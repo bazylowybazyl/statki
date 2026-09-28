@@ -1,7 +1,7 @@
 // src/game/asteroidRockKinds.js
 //
 // Rodzaje skał nowego pola asteroid: typy (7 rud + skała NEUTRALNA, czyli
-// wypełniacz bez surowca), rodziny kształtów banku (rockShapes3D) i reguły,
+// wypełniacz bez surowca), rodziny kształtów banku (src/3d/asteroids/rockBank.js) i reguły,
 // które je łączą — kształt zależy od typu i rozmiaru, skład od głębokości
 // w polu (obrzeża prawie same skały neutralne, rudy głębiej, rzadkie w rdzeniu).
 //

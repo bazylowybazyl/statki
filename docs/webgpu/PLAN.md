@@ -149,6 +149,18 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   alokuje ~150 B na atrybut na klatkę — zakres na stałe z wyłączonym czyszczeniem (`liveAttribute`, `fxParticles3D.js`).
   Tekstura per obiekt we wspólnym grafie: `FxMapNode` (jak `HullObjectTextureNode`, `texture().onObjectUpdate()` nie
   działa).
+- **Pułapki z zadania 21 (pas asteroid, three r183):** materiał z `lights = true` dostaje WSZYSTKIE światła sceny
+  Core3D (słońce z cieniem, otoczenie, punktowe) — demo ich nie miało; własny model oświetlenia gasi je w `direct()`
+  (`lightNode.light` istnieje tylko dla świateł three) i sam podaje swoje słońce znacznikiem (`BELT_SUN_LIGHT`,
+  `src/3d/asteroids/surfaceLighting.js`). **`positionWorld` przy 6–10 mln j. to float32** (skok ~0,5–1 j.) — mapy pola,
+  ośrodek, mgła i szum czytają pozycje LOKALNE (grupa pola przesunięta o `Core3D.fx.origin`, varying z pozycji instancji
+  albo środek płatu z CPU), `positionLocal` we fragmencie to varying pozycji po `positionNode`. **Kroki `Core3D.fx` idą
+  PO `_syncSceneMatrices()`** — krok, który przesuwa obiekty, sam woła `updateMatrixWorld`. **`compileAsync` /
+  `prewarmPass` pomija obiekty z `visible = false`** — rozgrzewka odsłania schowane siatki na czas kompilacji (inaczej
+  pierwsze wejście w pole buduje pipeline'y w klatce). **Kolejka:** nieprzezroczyste idą przed przezroczystymi bez
+  względu na `renderOrder` — skały tła, które mają przykryć przezroczystą zasłonę pola, są w kolejce przezroczystej
+  z `NoBlending` i zapisem głębi. **Bloom gry = bloom dema × 3** (`BLOOM_ZGODNOSC_WEBGL`) — emitery z dema (pioruny,
+  kryształy) świecą w grze mocniej niż w demie; wartości zostały z dema (wygląd wg zrzutów obok siebie).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).

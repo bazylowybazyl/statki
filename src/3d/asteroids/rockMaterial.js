@@ -38,7 +38,7 @@ import { enableGridLights } from '../fx/lightGrid.js';
 
 export const ROCK_TYPE_COUNT = ROCK_TYPES.length;
 
-// Kopia ROCK_TYPE_LOOKS z rockMaterial3D.js (kolejność = ROCK_TYPES).
+// Wygląd typów skał (kolejność = ROCK_TYPES; dawniej ROCK_TYPE_LOOKS w rockMaterial3D.js).
 export const ROCK_TYPE_LOOKS = Object.freeze([
   Object.freeze({ id: 'iron', base: '#3e3935', base2: '#26221f', a: '#44484e', aSpec: 0.7, b: '#5a2b15', bParam: 0.55, c: '#80868e', d: '#2e2926', emit: 0, cover: 0.4, line: 0, sparkle: 0.35, ice: 0, gloss: 60, metal: 1, relief: 0.05 }),
   Object.freeze({ id: 'copper', base: '#4a4540', base2: '#302c28', a: '#2f8a58', aSpec: 0.3, b: '#0d3a26', bParam: 0.5, c: '#b8683a', d: '#1d3a94', emit: 0, cover: 0.3, line: 11, sparkle: 0.2, ice: 0, gloss: 60, metal: 1, relief: 0.03 }),

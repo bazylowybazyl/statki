@@ -15,7 +15,8 @@
 - **`planet3d.proc.js`** — wariant legacy/proceduralny (nie używać jako głównej ścieżki bez wyraźnej potrzeby).
 - **`src/3d/haloRing/`** — ring „Halo” Ziemi i Marsa (teren, miasta, megastruktura, port K-7); klej gry `haloRingGame.js`, kolizje `src/game/haloRingCollision.js`. Opis: `docs/PORT-halo-ring.md`.
 - **`src/game/hullBodies.js`** — kadłuby statków, NPC i wraków na silniku belek (`src/game/destructorBeams3D.js`, tryb płaski): budowa ze sprite'a, synchronizacja ruchu, trafienia, wraki. Opis: `docs/PORT-silnik-belek.md`.
-- **`src/game/destructor.js`** — stary silnik heksów; dziś już tylko asteroidy (do portu skał na belki).
+- **`src/3d/asteroids/`** — pas asteroid z dema WebGPU (skały, minerały, olbrzymy, ośrodek objętościowy, burze, mgła); klej `asteroidBelt.js` (krok `Core3D.fx`), rozgrywka pola w `src/game/asteroid*.js` (kolizje z olbrzymami: `asteroidBeltGiants.js`). Opis: § „Pas asteroid” niżej.
+- **`src/game/destructor.js`** — stary silnik heksów; od zadania 21 (stare asteroidy usunięte) w grze nie tworzy ciał — zostaje dla mostków/rdzeni/zimnych wraków na `hexGrid` do ich portu.
 - **`src/game/shipEntity.js`** — konfiguracja i geometria statku gracza (fizyka wejścia, offsety, thrusters, hardpointy).
 - **`package.json`** — serwer dev i zależności.
 
@@ -30,6 +31,7 @@
    - `updateStations3D(stations)`
    - `updateWorld3D(frameDt, vfxTime)`
    - `updateHexShips3D(cam, hexEntities)`
+   - `asteroidBelt.prepareFrame(frameDt, ship, …)` (pas asteroid — wejście klatki; praca w kroku `Core3D.fx` przed passami)
 3. Finalna klatka 3D (kanwa WebGPU `#webgl-layer`) jest kopiowana na główny canvas przez `drawHexShips3D(ctx, W, H)` — w TYM SAMYM zadaniu JS co render (po `await` kanwa WebGPU bywa pusta). Podzielony ekran = 2× `Core3D.renderSingle` + wycinki (jeden render z nożyczkami nie istnieje: `clear()` w WebGPU czyści cały cel).
 4. HUD/overlays 2D są rysowane na końcu.
 
@@ -124,9 +126,9 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
   lot, trafienie).
-- **Stara soczewka warpa i stare asteroidy nie przechodzą** (stare pole **wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
-  `?asteroidyStare`) — zastępują je nowe z dem WebGPU (`dema/asteroidy-webgpu` → zadanie 21, `dema/warp-webgpu` →
-  zadanie 22). Moduły ruchu v2 spoza gry (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
+- **Stara soczewka warpa i stare asteroidy nie przechodzą** — zastępują je nowe z dem WebGPU (`dema/warp-webgpu` →
+  zadanie 22; `dema/asteroidy-webgpu` → zadanie 21: stare pole, tło pasa i klej WebGL usunięte, pas w
+  `src/3d/asteroids/`). Moduły ruchu v2 spoza gry (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
 - **Weryfikacja:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --baza .tmp/webgpu/baseline/webgl/p1`
   (sceny deterministyczne, porównanie z bazą WebGL, spis zamienników; `--uuid osobne` = UUID three z osobnego strumienia,
   bez tego tysiące węzłów TSL przesuwają `Math.random` gry i świat — planety, wraki, warp — wychodzi inny niż w bazie;
@@ -230,6 +232,16 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `scripts/halo-ring-shots.mjs --czesci terrain,structure,structureTop,clouds,shell`, gry `zrzuty.mjs --czesci-ringu`
   (sceny `ring-dach`, `ring-dach-z01`, `ring-habitat` — dach w FG i habitat z dala od portu).
 
+### Pas asteroid (`src/3d/asteroids/`, zadanie 21 portu; decyzje i warunki dema: `docs/webgpu/DEMO-ASTEROIDY.md`)
+- Pas = pola z dema `dema/asteroidy-webgpu` (typy skał i rud, minerały, olbrzymy z tunelami, światło objętościowe z cieniami skał, reflektory statków, burze z piorunami, mgła, zasłona i nocna łuna pola). Klej `AsteroidBelt` (`asteroidBelt.js`, `createAsteroidBelt` w `index.html`): `precompute()` (cień pól, ~1 s) i `initGpu()` na ekranie ładowania (`startGame`), `prepareFrame(frameDt, ship, p2, npcs, PAUSED)` w `render()`, cała praca w kroku `Core3D.addFxStep` w kolejności klatki dema (początek → warstwy skał → olbrzymy → mapa pola → mgła → burza → światła i atlas cieni | cienie → ośrodek `compute` → iskry → duszki → zasłona → maska słońca). Kadr poza pasmem pasa = krok wychodzi od razu, siatki schowane.
+- Warstwy Core3D: pasmo PLAY (skały POD płaszczyzną gry, `zOf = −1,45 r`), minerały, płytka mgła, iskry, pioruny i kwad dna ośrodka (z = −29 000) — pass ortho (warstwa 0, renderOrder < 0; efekty gry ≥ 0); RUBBLE/MID/DEEP, głęboka mgła i zasłona pola — pass tła (warstwa 1, perspektywa; skały tła w kolejce przezroczystej z `NoBlending`, po zasłonie). Pozycje LOKALNE względem `Core3D.fx.origin` (grupa pola przesunięta o początek) — w shaderach pasa bez `positionWorld` (float32 przy 6–10 mln j.).
+- Materiały pasa nie biorą świateł sceny Core3D: własne słońce (`BELT_SUN_LIGHT`, `surfaceLighting.js`) + siatka `Core3D.fx.grid` (opt-in `enableGridLights`). Transmitancja słońca do renderu przez `nightKnee(T)`, do logiki surowe `T` (`asteroidFieldLight.js`); mapa pola (R = `nightKnee(T)`) idzie do maski słońca Core3D (`setSunOcclusionField`) — kadłuby ciemnieją w głębi pola.
+- Ośrodek objętościowy (`beltMedium.js`, jeden na grę): `sample(P)` → `kolor · a + rgb` w KAŻDEJ powierzchni z zapisem głębi w passie gry — skały i minerały do stropu warstwy skał (`rockLayerTop = 0`), olbrzymy w punkcie powierzchni, kadłuby przez hak `hullVolume` (`hexShips3D.tsl.js`); poza polem `on = 0` (tożsamość). Nowa powierzchnia w passie gry → ten sam hak, inaczej w polu świeci „przez pył”.
+- Światła statków: `addShipLights` z profilem `FIELD_SHIP_LIGHTS` (pod stropem olbrzyma `CAVE_SHIP_LIGHTS`), gracz zawsze + najbliższe środka kadru do `ASTEROID_BELT_CONFIG.maxLitShips` (6); reflektory z mapami cienia skał (`ShadowAtlas` = `grid.shadows`). Świecące skały (kryształ, uran, energetyczna) = światła siatki (`GLOW_ROCK`).
+- Rozgrywka: dane pola `src/game/asteroidBeltField.js`, cień pól `asteroidFieldLight.js`, burze `asteroidStorms.js` (`StormSimulator`), olbrzymy `asteroidGiants.js` + `asteroidGiantBuilder.js` (SDF w workerach) + `asteroidBeltGiants.js` (5 miejsc przy rdzeniach pasa — pierwszy = Labirynt dema, budowa, gdy kamera / statek < 420 tys. j., kolizje). Kolizje TYLKO z olbrzymami: `stepShipAsteroidCollisions` w `physicsStep` → `asteroidBelt.collideShip` (gracz / P2 przez pos/vel, NPC przez widok kinematyki), pociski gasną w skale olbrzyma (`pointBlocked`). Małe skały leżą pod płaszczyzną: bez kolizji, niszczenia i łupu; pioruny i olbrzymy bez obrażeń; AI nie omija olbrzymów (ślizga się po ścianie). Wydobycie — zadanie 21b.
+- **Nowy typ skały:** nazwa NA KOŃCU `ROCK_TYPES` (`src/game/asteroidRockKinds.js`; rudy gry = `ASTEROID_TYPES` w `src/data/asteroidTypes.js`) z wagami rodzin kształtów (`FAMILY_WEIGHTS_BY_TYPE`), `ORE_TIER` i etykietą PL; skład pola — `asteroidBeltField.js` (`_pickType`, udział na głębokości pola); wygląd — wiersz w `ROCK_TYPE_LOOKS` (`src/3d/asteroids/rockMaterial.js`, kolejność = `ROCK_TYPES`, jedna tablica uniformów — limit 12 buforów); opcjonalnie minerały (`MINERAL_RECIPES`, `minerals.js`) i światło (`GLOW_ROCK`, `asteroidBelt.js`). Testy: `tests/asteroidBeltField.test.mjs`.
+- Narzędzia: `scripts/webgpu/asteroidy-gra.mjs` (sceny pola w grze, `--kolizja`, `--wydajnosc`), `asteroidy-demo.mjs` (te same miejsca w demie), sesja `pas` w `zrzuty.mjs`.
+
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
 - Render: `Core3D.renderBackdrop(camera)` — ta sama scena i post (bloom, ACES), tylko warstwa `MENU_BACKDROP_LAYER` (9; na czas menu ring ma na niej wszystkie siatki). Ziemia i niebo tła są dziećmi grupy ringu i liczą światło w układzie ringu (`uCamLocal`, `uSunDir`, `haloRingBlock`); tekstury Ziemi pożyczone od planety gry (`window.EARTH`), mgławica od `NebulaSystem`.
@@ -252,7 +264,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trafienia i zapytania tylko przez `HullBodies` (`sweep`, `impact` = krater z budżetem HP, `probe`, `cutSegment`); styk dla AI: `HullBodies.hasContact`; sufit HP: `HullBodies.structuralState`.
 - Nowy wrak z kadłuba (śmierć, rozpad, wybuch reaktora) idzie przez `convertToWreck` / `shatter` / hak `onWreck` — nie składaj go ręcznie.
 - Siatka 15 px jak w demie (`HULL_BODY_CONFIG.cellPx`); jednostką strojenia zostaje dawny heks (`HEX_PITCH_PX` = 7,5): węzeł = `hull.hexPerNode` heksów (HP ×4, łup, tempo cięcia, promień krateru). Nową wartość „na komórkę” przeliczaj przez `hexPerNode`. Nie zagęszczaj siatki bez pomiaru ciągłego styku — przy 7,5 px pchany okręt budził się cały i nie zasypiał (krok 2,7 ms zamiast 0,13).
-- Dwie masy: ciało w silniku ma masę ZDERZEŃ z powierzchni kadłuba (`HULL_BODY_CONFIG.massPerArea`, jedna gęstość jak demo — Atlas ≈ 800 tys.), `entity.mass` to masa GRY (ciąg ∝ masa, separacja AI, holowanie, asteroidy). Nie przepisuj jednej w drugą: `syncOut` skaluje masę gry i `inertia` w stosunku ubytku masy ciała, wrak dostaje masę w skali gry rodzica.
+- Dwie masy: ciało w silniku ma masę ZDERZEŃ z powierzchni kadłuba (`HULL_BODY_CONFIG.massPerArea`, jedna gęstość jak demo — Atlas ≈ 800 tys.), `entity.mass` to masa GRY (ciąg ∝ masa, separacja AI, holowanie). Nie przepisuj jednej w drugą: `syncOut` skaluje masę gry i `inertia` w stosunku ubytku masy ciała, wrak dostaje masę w skali gry rodzica.
 - Materiał kadłuba (port WebGPU, zadanie 04): graf TSL RAZ na wariant (`src/3d/hexShips3D.tsl.js`: skóra belek, siatka heksów, płyta pancerza, szczątki GPU), każdy kadłub dostaje lekki `HullNodeMaterial` z tymi samymi węzłami — nie buduj grafu na encję (NodeBuilder ~12 ms CPU na kadłub, spawn 30 NPC: 389 ms zamiast 14). Wartości per encja w `material.uniforms` (obiekty `{ value }`), wspólne (czas, strojenie światła, żar) w `HULL_SHARED` (raz na klatkę), lampy statku i strefy dysz w buforze storage `HullLightStore` (slot na kadłub, zapis tylko przy zmianie podpisu). Nowe dane per kadłub: holder w `createHullUniforms` + `perObject()` w grafie, nie pole-liczba materiału (klucz three bierze liczby jako 0/1). Maska słońca kadłubów, odłamków i smug: JEDNO miejsce importu (`sunVisibility`/`sunFill`/`sunShadeUnlit` w `hexShips3D.tsl.js`). Haki: mapa ran i światła efektów (zadanie 18: `hullDamageSurface`, `hullDamageHeat`, `hullEffectLights`), ośrodek wolumetryczny (zadanie 21: `hullVolume`, `kolor·a + rgb`).
 
 ### Mostki (zniszczenie mostka = kill)
@@ -281,7 +293,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Tablice `bullets`, `particles`.
 - `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
 - Efekty zderzeń kadłubów idą przez `CollisionFX` (`grind` co krok styku, `impact` raz na zetknięcie). `bounceForce` w zdarzeniu to IMPULS (masa × v; na belkach 10⁵–10⁶) — nie skaluj nim efektów. Iskry tarcia (`src/vfx/collisionSparks.js`): budżet = TEMPO z prędkości styku (`COLLISION_SPARKS_TUNE`) w czasie symulacji pary, plus jednorazowy snop na `impact`; jasność iskry przez `gain` w `SparkSystem3D.emit` (atrybut `iGain`, tarcie < 1, trafienia 1). Dawny budżet „na wywołanie z impulsu” sypał 6–10 tys. iskier/s przy zwykłym taranie.
-- Żar skóry kadłubów belkowych: szczyt `HULL_BODY_CONFIG.heatGlowPeak` (nie `DESTRUCTOR_CONFIG.heatGlowPeak`, ten zostaje heksom — asteroidy).
+- Żar skóry kadłubów belkowych: szczyt `HULL_BODY_CONFIG.heatGlowPeak` (nie `DESTRUCTOR_CONFIG.heatGlowPeak`, ten zostaje heksom).
 
 ### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
 - Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (gracz/P2 — `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
@@ -335,7 +347,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
    - Unikaj alokacji w gorących pętlach (kolizje, spatial queries, contact buffers).
    - Krok fizyki `PHYS_HZ` domyślnie 120 Hz (`?physHz=60` do testów A/B). Nowe stałe „na krok” (mnożniki tłumienia, liczniki w tickach) tylko przez `stepDecay120` / `ticksAt120` z `src/game/stepDecay.js` — inaczej zmiana kroku zmienia zachowanie gry.
    - Silnik belek: magazyny węzłów i belek to SoA (`beamStore3D.js`) — pola dodawaj jawnie po nazwie w konstruktorze (inaczej V8 przechodzi w tryb słownikowy) i w `gatherNodeFields`. Zmiana fizyki = sprawdzenie złotych stanów (hash stanu kanoniczny) i testów `tests/beam*.test.mjs`.
-   - (Heksy — dziś tylko asteroidy.) `hexGrid.grid` jest indeksowana komórką POCZĄTKOWĄ heksa, a wgnieciony heks stoi do `_maxHexDrift` px dalej. Szukanie heksów w oknie komórek (sondy trafień, raymarch wiązki) musi doliczyć `getHexProbeDrift(grid)` — inaczej heksy-duchy: pocisk przelatuje przez wgniecenie. Trafienie, które zna heks, podaje go do `applyImpact(..., { shard })` (w `index.html`: `applyHexImpact`), zamiast szukać drugi raz.
+   - (Heksy — od zadania 21 w grze bez ciał; dema i przyszłe porty mostków/rdzeni.) `hexGrid.grid` jest indeksowana komórką POCZĄTKOWĄ heksa, a wgnieciony heks stoi do `_maxHexDrift` px dalej. Szukanie heksów w oknie komórek (sondy trafień, raymarch wiązki) musi doliczyć `getHexProbeDrift(grid)` — inaczej heksy-duchy: pocisk przelatuje przez wgniecenie. Trafienie, które zna heks, podaje go do `applyImpact(..., { shard })` (w `index.html`: `applyHexImpact`), zamiast szukać drugi raz.
    - Solver sprężyn GPU kroczy w czasie gry (`gpuSoftBodyHz` = 60), nie w klatkach renderu; liczniki dispatchera są w krokach 60 Hz.
 
 4. **Wydajność**
@@ -381,6 +393,9 @@ Dodaj TODO z prefiksem `AGENT:`.
 
 **Jak dodać nowy statek (kadłub)?**
 Sprite: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`); układ gniazd w `hardpointEditorDefaults.js`; dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`); **mostek** (strefa + model 3D) wg `docs/BRIEF-mostek-nowego-kadluba.md`.
+
+**Jak dodać nowy typ skały pasa asteroid?**
+Wg § „Pas asteroid”: `ROCK_TYPES` (na końcu) + wagi kształtów w `src/game/asteroidRockKinds.js`, skład w `asteroidBeltField.js`, wygląd w `ROCK_TYPE_LOOKS` (`src/3d/asteroids/rockMaterial.js`), opcjonalnie minerały i światło.
 
 ---
 

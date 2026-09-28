@@ -138,6 +138,8 @@ export class RockLayer {
     this.stats = { instances: 0, drawn: 0, tris: 0, cells: 0, pending: 0, lods: [] };
     this._missing = [];
     this._order = [];
+    // Porównanie kolejki komórek raz na warstwę (bez domknięcia przy każdej zmianie kadru).
+    this._byDistance = (a, b) => this._missing[a + 2] - this._missing[b + 2];
     this._version = 0;
     this._built = { x: NaN, y: NaN, zoom: NaN, version: -1, minPx: NaN };
     this.buckets = new LodBuckets({
@@ -256,7 +258,8 @@ export class RockLayer {
       const r = o.range;
       const rangeChanged = !r || r[0] !== cx0 || r[1] !== cx1 || r[2] !== cy0 || r[3] !== cy1;
       if (rangeChanged || o.pending > 0) {
-        o.range = [cx0, cx1, cy0, cy1];
+        if (!o.range) o.range = [0, 0, 0, 0];
+        o.range[0] = cx0; o.range[1] = cx1; o.range[2] = cy0; o.range[3] = cy1;
         for (const cell of o.cells.values()) {
           if (cell.cx < cx0 - 1 || cell.cx > cx1 + 1 || cell.cy < cy0 - 1 || cell.cy > cy1 + 1) this._unloadCell(o, cell);
         }
@@ -276,7 +279,7 @@ export class RockLayer {
           const order = this._order;
           order.length = 0;
           for (let i = 0; i < missing.length; i += 3) order.push(i);
-          order.sort((a, b) => missing[a + 2] - missing[b + 2]);
+          order.sort(this._byDistance);
           for (let j = 0; j < order.length; j++) {
             const i = order[j];
             if (loaded > 0 && performance.now() > budgetEnd) { o.pending++; continue; }
