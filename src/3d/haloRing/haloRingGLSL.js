@@ -12,14 +12,16 @@
 // (dwie ściany jako pierścienie w płaszczyznach, podłoga jako walec/stożek,
 // kadłub jako walec). Do tego światło planety i niebo habitatu.
 //
-// Port WebGPU: biblioteka jest w TSL (haloRingTSL.js); teren (07), konstrukcja
-// i atmosfera (08), megastruktura i miasto (09), hala K-7 i ringi-archetypy (10) już
-// jej nie używają — w src/3d/haloRing/ nie ma innego GLSL. Zostaje dla tła menu
-// (menuBackdrop3D.js — COMMON, LIGHT; port w zadaniu 11), budowli portowych Z7 poza
-// portem (COMMON, NOISE, LIGHT — przejdą na TSL przy integracji) i narzędzia
-// parzystości GLSL ↔ TSL (scripts/webgpu/ring-tsl-parzystosc.mjs — jedyny użytkownik
-// HALO_GLSL_STORM, AIR, RTE, INDKIT oraz po 10 także FG, TRANSIT i PORTSITES; FG_CLIP usunięte w 10).
-// HALO_GLSL_SURFACE usunięte w 09 (ostatni użytkownicy: megastruktura i miasto).
+// Port WebGPU: gra liczy ring w TSL (haloRingTSL.js — teren 07, konstrukcja i atmosfera 08,
+// megastruktura i miasto 09, K-7 i ringi-archetypy 10, tło menu 11); gra tego pliku nie ładuje
+// (strażnik tests/graBezGlsl.test.mjs). Zostaje POZA grą jako odniesienie GLSL:
+//  - budowle portowe Z7 (portBuildings3D.js, portHullBuild3D.js: COMMON, NOISE, LIGHT) —
+//    AGENT: przejdą na TSL (haloRingTSL.js) przy integracji Z7, wtedy te trzy bloki znikną stąd;
+//  - narzędzie parzystości GLSL ↔ TSL (scripts/webgpu/ring-tsl-parzystosc.mjs — jedyny użytkownik
+//    HALO_GLSL_STORM, AIR, RTE, INDKIT, FG, TRANSIT i PORTSITES): wiersze haszy bit w bit z bazą
+//    WebGL (tag webgl-baseline, agents.md — pułapki TSL 10, 12, 14). Plik znika razem z narzędziem,
+//    gdy ring przestanie być porównywany z bazą WebGL.
+// HALO_GLSL_SURFACE usunięte w 09, FG_CLIP w 10, CLOUDCOVER w 08.
 
 import { IND_EMIT, IND_MAT } from './haloRingIndustryKit.js';
 

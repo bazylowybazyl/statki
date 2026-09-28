@@ -5095,6 +5095,1221 @@
         "srednia": 0,
         "maks": 0
       }
+    },
+    "reaktor-ladowanie": {
+      "opis": "Wybuch reaktora (profil capital, rozmiar 300): ładowanie 0,4 s po wywołaniu — rdzeń z linią anamorficzną, zoom 0,5",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.34,
+      "gpuMs": 0.462,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.023,
+        "p99": 0.1387,
+        "p999": 0.5875,
+        "max": 0.783
+      },
+      "stan": {
+        "kroki": 24,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6360000,
+          4980000,
+          0.5,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-ladowanie__reaktor": {
+      "wariantSceny": "reaktor-ladowanie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-blysk": {
+      "opis": "Ten sam wybuch 0,95 s po wywołaniu (0,15 s po rozbłysku): błysk, pierścień, ciemna fala, kolce, świeże iskry, zoom 0,25",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.295,
+      "gpuMs": 0.513,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0225,
+        "p99": 0.1366,
+        "p999": 0.5729,
+        "max": 0.78
+      },
+      "stan": {
+        "kroki": 57,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6360000,
+          4980000,
+          0.25,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-blysk__reaktor": {
+      "wariantSceny": "reaktor-blysk",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-iskry": {
+      "opis": "Ten sam wybuch 1,5 s po wywołaniu: gasnący błysk, rozlany pierścień i fala, iskry w locie, zoom 0,25",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.305,
+      "gpuMs": 0.613,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0225,
+        "p99": 0.1366,
+        "p999": 0.5729,
+        "max": 0.78
+      },
+      "stan": {
+        "kroki": 90,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6360000,
+          4980000,
+          0.25,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-iskry__reaktor": {
+      "wariantSceny": "reaktor-iskry",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-gasnie": {
+      "opis": "Ten sam wybuch 3 s po wywołaniu: dogasające iskry, zoom 0,25",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.26,
+      "gpuMs": 0.462,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0225,
+        "p99": 0.1366,
+        "p999": 0.5729,
+        "max": 0.78
+      },
+      "stan": {
+        "kroki": 180,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6360000,
+          4980000,
+          0.25,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-gasnie__reaktor": {
+      "wariantSceny": "reaktor-gasnie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-eskorta": {
+      "opis": "Wybuch reaktora fregaty (profil escort, rozmiar 200) 0,45 s po wywołaniu (0,15 s po rozbłysku), zoom 0,5",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.25,
+      "gpuMs": 0.475,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0229,
+        "p99": 0.1393,
+        "p999": 0.5734,
+        "max": 0.771
+      },
+      "stan": {
+        "kroki": 297,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6351000,
+          4986000,
+          0.5,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-eskorta__reaktor": {
+      "wariantSceny": "reaktor-eskorta",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-lancuch": {
+      "opis": "Wybuch łańcuchowy stacji (profil chain, rozmiar 160) 0,12 s po wywołaniu: błysk, pierścień, kolce, iskry, zoom 0,8",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.24,
+      "gpuMs": 0.494,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0231,
+        "p99": 0.1403,
+        "p999": 0.5792,
+        "max": 0.783
+      },
+      "stan": {
+        "kroki": 424,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6369000,
+          4975000,
+          0.8,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-lancuch__reaktor": {
+      "wariantSceny": "reaktor-lancuch",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-pozne": {
+      "opis": "Wybuch reaktora (profil capital, rozmiar 300) 2 s po wywołaniu (1,2 s po rozbłysku): rzadkie iskry w locie — poświata pojedynczych iskier, zoom 0,6",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.245,
+      "gpuMs": 0.473,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0231,
+        "p99": 0.1404,
+        "p999": 0.573,
+        "max": 0.775
+      },
+      "stan": {
+        "kroki": 604,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6360000,
+          4992000,
+          0.6,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-pozne__reaktor": {
+      "wariantSceny": "reaktor-pozne",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-pozne-blisko": {
+      "opis": "Wybuch reaktora niszczyciela (profil cruiser, rozmiar 180) 1,6 s po wywołaniu, zoom 1,2 — iskry z bliska",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.255,
+      "gpuMs": 0.464,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0232,
+        "p99": 0.1409,
+        "p999": 0.5844,
+        "max": 0.783
+      },
+      "stan": {
+        "kroki": 850,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6348000,
+          4971000,
+          1.2,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-pozne-blisko__reaktor": {
+      "wariantSceny": "reaktor-pozne-blisko",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "reaktor-duzy": {
+      "opis": "Wybuch reaktora największego okrętu (profil capital, rozmiar 810 — śmierć pancernika pirackiego jak w „wraki”) 2,5 s po wywołaniu: duże rozlane iskry, zoom 0,6",
+      "sesja": "reaktor",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 20,
+      "trojkaty": 22,
+      "passy": {
+        "total": 20,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.265,
+      "gpuMs": 0.475,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0072,
+        "p90": 0.0231,
+        "p99": 0.1406,
+        "p999": 0.5809,
+        "max": 0.784
+      },
+      "stan": {
+        "kroki": 1060,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6374000,
+          4990000,
+          0.6,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "reaktor-duzy__reaktor": {
+      "wariantSceny": "reaktor-duzy",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
     }
   },
   "wydajnosc": {
@@ -5360,6 +6575,31 @@
         "stacja-ciecie__tlo"
       ],
       "polecenie": "node scripts/webgpu/baza.mjs --dopisz C:/Users/Szymon/Documents/GitHub/statki/.tmp/webgpu/zadania/16/baza-stacja"
+    },
+    {
+      "kiedy": "2026-09-28T11:19:41.750Z",
+      "commitPrzebiegu": "766fe6a",
+      "sceny": [
+        "reaktor-ladowanie",
+        "reaktor-ladowanie__reaktor",
+        "reaktor-blysk",
+        "reaktor-blysk__reaktor",
+        "reaktor-iskry",
+        "reaktor-iskry__reaktor",
+        "reaktor-gasnie",
+        "reaktor-gasnie__reaktor",
+        "reaktor-eskorta",
+        "reaktor-eskorta__reaktor",
+        "reaktor-lancuch",
+        "reaktor-lancuch__reaktor",
+        "reaktor-pozne",
+        "reaktor-pozne__reaktor",
+        "reaktor-pozne-blisko",
+        "reaktor-pozne-blisko__reaktor",
+        "reaktor-duzy",
+        "reaktor-duzy__reaktor"
+      ],
+      "polecenie": "node scripts/webgpu/baza.mjs --dopisz C:/Users/Szymon/Documents/GitHub/statki/.tmp/webgpu/zadania/24/baza-tag-reaktor"
     }
   ]
 }

@@ -770,10 +770,9 @@ class DirectSun {
         this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), material);
         this.mesh.name = 'SunMesh'; // <---
 
-        const spriteMat = new THREE.SpriteMaterial({ map: loadTex('assets/effects/glow.png'), color: 0xffaa00, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-        this.glow = new THREE.Sprite(spriteMat);
-        
-        this.group.add(this.mesh); this.group.add(this.glow);
+        // Dawny sprite blasku (assets/effects/glow.png — pliku nigdy nie było, 404: addytywny sprite
+        // bez tekstury nic nie dokładał) usunięty w zadaniu 24 portu; blask słońca = bloom kuli HDR.
+        this.group.add(this.mesh);
         Core3D.scene.add(this.group); enablePlanetLayer(this.group);
 
         this.sunLight = new THREE.DirectionalLight(SUN_SHADOW_TUNE.color, SUN_SHADOW_TUNE.intensity);
@@ -800,9 +799,8 @@ class DirectSun {
         }
         const scale = (this.data.r3D || this.data.r || 200) * SUN_SIZE_MULTIPLIER;
         this.mesh.scale.set(scale, scale, scale);
-        if (this.glow) { this.glow.scale.set(scale * 2.6, scale * 2.6, 1); this.glow.material.opacity = 0.6 + Math.sin(this.uniforms.uTime.value * 2.0) * 0.1; }
-        // Słońce nie ma cullingu w grze; flaga warstwy planet z promieniem
-        // poświaty (sprite 2,6× skali = 1,3× promienia), bez halo.
+        // Słońce nie ma cullingu w grze; flaga warstwy planet z promieniem poświaty bloomu
+        // (1,3× promienia — margines dawnego sprite'a blasku 2,6× skali), bez halo.
         if (typeof Core3D.markPlanetLayersActive === 'function'
             && isBodyLikelyOnScreen(this.data.x, this.data.y, -60000, scale * 1.3, false, cam)) {
             Core3D.markPlanetLayersActive(false, false);

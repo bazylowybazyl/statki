@@ -5,8 +5,9 @@
 // po warstwach do JEDNEGO celu MSAA HalfFloat (composerTarget), czyszczona tylko
 // głębia między passami, potem post jako węzły TSL w RenderPipeline
 // (outputColorTransform = false — ACES i sRGB robi gra, kolorGry.js).
-// Nieprzeniesione ShaderMaterial rysują się magentowym zamiennikiem
-// (src/3d/tsl/zamiennik.js). Tylko WebGPU: bez adaptera renderer nie powstaje,
+// Gra nie ma GLSL (strażnik tests/graBezGlsl.test.mjs); ShaderMaterial spoza gry (dema modułów
+// poza portem, dodatki three) rysuje się magentowym zamiennikiem (src/3d/tsl/zamiennik.js —
+// bezpiecznik w biegu). Tylko WebGPU: bez adaptera renderer nie powstaje,
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
 import {

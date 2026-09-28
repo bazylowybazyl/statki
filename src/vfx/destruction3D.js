@@ -860,8 +860,15 @@ function _cloneShellHierarchy(rootObject) {
     for (let i = 0; i < count; i++) {
         const src = srcMeshes[i];
         const dst = dstMeshes[i];
+        // Geometria i materiały kawałka to jego WŁASNE klony — zwalnia je DestructionDebrisManager
+        // razem z odłamkami. Flaga zasobu szablonu GLB (__sharedTemplateAsset, stations3D.js) nie może
+        // przejść na klon: BufferGeometry.copy dzieli userData ze źródłem (referencja), a
+        // Material.copy kopiuje je razem z flagą — dawniej klony kawałków (cała bryła stacji na
+        // kawałek) nigdy nie były zwalniane (zadanie 24 portu WebGPU).
         if (src.geometry) {
             const g = src.geometry.clone();
+            g.userData = { ...src.geometry.userData };
+            delete g.userData.__sharedTemplateAsset;
             if (src.geometry.boundingSphere) g.boundingSphere = src.geometry.boundingSphere.clone();
             if (src.geometry.boundingBox) g.boundingBox = src.geometry.boundingBox.clone();
             if (src.geometry.__shardSpawnData) g.__shardSpawnData = src.geometry.__shardSpawnData;
@@ -869,10 +876,10 @@ function _cloneShellHierarchy(rootObject) {
             dst.geometry = g;
         }
         if (Array.isArray(src.material)) {
-            dst.material = src.material.map(m => m?.clone?.() ?? m);
+            dst.material = src.material.map(_cloneOwnedMaterial);
             for (let m = 0; m < dst.material.length; m++) _shareShadowNodes(dst.material[m], src.material[m]);
         } else if (src.material?.clone) {
-            dst.material = src.material.clone();
+            dst.material = _cloneOwnedMaterial(src.material);
             _shareShadowNodes(dst.material, src.material);
         }
         dst.frustumCulled = false;
@@ -1868,5 +1875,6 @@ export const DESTRUCTION_TSL_INTERNALS = Object.freeze({
     layoutGeometry: _layoutGeometry,
     fadeClone: _fadeClone,
     shellPieceClone: _shellPieceClone,
+    cloneShellHierarchy: _cloneShellHierarchy,
     warmStats: () => ({ keys: _warmedKeys.size, queued: _warmQueue.length, holders: _warmHolders.length, shadowPending: _shadowWarmPending.length }),
 });

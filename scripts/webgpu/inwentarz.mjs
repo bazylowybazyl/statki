@@ -3,57 +3,51 @@
 //
 //   node scripts/webgpu/inwentarz.mjs [--md docs/webgpu/INWENTARZ.md] [--json .tmp/webgpu/inwentarz.json] [--cicho]
 //
-// Metoda:
-//  - pliki: src/**/*.js|mjs, pliki .js w katalogu głównym (planet3d.proc.js, Engineeffects.js…),
-//    skrypty modułowe z index.html; dla dem i narzędzi — strony HTML w dema/, scripts/ i w katalogu głównym;
+// Metoda (lekser, rozpoznawanie GLSL i API WebGL, graf importów — wspólne ze strażnikiem
+// tests/graBezGlsl.test.mjs: scripts/webgpu/grafGry.mjs):
+//  - pliki: src/**/*.js|mjs, pliki .js w katalogu głównym (Engineeffects.js…), skrypty modułowe z
+//    index.html; dla dem i narzędzi — strony HTML w dema/, scripts/ i w katalogu głównym;
 //  - lekser JS (komentarze, napisy, szablony z zagnieżdżonym ${…}, wyrażenia regularne) oddziela kod od napisów;
 //  - napis = GLSL, gdy ma ≥ 2 znaczniki (void main, gl_*, uniform/varying, vecN(, precision, #include…);
 //    „linie GLSL” = linie takich napisów (szablon liczony w całości, z ${…});
-//  - liczniki API liczone w samym kodzie (bez komentarzy i napisów);
-//  - zasięg: graf importów (statyczne, dynamiczne import('…'), new URL('…', import.meta.url)) od index.html
-//    = „gra”; od stron dem / narzędzi = „dema”; reszta = „nieużywany”;
+//  - liczniki API liczone w samym kodzie (bez komentarzy i napisów); „inne WebGL / post” = wzorce WEBGL_API
+//    strażnika (WebGLRenderer, cele WebGL, EffectComposer i passy, kontekst i wywołania WebGL);
+//  - zasięg: graf importów (statyczne, dynamiczne import('…'), re-eksporty, new URL('…', import.meta.url))
+//    od index.html = „gra”; od stron dem / narzędzi = „dema”; reszta = „nieużywany”;
 //  - status TSL: plik bez GLSL, który importuje three/tsl albo three/webgpu (albo ma sąsiada *.tsl.js).
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, relative, dirname, resolve, extname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, resolve } from 'node:path';
+import {
+  POZA_PORTEM, glslScore, importsOf, lex, lineOf, loadSource, nameOfString, rel, repo, resolveSpec, trafieniaWebgl
+} from './grafGry.mjs';
 
-const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
 const arg = (n, d = null) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? (argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : '1') : d; };
 const OUT_MD = arg('md', 'docs/webgpu/INWENTARZ.md');
 const OUT_JSON = arg('json', '.tmp/webgpu/inwentarz.json');
 const QUIET = !!arg('cicho');
 
-// ── Zakres portu (decyzje użytkownika, docs/webgpu/POSTEP.md) ─────────────────
-// Kolejność ma znaczenie: pierwsze trafienie wygrywa.
-const SCOPE_RULES = [
-  { re: /^src\/3d\/(warpLens3D|warpFx3D|warpWorldLens)\.js$|^src\/vfx\/warpLensPass\.js$/, tag: 'warp', label: 'poza portem — warp (nowy warp wejdzie w TSL)' },
-  // Asteroidy: stare pole, tło pasa i klej WebGL usunięte w zadaniu 21 — pas z dema WebGPU jest w porcie (src/3d/asteroids/).
-  { re: /^planet3d\.proc\.js$/, tag: 'legacy', label: 'legacy — nieużywany (do usunięcia)' }
-];
+// ── Zakres portu (decyzje użytkownika, docs/webgpu/PLAN.md §12) ───────────────
+// Moduły osiągalne z grafu gry, ale poza portem — ta sama lista co w strażniku (POZA_PORTEM, grafGry.mjs).
+const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const SCOPE_RULES = POZA_PORTEM.map((w) => ({ re: new RegExp(`^${escRe(w.plik)}$`), tag: 'poza portem', label: w.powod }));
 
 // Uwagi ręczne do tabel (to, czego skan nie wyczyta).
 const NOTES = {
-  'src/3d/core3d.js': 'serce portu: WebGPURenderer, passy sceny (zadanie 01), post w TSL — bloom i uber z gorącym powietrzem w src/3d/tsl/postGry.js (zadanie 02); pass maski słońca w TSL (zadanie 03); fala z refrakcją i jej snapshot usunięte (zadanie 19 — zniekształcenia efektów); soczewka i fale warpa usunięte',
-  'src/3d/hexShips3D.js': 'kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04',
-  // Zastąpione efektami z dem WebGPU (decyzja użytkownika 2026-09-27, PLAN §1 p. 6) — nie przenosimy 1:1.
-  'src/3d/slugTrail3D.js': 'zastąpi TrailSystem z dema broni (zadanie 17)',
-  'src/3d/muzzleFx3D.js': 'zastąpią receptury dema broni (zadanie 17)',
-  'src/3d/railgunFx3D.js': 'zastąpią receptury dema broni (zadanie 17)',
+  'src/3d/core3d.js': 'serce renderu: WebGPURenderer, passy scen do composerTarget, post w TSL (src/3d/tsl/postGry.js, bloom compute), maska słońca w TSL, klatka efektów GPU (Core3D.fx), rejestr rozgrzewki (Core3D.warmup)',
+  'src/3d/hexShips3D.js': 'kadłuby: skóra belek w partiach (hullSkinBatch.js), grafy TSL w hexShips3D.tsl.js; gałąź heksów (HEX/ARMOR/DEBRIS) rysuje w grze tylko to, co ma hexGrid — stoją na niej warsztaty mostki-demo, rdzen-demo i pomiar drżenia',
   'src/3d/sparkSystem3D.js': 'API iskier gry na puli z dema rakiet (src/3d/rockets/sparks.js) w scenie Core3D — zadanie 19',
-  'src/effects3d/yamato.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
-  'src/effects3d/railgunExplosion.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
-  'src/effects3d/armataImpact.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
-  'src/effects3d/autocannonImpact.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
   'src/effects3d/rocketSystem3D.js': 'lot i trafienia rakiet (rozgrywka); wygląd — reżyser efektów z dema rakiet w Core3D (src/3d/rockets/, zadanie 19)',
-  'src/effects3d/reactorblow.js': 'wybuch reaktora w scenie Core3D (zadanie 20): pule particlePool.js, materiały TSL w reactorblow.tsl.js, wygląd dawnego overlaya pod post gry (reactorLook); overlay i drugi renderer usunięte',
-  'src/3d/fxParticles3D.js': 'Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie)',
-  'Engineeffects.js': 'tylko tekstury poświaty dysz SIDE (make*Texture); martwe getEngineVFX z własnym WebGLRenderer i shader usunięte (zadanie 13)',
-  'src/3d/sunShadowMask.js': 'biblioteka maski słońca w TSL (screenUV) + hak wbudowanych materiałów (setupLightingModel / outputNode) — zadanie 03',
-  'src/3d/sunShadowMaskGLSL.js': 'LEGACY: GLSL maski dla nieprzeniesionych ShaderMaterial (planety 05, mostek 15, Z4/Z5/Z7; asteroidy — 21 zrobione) — znika z ostatnim z nich (24)',
+  'src/effects3d/reactorblow.js': 'wybuch reaktora w scenie Core3D (zadanie 20): pule particlePool.js, materiały TSL w reactorblow.tsl.js, wygląd dawnego overlaya pod post gry (reactorLook)',
+  'src/3d/fxParticles3D.js': 'Fx3D w TSL (zadanie 12): dysze MAIN, mostki, rdzenie',
+  'Engineeffects.js': 'tylko tekstury poświaty dysz SIDE (make*Texture); getEngineVFX z własnym WebGLRenderer usunięte (zadanie 13)',
+  'src/3d/sunShadowMask.js': 'biblioteka maski słońca w TSL (screenUV) + hak wbudowanych materiałów (setupLightingModel / outputNode) — zadanie 03; re-eksport SUN_SHADOW_GLSL tylko dla budowli Z7 (POZA_PORTEM)',
+  'src/3d/sunShadowMaskGLSL.js': 'napis GLSL maski dla modułów Z4/Z5/Z7 poza grą — znika z ostatnim z nich (przejście na TSL przy integracji)',
   'src/3d/hullShadowSdf.js': 'biblioteka SDF kadłubów; marsz w TSL (hullSdfShadow, zadanie 03); lustro CPU traceHullShadowCpu (test)',
   'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: asynchronicznie, bez odwracania osi — zadanie 06)',
-  'src/3d/menuBackdrop3D.js': 'rozgrzewka po kluczu programu WebGL — do przeprojektowania',
+  'src/3d/haloRing/haloRingGLSL.js': 'GLSL ringu poza grą: budowle Z7 (COMMON, NOISE, LIGHT) i narzędzie parzystości GLSL ↔ TSL (scripts/webgpu/ring-tsl-parzystosc.mjs); gra czyta haloRingTSL.js',
+  'src/3d/menuBackdrop3D.js': 'tło menu w TSL (menuBackdrop3D.tsl.js), rozgrzewka przez rejestr Core3D.warmup (zadanie 11)',
+  'src/3d/beamDebris3D.js': 'pula odłamków dem destruktora (własny WebGLRenderer) — geometria dla gry w metalDebrisGeometry.js',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
   'src/3d/coldWreckImpostors.js': 'uśpione (wymaga hexGrid)',
@@ -73,7 +67,6 @@ function walk(dir, pred, out = []) {
   }
   return out;
 }
-const rel = (p) => relative(repo, p).split('\\').join('/');
 const isJs = (p) => /\.(m?js)$/.test(p);
 
 const srcFiles = walk(join(repo, 'src'), isJs);
@@ -88,197 +81,6 @@ const toolJs = [
   ...walk(join(repo, 'scripts'), isJs)
 ];
 
-// ── Lekser ────────────────────────────────────────────────────────────────────
-const REGEX_BEFORE_WORD = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'yield', 'await', 'instanceof']);
-
-function lex(src) {
-  const n = src.length;
-  const noCom = src.split('');
-  const codeOnly = src.split('');
-  const strings = [];
-  const stack = [{ type: 'code', depth: 0, inTpl: false }];
-  let i = 0;
-  let prevSig = '';
-  let prevWord = '';
-  const blank = (arr, a, b) => { for (let k = a; k < b; k++) if (arr[k] !== '\n' && arr[k] !== '\r') arr[k] = ' '; };
-  while (i < n) {
-    const top = stack[stack.length - 1];
-    const c = src[i];
-    if (top.type === 'template') {
-      if (c === '\\') { blank(codeOnly, i, i + 2); i += 2; continue; }
-      if (c === '`') { top.tpl.end = i + 1; strings.push(top.tpl); stack.pop(); i++; prevSig = '`'; prevWord = ''; continue; }
-      if (c === '$' && src[i + 1] === '{') { top.tpl.hasExpr = true; stack.push({ type: 'code', depth: 0, inTpl: true }); i += 2; continue; }
-      if (c !== '\n' && c !== '\r') codeOnly[i] = ' ';
-      i++;
-      continue;
-    }
-    const d = src[i + 1];
-    if (c === '/' && d === '/') {
-      const e = src.indexOf('\n', i);
-      const end = e < 0 ? n : e;
-      blank(noCom, i, end); blank(codeOnly, i, end);
-      i = end;
-      continue;
-    }
-    if (c === '/' && d === '*') {
-      const e = src.indexOf('*/', i + 2);
-      const end = e < 0 ? n : e + 2;
-      const text = src.slice(i, end);
-      // /* glsl */ przed szablonem zostaje w noCom jako znacznik
-      if (!/^\/\*\s*glsl\s*\*\/$/.test(text)) { blank(noCom, i, end); }
-      blank(codeOnly, i, end);
-      i = end;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < n && src[j] !== c && src[j] !== '\n') { if (src[j] === '\\') j++; j++; }
-      strings.push({ kind: c, start: i, end: j + 1 });
-      blank(codeOnly, i + 1, j);
-      i = j + 1;
-      prevSig = c; prevWord = '';
-      continue;
-    }
-    if (c === '`') { stack.push({ type: 'template', tpl: { kind: '`', start: i, end: -1, hasExpr: false } }); i++; continue; }
-    if (c === '/') {
-      const wordCtx = /[A-Za-z0-9_$]/.test(prevSig);
-      const isRegex = prevSig === '' || (!wordCtx && '(,=:[!&|?{};+-*%<>~^'.includes(prevSig)) || (wordCtx && REGEX_BEFORE_WORD.has(prevWord));
-      if (isRegex) {
-        let j = i + 1;
-        let inClass = false;
-        while (j < n) {
-          const ch = src[j];
-          if (ch === '\\') { j += 2; continue; }
-          if (ch === '\n') break;
-          if (ch === '[') inClass = true;
-          else if (ch === ']') inClass = false;
-          else if (ch === '/' && !inClass) break;
-          j++;
-        }
-        j++;
-        while (j < n && /[a-z]/i.test(src[j])) j++;
-        blank(codeOnly, i + 1, j - 1);
-        i = j;
-        prevSig = '/'; prevWord = '';
-        continue;
-      }
-    }
-    if (c === '{') top.depth++;
-    if (c === '}') {
-      if (top.inTpl && top.depth === 0) { stack.pop(); i++; continue; }
-      top.depth--;
-    }
-    if (!/\s/.test(c)) {
-      if (/[A-Za-z0-9_$]/.test(c)) {
-        if (!/[A-Za-z0-9_$]/.test(prevSig)) prevWord = '';
-        prevWord += c;
-      } else prevWord = '';
-      prevSig = c;
-    }
-    i++;
-  }
-  return { noCom: noCom.join(''), codeOnly: codeOnly.join(''), strings };
-}
-
-const GLSL_MARKERS = [
-  /\bvoid\s+main\s*\(/, /\bgl_(FragColor|Position|FragCoord|PointSize|PointCoord|FrontFacing|VertexID|InstanceID)\b/,
-  /\buniform\s+(float|int|vec[234]|mat[234]|sampler\w*|bool|ivec\w*)\s+\w+/, /\bvarying\s+\w+\s+\w+/,
-  /\bvec[234]\s*\(/, /\bprecision\s+(high|medium|low)p\b/, /#include\s*</, /\btexture2D\s*\(/, /#define\s+\w+/,
-  /\b(float|vec[234]|mat[234])\s+\w+\s*\([^)]*\)\s*\{/, /\battribute\s+\w+\s+\w+/, /\bfract\s*\(|\bsmoothstep\s*\(/,
-  /\bin\s+(float|vec[234])\s+\w+\s*;/, /\bout\s+(float|vec[234])\s+\w+\s*;/, /#ifdef\s+\w+|#endif\b/, /\btextureLod\s*\(/
-];
-
-function glslScore(text) {
-  let s = 0;
-  for (const re of GLSL_MARKERS) if (re.test(text)) s++;
-  return s;
-}
-
-function lineOf(src, pos) {
-  let l = 1;
-  for (let i = 0; i < pos && i < src.length; i++) if (src.charCodeAt(i) === 10) l++;
-  return l;
-}
-
-// Nazwa napisu: const NAZWA = `…`, NAZWA: `…`, vertexShader: `…`
-function nameOfString(noCom, start) {
-  const before = noCom.slice(Math.max(0, start - 160), start).replace(/\/\*\s*glsl\s*\*\/\s*$/, '');
-  let m = before.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*$/);
-  if (m) return m[1];
-  m = before.match(/([A-Za-z_$][\w$]*)\s*:\s*$/);
-  if (m) return m[1] + ':';
-  m = before.match(/([A-Za-z_$][\w$.]*)\s*(\+?=)\s*$/);
-  if (m) return m[1] + m[2];
-  return '';
-}
-
-// ── Pliki źródłowe → treść kodu (index.html: skrypty) ────────────────────────
-function scriptBlocks(html) {
-  const out = [];
-  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const attrs = m[1];
-    const body = m[2];
-    const bodyStart = m.index + m[0].indexOf('>') + 1;
-    const src = attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/);
-    const type = attrs.match(/\btype\s*=\s*["']([^"']+)["']/);
-    out.push({ src: src ? src[1] : null, type: type ? type[1] : 'text/javascript', body, bodyStart });
-  }
-  return out;
-}
-
-function loadSource(file) {
-  const raw = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
-  if (extname(file) !== '.html') return { raw, js: raw, offsets: null };
-  // Kod skryptów wklejony w miejscu (reszta HTML zastąpiona spacjami, linie zachowane).
-  const js = raw.replace(/[^\n]/g, ' ').split('');
-  for (const b of scriptBlocks(raw)) {
-    if (b.src || /importmap|json/.test(b.type)) continue;
-    for (let k = 0; k < b.body.length; k++) js[b.bodyStart + k] = b.body[k];
-  }
-  return { raw, js: js.join(''), offsets: null };
-}
-
-// ── Importy ───────────────────────────────────────────────────────────────────
-function importsOf(file, noCom, raw) {
-  const out = [];
-  const add = (spec, kind, names = null) => out.push({ spec, kind, names });
-  let m;
-  const reStatic = /\bimport\s+([\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g;
-  while ((m = reStatic.exec(noCom))) {
-    const clause = m[1];
-    const names = [];
-    const braces = clause.match(/\{([\s\S]*?)\}/);
-    if (braces) for (const part of braces[1].split(',')) { const t = part.trim(); if (!t) continue; const [orig, alias] = t.split(/\s+as\s+/); names.push({ orig: orig.trim(), local: (alias || orig).trim() }); }
-    add(m[2], 'static', names);
-  }
-  const reSide = /\bimport\s+['"]([^'"]+)['"]/g;
-  while ((m = reSide.exec(noCom))) add(m[1], 'side');
-  const reDyn = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-  while ((m = reDyn.exec(noCom))) add(m[1], 'dynamic');
-  const reRe = /\bexport\s+(?:\*|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]/g;
-  while ((m = reRe.exec(noCom))) add(m[1], 'reexport');
-  const reUrl = /new\s+URL\(\s*['"]([^'"]+\.m?js)['"]\s*,\s*import\.meta\.url\s*\)/g;
-  while ((m = reUrl.exec(noCom))) add(m[1], 'worker');
-  if (extname(file) === '.html') {
-    for (const b of scriptBlocks(raw)) {
-      if (!b.src || !/module/.test(b.type) || /^[a-z]+:/i.test(b.src)) continue;
-      add(/^[./]/.test(b.src) ? b.src : `./${b.src}`, 'script');
-    }
-  }
-  return out;
-}
-
-function resolveSpec(fromFile, spec) {
-  if (!/^[./]/.test(spec)) return null; // gołe (three, three/webgpu…)
-  let base = spec.startsWith('/') ? join(repo, spec) : join(dirname(fromFile), spec);
-  base = base.split('?')[0];
-  const candidates = [base, `${base}.js`, `${base}.mjs`, join(base, 'index.js')];
-  for (const c of candidates) if (existsSync(c) && statSync(c).isFile()) return c;
-  return null;
-}
-
 // ── Analiza pliku ─────────────────────────────────────────────────────────────
 const RX = {
   shaderMaterial: /\bnew\s+(?:THREE\.)?ShaderMaterial\s*\(/g,
@@ -289,10 +91,6 @@ const RX = {
   renderTargets: /\bnew\s+(?:THREE\.)?(WebGLRenderTarget|WebGL3DRenderTarget|WebGLArrayRenderTarget|WebGLCubeRenderTarget|RenderTarget3D|RenderTargetArray|RenderTarget)\s*\(/g,
   pixelReads: /\b(readRenderTargetPixels(?:Async)?|readPixels)\s*\(/g,
   compile: /\.(compile|compileAsync)\s*\(/g,
-  // getContext tylko z WebGL (kanwy 2D się nie liczą) albo renderer.getContext() — patrz WEBGL_CTX.
-  webglApi: /\b(getExtension)\s*\(|\.capabilities\b|\.properties\.get\s*\(|\brenderer\.state\b|\bWebGLRenderer\b|\bisWebGL2\b|\binitRenderTarget\s*\(|\binitTexture\s*\(|\bgl\.(\w+)\s*\(/g,
-  webglCtx: /\.getContext\(\s*['"](webgl2?|experimental-webgl)['"]|\b(?:renderer|R|gl|this\.renderer|core\.renderer)\.getContext\(\s*\)/g,
-  postprocessing: /\b(EffectComposer|RenderPass|UnrealBloomPass|FullScreenQuad|ShaderPass|OutputPass)\b|\bextends\s+Pass\b/g,
   builtinMaterials: /\bnew\s+(?:THREE\.)?(MeshBasicMaterial|MeshStandardMaterial|MeshPhysicalMaterial|MeshLambertMaterial|MeshPhongMaterial|ShadowMaterial|PointsMaterial|SpriteMaterial|LineBasicMaterial|LineDashedMaterial|MeshDepthMaterial|MeshDistanceMaterial|MeshNormalMaterial|MeshToonMaterial|MeshMatcapMaterial)\s*\(/g,
   instanced: /\b(InstancedMesh|InstancedBufferAttribute|InstancedInterleavedBuffer|InstancedBufferGeometry)\b/g,
   matClone: /\b\w*[Mm]at(?:erial)?s?\b(?:\[[^\]]*\])?\.clone\s*\(\s*\)/g,
@@ -349,6 +147,7 @@ function analyze(file) {
     const hit = glsl.find((g) => g.start > e.pos && g.start < endPos);
     if (hit) libExports.push(e.name);
   }
+  const rawImports = importsOf(file, noCom, raw);
   const a = {
     file: r,
     glslBlocks: glsl.map(({ name, line, lines }) => ({ name, line, lines })),
@@ -361,11 +160,11 @@ function analyze(file) {
     renderTargets: [...codeOnly.matchAll(RX.renderTargets)].map((x) => x[1]),
     pixelReads: sitesRx(RX.pixelReads, codeOnly, file),
     compile: sitesRx(RX.compile, codeOnly, file),
-    webglApi: [...new Set([
-      ...[...noCom.matchAll(RX.webglCtx)].map(() => 'getContext(webgl)'),
-      ...[...codeOnly.matchAll(RX.webglApi)].map((x) => (x[1] || x[0]).replace(/\s*\($/, '').trim())
-    ])],
-    postprocessing: [...new Set([...codeOnly.matchAll(RX.postprocessing)].map((x) => x[1] || 'extends Pass'))],
+    // ShaderMaterial i onBeforeCompile mają własne kolumny.
+    webglApi: [...new Set(trafieniaWebgl(noCom, codeOnly, rawImports)
+      .filter((t) => t.co !== 'ShaderMaterial' && t.co !== 'onBeforeCompile')
+      .map((t) => (t.co === 'kontekst WebGL' ? 'getContext(webgl)' : t.tekst.replace(/\s*\($/, ''))))],
+    postprocessing: [],
     builtinMaterials: [...codeOnly.matchAll(RX.builtinMaterials)].map((x) => x[1]),
     instanced: countRx(RX.instanced, codeOnly),
     matClone: sitesRx(RX.matClone, codeOnly, file),
@@ -373,7 +172,7 @@ function analyze(file) {
     defines: countRx(RX.defines, codeOnly),
     usesTsl: countRx(RX.tsl, noCom) > 0 || (/\.m?js$/.test(file) && existsSync(file.replace(/\.m?js$/, '.tsl.js'))),
     libExports,
-    imports: importsOf(file, noCom, raw).map((x) => ({ ...x, resolved: resolveSpec(file, x.spec) ? rel(resolveSpec(file, x.spec)) : null }))
+    imports: rawImports.map((x) => ({ ...x, resolved: resolveSpec(file, x.spec) ? rel(resolveSpec(file, x.spec)) : null }))
   };
   a.materials = a.shaderMaterial + a.rawShaderMaterial + a.shaderPass;
   a.status = a.glslLines > 0 || a.materials > 0 || a.onBeforeCompile > 0
@@ -507,8 +306,7 @@ function sums(list) {
 }
 const groups = {
   port: rows.filter((r) => r.zakres === 'port'),
-  warp: rows.filter((r) => r.zakres === 'warp'),
-  legacy: rows.filter((r) => r.zakres === 'legacy'),
+  'poza portem': rows.filter((r) => r.zakres === 'poza portem'),
   'poza grą': rows.filter((r) => r.zakres.startsWith('poza grą'))
 };
 const total = sums(rows);
@@ -570,13 +368,19 @@ const md = `# Inwentarz portu WebGPU
 - **linie GLSL** — linie napisów rozpoznanych jako GLSL (≥ 2 znaczniki: \`void main\`, \`gl_*\`, \`uniform\`/\`varying\`, \`vecN(\`,
   \`precision\`, \`#include\`, \`#define\`…); szablon liczony w całości razem z \`\${…}\`. Heurystyka — jak w \`USTALENIA.md\`.
 - **oBC** — \`onBeforeCompile\` (w WebGPU nie istnieje). **cele renderu** — konstruktory celów. **odczyty** — \`readRenderTargetPixels*\` / \`readPixels\`.
-- **inne WebGL / post** — \`getContext\`, \`getExtension\`, \`capabilities\`, \`properties.get\`, \`gl.*\`, \`EffectComposer\`, \`RenderPass\`, \`ShaderPass\`…
+- **inne WebGL / post** — wzorce \`WEBGL_API\` strażnika (\`scripts/webgpu/grafGry.mjs\`): \`WebGLRenderer\`, cele \`WebGL*RenderTarget\`,
+  \`EffectComposer\` / \`RenderPass\` / \`ShaderPass\` / \`UnrealBloomPass\`, \`getContext('webgl')\`, \`getExtension\`, metody kontekstu
+  \`gl.*\`, \`renderer.state|properties|capabilities|extensions\`, importy postprocessingu z przykładów three. Metody wspólne
+  z WebGPURenderer (\`initTexture\`, \`initRenderTarget\`, \`compileAsync\`) się nie liczą.
 - **wbudowane mat.** — \`MeshBasicMaterial\`, \`MeshStandardMaterial\`, \`ShadowMaterial\`… WebGPURenderer zamienia je sam na wersje węzłowe
   (\`StandardNodeLibrary\`); do przeniesienia są tylko te z \`onBeforeCompile\` / \`customProgramCacheKey\`.
 - **przebudowy** — \`material.clone()\` / \`material.needsUpdate = true\` / \`defines\`: w WebGPU każda nowa kombinacja = nowy pipeline.
 - **status** — \`GLSL\` (do przeniesienia), \`mieszany\` (w trakcie), \`TSL\` (przeniesiony), \`—\` (bez shaderów).
-- **zakres** — \`port\` = plik ładowany przez grę (graf importów od \`index.html\`) i nie wyłączony decyzją użytkownika;
-  \`warp\` = poza portem (decyzja 2026-09-27); \`poza grą\` = tylko dema / narzędzia / nieużywany.
+- **zakres** — \`port\` = plik ładowany przez grę (graf importów od \`index.html\`); \`poza portem\` = ładowany przez grę,
+  ale wyłączony decyzją użytkownika (\`POZA_PORTEM\` w \`scripts/webgpu/grafGry.mjs\` — ta sama lista co w strażniku
+  \`tests/graBezGlsl.test.mjs\`); \`poza grą\` = tylko dema / narzędzia / nieużywany.
+- **Port zakończony (zadanie 24):** grupa \`port\` ma 0 linii GLSL, 0 \`ShaderMaterial\` / \`onBeforeCompile\` i 0 API WebGL —
+  pilnuje tego strażnik; GLSL został tylko w modułach poza grą (przejdą na TSL przy integracji).
 
 ## Sumy
 
@@ -598,17 +402,16 @@ ${fileTable(groups.port)}
 
 ## Poza portem — decyzje użytkownika
 
-### Warp
-${fileTable(groups.warp)}
+Moduły ładowane przez grę, ale poza portem (PLAN §12 p. 1; lista \`POZA_PORTEM\` w \`scripts/webgpu/grafGry.mjs\`):
 
-Asteroidy: stare pole (sprite'y + ciała heksowe), tło pasa i klej WebGL (\`asteroidBelt3D\`, \`rocks/*\`, \`beltDust3D\`,
-\`beltStorm3D\`, \`fieldLights3D\`) usunięte w zadaniu 21 — pas z dema WebGPU (\`src/3d/asteroids/\`) jest w porcie.
-Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, \`createEntityMesh\`/\`updateEntityMesh\`) po zadaniu 21
-nie ma w grze użytkownika (rysowała tylko ciała heksowe starych asteroid); stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\`
-i pomiar drżenia (PLAN.md §1 p. 7). \`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
+${fileTable(groups['poza portem'])}
 
-### Legacy
-${fileTable(groups.legacy)}
+Moduły rozwijane poza grą — Z4 \`shipProxyBatch3D\`, Z5 \`cargoContainers3D\` / \`cargoDrones3D\`, Z7 \`portBuildings/*\`,
+\`beamShips3D\` / \`beamDebris3D\` dem destruktora — zostają w GLSL (na WebGPU zamienniki) i przejdą na TSL przy swojej
+integracji (tabela „Poza grą” niżej). Asteroidy: stare pole, tło pasa i klej WebGL usunięte w zadaniu 21 — pas z dema
+WebGPU (\`src/3d/asteroids/\`) jest w porcie. Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula
+szczątków GPU) nie ma w grze ciał (stare asteroidy usunięte); stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\` i pomiar
+drżenia (PLAN.md §1 p. 7). \`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
 
 ## Poza grą (dema, narzędzia, nieużywane)
 

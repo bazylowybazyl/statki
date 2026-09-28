@@ -102,7 +102,6 @@ export const RenderLiveDebug = {
     console.log(`[RenderFuncDBG ${elapsed.toFixed(1)}s]`, {
       frame: `${frameAvg.toFixed(2)}/${this.frameMsMax.toFixed(2)}ms x${this.frames}`,
       camera: fmt('cameraPrep'),
-      warpLens: fmt('warpLens'),
       planets3d: fmt('updatePlanets3D'),
       rings3d: fmt('updatePlanetaryRings3D'),
       stations3d: fmt('updateStations3D'),

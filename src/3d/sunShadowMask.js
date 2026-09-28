@@ -37,13 +37,17 @@
 // na wariant) mają maskę w swoim kodzie raz — nie per obiekt. Bez setLayout: funkcja
 // z uniformem w domknięciu byłaby w three r183 buforowana globalnie (PLAN §3).
 //
-// GLSL maski dla jeszcze nieprzeniesionych ShaderMaterial: sunShadowMaskGLSL.js
-// (re-eksport SUN_SHADOW_GLSL niżej) — na WebGPU to i tak zamienniki.
+// GLSL maski dla modułów poza portem (Z4/Z5/Z7 — na WebGPU i tak zamienniki):
+// sunShadowMaskGLSL.js. Re-eksport niżej zostaje tylko dla budowli Z7.
 import {
   DataTexture, LinearFilter, NoColorSpace, RGBAFormat, UnsignedByteType, Vector2
 } from 'three/webgpu';
 import { float, mix, output, renderGroup, screenUV, select, texture, uniform, vec2, vec3, vec4 } from 'three/tsl';
 
+// AGENT: re-eksport TYLKO dla budowli Z7 (portBuildings3D.js, portHullBuild3D.js importują stąd
+// SUN_SHADOW_GLSL; Z4 i Z5 biorą go wprost z sunShadowMaskGLSL.js). To jedyna droga GLSL do grafu
+// importów gry — wpis POZA_PORTEM w scripts/webgpu/grafGry.mjs. Po przepięciu Z7 usuń tę linię
+// i wpis (strażnik tests/graBezGlsl.test.mjs sam o to poprosi).
 export { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
 
 // Barwa smugi na tle — ta sama, którą pass mnożył dawniej cały obraz.

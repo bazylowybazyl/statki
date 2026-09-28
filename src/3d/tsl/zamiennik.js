@@ -1,7 +1,15 @@
 // src/3d/tsl/zamiennik.js
 //
-// Magentowy zamiennik nieprzeniesionych materiałów (docs/webgpu/PLAN.md §2,
-// SPIKE.md p. 15). WebGPURenderer nie umie `ShaderMaterial` / `RawShaderMaterial`:
+// Magentowy zamiennik materiałów GLSL (docs/webgpu/PLAN.md §2, SPIKE.md p. 15).
+//
+// Po porcie (zadanie 24) gra nie ma GLSL — pilnuje tego statycznie strażnik
+// tests/graBezGlsl.test.mjs (graf importów od index.html). Zamiennik zostaje jako BEZPIECZNIK
+// w biegu (decyzja zadania 24): ShaderMaterial, którego strażnik nie zobaczy — z dodatków three
+// (node_modules), z modułów poza portem w demach na Core3D (budowle Z7, kontenery Z5, proxy Z4)
+// albo wniesiony nowym kodem przed testami — rysuje się magentą z ostrzeżeniem w konsoli (raz na
+// nazwę) zamiast błędu three i pustego materiału; harness liczy go w `spis.zamienniki` (w grze 0).
+//
+// WebGPURenderer nie umie `ShaderMaterial` / `RawShaderMaterial`:
 // bez zamiennika three loguje błąd i rysuje pusty NodeMaterial. Po
 // `installPlaceholders(renderer)` biblioteka materiałów renderera zamienia je na
 // ZamiennikMaterial: magenta ze stanem renderu oryginału (blending, głębia,

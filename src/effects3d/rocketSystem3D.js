@@ -157,17 +157,6 @@ function resolveRocketProfile(weaponDef) {
         terminalRadius,
         Math.max(terminalRadius * 4.0, 2400)
     );
-    const fireVfx = String(weaponDef?.rocketFireVfx || '').toLowerCase();
-    const smokeVfx = String(weaponDef?.rocketSmokeVfx || '').toLowerCase();
-    const explosionVfx = String(weaponDef?.rocketExplosionVfx || '').toLowerCase();
-    let bodyColorHex = null;
-    if (weaponDef?.rocketBodyColor) {
-        try {
-            bodyColorHex = new THREE.Color(weaponDef.rocketBodyColor).getHex();
-        } catch {
-            bodyColorHex = null;
-        }
-    }
     return {
         desiredSpeed,
         maxRange,
@@ -209,21 +198,10 @@ function resolveRocketProfile(weaponDef) {
             0,
             0.5
         ),
+        // Wygląd rakiety (płomień, dym, kule ognia, Supernowa) czyta reżyser efektów z dema
+        // (src/3d/rockets/) wprost z weaponDef; w profilu lotu zostaje tylko skala kadłubka.
         bodyScale: THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.35, 3.0),
-        exhaustScale: THREE.MathUtils.clamp(Number(weaponDef?.exhaustScale) || 1, 0.35, 3.0),
-        fireScale: THREE.MathUtils.clamp(Number(weaponDef?.fireScale) || 1, 0.2, 3.0),
-        smokeScale: THREE.MathUtils.clamp(Number(weaponDef?.smokeScale) || 1, 0.2, 3.0),
-        explosionVisualScale: THREE.MathUtils.clamp(Number(weaponDef?.explosionVisualScale) || 1, 0.25, 4.0),
-        hitRadius: proximityRadius,
-        bodyColorHex,
-        fireVfxType: fireVfx === 'supernova' ? 10 : 0,
-        smokeVfxType: smokeVfx === 'chemical' ? 2 : 1,
-        explosionCoreType: explosionVfx === 'supernova' ? 13 : 3,
-        explosionSparkType: explosionVfx === 'supernova' ? 14 : 4,
-        shockwaveType: explosionVfx === 'supernova' ? 15 : 5,
-        anamorphicType: explosionVfx === 'supernova' ? 16 : 0,
-        fractalRingType: explosionVfx === 'supernova' ? 17 : 0,
-        explosionStyle: explosionVfx === 'supernova' ? 'supernova' : 'default'
+        hitRadius: proximityRadius
     };
 }
 
@@ -257,7 +235,6 @@ class RocketSystem3D {
                 position:       new THREE.Vector3(),
                 velocity:       new THREE.Vector3(),
                 quaternion:     new THREE.Quaternion(),
-                prevExhaustPos: new THREE.Vector3(),
                 target:         null,
                 state:          "EJECTED",
                 timeSinceLaunch: 0,
@@ -283,19 +260,6 @@ class RocketSystem3D {
                 leadHorizon: 0,
                 terminalLeadHorizon: 0,
                 bodyScale: 1,
-                exhaustScale: 1,
-                fireScale: 1,
-                smokeScale: 1,
-                explosionVisualScale: 1,
-                bodyColorHex: null,
-                fireVfxType: 0,
-                smokeVfxType: 1,
-                explosionCoreType: 3,
-                explosionSparkType: 4,
-                shockwaveType: 5,
-                anamorphicType: 0,
-                fractalRingType: 0,
-                explosionStyle: "default",
                 didImpactDamage:false,
                 weaponDef:      null,
                 launchPos:      new THREE.Vector3(),
@@ -384,19 +348,6 @@ class RocketSystem3D {
         r.leadHorizon = profile.leadHorizon;
         r.terminalLeadHorizon = profile.terminalLeadHorizon;
         r.bodyScale = profile.bodyScale;
-        r.exhaustScale = profile.exhaustScale;
-        r.fireScale = profile.fireScale;
-        r.smokeScale = profile.smokeScale;
-        r.explosionVisualScale = profile.explosionVisualScale;
-        r.bodyColorHex = profile.bodyColorHex;
-        r.fireVfxType = profile.fireVfxType;
-        r.smokeVfxType = profile.smokeVfxType;
-        r.explosionCoreType = profile.explosionCoreType;
-        r.explosionSparkType = profile.explosionSparkType;
-        r.shockwaveType = profile.shockwaveType;
-        r.anamorphicType = profile.anamorphicType;
-        r.fractalRingType = profile.fractalRingType;
-        r.explosionStyle = profile.explosionStyle;
         r.didImpactDamage = false;
         r.hitShield       = false;
         r.weaponDef       = weaponDef;
@@ -406,7 +357,6 @@ class RocketSystem3D {
         r.reacquireUntil = 0;
         r.terminalEnteredAtDist = Infinity;
         r.missGrowTime = 0;
-        r.prevExhaustPos.copy(r.position);
 
         // Nos w stronę celu przesuniętego o ruch względem układu wyrzutni.
         _leadFrame.x = r.frameVel.x;

@@ -162,7 +162,7 @@ dachu. Skutki dla portu:
   z górami przy ścianach, HEPHAESTUS = krajobraz, DAEDALUS = szkło). **Osłona**: nad płytą doku
   i portalu tranzytu (od płyty do górnej ściany, w pasie płyty wzdłuż ringu) teren zostaje niski
   — w kamerze gry to, co leży nad płaszczyzną gry, jest bliżej kamery i zasłoniłoby dok. Tranzyty
-  bez stref. Liczone w bake'u map (`haloPortZones` w `haloRingGLSL.js` / `haloRingWorldGen.js`),
+  bez stref. Liczone w bake'u map (`haloPortZones` z `haloPortSitesTSL` w `haloRingTSL.js`, pieczenie w `haloRingWorldGen.js`),
   kawałki miasta 3D biorą te same zasięgi;
 - dolna ściana od środka jest bliżej kamery (z = −2 700 zamiast −5 750) — widać ją większą.
 
