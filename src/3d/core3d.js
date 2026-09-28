@@ -1668,6 +1668,8 @@ export const Core3D = {
       }
       const camera = this.getPassCamera(pass.ortho);
       camera.layers.set(pass.layer);
+      const hooks = this._passHooks ? this._passHooks[pass.name] : null;
+      if (hooks) for (let i = 0; i < hooks.length; i++) hooks[i](camera, pass);
       renderer.render(this.scene, camera);
     }
     this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
@@ -1990,6 +1992,23 @@ export const Core3D = {
   // Krok { name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) } raz na klatkę przed
   // passami scen; warm raz przy gotowym urządzeniu (puste dispatche, prewarmPass siatek).
   addFxStep(step) { return this.fx ? this.fx.addStep(step) : step; },
+
+  // Haki przed passem sceny (zadanie 23): fn(camera, pass) tuż przed renderer.render passa o tej nazwie
+  // ('ortho', 'fg', …) — z kamerą TEGO passa (podzielony ekran: raz na widok). Wzór: zapis danych per
+  // kadłub z macierzą model-widok (HullObjectStore, hexShips3D.tsl.js).
+  _passHooks: null,
+  addPassHook(passName, fn) {
+    if (typeof fn !== 'function') return fn;
+    const hooks = this._passHooks || (this._passHooks = {});
+    const list = hooks[passName] || (hooks[passName] = []);
+    if (!list.includes(fn)) list.push(fn);
+    return fn;
+  },
+  removePassHook(passName, fn) {
+    const list = this._passHooks?.[passName];
+    const i = list ? list.indexOf(fn) : -1;
+    if (i >= 0) list.splice(i, 1);
+  },
   removeFxStep(step) { this.fx?.removeStep(step); },
   // Źródła zniekształceń tej klatki w świecie gry (shock / implode / heat — distortion.js);
   // dysze i tarcze zostają przy pushHeatHazeWorld.

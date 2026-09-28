@@ -36,7 +36,8 @@ import {
   HULL_WARP_OFF,
   HullDebrisNodeMaterial,
   HullLightStore,
-  HullNodeMaterial
+  HullNodeMaterial,
+  HullObjectStore
 } from './hexShips3D.tsl.js';
 import { buildHullSkinTopology, writeHullSkin, writeHullSkinQuads, clearHullSkinDirty } from './beamHullSkin.js';
 import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
@@ -776,6 +777,11 @@ function disposeMeshData(data) {
     HullLightStore.release(data.lightSlot);
     data.lightSlot = -1;
   }
+  const hullSlot = data.mesh?.material?.uniforms?.uHullSlot;
+  if (hullSlot && hullSlot.value > 0) {
+    HullObjectStore.release(hullSlot.value);
+    hullSlot.value = 0;
+  }
 }
 
 const GPU_DEBRIS_MAX = 10000;
@@ -1034,8 +1040,19 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
       uWarpA: warpHullHolder(entity, 'a'),
       uWarpB: warpHullHolder(entity, 'b'),
-      uWarpC: warpHullHolder(entity, 'c')
+      uWarpC: warpHullHolder(entity, 'c'),
+      // Skóra belek (zadanie 23): slot w HullObjectStore — wartości wyżej i macierze kadłuba trafiają
+      // do bufora storage przed passem ortho; w grupie „object” materiału zostaje tylko ten numer.
+      uHullSlot: { value: 0 }
   };
+}
+
+// Zapis slotów HullObjectStore przed passem ortho (kamera TEGO passa — macierz model-widok jak three).
+let _hullObjectHook = false;
+function ensureHullObjectHook() {
+  if (_hullObjectHook || typeof Core3D.addPassHook !== 'function') return;
+  Core3D.addPassHook('ortho', (camera) => { HullObjectStore.commit(camera); });
+  _hullObjectHook = true;
 }
 
 function warpHullHolder(entity, key) {
@@ -1526,6 +1543,8 @@ function createBeamSkinMesh(entity) {
   const material = new HullNodeMaterial('beam',
     createHullUniforms(entity, texture, normalTexture, shapeUniform, hull.srcWidth, hull.srcHeight));
   const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  ensureHullObjectHook();
+  material.uniforms.uHullSlot.value = HullObjectStore.acquire(mesh);
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;

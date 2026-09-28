@@ -49,7 +49,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Continue, Discard,
-  float, int, vec2, vec3, vec4, nodeObject,
+  float, int, uint, vec2, vec3, vec4, mat4, nodeObject,
   uniform, attribute, storage, varying,
   positionGeometry, positionLocal, modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, uv,
   abs, clamp, cos, sin, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, select, smoothstep, sqrt, step,
@@ -61,6 +61,7 @@ import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShado
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
 import { warpBloomKnee } from './warp/bloomKnee.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
 // Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
@@ -265,6 +266,164 @@ export const HullLightStore = {
   }
 };
 
+// ── Dane per kadłub skóry belek w buforze storage (zadanie 23, duża bitwa) ─────
+// three r183 liczy każdy rysunek obiektu z materiałem węzłowym od nowa: ~20 węzłów OBJECT (17 wartości
+// per kadłub + macierze modelu) i bufor uniformów grupy „object” wysyłany writeBuffer-em przy każdej
+// zmianie — przy ruchomym kadłubie w KAŻDEJ klatce. Bitwa 148 okrętów: ~23 µs CPU na rysunek kadłuba,
+// z tego wiązania ~10 µs, węzły ~4 µs (~145 rysunków = ~3,3 ms / klatkę). Tu wszystko, co zmienia się
+// per kadłub, leży w JEDNYM buforze storage (slot na kadłub, jak HullLightStore): macierz model-widok
+// (liczona jak highpModelViewMatrix three: double na CPU, float32 w buforze — ten sam wynik co do bitu),
+// macierz świata i 17 wartości z `material.uniforms`. W grupie „object” zostaje tylko numer slotu (stały
+// → bez zapisu na klatkę). Zapis: Core3D przed passem ortho (commit z kamerą TEGO passa — podzielony
+// ekran pisze bufor dla każdego widoku), jedna wysyłka zakresu zajętych slotów.
+// Układ slotu (vec4): 0–3 macierz MV (kolumny), 4–7 macierz świata, 8 (uHasNormalMap, uRotation,
+// uLodOpacity, uBillboardLighting), 9 (uSpriteSize.xy, uDmgWorld.xy), 10 (uLightDir.xyz, uLacquerWeight),
+// 11 (uShipLightCount, uEngineZoneCount, uLightBase, uLacquerGlint), 12 uDmgSlot, 13 (uGridOwner),
+// 14–16 uWarpA / uWarpB / uWarpC. Slot 0 = zera (trzymacze grafu, rozgrzewka, pula pełna).
+export const HULL_OBJECT_SLOT_VEC4 = 17;
+export const HULL_OBJECT_SLOTS = 1024;
+const _hullMV = new THREE.Matrix4();
+
+export const HullObjectStore = {
+  slotVec4: HULL_OBJECT_SLOT_VEC4,
+  capacity: HULL_OBJECT_SLOTS,
+  attribute: null,
+  node: null,
+  _free: [],
+  _next: 1,
+  _warned: false,
+  // slot → siatka kadłuba (material.uniforms — trzymacze wartości, jak dotąd)
+  _meshes: new Map(),
+  stats: { acquired: 0, released: 0, exhausted: 0, commits: 0, written: 0 },
+
+  _ensure() {
+    if (this.attribute) return;
+    this.attribute = new THREE.StorageBufferAttribute(new Float32Array(this.capacity * this.slotVec4 * 4), 4);
+    this.node = storage(this.attribute, 'vec4', this.capacity * this.slotVec4).toReadOnly().setName('hullObjects');
+  },
+
+  getNode() {
+    this._ensure();
+    return this.node;
+  },
+
+  /** Slot dla siatki kadłuba (≥ 1) albo 0 (pula pełna — kadłub bez danych, niewidoczny). */
+  acquire(mesh) {
+    this._ensure();
+    let slot = 0;
+    if (this._free.length > 0) slot = this._free.pop();
+    else if (this._next < this.capacity) slot = this._next++;
+    if (!slot) {
+      this.stats.exhausted++;
+      if (!this._warned) {
+        this._warned = true;
+        console.warn(`[HullObjectStore] pula ${this.capacity} slotów kadłubów pełna — kolejne kadłuby bez danych`);
+      }
+      return 0;
+    }
+    this._meshes.set(slot, mesh);
+    this.stats.acquired++;
+    return slot;
+  },
+
+  release(slot) {
+    if (!(slot > 0) || !this._meshes.has(slot)) return;
+    this._meshes.delete(slot);
+    this._free.push(slot);
+    this.stats.released++;
+  },
+
+  /**
+   * Zapis slotów widocznych kadłubów przed passem ortho (Core3D.addPassHook): macierz model-widok
+   * z kamerą passa (camera.matrixWorldInverse · mesh.matrixWorld — jak three), macierz świata i wartości
+   * z material.uniforms. Jedna wysyłka zakresu [najniższy, najwyższy zapisany slot].
+   */
+  commit(camera) {
+    if (!this.attribute || this._meshes.size === 0 || !camera) return 0;
+    // three odświeża kamerę na starcie renderu — tu to samo (ta sama macierz odwrotna)
+    if (camera.parent === null && camera.matrixWorldAutoUpdate === true) camera.updateMatrixWorld();
+    const A = this.attribute.array;
+    const inv = camera.matrixWorldInverse;
+    const stride = this.slotVec4 * 4;
+    let lo = this.capacity;
+    let hi = -1;
+    let n = 0;
+    for (const [slot, mesh] of this._meshes) {
+      if (!mesh.visible || !mesh.parent) continue;
+      const u = mesh.material?.uniforms;
+      if (!u) continue;
+      const o = slot * stride;
+      _hullMV.multiplyMatrices(inv, mesh.matrixWorld);
+      const m = _hullMV.elements;
+      for (let k = 0; k < 16; k++) A[o + k] = m[k];
+      const w = mesh.matrixWorld.elements;
+      for (let k = 0; k < 16; k++) A[o + 16 + k] = w[k];
+      A[o + 32] = u.uHasNormalMap.value;
+      A[o + 33] = u.uRotation.value;
+      A[o + 34] = u.uLodOpacity.value;
+      A[o + 35] = u.uBillboardLighting.value;
+      const ss = u.uSpriteSize.value;
+      const dw = u.uDmgWorld.value;
+      A[o + 36] = ss.x; A[o + 37] = ss.y; A[o + 38] = dw.x; A[o + 39] = dw.y;
+      const ld = u.uLightDir.value;
+      A[o + 40] = ld.x; A[o + 41] = ld.y; A[o + 42] = ld.z; A[o + 43] = u.uLacquerWeight.value;
+      A[o + 44] = u.uShipLightCount.value;
+      A[o + 45] = u.uEngineZoneCount.value;
+      A[o + 46] = u.uLightBase.value;
+      A[o + 47] = u.uLacquerGlint.value;
+      const ds = u.uDmgSlot.value;
+      A[o + 48] = ds.x; A[o + 49] = ds.y; A[o + 50] = ds.z; A[o + 51] = ds.w;
+      A[o + 52] = u.uGridOwner.value; A[o + 53] = 0; A[o + 54] = 0; A[o + 55] = 0;
+      const wa = u.uWarpA.value; const wb = u.uWarpB.value; const wc = u.uWarpC.value;
+      A[o + 56] = wa.x; A[o + 57] = wa.y; A[o + 58] = wa.z; A[o + 59] = wa.w;
+      A[o + 60] = wb.x; A[o + 61] = wb.y; A[o + 62] = wb.z; A[o + 63] = wb.w;
+      A[o + 64] = wc.x; A[o + 65] = wc.y; A[o + 66] = wc.z; A[o + 67] = wc.w;
+      if (slot < lo) lo = slot;
+      if (slot > hi) hi = slot;
+      n++;
+    }
+    if (hi < lo) return 0;
+    zbierzZakres(this.attribute, lo * stride, (hi - lo + 1) * stride);
+    this.stats.commits++;
+    this.stats.written = n;
+    return n;
+  }
+};
+
+// Węzły per kadłub skóry belek: te same klucze co hullPerObjectNodes(), wartości z bufora storage
+// slotu (uHullSlot — jedyny uniform obiektu), plus macierze model-widok i świata (mat4 z kolumn).
+let _objectStoreNodes = null;
+function hullObjectStoreNodes() {
+  if (_objectStoreNodes) return _objectStoreNodes;
+  const S = HullObjectStore.getNode();
+  const slot = uniform(0, 'uint').onObjectUpdate(({ material }) => material.uniforms.uHullSlot.value);
+  const base = slot.mul(uint(HULL_OBJECT_SLOT_VEC4));
+  const v = (k) => S.element(base.add(uint(k)));
+  _objectStoreNodes = {
+    uHullSlot: slot,
+    modelView: mat4(v(0), v(1), v(2), v(3)),
+    modelWorld: mat4(v(4), v(5), v(6), v(7)),
+    uHasNormalMap: v(8).x,
+    uRotation: v(8).y,
+    uLodOpacity: v(8).z,
+    uBillboardLighting: v(8).w,
+    uSpriteSize: v(9).xy,
+    uDmgWorld: v(9).zw,
+    uLightDir: v(10).xyz,
+    uLacquerWeight: v(10).w,
+    uShipLightCount: v(11).x,
+    uEngineZoneCount: v(11).y,
+    uLightBase: v(11).z,
+    uLacquerGlint: v(11).w,
+    uDmgSlot: v(12),
+    uGridOwner: v(13).x,
+    uWarpA: v(14),
+    uWarpB: v(15),
+    uWarpC: v(16)
+  };
+  return _objectStoreNodes;
+}
+
 // ── Węzły per obiekt (wspólne dla wariantów kadłuba) ─────────────────────────
 let _perObjectNodes = null;
 function hullPerObjectNodes() {
@@ -314,7 +473,7 @@ export const HULL_WARP_OFF = Object.freeze({
 // tekstura i wiązanie co sprite, jedna próbka z jawnym poziomem, bez nowych zasobów.
 // Sprite kadłuba: dziób w stronę +u (spriteRotation = 0 dla wszystkich profili).
 function hullWarp(ctx, out, alpha) {
-  const P = hullPerObjectNodes();
+  const P = ctx.P;
   If(P.uWarpC.w.greaterThan(0.5), () => {
     const A = P.uWarpA;
     const B = P.uWarpB;
@@ -345,7 +504,7 @@ function hullWarp(ctx, out, alpha) {
 // ctx.albedo, przestrzelina małego kalibru → Discard() (nie alfa: zapis głębi i cień mostka),
 // żar i jony rany do ctx.woundHeat / ctx.woundIon (hullDamageHeat).
 function hullDamageSurface(ctx) {
-  if (ctx.damage) hullWoundSurface(ctx, hullPerObjectNodes(), HULL_SHARED.uTime);
+  if (ctx.damage) hullWoundSurface(ctx, ctx.P, HULL_SHARED.uTime);
 }
 
 // Zadanie 18-C — żar = max(żar skóry, żar rany) + poświata jonowa: jedno źródło żaru na piksel
@@ -366,7 +525,7 @@ function hullDamageLacquer(ctx, weight) {
 // punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
 function hullEffectLights(ctx) {
   if (!ctx.damage) return vec3(0.0);
-  return hullEffectLighting(ctx, effectLightGrid(), hullPerObjectNodes().uGridOwner);
+  return hullEffectLighting(ctx, effectLightGrid(), ctx.P.uGridOwner);
 }
 
 // Zadanie 21 — ośrodek światła wolumetrycznego pasa asteroid (src/3d/asteroids/beltMedium.js,
@@ -388,8 +547,10 @@ function hullVolume(/* ctx */) {
 // opts.localWorld vec2 (varying) — (world − początek mesha).xy, kierunki świata
 // opts.lodOpacity float — przenikanie LOD (1 dla belek)
 // opts.heatDecay / opts.heatPeak — wspólne węzły żaru wariantu
+// opts.perObject  węzły per kadłub (domyślnie uniformy obiektu — hullPerObjectNodes; skóra belek: bufor
+//                 storage slotu — hullObjectStoreNodes, zadanie 23)
 function hullFragmentNode(opts) {
-  const P = hullPerObjectNodes();
+  const P = opts.perObject || hullPerObjectNodes();
   const L = HullLacquer.uniforms;
   const lights = HullLightStore.getNode();
   const uTime = HULL_SHARED.uTime;
@@ -408,7 +569,7 @@ function hullFragmentNode(opts) {
       Discard();
     });
 
-    const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true };
+    const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P };
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -502,7 +663,7 @@ function hullFragmentNode(opts) {
         // Bliskie obłoki zakotwiczone w świecie: pozycja statku × drift + offset
         // w kadłubie (1:1) + wygięcie od R. Offset liczony w wierzchołku jako
         // kierunek (bez odejmowania dwóch pozycji ~7 mln j. we float32).
-        const originXY = modelWorldMatrix.element(3).xy;
+        const originXY = (P.modelWorld || modelWorldMatrix).element(3).xy;
         const skyP = originXY.mul(L.uLacquerD.y).add(opts.localWorld).add(R.xy.mul(L.uLacquerD.z.div(max(R.z, 0.05))));
         const skyUV = skyP.mul(L.uLacquerD.x).toVar();
         const skyW = smoothstep(0.02, 0.3, R.z).mul(L.uLacquerE.z).mul(L.uLacquerD.w).toVar();
@@ -623,7 +784,7 @@ function hullFragmentNode(opts) {
 
 // Offset fragmentu od początku mesha w KIERUNKACH świata (w = 0): lakier
 // potrzebuje (world − origin).xy; bez odejmowania dwóch dużych liczb float32.
-const localWorldOf = (localPos) => varying(modelWorldMatrix.mul(vec4(localPos.xy, 0.0, 0.0)).xy, 'vHullLocalWorld');
+const localWorldOf = (localPos, world = modelWorldMatrix) => varying(world.mul(vec4(localPos.xy, 0.0, 0.0)).xy, 'vHullLocalWorld');
 
 // ── Warianty ────────────────────────────────────────────────────────────────
 
@@ -639,16 +800,21 @@ export function getHullVariant(name) {
   let v = _variants.get(name);
   if (v) return v;
   if (name === 'beam') {
+    // Dane per kadłub z bufora storage slotu (zadanie 23): macierze i wartości — w grupie „object”
+    // tylko numer slotu. positionView = MV slotu × pozycja (jak three: modelViewMatrix × positionLocal).
+    const P = hullObjectStoreNodes();
     v = {
       name,
       side: THREE.DoubleSide, // zgnieciony czworokąt potrafi się przewrócić
       positionNode: null,
+      positionView: P.modelView.mul(positionLocal).xyz,
       fragmentNode: hullFragmentNode({
+        perObject: P,
         spriteUV: uv(),
         shade: attribute('aShade', 'float'),
         stress: null,
         heat: attribute('aHeat', 'vec2'),
-        localWorld: localWorldOf(positionGeometry),
+        localWorld: localWorldOf(positionGeometry, P.modelWorld),
         lodOpacity: float(1.0),
         heatDecay: HULL_SHARED.beamHeatDecay,
         heatPeak: HULL_SHARED.beamHeatPeak,
@@ -730,6 +896,13 @@ export class HullNodeMaterial extends THREE.NodeMaterial {
     this.forceSinglePass = true;
     this.positionNode = variant.positionNode;
     this.fragmentNode = variant.fragmentNode;
+    // Pozycja w przestrzeni widoku z bufora slotu (skóra belek) — three używa jej do pozycji w klipie
+    // i do positionView we fragmencie (światła efektów, ośrodek pasa).
+    this.hullPositionView = variant.positionView || null;
+  }
+
+  setupPositionView(builder) {
+    return this.hullPositionView || super.setupPositionView(builder);
   }
 }
 
@@ -854,6 +1027,7 @@ export class HullDebrisNodeMaterial extends THREE.NodeMaterial {
 // Eksport węzłów do testów struktury grafu (bez GPU).
 export const HULL_TSL_INTERNALS = Object.freeze({
   hullPerObjectNodes,
+  hullObjectStoreNodes,
   debrisGraph,
   smoothRev,
   HullObjectTextureNode,
