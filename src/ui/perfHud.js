@@ -381,6 +381,8 @@ const PERF_PANEL_HTML = `
       id="perfDrawCallsPost">--</span></div>
   <div class="perf-row"><span class="perf-label"> |- Other</span><span class="perf-val"
       id="perfDrawCallsOther">--</span></div>
+  <div class="perf-row"><span class="perf-label"> |- Efekty GPU</span><span class="perf-val"
+      id="perfFxCompute">--</span></div>
   <div class="perf-row"><span class="perf-label">Pociski / NPC</span><span class="perf-val"
       id="perfCounts">--</span></div>
   <div class="perf-row"><span class="perf-label">Wraki gorące / śpiące / zimne</span><span class="perf-val"
@@ -781,6 +783,7 @@ export const PerfHUD = {
       drawCallsBloom: document.getElementById('perfDrawCallsBloom'),
       drawCallsPost: document.getElementById('perfDrawCallsPost'),
       drawCallsOther: document.getElementById('perfDrawCallsOther'),
+      fxCompute: document.getElementById('perfFxCompute'),
       counts: document.getElementById('perfCounts'),
       wrecks: document.getElementById('perfWrecks'),
       npcTeams: document.getElementById('perfNpcTeams'),
@@ -1573,6 +1576,16 @@ export const PerfHUD = {
       if (e.drawCallsBloom) e.drawCallsBloom.textContent = formatDrawInfo(passes?.bloom);
       if (e.drawCallsPost) e.drawCallsPost.textContent = formatDrawInfo(passes?.post);
       if (e.drawCallsOther) e.drawCallsOther.textContent = formatDrawInfo(passes?.other);
+      if (e.fxCompute) {
+        // Klatka efektów GPU (Core3D.fxStats, zadanie 12-B): dispatche compute, CPU kroku (siatka
+        // świateł, początek pul, kroki), GPU compute ze znaczników czasu, światła siatki, źródła
+        // zniekształceń (+DIST — warstwa zniekształceń w tej klatce).
+        const fx = window.Core3D?.fxStats;
+        const gpuC = Number(window.Core3D?.gpuComputeMs);
+        e.fxCompute.textContent = fx
+          ? `${fx.dispatches} disp · ${fx.cpuMs.toFixed(2)}ms · GPU ${gpuC > 0 ? gpuC.toFixed(2) + 'ms' : '--'} · św ${fx.lights} · zn ${fx.distortSources}${fx.distortLayer ? ' +DIST' : ''}`
+          : '--';
+      }
     }
     if (e.npcTeams) e.npcTeams.textContent = `${d.enemyNpcCount} / ${d.friendlyNpcCount} (F ${d.enemyFighterCount}/${d.friendlyFighterCount})`;
     if (e.pointLights) e.pointLights.textContent = `${d.visiblePointLightCount}/${d.pointLightCount} (eng ${d.visibleEnginePointLightCount}/${d.enginePointLightCount})`;
