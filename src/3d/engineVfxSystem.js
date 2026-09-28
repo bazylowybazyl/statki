@@ -398,6 +398,10 @@ function resolveWarpMode(entity) {
     return 'off';
   }
   if (entity.state === 'warping_in' || entity.phase === 'warping') return 'active';
+  // Warp „Nurt” (zadanie 22, src/3d/warp/warpNurt.js): przylot / odlot tunelem zapala plazmę
+  // na czas wyrzutu i ładowania odlotu (sam wygląd — rozgrywki nie dotyka).
+  const nurt = entity.__warpNurtMode;
+  if (nurt === 'active' || nurt === 'charging') return nurt;
   return 'off';
 }
 

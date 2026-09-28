@@ -89,15 +89,18 @@ test('kropki hardpointów NPC są tylko za DevFlags.showNpcHardpoints (domyślni
   assert.match(indexHtml, /if \(DevFlags\.showNpcHardpoints\) drawNpcHardpointOverlay\(ctx, npc, s\);/);
 });
 
-test('trafienia pocisków: efekt 3D i iskry dopiero po bramce kadru/rozmiaru', () => {
-  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0\) \{[\s\S]*?\n    }\n/)?.[0] || '';
+// Zadanie 17: trafienie = receptura rodziny z dema bronie-webgpu (WeaponFx.impact) zamiast
+// fabryk overlaya (trigger*3D) i iskier SparkSystem3D.burst — bramki kadru/rozmiaru i
+// cooldownu komórki zostają przed recepturą.
+test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i cooldownu', () => {
+  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0, hit = null\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   const gate = fn.indexOf('impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX');
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
-  for (const trigger of ['triggerYamatoImpact3D(x', 'triggerArmataImpact3D(x', 'triggerRailgunExplosion3D(x', 'triggerAutocannonImpact3D(x']) {
-    assert.ok(fn.indexOf(trigger) > gate, `${trigger} musi stać za bramką`);
-  }
-  assert.ok(fn.indexOf('spark3D.burst(') > fn.indexOf('IMPACT_SPARK_MIN_PX'), 'iskry za bramką rozrzutu');
+  const cooldown = fn.indexOf('impactFxCooldownReady(');
+  assert.ok(cooldown > gate, 'cooldown komórki za bramką kadru');
+  assert.ok(fn.indexOf('WeaponFx.impact(') > cooldown, 'receptura trafienia musi stać za bramkami');
+  assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
 // Port WebGPU (zadanie 01): renderer.shadowMap ma tylko enabled / type — mapa
@@ -182,40 +185,65 @@ test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / 
 const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
-  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js', 'src/effects3d/yamato.js']) {
+  // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
+  for (const path of ['src/effects3d/reactorblow.js']) {
     assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
   }
+  // Rakiety i Supernowa (port WebGPU, zadanie 19): światła wybuchów, dysz i łuków idą do
+  // siatki świateł efektów Core3D (grid.addWorld), nie do świateł sceny three.
+  for (const f of ['effects', 'rocketFx', 'smoke', 'fireballs', 'missileBodies', 'nebula', 'arcs', 'glow', 'plumes', 'sparks']) {
+    assert.doesNotMatch(readSrc(`src/3d/rockets/${f}.js`), /PointLight|SpotLight/, f);
+  }
+  assert.match(readSrc('src/3d/rockets/effects.js'), /grid\.addWorld\(/);
 });
 
-test('martwe: bez regl z unpkg, soczewka warpu bez własnego kontekstu WebGL (API Core3D)', () => {
+test('martwe: bez regl z unpkg, warp „Nurt” bez własnego kontekstu i bez próbkowania gotowej klatki (Core3D)', () => {
   assert.doesNotMatch(indexHtml, /unpkg\.com\/regl/);
-  // Soczewka zgłasza się do Core3D (warpLensPass.js) — żadnego trzeciego
-  // kontekstu ani uploadu całej kanwy 2D jako tekstury co klatkę.
-  const lens = readSrc('src/vfx/warpLensPass.js');
-  assert.doesNotMatch(lens, /WarpBlackHole|getContext\(|texImage2D/);
-  assert.match(lens, /Core3D\.setWarpLensWorld\(/);
-  // Port WebGPU: warp poza portem — pass soczewki i jej cele usunięte z Core3D,
-  // API zostaje jako no-op (nowy warp wejdzie w TSL w miejscu opisanym w render()).
-  assert.doesNotMatch(core3d, /import[^;]*warpLens3D/);
+  // Zadanie 22: stara soczewka (warpLensPass / warpLens3D / warpWorldLens / warpFx3D) usunięta
+  // razem z no-opami API Core3D; nowy warp to moduły src/3d/warp/ na scenie i kroku efektów Core3D.
+  assert.doesNotMatch(indexHtml, /import[^;]*warpLensPass|updateWarpLens3D\(/);
+  assert.doesNotMatch(core3d, /import[^;]*warpLens3D|setWarpLensWorld\(|pushWarpSpaceWorld\(|setWarpViewWorld\(/);
   assert.doesNotMatch(core3d, /warpLensTarget|warpStarTarget|_prepareWarpLens|createWarpLensShader/);
-  assert.match(core3d, /setWarpLensWorld\(worldX, worldY, angle, radiusAlong, radiusAcross, swallow\) \{ \},/);
+  const nurt = readSrc('src/3d/warp/warpNurt.js');
+  for (const file of ['warpNurt.js', 'medium.js', 'sprites.js', 'skyBend.js', 'stars.js']) {
+    const src = readSrc(`src/3d/warp/${file}`);
+    // Jeden renderer (Core3D), bez kanwy 2D jako tekstury i bez celu z gotową klatką („jajko”).
+    assert.doesNotMatch(src, /new THREE\.(WebGPURenderer|WebGLRenderer)|getContext\(|texImage2D|composerTarget\.texture/, file);
+  }
+  assert.match(nurt, /Core3D\.addFxStep\(/);
+  assert.match(nurt, /Core3D\.setWarpLayerActive\(/);
+  assert.match(core3d, /this\.renderPassWarp = makeScenePass\('warp', 'warp', WARP_MEDIUM_RENDER_LAYER, false, false, false\);/);
+  assert.match(core3d, /if \(pass === this\.renderPassWarp\) return activity\.warp === true;/);
 });
 
-test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {
-  assert.match(readSrc('src/effects3d/rocketFireGPU.js'), /this\.mesh\.visible = this\.highWater > 0;/);
-  assert.match(readSrc('src/effects3d/rocketSmokeGPU.js'), /this\.points\.visible = this\.highWater > 0;/);
-  assert.match(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\.visible = this\.activeRockets > 0;/);
+test('pule rakiet (Core3D) i odłamków paneli: puste siatki są niewidoczne', () => {
+  // Port WebGPU, zadanie 19: rakiety rysują pule w scenie Core3D (src/3d/rockets/); pusta pula
+  // nie wchodzi do passa (zachowanie: tests/rocketFx.test.mjs).
+  for (const f of ['fireballs', 'glow', 'missileBodies', 'plumes', 'sparks']) {
+    assert.match(readSrc(`src/3d/rockets/${f}.js`), /this\.mesh\.visible = n > 0;/, f);
+  }
+  assert.match(readSrc('src/3d/rockets/arcs.js'), /this\.mesh\.visible = this\.highWater > 0;/);
+  assert.match(readSrc('src/3d/rockets/nebula.js'), /this\.mesh\.visible = this\.highWater > 1;/);
+  const smoke = readSrc('src/3d/rockets/smoke.js');
+  assert.match(smoke, /this\.mesh\.visible = n > 1;/);
+  assert.match(smoke, /this\.densityMesh\.visible = n > 1;/);
+  assert.doesNotMatch(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
   const shards = readSrc('src/vfx/panelShardManager.js');
   assert.match(shards, /if \(this\.activeCount === 0\) return;/);
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);
 });
 
-test('pociski 3D: barwy HDR raz na styl, upload tylko zajętego wycinka', () => {
-  const w3d = readSrc('src/3d/weapon3DSystem.js');
-  assert.doesNotMatch(w3d, /colorObj\.set\(style\./);
-  assert.match(w3d, /setColorAt\(instanceCount, styleHdr\.core\)/);
-  assert.match(w3d, /uploadInstancePrefix\(bulletInstances\.trails\.instanceMatrix, instanceCount, 16\)/);
-  assert.doesNotMatch(w3d, /bulletInstances\.heads\.instanceMatrix\.needsUpdate = true;\s*if \(bulletInstances\.trails\.instanceColor\)/);
+// Zadanie 17: pociski rysuje ProjectileSystem (src/3d/weapons/projectiles.js — style w jednym draw
+// callu, dawniej weapon3DSystem.js): barwa HDR z konfiguracji rodziny (raz na rodzinę i rozmiar
+// w WeaponFx), wysyłka tylko zajętej części bufora przez stałe zakresy (liveRange.js — bez obiektu
+// zakresu na klatkę).
+test('pociski 3D: barwy HDR raz na rodzinę, upload tylko zajętego wycinka', () => {
+  const proj = readSrc('src/3d/weapons/projectiles.js');
+  assert.match(proj, /if \(n > 0\) markRange\(this\.node\.value, 0, Math\.max\(2, n\) \* FLOATS\);/);
+  assert.doesNotMatch(proj, /addUpdateRange\(|needsUpdate = true/);
+  const wfx = readSrc('src/3d/weapons/weaponFx.js');
+  assert.match(wfx, /function projectileConf\(family, size\) \{[\s\S]*?_confCache\.get\(key\)/);
+  assert.match(readSrc('src/3d/weapons/liveRange.js'), /attr\.clearUpdateRanges = keepUpdateRanges;/);
 });
 
 test('overlay: adaptacja jakości z histerezą, pusta lista efektów nie zmienia skali', () => {

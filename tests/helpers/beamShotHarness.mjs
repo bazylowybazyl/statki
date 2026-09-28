@@ -56,10 +56,12 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     }
   };
 
+  // Wiązka: [startX, startY, endX, endY, width, mode, emitterUid, kind] — kind ('continuous' |
+  // 'pulse' | 'pd') wybiera efekt w WeaponFx (zadanie 17).
   function logShot(d) {
     const b = d.beam;
     log.push(['event', 'game_weapon_fired', d.weaponId, d.isBeam, d.beamMode,
-      b ? [r1(b.startX), r1(b.startY), r1(b.endX), r1(b.endY), b.width, b.mode, b.emitterUid] : null]);
+      b ? [r1(b.startX), r1(b.startY), r1(b.endX), r1(b.endY), b.width, b.mode, b.emitterUid, b.kind] : null]);
   }
 
   class FakeCustomEvent {

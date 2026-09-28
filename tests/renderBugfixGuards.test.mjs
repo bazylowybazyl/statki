@@ -40,22 +40,37 @@ test('kolizje statek-asteroida w physicsStep z prawdziwym dt, nie w render()', (
   assert.match(field, /DestructorSystem\.collideEntities\(ship, promotedEntity, dt, true\)/);
 });
 
-// Fala z refrakcją (window.trigger3DShockwave) zostaje wyłącznie dla rakiet
-// supernova (decyzja 2026-09-24): Yamato, wybuchy reaktorów i rozpad stacji jej
-// nie odpalają. Zapas heatHaze w reactorblow zostaje w kodzie (profile go
-// wyłączają) — pilnujemy, żeby po włączeniu był w osi sceny, jak u rakiet.
+// Fala z refrakcją (dawne window.trigger3DShockwave) była od 2026-09-24 tylko dla rakiet
+// supernova; od zadania 19 (port WebGPU) nie ma jej wcale — Yamato, wybuchy reaktorów
+// i rozpad stacji jej nie odpalają, a rakiety zgłaszają źródła zniekształceń Core3D.
+// Zapas heatHaze w reactorblow zostaje w kodzie (profile go wyłączają) — pilnujemy,
+// żeby po włączeniu był w osi sceny.
 const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
-test('haze reaktora i rakiet w osi sceny (y3d = -yGry); fala z refrakcją tylko dla supernovy', () => {
+// Port WebGPU, zadanie 19: fale, implozja i gorące powietrze rakiet (także Supernowej) to źródła
+// zniekształceń Core3D (src/3d/fx/distortion.js) zgłaszane w ŚWIECIE gry — oś y odwraca commit
+// źródeł (behawioralnie: tests/rocketFx.test.mjs); rakiety nie wołają już pushHeatHazeWorld ani
+// dawnej fali trigger3DShockwave (fala Supernowej = sama refrakcja, bez świecącego obrysu).
+test('haze reaktora w osi sceny (y3d = -yGry); rakiety i Supernowa przez zniekształcenia Core3D', () => {
   assert.match(read('src/effects3d/reactorblow.js'), /pushHeatHazeWorld\(expX, -expZ, -4,/);
-  assert.match(read('src/effects3d/rocketSystem3D.js'), /pushHeatHazeWorld\(burst\.x, -burst\.z, -4,/);
-  assert.doesNotMatch(code('src/effects3d/yamato.js'), /trigger3DShockwave|sw3d\(/, 'Yamato bez fali');
+  const rockets = code('src/effects3d/rocketSystem3D.js');
+  assert.doesNotMatch(rockets, /pushHeatHazeWorld|trigger3DShockwave|makeSupernovaMissileBlow/, 'rakiety bez starego haze i fali');
+  const fx = code('src/3d/rockets/effects.js');
+  assert.match(fx, /field\.shock\(this\.sx\[i\] \+ S\[o \+ 6\] \* a, this\.sy\[i\] \+ S\[o \+ 7\] \* a,/, 'fala w świecie gry (x, y), nie w osi sceny');
+  assert.match(fx, /field\.implode\(this\.nvx\[i\], this\.nvy\[i\],/);
+  assert.match(fx, /field\.heat\(this\.hx\[i\] \+ H\[o \+ 3\] \* a, this\.hy\[i\] \+ H\[o \+ 4\] \* a,/);
+  // Yamato i reszta broni (zadanie 17): receptury z dema bronie-webgpu (src/3d/weapons/) — fala
+  // to zniekształcenie Core3D (pula DIST, sama refrakcja — decyzja 2026-09-27: efekty z dema),
+  // nigdy dawna fala overlaya trigger3DShockwave.
+  for (const f of ['recipes.js', 'weaponFx.js', 'gpuFx.js']) {
+    assert.doesNotMatch(code(`src/3d/weapons/${f}`), /trigger3DShockwave|sw3d\(/, `${f}: broń bez fali overlaya`);
+  }
   assert.doesNotMatch(code('src/effects3d/reactorblow.js'), /shockwave3D: \{|heatHaze: \{/, 'wybuchy reaktorów bez fali i haze');
   for (const f of ['stationChainProfile', 'stationCutProfile', 'stationFinalProfile']) {
     assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
   }
   assert.match(indexHtml, /Destruction3D\.init\(\{[\s\S]{0,400}?shockwaveManager: null,/, 'rozpad stacji bez fali');
-  assert.match(code('src/effects3d/rocketSystem3D.js'), /explosionStyle === "supernova"\) \{\s*const triggerShockwave = window\.trigger3DShockwave;/);
+  assert.doesNotMatch(code('src/3d/core3d.js'), /Shockwave3DManager|trigger3DShockwave|refractionTarget/, 'Core3D bez fali z refrakcją');
 });
 
 test('dysza SIDE świeci w bloomie tylko przy manewrze (audyt 2026-09-26)', () => {
@@ -83,12 +98,16 @@ test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania b
   const overlay = read('src/effects3d/overlay.js');
   assert.match(overlay, /setBloomModifier: \(key, modifier\) =>/);
   assert.match(overlay, /clearBloomModifier: \(key\) =>/);
-  const yamato = read('src/effects3d/yamato.js');
-  assert.match(yamato, /overlay\.setBloomModifier\(lease, YAMATO_BLOOM_SUPPRESSION\)/);
-  assert.doesNotMatch(yamato, /setBloomConfig|__yamatoBloomSuppression/);
-  const nova = read('src/effects3d/supernovaMissileBlow.js');
-  assert.doesNotMatch(nova, /_savedBloom|_activeNovaCount|setBloomConfig/);
-  assert.match(nova, /_restoreBloom\(bloomLease\)/);
+  // Yamato nie jest już w overlayu (zadanie 17 — receptura WeaponFx w Core3D): bez modyfikatora
+  // i bez zapisu konfiguracji bloomu.
+  const weaponFx = code('src/3d/weapons/weaponFx.js') + code('src/3d/weapons/recipes.js');
+  assert.doesNotMatch(weaponFx, /setBloomConfig|setBloomModifier|__yamatoBloomSuppression/);
+  // Supernowa (zadanie 19) nie jest już w overlayu: podbicie bloomu i przygaszenie idą przez
+  // Core3D.fx.post (kasowane co klatkę efektów), bez zapisu/przywracania konfiguracji bloomu.
+  const rocketFx = code('src/3d/rockets/rocketFx.js');
+  assert.match(rocketFx, /if \(d\.bloomBoost > post\.bloomBoost\) post\.bloomBoost = d\.bloomBoost;/);
+  assert.doesNotMatch(rocketFx, /setBloomConfig|DevVFX/);
+  assert.match(code('src/3d/fx/fxFrame.js'), /this\.post\.exposure = 1;\s*this\.post\.bloomBoost = 0;/, 'post efektów kasowany co klatkę');
 });
 
 test('updateEntityMesh: po przebudowie mesh wskazuje nowy obiekt; nowe dane przed zwolnieniem starych', () => {
@@ -114,13 +133,18 @@ test('panel skanera: przyciski akcji budowane raz na cel (klik nie ginie), schow
   assert.match(src, /if \(runtime\.enabled === false\) return;\s*render\(\);/);
 });
 
-test('cząstki rakiet: zakresy uploadu kumulowane, zawinięcie bez pełnego bufora', () => {
-  for (const path of ['src/effects3d/rocketFireGPU.js', 'src/effects3d/rocketSmokeGPU.js']) {
-    const src = read(path);
-    assert.doesNotMatch(src, /clearUpdateRanges\(\);\s*attr\.addUpdateRange\(start, count\);/, path);
-    assert.match(src, /if \(this\.activeIndex === 0\) this\._pushDirtySpan\(\);/, path);
-    assert.doesNotMatch(src, /_dirtyWrapped/, path);
+// Port WebGPU, zadanie 19: dawne RocketFireGPU / RocketSmokeGPU zastąpił dym compute z dema
+// rakiet; pierścienie z wysyłką zakresów (iskry, łuki) mają test zachowania w
+// tests/rocketFx.test.mjs („pierścień: zawinięcie = dwa wycinki, bez pełnego bufora”).
+test('cząstki rakiet: stare pule uploadu CPU zastąpione (dym compute, pierścienie z zakresami)', () => {
+  const rockets = code('src/effects3d/rocketSystem3D.js');
+  assert.doesNotMatch(rockets, /RocketFireGPU|RocketSmokeGPU|fireGPU|smokeGPU/);
+  assert.match(code('src/3d/rockets/smoke.js'), /this\._qRange\.count = n \* 16;/, 'zlecenia dymu: jeden zakres na stałe, tylko zapisana część');
+  for (const path of ['src/3d/rockets/sparks.js', 'src/3d/rockets/arcs.js']) {
+    assert.match(code(path), /import \{ ringAttr, RingUpload \} from '\.\/ringUpload\.js';/, `${path}: pierścień przez ringUpload`);
+    assert.doesNotMatch(code(path), /_wrapped|addUpdateRange/, `${path}: bez pełnego bufora po zawinięciu`);
   }
+  assert.match(code('src/3d/rockets/ringUpload.js'), /at\.clearUpdateRanges = \(\) => \{\};/, 'zakresy na stałe (bez push na klatkę)');
 });
 
 test('destrukcja stacji nie rusza zasobów szablonu GLB', () => {

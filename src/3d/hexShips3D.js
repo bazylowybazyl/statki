@@ -2,10 +2,8 @@
 import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary, DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructor.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
-import { Weapon3DSystem } from './weapon3DSystem.js';
+import { WeaponFx } from './weapons/weaponFx.js';
 import { Fx3D } from './fxParticles3D.js';
-import { RailgunFX3D } from './railgunFx3D.js';
-import { BulletTrails } from './slugTrail3D.js';
 import { MainExhaust3D } from './mainExhaust3D.js';
 import { WarpPlume3D } from './warpPlume3D.js';
 import { Turret2D } from '../vfx/turret2D.js';
@@ -35,6 +33,7 @@ import {
   HULL_FLAT_NORMAL_TEXTURE,
   HULL_LIGHT_ZONE_OFFSET,
   HULL_SHARED,
+  HULL_WARP_OFF,
   HullDebrisNodeMaterial,
   HullLightStore,
   HullNodeMaterial
@@ -1023,7 +1022,21 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       // sprite'em (HullLacquer.acquireShapeUniform) — pieczenie podmienia teksturę wszystkim.
       uShapeMap: shapeUniform,
       uLacquerWeight: { value: 0 },
-      uLacquerGlint: { value: 1 }
+      uLacquerGlint: { value: 1 },
+      // Warp „Nurt” (zadanie 22): odsłanianie, szew i żar brzegu — wartości pisze sterownik
+      // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
+      uWarpA: warpHullHolder(entity, 'a'),
+      uWarpB: warpHullHolder(entity, 'b'),
+      uWarpC: warpHullHolder(entity, 'c')
+  };
+}
+
+function warpHullHolder(entity, key) {
+  return {
+    get value() {
+      const w = entity ? entity.__warpHullU : null;
+      return w ? w[key] : HULL_WARP_OFF[key];
+    }
   };
 }
 
@@ -1754,14 +1767,14 @@ function disposeHullVariantProbes() {
   _hullProbes = null;
 }
 
-// Bank cząstek dem (błyski wylotowe armat i dział jonowych + Hexlance) ma
-// dziesięć własnych programów shaderowych. Bez kompilacji na ekranie
-// ładowania pierwszy strzał każdej rodziny broni gubi klatkę.
+// Bank cząstek Fx3D (iskry dysz, mostki, rdzenie) ma własne programy shaderowe. Bez
+// kompilacji na ekranie ładowania pierwsze użycie gubi klatkę. Efekty broni (WeaponFx,
+// pule GPU z dema bronie-webgpu) rozgrzewa krok Core3D.fx (warm: kernele + prewarmPass).
 function prewarmFx3D() {
   // Core3D.renderer istnieje dopiero przy gotowym urządzeniu WebGPU.
   if (!Fx3D.ensure() || !Core3D.renderer || !Core3D.cameraOrtho) return false;
   const meshes = Fx3D.meshes;
-  for (const trail of [RailgunFX3D.prewarm(), BulletTrails.prewarm(), MainExhaust3D.prewarm()]) {
+  for (const trail of [MainExhaust3D.prewarm()]) {
     if (trail) meshes.push(trail);
   }
   // Plazma warpa: raymarch to najcięższy program w grze — bez tego pierwszy
@@ -1784,7 +1797,7 @@ function prewarmFx3D() {
 
 export function prewarmHexShips3D({ canvas = null } = {}) {
   if (!Core3D.isInitialized) Core3D.init(canvas);
-  Weapon3DSystem.prewarmShaders();
+  WeaponFx.prewarm();
   prewarmFx3D();
   return true;
 }
@@ -2086,7 +2099,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // Wygaszanie odrzutu — raz na klatke, niezaleznie od liczby passow 2D
   // (split-screen rysuje ten sam bufor dwa razy).
   Turret2D.update();
-  Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
+  // Efekty broni (zadanie 17): pociski, smugi, lot, wstrząs strzałów, bank Fx3D — raz na klatkę
+  // renderu, po Turret2D.sync (lufy wiązek ciągłych i błysków z rekordów tej klatki).
+  WeaponFx.sync((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
 
   GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
   GpuDebrisManager.updateTime(now * 0.001);
@@ -2225,6 +2240,16 @@ export function invalidateHexShipEntity3D(entity) {
   return true;
 }
 
+/**
+ * Sprite kadłuba encji (tekstura z mipmapami, flipY = false) — smuga sylwetki warpa
+ * (src/3d/warp/warpNurt.js). null, gdy encja nie ma jeszcze siatki.
+ */
+export function getEntityHullSprite(entity) {
+  const data = entity ? state.entityMeshes.get(entity) : null;
+  const tex = data?.mesh?.material?.uniforms?.uSprite?.value;
+  return (tex && tex.isTexture && tex !== HULL_EMPTY_SPRITE_TEXTURE) ? tex : null;
+}
+
 // === ZIMNE WRAKI (src/game/coldWrecks.js) ===
 
 function getWreckImpostorEnterPx() {
@@ -2292,7 +2317,7 @@ export function disposeHexShips3D() {
   GpuDebrisManager.dispose();
   HullDebris3D.dispose();
   EngineVfxSystem.disposeAll();
-  Weapon3DSystem.disposeAll();
+  WeaponFx.reset();
   Turret2D.clear();
   ShipLights3D.dispose();
   HullShadowSdf.reset();

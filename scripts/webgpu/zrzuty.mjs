@@ -244,6 +244,86 @@ const SCENES = {
     hud: false, warm: 30,
     js: `H.reseed(0x3a2d); DevFlags.unlimitedWarp = true; warp.state = 'charging'; warp.charge = 0; await H.step(75); S.cam(ship.pos.x, ship.pos.y, 0.6);`
   },
+  // Zadanie 19: galeria rakiet (efekty z dema rakiety-webgpu w Core3D). Cele: pirat-pancernik i dwa
+  // niszczyciele bez AI (npc.ai = null — stoją, nie strzelają), tarcze wyłączone (DevFlags) poza
+  // sceną tarczy; rakiety odpala wprost rocketSystem3D.fire (obrażenia 1 — kadłuby zostają).
+  // Nowe efekty nie mają bazy w tagu — ocena obok zrzutów dema (`rakiety-demo.mjs`), potem
+  // przebieg z main jako baza (PLAN §7).
+  'galeria-rakiet': {
+    opis: 'Salwa 12 rakiet manewrujących w trzy okręty (smugi oświetlone dyszami, samocień, pierwsze trafienia), zoom 0,3',
+    hud: false, warm: 2,
+    js: `DevFlags.globalShieldsOff = true;
+         DevScene.teleport(${DEEP.x - 300000}, ${DEEP.y + 40000}, 0);
+         // Czarna, NIEPRZEZROCZYSTA płyta pod sceną (warstwa 0, z = −900): tło gry to jeszcze zamiennik
+         // (zadanie 05), a bez nieprzezroczystego tła kanwa premultiplied pokazuje blask efektów addytywnych
+         // (rgb > alfa) ~2× jaśniej — obraz byłby nieporównywalny z demem (niebo dema jest nieprzezroczyste).
+         { const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
+           const T = await import(url);
+           const bd = new T.Mesh(new T.PlaneGeometry(2000000, 2000000), new T.MeshBasicMaterial({ color: 0x000000 }));
+           bd.position.set(ship.pos.x, -ship.pos.y, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern';
+           Core3D.scene.add(bd); bd.updateMatrixWorld(true); }
+         const s = ship; const at = (fx, fy) => ({ x: s.pos.x + fx, y: s.pos.y + fy });
+         const made = [];
+         const put = (k, x, y, a) => { const r = spawnCallInShip(k, { mode: 'pirate', spawnPos: at(x, y), spawnAngle: a }); for (const n of (Array.isArray(r) ? r : [r])) if (n) { n.ai = null; made.push(n); } };
+         put('pirate_battleship', 4200, -150, Math.PI); put('destroyer', 3500, 950, Math.PI + 0.2); put('destroyer', 3700, -1250, Math.PI - 0.15);
+         window.__rkGal = made;
+         S.cam(s.pos.x + 2000, s.pos.y - 100, 0.3);
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         H.reseed(0x51a1);
+         const W = MASTER_WEAPONS.missile_rack;
+         for (let i = 0; i < 12; i++) { rocketSystem3D.fire(s.pos.x + 250, s.pos.y + (i % 4 - 1.5) * 70, made[i % 3], 1, W, 'blue', 0, 0); await H.step(8); }
+         await H.step(42);
+         S.cam(s.pos.x + 2000, s.pos.y - 100, 0.3);`
+  },
+  'galeria-rakiet-trafienie': {
+    opis: 'Trafienie z bliska (zoom 1,2): trzy rakiety w niszczyciel (z 3000 j. — w pełnym locie) — kula ognia na poszyciu, iskry, odłamki, przypalenie; ~0,12 s po pierwszym wybuchu',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[1]; const W = MASTER_WEAPONS.missile_rack;
+         // Czysta scena: poprzednie rakiety wybuchły, dym i efekty wygasły.
+         for (let q = 0; q < 1800 && (rocketSystem3D.activeRockets > 0 || window.__rocketFx?.smoke.highWater > 0 || window.__rocketFx?.nebula.live || window.__rocketFx?.director.busy); q++) await H.step(1);
+         if (t) {
+           S.cam(t.x - 250, t.y, 1.2);
+           H.reseed(0x51a2);
+           for (let i = 0; i < 3; i++) { const a = Math.PI + 0.22 * (i - 1); rocketSystem3D.fire(t.x + Math.cos(a) * 3000, t.y + Math.sin(a) * 3000 - 150, t, 1, W, 'blue', 0, 0); await H.step(10); }
+           for (let i = 0; i < 600 && rocketSystem3D.activeRockets >= 3; i++) await H.step(1);
+           await H.step(7);
+           S.cam(t.x - 250, t.y, 1.2);
+         }`
+  },
+  'galeria-rakiet-supernowa': {
+    opis: 'Supernowa w pancernik: błysk z linią anamorficzną i fala (refrakcja) ~0,1 s po implozji (0,33 s po wybuchu głowicy), zoom 0,45',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[0]; const W = MASTER_WEAPONS.supernova_missile;
+         for (let q = 0; q < 1800 && (rocketSystem3D.activeRockets > 0 || window.__rocketFx?.smoke.highWater > 0 || window.__rocketFx?.nebula.live || window.__rocketFx?.director.busy); q++) await H.step(1);
+         if (t) {
+           H.reseed(0x51a3);
+           rocketSystem3D.fire(t.x - 2600, t.y - 500, t, 1, W, 'blue', 0, 0);
+           for (let i = 0; i < 600 && rocketSystem3D.activeRockets > 0; i++) { await H.step(1); if (i % 10 === 0) S.cam(t.x - 700, t.y, 0.45); }
+           await H.step(20);
+           S.cam(t.x - 250, t.y, 0.45);
+         }`
+  },
+  'galeria-rakiet-pozostalosc': {
+    opis: 'Ta sama Supernowa 1,9 s po wybuchu głowicy: pozostałość z włókien (Hα, [O III], [S II]), stygnące jądro, zoom 0,25',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[0]; await H.step(94); if (t) S.cam(t.x - 250, t.y, 0.25);`
+  },
+  'galeria-rakiet-tarcza': {
+    opis: 'Propozycja receptury tarczy: dwie rakiety w niszczyciel z podniesioną tarczą (błysk w barwie pola, iskry stycznie po polu, fala, sadza na zewnątrz), zoom 0,9',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[2]; const W = MASTER_WEAPONS.missile_rack;
+         for (let q = 0; q < 1800 && (rocketSystem3D.activeRockets > 0 || window.__rocketFx?.smoke.highWater > 0 || window.__rocketFx?.nebula.live || window.__rocketFx?.director.busy); q++) await H.step(1);
+         DevFlags.globalShieldsOff = false;
+         if (t && t.shield) {
+           t.shield.val = t.shield.max; t.shield.state = 'active'; t.shield.activationProgress = 1; t.shield.currentAlpha = 1;
+           S.cam(t.x - 350, t.y, 0.9);
+           H.reseed(0x51a4);
+           for (let i = 0; i < 2; i++) { rocketSystem3D.fire(t.x - 3000, t.y + (i - 0.5) * 300, t, 1, W, 'blue', 0, 0); await H.step(10); }
+           for (let i = 0; i < 600 && rocketSystem3D.activeRockets >= 2; i++) await H.step(1);
+           await H.step(6);
+           S.cam(t.x - 350, t.y, 0.9);
+         }`
+  },
   split: {
     opis: 'Podzielony ekran (dwa renderSingle + wycinki), obie kamery na statkach, zoom 0,5',
     hud: false, warm: 45,
@@ -251,6 +331,74 @@ const SCENES = {
          S.cam(ship.pos.x, ship.pos.y, 0.5);
          const c2 = window.camera2, p2 = window.player2Ship;
          if (c2 && p2) { c2.transition = null; c2.x = c2.targetX = p2.pos.x; c2.y = c2.targetY = p2.pos.y; c2.zoom = c2.targetZoom = 0.5; }`
+  },
+  // ── Warp „Nurt” (zadanie 22) — osobna sesja (świeża strona: nie przesuwa scen innych sesji). Skok
+  // gracza na automacie gry (ładowanie 0,8 s → skok → lot → wyjście), kamera statku zoom 0,1; przylot
+  // i odlot NPC przez API WarpNurt (plan z wyprzedzeniem: zwiastun → szczelina → wyrzut), kamera RTS.
+  // Nowe sceny — bez bazy w tagu (inny warp); zestawienie obok zrzutów dema: warp-demo-zrzuty.mjs.
+  'warp-ladowanie': {
+    opis: 'Warp „Nurt”: ładowanie gracza (75%) — płaty ośrodka (turkus z przodu, pomarańcz z tyłu), gwiazdy płasko, soczewka mgławicy, plazma WARP; zoom 0,1',
+    hud: false, warm: 20,
+    js: `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 150000}, -0.35); DevFlags.unlimitedWarp = true; S.shipCam(0.1); DevScene.aimWarp(-0.35);
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         H.reseed(0x22a1); await H.step(20); warp.state = 'charging'; warp.charge = 0; await H.step(36); S.shipCam(0.1);`
+  },
+  'warp-skok': {
+    opis: 'Warp „Nurt”: 0,2 s po kopnięciu — smugi gwiazd z przestrzałem, fala w punkcie skoku (refrakcja), błysk za rufą, ośrodek rusza',
+    hud: false, warm: 20,
+    js: `await H.step(24); S.shipCam(0.1);`
+  },
+  'warp-lot': {
+    opis: 'Warp „Nurt”: podróż (1,5 s po skoku) — opływ bańki, strugi w talii, pomarańczowy warkocz, płaskie smugi gwiazd',
+    hud: false, warm: 20,
+    js: `await H.step(90); S.shipCam(0.1);`
+  },
+  'warp-wyjscie': {
+    opis: 'Warp „Nurt”: wyjście (0,1 s) — front od dziobu: smugi gwiazd wracają do punktów, bańka zapada się, szew i żar brzegu, błysk przy dziobie, fala',
+    hud: false, warm: 20,
+    js: `DevScene.exitWarp(); await H.step(6); S.shipCam(0.1);`
+  },
+  'warp-po-wyjsciu': {
+    opis: 'Warp „Nurt”: 0,75 s po wyjściu — biały → pomarańczowy żar brzegu kadłuba, ośrodek gaśnie',
+    hud: false, warm: 20,
+    js: `await H.step(39); S.shipCam(0.1);`
+  },
+  'warp-zwiastun': {
+    opis: 'Przylot NPC tunelem (plan z wyprzedzeniem, WarpNurt.planArrival): zwiastun 2,5 s — nić ośrodka do punktu wyjścia, punkt zbierania, szczelina się otwiera; kamera RTS 0,13',
+    hud: false, warm: 20,
+    js: `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 190000}, -0.35);
+         const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         S.cam(X - 900, Y - 900, 0.13); H.reseed(0x22b2); await H.step(30);
+         window.__warpRec = WarpNurt.planArrival({ x: X - 2300, y: Y - 1700, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstIn: 3.0 });
+         await H.step(150); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  'warp-przylot': {
+    opis: 'Przylot NPC: wyrzut (0,15 s) — superkapitał wypada z szczeliny: odsłanianie od dziobu, szew, żar, smuga sylwetki, błysk i linia blasku w ujściu, fala, iskry ośrodka',
+    hud: false, warm: 20,
+    js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         await H.step(30);
+         const at = { x: X - 2300, y: Y - 1700 };
+         const r = spawnCallInShip('supercapital', { mode: 'friendly', spawnPos: at, pos: at, spawnAngle: -0.5 });
+         const npc = Array.isArray(r) ? r[0] : r; window.__warpNpc = npc;
+         if (npc) { npc.angle = -0.5; npc.vx = 0; npc.vy = 0; npc.command = { type: 'hold', faceAngle: -0.5 }; WarpNurt.attach(window.__warpRec, npc); }
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         if (npc) WarpNurt.attach(window.__warpRec, npc);
+         await H.step(9); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  'warp-odlot-ladowanie': {
+    opis: 'Odlot NPC tunelem (WarpNurt.depart): ładowanie — punkt skoku przed dziobem, ośrodek zbierany, szczelina otwiera się przed dziobem',
+    hud: false, warm: 20,
+    js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         await H.step(150);
+         const npc = window.__warpNpc; window.__warpDep = npc ? WarpNurt.depart(npc, { drive: true }) : null;
+         const d = window.__warpDep?.fx; const n = d ? Math.round((d.tDive - 0.15 - WarpNurt.time) * 60) : 60;
+         await H.step(Math.max(1, n)); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  'warp-odlot': {
+    opis: 'Odlot NPC: wejście w szczelinę (0,2 s) — kadłub znika od dziobu za płaszczyzną ujścia, smuga, błysk w ujściu, fala',
+    hud: false, warm: 20,
+    js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         await H.step(21); S.cam(X - 900, Y - 900, 0.13);`
   },
   // Zadanie 16: rozpad stacji planet (GLB). Sesja „stacja” — osobna, nie przesuwa innych scen; baza z tagu
   // przez `baza.mjs --dopisz`. Stacja planety spoza ringów (Wenus, Merkury, Saturn, Uran — model stacji Ziemi)
@@ -345,6 +493,121 @@ const SCENES = {
   }
 };
 
+// ── Galeria broni (zadanie 17) ────────────────────────────────────────────────────────────────
+// Efekty broni z dema bronie-webgpu w grze. Cel: pancernik (kadłub Iron Skull) bez AI — stoi;
+// sojuszniczy, żeby gracz go nie namierzał (ramka namiaru w kadrze); bez tarczy (val i max = 0:
+// wiązki kończą się na promieniu tarczy przy val > 0 także z DevFlags.globalShieldsOff — tak
+// liczy resolveBeamWorldHit), wstrząs kamery wyłączony (stały kadr), HP przywracane przed zrzutem
+// (bez paska). Działo = wroga platforma bez kadłuba (strzelec bez wieżyczek — wylot w punkcie
+// lufy, jak u myśliwca) z obrażeniami × 1e-6, więc kadłub zostaje cały między ujęciami. Strzał
+// idzie ścieżką NPC w grze: window.fireWeaponCore → szyna strzałów → WeaponFx; lot, trafienia
+// i zapalnik flaku liczy gra. Ujęcie rodziny: kilka strzałów w odstępach i zrzut tuż po ostatnim
+// (wylot, pociski w locie, smugi, trafienia) — przed nim czyste pule (WeaponFx.reset) i ziarno
+// ujęcia. Hexlance — ścieżka superbroni gracza (Atlas: ładowanie, salwa).
+// Obok: scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie <te same bronie>.
+// Ujęcia: [nazwa, broń, strzałów, odstęp (klatki 60 Hz), klatek po ostatnim, zoom].
+const GALERIA_BRONI = [
+  ['yamato', 'special_yamato_cannon', 2, 24, 3, 0.8],
+  ['mjolnir', 'siege_railgun', 2, 24, 3, 0.8],
+  ['valkyrie', 'special_valkyrie_railgun', 3, 16, 3, 0.8],
+  ['goliath', 'special_goliath_autocannon', 6, 8, 2, 0.9],
+  ['gatling-plazmowy', 'special_plasma_gatling', 9, 6, 2, 0.9],
+  ['armata', 'armata_mk1', 3, 18, 3, 0.9],
+  ['tempest', 'tempest_ion_l', 3, 16, 3, 0.9],
+  ['helios', 'helios_laser', 4, 12, 2, 0.9],
+  ['autokanon', 'heavy_autocannon', 5, 9, 2, 0.9],
+  ['vulcan', 'vulcan_minigun', 12, 4, 2, 0.9],
+  ['wiazka-ciagla', 'beam_continuous', 40, 1, 1, 0.9],
+  ['wiazka-impuls', 'beam_pulse', 3, 14, 3, 0.9],
+  ['ciws', 'ciws_mk1', 14, 4, 2, 0.9],
+  ['laser-pd', 'laser_pd_mk1', 5, 11, 2, 0.9],
+  ['flak', 'flak_m', 3, 22, 4, 0.9]
+];
+const GALERIA_POMOC = `const G = window.__galeria;
+  const WFX = window.WeaponFx;
+  const gun = (x, y) => ({ id: 'galeria-dzialo', x, y, pos: { x, y }, vel: { x: 0, y: 0 }, vx: 0, vy: 0, angle: 0, angVel: 0, friendly: false, modifiers: { damage: 1e-6 } });
+  const noShield = () => { if (G.T.shield) { G.T.shield.val = 0; G.T.shield.max = 0; } };
+  // aim — cel (encja) albo punkt na kadłubie; laser PD dostaje zawsze kadłub (szybka ścieżka PD).
+  const fire = (g, id, aim, uid) => {
+    noShield();
+    const dx = aim.x - g.x, dy = aim.y - g.y, d = Math.hypot(dx, dy) || 1;
+    const aux = MASTER_WEAPONS[id]?.mountType === 'aux';
+    return window.fireWeaponCore(g, aim, id, { pos: { x: g.x, y: g.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: 0, y: 0 }, emitterUid: uid, pdTarget: aux ? G.T : null });
+  };
+  const clear = async () => { for (const b of window.bullets) b.life = -1; await H.step(2); WFX?.reset(); noShield(); };
+  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
+for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
+  SCENES[`galeria-${name}`] = {
+    opis: `Galeria broni: ${id} — ${shots} strz. co ${gap} kl. w pancernik z 1050 j., zrzut ${after} kl. po ostatnim, zoom ${zoom}`,
+    hud: false, warm: 2,
+    js: `${GALERIA_POMOC}
+         await clear();
+         const T = G.T; const g = gun(T.x - 1050, T.y);
+         S.cam(T.x - 520, T.y, ${zoom});
+         H.reseed(${0x6a1100 + i});
+         for (let k = 0; k < ${shots}; k++) { fire(g, '${id}', T, 'galeria:${name}'); await H.step(k < ${shots - 1} ? ${gap} : ${after}); }
+         calm(); S.cam(T.x - 520, T.y, ${zoom});`
+  };
+}
+SCENES['galeria-przygotowanie'] = {
+  opis: 'Bez zrzutu: cel galerii broni — pancernik bez AI i tarczy, wstrząs kamery wyłączony',
+  capture: false, warm: 2,
+  js: `DevFlags.globalShieldsOff = true; DevFlags.disableCameraShake = true;
+       DevScene.teleport(${DEEP.x - 600000}, ${DEEP.y - 200000}, 0);
+       const r = spawnCallInShip('pirate_battleship', { mode: 'friendly', spawnPos: { x: ship.pos.x + 5200, y: ship.pos.y }, spawnAngle: Math.PI });
+       const T = Array.isArray(r) ? r[0] : r; T.ai = null;
+       window.__galeria = { T };
+       if (T.shield) { T.shield.val = 0; T.shield.max = 0; }
+       // Kursor w rogu: pod kursorem na środku kadru rósł namiar SINGLE (ramka w zrzucie).
+       document.getElementById('c')?.dispatchEvent(new MouseEvent('mousemove', { clientX: 24, clientY: 24, bubbles: true }));
+       S.cam(T.x - 520, T.y, 0.42);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);`
+};
+// Przegląd: 15 rodzin naraz z łuku 1250 j. wokół pancernika, każda w swój punkt kadłuba (elipsa wokół
+// środka po stronie działa). Lekkie kończą serię w klatce zrzutu, ciężkie (Yamato, Mjolnir, Valkyrie,
+// Armata, Tempest) wcześniej o `lag` klatek — ich rozbłysk wylotu (Mjolnir: ~1,3 tys. j.) zdążył zgasnąć
+// i nie zalewa kadru, zostają trafienia i smugi. [broń, strzałów, odstęp, lag]
+const GALERIA_PRZEGLAD = { yamato: [1, 1, 40], mjolnir: [1, 1, 50], valkyrie: [2, 16, 20], armata: [2, 18, 10], tempest: [2, 16, 6] };
+SCENES['galeria-broni'] = {
+  opis: 'Galeria broni: 15 rodzin naraz (działa Capital/L/M/S, wiązki, CIWS, laser PD, flak) z łuku wokół pancernika, zoom 0,42',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const T = G.T;
+       const L = ${JSON.stringify(GALERIA_BRONI.map(([name, id, shots, gap]) => {
+         const o = GALERIA_PRZEGLAD[name];
+         return o ? [name, id, o[0], o[1], o[2]] : [name, id, shots, gap, 0];
+       }))};
+       const ang = (i) => Math.PI * (0.6 + 0.8 * i / (L.length - 1));
+       const guns = L.map((e, i) => gun(T.x + Math.cos(ang(i)) * 1250, T.y + Math.sin(ang(i)) * 1250));
+       const aims = L.map((e, i) => ({ x: T.x + Math.cos(ang(i)) * 300, y: T.y + Math.sin(ang(i)) * 140 }));
+       const end = Math.max(...L.map(([, , n, gap, lag]) => (n - 1) * gap + lag));
+       S.cam(T.x - 380, T.y, 0.42);
+       H.reseed(0x6a11ff);
+       for (let f = 0; f <= end; f++) {
+         L.forEach(([name, id, n, gap, lag], i) => { const k = f - (end - lag - (n - 1) * gap); if (k >= 0 && k <= (n - 1) * gap && k % gap === 0) fire(guns[i], id, aims[i], 'galeria-przeglad:' + name); });
+         await H.step(1);
+       }
+       await H.step(1);
+       calm(); S.cam(T.x - 380, T.y, 0.42);`
+};
+// Hexlance: superbroń gracza (Atlas) — dwa wciśnięcia (ładowanie 1,2 s, salwa 4 strzałów co 0,25 s).
+SCENES['galeria-hexlance'] = {
+  opis: 'Galeria broni: Hexlance gracza (ładowanie, salwa — lanca, smuga, igła, wejście w pancernik 5200 j. dalej), zoom 0,33',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const T = G.T; const cx = ship.pos.x + 2900;
+       S.cam(cx, T.y, 0.33);
+       H.reseed(0x6a12ff);
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(80);
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(40);
+       calm(); S.cam(cx, T.y, 0.33);`
+};
+
 // Sesje = jedno wczytanie strony; sceny w sesji idą po kolei (kolejność ma znaczenie).
 const SESSIONS = [
   { id: 'menu', query: 'dev=1', start: null, scenes: ['menu'] },
@@ -353,8 +616,14 @@ const SESSIONS = [
   { id: 'mars', query: 'dev=1&haloTest=mars&haloAt=port', start: 'single', ring: 'mars', scenes: ['mars-ring'] },
   { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
+  // Zadanie 19: osobna sesja — nie przesuwa scen sesji „kosmos” (baza z tagu).
+  { id: 'rakiety', query: 'dev=1', start: 'single', sprites: true, scenes: ['galeria-rakiet', 'galeria-rakiet-trafienie', 'galeria-rakiet-supernowa', 'galeria-rakiet-pozostalosc', 'galeria-rakiet-tarcza'] },
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
-  { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] }
+  { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
+  { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] },
+  // Galeria broni (zadanie 17): własna sesja — sceny bitwy w „kosmos” zostają bez zmian klatek.
+  { id: 'galeria', query: 'dev=1', start: 'single', sprites: true,
+    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance'] }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).
@@ -565,10 +834,11 @@ async function runPerf(backend, outDir, base) {
         return { fps: d.fps, klatka: d.frameMs, p95: d.frameP95, fizyka: d.physicsTime, rysowanie: d.drawTime, uHex: d.render3dHexUpdateTime,
           coreRender: d.render3dCoreRenderTime, coreRenderTotal: C.lastFramePerf?.renderTotalMs, gpu: C.gpuFrameMs, drawCalls: r.calls, trojkaty: r.triangles,
           fxMs: C.fxStats?.cpuMs, gpuCompute: C.gpuComputeMs,
+          rakiety: window.rocketSystem3D?.activeRockets, rakietyFxMs: window.__rocketFx?.stats?.cpuMs, dym: window.__rocketFx?.smoke?.highWater,
           npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length, wraki: (window.wrecks || []).length }; })()`));
     }
     const med = (k) => { const v = samples.map((s) => Number(s[k])).filter(Number.isFinite).sort((a, b) => a - b); return v.length ? +v[Math.floor(v.length / 2)].toFixed(3) : null; };
-    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'npc', 'pociski', 'wraki'].map((k) => [k, med(k)]));
+    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'rakiety', 'rakietyFxMs', 'dym', 'npc', 'pociski', 'wraki'].map((k) => [k, med(k)]));
     const res = { backend, spawned, mediana: summary, probki: samples, bledy: logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 20) };
     writeJson(join(outDir, 'wydajnosc.json'), res);
     console.log(`  wydajność ${backend}: ${JSON.stringify(summary)}`);

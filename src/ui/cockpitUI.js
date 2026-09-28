@@ -1942,6 +1942,8 @@ export class CockpitUI {
   spawnSupport(key, spawnPos) {
     const faction = SUPPORT_FACTIONS[this.supportFaction];
     const result = window.spawnCallInShip?.(key, { mode: faction.mode, ...(spawnPos ? { spawnPos, pos: spawnPos } : {}) });
+    // Okręt wypada z tunelu warpa „Nurt” w chwili pojawienia się (sam wygląd, src/3d/warp/warpNurt.js).
+    if (result) window.WarpNurt?.arriveAll?.(result);
     if (result) {
       // Rozkaz skrzydła zostaje, jaki był — dawniej przyzwanie przestawiało całe
       // skrzydło na ESKORTĘ i kasowało wcześniej kliknięty ATAK.

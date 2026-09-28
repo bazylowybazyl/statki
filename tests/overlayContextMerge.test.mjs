@@ -51,11 +51,12 @@ test('an empty raw scene does not keep the overlay awake', () => {
   assert.match(tickSlice, /if \(effects\.length === 0 && !hasPersistentSceneContent && !hasRawContent\)/);
 });
 
-test('the game wires rockets into the shared context, with an escape hatch', () => {
-  assert.match(indexHtml, /withRawLayer: !splitContexts/);
-  assert.match(indexHtml, /DevFlags\.splitOverlayContexts/, 'musi zostać awaryjny powrót do dwóch kontekstów');
-  assert.match(indexHtml, /: ov\.rawLayer;/, 'domyślnie rakiety biorą warstwę współdzieloną');
-
-  // Konsumenci dawnego API muszą dalej działać.
-  assert.match(indexHtml, /initRocketSystem3D\(rocketOv\.scene\)/);
+// Port WebGPU, zadanie 19: rakiety (lot: rocketSystem3D, wygląd: src/3d/rockets/) i iskry
+// (SparkSystem3D) przeszły do sceny Core3D — overlay nie ma już warstwy raw rakiet ani iskier
+// (sam overlay i jego renderer odchodzą w zadaniu 20).
+test('rakiety i iskry w scenie Core3D, nie w overlayu (warstwa raw bez rakiet)', () => {
+  assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);\s*initRocketSystem3D\(Core3D\.scene, \{ effects: createRocketFx\(Core3D\) \}\);/);
+  assert.doesNotMatch(indexHtml, /SparkSystem3D\.init\(ov\.scene\)/, 'iskry nie w scenie overlaya');
+  assert.doesNotMatch(indexHtml, /rocketOverlay3D|withRawLayer|splitOverlayContexts/, 'bez warstwy raw rakiet');
+  assert.doesNotMatch(overlayJs, /SparkSystem3D\.update\(/, 'tick overlaya nie prowadzi już zegara iskier');
 });

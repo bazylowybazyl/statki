@@ -46,8 +46,10 @@ import {
   gridToLocal, localToWorld, isShardOnEntity, coreJetEnvelope, gridDirToWorld
 } from '../game/shipCore.js';
 import { Fx3D, FX_PLANE_Z, sp as fxParams, coneDir, makeBasis } from './fxParticles3D.js';
-import { RailgunFX3D } from './railgunFx3D.js';
-import { MuzzleFX3D } from './muzzleFx3D.js';
+// Wystrzał armaty (wybuch wtórny), wyładowanie Tempesta (kula) i rzaz Hexlance'a (strumień) —
+// receptury dema bronie-webgpu przez WeaponFx (port WebGPU, zadanie 17; dawniej MuzzleFX3D
+// i RailgunFX3D).
+import { WeaponFx } from './weapons/weaponFx.js';
 import { shardHeatNow, isHexShips3DActive } from '../game/destructor.js';
 import { CORE_FX_BANDS, CORE_FX_LAYER, coreStateBand } from './coreBands.js';
 import {
@@ -90,7 +92,7 @@ function finite(value, fallback = 0) {
 
 // ---------------------------------------------------------------------------
 // Iskry z puli gry. Wspólny bank Fx3D (fxParticles3D.js) — ten sam, z którego
-// sypią błyski wylotowe dział (muzzleFx3D) i Hexlance (railgunFx3D, klawisz 4);
+// sypały dawne błyski wylotowe dział i Hexlance (od zadania 17 receptury WeaponFx);
 // jedno wywołanie na system, bez własnych pul. Do tego iskry trafień i tarcia
 // SparkSystem3D (overlay, 20 000 slotów), jeśli ktoś go zainicjował. Recepty
 // rdzenia tylko rozsypują to samo tworzywo inaczej; palety wprost z tamtych
@@ -99,8 +101,8 @@ function finite(value, fallback = 0) {
 const SPARK_METAL = [2.9, 2.2, 1.4];   // odpryski przebicia (RailgunFX.impact)
 const SPARK_KERF = [2.9, 2.1, 1.2];    // wiór rzazu (RailgunFX.kerf)
 const SPARK_CHUNK = [3.0, 1.7, 0.7];   // rozżarzone odpryski poszycia (stygną do 0,4 / 0,1)
-// Skala recept (S jak w muzzleFx3D; Hexlance na Atlasie ma 3) i moc wystrzału
-// RailgunFX3D (jego skala jest wmurowana) na klasę rdzenia.
+// Skala recept (S jak skala wieżyczki w recepturach wylotu; Hexlance na Atlasie ma 3) i moc
+// receptury Hexlance'a (jej skala jest wmurowana) na klasę rdzenia.
 const FX_CLASS_SCALE = Object.freeze({ escort: 1.2, cruiser: 1.9, capital: 2.7 });
 const FX_CLASS_POWER = Object.freeze({ escort: 0.45, cruiser: 0.7, capital: 1.0 });
 // Spłaszczenie rozrzutu w Z jak w receptach broni: w widoku ortho z góry ruch
@@ -540,9 +542,9 @@ export function createCoreFx3D(options = {}) {
     const S = fxScale(o.classId) * finite(o.scale, 1);
     const shots = 2 + (Math.random() < 0.5 ? 1 : 0);
     const a0 = Math.random() * Math.PI * 2;
-    if (MuzzleFX3D.available) {
+    if (WeaponFx.available) {
       for (let i = 0; i < shots; i++) {
-        MuzzleFX3D.fire('armata', x, y, a0 + i * (Math.PI * 2 / shots) + frand(-0.45, 0.45), S * 0.75);
+        WeaponFx.muzzleAt('armata_mk1', x, y, a0 + i * (Math.PI * 2 / shots) + frand(-0.45, 0.45), S * 0.75);
       }
     }
     if (Fx3D.ensure()) {
@@ -640,8 +642,8 @@ export function createCoreFx3D(options = {}) {
   }
 
   // Strumień: przy starcie wystrzał (jetShot), strugi jonów i łuki przy
-  // wylocie, a na celu — rzaz jak Hexlance tnący kadłub (RailgunFX3D: rozbłysk
-  // wejścia raz na kadłub, potem wiór co 0,05 s).
+  // wylocie, a na celu — rzaz jak Hexlance tnący kadłub (receptura Hexlance'a w WeaponFx:
+  // rozbłysk wejścia raz na kadłub, potem wiór co 0,05 s; bez wstrząsu kamery, jak dawniej).
   function jetSparks(rec, jet, env, simDt) {
     if (!debug.blast) return;
     const power = fxPower(jet.classId);
@@ -670,19 +672,19 @@ export function createCoreFx3D(options = {}) {
       Fx3D.arcs.spawn(_fp, _fb, frand(0.08, 0.22), frand(4, 16) * S, rec.plasma);
     }
     const hit = jet.hitEntity;
-    if (!hit || !RailgunFX3D.available) return;
+    if (!hit || !WeaponFx.available) return;
     const ss = impactSparks();
     if (!rec.bitten.has(hit)) {
       rec.bitten.add(hit);
       rec.kerfCd = 0.05;
-      RailgunFX3D.impact(jet.endX, jet.endY, jet.dirWX, jet.dirWY, 0.85 * power);
+      WeaponFx.hexlanceImpact(jet.endX, jet.endY, jet.dirWX, jet.dirWY, null, power, false);
       if (ss) ss.burst(jet.endX, jet.endY, 40, 520, 0.4, 0.7);
       return;
     }
     rec.kerfCd -= simDt;
     if (rec.kerfCd > 0) return;
     rec.kerfCd = 0.05;
-    RailgunFX3D.kerf(jet.endX, jet.endY, jet.dirWX, jet.dirWY, 0.7 * power);
+    WeaponFx.hexlanceKerf(jet.endX, jet.endY, jet.dirWX, jet.dirWY, null, power);
     if (ss) ss.burst(jet.endX, jet.endY, 10, 420, 0.35, 0.6);
   }
 
@@ -696,7 +698,7 @@ export function createCoreFx3D(options = {}) {
       rec.fired = true;
       const hvx = finite(orb.host?.vel?.x ?? orb.host?.vx);
       const hvy = finite(orb.host?.vel?.y ?? orb.host?.vy);
-      if (MuzzleFX3D.available) MuzzleFX3D.fire('tempest', orb.x, orb.y, Math.atan2(orb.vy - hvy, orb.vx - hvx), S * 1.3);
+      if (WeaponFx.available) WeaponFx.muzzleAt('railgun_mk1', orb.x, orb.y, Math.atan2(orb.vy - hvy, orb.vx - hvx), S * 1.3);
     }
     if (!(simDt > 0) || !Fx3D.ensure()) return;
     const sp = Math.hypot(orb.vx, orb.vy);

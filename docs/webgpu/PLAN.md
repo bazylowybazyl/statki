@@ -79,7 +79,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
 - **`defines` i `needsUpdate` w biegu** (INWENTARZ § Przebudowy): w WebGPU każda nowa kombinacja = nowy pipeline.
   Przełączniki zamieniamy na gałęzie z uniformem (`If` / `select`) albo osobne, raz zbudowane materiały. Klon
   materiału ma ten sam klucz (tani w budowie), ale to nowy obiekt z własnymi wiązaniami — na strzał pule, nie klony
-  (`weapon3DSystem` ma już pulę wiązek ≤ 96, audyt bitwy §2.2).
+  (efekty broni, zadanie 17: impulsy wiązek w pierścieniu 1024 rysowanym jednym draw callem, audyt bitwy §2.2).
 - **Wiele materiałów jednego efektu — jeden graf węzłów.** Klucz materiału węzłowego to id jego węzłów
   (`Node.customCacheKey()` = `this.id`, `NodeMaterial.customProgramCacheKey`) plus stan; `NodeManager` buduje materiał
   (NodeBuilder na CPU, generacja WGSL) raz na klucz. Nowy graf na każdy wybuch / strzał = pełna budowa na CPU za każdym
@@ -205,6 +205,51 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   warstwy kamery passa — łapacz 0 cienia stacji nie widział (po rozpadzie widać cień bryły-ducha nad planetą; decyzja w 23).
   Obraz: sesja „stacja” w `zrzuty.mjs` (baza z tagu), sylwetki vs wnętrza — `scripts/webgpu/krawedzie.mjs`; klatka rozpadu
   bez budów — `scripts/webgpu/rozpad-stacji.mjs`.
+- **Pułapki z zadania 17 (efekty broni, V8 i three r183):** **`Math.hypot` alokuje** (~30–40 B na wywołanie w V8) —
+  w gorących ścieżkach `Math.sqrt(x·x + y·y)`. **Liczby double w argumentach NIEwklejonych wywołań V8 pakuje w
+  HeapNumber** (alokacja na wywołanie) — wiele liczb do pomocnika przez `Float64Array` (smugi: `_seg`), a metody
+  budowniczego krótkie (< 27 B bajtkodu — V8 wkleja je zawsze; bez parametrów domyślnych, ≤ 2 zapisy): łańcuch
+  `E(…).speed(a, b).life(a, b)…emit()` nie alokuje, opcje-obiekty dema kosztowały 0,6–1,5 KB na bogaty wylot. Pomiar
+  alokacji: przyrost `new_space` z `v8.getHeapSpaceStatistics()` po rozgrzewce JIT, najlepsza z kilku prób
+  (`tests/weaponRecipes.test.mjs`, `tests/pulseBeamPoolLimit.test.mjs`). **Liczba instancji siatki 1 ↔ > 1 zmienia
+  klucz programu** — rysunek instancjonowany trzyma `mesh.count ≥ 2` (druga instancja pusta, niewidoczna).
+  **Receptury z losowaniem**: własny strumień `fxRandom` — `Math.random` w efektach przesuwa sekwencję losowań gry
+  (rozrzut, zapalniki). Stare moduły wizualne nadal losują z `Math.random` gry (`mainExhaust3D`, `rand` / `coneDir`
+  banku `Fx3D`, `shieldImpactFx`, efekty rakiet, overlay), a liczba ich losowań zależy od stanu pul (budżet iskier
+  banku `Fx3D`), zoomu i kadru — przebieg bitwy zależy więc od wizualiów: po 17 (bronie nie zajmują już banku `Fx3D`)
+  iskry dysz MAIN dostają więcej budżetu i deterministyczna bitwa 48 okrętów rozjeżdża się z `main` od 2. klatki
+  (ślad losowań: pierwsza różnica w `mainExhaust3D.spawnSpark`; wywołania logiki gry identyczne do tego miejsca).
+  Do 23/24: wizualia na `fxRandom`. **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
+  `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
+  wyłączonymi tarczami zerują `val` celu (galeria broni).
+- **Pułapki z zadania 19 (three r183, V8):** **`InstancedMesh` w r183 stosuje macierz instancji PRZED `positionNode`**
+  (własny `positionNode` ją nadpisuje) — pule z własnym ruchem: zwykły `Mesh` z `InstancedBufferGeometry` i własnymi
+  atrybutami instancji (`src/3d/rockets/`). **`mesh.count` trzymać 0 albo ≥ 2** (przejście 1 ↔ > 1 przebudowuje potok);
+  rozgrzewka odsłania pule z licznikiem ≥ 2 i przywraca stan. **Core3D ma `scene.matrixWorldAutoUpdate = false`** —
+  siatka kroku efektów, która przestawia się w klatce (początek pul), sama liczy `matrixWorld` (`updateMatrix()` +
+  `matrixWorld.copy(matrix)`). **Barwa czyszczenia renderera jest globalna** — pass, który ją zmienia (mapa gęstości
+  dymu), przywraca poprzednią. **Porównania z demami:** wariant harnessu bez passu tła (kanwa przezroczysta,
+  premultiplied) pokazuje blask addytywny (rgb > alfa) ~2× jaśniej — porównywać na nieprzezroczystym tle (czarna płyta
+  w sesji „rakiety”). **V8: liczba zmiennoprzecinkowa w argumencie albo wyniku wywołania, którego JIT nie wklei, to nowy
+  obiekt (16 B)** — w pętlach klatki wpisy robocze pul (`pool.s` + `push()`), bufory `Float64Array`, kinematyka
+  w tablicach, `fillRandom` zamiast serii `rng.next()` w dużych funkcjach, `Math.sqrt(x·x + y·y)` zamiast `Math.hypot`
+  (alokuje nawet w kodzie zoptymalizowanym). `LightGrid.add` przekracza limit wklejania (~100 B na światło z liczb
+  argumentów) — kandydat na wariant z buforem. **Pomiar alokacji w testach:** atrapy (np. siatka-zamknięcie zamiast
+  `LightGrid`) robią wywołania polimorficzne i JIT przestaje wklejać — testy alokacji na początku pliku, prawdziwe obiekty,
+  pętla pomiaru rozgrzana kilkoma funkcjami (inaczej JIT wkleja mierzoną funkcję w pętlę) i minimum z kilku prób.
+- **Pułapki z zadania 22 (warp „Nurt”, efekty z dem):** **Dema liczą bloom `BloomNode` BEZ ×3 gry**
+  (`BLOOM_ZGODNOSC_WEBGL`) — ten sam emiter HDR z dema świeci w grze 3× mocniejszą poświatą (brzegi szczelin i błyski
+  obrastały białą mgłą); bloom bierze cały teksel ponad progiem, więc kolano na luminancji (`src/3d/warp/bloomKnee.js`:
+  do progu bez zmian, nadmiar ×1/3) oddaje poświatę dema bez ruszania barw pod progiem — dotyczy każdego efektu z dem
+  (bronie, rakiety, asteroidy). **Ośrodek cząstek w pudle wokół kamery** z pudłem zależnym od zoomu: przy oddaleniu brzegi
+  zostają puste (drobiny nie wracają same do równej gęstości) — przyrost pudła przenosi udział drobin w nowy pas
+  (`growShare`), a po przebudzeniu i skoku kamery (teleport, RTS) ośrodek od nowa (`reset` — jeden dispatch), inaczej ślad
+  poprzedniego skoku (rozrzedzenie, warkocz, zebrana nić) zostaje w nowym miejscu. **Oś dema w krótszym czasie gry**
+  (ładowanie 0,8 s zamiast 3 s): wielkości całkowane w czasie (dryf) skalują się jak ściśnięcie, a wzbudzenie z zanikiem
+  (1,1 s) tylko częściowo (×k^0,6) — krzywe po ułamku fazy, nie po sekundach. **Zgięcie tła bez passa:** mgławica to
+  płaszczyzna, więc przesunięcie próbki o `off` px = `uv + dFdx(uv)·off.x + dFdy(uv)·off.y` w jej materiale (gałąź po
+  jednolitym warunku — bez zgłoszeń shader liczy to co wcześniej). **Świeży kadłub (przylot) nie ma jeszcze SDF sylwetki**
+  (`hullShadowSdf.js` piecze z budżetem) — żar brzegu z alfy mipmapy sprite'a (`sprite.level(log2(szerokość brzegu))`).
 - **Pułapki z zadania 11 (tło menu, rozgrzewka):** tekstura z `minFilter = LinearFilter` i domyślnym `generateMipmaps
   = true` — WebGL próbkuje sam poziom 0, a three r183 na WebGPU i tak generuje mipmapy (`Textures.needsMipmaps` patrzy
   tylko na `generateMipmaps`) i daje samplerowi `mipmapFilter: 'linear'` (trójliniowo) — w materiale `.level(0)` albo
