@@ -10,7 +10,9 @@ export function getMountedWeaponAim(ship, loadout) {
   let state = aims.get(hp);
   if (!state) {
     const angle = Number(ship.angle) || 0;
-    state = { angle, previousAngle: angle, angVel: 0, target: null, nextBarrel: 0 };
+    // aimErr — błąd celowania po ostatnim kroku [rad] (ładowanie Mjolnira / Valkyrie,
+    // src/game/weaponCharge.js); charge — stan ładowania zaczepu (tworzy go weaponCharge).
+    state = { angle, previousAngle: angle, angVel: 0, target: null, nextBarrel: 0, aimErr: Math.PI, charge: null };
     aims.set(hp, state);
   }
   return state;
@@ -42,6 +44,8 @@ export function stepMountedWeaponAim(state, base, aimPoint, dt, drive) {
   state.angVel += clamp(desiredVel - state.angVel, -maxAccel * dt, maxAccel * dt);
   state.angVel = clamp(state.angVel * Math.exp(-damping * dt), -maxSpeed, maxSpeed);
   state.angle = wrap(state.angle + state.angVel * dt);
+  // Błąd celowania po kroku — bramka ładowania i strzału broni z `chargeTime` (18-B).
+  state.aimErr = Math.abs(wrap(desired - state.angle));
 }
 
 export function mountedWeaponRenderAngle(ship, loadout, alpha = 1) {

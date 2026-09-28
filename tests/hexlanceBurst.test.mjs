@@ -70,3 +70,35 @@ test('kolejka pusta i długi krok: wszystkie zaległe strzały w jednym kroku, b
     assert.equal(q.length, 0);
   } finally { Math.random = random; }
 });
+
+// Zadanie 18-B: seria w grze — superweapon.js buduje kolejkę buildHexlanceBurst z danych
+// (dawniej jeden strzał na gniazdo), rytm 0,25 s, przeładowanie rusza po opróżnieniu kolejki.
+test('superweapon.js: naciśnięcie po naładowaniu oddaje serię 4 strzałów co 0,25 s z gniazda Atlasa', async () => {
+  const shots = [];
+  const shakes = [];
+  globalThis.window = Object.assign(globalThis.window || {}, {
+    camera: { addShake: (m) => shakes.push(m) },
+    dispatchEvent: (e) => { if (e?.type === 'game_weapon_fired') shots.push(t); return true; }
+  });
+  const SW = await import('../src/game/superweapon.js');
+  const S = SW.superweaponState;
+  S.cooldown = 0; S.queue.length = 0; S.charging = false; S.armed = false;
+  const ship = {
+    pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, angle: 0, angVel: 0,
+    weapons: { builtin: [{ weapon: HEX, hp: { id: 'b0', pos: { x: 400, y: 0, rot: 90 } } }] }
+  };
+  let t = 0;
+  const dt = 1 / 120;
+  assert.equal(SW.tryFireSuperweapon(ship), true, 'pierwsze naciśnięcie — ładowanie');
+  for (; t < 1.3; t += dt) SW.updateSuperweapon(dt, ship, null);
+  assert.equal(S.armed, true, 'naładowane po 1,2 s');
+  assert.equal(SW.tryFireSuperweapon(ship), true, 'drugie naciśnięcie — seria');
+  assert.equal(S.queue.length, 4, 'kolejka burstCount × gniazda');
+  const t0 = t;
+  for (; t < t0 + 1.0; t += dt) SW.updateSuperweapon(dt, ship, null);
+  assert.equal(shots.length, 4, 'cztery strzały na naciśnięcie');
+  shots.forEach((ts, k) => assert.ok(Math.abs(ts - t0 - k * 0.25) <= dt + 1e-9, `strzał ${k} po ${ts - t0} s`));
+  assert.equal(shakes.length, 4, 'wstrząs przy każdym strzale serii');
+  assert.ok(S.cooldown > 0 && S.cooldown <= HEX.cooldown, 'przeładowanie rusza po serii');
+  assert.equal(SW.tryFireSuperweapon(ship), false, 'w przeładowaniu naciśnięcie odbija');
+});

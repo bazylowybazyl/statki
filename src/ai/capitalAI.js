@@ -9,6 +9,7 @@ import {
 import { getBattleSlot } from './fleetCoordinator.js';
 import { AWARENESS_CONFIG } from './fleetAwareness.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
+import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -775,6 +776,26 @@ const _spawnOpts = { type: null, hp: null, angleOverride: 0, pdTarget: null };
 const _leadTargetScratch = { x: 0, y: 0, vx: 0, vy: 0 };
 let nextWeaponGeometryId = 1;
 
+// Ładowanie broni z `chargeTime` (Mjolnir, Valkyrie — zadanie 18-B; ta sama maszyna stanów co
+// gracza, src/game/weaponCharge.js): działo gotowe, cel widoczny → ładuje, strzela po
+// naładowaniu przy błędzie celowania ≤ 0,03 rad; `requiresStationary` — tylko na postoju.
+// Stan na dziale (`weapon.charge`). Domyślne loadouty NPC takich broni nie mają (dziś ścieżka
+// uśpiona — bitwy NPC bez zmian). Efekt ładowania: hak gry window.spawnWeaponChargeFx.
+const _npcChargeInput = { wantFire: true, aimErr: 0, speed: 0, angVel: 0, ready: true };
+function stepNpcWeaponCharge(npc, weapon, aimErr, dt) {
+  const st = weapon.charge || (weapon.charge = createChargeState());
+  const vx = Number(npc.vx) || 0;
+  const vy = Number(npc.vy) || 0;
+  _npcChargeInput.aimErr = aimErr;
+  _npcChargeInput.speed = Math.sqrt(vx * vx + vy * vy);
+  _npcChargeInput.angVel = Number(npc.angVel) || 0;
+  const res = stepCharge(st, dt, _npcChargeInput, weapon.def);
+  if (res === CHARGE_CHARGING && typeof window.spawnWeaponChargeFx === 'function') {
+    window.spawnWeaponChargeFx(npc, weapon, st.u, dt);
+  }
+  return res === CHARGE_FIRE;
+}
+
 // Eksport dla testów (tests/pointDefenseTargeting.test.mjs); gra woła przez mózgi.
 export function processAutonomousWeapons(npc, dt) {
   if (!npc) return;
@@ -943,6 +964,9 @@ export function processAutonomousWeapons(npc, dt) {
           weapon._losRetryCd = 0.15;
           weapon.cachedTarget = null;
           weapon.scanCd = 0;
+        } else if (chargeTimeOf(weapon.def) > 0 &&
+          !stepNpcWeaponCharge(npc, weapon, Math.abs(window.wrapAngle(aimAngle - weapon.visualAngle)), dt)) {
+          // Ładuje (albo czeka na postój / wycelowanie) — strzał dopiero po naładowaniu.
         } else {
           if (window.spawnBulletAdapter) {
             // Opcje strzału — jeden obiekt na moduł (adapter czyta je od razu).
@@ -963,6 +987,8 @@ export function processAutonomousWeapons(npc, dt) {
     } else {
       let diff = window.wrapAngle(restAngle - weapon.visualAngle);
       weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 3 * dt);
+      // Bez celu ładowanie gaśnie (gracz: holdMax; tu cel zniknął całkiem).
+      if (weapon.charge && weapon.charge.charge >= 0) cancelCharge(weapon.charge);
     }
   }
 

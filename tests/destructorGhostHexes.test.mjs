@@ -294,5 +294,8 @@ test('game hit paths hand the found hex to applyImpact', () => {
   assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, [^;]*beamHitShard\)/);
   const bullets = html.slice(html.indexOf('function bulletsAndCollisionsStep('));
   assert.match(bullets, /hullShard = hexSweep\.hitShard/);
-  assert.match(bullets, /applyHexImpact\(hitNPC\._realEntity \|\| hitNPC, hitX, hitY, npcDamage, [^;]*hitHexShard\)/);
+  // Zadanie 18-B: krater wejścia z mnożnikiem mechaniki broni (rykoszet × 0,3; reszta arsenału
+  // × 1 — obrażenia jak dotąd), encja trafienia jako realHit = hitNPC._realEntity || hitNPC.
+  assert.match(bullets, /const realHit = hitNPC\._realEntity \|\| hitNPC;/);
+  assert.match(bullets, /applyHexImpact\(realHit, hitX, hitY, npcDamage \* entryK\.crater, [^;]*hitHexShard\)/);
 });

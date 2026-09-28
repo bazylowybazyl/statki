@@ -1,10 +1,16 @@
 /**
  * Moduł Superbroni (Hexlance) - W pełni zintegrowany z Hardpointami
+ *
+ * Cykl: pierwsze naciśnięcie — ładowanie `chargeTime` (1,2 s), drugie w oknie „armed” — seria
+ * `burstCount` strzałów z każdego gniazda co `burstDelay` (dane broni: 4 × 0,25 s, zadanie 18-B;
+ * dawniej jeden strzał na gniazdo), przeładowanie `cooldown` po serii. Obrażenia tylko
+ * strukturalne (rzaz HullBodies.cutSegment → sufit HP od zabitych węzłów).
  */
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
 import { WeaponFx } from '../3d/weapons/weaponFx.js';
 import { createCarrier, writeCarrier } from './carrierVelocity.js';
+import { buildHexlanceBurst } from './weaponCharge.js';
 
 // Nośniki (src/game/carrierVelocity.js): lufa okrętu — ładowanie, rozbłysk,
 // smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia, rzaz i wyjście.
@@ -243,17 +249,14 @@ function fireSingleMount(ship, cannonIndex) {
     }
 }
 
+// Seria z danych broni (zadanie 18-B, PROJEKT-BRONI §2.5, §5 p. 3): `burstCount` strzałów
+// z każdego gniazda co `burstDelay` (Hexlance 4 × 0,25 s), gniazdo po gnieździe
+// (buildHexlanceBurst, src/game/weaponCharge.js). Opóźnienia WZGLĘDNE — tak czyta je pętla
+// w updateSuperweapon (dawniej narastające 0, d, 2d… przy czytaniu względnym dawały 0, d, 3d,
+// 6d przy 3+ gniazdach). Przeładowanie rusza po opróżnieniu kolejki (jak dotąd).
 function prepareSuperweaponSalvo(ship) {
-    superweaponState.queue = [];
-    const delay = superweaponState.shotDelay;
     const mounts = getActiveMounts(ship);
-    let currentDelay = 0;
-    
-    // Built-in fires directly from the hardpoint pivot, one shot per mount.
-    for (let cannonIndex = 0; cannonIndex < mounts.length; cannonIndex++) {
-        superweaponState.queue.push({ cannonIndex, delay: currentDelay });
-        currentDelay += delay;
-    }
+    buildHexlanceBurst(HEXLANCE_DEF, mounts.length, superweaponState.queue);
     superweaponState.cooldown = superweaponState.cooldownMax;
 }
 
