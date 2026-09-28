@@ -19,7 +19,7 @@ const CHROME = [
 /**
  * Headless Chrome jak w dema/rdzen-cdp.js (te same flagi GPU), plus dodatkowe
  * argumenty (np. '--enable-dawn-features=use_dxc') i stały port debugowania.
- * @param {{ width?: number, height?: number, extraArgs?: string[] }} o
+ * @param {{ width?: number, height?: number, extraArgs?: string[], webgpu?: boolean }} o
  */
 export async function startChrome(o = {}) {
   if (!CHROME) throw new Error('Nie znaleziono chrome.exe');
@@ -32,7 +32,9 @@ export async function startChrome(o = {}) {
     '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
     '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
     '--disable-gpu-vsync', '--disable-frame-rate-limit', '--hide-scrollbars',
-    '--autoplay-policy=no-user-gesture-required', '--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU',
+    '--autoplay-policy=no-user-gesture-required',
+    // webgpu: false — bez flag włączających WebGPU (zadanie 23: sprawdzenie gry w Chrome bez WebGPU)
+    ...(o.webgpu !== false ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU'] : []),
     ...(o.extraArgs || []),
     `--window-size=${W},${H}`, 'about:blank'
   ];
