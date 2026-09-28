@@ -103,30 +103,53 @@ test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i
   assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
-// Port WebGPU (zadanie 01): renderer.shadowMap ma tylko enabled / type — mapa
-// cienia odświeża się per światło. Słońce gry zgłasza się do Core3D, a render()
-// raz na klatkę (na starcie, przed pierwszym odbiorcą) ustawia autoUpdate = false
-// i needsUpdate = true. Dawne dwa odświeżenia z WebGL (przed ortho i FG) są
-// zbędne: ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (SPIKE 9).
-test('Core3D: mapa cienia słońca per światło, odświeżana raz na klatkę na starcie render()', async () => {
+// Port WebGPU: renderer.shadowMap ma tylko enabled / type — mapa cienia odświeża się
+// per światło. Zadanie 23: semantyka WebGLShadowMap z bazy — mapa rysowana tuż przed
+// passem ortho (rzucający z warstwy 0) i FG (warstwa 2 + trzymacze rozgrzewki cienia 31),
+// odbiorcy passa czytają świeżą mapę; planety — ostatnią. ShadowNode three r183 (raz na
+// klatkę rAF, wszystkie warstwy kamery cienia) dawał łapaczowi warstwy 0 cień stacji z FG.
+test('Core3D: mapa cienia słońca per pass (warstwy passa jak WebGLShadowMap) — PassShadowNode', async () => {
   assert.doesNotMatch(core3d, /shadowMap\.(autoUpdate|needsUpdate)\s*=/, 'WebGL-owe flagi mapy cienia wróciły');
   const renderAt = core3d.indexOf('\n  render() {');
-  const requestAt = core3d.indexOf('this._requestSunShadowUpdate(t);', renderAt);
   const chainAt = core3d.indexOf('for (const pass of this._scenePasses)', renderAt);
-  assert.ok(renderAt > 0 && requestAt > renderAt && requestAt < chainAt, 'odświeżenie mapy przed passami sceny');
+  const runAt = core3d.indexOf('this._runScenePass(pass);', chainAt);
+  const orthoAt = core3d.indexOf('if (pass === this.renderPassOrtho) this._requestSunShadowUpdate(t, 1 << pass.layer);', chainAt);
+  const fgAt = core3d.indexOf('else if (pass === this.renderPassFg) this._requestSunShadowUpdate(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER));', chainAt);
+  assert.ok(renderAt > 0 && orthoAt > chainAt && fgAt > orthoAt && runAt > fgAt, 'odświeżenie mapy w pętli passów, przed passem ortho i FG');
+  assert.equal(core3d.slice(renderAt, chainAt).includes('_requestSunShadowUpdate('), false, 'bez dawnego odświeżenia raz na klatkę na starcie render()');
   const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
   assert.match(planets, /Core3D\.setSunShadowLight\?\.\(this\.sunLight\);/);
-  // Zachowanie: needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
+  // Zachowanie: własny węzeł cienia, needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
   globalThis.window = globalThis.window || {};
+  const THREE = await import('three/webgpu');
   const { Core3D } = await import('../src/3d/core3d.js');
-  const light = { isLight: true, castShadow: true, shadow: { autoUpdate: true, needsUpdate: false } };
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.castShadow = true;
+  light.shadow.camera.layers.enableAll();
   const core = Object.create(Core3D);
   core.setSunShadowLight(light);
   assert.equal(light.shadow.autoUpdate, false);
-  core._requestSunShadowUpdate({ threeShadows: false });
+  const node = light.shadow.shadowNode;
+  assert.ok(node instanceof THREE.ShadowNode && node.constructor.type === 'PassShadowNode', 'własny węzeł cienia światła');
+  core.setSunShadowLight(light);
+  assert.equal(light.shadow.shadowNode, node, 'drugie zgłoszenie nie podmienia węzła');
+  core._requestSunShadowUpdate({ threeShadows: false }, 1);
   assert.equal(light.shadow.needsUpdate, false, 'cienie wyłączone — bez odświeżania');
-  core._requestSunShadowUpdate({ threeShadows: true });
+  core._requestSunShadowUpdate({ threeShadows: true }, (1 << 2) | (1 << 31));
   assert.equal(light.shadow.needsUpdate, true);
+  // updateBefore: odświeżenie tylko na żądanie, rzucający z warstw passa, maska kamery cienia wraca.
+  const masks = [];
+  node.shadowMap = { depthTexture: { version: 3 } };
+  node.updateShadow = () => { masks.push(light.shadow.camera.layers.mask); node._depthVersionCached = 3; };
+  node.updateBefore({});
+  assert.deepEqual(masks, [((1 << 2) | (1 << 31)) | 0], 'mapa FG: warstwa 2 + trzymacze rozgrzewki cienia');
+  assert.equal(light.shadow.camera.layers.mask, -1, 'maska kamery cienia przywrócona (enableAll)');
+  assert.equal(light.shadow.needsUpdate, false, 'odświeżone — do następnego żądania');
+  node.updateBefore({});
+  assert.equal(masks.length, 1, 'bez żądania (np. pass planet) — ostatnia mapa, bez rysowania');
+  core._requestSunShadowUpdate({ threeShadows: true }, 1 << 0);
+  node.updateBefore({});
+  assert.deepEqual(masks.slice(1), [1], 'mapa ortho: tylko warstwa 0');
   core.setSunShadowLight(null);
   assert.equal(core._sunShadowLight, null);
 });

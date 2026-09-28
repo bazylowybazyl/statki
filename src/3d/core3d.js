@@ -36,6 +36,9 @@ const GPU_TIMER_RENDER_QUERIES = 128;
 // Pula compute (renderer.compute: 2 zapytania na wywołanie) — klatka gry to dziś ~10–30 wywołań
 // (efekty broni, rakiety, ośrodek warpa, pas asteroid, mapa ran, przesunięcia pul).
 const GPU_TIMER_FRAME_COMPUTE_QUERIES = 256;
+// Warstwa trzymaczy rozgrzewki passa cienia (destruction3D.js, SHADOW_WARM_LAYER: żaden pass Core3D
+// jej nie rysuje) — w mapie cienia FG, żeby pipeline cienia kawałków stacji powstał przed rozpadem.
+const SHADOW_WARM_LAYER = 31;
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko poza
 // ośrodkiem warpa (liczony wokół kamery gry w płaszczyźnie gry).
 const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true, warp: false });
@@ -313,6 +316,41 @@ export function createShadowShaftsPass() {
     name: 'shadowShafts', bucket: 'shafts', enabled: true, quad, material,
     hullSdfPlaceholder: uniforms.uHullSdf.value, fieldOccPlaceholder: uniforms.uFieldOcc.value
   };
+}
+
+// Mapa cienia słońca PER PASS (zadanie 23) — semantyka WebGLShadowMap z bazy: mapa rysowana tuż przed
+// passem, który ją czyta, z rzucającymi TYLKO z warstw kamery tego passa (Core3D: przed passem ortho —
+// warstwa 0, przed FG — warstwa 2 i trzymacze rozgrzewki cienia, SHADOW_WARM_LAYER); pozostałe passy
+// (planety, ring-planety) czytają ostatnią mapę, jak na WebGL. ShadowNode three r183 odświeża mapę
+// najwyżej raz na klatkę rAF i rysuje wszystkie warstwy kamery cienia (gra: layers.enableAll) — łapacz
+// cienia warstwy 0 (z = −2) dostawał cień obiektów FG (stacje, rozpad stacji: cień bryły-ducha nad
+// planetą), a drugi widok podzielonego ekranu — mapę z kamery pierwszego. Tu odświeżenie tylko na
+// żądanie Core3D (`shadow.needsUpdate` przed passem), warstwy z `passLayersMask`.
+class PassShadowNode extends THREE.ShadowNode {
+  static get type() {
+    return 'PassShadowNode';
+  }
+
+  constructor(light) {
+    super(light);
+    /** Maska warstw rzucających dla następnego odświeżenia (0 = warstwy kamery cienia bez zmian). */
+    this.passLayersMask = 0;
+  }
+
+  updateBefore(frame) {
+    const shadow = this.shadow;
+    if (shadow.needsUpdate !== true) return;
+    const layers = shadow.camera.layers;
+    const saved = layers.mask;
+    if (this.passLayersMask !== 0) layers.mask = this.passLayersMask;
+    try {
+      this.updateShadow(frame);
+    } finally {
+      layers.mask = saved;
+    }
+    // Pierwsze odświeżenie tworzy mapę (nowa wersja tekstury głębi) — needsUpdate zostaje na następny pass, jak w three.
+    if (this.shadowMap && this.shadowMap.depthTexture.version === this._depthVersionCached) shadow.needsUpdate = false;
+  }
 }
 
 const BLEND_ADD_ONE_ONE = {
@@ -1369,21 +1407,29 @@ export const Core3D = {
     );
   },
 
-  // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu.
-  // W WebGPU odświeżanie mapy jest per światło (renderer.shadowMap ma tylko
-  // enabled / type): autoUpdate = false, needsUpdate raz na starcie render().
-  // ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (SPIKE 9) — dawne
-  // dwa odświeżenia z WebGL (przed ortho i FG) są zbędne.
+  // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu —
+  // przed pierwszym renderem (węzeł cienia światła powstaje przy budowie pierwszego
+  // odbiorcy). W WebGPU odświeżanie mapy jest per światło (renderer.shadowMap ma
+  // tylko enabled / type): autoUpdate = false, własny węzeł cienia (PassShadowNode)
+  // i odświeżenie przed passem ortho i FG z warstwami passa, jak na WebGL (zadanie 23).
   setSunShadowLight(light) {
     this._sunShadowLight = (light && light.isLight && light.shadow) ? light : null;
-    if (this._sunShadowLight) this._sunShadowLight.shadow.autoUpdate = false;
+    if (!this._sunShadowLight) return;
+    const shadow = this._sunShadowLight.shadow;
+    shadow.autoUpdate = false;
+    if (!(shadow.shadowNode instanceof PassShadowNode)) shadow.shadowNode = new PassShadowNode(this._sunShadowLight);
   },
 
-  _requestSunShadowUpdate(toggles) {
+  // Mapa cienia przed passem sceny: rzucający z warstw `layersMask` (kamera passa), odbiorcy tego passa
+  // czytają świeżą mapę; passy bez żądania — ostatnią (planety, ring-planety — jak na WebGL).
+  _requestSunShadowUpdate(toggles, layersMask) {
     const light = this._sunShadowLight;
     if (!light || !light.castShadow || !light.shadow) return;
     light.shadow.autoUpdate = false;
-    if (toggles.threeShadows !== false) light.shadow.needsUpdate = true;
+    if (toggles.threeShadows === false) return;
+    const node = light.shadow.shadowNode;
+    if (node instanceof PassShadowNode) node.passLayersMask = layersMask | 0;
+    light.shadow.needsUpdate = true;
   },
 
   // Maska widoczności słońca (sunShadowMask.js): uniformy okluderów i jeden
@@ -1527,8 +1573,7 @@ export const Core3D = {
     renderer.autoClear = false;
     renderer.toneMapping = THREE.NoToneMapping;
 
-    // Mapa cienia słońca: raz na klatkę, zanim pierwszy odbiorca ją przeczyta.
-    this._requestSunShadowUpdate(t);
+    // Mapa cienia słońca: per pass (przed ortho i FG, warstwy passa) — w pętli passów niżej.
 
     // Maska widoczności słońca — PRZED pre-passem halo i passami sceny, bo
     // czytają ją materiały (kadłuby, tło, planety przy ringu, atmosfery).
@@ -1568,6 +1613,10 @@ export const Core3D = {
       if (!this._scenePassHasContent(pass, layerActivity)) continue;
       // Zgięcie tła warpa (zadanie 22) nie ma tu passa: w demie gnie się tylko mgławica, a pass tła
       // gry niesie też gwiazdy i dolną część ringu — zgina ją materiał mgławicy (skyBend.js).
+      // Mapa cienia słońca przed passami z odbiorcami (łapacze cienia warstw 0 i 2, stacje FG) — z
+      // rzucającymi z warstw TEGO passa, jak WebGLShadowMap w bazie (PassShadowNode, zadanie 23).
+      if (pass === this.renderPassOrtho) this._requestSunShadowUpdate(t, 1 << pass.layer);
+      else if (pass === this.renderPassFg) this._requestSunShadowUpdate(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER));
       this._runScenePass(pass);
     }
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
