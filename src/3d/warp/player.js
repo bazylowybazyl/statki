@@ -20,8 +20,11 @@
 //              front od dziobu 18 000 → −18 000 j. w 0,22 s), bańka zapada się od czoła
 //              (0,2 s), wydech tyłu, błysk przy dziobie, fala, szew i żar brzegu kadłuba,
 //              ośrodek gaśnie (setFade 6 przez 1,5 s).
-// Kamera gry ma własny rig (cameraRig.js) — kopa i zoomu z dema nie ma (agents.md: bez
-// offsetów kamery poza rigiem); zostaje wstrząs przez `onShake` (kop — tu, wyjście — exitWarp).
+// Kamerą rządzi rig gry (cameraRig.js, agents.md: bez offsetów kamery poza rigiem) — kop
+// kamery z dema (statek wyrywa się do przodu, zoom −10% / +10%, oddalenie na czas skoku) jest
+// tam (zadanie 22-B: stepCameraRigWarp na zdarzeniach automatu warpa); tu zostaje wstrząs przez
+// `onShake` (kop — tu, wyjście — exitWarp). Ośrodek widzi ruch kamery względem statku
+// (warpNurt.js: kamera ośrodka = widoczna droga statku + zmiana offsetu riga).
 
 import { warpPalette, seamColor, heatColor } from './palette.js';
 
@@ -202,7 +205,8 @@ export class WarpPlayerFx {
       bub.on = A > 0.001 && (mode !== 'exit' || tx < 0.45);
       bub.x = sx; bub.y = sy;
       bub.angle = this.angle;
-      // Prędkość bańki w przestrzeni ośrodka: prędkość widoczna kamery (+ ruch statku w kadrze).
+      // Prędkość bańki w przestrzeni ośrodka: prędkość widoczna kamery + ruch statku w kadrze
+      // (warpNurt.js: vRel = −zmiana offsetu kamery / dt) = prędkość widoczna statku.
       bub.vx = medium.flowX + (Number(game.vRelX) || 0);
       bub.vy = medium.flowY + (Number(game.vRelY) || 0);
       bub.R = R;
@@ -229,7 +233,9 @@ export class WarpPlayerFx {
     st.angle = this.angle;
     st.refX = sx;
     st.refY = sy;
-    const speedFrac = clamp01((Number(medium.flow) || 0) / WARP_FLOW.gear2);
+    // Prędkość WIDOCZNA statku (nie kamery ośrodka — ta przy kopie kamery cofa się i dogania statek).
+    const visFlow = this.visibleFlow(t);
+    const speedFrac = clamp01((visFlow !== null ? visFlow : (Number(medium.flow) || 0)) / WARP_FLOW.gear2);
     if (mode === 'charging' || mode === 'idle') {
       st.stretch = 0.32 * cT * cT;
       st.warpTint = cT * 0.4;

@@ -386,6 +386,14 @@
                 </div>
                 <p class="mm-note">Auto: w walce kamera zagląda za kursorem, poza walką stoi i wyprzedza lot. Zawsze = jak w walce, Nigdy = jak poza walką.</p>
               </div>
+              <div class="mm-field">
+                <div class="mm-field-label">Kop kamery przy warpie</div>
+                <div class="menu-chip-group" role="group" aria-label="Kop kamery przy warpie">
+                  <button class="menu-chip" data-camera-warp-kick="on">Wł.</button>
+                  <button class="menu-chip" data-camera-warp-kick="off">Wył.</button>
+                </div>
+                <p class="mm-note">Wł.: przy skoku statek wyrywa się do przodu w kadrze, na czas skoku kamera się oddala, po wyjściu wraca do ustawionego zoomu. Wył.: kamera w warpie jak w zwykłym locie.</p>
+              </div>
               <p class="mm-note">Lista skrótów: menu główne → Sterowanie. Przypisywanie klawiszy — wkrótce.</p>
             </div>
           </div>
@@ -943,10 +951,11 @@
     import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics } from "./src/game/projectileTrajectory.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
-    import { stepCameraZoom, wheelDeltaPx } from "./src/game/cameraZoom.js";
+    import { stepCameraZoom, cameraZoomBase, wheelDeltaPx } from "./src/game/cameraZoom.js";
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
-      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx
+      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
+      normalizeCameraWarpKickMode
     } from "./src/game/cameraRig.js";
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
@@ -1742,6 +1751,8 @@
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
       // Kamera za kursorem: 'auto' (tylko w walce) | 'always' | 'never' — src/game/cameraRig.js.
       cameraLook: 'auto',
+      // Kop kamery przy warpie (skok, wyjście, oddalenie zoomu): 'on' | 'off' — src/game/cameraRig.js.
+      cameraWarpKick: 'on',
       planetQuality: 'medium',
       shadowShafts: 'medium'
     };
@@ -5437,6 +5448,10 @@
       // Płynny zoom (src/game/cameraZoom.js): prędkość sprężyny w log/s i kotwica
       // zoomu RTS pod kursorem (px od środka kadru). Krok raz na klatkę: updateCameraZoom.
       zoomVel: 0,
+      // Zoom gracza (stan sprężyny) i przejściowy człon log(zoom) kopu warpa (cameraRig.js,
+      // updateCameraWarpKick): camera.zoom = zoomBase · e^zoomImpulseLog.
+      zoomBase: 1.0,
+      zoomImpulseLog: 0,
       zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
@@ -5474,7 +5489,8 @@
         this.focusStation = null;
         this.targetX = this.x;
         this.targetY = this.y;
-        this.targetZoom = this.zoom;
+        // Zoom gracza bez kopu warpa: oddalenie skoku wraca poza kamerą statku do niego (bez skoku).
+        this.targetZoom = cameraZoomBase(this);
         this.zoomVel = 0;
         this.transition = null;
         this.focusArrived = false;
@@ -20467,6 +20483,8 @@
       // Wyjście widać w warpie „Nurt” (src/3d/warp/player.js: front, fala refrakcji, błysk, szew
       // i żar) — dawny świecący pierścień 2D (spawnShockwave) usunięty w zadaniu 22.
       camera.addShake(18, 0.22);
+      // Kamera (cameraRig.js): impuls zoomu +10% i powrót do zoomu gracza — zdarzenie dla riga.
+      noteCameraRigWarp(cameraRig, 'exit');
 
       warp.entryProgress = 0;
 
@@ -20649,7 +20667,9 @@
         warp.fuel = warp.fuelMax;
       }
       // Skok widać w warpie „Nurt” (src/3d/warp/player.js: kop — smugi gwiazd, fala, błysk za
-      // rufą, ośrodek); dawny rozprysk cząstek 2D usunięty w zadaniu 22.
+      // rufą, ośrodek); dawny rozprysk cząstek 2D usunięty w zadaniu 22. Kamera (cameraRig.js):
+      // statek wyrywa się do przodu w kadrze, zoom −10% — zdarzenie dla riga.
+      noteCameraRigWarp(cameraRig, 'kick');
     }
 	const _p1ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
 	const _p2ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
@@ -22190,6 +22210,26 @@
     // W RTS kamera jedzie tak, by punkt świata pod kotwicą (kursor z ostatniego
     // ząbka) został w miejscu; ten sam przesuw dostaje prevCameraState, więc
     // interpolacja pozycji go nie rozmywa.
+    // Kop warpa (src/game/cameraRig.js, demo „Nurt”): oś impulsów w CZASIE GRY (w pauzie stoi),
+    // raz na klatkę przed zoomem i rigiem — człon log(zoom) dla updateCameraZoom, cofnięcie
+    // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
+    // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
+    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false };
+    function updateCameraWarpKick(gameDt) {
+      const w = _cameraWarpInput;
+      w.dt = gameDt;
+      w.state = warp.state;
+      w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
+      const dir = warp.dir;
+      if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
+      else if (ship) { w.dirX = Math.cos(ship.angle); w.dirY = Math.sin(ship.angle); }
+      w.enabled = normalizeCameraWarpKickMode(OPTIONS.cameraWarpKick) === 'on'
+        && camera.mode === 'ship' && !!ship && !ship.destroyed;
+      // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
+      w.suspend = !!(camera.transition && camera.transition.kind !== 'ship');
+      stepCameraRigWarp(cameraRig, w, cameraRigTune);
+      camera.zoomImpulseLog = cameraRig.warpZoomLog;
+    }
     function updateCameraZoom(dt) {
       const anchor = camera.zoomAnchor;
       if (camera.transition && camera.transition.kind !== 'ship') {
@@ -22220,6 +22260,7 @@
       if (PAUSED) {
         saveState();
         updateCameraTarget(frame);
+        updateCameraWarpKick(0);
         updateCameraZoom(frame);
         zoomIndicator.update(frame);
         // Pauza: poza gracza = fizyczna, efekty niesione nośnikiem stoją razem z nim.
@@ -22321,6 +22362,7 @@
         camera.shakeTime -= frame;
         if (camera.shakeTime <= 0) camera.shakeMag = 0;
       }
+      updateCameraWarpKick(frame);
       updateCameraZoom(frame);
       zoomIndicator.update(frame);
       updatePlayerStatusUI();
@@ -23025,12 +23067,14 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
-    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, ship: null, warp: null, npcs: null };
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, npcs: null };
     function _warpNurtFrame(dt, camNoShake, camShake) {
       const o = _warpNurtCtx;
       o.dt = dt;
       o.cam = camNoShake;
       o.camShake = camShake;
+      // Kamera = statek + offset riga (ośrodek w skoku idzie za zmianą offsetu: wyprzedzenie, kop).
+      o.camFollow = camera.mode === 'ship' && !camera.transition;
       o.ship = ship;
       o.warp = warp;
       o.npcs = npcs;
@@ -23158,7 +23202,8 @@
           ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur)
           : 0;
         const weaponShakeMag = weaponShake ? (Number(weaponShake.mag) || 0) : 0;
-        const shakePx = cameraShakeAmplitudePx(addShakeMag, weaponShakeMag, cameraRigTune);
+        // + drżenie ładowania warpa (kop warpa w rigu, px) — pod tym samym sufitem.
+        const shakePx = cameraShakeAmplitudePx(addShakeMag, weaponShakeMag, cameraRigTune, cameraRig.warpShakePx);
         if (shakePx > 0) {
           sampleCameraShakePx(shakePx, vfxTime, cameraRigTune, _cameraShakePx);
           cam.x += _cameraShakePx.x / cam.zoom;
@@ -26514,6 +26559,32 @@
       if (savedCameraLook) OPTIONS.cameraLook = normalizeCameraLookMode(savedCameraLook);
     } catch { }
     updateCameraLookUI();
+
+    // --- KOP KAMERY PRZY WARPIE (src/game/cameraRig.js: stepCameraRigWarp) ---
+
+    function updateCameraWarpKickUI() {
+      const current = normalizeCameraWarpKickMode(window.OPTIONS && window.OPTIONS.cameraWarpKick);
+      document.querySelectorAll('[data-camera-warp-kick]').forEach(btn => {
+        const isActive = (btn.dataset.cameraWarpKick === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-camera-warp-kick]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = normalizeCameraWarpKickMode(e.currentTarget.dataset.cameraWarpKick);
+        if (window.OPTIONS) window.OPTIONS.cameraWarpKick = mode;
+        try { localStorage.setItem('sc_camera_warp_kick', mode); } catch { }
+        updateCameraWarpKickUI();
+      });
+    });
+
+    try {
+      const savedWarpKick = localStorage.getItem('sc_camera_warp_kick');
+      if (savedWarpKick) OPTIONS.cameraWarpKick = normalizeCameraWarpKickMode(savedWarpKick);
+    } catch { }
+    updateCameraWarpKickUI();
 
   </script>
 

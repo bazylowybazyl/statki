@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CAMERA_ZOOM_SMOOTH, stepCameraZoom, wheelDeltaPx } from '../src/game/cameraZoom.js';
+import { CAMERA_ZOOM_SMOOTH, stepCameraZoom, cameraZoomBase, wheelDeltaPx } from '../src/game/cameraZoom.js';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 // Ząbek kółka przy deltaY = 100 i camera.wheelSpeed = 0,002.
@@ -100,6 +100,53 @@ test('cel poza zakresem kończy się na granicy zoomu', () => {
   const near = run(makeCam(1, 0.001), steps(1 / 60, 240));
   assert.equal(near.zoom, 0.035);
   assert.equal(near.zoomVel, 0);
+});
+
+test('człon przejściowy (kop warpa): zoom = zoomBase · e^człon, sprężyna i cel gracza go nie widzą', () => {
+  // Spoczynek: człon działa od razu (bez sprężyny), zdjęty — dokładnie zoom gracza.
+  const cam = makeCam(0.5, 0.5);
+  cam.zoomImpulseLog = Math.log(0.55);
+  stepCameraZoom(cam, 1 / 144);
+  assert.ok(Math.abs(cam.zoom - 0.275) < 1e-12);
+  assert.equal(cam.zoomBase, 0.5);
+  assert.equal(cam.targetZoom, 0.5);
+  assert.equal(cameraZoomBase(cam), 0.5);
+  cam.zoomImpulseLog = 0;
+  assert.equal(stepCameraZoom(cam, 1 / 144), false, 'bez członu i w spoczynku — stoi');
+  assert.equal(cam.zoom, 0.5);
+
+  // Ząbek kółka w trakcie członu: sprężyna (zoom gracza) biegnie tak samo jak bez niego.
+  const plain = makeCam(1, NOTCH);
+  const kicked = makeCam(1, NOTCH);
+  for (let i = 0; i < 144; i++) {
+    kicked.zoomImpulseLog = -0.3 * Math.sin(i / 20);
+    stepCameraZoom(plain, 1 / 144);
+    stepCameraZoom(kicked, 1 / 144);
+    assert.ok(Math.abs(kicked.zoomBase - plain.zoom) < 1e-12, `klatka ${i}`);
+    assert.ok(Math.abs(Math.log(kicked.zoom / kicked.zoomBase) - kicked.zoomImpulseLog) < 1e-12);
+  }
+
+  // Zapis z zewnątrz (teleport, harness, dev) w trakcie członu = nowy zoom gracza.
+  const ext = makeCam(0.5, 0.5);
+  ext.zoomImpulseLog = Math.log(0.55);
+  stepCameraZoom(ext, 1 / 144);
+  ext.zoom = ext.targetZoom = 0.1;
+  assert.equal(cameraZoomBase(ext), 0.1);
+  stepCameraZoom(ext, 1 / 144);
+  assert.equal(ext.zoomBase, 0.1);
+  assert.ok(Math.abs(ext.zoom - 0.055) < 1e-12);
+
+  // Zakres: zoom na ekranie przycięty, zoom gracza nie.
+  const edge = makeCam(0.035, 0.035);
+  edge.zoomImpulseLog = Math.log(0.55);
+  stepCameraZoom(edge, 1 / 144);
+  assert.equal(edge.zoom, 0.035);
+  assert.equal(edge.zoomBase, 0.035);
+  // Śmieci w członie nie psują zoomu.
+  const bad = makeCam(0.5, 0.5);
+  bad.zoomImpulseLog = NaN;
+  stepCameraZoom(bad, 1 / 144);
+  assert.equal(bad.zoom, 0.5);
 });
 
 test('delta kółka: linie (Firefox) i strony liczone jak piksele', () => {
