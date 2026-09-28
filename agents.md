@@ -94,14 +94,14 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
 - **Maska słońca, SDF kadłubów, refrakcja (zadanie 03):** pass maski = `QuadMesh` + NodeMaterial (`createShadowShaftsPass`
   w `core3d.js`, marsz po SDF — `hullSdfShadow` w `hullShadowSdf.js`); materiały czytają maskę funkcjami TSL z
-  `sunShadowMask.js` po **`screenUV`** (rozmiar AKTUALNEGO celu — snapshot refrakcji w połowie rozdzielczości trafia sam,
-  bez teksela). Cele pomocnicze, do których rysują materiały SCENY (halo, snapshot refrakcji), mają format / typ / MSAA /
+  `sunShadowMask.js` po **`screenUV`** (rozmiar AKTUALNEGO celu — cel w innej rozdzielczości trafia sam, bez teksela).
+  Cele pomocnicze, do których rysują materiały SCENY (halo), mają format / typ / MSAA /
   głębię `composerTarget`: three buduje materiały (NodeBuilder) i pipeline'y per KONTEKST renderu, a kontekst to stan
   załączników celu — inny format = budowa wszystkiego w kadrze na zimno przy pierwszym użyciu. Tablice warstw
   (`DataArrayTexture`): three r183 w WebGPU ignoruje `layerUpdates` i na `needsUpdate` wgrywa całą tablicę (SDF
   kadłubów 4 MB, ~3 ms CPU) — jedna warstwa przez `Core3D.uploadTextureLayer` (hak `HullShadowSdf.layerUploader`).
-  Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`; fala uderzeniowa A/B:
-  `scripts/webgpu/fala-uderzeniowa.mjs`. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
+  Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`. Fala z refrakcją
+  (`shockwave3D.js`, snapshot sceny) usunięta w zadaniu 19 — fale idą przez zniekształcenia efektów. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
   kamery gracza 1; na WebGL widok 1 miał je przesunięte, widok 2 — żadnych).
 - **Infrastruktura efektów GPU (zadanie 12, `src/3d/fx/`, opis `docs/webgpu/FX-INFRA.md`)** — `Core3D.fx` (`fxFrame.js`)
   raz na klatkę rAF na starcie `render()`, przed passami (podzielony ekran: drugi `renderSingle` nic nie robi): kroki
@@ -124,6 +124,18 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
   lot, trafienie).
+- **Rakiety (zadanie 19, `src/3d/rockets/`, opis `docs/webgpu/DEMO-RAKIETY.md` § Port w grze):** lot, naprowadzanie,
+  trafienia i obrażenia zostają w `rocketSystem3D.js`; wygląd z dema `rakiety-webgpu` to reżyser `RocketEffects`
+  (`effects.js`) na zdarzeniach lotu (`onLaunch / onIgnite / onFly / prepareContact / onDetonate / update`) i krok efektów
+  „rakiety” (`rocketFx.js`): dym compute (mapa gęstości, samocień, światło z siatki, siła śladu tylko w dymie > 0,8 s),
+  płomienie, kadłubki (słońce × `sunVisibility` + siatka), kule ognia, łuki, mgławica Supernowej, duszki, światła →
+  `grid.addWorld`, fale / implozja / gorące powietrze → `Core3D.fxDistortion()`. Zegar reżysera = suma dt lotu rakiet
+  (w pauzie stoi); pozycje w świecie gry (double), do GPU względem `Core3D.fx.origin`. Supernowa przygasza obraz
+  i podbija bloom przez `Core3D.fx.post` (exposure = min, bloomBoost = max; FxFrame kasuje co klatkę). Losowość efektów
+  z fxRandom — `Math.random` gry (wyrzut) bez zmian. **Zero alokacji na klatkę i rakietę:** w pętlach klatki bez liczb
+  zmiennoprzecinkowych w argumentach / wyniku wywołań (V8 opakowuje je w obiekty, gdy nie wklei funkcji) — wpisy robocze
+  pul (`pool.s` + `push()`), bufor świateł (`stageLights` / `flushLights`), kinematyka rakiet w tablicach (`_kin`),
+  liczby losowe `fillRandom` (ten sam ciąg co fxRandom), `Math.sqrt` zamiast `Math.hypot`. Harness: sesja „rakiety”.
 - **Stara soczewka warpa i stare asteroidy nie przechodzą** (stare pole **wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
   `?asteroidyStare`) — zastępują je nowe z dem WebGPU (`dema/asteroidy-webgpu` → zadanie 21, `dema/warp-webgpu` →
   zadanie 22). Moduły ruchu v2 spoza gry (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
@@ -266,6 +278,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Tablice `bullets`, `particles`.
 - `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
 - Efekty zderzeń kadłubów idą przez `CollisionFX` (`grind` co krok styku, `impact` raz na zetknięcie). `bounceForce` w zdarzeniu to IMPULS (masa × v; na belkach 10⁵–10⁶) — nie skaluj nim efektów. Iskry tarcia (`src/vfx/collisionSparks.js`): budżet = TEMPO z prędkości styku (`COLLISION_SPARKS_TUNE`) w czasie symulacji pary, plus jednorazowy snop na `impact`; jasność iskry przez `gain` w `SparkSystem3D.emit` (atrybut `iGain`, tarcie < 1, trafienia 1). Dawny budżet „na wywołanie z impulsu” sypał 6–10 tys. iskier/s przy zwykłym taranie.
+- Iskry (`SparkSystem3D`, API bez zmian) od zadania 19 na puli z dema rakiet (`src/3d/rockets/sparks.js`) w scenie Core3D (krok efektów „iskry”, zegar efektów — biegnie też w pauzie): barwa PER ISKRA — `emit(..., gain, [r, g, b])` albo barwa domyślna (`setColor`), `burst(..., kolor)` barwi tylko swoją serię (dawniej przemalowywał wszystkie żywe); losowość z fxRandom; pętle klatki piszą przez `stage()` + `pushStaged()`.
 - Żar skóry kadłubów belkowych: szczyt `HULL_BODY_CONFIG.heatGlowPeak` (nie `DESTRUCTOR_CONFIG.heatGlowPeak`, ten zostaje heksom — asteroidy).
 
 ### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
@@ -274,6 +287,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Rysowanie: `pos + v · (T − t0)` z `SimClock` (`src/game/simClock.js`): `sim` rośnie w `physicsStep` zaraz po całkowaniu pozycji gracza, `render` = czas interpolowanej pozy gracza (`beginRender` przed `render`). Nie przesuwaj niesionych efektów zegarem klatki — rozjadą się z kadłubem w pauzie i przy interpolacji. Czas pozy: z rekordów Turret2D `fromRender = true`, z pozy fizycznej `false`.
 - Wyprzedzenie liczy ruch celu WZGLĘDEM strzelca (`getLeadAim(..., shooterVel)`, `leadTarget`), smuga pocisku = ruch względem strzelca, kierunek wgniecenia = prędkość pocisku względem celu, zasięg Hexlance'a i rakiet = droga własna.
 - Rakiety 3D: `rocketSystem3D.fire(..., launchVx, launchVy)` — układ rakiety to pęd wyrzutni (stały, bez dopasowania do celu), lot kinematyczny w nim; przy wyrzutni w spoczynku zachowanie jak dawniej. Canvasowe rakiety i torpedy naprowadzają ruch własny w układzie `ivx/ivy`.
+- Efekty rakiet (zadanie 19) niosą nośnik jawnie: smuga, wyrzut, zapłon i wybuch w próżni — układ rakiety (`r.frameVel`); wybuch na kadłubie i receptura tarczy — trafiony kadłub (`vx / vy`), iskry trafienia w gracza w `CLOCK_RENDER`, w NPC w `CLOCK_SIM`; pozostałość Supernowej stoi w świecie (jak w demie).
 
 ### Wejście i HUD (aktualne skróty)
 - `W/S` — ciąg przód/tył

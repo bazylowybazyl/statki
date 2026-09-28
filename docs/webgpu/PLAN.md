@@ -140,6 +140,21 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   alokuje ~150 B na atrybut na klatkę — zakres na stałe z wyłączonym czyszczeniem (`liveAttribute`, `fxParticles3D.js`).
   Tekstura per obiekt we wspólnym grafie: `FxMapNode` (jak `HullObjectTextureNode`, `texture().onObjectUpdate()` nie
   działa).
+- **Pułapki z zadania 19 (three r183, V8):** **`InstancedMesh` w r183 stosuje macierz instancji PRZED `positionNode`**
+  (własny `positionNode` ją nadpisuje) — pule z własnym ruchem: zwykły `Mesh` z `InstancedBufferGeometry` i własnymi
+  atrybutami instancji (`src/3d/rockets/`). **`mesh.count` trzymać 0 albo ≥ 2** (przejście 1 ↔ > 1 przebudowuje potok);
+  rozgrzewka odsłania pule z licznikiem ≥ 2 i przywraca stan. **Core3D ma `scene.matrixWorldAutoUpdate = false`** —
+  siatka kroku efektów, która przestawia się w klatce (początek pul), sama liczy `matrixWorld` (`updateMatrix()` +
+  `matrixWorld.copy(matrix)`). **Barwa czyszczenia renderera jest globalna** — pass, który ją zmienia (mapa gęstości
+  dymu), przywraca poprzednią. **Porównania z demami:** wariant harnessu bez passu tła (kanwa przezroczysta,
+  premultiplied) pokazuje blask addytywny (rgb > alfa) ~2× jaśniej — porównywać na nieprzezroczystym tle (czarna płyta
+  w sesji „rakiety”). **V8: liczba zmiennoprzecinkowa w argumencie albo wyniku wywołania, którego JIT nie wklei, to nowy
+  obiekt (16 B)** — w pętlach klatki wpisy robocze pul (`pool.s` + `push()`), bufory `Float64Array`, kinematyka
+  w tablicach, `fillRandom` zamiast serii `rng.next()` w dużych funkcjach, `Math.sqrt(x·x + y·y)` zamiast `Math.hypot`
+  (alokuje nawet w kodzie zoptymalizowanym). `LightGrid.add` przekracza limit wklejania (~100 B na światło z liczb
+  argumentów) — kandydat na wariant z buforem. **Pomiar alokacji w testach:** atrapy (np. siatka-zamknięcie zamiast
+  `LightGrid`) robią wywołania polimorficzne i JIT przestaje wklejać — testy alokacji na początku pliku, prawdziwe obiekty,
+  pętla pomiaru rozgrzana kilkoma funkcjami (inaczej JIT wkleja mierzoną funkcję w pętlę) i minimum z kilku prób.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
