@@ -12,9 +12,11 @@
  *    zakleszczenie (budżet wyczerpany w środku) = krater 0,5 × energii niesionej w tym kadłubie.
  *
  * Moduł bez Math.random i bez alokacji w gorącej ścieżce: stan w polach pocisku
- * (`b.serial`, `b.pen`), wyniki we współdzielonych obiektach. Zapytania kadłuba tylko przez
- * HullBodies (traceThrough). Wpięcie w bulletsAndCollisionsStep — zadanie 18-B (opis wpięcia:
- * docs/webgpu/MECHANIKA-BRONI.md).
+ * (`b.serial`, `b.pen`; stan przejścia to jeden obiekt na pocisk przebijający — Mjolnir,
+ * Valkyrie), wyniki we współdzielonych obiektach. Zapytania kadłuba tylko przez HullBodies
+ * (traceThrough). Wpięte w grę w 18-B: fireWeaponCore nadaje `serial` i `mech`,
+ * bulletsAndCollisionsStep (index.html) bierze decyzję z resolveHullHit i kroczy pocisk w
+ * materiale (stepInsideHull, applyBulletHullPass) — opis: docs/webgpu/MECHANIKA-BRONI.md.
  */
 
 import { HullBodies } from './hullBodies.js';
@@ -93,6 +95,15 @@ export function penetrationDepthOf(def) {
 export function penetrationLimitOf(def) {
   const n = Math.round(Number(def?.penetration));
   return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
+ * Czy broń ma mechanikę kadłuba z dema: przebicie (`penDepth`) albo rykoszet (`ricochet`).
+ * Tylko takie pociski dostają w grze decyzję resolveHullHit (18-B: `bullet.mech` z
+ * fireWeaponCore) — reszta arsenału trafia w kadłub jak dotąd.
+ */
+export function hasHullMechanics(def) {
+  return !!def && (penetrationDepthOf(def) > 0 || !!def.ricochet);
 }
 
 /** Mnożnik obrażeń kadłuba przy rykoszecie (1 = broń bez rykoszetu). */

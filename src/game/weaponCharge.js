@@ -14,7 +14,12 @@
  * Seria (Hexlance): `burstCount` strzałów z każdego gniazda co `burstDelay`, kolejno
  * gniazdo po gnieździe; kolejka w tej samej postaci co `superweaponState.queue`
  * (src/game/superweapon.js), opóźnienia WZGLĘDNE (od poprzedniego strzału) — tak je
- * odczytuje pętla opróżniania (stepBurstQueue = jej kopia). Wpięcie — 18-B.
+ * odczytuje pętla opróżniania (stepBurstQueue = jej kopia).
+ *
+ * Wpięcie (18-B): gracz — index.html (_fireSpecialGroup zgłasza, stepSpecialCharge w
+ * updateSpecialWeaponCooldowns ładuje i strzela, HUD _specialHudFromEntries), P2 —
+ * WeaponController (tryFireSpecialWeapons / update), AI — capitalAI (stepNpcWeaponCharge),
+ * seria — superweapon.js (prepareSuperweaponSalvo → buildHexlanceBurst).
  */
 
 export const CHARGE_IDLE = 'idle';
@@ -108,6 +113,84 @@ export function stepCharge(state, dt, input, def) {
     state.reason = 'aim';
   }
   return CHARGE_CHARGING;
+}
+
+// ============================ ZACZEPY GRACZA (P1, P2) ============================
+//
+// Wpięcie ładowania w sterowanie ogniem gracza (zadanie 18-B): naciśnięcie (klawisz 2),
+// auto-fire i spust pada tylko ZGŁASZAJĄ strzał (requestMountCharge); ładowanie i strzał
+// idą w kroku fizyki (index.html updateSpecialWeaponCooldowns, WeaponController.update)
+// przez stepMountCharge. Stan na hardpoincie — w stanie celowania (weaponAim.js,
+// `aim.charge`), więc przeżywa przebudowę loadoutu jak kąt wieżyczki.
+
+/** Ile czeka naciśnięcie, aż wieżyczka dojdzie do celu (błąd ≤ startAimErr) [s]. */
+export const MOUNT_REQUEST_HOLD = 1.5;
+
+// Wejście stepCharge dla zaczepów — jeden obiekt (krok co fizykę, bez alokacji).
+const _mountInput = { wantFire: false, aimErr: 0, speed: 0, angVel: 0, ready: true };
+
+/** Stan ładowania zaczepu (tworzony raz, w stanie celowania `aim` z getMountedWeaponAim). */
+export function mountChargeState(aim) {
+  let st = aim.charge;
+  if (!st) {
+    st = aim.charge = { charge: -1, u: 0, hold: 0, reason: '', want: 0, manual: false, event: '', fx: null };
+  }
+  return st;
+}
+
+/**
+ * Zgłoszenie strzału broni z ładowaniem. manual — naciśnięcie gracza (klawisz): czeka
+ * MOUNT_REQUEST_HOLD na wycelowanie wieżyczki i dostaje komunikaty (st.event); auto-fire
+ * i trzymany spust pada zgłaszają co krok, bez komunikatów.
+ */
+export function requestMountCharge(st, manual = false) {
+  st.want = MOUNT_REQUEST_HOLD;
+  if (manual) st.manual = true;
+  return st;
+}
+
+/** Przerwanie ładowania i zgłoszenia zaczepu (skok, śmierć, zniszczony zaczep). */
+export function cancelMountCharge(st) {
+  cancelCharge(st);
+  st.want = 0;
+  st.manual = false;
+  st.event = '';
+  return st;
+}
+
+/**
+ * Krok ładowania zaczepu: stepCharge ze zgłoszeniem (`st.want`) jako naciśnięciem.
+ * input: { aimErr, speed, angVel, ready } — błąd celowania wieżyczki, |v| i ω statku,
+ * przeładowanie skończone. Zwraca CHARGE_*; `st.event` — co powiedzieć graczowi po
+ * naciśnięciu: 'start' (zaczął ładować), 'moving' (naciśnięcie odrzucone albo ładowanie
+ * przerwane ruchem), 'aim' (naciśnięcie wygasło bez wycelowania, naładowane działo zgasło
+ * bez celu), '' — nic. Przerwanie ładowania daje zdarzenie także bez naciśnięcia (auto-fire).
+ */
+export function stepMountCharge(st, dt, input, def) {
+  const want = st.want > 0;
+  const manual = want && st.manual;
+  const wasIdle = !(st.charge >= 0);
+  _mountInput.wantFire = want;
+  _mountInput.aimErr = input?.aimErr;
+  _mountInput.speed = input?.speed;
+  _mountInput.angVel = input?.angVel;
+  _mountInput.ready = input?.ready !== false;
+  const res = stepCharge(st, dt, _mountInput, def);
+  st.event = '';
+  if (res === CHARGE_IDLE && want && st.reason === 'aim') {
+    // Wieżyczka jeszcze się obraca — naciśnięcie czeka (auto-fire i tak zgłasza co krok).
+    st.want = Math.max(0, st.want - Math.max(0, Number(dt) || 0));
+    if (st.want <= 0 && manual) st.event = 'aim';
+  } else {
+    if (manual) {
+      if (res === CHARGE_IDLE && st.reason === 'moving') st.event = 'moving';
+      else if (res === CHARGE_CHARGING && wasIdle) st.event = 'start';
+    }
+    st.want = 0;
+  }
+  if (res === CHARGE_CANCEL) st.event = st.reason;
+  if (!(st.want > 0)) st.manual = false;
+  return res;
 }
 
 // ============================ SERIE (HEXLANCE) ============================

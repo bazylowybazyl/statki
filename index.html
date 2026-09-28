@@ -864,6 +864,7 @@
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
+    import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
     HullBodies.onImpact = HullDamageMap.onHullImpact;
     HullBodies.onRepair = HullDamageMap.onHullRepair;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
@@ -1066,6 +1067,17 @@
     import { WeaponController } from "./src/game/weaponController.js";
     import { getMountedWeaponAim } from "./src/game/weaponAim.js";
     import { barrelsPerShotOf, queueSalvoBarrels, drainSalvoQueue } from "./src/game/weaponController.js";
+    // Mechanika broni z dema (zadanie 18-B): przebicia i rykoszety (bulletsAndCollisionsStep),
+    // ładowanie Mjolnira / Valkyrie (zaczepy special); skala trafienia z danych broni (18-D).
+    import {
+      nextProjectileSerial, hasHullMechanics, resolveHullHit, entryDamage, stepInsideHull, skipsHull, ricochetBounce,
+      HIT_PENETRATE, HIT_RICOCHET, PASS_EXIT, PASS_STUCK, PASS_INSIDE
+    } from "./src/game/projectileMechanics.js";
+    import {
+      chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
+      CHARGE_FIRE, CHARGE_CHARGING
+    } from "./src/game/weaponCharge.js";
+    import { weaponImpactScale } from "./src/game/weaponFeel.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize, shieldImpactClass } from "./src/data/weapons.js";
     import {
       addHangarSquadronMount,
@@ -5326,6 +5338,11 @@
         const hp = loadout?.hp;
         const wpn = loadout?.weapon;
         if (!hp || !wpn) continue;
+        // Ładowanie (Mjolnir, Valkyrie — 18-B): pasek slotu pokazuje postęp ładowania.
+        if (chargeTimeOf(wpn) > 0) {
+          const st = getMountedWeaponAim(ship, loadout).charge;
+          if (st && st.charge >= 0) return { weapon: wpn, charge: clamp(Number(st.u) || 0, 0, 1), charging: true };
+        }
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         const cdMax = Math.max(0.01, Number(wpn.cooldown) || cdLeft || 0.25);
         if (cdLeft < bestCdLeft) {
@@ -8510,12 +8527,13 @@
     function hexSweepImpact(entity, x0, y0, x1, y1, radius) {
       return DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius);
     }
-    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null) {
+    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
-      // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C).
+      // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C);
+      // fxVariant — wariant stempla: 'impact', 'ricochet', 'exit', 'stuck' (przebicia 18-B).
       if (entity?.beamHull) {
         if (!fxSource) return HullBodies.impact(entity, x, y, damage, vel);
-        HullDamageMap.setSource(fxSource);
+        HullDamageMap.setSource(fxSource, fxVariant);
         try {
           return HullBodies.impact(entity, x, y, damage, vel);
         } finally {
@@ -9092,7 +9110,14 @@
               homingDelay: weapon.homingDelay || 0,
               vfxKey: weapon.id,
               forceCanvas: !!weapon.forceCanvas,  // WeaponFx.sync nie rysuje go w 3D (lot na kanwie)
-              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
+              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null),
+              // Mechanika z dema (zadanie 18-B, src/game/projectileMechanics.js): numer pocisku —
+              // ziarno decyzji rykoszetu i jego obrazu (hash, bez Math.random); mech — dane broni
+              // z przebiciem (`penDepth`) albo rykoszetem, null = trafienie w kadłub jak dotąd;
+              // pen — stan przejścia przez materiał (tworzy go resolveHullHit).
+              serial: nextProjectileSerial(),
+              mech: hasHullMechanics(weapon) ? weapon : null,
+              pen: null
             };
             // --- FLAK: dane zapalnika (obsługa w bulletsAndCollisionsStep) ---
             // Zwykłe przypisania zamiast spreadu obiektu tymczasowego per pocisk.
@@ -9138,10 +9163,19 @@
 
     function updateSpecialWeaponCooldowns(dt) {
       const specials = getCombinedSpecialLoadouts(Game.player);
+      // Komunikat ładowania — jeden na krok dla całej grupy (zaczepy tej samej broni zgłaszają to samo).
+      let chargeEvent = '';
+      let chargeWeapon = null;
       for (let i = 0; i < specials.length; i++) {
         const loadout = specials[i];
         const hp = loadout?.hp;
         if (!hp) continue;
+        // Broń z ładowaniem (18-B): krok ładowania przed licznikiem przeładowania — strzał
+        // ustawia specialCd tak jak _fireSpecialGroup (które idzie przed tą funkcją).
+        if (loadout.weapon && chargeTimeOf(loadout.weapon) > 0) {
+          const ev = stepSpecialCharge(loadout, hp, i, dt);
+          if (ev && !chargeEvent) { chargeEvent = ev; chargeWeapon = loadout.weapon; }
+        }
         // Reszta salwy wielolufowej. Domknięcie powstaje TYLKO gdy kolejka
         // coś trzyma — czyli przez ~30 ms po strzale, a nie co klatkę.
         if (hp.salvo && hp.salvo.length) {
@@ -9152,6 +9186,70 @@
         if (current <= 0) continue;
         hp.specialCd = Math.max(0, current - dt);
       }
+      if (chargeEvent) pushSpecialChargeMessage(chargeWeapon, chargeEvent);
+    }
+
+    // Ładowanie broni z `chargeTime` (zadanie 18-B, src/game/weaponCharge.js): Mjolnir 3 s
+    // tylko na postoju (|v| ≤ 30 j/s, |ω| ≤ 0,05 rad/s), Valkyrie 0,28 s. Klawisz 2 / auto-fire /
+    // spust pada zgłaszają strzał (_fireSpecialGroup), ładowanie idzie tu co krok fizyki:
+    // start przy błędzie celowania wieżyczki ≤ 0,08 rad, strzał po naładowaniu przy ≤ 0,03 rad
+    // (naciśnięcie czeka do 1,5 s, aż wieżyczka dojdzie), ruch przerywa ładowanie Mjolnira.
+    // Efekt ładowania — receptura broni (WeaponFx.charge); skok i śmierć przerywają. Zwraca
+    // zdarzenie dla komunikatu (st.event: 'start' | 'moving' | 'aim' | '').
+    const _chargeCarrier = createCarrier();
+    function stepSpecialCharge(loadout, hp, slot, dt) {
+      const weapon = loadout.weapon;
+      const aim = getMountedWeaponAim(ship, loadout);
+      const st = mountChargeState(aim);
+      if (!p1WeaponCtrl || !ship || ship.dead || ship.destroyed || hp.destroyed || warp.isBusy()) {
+        if (st.charge >= 0 || st.want > 0) cancelMountCharge(st);
+        return '';
+      }
+      const vx = Number(ship.vel?.x) || 0;
+      const vy = Number(ship.vel?.y) || 0;
+      const res = stepMountCharge(st, dt, {
+        aimErr: aim.aimErr,
+        speed: Math.sqrt(vx * vx + vy * vy),
+        angVel: Number(ship.angVel) || 0,
+        ready: !(Number(hp.specialCd) > 0)
+      }, weapon);
+      if (res === CHARGE_FIRE) {
+        fireSpecialLoadout(loadout, hp, slot);
+      } else if (res === CHARGE_CHARGING && WeaponFx.available && dt > 0) {
+        const m = p1WeaponCtrl.computeMountedMuzzle(loadout, Number(aim.nextBarrel) || 0);
+        if (!st.fx) st.fx = WeaponFx.createChargeState();
+        WeaponFx.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st.fx,
+          writeCarrier(ship, m.pos.x, m.pos.y, false, _chargeCarrier));
+      }
+      return st.event;
+    }
+
+    // Komunikaty ładowania (po naciśnięciu klawisza i przy przerwaniu): krótka nazwa broni.
+    function pushSpecialChargeMessage(weapon, event) {
+      const name = String(weapon?.name || weapon?.id || 'BROŃ').split(/[\s(]/)[0].toUpperCase();
+      const stationary = weapon?.requiresStationary === true;
+      if (event === 'start') {
+        if (chargeTimeOf(weapon) >= 1) {
+          pushZoneMessage(stationary ? `${name}: ŁADOWANIE — OKRĘT MUSI STAĆ` : `${name}: ŁADOWANIE`, 1.6);
+        }
+      } else if (event === 'moving') {
+        pushZoneMessage(`${name}: WYMAGA POSTOJU OKRĘTU`, 1.6);
+      } else if (event === 'aim') {
+        pushZoneMessage(`${name}: BRAK WYCELOWANIA`, 1.4);
+      }
+    }
+
+    // Strzał zaczepu special teraz: pierwsza lufa od razu, reszta salwy (`barrelsPerShot`)
+    // z kolejki w updateSpecialWeaponCooldowns; przeładowanie z fireWeaponCore.
+    function fireSpecialLoadout(loadout, hp, slot) {
+      const weapon = loadout.weapon;
+      const aim = getMountedWeaponAim(ship, loadout);
+      const barrels = barrelsPerShotOf(weapon);
+      const start = Number(aim.nextBarrel) || 0;
+      aim.nextBarrel = start + barrels;
+      const cd = fireSpecialBarrel(loadout, hp, slot, start, barrels > 1);
+      hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
+      queueSalvoBarrels(hp, weapon.id, start, barrels);
     }
 
     // Jeden strzał z jednej lufy zaczepu `special`. Cel i kąt liczymy
@@ -9168,7 +9266,8 @@
       return Number(window.fireWeaponCore(ship, target, weapon.id, muzzle)) || 0;
     }
 
-    function _fireSpecialGroup(loadouts) {
+    // manual — naciśnięcie klawisza (komunikaty ładowania); auto-fire i spust pada — bez.
+    function _fireSpecialGroup(loadouts, manual = false) {
       if (!loadouts.length) return false;
       let fired = false;
       if (!p1WeaponCtrl) return false;
@@ -9185,27 +9284,28 @@
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
+        // Broń z ładowaniem (Mjolnir, Valkyrie — 18-B): tylko zgłoszenie strzału, ładowanie
+        // i strzał w kroku fizyki (stepSpecialCharge).
+        if (chargeTimeOf(weapon) > 0) {
+          requestMountCharge(mountChargeState(getMountedWeaponAim(ship, loadout)), manual);
+          fired = true;
+          continue;
+        }
+
         // Salwa: `barrelsPerShot` luf na jedno naciśnięcie. Pierwsza idzie
         // od razu, reszta z kolejki w `updateSpecialWeaponCooldowns`.
-        const aim = getMountedWeaponAim(ship, loadout);
-        const barrels = barrelsPerShotOf(weapon);
-        const start = Number(aim.nextBarrel) || 0;
-        aim.nextBarrel = start + barrels;
-
-        const cd = fireSpecialBarrel(loadout, hp, i, start, barrels > 1);
-        hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
-        queueSalvoBarrels(hp, weapon.id, start, barrels);
+        fireSpecialLoadout(loadout, hp, i);
         fired = true;
       }
       return fired;
     }
 
-    function tryFireMountedSpecialWeapons() {
-      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL] || []);
+    function tryFireMountedSpecialWeapons(manual = false) {
+      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL] || [], manual);
     }
 
-    function tryFireSpecialMissiles() {
-      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || []);
+    function tryFireSpecialMissiles(manual = false) {
+      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || [], manual);
     }
 
     // Hexlance jest DWUTAKTOWY: pierwsze 4 rozpoczyna ładowanie (1,2 s), dopiero
@@ -9337,6 +9437,29 @@
       window.fireWeaponCore(owner, target, weaponDef.id, muzzle);
       muzzle.pdTarget = null;
       muzzle.baseVel = _adapterBaseVel;
+    };
+
+    // Efekt ładowania działa NPC (zadanie 18-B — capitalAI.stepNpcWeaponCharge; dziś żaden
+    // domyślny loadout NPC nie ma broni z `chargeTime`): wylot z gniazda jak w spawnBulletAdapter,
+    // kąt wieżyczki AI, receptura broni (WeaponFx.charge), stan efektu na dziale.
+    const _npcChargeCarrier = createCarrier();
+    window.spawnWeaponChargeFx = function (owner, weapon, u, dt) {
+      if (!WeaponFx.available || !owner || !weapon?.def) return;
+      let x = owner.x;
+      let y = owner.y;
+      const hp = weapon.hpOffset;
+      if (hp && hp.x !== undefined) {
+        const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        const hpX = hp.x * getEntityHardpointScaleX(owner);
+        const hpY = hp.y * getEntityHardpointScaleY(owner);
+        x = owner.x + (hpX * c - hpY * s);
+        y = owner.y + (hpX * s + hpY * c);
+      }
+      if (!weapon.chargeFx) weapon.chargeFx = WeaponFx.createChargeState();
+      const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
+      WeaponFx.charge(weapon.def.id, x, y, a, 1, u, dt, weapon.chargeFx, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
 
     // Uid emitera (wiązka ciągła trzyma się po nim swojej lufy). Liczony raz na
@@ -9632,6 +9755,28 @@
           const entries = Object.values(HULL_SPRITE_PATHS_BY_ID).map((src) => loadHullSprite(src)).filter(Boolean);
           return entries.every((e) => e.ready || e.error);
         },
+        // Galeria broni (zadanie 18-B): broń na zaczepach special gracza bez ładowni (wszystkie
+        // albo `count` pierwszych) i strzał jak klawisz 2 — ładowanie Mjolnira / Valkyrie w kadrze.
+        mountSpecial(weaponId, count = Infinity) {
+          let n = 0;
+          for (const hp of Game.player.hardpoints) {
+            if (hp.type !== HP.SPECIAL || hp.destroyed) continue;
+            setHardpointMount(hp, n < count ? weaponId : null, { skipInventory: true });
+            if (n < count) n++;
+          }
+          syncWeaponSystems();
+          return n;
+        },
+        fireSpecial() {
+          return tryFireMountedSpecialWeapons(true);
+        },
+        // Stan ładowania zaczepów special (charge < 0 — bezczynne, u — postęp, cd — przeładowanie).
+        specialCharge() {
+          return (Game.player.weapons?.[HP.SPECIAL] || []).map((l) => {
+            const st = getMountedWeaponAim(ship, l).charge;
+            return { weapon: l.weapon?.id || null, charge: st ? st.charge : -1, u: st ? st.u : 0, cd: Number(l.hp?.specialCd) || 0 };
+          });
+        },
         // Warp „Nurt” (zadanie 22): kursor w kierunku `heading` od środka ekranu — ładowanie warpa
         // obraca statek ku kursorowi (automat gry), więc kurs skoku w harnessie jest powtarzalny.
         aimWarp(heading) {
@@ -9797,7 +9942,13 @@
     // prędkość pocisku względem niej. Jeden obiekt — efekt czyta go synchronicznie.
     // Kadłub na belkach: normalna z HullBodies.surfaceNormal (wołać PRZED kraterem);
     // inne ciała — promieniście od środka; bez ciała (płyta ringu, rakieta) — pod prąd.
-    const _impactHit = { x: 0, y: 0, nx: 0, ny: -1, entity: null, relVx: 0, relVy: 0, kind: 'none' };
+    // through — pocisk przebija kadłub i leci dalej (18-B: smuga nie kończy się na wejściu);
+    // ric… — rykoszet rozstrzygnięty przez grę (kierunek, prędkość, życie smugowca odbitego —
+    // ten sam hash co decyzja, writeImpactRicochet).
+    const _impactHit = {
+      x: 0, y: 0, nx: 0, ny: -1, entity: null, relVx: 0, relVy: 0, kind: 'none',
+      through: false, ric: false, ricDirX: 0, ricDirY: 0, ricSpeed: 0, ricLife: 0
+    };
     function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {
       out.x = x;
       out.y = y;
@@ -9805,6 +9956,8 @@
       out.relVx = Number(relVx) || 0;
       out.relVy = Number(relVy) || 0;
       out.kind = kind || 'none';
+      out.through = false;
+      out.ric = false;
       const vl = Math.hypot(out.relVx, out.relVy);
       let nx = vl > 1e-9 ? -out.relVx / vl : 0;
       let ny = vl > 1e-9 ? -out.relVy / vl : -1;
@@ -9822,6 +9975,66 @@
       out.nx = nx;
       out.ny = ny;
       return out;
+    }
+
+    // Rykoszet (zadanie 18-B): obraz smugowca odbitego z TEGO SAMEGO hasha co decyzja
+    // (projectileMechanics.ricochetBounce — numer pocisku i węzeł trafienia, bez losowania):
+    // kierunek od normalnej z rozrzutem ±0,15 rad, prędkość × 0,35–0,6 względem kadłuba, życie
+    // 0,2–0,45 s. Wołać po writeImpactHit (normalna i prędkość względna w `out`).
+    const _ricRelVel = { x: 0, y: 0 };
+    function writeImpactRicochet(out, b, node) {
+      _ricRelVel.x = out.relVx;
+      _ricRelVel.y = out.relVy;
+      const r = ricochetBounce(b, out, _ricRelVel, node);
+      out.ric = true;
+      out.ricDirX = r.dirX;
+      out.ricDirY = r.dirY;
+      out.ricSpeed = Math.sqrt(out.relVx * out.relVx + out.relVy * out.relVy) * r.speedFactor;
+      out.ricLife = r.life;
+      return out;
+    }
+
+    // Przebicie (zadanie 18-B): zdarzenie kroku pocisku w materiale kadłuba (stepInsideHull) —
+    // znaki rzazu (efekt co 22 j. drogi), krater wyjścia / zakleszczenia (HullBodies.impact z
+    // budżetem craterDamage, BEZ obrażeń HP: HP spada przez sufit strukturalny od zabitych
+    // węzłów — decyzja PROJEKT-BRONI §5 p. 2) i efekt wyjścia / zakleszczenia z receptury broni.
+    // Nośnik efektów i kierunek krateru — kadłub (prędkość pocisku względem niego). Zwraca
+    // true, gdy pocisk ugrzązł (wołający go usuwa).
+    // Mapa ran (18-C): krater wyjścia / zakleszczenia stempluje hak onImpact (źródło = pocisk,
+    // wariant 'exit' / 'stuck'), pas rzazu — HullDamageMap.stampKerf na drodze w materiale tego
+    // kroku (niezależnie od LOD efektu; receptura `kerf` dostaje kadłub null — bez drugiego stempla).
+    const _passCarrier = createCarrier();
+    const _passRelVel = { x: 0, y: 0 };
+    function applyBulletHullPass(b, pass) {
+      const ev = pass.event;
+      const e = pass.entity;
+      const stuck = ev === PASS_STUCK;
+      const out = stuck || ev === PASS_EXIT;
+      if (!e || (!out && !(pass.kerfs > 0))) return stuck;
+      const px = out ? pass.x : b.x;
+      const py = out ? pass.y : b.y;
+      const carrier = writeCarrier(e, px, py, false, _passCarrier);
+      _passRelVel.x = b.vx - carrier.vx;
+      _passRelVel.y = b.vy - carrier.vy;
+      if (pass.kerfs > 0 && e.beamHull) {
+        // Od pierwszego do ostatniego znaku kroku (jeden znak: odcinek pół kroku — sam kierunek
+        // wydłużenia stempla; stampKerf kładzie wtedy jeden znak na początku).
+        const k = pass.kerfs > 1 ? pass.kerfs - 1 : 0.5;
+        HullDamageMap.stampKerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
+      }
+      if (out && pass.craterDamage > 0) {
+        applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');
+      }
+      if (WeaponFx.available) {
+        ActiveCarrier.set(carrier);
+        if (pass.kerfs > 0) {
+          WeaponFx.kerf(b, pass.kerfX, pass.kerfY, pass.kerfDX, pass.kerfDY, pass.kerfs, _passRelVel.x, _passRelVel.y, e);
+        }
+        if (ev === PASS_EXIT) WeaponFx.pierceExit(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        else if (stuck) WeaponFx.pierceStuck(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        ActiveCarrier.clear();
+      }
+      return stuck;
     }
 
     // Trafienie pocisku: receptura rodziny broni z dema bronie-webgpu (WeaponFx, zadanie 17 —
@@ -9842,10 +10055,13 @@
     const IMPACT_FX_SIZE = [2.4, 1.5, 1.2, 1.0];
     const IMPACT_FX_COOLDOWN_MS = [0, 28, 8, 42];
 
+    // Rozmiar efektu w bramce × impactScale broni (dane — zadanie 18-D, src/game/weaponFeel.js):
+    // ciężkie trafienia (Mjolnir 5, Yamato 4,5, Valkyrie 3,5) widać z dalszego zoomu, lekkie
+    // wiązki (0,4–0,7) znikają wcześniej. Obrazu receptury skala nie zmienia (jak w demie).
     function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
       if (!WeaponFx.available) return;
       const fxKind = impactFxKindOf(b);
-      const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind];
+      const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind] * (b?.vfxKey ? weaponImpactScale(WEAPONS[b.vfxKey]) : 1);
       if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, IMPACT_FX_COOLDOWN_MS[fxKind], x, y)) {
         WeaponFx.impact(b, x, y, scale, hit);
       }
@@ -14130,7 +14346,7 @@
           specialAutoFire = !specialAutoFire;
           pushZoneMessage(specialAutoFire ? 'BROŃ SPECJALNA: AUTO-FIRE ON' : 'BROŃ SPECJALNA: AUTO-FIRE OFF', 1.5);
         } else {
-          tryFireMountedSpecialWeapons();
+          tryFireMountedSpecialWeapons(true);
         }
       }
       if (e.code === 'Digit3' && !stationUI.open && !CICDisplay.active && !e.repeat) {
@@ -14154,7 +14370,7 @@
           specialMissileAutoFire = !specialMissileAutoFire;
           pushZoneMessage(specialMissileAutoFire ? 'SPECIAL MISSILE: AUTO-FIRE ON' : 'SPECIAL MISSILE: AUTO-FIRE OFF', 1.5);
         } else {
-          tryFireSpecialMissiles();
+          tryFireSpecialMissiles(true);
         }
       }
       if ((e.code === 'Digit6' || e.code === 'Numpad6') && !stationUI.open && !CICDisplay.active) {
@@ -19397,6 +19613,7 @@
       const bulletProfileStride = !PerfHUD.visible ? 0 : (bullets.length >= 64 ? 8 : (bullets.length >= 16 ? 4 : 1));
       const bulletProfileScale = bulletProfileStride || 1;
 
+      bulletLoop:
       for (let i = bullets.length - 1; i >= 0; i--) {
         const profileBullet = bulletProfileStride > 0 && (i % bulletProfileStride) === 0;
         let tBulletSection0 = profileBullet ? performance.now() : 0;
@@ -19508,16 +19725,45 @@
         if (profileBullet) secIntercept += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
+        // --- PRZEBICIA (zadanie 18-B, src/game/projectileMechanics.js) ---
+        // Pocisk w materiale kadłuba (Mjolnir, Valkyrie): droga w materiale, hamowanie, znaki
+        // rzazu, potem wyjście (krater wyjścia, lot dalej — kandydaci od punktu wyjścia) albo
+        // zakleszczenie (krater, pocisk znika). W materiale — bez innych kolizji w tym kroku.
+        // Odcinek kandydatów zaczyna się w b.px/b.py (każdy inny pocisk — jak dotąd).
+        let candX0 = b.px;
+        let candY0 = b.py;
+        if (b.pen) {
+          const pass = stepInsideHull(b, b.mech);
+          if (applyBulletHullPass(b, pass)) {
+            removeBulletAt(i);
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+            continue;
+          }
+          if (pass.event === PASS_EXIT) {
+            candX0 = pass.x;
+            candY0 = pass.y;
+          } else if (pass.event === PASS_INSIDE) {
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+            continue;
+          }
+        }
+
         // --- GLOWNA PETLA KOLIZJI ---
+        // Przebieg po kandydatach na odcinku [candX0, b.x]; drugi i kolejny tylko dla pocisku,
+        // który w tym kroku przebił kadłub na wylot (następny kadłub za burtą w tym samym kroku).
         let hitNPC = null;
+        for (let hullPass = 0; hullPass < 12; hullPass++) {
         let didHitShield = false;
         let didHitHex = false;
         // Heks znaleziony przez sweepImpact — idzie wprost do applyImpact.
         let hitHexShard = null;
+        // Węzeł wejścia w kadłub na belkach (sweep) — ziarno decyzji rykoszetu (hash z numerem pocisku).
+        let hitNode = -1;
+        hitNPC = null;
 
         const targetsCount = SpatialGrid.getPotentialTargetsAlongSegment(
-          b.px,
-          b.py,
+          candX0,
+          candY0,
           b.x,
           b.y,
           Number(b.r) || 0
@@ -19533,6 +19779,8 @@
 
           const realNpc = npc._realEntity || npc;
           if (b.source && b.source === realNpc) continue;
+          // Kadłub, w którym pocisk jest albo z którego w tym kroku wyszedł (przebicie).
+          if (b.pen && skipsHull(b, realNpc)) continue;
           // Filtr drużynowy USUNIĘTY żeby aktywować Friendly Fire.
           // const isPlayerBullet = b.owner === 'player' || b.owner === 'player2';
           // if (npc._isPlayerShip && isPlayerBullet) continue;
@@ -19541,21 +19789,22 @@
 
           const bulletR = Number(b.r) || 0;
           const hullR = (Number(npc.radius) || 0) + bulletR;
-          const hullBroadT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, hullR);
+          const hullBroadT = segmentCircleToi(candX0, candY0, b.x, b.y, npc.x, npc.y, hullR);
           // Tarcza najpierw — tani test, a jej t przycina sweep po heksach niżej.
           const shieldR = npc._blkShieldR || 0;
           let shieldT = -1;
           if (shieldR > 0) {
             const dirShieldR = getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y) * (npc._blkShieldProg || 0);
             if (dirShieldR > 0) {
-              shieldT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, dirShieldR + bulletR);
+              shieldT = segmentCircleToi(candX0, candY0, b.x, b.y, npc.x, npc.y, dirShieldR + bulletR);
             }
           }
           let hullT = hullBroadT;
           let hullIsHex = false;
           let hullShard = null;
-          let hullImpactX = hullT >= 0 ? b.px + (b.x - b.px) * hullT : b.x;
-          let hullImpactY = hullT >= 0 ? b.py + (b.y - b.py) * hullT : b.y;
+          let hullNode = -1;
+          let hullImpactX = hullT >= 0 ? candX0 + (b.x - candX0) * hullT : b.x;
+          let hullImpactY = hullT >= 0 ? candY0 + (b.y - candY0) * hullT : b.y;
           const hullSweepable = !!(realNpc.beamHull || realNpc.hexGrid);
           if (hullBroadT >= 0 && hullSweepable) {
             // Heks wygrywa tylko PRZED wejściem w tarczę (remis → tarcza) i przed
@@ -19567,10 +19816,10 @@
             let hexSweep = null;
             const sweepFn = realNpc.beamHull ? hullSweepImpact : hexSweepImpact;
             if (sweepLimit >= 1) {
-              hexSweep = sweepFn(realNpc, b.px, b.py, b.x, b.y, bulletR);
+              hexSweep = sweepFn(realNpc, candX0, candY0, b.x, b.y, bulletR);
             } else if (sweepLimit > 0) {
-              hexSweep = sweepFn(realNpc, b.px, b.py,
-                b.px + (b.x - b.px) * sweepLimit, b.py + (b.y - b.py) * sweepLimit, bulletR);
+              hexSweep = sweepFn(realNpc, candX0, candY0,
+                candX0 + (b.x - candX0) * sweepLimit, candY0 + (b.y - candY0) * sweepLimit, bulletR);
             }
             hullT = hexSweep ? (sweepLimit >= 1 ? hexSweep.t : hexSweep.t * sweepLimit) : -1;
             hullIsHex = hullT >= 0;
@@ -19579,6 +19828,7 @@
               hullImpactY = hexSweep.worldY;
               // Wynik sweepa jest statyczny — następny kandydat go nadpisze.
               hullShard = hexSweep.hitShard;
+              hullNode = Number.isInteger(hexSweep.node) ? hexSweep.node : -1;
             }
           }
 
@@ -19589,8 +19839,8 @@
           if (shieldT >= 0 && (candidateT < 0 || shieldT <= candidateT)) {
             candidateT = shieldT;
             candidateShield = true;
-            candidateImpactX = b.px + (b.x - b.px) * shieldT;
-            candidateImpactY = b.py + (b.y - b.py) * shieldT;
+            candidateImpactX = candX0 + (b.x - candX0) * shieldT;
+            candidateImpactY = candY0 + (b.y - candY0) * shieldT;
           }
           if (candidateT < 0 || candidateT >= hitT) continue;
 
@@ -19599,11 +19849,13 @@
           didHitShield = candidateShield;
           didHitHex = !candidateShield && hullIsHex;
           hitHexShard = didHitHex ? hullShard : null;
+          hitNode = didHitHex ? hullNode : -1;
           hitX = candidateImpactX;
           hitY = candidateImpactY;
         }
 
-        if (hitNPC) {
+        if (!hitNPC) break;
+        {
           // Flak trafiony bezpośrednio (np. w tarczę, zanim zadziałał zapalnik)
           // i tak pęka — obrażenia rozchodzą się jako odłamki, nie jako trafienie.
           if (b.type === 'flak' && b.flakBurstRadius) {
@@ -19612,7 +19864,7 @@
             detonateFlakShell(b);
             removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
           }
           const _rawDmg = Number.isFinite(b.damage) ? b.damage : 0;
           // CIWS/laser_pd: 100% vs myśliwce, 20% vs hull/tarcza statków
@@ -19662,10 +19914,11 @@
             // ZATRZYMAJ I USUN POCISK
             removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
 
           } else if (!shieldActive && hexHit) {
             // Tarcza nie działa, trafiono w kadłub -> OBRAŻENIA
+            const realHit = hitNPC._realEntity || hitNPC;
 
             // Nośnik trafionego punktu kadłuba (ruch + obrót): kierunek wgniecenia
             // i tunelu mostka z prędkości pocisku WZGLĘDEM niego (pocisk niesie
@@ -19675,38 +19928,79 @@
             _impactRelVel.x = b.vx - hitCarrier.vx;
             _impactRelVel.y = b.vy - hitCarrier.vy;
             // Normalna powierzchni dla efektu trafienia — PRZED kraterem (krater zabija węzły).
-            writeImpactHit(_impactHit, hitNPC._realEntity || hitNPC, hitX, hitY, _impactRelVel.x, _impactRelVel.y, 'hull');
+            writeImpactHit(_impactHit, realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, 'hull');
+
+            // Mechanika z dema (zadanie 18-B): bronie z przebiciem albo rykoszetem (`b.mech`) na
+            // kadłubie belkowym — rykoszet (płaski kąt, hash numeru pocisku: obrażenia × 0,3,
+            // pocisk znika, smugowiec z tego samego hasha), przebicie (droga w materiale liczona
+            // PRZED kraterem wejścia, potem wyjście / zakleszczenie) albo stop. Reszta — jak dotąd.
+            const mech = (b.mech && realHit.beamHull) ? b.mech : null;
+            let decision = null;
+            let pass = null;
+            if (mech) {
+              decision = resolveHullHit(b, mech, _impactHit, _impactRelVel, hitNode, realHit, hitX, hitY);
+              if (decision === HIT_PENETRATE) {
+                pass = stepInsideHull(b, mech);
+                _impactHit.through = pass.event !== PASS_STUCK;
+              } else if (decision === HIT_RICOCHET) {
+                writeImpactRicochet(_impactHit, b, hitNode);
+              }
+            }
+            const entryK = entryDamage(b, mech, decision);
 
             // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
             // kadłub na belkach — krater od punktu wejścia.
             if (hitNPC.hexGrid || hitNPC.beamHull) {
-              applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, _impactRelVel, hitHexShard, b);
+              // Źródło stempla mapy ran (18-C) — pocisk; rykoszet zostawia płytkie osmalenie
+              // (wariant `ricochet`, src/3d/hullDamageStamps.js), reszta — ranę trafienia.
+              applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, hitHexShard, b,
+                decision === HIT_RICOCHET ? 'ricochet' : 'impact');
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
-              noteBridgeHit(hitNPC._realEntity || hitNPC, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
+              noteBridgeHit(realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }
 
-            // Routing obrażeń: gracz vs NPC
-            if (hitNPC._isPlayerShip) {
-              applyDamageToPlayer(npcDamage);
-            } else {
-              if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
-              applyDamageToNPC(hitNPC, npcDamage, b.type);
+            // Routing obrażeń: gracz vs NPC. Ponowne wejście pocisku w ten sam kadłub (wklęsła
+            // sylwetka) — krater tak, HP drugi raz nie (entryK.hp = 0, decyzja 18-A).
+            if (entryK.hp > 0) {
+              if (hitNPC._isPlayerShip) {
+                applyDamageToPlayer(npcDamage * entryK.hp);
+              } else {
+                if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
+                applyDamageToNPC(hitNPC, npcDamage * entryK.hp, b.type);
+              }
             }
 
             ActiveCarrier.set(hitCarrier);
             spawnBulletImpactEffect(b, hitX, hitY, 1.0, _impactHit);
             ActiveCarrier.clear();
 
-            if (shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
+            if (decision === HIT_PENETRATE) {
+              // Rzaz, wyjście albo zakleszczenie w tym samym kroku (droga od punktu wejścia).
+              if (applyBulletHullPass(b, pass)) {
+                removeBulletAt(i);
+                if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+                continue bulletLoop;
+              }
+              if (pass.event === PASS_EXIT) {
+                // Wylot za burtą: następny kadłub na reszcie odcinka tego kroku.
+                candX0 = pass.x;
+                candY0 = pass.y;
+                continue;
+              }
+              if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+              continue bulletLoop;
+            }
+            if (mech || shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
           } else {
             // Pocisk minął wszystko (np. dziura we wraku, albo minął tarczę gdy była wyłączona)
             hitNPC = null;
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
           }
         }
+        } // for hullPass — kolejny przebieg tylko po wylocie z kadłuba (przebicie, 18-B)
         if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;

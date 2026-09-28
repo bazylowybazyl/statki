@@ -301,7 +301,8 @@ export const HullDamageMap = {
   /**
    * Źródło stempla dla najbliższego haka onImpact: pocisk gry (`vfxKey`, `type`, `weaponSize`,
    * `flakBurstRadius`), opis broni z MASTER_WEAPONS (`id`, `category`, `size`) albo id / rodzina
-   * (string); wariant — 'impact' | 'kerf' | 'exit' | 'stuck'. Kierunek lotu niesie hullImpactResult
+   * (string); wariant — 'impact' | 'kerf' | 'exit' | 'stuck' | 'ricochet' (18-B; rodzina bez wariantu —
+   * stempel trafienia, hullDamageStamps.stampEntry). Kierunek lotu niesie hullImpactResult
    * (impact: wektor `vel`, cut: odcinek).
    */
   setSource(src, variant = 'impact') {
