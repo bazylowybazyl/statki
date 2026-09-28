@@ -878,6 +878,7 @@ export const Core3D = {
     const w = this.warmup;
     if (!w || w._passWarmups) return;
     w._passWarmups = true;
+    this._registerPostWarmups();
     const scene = () => this.scene;
     for (const layer of [1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
       w.add({ name: `Core3D: warstwa ${layer}`, objects: scene, layer, visible: false });
@@ -888,6 +889,25 @@ export const Core3D = {
     for (const layer of [0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
       w.add({ name: `Core3D: warstwa ${layer} (start gry)`, objects: scene, layer, visible: false, phase: 'loading' });
     }
+  },
+
+  // Post (uber, bloom) przed pierwszą klatką — pilnie, zaraz przy urządzeniu, pod kurtyną menu (zadanie 11): quad
+  // RenderPipeline z bloomem i bez, na kanwie. three r183 woła w compileAsync `updateBefore` węzłów materiału, więc
+  // kompilacja „uber” RYSUJE też passy BloomNode (zagnieżdżony render — ich 7 pipeline'ów powstaje wtedy, synchronicznie,
+  // ale jeszcze przed tłem menu). Nie wyłączać `updateBeforeType` bloomu na czas kompilacji: stan budowy zapamiętałby
+  // graf bez bloomu. Bez tego post kompilował się w pierwszej klatce tła menu, a przy starcie gry przed nią —
+  // w pierwszej klatce gry (8 pipeline'ów, ~0,2 s).
+  _registerPostWarmups() {
+    const w = this.warmup;
+    const canvas = () => null;
+    const postQuad = (key) => () => {
+      const post = this[key];
+      if (!post?._quadMesh) return null;
+      if (typeof post._update === 'function') post._update();
+      return post._quadMesh;
+    };
+    w.now(postQuad('_post'), { name: 'Core3D: post (uber, bloom)', target: canvas });
+    w.now(postQuad('_postBezBloomu'), { name: 'Core3D: post bez bloomu', target: canvas });
   },
 
   _failGpu(reason) {

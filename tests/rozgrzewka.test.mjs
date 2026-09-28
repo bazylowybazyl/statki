@@ -201,8 +201,23 @@ test('Core3D: rejestr jako Core3D.warmup, start przy gotowym urządzeniu, passy 
   assert.match(initGpu, /this\.fx\?\.warmAll\(\);[\s\S]*this\._registerPassWarmups\(\);\s*this\.warmup\.start\(\);/);
   // passy: w tle menu tło i planety, pre-pass halo z materiałem zastępczym, quady; na ekranie ładowania wszystkie
   const added = [];
-  const fake = { warmup: { add: (spec) => added.push(spec) }, scene: {}, haloDepthMaskMaterial: { name: 'haloDepthMask' } };
+  const urgent = [];
+  const fake = {
+    warmup: { add: (spec) => added.push(spec), now: (objects, opts) => urgent.push({ ...opts, objects }) },
+    scene: {}, haloDepthMaskMaterial: { name: 'haloDepthMask' },
+    _registerPostWarmups: Core3D._registerPostWarmups
+  };
   Core3D._registerPassWarmups.call(fake);
+  // post (uber z bloomem i bez) pilnie, zanim ruszy tło menu: quady RenderPipeline na kanwie (passy bloomu rysuje
+  // przy tym updateBefore — bez osobnych wpisów i bez pól prywatnych BloomNode)
+  assert.deepEqual(urgent.map((s) => s.name), ['Core3D: post (uber, bloom)', 'Core3D: post bez bloomu']);
+  assert.equal(urgent[0].target(), null, 'post na kanwie');
+  assert.equal(urgent.some((s) => s.variant), false, 'bez wariantu: updateBeforeType bloomu nietknięty');
+  let updated = 0;
+  fake._post = { _quadMesh: { isQuadMesh: true }, _update: () => { updated++; } };
+  assert.equal(urgent[0].objects(), fake._post._quadMesh);
+  assert.equal(updated, 1, 'graf „uber” ustawiony przed kompilacją (RenderPipeline._update)');
+  assert.equal(urgent[1].objects(), null, 'bez postu wpis pusty');
   const menuLayers = added.filter((s) => Number.isInteger(s.layer) && !s.phase && s.split !== false).map((s) => s.layer);
   assert.deepEqual(menuLayers, [1, 3, 5, 6]);
   assert.ok(added.every((s) => s.visible !== true), 'przegląd sceny tylko widocznych');
