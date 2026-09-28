@@ -43,15 +43,30 @@ test('gra: overlay rozgrzewany z pulami w scenie; efekty broni rozgrzewa krok Co
   const call = body.indexOf('ov.prewarm?.()');
   assert.ok(call > 0, 'startOverlay3D woła ov.prewarm');
   assert.doesNotMatch(body, /makeRailgunExplosion|makeArmataImpact|makeAutocannonImpact|makeYamatoImpact/, 'fabryki trafień broni wróciły do overlaya');
-  // Pule (iskry, reaktor, supernowa, rakiety) muszą już wisieć w scenie.
-  for (const init of ['SparkSystem3D.init(ov.scene)', 'window.makeReactorBlow = reactorFactory(ov.scene)',
-    'initRocketSystem3D(rocketOv.scene)']) {
+  // Pula reaktora musi już wisieć w scenie. Iskry, rakiety i Supernowa (port WebGPU, zadanie 19)
+  // są w scenie Core3D — rozgrzewa je krok efektów (test niżej).
+  for (const init of ['window.makeReactorBlow = reactorFactory(ov.scene)']) {
     const at = body.indexOf(init);
     assert.ok(at > 0 && at < call, `${init} przed rozgrzewką`);
   }
   const wfx = readFileSync(new URL('../src/3d/weapons/weaponFx.js', import.meta.url), 'utf8');
   assert.match(wfx, /warm\(c\) \{ self\.gpu\.warm\(c\.renderer, c\.core\); self\._warmSystems\(c\); \}/);
   assert.match(wfx, /core\.prewarmPass\(mesh, 0\)/);
+});
+
+test('rakiety i iskry (Core3D): rozgrzewka kroków efektów — compute, mapa gęstości, pule odsłonięte', () => {
+  const rocketFx = readFileSync(new URL('../src/3d/rockets/rocketFx.js', import.meta.url), 'utf8');
+  const warm = functionBody(rocketFx, '  _warm(ctx) {');
+  // Kernele compute (dispatch z count 0 kompiluje pipeline), pass mapy gęstości i wszystkie
+  // siatki rakiet w passie sceny (compileAsync pomija niewidoczne — odsłonięte na czas projekcji).
+  assert.match(warm, /computeAsync|compute\(/);
+  assert.match(warm, /m\.visible = true;/);
+  assert.match(warm, /ctx\.core\.prewarmPass\(m, 0\)/);
+  assert.doesNotMatch(warm, /\.dispose\(/);
+  assert.match(rocketFx, /name: 'rakiety'[\s\S]{0,200}warm: \(ctx\) => self\._warm\(ctx\)/);
+  const sparks = readFileSync(new URL('../src/3d/sparkSystem3D.js', import.meta.url), 'utf8');
+  assert.match(sparks, /name: 'iskry'/);
+  assert.match(sparks, /m\.visible = true;[\s\S]{0,200}ctx\.core\.prewarmPass\(m, 0\)/);
 });
 
 test('tarcze: materiały-trzymacze obu wariantów, rozgrzewka na ekranie ładowania', () => {

@@ -222,6 +222,35 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   Do 23/24: wizualia na `fxRandom`. **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
   `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
   wyłączonymi tarczami zerują `val` celu (galeria broni).
+- **Pułapki z zadania 18-C (three r183, mapa ran):** **bufor storage-singleton ma rozmiar od PIERWSZEGO wołającego** —
+  graf materiału kadłuba budował pulę ran przed kernelem (1 teksel zamiast 3,1 mln): kernel pisał poza bufor (dostęp
+  WebGPU jest „robust” — bez błędu, bez efektu), materiał czytał zera; rozmiar trzymać przy singletonie, nie w
+  argumencie. **Bufor tylko-GPU bez kopii CPU:** `StorageBufferAttribute` trzyma tablicę CPU (24 MB puli) — po
+  utworzeniu bufora GPU (`renderer.backend.get(attr).buffer`) three czyta `array` tylko przy zmianie `version`, więc
+  kopię można oddać; ALE `renderer.getArrayBufferAsync(attr)` kopiuje `array.byteLength` bajtów — narzędzia odczytu
+  muszą kopię zachować (`HullDamageMap.keepCpuCopy`). **`renderer.compute(węzeł, n)` przelicza i alokuje rozmiar siatki
+  grup przy każdej zmianie `n`** — dynamiczną liczbę wątków zaokrąglać (potęga dwójki, nadmiarowe wątki wychodzą na
+  pierwszym warunku). **Liczby double w argumentach wywołań nieinlinowanych V8 pakuje** (~16 B na liczbę; pomiar:
+  ~45 B na trafienie przy 13 argumentach) — ścieżki „na trafienie” podają parametry przez tablicę typowaną; odczyt pola
+  double przy dostępie megamorficznym też kopiuje liczbę (testy alokacji — przed testami z wieloma kształtami obiektów).
+  **Lej rany a przezroczystość:** demo ma w środku rany dziurę (widać kosmos, świeci sam pierścień brzegu);
+  bez przezroczystości (reguła „dziura albo krater”) środek musi być ciemny i nieświecący — inaczej tarcza bieli
+  8–10 HDR na całą średnicę i bloom zalewa pół kadłuba.
+- **Pułapki z zadania 19 (three r183, V8):** **`InstancedMesh` w r183 stosuje macierz instancji PRZED `positionNode`**
+  (własny `positionNode` ją nadpisuje) — pule z własnym ruchem: zwykły `Mesh` z `InstancedBufferGeometry` i własnymi
+  atrybutami instancji (`src/3d/rockets/`). **`mesh.count` trzymać 0 albo ≥ 2** (przejście 1 ↔ > 1 przebudowuje potok);
+  rozgrzewka odsłania pule z licznikiem ≥ 2 i przywraca stan. **Core3D ma `scene.matrixWorldAutoUpdate = false`** —
+  siatka kroku efektów, która przestawia się w klatce (początek pul), sama liczy `matrixWorld` (`updateMatrix()` +
+  `matrixWorld.copy(matrix)`). **Barwa czyszczenia renderera jest globalna** — pass, który ją zmienia (mapa gęstości
+  dymu), przywraca poprzednią. **Porównania z demami:** wariant harnessu bez passu tła (kanwa przezroczysta,
+  premultiplied) pokazuje blask addytywny (rgb > alfa) ~2× jaśniej — porównywać na nieprzezroczystym tle (czarna płyta
+  w sesji „rakiety”). **V8: liczba zmiennoprzecinkowa w argumencie albo wyniku wywołania, którego JIT nie wklei, to nowy
+  obiekt (16 B)** — w pętlach klatki wpisy robocze pul (`pool.s` + `push()`), bufory `Float64Array`, kinematyka
+  w tablicach, `fillRandom` zamiast serii `rng.next()` w dużych funkcjach, `Math.sqrt(x·x + y·y)` zamiast `Math.hypot`
+  (alokuje nawet w kodzie zoptymalizowanym). `LightGrid.add` przekracza limit wklejania (~100 B na światło z liczb
+  argumentów) — kandydat na wariant z buforem. **Pomiar alokacji w testach:** atrapy (np. siatka-zamknięcie zamiast
+  `LightGrid`) robią wywołania polimorficzne i JIT przestaje wklejać — testy alokacji na początku pliku, prawdziwe obiekty,
+  pętla pomiaru rozgrzana kilkoma funkcjami (inaczej JIT wkleja mierzoną funkcję w pętlę) i minimum z kilku prób.
 - **Pułapki z zadania 22 (warp „Nurt”, efekty z dem):** **Dema liczą bloom `BloomNode` BEZ ×3 gry**
   (`BLOOM_ZGODNOSC_WEBGL`) — ten sam emiter HDR z dema świeci w grze 3× mocniejszą poświatą (brzegi szczelin i błyski
   obrastały białą mgłą); bloom bierze cały teksel ponad progiem, więc kolano na luminancji (`src/3d/warp/bloomKnee.js`:

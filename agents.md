@@ -95,14 +95,14 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
 - **Maska słońca, SDF kadłubów, refrakcja (zadanie 03):** pass maski = `QuadMesh` + NodeMaterial (`createShadowShaftsPass`
   w `core3d.js`, marsz po SDF — `hullSdfShadow` w `hullShadowSdf.js`); materiały czytają maskę funkcjami TSL z
-  `sunShadowMask.js` po **`screenUV`** (rozmiar AKTUALNEGO celu — snapshot refrakcji w połowie rozdzielczości trafia sam,
-  bez teksela). Cele pomocnicze, do których rysują materiały SCENY (halo, snapshot refrakcji), mają format / typ / MSAA /
+  `sunShadowMask.js` po **`screenUV`** (rozmiar AKTUALNEGO celu — cel w innej rozdzielczości trafia sam, bez teksela).
+  Cele pomocnicze, do których rysują materiały SCENY (halo), mają format / typ / MSAA /
   głębię `composerTarget`: three buduje materiały (NodeBuilder) i pipeline'y per KONTEKST renderu, a kontekst to stan
   załączników celu — inny format = budowa wszystkiego w kadrze na zimno przy pierwszym użyciu. Tablice warstw
   (`DataArrayTexture`): three r183 w WebGPU ignoruje `layerUpdates` i na `needsUpdate` wgrywa całą tablicę (SDF
   kadłubów 4 MB, ~3 ms CPU) — jedna warstwa przez `Core3D.uploadTextureLayer` (hak `HullShadowSdf.layerUploader`).
-  Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`; fala uderzeniowa A/B:
-  `scripts/webgpu/fala-uderzeniowa.mjs`. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
+  Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`. Fala z refrakcją
+  (`shockwave3D.js`, snapshot sceny) usunięta w zadaniu 19 — fale idą przez zniekształcenia efektów. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
   kamery gracza 1; na WebGL widok 1 miał je przesunięte, widok 2 — żadnych).
 - **Infrastruktura efektów GPU (zadanie 12, `src/3d/fx/`, opis `docs/webgpu/FX-INFRA.md`)** — `Core3D.fx` (`fxFrame.js`)
   raz na klatkę rAF na starcie `render()`, przed passami (podzielony ekran: drugi `renderSingle` nic nie robi): kroki
@@ -137,6 +137,18 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Broń (zadanie 17): `src/3d/weapons/` — § „Efekty broni” niżej. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
   lot, trafienie).
+- **Rakiety (zadanie 19, `src/3d/rockets/`, opis `docs/webgpu/DEMO-RAKIETY.md` § Port w grze):** lot, naprowadzanie,
+  trafienia i obrażenia zostają w `rocketSystem3D.js`; wygląd z dema `rakiety-webgpu` to reżyser `RocketEffects`
+  (`effects.js`) na zdarzeniach lotu (`onLaunch / onIgnite / onFly / prepareContact / onDetonate / update`) i krok efektów
+  „rakiety” (`rocketFx.js`): dym compute (mapa gęstości, samocień, światło z siatki, siła śladu tylko w dymie > 0,8 s),
+  płomienie, kadłubki (słońce × `sunVisibility` + siatka), kule ognia, łuki, mgławica Supernowej, duszki, światła →
+  `grid.addWorld`, fale / implozja / gorące powietrze → `Core3D.fxDistortion()`. Zegar reżysera = suma dt lotu rakiet
+  (w pauzie stoi); pozycje w świecie gry (double), do GPU względem `Core3D.fx.origin`. Supernowa przygasza obraz
+  i podbija bloom przez `Core3D.fx.post` (exposure = min, bloomBoost = max; FxFrame kasuje co klatkę). Losowość efektów
+  z fxRandom — `Math.random` gry (wyrzut) bez zmian. **Zero alokacji na klatkę i rakietę:** w pętlach klatki bez liczb
+  zmiennoprzecinkowych w argumentach / wyniku wywołań (V8 opakowuje je w obiekty, gdy nie wklei funkcji) — wpisy robocze
+  pul (`pool.s` + `push()`), bufor świateł (`stageLights` / `flushLights`), kinematyka rakiet w tablicach (`_kin`),
+  liczby losowe `fillRandom` (ten sam ciąg co fxRandom), `Math.sqrt` zamiast `Math.hypot`. Harness: sesja „rakiety”.
 - **Stara soczewka warpa i stare asteroidy nie przechodzą** (stare pole **wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
   `?asteroidyStare`) — zastępują je nowe z dem WebGPU (`dema/asteroidy-webgpu` → zadanie 21, `dema/warp-webgpu` →
   zadanie 22: warp „Nurt” w grze, opis w „Warp „Nurt”” niżej). Moduły ruchu v2 spoza gry (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
@@ -336,6 +348,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Siatka 15 px jak w demie (`HULL_BODY_CONFIG.cellPx`); jednostką strojenia zostaje dawny heks (`HEX_PITCH_PX` = 7,5): węzeł = `hull.hexPerNode` heksów (HP ×4, łup, tempo cięcia, promień krateru). Nową wartość „na komórkę” przeliczaj przez `hexPerNode`. Nie zagęszczaj siatki bez pomiaru ciągłego styku — przy 7,5 px pchany okręt budził się cały i nie zasypiał (krok 2,7 ms zamiast 0,13).
 - Dwie masy: ciało w silniku ma masę ZDERZEŃ z powierzchni kadłuba (`HULL_BODY_CONFIG.massPerArea`, jedna gęstość jak demo — Atlas ≈ 800 tys.), `entity.mass` to masa GRY (ciąg ∝ masa, separacja AI, holowanie, asteroidy). Nie przepisuj jednej w drugą: `syncOut` skaluje masę gry i `inertia` w stosunku ubytku masy ciała, wrak dostaje masę w skali gry rodzica.
 - Materiał kadłuba (port WebGPU, zadanie 04): graf TSL RAZ na wariant (`src/3d/hexShips3D.tsl.js`: skóra belek, siatka heksów, płyta pancerza, szczątki GPU), każdy kadłub dostaje lekki `HullNodeMaterial` z tymi samymi węzłami — nie buduj grafu na encję (NodeBuilder ~12 ms CPU na kadłub, spawn 30 NPC: 389 ms zamiast 14). Wartości per encja w `material.uniforms` (obiekty `{ value }`), wspólne (czas, strojenie światła, żar) w `HULL_SHARED` (raz na klatkę), lampy statku i strefy dysz w buforze storage `HullLightStore` (slot na kadłub, zapis tylko przy zmianie podpisu). Nowe dane per kadłub: holder w `createHullUniforms` + `perObject()` w grafie, nie pole-liczba materiału (klucz three bierze liczby jako 0/1). Maska słońca kadłubów, odłamków i smug: JEDNO miejsce importu (`sunVisibility`/`sunFill`/`sunShadeUnlit` w `hexShips3D.tsl.js`). Haki: mapa ran i światła efektów (zadanie 18: `hullDamageSurface`, `hullDamageHeat`, `hullEffectLights`), ośrodek wolumetryczny (zadanie 21: `hullVolume`, `kolor·a + rgb`).
+- Mapa ran (zadanie 18-C, `src/3d/hullDamageMap.js` + `.tsl.js`, stemple `src/3d/hullDamageStamps.js`; `docs/webgpu/PROJEKT-BRONI.md` §3): żar stygnący z bieli w czerwień, osmalenie, lej / przestrzelina z żarzącym się brzegiem i poświata jonowa w uv skóry (rana jedzie z odkształceniem). Pula slotów L/M/S w JEDNYM buforze storage (24 MB GPU), slot per ród `hull.dmgKey` — wrak i odłamy dziedziczą rany; slot bez widoczności oddaje LRU. Kratery i rzazy stempluje hak `HullBodies.onImpact` (index.html: `onHullImpact`) po KAŻDYM trafieniu, bez bramki LOD efektów; rodzinę broni podaje wołający `HullBodies.impact`: `HullDamageMap.setSource(pocisk | broń | id, wariant)` … `clearSource()` (w grze: 7. argument `applyHexImpact`); bez źródła krater = stempel ogólny, rzaz = Hexlance. `ctx.stamp` receptur (17) idzie do `HullDamageMap.stampRecipe`: stempel w miejscu krateru z haka tej klatki jest pomijany (to samo trafienie), reszta — wtórne Yamato (punkt opóźniony przesuwany nośnikiem), rzazy / zakleszczenia przebić (18-B: receptury `kerf` / `stuck` z encją kadłuba), wiązka między taktami, żar płonącej wyrwy (`burnStep`) — na mapę z parametrami receptury. Bez krateru i bez receptury: `stampKerf` / `stampAt`. Reguła „dziura albo krater”: przezroczysta przestrzelina tylko z małego kalibru bez zabitego węzła; resztę dziur robi geometria belek, a lej po dużym kalibrze to ciemne, nieświecące dno z białym (8–12 HDR) brzegiem. Żar rany i żar skóry: `max()` (jedno źródło na piksel); lakier gaśnie na osmaleniu i w leju (hak `hullDamageLacquer` — odbicie nieba nie zależy od albedo). Naprawa R: hak `HullBodies.onRepair` wygasza osmalenie, koniec naprawy zwalnia slot. Kernel (klatka efektów, `Core3D.addFxStep`) liczy tylko sloty z nowymi stemplami i gorące w kadrze (stygnięcie wzorem zamkniętym — slot poza kadrem nadrabia jednym krokiem). Tylko skóra belek (`damage: true` wariantu); światła efektów z siatki (`Core3D.fx.grid`) jako dodatkowe światła poszycia — lampy statku zostają w payloadzie. Narzędzie: `scripts/webgpu/rany-gra.mjs`.
 
 ### Mostki (zniszczenie mostka = kill)
 - **Stan 2026-09-25: mostki i rdzenie wymagają `hexGrid`, więc na kadłubach belkowych są nieaktywne do ich portu (etapy 4–5 w `docs/PORT-silnik-belek.md`).** Opis niżej dotyczy docelowego zachowania.
@@ -364,6 +377,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Tablice `bullets`, `particles`.
 - `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
 - Efekty zderzeń kadłubów idą przez `CollisionFX` (`grind` co krok styku, `impact` raz na zetknięcie). `bounceForce` w zdarzeniu to IMPULS (masa × v; na belkach 10⁵–10⁶) — nie skaluj nim efektów. Iskry tarcia (`src/vfx/collisionSparks.js`): budżet = TEMPO z prędkości styku (`COLLISION_SPARKS_TUNE`) w czasie symulacji pary, plus jednorazowy snop na `impact`; jasność iskry przez `gain` w `SparkSystem3D.emit` (atrybut `iGain`, tarcie < 1, trafienia 1). Dawny budżet „na wywołanie z impulsu” sypał 6–10 tys. iskier/s przy zwykłym taranie.
+- Iskry (`SparkSystem3D`, API bez zmian) od zadania 19 na puli z dema rakiet (`src/3d/rockets/sparks.js`) w scenie Core3D (krok efektów „iskry”, zegar efektów — biegnie też w pauzie): barwa PER ISKRA — `emit(..., gain, [r, g, b])` albo barwa domyślna (`setColor`), `burst(..., kolor)` barwi tylko swoją serię (dawniej przemalowywał wszystkie żywe); losowość z fxRandom; pętle klatki piszą przez `stage()` + `pushStaged()`.
 - Żar skóry kadłubów belkowych: szczyt `HULL_BODY_CONFIG.heatGlowPeak` (nie `DESTRUCTOR_CONFIG.heatGlowPeak`, ten zostaje heksom — asteroidy).
 
 ### Efekty broni (WeaponFx, `src/3d/weapons/` — port WebGPU, zadanie 17)
@@ -373,7 +387,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - **Nowa broń:** dane w `MASTER_WEAPONS` (`src/data/weapons.js`) + wpis w `WEAPON_FX` (istniejąca rodzina albo nowa receptura) + klucz wieżyczki (`normalizeWeaponFxKey`, `FX_PROFILE` w `turret2D.js`). Testy `weaponFxTable` / `weaponRecipes` / `beamRenderPath` pilnują, że każda broń ma recepturę (wiązka — `beam`).
 - **Nowa receptura:** paczki przez budowniczego puli `E(pool, rodzaj, n, P, D).speed(a, b)…emit()` (metody budowniczego zostają krótkie — V8 wkleja je, łańcuch nie alokuje), losowanie tylko `fxRandom` (nigdy `Math.random` — sekwencja rozgrywki; stare wizualia — `mainExhaust3D`, `rand` / `coneDir` banku `Fx3D`, `shieldImpactFx`, overlay — jeszcze losują z `Math.random` gry i przez to przebieg bitwy zależy od nich, PLAN §3), zdarzenia opóźnione `ctx.after(opóźnienie, AFTER.RODZAJ, liczby…, encja)` bez domknięć, światła przez `ctx.lights.flash / point` (siatka świateł), wstrząs `ctx.shake` (wylot — `camera.addShake` porównany z resztą; trafienie — tylko gdy gracz strzelał albo oberwał). Barwy w pasmach HDR (rdzenie i błyski > 0,9, ciała 0,3–1,3, smugi: ciało ≤ 1,4); w gorących pętlach `Math.sqrt`, nie `Math.hypot` (alokuje), liczby double do niewklejonych wywołań przez `Float64Array`.
 - Budżety: pełnych wylotów i trafień po 48 na klatkę (ponad — tani błysk), LOD wylotu po rozmiarze wieżyczki na ekranie, impulsy w pierścieniu `PULSE_CAP` (1024), stany pocisków 4096, zdarzenia opóźnione 512. Dym i odłamki czytają maskę słońca (`sunVisibility`), emisja nie.
-- Mechanika z dema (przebicia, rykoszety, ładowanie Mjolnira / Valkyrie, mapa ran na kadłubie) — zadanie 18: haki `ctx.stamp` (mapa ran, 18-C), `ctx.ricochet`, `WeaponFx.charge` i receptury `kerf / exit / stuck` czekają na logikę gry.
+- Mechanika z dema (przebicia, rykoszety, ładowanie Mjolnira / Valkyrie) — zadanie 18: `ctx.ricochet`, `WeaponFx.charge` i receptury `kerf / exit / stuck` czekają na logikę gry (18-B); `ctx.stamp` → mapa ran (18-C, `HullDamageMap.stampRecipe` — receptury `kerf` / `stuck` z encją kadłuba stemplują rzaz i zakleszczenie).
 
 ### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
 - Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (gracz/P2 — `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
@@ -381,6 +395,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Rysowanie: `pos + v · (T − t0)` z `SimClock` (`src/game/simClock.js`): `sim` rośnie w `physicsStep` zaraz po całkowaniu pozycji gracza, `render` = czas interpolowanej pozy gracza (`beginRender` przed `render`). Nie przesuwaj niesionych efektów zegarem klatki — rozjadą się z kadłubem w pauzie i przy interpolacji. Czas pozy: z rekordów Turret2D `fromRender = true`, z pozy fizycznej `false`.
 - Wyprzedzenie liczy ruch celu WZGLĘDEM strzelca (`getLeadAim(..., shooterVel)`, `leadTarget`), smuga pocisku = ruch względem strzelca, kierunek wgniecenia = prędkość pocisku względem celu, zasięg Hexlance'a i rakiet = droga własna.
 - Rakiety 3D: `rocketSystem3D.fire(..., launchVx, launchVy)` — układ rakiety to pęd wyrzutni (stały, bez dopasowania do celu), lot kinematyczny w nim; przy wyrzutni w spoczynku zachowanie jak dawniej. Canvasowe rakiety i torpedy naprowadzają ruch własny w układzie `ivx/ivy`.
+- Efekty rakiet (zadanie 19) niosą nośnik jawnie: smuga, wyrzut, zapłon i wybuch w próżni — układ rakiety (`r.frameVel`); wybuch na kadłubie i receptura tarczy — trafiony kadłub (`vx / vy`), iskry trafienia w gracza w `CLOCK_RENDER`, w NPC w `CLOCK_SIM`; pozostałość Supernowej stoi w świecie (jak w demie).
 
 ### Wejście i HUD (aktualne skróty)
 - `W/S` — ciąg przód/tył
