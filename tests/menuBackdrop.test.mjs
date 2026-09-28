@@ -132,13 +132,16 @@ test('index.html: tło po initHaloRings, ring wraca do gry przed jej pierwszą k
 
 test('halo Ziemi i Marsa w grze: poświata limbu z modelu atmosfery menu, gaśnie do zera na brzegu', () => {
   const src = read('src/3d/planet3d.assets.js');
-  const frag = src.match(/const\s+RING_ATMOSPHERE_FRAGMENT\s*=\s*`([\s\S]*?)`;/)?.[1] || '';
-  assert.ok(frag, 'brak RING_ATMOSPHERE_FRAGMENT');
-  assert.match(frag, /if \(rho >= uRa\) discard;/);
-  assert.match(frag, /sqrt\(max\(uRa \* uRa - rho \* rho, 0\.0\)\)/, 'cięciwa przez powłokę → 0 na jej brzegu (bez kropkowanej krawędzi)');
-  assert.match(frag, /exp\(-h \/ uHs\)/);
-  assert.match(frag, /float alpha = max\(glow\.r, max\(glow\.g, glow\.b\)\);/, 'alfa = max(rgb) przy blendzie ONE/ONE');
-  assert.doesNotMatch(frag, /hash12|gl_FragCoord/);
+  // Port WebGPU (zadanie 05): shader poświaty limbu to graf TSL (buildRingAtmosphereGraph, planet3d.assets.tsl.js).
+  const tsl = read('src/3d/planet3d.assets.tsl.js').replace(/\r\n/g, '\n');
+  const frag = tsl.slice(tsl.indexOf('function buildRingAtmosphereGraph()'), tsl.indexOf('// ── Graf: słońce'));
+  assert.ok(frag.includes('fragmentNode'), 'brak grafu poświaty limbu');
+  assert.match(frag, /Discard\(rho\.greaterThanEqual\(U\.uRa\)\.or\(alpha\.lessThanEqual\(0\.001\)\)\);/);
+  assert.match(frag, /sqrt\(max\(U\.uRa\.mul\(U\.uRa\)\.sub\(rho\.mul\(rho\)\), 0\.0\)\)/, 'cięciwa przez powłokę → 0 na jej brzegu (bez kropkowanej krawędzi)');
+  assert.match(frag, /exp\(h\.negate\(\)\.div\(U\.uHs\)\)/);
+  assert.match(frag, /const alpha = max\(glow\.r, max\(glow\.g, glow\.b\)\)/, 'alfa = max(rgb) przy blendzie ONE/ONE');
+  assert.match(frag, /blendSrc: THREE\.OneFactor, blendDst: THREE\.OneFactor/, 'blend ONE/ONE jak dawne premultipliedAlpha + Additive');
+  assert.doesNotMatch(frag, /hash12|fragCoord|screenCoordinate/);
   assert.match(src, /if \(this\.isRingAnchored\) \{[^}]*createRingAtmosphere\(name, resolveRingPlanetWorldRadius\(this\.data\)\)/);
   assert.match(src, /RING_ATMOSPHERE_TUNE = Object\.freeze\(\{\s*earth: Object\.freeze\(\{ height: 1250/, 'wysokość powłoki jak w tle menu (R + 1250)');
   assert.match(src, /atmU\.uSunDir\.value\.set\(dx \/ len, dy \/ len, 0\)/, 'słońce w płaszczyźnie gry');

@@ -130,6 +130,25 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `setupLightingModel` / `outputNode` na `MeshStandardMaterial` działa (klucz programu: własny `customProgramCacheKey`
   = klucz klasy + hak). Zagnieżdżone `Loop(n)` dostają ten sam indeks `i` — w bibliotekach nazywaj indeksy
   (`Loop({ start, end, type: 'int', condition: '<', name })`).
+- **Pułapki z zadania 05 (three r183):** `NodeMaterial` z `premultipliedAlpha = true` mnoży kolor przez alfę W SHADERZE
+  (`setupOutput` → `premultiplyAlpha`), a `ShaderMaterial` z tą flagą zmieniał tylko blend — port addytywnego ONE/ONE:
+  `premultipliedAlpha = false` + `CustomBlending` (czynniki One). `ShaderMaterial` ma `forceSinglePass = true`, materiał
+  węzłowy nie — przezroczysty `DoubleSide` w porcie ustawia go sam (inaczej dwa rysunki). `select(c, a, b)` z nietrywialnymi
+  gałęziami TSL generuje jako if/else i leniwie wkłada tam węzły, także próbki tekstur z pochodnymi — próbkę przed
+  wyborem przypiąć `.toVar()`. `THREE.Points` z rozmiarem nie istnieje w WebGPU (punkt = 1 px) — kwadraty
+  instancjonowane (kwadrat punktu z GL: bok ≥ 1 px, gl_PointCoord t w dół). Pusta `new Texture()` w WebGPU próbkuje
+  (0, 0, 0, 0), w WebGL (0, 0, 0, 1). Harness: sceny porównywać w pełnych sesjach — `--sceny` z podzbiorem zmienia drogę
+  kamery gwiazd (`advanceStarCamera` całkuje skoki kamery) i czas słońca (plamy), więc tło rozjeżdża się z bazą.
+- **Pułapki z zadania 12 (three r183):** **`renderer.lighting` renderer łapie w `init()`** (`new RenderLists(this.lighting)`)
+  — podmiana po `init()` nic nie zmienia (siatka świateł po cichu nie działała); system oświetlenia ustawiać PRZED
+  `await renderer.init()`. **Siatka bezpieczeństwa NaN / Inf:** nie `x != x` (WGSL pozwala zakładać brak NaN i zwinąć
+  porównanie) ani `max(min(x, a), 0)` (min / max z NaN oddają DRUGI argument — demo rakiet zamieniało NaN w 60 000, jasną
+  plamę po bloomie), tylko bity wykładnika: `floatBitsToUint(c) & 0x7f800000 == 0x7f800000` → 0 (`hdrBezpieczny`,
+  `postGry.js`; bez niej NaN kwadu 40 px zalewał przez bloom cały ekran — `efekty-kontrola.mjs`). **Zakresy wysyłki
+  atrybutów** (`addUpdateRange`) three czyści po każdej wysyłce (`clearUpdateRanges` → `length = 0`), a ponowne `push`
+  alokuje ~150 B na atrybut na klatkę — zakres na stałe z wyłączonym czyszczeniem (`liveAttribute`, `fxParticles3D.js`).
+  Tekstura per obiekt we wspólnym grafie: `FxMapNode` (jak `HullObjectTextureNode`, `texture().onObjectUpdate()` nie
+  działa).
 - **Pułapki z zadania 15 (three r183):** **`DynamicDrawUsage` na atrybucie = `writeBuffer` CAŁEGO bufora przy każdym
   `render()`, który go rysuje** (`Attributes.update` pomija wtedy porównanie wersji) — bufory pisane w biegu zostają
   przy domyślnym użyciu z `needsUpdate` i zakresami (`addUpdateRange`; backend wysyła tylko zakresy i sam czyści listę).

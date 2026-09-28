@@ -103,6 +103,23 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`; fala uderzeniowa A/B:
   `scripts/webgpu/fala-uderzeniowa.mjs`. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
   kamery gracza 1; na WebGL widok 1 miał je przesunięte, widok 2 — żadnych).
+- **Infrastruktura efektów GPU (zadanie 12, `src/3d/fx/`, opis `docs/webgpu/FX-INFRA.md`)** — `Core3D.fx` (`fxFrame.js`)
+  raz na klatkę rAF na starcie `render()`, przed passami (podzielony ekran: drugi `renderSingle` nic nie robi): kroki
+  `Core3D.addFxStep({ name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) })` → początek pul przy kamerze i zegary
+  (`ctx.origin` = `FxPoolOrigin`; **pula GPU MUSI się w nim zarejestrować** z kernelem `createShiftKernel`, inaczej początek
+  przestawia się pod jej danymi) → siatka świateł → update. Zegar efektów `ctx.time` / `Core3D.fx.time` biegnie z klatką
+  rAF jak `Fx3D.time` (krok ≤ 0,1 s, także w pauzie). `warm` idzie raz przy gotowym urządzeniu: puste dispatche kerneli +
+  `Core3D.prewarmPass(siatka, warstwa)`. **Siatka świateł** (`Core3D.fx.grid`): `renderer.lighting = GridLighting` w trybie
+  „optIn”, ustawiony PRZED `renderer.init()` (three r183 łapie `lighting` w init — podmiana później nic nie zmienia);
+  czytają ją tylko materiały z `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian.
+  Światła efektów: `Core3D.fx.lights.flash(...)` / `.point(...)` (świat gry, nośnik z `ActiveCarrier`), własne światła kroku
+  w `lights(ctx)` przez `ctx.grid.addWorld(...)`. **Zniekształcenia** („uber”, gałąź tylko przy źródłach): fala / implozja /
+  gorące powietrze — `Core3D.fxDistortion().shock / implode / heat(...)` (świat gry, co klatkę przed renderem; dysze i
+  tarcze zostają przy `pushHeatHazeWorld`); warstwa DIST — siatki na `FX_DISTORT_LAYER` (10) piszą przesunięcie w px (osie
+  sceny, RG) do `Core3D.distortionTarget`, właściciel co klatkę `Core3D.setDistortLayerActive(bool)`. Przed bloomem i w
+  odczytach sceny „uber” — siatka bezpieczeństwa NaN / ±Inf → 0 (`hdrBezpieczny`, `postGry.js`). Pomiar: `Core3D.fxStats`
+  (PerfHUD „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`) w TSL:
+  cztery grafy (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -161,6 +178,21 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - `updatePlanets3D(dt, cam)` — aktualizacja.
 - Planety są częścią wizualnej warstwy 3D, gameplay nadal jest liczony w 2D.
 - Halo (poświata limbu) Ziemi i Marsa: `createRingAtmosphere` w `planet3d.assets.js` — płaski dysk w passie ortho z modelem atmosfery z tła menu (cięciwa przez powłokę R + H, gęstość e^(−h/Hs)), gaśnie do zera na brzegu powłoki. Nie wracaj do powłoki-kuli z maską Fresnela: przy 1,21 R dawała kropkowany łuk, przy 1,034 R ~1% jasności (halo znikało).
+- Materiały w TSL (port WebGPU, zadanie 05): `src/3d/planet3d.assets.tsl.js`. Graf RAZ na rodzaj (powierzchnia,
+  chmury, poświata planet tła i księżyców, poświata limbu, słońce), każde ciało dostaje lekki `PlanetBodyNodeMaterial`
+  z tymi samymi węzłami; wartości per ciało w `material.uniforms` (obiekty `{ value }` — kontrakt
+  `window.EARTH.uniforms.*Texture.value` / `cloudUniforms` dla tła menu i devTools bez zmian), tekstury per ciało przez
+  `PlanetObjectTextureNode`. Mgławica (`uniforms.map.value` pożycza tło menu) i gwiazdy — węzły za adapterem uniformów.
+  Maska słońca: JEDEN import z `sunShadowMask.js` (TSL, zadanie 03) — `sunVisibility()` na ciałach przy ringu
+  (`uSunShadowRecv = 1`; planety tła w perspektywie jej nie czytają), `sunShaftBackdrop()` na mgławicy i gwiazdach.
+- Gwiazdy (`StarSystem`): WebGPU rysuje punkty zawsze po 1 px, więc to `Mesh` z `InstancedBufferGeometry` (kwadrat ×
+  26 000, dane gwiazd w JEDNYM przeplecionym buforze instancji — limit 8 buforów wierzchołków) i kwadrat punktu z GL
+  (bok gl_PointSize obcięty do ≥ 1 px, gl_PointCoord z rogów, t w dół). Nie wracaj do `THREE.Points` z rozmiarem.
+  Rozciąganie w skoku i bicz przy wyjściu przeszły 1:1 (do wymiany z nowym warpem, zadanie 22).
+- Poświata limbu: blend ONE/ONE przez `CustomBlending` — `NodeMaterial` z `premultipliedAlpha = true` mnożyłby kolor
+  przez alfę w shaderze (ShaderMaterial z tą flagą zmieniał tylko blend).
+- A/B planet, księżyców i stacji w prawdziwej grze (harness nie ma kadru z Ziemią przy ringu):
+  `node scripts/webgpu/planety-gra.mjs [--root <worktree tagu webgl-baseline>]`, porównanie `porownaj.mjs`.
 
 ### Ring „Halo” (Ziemia, Mars, Jowisz)
 - `HaloRingGame` (`src/3d/haloRing/haloRingGame.js`): BG warstwa 1, górna ściana i suwnice K-7 w FG (warstwa 2). `haloRings.update(frameDt, cam, …)` co klatkę PRZED `Core3D.render`, z kamerą TEJ klatki (`cam` ze wstrząsem) — ring liczy pozycje względem kamery (RTE), inna kamera przesunie go względem statków. Jakość = `OPTIONS.planetQuality` („Ultra” = dalszy LOD, `HALO_LOD_ULTRA`).
@@ -285,7 +317,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
    - Parametry bloomu (strength/radius/threshold, także dla overlay3D) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL.
    - Bloom przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie. Core3D od zadania 02: `BloomGry` (BloomNode + ×3 `BLOOM_ZGODNOSC_WEBGL`, `src/3d/tsl/postGry.js`) — obraz 1:1 z dawnym `UnrealBloomPass` (strażnik różnic three: `tests/webgpuPost.test.mjs`); overlay3D do zadania 20 na starym passie.
    - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
-   - Nie duplikuj postprocessingu w innych modułach.
+   - Nie duplikuj postprocessingu w innych modułach. Nowe efekty GPU: compute przez `Core3D.addFxStep` (raz na klatkę, przed passami), światła przez siatkę (`Core3D.fx.lights` / `ctx.grid`), refrakcja przez `Core3D.fxDistortion()` albo warstwę DIST (`FX_DISTORT_LAYER`) — nie własne `renderer.compute` w pętli gry, własne cele ani passy (`docs/webgpu/FX-INFRA.md` §10).
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
    - Mapa cienia słońca: w WebGPU odświeżanie jest per światło (`renderer.shadowMap` ma tylko `enabled` / `type`). Słońce gry zgłasza się `Core3D.setSunShadowLight(light)`, a `render()` raz na klatkę, na starcie, ustawia `light.shadow.autoUpdate = false; needsUpdate = true` — ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (kamera cienia z `layers.enableAll()` widzi rzucających na wszystkich warstwach). Nowe światło z cieniem zgłaszaj tak samo.
    - Warp poza portem (decyzja użytkownika 2026-09-27): soczewka skoku, zgięcie tła, widok skoku (kropla / bańka), gwiazdy na warstwie 8 i fale w „uber” są usunięte z Core3D. API (`setWarpLensWorld`, `clearWarpLens`, `setWarpViewWorld`, `clearWarpView`, `pushWarpSpaceWorld`, `pushWarpWaveWorld`, `setWarpStarsObject`, `suppressShadowShafts`) zostaje jako no-op; nowy warp wejdzie od razu w TSL w miejscu opisanym w `render()` (pass zgięcia tła zaraz po passie tła, przed planetami). Nie próbkuj gotowej klatki 2D i nie wycinaj statku maską — tak powstało kiedyś „jajko” wokół kadłuba. Warstwa 8 wolna (dla nowego warpa), warstwa 9 to tło menu (`MENU_BACKDROP_LAYER`, rysuje ją tylko `Core3D.renderBackdrop`).

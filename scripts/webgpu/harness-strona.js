@@ -170,7 +170,9 @@
       const C = window.Core3D;
       const orig = C.render;
       const cpu = [];
-      C.render = function (...a) { const t0 = realNow(); const r = orig.apply(this, a); cpu.push(realNow() - t0); return r; };
+      const fxMs = [];
+      // Klatka efektów GPU (Core3D.fxStats, zadanie 12-B): CPU kroku compute / siatki świateł.
+      C.render = function (...a) { const t0 = realNow(); const r = orig.apply(this, a); cpu.push(realNow() - t0); if (C.fxStats) fxMs.push(C.fxStats.cpuMs); return r; };
       // Odstęp między kolejnymi klatkami strony (w trybie hold: n zamówionych klatek pod rząd).
       const frameMs = [];
       let last = realNow();
@@ -189,7 +191,9 @@
         frameMs: +med(frameMs.slice(1)).toFixed(3),
         gpuMs: Number.isFinite(C.gpuFrameMs) ? +C.gpuFrameMs.toFixed(3) : null,
         drawCalls: info.calls ?? null, triangles: info.triangles ?? null,
-        passes: info.passes ? Object.fromEntries(Object.entries(info.passes).map(([k, v]) => [k, v.calls])) : null
+        passes: info.passes ? Object.fromEntries(Object.entries(info.passes).map(([k, v]) => [k, v.calls])) : null,
+        fx: C.fxStats ? { cpuMs: +med(fxMs).toFixed(4), dispatches: C.fxStats.dispatches, swiatla: C.fxStats.lights, wpisySiatki: C.fxStats.gridItems, zrodla: C.fxStats.distortSources, dist: C.fxStats.distortLayer } : null,
+        gpuComputeMs: Number.isFinite(C.gpuComputeMs) ? +C.gpuComputeMs.toFixed(3) : null
       };
     },
     // Izolacja warstw: renderer.render dla kamer passów Core3D (cameraOrtho / cameraPersp) rysuje
