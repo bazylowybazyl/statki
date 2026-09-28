@@ -1189,14 +1189,23 @@ export class GpuFx {
     U.dt.value = dt;
     U.zoom.value = Math.max(1e-4, zoom);
     const P = this.pools;
-    let dispatches = 0;
+    // Ruch i światło pul w JEDNYM passie compute (zadanie 23, duża bitwa): renderer.compute(lista) koduje
+    // dispatch'e po kolei w jednym passie z jednym zgłoszeniem zamiast pięciu (~25–40 µs CPU każde); dispatch
+    // w passie to osobny zakres użycia buforów (WebGPU wstawia bariery) — kolejność i wynik jak w osobnych
+    // passach. Wątków = count węzła (zajęta część puli, jak dawny rozmiar dispatchu); wspólne uniformy
+    // (dt, zoom) te same dla wszystkich kerneli klatki.
+    const L = this._updateList || (this._updateList = []);
+    L.length = 0;
     if (dt > 0) {
-      if (P.spark.isLive()) { renderer.compute(this.updateSpark, P.spark.used); dispatches++; }
-      if (P.smoke.isLive()) { renderer.compute(this.updateSmoke, P.smoke.used); dispatches++; }
-      if (P.debris.isLive()) { renderer.compute(this.updateDebris, P.debris.used); dispatches++; }
+      if (P.spark.isLive()) { this.updateSpark.count = P.spark.used; L.push(this.updateSpark); }
+      if (P.smoke.isLive()) { this.updateSmoke.count = P.smoke.used; L.push(this.updateSmoke); }
+      if (P.debris.isLive()) { this.updateDebris.count = P.debris.used; L.push(this.updateDebris); }
     }
-    if (P.smoke.isLive()) { renderer.compute(this.lightSmoke, P.smoke.used); dispatches++; }
-    if (P.debris.isLive()) { renderer.compute(this.lightDebris, P.debris.used); dispatches++; }
+    if (P.smoke.isLive()) { this.lightSmoke.count = P.smoke.used; L.push(this.lightSmoke); }
+    if (P.debris.isLive()) { this.lightDebris.count = P.debris.used; L.push(this.lightDebris); }
+    if (L.length === 1) renderer.compute(L[0]);
+    else if (L.length > 1) renderer.compute(L);
+    const dispatches = L.length;
     const o = this.origin;
     for (let k = 0; k < this.meshes.length; k++) {
       const mesh = this.meshes[k];

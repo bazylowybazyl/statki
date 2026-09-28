@@ -457,6 +457,8 @@ export const Core3D = {
   // Światło z mapą cienia (słońce gry, planet3d.assets.js): odświeżane raz na
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
+  // Scalone wysyłki buforów uniformów (_coalesceUniformUploads): bufory z ≥ 2 zakresami, oszczędzone zapisy.
+  uniformUploadStats: { merged: 0, savedWrites: 0 },
   // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
   shadowPassStats: { updated: 0, skipped: 0 },
   _shadowMapEmpty: false,
@@ -1023,8 +1025,42 @@ export const Core3D = {
     // Klucz węzła świateł pamiętany z podpisem świateł (zadanie 23): three liczył go od nowa przy każdym
     // render() (~10–15 µs; 12 passów bloomu, post, maska, passy sceny) — ten sam klucz, bez przeliczania.
     zainstalujKluczSwiatel();
+    this._coalesceUniformUploads(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
+  },
+
+  // three r183 (WebGPUBindingUtils.updateBinding) wysyła KAŻDY zmieniony uniform bufora osobnym
+  // queue.writeBuffer — zakres na uniform, bez scalania. Grupa „object” materiału węzłowego to kilka
+  // zapisów na rysunek (macierze, czas, stan tarczy…): duża bitwa ~300 wywołań writeBuffer na klatkę,
+  // ~2,5 µs każde (zadanie 23). Tu zakresy bufora scalone w JEDEN [najniższy, najwyższy) — bajty pomiędzy
+  // są na GPU takie same jak w kopii CPU bufora (UniformsGroup pisze wartość do kopii CPU i dopisuje jej
+  // zakres; bufor GPU powstaje wyzerowany jak kopia), więc stan GPU po zapisie jest bit w bit ten sam.
+  // Bez zakresów (bufor tablicy uniformów — pełna wysyłka) i jeden zakres — ścieżka three.
+  _coalesceUniformUploads(renderer) {
+    const utils = renderer?.backend?.bindingUtils;
+    if (!utils || typeof utils.updateBinding !== 'function' || utils.__core3dUniformCoalesce) return;
+    const orig = utils.updateBinding;
+    const stats = this.uniformUploadStats;
+    utils.__core3dUniformCoalesce = true;
+    utils.updateBinding = function (binding) {
+      const ranges = binding.updateRanges;
+      const n = ranges ? ranges.length : 0;
+      const array = n > 1 ? binding.buffer : null;
+      if (n < 2 || !ArrayBuffer.isView(array)) return orig.call(this, binding);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < n; i++) {
+        const r = ranges[i];
+        if (r.start < lo) lo = r.start;
+        const end = r.start + r.count;
+        if (end > hi) hi = end;
+      }
+      const buffer = this.backend.get(binding).buffer;
+      this.backend.device.queue.writeBuffer(buffer, lo * array.BYTES_PER_ELEMENT, array, lo, hi - lo);
+      stats.merged++;
+      stats.savedWrites += n - 1;
+    };
   },
 
   // three r183: compileAsync wkłada do cache pipeline, którego obiekt GPU dopiero
