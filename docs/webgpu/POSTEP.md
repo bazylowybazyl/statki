@@ -42,7 +42,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | zrobione, scalone (eb9370b) | a72b8fa, 777f86b, 77eef2b | `tolerancjaPortu` >8/255 ≤ 0,05%, średnia ≤ 0,03; `BloomNode` ×3 (zgodność z `UnrealBloomPass`); bloom ~1 ms CPU → 23 |
 | 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | zrobione, scalone (f487d2f) | 5adc702, 65d92a2 | maska = baza WebGL w grze (`maska-slonca.mjs`: maks. 5/255 na 2 pikselach); zastępnik z 04 podmieniony; SDF: wgrywanie jednej warstwy zamiast 4 MB |
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | zrobione, scalone (f7c3c77, poprawka 9841cbf); maska słońca = zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js` (podmienia 03) | 3adcc5c, 7599a42 | graf na wariant (spawn 30 NPC 14 ms zamiast 389); haki `hullDamageSurface/Heat`, `hullEffectLights` (18), `hullVolume` (21) |
-| 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/05`; maska = zastępnik do 03, tolerancja `planeta-cien` po 03) | | |
+| 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | zrobione, scalone (2245c90) | b6eb4f3, 40224bb, 24d31b2 (scalenia `main` c0bc1d0, 970e800, 70551cb) | graf TSL na rodzaj ciała; gwiazdy = kwadraty instancjonowane; rozciąganie w skoku 1:1; `planeta-cien` przyjęte (poza progiem tylko szum stacji Wenus i kropkowany łuk bazy WebGL) |
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | zrobione, scalone (979ed52) | 2c87915…fa8389b (scalenie `main` 60c7e4c) | nowe sceny bazy `ring-dach`, `ring-dach-z01`, `ring-habitat` (dopisane z tagu) |
@@ -72,7 +72,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 |---|---|---|---|
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
-| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (planety 05, mostek 15, skały 21, Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
+| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (mostek 15, skały 21, Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
@@ -472,3 +472,25 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   `addFxStep`, światła przez `fx.lights`, fale przez `fxDistortion()` / DIST; w 18 kadłuby czytają siatkę jawnie
   `grid.loop`). Inwentarz z HEAD 72ec255: port 26 plików z GLSL, 43 materiały, 5082 linie. Testy: 1509 / 7 porażek
   bazowych / 3 todo; `npm test` OK.
+- **Zadanie 05 scalone do `main`** (b6eb4f3 port, 40224bb maska z 03, 24d31b2 A/B gwiazd w skoku; scalenia `main` c0bc1d0,
+  970e800, 70551cb; scalenie 2245c90): planety (dzień/noc, mapa normalnych Ziemi, mgiełka, analityczny pas cienia ringu,
+  `uPlanetBloom`), chmury, poświaty, poświata limbu, słońce z koroną, mgławica i gwiazdy w TSL
+  (`src/3d/planet3d.assets.tsl.js`); `planet3d.assets.js` bez GLSL (−191 linii, 7 materiałów). Graf RAZ na rodzaj ciała
+  (~20–27 ms CPU raz zamiast 9×), lekki `PlanetBodyNodeMaterial` per ciało, wartości w `material.uniforms` (kontrakt
+  `window.EARTH` bez zmian), tekstury przez `PlanetObjectTextureNode`. Gwiazdy = kwadraty instancjonowane (punkty WebGPU
+  mają 1 px; bok ≥ 1 px, `gl_PointCoord` jak GL); **rozciąganie gwiazd w skoku i bicz przy wyjściu przeszły 1:1** (A/B
+  `gwiazdy-skok` 0% >8/255; `setWarpStarsObject` dalej no-op, wymiana w 22). Poświata limbu `CustomBlending` ONE/ONE z
+  `premultipliedAlpha = false`; chmury `forceSinglePass`. Maska: `sunVisibility()` na ciałach przy ringu,
+  `sunShaftBackdrop()` na mgławicy i gwiazdach. Stacje i stacja piracka — materiały wbudowane, bez zmian w kodzie.
+  Harness (0 błędów): w tolerancji `slonce` (0,0028% / 0,0079), `hud`, `ring-z1`, `kalibracja`, `wybuch`,
+  `bitwa-blisko`, `__tlo` scen kosmosu; tło bez zamienników. **`planeta-cien` przyjęte decyzją orkiestratora** (mapa
+  różnic): 0,32% >8/255, z czego poza prostokątem stacji Wenus (szum obrotu, 1,2% kadru) 836 px = 0,041% w każdym
+  przebiegu — kropkowany łuk poświaty w bazie WebGL (451 px, artefakt MSAA, ten sam co zakazana w agents.md powłoka-kula;
+  nie odtwarzany) + 1-px krawędź limbu (311 px); `__planety` 0,037% / śr. 0,0415 (łuk), `__tlo` 0,90% = przeciek
+  poświaty w izolacji warstw na tagu (poza pierścieniem ±40 px: 3 px). A/B w grze (`scripts/webgpu/planety-gra.mjs`):
+  planety i księżyce ≤ 0,040%, gwiazdy i gwiazdy w skoku 0%, stacja piracka 0,022%, stacja Wenus 0,25% (krawędzie).
+  Pułapka: podzbiór `--sceny` zmienia drogę kamery gwiazd i czas słońca — porównywać w pełnych sesjach (PLAN §3).
+  Znalezione: sprite blasku słońca ładuje brakujący `assets/effects/glow.png` (404, niewidoczny w obu rendererach — 24);
+  `dema/asteroidy.html` i `dema/warp-demo.html` (WebGL, poza portem) dostają mgławicę i gwiazdy z TSL — nietestowane.
+  Inwentarz z HEAD 2245c90: port 25 plików z GLSL, 36 materiałów, 4891 linii. Testy: 1515 / 7 porażek bazowych / 3 todo;
+  `npm test` OK.

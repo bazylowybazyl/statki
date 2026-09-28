@@ -22,8 +22,8 @@
 
 | zakres | pliki z GLSL | materiały | linie GLSL | oBC | odczyty | compile | wbudowane | clone / needsUpdate / defines | TSL / mieszane |
 |---|---:|---|---:|---:|---:|---:|---:|---|---|
-| **razem** | 48 | 89 (86 SM, 0 Raw, 3 ShaderPass) | 10019 | 0 | 2 | 5 | 58 | 6 / 36 / 19 | 33 / 1 |
-| port | 26 | 43 (42 SM, 0 Raw, 1 ShaderPass) | 5082 | 0 | 1 | 5 | 46 | 6 / 27 / 13 | 31 / 1 |
+| **razem** | 47 | 82 (79 SM, 0 Raw, 3 ShaderPass) | 9828 | 0 | 2 | 5 | 58 | 6 / 36 / 19 | 35 / 1 |
+| port | 25 | 36 (35 SM, 0 Raw, 1 ShaderPass) | 4891 | 0 | 1 | 5 | 46 | 6 / 27 / 13 | 33 / 1 |
 | warp | 2 | 2 (2 SM, 0 Raw, 0 ShaderPass) | 364 | 0 | 0 | 0 | 1 | 0 / 0 / 0 | 0 / 0 |
 | asteroidy-stare | 1 | 1 (1 SM, 0 Raw, 0 ShaderPass) | 66 | 0 | 0 | 0 | 2 | 0 / 3 / 0 | 0 / 0 |
 | asteroidy-nowe | 7 | 15 (15 SM, 0 Raw, 0 ShaderPass) | 1889 | 0 | 1 | 0 | 0 | 0 / 0 / 1 | 0 / 0 |
@@ -32,8 +32,8 @@
 
 ### Porównanie z `USTALENIA.md` (~105 materiałów w 53 plikach, ~12,7 tys. linii GLSL w 59 plikach)
 
-Tu: **89 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 43 plikach,
-**10019 linii GLSL** w 47 plikach. Różnice: (1) ten lekser liczy szablony w całości
+Tu: **82 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 42 plikach,
+**9828 linii GLSL** w 46 plikach. Różnice: (1) ten lekser liczy szablony w całości
 (z `${…}`) i także krótkie jednolinijkowe shadery w zwykłych napisach; (2) liczy `ShaderPass` jako materiał; (3) pliki dodane od
 `2c2ef18` (ringi-archetypy Z6 `haloRing/arch/*`, budowle portowe Z7, burze pasa). Do planu liczy się wiersz **port**.
 
@@ -52,7 +52,6 @@ Tu: **89 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 43 plikach,
 | `src/effects3d/reactorblow.js` | 2 | 226 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; port do Core3D w zadaniu 20 |
 | `src/effects3d/rocketFireGPU.js` | 1 | 213 |  |  |  |  |  |  | · / · / · | GLSL | zastąpi dym i dysze z dema rakiet (zadanie 19) |
 | `src/3d/menuBackdrop3D.js` | 3 | 200 |  |  |  | 2 | initTexture |  | · / · / · | GLSL | rozgrzewka po kluczu programu WebGL — do przeprojektowania |
-| `src/3d/planet3d.assets.js` | 7 | 191 |  |  |  |  |  | 3 | · / · / · | GLSL |  |
 | `src/3d/haloRing/arch/fable.js` | 1 | 178 |  |  |  |  |  |  | · / 2 / · | GLSL |  |
 | `src/3d/haloRing/arch/ecumene.js` | 1 | 171 |  |  |  |  |  |  | · / 2 / · | GLSL |  |
 | `src/vfx/shatterMaterial.js` | 1 | 143 |  |  |  |  |  |  | · / · / · | GLSL | zniszczenie stacji |
@@ -261,13 +260,13 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 
 | strona | Core3D | własny WebGLRenderer | WebGPU | moduły gry z GLSL | używana przez |
 |---|---|---|---|---|---|
-| `dema/asteroidy.html` | tak |  |  | 12 (planet3d.assets.js, sunShadowMaskGLSL.js, beltStorm3D.js, fieldLights3D.js, beltDust3D.js …(+7)) | `dema/asteroidy-webgpu.js`, `dema/asteroidy.js` |
+| `dema/asteroidy.html` | tak |  |  | 11 (sunShadowMaskGLSL.js, beltStorm3D.js, fieldLights3D.js, beltDust3D.js, rockMinerals3D.js …(+6)) | `dema/asteroidy-webgpu.js`, `dema/asteroidy.js` |
 | `dema/budowle-portowe.html` | tak |  |  | 9 (portBuoys3D.js, sunShadowMaskGLSL.js, portBuildings3D.js, portHullBuild3D.js, haloRingGLSL.js …(+4)) | `dema/budowle-portowe-shots.js`, `dema/budowle-portowe.js` |
 | `dema/halo_ring_demo.html` |  |  | tak | 9 (fable.js, archMaterials.js, archGLSL.js, haloRingGLSL.js, ecumene.js …(+4)) | `dema/halo_ring_demo.js`, `scripts/halo-ring-shots.mjs` |
 | `dema/kontenery.html` |  | tak | tak | 8 (cargoDrones3D.js, sunShadowMaskGLSL.js, cargoContainers3D.js, haloPortK7.js, haloRingGLSL.js …(+3)) | `dema/kontenery-shots.js`, `dema/kontenery.js` |
 | `dema/mostki-demo.html` | tak |  |  | 6 (bridge3D.js, sunShadowMaskGLSL.js, bridgeFx3D.js, beamDebris3D.js, shipLights3D.js …(+1)) | `dema/mostki-demo.js`, `dema/mostki-shots.js`, `dema/mostki3d-drzenie.js`, `dema/mostki3d-shots.js`, `dema/precyzja-drzenie.js` |
 | `dema/rdzen-demo.html` | tak |  |  | 9 (sunShadowMaskGLSL.js, beamDebris3D.js, shipLights3D.js, slugTrail3D.js, sparkSystem3D.js …(+4)) | `dema/rdzen-demo.js`, `dema/rdzen-gpu-check.js`, `dema/rdzen-shots.js` |
-| `dema/warp-demo.html` | tak |  |  | 7 (planet3d.assets.js, sunShadowMaskGLSL.js, warpLens3D.js, warpFx3D.js, beamDebris3D.js …(+2)) | `dema/warp-demo.js` |
+| `dema/warp-demo.html` | tak |  |  | 6 (sunShadowMaskGLSL.js, warpLens3D.js, warpFx3D.js, beamDebris3D.js, shipLights3D.js …(+1)) | `dema/warp-demo.js` |
 | `scripts/proxy-batch/index.html` | tak |  |  | 5 (sunShadowMaskGLSL.js, beamDebris3D.js, shipLights3D.js, slugTrail3D.js, shipProxyBatch3D.js) | `scripts/proxy-batch/gallery.mjs`, `scripts/proxy-batch/lighting.mjs`, `scripts/proxy-batch/precision.mjs`, `scripts/proxy-batch/run.mjs`, `scripts/webgpu/inwentarz.mjs` |
 | `scripts/webgpu/ring-mapa-strona.html` |  | tak |  | 6 (fable.js, archMaterials.js, archGLSL.js, haloRingGLSL.js, ecumene.js …(+1)) | `scripts/webgpu/ring-mapa.mjs` |
 | `scripts/webgpu/ring-tsl-parzystosc-strona.html` |  |  | tak | 2 (haloRingIndustryKit.js, haloRingGLSL.js) | `scripts/webgpu/ring-tsl-parzystosc.mjs` |
@@ -288,18 +287,17 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `tests/haloRingStructureTSL.test.mjs` | `src/3d/haloRing/haloRingGLSL.js` |
 | `tests/haloRingTerrainTSL.test.mjs` | `src/3d/haloRing/haloRingCity.js`, `src/3d/haloRing/haloRingGLSL.js`, `src/3d/haloRing/haloRingIndustryKit.js`, `src/3d/haloRing/haloRingMegastructure.js` |
 | `tests/hexShips3DShader.test.mjs` | `src/3d/core3d.js` |
-| `tests/menuBackdrop.test.mjs` | `src/3d/menuBackdrop3D.js`, `src/3d/planet3d.assets.js`, `src/3d/core3d.js` |
+| `tests/menuBackdrop.test.mjs` | `src/3d/menuBackdrop3D.js`, `src/3d/core3d.js` |
 | `tests/overlayContextMerge.test.mjs` | `src/effects3d/overlay.js` |
 | `tests/perfInstrumentation.test.mjs` | `src/3d/core3d.js` |
 | `tests/portBuildings.test.mjs` | `src/3d/portBuildings/portBuildings3D.js`, `src/3d/portBuildings/portBuoys3D.js`, `src/3d/portBuildings/portHullBuild3D.js`, `src/3d/core3d.js` |
-| `tests/renderPerfGates.test.mjs` | `src/3d/planet3d.assets.js`, `src/effects3d/overlay.js`, `src/effects3d/reactorblow.js`, `src/effects3d/rocketFireGPU.js`, `src/effects3d/rocketSmokeGPU.js` …(+3) |
-| `tests/ringPlanetAnchoring.test.mjs` | `src/3d/planet3d.assets.js`, `src/3d/core3d.js` |
+| `tests/renderPerfGates.test.mjs` | `src/effects3d/overlay.js`, `src/effects3d/reactorblow.js`, `src/effects3d/rocketFireGPU.js`, `src/effects3d/rocketSmokeGPU.js`, `src/effects3d/supernovaMissileBlow.js` …(+2) |
+| `tests/ringPlanetAnchoring.test.mjs` | `src/3d/core3d.js` |
 | `tests/sceneMatrixSync.test.mjs` | `src/3d/core3d.js` |
 | `tests/shaderPrewarm.test.mjs` | `src/effects3d/overlay.js` |
-| `tests/shadowShaftsQuality.test.mjs` | `src/3d/asteroidBeltBackdrop3D.js`, `src/3d/bridge3D.js`, `src/3d/bridgeFx3D.js`, `src/3d/haloRing/haloRingCity.js`, `src/3d/haloRing/haloRingGLSL.js` …(+6) |
+| `tests/shadowShaftsQuality.test.mjs` | `src/3d/asteroidBeltBackdrop3D.js`, `src/3d/bridge3D.js`, `src/3d/bridgeFx3D.js`, `src/3d/haloRing/haloRingCity.js`, `src/3d/haloRing/haloRingGLSL.js` …(+5) |
 | `tests/shipLights3D.test.mjs` | `src/3d/shipLights3D.js`, `src/3d/core3d.js` |
 | `tests/shipProxyBatch3D.test.mjs` | `src/3d/shipProxyBatch3D.js`, `src/3d/core3d.js` |
-| `tests/starParallax.test.mjs` | `src/3d/planet3d.assets.js` |
 | `tests/sunShadowMaskTSL.test.mjs` | `src/3d/core3d.js` |
 | `tests/warpLens3D.test.mjs` | `src/3d/warpLens3D.js`, `src/3d/core3d.js` |
 | `tests/warpSpace.test.mjs` | `src/3d/warpLens3D.js`, `src/3d/core3d.js` |
