@@ -81,6 +81,40 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 (nowy warp) |
 | Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 (nowe asteroidy) |
 
+## Zebrane dla zadań 11, 23 i 24 (z raportów podagentów)
+
+Lista robocza orkiestratora — zadania 11 / 23 / 24 zaczynają od niej (i od dziennika).
+
+**11 (rozgrzewka przed pierwszą klatką):** teren ringu na zimno 0,4–1,3 s (07); konstrukcja ringu 1,1–1,7 s na każdy z 2
+wariantów, chmury ~1,1 s, powłoka ~0,85 s (08); 9 materiałów megastruktury i miasta ~2–3 s razem (09); K-7 i archetypy
+(10); dysze SIDE — 4 pipeline'y w pierwszej klatce gry (13); materiał fali uderzeniowej (03 — pierwsza Supernowa);
+menu nie czeka na `ring.ready` (ring dołącza 2–4,5 s po Ziemi) i pusta scena `createHaloBakeWarmup` do usunięcia (06).
+
+**23 (wydajność, precyzja, poprawki renderu):**
+- bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render; 02);
+- wgrywanie geometrii `hull:beam` 170 ms przy wejściu w skok (13, 12-B);
+- `discard` w Tint nie przerywa shadera: zanikająca górna ściana ringu i puste chmury liczą pełne cieniowanie — pomijać
+  rysunek przy pełnym zaniku, osłonić chmury (08);
+- **jedna mapa cienia ze wszystkimi warstwami**: łapacz cienia warstwy 0 (`Core3D.shadowCatcher`) dostaje cień z FG
+  (stacje po rozpadzie — 16);
+- brama znaczników czasu (`_gpuTimerGate`) liczy miejsce raz na klatkę rAF, a dema renderują wiele razy — przepełnienie
+  puli w `mostki-demo` / `rdzen-demo` (04, 15);
+- harness zbiera błędy per scena — błędy startu sesji (przed pierwszą sceną) giną (13: SIDE z 12 buforami wierzchołków);
+- żar krawędzi w demie rdzenia 1–3% ciemniejszy (materiał kadłuba, 15);
+- resztkowe różnice krawędzi ringu (FXC scala `mad` także w wierzchołkach, pochodne na czwórkach pikseli — 09);
+- pass maski słońca +1 draw call, ~0,1 ms GPU (03); cel refrakcji HalfFloat MSAA ~16 MB przy 1080p (03);
+- iskry MAIN na dopalaczu 0,067% vs tag (linie 1 px: Dawn vs ANGLE — przyjęte, 12-B).
+
+**24 (sprzątanie):** `src/3d/sunShadowMaskGLSL.js` (po ostatnim odbiorcy); `HALO_GLSL_INDKIT` / `HALO_GLSL_STORM` tylko dla
+narzędzia parzystości (08, 09); `beamDebris3D.js` — GLSL tylko w demach destruktora (04); brakujący
+`assets/effects/glow.png` (404 sprite'a blasku słońca, 05); wyciek `_cloneShellHierarchy` (`__sharedTemplateAsset` w
+klonach kawałków — nigdy niezwalniane, 16); skrypty dem z własnym startem Chrome bez sprzątania profilu → wspólny
+`closeChrome` (incydent dysku); `dema/kontenery.html` na `main` nie działa (poza portem, 06).
+
+**Decyzje wyglądu do potwierdzenia przez użytkownika:** odłamki paneli czarne jak w WebGL (`PANEL_SHARD_BASE_COLOR`, 16);
+`planeta-cien` bez kropkowanego łuku poświaty z bazy WebGL (05); fala uderzeniowa — połowa kadru w snapshocie i cyjanowy
+obrys (03 → 19); warp: wariant czysto wizualny na 3 otwarte pytania dema (22).
+
 ## Środowisko (Krok 2, 2026-09-27)
 
 Sonda: `node scripts/webgpu/srodowisko.mjs [--out plik.json]` (Vite + headless Chrome z flagami
