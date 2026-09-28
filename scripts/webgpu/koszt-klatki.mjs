@@ -204,6 +204,35 @@ try {
     };
     console.log(`${n.padEnd(14)} CPU ${wynik.pomiary[n].cpuMs} ms (okna ${wynik.pomiary[n].cpuMedOkien}, ${wynik.pomiary[n].cpuRozrzutOkien.join('…')}) p90 ${wynik.pomiary[n].cpuP90} | odstęp ${wynik.pomiary[n].okresMs} | GPU ${wynik.pomiary[n].gpuMs} | dc ${wynik.pomiary[n].drawCalls} | fx ${wynik.pomiary[n].fxCpuMs}`);
   }
+  // --graf: spis grafu sceny (węzły, widoczne gałęzie, rysowalne wg warstw, rzucający cień wg warstw) i czas
+  // przejścia JS po widocznych gałęziach (mediana 50 powtórzeń) — koszt _projectObject na pass (zadanie 23).
+  if (args.graf) {
+    wynik.graf = await ev(`(() => {
+      const C = window.Core3D, H = window.__harness; const now = H ? H.realNow : performance.now.bind(performance);
+      let wezly = 0, widoczne = 0; const rys = {}, rzuc = {}, nazwy = new Map();
+      C.scene.traverse(() => { wezly++; });
+      const walk = (o) => {
+        if (o.visible === false) return;
+        widoczne++;
+        if (o.isMesh || o.isLine || o.isPoints || o.isSprite) {
+          rys[o.layers.mask] = (rys[o.layers.mask] || 0) + 1;
+          if (o.castShadow === true) { rzuc[o.layers.mask] = (rzuc[o.layers.mask] || 0) + 1; }
+          const k = (o.name || o.type).replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, '#').replace(/_\\d+$/, '_N') + ' @' + o.layers.mask;
+          nazwy.set(k, (nazwy.get(k) || 0) + 1);
+        }
+        const ch = o.children; for (let i = 0; i < ch.length; i++) walk(ch[i]);
+      };
+      walk(C.scene);
+      const czasy = [];
+      let hit = 0;
+      const probe = (o, mask) => { if (o.visible === false) return; if (o.castShadow === true && (o.layers.mask & mask) !== 0) hit++; const ch = o.children; for (let i = 0; i < ch.length; i++) probe(ch[i], mask); };
+      for (let r = 0; r < 50; r++) { const t0 = now(); probe(C.scene, 1 | 4 | (1 << 31)); czasy.push(now() - t0); }
+      czasy.sort((a, b) => a - b);
+      const top = [...nazwy].sort((a, b) => b[1] - a[1]).slice(0, 25);
+      return { wezly, widoczne, rysowalneWgMaski: rys, rzucajacyWgMaski: rzuc, przejscieUs: +(czasy[25] * 1000).toFixed(1), top }; })()`);
+    console.log('graf sceny:', JSON.stringify({ ...wynik.graf, top: undefined }));
+    for (const [k, n] of wynik.graf.top) console.log(`  ${String(n).padStart(6)}  ${k}`);
+  }
   // --fazy N: fazy renderu obiektu (Renderer._renderObjectDirect) wg materiału, µs na rysunek.
   if (Number(args.fazy) > 0) {
     const nFrames = Number(args.fazy);
@@ -290,7 +319,8 @@ try {
             const el = data.BYTES_PER_ELEMENT || 1;
             const bytes = (size !== undefined ? size : ((data.byteLength / el) - dOff)) * el;
             // zapis spoza updateAttribute (wiązania, bufory storage, własne writeBuffer modułów): kto woła
-            let k = 'B ' + (buf.label || '?') + ' [' + buf.size + ' B]';
+            // wysyłka atrybutu (backend.updateAttribute): klucz atrybutu, każde writeBuffer liczone osobno
+            let k = S.inUA ? S.uaKey : 'B ' + (S.cur ? S.cur + ' ' : '') + (buf.label || '?') + ' [' + buf.size + ' B]';
             if (!buf.label && !S.inUA) { const lim = Error.stackTraceLimit; Error.stackTraceLimit = 7; const st = String(new Error().stack).split('\\n').slice(2, 7).map((l) => (l.match(/at (\\S+)/) || [])[1] || '?').join(' < '); Error.stackTraceLimit = lim; k += ' ← ' + st; }
             const e = S.map.get(k) || { n: 0, bytes: 0 }; e.n++; e.bytes += bytes; S.map.set(k, e);
           }
@@ -330,8 +360,7 @@ try {
             const arr = ba.array; const el = arr?.BYTES_PER_ELEMENT || 4;
             let bytes = 0; const r = ba.updateRanges || [];
             if (r.length) for (const x of r) bytes += x.count * el; else bytes = arr ? arr.byteLength : 0;
-            const k = 'A ' + (S.cur ? S.cur + ' ' : '') + (S.owner?.get(attr) || attr.name || '') + ' [' + (arr ? arr.byteLength : 0) + ' B' + (ba.usage === 35048 ? ', Dynamic' : '') + (r.length ? ', zakresy' : '') + ']';
-            const e = S.map.get(k) || { n: 0, bytes: 0 }; e.n++; e.bytes += bytes; S.map.set(k, e);
+            S.uaKey = 'A ' + (S.cur ? S.cur + ' ' : '') + (S.owner?.get(attr) || attr.name || '') + ' [' + (arr ? arr.byteLength : 0) + ' B' + (ba.usage === 35048 ? ', Dynamic' : '') + (r.length ? ', zakresy' : '') + ']';
           }
           S.inUA = true;
           try { return ua(attr); } finally { S.inUA = false; }
@@ -349,6 +378,11 @@ try {
     wynik.zapisy = { klatki: frames, wywolanNaKlatke: +(suma[0] / frames).toFixed(1), kBNaKlatke: +(suma[1] / frames / 1024).toFixed(1), lista: lista.slice(0, 60).map(([k, n, b]) => [k, +(n / frames).toFixed(2), +(b / frames / 1024).toFixed(2)]) };
     console.log(`\nzapisy do kolejki: ${wynik.zapisy.wywolanNaKlatke} wywołań, ${wynik.zapisy.kBNaKlatke} KB na klatkę (${frames} klatek)`);
     for (const [k, n, kb] of wynik.zapisy.lista.slice(0, 40)) console.log(`  ${String(n).padStart(7)} × / ${String(kb).padStart(9)} KB  ${k}`);
+    // wg liczby wywołań (koszt stały writeBuffer w Chrome ~2 µs — dziesiątki małych zapisów uniformów)
+    const wgLiczby = [...lista].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, n, b]) => [k, +(n / frames).toFixed(2), +(b / frames / 1024).toFixed(2)]);
+    wynik.zapisy.wgLiczby = wgLiczby;
+    console.log('\nwg liczby wywołań:');
+    for (const [k, n, kb] of wgLiczby) console.log(`  ${String(n).padStart(7)} × / ${String(kb).padStart(9)} KB  ${k}`);
   }
   // --profil N: profil CPU (CDP Profiler, próbkowanie 100 µs) N klatek wariantu A — self-time funkcji
   // i poddrzewo Core3D.render w ms na klatkę (profil .cpuprofile obok --out).

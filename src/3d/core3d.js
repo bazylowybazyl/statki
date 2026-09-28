@@ -23,6 +23,7 @@ import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
 import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
+import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -39,6 +40,38 @@ const GPU_TIMER_FRAME_COMPUTE_QUERIES = 256;
 // Warstwa trzymaczy rozgrzewki passa cienia (destruction3D.js, SHADOW_WARM_LAYER: żaden pass Core3D
 // jej nie rysuje) — w mapie cienia FG, żeby pipeline cienia kawałków stacji powstał przed rozpadem.
 const SHADOW_WARM_LAYER = 31;
+// Przejście grafu sceny przy sprawdzaniu rzucających cień (passShadowNeeded) — stos bez alokacji na klatkę.
+const _shadowScanStack = [];
+const _shadowScanFrustum = new THREE.Frustum();
+const _shadowScanMatrix = new THREE.Matrix4();
+
+// Czy mapa cienia passa (rzucający z warstw `mask`) wyjdzie niepusta albo czyta ją ktoś poza łapaczem —
+// warunek jak Renderer._projectObject three r183 dla kamery cienia (widoczne gałęzie, warstwy, kadr cienia;
+// rysują tylko siatki, linie, punkty i sprite'y — światło słońca też ma castShadow) i filtr passa cienia
+// (castShadow). Zachowawczo: LOD (zmienia dzieci pod kamerą), odbiorca cienia inny niż łapacz, rzucający
+// bez testu kadru — „potrzebna”.
+function passShadowNeeded(scene, mask, catcher, frustum) {
+  const stack = _shadowScanStack;
+  let n = 0;
+  let need = false;
+  stack[n++] = scene;
+  while (n > 0) {
+    const o = stack[--n];
+    stack[n] = null;
+    if (o.visible === false) continue;
+    if ((o.layers.mask & mask) !== 0) {
+      if (o.isLOD === true || (o.receiveShadow === true && o !== catcher)) { need = true; break; }
+      if (o.castShadow === true && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) {
+        if (!o.frustumCulled) { need = true; break; }
+        if (o.isSprite ? frustum.intersectsSprite(o) : frustum.intersectsObject(o)) { need = true; break; }
+      }
+    }
+    const ch = o.children;
+    for (let i = 0; i < ch.length; i++) stack[n++] = ch[i];
+  }
+  while (n > 0) stack[--n] = null;
+  return need;
+}
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko poza
 // ośrodkiem warpa (liczony wokół kamery gry w płaszczyźnie gry).
 const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true, warp: false });
@@ -424,6 +457,9 @@ export const Core3D = {
   // Światło z mapą cienia (słońce gry, planet3d.assets.js): odświeżane raz na
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
+  // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
+  shadowPassStats: { updated: 0, skipped: 0 },
+  _shadowMapEmpty: false,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
   // dyski (planet3d.assets), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
@@ -984,6 +1020,9 @@ export const Core3D = {
     this._gpuTimestampFeature = renderer.backend?.trackTimestamp === true;
     installPlaceholders(renderer);
     this._guardPendingPipelines(renderer);
+    // Klucz węzła świateł pamiętany z podpisem świateł (zadanie 23): three liczył go od nowa przy każdym
+    // render() (~10–15 µs; 12 passów bloomu, post, maska, passy sceny) — ten sam klucz, bez przeliczania.
+    zainstalujKluczSwiatel();
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
   },
@@ -1443,6 +1482,42 @@ export const Core3D = {
     light.shadow.needsUpdate = true;
   },
 
+  // Mapa cienia przed passem z łapaczem (zadanie 23, duża bitwa): bez rzucających w kadrze cienia i bez
+  // innych odbiorców na warstwach passa mapa wyszłaby pusta, a łapacz (ShadowMaterial: alfa = krycie ×
+  // (1 − cień)) rysowałby alfę 0 — obraz bez zmian. Wtedy bez odświeżenia mapy (przejście sceny kamerą
+  // cienia, pass głębi: ~75 µs) i bez rysunku łapacza (~25 µs). Mapę z końca klatki (FG) czytają później
+  // planety — FG pomijamy tylko, gdy mapa jest już pusta (ostatnie odświeżenie bez rzucających).
+  // Przełączniki wydajności cienia (threeShadows / fgShadows wyłączone) — dawny przepływ.
+  _passSunShadow(t, mask, catcher, last) {
+    const light = this._sunShadowLight;
+    const shadow = light && light.castShadow ? light.shadow : null;
+    if (!shadow || !catcher || t.threeShadows === false || t.fgShadows === false) {
+      this._requestSunShadowUpdate(t, mask);
+      this._shadowMapEmpty = false;
+      return;
+    }
+    // Kadr kamery cienia jak w passie cienia three (ShadowNode.renderShadow → updateMatrices, frustum z
+    // projekcji × odwrotności świata). Przed pierwszym renderem cienia (inny układ współrzędnych kamery) —
+    // bez testu kadru (mapa „potrzebna”).
+    shadow.updateMatrices(light);
+    const cam = shadow.camera;
+    let need = true;
+    if (cam.coordinateSystem === this.renderer.coordinateSystem) {
+      _shadowScanMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      _shadowScanFrustum.setFromProjectionMatrix(_shadowScanMatrix, cam.coordinateSystem, cam.reversedDepth);
+      need = passShadowNeeded(this.scene, mask, catcher, _shadowScanFrustum);
+    }
+    if (need || (last && this._shadowMapEmpty !== true)) {
+      if (catcher.visible !== true) catcher.visible = true;
+      this._requestSunShadowUpdate(t, mask);
+      this._shadowMapEmpty = !need;
+      this.shadowPassStats.updated++;
+    } else {
+      if (catcher.visible !== false) catcher.visible = false;
+      this.shadowPassStats.skipped++;
+    }
+  },
+
   // Maska widoczności słońca (sunShadowMask.js): uniformy okluderów i jeden
   // quad do sunShadowTarget. Bez słońca, przy shaftach Off albo w wolnej kamerze
   // maska jest wyłączona uniformem — materiały dostają wtedy pełne słońce.
@@ -1626,8 +1701,8 @@ export const Core3D = {
       // gry niesie też gwiazdy i dolną część ringu — zgina ją materiał mgławicy (skyBend.js).
       // Mapa cienia słońca przed passami z odbiorcami (łapacze cienia warstw 0 i 2, stacje FG) — z
       // rzucającymi z warstw TEGO passa, jak WebGLShadowMap w bazie (PassShadowNode, zadanie 23).
-      if (pass === this.renderPassOrtho) this._requestSunShadowUpdate(t, 1 << pass.layer);
-      else if (pass === this.renderPassFg) this._requestSunShadowUpdate(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER));
+      if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);
+      else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);
       this._runScenePass(pass);
     }
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
