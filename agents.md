@@ -65,7 +65,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–08” niżej): **najwyżej 8
+- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–09” niżej): **najwyżej 8
   buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
   to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
   sam (`vertexNode`) na InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd
@@ -120,6 +120,18 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   odczytach sceny „uber” — siatka bezpieczeństwa NaN / ±Inf → 0 (`hdrBezpieczny`, `postGry.js`). Pomiar: `Core3D.fxStats`
   (PerfHUD „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`) w TSL:
   cztery grafy (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
+- **Zniszczenie stacji (zadanie 16, `src/vfx/`):** rozpad na trójkąty i implozja = dwa grafy TSL w `shatterMaterial.js`
+  (budowane raz, lekki `ShatterNodeMaterial` per mesh, wartości w `material.uniforms` przez `onObjectUpdate`, mapa per obiekt
+  `teksturaObiektu` z `src/3d/tsl/`); wierzchołki w `vertexNode`, więc pass cienia rysuje nieprzesuniętą bryłę jak dawny
+  `MeshDepthMaterial`. Kawałki skorupy po `detachChunk` tną się **maską TSL** (`maskNode` klonów, płaszczyzny per obiekt
+  rzutowane do widoku — ta sama reguła co `material.clippingPlanes` w WebGL), nie `ClippingGroup` (pułapka 18). Klony
+  materiałów GLB (wygaszenie bryły, kawałki) dostają węzły cienia oryginału (`_shareShadowNodes`). Rozgrzewka przy
+  `Destruction3D.prebake` (bryła stacji powstała): trójkąty, implozja, wygaszenie, kawałki — `prewarmPass` na trzymaczach z
+  układem geometrii bryły; pass cienia — trzymacze na warstwie 31 przez 2 klatki; pule odłamków paneli —
+  `PanelShardManager.prewarm`. Klatka rozpadu bez budowy materiałów (`scripts/webgpu/rozpad-stacji.mjs`). Odłamki paneli są
+  CZARNE jak w WebGL (pułapka 22) — barwy z `instanceColor` to decyzja wyglądu (kolor pul 0xffffff). Scena bazy
+  `stacja-rozpad` (sesja „stacja”, warianty `__3d` / `__fg-3d` bez overlaya); różnice na sylwetkach vs wnętrza:
+  `scripts/webgpu/krawedzie.mjs`.
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -133,7 +145,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
   nie działa).
-- **TSL — pułapki sprawdzone w zadaniach 02, 06–08:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
+- **TSL — pułapki sprawdzone w zadaniach 02, 06–09:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
   (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
   uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
   `src/3d/haloRing/haloRingTSL.js`; (2) najwyżej **12 buforów uniformów na etap** (`maxUniformBuffersPerShaderStage`,
@@ -160,7 +172,39 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `s / 23 + l · 0,37` — dwa; wariant wybieraj POMIAREM (wiersz parzystości GLSL ↔ TSL z dokładnym wyrażeniem to wskazówka,
   rozstrzyga porównanie zrzutów z bazą), nie z góry przez `haloFusedMulAddInt`; (13) ShaderMaterial w bazie miał
   `forceSinglePass = true` — przenosząc przezroczysty `DoubleSide` na NodeMaterial, ustaw `forceSinglePass: true` (inaczej
-  three rysuje tył i przód osobno).
+  three rysuje tył i przód osobno); (14) `a·b + c` z jednym zaokrągleniem dla DOWOLNEGO `a` (zadanie 09): `haloFma(a, b, c)`
+  / `haloFmaV2` (`haloRingTSL.js`) = wbudowane `fma()` WGSL (Tint → HLSL `mad` → DXC — ten sam rozkaz, na który FXC składał
+  GLSL w bazie; na GPU bit w bit, `ring-tsl-parzystosc.mjs` wiersze `*FmaWgsl`); TSL r183 nie ma `fma`, stąd `wgslFn`
+  (czysta funkcja — uzasadniony wyjątek). Kolejność argumentów = który iloczyn baza scaliła — z pomiaru; (15) pochodne
+  (`fwidth`) licz PRZED gałęziami: FXC w bazie spłaszczał gałęzie z pochodnymi, a w WGSL pochodna w rozbieżnej gałęzi jest
+  nieokreślona; (16) wczesne `return` w `vertexNode` nie istnieje (main zwraca strukturę varyingów) — zagnieżdżone `If`
+  z domyślnym wierzchołkiem `vec4(2, 2, 2, 1)` (poza bryłą obcinania) zachowują oszczędność dawnych `collapse(); return;`;
+  `cond.select(a, b)` TSL i tak buduje jako `if / else`.
+- **Pułapki r183 z zadania 16 (cienie, cięcie, stan renderu):** (17) goły `NodeMaterial` na meshu z `castShadow` musi mieć
+  `map = null` (i `alphaMap = null`): pass cienia (`Renderer._getShadowNodes`) bierze `material.map !== null` za mapę —
+  `undefined` daje `texture(undefined)` i błąd budowy cienia (tak padał zamiennik `ShaderMaterial` rzucający cień);
+  (18) `material.clippingPlanes` WebGPURenderer ignoruje, a `ClippingGroup` wkłada płaszczyzny do `uniformArray` grupy
+  „render” z kontekstu obiektu, który ZBUDOWAŁ program — grupy o tym samym kluczu materiału i liczbie płaszczyzn tną się
+  płaszczyznami pierwszej; cięcie per obiekt = maska TSL (`maskNode`, płaszczyzny per obiekt w `onObjectUpdate`, wzór
+  `_getShellClipNodes` w `destruction3D.js`); (19) węzły passa cienia powstają PER OBIEKT materiału z `map`
+  (`reference('map', …, material)`), więc każdy świeży klon = budowa NodeBuildera cienia w klatce użycia — klon z tą samą
+  mapą może dostać wpis oryginału (`_shareShadowNodes`, pola prywatne three, z osłoną); (20) `compileAsync` nie rozgrzewa passa
+  cienia — trzymacz w scenie na nieużywanej warstwie (31: kamera cienia słońca ma `layers.enableAll`, żaden pass Core3D
+  jej nie rysuje) przez 2 klatki; (21) przezroczyste `DoubleSide` bez `forceSinglePass`: WebGPU rysuje WSZYSTKIE tyły, potem
+  wszystkie przody (`_renderTransparents`), WebGL tył + przód obiekt po obiekcie — nakładające się siatki mieszają się w innej
+  kolejności (wygaszenie bryły stacji, 5 klatek); (22) `vertexColors: true` bez atrybutu `color`: WebGL mnożył przez stałą
+  wartość atrybutu (0, 0, 0, 1) = czerń, WebGPU pomija vertexColors (biel); (23) mapa cienia słońca raz na klatkę ze
+  WSZYSTKIMI warstwami — łapacz cienia warstwy 0 (`Core3D.shadowCatcher`, z = −2) dostaje cień obiektów FG (stacje,
+  z ≈ −100 ± 300); w WebGL mapa cienia każdego passa miała tylko warstwy kamery passa (`WebGLShadowMap` testuje warstwy
+  kamery renderu), więc łapacz 0 cienia stacji nie widział. Widać to po rozpadzie stacji (cień bryły-ducha nad planetą) i
+  przy implozji — do decyzji w Core3D (zadanie 23), nie w materiałach.
+- **Pułapki TSL z zadania 10 (hala K-7, ringi-archetypy):** (24) wiele siatek jednego materiału (partie, dzielnice) —
+  `Mesh` z `InstancedBufferGeometry`, nie `InstancedMesh` (jego uuid wchodzi do klucza programu: osobny NodeBuilder na
+  siatkę; ~100 partii ringu Fable); (25) `uniformArray` dostaje nazwę bufora z id węzła (`NodeBuffer_<id>`) — różne
+  egzemplarze grafu (trzy ringi, przebudowa jakości) dają różny WGSL i osobne moduły; `.setName('stała')` = wspólny kod;
+  (26) `dFdy` TSL generuje `-dpdy` (oś y jak w GL) — dla `textureGrad` bez znaczenia, w formułach ze znakiem pamiętaj;
+  (27) wiersz parzystości GLSL ↔ TSL buduj na wejściach jak w materiale: FXC zwija stałe (`(x − 200) + 3,7` → `x − 196,3`),
+  więc syntetyczne przesunięcie potrafi zmienić zaokrąglenia (kratka paneli 57% zamiast 100%).
 
 ---
 
@@ -201,7 +245,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
-  zostaje tylko dla materiałów megastruktury, miasta, K-7 i archetypów do ich zadań 09–10), uniformy ringu
+  po zadaniu 10 zostaje tylko dla tła menu (11: COMMON, LIGHT), budowli Z7 poza portem i narzędzia parzystości), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
   jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
@@ -215,7 +259,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `haloRingSurfaceTSL(u, su)`). Jedyny wariant kompilacji to kroki powietrza (`quality.airSteps`), reszta jakości w
   uniformach. Zestaw przemysłowy: `haloIndKitTSL(u)` (`haloRingIndustryKit.js`), liczby z jednej definicji `kitParts` —
   na liczbach = bliźniak JS `indKitPart` bit w bit (`tests/haloRingTerrainTSL.test.mjs`), na GPU zero rozbieżnych decyzji
-  (parzystość). `HALO_GLSL_SURFACE` jest w `haloRingGLSL.js` do 09 (`CLOUDCOVER` usunięte w 08), `HALO_GLSL_INDKIT` dla miasta do 09.
+  (parzystość). `HALO_GLSL_SURFACE` usunięte w 09 (`CLOUDCOVER` w 08), `HALO_GLSL_INDKIT` leży w `haloRingGLSL.js`
+  tylko dla narzędzia parzystości.
   Zrzuty samego terenu dema: `scripts/halo-ring-shots.mjs --teren [--bez-otoczenia]` (ten sam skrypt w worktree z tagu).
 - Konstrukcja i atmosfera w TSL (zadanie 08): `HaloStructure` = NodeMaterial z `makeHaloStructureNodes`
   (`haloRingStructure.js`, 1:1 z dawnym GLSL); wierzchołek pasów obrotowych `haloStripVertexTSL` dzielą konstrukcja, chmury
@@ -229,6 +274,35 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   z mieszaniem kolor + cel · alfa; warianty z jakości (kroki powietrza, oktawy chmur). Zrzuty części ringu: dema
   `scripts/halo-ring-shots.mjs --czesci terrain,structure,structureTop,clouds,shell`, gry `zrzuty.mjs --czesci-ringu`
   (sceny `ring-dach`, `ring-dach-z01`, `ring-habitat` — dach w FG i habitat z dala od portu).
+- Megastruktura i miasto w TSL (zadanie 09): bryły dachu (FG) i doków, szkło kopuł, pociągi, światła pozycyjne
+  (`haloRingMegastructure.js`) oraz ogrody, przemysł i drzewa (`haloRingCity.js`) = NodeMaterial 1:1 z dawnym GLSL;
+  fragment brył `makeHaloPrimFragment` wspólny (miasto: wariant ścian z położenia lokalnego). Dawne `defines` to warianty
+  budowane raz (dach nad płaszczyzną gry z `haloFgClip` / światła z `haloFgVisibility` vs doki bez), draw calle bez zmian.
+  Wczesne wyjścia wierzchołków (dawne `collapse(); return;`) = zagnieżdżone gałęzie z domyślnym wierzchołkiem poza bryłą
+  obcinania (mapy czyta tylko żywy wierzchołek — drzewo po mapie A, jak dawniej). Ziarna brył i hasze okien / paneli /
+  fasad megabudowli liczą `a·b + c` przez `haloFma` (fma WGSL — ten sam rozkaz mad, który składał FXC w bazie):
+  bez tego 28% brył świeciło innymi oknami (wzór losowany na nowo). Pozostałe różnice z bazą to piksele krawędzi i
+  aliasing okien na budynkach 1–2 px (miasto z daleka, ściany pod ostrym kątem) — ten sam wzór, inne próbki.
+  Zrzuty samych brył: dema `--czesci mega,city`, gry `zrzuty.mjs --czesci-ringu HaloMega_detail_box,…,HaloTrees`;
+  baza dema z kopii tagu: `halo-ring-shots.mjs --repo <drzewo tagu>`.
+- Hala K-7 i ringi-archetypy w TSL (zadanie 10 — ring bez zamienników i bez GLSL poza `haloRingGLSL.js`): K-7
+  (`haloPortK7.js`) = GRAF NA RING, WARTOŚCI NA HALĘ: `k7Graphs(u)` buduje raz (cache po uniformach ringu) grafy
+  instancji, płyt, napisów i węży; cztery hale dostają lekkie NodeMaterial-e na tych samych węzłach (jeden NodeBuilder na
+  rodzaj i stan), wartości hali w `material.uniforms` — `uHub` / `uHallLights` / `uRoofOpacity` przez
+  `uniform().onObjectUpdate`, macierze grup ruchomych (suwnice, złączki) oraz emisja grup, lampy, paleta, emisja i
+  poświata w dwóch `uniformArray` pakowanych PER OBIEKT (`k7Groups`, `k7Surf` — stałe nazwy buforów), atlas napisów
+  węzłem tekstury per obiekt (`teksturaObiektu`, `src/3d/tsl/`). Dach (`K7RoofFade`) dalej przełącza `transparent` / `depthWrite` w
+  `update()` (drugi stan = drugi pipeline, raz). Nowa wartość per hala = holder w `k7Uniforms` + pakowanie / `perObject`,
+  nie nowy węzeł na halę. Archetypy (`arch/archTSL.js`, dawne `archGLSL.js`): partie instancji to `Mesh` z
+  `InstancedBufferGeometry` i JEDNYM przeplecionym buforem (macierz, barwa, aInst — `ARCH_INST_STRIDE`), NIE
+  `THREE.InstancedMesh` (uuid w kluczu programu = NodeBuilder na każdą z ~40 / ~100 partii); światła pozycyjne to
+  kwadraty instancjonowane (nie `THREE.Points`); dawne `defines` (FG, atlas, barwy w wierzchołkach) = warianty budowane
+  raz. Hasze okien / paneli / kratek i ziarno instancji liczą `a·b + c` przez `haloFma` / `haloFmaVec2` (zmierzone:
+  100% bit w bit z bazą, `ring-tsl-parzystosc.mjs` wiersze `arch*`). Powierzchnie ECUMENE / Fable: pola wody i typu to
+  czyste funkcje WGSL (uEcu w parametrze), pochodne linii Fable przed gałęziami stref, mapa stref NEAREST czytana
+  `textureLoad`. Demo `halo_ring_demo`: post = `BloomGry` z × `BLOOM_ZGODNOSC_WEBGL` jak gra (wcześniej bloom dema był
+  3 × słabszy niż w bazie — jasne kadry nie dawały się porównać); porównanie samego ringu z bazą z tagu:
+  `halo-ring-shots.mjs --czesci terrain,structure,structureTop,clouds,shell,mega,city,k7 --bez-otoczenia`.
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
@@ -238,6 +312,10 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 ### Stacje i obiekty 3D
 - `updateStations3D(stations)` — synchronizacja stacji 2D -> 3D.
+- Zniszczenie stacji: `destroyStation3D` → `Destruction3D.shatter` (odłamki paneli + wygaszenie bryły), progi HP →
+  `Destruction3D.detachChunk` (fragment leci, pęka na kawałki z maską cięcia, potem odłamki). Materiały rozpadu w TSL
+  (`src/vfx/shatterMaterial.js`); nowa bryła stacji ma przejść przez `Destruction3D.prebake` (wypiek + rozgrzewka — bez niej
+  pierwszy rozpad buduje materiały w swojej klatce). Szablon GLB nietknięty: wygaszenie i kawałki pracują na klonach.
 - `updateWorld3D(dt, t)` — aktualizacja obiektów świata 3D.
 
 ### Statek gracza
@@ -260,7 +338,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - `src/game/shipBridge.js` (strefy heksów, integralność, oś czasu), `src/game/shipBridgeRuntime.js` (klej gry), `src/3d/bridgeFx3D.js` (okna, wyrzut atmosfery). Opis: `docs/PORT-mostki.md`.
 - Utrata dowodzenia robi z NPC hulka (`isBridgeHulk`): `npcStep` pomija AI i model lotu, `applyDamageToNPC` i sufit heksów go nie ruszają, po `BRIDGE_KILL_TIMELINE.sequenceEnd` `finishBridgeKill` robi wrak BEZ losowego wybuchu reaktora. Nowe ścieżki śmierci / AI / celowania muszą to respektować.
 - AI celowo nie celuje w mostki (za szybko zabijałoby gracza) — tylko przyszli „bossowie”.
-- Model 3D mostka: `src/3d/bridge3D.js` (+ `bridge3DShapes.js`), `docs/PORT-mostki.md` §8. Wyrwy tylko z heksów 2D (tekstura obrażeń), nic nie zmienia gameplayu. Cień na kadłubie to prostokąt POD kadłubem z `depthFunc GREATER` — działa, bo kadłuby (renderOrder 10) piszą głębię w passie ortho na z ≈ 0; zmieniając głębię/z kadłubów, sprawdź cień mostka. `bridgeState.model3D` wyłącza szczeliny okien w `bridgeFx3D` (wyrzut atmosfery zostaje). Model przechodzi na wrak sam, po przynależności heksów — nie dokładaj haków w `finishBridgeKill`.
+- Model 3D mostka: `src/3d/bridge3D.js` (+ `bridge3DShapes.js`, graf TSL w `bridge3D.tsl.js`), `docs/PORT-mostki.md` §8. Wyrwy tylko z heksów 2D (bufor obrażeń), nic nie zmienia gameplayu. Cień na kadłubie to prostokąt POD kadłubem z `depthFunc GREATER` — działa, bo kadłuby (renderOrder 10) piszą głębię w passie ortho na z ≈ 0; zmieniając głębię/z kadłubów, sprawdź cień mostka. `bridgeState.model3D` wyłącza szczeliny okien w `bridgeFx3D` (wyrzut atmosfery zostaje). Model przechodzi na wrak sam, po przynależności heksów — nie dokładaj haków w `finishBridgeKill`.
+- Mostek na WebGPU (zadanie 15, `docs/PORT-mostki.md` §8.14): JEDEN graf i materiał bryły na wszystkie rodzaje — Mesh + `InstancedBufferGeometry` na rodzaj (nie `InstancedMesh`: jego uuid wchodzi do klucza programu), dane instancji w jednym przeplecionym buforze, stałe rodzaju (obrys, paleta, skala detalu) w tablicy `uniformArray` czytanej indeksem rodzaju z instancji. Obrażenia = bufor storage u32 (bajty RGBA8 w słowie, 768 × 512 komórek; `Bridge3D.damage.data` to widok bajtów), wysyłane tylko zakresami zmienionych bloków (`_markRange`) — tekstury backend WebGPU wysyła w całości (1,5 MB na każdą zmianę). Maska słońca z `sunShadowMask.js` (`sunVisibility` / `sunFill`) w jednym miejscu grafu; okna, lampy, szczeliny `bridgeFx3D` i światła pozycyjne `shipLights3D` maski nie czytają. Rdzenie z dem (`reactor3D.js`, `coreFx3D.js`, grafy w `*.tsl.js`) — w TSL, dalej niewpięte w grę.
 - **Nowy kadłub (nowy albo podmieniony sprite okrętu) = od razu mostek**: strefa w `BRIDGE_LAYOUT_PROPOSALS`, model w `bridge3DShapes.js`, paleta w `bridge3D.js` — checklista `docs/BRIEF-mostek-nowego-kadluba.md`. Mostki ma cała flota bojowa (Terra Nova, piraci, Atlas) i lokomotywa megafrachtowca; frachtowce cywilne i myśliwce nie.
 
 ### Silniki: MAIN, WARP, SIDE

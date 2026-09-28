@@ -456,7 +456,7 @@ test('every kind has a full palette and style', () => {
   }
 });
 
-test('damage rows: big bridges get consecutive rows, uploads split per row, rows are reused', () => {
+test('damage rows: big bridges get consecutive rows, uploads cover only the changed blocks, rows are reused', () => {
   const scene = new THREE.Scene();
   assert.ok(Bridge3D.attach(scene));
   try {
@@ -471,15 +471,65 @@ test('damage rows: big bridges get consecutive rows, uploads split per row, rows
     assert.equal(Bridge3D._allocRows(2), 5);
     assert.equal(Bridge3D._allocRows(1), 3);
     assert.equal(Bridge3D.damage.rowsUsed, 7);
-    // Rekord 2000 komórek w 3 wierszach: trzy zakresy, każdy w swoim wierszu.
-    const tex = Bridge3D.damage.tex;
-    tex.clearUpdateRanges();
-    Bridge3D.damage.used = 0;
-    Bridge3D._fullUpload = false;
+    // Port WebGPU (zadanie 15): obrażenia w buforze storage u32 (RGBA8 w słowie) —
+    // backend WebGPU ignoruje zakresy TEKSTUR (każda zmiana = całe 1,5 MB), zakresy
+    // bufora wysyła writeBuffer. Blok rekordu leży liniowo od jego wiersza, więc
+    // rekord 2000 komórek w 3 wierszach to JEDEN zakres dokładnie jego komórek.
+    const attr = Bridge3D.damage.attr;
+    assert.ok(attr.isStorageBufferAttribute, 'obrażenia w buforze storage');
+    assert.equal(attr.array.length, W * BRIDGE3D_DAMAGE_LIMITS.rows);
+    assert.equal(Bridge3D.damage.data.buffer, attr.array.buffer, 'bajty RGBA pisane w ten sam bufor');
+    attr.clearUpdateRanges();
+    const v0 = attr.version;
     Bridge3D._markRows({ row: 10, rowCount: 3, cellCount: 2000 });
-    const ranges = tex.updateRanges.map((r) => [r.start / 4, r.count / 4]);
-    assert.deepEqual(ranges, [[10 * W, W], [11 * W, W], [12 * W, 2000 - 2 * W]]);
+    Bridge3D._markRows({ row: 4, rowCount: 1, cellCount: 300 });
+    assert.deepEqual(attr.updateRanges.map((r) => [r.start, r.count]), [[10 * W, 2000], [4 * W, 300]]);
+    assert.ok(attr.version > v0, 'needsUpdate — wysyłka w następnym renderze');
+    // Wysyłka (three czyści listę po writeBuffer) — pula zakresów od nowa, bez alokacji.
+    const first = attr.updateRanges[0];
+    attr.clearUpdateRanges();
+    Bridge3D._markRows({ row: 1, rowCount: 2, cellCount: 900 });
+    assert.deepEqual(attr.updateRanges.map((r) => [r.start, r.count]), [[W, 900]]);
+    assert.equal(attr.updateRanges[0], first, 'obiekt zakresu z puli');
+    // Za dużo zakresów przed wysyłką: jeden obejmujący wszystkie (nic nie ginie).
+    for (let i = 0; i < 80; i++) Bridge3D._markRows({ row: 20 + i, rowCount: 1, cellCount: 10 });
+    const covered = attr.updateRanges.map((r) => [r.start, r.start + r.count]);
+    const inside = (s, e) => covered.some(([cs, ce]) => cs <= s && e <= ce);
+    assert.ok(attr.updateRanges.length <= 64, `zakresów ${attr.updateRanges.length}`);
+    assert.ok(inside(W, W + 900) && inside(20 * W, 20 * W + 10) && inside(99 * W, 99 * W + 10), 'zakres obejmujący zmiany sprzed przepełnienia');
+    const lo = Math.min(...covered.map((c) => c[0]));
+    const hi = Math.max(...covered.map((c) => c[1]));
+    assert.ok(hi - lo < W * BRIDGE3D_DAMAGE_LIMITS.rows, 'bez pełnego uploadu bufora');
   } finally {
     Bridge3D.dispose();
+  }
+});
+
+test('refreshBridgeRecordDamage writes RGBA bytes the shader unpacks from one u32 per cell', () => {
+  const e = hullWithBridge();
+  try {
+    const st = e.bridgeState;
+    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 2);
+    const W = BRIDGE3D_DAMAGE_LIMITS.width;
+    const words = new Uint32Array(W * 4);
+    const bytes = new Uint8Array(words.buffer);
+    const victim = st.bridges[0].shards[Math.floor(st.bridges[0].shards.length / 2)];
+    refreshBridgeRecordDamage(rec, e.hexGrid, bytes, 1, W);
+    D.destroyShard(e, victim);
+    refreshBridgeRecordDamage(rec, e.hexGrid, bytes, 1.2, W);
+    // Słowo komórki k rekordu z wiersza 2 = R | G << 8 | B << 16 | A << 24 (bridge3D.tsl.js: cell()).
+    let checked = 0;
+    for (let k = 0; k < rec.cellCount; k++) {
+      const o = (2 * W + k) * 4;
+      const w = words[2 * W + k];
+      assert.equal(w & 255, bytes[o]);
+      assert.equal((w >>> 8) & 255, bytes[o + 1]);
+      assert.equal((w >>> 16) & 255, bytes[o + 2]);
+      assert.equal(w >>> 24, bytes[o + 3]);
+      if (bytes[o + 2]) checked++;
+    }
+    assert.ok(checked > 0, 'komórki z maską martwych sąsiadów');
+  } finally {
+    disposeHexBody(e);
   }
 });

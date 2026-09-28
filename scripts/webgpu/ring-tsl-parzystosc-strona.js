@@ -10,10 +10,14 @@
 // Zadanie 08: hasze konstrukcji (okna, pasma pięter, kreski tarasów) GLSL ↔ TSL oraz reguły
 // komórek dachu TSL na GPU ↔ lustro CPU planu brył (industrialCellRule, plotRule, klasa sektora
 // komórki): state.roofMirror — GLSL dachu zniknął z portem (08), wzorcem jest plan brył na CPU.
+// Zadanie 09: ziarna brył (wierzchołki megastruktury i przemysłu) i hasze fragmentu brył (panele, okna,
+// lampy tunelu, kontenery, fasady megabudowli: pas / grupa / okno) — wejścia e (in3: segment, wzdłuż, z,
+// lotH) i f (in4: komórka x, y, ściana 1..4, ziarno); warianty: wprost (DXC: dwa zaokrąglenia), całkowite
+// FMA (haloFusedMulAddInt) i wbudowane fma() WGSL (haloFma z haloRingTSL.js — wariant przyjęty w materiałach 09).
 import * as THREE from 'three/webgpu';
-import { Fn, float, int, ivec2, vec2, vec3, vec4, texture, textureLoad, screenCoordinate, normalize, length, fract, mod } from 'three/tsl';
+import { Fn, float, int, ivec2, vec2, vec3, vec4, texture, textureLoad, screenCoordinate, normalize, length, fract, mod, floor, sign } from 'three/tsl';
 import {
-  HALO_GLSL_AIR, HALO_GLSL_COMMON, HALO_GLSL_FG, HALO_GLSL_LIGHT, HALO_GLSL_NOISE, HALO_GLSL_PORTSITES,
+  HALO_GLSL_AIR, HALO_GLSL_COMMON, HALO_GLSL_FG, HALO_GLSL_INDKIT, HALO_GLSL_LIGHT, HALO_GLSL_NOISE, HALO_GLSL_PORTSITES,
   HALO_GLSL_RTE, HALO_GLSL_STORM, HALO_GLSL_TRANSIT
 } from '../../src/3d/haloRing/haloRingGLSL.js';
 import {
@@ -24,8 +28,8 @@ import { createHaloUniforms } from '../../src/3d/haloRing/haloRingUniforms.js';
 import { RING_PLANET_WORLD_RADII } from '../../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../../src/game/haloRingPlanets.js';
 import { mulberry32 } from '../../src/3d/haloRing/haloRingLayout.js';
-import { HALO_GLSL_INDKIT, IND_PARTS, haloIndKitTSL, indKitPart } from '../../src/3d/haloRing/haloRingIndustryKit.js';
-import { haloFusedMulAddInt } from '../../src/3d/haloRing/haloRingTSL.js';
+import { IND_PARTS, haloIndKitTSL, indKitPart } from '../../src/3d/haloRing/haloRingIndustryKit.js';
+import { haloFma, haloFmaVec2, haloFusedMulAddInt } from '../../src/3d/haloRing/haloRingTSL.js';
 import { haloRoofTSL } from '../../src/3d/haloRing/haloRingStructure.js';
 import { buildHaloRoofPlan, industrialCellRule, plotRule } from '../../src/3d/haloRing/haloRingRoofPlan.js';
 import { applyRoofPlanUniforms } from '../../src/3d/haloRing/haloRingUniforms.js';
@@ -103,6 +107,26 @@ const in2 = new Float32Array(N * 4);
     in2[o + 3] = rand();
   }
 }
+// Zadanie 09: in3 = (segment 0..1439, wzdłuż [0, 400), z [−3000, 3000), lotH [0, 1)) — wejścia wierzchołków brył;
+// in4 = (komórka x 0..399, komórka y 0..299, ściana 1..4, ziarno [0, 1)) — wejścia haszy fragmentu brył.
+const in3 = new Float32Array(N * 4);
+const in4 = new Float32Array(N * 4);
+{
+  const r9 = mulberry32(0x0909);
+  for (let i = 0; i < N; i++) {
+    const o = i * 4;
+    in3[o] = Math.floor(r9() * 1440);
+    in3[o + 1] = r9() * 400;
+    in3[o + 2] = r9() * 6000 - 3000;
+    in3[o + 3] = r9();
+    in4[o] = Math.floor(r9() * 400);
+    in4[o + 1] = Math.floor(r9() * 300);
+    in4[o + 2] = 1 + Math.floor(r9() * 4);
+    in4[o + 3] = r9();
+  }
+}
+// fma() WGSL z biblioteki ringu (haloFma — Tint → HLSL mad → DXC, jak mad FXC w bazie); wiersze *FmaWgsl = wariant materiału
+const fma = (a, b, c) => haloFma(a, b, c);
 
 // ---------------------------------------------------------------------------
 // Testy: [nazwa, wyrażenie GLSL (a = p+jitter, b = kierunek+skalar, d = parametry), wyrażenie TSL]
@@ -183,8 +207,104 @@ const TESTS = [
   // płyty (hasz z rodzajem krawędzi · 17), działka i komórka dachu, okna kadłuba (wejścia całkowite)
   ['structPanelRoof', 'vec4(haloHash12(vec2(floor(d.x / 8.0), floor(d.y / 64.0)) + floor(d.w * 8.0) * 17.0), haloHash12(vec2(d.x, d.z)), haloHash12(vec2(floor(d.y / 4.0), mod(d.z, 2.0))), haloHash12(vec2(floor(d.x / 16.0), floor(d.y / 22.0)) + 4.0))',
     (a, b, d) => vec4(haloHash12(vec2(d.x.div(8.0).floor(), d.y.div(64.0).floor()).add(d.w.mul(8.0).floor().mul(17.0))), haloHash12(vec2(d.x, d.z)),
-      haloHash12(vec2(d.y.div(4.0).floor(), mod(d.z, 2.0))), haloHash12(vec2(d.x.div(16.0).floor(), d.y.div(22.0).floor()).add(4.0)))]
+      haloHash12(vec2(d.y.div(4.0).floor(), mod(d.z, 2.0))), haloHash12(vec2(d.x.div(16.0).floor(), d.y.div(22.0).floor()).add(4.0)))],
+  // ---- zadanie 09: ziarna brył (wierzchołki): 0 megastruktura fract(wzdłuż·0,01737 + segment·0,61803 + z·0,0131),
+  // 1 przemysł fract(lotH·17 + część·0,31), 2 pociąg fract(s0·0,0137); wariant materiału = wprost
+  ['megaSeed', 'vec4(fract(e.y * 0.01737 + e.x * 0.61803 + e.z * 0.0131), fract(e.w * 17.0 + (f.z - 1.0) * 0.31), fract(e.y * 0.0137), 1.0)',
+    (a, b, d, e, f) => vec4(fract(e.y.mul(0.01737).add(e.x.mul(0.61803)).add(e.z.mul(0.0131))), fract(e.w.mul(17.0).add(f.z.sub(1.0).mul(0.31))), fract(e.y.mul(0.0137)), 1.0)],
+  ['megaSeedFmaInt', 'vec4(fract(e.y * 0.01737 + e.x * 0.61803 + e.z * 0.0131), fract(e.w * 17.0 + (f.z - 1.0) * 0.31), 0.0, 1.0)',
+    (a, b, d, e, f) => vec4(fract(haloFusedMulAddInt(e.x, 0.61803, e.y.mul(0.01737)).add(e.z.mul(0.0131))), fract(haloFusedMulAddInt(f.z.sub(1.0), 0.31, e.w.mul(17.0))), 0.0, 1.0)],
+  ['megaSeedFmaWgsl', 'vec4(fract(e.y * 0.01737 + e.x * 0.61803 + e.z * 0.0131), fract(e.w * 17.0 + (f.z - 1.0) * 0.31), fract(e.w * 17.0 + (f.z - 1.0) * 0.31), 1.0)',
+    (a, b, d, e, f) => vec4(fract(fma(e.z, 0.0131, fma(e.x, 0.61803, e.y.mul(0.01737)))), fract(fma(e.w, 17.0, f.z.sub(1.0).mul(0.31))), fract(fma(f.z.sub(1.0), 0.31, e.w.mul(17.0))), 1.0)],
+  // hasze fragmentu brył: 0 panel (komórka + ziarno·91), 1 okno (komórka + ziarno·57), 2 lampa tunelu
+  // (vec2(x, sign(y − 150)) + ziarno·13), 3 kontener (komórka + vec2(floor(x / 3), ziarno·17))
+  ['megaHash', 'vec4(haloHash12(f.xy + f.w * 91.0), haloHash12(f.xy + f.w * 57.0), haloHash12(vec2(f.x, sign(f.y - 150.0)) + f.w * 13.0), haloHash12(f.xy + vec2(floor(f.x / 3.0), f.w * 17.0)))',
+    (a, b, d, e, f) => vec4(haloHash12(f.xy.add(f.w.mul(91.0))), haloHash12(f.xy.add(f.w.mul(57.0))), haloHash12(vec2(f.x, sign(f.y.sub(150.0))).add(f.w.mul(13.0))),
+      haloHash12(f.xy.add(vec2(floor(f.x.div(3.0)), f.w.mul(17.0)))))],
+  ['megaHashFmaWgsl', 'vec4(haloHash12(f.xy + f.w * 91.0), haloHash12(f.xy + f.w * 57.0), haloHash12(vec2(f.x, sign(f.y - 150.0)) + f.w * 13.0), haloHash12(f.xy + vec2(floor(f.x / 3.0), f.w * 17.0)))',
+    (a, b, d, e, f) => vec4(haloHash12(vec2(fma(f.w, 91.0, f.x), fma(f.w, 91.0, f.y))), haloHash12(vec2(fma(f.w, 57.0, f.x), fma(f.w, 57.0, f.y))),
+      haloHash12(vec2(fma(f.w, 13.0, f.x), fma(f.w, 13.0, sign(f.y.sub(150.0))))), haloHash12(vec2(f.x.add(floor(f.x.div(3.0))), fma(f.w, 17.0, f.y))))],
+  // fasady megabudowli: 0 pas 12 kondygnacji vec2(floor(y / 12), ściana·7,3 + ziarno·13), 1 grupa 3 × 3
+  // floor(komórka / 3) + vec2(ściana·17,3, ziarno·23), 2 okno komórka + vec2(ściana·31,7, ziarno·57),
+  // 3 jasność okna komórka + vec2(3,3, ściana) (całkowite + stała — bez poprawek)
+  ['megaFacade', 'vec4(haloHash12(vec2(floor(f.y / 12.0), f.z * 7.3 + f.w * 13.0)), haloHash12(floor(f.xy / 3.0) + vec2(f.z * 17.3, f.w * 23.0)), haloHash12(f.xy + vec2(f.z * 31.7, f.w * 57.0)), haloHash12(f.xy + vec2(3.3, f.z)))',
+    (a, b, d, e, f) => vec4(haloHash12(vec2(floor(f.y.div(12.0)), f.z.mul(7.3).add(f.w.mul(13.0)))), haloHash12(floor(f.xy.div(3.0)).add(vec2(f.z.mul(17.3), f.w.mul(23.0)))),
+      haloHash12(f.xy.add(vec2(f.z.mul(31.7), f.w.mul(57.0)))), haloHash12(f.xy.add(vec2(3.3, f.z))))],
+  ['megaFacadeFmaX', 'vec4(haloHash12(vec2(floor(f.y / 12.0), f.z * 7.3 + f.w * 13.0)), haloHash12(floor(f.xy / 3.0) + vec2(f.z * 17.3, f.w * 23.0)), haloHash12(f.xy + vec2(f.z * 31.7, f.w * 57.0)), 1.0)',
+    (a, b, d, e, f) => vec4(haloHash12(vec2(floor(f.y.div(12.0)), haloFusedMulAddInt(f.z, 7.3, f.w.mul(13.0)))),
+      haloHash12(vec2(haloFusedMulAddInt(f.z, 17.3, floor(f.x.div(3.0))), floor(f.y.div(3.0)).add(f.w.mul(23.0)))),
+      haloHash12(vec2(haloFusedMulAddInt(f.z, 31.7, f.x), f.y.add(f.w.mul(57.0)))), 1.0)],
+  ['megaFacadeFmaWgsl', 'vec4(haloHash12(vec2(floor(f.y / 12.0), f.z * 7.3 + f.w * 13.0)), haloHash12(floor(f.xy / 3.0) + vec2(f.z * 17.3, f.w * 23.0)), haloHash12(f.xy + vec2(f.z * 31.7, f.w * 57.0)), haloHash12(vec2(floor(f.y / 12.0), f.z * 7.3 + f.w * 13.0)))',
+    (a, b, d, e, f) => vec4(haloHash12(vec2(floor(f.y.div(12.0)), fma(f.w, 13.0, f.z.mul(7.3)))),
+      haloHash12(vec2(fma(f.z, 17.3, floor(f.x.div(3.0))), fma(f.w, 23.0, floor(f.y.div(3.0))))),
+      haloHash12(vec2(fma(f.z, 31.7, f.x), fma(f.w, 57.0, f.y))), haloHash12(vec2(floor(f.y.div(12.0)), fma(f.z, 7.3, f.w.mul(13.0)))))],
+  // ---- zadanie 10: ringi-archetypy (archTSL.js). Ziarno instancji floor(aInst.y · 1000 + 0,5) (e.w, f.w — [0, 1));
+  // hasze archHash(p) = haloHash12(p · 0,7071 + (13,17, 71,3)) z wejść: s = ziarno całkowite (d.x / 64 → 0…1023),
+  // komórka c = f.xy − 200 (−200…199), ściana fz = f.z − 1 (0…3), rodzaj budynku k = floor(d.w · 9).
+  // Kanały archEcuWin: 0 okno ECUMENE c + (s·0,37, s·1,91), 1 odcień płyty c + s·0,13, 2 kratka c + 3,7, 3 dach Fable
+  // c + s·0,1. archFabWin: 0 okno Fable c + (s·0,97 + fz·7, s·0,31), 1 barwa okien (s·0,31 + fz, k), 2 średnia
+  // floor(c / 3) + s·0,011, 3 panel c + s·0,013. Warianty: Naive — mnożenie i dodawanie wprost (DXC: dwa zaokrąglenia),
+  // Fma — wariant materiału (a·b + c przez fma WGSL, haloFma / haloFmaVec2), HashFma / SeedFma — fma tylko w haszu /
+  // tylko w ziarnie·k, FmaB — okno Fable z fma(ściana, 7, s·0,97).
+  ['archSeed', 'vec4(floor(f.w * 1000.0 + 0.5), floor(e.w * 1000.0 + 0.5), fract(f.w * 1000.0 + 0.5), fract(e.w * 1000.0 + 0.5))',
+    (a, b, d, e, f) => vec4(floor(f.w.mul(1000.0).add(0.5)), floor(e.w.mul(1000.0).add(0.5)), fract(f.w.mul(1000.0).add(0.5)), fract(e.w.mul(1000.0).add(0.5)))],
+  ['archSeedFma', 'vec4(floor(f.w * 1000.0 + 0.5), floor(e.w * 1000.0 + 0.5), fract(f.w * 1000.0 + 0.5), fract(e.w * 1000.0 + 0.5))',
+    (a, b, d, e, f) => vec4(floor(fma(f.w, 1000.0, 0.5)), floor(fma(e.w, 1000.0, 0.5)), fract(fma(f.w, 1000.0, 0.5)), fract(fma(e.w, 1000.0, 0.5)))],
+  ...archRows()
 ];
+
+// Wiersze haszy archetypów (zadanie 10) — patrz komentarz przy archSeed.
+function archRows() {
+  const glslEcu = 'vec4(archHash((f.xy - 200.0) + vec2(floor(d.x / 64.0) * 0.37, floor(d.x / 64.0) * 1.91)), archHash((f.xy - 200.0) + floor(d.x / 64.0) * 0.13), archHash((f.xy - 200.0) + 3.7), archHash((f.xy - 200.0) + floor(d.x / 64.0) * 0.1))';
+  const glslFab = 'vec4(archHash((f.xy - 200.0) + vec2(floor(d.x / 64.0) * 0.97 + (f.z - 1.0) * 7.0, floor(d.x / 64.0) * 0.31)), archHash(vec2(floor(d.x / 64.0) * 0.31 + (f.z - 1.0), floor(d.w * 9.0))), archHash(floor((f.xy - 200.0) / 3.0) + floor(d.x / 64.0) * 0.011), archHash((f.xy - 200.0) + floor(d.x / 64.0) * 0.013))';
+  const hashN = (p) => haloHash12(p.mul(0.7071).add(vec2(13.17, 71.3)));
+  const hashF = (p) => haloHash12(haloFmaVec2(p, [0.7071, 0.7071], [13.17, 71.3]));
+  const seedN = (s, k, c) => c.add(vec2(s.mul(k[0]), s.mul(k[1])));
+  const seedF = (s, k, c) => haloFmaVec2(vec2(s, s), k, c);
+  const ecu = (hash, seed) => (a, b, d, e, f) => {
+    const s = d.x.div(64.0).floor();
+    const c = f.xy.sub(200.0);
+    return vec4(hash(seed(s, [0.37, 1.91], c)), hash(seed(s, [0.13, 0.13], c)), hash(c.add(3.7)), hash(seed(s, [0.1, 0.1], c)));
+  };
+  const fab = (hash, seed, win) => (a, b, d, e, f) => {
+    const s = d.x.div(64.0).floor();
+    const c = f.xy.sub(200.0);
+    const fz = f.z.sub(1.0);
+    return vec4(hash(win(s, fz, c)), hash(vec2(seed === seedF ? fma(s, 0.31, fz) : s.mul(0.31).add(fz), d.w.mul(9.0).floor())),
+      hash(seed(s, [0.011, 0.011], c.div(3.0).floor())), hash(seed(s, [0.013, 0.013], c)));
+  };
+  const winN = (s, fz, c) => c.add(vec2(s.mul(0.97).add(fz.mul(7.0)), s.mul(0.31)));
+  const winF = (s, fz, c) => vec2(c.x.add(fma(s, 0.97, fz.mul(7.0))), fma(s, 0.31, c.y));
+  const winB = (s, fz, c) => vec2(c.x.add(fma(fz, 7.0, s.mul(0.97))), fma(s, 0.31, c.y));
+  return [
+    ['archEcuWinNaive', glslEcu, ecu(hashN, seedN)],
+    ['archEcuWinFma', glslEcu, ecu(hashF, seedF)],
+    ['archEcuWinHashFma', glslEcu, ecu(hashF, seedN)],
+    ['archEcuWinSeedFma', glslEcu, ecu(hashN, seedF)],
+    ['archFabWinNaive', glslFab, fab(hashN, seedN, winN)],
+    ['archFabWinFma', glslFab, fab(hashF, seedF, winF)],
+    ['archFabWinFmaB', glslFab, fab(hashF, seedF, winB)],
+    ['archFabWinHashFma', glslFab, fab(hashF, seedN, winN)],
+    // kratka płyt archHash(id + 3,7) z id = floor(…) jak w materiale (w wierszu archEcuWin kanał 2 baza zwijała
+    // stałe (f.xy − 200) + 3,7 = f.xy − 196,3 — nie jak w materiale): fma w haszu / wprost / stała zwinięta
+    // ((id + 3,7)·0,7071 + k = id·0,7071 + (3,7·0,7071 + k), float32)
+    ...(() => {
+      const f32 = Math.fround;
+      const k32 = [f32(f32(f32(3.7) * f32(0.7071)) + f32(13.17)), f32(f32(f32(3.7) * f32(0.7071)) + f32(71.3))];
+      const g = 'vec4(archHash(floor((f.xy - 200.0) / 7.0) + 3.7), archHash(floor(f.xy / 3.0) + 3.7), 0.0, 1.0)';
+      const c1 = (f) => f.xy.sub(200.0).div(7.0).floor();
+      const c2 = (f) => f.xy.div(3.0).floor();
+      const hF = (p) => haloHash12(haloFmaVec2(p.add(3.7), [0.7071, 0.7071], [13.17, 71.3]));
+      const hN = (p) => haloHash12(p.add(3.7).mul(0.7071).add(vec2(13.17, 71.3)));
+      const hK = (p) => haloHash12(haloFmaVec2(p, [0.7071, 0.7071], k32));
+      return [
+        ['archVentFma', g, (a, b, d, e, f) => vec4(hF(c1(f)), hF(c2(f)), 0.0, 1.0)],
+        ['archVentNaive', g, (a, b, d, e, f) => vec4(hN(c1(f)), hN(c2(f)), 0.0, 1.0)],
+        ['archVentK32Fma', g, (a, b, d, e, f) => vec4(hK(c1(f)), hK(c2(f)), 0.0, 1.0)]
+      ];
+    })()
+  ];
+}
 
 // Tylko TSL (zadanie 08): reguły komórek dachu na GPU, porównane z planem brył na CPU (compareRoofMirror).
 // d.x = indeks komórki / działki wzdłuż (0…65535), d.z = komórka w poprzek (0…63), klasa sektora = floor(d.w · 4),
@@ -218,7 +338,7 @@ function glslRun() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     return t;
   };
-  const tex = [mkTex(in0), mkTex(in1), mkTex(in2)];
+  const tex = [mkTex(in0), mkTex(in1), mkTex(in2), mkTex(in3), mkTex(in4)];
   const out = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, out);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, null);
@@ -232,6 +352,7 @@ vec4 haloAirTestIn(vec3 d, float t1, float j) { vec3 ins; vec3 tr; haloAirIntegr
 vec4 haloAirTestTr(vec3 d, float t1, float j) { vec3 ins; vec3 tr; haloAirIntegrate(uCamLocal, d, 0.0, t1, j, ins, tr); return vec4(tr, 1.0); }
 vec4 kitA(float lotH, int p) { vec4 A; vec4 B; indKitPart(lotH, p, A, B); return A; }
 vec4 kitB(float lotH, int p) { vec4 A; vec4 B; indKitPart(lotH, p, A, B); return B; }
+float archHash(vec2 p) { return haloHash12(p * 0.7071 + vec2(13.17, 71.3)); }
 `;
   const compile = (type, src) => {
     const s = gl.createShader(type);
@@ -274,12 +395,16 @@ ${helpers}
 uniform sampler2D uIn0;
 uniform sampler2D uIn1;
 uniform sampler2D uIn2;
+uniform sampler2D uIn3;
+uniform sampler2D uIn4;
 out vec4 fragColor;
 void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
   vec4 a = texelFetch(uIn0, c, 0);
   vec4 b = texelFetch(uIn1, c, 0);
   vec4 d = texelFetch(uIn2, c, 0);
+  vec4 e = texelFetch(uIn3, c, 0);
+  vec4 f = texelFetch(uIn4, c, 0);
   fragColor = ${expr};
 }`;
     const prog = gl.createProgram();
@@ -289,7 +414,7 @@ void main() {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`${name}: ${gl.getProgramInfoLog(prog)}`);
     gl.useProgram(prog);
     setUniforms(prog);
-    ['uIn0', 'uIn1', 'uIn2'].forEach((n, k) => {
+    ['uIn0', 'uIn1', 'uIn2', 'uIn3', 'uIn4'].forEach((n, k) => {
       gl.activeTexture(gl.TEXTURE0 + k);
       gl.bindTexture(gl.TEXTURE_2D, tex[k]);
       gl.uniform1i(gl.getUniformLocation(prog, n), k);
@@ -321,7 +446,7 @@ async function tslRun() {
     t.needsUpdate = true;
     return t;
   };
-  const tex = [mkTex(in0), mkTex(in1), mkTex(in2)];
+  const tex = [mkTex(in0), mkTex(in1), mkTex(in2), mkTex(in3), mkTex(in4)];
   const rt = new THREE.RenderTarget(W, H, { type: THREE.FloatType, depthBuffer: false });
   const quad = new THREE.QuadMesh();
   const results = {};
@@ -332,7 +457,9 @@ async function tslRun() {
       const a = textureLoad(texture(tex[0]), c).toVar();
       const b = textureLoad(texture(tex[1]), c).toVar();
       const d = textureLoad(texture(tex[2]), c).toVar();
-      return tslExpr(a, b, d);
+      const e = textureLoad(texture(tex[3]), c).toVar();
+      const f = textureLoad(texture(tex[4]), c).toVar();
+      return tslExpr(a, b, d, e, f);
     })();
     m.blending = THREE.NoBlending;
     m.depthTest = false;
@@ -389,6 +516,24 @@ async function main() {
   for (const [name] of TESTS) {
     state.results[name] = compare(glsl[name], tsl[name]);
     log(`${name.padEnd(18)} ${JSON.stringify(state.results[name])}`);
+  }
+  // zadanie 09: decyzje progowe z haszy brył (okno świeci: hasz ≥ 0,55; grupa fasady: hasz < aktywność pasa
+  // ~0,3; okno fasady: hasz < 0,8 / 0,06) — ile próbek zmienia decyzję między GLSL a TSL
+  const flips = (A, B, ch, t) => {
+    let n = 0;
+    for (let i = ch; i < A.length; i += 4) if ((A[i] >= t) !== (B[i] >= t)) n++;
+    return +(100 * n / N).toFixed(3);
+  };
+  for (const name of Object.keys(state.results)) {
+    if (/^megaHash/.test(name)) state.results[name].flipsPct = { okno055: flips(glsl[name], tsl[name], 1, 0.55) };
+    // zadanie 10: okno ECUMENE świeci przy haszu ≥ 0,61; okno Fable przy haszu ≥ progu 0,55…0,85 (tu 0,7), barwa ≥ 0,62
+    if (/^archEcuWin/.test(name)) state.results[name].flipsPct = { okno061: flips(glsl[name], tsl[name], 0, 0.61), kratka072: flips(glsl[name], tsl[name], 2, 0.72) };
+    if (/^archFabWin/.test(name)) state.results[name].flipsPct = { okno07: flips(glsl[name], tsl[name], 0, 0.7), barwa062: flips(glsl[name], tsl[name], 1, 0.62) };
+    if (/^megaFacade/.test(name)) {
+      state.results[name].flipsPct = {
+        grupa03: flips(glsl[name], tsl[name], 1, 0.3), okno08: flips(glsl[name], tsl[name], 2, 0.8), okno006: flips(glsl[name], tsl[name], 2, 0.06)
+      };
+    }
   }
   state.mirror = compareKitMirror(tsl);
   log(`zestaw TSL ↔ bliźniak JS: ${JSON.stringify(state.mirror)}`);

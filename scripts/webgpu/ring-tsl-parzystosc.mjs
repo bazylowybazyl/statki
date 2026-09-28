@@ -40,6 +40,12 @@ try {
   for (const [name, r] of Object.entries(res.results)) {
     md.push(`| ${name} | ${r.n} | ${r.identicalPct}% | ${(r.identicalPctByChannel || []).join(' / ')} | ${f(r.maxAbs)} | ${f(r.meanAbs)} | ${f(r.maxRel)} | ${r.nanGLSL} / ${r.nanTSL} |`);
   }
+  // zadanie 09: decyzje progowe z haszy brył megastruktury i miasta (okna, grupy okien fasad)
+  const flipRows = Object.entries(res.results).filter(([, r]) => r.flipsPct);
+  if (flipRows.length) {
+    md.push('', '## Bryły (09): zmienione decyzje progowe GLSL ↔ TSL [% próbek]', '', '| wiersz | decyzje |', '|---|---|');
+    for (const [name, r] of flipRows) md.push(`| ${name} | ${Object.entries(r.flipsPct).map(([k, v]) => `${k} ${v}%`).join(', ')} |`);
+  }
   // zadanie 07: zestaw przemysłowy TSL (GPU, float32) ↔ bliźniak JS indKitPart (float64)
   if (res.mirror) {
     const m = res.mirror;

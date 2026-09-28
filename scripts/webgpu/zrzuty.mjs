@@ -319,6 +319,97 @@ const SCENES = {
     hud: false, warm: 20,
     js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
          await H.step(21); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  // Zadanie 16: rozpad stacji planet (GLB). Sesja „stacja” — osobna, nie przesuwa innych scen; baza z tagu
+  // przez `baza.mjs --dopisz`. Stacja planety spoza ringów (Wenus, Merkury, Saturn, Uran — model stacji Ziemi)
+  // stoi w środku planety na warstwie FG; rozpad woła te same funkcje co gra (destroyStation3D z tej samej
+  // instancji modułu, Destruction3D.detachChunk przy progach HP).
+  'stacja-przygotowanie': {
+    opis: 'Bez zrzutu: bryły stacji planet od nowa w znanej klatce (kąt obrotu, wypiek rozpadu z ziarnem sceny)',
+    capture: false, warm: 2,
+    // Bryły stacji powstają w pierwszej klatce gry po wczytaniu GLB (czas rzeczywisty) i od tej chwili obracają się
+    // o 0,002 rad na klatkę; wypiek rozpadu (losowe kierunki trójkątów, próbki odłamków paneli — Math.random) idzie
+    // przy tej samej klatce. Liczba klatek przed „hold” jest zmienna, więc: detachPlanetStations3D (rekordy i bryły
+    // znikają), skasowany wypiek z geometrii szablonu, nowe ziarno i jedna klatka — updateStations3D składa bryły,
+    // kąty i wypiek na nowo z tego samego stanu losowania w każdym przebiegu.
+    js: `const glb = () => stations.filter((s) => !s.ringPort && !s.isPirate).every((s) => !!s._mesh3d);
+         for (let i = 0; i < 900 && !glb(); i++) await H.frames(2);
+         if (!glb()) throw new Error('bryły stacji planet nie powstały (GLB)');
+         for (const s of stations) s._mesh3d?.traverse((o) => { const g = o.geometry; if (g) { delete g.__shatterBaked; delete g.__shardSpawnData; } });
+         window.detachPlanetStations3D();
+         H.reseed(0x57ac);
+         await H.frames(1);
+         if (!glb()) throw new Error('bryły stacji planet nie wróciły po detachPlanetStations3D');
+         // Stała liczba klatek (każda obraca stacje): wgrywanie tekstur idzie w requestIdleCallback, bez klatek gry.
+         await H.frames(10);
+         for (let i = 0; i < 600 && !S.uploadsIdle(); i++) await new Promise((r) => setTimeout(r, 100));`
+  },
+  'stacja-rozpad': {
+    opis: 'Rozpad stacji Wenus (destroyStation3D jak gra przy 0 HP): 4 klatki po — wygaszenie bryły (klony materiałów GLB, błysk emisji), odłamki paneli przy kadłubie, wybuch reaktora z overlaya; zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'venus');
+         S.cam(st.x, st.y, 0.5);
+         await H.frames(3);
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x16a1);
+         st._destroyed3D = true;
+         destroyStation3D(st, { shockwave: true });
+         await H.step(4);
+         S.cam(st.x, st.y, 0.5);`
+  },
+  'stacja-odlamki': {
+    opis: 'Ta sama stacja 2,5 s po rozpadzie: odłamki paneli daleko, część gaśnie, zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'venus');
+         await H.step(146);
+         S.cam(st.x, st.y, 0.5);`
+  },
+  'stacja-trojkaty': {
+    opis: 'Rozpad stacji Merkurego na trójkąty (debrisStyle „triangles” — materiał rozpadu w shaderze, droga zapasowa odłamków paneli) 0,5 s po, zoom 0,35',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'mercury');
+         S.cam(st.x, st.y, 0.35);
+         await H.frames(3);
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x16a2);
+         st._destroyed3D = true;
+         destroyStation3D(st, { shockwave: true, debrisStyle: 'triangles' });
+         await H.step(30);
+         S.cam(st.x, st.y, 0.35);`
+  },
+  'stacja-implozja': {
+    opis: 'Implozja stacji Saturna (mode „implode” — zapas przy wielu rozpadach naraz) 0,5 s po, zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'saturn');
+         S.cam(st.x, st.y, 0.5);
+         await H.frames(3);
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x16a3);
+         st._destroyed3D = true;
+         destroyStation3D(st, { shockwave: true, mode: 'implode' });
+         await H.step(30);
+         S.cam(st.x, st.y, 0.5);`
+  },
+  'stacja-ciecie': {
+    opis: 'Odpadnięty fragment stacji Urana (detachChunk jak gra przy progu HP) po podziale na kawałki z płaszczyznami cięcia, 2 s po podziale, zoom 0,8',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    // Fragment leci ~7 s, potem pęka (wybuchy łańcuchowe) i ~3 s później dzieli się na 2–6 kawałków — klony
+    // z płaszczyznami cięcia (WebGL: material.clippingPlanes, WebGPU: ClippingGroup). Kroki co 30 klatek do
+    // podziału (liczba kroków z ziarna — ta sama w każdym przebiegu), kamera na środku kawałków.
+    js: `const st = stations.find((s) => s.id === 'uranus');
+         S.cam(st.x, st.y, 0.8);
+         await H.frames(3);
+         H.reseed(0x16a4);
+         Destruction3D.detachChunk(st._mesh3d);
+         const pieces = () => Core3D.scene.children.filter((o) => /__piece\\d+$/.test(o.name) || o.children.some((c) => /__piece\\d+$/.test(c.name)));
+         let k = 0;
+         for (; k < 40 && !pieces().length; k++) await H.step(30);
+         window.__harnessDiag = { krokiDoPodzialu: k * 30, kawalki: pieces().length };
+         await H.step(120);
+         const p = new Core3D.scene.position.constructor();
+         const c = { x: 0, y: 0, n: 0 };
+         for (const o of pieces()) { o.getWorldPosition(p); c.x += p.x; c.y -= p.y; c.n++; }
+         if (c.n) S.cam(c.x / c.n, c.y / c.n, 0.8);`
   }
 };
 
@@ -331,6 +422,7 @@ const SESSIONS = [
   { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
+  { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
   { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] }
 ];
 
@@ -405,6 +497,24 @@ async function runSession(session, backend, outDir, base) {
           await screenshotPng(cdp, join(outDir, `${id}__${nazwa}.png`));
         }
         await ev('window.__harness.scene.isolate(null)');
+        await ev('window.__harness.frames(3)');
+      }
+      // Warianty bez overlaya efektów (zadanie 16): wybuch reaktora z overlaya (własny WebGLRenderer do zadania 20,
+      // kanwa `canvas.overlay3d` nad grą) zalewa kadr rozpadu — `__3d` (cała klatka Core3D) i `__fg-3d` (sama warstwa
+      // FG: bryły stacji, odłamki, kawałki, cień słońca na łapaczu FG) pokazują materiały zadania. Ukrycie kanwy to
+      // tylko CSS (overlay dalej liczy). W `__fg-3d` także bez passów planet (perfToggles.planetPass): quad poświaty
+      // planet idzie poza kamerami passów, więc izolacja warstw go nie zdejmuje (poświata = zadanie 05).
+      if (sc.bezOverlay) {
+        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = 'hidden'; return true; })()`);
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__3d.png`));
+        await ev('window.__harness.scene.isolate([2])');
+        await ev('(() => { window.Core3D.setPerfToggles({ planetPass: false }); return true; })()');
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__fg-3d.png`));
+        await ev('(() => { window.Core3D.setPerfToggles({ planetPass: true }); return true; })()');
+        await ev('window.__harness.scene.isolate(null)');
+        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = ''; return true; })()`);
         await ev('window.__harness.frames(3)');
       }
       // --teren-ringu (zadanie 07): wariant `__teren` — tylko siatka terenu ringu Ziemi (reszta sceny

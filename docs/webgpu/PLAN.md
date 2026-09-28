@@ -149,8 +149,65 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   alokuje ~150 B na atrybut na klatkę — zakres na stałe z wyłączonym czyszczeniem (`liveAttribute`, `fxParticles3D.js`).
   Tekstura per obiekt we wspólnym grafie: `FxMapNode` (jak `HullObjectTextureNode`, `texture().onObjectUpdate()` nie
   działa).
+- **Pułapki z zadania 09 (ring: megastruktura i miasto):** **`a·b + c` dla dowolnego `a`** (niecałkowitego — ziarno bryły,
+  z) przez wbudowane **`fma()` WGSL** (`haloFma` / `haloFmaV2` w `haloRingTSL.js`, `wgslFn` — TSL r183 nie ma `fma`): Tint
+  zamienia je na HLSL `mad`, DXC na ten sam rozkaz, na który FXC składał GLSL w bazie — na GPU bit w bit (wiersze
+  `*FmaWgsl` w `ring-tsl-parzystosc.mjs`; wprost 71,7% ziaren brył, 28% brył z innym wzorem okien). Kolejność argumentów
+  z pomiaru (`ściana·7,3 + ziarno·13` → `fma(ziarno, 13, ściana·7,3)`, odwrotnie 82,6%). **Pochodne przed gałęziami:**
+  FXC spłaszczał gałęzie z `fwidth`, w WGSL pochodna w rozbieżnej gałęzi jest nieokreślona. **Wczesne wyjście z
+  wierzchołków** (`collapse(); return;`) = zagnieżdżone `If` z domyślnym `vec4(2, 2, 2, 1)` (main zwraca strukturę
+  varyingów — `Return()` się nie da). **Reszta różnic z bazą** (do 1,2% pikseli > 8/255 w kadrach gęstego miasta,
+  budynki 1–2 px): krawędzie MSAA i aliasing okien — pozycje wierzchołków różnią się o ULP (FXC scala `mad` także w
+  wierzchołkach, `haloRelFromPolar`), a pochodne liczone na czwórkach pikseli mogą brać inny wiersz czwórki
+  (hipoteza: ANGLE rysuje cele odwrócone w pionie; do sprawdzenia w 23 — `dpdxFine` / operacje na czwórkach).
+- **Pułapki z zadania 10 (ring: hala K-7 i ringi-archetypy):** **wiele siatek jednego materiału = `Mesh` z
+  `InstancedBufferGeometry`**, nie `THREE.InstancedMesh` — uuid `InstancedMesh` w kluczu programu daje NodeBuilder na
+  KAŻDĄ siatkę (ring Fable: ~100 partii dzielnic i kopuł; do tego `InstanceNode` wybiera bufor uniformów lub atrybuty
+  zależnie od liczby instancji — inny WGSL); jeden przepleciony bufor instancji (macierz 4 × vec4, barwa, parametry —
+  limit 8 buforów wierzchołków), obwiednia dla frustum cullingu w `geometry.boundingSphere`. **`uniformArray` bez
+  `.setName()`** ma w WGSL nazwę z id węzła (`NodeBuffer_<id>`) — każdy egzemplarz grafu (trzy ringi, przebudowa
+  jakości) to inny kod i osobne moduły GPU. **Graf na ring, wartości na obiekt** także dla tablic: kilka tablic per
+  obiekt (macierze grup ruchomych, lampy, palety) = `uniformArray` z `onObjectUpdate` pakującym dane z
+  `material.uniforms` (grupa „object” ma bufor na obiekt renderu). **`dFdy` TSL = `-dpdy`** (oś y jak GL) — dla
+  `textureGrad` obojętne. **Wiersze parzystości GLSL ↔ TSL na wejściach jak w materiale:** FXC zwija stałe (w wierszu
+  z `(x − 200) + 3,7` baza liczyła `x − 196,3`), więc syntetyczne przesunięcie potrafi dać fałszywą rozbieżność (kratka
+  paneli: 57% → 100% po przejściu na `floor(…) + 3,7`). **Demo ringu:** `BloomNode` bez × 3 dawał bloom 3 × słabszy
+  niż `UnrealBloomPass` bazy (jasne kadry 20–45% pikseli > 8/255) — demo ma `BloomGry` jak gra.
+- **Pułapki z zadania 15 (three r183):** **`DynamicDrawUsage` na atrybucie = `writeBuffer` CAŁEGO bufora przy każdym
+  `render()`, który go rysuje** (`Attributes.update` pomija wtedy porównanie wersji) — bufory pisane w biegu zostają
+  przy domyślnym użyciu z `needsUpdate` i zakresami (`addUpdateRange`; backend wysyła tylko zakresy i sam czyści listę).
+  **Częściowa aktualizacja danych czytanych jak tekstura** (wiersze obrażeń mostków): zakresy tekstur backend ignoruje
+  (każda zmiana = `writeTexture` całości: 768 × 512 RGBA8 = 1,5 MB, ~0,7 ms CPU), zakresy buforów honoruje — bufor
+  storage (`StorageBufferAttribute` + `storage(attr, 'uint', n).toReadOnly()`), bajty RGBA8 w słowie u32 (widok
+  `Uint8Array` na tym samym `ArrayBuffer`; przesunięcia w WGSL tylko na `u32` — `i32 >> i32` to błąd): blok ~1 KB,
+  < 0,005 ms (`benchDamageUpload` w `dema/mostki-demo.js`). Alternatywa z zadania 03 dla tekstur: własny
+  `queue.writeTexture` wycinka (`Core3D.uploadTextureLayer`). **Wiele meshy instancji z JEDNYM materiałem:** Mesh +
+  `InstancedBufferGeometry` (klucz geometrii strukturalny, `instanceCount` = liczba rysowanych) zamiast `InstancedMesh`
+  (uuid w kluczu), stałe rodzaju w `uniformArray` czytanej indeksem z danych instancji (mostki: 11 rodzajów, 1 graf).
+  **Macierz instancji `InstancedMesh` ponad 1024 instancje** (atrybut, nie bufor uniformów) three synchronizuje RAZ
+  NA KLATKĘ rAF (`InstanceNode`, `updateType` FRAME): w serii renderów w jednym zadaniu JS rysują się dane z pierwszego
+  — w grze (render raz na klatkę, podzielony ekran z tymi samymi danymi) bez skutków, w narzędziach z pętlą
+  synchroniczną tak (`precyzja-drzenie.js`: szczeliny okien przy starym początku układu, maska 0) — przed renderem
+  pomiaru czekać na nową klatkę (`renderer.info.frame`). **`textureSample` w niejednolitym przepływie** (pętla z
+  `Break` zależnym od danych — marsz cienia) to błąd WGSL — `texture(...).level(0)` (textureSampleLevel).
+- **Pułapki z zadania 16 (zniszczenie stacji, three r183):** **goły `NodeMaterial` z `castShadow` → `map = null`**
+  (`Renderer._getShadowNodes` bierze `map !== null`, także `undefined`, za mapę → `texture(undefined)`, błąd budowy passa
+  cienia). **`material.clippingPlanes` WebGPU ignoruje**, a **`ClippingGroup`** wkłada płaszczyzny do `uniformArray` grupy
+  „render” z kontekstu obiektu, który zbudował program — kilka grup o tym samym kluczu materiału i liczbie płaszczyzn tnie
+  płaszczyznami pierwszej; cięcie per obiekt = maska TSL (`maskNode` + płaszczyzny widoku w `onObjectUpdate`,
+  `destruction3D.js`) — ta sama reguła odrzucenia co WebGL, wspólny węzeł, zero budów na kawałek. **Węzły cienia per obiekt
+  materiału z mapą** (`reference('map', …, material)`) — każdy świeży klon to budowa NodeBuildera cienia; klon z tą samą
+  mapą dostaje wpis oryginału. **`compileAsync` nie rozgrzewa passa cienia** — trzymacz w scenie na warstwie 31 przez 2 klatki
+  (kamera cienia widzi wszystkie warstwy, passy Core3D nie). **Przezroczyste `DoubleSide`:** WebGPU rysuje wszystkie tyły,
+  potem wszystkie przody (`_renderTransparents`), WebGL tył + przód per obiekt. **`vertexColors` bez atrybutu `color`:**
+  WebGL — czerń (stała wartość atrybutu 0), WebGPU — biel (pomija). **Mapa cienia słońca ze wszystkimi warstwami raz na
+  klatkę** (01): łapacz cienia warstwy 0 (z = −2) dostaje cień obiektów FG (stacje); w WebGL mapa każdego passa miała tylko
+  warstwy kamery passa — łapacz 0 cienia stacji nie widział (po rozpadzie widać cień bryły-ducha nad planetą; decyzja w 23).
+  Obraz: sesja „stacja” w `zrzuty.mjs` (baza z tagu), sylwetki vs wnętrza — `scripts/webgpu/krawedzie.mjs`; klatka rozpadu
+  bez budów — `scripts/webgpu/rozpad-stacji.mjs`.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
-  uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
+  uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09),
+  `haloFmaVec2` (10 — ten sam `fma` WGSL na wektorach, hasze archetypów).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
   Ciężkie funkcje: `Fn(...).setLayout(...)` — jedna funkcja WGSL zamiast wklejania.
 - **Reguły z `agents.md` bez zmian:** HDR-first i próg bloomu 0,9; bez `pow()` z ujemną podstawą; clamp varyingów
