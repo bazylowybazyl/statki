@@ -141,6 +141,9 @@ export function createPostUniforms() {
     uAspect: uniform(1.0),
     uHeatOn: uniform(1.0),
     uDistLayerOn: uniform(0.0),
+    // Przygaszenie obrazu od efektów (Supernowa, zadanie 19 — Core3D.fx.post.exposure): tylko
+    // w gałęzi efektów (są źródła zniekształceń), przy 1 wynik bit w bit jak bez mnożenia.
+    uFxExposure: uniform(1.0),
     // xy = środek (UV, v od dołu ekranu), z = promień w jednostkach osi v, w = siła
     uHeatSources: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector4(2, 2, 0, 0)), 'vec4'),
     // kierunek wydechu dyszy w przestrzeni ekranu; (0, 0) = źródło izotropowe
@@ -167,6 +170,7 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bl
   const uHeatSources = uniformNode(uniforms.uHeatSources);
   const uHeatDirs = uniformNode(uniforms.uHeatDirs);
   const uDistLayerOn = uniforms.uDistLayerOn ? uniformNode(uniforms.uDistLayerOn) : null;
+  const uFxExposure = uniforms.uFxExposure ? uniformNode(uniforms.uFxExposure) : null;
 
   // UV kwadu WebGPU ma v = 0 u GÓRY; źródła i przesunięcia liczymy jak w GLSL (v od dołu),
   // przesunięcie wraca do UV tekstury z odwróconą składową y.
@@ -306,6 +310,8 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bl
         }).Else(() => {
           sceneColor.assign(sampleScene(base));
         });
+        // Przygaszenie od efektów (implozja Supernowej) — tylko przy źródłach; 1 = bez zmian.
+        if (uFxExposure) sceneColor.rgb.mulAssign(uFxExposure);
       }).Else(zDyszami);
     }
 
