@@ -140,10 +140,10 @@ Miejsca scen liczone jak w demie WebGL (`world.js`: `findSpot`, `freeSpotNear`, 
 
 Demo to warstwa RENDERU nowego pola asteroid na WebGPU. Dane i logika pola już są w grze
 (`src/game/`: `AsteroidBeltField`, `FieldSunOcclusion`, `asteroidStorms.js`, `asteroidGiants.js`
-+ `GiantBuilder`, `asteroidRockKinds.js`) — demo czyta je bez kopii. Odpowiednikiem WebGL jest
-klej `src/3d/asteroidBelt3D.js` (warstwy `src/3d/rocks/*`, `beltDust3D`, `beltStorm3D`,
-`fieldLights3D`); dziś tworzy go tylko demo WebGL, gra nie. Klejem WebGPU jest `start()` +
-`frame()` w `dema/asteroidy-webgpu.js` — do przeniesienia jako moduł pasa w Core3D.
++ `GiantBuilder`, `asteroidRockKinds.js`) — demo czyta je bez kopii. Odpowiednik WebGL (klej
+`src/3d/asteroidBelt3D.js`, warstwy `src/3d/rocks/*`, `beltDust3D`, `beltStorm3D`, `fieldLights3D`)
+usunęło zadanie 21 — demo WebGL `dema/asteroidy.html` działa z tagu `webgl-baseline`. Klej WebGPU
+(`start()` + `frame()` w `dema/asteroidy-webgpu.js`) jest w grze jako moduł pasa — patrz „Stan w grze” niżej.
 
 **Moduły produkcyjne** (`dema/asteroidy-webgpu/`, każdy z komentarzem API w nagłówku):
 
@@ -204,6 +204,57 @@ z budżetem, `grid.build`, `atlas.gather`, burza).
 - niszczenie skał pociskami: brak (pociski dema wybuchają na kole skały — sam efekt);
 - burze: symulator gry (`StormSimulator`), pioruny i trafienia tylko wizualnie, bez obrażeń;
 - cień pól na słońcu: `FieldSunOcclusion.precomputeAll` (~1 s) — w grze na ekran ładowania.
+
+### Stan w grze (zadanie 21, 2026-09-28)
+
+Moduły dema są w `src/3d/asteroids/` pod tymi samymi nazwami (poza: `sunMap.js` → `fieldMap.js`, `sky.js` →
+`beltVeil.js` — sama zasłona pola, nocna łuna i błyski burzy nad niebem gry; `lights.js` → siatka gry
+`src/3d/fx/lightGrid.js` z 12). Nowe: `asteroidBelt.js` (klej `start()` / `frame()`), `beltMedium.js` (ośrodek
+wydzielony z `volumetrics.js` jako jeden obiekt gry — czytają go skały, minerały, olbrzymy i kadłuby przez hak
+`hullVolume`), `src/game/asteroidBeltGiants.js` (miejsca, budowa, kolizje). Opis dla agentów: `agents.md` § „Pas asteroid”.
+
+Różnice względem dema (świadome):
+- Złożenie: passy Core3D (PLAY i płytka mgła w passie gry, warstwa 0; RUBBLE/MID/DEEP, głęboka mgła i zasłona w passie
+  tła, warstwa 1), post gry (bloom ×3 `BLOOM_ZGODNOSC_WEBGL`, ACES gry) — nie `RenderPipeline` dema. Niebo gry z 05 (mgławica,
+  gwiazdy) zamiast nieba dema; kwad dna ośrodka w passie gry z renderOrder −50 (przed efektami gry).
+- Współrzędne: początek przy kamerze z `Core3D.fx.origin` (przeskok 20 tys. j. jak w demie, ale wspólny z pulami efektów);
+  shadery pasa bez `positionWorld` (varying pozycji lokalnej, środek płatu mgły z CPU, mapa pola i ośrodek w układzie
+  lokalnym). Iskry przesuwa kernel `FxPoolOrigin`, nie własne `shift`.
+- Światło: materiały pasa gaszą światła sceny Core3D i biorą słońce pasa (`BELT_SUN_LIGHT`); światła statków gry
+  (`addShipLights`, profil pola / jaskini) dla gracza i najbliższych środka kadru — `maxLitShips` 6 (ryzyko `ITEM_CAP`
+  z 12); flar dema (`dynamics.js`) nie ma, światła wybuchów i pocisków dają efekty gry (17–19) przez `Core3D.fx.lights`.
+  Świecące skały (kryształ, uran, energetyczna) jak w demie; światła dysz z dema — nie przeniesione.
+- Kadłuby: materiał kadłubów gry (04) czyta ośrodek (`hullVolume`), ale jeszcze NIE siatkę świateł (hak `hullEffectLights`
+  — zadanie 18) — w głębokiej nocy kadłub jest ciemny, w demie świeci własnymi reflektorami i flarami.
+- Burza: los efektów z `fxRandom` (harness ziarni go razem z `Math.random`) zamiast `Math.random`.
+- Podzielony ekran: jeden widok pasa = suma kadrów obu graczy (strumień skał, światła, ośrodek).
+- Rozgrywka: kolizje statków (gracz, P2, NPC) tylko z olbrzymami (`collideShip`: koła wzdłuż osi, koło ≤ pasmo SDF,
+  odbicie 0,3, bez obrażeń), pociski gasną w skale olbrzyma (`pointBlocked`); 5 olbrzymów przy rdzeniach pasa
+  (pierwszy = Labirynt dema w tym samym miejscu), budowa SDF w workerach, gdy kamera / statek < 420 tys. j.
+- Zrzuty obok dema: `scripts/webgpu/asteroidy-demo.mjs` (demo) i sesja `pas` w `zrzuty.mjs` / `asteroidy-gra.mjs` (gra)
+  w tych samych miejscach i zoomie; burza powtarzalna (`STORM_STAGE`: ten sam los symulatora, piorun i błysk w chmurach) —
+  bez niej fioletowa łuna zależy od chwilowego błysku w chmurach (rozproszenie 0,8).
+
+**Wydajność w grze** (headless Chrome, RTX 5080, 1920 × 1080, czas rzeczywisty; `asteroidy-gra.mjs --wydajnosc`:
+konfiguracje w świeżych stronach, 3 przebiegi na przemian, mediana median, w nawiasie rozrzut przebiegów; inne sesje
+pracowały na tym samym GPU/CPU — rozrzut duży, porównania tylko naprzemienne; PRZED budżetem map cienia i przed
+poprawką wysyłki buforów — stan końcowy niżej):
+
+| konfiguracja | klatka [ms] | CPU `Core3D` [ms] | GPU [ms] | CPU pasa [ms] | draw calle |
+|---|---|---|---|---|---:|
+| próżnia, sam gracz, zoom 0,12 | 3,21 (2,62–3,28) | 2,69 | 0,32 | — | 24 |
+| gęste pole, sam gracz, zoom 0,12 (6,5 tys. skał, 28 świateł) | 4,81 (3,88–5,79) | 4,20 (3,46–5,00) | 1,80 | 0,64 (0,51–0,69) | 53 |
+| gęste pole, zoom 1 (1522 skały, 6 map cienia) | 4,99 (4,60–6,89) | 4,25 | 1,50 | 0,49 | 55 |
+| bitwa 24 × 24 w próżni, zoom 0,12 | 10,42 (7,29–10,49) | 3,71 (2,92–4,16) | 0,66 | — | 85 |
+| bitwa 24 × 24 w gęstym polu, zoom 0,12 | 12,09 (9,63–15,78) | 6,27 (5,20–6,97) | 2,29 | 1,01 (0,95–1,30) | 118 |
+
+A/B w jednej stronie (`asteroidy-gra.mjs --ab`, bitwa w polu, warianty na przemian): przed poprawkami pas kosztował
+~2–3 ms CPU `Core3D` i ~1,5 ms GPU, mapy cienia reflektorów ~0,1 ms CPU na mapę (w bitwie 11–12 map). Dwie poprawki:
+(1) bufory pasa bez `DynamicDrawUsage` — three r183 wysyłał je przy KAŻDYM renderze (~1 MB na klatkę przy zoomie 0,12),
+teraz tylko po `needsUpdate`; (2) budżet `maxShadowShips` = 2 (gracz + najbliższy statek: 3–7 map). Po nich narzut pasa
+w bitwie ~0,5–1,2 ms CPU `Core3D` (pełne mapy cienia +~0,8 ms), GPU bez zmian (~1,5 ms). Siatka świateł w bitwie do
+6,8 tys. elementów, 0 odrzuconych (`ITEM_CAP` 262 tys.). Do 23: mapy cienia w jednym renderze atlasu zamiast renderu na
+mapę, koszt passów pasa przy dalekim zoomie (kubełki LOD, 8 płatów mgły).
 
 ## Uproszczenia względem dema WebGL i braki
 
