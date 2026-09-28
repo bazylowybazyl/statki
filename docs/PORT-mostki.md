@@ -814,7 +814,7 @@ usunięty (razem z rdzeniami z dem: `reactor3D.tsl.js`, `coreFx3D.tsl.js` —
   szczeliny i światła pozycyjne maski nie czytają.
 - **Cień na kadłubie** bez zmian (`GreaterDepth` na głębi kadłubów, renderOrder
   10 → 11 → 12). Sprawdzone w demie obok tagu: udział cienia (kadr z cieniem −
-  bez, piksele > 8/255) port 2,07%, baza 2,16%; sam cień (bez bryły) 12,67% /
+  bez, piksele > 8/255) port 2,07–2,17%, baza 2,16%; sam cień (bez bryły) 12,67% /
   12,63%. Pasma HDR okien modelu (`mostki3d-shots.js`, 10 kadłubów) jak w bazie:
   piksele okien, > 0,9, p50, p99 i max równe albo ±1–2% (np. Bellator 2781 / 2782
   px, 316 / 316 > 0,9, max 1,40 / 1,40), powierzchnia bez NaN; szczeliny
