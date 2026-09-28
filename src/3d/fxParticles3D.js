@@ -49,6 +49,8 @@ import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { SimClock, CLOCK_RENDER } from '../game/simClock.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 /* ============================================================================
    WARSTWY Z I KOLEJNOŚĆ RYSOWANIA
@@ -76,7 +78,7 @@ export const FX_RENDER_ORDER = RENDER_ORDER;
    ========================================================================== */
 export const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 export const lerp = (a, b, t) => a + (b - a) * t;
-export const rand = (a, b) => a + Math.random() * (b - a);
+export const rand = (a, b) => a + fxRandom.next() * (b - a);
 export function smoothstep(e0, e1, x) {
   const t = clamp01((x - e0) / (e1 - e0 || 1e-6));
   return t * t * (3 - 2 * t);
@@ -98,8 +100,8 @@ export function makeBasis(dir) {
 // w osi Z: w widoku ortho z góry ruch w Z jest NIEWIDOCZNY, więc rozrzut ma
 // iść po płaszczyźnie gry, a nie „w ekran".
 export function coneDir(out, dir, spread, flat = 1) {
-  const theta = spread * Math.sqrt(Math.random());
-  const phi = Math.random() * Math.PI * 2;
+  const theta = spread * Math.sqrt(fxRandom.next());
+  const phi = fxRandom.next() * Math.PI * 2;
   const st = Math.sin(theta);
   const ct = Math.cos(theta);
   out.copy(dir).multiplyScalar(ct)
@@ -736,7 +738,7 @@ class ArcSystem {
     f.t[i2] = 0; f.t[i2 + 1] = life;
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
     f.jit[i] = jitter;
-    f.seed[i] = (Math.random() * 65535) | 0;
+    f.seed[i] = (fxRandom.next() * 65535) | 0;
     writeCarrierFields(f, i);
   }
   update(dt, time) {
@@ -844,7 +846,7 @@ class SparkSystem {
     f.t[i2] = 0; f.t[i2 + 1] = life;
     f.drag[i] = drag;
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
-    f.misc[i2] = streak; f.misc[i2 + 1] = Math.random() * 6.28;
+    f.misc[i2] = streak; f.misc[i2 + 1] = fxRandom.next() * 6.28;
     f.cool[i2] = coolG; f.cool[i2 + 1] = coolB;
     writeCarrierFields(f, i);
   }

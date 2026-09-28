@@ -5,8 +5,8 @@
 // 1,6 / 0,15, składanie `screen`). Teraz: dwie pule cząstek w passie ortho Core3D (warstwa 0),
 // materiał raz na pulę (reactorblow.tsl.js), ruch analityczny w wierzchołkach, wybuchy jako
 // KROK klatki efektów Core3D (`core.addFxStep`, src/3d/fx/fxFrame.js):
-//   spawn  — fazy wybuchów (ładowanie → rozbłysk → iskry) i narodziny cząstek (Math.random gry
-//            jak dawniej — ta sama kolejność losowań co w ticku overlaya),
+//   spawn  — fazy wybuchów (ładowanie → rozbłysk → iskry) i narodziny cząstek (losowania z fxRandom —
+//            warstwa efektów, zadanie 23; ta sama kolejność losowań co w ticku overlaya),
 //   lights — światło rdzenia i rozbłysku → siatka świateł efektów (`ctx.grid`, zadanie 12),
 //   update — wysyłka zapisanych wycinków pul, zegar cząstek, widoczność i początek pul,
 //   warm   — compileAsync obu siatek w passie ortho (pierwszy wybuch bez kompilacji).
@@ -27,6 +27,7 @@ import { STATION_CHAIN_REACTOR_PROFILE } from './reactorProfiles/stationChainPro
 import { STATION_CUT_REACTOR_PROFILE } from './reactorProfiles/stationCutProfile.js';
 import { STATION_FINAL_REACTOR_PROFILE } from './reactorProfiles/stationFinalProfile.js';
 import { ParticlePool } from './particlePool.js';
+import { fxRandom } from '../3d/fx/fxRandom.js';
 import { REACTOR_TYPE, createReactorUniforms, createReactorFireMaterial, createReactorSmokeMaterial } from './reactorblow.tsl.js';
 
 export const REACTOR_FIRE_CAPACITY = 100000;
@@ -364,8 +365,9 @@ export class ReactorBlow3D {
     return true;
   }
 
-  // Fazy wybuchów (dawne update(dt) efektu overlaya). Losowania z Math.random gry w tej samej
-  // kolejności co tick overlaya: wybuchy od najnowszego do najstarszego, w wybuchu kolce
+  // Fazy wybuchów (dawne update(dt) efektu overlaya). Losowania z fxRandom (warstwa efektów — zadanie
+  // 23: Math.random gry przesuwał się o 5 losowań na iskrę, więc strojenie wyglądu wybuchu zmieniało
+  // przebieg bitwy) w kolejności ticku overlaya: wybuchy od najnowszego do najstarszego, w wybuchu kolce
   // (prędkość, kąt, pion, rozmiar, życie), potem iskry (prędkość, kąt, φ, rozmiar, życie).
   _advance(ctx) {
     const t0 = performance.now();
@@ -395,13 +397,13 @@ export class ReactorBlow3D {
         const szRange = Math.max(0.001, cfg.spikeSizeMaxMul - cfg.spikeSizeMinMul);
         const lifeRange = Math.max(0.001, cfg.spikeLifeMax - cfg.spikeLifeMin);
         for (let i = 0; i < cfg.spikeCount; i++) {
-          const speed = size * (spdMin + Math.random() * spdRange);
-          const angle = Math.random() * Math.PI * 2;
+          const speed = size * (spdMin + fxRandom.next() * spdRange);
+          const angle = fxRandom.next() * Math.PI * 2;
           const vx = Math.cos(angle) * speed;
-          const vUp = (Math.random() - 0.5) * speed * 0.15;   // dawne vy overlaya (oś ku kamerze)
+          const vUp = (fxRandom.next() - 0.5) * speed * 0.15;   // dawne vy overlaya (oś ku kamerze)
           const vz = Math.sin(angle) * speed;                  // dawne vz overlaya (y gry)
-          const s = size * (cfg.spikeSizeMinMul + Math.random() * szRange);
-          const life = cfg.spikeLifeMin + Math.random() * lifeRange;
+          const s = size * (cfg.spikeSizeMinMul + fxRandom.next() * szRange);
+          const life = cfg.spikeLifeMin + fxRandom.next() * lifeRange;
           fire.spawn(X, Y, EXP_Z, vx, -vz, vUp, s, life, REACTOR_TYPE.SPIKE, gt);
         }
       }
@@ -412,14 +414,14 @@ export class ReactorBlow3D {
         const szRange = Math.max(0.001, cfg.sparkSizeMaxMul - cfg.sparkSizeMinMul);
         const lifeRange = Math.max(0.001, cfg.sparkLifeMax - cfg.sparkLifeMin);
         for (let i = 0; i < cfg.sparkCount; i++) {
-          const speed = size * (spdMin + Math.random() * spdRange);
-          const angle = Math.random() * Math.PI * 2;
-          const phi = Math.acos(2 * Math.random() - 1);
+          const speed = size * (spdMin + fxRandom.next() * spdRange);
+          const angle = fxRandom.next() * Math.PI * 2;
+          const phi = Math.acos(2 * fxRandom.next() - 1);
           const vx = Math.sin(phi) * Math.cos(angle) * speed;
           const vUp = Math.cos(phi) * speed;
           const vz = Math.sin(phi) * Math.sin(angle) * speed;
-          const s = size * (cfg.sparkSizeMinMul + Math.random() * szRange);
-          const life = cfg.sparkLifeMin + Math.random() * lifeRange;
+          const s = size * (cfg.sparkSizeMinMul + fxRandom.next() * szRange);
+          const life = cfg.sparkLifeMin + fxRandom.next() * lifeRange;
           fire.spawn(X, Y, EXP_Z, vx, -vz, vUp, s, life, REACTOR_TYPE.SPARK, gt);
         }
       }

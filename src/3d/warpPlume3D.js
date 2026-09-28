@@ -48,6 +48,10 @@ import {
 import { Core3D } from './core3d.js';
 import { blendAddytywnePremul } from './tsl/mieszanie.js';
 import { WARP_PLASMA_PALETTES, WARP_PLUME_BASE_LEN, WARP_PLUME_BOOST_LEN } from '../data/engineFx.js';
+// Ziarna cząstek i zegar instancji z warstwy efektów (zadanie 23): nowa instancja puli (4 × 520
+// losowań) powstaje przy skoku kilku okrętów naraz — z Math.random gry przebieg bitwy zależał od
+// liczby dysz w skoku.
+import { fxRandom } from './fx/fxRandom.js';
 
 /* ============================================================================
    0. WSPÓLNE — simplex noise 3D (Ashima / Gustavson), prefiks pe_
@@ -509,7 +513,7 @@ export class WarpPlumeFX {
     this.state = 'off';          // off | ignition | running | shutdown
     this.throttle = 0;
     this._stateT = 0;
-    this._time = Math.random() * 10;
+    this._time = fxRandom.next() * 10;
     this._ph = { o1: 0, o2: 0, o3: 0, mach: 0, life: 0, stretch: 1 };
     this._flickMul = 1;
     this._palIdx = -1;
@@ -576,10 +580,10 @@ export class WarpPlumeFX {
     const seed = new Float32Array(N * 3);
     const phase = new Float32Array(N);
     for (let i = 0; i < N; i++) {
-      seed[i * 3] = Math.random();
-      seed[i * 3 + 1] = Math.random();
-      seed[i * 3 + 2] = Math.random();
-      phase[i] = Math.random();
+      seed[i * 3] = fxRandom.next();
+      seed[i * 3 + 1] = fxRandom.next();
+      seed[i * 3 + 2] = fxRandom.next();
+      phase[i] = fxRandom.next();
     }
     g.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seed, 3));
     g.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phase, 1));

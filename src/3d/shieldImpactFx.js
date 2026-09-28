@@ -27,6 +27,8 @@ import {
 } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 // Wstęga: 16 quadów = 17 przekrojów = 34 wierzchołki, 96 indeksów.
 // Indeksy idą segment po segmencie, więc drawRange ucina ogon od tyłu (LOD).
@@ -372,7 +374,7 @@ function flushAttributes(geo, names, lo, hi) {
 }
 
 function randRange(range) {
-    return range[0] + Math.random() * (range[1] - range[0]);
+    return range[0] + fxRandom.next() * (range[1] - range[0]);
 }
 
 // Przesunięcie układu lokalnego pod nowe ognisko walki. Puli pustej nie ma co
@@ -630,14 +632,14 @@ export const ShieldImpactFX = {
             const slot = idx;
             idx = (idx + 1) % MAX_PARTICLES;
 
-            const r = Math.random();
+            const r = fxRandom.next();
             const typeId = r < preset.mix[0] ? 0 : (r < preset.mix[1] ? 1 : 2);
 
             // Kierunek wyrzutu.
             let axX, axY, spread;
             if (preset.tangential && typeId !== 2) {
                 // Tarcza o tarczę: plazma tryska w bok, lekko odchylona od kadłuba.
-                const side = Math.random() < 0.5 ? -1 : 1;
+                const side = fxRandom.next() < 0.5 ? -1 : 1;
                 axX = tanX * side + outX * 0.30;
                 axY = tanY * side + outY * 0.30;
                 spread = preset.spread;
@@ -651,7 +653,7 @@ export const ShieldImpactFX = {
             }
             const axLen = Math.hypot(axX, axY) || 1;
             const axAngle = Math.atan2(axY / axLen, axX / axLen);
-            const angle = axAngle + (Math.random() - 0.5) * 2 * spread;
+            const angle = axAngle + (fxRandom.next() - 0.5) * 2 * spread;
 
             // Iskry są szybsze i krótsze, łuki wolne i przyklejone do tarczy.
             const typeSpeed = typeId === 1 ? 1.35 : (typeId === 2 ? 0.85 : 1.0);
@@ -665,7 +667,7 @@ export const ShieldImpactFX = {
             iOrigin[s3] = o.x - frameOx;
             iOrigin[s3 + 1] = frameOy - o.y;
             // Delikatne rozwarstwienie w z, żeby wstęgi nie leżały w jednej płaszczyźnie.
-            iOrigin[s3 + 2] = 1.4 + Math.random() * 0.4;
+            iOrigin[s3 + 2] = 1.4 + fxRandom.next() * 0.4;
 
             iVel[s3] = Math.cos(angle) * speed + inhX;
             iVel[s3 + 1] = -(Math.sin(angle) * speed + inhY);
@@ -676,15 +678,15 @@ export const ShieldImpactFX = {
 
             const s4 = slot * 4;
             iShape[s4] = typeId;
-            iShape[s4 + 1] = widthBase * typeWidth * (0.7 + Math.random() * 0.6);
+            iShape[s4 + 1] = widthBase * typeWidth * (0.7 + fxRandom.next() * 0.6);
             // Rozpiętość ogona w sekundach + losowe skrócenie części wstęg
             // (prototyp robił to samo przez randomLengthFactor w shaderze).
-            iShape[s4 + 2] = life * preset.trailFactor * (0.45 + Math.random() * 0.55);
-            iShape[s4 + 3] = Math.random();
+            iShape[s4 + 2] = life * preset.trailFactor * (0.45 + fxRandom.next() * 0.55);
+            iShape[s4 + 3] = fxRandom.next();
 
             const s2 = slot * 2;
-            iWobble[s2] = wobbleAmp * (typeId === 2 ? 1.8 : 1.0) * (0.4 + Math.random() * 1.2);
-            iWobble[s2 + 1] = (typeId === 2 ? 26 : 7) * (0.6 + Math.random() * 0.9);
+            iWobble[s2] = wobbleAmp * (typeId === 2 ? 1.8 : 1.0) * (0.4 + fxRandom.next() * 1.2);
+            iWobble[s2 + 1] = (typeId === 2 ? 26 : 7) * (0.6 + fxRandom.next() * 0.9);
 
             iColor[s3] = cr;
             iColor[s3 + 1] = cg;
@@ -716,7 +718,7 @@ export const ShieldImpactFX = {
         fOrigin[s3 + 1] = frameOy - o.y;
         fOrigin[s3 + 2] = 1.2;
 
-        const life = (preset.flashLife || 0.2) * (0.85 + Math.random() * 0.3);
+        const life = (preset.flashLife || 0.2) * (0.85 + fxRandom.next() * 0.3);
         const s4 = slot * 4;
         fParams[s4] = now;
         fParams[s4 + 1] = life;

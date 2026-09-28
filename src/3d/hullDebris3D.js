@@ -22,6 +22,8 @@ import { createMetalDebrisGeometry } from './beamDebris3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { makeUniforms } from './tsl/uniformy.js';
 import { sunFill, sunVisibility } from './hexShips3D.tsl.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 export const HULL_DEBRIS_CAPACITY = 8192;
 export const HULL_DEBRIS_LIFE = 8;
@@ -204,14 +206,14 @@ export const HullDebris3D = {
     a.aStart[i3] = x - this.originX; a.aStart[i3 + 1] = -y - this.originY; a.aStart[i3 + 2] = 0;
     // Lekki ruch poza płaszczyznę tylko w obrocie — tor zostaje w płaszczyźnie gry.
     a.aVel[i3] = vx; a.aVel[i3 + 1] = -vy; a.aVel[i3 + 2] = 0;
-    a.aRot[i4] = Math.random() * 2 - 1; a.aRot[i4 + 1] = Math.random() * 2 - 1; a.aRot[i4 + 2] = Math.random() * 2 - 1;
-    a.aRot[i4 + 3] = (Math.random() - 0.5) * 7;
+    a.aRot[i4] = fxRandom.next() * 2 - 1; a.aRot[i4 + 1] = fxRandom.next() * 2 - 1; a.aRot[i4 + 2] = fxRandom.next() * 2 - 1;
+    a.aRot[i4 + 3] = (fxRandom.next() - 0.5) * 7;
     a.aInfo[i3] = nowSec; a.aInfo[i3 + 1] = scale; a.aInfo[i3 + 2] = HULL_DEBRIS_LIFE;
     a.aColor[i3] = toLinear(r); a.aColor[i3 + 1] = toLinear(g); a.aColor[i3 + 2] = toLinear(b);
-    a.aShape[i4] = 0.65 + Math.random() * 0.8;
-    a.aShape[i4 + 1] = 0.5 + Math.random() * 0.9;
-    a.aShape[i4 + 2] = 0.55 + Math.random() * 0.8;
-    a.aShape[i4 + 3] = Math.random() * Math.PI * 2;
+    a.aShape[i4] = 0.65 + fxRandom.next() * 0.8;
+    a.aShape[i4 + 1] = 0.5 + fxRandom.next() * 0.9;
+    a.aShape[i4 + 2] = 0.55 + fxRandom.next() * 0.8;
+    a.aShape[i4 + 3] = fxRandom.next() * Math.PI * 2;
     if (!batch.alive) batch.first = i;
     if (batch.alive === batch.capacity) batch.first = (batch.first + 1) % batch.capacity;
     else batch.alive++;

@@ -13,6 +13,8 @@ import { WeaponFx } from '../3d/weapons/weaponFx.js';
 import { createCarrier, writeCarrier } from './carrierVelocity.js';
 import { buildHexlanceBurst } from './weaponCharge.js';
 import { weaponRecoil, weaponShake } from './weaponFeel.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
 // Nośniki (src/game/carrierVelocity.js): lufa okrętu — ładowanie, rozbłysk,
 // smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia, rzaz i wyjście.
@@ -89,17 +91,17 @@ class MainSpark {
     constructor(x, y, vx, vy) {
         this.x = x; this.y = y;
         const baseAngle = Math.atan2(vy, vx);
-        const spread = (Math.random() - 0.5) * 2.5; 
+        const spread = (fxRandom.next() - 0.5) * 2.5; 
         const angle = baseAngle + spread;
-        const frameSpeed = Math.random() * 8 + 2; 
+        const frameSpeed = fxRandom.next() * 8 + 2; 
         const worldSpeed = frameSpeed * 60; 
         this.vx = Math.cos(angle) * worldSpeed;
         this.vy = Math.sin(angle) * worldSpeed;
         this.life = 1.0; 
-        this.decay = Math.random() * 0.05 + 0.02; 
+        this.decay = fxRandom.next() * 0.05 + 0.02; 
         this.decayPerSec = this.decay * 60;
-        this.size = VFX_CONFIG.newMinSize + Math.random() * (VFX_CONFIG.newMaxSize - VFX_CONFIG.newMinSize);
-        this.color = VFX_CONFIG.colors[Math.floor(Math.random() * VFX_CONFIG.colors.length)];
+        this.size = VFX_CONFIG.newMinSize + fxRandom.next() * (VFX_CONFIG.newMaxSize - VFX_CONFIG.newMinSize);
+        this.color = VFX_CONFIG.colors[Math.floor(fxRandom.next() * VFX_CONFIG.colors.length)];
     }
     update(dt) {
         this.x += this.vx * dt;
@@ -126,13 +128,13 @@ class MainSpark {
 class BgSpark {
     constructor(x, y, vx, vy) {
         this.x = x; this.y = y; this.vx = vx; this.vy = vy;
-        this.life = 0.2 + Math.random() * 0.3; 
+        this.life = 0.2 + fxRandom.next() * 0.3; 
         this.maxLife = this.life;
         const bgColors = ['#ffffff', '#e0f7fa', '#85c1ff'];
-        this.color = bgColors[Math.floor(Math.random() * bgColors.length)];
-        this.size = VFX_CONFIG.oldMinSize + Math.random() * (VFX_CONFIG.oldMaxSize - VFX_CONFIG.oldMinSize);
-        this.drag = 0.90 + Math.random() * 0.06;
-        this.curve = (Math.random() - 0.5) * 6.0;
+        this.color = bgColors[Math.floor(fxRandom.next() * bgColors.length)];
+        this.size = VFX_CONFIG.oldMinSize + fxRandom.next() * (VFX_CONFIG.oldMaxSize - VFX_CONFIG.oldMinSize);
+        this.drag = 0.90 + fxRandom.next() * 0.06;
+        this.curve = (fxRandom.next() - 0.5) * 6.0;
     }
     update(dt) {
         if (this.curve) {
@@ -189,15 +191,15 @@ function getMuzzlePos(ship, cannonIndex) {
 
 function spawnChargeEffect(targetPos) {
     if (window.spawnParticle) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 40 + Math.random() * 50; 
+        const angle = fxRandom.next() * Math.PI * 2;
+        const dist = 40 + fxRandom.next() * 50; 
         const startX = targetPos.x + Math.cos(angle) * dist;
         const startY = targetPos.y + Math.sin(angle) * dist;
-        const life = 0.2 + Math.random() * 0.15;
+        const life = 0.2 + fxRandom.next() * 0.15;
         const speed = dist / life; 
         const vx = -Math.cos(angle) * speed;
         const vy = -Math.sin(angle) * speed;
-        window.spawnParticle({ x: startX, y: startY }, { x: vx, y: vy }, life, '#cceeff', 1.5 + Math.random() * 1.5, false);
+        window.spawnParticle({ x: startX, y: startY }, { x: vx, y: vy }, life, '#cceeff', 1.5 + fxRandom.next() * 1.5, false);
     }
 }
 
@@ -246,9 +248,9 @@ function fireSingleMount(ship, cannonIndex) {
     if (window.spawnShockwave) window.spawnShockwave(m.x, m.y, { maxR: 80, maxLife: 0.12, w: 4, color: 'rgba(133, 193, 255,' });
     for(let i=0; i<12; i++) localParticles.push(new MainSpark(m.x, m.y, m.dir.x, m.dir.y));
     for (let i = 0; i < 60; i++) {
-        const spread = (Math.random() - 0.5) * 1.4;
+        const spread = (fxRandom.next() - 0.5) * 1.4;
         const sparkAngle = angle + spread;
-        const speed = 1000 + Math.random() * 1500;
+        const speed = 1000 + fxRandom.next() * 1500;
         localParticles.push(new BgSpark(m.x, m.y, Math.cos(sparkAngle) * speed + ship.vel.x, Math.sin(sparkAngle) * speed + ship.vel.y));
     }
 }
@@ -546,7 +548,7 @@ function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
                 let jitterY = 0;
                 if (t > 0.7) {
                     const chaosFactor = (t - 0.7) / 0.3; 
-                    jitterY = (Math.random() - 0.5) * 40 * chaosFactor * zoom;
+                    jitterY = (fxRandom.next() - 0.5) * 40 * chaosFactor * zoom;
                     currentAmp *= (1 + chaosFactor * 2); 
                 }
                 const py = Math.sin(px * waveFreq * 0.1 + phaseOffset) * currentAmp + jitterY;

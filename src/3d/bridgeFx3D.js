@@ -25,6 +25,8 @@ import {
 import { Fx3D, FX_PLANE_Z, coneDir, makeBasis, sp } from './fxParticles3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 import {
   BRIDGE_KILL_TIMELINE,
   bridgeGridToWorld,
@@ -366,9 +368,9 @@ export const BridgeFx3D = {
       makeBasis(_dir);
       for (let i = 0; i < 30; i++) {
         coneDir(_d, _dir, 0.5, 0.18);
-        const v = (180 + Math.random() * 480) * S;
+        const v = (180 + fxRandom.next() * 480) * S;
         _v.set(_d.x * v + vx, _d.y * v + vy, _d.z * v);
-        Fx3D.spark.spawn(_pos, _v, 0.35 + Math.random() * 0.7, 0.9 + Math.random() * 0.8, (4 + Math.random() * 9) * S,
+        Fx3D.spark.spawn(_pos, _v, 0.35 + fxRandom.next() * 0.7, 0.9 + fxRandom.next() * 0.8, (4 + fxRandom.next() * 9) * S,
           [4.2, 2.8, 1.4], 0.35, 0.08);
       }
     }
@@ -396,29 +398,29 @@ export const BridgeFx3D = {
     if (count > 14) count = 14;
     for (let i = 0; i < count; i++) {
       coneDir(_d, _dir, 0.18 + 0.2 * (1 - strength), 0.2);
-      const v = (340 + Math.random() * 420) * S * (0.45 + 0.55 * strength);
+      const v = (340 + fxRandom.next() * 420) * S * (0.45 + 0.55 * strength);
       const o = sp();
-      o.x = _pos.x + _d.x * Math.random() * 10 * S;
-      o.y = _pos.y + _d.y * Math.random() * 10 * S;
+      o.x = _pos.x + _d.x * fxRandom.next() * 10 * S;
+      o.y = _pos.y + _d.y * fxRandom.next() * 10 * S;
       o.z = _pos.z;
       o.vx = _d.x * v + vx; o.vy = _d.y * v + vy; o.vz = 0;
-      o.life = 0.5 + Math.random() * 0.5; o.drag = 1.5;
-      o.s0 = (5 + Math.random() * 5) * S; o.s1 = (34 + Math.random() * 40) * S;
-      o.rot = Math.random() * 6.283; o.vrot = (Math.random() - 0.5) * 1.5;
+      o.life = 0.5 + fxRandom.next() * 0.5; o.drag = 1.5;
+      o.s0 = (5 + fxRandom.next() * 5) * S; o.s1 = (34 + fxRandom.next() * 40) * S;
+      o.rot = fxRandom.next() * 6.283; o.vrot = (fxRandom.next() - 0.5) * 1.5;
       o.r0 = 0.7; o.g0 = 0.8; o.b0 = 0.95;
       o.r1 = 0.1; o.g1 = 0.13; o.b1 = 0.2; o.mix = 2.4;
       o.alpha = 0.36 + 0.34 * strength; o.fadeIn = 0.02; o.fadeOut = 1.35; o.grow = 0.55;
       Fx3D.vapor.spawn(o);
     }
     // Kryształki lodu — pojedyncze, szybko gasnące punkty w strumieniu.
-    const glints = Math.random() < strength ? 2 : (Math.random() < strength ? 1 : 0);
+    const glints = fxRandom.next() < strength ? 2 : (fxRandom.next() < strength ? 1 : 0);
     for (let i = 0; i < glints; i++) {
       coneDir(_d, _dir, 0.3, 0.2);
-      const v = (280 + Math.random() * 360) * S;
+      const v = (280 + fxRandom.next() * 360) * S;
       const o = sp();
       o.x = _pos.x; o.y = _pos.y; o.z = _pos.z + 0.5;
       o.vx = _d.x * v + vx; o.vy = _d.y * v + vy; o.vz = 0;
-      o.life = 0.25 + Math.random() * 0.35; o.drag = 1.1;
+      o.life = 0.25 + fxRandom.next() * 0.35; o.drag = 1.1;
       o.s0 = 1.3 * S; o.s1 = 0.6 * S;
       o.r0 = 2.2; o.g0 = 2.5; o.b0 = 3.0;
       o.r1 = 0.4; o.g1 = 0.5; o.b1 = 0.7; o.mix = 5;

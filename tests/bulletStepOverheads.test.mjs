@@ -10,6 +10,7 @@ import {
 } from '../src/game/bulletStepFilters.js';
 import { BeltGiants } from '../src/game/asteroidBeltGiants.js';
 import { CanvasVFX } from '../src/vfx/canvasParticleSystem.js';
+import { fxRandom } from '../src/3d/fx/fxRandom.js';
 import { DestructorSystem, disposeHexBody } from '../src/game/destructor.js';
 import { makeDestructorHull } from './helpers/destructorHull.mjs';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
@@ -111,7 +112,8 @@ test('liczba porcji smugi zależy od czasu klatki, nie od liczby kroków fizyki'
 test('porcje smugi leżą wzdłuż drogi pocisku w tej klatce, bez obiektów pozycji', () => {
   const spawns = [];
   const spawnBulletTrail = loadIndexFunction(html, 'function spawnBulletTrail(b, count, frameDt) {', 'spawnBulletTrail', {
-    CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) }
+    CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) },
+    fxRandom
   });
   spawnBulletTrail({ type: 'autocannon', x: 100, y: 50, vx: 1200, vy: 0 }, 2, 2 / 120);
   assert.equal(spawns.length, 2);
