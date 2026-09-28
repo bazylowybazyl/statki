@@ -22,8 +22,8 @@
 
 | zakres | pliki z GLSL | materiały | linie GLSL | oBC | odczyty | compile | wbudowane | clone / needsUpdate / defines | TSL / mieszane |
 |---|---:|---|---:|---:|---:|---:|---:|---|---|
-| **razem** | 39 | 65 (62 SM, 0 Raw, 3 ShaderPass) | 7864 | 0 | 2 | 5 | 58 | 6 / 36 / 9 | 46 / 0 |
-| port | 19 | 24 (23 SM, 0 Raw, 1 ShaderPass) | 3429 | 0 | 1 | 5 | 46 | 6 / 27 / 3 | 40 / 0 |
+| **razem** | 37 | 63 (60 SM, 0 Raw, 3 ShaderPass) | 7692 | 0 | 2 | 5 | 58 | 6 / 36 / 9 | 49 / 0 |
+| port | 17 | 22 (21 SM, 0 Raw, 1 ShaderPass) | 3257 | 0 | 1 | 5 | 46 | 6 / 27 / 3 | 43 / 0 |
 | warp | 2 | 2 (2 SM, 0 Raw, 0 ShaderPass) | 364 | 0 | 0 | 0 | 1 | 0 / 0 / 0 | 0 / 0 |
 | asteroidy-stare | 1 | 1 (1 SM, 0 Raw, 0 ShaderPass) | 66 | 0 | 0 | 0 | 2 | 0 / 3 / 0 | 0 / 0 |
 | asteroidy-nowe | 7 | 15 (15 SM, 0 Raw, 0 ShaderPass) | 1889 | 0 | 1 | 0 | 0 | 0 / 0 / 1 | 0 / 0 |
@@ -32,8 +32,8 @@
 
 ### Porównanie z `USTALENIA.md` (~105 materiałów w 53 plikach, ~12,7 tys. linii GLSL w 59 plikach)
 
-Tu: **65 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 35 plikach,
-**7864 linii GLSL** w 38 plikach. Różnice: (1) ten lekser liczy szablony w całości
+Tu: **63 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 33 plikach,
+**7692 linii GLSL** w 36 plikach. Różnice: (1) ten lekser liczy szablony w całości
 (z `${…}`) i także krótkie jednolinijkowe shadery w zwykłych napisach; (2) liczy `ShaderPass` jako materiał; (3) pliki dodane od
 `2c2ef18` (ringi-archetypy Z6 `haloRing/arch/*`, budowle portowe Z7, burze pasa). Do planu liczy się wiersz **port**.
 
@@ -51,14 +51,12 @@ Tu: **65 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 35 plikach,
 | `src/3d/menuBackdrop3D.js` | 3 | 200 |  |  |  | 2 | initTexture |  | · / · / · | GLSL | rozgrzewka po kluczu programu WebGL — do przeprojektowania |
 | `src/3d/haloRing/arch/fable.js` | 1 | 178 |  |  |  |  |  |  | · / 2 / · | GLSL |  |
 | `src/3d/haloRing/arch/ecumene.js` | 1 | 171 |  |  |  |  |  |  | · / 2 / · | GLSL |  |
-| `src/vfx/shatterMaterial.js` | 1 | 143 |  |  |  |  |  |  | · / · / · | GLSL | zniszczenie stacji |
 | `src/3d/sparkSystem3D.js` | 1 | 112 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; zastąpi sparks.js z dema rakiet (zadanie 19) |
 | `src/3d/slugTrail3D.js` | 1 | 75 |  |  |  |  |  |  | · / · / 1 | GLSL | zastąpi TrailSystem z dema broni (zadanie 17) |
 | `src/effects3d/rocketSmokeGPU.js` | 1 | 74 |  |  |  |  |  |  | · / · / · | GLSL | zastąpi dym z dema rakiet (zadanie 19) |
 | `src/3d/beamDebris3D.js` | 1 | 64 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/effects3d/overlay.js` | 1 | 36 |  | WebGLRenderTarget |  |  | WebGLRenderer, EffectComposer, RenderPass, UnrealBloomPass, ShaderPass |  | · / · / · | GLSL | DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) — zostaje w porcie, usuwa go zadanie 20 |
 | `src/3d/sunShadowMaskGLSL.js` |  | 35 |  |  |  |  |  |  | · / · / · | GLSL | LEGACY: GLSL maski dla nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7) — znika z ostatnim z nich (24) |
-| `src/vfx/destruction3D.js` | 1 | 29 |  |  |  |  |  |  | 2 / · / · | GLSL | zniszczenie stacji |
 | `src/3d/haloRing/arch/archMaterials.js` | 1 |  |  |  |  |  |  |  | · / 1 / 2 | GLSL |  |
 | `Engineeffects.js` |  |  |  |  |  |  |  |  | · / · / · | — | tylko tekstury poświaty dysz SIDE (make*Texture); martwe getEngineVFX z własnym WebGLRenderer i shader usunięte (zadanie 13) |
 | `src/3d/coldWreckImpostors.js` |  |  |  |  |  |  |  |  | · / · / · | — | uśpione (wymaga hexGrid) |
@@ -76,6 +74,8 @@ Tu: **65 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 35 plikach,
 | `src/effects3d/autocannonImpact.js` |  |  |  |  |  |  |  | 7 | · / 4 / · | — | scena overlay; zastąpią receptury dema broni (zadanie 17) |
 | `src/effects3d/railgunExplosion.js` |  |  |  |  |  |  |  | 4 | 2 / 1 / · | — | scena overlay; zastąpią receptury dema broni (zadanie 17) |
 | `src/effects3d/rocketSystem3D.js` |  |  |  |  |  |  |  | 1 | · / 2 / · | — | lot i trafienia rakiet (rozgrywka) zostają; render zastąpi demo rakiet (zadanie 19) |
+| `src/vfx/destruction3D.js` |  |  |  |  |  |  |  |  | 2 / · / · | TSL | zniszczenie stacji |
+| `src/vfx/shatterMaterial.js` |  |  |  |  |  |  |  |  | · / · / · | TSL | zniszczenie stacji |
 
 ## Poza portem — decyzje użytkownika
 
@@ -176,7 +176,6 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `src/3d/haloRing/haloRingGLSL.js:560` | `HALO_GLSL_INDKIT` | 127 | port |
 | `src/3d/rocks/rockShapes3D.js:308` | `—` | 124 | asteroidy-nowe |
 | `src/3d/portBuildings/portBuildings3D.js:150` | `PB_GLSL_SURFACE` | 120 | poza grą (dema) |
-| `src/vfx/shatterMaterial.js:43` | `VERT` | 118 | port |
 | `src/effects3d/supernovaMissileBlow.js:48` | `vertexShader:` | 110 | port |
 | `src/3d/haloRing/haloRingGLSL.js:212` | `HALO_GLSL_LIGHT` | 109 | port |
 | `src/3d/warpFx3D.js:82` | `GLYPH_FRAG` | 108 | warp |
@@ -200,6 +199,7 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `src/3d/beamShips3D.js:25` | `SKIN_VERTEX_SHADER` | 61 | poza grą (dema) |
 | `src/effects3d/rocketFireGPU.js:288` | `fragmentShader:` | 60 | port |
 | `src/3d/rocks/giantRock3D.js:66` | `BAKE_FRAGMENT` | 56 | asteroidy-nowe |
+| `src/3d/beamShips3D.js:87` | `SKIN_FRAGMENT_SHADER` | 55 | poza grą (dema) |
 
 ## Przebudowy materiałów w locie (zakres: port)
 
@@ -231,13 +231,13 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 - needsUpdate — src/effects3d/railgunExplosion.js:165
 - needsUpdate — src/effects3d/rocketSystem3D.js:336
 - needsUpdate — src/effects3d/rocketSystem3D.js:839
-- clone — src/vfx/destruction3D.js:681
-- clone — src/vfx/destruction3D.js:933
-- clone — src/vfx/panelShardManager.js:289
-- clone — src/vfx/panelShardManager.js:298
-- needsUpdate — src/vfx/panelShardManager.js:145
-- needsUpdate — src/vfx/panelShardManager.js:172
-- needsUpdate — src/vfx/panelShardManager.js:217
+- clone — src/vfx/destruction3D.js:867
+- clone — src/vfx/destruction3D.js:1162
+- clone — src/vfx/panelShardManager.js:301
+- clone — src/vfx/panelShardManager.js:310
+- needsUpdate — src/vfx/panelShardManager.js:150
+- needsUpdate — src/vfx/panelShardManager.js:177
+- needsUpdate — src/vfx/panelShardManager.js:222
 
 `defines` w plikach: `src/3d/haloRing/arch/archMaterials.js` (2), `src/3d/slugTrail3D.js` (1).
 
@@ -290,3 +290,4 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `tests/warpSpace.test.mjs` | `src/3d/warpLens3D.js`, `src/3d/core3d.js` |
 | `tests/webgpuFundament.test.mjs` | `src/effects3d/overlay.js`, `src/3d/core3d.js` |
 | `tests/webgpuPost.test.mjs` | `src/3d/core3d.js` |
+| `tests/zniszczenieStacjiTSL.test.mjs` | `src/3d/core3d.js` |

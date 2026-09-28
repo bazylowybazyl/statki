@@ -53,7 +53,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | zrobione, scalone (ca83cd4) | 90b73f3, 67f5d8b, 0d20cf4, b366146, 0c292d4, f1bf060, 5e383a0, e39d5ab, 172d1d3 (scalenia `main` 45a927b, 7286401, c60ee1c, 7f49da8, ab7ca8a) | −998 linii GLSL w 5 modułach; jeden graf bryły mostka na 11 rodzajów; obrażenia mostka w buforze storage (µs zamiast 0,7–1,3 ms); `bitwa__fg` i `split` 0% vs baza |
-| 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | w toku (podagent, worktree `statki-wt/16`, tag w `statki-wt/tag16`) | | |
+| 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | zrobione, scalone (82573e5) | 2dd8c5f, e676d1b, b00dd2f (scalenia `main` 99d1f12, 05f429b) | klatka rozpadu bez budów (Neptun 64 → 4,9 ms); kawałki tną się maską TSL; sesja bazy „stacja” (5 scen, szum 0%); odłamki paneli czarne jak w WebGL (decyzja wyglądu) |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | w toku (podagent, worktree `statki-wt/17`, części 17-A…F wg `PROJEKT-BRONI.md` §4) | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
 | 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; 18-C (mapa ran, światła efektów na poszyciu) w toku (podagent, worktree `statki-wt/18c`); zostają 18-B (wpięcie, po 17), 18-D | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | w toku (podagent, worktree `statki-wt/19`) | | lot rakiet zostaje w `rocketSystem3D` |
@@ -529,3 +529,26 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   dema renderują wiele razy (ostrzeżenie o przepełnieniu); żar krawędzi w demie rdzenia 1–3% ciemniejszy (materiał
   kadłuba). Mostki i rdzenie na kadłubach belkowych nadal nieaktywne (etapy 4–5 portu belek). Inwentarz z HEAD ca83cd4:
   port 19 plików z GLSL, 24 materiały, 3429 linii. Testy: 1531 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 16 scalone do `main`** (2dd8c5f, e676d1b, b00dd2f; scalenia `main` 99d1f12, 05f429b; scalenie 82573e5): rozpad na
+  trójkąty i implozja w TSL (`shatterMaterial.js`, `destruction3D.js`: grafy budowane raz, lekki `ShatterNodeMaterial` per
+  mesh na wspólnych węzłach, mapa per obiekt przez nowy pomocnik `src/3d/tsl/teksturaObiektu.js`), −172 linie GLSL / −2
+  materiały. **Kawałki skorupy po `detachChunk` tną się maską TSL** (`maskNode`, płaszczyzny per obiekt) — WebGPU ignoruje
+  `material.clippingPlanes` (przed portem każdy kawałek rysował całą bryłę), a `ClippingGroup` r183 daje kawałkom o tym
+  samym kluczu płaszczyzny pierwszego. Klony GLB dzielą węzły cienia z oryginałem; rozgrzewka przy `prebake`
+  (`requestIdleCallback`) + pass cienia na warstwie 31 przez 2 klatki; `map = null` w cieniu (błąd `texture(undefined)`
+  już na `main`). Klatka rozpadu (mediana): Wenus 80 → 22 ms, Merkury (trójkąty) 36 → 27 ms, podział fragmentu 29 → 4,4
+  ms, Neptun 64 → 4,9 ms — wszędzie 0 budów (tag WebGL 171–378 ms). **Nowa sesja bazy „stacja”** (`stacja-rozpad`,
+  `-odlamki`, `-trojkaty`, `-implozja`, `-ciecie` + warianty warstw i `__3d` / `__fg-3d` bez overlaya; baza z tagu
+  `--uuid osobne`, szum p1↔p2 0% >2/255 w 35 zrzutach) — `baseline.json` ma 98 scen. Wynik `__fg-3d` vs tag: odłamki 0%,
+  rozpad 0,54% (91% na krawędziach), trójkąty 6,5% (74 tys. trójkątów, 85% na krawędziach), implozja 1,57%, cięcie
+  1,21% (`scripts/webgpu/krawedzie.mjs` dzieli różnice na sylwetki i wnętrza); 0 zamienników i 0 błędów (przed portem
+  trójkąty 90% magenty). **Błąd do 23:** WebGPU liczy jedną mapę cienia ze wszystkimi warstwami, więc łapacz cienia
+  warstwy 0 (`Core3D.shadowCatcher`) dostaje cień stacji z FG (WebGL: mapa per pass z warstwami kamery) — główne źródło
+  różnic pełnych klatek po rozpadzie. Wygaszenie bryły (5 klatek): WebGPU rysuje wszystkie tyły, potem przody
+  przezroczystych DoubleSide (WebGL obiekt po obiekcie). **Decyzja wyglądu dla użytkownika:** odłamki paneli czarne jak na
+  tagu (WebGL przy `vertexColors` bez atrybutu mnożył przez 0, WebGPU daje biel — kolorowe odłamki `instanceColor`
+  to jedna stała `PANEL_SHARD_BASE_COLOR` = 0xffffff). Znalezione, nienaprawione: `_cloneShellHierarchy` kopiuje
+  `__sharedTemplateAsset` do klonów kawałków (geometria i materiały nigdy nie zwalniane — 24); stacja piracka bez sceny
+  (`startMercenaryMission` nie na `window`); `dema/station-destruction-sandbox.html` tylko z tagu. Narzędzie
+  `scripts/webgpu/rozpad-stacji.mjs`. Inwentarz z HEAD 82573e5: port 17 plików z GLSL, 22 materiały, 3257 linii. Testy:
+  1542 / 7 porażek bazowych / 3 todo; `npm test` OK.
