@@ -59,7 +59,6 @@ const NOTES = {
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
   'src/3d/coldWreckImpostors.js': 'uśpione (wymaga hexGrid)',
-  'src/3d/weapon3DSystem.js': 'zastąpią pule i receptury dema broni (zadania 17–18); klony materiałów wiązek w puli ≤ 96',
   'src/3d/asteroidBeltBackdrop3D.js': 'tło pasa (ShaderMaterial + onBeforeCompile pyłu)',
   'src/3d/asteroidField3D.js': 'sprite’y na MeshBasicMaterial + CAŁA rozgrywka asteroid; ciała heksowe rysuje hexShips3D'
 };

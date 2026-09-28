@@ -85,6 +85,49 @@ usunięte. Zrzuty części ringu: `node scripts/halo-ring-shots.mjs --set mid --
 `node scripts/webgpu/zrzuty.mjs --czesci-ringu` (warianty `__ring`, `__ring-tlo`, `__ring-fg`; sceny `ring-dach`,
 `ring-dach-z01`, `ring-habitat` pokazują dach w FG i habitat z dala od portu — przy porcie konstrukcji prawie nie widać).
 
+**Megastruktura i miasto (port, zadanie 09):** `HaloMegastructure` rysuje NodeMaterial-e z `haloRingMegastructure.js`
+(1:1 z dawnym GLSL): bryły (`makeHaloPrimVertex` — segment + wzdłuż względem refS, kwaternion, zanik detalu z haszu;
+fragment `makeHaloPrimFragment` — paleta `uMegaPal`, fazki i szczeliny paneli, przemysł, okna nocą, pokłady tunelu i
+zatok, fasady megabudowli w trzech skalach świateł, radiatory, światło analityczne i odbicie nieba, powietrze 4 kroki),
+szkło kopuł (`makeHaloGlassFragment` — przezroczyste BackSide bez zapisu głębi, renderOrder 30), pociągi
+(`makeHaloTrainVertex`) i billboardy świateł (`makeHaloLightNodes` — min. 1,6 px, mieszanie ONE/ONE, alfa celu bez
+zmian, renderOrder 40). Dawne `defines` to warianty budowane raz: dach nad płaszczyzną gry (`HALO_FG` → `haloFgClip`
+we fragmencie brył i pociągów, `haloFgVisibility` w wierzchołkach świateł) i doki bez niego. `HaloCity` —
+`makeHaloGardenVertex` (8-wierzchołkowe prostopadłościany, dwie iteracje odwrócenia skrzywienia ulic w `Loop`),
+`makeHaloIndustryVertex` (zestaw działki z `haloIndKitTSL`), `makeHaloTreeVertex` / `makeHaloTreeFragment` (slot z
+`instanceIndex`, gatunek z mapy A); fragment budynków = fragment brył (ogrody: ściana z położenia lokalnego, baza bryły
+z varyingów). Wczesne wyjścia wierzchołków to zagnieżdżone gałęzie z wierzchołkiem poza bryłą obcinania. Ziarna brył i
+hasze (panele, okna, lampy tunelu, kontenery, fasady) liczą `a·b + c` przez `haloFma` (fma WGSL = mad FXC w bazie).
+Zgodność z bazą WebGL z tagu (same bryły megastruktury i miasta, `--czesci mega,city`): miasto z bliska ≤ 0,0012%
+pikseli > 8/255, dachy, porty i megabudowle 0,07–1,25%, kadr kinowy z dalekim miastem (p9) 2,3% (krawędzie MSAA, aliasing okien na budynkach 1–2 px), w grze
+`__ring` 0,05–0,39%; draw calle i HDR jak w bazie. Czas kompilacji na zimno (`__halo.compileMs`): bryły dachu / doków,
+pociągi, ogrody, przemysł 0,22–0,50 s każdy, szkło 0,14–0,28 s, drzewa 0,12–0,25 s, światła < 0,06 s.
+`HALO_GLSL_SURFACE` usunięty; `HALO_GLSL_INDKIT` został w `haloRingGLSL.js` tylko dla narzędzia parzystości.
+
+**Hala K-7 i ringi-archetypy (port, zadanie 10 — ring bez zamienników):** `HaloPortK7` rysuje NodeMaterial-e z grafów
+`k7Graphs(ring.uniforms)` (1:1 z dawnym GLSL: instancje z kwaternionem, skalą pionową i grupą ruchomą, płyty K-7 ze
+spoinami, śrubami i zaciekami, lampy hal w pętli, emisja stanu i złączek, napisy z atlasu, węże z żebrami). Graf jest
+jeden na ring (cztery hale kompleksów = jeden NodeBuilder na rodzaj materiału i stan), wartości hali (macierz huba,
+lampy hal nocą, nieprzezroczystość dachu, macierze suwnic i złączek, paleta i emisja z profilu) czytane przy rysowaniu
+obiektu z `material.uniforms` (`onObjectUpdate`; tablice pakowane per obiekt w `k7Groups` / `k7Surf`). Zanik dachu
+(`K7RoofFade`) przełącza jak dawniej `transparent` / `depthWrite` materiałów dachu. Archetypy (`arch/archTSL.js`, dawne
+`archGLSL.js`): instancje (ECUMENE: fasady z oknami; Fable: 9 rodzajów budynków; płyty, radiatory, woda, światła HDR),
+pasy z atlasem płyt, szkło kopuł, kratownice, światła pozycyjne jako kwadraty instancjonowane; powierzchnie dzielnic
+ECUMENE i habitatu Fable w `ecumene.js` / `fable.js`. Partie instancji to `Mesh` z `InstancedBufferGeometry` (jeden
+przepleciony bufor: macierz, barwa, aInst) zamiast `InstancedMesh` — jeden NodeBuilder na materiał zamiast na partię.
+Hasze okien, paneli i kratek oraz ziarno instancji przez `haloFma` / `haloFmaVec2` (fma WGSL = mad bazy; parzystość na
+GPU 100%, wiersze `arch*` w `ring-tsl-parzystosc.mjs`). Porównanie samego ringu z tagiem bez planety i nieba dema:
+`node scripts/halo-ring-shots.mjs --planet mars|jupiter --set profile --czesci terrain,structure,structureTop,clouds,shell,mega,city,k7
+--bez-otoczenia [--repo <drzewo tagu>]` (dla archetypów `--czesci` nie ukrywa części ringu — ukrywa hale K-7, gdy nie
+ma `k7`). Post dema = `BloomGry` gry z kompozytem × 3 (jak dawny `UnrealBloomPass`; wcześniej bloom dema był 3 × słabszy).
+Zgodność bez otoczenia (tag → port, piksele > 8/255): hale K-7 i porty 0,05–0,42%, dzielnice, kopuły i kadry kinowe
+0,5–3,1% (krawędzie MSAA siatek 1 px, korony drzew, kratownice). Tranzyty archetypów (`archPort.js`) mają bryły
+współpłaszczyznowe — pasek światła 4 j. wpuszczony w ścianę tunelu (lico na x = hw jak lico ściany) i narożniki ramy
+portalu (rama boczna i czarna belka dolna o tych samych y) — ten z-fighting migocze też w bazie, a WebGPU rozstrzyga go
+inaczej (scena `transit` 2–3%); poprawka to geometria (odsunięcie lic), nie shader. Kompilacja na zimno
+(`__halo.compileMs`): materiały K-7 0,07–0,29 s, powierzchnia ECUMENE 0,51 s, Fable 0,87 s, bryły dzielnic i powłoki
+0,23–0,61 s, szkło, kratownice, drzewa i światła 0,03–0,19 s.
+
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 
 `flightLevel: 0.5` (domyślnie dla habitatu w stronę kosmosu): z = 0 przecina podłogę habitatu w
@@ -409,7 +452,12 @@ WGSL terenu budowany w Node — CDLOD w pętli, dwa bufory ringu, bez macierzy u
 krawędzie smoothstep, wariant tylko z kroków powietrza, blok `haloSurfU`, wybór węzłów CDLOD),
 `haloRingStructureTSL.test.mjs` (08: konstrukcja i atmosfera bez GLSL, stan renderu jak dawny ShaderMaterial, WGSL pasów
 i wariantu FG, sole / progi / kolejność reguł dachu jak plan brył na CPU, warianty jakości atmosfery, zaokrąglenia haszy
-okien jak w bazie).
+okien jak w bazie), `haloRingMegaCityTSL.test.mjs` (09: megastruktura i miasto bez GLSL, stan renderu jak dawny
+ShaderMaterial, limity WebGPU — bufory uniformów, wierzchołków, varyingi — WGSL wariantów FG / doków / ogrodów, wczesne
+wyjścia wierzchołków, fma w ziarnach i haszach brył, LOD z jakości), `haloRingK7ArchTSL.test.mjs` (10: K-7 i archetypy
+bez GLSL, graf K-7 na ring i pakowanie tablic hali per obiekt, wierzchołek instancji K-7 = bliźniak JS z
+`haloPortK7.test.mjs`, partie archetypów bez `InstancedMesh`, kwadraty świateł, stany renderu jak dawne ShaderMaterial,
+limity WebGPU, pochodne przed gałęziami, hasze przez fma, czyste funkcje pól ECUMENE, mapa stref Fable `textureLoad`).
 
 ### Narzędzie: zrzuty prawdziwej gry
 
@@ -450,10 +498,10 @@ przed/po: różnica ~0 pikseli, te same draw calle).
   hale K-7, reguły FG, wycięcia, słońce, jakość, `terrainHeightAt`), `ecumene.js` + `ecumenePlan.js`,
   `fable.js` + `fablePlan.js` (plan = czysta matematyka, bez Three), `archPort.js` (zatoki
   i tranzyty w wymiarach `HALO_PORT` / `HALO_TRANSIT`, ubrane w styl dema), `archFrame.js`
-  (rama punktu: X wzdłuż, Y od planety, Z = −oś; partie instancji), `archGLSL.js`,
-  `archMaterials.js`. Uniformy i model światła wspólne z Halo (`createHaloUniforms`,
-  `HALO_GLSL_*`). Pozycje lokalne względem grupy ringu (≤ 60 tys.), `gl_Position` przez
-  `modelViewMatrix` (precyzja). Materiały instancji rozróżniają rodzaj w `aInst` (fasady ECUMENE,
+  (rama punktu: X wzdłuż, Y od planety, Z = −oś; partie instancji), `archTSL.js` (shadery w TSL
+  od zadania 10; dawne `archGLSL.js`), `archMaterials.js`. Uniformy i model światła wspólne z Halo
+  (`createHaloUniforms`, `haloRingTSL.js`). Pozycje lokalne względem grupy ringu (≤ 60 tys.), pozycja
+  na ekranie przez `modelViewMatrix` (precyzja). Materiały instancji rozróżniają rodzaj w `aInst` (fasady ECUMENE,
   budynki Fable, panele, radiatory, woda, blask HDR); ziarno kwantowane (bez szumu z varyingu).
 - **Hala K-7** zostaje (stanowiska, kolizje), zmienia się ubiór: `port.roof/walls/bays` =
   `'ecumene'` (panele stal/rura, stopnie, miedziane czapy) albo `'fable'` (pola radiatorów

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+const planetTslSource = readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 test('ring planets render through their own orthographic pass before world and foreground', () => {
@@ -36,10 +37,16 @@ test('Earth, Mars and Jupiter (ring „Halo”) use physical radius and keep atm
 
 test('planet halo has a compact shell and no noisy alpha outside the rim', () => {
   assert.match(planetSource, /HALO_DEFAULTS\s*=\s*Object\.freeze\(\{\s*sizeMul:\s*0\.985/);
-  const atmosphereFragment = planetSource.match(/const\s+ATMOSPHERE_FRAGMENT\s*=\s*`([\s\S]*?)`;/)?.[1] || '';
-  assert.ok(atmosphereFragment, 'atmosphere fragment shader was not found');
-  assert.doesNotMatch(atmosphereFragment, /hash12|gl_FragCoord/);
-  assert.match(atmosphereFragment, /if\s*\(alpha\s*<=\s*0\.001\)\s*discard/);
+  // Port WebGPU (zadanie 05): poświata to graf TSL wspólny dla planet i księżyców (buildAtmosphereGraph
+  // w planet3d.assets.tsl.js), wartości per ciało w material.uniforms.
+  assert.match(planetSource, /return createPlanetAtmosphereMaterial\(\{/);
+  const atmosphereGraph = planetTslSource.slice(planetTslSource.indexOf('function buildAtmosphereGraph()'),
+    planetTslSource.indexOf('function buildRingAtmosphereGraph()'));
+  assert.ok(atmosphereGraph.includes('fragmentNode'), 'atmosphere graph was not found');
+  assert.doesNotMatch(atmosphereGraph, /hash12|fragCoord|screenCoordinate/);
+  assert.match(atmosphereGraph, /Discard\(alpha\.lessThanEqual\(0\.001\)\);/);
+  // Podstawa potęgi z varyingu ≥ 0 (MSAA ekstrapoluje varyingi poza trójkąt — pow z ujemną podstawą to NaN).
+  assert.match(atmosphereGraph, /pow\(max\(vRimMask, 0\.0\), max\(0\.35, U\.power\.mul\(0\.18\)\)\)/);
 });
 
 test('anchored planet culling checks both split-screen cameras in game coordinates', () => {

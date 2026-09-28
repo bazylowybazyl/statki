@@ -1,21 +1,29 @@
 // Ringi-archetypy — materiały i siatki z zebranych instancji (ArchBatch).
 // Każdy materiał ma wersję BG (pod statkami) i FG (górna ściana nad
-// płaszczyzną gry: #define HALO_FG — zanik i wycięcia jak w silniku Halo).
-// Uniformy: wspólne obiekty { value } ringu (createHaloUniforms) + własne.
+// płaszczyzną gry: zanik i wycięcia jak w silniku Halo — dawne #define HALO_FG).
+// Uniformy: wspólne obiekty { value } ringu (createHaloUniforms) + własne węzły uniform()
+// materiału (`.value` jak dawniej).
+//
+// Port WebGPU (zadanie 10): materiały węzłowe z archTSL.js (dawne archGLSL.js), warianty
+// (FG, atlas, barwy w wierzchołkach) budowane raz; partie instancji to zwykłe siatki z
+// InstancedBufferGeometry (JEDEN przeplecony bufor: macierz, barwa, aInst — ARCH_INST_STRIDE),
+// nie THREE.InstancedMesh (uuid InstancedMesh w kluczu programu = budowa NodeBuildera na
+// partię, PLAN §3); punkty świateł to kwadraty instancjonowane (punkt WebGPU ma 1 px).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { uniform } from 'three/tsl';
 import {
-  ARCH_GLASS_FRAGMENT,
-  ARCH_GLASS_VERTEX,
-  ARCH_INSTANCED_FRAGMENT,
-  ARCH_INSTANCED_VERTEX,
-  ARCH_LINE_FRAGMENT,
-  ARCH_LINE_VERTEX,
-  ARCH_POINTS_FRAGMENT,
-  ARCH_POINTS_VERTEX,
-  ARCH_STRIP_FRAGMENT,
-  ARCH_STRIP_VERTEX
-} from './archGLSL.js';
+  ARCH_INST_LAYOUT,
+  ARCH_INST_STRIDE,
+  ARCH_LIGHT_LAYOUT,
+  ARCH_LIGHT_STRIDE,
+  archNodeMaterial,
+  makeArchGlassNodes,
+  makeArchInstancedNodes,
+  makeArchLineNodes,
+  makeArchPointNodes,
+  makeArchStripNodes
+} from './archTSL.js';
 
 export const ARCH_KIND = Object.freeze({ plain: 0, ecumene: 1, glow: 2, fable: 3, panel: 4, radiator: 5, water: 6 });
 
@@ -31,22 +39,12 @@ export function archUnitGeometries() {
   return { box, cube, cyl, cyl8, sphere, disc };
 }
 
-function makeShader(uniforms, vertexShader, fragmentShader, { fg = false, name = 'Arch', extra = {}, ...opts } = {}) {
-  return new THREE.ShaderMaterial({
-    name,
-    uniforms: { ...uniforms, ...extra },
-    vertexShader,
-    fragmentShader,
-    defines: fg ? { HALO_FG: '' } : {},
-    ...opts
-  });
-}
-
 export class ArchMaterials {
   constructor(uniforms) {
     this.uniforms = uniforms;
     this.list = [];
-    this.pointScale = { value: 540 };
+    // rozmiar punktów świateł: wysokość bufora · 0,5 · projectionMatrix[1][1] (archRing.update)
+    this.pointScale = uniform(540);
     this._inst = [null, null];
     this._instVC = [null, null];
   }
@@ -56,60 +54,53 @@ export class ArchMaterials {
     const cache = vertexColors ? this._instVC : this._inst;
     const k = fg ? 1 : 0;
     if (!cache[k]) {
-      cache[k] = this._track(makeShader(this.uniforms, ARCH_INSTANCED_VERTEX, ARCH_INSTANCED_FRAGMENT, {
-        fg, name: fg ? 'ArchInstancedFG' : 'ArchInstanced', vertexColors
-      }));
+      cache[k] = this._track(archNodeMaterial(fg ? 'ArchInstancedFG' : 'ArchInstanced',
+        makeArchInstancedNodes({ u: this.uniforms, fg, vertexColors }), {}, { ...this.uniforms }));
     }
     return cache[k];
   }
 
   strip({ map, emap, tint = [1, 1, 1], emitGain = 1, varScale = 900, fg = false, atlas = false }) {
-    const m = makeShader(this.uniforms, ARCH_STRIP_VERTEX, ARCH_STRIP_FRAGMENT, {
-      fg,
-      name: fg ? 'ArchStripFG' : 'ArchStrip',
-      side: THREE.DoubleSide,
-      extra: {
-        uMap: { value: map },
-        uEmap: { value: emap },
-        uTint: { value: new THREE.Vector3(...tint) },
-        uEmitGain: { value: emitGain },
-        uVarScale: { value: varScale }
-      }
-    });
-    if (atlas) m.defines.ARCH_ATLAS = '';
-    return this._track(m);
+    const uTint = uniform(new THREE.Vector3(...tint));
+    const uEmitGain = uniform(emitGain);
+    const uVarScale = uniform(varScale);
+    const nodes = makeArchStripNodes({ u: this.uniforms, fg, atlas, map, emap, tint: uTint, emitGain: uEmitGain, varScale: uVarScale });
+    return this._track(archNodeMaterial(fg ? 'ArchStripFG' : 'ArchStrip', nodes, { side: THREE.DoubleSide }, {
+      ...this.uniforms, uMap: nodes.uniforms.uMap, uEmap: nodes.uniforms.uEmap, uTint, uEmitGain, uVarScale
+    }));
   }
 
   glass({ alpha = 0.12, fg = false } = {}) {
-    return this._track(makeShader(this.uniforms, ARCH_GLASS_VERTEX, ARCH_GLASS_FRAGMENT, {
-      fg,
-      name: 'ArchGlass',
+    const uGlassAlpha = uniform(alpha);
+    // przezroczyste DoubleSide w jednym przebiegu jak ShaderMaterial w bazie (forceSinglePass)
+    return this._track(archNodeMaterial('ArchGlass', makeArchGlassNodes({ u: this.uniforms, fg, glassAlpha: uGlassAlpha }), {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
-      extra: { uGlassAlpha: { value: alpha } }
-    }));
+      forceSinglePass: true
+    }, { ...this.uniforms, uGlassAlpha }));
   }
 
   lines({ color = [0.6, 0.7, 0.75], alpha = 0.55, fg = false } = {}) {
-    return this._track(makeShader(this.uniforms, ARCH_LINE_VERTEX, ARCH_LINE_FRAGMENT, {
-      fg,
-      name: 'ArchLines',
+    const uLineColor = uniform(new THREE.Vector3(...color));
+    const uLineAlpha = uniform(alpha);
+    return this._track(archNodeMaterial('ArchLines', makeArchLineNodes({ u: this.uniforms, fg, lineColor: uLineColor, lineAlpha: uLineAlpha }), {
       transparent: true,
-      depthWrite: false,
-      extra: { uLineColor: { value: new THREE.Vector3(...color) }, uLineAlpha: { value: alpha } }
-    }));
+      depthWrite: false
+    }, { ...this.uniforms, uLineColor, uLineAlpha }));
   }
 
   points(fg = false) {
-    return this._track(makeShader(this.uniforms, ARCH_POINTS_VERTEX, ARCH_POINTS_FRAGMENT, {
-      fg,
-      name: 'ArchPoints',
+    // dawne AdditiveBlending ShaderMaterial w WebGL: blendFunc(SRC_ALPHA, ONE) dla barwy i alfy
+    return this._track(archNodeMaterial('ArchPoints', makeArchPointNodes({ u: this.uniforms, fg, pointScale: this.pointScale }), {
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      extra: { uPointScale: this.pointScale }
-    }));
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.SrcAlphaFactor,
+      blendDst: THREE.OneFactor,
+      blendSrcAlpha: THREE.SrcAlphaFactor,
+      blendDstAlpha: THREE.OneFactor
+    }, { ...this.uniforms, uPointScale: this.pointScale }));
   }
 
   dispose() {
@@ -118,21 +109,39 @@ export class ArchMaterials {
   }
 }
 
-// InstancedMesh z partii (ArchBatch): macierze, barwy, aInst. Obwiednia
-// liczona z pozycji instancji (+ zapas na rozmiar), żeby frustum culling
-// three działał na kawałki ringu.
+// Geometria partii: bryła bazowa (wspólne bufory position / normal / color / index) + JEDEN
+// przeplecony bufor instancji (ARCH_INST_LAYOUT). Wynik: { geo, data }.
+export function archInstancedGeometry(base, data, count) {
+  const geo = new THREE.InstancedBufferGeometry();
+  if (base.index) geo.setIndex(base.index);
+  geo.setAttribute('position', base.getAttribute('position'));
+  geo.setAttribute('normal', base.getAttribute('normal'));
+  if (base.getAttribute('color')) geo.setAttribute('color', base.getAttribute('color'));
+  const buf = new THREE.InstancedInterleavedBuffer(data, ARCH_INST_STRIDE);
+  for (const [name, [offset, size]] of Object.entries(ARCH_INST_LAYOUT)) {
+    geo.setAttribute(name, new THREE.InterleavedBufferAttribute(buf, size, offset));
+  }
+  geo.instanceCount = count;
+  return geo;
+}
+
+// Siatka z partii (ArchBatch): macierze, barwy, aInst. Obwiednia liczona z pozycji instancji
+// (+ zapas na rozmiar), żeby frustum culling three działał na kawałki ringu.
 export function archBatchMesh(batch, geometry, material, { pad = 0 } = {}) {
   const n = batch.count;
   if (!n) return null;
-  const geo = geometry.clone();
-  const inst = new THREE.InstancedBufferAttribute(new Float32Array(batch.a), 4);
-  geo.setAttribute('aInst', inst);
-  const mesh = new THREE.InstancedMesh(geo, material, n);
-  mesh.instanceMatrix.array.set(batch.m);
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(batch.c), 3);
-  // obwiednia: środki instancji + największa skala
   const m = batch.m;
+  const data = new Float32Array(n * ARCH_INST_STRIDE);
+  for (let i = 0; i < n; i++) {
+    const o = i * ARCH_INST_STRIDE;
+    for (let k = 0; k < 16; k++) data[o + k] = m[i * 16 + k];
+    data[o + 16] = batch.c[i * 3];
+    data[o + 17] = batch.c[i * 3 + 1];
+    data[o + 18] = batch.c[i * 3 + 2];
+    for (let k = 0; k < 4; k++) data[o + 20 + k] = batch.a[i * 4 + k];
+  }
+  const geo = archInstancedGeometry(geometry, data, n);
+  // obwiednia: środki instancji + największa skala
   let minX = Infinity; let minY = Infinity; let minZ = Infinity;
   let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
   let big = 0;
@@ -146,28 +155,54 @@ export function archBatchMesh(batch, geometry, material, { pad = 0 } = {}) {
     if (s > big) big = s;
   }
   const r = big * 1.75 + pad;
-  mesh.boundingBox = new THREE.Box3(new THREE.Vector3(minX - r, minY - r, minZ - r), new THREE.Vector3(maxX + r, maxY + r, maxZ + r));
-  mesh.boundingSphere = mesh.boundingBox.getBoundingSphere(new THREE.Sphere());
-  geo.boundingSphere = mesh.boundingSphere.clone();
-  geo.boundingBox = mesh.boundingBox.clone();
+  geo.boundingBox = new THREE.Box3(new THREE.Vector3(minX - r, minY - r, minZ - r), new THREE.Vector3(maxX + r, maxY + r, maxZ + r));
+  geo.boundingSphere = geo.boundingBox.getBoundingSphere(new THREE.Sphere());
+  const mesh = new THREE.Mesh(geo, material);
   mesh.frustumCulled = true;
   mesh.name = batch.name || 'ArchBatch';
+  mesh.userData.instances = n;
   return mesh;
 }
 
-// Punkty świateł: pozycje, barwy (HDR), rozmiar i faza.
+// Punkty świateł: pozycje, barwy (HDR), rozmiar i faza — kwadraty instancjonowane (dawne
+// THREE.Points z gl_PointSize; punkt WebGPU ma 1 px). Kwadrat: 4 wierzchołki ±0,5, 2 trójkąty CCW.
 export function archPointsMesh(data, material) {
   const n = data.pos.length / 3;
   if (!n) return null;
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(data.pos, 3));
-  g.setAttribute('aColor', new THREE.Float32BufferAttribute(data.col, 3));
-  g.setAttribute('aLight', new THREE.Float32BufferAttribute(data.light, 2));
-  g.computeBoundingSphere();
-  const pts = new THREE.Points(g, material);
-  pts.name = 'ArchLights';
-  pts.frustumCulled = true;
-  return pts;
+  const quadPositions = new THREE.BufferAttribute(new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, 0.5, 0.5, 0]), 3);
+  const quadIndex = new THREE.BufferAttribute(new Uint16Array([0, 1, 2, 2, 1, 3]), 1);
+  const arr = new Float32Array(n * ARCH_LIGHT_STRIDE);
+  let minX = Infinity; let minY = Infinity; let minZ = Infinity;
+  let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
+  let big = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * ARCH_LIGHT_STRIDE;
+    const x = data.pos[i * 3]; const y = data.pos[i * 3 + 1]; const z = data.pos[i * 3 + 2];
+    arr[o] = x; arr[o + 1] = y; arr[o + 2] = z;
+    arr[o + 3] = data.col[i * 3]; arr[o + 4] = data.col[i * 3 + 1]; arr[o + 5] = data.col[i * 3 + 2];
+    arr[o + 6] = data.light[i * 2]; arr[o + 7] = data.light[i * 2 + 1];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    if (data.light[i * 2] > big) big = data.light[i * 2];
+  }
+  const g = new THREE.InstancedBufferGeometry();
+  g.setIndex(quadIndex);
+  g.setAttribute('position', quadPositions);
+  const buf = new THREE.InstancedInterleavedBuffer(arr, ARCH_LIGHT_STRIDE);
+  for (const [name, [offset, size]] of Object.entries(ARCH_LIGHT_LAYOUT)) {
+    g.setAttribute(name, new THREE.InterleavedBufferAttribute(buf, size, offset));
+  }
+  g.instanceCount = n;
+  // obwiednia z pozycji świateł (kwadrat ma rozmiar ekranowy — zapas na największe światło)
+  const r = big * 2 + 50;
+  g.boundingBox = new THREE.Box3(new THREE.Vector3(minX - r, minY - r, minZ - r), new THREE.Vector3(maxX + r, maxY + r, maxZ + r));
+  g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());
+  const mesh = new THREE.Mesh(g, material);
+  mesh.name = 'ArchLights';
+  mesh.frustumCulled = true;
+  mesh.userData.instances = n;
+  return mesh;
 }
 
 export class ArchLights {

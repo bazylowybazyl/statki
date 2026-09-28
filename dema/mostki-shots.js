@@ -13,6 +13,7 @@ import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { closeChrome } from './rdzen-cdp.js';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
   if (a.startsWith('--')) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : '1']);
@@ -169,7 +170,8 @@ async function run() {
       try { ready = await evaluate(cdp, '!!(window.__mostki && window.__mostki.ready)'); } catch { ready = false; }
     }
     if (!ready) throw new Error('demo nie wstało (timeout)');
-    results.gpu = await evaluate(cdp, `(() => { const gl = window.__mostki && document.getElementById('webgl-layer').getContext('webgl2'); const e = gl && gl.getExtension('WEBGL_debug_renderer_info'); return { renderer: gl ? (e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) : null, webgpu: !!navigator.gpu }; })()`);
+    // Port WebGPU: kanwa #webgl-layer ma kontekst 'webgpu' (getContext('webgl2') = null) — adapter z navigator.gpu.
+    results.gpu = await evaluate(cdp, `(async () => { const { Core3D } = await import('/src/3d/core3d.js'); const a = navigator.gpu ? await navigator.gpu.requestAdapter() : null; const i = (a && a.info) || {}; return { webgpu: !!navigator.gpu, backend: Core3D.renderer?.backend?.isWebGPUBackend ? 'webgpu' : null, adapter: [i.vendor, i.architecture, i.description].filter(Boolean).join(' ') || null }; })()`);
     await evaluate(cdp, 'window.__mostki.clock.paused = false, true');
     await sleep(1500);
     results.boot = await evaluate(cdp, 'window.__mostki.stats()');
@@ -217,7 +219,11 @@ async function run() {
           rec.hdr[`${a}_okna`] = r;
           console.log(`  OKNA ${a}: pikseli okien ${r.windowPixels}, >0,9: ${r.windowPixelsOver09}, max ${r.maxWithWindows.toFixed(2)}, p50 ${r.p50.toFixed(2)} p90 ${r.p90.toFixed(2)} p99 ${r.p99.toFixed(2)}; kadłub >0,9 bez okien: ${r.hullPixelsOver09WithoutWindows}`);
         }
-        else if (op === 'shot') { await evaluate(cdp, 'window.__mostki.renderFrames(1), true'); await shot(cdp, a); rec.shots.push(a); console.log(`  zrzut ${a}`); }
+        else if (op === 'shot') {
+          // Port WebGPU: macierze instancji InstancedMesh > 1024 three wysyła raz na klatkę rAF — render zrzutu w nowej klatce.
+          await evaluate(cdp, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))).then(() => (window.__mostki.renderFrames(1), true))');
+          await shot(cdp, a); rec.shots.push(a); console.log(`  zrzut ${a}`);
+        }
         else if (op === 'hdr') {
           const expr = b ? `window.__mostki.measureHDR(window.__mostki.bridgeRect(${JSON.stringify(b)}))` : 'window.__mostki.measureHDR(null)';
           rec.hdr[a] = await evaluate(cdp, expr);
@@ -235,7 +241,7 @@ async function run() {
     results.finalErrors = cdp ? await evaluate(cdp, 'window.__mostki ? window.__mostki.stats().errors : []').catch(() => []) : [];
     writeFileSync(join(outDir, 'results.json'), JSON.stringify(results, null, 1));
     try { ws?.close(); } catch { /* */ }
-    chrome.kill();
+    await closeChrome(chrome, null, profile); // usuwa też profil z %TEMP%
     await server.close();
     console.log(`logi konsoli: ${results.logs.length}, błędy dema: ${(results.finalErrors || []).length} → ${join(outDir, 'results.json')}`);
   }

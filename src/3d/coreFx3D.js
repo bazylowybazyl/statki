@@ -28,27 +28,34 @@
 // Konwencja gry: świat (x, y) → scena (x, -y), kamera ortho z góry (+Z).
 //
 // AGENT: precyzja float32 przed integracją do gry (2026-09-25, sesja poprawek
-// drżenia; kodu tu nie ruszałem). Sześć shaderów (żar, wyrzuty, strumienie,
-// kule, pierścienie, błyski) liczy `projectionMatrix * viewMatrix * vec4(świat)`
-// — przy 5–10 mln j. obraz drga ~1 px × zoom względem kadłuba (AGENTS.md,
+// drżenia; kodu tu nie ruszałem). Sześć efektów (żar, wyrzuty, strumienie,
+// kule, pierścienie, błyski) ma w atrybutach pozycje ŚWIATA, mesh w początku
+// układu — przy 5–10 mln j. obraz drga ~1 px × zoom względem kadłuba (AGENTS.md,
 // docs/PORT-mostki.md §8.12). Przepis: początek przy kamerze w mesh.position
 // (src/3d/sceneOrigin.js → sceneOriginNearCamera), dane instancji względem
-// niego (CPU w double), shader `projectionMatrix * modelViewMatrix * …`.
+// niego (CPU w double). Shadery (TSL, coreFx3D.tsl.js — port WebGPU, zadanie 15)
+// już liczą `projection · modelViewMatrix · …`, więc zostaje sama strona CPU.
 // Wyrzuty siedzą w buforze pierścieniowym (zapis przy emisji), więc początek
 // „lepki” jak w sparkSystem3D.js / slugTrail3D.js: pusty bufor bierze kamerę,
 // żywy przesuwa dane dopiero po odjeździe kamery. ventMesh ma
 // matrixAutoUpdate = false — po zmianie position trzeba updateMatrix().
 // Pomiar przed/po: dema/precyzja-drzenie.js (dopisać moduł jak `fx`).
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import {
   getCoreWorld, getEntityHexAngle, CORE_STATE, coreStateRank,
   gridToLocal, localToWorld, isShardOnEntity, coreJetEnvelope, gridDirToWorld
 } from '../game/shipCore.js';
 import { Fx3D, FX_PLANE_Z, sp as fxParams, coneDir, makeBasis } from './fxParticles3D.js';
-import { RailgunFX3D } from './railgunFx3D.js';
-import { MuzzleFX3D } from './muzzleFx3D.js';
+// Wystrzał armaty (wybuch wtórny), wyładowanie Tempesta (kula) i rzaz Hexlance'a (strumień) —
+// receptury dema bronie-webgpu przez WeaponFx (port WebGPU, zadanie 17; dawniej MuzzleFX3D
+// i RailgunFX3D).
+import { WeaponFx } from './weapons/weaponFx.js';
 import { shardHeatNow, isHexShips3DActive } from '../game/destructor.js';
 import { CORE_FX_BANDS, CORE_FX_LAYER, coreStateBand } from './coreBands.js';
+import {
+  createCoreFlashMaterial, createCoreGlowMaterial, createCoreJetMaterial, createCoreOrbMaterial,
+  createCoreRingMaterial, createCoreVentMaterial
+} from './coreFx3D.tsl.js';
 
 // Pasma HDR (CORE_FX_BANDS), warstwa (CORE_FX_LAYER) i puls stanu żyją
 // w coreBands.js — te same liczby bierze plazma modelu reaktora (reactor3D).
@@ -67,313 +74,16 @@ const FLASH_Z = 6;
 const FLASH_RENDER_ORDER = 16;
 
 // Światło addytywne jak blend bloomu w three: kolor i alfa ONE/ONE
-// (AdditiveBlending + premultipliedAlpha), alfa z shadera = max(rgb) liniowo.
-// Alfa 1,0 na całym quadzie dawała na kanwie premultiplied twarde koło i
-// prostokąt w poświacie bloomu: pod quadem poświata szła inną drogą niż obok.
-const FX_BLEND = { blending: THREE.AdditiveBlending, premultipliedAlpha: true };
+// (AdditiveBlending + premultipliedAlpha — ustawia coreFx3D.tsl.js), alfa
+// z shadera = max(rgb) liniowo. Alfa 1,0 na całym quadzie dawała na kanwie
+// premultiplied twarde koło i prostokąt w poświacie bloomu: pod quadem
+// poświata szła inną drogą niż obok.
 // Brzeg pęknięcia: heksy edgeShards do ~2,5 heksa od linii szczeliny (siatka
 // 5 px: odstęp kolumn 7,5).
 const CRACK_EDGE_GRID = 19;
 
-const NOISE_GLSL = `
-float cfxHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float cfxNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float a = cfxHash(i);
-  float b = cfxHash(i + vec2(1.0, 0.0));
-  float c = cfxHash(i + vec2(0.0, 1.0));
-  float d = cfxHash(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-float cfxFbm(vec2 p) {
-  float v = 0.0;
-  v += 0.55 * cfxNoise(p); p *= 2.03;
-  v += 0.28 * cfxNoise(p); p *= 2.01;
-  v += 0.17 * cfxNoise(p);
-  return v;
-}
-`;
-
-const GLOW_VERTEX = `
-attribute vec4 aCore;    // x, y (scena), promień (świat), obrót
-attribute vec4 aColor;   // barwa ciała (znormalizowana do pasma), ziarno
-attribute vec4 aState;   // jasność ciała L, jasność rdzenia L, promień rdzenia (0-1), puls 0-1
-uniform float uZ;
-varying vec2 vUv;
-varying vec4 vColor;
-varying vec4 vState;
-void main() {
-  vUv = position.xy;
-  vColor = aColor;
-  vState = aState;
-  float c = cos(aCore.w);
-  float s = sin(aCore.w);
-  vec2 p = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * aCore.z;
-  gl_Position = projectionMatrix * viewMatrix * vec4(aCore.x + p.x, aCore.y + p.y, uZ, 1.0);
-}
-`;
-
-const GLOW_FRAGMENT = `
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-uniform float uTime;
-varying vec2 vUv;
-varying vec4 vColor;
-varying vec4 vState;
-${NOISE_GLSL}
-void main() {
-  float r = length(vUv);
-  if (r > 1.0) discard;
-  float seed = vColor.w;
-  float pulse = vState.w;
-  // Wir plazmy we współrzędnych biegunowych: kąt obraca się, promień płynie do środka.
-  float ang = atan(vUv.y, vUv.x);
-  vec2 q = vec2(ang * 1.2 + uTime * 0.35 + seed * 13.0, r * 3.2 - uTime * (0.7 + pulse * 1.6));
-  float n = cfxFbm(q * 1.7 + seed * 7.0);
-  float bodyProfile = smoothstep(1.0, 0.1, r);
-  float body = bodyProfile * (0.35 + 0.65 * n) * (0.86 + 0.14 * pulse);
-  float coreR = max(0.02, vState.z) * (1.0 + 0.18 * pulse);
-  // Ostra krawędź: mało pikseli w paśmie 0,9–8, które bloom brałby w całości.
-  float core = smoothstep(coreR, coreR * CORE_EDGE, r);
-  // Ciało pod progiem bloomu także przy rdzeniu (bez sumy ciało + rdzeń > 0,9 wokół).
-  body *= smoothstep(coreR * 0.6, coreR * 1.6, r) * 0.35 + 0.65;
-  vec3 col = vColor.rgb * (vState.x * body) + vec3(1.0, 0.97, 0.92) * (vState.y * core);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
-
-const VENT_VERTEX = `
-attribute vec4 aStart;   // x, y (scena), vx, vy
-attribute vec4 aLife;    // t0, życie, rozmiar startowy, rozmiar końcowy
-attribute vec4 aColor;   // barwa ciała (pasmo), jasność białego rdzenia
-uniform float uTime;
-uniform float uZ;
-varying vec2 vUv;
-varying vec4 vColor;
-varying float vAge;
-void main() {
-  float age = uTime - aLife.x;
-  if (age < 0.0 || age > aLife.y) {
-    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    return;
-  }
-  float t = age / aLife.y;
-  float drag = 2.4;
-  vec2 pos = aStart.xy + aStart.zw * ((1.0 - exp(-drag * age)) / drag);
-  float size = mix(aLife.z, aLife.w, sqrt(t));
-  vUv = position.xy;
-  vColor = aColor;
-  vAge = t;
-  gl_Position = projectionMatrix * viewMatrix * vec4(pos + position.xy * size, uZ, 1.0);
-}
-`;
-
-const VENT_FRAGMENT = `
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-#define VENT_HOT_LIFE ${CORE_FX_BANDS.ventHotLife.toFixed(3)}
-#define VENT_HOT_R ${CORE_FX_BANDS.ventHotRadius.toFixed(3)}
-varying vec2 vUv;
-varying vec4 vColor;
-varying float vAge;
-void main() {
-  float r = length(vUv);
-  if (r > 1.0) discard;
-  float soft = pow(1.0 - r, 1.7);
-  float fade = (1.0 - vAge) * (1.0 - vAge);
-  // Głowica: ostra w przestrzeni i w czasie — piksele w paśmie 8–12 albo 0.
-  float hot = step(vAge, VENT_HOT_LIFE) * (1.0 - smoothstep(VENT_HOT_R * CORE_EDGE, VENT_HOT_R, r));
-  vec3 col = vColor.rgb * (soft * fade) + vec3(1.0, 0.96, 0.9) * (vColor.a * hot);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
-
-// --- Efekty po detonacji: strumień plazmy, kula plazmy, pierścień plazmy ---
-// Pasma jak żar: ciało w paśmie barwy (≤ ~1), biel 8–12 wyłącznie ostrymi
-// krawędziami i tylko przy pełnej mocy (step), żeby nie przechodzić przez 2–8.
-
-const JET_VERTEX = `
-attribute vec4 aSeg;    // początek x, y; koniec x, y (scena)
-attribute vec4 aJet;    // półszerokość (świat), obwiednia 0–1, ziarno, długość (świat)
-attribute vec4 aColor;  // barwa ciała (pasmo), jasność białej żyły
-uniform float uZ;
-varying vec2 vUv;
-varying vec4 vJet;
-varying vec4 vColor;
-void main() {
-  vec2 a = aSeg.xy;
-  vec2 b = aSeg.zw;
-  vec2 d = b - a;
-  float len = max(1.0, length(d));
-  vec2 dir = d / len;
-  vec2 nrm = vec2(-dir.y, dir.x);
-  float u = position.x + 0.5;
-  // w wyrwie zwężony, na celu rozlany (rozprysk na pancerzu)
-  float w = aJet.x * (0.55 + 0.45 * smoothstep(0.0, 0.2, u)) * (1.0 + 0.7 * smoothstep(0.86, 1.0, u));
-  vec2 p = a + dir * (u * len) + nrm * (position.y * 2.0 * w);
-  vUv = vec2(u, position.y * 2.0);
-  vJet = aJet;
-  vColor = aColor;
-  gl_Position = projectionMatrix * viewMatrix * vec4(p, uZ, 1.0);
-}
-`;
-
-const JET_FRAGMENT = `
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-uniform float uTime;
-varying vec2 vUv;
-varying vec4 vJet;
-varying vec4 vColor;
-${NOISE_GLSL}
-void main() {
-  float u = vUv.x;
-  float across = abs(vUv.y);
-  float flow = cfxFbm(vec2(u * vJet.w / 70.0 - uTime * 9.0 + vJet.z * 17.0, vUv.y * 2.2));
-  float w = 0.6 + 0.4 * flow;
-  float body = smoothstep(w, w * 0.2, across);
-  // biała żyła tylko przy wylocie z wyrwy (pierwsze 30% długości): na całej
-  // długości bloom z linii 8+ zjadał barwę frakcji i strumień robił się biały
-  float vein = (1.0 - smoothstep(0.09 * CORE_EDGE, 0.09, across / max(0.4, w))) * (1.0 - smoothstep(0.26, 0.3, u));
-  float tail = smoothstep(1.0, 0.9, u);
-  float env = vJet.y;
-  float on = step(0.4, env);
-  vec3 col = vColor.rgb * (body * env * tail) + vec3(1.0, 0.97, 0.92) * (vein * vColor.a * on * tail);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
-
-const ORB_VERTEX = `
-attribute vec4 aOrb;    // x, y (scena), promień obrazu (świat), faza wirowania
-attribute vec4 aOrbS;   // postęp zapalnika 0–1, ziarno, jasność ciała, jasność rdzenia
-attribute vec4 aColor;  // barwa (pasmo)
-uniform float uZ;
-varying vec2 vUv;
-varying vec4 vS;
-varying vec4 vColor;
-varying float vPhase;
-void main() {
-  vUv = position.xy;
-  vS = aOrbS;
-  vColor = aColor;
-  vPhase = aOrb.w;
-  gl_Position = projectionMatrix * viewMatrix * vec4(aOrb.xy + position.xy * aOrb.z, uZ, 1.0);
-}
-`;
-
-const ORB_FRAGMENT = `
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-uniform float uTime;
-varying vec2 vUv;
-varying vec4 vS;
-varying vec4 vColor;
-varying float vPhase;
-${NOISE_GLSL}
-void main() {
-  float r = length(vUv);
-  if (r > 1.0) discard;
-  float fuse = vS.x;
-  // torus plazmy, który wypadł z komory: jasny pierścień wiruje, mgiełka wokół
-  float ang = atan(vUv.y, vUv.x) + vPhase;
-  vec2 q = vec2(ang * 1.6, r * 4.5 - uTime * 1.6 + vS.y * 9.0);
-  float n = cfxFbm(q * 1.4 + vS.y * 5.0);
-  float ring = exp(-pow((r - 0.5) / 0.19, 2.0));
-  float haze = smoothstep(1.0, 0.0, r) * 0.28;
-  float body = (ring * (0.55 + 0.45 * n) + haze) * vS.z;
-  // serce pulsuje coraz szybciej, im bliżej zapalnika
-  float pulse = 0.5 + 0.5 * sin(uTime * mix(6.0, 30.0, fuse * fuse) + vS.y * 6.0);
-  float coreR = 0.08 + 0.05 * pulse * (0.4 + 0.6 * fuse);
-  float core = 1.0 - smoothstep(coreR * CORE_EDGE, coreR, r);
-  vec3 col = vColor.rgb * body + vec3(1.0, 0.97, 0.92) * (core * vS.w);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
-
-const RING_VERTEX = `
-attribute vec4 aRing;   // x, y (scena), promień frontu (świat), grubość względna
-attribute vec4 aRingS;  // wiek 0–1, jasność ciała, jasność białej krawędzi, ziarno
-attribute vec4 aColor;  // barwa (pasmo)
-uniform float uZ;
-varying vec2 vUv;
-varying vec4 vS;
-varying vec4 vColor;
-varying float vTh;
-void main() {
-  vUv = position.xy * 1.25;
-  vS = aRingS;
-  vColor = aColor;
-  vTh = aRing.w;
-  gl_Position = projectionMatrix * viewMatrix * vec4(aRing.xy + position.xy * aRing.z * 1.25, uZ, 1.0);
-}
-`;
-
-const RING_FRAGMENT = `
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-varying vec2 vUv;
-varying vec4 vS;
-varying vec4 vColor;
-varying float vTh;
-${NOISE_GLSL}
-void main() {
-  float r = length(vUv);
-  if (r > 1.25) discard;
-  float th = max(0.01, vTh);
-  float age = vS.x;
-  float ang = atan(vUv.y, vUv.x);
-  float n = cfxNoise(vec2(ang * 5.0 + vS.w * 13.0, age * 3.0));
-  float d = (r - 1.0) / th;
-  // za frontem plazma ciągnie się dłużej niż przed nim
-  float prof = d < 0.0 ? exp(-d * d * 0.6) : exp(-d * d * 4.0);
-  float fade = pow(1.0 - age, 1.6);
-  float body = prof * (0.65 + 0.35 * n) * fade * vS.y;
-  float e = th * 0.22;
-  float edge = step(age, 0.18) * (1.0 - smoothstep(e * CORE_EDGE, e, abs(r - 1.0)));
-  vec3 col = vColor.rgb * body + vec3(1.0, 0.97, 0.92) * (edge * vS.z);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
-
-const FLASH_VERTEX = `
-attribute vec4 aFlash;   // x, y (scena), promień (świat), wiek 0–1
-attribute vec4 aFlashS;  // jasność bieli, jasność ciała, ziarno, —
-attribute vec4 aColor;   // barwa (pasmo)
-uniform float uZ;
-varying vec2 vUv;
-varying vec4 vF;
-varying vec4 vS;
-varying vec4 vColor;
-void main() {
-  vUv = position.xy;
-  vF = aFlash;
-  vS = aFlashS;
-  vColor = aColor;
-  gl_Position = projectionMatrix * viewMatrix * vec4(aFlash.xy + position.xy * aFlash.z, uZ, 1.0);
-}
-`;
-
-// Rozbłysk plazmy: mała biała kula (ostra, 8–12, gaśnie po 30% życia) i barwny
-// rozbłysk pod progiem pasma barwy — własny wybuch wariantów, które nie biorą
-// pełnego reactorblow (przełamanie, rozerwanie, wyrzut, kula).
-const FLASH_FRAGMENT = `
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-varying vec2 vUv;
-varying vec4 vF;
-varying vec4 vS;
-varying vec4 vColor;
-${NOISE_GLSL}
-void main() {
-  float r = length(vUv);
-  if (r > 1.0) discard;
-  float age = vF.w;
-  float coreR = mix(0.3, 0.07, clamp(age / 0.3, 0.0, 1.0));
-  float white = step(age, 0.3) * (1.0 - smoothstep(coreR * CORE_EDGE, coreR, r));
-  float ang = atan(vUv.y, vUv.x);
-  float n = cfxNoise(vec2(ang * 4.0 + vS.z * 11.0, r * 3.0 + age * 2.0));
-  float halo = pow(max(0.0, 1.0 - r), 1.6) * (0.75 + 0.25 * n);
-  float body = halo * pow(1.0 - age, 1.8) * vS.y;
-  vec3 col = vColor.rgb * body + vec3(1.0, 0.97, 0.92) * (white * vS.x);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
+// Shadery efektów: coreFx3D.tsl.js (port WebGPU, zadanie 15 — TSL, wzory 1:1
+// z dawnym GLSL: żar, wyrzuty, strumień, kula, pierścień, rozbłysk).
 
 function finite(value, fallback = 0) {
   const n = Number(value);
@@ -382,7 +92,7 @@ function finite(value, fallback = 0) {
 
 // ---------------------------------------------------------------------------
 // Iskry z puli gry. Wspólny bank Fx3D (fxParticles3D.js) — ten sam, z którego
-// sypią błyski wylotowe dział (muzzleFx3D) i Hexlance (railgunFx3D, klawisz 4);
+// sypały dawne błyski wylotowe dział i Hexlance (od zadania 17 receptury WeaponFx);
 // jedno wywołanie na system, bez własnych pul. Do tego iskry trafień i tarcia
 // SparkSystem3D (overlay, 20 000 slotów), jeśli ktoś go zainicjował. Recepty
 // rdzenia tylko rozsypują to samo tworzywo inaczej; palety wprost z tamtych
@@ -391,8 +101,8 @@ function finite(value, fallback = 0) {
 const SPARK_METAL = [2.9, 2.2, 1.4];   // odpryski przebicia (RailgunFX.impact)
 const SPARK_KERF = [2.9, 2.1, 1.2];    // wiór rzazu (RailgunFX.kerf)
 const SPARK_CHUNK = [3.0, 1.7, 0.7];   // rozżarzone odpryski poszycia (stygną do 0,4 / 0,1)
-// Skala recept (S jak w muzzleFx3D; Hexlance na Atlasie ma 3) i moc wystrzału
-// RailgunFX3D (jego skala jest wmurowana) na klasę rdzenia.
+// Skala recept (S jak skala wieżyczki w recepturach wylotu; Hexlance na Atlasie ma 3) i moc
+// receptury Hexlance'a (jej skala jest wmurowana) na klasę rdzenia.
 const FX_CLASS_SCALE = Object.freeze({ escort: 1.2, cruiser: 1.9, capital: 2.7 });
 const FX_CLASS_POWER = Object.freeze({ escort: 0.45, cruiser: 0.7, capital: 1.0 });
 // Spłaszczenie rozrzutu w Z jak w receptach broni: w widoku ortho z góry ruch
@@ -516,22 +226,16 @@ export function createCoreFx3D(options = {}) {
   const glowCore = new Float32Array(maxGlows * 4);
   const glowColor = new Float32Array(maxGlows * 4);
   const glowState = new Float32Array(maxGlows * 4);
-  const aCore = new THREE.InstancedBufferAttribute(glowCore, 4).setUsage(THREE.DynamicDrawUsage);
-  const aColor = new THREE.InstancedBufferAttribute(glowColor, 4).setUsage(THREE.DynamicDrawUsage);
-  const aState = new THREE.InstancedBufferAttribute(glowState, 4).setUsage(THREE.DynamicDrawUsage);
+  // Atrybuty z domyślnym użyciem: WebGPU wysyła zakres po needsUpdate
+  // (DynamicDrawUsage w backendzie WebGPU = pełny upload przy każdym renderze).
+  const aCore = new THREE.InstancedBufferAttribute(glowCore, 4);
+  const aColor = new THREE.InstancedBufferAttribute(glowColor, 4);
+  const aState = new THREE.InstancedBufferAttribute(glowState, 4);
   glowGeo.setAttribute('aCore', aCore);
   glowGeo.setAttribute('aColor', aColor);
   glowGeo.setAttribute('aState', aState);
   glowGeo.instanceCount = 0;
-  const glowMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uZ: { value: GLOW_Z } },
-    vertexShader: GLOW_VERTEX,
-    fragmentShader: GLOW_FRAGMENT,
-    ...FX_BLEND,
-    transparent: true,
-    depthTest: true,
-    depthWrite: false
-  });
+  const glowMat = createCoreGlowMaterial({ z: GLOW_Z, coreEdge: CORE_FX_BANDS.coreEdge });
   const glowMesh = new THREE.Mesh(glowGeo, glowMat);
   glowMesh.frustumCulled = false;
   glowMesh.renderOrder = GLOW_RENDER_ORDER;
@@ -549,21 +253,15 @@ export function createCoreFx3D(options = {}) {
   const ventStart = new Float32Array(ventCap * 4);
   const ventLife = new Float32Array(ventCap * 4);
   const ventColor = new Float32Array(ventCap * 4);
-  const vStart = new THREE.InstancedBufferAttribute(ventStart, 4).setUsage(THREE.DynamicDrawUsage);
-  const vLife = new THREE.InstancedBufferAttribute(ventLife, 4).setUsage(THREE.DynamicDrawUsage);
-  const vColor = new THREE.InstancedBufferAttribute(ventColor, 4).setUsage(THREE.DynamicDrawUsage);
+  const vStart = new THREE.InstancedBufferAttribute(ventStart, 4);
+  const vLife = new THREE.InstancedBufferAttribute(ventLife, 4);
+  const vColor = new THREE.InstancedBufferAttribute(ventColor, 4);
   ventGeo.setAttribute('aStart', vStart);
   ventGeo.setAttribute('aLife', vLife);
   ventGeo.setAttribute('aColor', vColor);
   ventGeo.instanceCount = 0;
-  const ventMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uZ: { value: VENT_Z } },
-    vertexShader: VENT_VERTEX,
-    fragmentShader: VENT_FRAGMENT,
-    ...FX_BLEND,
-    transparent: true,
-    depthTest: true,
-    depthWrite: false
+  const ventMat = createCoreVentMaterial({
+    z: VENT_Z, coreEdge: CORE_FX_BANDS.coreEdge, hotLife: CORE_FX_BANDS.ventHotLife, hotRadius: CORE_FX_BANDS.ventHotRadius
   });
   const ventMesh = new THREE.Mesh(ventGeo, ventMat);
   ventMesh.frustumCulled = false;
@@ -610,27 +308,19 @@ export function createCoreFx3D(options = {}) {
   }
 
   // --- efekty po detonacji: strumienie, kule, pierścienie (po 1 wywołaniu) ---
-  function makeInstanced(base, attrs, count, vertexShader, fragmentShader, z, renderOrder, name) {
+  function makeInstanced(base, attrs, count, createMaterial, z, renderOrder, name) {
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = base.index;
     geo.setAttribute('position', base.attributes.position);
     const bufs = {};
     for (const key of attrs) {
       const arr = new Float32Array(count * 4);
-      const attr = new THREE.InstancedBufferAttribute(arr, 4).setUsage(THREE.DynamicDrawUsage);
+      const attr = new THREE.InstancedBufferAttribute(arr, 4);
       geo.setAttribute(key, attr);
       bufs[key] = { arr, attr };
     }
     geo.instanceCount = 0;
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uZ: { value: z } },
-      vertexShader,
-      fragmentShader,
-      ...FX_BLEND,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false
-    });
+    const mat = createMaterial({ z, coreEdge: CORE_FX_BANDS.coreEdge });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = renderOrder;
@@ -644,11 +334,11 @@ export function createCoreFx3D(options = {}) {
   const MAX_JETS = 8;
   const MAX_ORBS = 16;
   const MAX_RINGS = 24;
-  const jetFx = makeInstanced(new THREE.PlaneGeometry(1, 1, 24, 1), ['aSeg', 'aJet', 'aColor'], MAX_JETS, JET_VERTEX, JET_FRAGMENT, JET_Z, JET_RENDER_ORDER, 'coreFx3D:jets');
-  const orbFx = makeInstanced(new THREE.PlaneGeometry(2, 2), ['aOrb', 'aOrbS', 'aColor'], MAX_ORBS, ORB_VERTEX, ORB_FRAGMENT, ORB_Z, ORB_RENDER_ORDER, 'coreFx3D:orbs');
-  const ringFx = makeInstanced(new THREE.PlaneGeometry(2, 2), ['aRing', 'aRingS', 'aColor'], MAX_RINGS, RING_VERTEX, RING_FRAGMENT, RING_Z, RING_RENDER_ORDER, 'coreFx3D:rings');
+  const jetFx = makeInstanced(new THREE.PlaneGeometry(1, 1, 24, 1), ['aSeg', 'aJet', 'aColor'], MAX_JETS, createCoreJetMaterial, JET_Z, JET_RENDER_ORDER, 'coreFx3D:jets');
+  const orbFx = makeInstanced(new THREE.PlaneGeometry(2, 2), ['aOrb', 'aOrbS', 'aColor'], MAX_ORBS, createCoreOrbMaterial, ORB_Z, ORB_RENDER_ORDER, 'coreFx3D:orbs');
+  const ringFx = makeInstanced(new THREE.PlaneGeometry(2, 2), ['aRing', 'aRingS', 'aColor'], MAX_RINGS, createCoreRingMaterial, RING_Z, RING_RENDER_ORDER, 'coreFx3D:rings');
   const MAX_FLASHES = 16;
-  const flashFx = makeInstanced(new THREE.PlaneGeometry(2, 2), ['aFlash', 'aFlashS', 'aColor'], MAX_FLASHES, FLASH_VERTEX, FLASH_FRAGMENT, FLASH_Z, FLASH_RENDER_ORDER, 'coreFx3D:flashes');
+  const flashFx = makeInstanced(new THREE.PlaneGeometry(2, 2), ['aFlash', 'aFlashS', 'aColor'], MAX_FLASHES, createCoreFlashMaterial, FLASH_Z, FLASH_RENDER_ORDER, 'coreFx3D:flashes');
   const flashList = [];
   const jetList = [];
   const orbList = [];
@@ -852,9 +542,9 @@ export function createCoreFx3D(options = {}) {
     const S = fxScale(o.classId) * finite(o.scale, 1);
     const shots = 2 + (Math.random() < 0.5 ? 1 : 0);
     const a0 = Math.random() * Math.PI * 2;
-    if (MuzzleFX3D.available) {
+    if (WeaponFx.available) {
       for (let i = 0; i < shots; i++) {
-        MuzzleFX3D.fire('armata', x, y, a0 + i * (Math.PI * 2 / shots) + frand(-0.45, 0.45), S * 0.75);
+        WeaponFx.muzzleAt('armata_mk1', x, y, a0 + i * (Math.PI * 2 / shots) + frand(-0.45, 0.45), S * 0.75);
       }
     }
     if (Fx3D.ensure()) {
@@ -952,8 +642,8 @@ export function createCoreFx3D(options = {}) {
   }
 
   // Strumień: przy starcie wystrzał (jetShot), strugi jonów i łuki przy
-  // wylocie, a na celu — rzaz jak Hexlance tnący kadłub (RailgunFX3D: rozbłysk
-  // wejścia raz na kadłub, potem wiór co 0,05 s).
+  // wylocie, a na celu — rzaz jak Hexlance tnący kadłub (receptura Hexlance'a w WeaponFx:
+  // rozbłysk wejścia raz na kadłub, potem wiór co 0,05 s; bez wstrząsu kamery, jak dawniej).
   function jetSparks(rec, jet, env, simDt) {
     if (!debug.blast) return;
     const power = fxPower(jet.classId);
@@ -982,19 +672,19 @@ export function createCoreFx3D(options = {}) {
       Fx3D.arcs.spawn(_fp, _fb, frand(0.08, 0.22), frand(4, 16) * S, rec.plasma);
     }
     const hit = jet.hitEntity;
-    if (!hit || !RailgunFX3D.available) return;
+    if (!hit || !WeaponFx.available) return;
     const ss = impactSparks();
     if (!rec.bitten.has(hit)) {
       rec.bitten.add(hit);
       rec.kerfCd = 0.05;
-      RailgunFX3D.impact(jet.endX, jet.endY, jet.dirWX, jet.dirWY, 0.85 * power);
+      WeaponFx.hexlanceImpact(jet.endX, jet.endY, jet.dirWX, jet.dirWY, null, power, false);
       if (ss) ss.burst(jet.endX, jet.endY, 40, 520, 0.4, 0.7);
       return;
     }
     rec.kerfCd -= simDt;
     if (rec.kerfCd > 0) return;
     rec.kerfCd = 0.05;
-    RailgunFX3D.kerf(jet.endX, jet.endY, jet.dirWX, jet.dirWY, 0.7 * power);
+    WeaponFx.hexlanceKerf(jet.endX, jet.endY, jet.dirWX, jet.dirWY, null, power);
     if (ss) ss.burst(jet.endX, jet.endY, 10, 420, 0.35, 0.6);
   }
 
@@ -1008,7 +698,7 @@ export function createCoreFx3D(options = {}) {
       rec.fired = true;
       const hvx = finite(orb.host?.vel?.x ?? orb.host?.vx);
       const hvy = finite(orb.host?.vel?.y ?? orb.host?.vy);
-      if (MuzzleFX3D.available) MuzzleFX3D.fire('tempest', orb.x, orb.y, Math.atan2(orb.vy - hvy, orb.vx - hvx), S * 1.3);
+      if (WeaponFx.available) WeaponFx.muzzleAt('railgun_mk1', orb.x, orb.y, Math.atan2(orb.vy - hvy, orb.vx - hvx), S * 1.3);
     }
     if (!(simDt > 0) || !Fx3D.ensure()) return;
     const sp = Math.hypot(orb.vx, orb.vy);
@@ -1120,7 +810,7 @@ export function createCoreFx3D(options = {}) {
     orbList.push({ orb, color: col, plasma: plasmaSparkColor(col), seed: rng(), fired: false, trailAcc: 0, sparkAcc: 0, arcAcc: 0, meltCd: 0 });
   }
 
-  // Rozbłysk plazmy (patrz FLASH_FRAGMENT): promień rośnie do `radius`.
+  // Rozbłysk plazmy (createCoreFlashMaterial w coreFx3D.tsl.js): promień rośnie do `radius`.
   function flash(x, y, radius, color, duration = 0.45, o = {}) {
     if (!(radius > 0)) return;
     if (flashList.length >= MAX_FLASHES) flashList.shift();

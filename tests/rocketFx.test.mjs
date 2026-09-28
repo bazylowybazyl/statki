@@ -552,6 +552,22 @@ test('lot rakiet: efekty nie zmieniają Math.random gry, toru ani trafień; kole
   initRocketSystem3D(null, { effects: rfx });
 });
 
+test('warstwa DIST: zgłoszenia właścicieli w klatce łączone przez OR, kasowane na starcie klatki efektów', async () => {
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const f = new FxFrame();
+  const c = Object.assign(Object.create(Core3D), { fx: f });
+  const r = fakeRenderer(500);
+  f.attach(r, c);
+  f.addStep({ name: 'broń', update: () => c.setDistortLayerActive(true) });
+  f.addStep({ name: 'rakiety', update: () => c.setDistortLayerActive(false) });
+  f.frame(r, cam, null, 1920, 1080, false, 0);
+  assert.equal(f.distortLayerActive, true, 'późniejsze „nie mam” nie gasi zgłoszenia innego właściciela');
+  f.steps.length = 0;
+  r.info.frame = 501;
+  f.frame(r, cam, null, 1920, 1080, false, 16);
+  assert.equal(f.distortLayerActive, false, 'bez zgłoszeń w klatce — warstwa wyłączona');
+});
+
 test('rocketVfxIndex: supernowa, szybka salwa, manewrujący', () => {
   assert.equal(rocketVfxIndex(MASTER_WEAPONS.supernova_missile), VFX_NOVA);
   assert.equal(rocketVfxIndex(MASTER_WEAPONS.fast_missile_rack), VFX_FAST);

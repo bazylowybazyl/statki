@@ -331,7 +331,213 @@ const SCENES = {
          S.cam(ship.pos.x, ship.pos.y, 0.5);
          const c2 = window.camera2, p2 = window.player2Ship;
          if (c2 && p2) { c2.transition = null; c2.x = c2.targetX = p2.pos.x; c2.y = c2.targetY = p2.pos.y; c2.zoom = c2.targetZoom = 0.5; }`
+  },
+  // Zadanie 16: rozpad stacji planet (GLB). Sesja „stacja” — osobna, nie przesuwa innych scen; baza z tagu
+  // przez `baza.mjs --dopisz`. Stacja planety spoza ringów (Wenus, Merkury, Saturn, Uran — model stacji Ziemi)
+  // stoi w środku planety na warstwie FG; rozpad woła te same funkcje co gra (destroyStation3D z tej samej
+  // instancji modułu, Destruction3D.detachChunk przy progach HP).
+  'stacja-przygotowanie': {
+    opis: 'Bez zrzutu: bryły stacji planet od nowa w znanej klatce (kąt obrotu, wypiek rozpadu z ziarnem sceny)',
+    capture: false, warm: 2,
+    // Bryły stacji powstają w pierwszej klatce gry po wczytaniu GLB (czas rzeczywisty) i od tej chwili obracają się
+    // o 0,002 rad na klatkę; wypiek rozpadu (losowe kierunki trójkątów, próbki odłamków paneli — Math.random) idzie
+    // przy tej samej klatce. Liczba klatek przed „hold” jest zmienna, więc: detachPlanetStations3D (rekordy i bryły
+    // znikają), skasowany wypiek z geometrii szablonu, nowe ziarno i jedna klatka — updateStations3D składa bryły,
+    // kąty i wypiek na nowo z tego samego stanu losowania w każdym przebiegu.
+    js: `const glb = () => stations.filter((s) => !s.ringPort && !s.isPirate).every((s) => !!s._mesh3d);
+         for (let i = 0; i < 900 && !glb(); i++) await H.frames(2);
+         if (!glb()) throw new Error('bryły stacji planet nie powstały (GLB)');
+         for (const s of stations) s._mesh3d?.traverse((o) => { const g = o.geometry; if (g) { delete g.__shatterBaked; delete g.__shardSpawnData; } });
+         window.detachPlanetStations3D();
+         H.reseed(0x57ac);
+         await H.frames(1);
+         if (!glb()) throw new Error('bryły stacji planet nie wróciły po detachPlanetStations3D');
+         // Stała liczba klatek (każda obraca stacje): wgrywanie tekstur idzie w requestIdleCallback, bez klatek gry.
+         await H.frames(10);
+         for (let i = 0; i < 600 && !S.uploadsIdle(); i++) await new Promise((r) => setTimeout(r, 100));`
+  },
+  'stacja-rozpad': {
+    opis: 'Rozpad stacji Wenus (destroyStation3D jak gra przy 0 HP): 4 klatki po — wygaszenie bryły (klony materiałów GLB, błysk emisji), odłamki paneli przy kadłubie, wybuch reaktora z overlaya; zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'venus');
+         S.cam(st.x, st.y, 0.5);
+         await H.frames(3);
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x16a1);
+         st._destroyed3D = true;
+         destroyStation3D(st, { shockwave: true });
+         await H.step(4);
+         S.cam(st.x, st.y, 0.5);`
+  },
+  'stacja-odlamki': {
+    opis: 'Ta sama stacja 2,5 s po rozpadzie: odłamki paneli daleko, część gaśnie, zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'venus');
+         await H.step(146);
+         S.cam(st.x, st.y, 0.5);`
+  },
+  'stacja-trojkaty': {
+    opis: 'Rozpad stacji Merkurego na trójkąty (debrisStyle „triangles” — materiał rozpadu w shaderze, droga zapasowa odłamków paneli) 0,5 s po, zoom 0,35',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'mercury');
+         S.cam(st.x, st.y, 0.35);
+         await H.frames(3);
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x16a2);
+         st._destroyed3D = true;
+         destroyStation3D(st, { shockwave: true, debrisStyle: 'triangles' });
+         await H.step(30);
+         S.cam(st.x, st.y, 0.35);`
+  },
+  'stacja-implozja': {
+    opis: 'Implozja stacji Saturna (mode „implode” — zapas przy wielu rozpadach naraz) 0,5 s po, zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    js: `const st = stations.find((s) => s.id === 'saturn');
+         S.cam(st.x, st.y, 0.5);
+         await H.frames(3);
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x16a3);
+         st._destroyed3D = true;
+         destroyStation3D(st, { shockwave: true, mode: 'implode' });
+         await H.step(30);
+         S.cam(st.x, st.y, 0.5);`
+  },
+  'stacja-ciecie': {
+    opis: 'Odpadnięty fragment stacji Urana (detachChunk jak gra przy progu HP) po podziale na kawałki z płaszczyznami cięcia, 2 s po podziale, zoom 0,8',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    // Fragment leci ~7 s, potem pęka (wybuchy łańcuchowe) i ~3 s później dzieli się na 2–6 kawałków — klony
+    // z płaszczyznami cięcia (WebGL: material.clippingPlanes, WebGPU: ClippingGroup). Kroki co 30 klatek do
+    // podziału (liczba kroków z ziarna — ta sama w każdym przebiegu), kamera na środku kawałków.
+    js: `const st = stations.find((s) => s.id === 'uranus');
+         S.cam(st.x, st.y, 0.8);
+         await H.frames(3);
+         H.reseed(0x16a4);
+         Destruction3D.detachChunk(st._mesh3d);
+         const pieces = () => Core3D.scene.children.filter((o) => /__piece\\d+$/.test(o.name) || o.children.some((c) => /__piece\\d+$/.test(c.name)));
+         let k = 0;
+         for (; k < 40 && !pieces().length; k++) await H.step(30);
+         window.__harnessDiag = { krokiDoPodzialu: k * 30, kawalki: pieces().length };
+         await H.step(120);
+         const p = new Core3D.scene.position.constructor();
+         const c = { x: 0, y: 0, n: 0 };
+         for (const o of pieces()) { o.getWorldPosition(p); c.x += p.x; c.y -= p.y; c.n++; }
+         if (c.n) S.cam(c.x / c.n, c.y / c.n, 0.8);`
   }
+};
+
+// ── Galeria broni (zadanie 17) ────────────────────────────────────────────────────────────────
+// Efekty broni z dema bronie-webgpu w grze. Cel: pancernik (kadłub Iron Skull) bez AI — stoi;
+// sojuszniczy, żeby gracz go nie namierzał (ramka namiaru w kadrze); bez tarczy (val i max = 0:
+// wiązki kończą się na promieniu tarczy przy val > 0 także z DevFlags.globalShieldsOff — tak
+// liczy resolveBeamWorldHit), wstrząs kamery wyłączony (stały kadr), HP przywracane przed zrzutem
+// (bez paska). Działo = wroga platforma bez kadłuba (strzelec bez wieżyczek — wylot w punkcie
+// lufy, jak u myśliwca) z obrażeniami × 1e-6, więc kadłub zostaje cały między ujęciami. Strzał
+// idzie ścieżką NPC w grze: window.fireWeaponCore → szyna strzałów → WeaponFx; lot, trafienia
+// i zapalnik flaku liczy gra. Ujęcie rodziny: kilka strzałów w odstępach i zrzut tuż po ostatnim
+// (wylot, pociski w locie, smugi, trafienia) — przed nim czyste pule (WeaponFx.reset) i ziarno
+// ujęcia. Hexlance — ścieżka superbroni gracza (Atlas: ładowanie, salwa).
+// Obok: scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie <te same bronie>.
+// Ujęcia: [nazwa, broń, strzałów, odstęp (klatki 60 Hz), klatek po ostatnim, zoom].
+const GALERIA_BRONI = [
+  ['yamato', 'special_yamato_cannon', 2, 24, 3, 0.8],
+  ['mjolnir', 'siege_railgun', 2, 24, 3, 0.8],
+  ['valkyrie', 'special_valkyrie_railgun', 3, 16, 3, 0.8],
+  ['goliath', 'special_goliath_autocannon', 6, 8, 2, 0.9],
+  ['gatling-plazmowy', 'special_plasma_gatling', 9, 6, 2, 0.9],
+  ['armata', 'armata_mk1', 3, 18, 3, 0.9],
+  ['tempest', 'tempest_ion_l', 3, 16, 3, 0.9],
+  ['helios', 'helios_laser', 4, 12, 2, 0.9],
+  ['autokanon', 'heavy_autocannon', 5, 9, 2, 0.9],
+  ['vulcan', 'vulcan_minigun', 12, 4, 2, 0.9],
+  ['wiazka-ciagla', 'beam_continuous', 40, 1, 1, 0.9],
+  ['wiazka-impuls', 'beam_pulse', 3, 14, 3, 0.9],
+  ['ciws', 'ciws_mk1', 14, 4, 2, 0.9],
+  ['laser-pd', 'laser_pd_mk1', 5, 11, 2, 0.9],
+  ['flak', 'flak_m', 3, 22, 4, 0.9]
+];
+const GALERIA_POMOC = `const G = window.__galeria;
+  const WFX = window.WeaponFx;
+  const gun = (x, y) => ({ id: 'galeria-dzialo', x, y, pos: { x, y }, vel: { x: 0, y: 0 }, vx: 0, vy: 0, angle: 0, angVel: 0, friendly: false, modifiers: { damage: 1e-6 } });
+  const noShield = () => { if (G.T.shield) { G.T.shield.val = 0; G.T.shield.max = 0; } };
+  // aim — cel (encja) albo punkt na kadłubie; laser PD dostaje zawsze kadłub (szybka ścieżka PD).
+  const fire = (g, id, aim, uid) => {
+    noShield();
+    const dx = aim.x - g.x, dy = aim.y - g.y, d = Math.hypot(dx, dy) || 1;
+    const aux = MASTER_WEAPONS[id]?.mountType === 'aux';
+    return window.fireWeaponCore(g, aim, id, { pos: { x: g.x, y: g.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: 0, y: 0 }, emitterUid: uid, pdTarget: aux ? G.T : null });
+  };
+  const clear = async () => { for (const b of window.bullets) b.life = -1; await H.step(2); WFX?.reset(); noShield(); };
+  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
+for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
+  SCENES[`galeria-${name}`] = {
+    opis: `Galeria broni: ${id} — ${shots} strz. co ${gap} kl. w pancernik z 1050 j., zrzut ${after} kl. po ostatnim, zoom ${zoom}`,
+    hud: false, warm: 2,
+    js: `${GALERIA_POMOC}
+         await clear();
+         const T = G.T; const g = gun(T.x - 1050, T.y);
+         S.cam(T.x - 520, T.y, ${zoom});
+         H.reseed(${0x6a1100 + i});
+         for (let k = 0; k < ${shots}; k++) { fire(g, '${id}', T, 'galeria:${name}'); await H.step(k < ${shots - 1} ? ${gap} : ${after}); }
+         calm(); S.cam(T.x - 520, T.y, ${zoom});`
+  };
+}
+SCENES['galeria-przygotowanie'] = {
+  opis: 'Bez zrzutu: cel galerii broni — pancernik bez AI i tarczy, wstrząs kamery wyłączony',
+  capture: false, warm: 2,
+  js: `DevFlags.globalShieldsOff = true; DevFlags.disableCameraShake = true;
+       DevScene.teleport(${DEEP.x - 600000}, ${DEEP.y - 200000}, 0);
+       const r = spawnCallInShip('pirate_battleship', { mode: 'friendly', spawnPos: { x: ship.pos.x + 5200, y: ship.pos.y }, spawnAngle: Math.PI });
+       const T = Array.isArray(r) ? r[0] : r; T.ai = null;
+       window.__galeria = { T };
+       if (T.shield) { T.shield.val = 0; T.shield.max = 0; }
+       // Kursor w rogu: pod kursorem na środku kadru rósł namiar SINGLE (ramka w zrzucie).
+       document.getElementById('c')?.dispatchEvent(new MouseEvent('mousemove', { clientX: 24, clientY: 24, bubbles: true }));
+       S.cam(T.x - 520, T.y, 0.42);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);`
+};
+// Przegląd: 15 rodzin naraz z łuku 1250 j. wokół pancernika, każda w swój punkt kadłuba (elipsa wokół
+// środka po stronie działa). Lekkie kończą serię w klatce zrzutu, ciężkie (Yamato, Mjolnir, Valkyrie,
+// Armata, Tempest) wcześniej o `lag` klatek — ich rozbłysk wylotu (Mjolnir: ~1,3 tys. j.) zdążył zgasnąć
+// i nie zalewa kadru, zostają trafienia i smugi. [broń, strzałów, odstęp, lag]
+const GALERIA_PRZEGLAD = { yamato: [1, 1, 40], mjolnir: [1, 1, 50], valkyrie: [2, 16, 20], armata: [2, 18, 10], tempest: [2, 16, 6] };
+SCENES['galeria-broni'] = {
+  opis: 'Galeria broni: 15 rodzin naraz (działa Capital/L/M/S, wiązki, CIWS, laser PD, flak) z łuku wokół pancernika, zoom 0,42',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const T = G.T;
+       const L = ${JSON.stringify(GALERIA_BRONI.map(([name, id, shots, gap]) => {
+         const o = GALERIA_PRZEGLAD[name];
+         return o ? [name, id, o[0], o[1], o[2]] : [name, id, shots, gap, 0];
+       }))};
+       const ang = (i) => Math.PI * (0.6 + 0.8 * i / (L.length - 1));
+       const guns = L.map((e, i) => gun(T.x + Math.cos(ang(i)) * 1250, T.y + Math.sin(ang(i)) * 1250));
+       const aims = L.map((e, i) => ({ x: T.x + Math.cos(ang(i)) * 300, y: T.y + Math.sin(ang(i)) * 140 }));
+       const end = Math.max(...L.map(([, , n, gap, lag]) => (n - 1) * gap + lag));
+       S.cam(T.x - 380, T.y, 0.42);
+       H.reseed(0x6a11ff);
+       for (let f = 0; f <= end; f++) {
+         L.forEach(([name, id, n, gap, lag], i) => { const k = f - (end - lag - (n - 1) * gap); if (k >= 0 && k <= (n - 1) * gap && k % gap === 0) fire(guns[i], id, aims[i], 'galeria-przeglad:' + name); });
+         await H.step(1);
+       }
+       await H.step(1);
+       calm(); S.cam(T.x - 380, T.y, 0.42);`
+};
+// Hexlance: superbroń gracza (Atlas) — dwa wciśnięcia (ładowanie 1,2 s, salwa 4 strzałów co 0,25 s).
+SCENES['galeria-hexlance'] = {
+  opis: 'Galeria broni: Hexlance gracza (ładowanie, salwa — lanca, smuga, igła, wejście w pancernik 5200 j. dalej), zoom 0,33',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const T = G.T; const cx = ship.pos.x + 2900;
+       S.cam(cx, T.y, 0.33);
+       H.reseed(0x6a12ff);
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(80);
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(40);
+       calm(); S.cam(cx, T.y, 0.33);`
 };
 
 // Sesje = jedno wczytanie strony; sceny w sesji idą po kolei (kolejność ma znaczenie).
@@ -344,7 +550,11 @@ const SESSIONS = [
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
   // Zadanie 19: osobna sesja — nie przesuwa scen sesji „kosmos” (baza z tagu).
   { id: 'rakiety', query: 'dev=1', start: 'single', sprites: true, scenes: ['galeria-rakiet', 'galeria-rakiet-trafienie', 'galeria-rakiet-supernowa', 'galeria-rakiet-pozostalosc', 'galeria-rakiet-tarcza'] },
-  { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] }
+  { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
+  { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
+  // Galeria broni (zadanie 17): własna sesja — sceny bitwy w „kosmos” zostają bez zmian klatek.
+  { id: 'galeria', query: 'dev=1', start: 'single', sprites: true,
+    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance'] }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).
@@ -418,6 +628,24 @@ async function runSession(session, backend, outDir, base) {
           await screenshotPng(cdp, join(outDir, `${id}__${nazwa}.png`));
         }
         await ev('window.__harness.scene.isolate(null)');
+        await ev('window.__harness.frames(3)');
+      }
+      // Warianty bez overlaya efektów (zadanie 16): wybuch reaktora z overlaya (własny WebGLRenderer do zadania 20,
+      // kanwa `canvas.overlay3d` nad grą) zalewa kadr rozpadu — `__3d` (cała klatka Core3D) i `__fg-3d` (sama warstwa
+      // FG: bryły stacji, odłamki, kawałki, cień słońca na łapaczu FG) pokazują materiały zadania. Ukrycie kanwy to
+      // tylko CSS (overlay dalej liczy). W `__fg-3d` także bez passów planet (perfToggles.planetPass): quad poświaty
+      // planet idzie poza kamerami passów, więc izolacja warstw go nie zdejmuje (poświata = zadanie 05).
+      if (sc.bezOverlay) {
+        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = 'hidden'; return true; })()`);
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__3d.png`));
+        await ev('window.__harness.scene.isolate([2])');
+        await ev('(() => { window.Core3D.setPerfToggles({ planetPass: false }); return true; })()');
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__fg-3d.png`));
+        await ev('(() => { window.Core3D.setPerfToggles({ planetPass: true }); return true; })()');
+        await ev('window.__harness.scene.isolate(null)');
+        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = ''; return true; })()`);
         await ev('window.__harness.frames(3)');
       }
       // --teren-ringu (zadanie 07): wariant `__teren` — tylko siatka terenu ringu Ziemi (reszta sceny

@@ -59,7 +59,12 @@ test('haze reaktora w osi sceny (y3d = -yGry); rakiety i Supernowa przez znieksz
   assert.match(fx, /field\.shock\(this\.sx\[i\] \+ S\[o \+ 6\] \* a, this\.sy\[i\] \+ S\[o \+ 7\] \* a,/, 'fala w świecie gry (x, y), nie w osi sceny');
   assert.match(fx, /field\.implode\(this\.nvx\[i\], this\.nvy\[i\],/);
   assert.match(fx, /field\.heat\(this\.hx\[i\] \+ H\[o \+ 3\] \* a, this\.hy\[i\] \+ H\[o \+ 4\] \* a,/);
-  assert.doesNotMatch(code('src/effects3d/yamato.js'), /trigger3DShockwave|sw3d\(/, 'Yamato bez fali');
+  // Yamato i reszta broni (zadanie 17): receptury z dema bronie-webgpu (src/3d/weapons/) — fala
+  // to zniekształcenie Core3D (pula DIST, sama refrakcja — decyzja 2026-09-27: efekty z dema),
+  // nigdy dawna fala overlaya trigger3DShockwave.
+  for (const f of ['recipes.js', 'weaponFx.js', 'gpuFx.js']) {
+    assert.doesNotMatch(code(`src/3d/weapons/${f}`), /trigger3DShockwave|sw3d\(/, `${f}: broń bez fali overlaya`);
+  }
   assert.doesNotMatch(code('src/effects3d/reactorblow.js'), /shockwave3D: \{|heatHaze: \{/, 'wybuchy reaktorów bez fali i haze');
   for (const f of ['stationChainProfile', 'stationCutProfile', 'stationFinalProfile']) {
     assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
@@ -93,9 +98,10 @@ test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania b
   const overlay = read('src/effects3d/overlay.js');
   assert.match(overlay, /setBloomModifier: \(key, modifier\) =>/);
   assert.match(overlay, /clearBloomModifier: \(key\) =>/);
-  const yamato = read('src/effects3d/yamato.js');
-  assert.match(yamato, /overlay\.setBloomModifier\(lease, YAMATO_BLOOM_SUPPRESSION\)/);
-  assert.doesNotMatch(yamato, /setBloomConfig|__yamatoBloomSuppression/);
+  // Yamato nie jest już w overlayu (zadanie 17 — receptura WeaponFx w Core3D): bez modyfikatora
+  // i bez zapisu konfiguracji bloomu.
+  const weaponFx = code('src/3d/weapons/weaponFx.js') + code('src/3d/weapons/recipes.js');
+  assert.doesNotMatch(weaponFx, /setBloomConfig|setBloomModifier|__yamatoBloomSuppression/);
   // Supernowa (zadanie 19) nie jest już w overlayu: podbicie bloomu i przygaszenie idą przez
   // Core3D.fx.post (kasowane co klatkę efektów), bez zapisu/przywracania konfiguracji bloomu.
   const rocketFx = code('src/3d/rockets/rocketFx.js');

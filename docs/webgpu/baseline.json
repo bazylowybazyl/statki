@@ -4084,6 +4084,1017 @@
         "srednia": 0,
         "maks": 0
       }
+    },
+    "stacja-rozpad": {
+      "opis": "Rozpad stacji Wenus (destroyStation3D jak gra przy 0 HP): 4 klatki po — wygaszenie bryły (klony materiałów GLB, błysk emisji), odłamki paneli przy kadłubie, wybuch reaktora z overlaya; zoom 0,5",
+      "sesja": "stacja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      },
+      "drawCalls": 43,
+      "trojkaty": 302935,
+      "passy": {
+        "total": 43,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 20,
+        "bloom": 13,
+        "post": 1,
+        "other": 3
+      },
+      "coreRenderMs": 0.415,
+      "gpuMs": 1.227,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00001,
+        "p50": 0.01,
+        "p90": 0.1019,
+        "p99": 0.322,
+        "p999": 0.5704,
+        "max": 2.345
+      },
+      "stan": {
+        "kroki": 4,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6345704,
+          5468780,
+          0.5,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 7,
+              "instancje": 448
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "stacja-rozpad__3d": {
+      "wariantSceny": "stacja-rozpad",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      }
+    },
+    "stacja-rozpad__fg-3d": {
+      "wariantSceny": "stacja-rozpad",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 2
+      }
+    },
+    "stacja-rozpad__fg": {
+      "wariantSceny": "stacja-rozpad",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      }
+    },
+    "stacja-rozpad__ortho": {
+      "wariantSceny": "stacja-rozpad",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-rozpad__planety": {
+      "wariantSceny": "stacja-rozpad",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-rozpad__tlo": {
+      "wariantSceny": "stacja-rozpad",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-odlamki": {
+      "opis": "Ta sama stacja 2,5 s po rozpadzie: odłamki paneli daleko, część gaśnie, zoom 0,5",
+      "sesja": "stacja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 43,
+      "trojkaty": 302935,
+      "passy": {
+        "total": 43,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 20,
+        "bloom": 13,
+        "post": 1,
+        "other": 3
+      },
+      "coreRenderMs": 0.36,
+      "gpuMs": 0.922,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.01,
+        "p90": 0.1044,
+        "p99": 0.3239,
+        "p999": 0.564,
+        "max": 0.768
+      },
+      "stan": {
+        "kroki": 150,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6345704,
+          5468780,
+          0.5,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 7,
+              "instancje": 448
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "stacja-odlamki__3d": {
+      "wariantSceny": "stacja-odlamki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-odlamki__fg-3d": {
+      "wariantSceny": "stacja-odlamki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-odlamki__fg": {
+      "wariantSceny": "stacja-odlamki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-odlamki__ortho": {
+      "wariantSceny": "stacja-odlamki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-odlamki__planety": {
+      "wariantSceny": "stacja-odlamki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-odlamki__tlo": {
+      "wariantSceny": "stacja-odlamki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-trojkaty": {
+      "opis": "Rozpad stacji Merkurego na trójkąty (debrisStyle „triangles” — materiał rozpadu w shaderze, droga zapasowa odłamków paneli) 0,5 s po, zoom 0,35",
+      "sesja": "stacja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      },
+      "drawCalls": 39,
+      "trojkaty": 228119,
+      "passy": {
+        "total": 39,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 16,
+        "bloom": 13,
+        "post": 1,
+        "other": 3
+      },
+      "coreRenderMs": 0.31,
+      "gpuMs": 1.254,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.01958,
+        "p50": 0.0104,
+        "p90": 0.2418,
+        "p99": 1.2178,
+        "p999": 1.5985,
+        "max": 1.916
+      },
+      "stan": {
+        "kroki": 180,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          5712809,
+          6178282,
+          0.35,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 7,
+              "instancje": 448
+            },
+            "ShaderMaterial:uTime+uShatterTime+uDuration": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "stacja-trojkaty__3d": {
+      "wariantSceny": "stacja-trojkaty",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      }
+    },
+    "stacja-trojkaty__fg-3d": {
+      "wariantSceny": "stacja-trojkaty",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 2
+      }
+    },
+    "stacja-trojkaty__fg": {
+      "wariantSceny": "stacja-trojkaty",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-trojkaty__ortho": {
+      "wariantSceny": "stacja-trojkaty",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-trojkaty__planety": {
+      "wariantSceny": "stacja-trojkaty",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-trojkaty__tlo": {
+      "wariantSceny": "stacja-trojkaty",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-implozja": {
+      "opis": "Implozja stacji Saturna (mode „implode” — zapas przy wielu rozpadach naraz) 0,5 s po, zoom 0,5",
+      "sesja": "stacja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      },
+      "drawCalls": 42,
+      "trojkaty": 277271,
+      "passy": {
+        "total": 42,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 4,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 16,
+        "bloom": 13,
+        "post": 1,
+        "other": 4
+      },
+      "coreRenderMs": 0.33,
+      "gpuMs": 1.331,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0133,
+        "p90": 0.5175,
+        "p99": 0.8579,
+        "p999": 0.8745,
+        "max": 0.875
+      },
+      "stan": {
+        "kroki": 210,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          7111470,
+          2781736,
+          0.5,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 7,
+              "instancje": 448
+            },
+            "ShaderMaterial:uTime+uShatterTime+uDuration": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:uTime+uStartTime+uDuration": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "stacja-implozja__3d": {
+      "wariantSceny": "stacja-implozja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-implozja__fg-3d": {
+      "wariantSceny": "stacja-implozja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      }
+    },
+    "stacja-implozja__fg": {
+      "wariantSceny": "stacja-implozja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-implozja__ortho": {
+      "wariantSceny": "stacja-implozja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-implozja__planety": {
+      "wariantSceny": "stacja-implozja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      }
+    },
+    "stacja-implozja__tlo": {
+      "wariantSceny": "stacja-implozja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-ciecie": {
+      "opis": "Odpadnięty fragment stacji Urana (detachChunk jak gra przy progu HP) po podziale na kawałki z płaszczyznami cięcia, 2 s po podziale, zoom 0,8",
+      "sesja": "stacja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 38,
+      "trojkaty": 247523,
+      "passy": {
+        "total": 38,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 15,
+        "bloom": 13,
+        "post": 1,
+        "other": 3
+      },
+      "coreRenderMs": 0.28,
+      "gpuMs": 1.468,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00023,
+        "p50": 0.0101,
+        "p90": 0.0441,
+        "p99": 0.1446,
+        "p999": 0.8707,
+        "max": 10.689
+      },
+      "stan": {
+        "kroki": 1410,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          9654460,
+          8138270,
+          0.8,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uShatterTime+uDuration": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "stacja-ciecie__3d": {
+      "wariantSceny": "stacja-ciecie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-ciecie__fg-3d": {
+      "wariantSceny": "stacja-ciecie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-ciecie__fg": {
+      "wariantSceny": "stacja-ciecie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-ciecie__ortho": {
+      "wariantSceny": "stacja-ciecie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-ciecie__planety": {
+      "wariantSceny": "stacja-ciecie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "stacja-ciecie__tlo": {
+      "wariantSceny": "stacja-ciecie",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
     }
   },
   "wydajnosc": {
@@ -4307,6 +5318,48 @@
         "ring-habitat__tlo"
       ],
       "polecenie": "node scripts/webgpu/baza.mjs --dopisz .tmp/webgpu/zadania/08/baza-ziemia-ring"
+    },
+    {
+      "kiedy": "2026-09-28T01:08:49.627Z",
+      "commitPrzebiegu": "766fe6a",
+      "sceny": [
+        "stacja-rozpad",
+        "stacja-rozpad__3d",
+        "stacja-rozpad__fg-3d",
+        "stacja-rozpad__fg",
+        "stacja-rozpad__ortho",
+        "stacja-rozpad__planety",
+        "stacja-rozpad__tlo",
+        "stacja-odlamki",
+        "stacja-odlamki__3d",
+        "stacja-odlamki__fg-3d",
+        "stacja-odlamki__fg",
+        "stacja-odlamki__ortho",
+        "stacja-odlamki__planety",
+        "stacja-odlamki__tlo",
+        "stacja-trojkaty",
+        "stacja-trojkaty__3d",
+        "stacja-trojkaty__fg-3d",
+        "stacja-trojkaty__fg",
+        "stacja-trojkaty__ortho",
+        "stacja-trojkaty__planety",
+        "stacja-trojkaty__tlo",
+        "stacja-implozja",
+        "stacja-implozja__3d",
+        "stacja-implozja__fg-3d",
+        "stacja-implozja__fg",
+        "stacja-implozja__ortho",
+        "stacja-implozja__planety",
+        "stacja-implozja__tlo",
+        "stacja-ciecie",
+        "stacja-ciecie__3d",
+        "stacja-ciecie__fg-3d",
+        "stacja-ciecie__fg",
+        "stacja-ciecie__ortho",
+        "stacja-ciecie__planety",
+        "stacja-ciecie__tlo"
+      ],
+      "polecenie": "node scripts/webgpu/baza.mjs --dopisz C:/Users/Szymon/Documents/GitHub/statki/.tmp/webgpu/zadania/16/baza-stacja"
     }
   ]
 }

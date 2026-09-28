@@ -1844,7 +1844,9 @@ export const Core3D = {
   // dysze i tarcze zostają przy pushHeatHazeWorld.
   fxDistortion() { return this.fx ? this.fx.distortionSources() : null; },
   // Warstwa DIST (FX_DISTORT_LAYER): właściciel zgłasza co klatkę, czy ma widoczną zawartość.
-  setDistortLayerActive(active) { if (this.fx) this.fx.distortLayerActive = !!active; },
+  // Warstwa DIST: zgłoszenia właścicieli w klatce łączone przez OR (broń, rakiety, …) — FxFrame
+  // kasuje flagę na starcie klatki efektów, właściciel zgłasza w swoim kroku (update).
+  setDistortLayerActive(active) { if (this.fx && active) this.fx.distortLayerActive = true; },
 
   // Pass sceny bez widocznej zawartości pomijamy w całości.
   _scenePassHasContent(pass, activity) {

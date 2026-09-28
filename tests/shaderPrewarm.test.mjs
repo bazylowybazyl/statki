@@ -35,20 +35,23 @@ test('overlay3D: prewarm renderuje kompozytor ze wszystkim widocznym i trzyma pr
   assert.match(overlay, /rawScene, rawLayer, prewarm,/, 'prewarm w API overlaya');
 });
 
-test('gra: overlay rozgrzewany próbkami fabryk tworzących materiały na każdy wybuch', () => {
+// Zadanie 17: fabryk trafień broni w overlayu (rail, armata, działko, Yamato) już nie ma — trafienia
+// to receptury WeaponFx (pule GPU w Core3D, rozgrzewane krokiem Core3D.fx: kernele compute
+// i siatki przez prewarmPass). Overlay rozgrzewa to, co w nim zostało.
+test('gra: overlay rozgrzewany z pulami w scenie; efekty broni rozgrzewa krok Core3D.fx', () => {
   const body = functionBody(indexHtml, 'function startOverlay3D(');
-  const call = body.indexOf('ov.prewarm?.(prewarmSamples)');
+  const call = body.indexOf('ov.prewarm?.()');
   assert.ok(call > 0, 'startOverlay3D woła ov.prewarm');
-  for (const factory of ['makeRailgunExplosion', 'makeArmataImpact', 'makeAutocannonImpact']) {
-    const at = body.indexOf(`prewarmSamples.push(window.${factory}(`);
-    assert.ok(at > 0 && at < call, `próbka ${factory} przed rozgrzewką`);
-  }
-  // Pule (Yamato, reaktor) muszą już wisieć w scenie. Iskry, rakiety i Supernowa (port WebGPU,
-  // zadanie 19) są w scenie Core3D — rozgrzewa je krok efektów (niżej).
-  for (const init of ['window.makeYamatoImpact = yamatoFactory(ov.scene)', 'window.makeReactorBlow = reactorFactory(ov.scene)']) {
+  assert.doesNotMatch(body, /makeRailgunExplosion|makeArmataImpact|makeAutocannonImpact|makeYamatoImpact/, 'fabryki trafień broni wróciły do overlaya');
+  // Pula reaktora musi już wisieć w scenie. Iskry, rakiety i Supernowa (port WebGPU, zadanie 19)
+  // są w scenie Core3D — rozgrzewa je krok efektów (test niżej).
+  for (const init of ['window.makeReactorBlow = reactorFactory(ov.scene)']) {
     const at = body.indexOf(init);
     assert.ok(at > 0 && at < call, `${init} przed rozgrzewką`);
   }
+  const wfx = readFileSync(new URL('../src/3d/weapons/weaponFx.js', import.meta.url), 'utf8');
+  assert.match(wfx, /warm\(c\) \{ self\.gpu\.warm\(c\.renderer, c\.core\); self\._warmSystems\(c\); \}/);
+  assert.match(wfx, /core\.prewarmPass\(mesh, 0\)/);
 });
 
 test('rakiety i iskry (Core3D): rozgrzewka kroków efektów — compute, mapa gęstości, pule odsłonięte', () => {

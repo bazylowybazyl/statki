@@ -62,56 +62,108 @@ test('individual stars vary speed inside their parallax layer', async () => {
   assert.ok(speed.parallaxMax - speed.parallaxMin >= 0.6);
 });
 
-test('planet star shader uses per-star parallax and warp stretch attributes', () => {
-  const source = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+// Port WebGPU (zadanie 05): shader gwiazd to graf TSL (createStarMaterial w planet3d.assets.tsl.js) na kwadratach
+// instancjonowanych — WebGPU rysuje punkty po 1 px. Strażnicy dawnych regexów GLSL pilnują tych samych wzorów
+// w grafie (paralaksa per gwiazda, smugi tylko w skoku i przy biczu, głowa smugi w miejscu gwiazdy), a WGSL
+// budowany w Node — że atrybuty gwiazd naprawdę trafiają do shadera wierzchołków.
+const starSources = () => ({
+  js: readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n'),
+  tsl: readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+});
+const starGraphSource = (tsl) => tsl.slice(tsl.indexOf('export function createStarMaterial(u)'));
 
-  assert.doesNotMatch(source, /starSpeed:\s*0\.9/);
-  assert.match(source, /attribute\s+float\s+parallaxFactor\s*;/);
-  assert.match(source, /attribute\s+float\s+layerStretchMul\s*;/);
-  assert.doesNotMatch(source, /attribute\s+float\s+speedResponse\s*;/);
-  assert.doesNotMatch(source, /uniform\s+float\s+speedFactor\s*;/);
-  assert.match(source, /geo\.setAttribute\('parallaxFactor'/);
-  assert.match(source, /computeStarParallaxFactor/);
-  assert.match(source, /parallaxFactors\[i\]\s*=\s*computeStarParallaxFactor\(layer,\s*Math\.random\(\)\)/);
-  assert.doesNotMatch(source, /parallaxFactors\[i\]\s*=\s*layer\.parallax/);
+async function buildStarWgsl() {
+  const THREE = await import('three/webgpu');
+  const { texture, uniform, uniformArray, vec2 } = await import('three/tsl');
+  const { uniformsAdapter } = await import('../src/3d/tsl/uniformy.js');
+  const { createStarMaterial, createStarGeometry, STAR_PLANET_MASK_CAP } = await import('../src/3d/planet3d.assets.tsl.js');
+  const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
+  const renderer = new THREE.WebGPURenderer({ canvas });
+  renderer.hasFeature = () => false;
+  renderer.highPrecision = true;
+  const tex = new THREE.Texture();
+  tex.image = { width: 1, height: 1 };
+  const u = uniformsAdapter({
+    pointTexture: texture(tex, vec2(0.0)), time: uniform(0), cameraOffset: uniform(new THREE.Vector2()),
+    containerSize: uniform(220000), perspectiveScale: uniform(800), globalBrightness: uniform(1), warpFactor: uniform(0),
+    moveDir: uniform(new THREE.Vector2(0, 1)), stretchStrength: uniform(20), zoomComp: uniform(1), exitWhipFactor: uniform(0),
+    exitWhipStrength: uniform(1.75), viewportSize: uniform(new THREE.Vector2(1, 1)), thinningStrength: uniform(38), baseSizeMul: uniform(1.65),
+    planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4()), 'vec4')
+  });
+  const f = (k) => new Float32Array(2 * k);
+  const geometry = createStarGeometry({ starPos: f(3), size: f(1), brightness: f(1), color: f(3), parallaxFactor: f(1), layerSizeMul: f(1), layerBrightnessMul: f(1), layerStretchMul: f(1) }, 2);
+  const material = createStarMaterial(u);
+  const mesh = new THREE.Mesh(geometry, material);
+  const b = renderer.backend.createNodeBuilder(mesh, renderer);
+  b.material = material;
+  b.scene = new THREE.Scene();
+  b.camera = new THREE.PerspectiveCamera();
+  b.context.material = material;
+  b.build();
+  return { vertex: b.vertexShader, fragment: b.fragmentShader, geometry, material };
+}
+
+test('planet star shader uses per-star parallax and warp stretch attributes', async () => {
+  const { js, tsl } = starSources();
+  const graph = starGraphSource(tsl);
+
+  // Dane gwiazd: paralaksa losowana per gwiazda w obrębie warstwy (nie stała warstwy), bez „prędkości” lotu.
+  assert.doesNotMatch(js, /starSpeed:\s*0\.9/);
+  assert.match(js, /computeStarParallaxFactor/);
+  assert.match(js, /parallaxFactors\[i\]\s*=\s*computeStarParallaxFactor\(layer,\s*Math\.random\(\)\)/);
+  assert.doesNotMatch(js, /parallaxFactors\[i\]\s*=\s*layer\.parallax/);
+  assert.match(js, /createStarGeometry\(\{[\s\S]*?parallaxFactor: parallaxFactors,[\s\S]*?layerStretchMul: layerStretchMuls/);
+  // Graf: atrybuty paralaksy i rozciągania warstwy, bez speedFactor / speedResponse.
+  assert.match(graph, /attribute\('parallaxFactor', 'float'\)/);
+  assert.match(graph, /attribute\('layerStretchMul', 'float'\)/);
+  assert.doesNotMatch(tsl, /speedResponse|speedFactor/);
+  assert.match(graph, /const layeredOffset = u\.cameraOffset\.mul\(aParallax\);/);
+
+  // WGSL: atrybuty gwiazd są wejściem shadera wierzchołków (dane instancji w JEDNYM przeplecionym buforze).
+  const { vertex, geometry } = await buildStarWgsl();
+  for (const name of ['starPos', 'size', 'brightness', 'color', 'parallaxFactor', 'layerSizeMul', 'layerBrightnessMul', 'layerStretchMul']) {
+    assert.match(vertex, new RegExp(`@location\\( ?\\d+ ?\\) ${name} :`), `atrybut ${name} w WGSL`);
+  }
+  const buffers = new Set(Object.values(geometry.attributes).map((a) => (a.isInterleavedBufferAttribute ? a.data : a)));
+  assert.equal(buffers.size, 2, 'kwadrat + jeden bufor instancji (limit 8 buforów wierzchołków)');
 });
 
 test('normal flight speed does not drive warp stretch in the star shader', () => {
-  const source = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
-
-  assert.doesNotMatch(source, /max\s*\(\s*warpFactor\s*,\s*speedFactor\s*\*\s*speedResponse\s*\)/);
-  assert.match(source, /float\s+stretchDrive\s*=\s*max\s*\(\s*warpFactor\s*,\s*exitWhipFactor\s*\*\s*exitWhipStrength\s*\)\s*;/);
-  assert.match(source, /float\s+stretch\s*=\s*1\.0\s*\+\s*\(\s*stretchDrive\s*\*\s*stretchStrength\s*\*\s*layerStretchMul\s*\)/);
+  const graph = starGraphSource(starSources().tsl);
+  assert.doesNotMatch(graph, /max\(\s*u\.warpFactor\s*,\s*u\.speedFactor/);
+  assert.match(graph, /const stretchDrive = max\(u\.warpFactor, u\.exitWhipFactor\.mul\(u\.exitWhipStrength\)\);/);
+  assert.match(graph, /const stretch = float\(1\.0\)\.add\(stretchDrive\.mul\(u\.stretchStrength\)\.mul\(aLayerStretch\)\);/);
 });
 
 test('warp star streak keeps the star head anchored at the original point', () => {
-  const source = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
-
-  assert.match(source, /uniform\s+vec2\s+viewportSize\s*;/);
-  assert.match(source, /vec4\s+clipPosition\s*=\s*projectionMatrix\s*\*\s*mvPosition\s*;/);
-  assert.match(source, /clipPosition\.xy\s*-=\s*screenOffset\s*;/);
-  assert.match(source, /gl_Position\s*=\s*clipPosition\s*;/);
-  assert.match(source, /uv\.x\s*=\s*\(\s*uv\.x\s*-\s*0\.5\s*\)\s*\/\s*vStretch\s*;/);
-  assert.doesNotMatch(source, /\(\s*stretch\s*-\s*1\.0\s*\)\s*\*\s*0\.5/);
-  assert.doesNotMatch(source, /mvPosition\.xy\s*-=\s*moveDir/);
-  assert.doesNotMatch(source, /uv\.x\s*\*=\s*\(1\.0\s*\/\s*vStretch\)/);
+  const graph = starGraphSource(starSources().tsl);
+  // Głowa smugi w miejscu gwiazdy: środek punktu cofa się o pół boku wzdłuż kierunku skoku (viewportSize).
+  assert.match(graph, /const safeViewport = max\(u\.viewportSize, vec2\(1\.0\)\);/);
+  assert.match(graph, /const clipPosition = cameraProjectionMatrix\.mul\(mvPosition\)\.toVar\(\);/);
+  assert.match(graph, /clipPosition\.assign\(vec4\(clipPosition\.xy\.sub\(screenOffset\), clipPosition\.zw\)\);/);
+  assert.match(graph, /return vec4\(clipPosition\.xy\.add\(offset\), clipPosition\.zw\);/);
+  assert.match(graph, /suv\.assign\(vec2\(suv\.x\.sub\(0\.5\)\.div\(vStretch\), suv\.y\)\);/);
+  assert.doesNotMatch(graph, /stretch\.sub\(1\.0\)\.mul\(0\.5\)/);
+  assert.doesNotMatch(graph, /mvPosition\.xy\.sub\(u\.moveDir/);
+  // Kwadrat punktu z GL: bok gl_PointSize obcięty do ≥ 1 px (ALIASED_POINT_SIZE_RANGE w WebGL).
+  assert.match(graph, /const quadSize = max\(pointSize, 1\.0\);/);
 });
 
 test('warp exit uses a short whip pulse and preserves the last warp direction', () => {
-  const source = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
-
-  assert.match(source, /uniform\s+float\s+exitWhipFactor\s*;/);
-  assert.match(source, /uniform\s+float\s+exitWhipStrength\s*;/);
-  assert.match(source, /varying\s+float\s+vExitWhip\s*;/);
-  assert.match(source, /exitWhipTimer:\s*0/);
-  assert.match(source, /exitWhipDuration:\s*0\.34/);
-  assert.match(source, /this\.lastWarpState\s*===\s*'active'\s*&&\s*currentState\s*!==\s*'active'/);
-  assert.match(source, /this\.exitWhipTimer\s*=\s*this\.exitWhipDuration\s*;/);
-  assert.match(source, /Math\.pow\s*\(\s*whipT\s*,\s*2\.6\s*\)/);
-  assert.match(source, /this\.uniforms\.exitWhipFactor\.value\s*=\s*exitWhipFactor\s*;/);
-  assert.match(source, /lastWarpDirX/);
-  assert.match(source, /if\s*\(\s*this\.exitWhipTimer\s*>\s*0\s*\)\s*\{\s*dx\s*=\s*this\.lastWarpDirX\s*;\s*dy\s*=\s*this\.lastWarpDirY\s*;/);
-  assert.doesNotMatch(source, /this\.exitTimer\s*=\s*0\.8/);
+  const { js, tsl } = starSources();
+  const graph = starGraphSource(tsl);
+  assert.match(js, /exitWhipFactor: uniform\(0\.0\), exitWhipStrength: uniform\(1\.75\)/);
+  assert.match(graph, /const vExitWhip = u\.exitWhipFactor;/);
+  assert.match(graph, /const whipFlash = float\(1\.0\)\.add\(vExitWhip\.mul\(1\.25\)\)/);
+  assert.match(js, /exitWhipTimer:\s*0/);
+  assert.match(js, /exitWhipDuration:\s*0\.34/);
+  assert.match(js, /this\.lastWarpState\s*===\s*'active'\s*&&\s*currentState\s*!==\s*'active'/);
+  assert.match(js, /this\.exitWhipTimer\s*=\s*this\.exitWhipDuration\s*;/);
+  assert.match(js, /Math\.pow\s*\(\s*whipT\s*,\s*2\.6\s*\)/);
+  assert.match(js, /this\.uniforms\.exitWhipFactor\.value\s*=\s*exitWhipFactor\s*;/);
+  assert.match(js, /lastWarpDirX/);
+  assert.match(js, /if\s*\(\s*this\.exitWhipTimer\s*>\s*0\s*\)\s*\{\s*dx\s*=\s*this\.lastWarpDirX\s*;\s*dy\s*=\s*this\.lastWarpDirY\s*;/);
+  assert.doesNotMatch(js, /this\.exitTimer\s*=\s*0\.8/);
 });
 
 test('oddalenie kamery nie zagęszcza gwiazd: wzór rośnie z kadrem poniżej zoomu odniesienia', async () => {

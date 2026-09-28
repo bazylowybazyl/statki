@@ -188,6 +188,8 @@ export class FxFrame {
     ctx.frame = frameId;
     this.post.exposure = 1;
     this.post.bloomBoost = 0;
+    // Warstwa DIST: właściciele zgłaszają zawartość w tej klatce (OR — Core3D.setDistortLayerActive).
+    this.distortLayerActive = false;
     const steps = this.steps;
     const n = steps.length;
     // 1. paczki z CPU (stara rama)

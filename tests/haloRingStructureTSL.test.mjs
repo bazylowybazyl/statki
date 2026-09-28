@@ -93,10 +93,10 @@ test('konstrukcja i atmosfera: materiały węzłowe bez GLSL, stan renderu jak d
     const src = read(`src/3d/haloRing/${f}`);
     assert.doesNotMatch(src, /\/\* glsl \*\/|new THREE\.ShaderMaterial|gl_FragColor|gl_Position|from '\.\/haloRingGLSL\.js'/, `${f}: bez GLSL`);
   }
-  // CLOUDCOVER usunięte (ostatni użytkownik: chmury); SURFACE zostaje dla megastruktury i miasta (09)
+  // CLOUDCOVER usunięte (ostatni użytkownik: chmury); SURFACE — z megastrukturą i miastem (09)
   const glsl = read('src/3d/haloRing/haloRingGLSL.js');
   assert.doesNotMatch(glsl, /HALO_GLSL_CLOUDCOVER/);
-  assert.match(glsl, /export const HALO_GLSL_SURFACE = /);
+  assert.doesNotMatch(glsl, /export const HALO_GLSL_SURFACE = /);
   const P = makeParts();
   const { rest, top, clouds, shell, uniforms, terrain, domain } = P;
   for (const part of [rest, top]) {

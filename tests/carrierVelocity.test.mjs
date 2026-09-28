@@ -183,3 +183,47 @@ test('Fx3D: dym z lufy leci z okrętem (nośnik), a opór hamuje tylko jego ruch
     SimClock.reset();
   }
 });
+
+// --- Efekty broni (zadanie 17): paczka puli GPU niesie nośnik lufy ---
+// Receptura wylotu (pule z dema bronie-webgpu, src/3d/weapons/) nie rodzi cząstek na CPU: wysyła
+// paczkę, którą kernel rozwija na GPU. Nośnik lufy jedzie w paczce (prędkość w osiach sceny —
+// y odbite, t0 względem epoki gry, zegar), a rysunek liczy pos + v · (T − t0) jak Fx3D wyżej.
+test('WeaponFx: wylot armaty z pędzącego okrętu — paczki dymu i błysku niosą nośnik lufy', async () => {
+  stubCanvasDom();
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { FxFrame } = await import('../src/3d/fx/fxFrame.js');
+  const { WeaponFx } = await import('../src/3d/weapons/weaponFx.js');
+  const { BSTRIDE, BURST_CARRIER } = await import('../src/3d/weapons/gpuFx.js');
+  Core3D.isInitialized = true;
+  Core3D.scene = new (await import('three/webgpu')).Scene();
+  Core3D.fx = Core3D.fx || new FxFrame();
+  try {
+    assert.ok(WeaponFx.ensure(), 'WeaponFx powstał');
+    SimClock.reset();
+    const epoch = Core3D.fx.origin.simEpoch;
+    const carrier = { vx: 10000, vy: 2500, t0: epoch + 3, clock: CLOCK_RENDER };
+    for (const pool of WeaponFx.gpu.poolList) pool.burstCount = 0;
+    assert.ok(WeaponFx.muzzleAt('armata_mk1', 6_000_000, -2_000_000, 0.3, 1.5, carrier), 'receptura wylotu');
+    let checked = 0;
+    for (const pool of [WeaponFx.gpu.smoke, WeaponFx.gpu.add]) {
+      assert.ok(pool.burstCount > 0, `${pool.name || 'pula'}: paczki`);
+      for (let i = 0; i < pool.burstCount; i++) {
+        const b = pool.bursts.subarray(i * BSTRIDE * 4, (i + 1) * BSTRIDE * 4);
+        assert.deepEqual([b[BURST_CARRIER], b[BURST_CARRIER + 1], b[BURST_CARRIER + 2], b[BURST_CARRIER + 3]],
+          [10000, -2500, 3, CLOCK_RENDER], 'nośnik: vx, vy sceny, t0 − epoka gry, zegar');
+        checked++;
+      }
+    }
+    assert.ok(checked > 3);
+    // Bez nośnika — zero (efekt stoi w świecie).
+    for (const pool of WeaponFx.gpu.poolList) pool.burstCount = 0;
+    WeaponFx.muzzleAt('armata_mk1', 6_000_000, -2_000_000, 0.3, 1.5, null);
+    const b = WeaponFx.gpu.add.bursts;
+    assert.deepEqual([b[BURST_CARRIER] + 0, b[BURST_CARRIER + 1] + 0], [0, 0]);
+  } finally {
+    WeaponFx.reset();
+    Core3D.isInitialized = false;
+    Core3D.scene = null;
+    SimClock.reset();
+  }
+});

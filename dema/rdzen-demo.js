@@ -16,7 +16,6 @@ import { createReactorBlowFactory } from '../src/effects3d/reactorblow.js';
 import { createCoreFx3D } from '../src/3d/coreFx3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
-import { MuzzleFX3D } from '../src/3d/muzzleFx3D.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
@@ -929,11 +928,12 @@ function render(realDt, simFrameDt) {
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   cullEmptyWrecks();
   const renderEntities = S.destructibles.filter((e) => !e.dead);
-  // Wspólny bank cząstek (iskry, błyski wylotowe, Hexlance) — w grze przesuwa
-  // go Weapon3DSystem.syncProjectiles, dokładnie raz na klatkę; demo nie ma
-  // systemu broni 3D, więc robi to tutaj (czas symulacji: pauza zatrzymuje iskry).
+  // Wspólny bank cząstek Fx3D (iskry rdzeni) — tu w czasie symulacji (pauza zatrzymuje
+  // iskry). updateHexShips3D niżej woła też WeaponFx.sync (efekty broni z dema
+  // bronie-webgpu: wystrzał armaty wybuchu wtórnego, wyładowanie kuli, rzaz strumienia —
+  // budżet klatki i krok Core3D.fx), który przesuwa ten sam bank zegarem klatki — tak jak
+  // dawniej Weapon3DSystem.syncProjectiles.
   Fx3D.update(simFrameDt);
-  MuzzleFX3D.beginFrame();
   const t1 = performance.now();
   updateHexShips3D(cam, renderEntities, cullInfo);
   drawHexShips3D(ctx2d, W, H);
@@ -1348,17 +1348,24 @@ async function runBrowserBench() {
 
 // ---------------------------------------------------------------------------
 // API dla zrzutów (CDP) i konsoli
-function measureHDR({ x0 = 0, y0 = 0, w = W, h = H } = {}) {
+// Histogram HDR bufora sceny (Core3D.composerTarget: HalfFloat po resolve MSAA,
+// przed bloomem i ACES). Port WebGPU (zadanie 15): odczyt asynchroniczny, wiersz 0
+// = GÓRA celu (y0 od góry jak w pikselach ekranu), wiersze wyrównane do 256 B.
+async function measureHDR({ x0 = 0, y0 = 0, w = W, h = H } = {}) {
   const renderer = Core3D.renderer;
-  const rt = Core3D.postTarget;
+  const rt = Core3D.composerTarget;
   const bloomWas = Core3D.perfToggles.bloom;
   Core3D.setPerfToggles({ bloom: false });
   render(0, 0);
-  const px = Math.max(1, Math.floor(w)), py = Math.max(1, Math.floor(h));
-  const buf = new Uint16Array(px * py * 4);
-  const yGl = rt.height - Math.floor(y0) - py;
-  renderer.readRenderTargetPixels(rt, Math.floor(x0), Math.max(0, yGl), px, py, buf);
+  const pr = Core3D.pixelRatio || 1;
+  const x = Math.max(0, Math.min(rt.width - 1, Math.floor(x0 * pr)));
+  const y = Math.max(0, Math.min(rt.height - 1, Math.floor(y0 * pr)));
+  const px = Math.max(1, Math.min(rt.width - x, Math.floor(w * pr)));
+  const py = Math.max(1, Math.min(rt.height - y, Math.floor(h * pr)));
+  const buf = await renderer.readRenderTargetPixelsAsync(rt, x, y, px, py);
   Core3D.setPerfToggles({ bloom: bloomWas });
+  const isHalf = buf instanceof Uint16Array;
+  const rowElems = Math.ceil((px * 4 * buf.BYTES_PER_ELEMENT) / 256) * 256 / buf.BYTES_PER_ELEMENT;
   const half = (v) => {
     const s = (v & 0x8000) ? -1 : 1;
     const e = (v >> 10) & 0x1f;
@@ -1367,10 +1374,12 @@ function measureHDR({ x0 = 0, y0 = 0, w = W, h = H } = {}) {
     if (e === 31) return f ? NaN : s * Infinity;
     return s * Math.pow(2, e - 15) * (1 + f / 1024);
   };
+  const ch = (o) => (isHalf ? half(buf[o]) : buf[o]);
   const lums = [];
   let nan = 0, over09 = 0, band = 0, white = 0, max = 0;
   for (let i = 0; i < px * py; i++) {
-    const r = half(buf[i * 4]), g = half(buf[i * 4 + 1]), b = half(buf[i * 4 + 2]);
+    const o = Math.floor(i / px) * rowElems + (i % px) * 4;
+    const r = ch(o), g = ch(o + 1), b = ch(o + 2);
     const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     if (!Number.isFinite(L)) { nan++; continue; }
     lums.push(L);
@@ -1607,6 +1616,9 @@ window.__rdzen = {
 (async () => {
   try {
     await loadHullAssets();
+    // Port WebGPU: urządzenie powstaje w tle (Core3D.ready) — zrzuty czekają na
+    // __rdzen.ready, więc najpierw renderer (bez niego klatki Core3D są puste).
+    if (!(await Core3D.ready)) reportError(`WebGPU: ${Core3D.gpuError || 'brak urządzenia'}`);
     initPanel();
     buildScene(S.sceneId);
     $('loading').style.display = 'none';
