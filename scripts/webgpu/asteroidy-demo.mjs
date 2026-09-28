@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
+import { STORM_STAGE } from './asteroidy-gra.mjs';
 
 const args = parseArgs();
 const [W, H] = (args.rozmiar || '1920x1080').split('x').map(Number);
@@ -44,7 +45,11 @@ async function main() {
       // Klatki: komórki pola, ośrodek, mapy cienia (kamera stoi na statku).
       await ev(`(() => { const d = window.__demo; d.S.cam.x = d.S.ship.x; d.S.cam.y = d.S.ship.y; d.step(40, 1 / 60); return true; })()`);
       if (sc.burza) {
-        await ev(`(() => { const d = window.__demo; const s = d.S.ship; return d.strike(s.x + Math.cos(s.angle) * 1400, s.y + Math.sin(s.angle) * 1400); })()`);
+        // Burza powtarzalna — ten sam kod co w grze (STORM_STAGE z asteroidy-gra.mjs).
+        await ev(`(async () => { const d = window.__demo; const s = d.S.ship;
+          const sim = d.storm.sim; const sx = s.x, sy = s.y, sa = s.angle;
+          const force = (x, y) => d.strike(x, y);
+          ${STORM_STAGE} })()`);
         await ev(`(() => { window.__demo.step(20, 1 / 60); return true; })()`);
       }
       await ev(`(() => { window.__demo.step(2, 1 / 60); return true; })()`);

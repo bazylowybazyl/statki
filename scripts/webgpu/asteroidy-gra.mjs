@@ -12,6 +12,7 @@
 // --wydajnosc: czas rzeczywisty w gęstym polu (bez i z bitwą 12 × 12), mediana próbek.
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
 
 const args = parseArgs();
@@ -22,6 +23,22 @@ const warmFrames = Number(args.klatki || 30);
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 const SEED = 0x5eed1234;
 const IGNORE = [/favicon\.ico/, /AudioSys/, /Unable to decode audio data/, /powerPreference option is currently ignored/, /\[vite\]/, /DevTools/, /GPU stall due to ReadPixels/];
+
+// Burza powtarzalna dla porównania z demem (gra i demo — ten sam kod, ten sam symulator
+// src/game/asteroidStorms.js): los symulatora od ziarna, bez piorunów i błysków losowych,
+// piorun wymuszony 1400 j. przed dziobem, błysk w chmurach za 18 klatek (w chwili zrzutu
+// ~4 klatki po starcie), 2600 j. za lewą burtą, 5200 j. pod płaszczyzną. Wolne zmienne:
+// sim, sx, sy, sa (statek), force(x, y) → bool.
+export const STORM_STAGE = `
+  const { mulberry32 } = await import('/src/game/asteroidStorms.js');
+  sim.rng = mulberry32(0x5707);
+  sim.strikes.length = 0; sim.sheets.length = 0; sim.cooldown.clear();
+  sim.config.strikeRate = 0; sim.config.sheetRate = 0;
+  const ok = force(sx + Math.cos(sa) * 1400, sy + Math.sin(sa) * 1400);
+  const bx = -Math.sin(sa), by = Math.cos(sa);
+  sim.sheets.push({ id: 900001, t0: sim.time + 18 / 60, pulses: [{ at: 0, amp: 1 }, { at: 0.09, amp: 0.7 }], duration: 0.6,
+    x: sx - Math.cos(sa) * 1200 - bx * 2600, y: sy - Math.sin(sa) * 1200 - by * 2600, z: -5200, range: 8200 });
+  return ok;`;
 
 // Sceny: js — ciało funkcji async w stronie (W = world.js dema, S = pomocniki harnessu,
 // H = harness, B = pas gry). Wzory miejsc i zoom jak `setScene` dema.
@@ -86,9 +103,13 @@ async function main() {
         }
         await ev(`window.__harness.frames(${warmFrames})`);
         if (sc.burza) {
-          // Jak demo: 40 klatek burzy (naturalne pioruny), piorun wymuszony przed dziobem, 20 klatek.
+          // Jak demo: 40 klatek burzy (naturalne pioruny), potem burza powtarzalna
+          // (STORM_STAGE — ten sam kod w asteroidy-demo.mjs), 20 klatek.
           await ev('window.__harness.step(40)');
-          const ok = await ev(`(() => { const s = window.ship; return window.__asteroidBelt.forceStrike(s.pos.x + Math.cos(s.angle) * 1400, s.pos.y + Math.sin(s.angle) * 1400); })()`);
+          const ok = await ev(`(async () => { const s = window.ship; const B = window.__asteroidBelt;
+            const sim = B.storm.sim; const sx = s.pos.x, sy = s.pos.y, sa = s.angle;
+            const force = (x, y) => B.forceStrike(x, y);
+            ${STORM_STAGE} })()`);
           await ev('window.__harness.step(20)');
           if (args.diag) {
             const st = await ev(`(() => { const B = window.__asteroidBelt; const out = { forced: ${ok}, strikes: B.storm.sim.strikes.length, seg: B.storm.batch.count, vis: B.storm.batch.mesh.visible, layers: B.storm.batch.mesh.layers.mask, parent: B.storm.batch.mesh.parent?.name, root: [B.root.position.x, B.root.position.y], pts: [] };
@@ -151,4 +172,7 @@ async function kolizja(ev, cdp) {
   return { before, trace, minSdf };
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Uruchomienie tylko wprost (asteroidy-demo.mjs importuje stąd STORM_STAGE).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}
