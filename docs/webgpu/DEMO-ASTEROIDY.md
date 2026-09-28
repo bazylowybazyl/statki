@@ -200,7 +200,7 @@ z budżetem, `grid.build`, `atlas.gather`, burza).
   z małymi skałami: brak (leżą pod płaszczyzną — statki latają nad nimi);
 - rudy i minerały: wygląd + **fizyka wydobycia** (scena Kopalnia, `docs/ASTEROIDY-FIZYKA.md`): laser drona kopie
   do rdzenia (skład skorupa → płaszcz → rdzeń), piła, ładunki z pękaniem zależnym od materiału, odłamy i okruchy,
-  wiązka ściągająca do ładowni; logika w `src/game/asteroidMining.js` (bez three, testy), w grze jeszcze nie wpięta;
+  wiązka ściągająca do ładowni; logika w `src/game/asteroidMining.js` (bez three, testy), w grze od zadania 21b (platforma `asteroidMiningRig.js`, tryb `N`; `docs/ASTEROIDY-FIZYKA.md` § „W grze”);
 - niszczenie skał pociskami: brak (pociski dema wybuchają na kole skały — sam efekt);
 - burze: symulator gry (`StormSimulator`), pioruny i trafienia tylko wizualnie, bez obrażeń;
 - cień pól na słońcu: `FieldSunOcclusion.precomputeAll` (~1 s) — w grze na ekran ładowania.

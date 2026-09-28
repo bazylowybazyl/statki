@@ -13,6 +13,12 @@
  *   - Zniszczenie: hex wraca do puli, asteroida znika z pola
  *
  * Pamięć: 200 hex bodies × 121 cells (BIG) × 4B (Float32) = ~97 KB. Trywialne.
+ *
+ * AGENT: (zadanie 24 portu WebGPU) moduł martwy w grze — stare pole usunęło zadanie 21, a
+ * wydobycie skał (21b) idzie przez src/game/asteroidMining.js + asteroidMiningRig.js. Importuje
+ * go już tylko test `legacy big asteroid fallback…` w tests/destructorImpact.test.mjs
+ * (resolveShipAsteroidCollision). Do usunięcia razem z tym testem i stałymi HEX_* w
+ * src/data/asteroidPhysics.js (ASTEROID_MATERIAL zostaje — czyta go asteroidMaterials.js).
  */
 
 import {

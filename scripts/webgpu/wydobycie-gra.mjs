@@ -5,7 +5,8 @@
 // wiązka ściągająca (urobek do ładowni). Zrzuty, stan platformy, błędy konsoli / walidacji.
 //
 //   node scripts/webgpu/wydobycie-gra.mjs [--out katalog] [--port 5362] [--rozmiar 1920x1080]
-//        [--demo] [--koszt] [--etapy skala,laser,pila,ladunek,urobek]
+//        [--demo] [--koszt] [--hud] [--etapy skala,laser,pila,ladunek,urobek]
+// --hud:   z HUD-em DOM kokpitu (układ panelu wydobycia względem kokpitu).
 //
 // --demo:  te same etapy w demie (window.__demo: rig, mining, step) → <out>/demo/*.png.
 // --koszt: czas rzeczywisty (zegar harnessu „real”): budowa ciała, wybuch (ms jednorazowo),
@@ -123,7 +124,7 @@ async function gameStages(base) {
       const t0 = Date.now();
       let error = null;
       try {
-        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(true); H.reseed(0x21b0 + ${Object.keys(MINING_STAGES).indexOf(id)}); ${st.js} return true; })()`);
+        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(${args.hud ? 'false' : 'true'}); H.reseed(0x21b0 + ${Object.keys(MINING_STAGES).indexOf(id)}); ${st.js} return true; })()`);
         await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);
         await ev('window.__harness.frames(4)');
       } catch (err) {
