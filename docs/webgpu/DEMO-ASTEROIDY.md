@@ -225,8 +225,9 @@ Różnice względem dema (świadome):
   (`addShipLights`, profil pola / jaskini) dla gracza i najbliższych środka kadru — `maxLitShips` 6 (ryzyko `ITEM_CAP`
   z 12); flar dema (`dynamics.js`) nie ma, światła wybuchów i pocisków dają efekty gry (17–19) przez `Core3D.fx.lights`.
   Świecące skały (kryształ, uran, energetyczna) jak w demie; światła dysz z dema — nie przeniesione.
-- Kadłuby: materiał kadłubów gry (04) czyta ośrodek (`hullVolume`), ale jeszcze NIE siatkę świateł (hak `hullEffectLights`
-  — zadanie 18) — w głębokiej nocy kadłub jest ciemny, w demie świeci własnymi reflektorami i flarami.
+- Kadłuby: materiał kadłubów gry (04) czyta ośrodek (`hullVolume`) i — od scalenia 18-C — siatkę świateł
+  (`hullEffectLights`): w głębokiej nocy kadłub świeci światłem dookoła, reflektorami innych statków, piorunami
+  i świecącymi skałami (własne lampy kadłuba pomija właściciel siatki). Flar dema nie ma, więc noc jest ciemniejsza.
 - Burza: los efektów z `fxRandom` (harness ziarni go razem z `Math.random`) zamiast `Math.random`.
 - Podzielony ekran: jeden widok pasa = suma kadrów obu graczy (strumień skał, światła, ośrodek).
 - Rozgrywka: kolizje statków (gracz, P2, NPC) tylko z olbrzymami (`collideShip`: koła wzdłuż osi, koło ≤ pasmo SDF,
