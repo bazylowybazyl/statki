@@ -317,7 +317,7 @@ function shardPhysicallyAlive(s) {
 /**
  * Tworzy rekord (dane CPU, bez three): mapowanie, blok komórek z heksami
  * gospodarza, sąsiedzi, emitery z heksami pod nimi. `kind` — zasób rodzaju
- * ({ index, name, model, emit }). Wiersz tekstury przydziela wołający.
+ * ({ index, name, model, emit }). Wiersz bufora obrażeń przydziela wołający.
  */
 export function createBridgeRecordCore(host, st, bridgeIndex, kind, row) {
   const grid = host.hexGrid;
@@ -405,13 +405,14 @@ export function createBridgeRecordCore(host, st, bridgeIndex, kind, row) {
 }
 
 /**
- * Odświeża stan komórek rekordu i zapisuje wiersz tekstury obrażeń (RGBA8):
+ * Odświeża stan komórek rekordu i zapisuje jego wiersze bufora obrażeń (RGBA8):
  *   R — 0: martwa / brak heksa; 64..255: żywa, HP 0..1,
  *   G — żar heksa (shardHeatNow) w chwili zapisu,
  *   B — maska martwych sąsiadów (6 bitów, kierunki HEX_NEIGHBOR_AXIAL),
  *   A — żar świeżego cięcia (sąsiad zginął) w chwili zapisu.
  * Zanik żaru od chwili zapisu liczy shader (vB3State.y). Zwraca true, gdy
- * bajty wiersza się zmieniły. `data` — cały bufor tekstury (szer. DAMAGE_W).
+ * bajty wiersza się zmieniły. `data` — bajty całego bufora obrażeń (widok
+ * Uint8Array na słowach u32 bufora storage; wiersz = DAMAGE_W komórek).
  */
 export function refreshBridgeRecordDamage(rec, grid, data, heatNow, rowStride = DAMAGE_W) {
   const n = rec.cellCount;

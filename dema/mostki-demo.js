@@ -14,7 +14,7 @@ import { drawHexShips3D, initHexShips3D, prewarmHexShipVisual, updateHexShips3D 
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { Fx3D, FX_PLANE_Z, sp } from '../src/3d/fxParticles3D.js';
 import { BridgeFx3D, BRIDGE_FX_TUNE } from '../src/3d/bridgeFx3D.js';
-import { Bridge3D, BRIDGE3D_TUNE } from '../src/3d/bridge3D.js';
+import { Bridge3D, BRIDGE3D_DAMAGE_LIMITS, BRIDGE3D_TUNE } from '../src/3d/bridge3D.js';
 import { DestructorSystem, disposeHexBody, getHexStructuralState, setHexShips3DActive } from '../src/game/destructor.js';
 import { DestructorGpuSoftBody } from '../src/game/destructorGpuSoftBody.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
@@ -1312,6 +1312,130 @@ const api = {
     }
     renderFrame(1 / 60);
     return { shots: n, integrity: bridge ? +bridge.integrity.toFixed(3) : null, dead: !!bridge?.dead, commandLost: st.commandLost };
+  },
+  // Koszt wysyłki obrażeń mostka na GPU (port WebGPU, zadanie 15): ostrzał jak
+  // damageBridge (lock, pociski natychmiastowe), klatka po klatce z oddaniem wątku.
+  // W klatce ze zmianą te same bajty idą na GPU trzema drogami (CPU wywołań):
+  //  - bufferRanges — dzisiejsza: bufor storage u32, writeBuffer tylko zakresów
+  //                   zmienionych bloków (backend.updateAttribute owinięty zegarem,
+  //                   wołany w środku renderu),
+  //  - textureFull  — dawna tekstura RGBA8 768 × 512: backend WebGPU ignoruje zakresy
+  //                   tekstur, więc każda zmiana = writeTexture całych 1,5 MB
+  //                   (renderer.initTexture → updateTexture, ta sama ścieżka co przy rysunku),
+  //  - bufferFull   — ten sam bufor bez zakresów (writeBuffer 1,5 MB).
+  // Kopie idą w kolejce poza passami — znaczniki czasu GPU passów ich nie widzą.
+  async benchDamageUpload({ hull = 'battleship', weapon = 'heavy_autocannon', frames = 2400, rounds = 3, integrity = 0.55, zoom = 3 } = {}) {
+    const renderer = Core3D.renderer;
+    const backend = renderer?.backend;
+    const dmg = Bridge3D.damage;
+    if (!backend || !dmg) return { error: 'brak renderera WebGPU albo Bridge3D' };
+    running = false;
+    const attr = dmg.attr;
+    const texW = BRIDGE3D_DAMAGE_LIMITS.width;
+    const texH = BRIDGE3D_DAMAGE_LIMITS.rows;
+    const tex = new THREE.DataTexture(dmg.data, texW, texH, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.flipY = false;
+    tex.needsUpdate = true;
+    renderer.initTexture(tex);
+    const origUpdate = backend.updateAttribute;
+    const cur = { ms: 0, bytes: 0, uploads: 0 };
+    backend.updateAttribute = function (attribute) {
+      if (attribute !== attr) return origUpdate.call(this, attribute);
+      let words = 0;
+      for (const r of attribute.updateRanges) words += r.count;
+      if (attribute.updateRanges.length === 0) words = attribute.array.length;
+      const t0 = realNow();
+      const out = origUpdate.call(this, attribute);
+      cur.ms += realNow() - t0;
+      cur.bytes += words * 4;
+      cur.uploads++;
+      return out;
+    };
+    const sorted = (a) => a.slice().sort((x, y) => x - y);
+    const q = (a, p) => { const b = sorted(a); return b.length ? +b[Math.min(b.length - 1, Math.floor(b.length * p))].toFixed(4) : null; };
+    const pause = () => new Promise((r) => setTimeout(r, 0));
+    const out = { hull, weapon, frames, rounds, bytesFull: texW * texH * 4, runs: [] };
+    try {
+      for (let round = 0; round < rounds; round++) {
+        clock.paused = true;
+        this.orthoCam();
+        this.setup({ hull, shield: false, returnFire: false, drift: 0, spin: 0, overlays: { zone: false, bridgeHexes: false, hardpoints: false, info: false, aim: false, grid: false } });
+        this.zoomModel(hull, zoom, 0);
+        const t = sim.targets.find((e) => e.hullKey === hull);
+        const st = t?.bridgeState;
+        const bridge = st?.bridges[0];
+        const w = resolveWeapon(weapon);
+        const mem = { shard: null };
+        const aim = { x: 0, y: 0 };
+        const prevPool = sim.poolHitMul;
+        sim.poolHitMul = 0;
+        // Rozgrzewka: pipeline'y modelu (kompilacja w tle), pierwsza wysyłka bufora.
+        for (let i = 0; i < 8; i++) { renderFrame(1 / 60); await pause(); }
+        const acc = { buf: [], bufBytes: [], tex: [], full: [], frame: [], update: [], changed: 0, shots: 0 };
+        const marks0 = Bridge3D.stats.rowUploads;
+        try {
+          for (let f = 0; f < frames; f++) {
+            if (!bridge || bridge.dead || st.commandLost) break;
+            evaluateShipBridges(t, sim.time);
+            if (bridge.integrity <= integrity) break;
+            const p = getBridgeAimPoint(t, aim, { mode: 'breach', fromX: gun.x, fromY: gun.y, memory: mem, bridgeId: bridge.id });
+            if (!p) break;
+            fireInstant(sim, w, { x: gun.x, y: gun.y }, p, null);
+            acc.shots++;
+            for (let k = 0; k < 2; k++) physicsStep(PHYS_DT);
+            clock.virtual += 1000 / 60;
+            stepVisuals(sim, 1 / 60);
+            cur.ms = 0; cur.bytes = 0; cur.uploads = 0;
+            const t0 = realNow();
+            renderFrame(1 / 60);
+            acc.frame.push(realNow() - t0);
+            acc.update.push(bench3D.lastUpdateMs);
+            if (cur.uploads > 0) {
+              acc.changed++;
+              acc.buf.push(cur.ms);
+              acc.bufBytes.push(cur.bytes);
+              // Te same bajty dawnymi drogami, kolejność na zmianę (bez faworyzowania).
+              const first = (f & 1) ? 'tex' : 'full';
+              for (const m of [first, first === 'tex' ? 'full' : 'tex']) {
+                if (m === 'tex') {
+                  tex.needsUpdate = true;
+                  const t1 = realNow();
+                  renderer.initTexture(tex);
+                  acc.tex.push(realNow() - t1);
+                } else {
+                  // Bez needsUpdate: wersja atrybutu zostaje, gra nie dośle 1,5 MB w następnej klatce.
+                  attr.clearUpdateRanges();
+                  const t1 = realNow();
+                  origUpdate.call(backend, attr);
+                  acc.full.push(realNow() - t1);
+                }
+              }
+            }
+            await pause();
+          }
+        } finally {
+          sim.poolHitMul = prevPool;
+        }
+        const b = sorted(acc.bufBytes);
+        out.runs.push({
+          round, shots: acc.shots, framesWithChanges: acc.changed, blockMarks: Bridge3D.stats.rowUploads - marks0,
+          integrity: bridge ? +bridge.integrity.toFixed(3) : null,
+          bufferRanges: { medMs: q(acc.buf, 0.5), p90Ms: q(acc.buf, 0.9), maxMs: q(acc.buf, 1), medBytes: b.length ? b[b.length >> 1] : null, maxBytes: b.length ? b[b.length - 1] : null },
+          textureFull: { medMs: q(acc.tex, 0.5), p90Ms: q(acc.tex, 0.9), maxMs: q(acc.tex, 1) },
+          bufferFull: { medMs: q(acc.full, 0.5), p90Ms: q(acc.full, 0.9), maxMs: q(acc.full, 1) },
+          frameMedMs: q(acc.frame, 0.5),
+          bridge3DUpdateMedMs: q(acc.update, 0.5)
+        });
+      }
+    } finally {
+      backend.updateAttribute = origUpdate;
+      tex.dispose();
+      running = true;
+    }
+    return out;
   },
   // Środek modelu (świat) — działa też po przejściu modelu na wrak.
   modelCenter(targetKey = state.focus, index = 0) {
