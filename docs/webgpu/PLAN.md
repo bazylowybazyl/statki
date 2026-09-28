@@ -320,14 +320,19 @@ nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7). S
   `options.prewarm` budowy — bryły (i dach K-7 w drugim stanie) rozgrzane PRZED podpięciem, `ready` / `mapsReady` je
   obejmują; tło menu rusza z gotowym ringiem i rozgrzaną Ziemią / niebem (`createHaloBakeWarmup` usunięte, pieczenie
   rozgrzewa `HaloWorldMaps.init` na prawdziwych celach). Przestoje mierzy harness (dziennik klatek, `przestoje` scen,
-  `sesje`) i `scripts/webgpu/start-gry.mjs` (prawdziwy czas, `--root` = tag). Pass cienia rozgrzewa się tylko
-  rysunkiem (pułapka 20 w agents.md) — rejestr go nie obejmuje.
+  `sesje`) i `scripts/webgpu/start-gry.mjs` (prawdziwy czas, `--root` = tag); oba spisują pipeline'y utworzone
+  synchronicznie (`pipeline.sync` / `syncLista` — co zostało do rozgrzania), a `zrzuty.mjs --root <eksport main>` mierzy
+  „przed” tym samym harnessem. Pass cienia rozgrzewa się tylko rysunkiem (pułapka 20 w agents.md) — rejestr go nie
+  obejmuje.
 - **`compileAsync` odtwarza pass, nie „wszystkie materiały sceny”** (źródło: `Renderer.compileAsync` →
   `_projectObject`): pomija obiekty `visible = false`, spoza warstw kamery i spoza frustum (chyba że
   `frustumCulled = false`), a pipeline kompiluje dla BIEŻĄCEGO celu (`renderer.setRenderTarget` — format, MSAA) i
   świateł widocznych w tym passie. Rozgrzewka modułu = `setRenderTarget(composerTarget)` + kamera passa z jego warstwą
   + obiekty widoczne w kadrze (albo `frustumCulled = false` na czas kompilacji). Rozgrzewka na kanwie (bgra8unorm,
-  bez MSAA) nic nie daje — pierwszy prawdziwy draw i tak skompiluje pipeline od nowa.
+  bez MSAA) nic nie daje — pierwszy prawdziwy draw i tak skompiluje pipeline od nowa. Głębię i szablon bierze
+  `compileAsync` z RENDERERA, a render z CELU — na celu bez głębi (pieczenie, maska słońca, DIST) rozgrzany pipeline
+  miał inny klucz niż rysunek (zadanie 11); każde `compileAsync` na celu przez `compileAsyncNaCelu`
+  (`src/3d/rozgrzewka.js`).
 - **Trzymacze programów zostają:** `NodeManager` usuwa stan budowy materiału, gdy ostatni obiekt przestaje go używać
   (`usedTimes === 0`), a `Pipelines` zwalniają nieużywane moduły shaderów — tak jak WebGL zwalniał programy. Próbki
   z rozgrzewki efektów (overlay, tarcze) dalej trzymamy bez `dispose` (test `shaderPrewarm` — odpowiednik w 14, 19, 20).

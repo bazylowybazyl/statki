@@ -34,13 +34,36 @@ const RECORDER = `(() => {
   const now = performance.now.bind(performance);
   const raf = window.requestAnimationFrame.bind(window);
   const N = 60000;
-  const R = { start: new Float64Array(N), cpu: new Float32Array(N), game: new Int32Array(N), n: 0, marks: {} };
-  let curTs = -1; let idx = 0;
+  const R = { start: new Float64Array(N), cpu: new Float32Array(N), game: new Int32Array(N), n: 0, marks: {}, pipes: [] };
+  let curTs = -1; let idx = 0; let inFrame = false;
   window.requestAnimationFrame = (cb) => raf((ts) => {
     const t0 = now();
     if (ts !== curTs) { curTs = ts; idx = R.n < N ? R.n++ : N - 1; R.start[idx] = t0; R.cpu[idx] = 0; }
-    try { cb(ts); } finally { R.cpu[idx] += now() - t0; R.game[idx] = window.__frameId | 0; }
+    inFrame = true;
+    try { cb(ts); } finally { inFrame = false; R.cpu[idx] += now() - t0; R.game[idx] = window.__frameId | 0; }
   });
+  // Pipeline'y three: numer klatki (poza rAF — następnej, z poza: true — leży w okresie poprzedniej),
+  // sync = zwykły render (przestój), compute zawsze sync.
+  const pipeName = (m, o) => ((m && m.type) || '?') + (m && m.name ? ':' + m.name : '') + ' @ ' + ((o && o.type) || '?')
+    + (o && o.name ? ':' + o.name : (o && o.parent && o.parent.name ? ' w ' + o.parent.name : ''));
+  const hook = setInterval(() => {
+    const r = window.Core3D && window.Core3D.renderer;
+    if (r && r.isWebGLRenderer) clearInterval(hook); // tag WebGL: bez dziennika
+    const pu = r && r.backend && r.backend.pipelineUtils;
+    if (!pu) return;
+    clearInterval(hook);
+    const render = pu.createRenderPipeline;
+    const compute = pu.createComputePipeline;
+    const push = (e) => { if (R.pipes.length < 16384) R.pipes.push(e); };
+    pu.createRenderPipeline = function (ro, promises) {
+      push({ k: inFrame ? idx : R.n, poza: !inFrame, sync: !promises, nazwa: pipeName(ro && ro.material, ro && ro.object) });
+      return render.call(this, ro, promises);
+    };
+    pu.createComputePipeline = function (p, b) {
+      push({ k: inFrame ? idx : R.n, poza: !inFrame, sync: true, compute: true, nazwa: 'compute' + (p && p.computeProgram && p.computeProgram.name ? ':' + p.computeProgram.name : '') });
+      return compute.call(this, p, b);
+    };
+  }, 10);
   const mark = (k, ok) => { if (R.marks[k] === undefined && ok) R.marks[k] = +now().toFixed(1); };
   const poll = setInterval(() => {
     try {
@@ -80,6 +103,26 @@ function frameWindow(rec, a, b) {
   out.sumaNadwyzekMs = Math.round(out.sumaNadwyzekMs);
   out.najdluzsze.sort((x, y) => y.ms - x.ms);
   out.najdluzsze = out.najdluzsze.slice(0, 8);
+  // pipeline'y utworzone w oknie; synchroniczne z okresu klatki przestoju (zwykle jego przyczyna): w jej
+  // wywołaniach rAF albo po nich, przed następną klatką (poza rAF)
+  const pipes = (rec.pipes || []).filter((p) => p.k >= a && p.k <= b);
+  const by = new Map();
+  for (const p of pipes) if (p.sync) by.set(p.nazwa, (by.get(p.nazwa) || 0) + 1);
+  out.pipeline = {
+    sync: pipes.filter((p) => p.sync && !p.compute).length,
+    async: pipes.filter((p) => !p.sync).length,
+    compute: pipes.filter((p) => p.compute).length,
+    syncLista: [...by].sort((x, y) => y[1] - x[1]).slice(0, 16).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n))
+  };
+  for (const e of out.najdluzsze) {
+    const i = a + e.k;
+    const inPeriod = pipes.filter((p) => (p.poza ? p.k === i + 1 : p.k === i));
+    const names = inPeriod.filter((p) => p.sync).map((p) => p.nazwa);
+    if (names.length) e.pipeline = names.length > 6 ? [...names.slice(0, 6), `… +${names.length - 6}`] : names;
+    // w tle (compileAsync: budowa NodeBuilder synchronicznie na CPU, pipeline w tle GPU)
+    const nAsync = inPeriod.filter((p) => !p.sync).length;
+    if (nAsync) e.pipelineWTle = nAsync;
+  }
   return out;
 }
 
@@ -100,7 +143,7 @@ async function runOnce(base, n) {
     await sleep(menuMs);
     const click = await ev('(() => { const t = performance.now(); document.getElementById("btn-mode-single").click(); window.__startRec.marks.klik = +t.toFixed(1); return window.__startRec.n; })()');
     if (!await waitFor(cdp, `(window.__frameId | 0) >= ${gameFrames}`, 180000, 100)) throw new Error('gra nie ruszyła');
-    const rec = await ev(`(() => { const R = window.__startRec; return { n: R.n, marks: R.marks, start: Array.from(R.start.subarray(0, R.n)), cpu: Array.from(R.cpu.subarray(0, R.n)), game: Array.from(R.game.subarray(0, R.n)) }; })()`);
+    const rec = await ev(`(() => { const R = window.__startRec; return { n: R.n, marks: R.marks, start: Array.from(R.start.subarray(0, R.n)), cpu: Array.from(R.cpu.subarray(0, R.n)), game: Array.from(R.game.subarray(0, R.n)), pipes: R.pipes }; })()`);
     res.chwile = rec.marks;
     if (Number.isFinite(rec.marks.graPierwszaKlatka) && Number.isFinite(rec.marks.klik)) {
       res.chwile.graOdKliku = +(rec.marks.graPierwszaKlatka - rec.marks.klik).toFixed(1);
@@ -108,6 +151,7 @@ async function runOnce(base, n) {
     // okna klatek: menu (pierwsza klatka tła → klik), gra (pierwsze `gameFrames` klatek gry)
     const firstMenu = rec.start.findIndex((t) => t >= (rec.marks.menuPierwszaKlatka ?? Infinity) - 20);
     const menuFrom = firstMenu >= 0 ? Math.max(0, firstMenu - 1) : 0;
+    res.przedMenu = frameWindow(rec, 0, menuFrom);
     res.menu = frameWindow(rec, menuFrom, click);
     const g0 = rec.game.findIndex((g, i) => i >= click && g >= 1);
     if (g0 >= 0) {
@@ -155,6 +199,7 @@ try {
       + ` gpu ${c.gpuReady ?? '-'} | menu 1. klatka ${c.menuPierwszaKlatka ?? '-'} gotowe ${c.menuGotowe ?? '-'} | ring ${c.ringZiemi ?? '-'}`
       + ` | gra od kliku ${c.graOdKliku ?? '-'} ms, 1. klatka ${r.gra?.pierwszaKlatkaMs ?? '-'} ms (CPU ${r.gra?.pierwszaKlatkaCpu ?? '-'})`
       + ` | przestoje menu ${r.menu?.przestoje ?? '-'}/${r.menu?.klatki ?? '-'} (maks ${r.menu?.maksMs ?? '-'}), ładowanie ${r.ladowanie?.przestoje ?? '-'}/${r.ladowanie?.klatki ?? '-'} (maks ${r.ladowanie?.maksMs ?? '-'}), gra ${r.gra?.przestoje ?? '-'}/${r.gra?.klatki ?? '-'} (maks ${r.gra?.maksMs ?? '-'})`
+      + ` | pipeline'y sync: przed menu ${r.przedMenu?.pipeline?.sync ?? '-'}, menu ${r.menu?.pipeline?.sync ?? '-'}, ładowanie ${r.ladowanie?.pipeline?.sync ?? '-'}, gra ${r.gra?.pipeline?.sync ?? '-'}`
       + (r.bledy?.length ? ` | błędy: ${r.bledy.slice(0, 3).join(' ; ')}` : ''));
   }
 } finally {
@@ -177,7 +222,12 @@ const summary = {
   ladowanieMaksMs: pick((r) => r.ladowanie?.maksMs),
   graPrzestoje: pick((r) => r.gra?.przestoje),
   graMaksMs: pick((r) => r.gra?.maksMs),
-  graSumaNadwyzekMs: pick((r) => r.gra?.sumaNadwyzekMs)
+  graSumaNadwyzekMs: pick((r) => r.gra?.sumaNadwyzekMs),
+  // pipeline'y utworzone synchronicznie (zwykły render — przestój kompilacji); na tagu WebGL brak dziennika
+  przedMenuPipelineSync: pick((r) => r.przedMenu?.pipeline?.sync),
+  menuPipelineSync: pick((r) => r.menu?.pipeline?.sync),
+  ladowaniePipelineSync: pick((r) => r.ladowanie?.pipeline?.sync),
+  graPipelineSync: pick((r) => r.gra?.pipeline?.sync)
 };
 mkdirSync(outDir, { recursive: true });
 const file = join(outDir, `start-${label}.json`);

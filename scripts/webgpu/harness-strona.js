@@ -12,10 +12,11 @@
 //    CDP strona stoi, więc liczba klatek (i efekty liczone na klatkę: iskry, obrót stacji) jest
 //    powtarzalna. Bez „hold” (ładowanie) każda prawdziwa klatka jest dozwolona;
 //  - CSS bez animacji i przejść (menu, HUD) — inaczej zrzut łapie je w połowie.
-//  - dziennik klatek (prawdziwy czas: start, CPU wywołań rAF, __frameId) i chwile startu (urządzenie,
-//    tło menu, ring Ziemi, pierwsza klatka gry) — przestoje kompilacji w scenach (zadanie 11).
+//  - dziennik klatek (prawdziwy czas: start, CPU wywołań rAF, __frameId), chwile startu (urządzenie,
+//    tło menu, ring Ziemi, pierwsza klatka gry) i dziennik pipeline'ów (synchroniczne = przestój) —
+//    przestoje kompilacji w scenach (zadanie 11).
 // window.__harness: clock, step(n), frames(n), hold(on), reseed(v), freeze(), realNow(), scene,
-//   frameLog, marks, frameStats(od, do, próg).
+//   frameLog, marks, pipes, frameStats(od, do, próg).
 (() => {
   if (window.__harness) return;
   const SEED = Number(window.__HARNESS_SEED__ || 0x5eed1234) >>> 0;
@@ -55,6 +56,7 @@
   // w tej samej serii − start tej (obejmuje przestój kolejki GPU), ostatnia w serii: samo CPU.
   const LOG = 32768;
   const frameLog = { start: new Float64Array(LOG), cpu: new Float32Array(LOG), game: new Int32Array(LOG), seria: new Int32Array(LOG), n: 0, _seria: 0, _przerwa: true };
+  let inTick = false; // w wywołaniach rAF strony (dziennik pipeline'ów)
   const logFrame = (t0, cpu) => {
     const i = frameLog.n % LOG;
     if (frameLog._przerwa) { frameLog._seria++; frameLog._przerwa = false; }
@@ -75,6 +77,48 @@
       if (marks.graPierwszaKlatka !== undefined && marks.ringZiemi !== undefined) clearInterval(markPoll);
     } catch { /* strona się ładuje */ }
   }, 10);
+  // Pipeline'y three (zadanie 11): każde utworzenie z numerem klatki dziennika — render synchronicznie
+  // w zwykłym renderze (sync: proces GPU kompiluje shader, strona staje przy najbliższym zapisie do
+  // kolejki) albo w tle z compileAsync; compute zawsze synchronicznie. Nazwa = typ:nazwa materiału @
+  // obiekt — co kompilowało się w przestoju (frameStats → `pipeline`, `lista[].pipeline`). Hak na
+  // backend.pipelineUtils po powstaniu urządzenia (na tagu WebGL pola nie ma — dziennik pusty).
+  const PIPE_MAX = 16384;
+  const pipes = { list: [], n: 0 };
+  const pipeName = (m, o) => `${m?.type || '?'}${m?.name ? ':' + m.name : ''} @ ${o?.type || '?'}${o?.name ? ':' + o.name : (o?.parent?.name ? ' w ' + o.parent.name : '')}`;
+  const pipeHook = setInterval(() => {
+    if (window.Core3D?.renderer?.isWebGLRenderer) clearInterval(pipeHook); // tag WebGL: bez dziennika
+    const pu = window.Core3D?.renderer?.backend?.pipelineUtils;
+    if (!pu || pu.__harnessHook) return;
+    clearInterval(pipeHook);
+    pu.__harnessHook = true;
+    const render = pu.createRenderPipeline;
+    const compute = pu.createComputePipeline;
+    const push = (e) => { pipes.n++; if (pipes.list.length < PIPE_MAX) pipes.list.push(e); };
+    // k = klatka dziennika w toku; poza wywołaniami rAF — następna (poza: true, leży w okresie poprzedniej)
+    pu.createRenderPipeline = function (ro, promises) {
+      push({ k: frameLog.n, poza: !inTick, sync: !promises, nazwa: pipeName(ro?.material, ro?.object) });
+      return render.call(this, ro, promises);
+    };
+    pu.createComputePipeline = function (p, b) {
+      push({ k: frameLog.n, poza: !inTick, sync: true, compute: true, nazwa: `compute${p?.computeProgram?.name ? ':' + p.computeProgram.name : ''}` });
+      return compute.call(this, p, b);
+    };
+  }, 10);
+  // Pipeline'y utworzone w klatkach [beg, end) (i po ostatniej, przed następną): render sync / w tle,
+  // compute; nazwy synchronicznych (do 12).
+  const pipeStats = (beg, end) => {
+    let sync = 0; let async = 0; let compute = 0;
+    const by = new Map();
+    for (const p of pipes.list) {
+      if (p.k < beg || p.k > end || (p.k === end && !p.poza)) continue;
+      if (p.compute) compute++;
+      else if (p.sync) sync++;
+      else async++;
+      if (p.sync) by.set(p.nazwa, (by.get(p.nazwa) || 0) + 1);
+    }
+    const syncLista = [...by].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
+    return { sync, async, compute, syncLista };
+  };
 
   const waiters = [];
   const tick = () => {
@@ -95,9 +139,11 @@
     const cbs = [...pending.values()];
     pending.clear();
     const tFrame0 = realNow();
+    inTick = true;
     for (const cb of cbs) {
       try { cb(ts); } catch (err) { setTimeout(() => { throw err; }); }
     }
+    inTick = false;
     logFrame(tFrame0, realNow() - tFrame0);
     for (let i = waiters.length - 1; i >= 0; i--) {
       const w = waiters[i];
@@ -371,7 +417,19 @@
       if (ms > thr) { list.push({ k: k - beg, ms: +ms.toFixed(1), cpu: +cpu.toFixed(1), gra: frameLog.game[i] }); over += ms - 1000 / 60; }
     }
     list.sort((a, b) => b.ms - a.ms);
-    return { klatki: end - beg, przestoje: list.length, maksMs: +maxMs.toFixed(1), maksCpu: +maxCpu.toFixed(1), sumaMs: +over.toFixed(0), lista: list.slice(0, 8) };
+    const top = list.slice(0, 8);
+    // synchroniczne pipeline'y z okresu klatki przestoju (zwykle jego przyczyna): w jej wywołaniach rAF
+    // albo po nich, przed następną klatką
+    for (const e of top) {
+      const i = beg + e.k;
+      const inPeriod = pipes.list.filter((p) => (p.poza ? p.k === i + 1 : p.k === i));
+      const names = inPeriod.filter((p) => p.sync).map((p) => p.nazwa);
+      if (names.length) e.pipeline = names.length > 6 ? [...names.slice(0, 6), `… +${names.length - 6}`] : names;
+      // w tle (compileAsync: budowa NodeBuilder synchronicznie na CPU, pipeline w tle GPU)
+      const nAsync = inPeriod.filter((p) => !p.sync).length;
+      if (nAsync) e.pipelineWTle = nAsync;
+    }
+    return { klatki: end - beg, przestoje: list.length, maksMs: +maxMs.toFixed(1), maksCpu: +maxCpu.toFixed(1), sumaMs: +over.toFixed(0), lista: top, pipeline: pipeStats(beg, end) };
   };
 
   window.__harness = {
@@ -380,6 +438,7 @@
     frameLog,
     marks,
     frameStats,
+    pipes,
     scene,
     // n klatek po stepMs; Promise kończy się, gdy czas znów stoi
     step(n = 1, stepMs = 1000 / 60) {
