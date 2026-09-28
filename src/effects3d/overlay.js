@@ -69,7 +69,6 @@ export function initOverlay({
   useBloom = true,
   useAlphaPass = true,
   adaptiveQuality = true,
-  updateSparkSystem = true,
   baseRenderScale = 0.8,
   // Druga scena RENDEROWANA W TYM SAMYM KONTEKŚCIE, nad skomponowaną warstwą
   // efektów (odpowiednik dawnego rocketOverlay3D na zIndex 21). Każdy osobny
@@ -446,9 +445,8 @@ export function initOverlay({
     applyAdaptiveQuality();
     if (useBloom) applyOverlayBloomConfig();
 
-    if (updateSparkSystem && typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
-      window.SparkSystem3D.update(dt);
-    }
+    // Iskry trafień i tarcia (SparkSystem3D) od zadania 19 w scenie Core3D — czas prowadzi
+    // krok klatki efektów Core3D, nie tick overlaya.
 
     let updateNow = true;
     let stepDt = dt;

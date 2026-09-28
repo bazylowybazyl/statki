@@ -186,9 +186,15 @@ const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), '
 
 test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
   // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
-  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js']) {
+  for (const path of ['src/effects3d/reactorblow.js']) {
     assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
   }
+  // Rakiety i Supernowa (port WebGPU, zadanie 19): światła wybuchów, dysz i łuków idą do
+  // siatki świateł efektów Core3D (grid.addWorld), nie do świateł sceny three.
+  for (const f of ['effects', 'rocketFx', 'smoke', 'fireballs', 'missileBodies', 'nebula', 'arcs', 'glow', 'plumes', 'sparks']) {
+    assert.doesNotMatch(readSrc(`src/3d/rockets/${f}.js`), /PointLight|SpotLight/, f);
+  }
+  assert.match(readSrc('src/3d/rockets/effects.js'), /grid\.addWorld\(/);
 });
 
 test('martwe: bez regl z unpkg, warp „Nurt” bez własnego kontekstu i bez próbkowania gotowej klatki (Core3D)', () => {
@@ -210,10 +216,18 @@ test('martwe: bez regl z unpkg, warp „Nurt” bez własnego kontekstu i bez pr
   assert.match(core3d, /if \(pass === this\.renderPassWarp\) return activity\.warp === true;/);
 });
 
-test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {
-  assert.match(readSrc('src/effects3d/rocketFireGPU.js'), /this\.mesh\.visible = this\.highWater > 0;/);
-  assert.match(readSrc('src/effects3d/rocketSmokeGPU.js'), /this\.points\.visible = this\.highWater > 0;/);
-  assert.match(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\.visible = this\.activeRockets > 0;/);
+test('pule rakiet (Core3D) i odłamków paneli: puste siatki są niewidoczne', () => {
+  // Port WebGPU, zadanie 19: rakiety rysują pule w scenie Core3D (src/3d/rockets/); pusta pula
+  // nie wchodzi do passa (zachowanie: tests/rocketFx.test.mjs).
+  for (const f of ['fireballs', 'glow', 'missileBodies', 'plumes', 'sparks']) {
+    assert.match(readSrc(`src/3d/rockets/${f}.js`), /this\.mesh\.visible = n > 0;/, f);
+  }
+  assert.match(readSrc('src/3d/rockets/arcs.js'), /this\.mesh\.visible = this\.highWater > 0;/);
+  assert.match(readSrc('src/3d/rockets/nebula.js'), /this\.mesh\.visible = this\.highWater > 1;/);
+  const smoke = readSrc('src/3d/rockets/smoke.js');
+  assert.match(smoke, /this\.mesh\.visible = n > 1;/);
+  assert.match(smoke, /this\.densityMesh\.visible = n > 1;/);
+  assert.doesNotMatch(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
   const shards = readSrc('src/vfx/panelShardManager.js');
   assert.match(shards, /if \(this\.activeCount === 0\) return;/);
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);

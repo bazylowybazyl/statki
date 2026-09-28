@@ -244,6 +244,86 @@ const SCENES = {
     hud: false, warm: 30,
     js: `H.reseed(0x3a2d); DevFlags.unlimitedWarp = true; warp.state = 'charging'; warp.charge = 0; await H.step(75); S.cam(ship.pos.x, ship.pos.y, 0.6);`
   },
+  // Zadanie 19: galeria rakiet (efekty z dema rakiety-webgpu w Core3D). Cele: pirat-pancernik i dwa
+  // niszczyciele bez AI (npc.ai = null — stoją, nie strzelają), tarcze wyłączone (DevFlags) poza
+  // sceną tarczy; rakiety odpala wprost rocketSystem3D.fire (obrażenia 1 — kadłuby zostają).
+  // Nowe efekty nie mają bazy w tagu — ocena obok zrzutów dema (`rakiety-demo.mjs`), potem
+  // przebieg z main jako baza (PLAN §7).
+  'galeria-rakiet': {
+    opis: 'Salwa 12 rakiet manewrujących w trzy okręty (smugi oświetlone dyszami, samocień, pierwsze trafienia), zoom 0,3',
+    hud: false, warm: 2,
+    js: `DevFlags.globalShieldsOff = true;
+         DevScene.teleport(${DEEP.x - 300000}, ${DEEP.y + 40000}, 0);
+         // Czarna, NIEPRZEZROCZYSTA płyta pod sceną (warstwa 0, z = −900): tło gry to jeszcze zamiennik
+         // (zadanie 05), a bez nieprzezroczystego tła kanwa premultiplied pokazuje blask efektów addytywnych
+         // (rgb > alfa) ~2× jaśniej — obraz byłby nieporównywalny z demem (niebo dema jest nieprzezroczyste).
+         { const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
+           const T = await import(url);
+           const bd = new T.Mesh(new T.PlaneGeometry(2000000, 2000000), new T.MeshBasicMaterial({ color: 0x000000 }));
+           bd.position.set(ship.pos.x, -ship.pos.y, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern';
+           Core3D.scene.add(bd); bd.updateMatrixWorld(true); }
+         const s = ship; const at = (fx, fy) => ({ x: s.pos.x + fx, y: s.pos.y + fy });
+         const made = [];
+         const put = (k, x, y, a) => { const r = spawnCallInShip(k, { mode: 'pirate', spawnPos: at(x, y), spawnAngle: a }); for (const n of (Array.isArray(r) ? r : [r])) if (n) { n.ai = null; made.push(n); } };
+         put('pirate_battleship', 4200, -150, Math.PI); put('destroyer', 3500, 950, Math.PI + 0.2); put('destroyer', 3700, -1250, Math.PI - 0.15);
+         window.__rkGal = made;
+         S.cam(s.pos.x + 2000, s.pos.y - 100, 0.3);
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         H.reseed(0x51a1);
+         const W = MASTER_WEAPONS.missile_rack;
+         for (let i = 0; i < 12; i++) { rocketSystem3D.fire(s.pos.x + 250, s.pos.y + (i % 4 - 1.5) * 70, made[i % 3], 1, W, 'blue', 0, 0); await H.step(8); }
+         await H.step(42);
+         S.cam(s.pos.x + 2000, s.pos.y - 100, 0.3);`
+  },
+  'galeria-rakiet-trafienie': {
+    opis: 'Trafienie z bliska (zoom 1,2): trzy rakiety w niszczyciel (z 3000 j. — w pełnym locie) — kula ognia na poszyciu, iskry, odłamki, przypalenie; ~0,12 s po pierwszym wybuchu',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[1]; const W = MASTER_WEAPONS.missile_rack;
+         // Czysta scena: poprzednie rakiety wybuchły, dym i efekty wygasły.
+         for (let q = 0; q < 1800 && (rocketSystem3D.activeRockets > 0 || window.__rocketFx?.smoke.highWater > 0 || window.__rocketFx?.nebula.live || window.__rocketFx?.director.busy); q++) await H.step(1);
+         if (t) {
+           S.cam(t.x - 250, t.y, 1.2);
+           H.reseed(0x51a2);
+           for (let i = 0; i < 3; i++) { const a = Math.PI + 0.22 * (i - 1); rocketSystem3D.fire(t.x + Math.cos(a) * 3000, t.y + Math.sin(a) * 3000 - 150, t, 1, W, 'blue', 0, 0); await H.step(10); }
+           for (let i = 0; i < 600 && rocketSystem3D.activeRockets >= 3; i++) await H.step(1);
+           await H.step(7);
+           S.cam(t.x - 250, t.y, 1.2);
+         }`
+  },
+  'galeria-rakiet-supernowa': {
+    opis: 'Supernowa w pancernik: błysk z linią anamorficzną i fala (refrakcja) ~0,1 s po implozji (0,33 s po wybuchu głowicy), zoom 0,45',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[0]; const W = MASTER_WEAPONS.supernova_missile;
+         for (let q = 0; q < 1800 && (rocketSystem3D.activeRockets > 0 || window.__rocketFx?.smoke.highWater > 0 || window.__rocketFx?.nebula.live || window.__rocketFx?.director.busy); q++) await H.step(1);
+         if (t) {
+           H.reseed(0x51a3);
+           rocketSystem3D.fire(t.x - 2600, t.y - 500, t, 1, W, 'blue', 0, 0);
+           for (let i = 0; i < 600 && rocketSystem3D.activeRockets > 0; i++) { await H.step(1); if (i % 10 === 0) S.cam(t.x - 700, t.y, 0.45); }
+           await H.step(20);
+           S.cam(t.x - 250, t.y, 0.45);
+         }`
+  },
+  'galeria-rakiet-pozostalosc': {
+    opis: 'Ta sama Supernowa 1,9 s po wybuchu głowicy: pozostałość z włókien (Hα, [O III], [S II]), stygnące jądro, zoom 0,25',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[0]; await H.step(94); if (t) S.cam(t.x - 250, t.y, 0.25);`
+  },
+  'galeria-rakiet-tarcza': {
+    opis: 'Propozycja receptury tarczy: dwie rakiety w niszczyciel z podniesioną tarczą (błysk w barwie pola, iskry stycznie po polu, fala, sadza na zewnątrz), zoom 0,9',
+    hud: false, warm: 2,
+    js: `const t = window.__rkGal?.[2]; const W = MASTER_WEAPONS.missile_rack;
+         for (let q = 0; q < 1800 && (rocketSystem3D.activeRockets > 0 || window.__rocketFx?.smoke.highWater > 0 || window.__rocketFx?.nebula.live || window.__rocketFx?.director.busy); q++) await H.step(1);
+         DevFlags.globalShieldsOff = false;
+         if (t && t.shield) {
+           t.shield.val = t.shield.max; t.shield.state = 'active'; t.shield.activationProgress = 1; t.shield.currentAlpha = 1;
+           S.cam(t.x - 350, t.y, 0.9);
+           H.reseed(0x51a4);
+           for (let i = 0; i < 2; i++) { rocketSystem3D.fire(t.x - 3000, t.y + (i - 0.5) * 300, t, 1, W, 'blue', 0, 0); await H.step(10); }
+           for (let i = 0; i < 600 && rocketSystem3D.activeRockets >= 2; i++) await H.step(1);
+           await H.step(6);
+           S.cam(t.x - 350, t.y, 0.9);
+         }`
+  },
   split: {
     opis: 'Podzielony ekran (dwa renderSingle + wycinki), obie kamery na statkach, zoom 0,5',
     hud: false, warm: 45,
@@ -539,6 +619,8 @@ const SESSIONS = [
   { id: 'mars', query: 'dev=1&haloTest=mars&haloAt=port', start: 'single', ring: 'mars', scenes: ['mars-ring'] },
   { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
+  // Zadanie 19: osobna sesja — nie przesuwa scen sesji „kosmos” (baza z tagu).
+  { id: 'rakiety', query: 'dev=1', start: 'single', sprites: true, scenes: ['galeria-rakiet', 'galeria-rakiet-trafienie', 'galeria-rakiet-supernowa', 'galeria-rakiet-pozostalosc', 'galeria-rakiet-tarcza'] },
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
   { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
   { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] },
@@ -733,13 +815,14 @@ async function runPerf(backend, outDir, base) {
         return { fps: d.fps, klatka: d.frameMs, p95: d.frameP95, fizyka: d.physicsTime, rysowanie: d.drawTime, uHex: d.render3dHexUpdateTime,
           coreRender: d.render3dCoreRenderTime, coreRenderTotal: C.lastFramePerf?.renderTotalMs, gpu: C.gpuFrameMs, drawCalls: r.calls, trojkaty: r.triangles,
           fxMs: C.fxStats?.cpuMs, gpuCompute: C.gpuComputeMs,
+          rakiety: window.rocketSystem3D?.activeRockets, rakietyFxMs: window.__rocketFx?.stats?.cpuMs, dym: window.__rocketFx?.smoke?.highWater,
           npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length, wraki: (window.wrecks || []).length,
           // Mapa ran (zadanie 18-C): zajęte sloty, wątki kernela w klatce, stemple od startu.
           ranySloty: window.HullDamageMap ? window.HullDamageMap.stats.slotsL + window.HullDamageMap.stats.slotsM + window.HullDamageMap.stats.slotsS : null,
           ranyWatki: window.HullDamageMap?.stats.threads ?? null, ranyStemple: window.HullDamageMap?.stats.stamps ?? null }; })()`));
     }
     const med = (k) => { const v = samples.map((s) => Number(s[k])).filter(Number.isFinite).sort((a, b) => a - b); return v.length ? +v[Math.floor(v.length / 2)].toFixed(3) : null; };
-    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'npc', 'pociski', 'wraki', 'ranySloty', 'ranyWatki', 'ranyStemple'].map((k) => [k, med(k)]));
+    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'rakiety', 'rakietyFxMs', 'dym', 'npc', 'pociski', 'wraki', 'ranySloty', 'ranyWatki', 'ranyStemple'].map((k) => [k, med(k)]));
     const res = { backend, spawned, mediana: summary, probki: samples, bledy: logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 20) };
     writeJson(join(outDir, 'wydajnosc.json'), res);
     console.log(`  wydajność ${backend}: ${JSON.stringify(summary)}`);

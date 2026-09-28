@@ -100,15 +100,42 @@ Spacja — pauza, T — zwolnienie ×0,25, C — wyczyść, B — bloom, H — b
 - `Loop` z liczbą-węzłem + `Break()` w compute działa (próbkowanie z odrzucaniem).
 - Przypisania do swizzla (`v.xy.addAssign`) działają (WGSL bez swizzle-assign → rozbicie).
 
-## Do portu w grze (propozycja, nic nie jest wpięte)
+## Port w grze (zadanie 19 — wpięte 2026-09-28)
 
-- `SmokeSystem` zastępuje `RocketFireGPU` + `RocketSmokeGPU` (`rocketSystem3D.js`): ta sama
-  rola `spawn(...)`, ale stan na GPU i oświetlenie siatką świateł; wymaga siatki świateł
-  w Core3D (dziś tablica uniformów świateł pola) i passu mapy gęstości.
-- Receptury (`effects.js`) wołają pule — w grze: `Fx3D`/`SparkSystem3D` po porcie na TSL
-  (zadanie 14 planu), światła przez Core3D, zniekształcenia przez uberPass
-  (`pushHeatHazeWorld` + nowy typ „implozja”).
-- Model lotu zostaje w `rocketSystem3D.js` (gameplay) — demo go tylko odtwarza.
-- Otwarte: dym nie opływa kadłubów (jest nad nimi), zderzenia dymu z asteroidami, tarcze
-  (dziś rakieta w tarczę nie pokazuje kuli ognia — receptura tarczy do zrobienia), LOD
-  gęstości smug przy dalekim zoomie.
+- **Gdzie:** `src/3d/rockets/` — pule dema (`smoke.js`, `plumes.js`, `missileBodies.js`, `fireballs.js`, `arcs.js`,
+  `nebula.js`, `glow.js`, `sparks.js`, `palette.js`), reżyser receptur `effects.js` (port `Effects` z dema) i krok klatki
+  efektów Core3D „rakiety” (`rocketFx.js`, `createRocketFx(Core3D)`). Lot, naprowadzanie, trafienia i obrażenia zostają
+  w `src/effects3d/rocketSystem3D.js`; zgłasza zdarzenia `onLaunch / onIgnite / onFly / prepareContact / onDetonate /
+  update`. Usunięte: `RocketFireGPU`, `RocketSmokeGPU`, siatka rakiet, `supernovaMissileBlow.js`, fala `shockwave3D`
+  (629 linii GLSL, 5 `ShaderMaterial`). Iskry gry (`SparkSystem3D`, to samo API) stoją na puli iskier dema.
+- **Kolejność w klatce:** `rocketSystem3D.update(frame)` przed `render()` (zdarzenia → kolejki CPU), potem krok efektów:
+  spawn (siły w dymie, krok dymu o dt lotu, wysyłka zleceń — stara rama początku) → początek pul i przesunięcie →
+  światła do siatki → update (mapa gęstości 480 × 270 nad kadrem + długość cienia, światło cząstek, instancje tej klatki,
+  łuki, mgławica, zniekształcenia, post Supernowej).
+- **Różnice względem dema:** pozycje w świecie gry (double), na GPU względem `Core3D.fx.origin` (kernel przesunięcia dymu
+  i mgławicy, przesunięcie CPU iskier i łuków); zegar reżysera = suma dt lotu rakiet (smuga jedzie z rakietą co do kroku,
+  w pauzie stoi), iskry — zegar efektów + nośnik z `SimClock`; losowość z fxRandom; zero alokacji na klatkę i rakietę;
+  LOD smugi przy dalekim zoomie (poniżej 0,25: porcje rzedną do ×4, krycie rośnie tak, że gęstość zostaje); dym, iskry
+  i odłamki spoza kadru z zapasem 1500 j. nie powstają (wybuch daleko zostawia tylko światło); wstrząs kamery tylko od
+  Supernowej w kadrze; wybuch na poszyciu w punkcie i z normalną z `HullBodies.traceThrough / surfaceNormal` (tylko
+  odczyt, przed obrażeniami — krater zabija węzły); człon słońca dymu, kul ognia i kadłubków × `sunVisibility()`;
+  kadłubki z własnym oświetleniem (słońce + siatka) na zwykłym `Mesh` z atrybutami instancji (w r183 `InstancedMesh`
+  stosuje macierz instancji przed `positionNode`); pas kadłubka: sojusznik — niebieski dema, wróg — czerwony,
+  Supernowa — różowa.
+- **Supernowa w poście gry:** przygaszenie (implozja) i podbicie bloomu (błysk) przez `Core3D.fx.post` — mnożnik gałęzi
+  efektów „uber” (`uFxExposure`) i dodatek do siły bloomu w `_applyBloomPassConfig`. Fala = sama refrakcja
+  (`Core3D.fxDistortion().shock`), bez świecącego obrysu; wymiatanie dymu tą samą falą (siły w kernelu dymu).
+- **Tarcza (nowe, propozycja — demo jej nie miało):** głowica pęka na obrysie pola (`getEntityShieldRadiusTowards`):
+  błysk z halo w barwie pola (pełne — niebieskie `#5992f7`, puste — czerwień, liniowo z życia tarczy), światło pola,
+  iskry plazmy rozlane stycznie (±90° od normalnej), garść sadzy na zewnątrz, krótka fala i gorące powietrze; bez kuli
+  ognia i przypalenia (pole ma własne wstęgi i bańkę — `shieldImpactFx`). Zrzut: sesja harnessu „rakiety”,
+  `galeria-rakiet-tarcza`.
+- **Jasność:** bloom gry = `BloomGry` (×3 zgodności z WebGL), demo — goły `BloomNode`; przy nieprzezroczystym tle obraz
+  galerii zgadza się z demem (mgławica: średnie R 158 vs 157), więc bez kompensacji HDR. Uwaga do porównań: wariant
+  harnessu bez passu tła (kanwa przezroczysta, premultiplied) pokazuje blask addytywny (rgb > alfa) ~2× jaśniej.
+- **Otwarte:** dym nie opływa kadłubów (leci nad nimi); dym vs asteroidy — pominięte (nowe asteroidy: zadanie 21);
+  cień dymu na kadłubach — nie wpięty (próbka mapy gęstości w grafie kadłuba `hexShips3D.tsl.js`, w którym pracuje
+  18-C; mapa gęstości i `dRect` są gotowe w `smoke.js`); kopie CPU buforów storage (`instancedArray`: dym ~50 MB,
+  mgławica ~21 MB) zostają w pamięci po pierwszej wysyłce — do rozważenia zwolnienie; `LightGrid.add` przekracza
+  limit wklejania V8, więc każde światło (wszystkich producentów) opakowuje liczby argumentów (~100 B) — kandydat na
+  wariant z buforem (infrastruktura 12).
