@@ -1,6 +1,6 @@
 // Wspólne chunki GLSL ringu „Halo”. Wszystko liczy się w LOKALNYM układzie
 // ringu (oś = Z, środek planety na (0, 0, −W/2)). Materiały składają chunki
-// w kolejności: COMMON → NOISE → LIGHT → AIR (→ SURFACE).
+// w kolejności: COMMON → NOISE → LIGHT → AIR.
 //
 // Kierunek habitatu to uniform uHabitat.x = σ: +1 habitat w stronę kosmosu
 // („góra” = od planety), −1 klasyczne Halo („góra” = ku osi). Wszystkie
@@ -13,9 +13,14 @@
 // kadłub jako walec). Do tego światło planety i niebo habitatu.
 //
 // Port WebGPU: biblioteka jest w TSL (haloRingTSL.js); teren (07), konstrukcja
-// i atmosfera (08) już jej nie używają. Zostaje dla megastruktury i miasta (09),
-// K-7 i ringów-archetypów (10) oraz narzędzia parzystości GLSL ↔ TSL
-// (scripts/webgpu/ring-tsl-parzystosc.mjs — jedyny użytkownik HALO_GLSL_STORM po 08).
+// i atmosfera (08), megastruktura i miasto (09) już jej nie używają. Zostaje dla
+// K-7 i ringów-archetypów (10: COMMON, NOISE, LIGHT, FG, FG_CLIP, TRANSIT, PORTSITES;
+// tło menu 11 — COMMON, LIGHT; budowle portowe Z7 poza portem) oraz narzędzia
+// parzystości GLSL ↔ TSL (scripts/webgpu/ring-tsl-parzystosc.mjs — jedyny użytkownik
+// HALO_GLSL_STORM, HALO_GLSL_AIR, HALO_GLSL_RTE i HALO_GLSL_INDKIT po 09).
+// HALO_GLSL_SURFACE usunięte w 09 (ostatni użytkownicy: megastruktura i miasto).
+
+import { IND_EMIT, IND_MAT } from './haloRingIndustryKit.js';
 
 export const HALO_GLSL_COMMON = /* glsl */`
 #define HALO_PI 3.14159265359
@@ -549,63 +554,133 @@ vec4 haloProjectRel(vec3 relLocal) {
 }
 `;
 
-// Wspólne próbkowanie map i detalu (vertex + fragment). Do zadania 07
-// w haloRingTerrain.js; teren (07), konstrukcja i atmosfera (08) są już w TSL
-// (haloRingSurfaceTSL w haloRingTSL.js), GLSL zostaje dla megastruktury i miasta (09).
-// AGENT: usunąć po zadaniu 09 (razem z resztą tego pliku po 10).
-export const HALO_GLSL_SURFACE = /* glsl */`
-uniform sampler2D uMapA;
-uniform sampler2D uMapB;
-uniform sampler2D uMapC;
-uniform vec4 uMapSize;       // w, h, 1/w, 1/h
-uniform sampler2D uDetail1;
-uniform sampler2D uDetail2;
-uniform vec4 uDetailN;       // okresy kafli detalu [j.]
-uniform vec4 uDetailOff;     // fract(s_ref / okres) dla kazdej skali
-uniform vec4 uCloudS0;       // okresy chmur w s (4 pierwsze)
-uniform vec4 uCloudT0;       // okresy chmur w t
-uniform vec4 uCloudOff0;     // fract(s_ref / okres_s)
-uniform vec4 uGridInfo;      // ds, dt (j. na komorke najdrobniejszej), Ns, refS
-uniform vec4 uVarN;          // okresy tekstur zmiennosci barw [j.]
-uniform vec4 uVarOff;
-uniform float uPatT[8];      // wzory: okres L/n (0-5 miasto, 6 komorka dachu, 7 dzialka)
-uniform float uPatF[8];      // fract(s_ref / okres)
-uniform float uPatI[8];      // floor(s_ref / okres) mod n
-uniform float uPatN[8];      // n (okresy na obwod)
-
-// Reszta z dzielenia liczb calkowitych zapisanych we float, odporna na
-// przyblizone dzielenie w ANGLE/D3D (mod(32, 16) potrafi dac 16).
-float haloWrapI(float x, float n) {
-  return x - n * floor((x + 0.5) / n);
+// Zestaw przemysłowy w GLSL (dawniej haloRingIndustryKit.js; miasto przeszło na TSL w zadaniu 09 —
+// haloIndKitTSL). Zostaje TYLKO dla narzędzia parzystości (scripts/webgpu/ring-tsl-parzystosc-strona.js:
+// wiersze kitA / kitB / kitType / kitTopColor / kitShadowCyl — TSL ↔ GLSL); znika razem z tym plikiem.
+export const HALO_GLSL_INDKIT = /* glsl */`
+// progi rodzajow z profilu planety (uIndKitCdf0/1, lustro indKitType w JS)
+float indKitType(float lotH) {
+  return lotH < uIndKitCdf0.x ? 0.0 : lotH < uIndKitCdf0.y ? 1.0 : lotH < uIndKitCdf0.z ? 2.0 : lotH < uIndKitCdf0.w ? 3.0
+    : lotH < uIndKitCdf1.x ? 4.0 : lotH < uIndKitCdf1.y ? 5.0 : lotH < uIndKitCdf1.z ? 6.0 : 7.0;
 }
-// Komorka wzoru zakotwiczona w swiecie (nie w kamerze): id mod n, ulamek.
-vec2 haloPat(int k, float sRel) {
-  float c = sRel / uPatT[k] + uPatF[k];
-  float fl = floor(c);
-  return vec2(haloWrapI(fl + uPatI[k], uPatN[k]), c - fl);
+void indKitPart(float lotH, int p, out vec4 A, out vec4 B) {
+  float k = indKitType(lotH);
+  float h1 = fract(lotH * 13.7);
+  float h2 = fract(lotH * 7.31);
+  float h3 = fract(lotH * 3.17);
+  float h4 = fract(lotH * 5.93);
+  A = vec4(0.0);
+  B = vec4(0.0);
+  if (k < 0.5) {
+    float hw = 64.0 + 16.0 * h1;
+    float hd = 60.0 + 24.0 * h2;
+    float hh = 16.0 + 10.0 * h3;
+    if (p == 0) { A = vec4(0.0, 0.0, hw, hd); B = vec4(0.0, hh, ${IND_MAT.sawtooth + 32 * IND_EMIT.sodium}.0, 0.0); }
+    else if (p == 1) { A = vec4(hw * 0.5 - 10.0, -(hd * 0.5 - 12.0), 20.0, 24.0); B = vec4(0.0, hh + 8.0 + 8.0 * h4, ${IND_MAT.white + 32 * IND_EMIT.windowsCool}.0, 0.0); }
+    else if (p == 2) { A = vec4(-hw * 0.25, hd * 0.2, 2.5, 0.0); B = vec4(hh, 12.0, ${IND_MAT.pipe}.0, 0.0); }
+    else if (p == 3) { A = vec4(hw * 0.1, -hd * 0.25, 3.0, 0.0); B = vec4(hh, 8.0, ${IND_MAT.pipe}.0, 0.0); }
+  } else if (k < 1.5) {
+    float r = 13.0 + 5.0 * h1;
+    float th = 16.0 + 14.0 * h2;
+    if (p == 0) { A = vec4(0.0, 0.0, 84.0, 88.0); B = vec4(0.0, 2.5, ${IND_MAT.concrete}.0, 0.0); }
+    else if (p == 1) { A = vec4(32.0, 34.0, 14.0, 12.0); B = vec4(0.0, 8.0, ${IND_MAT.roofMid}.0, 0.0); }
+    else if (p == 2) { A = vec4(-18.0, -20.0, r, 0.0); B = vec4(0.0, th, ${IND_MAT.tank}.0, 0.0); }
+    else if (p == 3) { A = vec4(20.0, -20.0, r, 0.0); B = vec4(0.0, th * (0.8 + 0.4 * h3), ${IND_MAT.tank}.0, 0.0); }
+    else { A = vec4(-4.0, 20.0, r * (0.8 + 0.3 * h4), 0.0); B = vec4(0.0, th, ${IND_MAT.tank}.0, 0.0); }
+  } else if (k < 2.5) {
+    float r = 9.0 + 2.0 * h1;
+    float sh = 42.0 + 26.0 * h2;
+    if (p == 0) { A = vec4(-6.0, 0.0, 8.0, 76.0); B = vec4(sh - 2.0, 5.0, ${IND_MAT.truss}.0, 0.0); }
+    else if (p == 1) { A = vec4(26.0, 0.0, 22.0, 34.0); B = vec4(0.0, 12.0 + 6.0 * h3, ${IND_MAT.rust + 32 * IND_EMIT.windowsWarm}.0, 0.0); }
+    else if (p == 2) { A = vec4(-6.0, -28.0, r, 0.0); B = vec4(0.0, sh, ${IND_MAT.silo}.0, 0.0); }
+    else if (p == 3) { A = vec4(-6.0, 0.0, r, 0.0); B = vec4(0.0, sh, ${IND_MAT.silo}.0, 0.0); }
+    else { A = vec4(-6.0, 28.0, r, 0.0); B = vec4(0.0, sh, ${IND_MAT.silo}.0, 0.0); }
+  } else if (k < 3.5) {
+    if (p == 0) { A = vec4(-8.0, 4.0, 50.0 + 10.0 * h1, 40.0 + 8.0 * h2); B = vec4(0.0, 18.0 + 10.0 * h3, ${IND_MAT.rust + 32 * IND_EMIT.windowsWarm}.0, 0.0); }
+    else if (p == 1) { A = vec4(26.0, -28.0, 16.0, 20.0); B = vec4(0.0, 10.0, ${IND_MAT.roofMid}.0, 0.0); }
+    else if (p == 2) { A = vec4(28.0, 26.0, 4.5 + 1.5 * h4, 0.0); B = vec4(0.0, 80.0 + 40.0 * h1, ${IND_MAT.chimney}.0, 2.0); }
+    else if (p == 3) { A = vec4(-30.0, -30.0, 7.0, 0.0); B = vec4(0.0, 12.0, ${IND_MAT.tank}.0, 0.0); }
+  } else if (k < 4.5) {
+    if (p == 0) { A = vec4(34.0, 38.0, 10.0, 10.0); B = vec4(0.0, 7.0, ${IND_MAT.roofMid}.0, 0.0); }
+    else if (p == 2) { A = vec4(0.0, 0.0, 30.0 + 6.0 * h1, 0.0); B = vec4(0.0, 55.0 + 15.0 * h2, ${IND_MAT.concreteLight}.0, 1.0); }
+  } else if (k < 5.5) {
+    if (p == 0) { A = vec4(0.0, 0.0, 80.0, 6.0); B = vec4(10.0, 3.0, ${IND_MAT.pipe}.0, 0.0); }
+    else if (p == 1) { A = vec4(-24.0, 32.0, 26.0, 18.0); B = vec4(0.0, 10.0, ${IND_MAT.white + 32 * IND_EMIT.windowsCool}.0, 0.0); }
+    else if (p == 2) { A = vec4(-22.0, -18.0, 3.5 + 1.5 * h1, 0.0); B = vec4(0.0, 50.0 + 30.0 * h2, ${IND_MAT.tank}.0, 0.0); }
+    else if (p == 3) { A = vec4(-4.0, 14.0, 4.0 + 1.5 * h3, 0.0); B = vec4(0.0, 45.0 + 35.0 * h4, ${IND_MAT.tank}.0, 0.0); }
+    else { A = vec4(18.0, -10.0, 3.0 + 1.5 * h2, 0.0); B = vec4(0.0, 60.0 + 25.0 * h1, ${IND_MAT.tank}.0, 0.0); }
+  } else if (k < 6.5) {
+    if (p == 0) { A = vec4(0.0, -20.0, 66.0, 13.0); B = vec4(0.0, 10.0 + 14.0 * h1, ${IND_MAT.containers}.0, 0.0); }
+    else if (p == 1) { A = vec4(0.0, 14.0, 66.0, 13.0); B = vec4(0.0, 8.0 + 12.0 * h2, ${IND_MAT.containers}.0, 0.0); }
+  } else {
+    float rh = 26.0 + 14.0 * h1;
+    if (p == 0) { A = vec4(0.0, -17.0, 80.0, 5.0); B = vec4(0.0, rh, ${IND_MAT.radiator}.0, 0.0); }
+    else if (p == 1) { A = vec4(0.0, 17.0, 80.0, 5.0); B = vec4(0.0, rh * (0.85 + 0.3 * h3), ${IND_MAT.radiator}.0, 0.0); }
+    else if (p == 2) { A = vec4(-32.0, 36.0, 6.0 + 2.0 * h2, 0.0); B = vec4(0.0, 12.0, ${IND_MAT.pipe}.0, 0.0); }
+    else if (p == 3) { A = vec4(30.0, -36.0, 4.5, 0.0); B = vec4(0.0, 9.0, ${IND_MAT.tank}.0, 0.0); }
+  }
 }
-vec4 haloVar(int k, float sRel, float t) {
-  float T = uVarN[k];
-  return texture(uDetail2, vec2(sRel / T + uVarOff[k], t / T));
+// Profil walca: skala promienia na wysokości t ∈ [0,1] (chłodnia = hiperboloida,
+// komin zwężany ku górze).
+float indCylRadius(float shape, float t) {
+  if (shape > 1.5) return 1.0 - 0.28 * t;
+  if (shape > 0.5) { float d = (t - 0.72) / 0.72; return 0.6 + 0.4 * d * d; }
+  return 1.0;
 }
-
-vec2 haloMapUV(float sAbs, float t) {
-  return vec2(sAbs / uFloorDims.x, t / uFloorDims.y);
+float indCylSlope(float shape, float t) {
+  if (shape > 1.5) return -0.28;
+  if (shape > 0.5) return 0.8 * (t - 0.72) / (0.72 * 0.72);
+  return 0.0;
 }
-// detal wysokosci: 0 = gory (ridged), 1 = rownina; zwraca (h, dh/ds, dh/dt).
-// Petle rozwiniete: dynamiczne indeksowanie wektorow ANGLE/D3D emuluje (wolno).
-vec3 haloDetailOct(float sRel, float t, float T, float off, float amp, float ridgeK, float lodBias) {
-  vec2 uv = vec2(sRel / T + off, t / T);
-  float fade = 1.0 - smoothstep(0.35, 0.9, lodBias / T);
-  vec4 d1 = textureLod(uDetail1, uv, max(0.0, log2(max(lodBias * 1024.0 / T, 1.0)) - 0.5));
-  float hN = mix(d1.r, d1.a * 1.3, ridgeK);
-  return vec3(hN, d1.g / T, d1.b / T) * amp * fade;
+// Cień pozorny: odcinek od punktu ku słońcu (a → a + V) przecina obrys części.
+float indSegBox(vec2 a, vec2 V, vec2 h) {
+  vec2 sV = sign(V) * max(abs(V), vec2(1e-4));
+  vec2 inv = 1.0 / sV;
+  vec2 t1 = (-h - a) * inv;
+  vec2 t2 = (h - a) * inv;
+  vec2 tmin = min(t1, t2);
+  vec2 tmax = max(t1, t2);
+  float lo = max(max(tmin.x, tmin.y), 0.0);
+  float hi = min(min(tmax.x, tmax.y), 1.0);
+  return step(lo, hi);
 }
-vec3 haloDetailHeight(float sRel, float t, float mountain, float flatten, float lodBias) {
-  vec3 acc = haloDetailOct(sRel, t, uDetailN.x, uDetailOff.x, mix(2.6, 20.0, mountain), mountain, lodBias);
-  acc += haloDetailOct(sRel, t, uDetailN.y, uDetailOff.y, mix(1.0, 5.0, mountain), mountain, lodBias);
-  acc += haloDetailOct(sRel, t, uDetailN.z, uDetailOff.z, mix(0.34, 1.2, mountain), 0.0, lodBias);
-  acc += haloDetailOct(sRel, t, uDetailN.w, uDetailOff.w, mix(0.12, 0.3, mountain), 0.0, lodBias);
-  return acc * (1.0 - flatten);
+float indSegCircle(vec2 a, vec2 V, float r) {
+  float t = clamp(-dot(a, V) / max(dot(V, V), 1e-6), 0.0, 1.0);
+  return 1.0 - smoothstep(r - 0.8, r + 0.8, length(a + V * t));
+}
+// Barwa dachu części z góry (odcisk w terenie z daleka); indTopColor niżej
+// mnoży ją przez barwę profilu planety.
+vec3 indTopColorBase(float mat, float seed, vec2 q, vec4 A) {
+  float m = mod(mat, 32.0);
+  if (m > 28.5 && m < 29.5) {
+    // panel radiatora z gory: waska krawedz z zebrami
+    return uMegaPal[29] * (0.8 + 0.4 * step(0.5, fract(q.x / 4.0)));
+  }
+  if (m > 17.5 && m < 18.5) {
+    float saw = fract(q.x / 9.0);
+    return mix(vec3(0.05, 0.055, 0.06), vec3(0.20, 0.21, 0.22), step(0.38, saw));
+  }
+  if (m > 19.5 && m < 20.5) {
+    float rr = length(q) / max(A.z, 1.0);
+    return mix(vec3(0.30, 0.30, 0.29), vec3(0.14), smoothstep(0.82, 0.92, rr)) * (0.9 + 0.2 * seed);
+  }
+  if (m > 16.5 && m < 17.5) return length(q) < A.z * 0.66 ? vec3(0.015) : vec3(0.28, 0.28, 0.26);
+  if (m > 20.5 && m < 21.5) return vec3(0.24, 0.24, 0.23);
+  if (m > 18.5 && m < 19.5) return vec3(0.02);
+  if (m > 21.5 && m < 22.5) {
+    float c = floor(q.x / 12.2 + 20.0) + floor(q.y / 6.5) * 7.0 + seed * 13.0;
+    float k = fract(sin(c * 12.9898) * 43758.5453);
+    vec3 col = k < 0.25 ? vec3(0.19, 0.06, 0.035) : (k < 0.5 ? vec3(0.03, 0.08, 0.15) : (k < 0.75 ? vec3(0.16, 0.12, 0.05) : vec3(0.26)));
+    return col * (0.85 + 0.3 * step(0.1, fract(q.x / 12.2)));
+  }
+  if (m > 22.5 && m < 23.5) return vec3(0.12, 0.13, 0.14);
+  if (m > 15.5 && m < 16.5) return vec3(0.16, 0.16, 0.15);
+  if (m > 3.5 && m < 4.5) return vec3(0.12, 0.082, 0.06);
+  if (m > 2.5 && m < 3.5) return vec3(0.26, 0.262, 0.26);
+  if (m > 4.5 && m < 5.5) return vec3(0.055, 0.058, 0.064);
+  return vec3(0.09, 0.092, 0.097);
+}
+vec3 indTopColor(float mat, float seed, vec2 q, vec4 A) {
+  return indTopColorBase(mat, seed, q, A) * uIndTopTint;
 }
 `;

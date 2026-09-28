@@ -17,8 +17,9 @@
 //   node scripts/halo-ring-shots.mjs --only p1,p8 --size 2560x1440
 //   node scripts/halo-ring-shots.mjs --set m4 --teren --out .tmp/halo-ring/m4-teren
 //   node scripts/halo-ring-shots.mjs --set mid --czesci terrain,structure,structureTop,clouds,shell --out .tmp/halo-ring/mid-08
+//   node scripts/halo-ring-shots.mjs --repo ../statki-wt/tag13 --set miasto --port 5360 --out .tmp/halo-ring/miasto-tag
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'vite';
@@ -27,8 +28,11 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) =>
   if (a.startsWith('--')) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : '1']);
   return acc;
 }, []));
-const repo = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-const outDir = resolve(repo, args.out || '.tmp/halo-ring');
+// --repo <katalog>: serwuj demo z innego drzewa (np. worktree z tagu webgl-baseline — baza WebGL
+// bez kopiowania skryptu; zadanie 09). Wyniki (--out) względem bieżącego repo.
+const here = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+const repo = args.repo ? resolve(args.repo) : here;
+const outDir = resolve(here, args.out || '.tmp/halo-ring');
 mkdirSync(outDir, { recursive: true });
 const [W, H] = (args.size || '1920x1080').split('x').map(Number);
 const quality = args.quality || 'high';
@@ -163,7 +167,10 @@ const SETS = {
   landmarks: ['lm0_gate', 'lm1_terrace', 'lm2_crown', 'lm4_bridge', 'lm6_glass_gate', 'lm2_night', 'lm0_game_z045', 'lm2_game_z02',
     'lm1_game_z1', 'lm5_game_night_z045', 'p6', 'p9', 'm4_city_z1', 'k7_docked_z035'],
   domes: ['dome0_tropical', 'dome5_aquatic', 'dome9_wild', 'dome3_botanical', 'dome0_night', 'dome0_game_z045', 'dome2_game_z1',
-    'lm0_gate', 'lm3_park_night', 'lm0_game_z045', 'p6', 'm4_city_z1']
+    'lm0_gate', 'lm3_park_night', 'lm0_game_z045', 'p6', 'm4_city_z1'],
+  // zadanie 09 (megastruktura i miasto w TSL): miasto dniem i nocą, przemysł, dach z detalem, pociągi i światłami
+  miasto: ['m4_city_z1', 'm4_city_night_z1', 'm4_glass_z02', 'city_garden_z034', 'city_heph_z034', 'city_heph_z089',
+    'm3_port_night_z02', 'm3_roof_z02', 'm3_roof_z1', 'mid_roof_z1', 'mid_roof_z03', 'p5', 'p7', 'p9']
 };
 
 // Profile planet (Z6, 2026-09-26): --planet mars|jupiter|earth — ring z profilem
@@ -240,6 +247,18 @@ async function evaluate(cdp, expression, timeout = 120000) {
   return res.result.value;
 }
 
+// Profil headless Chrome w %TEMP% (75–300 MB: pamięć podręczna shaderów) — usuwany na końcu i przy
+// błędzie (dawniej zostawał po każdym uruchomieniu; 2026-09-28 dysk się zapełnił — zadanie 09).
+let chromeProfile = null;
+let chromeProc = null;
+function removeChromeProfile() {
+  if (chromeProc && chromeProc.exitCode === null) { try { chromeProc.kill(); } catch { /* */ } }
+  if (!chromeProfile) return;
+  try { rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 }); } catch { /* zablokowany */ }
+  chromeProfile = null;
+}
+process.on('exit', removeChromeProfile);
+
 async function main() {
   const server = await createServer({
     root: repo, logLevel: 'error',
@@ -252,6 +271,7 @@ async function main() {
   const base = `http://localhost:${server.httpServer.address().port}`;
   void port;
   const profile = join(tmpdir(), `halo-shots-${Date.now()}`);
+  chromeProfile = profile;
   const dbgPort = 9333 + Math.floor(Math.random() * 500);
   const chrome = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
@@ -259,6 +279,7 @@ async function main() {
     '--disable-gpu-vsync', '--disable-frame-rate-limit', '--hide-scrollbars',
     `--window-size=${W},${H}`, 'about:blank'
   ], { stdio: 'ignore' });
+  chromeProc = chrome;
   let target = null;
   for (let i = 0; i < 60 && !target; i++) {
     try {
@@ -364,10 +385,18 @@ async function main() {
   writeFileSync(join(outDir, 'results.md'), table.join('\n') + '\n');
   ws.close();
   chrome.kill();
+  await new Promise((ok) => { if (chrome.exitCode !== null) ok(); else { chrome.once('exit', ok); setTimeout(ok, 5000); } });
+  removeChromeProfile();
   await server.close();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  // przeglądarka i jej profil nie zostają po błędzie
+  if (chromeProc && chromeProc.exitCode === null) {
+    try { chromeProc.kill(); } catch { /* */ }
+    await new Promise((ok) => { chromeProc.once('exit', ok); setTimeout(ok, 5000); });
+  }
+  removeChromeProfile();
   process.exit(1);
 });

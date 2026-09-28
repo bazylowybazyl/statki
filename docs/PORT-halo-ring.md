@@ -85,6 +85,25 @@ usunięte. Zrzuty części ringu: `node scripts/halo-ring-shots.mjs --set mid --
 `node scripts/webgpu/zrzuty.mjs --czesci-ringu` (warianty `__ring`, `__ring-tlo`, `__ring-fg`; sceny `ring-dach`,
 `ring-dach-z01`, `ring-habitat` pokazują dach w FG i habitat z dala od portu — przy porcie konstrukcji prawie nie widać).
 
+**Megastruktura i miasto (port, zadanie 09):** `HaloMegastructure` rysuje NodeMaterial-e z `haloRingMegastructure.js`
+(1:1 z dawnym GLSL): bryły (`makeHaloPrimVertex` — segment + wzdłuż względem refS, kwaternion, zanik detalu z haszu;
+fragment `makeHaloPrimFragment` — paleta `uMegaPal`, fazki i szczeliny paneli, przemysł, okna nocą, pokłady tunelu i
+zatok, fasady megabudowli w trzech skalach świateł, radiatory, światło analityczne i odbicie nieba, powietrze 4 kroki),
+szkło kopuł (`makeHaloGlassFragment` — przezroczyste BackSide bez zapisu głębi, renderOrder 30), pociągi
+(`makeHaloTrainVertex`) i billboardy świateł (`makeHaloLightNodes` — min. 1,6 px, mieszanie ONE/ONE, alfa celu bez
+zmian, renderOrder 40). Dawne `defines` to warianty budowane raz: dach nad płaszczyzną gry (`HALO_FG` → `haloFgClip`
+we fragmencie brył i pociągów, `haloFgVisibility` w wierzchołkach świateł) i doki bez niego. `HaloCity` —
+`makeHaloGardenVertex` (8-wierzchołkowe prostopadłościany, dwie iteracje odwrócenia skrzywienia ulic w `Loop`),
+`makeHaloIndustryVertex` (zestaw działki z `haloIndKitTSL`), `makeHaloTreeVertex` / `makeHaloTreeFragment` (slot z
+`instanceIndex`, gatunek z mapy A); fragment budynków = fragment brył (ogrody: ściana z położenia lokalnego, baza bryły
+z varyingów). Wczesne wyjścia wierzchołków to zagnieżdżone gałęzie z wierzchołkiem poza bryłą obcinania. Ziarna brył i
+hasze (panele, okna, lampy tunelu, kontenery, fasady) liczą `a·b + c` przez `haloFma` (fma WGSL = mad FXC w bazie).
+Zgodność z bazą WebGL z tagu (same bryły megastruktury i miasta, `--czesci mega,city`): miasto z bliska ≤ 0,0012%
+pikseli > 8/255, dachy, porty i megabudowle 0,07–1,25%, kadr kinowy z dalekim miastem (p9) 2,3% (krawędzie MSAA, aliasing okien na budynkach 1–2 px), w grze
+`__ring` 0,05–0,39%; draw calle i HDR jak w bazie. Czas kompilacji na zimno (`__halo.compileMs`): bryły dachu / doków,
+pociągi, ogrody, przemysł 0,22–0,50 s każdy, szkło 0,14–0,28 s, drzewa 0,12–0,25 s, światła < 0,06 s.
+`HALO_GLSL_SURFACE` usunięty; `HALO_GLSL_INDKIT` został w `haloRingGLSL.js` tylko dla narzędzia parzystości.
+
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 
 `flightLevel: 0.5` (domyślnie dla habitatu w stronę kosmosu): z = 0 przecina podłogę habitatu w
@@ -409,7 +428,9 @@ WGSL terenu budowany w Node — CDLOD w pętli, dwa bufory ringu, bez macierzy u
 krawędzie smoothstep, wariant tylko z kroków powietrza, blok `haloSurfU`, wybór węzłów CDLOD),
 `haloRingStructureTSL.test.mjs` (08: konstrukcja i atmosfera bez GLSL, stan renderu jak dawny ShaderMaterial, WGSL pasów
 i wariantu FG, sole / progi / kolejność reguł dachu jak plan brył na CPU, warianty jakości atmosfery, zaokrąglenia haszy
-okien jak w bazie).
+okien jak w bazie), `haloRingMegaCityTSL.test.mjs` (09: megastruktura i miasto bez GLSL, stan renderu jak dawny
+ShaderMaterial, limity WebGPU — bufory uniformów, wierzchołków, varyingi — WGSL wariantów FG / doków / ogrodów, wczesne
+wyjścia wierzchołków, fma w ziarnach i haszach brył, LOD z jakości).
 
 ### Narzędzie: zrzuty prawdziwej gry
 
