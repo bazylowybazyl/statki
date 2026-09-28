@@ -204,7 +204,9 @@ export function distortionOffset(block, uvIn = screenUV) {
   return Fn(() => {
     const H0 = block.element(0).toVar();                 // liczba, czas, włącznik
     const H1 = block.element(1).toVar();                 // szer., wys., zoom
-    const size = H1.xy;
+    // Rozmiar ≥ 1 px: blok przed pierwszym commit() ma zera, a 0 · (1 / 0) dałoby NaN w UV
+    // całego ekranu (12-B — Core3D pakuje nagłówek od startu, to druga linia obrony).
+    const size = max(H1.xy, vec2(1.0));
     const px = uvIn.mul(size).toVar();
     // Piksel w osiach sceny (y w górę), względem środka ekranu.
     const q = vec2(px.x.sub(size.x.mul(0.5)), size.y.mul(0.5).sub(px.y)).toVar();

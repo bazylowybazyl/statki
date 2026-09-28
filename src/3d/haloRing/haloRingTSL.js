@@ -32,7 +32,7 @@ import {
   float, int, uint, vec2, vec3, vec4, mat3,
   abs, floor, fract, sqrt, exp, log, log2, pow, sin, cos, acos, min, max, clamp, mix, step, smoothstep,
   dot, length, normalize, mod,
-  screenCoordinate, screenSize, cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix
+  screenCoordinate, screenSize, cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix, wgslFn
 } from 'three/tsl';
 import { nodeOf } from './haloUniformsAdapter.js';
 
@@ -168,6 +168,20 @@ export const haloFusedMulAddInt = (a, b, c) => {
   const [hi, lo] = haloSplitF32(b);
   return a.mul(hi).add(c).add(a.mul(lo));
 };
+
+// a·b + c jak `mad` w bazie WebGL, dla DOWOLNEGO a (zadanie 09): wbudowane fma() WGSL. Tint zamienia je na
+// HLSL mad(), DXC na FMad — ten sam rozkaz, na który FXC w bazie składał GLSL a·b + c, więc na tym samym GPU
+// wynik jest ten sam (zmierzone: scripts/webgpu/ring-tsl-parzystosc.mjs, wiersze megaSeedFmaWgsl / megaHashFmaWgsl /
+// megaFacadeFmaWgsl — 100% haszy i ziaren bit w bit, wprost 71,7% ziaren brył). TSL r183 nie ma fma, stąd
+// wgslFn: czysta funkcja bez uniformów (wyjątek od „TSL, nie wgslFn” z uzasadnieniem — PLAN §3). Kolejność
+// argumentów ma znaczenie (który iloczyn baza scaliła): tylko tam, gdzie pomiar ją potwierdził.
+const fmaF32 = wgslFn('fn haloFma( a : f32, b : f32, c : f32 ) -> f32 { return fma( a, b, c ); }');
+const fmaV2 = wgslFn('fn haloFmaV2( a : f32, b : f32, c : vec2<f32> ) -> vec2<f32> { return fma( vec2<f32>( a ), vec2<f32>( b ), c ); }');
+const asFloat = (x) => (typeof x === 'number' ? float(x) : x);
+/** a·b + c z jednym zaokrągleniem (fma WGSL) — skalary. */
+export const haloFma = (a, b, c) => fmaF32(asFloat(a), asFloat(b), asFloat(c));
+/** vec2(a·b + c.x, a·b + c.y) z jednym zaokrągleniem na składową (jak mad wektorowy w bazie). */
+export const haloFmaV2 = (a, b, c) => fmaV2(asFloat(a), asFloat(b), c);
 
 // smoothstep zapisany wzorem (jak rozwija go HLSL): t = clamp((x − e0)/(e1 − e0)),
 // t²(3 − 2t). Działa też dla e0 > e1 (GLSL ringu używa odwróconych krawędzi —
