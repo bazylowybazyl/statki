@@ -48,7 +48,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | zrobione, scalone (979ed52) | 2c87915…fa8389b (scalenie `main` 60c7e4c) | nowe sceny bazy `ring-dach`, `ring-dach-z01`, `ring-habitat` (dopisane z tagu) |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | zrobione, scalone (ab3c820) | 5e3a666, 09e4b09, 8b915ed (scalenia `main` 7ac8d07, 11aaa9e, eb3d21d) | `haloFma` (fma WGSL = `mad` FXC): ziarna i hasze brył bit w bit; `wgslFn` wyjątkowo (TSL r183 nie ma `fma`) |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | zrobione, scalone (3794883) | 09b532c, f4d4bb5 (scalenie `main` 6092010) | ring bez zamienników i bez GLSL (poza `haloRingGLSL.js`: menu 11, Z7, narzędzie parzystości); K-7 = graf na ring; partie archetypów = Mesh + InstancedBufferGeometry; `haloFmaVec2` |
-| 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | w toku (podagent, worktree `statki-wt/11`; rejestr rozgrzewki dla modułów 17–22) | | nowy `menuBackdrop.test` |
+| 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | zrobione, scalone (d62e275) | e58fc42…eeedba3 (scalenia `main` 9ebe362, e5cbe53, 80332bd) | tło menu w TSL (0 zamienników); rejestr `Core3D.warmup`; menu gotowe 11,6 → 7,7 s, przestój menu 2,9 → 0,13 s, 1. klatka gry 330 → 244 ms |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | zrobione, scalone (12-A: moduły `src/3d/fx/`; 12-B: 72ec255 — wpięcie w Core3D, Fx3D w TSL) | 0f3d429…37953a6 (12-A); 819fd85, 0c67d84, ebc4211, a029a03, 59e0571, 7168783 (12-B) | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
@@ -75,7 +75,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
 | 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
-| 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
+| 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 — ZAMKNIĘTE (d62e275): rejestr `Core3D.warmup`; zostały: cień Destruction3D rozgrzewany rysunkiem (16), bryła stacji GLB, kernele compute synchronicznie na ekranie ładowania, pas 21b |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się; cyjanowe głowy pocisków nie rysują się na WebGPU), smugi `slugTrail3D` (zamiennik); dym i iskry Fx3D — ZAMKNIĘTE w 12-B | broń — ZAMKNIĘTE w 17 (753700e); rakiety — ZAMKNIĘTE w 19 (2adf8fb) |
@@ -762,3 +762,28 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   kolizji, rzaz przerzedzony do gęstości dema, naciśnięcie broni z ładowaniem czeka do 1,5 s na wycelowanie, rykoszet na
   mapie ran = osmalenie. Otwarte: ścieżka AI z ładowaniem uśpiona (domyślne loadouty NPC nie mają tych broni),
   `impactScale` nie działa na wiązki, nowa baza galerii z `main`. Testy: 1590 / 5 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 11 scalone do `main`** (e58fc42, 69f2792, 5e98401, 5c19642, 6c57e60, 17f5ac2, c16c10b, 3493ec9, 0be809b, 7a16199,
+  eeedba3; scalenia `main` 9ebe362, e5cbe53, 80332bd; scalenie d62e275): tło menu w TSL (`menuBackdrop3D.tsl.js`: Ziemia w
+  układzie ringu, poświata, niebo; −200 linii GLSL, −3 `ShaderMaterial`; menu nie czyta już `haloRingGLSL.js`,
+  `createHaloBakeWarmup` usunięte). **Rejestr rozgrzewki** `src/3d/rozgrzewka.js` = `Core3D.warmup`: `add` (moduł dopisuje
+  się jedną linią), `now` (pilne, Promise), `run(nazwa, fn)` (istniejąca rozgrzewka modułu z pomiarem czasu i pipeline'ów),
+  `flush()` na ekranie ładowania (limit 4 s), `stats.lista`; każda siatka osobnym `compileAsync` na prawdziwym celu i
+  kamerą swojego passa; kroki `Core3D.fx` z `warm` przechodzą przez rejestr same (17, 18-C, 19, 22), kadłuby / tarcze /
+  start GPU pasa (21) przez `run` w `startGame`, bryły ringów przed podpięciem. Poprawki z pomiaru:
+  `compileAsyncNaCelu` (three r183 bierze głębię z renderera przy `compileAsync`, a z celu przy renderze — na celach bez
+  głębi pierwszy rysunek tworzył drugi pipeline synchronicznie: pieczenie i detal ringu, maska słońca, warstwa DIST),
+  kernele przesunięcia pul rejestrowanych po `warmAll`, post (uber z bloomem i bez) przy urządzeniu pod kurtyną menu.
+  **Start (mediany 3 przebiegów, czas rzeczywisty):** menu gotowe 11,56 → 7,65 s (obciążone GPU 14,66 → 8,24 s; tag WebGL
+  17,3 s), najdłuższy przestój menu 2,90 → 0,13 s, pierwsza klatka gry 330 → 244 ms (tag 711 ms), pipeline'y synchroniczne
+  w menu / 300 klatkach gry 24 / 8 → 0 / 0, budowy NodeBuilder w klatkach gry 8 → 0. Harness (77 scen): zamienniki 3 → 0,
+  pipeline'y synchroniczne w pierwszych klatkach gry 139 → 16 i budowy 155 → 36 (reszta = rozgrzewka cienia Destruction3D
+  rysunkiem — świadomie, pass cienia nie ma `compileAsync`), przestoje > 50 ms 15 → 8 (`mars-ring` 552 ms → 0,
+  `jowisz-ring` 496 ms → 0). `menu` vs baza: 0,34% >8/255 (Ziemia 0%, niebo 0,0004%, sam ring 0,38% — resztki jak w
+  scenach ringu, → 23). Narzędzia: harness i `scripts/webgpu/start-gry.mjs` spisują pipeline'y synchroniczne i budowy per
+  klatka z nazwami materiałów, `zrzuty.mjs --root` (pomiar „przed” na eksporcie `main`). Decyzje: `prewarmHexShips3D`
+  zostaje na ekranie ładowania (2081 × `Math.random` w cząstkach — wcześniej przesunąłby świat `startGame`); gotowość ringów
+  obejmuje rozgrzewkę (teren Marsa / Jowisza w koliderze ~0,5–1 s później); mgławica nieba menu `.level(0)` jak WebGL.
+  Otwarte: 21b (mapy cienia skał, `sparks.stepNode`), 16 (cień Destruction3D, bryła stacji GLB), 20 (wybuch reaktora w
+  rejestrze), 23 (asynchroniczne kernele compute, ~200–250 ms CPU pierwszej klatki gry — nie kompilacja). Inwentarz z HEAD
+  d62e275: port 4 pliki z GLSL, 4 materiały, 361 linii; razem 15 / 27 / 3081. Testy: 1605 / 5 porażek bazowych / 3 todo
+  (+1 niestabilny pod obciążeniem w jednym przebiegu); `npm test` OK.
