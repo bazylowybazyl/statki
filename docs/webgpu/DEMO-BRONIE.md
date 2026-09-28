@@ -72,17 +72,47 @@ aberracją → bloom (`bloomConfig.js`) → ACES gry → sRGB.
 - **Kinowy pokaz** (domyślnie przy starcie): 27 broni po kolei, kamera całość → wylot → cel, naprawa celu
   przy zmianie broni (przełącznik).
 
-## Port do gry — co trzeba dołożyć
+## Port do gry (zadanie 17 — zrobione; mechanika z dema — zadanie 18)
 
-- **Precyzja:** demo stoi przy zerze. W grze pule muszą trzymać pozycje względem początku przy kamerze
-  (`sceneOrigin.js`) z kernelem przesunięcia żywych danych (jak `shift` w pyle dema asteroid), a czas —
-  względem epoki.
-- **Nośnik:** paczka ma `vel` (prędkość bazowa) — tędy wchodzi 100% prędkości kadłuba (`ActiveCarrier`).
-  Ruch analityczny puli ADD liczy się w świecie, więc wystarczy dodać prędkość nośnika do `vel`.
-- **Warstwy / Core3D:** pule to zwykłe siatki z `NodeMaterial` — do sceny Core3D po jego porcie; pass
-  zniekształceń zastępuje dzisiejsze źródła gorącego powietrza w uberPassie.
+Efekty wszystkich 27 broni są w grze w `src/3d/weapons/` (fasada `WeaponFx`, opis w `agents.md` § „Efekty broni”).
+Z dema weszły: silnik cząstek (`gpuFx.js`), receptury (`recipes.js`), render pocisków (`projectiles.js`), smugi
+(`trails.js`) i wiązki (`beams.js`). **Nie weszły:** symulacja pocisków dema (240 Hz, trafienia w pole odległości,
+przebicia, rykoszety — lot i trafienia liczy gra), `gunnery.js` (wzorce strzału — strzela gra), `hull.js` (mapa
+ran — zadanie 18-C przez haki `ctx.stamp`), `turrets.js` (wieżyczki zostają 2D), `drones.js`, `sky.js`,
+kopie `lightGrid.js` / `fxLights.js` / `noise.js` (w grze wspólne z `src/3d/fx/`, zadanie 12).
+
+- **Precyzja:** pule trzymają pozycje względem początku przy kamerze (`FxPoolOrigin`, `src/3d/fx/gpuPoolOrigin.js`)
+  z kernelem przesunięcia żywych danych przy odjeździe kamery; czas względem epoki (`timeFx`, `timeSim`,
+  `timeRender`). Pociski i wiązki: dane lokalne co klatkę, siatka na początku pul.
+- **Nośnik:** paczka niesie nośnik (prędkość w osiach sceny, `t0` względem epoki gry, zegar — `writeCarrierPacket`),
+  rysunek dodaje `v · (T − t0)` (`fxCarrierOffset`) — efekt jedzie z kadłubem także w pauzie i przy interpolacji
+  gracza. Wylot — kadłub strzelca (rekord `Turret2D`), trafienie — trafiony kadłub, lot i smuga — `ivx/ivy` pocisku.
+- **Losowość:** `fxRandom` (mulberry32) zamiast `Math.random` — receptury nie przesuwają sekwencji losowań gry;
+  harness sieje oba strumienie (`H.reseed`).
+- **Zero obiektów na strzał:** opcje-obiekty dema (`{ cone, v, life, … }`, 0,6–1,5 KB na bogaty wylot) zastąpił
+  budowniczy paczki z krótkimi metodami (`E(pool, rodzaj, n, P, D).speed(a, b)…emit()`), zdarzenia opóźnione dema
+  (domknięcia) — rodzaj + liczby (`AFTER`, `runAfter`). Zostaje pakowanie liczb double w niewklejonych wywołaniach
+  (~0,1–0,3 KB na bogatą serię; strażnik w `tests/weaponRecipes.test.mjs`).
+- **Warstwy / Core3D:** pule to siatki passa ortho (warstwa 0), DIST na warstwie zniekształceń 10 (`FX_DISTORT_LAYER`,
+  flaga aktywności `Core3D.setDistortLayerActive`), światła błysków do siatki świateł (`Core3D.fx.lights`), kernele
+  compute w kroku `Core3D.addFxStep` (spawn / update / warm).
+- **Budżety gry** (bitwa ≫ demo): LOD wylotu po rozmiarze wieżyczki na ekranie (tani błysk poniżej 9 px), 48 pełnych
+  wylotów i trafień na klatkę, bramki trafień w `index.html` (kadr, rozmiar, cooldown komórki), impulsy w
+  pierścieniu (1024), wiązki ciągłe (56). Iskry receptur zastąpiły `SparkSystem3D.burst` przy trafieniu pocisku.
+- **Laser PD i flak** przeszły z kanwy 2D do 3D (receptury `laserPD`, `flak`); kanwa nie rysuje już wiązek, błysków
+  wylotu ani trafień wiązek. Hexlance (`superweapon.js`) i warsztat rdzeni (`coreFx3D.js`: wybuch wtórny, kula,
+  strumień) wołają receptury wprost.
+- **Galeria w grze:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --sceny galeria-broni,galeria-armata,…`
+  (sesja `galeria`: przegląd 15 rodzin naraz + ujęcie każdej rodziny + Hexlance), obok dema:
+  `node scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie <te same bronie>`.
+- **Czeka na 18:** przebicia (`kerf`, `exit`, `stuck` — Hexlance ma je już z gry), ładowanie Mjolnira i Valkyrie
+  (`WeaponFx.charge`, `createChargeState`), rykoszety (`ctx.ricochet` — dziś kosmetyczne, nigdy w `bullets`), mapa
+  ran (`ctx.stamp`), wstrząs z danych broni zamiast `FX_PROFILE` (18-D).
 
 ## Znalezione przy okazji w grze (nie ruszane)
+
+(Zadanie 17: punkty o starych modułach — czarny tani błysk, brak tekstur trafienia railguna, Valkyrie cyjanem,
+zaszyte barwy wiązek, brak efektu 3D trafień wiązek, pomarańczowe iskry przy trafieniu — zniknęły z modułami.)
 
 Z przeglądu kodu przed demem (agenci, niesprawdzone w biegu gry):
 - Tani błysk wylotowy (`weapon3DSystem.js`, `spawnMuzzleFlash`) ma `vertexColors: true`, a kwad nie ma

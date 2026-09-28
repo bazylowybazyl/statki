@@ -79,7 +79,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
 - **`defines` i `needsUpdate` w biegu** (INWENTARZ § Przebudowy): w WebGPU każda nowa kombinacja = nowy pipeline.
   Przełączniki zamieniamy na gałęzie z uniformem (`If` / `select`) albo osobne, raz zbudowane materiały. Klon
   materiału ma ten sam klucz (tani w budowie), ale to nowy obiekt z własnymi wiązaniami — na strzał pule, nie klony
-  (`weapon3DSystem` ma już pulę wiązek ≤ 96, audyt bitwy §2.2).
+  (efekty broni, zadanie 17: impulsy wiązek w pierścieniu 1024 rysowanym jednym draw callem, audyt bitwy §2.2).
 - **Wiele materiałów jednego efektu — jeden graf węzłów.** Klucz materiału węzłowego to id jego węzłów
   (`Node.customCacheKey()` = `this.id`, `NodeMaterial.customProgramCacheKey`) plus stan; `NodeManager` buduje materiał
   (NodeBuilder na CPU, generacja WGSL) raz na klucz. Nowy graf na każdy wybuch / strzał = pełna budowa na CPU za każdym
@@ -177,6 +177,18 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   synchroniczną tak (`precyzja-drzenie.js`: szczeliny okien przy starym początku układu, maska 0) — przed renderem
   pomiaru czekać na nową klatkę (`renderer.info.frame`). **`textureSample` w niejednolitym przepływie** (pętla z
   `Break` zależnym od danych — marsz cienia) to błąd WGSL — `texture(...).level(0)` (textureSampleLevel).
+- **Pułapki z zadania 17 (efekty broni, V8 i three r183):** **`Math.hypot` alokuje** (~30–40 B na wywołanie w V8) —
+  w gorących ścieżkach `Math.sqrt(x·x + y·y)`. **Liczby double w argumentach NIEwklejonych wywołań V8 pakuje w
+  HeapNumber** (alokacja na wywołanie) — wiele liczb do pomocnika przez `Float64Array` (smugi: `_seg`), a metody
+  budowniczego krótkie (< 27 B bajtkodu — V8 wkleja je zawsze; bez parametrów domyślnych, ≤ 2 zapisy): łańcuch
+  `E(…).speed(a, b).life(a, b)…emit()` nie alokuje, opcje-obiekty dema kosztowały 0,6–1,5 KB na bogaty wylot. Pomiar
+  alokacji: przyrost `new_space` z `v8.getHeapSpaceStatistics()` po rozgrzewce JIT, najlepsza z kilku prób
+  (`tests/weaponRecipes.test.mjs`, `tests/pulseBeamPoolLimit.test.mjs`). **Liczba instancji siatki 1 ↔ > 1 zmienia
+  klucz programu** — rysunek instancjonowany trzyma `mesh.count ≥ 2` (druga instancja pusta, niewidoczna).
+  **Receptury z losowaniem**: własny strumień `fxRandom` — `Math.random` w efektach przesuwa sekwencję losowań gry
+  (rozrzut, zapalniki). **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
+  `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
+  wyłączonymi tarczami zerują `val` celu (galeria broni).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
