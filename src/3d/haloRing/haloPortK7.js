@@ -21,9 +21,8 @@
 // grup ruchomych, emisja grup, lampy, paleta, emisja, poświata) w dwóch uniformArray
 // pakowanych per obiekt (onObjectUpdate — domyślnie tablica pakuje się raz na render(),
 // wtedy wszystkie hale passa dostałyby dane jednej), atlas napisów — węzeł tekstury per
-// obiekt (K7AtlasNode; `texture().onObjectUpdate()` w r183 nie działa).
+// obiekt (`teksturaObiektu`; `texture().onObjectUpdate()` w r183 nie działa).
 import * as THREE from 'three';
-import { TextureNode, NodeUpdateType } from 'three/webgpu';
 import {
   Fn, If, Loop, Discard,
   float, int, vec2, vec3, vec4, mat3, mat4,
@@ -31,6 +30,7 @@ import {
   modelViewMatrix, cameraProjectionMatrix,
   abs, clamp, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, sin, smoothstep, step
 } from 'three/tsl';
+import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
 import { HALO_PI, haloHash12, haloRingTSL } from './haloRingTSL.js';
 import { haloNodeMaterial, haloQrot } from './haloRingMegastructure.js';
 import { K7_ABOVE_SCALE, K7_HEIGHTS, k7Frame, k7HeightToZ, k7Phase } from './haloPortK7Layout.js';
@@ -112,42 +112,9 @@ function packK7Surf(frame, node) {
 // Wartość per obiekt z material.uniforms[klucz].value rysowanego obiektu.
 const perObject = (init, key) => uniform(init).onObjectUpdate(({ material }) => material?.uniforms?.[key]?.value);
 
-// Atlas napisów per obiekt (każda hala ma swój). `texture().onObjectUpdate()` w three r183 NIE działa
-// (TextureNode.setup sam ustawia updateType, bez macierzy uv — NONE), stąd updateType na stałe OBJECT
-// i własne update() (wzór HullObjectTextureNode, hexShips3D.tsl.js).
-class K7AtlasNode extends TextureNode {
-  static get type() {
-    return 'K7AtlasNode';
-  }
-
-  get updateType() {
-    return NodeUpdateType.OBJECT;
-  }
-
-  set updateType(_value) { /* stałe OBJECT — patrz wyżej */ }
-
-  update(frame) {
-    const t = frame.material?.uniforms?.uAtlas?.value;
-    this.value = t && t.isTexture === true ? t : this.k7Fallback;
-  }
-
-  clone() {
-    const node = super.clone();
-    node.k7Fallback = this.k7Fallback;
-    return node;
-  }
-}
-
-// Tekstura zastępcza atlasu przy budowie grafu: filtr liniowy (TSL wybiera ścieżkę próbkowania
-// z tekstury obecnej przy BUDOWIE — NEAREST dałby textureLoad), (0, 0, 0, 0) = brak napisu.
-function atlasPlaceholder() {
-  const t = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
-  t.magFilter = THREE.LinearFilter;
-  t.minFilter = THREE.LinearFilter;
-  t.generateMipmaps = false;
-  t.needsUpdate = true;
-  return t;
-}
+// Atlas napisów per obiekt (każda hala ma swój): `teksturaObiektu` (src/3d/tsl/teksturaObiektu.js —
+// `texture().onObjectUpdate()` w three r183 NIE działa). Zastępcza przy budowie: filtr liniowy (TSL
+// wybiera ścieżkę próbkowania z tekstury obecnej przy BUDOWIE), (0, 0, 0, 0) = brak napisu.
 
 // x⁵ mnożeniem (baza WebGL: FXC rozwijał pow(x, 5.0) w mnożenia — dla podstawy tuż poniżej
 // zera bez NaN; pow w WGSL to exp2(n·log2 x) = NaN dla x < 0).
@@ -364,8 +331,7 @@ export function k7Graphs(u) {
   const vUv = varyingProperty('vec2', 'vK7Uv');
   const vColor = varyingProperty('vec3', 'vK7Color');
   const vl = { ring: varyingProperty('vec3', 'vK7Ring'), n: varyingProperty('vec3', 'vK7N') };
-  const atlas = new K7AtlasNode(atlasPlaceholder(), vUv);
-  atlas.k7Fallback = atlas.value;
+  const atlas = teksturaObiektu('uAtlas', teksturaZastepcza(0, 0, 0, 0), vUv);
   const labelVertex = Fn(() => {
     const position = positionGeometry;
     vUv.assign(attribute('uv', 'vec2'));
