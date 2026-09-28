@@ -345,7 +345,10 @@ nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7). S
   klucz passa gry — render bierze gotowy stan i pipeline, nowy jest tylko lekki RenderObject), widoczne i bez cullingu
   tylko na czas wywołania (projekcja synchroniczna); warianty stanu materiału (`variant`), QuadMesh passów
   pełnoekranowych, pre-pass z materiałem zastępczym (`split: false` + `override`), wpisy „na start gry”
-  (`phase: 'loading'`), `flush()` na ekranie ładowania (reszta kolejki + pipeline'y, limit 4 s). Ring: hak
+  (`phase: 'loading'`), `flush()` na ekranie ładowania (reszta kolejki + pipeline'y, limit 4 s). Istniejące
+  rozgrzewki modułów idą przez `run(nazwa, fn)` (ta sama chwila i logika; czas i pipeline'y we wpisie, flush czeka) —
+  kroki `Core3D.fx` z `warm` same (`FxFrame._warmStep`: broń, rakiety, iskry, warp, pas, mapa ran; 20 tak samo), kadłuby,
+  tarcze i start GPU pasa jedną linią w `startGame`. Ring: hak
   `options.prewarm` budowy — bryły (i dach K-7 w drugim stanie) rozgrzane PRZED podpięciem, `ready` / `mapsReady` je
   obejmują; tło menu rusza z gotowym ringiem i rozgrzaną Ziemią / niebem (`createHaloBakeWarmup` usunięte, pieczenie
   rozgrzewa `HaloWorldMaps.init` na prawdziwych celach). Przestoje mierzy harness (dziennik klatek, `przestoje` scen,
