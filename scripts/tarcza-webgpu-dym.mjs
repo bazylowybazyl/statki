@@ -87,6 +87,9 @@ const scenarios = {
     const st = await stats(page);
     notes.push(`[start] ${JSON.stringify(st)}`);
     if (!(st.maxR > 850 && st.maxR < 1050)) problems.push(`[start] maxR ${st.maxR} poza oczekiwanym zakresem (~pół kadłuba + odstęp)`);
+    // Tarcza przezroczysta: w spoczynku nie ma czego rysować.
+    if (st.hexVisible) problems.push('[start] heksy tarczy widoczne w spoczynku (tarcza ma być przezroczysta)');
+    if (!(st.hexes > 500)) problems.push(`[start] za mało płytek tarczy: ${st.hexes}`);
     await page.close();
   },
 
@@ -104,6 +107,14 @@ const scenarios = {
     });
     await step(page, 3);
     await shot(page, '02-trafienia-a');
+    const st = await stats(page);
+    if (!st.hexVisible) problems.push('[trafienia] heksy niewidoczne po trafieniach');
+    if (await has(page, 'hexProbe')) {
+      const pr = await call(page, () => window.__demo.hexProbe());
+      notes.push(`[trafienia] płytki: rozgrzane ${pr.lit}, naprężone ${pr.stressed}, wgniecenie ${pr.maxDentCells.toFixed(2)} komórki`);
+      if (!(pr.lit > 10)) problems.push(`[trafienia] za mało rozgrzanych płytek: ${pr.lit}`);
+      if (!(pr.maxDefCells > 0.1)) problems.push(`[trafienia] płytki się nie przesunęły (${pr.maxDefCells.toFixed(3)} komórki)`);
+    }
     await step(page, 10);
     await shot(page, '02-trafienia-b');
     await page.close();
@@ -145,6 +156,12 @@ const scenarios = {
       await shot(page, '04-wiazka-przebicie');
       const st = await stats(page);
       notes.push(`[wiazka] przebicie: ${st.breach}, trafienia w pancerz: ${st.hullHits}`);
+      if (await has(page, 'hexProbe')) {
+        // Przebicie odrywa przegrzane płytki (odłamki), dziura zostaje pusta.
+        const pr = await call(page, () => window.__demo.hexProbe());
+        notes.push(`[wiazka] oderwane płytki: ${pr.flying}`);
+        if (st.breach && !(pr.flying > 0)) problems.push('[wiazka] przebicie bez oderwanych płytek');
+      }
       await call(page, () => window.__demo.beam(0, 0, false));
       await step(page, 4);
     } else notes.push('[wiazka] pominięto — brak __demo.beam');
@@ -174,6 +191,8 @@ const scenarios = {
     await shot(page, '06-pekniecie-a');
     await step(page, 12);
     await shot(page, '06-pekniecie-b');
+    const st2 = await stats(page);
+    if (!st2.debrisFlying || !st2.hexVisible) problems.push('[pekniecie] siatka heksów nie rozpadła się na odłamki');
     if (!(await waitState(page, 'off', 60))) problems.push('[pekniecie] tarcza nie przeszła w off');
     // Regeneracja do progu (20%) → ponowny rozruch.
     await call(page, () => window.__demo.setHP(0.3));

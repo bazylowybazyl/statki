@@ -7,10 +7,13 @@
 <title>Tarcza nowej generacji — demo WebGPU</title>
 <!--
   Demo WebGPU (three.js r183 przez Vite: `npm run dev`, /dema/tarcza-webgpu.html).
-  Tarcza Atlasa jako OŚRODEK, nie naklejka: stan pola liczony na GPU (fala,
-  energia, przebicie), pole świeci na otoczenie (światła trafień, poświata na
-  kadłubie), załamuje światło, iskry ślizgają się po czaszy, pęknięcie rozsypuje
-  czaszę na heksy. Obrys, stany i czasy z gry (shieldSystem.js).
+  Tarcza Atlasa jest PRZEZROCZYSTA — widać ją tylko tam, gdzie coś w nią uderzy.
+  Stan pola liczony na GPU (fala, energia, przebicie); tarcza to siatka płytek-heksów
+  jak kadłub w starym destruktorze GPU: ciało miękkie (wgniecenia rozchodzą się po
+  sąsiadach), poświata stresu, żar stygnący od bieli do głębokiego błękitu,
+  przeciążone płytki odpadają przy przebiciu, pęknięcie rozrywa całą siatkę.
+  Światła trafień, poświata na kadłubie, załamanie, iskry na czaszy.
+  Obrys, stany i czasy z gry (shieldSystem.js).
 
   Parametry adresu: ?test=1 (klatki tylko przez __demo.step), ?debug=pole
   (widok kontrolny siatki pola), ?siatka=512 (jakość siatki pola), ?kat=0.3
@@ -76,7 +79,8 @@
     Spacja — salwa wszystkich · kółko — zoom · WASD — kamera · H — panel</div>
   <div id="stats"></div>
   <details id="settings"><summary>ustawienia</summary>
-    <label><input type="checkbox" id="c-field"> pokaż pole (stała widoczność)</label>
+    <label><input type="checkbox" id="c-field"> pokaż heksy (cała siatka, stale)</label>
+    <label><input type="checkbox" id="c-fronts"> rozruch i gaszenie widoczne</label>
     <label><input type="checkbox" id="c-waves" checked> fale</label>
     <label><input type="checkbox" id="c-energy" checked> energia i przebicia</label>
     <label><input type="checkbox" id="c-lights" checked> światła trafień</label>
@@ -89,6 +93,10 @@
     <div class="row"><span>tłumienie fali</span><input type="range" id="s-damp" min="0.2" max="6" step="0.1" value="1.6"><output id="o-damp"></output></div>
     <div class="row"><span>stygnięcie [s]</span><input type="range" id="s-cool" min="0.5" max="8" step="0.1" value="2.6"><output id="o-cool"></output></div>
     <div class="row"><span>próg przebicia</span><input type="range" id="s-thr" min="0.4" max="4" step="0.05" value="1.4"><output id="o-thr"></output></div>
+    <div class="row"><span>rozmiar heksa [×]</span><input type="range" id="s-hex" min="0.5" max="2" step="0.05" value="1"><output id="o-hex"></output></div>
+    <div class="row"><span>wgniecenie heksów</span><input type="range" id="s-kick" min="0" max="3" step="0.05" value="1"><output id="o-kick"></output></div>
+    <div class="row"><span>żar heksów</span><input type="range" id="s-heat" min="0" max="3" step="0.05" value="1"><output id="o-heat"></output></div>
+    <div class="row"><span>poświata stresu</span><input type="range" id="s-stress" min="0" max="3" step="0.05" value="1"><output id="o-stress"></output></div>
     <div class="row"><span>siła załamania</span><input type="range" id="s-refr" min="0" max="3" step="0.05" value="1"><output id="o-refr"></output></div>
     <div class="row"><span>regeneracja HP [%/s]</span><input type="range" id="s-regen" min="0" max="25" step="0.5" value="4"><output id="o-regen"></output></div>
     <div class="row"><span>jakość siatki pola</span><input type="range" id="s-grid" min="256" max="1024" step="128" value="512"><output id="o-grid"></output></div>

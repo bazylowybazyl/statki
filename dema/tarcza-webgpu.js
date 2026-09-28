@@ -4,7 +4,7 @@
 //
 // Klatka: wejście → kamera → broń i pociski (gameplay 2D jak w grze) →
 // stany tarcz (updateShieldFx z shieldSystem.js) → zdarzenia pola → światła →
-// compute (pole, iskry, odłamki) → render (pass → bloom → tone mapping).
+// compute (pole, płytki-heksy, iskry) → render (pass → bloom → tone mapping).
 // Współrzędne API (__demo) i encji: układ gry, y w dół; scena 3D: y = −y gry.
 // ============================================================
 import * as THREE from 'three/webgpu';
@@ -151,7 +151,7 @@ async function main() {
 
   const profile = shield.profile;
   console.log(`Tarcza Atlasa: maxR ${profile.maxR.toFixed(1)} j., minR ${profile.minR.toFixed(1)} j., odstęp ${profile.pad.toFixed(1)} j., ` +
-    `kadłub ${sprite.shards.length} komórek, siatka pola ${shield.describeGrid()}`);
+    `kadłub ${sprite.shards.length} komórek, siatka pola ${shield.describeGrid()}, heksy ${shield.describeHexes()}`);
 
   // -------------------------------------------------------------------------
   // Wrogowie: 3 mniejsze okręty na łuku 4–6 tys. j. od Atlasa, wieże w Atlasa.
@@ -184,7 +184,7 @@ async function main() {
   };
   const eGroup = new THREE.Group();
   scene.add(eGroup);
-  const eShield = new Tarcza({ renderer, entity: eEnt, group: eGroup, gridCells: 192, name: 'wróg', sparkPool: 16384, shardMax: 1500 });
+  const eShield = new Tarcza({ renderer, entity: eEnt, group: eGroup, gridCells: 192, name: 'wróg', sparkPool: 16384, hexMax: 6000 });
   const clash = createClash({ atlas, atlasShield: shield, enemy: enemies[eIdx], eEnt, eShield, eGroup });
   clash.syncEnemy();
 
@@ -319,6 +319,7 @@ async function main() {
   }
   if (TEST) $('c-enemy').checked = false;   // test: bez losowego ognia
   bindCheck('c-field', (v) => { shield.showField = v; eShield.showField = v; });
+  bindCheck('c-fronts', (v) => { shield.frontsVisible = v; eShield.frontsVisible = v; });
   bindCheck('c-lights', (v) => { S.lightsOn = v; applyFxToggles(); });
   bindCheck('c-glow', (v) => { S.glowOn = v; applyFxToggles(); });
   bindCheck('c-refr', (v) => { S.refrOn = v; applyFxToggles(); });
@@ -328,6 +329,10 @@ async function main() {
   bindCheck('c-waves', (v) => { FIELD_PARAMS.wavesOn = v; });
   bindCheck('c-energy', (v) => { FIELD_PARAMS.energyOn = v; });
   bindRange('s-refr', (v) => { shield.G.refr.value = v; eShield.G.refr.value = v; });
+  bindRange('s-kick', (v) => { shield.X.uKick.value = v; eShield.X.uKick.value = v; });
+  bindRange('s-heat', (v) => { shield.X.uHeatPeak.value = 3.2 * v; eShield.X.uHeatPeak.value = 3.2 * v; });
+  bindRange('s-stress', (v) => { shield.X.uStressGain.value = 1.2 * v; eShield.X.uStressGain.value = 1.2 * v; });
+  bindRange('s-hex', (v) => { shield.setHexScale(v); eShield.setHexScale(v); }, (v) => v.toFixed(2), true);
   bindRange('s-light', (v) => { uLightGain.value = v; });
   bindRange('s-sparks', (v) => { FIELD_PARAMS.sparkMult = v; });
   bindRange('s-bloom', (v) => { S.bloomStrength = v; if (S.bloom) bloomNode.strength.value = v; });
@@ -461,6 +466,7 @@ async function main() {
       `ms GPU           ${timestamps ? (S.gpuMs + S.gpuComputeMs).toFixed(2) + `  (compute ${S.gpuComputeMs.toFixed(2)})` : '— (brak timestamp-query)'}\n` +
       `siatka pola      ${shield.describeGrid()}\n` +
       `krok fali        1/${Math.round(1 / shield.stepSize)} s × ${shield.substeps}\n` +
+      `heksy            ${shield.describeHexes()} · podkroki ${shield.hexes.substeps}\n` +
       `zdarzenia/klatkę ${shield.eventsLastFrame + eShield.eventsLastFrame}\n` +
       `żywe iskry (≈)   ${(shield.sparks.live + eShield.sparks.live).toLocaleString('pl-PL')} / ${shield.sparks.pool.toLocaleString('pl-PL')}\n` +
       `światła          ${lights.count} / 256\n` +
@@ -548,6 +554,7 @@ async function main() {
     toggleShield,
     fullCharge,
     setNewFx,
+    hexProbe: () => shield.hexes.probe(),
     lookAt(x, y, zoom) {
       cam.x = x; cam.y = -y; cam.anchor.on = false;
       if (zoom) cam.tz = cam.z = clamp(zoom, ZOOM_MIN, ZOOM_MAX);
@@ -559,7 +566,8 @@ async function main() {
         fps: S.fps, cpuMs: S.cpuMs, gpuMs: S.gpuMs, gpuComputeMs: S.gpuComputeMs, lights: lights.count,
         state: sh.state, hp: sh.val, hpMax: sh.max, grid: shield.describeGrid(), domeVisible: shield.visible,
         substeps: shield.substeps, events: shield.eventsLastFrame + eShield.eventsLastFrame, mode: shield.mode,
-        sparks: shield.sparks.live + eShield.sparks.live, shards: shield.shards.count, shardsActive: shield.shards.active(S.time),
+        sparks: shield.sparks.live + eShield.sparks.live, hexes: shield.hexes.count, hexCell: shield.hexes.cell,
+        hexSubsteps: shield.hexes.substeps, hexVisible: shield.hexes.mesh.visible, debrisFlying: shield.hexes.flying(S.time),
         bolts: weapons.W.stats.bolts, shieldHits: weapons.W.stats.shieldHits, hullHits: weapons.W.stats.hullHits,
         passedBreach: weapons.W.stats.passed, breach: shield.field.breachAny,
         clash: clash.C.phase, clashContacts: clash.C.contacts, enemyShield: eEnt.shield.state, enemyHp: eEnt.shield.val,

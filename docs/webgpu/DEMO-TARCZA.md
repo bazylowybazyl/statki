@@ -12,13 +12,42 @@ na prawdziwym GPU; w kontenerze działa sprawdzanie poprawności (SwiftShader, �
 | `dema/tarcza-webgpu.js` | renderer, kamera, pętla (`?test=1` + `__demo.step`), wejście, panel, `window.__demo` |
 | `dema/tarcza-webgpu/tarcza.js` | most `shieldSystem.js` ↔ render: encja, trafienia (`registerShieldImpact`), faza „niewidzialnego pola”, zdarzenia pola, światła trafień, wiązka, iskry z pancerza |
 | `dema/tarcza-webgpu/pole.js` | stan pola w compute: siatka kartezjańska, fala (h, v), energia E, przebicie B, obwiednia fali W, tekstura rgba16f, mapa przebić 64×64 dla CPU |
-| `dema/tarcza-webgpu/czasza.js` | geometria czaszy z profilu (384 × 24), materiał „jak dziś w grze” (port `HULL_SHIELD_FRAGMENT`, tryb B), nowy materiał z pola (tryb A) z załamaniem |
+| `dema/tarcza-webgpu/heksy.js` | nowy wygląd (tryb A): tarcza jako siatka płytek-heksów — ciało miękkie w compute jak stary destruktor GPU, żar, stres, odrywanie przy przebiciu, rozpad przy pęknięciu |
+| `dema/tarcza-webgpu/czasza.js` | geometria czaszy z profilu (384 × 24), materiał „jak dziś w grze” (port `HULL_SHIELD_FRAGMENT`, tryb B), uniformy wyglądu (załamanie, poświata) |
 | `dema/tarcza-webgpu/iskry.js` | iskry w compute ślizgające się po czaszy (pula 64 tys.) |
-| `dema/tarcza-webgpu/odlamki.js` | pęknięcie: heksy z czaszy w compute |
 | `dema/tarcza-webgpu/bronie.js` | PD, laser, torpeda, wiązka, salwy, ogień wrogów, kolizje w płaszczyźnie gry |
 | `dema/tarcza-webgpu/zderzenie.js` | tarcza w tarczę (K) |
 | `dema/tarcza-webgpu/kadlub.js`, `wrogowie.js`, `tlo.js`, `wspolne.js` | Atlas ze sprite'a (heksy z alfy co 12 px, normalna z luminancji), okręty z brył, niebo, światła i szumy |
 | `scripts/tarcza-webgpu-dym.mjs` | skrypt sprawdzający (Playwright + SwiftShader, zrzuty do `.tmp/tarcza/`) |
+
+## Wygląd: heksy jak w starym destruktorze GPU
+
+Tarcza jest przezroczysta — w spoczynku płytki mają zerową wielkość (brak fragmentów),
+widać ją tylko tam, gdzie coś uderzyło. Wzór: `src/game/destructorGpuSoftBody.js`
+(compute na surowym WebGPU, sprzed portu) i shader heksów z `src/3d/hexShips3D.js`
+sprzed portu (commit `8c719de`: `stressGlow`, `heatRamp`, `DESTRUCTOR_CONFIG.heat*`).
+
+- **Siatka:** trójkątna w płaszczyźnie kadłuba, odstęp `clamp(0,026·maxR, 8, 40)` j.
+  × suwak; płytka to komórka Woronoja (heks ostrym wierzchołkiem w górę) podniesiona
+  do płaszczyzny stycznej czaszy — z góry płytki kładą się dokładnie na siatkę.
+- **Ciało miękkie** (jak shader destruktora): sprężyny do 6 sąsiadów od siatki
+  spoczynkowej, ściskanie 3,2× twardsze od rozciągania, wybrzuszenie przy mocnym
+  ściśnięciu, przenoszenie prędkości wzdłuż/w poprzek wiązania, siła / √sąsiadów.
+  Prędkość fali w siatce ≈ prędkość fali pola (k = (c / 0,642·d)²), podkroki z CFL.
+- **Plastyczność:** przesunięcie ponad 10% komórki zostaje jako wgniecenie (spoczynek
+  płytki przesuwa się za nią), wgniecenie goi się ~1 s (gorąca płytka ~3× wolniej) —
+  bez tego krater znikał po 0,1 s.
+- **Żar:** zdarzenie pola grzeje płytki (gauss w promieniu zdarzenia; krater sięga
+  1,4× dalej), stygnięcie 0,5 × „stygnięcie”, wyrównywanie z sąsiadami; jasność 0,26h + 0,74h⁴
+  (jak żar kadłuba), rampa: głęboki błękit → barwa tarczy → błękitna biel → biel.
+  Energia pola blisko progu barwi płytki na pomarańcz (przeciążenie).
+- **Stres:** obwiednia naprężenia wiązań i przesunięcia — świecą szwy płytek. Martwa
+  strefa (30%), żeby drobne drgania daleko od trafienia nie zapalały całej tarczy.
+- **Przebicie:** płytka odpada, gdy B pola nad jej środkiem przekroczy własny próg
+  (0,45–0,7) — leci jako odłamek; wraca, gdy B < 0,25 i tarcza jest aktywna.
+- **Pęknięcie:** cała siatka rozrywa się falą od ostatniego trafienia (3600 j./s),
+  tuż przed oderwaniem szwy świecą barwą pęknięcia; po rozruchu płytki odrastają za
+  czołem (widoczne tylko z „rozruch i gaszenie widoczne”).
 
 ## Ustalenia
 
@@ -40,6 +69,11 @@ na prawdziwym GPU; w kontenerze działa sprawdzanie poprawności (SwiftShader, �
 - **WGSL:** żadnego `smoothstep` z odwróconymi krawędziami (dla stałych Tint odrzuca shader) —
   `1 − smoothstep(b, a, x)`; nazwy funkcji `setLayout` tylko ASCII (nazwa z „ó” wywraca
   budowanie: „Function is not a WGSL code”).
+- **Limit buforów storage:** domyślnie 8 na etap shadera (`maxStorageBuffersPerShaderStage`);
+  dziewiąty bufor w przebiegu compute unieważnia układ grup wiązań i cały przebieg.
+  Dane do rysunku (poza, wygląd) służą więc też jako stan lotu odłamka.
+- **`hash` z TSL** bierze `seed.toUint()` — część ułamkowa ziarna przepada; losowość
+  z ziaren w [0, 1) przez `hash12(vec2)` z `wspolne.js`.
 - **Klatki bez pętli animacji:** `pass` i `BloomNode` odświeżają się raz na klatkę węzłów
   (`NodeFrame.frameId`), którą liczy pętla `setAnimationLoop`. Pod `?test=1` pętla rAF
   zostaje, ale klatka dema idzie tylko z `__demo.step(n)`.

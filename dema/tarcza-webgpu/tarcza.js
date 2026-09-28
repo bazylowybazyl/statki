@@ -1,6 +1,6 @@
 // ============================================================
 // Tarcza encji: most między shieldSystem.js (stan, obrys, trafienia — jak w grze)
-// a renderem WebGPU (czasza, pole w compute, efekty). Encja w konwencji gry:
+// a renderem WebGPU (pole w compute, siatka płytek-heksów, efekty). Encja w konwencji gry:
 // { x, y, angle, visual: { spriteScale }, hexGrid: { shards }, shield: { val, max } },
 // y w dół; render w klatce lokalnej 3D grupy (pozycja (x, −y), obrót −kąt).
 // ============================================================
@@ -14,12 +14,12 @@ import {
 } from '../../shieldSystem.js';
 import {
   buildDomeGeometry, createShieldUniforms, createReferenceMaterial, createFieldLookUniforms,
-  createFieldMaterial, MAX_HITS, sstepDown
+  MAX_HITS, sstepDown
 } from './czasza.js';
 import { createField, createFieldShared, MAX_EVENTS, MAX_SOURCES } from './pole.js';
 import { clamp, lights as sceneLights } from './wspolne.js';
 import { createSparks } from './iskry.js';
-import { createShards } from './odlamki.js';
+import { createHexLattice, createHexShared, hexCellFor } from './heksy.js';
 
 // Liczby z src/3d/shield3D.js (model „niewidzialne pole”).
 export const SHIELD_FIELD_TUNING = {
@@ -99,7 +99,7 @@ function createDebugMaterial(P) {
 }
 
 export class Tarcza {
-  constructor({ renderer, entity, group, gridCells = 512, debugMarker = null, name = 'tarcza', sparkPool = 65536, shardMax = 6000 }) {
+  constructor({ renderer, entity, group, gridCells = 512, debugMarker = null, name = 'tarcza', sparkPool = 65536, hexMax = 16000 }) {
     this.renderer = renderer;
     this.entity = entity;
     this.group = group;
@@ -110,32 +110,39 @@ export class Tarcza {
     this.domeHeight = height;
     this.sizeK = clamp(this.profile.maxR / 900, 0.35, 1.2);
     this.U = createShieldUniforms(this.profile);
-    this.G = createFieldLookUniforms(this.profile);
+    this.G = createFieldLookUniforms();
     this.P = createFieldShared();
     this.P.uHMax.value = height * 0.32;
     this.debugMarker = debugMarker;
     if (debugMarker) this.P.uMarker.value.copy(debugMarker);
     this.gridCells = gridCells;
     this.field = createField(renderer, this.profile, gridCells, this.P);
+    // Czasza: tylko wygląd „jak dziś w grze” (A/B) i widok kontrolny pola.
     this.materials = {
-      new: createFieldMaterial(this.U, this.P, this.G),
       ref: createReferenceMaterial(this.U),
       debug: createDebugMaterial(this.P)
     };
-    this.mode = debugMarker ? 'debug' : 'new';
-    this.mesh = new THREE.Mesh(geometry, this.materials[this.mode]);
+    this.mesh = new THREE.Mesh(geometry, this.materials.ref);
     this.mesh.renderOrder = 10;
     this.mesh.frustumCulled = false;
     group.add(this.mesh);
 
-    // Iskry na powierzchni i odłamki pęknięcia (compute, pule tworzone raz).
+    // Nowy wygląd: siatka płytek-heksów (ciało miękkie jak w starym destruktorze GPU).
+    this.X = createHexShared();
+    this.hexMax = hexMax;
+    this.hexScale = 1;
+    this.hexes = createHexLattice({
+      renderer, group, profile: this.profile, domeHeight: height, P: this.P, U: this.U, G: this.G, X: this.X,
+      cell: hexCellFor(this.profile, this.hexScale), maxCount: hexMax
+    });
+    this.frontsVisible = false;   // rozruch / gaszenie widoczne (domyślnie: tylko trafienia)
+
+    // Iskry na powierzchni (compute, pula tworzona raz).
     this.sparks = createSparks({ renderer, group, profile: this.profile, domeHeight: height, U: this.U, pool: sparkPool });
-    this.shards = createShards({ renderer, group, profile: this.profile, domeHeight: height, maxCount: shardMax });
     this.meanR = (this.profile.maxR + this.profile.minR) * 0.5;
     this.breachReadAt = 0;
     this.waveAcc = 0;
     this.stepSize = 1 / 240;
-    this.fadeK = 1;
     this.beamAcc = 0;
 
     // Pierścień trafień (jak syncHitBuffer w grze): sloty z czasem startu.
@@ -168,6 +175,9 @@ export class Tarcza {
     this._hc = new THREE.Color();
     this._heatWhite = new THREE.Color(1.25, 1.3, 1.4);
     this._heatOrange = new THREE.Color(1.9, 0.62, 0.16);
+
+    this.mode = 'new';
+    this.setMode(debugMarker ? 'debug' : 'new');
   }
 
   get shield() { return this.entity.shield; }
@@ -401,6 +411,14 @@ export class Tarcza {
     const phase = this.resolvePhase(time);
     const up = sh.state !== 'off';
     U.fieldVisibility.value = this.showField && up ? Math.max(phase.field, 1) : phase.field;
+    // Płytki: odrastają za czołem rozruchu, wracają tylko przy aktywnej tarczy.
+    const X = this.X;
+    const flying = this.hexes.flying(time);
+    X.uShow.value = this.showField && up ? 1 : 0;
+    X.uFrontGlow.value = this.frontsVisible ? 1 : 0;
+    X.uRegrowOK.value = (sh.state === 'active' || sh.state === 'activating') ? 1 : 0;
+    X.uSweep.value = (sh.state === 'activating' || sh.state === 'deactivating') ? phase.sweep : -1;
+    X.uShatterMix.value = flying ? 1 : 0;
     U.sweep.value = phase.sweep;
     const lowPower = (sh.state === 'active' || sh.state === 'activating')
       ? clamp((LOW_POWER_THRESHOLD - life) / LOW_POWER_THRESHOLD, 0, 1) : 0;
@@ -425,25 +443,33 @@ export class Tarcza {
     if (sweeping) this.wake(0);
     if (lowPower > 0 || this.showField) this.wake(0);
     if (this.debugMarker) this.debugSources(dt, time);
-    this.G.fade.value = this.fadeK;
     this.sparks.update(time);
     this.sparks.uMinW.value = 1.3 / Math.max(1e-4, pxPerUnit);
     this.sparks.uGroupRot.value = this.group.rotation.z;
 
     // Jak updateShields3D: stan off (albo stłumiona bez gaszenia) = brak kopuły;
-    // nic się nie dzieje = zero draw calli.
+    // nic się nie dzieje = zero draw calli. Nowy wygląd: tarcza przezroczysta —
+    // płytki rysowane tylko wtedy, gdy pole żyje po trafieniu (albo lecą odłamki).
     const shown = up && (!isShieldSuppressed(this.entity) || sh.state === 'deactivating');
     const domePx = Math.max(1, this.profile.maxR) * pxPerUnit;
-    const busy = this.mode === 'new'
-      ? (time < this.awakeUntil || U.fieldVisibility.value > 0.002 || U.lowPower.value > 0.004)
-      : (U.fieldVisibility.value > 0.002 || U.lowPower.value > 0.004 || liveHits > 0);
-    this.visible = this.mode === 'debug' || (shown && domePx >= SHIELD_DOME_MIN_PX && (busy || (sh.energyShotTimer || 0) > 0));
-    this.mesh.visible = this.visible;
+    if (this.mode === 'new') {
+      const sweeping = sh.state === 'activating' || sh.state === 'deactivating';
+      const busy = time < this.awakeUntil || X.uShow.value > 0 || (this.frontsVisible && sweeping);
+      this.visible = flying || (shown && domePx >= SHIELD_DOME_MIN_PX && busy);
+      this.hexes.mesh.visible = this.visible;
+      this.mesh.visible = false;
+    } else {
+      const busy = U.fieldVisibility.value > 0.002 || U.lowPower.value > 0.004 || liveHits > 0;
+      this.visible = this.mode === 'debug' || (shown && domePx >= SHIELD_DOME_MIN_PX && (busy || (sh.energyShotTimer || 0) > 0));
+      this.mesh.visible = this.visible;
+      this.hexes.mesh.visible = false;
+    }
 
-    // Wyłączona tarcza: pole od zera przy następnym rozruchu.
+    // Wyłączona tarcza: pole od zera przy następnym rozruchu, płytki czekają na rozruch.
     if (sh.state === 'off') {
       if (!this.offReset) {
         this.field.reset(); this.field.clearBreachMap(); this.clearHeat();
+        this.hexes.resetAttached();
         this.offReset = true; this.awakeUntil = -1;
       }
     } else {
@@ -490,12 +516,12 @@ export class Tarcza {
     }
   }
 
-  // Pęknięcie (nowy wygląd): heksy lecą od ostatniego trafienia, błysk i światło,
-  // snop iskier; czasza gaśnie od razu — odłamki ją zastępują.
+  // Pęknięcie (nowy wygląd): siatka rozrywa się falą od ostatniego trafienia —
+  // płytki odlatują jako odłamki, błysk i światło, snop iskier.
   onBreak(time) {
     if (this.mode !== 'new') return;
     const hx = this.lastHitLocal.x, hy = this.lastHitLocal.y;
-    this.shards.trigger(hx, hy, 1.0, time);
+    this.hexes.shatter(hx, hy, time);
     this.addFlash(hx, hy, 'break', 400);
     this.addFlash(0, 0, 'break', 200);
     if (FIELD_PARAMS.sparksOn) {
@@ -503,7 +529,6 @@ export class Tarcza {
       this.sparks.spawn(hx, hy, this.domeZ(hx * 0.95, hy * 0.95) + 2, hx / r, hy / r, 0.6,
         1400 * FIELD_PARAMS.sparkMult, 500, 2600, 0.5, 1.4, 0.55, 1.4, 3.6, 1.4, time);
     }
-    this.fadeK = 0;
   }
 
   // resolveHullFieldPhase z gry: rozruch/gaszenie = czoło fali, dopalenie po rozruchu.
@@ -514,7 +539,7 @@ export class Tarcza {
     if (this.prevState !== st) {
       if (st === 'active' && this.prevState === 'activating') this.bootAt = time;
       if (st === 'breaking') this.onBreak(time);
-      if (st === 'activating' || st === 'active') this.fadeK = 1;
+      if (st === 'activating') this.hexes.clearShatter();
       this.prevState = st;
     }
     const ph = this.phase;
@@ -531,9 +556,11 @@ export class Tarcza {
   }
 
   setMode(mode) {
-    if (!this.materials[mode]) return;
+    if (mode !== 'new' && !this.materials[mode]) return;
     this.mode = mode;
-    this.mesh.material = this.materials[mode];
+    if (mode !== 'new') this.mesh.material = this.materials[mode];
+    this.mesh.visible = mode === 'debug';
+    this.hexes.mesh.visible = false;
   }
 
   // Compute pola: parametry z panelu, zdarzenia tej klatki, podkroki z CFL.
@@ -541,9 +568,8 @@ export class Tarcza {
     const P = this.P, fp = FIELD_PARAMS;
     const awake = this.mode !== 'ref' && this.time < this.awakeUntil && this.shield.state !== 'off';
     this.eventsLastFrame = this.evCount;
-    // Iskry i odłamki żyją własnym życiem (także po zgaszeniu tarczy).
+    // Iskry żyją własnym życiem (także po zgaszeniu tarczy).
     this.sparks.compute(this.time);
-    this.shards.compute(this.time);
     if (awake) {
       // Stały krok fali (≤ 1/240 s, CFL), tyle kroków, ile trzeba — parami (ping-pong);
       // reszta czasu przechodzi do następnej klatki. Zaległości ponad limit przepadają
@@ -581,6 +607,9 @@ export class Tarcza {
     } else {
       this.substeps = 0;
     }
+    // Płytki po polu (czytają jego teksturę i te same zdarzenia); odłamki po
+    // pęknięciu lecą także wtedy, gdy pole śpi.
+    if (this.mode === 'new') this.hexes.compute(dt, this.time, awake, fp);
     this.evCount = 0;
     this.srcCount = 0;
   }
@@ -596,4 +625,20 @@ export class Tarcza {
   }
 
   describeGrid() { return this.field.describe(); }
+
+  // Suwak rozmiaru heksa: nowa siatka płytek (te same uniformy wyglądu).
+  setHexScale(scale) {
+    if (Math.abs(scale - this.hexScale) < 1e-6) return;
+    this.hexScale = scale;
+    const old = this.hexes;
+    this.hexes = createHexLattice({
+      renderer: this.renderer, group: this.group, profile: this.profile, domeHeight: this.domeHeight,
+      P: this.P, U: this.U, G: this.G, X: this.X, cell: hexCellFor(this.profile, scale), maxCount: this.hexMax
+    });
+    this.hexes.reset(this.shield.state === 'active' || this.shield.state === 'activating');
+    this.hexes.mesh.visible = false;
+    old.dispose();
+  }
+
+  describeHexes() { return this.hexes.describe(); }
 }
