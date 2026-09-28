@@ -450,7 +450,7 @@ w dwóch skalach, brud; piraci: płyty stal/ciemna stal/rdza, zacieki, nity).
   w vertex shaderze z `window.SUN`; te same stałe (otoczenie 0,24, rozproszone
   1,18, połysk Blinna 0,30 — `SHIP_LIGHT_DEFAULTS`).
 - **Dach świeci jak kadłub pod strefą** (`hullLightAt` — lustro „poduszkowej”
-  normalnej `HEX_FRAGMENT_SHADER`), skosy od słońca dostają rozproszone, ściany
+  normalnej skóry kadłuba, dziś graf TSL w `hexShips3D.tsl.js`), skosy od słońca dostają rozproszone, ściany
   odchylone mniej otoczenia. Zmierzone (HDR, bez bloomu) dach modelu / namalowana
   strefa w tym samym miejscu: Bellator 0,262 / 0,263, Iron Skull 0,039 / 0,052,
   Atlas 0,066 / 0,032 (Atlas ma ciemny kręgosłup na sprite'cie).
@@ -696,7 +696,8 @@ już małe liczby.
 (ortho: `cam.x`, `−cam.y`; free3d: pozycja kamery; awaryjnie środek `cull`)
 trafia do `mesh.position` wszystkich 6 meshy, a translacje instancji — bryły,
 cień na kadłubie, okna — są względem niego (małe liczby). Shadery:
-`projectionMatrix * modelViewMatrix * instanceMatrix * p`. Kierunek światła
+`projectionMatrix * modelViewMatrix * instanceMatrix * p` (od zadania 15 graf TSL z węzłem
+`modelViewMatrix` — przy `highPrecision` składany na CPU w double, §8.14). Kierunek światła
 dalej z `modelMatrix * instanceMatrix` (słońce jest daleko, ±0,5 j. bez
 znaczenia); kierunek widoku w przestrzeni kamery (ortho: prosto z góry, jak
 `viewDir` kadłuba). Przy okazji: rozrzut startu marszu cienia był z

@@ -14,7 +14,7 @@ Nie ma flagi ani dwóch ścieżek dla statków: encja z kadłubem ma `beamHull`,
 | `src/game/destructorBeams3D.js` | silnik; haki gry: `pairFilter`, `onContact`, `onWreck`, `onNodeDebris`, `clock`; krater (`opts.hpBudget`); `sweepLocal2D` / `probeLocal2D`; żar zgniotu (`cfg.heatGain`) |
 | `src/game/beamStore3D.js` | pola węzła `heat` / `heatStamp` (tylko render) |
 | `src/3d/beamHullSkin.js` | skóra gry: czworokąt na węzeł, UV jak tekstury heksów (`flipY = false`), jasność blachy, żar |
-| `src/3d/hexShips3D.js` | backend skóry (`createBeamSkinMesh` / `updateBeamSkinMesh`), shader = `HEX_FRAGMENT_SHADER` + jasność; cień SDF z komórek (`beamShadowGrid`) |
+| `src/3d/hexShips3D.js` | backend skóry (`createBeamSkinMesh` / `updateBeamSkinMesh`), materiał = graf TSL skóry belek (`hexShips3D.tsl.js`, rysunek w partiach `hullSkinBatch.js` — port WebGPU, zadania 04 i 23); cień SDF z komórek (`beamShadowGrid`) |
 | `src/3d/hullShadowSdf.js` | siatka komórkowa (`cellX/cellY/cellActive/cellCount/cellRadius`) obok heksów |
 | `shieldSystem.js` | tarcza-obrys z węzłów spoczynkowych (`hull.shieldCells`) |
 | `src/game/salvage.js` | udziały w komórkach = `hull.baseNodes`, stawki materiałów i tempo cięcia na heks (`hexPerNode`), broń przypięta do komórki `ix,iy` |

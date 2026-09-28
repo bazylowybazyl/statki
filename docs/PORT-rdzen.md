@@ -1252,7 +1252,8 @@ luminancji 1, jasność daje pasmo stanu.
 ### Otwarte
 
 - **`coreFx3D` pisze pozycje bezwzględne**
-  (`projectionMatrix * viewMatrix * vec4(świat)` w 6 shaderach). Dotyczy
+  (od zadania 15 graf TSL `coreFx3D.tsl.js`: `cameraProjectionMatrix · modelViewMatrix · vec4(świat)`
+  przy meshu w początku układu — dane w atrybutach nadal bezwzględne). Dotyczy
   żaru rdzeni bez modelu, wyrzutów, strumienia, kuli, pierścienia i
   rozbłysku. Przy 5–10 mln j. to ~1 px drgań miękkich efektów — ta sama klasa
   co cząstki gry sprzed poprawek precyzji. Twardą krawędź (model w wyrwie)
@@ -1260,8 +1261,8 @@ luminancji 1, jasność daje pasmo stanu.
   zostawiła sesja precyzji w notatce `AGENT:` w jego nagłówku (2026-09-25):
   - `sceneOriginNearCamera` → `mesh.position`, dane względem niego;
   - wyrzuty siedzą w buforze pierścieniowym, więc początek „lepki” jak w
-    `sparkSystem3D.js` / `slugTrail3D.js`;
-  - pomiar przed/po: `dema/precyzja-drzenie.js`.
+    `sparkSystem3D.js` (pule GPU: `FxPoolOrigin`, `src/3d/fx/gpuPoolOrigin.js`);
+  - pomiar przed/po: `dema/precyzja-drzenie.js`, w grze `scripts/webgpu/drzenie-gra.mjs`.
   Zrobić przy integracji.
 - Model nie reaguje na wgniecenia kadłuba (heksy dryfują do `_maxHexDrift`).
   Widać go tylko przez martwe heksy, więc tego nie widać.
