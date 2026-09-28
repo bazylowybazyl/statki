@@ -4,6 +4,13 @@
 > znajomości rozmów. Numery linii są orientacyjne (`index.html` edytuje kilka
 > sesji naraz) — szukaj po nazwie funkcji.
 
+> **Propozycja 2 (2026-09-27, WebGPU): warp „Nurt”** — `dema/warp-webgpu.html`, opis
+> `docs/webgpu/DEMO-WARP.md`. Bańki nie rysujemy: widać ją po ośrodku (miliony drobin
+> w compute) — płaty Yorka bez siatki, strugi opływu, warkocz. Iteracja 2 (tego samego dnia,
+> uwagi usera): soczewka świata z planetami z propozycji 1, kop przy skoku, wyjście gwałtowne
+> jak w Star Wars, przyloty i odloty NPC tunelem (nić zwiastuna → szczelina → okręt wypada).
+> Ten dokument opisuje propozycję 1 („Fałda”, `dema/warp-demo.html`, WebGL).
+
 **Stan (2026-09-26): M1 (wyjście), ładowanie skoku z M2 i widok skoku z M3
 (soczewka świata w prawdziwych odległościach z przelotami obok planet
 i księżyców, cel wiszący przy krawędzi, podróż między dowolnymi planetami,

@@ -1296,11 +1296,16 @@ $('loading').textContent = 'Budowa ringu (kompilacja i pieczenie map)…';
 const ringOk = await ring.ready;
 window.__halo.buildMs = performance.now() - tBuild;
 if (!ringOk) reportError(`Budowa ringu nie wyszła: ${ring.error?.message || ring.error}`);
-// Czas kompilacji materiałów ringu (zadania 07–08): compileAsync samej siatki
+// Czas kompilacji materiałów ringu (zadania 07–09): compileAsync samej siatki
 // (budowa węzłów TSL → WGSL, moduł i pipeline) na celu sceny posta (format i MSAA
 // jak w klatce), przed pierwszą klatką — na zimno, po kolei: teren, konstrukcja
-// (reszta i górna ściana FG), chmury, powłoka powietrza. Przy okazji rozgrzewa pipeline'y.
-const COMPILE_MEASURED = ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell'];
+// (reszta i górna ściana FG), chmury, powłoka powietrza, megastruktura (bryły dachu FG
+// i doków, szkło kopuł, pociągi, światła dachu i doków), miasto (ogrody, przemysł,
+// drzewa). Bryły jednego zestawu dzielą materiał — mierzona pierwsza (prostopadłościan).
+// Przy okazji rozgrzewa pipeline'y.
+const COMPILE_MEASURED = ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell',
+  'HaloMega_detail_box', 'HaloMega_landmark_box', 'HaloMega_domeGlass', 'HaloMega_trains', 'HaloMega_lights', 'HaloMega_dockLights',
+  'HaloCity_garden', 'HaloCity_industry', 'HaloTrees'];
 async function measureCompile(name) {
   const mesh = ring.group.getObjectByName(name);
   if (!mesh || typeof renderer.compileAsync !== 'function') return null;

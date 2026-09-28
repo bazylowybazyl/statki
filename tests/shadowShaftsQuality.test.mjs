@@ -307,10 +307,13 @@ test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', 
   assert.match(impostorSource, /import \{ sunShadeUnlit \} from '\.\/hexShips3D\.tsl\.js';/);
   assert.match(impostorSource, /sunShadeUnlit\(aColor\.mul\(/);
 
-  const bridgeSource = readFileSync(new URL('../src/3d/bridge3D.js', import.meta.url), 'utf8');
-  assert.match(bridgeSource, /float hullLight = uB3Light\.x \* sunFill\(sunVis\) \+ \(vB3Hull\.x - uB3Light\.x\) \* sunVis;/);
-  assert.match(bridgeSource, /float dif = max\(0\.0, NdotL\) \* uB3Light\.y \* sh \* sunVis;/);
-  assert.match(bridgeSource, /float dark = \(1\.0 - sh\) \* uB3Shadow\.y \* sunVisibility\(\) \+ \(1\.0 - ao\);/);
+  // Model 3D mostka (port WebGPU, zadanie 15: TSL w bridge3D.tsl.js): otoczenie
+  // przez sunFill, słońce i własny cień przez sunVisibility; cień na kadłubie gaśnie bez słońca.
+  const bridgeSource = readFileSync(new URL('../src/3d/bridge3D.tsl.js', import.meta.url), 'utf8');
+  assert.match(bridgeSource, /const hullLight = U\.uB3Light\.x\.mul\(sunFill\(sunVis\)\)\.add\(vHull\.x\.sub\(U\.uB3Light\.x\)\.mul\(sunVis\)\);/);
+  assert.match(bridgeSource, /const dif = max\(0\.0, NdotL\)\.mul\(U\.uB3Light\.y\)\.mul\(sh\)\.mul\(sunVis\);/);
+  assert.match(bridgeSource, /const dark = float\(1\.0\)\.sub\(sh\)\.mul\(U\.uB3Shadow\.y\)\.mul\(sunVisibility\(\)\)\.add\(float\(1\.0\)\.sub\(ao\)\)\.toVar\(\);/);
+  assert.match(bridgeSource, /mul\(mix\(1\.0, sh, U\.uB3Shadow\.w\.mul\(sunVis\)\)\)/);
 });
 
 test('emitters and the Halo ring never read the sun shadow mask', () => {
@@ -331,13 +334,24 @@ test('emitters and the Halo ring never read the sun shadow mask', () => {
 });
 
 test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
-  assert.match(planetSource, /gl_FragColor = vec4\(sunShaftBackdrop\(color \* boost\), 1\.0\);/);
-  assert.match(planetSource, /finalColor = sunShaftBackdrop\(finalColor\);/);
+  // Port WebGPU (zadanie 05): mgławica, gwiazdy i ciała niebieskie w TSL (planet3d.assets.tsl.js). Maska słońca
+  // przez JEDNO miejsce w module (do zadania 03 zastępnik: pełne słońce, tło bez smugi — potem import z
+  // sunShadowMask.js); tu pilnujemy, KTÓRE człony ją czytają.
+  const planetTsl = readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const maskSites = planetTsl.match(/^(?:const sunVisibility = |const sunShaftBackdrop = |import \{[^}]*\bsun(?:Visibility|ShaftBackdrop)\b[^}]*\} from '\.\/sunShadowMask\.js';)/gm) || [];
+  assert.ok(maskSites.length >= 1 && maskSites.length <= 2, 'maska słońca w jednym miejscu modułu (zastępnik albo import)');
+  assert.ok(!/SUN_SHADOW_GLSL|attachSunShadowUniforms/.test(planetSource), 'planety bez GLSL maski');
+  // Tło: długa smuga cienia na mgławicy i gwiazdach.
+  assert.match(planetTsl, /return vec4\(sunShaftBackdrop\(color\.mul\(boost\)\), 1\.0\);/);
+  assert.match(planetTsl, /finalColor\.assign\(sunShaftBackdrop\(finalColor\)\);/);
   const beltSource = readFileSync(new URL('../src/3d/asteroidBeltBackdrop3D.js', import.meta.url), 'utf8');
   assert.match(beltSource, /col = sunShaftBackdrop\(col\);/);
   assert.match(beltSource, /applySunShadowToBuiltinMaterial\(this\.dustMaterial, 'backdrop'\);/);
   // Planety tla (perspektywa, z = -50 000) nie czytaja maski liczonej w plaszczyznie gry.
   assert.match(planetSource, /uSunShadowRecv: \{ value: this\.isRingAnchored \? 1\.0 : 0\.0 \}/);
-  assert.match(planetSource, /mixFactor \*= sunVisP;/);
+  // Planeta przy ringu: zaćmienie gasi dzień (terminator), chmury, poświatę; poświata limbu — do połowy.
+  assert.match(planetTsl, /const sunVisP = mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\)\.toVar\(\);\s*mixFactor\.mulAssign\(sunVisP\);/);
+  assert.match(planetTsl, /const lit = smoothstep\(-0\.02, 0\.22, dot\(normal, lightDir\)\)\.mul\(mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\)\)/);
+  assert.match(planetTsl, /glow\.mulAssign\(mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\.mul\(0\.5\)\)\);/);
   assert.match(planetSource, /if \(this\.isRingAnchored\) applySunShadowToBuiltinMaterial\(material, 'direct'\);/);
 });
