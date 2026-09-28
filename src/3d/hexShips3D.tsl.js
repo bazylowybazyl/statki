@@ -60,6 +60,7 @@ import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
 import { warpBloomKnee } from './warp/bloomKnee.js';
+import { getBeltMedium } from './asteroids/beltMedium.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
 // Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
@@ -368,14 +369,14 @@ function hullEffectLights(ctx) {
   return hullEffectLighting(ctx, effectLightGrid(), hullPerObjectNodes().uGridOwner);
 }
 
-// AGENT: zadanie 21 — volume.sample: ośrodek światła wolumetrycznego nowych
-// asteroid (dema/asteroidy-webgpu/ship.js, HullNodeMaterial.setupOutput).
-// Każda powierzchnia z zapisem głębi składa `kolor·a + rgb` (pył w kolumnie nad
-// pancerzem). Domyślnie a = 1, rgb = 0 — obraz bez zmian. Uwaga: wyjście
-// kadłuba NIE jest premultiplied (mieszanie SrcAlpha), więc rgb ośrodka na
-// brzegu sylwetki dostaje × alfa od mieszania.
+// Zadanie 21 — ośrodek światła wolumetrycznego pasa asteroid (src/3d/asteroids/beltMedium.js,
+// jak HullNodeMaterial.setupOutput z dema/asteroidy-webgpu/ship.js): każda powierzchnia
+// z zapisem głębi składa `kolor·a + rgb` (pył w kolumnie nad pancerzem, na wysokości
+// fragmentu). Poza polem (włącznik ośrodka = 0) bez odczytu: a = 1, rgb = 0 — obraz bez
+// zmian co do bitu. Uwaga: wyjście kadłuba NIE jest premultiplied (mieszanie SrcAlpha),
+// więc rgb ośrodka na brzegu sylwetki dostaje × alfa od mieszania.
 function hullVolume(/* ctx */) {
-  return { a: float(1.0), rgb: vec3(0.0) };
+  return getBeltMedium().hullVolume();
 }
 
 // ── Fragment kadłuba (wspólny dla wariantów) ────────────────────────────────

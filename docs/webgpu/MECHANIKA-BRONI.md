@@ -182,7 +182,7 @@ w `superweapon.js`); przepisane: `projectileTrajectory` (kadłub zatrzymuje wszy
 - Pocisk z `b.pen` najpierw kroczy `stepInsideHull`; zdarzenie obsługuje `applyBulletHullPass` (znaki rzazu →
   `WeaponFx.kerf` i pas na mapie ran, krater wyjścia / zakleszczenia przez `applyHexImpact` → `HullBodies.impact`
   BEZ HP, efekt `pierceExit` / `pierceStuck`, nośnik = kadłub; stemple — §8.6). W materiale (`PASS_INSIDE`) pocisk nie widzi innych kolizji
-  (kadłuby, asteroidy, płyta ringu, stacje); po wylocie kandydaci od punktu wyjścia.
+  (kadłuby, olbrzymy pasa asteroid, płyta ringu, stacje); po wylocie kandydaci od punktu wyjścia.
 - Pętla kandydatów działa w przebiegach `hullPass` (≤ 12): drugi i kolejne tylko po wylocie z kadłuba w tym samym
   kroku (następny okręt w kolumnie). Odcinek kandydatów `[candX0, b.x]` — dla każdego innego pocisku `candX0 =
   b.px` (arytmetyka identyczna jak przed 18-B). `skipsHull` pomija kadłub, w którym pocisk jest / z którego wyszedł.

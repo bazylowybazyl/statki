@@ -2,11 +2,14 @@
 // harnessu gry (zrzuty.mjs, sesja „warp”) — do zestawienia obok siebie (zadanie 22).
 // Demo przewija oś deterministycznie (seek: kroki 1/240 s od początku sceny), bez paneli (?shot=1).
 //
-//   node scripts/webgpu/warp-demo-zrzuty.mjs [--out katalog] [--port 5356] [--rozmiar 1920x1080]
+//   node scripts/webgpu/warp-demo-zrzuty.mjs [--out katalog] [--port 5356] [--rozmiar 1920x1080] [--kop]
 //
 // Chwile: ładowanie 75% (Ziemia → Jowisz), 0,2 s po kopnięciu, 1,5 s lotu, 0,1 i 0,75 s po wyjściu;
 // przylot supercapitala: 0,5 s przed wyrzutem (zwiastun) i 0,15 s po; odlot: 0,15 s przed wejściem
 // w szczelinę i 0,2 s po. Granice faz przylotu / odlotu dema szukane po nazwie fazy (state().phase).
+// --kop (zadanie 22-B): zamiast tego sekwencja kamery wokół skoku i wyjścia — te same chwile co sesja
+// „warp-kop” harnessu gry (zrzuty.mjs): ładowanie 90%, skok +0,05 / 0,117 / 0,25 / 0,5 / 1 / 2 s, wyjście
+// +0,033 / 0,067 / 0,2 / 0,5 / 1 / 1,6 s → demo-kop-*.png (nazwy jak sceny gry z przedrostkiem „demo-”).
 import { join, resolve } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -50,7 +53,22 @@ async function phaseEdge(a, b, test) {
   return hi;
 }
 
-try {
+// Kop kamery (--kop, zadanie 22-B), scena 1: ładowanie 3 s od 0,8 s, SKOK w T.kick, WYJŚCIE w T.exit.
+async function kopSequence() {
+  await open('scene=trip&from=earth&to=jupiter');
+  const T = await ev('window.__demo.state().T');
+  result.T = T;
+  const seq = [
+    ['demo-kop-ladowanie', 0.8 + 0.9 * 3.0],
+    ['demo-kop-skok-005', T.kick + 3 / 60], ['demo-kop-skok-012', T.kick + 7 / 60], ['demo-kop-skok-025', T.kick + 15 / 60],
+    ['demo-kop-skok-05', T.kick + 0.5], ['demo-kop-skok-1', T.kick + 1], ['demo-kop-lot', T.kick + 2],
+    ['demo-kop-wyjscie-003', T.exit + 2 / 60], ['demo-kop-wyjscie-007', T.exit + 4 / 60], ['demo-kop-wyjscie-02', T.exit + 0.2],
+    ['demo-kop-wyjscie-05', T.exit + 0.5], ['demo-kop-wyjscie-1', T.exit + 1], ['demo-kop-wyjscie-16', T.exit + 1.6]
+  ];
+  for (const [name, t] of seq) await shot(name, t);
+}
+
+async function defaultSequence() {
   // Podróż Atlasa (scena 1): postój 0,8 s → ładowanie 3 s → SKOK (3,8 s) → przelot → WYJŚCIE.
   await open('scene=trip&from=earth&to=jupiter');
   const T = await ev('window.__demo.state().T');
@@ -70,6 +88,11 @@ try {
   await shot('demo-przylot', burst + 0.15);
   await shot('demo-odlot-ladowanie', dive - 0.15);
   await shot('demo-odlot', dive + 0.2);
+}
+
+try {
+  if (args.kop) await kopSequence();
+  else await defaultSequence();
 } catch (err) {
   result.bledy.push(String(err?.message || err));
   console.log('BŁĄD', err?.message || err);

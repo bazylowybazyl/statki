@@ -73,7 +73,7 @@ export const BELT_FIELD_CONFIG = Object.freeze({
   cellMax: 65536,
   // Pozwolone zachodzenie skał PLAY na siebie (ułamek sumy promieni).
   playOverlap: 0.82,
-  // Liczba kształtów w banku (rockShapes3D): rodziny × warianty
+  // Liczba kształtów w banku (src/3d/asteroids/rockBank.js): rodziny × warianty
   // (asteroidRockKinds.js) — kształt zależy od typu i rozmiaru skały.
   shapeCount: SHAPE_COUNT
 });

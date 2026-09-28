@@ -108,6 +108,7 @@ const game = {
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
   shouldRemoveProjectileAfterImpact, haloRings: null,
   applyDamageToPlatform() {}, triggerMercAggro() {}, applyDamageToStation() {},
+  asteroidBelt: null,
   window: { asteroidField: null, AudioSys: null }
 };
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };

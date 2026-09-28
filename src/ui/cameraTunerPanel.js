@@ -63,6 +63,18 @@ const SECTIONS = Object.freeze([
     controls: [
       { key: 'hullScreenFraction', label: 'Kadłub / ekran', step: 0.01 }
     ]
+  },
+  {
+    // Demo „Nurt” (dema/warp-webgpu/scenes.js); opcja gracza: menu → Sterowanie → Kop kamery przy warpie.
+    title: 'Kop warpa',
+    controls: [
+      { key: 'warpKickPx', label: 'Kop skoku (px)', step: 1 },
+      { key: 'warpZoomOut', label: 'Zoom w skoku ×', step: 0.01 },
+      { key: 'warpZoomKick', label: 'Impuls skoku', step: 0.01 },
+      { key: 'warpZoomExit', label: 'Impuls wyjścia', step: 0.01 },
+      { key: 'warpZoomReturn', label: 'Powrót (s)', step: 0.05 },
+      { key: 'warpChargeShakePx', label: 'Drżenie ład. (px)', step: 0.5 }
+    ]
   }
 ]);
 
@@ -199,10 +211,13 @@ function describeLive() {
   const combatPct = Math.round((Number(rig.combat) || 0) * 100);
   const hold = Math.max(0, Number(rig.combatHoldLeft) || 0);
   const reason = hold > 0 ? (rig.combatReason || '—') : '—';
+  const kick = window.OPTIONS?.cameraWarpKick === 'off' ? 'wył.' : 'wł.';
+  const warpZoom = Math.exp(Number(rig.warpZoomLog) || 0);
   return [
     `Opcja: ${mode} · walka ${combatPct}%`,
     `Trzymanie: ${hold.toFixed(1)} s · powód: ${reason}`,
-    `Offset: ${Math.round(rig.offsetX)}, ${Math.round(rig.offsetY)} px (cel ${Math.round(rig.targetX)}, ${Math.round(rig.targetY)})`
+    `Offset: ${Math.round(rig.offsetX)}, ${Math.round(rig.offsetY)} px (cel ${Math.round(rig.targetX)}, ${Math.round(rig.targetY)})`,
+    `Kop warpa (${kick}): zoom ×${warpZoom.toFixed(3)} · cofnięcie ${Math.round(Number(rig.warpLagPx) || 0)} px`
   ].join('\n');
 }
 

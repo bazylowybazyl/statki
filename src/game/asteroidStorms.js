@@ -11,8 +11,8 @@
 // Przebieg pioruna jak w atmosferze: lider (piorun „rośnie” od skały),
 // udar główny, 1–3 udary powrotne po tej samej ścieżce, poświata.
 //
-// Render i światło: src/3d/beltStorm3D.js (wstęgi HDR, błyski jako światła
-// pola, rozbłysk żył skały przy uderzeniu). Testy: tests/asteroidStorms.test.mjs.
+// Render i światło: src/3d/asteroids/storm.js (wstęgi HDR, błyski jako światła
+// siatki, rozbłysk żył skały przy uderzeniu). Testy: tests/asteroidStorms.test.mjs.
 
 export const STORM_CONFIG = Object.freeze({
   // Komórki burz: szum o okresie `scale` [j.], próg z miękkim brzegiem, tylko
