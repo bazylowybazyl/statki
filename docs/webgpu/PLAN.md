@@ -205,6 +205,14 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   warstwy kamery passa — łapacz 0 cienia stacji nie widział (po rozpadzie widać cień bryły-ducha nad planetą; decyzja w 23).
   Obraz: sesja „stacja” w `zrzuty.mjs` (baza z tagu), sylwetki vs wnętrza — `scripts/webgpu/krawedzie.mjs`; klatka rozpadu
   bez budów — `scripts/webgpu/rozpad-stacji.mjs`.
+- **Pułapki z zadania 11 (tło menu, rozgrzewka):** tekstura z `minFilter = LinearFilter` i domyślnym `generateMipmaps
+  = true` — WebGL próbkuje sam poziom 0, a three r183 na WebGPU i tak generuje mipmapy (`Textures.needsMipmaps` patrzy
+  tylko na `generateMipmaps`) i daje samplerowi `mipmapFilter: 'linear'` (trójliniowo) — w materiale `.level(0)` albo
+  `generateMipmaps = false` u właściciela (mgławica gry: pożyczona przez tło menu). Zmienna TSL (`toVar`) powstaje przy
+  pierwszym użyciu — pochodne liczone „przed” gałęzią, a użyte w niej, trafiają do gałęzi; przed `If` jawne `.assign()`.
+  Hipoteza do sprawdzenia w 23 (niezmierzona): mipmapy generowane przez three WebGPU (blit liniowy) mogą różnić się
+  treścią od `gl.generateMipmap` — stąd resztkowe różnice drobnych, oddalonych szczegółów (atlas K-7, ring z daleka
+  w menu: 0,38% kadru > 8/255 przy tych samych grafach).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09),
   `haloFmaVec2` (10 — ten sam `fma` WGSL na wektorach, hasze archetypów).
@@ -253,8 +261,22 @@ nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7). S
   bryły / hale K-7 / mapa CPU po `await ring.ready`; `HaloRingGame` podpina teren do kolizji po `ready`.
   Mapa CPU steruje kolizjami (`terrainHeightAt`), LOD terenu, rozstawieniem budowli i wysokością kamery — ring nie
   może zgłosić gotowości przed odczytem (inaczej zmienia się gameplay). Harness czeka na `mapsReady`.
-- **Rozgrzewka:** tło menu rozgrzewa pieczenie ringu i jego materiały przez `compileAsync` na tych samych obiektach
-  (klucz pipeline'u WebGPU ≠ klucz programu WebGL — `createHaloBakeWarmup` do przeprojektowania, zadanie 11).
+- **Rozgrzewka (zadanie 11 — rejestr `Core3D.warmup`, `src/3d/rozgrzewka.js`):** pierwszy zwykły rysunek nowego
+  materiału tworzy pipeline SYNCHRONICZNIE — proces GPU kompiluje shader, strona staje przy najbliższym zapisie do
+  kolejki (pierwsza klatka ringu w menu: 4–5,6 s „writeBuffer”; NodeBuilder całego ringu to tylko ~0,6 s CPU);
+  `compileAsync` = `createRenderPipelineAsync` w tle (ring Marsa: 0,14 s CPU, 0,5 s w tle, klatki bez przestoju).
+  Rejestr: moduł zgłasza PRAWDZIWE obiekty jedną linią (`add`, pilne `now` → Promise), rejestr kompiluje je siatka po
+  siatce w wolnych chwilach (`requestIdleCallback`; jedna budowa NodeBuilder na zadanie, ≤ ~95 ms) w celu passa
+  (`composerTarget` / `distortionTarget`), kamerą typu passa warstwy, ze światłami `Core3D.scene` (klucz NodeBuilder =
+  klucz passa gry — render bierze gotowy stan i pipeline, nowy jest tylko lekki RenderObject), widoczne i bez cullingu
+  tylko na czas wywołania (projekcja synchroniczna); warianty stanu materiału (`variant`), QuadMesh passów
+  pełnoekranowych, pre-pass z materiałem zastępczym (`split: false` + `override`), wpisy „na start gry”
+  (`phase: 'loading'`), `flush()` na ekranie ładowania (reszta kolejki + pipeline'y, limit 4 s). Ring: hak
+  `options.prewarm` budowy — bryły (i dach K-7 w drugim stanie) rozgrzane PRZED podpięciem, `ready` / `mapsReady` je
+  obejmują; tło menu rusza z gotowym ringiem i rozgrzaną Ziemią / niebem (`createHaloBakeWarmup` usunięte, pieczenie
+  rozgrzewa `HaloWorldMaps.init` na prawdziwych celach). Przestoje mierzy harness (dziennik klatek, `przestoje` scen,
+  `sesje`) i `scripts/webgpu/start-gry.mjs` (prawdziwy czas, `--root` = tag). Pass cienia rozgrzewa się tylko
+  rysunkiem (pułapka 20 w agents.md) — rejestr go nie obejmuje.
 - **`compileAsync` odtwarza pass, nie „wszystkie materiały sceny”** (źródło: `Renderer.compileAsync` →
   `_projectObject`): pomija obiekty `visible = false`, spoza warstw kamery i spoza frustum (chyba że
   `frustumCulled = false`), a pipeline kompiluje dla BIEŻĄCEGO celu (`renderer.setRenderTarget` — format, MSAA) i

@@ -1899,10 +1899,13 @@ export const Core3D = {
       camera.layers.mask = prevMask;
       renderer.setRenderTarget(prevTarget);
     }
-    return promise.then(() => true, (err) => {
+    const done = promise.then(() => true, (err) => {
       console.warn('[Core3D] rozgrzewka passa nie wyszła:', err?.message || err);
       return false;
     });
+    // flush() rejestru na ekranie ładowania czeka i na te pipeline'y (zadanie 11): pierwsza klatka gry
+    // zapisująca do kolejki w trakcie ich kompilacji stawała na procesie GPU.
+    return this.warmup ? this.warmup.track(done) : done;
   },
 
   // Jedna warstwa tablicy tekstur (DataArrayTexture) prosto na GPU — queue.writeTexture tej

@@ -58,7 +58,6 @@ export class Rozgrzewka {
   constructor(core) {
     this.core = core;
     this.ready = false;
-    this.entries = [];
     this._urgent = [];
     this._normal = [];
     this._waiting = [];          // wpisy z pustymi obiektami — ponownie przy flush()
@@ -85,6 +84,18 @@ export class Rozgrzewka {
     if (this.ready) return;
     this.ready = true;
     this._kick();
+  }
+
+  /**
+   * Kompilacja spoza rejestru (Core3D.prewarmPass — kadłuby, tarcze, efekty na ekranie ładowania): flush() czeka
+   * i na nią. Pierwsza klatka gry, która zapisuje do kolejki, gdy proces GPU jeszcze kompiluje, staje na nim.
+   */
+  track(promise) {
+    if (!promise || typeof promise.then !== 'function') return promise;
+    const tracked = Promise.resolve(promise).then(() => true, () => false);
+    this._pending.add(tracked);
+    tracked.then(() => this._pending.delete(tracked));
+    return promise;
   }
 
   /** Czy coś czeka albo kompiluje się w tle. */
@@ -116,7 +127,7 @@ export class Rozgrzewka {
     try {
       let slice = nowMs();
       while (this._urgent.length || this._normal.length) {
-        this._step();
+        if (!this._step()) break;
         if (nowMs() - t0 > timeoutMs) break;
         if (nowMs() - slice > 8) {
           await new Promise((r) => setTimeout(r, 0));
@@ -157,7 +168,6 @@ export class Rozgrzewka {
       _resolve: null
     };
     entry.promise = new Promise((resolve) => { entry._resolve = resolve; });
-    this.entries.push(entry);
     this.stats.wpisy++;
     // bez WebGPU (komunikat w menu) nic się nie skompiluje — obietnica od razu
     if (this.core?.gpuUnsupported) {
