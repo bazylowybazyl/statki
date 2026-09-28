@@ -567,7 +567,10 @@ const GALERIA_POMOC = `const G = window.__galeria;
     const aux = MASTER_WEAPONS[id]?.mountType === 'aux';
     return window.fireWeaponCore(g, aim, id, { pos: { x: g.x, y: g.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: 0, y: 0 }, emitterUid: uid, pdTarget: aux ? G.T : null });
   };
-  const clear = async () => { for (const b of window.bullets) b.life = -1; await H.step(2); WFX?.reset(); noShield(); };
+  // Rany na kadłubie (mapa ran, 18-C) też od zera — jak „naprawa przy zmianie broni” w demie: obrażenia
+  // × 1e-6 trzymają kadłub w całości, ale mapa stempluje każde trafienie, więc bez tego ujęcie pokazywałoby
+  // rany wszystkich wcześniejszych rodzin w jednym miejscu.
+  const clear = async () => { for (const b of window.bullets) b.life = -1; window.HullDamageMap?.heal(G.T.beamHull?.dmgKey, 1); await H.step(2); WFX?.reset(); noShield(); };
   const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
 for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
   SCENES[`galeria-${name}`] = {
@@ -850,10 +853,13 @@ async function runPerf(backend, outDir, base) {
           coreRender: d.render3dCoreRenderTime, coreRenderTotal: C.lastFramePerf?.renderTotalMs, gpu: C.gpuFrameMs, drawCalls: r.calls, trojkaty: r.triangles,
           fxMs: C.fxStats?.cpuMs, gpuCompute: C.gpuComputeMs,
           rakiety: window.rocketSystem3D?.activeRockets, rakietyFxMs: window.__rocketFx?.stats?.cpuMs, dym: window.__rocketFx?.smoke?.highWater,
-          npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length, wraki: (window.wrecks || []).length }; })()`));
+          npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length, wraki: (window.wrecks || []).length,
+          // Mapa ran (zadanie 18-C): zajęte sloty, wątki kernela w klatce, stemple od startu.
+          ranySloty: window.HullDamageMap ? window.HullDamageMap.stats.slotsL + window.HullDamageMap.stats.slotsM + window.HullDamageMap.stats.slotsS : null,
+          ranyWatki: window.HullDamageMap?.stats.threads ?? null, ranyStemple: window.HullDamageMap?.stats.stamps ?? null }; })()`));
     }
     const med = (k) => { const v = samples.map((s) => Number(s[k])).filter(Number.isFinite).sort((a, b) => a - b); return v.length ? +v[Math.floor(v.length / 2)].toFixed(3) : null; };
-    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'rakiety', 'rakietyFxMs', 'dym', 'npc', 'pociski', 'wraki'].map((k) => [k, med(k)]));
+    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'rakiety', 'rakietyFxMs', 'dym', 'npc', 'pociski', 'wraki', 'ranySloty', 'ranyWatki', 'ranyStemple'].map((k) => [k, med(k)]));
     const res = { backend, spawned, mediana: summary, probki: samples, bledy: logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 20) };
     writeJson(join(outDir, 'wydajnosc.json'), res);
     console.log(`  wydajność ${backend}: ${JSON.stringify(summary)}`);

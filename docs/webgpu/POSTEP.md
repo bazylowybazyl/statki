@@ -55,7 +55,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | zrobione, scalone (ca83cd4) | 90b73f3, 67f5d8b, 0d20cf4, b366146, 0c292d4, f1bf060, 5e383a0, e39d5ab, 172d1d3 (scalenia `main` 45a927b, 7286401, c60ee1c, 7f49da8, ab7ca8a) | −998 linii GLSL w 5 modułach; jeden graf bryły mostka na 11 rodzajów; obrażenia mostka w buforze storage (µs zamiast 0,7–1,3 ms); `bitwa__fg` i `split` 0% vs baza |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | zrobione, scalone (82573e5) | 2dd8c5f, e676d1b, b00dd2f (scalenia `main` 99d1f12, 05f429b) | klatka rozpadu bez budów (Neptun 64 → 4,9 ms); kawałki tną się maską TSL; sesja bazy „stacja” (5 scen, szum 0%); odłamki paneli czarne jak w WebGL (decyzja wyglądu) |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | zrobione, scalone (753700e) | 25123a4, e002a65, 5374728, 4e2d332, e575f23, 3992955, fae3257 (scalenia `main` 6ebbc29, 91d7964, 1bb1866, c243359) | 27 broni na recepturach dema (`src/3d/weapons/`, `WeaponFx`); PD i flak w 3D; −8 modułów; zero obiektów na strzał; nowe efekty — ocena obrazu zamiast tolerancji |
-| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; 18-C (mapa ran, światła efektów na poszyciu) w toku (worktree `statki-wt/18c`); 18-B + 18-D (wpięcie mechaniki, odrzut z danych) w toku (worktree `statki-wt/18b`) | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
+| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; 18-C (mapa ran, światła efektów na poszyciu) zrobione i scalone (1dd742a); 18-B + 18-D (wpięcie mechaniki, odrzut z danych) w toku (worktree `statki-wt/18b`) | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zrobione, scalone (2adf8fb) | 877f8ac, 1d60e1e, 079805c, 2025ba7, b2dabc4, b697ae9 (scalenia `main` 144b0f7, 6f0774a, 26636ce) | lot w `rocketSystem3D`; fala `shockwave3D` i `weapon3DSystem.js` usunięte; DIST przez OR; receptura tarczy (propozycja) |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | w toku (podagent, worktree `statki-wt/20`; równolegle z 18-B/C — overlay ma już tylko wybuch reaktora) | | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | w toku (podagent, worktree `statki-wt/21`; demo zacommitowane: 84198d3) | | zielone światło użytkownika; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
@@ -110,6 +110,9 @@ menu nie czeka na `ring.ready` (ring dołącza 2–4,5 s po Ziemi) i pusta scena
   overlay) → `fxRandom` + nowa baza `wraki` / `warp` (17);
 - pass maski słońca +1 draw call, ~0,1 ms GPU (03); cel refrakcji HalfFloat MSAA ~16 MB przy 1080p (03);
 - iskry MAIN na dopalaczu 0,067% vs tag (linie 1 px: Dawn vs ANGLE — przyjęte, 12-B);
+- kolano bloomu z 22 (`bloomKnee.js`) na żarze rany i świetle poszycia (18-C) razem z efektami 17 / 19 — decyzja dla
+  całej broni (dema liczą bloom bez ×3 gry, więc w grze efekty świecą mocniej niż w demach); nowa baza `galeria-*` / `bitwa`
+  z `main`;
 - `LightGrid.add` przekracza limit wklejania V8 (~100 B obiektów na światło na producenta — wariant z buforem); kopie CPU
   buforów storage dymu i mgławicy rakiet ~71 MB; cień dymu rakiet na kadłubach (mapa gęstości gotowa, wymaga grafu
   kadłuba — po 18-C) (19);
@@ -681,3 +684,20 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   `withRawLayer` nieużywany (pilnuje go `overlayContextMerge` 1–3), martwa gałąź `useShockwave3D` w `reactorblow`.
   Inwentarz z HEAD 2adf8fb: port 6 plików z GLSL, 7 materiałów, 1165 linii. Testy: 1561 / 6 porażek bazowych / 3 todo;
   `npm test` OK.
+- **Część 18-C scalona do `main`** (7e7fd3d, d4c20d5, b8320cb, 86f2314, fdeb3fc, ef66506, 2bf83c8, 38b8d01, ee1fc5d; scalenia
+  `main` 942f1d5, cfaebf1, 51139f0, 4852806; scalenie 1dd742a): mapa ran z dema broni na skórze kadłubów belkowych
+  (`src/3d/hullDamageMap.js`, `hullDamageMap.tsl.js`, `hullDamageStamps.js`) — żar stygnący z bieli w czerwień, osmalenie,
+  lej (ciemne dno, brzeg 8–12 HDR; dziury robi geometria belek), przestrzeliny małego kalibru bez zniszczonego węzła,
+  poświata jonowa; w uv skóry (rana jedzie z odkształceniem), wrak i odłamy dziedziczą rany (`dmgKey`), naprawa R je
+  wygasza (hak `onRepair`). Pula slotów L/M/S z LRU w jednym buforze storage (24 MB GPU, kopia CPU oddana po wgraniu),
+  kernel w kroku efektów tylko dla slotów ze stemplami i gorących w kadrze (stygnięcie wzorem zamkniętym). Stemple: hak
+  `HullBodies.onImpact` po każdym kraterze i rzazie (rodzina z `HullDamageMap.setSource` — 7. argument `applyHexImpact`),
+  `ctx.stamp` receptur 17 → `stampRecipe` (duplikat krateru z tej klatki pomijany), API `stampAt` / `stampKerf` dla 18-B.
+  Światła efektów z siatki (12) jako dodatkowe światła poszycia (lampy statku bez zmian); lakier gaśnie na osmaleniu i w
+  leju; płonąca wyrwa tli się, póki płonie. Koszt (bitwa 24 × 24): compute +0,003 ms GPU, klatka GPU 0,63 vs 0,62 ms, krok
+  efektów CPU +0,04 ms, U hex bez mierzalnej zmiany. Harness 55 scen, 0 błędów, stan świata = `main`; obraz różni się
+  tylko przy trafieniach (bitwa 10,4% — błyski luf na poszyciu, Supernowa 27% — jej światło na pancerniku). Zrzuty obok
+  dema: `.tmp/webgpu/zadania/18c/rany-obok-dema.png`, `rany-gra/` — **do oceny użytkownika**. Testy: 1578 / 6 porażek
+  bazowych / 3 todo; `npm test` OK. **Dopięte przez orkiestratora** (2758313): trafienie rakiety w kadłub zostawia ranę
+  (stempel `rocket` w `src/3d/rockets/effects.js` — rakiety nie robią krateru, więc bez tego nie zostawiały śladu); harness
+  sesji rakiety 0 błędów, 0 NaN.

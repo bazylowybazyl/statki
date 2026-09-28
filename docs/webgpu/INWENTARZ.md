@@ -22,8 +22,8 @@
 
 | zakres | pliki z GLSL | materiały | linie GLSL | oBC | odczyty | compile | wbudowane | clone / needsUpdate / defines | TSL / mieszane |
 |---|---:|---|---:|---:|---:|---:|---:|---|---|
-| **razem** | 24 | 46 (43 SM, 0 Raw, 3 ShaderPass) | 5236 | 0 | 2 | 5 | 31 | 4 / 16 / 6 | 73 / 0 |
-| port | 6 | 7 (6 SM, 0 Raw, 1 ShaderPass) | 1165 | 0 | 1 | 5 | 20 | 4 / 7 / 0 | 69 / 0 |
+| **razem** | 24 | 46 (43 SM, 0 Raw, 3 ShaderPass) | 5236 | 0 | 2 | 5 | 31 | 4 / 16 / 6 | 75 / 0 |
+| port | 6 | 7 (6 SM, 0 Raw, 1 ShaderPass) | 1165 | 0 | 1 | 5 | 20 | 4 / 7 / 0 | 71 / 0 |
 | warp | 0 | 0 (0 SM, 0 Raw, 0 ShaderPass) | 0 | 0 | 0 | 0 | 0 | 0 / 0 / 0 | 0 / 0 |
 | asteroidy-stare | 1 | 1 (1 SM, 0 Raw, 0 ShaderPass) | 66 | 0 | 0 | 0 | 2 | 0 / 3 / 0 | 0 / 0 |
 | asteroidy-nowe | 7 | 15 (15 SM, 0 Raw, 0 ShaderPass) | 1889 | 0 | 1 | 0 | 0 | 0 / 0 / 1 | 0 / 0 |
@@ -173,7 +173,7 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 `clone()` / `needsUpdate = true` (heurystyka: zmienna z „mat” w nazwie):
 
 - needsUpdate — src/3d/bridgeFx3D.js:300
-- needsUpdate — src/3d/hexShips3D.js:1400
+- needsUpdate — src/3d/hexShips3D.js:1406
 - needsUpdate — src/3d/shipLights3D.js:202
 - needsUpdate — src/3d/sunShadowMask.js:205
 - clone — src/vfx/destruction3D.js:867
@@ -215,6 +215,7 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `tests/haloRingStructureTSL.test.mjs` | `src/3d/haloRing/haloRingGLSL.js` |
 | `tests/haloRingTerrainTSL.test.mjs` | `src/3d/haloRing/haloRingGLSL.js` |
 | `tests/hexShips3DShader.test.mjs` | `src/3d/core3d.js` |
+| `tests/hullDamageMap.test.mjs` | `src/3d/core3d.js` |
 | `tests/menuBackdrop.test.mjs` | `src/3d/menuBackdrop3D.js`, `src/3d/core3d.js` |
 | `tests/mostkiRdzenieTSL.test.mjs` | `src/3d/core3d.js` |
 | `tests/overlayContextMerge.test.mjs` | `src/effects3d/overlay.js` |
