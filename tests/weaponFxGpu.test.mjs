@@ -115,7 +115,7 @@ test('budowniczy bez alokacji na paczkę; ponad pojemność pula nie nadpisuje w
   const COL = [2.8, 2.2, 1.3];
   const emit = () => {
     if (pool.burstCount > 1500) { pool.burstCount = 0; pool.total = 0; }
-    pool.begin(K.SPARK, 4).at(10, 20).dir(0.6, 0.8).cone(0.3).speed(100, 300).life(0.2, 0.6).colors(COL).extra(16, 0.32, 0.06, 1.2).emit();
+    pool.begin(K.SPARK, 4).at(10, 20).dir(0.6, 0.8).cone(0.3, 0.18).speed(100, 300).life(0.2, 0.6).colors(COL).x01(16, 0.32).x23(0.06, 1.2).emit();
   };
   const bytes = allocatedBytes(emit, 20000);
   assert.ok(bytes < 20000 * 0.5, `alokacja ${bytes} B na 20 000 paczek (szum pomiaru < 0,5 B na paczkę)`);

@@ -189,14 +189,19 @@ export class Pool {
     // Zegar efektów, do którego pula żyje (najpóźniejsza śmierć zrodzonych cząstek).
     this.liveUntil = -1;
     this._b = new Float32Array(BSTRIDE * 4);
+    this._w = new Float64Array(2);   // punkt paczki w scenie (double) do odjęcia początku w emit
     this._count = 0;
     this._maxLife = 0;
     this._open = false;
   }
 
   // --- budowniczy ------------------------------------------------------------
-  // pool.begin(kind, n).at(…).dir(…).speed(…)….emit(); pozycje w układzie SCENY (x, −y
-  // świata gry) — `at` odejmuje początek pul (lokalne float32).
+  // pool.begin(kind, n).at(x, y).dir(dx, dy).speed(a, b)….emit(); pozycje i kierunki w
+  // układzie SCENY (x, −y świata gry). Metody mają najwyżej dwa zapisy i BEZ parametrów
+  // domyślnych — bajtkod < 27 B, więc V8 wkleja je zawsze, niezależnie od budżetu
+  // wklejania dużej receptury; wywołanie niewklejone pakowałoby liczby double z argumentów
+  // (alokacja na paczkę). Punkt trafia do Float64Array (double), a początek pul odejmuje
+  // i kierunek normuje dopiero `emit()` (bez argumentów).
 
   begin(kind, count) {
     const b = this._b;
@@ -213,44 +218,42 @@ export class Pool {
     b[29] = 0.6; b[30] = 0.06; b[31] = 1.5;      // grow, fadeIn, fadeOut
     b[32] = 4; b[33] = 0.18;                     // mix, flat
     b[39] = 0.3;                                 // sprężystość iskier
+    const w = this._w;
+    w[0] = this.fx.origin.x; w[1] = this.fx.origin.y;
     this._open = true;
     return this;
   }
-  /** Punkt w układzie SCENY (double) → lokalnie względem początku pul. */
-  at(x, y, z = 15) {
-    const b = this._b;
-    const o = this.fx.origin;
-    b[4] = x - o.x; b[5] = y - o.y; b[6] = z;
-    return this;
-  }
+  /** Punkt w układzie SCENY (double; lokalny = − początek w emit). */
+  at(x, y) { const w = this._w; w[0] = x; w[1] = y; return this; }
   z(z) { this._b[6] = z; return this; }
   preAge(t) { this._b[7] = t; return this; }
-  dir(x, y, z = 0) {
-    // Math.hypot alokuje (~30–40 B na wywołanie w V8) — pierwiastek wprost.
-    const l = Math.sqrt(x * x + y * y + z * z) || 1;
-    const b = this._b; b[8] = x / l; b[9] = y / l; b[10] = z / l; return this;
-  }
-  cone(spread, flat = 0.18) { const b = this._b; b[11] = spread; b[33] = flat; return this; }
-  speed(a, c = a) { const b = this._b; b[12] = a; b[13] = c; return this; }
-  life(a, c = a) { const b = this._b; b[14] = a; b[15] = c; return this; }
-  size(s0a, s0b = s0a, s1a = s0a, s1b = s0b) { const b = this._b; b[16] = s0a; b[17] = s0b; b[18] = s1a; b[19] = s1b; return this; }
-  /** Kwady zorientowane (CROSS, PLUME): długość l0→l1, szerokość w0→w1. */
-  orient(l0, l1, w0, w1) { const b = this._b; b[16] = l0; b[17] = l1; b[18] = w0; b[19] = w1; return this; }
+  /** Kierunek w scenie (normowany w emit). */
+  dir(x, y) { const b = this._b; b[8] = x; b[9] = y; return this; }
+  cone(spread, flat) { const b = this._b; b[11] = spread; b[33] = flat; return this; }
+  speed(a, c) { const b = this._b; b[12] = a; b[13] = c; return this; }
+  life(a, c) { const b = this._b; b[14] = a; b[15] = c; return this; }
+  /** Rozmiar na starcie (a–b) — kwady zorientowane (CROSS, PLUME): długość l0→l1. */
+  s0(a, c) { const b = this._b; b[16] = a; b[17] = c; return this; }
+  /** Rozmiar na końcu (a–b) — kwady zorientowane: szerokość w0→w1. */
+  s1(a, c) { const b = this._b; b[18] = a; b[19] = c; return this; }
   color(r, g, bl) { const b = this._b; b[20] = r; b[21] = g; b[22] = bl; b[24] = r; b[25] = g; b[26] = bl; return this; }
   color1(r, g, bl) { const b = this._b; b[24] = r; b[25] = g; b[26] = bl; return this; }
-  colors(c0, c1 = c0) { this.color(c0[0], c0[1], c0[2]); return this.color1(c1[0], c1[1], c1[2]); }
-  alpha(a, c = a) { const b = this._b; b[23] = a; b[27] = c; return this; }
-  drag(a, c = a) { const b = this._b; b[28] = a; b[43] = c; return this; }
+  /** Barwy z tablic (stałe palet — bez liczb w argumentach). */
+  colors(c0, c1) { this.color(c0[0], c0[1], c0[2]); if (c1) this.color1(c1[0], c1[1], c1[2]); return this; }
+  alpha(a, c) { const b = this._b; b[23] = a; b[27] = c; return this; }
+  drag(a, c) { const b = this._b; b[28] = a; b[43] = c; return this; }
   bounce(r) { this._b[39] = r; return this; }
   grow(g) { this._b[29] = g; return this; }
   fade(fadeIn, fadeOut) { const b = this._b; b[30] = fadeIn; b[31] = fadeOut; return this; }
   mix(m) { this._b[32] = m; return this; }
-  offset(a, c = a) { const b = this._b; b[34] = a; b[35] = c; return this; }
-  jitter(r, z = 0) { const b = this._b; b[36] = r; b[37] = z; return this; }
+  offset(a, c) { const b = this._b; b[34] = a; b[35] = c; return this; }
+  jitter(r, z) { const b = this._b; b[36] = r; b[37] = z; return this; }
   spin(s) { this._b[38] = s; return this; }
   /** Prędkość bazowa (scena) dodana do prędkości własnej (np. czubek lecący z pociskiem). */
-  vel(x, y, z = 0) { const b = this._b; b[40] = x; b[41] = y; b[42] = z; return this; }
-  extra(a = 0, c = 0, d = 0, e = 0) { const b = this._b; b[44] = a; b[45] = c; b[46] = d; b[47] = e; return this; }
+  vel(x, y) { const b = this._b; b[40] = x; b[41] = y; return this; }
+  /** Pola dodatkowe rodzaju (extra dema): 0–1 i 2–3. */
+  x01(a, c) { const b = this._b; b[44] = a; b[45] = c; return this; }
+  x23(a, c) { const b = this._b; b[46] = a; b[47] = c; return this; }
 
   emit() {
     if (!this._open) return this;
@@ -261,6 +264,13 @@ export class Pool {
     n = Math.min(n, this.cap >> 2);
     if (this.burstCount >= BURST_CAP || this.total + n > this.cap) { this.dropped += n; return this; }
     const b = this._b;
+    // punkt lokalnie (double → float32 po odjęciu początku), kierunek jednostkowy
+    const o = this.fx.origin;
+    b[4] = this._w[0] - o.x;
+    b[5] = this._w[1] - o.y;
+    const dx = b[8]; const dy = b[9]; const dz = b[10];
+    const l = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (l > 1e-12) { b[8] = dx / l; b[9] = dy / l; b[10] = dz / l; } else { b[8] = 1; b[9] = 0; b[10] = 0; }
     b[0] = this.total;
     b[1] = n;
     b[2] = this.head;

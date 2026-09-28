@@ -921,6 +921,76 @@ export const Turret2D = {
   },
 
   /**
+   * Jak findTurretKey, ale bez składania napisu (efekty broni co zdarzenie wiązki — zadanie 17):
+   * out.key = klucz rekordu (napis już istniejący w rekordzie), out.muzzle = indeks lufy.
+   * Zwraca out albo null.
+   */
+  findTurretSlot(x, y, weaponKey = '', owner = null, out) {
+    if (!this.enabled || frameCount === 0 || !out) return null;
+    let bestRec = null;
+    let bestMuzzle = 0;
+    let bestDistSq = Infinity;
+    const records = owner ? recordsByEntity.get(owner) : frameRecords;
+    if (!records) return null;
+    const count = owner ? records.length : frameCount;
+    for (let i = 0; i < count; i++) {
+      const rec = records[i];
+      if (owner && rec.entity !== owner) continue;
+      if (weaponKey && rec.fxKey !== weaponKey) continue;
+      const limitSq = owner ? Infinity : ownerlessSnapSq(rec);
+      const muzzles = rec.spec.m;
+      const cosA = Math.cos(rec.ang);
+      const sinA = Math.sin(rec.ang);
+      for (let m = 0; m < muzzles.length; m++) {
+        const mx = muzzles[m][0] * rec.scale;
+        const my = muzzles[m][1] * rec.scale;
+        const dx = rec.wx + mx * cosA - my * sinA - x;
+        const dy = rec.wy + mx * sinA + my * cosA - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestDistSq && d2 <= limitSq) {
+          bestDistSq = d2;
+          bestRec = rec;
+          bestMuzzle = m;
+        }
+      }
+    }
+    if (!bestRec) return null;
+    out.key = bestRec.key;
+    out.muzzle = bestMuzzle;
+    return out;
+  },
+
+  /**
+   * Lufa dla klucza rekordu i indeksu z `findTurretSlot`, w tej klatce, do `out` (x, y — wylot
+   * przesunięty lekko przed lufę jak w triggerShot, angle, scale). Bez alokacji. false, gdy
+   * wieżyczka zniknęła (encja martwa, kamera odjechała, CIC).
+   */
+  resolveMuzzleSlot(key, muzzle, out) {
+    if (!key || frameCount === 0 || !out) return false;
+    const rec = recordsByKey.get(key);
+    if (!rec) return false;
+    const muzzles = rec.spec.m;
+    const idx = Math.min(Math.max(0, muzzle | 0), muzzles.length - 1);
+    const cosA = Math.cos(rec.ang);
+    const sinA = Math.sin(rec.ang);
+    const forward = rec.spec.r * 0.06 + 3;
+    const mx = muzzles[idx][0] * rec.scale + forward;
+    const my = muzzles[idx][1] * rec.scale;
+    out.x = rec.wx + mx * cosA - my * sinA;
+    out.y = rec.wy + mx * sinA + my * cosA;
+    out.angle = rec.ang;
+    out.scale = rec.scale;
+    return true;
+  },
+
+  /** Skala wieżyczki broni na kadłubie encji (efekt strzelca bez rekordu wieżyczki). */
+  turretScaleFor(def, entity) {
+    if (!def) return 1;
+    const tier = entity ? getEntityWeaponTier(entity) : 'Capital';
+    return weaponScale(def.size, def.category) * (WEAPON_TIER_SCALE[tier] || WEAPON_TIER_SCALE.Capital).turret;
+  },
+
+  /**
    * Pozycja lufy dla klucza z `findTurretKey`, w tej klatce.
    * null, gdy wieżyczka zniknęła (encja martwa, kamera odjechała, CIC).
    */
