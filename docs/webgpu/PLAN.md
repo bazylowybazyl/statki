@@ -222,6 +222,19 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   Do 23/24: wizualia na `fxRandom`. **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
   `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
   wyłączonymi tarczami zerują `val` celu (galeria broni).
+- **Pułapki z zadania 22 (warp „Nurt”, efekty z dem):** **Dema liczą bloom `BloomNode` BEZ ×3 gry**
+  (`BLOOM_ZGODNOSC_WEBGL`) — ten sam emiter HDR z dema świeci w grze 3× mocniejszą poświatą (brzegi szczelin i błyski
+  obrastały białą mgłą); bloom bierze cały teksel ponad progiem, więc kolano na luminancji (`src/3d/warp/bloomKnee.js`:
+  do progu bez zmian, nadmiar ×1/3) oddaje poświatę dema bez ruszania barw pod progiem — dotyczy każdego efektu z dem
+  (bronie, rakiety, asteroidy). **Ośrodek cząstek w pudle wokół kamery** z pudłem zależnym od zoomu: przy oddaleniu brzegi
+  zostają puste (drobiny nie wracają same do równej gęstości) — przyrost pudła przenosi udział drobin w nowy pas
+  (`growShare`), a po przebudzeniu i skoku kamery (teleport, RTS) ośrodek od nowa (`reset` — jeden dispatch), inaczej ślad
+  poprzedniego skoku (rozrzedzenie, warkocz, zebrana nić) zostaje w nowym miejscu. **Oś dema w krótszym czasie gry**
+  (ładowanie 0,8 s zamiast 3 s): wielkości całkowane w czasie (dryf) skalują się jak ściśnięcie, a wzbudzenie z zanikiem
+  (1,1 s) tylko częściowo (×k^0,6) — krzywe po ułamku fazy, nie po sekundach. **Zgięcie tła bez passa:** mgławica to
+  płaszczyzna, więc przesunięcie próbki o `off` px = `uv + dFdx(uv)·off.x + dFdy(uv)·off.y` w jej materiale (gałąź po
+  jednolitym warunku — bez zgłoszeń shader liczy to co wcześniej). **Świeży kadłub (przylot) nie ma jeszcze SDF sylwetki**
+  (`hullShadowSdf.js` piecze z budżetem) — żar brzegu z alfy mipmapy sprite'a (`sprite.level(log2(szerokość brzegu))`).
 - **Pułapki z zadania 21 (pas asteroid, three r183):** materiał z `lights = true` dostaje WSZYSTKIE światła sceny
   Core3D (słońce z cieniem, otoczenie, punktowe) — demo ich nie miało; własny model oświetlenia gasi je w `direct()`
   (`lightNode.light` istnieje tylko dla świateł three) i sam podaje swoje słońce znacznikiem (`BELT_SUN_LIGHT`,

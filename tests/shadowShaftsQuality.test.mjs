@@ -352,7 +352,9 @@ test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
   assert.ok(!/SUN_SHADOW_GLSL|attachSunShadowUniforms/.test(planetSource), 'planety bez GLSL maski');
   // Tło: długa smuga cienia na mgławicy i gwiazdach.
   assert.match(planetTsl, /return vec4\(sunShaftBackdrop\(color\.mul\(boost\)\), 1\.0\);/);
-  assert.match(planetTsl, /finalColor\.assign\(sunShaftBackdrop\(finalColor\)\);/);
+  // Gwiazdy: punkty i smugi warpa (zadanie 22) — obie gałęzie ze smugą tła.
+  assert.match(planetTsl, /const finalColor = sunShaftBackdrop\(vColor\)\.toVar\(\);/);
+  assert.match(planetTsl, /sunShaftBackdrop\(tint\)/);
   // Planety tla (perspektywa, z = -50 000) nie czytaja maski liczonej w plaszczyznie gry.
   assert.match(planetSource, /uSunShadowRecv: \{ value: this\.isRingAnchored \? 1\.0 : 0\.0 \}/);
   // Planeta przy ringu: zaćmienie gasi dzień (terminator), chmury, poświatę; poświata limbu — do połowy.

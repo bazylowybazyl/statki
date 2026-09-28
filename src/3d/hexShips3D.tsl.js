@@ -58,6 +58,7 @@ import {
 import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
+import { warpBloomKnee } from './warp/bloomKnee.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
@@ -278,9 +279,56 @@ function hullPerObjectNodes() {
     uEngineZoneCount: perObject('uEngineZoneCount', 'float', 0),
     uLightBase: perObject('uLightBase', 'float', 0),
     uLacquerWeight: perObject('uLacquerWeight', 'float', 0),
-    uLacquerGlint: perObject('uLacquerGlint', 'float', 1)
+    uLacquerGlint: perObject('uLacquerGlint', 'float', 1),
+    // Warp „Nurt” (zadanie 22, hullWarp niżej): A = (linia odsłaniania, tryb ±1, linia szwu,
+    // szerokość szwu) [px sprite'a, x od środka ku dziobowi], B = (barwa szwu HDR, poziom mip
+    // pasa żaru), C = (barwa żaru HDR, włącznik).
+    uWarpA: perObject('uWarpA', 'vec4', new THREE.Vector4(-1e6, 1, -1e6, 1)),
+    uWarpB: perObject('uWarpB', 'vec4', new THREE.Vector4(0, 0, 0, 4)),
+    uWarpC: perObject('uWarpC', 'vec4', new THREE.Vector4(0, 0, 0, 0))
   };
   return _perObjectNodes;
+}
+
+// ── Warp „Nurt” (zadanie 22) ──────────────────────────────────────────────────
+// Wartości per kadłub (hexShips3D.js: createHullUniforms — trzymacze czytają
+// entity.__warpHullU, pisze je src/3d/warp/warpNurt.js); wyłączone = gałąź się nie
+// wykonuje (jednolity warunek z uniformu obiektu) i kadłub liczy to samo co przed 22.
+export const HULL_WARP_OFF = Object.freeze({
+  a: new THREE.Vector4(-1e6, 1, -1e6, 1),
+  b: new THREE.Vector4(0, 0, 0, 4),
+  c: new THREE.Vector4(0, 0, 0, 0)
+});
+
+// Przylot / wyjście / odlot (dema/warp-webgpu/hulls.js): ODSŁANIANIE frontem (widać część
+// kadłuba przed linią — wyjście od dziobu, albo za nią — odlot), SZEW (cienka gorąca linia
+// na linii frontu, także nad schowaną częścią — alfa szwu) i ŻAR BRZEGU (biel → pomarańcz →
+// wiśnia w pasie przy sylwetce). Pole odległości sylwetki z dema zastępuje tu rozmyta alfa
+// sprite'a (poziom mip ≈ szerokość pasa żaru): przy krawędzi ~0,5, w głębi 1 — ta sama
+// tekstura i wiązanie co sprite, jedna próbka z jawnym poziomem, bez nowych zasobów.
+// Sprite kadłuba: dziób w stronę +u (spriteRotation = 0 dla wszystkich profili).
+function hullWarp(ctx, out, alpha) {
+  const P = hullPerObjectNodes();
+  If(P.uWarpC.w.greaterThan(0.5), () => {
+    const A = P.uWarpA;
+    const B = P.uWarpB;
+    const C = P.uWarpC;
+    const lx = ctx.uv.x.sub(0.5).mul(P.uSpriteSize.x).toVar();
+    const edge = max(fwidth(lx), 0.5).mul(1.5);
+    const vis = smoothstep(edge.negate(), edge, lx.sub(A.x).mul(A.y)).toVar();
+    const sx = lx.sub(A.z).div(max(A.w, 0.5));
+    const seamOn = step(1e-4, B.x.add(B.y).add(B.z));
+    const seamK = exp(sx.mul(sx).negate()).mul(seamOn).toVar();
+    const blur = ctx.sprite.level(B.w).a;
+    const rim = clamp(float(1.0).sub(blur).mul(2.0), 0.0, 1.0).toVar();
+    // Kolano bloomu (warp/bloomKnee.js): demo liczyło bloom bez ×3 gry.
+    const heat = warpBloomKnee(C.xyz.mul(rim.mul(rim).mul(0.85).add(rim.mul(0.15))));
+    // Szew świeci także nad częścią już / jeszcze schowaną: alfa = max(odsłonięcie, szew).
+    const k = max(vis, seamK).toVar();
+    out.assign(out.add(heat).mul(vis).add(warpBloomKnee(B.xyz.mul(seamK))).div(max(k, 1e-4)));
+    alpha.assign(alpha.mul(k));
+    Discard(alpha.lessThan(0.004));
+  });
 }
 
 // ── Haki (zadania 18 i 21) — dziś tożsamość, obraz bez zmian ────────────────
@@ -345,7 +393,7 @@ function hullFragmentNode(opts) {
       Discard();
     });
 
-    const ctx = { uv: spriteUV, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld };
+    const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld };
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -551,6 +599,8 @@ function hullFragmentNode(opts) {
 
     const vol = hullVolume(ctx);
     out.assign(out.mul(vol.a).add(vol.rgb));
+
+    hullWarp(ctx, out, alpha);
 
     return vec4(out, alpha);
   })();
