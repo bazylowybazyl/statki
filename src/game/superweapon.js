@@ -4,13 +4,15 @@
  * Cykl: pierwsze naciśnięcie — ładowanie `chargeTime` (1,2 s), drugie w oknie „armed” — seria
  * `burstCount` strzałów z każdego gniazda co `burstDelay` (dane broni: 4 × 0,25 s, zadanie 18-B;
  * dawniej jeden strzał na gniazdo), przeładowanie `cooldown` po serii. Obrażenia tylko
- * strukturalne (rzaz HullBodies.cutSegment → sufit HP od zabitych węzłów).
+ * strukturalne (rzaz HullBodies.cutSegment → sufit HP od zabitych węzłów). Wstrząs strzału z
+ * danych (`shake`, src/game/weaponFeel.js — 18-D).
  */
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
 import { WeaponFx } from '../3d/weapons/weaponFx.js';
 import { createCarrier, writeCarrier } from './carrierVelocity.js';
 import { buildHexlanceBurst } from './weaponCharge.js';
+import { weaponRecoil, weaponShake } from './weaponFeel.js';
 
 // Nośniki (src/game/carrierVelocity.js): lufa okrętu — ładowanie, rozbłysk,
 // smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia, rzaz i wyjście.
@@ -203,8 +205,10 @@ function fireSingleMount(ship, cannonIndex) {
     const m = getMuzzlePos(ship, cannonIndex);
     const angle = Math.atan2(m.dir.y, m.dir.x);
     const fx3d = WeaponFx.available;
-    superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + 12);
-    if (window.camera && window.camera.addShake) window.camera.addShake(fx3d ? 14 : 8, fx3d ? 0.4 : 0.25);
+    // Odrzut i wstrząs z danych broni (zadanie 18-D, src/game/weaponFeel.js): Hexlance ma
+    // `recoil: 0` (lufa wtopiona w kil, bez wieżyczki) i `shake: 14` (dawniej 14 wpisane tutaj).
+    superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + weaponRecoil(HEXLANCE_DEF));
+    if (window.camera && window.camera.addShake) window.camera.addShake(weaponShake(HEXLANCE_DEF), fx3d ? 0.4 : 0.25);
     window.dispatchEvent(new CustomEvent('game_weapon_fired', {
         detail: { weaponId: 'hexlance', x: m.x, y: m.y }
     }));

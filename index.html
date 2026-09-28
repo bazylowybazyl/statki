@@ -1054,7 +1054,7 @@
     import { getMountedWeaponAim } from "./src/game/weaponAim.js";
     import { barrelsPerShotOf, queueSalvoBarrels, drainSalvoQueue } from "./src/game/weaponController.js";
     // Mechanika broni z dema (zadanie 18-B): przebicia i rykoszety (bulletsAndCollisionsStep),
-    // ładowanie Mjolnira / Valkyrie (zaczepy special).
+    // ładowanie Mjolnira / Valkyrie (zaczepy special); skala trafienia z danych broni (18-D).
     import {
       nextProjectileSerial, hasHullMechanics, resolveHullHit, entryDamage, stepInsideHull, skipsHull, ricochetBounce,
       HIT_PENETRATE, HIT_RICOCHET, PASS_EXIT, PASS_STUCK, PASS_INSIDE
@@ -1063,6 +1063,7 @@
       chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
       CHARGE_FIRE, CHARGE_CHARGING
     } from "./src/game/weaponCharge.js";
+    import { weaponImpactScale } from "./src/game/weaponFeel.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize, shieldImpactClass } from "./src/data/weapons.js";
     import {
       addHangarSquadronMount,
@@ -10057,10 +10058,13 @@
     const IMPACT_FX_SIZE = [2.4, 1.5, 1.2, 1.0];
     const IMPACT_FX_COOLDOWN_MS = [0, 28, 8, 42];
 
+    // Rozmiar efektu w bramce × impactScale broni (dane — zadanie 18-D, src/game/weaponFeel.js):
+    // ciężkie trafienia (Mjolnir 5, Yamato 4,5, Valkyrie 3,5) widać z dalszego zoomu, lekkie
+    // wiązki (0,4–0,7) znikają wcześniej. Obrazu receptury skala nie zmienia (jak w demie).
     function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
       if (!WeaponFx.available) return;
       const fxKind = impactFxKindOf(b);
-      const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind];
+      const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind] * (b?.vfxKey ? weaponImpactScale(WEAPONS[b.vfxKey]) : 1);
       if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, IMPACT_FX_COOLDOWN_MS[fxKind], x, y)) {
         WeaponFx.impact(b, x, y, scale, hit);
       }

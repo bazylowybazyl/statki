@@ -98,7 +98,7 @@ test('superweapon.js: naciśnięcie po naładowaniu oddaje serię 4 strzałów c
   for (; t < t0 + 1.0; t += dt) SW.updateSuperweapon(dt, ship, null);
   assert.equal(shots.length, 4, 'cztery strzały na naciśnięcie');
   shots.forEach((ts, k) => assert.ok(Math.abs(ts - t0 - k * 0.25) <= dt + 1e-9, `strzał ${k} po ${ts - t0} s`));
-  assert.equal(shakes.length, 4, 'wstrząs przy każdym strzale serii');
+  assert.deepEqual(shakes, [14, 14, 14, 14], 'wstrząs z danych broni (shake 14)');
   assert.ok(S.cooldown > 0 && S.cooldown <= HEX.cooldown, 'przeładowanie rusza po serii');
   assert.equal(SW.tryFireSuperweapon(ship), false, 'w przeładowaniu naciśnięcie odbija');
 });

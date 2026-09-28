@@ -40,6 +40,7 @@ import { ActiveCarrier, createCarrier, writeCarrier, writeCarrierVelocity } from
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../../data/ships.js';
+import { weaponImpactScale } from '../../game/weaponFeel.js';
 
 // ---------------------------------------------------------------------------
 // Budżety i progi
@@ -306,13 +307,17 @@ export const WeaponFx = {
   },
 
   _shakeAllowed: true,
+  // Mnożnik wstrząsu receptury: przy trafieniu (impact, wyjście, zakleszczenie) = impactScale
+  // broni (zadanie 18-D, src/game/weaponFeel.js); poza trafieniem 1.
+  _shakeScale: 1,
 
   _shake(mag, dur) {
     if (!this._shakeAllowed || !(mag > 0)) return;
     const cam = typeof window !== 'undefined' ? window.camera : null;
     if (!cam || typeof cam.addShake !== 'function') return;
+    const m = mag * this._shakeScale;
     const left = cam.shakeDur > 0 ? cam.shakeMag * Math.max(0, cam.shakeTime / cam.shakeDur) : 0;
-    if (mag > left) cam.addShake(mag, dur);
+    if (m > left) cam.addShake(m, dur);
   },
 
   _hullInside(hull, x, y) {
@@ -777,11 +782,13 @@ export const WeaponFx = {
     } else {
       _hit.ric = false;
     }
-    // wstrząs z trafień tylko dla gracza (strzelał albo oberwał) — bitwa NPC nie trzęsie kamerą
+    // wstrząs z trafień tylko dla gracza (strzelał albo oberwał) — bitwa NPC nie trzęsie kamerą;
+    // siła × impactScale broni (18-D — obraz receptury bez zmian)
     const player = typeof window !== 'undefined' ? window.ship : null;
     const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
     const ent = hit?.entity || null;
     this._shakeAllowed = b.owner === 'player' || b.owner === 'player2' || (ent && (ent === player || ent === p2));
+    this._shakeScale = b.vfxKey ? weaponImpactScale(weaponCtx(b.vfxKey).def) : 1;
     try {
       if (!family) {
         // rakieta / torpeda w tablicy bullets: zestrzelona rakieta — mały wybuch (do 19),
@@ -810,6 +817,7 @@ export const WeaponFx = {
       recipe.impact(this.ctx, p, hull, _hit);
     } finally {
       this._shakeAllowed = true;
+      this._shakeScale = 1;
       _hit.ric = false;
     }
     return true;
@@ -879,6 +887,7 @@ export const WeaponFx = {
     const player = typeof window !== 'undefined' ? window.ship : null;
     const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
     this._shakeAllowed = b.owner === 'player' || b.owner === 'player2' || (hull && (hull === player || hull === p2));
+    this._shakeScale = b.vfxKey ? weaponImpactScale(weaponCtx(b.vfxKey).def) : 1;
     try {
       if (!stuck) {
         if (!recipe.exit) return false;
@@ -897,6 +906,7 @@ export const WeaponFx = {
       }
     } finally {
       this._shakeAllowed = true;
+      this._shakeScale = 1;
     }
     return true;
   },
