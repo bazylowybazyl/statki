@@ -105,3 +105,44 @@ test('HaloRingGame: kolizje z terenem i stanowiska K-7 dopiero po ready (nigdy p
   for (const hall of ring.k7Halls) for (const b of hall.layout.berths) assert.equal(b.occupied, null);
   game.dispose();
 });
+
+// Zadanie 23 portu WebGPU: dach nad płaszczyzną gry całkiem wygaszony (uFgFade.x = 0) — każdy fragment
+// górnej ściany i brył dachu odpada w haloFgClip, ale `discard` w WGSL nie kończy cieniowania (Tint:
+// demote-to-helper), więc ring nie rysuje wtedy tych siatek; przy powrocie dachu wracają z widocznością
+// sprzed zaniku (setVisible części, bryły bez instancji zostają ukryte).
+test('update: dach przy pełnym zaniku (uFgFade.x = 0) bez rysunku, wraca z widocznością sprzed zaniku', async () => {
+  const THREE = await import('three');
+  const ring = createHaloRing({ renderer: fakeRenderer(), planetRadius: 37800, seed: 1337, quality: 'low' });
+  assert.equal(await ring.ready, true);
+  const L = ring.layout;
+  const top = ring.group.children.find((o) => o.name === 'HaloStructure_topWall');
+  assert.ok(top, 'górna ściana (FG) w grupie');
+  // dach FG megastruktury: bryły detalu, pociągi, światła dachu (doki i ich światła to BG — bez zmian)
+  const fgMega = [];
+  ring.group.traverse((o) => { if (/^HaloMega_(detail_|trains$|lights$)/.test(o.name)) fgMega.push(o); });
+  assert.ok(fgMega.length >= 3, `siatki dachu FG: ${fgMega.map((m) => m.name)}`);
+  const bg = [];
+  ring.group.traverse((o) => { if (/^HaloMega_(landmark_|domeGlass$|dockLights$)/.test(o.name)) bg.push(o); });
+  const bgBefore = bg.map((m) => m.visible);
+  const cam = new THREE.PerspectiveCamera(40, 16 / 9, 1, 1e7);
+  const view = { camera: cam, viewportHeight: 1080, gameView: true };
+  const at = (z) => { cam.position.set(L.radii.floorMid, 0, z); cam.lookAt(L.radii.floorMid, 0, 0); cam.updateMatrixWorld(true); ring.update(1 / 60, view); };
+  at(L.z.top * 4); // daleko nad dachem: m → 1,33 < fadeMag[0] — dach pełny
+  assert.equal(ring.uniforms.uFgFade.value.x, 1);
+  const before = new Map(fgMega.map((m) => [m, m.visible]));
+  assert.equal(top.visible, true);
+  at(L.z.top * 1.2); // tuż nad dachem: m = 6 > fadeMag[1] — zanik pełny
+  assert.equal(ring.uniforms.uFgFade.value.x, 0);
+  assert.equal(top.visible, false, 'górna ściana bez rysunku przy pełnym zaniku');
+  for (const m of fgMega) assert.equal(m.visible, false, `${m.name} bez rysunku przy pełnym zaniku`);
+  assert.deepEqual(bg.map((m) => m.visible), bgBefore, 'doki (BG) bez zmian');
+  at(L.z.top * 4);
+  assert.equal(top.visible, true, 'ściana wraca');
+  for (const m of fgMega) assert.equal(m.visible, before.get(m), `${m.name}: widoczność sprzed zaniku`);
+  // część wyłączona przez hosta zostaje wyłączona po powrocie dachu
+  ring.setVisible('structureTop', false);
+  at(L.z.top * 1.2);
+  at(L.z.top * 4);
+  assert.equal(top.visible, false, 'setVisible(structureTop, false) ma pierwszeństwo');
+  ring.dispose();
+});

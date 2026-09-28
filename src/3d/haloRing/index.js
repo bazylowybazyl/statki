@@ -254,8 +254,27 @@ export function createHaloRing(options = {}) {
 
   function applyVisible(part, visible) {
     const p = parts?.[part];
-    if (p?.mesh) p.mesh.visible = !!visible;
+    if (p?.mesh) p.mesh.visible = !!visible && !(part === 'structureTop' && parts.fgFadeHidden);
     else if (p?.group) p.group.visible = !!visible;
+  }
+
+  // Dach nad płaszczyzną gry całkiem wygaszony (uFgFade.x = 0 — kamera tuż nad nim): każdy fragment
+  // górnej ściany i brył dachu odpada w haloFgClip, a światła dachu mają barwę 0 — ale `discard` w WGSL
+  // (Tint na D3D12: „demote to helper”) nie kończy wykonania, więc pełne cieniowanie konstrukcji szło
+  // na cały kadr. Zadanie 23: przy pełnym zaniku bez rysunku (obraz ten sam, bez kosztu GPU); siatki
+  // wracają z widocznością sprzed zaniku (setVisible części, `src.total > 0` brył dachu).
+  function setFgFadeHidden(hidden) {
+    if (!parts || !!parts.fgFadeHidden === hidden) return;
+    parts.fgFadeHidden = hidden;
+    if (parts.structureTop) parts.structureTop.mesh.visible = !hidden && state.visible.structureTop !== false;
+    for (const m of parts.mega.fgMeshes) {
+      if (hidden) {
+        m.userData.haloFgBaseVisible = m.visible;
+        m.visible = false;
+      } else if (m.userData.haloFgBaseVisible !== undefined) {
+        m.visible = m.userData.haloFgBaseVisible;
+      }
+    }
   }
 
   // Gotowość: czeka na bieżącą budowę (także gdy w międzyczasie ruszyła następna).
@@ -400,6 +419,7 @@ export function createHaloRing(options = {}) {
       } else {
         fg.set(1, 0, 1e6, layout.radii.floorTop);
       }
+      setFgFadeHidden(!(fg.x > 0));
       parts.clouds.update(frustum, refS);
       parts.shell.update(frustum, refS, layout.isInsideAir(camLocal.x, camLocal.y, camLocal.z));
       // rozmiar piksela: minimum świateł pozycyjnych, próg budynków i drzew
