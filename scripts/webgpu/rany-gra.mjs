@@ -130,7 +130,20 @@ try {
   await ev('window.__harness.step(3)');
   await snap('01-cale-0_05s', 'Seria trafień, 0,05 s: białe brzegi ran (8–12 HDR), jony Tempesta, wtórne Yamato jeszcze nie', camAll);
   await snap('02-atlas-0_05s', 'Atlas z bliska, 0,05 s', camAtlas);
-  await ev('window.__harness.step(33)');
+  // Koszt kernela (znaczniki czasu GPU compute) w klatkach, w których oba sloty stygną (w kadrze) —
+  // wątki i dispatch z HullDamageMap.stats. 12 klatek (0,2 s) wlicza się w odstęp do zrzutu 0,6 s.
+  result.kernel = await ev(`(async () => {
+    const H = window.__harness, C = window.Core3D, M = window.HullDamageMap;
+    const out = [];
+    for (let i = 0; i < 12; i++) {
+      await H.step(1);
+      await H.frames(2);
+      out.push({ gpuComputeMs: C.gpuComputeMs, jobs: M.stats.jobs, threads: M.stats.threads, dispatch: M.stats.dispatch, fxCpuMs: C.fxStats?.cpuMs });
+    }
+    return JSON.stringify(out);
+  })()`);
+  console.log('kernel:', result.kernel);
+  await ev('window.__harness.step(21)');
   await snap('03-atlas-0_6s', 'Atlas, 0,6 s: brzegi jeszcze białe, poświata stygnie', camAtlas);
   await ev('window.__harness.step(54)');
   await snap('04-atlas-1_5s', 'Atlas, 1,5 s: biel → pomarańcz', camAtlas);

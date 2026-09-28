@@ -25,8 +25,9 @@
 //
 // Pamięć (klasy wg długości kadłuba-korzenia w świecie, teksel 8 B): L 512×256 ×12 (≥ 900 j.),
 // M 256×128 ×32 (400–900), S 128×64 ×64 (160–400), myśliwce bez mapy → 24 MB GPU (kopia CPU
-// zwalniana po wgraniu). Pełna klasa oddaje slot najdawniej widzianego kadłuba spoza kadru
-// (LRU), a gdy wszystkie są w kadrze — kadłub dostaje slot mniejszej klasy albo stempel przepada.
+// zwalniana po wgraniu). Pełna klasa: najpierw WOLNY slot większej klasy, potem slot najdawniej
+// widzianego kadłuba spoza kadru (LRU) w swojej klasie, potem mniejsza klasa; wszystko w kadrze —
+// stempel przepada (licznik).
 // Trafienia dalej niż pół kadru od ekranu nie stemplują (walka poza kadrem nie mieli slotów).
 //
 // Klatka: fizyka stempluje (kolejka CPU) → updateHexShips3D wiąże sloty z materiałami (`bind`:
@@ -149,7 +150,7 @@ export const HullDamageMap = {
   _time: 0,
   stats: {
     poolBytes: TEXELS * DMG_TEXEL_BYTES, cpuCopyBytes: TEXELS * DMG_TEXEL_BYTES, slotsL: 0, slotsM: 0, slotsS: 0,
-    stamps: 0, droppedStamps: 0, offView: 0, noSlot: 0, evictions: 0, downgrades: 0,
+    stamps: 0, droppedStamps: 0, offView: 0, noSlot: 0, evictions: 0, downgrades: 0, upgrades: 0,
     jobs: 0, threads: 0, dispatch: 0, heals: 0, delayed: 0
   },
 
@@ -168,7 +169,11 @@ export const HullDamageMap = {
     }
   },
 
-  /** Slot rodu `key` (istniejący albo nowy: wolny → LRU spoza kadru → mniejsza klasa). null = brak. */
+  /**
+   * Slot rodu `key`: istniejący albo nowy — wolny w swojej klasie → wolny w większej (tylko wolny:
+   * nie wypycha dużych kadłubów) → LRU spoza kadru w swojej klasie → mniejsza klasa (wolny, potem
+   * LRU). null = brak (wszystko w kadrze).
+   */
   acquire(key, worldW, worldH) {
     if (!(key > 0) || !this.enabled) return null;
     this._ensureSlots();
@@ -176,30 +181,38 @@ export const HullDamageMap = {
     if (have !== undefined) return have;
     const cls = damageClassFor(Math.max(worldW, worldH));
     if (cls < 0) return null;
-    const S = this.slots;
-    for (let c = cls; c < DMG_CLASSES.length; c++) {
-      let free = null;
-      let lru = null;
-      for (let i = 0; i < S.length; i++) {
-        const s = S[i];
-        if (s.cls !== c) continue;
-        if (s.key === 0) { free = s; break; }
-        // Chronione: widziane w ostatniej narysowanej klatce albo ze stemplami tej klatki.
-        if (s.seen >= this.frame - 1 || s.pending > 0) continue;
-        if (!lru || s.seen < lru.seen) lru = s;
-      }
-      const s = free || lru;
-      if (!s) continue;
-      if (!free) {
-        this._byKey.delete(s.key);
-        this.stats.evictions++;
-      }
-      if (c !== cls) this.stats.downgrades++;
-      this._assign(s, key, worldW, worldH);
-      return s;
+    // Klasy: 0 = L (największa) … 2 = S; mniejszy indeks = większa klasa.
+    let s = this._pick(cls, false);
+    for (let c = cls - 1; !s && c >= 0; c--) s = this._pick(c, false);
+    if (!s) s = this._pick(cls, true);
+    for (let c = cls + 1; !s && c < DMG_CLASSES.length; c++) s = this._pick(c, true);
+    if (!s) {
+      this.stats.noSlot++;
+      return null;
     }
-    this.stats.noSlot++;
-    return null;
+    if (s.key !== 0) {
+      this._byKey.delete(s.key);
+      this.stats.evictions++;
+    }
+    if (s.cls > cls) this.stats.downgrades++;
+    else if (s.cls < cls) this.stats.upgrades++;
+    this._assign(s, key, worldW, worldH);
+    return s;
+  },
+
+  // Wolny slot klasy albo — z allowLru — najdawniej widziany spoza kadru. Chronione: widziane w ostatniej
+  // narysowanej klatce i ze stemplami tej klatki (ich stemple czekają w kolejce).
+  _pick(cls, allowLru) {
+    const S = this.slots;
+    let lru = null;
+    for (let i = 0; i < S.length; i++) {
+      const s = S[i];
+      if (s.cls !== cls) continue;
+      if (s.key === 0) return s;
+      if (!allowLru || s.seen >= this.frame - 1 || s.pending > 0) continue;
+      if (!lru || s.seen < lru.seen) lru = s;
+    }
+    return lru;
   },
 
   _assign(s, key, worldW, worldH) {
@@ -748,7 +761,7 @@ export const HullDamageMap = {
     this._dCount = 0;
     this._src.active = false;
     const st = this.stats;
-    st.stamps = 0; st.droppedStamps = 0; st.offView = 0; st.noSlot = 0; st.evictions = 0; st.downgrades = 0;
+    st.stamps = 0; st.droppedStamps = 0; st.offView = 0; st.noSlot = 0; st.evictions = 0; st.downgrades = 0; st.upgrades = 0;
     st.jobs = 0; st.threads = 0; st.dispatch = 0; st.heals = 0; st.delayed = 0;
   }
 };

@@ -122,6 +122,12 @@ test('przydział: klasa z rozmiaru, ten sam slot dla klucza, pełna klasa → mn
   const d = HullDamageMap.acquire(3000, 1800, 806);
   assert.equal(d.cls, 1, 'zapas w klasie M');
   assert.ok(HullDamageMap.stats.downgrades >= 1);
+  // Pełna klasa S w kadrze: kadłub S bierze WOLNY slot większej klasy (nie wypycha innych).
+  for (let k = 0; k < 64; k++) HullDamageMap.acquire(6000 + k, 300, 120);
+  const up = HullDamageMap.acquire(6999, 300, 120);
+  assert.equal(up.cls, 1, 'wolny slot M dla fregaty, gdy S pełne');
+  assert.equal(HullDamageMap.stats.upgrades, 1);
+  assert.equal(HullDamageMap.stats.evictions, 0, 'nikt nie stracił ran');
   // Wszystkie sloty (L, M, S) widziane teraz → brak slotu, licznik.
   for (let k = 0; k < 200; k++) HullDamageMap.acquire(4000 + k, 1800, 806);
   const before = HullDamageMap.stats.noSlot;
@@ -137,6 +143,9 @@ test('LRU: oddaje slot najdawniej widzianego kadłuba spoza kadru; widziane i ze
   assert.ok(S0.every((s) => s && s.cls === 2));
   // Klatki mijają: widoczność z bind() (materiał kadłuba).
   HullDamageMap.frame = 50;
+  // Większe klasy zajęte przez kadłuby w kadrze (inaczej fregata dostałaby wolny slot M / L).
+  for (let k = 0; k < 44; k++) HullDamageMap.acquire(800 + k, 1800, 806);
+  assert.equal(HullDamageMap.stats.slotsL + HullDamageMap.stats.slotsM, 44);
   const holder = () => ({ uDmgSlot: { value: new THREE.Vector4() }, uDmgWorld: { value: new THREE.Vector2() } });
   for (let k = 0; k < 64; k++) S0[k].seen = 20 + k % 20;       // różne „ostatnio widziane”
   S0[3].seen = 5;                                                // najdawniej
@@ -415,7 +424,8 @@ test('zadania: czyszczenie przejętego slotu (brudny prostokąt), stygnięcie w 
   assert.equal(HullDamageMap.buildJobs(9), 0, 'zimny slot w kadrze — bez pracy');
   // Przejęcie slotu przez inny kadłub (LRU): pierwsze zadanie czyści brudny prostokąt poprzednika.
   HullDamageMap.frame += 10;
-  for (let k = 0; k < 40; k++) HullDamageMap.acquire(70000 + k, 720, 380);
+  // 31 wolnych M, 12 wolnych L (większa klasa — tylko wolne), potem LRU w M: ten slot.
+  for (let k = 0; k < 44; k++) HullDamageMap.acquire(70000 + k, 720, 380);
   assert.equal(HullDamageMap.slotOf(key), undefined, 'wypchnięty przez LRU');
   const owner = [...HullDamageMap._byKey.entries()].find(([, s]) => s === slot)?.[0];
   assert.ok(owner >= 70000, 'slot ma nowego właściciela');

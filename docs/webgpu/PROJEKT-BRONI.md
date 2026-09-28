@@ -257,8 +257,9 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
   wariant, dirX, dirY)`. `ctx.stamp` receptur 17 zostaje pusty (inaczej stemple podwójne i zależne od bramki LOD).
   Wtórne wybuchy Yamato planuje mapa (kolejka opóźniona: uv trafienia + przesunięcie w układzie kadłuba, klucz rodu),
   `burn` (ogień w wyrwie) to efekt 17 bez stempla.
-- **Przydział (§3.2):** jak w projekcie + klasa przy pierwszym stemplu rodu; gdy cała klasa w kadrze — slot mniejszej
-  klasy (licznik `downgrades`), potem brak (`noSlot`); chronione też sloty ze stemplami tej klatki; przejęty slot
+- **Przydział (§3.2):** jak w projekcie + klasa przy pierwszym stemplu rodu; kolejność: wolny slot swojej klasy →
+  WOLNY slot większej (`upgrades`; nie wypycha dużych kadłubów — w bitwie niszczycieli S zapełnia się pierwsze) → LRU
+  swojej klasy → mniejsza klasa (`downgrades`) → brak (`noSlot`); chronione też sloty ze stemplami tej klatki; przejęty slot
   czyści tylko swój **brudny prostokąt** (suma stempli od ostatniego czyszczenia), nie cały slot; trafienia dalej niż
   pół kadru poza ekranem nie stemplują (`DMG_VIEW_MARGIN` — bitwa poza kadrem nie mieli slotów); kopia CPU puli
   oddawana po utworzeniu bufora GPU (pamięć CPU 24 MB → 0).
