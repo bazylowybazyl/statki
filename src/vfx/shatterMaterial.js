@@ -288,8 +288,9 @@ export class ShatterNodeMaterial extends THREE.NodeMaterial {
     SHATTER_TSL_STATS.materials[key]++;
   }
 
-  // ShaderMaterial w WebGL: clipping = false — płaszczyzny cięcia (ClippingGroup kawałka
-  // skorupy) nie dotyczą rozpadu na trójkąty.
+  // ShaderMaterial w WebGL: clipping = false — kontekst cięcia renderera (ClippingGroup) nie
+  // dotyczy rozpadu na trójkąty. Kawałki skorupy tną się maską na klonach SWOICH materiałów
+  // (destruction3D.js), której materiał rozpadu nie ma — kawałek rozpada się cały, jak w WebGL.
   setupClipping() {
     return null;
   }
