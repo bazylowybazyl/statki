@@ -8,8 +8,8 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, uniformArray, float, vec2, vec3, vec4, attribute, positionGeometry, positionView,
-  normalView, normalize, abs, dot, pow, exp, max, min, mix, smoothstep, saturate, floor, length,
-  sin, step, fract, select, Loop, If, Discard
+  normalView, normalGeometry, normalize, abs, dot, pow, exp, max, min, mix, smoothstep, saturate, floor,
+  length, sin, step, fract, select, Loop, If, Discard, transformNormalToView, cameraViewMatrix
 } from 'three/tsl';
 import { sampleShieldProfileRadius } from '../../shieldSystem.js';
 import { uTime, gnoise, hash12, SHIELD_FULL_COLOR, SHIELD_EDGE_COLOR } from './wspolne.js';
@@ -267,6 +267,141 @@ export function createReferenceMaterial(U) {
       .add(revealEdge.mul(U.noiseEdgeIntensity).mul(edgeVis))).mul(revealMask).toVar();
     If(alpha.lessThan(0.002), () => { Discard(); });
     return vec4(max(shieldColor.mul(revealMask).add(edgeGlow), vec3(0.0)), alpha);
+  })();
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Nowy wygląd: czasza jako OŚRODEK. Stan z tekstury pola (h, E, B, W):
+//  • wierzchołki przesunięte wzdłuż normalnej o h, normalna z gradientu h
+//    (fresnel, połysk i załamanie reagują na fale);
+//  • model „niewidzialne pole”: w spoczynku nic; świeci energia E (błękit →
+//    biel → pomarańcz przy przeciążeniu), front fali (obwiednia W), heksy
+//    zapalane tam, gdzie przeszła fala albo leży energia (każda komórka
+//    z własnym progiem i migotaniem, krawędzie jaśniejsze), fronty rozruchu
+//    i gaszenia, puls niskiego HP, dziura przebicia z rozżarzonym brzegiem.
+// Mieszanie: rgb + tło·(1 − a) — a = 0 daje czystą emisję (addytywnie),
+// a > 0 zastępuje tło (załamanie, etap 4).
+
+export function createFieldLookUniforms(profile) {
+  const maxR = Math.max(1, profile.maxR);
+  return {
+    hexScale: uniform(1 / (0.05 * maxR)),
+    dispScale: uniform(1.0),
+    normalGain: uniform(1.0),
+    waveGlow: uniform(1.0),
+    energyGlow: uniform(1.0),
+    spec: uniform(1.0),
+    lightDir: uniform(new THREE.Vector3(-0.45, 0.55, 0.7).normalize()), // w świecie
+    fade: uniform(1.0)            // wygaszanie całej czaszy (pęknięcie → odłamki)
+  };
+}
+
+export function createFieldMaterial(U, P, G) {
+  const m = new THREE.MeshBasicNodeMaterial({
+    transparent: true, depthWrite: false, side: THREE.FrontSide,
+    blending: THREE.CustomBlending,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor
+  });
+  const aEdge = attribute('aEdge', 'float');
+  const fieldUV = (xy) => xy.sub(P.uOrigin).div(P.uSize);
+
+  // Wierzchołki: h wzdłuż normalnej czaszy (odczyt w vertex shaderze z .level(0)).
+  m.positionNode = Fn(() => {
+    const f = P.texNode.sample(fieldUV(positionGeometry.xy)).level(0);
+    return positionGeometry.add(normalGeometry.mul(f.x.mul(G.dispScale)));
+  })();
+
+  m.fragmentNode = Fn(() => {
+    const obj = positionGeometry.toVar();
+    const uvf = fieldUV(obj.xy).toVar();
+    const f = P.texNode.sample(uvf).toVar();
+    const tx = vec2(P.uTexel.x, 0.0), ty = vec2(0.0, P.uTexel.y);
+    const hL = P.texNode.sample(uvf.sub(tx)).x;
+    const hR = P.texNode.sample(uvf.add(tx)).x;
+    const hD = P.texNode.sample(uvf.sub(ty)).x;
+    const hU = P.texNode.sample(uvf.add(ty)).x;
+    const grad = vec2(hR.sub(hL), hU.sub(hD)).div(P.uCell.mul(2.0)).mul(G.normalGain).toVar();
+    const nLoc = normalize(normalize(normalGeometry).sub(vec3(grad, 0.0))).toVar();
+    const Nv = normalize(transformNormalToView(nLoc)).toVar();
+    const V = normalize(positionView.negate()).toVar();
+    const vEdge = aEdge.toVar();
+    const t = uTime.toVar();
+
+    const eN = max(f.y, 0.0).div(max(P.uThr, 0.05)).toVar();     // energia względem progu
+    const Wa = max(f.w, 0.0).toVar();                              // aktywność fali
+    const Bk = f.z.toVar();                                        // przebicie 0..1
+
+    const fres = pow(saturate(float(1.0).sub(abs(dot(Nv, V)))), U.fresnelPower).mul(U.fresnelStrength).toVar();
+    const ft = t.mul(U.flowSpeed);
+    const flow = gnoise(obj.xy.mul(U.flowScale).add(vec2(ft, ft.mul(0.6)))).mul(0.6)
+      .add(gnoise(obj.xy.mul(U.flowScale.mul(2.1)).add(vec2(ft.mul(-0.5), ft.mul(0.9)))).mul(0.4))
+      .mul(0.5).add(0.5).toVar();
+
+    // Barwa: HP (pełne → #5992f7, puste → czerwień), przy pęknięciu barwa pęknięcia.
+    const lColor = mix(vec3(1.0, 0.08, 0.04), U.color, U.life).toVar();
+    lColor.assign(select(U.isBreaking.greaterThan(0.5),
+      mix(vec3(1.0, 0.35, 0.22), vec3(2.0), fract(t.mul(25.0)).mul(0.4)), lColor));
+
+    // Warstwa pola (rozruch, gaszenie, pęknięcie, „pokaż pole”) — jak w grze.
+    const rim = smoothstep(U.rimStart, 1.0, vEdge).toVar();
+    const rimGlow = rim.mul(rim).mul(U.rimIntensity).toVar();
+    const film = U.filmStrength.mul(flow.mul(0.45).add(0.55));
+    const hasSweep = U.sweep.greaterThanEqual(0.0);
+    const lit = select(hasSweep, sstepDown(U.sweep.add(U.sweepWidth), U.sweep.sub(U.sweepWidth), vEdge), float(1.0)).toVar();
+    const sweepBand = select(hasSweep,
+      sstepDown(U.sweepWidth, 0.0, abs(vEdge.sub(U.sweep))).mul(flow.mul(0.25).add(0.75)), float(0.0));
+    const field = fres.mul(0.4).add(rimGlow).add(film).mul(lit).toVar();
+    field.addAssign(sweepBand.mul(1.9));
+    field.addAssign(rim.mul(smoothstep(0.86, 1.04, U.sweep)).mul(smoothstep(1.04, 1.5, U.sweep).oneMinus()).mul(2.4));
+    field.mulAssign(U.fieldVisibility);
+
+    // Niskie HP: obrys pulsuje, całe pole migocze.
+    const warn = rimGlow.mul(U.lowPower).mul(sin(t.mul(4.6)).mul(0.45).add(0.55)).mul(0.30);
+    const flickLP = float(1.0).sub(U.lowPower.mul(0.55).mul(step(0.62, hash12(vec2(floor(t.mul(19.0)), 7.0)))));
+
+    // Heksy: komórka ~5% maxR w płaszczyźnie kadłuba. Stan pola w ŚRODKU komórki,
+    // własny próg (opóźnienie zapłonu) i migotanie; krawędź jaśniejsza.
+    const hc = hexCell(obj.xy.mul(G.hexScale)).toVar();
+    const center = hc.xy.mul(vec2(1.0, 1.7320508)).div(G.hexScale);
+    const fc = P.texNode.sample(fieldUV(center)).toVar();
+    const rnd = hash12(hc.xy.add(vec2(3.1, 11.7))).toVar();
+    const act = max(max(fc.w, 0.0).mul(1.35), max(fc.y, 0.0).div(max(P.uThr, 0.05)).mul(0.9));
+    const thrCell = rnd.mul(0.55).add(0.12);
+    const on = smoothstep(thrCell, thrCell.add(0.22), act);
+    const flick = sin(t.mul(rnd.mul(11.0).add(5.0)).add(rnd.mul(40.0))).mul(0.3).add(0.7);
+    const edge = smoothstep(0.34, 0.5, hc.z);
+    const hexGlow = on.mul(edge.mul(1.25).add(0.12)).mul(flick).toVar();
+
+    // Energia: barwa chłodny błękit → biel → pomarańcz (przeciążenie).
+    const heat = mix(lColor, vec3(1.25, 1.3, 1.4), smoothstep(0.42, 0.9, eN)).toVar();
+    heat.assign(mix(heat, vec3(1.9, 0.62, 0.16), smoothstep(0.95, 1.45, eN)));
+    const glowE = eN.mul(flow.mul(0.45).add(0.55)).mul(fres.mul(0.45).add(0.55)).mul(G.energyGlow);
+
+    // Front fali: obwiednia W + połysk na zboczach fal.
+    const glowW = Wa.mul(fres.mul(0.6).add(0.3)).mul(flow.mul(0.4).add(0.6)).mul(G.waveGlow);
+    const Lv = normalize(cameraViewMatrix.mul(vec4(G.lightDir, 0.0)).xyz);
+    const Hv = normalize(Lv.add(V));
+    const spec = pow(max(dot(Nv, Hv), 0.0), 90.0).mul(Wa.mul(2.0).add(eN.mul(0.4)).add(U.fieldVisibility.mul(0.12))).mul(G.spec);
+
+    // Przebicie: dziura z postrzępionym, migoczącym brzegiem.
+    const bq = Bk.add(gnoise(obj.xy.mul(0.045).add(vec2(t.mul(1.7), t.mul(-1.1)))).mul(0.10)).toVar();
+    const hole = smoothstep(0.5, 0.56, bq).toVar();
+    const rimB = saturate(float(1.0).sub(abs(bq.sub(0.5)).div(0.09))).mul(step(0.02, Bk));
+    const sparkle = hash12(floor(obj.xy.mul(0.09)).add(vec2(floor(t.mul(24.0)), 0.0))).mul(0.6).add(0.4);
+    const breachGlow = vec3(2.6, 1.05, 0.3).mul(rimB.mul(rimB)).mul(sparkle).mul(2.2);
+
+    const emis = lColor.mul(field.add(warn).mul(2.0))
+      .add(lColor.mul(flow.mul(fres.add(rim.mul(0.6)).add(U.filmStrength)).mul(U.flowIntensity).mul(lit).mul(U.fieldVisibility)))
+      .add(lColor.mul(glowW.mul(1.1)))
+      .add(heat.mul(glowE.mul(1.5)))
+      .add(mix(lColor, heat, smoothstep(0.3, 1.0, eN)).mul(hexGlow.mul(1.25)))
+      .add(vec3(spec))
+      .mul(hole.oneMinus()).mul(flickLP)
+      .add(breachGlow)
+      .mul(G.fade).toVar();
+    return vec4(max(emis, vec3(0.0)), 0.0);
   })();
   return m;
 }

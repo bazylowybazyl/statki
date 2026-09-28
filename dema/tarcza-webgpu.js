@@ -15,7 +15,7 @@ import { uTime, uDt, lights, BLOOM_GAME, clamp } from './tarcza-webgpu/wspolne.j
 import { createSky } from './tarcza-webgpu/tlo.js';
 import { loadAtlasSprite, createAtlasHullMesh } from './tarcza-webgpu/kadlub.js';
 import { buildShip, placeShip, aimTurret, shipPoint } from './tarcza-webgpu/wrogowie.js';
-import { Tarcza } from './tarcza-webgpu/tarcza.js';
+import { Tarcza, FIELD_PARAMS } from './tarcza-webgpu/tarcza.js';
 import { sstepDown } from './tarcza-webgpu/czasza.js';
 
 const $ = (id) => document.getElementById(id);
@@ -128,7 +128,7 @@ async function main() {
 
   // Kadłub: w widoku kontrolnym pierścień znacznika liczony z pozycji lokalnej kwadu.
   const hullExtra = DEBUG_FIELD ? (local) => {
-    const d = length(local.sub(shield.F.uMarker.xy));
+    const d = length(local.sub(shield.P.uMarker.xy));
     const ring = sstepDown(2.2, 0.0, abs(d.sub(float(MARKER_R * 1.45))).div(max(fwidth(d), 1e-4)));
     return vec3(5.0, 0.8, 4.4).mul(ring);
   } : null;
@@ -241,8 +241,27 @@ async function main() {
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
-  const fieldToggle = $('c-field');
-  fieldToggle.addEventListener('change', () => { shield.showField = fieldToggle.checked; });
+  // Panel: przełączniki i suwaki pola.
+  function bindCheck(id, fn) { const el = $(id); el.addEventListener('change', () => fn(el.checked)); fn(el.checked); }
+  // onChange: przebudowa (siatka pola) dopiero po puszczeniu suwaka, nie co krok.
+  function bindRange(id, fn, fmt = (v) => v.toFixed(2), onChange = false) {
+    const el = $(id), out = $(id.replace('s-', 'o-'));
+    const show = () => { if (out) out.textContent = fmt(Number(el.value)); };
+    const upd = () => { show(); fn(Number(el.value)); };
+    el.addEventListener('input', onChange ? show : upd);
+    if (onChange) el.addEventListener('change', upd);
+    upd();
+  }
+  bindCheck('c-field', (v) => { shield.showField = v; });
+  bindCheck('c-waves', (v) => { FIELD_PARAMS.wavesOn = v; });
+  bindCheck('c-energy', (v) => { FIELD_PARAMS.energyOn = v; });
+  bindRange('s-wave', (v) => { FIELD_PARAMS.waveSpeed = v; }, (v) => v.toFixed(0));
+  bindRange('s-damp', (v) => { FIELD_PARAMS.damping = v; }, (v) => v.toFixed(1));
+  bindRange('s-cool', (v) => { FIELD_PARAMS.coolTime = v; }, (v) => v.toFixed(1));
+  bindRange('s-thr', (v) => { FIELD_PARAMS.threshold = v; });
+  bindRange('s-regen', (v) => { S.regen = v / 100; }, (v) => v.toFixed(1));
+  $('s-grid').value = String(GRID_CELLS);
+  bindRange('s-grid', (v) => { shield.setGridCells(v); }, (v) => v.toFixed(0), true);
 
   function updateCamera(dt) {
     const pan = 1300 * dt * (cam.z / 3600);
@@ -337,6 +356,8 @@ async function main() {
       `ms CPU (klatka)  ${S.cpuMs.toFixed(2)}\n` +
       `ms GPU           ${timestamps ? (S.gpuMs + S.gpuComputeMs).toFixed(2) + `  (compute ${S.gpuComputeMs.toFixed(2)})` : '—'}\n` +
       `siatka pola      ${shield.describeGrid()}\n` +
+      `podkroki fali    ${shield.substeps}\n` +
+      `zdarzenia/klatkę ${shield.eventsLastFrame}\n` +
       `światła          ${lights.count} / 256`;
   }
 
@@ -374,7 +395,6 @@ async function main() {
     syncCamera();
   }
   setNewFx(!DEBUG_FIELD);
-  if (!DEBUG_FIELD) shield.setMode('ref');
 
   window.__demo = {
     ready: true,
@@ -401,10 +421,14 @@ async function main() {
       return {
         fps: S.fps, cpuMs: S.cpuMs, gpuMs: S.gpuMs, gpuComputeMs: S.gpuComputeMs, lights: lights.count,
         state: sh.state, hp: sh.val, hpMax: sh.max, grid: shield.describeGrid(), domeVisible: shield.visible,
+        substeps: shield.substeps, events: shield.eventsLastFrame, mode: shield.mode,
         maxR: profile.maxR, minR: profile.minR, pad: profile.pad
       };
     }
   };
 }
 
-main().catch((e) => showError(`Start: ${e?.stack || e}`));
+main().catch((e) => {
+  showError(`Start: ${e?.stack || e}`);
+  window.__demo = { ready: false, error: 'start', detail: String(e?.message || e) };
+});
