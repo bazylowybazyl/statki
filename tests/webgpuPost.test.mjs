@@ -267,7 +267,7 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   const renderer = { info: { frame: 1 }, backend };
   const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuTimestampFeature: true });
   // atrapa zlecenia: three zeruje pulę synchronicznie na starcie rozwiązywania
-  fake._gpuTimerPoll = () => { polls++; pool.currentQueryIndex = 0; fake._gpuTimerPending.render = true; };
+  fake._gpuTimerPollType = (type) => { polls++; backend.timestampQueryPool[type].currentQueryIndex = 0; fake._gpuTimerPending[type] = true; };
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls], [true, 0], 'miejsce jest — bez zmian');
   pool.currentQueryIndex = 1800; renderer.info.frame = 2;
@@ -283,6 +283,31 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   renderer.info.frame = 4;
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls, pool.currentQueryIndex], [true, 2, 0], 'wynik przyszedł — pomiar wraca');
+  // Zadanie 23: seria renderów w JEDNEJ klatce rAF (dema, narzędzia) — miejsce sprawdzane przy każdym
+  // renderze (na jeden pełny render), nie tylko na granicy klatki.
+  fake._gpuTimerPending.render = false;
+  pool.currentQueryIndex = 1990;
+  fake._gpuTimerGate();
+  assert.deepEqual([backend.trackTimestamp, polls, pool.currentQueryIndex], [true, 3, 0], 'kolejny render tej klatki bez miejsca — zlecenie od razu');
+  pool.currentQueryIndex = 1990;
+  fake._gpuTimerGate();
+  assert.deepEqual([backend.trackTimestamp, polls], [false, 3], 'zlecenie w locie — reszta klatki bez znaczników (zamiast przepełnienia)');
+  pool.currentQueryIndex = 100;
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, false, 'do końca klatki bez znaczników');
+  // Pula compute: własny znacznik puli, render dalej mierzony.
+  const compute = { maxQueries: 2048, currentQueryIndex: 1900, trackTimestamp: true };
+  backend.timestampQueryPool.compute = compute;
+  fake._gpuTimerPending.render = false;
+  fake._gpuTimerPending.compute = true;
+  renderer.info.frame = 5;
+  pool.currentQueryIndex = 0;
+  fake._gpuTimerGate();
+  assert.deepEqual([backend.trackTimestamp, compute.trackTimestamp], [true, false], 'compute bez miejsca i ze zleceniem w locie — bez znaczników compute');
+  fake._gpuTimerPending.compute = false;
+  renderer.info.frame = 6;
+  fake._gpuTimerGate();
+  assert.deepEqual([compute.trackTimestamp, compute.currentQueryIndex, polls], [true, 0, 4], 'compute bez miejsca, bez zlecenia — zlecenie od razu');
   // bez cechy timestamp-query brama nic nie włącza
   const noFeature = Object.assign(Object.create(Core3D), { renderer: { info: { frame: 9 }, backend: { trackTimestamp: false } }, _gpuTimestampFeature: false, _gpuTimerGateFrame: -1 });
   noFeature._gpuTimerGate();

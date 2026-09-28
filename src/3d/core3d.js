@@ -28,6 +28,14 @@ import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
 // (pieczenie map ringu, SDF kadłubów) i z zapasem na passy kolejnych zadań.
 const GPU_TIMER_FRAME_QUERIES = 512;
+// Kolejny render w tej samej klatce rAF (dema i narzędzia renderują wiele razy na klatkę —
+// mostki-demo, rdzen-demo, pomiary w pętli): miejsce na jeden pełny render (~25 passów sceny,
+// bloomu i postu po 2 zapytania + rendery modułów). Zadanie 23: brama liczyła miejsce tylko raz
+// na klatkę, więc seria renderów przepełniała pulę three („Maximum number of queries exceeded”).
+const GPU_TIMER_RENDER_QUERIES = 128;
+// Pula compute (renderer.compute: 2 zapytania na wywołanie) — klatka gry to dziś ~10–30 wywołań
+// (efekty broni, rakiety, ośrodek warpa, pas asteroid, mapa ran, przesunięcia pul).
+const GPU_TIMER_FRAME_COMPUTE_QUERIES = 256;
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko poza
 // ośrodkiem warpa (liczony wokół kamery gry w płaszczyźnie gry).
 const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true, warp: false });
@@ -1309,35 +1317,56 @@ export const Core3D = {
   // synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp =
   // false: initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje.
   // Zmierzone klatki zostają pełne; PerfHUD dostaje wynik rzadziej.
+  // Zadanie 23: miejsce sprawdzane też przy KAŻDYM kolejnym renderze tej samej klatki rAF (dema i
+  // narzędzia renderują wiele razy na klatkę — brama raz na klatkę przepuszczała całą serię i pula się
+  // przepełniała) i w puli compute (osobny znacznik puli — compute nie gasi znaczników renderu).
   _gpuTimerGate() {
     const renderer = this.renderer;
     const backend = renderer?.backend;
     if (!backend || this._gpuTimestampFeature !== true) return;
     const frame = renderer.info.frame;
-    if (frame === this._gpuTimerGateFrame) return;
-    this._gpuTimerGateFrame = frame;
-    backend.trackTimestamp = true;
-    const pool = backend.timestampQueryPool?.render;
+    const firstOfFrame = frame !== this._gpuTimerGateFrame;
+    const pools = backend.timestampQueryPool;
+    if (firstOfFrame) {
+      this._gpuTimerGateFrame = frame;
+      backend.trackTimestamp = true;
+      const compute = pools?.compute;
+      if (compute) {
+        compute.trackTimestamp = true;
+        if (compute.maxQueries - compute.currentQueryIndex < GPU_TIMER_FRAME_COMPUTE_QUERIES) {
+          if (!this._gpuTimerPending.compute) this._gpuTimerPollType('compute');
+          else compute.trackTimestamp = false;
+        }
+      }
+    } else if (backend.trackTimestamp !== true) {
+      return; // ta klatka już bez znaczników
+    }
+    const pool = pools?.render;
     if (!pool || !(pool.maxQueries > 0)) return;
-    if (pool.maxQueries - pool.currentQueryIndex >= GPU_TIMER_FRAME_QUERIES) return;
-    if (!this._gpuTimerPending.render) this._gpuTimerPoll();
+    const need = firstOfFrame ? GPU_TIMER_FRAME_QUERIES : GPU_TIMER_RENDER_QUERIES;
+    if (pool.maxQueries - pool.currentQueryIndex >= need) return;
+    if (!this._gpuTimerPending.render) this._gpuTimerPollType('render');
     else backend.trackTimestamp = false;
   },
 
   _gpuTimerPoll() {
-    const renderer = this.renderer;
-    const backend = renderer?.backend;
+    const backend = this.renderer?.backend;
     if (!backend || backend.trackTimestamp !== true) return;
-    const pools = backend.timestampQueryPool;
+    this._gpuTimerPollType('render');
+    this._gpuTimerPollType('compute');
+  },
+
+  // Jedno zlecenie w locie na typ puli (render / compute); zlecenie zeruje pulę synchronicznie.
+  _gpuTimerPollType(type) {
+    const renderer = this.renderer;
+    const pool = renderer?.backend?.timestampQueryPool?.[type];
     const pending = this._gpuTimerPending;
-    if (!pending.render && pools?.render) {
-      pending.render = true;
-      renderer.resolveTimestampsAsync('render').then(this._onGpuRenderTimestamp, this._onGpuTimestampError);
-    }
-    if (!pending.compute && pools?.compute) {
-      pending.compute = true;
-      renderer.resolveTimestampsAsync('compute').then(this._onGpuComputeTimestamp, this._onGpuTimestampError);
-    }
+    if (!pool || pending[type]) return;
+    pending[type] = true;
+    renderer.resolveTimestampsAsync(type).then(
+      type === 'render' ? this._onGpuRenderTimestamp : this._onGpuComputeTimestamp,
+      this._onGpuTimestampError
+    );
   },
 
   // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu.
