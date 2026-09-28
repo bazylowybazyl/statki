@@ -84,8 +84,9 @@ export function quatRotateInv(q, x, y, z, out) {
   return out;
 }
 
+// Math.hypot alokuje w V8 (~30–40 B na wywołanie) — w krokach symulacji sqrt.
 function quatNormalize(q) {
-  const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  const l = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]) || 1;
   q[0] /= l; q[1] /= l; q[2] /= l; q[3] /= l;
   return q;
 }
@@ -223,6 +224,11 @@ export class RockBody {
     this.surfacePts = null;
     this.alive = true;
     this.anchored = !!o.anchored;
+    // Uśpienie (MINING_CONFIG.sleep*): czas w spoczynku i stan.
+    this.sleep = 0;
+    this.asleep = false;
+    this._lastSplitAt = -1e9;
+    this._massAt = -1e9;
     // Ostatni punkt kopania (układ skały) i czas systemu — żar świeżego cięcia.
     this.hot = [0, 0, 0, -1e9];
     // Licznik urobku ostatniego kopania (drobinki odłupane laserem trafiają tam).
@@ -234,23 +240,22 @@ export class RockBody {
   index(i, j, k) { return i + this.nx * (j + this.ny * k); }
 
   /** Zapełnienie (trójliniowo) w punkcie układu skały; poza siatką 0. */
+  // Zwarta forma (bajtkod < 460 B — V8 wkleja ją w raycast i gradient; większa zwracała
+  // liczbę przez stertę przy każdej próbce marszu promienia lasera).
   sample(lx, ly, lz) {
     const cs = this.cs;
     const fx = (lx - this.gx) / cs, fy = (ly - this.gy) / cs, fz = (lz - this.gz) / cs;
     const i0 = Math.floor(fx), j0 = Math.floor(fy), k0 = Math.floor(fz);
-    const nx = this.nx, ny = this.ny, nz = this.nz;
-    if (i0 < 0 || j0 < 0 || k0 < 0 || i0 >= nx - 1 || j0 >= ny - 1 || k0 >= nz - 1) return 0;
-    const tx = fx - i0, ty = fy - j0, tz = fz - k0;
-    const f = this.fill;
-    const sx = 1, sy = nx, sz = nx * ny;
-    const b = i0 + nx * (j0 + ny * k0);
-    const c00 = f[b] + (f[b + sx] - f[b]) * tx;
-    const c10 = f[b + sy] + (f[b + sy + sx] - f[b + sy]) * tx;
-    const c01 = f[b + sz] + (f[b + sz + sx] - f[b + sz]) * tx;
-    const c11 = f[b + sz + sy] + (f[b + sz + sy + sx] - f[b + sz + sy]) * tx;
-    const c0 = c00 + (c10 - c00) * ty;
-    const c1 = c01 + (c11 - c01) * ty;
-    return c0 + (c1 - c0) * tz;
+    const nx = this.nx, ny = this.ny;
+    if (i0 < 0 || j0 < 0 || k0 < 0 || i0 >= nx - 1 || j0 >= ny - 1 || k0 >= this.nz - 1) return 0;
+    const tx = fx - i0, ty = fy - j0;
+    const f = this.fill, sz = nx * ny;
+    const b = i0 + nx * j0 + sz * k0, c = b + nx;
+    const c0 = f[b] + (f[b + 1] - f[b]) * tx;
+    const c1 = c0 + (f[c] + (f[c + 1] - f[c]) * tx - c0) * ty;
+    const d0 = f[b + sz] + (f[b + sz + 1] - f[b + sz]) * tx;
+    const d1 = d0 + (f[c + sz] + (f[c + sz + 1] - f[c + sz]) * tx - d0) * ty;
+    return c1 + (d1 - c1) * (fz - k0);
   }
 
   /** Udział rudy (0 … 1) najbliższej komórki. */
@@ -294,8 +299,13 @@ export class RockBody {
 
   /** Masa, środek masy (układ skały — sam układ zostaje w miejscu), bezwładność, obrys. */
   recomputeMass() {
+    // Jeden przegląd siatki: masa, ruda, momenty (względem środka siatki) i pudełko
+    // pełnych komórek; najdalsza pełna komórka od środka masy — drugi przegląd tylko
+    // w tym pudełku (gra woła to po kopaniu co massRecomputeInterval).
     const { nx, ny, nz, cs, fill, ore } = this;
-    let m = 0, mo = 0, cx = 0, cy = 0, cz = 0, solid = 0;
+    let m = 0, mo = 0, sx = 0, sy = 0, sz = 0, solid = 0;
+    let sxx = 0, syy = 0, szz = 0, sxy = 0, sxz = 0, syz = 0;
+    let bi0 = nx, bj0 = ny, bk0 = nz, bi1 = -1, bj1 = -1, bk1 = -1;
     for (let k = 0, idx = 0; k < nz; k++) {
       const z = this.gz + k * cs;
       for (let j = 0; j < ny; j++) {
@@ -304,9 +314,16 @@ export class RockBody {
           const f = fill[idx];
           if (f <= 0) continue;
           const x = this.gx + i * cs;
-          m += f; cx += f * x; cy += f * y; cz += f * z;
+          const fx = f * x, fy = f * y, fz = f * z;
+          m += f; sx += fx; sy += fy; sz += fz;
+          sxx += fx * x; syy += fy * y; szz += fz * z; sxy += fx * y; sxz += fx * z; syz += fy * z;
           mo += f * ore[idx];
-          if (f >= 0.5) solid++;
+          if (f >= 0.5) {
+            solid++;
+            if (i < bi0) bi0 = i; if (i > bi1) bi1 = i;
+            if (j < bj0) bj0 = j; if (j > bj1) bj1 = j;
+            if (k < bk0) bk0 = k; if (k > bk1) bk1 = k;
+          }
         }
       }
     }
@@ -318,20 +335,23 @@ export class RockBody {
       this.massDirty = false;
       return;
     }
-    cx /= m; cy /= m; cz /= m;
-    let ixx = 0, iyy = 0, izz = 0, ixy = 0, ixz = 0, iyz = 0, r2 = 0;
+    const cx = sx / m, cy = sy / m, cz = sz / m;
+    // Momenty względem środka masy (twierdzenie Steinera); + sześcian komórki.
     const cube = cs * cs / 6;
-    for (let k = 0, idx = 0; k < nz; k++) {
+    const cxx = sxx - m * cx * cx, cyy = syy - m * cy * cy, czz = szz - m * cz * cz;
+    const ixx = cyy + czz + m * cube, iyy = cxx + czz + m * cube, izz = cxx + cyy + m * cube;
+    const ixy = -(sxy - m * cx * cy), ixz = -(sxz - m * cx * cz), iyz = -(syz - m * cy * cz);
+    let r2 = 0;
+    for (let k = bk0; k <= bk1; k++) {
       const z = this.gz + k * cs - cz;
-      for (let j = 0; j < ny; j++) {
+      for (let j = bj0; j <= bj1; j++) {
         const y = this.gy + j * cs - cy;
-        for (let i = 0; i < nx; i++, idx++) {
-          const f = fill[idx];
-          if (f <= 0) continue;
+        const row = nx * (j + ny * k);
+        for (let i = bi0; i <= bi1; i++) {
+          if (fill[row + i] < 0.5) continue;
           const x = this.gx + i * cs - cx;
-          ixx += f * (y * y + z * z + cube); iyy += f * (x * x + z * z + cube); izz += f * (x * x + y * y + cube);
-          ixy -= f * x * y; ixz -= f * x * z; iyz -= f * y * z;
-          if (f >= 0.5) { const d = x * x + y * y + z * z; if (d > r2) r2 = d; }
+          const d = x * x + y * y + z * z;
+          if (d > r2) r2 = d;
         }
       }
     }
@@ -387,7 +407,11 @@ export class RockBody {
   _touch(i0, j0, k0, i1, j1, k1) {
     this.version++;
     this.massDirty = true;
-    this.surfacePts = null;
+    // Punkty powierzchni (zderzenia) odświeża recomputeMass — przegląd całej siatki
+    // przy każdym kopnięciu lasera kosztował ~0,3 ms na krok przy styku dwóch ciał.
+    // Zmiana siatki (kopanie, cięcie, wybuch) budzi ciało.
+    this.asleep = false;
+    this.sleep = 0;
     const b = this.dirtyBox;
     if (!b) this.dirtyBox = [i0, j0, k0, i1, j1, k1];
     else {
@@ -402,6 +426,11 @@ const _t1 = [0, 0, 0];
 const _t2 = [0, 0, 0];
 const _t3 = [0, 0, 0];
 const _t4 = [0, 0, 0];
+// Scratch kroku (zderzenia, trafienia) — gra woła step / raycast / tractor co krok fizyki.
+const _n0 = [0, 0, 0];
+const _g0 = [0, 0, 0];
+const _one = [null];
+const NO_EVENTS = Object.freeze([]);
 
 // ---------------------------------------------------------------------------
 // System wydobycia
@@ -420,6 +449,10 @@ export class AsteroidMining {
     this.bodies = [];
     this.pebbles = [];
     this.events = [];
+    // Druga tablica zdarzeń (drainEvents zamienia je miejscami — bez tablicy na krok).
+    this._drained = [];
+    // Złapane przez wiązkę w ostatnim wywołaniu tractor() (tablica wielokrotnego użytku).
+    this._got = [];
     this.time = 0;
     this._eventSeq = 1;
     // Id ciał i okruchów z licznika systemu (losowania zależą od id — determinizm).
@@ -560,11 +593,16 @@ export class AsteroidMining {
    * Promień (przestrzeń skał) w ciała: najbliższe trafienie powierzchni.
    * Zwraca { body, t, x, y, z, nx, ny, nz, ore } albo null.
    */
-  raycast(ox, oy, oz, dx, dy, dz, maxDist = 1e6, only = null) {
+  raycast(ox, oy, oz, dx, dy, dz, maxDist = 1e6, only = null, out = null) {
     let best = null;
-    const L = Math.hypot(dx, dy, dz) || 1;
+    const L = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     dx /= L; dy /= L; dz /= L;
-    for (const b of (only ? [only] : this.bodies)) {
+    // `out` — obiekt trafienia wielokrotnego użytku (gra: wiązki dronów co krok fizyki).
+    this._hitOut = out;
+    let list = this.bodies;
+    if (only) { _one[0] = only; list = _one; }
+    for (let bi = 0; bi < list.length; bi++) {
+      const b = list[bi];
       if (!b.alive || b.mass <= 0) continue;
       // Kula obrysu.
       const cx = b.p[0] - ox, cy = b.p[1] - oy, cz = b.p[2] - oz;
@@ -580,41 +618,41 @@ export class AsteroidMining {
       const ld = quatRotateInv(b.q, dx, dy, dz, _t4);
       const lox = lo[0], loy = lo[1], loz = lo[2], ldx = ld[0], ldy = ld[1], ldz = ld[2];
       const step = b.cs * 0.4;
+      // Marsz od wejścia w kulę obrysu (pierwsza próbka w t0 — start w środku skały = trafienie
+      // w t0), potem bisekcja; próbkowanie w jednym miejscu pętli (V8 wkleja sample —
+      // liczby zwracane z niewklejonego wywołania to obiekty na stercie, gra woła to co krok).
       let prevT = t0;
-      let prevF = b.sample(lox + ldx * t0, loy + ldy * t0, loz + ldz * t0);
-      if (prevF >= 0.5) {
-        if (!best || t0 < best.t) best = this._hit(b, t0, lox, loy, loz, ldx, ldy, ldz, ox, oy, oz, dx, dy, dz);
-        continue;
-      }
-      for (let t = t0 + step; t <= t1; t += step) {
-        const f = b.sample(lox + ldx * t, loy + ldy * t, loz + ldz * t);
-        if (f >= 0.5) {
-          let a = prevT, c = t, fa = prevF;
+      let hitT = -1;
+      for (let t = t0; t <= t1 || t === t0; t += step) {
+        if (b.sample(lox + ldx * t, loy + ldy * t, loz + ldz * t) >= 0.5) {
+          if (t === t0) { hitT = t0; break; }
+          let a = prevT, c = t;
           for (let it = 0; it < 6; it++) {
             const m = (a + c) * 0.5;
-            const fm = b.sample(lox + ldx * m, loy + ldy * m, loz + ldz * m);
-            if (fm >= 0.5) c = m; else { a = m; fa = fm; }
+            if (b.sample(lox + ldx * m, loy + ldy * m, loz + ldz * m) >= 0.5) c = m; else a = m;
           }
-          void fa;
-          if (!best || c < best.t) best = this._hit(b, c, lox, loy, loz, ldx, ldy, ldz, ox, oy, oz, dx, dy, dz);
+          hitT = c;
           break;
         }
-        prevT = t; prevF = f;
+        prevT = t;
       }
+      if (hitT >= 0 && (!best || hitT < best.t)) best = this._hit(b, hitT, lox, loy, loz, ldx, ldy, ldz, ox, oy, oz, dx, dy, dz);
     }
+    _one[0] = null;
+    this._hitOut = null;
     return best;
   }
 
   _hit(b, t, lox, loy, loz, ldx, ldy, ldz, ox, oy, oz, dx, dy, dz) {
     const lx = lox + ldx * t, ly = loy + ldy * t, lz = loz + ldz * t;
-    const g = b.gradient(lx, ly, lz, [0, 0, 0]);
-    let gl = Math.hypot(g[0], g[1], g[2]);
+    const g = b.gradient(lx, ly, lz, _g0);
+    let gl = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
     if (gl < 1e-9) { g[0] = -ldx; g[1] = -ldy; g[2] = -ldz; gl = 1; }
-    const nw = quatRotate(b.q, -g[0] / gl, -g[1] / gl, -g[2] / gl, [0, 0, 0]);
-    return {
-      body: b, t, x: ox + dx * t, y: oy + dy * t, z: oz + dz * t,
-      nx: nw[0], ny: nw[1], nz: nw[2], ore: b.sampleOre(lx, ly, lz), lx, ly, lz
-    };
+    const nw = quatRotate(b.q, -g[0] / gl, -g[1] / gl, -g[2] / gl, _n0);
+    const h = this._hitOut || {};
+    h.body = b; h.t = t; h.x = ox + dx * t; h.y = oy + dy * t; h.z = oz + dz * t;
+    h.nx = nw[0]; h.ny = nw[1]; h.nz = nw[2]; h.ore = b.sampleOre(lx, ly, lz); h.lx = lx; h.ly = ly; h.lz = lz;
+    return h;
   }
 
   /**
@@ -749,7 +787,7 @@ export class AsteroidMining {
    */
   laser(body, hx, hy, hz, dx, dy, dz, power, dt, out = null, radius = this.cfg.laserRadius) {
     const cfg = this.cfg;
-    const L = Math.hypot(dx, dy, dz) || 1;
+    const L = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     const bite = radius * cfg.laserBite;
     const l = body.worldToLocal(hx + (dx / L) * bite, hy + (dy / L) * bite, hz + (dz / L) * bite, _t3);
     const vol = (power * cfg.digVolumeRate / (0.2 + body.material.hardness)) * dt;
@@ -838,6 +876,8 @@ export class AsteroidMining {
       const side = Math.sign((piece.p[0] - px) * nx + (piece.p[1] - py) * ny + (piece.p[2] - pz) * nz) || 1;
       const push = 6 + 30 * Math.min(1, 1000 / Math.max(1, piece.mass));
       piece.v[0] += nx * side * push; piece.v[1] += ny * side * push; piece.v[2] += nz * side * push;
+      piece.asleep = false;
+      piece.sleep = 0;
     });
     return { lost, oreLost, bodies: res.bodies, pebbles: res.pebbles };
   }
@@ -988,7 +1028,9 @@ export class AsteroidMining {
         grace: cfg.graceTime,
         age: 0,
         alive: true,
-        gravel: true
+        gravel: true,
+        sleep: 0,
+        asleep: false
       });
     }
     return out;
@@ -1148,6 +1190,8 @@ export class AsteroidMining {
 
   _blastKick(piece, isRemainder, x, y, z, E, rc, rf, m, vent, parent, region, rng) {
     const cfg = this.cfg;
+    piece.asleep = false;
+    piece.sleep = 0;
     let dx = piece.p[0] - x, dy = piece.p[1] - y, dz = piece.p[2] - z;
     let d = Math.hypot(dx, dy, dz);
     if (d < 1e-6) { dx = vent[0]; dy = vent[1]; dz = vent[2]; d = 1; }
@@ -1458,7 +1502,10 @@ export class AsteroidMining {
       seed: rng(),
       grace: 0,
       age: 0,
-      alive: true
+      alive: true,
+      gravel: false,
+      sleep: 0,
+      asleep: false
     };
     return peb;
   }
@@ -1471,21 +1518,36 @@ export class AsteroidMining {
     if (!(dt > 0)) return;
     const cfg = this.cfg;
     this.time += dt;
-    for (const b of this.bodies.slice()) {
-      if (b.splitDirty && b.alive) {
-        if (b.massDirty) b.recomputeMass();
-        // Drobinki odłupane laserem (mniejsze niż 3 okruchy) zbierają drony — do urobku kopania.
-        this._splitNow(b, null, null, { vaporizeBelow: this.cfg.pebbleMaxCells * 3, sink: b.digOut || null });
+    // Kopia listy tylko przy rozpadzie do sprawdzenia (rozpad dopisuje i usuwa ciała);
+    // sprawdzenie ciała najczęściej co splitCheckInterval (etykietowanie całej siatki).
+    const every = cfg.splitCheckInterval || 0;
+    let splitPending = false;
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      if (b.splitDirty && this.time - b._lastSplitAt >= every) { splitPending = true; break; }
+    }
+    if (splitPending) {
+      for (const b of this.bodies.slice()) {
+        if (b.splitDirty && b.alive && this.time - b._lastSplitAt >= every) {
+          b._lastSplitAt = this.time;
+          if (b.massDirty) b.recomputeMass();
+          // Drobinki odłupane laserem (mniejsze niż 3 okruchy) zbierają drony — do urobku kopania.
+          this._splitNow(b, null, null, { vaporizeBelow: this.cfg.pebbleMaxCells * 3, sink: b.digOut || null });
+        }
       }
     }
     const lin = Math.exp(-cfg.linearDamping * dt);
     const ang = Math.exp(-cfg.angularDamping * dt);
     // Skała zakotwiczona (platforma wydobywcza trzyma ją w miejscu): ruch i obrót gasną.
     const hold = Math.exp(-cfg.anchorDamping * dt);
-    for (const b of this.bodies) {
-      if (b.massDirty) b.recomputeMass();
+    this._contactDamp = Math.exp(-(cfg.contactSpin || 0) * dt);
+    const massEvery = cfg.massRecomputeInterval || 0;
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      if (b.massDirty && this.time - b._massAt >= massEvery) { b.recomputeMass(); b._massAt = this.time; }
       b.age += dt;
       if (b.grace > 0) b.grace -= dt;
+      if (b.asleep) continue;
       b.p[0] += b.v[0] * dt; b.p[1] += b.v[1] * dt; b.p[2] += b.v[2] * dt;
       quatIntegrate(b.q, b.w[0], b.w[1], b.w[2], dt);
       const kl = b.anchored ? hold : (b.generation > 0 || b.age > 0.5 ? lin : 1);
@@ -1493,17 +1555,45 @@ export class AsteroidMining {
       b.v[0] *= kl; b.v[1] *= kl; b.v[2] *= kl;
       b.w[0] *= ka; b.w[1] *= ka; b.w[2] *= ka;
       this._layerBounds(b.p, b.v, b.boundR * 0.7);
+      this._sleepCheck(b, dt);
     }
-    for (const p of this.pebbles) {
+    for (let i = 0; i < this.pebbles.length; i++) {
+      const p = this.pebbles[i];
       p.age += dt;
       if (p.grace > 0) p.grace -= dt;
+      if (p.asleep) continue;
       p.p[0] += p.v[0] * dt; p.p[1] += p.v[1] * dt; p.p[2] += p.v[2] * dt;
       quatIntegrate(p.q, p.w[0], p.w[1], p.w[2], dt);
       p.v[0] *= lin; p.v[1] *= lin; p.v[2] *= lin;
       p.w[0] *= ang; p.w[1] *= ang; p.w[2] *= ang;
       this._layerBounds(p.p, p.v, p.r);
+      this._sleepCheck(p, dt);
     }
     this._collide();
+  }
+
+  // Spoczynek przez sleepTime → uśpienie (bez ruchu; zderzenia śpiących ze sobą pomijane).
+  _sleepCheck(o, dt) {
+    const cfg = this.cfg;
+    const v2 = o.v[0] * o.v[0] + o.v[1] * o.v[1] + o.v[2] * o.v[2];
+    const w2 = o.w[0] * o.w[0] + o.w[1] * o.w[1] + o.w[2] * o.w[2];
+    if (v2 < cfg.sleepSpeed * cfg.sleepSpeed && w2 < cfg.sleepSpin * cfg.sleepSpin) {
+      o.sleep += dt;
+      if (o.sleep >= cfg.sleepTime) {
+        o.asleep = true;
+        o.v[0] = 0; o.v[1] = 0; o.v[2] = 0;
+        o.w[0] = 0; o.w[1] = 0; o.w[2] = 0;
+      }
+    } else {
+      o.sleep = 0;
+    }
+  }
+
+  /** Budzi ciało albo okruch (kod gry, który sam rusza obiektem). */
+  wake(o) {
+    if (!o) return;
+    o.asleep = false;
+    o.sleep = 0;
   }
 
   _layerBounds(p, v, r) {
@@ -1529,17 +1619,21 @@ export class AsteroidMining {
       for (let c = a + 1; c < B.length; c++) {
         const C = B[c];
         if (A.grace > 0 || C.grace > 0) continue;
+        if (A.asleep && C.asleep) continue;
         const dx = C.p[0] - A.p[0], dy = C.p[1] - A.p[1], dz = C.p[2] - A.p[2];
         const R = A.boundR + C.boundR;
         if (dx * dx + dy * dy + dz * dz > R * R) continue;
-        const [light, heavy] = A.mass < C.mass ? [A, C] : [C, A];
-        this._bodyContact(light, heavy, cfg);
+        if (A.mass < C.mass) this._bodyContact(A, C, cfg);
+        else this._bodyContact(C, A, cfg);
       }
     }
     // Okruch–ciało: środek okruchu w polu ciała.
-    for (const p of P) {
+    for (let pi = 0; pi < P.length; pi++) {
+      const p = P[pi];
       if (p.grace > 0) continue;
-      for (const b of B) {
+      for (let bi = 0; bi < B.length; bi++) {
+        const b = B[bi];
+        if (p.asleep && b.asleep) continue;
         const dx = p.p[0] - b.p[0], dy = p.p[1] - b.p[1], dz = p.p[2] - b.p[2];
         const R = b.boundR + p.r;
         if (dx * dx + dy * dy + dz * dz > R * R) continue;
@@ -1547,26 +1641,45 @@ export class AsteroidMining {
         const f = b.sample(l[0], l[1], l[2]);
         if (f < 0.3) continue;
         const g = b.gradient(l[0], l[1], l[2], _t4);
-        const gl = Math.hypot(g[0], g[1], g[2]);
+        const gl = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
         if (gl < 1e-6) continue;
-        const nw = quatRotate(b.q, -g[0] / gl, -g[1] / gl, -g[2] / gl, [0, 0, 0]);
+        const nw = quatRotate(b.q, -g[0] / gl, -g[1] / gl, -g[2] / gl, _n0);
         const depth = (f - 0.3) * b.cs + p.r * 0.3;
         this._resolve(p, b, nw, depth, cfg.restitution);
+        this._contactSpin(p);
       }
     }
-    // Okruch–okruch: kule.
+    // Okruch–okruch: kule. Zamiatanie wzdłuż x — okruchy posortowane po x przez
+    // wstawianie w miejscu (między krokami lista jest prawie posortowana: O(n) zamiast
+    // O(n²) par przy 500 okruchach po kilku wybuchach).
+    let maxR = 0;
+    for (let i = 0; i < P.length; i++) {
+      const q = P[i];
+      if (q.r > maxR) maxR = q.r;
+      const x = q.p[0];
+      let j = i - 1;
+      while (j >= 0 && P[j].p[0] > x) { P[j + 1] = P[j]; j--; }
+      P[j + 1] = q;
+    }
     for (let a = 0; a < P.length; a++) {
       const A = P[a];
       if (A.grace > 0) continue;
+      const reach = (A.r + maxR) * 0.85;
+      const ax = A.p[0];
       for (let c = a + 1; c < P.length; c++) {
         const C = P[c];
-        if (C.grace > 0) continue;
-        const dx = C.p[0] - A.p[0], dy = C.p[1] - A.p[1], dz = C.p[2] - A.p[2];
+        const dx = C.p[0] - ax;
+        if (dx > reach) break;
+        if (C.grace > 0 || (A.asleep && C.asleep)) continue;
+        const dy = C.p[1] - A.p[1], dz = C.p[2] - A.p[2];
         const R = (A.r + C.r) * 0.85;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > R * R || d2 < 1e-9) continue;
         const d = Math.sqrt(d2);
-        this._resolve(C, A, [dx / d, dy / d, dz / d], R - d, cfg.restitution);
+        _n0[0] = dx / d; _n0[1] = dy / d; _n0[2] = dz / d;
+        this._resolve(C, A, _n0, R - d, cfg.restitution);
+        this._contactSpin(A);
+        this._contactSpin(C);
       }
     }
   }
@@ -1581,7 +1694,7 @@ export class AsteroidMining {
       const f = heavy.sample(l[0], l[1], l[2]);
       if (f < 0.5) continue;
       const g = heavy.gradient(l[0], l[1], l[2], _t4);
-      const gl = Math.hypot(g[0], g[1], g[2]);
+      const gl = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
       if (gl < 1e-6) continue;
       const nwv = quatRotate(heavy.q, -g[0] / gl, -g[1] / gl, -g[2] / gl, _t2);
       nx += nwv[0]; ny += nwv[1]; nz += nwv[2];
@@ -1589,15 +1702,36 @@ export class AsteroidMining {
       hits++;
     }
     if (!hits) return;
-    const nl = Math.hypot(nx, ny, nz);
+    const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
     if (nl < 1e-9) return;
-    this._resolve(light, heavy, [nx / nl, ny / nl, nz / nl], depth, cfg.restitution);
+    _n0[0] = nx / nl; _n0[1] = ny / nl; _n0[2] = nz / nl;
+    this._resolve(light, heavy, _n0, depth, cfg.restitution);
+    this._contactSpin(light);
+    this._contactSpin(heavy);
   }
 
-  // Rozsunięcie i impuls wzdłuż normalnej n (od b do a).
+  // Tarcie w styku: obrót czuwającego obiektu gaśnie (contactSpin).
+  _contactSpin(o) {
+    if (o.asleep) return;
+    const k = this._contactDamp ?? 1;
+    o.w[0] *= k; o.w[1] *= k; o.w[2] *= k;
+  }
+
+  // Rozsunięcie i impuls wzdłuż normalnej n (od b do a). Śpiący obiekt przy spoczynkowym
+  // styku działa jak nieruchomy (rozsuwa się tylko czuwający); budzi go dopiero uderzenie.
   _resolve(a, b, n, depth, e) {
-    const ima = a.mass > 0 ? 1 / a.mass : 0;
-    const imb = b.mass > 0 ? 1 / b.mass : 0;
+    let ima = a.mass > 0 ? 1 / a.mass : 0;
+    let imb = b.mass > 0 ? 1 / b.mass : 0;
+    if (a.asleep || b.asleep) {
+      const rv0 = (a.v[0] - b.v[0]) * n[0] + (a.v[1] - b.v[1]) * n[1] + (a.v[2] - b.v[2]) * n[2];
+      if (rv0 < -2 * this.cfg.sleepSpeed) {
+        a.asleep = false; a.sleep = 0;
+        b.asleep = false; b.sleep = 0;
+      } else {
+        if (a.asleep) ima = 0;
+        if (b.asleep) imb = 0;
+      }
+    }
     const sum = ima + imb;
     if (sum <= 0) return;
     const corr = Math.min(depth, 60) / sum;
@@ -1615,24 +1749,22 @@ export class AsteroidMining {
    * skał), nie cięższe niż `capacity` [t], lecą do punktu; bliżej niż `capture`
    * trafiają do ładowni. Zwraca listę złapanych { kind, ore, oreRes, waste }, urobek do `out`.
    */
-  tractor(tx, ty, tz, radius, capacity, capture, dt, out = null, pull = 1) {
-    const got = [];
-    const pullOne = (o, mass, rr) => {
-      const dx = tx - o.p[0], dy = ty - o.p[1], dz = tz - o.p[2];
-      const d = Math.hypot(dx, dy, dz);
-      if (d > radius + rr || mass > capacity) return false;
-      if (d < capture + rr * 0.5) return true;
-      const want = Math.min(900, 60 + d * 1.2) * pull;
-      const k = 1 - Math.exp(-2.2 * dt * pull);
-      o.v[0] += ((dx / d) * want - o.v[0]) * k;
-      o.v[1] += ((dy / d) * want - o.v[1]) * k;
-      o.v[2] += ((dz / d) * want - o.v[2]) * k;
-      if (o.w) { o.w[0] *= 1 - k * 0.5; o.w[1] *= 1 - k * 0.5; o.w[2] *= 1 - k * 0.5; }
-      return false;
-    };
+  tractor(tx, ty, tz, radius, capacity, capture, dt, out = null, pull = 1, maxOre = Infinity) {
+    // Tablica złapanych wielokrotnego użytku (ważna do następnego wywołania) — gra
+    // woła wiązkę co krok fizyki; zdarzenie zbiórki dostaje kopię (rzadko).
+    const got = this._got;
+    got.length = 0;
+    const T = this._tr || (this._tr = { tx: 0, ty: 0, tz: 0, radius: 0, capacity: 0, capture: 0, want: 0, k: 0, pull: 1 });
+    T.tx = tx; T.ty = ty; T.tz = tz; T.radius = radius; T.capacity = capacity; T.capture = capture;
+    T.k = 1 - Math.exp(-2.2 * dt * pull);
+    T.pull = pull;
+    // maxOre — ile rudy [t] może jeszcze wejść (ładownia gry): odłam z większą rudą
+    // nie jest łapany (czeka przy punkcie wiązki), skała płonna bez rudy — zawsze.
+    let allowance = maxOre;
     for (let i = this.pebbles.length - 1; i >= 0; i--) {
       const p = this.pebbles[i];
-      if (pullOne(p, p.mass, p.r)) {
+      if (this._pullOne(p, p.mass, p.r) && p.oreMass <= allowance + 1e-9) {
+        allowance -= p.oreMass;
         this.pebbles.splice(i, 1);
         p.alive = false;
         const waste = p.mass - p.oreMass;
@@ -1643,7 +1775,8 @@ export class AsteroidMining {
     for (let i = this.bodies.length - 1; i >= 0; i--) {
       const b = this.bodies[i];
       if (b.massDirty) b.recomputeMass();
-      if (pullOne(b, b.mass, b.boundR)) {
+      if (this._pullOne(b, b.mass, b.boundR) && b.oreMass <= allowance + 1e-9) {
+        allowance -= b.oreMass;
         this.bodies.splice(i, 1);
         b.alive = false;
         const waste = b.mass - b.oreMass;
@@ -1655,15 +1788,41 @@ export class AsteroidMining {
       this.stats.collected += got.length;
       this.stats.bodies = this.bodies.length;
       this.stats.pebbles = this.pebbles.length;
-      this.events.push({ kind: 'collect', items: got });
+      this.events.push({ kind: 'collect', items: got.slice() });
     }
     return got;
   }
 
-  /** Zdarzenia od ostatniego wywołania (wybuchy, rozpady, zbiórka) — dla efektów. */
+  // Wiązka na jednym obiekcie (parametry wywołania w this._tr): true = w zasięgu chwytu.
+  _pullOne(o, mass, rr) {
+    const T = this._tr;
+    const dx = T.tx - o.p[0], dy = T.ty - o.p[1], dz = T.tz - o.p[2];
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d > T.radius + rr || mass > T.capacity) return false;
+    if (d < T.capture + rr * 0.5) return true;
+    const want = Math.min(900, 60 + d * 1.2) * T.pull;
+    const k = T.k;
+    o.asleep = false;
+    o.sleep = 0;
+    o.v[0] += ((dx / d) * want - o.v[0]) * k;
+    o.v[1] += ((dy / d) * want - o.v[1]) * k;
+    o.v[2] += ((dz / d) * want - o.v[2]) * k;
+    if (o.w) { o.w[0] *= 1 - k * 0.5; o.w[1] *= 1 - k * 0.5; o.w[2] *= 1 - k * 0.5; }
+    return false;
+  }
+
+  /**
+   * Zdarzenia od ostatniego wywołania (wybuchy, rozpady, zbiórka) — dla efektów.
+   * Zwrócona tablica jest ważna do NASTĘPNEGO wywołania (dwie tablice na zmianę —
+   * gra drenuje co krok fizyki bez nowej tablicy na krok).
+   */
   drainEvents() {
     const e = this.events;
-    this.events = [];
+    if (e.length === 0) return NO_EVENTS;
+    const next = this._drained;
+    next.length = 0;
+    this.events = next;
+    this._drained = e;
     return e;
   }
 }
