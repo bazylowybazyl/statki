@@ -53,7 +53,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | w toku (podagent, worktree `statki-wt/15`; maska w `bridge3D` = zastępnik do 03) | | |
-| 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
+| 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | w toku (podagent, worktree `statki-wt/16`, tag w `statki-wt/tag16`) | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | czeka | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
 | 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; zostają 18-B (wpięcie, po 17), 18-C (mapa ran, po 04 i 12), 18-D | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | czeka | | lot rakiet zostaje w `rocketSystem3D` |
@@ -444,3 +444,9 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   call, ~0,1 ms GPU (→ 23). Inwentarz z HEAD f487d2f: port 27 plików z GLSL, 44 materiały, 5149 linii, `onBeforeCompile`
   0. Testy: 1495 / 7 porażek bazowych / 3 todo; `npm test` OK. Po scaleniu: 05, 15 i 12-B scalają `main` i podmieniają
   zastępniki maski.
+- **Incydent 2026-09-28 ~01:50–02:15: dysk C: pełny** (harness 12-B padł z ENOSPC). Przyczyna: narzędzia CDP (`dema/rdzen-cdp.js`,
+  `scripts/webgpu/wspolne.mjs`, skrypty dem) zostawiały profil headless Chrome w `%TEMP%` po każdym przebiegu (~60 MB z
+  pamięcią shaderów) — ~1000 profili. Usunięte profile starsze niż 60 min (C: 0,08 → ~170 GB wolne); poprawka aa500c7
+  (`closeChrome` czeka na wyjście Chrome i kasuje profil). Skrypty dem z własnym startem Chrome (`halo-ring-shots.mjs`,
+  `mostki-*.js`, `precyzja-drzenie.js` itd.) nadal zostawiają profile — do 24 (wspólny `closeChrome`); do tego czasu
+  orkiestrator trzyma w tle pętlę kasującą profile starsze niż 45 min.
