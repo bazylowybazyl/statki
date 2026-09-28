@@ -75,13 +75,17 @@ function drainFx(rig, from) {
 
 // Pomiar alokacji PIERWSZY w pliku: inne testy robią miejsca wywołań polimorficznymi (JIT
 // przestaje wklejać i pakuje liczby) — zasada z PLAN §3 (zadanie 19).
-test('krok bez wydobycia (drony w doku) i cięcie laserem nie alokują na krok', () => {
+test('krok bez wydobycia (drony w doku) i cięcie laserem nie alokują na krok', async () => {
   const { rig, ship } = makeRig();
-  // Rozgrzewka JIT (interpreter pakuje każdą liczbę) — pomiar dopiero po optymalizacji.
-  const measure = (fn, n) => {
+  // Rozgrzewka JIT (interpreter pakuje każdą liczbę) — pomiar dopiero po optymalizacji; przerwy
+  // dają wątkowi kompilatora wgrać kod pod obciążeniem (równoległe pliki testów).
+  const measure = async (fn, n) => {
     let best = Infinity;
-    for (let i = 0; i < 3000; i++) fn();
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 1000; i++) fn();
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    for (let attempt = 0; attempt < 6; attempt++) {
       for (let i = 0; i < 200; i++) fn();
       const before = v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
       for (let i = 0; i < n; i++) fn();
@@ -90,7 +94,7 @@ test('krok bez wydobycia (drony w doku) i cięcie laserem nie alokują na krok',
     }
     return best;
   };
-  const idle = measure(() => frame(rig, ship), 400);
+  const idle = await measure(() => frame(rig, ship), 400);
   assert.ok(idle < 64, `bezczynny krok: ${idle.toFixed(1)} B/klatkę`);
   // Cięcie laserem (skała przejęta, drony na miejscu).
   rig.setEnabled(true);
@@ -98,7 +102,7 @@ test('krok bez wydobycia (drony w doku) i cięcie laserem nie alokują na krok',
   rig.pointer(rock.x, rock.y, true);
   for (let f = 0; f < 120; f++) frame(rig, ship);
   assert.ok(rig.drones.some((d) => d.laserOn));
-  const cutting = measure(() => frame(rig, ship), 200);
+  const cutting = await measure(() => frame(rig, ship), 200);
   // Rozpad do sprawdzenia (co 0,2 s) i przeliczenie masy tworzą tablice robocze, a kopanie
   // (dig — funkcja za duża na wklejenie) pakuje kilka liczb — średnio ~80 B na klatkę
   // (2026-09-28; przed zwarciem RockBody.sample: ~5 KB — próbki marszu promienia na stercie).

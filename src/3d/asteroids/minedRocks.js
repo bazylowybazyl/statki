@@ -589,7 +589,9 @@ export class MinedRocks {
         d[b + 16] = body.sx; d[b + 17] = body.sy; d[b + 18] = body.sz; d[b + 19] = body.sunT;
         d[b + 20] = slot.block.x; d[b + 21] = slot.block.y; d[b + 22] = slot.block.z; d[b + 23] = body.cs;
         d[b + 24] = body.gx; d[b + 25] = body.gy; d[b + 26] = body.gz; d[b + 27] = 0;
-        this.minerals?.appendRock(d, b, rPx);
+        // Minerały tylko typów, które je mają (wywołanie z liczbą w argumencie V8 pakuje,
+        // gdy nie wklei appendRock — typy bez minerałów nie wołają go wcale).
+        if (this.minerals && this.minerals.templates.hasType(body.type)) this.minerals.appendRock(d, b, rPx);
         if (this.shadowCount < MINED_MAX_BODIES) {
           const sd = this.shadowData;
           const so = this.shadowCount * EXT_FLOATS;

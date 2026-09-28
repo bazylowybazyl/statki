@@ -113,7 +113,7 @@ test('wnętrze: głębia trafienia przez modelViewMatrix (grupa pola na początk
   assert.ok(view.includes('DRONE_LIGHT_OWNER') && DRONE_LIGHT_OWNER > 0, 'drony pomijają własne lampy');
 });
 
-test('atlas: bloki wg wymiaru siatki, wysyłka z budżetem, zwolnienie po zniknięciu ciała, bez alokacji na klatkę', () => {
+test('atlas: bloki wg wymiaru siatki, wysyłka z budżetem, zwolnienie po zniknięciu ciała, bez alokacji na klatkę', async () => {
   const rock = (id, x, r, type = 'copper') => ({ id, x, y: 0, r, d: 2 * r, shape: 3, type: ROCK_TYPE_INDEX[type], qx: 0, qy: 0, qz: 0, qw: 1, ax: 0, ay: 0, az: 1, spin: 0, phase: 0, sx: 1, sy: 1, sz: 1, seed: 0.3 });
   const a = mining.activate(rock(1, 0, 300), { z: -435 });
   const b = mining.activate(rock(2, 4000, 40, 'ice'), { z: -60 });
@@ -138,9 +138,15 @@ test('atlas: bloki wg wymiaru siatki, wysyłka z budżetem, zwolnienie po znikni
   // Bez zmian: zero wysyłek i zero alokacji na klatkę.
   computes.length = 0;
   const ns = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
-  for (let i = 0; i < 3000; i++) mined.update(f);
+  // Rozgrzewka i przerwa: kompilator optymalizujący pracuje w osobnym wątku — pod obciążeniem
+  // (równoległe pliki testów) kod zoptymalizowany wchodzi później, a do tego czasu interpreter
+  // pakuje liczby (fałszywe alokacje). Najmniejsza z kilku prób.
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < 2000; i++) mined.update(f);
+    await new Promise((r) => setTimeout(r, 60));
+  }
   let best = Infinity;
-  for (let t = 0; t < 4; t++) {
+  for (let t = 0; t < 8; t++) {
     const s = ns();
     for (let i = 0; i < 500; i++) mined.update(f);
     const e = ns();
