@@ -485,8 +485,9 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   Harness (0 błędów): w tolerancji `slonce` (0,0028% / 0,0079), `hud`, `ring-z1`, `kalibracja`, `wybuch`,
   `bitwa-blisko`, `__tlo` scen kosmosu; tło bez zamienników. **`planeta-cien` przyjęte decyzją orkiestratora** (mapa
   różnic): 0,32% >8/255, z czego poza prostokątem stacji Wenus (szum obrotu, 1,2% kadru) 836 px = 0,041% w każdym
-  przebiegu — kropkowany łuk poświaty w bazie WebGL (451 px, artefakt MSAA, ten sam co zakazana w agents.md powłoka-kula;
-  nie odtwarzany) + 1-px krawędź limbu (311 px); `__planety` 0,037% / śr. 0,0415 (łuk), `__tlo` 0,90% = przeciek
+  przebiegu, przy krawędzi poświaty Wenus (średniej tego obszaru wg harnessu nie liczono); w wariancie `__planety` (762 px)
+  to kropkowany łuk poświaty w bazie WebGL (451 px, artefakt MSAA, ten sam co zakazana w agents.md powłoka-kula; nie
+  odtwarzany) + 1-px krawędź limbu (311 px); `__planety` 0,037% / śr. 0,0415 (łuk), `__tlo` 0,90% = przeciek
   poświaty w izolacji warstw na tagu (poza pierścieniem ±40 px: 3 px). A/B w grze (`scripts/webgpu/planety-gra.mjs`):
   planety i księżyce ≤ 0,040%, gwiazdy i gwiazdy w skoku 0%, stacja piracka 0,022%, stacja Wenus 0,25% (krawędzie).
   Pułapka: podzbiór `--sceny` zmienia drogę kamery gwiazd i czas słońca — porównywać w pełnych sesjach (PLAN §3).
