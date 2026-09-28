@@ -41,6 +41,7 @@ import {
 import { buildHullSkinTopology, writeHullSkin, writeHullSkinQuads, clearHullSkinDirty } from './beamHullSkin.js';
 import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
+import { zbierzCaly, zbierzZakres } from './zakresyWysylki.js';
 import { HullDamageMap } from './hullDamageMap.js';
 
 // Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
@@ -1570,9 +1571,12 @@ function rebuildBeamSkinGeometry(data) {
   data.shade = new Float32Array(vertices);
   data.heat = new Float32Array(vertices * 2);
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('aShade', new THREE.BufferAttribute(data.shade, 1).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('aHeat', new THREE.BufferAttribute(data.heat, 2).setUsage(THREE.DynamicDrawUsage));
+  // Bez DynamicDrawUsage (zadanie 23): three r183 wysyłał wtedy CAŁĄ skórę każdego kadłuba przy każdym renderze
+  // (bitwa 48 okrętów ~1,2 MB na klatkę), choć zapis niżej zna zakres zmian — wysyłka tylko zmienionych czworokątów
+  // (zakresy zbierane do wysyłki: kadłub poza kadrem w klatce zmiany nie gubi jej — zakresyWysylki.js).
+  geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+  geometry.setAttribute('aShade', new THREE.BufferAttribute(data.shade, 1));
+  geometry.setAttribute('aHeat', new THREE.BufferAttribute(data.heat, 2));
   geometry.setAttribute('uv', new THREE.BufferAttribute(topo.uvs, 2));
   geometry.setIndex(new THREE.BufferAttribute(topo.indices, 1));
   data.mesh.geometry.dispose();
@@ -1612,24 +1616,18 @@ function updateBeamSkinGeometry(data) {
       clearHullSkinDirty(body);
       if (range.max >= range.min) {
         const quads = range.max - range.min + 1;
-        setAttrUpdateRange(position, range.min * 12, quads * 12);
-        setAttrUpdateRange(shade, range.min * 4, quads * 4);
-        setAttrUpdateRange(heat, range.min * 8, quads * 8);
-        position.needsUpdate = true;
-        shade.needsUpdate = true;
-        heat.needsUpdate = true;
+        zbierzZakres(position, range.min * 12, quads * 12);
+        zbierzZakres(shade, range.min * 4, quads * 4);
+        zbierzZakres(heat, range.min * 8, quads * 8);
       }
     }
     data.visibleQuads = body.activeNodes;
   } else {
     data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
     clearHullSkinDirty(body);
-    setAttrUpdateRange(position, 0, -1);
-    setAttrUpdateRange(shade, 0, -1);
-    setAttrUpdateRange(heat, 0, -1);
-    position.needsUpdate = true;
-    shade.needsUpdate = true;
-    heat.needsUpdate = true;
+    zbierzCaly(position);
+    zbierzCaly(shade);
+    zbierzCaly(heat);
   }
   data.needsFullWrite = false;
   body.meshDirty = false;

@@ -22,6 +22,7 @@ import { createMetalDebrisGeometry } from './beamDebris3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { makeUniforms } from './tsl/uniformy.js';
 import { sunFill, sunVisibility } from './hexShips3D.tsl.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from './fx/fxRandom.js';
 
@@ -135,7 +136,9 @@ function createBatch(kind, capacity, material) {
   const arrays = {};
   for (const [name, width] of Object.entries(ATTRIBUTES)) {
     arrays[name] = new Float32Array(capacity * width);
-    geometry.setAttribute(name, new THREE.InstancedBufferAttribute(arrays[name], width).setUsage(THREE.DynamicDrawUsage));
+    // Bez DynamicDrawUsage (zadanie 23): three r183 wysyłał wtedy całe bufory puli (~640 KB) przy każdym renderze
+    // z żywym odłamkiem; wysyłka tylko zakresu nowych odłamków (zakresyWysylki.js — zbierany do wysyłki).
+    geometry.setAttribute(name, new THREE.InstancedBufferAttribute(arrays[name], width));
   }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = `Hull debris: ${kind}`;
@@ -255,9 +258,7 @@ export const HullDebris3D = {
       if (batch.dirtyMax < batch.dirtyMin) continue;
       for (const name in ATTRIBUTES) {
         const attr = batch.geometry.getAttribute(name), width = ATTRIBUTES[name];
-        attr.clearUpdateRanges();
-        attr.addUpdateRange(batch.dirtyMin * width, (batch.dirtyMax - batch.dirtyMin + 1) * width);
-        attr.needsUpdate = true;
+        zbierzZakres(attr, batch.dirtyMin * width, (batch.dirtyMax - batch.dirtyMin + 1) * width);
       }
       batch.dirtyMin = batch.capacity;
       batch.dirtyMax = -1;
