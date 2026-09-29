@@ -32,20 +32,34 @@
 //    drugiego (po czasie `graceTime` od rozpadu).
 //  • Zbieranie: wiązka ściągająca ciągnie odłamy i okruchy lżejsze niż jej
 //    udźwig; złapane oddają rudę (tony surowca gry) i skałę płonną.
+//  • RDZEŃ (2026-09-28): lita bryła innego materiału (asteroidMaterials:
+//    CORE_MATERIAL) w polu `coreFill` siatki — udział rdzenia w komórce, 100%
+//    rudy. Laser tnie go wolniej niż skałę (metal) albo szybciej (lód). Ładunek,
+//    którego strefa spękań sięga rdzenia, odrywa go od skały: metal wylatuje
+//    w 1–4 bryłach, kryształ i lód sypią się na odłamki; odłamy i okruchy
+//    z rdzenia mają `core` (okruch) / coreMass (ciało) — render rysuje je jako
+//    kawałki rdzenia, nie jak skały.
+//  • PIORUN KULISTY (rdzeń skały energetycznej, cfg.ballLightning): odsłonięty
+//    laserem, piłą albo ładunkiem ucieka z geody jako `balls[i]` z bezpiecznikiem
+//    (wiercenie — długi, wybuch — krótki), błądzi z uskokami i wybucha (zdarzenie
+//    'ball' / 'discharge', rozsadza najbliższą skałę). Łapie go tylko wiązka
+//    z pułapką magnetyczną (pullBalls(…, trap = true)); zwykła wiązka go detonuje.
 //
 // UKŁAD: przestrzeń skał = układ sceny BEZ przesunięcia początku: X = x świata
 // gry, Y = −y, Z = z (w górę, do kamery). Kwaterniony skał pola (qx..qw, oś
 // obrotu, faza) działają w tym układzie tak jak w shaderze skał.
 //
 // API: `new AsteroidMining({ radiusAt })`, `activate(rock, { z, time })`,
-// `raycast`, `laser`, `slice`, `detonate`, `tractor`, `step(dt)`, `probe`,
-// `summary`; `bodies` / `pebbles` do renderu (body.version rośnie przy zmianie
-// siatki). Stałe i materiały: asteroidMaterials.js. Testy:
+// `raycast`, `laser`, `slice`, `detonate`, `tractor`, `pullBalls`, `step(dt)`,
+// `probe`, `summary`; `bodies` / `pebbles` / `balls` do renderu (body.version
+// rośnie przy zmianie siatki). Stałe i materiały: asteroidMaterials.js. Testy:
 // tests/asteroidMining.test.mjs.
 
 import { hash32, mulberry32 } from './asteroidBeltField.js';
 import { ROCK_TYPES, ROCK_TYPE_INDEX } from './asteroidRockKinds.js';
-import { MINING_CONFIG, rockMaterial, oreResourceOf, HIDDEN_CORE_TYPES } from './asteroidMaterials.js';
+import {
+  MINING_CONFIG, rockMaterial, coreMaterial, oreResourceOf, HIDDEN_CORE_TYPES, chargeForDepth, ballEnergyForVolume
+} from './asteroidMaterials.js';
 
 // ---------------------------------------------------------------------------
 // Matematyka (kwaterniony [x, y, z, w])
@@ -199,8 +213,14 @@ export class RockBody {
     // Zapełnienie z chwili przejęcia skały (×255): render odróżnia wyciętą ścianę
     // (orig > fill) od pierwotnej powierzchni skały.
     this.orig = o.orig || new Uint8Array(n);
-    // Rdzeń (układ skały): środek i promienie stref — do skanera.
+    // Rdzeń: udział materiału rdzenia w komórce (×255; powierzchnia rdzenia = 128) —
+    // reszta komórki to skała. Materiał rdzenia (twardość, pękanie, rodzaj) i jego
+    // opis w układzie skały (środek, promień, ruda) — do skanera i rozpadu.
+    this.coreFill = o.coreFill || new Uint8Array(n);
+    this.coreMaterial = o.coreMaterial || null;
     this.core = o.core || null;
+    // Piorun kulisty uciekł z geody (rdzeń plazmy już pusty).
+    this.coreReleased = !!o.coreReleased;
     // Ciało sztywne (przestrzeń skał): środek masy, prędkość, układ skały, obrót.
     this.p = [0, 0, 0];
     this.v = [0, 0, 0];
@@ -209,6 +229,7 @@ export class RockBody {
     this.com = [0, 0, 0];
     this.mass = 0;
     this.oreMass = 0;
+    this.coreMass = 0;
     this.inertia = new Float64Array(9);
     this.boundR = 0;
     this.solidCells = 0;
@@ -268,6 +289,15 @@ export class RockBody {
     return this.ore[this.index(i, j, k)] / 255;
   }
 
+  /** Udział rdzenia (0 … 1) najbliższej komórki. */
+  sampleCore(lx, ly, lz) {
+    const i = Math.round((lx - this.gx) / this.cs);
+    const j = Math.round((ly - this.gy) / this.cs);
+    const k = Math.round((lz - this.gz) / this.cs);
+    if (i < 0 || j < 0 || k < 0 || i >= this.nx || j >= this.ny || k >= this.nz) return 0;
+    return this.coreFill[this.index(i, j, k)] / 255;
+  }
+
   /** Gradient zapełnienia (układ skały) — normalna powierzchni to −grad. */
   gradient(lx, ly, lz, out) {
     const h = this.cs * 0.5;
@@ -303,8 +333,8 @@ export class RockBody {
     // Jeden przegląd siatki: masa, ruda, momenty (względem środka siatki) i pudełko
     // pełnych komórek; najdalsza pełna komórka od środka masy — drugi przegląd tylko
     // w tym pudełku (gra woła to po kopaniu co massRecomputeInterval).
-    const { nx, ny, nz, cs, fill, ore } = this;
-    let m = 0, mo = 0, sx = 0, sy = 0, sz = 0, solid = 0;
+    const { nx, ny, nz, cs, fill, ore, coreFill } = this;
+    let m = 0, mo = 0, mc = 0, sx = 0, sy = 0, sz = 0, solid = 0;
     let sxx = 0, syy = 0, szz = 0, sxy = 0, sxz = 0, syz = 0;
     let bi0 = nx, bj0 = ny, bk0 = nz, bi1 = -1, bj1 = -1, bk1 = -1;
     for (let k = 0, idx = 0; k < nz; k++) {
@@ -319,6 +349,7 @@ export class RockBody {
           m += f; sx += fx; sy += fy; sz += fz;
           sxx += fx * x; syy += fy * y; szz += fz * z; sxy += fx * y; sxz += fx * z; syz += fy * z;
           mo += f * ore[idx];
+          mc += f * coreFill[idx];
           if (f >= 0.5) {
             solid++;
             if (i < bi0) bi0 = i; if (i > bi1) bi1 = i;
@@ -332,7 +363,7 @@ export class RockBody {
     this.origin(old);
     this.solidCells = solid;
     if (m <= 1e-9) {
-      this.mass = 0; this.oreMass = 0; this.boundR = 0;
+      this.mass = 0; this.oreMass = 0; this.coreMass = 0; this.boundR = 0;
       this.massDirty = false;
       return;
     }
@@ -363,6 +394,7 @@ export class RockBody {
     I[6] = ixz * cm; I[7] = iyz * cm; I[8] = izz * cm;
     this.mass = m * cm;
     this.oreMass = (mo / 255) * cm;
+    this.coreMass = (mc / 255) * cm;
     this.com[0] = cx; this.com[1] = cy; this.com[2] = cz;
     this.boundR = Math.sqrt(r2) + cs * 0.9;
     // Układ skały w miejscu: nowy środek masy = początek + R · com; prędkość punktu
@@ -453,11 +485,15 @@ export class AsteroidMining {
     this.seed = seed >>> 0;
     this.bodies = [];
     this.pebbles = [];
+    // Pioruny kuliste na wolności (rdzenie skał energetycznych, cfg.ballLightning).
+    this.balls = [];
     this.events = [];
     // Druga tablica zdarzeń (drainEvents zamienia je miejscami — bez tablicy na krok).
     this._drained = [];
-    // Złapane przez wiązkę w ostatnim wywołaniu tractor() (tablica wielokrotnego użytku).
+    // Złapane przez wiązkę w ostatnim wywołaniu tractor() / pullBalls() (tablice wielokrotnego użytku).
     this._got = [];
+    this._gotBalls = [];
+    this._coreCells = [];
     this.time = 0;
     this._eventSeq = 1;
     // Id ciał i okruchów z licznika systemu (losowania zależą od id — determinizm).
@@ -465,7 +501,10 @@ export class AsteroidMining {
     this._scratchLabels = null;
     this._scratchRegion = null;
     this._queue = null;
-    this.stats = { blasts: 0, splits: 0, collected: 0, bodies: 0, pebbles: 0, lastLabelMs: 0, lastBlastMs: 0, lastBuildMs: 0 };
+    this.stats = {
+      blasts: 0, splits: 0, collected: 0, bodies: 0, pebbles: 0, lastLabelMs: 0, lastBlastMs: 0, lastBuildMs: 0,
+      balls: 0, ballsReleased: 0, ballsDischarged: 0, ballsCaptured: 0
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -486,13 +525,16 @@ export class AsteroidMining {
     const s = [rock.sx ?? 1, rock.sy ?? 1, rock.sz ?? 1];
     const shape = rock.shape ?? 0;
     const radiusAt = this.radiusAt;
-    // Obrys w układzie skały.
+    // Obrys w układzie skały; najbliższa powierzchnia od środka (miejsce na rdzeń).
     const ext = [0, 0, 0];
+    let minSurf = Infinity;
     for (let d = 0; d < DIRS_EXTENT.length; d += 3) {
       const dx = DIRS_EXTENT[d], dy = DIRS_EXTENT[d + 1], dz = DIRS_EXTENT[d + 2];
       const R = radiusAt(shape, dx, dy, dz) * r;
       const ax = Math.abs(dx * R * s[0]), ay = Math.abs(dy * R * s[1]), az = Math.abs(dz * R * s[2]);
       if (ax > ext[0]) ext[0] = ax; if (ay > ext[1]) ext[1] = ay; if (az > ext[2]) ext[2] = az;
+      const surf = Math.sqrt(ax * ax + ay * ay + az * az);
+      if (surf < minSurf) minSurf = surf;
     }
     const longest = 2 * Math.max(ext[0], ext[1], ext[2]);
     let cs = Math.max(cfg.minCellSize, longest / cfg.cellsAcross);
@@ -504,24 +546,47 @@ export class AsteroidMining {
     const fill = new Float32Array(n);
     const ore = new Uint8Array(n);
     const orig = new Uint8Array(n);
-    // Skład: rdzeń przesunięty lekko od środka, płaszcz ~1,9 promienia rdzenia.
+    const coreFill = new Uint8Array(n);
+    // Skład: skorupa ~10% rudy (skała pospolita z domieszką i żyłami), płaszcz
+    // wzbogacony wokół rdzenia (do ~1,9 jego promienia), rdzeń = lita bryła czystej rudy.
     let oreTypeId = comp.coreType || (mat.id === 'rock' ? null : mat.id);
     let crust = comp.crust, mantle = comp.mantle, coreOre = comp.core, veins = comp.veins;
+    let hasCore = mat.id !== 'rock';
     if (mat.id === 'rock' && comp.hiddenCore && rng() < comp.hiddenCore) {
       oreTypeId = HIDDEN_CORE_TYPES[Math.floor(rng() * HIDDEN_CORE_TYPES.length)];
-      crust = 0; mantle = 0.1; coreOre = 0.85; veins = 0.1;
+      crust = 0; mantle = 0.08; coreOre = 1; veins = 0.08;
+      hasCore = true;
     }
+    // Skała energetyczna: w geodzie piorun kulisty (plazma, nie ruda) — gdy system go ma.
+    const plasma = hasCore && !!comp.plasma && !!cfg.ballLightning;
     const meanR = r * Math.cbrt(s[0] * s[1] * s[2]);
     const cDir = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
     const cl = Math.hypot(cDir[0], cDir[1], cDir[2]) || 1;
-    const cOff = rng() * 0.18 * meanR;
-    const core = {
+    let cOff = rng() * 0.18 * meanR;
+    // Rdzeń mniejszy albo większy (przedział typu), z garbami; cały w skale — skorupa
+    // nad nim ≥ coreShell promienia (i ≥ 2,5 komórki), inaczej rdzeń maleje.
+    let coreR = meanR * (comp.coreRadius[0] + rng() * (comp.coreRadius[1] - comp.coreRadius[0]));
+    const lump = comp.coreLump ?? 0.2;
+    const room = minSurf - Math.max(2.5 * cs, cfg.coreShell * meanR);
+    if (cOff + coreR * (1 + lump) > room) {
+      cOff = Math.min(cOff, Math.max(0, room * 0.25));
+      coreR = Math.max(1.2 * cs, (room - cOff) / (1 + lump));
+    }
+    const core = hasCore ? {
       x: (cDir[0] / cl) * cOff, y: (cDir[1] / cl) * cOff, z: (cDir[2] / cl) * cOff,
-      r: meanR * (comp.coreRadius[0] + rng() * (comp.coreRadius[1] - comp.coreRadius[0])),
-      mantle: 0,
-      oreTypeId
-    };
-    core.mantle = core.r * 1.9;
+      r: coreR,
+      rMax: coreR * (1 + lump),
+      mantle: coreR * 1.9,
+      oreTypeId,
+      kind: 'rock'
+    } : null;
+    const coreMat = hasCore ? coreMaterial(plasma ? 'plasma' : oreTypeId, mat.density) : null;
+    if (core) core.kind = coreMat.kind;
+    const coreOreK = plasma ? 0 : coreOre;
+    const cx0 = core ? core.x : 0, cy0 = core ? core.y : 0, cz0 = core ? core.z : 0;
+    const coreReach = core ? core.rMax + cs : -1;
+    const mantleR = core ? core.mantle : 1;
+    const coreSeed = hash32(rock.id >>> 0, 0xC0E, this.seed);
     const veinSeed = hash32(rock.id >>> 0, 0x7E1, this.seed);
     const veinScale = 1 / (0.33 * meanR);
     const invS = [1 / (r * s[0]), 1 / (r * s[1]), 1 / (r * s[2])];
@@ -545,18 +610,27 @@ export class AsteroidMining {
           fill[idx] = f;
           orig[idx] = Math.round(f * 255);
           if (f <= 0) continue;
-          const ddx = px - core.x, ddy = py - core.y, ddz = pz - core.z;
+          const ddx = px - cx0, ddy = py - cy0, ddz = pz - cz0;
           const dc = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-          const tCore = 1 - smoothstep(core.r * 0.85, core.r * 1.1, dc);
-          const tMantle = 1 - smoothstep(core.mantle * 0.8, core.mantle * 1.15, dc);
-          let o = crust + (mantle - crust) * tMantle + (coreOre - mantle) * tCore;
+          // Rdzeń: bryła z garbami (szum na kierunku od środka rdzenia), gładki brzeg jak fill.
+          let cf = 0;
+          if (dc < coreReach) {
+            const inv = 1 / Math.max(dc, 1e-6);
+            const nzs = vnoise3(ddx * inv * 1.9 + 17.3, ddy * inv * 1.9 + 5.1, ddz * inv * 1.9 + 9.7, coreSeed);
+            cf = Math.min(1, Math.max(0, 0.5 + (coreR * (1 + lump * (2 * nzs - 1)) - dc) / cs));
+          }
+          coreFill[idx] = Math.round(cf * 255);
+          // Skała dookoła: skorupa → płaszcz (wzbogacenie przy rdzeniu) + żyły; wietrzenie
+          // tuż pod powierzchnią (rudy mniej).
+          const tMantle = core ? 1 - smoothstep(coreR, mantleR * 1.1, dc) : 0;
+          let o = crust + (mantle - crust) * tMantle;
           if (veins > 0) {
             const nv = vnoise3(px * veinScale, py * veinScale, pz * veinScale, veinSeed);
             const vein = 1 - smoothstep(0, 0.05, Math.abs(nv - 0.5));
-            o += veins * vein * (0.35 + 0.65 * tMantle) * (1 - tCore);
+            o += veins * vein * (0.35 + 0.65 * tMantle);
           }
-          // Wietrzenie: tuż pod powierzchnią rudy mniej.
           if (sd < 1.5 * cs) o *= 0.5 + 0.5 * Math.max(0, sd) / (1.5 * cs);
+          o = Math.min(1, Math.max(0, o)) * (1 - cf) + coreOreK * cf;
           ore[idx] = Math.round(Math.min(1, Math.max(0, o)) * 255);
         }
       }
@@ -570,7 +644,7 @@ export class AsteroidMining {
     const body = new RockBody({
       id: this._nextId++, sourceId: rock.id ?? 0, type: rock.type, material: mat, oreTypeId, shape, seed: rock.seed ?? 0,
       r, sx: s[0], sy: s[1], sz: s[2], sunT,
-      cs, nx, ny, nz, gx, gy, gz, fill, ore, orig, core, q, w: [ax * spin, ay * spin, az * spin],
+      cs, nx, ny, nz, gx, gy, gz, fill, ore, orig, coreFill, coreMaterial: coreMat, core, q, w: [ax * spin, ay * spin, az * spin],
       tonnesPerVolume: cfg.tonnesPerVolume, anchored
     });
     // Układ skały zaczepiony w środku skały pola: p = początek + R · com po przeliczeniu masy.
@@ -668,9 +742,10 @@ export class AsteroidMining {
     const l = body.worldToLocal(x, y, z, [0, 0, 0]);
     const c = body.core;
     const dc = c ? Math.hypot(l[0] - c.x, l[1] - c.y, l[2] - c.z) : Infinity;
+    const inCore = body.sampleCore(l[0], l[1], l[2]) >= 0.5;
     return {
       ore: body.sampleOre(l[0], l[1], l[2]),
-      zone: !c ? 'skorupa' : dc < c.r ? 'rdzeń' : dc < c.mantle ? 'płaszcz' : 'skorupa',
+      zone: inCore ? 'rdzeń' : !c ? 'skorupa' : dc < c.mantle ? 'płaszcz' : 'skorupa',
       coreDistance: c ? Math.max(0, dc - c.r) : Infinity,
       depth: this._depthAt(body, l[0], l[1], l[2]).depth
     };
@@ -682,11 +757,17 @@ export class AsteroidMining {
     const c = body.core;
     let coreWorld = null;
     if (c) coreWorld = body.localToWorld(c.x, c.y, c.z, [0, 0, 0]);
+    const cm = body.coreMaterial;
     return {
       id: body.id, type: body.typeId, oreType: body.oreTypeId, oreRes: body.oreRes,
-      mass: body.mass, ore: body.oreMass, generation: body.generation,
+      mass: body.mass, ore: body.oreMass, coreMass: body.coreMass, generation: body.generation,
       hardness: body.material.hardness, toughness: body.material.toughness, brittleness: body.material.brittleness,
-      core: c ? { x: coreWorld[0], y: coreWorld[1], z: coreWorld[2], r: c.r, mantle: c.mantle } : null,
+      core: c ? {
+        x: coreWorld[0], y: coreWorld[1], z: coreWorld[2], r: c.r, mantle: c.mantle,
+        kind: cm ? cm.kind : null, oreType: c.oreTypeId, released: body.coreReleased,
+        // Rdzeń w tym ciele (odłam bez rdzenia albo pusta geoda — false).
+        present: body.coreMass > 1e-9 || (!!cm && cm.kind === 'plasma' && !body.coreReleased)
+      } : null,
       damage: body.damage
     };
   }
@@ -718,7 +799,14 @@ export class AsteroidMining {
    */
   dig(body, lx, ly, lz, radius, volume, out = null) {
     const cs = body.cs;
-    const { nx, ny, nz, fill, ore } = body;
+    const { nx, ny, nz, fill, ore, coreFill } = body;
+    // Rdzeń innej twardości niż skała: ta sama praca lasera zdejmuje z komórki rdzenia
+    // (0,2 + twardość skały) / (0,2 + twardość rdzenia) tego, co ze skały (volume
+    // liczy wołający dla skały). Plazmy się nie kopie — dotknięta ucieka z geody.
+    const coreMat = body.coreMaterial;
+    const plasma = coreMat !== null && coreMat.kind === 'plasma' && !body.coreReleased;
+    const coreK = coreMat !== null ? (0.2 + body.material.hardness) / (0.2 + coreMat.hardness) - 1 : 0;
+    let touchedPlasma = false;
     const i0 = Math.max(0, Math.floor((lx - radius - body.gx) / cs));
     const i1 = Math.min(nx - 1, Math.ceil((lx + radius - body.gx) / cs));
     const j0 = Math.max(0, Math.floor((ly - radius - body.gy) / cs));
@@ -760,7 +848,13 @@ export class AsteroidMining {
           if (f <= 0) continue;
           // Nierówne wybieranie (ziarno skały): ściany otworu chropowate, nie gładki lej.
           const u = 1 - d2 / R2;
-          const take = Math.min(f, perW * u * u * (0.55 + 0.9 * hash01(idx, body.id, 0xD16)));
+          let want = perW * u * u * (0.55 + 0.9 * hash01(idx, body.id, 0xD16));
+          const c = coreFill[idx];
+          if (c !== 0) {
+            if (plasma) { if (c >= 128) touchedPlasma = true; continue; }
+            want *= 1 + coreK * (c / 255);
+          }
+          const take = Math.min(f, want);
           if (take <= 0) continue;
           const nf = f - take;
           fill[idx] = nf < 1e-4 ? 0 : nf;
@@ -782,6 +876,7 @@ export class AsteroidMining {
       body.removedSinceCheck += solidLost;
       if (body.removedSinceCheck >= this.cfg.splitCheckCells) body.splitDirty = true;
     }
+    if (touchedPlasma) this._releaseBall(body, 'dig');
     return removed * cs * cs * cs;
   }
 
@@ -820,8 +915,10 @@ export class AsteroidMining {
       from = sweep.from; to = sweep.to;
     }
     const half = Math.max(kerf, cs * 1.2) * 0.5;
-    const { fill, ore, bonds } = body;
+    const { fill, ore, bonds, coreFill } = body;
     const cm = body.cellMass;
+    const plasma = body.coreMaterial !== null && body.coreMaterial.kind === 'plasma' && !body.coreReleased;
+    let touchedPlasma = false;
     let lost = 0;
     let oreLost = 0;
     let bi0 = Infinity, bj0 = Infinity, bk0 = Infinity, bi1 = -1, bj1 = -1, bk1 = -1;
@@ -863,6 +960,7 @@ export class AsteroidMining {
           if (j + 1 < body.ny && Math.sign(dn) !== Math.sign(dn + cs * nl[1])) bonds[idx] |= 2;
           if (k + 1 < body.nz && Math.sign(dn) !== Math.sign(dn + cs * nl[2])) bonds[idx] |= 4;
           if (Math.abs(dn) <= half) {
+            if (plasma && coreFill[idx] >= 128) touchedPlasma = true;
             const f = fill[idx];
             lost += f * cm;
             oreLost += f * cm * (ore[idx] / 255);
@@ -876,6 +974,8 @@ export class AsteroidMining {
     if (bi1 < 0) return { lost: 0, bodies: [] };
     addYield(out, body.oreRes, 0, 0, lost);
     body._touch(bi0, bj0, bk0, bi1, bj1, bk1);
+    // Piła przeszła przez geodę: piorun kulisty ucieka (zanim skała się rozpadnie).
+    if (touchedPlasma) this._releaseBall(body, 'saw');
     const res = this._splitNow(body, (piece) => {
       // Połówki rozsuwają się wolno wzdłuż normalnej (od strony środka masy).
       const side = Math.sign((piece.p[0] - px) * nx + (piece.p[1] - py) * ny + (piece.p[2] - pz) * nz) || 1;
@@ -898,7 +998,8 @@ export class AsteroidMining {
   detonate(body, x, y, z, energy, out = null) {
     const t0 = nowMs();
     const cfg = this.cfg;
-    const m = body.material;
+    const mm = body.material;
+    const cm = body.coreMaterial;
     const cs = body.cs;
     const l = body.worldToLocal(x, y, z, [0, 0, 0]);
     const inside = body.sample(l[0], l[1], l[2]) >= 0.5;
@@ -906,15 +1007,32 @@ export class AsteroidMining {
     const coupling = inside
       ? Math.min(1, cfg.surfaceCoupling + (1 - cfg.surfaceCoupling) * dep.depth / (cfg.embedCells * cs))
       : cfg.surfaceCoupling;
-    const E = Math.max(0, energy) * coupling * m.volatile;
-    const rc = cfg.crushK * Math.cbrt(E / (0.2 + m.hardness));
-    const rf = cfg.fractureK * Math.cbrt(E / (0.15 + m.toughness)) * (0.6 + 1.2 * m.brittleness) * Math.cbrt(1 + body.damage);
+    // Strefa spękań rośnie w SKALE (ładunek w otworze w rdzeniu też rozsadza skałę dookoła —
+    // gracz, który dowiercił się do rdzenia, ma móc go wysadzić); zmiażdżenie każda komórka
+    // liczy po swojemu (bryła metalu kruszy się mniej — coreMetalCrush), a rdzeń pęka po
+    // swojemu (_coreRegions).
+    const E = Math.max(0, energy) * coupling * mm.volatile;
+    const rcRock = cfg.crushK * Math.cbrt(E / (0.2 + mm.hardness));
+    const rcCore = cm !== null && cm.kind !== 'plasma'
+      ? cfg.crushK * Math.cbrt(E / (0.2 + cm.hardness)) * (cm.kind === 'metal' ? cfg.coreMetalCrush : 1)
+      : 0;
+    const inCore = rcCore > 0 && body.sampleCore(l[0], l[1], l[2]) >= 0.5;
+    const rc = inCore ? rcCore : rcRock;
+    const rf = cfg.fractureK * Math.cbrt(E / (0.15 + mm.toughness)) * (0.6 + 1.2 * mm.brittleness) * Math.cbrt(1 + body.damage);
     const rng = mulberry32(hash32(this.seed, body.id, this._eventSeq++, 0xB1A5));
     const res = {
       outcome: 'contained', energy: E, rc, rf, depth: dep.depth, coupling,
-      crushed: 0, lostCrush: 0, fines: 0, gravel: [], bodies: [], pebbles: [], dust: 0, x, y, z, body
+      crushed: 0, lostCrush: 0, fines: 0, gravel: [], bodies: [], pebbles: [], dust: 0, x, y, z, body,
+      coreChunks: 0, ball: null
     };
     this.stats.blasts++;
+    // Piorun kulisty: geoda pęka, gdy strefa spękań sięga rdzenia (także przy ładunku za
+    // słabym na skorupę) — plazma ucieka z krótkim bezpiecznikiem, ze zmiażdżenia prawie od razu.
+    if (cm !== null && cm.kind === 'plasma' && !body.coreReleased && body.core) {
+      const c = body.core;
+      const dSurf = Math.max(0, Math.hypot(l[0] - c.x, l[1] - c.y, l[2] - c.z) - c.r);
+      if (dSurf < rf) res.ball = this._releaseBall(body, dSurf < rc ? 'crush' : 'blast', x, y, z);
+    }
     if (rf < dep.depth) {
       // Ładunek za słaby: skorupa trzyma, skała pęka w środku i słabnie (następny
       // sięga dalej). Rudy nie ubywa — gruz zostaje w skale.
@@ -924,14 +1042,23 @@ export class AsteroidMining {
       this.stats.lastBlastMs = nowMs() - t0;
       return res;
     }
-    // 1) Strefa zmiażdżenia: drobnica przepada jako pył, reszta leci jako żwir.
-    const crush = this._crush(body, l[0], l[1], l[2], rc, out);
+    // 1) Strefa zmiażdżenia: drobnica przepada jako pył, reszta leci jako żwir — osobno
+    //    skała i rdzeń (metal ze zmiażdżenia to śrut: prawie nic nie ginie).
+    const crush = this._crush(body, l[0], l[1], l[2], rcRock, out, rcCore);
     res.crushed = crush.mass;
-    const fines = crush.mass * m.fines;
+    const rockMass = Math.max(0, crush.mass - crush.coreMass);
+    const rockOre = Math.max(0, crush.ore - crush.coreOre);
+    const rockFines = rockMass * mm.fines;
+    const coreFines = cm !== null ? crush.coreMass * cm.fines : 0;
+    const fines = rockFines + coreFines;
     addYield(out, null, 0, 0, fines);
     res.fines = fines;
-    const gravel = this._gravel(body, l, rc, crush.mass - fines, crush.ore * (1 - m.fines), E, m, rng);
+    const gravel = this._gravel(body, l, rcRock, rockMass - rockFines, rockOre * (1 - mm.fines), E, mm, rng, false);
     for (const g of gravel) this.pebbles.push(g);
+    if (cm !== null && crush.coreMass > 1e-9) {
+      const shot = this._gravel(body, l, Math.max(rcCore, cs), crush.coreMass - coreFines, crush.coreOre * (1 - cm.fines), E, cm, rng, true);
+      for (const g of shot) { this.pebbles.push(g); gravel.push(g); }
+    }
     res.gravel = gravel;
     // Żwir, który nie zmieścił się w puli okruchów, też przepada.
     let gravelMass = 0;
@@ -940,33 +1067,41 @@ export class AsteroidMining {
     if (overflow > 1e-9) addYield(out, null, 0, 0, overflow);
     res.lostCrush = fines + overflow;
     res.outcome = 'breach';
-    // 2) Bryły Voronoi w strefie spękań.
-    const seeds = this._fractureSeeds(body, l, rf, m, rng);
-    const region = this._assignRegions(body, l, rf, seeds, m, rng);
-    // 3) Pęknięcia: między bryłami zawsze, na brzegu strefy z szansą = kruchość.
-    this._breakBonds(body, region, m, rng);
+    // 2) Bryły Voronoi w strefie spękań (skała) i części rdzenia, jeśli strefa go sięga.
+    const seeds = this._fractureSeeds(body, l, rf, mm, rng);
+    const region = this._assignRegions(body, l, rf, seeds, mm, rng);
+    const coreBase = seeds.length + 1;
+    res.coreChunks = cm !== null ? this._coreRegions(body, l, rf, E, region, coreBase, rng) : 0;
+    // 3) Pęknięcia: między bryłami zawsze, na brzegu strefy z szansą = kruchość; rdzeń
+    //    odpada od spękanej skały (od nienaruszonej z szansą coreEdgeBreak).
+    this._breakBonds(body, region, mm, rng, coreBase, res.coreChunks);
     // 4) Rozpad z odrzutem od ładunku (zasłonięte odłamy — w stronę wylotu).
     const vent = quatRotate(body.q, dep.vx, dep.vy, dep.vz, [0, 0, 0]);
-    const kick = (piece, isRemainder) => this._blastKick(piece, isRemainder, x, y, z, E, rc, rf, m, vent, body, region, rng);
+    const kick = (piece, isRemainder) => this._blastKick(piece, isRemainder, x, y, z, E, rc, rf, mm, vent, body, region, rng);
     const split = this._splitNow(body, kick, region);
     res.bodies = split.bodies;
     res.pebbles = split.pebbles;
     res.dust = split.dust;
     if (split.dust > 0) addYield(out, body.oreRes, 0, 0, split.dust);
-    this.events.push({ kind: 'blast', outcome: 'breach', x, y, z, energy: E, rc, rf, body, pieces: split.bodies.length + split.pebbles.length });
+    this.events.push({
+      kind: 'blast', outcome: 'breach', x, y, z, energy: E, rc, rf, body,
+      pieces: split.bodies.length + split.pebbles.length, coreChunks: res.coreChunks
+    });
     this.stats.lastBlastMs = nowMs() - t0;
     return res;
   }
 
-  _crush(body, lx, ly, lz, rc, out) {
+  // Zmiażdżenie: skała w promieniu rc, komórki rdzenia w promieniu rcCore (metal mniej).
+  _crush(body, lx, ly, lz, rc, out, rcCore = rc) {
     const cs = body.cs;
-    const { nx, ny, nz, fill, ore } = body;
-    const i0 = Math.max(0, Math.floor((lx - rc - body.gx) / cs)), i1 = Math.min(nx - 1, Math.ceil((lx + rc - body.gx) / cs));
-    const j0 = Math.max(0, Math.floor((ly - rc - body.gy) / cs)), j1 = Math.min(ny - 1, Math.ceil((ly + rc - body.gy) / cs));
-    const k0 = Math.max(0, Math.floor((lz - rc - body.gz) / cs)), k1 = Math.min(nz - 1, Math.ceil((lz + rc - body.gz) / cs));
-    let lost = 0, oreT = 0;
+    const { nx, ny, nz, fill, ore, coreFill } = body;
+    const rMax = Math.max(rc, rcCore);
+    const i0 = Math.max(0, Math.floor((lx - rMax - body.gx) / cs)), i1 = Math.min(nx - 1, Math.ceil((lx + rMax - body.gx) / cs));
+    const j0 = Math.max(0, Math.floor((ly - rMax - body.gy) / cs)), j1 = Math.min(ny - 1, Math.ceil((ly + rMax - body.gy) / cs));
+    const k0 = Math.max(0, Math.floor((lz - rMax - body.gz) / cs)), k1 = Math.min(nz - 1, Math.ceil((lz + rMax - body.gz) / cs));
+    let lost = 0, oreT = 0, coreT = 0, coreOreT = 0;
     const cm = body.cellMass;
-    const R2 = rc * rc;
+    const R2 = rMax * rMax;
     for (let k = k0; k <= k1; k++) {
       const dz = body.gz + k * cs - lz;
       for (let j = j0; j <= j1; j++) {
@@ -978,23 +1113,31 @@ export class AsteroidMining {
           const idx = i + nx * (j + ny * k);
           const f = fill[idx];
           if (f <= 0) continue;
+          const R = coreFill[idx] >= 128 ? rcCore : rc;
+          if (d2 > R * R) continue;
           // Gładki brzeg krateru: pełne zmiażdżenie w środku, zanik na ostatniej komórce.
-          const edge = Math.min(1, (rc - Math.sqrt(d2)) / cs);
+          const edge = Math.min(1, (R - Math.sqrt(d2)) / cs);
           const take = f * Math.max(0.35, edge);
           fill[idx] = f - take < 0.02 ? 0 : f - take;
-          lost += take * cm;
-          oreT += take * cm * (ore[idx] / 255);
+          const tm = take * cm;
+          const o = ore[idx] / 255;
+          lost += tm;
+          oreT += tm * o;
+          // Część rdzenia w komórce: cała ruda komórki ponad skałę jest w rdzeniu (rdzeń = 100%).
+          const c = coreFill[idx] / 255;
+          if (c > 0) { coreT += tm * c; coreOreT += tm * Math.min(c, o); }
         }
       }
     }
     if (lost > 0) body._touch(i0, j0, k0, i1, j1, k1);
     void out;
-    return { mass: lost, ore: oreT };
+    return { mass: lost, ore: oreT, coreMass: coreT, coreOre: coreOreT };
   }
 
   // Żwir ze strefy zmiażdżenia: (1 − drobnica) masy w kilku okruchach lecących
-  // od ładunku (ruda zmiażdżonego rdzenia da się jeszcze wyłapać).
-  _gravel(body, l, rc, massT, oreT, E, m, rng) {
+  // od ładunku (ruda zmiażdżonego rdzenia da się jeszcze wyłapać). core = śrut
+  // z rdzenia (bryłki metalu, odpryski kryształu) — okruchy z flagą `core`.
+  _gravel(body, l, rc, massT, oreT, E, m, rng, core = false) {
     const cfg = this.cfg;
     const n = Math.max(2, Math.min(cfg.gravelMax, Math.round(2 + 2.5 * Math.log2(1 + massT / 3))));
     const out = [];
@@ -1021,6 +1164,7 @@ export class AsteroidMining {
       out.push({
         id: this._nextId++, sourceId: body.sourceId, parentId: body.id,
         type: body.type, typeId: body.typeId, oreRes: body.oreRes, oreTypeId: body.oreTypeId,
+        core, coreType: core ? coreTypeOf(body) : null,
         p: [o[0] + lw[0], o[1] + lw[1], o[2] + lw[2]],
         v: [body.v[0] + dw[0] * speed, body.v[1] + dw[1] * speed, body.v[2] + dw[2] * speed],
         q: [s1 * Math.sin(2 * Math.PI * u2), s1 * Math.cos(2 * Math.PI * u2), s2 * Math.sin(2 * Math.PI * u3), s2 * Math.cos(2 * Math.PI * u3)],
@@ -1067,12 +1211,15 @@ export class AsteroidMining {
     const cell = Math.max(s0, 2 * cs);
     const hash = new Map();
     const key = (a, b, c) => ((a + 512) * 1024 + (b + 512)) * 1024 + (c + 512);
+    // Ziarna tylko w skale — rdzeń dzieli _coreRegions.
+    const hasCore = body.coreMaterial !== null;
     for (let n = 0; n < tries && seeds.length < cfg.maxSeeds; n++) {
       const dx = (rng() * 2 - 1) * reach, dy = (rng() * 2 - 1) * reach, dz = (rng() * 2 - 1) * reach;
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (d > reach) continue;
       const px = l[0] + dx, py = l[1] + dy, pz = l[2] + dz;
       if (body.sample(px, py, pz) < 0.5) continue;
+      if (hasCore && body.sampleCore(px, py, pz) >= 0.5) continue;
       const sp = spacing(d) * 0.85;
       const ci = Math.floor(px / cell), cj = Math.floor(py / cell), ck = Math.floor(pz / cell);
       let ok = true;
@@ -1110,7 +1257,8 @@ export class AsteroidMining {
     const region = this._scratchRegion;
     region.fill(0, 0, n);
     const cs = body.cs;
-    const { nx, ny, nz, fill } = body;
+    const { nx, ny, nz, fill, coreFill } = body;
+    const hasCore = body.coreMaterial !== null;
     let cvx = rng() * 2 - 1, cvy = rng() * 2 - 1, cvz = rng() * 2 - 1;
     const cvl = Math.hypot(cvx, cvy, cvz) || 1;
     cvx /= cvl; cvy /= cvl; cvz /= cvl;
@@ -1128,6 +1276,8 @@ export class AsteroidMining {
         for (let i = i0; i <= i1; i++) {
           const idx = i + nx * (j + ny * k);
           if (fill[idx] < 0.5) continue;
+          // Komórki rdzenia dzieli _coreRegions (poza zasięgiem rdzeń zostaje w całości).
+          if (hasCore && coreFill[idx] >= 128) continue;
           const px = body.gx + i * cs;
           const ex = px - l[0], ey = py - l[1], ez = pz - l[2];
           if (ex * ex + ey * ey + ez * ez > R2) continue;
@@ -1165,11 +1315,113 @@ export class AsteroidMining {
     return region;
   }
 
-  _breakBonds(body, region, m, rng) {
+  /**
+   * Rdzeń w strefie spękań (odległość ładunku od powierzchni rdzenia < rf): komórki
+   * rdzenia dostają regiony od `base`. Ciągliwy (metal) → 1 + log2(1 + E_rdzenia /
+   * E_pęknięcia) brył (≤ coreMaxChunks; E_pęknięcia = ładunek, który spęka całą bryłę),
+   * kruchy → odłamki (Voronoi w rdzeniu z łupliwością rdzenia, ≤ coreMaxShards).
+   * Rdzeń poza zasięgiem zostaje w całości (region 0). Zwraca liczbę części.
+   */
+  _coreRegions(body, l, rf, E, region, base, rng) {
+    const cm = body.coreMaterial;
+    const c = body.core;
+    if (!cm || !c || cm.kind === 'plasma') return 0;
+    const cfg = this.cfg;
+    const dSurf = Math.max(0, Math.hypot(l[0] - c.x, l[1] - c.y, l[2] - c.z) - c.r);
+    if (dSurf >= rf) return 0;
+    const shock = E * (1 - dSurf / rf) * (1 - dSurf / rf);
+    const x = shock / Math.max(1e-6, chargeForDepth(cm, c.r, cfg));
+    const want = cm.brittleness < 0.2
+      ? Math.min(cfg.coreMaxChunks, 1 + Math.floor(Math.log2(1 + x)))
+      : Math.max(2, Math.min(cfg.coreMaxShards, Math.round(3 + (cfg.coreMaxShards - 3) * cm.brittleness * Math.min(1, x))));
+    // Komórki rdzenia w tym ciele (pudełko rdzenia w jego siatce).
+    const { nx, ny, nz, cs, fill, coreFill } = body;
+    const R = (c.rMax ?? c.r) + cs * 2;
+    const i0 = Math.max(0, Math.floor((c.x - R - body.gx) / cs)), i1 = Math.min(nx - 1, Math.ceil((c.x + R - body.gx) / cs));
+    const j0 = Math.max(0, Math.floor((c.y - R - body.gy) / cs)), j1 = Math.min(ny - 1, Math.ceil((c.y + R - body.gy) / cs));
+    const k0 = Math.max(0, Math.floor((c.z - R - body.gz) / cs)), k1 = Math.min(nz - 1, Math.ceil((c.z + R - body.gz) / cs));
+    const cells = this._coreCells;
+    cells.length = 0;
+    for (let k = k0; k <= k1; k++) {
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const idx = i + nx * (j + ny * k);
+          if (fill[idx] >= 0.5 && coreFill[idx] >= 128) cells.push(idx);
+        }
+      }
+    }
+    if (!cells.length) return 0;
+    // Ziarna: losowe komórki rdzenia z odstępem (bryły mniej więcej równe).
+    const n = Math.min(want, cells.length);
+    const minD = 0.55 * Math.cbrt(cells.length / n) * cs;
+    const sx = [], sy = [], sz = [];
+    for (let t = 0; t < n * 40 && sx.length < n; t++) {
+      const idx = cells[Math.floor(rng() * cells.length)];
+      const px = body.gx + (idx % nx) * cs, py = body.gy + (Math.floor(idx / nx) % ny) * cs, pz = body.gz + Math.floor(idx / (nx * ny)) * cs;
+      let ok = true;
+      for (let s = 0; s < sx.length && ok; s++) {
+        const dx = sx[s] - px, dy = sy[s] - py, dz = sz[s] - pz;
+        if (dx * dx + dy * dy + dz * dz < minD * minD) ok = false;
+      }
+      if (ok) { sx.push(px); sy.push(py); sz.push(pz); }
+    }
+    // Łupliwość rdzenia (kryształ): odległość z przewagą osi łupliwości — płytki i igły.
+    let cvx = rng() * 2 - 1, cvy = rng() * 2 - 1, cvz = rng() * 2 - 1;
+    const cvl = Math.hypot(cvx, cvy, cvz) || 1;
+    cvx /= cvl; cvy /= cvl; cvz /= cvl;
+    const clv = cm.cleavage * 3;
+    for (let q = 0; q < cells.length; q++) {
+      const idx = cells[q];
+      const px = body.gx + (idx % nx) * cs, py = body.gy + (Math.floor(idx / nx) % ny) * cs, pz = body.gz + Math.floor(idx / (nx * ny)) * cs;
+      let best = 0, bd = Infinity;
+      for (let s = 0; s < sx.length; s++) {
+        const dx = sx[s] - px, dy = sy[s] - py, dz = sz[s] - pz;
+        const dn = dx * cvx + dy * cvy + dz * cvz;
+        const d2 = (dx * dx + dy * dy + dz * dz + clv * dn * dn) * (1 + 0.25 * (hash01(idx, s, 0xC0E5) - 0.5));
+        if (d2 < bd) { bd = d2; best = s; }
+      }
+      region[idx] = base + best;
+    }
+    return sx.length;
+  }
+
+  _breakBonds(body, region, m, rng, coreBase = 0, coreParts = 0) {
     void rng;
-    const { nx, ny, nz, fill, bonds } = body;
+    const { nx, ny, nz, fill, bonds, coreFill } = body;
+    const hasCore = body.coreMaterial !== null;
     const pEdge = 0.2 + 0.8 * m.brittleness;
+    const pCore = this.cfg.coreEdgeBreak;
     const sxy = nx * ny;
+    // Odsłonięcie części rdzenia: ułamek sąsiadów-skały w strefie spękań. Bryła, którą
+    // spękana skała otacza w większości, wypada z gniazda w całości (wiązania z resztą
+    // skały też pękają — odrzut prowadzi ją ku wylotowi krateru); mniej odsłonięta
+    // zostaje w skale (z nienaruszoną pęka z szansą coreEdgeBreak).
+    let free = null;
+    if (hasCore && coreParts > 0) {
+      const cracked = this._coreCracked || (this._coreCracked = new Float64Array(64));
+      const intact = this._coreIntact || (this._coreIntact = new Float64Array(64));
+      cracked.fill(0); intact.fill(0);
+      const cells = this._coreCells;
+      for (let q = 0; q < cells.length; q++) {
+        const idx = cells[q];
+        const part = region[idx] - coreBase;
+        if (part < 0 || part >= 64) continue;
+        const i = idx % nx, j = ((idx / nx) | 0) % ny, k = (idx / sxy) | 0;
+        for (let a = 0; a < 6; a++) {
+          let nb = -1;
+          if (a === 0) { if (i + 1 < nx) nb = idx + 1; }
+          else if (a === 1) { if (i > 0) nb = idx - 1; }
+          else if (a === 2) { if (j + 1 < ny) nb = idx + nx; }
+          else if (a === 3) { if (j > 0) nb = idx - nx; }
+          else if (a === 4) { if (k + 1 < nz) nb = idx + sxy; }
+          else if (k > 0) nb = idx - sxy;
+          if (nb < 0 || fill[nb] < 0.5 || coreFill[nb] >= 128) continue;
+          if (region[nb] > 0) cracked[part]++; else intact[part]++;
+        }
+      }
+      free = this._coreFree || (this._coreFree = new Uint8Array(64));
+      for (let p = 0; p < 64; p++) free[p] = cracked[p] >= intact[p] ? 1 : 0;
+    }
     for (let k = 0; k < nz; k++) {
       for (let j = 0; j < ny; j++) {
         for (let i = 0; i < nx; i++) {
@@ -1185,7 +1437,16 @@ export class AsteroidMining {
             if (fill[nb] < 0.5) continue;
             const rb = region[nb];
             if (ra === rb) continue;
-            if (ra > 0 && rb > 0) bonds[idx] |= (1 << a);
+            const ca = hasCore && coreFill[idx] >= 128;
+            const cb = hasCore && coreFill[nb] >= 128;
+            if (ca !== cb) {
+              // Rdzeń–skała: rdzeń w strefie odpada od spękanej skały zawsze, od nienaruszonej
+              // z szansą coreEdgeBreak; nienaruszony rdzeń przy spękanej skale — jak brzeg strefy.
+              const rCore = ca ? ra : rb, rRock = ca ? rb : ra;
+              const loose = free !== null && rCore >= coreBase && free[rCore - coreBase] === 1;
+              const p = rCore > 0 ? (rRock > 0 || loose ? 1 : pCore) : pEdge;
+              if (p >= 1 || hash01(idx, a, body.id, 0xC0ED) < p) bonds[idx] |= (1 << a);
+            } else if (ra > 0 && rb > 0) bonds[idx] |= (1 << a);
             else if (hash01(idx, a, body.id, 0xED6E) < pEdge) bonds[idx] |= (1 << a);
           }
         }
@@ -1215,7 +1476,9 @@ export class AsteroidMining {
     dx /= ll; dy /= ll; dz /= ll;
     const near = Math.min(1.6, Math.max(0.3, rf / (d + rc)));
     const massK = Math.pow(Math.max(1, piece.mass) / 200, -0.12);
-    let speed = cfg.blastSpeed * Math.pow(E, 0.45) * m.blast * near * massK;
+    // Kawałek rdzenia leci z rozrzutem materiału rdzenia (bryła metalu wolniej, odłamki kryształu szybciej).
+    const blastK = parent.coreMaterial !== null && isCorePiece(piece) ? parent.coreMaterial.blast : m.blast;
+    let speed = cfg.blastSpeed * Math.pow(E, 0.45) * blastK * near * massK;
     if (isRemainder) speed *= 0.12;
     speed = Math.min(cfg.blastSpeedMax, speed);
     piece.v[0] += dx * speed; piece.v[1] += dy * speed; piece.v[2] += dz * speed;
@@ -1252,7 +1515,7 @@ export class AsteroidMining {
 
   _label(body) {
     const t0 = nowMs();
-    const { nx, ny, nz, fill, bonds } = body;
+    const { nx, ny, nz, fill, bonds, coreFill } = body;
     const n = nx * ny * nz;
     if (!this._scratchLabels || this._scratchLabels.length < n) this._scratchLabels = new Int32Array(n);
     if (!this._queue || this._queue.length < n) this._queue = new Int32Array(n);
@@ -1268,7 +1531,7 @@ export class AsteroidMining {
       let head = 0, tail = 0;
       queue[tail++] = start;
       labels[start] = label;
-      let count = 0, fillSum = 0, oreSum = 0;
+      let count = 0, fillSum = 0, oreSum = 0, coreSum = 0;
       let i0 = nx, j0 = ny, k0 = nz, i1 = -1, j1 = -1, k1 = -1;
       let hasRemainder = false;
       while (head < tail) {
@@ -1277,6 +1540,7 @@ export class AsteroidMining {
         count++;
         fillSum += fill[idx];
         oreSum += fill[idx] * body.ore[idx];
+        coreSum += fill[idx] * coreFill[idx];
         if (this._scratchRegion && this._regionActive && this._scratchRegion[idx] === 0) hasRemainder = true;
         if (i < i0) i0 = i; if (i > i1) i1 = i; if (j < j0) j0 = j; if (j > j1) j1 = j; if (k < k0) k0 = k; if (k > k1) k1 = k;
         const b = bonds[idx];
@@ -1287,7 +1551,7 @@ export class AsteroidMining {
         if (k + 1 < nz && !(b & 4)) { const q = idx + sxy; if (!labels[q] && fill[q] >= 0.5) { labels[q] = label; queue[tail++] = q; } }
         if (k > 0 && !(bonds[idx - sxy] & 4)) { const q = idx - sxy; if (!labels[q] && fill[q] >= 0.5) { labels[q] = label; queue[tail++] = q; } }
       }
-      comps.push({ label, count, fillSum, oreSum, i0, j0, k0, i1, j1, k1, hasRemainder });
+      comps.push({ label, count, fillSum, oreSum, coreSum, i0, j0, k0, i1, j1, k1, hasRemainder });
     }
     // Komórki brzegu (0 < fill < 0,5): do składowej pełnego sąsiada (gładka powierzchnia).
     if (comps.length > 1) {
@@ -1309,6 +1573,7 @@ export class AsteroidMining {
             const c = comps[lab - 1];
             c.fillSum += f;
             c.oreSum += f * body.ore[idx];
+            c.coreSum += f * coreFill[idx];
           }
         }
         // Druga warstwa brzegu widzi pierwszą (znak ujemny = przypisana w tym przejściu).
@@ -1404,7 +1669,7 @@ export class AsteroidMining {
         for (let i = comp.i0 - 1; i <= comp.i1 + 1; i++) {
           if (i < 0 || i >= nx) continue;
           const idx = i + nx * (j + ny * k);
-          if (labels[idx] === comp.label) { body.fill[idx] = 0; body.ore[idx] = 0; body.bonds[idx] = 0; }
+          if (labels[idx] === comp.label) { body.fill[idx] = 0; body.ore[idx] = 0; body.bonds[idx] = 0; body.coreFill[idx] = 0; }
         }
       }
     }
@@ -1420,6 +1685,7 @@ export class AsteroidMining {
     const ore = new Uint8Array(n);
     const bonds = new Uint8Array(n);
     const orig = new Uint8Array(n);
+    const coreFill = new Uint8Array(n);
     for (let k = 0; k < nz; k++) {
       for (let j = 0; j < ny; j++) {
         for (let i = 0; i < nx; i++) {
@@ -1432,7 +1698,8 @@ export class AsteroidMining {
           fill[dst] = parent.fill[src];
           ore[dst] = parent.ore[src];
           bonds[dst] = parent.bonds[src];
-          parent.fill[src] = 0; parent.ore[src] = 0; parent.bonds[src] = 0;
+          coreFill[dst] = parent.coreFill[src];
+          parent.fill[src] = 0; parent.ore[src] = 0; parent.bonds[src] = 0; parent.coreFill[src] = 0;
         }
       }
     }
@@ -1442,7 +1709,8 @@ export class AsteroidMining {
       r: parent.r, sx: parent.sx, sy: parent.sy, sz: parent.sz, sunT: parent.sunT,
       cs: parent.cs, nx, ny, nz,
       gx: parent.gx + i0 * parent.cs, gy: parent.gy + j0 * parent.cs, gz: parent.gz + k0 * parent.cs,
-      fill, ore, bonds, orig, core: parent.core, q: parent.q, w: parentW, damage: parent.damage,
+      fill, ore, bonds, orig, coreFill, coreMaterial: parent.coreMaterial, coreReleased: parent.coreReleased,
+      core: parent.core, q: parent.q, w: parentW, damage: parent.damage,
       tonnesPerVolume: this.cfg.tonnesPerVolume
     });
     // Ten sam układ skały co rodzic: p = początek rodzica + R · com (po przeliczeniu).
@@ -1464,7 +1732,7 @@ export class AsteroidMining {
   }
 
   _extractPebble(parent, labels, comp, parentV, parentW, parentCom) {
-    let m = 0, mo = 0, cx = 0, cy = 0, cz = 0;
+    let m = 0, mo = 0, mc = 0, cx = 0, cy = 0, cz = 0;
     const cs = parent.cs;
     const { nx, ny } = parent;
     for (let k = comp.k0 - 1; k <= comp.k1 + 1; k++) {
@@ -1476,12 +1744,15 @@ export class AsteroidMining {
           const idx = i + nx * (j + ny * k);
           if (labels[idx] !== comp.label) continue;
           const f = parent.fill[idx];
-          m += f; mo += f * parent.ore[idx] / 255;
+          m += f; mo += f * parent.ore[idx] / 255; mc += f * parent.coreFill[idx] / 255;
           cx += f * (parent.gx + i * cs); cy += f * (parent.gy + j * cs); cz += f * (parent.gz + k * cs);
-          parent.fill[idx] = 0; parent.ore[idx] = 0; parent.bonds[idx] = 0;
+          parent.fill[idx] = 0; parent.ore[idx] = 0; parent.bonds[idx] = 0; parent.coreFill[idx] = 0;
         }
       }
     }
+    // Okruch z rdzenia (w przewadze): kawałek bryły metalu / odłamek kryształu — render rysuje
+    // go materiałem rdzenia, nie jak skałę.
+    const core = parent.coreMaterial !== null && mc >= 0.5 * m;
     cx /= m; cy /= m; cz /= m;
     quatRotate(parent.q, parentCom[0], parentCom[1], parentCom[2], _t2);
     const ox = parent.p[0] - _t2[0], oy = parent.p[1] - _t2[1], oz = parent.p[2] - _t2[2];
@@ -1496,6 +1767,7 @@ export class AsteroidMining {
     const peb = {
       id: this._nextId++, sourceId: parent.sourceId, parentId: parent.id,
       type: parent.type, typeId: parent.typeId, oreRes: parent.oreRes, oreTypeId: parent.oreTypeId,
+      core, coreType: core ? coreTypeOf(parent) : null,
       p: [px, py, pz],
       v: [parentV[0] + parentW[1] * rz - parentW[2] * ry, parentV[1] + parentW[2] * rx - parentW[0] * rz, parentV[2] + parentW[0] * ry - parentW[1] * rx],
       q: [s1 * Math.sin(2 * Math.PI * u2), s1 * Math.cos(2 * Math.PI * u2), s2 * Math.sin(2 * Math.PI * u3), s2 * Math.cos(2 * Math.PI * u3)],
@@ -1575,6 +1847,8 @@ export class AsteroidMining {
       this._sleepCheck(p, dt);
     }
     this._collide();
+    // Pioruny kuliste na końcu kroku: wyładowanie może rozsadzić skałę (nowe ciała).
+    this._stepBalls(dt);
   }
 
   // Spoczynek przez sleepTime → uśpienie (bez ruchu; zderzenia śpiących ze sobą pomijane).
@@ -1768,13 +2042,14 @@ export class AsteroidMining {
     let allowance = maxOre;
     for (let i = this.pebbles.length - 1; i >= 0; i--) {
       const p = this.pebbles[i];
+      if (p.display) continue;
       if (this._pullOne(p, p.mass, p.r) && p.oreMass <= allowance + 1e-9) {
         allowance -= p.oreMass;
         this.pebbles.splice(i, 1);
         p.alive = false;
         const waste = p.mass - p.oreMass;
         addYield(out, p.oreRes, p.oreMass, waste);
-        got.push({ kind: 'pebble', ore: p.oreMass, oreRes: p.oreRes, waste, x: p.p[0], y: p.p[1], z: p.p[2] });
+        got.push({ kind: 'pebble', ore: p.oreMass, oreRes: p.oreRes, waste, x: p.p[0], y: p.p[1], z: p.p[2], core: !!p.core });
       }
     }
     for (let i = this.bodies.length - 1; i >= 0; i--) {
@@ -1786,7 +2061,7 @@ export class AsteroidMining {
         b.alive = false;
         const waste = b.mass - b.oreMass;
         addYield(out, b.oreRes, b.oreMass, waste);
-        got.push({ kind: 'body', ore: b.oreMass, oreRes: b.oreRes, waste, x: b.p[0], y: b.p[1], z: b.p[2], body: b });
+        got.push({ kind: 'body', ore: b.oreMass, oreRes: b.oreRes, waste, x: b.p[0], y: b.p[1], z: b.p[2], body: b, core: isCorePiece(b) });
       }
     }
     if (got.length) {
@@ -1816,6 +2091,258 @@ export class AsteroidMining {
     return false;
   }
 
+  // -------------------------------------------------------------------------
+  // Piorun kulisty (rdzeń skały energetycznej)
+
+  /**
+   * Plazma ucieka z geody ciała: komórki rdzenia stają się pustką (ściany geody to
+   * powierzchnia wycięta — orig zostaje), w środku rdzenia powstaje piorun kulisty.
+   * how: 'dig' | 'saw' (długi bezpiecznik), 'blast' | 'crush' (krótki; bx..bz =
+   * punkt ładunku — piorun leci od niego). Zwraca piorun albo null.
+   */
+  _releaseBall(body, how, bx = NaN, by = 0, bz = 0) {
+    const cm = body.coreMaterial;
+    if (!cm || cm.kind !== 'plasma' || body.coreReleased) return null;
+    body.coreReleased = true;
+    const cfg = this.cfg;
+    const { nx, ny, nz, cs, fill, coreFill } = body;
+    const c = body.core;
+    let i0 = 0, j0 = 0, k0 = 0, i1 = nx - 1, j1 = ny - 1, k1 = nz - 1;
+    if (c) {
+      const R = (c.rMax ?? c.r) + cs * 2;
+      i0 = Math.max(0, Math.floor((c.x - R - body.gx) / cs)); i1 = Math.min(nx - 1, Math.ceil((c.x + R - body.gx) / cs));
+      j0 = Math.max(0, Math.floor((c.y - R - body.gy) / cs)); j1 = Math.min(ny - 1, Math.ceil((c.y + R - body.gy) / cs));
+      k0 = Math.max(0, Math.floor((c.z - R - body.gz) / cs)); k1 = Math.min(nz - 1, Math.ceil((c.z + R - body.gz) / cs));
+    }
+    let vol = 0, sx = 0, sy = 0, sz = 0;
+    let bi0 = nx, bj0 = ny, bk0 = nz, bi1 = -1, bj1 = -1, bk1 = -1;
+    for (let k = k0; k <= k1; k++) {
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const idx = i + nx * (j + ny * k);
+          const cf = coreFill[idx];
+          if (cf === 0) continue;
+          coreFill[idx] = 0;
+          const f = fill[idx];
+          const take = f * cf / 255;
+          if (take <= 0) continue;
+          fill[idx] = f - take < 1e-4 ? 0 : f - take;
+          vol += take;
+          sx += take * (body.gx + i * cs); sy += take * (body.gy + j * cs); sz += take * (body.gz + k * cs);
+          if (i < bi0) bi0 = i; if (j < bj0) bj0 = j; if (k < bk0) bk0 = k;
+          if (i > bi1) bi1 = i; if (j > bj1) bj1 = j; if (k > bk1) bk1 = k;
+        }
+      }
+    }
+    if (vol <= 0) return null;
+    body._touch(bi0, bj0, bk0, bi1, bj1, bk1);
+    body.version++;
+    // Pusta geoda może rozdzielić cienką skorupę — sprawdzenie rozpadu w kroku.
+    body.splitDirty = true;
+    // Żar plazmy na ścianach geody (render: fiolet gasnący przez kilka sekund).
+    body.plasmaHot = [sx / vol, sy / vol, sz / vol, this.time, c ? c.r : Math.cbrt(vol) * cs];
+    const w = body.localToWorld(sx / vol, sy / vol, sz / vol, [0, 0, 0]);
+    const volume = vol * cs * cs * cs;
+    const energy = ballEnergyForVolume(volume, cfg);
+    const r = Math.min(cfg.ballRadiusMax, Math.max(cfg.ballRadiusMin, Math.cbrt((3 * volume) / (4 * Math.PI)) * cfg.ballRadiusK));
+    const rng = mulberry32(hash32(this.seed, body.id, this._eventSeq++, 0xBA11));
+    const fuseR = how === 'crush' ? cfg.ballFuseCrush : how === 'blast' ? cfg.ballFuseBlast : cfg.ballFuseDig;
+    const fuse = fuseR[0] + rng() * (fuseR[1] - fuseR[0]);
+    // Prędkość punktu ciała (ruch + obrót) i wyrzut: od ładunku albo w górę z otworu.
+    const rx = w[0] - body.p[0], ry = w[1] - body.p[1], rz = w[2] - body.p[2];
+    const v = [
+      body.v[0] + body.w[1] * rz - body.w[2] * ry,
+      body.v[1] + body.w[2] * rx - body.w[0] * rz,
+      body.v[2] + body.w[0] * ry - body.w[1] * rx
+    ];
+    if (Number.isFinite(bx)) {
+      let dx = w[0] - bx, dy = w[1] - by, dz = w[2] - bz;
+      const dl = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      dx /= dl; dy /= dl; dz /= dl;
+      const kick = 220 + 160 * rng();
+      v[0] += dx * kick; v[1] += dy * kick; v[2] += Math.max(0, dz) * kick;
+    }
+    const ball = {
+      id: this._nextId++, sourceId: body.sourceId, parentId: body.id,
+      p: w, v, r, energy, fuse, fuse0: fuse, how,
+      age: 0, lock: 0, held: false, trapped: false, drain: 1,
+      home: [w[0], w[1]], wa: rng() * Math.PI * 2, dartT: 0.25 + rng() * 0.5, seq: 0,
+      alive: true, display: false
+    };
+    this.stats.ballsReleased++;
+    this.events.push({ kind: 'ball', outcome: 'release', ball, how, x: w[0], y: w[1], z: w[2], energy, r, body });
+    if (this.balls.length >= cfg.maxBalls) {
+      // Za dużo piorunów naraz: nowy wyładowuje się od razu.
+      this.balls.push(ball);
+      this._discharge(ball, 'free');
+      return ball;
+    }
+    this.balls.push(ball);
+    this.stats.balls = this.balls.length;
+    return ball;
+  }
+
+  /**
+   * Piorun kulisty na pokaz (galeria dema): wisi w miejscu, bez bezpiecznika.
+   * Przestrzeń skał, energia w jednostkach ładunku.
+   */
+  addDisplayBall(x, y, z, energy, r = null) {
+    const cfg = this.cfg;
+    const rr = r ?? Math.min(cfg.ballRadiusMax, Math.max(cfg.ballRadiusMin, Math.cbrt(energy / cfg.ballEnergyPerVolume * 3 / (4 * Math.PI)) * cfg.ballRadiusK));
+    const ball = {
+      id: this._nextId++, sourceId: 0, parentId: 0,
+      p: [x, y, z], v: [0, 0, 0], r: rr, energy, fuse: Infinity, fuse0: Infinity, how: 'display',
+      age: 0, lock: 0, held: false, trapped: false, drain: 1,
+      home: [x, y], wa: 0, dartT: 1, seq: 0, alive: true, display: true
+    };
+    this.balls.push(ball);
+    this.stats.balls = this.balls.length;
+    return ball;
+  }
+
+  // Ruch piorunów: błądzenie (kierunek kręci się gładko) z uskokami, powrót w okolice
+  // miejsca uwolnienia, unoszenie nad skały pod płaszczyznę gry; bezpiecznik (drain
+  // ustawia pullBalls w tym kroku). Losowania z id pioruna i numeru kroku (determinizm).
+  _stepBalls(dt) {
+    const B = this.balls;
+    if (B.length === 0) return;
+    const cfg = this.cfg;
+    const kv = 1 - Math.exp(-1.6 * dt);
+    const kz = 1 - Math.exp(-3 * dt);
+    const sq = Math.sqrt(dt);
+    for (let i = B.length - 1; i >= 0; i--) {
+      const b = B[i];
+      if (!b.alive) { B.splice(i, 1); continue; }
+      b.age += dt;
+      b.seq++;
+      if (b.display) { b.held = false; b.drain = 1; continue; }
+      const calm = b.lock;
+      const wild = b.held && !b.trapped ? 1.8 : 1;
+      b.wa += (hash01(b.id, b.seq, 0x3A7) - 0.5) * 12 * sq;
+      if (!b.held) {
+        const drift = cfg.ballDrift * (1 - 0.85 * calm);
+        const tvx = Math.cos(b.wa) * drift + (b.home[0] - b.p[0]) * cfg.ballHome;
+        const tvy = Math.sin(b.wa) * drift + (b.home[1] - b.p[1]) * cfg.ballHome;
+        b.v[0] += (tvx - b.v[0]) * kv;
+        b.v[1] += (tvy - b.v[1]) * kv;
+      }
+      // Uskoki: nagły skok w bok (bez pułapki w wiązce — częściej i mocniej).
+      b.dartT -= dt * wild;
+      if (b.dartT <= 0) {
+        const a = hash01(b.id, b.seq, 0xDA27) * Math.PI * 2;
+        const sp = (cfg.ballDart[0] + (cfg.ballDart[1] - cfg.ballDart[0]) * hash01(b.id, b.seq, 0xDA28)) * (1 - 0.9 * calm) * wild;
+        b.v[0] += Math.cos(a) * sp;
+        b.v[1] += Math.sin(a) * sp;
+        b.dartT = cfg.ballDartEvery[0] + (cfg.ballDartEvery[1] - cfg.ballDartEvery[0]) * hash01(b.id, b.seq, 0xDA29);
+      }
+      // Unosi się nad skały: środek tuż pod płaszczyzną gry.
+      const zt = cfg.layerTop - b.r * 0.4;
+      b.v[2] += ((zt - b.p[2]) * 2.5 - b.v[2]) * kz;
+      b.p[0] += b.v[0] * dt; b.p[1] += b.v[1] * dt; b.p[2] += b.v[2] * dt;
+      if (b.p[2] > cfg.layerTop) { b.p[2] = cfg.layerTop; if (b.v[2] > 0) b.v[2] = 0; }
+      b.fuse -= dt * b.drain;
+      const held = b.held;
+      b.held = false;
+      b.trapped = false;
+      b.drain = 1;
+      if (b.fuse <= 0) this._discharge(b, held ? 'beam' : 'free');
+    }
+    this.stats.balls = B.length;
+  }
+
+  // Wyładowanie: zdarzenie (efekty i obrażenia liczy gra / demo), rozsadzenie najbliższej
+  // skały w zasięgu (jak ładunek na jej powierzchni), bezpieczniki piorunów obok → prawie 0.
+  _discharge(b, where) {
+    if (!b.alive) return;
+    b.alive = false;
+    const i = this.balls.indexOf(b);
+    if (i >= 0) this.balls.splice(i, 1);
+    const cfg = this.cfg;
+    let hit = null;
+    if (cfg.ballDischargeBlast) {
+      const reach = cfg.fractureK * 0.55 * Math.cbrt(Math.max(0.01, b.energy));
+      let best = Infinity;
+      for (const body of this.bodies) {
+        if (!body.alive || body.mass <= 0) continue;
+        const dx = body.p[0] - b.p[0], dy = body.p[1] - b.p[1], dz = body.p[2] - b.p[2];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) - body.boundR;
+        if (d < reach && d < best) { best = d; hit = body; }
+      }
+    }
+    this.stats.ballsDischarged++;
+    this.stats.balls = this.balls.length;
+    this.events.push({ kind: 'ball', outcome: 'discharge', ball: b, where, x: b.p[0], y: b.p[1], z: b.p[2], energy: b.energy, r: b.r, body: hit });
+    for (const o of this.balls) {
+      if (o.display) continue;
+      const dx = o.p[0] - b.p[0], dy = o.p[1] - b.p[1], dz = o.p[2] - b.p[2];
+      const R = 600 + 6 * b.r;
+      if (dx * dx + dy * dy + dz * dz < R * R) o.fuse = Math.min(o.fuse, 0.2 + 0.25 * hash01(o.id, b.id, 0xC4A1));
+    }
+    if (hit) {
+      const h = this.raycast(b.p[0], b.p[1], b.p[2], hit.p[0] - b.p[0], hit.p[1] - b.p[1], hit.p[2] - b.p[2], 1e6, hit);
+      if (h) this.detonate(hit, h.x, h.y, h.z, b.energy);
+    }
+  }
+
+  /**
+   * Wiązka ściągająca na pioruny kuliste w promieniu `radius` od punktu (przestrzeń
+   * skał). BEZ pułapki (trap = false) wiązka nie trzyma plazmy: piorun szarpie się,
+   * bezpiecznik płynie ballBeamDrain razy szybciej, a doprowadzony do punktu wiązki
+   * (bliżej niż `capture`) wybucha. Z PUŁAPKĄ MAGNETYCZNĄ chwyt rośnie ballTrapLock
+   * na sekundę (piorun się uspokaja, bezpiecznik × ballTrapDrain), a przy pełnym
+   * chwycie w zasięgu `capture` piorun trafia do pułapki — najwyżej `room` na wywołanie
+   * (pełna pułapka: wisi przy statku). Zwraca złapane (tablica ważna do następnego wywołania).
+   */
+  pullBalls(tx, ty, tz, radius, capture, dt, trap = false, room = Infinity) {
+    const got = this._gotBalls;
+    got.length = 0;
+    const B = this.balls;
+    if (B.length === 0) return got;
+    const cfg = this.cfg;
+    const k = 1 - Math.exp(-2.2 * dt);
+    for (let i = B.length - 1; i >= 0; i--) {
+      const b = B[i];
+      if (!b.alive || b.display) continue;
+      const dx = tx - b.p[0], dy = ty - b.p[1], dz = tz - b.p[2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      if (d > radius + b.r) {
+        b.lock = Math.max(0, b.lock - dt * 0.5);
+        continue;
+      }
+      b.held = true;
+      if (trap) {
+        b.trapped = true;
+        b.lock = Math.min(1, b.lock + dt * cfg.ballTrapLock);
+        b.drain = cfg.ballTrapDrain;
+        const want = Math.min(700, 60 + d * 1.2) * (0.25 + 0.75 * b.lock);
+        const kk = k * (0.3 + 0.7 * b.lock);
+        b.v[0] += ((dx / d) * want - b.v[0]) * kk;
+        b.v[1] += ((dy / d) * want - b.v[1]) * kk;
+        b.v[2] += ((dz / d) * want - b.v[2]) * kk;
+        if (b.lock >= 1 && d < capture + b.r) {
+          if (got.length < room) {
+            b.alive = false;
+            B.splice(i, 1);
+            got.push(b);
+            this.stats.ballsCaptured++;
+            this.events.push({ kind: 'ball', outcome: 'capture', ball: b, x: b.p[0], y: b.p[1], z: b.p[2], energy: b.energy, r: b.r });
+          } else {
+            b.v[0] *= 0.5; b.v[1] *= 0.5; b.v[2] *= 0.5;
+          }
+        }
+      } else {
+        b.drain = cfg.ballBeamDrain;
+        const want = Math.min(900, 60 + d * 1.2);
+        b.v[0] += ((dx / d) * want - b.v[0]) * k;
+        b.v[1] += ((dy / d) * want - b.v[1]) * k;
+        b.v[2] += ((dz / d) * want - b.v[2]) * k;
+        if (d < capture + b.r) this._discharge(b, 'beam');
+      }
+    }
+    this.stats.balls = B.length;
+    return got;
+  }
+
   /**
    * Zdarzenia od ostatniego wywołania (wybuchy, rozpady, zbiórka) — dla efektów.
    * Zwrócona tablica jest ważna do NASTĘPNEGO wywołania (dwie tablice na zmianę —
@@ -1834,6 +2361,18 @@ export class AsteroidMining {
 
 function nowMs() {
   return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+}
+
+/** Ruda rdzenia ciała (ukryty rdzeń skały neutralnej ma inną niż typ skały). */
+function coreTypeOf(body) {
+  return body.core?.oreTypeId ?? body.oreTypeId ?? null;
+}
+
+/** Kawałek rdzenia: okruch z flagą `core` albo ciało, którego masa to w przewadze rdzeń. */
+export function isCorePiece(o) {
+  if (!o) return false;
+  if (o.core === true) return true;
+  return o.coreMass !== undefined && o.mass > 0 && o.coreMass >= 0.5 * o.mass;
 }
 
 export { ROCK_TYPE_INDEX };

@@ -8,7 +8,7 @@
 import { MASTER_WEAPONS, shieldImpactClass } from '../../src/data/weapons.js';
 import { isTargetAlive, targetPoint as scannerTargetPoint, getTargetX, getTargetY } from '../../src/game/scannerTargeting.js';
 import { DestructorSystem, DESTRUCTOR_CONFIG, findBeamHexShard } from '../../src/game/destructor.js';
-import { isEntityShieldBlocking, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
+import { isEntityShieldBlocking, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from '../../shieldSystem.js';
 import { spatialCellKey } from '../../src/game/spatialCellKey.js';
 import { createPdBeamHit, resolvePdBeamHit } from '../../src/game/pdBeamFastPath.js';
 import { isPointDefenseWeapon } from '../../src/ai/pointDefenseTargeting.js';
@@ -87,7 +87,8 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     findBeamHexShard,
     DestructorSystem,
     spatialCellKey,
-    getEntityShieldBlockingRadiusTowards,
+    getEntityShieldBlockingRadius,
+    getEntityShieldRayEnter,
     createPdBeamHit,
     resolvePdBeamHit,
     isPointDefenseWeapon,

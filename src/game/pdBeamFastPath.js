@@ -2,7 +2,7 @@
 //
 // AI (processAutonomousWeapons) zna cel i już sprawdziło linię ognia na
 // sojuszników, więc strzał PD nie skanuje świata — testuje tylko swój cel:
-//   1. tarczę: promień blokujący w kierunku lufy (0, gdy pole nie blokuje),
+//   1. tarczę: wejście wiązki w obrys blokującej tarczy (shieldSystem),
 //   2. kadłub: sweep po heksach na odcinku wiązki przyciętym do okręgu kadłuba,
 //      a bez siatki heksów (myśliwce) — sam okrąg, jak ogólna ścieżka.
 // Dawniej każda wiązka PD przechodziła przez wszystkie NPC, stacje, platformy,
@@ -45,7 +45,7 @@ function finishHit(out, entity, dist, shield, shard, playerShip) {
  * @param dirX,dirY kierunek wiązki (jednostkowy)
  * @param range   zasięg wiązki
  * @param target  cel wybrany przez AI
- * @param deps    { shieldBlockingRadiusTowards(e, x, y), sweepImpact(e, x0, y0, x1, y1, r),
+ * @param deps    { shieldRayEnter(e, x0, y0, dirX, dirY, maxT) → t | −1, sweepImpact(e, x0, y0, x1, y1, r),
  *                  hullRadius(e), playerShip }
  */
 export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
@@ -66,13 +66,11 @@ export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
   const perpSq = fx * fx + fy * fy - along * along;
   const playerShip = deps.playerShip;
 
-  // 1. Tarcza. Wejście w bańkę jak w ogólnej ścieżce: max(0, t − głębokość).
-  const shieldR = deps.shieldBlockingRadiusTowards ? deps.shieldBlockingRadiusTowards(entity, x0, y0) : 0;
-  if (shieldR > 0 && perpSq <= shieldR * shieldR) {
-    const half = Math.sqrt(shieldR * shieldR - perpSq);
-    const tEnter = Math.max(0, along - half);
-    if (along + half >= 0 && tEnter <= range) return finishHit(out, entity, tEnter, true, null, playerShip);
-  }
+  // 1. Tarcza. Wejście w obrys jak w ogólnej ścieżce (dawniej okrąg o promieniu
+  //    tarczy w stronę lufy — przy długim kadłubie wiązka kończyła się w powietrzu
+  //    albo przechodziła przez tarczę przy dziobie).
+  const shieldT = deps.shieldRayEnter ? deps.shieldRayEnter(entity, x0, y0, dirX, dirY, range) : -1;
+  if (shieldT >= 0) return finishHit(out, entity, shieldT, true, null, playerShip);
 
   // 2. Kadłub. Okrąg kadłuba przycina wiązkę do odcinka nad siatką — sweep po
   //    heksach dostaje małe pudło komórek zamiast całej wiązki.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AsteroidMining, createYield, yieldOreTotal } from '../src/game/asteroidMining.js';
+import { AsteroidMining, createYield, yieldOreTotal, isCorePiece } from '../src/game/asteroidMining.js';
 import { MINING_CONFIG, rockMaterial, chargeReach, chargeForDepth, oreResourceOf } from '../src/game/asteroidMaterials.js';
 import { ROCK_TYPE_INDEX } from '../src/game/asteroidRockKinds.js';
 
@@ -255,6 +255,223 @@ test('determinizm: te same operacje = te same odłamy', () => {
     const res = sys.detonate(b, b.p[0] + 40, b.p[1], b.p[2], 2);
     for (let i = 0; i < 30; i++) sys.step(1 / 60);
     return [res.bodies.length, res.pebbles.length, totalMass(sys).toFixed(6), sys.bodies.map((x) => x.p[0].toFixed(4)).join(',')];
+  };
+  assert.deepEqual(run(), run());
+});
+
+// ---------------------------------------------------------------------------
+// Rdzeń (2026-09-28): lita bryła czystej rudy innego materiału niż skała.
+
+function coreCells(b) {
+  const c = b.core;
+  let crustOre = 0, crustN = 0, coreOre = 0, coreN = 0;
+  for (let k = 0; k < b.nz; k++) {
+    for (let j = 0; j < b.ny; j++) {
+      for (let i = 0; i < b.nx; i++) {
+        const idx = b.index(i, j, k);
+        if (b.fill[idx] < 0.5) continue;
+        const x = b.gx + i * b.cs - c.x, y = b.gy + j * b.cs - c.y, z = b.gz + k * b.cs - c.z;
+        if (b.coreFill[idx] === 255) { coreOre += b.ore[idx] / 255; coreN++; }
+        else if (Math.hypot(x, y, z) > c.mantle * 1.2) { crustOre += b.ore[idx] / 255; crustN++; }
+      }
+    }
+  }
+  return { crust: crustOre / crustN, core: coreOre / coreN, coreN };
+}
+
+test('rdzeń: lita bryła czystej rudy (100%), skorupa ~10%, rdzenie mniejsze i większe', () => {
+  const sys = new AsteroidMining({ radiusAt: lumpy, seed: 7 });
+  const radii = [];
+  for (let id = 1; id <= 16; id++) {
+    const b = sys.activate(rockRecord('copper', 650, id * 7919), { z: -950 });
+    radii.push(b.core.r / 650);
+    sys.release(b);
+  }
+  const lo = Math.min(...radii), hi = Math.max(...radii);
+  assert.ok(hi / lo > 1.6, `rdzenie ${lo.toFixed(2)}–${hi.toFixed(2)} promienia`);
+  const b = sys.activate(rockRecord('copper', 650), { z: -950 });
+  const s = coreCells(b);
+  assert.ok(s.crust > 0.05 && s.crust < 0.15, `skorupa ${(s.crust * 100).toFixed(1)}% rudy`);
+  assert.ok(s.core > 0.995 && s.coreN > 100, `rdzeń ${(s.core * 100).toFixed(1)}% rudy (${s.coreN} komórek)`);
+  assert.equal(b.core.kind, 'metal');
+  assert.ok(b.coreMass > 0.02 * b.mass && b.coreMass < 0.2 * b.mass, `rdzeń ${b.coreMass.toFixed(1)} t z ${b.mass.toFixed(0)} t`);
+  const cw = b.localToWorld(b.core.x, b.core.y, b.core.z, [0, 0, 0]);
+  const pr = sys.probe(b, cw[0], cw[1], cw[2]);
+  assert.equal(pr.zone, 'rdzeń');
+  assert.ok(pr.ore > 0.99);
+  // Rodzaje rdzeni: metal, kryształ, lód, smółka.
+  const kind = (t) => { const x = sys.activate(rockRecord(t, 500, 77), { z: -700 }); sys.release(x); return x.core.kind; };
+  assert.deepEqual(['iron', 'titan', 'crystal', 'silicon', 'ice', 'uran'].map(kind), ['metal', 'metal', 'crystal', 'crystal', 'ice', 'mineral']);
+});
+
+test('laser: bryła metalu tnie się wolniej niż skała, urobek z rdzenia to czysta ruda', () => {
+  const sys = new AsteroidMining({ radiusAt: sphere });
+  const b = sys.activate(rockRecord('copper', 650), { z: -950 });
+  const c = b.core;
+  const outCore = createYield();
+  const outRock = createYield();
+  const vCore = sys.dig(b, c.x, c.y, c.z, 70, 2e5, outCore);
+  // Skała w pół drogi między płaszczem a powierzchnią, po drugiej stronie niż przesunięcie rdzenia.
+  const l = Math.hypot(c.x, c.y, c.z) || 1;
+  const d = (c.mantle * 1.2 + 650) * 0.5;
+  const vRock = sys.dig(b, -c.x / l * d, -c.y / l * d, -c.z / l * d, 70, 2e5, outRock);
+  assert.ok(vCore < vRock * 0.85, `rdzeń ${vCore.toFixed(0)} j.³ < skała ${vRock.toFixed(0)} j.³`);
+  const share = (y) => yieldOreTotal(y) / (yieldOreTotal(y) + y.waste);
+  assert.ok(share(outCore) > 0.99, `rdzeń: ${(share(outCore) * 100).toFixed(1)}% rudy`);
+  assert.ok(share(outRock) < 0.3, `skała: ${(share(outRock) * 100).toFixed(1)}% rudy`);
+});
+
+// Ładunek w otworze nad rdzeniem (1,25 promienia rdzenia nad środkiem).
+function blastAtCore(type, E, seed = 7) {
+  const sys = new AsteroidMining({ radiusAt: lumpy, seed });
+  const b = sys.activate(rockRecord(type, 650), { z: -950 });
+  const coreMass0 = b.coreMass;
+  const c = b.core;
+  const w = b.localToWorld(c.x, c.y, c.z + c.r * 1.25, [0, 0, 0]);
+  const res = sys.detonate(b, w[0], w[1], w[2], E, createYield());
+  const pieces = [...res.bodies, ...res.pebbles, ...res.gravel];
+  const core = pieces.filter(isCorePiece);
+  return { sys, b, res, pieces, core, coreMass0, coreMass: core.reduce((a, p) => a + p.mass, 0) };
+}
+
+test('ładunek przy rdzeniu metalu: bryła wypada z gniazda w całości, duży ładunek łamie ją na kilka brył', () => {
+  const L = blastAtCore('copper', 8);
+  assert.equal(L.res.outcome, 'breach');
+  const biggest = Math.max(...L.core.map((p) => p.mass));
+  assert.ok(biggest > 0.85 * L.coreMass0, `L: bryła ${biggest.toFixed(1)} t z rdzenia ${L.coreMass0.toFixed(1)} t`);
+  for (const p of L.core) assert.ok(p.oreMass / p.mass > 0.9, 'kawałek rdzenia = czysta ruda');
+  // Bryła leci od ładunku (z krateru), nie w głąb skały.
+  const nug = L.core.find((p) => p.mass === biggest);
+  assert.ok(Math.hypot(nug.v[0], nug.v[1], nug.v[2]) > 20, 'bryła rdzenia w ruchu');
+  const XL = blastAtCore('copper', 32);
+  assert.ok(XL.res.coreChunks >= 2 && XL.res.coreChunks <= MINING_CONFIG.coreMaxChunks, `XL: ${XL.res.coreChunks} brył`);
+  assert.ok(XL.coreMass > 0.8 * XL.coreMass0, 'metal nie ginie jako pył');
+  // Tytan: ładunek WEWNĄTRZ bryły też rozsadza skałę (strefa spękań w skale), bryła pęka na części.
+  const sys = new AsteroidMining({ radiusAt: lumpy, seed: 7 });
+  const t = sys.activate(rockRecord('titan', 300), { z: -450 });
+  const cw = t.localToWorld(t.core.x, t.core.y, t.core.z, [0, 0, 0]);
+  const res = sys.detonate(t, cw[0], cw[1], cw[2], 16, createYield());
+  assert.equal(res.outcome, 'breach');
+  assert.ok(res.coreChunks >= 2, `tytan: ${res.coreChunks} brył`);
+});
+
+test('kruchy rdzeń (kryształ, lód) sypie się na odłamki czystej rudy — okruchy z flagą core', () => {
+  for (const [type, E] of [['crystal', 8], ['ice', 2]]) {
+    const r = blastAtCore(type, E);
+    assert.ok(r.core.length >= 8, `${type}: ${r.core.length} odłamków rdzenia`);
+    assert.ok(r.core.some((p) => p.core === true && p.coreType === (type === 'crystal' ? 'crystal' : 'ice')), 'okruch rdzenia zna rudę rdzenia');
+    const ore = r.core.reduce((a, p) => a + p.oreMass, 0);
+    assert.ok(ore / r.coreMass > 0.9, `${type}: ruda odłamków ${(ore / r.coreMass * 100).toFixed(0)}%`);
+    // Okruchy skały (skorupa) nie udają rdzenia (lód: skorupa komety to w połowie lód).
+    const crust = r.res.pebbles.filter((p) => !p.core);
+    assert.ok(crust.length > 0, 'są też okruchy skorupy');
+    if (type === 'crystal') assert.ok(crust.every((p) => p.oreMass / p.mass < 0.6), 'okruchy skorupy — mało rudy');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Piorun kulisty (rdzeń skały energetycznej, cfg.ballLightning)
+
+function energyRock(seed = 7) {
+  const sys = new AsteroidMining({ radiusAt: lumpy, seed, config: { ballLightning: true } });
+  const b = sys.activate(rockRecord('energy', 650), { z: -950 });
+  return { sys, b };
+}
+
+// Laser z góry nad rdzeniem, aż piorun ucieknie z geody.
+function drillToCore(sys, b) {
+  const cw = b.localToWorld(b.core.x, b.core.y, b.core.z, [0, 0, 0]);
+  for (let i = 0; i < 6000 && !sys.balls.length; i++) {
+    const hit = sys.raycast(cw[0], cw[1], 5000, 0, 0, -1, 1e6, b);
+    if (!hit) break;
+    sys.laser(b, hit.x, hit.y, hit.z, 0, 0, -1, 4, 1 / 60, createYield());
+    sys.step(1 / 60);
+  }
+  return sys.balls[0] || null;
+}
+
+test('piorun kulisty: odsłonięty laserem ucieka z geody, unosi się nad skały, bez wiązki wybucha i rozsadza skałę', () => {
+  const { sys, b } = energyRock();
+  assert.equal(b.core.kind, 'plasma');
+  assert.ok(b.coreMass > 0, 'plazma w geodzie');
+  const ball = drillToCore(sys, b);
+  assert.ok(ball, 'piorun uwolniony');
+  const ev = sys.drainEvents().find((e) => e.kind === 'ball' && e.outcome === 'release');
+  assert.ok(ev && ev.how === 'dig');
+  assert.ok(b.coreReleased);
+  b.recomputeMass();
+  assert.ok(b.coreMass < 1e-6, 'geoda pusta');
+  const [lo, hi] = MINING_CONFIG.ballFuseDig;
+  assert.ok(ball.fuse > lo * 0.9 && ball.fuse <= hi, `bezpiecznik ${ball.fuse.toFixed(1)} s`);
+  assert.ok(ball.energy > 0.5, `energia ${ball.energy.toFixed(2)}`);
+  for (let i = 0; i < 90; i++) sys.step(1 / 60);
+  assert.ok(ball.p[2] > -ball.r * 1.5 && ball.p[2] <= MINING_CONFIG.layerTop, `unosi się nad skały (z ${ball.p[2].toFixed(0)})`);
+  // Błądzi: rozrzut prędkości (uskoki).
+  let moved = 0;
+  const p0 = ball.p.slice();
+  for (let i = 0; i < 60; i++) sys.step(1 / 60);
+  moved = Math.hypot(ball.p[0] - p0[0], ball.p[1] - p0[1]);
+  assert.ok(moved > 30, `błądzi (${moved.toFixed(0)} j. w 1 s)`);
+  const bodies0 = sys.bodies.length;
+  let discharge = null;
+  for (let i = 0; i < 60 * 20 && !discharge; i++) {
+    sys.step(1 / 60);
+    discharge = sys.drainEvents().find((e) => e.kind === 'ball' && e.outcome === 'discharge') || null;
+  }
+  assert.ok(discharge, 'wybucha po czasie');
+  assert.equal(discharge.where, 'free');
+  assert.ok(discharge.body, 'wyładowanie trafia skałę obok');
+  assert.ok(sys.bodies.length > bodies0, 'skała rozsadzona');
+  assert.equal(sys.balls.length, 0);
+});
+
+test('piorun kulisty: zwykła wiązka go detonuje, z pułapką magnetyczną trafia do pułapki', () => {
+  const run = (trap) => {
+    const { sys, b } = energyRock();
+    const ball = drillToCore(sys, b);
+    sys.drainEvents();
+    const tx = ball.p[0] - 1700, ty = ball.p[1], tz = 0;
+    for (let i = 0; i < 60 * 20 && sys.balls.length; i++) {
+      const got = sys.pullBalls(tx, ty, tz, 3600, 260, 1 / 60, trap, 2);
+      if (got.length) return { captured: got[0], t: i / 60, sys };
+      sys.step(1 / 60);
+      const e = sys.drainEvents().find((x) => x.kind === 'ball' && x.outcome === 'discharge');
+      if (e) return { discharge: e, t: i / 60, sys };
+    }
+    return { t: Infinity, sys };
+  };
+  const bare = run(false);
+  assert.ok(bare.discharge, 'bez pułapki — wybuch');
+  assert.equal(bare.discharge.where, 'beam');
+  assert.ok(bare.t < 8, `wybuch w wiązce po ${bare.t.toFixed(1)} s`);
+  const trap = run(true);
+  assert.ok(trap.captured, 'z pułapką — złapany');
+  assert.ok(trap.t > 1 && trap.t < 12, `chwyt ${trap.t.toFixed(1)} s (nie od razu)`);
+  assert.equal(trap.sys.stats.ballsCaptured, 1);
+  assert.equal(trap.sys.balls.length, 0);
+});
+
+test('piorun kulisty: ładunek przy geodzie — krótki bezpiecznik; wyłączony (gra) — rdzeń z kryształu', () => {
+  const { sys, b } = energyRock();
+  const c = b.core;
+  const w = b.localToWorld(c.x, c.y, c.z + c.r * 2.6, [0, 0, 0]);
+  const res = sys.detonate(b, w[0], w[1], w[2], 8, createYield());
+  assert.ok(res.ball, 'ładunek uwalnia piorun');
+  assert.ok(res.ball.fuse <= MINING_CONFIG.ballFuseBlast[1], `bezpiecznik ${res.ball.fuse.toFixed(2)} s`);
+  // Bez pioruna kulistego (domyślnie — gra): rdzeń skały energetycznej to zbite kryształy.
+  const off = new AsteroidMining({ radiusAt: lumpy, seed: 7 });
+  const e = off.activate(rockRecord('energy', 650), { z: -950 });
+  assert.equal(e.core.kind, 'crystal');
+  assert.ok(e.coreMass > 0);
+  assert.ok(coreCells(e).core > 0.99, 'rdzeń z czystego kryształu');
+});
+
+test('piorun kulisty: determinizm (te same operacje = ten sam lot i wybuch)', () => {
+  const run = () => {
+    const { sys, b } = energyRock(11);
+    const ball = drillToCore(sys, b);
+    for (let i = 0; i < 120; i++) sys.step(1 / 60);
+    return [ball.p.map((v) => v.toFixed(4)).join(','), ball.fuse.toFixed(6)];
   };
   assert.deepEqual(run(), run());
 });

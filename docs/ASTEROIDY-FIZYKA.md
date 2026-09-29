@@ -34,10 +34,59 @@ Ciało sztywne 6DoF: środek masy, kwaternion układu skały, prędkości (przes
 początku: **X = x, Y = −y, Z = z**). Przejęta skała obraca się dalej tak, jak w polu (ta sama faza co w shaderze);
 **zakotwiczona** (platforma wydobywcza) gasi obrót i dryf.
 
-**Skład:** rdzeń przesunięty lekko od środka (0,24–0,34 promienia), płaszcz do ~1,9 promienia rdzenia. Rudy
-(`ROCK_COMPOSITION`): skorupa ~6%, płaszcz ~30%, rdzeń ~93%; lód: brudny wierzch 45%, czysty środek; skała
-neutralna: bez rudy, ale z 22% szansą kryje **rdzeń pospolitej rudy** (niespodzianka dla skanera). Całość: ruda
-~12% masy, z tego ~20% w rdzeniu (skupiona).
+**Skład:** skorupa ~10% rudy (skała pospolita z domieszką i żyłami), płaszcz wzbogacony wokół rdzenia (do ~1,9
+jego promienia, ~25%), **rdzeń = lita bryła czystej rudy (100%)**; lód: brudny wierzch 45%, czysty środek; skała
+neutralna: bez rudy, ale z 22% szansą kryje **rdzeń pospolitej rudy** (niespodzianka dla skanera).
+
+### Rdzeń (2026-09-28)
+
+Prośba użytkownika: „każda asteroida ma rdzeń, mniejszy lub większy; skorupa daje ~10% surowca, rdzeń 100%;
+wybuchniesz asteroidę — kawałki rdzenia niech latają; usuń spawnowanie asteroid z asteroidy”.
+
+- Rdzeń to osobne pole siatki `coreFill` (Uint8: udział materiału rdzenia w komórce, powierzchnia = 128) — bryła
+  z garbami (szum na kierunku), przesunięta od środka, wielkość losowa z przedziału typu (`coreRadius`, np. miedź
+  0,16–0,38 promienia skały), zawsze cała w skale (skorupa nad nią ≥ `coreShell` promienia). Ruda komórki =
+  skała × (1 − rdzeń) + 100% × rdzeń.
+- Materiał rdzenia (`CORE_MATERIAL`, `coreMaterial()`): **metal** (miedź, żelazo, tytan) — ciągliwy, twardszy dla
+  lasera niż skała (skała schodzi szybciej, bryłka „wychodzi” z otworu); **zbite kryształy** (kryształ, krzem) i
+  **czysty lód** — kruche, łupliwe; **smółka uranowa** — średnio krucha; **plazma** — piorun kulisty (niżej).
+  Gęstość rdzenia = gęstość skały (jedna na ciało).
+- Laser: ta sama praca zdejmuje z komórki rdzenia (0,2 + twardość skały) / (0,2 + twardość rdzenia) tego, co ze skały.
+- Ładunek: strefa spękań rośnie w SKALE (ładunek w otworze w rdzeniu też rozsadza skałę — dowiercenie się do rdzenia
+  ma sens); zmiażdżenie każda komórka liczy po swojemu (metal × `coreMetalCrush` 0,45 — reszta bryły wylatuje,
+  zmiażdżona część to śrut). Rdzeń w strefie spękań (`_coreRegions`): metal → 1 + log2(1 + E_rdzenia / E_pęknięcia)
+  brył (≤ `coreMaxChunks` 4; E_pęknięcia = `chargeForDepth(rdzeń, promień rdzenia)`), kruchy → do `coreMaxShards` 24
+  odłamków (Voronoi z łupliwością rdzenia). Wiązania rdzeń–skała: ze spękaną skałą pękają zawsze; gdy ≥ 50% otoczenia
+  bryły jest spękane, bryła wypada z gniazda w całości (odrzut prowadzi ją ku wylotowi krateru), mniej odsłonięta
+  zostaje w skale (z nienaruszoną pęka z szansą `coreEdgeBreak` 0,15). Pomiar (r 650, ładunek 1,25 promienia rdzenia
+  nad jego środkiem): miedź L — jedna bryła 57 t (cały rdzeń), XL — 3 bryły; tytan XL — 3; kryształ L — 23 odłamki;
+  lód M — 22; uran L — 12. Kawałki rdzenia to ~96–99% rudy (brzeg rdzenia jest mieszany).
+- Okruch z przewagą rdzenia ma `core: true` i `coreType` (ruda rdzenia), ciało — `coreMass` (`isCorePiece(o)`); render
+  rysuje je materiałem rdzenia, nie jak skałę.
+
+### Piorun kulisty (rdzeń skały energetycznej)
+
+Prośba użytkownika: „energetyczna — piorun kulisty, który ciężko złapać, trzeba mieć sprzęt, inaczej wybuchnie”.
+Włącza go `config: { ballLightning: true }` (demo); **domyślnie wyłączony** — gra nie ma jeszcze jego obrazu ani
+pułapki, więc tam rdzeń skały energetycznej to zbite kryształy. Skała energetyczna ma wtedy geodę z surowego
+kryształu (płaszcz 55%), a w niej plazmę (komórki rdzenia bez rudy).
+
+- **Uwolnienie** (`_releaseBall`): laser dotyka plazmy, piła przecina geodę albo strefa spękań ładunku sięga rdzenia
+  (też ładunek za słaby na skorupę). Geoda pustoszeje (ściany to powierzchnia wycięta — fioletowy żar w renderze),
+  w środku rdzenia powstaje `balls[i]`: energia = objętość rdzenia × `ballEnergyPerVolume` (jednostki ładunku; rdzeń
+  r ≈ 190 j. ≈ 7–11), promień ½ promienia rdzenia. **Bezpiecznik**: wiercenie / piła 12–18 s, wybuch 1,2–3 s,
+  zmiażdżenie 0,15–0,35 s.
+- **Ruch**: unosi się nad skały tuż pod płaszczyznę gry, błądzi (`ballDrift`) z uskokami (`ballDart` co 0,5–1,6 s),
+  wraca w okolice miejsca uwolnienia — trudno go złapać. Losowania z id pioruna i numeru kroku (determinizm).
+- **Wiązka** `pullBalls(tx, ty, tz, zasięg, chwyt, dt, trap, miejsce)`: BEZ pułapki plazmy nie trzyma — bezpiecznik
+  × `ballBeamDrain` 5, piorun szarpie się (uskoki częstsze), doprowadzony do statku wybucha (`where: 'beam'`); Z
+  PUŁAPKĄ MAGNETYCZNĄ chwyt rośnie `ballTrapLock` 0,7/s (pełny ~1,4 s), piorun się uspokaja (bezpiecznik ×
+  `ballTrapDrain` 0,3), przy pełnym chwycie w zasięgu `chwyt` trafia do pułapki (`miejsce` = wolne sloty; pełna —
+  wisi przy statku). Pomiar: bez pułapki wybuch w wiązce po ~2 s, z pułapką złapany po ~3 s.
+- **Wyładowanie** (`_discharge`): zdarzenie `{ kind: 'ball', outcome: 'discharge', where, energy, body }`, rozsadza
+  najbliższą skałę w zasięgu (`detonate` z energią pioruna na jej powierzchni — reakcja łańcuchowa w polu) i skraca
+  bezpieczniki innych piorunów obok. Zdarzenia: `release` (z `how`), `discharge`, `capture`.
+- Co daje złapany piorun w ekonomii — **do decyzji** (nie ma surowca w `resources.js`; demo liczy je w pułapce).
 
 **Materiały** (`ROCK_FRACTURE` + gęstość/twardość z `src/data/asteroidPhysics.js`):
 
@@ -105,11 +154,13 @@ mining.laser(hit.body, hit.x, hit.y, hit.z, dx, dy, dz, moc, dt, urobek);
 mining.slice(body, px, py, pz, nx, ny, nz, szczelina, przesuw?, urobek);
 const res = mining.detonate(body, x, y, z, E, straty);     // { outcome, rc, rf, bodies, pebbles, gravel, … }
 mining.tractor(tx, ty, tz, zasięg, udźwig, chwyt, dt, urobek, siła?, maxRudy?); // → złapane (tablica do następnego wywołania)
-mining.step(dt);                                            // masa, rozpady po cięciu, ruch, zderzenia, uśpienie
+mining.pullBalls(tx, ty, tz, zasięg, chwyt, dt, pułapka, miejsce); // pioruny kuliste → złapane (z pułapką)
+mining.step(dt);                                            // masa, rozpady po cięciu, ruch, zderzenia, uśpienie, pioruny
 mining.wake(obiekt);                                        // obudź ciało / okruch ruszane z zewnątrz
 mining.probe(body, x, y, z); mining.summary(body);          // skaner: ruda, strefa, głębokość, rdzeń
-mining.drainEvents();                                       // wybuchy, rozpady, zbiórka (tablica do następnego wywołania)
-// render: mining.bodies (fill/ore/orig, version, dirtyBox, origin(), q), mining.pebbles (p, q, r, type)
+mining.drainEvents();                                       // wybuchy, rozpady, zbiórka, pioruny (tablica do następnego wywołania)
+// render: mining.bodies (fill/ore/orig/coreFill, coreMaterial, version, dirtyBox, origin(), q),
+//         mining.pebbles (p, q, r, type, core, coreType, gravel, age), mining.balls (p, r, fuse, lock, energy)
 ```
 
 Urobek: `createYield()` → `{ ore: { [surowiec]: t }, waste, lost }`. Koszt (Node, 1 rdzeń): budowa ciała 10–30 ms,
@@ -133,8 +184,18 @@ próbka lasera zwracała liczbę przez stertę), `sqrt` zamiast `Math.hypot`.
   skała wygląda jak przed przejęciem. **Wnętrze** = raymarching po atlasie, tylko ściany wycięte (`orig > fill`):
   świeży przełom jaśniejszy niż zwietrzały wierzch, ziarno i mikrorzeźba z szumu, w płaszczu minerał typu (malachit…),
   w rdzeniu ruda właściwa (metal lśni, kryształ i uran świecą), AO w otworach, żar świeżego cięcia, światła siatki,
-  pył ośrodka jak nad skałą. **Okruchy** = zwykłe skały banku (RockSet). Jeden materiał na zewnętrze i jeden na
-  wnętrze (nowy materiał skały = ~50 ms CPU, a wybuch daje kilkanaście odłamów).
+  pył ośrodka jak nad skałą; kanał A atlasu = udział rdzenia — lita bryła materiałem rdzenia (`coreLook.js`:
+  metal z połyskiem i patyną w zagłębieniach, kryształy świecące od środka, lód, smółka z żyłkami), kawałek rdzenia
+  prosto z wybuchu żarzy się na brzegach ~3 s (metal i smółka; lód i kryształ nie), pusta geoda po piorunie —
+  fioletowy żar ~6 s. **Okruchy** = odłamki (`fragments.js`, od 2026-09-28 — wcześniej zwykłe skały banku, czyli
+  „mniejsze asteroidy” z wybuchu): skorupa — kanciaste odłamki (otoczka wypukła z płaszczyznami przełomu, relief i
+  ziarno w skali świata, drobinki minerału), rdzeń — bryłki metalu z guzami, kiście graniastosłupów kryształu, bloki
+  krzemu, bryłki lodu, bryły smółki. Jeden materiał TSL na wszystkie rodziny (17 siatek instancji). Jeden materiał
+  na zewnętrze i jeden na wnętrze skał (nowy materiał skały = ~50 ms CPU, a wybuch daje kilkanaście odłamów).
+- `ballLightning.js`: piorun kulisty — kula plazmy w TSL (addytywnie: rdzeń, fioletowe ciało, sieć włókien
+  wyładowań w ruchu, oddech kuli; niestabilna migocze i bieleje, w pułapce sinieje); poświata, światło z siatki,
+  łuki pełzające po kuli (burza `storm._addArc`) i wyładowanie (fioletowy błysk, iskry, pioruny do powierzchni
+  najbliższych skał) — `miningRig.js`.
 - `rockLayers.js`: `hide(id)` / `unhide(id)` — przejęta skała znika z warstwy pola (też z cieni, piorunów, świateł).
 - `minerals.js`: `MineralLayer` / `MineralMaterial` w trybie `carve` — minerały przejętej skały (kryształy, lód, uran)
   zostają na niej; minerał znika, gdy jego podstawę wykopano albo odleciała w innym odłamie.
@@ -146,8 +207,11 @@ próbka lasera zwracała liczbę przez stertę), `sqrt` zamiast `Math.hypot`.
 
 **Sterowanie (Kopalnia / tryb G):** LPM trzymany — lasery dronów (skała pola pod kursorem przechodzi do fizyki),
 Shift + przeciągnięcie LPM — piła wzdłuż linii (pas po pasie, rozpad po przecięciu na wylot), PPM —
-ładunek w dnie otworu pod kursorem, C — wielkość ładunku, F — detonacja, T — wiązka ściągająca, K — skaner; przyciski
-typów stawiają skałę testową (lód … tytan, energetyczna).
+ładunek w dnie otworu pod kursorem, C — wielkość ładunku, F — detonacja, **R — wysadź rdzeń** (ładunek w otworze tuż
+nad rdzeniem skały i detonacja), T — wiązka ściągająca, **M — pułapka magnetyczna** (sprzęt na pioruny kuliste),
+K — skaner (rdzeń z rodzajem i masą, piorun kulisty z bezpiecznikiem i chwytem, romby na lecących kawałkach rdzenia),
+**J — galeria rdzeni** (kawałek rdzenia każdej rudy nad odłamkiem jej skorupy i piorun kulisty na pokaz); przyciski
+typów stawiają skałę testową (lód … tytan, energetyczna). Zrzuty z harnessu: `scripts/webgpu/wydobycie-gra.mjs --demo`.
 
 ## W grze (zadanie 21b portu WebGPU)
 
@@ -191,6 +255,11 @@ typów stawiają skałę testową (lód … tytan, energetyczna).
 - **Zrzuty obok dema:** `scripts/webgpu/wydobycie-gra.mjs` (etapy skała → laser → piła → ładunek → urobek w miejscu
   sceny „pole” z tą samą skałą testową co Kopalnia dema; `--demo` — te same etapy w demie), sesja `wydobycie` w
   `zrzuty.mjs`.
+
+**Rdzeń w grze (2026-09-28):** fizyka jest wspólna, więc gra ma już rdzenie (skorupa ~10%, rdzeń 100%, bryła metalu
+wypada w całości, kruche rdzenie sypią się na odłamki), ale **render gry (`src/3d/asteroids/minedRocks.js`) rysuje
+okruchy dalej skałami banku** i nie zna kanału rdzenia ani piorunów — port `fragments.js` / `coreLook.js` /
+`ballLightning.js` i pułapki (sprzęt gracza, HUD) czeka; do tego czasu gra ma `ballLightning: false`.
 
 **Otwarte (do decyzji użytkownika — w grze wariant najprostszy):** odłamy nie zderzają się z kadłubami (leżą pod
 płaszczyzną jak skały PLAY), wybuch nie rusza sąsiednich skał pola, udźwig wiązki 450 t (z dema), ceny ładunków

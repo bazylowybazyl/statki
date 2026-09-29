@@ -18,8 +18,19 @@
 // więc mają wpisy tutaj.
 //
 // Skład (ROCK_COMPOSITION): udział rudy w skorupie, płaszczu i rdzeniu. Skała
-// miedzi ma z wierzchu ~6% miedzi, a rdzeń to prawie czysta miedź — gracz
-// musi dokopać się do środka albo wysadzić rdzeń i wyłapać odłamki.
+// miedzi ma z wierzchu ~10% miedzi (skała pospolita z domieszką i żyłami),
+// a RDZEŃ to lita, czysta miedź — gracz musi dokopać się do środka albo
+// wysadzić rdzeń i wyłapać jego kawałki.
+//
+// RDZEŃ (prośba użytkownika 2026-09-28: „każda asteroida ma rdzeń, mniejszy lub
+// większy; skorupa daje ~10% surowca, rdzeń 100%; wybuchniesz asteroidę —
+// kawałki rdzenia niech latają”): bryła z INNEGO materiału niż skała dookoła
+// (CORE_MATERIAL) — miedź, żelazo i tytan to bryłki metalu (ciągliwe: nie
+// sypią się na drobnicę, wylatują w całości albo w kilku bryłach), kryształ
+// to zbite kryształy (kruche, łupliwe — odłamki), lód to czysty lód, krzem —
+// kryształ krzemu, uran — bryła smółki uranowej, a skała energetyczna ma
+// w krystalicznej geodzie PIORUN KULISTY (plazma): odsłonięty ucieka, trudno go
+// złapać i bez pułapki magnetycznej wybucha (asteroidMining.js: balls).
 //
 // Moduł bez three i DOM-u (czyta go logika wydobycia i testy).
 
@@ -51,28 +62,81 @@ const EXTRA_BULK = Object.freeze({
 });
 
 /**
- * Skład: udział rudy (0 … 1) w skorupie, płaszczu i rdzeniu, siła żył
- * (dopisek w wąskich pasmach) i promień rdzenia jako ułamek promienia skały.
- * coreType — ruda rdzenia, jeśli inna niż typ skały; hiddenCore — szansa, że
- * skała neutralna kryje rdzeń pospolitej rudy (resztę rdzeni ma pustą skałę).
+ * Skład: udział rudy (0 … 1) w skorupie, płaszczu (wzbogacenie wokół rdzenia)
+ * i rdzeniu, siła żył (dopisek w wąskich pasmach), promień rdzenia jako ułamek
+ * promienia skały (losowany z przedziału — rdzenie mniejsze i większe) i jego
+ * garby (coreLump: 0 = kula). coreType — ruda, jeśli inna niż typ skały;
+ * hiddenCore — szansa, że skała neutralna kryje rdzeń pospolitej rudy; plasma —
+ * rdzeń to piorun kulisty (gdy system wydobycia ma go włączonego, inaczej
+ * rdzeń z rudy coreType).
  */
-const ORE_PROFILE = Object.freeze({ crust: 0.06, mantle: 0.3, core: 0.93, veins: 0.35, coreRadius: [0.24, 0.34] });
+const ORE_PROFILE = Object.freeze({ crust: 0.085, mantle: 0.25, core: 1, veins: 0.3, coreRadius: [0.16, 0.4], coreLump: 0.22 });
 export const ROCK_COMPOSITION = Object.freeze({
-  iron: ORE_PROFILE,
-  copper: ORE_PROFILE,
-  silicon: Object.freeze({ ...ORE_PROFILE, crust: 0.1, mantle: 0.35 }),
-  titan: Object.freeze({ ...ORE_PROFILE, crust: 0.05, mantle: 0.28, core: 0.9 }),
-  crystal: Object.freeze({ ...ORE_PROFILE, crust: 0.04, mantle: 0.25, core: 0.95, veins: 0.5 }),
+  iron: Object.freeze({ ...ORE_PROFILE, coreRadius: [0.18, 0.4] }),
+  copper: Object.freeze({ ...ORE_PROFILE, coreRadius: [0.16, 0.38] }),
+  silicon: Object.freeze({ ...ORE_PROFILE, crust: 0.09, mantle: 0.28, coreRadius: [0.18, 0.4], coreLump: 0.18 }),
+  titan: Object.freeze({ ...ORE_PROFILE, crust: 0.08, mantle: 0.22, coreRadius: [0.14, 0.32] }),
+  crystal: Object.freeze({ ...ORE_PROFILE, crust: 0.06, mantle: 0.3, veins: 0.5, coreRadius: [0.2, 0.44], coreLump: 0.28 }),
   // Kometa: brudny lód na wierzchu, czysty w środku.
-  ice: Object.freeze({ crust: 0.45, mantle: 0.72, core: 0.96, veins: 0.15, coreRadius: [0.3, 0.42] }),
-  uran: Object.freeze({ ...ORE_PROFILE, crust: 0.03, mantle: 0.22, core: 0.88, coreRadius: [0.2, 0.3] }),
-  rock: Object.freeze({ crust: 0, mantle: 0, core: 0, veins: 0, coreRadius: [0.22, 0.32], hiddenCore: 0.22 }),
-  // Naładowana skała: rdzeń z surowego kryształu.
-  energy: Object.freeze({ ...ORE_PROFILE, crust: 0.03, mantle: 0.2, core: 0.9, coreType: 'crystal' })
+  ice: Object.freeze({ crust: 0.45, mantle: 0.7, core: 1, veins: 0.15, coreRadius: [0.26, 0.48], coreLump: 0.12 }),
+  uran: Object.freeze({ ...ORE_PROFILE, crust: 0.06, mantle: 0.2, coreRadius: [0.12, 0.28], coreLump: 0.2 }),
+  rock: Object.freeze({ crust: 0, mantle: 0, core: 0, veins: 0, coreRadius: [0.14, 0.3], coreLump: 0.2, hiddenCore: 0.22 }),
+  // Naładowana skała: żyły i geoda z surowego kryształu, w środku piorun kulisty.
+  energy: Object.freeze({ ...ORE_PROFILE, crust: 0.03, mantle: 0.55, veins: 0.4, coreType: 'crystal', coreRadius: [0.18, 0.34], coreLump: 0.05, plasma: true })
 });
 
 /** Rudy pospolite, które może kryć rdzeń skały neutralnej. */
 export const HIDDEN_CORE_TYPES = Object.freeze(['iron', 'silicon', 'copper', 'ice']);
+
+/**
+ * Materiał RDZENIA (po rudzie rdzenia): rodzaj (kind) i parametry pękania jak
+ * w ROCK_FRACTURE. Gęstość rdzenia = gęstość skały (jedna na ciało — metal
+ * rudy i tak ma gęstość swojej skały w ASTEROID_MATERIAL). Twardość: metal
+ * trudniej ciąć laserem niż skałę dookoła (skała schodzi szybciej i bryłka
+ * „wychodzi” z otworu), lód i kryształ łatwo.
+ *   metal   — ciągliwy: ładunek nie sypie go na drobnicę; bryła odpada od skały
+ *             i pęka najwyżej na coreMaxChunks części (ze zmiażdżenia — śrut);
+ *   crystal — zbite kryształy / kryształ krzemu: kruche, łupliwe — odłamki;
+ *   ice     — czysty lód: kruchy, sypie się na bryłki;
+ *   mineral — smółka uranowa: średnio krucha;
+ *   plasma  — piorun kulisty (skała energetyczna): nie da się go kopać ani
+ *             rozbić — odsłonięty ucieka (asteroidMining: balls).
+ */
+export const CORE_MATERIAL = Object.freeze({
+  iron: Object.freeze({ kind: 'metal', hardness: 0.95, toughness: 2.4, brittleness: 0.03, cleavage: 0, fines: 0.02, blast: 0.6 }),
+  copper: Object.freeze({ kind: 'metal', hardness: 0.8, toughness: 2.0, brittleness: 0.03, cleavage: 0, fines: 0.02, blast: 0.65 }),
+  titan: Object.freeze({ kind: 'metal', hardness: 1.25, toughness: 3.0, brittleness: 0.02, cleavage: 0, fines: 0.02, blast: 0.55 }),
+  silicon: Object.freeze({ kind: 'crystal', hardness: 0.6, toughness: 0.3, brittleness: 0.88, cleavage: 0.7, fines: 0.15, blast: 1.0 }),
+  crystal: Object.freeze({ kind: 'crystal', hardness: 0.45, toughness: 0.28, brittleness: 0.95, cleavage: 0.9, fines: 0.2, blast: 1.1 }),
+  ice: Object.freeze({ kind: 'ice', hardness: 0.08, toughness: 0.18, brittleness: 0.9, cleavage: 0.2, fines: 0.3, blast: 1.15 }),
+  uran: Object.freeze({ kind: 'mineral', hardness: 0.7, toughness: 0.5, brittleness: 0.45, cleavage: 0.1, fines: 0.1, blast: 0.8 }),
+  plasma: Object.freeze({ kind: 'plasma', hardness: 0, toughness: 0, brittleness: 1, cleavage: 0, fines: 1, blast: 1 })
+});
+
+/** Nazwy rodzajów rdzenia do HUD-u. */
+export const CORE_KIND_LABELS_PL = Object.freeze({
+  metal: 'bryła metalu', crystal: 'zbite kryształy', ice: 'czysty lód', mineral: 'bryła smółki', plasma: 'piorun kulisty'
+});
+
+/**
+ * Materiał rdzenia rudy `oreTypeId` ('plasma' = piorun kulisty) w skale
+ * o gęstości `density`: pola jak rockMaterial (bez składu) + kind.
+ */
+export function coreMaterial(oreTypeId, density = 2.7) {
+  const c = CORE_MATERIAL[oreTypeId] || CORE_MATERIAL.uran;
+  return {
+    id: oreTypeId,
+    kind: c.kind,
+    density,
+    hardness: c.hardness,
+    toughness: c.toughness,
+    brittleness: c.brittleness,
+    cleavage: c.cleavage,
+    fines: c.fines,
+    blast: c.blast,
+    volatile: 1
+  };
+}
 
 /**
  * Wspólne stałe wydobycia (jednostki świata gry, tony, sekundy).
@@ -154,7 +218,48 @@ export const MINING_CONFIG = Object.freeze({
   contactSpin: 3,
   // Masa, środek masy i bezwładność ciała po kopaniu najczęściej co tyle sekund (pełny
   // przegląd siatki ~0,6 ms przy 48³; laser zmienia siatkę w każdym kroku fizyki).
-  massRecomputeInterval: 0.25
+  massRecomputeInterval: 0.25,
+  // Rdzeń: skorupa nad nim ≥ coreShell promienia skały (i ≥ 2,5 komórki). Rdzeń
+  // w strefie spękań odpada od skały (wiązania ze spękaną skałą pękają zawsze, z
+  // nienaruszoną — z szansą coreEdgeBreak). Ciągliwy rdzeń (metal) pęka na
+  // 1 + log2(1 + E_rdzenia / E_pęknięcia) brył (≤ coreMaxChunks), kruchy — na
+  // odłamki (≤ coreMaxShards; drobne lecą jako okruchy rdzenia).
+  coreShell: 0.14,
+  coreEdgeBreak: 0.15,
+  coreMaxChunks: 4,
+  coreMaxShards: 24,
+  // Metal się nie kruszy, tylko odkształca: strefa zmiażdżenia w bryle metalu × tyle
+  // (reszta bryły wylatuje w kawałkach, zmiażdżona część — śrutem).
+  coreMetalCrush: 0.45,
+  // PIORUN KULISTY (rdzeń skały energetycznej). false = rdzeń z kryształu (gra, dopóki
+  // nie ma obrazu i pułapki; demo włącza). Odsłonięty (laser, piła, ładunek) ucieka
+  // z geody: energia wyładowania = objętość rdzenia × ballEnergyPerVolume (jednostki
+  // ładunku), bezpiecznik [s] zależy od sposobu uwolnienia (wiercenie — długi, wybuch —
+  // krótki, zmiażdżenie — prawie od razu). Błądzi (ballDrift) z uskokami (ballDart co
+  // ballDartEvery s) — trudno go złapać; unosi się nad skały pod płaszczyznę gry.
+  ballLightning: false,
+  ballEnergyPerVolume: 2.6e-7,
+  ballRadiusK: 0.5,
+  ballRadiusMin: 40,
+  ballRadiusMax: 170,
+  ballFuseDig: [12, 18],
+  ballFuseBlast: [1.2, 3.0],
+  ballFuseCrush: [0.15, 0.35],
+  ballDrift: 150,
+  ballDart: [280, 540],
+  ballDartEvery: [0.5, 1.6],
+  ballHome: 0.35,
+  // Wiązka BEZ pułapki: plazmy nie trzyma — bezpiecznik płynie ballBeamDrain razy
+  // szybciej, piorun szarpie się, a doprowadzony do statku wybucha. Z pułapką
+  // magnetyczną chwyt rośnie ballTrapLock na sekundę (pełny ~1,4 s), bezpiecznik
+  // płynie × ballTrapDrain; złapany przy pełnym chwycie w zasięgu `capture`.
+  ballBeamDrain: 5,
+  ballTrapLock: 0.7,
+  ballTrapDrain: 0.3,
+  // Wyładowanie rozsadza najbliższą skałę w zasięgu (jak ładunek o energii pioruna
+  // na jej powierzchni) i skraca bezpieczniki innych piorunów w pobliżu.
+  ballDischargeBlast: true,
+  maxBalls: 8
 });
 
 /** Materiał typu (indeks ROCK_TYPES albo nazwa): gęstość, twardość, pękanie, skład. */
@@ -175,6 +280,14 @@ export function rockMaterial(type) {
     volatile: fr.volatile || 1,
     composition: comp
   };
+}
+
+/**
+ * Energia wyładowania pioruna kulistego z rdzenia o objętości `volume` [j.³]
+ * (jednostki ładunku: S 0,5 · M 2 · L 8 · XL 32).
+ */
+export function ballEnergyForVolume(volume, cfg = MINING_CONFIG) {
+  return Math.max(0, volume) * cfg.ballEnergyPerVolume;
 }
 
 /** Surowiec gry (resources.js) z typu rudy; null = skała bez wartości. */

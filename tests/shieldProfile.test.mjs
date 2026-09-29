@@ -109,3 +109,48 @@ test('player spatial proxy resolves the real entity for profile sampling', () =>
   // Cache profilu wylądował na prawdziwej encji, nie na proxy.
   assert.ok(ship._shieldProfileCache);
 });
+
+// Wiązka kończy się na OBRYSIE tarczy, nie na okręgu wokół środka (dawniej
+// resolveBeamWorldHit brał okrąg max(w, h) · 0,75 — laser bił w powietrze).
+test('beam ray enters the hull shield at its outline', () => {
+  const ship = makeElongatedShip();
+  const sideR = shieldSystem.getEntityShieldRadiusTowards(ship, 0, 1000);
+  const noseR = shieldSystem.getEntityShieldRadiusTowards(ship, 1000, 0);
+
+  // Z burty (z góry, y = −1000, w dół): wejście na promieniu burty.
+  const tSide = shieldSystem.getEntityShieldRayEnter(ship, 0, -1000, 0, 1, 5000);
+  assert.ok(Math.abs(tSide - (1000 - sideR)) < 0.5, `burta: t=${tSide}, oczekiwane ${1000 - sideR}`);
+
+  // Z przodu wzdłuż osi: wejście na promieniu dziobu.
+  const tNose = shieldSystem.getEntityShieldRayEnter(ship, 1000, 0, -1, 0, 5000);
+  assert.ok(Math.abs(tNose - (1000 - noseR)) < 0.5, `dziób: t=${tNose}, oczekiwane ${1000 - noseR}`);
+
+  // Punkt wejścia leży na obrysie także pod skosem.
+  const dx = -0.6, dy = 0.8;
+  const t = shieldSystem.getEntityShieldRayEnter(ship, 800, -1000, dx, dy, 5000);
+  assert.ok(t > 0);
+  const px = 800 + dx * t, py = -1000 + dy * t;
+  const r = shieldSystem.getEntityShieldRadiusTowards(ship, px, py);
+  assert.ok(Math.abs(Math.hypot(px, py) - r) < 0.5, `skos: |P|=${Math.hypot(px, py)} r=${r}`);
+
+  // Wzdłuż kadłuba tuż nad najwyższym punktem obrysu — w obwiedni maxR (i w dawnym
+  // okręgu), ale poza obrysem: pudło; tuż pod nim: trafienie.
+  const profile = shieldSystem.getEntityShieldProfile(ship);
+  let topY = 0;
+  for (let i = 0; i < 2048; i++) {
+    const a = (i / 2048) * Math.PI * 2;
+    topY = Math.max(topY, shieldSystem.sampleShieldProfileRadius(profile, a) * Math.sin(a));
+  }
+  assert.ok(topY + 5 < profile.maxR);
+  assert.equal(shieldSystem.getEntityShieldRayEnter(ship, -1000, topY + 5, 1, 0, 5000), -1, 'nad obrysem — pudło');
+  assert.ok(shieldSystem.getEntityShieldRayEnter(ship, -1000, topY - 5, 1, 0, 5000) > 0, 'w obrysie — trafienie');
+  assert.equal(shieldSystem.getEntityShieldRayEnter(ship, 0, -1000, 1, 0, 5000), -1, 'równolegle daleko obok — pudło');
+  assert.equal(shieldSystem.getEntityShieldRayEnter(ship, 0, -1000, 0, 1, 100), -1, 'poza zasięgiem — pudło');
+});
+
+test('beam ray ignores a shield that is not blocking', () => {
+  const ship = makeElongatedShip();
+  ship.shield.state = 'off';
+  ship.shield.activationProgress = 0;
+  assert.equal(shieldSystem.getEntityShieldRayEnter(ship, 0, -1000, 0, 1, 5000), -1);
+});

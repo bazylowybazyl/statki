@@ -214,7 +214,7 @@ function firingCore(ship, owner = 'player') {
     createPdBeamHit, resolvePdBeamHit, isPointDefenseWeapon, spatialCellKey,
     // Zadanie 18-B: numer pocisku (hash rykoszetu) i dane mechaniki kadłuba na pocisku.
     nextProjectileSerial, hasHullMechanics,
-    getEntityShieldBlockingRadiusTowards: () => 0, findBeamHexShard: () => null, DestructorSystem: {},
+    getEntityShieldRayEnter: () => -1, getEntityShieldBlockingRadius: () => 0, isEntityShieldBlocking: () => false, findBeamHexShard: () => null, DestructorSystem: {},
     CustomEvent: class { constructor(type, data) { Object.assign(this, data); } },
     // Rdzeń nadaje szyną strzałów; detail.beam to obiekt wspólny — kopiujemy.
     WeaponShotBus: {

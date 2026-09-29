@@ -629,11 +629,26 @@ function resetMining() {
   if (!mining) return;
   mining.bodies.length = 0;
   mining.pebbles.length = 0;
+  mining.balls.length = 0;
+  mining.drainEvents();
   if (playLayer && playLayer.hidden.size) {
     playLayer.hidden.clear();
     playLayer._version++;
   }
-  if (rig) rig.charges.length = 0;
+  if (rig) { rig.charges.length = 0; rig.gallery.length = 0; }
+}
+
+/** Galeria rdzeni (J): kawałki rdzeni wszystkich rud i odłamki skorupy przed statkiem, zbliżenie. */
+function showCoreGallery() {
+  if (!rig) return;
+  if (S.scene !== 'mining') setScene('mining');
+  else resetMining();
+  S.pendingTestRock = null;
+  const c = rig.spawnCoreGallery({ x: S.ship.x, y: S.ship.y, angle: S.ship.angle });
+  S.camHold = { x: c.x, y: c.y };
+  S.cam.zoom = S.targetZoom = 0.62;
+  rig.setEnabled(true);
+  updateMiningButtons();
 }
 
 function updateMiningButtons() {
@@ -642,6 +657,7 @@ function updateMiningButtons() {
   on('b-mine-mode', rig.enabled);
   on('b-tractor', rig.tractor);
   on('b-scan', rig.scan);
+  on('b-trap', rig.trap);
   for (const b of document.querySelectorAll('[data-charge]')) b.classList.toggle('on', Number(b.dataset.charge) === rig.chargeIndex);
   for (const b of document.querySelectorAll('[data-mine-type]')) b.classList.toggle('on', b.dataset.mineType === S.testType);
 }
@@ -898,7 +914,7 @@ const stormFrame = { cam: null, viewW: 0, viewH: 0, dt: 0, originX: 0, originY: 
 const giantFrame = { cam: null, viewW: 0, viewH: 0, dt: 0, originX: 0, originY: 0, sunT: 1 };
 const _focus = { x: 0, y: 0, len: 1800 };
 const _rigFrame = { time: 0, ship: { x: 0, y: 0, angle: 0, len: 1800 }, originX: 0, originY: 0 };
-const _minedFrame = { zoom: 1, originX: 0, originY: 0, time: 0, camX: 0, camY: 0 };
+const _minedFrame = { zoom: 1, originX: 0, originY: 0, time: 0, camX: 0, camY: 0, sunT: null };
 const _stormOpts = { layer: null, zOf: null };
 const _flashes = [];
 const _flashPool = [];
@@ -971,6 +987,7 @@ function frame(nowMs, forcedDt = null) {
     rig.update(realDt, _rigFrame);
     _minedFrame.zoom = S.cam.zoom; _minedFrame.originX = S.origin.x; _minedFrame.originY = S.origin.y;
     _minedFrame.time = S.time; _minedFrame.camX = S.cam.x; _minedFrame.camY = S.cam.y;
+    _minedFrame.sunT = S.sunOcc ? sunLight : null;
     minedRocks.update(_minedFrame);
   }
 
@@ -1267,10 +1284,13 @@ addEventListener('keydown', (e) => {
   if (k === 'p') strike();
   // Kopalnia.
   if (k === 'g' && rig && !GALLERY_SCENES.has(S.scene) && S.scene !== 'giants') { rig.setEnabled(!rig.enabled); updateMiningButtons(); }
+  if (k === 'j' && rig) showCoreGallery();
   if (rig?.enabled) {
     if (k === 'f') rig.detonate();
+    if (k === 'r') rig.blastCore(S.time);
     if (k === 'c') { rig.cycleCharge(e.shiftKey ? -1 : 1); updateMiningButtons(); }
     if (k === 't') { rig.toggleTractor(); updateMiningButtons(); }
+    if (k === 'm') { rig.toggleTrap(); updateMiningButtons(); }
     if (k === 'k') { rig.toggleScan(); updateMiningButtons(); }
   }
 });
@@ -1402,6 +1422,13 @@ function bindControls() {
   $('b-detonate').addEventListener('click', () => rig.detonate());
   $('b-tractor').addEventListener('click', () => { rig.toggleTractor(); updateMiningButtons(); });
   $('b-scan').addEventListener('click', () => { rig.toggleScan(); updateMiningButtons(); });
+  $('b-core-blast')?.addEventListener('click', () => {
+    if (!rig.enabled) { if (GALLERY_SCENES.has(S.scene) || S.scene === 'giants') setScene('mining'); else rig.setEnabled(true); }
+    rig.blastCore(S.time);
+    updateMiningButtons();
+  });
+  $('b-trap')?.addEventListener('click', () => { rig.toggleTrap(); updateMiningButtons(); });
+  $('b-core-gallery')?.addEventListener('click', () => showCoreGallery());
   for (const b of document.querySelectorAll('[data-charge]')) {
     b.addEventListener('click', () => { rig.chargeIndex = Number(b.dataset.charge); updateMiningButtons(); });
   }
@@ -1476,9 +1503,10 @@ async function start() {
   storm = new StormSystem({ scene: fgScene, field, shared, sparks });
   // Kopalnia: fizyka wydobycia (src/game/asteroidMining.js — ta sama w grze),
   // render ciał i okruchów (minedRocks.js), drony i ładunki dema (miningRig.js).
-  mining = new AsteroidMining({ radiusAt: (shape, x, y, z) => bank.radiusAt(shape, x, y, z), seed: 0x51A7 });
-  minedRocks = new MinedRocks({ renderer, scene: fgScene, bank, shared, playMaterial, grid, mining, mineralTemplates, shadows });
-  rig = new MiningRig({ scene: fgScene, mining, playLayer, playZ, dynamics, sparks, sunT: sunLight });
+  // Rdzenie skał (2026-09-28): skała energetyczna ma w geodzie piorun kulisty (w grze jeszcze wył.).
+  mining = new AsteroidMining({ radiusAt: (shape, x, y, z) => bank.radiusAt(shape, x, y, z), seed: 0x51A7, config: { ballLightning: true } });
+  minedRocks = new MinedRocks({ renderer, scene: fgScene, bank, shared, grid, mining, mineralTemplates, shadows });
+  rig = new MiningRig({ scene: fgScene, mining, playLayer, playZ, dynamics, sparks, sunT: sunLight, storm, shared });
   loading.textContent = 'Kadłuby…';
   try {
     atlas = await DemoHull.load({ id: 'atlas', url: atlasUrl, editor: ATLAS_EDITOR_DEFAULTS, scene: fgScene, shared, owner: 1 });

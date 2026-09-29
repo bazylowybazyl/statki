@@ -66,8 +66,8 @@ test('beam targets are prefiltered by the shot capsule before the exact test', (
   const pushAt = html.indexOf('function pushBeamTarget(obj, shooter, frameId, boundCacheable, minX, maxX, minY, maxY) {');
   assert.ok(radiusAt > 0 && pushAt > radiusAt, 'promień celu musi istnieć przed prefiltrem');
   const push = html.slice(pushAt, html.indexOf('_beamTargets.push(obj);', pushAt));
-  assert.match(push, /Math\.max\(getBeamTargetRadius\(obj\), getBeamShieldCheckRadius\(obj\)\)/,
-    'promień prefiltru musi obejmować i kadłub, i bańkę tarczy');
+  assert.match(push, /Math\.max\(getBeamTargetRadius\(obj\), getEntityShieldBlockingRadius\(obj\)\)/,
+    'promień prefiltru musi obejmować i kadłub, i obwiednię tarczy');
   assert.match(push, /ox < minX - bound/);
   // Dokładna pętla idzie po liście z prefiltra.
   const world = sliceFunction(html, 'function resolveBeamWorldHit(shooter, weapon, muzzleX, muzzleY, dirX, dirY, range, out) {');

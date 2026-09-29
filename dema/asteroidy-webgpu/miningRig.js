@@ -13,13 +13,20 @@
 //   • F: detonacja wszystkich ładunków; T: wiązka ściągająca (okruchy i odłamy
 //     lżejsze niż udźwig lecą do Atlasa i trafiają do ładowni); K: skaner
 //     (rdzeń, ruda pod kursorem, ładunek potrzebny do przebicia).
+//   • RDZEŃ (2026-09-28): R — ładunek w otworze tuż nad rdzeniem skały i detonacja
+//     (rdzeń wypada z gniazda: bryła metalu, odłamki kryształu…); J — galeria
+//     rdzeni (kawałki rdzeni wszystkich rud obok odłamków skorupy, piorun kulisty).
+//   • PIORUN KULISTY (rdzeń skały energetycznej): odsłonięty ucieka i błądzi;
+//     M — pułapka magnetyczna (sprzęt): wiązka T z pułapką chwyta go i ściąga do
+//     pułapki (TRAP_CAP), bez pułapki wiązka go detonuje — wybuch przy statku.
 
 import * as THREE from 'three/webgpu';
 import { Fn, float, vec3, vec4, attribute, exp, max, normalize, cross, length, select, varyingProperty, mix } from 'three/tsl';
-import { createYield } from '../../src/game/asteroidMining.js';
-import { chargeForDepth, chargeReach, rockMaterial } from '../../src/game/asteroidMaterials.js';
-import { RESOURCES } from '../../src/data/resources.js';
+import { createYield, isCorePiece } from '../../src/game/asteroidMining.js';
+import { chargeForDepth, chargeReach, rockMaterial, CORE_KIND_LABELS_PL, CORE_MATERIAL, MINING_CONFIG } from '../../src/game/asteroidMaterials.js';
+import { RESOURCES, ASTEROID_YIELD } from '../../src/data/resources.js';
 import { ROCK_TYPE_LABELS_PL, ROCK_TYPE_INDEX, pickShape } from '../../src/game/asteroidRockKinds.js';
+import { BallLightningView, ballInstability } from './ballLightning.js';
 
 export const CHARGES = Object.freeze([
   Object.freeze({ id: 'S', label: 'mały', energy: 0.5 }),
@@ -34,9 +41,20 @@ const DRONE_POWER = 1.5;
 const DRONE_RING = 300;
 const DRONE_Z = 170;
 const TRACTOR = Object.freeze({ radius: 3600, capacity: 450, capture: 260 });
-const BEAM_CAP = 48;
+const BEAM_CAP = 96;
+// Pułapka magnetyczna: tyle piorunów kulistych mieści naraz.
+const TRAP_CAP = 3;
+// Galeria rdzeni: rudy (kolejność w rzędzie) i opisy.
+const GALLERY_TYPES = Object.freeze(['copper', 'iron', 'titan', 'silicon', 'crystal', 'ice', 'uran']);
 
 function fmt1(v) { return v.toFixed(1).replace('.', ','); }
+
+/** Opis rdzenia do HUD-u: „bryła metalu”, „zbite kryształy”, „piorun kulisty”… */
+function coreLabel(kind, oreTypeId) {
+  if (oreTypeId === 'silicon' && kind === 'crystal') return 'kryształ krzemu';
+  if (kind === 'mineral' && oreTypeId === 'uran') return 'smółka uranowa';
+  return CORE_KIND_LABELS_PL[kind] || kind || 'rdzeń';
+}
 
 // ---------------------------------------------------------------------------
 // Wiązki (laser, wiązka ściągająca): pasek od A do B, szerokość w świecie,
@@ -174,14 +192,26 @@ export class MiningRig {
    * @param {import('./dynamics.js').Dynamics} o.dynamics
    * @param {import('./sparks.js').Sparks} o.sparks
    * @param {(x:number, y:number) => number} o.sunT transmitancja słońca do renderu
+   * @param {import('./storm.js').StormSystem} [o.storm] łuki wyładowań pioruna kulistego
+   * @param {object} [o.shared] uniformy skał (obraz pioruna kulistego)
    */
-  constructor({ scene, mining, playLayer, playZ, dynamics, sparks, sunT }) {
+  constructor({ scene, mining, playLayer, playZ, dynamics, sparks, sunT, storm = null, shared = null }) {
     this.mining = mining;
     this.playLayer = playLayer;
     this.playZ = playZ;
     this.dynamics = dynamics;
     this.sparks = sparks;
     this.sunT = sunT;
+    this.storm = storm;
+    // Pioruny kuliste: obraz kul plazmy, pułapka magnetyczna (sprzęt), złapane,
+    // błyski wyładowań (światło) i łuki pełzające po kulach.
+    this.ballView = shared ? new BallLightningView({ scene, shared }) : null;
+    this.trap = false;
+    this.trapped = [];
+    this._flashes = [];
+    this._arcT = 0;
+    // Galeria rdzeni: podpisy (przestrzeń skał) okruchów na pokaz.
+    this.gallery = [];
     this.enabled = false;
     this.firing = false;
     this.cursor = null;          // punkt kursora (przestrzeń skał: x, −y)
@@ -282,6 +312,14 @@ export class MiningRig {
   toggleTractor() { this.tractor = !this.tractor; }
   toggleScan() { this.scan = !this.scan; }
 
+  /** Pułapka magnetyczna (sprzęt): bez niej wiązka detonuje pioruny kuliste. */
+  toggleTrap() {
+    this.trap = !this.trap;
+    this._say(this.trap
+      ? `Pułapka magnetyczna włączona — wiązka (T) chwyta pioruny kuliste (${this.trapped.length}/${TRAP_CAP})`
+      : 'Pułapka magnetyczna wyłączona — wiązka zdetonuje piorun kulisty');
+  }
+
   _say(text) {
     this.messages.push({ text, t: this.time });
     if (this.messages.length > 6) this.messages.shift();
@@ -306,8 +344,16 @@ export class MiningRig {
     body.userData = { fieldId: best.id };
     this.playLayer.hide(best.id);
     const label = ROCK_TYPE_LABELS_PL[body.typeId] || body.typeId;
-    this._say(`Przejęta skała: ${label}, r ${Math.round(best.r)} j., ${fmt1(body.mass)} t${body.oreTypeId && body.typeId === 'rock' ? ' (ukryty rdzeń!)' : ''}`);
+    this._say(`Przejęta skała: ${label}, r ${Math.round(best.r)} j., ${fmt1(body.mass)} t${body.oreTypeId && body.typeId === 'rock' ? ' (ukryty rdzeń!)' : ''}${this._coreNote(body)}`);
     return body;
+  }
+
+  // „ · rdzeń: bryła metalu r 190 j., 57 t” (piorun kulisty — ostrzeżenie).
+  _coreNote(body) {
+    const c = body.core;
+    if (!c) return '';
+    if (c.kind === 'plasma') return ` · w geodzie PIORUN KULISTY — złapiesz go tylko z pułapką magnetyczną (M)`;
+    return ` · rdzeń: ${coreLabel(c.kind, c.oreTypeId)} r ${Math.round(c.r)} j., ${fmt1(body.coreMass)} t czystej rudy`;
   }
 
   /** Skała testowa danego typu obok statku (scena Kopalnia). */
@@ -329,8 +375,98 @@ export class MiningRig {
     });
     const body = this.mining.activate(rock, { z: this.playZ(rock), time, sunT: this.sunT(x, y), anchored: true });
     body.userData = { test: true };
-    this._say(`Skała testowa: ${ROCK_TYPE_LABELS_PL[typeId] || typeId}, r ${r} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t`);
+    this._say(`Skała testowa: ${ROCK_TYPE_LABELS_PL[typeId] || typeId}, r ${r} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t${this._coreNote(body)}`);
     return body;
+  }
+
+  /** Największe ciało z nienaruszonym rdzeniem (skała testowa / przejęta) albo null. */
+  _coreBody() {
+    let best = null;
+    for (const b of this.mining.bodies) {
+      if (!b.alive || !b.core || !b.coreMaterial) continue;
+      if (b.massDirty) b.recomputeMass();
+      const present = b.coreMass > 1e-6;
+      if (!present) continue;
+      if (!best || b.mass > best.mass) best = b;
+    }
+    return best;
+  }
+
+  /**
+   * R: ładunek (bieżąca wielkość) w otworze tuż nad rdzeniem (jak po wierceniu
+   * do rdzenia) i detonacja — rdzeń wypada z gniazda.
+   */
+  blastCore(time) {
+    const b = this._coreBody();
+    if (!b) { this._say('Wysadź rdzeń: brak skały z rdzeniem (postaw skałę testową)'); return false; }
+    const c = b.core;
+    // „Góra” skały w jej układzie = kierunek do kamery (+Z sceny).
+    const up = [0, 0, 0];
+    const q = b.q;
+    // v' = q* (0, 0, 1) q — oś Z sceny w układzie skały.
+    const x = q[0], y = q[1], z = q[2], w = q[3];
+    up[0] = 2 * (x * z - w * y); up[1] = 2 * (y * z + w * x); up[2] = 1 - 2 * (x * x + y * y);
+    const d = (c.rMax ?? c.r) + b.cs * 0.8;
+    const local = [c.x + up[0] * d, c.y + up[1] * d, c.z + up[2] * d];
+    const ch = CHARGES[this.chargeIndex];
+    this.charges.push({ body: b, local, energy: ch.energy, id: ch.id, t0: this.time });
+    this._say(`Ładunek ${ch.id} w otworze nad rdzeniem (${coreLabel(c.kind, c.oreTypeId)}) — detonacja`);
+    this.detonate();
+    void time;
+    return true;
+  }
+
+  /**
+   * J: galeria rdzeni przed statkiem — kawałek rdzenia każdej rudy (górny rząd),
+   * odłamek jej skorupy (dolny) i piorun kulisty na pokaz (wisi, nie wybucha).
+   */
+  spawnCoreGallery(ship) {
+    const m = this.mining;
+    const cfg = m.cfg;
+    const c = Math.cos(ship.angle), s = Math.sin(ship.angle);
+    // Środek galerii przed dziobem; rzędy poziomo na ekranie (świat gry → przestrzeń skał: Y = −y).
+    const cx = ship.x + c * 1500, cy = ship.y + s * 1500;
+    const step = 330;
+    this.gallery.length = 0;
+    const n = GALLERY_TYPES.length + 1;
+    const put = (i, row, r, fields) => {
+      const off = (i - (n - 1) / 2) * step;
+      const gx = cx + off, gy = cy + row * 330 - 165;
+      const rho = rockMaterial(fields.type).density;
+      const mass = (4 / 3) * Math.PI * r * r * r * rho * cfg.tonnesPerVolume;
+      const a = (i * 0.61803 + row * 0.37) % 1;
+      const q = [0.3 * Math.sin(a * 9), 0.4 * Math.cos(a * 7), 0.2, 0.85];
+      const l = Math.hypot(...q);
+      const peb = {
+        id: m._nextId++, sourceId: 0, parentId: 0, typeId: fields.typeId, oreRes: fields.oreRes, oreTypeId: fields.coreType,
+        type: fields.type, core: fields.core, coreType: fields.coreType,
+        p: [gx, -gy, -r * 1.05], v: [0, 0, 0], q: q.map((v) => v / l), w: [0, 0, 0], r, mass,
+        oreMass: fields.core ? mass : mass * 0.1, shape: 0, seed: a, grace: 0, age: 0, alive: true, gravel: false,
+        sleep: 0, asleep: true, display: true
+      };
+      m.pebbles.push(peb);
+      return peb;
+    };
+    GALLERY_TYPES.forEach((t, i) => {
+      const type = ROCK_TYPE_INDEX[t];
+      const kind = CORE_MATERIAL[t]?.kind;
+      const base = { type, typeId: t, oreRes: ASTEROID_YIELD[t] || null, coreType: t };
+      const core = put(i, 0, 115, { ...base, core: true });
+      const crust = put(i, 1, 95, { ...base, core: false });
+      this.gallery.push({ p: core.p, r: core.r, text: `${ROCK_TYPE_LABELS_PL[t] || t} — rdzeń`, sub: coreLabel(kind, t) });
+      this.gallery.push({ p: crust.p, r: crust.r, text: 'skorupa', sub: '~10% rudy' });
+    });
+    // Piorun kulisty na pokaz (bez bezpiecznika).
+    const off = ((n - 1) - (n - 1) / 2) * step;
+    const ball = m.addDisplayBall(cx + off, -cy, -60, 6);
+    this.gallery.push({ p: ball.p, r: ball.r * 1.6, text: 'energetyczna — rdzeń', sub: 'piorun kulisty' });
+    // Skały pola w obrysie galerii znikają (resetMining je przywraca).
+    const hx = (n / 2) * step + 250, hy = 600;
+    this.playLayer.forEachLoaded((f) => {
+      if (Math.abs(f.x - cx) < hx + f.r && Math.abs(f.y - cy) < hy + f.r) this.playLayer.hide(f.id);
+    });
+    this._say('Galeria rdzeni: górny rząd — kawałki rdzeni (czysta ruda), dolny — odłamki skorupy; na końcu piorun kulisty');
+    return { x: cx, y: cy };
   }
 
   /** Pionowy promień w dół w punkcie (przestrzeń skał) — trafienie w ciało albo null. */
@@ -363,7 +499,7 @@ export class MiningRig {
     if (!this.charges.length) { this._say('Brak ładunków (PPM)'); return; }
     const list = this.charges;
     this.charges = [];
-    let pieces = 0, breach = 0, contained = 0;
+    let pieces = 0, breach = 0, contained = 0, corePieces = 0, coreKind = null, coreType = null;
     for (const ch of list) {
       const w = ch.body.localToWorld(ch.local[0], ch.local[1], ch.local[2], [0, 0, 0]);
       // Ciało mogło się już rozpaść: ładunek siedzi w tym, które ma go w środku.
@@ -380,11 +516,15 @@ export class MiningRig {
       const res = this.mining.detonate(body, w[0], w[1], w[2], ch.energy, this.lost);
       if (res.outcome === 'breach') {
         breach++;
+        const all = [res.bodies, res.pebbles, res.gravel];
         pieces += res.bodies.length + res.pebbles.length + res.gravel.length;
+        for (const list2 of all) for (const p of list2) if (isCorePiece(p)) corePieces++;
+        if (res.coreChunks && body.core) { coreKind = body.core.kind; coreType = body.core.oreTypeId; }
       } else contained++;
       this.lastBlast = res;
     }
-    if (breach) this._say(`Wybuch: ${pieces} odłamów${contained ? `, ${contained} ładunków za słabych` : ''}`);
+    const coreTxt = corePieces ? ` · rdzeń (${coreLabel(coreKind, coreType)}): ${corePieces} ${corePieces === 1 ? 'kawałek' : 'kawałków'} czystej rudy` : '';
+    if (breach) this._say(`Wybuch: ${pieces} odłamów${coreTxt}${contained ? `, ${contained} ładunków za słabych` : ''}`);
     else this._say('Za słaby ładunek — skała pękła w środku, skorupa trzyma (następny sięgnie dalej)');
   }
 
@@ -409,10 +549,10 @@ export class MiningRig {
     const mining = this.mining;
     const ox = f.originX, oy = f.originY;
     const sp = this.sparks;
-    // Iskry wybuchów (scena).
+    // Iskry wybuchów (scena); wyładowania pioruna kulistego — fioletowe.
     if (this._sparkQueue && sp) {
       for (const q of this._sparkQueue) {
-        sp.emit(q.x - ox, q.y + oy, q.z + 40, 0, 0, 1, q.n, { cone: -1, speed: [250, 2200 * Math.min(1.6, q.k)], life: [0.3, 1.3], color: [3.4, 1.8, 0.7], size: 7 });
+        sp.emit(q.x - ox, q.y + oy, q.z + 40, 0, 0, 1, q.n, { cone: -1, speed: [250, (q.speed || 2200) * Math.min(1.6, q.k)], life: [0.3, 1.3], color: q.color || [3.4, 1.8, 0.7], size: 7 });
       }
       this._sparkQueue.length = 0;
     }
@@ -479,15 +619,20 @@ export class MiningRig {
     }
     // Wiązka ściągająca.
     this._tractorTargets.length = 0;
+    this._ballTargets = this._ballTargets || [];
+    this._ballTargets.length = 0;
     if (this.tractor) {
       const tx = ship.x, ty = -ship.y, tz = 0;
       const got = mining.tractor(tx, ty, tz, TRACTOR.radius, TRACTOR.capacity, TRACTOR.capture, dt, this.cargo);
       for (const g of got) {
         const res = g.oreRes ? RESOURCES[g.oreRes] : null;
-        if (g.ore > 0.05 && res) this._say(`+${fmt1(g.ore)} t: ${res.label.toLowerCase()} (${g.kind === 'body' ? 'odłam' : 'okruch'})`);
+        if (g.ore > 0.05 && res) this._say(`+${fmt1(g.ore)} t: ${res.label.toLowerCase()} (${g.core ? 'kawałek rdzenia' : g.kind === 'body' ? 'odłam' : 'okruch'})`);
       }
+      // Pioruny kuliste: z pułapką — chwyt i ściąganie do pułapki, bez — wiązka je detonuje.
+      mining.pullBalls(tx, ty, tz, TRACTOR.radius, TRACTOR.capture, dt, this.trap, TRAP_CAP - this.trapped.length);
       const near = [];
       for (const p of mining.pebbles) {
+        if (p.display) continue;
         const dd = Math.hypot(p.p[0] - tx, p.p[1] - ty, p.p[2] - tz);
         if (dd < TRACTOR.radius && p.mass <= TRACTOR.capacity) near.push([dd, p.p]);
       }
@@ -497,8 +642,13 @@ export class MiningRig {
       }
       near.sort((a, b) => a[0] - b[0]);
       for (let i = 0; i < Math.min(12, near.length); i++) this._tractorTargets.push(near[i][1]);
+      for (const b of mining.balls) {
+        if (b.display) continue;
+        if (Math.hypot(b.p[0] - tx, b.p[1] - ty, b.p[2] - tz) < TRACTOR.radius + b.r) this._ballTargets.push(b);
+      }
     }
     mining.step(dt);
+    this._ballEvents(f);
     // Wiązki (scena).
     const B = this.beams;
     B.begin();
@@ -532,8 +682,35 @@ export class MiningRig {
         const pulse = 0.55 + 0.45 * Math.sin(this.time * 9 + t[0] * 0.01);
         B.add(sx, sy, 20, t[0] - ox, t[1] + oy, t[2], 38, 0.25, 0.6, 1.6, 0.35 * pulse);
       }
+      // Pioruny w wiązce: z pułapką — zimna wiązka i klatka pola wokół kuli (zaciska się
+      // z chwytem), bez pułapki — rwąca się, fioletowa (plazma się wyrywa).
+      for (const b of this._ballTargets) {
+        if (!b.alive) continue;
+        const bx = b.p[0] - ox, by = b.p[1] + oy, bz = b.p[2];
+        if (this.trap) {
+          const pulse = 0.7 + 0.3 * Math.sin(this.time * 14 + b.id);
+          B.add(sx, sy, 20, bx, by, bz, 56, 0.3, 1.3, 2.6, 0.5 * pulse);
+          const R = b.r * (1.9 - 0.6 * b.lock);
+          for (let ring = 0; ring < 2; ring++) {
+            const tilt = ring ? 0.9 : 0.25;
+            const spin = this.time * (ring ? -2.1 : 1.7);
+            for (let s2 = 0; s2 < 14; s2++) {
+              const a0 = spin + (s2 / 14) * Math.PI * 2, a1 = spin + ((s2 + 1) / 14) * Math.PI * 2;
+              const p0 = [Math.cos(a0) * R, Math.sin(a0) * R * Math.cos(tilt), Math.sin(a0) * R * Math.sin(tilt)];
+              const p1 = [Math.cos(a1) * R, Math.sin(a1) * R * Math.cos(tilt), Math.sin(a1) * R * Math.sin(tilt)];
+              B.add(bx + p0[0], by + p0[1], bz + p0[2], bx + p1[0], by + p1[1], bz + p1[2], 9, 0.5, 1.6, 2.8, 0.55 + 0.45 * b.lock);
+            }
+          }
+        } else {
+          const flick = Math.random() < 0.3 ? 0.15 : 1;
+          B.add(sx, sy, 20, bx, by, bz, 44, 1.6, 0.5, 2.4, 0.4 * flick);
+        }
+      }
     }
     B.commit();
+    // Pioruny kuliste: kule plazmy i łuki pełzające po nich.
+    this.ballView?.update(mining.balls, ox, oy, this.time);
+    this._ballArcs(dt);
     // Drony (scena).
     const DM = this.droneMeshes;
     for (let i = 0; i < this.drones.length; i++) {
@@ -554,8 +731,99 @@ export class MiningRig {
     }
   }
 
+  // Zdarzenia fizyki: pioruny kuliste (uwolnienie, wyładowanie, złapanie).
+  _ballEvents(f) {
+    const ev = this.mining.drainEvents();
+    for (let i = 0; i < ev.length; i++) {
+      const e = ev[i];
+      if (e.kind !== 'ball') continue;
+      if (e.outcome === 'release') {
+        const how = e.how === 'dig' ? 'laser otworzył geodę' : e.how === 'saw' ? 'piła przecięła geodę' : 'wybuch rozbił geodę';
+        this._say(`PIORUN KULISTY uwolniony (${how}, E ${fmt1(e.energy)}, wybuch za ${fmt1(e.ball.fuse)} s) — ${this.trap ? 'pułapka gotowa, łap wiązką (T)' : 'bez pułapki magnetycznej (M) wiązka go zdetonuje!'}`);
+        this._sparkQueue.push({ x: e.x, y: e.y, z: e.z, n: 160, k: 0.8, color: [2.0, 1.1, 3.4] });
+      } else if (e.outcome === 'discharge') {
+        this._dischargeFx(e);
+      } else if (e.outcome === 'capture') {
+        this.trapped.push({ energy: e.energy, t: this.time });
+        this._say(`Piorun kulisty w pułapce magnetycznej (E ${fmt1(e.energy)}) · ${this.trapped.length}/${TRAP_CAP}`);
+      }
+    }
+    void f;
+  }
+
+  // Wyładowanie: błysk i łuna, fioletowe iskry, pioruny do powierzchni najbliższych skał.
+  _dischargeFx(e) {
+    const E = e.energy;
+    // Bez pomarańczowej łuny wybuchu ładunku (dynamics.explode): wyładowanie plazmy świeci
+    // fioletem — błysk i światło z _flashes, iskry jonów, pioruny do skał.
+    this._sparkQueue.push({ x: e.x, y: e.y, z: e.z, n: Math.min(1400, 300 + 90 * E), k: 1.3, color: [2.2, 1.3, 3.8], speed: 2600 });
+    this._flashes.push({ x: e.x, y: e.y, z: e.z, t0: this.time, E });
+    if (this.storm) {
+      const near = [];
+      for (const b of this.mining.bodies) {
+        const d = Math.hypot(b.p[0] - e.x, b.p[1] - e.y, b.p[2] - e.z) - b.boundR;
+        if (d < 2400) near.push([d, b]);
+      }
+      near.sort((a, b) => a[0] - b[0]);
+      let made = 0;
+      for (let i = 0; i < near.length && made < 4; i++) {
+        const b = near[i][1];
+        const h = this.mining.raycast(e.x, e.y, e.z, b.p[0] - e.x, b.p[1] - e.y, b.p[2] - e.z, 1e6, b);
+        if (!h) continue;
+        this.storm._addArc(e.x, -e.y, e.z, h.x, -h.y, h.z, 0.32 + made * 0.06, 1.3);
+        made++;
+      }
+      for (let i = made; i < 6; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const L = 450 + Math.random() * 800;
+        this.storm._addArc(e.x, -e.y, e.z, e.x + Math.cos(a) * L, -(e.y + Math.sin(a) * L), e.z - Math.random() * 250, 0.22 + Math.random() * 0.12, 0.9);
+      }
+    }
+    const where = e.where === 'beam' ? ' — w wiązce, przy statku! Bez pułapki magnetycznej (M) się go nie złapie' : '';
+    this._say(`Piorun kulisty wybuchł (E ${fmt1(E)})${where}${e.body ? ' — rozsadził skałę obok' : ''}`);
+  }
+
+  // Łuki pełzające po kulach plazmy (ognie świętego Elma; niestabilna — gęściej).
+  _ballArcs(dt) {
+    const storm = this.storm;
+    const balls = this.mining.balls;
+    if (!storm || !balls.length) { this._arcT = 0; return; }
+    this._arcT += dt;
+    while (this._arcT > 0.06) {
+      this._arcT -= 0.06;
+      for (const b of balls) {
+        const ins = ballInstability(b);
+        if (Math.random() > 0.35 + 0.5 * ins) continue;
+        const a0 = Math.random() * Math.PI * 2;
+        const a1 = a0 + (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 1.2);
+        const r0 = b.r * 0.75;
+        const r1 = b.r * (1.05 + Math.random() * (0.5 + ins));
+        storm._addArc(b.p[0] + Math.cos(a0) * r0, -(b.p[1] + Math.sin(a0) * r0), b.p[2] + b.r * 0.55,
+          b.p[0] + Math.cos(a1) * r1, -(b.p[1] + Math.sin(a1) * r1), b.p[2] + b.r * 0.15, 0.05 + Math.random() * 0.09, 0.28 + 0.2 * ins);
+      }
+    }
+  }
+
   /** Światła dronów, miejsc cięcia i ładunków (scena). */
   addLights(grid, ox, oy) {
+    // Pioruny kuliste: fioletowe (w pułapce — sine) światło, migocze; błyski wyładowań.
+    for (const b of this.mining.balls) {
+      const ins = ballInstability(b);
+      const fl = 0.82 + 0.18 * Math.sin(this.time * (13 + 34 * ins) + b.id);
+      const k = (0.55 + 0.3 * Math.cbrt(b.energy)) * fl * (1 + 0.8 * ins);
+      const cr = 1.0 - 0.5 * b.lock, cg = 0.55 + 0.35 * b.lock, cb = 1.6 - 0.2 * b.lock;
+      // Mało rozpraszania w pyle: pełne robiło fioletową mgłę na cały kadr.
+      grid.add(b.p[0] - ox, b.p[1] + oy, b.p[2] + b.r * 0.4, 800 + b.r * 6, cr * k, cg * k, cb * k, 0.06);
+    }
+    let w = 0;
+    for (const fl of this._flashes) {
+      const u = (this.time - fl.t0) / 0.8;
+      if (u >= 1 || u < 0) continue;
+      this._flashes[w++] = fl;
+      const k = (1 - u) * (1 - u) * (1.2 + fl.E * 0.15);
+      grid.add(fl.x - ox, fl.y + oy, fl.z + 80, 1500 + 110 * fl.E, 1.3 * k, 0.9 * k, 2.2 * k, 0.3);
+    }
+    this._flashes.length = w;
     for (const d of this.drones) {
       if (d.parked && !this.enabled) continue;
       grid.add(d.p[0] - ox, d.p[1] + oy, d.p[2], 420, 0.35, 0.55, 0.8, 0.05);
@@ -575,8 +843,20 @@ export class MiningRig {
     }
   }
 
-  /** Duszki: żar punktów cięcia, dysze dronów, migające ładunki. */
+  /** Duszki: żar punktów cięcia, dysze dronów, migające ładunki, poświata piorunów kulistych. */
   addGlows(glow, ox, oy) {
+    for (const b of this.mining.balls) {
+      const ins = ballInstability(b);
+      const fl = 0.8 + 0.2 * Math.sin(this.time * (17 + 40 * ins) + b.id * 3);
+      const x = b.p[0] - ox, y = b.p[1] + oy, z = b.p[2] + b.r * 1.05;
+      glow.add(x, y, z, b.r * 4.2, (0.22 - 0.1 * b.lock) * fl, (0.1 + 0.12 * b.lock) * fl, 0.42 * fl * (1 + 0.5 * ins), 0);
+    }
+    for (const fl of this._flashes) {
+      const u = (this.time - fl.t0) / 0.8;
+      if (u >= 1 || u < 0) continue;
+      const k = (1 - u) * (1 - u);
+      glow.add(fl.x - ox, fl.y + oy, fl.z + 120, (500 + 70 * fl.E) * (0.6 + u), 3.0 * k, 2.2 * k, 4.5 * k, 0);
+    }
     for (const d of this.drones) {
       if (d.parked && !this.enabled) continue;
       glow.add(d.p[0] - ox, d.p[1] + oy, d.p[2] + 12, 26, 0.7, 1.6, 2.6, 0);
@@ -603,14 +883,17 @@ export class MiningRig {
     if (this.scan) {
       for (const b of this.mining.bodies) {
         if (!b.core || !b.oreTypeId) continue;
+        // Rdzeń w tym ciele? (odłam bez rdzenia, wysadzony rdzeń, pusta geoda — bez znacznika)
+        if (b.massDirty) b.recomputeMass();
+        if (!(b.coreMass > 1e-6)) continue;
+        if (b.sampleCore(b.core.x, b.core.y, b.core.z) < 0.5 && b.generation > 0) continue;
         const c = b.localToWorld(b.core.x, b.core.y, b.core.z, [0, 0, 0]);
-        // Rdzeń w tym ciele? (odłam bez rdzenia nie pokazuje go)
-        if (b.sample(b.core.x, b.core.y, b.core.z) < 0.3 && b.generation > 0) continue;
         const [sx, sy] = toScr(c[0], c[1]);
         const rr = Math.max(8, b.core.r * cam.zoom);
         if (sx < -rr || sy < -rr || sx > W + rr || sy > H + rr) continue;
+        const plasma = b.core.kind === 'plasma';
         ctx.setLineDash([6, 5]);
-        ctx.strokeStyle = 'rgba(255,200,120,0.85)';
+        ctx.strokeStyle = plasma ? 'rgba(200,150,255,0.9)' : 'rgba(255,200,120,0.85)';
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
@@ -618,11 +901,66 @@ export class MiningRig {
         const top = this._probeDown(c[0], c[1]);
         const depth = top ? Math.max(0, top.z - c[2]) : 0;
         const need = chargeForDepth(b.material, depth + b.core.r * 0.3);
-        ctx.fillStyle = 'rgba(255,215,150,0.95)';
-        ctx.fillText(`RDZEŃ · ${res ? res.label.toLowerCase() : b.oreTypeId}`, sx, sy - rr - 18);
+        ctx.fillStyle = plasma ? 'rgba(220,180,255,0.98)' : 'rgba(255,215,150,0.95)';
+        const what = plasma
+          ? 'PIORUN KULISTY — potrzebna pułapka magnetyczna (M)'
+          : `${res ? res.label.toLowerCase() : b.oreTypeId} — ${coreLabel(b.core.kind, b.core.oreTypeId)}, ${fmt1(b.coreMass)} t (100%)`;
+        ctx.fillText(`RDZEŃ · ${what}`, sx, sy - rr - 18);
         ctx.fillStyle = 'rgba(210,225,235,0.85)';
-        ctx.fillText(`głęb. ${Math.round(depth)} j. · ładunek z rdzenia ≥ ${fmt1(need)}`, sx, sy - rr - 4);
+        ctx.fillText(`głęb. ${Math.round(depth)} j. · ładunek z rdzenia ≥ ${fmt1(need)} · R: wysadź rdzeń`, sx, sy - rr - 4);
       }
+    }
+    // Pioruny kuliste na wolności: bezpiecznik i stan chwytu.
+    for (const b of this.mining.balls) {
+      if (b.display) continue;
+      const [sx, sy] = toScr(b.p[0], b.p[1]);
+      const rr = Math.max(12, b.r * cam.zoom * 1.5);
+      if (sx < -rr || sy < -rr || sx > W + rr || sy > H + rr) continue;
+      ctx.setLineDash([3, 4]);
+      ctx.strokeStyle = this.trap ? 'rgba(140,220,255,0.9)' : 'rgba(215,150,255,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(230,200,255,0.98)';
+      ctx.fillText(`PIORUN KULISTY · E ${fmt1(b.energy)} · wybuch za ${fmt1(Math.max(0, b.fuse))} s`, sx, sy - rr - 18);
+      ctx.fillStyle = this.trap ? 'rgba(170,230,255,0.95)' : 'rgba(255,170,170,0.95)';
+      const state = this.trap
+        ? (b.lock > 0.01 ? `pułapka: chwyt ${Math.round(b.lock * 100)}%` : 'pułapka gotowa — wiązka T')
+        : 'bez pułapki (M) wiązka go zdetonuje';
+      ctx.fillText(state, sx, sy - rr - 4);
+    }
+    // Kawałki rdzenia w locie (skaner): romb i ruda — do wyłapania wiązką.
+    if (this.scan) {
+      let marks = 0;
+      const mark = (x, y, rr, mass, oreRes) => {
+        if (marks >= 40) return;
+        const [sx, sy] = toScr(x, y);
+        const s = Math.max(7, rr * cam.zoom * 0.9);
+        if (sx < -s || sy < -s || sx > W + s || sy > H + s) return;
+        marks++;
+        ctx.strokeStyle = 'rgba(255,205,120,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(sx, sy - s); ctx.lineTo(sx + s, sy); ctx.lineTo(sx, sy + s); ctx.lineTo(sx - s, sy); ctx.closePath(); ctx.stroke();
+        const res = oreRes ? RESOURCES[oreRes] : null;
+        ctx.fillStyle = 'rgba(255,220,160,0.92)';
+        ctx.fillText(`${res ? res.short : '?'} ${fmt1(mass)} t`, sx, sy - s - 4);
+      };
+      for (const p of this.mining.pebbles) {
+        if (p.core && !p.display && p.mass >= 0.2) mark(p.p[0], p.p[1], p.r, p.mass, p.oreRes);
+      }
+      for (const b of this.mining.bodies) {
+        if (b.generation > 0 && isCorePiece(b)) mark(b.p[0], b.p[1], b.boundR * 0.7, b.mass, b.oreRes);
+      }
+    }
+    // Galeria rdzeni: podpisy.
+    for (const g of this.gallery) {
+      const [sx, sy] = toScr(g.p[0], g.p[1]);
+      const off = Math.max(10, g.r * cam.zoom) + 14;
+      if (sx < -200 || sy < -60 || sx > W + 200 || sy > H + 60) continue;
+      ctx.fillStyle = 'rgba(235,225,205,0.95)';
+      ctx.fillText(g.text, sx, sy + off);
+      ctx.fillStyle = 'rgba(180,200,215,0.85)';
+      ctx.fillText(g.sub, sx, sy + off + 14);
     }
     for (const ch of this.charges) {
       if (!ch.body.alive) continue;
@@ -650,12 +988,15 @@ export class MiningRig {
     if (!this.enabled) return [];
     const ch = CHARGES[this.chargeIndex];
     const lines = [];
-    lines.push(`<b>KOPALNIA</b> (G) · LPM laser dronów · Shift+LPM piła · PPM ładunek <b>${ch.id}</b> (${ch.energy}, C) · F detonacja · T wiązka ${this.tractor ? '<b>wł.</b>' : 'wył.'} · K skaner`);
+    lines.push(`<b>KOPALNIA</b> (G) · LPM laser dronów · Shift+LPM piła · PPM ładunek <b>${ch.id}</b> (${ch.energy}, C) · F detonacja · R wysadź rdzeń · T wiązka ${this.tractor ? '<b>wł.</b>' : 'wył.'} · M pułapka ${this.trap ? '<b>wł.</b>' : 'wył.'} · K skaner · J galeria rdzeni`);
     const ores = Object.entries(this.cargo.ore).filter(([, t]) => t > 0.005);
     const oreTxt = ores.length ? ores.map(([id, t]) => `${RESOURCES[id]?.short || id} ${fmt1(t)} t`).join(' · ') : '—';
-    lines.push(`ładownia: ${oreTxt} · skała płonna ${fmt1(this.cargo.waste)} t · stracone ${fmt1(this.lost.lost)} t`);
+    const trapE = this.trapped.reduce((a, b) => a + b.energy, 0);
+    lines.push(`ładownia: ${oreTxt} · skała płonna ${fmt1(this.cargo.waste)} t · stracone ${fmt1(this.lost.lost)} t · pułapka: ${this.trapped.length}/${TRAP_CAP} piorunów${this.trapped.length ? ` (E ${fmt1(trapE)})` : ''}`);
     const m = this.mining;
-    lines.push(`ciała ${m.bodies.length} · okruchy ${m.pebbles.length} · ładunki ${this.charges.length} · wybuch ${fmt1(m.stats.lastBlastMs)} ms`);
+    const free = m.balls.filter((b) => !b.display);
+    const coreP = m.pebbles.reduce((a, p) => a + (p.core && !p.display ? 1 : 0), 0);
+    lines.push(`ciała ${m.bodies.length} · okruchy ${m.pebbles.length} (rdzenia ${coreP}) · ładunki ${this.charges.length} · wybuch ${fmt1(m.stats.lastBlastMs)} ms${free.length ? ` · <b>pioruny kuliste: ${free.map((b) => `${fmt1(Math.max(0, b.fuse))} s`).join(', ')}</b>` : ''}`);
     for (const msg of this.messages.slice(-3)) {
       if (this.time - msg.t < 9) lines.push(`› ${msg.text}`);
     }

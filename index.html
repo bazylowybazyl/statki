@@ -786,7 +786,7 @@
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
     import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
-    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadiusTowards } from './shieldSystem.js';
+    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import {
@@ -8752,17 +8752,6 @@
       return radius;
     }
 
-    // Przy aktywnej tarczy test idzie po bańce, a nie po kadłubie.
-    function getBeamShieldCheckRadius(pt) {
-      let w = pt.w || (pt.radius * 2) || 40;
-      let h = pt.h || (pt.radius * 2) || 40;
-      if (pt.capitalProfile) {
-        w = Math.max(w, (pt.radius || 20) * (pt.capitalProfile.lengthScale || 3.2));
-        h = Math.max(h, (pt.radius || 20) * (pt.capitalProfile.widthScale || 1.2));
-      }
-      return Math.max(w, h) * 0.75;
-    }
-
     function classifyBeamHitEntity(pt, stationList, platformList, wreckList) {
       if (pt === window.ship) return 'player';
       if (stationList && stationList.includes(pt)) return 'station';
@@ -8775,7 +8764,7 @@
     const _beamTargets = [];
     const _beamHitPool = [];
     const _beamHits = [];
-    const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null };
+    const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null, shield: false };
     const _pdBeamHit = createPdBeamHit();
     const _fireAimPoint = { x: 0, y: 0 };
     // Nośniki strzału (src/game/carrierVelocity.js): lufa strzelca i trafiony
@@ -8791,7 +8780,7 @@
       hitEntity: null, nx: 0, ny: 0
     };
     const PD_BEAM_DEPS = {
-      shieldBlockingRadiusTowards: getEntityShieldBlockingRadiusTowards,
+      shieldRayEnter: getEntityShieldRayEnter,
       sweepImpact: (entity, x0, y0, x1, y1, radius) => (entity?.beamHull
         ? HullBodies.sweep(entity, x0, y0, x1, y1, radius)
         : DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius)),
@@ -8805,15 +8794,16 @@
     // poszerzony o promień celu). Dawniej KAŻDY strzał liczył promień i rzut
     // dla wszystkich NPC, wraków i stacji — rój
     // przechwytywaczy (laser PD co 0,18 s) robił setki takich przebiegów na
-    // sekundę. Promień jest zachowawczy (większy z kadłuba i tarczy) i liczony
-    // raz na klatkę na encję, więc dokładna pętla niżej widzi te same trafienia.
+    // sekundę. Promień jest zachowawczy (większy z kadłuba i obwiedni blokującej
+    // tarczy) i liczony raz na klatkę na encję, więc dokładna pętla niżej widzi
+    // te same trafienia.
     function pushBeamTarget(obj, shooter, frameId, boundCacheable, minX, maxX, minY, maxY) {
       if (!obj || obj === shooter) return;
       if (obj.dead || obj.destroyed || obj.removed || obj._destroyed3D) return;
       if (obj.isCollidable === false) return;
       let bound = obj.__beamBoundR;
       if (!boundCacheable || obj.__beamBoundFid !== frameId || !(bound >= 0)) {
-        bound = Math.max(getBeamTargetRadius(obj), getBeamShieldCheckRadius(obj));
+        bound = Math.max(getBeamTargetRadius(obj), getEntityShieldBlockingRadius(obj));
         obj.__beamBoundR = bound;
         obj.__beamBoundFid = frameId;
       }
@@ -8831,6 +8821,7 @@
       let hitEntity = null;
       let hitType = null;
       let beamHitShard = null;
+      let hitShield = false;
 
       const mercCtx = window.mercMission || (typeof mercMission !== 'undefined' ? mercMission : null);
 
@@ -8884,39 +8875,47 @@
         const pt = _beamTargets[k];
         if (!pt) continue;
         if (pt === shooter) continue;
-        const hasShield = pt.shield && pt.shield.val > 0;
-        const checkRadius = hasShield ? getBeamShieldCheckRadius(pt) : getBeamTargetRadius(pt);
-
-        const cx = pt.x;
-        const cy = pt.y;
-        const fx = cx - muzzleX;
-        const fy = cy - muzzleY;
-        const t = fx * dirX + fy * dirY;
-        if (t < -checkRadius || t > hitDist + checkRadius) continue;
-
-        const closestX = muzzleX + dirX * t;
-        const closestY = muzzleY + dirY * t;
-        const distToCenterSq = (cx - closestX) ** 2 + (cy - closestY) ** 2;
-
-        if (distToCenterSq <= checkRadius * checkRadius) {
+        // Blokująca tarcza: wiązka kończy się na wejściu w jej OBRYS (shieldSystem —
+        // ten sam kształt co efekt tarczy i test pocisków). Dawniej przy `shield.val > 0`
+        // (także z tarczą wyłączoną) był to okrąg max(w, h) · 0,75 wokół środka — laser
+        // bił w powietrze daleko przed kadłubem.
+        const hasShield = isEntityShieldBlocking(pt);
+        let tEnter, tExit;
+        if (hasShield) {
+          tEnter = getEntityShieldRayEnter(pt, muzzleX, muzzleY, dirX, dirY, hitDist);
+          if (tEnter < 0) continue;
+          tExit = tEnter;
+        } else {
+          // Okrąg obwiedni kadłuba — tylko przycina odcinek do sweepu / raymarchu
+          // po kadłubie; sam okrąg jest trafieniem wyłącznie dla encji bez kadłuba.
+          const checkRadius = getBeamTargetRadius(pt);
+          const fx = pt.x - muzzleX;
+          const fy = pt.y - muzzleY;
+          const t = fx * dirX + fy * dirY;
+          if (t < -checkRadius || t > hitDist + checkRadius) continue;
+          const distToCenterSq = fx * fx + fy * fy - t * t;
+          if (!(distToCenterSq <= checkRadius * checkRadius)) continue;
           const distInside = Math.sqrt(checkRadius * checkRadius - distToCenterSq);
-          const tEnter = Math.max(0, t - distInside);
-          const tExit = t + distInside;
-          if (tEnter < hitDist) {
-            let rec = _beamHitPool[hitCount];
-            if (!rec) rec = _beamHitPool[hitCount] = { entity: null, tEnter: 0, tExit: 0, hasShield: false };
-            rec.entity = pt;
-            rec.tEnter = tEnter;
-            rec.tExit = tExit;
-            rec.hasShield = hasShield;
-            _beamHits[hitCount] = rec;
-            hitCount++;
-          }
+          tEnter = Math.max(0, t - distInside);
+          tExit = t + distInside;
+          if (!(tEnter < hitDist)) continue;
         }
+        let rec = _beamHitPool[hitCount];
+        if (!rec) rec = _beamHitPool[hitCount] = { entity: null, tEnter: 0, tExit: 0, hasShield: false };
+        rec.entity = pt;
+        rec.tEnter = tEnter;
+        rec.tExit = tExit;
+        rec.hasShield = hasShield;
+        _beamHits[hitCount] = rec;
+        hitCount++;
       }
       _beamHits.length = hitCount;
       if (hitCount > 1) _beamHits.sort(compareBeamHitEnter);
 
+      // Kandydaci po wejściu w obwiednię; pętla kończy się, gdy następna obwiednia
+      // zaczyna się dalej niż najbliższe dotąd trafienie. Trafienie w kadłub nie
+      // przerywa pętli: sweep sąsiedniej (nakładającej się) obwiedni może dać
+      // bliższy punkt — dawniej wygrywał kadłub z wcześniejszym okręgiem, nie trafieniem.
       for (let h = 0; h < hitCount; h++) {
         const hit = _beamHits[h];
         if (hit.tEnter > hitDist) break;
@@ -8926,7 +8925,9 @@
           hitDist = hit.tEnter;
           hitEntity = pt;
           hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
-          break;
+          beamHitShard = null;
+          hitShield = true;
+          continue;
         }
 
         if (pt.beamHull) {
@@ -8942,7 +8943,7 @@
             hitEntity = pt;
             hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
             beamHitShard = null;
-            break;
+            hitShield = false;
           }
         } else if (
           pt.hexGrid &&
@@ -8953,7 +8954,6 @@
           pt.hexGrid.rows > 0
         ) {
           const step = Math.max(4, Math.min(12, beamHexR * 0.9));
-          let foundHex = false;
 
           // Zamiast niszczyć statek testem, robimy bezpieczną analizę pikselową (Safe Raymarch)
           const scale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
@@ -8993,16 +8993,16 @@
               hitEntity = pt;
               hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
               beamHitShard = beamShard;
-              foundHex = true;
+              hitShield = false;
               break;
             }
           }
-          if (foundHex) break;
         } else {
           hitDist = hit.tEnter;
           hitEntity = pt;
           hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
-          break;
+          beamHitShard = null;
+          hitShield = false;
         }
       }
 
@@ -9015,6 +9015,7 @@
       out.entity = hitEntity;
       out.kind = hitType;
       out.shard = beamHitShard;
+      out.shield = hitShield;
       return out;
     }
 
@@ -9126,6 +9127,8 @@
           // Heks trafiony przez raymarch/sweep — applyImpact bierze go wprost, zamiast
           // szukać od nowa sondą o innym promieniu (brzegowe trafienia ginęły).
           const beamHitShard = beamHit.shard;
+          // Wiązka skończyła się na tarczy (obrys blokującej tarczy), nie na kadłubie.
+          const beamHitShield = beamHit.shield === true;
           const mercCtx = window.mercMission || (typeof mercMission !== 'undefined' ? mercMission : null);
 
           const finalEndX = muzzleData.pos.x + dirX * hitDist;
@@ -9174,7 +9177,7 @@
             const ignoreSelfHit = (hitEntity === shooter || hitEntity._realEntity === shooter);
             const allowDamage = !ignoreSelfHit; // Przyjazny ogien aktywny (friendly fire on)!
 
-            if (allowDamage && (!hitEntity.shield || hitEntity.shield.val <= 0)) {
+            if (allowDamage && !beamHitShield) {
               if (hitEntity.hexGrid || hitEntity.beamHull) {
                 const impactSpeed = Number.isFinite(speed) ? speed : Math.max(800, Number(weapon.baseRange) || 2000);
                 applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard, weapon);
@@ -9188,7 +9191,7 @@
             // Bramka 0.1 s na cel dotyczy w praktyce wylacznie lasera ciaglego
             // (20 Hz) — puls (0.65 s) i PD (0.18 s) i tak strzelaja rzadziej.
             const beamShield = (hitEntity._realEntity || hitEntity)?.shield;
-            const beamBlockedByShield = !!beamShield && isEntityShieldBlocking(hitEntity);
+            const beamBlockedByShield = !!beamShield && beamHitShield;
             if (allowDamage && beamBlockedByShield) {
               const nowBeam = performance.now() / 1000;
               if (nowBeam - (Number(beamShield._beamFxAt) || 0) >= 0.1) {
@@ -15880,8 +15883,7 @@
       const rows = [
         { name: 'ID', amount: meta.unitId },
         { name: 'Class', amount: meta.unitClass },
-        { name: 'Distance', amount: `${Math.round(Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y))}` },
-        { name: 'Radius', amount: `${Math.round(getTargetRadius(target))}` }
+        { name: 'Distance', amount: `${Math.round(Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y))}` }
       ];
       for (const row of buildRadarCargoSummary(target)) rows.push(row);
       return {

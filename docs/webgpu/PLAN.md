@@ -225,9 +225,9 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   banku `Fx3D`), zoomu i kadru — przebieg bitwy zależy więc od wizualiów: po 17 (bronie nie zajmują już banku `Fx3D`)
   iskry dysz MAIN dostają więcej budżetu i deterministyczna bitwa 48 okrętów rozjeżdża się z `main` od 2. klatki
   (ślad losowań: pierwsza różnica w `mainExhaust3D.spawnSpark`; wywołania logiki gry identyczne do tego miejsca).
-  Do 23/24: wizualia na `fxRandom`. **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
-  `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
-  wyłączonymi tarczami zerują `val` celu (galeria broni).
+  Do 23/24: wizualia na `fxRandom`. Wiązki od 2026-09-28 kończą się na OBRYSIE tarczy tylko przy
+  `isEntityShieldBlocking` (`getEntityShieldRayEnter`, jak pociski) — wcześniej na okręgu max(w, h) · 0,75 przy
+  `shield.val > 0`, także z `DevFlags.globalShieldsOff`; sceny, które zerują `val` celu (galeria broni), dalej działają.
 - **Pułapki z zadania 18-C (three r183, mapa ran):** **bufor storage-singleton ma rozmiar od PIERWSZEGO wołającego** —
   graf materiału kadłuba budował pulę ran przed kernelem (1 teksel zamiast 3,1 mln): kernel pisał poza bufor (dostęp
   WebGPU jest „robust” — bez błędu, bez efektu), materiał czytał zera; rozmiar trzymać przy singletonie, nie w

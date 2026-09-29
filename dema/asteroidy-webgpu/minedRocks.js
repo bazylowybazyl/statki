@@ -5,7 +5,8 @@
 //
 //   • ATLAS 3D (Storage3DTexture RGBA8 256 × 256 × 128): każde ciało ma blok
 //     64³ / 32³ / 16³ (przydział bliźniaczy), R = zapełnienie, G = ruda,
-//     B = zapełnienie pierwotne (z chwili przejęcia). Zmiany siatki idą przez
+//     B = zapełnienie pierwotne (z chwili przejęcia), A = udział RDZENIA
+//     (lita bryła materiału rdzenia — coreLook.js). Zmiany siatki idą przez
 //     bufor storage i compute (three r183 wgrywa teksturę 3D tylko w całości):
 //     blok w całości przy przydziale, potem tylko pudełko zmian.
 //   • ZEWNĘTRZE: ten sam materiał co pole (RockNodeMaterial, programy
@@ -14,10 +15,12 @@
 //   • WNĘTRZE: raymarching po atlasie (pudełko siatki w układzie skały,
 //     BackSide, głębia z trafienia) — tylko ściany WYCIĘTE (pierwotne
 //     zapełnienie > bieżące: otwory lasera, szczeliny piły, powierzchnie
-//     pęknięć): skała z warstwami, ruda gęstnieje ku rdzeniowi (metal lśni,
-//     kryształ i uran świecą), żar świeżego cięcia, AO w otworach, światła
-//     siatki, słońce, pył ośrodka jak nad skałą.
-//   • OKRUCHY: RockSet (zwykłe skały z banku) z pozycją i obrotem z fizyki.
+//     pęknięć): skała z warstwami, ruda gęstnieje ku rdzeniowi, a sam rdzeń to
+//     lita bryła (metal lśni, kryształy świecą, lód, smółka uranu), żar świeżego
+//     cięcia, fioletowy żar pustej geody po ucieczce pioruna kulistego, AO
+//     w otworach, światła siatki, słońce, pył ośrodka jak nad skałą.
+//   • OKRUCHY: odłamki (fragments.js) — kanciaste kawałki skorupy i kawałki
+//     rdzenia jego materiałem, NIE skały z banku (z wybuchu leciały „małe asteroidy”).
 //
 // Jeden materiał na zewnętrze i jeden na wnętrze (graf budowany raz — nowy
 // materiał skały kosztuje ~50 ms CPU, a wybuch daje kilkanaście odłamów).
@@ -27,21 +30,24 @@ import {
   Fn, float, int, uint, uvec3, vec3, vec4, uniform, uniformArray, attribute, attributeArray, varyingProperty,
   instanceIndex, textureStore, texture3D, positionGeometry, cameraProjectionMatrix, cameraViewMatrix,
   Loop, If, Break, Return, Discard, select, mix, smoothstep, clamp, exp, max, min, pow, dot, normalize,
-  length, sign
+  length, sign, abs
 } from 'three/tsl';
 import { RockNodeMaterial, hexToLinear } from './rockMaterial.js';
 import { ROCK_LODS, pickRockLod } from './rockBank.js';
-import { RockSet } from './rockLayers.js';
 import { MineralLayer, MineralMaterial } from './minerals.js';
 import { quatRotate } from './tslCommon.js';
+import { FragmentSet } from './fragments.js';
+import { createCoreLookArray, coreSurface } from './coreLook.js';
 import { ROCK_TYPES } from '../../src/game/asteroidRockKinds.js';
 
 export const MINED_ATLAS = Object.freeze([256, 256, 128]);
 const TOP = 64;
 const STAGING_CELLS = TOP * TOP * TOP;
 const EXT_FLOATS = 28;   // iPos, iRot, iSpin, iShape, iStretch, iCarve, iGrid
-const INT_FLOATS = 28;   // iPos, iRot, iGrid, iDims, iAtlas, iHot, iMisc
+const INT_FLOATS = 32;   // iPos, iRot, iGrid, iDims, iAtlas, iHot, iMisc, iPlasma
 const MAX_BODIES = 48;
+// Żar pustej geody po ucieczce pioruna kulistego [s].
+const PLASMA_GLOW_LIFE = 6;
 
 // Barwa rudy WNĘTRZA (liniowo) i parametry: metal, emisja, połysk — per typ rudy
 // (ROCK_TYPES). Skała neutralna bez rudy nie używa (udział 0).
@@ -152,11 +158,10 @@ export class MinedRocks {
    * @param {THREE.Scene} o.scene pass gry
    * @param {import('./rockBank.js').RockShapeBankGPU} o.bank
    * @param {object} o.shared uniformy skał (createRockShared; volume, noise)
-   * @param {import('./rockMaterial.js').RockNodeMaterial} o.playMaterial materiał warstwy gry (okruchy)
    * @param {import('./lights.js').LightGrid} o.grid
    * @param {import('../../src/game/asteroidMining.js').AsteroidMining} o.mining
    */
-  constructor({ renderer, scene, bank, shared, playMaterial, grid, mining, mineralTemplates = null, shadows = null }) {
+  constructor({ renderer, scene, bank, shared, grid, mining, mineralTemplates = null, shadows = null }) {
     this.renderer = renderer;
     this.scene = scene;
     this.bank = bank;
@@ -196,10 +201,11 @@ export class MinedRocks {
       const mat = new MineralMaterial({ shared, layer: this.extMaterial.L, grid, minRockPx: 4, carve: { atlas, size: this.atlasSize } });
       this.minerals = new MineralLayer({ scene, templates: mineralTemplates, material: mat, renderOrder: 2, capacity: 4096, minRockPx: 4, carve: true, name: 'minerals_mined' });
     }
-    // Wnętrze: raymarching.
+    // Wnętrze: raymarching (skała, ruda, lita bryła rdzenia).
+    this.coreLook = createCoreLookArray();
     this.intMaterial = this._buildInterior();
     const box = new THREE.BoxGeometry(1, 1, 1);
-    this.int = makeInstanced(box, INT_FLOATS, ['iPos', 'iRot', 'iGrid', 'iDims', 'iAtlas', 'iHot', 'iMisc'], MAX_BODIES);
+    this.int = makeInstanced(box, INT_FLOATS, ['iPos', 'iRot', 'iGrid', 'iDims', 'iAtlas', 'iHot', 'iMisc', 'iPlasma'], MAX_BODIES);
     this.intMesh = new THREE.Mesh(this.int.geo, this.intMaterial);
     this.intMesh.frustumCulled = false;
     this.intMesh.renderOrder = 1;
@@ -211,11 +217,9 @@ export class MinedRocks {
     this.shadowData = new Float32Array(MAX_BODIES * EXT_FLOATS);
     this.shadowCount = 0;
     if (shadows) shadows.enableCarve(bank, this.extMaterial, { atlas, size: this.atlasSize });
-    // Okruchy: zwykłe skały banku.
-    this.pebbleSet = new RockSet({ scene, bank, material: playMaterial, zOf: (r) => r.z, name: 'minedPebbles', maxLod: 3 });
-    this._pebbleRecords = [];
-    this._pool = [];
-    this.stats = { bodies: 0, pebbles: 0, uploads: 0, uploadCells: 0, blocksFree: 0 };
+    // Okruchy: odłamki skorupy i kawałki rdzenia (nie skały banku).
+    this.fragments = new FragmentSet({ scene, shared, grid });
+    this.stats = { bodies: 0, pebbles: 0, corePebbles: 0, uploads: 0, uploadCells: 0, blocksFree: 0 };
   }
 
   // --- Kopiowanie do atlasu (compute) ---------------------------------------
@@ -258,7 +262,7 @@ export class MinedRocks {
       sx = Math.min(body.nx, b[3] + 2) - i0; sy = Math.min(body.ny, b[4] + 2) - j0; sz = Math.min(body.nz, b[5] + 2) - k0;
       if (sx <= 0 || sy <= 0 || sz <= 0) return;
     }
-    const { nx, ny, nz, fill, ore, orig } = body;
+    const { nx, ny, nz, fill, ore, orig, coreFill } = body;
     let o = 0;
     for (let k = 0; k < sz; k++) {
       const kk = k + k0;
@@ -269,7 +273,7 @@ export class MinedRocks {
           if (ii >= nx || jj >= ny || kk >= nz) { st[o] = 0; continue; }
           const idx = ii + nx * (jj + ny * kk);
           const f = Math.round(Math.min(1, Math.max(0, fill[idx])) * 255);
-          st[o] = (f | (ore[idx] << 8) | (orig[idx] << 16)) >>> 0;
+          st[o] = (f | (ore[idx] << 8) | (orig[idx] << 16) | (coreFill[idx] << 24)) >>> 0;
         }
       }
     }
@@ -311,8 +315,10 @@ export class MinedRocks {
       dims: varyingProperty('vec4', 'vMinedDims'),
       atlas: varyingProperty('vec4', 'vMinedAtlas'),
       hot: varyingProperty('vec4', 'vMinedHot'),
-      misc: varyingProperty('vec4', 'vMinedMisc')
+      misc: varyingProperty('vec4', 'vMinedMisc'),
+      plasma: varyingProperty('vec4', 'vMinedPlasma')
     };
+    const coreLook = this.coreLook;
     // Paleta rudy wnętrza per typ (jedna tablica: barwa, parametry).
     const lookRows = [];
     const lin = new THREE.Vector3();
@@ -337,6 +343,7 @@ export class MinedRocks {
       V.atlas.assign(attribute('iAtlas', 'vec4'));
       V.hot.assign(attribute('iHot', 'vec4'));
       V.misc.assign(attribute('iMisc', 'vec4'));
+      V.plasma.assign(attribute('iPlasma', 'vec4'));
       return iPos.xyz.add(quatRotate(iRot, local));
     })();
     const uvw = (p) => V.atlas.xyz.add(p.sub(V.grid.xyz).div(V.grid.w)).add(0.5).div(size);
@@ -441,33 +448,55 @@ export class MinedRocks {
         .add(cell(pl.add(nL.mul(cs.mul(3.0)))).r.mul(0.3))
         .add(cell(pl.add(nL.mul(cs.mul(6.0)))).r.mul(0.2));
       const ao = clamp(float(1.0).sub(occ.mul(0.7)), 0.25, 1.0).toVar();
+      // RDZEŃ (kanał A atlasu = udział rdzenia): lita bryła materiału rdzenia (coreLook.js) —
+      // metal z połyskiem i patyną w zagłębieniach, kryształy świecące od środka, lód, smółka.
+      const coreW = smoothstep(0.4, 0.6, smp.a).toVar();
+      const n3 = texture3D(S.noise, pl.div(38.0).add(vec3(0.53, seed.mul(2.9), 0.11))).level(0).toVar();
+      const core = coreSurface(coreLook, oreType, n2, n3, N, float(1.0).sub(ao).mul(1.6));
+      albedo.assign(mix(albedo, core.albedo, coreW));
+      metal.assign(mix(metal, core.metal, coreW));
+      gloss.assign(mix(gloss, core.gloss, coreW));
+      N.assign(normalize(mix(N, core.N, coreW)));
+      const tint = mix(lookC, core.albedo, coreW).toVar();
+      const specK = core.specK.mul(coreW).toVar();
       // Światło: słońce (przesłanianie pola), otoczenie (gaśnie w mroku), światła siatki.
       const sunT = mix(float(1.0), V.misc.x, S.sunOcc).toVar();
       const fillK = mix(float(0.22), float(1.0), sunT).mul(float(1.0).sub(float(1.0).sub(sunT).mul(0.96))).toVar();
       const Vw = vec3(0.0, 0.0, 1.0);
       const ndl = dot(N, S.sunDir).toVar();
       const diff = S.sunColor.mul(sunT).mul(clamp(ndl.add(0.12).div(1.12), 0.0, 1.0)).toVar();
-      const spec = S.sunColor.mul(sunT).mul(pow(max(dot(N, normalize(S.sunDir.add(Vw))), 0.0), gloss)).mul(step01(ndl)).mul(metal.mul(0.8).add(0.05)).toVar();
+      const spec = S.sunColor.mul(sunT).mul(pow(max(dot(N, normalize(S.sunDir.add(Vw))), 0.0), gloss)).mul(step01(ndl)).mul(metal.mul(0.8).add(0.05).add(specK)).toVar();
       const amb = S.ambientTop.mul(N.z.mul(0.25).add(0.75)).mul(fillK).toVar();
       grid.loop(P, ({ toL, att, col }) => {
         const c = col.mul(att).toVar();
         const nl = dot(N, toL);
         diff.addAssign(c.mul(clamp(nl.add(0.1).div(1.1), 0.0, 1.0)));
-        spec.addAssign(c.mul(pow(max(dot(N, normalize(toL.add(Vw))), 0.0), gloss)).mul(step01(nl)).mul(metal.mul(1.2).add(0.06)));
+        spec.addAssign(c.mul(pow(max(dot(N, normalize(toL.add(Vw))), 0.0), gloss)).mul(step01(nl)).mul(metal.mul(1.2).add(0.06).add(specK)));
       });
       const kd = float(1.0).sub(metal.mul(0.8));
-      const col = albedo.mul(diff.add(amb).mul(ao)).mul(kd).add(spec.mul(mix(vec3(1.0), lookC, metal)).mul(ao)).toVar();
+      const col = albedo.mul(diff.add(amb).mul(ao)).mul(kd).add(spec.mul(mix(vec3(1.0), tint, metal)).mul(ao)).toVar();
       // Metal odbija otoczenie (jak odblask metali w materiale skał): słabe tło i blask słońca.
       const Rv = Vw.negate().add(N.mul(N.z.mul(2.0)));
       const glare = pow(max(dot(Rv, S.sunDir), 0.0), 6.0);
-      col.addAssign(lookC.mul(S.ambientTop.mul(0.5).mul(fillK).add(S.sunColor.mul(0.35).mul(glare).mul(sunT))).mul(metal).mul(ao));
-      // Emisja rudy (kryształ, uran, energetyczna): świeci rdzeń, HDR tylko na najgęstszej rudzie.
-      col.addAssign(lookC.mul(lookP.y).mul(oreCov.mul(oreCov)).mul(smoothstep(0.5, 0.95, ore).mul(1.6).add(0.25)).mul(0.35));
+      col.addAssign(tint.mul(S.ambientTop.mul(0.5).mul(fillK).add(S.sunColor.mul(0.35).mul(glare).mul(sunT))).mul(metal).mul(ao));
+      // Emisja rudy (kryształ, uran, energetyczna) w płaszczu, HDR tylko na najgęstszej rudzie;
+      // w rdzeniu świeci materiał rdzenia (kryształy od środka, żyłki smółki).
+      col.addAssign(lookC.mul(lookP.y).mul(oreCov.mul(oreCov)).mul(smoothstep(0.5, 0.95, ore).mul(1.6).add(0.25)).mul(0.35).mul(float(1.0).sub(coreW)));
+      col.addAssign(core.emit.mul(coreW));
       // Żar świeżego cięcia lasera: biały środek, pomarańczowy brzeg, stygnie.
       const hd = pl.sub(V.hot.xyz);
       const hr = cs.mul(2.4);
       const heat = V.hot.w.mul(exp(dot(hd, hd).div(hr.mul(hr)).negate())).toVar();
       col.addAssign(mix(vec3(2.6, 0.7, 0.12), vec3(6.0, 4.2, 2.4), heat.mul(heat)).mul(heat));
+      // Kawałek rdzenia prosto z wybuchu: żar gaśnie (V.pos.w), mocniej na krawędziach.
+      const ch = V.pos.w.mul(coreW).toVar();
+      const chRim = pow(float(1.0).sub(abs(N.z)), 1.5).mul(0.8).add(float(1.0).sub(ao).mul(0.5));
+      col.addAssign(mix(vec3(1.4, 0.28, 0.04), vec3(3.0, 1.4, 0.45), ch.mul(ch)).mul(ch).mul(chRim));
+      // Pusta geoda po ucieczce pioruna kulistego: fioletowy żar ścian, gaśnie i migocze.
+      const gd = length(pl.sub(V.plasma.xyz));
+      const gr = max(V.misc.w, cs);
+      const glow = V.plasma.w.mul(exp(max(gd.sub(gr), 0.0).div(gr.mul(0.45)).negate())).toVar();
+      col.addAssign(vec3(1.1, 0.45, 2.6).mul(glow));
       // Pył ośrodka jak nad skałą (do stropu warstwy skał).
       if (S.volume) {
         const v = S.volume.sample(vec3(P.xy, max(P.z, S.rockLayerTop)));
@@ -482,7 +511,7 @@ export class MinedRocks {
   // --- Klatka -------------------------------------------------------------------
 
   /**
-   * @param {object} f { zoom, originX, originY, time, sunT(x, y) }
+   * @param {object} f { zoom, originX, originY, time, sunT(x, y) — transmitancja słońca (świat gry) dla odłamków }
    */
   update(f) {
     const mining = this.mining;
@@ -542,7 +571,12 @@ export class MinedRocks {
       if (I.count < I.capacity) {
         const d = I.data;
         const b = I.count++ * INT_FLOATS;
-        d[b] = sx; d[b + 1] = sy; d[b + 2] = sz; d[b + 3] = 0;
+        // Kawałek rdzenia metalu / smółki wyrwany wybuchem (nowe ciało) żarzy się przez ~3 s
+        // (lód paruje, kryształ świeci sam — bez żaru).
+        const ck = body.coreMaterial ? body.coreMaterial.kind : '';
+        const coreHeat = (ck === 'metal' || ck === 'mineral') && body.generation > 0 && body.coreMass > 0.5 * body.mass
+          ? 0.8 * Math.max(0, 1 - body.age / 3) : 0;
+        d[b] = sx; d[b + 1] = sy; d[b + 2] = sz; d[b + 3] = coreHeat;
         d[b + 4] = body.q[0]; d[b + 5] = body.q[1]; d[b + 6] = body.q[2]; d[b + 7] = body.q[3];
         d[b + 8] = body.gx; d[b + 9] = body.gy; d[b + 10] = body.gz; d[b + 11] = body.cs;
         const oreIdx = body.oreTypeId ? ROCK_TYPES.indexOf(body.oreTypeId) : body.type;
@@ -550,7 +584,12 @@ export class MinedRocks {
         d[b + 16] = slot.block.x; d[b + 17] = slot.block.y; d[b + 18] = slot.block.z; d[b + 19] = body.type;
         const heat = Math.max(0, 1 - (mining.time - body.hot[3]) / 1.4);
         d[b + 20] = body.hot[0]; d[b + 21] = body.hot[1]; d[b + 22] = body.hot[2]; d[b + 23] = heat;
-        d[b + 24] = body.sunT; d[b + 25] = body.seed; d[b + 26] = body.generation; d[b + 27] = 0;
+        // Żar pustej geody (piorun kulisty uciekł): środek, promień, siła gasnąca z migotaniem.
+        const ph = body.plasmaHot;
+        const age = ph ? mining.time - ph[3] : Infinity;
+        const pk = age < PLASMA_GLOW_LIFE ? (1 - age / PLASMA_GLOW_LIFE) ** 2 * (0.75 + 0.25 * Math.sin(age * 31 + body.id)) : 0;
+        d[b + 24] = body.sunT; d[b + 25] = body.seed; d[b + 26] = body.generation; d[b + 27] = ph ? ph[4] : 0;
+        d[b + 28] = ph ? ph[0] : 0; d[b + 29] = ph ? ph[1] : 0; d[b + 30] = ph ? ph[2] : 0; d[b + 31] = pk;
       }
     }
     for (const E of this.ext) this._commit(E, E.mesh);
@@ -558,23 +597,11 @@ export class MinedRocks {
     this._commit(this.int, this.intMesh);
     this.extMaterial.L.pxScale.value = f.zoom;
     this.extMaterial.L.camZ.value = 0;
-    // Okruchy.
-    const recs = this._pebbleRecords;
-    recs.length = 0;
-    for (let i = 0; i < mining.pebbles.length; i++) {
-      const p = mining.pebbles[i];
-      const r = this._pool[i] || (this._pool[i] = { id: 0, x: 0, y: 0, z: 0, r: 1, d: 2, shape: 0, type: 0, qx: 0, qy: 0, qz: 0, qw: 1, ax: 0, ay: 0, az: 1, spin: 0, phase: 0, sx: 1, sy: 1, sz: 0.9, seed: 0 });
-      r.id = p.id; r.x = p.p[0]; r.y = -p.p[1]; r.z = p.p[2]; r.r = p.r; r.d = p.r * 2;
-      r.shape = p.shape; r.type = p.type; r.seed = p.seed;
-      r.qx = p.q[0]; r.qy = p.q[1]; r.qz = p.q[2]; r.qw = p.q[3];
-      r.sunT = 1;
-      recs.push(r);
-    }
-    this.pebbleSet.setOrigin(ox, oy);
-    this.pebbleSet.set(recs);
-    this.pebbleSet.update({ cam: { x: f.camX ?? ox, y: f.camY ?? oy, zoom: f.zoom }, viewW: 1, viewH: 1, focalPx: 1 });
+    // Okruchy: odłamki skorupy i kawałki rdzenia.
+    this.fragments.update(mining.pebbles, f);
     this.stats.bodies = this.int.count;
-    this.stats.pebbles = recs.length;
+    this.stats.pebbles = this.fragments.stats.drawn;
+    this.stats.corePebbles = this.fragments.stats.core;
     let free = 0;
     for (const s of [64, 32, 16]) free += this.blocks.free[s].length * (s / 16) ** 3;
     this.stats.blocksFree = free;

@@ -12,7 +12,7 @@ const html = readIndexHtml();
 
 function deps(overrides = {}) {
   return {
-    shieldBlockingRadiusTowards: () => 0,
+    shieldRayEnter: () => -1,
     sweepImpact: null,
     hullRadius: (e) => e.radius,
     playerShip: null,
@@ -20,10 +20,10 @@ function deps(overrides = {}) {
   };
 }
 
-test('tarcza celu: wiązka kończy się na wejściu w bańkę', () => {
+test('tarcza celu: wiązka kończy się na wejściu w obrys tarczy', () => {
   const out = createPdBeamHit();
   const target = { x: 500, y: 0, radius: 30, hp: 10, maxHp: 10 };
-  resolvePdBeamHit(out, 0, 0, 1, 0, 1000, target, deps({ shieldBlockingRadiusTowards: () => 100 }));
+  resolvePdBeamHit(out, 0, 0, 1, 0, 1000, target, deps({ shieldRayEnter: () => 400 }));
   assert.equal(out.entity, target);
   assert.equal(out.shield, true);
   assert.equal(out.kind, 'npc');
@@ -206,4 +206,35 @@ test('uid emitera NPC liczony raz na gniazdo, nie przy każdym strzale', () => {
   assert.equal(getNpcEmitterUid(owner, hp), a);
   assert.equal(getNpcEmitterUid({ id: 78 }, hp), 'npc:78:aux3', 'inny właściciel — nowy uid');
   assert.equal(typeof hp.__emitterUidOwner, 'number', 'na hp tylko wartości proste');
+});
+
+// ---------------------------------------------------------------------------
+// Laser ciągły, ścieżka ogólna: wiązka kończy się na obrysie tarczy albo na kadłubie,
+// nie na okręgu wokół środka (dawniej max(w, h) · 0,75 przy `shield.val > 0`).
+
+test('laser ciągły: koniec wiązki na obrysie tarczy, bez tarczy — na kadłubie', async () => {
+  const shieldSystem = await import('../shieldSystem.js');
+  withSeededRandom(6, () => {
+    const h = createBeamHarness({ html });
+    const shooter = { __name: 'ls', id: 'ls1', x: 0, y: 0, angle: 0, friendly: true, vx: 0, vy: 0 };
+    // Długi kadłub bokiem do strzelca (oś x), środek 1000 j. w dół.
+    const shielded = makeHexTarget('shielded', { x: 0, y: 1000, width: 600, height: 80, shield: 400 });
+    h.world.npcs.push(shielded);
+    const muzzle = { pos: { x: 0, y: 0 }, dir: { x: 0, y: 1 }, baseVel: { x: 0, y: 0 }, emitterUid: 'p:ls' };
+    let log = h.fire(shooter, shielded, 'beam_continuous', muzzle);
+    const endY = kinds(log, 'event')[0][5][3];
+    const sideR = shieldSystem.getEntityShieldRadiusTowards(shielded, 0, 0);
+    assert.ok(Math.abs(endY - (1000 - sideR)) < 1, `koniec wiązki ${endY}, obrys ${1000 - sideR}`);
+    assert.equal(kinds(log, 'shieldFx').length, 1, 'efekt tarczy');
+    assert.equal(kinds(log, 'hex').length, 0, 'tarcza — bez krateru');
+
+    // Tarcza wyłączona, choć ma jeszcze energię: wiązka dochodzi do kadłuba.
+    shielded.shield.state = 'off';
+    shielded.shield.activationProgress = 0;
+    log = h.fire(shooter, shielded, 'beam_continuous', muzzle);
+    const hullEndY = kinds(log, 'event')[0][5][3];
+    assert.ok(hullEndY > 1000 - 40 - 12 && hullEndY < 1000, `koniec wiązki ${hullEndY} na burcie kadłuba`);
+    assert.equal(kinds(log, 'shieldFx').length, 0);
+    assert.deepEqual(kinds(log, 'hex').map((e) => e[1]), ['shielded'], 'krater w kadłubie');
+  });
 });

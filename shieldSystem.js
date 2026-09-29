@@ -357,6 +357,71 @@ export function getEntityShieldBlockingRadiusTowards(entity, worldX, worldY) {
   return getEntityShieldRadiusTowards(entity, worldX, worldY) * progress;
 }
 
+// Wejście promienia (wiązki) w BLOKUJĄCĄ tarczę: najmniejsze t ∈ [0, maxT], w którym
+// punkt (x0 + dirX·t, y0 + dirY·t) leży w obrysie tarczy, albo −1 (pudło / tarcza nie
+// blokuje). Obrys kadłuba: marsz po cięciwie okręgu-obwiedni profilu (maxR) i bisekcja;
+// bańka kolista: wprost. Dawniej wiązka kończyła się na okręgu max(w, h) · 0,75 wokół
+// środka — daleko przed niewidzialną tarczą-obrysem.
+const SHIELD_RAY_MAX_STEPS = 128;
+const SHIELD_RAY_BISECT = 10;
+
+// Punkt (dx, dy) względem środka leży w obrysie: odległość ≤ promień profilu w jego kierunku.
+function shieldProfileContains(profile, progress, ca, sa, dx, dy) {
+  const r = sampleShieldProfileRadius(profile, Math.atan2(-dx * sa + dy * ca, dx * ca + dy * sa)) * progress;
+  return dx * dx + dy * dy <= r * r;
+}
+
+export function getEntityShieldRayEnter(rawEntity, x0, y0, dirX, dirY, maxT) {
+  const entity = unwrapShieldEntity(rawEntity);
+  const progress = getEntityShieldBlockingProgress(entity);
+  if (progress <= 0 || !(maxT >= 0)) return -1;
+  const cx = getEntityPosX(entity);
+  const cy = getEntityPosY(entity);
+  const profile = getEntityShieldProfile(entity);
+  const boundR = (profile ? profile.maxR : getEntityShieldBaseRadius(entity)) * progress;
+  if (!(boundR > 0)) return -1;
+
+  const fx = cx - x0;
+  const fy = cy - y0;
+  const along = fx * dirX + fy * dirY;
+  const perpSq = fx * fx + fy * fy - along * along;
+  if (perpSq > boundR * boundR) return -1;
+  const half = Math.sqrt(boundR * boundR - perpSq);
+  const tA = Math.max(0, along - half);
+  const tB = Math.min(maxT, along + half);
+  if (tA > tB) return -1;
+  if (!profile) return tA;
+
+  const a = getShieldHullAngle(entity);
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  // Punkt promienia względem środka tarczy: (px + dirX·t, py + dirY·t).
+  const px = x0 - cx;
+  const py = y0 - cy;
+  if (shieldProfileContains(profile, progress, ca, sa, px + dirX * tA, py + dirY * tA)) return tA;
+  // Krok ≤ 1/16 najmniejszego promienia profilu — węższych wypustek obrys nie ma
+  // (dylatacja i wygładzenie binów w buildShieldProfile).
+  const span = tB - tA;
+  const minStep = Math.max(1, profile.minR * progress / 16);
+  const steps = Math.min(SHIELD_RAY_MAX_STEPS, Math.max(8, Math.ceil(span / minStep)));
+  const dt = span / steps;
+  let prev = tA;
+  for (let i = 1; i <= steps; i++) {
+    const t = tA + dt * i;
+    if (shieldProfileContains(profile, progress, ca, sa, px + dirX * t, py + dirY * t)) {
+      let lo = prev, hi = t;
+      for (let k = 0; k < SHIELD_RAY_BISECT; k++) {
+        const mid = (lo + hi) * 0.5;
+        if (shieldProfileContains(profile, progress, ca, sa, px + dirX * mid, py + dirY * mid)) hi = mid;
+        else lo = mid;
+      }
+      return hi;
+    }
+    prev = t;
+  }
+  return -1;
+}
+
 export function getEntityShieldMaxDimension(entity) {
   const fromHexGrid = getHexGridShieldMaxDimension(entity);
   if (fromHexGrid > 0) return fromHexGrid;

@@ -224,9 +224,11 @@ test('widok platformy: zdarzenia z czasu poza kadrem (hide) nie odpalają się p
   const frame = { dt: 1 / 60, time: 30, originX: 0, originY: 0, zoom: 0.4, ship: { x: 0, y: 0 }, sunT: () => 1 };
   v2.update(frame);
   assert.equal(v2.stats.blasts, 0, 'wybuch sprzed powrotu pominięty');
-  // Nowe zdarzenia po powrocie — jak zwykle.
+  // Nowe zdarzenia po powrocie — jak zwykle. Ładunek w największym odłamie (lód po L-ce
+  // sypie się na drobnicę; to, co leży akurat pod środkiem skały, zależy od rozkładu brył).
   rig.beginFrame();
-  assert.ok(rig.plantCharge(1500, 0));
+  const big = m3.bodies.reduce((a, b) => (!a || b.mass > a.mass ? b : a), null);
+  assert.ok(big && rig.plantCharge(big.p[0], -big.p[1]), 'drugi ładunek w odłamie');
   rig.detonate();
   rig.beginFrame();
   rig.step(1 / 120, ship);
