@@ -215,6 +215,8 @@ test('AI: działo z chargeTime ładuje przed strzałem (Valkyrie 0,28 s), Mjolni
     let clock = 0;
     processAutonomousWeapons(npc, 0.05);
     npc.autoWeapons[0].cd = 0;
+    // Losowe cd z initAutonomousWeapons < dt rusza ładowanie już w wywołaniu wyżej — zegar testu liczy od zera.
+    if (npc.autoWeapons[0].charge) C.cancelCharge(npc.autoWeapons[0].charge);
     for (; clock < seconds; clock += 0.05) processAutonomousWeapons(npc, 0.05);
     return { shots, charges, weapon: npc.autoWeapons[0] };
   };
