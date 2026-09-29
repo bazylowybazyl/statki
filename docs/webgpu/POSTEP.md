@@ -67,9 +67,9 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | zrobione, scalone (b41e4de) | 8fc9e77…56012bf (21 commitów) | duża bitwa 54% → 84% FPS bazy WebGL (Core3D 4,02 → 1,47 ms); bloom compute bit w bit; raport `WYDAJNOSC.md`; otwarte: przestoje > 100 ms przy pierwszej stacji modelu, partie tarcz, kolano bloomu (A/B) |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | zrobione, scalone (be51f3f), tag `webgpu-port` | 8998cbe, 0b3bb55, d3ce675, f40eaa4, d6adac1, efa140e, 041a7e7, 8640c5c, 9a6241d, 0f4823e | gra bez GLSL i API WebGL (strażnik `graBezGlsl`); −4 moduły legacy; wyciek kawałków stacji naprawiony |
-| 25a | Rozgrzewka stacji i wszystkiego przy ładowaniu gry (zero kompilacji w grze) | 11, 23 | 25b, 25c, 26 | max | zrobione na `webgpu/25a`, scalenie czeka (niezacommitowane `index.html` / `agents.md` innych sesji) | 1967f91, 4301bad, 57a1834, ef2d7a6 | przestoje > 100 ms przy pierwszej stacji modelu, cień Destruction3D |
+| 25a | Rozgrzewka stacji i wszystkiego przy ładowaniu gry (zero kompilacji w grze) | 11, 23 | 25b, 25c, 26 | max | zrobione, scalone (0f5ed5b) | 1967f91, 4301bad, 57a1834, ef2d7a6 | przestoje > 100 ms przy pierwszej stacji modelu, cień Destruction3D |
 | 25b | Bloom gry do poziomu dem: bez ×3, bez kolan, stare emitery przestrojone do oceny | 17–22, 23 | 25a, 25c, 26 | xhigh | zrobione, scalone (c461e7f); wpis `agents.md` w łatce `.tmp/webgpu/zadania/25b/agents-md.patch` (plik w edycji innej sesji) | 5b9c37c, 9e0fc26, 7f14636 | nowa baza obrazu `.tmp/webgpu/zadania/25b/baza-main/`; do oceny: zrzuty gra ↔ demo i stare emitery |
-| 25c | Rany ↔ fizyka: fizyczna wyrwa tak duża jak lej rany (Yamato i ciężkie działa) | 18 | 25a, 25b, 26 | max | zrobione na `webgpu/25c`, scalenie czeka (niezacommitowane `index.html` / `agents.md` innych sesji w głównym katalogu); 5 pytań balansu do użytkownika | 3fa5d51, 51a45a5, 58fecae | zmiana rozgrywki — liczby balansu w raporcie |
+| 25c | Rany ↔ fizyka: fizyczna wyrwa tak duża jak lej rany (Yamato i ciężkie działa) | 18 | 25a, 25b, 26 | max | zrobione, scalone (3c92b3c); 5 pytań balansu do użytkownika (niżej, wpis 2026-09-29) | 3fa5d51, 51a45a5, 58fecae | zmiana rozgrywki — liczby balansu w raporcie |
 | 25d | Warp: mocniejszy tunel (więcej cząstek) + podbicie efektów przy zmianie biegu | 22 | — | xhigh | wstrzymane — sesja „przyjazdy i powroty w warpie” edytuje `src/3d/warp/*` | | |
 | 26 | Demo WebGPU ładowni: wrota à la Venator, pusta przestrzeń, kontenery 3D, drony (Z5 w TSL) | — | 25a–c | max | zrobione, scalone (demo `dema/ladownia-webgpu.html`) | c1c3435, 4756daf, f0142c7 | 9 pytań do użytkownika (tony na kontener, `cargoCap` z ładowni, strefy, wrota, drony) — `docs/webgpu/DEMO-LADOWNIA.md` |
 ## Regresje przejściowe (świadome)
@@ -961,3 +961,11 @@ usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `d
   budżetem klatki (−0,5–0,6 s ładowania, ryzyko szarpnięć tła menu); stałe światła latarni stacji pirackiej (+0,03–0,07 ms
   GPU w scenach stacji) albo emisja w materiałach (zmienia wygląd). Kernele compute zostają synchroniczne na ekranie
   ładowania (three r183). Testy: 1674 / 5 porażek bazowych / 3 todo.
+- **2026-09-29: 25a i 25c scalone do `main`** (0f5ed5b, 3c92b3c — bez konfliktów; łatka `agents.md` z 25b nałożona, konflikt
+  tylko w akapicie warpa). Testy po scaleniu: 1748, porażki = 9 bazowych `main` sprzed scalenia (HUD radaru, loadout, bramki
+  renderu, skaner, AU, koło celowania — zmiany innych sesji) + 3 todo; `npm test` OK. `weaponChargeGame` (AI Valkyrie) był
+  niestabilny także przed scaleniem (~2,8%: losowe `cd` < dt ruszało ładowanie w wywołaniu inicjującym) — poprawiony test
+  (fff6fcb). **Pytania balansu 25c do użytkownika:** (1) salwa Yamato rozcina pancernik w burtę na pół — zostawić czy
+  zmniejszyć `S_CRATER` (1900 → 60 j.)? (2) piracka armata zabija niszczyciele TN 3,6× szybciej — zostawić czy wzorzec 306
+  (24,7 j., 2,2×)? (3) Goliath bez krateru na miarę rany? (4) Mjolnir: przejście przez materiał ma wycinać rów (łańcuch
+  kraterów, duży wzrost siły)? (5) mały krater rakiet 18 j. OK?
