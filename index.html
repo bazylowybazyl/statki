@@ -865,9 +865,10 @@
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
     import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
-    import { craterOptsFor, rocketCraterHit } from "./src/game/hullCraters.js";
+    import { craterOptsFor, rocketCraterHit, hasTrench, trenchCraters } from "./src/game/hullCraters.js";
     HullBodies.onImpact = HullDamageMap.onHullImpact;
     HullBodies.onRepair = HullDamageMap.onHullRepair;
+    HullBodies.onNodeLost = HullDamageMap.onHullNodeLost;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
@@ -10204,6 +10205,8 @@
     // Mapa ran (18-C): krater wyjścia / zakleszczenia stempluje hak onImpact (źródło = pocisk,
     // wariant 'exit' / 'stuck'), pas rzazu — HullDamageMap.stampKerf na drodze w materiale tego
     // kroku (niezależnie od LOD efektu; receptura `kerf` dostaje kadłub null — bez drugiego stempla).
+    // Rów przebicia (Mjolnir, 2026-09-29): zamiast pasa rzazu łańcuch kraterów na znakach rzazu
+    // (trenchCraters, bez HP; każdy krater stempluje mapę ran przez hak — wariant 'kerf').
     const _passCarrier = createCarrier();
     const _passRelVel = { x: 0, y: 0 };
     function applyBulletHullPass(b, pass) {
@@ -10218,10 +10221,14 @@
       _passRelVel.x = b.vx - carrier.vx;
       _passRelVel.y = b.vy - carrier.vy;
       if (pass.kerfs > 0 && e.beamHull) {
-        // Od pierwszego do ostatniego znaku kroku (jeden znak: odcinek pół kroku — sam kierunek
-        // wydłużenia stempla; stampKerf kładzie wtedy jeden znak na początku).
-        const k = pass.kerfs > 1 ? pass.kerfs - 1 : 0.5;
-        HullDamageMap.stampKerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
+        if (hasTrench(b)) {
+          trenchCraters(HullBodies, pass, b, _passRelVel, applyHexImpact);
+        } else {
+          // Od pierwszego do ostatniego znaku kroku (jeden znak: odcinek pół kroku — sam kierunek
+          // wydłużenia stempla; stampKerf kładzie wtedy jeden znak na początku).
+          const k = pass.kerfs > 1 ? pass.kerfs - 1 : 0.5;
+          HullDamageMap.stampKerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
+        }
       }
       if (out && pass.craterDamage > 0) {
         applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');

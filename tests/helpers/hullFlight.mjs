@@ -19,7 +19,7 @@ import {
 } from '../../src/game/projectileMechanics.js';
 import { writePointVelocity } from '../../src/game/carrierVelocity.js';
 // Krater na miarę rany ciężkiej broni (zadanie 25c) — jak applyHexImpact w index.html.
-import { craterOptsFor } from '../../src/game/hullCraters.js';
+import { craterOptsFor, trenchCraters } from '../../src/game/hullCraters.js';
 
 export function createShot(def, x, y, dirX, dirY, serial = 0, extra = {}) {
   const l = Math.hypot(dirX, dirY) || 1;
@@ -60,10 +60,16 @@ function crater(e, x, y, dmg, b, ledger, variant = 'impact') {
   return k;
 }
 
-// Zdarzenie przejścia (wyjście / zakleszczenie): krater bez HP, znaki rzazu do rejestru.
+// Zdarzenie przejścia (wyjście / zakleszczenie): krater bez HP, znaki rzazu do rejestru; rów przebicia
+// (Mjolnir, 2026-09-29) — kratery na znakach rzazu przed kraterem wyjścia, jak applyBulletHullPass.
 function applyPass(pass, b, ledger, log) {
   const e = pass.entity;
   if (e) ledgerFor(ledger, e).kerfs += pass.kerfs;
+  if (e && pass.kerfs > 0 && HullBodies.hasHull(e)) {
+    const out = pass.event === PASS_STUCK || pass.event === PASS_EXIT;
+    const k = trenchCraters(HullBodies, pass, b, relVelAt(b, e, out ? pass.x : b.x, out ? pass.y : b.y));
+    if (k > 0) ledgerFor(ledger, e).killed += k;
+  }
   if (pass.event === PASS_STUCK) {
     if (e) ledgerFor(ledger, e).stuck++;
     const killed = crater(e, pass.x, pass.y, pass.craterDamage, b, ledger, 'stuck');

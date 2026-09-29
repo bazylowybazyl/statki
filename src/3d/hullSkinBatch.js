@@ -7,7 +7,7 @@
 // przegląd 23 wiązań grupy „object” (tekstury, samplery, bufory storage) i atrybutów geometrii. Bitwa
 // 148 okrętów: ~145 rysunków skór = ~2,8 ms na klatkę. Tu kadłuby z TYM SAMYM zestawem tekstur (sprite,
 // mapa normalnych, mapa kształtu lakieru — typ okrętu, wraki z tym samym obrazem) rysują się JEDNYM
-// wywołaniem: wspólne bufory wierzchołków (pozycja, jasność + żar, uv + slot) i indeksów, dane per kadłub
+// wywołaniem: wspólne bufory wierzchołków (pozycja, jasność + żar + rozdarcie, uv + slot) i indeksów, dane per kadłub
 // (macierz model-widok, macierz świata, wartości materiału, widoczność) z bufora slotu — numer slotu
 // w atrybucie wierzchołka zamiast uniformu obiektu.
 //
@@ -49,7 +49,7 @@ export class HullSkinBatch {
 
   _alloc(vcap, icap, copyFrom = null) {
     const pos = new Float32Array(vcap * 3);
-    const sh = new Float32Array(vcap * 3);
+    const sh = new Float32Array(vcap * 4);
     const uvs = new Float32Array(vcap * 3);
     const idx = new Uint32Array(icap);
     if (copyFrom) {
@@ -66,7 +66,8 @@ export class HullSkinBatch {
     this.idx = idx;
     const g = new THREE.BufferGeometry();
     this.aPos = new THREE.BufferAttribute(pos, 3);
-    this.aSh = new THREE.BufferAttribute(sh, 3);
+    // jasność, żar (szczyt, znacznik), rozdarcie narożnika (beamHullSkin.js — poszarpany brzeg dziury)
+    this.aSh = new THREE.BufferAttribute(sh, 4);
     this.aUv = new THREE.BufferAttribute(uvs, 3);
     this.aIdx = new THREE.BufferAttribute(idx, 1);
     g.setAttribute('position', this.aPos);
@@ -94,15 +95,16 @@ export class HullSkinBatch {
 
   /**
    * Nowy kadłub na końcu partii: slot (HullObjectStore), topologia skóry (uv, indeksy) i jej tablice
-   * (pozycje, jasność, żar). Zwraca wpis (zapis zmian: writeQuads / writeAll, usunięcie: remove).
+   * (pozycje, jasność, żar; rozdarcie narożników — `tear`, opcjonalne, zapamiętane we wpisie).
+   * Zwraca wpis (zapis zmian: writeQuads / writeAll, usunięcie: remove).
    */
-  add(slot, topo, positions, shade, heat, proxy = null) {
+  add(slot, topo, positions, shade, heat, proxy = null, tear = null) {
     const nQuads = topo.count;
     const vCount = nQuads * 4;
     const iCount = topo.indices.length;
     if (this.vUsed + vCount > this.vcap || this.iUsed + iCount > this.icap) this._grow(vCount, iCount);
     // proxy: siatka kadłuba (nośnik transformacji, widoczność) — partia rysuje się, gdy widać choć jeden kadłub
-    const e = { batch: this, slot, vStart: this.vUsed, vCount, iStart: this.iUsed, iCount, quads: nQuads, alive: true, proxy };
+    const e = { batch: this, slot, vStart: this.vUsed, vCount, iStart: this.iUsed, iCount, quads: nQuads, alive: true, proxy, tear };
     this.vUsed += vCount;
     this.iUsed += iCount;
     this.entries.push(e);
@@ -143,6 +145,7 @@ export class HullSkinBatch {
     if (!e.alive || qMax < qMin) return;
     const P = this.pos;
     const S = this.sh;
+    const T = e.tear;
     const v0 = qMin * 4;
     const v1 = qMax * 4 + 4;
     const base = e.vStart;
@@ -152,12 +155,14 @@ export class HullSkinBatch {
       P[o] = positions[p];
       P[o + 1] = positions[p + 1];
       P[o + 2] = positions[p + 2];
-      S[o] = shade[v];
-      S[o + 1] = heat[v * 2];
-      S[o + 2] = heat[v * 2 + 1];
+      const q = (base + v) * 4;
+      S[q] = shade[v];
+      S[q + 1] = heat[v * 2];
+      S[q + 2] = heat[v * 2 + 1];
+      S[q + 3] = T ? T[v] : 0;
     }
     zbierzZakresy(this.aPos, (base + v0) * 3, (v1 - v0) * 3);
-    zbierzZakresy(this.aSh, (base + v0) * 3, (v1 - v0) * 3);
+    zbierzZakresy(this.aSh, (base + v0) * 4, (v1 - v0) * 4);
   }
 
   /** Kadłub znika z partii: indeksy zerowane (trójkąty zdegenerowane), miejsce do przepisania partii. */
@@ -203,7 +208,7 @@ export class HullSkinBatch {
     for (const e of this.entries) {
       if (e.vStart !== v) {
         P.copyWithin(v * 3, e.vStart * 3, (e.vStart + e.vCount) * 3);
-        S.copyWithin(v * 3, e.vStart * 3, (e.vStart + e.vCount) * 3);
+        S.copyWithin(v * 4, e.vStart * 4, (e.vStart + e.vCount) * 4);
         U.copyWithin(v * 3, e.vStart * 3, (e.vStart + e.vCount) * 3);
       }
       const shift = v - e.vStart;

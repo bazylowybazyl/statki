@@ -18,7 +18,13 @@
 //     widocznych wybuchów, punkt przesunięty o ruch nośnika), rzazy i zakleszczenia przebić (18-B),
 //     wiązka ciągła między taktami obrażeń, żar płonącej wyrwy (`burnStep`);
 //   • bez krateru i bez receptury (narzędzia, 18-B): `stampAt(e, x, y, rodzina, wariant, dirX, dirY)`,
-//     `stampKerf(e, x0, y0, x1, y1, rodzina)`.
+//     `stampKerf(e, x0, y0, x1, y1, rodzina)`;
+//   • ROZDARCIA (2026-09-29) — hak `HullBodies.onNodeLost` → `onHullNodeLost`: węzeł zniszczony poza
+//     trafieniem broni (zderzenie i zgniot, oparcie po zerwanych belkach, odpryski rozpadu, cięcie wraku,
+//     wybuch reaktora) dostaje stempel rodziny `tear` z dziurą o promieniu ~1 komórki — ten sam materiał
+//     rany co po broni: poszarpany, osmalony brzeg dziury zamiast gołych krawędzi siatki. Węzły bliżej
+//     niż DMG_TEAR_MERGE_CELLS od stempla tej klatki łączą się; najwyżej DMG_TEAR_SLOT_CAP stempli slotu
+//     na klatkę (reszta limitu — broń).
 //
 // Reguła „dziura albo krater” (§3.4): promień = krater zabił węzły ? max(receptura, zasięg
 // dziury + ½ komórki) : receptura. Przestrzelina PRZEZROCZYSTA (kanał otworu) tylko z małego
@@ -49,7 +55,7 @@ import { ActiveCarrier } from '../game/carrierVelocity.js';
 import { SimClock } from '../game/simClock.js';
 import {
   stampEntry, stampFamilyFor, stampPowerFor, stampFlakRadiusFor,
-  S_R, S_HEAT, S_SCORCH, S_HOLE, S_ION, S_ELONG, S_POW
+  S_R, S_HEAT, S_SCORCH, S_HOLE, S_ION, S_ELONG, S_POW, TEAR_HOLE_CELLS
 } from './hullDamageStamps.js';
 import {
   DMG_CLASSES, DMG_POOL_TEXELS, DMG_FLAG_CLEAR, DMG_FLAG_ZERO_HEAT, DMG_JOB_VEC4, DMG_STAMP_VEC4, DMG_STAMP_REACH,
@@ -80,6 +86,12 @@ export const DMG_KERF_STEP = 22;
 export const DMG_KERF_MAX = 8;
 /** Trafienie dalej od kadru efektów (Core3D.fx.view) niż ten ułamek jego boku — bez stempla. */
 export const DMG_VIEW_MARGIN = 0.5;
+/** Rozdarcia: węzeł bliżej stempla rozdarcia tej klatki niż tyle komórek — bez nowego stempla. */
+export const DMG_TEAR_MERGE_CELLS = 0.9;
+/** Rozdarcia: stempli slotu na klatkę (DMG_SLOT_STAMP_CAP − ta liczba zostaje dla broni). */
+export const DMG_TEAR_SLOT_CAP = 32;
+/** Rozdarcia tej klatki pamiętane do łączenia (pierścień). */
+export const DMG_TEAR_RING = 64;
 
 const TEXELS = DMG_POOL_TEXELS;
 const SLOT_COUNT = DMG_CLASSES.reduce((n, c) => n + c.count, 0);
@@ -154,6 +166,10 @@ export const HullDamageMap = {
   _hookData: new Float64Array(DMG_HOOK_RING * 4),
   _hookFrame: new Int32Array(DMG_HOOK_RING).fill(-1),
   _hookHead: 0,
+  // Rozdarcia tej klatki (klucz, x, y) — pierścień do łączenia sąsiednich węzłów.
+  _tearData: new Float64Array(DMG_TEAR_RING * 3),
+  _tearFrame: new Int32Array(DMG_TEAR_RING).fill(-1),
+  _tearHead: 0,
   // Źródło trafienia (setSource / clearSource).
   _src: { active: false, family: 'generic', variant: 'impact', power: 1, flakR: 0 },
   // GPU (leniwie): pula, bufory zadań i stempli, kernel, krok klatki efektów.
@@ -163,7 +179,8 @@ export const HullDamageMap = {
   stats: {
     poolBytes: TEXELS * DMG_TEXEL_BYTES, cpuCopyBytes: TEXELS * DMG_TEXEL_BYTES, slotsL: 0, slotsM: 0, slotsS: 0,
     stamps: 0, droppedStamps: 0, offView: 0, noSlot: 0, evictions: 0, downgrades: 0, upgrades: 0,
-    jobs: 0, threads: 0, dispatch: 0, heals: 0, recipeStamps: 0, recipeDup: 0
+    jobs: 0, threads: 0, dispatch: 0, heals: 0, recipeStamps: 0, recipeDup: 0,
+    tearStamps: 0, tearMerged: 0, tearCapped: 0
   },
 
   // ── Przydział ─────────────────────────────────────────────────────────────
@@ -435,6 +452,46 @@ export const HullDamageMap = {
     const ok = this._enqueueStamp(slot, hull);
     if (ok) this.stats.recipeStamps++;
     return ok;
+  },
+
+  /**
+   * HullBodies.onNodeLost: węzeł zniszczony poza trafieniem broni (zderzenie, zgniot, oparcie, rozpad,
+   * cięcie, wybuch reaktora) — stempel rozdarcia (`tear`) w uv jego komórki z dziurą ~1 komórki: lej rany
+   * tylko przy prawdziwej dziurze, poszarpany szumem, dookoła osmalenie i słaby żar. Sąsiednie węzły tej
+   * klatki łączą się (DMG_TEAR_MERGE_CELLS), limit na slot zostawia miejsce stemplom broni.
+   */
+  onHullNodeLost(entity, hull, u, v, x, y) {
+    const self = HullDamageMap;
+    if (!hull || !(hull.dmgKey > 0) || !self.enabled) return;
+    const key = hull.dmgKey;
+    const cs = hull.cellSize;
+    if (self._tornHere(key, x, y, DMG_TEAR_MERGE_CELLS * cs)) { self.stats.tearMerged++; return; }
+    if (self._offView(x, y)) return;
+    const slot = self.acquire(key, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
+    if (!slot) return;
+    if (slot.pending >= DMG_TEAR_SLOT_CAP) { self.stats.tearCapped++; return; }
+    setStampEntry(stampEntry('tear'));
+    _p[P_U] = u; _p[P_V] = v; _p[P_R] = stampEntry('tear')[S_R]; _p[P_CUT] = 0;
+    _p[P_DX] = 0; _p[P_DY] = 0; _p[P_HOLE] = TEAR_HOLE_CELLS * cs;
+    if (!self._enqueueStamp(slot, hull)) return;
+    self.stats.tearStamps++;
+    const i = self._tearHead;
+    self._tearHead = (i + 1) % DMG_TEAR_RING;
+    const o = i * 3;
+    self._tearData[o] = key; self._tearData[o + 1] = x; self._tearData[o + 2] = y;
+    self._tearFrame[i] = self.frame;
+  },
+
+  _tornHere(key, x, y, r) {
+    const T = this._tearData, F = this._tearFrame, r2 = r * r;
+    for (let i = 0; i < DMG_TEAR_RING; i++) {
+      if (F[i] !== this.frame) continue;
+      const o = i * 3;
+      if (T[o] !== key) continue;
+      const dx = T[o + 1] - x, dy = T[o + 2] - y;
+      if (dx * dx + dy * dy <= r2) return true;
+    }
+    return false;
   },
 
   /** HullBodies.onRepair: naprawa R wygasza osmalenie i przestrzeliny; koniec naprawy czyści mapę. */
@@ -772,10 +829,12 @@ export const HullDamageMap = {
     this._byKey.clear();
     this._qCount = 0;
     this._hookFrame.fill(-1);
+    this._tearFrame.fill(-1);
     this._src.active = false;
     const st = this.stats;
     st.stamps = 0; st.droppedStamps = 0; st.offView = 0; st.noSlot = 0; st.evictions = 0; st.downgrades = 0; st.upgrades = 0;
     st.jobs = 0; st.threads = 0; st.dispatch = 0; st.heals = 0; st.recipeStamps = 0; st.recipeDup = 0;
+    st.tearStamps = 0; st.tearMerged = 0; st.tearCapped = 0;
   }
 };
 

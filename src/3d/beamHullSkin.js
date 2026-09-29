@@ -6,7 +6,11 @@
 //  - UV w konwencji tekstur heksów (flipY = false): v = 0 to górny wiersz obrazu,
 //    więc vSpriteUV · uSpriteSize to piksel sprite'a jak w światłach i lakierze,
 //  - zamiast koloru wierzchołka: jasność blachy (wgniecenie, brzeg rozdarcia) i żar
-//    węzła (szczyt, znacznik czasu) — zanik liczy shader.
+//    węzła (szczyt, znacznik czasu) — zanik liczy shader,
+//  - ROZDARCIE narożnika (0 — cała blacha, 0,5 / 0,75 / 1 — narożnik dzieli 1 / 2 / 3 martwe
+//    komórki albo zerwane belki): interpolowane po czworokącie daje we fragmencie odległość do
+//    brzegu dziury, a szum wycina poszarpany pas — dziura po zniszczonych węzłach nie ma kwadratowych
+//    rogów siatki (hexShips3D.tsl.js, hullTearFray). Zapis opcjonalny (tablica `tear`).
 // Moduł nie importuje three.
 
 import { buildSpriteSkinTopology, SPRITE_CORNERS } from './beamSpriteSkin2D.js';
@@ -52,8 +56,11 @@ function nodeDent(s, e, i) {
   return smoothstep(0.02, 0.22, damage);
 }
 
+/** Rozdarcie narożnika z liczby martwych komórek / zerwanych belek, które go dzielą (0–3). */
+export const HULL_SKIN_TEAR = Object.freeze([0, 0.5, 0.75, 1]);
+
 // Czworokąt węzła i (układ lokalny ciała). Martwy węzeł = czworokąt zwinięty do punktu.
-function writeQuad(i, topo, half, positions, shade, heat) {
+function writeQuad(i, topo, half, positions, shade, heat, tear) {
   const s = topo.store, e = topo.beamStore, links = topo.links;
   const x = s.x, y = s.y, ox = s.ox, oy = s.oy, active = s.active;
   const ea = e.a, eb = e.b, broken = e.broken;
@@ -63,6 +70,7 @@ function writeQuad(i, topo, half, positions, shade, heat) {
       positions[p + k * 3] = ox[i]; positions[p + k * 3 + 1] = oy[i]; positions[p + k * 3 + 2] = 0;
       shade[v + k] = 0;
       heat[h + k * 2] = 0; heat[h + k * 2 + 1] = 0;
+      if (tear) tear[v + k] = 0;
     }
     return 0;
   }
@@ -96,15 +104,16 @@ function writeQuad(i, topo, half, positions, shade, heat) {
     // Żar zapisany na chwilę zapisu (zanik dalej liczy shader od tego znacznika).
     heat[h + k * 2] = cornerHeat;
     heat[h + k * 2 + 1] = now;
+    if (tear) tear[v + k] = HULL_SKIN_TEAR[torn];
   }
   return 1;
 }
 
-/** Cała skóra. Zwraca liczbę widocznych czworokątów. */
-export function writeHullSkin(body, topo, positions, shade, heat) {
+/** Cała skóra (tear — rozdarcie narożników, opcjonalne). Zwraca liczbę widocznych czworokątów. */
+export function writeHullSkin(body, topo, positions, shade, heat, tear = null) {
   const half = body.cellSize * 0.5;
   let visible = 0;
-  for (let i = 0; i < topo.count; i++) visible += writeQuad(i, topo, half, positions, shade, heat);
+  for (let i = 0; i < topo.count; i++) visible += writeQuad(i, topo, half, positions, shade, heat, tear);
   return visible;
 }
 
@@ -112,7 +121,7 @@ export function writeHullSkin(body, topo, positions, shade, heat) {
  * Tylko czworokąty zmienionych węzłów i ich 8 sąsiadów (narożniki są wspólne).
  * Zakres zmienionych czworokątów w `out` ({ min, max }, max < min = nic).
  */
-export function writeHullSkinQuads(body, topo, positions, shade, heat, list, count, out) {
+export function writeHullSkinQuads(body, topo, positions, shade, heat, list, count, out, tear = null) {
   const half = body.cellSize * 0.5, links = topo.links, stamps = topo.stamps;
   const ea = topo.beamStore.a, eb = topo.beamStore.b;
   let stamp = (topo.stamp + 1) >>> 0;
@@ -130,7 +139,7 @@ export function writeHullSkinQuads(body, topo, positions, shade, heat, list, cou
       }
       if (stamps[j] === stamp) continue;
       stamps[j] = stamp;
-      writeQuad(j, topo, half, positions, shade, heat);
+      writeQuad(j, topo, half, positions, shade, heat, tear);
       if (j < min) min = j;
       if (j > max) max = j;
     }

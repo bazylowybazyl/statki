@@ -45,12 +45,14 @@
 //    buforze storage, slot per obiekt uDmgSlot → perObject() niżej, próbkowanie po uv skóry,
 //    discard przestrzelin małego kalibru, żar = max(żar skóry, żar rany)) — hullDamageSurface /
 //    hullDamageHeat; światła efektów z siatki świateł (12) — hullEffectLights;
-//  - zadanie 21: ośrodek światła wolumetrycznego nowych asteroid — hullVolume.
+//  - zadanie 21: ośrodek światła wolumetrycznego nowych asteroid — hullVolume;
+//  - poszarpany brzeg dziur skóry belek (2026-09-29, partie): rozdarcie narożników z beamHullSkin.js
+//    (aShadeHeat.w) + szum — hullTearFray.
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Continue, Discard,
   float, int, uint, vec2, vec3, vec4, mat4, nodeObject,
-  uniform, attribute, storage, varying,
+  uniform, attribute, storage, varying, texture,
   positionGeometry, positionLocal, modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, uv,
   abs, clamp, cos, sin, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
@@ -60,6 +62,7 @@ import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
+import { fxNoise } from './fx/noise.js';
 import { zbierzZakres } from './zakresyWysylki.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
@@ -405,14 +408,15 @@ function hullObjectStoreNodes() {
 }
 
 // Partie kadłubów (hullSkinBatch.js): slot z atrybutu wierzchołka aUvSlot.z (we fragmencie przez
-// varying — zaokrąglenie znosi interpolację stałej), uv sprite'a z aUvSlot.xy, jasność i żar z aShadeHeat.
+// varying — zaokrąglenie znosi interpolację stałej), uv sprite'a z aUvSlot.xy, jasność, żar i rozdarcie
+// narożnika (w) z aShadeHeat.
 let _batchStoreNodes = null;
 function hullBatchStoreNodes() {
   if (_batchStoreNodes) return _batchStoreNodes;
   const uvSlot = attribute('aUvSlot', 'vec3');
   _batchStoreNodes = objectStoreNodesFor(uint(round(uvSlot.z)));
   _batchStoreNodes.uvSlot = uvSlot;
-  _batchStoreNodes.shadeHeat = attribute('aShadeHeat', 'vec3');
+  _batchStoreNodes.shadeHeat = attribute('aShadeHeat', 'vec4');
   return _batchStoreNodes;
 }
 
@@ -559,6 +563,40 @@ function hullVolume(/* ctx */) {
   return getBeltMedium().hullVolume();
 }
 
+// Poszarpany brzeg dziur skóry belek (2026-09-29). Rozdarcie narożników (beamHullSkin.js: 0 w głębi
+// blachy, 0,5–1 w narożniku przy martwej komórce albo zerwanym szwie) interpolowane po czworokącie rośnie
+// ku brzegowi dziury; szum w j. świata kadłuba (tile2D dema broni — jak brzeg rany z mapy ran) wycina pas
+// blachy przy brzegu, więc dziura po zniszczonych węzłach (zderzenie, zgniot, krater, rozpad, cięcie) nie
+// ma kwadratowych rogów siatki 15 j. — do ~¾ komórki w głąb sąsiadów, rogi obgryzione. Próbki z poziomu 0:
+// warunek niejednolity (bez pochodnych). Zwraca brzeg wycięcia 0..1 (przyciemnienie rozdartej blachy).
+export const HULL_TEAR_FRAY = Object.freeze({
+  coarse: 64,    // okres szumu grubego [j. świata] (oktawa bazowa ~16 j. ≈ komórka)
+  fine: 26,      // okres szumu drobnego [j.]
+  lo: 0.12,      // próg wycięcia przy szumie 0 (głęboki kęs)
+  hi: 0.95,      // próg przy szumie 1 (bez kęsa: rozdarcie prostego brzegu = 0,75)
+  rim: 0.22,     // szerokość przyciemnionego brzegu (w jednostkach rozdarcia)
+  dark: 0.55     // przyciemnienie brzegu
+});
+function hullTearFray(tear, uvNode, P) {
+  const F = HULL_TEAR_FRAY;
+  const edge = float(0.0).toVar();
+  // PRZED gałęzią (pułapka 29): pierwsze użycie danych slotu tworzy zmienną WGSL indeksu slotu partii —
+  // w gałęzi rozdarcia reszta materiału (mapa ran, lampy) czytałaby poza nią slot 0.
+  const world = P.uDmgWorld.toVar();
+  If(tear.greaterThan(0.01), () => {
+    const tex = fxNoise.tile2D();
+    const p = uvNode.mul(world).toVar();
+    const n = texture(tex, p.div(F.coarse), float(0.0)).g.mul(0.6)
+      .add(texture(tex, p.div(F.fine), float(0.0)).b.mul(0.4));
+    const thr = mix(float(F.lo), float(F.hi), clamp(n.sub(0.28).div(0.42), 0.0, 1.0)).toVar();
+    If(tear.greaterThan(thr), () => {
+      Discard();
+    });
+    edge.assign(smoothstep(thr.sub(F.rim), thr, tear));
+  });
+  return edge;
+}
+
 // ── Fragment kadłuba (wspólny dla wariantów) ────────────────────────────────
 //
 // opts.spriteUV   vec2 (varying) — uv sprite'a, v = 0 u góry obrazu
@@ -570,6 +608,7 @@ function hullVolume(/* ctx */) {
 // opts.heatDecay / opts.heatPeak — wspólne węzły żaru wariantu
 // opts.perObject  węzły per kadłub (domyślnie uniformy obiektu — hullPerObjectNodes; skóra belek: bufor
 //                 storage slotu — hullObjectStoreNodes, zadanie 23)
+// opts.tear       float|null — rozdarcie narożnika (partie skór belek): poszarpany brzeg dziur, hullTearFray
 function hullFragmentNode(opts) {
   const P = opts.perObject || hullPerObjectNodes();
   const L = HullLacquer.uniforms;
@@ -589,6 +628,7 @@ function hullFragmentNode(opts) {
     If(alpha.lessThan(0.01), () => {
       Discard();
     });
+    if (opts.tear) armorRgb.mulAssign(float(1.0).sub(hullTearFray(opts.tear, spriteUV, P).mul(HULL_TEAR_FRAY.dark)));
 
     const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P };
     hullDamageSurface(ctx);
@@ -858,6 +898,7 @@ export function getHullVariant(name) {
         shade: P.shadeHeat.x,
         stress: null,
         heat: P.shadeHeat.yz,
+        tear: P.shadeHeat.w,
         localWorld: localWorldOf(positionGeometry, P.modelWorld),
         lodOpacity: float(1.0),
         heatDecay: HULL_SHARED.beamHeatDecay,

@@ -6,11 +6,12 @@
 // z `craterRadius` (wszystkie węzły w promieniu giną: wgniecenie, odrzut blachy, belki, oparcie,
 // rozpad — silnik belek, bez Math.random). Broń bez wzorca krateru — krater z budżetu HP jak dotąd.
 //
-// Tu: opcje krateru dla trafienia (gra: applyHexImpact w index.html, wzorzec lotu testów i bilansu)
+// Tu: opcje krateru dla trafienia (gra: applyHexImpact w index.html, wzorzec lotu testów i bilansu),
+// rów przebicia (Mjolnir, 2026-09-29: łańcuch kraterów wzdłuż drogi w materiale — applyBulletHullPass)
 // oraz wybuch rakiety na poszyciu (rocketSystem3D._onHit → krater gry; punkt styku ten sam co
 // obraz wybuchu — src/3d/rockets/effects.js prepareContact). Bez alokacji na trafienie.
 
-import { craterRadiusFor } from '../3d/hullDamageStamps.js';
+import { craterRadiusFor, trenchRadiusFor } from '../3d/hullDamageStamps.js';
 
 /** Opcje HullBodies.impact krateru na miarę rany (współdzielone; ważne do następnego wywołania). */
 export const hullCraterOpts = { craterRadius: 0 };
@@ -23,6 +24,54 @@ export function craterOptsFor(src, variant = 'impact', damage = 0, out = hullCra
   const r = src ? craterRadiusFor(src, variant, damage) : 0;
   out.craterRadius = r;
   return r > 0 ? out : null;
+}
+
+/** Czy broń pocisku kopie rów przebicia (wpis `kerf` stempla z wzorcem krateru — dziś Mjolnir). */
+export function hasTrench(src) {
+  return trenchRadiusFor(src, 1) > 0;
+}
+
+/**
+ * Rów przebicia (decyzja 2026-09-29, Mjolnir): łańcuch kraterów na miarę rany na znakach rzazu kroku w
+ * materiale (`pass` ze stepInsideHull: pierwszy znak w kerfX/Y, kolejne co kerfDX/DY — 22 j.). Promień —
+ * lej wpisu `kerf` × √(energia / wzorzec) (hullDamageStamps.trenchRadiusFor); energia pocisku w materiale
+ * = dmg0 · (|v| / v0)² (jak settledDamage; relVel — prędkość pocisku względem kadłuba). Środek krateru
+ * cofnięty o jego promień wstecz toru: rów nie wycina materiału przed pociskiem, więc droga w materiale,
+ * hamowanie i wyjście liczą się jak bez rowu. Kratery bez obrażeń HP (jak krater wyjścia — HP spada przez
+ * sufit strukturalny od zabitych węzłów). `applyImpact` — funkcja gry (applyHexImpact z wariantem 'kerf':
+ * stempel mapy ran z haka krateru); bez niej HullBodies.impact z opcjami krateru (testy, bilans).
+ * Zwraca liczbę zabitych węzłów. Bez alokacji.
+ */
+export function trenchCraters(HB, pass, b, relVel, applyImpact = null) {
+  const e = pass ? pass.entity : null;
+  const n = pass ? pass.kerfs | 0 : 0;
+  if (!e || n <= 0 || !e.beamHull || !b) return 0;
+  let dmg = Number(b.damage) || 0;
+  const pen = b.pen;
+  if (pen && pen.v0 > 0 && pen.dmg0 > 0 && relVel) {
+    const vx = Number(relVel.x) || 0;
+    const vy = Number(relVel.y) || 0;
+    const k = Math.min(1, Math.sqrt(vx * vx + vy * vy) / pen.v0);
+    dmg = pen.dmg0 * k * k;
+  }
+  const r = trenchRadiusFor(b, dmg);
+  const dx = Number(pass.kerfDX) || 0;
+  const dy = Number(pass.kerfDY) || 0;
+  const sl = Math.sqrt(dx * dx + dy * dy);
+  if (!(r > 0) || !(sl > 1e-9)) return 0;
+  const bx = dx / sl * r;
+  const by = dy / sl * r;
+  let killed = 0;
+  for (let k = 0; k < n; k++) {
+    if (!HB.hasHull(e)) break;
+    const x = pass.kerfX + dx * k - bx;
+    const y = pass.kerfY + dy * k - by;
+    const hit = typeof applyImpact === 'function'
+      ? applyImpact(e, x, y, dmg, relVel, null, b, 'kerf')
+      : HB.impact(e, x, y, dmg, relVel, craterOptsFor(b, 'kerf', dmg));
+    if (hit) killed += HB.impactResult.killed;
+  }
+  return killed;
 }
 
 /** Wynik rocketHullContact — punkt styku głowicy z poszyciem i normalna (świat gry). */

@@ -1076,7 +1076,50 @@ for (const [i, [name, id, shots, gap, pitch]] of GALERIA_KRATERY.entries()) {
          S.cam(e.x, e.y - 90, 1.3);`
   };
 }
-const GALERIA_KRATERY_SCENY = ['galeria-kratery', ...GALERIA_KRATERY.flatMap(([name]) => [`galeria-krater-${name}`, `galeria-krater-${name}-zimna`])];
+// Rozdarcia po zderzeniu (2026-09-29): taran — pancernik pchany dziobem w burtę drugiego (obróconego o 90°),
+// 8200 j. na południe od celu galerii. Rozdarcia: stemple mapy ran z haka HullBodies.onNodeLost (węzły
+// zniszczone poza bronią) i poszarpany brzeg dziur skóry (rozdarcie narożników). Ujęcia: 0,6 s po końcu
+// pchania i 6 s później (zimne). Diagnostyka: zabite węzły obu kadłubów, stemple rozdarć.
+SCENES['galeria-taran'] = {
+  opis: 'Rozdarcia 2026-09-29: taran 420 j/s — pancernik dziobem w burtę drugiego, 0,6 s po końcu pchania (zgniot, dziury z poszarpanym, osmalonym brzegiem), zoom 1,1',
+  hud: false, warm: 2,
+  js: `const G = window.__galeria; const y1 = G.T.y + 8200;
+       const put = (dx, angle) => {
+         const r = spawnCallInShip('pirate_battleship', { mode: 'friendly', spawnPos: { x: G.T.x + dx, y: y1 } });
+         const e = Array.isArray(r) ? r[0] : r;
+         e.ai = null; e.hp = e.maxHp = 1e6; e.angle = angle; e.vx = 0; e.vy = 0; e.angVel = 0;
+         if (e.shield) { e.shield.val = 0; e.shield.max = 0; }
+         return e;
+       };
+       const B = put(0, Math.PI / 2); const A = put(-1300, 0);
+       S.cam(B.x - 200, y1, 0.45);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);
+       H.reseed(0x6a29a0);
+       const nA = A.beamHull.body.activeNodes, nB = B.beamHull.body.activeNodes;
+       const t0 = { ...window.HullDamageMap.stats };
+       const push = () => { A.vx = 420; A.vy = 0; A.angle = 0; A.angVel = 0; };
+       let k = 0; for (; k < 400 && !HullBodies.hasContact(A, B); k++) { push(); await H.step(1); }
+       for (let j = 0; j < 24; j++) { push(); await H.step(1); }
+       await H.step(36);
+       const t1 = window.HullDamageMap.stats;
+       G.taran = { A, B, nA, nB };
+       window.__harnessDiag = { klatekDoStyku: k, wezlyA: nA - A.beamHull.body.activeNodes, wezlyB: nB - B.beamHull.body.activeNodes,
+         rozdarcia: t1.tearStamps - t0.tearStamps, polaczone: t1.tearMerged - t0.tearMerged, limit: t1.tearCapped - t0.tearCapped };
+       camera.shakeMag = 0; camera.shakeTime = 0;
+       S.cam(B.x - 260, y1, 1.1);`
+};
+SCENES['galeria-taran-zimna'] = {
+  opis: 'Rozdarcia 2026-09-29: ten sam taran 6 s później (zimne rozdarcia: osmalenie, ciemny poszarpany brzeg), zoom 1,1',
+  hud: false, warm: 2,
+  js: `const G = window.__galeria; const { A, B, nA, nB } = G.taran;
+       await H.step(324);
+       window.__harnessDiag = { wezlyA: nA - A.beamHull.body.activeNodes, wezlyB: nB - B.beamHull.body.activeNodes };
+       camera.shakeMag = 0; camera.shakeTime = 0;
+       S.cam(B.x - 260, B.y, 1.1);`
+};
+const GALERIA_KRATERY_SCENY = ['galeria-kratery', ...GALERIA_KRATERY.flatMap(([name]) => [`galeria-krater-${name}`, `galeria-krater-${name}-zimna`]),
+  'galeria-taran', 'galeria-taran-zimna'];
 
 // Wydobycie skał (zadanie 21b): etapy z wydobycie-gra.mjs (skała testowa jak scena „Kopalnia”
 // dema → lasery → piła → ładunek + detonacja → wiązka), po kolei w jednej sesji.

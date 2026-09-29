@@ -1594,6 +1594,9 @@ function createBeamSkinMesh(entity) {
   // Nośnik transformacji i danych slotu — rysuje go partia (hullSkinBatch.js), siatka poza sceną.
   mesh.userData.hullBatched = true;
   material.uniforms.uHullSlot.value = HullObjectStore.acquire(mesh);
+  // Rozmiar kadłuba w świecie od razu (nie dopiero z slotem mapy ran): skala szumu poszarpanego brzegu
+  // dziur (hullTearFray) i rany; HullDamageMap.bind wpisuje tę samą wartość.
+  material.uniforms.uDmgWorld.value.set(hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;
@@ -1613,6 +1616,7 @@ function createBeamSkinMesh(entity) {
     positions: null,
     shade: null,
     heat: null,
+    tear: null,
     visibleQuads: 0,
     needsFullWrite: true,
     srcWidth: hull.srcWidth,
@@ -1640,16 +1644,17 @@ function rebuildBeamSkinGeometry(data) {
   data.positions = new Float32Array(vertices * 3);
   data.shade = new Float32Array(vertices);
   data.heat = new Float32Array(vertices * 2);
+  data.tear = new Float32Array(vertices);
   data.topo = topo;
   setBeamSkinHeatClock(topo);
-  data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
+  data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat, data.tear);
   clearHullSkinDirty(body);
   data.needsFullWrite = false;
   body.meshDirty = false;
   // Partia (zadanie 23): stary wpis (poprzednia topologia) znika, nowy na końcu partii z całą skórą —
   // wysyłka tylko zmienionych czworokątów w kolejnych klatkach (zbierzZakresy partii).
   if (data.batchEntry) data.batch.remove(data.batchEntry);
-  data.batchEntry = data.batch.add(data.mesh.material.uniforms.uHullSlot.value, topo, data.positions, data.shade, data.heat, data.mesh);
+  data.batchEntry = data.batch.add(data.mesh.material.uniforms.uHullSlot.value, topo, data.positions, data.shade, data.heat, data.mesh, data.tear);
 }
 
 // Żar narożników skóry liczony na chwilę zapisu — zegar renderera (performance.now, jak
@@ -1673,7 +1678,7 @@ function updateBeamSkinGeometry(data) {
   if (!data.needsFullWrite && region && region.store === body.nodeStore && !region.dirtyAll) {
     if (region.dirtyCount > 0) {
       const range = writeHullSkinQuads(body, topo, data.positions, data.shade, data.heat,
-        region.dirty, region.dirtyCount, _beamSkinRange);
+        region.dirty, region.dirtyCount, _beamSkinRange, data.tear);
       clearHullSkinDirty(body);
       if (range.max >= range.min) {
         data.batch.writeQuads(data.batchEntry, data.positions, data.shade, data.heat, range.min, range.max);
@@ -1681,7 +1686,7 @@ function updateBeamSkinGeometry(data) {
     }
     data.visibleQuads = body.activeNodes;
   } else {
-    data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
+    data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat, data.tear);
     clearHullSkinDirty(body);
     data.batch.writeAll(data.batchEntry, data.positions, data.shade, data.heat);
   }
@@ -1814,7 +1819,7 @@ function hullVariantProbes() {
   // partia skór (zadanie 23): ten sam układ atrybutów co HullSkinBatch
   const batchGeo = new THREE.BufferGeometry();
   batchGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
-  batchGeo.setAttribute('aShadeHeat', new THREE.BufferAttribute(new Float32Array(12), 3));
+  batchGeo.setAttribute('aShadeHeat', new THREE.BufferAttribute(new Float32Array(16), 4));
   batchGeo.setAttribute('aUvSlot', new THREE.BufferAttribute(new Float32Array([0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0]), 3));
   batchGeo.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2, 0, 2, 3]), 1));
   const batchProbe = new THREE.Mesh(batchGeo, new HullNodeMaterial('beamBatch', holders()));

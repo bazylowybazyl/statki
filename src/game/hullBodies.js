@@ -237,6 +237,13 @@ export const HullBodies = {
   // (entity, dt, changed) — po naprawie kadłuba w repair() (mapa ran: wygaszanie osmalenia
   // i przestrzelin; changed = false — naprawa zakończona). Domyślnie brak.
   onRepair: null,
+  // (entity, hull, u, v, x, y) — węzeł zniszczony POZA trafieniem broni (zderzenie i zgniot, oparcie po
+  // zerwanych belkach, odpryski rozpadu, cięcie wraku, wybuch reaktora): uv jego komórki w konwencji
+  // skóry i punkt świata gry. Trafienia (impact, cutSegment) mają własny hak onImpact. Mapa ran: rozdarcie
+  // (poszarpany, osmalony brzeg dziury). Domyślnie brak.
+  onNodeLost: null,
+  // > 0 w trakcie impact() / cutSegment(): zniszczone węzły należą do krateru / rzazu (onImpact).
+  _weaponDepth: 0,
 
   init() {
     if (this.ready) return this;
@@ -539,7 +546,13 @@ export const HullBodies = {
     r.node = D.probeLocal2D(body, _qLocal.x, _qLocal.y, r.radius);
     writeSpriteUv(hull, r.node, _qLocal.x, _qLocal.y, r);
     const before = body.activeNodes;
-    const hit = D.applyImpact(body, x, -y, 0, dmg, _impactVel, _impactOpts);
+    let hit;
+    this._weaponDepth++;
+    try {
+      hit = D.applyImpact(body, x, -y, 0, dmg, _impactVel, _impactOpts);
+    } finally {
+      this._weaponDepth--;
+    }
     r.hit = hit;
     r.killed = before - body.activeNodes;
     r.crater = hit ? D.lastCraterReach : 0;
@@ -581,7 +594,13 @@ export const HullBodies = {
     writeSpriteUv(hull, r.node, lx0 + (lx1 - lx0) * t, ly0 + (ly1 - ly0) * t, r);
     writeImpactDir(r, x1 - x0, y1 - y0, 1 - t);
     const before = body.activeNodes;
-    const killed = cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth);
+    let killed;
+    this._weaponDepth++;
+    try {
+      killed = cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth);
+    } finally {
+      this._weaponDepth--;
+    }
     r.hit = killed > 0;
     r.killed = before - body.activeNodes;
     if (killed > 0 && typeof this.onImpact === 'function') this.onImpact(entity, r);
@@ -1410,10 +1429,18 @@ function onContact(A, B, info) {
 
 // Ginący węzeł = odłamek jak w demie belek (hullDebris3D.js): pogięta płyta poszycia albo
 // kształtownik (węzeł z wręgiem/grodzią), kolor blachy komórki, rozmiar ~ bok komórki.
+const _lostUv = { u: 0, v: 0 };
+
 function onNodeDebris(body, i, wx, wy, wz, vx, vy) {
   const hull = body.hull;
-  if (!hull || typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
+  if (!hull) return;
   const s = body.nodeStore;
+  // Rozdarcie poza trafieniem broni (hak onNodeLost — mapa ran): uv komórki węzła w konwencji skóry.
+  if (HullBodies._weaponDepth === 0 && typeof HullBodies.onNodeLost === 'function' && hull.entity) {
+    writeSpriteUv(hull, i, s.x[i], s.y[i], _lostUv);
+    HullBodies.onNodeLost(hull.entity, hull, _lostUv.u, _lostUv.v, wx, -wy);
+  }
+  if (typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
   // Rozmiar jak odłamki dema: ~0,9–1,8 komórki (siatka gry = siatka dema, 15 j.).
   const scale = body.cellSize * (0.9 + fxRandom.next() * 0.9);
   const structural = s.beamCount[i] > s.localBeamCount[i] && fxRandom.next() < 0.4;

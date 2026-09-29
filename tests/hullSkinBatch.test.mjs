@@ -26,19 +26,22 @@ function skin(count, seed) {
   const positions = new Float32Array(count * 12);
   const shade = new Float32Array(count * 4);
   const heat = new Float32Array(count * 8);
+  const tear = new Float32Array(count * 4);
   for (let i = 0; i < positions.length; i++) positions[i] = seed + i;
   for (let i = 0; i < shade.length; i++) shade[i] = seed * 0.5 + i;
   for (let i = 0; i < heat.length; i++) heat[i] = seed * 0.25 + i;
-  return { positions, shade, heat };
+  for (let i = 0; i < tear.length; i++) tear[i] = (i % 4) * 0.25;
+  return { positions, shade, heat, tear };
 }
 const material = () => new THREE.MeshBasicMaterial();
 
-test('partia: wpisy kolejno, pozycje / jasność+żar / uv+slot z przeplotem, indeksy przesunięte', () => {
+test('partia: wpisy kolejno, pozycje / jasność+żar+rozdarcie / uv+slot z przeplotem, indeksy przesunięte', () => {
   const b = new HullSkinBatch('k', material());
   const A = skin(3, 100);
   const B = skin(2, 200);
   const ea = b.add(7, topo(3, 0.1), A.positions, A.shade, A.heat);
-  const eb = b.add(9, topo(2, 0.2), B.positions, B.shade, B.heat);
+  const eb = b.add(9, topo(2, 0.2), B.positions, B.shade, B.heat, null, B.tear);
+  assert.equal(b.aSh.itemSize, 4, 'jasność, żar (szczyt, znacznik), rozdarcie narożnika');
   assert.equal(ea.vStart, 0);
   assert.equal(eb.vStart, 12);
   assert.equal(eb.iStart, 18);
@@ -46,7 +49,8 @@ test('partia: wpisy kolejno, pozycje / jasność+żar / uv+slot z przeplotem, in
   // wierzchołek 1 kadłuba B → globalnie 13
   const v = 13;
   assert.deepEqual(Array.from(b.pos.subarray(v * 3, v * 3 + 3)), Array.from(B.positions.subarray(3, 6)));
-  assert.deepEqual(Array.from(b.sh.subarray(v * 3, v * 3 + 3)), [B.shade[1], B.heat[2], B.heat[3]]);
+  assert.deepEqual(Array.from(b.sh.subarray(v * 4, v * 4 + 4)), [B.shade[1], B.heat[2], B.heat[3], B.tear[1]]);
+  assert.equal(b.sh[2 * 4 + 3], 0, 'bez tablicy rozdarcia — 0 (cała blacha)');
   assert.deepEqual(Array.from(b.uvs.subarray(v * 3, v * 3 + 3)), [Math.fround(0.2 + 2 * 0.001), Math.fround(0.2 + 3 * 0.001), 9]);
   assert.deepEqual(Array.from(b.idx.subarray(18, 24)), [12, 13, 14, 12, 14, 15]);
   // zmiany czworokąta: tylko jego wycinek w zakresach wysyłki (osobny zakres na kadłub)
@@ -99,7 +103,7 @@ test('klej: nośnik kadłuba poza sceną, partia po zestawie tekstur, zapis czwo
   const src = read('src/3d/hexShips3D.js');
   assert.match(src, /mesh\.userData\.hullBatched = true;/);
   assert.doesNotMatch(src.slice(src.indexOf('function createBeamSkinMesh('), src.indexOf('function rebuildBeamSkinGeometry(')), /Core3D\.scene\.add\(mesh\)/, 'nośnik nie w scenie');
-  assert.match(src, /data\.batchEntry = data\.batch\.add\(data\.mesh\.material\.uniforms\.uHullSlot\.value, topo, data\.positions, data\.shade, data\.heat, data\.mesh\);/);
+  assert.match(src, /data\.batchEntry = data\.batch\.add\(data\.mesh\.material\.uniforms\.uHullSlot\.value, topo, data\.positions, data\.shade, data\.heat, data\.mesh, data\.tear\);/);
   assert.match(src, /mesh\.updateMatrixWorld\(\);/, 'macierz świata nośnika poza sceną');
   assert.match(src, /new HullNodeMaterial\('beamBatch', \{/);
   const tsl = read('src/3d/hexShips3D.tsl.js');

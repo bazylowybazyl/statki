@@ -37,26 +37,34 @@ const st = (r, heat, scorch, hole, ion, elong = 1, pow = 0, crater = 0) => Objec
 
 /**
  * Tabela rodzin (klucze = rodziny receptur dema / WEAPON_FX[id].fx z zadania 17).
- * `rocket` i `generic` — tylko gra: rakiety (receptury 19 nie stemplują) i trafienie bez źródła.
+ * `rocket` i `generic` — tylko gra: rakiety (receptury 19 nie stemplują) i trafienie bez źródła;
+ * `tear` — rozdarcie poszycia bez broni (zderzenia, zgniot, cięcie wraku: hak HullBodies.onNodeLost).
  * Ósme pole — obrażenia wzorcowe krateru (zadanie 25c): przy nich krater ma promień leja rany;
  * wzorzec = baseDamage broni (wylot / zakleszczenie: krater z 0,5 obrażeń — 18-A), rakieta — 1000
- * (missile_rack).
+ * (missile_rack). Wzorzec większy niż baseDamage = krater mniejszy niż lej receptury (balans
+ * 2026-09-29: Yamato 60 j., armata 24,7 j. — promień ∝ √(obrażenia / wzorzec)). Wpis `kerf` z wzorcem
+ * = rów przebicia (łańcuch kraterów wzdłuż drogi w materiale, src/game/hullCraters.js trenchCraters).
  */
 export const STAMP = Object.freeze({
   tempest: Object.freeze({ impact: st(20, 2.6, 0.5, 0.62, 1.0, 1, 1) }),
   vulcan: Object.freeze({ impact: st(7, 1.5, 0.35, 0.3, 0), ricochet: st(9, 0.9, 0.3, 0, 0, 2.6) }),
   autocannon: Object.freeze({ impact: st(24, 2.4, 0.8, 0.64, 0, 1, 1) }),
   helios: Object.freeze({ impact: st(18, 2.9, 0.6, 0.5, 0, 1, 1) }),
-  armata: Object.freeze({ impact: st(62, 3.2, 0.95, 0.76, 0, 1, 0, 150) }),
+  // Armata (150 obr.): krater 24,7 j. zamiast pełnego leja 35,4 j. (decyzja 2026-09-29 — pełny zabijał
+  // niszczyciele Terra Nova 3,6× szybciej).
+  armata: Object.freeze({ impact: st(62, 3.2, 0.95, 0.76, 0, 1, 0, 307) }),
   // Goliath (45 obr. co 0,32 s) — bez krateru na miarę rany: pełny lej (25 j.) w każdym pocisku serii
   // skracał czas zniszczenia niszczyciela 4,3× (szybciej niż Yamato), pancernika 2,4× (bilans 25c).
   // Krater z budżetu HP jak dotąd; lej rany tylko tam, gdzie seria przebije kadłub.
   goliath: Object.freeze({ impact: st(48, 3.0, 0.9, 0.72, 0) }),
-  yamato: Object.freeze({ impact: st(130, 3.6, 1.0, 0.9, 0.4, 1, 0, 850) }),
+  // Yamato (850 obr.): krater 60 j. zamiast pełnego leja 90,7 j. (decyzja 2026-09-29 — pełny rozcinał
+  // pancernik salwą w burtę).
+  yamato: Object.freeze({ impact: st(130, 3.6, 1.0, 0.9, 0.4, 1, 0, 1940) }),
   plasmaGatling: Object.freeze({ impact: st(34, 2.2, 0.55, 0.56, 0.8) }),
   hexlance: Object.freeze({ impact: st(70, 3.4, 1.0, 0.85, 0.2), kerf: st(34, 3.2, 0.9, 0.85, 0, 2.2) }),
+  // Mjolnir: rów przebicia (decyzja 2026-09-29) — kratery leja rzazu (26,5 j.) wzdłuż drogi w materiale.
   mjolnir: Object.freeze({
-    impact: st(80, 3.8, 1.0, 0.9, 0.5, 1, 0, 2500), kerf: st(38, 3.6, 1.0, 0.9, 0.2, 2.2),
+    impact: st(80, 3.8, 1.0, 0.9, 0.5, 1, 0, 2500), kerf: st(38, 3.6, 1.0, 0.9, 0.2, 2.2, 0, 2500),
     exit: st(56, 3.6, 1.0, 0.9, 0.3, 1, 0, 1250)
   }),
   valkyrie: Object.freeze({
@@ -71,8 +79,14 @@ export const STAMP = Object.freeze({
   // Promień: 0,2 × flakBurstRadius (recipes.js: `(p.flakR || 150) * 0.2`) — liczony w resolveStamp.
   flak: Object.freeze({ impact: st(30, 2.2, 0.8, 0.5, 0) }),
   rocket: Object.freeze({ impact: st(36, 3.0, 0.95, 0.7, 0.0, 1, 0, 1000) }),
-  generic: Object.freeze({ impact: st(16, 2.4, 0.7, 0.55, 0) })
+  generic: Object.freeze({ impact: st(16, 2.4, 0.7, 0.55, 0) }),
+  // Rozdarcie po zniszczonym węźle (zderzenie, zgniot, cięcie): na węzeł, lej ~14 j. od środka komórki
+  // (15 j.) — ciemny, poszarpany brzeg dziury na blasze sąsiadów; słaby żar (świeci skóra zgniotu).
+  tear: Object.freeze({ impact: st(24, 0.9, 0.5, 0.78, 0) })
 });
+
+/** Promień dziury (kanał krateru) stempla rozdarcia — w komórkach silnika wokół zniszczonego węzła. */
+export const TEAR_HOLE_CELLS = 1.1;
 
 // ── Lej i krater (zadanie 25c) ──────────────────────────────────────────────
 // Kanał brzegu teksela: brzeg · clamp(RIM_EDGE_A − RIM_EDGE_B · r / R, 0, 1) (kernel mapy ran), lej w
@@ -107,6 +121,17 @@ export function craterRadiusFor(src, variant = 'impact', damage = 0) {
   if (!(ref > 0) || !(dmg > 0)) return 0;
   const k = Math.sqrt(Math.min(dmg / ref, CRATER_MAX_SCALE * CRATER_MAX_SCALE));
   return lejRadius(e, stampPowerFor(src)) * k;
+}
+
+/**
+ * Promień krateru rowu przebicia [j. świata] (wpis `kerf` rodziny z wzorcem krateru — dziś Mjolnir) dla
+ * obrażeń (energii) pocisku w materiale; 0 = broń bez rowu (rzaz to sam żar i osmalenie). Bez alokacji.
+ */
+export function trenchRadiusFor(src, damage = 0) {
+  const f = STAMP[stampFamilyFor(src)];
+  const e = f ? f.kerf : null;
+  if (!e || !(e[S_CRATER] > 0)) return 0;
+  return craterRadiusFor(src, 'kerf', damage);
 }
 
 /** Broń gry → rodzina stempla (27 broni dema — kolumna `fx` tabeli WEAPON_FX zadania 17). */

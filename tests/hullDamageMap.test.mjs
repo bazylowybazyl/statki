@@ -325,14 +325,14 @@ test('lej tylko w prawdziwej dziurze (25c): stempel krateru niesie zasięg zabit
   try {
     const key = e.beamHull.dmgKey;
     const last = () => lastStamp(HullDamageMap.slotOf(key));
-    // Yamato na miarę rany: krater o promieniu leja (90,7 j.) — lej w zasięgu zabitych węzłów, rana z receptury.
+    // Yamato na miarę rany: krater 60 j. (balans 2026-09-29) — lej w zasięgu zabitych węzłów, rana z receptury.
     const yam = { vfxKey: 'special_yamato_cannon', type: 'plasma', weaponSize: 'Capital' };
     const hit = HullBodies.sweep(e, 0, -1000, 0, 0, 0);
     HullDamageMap.setSource(yam);
     HullBodies.impact(e, hit.worldX, hit.worldY, 850, { x: 0, y: 9000 }, craterOptsFor(yam, 'impact', 850));
     HullDamageMap.clearSource();
     let st = last();
-    assert.ok(hullImpactResult.crater > 75, `zasięg dziury ${hullImpactResult.crater}`);
+    assert.ok(hullImpactResult.crater > 45, `zasięg dziury ${hullImpactResult.crater}`);
     close(st.hole, hullImpactResult.crater, 1e-3, 'lej = zasięg zabitych węzłów');
     close(st.r, 130, 1e-3, 'rana w promieniu receptury (żar i osmalenie sięgają dalej)');
     // Lekki pocisk bez zabitego węzła: bez leja.

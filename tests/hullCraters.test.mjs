@@ -85,9 +85,10 @@ test('jedno źródło: promień leja z receptury (próg materiału) = promień k
 
 test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta — krater z budżetu HP; wzorce = obrażenia broni', () => {
   const W = MASTER_WEAPONS;
-  // Wzorzec = baseDamage broni; wylot i zakleszczenie przebić — krater z 0,5 obrażeń (18-A).
-  assert.equal(S.STAMP.yamato.impact[S.S_CRATER], W.special_yamato_cannon.baseDamage);
-  assert.equal(S.STAMP.armata.impact[S.S_CRATER], W.armata_mk1.baseDamage);
+  // Wzorzec = baseDamage broni; wylot i zakleszczenie przebić — krater z 0,5 obrażeń (18-A). Balans
+  // 2026-09-29: Yamato 60 j. i armata 24,7 j. przy pełnych obrażeniach (wzorzec większy niż baseDamage).
+  close(S.craterRadiusFor({ vfxKey: 'special_yamato_cannon' }, 'impact', W.special_yamato_cannon.baseDamage), 60, 0.05, 'Yamato 60 j.');
+  close(S.craterRadiusFor({ vfxKey: 'armata_mk1' }, 'impact', W.armata_mk1.baseDamage), 24.7, 0.05, 'armata 24,7 j.');
   assert.equal(S.STAMP.mjolnir.impact[S.S_CRATER], W.siege_railgun.baseDamage);
   assert.equal(S.STAMP.mjolnir.exit[S.S_CRATER], 0.5 * W.siege_railgun.baseDamage);
   assert.equal(S.STAMP.valkyrie.impact[S.S_CRATER], W.special_valkyrie_railgun.baseDamage);
@@ -96,9 +97,18 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
   assert.equal(S.STAMP.rocket.impact[S.S_CRATER], W.missile_rack.baseDamage);
   // Pocisk z gry (vfxKey, type): pełne obrażenia → promień leja; mniejsze → √.
   const yam = { vfxKey: 'special_yamato_cannon', type: 'plasma', weaponSize: 'Capital' };
-  close(S.craterRadiusFor(yam, 'impact', 850), S.lejRadius(S.STAMP.yamato.impact), 1e-9);
-  close(S.craterRadiusFor(yam, 'impact', 850 / 4), S.lejRadius(S.STAMP.yamato.impact) / 2, 1e-9, '¼ obrażeń → ½ promienia');
-  close(S.craterRadiusFor(yam, 'impact', 850 * 100), 2 * S.lejRadius(S.STAMP.yamato.impact), 1e-9, 'sufit: 2 promienie wzorcowe');
+  const yRef = S.STAMP.yamato.impact[S.S_CRATER];
+  close(S.craterRadiusFor(yam, 'impact', yRef), S.lejRadius(S.STAMP.yamato.impact), 1e-9);
+  close(S.craterRadiusFor(yam, 'impact', yRef / 4), S.lejRadius(S.STAMP.yamato.impact) / 2, 1e-9, '¼ obrażeń → ½ promienia');
+  close(S.craterRadiusFor(yam, 'impact', yRef * 100), 2 * S.lejRadius(S.STAMP.yamato.impact), 1e-9, 'sufit: 2 promienie wzorcowe');
+  // Rów przebicia Mjolnira (2026-09-29): wpis `kerf` z wzorcem = baseDamage → lej rzazu (26,5 j.); Valkyrie i Hexlance bez rowu.
+  assert.equal(S.STAMP.mjolnir.kerf[S.S_CRATER], W.siege_railgun.baseDamage);
+  close(S.trenchRadiusFor({ vfxKey: 'siege_railgun' }, 2500), S.lejRadius(S.STAMP.mjolnir.kerf), 1e-9);
+  assert.equal(C.hasTrench({ vfxKey: 'siege_railgun' }), true);
+  for (const src of [{ vfxKey: 'special_valkyrie_railgun' }, 'hexlance_siege', { vfxKey: 'armata_mk1' }, { vfxKey: 'special_yamato_cannon' }]) {
+    assert.equal(S.trenchRadiusFor(src, 5000), 0, JSON.stringify(src));
+    assert.equal(C.hasTrench(src), false);
+  }
   close(S.craterRadiusFor({ vfxKey: 'siege_railgun' }, 'exit', 1250), S.lejRadius(S.STAMP.mjolnir.exit), 1e-9);
   close(S.craterRadiusFor({ id: 'missile_rack', category: 'rocket' }, 'impact', 1000), 18, 1e-9, 'rakieta: mały krater');
   close(S.craterRadiusFor({ vfxKey: 'siege_torpedo', type: 'torpedo' }, 'impact', 800), 18 * Math.sqrt(0.8), 1e-9, 'torpeda — rodzina rakiet');
@@ -106,7 +116,7 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
   for (const [src, v, dmg] of [
     [{ vfxKey: 'railgun_mk2', type: 'rail' }, 'impact', 10], [{ vfxKey: 'heavy_autocannon_l' }, 'impact', 60],
     [{ vfxKey: 'special_goliath_autocannon' }, 'impact', 45], [{ vfxKey: 'special_plasma_gatling' }, 'impact', 60],
-    [{ vfxKey: 'vulcan_minigun' }, 'ricochet', 4], [{ vfxKey: 'siege_railgun' }, 'kerf', 2500],
+    [{ vfxKey: 'vulcan_minigun' }, 'ricochet', 4], [{ vfxKey: 'special_valkyrie_railgun' }, 'kerf', 500],
     [{ id: 'beam_pulse', category: 'beam' }, 'impact', 45], [null, 'impact', 1000], [yam, 'impact', 0]
   ]) {
     assert.equal(S.craterRadiusFor(src, v, dmg), 0, `${JSON.stringify(src)} ${v}`);
@@ -115,7 +125,7 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
   assert.equal(C.craterOptsFor({ vfxKey: 'railgun_mk2' }, 'impact', 10), null);
   const o = C.craterOptsFor(yam, 'impact', 850);
   assert.equal(o, C.hullCraterOpts);
-  close(o.craterRadius, S.lejRadius(S.STAMP.yamato.impact), 1e-9);
+  close(o.craterRadius, 60, 0.05);
 });
 
 test('silnik: killRadius zabija wszystkie węzły w promieniu (i tylko je), odrzut z haszu — bez Math.random, powtarzalnie', () => {

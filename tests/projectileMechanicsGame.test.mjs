@@ -19,7 +19,7 @@ const { SimClock } = await import('../src/game/simClock.js');
 const { createShot, flyShot, ledgerFor } = await import('./helpers/hullFlight.mjs');
 const { readIndexHtml, loadIndexFunction } = await import('./helpers/indexSource.mjs');
 const { stampFamilyFor } = await import('../src/3d/hullDamageStamps.js');
-const { craterOptsFor } = await import('../src/game/hullCraters.js');
+const { craterOptsFor, hasTrench, trenchCraters } = await import('../src/game/hullCraters.js');
 
 const html = readIndexHtml();
 const MJOLNIR = MASTER_WEAPONS.siege_railgun;
@@ -103,7 +103,7 @@ const game = {
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false,
-  HullBodies, HullDamageMap, stampFamilyFor, craterOptsFor, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  HullBodies, HullDamageMap, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
@@ -275,16 +275,12 @@ test('mapa ran (18-C): krater ze źródłem = pocisk i wariantem (wejście, wylo
   try {
     const b = gameShot(MJOLNIR, -2000, 10, 1, 0, 7);
     withSeed(7, () => flyInGame(b, col, 20));
-    assert.deepEqual(sources().map((s) => s.variant), ['impact', 'exit', 'impact', 'exit', 'impact', 'exit']);
+    // Rów przebicia (2026-09-29): między wejściem a wylotem kratery rowu (wariant `kerf`) zamiast pasa stampKerf.
+    assert.deepEqual(sources().filter((s) => s.variant !== 'kerf').map((s) => s.variant), ['impact', 'exit', 'impact', 'exit', 'impact', 'exit']);
     assert.ok(sources().every((s) => s.family === 'mjolnir'));
+    assert.ok(sources().filter((s) => s.variant === 'kerf').length >= 3 * 10, `kratery rowu w każdym kadłubie: ${sources().length}`);
     assert.equal(stamps.filter((s) => s.type === 'clear').length, sources().length, 'źródło czyszczone po każdym kraterze');
-    const kerfs = stamps.filter((s) => s.type === 'kerf');
-    for (const e of col) assert.ok(kerfs.some((k) => k.entity === e), 'pas rzazu w każdym kadłubie');
-    for (const k of kerfs) {
-      assert.equal(k.family, 'mjolnir');
-      assert.ok(k.x1 > k.x0, 'odcinek wzdłuż lotu');
-      assert.ok(k.x0 >= k.entity.x - 230 && k.x1 <= k.entity.x + 230 && Math.abs(k.y0 - 10) < 1e-6, 'w materiale kadłuba');
-    }
+    assert.equal(stamps.filter((s) => s.type === 'kerf').length, 0, 'bez pasa rzazu — rów stempluje hak krateru');
   } finally { releaseAll(col); }
   // Valkyrie w grubym kadłubie: wejście, zakleszczenie.
   const [thick] = hullsAt(THICK, [[0, 0]]);
