@@ -345,3 +345,33 @@ Testy: `tests/hullCraters.test.mjs` (jedno źródło promienia = próg materiał
 zabija dokładnie koło, bez Math.random i powtarzalnie, bez `killRadius` bit w bit jak dotąd, dziura od brzegu i rozpad,
 stemple mapy z zasięgiem dziury, rakieta), `hullDamageMap` (kanał krateru w lustrze CPU kernela i materiału: lej tylko
 w dziurze, osmalona blacha poza nią), `hullDamageMechanics`, `projectileMechanicsGame` (gra = wzorzec lotu z kraterami).
+
+### 9.1. Balans po decyzjach użytkownika (2026-09-29)
+
+Odpowiedzi na pytania 25c: Yamato — krater 60 j. (wzorzec `S_CRATER` 850 → 1940), armata — 24,7 j. (150 → 307),
+Goliath bez krateru na miarę rany (zostaje), rakiety 18 j. (zostaje), **Mjolnir — rów przebicia** („rób, najwyżej
+cofniemy, jak będzie OP”): wpis `kerf` z wzorcem 2500 → kratery `killRadius` o promieniu leja rzazu (26,5 j.) na
+znakach rzazu (co 22 j. drogi w materiale), środek cofnięty o promień za pocisk (`src/game/hullCraters.js`
+`trenchCraters`, gra: `applyBulletHullPass`) — rów nie wycina materiału przed pociskiem. Czy rów rozetnie kadłub,
+decydują długie wręgi silnika belek nad rowem: płyta testowa 600 × 300 przestrzelona wzdłuż została w całości, a w
+galerii (`galeria-krater-mjolnir`) strzał w poprzek burty pancernika odciął jego rufę wrakiem (341 węzłów, dawniej 32).
+
+Bilans (`node scripts/bilans-broni.mjs --n 1000`; 25c → teraz; sprzed 25c w nawiasie):
+
+| Broń → cel | węzły / strzał | strata HP / strzał | seria do zniszczenia |
+|---|---|---|---|
+| Yamato (salwa) → niszczyciel | 105 → 77 | 3729 → 3240 | 9,8 → 10,0 s (10,0) |
+| Yamato → pancernik | 212 → 81 | 6142 → 2746 | 15,3 → 21,1 s (25) |
+| Yamato → lotniskowiec | 187 → 80 | 9795 → 4365 | 34 → 55 s (85) |
+| Yamato → superkapitał | 186 → 80 | 10 110 → 4430 | 67 → 128 s (170) |
+| armata → fregata TN | 7,1 → 3,6 | 419 → 226 | 9,4 → 13,7 s (20) |
+| armata → niszczyciel TN | 7,3 → 3,3 | 647 → 306 | 19,4 → 30,6 s (70) |
+| armata → pancernik TN | 7,6 → 3,7 | 237 → 154 | 160 → 200 s (200) |
+| Mjolnir → pancernik | 29 → 105 | 2501 → 3938 | 54,5 → 38,5 s (55) |
+| Mjolnir → kolumna F + N + P | 76 → 171 | 6060 → 7274 (dps 551 → 661) | — |
+| Mjolnir → lotniskowiec | — | — | 152 → 89 s (186) |
+
+Valkyrie, Goliath, gatling plazmowy, rakiety — bez zmian. Galeria (`zrzuty.mjs --sceny galeria-krater-*`): salwa
+Yamato w burtę pancernika 404 → 93 węzły (bez rozcięcia), armata 3 pociski 23 → 10. Rozdarcia po zderzeniach
+(poszarpany brzeg dziur, stemple `tear` mapy ran — `agents.md` § „Kadłuby na belkach”, scena `galeria-taran`) nie
+zmieniają rozgrywki: tylko obraz (taran: te same 19 + 15 zniszczonych węzłów, 33 stemple rozdarć).

@@ -969,3 +969,15 @@ usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `d
   zmniejszyć `S_CRATER` (1900 → 60 j.)? (2) piracka armata zabija niszczyciele TN 3,6× szybciej — zostawić czy wzorzec 306
   (24,7 j., 2,2×)? (3) Goliath bez krateru na miarę rany? (4) Mjolnir: przejście przez materiał ma wycinać rów (łańcuch
   kraterów, duży wzrost siły)? (5) mały krater rakiet 18 j. OK?
+- **2026-09-29: odpowiedzi na pytania balansu 25c i rozdarcia po kolizjach.** Yamato — krater 60 j. (wzorzec 850 → 1940),
+  armata — 24,7 j. (150 → 307), Goliath i rakiety bez zmian, **Mjolnir — rów przebicia** (łańcuch kraterów `killRadius`
+  26,5 j. na znakach rzazu, cofniętych o promień za pocisk — `trenchCraters`; „najwyżej cofniemy, jak będzie OP”). Bilans:
+  Yamato pancernik 15,3 → 21,1 s (przed 25c 25 s), lotniskowiec 34 → 55 s (85); armata niszczyciel TN 19,4 → 30,6 s (70);
+  Mjolnir pancernik 54,5 → 38,5 s, lotniskowiec 152 → 89 s, kolumna dps 551 → 661; w galerii strzał w burtę pancernika
+  odciął rufę wrakiem (`MECHANIKA-BRONI.md` §9.1). **Rozdarcia** (uwaga użytkownika: po kolizjach kwadratowe rogi dziur,
+  „shader broni strzępił lepiej”): skóra belek pisze rozdarcie narożników (`beamHullSkin.js`, `aShadeHeat.w` partii), materiał
+  wycina szumem poszarpany pas przy brzegu każdej dziury (`hullTearFray`); węzły zniszczone poza bronią (zderzenie, zgniot,
+  rozpad, cięcie) stemplują mapę ran rodziną `tear` (hak `HullBodies.onNodeLost`). Po drodze złapany błąd: pierwsze użycie
+  indeksu slotu partii w gałęzi rozdarcia (pułapka 29) wyłączało rany na kadłubach — strażnik w `tests/hullTear.test.mjs`.
+  Zrzuty przed | po: `.tmp/webgpu/zadania/rozdarcia/obok/` (sceny `galeria-taran*` nowe w sesji `galeria`). Testy: 1740 /
+  9 bazowych porażek `main` / 3 todo; `npm test` OK.

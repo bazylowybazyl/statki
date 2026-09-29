@@ -303,7 +303,9 @@ osmalenie sięgają dalej.
   pole `S_CRATER` = obrażenia wzorcowe krateru na miarę rany. `craterRadiusFor(źródło, wariant, obrażenia)` =
   lej × √(obrażenia / wzorzec) (pole ∝ energii, ≤ 2 promienie wzorcowe). Wzorce: Yamato 850, Mjolnir 2500 / wylot
   1250, Valkyrie 500 / wylot i zakleszczenie 250, armata 150, rakiety i torpedy (rodzina `rocket`) 1000 → promienie
-  90,7 / 55,8 / 39,1 / 24,4 / 16,6 / 20,0 / 35,4 / 18,0 j. Bez wzorca (krater z budżetu HP jak dotąd): Goliath (pełny lej
+  90,7 / 55,8 / 39,1 / 24,4 / 16,6 / 20,0 / 35,4 / 18,0 j. Balans 2026-09-29 (decyzje użytkownika, `MECHANIKA-BRONI.md`
+  §9.1): Yamato 1940 → 60 j., armata 307 → 24,7 j., Mjolnir — rów przebicia (wpis `kerf` z wzorcem 2500: kratery 26,5 j.
+  na znakach rzazu, `trenchCraters`). Bez wzorca (krater z budżetu HP jak dotąd): Goliath (pełny lej
   25 j. przy 3 strzałach/s skracał czas zniszczenia niszczyciela 4,3×), gatling plazmowy, lekka broń, wiązki, flak,
   rykoszet, Hexlance (rzaz 35 j. ≥ lej znaków 22 j.).
 - **Fizyka** (`src/game/hullCraters.js` `craterOptsFor` → `HullBodies.impact(…, { craterRadius })` →
