@@ -95,7 +95,8 @@ bilansu).
   `updateSpecialWeaponCooldowns` w `index.html`, `capitalAI` (pole `weapon.charge`), HUD `_specialHudFromEntries`.
   Błąd celowania: `stepMountedWeaponAim` liczy `diff = wrap(desired − angle)`, ale go nie zapisuje — 18-B dopisze
   `state.aimErr = Math.abs(diff)` (`src/game/weaponAim.js`).
-- Seria: `buildHexlanceBurst(def, mounts, out)` → kolejka `burstCount × gniazda` (4 × 1 na Atlasie) wpisów
+- Seria: `buildHexlanceBurst(def, mounts, out)` → kolejka `burstCount × gniazda` (4 × 1 na Atlasie; od 2026-09-29 Hexlance
+  `burstCount: 1` — jeden strzał na gniazdo, decyzja użytkownika) wpisów
   `{cannonIndex, delay}` gniazdo po gnieździe, opóźnienia **względne** (0, potem `burstDelay` 0,25 s);
   `stepBurstQueue(queue, dt, fire)` = pętla z `updateSuperweapon` (nadwyżka kroku przechodzi dalej, rytm bez
   dryfu). Wpięcie: `prepareSuperweaponSalvo` buduje kolejkę tą funkcją; podgląd ładowania przed strzałem
@@ -375,3 +376,15 @@ Valkyrie, Goliath, gatling plazmowy, rakiety — bez zmian. Galeria (`zrzuty.mjs
 Yamato w burtę pancernika 404 → 93 węzły (bez rozcięcia), armata 3 pociski 23 → 10. Rozdarcia po zderzeniach
 (poszarpany brzeg dziur, stemple `tear` mapy ran — `agents.md` § „Kadłuby na belkach”, scena `galeria-taran`) nie
 zmieniają rozgrywki: tylko obraz (taran: te same 19 + 15 zniszczonych węzłów, 33 stemple rozdarć).
+
+### 9.2. Hexlance: jeden strzał i rzaz z pędem (2026-09-29)
+
+Uwagi użytkownika: Hexlance strzelał 4 razy zamiast raz (seria `burstCount: 4` z danych, czytana od 18-B), a odłamki
+rozbitego okrętu „lewitowały w miejscu”. Zmiany: `hexlance_siege.burstCount = 1` (mechanizm serii zostaje, `burstDelay`
+= odstęp gniazd); `HullBodies.cutSegment(…, { push: true })` — węzły rzazu giną z prędkością odłamka wzdłuż toru
+(`cutDebrisSpeed` 520 × 0,5–1,3, na boki 0,15–0,5), kadłub dostaje impuls w środku masy rzazu (masa wyciętego metalu ×
+`cutPushSpeed` 260, sufity 220 j/s i 1,2 rad/s na rzaz) przez prędkość encji, a odłam z rozpadu — pęd brzegu rzazu
+(`cutEdgeSpeed` 240 na węzeł przy pasie, do zera 2,5 komórki dalej) na swoją masę. Obrażenia i zabite węzły bez zmian (te same
+węzły z pędem i bez — test). Galeria (`galeria-hexlance-rozpad`, pancernik w poprzek toru, 260 j. od środka): odcięte części
+12 i 5 węzłów — przed: 0 j/s wzdłuż toru, po: 204 i 92 j/s (po 2 s 380 i 170 j. dalej), odłamki lecą za pociskiem.
+Wyniki bilansu z serią 4 cięć (tabela wyżej) nie dotyczą już Hexlance'a — jedno cięcie jak przed 18-B.

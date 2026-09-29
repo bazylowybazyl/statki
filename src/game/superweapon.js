@@ -2,8 +2,8 @@
  * Moduł Superbroni (Hexlance) - W pełni zintegrowany z Hardpointami
  *
  * Cykl: pierwsze naciśnięcie — ładowanie `chargeTime` (1,2 s), drugie w oknie „armed” — seria
- * `burstCount` strzałów z każdego gniazda co `burstDelay` (dane broni: 4 × 0,25 s, zadanie 18-B;
- * dawniej jeden strzał na gniazdo), przeładowanie `cooldown` po serii. Obrażenia tylko
+ * `burstCount` strzałów z każdego gniazda co `burstDelay` (dane broni: 1 strzał na gniazdo —
+ * decyzja 2026-09-29; seria 4 × 0,25 s z 18-B wycofana), przeładowanie `cooldown` po serii. Obrażenia tylko
  * strukturalne (rzaz HullBodies.cutSegment → sufit HP od zabitych węzłów). Wstrząs strzału z
  * danych (`shake`, src/game/weaponFeel.js — 18-D).
  */
@@ -32,8 +32,10 @@ const VFX_CONFIG = {
     colors: ['#ffffff', '#d0eaff', '#85c1ff', '#4a90e2']
 };
 
-const localParticles = []; 
+const localParticles = [];
 const hexlanceProjectiles = [];
+// Rzaz pocisku z pędem (HullBodies.cutSegment, 2026-09-29): odłamki i odcięte części lecą wzdłuż toru.
+const HEXLANCE_CUT_OPTS = Object.freeze({ push: true });
 let globalTime = 0;
 const HEXLANCE_DEF = MASTER_WEAPONS?.hexlance_siege || {};
 
@@ -256,7 +258,7 @@ function fireSingleMount(ship, cannonIndex) {
 }
 
 // Seria z danych broni (zadanie 18-B, PROJEKT-BRONI §2.5, §5 p. 3): `burstCount` strzałów
-// z każdego gniazda co `burstDelay` (Hexlance 4 × 0,25 s), gniazdo po gnieździe
+// z każdego gniazda co `burstDelay` (Hexlance: 1 strzał, gniazda co 0,25 s), gniazdo po gnieździe
 // (buildHexlanceBurst, src/game/weaponCharge.js). Opóźnienia WZGLĘDNE — tak czyta je pętla
 // w updateSuperweapon (dawniej narastające 0, d, 2d… przy czytaniu względnym dawały 0, d, 3d,
 // 6d przy 3+ gniazdach). Przeładowanie rusza po opróżnieniu kolejki (jak dotąd).
@@ -397,8 +399,9 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     let biteX = 0, biteY = 0, bitFrac = -1;
                     if (t.beamHull && window.HullBodies) {
                         // Kadłub na belkach: rzaz o półszerokości 35 j. wzdłuż całego odcinka
-                        // lotu — węzły w pasie giną, rozpad robi resztę.
-                        const cut = window.HullBodies.cutSegment(t, prevX, prevY, proj.x, proj.y, 35);
+                        // lotu — węzły w pasie giną, rozpad robi resztę. Rzaz z pędem: odłamki
+                        // lecą wzdłuż toru, kadłub (i odcięte części) dostaje impuls (HullBodies).
+                        const cut = window.HullBodies.cutSegment(t, prevX, prevY, proj.x, proj.y, 35, HEXLANCE_CUT_OPTS);
                         if (cut > 0) {
                             const r = window.HullBodies.sweepResult;
                             bitFrac = r.t;

@@ -981,3 +981,9 @@ usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `d
   indeksu slotu partii w gałęzi rozdarcia (pułapka 29) wyłączało rany na kadłubach — strażnik w `tests/hullTear.test.mjs`.
   Zrzuty przed | po: `.tmp/webgpu/zadania/rozdarcia/obok/` (sceny `galeria-taran*` nowe w sesji `galeria`). Testy: 1740 /
   9 bazowych porażek `main` / 3 todo; `npm test` OK.
+- **2026-09-29: Hexlance — jeden strzał i rzaz z pędem.** Uwagi użytkownika: 4 strzały zamiast 1 (seria `burstCount: 4`
+  z danych od lutego, czytana od 18-B) i odłamki rozbitego okrętu wiszące w miejscu (rzaz zabijał węzły bez prędkości).
+  `burstCount: 1`; `cutSegment(…, { push: true })` w `superweapon.js`: odłamki wzdłuż toru, impuls kadłuba przez encję,
+  pęd brzegu rzazu dla odłamów z rozpadu (`MECHANIKA-BRONI.md` §9.2). Galeria: odcięte części 0 → 204 / 92 j/s wzdłuż toru.
+  Testy: `hullCutPush` (nowy), `hexlanceBurst`; 1744 / 9 bazowych porażek / 3 todo, `npm test` OK. Zrzuty przed | po:
+  `.tmp/webgpu/zadania/hexlance/obok/`.

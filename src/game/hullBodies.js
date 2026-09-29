@@ -78,6 +78,23 @@ export const HULL_BODY_CONFIG = {
   craterMaxCells: 5,
   craterRefDamage: 80,      // obrażenia, przy których promień rośnie o heks
   hitReachCells: 0.55,      // promień węzła dla pocisków i wiązek (koła pokrywają płytę bez szpar)
+
+  // --- rzaz z pędem (cutSegment z opts.push — Hexlance, 2026-09-29) ---
+  // Pocisk przecinający kadłub oddaje pęd: wycięty metal (odłamki) leci WZDŁUŻ toru, a kadłub dostaje
+  // impuls w środku masy rzazu = masa wyciętych węzłów × cutPushSpeed wzdłuż toru (ruch i obrót encji —
+  // odcięte części dziedziczą go przy rozpadzie, zamiast wisieć w miejscu).
+  cutPushSpeed: 260,        // [j/s]
+  cutPushMaxDv: 220,        // [j/s] sufit zmiany prędkości kadłuba na jeden rzaz
+  cutPushMaxDw: 1.2,        // [rad/s] sufit zmiany prędkości obrotu na jeden rzaz
+  cutDebrisSpeed: 520,      // [j/s] odłamki rzazu: wzdłuż toru × (0,5–1,3), na boki od linii cięcia 0,15–0,5
+  // Brzeg rzazu: odłam, który odpadnie po rzazie (rozpad w silniku do cutEdgeWindow s później), dostaje
+  // pęd od węzłów przy linii cięcia — cutEdgeSpeed wzdłuż toru (i cutEdgeSpread od linii) na węzeł przy
+  // brzegu pasa, liniowo do zera cutEdgeCells komórek dalej, jako impuls na masę odłamu (z obrotem):
+  // mały odprysk przy rzazie leci szybko, duża połowa kadłuba — powoli.
+  cutEdgeSpeed: 240,        // [j/s]
+  cutEdgeSpread: 0.35,
+  cutEdgeCells: 2.5,
+  cutEdgeWindow: 0.5,       // [s] czasu symulacji
   probeReachCells: 0.8,     // sonda punktowa (podparcie gniazd broni i rdzeni)
 
   // --- zapytania powierzchni (tylko odczyt: surfaceNormal, traceThrough, spriteUvAt) ---
@@ -568,9 +585,11 @@ export const HullBodies = {
   /**
    * Rzaz (Hexlance): niszczy żywe węzły w pasie o półszerokości `halfWidth` wokół odcinka
    * (świat gry). Zwraca liczbę zniszczonych węzłów; pierwszy punkt wejścia w `hullSweepResult`,
-   * węzeł i uv wejścia w `hullImpactResult` (kind 'cut').
+   * węzeł i uv wejścia w `hullImpactResult` (kind 'cut'). `opts.push` — rzaz pocisku z pędem
+   * (odcinek = tor): odłamki lecą wzdłuż toru, kadłub dostaje impuls (applyCutPush); bez niego
+   * węzły giną w miejscu jak dawniej.
    */
-  cutSegment(entity, x0, y0, x1, y1, halfWidth) {
+  cutSegment(entity, x0, y0, x1, y1, halfWidth, opts = null) {
     const r = resetImpactResult('cut', x0, y0);
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return 0;
@@ -594,12 +613,17 @@ export const HullBodies = {
     writeSpriteUv(hull, r.node, lx0 + (lx1 - lx0) * t, ly0 + (ly1 - ly0) * t, r);
     writeImpactDir(r, x1 - x0, y1 - y0, 1 - t);
     const before = body.activeNodes;
+    const push = !!opts?.push;
     let killed;
     this._weaponDepth++;
     try {
-      killed = cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth);
+      killed = cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth, push);
     } finally {
       this._weaponDepth--;
+    }
+    if (push && killed > 0 && !body.dead) {
+      applyCutPush(hull, lx0, ly0, lx1, ly1);
+      rememberPushCut(hull, lx0, ly0, lx1, ly1, halfWidth);
     }
     r.hit = killed > 0;
     r.killed = before - body.activeNodes;
@@ -1264,13 +1288,29 @@ function dissolveCrumbWreck(body) {
   for (let i = 0; i < s.count && !body.dead; i++) if (s.active[i]) D.destroyNode(body, i);
 }
 
-// Pas wokół odcinka (układ ciała): zniszcz wszystkie żywe węzły bliżej niż halfWidth.
-function cutLocalBand(body, x0, y0, x1, y1, halfWidth) {
+// Hasz węzła 0..1 (rozrzut odłamków rzazu bez Math.random — przebieg gry nie zależy od obrazu).
+function nodeHash01(i, salt) {
+  let h = Math.imul((i + 1) ^ salt, 0x9E3779B1);
+  h ^= h >>> 15; h = Math.imul(h, 0x85EBCA77); h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+// Wycięty metal rzazu z pędem (cutLocalBand, push): masa i środek masy w układzie ciała.
+const _cutCut = { mass: 0, x: 0, y: 0 };
+
+// Pas wokół odcinka (układ ciała): zniszcz wszystkie żywe węzły bliżej niż halfWidth. push — rzaz
+// pocisku (odcinek = tor): węzeł dostaje prędkość odłamka wzdłuż toru i na bok od linii cięcia
+// (onNodeDebris bierze prędkość węzła), masa i środek wyciętego metalu → _cutCut (applyCutPush).
+function cutLocalBand(body, x0, y0, x1, y1, halfWidth, push = false) {
   const s = body.nodeStore, x = s.x, y = s.y, active = s.active;
   const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
   const r2 = halfWidth * halfWidth;
   const minX = Math.min(x0, x1) - halfWidth, maxX = Math.max(x0, x1) + halfWidth;
   const minY = Math.min(y0, y1) - halfWidth, maxY = Math.max(y0, y1) + halfWidth;
+  const len = Math.sqrt(len2);
+  const ux = len > 1e-9 ? dx / len : 0, uy = len > 1e-9 ? dy / len : 0;
+  const cut = _cutCut;
+  cut.mass = 0; cut.x = 0; cut.y = 0;
   let killed = 0;
   for (let i = 0; i < s.count; i++) {
     if (!active[i]) continue;
@@ -1280,15 +1320,105 @@ function cutLocalBand(body, x0, y0, x1, y1, halfWidth) {
     t = t < 0 ? 0 : t > 1 ? 1 : t;
     const ex = x0 + dx * t - px, ey = y0 + dy * t - py;
     if (ex * ex + ey * ey > r2) continue;
+    if (push && len > 1e-9) {
+      // Odłamek: wzdłuż toru × (0,5–1,3), na bok od linii cięcia (strona węzła) 0,15–0,5.
+      const side = (px - x0) * -uy + (py - y0) * ux >= 0 ? 1 : -1;
+      const sp = C.cutDebrisSpeed * (0.5 + 0.8 * nodeHash01(i, 0x3C6EF372));
+      const lat = side * (0.15 + 0.35 * nodeHash01(i, 0x1B873593));
+      s.vx[i] = (ux - uy * lat) * sp;
+      s.vy[i] = (uy + ux * lat) * sp;
+      const m = s.mass[i];
+      cut.mass += m; cut.x += px * m; cut.y += py * m;
+    }
     D.destroyNode(body, i);
     killed++;
     if (body.dead) break;
   }
+  if (cut.mass > 0) { cut.x /= cut.mass; cut.y /= cut.mass; }
   if (killed > 0) {
     D.wake(body, D.config.wakeHoldFrames);
     if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
   }
   return killed;
+}
+
+// Impuls rzazu z pędem (po cutLocalBand z push): masa wyciętego metalu × cutPushSpeed wzdłuż toru,
+// przyłożony w środku masy rzazu — ruch postępowy i obrót kadłuba. Gra całkuje ruch encji, a syncIn
+// nadpisuje body.vel z encji, więc zmiana prędkości idzie do ENCJI (jak syncOut: kotwica = początek
+// ciała + ra). Odcięte części dziedziczą ją przy rozpadzie (prędkość rodzica + ω × r) — odlatują
+// wzdłuż toru i rozchodzą się obrotem zamiast wisieć. Sufity: cutPushMaxDv, cutPushMaxDw.
+function applyCutPush(hull, lx0, ly0, lx1, ly1) {
+  const b = hull.body, e = hull.entity, cut = _cutCut;
+  if (!e || !(cut.mass > 0) || !(b.invMass > 0)) return;
+  const dlx = lx1 - lx0, dly = ly1 - ly0;
+  const dl = Math.sqrt(dlx * dlx + dly * dly);
+  if (!(dl > 1e-9)) return;
+  const pose = entityPose(hull, _pose);
+  const c = pose.c, s = pose.s;
+  // Układ ciała → świat silnika: R = [[c, −s], [s, c]] (toLocal = Rᵀ).
+  const dirX = (c * dlx - s * dly) / dl, dirY = (s * dlx + c * dly) / dl;
+  const rx = c * cut.x - s * cut.y, ry = s * cut.x + c * cut.y;
+  const jx = dirX * cut.mass * C.cutPushSpeed, jy = dirY * cut.mass * C.cutPushSpeed;
+  let dvx = jx * b.invMass, dvy = jy * b.invMass;
+  const dv = Math.sqrt(dvx * dvx + dvy * dvy);
+  if (dv > C.cutPushMaxDv) { dvx *= C.cutPushMaxDv / dv; dvy *= C.cutPushMaxDv / dv; }
+  const inv = b.invInertiaLocal;
+  const invIz = inv && inv.length > 8 ? Number(inv[8]) || 0 : 0;
+  let dw = invIz * (rx * jy - ry * jx);
+  if (dw > C.cutPushMaxDw) dw = C.cutPushMaxDw; else if (dw < -C.cutPushMaxDw) dw = -C.cutPushMaxDw;
+  // Kotwica encji względem początku ciała (jak syncOut).
+  const ax = anchorLocalX(hull), ay = anchorLocalY(hull);
+  const rax = c * ax - s * ay, ray = s * ax + c * ay;
+  setEntityVel(e, entityVelX(e) + dvx - dw * ray, entityVelY(e) - (dvy + dw * rax));
+  e.angVel = (Number(e.angVel) || 0) - dw;
+  if (e.isWreck) { e._wreckSleeping = false; e._wreckSleepTimer = 0; }
+}
+
+// Ostatni rzaz z pędem kadłuba (brzeg dla odłamów z rozpadu — applyCutEdgeImpulse). Współrzędne
+// SIATKI (układ ciała − latticeMin): nie zmieniają się przy przebudowie ciała i są te same w odłamie.
+function rememberPushCut(hull, lx0, ly0, lx1, ly1, halfWidth) {
+  const b = hull.body, lm = b.latticeMin;
+  const c = hull._pushCut || (hull._pushCut = { t: 0, x0: 0, y0: 0, x1: 0, y1: 0, hw: 0 });
+  c.t = HullBodies.simTime;
+  c.x0 = lx0 - lm.x; c.y0 = ly0 - lm.y;
+  c.x1 = lx1 - lm.x; c.y1 = ly1 - lm.y;
+  c.hw = halfWidth;
+}
+
+// Odłam z rozpadu po rzazie z pędem (hak onWreck, przed encją wraku): węzły przy brzegu rzazu oddają
+// pęd wzdłuż toru i od linii cięcia — suma impulsów na masę odłamu (ruch) i moment wokół jego środka
+// masy (obrót; początek odłamu = środek masy). Układ odłamu = układ rodzica (ten sam obrót przy rozpadzie).
+function applyCutEdgeImpulse(parentHull, wb) {
+  const cut = parentHull._pushCut;
+  if (!cut || !(HullBodies.simTime - cut.t <= C.cutEdgeWindow) || !(wb.mass > 0)) return;
+  const dx = cut.x1 - cut.x0, dy = cut.y1 - cut.y0, len2 = dx * dx + dy * dy;
+  if (!(len2 > 1e-12)) return;
+  const len = Math.sqrt(len2), ux = dx / len, uy = dy / len;
+  const s = wb.nodeStore, lm = wb.latticeMin, active = s.active;
+  const reach = cut.hw + C.cutEdgeCells * wb.cellSize, band = reach - cut.hw;
+  let px = 0, py = 0, tq = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!active[i]) continue;
+    const gx = s.x[i] - lm.x, gy = s.y[i] - lm.y;
+    let t = ((gx - cut.x0) * dx + (gy - cut.y0) * dy) / len2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ex = gx - (cut.x0 + dx * t), ey = gy - (cut.y0 + dy * t);
+    const d = Math.sqrt(ex * ex + ey * ey);
+    if (d >= reach) continue;
+    const w = d <= cut.hw ? 1 : 1 - (d - cut.hw) / band;
+    const j = s.mass[i] * C.cutEdgeSpeed * w;
+    const side = ex * -uy + ey * ux >= 0 ? C.cutEdgeSpread : -C.cutEdgeSpread;
+    const jx = (ux - uy * side) * j, jy = (uy + ux * side) * j;
+    px += jx; py += jy;
+    tq += s.x[i] * jy - s.y[i] * jx;
+  }
+  if (px === 0 && py === 0) return;
+  const m = D._refreshRot(wb);
+  wb.vel.x += (m[0] * px + m[1] * py) / wb.mass;
+  wb.vel.y += (m[3] * px + m[4] * py) / wb.mass;
+  const inv = wb.invInertiaLocal;
+  const dw = (inv && inv.length > 8 ? Number(inv[8]) || 0 : 0) * tq;
+  wb.angVel.z += dw > C.cutPushMaxDw * 2 ? C.cutPushMaxDw * 2 : dw < -C.cutPushMaxDw * 2 ? -C.cutPushMaxDw * 2 : dw;
 }
 
 // ============================ HAKI SILNIKA ============================
@@ -1560,6 +1690,8 @@ function onWreck(parentBody, wreckBody) {
   const parentHull = parentBody.hull;
   const parent = parentBody.entity;
   if (!parentHull) return;
+  // Odłam z rzazu z pędem (Hexlance): pęd brzegu rzazu, zanim encja wraku weźmie prędkość ciała.
+  applyCutEdgeImpulse(parentHull, wreckBody);
   const wreck = makeWreckEntity(parent || { visual: null }, wreckBody, parentHull);
   // Nowy wrak nie był w syncIn tego kroku — jego stan to od razu stan silnika.
   wreck.beamHull._inNodes = wreckBody.activeNodes;

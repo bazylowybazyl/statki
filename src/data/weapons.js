@@ -329,7 +329,8 @@ export const MASTER_WEAPONS = {
   hexlance_siege: {
     id: 'hexlance_siege', name: 'Hexlance Siege Cannon', mountType: 'builtin', category: 'superweapon', size: 'Capital',
     baseDamage: 9999, baseRange: 60000, baseSpeed: 12000, cooldown: 6.0, chargeTime: 1.2,
-    burstCount: 4, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff',
+    // Jeden strzał na gniazdo (decyzja 2026-09-29 — seria 4 strzałów z 18-B wycofana); burstDelay = odstęp gniazd.
+    burstCount: 1, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff',
     recoil: 0, shake: 14
   },
 

@@ -1118,8 +1118,47 @@ SCENES['galeria-taran-zimna'] = {
        camera.shakeMag = 0; camera.shakeTime = 0;
        S.cam(B.x - 260, B.y, 1.1);`
 };
+// Rzaz Hexlance'a z pędem (2026-09-29): świeży pancernik w poprzek toru, 3000 j. przed Atlasem, środek 260 j. obok
+// linii strzału — rzaz odcina koniec kadłuba. Ujęcia 0,4 s i 2 s po trafieniu: odłamki i odcięta część lecą
+// wzdłuż toru (dawniej wisiały w miejscu). Diagnostyka: prędkość celu i nowych wraków.
+SCENES['galeria-hexlance-rozpad'] = {
+  opis: 'Rzaz Hexlance z pędem: pancernik w poprzek toru, ~0,4 s po trafieniu — odłamki i odcięta część lecą wzdłuż toru, zoom 0,45',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const r = spawnCallInShip('pirate_battleship', { mode: 'friendly', spawnPos: { x: ship.pos.x + 3000, y: ship.pos.y - 260 } });
+       const e = Array.isArray(r) ? r[0] : r;
+       e.ai = null; e.hp = e.maxHp = 1e6; e.angle = Math.PI / 2; e.vx = 0; e.vy = 0; e.angVel = 0;
+       if (e.shield) { e.shield.val = 0; e.shield.max = 0; }
+       S.cam(e.x, e.y, 0.45);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);
+       H.reseed(0x6a29b0);
+       const w0 = window.wrecks.length; const n0 = e.beamHull.body.activeNodes;
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(80);
+       Superweapon.tryFireSuperweapon(ship);
+       let k = 0; for (; k < 120 && e.beamHull.body.activeNodes === n0; k++) await H.step(1);
+       await H.step(24);
+       G.hexRozpad = { e, w0, n0 };
+       const nowe = window.wrecks.slice(w0);
+       window.__harnessDiag = { klatekDoTrafienia: k, wezly: n0 - e.beamHull.body.activeNodes, cel: { vx: +e.vx.toFixed(1), vy: +e.vy.toFixed(1), w: +(e.angVel || 0).toFixed(3) },
+         wraki: nowe.map((w) => ({ n: w.beamHull?.body?.activeNodes || 0, vx: +(w.vx || 0).toFixed(1), vy: +(w.vy || 0).toFixed(1) })) };
+       calm(); S.cam(e.x, e.y, 0.45);`
+};
+SCENES['galeria-hexlance-rozpad-po'] = {
+  opis: 'Rzaz Hexlance z pędem: ten sam cel 2 s później — odcięta część odpłynęła wzdłuż toru, zoom 0,45',
+  hud: false, warm: 2,
+  js: `const G = window.__galeria; const { e, w0 } = G.hexRozpad;
+       await H.step(96);
+       const nowe = window.wrecks.slice(w0);
+       window.__harnessDiag = { cel: { x: +e.x.toFixed(0), y: +e.y.toFixed(0), vx: +e.vx.toFixed(1), vy: +e.vy.toFixed(1) },
+         wraki: nowe.map((w) => ({ n: w.beamHull?.body?.activeNodes || 0, x: +w.x.toFixed(0), y: +w.y.toFixed(0), vx: +(w.vx || 0).toFixed(1), vy: +(w.vy || 0).toFixed(1) })) };
+       camera.shakeMag = 0; camera.shakeTime = 0;
+       S.cam(e.x, e.y, 0.45);`
+};
 const GALERIA_KRATERY_SCENY = ['galeria-kratery', ...GALERIA_KRATERY.flatMap(([name]) => [`galeria-krater-${name}`, `galeria-krater-${name}-zimna`]),
-  'galeria-taran', 'galeria-taran-zimna'];
+  'galeria-taran', 'galeria-taran-zimna', 'galeria-hexlance-rozpad', 'galeria-hexlance-rozpad-po'];
 
 // Wydobycie skał (zadanie 21b): etapy z wydobycie-gra.mjs (skała testowa jak scena „Kopalnia”
 // dema → lasery → piła → ładunek + detonacja → wiązka), po kolei w jednej sesji.
