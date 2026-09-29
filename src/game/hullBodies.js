@@ -177,7 +177,7 @@ const _pose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
 const _local = { x: 0, y: 0 };
 const _sweepOut = { t: Infinity, node: -1 };
 const _impactVel = { x: 0, y: 0, z: 0 };
-const _impactOpts = { radius: 0, hpBudget: 0, damageFraction: 1 };
+const _impactOpts = { radius: 0, hpBudget: 0, damageFraction: 1, killRadius: 0 };
 const _nodeWorld = { x: 0, y: 0 };
 // Zapytania powierzchni mają własne scratche: syncBodyPose pisze do _pose i _local.
 const _qPose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
@@ -199,10 +199,13 @@ export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, pro
  * w następnym kroku; u, v — uv sprite'a tego punktu (konwencja skóry, liczone PRZED
  * kraterem); x, y — punkt (świat gry; cut: wejście); dmgKey — klucz mapy ran kadłuba;
  * dirX, dirY — kierunek jednostkowy (impact: wektor `vel`, cut: odcinek; 0, 0 = brak), len — cut:
- * droga od wejścia do końca odcinka (stemple rzazu mapy ran, 18-C), impact: 0.
+ * droga od wejścia do końca odcinka (stemple rzazu mapy ran, 18-C), impact: 0; crater — impact:
+ * zasięg prawdziwej dziury = najdalszy węzeł zabity przez krater od punktu [j.] (0 = krater nikogo
+ * nie zabił; utrata oparcia się nie liczy) — w tym promieniu mapa ran maluje lej (zadanie 25c), cut: 0.
  */
 export const hullImpactResult = {
-  kind: '', hit: false, killed: 0, radius: 0, node: -1, u: 0, v: 0, x: 0, y: 0, dmgKey: 0, dirX: 0, dirY: 0, len: 0
+  kind: '', hit: false, killed: 0, radius: 0, node: -1, u: 0, v: 0, x: 0, y: 0, dmgKey: 0, dirX: 0, dirY: 0, len: 0,
+  crater: 0
 };
 
 /** Wynik surfaceNormal() — normalna na zewnątrz (świat gry) i węzeł, przy którym ją liczono. */
@@ -500,8 +503,12 @@ export const HullBodies = {
   /**
    * Trafienie w punkt (świat gry): krater nearest-first z budżetem HP ∝ obrażeniom,
    * wgniecenie wzdłuż wektora pocisku. opts.radius — promień krateru w j. świata (np. wybuch).
-   * Zwraca, czy trafienie objęło jakikolwiek węzeł. Szczegóły (węzeł, uv, zabite węzły,
-   * klucz mapy ran) w `hullImpactResult`.
+   * opts.craterRadius — krater NA MIARĘ RANY (zadanie 25c, ciężka broń: promień leja z
+   * hullDamageStamps.craterRadiusFor): wszystkie węzły bliżej niż ten promień giną — z wgnieceniem,
+   * odrzutem wybitej blachy, zerwaniem belek i rozpadem silnika (D.applyImpact, killRadius), bez
+   * budżetu HP; wgniecenie sięga komórkę dalej (brzeg dziury).
+   * Zwraca, czy trafienie objęło jakikolwiek węzeł. Szczegóły (węzeł, uv, zabite węzły, zasięg
+   * dziury, klucz mapy ran) w `hullImpactResult`.
    */
   impact(entity, x, y, damage, vel = null, opts = null) {
     const r = resetImpactResult('impact', x, y);
@@ -515,8 +522,11 @@ export const HullBodies = {
     // Promień w heksach (strojenie heksowe), odstęp heksa w j. świata = komórka / √(heksy na węzeł).
     const hexPitch = body.cellSize / Math.sqrt(hull.hexPerNode || 1);
     const hexes = Math.max(C.craterMinCells, Math.min(C.craterMaxCells, C.craterMinCells + Math.sqrt(dmg / C.craterRefDamage)));
-    _impactOpts.radius = Number(opts?.radius) > 0 ? Number(opts.radius) : hexes * hexPitch;
-    _impactOpts.hpBudget = dmg * C.craterHpPerDamage;
+    const baseRadius = Number(opts?.radius) > 0 ? Number(opts.radius) : hexes * hexPitch;
+    const craterR = Number(opts?.craterRadius) > 0 ? Number(opts.craterRadius) : 0;
+    _impactOpts.radius = craterR > 0 ? Math.max(baseRadius, craterR + body.cellSize) : baseRadius;
+    _impactOpts.hpBudget = craterR > 0 ? 0 : dmg * C.craterHpPerDamage;
+    _impactOpts.killRadius = craterR;
     _impactOpts.damageFraction = 1;
     _impactVel.x = Number(vel?.x) || 0;
     _impactVel.y = -(Number(vel?.y) || 0);
@@ -532,6 +542,7 @@ export const HullBodies = {
     const hit = D.applyImpact(body, x, -y, 0, dmg, _impactVel, _impactOpts);
     r.hit = hit;
     r.killed = before - body.activeNodes;
+    r.crater = hit ? D.lastCraterReach : 0;
     if (hit && entity.isWreck) {
       entity._wreckSleeping = false;
       entity._wreckSleepTimer = 0;
@@ -1046,6 +1057,7 @@ function resetImpactResult(kind, x, y) {
   r.dirX = 0;
   r.dirY = 0;
   r.len = 0;
+  r.crater = 0;
   return r;
 }
 

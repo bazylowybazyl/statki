@@ -172,6 +172,14 @@ function hashKey(i, j, k) {
   return ((i + HASH_BIAS) | 0) | (((j + HASH_BIAS) | 0) << 10) | (((k + HASH_BIAS) | 0) << 20);
 }
 
+// Hasz [0, 1) indeksu węzła i soli (odrzut wybitej blachy krateru wymuszonego — bez Math.random).
+function craterHash(i, salt) {
+  let h = Math.imul(i ^ salt, 0x9E3779B1);
+  h = Math.imul(h ^ (h >>> 16), 0x85EBCA6B);
+  h = Math.imul(h ^ (h >>> 13), 0xC2B2AE35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
 // Zbieranie pól sekcji do nowego magazynu (_partitionBeams): osobna pętla na typ tablicy,
 // żeby każda była monomorficzna. Pomijane pola chwilowe: znaczniki (porównywane z rosnącymi
 // licznikami, więc 0 ≡ stara wartość), hashNext (odbudowa co krok), crushDepth (ważny tylko
@@ -263,6 +271,9 @@ export const DestructorBeams3D = {
   onWreck: null,          // (parent, wreck) — nowy wrak z rozpadu, już w liście ciał
   onNodeDebris: null,     // (body, i, wx, wy, wz, vx, vy, vz) — ginący węzeł jako indeks, bez widoku
   clock: () => nowMs() * 0.001,   // sekundy znaczników żaru (baza czasu renderera)
+  // Zasięg ostatniego krateru (applyImpact w trybie krateru): najdalszy węzeł zabity przez krater
+  // od punktu trafienia [j.]; 0 = krater nikogo nie zabił (mapa ran gry: lej tylko w dziurze).
+  lastCraterReach: 0,
   _tick: 0,
   _islandStamp: 1,
   _contactStamp: 1,
@@ -1514,9 +1525,17 @@ export const DestructorBeams3D = {
    * Nadmiar ponad HP węzła przechodzi na następny — ciężki pocisk wybija dziurę na
    * miarę swojej energii, lekki drapie jeden węzeł. Belki pękają wtedy tylko przy
    * zabitych węzłach (i dalej wg oparcia), bez osobnego promienia zerwań.
+   *
+   * opts.killRadius > 0 — krater WYMUSZONY (gra, zadanie 25c: dziura na miarę rany ciężkiej
+   * broni): każdy węzeł bliżej punktu trafienia niż killRadius ginie (jego HP schodzi z
+   * budżetu, jeśli jest), dalej — budżet jak wyżej. Wgniecenie, odrzut wybitej blachy,
+   * zerwane belki, oparcie i rozpad — ta sama fizyka co krater z budżetu; odrzut węzłów
+   * wymuszonych z haszu węzła, nie z Math.random (krater nie przesuwa losowań gry).
+   * Bez killRadius wywołanie liczy się bit w bit jak dotąd. Zasięg zabitych — lastCraterReach.
    */
   applyImpact(body, wx, wy, wz, damage = 0, worldVel = null, opts = null) {
     const cfg = this.config;
+    this.lastCraterReach = 0;
     if (!body || body.dead || body.static) return false;
     const m = this._refreshRot(body);
     const l = matVecT(m, wx - body.pos.x, wy - body.pos.y, wz - body.pos.z, this._s1);
@@ -1550,7 +1569,9 @@ export const DestructorBeams3D = {
     const killedNodes = this._impactKilled;
     killedNodes.length = 0;
     const hpBudget = opts?.hpBudget > 0 ? opts.hpBudget * fraction : 0;
-    const crater = hpBudget > 0;
+    const killR = opts?.killRadius > 0 ? opts.killRadius : 0;
+    const killRSq = killR * killR;
+    const crater = hpBudget > 0 || killR > 0;
     if (crater && this._craterNodes.length < total) {
       this._craterNodes = new Int32Array(Math.max(total, this._craterNodes.length * 2));
       this._craterD2 = new Float64Array(this._craterNodes.length);
@@ -1581,6 +1602,9 @@ export const DestructorBeams3D = {
       } else {
         hp[i] -= damage * 0.5 * influence * fraction;
       }
+      // Węzeł krateru wymuszonego i tak ginie niżej: bez wgniecenia — odłamek rusza z miejsca
+      // blachy (z odrzutem), a okno trafień nie puchnie o przesunięcie martwych węzłów.
+      if (killR > 0 && d2 <= killRSq) continue;
       if (impulseTime > 0) {
         // Pressure changes velocity; the solver moves and buckles the metal
         // over subsequent steps instead of teleporting it at detonation.
@@ -1610,17 +1634,23 @@ export const DestructorBeams3D = {
       // Bez kierunku pocisku — promieniście od punktu trafienia. Tempo rośnie z obrażeniami.
       const kick = Math.min(260, 40 + damage * 0.04);
       const hasDir = dir.x * dir.x + dir.y * dir.y > 1e-6;
-      for (let k = 0; k < craterCount && budget > 0; k++) {
+      let reachSq = 0;
+      // Węzły posortowane od najbliższego: wymuszone (≤ killRadius) są na początku listy, potem budżet.
+      for (let k = 0; k < craterCount; k++) {
+        const forced = killR > 0 && craterD2[k] <= killRSq;
+        if (!forced && !(budget > 0)) break;
         const i = craterNodes[k];
         if (!active[i]) continue;
         const take = hp[i] < budget ? hp[i] : budget;
         hp[i] -= take;
         budget -= take;
-        if (hp[i] <= 1e-9) {
-          const speed = kick * (0.6 + Math.random() * 0.8);
+        if (forced || hp[i] <= 1e-9) {
+          // Odrzut: węzeł wymuszony — rozkład jak niżej, ale z haszu węzła (bez Math.random).
+          const r0 = forced ? craterHash(i, 0x51ED27) : Math.random();
+          const speed = kick * (0.6 + r0 * 0.8);
           if (hasDir) {
-            const along = Math.random() < 0.65 ? -0.8 : 0.8;
-            const side = (Math.random() - 0.5) * 1.6;
+            const along = (forced ? craterHash(i, 0x2C1B3C6D) : Math.random()) < 0.65 ? -0.8 : 0.8;
+            const side = ((forced ? craterHash(i, 0x297A2D39) : Math.random()) - 0.5) * 1.6;
             s.vx[i] += (dir.x * along - dir.y * side) * speed;
             s.vy[i] += (dir.y * along + dir.x * side) * speed;
           } else {
@@ -1628,11 +1658,13 @@ export const DestructorBeams3D = {
             s.vx[i] += rx / rl * speed;
             s.vy[i] += ry / rl * speed;
           }
+          if (craterD2[k] > reachSq) reachSq = craterD2[k];
           this.destroyNode(body, i);
           killed++;
           if (local) killedNodes.push(i);
         } else if (local) markSkinDirty(body, i);
       }
+      this.lastCraterReach = Math.sqrt(reachSq);
     }
 
     // Zerwij belki, których środek leży w rdzeniu trafienia — to daje ranę

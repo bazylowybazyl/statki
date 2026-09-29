@@ -20,10 +20,14 @@
 //   • bez krateru i bez receptury (narzędzia, 18-B): `stampAt(e, x, y, rodzina, wariant, dirX, dirY)`,
 //     `stampKerf(e, x0, y0, x1, y1, rodzina)`.
 //
-// Reguła „dziura albo krater” (§3.4): promień = krater zabił węzły ? max(receptura, promień
-// krateru + ½ komórki) : receptura. Przestrzelina PRZEZROCZYSTA (kanał otworu) tylko z małego
+// Reguła „dziura albo krater” (§3.4): promień = krater zabił węzły ? max(receptura, zasięg
+// dziury + ½ komórki) : receptura. Przestrzelina PRZEZROCZYSTA (kanał otworu) tylko z małego
 // kalibru bez krateru (r ≤ 0,6 komórki); w pozostałych kształt brzegu z receptury bez
 // przezroczystości — dziurę robi geometria belek (krater, rzaz).
+// Lej tylko w prawdziwej dziurze (zadanie 25c): stempel krateru / rzazu niesie promień dziury
+// (hullImpactResult.crater — zasięg węzłów zabitych przez krater; rzaz — pół szerokości pasa), kernel
+// kładzie go do kanału krateru teksela, a materiał maluje lej (ciemne dno) tylko tam; reszta rany —
+// żar i osmalenie. Stemple receptur, stampAt i stampKerf dziury nie mają (lej się nie pojawia).
 //
 // Pamięć (klasy wg długości kadłuba-korzenia w świecie, teksel 8 B): L 512×256 ×12 (≥ 900 j.),
 // M 256×128 ×32 (400–900), S 128×64 ×64 (160–400), myśliwce bez mapy → 24 MB GPU (kopia CPU
@@ -118,9 +122,14 @@ const _uv = { u: 0, v: 0, du: 0, dv: 0 };
 
 // Parametry stempla dla _enqueueStamp — tablica zamiast argumentów: liczby double w argumentach
 // wywołań nieinlinowanych V8 pakuje w obiekty (~45 B na trafienie, pomiar w teście alokacji).
-// u, v — uv skóry; r — promień [j. świata]; kierunek w świecie gry (0, 0 = koło); el — wydłużenie.
-const P_U = 0, P_V = 1, P_R = 2, P_HEAT = 3, P_SCORCH = 4, P_RIM = 5, P_CUT = 6, P_ION = 7, P_DX = 8, P_DY = 9, P_EL = 10;
-const _p = new Float64Array(11);
+// u, v — uv skóry; r — promień [j. świata]; kierunek w świecie gry (0, 0 = koło); el — wydłużenie;
+// hole — promień prawdziwej dziury [j. świata] (0 = bez dziury: lej się nie maluje; zadanie 25c).
+const P_U = 0, P_V = 1, P_R = 2, P_HEAT = 3, P_SCORCH = 4, P_RIM = 5, P_CUT = 6, P_ION = 7, P_DX = 8, P_DY = 9, P_EL = 10,
+  P_HOLE = 11;
+const _p = new Float64Array(12);
+/** Liczb na stempel w kolejce i buforze GPU (DMG_STAMP_VEC4 × 4). */
+export const DMG_STAMP_FLOATS = DMG_STAMP_VEC4 * 4;
+const SF = DMG_STAMP_FLOATS;
 // Parametry receptury (żar, osmalenie, brzeg, jony, wydłużenie) z wpisu tabeli STAMP do _p.
 function setStampEntry(entry) {
   _p[P_HEAT] = entry[S_HEAT]; _p[P_SCORCH] = entry[S_SCORCH]; _p[P_RIM] = entry[S_HOLE]; _p[P_ION] = entry[S_ION];
@@ -136,9 +145,10 @@ export const HullDamageMap = {
   frame: 0,
   slots: [],
   _byKey: new Map(),
-  // Kolejka stempli klatki (SoA): slot, A (u, v, r/H, otwór), B (żar, osmalenie, brzeg, jony), C (kierunek uv, wydłużenie, ziarno).
+  // Kolejka stempli klatki (SoA): slot, A (u, v, r/H, otwór), B (żar, osmalenie, brzeg, jony), C (kierunek uv,
+  // wydłużenie, ziarno), D (promień dziury / H, 0, 0, 0).
   _qSlot: new Int32Array(DMG_STAMP_CAP),
-  _qData: new Float32Array(DMG_STAMP_CAP * 12),
+  _qData: new Float32Array(DMG_STAMP_CAP * SF),
   _qCount: 0,
   // Kratery z haka tej klatki (klucz, x, y, promień) — pierścień; klatka wpisu osobno.
   _hookData: new Float64Array(DMG_HOOK_RING * 4),
@@ -338,16 +348,20 @@ export const HullDamageMap = {
     const cs = hull.cellSize;
     let rad = e[S_R] * (e[S_POW] ? (src ? src.power : 1) : 1);
     if (family === 'flak' && src && src.flakR > 0) rad = src.flakR * 0.2;
+    // Prawdziwa dziura (zadanie 25c): krater — zasięg węzłów zabitych przez krater, rzaz — pół
+    // szerokości pasa; w niej (i tylko w niej) lej rany (kanał krateru teksela).
+    const holeR = cut ? (r.killed > 0 ? r.radius : 0) : (r.crater > 0 ? r.crater : 0);
     // Reguła „dziura albo krater”: krater (zabite węzły) — dziura z geometrii, żar obejmuje brzeg.
     let holeCut = 0;
-    if (r.killed > 0) rad = Math.max(rad, r.radius + 0.5 * cs);
-    else if (rad <= DMG_SMALL_CALIBER_CELLS * cs) holeCut = e[S_HOLE];
+    if (holeR > 0) rad = Math.max(rad, holeR + 0.5 * cs);
+    else if (!(r.killed > 0) && rad <= DMG_SMALL_CALIBER_CELLS * cs) holeCut = e[S_HOLE];
     const dirX = r.dirX || 0;
     const dirY = r.dirY || 0;
     setStampEntry(e);
     _p[P_R] = rad;
     _p[P_DX] = dirX;
     _p[P_DY] = dirY;
+    _p[P_HOLE] = holeR;
     if (cut || variant === 'kerf') {
       // Pas rzazu: znaki co ≤ DMG_KERF_STEP od wejścia do końca cięcia (≤ DMG_KERF_MAX), bez otworu.
       const len = Math.min(r.len > 0 ? r.len : 0, Math.max(worldW, worldH));
@@ -417,7 +431,7 @@ export const HullDamageMap = {
     const uv = HullBodies.spriteUvAt(entity, x, y);
     _p[P_U] = uv.u; _p[P_V] = uv.v; _p[P_R] = r;
     _p[P_HEAT] = heat; _p[P_SCORCH] = scorch; _p[P_RIM] = hole; _p[P_CUT] = 0; _p[P_ION] = ion;
-    _p[P_DX] = dirX; _p[P_DY] = dirY; _p[P_EL] = elong > 1 ? elong : 1;
+    _p[P_DX] = dirX; _p[P_DY] = dirY; _p[P_EL] = elong > 1 ? elong : 1; _p[P_HOLE] = 0;
     const ok = this._enqueueStamp(slot, hull);
     if (ok) this.stats.recipeStamps++;
     return ok;
@@ -453,7 +467,7 @@ export const HullDamageMap = {
     const e = stampEntry(family, variant);
     setStampEntry(e);
     _p[P_U] = uv.u; _p[P_V] = uv.v; _p[P_R] = e[S_R] * (e[S_POW] ? power : 1); _p[P_CUT] = 0;
-    _p[P_DX] = dirX; _p[P_DY] = dirY;
+    _p[P_DX] = dirX; _p[P_DY] = dirY; _p[P_HOLE] = 0;
     return this._enqueueStamp(slot, hull);
   },
 
@@ -477,7 +491,7 @@ export const HullDamageMap = {
       uvDelta(hull);
       setStampEntry(e);
       _p[P_U] = u0 + _uv.du; _p[P_V] = v0 + _uv.dv; _p[P_R] = e[S_R]; _p[P_CUT] = 0;
-      _p[P_DX] = dx; _p[P_DY] = dy;
+      _p[P_DX] = dx; _p[P_DY] = dy; _p[P_HOLE] = 0;
       if (this._enqueueStamp(slot, hull)) made++;
     }
     return made;
@@ -516,11 +530,13 @@ export const HullDamageMap = {
     const y1 = Math.min(slot.h - 1, Math.ceil((v + ext) * slot.h - 0.5));
     if (!(x0 <= x1 && y0 <= y1)) return false;
     const i = this._qCount++;
-    const o = i * 12;
+    const o = i * SF;
     const Q = this._qData;
     Q[o] = u; Q[o + 1] = v; Q[o + 2] = rH; Q[o + 3] = _p[P_CUT];
     Q[o + 4] = _p[P_HEAT]; Q[o + 5] = _p[P_SCORCH]; Q[o + 6] = _p[P_RIM]; Q[o + 7] = _p[P_ION];
     Q[o + 8] = cx; Q[o + 9] = cy; Q[o + 10] = el; Q[o + 11] = fxRandom.next() * 100;
+    // Prawdziwa dziura (lej): promień / H świata — koło bez wydłużenia i falowania (dziura w belkach).
+    Q[o + 12] = _p[P_HOLE] > 0 ? _p[P_HOLE] / slot.worldH : 0; Q[o + 13] = 0; Q[o + 14] = 0; Q[o + 15] = 0;
     this._qSlot[i] = slot.index;
     if (slot.pending === 0) { slot.px0 = x0; slot.py0 = y0; slot.px1 = x1; slot.py1 = y1; }
     else {
@@ -653,13 +669,13 @@ export const HullDamageMap = {
     }
     // Stemple w kolejności zadań (sortowanie przez zliczanie: kursor slotu).
     const Q = this._qData;
-    const SF = g.stampsF32;
+    const GS = g.stampsF32;
     for (let i = 0; i < this._qCount; i++) {
       const s = S[this._qSlot[i]];
       if (s.pending <= 0) continue;
-      const d = s.cursor++ * 12;
-      const o = i * 12;
-      for (let k = 0; k < 12; k++) SF[d + k] = Q[o + k];
+      const d = s.cursor++ * SF;
+      const o = i * SF;
+      for (let k = 0; k < SF; k++) GS[d + k] = Q[o + k];
     }
     for (let i = 0; i < S.length; i++) {
       const s = S[i];

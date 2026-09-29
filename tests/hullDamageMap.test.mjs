@@ -39,16 +39,19 @@ function fakeHull(W, H, { angle = 0, cellSize = 15 } = {}) {
 function impactResult(e, over = {}) {
   return Object.assign({
     kind: 'impact', hit: true, killed: 0, radius: 15, node: 0, u: 0.5, v: 0.3, x: 0, y: 0,
-    dmgKey: e.beamHull.dmgKey, dirX: 0, dirY: 1, len: 0
+    dmgKey: e.beamHull.dmgKey, dirX: 0, dirY: 1, len: 0, crater: 0
   }, over);
 }
-// Ostatni stempel w kolejce: { slot, u, v, r (j. świata), cut, heat, scorch, rim, ion, cx, cy, el }.
+// Ostatni stempel w kolejce: { slot, u, v, r (j. świata), cut, heat, scorch, rim, ion, cx, cy, el,
+// hole — promień prawdziwej dziury (j. świata; 0 = bez dziury — lej się nie maluje, zadanie 25c) }.
+const SF = M.DMG_STAMP_FLOATS;
 function lastStamp(slot) {
   const i = HullDamageMap._qCount - 1;
-  const Q = HullDamageMap._qData, o = i * 12;
+  const Q = HullDamageMap._qData, o = i * SF;
   return {
     slot: HullDamageMap._qSlot[i], u: Q[o], v: Q[o + 1], r: Q[o + 2] * slot.worldH, cut: Q[o + 3],
-    heat: Q[o + 4], scorch: Q[o + 5], rim: Q[o + 6], ion: Q[o + 7], cx: Q[o + 8], cy: Q[o + 9], el: Q[o + 10]
+    heat: Q[o + 4], scorch: Q[o + 5], rim: Q[o + 6], ion: Q[o + 7], cx: Q[o + 8], cy: Q[o + 9], el: Q[o + 10],
+    hole: Q[o + 12] * slot.worldH
   };
 }
 function fresh() {
@@ -184,13 +187,22 @@ test('reguła „dziura albo krater”: krater → żar na brzegu dziury, bez pr
   close(st.rim, 0.76, 1e-6, 'kształt brzegu z receptury');
   close(st.heat, 3.2, 1e-6);
   close(st.scorch, 0.95, 1e-6);
-  // Ten sam pocisk z kraterem (zabite węzły): promień obejmuje brzeg prawdziwej dziury.
+  assert.equal(st.hole, 0, 'bez dziury w belkach — lej się nie maluje (25c)');
+  // Ten sam pocisk z kraterem (zabite węzły): promień obejmuje brzeg prawdziwej dziury, lej w jej zasięgu.
   HullDamageMap.setSource('armata_mk1');
-  HullDamageMap.onHullImpact(e, impactResult(e, { killed: 3, radius: 70 }));
+  HullDamageMap.onHullImpact(e, impactResult(e, { killed: 3, radius: 80, crater: 70 }));
   HullDamageMap.clearSource();
   st = lastStamp(slot());
-  close(st.r, 70 + 7.5, 1e-3, 'max(receptura, krater + ½ komórki)');
+  close(st.r, 70 + 7.5, 1e-3, 'max(receptura, zasięg dziury + ½ komórki)');
+  close(st.hole, 70, 1e-3, 'lej w promieniu prawdziwej dziury (hullImpactResult.crater)');
   assert.equal(st.cut, 0, 'dziurę robi geometria');
+  // Zabite węzły bez krateru (sama utrata oparcia): bez przestrzeliny i bez leja.
+  HullDamageMap.setSource('armata_mk1');
+  HullDamageMap.onHullImpact(e, impactResult(e, { killed: 2, crater: 0 }));
+  HullDamageMap.clearSource();
+  st = lastStamp(slot());
+  assert.equal(st.hole, 0);
+  assert.equal(st.cut, 0);
   // Vulcan (r = 7 ≤ 0,6 · 15): przestrzelina przezroczysta z receptury.
   HullDamageMap.setSource({ vfxKey: 'vulcan_minigun', type: 'rail', weaponSize: 'M' });
   HullDamageMap.onHullImpact(e, impactResult(e, { killed: 0 }));
@@ -226,7 +238,7 @@ test('rzaz (cutSegment, Hexlance): znaki wzdłuż cięcia, wydłużone w kierunk
   assert.equal(n, 7);
   const slot = HullDamageMap.slotOf(e.beamHull.dmgKey);
   const Q = HullDamageMap._qData;
-  const first = before * 12, last = (before + n - 1) * 12;
+  const first = before * SF, last = (before + n - 1) * SF;
   close(Q[first], 0.3, 1e-6, 'pierwszy znak w wejściu');
   close((Q[last] - Q[first]) * 720, 150, 1e-3, 'ostatni znak na końcu cięcia (u × szerokość)');
   close(Q[last + 1], 0.5, 1e-6, 'v bez zmian przy cięciu poziomym');
@@ -235,6 +247,7 @@ test('rzaz (cutSegment, Hexlance): znaki wzdłuż cięcia, wydłużone w kierunk
   close(st.cx, 1, 1e-6); close(st.cy, 0, 1e-6);
   assert.equal(st.cut, 0);
   close(st.r, 35 + 7.5, 1e-3, 'pół szerokości rzazu + ½ komórki');
+  close(st.hole, 35, 1e-3, 'rzaz jest prawdziwą dziurą: lej w pasie (pół szerokości)');
   // Kierunek w układzie uv obraca się z kadłubem: kadłub obrócony o +90° (y w dół), cięcie w +y świata.
   const r = fakeHull(720, 380, { angle: Math.PI / 2 });
   HullDamageMap.onHullImpact(r, impactResult(r, { kind: 'cut', killed: 5, radius: 35, u: 0.5, v: 0.5, dirX: 0, dirY: 1, len: 40 }));
@@ -301,6 +314,50 @@ test('prawdziwe kadłuby: krater i rzaz przez hak onImpact, klucz rodu wspólny 
     HullBodies.release(e);
     window.wrecks.length = 0;
   }
+});
+
+test('lej tylko w prawdziwej dziurze (25c): stempel krateru niesie zasięg zabitych węzłów; receptura, stampAt, stampKerf — bez dziury', async () => {
+  const { craterOptsFor } = await import('../src/game/hullCraters.js');
+  fresh();
+  HullBodies.onImpact = HullDamageMap.onHullImpact;
+  const e = npcAt(0, 0);
+  HullBodies.createHull(e, plate(600, 300));
+  try {
+    const key = e.beamHull.dmgKey;
+    const last = () => lastStamp(HullDamageMap.slotOf(key));
+    // Yamato na miarę rany: krater o promieniu leja (90,7 j.) — lej w zasięgu zabitych węzłów, rana z receptury.
+    const yam = { vfxKey: 'special_yamato_cannon', type: 'plasma', weaponSize: 'Capital' };
+    const hit = HullBodies.sweep(e, 0, -1000, 0, 0, 0);
+    HullDamageMap.setSource(yam);
+    HullBodies.impact(e, hit.worldX, hit.worldY, 850, { x: 0, y: 9000 }, craterOptsFor(yam, 'impact', 850));
+    HullDamageMap.clearSource();
+    let st = last();
+    assert.ok(hullImpactResult.crater > 75, `zasięg dziury ${hullImpactResult.crater}`);
+    close(st.hole, hullImpactResult.crater, 1e-3, 'lej = zasięg zabitych węzłów');
+    close(st.r, 130, 1e-3, 'rana w promieniu receptury (żar i osmalenie sięgają dalej)');
+    // Lekki pocisk bez zabitego węzła: bez leja.
+    const hit2 = HullBodies.sweep(e, -200, -1000, -200, 0, 0);
+    HullDamageMap.setSource({ vfxKey: 'railgun_mk2', type: 'rail', weaponSize: 'M' });
+    HullBodies.impact(e, hit2.worldX, hit2.worldY, 10, { x: 0, y: 9000 });
+    HullDamageMap.clearSource();
+    assert.equal(last().hole, 0, 'bez dziury — bez leja');
+    HullDamageMap.frame++;
+    assert.equal(HullDamageMap.stampRecipe(e, 150, 40, 55, 2.8, 0.9, 0.5, 0.3), true);
+    assert.equal(last().hole, 0, 'receptura (wtórny wybuch Yamato) bez leja');
+    assert.equal(HullDamageMap.stampAt(e, -150, 40, 'rocket'), true);
+    assert.equal(last().hole, 0, 'stampAt bez leja');
+    assert.ok(HullDamageMap.stampKerf(e, -250, 0, 250, 0, 'mjolnir') > 0);
+    assert.equal(last().hole, 0, 'pas rzazu przebicia (bez rzazu w belkach) bez leja');
+  } finally {
+    HullBodies.onImpact = null;
+    HullBodies.release(e);
+    window.wrecks.length = 0;
+  }
+  // Materiał: kształt leja z receptury × kanał krateru; środek bez dziury nie świeci (jak lej), ale nie jest czarny.
+  const tsl = read('src/3d/hullDamageMap.tsl.js');
+  assert.match(tsl, /const lej = smoothstep\(0\.52, 0\.6, holeF\)\.toVar\(\);/);
+  assert.match(tsl, /const hole = lej\.mul\(D\.crater\)\.toVar\(\);/);
+  assert.match(tsl, /mul\(float\(1\.0\)\.sub\(lej\)\)\.toVar\(\);\n    const heatCol/, 'żar środka rany gaszony kształtem leja');
 });
 
 test('stemple tylko w kadrze z zapasem: trafienie daleko poza ekranem nie zajmuje slotu', async () => {
@@ -372,6 +429,7 @@ test('ctx.stamp receptur (17) → stampRecipe: krater z haka tej klatki pominię
     const st = lastStamp(HullDamageMap.slotOf(hull.dmgKey));
     close(st.r, 55, 1e-3); close(st.heat, 2.8, 1e-6); close(st.rim, 0.5, 1e-6); close(st.ion, 0.3, 1e-6);
     assert.equal(st.cut, 0, 'receptura nigdy nie robi przezroczystej dziury');
+    assert.equal(st.hole, 0, 'receptura nie ma dziury w belkach — bez leja (25c)');
     const uv = HullBodies.spriteUvAt(e, -150, 20);
     close(st.u, uv.u, 1e-6); close(st.v, uv.v, 1e-6);
     // Następna klatka: pamięć kraterów nie blokuje nowych trafień w to miejsce.
@@ -521,9 +579,11 @@ test('naprawa R: wygaszanie osmalenia i przestrzelin w trakcie, koniec naprawy c
 
 test('pasma HDR rany (lustro CPU kernela i materiału): biały brzeg 8–12, stygnięcie w pomarańcz i czerwień pod progiem, lej ciemny', () => {
   const E = S.STAMP.armata.impact;
-  const tex = (cx, cy) => {
-    const Tx = { heat: 0, ion: 0, scorch: 0, rim: 0, cut: 0 };
-    T.damageStampCpu(Tx, [0.5, 0.5, E[0] / 380, 0], [E[1], E[2], E[3], E[4]], [1, 0, 1, 0], cx, cy, 720 / 380);
+  // Stempel krateru z prawdziwą dziurą o promieniu leja receptury (armata na miarę rany, zadanie 25c).
+  const holeH = S.lejRadius(E) / 380;
+  const tex = (cx, cy, hole = holeH) => {
+    const Tx = { heat: 0, ion: 0, scorch: 0, rim: 0, cut: 0, crater: 0 };
+    T.damageStampCpu(Tx, [0.5, 0.5, E[0] / 380, 0], [E[1], E[2], E[3], E[4]], [1, 0, 1, 0], cx, cy, 720 / 380, [hole, 0, 0, 0], 128);
     Tx.heat = Math.min(T.DMG_HEAT_MAX, Tx.heat);
     return Tx;
   };
@@ -539,7 +599,27 @@ test('pasma HDR rany (lustro CPU kernela i materiału): biały brzeg 8–12, sty
   assert.ok(center.hole > 0.99 && Math.max(...center.heat) < 1e-6, 'lej nie świeci (w demie była tam dziura)');
   assert.ok(center.burnt < 0.1, `lej ciemny: ${center.burnt}`);
   assert.ok(center.gloss < 0.01, 'lej bez lakieru (odbicie nieba nie zależy od albedo — czarny lej lśniłby jak blacha)');
-  assert.equal(T.woundGlowCpu({ heat: 0, ion: 0, scorch: 0, rim: 0, cut: 0 }).gloss, 1, 'czysta blacha: pełny lakier');
+  assert.equal(T.woundGlowCpu({ heat: 0, ion: 0, scorch: 0, rim: 0, cut: 0, crater: 0 }).gloss, 1, 'czysta blacha: pełny lakier');
+  // Ta sama rana bez dziury w belkach (25c): środek to osmalona blacha, nie lej — nie świeci, ale nie jest
+  // czarny (× 0,08) i ma ślad lakieru; brzeg świeci jak przy kraterze.
+  let maxRimNoHole = 0, noHole = null;
+  for (let r = 0; r <= 1.5; r += 0.02) {
+    const g = T.woundGlowCpu(tex(0.5 + (r * E[0] / 720), 0.5, 0));
+    if (r === 0) noHole = g;
+    maxRimNoHole = Math.max(maxRimNoHole, Math.max(...g.heat));
+  }
+  close(maxRimNoHole, maxRim, 1e-9, 'pierścień brzegu bez zmian');
+  assert.ok(noHole.lej > 0.99 && noHole.hole < 1e-9, 'kształt leja jest, lej nie');
+  assert.ok(Math.max(...noHole.heat) < 1e-6, 'środek bez dziury nie świeci (bez tarczy bieli)');
+  assert.ok(noHole.burnt > center.burnt * 5, `osmalona blacha jaśniejsza od leja: ${noHole.burnt} vs ${center.burnt}`);
+  assert.ok(noHole.gloss > 0.1, 'osmalona blacha ma ślad lakieru');
+  // Lej kończy się na brzegu prawdziwej dziury: dziura mniejsza niż lej receptury (np. słabszy strzał) —
+  // ten sam punkt kształtu leja jest lejem tylko w dziurze, poza nią osmaloną blachą.
+  const px = 0.5 + 0.8 * holeH * 380 / 720;
+  const inside = T.woundGlowCpu(tex(px, 0.5));
+  const outside = T.woundGlowCpu(tex(px, 0.5, holeH * 0.5));
+  assert.ok(inside.lej > 0.99 && inside.hole > 0.99, `w dziurze lej: ${inside.hole}`);
+  assert.ok(outside.lej > 0.99 && outside.hole === 0, 'poza dziurą (mniejszą niż lej receptury) bez leja');
   // Po 3 s: pomarańcz/czerwień (bez bieli), po czasie stygnięcia — pod progiem bloomu 0,9.
   let max3 = 0, maxCold = 0;
   for (let r = 0; r <= 1.5; r += 0.02) {
@@ -635,4 +715,7 @@ test('WGSL kernela: pula read_write, zadania i stemple tylko do odczytu, wyszuki
   assert.equal((w.match(/hullDamageJobs\.value\[ \( nodeVar\d+ \* 4u \) \]\.x <= instanceIndex/g) || []).length, Math.log2(M.DMG_JOB_CAP), 'kroki wyszukiwania binarnego');
   assert.doesNotMatch(w, /(>>|<<) \d+(?![\du])/, 'przesunięcia tylko o u32');
   assert.match(w, />> 8u/);
+  // Kanał krateru (25c): czwarty bajt słowa 1, czwarty vec4 stempla (promień prawdziwej dziury).
+  assert.match(w, /<< 24u/);
+  assert.equal(T.DMG_STAMP_VEC4, 4);
 });

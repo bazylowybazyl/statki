@@ -294,6 +294,35 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
   kolana. Galeria broni w harnessie naprawia rany
   celu przed każdym ujęciem (jak „naprawa przy zmianie broni” w demie).
 
+### 3.8 Krater na miarę rany (zadanie 25c, 2026-09-28)
+Uwaga użytkownika: lej rany (ciemne dno z żarzącym się brzegiem) był dużo większy niż dziura w belkach (Yamato:
+lej ~91 j., krater z budżetu HP ~3 węzły na pocisk). Zasada: **lej nie jest większy niż prawdziwa dziura**, żar i
+osmalenie sięgają dalej.
+- **Jedno źródło promienia — wpis stempla** (`hullDamageStamps.js`): `lejRadius(wpis)` = promień leja z promienia
+  i brzegu receptury (ten sam próg co materiał: brzeg · clamp(1,25 − 0,9 r/R) = środek smoothstep 0,52–0,6), ósme
+  pole `S_CRATER` = obrażenia wzorcowe krateru na miarę rany. `craterRadiusFor(źródło, wariant, obrażenia)` =
+  lej × √(obrażenia / wzorzec) (pole ∝ energii, ≤ 2 promienie wzorcowe). Wzorce: Yamato 850, Mjolnir 2500 / wylot
+  1250, Valkyrie 500 / wylot i zakleszczenie 250, armata 150, rakiety i torpedy (rodzina `rocket`) 1000 → promienie
+  90,7 / 55,8 / 39,1 / 24,4 / 16,6 / 20,0 / 35,4 / 18,0 j. Bez wzorca (krater z budżetu HP jak dotąd): Goliath (pełny lej
+  25 j. przy 3 strzałach/s skracał czas zniszczenia niszczyciela 4,3×), gatling plazmowy, lekka broń, wiązki, flak,
+  rykoszet, Hexlance (rzaz 35 j. ≥ lej znaków 22 j.).
+- **Fizyka** (`src/game/hullCraters.js` `craterOptsFor` → `HullBodies.impact(…, { craterRadius })` →
+  `D.applyImpact(…, { killRadius })`): każdy węzeł bliżej niż promień ginie — wgniecenie (promień + komórka), odrzut
+  wybitej blachy (hasz węzła zamiast Math.random), zerwane belki, oparcie, rozpad w kroku; bez budżetu HP. Wywołanie
+  bez `killRadius` liczy się bit w bit jak dotąd (test). Obrażenia HP (applyDamageToNPC / applyDamageToPlayer) bez
+  zmian — zmienia się struktura, więc sufit HP `maxHp · (żywe / startowe)^2,2` (gracz 2,35) przestaje być martwy
+  dla ciężkiej broni. Gra: `applyHexImpact` (index.html, wejście / wylot / zakleszczenie); rakieta: `_onHit` →
+  `window.applyRocketHullImpact` (punkt styku = `rocketHullContact`, ten sam co obraz wybuchu), przed obrażeniami HP,
+  tylko gdy tarcza nie blokuje.
+- **Mapa**: `hullImpactResult.crater` = zasięg węzłów zabitych przez krater (`D.lastCraterReach`); stempel krateru
+  niesie go w czwartym vec4 (`DMG_STAMP_VEC4` = 4), kernel kładzie koło dziury (bez wydłużenia i falowania, brzeg jeden
+  teksel) do kanału krateru teksela (bajt 24–31 słowa 1), materiał: lej = kształt leja × kanał krateru. Poza dziurą
+  kształt leja to osmalona blacha (albedo z osmalenia, ślad lakieru), nie czarne dno; środek dalej nie świeci, brzeg jak
+  dotąd. Rzaz Hexlance'a: dziura = pas (pół szerokości). Receptury (`stampRecipe`: wtórne Yamato, żar wyrwy, wiązka
+  między taktami), `stampAt`, `stampKerf` (pas rzazu Mjolnira / Valkyrie — bez rzazu w belkach) — bez dziury. Stempel
+  `rocket` w `effects.js` usunięty (ranę kładzie hak krateru rakiety).
+- Bilans i zrzuty: `MECHANIKA-BRONI.md` §9.
+
 ## 4. Podział pracy, kolejność, testy
 
 - **17-A** (bez zależności): tabela broni + test „27 broni ma recepturę”; `fxRandom`; pola szyny (`dirX/dirY`, dane PD w

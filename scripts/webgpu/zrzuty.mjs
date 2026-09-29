@@ -1017,6 +1017,67 @@ SCENES['galeria-ladowanie-strzal'] = {
 const GALERIA_MECHANIKA = ['galeria-strzelnica', 'galeria-przebicie', 'galeria-przebicie-po', 'galeria-przebicie-valkyrie',
   'galeria-rykoszet', 'galeria-seria', 'galeria-seria-po', 'galeria-ladowanie', 'galeria-ladowanie-strzal'];
 
+// ── Kratery (zadanie 25c): rana z mapy ran obok prawdziwej dziury w belkach ────────────────────
+// Cztery świeże pancerniki (kadłub Iron Skull) burtą do działa, bez AI i tarcz, HP 1e6 (sufit
+// strukturalny nie zabija) — 2600 j. na południe od strzelnicy; broń z PEŁNYMI obrażeniami (krater
+// jak w walce), działo 1050 j. nad górną burtą, celuje w środek kadłuba. Ujęcia: 0,6 s po ostatnim
+// strzale (rana żarzy się) i 6 s po (rana zimna: osmalenie, lej, dziura w geometrii belek).
+// Na końcu sesji `galeria` — wcześniejsze ujęcia bez zmian klatek. Diagnostyka: zabite i odcięte
+// węzły celu, nowe wraki (odłamy), stemple mapy ran.
+// [nazwa, broń, strzałów, odstęp (klatki 60 Hz), rozstaw luf w x (salwa Yamato: 3 lufy)]
+const GALERIA_KRATERY = [
+  ['yamato', 'special_yamato_cannon', 3, 5, 14],
+  ['mjolnir', 'siege_railgun', 1, 1, 0],
+  ['goliath', 'special_goliath_autocannon', 6, 19, 0],
+  ['armata', 'armata_mk1', 3, 18, 0]
+];
+SCENES['galeria-kratery'] = {
+  opis: 'Bez zrzutu: cztery świeże pancerniki burtą do działa (cele kraterów 25c), 5200 j. na południe od celu galerii',
+  capture: false, warm: 2,
+  js: `const T = window.__galeria.T; const y0 = T.y + 5200;
+       const put = (dx) => {
+         const r = spawnCallInShip('pirate_battleship', { mode: 'friendly', spawnPos: { x: T.x + dx, y: y0 } });
+         const e = Array.isArray(r) ? r[0] : r;
+         e.ai = null; e.hp = e.maxHp = 1e6; e.angle = 0; e.vx = 0; e.vy = 0;
+         if (e.shield) { e.shield.val = 0; e.shield.max = 0; }
+         return e;
+       };
+       window.__galeria.KR = ${JSON.stringify(GALERIA_KRATERY.map((_, i) => (i - 1.5) * 1500))}.map(put);
+       S.cam(T.x, y0, 0.3);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);`
+};
+for (const [i, [name, id, shots, gap, pitch]] of GALERIA_KRATERY.entries()) {
+  SCENES[`galeria-krater-${name}`] = {
+    opis: `Kratery 25c: ${id} (pełne obrażenia, ${shots} strz.) w burtę pancernika — rana z mapy obok prawdziwej dziury, 0,6 s po ostatnim strzale, zoom 1,3`,
+    hud: false, warm: 2,
+    js: `${GALERIA_POMOC}
+         ${MECH_DIAG}
+         await clear();
+         const e = G.KR[${i}];
+         S.cam(e.x, e.y - 90, 1.3);
+         H.reseed(${0x6a25c0 + i});
+         const n0 = e.beamHull.body.activeNodes; const w0 = window.wrecks.length; const d0 = dmg();
+         for (let k = 0; k < ${shots}; k++) {
+           const g = { ...gun(e.x + (k - ${(shots - 1) / 2}) * ${pitch}, e.y - 1050), modifiers: {} };
+           fire(g, '${id}', { x: e.x + (k - ${(shots - 1) / 2}) * ${pitch}, y: e.y }, 'galeria:krater-${name}');
+           await H.step(k < ${shots - 1} ? ${gap} : 36);
+         }
+         window.__galeria['krater-${name}'] = { n0, w0 };
+         window.__harnessDiag = { wezly: n0 - (e.beamHull ? e.beamHull.body.activeNodes : 0), wraki: window.wrecks.length - w0, mapaRan: dmgDiff(d0, dmg()) };
+         calm(); S.cam(e.x, e.y - 90, 1.3);`
+  };
+  SCENES[`galeria-krater-${name}-zimna`] = {
+    opis: `Kratery 25c: ${id} — ta sama rana 6 s po ostatnim strzale (zimna: osmalenie, lej, dziura w belkach), zoom 1,3`,
+    hud: false, warm: 2,
+    js: `const G = window.__galeria; const e = G.KR[${i}]; const d = G['krater-${name}'];
+         await H.step(324);
+         window.__harnessDiag = { wezly: d.n0 - (e.beamHull ? e.beamHull.body.activeNodes : 0), wraki: window.wrecks.length - d.w0 };
+         S.cam(e.x, e.y - 90, 1.3);`
+  };
+}
+const GALERIA_KRATERY_SCENY = ['galeria-kratery', ...GALERIA_KRATERY.flatMap(([name]) => [`galeria-krater-${name}`, `galeria-krater-${name}-zimna`])];
+
 // Wydobycie skał (zadanie 21b): etapy z wydobycie-gra.mjs (skała testowa jak scena „Kopalnia”
 // dema → lasery → piła → ładunek + detonacja → wiązka), po kolei w jednej sesji.
 for (const [id, st] of Object.entries(MINING_STAGES)) {
@@ -1047,7 +1108,8 @@ const SESSIONS = [
   // Galeria broni (zadanie 17): własna sesja — sceny bitwy w „kosmos” zostają bez zmian klatek.
   // Mechanika z dema (18-B) na końcu sesji: przebicia, rykoszety, seria, ładowanie.
   { id: 'galeria', query: 'dev=1', start: 'single', sprites: true,
-    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance', ...GALERIA_MECHANIKA] },
+    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance', ...GALERIA_MECHANIKA,
+      ...GALERIA_KRATERY_SCENY] },
   // Zadanie 21: pas asteroid z dema WebGPU (osobna sesja — nie przesuwa scen pozostałych; bazy WebGL brak: stare pole
   // było wyłączone, porównanie ze zrzutami dema — asteroidy-demo.mjs).
   { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] },

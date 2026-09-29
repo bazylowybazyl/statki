@@ -666,7 +666,7 @@ class RocketSystem3D {
                     // Wygląd: punkt i normalna poszycia wzdłuż odcinka lotu — przed obrażeniami
                     // (krater zabija węzły). Tylko odczyt kadłuba, bez losowania.
                     if (fx && !isPointTarget) fx.prepareContact(r, x1, z1, cx, cz);
-                    this._onHit(r);
+                    this._onHit(r, x1, z1, cx, cz);
                     this._explode(r);
                     continue;
                 }
@@ -692,7 +692,7 @@ class RocketSystem3D {
 
     /* ─────────────────── DAMAGE ─────────────────── */
 
-    _onHit(r) {
+    _onHit(r, x0 = r.position.x, z0 = r.position.z, x1 = r.position.x, z1 = r.position.z) {
         const target = r.target;
         if (!target || target.dead) return;
         if (target._isPositionTarget) return;
@@ -701,7 +701,8 @@ class RocketSystem3D {
 
         // Rakiety zdejmowały HP tarczy przez applyDamageTo*, ale nigdy nie
         // rejestrowały trafienia — pole nie dostawało ani ripple, ani cząsteczek.
-        if (isEntityShieldBlocking(target) && typeof window !== "undefined" && window.registerShieldImpact) {
+        const shieldBlocking = isEntityShieldBlocking(target);
+        if (shieldBlocking && typeof window !== "undefined" && window.registerShieldImpact) {
             window.registerShieldImpact(
                 target, r.position.x, r.position.z, dmg, shieldImpactClass(r.weaponDef)
             );
@@ -709,6 +710,16 @@ class RocketSystem3D {
             // Detonacja zostaje (obrażenia obszarowe, dźwięk), znika sam pokaz —
             // zastępuje go bańka i cząsteczki w kolorze tarczy.
             r.hitShield = true;
+        }
+
+        // Głowica na poszyciu (zadanie 25c): mały krater na miarę rany rakiety w punkcie styku
+        // (ten sam co obraz wybuchu) — przed obrażeniami HP, żeby śmierć celu (wrak z całego
+        // kadłuba) nie zabrała mu kadłuba. Punkt i krater liczy gra (index.html).
+        if (!shieldBlocking && target.beamHull && typeof window !== "undefined" && window.applyRocketHullImpact) {
+            const tvx = Number(target.vx ?? target.vel?.x) || 0;
+            const tvy = Number(target.vy ?? target.vel?.y) || 0;
+            window.applyRocketHullImpact(target, x0, z0, x1, z1, dmg, r.weaponDef,
+                r.velocity.x + r.frameVel.x - tvx, r.velocity.z + r.frameVel.z - tvy);
         }
 
         const applyNpc    = window.applyDamageToNPC;
