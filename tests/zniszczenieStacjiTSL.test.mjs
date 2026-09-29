@@ -17,7 +17,7 @@ import {
   createImplodeMaterial, createShatterMaterial, getShatterGraph
 } from '../src/vfx/shatterMaterial.js';
 import { bakeShatterGeometry } from '../src/vfx/shatterShaderBake.js';
-import { DESTRUCTION_TSL_INTERNALS } from '../src/vfx/destruction3D.js';
+import { DESTRUCTION_TSL_INTERNALS, Destruction3D } from '../src/vfx/destruction3D.js';
 import { PanelShardManager } from '../src/vfx/panelShardManager.js';
 import { Core3D } from '../src/3d/core3d.js';
 
@@ -309,17 +309,78 @@ test('pliki zadania 16 bez GLSL (port zamknięty)', () => {
   assert.doesNotMatch(read('src/vfx/destruction3D.js'), /mat\.clippingPlanes\s*=/, 'cięcie maską TSL, nie material.clippingPlanes');
 });
 
-// Zadanie 23: trzymacze rozgrzewki CIENIA (pass mapy cienia nie ma compileAsync — pipeline powstaje
-// synchronicznie w następnej klatce) po jednym naraz: wszystkie w jednej wolnej chwili dawały przestój
-// ~80 ms (8 pipeline'ów ShadowMaterial w klatce, harness: wydobycie-skala).
-test('rozgrzewka cienia rozpadu: najwyżej jeden trzymacz cienia w scenie naraz', () => {
+// Zadanie 25a: rozgrzewka rozpadu przez rejestr Core3D.warmup — pass sceny (wpis zwykły) i pass MAPY CIENIA
+// (`shadow: true` → Core3D.prewarmShadowPass, w tle, w kontekście passa cienia gry; dawniej trzymacze rysowane w
+// mapie cienia FG: 8 pipeline'ów synchronicznie i 18 budów w pierwszych klatkach każdej sesji). Zapas rysunkiem
+// (gdy droga w tle niedostępna) — najwyżej jeden trzymacz w scenie naraz (zadanie 23: wszystkie naraz ~80 ms).
+test('rozgrzewka rozpadu przez rejestr: pass cienia w tle (shadow: true), zapas rysunkiem najwyżej jeden naraz', () => {
   const src = read('src/vfx/destruction3D.js');
-  const run = src.slice(src.indexOf('function _scheduleWarm() {'), src.indexOf('function _holderMesh('));
-  assert.match(run, /if \(_warmQueue\[0\]\.cien === true && _shadowWarmPending\.length\) break;/);
-  assert.ok(run.indexOf('.cien === true') < run.indexOf('_warmQueue.shift()'), 'sprawdzenie przed zdjęciem z kolejki');
-  const q = src.slice(src.indexOf('function _queueShadowWarm('), src.indexOf('function _stepShadowWarm('));
-  assert.match(q, /make\.cien = true;/);
-  assert.equal(DESTRUCTION_TSL_INTERNALS.warmStats().shadowPending, 0);
+  const warm = src.slice(src.indexOf('function _queueWarm('), src.indexOf('function _makeHolderSafe('));
+  assert.match(warm, /reg\.add\(\{ name: [^\n]*objects: \(\) => _keepHolder\(_makeHolderSafe\(makeHolder\)\) \}\);/);
+  const q = src.slice(src.indexOf('function _queueShadowWarm('), src.indexOf('function _queueShadowFallback('));
+  assert.match(q, /shadow: true,/);
+  assert.match(q, /fallback: _queueShadowFallback/);
+  assert.match(q, /holder\.castShadow = true;/);
+  assert.doesNotMatch(src, /requestIdleCallback/, 'bez własnej kolejki w wolnych chwilach — rejestr');
+  const step = src.slice(src.indexOf('function _stepShadowWarm() {'), src.indexOf('// Klon materiału jak w _beginRootFade'));
+  assert.ok(step.indexOf('_shadowWarmPending.length === 0') < step.indexOf('_shadowFallbackQueue.shift()'), 'sprawdzenie przed zdjęciem z kolejki');
+  assert.match(read('src/vfx/panelShardManager.js'), /reg\.add\(\{\s*name: 'rozpad stacji: pule odłamków paneli'/);
+
+  // zapas: kolejka trzymaczy, w scenie najwyżej jeden (2 klatki na warstwie 31), potem następny
+  const { queueShadowFallback, stepShadowWarm, warmStats } = DESTRUCTION_TSL_INTERNALS;
+  const scene = new THREE.Scene();
+  Destruction3D.init({ scene });
+  const a = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+  const b = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+  queueShadowFallback(a);
+  queueShadowFallback(b);
+  queueShadowFallback(a);
+  assert.equal(warmStats().shadowFallbackQueued, 2, 'bez duplikatów');
+  stepShadowWarm();
+  assert.equal(a.parent, scene);
+  assert.equal(b.parent, null, 'drugi czeka');
+  assert.equal(a.layers.mask >>> 0, 2 ** 31, 'warstwa 31');
+  assert.equal(a.castShadow, true);
+  stepShadowWarm();
+  assert.equal(b.parent, null, 'pierwszy jeszcze w scenie (2 klatki)');
+  stepShadowWarm();
+  assert.equal(a.parent, null, 'zdjęty bez dispose');
+  assert.equal(b.parent, scene, 'następny po zdjęciu poprzedniego');
+  stepShadowWarm();
+  stepShadowWarm();
+  assert.equal(b.parent, null);
+  assert.deepEqual([warmStats().shadowPending, warmStats().shadowFallbackQueued], [0, 0]);
+  Destruction3D.dispose();
+});
+
+// Zadanie 25a: trzymacze passa sceny (wygaszenie, kawałek skorupy) po PODPISIE materiału — pola klucza materiału
+// obiektu renderu three (bez uuid, nazwy, wersji, opacity, userData; kolor = obiekt bez treści; tekstura = mapowanie,
+// filtry, zawijanie), liczby dokładnie. Strzałki stacji pirackiej: 64 materiały różniące się barwą → jeden trzymacz.
+test('podpis materiału trzymaczy rozpadu: ten sam klucz materiału three = jeden trzymacz passa sceny', () => {
+  const { materialSignature } = DESTRUCTION_TSL_INTERNALS;
+  const a = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.4, name: 'a' });
+  const b = new THREE.MeshStandardMaterial({ color: 0x00ff00, roughness: 0.4, name: 'b', opacity: 0.5 });
+  b.userData.x = 1;
+  assert.equal(materialSignature(a), materialSignature(b), 'barwa, nazwa, opacity, userData, uuid — bez wpływu');
+  const c = a.clone();
+  c.roughness = 0.5;
+  assert.notEqual(materialSignature(a), materialSignature(c), 'liczby dokładnie (zachowawczo)');
+  const d = a.clone();
+  d.transparent = true;
+  assert.notEqual(materialSignature(a), materialSignature(d), 'przezroczystość');
+  const e = a.clone();
+  e.map = new THREE.Texture();
+  assert.notEqual(materialSignature(a), materialSignature(e), 'mapa');
+  const f = e.clone();
+  f.map = new THREE.Texture();
+  assert.equal(materialSignature(e), materialSignature(f), 'inna tekstura, te same próbkowanie i zawijanie');
+  f.map.wrapS = THREE.RepeatWrapping;
+  assert.notEqual(materialSignature(e), materialSignature(f), 'zawijanie tekstury');
+  assert.notEqual(materialSignature(a), materialSignature(new THREE.MeshBasicMaterial()), 'typ materiału');
+  const src = read('src/vfx/destruction3D.js');
+  assert.match(src, /_queueWarm\(`fade\|\$\{sig\}`/);
+  assert.match(src, /_queueWarm\(`kawalek\|\$\{sig\}`/);
+  assert.match(src, /_queueShadowWarm\(`fade-cien\|\$\{mat\}`/, 'pass cienia per materiał (węzły cienia z mapą)');
 });
 
 // Zadanie 24: kawałek skorupy (Destruction3D.detachChunk → podział fragmentu) dostaje WŁASNE klony

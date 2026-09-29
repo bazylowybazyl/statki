@@ -650,6 +650,32 @@ const SCENES = {
          for (const o of pieces()) { o.getWorldPosition(p); c.x += p.x; c.y -= p.y; c.n++; }
          if (c.n) S.cam(c.x / c.n, c.y / c.n, 0.8);`
   },
+  // Zadanie 25a: stacja piracka (misja najemnika) — bryła 3D jak w grze (attachPirateStation3D z tej samej instancji
+  // modułu; bez stacji 2D w `stations`, rozgrywka bez zmian), potem rozpad (destroyStation3D, preset „pirate”).
+  // Sesja „piraci” — osobna, na końcu (nie przesuwa scen innych sesji). Pomiar: kompilacje przy pojawieniu się stacji
+  // (światła latarni, materiały, cień) i przy jej rozpadzie; „przed” — ten sam harness z --root <eksport main>.
+  'stacja-piracka': {
+    opis: 'Stacja piracka (misja najemnika): pojawienie się bryły 3D w kadrze — latarnie, okna, strzałki, ekran, zoom 0,3',
+    hud: false, warm: 30,
+    js: `DevScene.teleport(${DEEP.x + 420000}, ${DEEP.y + 260000}, 0);
+         const X = ${DEEP.x + 420000} + 4000, Y = ${DEEP.y + 260000};
+         window.__piraci = { x: X, y: Y, r: 220, isPirate: true, type: 'pirate' };
+         S.cam(X, Y, 0.3); await H.frames(3);
+         const { attachPirateStation3D } = await import('/src/3d/world3d.js');
+         H.reseed(0x25a1);
+         attachPirateStation3D(null, window.__piraci);
+         await H.step(30); S.cam(X, Y, 0.3);`
+  },
+  'stacja-piracka-rozpad': {
+    opis: 'Rozpad stacji pirackiej (destroyStation3D, preset „pirate”) 0,5 s po — wygaszenie, odłamki paneli, wybuch; zoom 0,3',
+    hud: false, warm: 30,
+    js: `const st = window.__piraci;
+         const { destroyStation3D } = await import('/src/3d/stations3D.js');
+         H.reseed(0x25a2);
+         st._destroyed3D = true;
+         destroyStation3D(st, { preset: 'pirate', shockwave: true });
+         await H.step(30); S.cam(st.x, st.y, 0.3);`
+  },
   // Zadanie 20: galeria faz wybuchu reaktora (do zadania 20 kanwa overlaya — drugi WebGLRenderer z bloomem
   // 1,6 / 0,15 i składaniem `screen`; od 20 scena Core3D). Sesja „reaktor” — osobna (nie przesuwa scen innych
   // sesji); baza z tagu (baza.mjs --dopisz). Wybuch w próżni wywołany jak w grze (triggerReactorBlow3D), kamera
@@ -1027,7 +1053,9 @@ const SESSIONS = [
   { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] },
   // Zadanie 21b: wydobycie w polu (osobna sesja; bazy WebGL brak — porównanie ze sceną Kopalnia
   // dema: wydobycie-gra.mjs --demo).
-  { id: 'wydobycie', query: 'dev=1', start: 'single', belt: true, scenes: Object.keys(MINING_STAGES).map((id) => `wydobycie-${id}`) }
+  { id: 'wydobycie', query: 'dev=1', start: 'single', belt: true, scenes: Object.keys(MINING_STAGES).map((id) => `wydobycie-${id}`) },
+  // Zadanie 25a: stacja piracka — pojawienie się i rozpad (osobna sesja na końcu; bazy WebGL brak).
+  { id: 'piraci', query: 'dev=1', start: 'single', scenes: ['stacja-piracka', 'stacja-piracka-rozpad'] }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).

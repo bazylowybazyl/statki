@@ -63,6 +63,58 @@
     frameLog.start[i] = t0; frameLog.cpu[i] = cpu; frameLog.game[i] = window.__frameId | 0; frameLog.seria[i] = frameLog._seria;
     frameLog.n++;
   };
+  // Dziennik wywołań WebGPU per klatka (zadanie 25a — przestoje BEZ kompilacji: kilkaset ms okresu klatki przy
+  // ~2 ms CPU): liczby i bajty zapisów do kolejki, nowe tekstury / bufory, moduły shaderów, pipeline'y (sync /
+  // w tle), zgłoszenia, mapAsync — w klatce dziennika w toku (poza wywołaniami rAF: następnej). frameStats dokłada
+  // je do wpisów przestojów (`gpu`). Hak na prototypach przed skryptami strony.
+  const GPU_KEYS = ['wb', 'wbB', 'wt', 'wtB', 'cei', 'tex', 'texB', 'buf', 'bufB', 'sm', 'rp', 'rpa', 'cp', 'cpa', 'sub', 'map'];
+  const gpuLog = { n: new Int32Array(LOG), v: GPU_KEYS.map(() => new Float64Array(LOG)) };
+  const gpuAt = (key, add = 1) => {
+    // okres klatki: jej wywołania rAF (klatka w toku) i czas po nich do następnej (poza rAF — ostatnia zapisana)
+    const k = inTick ? frameLog.n : frameLog.n - 1;
+    if (k < 0) return;
+    const i = k % LOG;
+    if (gpuLog.n[i] !== k) { gpuLog.n[i] = k; for (const arr of gpuLog.v) arr[i] = 0; }
+    gpuLog.v[GPU_KEYS.indexOf(key)][i] += add;
+  };
+  const gpuHook = (proto, name, fn) => {
+    if (!proto || typeof proto[name] !== 'function') return;
+    const orig = proto[name];
+    proto[name] = function (...a) { try { fn(a); } catch { /* dziennik nie psuje strony */ } return orig.apply(this, a); };
+  };
+  const texBytes = (d) => {
+    const s = d?.size; const w = Array.isArray(s) ? s[0] : (s?.width || 0); const h = Array.isArray(s) ? (s[1] || 1) : (s?.height || 1);
+    const l = Array.isArray(s) ? (s[2] || 1) : (s?.depthOrArrayLayers || 1);
+    const bpp = /32float/.test(d?.format || '') ? 16 : /16float/.test(d?.format || '') ? 8 : 4;
+    return w * h * l * bpp * (d?.mipLevelCount > 1 ? 1.33 : 1) * Math.max(1, d?.sampleCount || 1);
+  };
+  if (typeof GPUQueue !== 'undefined') {
+    gpuHook(GPUQueue.prototype, 'writeBuffer', (a) => { gpuAt('wb'); gpuAt('wbB', a[4] !== undefined ? a[4] * (a[2]?.BYTES_PER_ELEMENT || 1) : (a[2]?.byteLength || 0)); });
+    gpuHook(GPUQueue.prototype, 'writeTexture', (a) => { gpuAt('wt'); gpuAt('wtB', a[1]?.byteLength || 0); });
+    gpuHook(GPUQueue.prototype, 'copyExternalImageToTexture', (a) => { gpuAt('cei'); const s = a[2]; gpuAt('wtB', (Array.isArray(s) ? s[0] * s[1] : (s?.width || 0) * (s?.height || 0)) * 4); });
+    gpuHook(GPUQueue.prototype, 'submit', () => gpuAt('sub'));
+  }
+  if (typeof GPUDevice !== 'undefined') {
+    gpuHook(GPUDevice.prototype, 'createTexture', (a) => { gpuAt('tex'); gpuAt('texB', texBytes(a[0])); });
+    gpuHook(GPUDevice.prototype, 'createBuffer', (a) => { gpuAt('buf'); gpuAt('bufB', a[0]?.size || 0); });
+    gpuHook(GPUDevice.prototype, 'createShaderModule', () => gpuAt('sm'));
+    gpuHook(GPUDevice.prototype, 'createRenderPipeline', () => gpuAt('rp'));
+    gpuHook(GPUDevice.prototype, 'createRenderPipelineAsync', () => gpuAt('rpa'));
+    gpuHook(GPUDevice.prototype, 'createComputePipeline', () => gpuAt('cp'));
+    gpuHook(GPUDevice.prototype, 'createComputePipelineAsync', () => gpuAt('cpa'));
+  }
+  if (typeof GPUBuffer !== 'undefined') gpuHook(GPUBuffer.prototype, 'mapAsync', () => gpuAt('map'));
+  // Suma dziennika GPU dla klatek [a, b] (tylko niezerowe pola; bajty w MB).
+  const gpuSum = (a, b) => {
+    const out = {};
+    for (let k = a; k <= b; k++) {
+      const i = k % LOG;
+      if (gpuLog.n[i] !== k) continue;
+      GPU_KEYS.forEach((key, j) => { const v = gpuLog.v[j][i]; if (v) out[key] = (out[key] || 0) + v; });
+    }
+    for (const key of Object.keys(out)) if (/B$/.test(key)) out[key] = +(out[key] / 1048576).toFixed(2);
+    return out;
+  };
   // Chwile startu (prawdziwy czas od nawigacji, pierwsza obserwacja co ~10 ms): urządzenie WebGPU, tło
   // menu (pierwsza klatka, gotowe), ring Ziemi (mapy), pierwsza klatka gry.
   const marks = {};
@@ -96,7 +148,12 @@
     const push = (e) => { pipes.n++; if (pipes.list.length < PIPE_MAX) pipes.list.push(e); };
     // k = klatka dziennika w toku; poza wywołaniami rAF — następna (poza: true, leży w okresie poprzedniej)
     pu.createRenderPipeline = function (ro, promises) {
-      push({ k: frameLog.n, poza: !inTick, sync: !promises, nazwa: pipeName(ro?.material, ro?.object) });
+      const e = { k: frameLog.n, poza: !inTick, sync: !promises, nazwa: pipeName(ro?.material, ro?.object) };
+      // zadanie 25a (diagnostyka, window.__HARNESS_PIPE_KEYS__): klucz pipeline'u three — czemu rozgrzany nie trafił
+      if (window.__HARNESS_PIPE_KEYS__) {
+        try { e.klucz = `${ro.pipeline?.cacheKey || ''} | ${this.backend.getRenderCacheKey(ro)} | ctx ${ro.context?.id} | pass ${ro.passId ?? ''}`; } catch { /* */ }
+      }
+      push(e);
       return render.call(this, ro, promises);
     };
     pu.createComputePipeline = function (p, b) {
@@ -124,10 +181,11 @@
     let sync = 0; let async = 0; let compute = 0; let budowy = 0; let budowyMs = 0; let budowyPoza = 0;
     const by = new Map();
     const nb = new Map();
+    const nbPoza = new Map();
     for (const p of pipes.list) {
       if (p.k < beg || p.k > end || (p.k === end && !p.poza)) continue;
       if (p.budowa) {
-        if (p.poza) { budowyPoza++; continue; }
+        if (p.poza) { budowyPoza++; nbPoza.set(p.nazwa, (nbPoza.get(p.nazwa) || 0) + 1); continue; }
         budowy++;
         budowyMs += p.ms;
         nb.set(p.nazwa, (nb.get(p.nazwa) || 0) + 1);
@@ -139,7 +197,10 @@
       if (p.sync) by.set(p.nazwa, (by.get(p.nazwa) || 0) + 1);
     }
     const top = (m) => [...m].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
-    return { sync, async, compute, syncLista: top(by), budowy, budowyMs: +budowyMs.toFixed(1), budowyPoza, budowyLista: top(nb) };
+    // budowyPozaLista (zadanie 25a): budowy poza klatkami (rozgrzewka w tle — rejestr, requestIdleCallback) z nazwami;
+    // syncRenderLista — same pipeline'y renderu synchroniczne (w syncLista giną za kernelami compute)
+    const byRender = new Map([...by].filter(([n]) => !n.startsWith('compute')));
+    return { sync, async, compute, syncLista: top(by), syncRenderLista: top(byRender), budowy, budowyMs: +budowyMs.toFixed(1), budowyPoza, budowyLista: top(nb), budowyPozaLista: top(nbPoza) };
   };
 
   const waiters = [];
@@ -516,9 +577,18 @@
       // w tle (compileAsync: budowa NodeBuilder synchronicznie na CPU, pipeline w tle GPU)
       const nAsync = inPeriod.filter((p) => !p.sync && !p.budowa).length;
       if (nAsync) e.pipelineWTle = nAsync;
-      // budowy NodeBuilder w tym okresie (CPU): liczba i czas
+      // wywołania WebGPU w okresie klatki (zadanie 25a): zapisy do kolejki, nowe zasoby, moduły, pipeline'y
+      const g = gpuSum(i, i);
+      if (Object.keys(g).length) e.gpu = g;
+      // i 3 klatki przed nim (praca zlecona wcześniej staje w kolejce GPU dopiero przy prezentacji)
+      const gp = gpuSum(Math.max(0, i - 3), i - 1);
+      if (Object.keys(gp).length) e.gpuPrzed = gp;
+      // budowy NodeBuilder w tym okresie (CPU): liczba i czas, najdłuższe z nazwą (zadanie 25a)
       const builds = inPeriod.filter((p) => p.budowa);
-      if (builds.length) e.budowy = `${builds.length} (${builds.reduce((s, p) => s + p.ms, 0).toFixed(0)} ms)`;
+      if (builds.length) {
+        e.budowy = `${builds.length} (${builds.reduce((s, p) => s + p.ms, 0).toFixed(0)} ms)`;
+        e.budowyNazwy = [...builds].sort((a, b) => b.ms - a.ms).slice(0, 4).map((p) => `${p.nazwa} ${p.ms} ms${p.poza ? ' (poza)' : ''}`);
+      }
     }
     return { klatki: end - beg, przestoje: list.length, maksMs: +maxMs.toFixed(1), maksCpu: +maxCpu.toFixed(1), sumaMs: +over.toFixed(0), lista: top, pipeline: pipeStats(beg, end) };
   };
@@ -530,6 +600,7 @@
     marks,
     frameStats,
     pipes,
+    gpuSum,
     scene,
     // n klatek po stepMs; Promise kończy się, gdy czas znów stoi
     step(n = 1, stepMs = 1000 / 60) {

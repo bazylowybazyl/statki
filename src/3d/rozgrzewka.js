@@ -37,6 +37,10 @@
 //              rozgrywki (pule, które `objects()` musiałoby utworzyć wcześniej niż gra).
 //   alive    — () => bool: false = właściciel zwolnił obiekty (tło menu zatrzymane, ring przebudowany) —
 //              reszta zadań wpisu przepada.
+//   shadow   — true: pass MAPY CIENIA słońca zamiast passa sceny (zadanie 25a) — siatki z castShadow, każda przez
+//              Core3D.prewarmShadowPass (kontekst passa cienia gry: cel mapy, kamera cienia, materiał zastępczy
+//              cienia, głębokość wywołania). `fallback(siatka)` — gdy ta droga niedostępna (false), np. rozgrzewka
+//              rysunkiem. Rozgrzana siatka pamiętana osobno od passa sceny.
 // QuadMesh (pełnoekranowy pass) rozgrzewa się własną kamerą, bez świateł sceny, w podanym celu (`target`).
 //
 // Kolejność: `now()` (pilne — np. ring i Ziemia tła menu przed jego pierwszą klatką, bryły nowego ringu przed
@@ -83,6 +87,7 @@ export class Rozgrzewka {
     this._waiting = [];          // wpisy z pustymi obiektami — ponownie przy flush()
     this._pending = new Set();   // obietnice compileAsync w locie
     this._done = new WeakMap();  // siatka → Set(materiał) — rozgrzane bez wariantu
+    this._doneShadow = new WeakMap(); // to samo dla passa mapy cienia (opcja shadow)
     this._scheduled = false;
     this._flushing = 0;
     this._loadingOpen = false;   // po pierwszym flush() wpisy 'loading' idą od razu
@@ -156,6 +161,15 @@ export class Rozgrzewka {
     const list = this.stats.lista;
     list.push(row);
     if (list.length > LISTA_MAX) list.shift();
+    // Sumy per grupa (nazwa do dwukropka; zadanie 25a — koszt ekranu ładowania po modułach, lista trzyma tylko ostatnie wpisy)
+    const name = String(row.nazwa || '');
+    const cut = name.indexOf(':');
+    const key = cut > 0 ? name.slice(0, cut) : name;
+    const g = this.stats.grupy || (this.stats.grupy = {});
+    const s = g[key] || (g[key] = { wpisy: 0, siatki: 0, cpuMs: 0 });
+    s.wpisy++;
+    s.siatki += row.siatki || 0;
+    s.cpuMs = +(s.cpuMs + (row.cpuMs || 0)).toFixed(1);
   }
 
   /** Czy coś czeka albo kompiluje się w tle. */
@@ -183,6 +197,8 @@ export class Rozgrzewka {
       }
     }
     const t0 = nowMs();
+    const cpu0 = this.stats.cpuMs;
+    const siatki0 = this.stats.siatki;
     this._flushing++;
     try {
       let slice = nowMs();
@@ -194,7 +210,8 @@ export class Rozgrzewka {
           slice = nowMs();
         }
       }
-      const left = Math.max(0, timeoutMs - (nowMs() - t0));
+      const tQueue = nowMs();
+      const left = Math.max(0, timeoutMs - (tQueue - t0));
       if (this._pending.size) {
         let timer = 0;
         await Promise.race([
@@ -203,6 +220,13 @@ export class Rozgrzewka {
         ]);
         clearTimeout(timer);
       }
+      // Ekran ładowania (zadanie 25a — pomiar): czas flush(), w tym kolejka (CPU budów) i czekanie na pipeline'y
+      // w tle; `wLocie` > 0 = limit czasu minął przed ostatnim pipeline'em.
+      const end = nowMs();
+      this.stats.flush = {
+        t: +t0.toFixed(1), ms: +(end - t0).toFixed(1), kolejkaMs: +(tQueue - t0).toFixed(1),
+        cpuMs: +(this.stats.cpuMs - cpu0).toFixed(1), siatki: this.stats.siatki - siatki0, wLocie: this._pending.size
+      };
     } finally {
       this._flushing--;
       this._kick();
@@ -318,6 +342,8 @@ export class Rozgrzewka {
     const take = (o) => {
       if (!MESHY(o) || seen.has(o) || !onLayer(o)) return;
       if (spec.visible !== false && o.material?.visible === false) return;
+      // pass mapy cienia rysuje tylko obiekty z castShadow (funkcja renderu obiektu cienia three)
+      if (spec.shadow && o.castShadow !== true) return;
       seen.add(o);
       out.push(o);
     };
@@ -328,26 +354,70 @@ export class Rozgrzewka {
     return out;
   }
 
-  _alreadyDone(mesh) {
-    const set = this._done.get(mesh);
+  _alreadyDone(mesh, done = this._done) {
+    const set = done.get(mesh);
     if (!set) return false;
     const m = mesh.material;
     if (Array.isArray(m)) return m.every((x) => set.has(x));
     return set.has(m);
   }
 
-  _markDone(mesh) {
-    let set = this._done.get(mesh);
-    if (!set) { set = new Set(); this._done.set(mesh, set); }
+  _markDone(mesh, done = this._done) {
+    let set = done.get(mesh);
+    if (!set) { set = new Set(); done.set(mesh, set); }
     const m = mesh.material;
     if (Array.isArray(m)) for (const x of m) set.add(x);
     else set.add(m);
+  }
+
+  // Pass mapy cienia (opcja shadow): Core3D.prewarmShadowPass — kontekst i materiał zastępczy passa cienia gry.
+  // Siatka bez drogi (false) → `fallback` wpisu, jeśli jest (np. rozgrzewka rysunkiem).
+  _compileShadow(entry, obj) {
+    const spec = entry.spec;
+    const core = this.core;
+    if (!spec.variant && this._alreadyDone(obj, this._doneShadow)) {
+      this.stats.pominiete++;
+      return;
+    }
+    if (typeof spec.alive === 'function' && !spec.alive()) return;
+    const t0 = nowMs();
+    let promise;
+    try {
+      promise = Promise.resolve(typeof core.prewarmShadowPass === 'function' ? core.prewarmShadowPass(obj) : false);
+    } catch (err) {
+      promise = Promise.reject(err);
+    }
+    const ms = nowMs() - t0;
+    entry.cpuMs += ms;
+    entry.siatki++;
+    this.stats.siatki++;
+    this.stats.cpuMs += ms;
+    if (ms > this.stats.maksZadanieMs) this.stats.maksZadanieMs = +ms.toFixed(1);
+    this._markDone(obj, this._doneShadow);
+    const tracked = promise.then((ok) => {
+      if (ok === true) return true;
+      if (typeof spec.fallback === 'function') {
+        try { spec.fallback(obj); } catch (err) { console.warn(`[Core3D.warmup] „${entry.name}”: zapas rozgrzewki cienia nie wyszedł —`, err?.message || err); }
+      }
+      return false;
+    }, (err) => {
+      this.stats.bledy++;
+      if (!entry.failed) {
+        entry.failed = true;
+        console.warn(`[Core3D.warmup] „${entry.name}”: kompilacja passa cienia nie wyszła —`, err?.message || err);
+      }
+      return false;
+    });
+    this._pending.add(tracked);
+    tracked.then(() => this._pending.delete(tracked));
+    entry.promises.push(tracked);
   }
 
   // compileAsync jednej siatki (albo obiektu) z celem, kamerą i widocznością na czas wywołania — projekcja three
   // idzie synchronicznie (NodeBuilder, programy, zlecenie pipeline'u), dalej czeka się tylko na GPU.
   _compileOne(entry, obj) {
     const spec = entry.spec;
+    if (spec.shadow) return this._compileShadow(entry, obj);
     const core = this.core;
     const renderer = core.renderer;
     const split = spec.split !== false;

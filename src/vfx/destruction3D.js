@@ -257,27 +257,26 @@ export const DESTRUCTION_PRESETS = {
     },
 };
 
-// ── Rozgrzewka materiałów rozpadu (port WebGPU) ───────────────────────────────
+// ── Rozgrzewka materiałów rozpadu (port WebGPU; od zadania 25a przez rejestr Core3D.warmup) ─────
 // Rozpad to zdarzenie jednorazowe, ale pierwsze rysowanie nowego materiału w WebGPU to budowa
-// NodeBuildera na CPU w klatce rozpadu (+ pipeline w tle, rysunek pominięty do gotowości). Klucz
-// programu = graf materiału + stan (przezroczystość, głębia, strona) + układ geometrii (nazwy
-// atrybutów, indeks) + receiveShadow + kontekst renderu (cel passa) — więc rozgrzewamy raz na
-// układ, przy wypieku bryły (prebake — bryła stacji dopiero co powstała), na trzymaczach poza
-// sceną: Core3D.prewarmPass (cel composerTarget, kamera passa z warstwą meshy, bez cullingu),
-// w wolnej chwili (requestIdleCallback), bez Math.random gry. Trzymacze zostają na zawsze
-// (NodeManager usuwa stan budowy, gdy ostatni obiekt przestaje go używać — jak trzymacze
-// programów w WebGL). Rozgrzewane: rozpad na trójkąty (wspólny graf), implozja (wspólny graf),
-// wygaszenie bryły (klony materiałów GLB z transparent / depthWrite = false — _beginRootFade)
-// i pule odłamków paneli (PanelShardManager.prewarm).
+// NodeBuildera na CPU w klatce rozpadu (+ pipeline). Klucz programu = graf materiału + stan
+// (przezroczystość, głębia, strona) + układ geometrii (nazwy atrybutów, indeks) + receiveShadow +
+// kontekst renderu (cel passa) — więc rozgrzewamy raz na układ, przy wypieku bryły (prebake — szablon
+// GLB stacji na ekranie ładowania, stations3D.js prepareStations3D), na trzymaczach poza sceną, bez
+// Math.random gry. Trzymacze idą do rejestru rozgrzewki (src/3d/rozgrzewka.js): pass sceny (cel
+// composerTarget, kamera passa z warstwą meshy, bez cullingu) i pass mapy cienia (`shadow: true` →
+// Core3D.prewarmShadowPass — compileAsync w kontekście passa cienia gry); flush() ekranu ładowania czeka
+// na pipeline'y, więc pierwszy rozpad w grze nie kompiluje nic. Trzymacze zostają na zawsze (NodeManager
+// usuwa stan budowy, gdy ostatni obiekt przestaje go używać — jak trzymacze programów w WebGL).
+// Rozgrzewane: rozpad na trójkąty (wspólny graf), implozja (wspólny graf), wygaszenie bryły (klony
+// materiałów GLB z transparent / depthWrite = false — _beginRootFade), kawałki skorupy i pule odłamków
+// paneli (PanelShardManager.prewarm).
 const _warmHolders = [];
 const _warmedKeys = new Set();
-const _warmQueue = [];
-let _warmScheduled = false;
 
-function _layerOf(object3D) {
-    const mask = object3D.layers.mask >>> 0;
-    for (let i = 0; i < 32; i++) if (mask & (1 << i)) return i;
-    return 0;
+function _keepHolder(holder) {
+    if (holder) _warmHolders.push(holder);
+    return holder;
 }
 
 // Podpis układu geometrii jak w kluczu programu three (RenderObject.getGeometryCacheKey) + typy
@@ -316,46 +315,22 @@ function _layoutGeometry(src) {
     return g;
 }
 
+// Pass sceny: wpis rejestru (warstwa = najniższa warstwa trzymacza, jak dawny Core3D.prewarmPass).
 function _queueWarm(key, makeHolder) {
     if (_warmedKeys.has(key)) return;
     _warmedKeys.add(key);
-    _warmQueue.push(makeHolder);
-    _scheduleWarm();
+    const reg = Core3D?.warmup;
+    if (!reg || typeof reg.add !== 'function') return;
+    reg.add({ name: `rozpad stacji: ${key.slice(0, key.indexOf('|'))}`, objects: () => _keepHolder(_makeHolderSafe(makeHolder)) });
 }
 
-function _scheduleWarm() {
-    if (_warmScheduled || !_warmQueue.length || typeof window === 'undefined' || !Core3D?.prewarmPass) return;
-    _warmScheduled = true;
-    const run = () => {
-        _warmScheduled = false;
-        if (!Core3D.gpuReady) {
-            if (Core3D.gpuUnsupported) { _warmQueue.length = 0; return; }
-            Core3D.ready?.then?.((ok) => { if (ok) _scheduleWarm(); });
-            return;
-        }
-        // Jedna paczka na wolną chwilę — budowy NodeBuildera są synchroniczne.
-        const t0 = performance.now();
-        while (_warmQueue.length && performance.now() - t0 < 12) {
-            // Trzymacz cienia: pipeline powstaje SYNCHRONICZNIE w passie mapy cienia następnej klatki (pass
-            // cienia nie ma compileAsync) — wszystkie naraz dawały przestój (~9 ms na pipeline, 8 × w jednej
-            // klatce: ~80 ms w harnessie). Najwyżej jeden trzymacz cienia w scenie naraz — następny po zdjęciu
-            // poprzedniego (zadanie 23).
-            if (_warmQueue[0].cien === true && _shadowWarmPending.length) break;
-            const make = _warmQueue.shift();
-            try {
-                const holder = make();
-                if (holder) {
-                    _warmHolders.push(holder);
-                    Core3D.prewarmPass(holder, _layerOf(holder.isMesh ? holder : (holder.children[0] || holder)));
-                }
-            } catch (err) {
-                console.warn('[Destruction3D] rozgrzewka materiału rozpadu nie wyszła:', err?.message || err);
-            }
-        }
-        _scheduleWarm();
-    };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
-    else setTimeout(run, 50);
+function _makeHolderSafe(makeHolder) {
+    try {
+        return makeHolder() || null;
+    } catch (err) {
+        console.warn('[Destruction3D] rozgrzewka materiału rozpadu nie wyszła:', err?.message || err);
+        return null;
+    }
 }
 
 function _holderMesh(geometry, material, like) {
@@ -390,28 +365,38 @@ function _shareShadowNodes(clone, source) {
     } catch { /* bez współdzielenia — zwykła budowa cienia */ }
 }
 
-// Pass cienia nie ma compileAsync: trzymacze cienia wchodzą do sceny na 2 klatki na warstwie 31
-// (tej warstwy nie rysuje żaden pass Core3D; kamera cienia słońca ma layers.enableAll), bez cullingu,
-// w początku świata — poza stożkiem kamery cienia (rysunek bez pikseli, budowa i pipeline zostają).
+// Pass mapy cienia (zadanie 25a): wpis rejestru z `shadow: true` — Core3D.prewarmShadowPass kompiluje go w tle
+// w kontekście passa cienia gry (dawniej tylko rysunkiem: 8 pipeline'ów synchronicznie i 18 budów w pierwszych
+// klatkach każdej sesji). Zapas, gdy tej drogi nie ma (inne pola three, brak słońca z cieniem): trzymacz wchodzi
+// do sceny na 2 klatki na warstwie 31 (tej warstwy nie rysuje żaden pass Core3D, mapa cienia FG — tak; kamera
+// cienia słońca ma layers.enableAll), bez cullingu, w początku świata — poza stożkiem kamery cienia (rysunek bez
+// pikseli, budowa i pipeline zostają). Najwyżej jeden trzymacz zapasu w scenie naraz (zadanie 23: ~9 ms na
+// pipeline synchroniczny, wszystkie naraz — ~80 ms w jednej klatce).
 const SHADOW_WARM_LAYER = 31;
 const _shadowWarmPending = [];
+const _shadowFallbackQueue = [];
 
 function _queueShadowWarm(key, makeHolder) {
     if (_warmedKeys.has(key)) return;
     _warmedKeys.add(key);
-    const make = () => {
-        const holder = makeHolder();
-        if (!holder || !_scene) return null;
-        holder.layers.set(SHADOW_WARM_LAYER);
-        holder.castShadow = true;
-        holder.userData.__shadowWarmFrames = 2;
-        _scene.add(holder);
-        _shadowWarmPending.push(holder);
-        return null; // bez prewarmPass — to pass cienia
-    };
-    make.cien = true;
-    _warmQueue.push(make);
-    _scheduleWarm();
+    const reg = Core3D?.warmup;
+    if (!reg || typeof reg.add !== 'function') return;
+    reg.add({
+        name: `rozpad stacji: ${key.slice(0, key.indexOf('|'))}`,
+        shadow: true,
+        objects: () => {
+            const holder = _makeHolderSafe(makeHolder);
+            if (!holder) return null;
+            holder.castShadow = true;
+            return _keepHolder(holder);
+        },
+        fallback: _queueShadowFallback
+    });
+}
+
+function _queueShadowFallback(holder) {
+    if (!holder || !_scene || _shadowFallbackQueue.includes(holder)) return;
+    _shadowFallbackQueue.push(holder);
 }
 
 function _stepShadowWarm() {
@@ -419,9 +404,44 @@ function _stepShadowWarm() {
         const h = _shadowWarmPending[i];
         if (--h.userData.__shadowWarmFrames > 0) continue;
         h.removeFromParent();          // bez dispose — stan budowy zostaje w cache
-        _warmHolders.push(h);
         _shadowWarmPending.splice(i, 1);
     }
+    // Następny trzymacz zapasu dopiero po zdjęciu poprzedniego (sprawdzenie PRZED zdjęciem z kolejki).
+    if (_shadowWarmPending.length === 0 && _shadowFallbackQueue.length && _scene) {
+        const h = _shadowFallbackQueue.shift();
+        h.layers.set(SHADOW_WARM_LAYER);
+        h.castShadow = true;
+        h.userData.__shadowWarmFrames = 2;
+        _scene.add(h);
+        _shadowWarmPending.push(h);
+    }
+}
+
+// Podpis materiału dla trzymaczy passa sceny (zadanie 25a): pola, które three r183 bierze do klucza materiału obiektu
+// renderu (RenderObject.getMaterialCacheKey — customProgramCacheKey, pola własne i gettery prototypów bez uuid / nazwy /
+// wersji / opacity / userData, tekstury jako mapowanie + filtry + zawijanie, inne obiekty bez treści), liczby DOKŁADNIE
+// (three bierze 0/1, ale mieszanie, strona czy funkcja głębi wchodzą do klucza pipeline'u). Ten sam podpis i układ geometrii
+// = ten sam stan budowy i pipeline passa sceny — jeden trzymacz na grupę (strzałki stacji pirackiej: 64 materiały → 2).
+// Pass cienia zostaje per materiał: węzły cienia materiału z mapą są jego własne (pułapka 19).
+function _materialSignature(material) {
+    let key = `${material.type}|${typeof material.customProgramCacheKey === 'function' ? material.customProgramCacheKey() : ''}|`;
+    const keys = Object.keys(material);
+    for (let proto = Object.getPrototypeOf(material); proto; proto = Object.getPrototypeOf(proto)) {
+        const descriptors = Object.getOwnPropertyDescriptors(proto);
+        for (const k in descriptors) if (descriptors[k] && typeof descriptors[k].get === 'function') keys.push(k);
+    }
+    for (const property of keys) {
+        if (/^(is[A-Z]|_)|^(visible|version|uuid|name|opacity|userData)$/.test(property)) continue;
+        const value = material[property];
+        let valueKey;
+        if (value !== null && typeof value === 'object') {
+            valueKey = value.isTexture ? `{${value.mapping},${value.magFilter},${value.minFilter},${value.wrapS},${value.wrapT},${value.wrapR}}` : '{}';
+        } else {
+            valueKey = String(value);
+        }
+        key += `${property}:${valueKey},`;
+    }
+    return key;
 }
 
 // Klon materiału jak w _beginRootFade (transparent, bez zapisu głębi).
@@ -452,22 +472,34 @@ function _prewarmForRoot(rootObject) {
         const baked = child.geometry.__shatterBaked;
         // Trójkąty i implozja: pass FG i pass cienia (mesh rzuca cień nieprzesuniętą bryłą — jak
         // MeshDepthMaterial w WebGL; węzły cienia bez mapy — jeden klucz na układ geometrii).
+        // Pass cienia tylko dla siatek, które rzucają cień (funkcja renderu obiektu cienia three pomija resztę).
+        const casts = child.castShadow === true;
         if (baked) {
             const key = `${base}${_geometryLayoutKey(baked)}`;
             _queueWarm(`shatter|${key}`, () => _holderMesh(_layoutGeometry(baked), createShatterMaterial(), child));
-            _queueShadowWarm(`shatter-cien|${key}`, () => _holderMesh(_layoutGeometry(baked), createShatterMaterial(), child));
+            if (casts) _queueShadowWarm(`shatter-cien|${key}`, () => _holderMesh(_layoutGeometry(baked), createShatterMaterial(), child));
         }
         const implodeKey = `${base}${_geometryLayoutKey(child.geometry)}`;
         _queueWarm(`implode|${implodeKey}`, () => _holderMesh(_layoutGeometry(child.geometry), createImplodeMaterial(), child));
-        _queueShadowWarm(`implode-cien|${implodeKey}`, () => _holderMesh(_layoutGeometry(child.geometry), createImplodeMaterial(), child));
+        if (casts) _queueShadowWarm(`implode-cien|${implodeKey}`, () => _holderMesh(_layoutGeometry(child.geometry), createImplodeMaterial(), child));
         const src = child.material;
         if (!src?.clone || src.isNodeMaterial) return;
         const mat = `${src.uuid}|${implodeKey}`;
+        // pass sceny: jeden trzymacz na podpis materiału (ten sam stan budowy i pipeline), pass cienia — per materiał
+        const sig = `${_materialSignature(src)}|${implodeKey}`;
         // Wygaszenie bryły: pass FG i pass cienia (klon przezroczysty — inny klucz cienia niż oryginał).
-        _queueWarm(`fade|${mat}`, () => _holderMesh(_layoutGeometry(child.geometry), _fadeClone(src), child));
-        _queueShadowWarm(`fade-cien|${mat}`, () => _holderMesh(_layoutGeometry(child.geometry), _fadeClone(src), child));
+        _queueWarm(`fade|${sig}`, () => _holderMesh(_layoutGeometry(child.geometry), _fadeClone(src), child));
+        if (casts) _queueShadowWarm(`fade-cien|${mat}`, () => _holderMesh(_layoutGeometry(child.geometry), _fadeClone(src), child));
+        // Rozpad na trójkąty W MIEJSCU (_shatterSingle na żywej bryle, styl „triangles”): three r183 trzyma obiekt
+        // renderu passa cienia po (obiekt, materiał zastępczy, kontekst) — po podmianie geometrii i materiału zostaje
+        // STARY stan budowy (węzły cienia materiału GLB: alfa mapy), a pipeline dostaje nowy układ (wypiek) i
+        // przezroczystość rozpadu. Ten sam pipeline daje klon przezroczysty materiału GLB na układzie wypieku.
+        if (baked && casts) {
+            const bakedKey = `${src.uuid}|${base}${_geometryLayoutKey(baked)}`;
+            _queueShadowWarm(`trojkaty-cien|${bakedKey}`, () => _holderMesh(_layoutGeometry(baked), _fadeClone(src), child));
+        }
         // Kawałki skorupy po odpadnięciu fragmentu (klony z maską cięcia): pass FG; cień = węzły oryginału.
-        _queueWarm(`kawalek|${mat}`, () => {
+        _queueWarm(`kawalek|${sig}`, () => {
             const holder = _holderMesh(_layoutGeometry(child.geometry), _shellPieceClone(src), child);
             holder.userData.__shellClip = null;
             return holder;
@@ -1299,8 +1331,9 @@ export const Destruction3D = {
      */
     prebake(rootObject3D) {
         bakeShatterMesh(rootObject3D);
-        // Port WebGPU: programy rozpadu tej bryły (trójkąty, implozja, wygaszenie) budowane
-        // w wolnej chwili teraz, nie w klatce rozpadu.
+        // Port WebGPU: programy rozpadu tej bryły (trójkąty, implozja, wygaszenie, kawałki — pass sceny
+        // i pass mapy cienia) do rejestru rozgrzewki teraz, nie w klatce rozpadu (szablony stacji: na
+        // ekranie ładowania — flush() czeka na pipeline'y).
         _prewarmForRoot(rootObject3D);
     },
 
@@ -1649,7 +1682,7 @@ export const Destruction3D = {
      */
     update(worldTime, dt = 0.016) {
         _worldTime = worldTime;
-        if (_shadowWarmPending.length) _stepShadowWarm();
+        if (_shadowWarmPending.length || _shadowFallbackQueue.length) _stepShadowWarm();
 
         // Update uTime on tracked shatter meshes (O(active) not O(all scene objects))
         for (const mesh of _shatterMeshes) {
@@ -1876,5 +1909,8 @@ export const DESTRUCTION_TSL_INTERNALS = Object.freeze({
     fadeClone: _fadeClone,
     shellPieceClone: _shellPieceClone,
     cloneShellHierarchy: _cloneShellHierarchy,
-    warmStats: () => ({ keys: _warmedKeys.size, queued: _warmQueue.length, holders: _warmHolders.length, shadowPending: _shadowWarmPending.length }),
+    warmStats: () => ({ keys: _warmedKeys.size, holders: _warmHolders.length, shadowPending: _shadowWarmPending.length, shadowFallbackQueued: _shadowFallbackQueue.length }),
+    queueShadowFallback: _queueShadowFallback,
+    stepShadowWarm: _stepShadowWarm,
+    materialSignature: _materialSignature,
 });

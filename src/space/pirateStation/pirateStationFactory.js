@@ -1,6 +1,20 @@
 import * as THREE from 'three';
+// Losowość wyglądu (zadanie 25a): WŁASNY strumień generatora warstwy efektów (FxRandom, stałe ziarno) — wygląd stacji
+// (panele, okna) nie zużywa ani Math.random gry (przebieg misji nie zależy od tego, kiedy i ile razy bryła powstała),
+// ani wspólnego fxRandom (bryła powstaje na ekranie ładowania — przesunięty ciąg efektów zmieniał iskry i światła
+// w scenach harnessu). Każda budowa od tego samego ziarna: ta sama stacja w każdej grze.
+import { FxRandom } from '../../3d/fx/fxRandom.js';
 
+const PIRATE_LOOK_SEED = 0x9a7e5a1;
+
+// opts.random — generator wyglądu (domyślnie własny strumień, PIRATE_LOOK_SEED); opts.beaconLights — dwa PointLight-y
+// latarni pożyczone ze sceny (world3d.js: stałe światła sceny od startu gry — pojawienie się stacji nie zmienia zestawu
+// świateł passa FG, więc nie przebudowuje materiałów w kadrze). Pożyczone światła nie wchodzą do grupy stacji: update()
+// stawia je co klatkę w miejscu latarni (pozycja świata), zasięg i barwa jak dawniej.
 function buildPirateStation(THREE, opts = {}) {
+  const lookRandom = new FxRandom(PIRATE_LOOK_SEED);
+  const random = typeof opts.random === 'function' ? opts.random : () => lookRandom.next();
+  const borrowedLights = Array.isArray(opts.beaconLights) ? opts.beaconLights : null;
   const scale = opts.scale ?? 1.0;
   const group = new THREE.Group();
   group.name = opts.name || 'PirateStation';
@@ -15,11 +29,11 @@ function buildPirateStation(THREE, opts = {}) {
     ctx.fillStyle = '#616775';
     ctx.fillRect(0, 0, size, size);
     for (let i = 0; i < 220; i++) {
-      const w = Math.floor(8 + Math.random() * 28);
-      const h = Math.floor(6 + Math.random() * 26);
-      const x = Math.floor(Math.random() * (size - w));
-      const y = Math.floor(Math.random() * (size - h));
-      const g = 150 + Math.floor(Math.random() * 70);
+      const w = Math.floor(8 + random() * 28);
+      const h = Math.floor(6 + random() * 26);
+      const x = Math.floor(random() * (size - w));
+      const y = Math.floor(random() * (size - h));
+      const g = 150 + Math.floor(random() * 70);
       ctx.fillStyle = `rgb(${g},${g},${g})`;
       ctx.fillRect(x, y, w, h);
       ctx.strokeStyle = 'rgba(0,0,0,0.15)';
@@ -202,7 +216,7 @@ function buildPirateStation(THREE, opts = {}) {
     let di = 0;
 
     function pickColor() {
-      const p = palette[Math.floor(Math.random() * palette.length)];
+      const p = palette[Math.floor(random() * palette.length)];
       if (Array.isArray(p)) return new THREE.Color().setHSL(p[0], p[1], p[2]);
       return new THREE.Color(p);
     }
@@ -211,11 +225,11 @@ function buildPirateStation(THREE, opts = {}) {
       const count = 72;
       for (let i = 0; i < count; i++) {
         const theta = (i / count) * Math.PI * 2;
-        if (Math.random() < 0.28) continue;
+        if (random() < 0.28) continue;
         m.identity();
         m.makeRotationY(theta);
         m.setPosition(0, yOff, 0);
-        if (Math.random() < offProb) {
+        if (random() < offProb) {
           darkInst.setMatrixAt(di++, m);
         } else {
           litInst.setMatrixAt(li, m);
@@ -280,7 +294,14 @@ function buildPirateStation(THREE, opts = {}) {
   function addBeacon(position, color = 0xff3b3b, phase = 0) {
     const beacon = new THREE.Group();
     beacon.position.copy(position);
-    const light = new THREE.PointLight(color, 0, 80 * scale, 2.0);
+    const borrowed = borrowedLights ? borrowedLights[beacons.length] : null;
+    const light = borrowed || new THREE.PointLight(color, 0, 80 * scale, 2.0);
+    if (borrowed) {
+      light.color.set(color);
+      light.intensity = 0;
+      light.distance = 80 * scale;
+      light.decay = 2.0;
+    }
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.26 * scale, 12, 12), new THREE.MeshBasicMaterial({ color }));
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: glowTex,
@@ -290,9 +311,10 @@ function buildPirateStation(THREE, opts = {}) {
       depthWrite: false
     }));
     sprite.scale.set(2.4 * scale, 2.4 * scale, 1);
-    beacon.add(light, bulb, sprite);
+    if (borrowed) beacon.add(bulb, sprite);
+    else beacon.add(light, bulb, sprite);
     group.add(beacon);
-    beacons.push({ light, sprite, phase });
+    beacons.push({ light, sprite, phase, anchor: borrowed ? beacon : null });
   }
   addBeacon(new THREE.Vector3(0, res.position.y + resH * 0.6, 0), 0xff3b3b, 0.0);
   addBeacon(new THREE.Vector3(0, -coreHeight * 0.5 - 4.2 * scale, 0), 0x39a3ff, 0.7);
@@ -443,6 +465,8 @@ function buildPirateStation(THREE, opts = {}) {
         b.sprite.scale.setScalar((1.7 + 1.3 * pulse) * scale);
       }
       if (b.light) b.light.intensity = 12 * pulse;
+      // pożyczone światło sceny: w miejscu latarni (pozycja świata jak dziecka grupy)
+      if (b.anchor) b.anchor.getWorldPosition(b.light.position);
     }
     if (tickerTex) tickerTex.offset.x = (tickerTex.offset.x - dt * 0.12) % 1;
     for (const g of guidance) {
@@ -467,7 +491,9 @@ export function createPirateStation(opts = {}) {
   const scale = requestedRadius ? requestedRadius / baseRadius : opts.scale ?? 1;
   const { group, update, radius } = buildPirateStation(THREE, {
     scale,
-    name: opts.name || 'PirateStation'
+    name: opts.name || 'PirateStation',
+    random: opts.random,
+    beaconLights: opts.beaconLights
   });
   return {
     object3d: group,

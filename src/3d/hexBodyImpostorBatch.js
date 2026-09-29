@@ -103,6 +103,10 @@ function ensureBuilt() {
   return true;
 }
 
+// Rozgrzewka (zadanie 25a): batch powstawał przy pierwszej smudze (daleki kadłub, zimny wrak) i kompilował się
+// w tej klatce (pipeline synchronicznie — harness: galeria-przebicie). Na ekranie ładowania: batch od razu, pass ortho.
+Core3D.warmup?.add({ name: 'smugi dalekich kadłubów (hexBodyImpostorBatch)', objects: () => (ensureBuilt() ? mesh : null), layer: 0, phase: 'loading' });
+
 /**
  * Średni kolor sprite'a ciała — liczony RAZ, z rzadkiego próbkowania canvasa.
  * Bierzemy tylko piksele o sensownej alfie, inaczej przezroczyste tło zjadałoby

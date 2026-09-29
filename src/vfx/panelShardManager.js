@@ -319,25 +319,17 @@ export class PanelShardManager {
 
     // Port WebGPU: każdy InstancedMesh ma w kluczu programu swój uuid (three r183), więc
     // 8 pul = 8 budów NodeBuildera przy PIERWSZYM rozpadzie (pule są puste i niewidoczne do
-    // pierwszego odłamka). Rozgrzewka raz, w wolnej chwili po gotowości urządzenia: pula
-    // widoczna tylko na czas compileAsync (projekcja synchroniczna — Core3D.prewarmPass).
+    // pierwszego odłamka). Rozgrzewka raz, przez rejestr (Core3D.warmup, zadanie 25a — dawniej
+    // własne requestIdleCallback): pula widoczna tylko na czas compileAsync, pass FG; flush()
+    // ekranu ładowania czeka na pipeline'y.
     prewarm() {
-        if (typeof window === 'undefined' || !Core3D?.prewarmPass || !Core3D.ready?.then) return;
-        const run = () => {
-            if (!Core3D.gpuReady) return;
-            for (let i = 0; i < this._allPools.length; i++) {
-                const mesh = this._allPools[i].mesh;
-                if (!mesh.parent) continue; // zwolniona (disposeAll)
-                const wasVisible = mesh.visible;
-                mesh.visible = true;
-                Core3D.prewarmPass(mesh, PANEL_SHARD_LAYER);
-                mesh.visible = wasVisible;
-            }
-        };
-        Core3D.ready.then((ok) => {
-            if (!ok) return;
-            if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
-            else setTimeout(run, 50);
+        const reg = Core3D?.warmup;
+        if (typeof window === 'undefined' || !reg || typeof reg.add !== 'function') return;
+        reg.add({
+            name: 'rozpad stacji: pule odłamków paneli',
+            objects: () => this._allPools.map((pool) => pool.mesh).filter((mesh) => !!mesh.parent), // bez zwolnionych (disposeAll)
+            layer: PANEL_SHARD_LAYER,
+            alive: () => this._allPools.some((pool) => !!pool.mesh.parent)
         });
     }
 
