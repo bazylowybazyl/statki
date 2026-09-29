@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Atlas 3D — demo WebGPU</title>
+<!--
+  Demo WebGPU (three.js r183 przez Vite: `npm run dev`, /dema/atlas3d-webgpu.html).
+  Model 3D Atlasa (kadłub ze sprite'a gry: obrys z alfy, pokład z tekstury, bryły, kil, rufa
+  z dyszami, kręgosłup Hexlance'a, płetwy startowe z hangarami, mostki gry) i modele 3D broni
+  (23 rodziny z atlasów sprite'ów, w skali i punktach wylotu gry) — w trzech trybach:
+  oględziny, lot (sterowanie, kamery 3D, ogień, drony i skały) i galeria broni.
+  Kod modeli: src/3d/ships3d/*, opis: docs/webgpu/DEMO-ATLAS-3D.md.
+
+  Parametry adresu: ?tryb=ogledziny|lot|galeria, ?kamera=gra|taktyczna|poscig|orbita|kinowa,
+  ?fit=gra|pelny, ?test=1 (klatki tylko przez __demo.step), ?dpr=1, ?cienie=2048.
+  Konsola: __demo.mode(tryb), camera(kamera), loadout('gra'|'pelny'), step(n), stats(),
+  fire('main'|'missile'|'special'|'hexlance'), exportGLB().
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, "Segoe UI", sans-serif; color: #d9e3ef; }
+  canvas { display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 318px; box-sizing: border-box; max-height: calc(100% - 24px);
+    overflow-y: auto; background: rgba(6, 10, 18, .86); border: 1px solid rgba(90, 170, 230, .28);
+    border-radius: 8px; padding: 11px 13px; font-size: 12.5px; line-height: 1.42; }
+  #panel.hidden { display: none; }
+  h1 { font-size: 13.5px; margin: 0 0 2px; letter-spacing: .06em; color: #bfe6ff; }
+  #backend { font-size: 11.5px; color: #97a8bf; margin-bottom: 7px; }
+  .grid { display: grid; gap: 4px; margin: 3px 0 6px; }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g5 { grid-template-columns: repeat(5, 1fr); }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  button { background: rgba(80, 150, 220, .10); color: #d4e8fa; border: 1px solid rgba(110, 170, 230, .32);
+    border-radius: 5px; padding: 6px 2px; font: 600 11.5px system-ui, sans-serif; cursor: pointer; }
+  button.on { border-color: #8fd3ff; color: #fff; background: rgba(90, 180, 255, .24); }
+  .g5 button { font-weight: 500; font-size: 10.5px; padding: 5px 1px; }
+  .sec { font-size: 10.5px; color: #7f91aa; margin-top: 6px; letter-spacing: .04em; text-transform: uppercase; }
+  #stats { font: 11px ui-monospace, Consolas, monospace; color: #9fe0a8; margin-top: 6px; white-space: pre; }
+  #hud { position: fixed; right: 12px; top: 12px; font: 12px ui-monospace, Consolas, monospace; color: #cfe7ff;
+    background: rgba(6, 10, 18, .7); border: 1px solid rgba(90, 170, 230, .22); border-radius: 6px; padding: 7px 9px;
+    white-space: pre; pointer-events: none; }
+  #hud.hidden { display: none; }
+  .keys { color: #8b9bb3; font-size: 11px; margin-top: 5px; }
+  details summary { cursor: pointer; color: #a9b8cd; font-size: 12px; margin: 7px 0 3px; }
+  label { display: flex; align-items: center; gap: 6px; margin: 2px 0; cursor: pointer; }
+  .row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 44px; gap: 6px; align-items: center; margin: 3px 0; }
+  .row input[type=range] { width: 100%; min-width: 0; margin: 0; }
+  .row output { text-align: right; font: 11px ui-monospace, Consolas, monospace; }
+  .sel { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 6px; align-items: center; margin: 3px 0; }
+  select { background: #0d1524; color: #d9e3ef; border: 1px solid #34465f; border-radius: 4px; font-size: 11.5px; min-width: 0; }
+  #labels { position: fixed; inset: 0; pointer-events: none; }
+  #labels div { position: absolute; transform: translate(-50%, -100%); font: 11px system-ui, sans-serif; color: #dbeeff;
+    background: rgba(6, 10, 18, .72); border: 1px solid rgba(110, 170, 230, .25); border-radius: 4px; padding: 2px 6px;
+    white-space: nowrap; }
+  #crosshair { position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
+    border: 1.5px solid rgba(140, 220, 255, .75); border-radius: 50%; display: none; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .9);
+    padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none;
+    max-height: 40%; overflow: auto; }
+  #loading { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 6px 12px;
+    background: rgba(6, 10, 18, .86); border: 1px solid rgba(90, 170, 230, .25); border-radius: 6px; font-size: 12px; }
+  #nogpu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; }
+  #nogpu div { max-width: 560px; background: rgba(20, 24, 40, .95); border: 1px solid #44507a; border-radius: 10px;
+    padding: 22px 26px; font-size: 14px; line-height: 1.55; }
+  #nogpu b { color: #ffd2a6; }
+</style>
+</head>
+<body>
+<div id="labels"></div>
+<div id="crosshair"></div>
+<div id="panel">
+  <h1>ATLAS 3D · MODELE BRONI · WEBGPU</h1>
+  <div id="backend">uruchamianie…</div>
+  <div class="grid g3" id="modes">
+    <button data-m="ogledziny">O · Oględziny</button>
+    <button data-m="lot">L · Lot</button>
+    <button data-m="galeria">G · Galeria broni</button>
+  </div>
+  <div class="sec">kamera</div>
+  <div class="grid g5" id="cams">
+    <button data-c="gra">1 Z góry</button>
+    <button data-c="taktyczna">2 3/4</button>
+    <button data-c="poscig">3 Pościg</button>
+    <button data-c="orbita">4 Orbita</button>
+    <button data-c="kinowa">5 Kino</button>
+  </div>
+  <div class="sec">uzbrojenie</div>
+  <div class="grid g2">
+    <button id="fit-gra">Fit gry (autoMount)</button>
+    <button id="fit-pelny">Wszystkie gniazda</button>
+  </div>
+  <div id="groups"></div>
+  <div class="keys" id="keys-flight">Lot: W/S ciąg · A/D skręt · Q/E boki · R/F góra/dół · Shift dopalacz ·
+    LPM ogień główny + specjalne · PPM / Spacja rakiety · X Hexlance · T auto-PD · kółko zoom ·
+    Alt + przeciąganie lub ŚPM — obrót kamery · 1–5 kamery · H panel · P pauza</div>
+  <details id="settings" open><summary>widok i model</summary>
+    <label><input type="checkbox" id="c-sprite"> porównanie: płaski sprite jak w grze (zamiast modelu)</label>
+    <label><input type="checkbox" id="c-deck" checked> tekstura pokładu (sprite gry)</label>
+    <label><input type="checkbox" id="c-bump" checked> mapa normalnych pokładu</label>
+    <label><input type="checkbox" id="c-seams" checked> szwy paneli (burty, broń)</label>
+    <label><input type="checkbox" id="c-turrets" checked> wieże 3D</label>
+    <label><input type="checkbox" id="c-markers"> znaczniki gniazd (typy)</label>
+    <label><input type="checkbox" id="c-plumes" checked> strugi dysz MAIN</label>
+    <label><input type="checkbox" id="c-lights" checked> światła pozycyjne i reflektory</label>
+    <label><input type="checkbox" id="c-shadows" checked> cienie słońca</label>
+    <label><input type="checkbox" id="c-bloom" checked> bloom gry</label>
+    <label><input type="checkbox" id="c-bank" checked> przechył w skręcie (wizualny)</label>
+    <label><input type="checkbox" id="c-follow"> kamera 3/4 obraca się z kursem</label>
+    <label><input type="checkbox" id="c-fast"> szybki lot ×3 (test)</label>
+    <label><input type="checkbox" id="c-pd" checked> auto-obrona punktowa (aux → drony)</label>
+    <label><input type="checkbox" id="c-drones" checked> drony wroga</label>
+    <label><input type="checkbox" id="c-gscale"> galeria: skala gry (inaczej dopasowana ~80 j.)</label>
+    <div class="row"><span>skala wież (1 = gra)</span><input type="range" id="s-tscale" min="1" max="2.2" step="0.05" value="1"><output id="o-tscale"></output></div>
+    <div class="row"><span>pochylenie 3/4 [°]</span><input type="range" id="s-tilt" min="0" max="80" step="1" value="52"><output id="o-tilt"></output></div>
+    <div class="row"><span>azymut słońca [°]</span><input type="range" id="s-sun" min="0" max="360" step="1" value="131"><output id="o-sun"></output></div>
+    <div class="row"><span>wys. słońca [°]</span><input type="range" id="s-elev" min="3" max="85" step="1" value="34"><output id="o-elev"></output></div>
+    <div class="row"><span>ekspozycja</span><input type="range" id="s-exp" min="0.3" max="2.5" step="0.05" value="1"><output id="o-exp"></output></div>
+  </details>
+  <div class="grid g2" style="margin-top:6px">
+    <button id="b-glb">Eksport GLB (Blender)</button>
+    <button id="b-pause">P · pauza</button>
+  </div>
+  <div id="stats"></div>
+</div>
+<div id="hud"></div>
+<div id="loading">wczytywanie sprite'a Atlasa…</div>
+<div id="err"></div>
+<div id="nogpu"><div>
+  <b>WebGPU niedostępne.</b><br>
+  Demo rysuje model Atlasa i broni w TSL na WebGPU — potrzebuje przeglądarki z WebGPU
+  (Chrome / Edge 113+ na Windowsie z aktualnym sterownikiem). Sprawdź <code>chrome://gpu</code>.
+  <div id="nogpu-detail" style="margin-top:8px;color:#9fb3cf;font-size:12px"></div>
+</div></div>
+<script type="module" src="./atlas3d-webgpu.js"></script>
+</body>
+</html>
