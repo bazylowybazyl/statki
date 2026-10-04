@@ -1,4 +1,4 @@
-// src/3d/ships3d/atlasHull3D.js
+// src/3d/ships3d/ships/atlasHull3D.js
 //
 // MODEL 3D KADŁUBA ATLASA — z obrysu i rysunku sprite'a gry (assets/capital_ship_rect_v1.png,
 // 3747 × 1677 px), gniazd z edytora (ATLAS_EDITOR_DEFAULTS) i mostków gry (bridge3DShapes.js).
@@ -13,9 +13,9 @@
 // tekstury sprite'a z góry), bryły tylko podnoszą albo obniżają fragmenty rysunku.
 // Burty, fazy, kil i detale — paleta (SHIP3D_MAT, shipMaterials3D.tsl.js).
 
-import { MeshBuilder3D, SHIP3D_MAT as M, mirrorHalf, octPoly, rectPoly, pointInPoly, ensureCCW } from './meshBuilder3D.js';
-import { ATLAS_EDITOR_DEFAULTS } from '../../data/atlasHardpointDefaults.js';
-import { buildBridgeModel, BRIDGE3D_MAT, BRIDGE3D_EMIT } from '../bridge3DShapes.js';
+import { MeshBuilder3D, SHIP3D_MAT as M, mirrorHalf, octPoly, rectPoly, pointInPoly, ensureCCW } from '../meshBuilder3D.js';
+import { ATLAS_EDITOR_DEFAULTS } from '../../../data/atlasHardpointDefaults.js';
+import { buildBridgeModel, BRIDGE3D_MAT, BRIDGE3D_EMIT } from '../../../3d/bridge3DShapes.js';
 
 export const ATLAS3D_SPRITE = Object.freeze({ width: 3747, height: 1677 });
 /** Jednostki świata na piksel sprite'a (1800 / 3747). */
@@ -495,9 +495,30 @@ function finalize(B, d) {
   out.hexlanceMuzzle = { x: d.hexlanceMuzzle[0] * S, y: d.hexlanceMuzzle[1] * S, z: d.hexlanceMuzzle[2] * S };
   out.builder = B;
   out.scale = S;
+  // Wspólne pola modeli okrętów (rejestr ships3D.js, kadłuby floty: fleetHull3D.js).
+  out.id = 'atlas';
+  out.label = 'Atlas — okręt gracza';
+  out.faction = 'player';
+  out.tier = 'Capital';
+  out.editorKey = 'atlas';
+  out.profile = 'atlas';
+  out.sprite = ATLAS3D_SPRITE;
+  out.palette = null;
+  out.deckZ = Z.deck * S;
   // Zapytania w jednostkach świata (układ modelu): dach nad punktem, dno kila, wnętrze obrysu.
   out.heightAt = (xw, yw) => heightAt(d.tops, xw / S, yw / S) * S;
-  out.bottomAt = (xw) => (xw / S <= X_CUT ? keelZ(xw / S) : prongKeel(xw / S)) * S;
+  // Dno: kadłub — pochyłe burty dolne od pasu (krawędź obrysu) do obrysu kila (× KEEL_S), dalej
+  // dno kila; widły — dno kila wideł (bez y). yw pominięte = oś (najgłębiej).
+  out.bottomAt = (xw, yw = 0) => {
+    const x = xw / S;
+    if (x > X_CUT) return prongKeel(x) * S;
+    const ye = atlasEdgeHalfWidth(x);
+    const ay = Math.abs(yw / S);
+    const kz = keelZ(x);
+    if (ye <= 0 || ay <= ye * KEEL_S) return kz * S;
+    const f = Math.max(0, Math.min(1, (ye - ay) / ((1 - KEEL_S) * ye)));
+    return (Z.belt + f * (kz - Z.belt)) * S;
+  };
   out.contains = (xw, yw) => pointInPoly(xw / S, yw / S, BODY_POLY) || pointInPoly(xw / S, Math.abs(yw / S), PRONG_POLY);
   return out;
 }

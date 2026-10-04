@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dema — Super Capital</title>
+<style>
+  :root {
+    --bg: #070a10;
+    --panel: #0e131c;
+    --panel-hover: #141b28;
+    --line: #1e2735;
+    --text: #d8e0ec;
+    --muted: #7d8aa0;
+    --accent: #5fc8ff;
+    --gpu: #8ef0b0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; justify-content: space-between; margin-bottom: 24px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: .02em; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+  input[type=search] {
+    width: min(320px, 100%);
+    padding: 8px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+  }
+  input[type=search]:focus { outline: none; border-color: var(--accent); }
+  section { margin-top: 28px; }
+  h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+  a.demo {
+    display: block;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: inherit;
+    text-decoration: none;
+    min-width: 0;
+  }
+  a.demo:hover, a.demo:focus-visible { background: var(--panel-hover); border-color: var(--accent); outline: none; }
+  .name { font-weight: 500; }
+  .file { color: var(--muted); font-size: 12px; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+  .tag { font-size: 10px; font-weight: 600; color: var(--gpu); border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+  .empty { color: var(--muted); margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Dema<small id="count"></small></h1>
+    <input type="search" id="q" placeholder="Szukaj (nazwa albo plik)…" autofocus>
+  </header>
+  <main id="list"></main>
+  <p class="empty" id="empty" hidden>Nic nie pasuje.</p>
+</div>
+<script>
+// Lista dem: [plik względem dema/, nazwa]. Nowe demo dopisz do swojej grupy —
+// tests/demaIndex.test.mjs pilnuje, że każdy plik .html z dema/ tu jest.
+const GROUPS = [
+  ['WebGPU', [
+    ['bronie-webgpu.html', 'Bronie — 27 dział, PD i laserów'],
+    ['rakiety-webgpu.html', 'Rakiety — efekty'],
+    ['asteroidy-webgpu.html', 'Pas asteroid'],
+    ['warp-webgpu.html', 'Warp „Nurt”'],
+    ['atlas3d-webgpu.html', 'Okręty 3D'],
+    ['rdzen-webgpu.html', 'Rdzeń reaktora'],
+    ['destruktor2d-webgpu.html', 'Destruktor 2D — belki na GPU'],
+    ['tarcza-webgpu.html', 'Tarcza nowej generacji'],
+    ['laser-webgpu.html', 'Działo laserowe'],
+    ['ladownia-webgpu.html', 'Ładownie à la Venator'],
+    ['gazy-webgpu.html', 'Gazy i pył'],
+    ['tlo-kosmosu-webgpu.html', 'Tło kosmosu — generator'],
+    ['halo_ring_demo.html', 'Halo — ring planetarny'],
+    ['webgpu-spike.html', 'Spike WebGPU — port renderu'],
+  ]],
+  ['Ringi, porty i budowle', [
+    ['hangar-ring.html', 'Dok K-7 — wcięcie pierścienia'],
+    ['orbital_ring_demo.html', 'ECUMENE / Orbital Ring'],
+    ['orbital_ring_demo_2.html', 'Orbital Ring — habitat'],
+    ['orbital_ring_gameplay_hub_v3.html', 'K-7 v2 — 26 stanowisk'],
+    ['ringprocedural.html', 'Ring City — miasto na pierścieniu'],
+    ['budowle-portowe.html', 'Budowle portowe (Z7)'],
+    ['kontenery.html', 'Kontenery i drony (Z5)'],
+    ['gigantyczny_dok_kosmiczny_3d.html', 'Gigantyczny dok — 3D'],
+    ['gigantyczny_dok_kosmiczny (1).html', 'Gigantyczny dok'],
+    ['dok_bebnowy_2d.html', 'Dok bębnowy — 2D'],
+    ['fighter production array.html', 'Orbitalna fabryka myśliwców'],
+  ]],
+  ['Zniszczenia, mostki, rdzenie', [
+    ['mostki-demo.html', 'Mostki — kill przez mostek'],
+    ['rdzen-demo.html', 'Rdzeń statku'],
+    ['damage-fx-demo.html', 'Zniszczenia — hardpoint, silnik, rozszczelnienie'],
+    ['destructioneffects.html', 'Destruction effects — chain / cut / scatter'],
+    ['station-destruction-sandbox.html', 'Station destruction sandbox'],
+  ]],
+  ['Bronie i efekty (starsze)', [
+    ['bronie/yamatoeffects.html', 'Yamato — trafienie 1:1 z grą'],
+    ['bronie/yamato2.html', 'Yamato — trafienie 2'],
+    ['bronie/yamato-preview.html', 'Uzbrojenie — sprite’y'],
+    ['bronie/railgun-fx-demo.html', 'Railgun kadłubowy'],
+    ['bronie/rakiety.html', 'Rakiety top-down (GPU particles)'],
+    ['bronie/flak-wybuchy (2).html', 'Flak — wybuchy'],
+    ['bronie/nova.html', 'Eksplozja Nova'],
+    ['bronie/weapons3dspecial.html', 'Zbrojownia — poligon'],
+    ['muzzle-fx-3-lufy (1).html', 'Wystrzał — 3 lufy'],
+    ['shieldhitgpu.html', 'Trafienia w tarczę (GPGPU)'],
+    ['silniki/plasma_engine_demo.html', 'Silnik plazmowy'],
+    ['silniki/silnik-wydech.html', 'Wydech silnika'],
+    ['silniki/enginetrails.html', 'Dysze i ślad gazu'],
+    ['chmury.html', 'Mgławica'],
+    ['oświetlenie.html', 'Debug środowiska VFX'],
+    ['asteroidy.html', 'Asteroidy 3D (przed WebGPU)'],
+  ]],
+  ['AI i ruch', [
+    ['ruch-kosmiczny-demo.html', 'Laboratorium ruchu — 2000+ statków'],
+    ['ruch-kosmiczny.html', 'Ruch kosmiczny — potok / agent'],
+    ['AISPACE.html', 'AI SPACE — combat sandbox'],
+    ['AI SPACE.html', 'Dogfight AI — burty pancerników'],
+  ]],
+  ['HUD i interfejs', [
+    ['hud-koncept.html', 'HUD — jeden klaster + kontekst'],
+    ['kokpit.html', 'Kokpit'],
+    ['kokpit3d.html', 'Kokpit 3D'],
+    ['prototyp kokpit.html', 'Kokpit v2 — prototyp'],
+    ['radar.html', 'CIC — radar'],
+    ['targeting-system-prototype.html', 'System celowania'],
+    ['celownik/celownik.html', 'Celownik — namierzanie'],
+    ['celownik/celownik pojedyńczy.html', 'Celownik — pojedynczy cel'],
+    ['celownik/celownik group.html', 'Celownik — grupa'],
+    ['celownik/celownik subsytem.html', 'Celownik — podsystem'],
+  ]],
+];
+
+// /dema bez ukośnika — linki względne liczone od katalogu dem.
+const base = new URL(location.pathname.endsWith('/') ? location.href : location.pathname + '/', location.href);
+const list = document.getElementById('list');
+let total = 0;
+for (const [title, demos] of GROUPS) {
+  const sec = document.createElement('section');
+  sec.innerHTML = `<h2>${title}</h2><div class="grid"></div>`;
+  const grid = sec.lastChild;
+  for (const [file, name] of demos) {
+    const a = document.createElement('a');
+    a.className = 'demo';
+    a.href = new URL(file.split('/').map(encodeURIComponent).join('/'), base).href;
+    a.dataset.q = (name + ' ' + file).toLowerCase();
+    const gpu = /webgpu/i.test(file) || file === 'halo_ring_demo.html';
+    a.innerHTML = `<div class="name"></div><div class="file"></div>`;
+    a.firstChild.textContent = name;
+    if (gpu) a.firstChild.insertAdjacentHTML('beforeend', '<span class="tag">WebGPU</span>');
+    a.lastChild.textContent = file;
+    grid.appendChild(a);
+    total++;
+  }
+  list.appendChild(sec);
+}
+document.getElementById('count').textContent = `${total} plików`;
+
+const q = document.getElementById('q');
+q.addEventListener('input', () => {
+  const s = q.value.trim().toLowerCase();
+  let shown = 0;
+  for (const sec of list.children) {
+    let n = 0;
+    for (const a of sec.querySelectorAll('a.demo')) {
+      const ok = !s || a.dataset.q.includes(s);
+      a.hidden = !ok;
+      if (ok) n++;
+    }
+    sec.hidden = n === 0;
+    shown += n;
+  }
+  document.getElementById('empty').hidden = shown > 0;
+});
+q.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const first = list.querySelector('a.demo:not([hidden])');
+  if (first) location.href = first.href;
+});
+</script>
+</body>
+</html>

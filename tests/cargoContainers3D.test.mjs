@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
+import * as THREE_GPU from 'three/webgpu';
 
 import { CARGO3D_LIMITS, CARGO3D_TUNE, CargoContainers3D, buildContainerGeometry } from '../src/3d/cargoContainers3D.js';
 import { CargoDrones3D, buildDroneGeometry, pushCargoScene } from '../src/3d/cargoDrones3D.js';
@@ -148,7 +149,48 @@ test('widok: paralaksa i ścisk głębi w passie ortho, wolna kamera — prawdzi
   frame({ perspective: true });
   assert.equal(U.uCgParallax.value.w, 0);
   assert.equal(U.uCgDepth.value.y, 0);
-  // Materiał kontenerów czyta maskę cieni słońca (pokład statku jak kadłub).
-  assert.match(CargoContainers3D.mesh.material.fragmentShader, /sunVisibility\(\)/);
+  // Materiał kontenerów czyta maskę cieni słońca (pokład statku jak kadłub) — WGSL niżej.
+  assert.ok(CargoContainers3D.mesh.material.isNodeMaterial, 'kontenery: materiał węzłowy (TSL)');
   assert.ok(CARGO3D_TUNE.depthSquash > 0 && CARGO3D_TUNE.depthSquash < 0.1);
+});
+
+// ---------------------------------------------------------------------------
+// Materiały TSL (port WebGPU): WGSL budowany w Node (wzór tests/cargoTsl.test.mjs).
+// ---------------------------------------------------------------------------
+
+const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
+const gpuRenderer = new THREE_GPU.WebGPURenderer({ canvas });
+gpuRenderer.hasFeature = () => false;
+
+function buildWGSL(mesh) {
+  const m = new THREE_GPU.Mesh(mesh.geometry, mesh.material);
+  const b = gpuRenderer.backend.createNodeBuilder(m, gpuRenderer);
+  b.material = mesh.material;
+  b.scene = new THREE_GPU.Scene();
+  b.camera = new THREE_GPU.OrthographicCamera();
+  b.context.material = mesh.material;
+  b.build();
+  return { vertex: b.vertexShader, fragment: b.fragmentShader };
+}
+
+test('TSL: kontenery, cienie, drony i światła budują WGSL w limitach WebGPU; maska słońca z sunShadowMask', () => {
+  const parts = [
+    ['kontenery', CargoContainers3D.mesh, true],
+    ['cień na kadłubie', CargoContainers3D.hullShadow.mesh, true],
+    ['cień na pokładzie', CargoContainers3D.deckShadow.mesh, false],
+    ['drony', CargoDrones3D.mesh, true],
+    ['światła dronów', CargoDrones3D.lights.mesh, false]
+  ];
+  for (const [name, mesh, sun] of parts) {
+    assert.ok(mesh.material.isNodeMaterial && !mesh.material.isShaderMaterial, `${name}: materiał węzłowy`);
+    const { vertex, fragment } = buildWGSL(mesh);
+    assert.ok(vertex.includes('fn main') && fragment.includes('fn main'), `${name}: brak shaderów`);
+    const ub = (w) => (w.match(/var<uniform>/g) || []).length;
+    assert.ok(ub(vertex) <= 12 && ub(fragment) <= 12, `${name}: bufory uniformów > 12`);
+    assert.ok(Object.keys(mesh.geometry.attributes).length <= 8, `${name}: > 8 buforów wierzchołków`);
+    for (const m of fragment.matchAll(/smoothstep\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,/g)) {
+      assert.ok(Number(m[1]) < Number(m[2]), `${name}: smoothstep(${m[1]}, ${m[2]}, …) z odwróconymi krawędziami`);
+    }
+    if (sun) assert.match(fragment, /textureSampleLevel/, `${name}: brak odczytu maski słońca`);
+  }
 });

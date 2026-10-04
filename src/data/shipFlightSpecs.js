@@ -108,13 +108,43 @@ export const SHIP_FLIGHT_SPECS = Object.freeze({
     maxSpeed: 380, accel: 120, decel: 150, strafeAccel: 55, reverseAccel: 45,
     turnRate: 15, turnAccel: 10, cruiseBonus: 450, travelSpeed: 2200
   }),
-  // Atlas jako NPC (gracz lata własnym napędem z driveTransmission.js).
+  // Atlas — te same liczby dla gracza i dla Atlasa-NPC (decyzja użytkownika 2026-10-01: jedna tabela,
+  // limit bojowy 500 j/s; napęd gracza kalibruje się do tej tabeli — driveTransmission.js).
   atlas: Object.freeze({
     flightClass: 'supercapital',
-    maxSpeed: 400, accel: 130, decel: 160, strafeAccel: 60, reverseAccel: 50,
-    turnRate: 16, turnAccel: 11, cruiseBonus: 450, travelSpeed: 2200
+    maxSpeed: 500, accel: 160, decel: 200, strafeAccel: 70, reverseAccel: 60,
+    turnRate: 18, turnAccel: 12, cruiseBonus: 450, travelSpeed: 2200
   })
 });
+
+// Kadłub gracza (PLAYER.activeHullId / rama) → wpis tabeli lotu. Kadłub bez wpisu (megafrachtowiec,
+// nieznany) lata dawnym napędem trybów z driveTransmission.js.
+const PLAYER_HULL_FLIGHT_SPEC = Object.freeze({
+  atlas: 'atlas',
+  frigate: 'terran_frigate',
+  corvus: 'terran_frigate',
+  destroyer: 'terran_destroyer',
+  battleship: 'terran_battleship',
+  carrier: 'terran_carrier',
+  supercapital: 'terran_supercapital'
+});
+
+/** Id wpisu SHIP_FLIGHT_SPECS dla kadłuba gracza albo null. */
+export function playerFlightSpecId(hullId) {
+  const key = String(hullId || '').trim().toLowerCase();
+  if (!key) return null;
+  if (PLAYER_HULL_FLIGHT_SPEC[key]) return PLAYER_HULL_FLIGHT_SPEC[key];
+  return SHIP_FLIGHT_SPECS[key] ? key : null;
+}
+
+/** Wpis tabeli lotu z uzupełnieniem domyślnych wartości klasy (stopnie jak w tabeli) albo null. */
+export function playerFlightSpec(hullId) {
+  const id = playerFlightSpecId(hullId);
+  if (!id) return null;
+  const hull = SHIP_FLIGHT_SPECS[id];
+  const base = SHIP_FLIGHT_CLASS_DEFAULTS[hull.flightClass] || SHIP_FLIGHT_CLASS_DEFAULTS.battleship;
+  return { id, ...base, ...hull };
+}
 
 // Wartości do szablonów w ships.js — żeby `accel/maxSpeed/turn` szablonu nie
 // były drugą, rozjeżdżającą się kopią. `turn` w rad/s (tak czyta go stary kod).

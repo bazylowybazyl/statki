@@ -54,6 +54,7 @@ import {
 import { uniformsAdapter, uniformNode } from './uniformy.js';
 import { acesGry, linearDoSrgb } from './kolorGry.js';
 import { distortionOffset } from '../fx/distortion.js';
+import { RULON, rulonInverse } from '../warp/rulon.js';
 
 /** Ile źródeł gorącego powietrza przyjmuje uber w klatce (Core3D.pushHeatHazeWorld). */
 export const MAX_HEAT_HAZE_SOURCES = 24;
@@ -316,6 +317,13 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
         if (uFxExposure) sceneColor.rgb.mulAssign(uFxExposure);
       }).Else(zDyszami);
     }
+
+    // Rulon warpa (src/3d/warp/rulon.js — cała gra zgina się w wierzchołkach): przyciemnienie przy
+    // horyzoncie walca i zanik za nim RAZ na piksel (odwrotność rulonu), zamiast w każdym materiale.
+    If(RULON.k.greaterThan(1e-7), () => {
+      const q = vec2(uv().x.sub(0.5).mul(RULON.viewHalf.x.mul(2.0)), float(0.5).sub(uv().y).mul(RULON.viewHalf.y.mul(2.0)));
+      sceneColor.rgb.mulAssign(rulonInverse(q).z);
+    });
 
     return vec4(linearDoSrgb(acesGry(sceneColor.rgb)), sceneColor.a);
   })();

@@ -111,9 +111,9 @@ test('CIC: znacznik pola w kadrze, poza kadrem nic; po zbliżeniu lista najbliż
 test('menu: zimny wrak — „WYCIĄGNIJ (HOL)”; RTS dostaje akcje wraku na końcu (MOVE zostaje pierwszy)', () => {
   const hot = { isWreck: true };
   const frozen = { isWreck: true, isCold: true };
-  assert.deepEqual(buildNormalCommandMenuItems({ targetEntity: hot }).slice(0, 2).map(i => i.label), ['SALVAGE', 'TOW']);
+  assert.deepEqual(buildNormalCommandMenuItems({ targetEntity: hot }).slice(0, 2).map(i => i.label), ['ODZYSK', 'HOL']);
   const coldItems = buildNormalCommandMenuItems({ targetEntity: frozen });
-  assert.deepEqual(coldItems.slice(0, 2).map(i => [i.action, i.label]), [['salvage', 'SALVAGE'], ['tow', 'WYCIĄGNIJ (HOL)']]);
+  assert.deepEqual(coldItems.slice(0, 2).map(i => [i.action, i.label]), [['salvage', 'ODZYSK'], ['tow', 'WYCIĄGNIJ (HOL)']]);
   const rts = buildRtsCommandMenuItems({ selectedCount: 2, targetEntity: frozen });
   assert.equal(rts[0].action, 'move-formation');
   assert.deepEqual(rts.slice(-2).map(i => i.action), ['salvage', 'tow']);

@@ -19,6 +19,23 @@ const VARIANTS = {
     url: new URL('../../assets/weapons/supernova-launcher-atlas-v1.png', import.meta.url).href,
     body: [109, 84, 1051, 779], pod: [67, 948, 1123, 246],
     base: [-12, -13, 24, 26], podX: -1, podWidth: 31, podHeight: 11, ports: [7, -7]
+  },
+  // Salwy mikrorakiet i głowica kasetowa (2026-09-30): atlasy istniejących wyrzutni, inna liczba
+  // i grubość kaset — Grad: blok sześciu cienkich rur, Rój: dwie kasety Osy, Hydra: dwie grube.
+  grad_launcher: {
+    url: new URL('../../assets/weapons/cruise-launcher-atlas-v1.png', import.meta.url).href,
+    body: [221, 152, 831, 679], pod: [116, 931, 1026, 229],
+    base: [-7, -10, 18, 20], podX: -1, podWidth: 16, podHeight: 2.6, ports: [-7, -4.2, -1.4, 1.4, 4.2, 7]
+  },
+  roj_pod: {
+    url: new URL('../../assets/weapons/osa-launcher-atlas-v1.png', import.meta.url).href,
+    body: [81, 249, 1093, 471], pod: [163, 932, 926, 201],
+    base: [-7, -6, 13, 12], podX: -3, podWidth: 12, podHeight: 3.4, ports: [-2.4, 2.4]
+  },
+  hydra_mirv: {
+    url: new URL('../../assets/weapons/cruise-launcher-atlas-v1.png', import.meta.url).href,
+    body: [221, 152, 831, 679], pod: [116, 931, 1026, 229],
+    base: [-6, -9, 16, 18], podX: -1, podWidth: 18, podHeight: 5.6, ports: [-3.6, 3.6]
   }
 };
 

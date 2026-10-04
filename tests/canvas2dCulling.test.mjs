@@ -129,11 +129,12 @@ test('rzutowanie świat→ekran nie alokuje viewportu', () => {
 
   // Wariant bez alokacji dla gorących pętli; worldToScreen ZOSTAJE alokujący,
   // bo część wołających trzyma dwa wyniki naraz.
-  assert.match(indexHtml, /function worldToScreenInto\(wx, wy, cam, out\)/);
+  // Gra 3D: opcjonalna wysokość punktu (wz) — rzut przez kamerę 3D (View3D) w trybie free3d.
+  assert.match(indexHtml, /function worldToScreenInto\(wx, wy, cam, out, wz = 0\)/);
   assert.match(indexHtml, /window\.worldToScreenInto = worldToScreenInto;/);
   assert.match(
     indexHtml,
-    /function worldToScreen\(wx, wy, cam\) \{\s*\n\s*return worldToScreenInto\(wx, wy, cam, \{ x: 0, y: 0 \}\);/,
+    /function worldToScreen\(wx, wy, cam, wz = 0\) \{\s*\n\s*return worldToScreenInto\(wx, wy, cam, \{ x: 0, y: 0 \}, wz\);/,
     'worldToScreen musi iść przez wspólną ścieżkę'
   );
 });

@@ -17,14 +17,7 @@ export const rel = (p, root = repo) => relative(root, p).split('\\').join('/');
 // ── Moduły poza portem osiągalne z grafu gry (decyzja użytkownika, PLAN §12 p. 1) ──────────────
 // Jedyna dozwolona droga GLSL do grafu importów gry. Strażnik wymaga, żeby każdy wpis był nadal
 // potrzebny (osiągalny z index.html i z GLSL / API WebGL) — zbędny wpis to błąd testu.
-export const POZA_PORTEM = Object.freeze([
-  Object.freeze({
-    plik: 'src/3d/sunShadowMaskGLSL.js',
-    powod: 'napis GLSL maski słońca dla modułów Z4/Z5/Z7 (poza grą, na WebGPU zamienniki); gra go nie używa — '
-      + 'do grafu wchodzi przez re-eksport SUN_SHADOW_GLSL w sunShadowMask.js, z którego importują budowle Z7 '
-      + '(portBuildings3D.js, portHullBuild3D.js). Po przepięciu Z7 na sunShadowMaskGLSL.js — usunąć re-eksport i wpis.'
-  })
-]);
+export const POZA_PORTEM = Object.freeze([]);
 
 // ── Lekser ────────────────────────────────────────────────────────────────────
 const REGEX_BEFORE_WORD = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'yield', 'await', 'instanceof']);

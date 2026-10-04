@@ -258,8 +258,8 @@ test('„uber” 12-B: blok źródeł zniekształceń i warstwa DIST w gałęzi,
   const m = new THREE.NodeMaterial();
   m.fragmentNode = createUberPost({ sceneTexture: rt.texture, bloomTexture: bloom.getTextureNode(), uniforms: createPostUniforms(), distortion: F.node, distortionLayer: dist.texture });
   const w = buildWGSL(m);
-  // bufory uniformów: obiekt + 2 tablice gorącego powietrza + blok źródeł (limit 12)
-  assert.equal((w.match(/var<uniform>/g) || []).length, 4);
+  // bufory uniformów: obiekt + 2 tablice gorącego powietrza + blok źródeł + grupa renderu (rulon warpa) (limit 12)
+  assert.equal((w.match(/var<uniform>/g) || []).length, 5);
   assert.equal((w.match(/var<uniform> fxDistort\b/g) || []).length, 1);
   assert.equal((w.match(/texture_2d<f32>/g) || []).length, 3, 'scena, bloom, warstwa DIST');
   assert.doesNotMatch(w, /textureSample\(/, 'wszystkie odczyty z poziomem 0 (gałęzie zależne od piksela)');
@@ -287,7 +287,7 @@ test('„uber” bez bloku efektów (np. testy 02) — kod jak przed 12-B, siatk
   const m = new THREE.NodeMaterial();
   m.fragmentNode = createUberPost({ sceneTexture: rt.texture, bloomTexture: null, uniforms: createPostUniforms() });
   const w = buildWGSL(m);
-  assert.equal((w.match(/var<uniform>/g) || []).length, 3);
+  assert.equal((w.match(/var<uniform>/g) || []).length, 4);   // + grupa renderu (rulon warpa)
   assert.doesNotMatch(w, /fxDistort|distortItem/);
   assert.equal((w.match(/texture_2d<f32>/g) || []).length, 1);
 });
@@ -296,8 +296,8 @@ test('Core3D: wpięcie klatki efektów, zniekształceń, warstwy DIST i rozgrzew
   const render = bodyOf(core, '\n  render() {');
   const at = (s) => render.indexOf(s);
   assert.ok(at('this._beginRenderInfo();') > 0 && at('this._runFxFrame(freePerspective);') > at('this._beginRenderInfo();'), 'klatka efektów po wyzerowaniu liczników');
-  assert.ok(at('this._runFxFrame(freePerspective);') < at('this._runScenePass(pass)'), 'przed passami scen');
-  assert.ok(at('this._renderFxDistortion(freePerspective || t.fxDistortion === false);') > at('this._runScenePass(pass)'));
+  assert.ok(at('this._runFxFrame(freePerspective);') < at('this._runScenePass(pass, freePerspective)'), 'przed passami scen');
+  assert.ok(at('this._renderFxDistortion(freePerspective || t.fxDistortion === false);') > at('this._runScenePass(pass, freePerspective)'));
   assert.ok(at('this._renderFxDistortion(') < at('this._renderPost();'), 'źródła i warstwa przed postem');
   const backdrop = bodyOf(core, '\n  renderBackdrop(camera) {');
   assert.match(backdrop, /this\._renderFxDistortion\(true\);\s*this\._updatePostUniforms\(false, 0\);/, 'tło menu bez zniekształceń');
@@ -310,6 +310,6 @@ test('Core3D: wpięcie klatki efektów, zniekształceń, warstwy DIST i rozgrzew
   assert.equal((create.match(/distortion, distortionLayer \}\)\)/g) || []).length, 2, 'oba pipeline’y postu z blokiem i warstwą');
   const prewarm = bodyOf(core, '  prewarmPass(object3d, layer = 0, opts = {}) {');
   assert.match(prewarm, /if \(layer === FX_DISTORT_LAYER && this\.distortionTarget\) renderer\.setRenderTarget\(this\.distortionTarget\);/, 'warstwa DIST rozgrzewana na własnym celu (inny klucz pipeline’u)');
-  assert.match(bodyOf(core, '  resize(w, h) {'), /this\.distortionTarget\.setSize\(bufW, bufH\)/);
+  assert.match(bodyOf(core, '  resize(w, h) {'), /resizeRenderTarget\(this\.distortionTarget, bufW, bufH, readyRenderer\)/);
   assert.equal(FX_DISTORT_LAYER, 10, 'warstwa 8 = nowy warp, 9 = tło menu');
 });

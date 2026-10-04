@@ -23,9 +23,17 @@ import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
 import { MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
 import { BloomGryCompute } from './tsl/bloomCompute.js';
+import { resizeRenderTarget } from './renderTargetResize.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
+import { syncSky3D } from './sky3D.js';
+import { setBillboard3DCamera } from './tsl/billboard3D.js';
+import { installRulonGlobal, RULON, rulonActive, rulonInverse } from './warp/rulon.js';
+
+// Rulon warpa zgina CAŁĄ grę (src/3d/warp/rulon.js): hak w każdym materiale węzłowym — zainstalowany
+// przed budową pierwszego materiału. Passy świata włączają go uniformem RULON.pass (_runScenePass).
+installRulonGlobal();
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -190,7 +198,13 @@ function shadowShaftsMaskNode(u) {
       // UV kwadu WebGPU ma v = 0 u GÓRY celu; świat liczymy jak GLSL z v od dołu —
       // wiersz 0 maski (góra) = największe y sceny, jak u materiałów czytających ją po
       // screenUV (też od góry). Orientację pilnuje scripts/webgpu/maska-slonca.mjs.
-      const uvGl = vec2(uv().x, float(1.0).sub(uv().y));
+      const uvGl = vec2(uv().x, float(1.0).sub(uv().y)).toVar('maskUvGl');
+      // Rulon warpa (rulon.js): materiały czytają maskę w ZGIĘTYM pikselu — świat piksela to płaski
+      // punkt z odwrotności rulonu.
+      If(RULON.k.greaterThan(1e-7), () => {
+        const span = RULON.viewHalf.mul(2.0);
+        uvGl.assign(rulonInverse(uvGl.sub(0.5).mul(span)).xy.div(span).add(0.5));
+      });
       const worldP = uCamCenter.add(uvGl.sub(0.5).mul(uViewWorldSize)).toVar('maskWorldP');
 
       // Kierunek do słońca liczony PER PIKSEL (nie per kamera) — poprawna
@@ -440,6 +454,10 @@ function recordRenderDbg(name, ms) {
 // albo false (brak WebGPU: gra pokazuje komunikat, renderer nie powstaje).
 let resolveGpuReady = null;
 const gpuReadyPromise = new Promise((resolve) => { resolveGpuReady = resolve; });
+
+const _bbRight = new THREE.Vector3();
+const _bbUp = new THREE.Vector3();
+const _bbFwd = new THREE.Vector3();
 
 export const Core3D = {
   activeCam1: { x: 0, y: 0, zoom: 1 },
@@ -959,6 +977,11 @@ export const Core3D = {
     for (const layer of [0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
       w.add({ name: `Core3D: warstwa ${layer} (start gry)`, objects: scene, layer, visible: false, phase: 'loading' });
     }
+    // Gra 3D (free3d): wszystkie passy rysuje kamera perspektywy — typ kamery wchodzi do klucza pipeline'u, więc
+    // warstwy passów ortho (świat, tarcze, FG) jeszcze raz w perspektywie.
+    for (const layer of [0, SHIELD_RENDER_LAYER, 2]) {
+      w.add({ name: `Core3D: warstwa ${layer} (gra 3D)`, objects: scene, layer, visible: false, ortho: false, phase: 'loading' });
+    }
   },
 
   // Post (uber, bloom) przed pierwszą klatką — pilnie, zaraz przy urządzeniu, pod kurtyną menu (zadanie 11): quad
@@ -1289,13 +1312,11 @@ export const Core3D = {
     }
     const bufW = Math.max(1, Math.floor(width * this.pixelRatio));
     const bufH = Math.max(1, Math.floor(height * this.pixelRatio));
-    if (this.composerTarget) this.composerTarget.setSize(bufW, bufH);
-    if (this.sunShadowTarget) this.sunShadowTarget.setSize(bufW, bufH);
-    if (this.distortionTarget) this.distortionTarget.setSize(bufW, bufH);
-
-    if (this.planetHaloTarget) {
-      this.planetHaloTarget.setSize(bufW, bufH);
-    }
+    const readyRenderer = this.gpuReady ? this.renderer : null;
+    resizeRenderTarget(this.composerTarget, bufW, bufH, readyRenderer);
+    resizeRenderTarget(this.sunShadowTarget, bufW, bufH, readyRenderer);
+    resizeRenderTarget(this.distortionTarget, bufW, bufH, readyRenderer);
+    resizeRenderTarget(this.planetHaloTarget, bufW, bufH, readyRenderer);
     // Bloom sam bierze rozmiar bufora rysowania w każdym renderze (BloomNode.updateBefore);
     // tu tylko skala rozdzielczości (tuner zmienia bloomResolutionScale i woła resize).
     if (this.bloomPass) this.bloomPass.resolutionScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
@@ -1326,7 +1347,25 @@ export const Core3D = {
       this.cameraPersp.quaternion.copy(gameCamera.quaternion);
       this.cameraPersp.updateProjectionMatrix();
       this.cameraPersp.updateMatrixWorld(true);
+      // Kamery 3D gry (src/game/camera3DRig.js): płaszczyzny łapiące cień leżą pod światem gry
+      // (z = −2 / −100) i w swobodnej kamerze byłyby widoczną „podłogą” z plamami cieni — schowane.
+      // Niebo-sfera (sky3D.js) w oku kamery zamiast płaskiej mgławicy i gwiazd.
+      if (viewOffsetX === 0) {
+        if (this.shadowCatcher && this.shadowCatcher.visible) this.shadowCatcher.visible = false;
+        if (this.shadowCatcherFg && this.shadowCatcherFg.visible) this.shadowCatcherFg.visible = false;
+        syncSky3D(true, this.cameraPersp.position, this.cameraPersp.far);
+        // Kwady efektów (tsl/billboard3D.js) w płaszczyźnie kadru — osie kamery.
+        const e = this.cameraPersp.matrixWorld.elements;
+        _bbRight.set(e[0], e[1], e[2]);
+        _bbUp.set(e[4], e[5], e[6]);
+        _bbFwd.set(-e[8], -e[9], -e[10]);
+        setBillboard3DCamera(true, _bbRight, _bbUp, _bbFwd);
+      }
       return;
+    }
+    if (viewOffsetX === 0) {
+      syncSky3D(false);
+      setBillboard3DCamera(false);
     }
 
     const zoom = Math.max(0.0001, gameCamera.zoom || 1);
@@ -1508,6 +1547,13 @@ export const Core3D = {
   // planety — FG pomijamy tylko, gdy mapa jest już pusta (ostatnie odświeżenie bez rzucających).
   // Przełączniki wydajności cienia (threeShadows / fgShadows wyłączone) — dawny przepływ.
   _passSunShadow(t, mask, catcher, last) {
+    this._passSunShadowInner(t, mask, catcher, last);
+    // Rulon warpa: łapacz (płaszczyzna 500 tys. j. z 4 wierzchołków) zgięty w wierzchołkach kładłby cień
+    // obok kadłubów — na czas rulonu schowany.
+    if (catcher && catcher.visible && rulonActive()) catcher.visible = false;
+  },
+
+  _passSunShadowInner(t, mask, catcher, last) {
     const light = this._sunShadowLight;
     const shadow = light && light.castShadow ? light.shadow : null;
     if (!shadow || !catcher || t.threeShadows === false || t.fgShadows === false) {
@@ -1720,9 +1766,13 @@ export const Core3D = {
       // gry niesie też gwiazdy i dolną część ringu — zgina ją materiał mgławicy (skyBend.js).
       // Mapa cienia słońca przed passami z odbiorcami (łapacze cienia warstw 0 i 2, stacje FG) — z
       // rzucającymi z warstw TEGO passa, jak WebGLShadowMap w bazie (PassShadowNode, zadanie 23).
-      if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);
+      // Kamery 3D (free3d): jedna mapa cienia przed ortho z rzucającymi z warstw 0 i 2, bez
+      // łapaczy (schowane w syncCamera) — bryły 3D rzucają cień na siebie nawzajem.
+      if (freePerspective) {
+        if (pass === this.renderPassOrtho) this._requestSunShadowUpdate(t, 1 | (1 << 2) | (1 << SHADOW_WARM_LAYER));
+      } else if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);
       else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);
-      this._runScenePass(pass);
+      this._runScenePass(pass, freePerspective);
     }
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
     this._renderFxDistortion(freePerspective || t.fxDistortion === false);
@@ -1746,7 +1796,7 @@ export const Core3D = {
 
   // Pass sceny albo pełnoekranowy quad; pomiar draw calli i czasu CPU do
   // kubełka passa (nazwy kubełków czytają harness i PerfHUD).
-  _runScenePass(pass) {
+  _runScenePass(pass, sharedDepth = false) {
     const renderer = this.renderer;
     const before = this._renderInfoBefore;
     this._readRenderInfoInto(before);
@@ -1757,14 +1807,20 @@ export const Core3D = {
       if (pass.clearColor) {
         renderer.setClearColor(0x000000, 0.0);
         renderer.clear(true, true, true);
-      } else if (pass.clearDepth) {
+      } else if (pass.clearDepth && !sharedDepth) {
+        // Kamera z góry: każdy pass rysuje się na poprzednich (tło → planety → świat → FG).
+        // Kamery 3D (sharedDepth): jedna kamera perspektywy dla wszystkich passów, więc wspólna
+        // głębia daje prawdziwe przesłanianie (statek za planetą / ringiem, ring przed statkiem).
         renderer.clear(false, true, false);
       }
       const camera = this.getPassCamera(pass.ortho);
       camera.layers.set(pass.layer);
       const hooks = this._passHooks ? this._passHooks[pass.name] : null;
       if (hooks) for (let i = 0; i < hooks.length; i++) hooks[i](camera, pass);
+      // Rulon warpa: pass świata gnie się (hak w materiałach — rulon.js); post i cienie nie.
+      RULON.pass.value = 1;
       renderer.render(this.scene, camera);
+      RULON.pass.value = 0;
     }
     this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
   },
@@ -1847,7 +1903,9 @@ export const Core3D = {
     const camera = this.getPassCamera(true);
     const prevMask = camera.layers.mask;
     camera.layers.set(FX_DISTORT_LAYER);
+    RULON.pass.value = 1;
     renderer.render(this.scene, camera);
+    RULON.pass.value = 0;
     camera.layers.mask = prevMask;
     renderer.setRenderTarget(prevTarget);
     this._addRenderInfoDelta('ortho', performance.now() - t0, before);
@@ -1869,11 +1927,13 @@ export const Core3D = {
 
     scene.overrideMaterial = this.haloDepthMaskMaterial;
     camera.layers.set(PLANET_RENDER_LAYER);
+    RULON.pass.value = 1;
     renderer.render(scene, camera);
 
     scene.overrideMaterial = prevOverrideMaterial;
     camera.layers.set(PLANET_HALO_RENDER_LAYER);
     renderer.render(scene, camera);
+    RULON.pass.value = 0;
 
     camera.layers.mask = prevPerspLayerMask;
   },

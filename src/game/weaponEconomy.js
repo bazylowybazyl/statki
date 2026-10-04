@@ -18,7 +18,7 @@
  */
 
 import {
-  MASTER_WEAPONS, weaponTradeGood, weaponAmmoType, weaponAmmoPerShot,
+  MASTER_WEAPONS, weaponTradeGood, weaponAmmoType, weaponAmmoPerShot, weaponAmmoPerMissile,
   weaponDamageType, DAMAGE_TYPE
 } from '../data/weapons.js';
 import {
@@ -87,7 +87,8 @@ export function squadronRearmCost(squadronId) {
   const squadron = getFighterSquadronDef(squadronId);
   const ammoId = weaponAmmoType(squadron.missileId);
   if (!ammoId) return {};
-  const perShot = weaponAmmoPerShot(squadron.missileId);
+  // Myśliwiec odpala rakiety sztukami (bez salwy wyrzutni okrętowej) — amunicja na rakietę.
+  const perShot = weaponAmmoPerMissile(squadron.missileId);
   const units = (Number(squadron.missileAmmo) || 0) * perShot
     * (Number(squadron.squadSize) || 1);
   return units > 0 ? { [ammoId]: units } : {};

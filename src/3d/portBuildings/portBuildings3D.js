@@ -13,8 +13,8 @@
 // modelViewMatrix w double, więc bez drgań przy 5–10 mln j. (wzór hal K-7 i
 // Bridge3D._setOrigin — dane względem pobliskiego początku, duży offset w macierzy).
 //
-// Dwa modele światła (define):
-//  - PB_LIGHT_HALO — na ringu: model ringu jak hala K-7 (haloSunVisibility: cień
+// Dwa modele światła (osobne grafy TSL, portBuildings3D.tsl.js):
+//  - 'halo' — na ringu: model ringu jak hala K-7 (haloSunVisibility: cień
 //    planety z czerwonym brzegiem i bryły ringu, światło planety), uniformy ringu
 //    (createHaloUniforms) + uHub = macierz budowli → układ ringu;
 //  - przestrzeń (megadok, stacja bez ringu, demo): słońce gry z wysokością 49°
@@ -23,9 +23,9 @@
 // Emisja w paśmie HDR 0,9–1,4 (bloom przy progu 0,9), iskry spawania i błyski
 // drobne (≤ kilka px) do ~6 — AGENTS.md: emitery HDR > 1.
 import * as THREE from 'three';
-import { HALO_GLSL_COMMON, HALO_GLSL_LIGHT, HALO_GLSL_NOISE } from '../haloRing/haloRingGLSL.js';
 import { K7_ABOVE_SCALE, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from '../sunShadowMask.js';
+import { sunShadowUniforms } from '../sunShadowMask.js';
+import { pbNodeMaterial, portBuildingGraphs } from './portBuildings3D.tsl.js';
 import { resolvePortBuildingStyle } from './portBuildingStyle.js';
 import { portHubMatrixElements } from './portModuleTraffic.js';
 import {
@@ -49,330 +49,8 @@ const NO_STATE = Object.freeze({});
 const smooth = (t) => t * t * (3 - 2 * t);
 const approach = (v, target, rate, dt) => v + (target - v) * (1 - Math.exp(-rate * dt));
 
-// ---------------------------------------------------------------------------
-// GLSL (komentarze tylko ASCII, bez znaku grawisu — kończyłby szablon JS)
-
-const PB_GLSL_UNIFORMS = /* glsl */`
-uniform mat4 uGroup[${PB_MAX_GROUPS}];
-uniform vec4 uChan[${PB_CHANNELS / 4}];
-uniform vec4 uPbTime;              // x czas, y krycie (dach), z dzien 0..1, w moc lamp
-uniform vec3 uPbPal[14];           // paleta materialow K-7 z profilu planety
-uniform vec3 uPbEmit[5];           // cyjan, ciepla, biel, czerwien, zielen (HDR)
-uniform vec3 uPbGlow[2];           // poswiata szkla: stala, nocna
-uniform vec3 uPbWeld;              // luk spawalniczy (HDR)
-uniform vec4 uLamps[${PB_MAX_LAMPS}];   // xyz w ukladzie budowli, w: 0 brak, 1 ciepla, 2 zimna
-#ifdef PB_LIGHT_HALO
-uniform mat4 uHub;                 // uklad budowli -> uklad ringu
-#else
-uniform vec3 uSunDirW;             // kierunek do slonca (scena)
-uniform vec3 uSunColorS;
-uniform vec3 uAmbientS;
-uniform float uSunVisS;            // cien planety od gospodarza (0..1)
-#endif
-float pbChan(float c) {
-  int i = int(c + 0.5);
-  vec4 v = uChan[i / 4];
-  int k = i - (i / 4) * 4;
-  return k == 0 ? v.x : (k == 1 ? v.y : (k == 2 ? v.z : v.w));
-}
-`;
-
-const PB_GLSL_VARYINGS = /* glsl */`
-varying vec3 vLit;
-varying vec3 vLitN;
-varying vec3 vHub;
-varying vec3 vHubN;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying float vMat;
-varying vec4 vFx;
-varying vec3 vSunL;
-`;
-
-// Wspolne dla wierzcholka: polozenie i normalna w ukladzie swiatla.
-const PB_GLSL_LIGHT_FRAME = /* glsl */`
-void pbLightFrame(vec4 gp, vec3 gn) {
-  vHub = gp.xyz;
-  vHubN = gn;
-#ifdef PB_LIGHT_HALO
-  vLit = (uHub * gp).xyz;
-  vLitN = normalize(mat3(uHub) * gn);
-  vSunL = uSunDir;
-#else
-  vLit = (modelViewMatrix * gp).xyz;
-  vLitN = normalize(mat3(modelViewMatrix) * gn);
-  vSunL = normalize(mat3(viewMatrix) * uSunDirW);
-#endif
-}
-`;
-
-const INSTANCE_VERTEX = /* glsl */`
-#ifdef PB_LIGHT_HALO
-${HALO_GLSL_COMMON}
-#endif
-${PB_GLSL_UNIFORMS}
-${PB_GLSL_VARYINGS}
-attribute vec4 iA;     // srodek xyz, skala pionowa
-attribute vec4 iB;     // rozmiar xyz, material
-attribute vec4 iQ;     // kwaternion
-attribute vec4 iC;     // grupa
-attribute vec4 iD;     // efekt: jasnosc, tryb, faza, parametr
-${PB_GLSL_LIGHT_FRAME}
-vec3 qrot(vec4 q, vec3 v) {
-  vec3 t = 2.0 * cross(q.xyz, v);
-  return v + q.w * t + cross(q.xyz, t);
-}
-void main() {
-  vec3 lp = position * iB.xyz;
-  vec3 r = qrot(iQ, lp);
-  r.y *= iA.w;
-  vec3 hubP = iA.xyz + r;
-  vec3 nl = normalize(normal / max(iB.xyz, vec3(1e-3)));
-  vec3 nr = qrot(iQ, nl);
-  nr.y /= max(iA.w, 1e-3);
-  mat4 G = uGroup[int(iC.x + 0.5)];
-  vec4 gp = G * vec4(hubP, 1.0);
-  vec3 gn = normalize(mat3(G) * nr);
-  pbLightFrame(gp, gn);
-  vLocal = lp;
-  vLocalN = normal;
-  vMat = iB.w;
-  vFx = iD;
-  gl_Position = projectionMatrix * modelViewMatrix * gp;
-  // tryb show (7): bryla widoczna tylko z flaga kanalu (blok na suwnicy)
-  if (iD.y > 6.5 && iD.y < 7.5) {
-    int flags = int(pbChan(iD.w) + 0.5);
-    int bit = int(iD.z + 0.5);
-    if ((flags / bit) - ((flags / bit) / 2) * 2 == 0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  }
-}
-`;
-
-// Powierzchnia: plyty K-7 (lustro k7Plates z haloPortK7.js), BRDF jak k7Shade,
-// lampy budowli, emisja z efektami.
-const PB_GLSL_SURFACE = /* glsl */`
-float pbHash12(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-vec3 pbPalette(float m) {
-  int i = int(clamp(floor(m + 0.5), 0.0, 14.0));
-  return i < 14 ? uPbPal[i] : vec3(0.02, 0.022, 0.025);
-}
-vec3 pbEmit(float m) {
-  return uPbEmit[int(clamp(floor(m + 0.5) - 14.0, 0.0, 4.0))];
-}
-float pbPlates(vec2 uv, bool deck, float fw, out float highlight) {
-  vec2 cells = deck ? vec2(4.0, 4.0) : vec2(3.0, 4.0);
-  vec2 g = uv / 260.0 * cells;
-  vec2 id = floor(g);
-  vec2 fcell = fract(g);
-  vec2 psz = 260.0 / cells;
-  vec2 d = min(fcell, 1.0 - fcell) * psz;
-  float aa = fw * 1.2 + 0.2;
-  float seam = 1.0 - smoothstep(0.35, 0.35 + aa, min(d.x, d.y));
-  highlight = (1.0 - smoothstep(0.7, 0.7 + aa, fcell.x * psz.x)) + (1.0 - smoothstep(0.7, 0.7 + aa, (1.0 - fcell.y) * psz.y));
-  highlight *= 1.0 - seam;
-  float v = pbHash12(id + (deck ? 17.0 : 3.0));
-  vec2 b = abs(fcell * psz - 4.4);
-  vec2 b2 = abs((1.0 - fcell) * psz - 4.4);
-  float bolt = 1.0 - smoothstep(0.7, 0.7 + aa, min(min(length(b), length(b2)), min(length(vec2(b.x, b2.y)), length(vec2(b2.x, b.y)))));
-  vec2 sc = fcell - vec2(0.8, 0.7);
-  float stain = exp(-dot(sc, sc) * 9.0) * pbHash12(id + 5.0);
-  float detail = 1.0 - smoothstep(0.8, 3.0, fw);
-  float base = deck ? mix(0.11, 0.17, v) : mix(0.42, 0.56, v);
-  return base * (1.0 - seam * 0.55 * detail) * (1.0 - bolt * 0.5 * detail) * (1.0 - stain * 0.25);
-}
-vec3 pbLampLight(vec3 hubP, vec3 N) {
-  vec3 acc = vec3(0.0);
-  for (int i = 0; i < ${PB_MAX_LAMPS}; i++) {
-    vec4 Lp = uLamps[i];
-    vec3 dv = Lp.xyz - hubP;
-    float d = length(dv);
-    float fall = 1.0 / (1.0 + (d / 520.0) * (d / 520.0));
-    float win = (1.0 - smoothstep(1500.0, 2450.0, d)) * step(0.5, Lp.w);
-    vec3 col = Lp.w < 1.5 ? vec3(1.0, 0.78, 0.55) : vec3(0.66, 0.85, 0.92);
-    acc += col * fall * win * max(dot(N, dv / max(d, 1.0)), 0.0);
-  }
-  return acc;
-}
-// Poziom efektu (0..1+) wg trybu instancji.
-float pbFxLevel(vec4 fx) {
-  float mode = fx.y;
-  float ph = fx.z;
-  float par = fx.w;
-  float t = uPbTime.x;
-  if (mode < 0.5) return 1.0;
-  if (mode < 1.5) return fract(t * par + ph) < 0.3 ? 1.0 : 0.05;
-  if (mode < 2.5) return 0.08 + 0.92 * exp(-fract(t * par - ph) * 7.0);
-  if (mode < 3.5) return pbChan(par) >= ph ? 1.0 : 0.07;
-  if (mode < 4.5) {
-    float work = pbChan(par);
-    float front = pbChan(par + 1.0);
-    float near = 1.0 - smoothstep(0.03, 0.12, abs(front - ph));
-    float n = floor(t * 22.0);
-    float on = step(0.45, pbHash12(vec2(n, ph * 311.0)));
-    return work * near * on * (0.7 + 1.6 * pbHash12(vec2(n + 7.0, ph * 97.0)));
-  }
-  if (mode < 5.5) return 1.0;
-  if (mode < 6.5) {
-    float n = pbChan(par);
-    // zajete miejsca kolejki swieca, impuls biegnie ku bramie (prowadzi do wlotu)
-    return n > ph ? 0.6 + 0.4 * exp(-fract(t * 0.9 + ph * 0.083) * 5.0) : 0.04;
-  }
-  if (mode > 7.5 && mode < 8.5) return pbChan(par) >= 0.5 ? 0.08 + 0.92 * exp(-fract(t * 1.2 - ph) * 7.0) : 0.12;
-  return 1.0;
-}
-vec3 pbShade(vec3 albedo0, float m, vec3 hubN, vec2 fuv, float fw, vec4 fx) {
-  vec3 P = vLit;
-  vec3 N = normalize(vLitN);
-  vec3 L = normalize(vSunL);
-#ifdef PB_LIGHT_HALO
-  vec3 V = normalize(uCamLocal - P);
-  vec3 sunVis = haloSunVisibility(P + N * 2.0, L);
-  vec3 sunCol = uSunColor;
-  vec3 amb = vec3(0.050, 0.056, 0.066) * (0.55 + 0.45 * max(hubN.y, 0.0)) + haloPlanetshine(P, N) + vec3(uNightAmbient);
-#else
-  vec3 V = normalize(-P);
-  float sv = uSunVisS * sunVisibility();
-  vec3 sunVis = vec3(sv);
-  vec3 sunCol = uSunColorS;
-  vec3 amb = uAmbientS * (0.55 + 0.45 * max(hubN.y, 0.0)) * sunFill(sv);
-#endif
-  bool plated = m < 5.5;
-  bool deck = (m > 5.5 && m < 6.5) || m > 19.5;
-  float hl = 0.0;
-  vec3 albedo = albedo0;
-  if (plated || deck) albedo *= pbPlates(fuv, deck, fw, hl);
-  if (m > 19.5) albedo = vec3(0.012, 0.017, 0.021) * pbPlates(fuv, true, fw, hl);
-  float rough = m > 6.5 && m < 7.5 ? 0.38 : (m > 9.5 && m < 10.5 ? 0.45 : (m > 10.5 && m < 11.5 ? 0.2 : 0.72));
-  float metal = m > 6.5 && m < 7.5 ? 0.86 : (plated ? 0.5 : 0.1);
-  float NdL = max(dot(N, L), 0.0);
-  float NdV = max(dot(N, V), 1e-3);
-  vec3 H = normalize(L + V);
-  float a2 = rough * rough;
-  float NdH = max(dot(N, H), 0.0);
-  float dd = NdH * NdH * (a2 - 1.0) + 1.0;
-  vec3 F0 = mix(vec3(0.04), albedo, metal);
-  vec3 Fs = F0 + (1.0 - F0) * pow(1.0 - max(dot(H, V), 0.0), 5.0);
-  vec3 spec = Fs * min(a2 / (3.14159265 * dd * dd) * 0.25 / NdV, 6.0) * NdL;
-  amb += pbLampLight(vHub, hubN) * uPbTime.w;
-  vec3 diffuse = albedo * (1.0 - metal * 0.7);
-  vec3 color = diffuse * (sunCol * sunVis * NdL + amb) + sunCol * sunVis * spec * 0.8;
-  color += albedo * hl * 0.25 * (dot(sunVis, vec3(0.2126, 0.7152, 0.0722)) * NdL + 0.2);
-  color += F0 * 0.03 * (1.0 - rough);
-  float gain = fx.x > 0.0 ? fx.x : 1.0;
-  if (m > 13.5 && m < 18.5) color = pbEmit(m) * gain * pbFxLevel(fx);
-  if (m > 18.5 && m < 19.5) color = mix(uPbEmit[3], uPbEmit[4], clamp(pbChan(fx.w), 0.0, 1.0)) * gain;
-  if (m > 15.5 && m < 16.5 && fx.y > 3.5 && fx.y < 4.5) color = uPbWeld * pbFxLevel(fx);
-  if (m > 10.5 && m < 11.5) color += uPbGlow[0] + uPbGlow[1] * (0.3 + 0.7 * (1.0 - uPbTime.z));
-  return max(color, vec3(0.0));
-}
-`;
-
-const PB_FRAGMENT_HEAD = /* glsl */`
-#ifdef PB_LIGHT_HALO
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-#else
-${SUN_SHADOW_GLSL}
-#endif
-${PB_GLSL_UNIFORMS}
-${PB_GLSL_VARYINGS}
-${PB_GLSL_SURFACE}
-`;
-
-const INSTANCE_FRAGMENT = /* glsl */`
-${PB_FRAGMENT_HEAD}
-void main() {
-  float m = floor(vMat + 0.5);
-  vec3 kn = abs(vLocalN);
-  vec2 fuv = kn.y > 0.55 ? vLocal.xz : (kn.x > 0.55 ? vLocal.zy : vLocal.xy);
-  float fw = fwidth(fuv.x) + fwidth(fuv.y);
-  vec3 c = pbShade(pbPalette(m), m, normalize(vHubN), fuv, fw, vFx);
-  gl_FragColor = vec4(c, uPbTime.y);
-}
-`;
-
-const PLATE_VERTEX = /* glsl */`
-#ifdef PB_LIGHT_HALO
-${HALO_GLSL_COMMON}
-#endif
-${PB_GLSL_UNIFORMS}
-${PB_GLSL_VARYINGS}
-attribute float aMat;
-${PB_GLSL_LIGHT_FRAME}
-void main() {
-  pbLightFrame(vec4(position, 1.0), normal);
-  vLocal = position;
-  vLocalN = normal;
-  vMat = aMat;
-  vFx = vec4(0.0);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-const PLATE_FRAGMENT = /* glsl */`
-${PB_FRAGMENT_HEAD}
-void main() {
-  float m = floor(vMat + 0.5);
-  vec2 fuv = abs(vLocalN.y) > 0.5 ? vLocal.xz : (abs(vLocalN.x) > 0.5 ? vLocal.zy : vLocal.xy);
-  float fw = fwidth(fuv.x) + fwidth(fuv.y);
-  vec3 c = pbShade(pbPalette(m), m, vLocalN, fuv, fw, vec4(0.0));
-  gl_FragColor = vec4(c, uPbTime.y);
-}
-`;
-
-// Napisy: atlas (bialy tekst w alfie), kolor na czworokat, swiatlo slonca.
-const LABEL_VERTEX = /* glsl */`
-#ifdef PB_LIGHT_HALO
-${HALO_GLSL_COMMON}
-#endif
-${PB_GLSL_UNIFORMS}
-${PB_GLSL_VARYINGS}
-attribute vec3 aColor;
-varying vec2 vUv;
-varying vec3 vColor;
-${PB_GLSL_LIGHT_FRAME}
-void main() {
-  vUv = uv;
-  vColor = aColor;
-  pbLightFrame(vec4(position, 1.0), normal);
-  vLocal = position;
-  vLocalN = normal;
-  vMat = 0.0;
-  vFx = vec4(0.0);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-const LABEL_FRAGMENT = /* glsl */`
-${PB_FRAGMENT_HEAD}
-uniform sampler2D uAtlas;
-varying vec2 vUv;
-varying vec3 vColor;
-void main() {
-  float a = texture2D(uAtlas, vUv).a;
-  if (a < 0.02) discard;
-  vec3 N = normalize(vLitN);
-  vec3 L = normalize(vSunL);
-  float NdL = max(dot(N, L), 0.0);
-#ifdef PB_LIGHT_HALO
-  vec3 sunVis = haloSunVisibility(vLit + N * 2.0, L);
-  vec3 lit = uSunColor * sunVis * NdL + vec3(0.05, 0.056, 0.066) + haloPlanetshine(vLit, N);
-#else
-  float sv = uSunVisS * sunVisibility();
-  vec3 lit = uSunColorS * sv * NdL + uAmbientS * sunFill(sv);
-#endif
-  lit += pbLampLight(vHub, vec3(0.0, 1.0, 0.0)) * uPbTime.w * 0.6;
-  vec3 col = vColor * lit * 0.9;
-  gl_FragColor = vec4(col * a * uPbTime.y, a * uPbTime.y);
-}
-`;
-
-export const PORT_BUILDING_SHADERS = Object.freeze({
-  INSTANCE_VERTEX, INSTANCE_FRAGMENT, PLATE_VERTEX, PLATE_FRAGMENT, LABEL_VERTEX, LABEL_FRAGMENT
-});
+// Shadery: grafy TSL w portBuildings3D.tsl.js (graf raz na tryb światła, wartości
+// budowli w material.uniforms — port WebGPU, dawne GLSL PB_GLSL_* / INSTANCE_* / PLATE_* / LABEL_*).
 
 // ---------------------------------------------------------------------------
 // Geometrie
@@ -619,13 +297,15 @@ export class PortBuilding3D {
     const hostUniforms = this.lightMode === 'halo' ? haloUniforms : sunShadowUniforms;
     this._common = { ...hostUniforms, ...this.uniforms };
     this._commonRoof = { ...hostUniforms, ...this.uniforms, uPbTime: this.roofTime };
-    this.defines = this.lightMode === 'halo' ? { PB_LIGHT_HALO: 1 } : {};
+    // grafy TSL raz na tryb światła (ring: na obiekt uniformów ringu)
+    this.haloUniforms = this.lightMode === 'halo' ? haloUniforms : null;
+    this.graphs = portBuildingGraphs(this.haloUniforms);
     this.sphere = sceneSphere(scene.sets, scene.plates);
     this._build();
   }
 
-  _material(name, vs, fs, uniforms, opts = {}) {
-    const m = new THREE.ShaderMaterial({ name, uniforms, vertexShader: vs, fragmentShader: fs, defines: { ...this.defines }, ...opts });
+  _material(name, graph, uniforms, opts = {}) {
+    const m = pbNodeMaterial(name, graph, uniforms, opts);
     this.materials.push(m);
     return m;
   }
@@ -636,9 +316,9 @@ export class PortBuilding3D {
     this._bases = bases;
     this.instances = {};
     const mats = {
-      bg: this._material('PortBuildingBG', INSTANCE_VERTEX, INSTANCE_FRAGMENT, this._common),
-      fg: this._material('PortBuildingFG', INSTANCE_VERTEX, INSTANCE_FRAGMENT, this._common),
-      roof: this._material('PortBuildingRoof', INSTANCE_VERTEX, INSTANCE_FRAGMENT, this._commonRoof, { transparent: true })
+      bg: this._material('PortBuildingBG', this.graphs.instance, this._common),
+      fg: this._material('PortBuildingFG', this.graphs.instance, this._common),
+      roof: this._material('PortBuildingRoof', this.graphs.instance, this._commonRoof, { transparent: true })
     };
     this.roofMaterials = [mats.roof];
     for (const set of ['bg', 'fg', 'roof']) {
@@ -659,7 +339,7 @@ export class PortBuilding3D {
       const list = sc.plates.filter((p) => (p.set || 'bg') === set);
       if (!list.length) continue;
       const uni = set === 'roof' ? this._commonRoof : this._common;
-      const mat = this._material(`PortBuildingPlates_${set}`, PLATE_VERTEX, PLATE_FRAGMENT, uni, set === 'roof' ? { transparent: true } : {});
+      const mat = this._material(`PortBuildingPlates_${set}`, this.graphs.plate, uni, set === 'roof' ? { transparent: true } : {});
       if (set === 'roof') this.roofMaterials.push(mat);
       const mesh = new THREE.Mesh(makePlates(list), mat);
       mesh.name = `${this.root.name}_plates_${set}`;
@@ -674,7 +354,7 @@ export class PortBuilding3D {
         const list = sc.labels.filter((l) => (l.set || 'bg') === set);
         if (!list.length) continue;
         const uni = { ...(set === 'roof' ? this._commonRoof : this._common), uAtlas: { value: this.atlas.tex } };
-        const mat = this._material(`PortBuildingLabels_${set}`, LABEL_VERTEX, LABEL_FRAGMENT, uni, {
+        const mat = this._material(`PortBuildingLabels_${set}`, this.graphs.label, uni, {
           transparent: true,
           depthWrite: false,
           blending: THREE.CustomBlending,

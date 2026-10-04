@@ -1,15 +1,34 @@
 /**
- * 3D Rocket System — LOT rakiet (fizyka, naprowadzanie, zapalnik, obrażenia).
+ * 3D Rocket System — LOT rakiet (fizyka, naprowadzanie, zapalnik, obrażenia) i SALWY.
  * Ported from rakiety.html RocketManager + integration layer.
  *
  * Wygląd (port WebGPU, zadanie 19): efekty z dema `dema/rakiety-webgpu` w scenie Core3D —
  * src/3d/rockets/ (dym GPU z samocieniem, płomienie z dyskami Macha, kadłubki, kule ognia,
  * iskry, łuki, Supernowa z pozostałością). Ten moduł zgłasza reżyserowi efektów zdarzenia
- * (`effects`: onLaunch / onIgnite / onFly / prepareContact / onDetonate / update); dawne
- * cząstki RocketFireGPU / RocketSmokeGPU, siatka kadłubków w scenie overlaya, gorące
- * powietrze wybuchów i wybuch Supernowej z overlaya odeszły. Lot, naprowadzanie, trafienia
- * i obrażenia bez zmian (tests/rocketGuidance.test.mjs); bez `effects` (testy w Node)
- * rakiety latają bez obrazu.
+ * (`effects`: onLaunch / onIgnite / onFly / onSplit / prepareContact / onDetonate / update,
+ * opcjonalnie beginUpdate); bez `effects` (testy w Node) rakiety latają bez obrazu.
+ *
+ * LOT (2026-09-30, „feel” rakiet — tests/rocketGuidance.test.mjs):
+ *   1. WYRZUT — zimny start z komory: rakieta wyskakuje pod kątem `launchElevation` (90° —
+ *      pionowo, VLS) i wytraca prędkość, ZAWISA chwilę nad kadłubem;
+ *   2. ZAPŁON po `ignitionDelay` — silnik, przechył z pionu w kurs WACHLARZA salwy (każda
+ *      rakieta salwy ma własny kierunek w ±`dispersal`), rozpędzanie z `boostAccel`;
+ *   3. NAPROWADZANIE — fazy intercept / terminal / reacquire jak dawniej (wyprzedzenie celu,
+ *      turnRate), obrót narasta przez pierwsze 0,8 s po wachlarzu (szerokie łuki), kluczenie
+ *      `weave` gaśnie przy celu — salwa zakręca łukami i zbiega się na cel z kilku stron;
+ *   4. ZEJŚCIE na płaszczyznę gry w fazie końcowej.
+ * Wysokość (Y) jest tylko obrazem (kamery 3D, światło dyszy, skrót perspektywy): zapalnik,
+ * zasięg i trafienia liczą się w płaszczyźnie gry jak dotąd.
+ *
+ * SALWA (`fireSalvo`, z fireWeaponCore): pierwsza rakieta od razu, reszta z kolejki co
+ * `burstDelay` z KOLEJNYCH komór wyrzutni (`launchPorts` × rzędy, `cellSpacing`). Komora i kierunek
+ * wyrzutni są zapisane w układzie strzelca, więc salwa z lecącego i obracającego się okrętu
+ * wychodzi z jego pokładu (pęd — prędkość punktu komory, v + ω × r). Strzelec zniszczony w trakcie
+ * salwy — reszta przepada.
+ * HYDRA (`submunition`): nosiciel pęka `splitRange` przed celem na rakiety potomne (wachlarz,
+ * własne naprowadzanie, obrażenia każdej = obrażenia nosiciela).
+ * Losowanie gry (Math.random): JEDNO ziarno na rakietę albo na salwę — rozrzut wyrzutu, zapłonu,
+ * wachlarza i fazy kluczenia idą z haszu ziarna (`seedHash`).
  *
  * Coordinate convention (lot, Y-up jak dawny overlay):
  *   game world (x, y) → (x, 0, y)
@@ -19,12 +38,14 @@
  *   import { initRocketSystem3D } ...
  *   initRocketSystem3D(Core3D.scene, { effects: createRocketFx(Core3D) })
  *   // every frame (przed render()): window.rocketSystem3D.update(dt)
- *   // on fire:     window.rocketSystem3D.fire(gameX, gameY, target, damage, weaponDef, 'blue', vx, vy)
+ *   // on fire:  window.rocketSystem3D.fireSalvo(shooter, x, y, target, damage, weaponDef, 'blue', vx, vy, n, gap, az, mode)
+ *   //       albo window.rocketSystem3D.fire(gameX, gameY, target, damage, weaponDef, 'blue', vx, vy)
  */
 import * as THREE from "three";
 import { isEntityShieldBlocking } from "../../shieldSystem.js";
-import { shieldImpactClass } from "../data/weapons.js";
+import { shieldImpactClass, submunitionDef } from "../data/weapons.js";
 import { SimClock } from "../game/simClock.js";
+import { writePointVelocity } from "../game/carrierVelocity.js";
 
 /*
  * UKŁAD RAKIETY (src/game/carrierVelocity.js). Rakieta startuje z prędkością
@@ -46,45 +67,61 @@ import { SimClock } from "../game/simClock.js";
 /** World scale: converts rakiety.html units → game world units. */
 const WS = 0.1;
 
-const PHYSICS = Object.freeze({
-    gravity:  9.81 * 80 * WS,   // 78.48 u/s²
-    airDrag:  0.0001
-});
-
 const ROCKET = Object.freeze({
     mass:            8000,
-    maxThrust:       28_000_000 * WS,   // 2 800 000
-    turnSpeedMin:    1.0,
-    turnSpeedMax:    1.6,
-    ejectUp:         1500 * WS,          // 150 u/s
-    ejectUpRandom:   1000 * WS,          // +0…100
-    ejectSpread:     1500 * WS,          // ±150 horizontal
+    maxThrust:       28_000_000 * WS,   // 2 800 000 (przyspieszenie domyślne: maxThrust / masa)
     hitRadius:       800  * WS,          // 80 game units
     bodyLength:      160  * WS,          // 16
-    bodyRadTop:      8    * WS,          // 0.8
-    bodyRadBot:      16   * WS,          // 1.6
-    exhaustOffset:   60   * WS,          // 6 (local, behind rocket)
-    exhaustVel:      1200 * WS,          // 120
-    exhaustSpread:   180  * WS,          // 18
-    exhaustGap:      12   * WS,          // 1.2 (min distance between particles)
     maxRockets:      2000,
-    maxAltitude:     500  * WS
+    maxAltitude:     600
 });
 
+/** Tryb wyrzutu rakiety (r.mode). */
+export const LAUNCH_ELEVATED = 0;   // zimny wyrzut z komory pod kątem (VLS: 90°)
+export const LAUNCH_RAIL = 1;       // z belki myśliwca: zrzut w bok, zapłon po chwili
+export const LAUNCH_SPLIT = 2;      // głowica potomna Hydry: od razu na silniku
+
+/** Pojemność kolejki salw (rakiety czekające na swoją komorę). */
+const SALVO_CAP = 1024;
+/** Najwięcej rakiet w jednej salwie. */
+const SALVO_MAX = 64;
+/** Czas, przez który obrót po wachlarzu narasta od TURN_RAMP_START do pełnego turnRate [s]. */
+const TURN_RAMP = 1.0;
+const TURN_RAMP_START = 0.4;
+/** Zawis: prędkość wyrzutu gaśnie jak e^(−k·t), k = POP_DECAY / ignitionDelay (przy zapłonie ~16 %). */
+const POP_DECAY = 1.8;
+
+const TAU = Math.PI * 2;
+
 /* ── Reusable temp vectors (allocated once) ── */
-const _force     = new THREE.Vector3();
 const _forward   = new THREE.Vector3();
-const _drag      = new THREE.Vector3();
 const _targetDir = new THREE.Vector3();
-const _qTarget   = new THREE.Quaternion();
 const _BASE_FWD  = new THREE.Vector3(0, 1, 0);  // rocket nose in local space
-const _renderDir = new THREE.Vector3();
 const _leadAim2D = { x: 0, y: 0, t: 0 };
 // Scratch prowadzenia (bez obiektów per rakieta per klatka).
 const _leadPos = { x: 0, y: 0 };
 const _leadVel = { x: 0, y: 0 };
 const _leadFrame = { x: 0, y: 0 };
 const _targetVel = { x: 0, y: 0 };
+const _pointVel = { x: 0, y: 0 };
+// Opis wyrzutu dla fire() z salwy / podziału (jeden obiekt — fire czyta go od razu).
+const _launch = {
+    mode: LAUNCH_ELEVATED, index: 0, count: 1, seed: 0, azimuth: NaN, shooter: null,
+    // tylko LAUNCH_SPLIT: wysokość i ruch własny nosiciela, kurs wachlarza
+    y: 0, vx: 0, vy: 0, vz: 0
+};
+
+/**
+ * Liczba 0..1 z ziarna rakiety / salwy i klucza (hasz 32-bit) — rozrzut wyrzutu bez kolejnych
+ * losowań z Math.random (sekwencja gry): jedno ziarno, dowolnie wiele niezależnych liczb.
+ */
+export function seedHash(seed, k) {
+    let h = ((seed * 4294967296) >>> 0) ^ Math.imul(k + 0x6D2B79F5, 0x9E3779B1);
+    h = Math.imul(h ^ (h >>> 15), 0x85EBCA6B);
+    h = Math.imul(h ^ (h >>> 13), 0xC2B2AE35);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+}
 
 function readTargetVelocity2D(target, out) {
     const vel = target?.vel || target?.velocity || null;
@@ -92,6 +129,12 @@ function readTargetVelocity2D(target, out) {
     out.y = Number(target?.vy ?? vel?.y) || 0;
     return out;
 }
+
+/** Poza strzelca: NPC całkują x/y (kanoniczne), gracz ma x/y jako lustro pos po kroku fizyki. */
+function entX(e) { const x = Number(e?.x); return Number.isFinite(x) ? x : (Number(e?.pos?.x) || 0); }
+function entY(e) { const y = Number(e?.y); return Number.isFinite(y) ? y : (Number(e?.pos?.y) || 0); }
+function entAngle(e) { return Number(e?.angle) || 0; }
+function entGone(e) { return !e || e.dead === true || e.destroyed === true || e.removed === true; }
 
 // `frameVel` — układ, w którym leci pocisk: zwracany punkt = cel przesunięty
 // o ruch WZGLĘDEM układu (kierunek nosa w tym układzie). Bez niego = świat.
@@ -129,6 +172,14 @@ function solveLeadAim2D(shooterPos, shooterVel, target, projectileSpeed, out = _
     return out;
 }
 
+const clampN = (v, a, b) => (v < a ? a : (v > b ? b : v));
+const numOr = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+function wrapPi(a) {
+    a = (a + Math.PI) % TAU;
+    if (a < 0) a += TAU;
+    return a - Math.PI;
+}
+
 function resolveRocketProfile(weaponDef) {
     const desiredSpeed = Math.max(400, Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200);
     const maxRange = Math.max(3000, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 12000);
@@ -137,9 +188,8 @@ function resolveRocketProfile(weaponDef) {
     const speedFactor = THREE.MathUtils.clamp(desiredSpeed / 1200, 0.6, 4.0);
     const turnPenalty = THREE.MathUtils.clamp(180 / turnRateDeg, 0.45, 4.0);
     const homingDelay = THREE.MathUtils.clamp(Number(weaponDef?.homingDelay) || 0, 0, 3);
-    const ignitionDelayRaw = Number(weaponDef?.ignitionDelay);
     const speedScale = Math.max(0.9, desiredSpeed / 900);
-    const cruiseAltitudeDefault = Math.min(ROCKET.maxAltitude * 0.72, Math.max(10, desiredSpeed * 0.015));
+    const cruiseAltitudeDefault = Math.min(ROCKET.maxAltitude * 0.2, Math.max(30, desiredSpeed * 0.03));
     const cruiseAltitudeRaw = Number(weaponDef?.cruiseAltitude);
     const proximityDefault = Math.max(blastRadius * 0.9, 38 * speedFactor * Math.sqrt(turnPenalty));
     const proximityRadius = THREE.MathUtils.clamp(
@@ -157,16 +207,29 @@ function resolveRocketProfile(weaponDef) {
         terminalRadius,
         Math.max(terminalRadius * 4.0, 2400)
     );
+    const k = THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1);
+    const deg = THREE.MathUtils.degToRad;
+    const sub = weaponDef?.submunition ? submunitionDef(weaponDef) : null;
     return {
         desiredSpeed,
         maxRange,
         blastRadius,
-        turnRateRad: THREE.MathUtils.degToRad(turnRateDeg),
+        turnRateRad: deg(turnRateDeg),
         homingDelay: Number.isFinite(homingDelay) ? homingDelay : 0,
-        ignitionDelay: Number.isFinite(ignitionDelayRaw)
-            ? THREE.MathUtils.clamp(ignitionDelayRaw, 0.05, 0.35)
-            : 0.12,
         maxThrust: ROCKET.maxThrust * speedScale,
+        // Przyspieszenie silnika [j./s²] (dawniej maxThrust / masa — ~350 × speedScale).
+        accel: Number(weaponDef?.boostAccel) > 0
+            ? THREE.MathUtils.clamp(Number(weaponDef.boostAccel), 200, 20000)
+            : (ROCKET.maxThrust * speedScale) / ROCKET.mass,
+        // Wyrzut: kąt nad płaszczyzną, prędkość zimnego startu, zapłon (zawis).
+        elevation: deg(THREE.MathUtils.clamp(numOr(weaponDef?.launchElevation, 70), 0, 90)),
+        ejectSpeed: THREE.MathUtils.clamp(Number(weaponDef?.ejectSpeed) || 320, 40, 1500),
+        ignitionDelay: THREE.MathUtils.clamp(numOr(weaponDef?.ignitionDelay, 0.12), 0.04, 0.8),
+        launchTurnRateRad: deg(THREE.MathUtils.clamp(Number(weaponDef?.launchTurnRate) || Math.max(240, turnRateDeg * 0.5), 60, 1440)),
+        dispersalRad: deg(THREE.MathUtils.clamp(Number(weaponDef?.dispersal) || 0, 0, 170)),
+        dispersalTime: THREE.MathUtils.clamp(numOr(weaponDef?.dispersalTime, 0.2), 0, 1.5),
+        weaveRad: deg(THREE.MathUtils.clamp(Number(weaponDef?.weave) || 0, 0, 40)),
+        weaveHz: THREE.MathUtils.clamp(Number(weaponDef?.weaveHz) || 0, 0, 8),
         cruiseAltitude: Number.isFinite(cruiseAltitudeRaw)
             ? THREE.MathUtils.clamp(cruiseAltitudeRaw, 0, ROCKET.maxAltitude * 0.9)
             : cruiseAltitudeDefault,
@@ -174,34 +237,38 @@ function resolveRocketProfile(weaponDef) {
         terminalRadius,
         reacquireRadius,
         reacquireTurnMultiplier: THREE.MathUtils.clamp(
-            Number(weaponDef?.reacquireTurnMultiplier) || THREE.MathUtils.lerp(2.3, 1.55, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            Number(weaponDef?.reacquireTurnMultiplier) || THREE.MathUtils.lerp(2.3, 1.55, k),
             1.2,
             3.2
         ),
         reacquireSpeedFactor: THREE.MathUtils.clamp(
-            Number(weaponDef?.reacquireSpeedFactor) || THREE.MathUtils.lerp(0.52, 0.72, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            Number(weaponDef?.reacquireSpeedFactor) || THREE.MathUtils.lerp(0.52, 0.72, k),
             0.35,
             0.95
         ),
         terminalSpeedFactor: THREE.MathUtils.clamp(
-            Number(weaponDef?.terminalSpeedFactor) || THREE.MathUtils.lerp(0.68, 0.86, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            Number(weaponDef?.terminalSpeedFactor) || THREE.MathUtils.lerp(0.68, 0.86, k),
             0.45,
             1.0
         ),
         leadHorizon: THREE.MathUtils.clamp(
-            Number(weaponDef?.leadHorizon) || THREE.MathUtils.lerp(0.82, 0.38, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            Number(weaponDef?.leadHorizon) || THREE.MathUtils.lerp(0.82, 0.38, k),
             0,
             1
         ),
         terminalLeadHorizon: THREE.MathUtils.clamp(
-            Number(weaponDef?.terminalLeadHorizon) || THREE.MathUtils.lerp(0.18, 0.06, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            Number(weaponDef?.terminalLeadHorizon) || THREE.MathUtils.lerp(0.18, 0.06, k),
             0,
             0.5
         ),
         // Wygląd rakiety (płomień, dym, kule ognia, Supernowa) czyta reżyser efektów z dema
         // (src/3d/rockets/) wprost z weaponDef; w profilu lotu zostaje tylko skala kadłubka.
-        bodyScale: THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.35, 3.0),
-        hitRadius: proximityRadius
+        bodyScale: THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.25, 3.0),
+        hitRadius: proximityRadius,
+        // Głowica kasetowa (Hydra): liczba rakiet potomnych i odległość podziału od celu.
+        subDef: sub,
+        splitCount: sub ? THREE.MathUtils.clamp(Math.round(Number(weaponDef.submunition.count) || 0), 0, 16) : 0,
+        splitRange: sub ? THREE.MathUtils.clamp(Number(weaponDef.submunition.splitRange) || 1500, 300, 8000) : 0
     };
 }
 
@@ -225,6 +292,7 @@ class RocketSystem3D {
         this.globalTime = 0;
         this.activeRockets = 0;
         this.effects    = opts?.effects || null;
+        this._frameNo = 0;
 
         /* ── Rocket data pool ── */
         this.rockets = [];
@@ -241,6 +309,7 @@ class RocketSystem3D {
                 mass:           0,
                 maxThrust:      0,
                 currentThrust:  0,
+                accel:          0,
                 turnRateRad:    0,
                 homingDelay:    0,
                 ignitionDelay:  0,
@@ -261,6 +330,7 @@ class RocketSystem3D {
                 terminalLeadHorizon: 0,
                 bodyScale: 1,
                 didImpactDamage:false,
+                hitShield: false,
                 weaponDef:      null,
                 launchPos:      new THREE.Vector3(),
                 prevTravelPos:  new THREE.Vector3(),
@@ -271,14 +341,64 @@ class RocketSystem3D {
                 reacquireUntil: 0,
                 terminalEnteredAtDist: Infinity,
                 missGrowTime: 0,
+                // Kurs nosa w płaszczyźnie gry (x, 0, z — jednostkowy) i jego wzniesienie [rad]:
+                // pion (wyrzut) = π/2, lot poziomy = 0. Czyta reżyser efektów (kadłubek, płomień, dym).
                 visualDir:      new THREE.Vector3(0, 0, 1),
+                nosePitch:      0,
+                noseAz:         0,
                 // Układ rakiety (x, z overlaya) i czas pozy wyrzutni — patrz nagłówek.
                 frameVel:       new THREE.Vector3(),
                 bornSim:        0,
-                frameSynced:    false
+                frameSynced:    false,
+                bornFrame:      -1,
+                // Wyrzut i salwa.
+                mode:           LAUNCH_ELEVATED,
+                salvoIndex:     0,
+                salvoCount:     1,
+                seed:           0,
+                launchAz:       0,
+                dispAz:         0,
+                popDrag:        1,
+                ignitedAt:      0,
+                interceptAt:    0,
+                launchTurnRateRad: 0,
+                dispersalTime:  0,
+                weaveRad:       0,
+                weaveHz:        0,
+                weavePhase:     0,
+                weavePhase2:    0,
+                // Głowica kasetowa.
+                subDef:         null,
+                splitCount:     0,
+                splitRange:     0,
+                // Strzelec (tylko na czas onLaunch — efekt wyrzutni, odrzut kasety).
+                shooter:        null,
+                hostile:        false
             });
         }
+
+        /* ── Kolejka salw (SoA): rakiety czekające na swoją komorę ── */
+        this._qN = 0;
+        this._qShooter = new Array(SALVO_CAP).fill(null);
+        this._qTarget = new Array(SALVO_CAP).fill(null);
+        this._qDef = new Array(SALVO_CAP).fill(null);
+        this._qT = new Float64Array(SALVO_CAP);
+        this._qLx = new Float64Array(SALVO_CAP);      // komora: układ strzelca (albo świat bez strzelca)
+        this._qLy = new Float64Array(SALVO_CAP);
+        this._qLaz = new Float64Array(SALVO_CAP);     // kierunek wyrzutni względem kursu strzelca
+        this._qVx = new Float64Array(SALVO_CAP);      // pęd wyrzutni (bez strzelca)
+        this._qVy = new Float64Array(SALVO_CAP);
+        this._qDmg = new Float64Array(SALVO_CAP);
+        this._qSeed = new Float64Array(SALVO_CAP);
+        this._qIndex = new Uint16Array(SALVO_CAP);
+        this._qCount = new Uint16Array(SALVO_CAP);
+        this._qTheme = new Uint8Array(SALVO_CAP);
+        this._qMode = new Uint8Array(SALVO_CAP);
+        this._qLocal = new Uint8Array(SALVO_CAP);     // 1 — komora w układzie strzelca
     }
+
+    /** Rakiety czekające w kolejkach salw (HUD, testy). */
+    get pendingLaunches() { return this._qN; }
 
     /* ─────────────────── FIRE ─────────────────── */
 
@@ -292,13 +412,24 @@ class RocketSystem3D {
      * @param {string}      colorTheme — 'blue' | 'red'
      * @param {number}      launchVx, launchVy — prędkość wyrzutni (świat gry):
      *                      rakieta startuje w jej układzie (patrz nagłówek)
+     * @param {object|null} launch — opis wyrzutu z salwy / podziału (`_launch`: tryb, numer
+     *                      w salwie, ziarno, kierunek wyrzutni); null — pojedyncza rakieta
+     * @returns {object|null} slot rakiety (null — pula pełna)
      */
-    fire(gameX, gameY, target, damage, weaponDef, colorTheme = "blue", launchVx = 0, launchVy = 0) {
+    fire(gameX, gameY, target, damage, weaponDef, colorTheme = "blue", launchVx = 0, launchVy = 0, launch = null) {
         let r = null;
         for (let i = 0; i < ROCKET.maxRockets; i++) {
             if (!this.rockets[i].active) { r = this.rockets[i]; break; }
         }
-        if (!r) return;
+        if (!r) return null;
+
+        const profile = resolveRocketProfile(weaponDef);
+        const mode = launch ? launch.mode : (profile.elevation > 0.02 ? LAUNCH_ELEVATED : LAUNCH_RAIL);
+        const index = launch ? launch.index : 0;
+        const count = launch ? Math.max(1, launch.count) : 1;
+        // Jedno losowanie gry na rakietę (albo na całą salwę — ziarno z fireSalvo).
+        const seed = launch && Number.isFinite(launch.seed) ? launch.seed : Math.random();
+        const hk = index * 16;
 
         r.active = true;
         this.activeRockets++;
@@ -309,30 +440,27 @@ class RocketSystem3D {
         // do czasu klatki (SimClock), jak interpolowany kadłub gracza.
         r.bornSim = SimClock.sim;
         r.frameSynced = false;
+        r.bornFrame = this._frameNo;
+        r.mode = mode;
+        r.salvoIndex = index;
+        r.salvoCount = count;
+        r.seed = seed;
+        r.shooter = launch ? (launch.shooter || null) : null;
+        r.hostile = colorTheme === "red";
 
-        // Ejection: random horizontal spread + upward burst
-        r.velocity.set(
-            (Math.random() - 0.5) * ROCKET.ejectSpread * 2,
-            ROCKET.ejectUp + Math.random() * ROCKET.ejectUpRandom,
-            (Math.random() - 0.5) * ROCKET.ejectSpread * 2
-        );
-
-        // Identity quat = nose points +Y (up) → correct for vertical launch
-        r.quaternion.identity();
         r.target          = target;
         r.state           = "EJECTED";
         r.guidancePhase   = "launch";
         r.timeSinceLaunch = 0;
-        r.launchPos.copy(r.position);
-        r.prevTravelPos.copy(r.position);
+        r.ignitedAt       = 0;
+        r.interceptAt     = 0;
         r.travelDistance  = 0;
         r.mass            = ROCKET.mass;
-        const profile = resolveRocketProfile(weaponDef);
         r.maxThrust       = profile.maxThrust;
         r.currentThrust   = 0;
+        r.accel           = profile.accel;
         r.turnRateRad     = profile.turnRateRad;
         r.homingDelay     = profile.homingDelay;
-        r.ignitionDelay   = profile.ignitionDelay;
         r.cruiseAltitude  = profile.cruiseAltitude;
         r.damage          = damage || 60;
         r.blastRadius     = profile.blastRadius;
@@ -348,6 +476,15 @@ class RocketSystem3D {
         r.leadHorizon = profile.leadHorizon;
         r.terminalLeadHorizon = profile.terminalLeadHorizon;
         r.bodyScale = profile.bodyScale;
+        r.launchTurnRateRad = profile.launchTurnRateRad;
+        r.dispersalTime = profile.dispersalTime;
+        r.weaveRad = profile.weaveRad;
+        r.weaveHz = profile.weaveHz;
+        r.weavePhase = seedHash(seed, hk + 7) * TAU;
+        r.weavePhase2 = seedHash(seed, hk + 8) * TAU;
+        r.subDef = profile.subDef;
+        r.splitCount = profile.splitCount;
+        r.splitRange = profile.splitRange;
         r.didImpactDamage = false;
         r.hitShield       = false;
         r.weaponDef       = weaponDef;
@@ -358,31 +495,252 @@ class RocketSystem3D {
         r.terminalEnteredAtDist = Infinity;
         r.missGrowTime = 0;
 
-        // Nos w stronę celu przesuniętego o ruch względem układu wyrzutni.
+        // Środek wachlarza: cel przesunięty o ruch względem układu wyrzutni (albo punkt).
         _leadFrame.x = r.frameVel.x;
         _leadFrame.y = r.frameVel.z;
-        const initialAim = target && !target.dead
-            ? (target._isPositionTarget
-                ? { x: Number(target.x ?? target.pos?.x) || gameX, y: Number(target.y ?? target.pos?.y) || gameY }
-                : solveLeadAim2D(
-                    { x: gameX, y: gameY },
-                    _leadFrame,
-                    target,
-                    profile.desiredSpeed,
-                    _leadAim2D,
-                    _leadFrame
-                ))
-            : null;
-        if (initialAim) {
-            _targetDir.set(initialAim.x - gameX, profile.cruiseAltitude, initialAim.y - gameY);
-            if (_targetDir.lengthSq() > 1e-6) {
-                _targetDir.normalize();
-                r.quaternion.setFromUnitVectors(_BASE_FWD, _targetDir);
+        let aimAz = NaN;
+        if (target && !target.dead) {
+            if (target._isPositionTarget) {
+                const px = Number(target.x ?? target.pos?.x);
+                const py = Number(target.y ?? target.pos?.y);
+                if (Number.isFinite(px) && Number.isFinite(py) && (px !== gameX || py !== gameY)) aimAz = Math.atan2(py - gameY, px - gameX);
+            } else {
+                _leadPos.x = gameX;
+                _leadPos.y = gameY;
+                const aim = solveLeadAim2D(_leadPos, _leadFrame, target, profile.desiredSpeed, _leadAim2D, _leadFrame);
+                if (aim.x !== gameX || aim.y !== gameY) aimAz = Math.atan2(aim.y - gameY, aim.x - gameX);
             }
         }
+        const launchAz = launch && Number.isFinite(launch.azimuth)
+            ? launch.azimuth
+            : (Number.isFinite(aimAz) ? aimAz : 0);
+        const fanCenter = Number.isFinite(aimAz) ? aimAz : launchAz;
+        // Wachlarz salwy: numer rakiety na złotym podziale (równo, bez rzędów) z obrotem salwy;
+        // pojedyncza rakieta — sam rozrzut.
+        let fan = (seedHash(seed, hk + 1) - 0.5) * 2 * (0.08 + 0.12 * profile.dispersalRad);
+        if (count > 1 && profile.dispersalRad > 0) {
+            const u = (index * 0.6180339887 + seedHash(seed, 4093)) % 1;
+            fan += (u * 2 - 1) * profile.dispersalRad;
+        }
+        r.dispAz = fanCenter + fan;
+        r.launchAz = launchAz;
 
-        // Wygląd: wyrzut (obłok pary, błysk) — barwa pasa kadłubka ze strony (colorTheme).
-        if (this.effects) this.effects.onLaunch(r, colorTheme);
+        if (mode === LAUNCH_SPLIT && launch) {
+            // Głowica potomna: wysokość i ruch nosiciela, nos w kurs wachlarza — od razu na silniku.
+            r.position.y = Math.max(0, Number(launch.y) || 0);
+            const sp = Math.max(200, Math.sqrt(launch.vx * launch.vx + launch.vy * launch.vy + launch.vz * launch.vz));
+            const c = Math.cos(r.dispAz);
+            const s = Math.sin(r.dispAz);
+            _targetDir.set(c * 0.96, 0.28, s * 0.96).normalize();
+            r.quaternion.setFromUnitVectors(_BASE_FWD, _targetDir);
+            r.velocity.copy(_targetDir).multiplyScalar(sp * 0.75);
+            r.state = "POWERED";
+            r.ignitionDelay = 0;
+            r.popDrag = 1;
+            r.currentThrust = r.maxThrust;
+            r.frameSynced = true;
+            r.visualDir.set(c, 0, s);
+            r.noseAz = r.dispAz;
+            r.nosePitch = Math.asin(_targetDir.y);
+        } else if (mode === LAUNCH_RAIL) {
+            // Zrzut z belki (myśliwiec): w bok od kadłuba i lekko do przodu, zapłon po chwili.
+            const side = seedHash(seed, hk + 2) < 0.5 ? -1 : 1;
+            const c = Math.cos(launchAz);
+            const s = Math.sin(launchAz);
+            const fwd = profile.ejectSpeed * 0.45;
+            const lat = profile.ejectSpeed * 0.35 * side;
+            r.velocity.set(c * fwd - s * lat, 0, s * fwd + c * lat);
+            _targetDir.set(c, 0, s);
+            r.quaternion.setFromUnitVectors(_BASE_FWD, _targetDir);
+            r.ignitionDelay = Math.min(profile.ignitionDelay, 0.1) * (0.85 + 0.3 * seedHash(seed, hk + 3));
+            r.popDrag = POP_DECAY / Math.max(0.04, r.ignitionDelay);
+            r.visualDir.set(c, 0, s);
+            r.noseAz = launchAz;
+            r.nosePitch = 0;
+        } else {
+            // Zimny wyrzut z komory pod kątem launchElevation (rozrzut ±4°, prędkość ±10 %):
+            // rakieta wyskakuje nad kadłub i zawisa, aż zapali silnik.
+            const el = THREE.MathUtils.clamp(profile.elevation + (seedHash(seed, hk + 3) - 0.5) * 0.14, 0, Math.PI / 2);
+            const az = launchAz + (seedHash(seed, hk + 4) - 0.5) * 0.4;
+            const sp = profile.ejectSpeed * (0.9 + 0.2 * seedHash(seed, hk + 5));
+            const ce = Math.cos(el);
+            _targetDir.set(ce * Math.cos(az), Math.sin(el), ce * Math.sin(az));
+            r.velocity.copy(_targetDir).multiplyScalar(sp);
+            r.quaternion.setFromUnitVectors(_BASE_FWD, _targetDir);
+            r.ignitionDelay = profile.ignitionDelay * (0.85 + 0.3 * seedHash(seed, hk + 6));
+            r.popDrag = POP_DECAY / Math.max(0.04, r.ignitionDelay);
+            r.visualDir.set(Math.cos(az), 0, Math.sin(az));
+            r.noseAz = az;
+            r.nosePitch = el;
+        }
+        r.launchPos.copy(r.position);
+        r.prevTravelPos.copy(r.position);
+
+        // Wygląd: wyrzut (obłok pary, błysk, odrzut kasety) — barwa pasa kadłubka ze strony (colorTheme).
+        if (this.effects) {
+            this.effects.onLaunch(r, colorTheme);
+            // Głowica potomna wychodzi na silniku — zapłon od razu.
+            if (r.state === "POWERED") this.effects.onIgnite(r);
+        }
+        r.shooter = null;
+        return r;
+    }
+
+    /**
+     * SALWA z wyrzutni: `count` rakiet co `gap` s z kolejnych komór (`launchPorts` × rzędy,
+     * `cellSpacing` z karty broni) wokół wylotu (gameX, gameY). Pierwsza od razu, reszta z kolejki
+     * (update) — pozycja komory w układzie strzelca, pęd = prędkość jej punktu na kadłubie.
+     * @param {object|null} shooter    — okręt z wyrzutnią (null — komory stoją w świecie)
+     * @param {number}      azimuth    — kierunek wyrzutni (świat, rad); NaN — w stronę celu
+     * @param {number}      mode       — LAUNCH_ELEVATED | LAUNCH_RAIL
+     * @returns {number} liczba rakiet w salwie (wystrzelonych i czekających)
+     */
+    fireSalvo(shooter, gameX, gameY, target, damage, weaponDef, colorTheme = "blue", launchVx = 0, launchVy = 0,
+        count = 1, gap = 0, azimuth = NaN, mode = LAUNCH_ELEVATED) {
+        const n = Math.max(1, Math.min(SALVO_MAX, Math.round(Number(count)) || 1));
+        const seed = Math.random();
+        const hasShooter = !!shooter && !entGone(shooter);
+        let az = Number(azimuth);
+        if (!Number.isFinite(az)) {
+            const tx = Number(target?.x ?? target?.pos?.x);
+            const ty = Number(target?.y ?? target?.pos?.y);
+            az = Number.isFinite(tx) && Number.isFinite(ty) ? Math.atan2(ty - gameY, tx - gameX) : (hasShooter ? entAngle(shooter) : 0);
+        }
+        const ports = Math.max(1, Math.round(Number(weaponDef?.launchPorts) || 1));
+        const rows = Math.ceil(n / ports);
+        const spacing = Math.max(0, Number(weaponDef?.cellSpacing) || 0);
+        const gapS = Math.max(0, Number(gap) || 0);
+        const ca = Math.cos(az);
+        const sa = Math.sin(az);
+        const sx = hasShooter ? entX(shooter) : 0;
+        const sy = hasShooter ? entY(shooter) : 0;
+        const shA = hasShooter ? entAngle(shooter) : 0;
+        const cs = Math.cos(-shA);
+        const ss = Math.sin(-shA);
+        const L = _launch;
+        L.mode = mode === LAUNCH_RAIL ? LAUNCH_RAIL : LAUNCH_ELEVATED;
+        L.count = n;
+        L.seed = seed;
+        L.shooter = hasShooter ? shooter : null;
+        let fired = 0;
+        for (let k = 0; k < n; k++) {
+            // Komora k: kolumna (w poprzek wyrzutni) i rząd (wzdłuż) — ripple przechodzi rzędami.
+            const col = k % ports;
+            const row = Math.floor(k / ports);
+            const lat = (col - (ports - 1) * 0.5) * spacing;
+            const lon = (row - (rows - 1) * 0.5) * spacing * 0.85;
+            const px = gameX + ca * lon - sa * lat;
+            const py = gameY + sa * lon + ca * lat;
+            const delay = k * gapS * (k > 0 ? 0.85 + 0.3 * seedHash(seed, 2000 + k) : 0);
+            if (delay <= 0 || this._qN >= SALVO_CAP) {
+                L.index = k;
+                L.azimuth = az;
+                L.shooter = hasShooter ? shooter : null;
+                if (this.fire(px, py, target, damage, weaponDef, colorTheme, launchVx, launchVy, L)) fired++;
+                continue;
+            }
+            const q = this._qN++;
+            this._qShooter[q] = hasShooter ? shooter : null;
+            this._qTarget[q] = target || null;
+            this._qDef[q] = weaponDef;
+            this._qT[q] = delay;
+            if (hasShooter) {
+                const dx = px - sx;
+                const dy = py - sy;
+                this._qLx[q] = dx * cs - dy * ss;
+                this._qLy[q] = dx * ss + dy * cs;
+                this._qLaz[q] = az - shA;
+                this._qLocal[q] = 1;
+            } else {
+                this._qLx[q] = px;
+                this._qLy[q] = py;
+                this._qLaz[q] = az;
+                this._qLocal[q] = 0;
+            }
+            this._qVx[q] = Number(launchVx) || 0;
+            this._qVy[q] = Number(launchVy) || 0;
+            this._qDmg[q] = damage;
+            this._qSeed[q] = seed;
+            this._qIndex[q] = k;
+            this._qCount[q] = n;
+            this._qTheme[q] = colorTheme === "red" ? 1 : 0;
+            this._qMode[q] = L.mode;
+            fired++;
+        }
+        L.shooter = null;
+        return fired;
+    }
+
+    /** Kolejka salw: rakiety, którym minął odstęp — z komory w AKTUALNEJ pozie strzelca. */
+    _drainSalvos(dt) {
+        const L = _launch;
+        let i = 0;
+        while (i < this._qN) {
+            this._qT[i] -= dt;
+            if (this._qT[i] > 0) { i++; continue; }
+            const sh = this._qShooter[i];
+            if (this._qLocal[i] === 1 && entGone(sh)) { this._qRemove(i); continue; }
+            let x = this._qLx[i];
+            let y = this._qLy[i];
+            let az = this._qLaz[i];
+            let vx = this._qVx[i];
+            let vy = this._qVy[i];
+            if (this._qLocal[i] === 1) {
+                const a = entAngle(sh);
+                const c = Math.cos(a);
+                const s = Math.sin(a);
+                const lx = x;
+                const ly = y;
+                x = entX(sh) + lx * c - ly * s;
+                y = entY(sh) + lx * s + ly * c;
+                az += a;
+                writePointVelocity(sh, x, y, _pointVel);
+                vx = _pointVel.x;
+                vy = _pointVel.y;
+            }
+            const target = this._qTarget[i];
+            L.mode = this._qMode[i];
+            L.index = this._qIndex[i];
+            L.count = this._qCount[i];
+            L.seed = this._qSeed[i];
+            L.azimuth = az;
+            L.shooter = this._qLocal[i] === 1 ? sh : null;
+            this.fire(x, y, target && !target.dead ? target : null, this._qDmg[i], this._qDef[i],
+                this._qTheme[i] ? "red" : "blue", vx, vy, L);
+            L.shooter = null;
+            this._qRemove(i);
+        }
+    }
+
+    _qRemove(i) {
+        const last = --this._qN;
+        if (i !== last) {
+            this._qShooter[i] = this._qShooter[last];
+            this._qTarget[i] = this._qTarget[last];
+            this._qDef[i] = this._qDef[last];
+            this._qT[i] = this._qT[last];
+            this._qLx[i] = this._qLx[last];
+            this._qLy[i] = this._qLy[last];
+            this._qLaz[i] = this._qLaz[last];
+            this._qVx[i] = this._qVx[last];
+            this._qVy[i] = this._qVy[last];
+            this._qDmg[i] = this._qDmg[last];
+            this._qSeed[i] = this._qSeed[last];
+            this._qIndex[i] = this._qIndex[last];
+            this._qCount[i] = this._qCount[last];
+            this._qTheme[i] = this._qTheme[last];
+            this._qMode[i] = this._qMode[last];
+            this._qLocal[i] = this._qLocal[last];
+        }
+        // Kolejka nie trzyma encji ani definicji po wyjściu rakiety.
+        this._qShooter[last] = null;
+        this._qTarget[last] = null;
+        this._qDef[last] = null;
+    }
+
+    /** Czyści kolejki salw strzelca (np. okręt usunięty ze świata bez flagi dead). */
+    cancelSalvos(shooter) {
+        for (let i = this._qN - 1; i >= 0; i--) if (this._qShooter[i] === shooter) this._qRemove(i);
     }
 
     /* ─────────────────── UPDATE ─────────────────── */
@@ -391,35 +749,73 @@ class RocketSystem3D {
         if (dt <= 0) return;
         dt = Math.min(dt, 0.05);
         this.globalTime += dt;
+        const frameNo = ++this._frameNo;
         const fx = this.effects;
         const R  = ROCKET;
+        if (fx && typeof fx.beginUpdate === "function") fx.beginUpdate(this.activeRockets + this._qN);
+        // Salwy: rakiety, na które przyszła kolej (przed krokiem — lecą już w tej klatce).
+        if (this._qN > 0) this._drainSalvos(dt);
 
         // Pusta pula → nie iteruj 2000 slotów.
         for (let i = 0; this.activeRockets > 0 && i < R.maxRockets; i++) {
             const r = this.rockets[i];
             if (!r.active) continue;
+            // Głowica potomna urodzona w tej klatce (podział nosiciela) rusza od następnej.
+            if (r.mode === LAUNCH_SPLIT && r.bornFrame === frameNo) continue;
             r.timeSinceLaunch += dt;
+            const t = r.timeSinceLaunch;
 
-            /* ── State transition: EJECTED → POWERED ── */
-            if (r.state === "EJECTED") {
-                if (r.velocity.y < -5 * WS || r.timeSinceLaunch > r.ignitionDelay) {
-                    r.state = "POWERED";
-                    r.currentThrust = r.maxThrust;
-                    if (fx) fx.onIgnite(r);
+            /* ── State transition: EJECTED → POWERED (zapłon po zawisie) ── */
+            if (r.state === "EJECTED" && t >= r.ignitionDelay) {
+                r.state = "POWERED";
+                r.ignitedAt = t;
+                r.currentThrust = r.maxThrust;
+                if (fx) fx.onIgnite(r);
+            }
+
+            const speedNow = r.velocity.length();
+            let guidanceDesiredSpeed = Math.max(300, r.desiredSpeed || 1200);
+            // Sterowanie nosem: KURS (az, płaszczyzna gry) i WZNIESIENIE (el) osobno, każde z limitem
+            // obrotu — kwaternion po najkrótszym łuku przy nawrotach szedł „przez zenit” (pętla w górę).
+            let desAz = r.noseAz;
+            let desEl = 0;
+            let azRate = Math.max(0.001, r.turnRateRad);
+            let elRate = Math.max(azRate, r.launchTurnRateRad);
+            let steer = false;
+            const target = r.target;
+            const live = !!target && !target.dead;
+            let dist2D = Infinity;
+
+            /* ── Faza wyrzutu: zawis, zapłon, przechył w kurs wachlarza salwy ── */
+            if (r.guidancePhase === "launch") {
+                const sinceIgnition = r.state === "POWERED" ? t - r.ignitedAt : -1;
+                if (sinceIgnition >= r.dispersalTime && t >= r.homingDelay) {
+                    r.guidancePhase = "intercept";
+                    r.interceptAt = t;
+                } else {
+                    const look = Math.max(140, speedNow * 0.35);
+                    desAz = r.dispAz;
+                    desEl = Math.atan(THREE.MathUtils.clamp((r.cruiseAltitude - r.position.y) / look, -0.9, 1.2));
+                    // Przed zapłonem nos dopiero zaczyna się kłaść (stery gazowe), po zapłonie — pełny przechył.
+                    azRate = elRate = r.state === "POWERED" ? r.launchTurnRateRad : r.launchTurnRateRad * 0.2;
+                    steer = true;
+                    if (live) {
+                        const tx = Number(target.x ?? target.pos?.x) || r.position.x;
+                        const ty = Number(target.y ?? target.pos?.y) || r.position.z;
+                        r.lastTargetDist = Math.hypot(tx - r.position.x, ty - r.position.z);
+                    }
                 }
             }
 
-            let guidanceDesiredSpeed = Math.max(300, r.desiredSpeed || 1200);
-
-            /* ── Guidance phases: launch / intercept / terminal / reacquire ── */
-            if (r.target && !r.target.dead) {
-                const isPointTarget = !!r.target._isPositionTarget;
-                const tx = Number(r.target.x ?? r.target.pos?.x) || r.position.x;
-                const ty = Number(r.target.y ?? r.target.pos?.y) || r.position.z;
+            /* ── Guidance phases: intercept / terminal / reacquire ── */
+            if (!steer && live) {
+                const isPointTarget = !!target._isPositionTarget;
+                const tx = Number(target.x ?? target.pos?.x) || r.position.x;
+                const ty = Number(target.y ?? target.pos?.y) || r.position.z;
                 const targetRadius = isPointTarget ? 0 : Math.max(
-                    Number(r.target.radius) || 0,
-                    (Number(r.target.w) || 0) * 0.5,
-                    (Number(r.target.h) || 0) * 0.5
+                    Number(target.radius) || 0,
+                    (Number(target.w) || 0) * 0.5,
+                    (Number(target.h) || 0) * 0.5
                 );
                 const fuseRadius = Math.max(r.proximityRadius || r.hitRadius || R.hitRadius, targetRadius * 0.9);
                 const terminalRadius = Math.max(r.terminalRadius || fuseRadius * 2, fuseRadius * 1.35);
@@ -427,22 +823,18 @@ class RocketSystem3D {
 
                 const directDx = tx - r.position.x;
                 const directDz = ty - r.position.z;
-                const dist2D = Math.hypot(directDx, directDz);
+                dist2D = Math.hypot(directDx, directDz);
 
                 if (isPointTarget) {
-                    r.guidancePhase = (r.state === "EJECTED") ? "launch" : "intercept";
-                } else if (r.guidancePhase === "launch" && r.state === "POWERED") {
                     r.guidancePhase = "intercept";
-                }
-
-                if (!isPointTarget) {
+                } else {
                     if (r.guidancePhase !== "reacquire" && dist2D <= terminalRadius) {
                         if (r.guidancePhase !== "terminal") {
                             r.guidancePhase = "terminal";
                             r.terminalEnteredAtDist = dist2D;
                             r.missGrowTime = 0;
                         }
-                    } else if (r.guidancePhase === "reacquire" && (dist2D <= terminalRadius * 1.15 || r.timeSinceLaunch >= r.reacquireUntil)) {
+                    } else if (r.guidancePhase === "reacquire" && (dist2D <= terminalRadius * 1.15 || t >= r.reacquireUntil)) {
                         r.guidancePhase = dist2D <= terminalRadius ? "terminal" : "intercept";
                         if (r.guidancePhase === "terminal") r.terminalEnteredAtDist = dist2D;
                         r.missGrowTime = 0;
@@ -456,13 +848,19 @@ class RocketSystem3D {
                             if (r.missGrowTime >= 0.06) {
                                 r.guidancePhase = "reacquire";
                                 r.missCount += 1;
-                                r.reacquireUntil = r.timeSinceLaunch + THREE.MathUtils.clamp(0.24 + r.missCount * 0.08, 0.24, 0.9);
+                                r.reacquireUntil = t + THREE.MathUtils.clamp(0.24 + r.missCount * 0.08, 0.24, 0.9);
                                 r.missGrowTime = 0;
                             }
                         } else {
                             r.missGrowTime = Math.max(0, r.missGrowTime - dt * 2.5);
                         }
                     }
+                }
+
+                /* ── Głowica kasetowa: nosiciel pęka przed celem ── */
+                if (r.splitCount > 0 && r.state === "POWERED" && dist2D <= r.splitRange && t >= r.ignitionDelay + 0.35) {
+                    this._split(r, frameNo);
+                    continue;
                 }
 
                 const planarSpeed = Math.max(300, Math.hypot(r.velocity.x, r.velocity.z), guidanceDesiredSpeed);
@@ -477,7 +875,7 @@ class RocketSystem3D {
                 _leadFrame.y = r.frameVel.z;
                 // Dostrojona formuła (prędkość własna w ruchu względnym — z nią
                 // zestrojone leadHorizon) — przy wyrzutni w spoczynku jak dawniej.
-                const tunedLead = solveLeadAim2D(_leadPos, _leadVel, r.target, planarSpeed, _leadAim2D, _leadFrame);
+                const tunedLead = solveLeadAim2D(_leadPos, _leadVel, target, planarSpeed, _leadAim2D, _leadFrame);
                 const tunedX = tunedLead.x;
                 const tunedY = tunedLead.y;
                 // Udział dryfu układu w ruchu względnym: 0 = wyrzutnia w spoczynku,
@@ -486,36 +884,40 @@ class RocketSystem3D {
                 // układzie rakiety (dostrojona formuła zaniża go przy szybkim
                 // zbliżaniu: 7800 j/s mijało cel o 75 j. przy bezpieczniku 65 j.).
                 // W pościgu (cel leci z układem) ruch względny znika sam.
-                readTargetVelocity2D(r.target, _targetVel);
+                readTargetVelocity2D(target, _targetVel);
                 const frameSpeed = Math.hypot(r.frameVel.x, r.frameVel.z);
                 const driftShare = frameSpeed > 1e-6
                     ? frameSpeed / (frameSpeed + Math.hypot(_targetVel.x, _targetVel.y))
                     : 0;
                 let leadPoint = tunedLead;
                 if (driftShare > 0) {
-                    const trueLead = solveLeadAim2D(_leadPos, _leadFrame, r.target, planarSpeed, _leadAim2D, _leadFrame);
+                    const trueLead = solveLeadAim2D(_leadPos, _leadFrame, target, planarSpeed, _leadAim2D, _leadFrame);
                     trueLead.x = tunedX + (trueLead.x - tunedX) * driftShare;
                     trueLead.y = tunedY + (trueLead.y - tunedY) * driftShare;
                     leadPoint = trueLead;
                 }
 
                 let leadWeight = 0;
-                let targetY = 0;
+                let targetY = r.cruiseAltitude;
+                let dive = false;
                 let effectiveTurnRate = Math.max(0.001, r.turnRateRad);
-                if (r.guidancePhase === "launch") {
-                    leadWeight = isPointTarget ? 0 : 0.15;
-                    targetY = r.cruiseAltitude * 0.65;
-                } else if (r.guidancePhase === "intercept") {
+                if (r.guidancePhase === "intercept") {
                     leadWeight = isPointTarget ? 0 : r.leadHorizon;
-                    targetY = dist2D > terminalRadius ? r.cruiseAltitude : 0;
+                    if (dist2D <= terminalRadius * 1.6) { targetY = 0; dive = true; }
+                    // Po wachlarzu obrót narasta od 40 %: tory salwy zakręcają szerokimi łukami,
+                    // zanim rakiety złapią cel pełnym naprowadzaniem.
+                    const ramp = Math.min(1, TURN_RAMP_START + (1 - TURN_RAMP_START) * (t - r.interceptAt) / TURN_RAMP);
+                    effectiveTurnRate *= ramp;
                 } else if (r.guidancePhase === "terminal") {
                     leadWeight = isPointTarget ? 0 : r.terminalLeadHorizon;
                     targetY = 0;
+                    dive = true;
                     guidanceDesiredSpeed *= r.terminalSpeedFactor;
                     effectiveTurnRate *= 1.25;
                 } else if (r.guidancePhase === "reacquire") {
                     leadWeight = isPointTarget ? 0 : Math.min(0.18, r.terminalLeadHorizon);
                     targetY = 0;
+                    dive = true;
                     guidanceDesiredSpeed *= r.reacquireSpeedFactor;
                     effectiveTurnRate *= r.reacquireTurnMultiplier;
                 }
@@ -523,82 +925,90 @@ class RocketSystem3D {
                 const aimWeight = leadWeight + (1 - leadWeight) * driftShare;
                 const aimX = THREE.MathUtils.lerp(tx, leadPoint.x, aimWeight);
                 const aimZ = THREE.MathUtils.lerp(ty, leadPoint.y, aimWeight);
-                const dx = aimX - r.position.x;
-                const dz = aimZ - r.position.z;
+                const aimAz = Math.atan2(aimZ - r.position.z, aimX - r.position.x);
+                desAz = aimAz;
 
-                _targetDir.set(
-                    dx,
-                    THREE.MathUtils.clamp(targetY - r.position.y, -Math.max(60, r.cruiseAltitude), Math.max(120, r.cruiseAltitude)),
-                    dz
-                );
-
-                if (_targetDir.lengthSq() > 1e-6) {
-                    _targetDir.normalize();
-                    _qTarget.setFromUnitVectors(_BASE_FWD, _targetDir);
-                    _forward.set(0, 1, 0).applyQuaternion(r.quaternion).normalize();
-
-                    const planarForwardLen = Math.hypot(_forward.x, _forward.z);
-                    let angleError = 0;
-                    if (planarForwardLen > 1e-6) {
-                        const fx = _forward.x / planarForwardLen;
-                        const fz = _forward.z / planarForwardLen;
-                        const aimLen = Math.hypot(dx, dz);
-                        if (aimLen > 1e-6) {
-                            const ax = dx / aimLen;
-                            const az = dz / aimLen;
-                            angleError = Math.acos(THREE.MathUtils.clamp(fx * ax + fz * az, -1, 1));
-                        }
-                    }
-
-                    if (r.guidancePhase === "reacquire" || r.guidancePhase === "terminal") {
-                        const anglePenalty = THREE.MathUtils.clamp(angleError / Math.PI, 0, 1);
-                        guidanceDesiredSpeed *= THREE.MathUtils.lerp(1.0, 0.45, anglePenalty);
-                    }
-
-                    if (r.timeSinceLaunch >= r.homingDelay || r.guidancePhase === "reacquire" || r.guidancePhase === "terminal") {
-                        r.quaternion.rotateTowards(_qTarget, effectiveTurnRate * dt);
-                    } else {
-                        r.quaternion.slerp(_qTarget, THREE.MathUtils.clamp(dt * 6, 0, 0.18));
+                // Kluczenie: kurs celu kołysze się (dwie harmoniczne — bez metronomu), gaśnie przed
+                // fazą końcową, żeby nie psuć trafień.
+                if (r.weaveRad > 0 && r.guidancePhase === "intercept") {
+                    const fade = THREE.MathUtils.clamp((dist2D - terminalRadius * 1.25) / (terminalRadius * 1.5), 0, 1);
+                    if (fade > 0) {
+                        const ph = TAU * r.weaveHz * t;
+                        desAz += r.weaveRad * fade * (Math.sin(r.weavePhase + ph) + 0.5 * Math.sin(r.weavePhase2 + ph * 1.73)) * 0.667;
                     }
                 }
 
+                // Pułap: nachylenie z błędu wysokości na odcinku wyprzedzenia (niezależnie od odległości
+                // celu — daleki cel nie zostawia rakiety w górze); nurkowanie przed celem tak, żeby
+                // zejść na płaszczyznę gry na granicy zapalnika.
+                const look = dive
+                    ? Math.max(40, dist2D - fuseRadius * 0.5)
+                    : Math.max(160, planarSpeed * 0.4);
+                desEl = Math.atan(THREE.MathUtils.clamp((targetY - r.position.y) / look, -1.2, 0.9));
+
+                if (r.guidancePhase === "reacquire" || r.guidancePhase === "terminal") {
+                    const angleError = Math.abs(wrapPi(aimAz - r.noseAz));
+                    const anglePenalty = THREE.MathUtils.clamp(angleError / Math.PI, 0, 1);
+                    guidanceDesiredSpeed *= THREE.MathUtils.lerp(1.0, 0.45, anglePenalty);
+                }
+
+                azRate = effectiveTurnRate;
+                elRate = Math.max(effectiveTurnRate, r.launchTurnRateRad);
+                steer = true;
                 r.lastTargetDist = dist2D;
+            } else if (!steer) {
+                // Bez celu (zginął w locie albo brak namiaru): wyrównanie na wysokości przelotu, kurs bez zmian.
+                desAz = r.noseAz;
+                desEl = Math.atan(THREE.MathUtils.clamp((r.cruiseAltitude - r.position.y) / Math.max(160, speedNow * 0.4), -0.9, 0.9));
+                elRate = r.launchTurnRateRad;
+                steer = true;
+            }
+
+            if (steer) {
+                // Kurs: przy nosie w pionie zmiana az prawie nie rusza nosem — limit rośnie jak 1/cos(el).
+                const errAz = wrapPi(desAz - r.noseAz);
+                const azStep = azRate * dt / Math.max(0.2, Math.cos(r.nosePitch));
+                r.noseAz = wrapPi(r.noseAz + clampN(errAz, -azStep, azStep));
+                const elStep = elRate * dt;
+                r.nosePitch += clampN(desEl - r.nosePitch, -elStep, elStep);
             }
 
             /* ── Physics ── */
-            _forward.set(0, 1, 0).applyQuaternion(r.quaternion).normalize();
+            const ce = Math.cos(r.nosePitch);
+            _forward.set(ce * Math.cos(r.noseAz), Math.sin(r.nosePitch), ce * Math.sin(r.noseAz));
 
             if (r.state === "POWERED") {
-                // Kinematic flight: velocity follows the nose. The quaternion above is
+                // Kinematic flight: velocity follows the nose. The nose above is
                 // turn-rate-capped, so weaponDef.turnRate governs the actual flight path,
                 // not just the visual heading. Free-force integration couldn't turn the
                 // velocity vector (lateral authority = thrust/mass ≈ 175 u/s² at cruise
                 // throttle → 18 500u turn radius at 1800 u/s vs ~65u fuse), so missiles
                 // sailed past targets. Speed tracks guidanceDesiredSpeed with a real
                 // decel limit, making terminal/reacquire speed factors actually brake.
-                const speed = r.velocity.length();
                 const desiredSpeed = Math.max(220, guidanceDesiredSpeed);
-                const accelLimit = r.maxThrust / r.mass;
-                const newSpeed = speed < desiredSpeed
-                    ? Math.min(desiredSpeed, speed + accelLimit * dt)
-                    : Math.max(desiredSpeed, speed - accelLimit * 0.8 * dt);
+                const accelLimit = r.accel;
+                const newSpeed = speedNow < desiredSpeed
+                    ? Math.min(desiredSpeed, speedNow + accelLimit * dt)
+                    : Math.max(desiredSpeed, speedNow - accelLimit * 0.8 * dt);
                 r.velocity.copy(_forward).multiplyScalar(newSpeed);
                 // currentThrust only drives exhaust VFX intensity now.
-                const throttleNorm = THREE.MathUtils.clamp(((desiredSpeed - speed) / desiredSpeed) * 1.4 + 0.25, 0.12, 1.0);
+                const throttleNorm = THREE.MathUtils.clamp(((desiredSpeed - speedNow) / desiredSpeed) * 1.4 + 0.25, 0.12, 1.0);
                 r.currentThrust = r.maxThrust * throttleNorm;
+                r.position.addScaledVector(r.velocity, dt);
             } else {
-                // EJECTED: ballistic cold-launch arc (gravity + drag), motor not lit.
-                const weight = r.mass * PHYSICS.gravity;
-                _force.set(0, -weight, 0);
-                const speedSq = r.velocity.lengthSq();
-                if (speedSq > 1) {
-                    _drag.copy(r.velocity).normalize().negate();
-                    _force.addScaledVector(_drag, speedSq * PHYSICS.airDrag);
-                }
-                r.velocity.addScaledVector(_force.divideScalar(r.mass), dt);
+                // EJECTED: zimny wyrzut bez silnika — prędkość gaśnie wykładniczo (zawis nad komorą),
+                // droga liczona analitycznie (bez zależności od kroku klatki).
+                const k = r.popDrag;
+                const e = Math.exp(-k * dt);
+                const f = (1 - e) / k;
+                r.position.x += r.velocity.x * f;
+                r.position.y += r.velocity.y * f;
+                r.position.z += r.velocity.z * f;
+                r.velocity.multiplyScalar(e);
             }
+            // Kwaternion nosa (zgodność: odczyt w efektach i konsoli).
+            r.quaternion.setFromUnitVectors(_BASE_FWD, _forward);
 
-            r.position.addScaledVector(r.velocity, dt);
             // Układ rakiety: pierwszy update dosuwa pozę z kroku fizyki (bornSim)
             // do czasu tej klatki — potem SimClock.render rośnie o to samo dt.
             const frameDt = r.frameSynced ? dt : (SimClock.render - r.bornSim);
@@ -610,19 +1020,12 @@ class RocketSystem3D {
             // prevTravelPos still holds the pre-step position; the fuse check below
             // sweeps the full segment traveled this frame. Synced after hit detection.
 
-            if (r.position.y > R.maxAltitude) {
-                r.position.y = R.maxAltitude;
-                if (r.velocity.y > 0) r.velocity.y *= 0.2;
-            }
+            // Wysokość to obraz: płaszczyzna gry jest podłogą, pułap — sufitem.
+            if (r.position.y < 0) r.position.y = 0;
+            else if (r.position.y > R.maxAltitude) r.position.y = R.maxAltitude;
 
-            /* ── Kierunek kadłubka (wygląd: kurs w płaszczyźnie gry) ── */
-            _renderDir.copy(_forward);
-            if (_renderDir.lengthSq() < 1e-6) {
-                _renderDir.copy(r.visualDir);
-            } else {
-                _renderDir.normalize();
-                r.visualDir.copy(_renderDir);
-            }
+            /* ── Kurs nosa w płaszczyźnie (wygląd: kadłubek, płomień, dym; wzniesienie w nosePitch) ── */
+            r.visualDir.set(Math.cos(r.noseAz), 0, Math.sin(r.noseAz));
 
             /* ── Wygląd lotu: smuga porcji gazu wzdłuż odcinka dyszy (src/3d/rockets/) ── */
             if (fx) fx.onFly(r, dt);
@@ -630,9 +1033,9 @@ class RocketSystem3D {
             const traveled = r.travelDistance;
 
             /* ── Hit detection (swept: closest approach over this frame's segment) ── */
-            if (r.target && !r.target.dead) {
-                const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
-                const ty = Number(r.target.y ?? r.target.pos?.y) || 0;
+            if (live && !target.dead) {
+                const tx = Number(target.x ?? target.pos?.x) || 0;
+                const ty = Number(target.y ?? target.pos?.y) || 0;
                 // Endpoint-only distance tunnels through the fuse sphere at high speed
                 // (supernova at 30 fps steps 120u/frame against a 98u fuse).
                 const x1 = r.prevTravelPos.x, z1 = r.prevTravelPos.z;
@@ -645,20 +1048,20 @@ class RocketSystem3D {
                 const cz = z1 + segZ * tSeg;
                 const dx = tx - cx;
                 const dz = ty - cz;
-                const dist2D = Math.sqrt(dx * dx + dz * dz);
-                const isPointTarget = !!r.target._isPositionTarget;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                const isPointTarget = !!target._isPositionTarget;
                 const targetRadius = isPointTarget ? 0 : Math.max(
-                    Number(r.target.radius) || 0,
-                    (Number(r.target.w) || 0) * 0.5,
-                    (Number(r.target.h) || 0) * 0.5
+                    Number(target.radius) || 0,
+                    (Number(target.w) || 0) * 0.5,
+                    (Number(target.h) || 0) * 0.5
                 );
                 const fuseRadius = Math.max((r.hitRadius || R.hitRadius), targetRadius * 0.9);
                 const minArmTime = isPointTarget ? 0.7 : 0.18;
                 const minArmDistance = isPointTarget
                     ? Math.max(320, fuseRadius * 4.0)
                     : Math.max(90, fuseRadius * 1.1);
-                const isArmed = (r.timeSinceLaunch >= minArmTime) && (traveled >= minArmDistance);
-                const shouldDetonate = isArmed && dist2D <= fuseRadius;
+                const isArmed = (t >= minArmTime) && (traveled >= minArmDistance);
+                const shouldDetonate = isArmed && dist <= fuseRadius;
                 if (shouldDetonate) {
                     // Detonate at the closest-approach point, not wherever the step ended.
                     r.position.x = cx;
@@ -673,13 +1076,6 @@ class RocketSystem3D {
             }
             r.prevTravelPos.copy(r.position);
 
-            /* ── Ground / range expiry ── */
-            if (r.position.y <= 0 && r.velocity.y < 0 && r.timeSinceLaunch > 0.5) {
-                // Ground contact should not kill the rocket early; range or target hit is the source of truth.
-                r.position.y = 0.5;
-                r.velocity.y = Math.abs(r.velocity.y) * 0.25;
-            }
-
             if (traveled >= (r.maxRange || 0)) {
                 this._explode(r);
             }
@@ -688,6 +1084,49 @@ class RocketSystem3D {
         // Wygląd: zegar reżysera efektów (dym jedzie z rakietą co do kroku), sekwencje
         // Supernowej, płonące odłamki, przypalenia.
         if (fx) fx.update(dt);
+    }
+
+    /* ─────────────────── SPLIT (Hydra) ─────────────────── */
+
+    /**
+     * Nosiciel głowicy kasetowej pęka: rakiety potomne (wachlarz ±dispersal wokół kursu nosiciela,
+     * jego wysokość i ruch, ten sam cel i układ) — nosiciel znika bez obrażeń.
+     */
+    _split(r, frameNo) {
+        const sub = r.subDef;
+        const n = r.splitCount;
+        if (this.effects && typeof this.effects.onSplit === "function") this.effects.onSplit(r);
+        const x = r.position.x;
+        const z = r.position.z;
+        const L = _launch;
+        L.mode = LAUNCH_SPLIT;
+        L.count = n;
+        L.seed = seedHash(r.seed, 9001 + r.salvoIndex);
+        L.azimuth = Math.atan2(r.visualDir.z, r.visualDir.x);
+        L.shooter = null;
+        L.y = r.position.y;
+        L.vx = r.velocity.x;
+        L.vy = r.velocity.y;
+        L.vz = r.velocity.z;
+        const target = r.target;
+        const damage = r.damage;
+        const theme = r.hostile ? "red" : "blue";
+        const fvx = r.frameVel.x;
+        const fvz = r.frameVel.z;
+        // Nosiciel znika przed potomnymi (zwalnia slot, liczniki bez obrażeń).
+        this._deactivate(r);
+        for (let k = 0; k < n; k++) {
+            L.index = k;
+            const c = this.fire(x, z, target, damage, sub, theme, fvx, fvz, L);
+            if (c) c.bornFrame = frameNo;
+        }
+    }
+
+    _deactivate(r) {
+        if (r.active) this.activeRockets = Math.max(0, this.activeRockets - 1);
+        r.active = false;
+        r.target = null;
+        r.shooter = null;
     }
 
     /* ─────────────────── DAMAGE ─────────────────── */
@@ -803,12 +1242,15 @@ class RocketSystem3D {
         r.hitShield = false;
         const hitEntity = r.didImpactDamage && r.target && !r.target._isPositionTarget ? r.target : null;
         if (this.effects) this.effects.onDetonate(r, ex, ez, hitEntity, hitShield);
+        r.target = null;
+        r.shooter = null;
     }
 
     /* ─────────────────── DISPOSE ─────────────────── */
 
     dispose() {
         instance = null;
+        for (let i = this._qN - 1; i >= 0; i--) this._qRemove(i);
         if (typeof window !== "undefined" && window.rocketSystem3D === this) window.rocketSystem3D = null;
     }
 }

@@ -350,6 +350,73 @@ export class MeshBuilder3D {
     return this;
   }
 
+  /**
+   * Wielokąt z dziurami (earcut) na wysokości z (albo zOf(x, y)); up — normalna +Z. Normalna
+   * wspólna dla płata (Newell konturu zewnętrznego) — pochyłe dno kila z profilem wysokości.
+   */
+  polyHoles(outer, holes, z, mat, up = true, zOf = null) {
+    if (!holes || !holes.length) return this.poly(outer, z, mat, up, zOf);
+    const dedupe = (ring) => {
+      const r = ring.filter((p, i) => { const q = ring[(i + ring.length - 1) % ring.length]; return Math.hypot(p[0] - q[0], p[1] - q[1]) > 1e-9; });
+      return r;
+    };
+    const O = dedupe(outer);
+    const Hs = holes.map(dedupe).filter((h) => h.length >= 3);
+    const tris = ShapeUtils.triangulateShape(O.map(([x, y]) => new Vector2(x, y)), Hs.map((h) => h.map(([x, y]) => new Vector2(x, y))));
+    const all = O.concat(...Hs);
+    const P = all.map(([x, y]) => this.tp([x, y, zOf ? zOf(x, y) : z]));
+    const hint = this.tn([0, 0, up ? 1 : -1]);
+    let nx = 0; let ny = 0; let nz = 0;
+    for (let i = 0, n = O.length; i < n; i++) {
+      const a = P[i];
+      const b = P[(i + 1) % n];
+      nx += (a[1] - b[1]) * (a[2] + b[2]);
+      ny += (a[2] - b[2]) * (a[0] + b[0]);
+      nz += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    let N = v3.norm([nx, ny, nz]);
+    if (v3.dot(N, hint) < 0) N = v3.mul(N, -1);
+    const base = this.vcount();
+    for (const p of P) this._v(p, N, mat);
+    for (const t of tris) {
+      const a = P[t[0]]; const b = P[t[1]]; const c = P[t[2]];
+      const tn = v3.cross(v3.sub(b, a), v3.sub(c, a));
+      if (v3.dot(tn, N) < 0) this.idx.push(base + t[0], base + t[2], base + t[1]);
+      else this.idx.push(base + t[0], base + t[1], base + t[2]);
+    }
+    return this;
+  }
+
+  /**
+   * Płyta z dziurami: ściany konturu zewnętrznego i dziur (ścianami do środka dziury) z0 → z1,
+   * faza górna (o.bevel: [wysokość, odsunięcie] — dziury rosną, dach maleje), dach z dziurami.
+   * o.zOf0 / o.zOf1 — dół / góra pochyłe (funkcje x, y); o.wallMat, o.bevelMat, o.capMat;
+   * o.bottom — dno (o.bottomMat). Zamknięta bryła (z dnem albo domknięta kilem).
+   */
+  slab(outer, holes, z0, z1, o = {}) {
+    const P = ensureCCW(outer);
+    const Hs = (holes || []).map((h) => ensureCCW(h));
+    const mat = o.mat ?? SHIP3D_MAT.PAINT;
+    const wallMat = o.wallMat ?? mat;
+    const bevelMat = o.bevelMat ?? wallMat;
+    const capMat = o.capMat ?? mat;
+    const bev = o.bevel ? (Array.isArray(o.bevel) ? o.bevel : [o.bevel, o.bevel]) : null;
+    const top = (dz) => (x, y) => (o.zOf1 ? o.zOf1(x, y) : z1) - dz;
+    const bot = (x, y) => (o.zOf0 ? o.zOf0(x, y) : z0);
+    const zB = bev ? bev[0] : 0;
+    const capOuter = bev ? offsetPolygon(P, bev[1]) : P;
+    const capHoles = bev ? Hs.map((h) => offsetPolygon(h, -bev[1])) : Hs;
+    this.walls(P, 0, P, 0, wallMat, { zOf0: bot, zOf1: top(zB) });
+    Hs.forEach((h) => this.walls(h, 0, h, 0, wallMat, { zOf0: bot, zOf1: top(zB), flip: true }));
+    if (bev) {
+      this.walls(P, 0, capOuter, 0, bevelMat, { zOf0: top(zB), zOf1: top(0) });
+      Hs.forEach((h, i) => this.walls(h, 0, capHoles[i], 0, bevelMat, { zOf0: top(zB), zOf1: top(0), flip: true }));
+    }
+    this.polyHoles(capOuter, capHoles, 0, capMat, true, top(0));
+    if (o.bottom) this.polyHoles(P, Hs, 0, o.bottomMat ?? wallMat, false, bot);
+    return { poly: P, holes: Hs, top: capOuter, topHoles: capHoles };
+  }
+
   /** Czworokąt / trójkąt z normalnymi wierzchołków (lokalne); kolejność z normalnej średniej. */
   quadSmooth(p, nrm, mat) {
     const W = p.map((q) => this.tp(q));
@@ -378,13 +445,14 @@ export class MeshBuilder3D {
   /**
    * Ściany między pierścieniami (lower na z0 / zOf0, upper na z1 / zOf1), ta sama liczba
    * punktów. Zwraca listę ścian { a, b, c, d, edge } w układzie lokalnym (do detali).
+   * o.flip — ściany do WNĘTRZA pierścienia (dziura w płycie).
    */
   walls(lower, z0, upper, z1, mat, o = {}) {
     const n = lower.length;
     const faces = [];
     const zl = (p) => (o.zOf0 ? o.zOf0(p[0], p[1]) : z0);
     const zu = (p) => (o.zOf1 ? o.zOf1(p[0], p[1]) : z1);
-    const ccw = polyArea(lower) >= 0;
+    const ccw = (polyArea(lower) >= 0) !== !!o.flip;
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
       const a = [lower[i][0], lower[i][1], zl(lower[i])];

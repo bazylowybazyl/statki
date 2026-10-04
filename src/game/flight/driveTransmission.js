@@ -1,4 +1,17 @@
 // Player drive modes and travel transmission. Gameplay stays in the 2D flight loop.
+//
+// JEDNA TABELA LOTU (decyzja użytkownika 2026-10-01): kadłub gracza z wpisem w SHIP_FLIGHT_SPECS
+// (src/data/shipFlightSpecs.js) lata w trybie bojowym DOKŁADNIE liczbami tej tabeli — tymi samymi co NPC:
+// limit prędkości, przyspieszenie, hamowanie, strafe, prędkość i przyspieszenie obrotu. Fizyka gracza
+// dalej idzie przez dysze (thrusterModel.js), więc mnożniki ciągu bocznego i momentu KALIBRUJE się
+// do tabeli na prawdziwym układzie dysz kadłuba (`calibrateDriveToShip`, sonda z headingControl.js).
+// Dawne mnożniki klas (HULL_DRIVE_PROFILES: fregata 4800 j/s, Atlas 10 000 j/s) zostają tylko dla
+// kadłubów bez wpisu (megafrachtowiec) i trybu podróżnego. Tryb manewrowy = ułamek limitu bojowego
+// z mocniejszymi dyszami bocznymi (dokowanie).
+
+import { SHIP_PHYSICS } from './thrusterModel.js';
+import { resolveShipTurnCapability, thrusterGeometrySignature } from './headingControl.js';
+import { playerFlightSpec } from '../../data/shipFlightSpecs.js';
 
 const freezeGears = (values) => Object.freeze(values.map((maxSpeed, index) => Object.freeze({
   maxSpeed,
@@ -52,15 +65,15 @@ const DEFAULT_HULL_DRIVE_CONFIG = Object.freeze({
 });
 
 // Tryby napędu są wyposażeniem kadłuba, a nie globalną cechą wszystkich
-// statków. Atlas zachowuje klasyczny napęd bojowy sprzed skrzyni (około 10k),
-// natomiast Bertha — w danych gry nadal nazywana megafreighterem — używa
-// napędu podróżnego jako podstawowego i nie ma napędu bojowego.
+// statków. Atlas ma napęd bojowy i manewrowy (liczby z tabeli lotu — do 2026-10-01
+// miał własny limit 10 000 j/s), natomiast Bertha — w danych gry nadal nazywana
+// megafreighterem — używa napędu podróżnego jako podstawowego i nie ma napędu bojowego.
 export const HULL_DRIVE_CONFIGS = Object.freeze({
   atlas: Object.freeze({
     defaultMode: 'combat',
     availableModes: Object.freeze(['combat', 'maneuver']),
     defaultAuto: false,
-    maxSpeed: Object.freeze({ combat: 10000 })
+    maxSpeed: Object.freeze({})
   }),
   megafreighter: Object.freeze({
     defaultMode: 'travel',
@@ -140,6 +153,26 @@ export const HULL_DRIVE_PROFILES = Object.freeze({
 });
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+const DEG = Math.PI / 180;
+
+// --- tabela lotu (kadłuby z wpisem w SHIP_FLIGHT_SPECS) ---
+// Ciąg główny rośnie z obrotami rdzenia (spool 0,46–1,15): tabelowe przyspieszenie przypada
+// na ten poziom obrotów, pełne obroty dają niewielki zapas.
+const SPEC_SPOOL_REF = 0.95;
+// Tryb manewrowy względem bojowego.
+const SPEC_MANEUVER = Object.freeze({ speed: 0.5, minSpeed: 120, accel: 0.8, side: 1.6, turnAccel: 1.35, turnRate: 1.2 });
+// Hamowanie napędu po przekroczeniu limitu (zmiana trybu) względem tabelowego.
+const SPEC_GOVERNOR_DECEL = 2;
+
+function specSpeedLimit(spec, modeId) {
+  return modeId === 'maneuver'
+    ? Math.max(SPEC_MANEUVER.minSpeed, spec.maxSpeed * SPEC_MANEUVER.speed)
+    : spec.maxSpeed;
+}
+
+function usesFlightSpec(state, modeId) {
+  return !!state.flightSpec && (modeId === 'combat' || modeId === 'maneuver');
+}
 
 const RPM_LOAD_LEAD = Object.freeze({
   combat: 0.36,
@@ -167,7 +200,7 @@ function updateMainForceScale(state) {
   // Ciąg jest celowo słabszy zanim rdzeń napędu wejdzie na obroty. Przy
   // pełnym RPM dostępny jest niewielki zapas ponad nominalną moc silnika.
   state.spoolForceMultiplier = 0.46 + smoothstep01(state.rpm) * 0.69;
-  state.mainForceScale = state.baseMainForceScale * state.spoolForceMultiplier;
+  state.mainForceScale = state.baseMainForceScale * state.spoolForceMultiplier * (Number(state.stanceThrust) || 1);
 }
 
 function updateShiftCue(state) {
@@ -216,11 +249,16 @@ function syncHullDriveConfig(state) {
   state.availableModes = config.availableModes;
   state.defaultMode = config.defaultMode;
   state.defaultAuto = config.defaultAuto;
+  // Tabela lotu tylko dla kadłubów z napędem bojowym (megafrachtowiec lata skrzynią podróżną).
+  const spec = config.availableModes.includes('combat') ? playerFlightSpec(state.hullId) : null;
+  if ((state.flightSpec?.id || null) !== (spec?.id || null)) state.calib = null;
+  state.flightSpec = spec;
   state.modeMaxSpeeds = state.modeMaxSpeeds || {};
   for (const modeId of DRIVE_MODE_ORDER) {
     const mode = DRIVE_MODES[modeId];
-    state.modeMaxSpeeds[modeId] = mode.gears.at(-1).maxSpeed
-      * getConfiguredModeSpeedScale(state.hullId, state.hullClass, modeId);
+    state.modeMaxSpeeds[modeId] = usesFlightSpec(state, modeId)
+      ? specSpeedLimit(spec, modeId)
+      : mode.gears.at(-1).maxSpeed * getConfiguredModeSpeedScale(state.hullId, state.hullClass, modeId);
   }
   return config;
 }
@@ -277,6 +315,9 @@ function syncDerivedState(state, speed = 0) {
 
   state.gear = gearIndex + 1;
   state.gearCount = mode.gears.length;
+  if (usesFlightSpec(state, mode.id)) return syncSpecDerivedState(state, mode, hullProfile, speed);
+  state.brakeAccel = 0;
+  state.brakeTurnAccel = 0;
   state.speedLimit = gearMaxSpeed;
   state.modeMaxSpeed = mode.gears[mode.gears.length - 1].maxSpeed * speedScale;
   state.speedRpm = clamp(((Number(speed) || 0) - rpmFloor) / rpmSpan, 0, 1);
@@ -294,6 +335,64 @@ function syncDerivedState(state, speed = 0) {
   state.linearFriction = 1 - ((1 - mode.linearFriction) * hullProfile.dragScale);
   state.governorDeceleration = mode.governorDeceleration * hullProfile.governorScale;
   return state;
+}
+
+// Tryb bojowy / manewrowy kadłuba z tabeli lotu: limit, ciąg, hamowanie i obrót z SHIP_FLIGHT_SPECS.
+// Mnożniki dysz bocznych i momentu pochodzą z kalibracji na układzie dysz (calibrateDriveToShip);
+// przed nią — dawne mnożniki klasy (okręt jeszcze bez sprite'a i dysz).
+function syncSpecDerivedState(state, mode, hullProfile, speed) {
+  const spec = state.flightSpec;
+  const man = mode.id === 'maneuver';
+  const limit = specSpeedLimit(spec, mode.id);
+  state.speedLimit = limit;
+  state.modeMaxSpeed = limit;
+  state.speedRpm = clamp((Number(speed) || 0) / Math.max(1, limit), 0, 1);
+  state.rpmTarget = clamp(state.speedRpm + state.throttle * (RPM_LOAD_LEAD[mode.id] || 0.3), 0, 1);
+  state.engineColorTempK = mode.gears[0].colorTempK;
+  const accel = spec.accel * (man ? SPEC_MANEUVER.accel : 1);
+  state.baseMainForceScale = accel / (Math.max(1, SHIP_PHYSICS.SPEED) * SPEC_SPOOL_REF);
+  updateMainForceScale(state);
+  const calib = state.calib;
+  const side = calib ? calib.sideForceScale : mode.sideForceScale * hullProfile.sideForceScale;
+  const turn = calib ? calib.turnAccelerationScale : mode.turnAccelerationScale * hullProfile.turnAccelerationScale;
+  state.sideForceScale = side * (calib && man ? SPEC_MANEUVER.side : 1);
+  state.turnAccelerationScale = turn * (calib && man ? SPEC_MANEUVER.turnAccel : 1);
+  state.maxTurnSpeedScale = (spec.turnRate * DEG / Math.max(0.05, SHIP_PHYSICS.MAX_TURN_SPEED))
+    * (man ? SPEC_MANEUVER.turnRate : 1);
+  state.linearFriction = 1 - ((1 - mode.linearFriction) * hullProfile.dragScale);
+  state.governorDeceleration = spec.decel * SPEC_GOVERNOR_DECEL;
+  // Hamulec (S, tłumik, autopilot): tabelowe hamowanie zamiast dawnych tysięcy j/s²; obrót gaśnie
+  // z tabelowym przyspieszeniem kątowym (physicsStep w index.html).
+  state.brakeAccel = spec.decel;
+  state.brakeTurnAccel = spec.turnAccel * DEG * 1.5;
+  return state;
+}
+
+function calibrationKey(state, ship) {
+  return `${state.hullId}|${state.flightSpec.id}|${thrusterGeometrySignature(ship)}|${SHIP_PHYSICS.SPEED}`;
+}
+
+/**
+ * Kalibruje mnożniki dysz do tabeli lotu na PRAWDZIWYM układzie dysz statku: ciąg boczny tak, by strafe
+ * dawał spec.strafeAccel, moment tak, by obrót miał spec.turnAccel (dyszami bocznymi, a kadłub bez nich —
+ * odchyleniem głównych, jak wybiera resolveShipTurnCapability). Tania: liczy tylko po zmianie kadłuba
+ * albo układu dysz (klucz). Zwraca true, gdy przeliczyła.
+ */
+export function calibrateDriveToShip(state, ship, speed = 0) {
+  const spec = state?.flightSpec;
+  if (!spec || !ship?.visual) return false;
+  const key = calibrationKey(state, ship);
+  if (state.calib && state.calib.key === key) return false;
+  const probeDrive = { sideForceScale: 1, mainForceScale: 1, shiftBoostMultiplier: 1, turnAccelerationScale: 1, maxTurnSpeedScale: 1 };
+  const raw = resolveShipTurnCapability(ship, probeDrive, { mainAssist: 'auto' }, {});
+  const side = raw.strafeAccel > 1 ? clamp(spec.strafeAccel / raw.strafeAccel, 0.02, 12) : 1;
+  probeDrive.sideForceScale = side;
+  probeDrive.mainForceScale = spec.accel / Math.max(1, SHIP_PHYSICS.SPEED);
+  const cap = resolveShipTurnCapability(ship, probeDrive, { mainAssist: 'auto' }, {});
+  const turn = cap.accel > 1e-6 ? clamp((spec.turnAccel * DEG) / cap.accel, 0.01, 80) : 1;
+  state.calib = { key, sideForceScale: side, turnAccelerationScale: turn };
+  syncDerivedState(state, speed);
+  return true;
 }
 
 export function createDriveTransmission(options = {}) {
@@ -334,7 +433,20 @@ export function createDriveTransmission(options = {}) {
     lastShiftQuality: 'none',
     shiftSerial: 0,
     shiftCueIntensity: 0,
-    shiftCueDanger: 0
+    shiftCueDanger: 0,
+    // Tabela lotu kadłuba (albo null), kalibracja dysz do niej, hamulec z tabeli.
+    flightSpec: null,
+    calib: null,
+    brakeAccel: 0,
+    brakeTurnAccel: 0,
+    // Zryw (system okrętu F, src/game/flight/ramBurn.js): limit prędkości na czas zrywu
+    // i hamowanie napędu przy powrocie do limitu trybu.
+    burnLimit: 0,
+    burnBrake: 0,
+    // Postawa okrętu (src/game/shipModes.js — TARCZE / PRZELOT): mnożnik limitu prędkości regulatora
+    // i ciągu głównego. 1 = bojowy.
+    stanceLimit: 1,
+    stanceThrust: 1
   };
   syncHullDriveConfig(state);
   if (mode === 'travel') state.gear = selectTravelGearForSpeed(options.speed, state.hullClass, state.hullId);
@@ -481,11 +593,13 @@ export function applyDriveSpeedGovernor(state, velocity, dt) {
   const vx = Number(velocity.x) || 0;
   const vy = Number(velocity.y) || 0;
   const speed = Math.hypot(vx, vy);
-  const limit = Math.max(1, Number(state.speedLimit) || 1);
+  // Zryw podnosi limit; po nim napęd wraca do limitu trybu hamowaniem zrywu (burnBrake).
+  const limit = Math.max(1, (Number(state.speedLimit) || 1) * (Number(state.stanceLimit) || 1), Number(state.burnLimit) || 0);
   if (speed <= limit || speed <= 1e-6) return speed;
 
   const overshoot = speed - limit;
-  const maxReduction = Math.max(0, Number(state.governorDeceleration) || 0) * clamp(dt, 0, 0.12);
+  const decel = Math.max(Number(state.governorDeceleration) || 0, Number(state.burnBrake) || 0);
+  const maxReduction = Math.max(0, decel) * clamp(dt, 0, 0.12);
   const nextSpeed = Math.max(limit, speed - Math.min(overshoot, maxReduction));
   const scale = nextSpeed / speed;
   velocity.x = vx * scale;

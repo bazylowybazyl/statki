@@ -54,6 +54,9 @@ import {
   exp, sin, cos, sqrt, min, max, dot, length, normalize, positionGeometry,
   cameraProjectionMatrix, cameraViewMatrix, varyingProperty, mx_noise_float
 } from 'three/tsl';
+import { rulonForward, RULON } from './rulon.js';
+
+const RULON_BOX = 1.4;
 
 export const MEDIUM_CAP = 1 << 21;
 export const BUBBLE_CAP = 16;
@@ -82,7 +85,18 @@ export const MEDIUM_DEFAULTS = Object.freeze({
   widthPx: 1.05,          // pół-szerokość smugi [px]
   maxLenPx: 520,
   normPx: 26,             // długość, powyżej której smuga ciemnieje (energia rozłożona)
-  shutter: 1 / 60
+  shutter: 1 / 60,
+  // Lejek rulonu (rulon.js) — ośrodek w zawiniętej rzeczywistości:
+  spray: 3.0,             // rozprysk za kieszenią: rozciągnięcie w bok (× odległość od osi)
+  sprayOff: 25,          // rozsunięcie od osi [× rc kieszeni] — lejek i tak trzyma ośrodek w swoich ścianach
+  sprayLen: 0.7,          // długość narastania rozprysku za kieszenią [× Wa]
+  sprayGain: 2.0,         // rozjaśnienie rozpryśniętego warkocza (rozlany na lejek rzednie)
+  capGain: 0.3,           // kopuła (arkusz światła na obrysie kieszeni): jasność
+  capShare: 0.22,         // udział drobin, które świecą w arkuszu
+  capW: 0.95,             // pół-szerokość kopuły [× rc kieszeni]
+  capL: 1.0,              // wysokość łuku przed środkiem bańki [× ra kieszeni]
+  capWid: 0.07,           // grubość arkusza [× promień]
+  capTail: 0.55           // ściany kopuły do talii [× ra za środkiem bańki]
 });
 
 export class WarpMedium {
@@ -124,6 +138,16 @@ export class WarpMedium {
       tagRate: uniform(this.cfg.tagRate),
       bandW: uniform(this.cfg.bandW),
       bandSpeed: uniform(this.cfg.bandSpeed),
+      capGain: uniform(this.cfg.capGain),
+      capShare: uniform(this.cfg.capShare),
+      capW: uniform(this.cfg.capW),
+      capL: uniform(this.cfg.capL),
+      capWid: uniform(this.cfg.capWid),
+      capTail: uniform(this.cfg.capTail),
+      sprayGain: uniform(this.cfg.sprayGain),
+      spray: uniform(this.cfg.spray),
+      sprayOff: uniform(this.cfg.sprayOff),
+      sprayLen: uniform(this.cfg.sprayLen),
       cloudOrigin: uniform(new THREE.Vector2()),
       cloudScale: uniform(this.cfg.cloudScale),
       cloudBase: uniform(this.cfg.cloudBase),
@@ -444,6 +468,61 @@ export class WarpMedium {
     })().compute(MEDIUM_CAP).setName('medStep');
   }
 
+  /**
+   * ROZPRYSK za kieszenią rulonu (płaski punkt [px, y w górę, od środka kadru]):
+   * kieszeń zostawia płaski pas |s| < rc wzdłuż całej osi, więc warkocz (w świecie
+   * szeroki na 1–2 R) zostawał wąską kolumną, choć lejek za statkiem się otwiera.
+   * Za kieszenią odległość od osi rośnie × (1 + spray), rulon i tak zawija
+   * nieskończoność w bok na ścianę lejka — ośrodek „wypluwany” rozchodzi się
+   * do ścian lejka, nie dalej. Przed kieszenią i w niej — bez zmian.
+   * Rozsunięcie od osi: dwie płachty „V” od tylnych narożników kieszeni, wzdłuż
+   * ścian lejka. Strona osi (`side`) z GŁOWY smugi dla obu końców — smuga
+   * przecinająca oś rozciągałaby się inaczej w poprzek całego lejka.
+   * Zwraca vec3(punkt, waga rozprysku g).
+   */
+  _sprayAt(p) {
+    const h = RULON.h;
+    const a = dot(p, h).sub(RULON.ac);
+    const t = clamp(a.negate().sub(RULON.ra.mul(0.6)).div(RULON.ra.mul(0.4).add(RULON.Wa.mul(this.U.sprayLen))), 0.0, 1.0);
+    // field³: przy rozwijaniu rulonu (wyjście, 0,3 s) lejek przestaje trzymać ośrodek
+    // w ścianach — rozprysk musi zgasnąć szybciej, inaczej warkocz rozlewa się poziomo.
+    const f = min(RULON.field, 1.0);
+    return t.mul(t).mul(float(3.0).sub(t.mul(2.0))).mul(f.mul(f).mul(f));
+  }
+
+  _spray(p, side) {
+    const U = this.U;
+    const n = vec2(RULON.h.y.negate(), RULON.h.x);
+    const s = dot(p, n).sub(RULON.sc);
+    const g = this._sprayAt(p);
+    return vec3(p.add(n.mul(s.mul(U.spray).add(side.mul(RULON.rc).mul(U.sprayOff)).mul(g))), g);
+  }
+
+  /**
+   * Arkusz kopuły (płaski punkt [px]): półelipsa kieszeni przed środkiem bańki
+   * (pół-osie capW · rc w bok, capL · ra wzdłuż), dalej proste ściany |s| = capW · rc
+   * do talii (−capTail · ra); grubość capWid (× promień). Udział drobin capShare.
+   */
+  _capSheet(p, seed) {
+    const U = this.U;
+    const h = RULON.h;
+    const a = dot(p, h).sub(RULON.ac);
+    const s = dot(p, vec2(h.y.negate(), h.x)).sub(RULON.sc);
+    const ex = s.div(RULON.rc.mul(U.capW));
+    const ey = max(a, 0.0).div(RULON.ra.mul(U.capL));
+    const r = sqrt(ex.mul(ex).add(ey.mul(ey)));
+    const d = r.sub(1.0).div(U.capWid);
+    const tail = smoothstep(RULON.ra.mul(U.capTail).negate(), RULON.ra.mul(U.capTail).mul(-0.3), a);
+    const sel = select(seed.mul(29.3).fract().lessThan(U.capShare), float(1.0), float(0.0));
+    return exp(d.mul(d).negate()).mul(tail).mul(sel).mul(U.capGain).mul(min(RULON.field, 1.0));
+  }
+
+  /** Strona osi rulonu dla punktu (łagodny znak). */
+  _side(p) {
+    const s = dot(p, vec2(RULON.h.y.negate(), RULON.h.x)).sub(RULON.sc);
+    return s.div(abs(s).add(4.0));
+  }
+
   _buildRender(scene) {
     const U = this.U;
     const pos = this.pos;
@@ -497,8 +576,12 @@ export class WarpMedium {
       const tail = head.sub(sv.mul(min(capLen.div(max(svLen, 1e-3)), 1.0)));
       const c0 = cameraProjectionMatrix.mul(cameraViewMatrix.mul(vec4(head, 1.0))).toVar();
       const c1 = cameraProjectionMatrix.mul(cameraViewMatrix.mul(vec4(tail, 1.0))).toVar();
-      const s0 = c0.xy.div(c0.w).mul(U.viewHalfPx).toVar();
-      const s1 = c1.xy.div(c1.w).mul(U.viewHalfPx).toVar();
+      // Rozprysk w lejku (przed rulonem, na końcach smugi — szerokość smugi bez zmian).
+      const f0 = c0.xy.div(c0.w).mul(U.viewHalfPx).toVar();
+      const side0 = this._side(f0).toVar();
+      const sp0 = this._spray(f0, side0).toVar();
+      const s0 = sp0.xy.toVar();
+      const s1 = this._spray(c1.xy.div(c1.w).mul(U.viewHalfPx), side0).xy.toVar();
       const dS = s1.sub(s0).toVar();
       const L = length(dS).toVar();
       const dir = select(L.greaterThan(0.01), dS.div(max(L, 0.01)), vec2(1.0, 0.0)).toVar();
@@ -510,7 +593,8 @@ export class WarpMedium {
       const streamOn = select(seed.lessThan(U.streamShare), float(1.0), float(0.0)).mul(float(1.0).sub(hazeF)).mul(deep);
       const stream = U.streamGlow.mul(U.warpVis).mul(streamOn).mul(w).mul(smoothstep(4.0, 40.0, L));
       const kindGain = mix(float(1.0), U.hazeGain, hazeF);
-      const I = w.mul(E.mul(U.eGain).mul(kindGain).add(stream)).mul(depthFade).mul(U.bright).mul(vis).mul(jetFade).toVar();
+      const I = w.mul(E.mul(U.eGain).mul(kindGain).add(stream)).mul(depthFade).mul(U.bright).mul(vis).mul(jetFade)
+        .mul(float(1.0).add(U.sprayGain.mul(sp0.z))).toVar();
       const norm = float(1.0).div(sqrt(float(1.0).add(L.div(U.normPx))));
       // Barwa: turkus (ściśnięcie) / pomarańcz (rozrzedzenie) / neutralna,
       // gorąca biel przy świeżym pchnięciu.
@@ -518,7 +602,12 @@ export class WarpMedium {
       const tn = clamp(tag.negate(), 0.0, 1.0);
       const base = mix(mix(U.colNeutral, U.colCyan, tp), U.colAmber, tn);
       const hot = clamp(E.mul(0.3).mul(jetHot), 0.0, 0.6);
-      vCol.assign(mix(base, U.colHot, hot).mul(I.mul(norm)));
+      // KOPUŁA w lejku: arkusz światła na obrysie kieszeni (łuk przed dziobem,
+      // ściany do talii) — drobiny ośrodka przelatujące przez niego świecą turkusem.
+      // Obraz, nie stan symulacji: w locie drobina mija czoło w ~0,02 s i zaraz
+      // wpada do kieszeni (tam zgaszona), więc pas przed czołem w compute jest pusty.
+      const capI = this._capSheet(f0, seed).mul(w.mul(0.6).add(0.4)).mul(depthFade).mul(U.bright).mul(float(1.0).sub(deep)).toVar();
+      vCol.assign(mix(base, U.colHot, hot).mul(I.mul(norm)).add(U.colCyan.mul(capI.mul(norm))));
 
       // Głębsze drobiny cieńsze (perspektywa), bez schodzenia poniżej ~0,7 px;
       // mgiełka ma rozmiar w świecie (skaluje się z zoomem).
@@ -529,12 +618,16 @@ export class WarpMedium {
       const g = positionGeometry.xy;
       const alongPx = g.x.add(0.5).mul(L.add(wpx.mul(2.0))).sub(wpx);
       const side = g.y.mul(2.0).mul(wpx);
-      const pix = s0.add(dir.mul(alongPx)).add(perp.mul(side));
+      // Rulon (rulon.js): kwad smugi kładzie się na walcu zwiniętym od kamery.
+      // Ośrodek płynie lejkiem (udział RULON.medW, domyślnie 1); bańka leży w płaskiej kieszeni rulonu.
+      const rul = rulonForward(s0.add(dir.mul(alongPx)).add(perp.mul(side)), RULON.medW).toVar();
+      const pix = rul.xy;
       vAlong.assign(alongPx);
       vSide.assign(side);
       vLen.assign(L);
       vW.assign(wpx);
-      const on = select(I.mul(norm).greaterThan(0.00035), float(1.0), float(0.0));
+      const on = select(I.add(capI).mul(norm).greaterThan(0.00035), float(1.0), float(0.0));
+      vCol.mulAssign(rul.z);
       return vec4(pix.div(U.viewHalfPx).mul(c0.w), c0.z, c0.w).mul(on);
     })();
 
@@ -565,8 +658,10 @@ export class WarpMedium {
       x: (viewW * 0.5 / focalPx) * (camZ - z) * m,
       y: (viewH * 0.5 / focalPx) * (camZ - z) * m
     });
-    const hn = half(-cfg.nearZ, 1.14);
-    const hd = half(-cfg.deepZ, 1.18);
+    // Zapas pudeł na rulon (rulon.js): zwinięty kadr pokazuje świat aż do
+    // horyzontu walca — bez zapasu brzegi przy horyzoncie byłyby puste.
+    const hn = half(-cfg.nearZ, 1.14 * RULON_BOX);
+    const hd = half(-cfg.deepZ, 1.18 * RULON_BOX);
     this.U.boxNear.value.set(hn.x, hn.y, -cfg.nearZ, 0);
     this.U.boxDeep.value.set(hd.x, hd.y, -cfg.deepZ, -cfg.nearZ);
   }

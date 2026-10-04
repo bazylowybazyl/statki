@@ -3,15 +3,17 @@
 // Statki-proxy z bańki ruchu v2 (docs/PLAN-ruch-v2-w-grze.md § 3.1, zadanie Z4):
 // lekki render kadłubów POZA npcs[] — bez kadłuba belkowego, fizyki i AI.
 //
-//  - Jeden InstancedMesh na teksturę kadłuba (sprite z src/data/trafficHulls.js),
+//  - Jedna siatka (Mesh + InstancedBufferGeometry) na teksturę kadłuba (sprite z src/data/trafficHulls.js),
 //    warstwa 0, pass ortho jak kadłuby (renderOrder 10). Tekstura to TEN SAM obiekt,
 //    co kadłub pełnego NPC z tego obrazka (acquireHullVisualTexture, hexShips3D) —
 //    awans proxy → NPC nie ładuje niczego drugi raz. Pusty rodzaj: visible = false
 //    (zero draw calli), dłużej nieużywany odpina się od sceny (obchód grafu).
 //  - Precyzja float32 (AGENTS.md): początek przy kamerze w mesh.position
 //    (sceneOriginNearCamera, wzór Bridge3D._setOrigin), instancje względem niego
-//    liczone w double, shader `modelViewMatrix * instanceMatrix`.
-//  - Światło jak kadłuby (lustro rdzenia HEX_FRAGMENT_SHADER): poduszkowa normalna,
+//    liczone w double, węzeł modelViewMatrix three (highPrecision).
+//  - Materiał w TSL (shipProxyBatch3D.tsl.js): graf raz na moduł, rodzaj = lekki
+//    ShipProxyNodeMaterial z teksturą w `uniforms.uSprite.value`.
+//  - Światło jak kadłuby (lustro rdzenia hullFragmentNode z hexShips3D.tsl.js): poduszkowa normalna,
 //    słońce z window.SUN (z = 600), strojenie window.__shipLightTune, maska cieni
 //    Core3D (sunVisibility / sunFill), mrok pola i glow niebieskich elementów.
 //    Bez lakieru, świateł statku, żaru i cienia SDF — proxy jest małe i daleko.
@@ -26,17 +28,15 @@
 //   encjeHex.push(...ShipProxyBatch3D.engineEntities);   // → updateHexShips3D
 // Obrazki: setImageResolver((hullId, url) => loadHullSprite(url)?.image) — wspólny
 // cache obrazków z index.html. Klik na proxy: pickAt(x, y) → awans do NPC.
-// Instancja w instanceMatrix: kolumny 0–1 = osie × wymiary sprite'a, kolumna 3 =
-// środek względem początku; kolumnę 2 wierzchołek mnoży przez z = 0, więc niesie
-// (cos, sin) obrotu i krycie — bez osobnych atrybutów i z jedną geometrią.
+// Instancja = 16 liczb w buforze z przeplotem (`kind.buffer`, układ dawnej instanceMatrix):
+// [0..1] oś x × szerokość, [4..5] oś y × wysokość, [8..10] (cos, sin, krycie),
+// [12..13] środek względem początku.
 
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
-import { sunShadowUniforms } from './sunShadowMask.js';
-// AGENT: moduł Z4 poza grą (scripts/proxy-batch) — GLSL; przejdzie na TSL przy integracji (Z13, PLAN §12 p. 1),
-// wtedy parzystość z grafem kadłuba (hexShips3D.tsl.js). Napis maski GLSL wprost z biblioteki poza portem.
-import { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
+import { zbierzZakres } from './zakresyWysylki.js';
+import { PROXY_SHARED, PROXY_INSTANCE_STRIDE, ShipProxyNodeMaterial, createProxyGeometry } from './shipProxyBatch3D.tsl.js';
 import { acquireHullVisualTexture, releaseHullVisualTexture, getHullLightTuning } from './hexShips3D.js';
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
@@ -61,88 +61,8 @@ const ENGINE_MIN_SPEED = 0.5;
 // Warp bańki (DRIVE_MODES) — powyżej przelotu konwencjonalnego dysze na dopalaczu.
 const WARP_BOOST_SPEED = 1200;
 
-const VERTEX_SHADER = `
-uniform vec2 uSunRel;
-uniform float uHasSun;
-varying vec2 vUv;
-varying vec2 vRot;
-varying float vOpacity;
-varying vec3 vLightDir;
-
-void main() {
-  // Tekstury kadłubów mają flipY = false: v = 0 to górny wiersz PNG, a górę
-  // kwadu (lokalne +y) obraca się razem z dziobem w +x.
-  vUv = vec2(uv.x, 1.0 - uv.y);
-  vRot = instanceMatrix[2].xy;
-  vOpacity = instanceMatrix[2].z;
-  // Słońce jak u kadłubów: (słońce − statek, 600) w układzie sceny, oba punkty
-  // względem tego samego początku przy kamerze.
-  vec2 center = instanceMatrix[3].xy;
-  vLightDir = uHasSun > 0.5 ? vec3(uSunRel - center, 600.0) : vec3(0.0, 0.0, 1.0);
-  vec4 local = instanceMatrix * vec4(position.xy, 0.0, 1.0);
-  gl_Position = projectionMatrix * modelViewMatrix * local;
-}
-`;
-
-// Rdzeń HEX_FRAGMENT_SHADER (hexShips3D.js) bez normal mapy, lakieru i świateł
-// statku — zmieniając model światła kadłubów, zmień i ten.
-const FRAGMENT_SHADER = `
-uniform sampler2D uSprite;
-uniform float uDayAmbient;
-uniform float uDayDiffuseMul;
-uniform float uSpecularMul;
-varying vec2 vUv;
-varying vec2 vRot;
-varying float vOpacity;
-varying vec3 vLightDir;
-${SUN_SHADOW_GLSL}
-void main() {
-  vec4 armor = texture2D(uSprite, vUv);
-  float alpha = armor.a * clamp(vOpacity, 0.0, 1.0);
-  if (alpha < 0.01) discard;
-  vec3 color = armor.rgb;
-
-  // Poduszkowa normalna z UV sprite'a, obrócona z kadłubem. Clamp: MSAA
-  // ekstrapoluje varyingi poza trójkąt.
-  vec2 p = clamp(vUv, 0.0, 1.0) * 2.0 - 1.0;
-  vec3 localNormal = normalize(vec3(p.x * 0.45, -p.y * 0.45, 1.0));
-  float c = vRot.x;
-  float s = vRot.y;
-  vec3 worldNormal = normalize(vec3(
-    localNormal.x * c - localNormal.y * s,
-    localNormal.x * s + localNormal.y * c,
-    localNormal.z
-  ));
-
-  vec3 lightDir = normalize(vLightDir);
-  float NdotL = dot(worldNormal, lightDir);
-  float dayDiffuse = max(0.0, NdotL);
-  float sunVis = sunVisibility();
-  vec3 sunlitColor = color * (uDayAmbient + dayDiffuse * uDayDiffuseMul);
-  float lightMul = uDayAmbient * sunFill(sunVis) + dayDiffuse * uDayDiffuseMul * sunVis;
-  color *= lightMul;
-
-  vec3 halfVector = normalize(lightDir + vec3(0.0, 0.0, 1.0));
-  float spec = pow(max(dot(worldNormal, halfVector), 0.0), 32.0);
-  float litMask = smoothstep(-0.02, 0.08, NdotL);
-  color += vec3(spec * uSpecularMul * litMask * sunVis);
-  sunlitColor += vec3(spec * uSpecularMul * litMask);
-
-  float isGlowing = step(0.6, sunlitColor.b) * step(sunlitColor.r, 0.5);
-  float fieldLit = 1.0 - fieldDarkness();
-  vec3 finalColor = color + (sunlitColor * isGlowing * 1.5) * (0.3 + 0.7 * fieldLit);
-  gl_FragColor = vec4(finalColor, alpha);
-}
-`;
-
-// Wspólne obiekty uniformów — jeden zapis na klatkę dla wszystkich rodzajów.
-const lightUniforms = {
-  uSunRel: { value: new THREE.Vector2() },
-  uHasSun: { value: 0 },
-  uDayAmbient: { value: 0.24 },
-  uDayDiffuseMul: { value: 1.18 },
-  uSpecularMul: { value: 0.30 }
-};
+// Wspólne węzły uniformów (grupa renderu) — jeden zapis na klatkę dla wszystkich rodzajów.
+const lightUniforms = PROXY_SHARED;
 
 let quadGeometry = null;
 const kinds = new Map();          // url sprite'a → rodzaj (mesh + tekstura)
@@ -329,16 +249,19 @@ function ensureQuad() {
   return quadGeometry;
 }
 
+// Mesh + InstancedBufferGeometry, nie InstancedMesh: uuid InstancedMesh wchodzi do klucza
+// programu (osobny NodeBuilder na rodzaj). Bez DynamicDrawUsage — wysyłka zakresem (commitMatrices).
 function makeMesh(kind, capacity) {
-  const mesh = new THREE.InstancedMesh(ensureQuad(), kind.material, capacity);
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  mesh.count = 0;
+  const { geometry, buffer } = createProxyGeometry(ensureQuad(), capacity);
+  const mesh = new THREE.Mesh(geometry, kind.material);
   mesh.visible = false;
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;
   mesh.receiveShadow = false;
   mesh.name = `shipProxy:${kind.url.split('/').pop()}`;
+  mesh.userData.shipProxyBuffer = buffer;
+  kind.buffer = buffer;
   return mesh;
 }
 
@@ -346,63 +269,62 @@ function createKind(url, image) {
   if (!Core3D.isInitialized || !Core3D.scene) return null;
   const texture = acquireHullVisualTexture(image);
   if (!texture) return null;
-  const material = new THREE.ShaderMaterial({
-    uniforms: {
-      uSprite: { value: texture },
-      ...lightUniforms,
-      ...sunShadowUniforms
-    },
-    vertexShader: VERTEX_SHADER,
-    fragmentShader: FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: true,
-    depthTest: true,
-    side: THREE.DoubleSide
-  });
+  const material = new ShipProxyNodeMaterial(texture);
   const kind = {
     url,
     image,
     texture,
     material,
     mesh: null,
+    buffer: null,
     capacity: INITIAL_CAPACITY,
     count: 0,
     attached: false,
     lastUsed: frameNo,
-    range: { start: 0, count: 0 }
   };
   kind.mesh = makeMesh(kind, kind.capacity);
   kinds.set(url, kind);
   kindList.push(kind);
+  prewarmKind(kind);
   return kind;
 }
 
-// Pełny rodzaj: nowy InstancedMesh ×2 (rzadko — pojemność zostaje na zawsze).
+// Pipeline passa ortho w tle (compileAsync). Rodzaje dzielą graf i klucz programu, więc
+// kompiluje się raz; bez tego pierwszy rysunek tworzyłby pipeline synchronicznie.
+// compileAsync pomija niewidoczne — widoczność tylko na czas (synchronicznej) projekcji.
+function prewarmKind(kind) {
+  if (!Core3D.gpuReady || typeof Core3D.prewarmPass !== 'function') return;
+  const mesh = kind.mesh;
+  const wasVisible = mesh.visible;
+  mesh.visible = true;
+  try {
+    Core3D.prewarmPass(mesh, 0);
+  } finally {
+    mesh.visible = wasVisible;
+  }
+}
+
+// Pełny rodzaj: nowa siatka ×2 (rzadko — pojemność zostaje na zawsze).
 function growKind(kind) {
   if (kind.capacity >= MAX_CAPACITY) return false;
   const capacity = Math.min(MAX_CAPACITY, kind.capacity * 2);
   const old = kind.mesh;
+  const oldBuffer = kind.buffer;
   const mesh = makeMesh(kind, capacity);
-  mesh.instanceMatrix.array.set(old.instanceMatrix.array.subarray(0, kind.count * 16));
+  kind.buffer.array.set(oldBuffer.array.subarray(0, kind.count * PROXY_INSTANCE_STRIDE));
   if (old.parent) {
     old.parent.remove(old);
     Core3D.scene.add(mesh);
   }
-  old.dispose();
+  old.geometry.dispose();
   kind.mesh = mesh;
   kind.capacity = capacity;
   return true;
 }
 
 function commitMatrices(kind) {
-  const attr = kind.mesh.instanceMatrix;
-  const r = kind.range;
-  r.start = 0;
-  r.count = kind.count * 16;
-  // Własny obiekt zakresu — addUpdateRange alokuje { start, count } co wywołanie.
-  attr.updateRanges.length = 0;
-  attr.updateRanges.push(r);
-  attr.needsUpdate = true;
+  // Zakres zbierany (zakresyWysylki.js): siatka nierysowana w tej klatce nie zgubi zmiany.
+  zbierzZakres(kind.buffer, 0, kind.count * PROXY_INSTANCE_STRIDE);
 }
 
 // ---------------------------------------------------------------- dysze
@@ -631,8 +553,8 @@ export const ShipProxyBatch3D = {
     const s = Math.sin(-angle);
     const w = info.w;
     const h = info.h;
-    const M = kind.mesh.instanceMatrix.array;
-    const o = n * 16;
+    const M = kind.buffer.array;
+    const o = n * PROXY_INSTANCE_STRIDE;
     M[o] = c * w; M[o + 1] = s * w; M[o + 2] = 0; M[o + 3] = 0;
     M[o + 4] = -s * h; M[o + 5] = c * h; M[o + 6] = 0; M[o + 7] = 0;
     M[o + 8] = c; M[o + 9] = s; M[o + 10] = opacity; M[o + 11] = 0;
@@ -664,12 +586,12 @@ export const ShipProxyBatch3D = {
           kind.attached = true;
         }
         mesh.position.set(origin.x, origin.y, 0);
-        mesh.count = kind.count;
+        mesh.geometry.instanceCount = kind.count;
         commitMatrices(kind);
         if (!mesh.visible) mesh.visible = true;
         drawCalls++;
       } else {
-        mesh.count = 0;
+        mesh.geometry.instanceCount = 0;
         if (mesh.visible) mesh.visible = false;
         if (kind.attached && frameNo - kind.lastUsed > IDLE_DETACH_FRAMES) {
           Core3D.scene.remove(mesh);
@@ -736,7 +658,7 @@ export const ShipProxyBatch3D = {
   dispose() {
     for (const kind of kindList) {
       if (kind.mesh.parent) kind.mesh.parent.remove(kind.mesh);
-      kind.mesh.dispose();
+      kind.mesh.geometry.dispose();
       kind.material.dispose();
       releaseHullVisualTexture(kind.image);
     }

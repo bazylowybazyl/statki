@@ -223,7 +223,9 @@ test('Core3D: rejestr jako Core3D.warmup, start przy gotowym urządzeniu, passy 
   assert.ok(added.every((s) => s.visible !== true), 'przegląd sceny tylko widocznych');
   assert.ok(added.some((s) => s.override === fake.haloDepthMaskMaterial && s.split === false && s.layer === 3));
   assert.equal(added.filter((s) => /quad/.test(s.name)).length, 2);
-  assert.deepEqual(added.filter((s) => s.phase === 'loading').map((s) => s.layer).sort(), [0, 1, 2, 3, 5, 6, 7]);
+  assert.deepEqual(added.filter((s) => s.phase === 'loading' && s.ortho !== false).map((s) => s.layer).sort(), [0, 1, 2, 3, 5, 6, 7]);
+  // gra 3D (free3d): warstwy passów ortho jeszcze raz kamerą perspektywy (typ kamery w kluczu pipeline'u)
+  assert.deepEqual(added.filter((s) => s.phase === 'loading' && s.ortho === false).map((s) => s.layer).sort(), [0, 2, 7]);
   // moduły: jedna linia przy imporcie, pule tworzone na ekranie ładowania
   assert.match(read('src/3d/engineExhaustBatch.js'), /Core3D\.warmup\?\.add\(\{ name: 'dysze SIDE', objects: \(\) => EngineExhaustBatch\.warmupMeshes\(\), phase: 'loading' \}\);/);
   assert.match(read('src/3d/shipLights3D.js'), /Core3D\.warmup\?\.add\(\{ name: 'światła pozycyjne statków', objects: [^\n]*phase: 'loading' \}\);/);

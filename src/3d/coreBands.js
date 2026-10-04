@@ -1,6 +1,6 @@
 // Pasma HDR i puls stanu rdzenia — wspólne dla żaru (coreFx3D) i plazmy
 // modelu reaktora (reactor3D). Czysty moduł: bez three i bez DOM (testy node).
-import { CORE_STATE } from '../game/shipCore.js';
+import { CORE_STATE } from '../game/coreModel.js';
 
 // UnrealBloomPass BRAMKUJE (memory hdr-band-plan): piksel nad progiem wchodzi
 // do bloomu PEŁNĄ wartością, więc łagodna rampa od bieli do ciała (8 → 0,9)

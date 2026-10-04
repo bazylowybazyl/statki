@@ -390,8 +390,20 @@ test('źródło stempla: pocisk, broń, id; rodziny 27 broni dema zgodne z tabel
   assert.equal(S.stampFamilyFor('mjolnir'), 'mjolnir', 'nazwa rodziny wprost');
   assert.equal(S.stampFamilyFor(null), 'generic');
   assert.equal(S.stampPowerFor({ weaponSize: 'Capital' }), 1.6);
-  assert.equal(Object.keys(S.WEAPON_STAMP_FAMILY).length, 27);
+  // 27 broni dema + 3 warianty rozmiarowe broni specjalnej (własne, mniejsze wpisy stempla).
+  assert.equal(Object.keys(S.WEAPON_STAMP_FAMILY).length, 30);
   for (const fam of new Set(Object.values(S.WEAPON_STAMP_FAMILY))) assert.ok(S.STAMP[fam]?.impact, `rodzina ${fam} ma stempel trafienia`);
+  assert.equal(S.stampFamilyFor({ vfxKey: 'special_valkyrie_s', type: 'rail', weaponSize: 'S' }), 'valkyrieS');
+  assert.equal(S.stampFamilyFor({ vfxKey: 'special_valkyrie_m', type: 'rail', weaponSize: 'M' }), 'valkyrieM');
+  assert.equal(S.stampFamilyFor({ vfxKey: 'special_yamato_l', type: 'plasma', weaponSize: 'L' }), 'yamatoL');
+  // Warianty przebijające mają te same warianty stempla co Valkyrie (rzaz, wylot, zakleszczenie).
+  for (const fam of ['valkyrieS', 'valkyrieM']) {
+    for (const v of ['impact', 'kerf', 'exit', 'stuck']) {
+      assert.ok(S.STAMP[fam][v], `${fam}.${v}`);
+      assert.ok(S.STAMP[fam][v][S.S_R] < S.STAMP.valkyrie[v][S.S_R], `${fam}.${v}: mniejszy od rodzica`);
+    }
+  }
+  assert.ok(S.STAMP.yamatoL.impact[S.S_R] < S.STAMP.yamato.impact[S.S_R]);
   // Parametry z wywołań ctx.stamp w recepturach dema (recipes.js): kilka kontrolnych.
   const demo = read('dema/bronie-webgpu/recipes.js');
   for (const [fam, needle] of [['armata', 'ctx.stamp(hull, hit.x, hit.y, 62, 3.2, 0.95, 0.76, 0)'], ['vulcan', 'ctx.stamp(hull, hit.x, hit.y, 7, 1.5, 0.35, 0.3, 0)'],

@@ -53,6 +53,17 @@ test('weapon fx keys match the ones WeaponFx asks for; every weapon with a recip
   assert.equal(normalizeWeaponFxKey('special_yamato_cannon'), 'yamato');
   assert.equal(normalizeWeaponFxKey('siege_railgun'), 'siegeRail');
   assert.equal(normalizeWeaponFxKey(''), '');
+  // Warianty rozmiarowe broni specjalnej: klucz i sylwetka rodzica (Yamato L — dwie skrajne lufy).
+  assert.equal(normalizeWeaponFxKey('special_valkyrie_s'), normalizeWeaponFxKey('special_valkyrie_railgun'));
+  assert.equal(normalizeWeaponFxKey('special_valkyrie_m'), normalizeWeaponFxKey('special_valkyrie_railgun'));
+  assert.equal(normalizeWeaponFxKey('special_yamato_l'), 'yamato');
+  const valkyrie = Turret2D.resolveSpec('special_valkyrie_railgun', 'rail');
+  assert.equal(Turret2D.resolveSpec('special_valkyrie_s', 'rail'), valkyrie);
+  assert.equal(Turret2D.resolveSpec('special_valkyrie_m', 'rail'), valkyrie);
+  const twin = Turret2D.resolveSpec('special_yamato_l', 'plasma');
+  assert.equal(twin.m.length, MASTER_WEAPONS.special_yamato_l.barrelsPerShot);
+  assert.equal(twin.r, Turret2D.resolveSpec('special_yamato_cannon', 'plasma').r);
+  assert.equal(twin.m[0][1], -twin.m[1][1], 'lufy salwy symetrycznie względem osi wieży');
   const { WEAPON_FX_IDS } = await import('../src/3d/weapons/weaponFxTable.js');
   for (const id of WEAPON_FX_IDS) assert.ok(normalizeWeaponFxKey(id), `${id}: bez klucza wieżyczki`);
 });

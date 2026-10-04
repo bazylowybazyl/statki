@@ -12,12 +12,15 @@
 // ogonem do tyłu, rosną już przy ładowaniu; bez tunelu 3D i bez gięcia przez
 // bańkę. Wyjście: FRONT rzeczywistości idzie od dziobu ku rufie — gwiazdy
 // przed nim wracają do punktów pierwsze.
+// RULON (2026-10-03, rulon.js): smugi zostają płaskie, ale całe pole kładzie
+// się na walcu zwiniętym od kamery — wierzchołki kwadu idą przez rulonForward.
 
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, vec2, vec3, vec4, uniform, attribute, floor, sin, exp, sqrt, max, mix, clamp,
   smoothstep, positionGeometry, varyingProperty
 } from 'three/tsl';
+import { rulonForward } from './rulon.js';
 import { STAR_PARALLAX_LAYERS, pickStarParallaxLayer, computeStarParallaxFactor } from '../../src/3d/starParallax.js';
 
 export const STAR_WRAP = 220000;
@@ -133,12 +136,13 @@ export class WarpStars {
       // W skoku barwa bieleje/błękitnieje, jasność rośnie — energia rozłożona na smugę.
       const tint = mix(sB.rgb, vec3(0.72, 0.86, 1.0), clamp(st.mul(U.warpTint).mul(0.75), 0.0, 1.0));
       const energy = float(1.0).add(st.mul(0.9)).div(sqrt(float(1.0).add(L.div(max(w.mul(3.0), 1.0)).mul(0.35))));
-      vCol.assign(tint.mul(sB.w).mul(tw).mul(U.bright).mul(energy).mul(1.15));
+      const rul = rulonForward(pix, float(1.0)).toVar();
+      vCol.assign(tint.mul(sB.w).mul(tw).mul(U.bright).mul(energy).mul(1.15).mul(rul.z));
       vAlong.assign(alongPx);
       vSide.assign(side);
       vLen.assign(L);
       vW.assign(w);
-      return vec4(pix.div(U.viewHalfPx), 0.5, 1.0);
+      return vec4(rul.xy.div(U.viewHalfPx), 0.5, 1.0);
     })();
 
     mat.fragmentNode = Fn(() => {

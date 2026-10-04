@@ -161,14 +161,21 @@ test('P1 index firing paths use the same simulated mount state as the shared con
     // na `MuzzleFX3D is not defined` w fireRailBarrel, a potem na brakach salwy).
     ctx.barrelsPerShotOf = barrelsPerShotOf;
     ctx.queueSalvoBarrels = queueSalvoBarrels;
+    // Kierowanie ogniem (2026-10-01): strzał zaczepu special ustawia skalę wstrząsu kamery
+    // (wieża na auto nie trzęsie ekranem) — fireSpecialBarrel czyta WeaponFx i FC_AUTO_SHAKE.
+    ctx.WeaponFx = { shotShakeScale: 1 };
+    ctx.FC_AUTO_SHAKE = 0.1;
     // Zadanie 18-B: strzał zaczepu special wydzielony do fireSpecialLoadout (wspólny z ładowaniem),
     // broń z `chargeTime` tylko zgłasza strzał (weaponCharge.js).
     ctx.chargeTimeOf = chargeTimeOf;
     ctx.mountChargeState = mountChargeState;
     ctx.requestMountCharge = requestMountCharge;
+    // Wycinek do następnej funkcji albo nagłówka bloku (po fireRailBarrel stoi blok „KIEROWANIE OGNIEM”
+    // z kodem poziomu modułu — od 2026-10-03 bez funkcji pomiędzy).
     const slice = (header) => {
       const start = source.indexOf(header);
-      return source.slice(start, source.indexOf('\n    function ', start + 1));
+      const ends = [source.indexOf('\n    function ', start + 1), source.indexOf('\n    // =====', start + 1)].filter((i) => i > 0);
+      return source.slice(start, Math.min(...ends));
     };
     const code = group === 'main'
       ? slice('    function fireRailBarrel(')
@@ -207,7 +214,7 @@ function firingCore(ship, owner = 'player') {
       bullets: [], mouse2: { x: -500, y: 900 }, screenToWorld: (x, y) => ({ x, y }),
       getLeadAim, dispatchEvent: event => events.push(event)
     },
-    MASTER_WEAPONS, mouse: { x: -500, y: 900 }, targetingMode: { wheelOpen: false },
+    MASTER_WEAPONS, mouse: { x: -500, y: 900 }, shipModes: { wheel: { open: false } },
     isTargetAlive: target => !!target && !target.dead, scannerTargetPoint: target => target,
     getTargetX: target => target.x, getTargetY: target => target.y,
     isFlakWeapon: () => false, getPotentialPlanetaryRingTargets: null, DESTRUCTOR_CONFIG: {},

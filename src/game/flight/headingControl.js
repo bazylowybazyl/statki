@@ -111,6 +111,9 @@ export function resolveShipTurnCapability(ship, drive = null, {
   result.mainAccel = mainAccel;
   // Limit prędkości governora bieżącego trybu/biegu (applyDriveSpeedGovernor).
   result.speedLimit = drive && Number(drive.speedLimit) > 0 ? Number(drive.speedLimit) : Infinity;
+  // Hamowanie tłumika z tabeli lotu (driveTransmission: brakeAccel); 0 = dawny mocny tłumik —
+  // autopilot planuje drogę hamowania z tej liczby (playerAutopilot.js).
+  result.brakeAccel = drive && Number(drive.brakeAccel) > 0 ? Number(drive.brakeAccel) : 0;
   return result;
 }
 
@@ -233,7 +236,7 @@ function sumThrusterGeometry(list, salt) {
 }
 
 // Tania sygnatura rozmieszczenia dysz (edytor hardpointów może je przesunąć).
-function thrusterGeometrySignature(ship) {
+export function thrusterGeometrySignature(ship) {
   return sumThrusterGeometry(ship?.visual?.mainThrusters, 1)
     + sumThrusterGeometry(ship?.visual?.torqueThrusters, 2)
     + (Number(ship?.w) || 0) * 0.013 + (Number(ship?.h) || 0) * 0.017;

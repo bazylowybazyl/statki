@@ -1,20 +1,20 @@
 // ============================================================
-// Eksport GLB modelu 3D Atlasa z uzbrojeniem (Blender i inne narzędzia). Te same geometrie,
+// Eksport GLB modelu 3D okrętu (Atlas albo flota) z uzbrojeniem (Blender i inne narzędzia). Te same geometrie,
 // ale materiały standardowe (glTF nie zna grafów TSL): trójkąty pogrupowane po `aMat`,
 // każda grupa dostaje barwę, szorstkość, metaliczność i emisję z palety, pokład — teksturę
 // sprite'a. Oś Z modelu → Y glTF (Blender przelicza z powrotem na Z w górę).
 // ============================================================
 import * as THREE from 'three/webgpu';
-import { SHIP3D_PALETTE } from '../../src/3d/ships3d/shipMaterials3D.tsl.js';
+import { shipPalette } from '../../src/3d/ships3d/shipMaterials3D.tsl.js';
 import { SHIP3D_MAT } from '../../src/3d/ships3d/meshBuilder3D.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 const NAMES = Object.fromEntries(Object.entries(SHIP3D_MAT).map(([k, v]) => [v, k.toLowerCase()]));
 
-function makeMaterials(deckTexture) {
-  return SHIP3D_PALETTE.map((p, id) => {
+function makeMaterials(deckTexture, prefix = 'atlas', palette = null) {
+  return shipPalette(palette).map((p, id) => {
     const m = new THREE.MeshStandardMaterial({
-      name: `atlas_${NAMES[id] || id}`,
+      name: `${prefix}_${NAMES[id] || id}`,
       color: new THREE.Color(p.color),
       roughness: p.rough,
       metalness: p.metal
@@ -54,11 +54,12 @@ function grouped(geo) {
 }
 
 /** Blob GLB: kadłub + wieże w bieżącej pozie (ustawienie luf jak na ekranie). */
-export async function exportAtlasGLB(ship, image) {
+export async function exportShipGLB(ship, image) {
   const deck = new THREE.Texture(image);
   deck.colorSpace = THREE.SRGBColorSpace;
   deck.needsUpdate = true;
-  const mats = makeMaterials(deck);
+  const id = ship.id || 'atlas';
+  const mats = makeMaterials(deck, id, ship.hull?.palette || null);
   const cache = new Map();
   const conv = (geo) => {
     if (!cache.has(geo)) cache.set(geo, grouped(geo));
@@ -66,7 +67,7 @@ export async function exportAtlasGLB(ship, image) {
   };
 
   const root = new THREE.Group();
-  root.name = 'Atlas_3D';
+  root.name = `${id}_3D`;
   root.rotation.x = -Math.PI / 2; // Z w górę → Y w górę (glTF)
   const hull = new THREE.Mesh(conv(ship.hullGeometry), mats);
   hull.name = 'kadlub';
@@ -89,3 +90,6 @@ export async function exportAtlasGLB(ship, image) {
   const glb = await exporter.parseAsync(scene, { binary: true, onlyVisible: false });
   return new Blob([glb], { type: 'model/gltf-binary' });
 }
+
+/** Zgodność: dawna nazwa (Atlas). */
+export const exportAtlasGLB = exportShipGLB;

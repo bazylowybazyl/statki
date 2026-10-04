@@ -6,7 +6,8 @@ import {
   computeShipThrusterForces,
   updateShipThrusterState
 } from '../src/game/flight/thrusterModel.js';
-import { createDriveTransmission } from '../src/game/flight/driveTransmission.js';
+import { calibrateDriveToShip, createDriveTransmission } from '../src/game/flight/driveTransmission.js';
+import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 import {
   computeHeadingTorqueCommand,
   resolveShipTurnCapability,
@@ -242,19 +243,30 @@ test('player orbit keeps the bow on the orbit centre', () => {
   assert.ok(result.control.torque > 0.9, 'turns toward the centre (+90°), not along the tangent');
 });
 
-test('turn capability follows drive mode and main engine assist', () => {
+// Jedna tabela lotu (2026-10-01): napęd Atlasa skalibrowany do SHIP_FLIGHT_SPECS na układzie dysz z edytora —
+// obrót, strafe i hamowanie gracza to liczby tabeli (dawniej ~2°/s² z samych mnożników klasy).
+test('turn capability follows the flight table after calibration, drive mode and main engine assist', () => {
   const ship = makeAtlas();
   const combat = createDriveTransmission({ hullClass: 'atlas', mode: 'combat' });
   const maneuver = createDriveTransmission({ hullClass: 'atlas', mode: 'maneuver' });
+  assert.equal(calibrateDriveToShip(combat, ship), true);
+  assert.equal(calibrateDriveToShip(combat, ship), false, 'kalibracja liczy tylko po zmianie kadłuba / dysz');
+  calibrateDriveToShip(maneuver, ship);
+  const spec = SHIP_FLIGHT_SPECS.atlas;
   const side = resolveShipTurnCapability(ship, combat);
   const assisted = resolveShipTurnCapability(ship, combat, { mainAssist: true });
   const fullThrottle = resolveShipTurnCapability(ship, combat, { mainAssist: true, mainThrottle: 1 });
   const agile = resolveShipTurnCapability(ship, maneuver);
-  assert.ok(side.accel > 0.02 && side.accel < 0.06, `Atlas combat side-only ~2°/s², got ${(side.accel / DEG).toFixed(2)}°/s²`);
-  assert.ok(assisted.accel > side.accel * 1.5, 'gimballed main engines add turning authority');
+  assert.ok(Math.abs(side.accel / DEG - spec.turnAccel) < 0.05, `obrót z tabeli ${spec.turnAccel}°/s², jest ${(side.accel / DEG).toFixed(2)}°/s²`);
+  assert.ok(Math.abs(side.maxRate / DEG - spec.turnRate) < 1e-6, `prędkość obrotu z tabeli, jest ${(side.maxRate / DEG).toFixed(2)}°/s`);
+  assert.ok(Math.abs(side.strafeAccel - spec.strafeAccel) < 0.5, `strafe z tabeli ${spec.strafeAccel}, jest ${side.strafeAccel.toFixed(1)}`);
+  assert.equal(side.brakeAccel, spec.decel);
+  assert.equal(side.speedLimit, spec.maxSpeed);
+  assert.ok(assisted.accel > side.accel, 'gimballed main engines add turning authority');
   assert.ok(fullThrottle.accel > assisted.accel, 'more main throttle, more gimbal torque');
-  assert.ok(agile.accel > side.accel * 3, 'maneuver mode turns much harder');
+  assert.ok(agile.accel > side.accel * 1.5, 'maneuver mode turns harder');
   assert.ok(agile.maxRate > side.maxRate);
+  assert.ok(agile.speedLimit < side.speedLimit);
 });
 
 test('turn capability is measured on the same thruster model the physics integrates', () => {

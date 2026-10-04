@@ -6,7 +6,7 @@
 // Etykiety HTML nad postumentami.
 // ============================================================
 import * as THREE from 'three/webgpu';
-import { WEAPON3D_FAMILY_LABEL, weapon3DScale } from '../../src/3d/ships3d/weapons3D.js';
+import { WEAPON3D_FAMILY_LABEL, weapon3DScale } from '../../src/3d/ships3d/weapons/weapons3D.js';
 import { MeshBuilder3D, SHIP3D_MAT as M, ngonPoly } from '../../src/3d/ships3d/meshBuilder3D.js';
 import { MASTER_WEAPONS } from '../../src/data/weapons.js';
 import { Turret } from './statek.js';

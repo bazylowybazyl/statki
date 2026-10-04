@@ -1,18 +1,29 @@
-# Demo WebGPU: Atlas 3D i modele 3D broni (dema/atlas3d-webgpu.html)
+# Demo WebGPU: okręty 3D (Atlas i flota) i modele 3D broni (dema/atlas3d-webgpu.html)
 
 Polecenie użytkownika (2026-09-28): *„Zamierzam sprawdzić gameplay w 3D, tym samym potrzebuję model Atlasa w 3D.
 Wrzuć go do dema — pamiętaj o zgodności z WebGPU.”* i zaraz potem: *„i jeszcze modele broni 3D”*.
+2026-09-29: *„Trzeba dorobić model 3D battleshipa, destroyera oraz fregaty Terra Novy i 3 pirackie — battleship,
+destroyer, fregata”* — § „Flota: Terra Nova i piraci” niżej. 2026-09-30 (prośba sesji „Gra 3D”, która buduje z modeli
+kadłuby belkowe 3D): modele dla POZOSTAŁYCH profili kadłubów gry — § „Kadłuby z automatu”.
 
 Demo pokazuje **model 3D Atlasa** (okręt gracza) zbudowany ze sprite'a gry i **modele 3D wszystkich broni gry**
 (23 rodziny z atlasów sprite'ów) w trzech trybach: oględziny, lot (rozgrywka w 3D: sterowanie, kamery, ogień, cele)
-i galeria broni. Samodzielne demo (`WebGPURenderer` + TSL pod Vite), gry nie dotyka; modele leżą w `src/3d/ships3d/`
-gotowe do integracji. Tylko WebGPU i TSL — bez GLSL, `ShaderMaterial` i API WebGL (pilnuje test).
+i galeria broni. Samodzielne demo (`WebGPURenderer` + TSL pod Vite). Modele leżą w `src/3d/ships3d/` — gra używa ich jako
+wyglądu w opcjach nowej gry „Statki 3D” / „Bronie 3D” (`shipModels3DGame.js`, `docs/MODELE-3D-W-GRZE.md`; gra 3D z lotem
+w 3D z 2026-09-30 wycofana): `ships/` — okręty (rejestr `ships3D.js`, Atlas, flota, kadłuby z automatu, obrysy), `weapons/` — bronie
+(`weapons3D.js`), w korzeniu części wspólne (`meshBuilder3D.js` — budowniczy brył, `shipMaterials3D.tsl.js` — materiały). Tylko WebGPU i TSL — bez GLSL, `ShaderMaterial` i API WebGL (pilnuje test).
 
 ## Jak otworzyć i sterować
 
-`npm run dev` → `http://localhost:5173/dema/atlas3d-webgpu.html` (port wg Vite). Start: oględziny, orbita wokół Atlasa.
+`npm run dev` → `http://localhost:5173/dema/atlas3d-webgpu.html` (port wg Vite). Start: tryb **Flota** — wszystkie
+siedem okrętów obok siebie (Atlas w środku, Terra Nova z jednej strony, piraci z drugiej), z nazwami.
 
-- **Tryby (O / L / G):** Oględziny (statek stoi, kamera orbitalna, wieże śledzą kursor), Lot (rozgrywka w 3D),
+- **Okręt:** przyciski na górze panelu (Atlas, Hasta, Bellator, Custos, Iron Skull, niszczyciel i fregata piratów),
+  pod nimi lista rozwijana z pozostałymi kadłubami (lotniskowce, superkapitały, Corvus, myśliwiec, megafrachtowiec,
+  ruch v2 — model budowany przy pierwszym wyborze), **[ / ]** — poprzedni / następny w całym rejestrze, klik w okręt
+  w trybie Flota — oględziny tego okrętu. Wszystkie tryby i kamery
+  działają z każdym okrętem (lot z liczbami `SHIP_FLIGHT_SPECS` okrętu).
+- **Tryby (V / O / L / G):** Flota (kursor — cel wież wszystkich okrętów, Spacja — salwa), Oględziny (statek stoi, kamera orbitalna, wieże śledzą kursor), Lot (rozgrywka w 3D),
   Galeria broni (wszystkie modele na postumentach — rozmiar dopasowany ~80 j. albo skala gry z przełącznika; śledzą
   krążący punkt i strzelają).
 - **Kamery (1–5):** 1 Z góry — jak kamera gry (prosto w dół, północ w górę, statek obraca się pod kamerą),
@@ -31,9 +42,10 @@ gotowe do integracji. Tylko WebGPU i TSL — bez GLSL, `ShaderMaterial` i API We
   sprite jak w grze** — ten sam kadr z kwadem sprite'a zamiast modelu, galeria w skali gry), suwaki (skala wież,
   pochylenie 3/4, słońce, ekspozycja), **Eksport GLB**, statystyki (FPS, CPU / GPU, draw calle, trójkąty).
   **H** — panel i HUD, **P** — pauza.
-- **Adres:** `?tryb=ogledziny|lot|galeria`, `?kamera=gra|taktyczna|poscig|orbita|kinowa`, `?fit=gra|pelny`,
+- **Adres:** `?tryb=flota|ogledziny|lot|galeria`, `?statek=atlas|terran_battleship|terran_destroyer|terran_frigate|
+  pirate_battleship|pirate_destroyer|pirate_frigate`, `?kamera=gra|taktyczna|poscig|orbita|kinowa`, `?fit=gra|pelny`,
   `?test=1` (klatki tylko przez `__demo.step`), `?dpr=1`, `?cienie=2048`.
-- **Konsola:** `__demo.mode(tryb)`, `camera(kamera)`, `loadout('gra'|'pelny')`, `view({ az, el, dist, tilt, pan })`,
+- **Konsola:** `__demo.mode(tryb)`, `ship3d(id, tryb)`, `fleet()`, `ship` (bieżący), `ships`, `camera(kamera)`, `loadout('gra'|'pelny')`, `view({ az, el, dist, tilt, pan })`,
   `keys(['w','a'])`, `mouse(nx, ny, { lmb, rmb })`, `fire('main'|'special'|'aux'|'missile'|'hexlance')`, `step(n)`,
   `stats()`, `exportGLB()`.
 
@@ -42,11 +54,17 @@ gotowe do integracji. Tylko WebGPU i TSL — bez GLSL, `ShaderMaterial` i API We
 | Plik | Co robi |
 |---|---|
 | `src/3d/ships3d/meshBuilder3D.js` | **budowniczy brył** (bez DOM, działa w Node): graniastosłupy z wielokątów (także wklęsłych — earcut) z fazami i pochyleniem, bryły wzdłuż X (lufy), walce, toczenia, kopuły, stos przekształceń z lustrem (ściany zawsze na zewnątrz — kolejność z „podpowiedzi” po macierzy normalnych), uv pokładu z rzutu sprite'a, atrybut `aMat` (numer materiału palety) |
-| `src/3d/ships3d/atlasHull3D.js` | **kadłub Atlasa**: obrys ze sprite'a, płyta pokładu i widły, kil, cytadela, śródokręcie, rufa (bloki silnikowe, radiatory, platforma wieży), kręgosłup = działo Hexlance, płetwy startowe z hangarami, VLS, kopuły, okna burt, dysze MAIN i SIDE, mostki gry, gniazda z edytora; zapytania `heightAt`, `bottomAt`, `contains` |
-| `src/3d/ships3d/weapons3D.js` | **modele broni**: 23 rodziny, części (podstawa, obudowa, lufa, wirnik), czop, osie luf, wylot, odrzut, zakres podniesienia; `WEAPON3D_FAMILY` (broń → rodzina), `weapon3DScale` (skala jak wieże gry) |
+| `src/3d/ships3d/ships/ships3D.js` | **rejestr modeli okrętów**: `SHIP3D_MODELS` (`kind`: atlas / fleet / auto), `buildShip3D(id)` — Atlas, flota i kadłuby z automatu, wspólny kształt wyniku |
+| `src/3d/ships3d/ships/autoHull3D.js`, `autoHulls3D.js`, `autoOutlines3D.js` | **kadłuby z automatu**: budowniczy (specyfikacja z obrysu, rdzeń `buildHullCore` floty), tabela wejścia (sprite, profil, edytor, mostek, dysze), obrysy (plik generowany) — § „Kadłuby z automatu” |
+| `tests/auto3dModel.test.mjs` | testy kadłubów z automatu: każdy profil `HULL_RENDER_PROFILES` ma model, obrysy = PNG i płótno ruchu v2, geometria, skala, dysze / gniazda / hangary / światła / mostki z danych gry |
+| `src/3d/ships3d/ships/fleetHull3D.js`, `fleetHulls3D.js`, `fleetOutlines3D.js` | **kadłuby floty** (Terra Nova, piraci): budowniczy, specyfikacje (bryły, wysokości, palety frakcji), obrysy z alfy sprite'ów (plik generowany) — § „Flota” |
+| `scripts/webgpu/obrysy-floty.mjs` | generator obrysów floty (`--podglad` — nakładki konturów na sprite'ach do `.tmp/obrysy-floty/`) |
+| `tests/fleet3dModel.test.mjs` | testy floty bez GPU: geometria, skala = kadłub gry, uv pokładu, gniazda / dysze / RCS / światła / mostek z danych gry, obrysy aktualne względem PNG i specyfikacji, WGSL z paletą |
+| `src/3d/ships3d/ships/atlasHull3D.js` | **kadłub Atlasa**: obrys ze sprite'a, płyta pokładu i widły, kil, cytadela, śródokręcie, rufa (bloki silnikowe, radiatory, platforma wieży), kręgosłup = działo Hexlance, płetwy startowe z hangarami, VLS, kopuły, okna burt, dysze MAIN i SIDE, mostki gry, gniazda z edytora; zapytania `heightAt`, `bottomAt`, `contains` |
+| `src/3d/ships3d/weapons/weapons3D.js` | **modele broni**: 23 rodziny, części (podstawa, obudowa, lufa, wirnik), czop, osie luf, wylot, odrzut, zakres podniesienia; `WEAPON3D_FAMILY` (broń → rodzina), `weapon3DScale` (skala jak wieże gry) |
 | `src/3d/ships3d/shipMaterials3D.tsl.js` | **materiały TSL**: jeden graf na kadłub (pokład ze sprite'em + paleta) i jeden na broń; paleta `SHIP3D_PALETTE`, szwy paneli, emisja, mapa normalnych pokładu z luminancji |
 | `dema/atlas3d-webgpu.html`, `dema/atlas3d-webgpu.js` | strona, renderer, światło i cienie, post jak gra (pass MSAA 4 → siatka HDR → bloom gry → ACES gry → sRGB), tryby, wejście, celowanie, ogień, HUD, pętla, `window.__demo` |
-| `dema/atlas3d-webgpu/statek.js` | Atlas w scenie: kadłub, wieże w gniazdach (celowanie, odrzut, wirniki, wyloty), fity, strugi MAIN, światła pozycyjne i reflektory, znaczniki gniazd |
+| `dema/atlas3d-webgpu/statek.js` | okręt w scenie (`Ship3D`, dawniej `Atlas3D`): kadłub z rejestru, wieże w gniazdach (celowanie, odrzut, wirniki, wyloty), fity, strugi MAIN, światła pozycyjne i reflektory, znaczniki gniazd |
 | `dema/atlas3d-webgpu/lot.js` | model lotu (liczby `SHIP_FLIGHT_SPECS.atlas`) i kamery |
 | `dema/atlas3d-webgpu/efekty.js` | pociski, rakiety (samonaprowadzanie, ślad), błyski, iskry — pule instancji addytywnych |
 | `dema/atlas3d-webgpu/cele.js` | skały i drony wroga (cele, obrona punktowa) |
@@ -161,6 +179,77 @@ to punkt wyjścia do dopracowania w Blenderze, nie źródło prawdy (źródłem 
 - `npx vite --port 5199 --strictPort` w tle, potem `node scripts/webgpu/atlas3d-demo.mjs [--tylko start,gra,lot,poscig,galeria,pelny,glb]`
   — Chromium z Playwrighta na SwiftShaderze: błędy konsoli i walidacji WebGPU, zrzuty do `.tmp/atlas3d/`, rozmiar GLB.
   Sprawdza poprawność, nie wydajność (SwiftShader: klatka ~1–3 s).
+
+## Flota: Terra Nova i piraci (2026-09-29)
+
+Sześć kadłubów NPC tym samym przepisem co Atlas (z góry model = sprite, bryły podnoszą i obniżają fragmenty
+rysunku), ale z automatyką, żeby kolejne kadłuby nie wymagały ręcznego przepisywania obrysów:
+
+| id (`HULL_RENDER_PROFILES`) | nazwa | edytor gniazd | mostek | klasa wież | długość w grze |
+|---|---|---|---|---|---|
+| `terran_battleship` | Bellator — pancernik | `battleship` | `bellator` | L | 622 j. |
+| `terran_destroyer` | Hasta — niszczyciel | `destroyer` | `hasta` | M | 245 j. |
+| `terran_frigate` | Custos — fregata | `frigate` | `custos` | S | 152 j. |
+| `pirate_battleship` | Iron Skull — pancernik | `pirate_battleship` | `ironskull` | L | 675 j. |
+| `pirate_destroyer` | niszczyciel piratów | `pirate_destroyer` | `pirate_destroyer` | M | 343 j. |
+| `pirate_frigate` | fregata piratów | `pirate_frigate` | `pirate_frigate` | S | 175 j. |
+
+- **Skala i układ jak Atlas:** px sprite'a (środek płótna = 0), wynik × `scale = getHullRenderSize(profil).w /
+  szerokość płótna` — ta sama skala co `__hardpointScaleX` NPC, więc model zajmuje w grze miejsce sprite'a, a gniazda
+  z edytora leżą tam, gdzie liczy je gra.
+- **Obrysy (`scripts/webgpu/obrysy-floty.mjs` → `fleetOutlines3D.js`):** kontur płyty kadłuba z kanału alfa
+  (krawędzie pikseli → Douglas–Peucker), z **dziurami** (prześwity z rurami między skrzydłem a kadłubem Bellatora),
+  **gondole silników** wycięte z płyty (dopasowane do alfy od punktu sondy; u piratów cięcie wymuszone — bęben
+  i obudowa aż do kadłuba) i — u piratów — **kolce** oddzielone otwarciem morfologicznym. Sprite'y są niesymetryczne
+  (pancernik Terra Nova, fregata piratów z osią y = +22 px), więc płyta idzie po prawdziwym obrysie, nie po lustrze.
+- **Bryły (`fleetHulls3D.js`):** wielokąty w px OBRAZKA (jak edytor gniazd, y w dół), wysokości w `hu` (1% szerokości
+  kadłuba). `clip: true` — bryła = wielokąt ∩ alfa sprite'a (generator przycina rastrowo): zewnętrzne krawędzie
+  skrzydeł, klinów i bloków rufy idą dokładnie po rysunku, wielokąt wyznacza tylko granice wewnętrzne. Po zmianie
+  wielokąta z `clip` — ponownie generator (build rzuca błąd z nazwą bryły, test też). `drums` — okrągłe włazy wież
+  piratów (bęben z rysunkiem włazu na dachu).
+- **Kil:** pochyłe burty dolne do obrysu ściśniętego ku osi (`keel.s`) i dno z profilem głębokości w x; Bellator —
+  kil tylko pod kadłubem środkowym (`keel.half`), skrzydła mają płaskie dno (dziury muszą przechodzić na wylot).
+- **Gondole:** walce z rysunkiem sprite'a (materiał pokładu), z tyłu dysza z żarem (E_ENGINE) i struga MAIN; gondola
+  w osi spłaszczona (`pod.centerKz`). **Kolce:** ostrosłupy grzbietowe (rysunek kolca na płacie górnym).
+- **Z danych gry:** gniazda i barbety (promień × klasa wież), RCS z dysz SIDE (na najbliższej krawędzi obrysu),
+  światła pozycyjne, mostek gry (`bridge3DShapes.js`, strefa z `BRIDGE_LAYOUT_PROPOSALS`, wysokość × `bridgeZ` 2,2).
+- **Farby frakcji:** `FLEET3D_PALETTES` (ściany i fazy; dachy mają rysunek sprite'a) przez `createShipMaterial({
+  palette })` — te same węzły, inne wartości w tablicach uniformów; wieże piratów `FLEET3D_WEAPON_PALETTES.pirate`.
+- **Fit w demie:** „Fit gry” = uzbrojenie NPC frakcji (`equipNpcWeapons`) na gniazdach wybranych jak w grze
+  (`selectSpecSlots` ze spec ramy, specjalne puste), „Wszystkie gniazda” — każde gniazdo obsadzone.
+- **Bryły zamknięte:** każda bryła zamknięta sama albo razem z płytą, w którą wchodzi (wokselizacja kadłubów
+  belkowych 3D w grze); dekory (okna) to płaskie łaty tuż przy ścianach.
+- **Nowy kadłub floty:** wpis w `SHIPS` generatora (sprite, gondole, kolce), specyfikacja w `fleetHulls3D.js` (profil,
+  klucz edytora, mostek, klasa, `hu`, kil, bryły), `node scripts/webgpu/obrysy-floty.mjs --podglad`, test
+  `tests/fleet3dModel.test.mjs`, obejrzeć w demie (`?statek=id`).
+
+## Kadłuby z automatu (2026-09-30)
+
+Każdy profil `HULL_RENDER_PROFILES` ma model 3D (pilnuje `tests/auto3dModel.test.mjs`) — kadłuby bez ręcznie rysowanych
+brył powstają z automatu z tych samych danych co w grze. Wynik i skala jak Atlas / flota (`buildShip3D(id)`).
+
+| id | sprite | skąd dysze | uwagi |
+|---|---|---|---|
+| `terran_carrier` (Citadella), `terran_supercapital` (Colossus) | `src/assets/ships/terran*.png` | edytor (`engines.main`, średnica `ENGINE_FX_DEFAULTS`) | gniazda, hangary, światła z edytora, mostek gry |
+| `supercapital` | sprite Colossusa, profil `supercapital` (1200 j.) | jak Colossus | mostek przeskalowany przez `kx / ky` rodzaju |
+| `capital_carrier` | `assets/carrier.png` | tabela (3 gondole) | gniazda i hangary z edytora |
+| `corvus` | sprite Custosa, profil `corvus` | jak Custos | wpis floty (`outlineOf: 'terran_frigate'`) |
+| `fighter` | `assets/fighter-combat-v1.png` | tabela | bez profilu: szerokość płótna = 2,4 × 12 j. (jak `drawFighterSprite`); inny promień = skala × promień / 12 |
+| `megafreighter_front / _wagon / _back` | moduły pociągu (`megafreighterTrain.js`), profil `megafreighter` | lokomotywa — tabela (4 małe dysze) | lokomotywa z mostkiem gry |
+| 16 kadłubów ruchu v2 (`megafreighter` — cały skład, frachtowce, górnicze, piraci ruchu, pomocnicze) | `TRAFFIC_HULLS` | `TRAFFIC_HULLS.main` | `heavy_freighter` na sprite'cie frachtowca DZ (jak w ruchu v2) |
+
+- **Obrys i gondole:** jak flota (alfa → płyta z dziurami). Gondole z dysz MAIN: dysze łączone w pionie w grupy
+  (stykające się gondole), rufa = pierwszy piksel alfy w wierszu dyszy, kadłub zaczyna się w kolumnie, w której alfa
+  wychodzi poza pas grupy. Gdy kadłub jest tam szerszy niż gondole (za krótka gondola), dysza stoi na ścianie rufy
+  (`bells`: obudowa w ścianie + dzwon z żarem).
+- **Tarasy nadbudówek:** mapa odległości od krawędzi płyty — pierwszy taras `d ≥ 0,28 · max` na 6,5 hu, drugi (grzbiet)
+  `d ≥ 0,6 · max` na 10 hu; drobne wyspy odpadają. Dachy mają rysunek sprite'a, więc z góry model = sprite. Wysokości w hu
+  = 1% szerokości obrysu alfy; kil ściśnięty ku osi (środek masy maski), głębokość 11 hu w środku; przy dziurach w płycie
+  kil tylko pod pierwszym tarasem (dziury przelotowe).
+- **Palety:** Terra Nova / piraci jak flota, cywilne — grafit (`FLEET3D_PALETTES.civil`).
+- **Nowy kadłub z automatu:** wpis w `AUTO3D_TABLE` (`autoHulls3D.js`), `node scripts/webgpu/obrysy-floty.mjs --podglad`
+  (nakładki `.tmp/obrysy-floty/auto_<id>.png`), test `tests/auto3dModel.test.mjs`. Lepszy wygląd = przeniesienie do floty
+  (ręczne bryły w `fleetHulls3D.js`).
 
 ## Do integracji z grą (gdy przyjdzie czas)
 

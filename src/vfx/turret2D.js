@@ -87,19 +87,22 @@ function yamatoGun(s, gy, groups) {
   groups.detailCyan.p.push(['r', 6 + 26 * s, gy, 38 * s, 1.6 * s, 0.7]);
 }
 
-function buildYamatoSpec() {
+// twin — wariant L (special_yamato_l, 2 lufy na salwę): ta sama wieża, ale tylko SKRAJNE lufy
+// rodzica (środkowa kołyska pusta). Indeks lufy salwy 0 / 1 = lewa / prawa lufa skrajna — pociski
+// wychodzą symetrycznie względem osi wieży, a każda narysowana lufa ma swój punkt wylotowy.
+function buildYamatoSpec(twin = false) {
   const groups = {
     armor: { c: C.armor, b: 0, p: [['c', 2, 0, 17], ['p', [[-14, -15], [8, -15], [20, 0], [8, 15], [-14, 15], [-20, 0]]]] },
     barrel: { c: C.barrel, b: 1, p: [] },
     detailCyan: { c: C.detailCyan, b: 1, p: [] }
   };
   yamatoGun(0.9, 6.75, groups);
-  yamatoGun(1.0, 0, groups);
+  if (!twin) yamatoGun(1.0, 0, groups);
   yamatoGun(0.9, -6.75, groups);
   return {
     r: 58,
     g: [groups.armor, groups.barrel, groups.detailCyan],
-    m: [[56, 6.75], [58, 0], [56, -6.75]]
+    m: twin ? [[56, 6.75], [56, -6.75]] : [[56, 6.75], [58, 0], [56, -6.75]]
   };
 }
 
@@ -317,6 +320,7 @@ const SPECS = {
 };
 
 SPECS.yamato = buildYamatoSpec();
+SPECS.yamatoTwin = buildYamatoSpec(true);
 
 // Ta sama kolejność rozstrzygania co `createWeapon3DMesh`, żeby żadna broń nie
 // zmieniła sylwetki przy przejściu na 2D.
@@ -330,8 +334,10 @@ function resolveSpec(weaponId, category) {
   if (key === 'beam_pulse') return SPECS.beamPulse;
   if (key === 'special_goliath_autocannon') return SPECS.goliath;
   if (key === 'special_plasma_gatling') return SPECS.plasmaGatling;
-  if (key === 'special_valkyrie_railgun') return SPECS.tempest2;
+  // Warianty S / M Valkyrie (Kolec, Oszczep) — sylwetka i sprite rodzica (skalę daje rozmiar broni).
+  if (key === 'special_valkyrie_railgun' || key === 'special_valkyrie_s' || key === 'special_valkyrie_m') return SPECS.tempest2;
   if (key === 'special_yamato_cannon') return SPECS.yamato;
+  if (key === 'special_yamato_l') return SPECS.yamatoTwin;
   if (key === 'railgun_mk1' || key === 'tempest_ion_mk1') return SPECS.tempest1;
   if (key === 'railgun_mk2' || key === 'tempest_ion_mk2') return SPECS.tempest2;
   if (key === 'heavy_autocannon') return SPECS.heavyAutocannon;
@@ -376,7 +382,10 @@ const FX_PROFILE = {
   special_goliath_autocannon: { key: 'goliath' },
   special_plasma_gatling: { key: 'plasmaGatling' },
   special_valkyrie_railgun: { key: 'tempest' },
+  special_valkyrie_s: { key: 'tempest' },
+  special_valkyrie_m: { key: 'tempest' },
   special_yamato_cannon: { key: 'yamato' },
+  special_yamato_l: { key: 'yamato' },
   tempest_ion_mk1: { key: 'tempest' },
   tempest_ion_mk2: { key: 'tempest' },
   heavy_autocannon: { key: 'autocannon' },
@@ -703,6 +712,17 @@ export const Turret2D = {
 
   /** Sylwetka dla danej broni — wystawione dla testów i podglądu w konsoli. */
   resolveSpec,
+
+  /**
+   * Opcja „Bronie 3D” (src/3d/ships3d/shipModels3DGame.js): (rec) → true = wieżyczki nie rysuje kanwa
+   * (rysuje ją model 3D z rekordu tej klatki). null — kanwa rysuje wszystkie.
+   */
+  skipDraw: null,
+
+  /** Rekordy wieżyczek encji z tej klatki (tablica z puli — tylko do odczytu w tej klatce) albo null. */
+  recordsFor(entity) {
+    return recordsByEntity.get(entity) || null;
+  },
 
   // Pure geometry lookup: usable by simulation even offscreen or with VFX off.
   // The caller owns out; no render records, interpolation or recoil affect it.
@@ -1057,9 +1077,11 @@ export const Turret2D = {
     const vh = ctx.canvas?.height || 0;
 
     let drawn = 0;
+    const skipDraw = typeof this.skipDraw === 'function' ? this.skipDraw : null;
     ctx.save();
     for (let i = 0; i < frameCount; i++) {
       const rec = frameRecords[i];
+      if (skipDraw !== null && skipDraw(rec)) continue;
       const spec = rec.spec;
       const worldScale = rec.scale;
       const screenR = spec.r * worldScale * zoom;
@@ -1117,7 +1139,8 @@ export const Turret2D = {
         continue;
       }
 
-      if (spec === SPECS.yamato && YamatoSprite2D.draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+      if ((spec === SPECS.yamato || spec === SPECS.yamatoTwin)
+        && YamatoSprite2D.draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack, spec === SPECS.yamatoTwin)) {
         drawn++;
         continue;
       }

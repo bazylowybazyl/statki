@@ -35,6 +35,7 @@
 import * as THREE from 'three/webgpu';
 import { Core3D } from '../core3d.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
+import { View3D } from '../../game/view3D.js';
 import { AsteroidBeltField, BELT_BAND } from '../../game/asteroidBeltField.js';
 import { FieldSunOcclusion } from '../../game/asteroidFieldLight.js';
 import { BeltGiants } from '../../game/asteroidBeltGiants.js';
@@ -144,6 +145,7 @@ export class AsteroidBelt {
     // Wejście klatki z index.html (render): dt gry (0 w pauzie), statki do świateł.
     this._in = { dt: 0, ship: null, player2: null, npcs: null, prepared: false };
     this._view = { x: 0, y: 0, zoom: 1 };
+    this._box3D = { x: 0, y: 0, halfW: 1, halfH: 1 };
     this._frame = { cam: this._view, viewW: 1, viewH: 1, focalPx: 1, time: 0, budgetMs: 0 };
     this._mapFrame = { cam: this._view, viewW: 1, viewH: 1, focalPx: 1, originX: 0, originY: 0, sunT: null, field: this.field };
     this._volFrame = { camX: 0, camY: 0, zoom: 1, viewW: 1, viewH: 1, time: 0, originX: 0, originY: 0 };
@@ -419,11 +421,12 @@ export class AsteroidBelt {
   // obu graczy (zoom mniejszy — LOD grubszy). Zwraca false dla wolnej kamery 3D.
   _computeView() {
     const cam1 = Core3D.activeCam1;
-    if (!cam1 || Core3D.isFreePerspectiveCamera(cam1)) return false;
+    if (!cam1) return false;
     const target = Core3D.composerTarget;
     const bufW = Math.max(1, target ? target.width : 1);
     const bufH = Math.max(1, target ? target.height : 1);
     const v = this._view;
+    if (Core3D.isFreePerspectiveCamera(cam1)) return this._computeView3D(cam1, bufW, bufH);
     const z1 = Math.max(1e-4, Number(cam1.zoom) || 1);
     let x = Number(cam1.x) || 0;
     let y = Number(cam1.y) || 0;
@@ -459,6 +462,31 @@ export class AsteroidBelt {
   }
 
   /** Czy kadr (z paralaksą najgłębszego pasma tła) dotyka pasa. */
+  // Gra 3D (free3d): widok pola = prostokąt płaszczyzny gry pod stożkiem kamery (View3D.groundBox, zasięg z odległości
+  // kamery) jako równoważny widok z góry — koszyki skał i LOD liczą się jak w kamerze klasycznej o tym zasięgu;
+  // rysuje prawdziwa kamera perspektywy (skały, mgła i ośrodek są bryłami w świecie).
+  _computeView3D(cam1, bufW, bufH) {
+    if (!View3D.active) return false;
+    const fovDeg = Number(Core3D.cameraPersp?.fov) || 35;
+    const focal = (bufH * 0.5) / Math.tan((fovDeg * Math.PI / 180) * 0.5);
+    const z1 = Math.max(1e-4, Number(cam1.zoom) || 1);
+    const dist = (bufH * 0.5 / Math.tan(17.5 * Math.PI / 180)) / z1;
+    const reach = Math.min(90000, Math.max(24000, dist * 6));
+    const b = View3D.groundBox(reach, this._box3D);
+    const w = Math.max(1, b.halfW * 2);
+    const h = Math.max(1, b.halfH * 2);
+    const zoom = Math.max(1e-4, Math.min(bufW / w, bufH / h));
+    const v = this._view;
+    v.x = b.x;
+    v.y = b.y;
+    v.zoom = zoom;
+    const f = this._frame;
+    f.viewW = w * zoom;
+    f.viewH = h * zoom;
+    f.focalPx = focal;
+    return true;
+  }
+
   _viewTouchesBelt() {
     const v = this._view;
     const f = this._frame;

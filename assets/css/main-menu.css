@@ -415,6 +415,17 @@
   box-shadow: 0 0 8px var(--mm-orange);
 }
 #main-menu .mm-field + .mm-field { margin-top: calc(14 * var(--mm-u)); }
+/* Nowa gra: modele statków i broni 2D / 3D — dwa przełączniki w rzędzie nad kartami trybu. */
+#main-menu .mm-visual-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(28 * var(--mm-u));
+  padding: calc(12 * var(--mm-u)) calc(16 * var(--mm-u));
+  background: var(--mm-panel);
+  border: 1px solid var(--mm-line);
+  border-radius: calc(10 * var(--mm-u));
+}
+#main-menu .mm-visual-mode .mm-field + .mm-field { margin-top: 0; }
 #main-menu .mm-field-label {
   margin-bottom: calc(8 * var(--mm-u));
   font-size: calc(13 * var(--mm-u));

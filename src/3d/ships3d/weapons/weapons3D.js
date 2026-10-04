@@ -1,4 +1,4 @@
-// src/3d/ships3d/weapons3D.js
+// src/3d/ships3d/weapons/weapons3D.js
 //
 // MODELE 3D BRONI — wieże, wyrzutnie i ich ruchome części (demo dema/atlas3d-webgpu.html).
 // Geometria z budowniczego (meshBuilder3D.js), materiał palety (shipMaterials3D.tsl.js).
@@ -20,7 +20,7 @@
 //   spin    — wirujący blok luf (gatlingi) wokół osi lufy, opcjonalny.
 // Oś lufy w geometrii `barrel` / `spin`: X od czopu, y = z = 0.
 
-import { MeshBuilder3D, SHIP3D_MAT as M, octPoly, rectPoly, ngonPoly } from './meshBuilder3D.js';
+import { MeshBuilder3D, SHIP3D_MAT as M, octPoly, rectPoly, ngonPoly } from '../meshBuilder3D.js';
 
 // Skale z turret2D.js (SCALE_BY_SIZE, CATEGORY_TRIM) i ships.js (WEAPON_TIER_SCALE) —
 // te same liczby, żeby wieże 3D miały rozmiar wież gry.
@@ -47,9 +47,12 @@ export const WEAPON3D_FAMILY = Object.freeze({
   ciws_mk1: 'ciws1', ciws_mk2: 'ciws2', laser_pd_mk1: 'heliosPd',
   flak_s: 'flakL', flak_m: 'flakL', flak_l: 'flakH', flak_capital: 'flakH',
   missile_rack: 'cruise', torpedo_salvo: 'cruise', fast_missile_rack: 'fast', osa_micro_missile: 'osa',
+  roj_pod: 'osa', grad_launcher: 'cruise', hydra_mirv: 'cruise',
   supernova_missile: 'supernova', siege_torpedo: 'torpedo', siege_torpedo_mk2: 'torpedo',
   special_goliath_autocannon: 'goliath', special_plasma_gatling: 'plasmaGatling',
   special_valkyrie_railgun: 'valkyrie', special_yamato_cannon: 'yamato', siege_railgun: 'mjolnir',
+  // warianty rozmiarowe broni specjalnej: model rodzica (Yamato L — ta sama wieża z dwiema skrajnymi lufami)
+  special_valkyrie_s: 'valkyrie', special_valkyrie_m: 'valkyrie', special_yamato_l: 'yamato2',
   hexlance_siege: null,
   fighter_bay: null, fighter_squad_interceptor: null, fighter_squad_multirole: null, fighter_squad_strike: null
 });
@@ -61,7 +64,8 @@ export const WEAPON3D_FAMILY_LABEL = Object.freeze({
   beamP: 'Laser wiązkowy (puls)', ciws1: 'CIWS Mk I', ciws2: 'CIWS Mk II', heliosPd: 'Helios PD',
   flakL: 'Kartacz Flak', flakH: 'Grad / Perun Flak', cruise: 'Wyrzutnia Cruise', fast: 'Fast Missile Rack',
   osa: 'Osa Mk I', supernova: 'Supernova', torpedo: 'Torpedy oblężnicze', goliath: 'Goliath',
-  plasmaGatling: 'Ion Plasma Gatling', valkyrie: 'Valkyrie', mjolnir: 'Mjolnir', yamato: 'Yamato'
+  plasmaGatling: 'Ion Plasma Gatling', valkyrie: 'Valkyrie', mjolnir: 'Mjolnir', yamato: 'Yamato',
+  yamato2: 'Yamato (2 lufy)'
 });
 
 // ---------------------------------------------------------------------------
@@ -418,28 +422,35 @@ const FAMILIES = {
   },
 
   // YAMATO — okrągła wieża pancernika z trzema lufami (środkowa dłuższa), cyjan.
-  yamato: ({ R, H, L }) => {
-    ring(R, 22);
-    const z0 = 1.2;
-    // Okrągła podstawa + kanciasta tarcza czołowa.
-    H.push().translate(2, 0, z0);
-    H.lathe([[20.5, 0], [20.5, 6], [18.5, 9.5], [0, 9.5]], { seg: 32, mats: [M.STEEL, M.BRIGHT, M.STEEL] });
-    H.pop();
-    shell(H, [[-14, -15], [8, -15], [20, 0], [8, 15], [-14, 15], [-20, 0]], z0 + 6, 9.5);
-    H.box(-6, 0, z0 + 15.5 + 0.8, 12, 16, 1.6, { mat: M.PANEL, bevel: [0.5, 0.5] });
-    vent(H, -15, -9, -8, 8, z0 + 15.5, 5);
-    H.mirrorY(() => strip(H, -2, 10, 12.5, z0 + 15.5, 1.2, M.E_CYAN));
-    H.box(16, 0, z0 + 9, 6, 24, 10, { mat: M.DARK, bevel: [0.5, 0.5] });
-    const tx = 16; const tz = z0 + 9;
-    // Jedna lufa (środkowa, najdłuższa) — boczne to ta sama geometria przesunięta (y) i krótsza o 2 (odsunięta).
-    boxX(L, 6 - tx, 12 - tx, 3.4, 3.2, { mat: M.PANEL });
-    tubeX(L, 12 - tx, 56 - tx, 2.6, 2.2);
-    collar(L, 12 - tx, 2.2, 3.2, M.STEEL);
-    L.box(33 - tx, 0, 2.55, 30, 0.6, 0.4, { mat: M.E_CYAN });
-    L.cylinder([56 - tx, 0, 0], [58 - tx, 0, 0], 2.7, 2.7, { seg: 12, flat: true, mat: M.PANEL, capMat: M.DARK });
-    return { trunnion: [tx, tz], barrels: [[-6.75, -0.8], [0, 0], [6.75, -0.8]], barrelShift: [-2, 0, -2], muzzleX: 58 - tx, recoil: 3, light: 'cyan', kind: 'energy', pitch: [-5, 50] };
-  }
+  yamato: (P) => yamato(P, false),
+  // YAMATO L (special_yamato_l) — ta sama wieża i lufa, tylko dwie skrajne lufy (jak SPECS.yamatoTwin w turret2D.js).
+  yamato2: (P) => yamato(P, true)
 };
+
+function yamato({ R, H, L }, twin) {
+  ring(R, 22);
+  const z0 = 1.2;
+  // Okrągła podstawa + kanciasta tarcza czołowa.
+  H.push().translate(2, 0, z0);
+  H.lathe([[20.5, 0], [20.5, 6], [18.5, 9.5], [0, 9.5]], { seg: 32, mats: [M.STEEL, M.BRIGHT, M.STEEL] });
+  H.pop();
+  shell(H, [[-14, -15], [8, -15], [20, 0], [8, 15], [-14, 15], [-20, 0]], z0 + 6, 9.5);
+  H.box(-6, 0, z0 + 15.5 + 0.8, 12, 16, 1.6, { mat: M.PANEL, bevel: [0.5, 0.5] });
+  vent(H, -15, -9, -8, 8, z0 + 15.5, 5);
+  H.mirrorY(() => strip(H, -2, 10, 12.5, z0 + 15.5, 1.2, M.E_CYAN));
+  H.box(16, 0, z0 + 9, 6, 24, 10, { mat: M.DARK, bevel: [0.5, 0.5] });
+  const tx = 16; const tz = z0 + 9;
+  // Jedna lufa (środkowa, najdłuższa) — boczne to ta sama geometria przesunięta (y) i krótsza o 2 (odsunięta).
+  boxX(L, 6 - tx, 12 - tx, 3.4, 3.2, { mat: M.PANEL });
+  tubeX(L, 12 - tx, 56 - tx, 2.6, 2.2);
+  collar(L, 12 - tx, 2.2, 3.2, M.STEEL);
+  L.box(33 - tx, 0, 2.55, 30, 0.6, 0.4, { mat: M.E_CYAN });
+  L.cylinder([56 - tx, 0, 0], [58 - tx, 0, 0], 2.7, 2.7, { seg: 12, flat: true, mat: M.PANEL, capMat: M.DARK });
+  const layout = { trunnion: [tx, tz], muzzleX: 58 - tx, recoil: 3, light: 'cyan', kind: 'energy', pitch: [-5, 50] };
+  // twin: tylko skrajne lufy (krótsze o 2 — wylot 56 jak SPECS.yamatoTwin).
+  if (twin) return { ...layout, barrels: [[-6.75, -0.8], [6.75, -0.8]], barrelShift: [-2, -2] };
+  return { ...layout, barrels: [[-6.75, -0.8], [0, 0], [6.75, -0.8]], barrelShift: [-2, 0, -2] };
+}
 
 function tempest({ R, H, L }, o) {
   const hy = o.hy;

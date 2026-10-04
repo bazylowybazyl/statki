@@ -19,6 +19,8 @@
 // po uzgodnieniu z użytkownikiem. Statki tu to tylko ruch dema: w grze przyjdą
 // z ruchu v2 (ring i porty nie udają życia).
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import { Discard, Fn, If, cos, dot, max, normalize, pow, sin, smoothstep, texture, uniform, uv, vec3, vec4 } from 'three/tsl';
 import { Core3D } from '../src/3d/core3d.js';
 import { drawHexShips3D, initHexShips3D, resizeHexShips3D, updateHexShips3D } from '../src/3d/hexShips3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
@@ -71,9 +73,8 @@ let H = canvas2d.height = innerHeight;
 glCanvas.width = W;
 glCanvas.height = H;
 initHexShips3D({ canvas: glCanvas });
-Core3D.renderer.debug.onShaderError = (gl, program, vs, fs) => {
-  reportError(`SHADER: ${[gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs)].filter(Boolean).join('\n')}`);
-};
+// Port WebGPU: renderer powstaje w tle (Core3D.ready) — start demo czeka na
+// urządzenie (sekcja „Start” niżej); błędy pipeline'ów Core3D loguje do konsoli.
 addEventListener('resize', () => {
   W = canvas2d.width = innerWidth;
   H = canvas2d.height = innerHeight;
@@ -490,26 +491,31 @@ function stepHangar(dt) {
 const atlasTex = new THREE.TextureLoader().load('assets/capital_ship_rect_v1.png');
 atlasTex.colorSpace = THREE.SRGBColorSpace;
 atlasTex.anisotropy = 8;
-const atlas = new THREE.Mesh(new THREE.PlaneGeometry(1800, 806), new THREE.ShaderMaterial({
-  uniforms: { uMap: { value: atlasTex }, uLight: { value: new THREE.Vector3(0, 0, 1) }, uRot: { value: 0 } },
-  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: /* glsl */`
-    uniform sampler2D uMap; uniform vec3 uLight; uniform float uRot;
-    varying vec2 vUv;
-    void main() {
-      vec4 t = texture2D(uMap, vUv);
-      if (t.a < 0.45) discard;
-      vec2 p = vUv * 2.0 - 1.0;
-      vec3 n = normalize(vec3(p.x * 0.45, p.y * 0.45, 1.0));
-      float c = cos(uRot); float s = sin(uRot);
-      n = normalize(vec3(n.x * c - n.y * s, n.x * s + n.y * c, n.z));
-      float d = max(0.0, dot(n, uLight));
-      vec3 col = t.rgb * (0.24 + 1.18 * d);
-      vec3 h = normalize(uLight + vec3(0.0, 0.0, 1.0));
-      col += vec3(pow(max(dot(n, h), 0.0), 32.0) * 0.3 * smoothstep(-0.02, 0.08, dot(n, uLight)));
-      gl_FragColor = vec4(col, 1.0);
-    }`
-}));
+// Materiał w TSL (port WebGPU) — wzory 1:1 z dawnym GLSL; `material.uniforms.uLight /
+// uRot .value` jak dawniej (węzły uniform() mają `.value`).
+const atlasU = { uLight: uniform(new THREE.Vector3(0, 0, 1)), uRot: uniform(0) };
+const atlasMat = new NodeMaterial();
+atlasMat.name = 'AtlasDemoSprite';
+atlasMat.lights = false;
+atlasMat.fog = false;
+atlasMat.uniforms = atlasU;
+atlasMat.fragmentNode = Fn(() => {
+  const vUv = uv();
+  const t = texture(atlasTex, vUv).toVar();
+  If(t.a.lessThan(0.45), () => { Discard(); });
+  const p = vUv.mul(2.0).sub(1.0);
+  const n0 = normalize(vec3(p.x.mul(0.45), p.y.mul(0.45), 1.0));
+  const c = cos(atlasU.uRot);
+  const s = sin(atlasU.uRot);
+  const n = normalize(vec3(n0.x.mul(c).sub(n0.y.mul(s)), n0.x.mul(s).add(n0.y.mul(c)), n0.z));
+  const NdL = dot(n, atlasU.uLight);
+  const d = max(0.0, NdL);
+  const h = normalize(atlasU.uLight.add(vec3(0.0, 0.0, 1.0)));
+  const spec = pow(max(dot(n, h), 0.0), 32.0).mul(0.3).mul(smoothstep(-0.02, 0.08, NdL));
+  const col = t.rgb.mul(d.mul(1.18).add(0.24)).add(vec3(spec));
+  return vec4(col, 1.0);
+})();
+const atlas = new THREE.Mesh(new THREE.PlaneGeometry(1800, 806), atlasMat);
 atlas.name = 'Atlas (demo)';
 atlas.layers.set(0);
 atlas.renderOrder = 10;
@@ -891,7 +897,7 @@ window.__port = {
     hangar.update(0, {});
     for (const b of [yard, yardU, hangar]) b.setLayers(LAYER_BG, LAYER_FG);
     Core3D.scene.add(g);
-    Core3D.renderer.compile(Core3D.scene, Core3D.cameraPersp);
+    Core3D.renderer.compileAsync(Core3D.scene, Core3D.cameraPersp);
     Core3D.scene.remove(g);
     const programs = [yard, yardU, hangar].flatMap((b) => b.materials.map((m) => m.name));
     yard.dispose();
@@ -936,6 +942,10 @@ window.__port = {
 
 // ---------------------------------------------------------------------------
 // Start
+if (!(await Core3D.ready)) {
+  reportError(`WebGPU: ${Core3D.gpuError || 'brak urządzenia — demo wymaga przeglądarki z WebGPU'}`);
+  throw new Error('WebGPU niedostępne');
+}
 buildModules();
 makeBuoys(state.styleKey);
 styleButtons.forEach((b, i) => b.classList.toggle('on', STYLES[i][0] === state.styleKey));

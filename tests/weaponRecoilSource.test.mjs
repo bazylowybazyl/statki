@@ -38,6 +38,16 @@ test('dane: każda broń z efektem ma recoil i shake (wartości FX_PROFILE sprze
     assert.equal(weaponRecoil(MASTER_WEAPONS[id]), r, `${id}: odrzut`);
     assert.equal(weaponShake(MASTER_WEAPONS[id]), s, `${id}: wstrząs`);
   }
+  // Warianty rozmiarowe broni specjalnej (2026-10-01): odrzut, wstrząs i skala trafienia z danych, mniejsze niż u rodzica.
+  for (const [id, r, s, k, parent] of [
+    ['special_valkyrie_s', 8, 4, 1.2, 'special_valkyrie_railgun'], ['special_valkyrie_m', 12, 7, 2.0, 'special_valkyrie_railgun'],
+    ['special_yamato_l', 34, 12, 2.8, 'special_yamato_cannon']
+  ]) {
+    assert.equal(weaponRecoil(MASTER_WEAPONS[id]), r, `${id}: odrzut`);
+    assert.equal(weaponShake(MASTER_WEAPONS[id]), s, `${id}: wstrząs`);
+    assert.equal(weaponImpactScale(MASTER_WEAPONS[id]), k, `${id}: skala trafienia`);
+    assert.ok(k < weaponImpactScale(MASTER_WEAPONS[parent]) && r < weaponRecoil(MASTER_WEAPONS[parent]), `${id}: lżej niż rodzic`);
+  }
   assert.equal(weaponRecoil({}), WEAPON_RECOIL_FALLBACK);
   assert.equal(weaponShake({}), WEAPON_SHAKE_FALLBACK);
   assert.equal(weaponImpactScale(MASTER_WEAPONS.siege_railgun), 5);

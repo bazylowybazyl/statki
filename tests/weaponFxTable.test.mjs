@@ -14,8 +14,8 @@ import {
 const FAMILIES = new Set(['tempest', 'vulcan', 'autocannon', 'helios', 'armata', 'goliath', 'yamato', 'plasmaGatling',
   'hexlance', 'mjolnir', 'valkyrie', 'beamC', 'beamP', 'laserPD', 'ciws', 'flak']);
 
-test('27 broni z dema ma wpis w tabeli efektów, rodziny z listy receptur', () => {
-  assert.equal(WEAPON_FX_IDS.length, 27);
+test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej mają wpis w tabeli efektów, rodziny z listy receptur', () => {
+  assert.equal(WEAPON_FX_IDS.length, 30);
   for (const id of WEAPON_FX_IDS) {
     assert.ok(MASTER_WEAPONS[id], `${id}: brak w MASTER_WEAPONS`);
     assert.ok(FAMILIES.has(WEAPON_FX[id].fx), `${id}: nieznana rodzina ${WEAPON_FX[id].fx}`);
@@ -36,10 +36,36 @@ test('każda broń MASTER_WEAPONS poza rakietami, torpedami i hangarami ma efekt
 });
 
 test('ładowanie w tabeli = chargeTime z danych (Mjolnir, Valkyrie, Hexlance)', () => {
-  for (const id of ['siege_railgun', 'special_valkyrie_railgun', 'hexlance_siege']) {
+  for (const id of ['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_m', 'special_valkyrie_s', 'hexlance_siege']) {
     assert.equal(WEAPON_FX[id].charge, MASTER_WEAPONS[id].chargeTime, id);
   }
   assert.ok(WEAPON_FX.laser_pd_mk1.pd && WEAPON_FX.flak_capital.pd && WEAPON_FX.ciws_mk2.pd);
+});
+
+// Broń specjalna mniejszych klas (BRIEF-kierowanie-ogniem § 6): gniazdo special fregaty (S), niszczyciela (M)
+// i pancernika / lotniskowca (L) ma co zamontować; efekty z rodzin rodziców — bez nowych receptur.
+test('warianty rozmiarowe broni specjalnej: S / M / L na rodzinach Valkyrie i Yamato', () => {
+  for (const [id, size, fx, parent] of [
+    ['special_valkyrie_s', 'S', 'valkyrie', 'special_valkyrie_railgun'],
+    ['special_valkyrie_m', 'M', 'valkyrie', 'special_valkyrie_railgun'],
+    ['special_yamato_l', 'L', 'yamato', 'special_yamato_cannon']
+  ]) {
+    const def = MASTER_WEAPONS[id];
+    assert.ok(def, id);
+    assert.equal(def.id, id);
+    assert.equal(def.mountType, 'special', id);
+    assert.equal(def.size, size, id);
+    assert.equal(def.category, MASTER_WEAPONS[parent].category, id);
+    assert.equal(WEAPON_FX[id].fx, fx, id);
+    assert.equal(WEAPON_FX[id].fx, WEAPON_FX[parent].fx, `${id}: rodzina rodzica`);
+    assert.equal(projectileFamilyFor({ vfxKey: id, type: def.category }), fx, id);
+    assert.equal(def.vfxColor, MASTER_WEAPONS[parent].vfxColor, `${id}: barwa rodzica`);
+    assert.ok(def.baseDamage < MASTER_WEAPONS[parent].baseDamage, `${id}: słabsza od rodzica`);
+  }
+  assert.equal(MASTER_WEAPONS.special_yamato_l.barrelsPerShot, 2);
+  // W każdej klasie rozmiaru jest co najmniej jedna broń special.
+  const sizes = new Set(Object.values(MASTER_WEAPONS).filter((d) => d.mountType === 'special').map((d) => d.size));
+  assert.deepEqual(['S', 'M', 'L', 'Capital'].filter((s) => !sizes.has(s)), []);
 });
 
 test('pocisk spoza tabeli: rodzina po type (PROJEKT-BRONI §1.2 F)', () => {

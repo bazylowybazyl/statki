@@ -11,12 +11,17 @@
 // kula obejmowałaby kamerę). Obrót przelotu = kwaternion grupy; słońce stoi
 // w układzie grupy (obraca się razem z ciałem — przy przelocie przesuwa się
 // terminator, jak w propozycji 1). Obrót dobowy = przesunięcie tekstury.
+// RULON (rulon.js): tarcza, chmury, poświata i pierścień przechodzą przez
+// rulon W WIERZCHOŁKACH (`bendMaterial`) — przy horyzoncie bryła spłaszcza się
+// z walcem, w przewężeniu za statkiem rozciąga (klepsydra); grupa stoi
+// w PŁASKIM miejscu soczewki.
 
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, vec2, vec3, vec4, uniform, texture, uv, positionLocal, normalWorld, max, min, mix,
   dot, clamp, smoothstep, exp, pow, abs, length, normalize
 } from 'three/tsl';
+import { bendMaterial } from './rulon.js';
 
 const TEX = {
   earth: 'assets/planety/solar/earth/earth_color.jpg',
@@ -128,6 +133,7 @@ function planetMaterial(id) {
     col.addAssign(u.atm.mul(rim));
     return vec4(max(col.mul(u.exposure), vec3(0.0)), 1.0);
   })();
+  bendMaterial(mat, { mode: 'rgb' });
   return { mat, u };
 }
 
@@ -153,6 +159,7 @@ function cloudMaterial(sunU) {
   mat.blendDst = THREE.OneMinusSrcAlphaFactor;
   mat.blendSrcAlpha = THREE.OneFactor;
   mat.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+  bendMaterial(mat, { mode: 'all' });
   return { mat, u };
 }
 
@@ -181,6 +188,7 @@ function haloMaterial(id) {
     const side = clamp(dot(q.div(max(r, 1e-3)), u.sun2).mul(0.6).add(0.45), 0.0, 1.0);
     return vec4(u.col.mul(shell.mul(side).mul(u.gain).mul(0.9)), 0.0);
   })();
+  bendMaterial(mat, { mode: 'rgb' });
   return { mat, u };
 }
 
@@ -204,6 +212,7 @@ function ringMaterial(sunU) {
   mat.blendDst = THREE.OneMinusSrcAlphaFactor;
   mat.blendSrcAlpha = THREE.OneFactor;
   mat.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+  bendMaterial(mat, { mode: 'all' });
   return mat;
 }
 
@@ -228,8 +237,17 @@ export class PlanetSet {
    */
   constructor(scene, bodies) {
     this.items = new Map();
-    const sphere = new THREE.SphereGeometry(1, 96, 64);
-    const quad = new THREE.PlaneGeometry(2.4, 2.4);
+    // Rulon gnie siatki w wierzchołkach — bok siatki na ekranie musi być krótki,
+    // inaczej tarcza na pół ekranu i więcej (start z Ziemi: ~6000 px promienia)
+    // wychodzi kanciasta, a tekstura „łamie się” na każdym trójkącie. Poziomy
+    // szczegółowości wg promienia na ekranie (apply): < 300 px, < 1500 px, więcej.
+    this.lods = [
+      { sphere: new THREE.SphereGeometry(1, 96, 64), quad: new THREE.PlaneGeometry(2.4, 2.4, 48, 48) },
+      { sphere: new THREE.SphereGeometry(1, 256, 160), quad: new THREE.PlaneGeometry(2.4, 2.4, 128, 128) },
+      { sphere: new THREE.SphereGeometry(1, 768, 400), quad: new THREE.PlaneGeometry(2.4, 2.4, 320, 320) }
+    ];
+    const sphere = this.lods[0].sphere;
+    const quad = this.lods[0].quad;
     for (const b of bodies) {
       const look = TEX[b.id] ? b.id : 'moon';
       const group = new THREE.Group();
@@ -259,6 +277,11 @@ export class PlanetSet {
       item.halo = new THREE.Mesh(quad, hm.mat);
       item.halo.renderOrder = -1;
       item.haloU = hm.u;
+      // Rulon przenosi bryłę w shaderze — płaskie miejsce bywa daleko poza
+      // kadrem (ciało ściągnięte przez przewężenie), więc bez odrzucania przez
+      // three; kadr sprawdza apply() na miejscu po rulonie.
+      item.halo.frustumCulled = false;
+      group.traverse((o) => { o.frustumCulled = false; });
       scene.add(item.halo);
       scene.add(group);
       this.items.set(b.id, item);
@@ -314,18 +337,41 @@ export class PlanetSet {
    * Wynik soczewki (worldLens.js) → siatki. px od środka ekranu (y w dół),
    * kamera passa: ortho w px ze środkiem (0, 0); t — czas (obrót dobowy).
    */
-  apply(view, W, H, t, visible = true) {
+  /**
+   * `rulon` (opcjonalnie, rulon.js): { map(x, y) → { x, y, g, vis }, boost(x, y) → mnożnik }
+   * — punkt w px od środka, y w GÓRĘ. Grupa stoi w płaskim miejscu (siatki
+   * gnie shader), `map` służy tylko odrzuceniu ciał poza kadrem, `boost` —
+   * powiększenie ciała przeciąganego przez przewężenie.
+   */
+  apply(view, W, H, t, visible = true, rulon = null) {
     this.hideAll();
     if (!visible) return;
     for (const v of view) {
       const it = this.items.get(v.body.id);
       if (!it) continue;
-      const size = v.size;
+      const vx = v.x;
+      const vy = -v.y;
+      let size = v.size;
+      let cx = vx;
+      let cy = vy;
+      let cs = size;
+      if (rulon) {
+        size *= rulon.boost(vx, vy);
+        const m = rulon.map(vx, vy);
+        cx = m.x;
+        cy = m.y;
+        // Zapas: przewężenie rozciąga bryłę wzdłuż kursu (za rufą do 1 + spit).
+        cs = size * Math.max(1, m.g) * 2.5;
+      }
       if (!(size > 0.4)) continue;
       // Poza kadrem (z poświatą) — pomijamy.
-      if (Math.abs(v.x) - size * 1.2 > W * 0.5 || Math.abs(v.y) - size * 1.2 > H * 0.5) continue;
+      if (Math.abs(cx) - cs * 1.2 > W * 0.5 || Math.abs(cy) - cs * 1.2 > H * 0.5) continue;
       it.group.visible = true;
-      it.group.position.set(v.x, -v.y, 0);
+      const lod = this.lods[size < 300 ? 0 : size < 1500 ? 1 : 2];
+      it.mesh.geometry = lod.sphere;
+      if (it.clouds) it.clouds.geometry = lod.sphere;
+      it.halo.geometry = lod.quad;
+      it.group.position.set(vx, vy, 0);
       it.group.scale.setScalar(size);
       this._axis.set(v.turnAx, v.turnAy, 0);
       it.group.quaternion.setFromAxisAngle(this._axis, v.turnAngle);
@@ -345,7 +391,7 @@ export class PlanetSet {
       const sl = Math.hypot(this._sunW.x, this._sunW.y) || 1;
       it.haloU.sun2.value.set(this._sunW.x / sl, this._sunW.y / sl);
       it.halo.visible = true;
-      it.halo.position.set(v.x, -v.y, -size * 1.3);
+      it.halo.position.set(vx, vy, -size * 1.3);
       it.halo.scale.setScalar(size);
       it.halo.updateMatrixWorld(true);
     }

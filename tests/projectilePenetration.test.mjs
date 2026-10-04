@@ -40,8 +40,17 @@ test('dane: Mjolnir bez limitu materiału i hamowania, Valkyrie 260 j. i 0,35; l
   assert.equal(M.penetrationLimitOf(VALKYRIE), 3);
   // Reszta arsenału nie przebija kadłubów (dzisiejsze `penetration` Tempesta, Heliosa, Yamato
   // działało tylko na cele bez kadłuba — projectileTrajectory.js).
+  // Warianty rozmiarowe Valkyrie (broń special mniejszych klas): płytszy budżet materiału, to samo hamowanie.
+  for (const [id, depth, limit] of [['special_valkyrie_s', 60, 2], ['special_valkyrie_m', 140, 3]]) {
+    const def = MASTER_WEAPONS[id];
+    assert.equal(M.penetrationDepthOf(def), depth, id);
+    assert.equal(def.penSpeedLoss, VALKYRIE.penSpeedLoss, id);
+    assert.equal(M.penetrationLimitOf(def), limit, id);
+    assert.equal(M.hasHullMechanics(def), true, id);
+  }
+  const piercing = new Set(['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_s', 'special_valkyrie_m']);
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
-    if (id === 'siege_railgun' || id === 'special_valkyrie_railgun') continue;
+    if (piercing.has(id)) continue;
     assert.equal(M.penetrationDepthOf(def), 0, `${id} nie przebija`);
   }
 });

@@ -219,6 +219,38 @@ dysze), `ships.js` (rozmiary kadłubów), `warpDrive.js`; plazma WARP z dysz w g
 **Tylko pokaz**: planety TSL (w tym obrót tarcz pod kadr), mgławica, duszki blasku, układ
 słoneczny i trasy, sceny, HUD.
 
+### Iteracja 3 w grze (2026-10-03: rulon, lejek, przyloty „jak w Star Wars”, TRAVEL TO)
+
+- *Rulon i lejek — CAŁA GRA* (user: „wszystko ma się zaginać, planety, asteroidy, cała gra”):
+  `src/3d/warp/rulon.js`, `installRulonGlobal()` — hak w każdym materiale węzłowym (wyjście etapu
+  wierzchołków przez `rulonClip`, czysta funkcja WGSL), włączany uniformem `RULON.pass` w passach świata
+  Core3D i przy `RULON.k > 0`. Zginają się planety, ring „Halo”, pas asteroid, stacje, okręty, efekty,
+  gwiazdy i ośrodek; mgławica — odwrotnością we fragmencie (`rulonBend = false`). Przyciemnienie
+  horyzontu — post; maska słońca — odwrotność w jej passie; culling poszerzony o kadr. Pudło ośrodka
+  × 1,4 tylko na czas rulonu. Koszt: budowa funkcji raz (~55 ms), potem 1–2 ms na materiał; w skoku
+  ~2× rysunków (obiekty zza kadru). Ograniczenia: płaszczyzny z 4 wierzchołków (łapacze cienia — schowane
+  w rulonie) i moduły z własnym cullingiem CPU (pas, LOD ringu) nie pokazują obiektów spoza zwykłego kadru.
+- *Oś czasu*: `warpRulonBend` (warpDrive.js — ta sama w efekcie i w rigu kamery). Ładowanie gry 0,8 s —
+  rulon zwija się w nim całym (demo 3 s).
+- *Kurs przed skokiem* (rozgrywka): ładowanie nie obraca statku, w locie bez skrętu (`warp.chargeAngle`).
+- *Wyjście gracza = przylot NPC* — prawdziwa kinematyka: `warp.exitRamp` (`createWarpExitRamp`:
+  zwolnienie 0,7 s, wlot 0,45 s, hamowanie 0,9 L) prowadzi statek w physicsStep; efekt (`player.js`) czyta
+  tę samą rampę (wiek z zegara gry): rulon się rozwija, smugi gwiazd gasną przez zwolnienie, hamowanie —
+  błysk dziobu, blask, fala, iskry ośrodka (przegródka `push`), żar; ośrodek gaśnie 0,6 s po zatrzymaniu.
+  Kamera (rig): statek na środku lejka, przy wyjściu kamera za statkiem (wysunięcie 0,4 pół kadru,
+  dogania w 1,3 s), oddalenie do końca zwolnienia.
+- *Przyloty NPC* (`arrivals.js`, `planWarpRush` / `sampleWarpRush` w warpDrive.js): nić zwiastuna do
+  miejsca zatrzymania, okręt pojawia się ≥ 9000 j. za nim i hamuje w chwili dawnego wyrzutu (oś
+  zwiastuna z gry bez zmian). Wezwania: spawn w `tSpawn` (pojawienie się), wlot i hamowanie prowadzi
+  efekt (duch do zatrzymania). Warp-in piratów: pozycję prowadzi gra, hamowanie od wyjścia z
+  'warping_in'. *Odlot* (`createWarpDeparture` — nowa oś): punkt skoku 4 L przed dziobem, kop, rozpęd
+  ∝ t³, zniknięcie od dziobu. Szczelin, smug sylwetki i wciągania tła w szczeliny dziś nikt nie karmi
+  (infrastruktura zostaje).
+- *TRAVEL TO* (mapa, menu PPM, skaner): podróż odcinkami — obrót, ładowanie, skok, wyjście w końcu
+  odcinka (`warpExitRampDistance`), cel w studni grawitacji — warp do jej brzegu, resztę napędem
+  (`src/game/travelNav.js`). Hipercruise przejmie odcinki napędem. Sprawdzenie w grze:
+  `node scripts/webgpu/travel-gra.mjs` (statek staje 20–80 j. od celu).
+
 ## Otwarte pytania do usera
 
 1. Czy przylot ma coś robić w grze (np. obrażenia w ujściu szczeliny — „nie stój w tunelu”)?

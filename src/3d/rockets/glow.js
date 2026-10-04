@@ -30,7 +30,7 @@ export class GlowSprites {
     // Wpis roboczy dla push(): wołający wypełnia pola i woła push() — w pętlach klatki bez
     // przekazywania liczb zmiennoprzecinkowych przez argumenty (V8 opakowuje je w obiekty
     // przy wywołaniu, którego nie wklei; add(...) zostaje dla wywołań rzadkich).
-    this.s = { x: 0, y: 0, z: 0, size: 0, r: 0, g: 0, b: 0 };
+    this.s = { x: 0, y: 0, z: 0, size: 0, r: 0, g: 0, b: 0, dx: 1, dy: 0, stretch: 1 };
     const base = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.setIndex(base.index);
@@ -121,6 +121,23 @@ export class GlowSprites {
     A[o] = s.x; A[o + 1] = s.y; A[o + 2] = s.z; A[o + 3] = s.size;
     B[o] = s.r; B[o + 1] = s.g; B[o + 2] = s.b; B[o + 3] = GLOW_ROUND;
     C[o] = 1; C[o + 1] = 0; C[o + 2] = 1; C[o + 3] = 0;
+  }
+
+  /**
+   * Smuga z wpisu roboczego `s` (lokalnie x, y, z — środek; rozmiar = szerokość, barwa HDR,
+   * kierunek (dx, dy) jednostkowy — jasny koniec po stronie +kierunku, wydłużenie = długość / szerokość).
+   */
+  pushStreak() {
+    const s = this.s;
+    if (this.count >= this.capacity || !(s.size > 0)) return;
+    const i = this.count++;
+    const o = i * 4;
+    const A = this.a.array;
+    const B = this.b.array;
+    const C = this.c.array;
+    A[o] = s.x; A[o + 1] = s.y; A[o + 2] = s.z; A[o + 3] = s.size;
+    B[o] = s.r; B[o + 1] = s.g; B[o + 2] = s.b; B[o + 3] = GLOW_STREAK;
+    C[o] = s.dx; C[o + 1] = s.dy; C[o + 2] = s.stretch; C[o + 3] = 0;
   }
 
   commit(ox, oy) {

@@ -43,6 +43,8 @@ import {
   texture, atan, floor, fract
 } from 'three/tsl';
 import { fxCarrierOffset, writeCarrierPacket } from '../fx/carrier.js';
+import { ActiveCarrier } from '../../game/carrierVelocity.js';
+import { billboardOffset, streakAcross } from '../tsl/billboard3D.js';
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
 import { sunVisibility, sunFill } from '../sunShadowMask.js';
 import { liveRangeAttribute, markRange } from './liveRange.js';
@@ -209,8 +211,8 @@ export class Pool {
     b.fill(0);
     this._count = count > 0 ? Math.floor(count) : 0;
     b[3] = kind;
-    // domyślne (jak `E()` dema: stożek 0 spłaszczony do 0,18, z = 15)
-    b[6] = 15;
+    // domyślne (jak `E()` dema: stożek 0 spłaszczony do 0,18, z = 15); gra 3D: + wysokość nośnika
+    b[6] = 15 + ActiveCarrier.z;
     b[8] = 1;                                    // dir x
     b[14] = 1; b[15] = 1;                        // życie
     b[16] = 1; b[17] = 1; b[18] = 1; b[19] = 1;  // rozmiary
@@ -226,7 +228,7 @@ export class Pool {
   }
   /** Punkt w układzie SCENY (double; lokalny = − początek w emit). */
   at(x, y) { const w = this._w; w[0] = x; w[1] = y; return this; }
-  z(z) { this._b[6] = z; return this; }
+  z(z) { this._b[6] = z + ActiveCarrier.z; return this; }
   preAge(t) { this._b[7] = t; return this; }
   /** Kierunek w scenie (normowany w emit). */
   dir(x, y) { const b = this._b; b[8] = x; b[9] = y; return this; }
@@ -715,7 +717,9 @@ export class GpuFx {
         const pos = P0.xyz.add(P1.xyz.mul(dragPath(P5.x, age))).add(this._carried(C)).toVar();
         const kind = P6.x.toVar();
         const g = positionGeometry.xy;
-        const corner = vec2(0.0).toVar();
+        // Gra 3D (tsl/billboard3D.js): przesunięcie rogu jako vec3 — kwady okrągłe w płaszczyźnie kadru,
+        // jęzory / krzyże wzdłuż kierunku z szerokością do kamery; w kamerze klasycznej jak dawniej.
+        const corner = vec3(0.0).toVar();
         const sz = float(0.0).toVar();
         const oriented = kind.equal(float(K.CROSS)).or(kind.equal(float(K.PLUME)));
         If(oriented, () => {
@@ -725,17 +729,20 @@ export class GpuFx {
           const dl = length(P6.yz);
           const dir = select(dl.greaterThan(1e-4), P6.yz.div(max(dl, 1e-4)), vec2(1.0, 0.0));
           const perp = vec2(dir.y.negate(), dir.x);
+          const dir3 = vec3(dir, 0.0);
+          const acr = streakAcross(dir3, perp);
           // krzyż wyśrodkowany; jęzor od podstawy (v = 0 u wylotu)
           const along = select(kind.equal(float(K.PLUME)), g.y.add(0.5), g.x);
           const across = select(kind.equal(float(K.PLUME)), g.x, g.y);
-          corner.assign(dir.mul(along.mul(len)).add(perp.mul(across.mul(wid))));
+          corner.assign(dir3.mul(along.mul(len)).add(acr.mul(across.mul(wid))));
           sz.assign(len);
         }).Else(() => {
           const size = mix(P2.x, P2.y, pow(max(u, 1e-5), P5.y));
           const rot = P2.z.add(P2.w.mul(age));
           const cr = cos(rot);
           const sr = sin(rot);
-          corner.assign(vec2(g.x.mul(cr).sub(g.y.mul(sr)), g.x.mul(sr).add(g.y.mul(cr))).mul(size));
+          const c2 = vec2(g.x.mul(cr).sub(g.y.mul(sr)), g.x.mul(sr).add(g.y.mul(cr))).mul(size);
+          corner.assign(billboardOffset(c2.x, c2.y));
           sz.assign(size);
         });
         const fadeIn = select(oriented, float(0.1), max(P5.z, 1e-3));
@@ -743,7 +750,7 @@ export class GpuFx {
         const col = mix(P3.xyz, P4.xyz, min(age.mul(P4.w), 1.0));
         vCol.assign(vec4(col.mul(a), kind));
         vInfo.assign(vec4(u, P6.w, age, sz.mul(U.zoom)));
-        out.assign(pos.add(vec3(corner, 0.0)));
+        out.assign(pos.add(corner));
       });
       return out;
     })();
@@ -831,12 +838,16 @@ export class GpuFx {
         const P4 = buf.element(i.add(uint(4))).toVar();
         const C = buf.element(i.add(uint(CARRIER_AT.spark))).toVar();
         const u = clamp(P0.w.div(max(P1.w, 1e-4)), 0.0, 1.0).toVar();
-        const head = P0.xy.add(this._carried(C).xy).toVar();
+        // Gra 3D: głowa i ruch w 3D (P0.z, P1.z), szerokość smugi do kamery (tsl/billboard3D.js);
+        // w kamerze klasycznej ruch pionowy iskier jest zerowy, więc wynik jak dawniej.
+        const head = P0.xyz.add(this._carried(C)).toVar();
         // Smuga z ruchu WŁASNEGO (względem nośnika — jak smuga pocisku względem strzelca).
-        const v2 = P1.xy.toVar();
-        const sp = length(v2).toVar();
-        const dir = select(sp.greaterThan(1e-3), v2.div(max(sp, 1e-3)), vec2(1.0, 0.0)).toVar();
-        const perp = vec2(dir.y.negate(), dir.x);
+        const v3 = P1.xyz.toVar();
+        const sp = length(v3).toVar();
+        const dir = select(sp.greaterThan(1e-3), v3.div(max(sp, 1e-3)), vec3(1.0, 0.0, 0.0)).toVar();
+        const dl2 = length(dir.xy);
+        const perp = select(dl2.greaterThan(1e-4), vec2(dir.y.negate(), dir.x).div(max(dl2, 1e-4)), vec2(0.0, 1.0));
+        const acr = streakAcross(dir, perp);
         // smuga z ruchu (jak w grze: min(v·0.022, smuga) — dłuższa na starcie)
         const len = min(sp.mul(0.022), P3.y).mul(float(0.35).add(float(0.65).mul(float(1.0).sub(u))));
         const pxW = P4.x.div(U.zoom);
@@ -845,7 +856,7 @@ export class GpuFx {
         const along = g.x.add(0.5);  // 0 ogon, 1 głowa
         const tail = head.sub(dir.mul(len));
         const center = mix(tail, head, along).add(dir.mul(g.x.sign().mul(wid.mul(0.5))));
-        out.assign(vec3(center.add(perp.mul(g.y.mul(wid).mul(2.0))), P0.z));
+        out.assign(center.add(acr.mul(g.y.mul(wid).mul(2.0))));
         // stygnięcie: proch biało-żółty → pomarańcz → czerwień; jony zostają błękitne
         const flick = sin(T.mul(42.0).add(P2.w)).mul(0.28).add(0.72);
         const b = pow(float(1.0).sub(u), 1.5).mul(flick);
@@ -899,7 +910,7 @@ export class GpuFx {
         const cr = cos(rot);
         const sr = sin(rot);
         const g = positionGeometry.xy;
-        const corner = vec2(g.x.mul(cr).sub(g.y.mul(sr)), g.x.mul(sr).add(g.y.mul(cr))).mul(size);
+        const corner = vec2(g.x.mul(cr).sub(g.y.mul(sr)), g.x.mul(sr).add(g.y.mul(cr))).mul(size).toVar();
         const a = P3.w.mul(smoothstep(0.0, max(P5.z, 1e-3), u)).mul(pow(float(1.0).sub(u), P5.w));
         vA.assign(vec4(P4.xyz, a));
         vL.assign(vec4(P6.xyz, P6.w));
@@ -908,7 +919,7 @@ export class GpuFx {
         const ly = P7.x.negate().mul(sr).add(P7.y.mul(cr));
         vD.assign(vec4(lx, ly, age, P7.z));
         vH.assign(P3.xyz.mul(exp(age.negate().mul(P4.w))));
-        out.assign(P0.xyz.add(this._carried(C)).add(vec3(corner, 0.0)));
+        out.assign(P0.xyz.add(this._carried(C)).add(billboardOffset(corner.x, corner.y)));
       });
       return out;
     })();
@@ -973,13 +984,13 @@ export class GpuFx {
         const cr = cos(rot);
         const sr = sin(rot);
         const g = positionGeometry.xy.mul(vec2(aspect, 1.0)).mul(P2.x);
-        const corner = vec2(g.x.mul(cr).sub(g.y.mul(sr)), g.x.mul(sr).add(g.y.mul(cr)));
+        const corner = vec2(g.x.mul(cr).sub(g.y.mul(sr)), g.x.mul(sr).add(g.y.mul(cr))).toVar();
         const a = smoothstep(1.0, 0.8, u);
         vA.assign(vec4(P4.xyz, kind));
         vL.assign(vec4(P5.xyz, a));
         vH.assign(vec4(P3.xyz.mul(exp(P0.w.negate().mul(P3.w))), P2.w));
         vR.assign(rot);
-        out.assign(P0.xyz.add(this._carried(C)).add(vec3(corner, 2.0)));
+        out.assign(P0.xyz.add(this._carried(C)).add(billboardOffset(corner.x, corner.y)).add(vec3(0.0, 0.0, 2.0)));
       });
       return out;
     })();
@@ -1119,13 +1130,16 @@ export class GpuFx {
         const side = positionGeometry.y;
         const step = floor(max(T, 0.0).mul(30.0)).toVar();
         const seed = P3.y;
-        const cOff = this._carried(C).xy.toVar();
-        const a = P0.xy.add(cOff);
-        const b = P1.xy.add(cOff);
+        // Gra 3D: łuk między punktami 3D, drgania i szerokość prostopadle do łuku i kamery.
+        const cOff = this._carried(C).toVar();
+        const a = P0.xyz.add(cOff);
+        const b = P1.xyz.add(cOff);
         const ab = b.sub(a).toVar();
         const len = max(length(ab), 1e-3);
         const dir = ab.div(len).toVar();
-        const perp = vec2(dir.y.negate(), dir.x).toVar();
+        const dl2 = length(dir.xy);
+        const perp2 = select(dl2.greaterThan(1e-4), vec2(dir.y.negate(), dir.x).div(max(dl2, 1e-4)), vec2(0.0, 1.0));
+        const perp = streakAcross(dir, perp2).toVar();
         const kf = t.mul(ARC_SEG).toVar();
         const env = sin(t.mul(3.14159265));
         // dwie skale drgań: duże zakręty + drobne ząbki
@@ -1136,7 +1150,7 @@ export class GpuFx {
         const wid = P3.x.div(U.zoom).mul(env.mul(0.6).add(0.4));
         const bright = pow(float(1.0).sub(u), 1.1).mul(hash(uint(seed).add(uint(step).mul(uint(977)))).mul(0.45).add(0.55));
         vC.assign(vec4(P2.xyz.mul(bright), side));
-        out.assign(vec3(pt.add(perp.mul(side.mul(wid))), P0.z));
+        out.assign(pt.add(perp.mul(side.mul(wid))));
       });
       return out;
     })();

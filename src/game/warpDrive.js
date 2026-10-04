@@ -166,44 +166,131 @@ export function sampleWarpArrival(a, t, out = {}) {
   return out;
 }
 
-/** Czasy odlotu (s) dla kadłuba referencyjnego — oś z dema „Nurt” (dema/warp-webgpu/arrivals.js). */
+// ── Rozpęd przylotu, odlot, wyjście gracza (demo „Nurt”, iteracja 3 — 2026-10-03) ──────────
+// User 2026-10-03: przylot i odlot „jak w Star Wars” — BEZ portalu (szczelina / tunel usunięte:
+// po wyjściu z niej okręt jeszcze kawałek leciał) i BEZ smugi („normalnie widoczny statek”).
+// Okręt pojawia się daleko za celem, wpada z dużą prędkością i gwałtownie hamuje; odlot — kop
+// od rufy, rozpęd ∝ t³ i zniknięcie od dziobu w punkcie skoku. Wyjście Atlasa z warpa = ten sam
+// przylot (spójność): zwolnienie do prędkości wlotu, wlot, hamowanie (dema/warp-webgpu/scenes.js:
+// EXIT, arrivals.js: RUSH, brakeEffects).
+
+/** Rozpęd przylotu i odlotu (długości kadłuba, sekundy; + perSize × skala rozmiaru). */
+export const WARP_RUSH = Object.freeze({
+  arriveDist: 4,       // minimalna droga od pojawienia się do zatrzymania [L]
+  arriveMin: 9000,     // ... i nie mniej niż tyle j.
+  arriveCoast: 0.7,    // ... i nie krócej niż tyle s lotu z pełną prędkością (z daleka)
+  arriveSpeed: 9,      // prędkość wlotu [L/s] — szybko, ale kadłub czytelny
+  arriveSpeedMin: 12000,
+  arriveSpeedMax: 30000,
+  brakeDist: 0.9,      // droga hamowania [L] — krótka: „gwałtownie hamuje”
+  departDist: 4,       // rozpęd od miejsca startu do punktu zniknięcia [L]
+  accel: 0.5,          // czas rozpędu [s] (+ accelPerSize × skala)
+  accelPerSize: 0.18
+});
+
+/** Prędkość wlotu przed hamowaniem [j/s] dla kadłuba długości L (przylot NPC i wyjście gracza z warpa). */
+export function warpArrivalSpeed(hullLength) {
+  const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
+  const R = WARP_RUSH;
+  return Math.min(R.arriveSpeedMax, Math.max(R.arriveSpeedMin, R.arriveSpeed * L));
+}
+
+/** Czas hamowania [s] z prędkości v0 na drodze WARP_RUSH.brakeDist × L (stałe opóźnienie). */
+export function warpBrakeTime(hullLength, v0) {
+  const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
+  return 2 * WARP_RUSH.brakeDist * L / Math.max(1, Number(v0) || 1);
+}
+
+/**
+ * Rozpęd przylotu do osi z createWarpArrival (dopisuje pola do `a`): okręt pojawia się
+ * `rushDist` za miejscem zatrzymania (a.x, a.y) w chwili tAppear, leci z v0 do tBrake (= dawny
+ * wyrzut, tBurst — oś zwiastuna bez zmian), hamuje ze stałym opóźnieniem i staje w tStop.
+ * rush — minimalna droga [× długość kadłuba] (sceny / wezwania dobierają do kadru).
+ */
+export function planWarpRush(a, rush = WARP_RUSH.arriveDist) {
+  const L = a.hullLength;
+  const R = WARP_RUSH;
+  a.v0 = warpArrivalSpeed(L);
+  const brakeDist = L * R.brakeDist;
+  a.rushDist = Math.max(L * Math.max(0.6, Number(rush) || R.arriveDist), R.arriveMin, brakeDist + a.v0 * R.arriveCoast);
+  a.brake = warpBrakeTime(L, a.v0);
+  a.coast = (a.rushDist - brakeDist) / a.v0;
+  a.tBrake = a.tBurst;
+  a.tAppear = a.tBrake - a.coast;
+  a.tStop = a.tBrake + a.brake;
+  // Miejsce pojawienia się (świat): cel − droga rozpędu wzdłuż kursu.
+  a.x0 = a.x - a.dirX * a.rushDist;
+  a.y0 = a.y - a.dirY * a.rushDist;
+  if (!(a.tEnd > a.tStop + 1.5)) a.tEnd = a.tStop + 1.5;
+  return a;
+}
+
+/**
+ * Próbka rozpędu przylotu: out.along — droga od miejsca pojawienia się, out.speed [j/s] wzdłuż
+ * kursu, out.off — położenie względem miejsca zatrzymania (≤ 0), out.appeared, out.tb — czas od
+ * początku hamowania (< 0: jeszcze leci).
+ */
+export function sampleWarpRush(a, t, out = {}) {
+  const tau = t - a.tAppear;
+  let along = 0;
+  let speed = 0;
+  if (tau >= 0) {
+    const tb = tau - a.coast;
+    if (tb < 0) { along = a.v0 * tau; speed = a.v0; }
+    else if (tb < a.brake) { along = a.v0 * a.coast + a.v0 * tb - a.v0 * tb * tb / (2 * a.brake); speed = a.v0 * (1 - tb / a.brake); }
+    else along = a.rushDist;
+  }
+  out.appeared = tau >= 0;
+  out.along = along;
+  out.speed = speed;
+  out.off = along - a.rushDist;
+  out.tb = t - a.tBrake;
+  return out;
+}
+
+/** Bańka okrętu w locie przed i w czasie hamowania: zapada się od dziobu (front 3 → −1,3). */
+export function warpBrakeBubbleFront(tb, brake) {
+  return tb < 0 ? 3 : (1.3 - 2.6 * clamp01(tb / Math.max(0.05, brake)));
+}
+
+/** Czasy odlotu (s) dla kadłuba referencyjnego (+ perSize × skala rozmiaru). */
 export const WARP_DEPARTURE_BASE = Object.freeze({
-  charge: 1.6,        // ładowanie: punkt skoku przed dziobem (+ chargePerSize × skala)
+  charge: 1.6,        // ładowanie: punkt skoku przed dziobem
   chargePerSize: 0.8,
-  split: 0.45,        // szczelina otwiera się tyle przed wejściem
-  dive: 0.34,         // wejście w szczelinę (+ divePerSize × skala)
-  divePerSize: 0.12,
-  close: 0.45,        // zamknięcie szczeliny za rufą
-  tail: 0.2,          // koniec osi po zamknięciu
-  diveReach: 2.6      // droga okrętu w szczelinie (× długość kadłuba)
+  close: 0.45,        // zapas po zniknięciu (błysk, fala)
+  tail: 0.2           // koniec osi
 });
 
 /**
- * Odlot okrętu przez tunel (wspak przylotu): ładowanie — punkt skoku przed
- * dziobem, szczelina otwiera się przed nim, okręt przyspiesza i znika w niej
- * od dziobu, szczelina się zamyka. Czysty opis osi i geometrii (jak
- * createWarpArrival); pozycja (x, y) i kąt w świecie gry (y w dół) to miejsce
- * okrętu przed wejściem w szczelinę.
- * @param {object} o { x, y, angle, hullLength, hullWidth, startTime, palette, entity, id }
+ * Odlot okrętu (wspak przylotu, bez szczeliny): ładowanie — punkt skoku `rush` długości przed
+ * dziobem (ośrodek zbierany, rdzeń jaśnieje), KOP od rufy (błysk, fala, wstrząs), rozpęd ∝ t³ do
+ * punktu skoku, dalej pełną prędkością — kadłub znika w nim od dziobu (błysk, fala). Pozycja
+ * (x, y) i kąt w świecie gry (y w dół) to miejsce okrętu przed rozpędem.
+ * @param {object} o { x, y, angle, hullLength, hullWidth, startTime, rush, palette, entity, id }
  */
 export function createWarpDeparture(o = {}) {
   const hullLength = Math.max(40, Number(o.hullLength) || WARP_REF_HULL_LENGTH);
   const hullWidth = Math.max(16, Number(o.hullWidth) || hullLength * 0.45);
   const s = warpSizeScale(hullLength);
   const B = WARP_DEPARTURE_BASE;
+  const R = WARP_RUSH;
   const t0 = Number(o.startTime) || 0;
   const charge = B.charge + B.chargePerSize * s;
-  const dive = B.dive + B.divePerSize * s;
   const angle = Number(o.angle) || 0;
   const dirX = Math.cos(angle);
   const dirY = Math.sin(angle);
   const x = Number(o.x) || 0;
   const y = Number(o.y) || 0;
-  const seamLength = hullLength * WARP_ARRIVAL_SHAPE.seamLength;
+  const rush = Number(o.rush) > 0 ? Number(o.rush) : R.departDist;
+  // Rozpęd: droga ∝ t³ przez `accel` do punktu skoku (D przed dziobem), dalej pełną prędkością.
+  const D = hullLength * Math.max(0.4, rush);
+  // Krótszy rozpęd = krótszy czas (∝ √drogi przy stałym „szarpnięciu” startu).
+  const accel = (R.accel + R.accelPerSize * s) * Math.sqrt(Math.min(1.5, Math.max(0.1, rush / R.departDist)));
+  const vEnd = 3 * D / accel;
   const tDive = t0 + charge;
-  const tGone = tDive + dive;
-  // Szczelina przed dziobem; jej tylny koniec = ujście (dziób w chwili wejścia).
-  const ahead = hullLength * 0.5 + seamLength * 0.5;
+  const tIn = tDive + accel;
+  // Zniknięcie: rufa za punktem skoku (droga D + 1,1 L, ostatni odcinek z vEnd).
+  const tGone = tIn + (hullLength * 1.1) / vEnd;
   return {
     id: o.id ?? null,
     x, y, angle, dirX, dirY,
@@ -214,29 +301,29 @@ export function createWarpDeparture(o = {}) {
     entity: o.entity || null,
     t0,
     charge,
-    dive,
+    accel,
+    rushDist: D,
+    vEnd,
     close: B.close,
-    tSplit: tDive - B.split,
     tDive,
+    tIn,
     tGone,
+    dive: tGone - tDive,
     tEnd: tGone + B.close + B.tail,
-    seamLength,
-    seamHalfWidth: seamLength * WARP_ARRIVAL_SHAPE.seamOpen,
-    cx: x + dirX * ahead,
-    cy: y + dirY * ahead,
-    mouth: hullLength * 0.5,
-    diveReach: hullLength * B.diveReach,
-    fired: { split: false, dive: false, gone: false }
+    // Punkt skoku (świat) — tu okręt znika; mouth = jego odległość od środka kadłuba na starcie.
+    cx: x + dirX * (hullLength * 0.5 + D),
+    cy: y + dirY * (hullLength * 0.5 + D),
+    mouth: hullLength * 0.5 + D,
+    fired: { dive: false, gone: false }
   };
 }
 
 /**
- * Próbka osi odlotu w chwili t (pola 0..1 poza drogą i prędkością). `out`
- * wypełniany w miejscu: phase ('wait' | 'charge' | 'dive' | 'close' | 'done'),
- * build (narastanie ładowania), riftOpen / riftLen (szczelina), dist [j.]
- * i speed [j/s] okrętu w szczelinie, revealLine (lokalne x ujścia względem
- * środka kadłuba: widać tylko część kadłuba za nią), shipVisible, smear, heat,
- * flash (błysk w ujściu), waveT (fala z ujścia, poza 0..1 = brak), shake.
+ * Próbka osi odlotu w chwili t (`out` wypełniany w miejscu): phase ('wait' | 'charge' | 'dive' |
+ * 'close' | 'done'), u / build (ładowanie), dist [j.] i speed [j/s] okrętu w rozpędzie,
+ * revealLine (lokalne x punktu skoku względem środka kadłuba: widać tylko część za nim),
+ * shipVisible, heat, kickT (czas od kopu, < 0 — przed), inT (czas od wejścia w punkt skoku),
+ * shake.
  */
 export function sampleWarpDeparture(d, t, out = {}) {
   let phase;
@@ -248,47 +335,141 @@ export function sampleWarpDeparture(d, t, out = {}) {
   out.phase = phase;
   const u = clamp01((t - d.t0) / Math.max(0.01, d.charge));
   const build = t < d.t0 ? 0 : u * u * (3 - 2 * u);
-  out.build = build;
   out.u = u;
-  // Szczelina: otwiera się pod koniec ładowania, zamyka po wejściu okrętu.
-  let open = 0;
-  let len = 0;
-  if (t >= d.tSplit) {
-    const o = clamp01((t - d.tSplit) / Math.max(0.01, d.tDive - d.tSplit));
-    open = 0.08 + 0.92 * easeOutCubic(o);
-    len = 0.25 + 0.75 * easeOutCubic(o);
-  }
-  if (t >= d.tGone) {
-    const c = clamp01((t - d.tGone) / Math.max(0.01, d.close));
-    open *= 1 - c * c * c;
-    len *= 1 - 0.55 * c;
-  }
-  if (phase === 'wait' || phase === 'done') { open = 0; len = 0; }
-  out.riftOpen = open;
-  out.riftLen = len;
-  // Wejście w szczelinę: przyspieszenie (droga ∝ w²).
+  out.build = build;
   let dist = 0;
   let speed = 0;
-  if (t >= d.tDive) {
-    const w = clamp01((t - d.tDive) / Math.max(0.01, d.dive));
-    dist = d.diveReach * w * w;
-    speed = t < d.tGone ? 2 * d.diveReach * w / Math.max(0.01, d.dive) : 0;
-    out.diveW = w;
-  } else {
-    out.diveW = 0;
+  let heat = 0.25 * build * build;
+  let shake = 0;
+  const tau = t - d.tDive;
+  if (tau >= 0) {
+    if (tau < d.accel) {
+      const w = tau / d.accel;
+      dist = d.rushDist * w * w * w;
+      speed = d.vEnd * w * w;
+    } else {
+      dist = d.rushDist + d.vEnd * (tau - d.accel);
+      speed = d.vEnd;
+    }
+    heat = Math.max(heat, 0.5 * Math.exp(-tau / 0.6));
+    shake = Math.exp(-tau / 0.3) * (0.4 + 0.6 * d.sizeScale);
+    const ti = t - d.tIn;
+    if (ti >= 0) shake = Math.max(shake, Math.exp(-ti / 0.3) * 0.5);
   }
   out.dist = dist;
-  out.speed = speed;
+  out.speed = t < d.tGone ? speed : 0;
+  out.kickT = tau;
+  out.inT = t - d.tIn;
   out.revealLine = d.mouth - dist;
   out.shipVisible = t < d.tDive || out.revealLine > -d.hullLength * 0.55;
-  out.smear = t >= d.tDive && t < d.tGone + 0.12 ? Math.max(0, 1 - out.diveW * 0.4) : 0;
-  out.heat = Math.max(0.25 * build * build, t >= d.tDive ? 0.6 * (1 - out.diveW) : 0);
-  const afterDive = t - d.tDive;
-  out.flash = afterDive >= 0 && afterDive < 0.2 ? (1 - afterDive / 0.2) ** 2 : 0;
-  out.waveT = afterDive >= 0 ? afterDive / 1.1 : -1;
-  out.shake = afterDive >= 0 && afterDive < 0.4 ? (1 - afterDive / 0.4) : 0;
+  out.heat = heat;
+  out.shake = shake;
   return out;
 }
+
+/**
+ * WYJŚCIE GRACZA Z WARPA = przylot jak u NPC (user 2026-10-03: spójność — Atlas też „hamuje”):
+ *   ZWOLNIENIE `slow` s — prędkość spada z warpowej do prędkości wlotu (warpArrivalSpeed),
+ *                rulon się rozwija, smugi gwiazd i ośrodka gasną;
+ *   WLOT `coast` s — statek leci z prędkością wlotu i wysuwa się przed kamerę (`ahead` × pół
+ *                kadru w stronę celu; kamera nigdy go nie wyprzedza, dogania w `settle` s);
+ *   HAMOWANIE — droga WARP_RUSH.brakeDist × L ze stałym opóźnieniem.
+ */
+export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, ahead: 0.4, settle: 1.3, zoomTail: 0.9 });
+
+/**
+ * Rampa wyjścia (rozgrywka: prędkość statku gracza po wyjściu z warpa; efekt: oś wyjścia).
+ * v0 — prędkość w chwili wyjścia [j/s]. Wlot nie szybszy niż v0 (wolny warp nie przyspiesza).
+ */
+export function createWarpExitRamp({ v0, hullLength, dirX = 1, dirY = 0, startTime = 0 } = {}) {
+  const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
+  const vStart = Math.max(0, Number(v0) || 0);
+  const vArr = Math.max(1, Math.min(warpArrivalSpeed(L), vStart || 1));
+  const E = WARP_EXIT;
+  const brake = warpBrakeTime(L, vArr);
+  const dl = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+  const r = {
+    active: true,
+    t0: Number(startTime) || 0,
+    age: 0,
+    v0: vStart,
+    vArr,
+    hullLength: L,
+    dirX: dirX / dl,
+    dirY: dirY / dl,
+    slow: E.slow,
+    coast: E.coast,
+    brake,
+    tSlowEnd: E.slow,
+    tBrake: E.slow + E.coast,
+    tHalt: E.slow + E.coast + brake
+  };
+  r.dist = warpExitRampDistance(vStart, L);
+  return r;
+}
+
+/**
+ * Droga rampy wyjścia [j.] od prędkości v0: zwolnienie (średnia v0 i wlotu — smoothstep całkuje
+ * się do ½), wlot, hamowanie (½ v·t). Travel to: wyjście zaczyna się, gdy do celu zostało tyle.
+ */
+export function warpExitRampDistance(v0, hullLength) {
+  const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
+  const vStart = Math.max(0, Number(v0) || 0);
+  const vArr = Math.max(1, Math.min(warpArrivalSpeed(L), vStart || 1));
+  const E = WARP_EXIT;
+  return E.slow * (vStart + vArr) * 0.5 + E.coast * vArr + warpBrakeTime(L, vArr) * vArr * 0.5;
+}
+
+/**
+ * Prędkość na rampie wyjścia w chwili `age` [s od wyjścia]: out.speed [j/s], out.phase
+ * ('slow' | 'coast' | 'brake' | 'done'), out.tb (czas od początku hamowania).
+ */
+export function sampleWarpExitRamp(r, age, out = {}) {
+  const a = Math.max(0, Number(age) || 0);
+  let speed;
+  let phase;
+  if (a < r.tSlowEnd) {
+    const u = clamp01(a / r.slow);
+    speed = r.v0 + (r.vArr - r.v0) * (u * u * (3 - 2 * u));
+    phase = 'slow';
+  } else if (a < r.tBrake) {
+    speed = r.vArr;
+    phase = 'coast';
+  } else if (a < r.tHalt) {
+    speed = r.vArr * (1 - (a - r.tBrake) / r.brake);
+    phase = 'brake';
+  } else {
+    speed = 0;
+    phase = 'done';
+  }
+  out.speed = speed;
+  out.phase = phase;
+  out.tb = a - r.tBrake;
+  return out;
+}
+
+/**
+ * RULON (pomysł usera 2026-10-03, src/3d/warp/rulon.js): ładowanie ZWIJA rzeczywistość wokół
+ * osi skoku i zawija ją do statku (lejek) — jedna faza; skok dociąga szarpnięciem (> 1), wyjście
+ * rozwija w `exitDur` s. state: 'charging' | 'active' | 'exit' | inne (0); kickAge — od skoku,
+ * exitAge — od wyjścia. Lejek (field) = min(1, zwinięcie).
+ */
+export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EXIT.slow) {
+  if (state === 'charging') {
+    const c = clamp01((clamp01(charge) - 0.05) / 0.9);
+    return Math.pow(c * c * (3 - 2 * c), 1.4);
+  }
+  if (state !== 'active' && state !== 'exit') return 0;
+  const k = Number(kickAge);
+  const pulse = k > 0 ? (1 - Math.exp(-k / 0.03)) * Math.exp(-k / 0.3) : 0;
+  let b = 1 + 0.16 * pulse;
+  if (state === 'exit') {
+    const u = clamp01((Number(exitAge) || 0) / Math.max(0.05, exitDur));
+    b *= 1 - (1 - (1 - u) * (1 - u) * (1 - u));
+  }
+  return b;
+}
+
 
 /**
  * Plan przylotu floty (wezwanie, zasadzka): zwiastuny startują razem,

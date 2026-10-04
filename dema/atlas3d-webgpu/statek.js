@@ -1,29 +1,50 @@
 // ============================================================
-// Atlas 3D w scenie dema: kadłub (atlasHull3D), wieże (weapons3D) w gniazdach edytora,
-// celowanie (yaw / pitch z limitami i prędkością obrotu), odrzut luf, wirniki gatlingów,
-// wyloty (pozycja + kierunek w świecie), strugi dysz MAIN, światła pozycyjne i reflektory.
+// Okręt 3D w scenie dema: kadłub z rejestru (src/3d/ships3d/ships/ships3D.js — Atlas, flota
+// Terra Nova i piratów), wieże (weapons3D) w gniazdach edytora, celowanie (yaw / pitch
+// z limitami i prędkością obrotu), odrzut luf, wirniki gatlingów, wyloty (pozycja +
+// kierunek w świecie), strugi dysz MAIN, światła pozycyjne i reflektory.
 // Układ jak Core3D: X ku dziobowi, Z w górę; grupa `root` = poza statku w świecie.
 // ============================================================
 import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, uv, vec3, float, mix, smoothstep, abs, normalView, sin, time, pow, clamp
 } from 'three/tsl';
-import { buildAtlasHull3D, ATLAS3D_SCALE } from '../../src/3d/ships3d/atlasHull3D.js';
-import { buildWeapon3D, WEAPON3D_FAMILY, weapon3DScale } from '../../src/3d/ships3d/weapons3D.js';
+import { buildShip3D } from '../../src/3d/ships3d/ships/ships3D.js';
+import { buildWeapon3D, WEAPON3D_FAMILY, weapon3DScale } from '../../src/3d/ships3d/weapons/weapons3D.js';
 import { createShipMaterial, createDeckTexture, createDeckNormalTexture } from '../../src/3d/ships3d/shipMaterials3D.tsl.js';
 import { MASTER_WEAPONS } from '../../src/data/weapons.js';
+import { SHIPS } from '../../src/data/ships.js';
+import { selectSpecSlots } from '../../src/game/npcWeaponSpec.js';
 import { MAIN_EXHAUST_PALETTES } from '../../src/data/engineFx.js';
 
 const DEG = Math.PI / 180;
 
-// Domyślny fit gracza jak autoMountDefaults() w index.html (kolejność gniazd edytora).
-export function defaultLoadout(mounts) {
+// Uzbrojenie NPC jak equipNpcWeapons() w index.html (na każdym gnieździe — demo pokazuje wszystkie).
+const NPC_PLAN = {
+  terran: { main: [['railgun_mk2', 99]], aux: [['laser_pd_mk1', 99]], missile: [['missile_rack', 99]], special: [['special_valkyrie_railgun', 99]] },
+  pirate: { main: [['armata_mk1', 99]], aux: [['ciws_mk1', 99]], missile: [['missile_rack', 99]], special: [['special_goliath_autocannon', 99]] }
+};
+
+// Domyślny fit gracza jak autoMountDefaults() w index.html (kolejność gniazd edytora);
+// okręty floty — uzbrojenie NPC swojej frakcji na gniazdach ze specyfikacji ramy
+// (selectSpecSlots, jak equipNpcWeapons; gniazda specjalne NPC zostają puste).
+export function defaultLoadout(mounts, faction = 'player', frameId = null) {
+  if (NPC_PLAN[faction]) {
+    const hps = mounts.map((m) => ({ id: m.id, type: m.type, x: m.px[0], y: -m.px[1] }));
+    const armed = selectSpecSlots(hps, SHIPS[frameId]?.spec || null);
+    const ids = new Set(hps.filter((h) => armed.has(h)).map((h) => h.id));
+    const { special, ...plan } = NPC_PLAN[faction];
+    void special;
+    return fillLoadout(mounts.filter((m) => ids.has(m.id)), plan);
+  }
   const plan = { main: [['railgun_mk2', 99]], aux: [['ciws_mk1', 6], ['flak_capital', 2]], missile: [['missile_rack', 99]], special_missile: [['supernova_missile', 1]], builtin: [['hexlance_siege', 1]], hangar: [['fighter_squad_multirole', 6]], special: [] };
   return fillLoadout(mounts, plan);
 }
 
-/** Fit „pełny”: wszystkie gniazda obsadzone (specjalne i puste aux też). */
-export function fullLoadout(mounts) {
+/** Fit „pełny”: wszystkie gniazda obsadzone (specjalne i puste aux też); flota — inne działa frakcji. */
+export function fullLoadout(mounts, faction = 'player') {
+  if (faction === 'pirate') return fillLoadout(mounts, { ...NPC_PLAN.pirate, special: [['special_goliath_autocannon', 2], ['special_plasma_gatling', 99]], aux: [['ciws_mk1', 6], ['flak_m', 99]] });
+  if (faction === 'terran') return fillLoadout(mounts, { ...NPC_PLAN.terran, main: [['railgun_mk2', 4], ['helios_laser', 99]], aux: [['laser_pd_mk1', 6], ['ciws_mk2', 99]] });
   const plan = {
     main: [['railgun_mk2', 99]],
     aux: [['ciws_mk1', 6], ['flak_capital', 2], ['ciws_mk2', 6]],
@@ -54,12 +75,12 @@ function fillLoadout(mounts, plan) {
 // ---------------------------------------------------------------------------
 
 export class Turret {
-  constructor(mount, weaponId, geo, model, material) {
+  constructor(mount, weaponId, geo, model, material, tier = 'Capital') {
     this.mount = mount;
     this.weaponId = weaponId;
     this.def = MASTER_WEAPONS[weaponId];
     this.model = model;
-    this.scale = weapon3DScale(this.def);
+    this.scale = weapon3DScale(this.def, tier);
     this.root = new THREE.Object3D();
     this.root.position.set(mount.x, mount.y, mount.z);
     this.root.scale.setScalar(this.scale);
@@ -158,34 +179,47 @@ export class Turret {
 }
 
 // ---------------------------------------------------------------------------
-// Atlas
+// Okręt (Atlas albo kadłub floty)
 // ---------------------------------------------------------------------------
 
-export class Atlas3D {
+// Rozmiar kulek świateł pozycyjnych wg klasy (Atlas — jak dawniej).
+const LIGHT_SIZE = { Capital: 1, L: 0.8, M: 0.6, S: 0.42 };
+
+export class Ship3D {
   /**
    * @param {object} o
+   * @param {string} [o.id='atlas'] id modelu z rejestru (SHIP3D_MODELS)
    * @param {HTMLImageElement} o.image sprite kadłuba (pokład)
    * @param {THREE.Scene} o.scene
+   * @param {THREE.Material} [o.weaponMat] wspólny materiał wież (jeden na demo)
    */
   constructor(o) {
+    this.id = o.id || 'atlas';
     this.root = new THREE.Group();
-    this.root.name = 'Atlas 3D';
+    this.root.name = `${this.id} 3D`;
     o.scene.add(this.root);
 
     const t0 = performance.now();
-    this.hull = buildAtlasHull3D({ bridgeZScale: o.bridgeZScale ?? 2.6 });
-    this.hullGeometry = this.hull.builder.toGeometry(THREE, ATLAS3D_SCALE);
+    this.hull = buildShip3D(this.id, o.bridgeZScale != null ? { bridgeZScale: o.bridgeZScale } : {});
+    this.hullGeometry = this.hull.builder.toGeometry(THREE, this.hull.scale);
     this.buildMs = performance.now() - t0;
+    this.tier = this.hull.tier || 'Capital';
+    this.faction = this.hull.faction || 'player';
+    this.label = this.hull.label || this.id;
+    const bb = this.hullGeometry.boundingBox;
+    this.length = bb.max.x - bb.min.x;
+    this.width = bb.max.y - bb.min.y;
+    this.center = new THREE.Vector3().addVectors(bb.min, bb.max).multiplyScalar(0.5);
     this.deckTex = createDeckTexture(o.image, o.anisotropy ?? 8);
     this.deckNormal = createDeckNormalTexture(o.image);
-    this.hullMat = createShipMaterial({ deckMap: this.deckTex, deckNormalMap: this.deckNormal, name: 'Atlas 3D — kadłub' });
+    this.hullMat = createShipMaterial({ deckMap: this.deckTex, deckNormalMap: this.deckNormal, palette: this.hull.palette, name: `${this.label} — kadłub` });
     this.hullMesh = new THREE.Mesh(this.hullGeometry, this.hullMat);
     this.hullMesh.castShadow = true;
     this.hullMesh.receiveShadow = true;
     this.hullMesh.name = 'kadłub';
     this.root.add(this.hullMesh);
 
-    this.weaponMat = createShipMaterial({ panelW: 7, panelH: 3.5, name: 'Atlas 3D — broń' });
+    this.weaponMat = o.weaponMat || createShipMaterial({ panelW: 7, panelH: 3.5, name: 'okręty 3D — broń' });
     this.turretGroup = new THREE.Group();
     this.turretGroup.name = 'wieże';
     this.root.add(this.turretGroup);
@@ -200,8 +234,9 @@ export class Atlas3D {
     // Porównanie z grą: płaski sprite (kwad z alfą) w miejscu kadłuba, na wysokości pokładu.
     const spriteMat = new THREE.MeshStandardNodeMaterial({ map: this.deckTex, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.62, metalness: 0.3 });
     spriteMat.normalMap = this.deckNormal;
-    this.spriteMesh = new THREE.Mesh(new THREE.PlaneGeometry(3747 * ATLAS3D_SCALE, 1677 * ATLAS3D_SCALE), spriteMat);
-    this.spriteMesh.position.z = 23;
+    const S = this.hull.scale;
+    this.spriteMesh = new THREE.Mesh(new THREE.PlaneGeometry(this.hull.sprite.width * S, this.hull.sprite.height * S), spriteMat);
+    this.spriteMesh.position.z = this.hull.deckZ ?? 23;
     this.spriteMesh.visible = false;
     this.spriteMesh.receiveShadow = true;
     this.spriteMesh.name = 'sprite gry (porównanie)';
@@ -243,7 +278,7 @@ export class Atlas3D {
       const fam = WEAPON3D_FAMILY[wid];
       if (!fam) continue; // hangar, Hexlance (wbudowany w kadłub)
       const { model, geo } = this.weaponGeometry(fam);
-      const t = new Turret(m, wid, geo, model, this.weaponMat);
+      const t = new Turret(m, wid, geo, model, this.weaponMat, this.tier);
       t.root.scale.setScalar(t.scale * this.turretScale);
       this.turrets.push(t);
       this.turretGroup.add(t.root);
@@ -317,6 +352,10 @@ export class Atlas3D {
   // Światła pozycyjne (czerwone, sekwencja „edge”) i reflektory dziobowe: kulki HDR (bloom).
   _buildLights(scene) {
     const list = this.hull.lights;
+    this.lightList = list;
+    this.spots = [];
+    if (!list.length) { this.lightMesh = null; return; }
+    const size = LIGHT_SIZE[this.tier] ?? 1;
     const geo = new THREE.SphereGeometry(1, 10, 8);
     const mat = new THREE.MeshBasicNodeMaterial();
     mat.colorNode = vec3(1);
@@ -326,16 +365,14 @@ export class Atlas3D {
     const m4 = new THREE.Matrix4();
     const c = new THREE.Color();
     list.forEach((l, i) => {
-      const r = l.kind === 'road' ? 2.4 : 2.0;
+      const r = (l.kind === 'road' ? 2.4 : 2.0) * size;
       m4.makeScale(r, r, r).setPosition(l.x, l.y, l.z);
       this.lightMesh.setMatrixAt(i, m4);
       this.lightMesh.setColorAt(i, c.set(l.color));
     });
     this.lightMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     this.root.add(this.lightMesh);
-    this.lightList = list;
-    // Reflektory: dwa światła stożkowe przed dziobem (zasięg z edytora).
-    this.spots = [];
+    // Reflektory: światła stożkowe przed dziobem (zasięg z edytora).
     for (const l of list.filter((q) => q.kind === 'road')) {
       const s = new THREE.SpotLight(0xdfe9ff, 0, (l.range || 800) * 3, (l.coneDeg || 40) * DEG * 0.5, 0.5, 1.0);
       s.position.set(l.x, l.y, l.z);
@@ -379,7 +416,7 @@ export class Atlas3D {
     // Światła: fala wzdłuż burt (grupa „edge”), reflektory stale.
     const c = new THREE.Color();
     const on = o.lights !== false;
-    this.lightList.forEach((l, i) => {
+    if (this.lightMesh) this.lightList.forEach((l, i) => {
       let k = 0;
       if (on) {
         if (l.kind === 'road') k = 2.2;
@@ -390,7 +427,7 @@ export class Atlas3D {
       }
       this.lightMesh.setColorAt(i, c.set(l.color).multiplyScalar(k * (l.power || 1)));
     });
-    this.lightMesh.instanceColor.needsUpdate = true;
+    if (this.lightMesh) this.lightMesh.instanceColor.needsUpdate = true;
     for (const s of this.spots) s.intensity = on && o.spots !== false ? 1600 : 0;
   }
 
@@ -414,9 +451,10 @@ export class Atlas3D {
     return n;
   }
 
-  /** Wylot Hexlance'a w świecie (działo osiowe wbudowane w kadłub). */
+  /** Wylot Hexlance'a w świecie (działo osiowe wbudowane w kadłub) albo null (kadłub bez niego). */
   hexlanceMuzzle(out) {
     const h = this.hull.hexlanceMuzzle;
+    if (!h) return null;
     return out.set(h.x, h.y, h.z).applyMatrix4(this.root.matrixWorld);
   }
 
@@ -427,4 +465,9 @@ export class Atlas3D {
     for (const t of this.turrets) t.root.traverse((o) => { if (o.isMesh) wt += o.geometry.index.count / 3; });
     return { hullVerts: pos, hullTris: tri, turrets: this.turrets.length, turretTris: wt, buildMs: Math.round(this.buildMs) };
   }
+}
+
+/** Zgodność: dawna nazwa klasy (Atlas). */
+export class Atlas3D extends Ship3D {
+  constructor(o) { super({ ...o, id: 'atlas' }); }
 }

@@ -17,8 +17,8 @@ Object.assign(globalThis.window, {
   getUnitKind: () => 'battleship'
 });
 
-const { aiBattleship, aiFrigate } = await import('../src/ai/capitalAI.js');
-const { stepShipFlight, usesShipFlightModel } = await import('../src/game/flight/shipFlightModel.js');
+const { aiBattleship, aiFrigate, computeTrafficAvoidance } = await import('../src/ai/capitalAI.js');
+const { setFlightArrive, setFlightSeparation, stepShipFlight, usesShipFlightModel } = await import('../src/game/flight/shipFlightModel.js');
 const { resolveCapitalIdealRange } = await import('../src/ai/capitalAiTuning.js');
 
 const armata = { id: 'armata_mk1', baseRange: 7000, baseSpeed: 2500 };
@@ -125,4 +125,39 @@ test('brains only set intent — movement is integrated by the flight step alone
     'mózg nie może ruszać pozycji/prędkości — to robi stepShipFlight co tick'
   );
   assert.equal(npc.__flightIntent.mode, 'arrive');
+});
+
+test('two frigates on crossing courses sidestep each other instead of colliding', () => {
+  // Symetryczne skrzyżowanie: obie w tej samej chwili na środku. Separacja
+  // działa dopiero przy nakładaniu się stref — unik (CPA) musi zejść wcześniej.
+  const run = (avoid) => {
+    const a = makePirate('frigate_pd', 'pirate_frigate', -3000);
+    const b = makePirate('frigate_pd', 'pirate_frigate', 0);
+    b.y = -3000;
+    b.angle = Math.PI / 2;
+    const legs = [[a, 3000, 0], [b, 0, 3000]];
+    window.queryAIGrid = () => ({ buffer: [a, b], count: 2 });
+    let minD = Infinity;
+    try {
+      for (let i = 0; i < 120 * 8; i++) {
+        if (i % 6 === 0) {
+          for (const [s, gx, gy] of legs) {
+            setFlightArrive(s, gx, gy, { arrival: 60 });
+            const av = avoid ? computeTrafficAvoidance(s, { ax: 0, ay: 0 }) : { ax: 0, ay: 0 };
+            setFlightSeparation(s, av.ax, av.ay);
+          }
+        }
+        stepShipFlight(a, DT);
+        stepShipFlight(b, DT);
+        minD = Math.min(minD, Math.hypot(a.x - b.x, a.y - b.y));
+      }
+    } finally {
+      window.queryAIGrid = () => ({ buffer: [], count: 0 });
+    }
+    return minD;
+  };
+  const contact = 2 * 45;
+  assert.ok(run(false) < contact, 'scenariusz bez uniku musi kończyć się zderzeniem');
+  const minD = run(true);
+  assert.ok(minD > contact + 100, `minęły się w odległości ${minD.toFixed(0)} j. (styk ${contact})`);
 });

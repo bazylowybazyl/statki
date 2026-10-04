@@ -398,6 +398,7 @@ export const DestructorBeams3D = {
       isWreck: false,
       noSplit: !!opts.noSplit,
       rammingMassMult: Number(opts.rammingMassMult) || 1,
+      collisionArmor: Number.isFinite(opts.collisionArmor) && opts.collisionArmor > 0 ? opts.collisionArmor : 1,
       meshDirty: true,
       structureDirty: true,
       isSleeping: false,
@@ -1295,6 +1296,7 @@ export const DestructorBeams3D = {
 
     const massA = Math.max(1, A.mass * A.rammingMassMult);
     const massB = Math.max(1, B.mass * B.rammingMassMult);
+    const armorA = A.collisionArmor, armorB = B.collisionArmor;
     const invMassA = A.static ? 0 : 1 / massA;
     const invMassB = B.static ? 0 : 1 / massB;
     const crushing = approach > cfg.crushSpeedThreshold;
@@ -1327,7 +1329,10 @@ export const DestructorBeams3D = {
           // nie znika, tylko dalej gniecie — czas zgniatania wychodzi z pędu.
           const light = A.static ? B : B.static ? A : (A.mass <= B.mass ? A : B);
           const nodeMass = light.mass / Math.max(1, light.activeNodes);
-          const jYield = cfg.crushStrength * count * nodeMass / Math.max(1e-6, light.cellSize) * dt;
+          // Najpierw ustępuje słabsze poszycie. Sama duża masa cywilnego kadłuba
+          // nie daje pancerza; ściana statyczna nie ogranicza odporności statku.
+          const armor = A.static ? armorB : B.static ? armorA : Math.min(armorA, armorB);
+          const jYield = cfg.crushStrength * count * nodeMass / Math.max(1e-6, light.cellSize) * dt * armor;
           j = doDamage ? Math.min(j, jYield) : 0;
         } else if (crushing) {
           // Pojedyncza warstwa poszycia nie zatrzymuje całej masy statku.
@@ -1361,8 +1366,11 @@ export const DestructorBeams3D = {
     if (doDamage && transfer > 0) {
       const bias = cfg.crushMassBias;
       const total = massA + massB;
-      const weightA = A.static ? 0 : (B.static ? 1 : Math.pow(massB / total, bias));
-      const weightB = B.static ? 0 : (A.static ? 1 : Math.pow(massA / total, bias));
+      // Podatność poszycia maleje z kwadratem pancerza. Normalizacja zachowuje
+      // cały zgniot: odporny kadłub przekazuje go słabszemu, zamiast kasować.
+      // Równy pancerz = dawny podział wg masy, także Atlas kontra Atlas.
+      const weightA = A.static ? 0 : (B.static ? 1 : Math.pow(massB / total, bias)) / (armorA * armorA);
+      const weightB = B.static ? 0 : (A.static ? 1 : Math.pow(massA / total, bias)) / (armorB * armorB);
       const weightSum = weightA + weightB || 1;
       const shareA = weightA / weightSum, shareB = weightB / weightSum;
       const travel = approach * dt;
@@ -2367,6 +2375,7 @@ export const DestructorBeams3D = {
       isWreck: true,
       noSplit: false,
       rammingMassMult: 1,
+      collisionArmor: parent.collisionArmor,
       meshDirty: true,
       structureDirty: false,
       isSleeping: false,

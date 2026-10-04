@@ -139,3 +139,52 @@ Spacja — pauza, T — zwolnienie ×0,25, C — wyczyść, B — bloom, H — b
   mgławica ~21 MB) zostają w pamięci po pierwszej wysyłce — do rozważenia zwolnienie; `LightGrid.add` przekracza
   limit wklejania V8, więc każde światło (wszystkich producentów) opakowuje liczby argumentów (~100 B) — kandydat na
   wariant z buforem (infrastruktura 12).
+
+## Feel rakiet, salwy, nowe typy, wir Supernowej, torpedy (2026-09-30)
+
+Zgłoszenie użytkownika: rakiety „po prostu się pojawiają i lecą” — mają być wystrzeliwane do góry i zwinnie manewrować
+w stronę celu, lecieć salwami; więcej typów (drobne, zasypujące cel gradem); lepszy wyrzut manewrujących; „wir” Supernowej
+bez animacji (tylko rósł). W trakcie: torpedy z celowaniem jak w World of Warships.
+
+**Lot (`src/effects3d/rocketSystem3D.js`).** Cztery fazy: zimny wyrzut z komory pod `launchElevation` (VLS 84–88°, kasety
+64–78°) z zawisem — prędkość gaśnie wykładniczo i przy zapłonie zostaje ~16 %, rakieta stoi nad kadłubem (40–130 j.); zapłon
+po `ignitionDelay`; przechył z pionu w kurs WACHLARZA (numer w salwie na złotym podziale kąta ±`dispersal`, rozrzut z ziarna)
+i rozpędzanie z `boostAccel`; naprowadzanie (fazy intercept / terminal / reacquire jak dawniej) z obrotem narastającym od 40 %
+przez 1 s po wachlarzu (tory salwy zakręcają szerokimi łukami i zbiegają się na cel z kilku stron) i kluczeniem `weave`
+(dwie harmoniczne, gaśnie przed fazą końcową); zejście na płaszczyznę na granicy zapalnika. Nos sterowany kursem i wzniesieniem
+osobno — kwaternion po najkrótszym łuku przy nawrotach robił pętle „przez zenit” (Grad wznosił się do 290 j. przy pułapie 55).
+Wysokość jest obrazem: zapalnik, zasięg i obrażenia w 2D. Symulacja (Node, `scripts/rakiety-salwy-sym.mjs`): 100 % trafień
+wszystkich typów w cele stojące i płynące 200–500 j/s, 93–96 % Gradu z okrętu lecącego 3000 j/s; rozrzut wachlarza w bok:
+manewrujące 170–230 j., Rój ~300, Grad ~700, Hydra 330–690.
+
+**Salwy.** `burstCount` / `burstDelay` broni rakietowej = ripple z kolejnych komór (`launchPorts` × rzędy, `cellSpacing`):
+`fireSalvo` (z `fireWeaponCore`, jeden przebieg pętli strzału) odpala pierwszą, resztę kolejkuje w układzie strzelca
+(komora i kierunek wyrzutni obracają się z kadłubem, pęd komory v + ω × r); myśliwiec odpala jedną z belki (`LAUNCH_RAIL`).
+Balans: DPS wyrzutni ~400–480 jak dawniej (manewrująca 3 × 1000 / 7,5 s, szybka 4 × 700 / 6 s, Rój 8 × 170 / 3,4 s, Grad
+24 × 180 / 9 s, Hydra 2 × 6 × 240 / 7 s); amunicja zaczepu liczy salwy.
+
+**Nowe typy.** Rój (S, 8 mikrorakiet), Grad (L, 24 mikrorakiety — wachlarz ±78°, „pająk” krętych smug nad okrętem), Hydra
+(M, nosiciel pęka 1,7 km przed celem na 6 głowic — `submunitionDef`, efekt `onSplit`). Wygląd `micro` (cienka jasna smuga —
+paleta dymu 6, mały płomień, mały wybuch) i `hydra`. Grafika wyrzutni 2D — warianty atlasów istniejących kaset
+(`launcherSprite2D.js`). Atlas startuje z Gradem na pierwszym zaczepie rakietowym; Rój, Hydra i torpedy są w ładowni
+(mechanik). NPC: pierwsze dwa zaczepy rakietowe — broń klasy okrętu.
+
+**Wyrzut w obrazie (`effects.js`, `missileBodies.js`).** Chłodny błysk komory i pierścień pary, szarpnięcie kasety przy
+każdej rakiecie (Turret2D), para zimnego wyrzutu za wznoszącą się rakietą, kadłubek z wzniesieniem (z góry w pionie — krążek
+z krzyżem stateczników, przy przechyle „rozwija się” na pełną długość) i skrótem perspektywy z wysokości, łuna dyszy zamiast
+płomienia, gdy nos patrzy w górę, pierścień spalin rozlany po pokładzie przy zapłonie, słup dymu z pionu rozlany na boki,
+płomień skrócony cos(el), światło dyszy na wysokości rakiety (plama na kadłubie szerzeje, gdy rakieta się wznosi).
+
+**Wir Supernowej (`nebula.js`, `effects.js`).** Obrót różnicowy wokół jądra (ω = spin·(0,28 + 0,72·(1 − ρ)²), ρ — promień
+rzutu), materia ściągnięta przy wybuchu do 2–3 ramion (waga ramienia mnoży jasność — ciemne przerwy), kłęby wzdłuż ramion
+spirali, przepływ z szumu 3D współporuszającego się z wirem, fala jasności i migotanie zagęszczeń, turkusowy brzeg; dżety
+pulsara (14 % cząstek, wyrzut przez 4,2 s z osi obracającej się ~2,3 rad/s — podwójna spirala, kładzione wzdłuż śladu
+strumienia) i wirujące snopy z jądra; większe, ciemniejsze kłęby (gaz zamiast „sierści” kresek). Sekwencja 6,4 s.
+
+**Torpedy (`src/game/torpedoAim.js`, index.html).** Tryb jak w World of Warships: klawisz 8, wachlarz niekierowanych torped
+(`burstCount` rur, `torpedoSpread` wąski / szeroki), nakładka z torami do zasięgu, stanem wyrzutni i duchem celu w punkcie
+przechwycenia; kilwater w dymie rakiet. Torpedy przyspieszone do grywalnego dolotu (1000–1400 j/s, zasięg 14–22 tys. j.).
+
+**Otwarte.** Obrona punktowa nie strzela do rakiet 3D (tylko do pocisków z `bullets`) — przy salwach Gradu to kandydat na
+kontrę; wyrzutnie 3D (opcja „Bronie 3D”, `src/3d/ships3d/weapons/weapons3D.js`) nie znają nowych id (Rój, Grad, Hydra) —
+spadają na model zastępczy; kamery 3D rysują płaskie płomienie i dym (wysokość rakiet jest już w danych).

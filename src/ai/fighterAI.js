@@ -10,6 +10,7 @@
 // obwiednię w ~0.2 s i stany przełączały się szybciej, niż zdążył wystrzelić.
 
 import { clampTurnVec, getLeadAim, scoreAiTarget } from './aiUtils.js';
+import { isCloakHidden } from '../game/cloak.js';
 
 const _leadScratch = { x: 0, y: 0 };
 const _turnScratch = { vx: 0, vy: 0 };
@@ -406,7 +407,7 @@ export function runAdvancedFighterAI(npc, dt) {
   }
 
   const isSquadWingman = (npc.squad && npc.squad.leader && !npc.squad.leader.dead && npc.squad.leader !== npc);
-  if (!target && !npc.friendly && !npc.guardStation && !isSquadWingman) {
+  if (!target && !npc.friendly && !npc.guardStation && !isSquadWingman && !isCloakHidden(window.ship)) {
     target = window.ship;
     npc.target = target;
   }

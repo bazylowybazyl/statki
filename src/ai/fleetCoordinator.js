@@ -53,6 +53,7 @@ import {
   FORMATION_CONFIG,
   createFormationState,
   describeFormation,
+  keepEscortSlotsClear,
   layoutBattle,
   layoutCruise,
   measureGroups,
@@ -78,7 +79,11 @@ const ENGAGE_PHASE_MUL = 1.25;
 const BATTLE_LINGER = 6;
 // Wygładzanie kursu szyku przelotowego (za ruchem korzenia) i osi natarcia (s).
 const HEADING_TAU = 2.2;
-const AXIS_TAU = 2.5;
+const AXIS_TAU = 3.5;
+// Martwa strefa osi natarcia: dopóki zagrożenie jest w tylu radianach od osi,
+// linia się nie obraca. Oś goniła każdy ruch wroga — skrajne grupy linii (6–7 km
+// od środka) jeździły po łuku z dużą prędkością i całe bloki eskorty kręciły się.
+const AXIS_DEADBAND = Math.PI / 12;
 // Poniżej tej prędkości korzeń „stoi" — kurs szyku się nie zmienia (gracz
 // obracający się w miejscu nie kręci całą flotą).
 const HEADING_MIN_SPEED = 120;
@@ -505,7 +510,11 @@ function battleFormation(side, st, player, members, threats, dt) {
   if (tx * tx + ty * ty > 1) {
     const target = Math.atan2(ty, tx);
     if (!st.battle || !Number.isFinite(st.axisAng)) st.axisAng = target;
-    else st.axisAng += wrapAngle(target - st.axisAng) * Math.min(1, dt / AXIS_TAU);
+    else {
+      const err = wrapAngle(target - st.axisAng);
+      const excess = Math.abs(err) - AXIS_DEADBAND;
+      if (excess > 0) st.axisAng += Math.sign(err) * excess * Math.min(1, dt / AXIS_TAU);
+    }
   } else if (!Number.isFinite(st.axisAng)) {
     st.axisAng = Number.isFinite(st.heading) ? st.heading : 0;
   }
@@ -550,6 +559,7 @@ function battleFormation(side, st, player, members, threats, dt) {
   _frame.dirY = axisY;
   _frame.reserve = reserve;
   layoutBattle(fs, _frame);
+  if (mode === 'guard') keepEscortSlotsClear(fs, refX, refY, Math.max(300, Number(player.radius) || 600));
 
   // W walce linia trzyma pole: podchodzi do dystansu bojowego, ale przed
   // wrogiem, który sam naciera, nie ucieka — stoi, dopóki nie wejdzie głębiej
@@ -673,6 +683,7 @@ function cruiseFormation(side, st, player, dt) {
   st.axisAng = NaN;
 
   layoutCruise(fs, root, st.heading);
+  if (!root.entity) keepEscortSlotsClear(fs, root.x, root.y, root.radius);
 
   const tether = FORMATION_TETHER[stance] || FORMATION_TETHER.guard;
   const facing = st.heading;

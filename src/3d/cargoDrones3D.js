@@ -9,7 +9,7 @@
 //   • drony — jedna scalona geometria (korpus, belki, 4 bloki RCS, rama
 //     chwytaka o obrysie kontenera, zamki) w instancjach, warstwa 0, pass
 //     ortho z tą samą paralaksą, ściskiem głębi i światłem co kontenery
-//     (CARGO_VIEW_GLSL / CARGO_LIGHT_GLSL z cargoContainers3D.js);
+//     (cargoContainers3D.tsl.js — wspólne węzły TSL);
 //   • światła — pozycyjne (czerwone/zielone), kogut na grzbiecie, białe
 //     światło rufowe i błyski RCS przy przyspieszaniu: billboardy w FG
 //     (warstwa 2, addytywnie, pasma HDR jak światła pozycyjne okrętów),
@@ -21,16 +21,12 @@
 // Klej przeładunku: pushCargoScene(state, plan, berthPose) — pokład, niesione,
 // plac, włazy wind i drony jednego stanowiska.
 
-import * as THREE from 'three';
-import {
-  CARGO3D_TUNE,
-  CARGO_LIGHT_GLSL,
-  CARGO_NOISE_GLSL,
-  CARGO_VIEW_GLSL,
-  CargoContainers3D
-} from './cargoContainers3D.js';
-// AGENT: moduł Z5 poza grą (dema/kontenery) — GLSL; przejdzie na TSL przy integracji ruchu v2 (PLAN §12 p. 1).
-import { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
+import * as THREE from 'three/webgpu';
+import { CARGO3D_TUNE, CargoContainers3D } from './cargoContainers3D.js';
+// Materiały w TSL (port WebGPU): cargoDrones3D.tsl.js (bryła na wspólnych węzłach kontenerów).
+import { createDroneLightMaterial, createDroneMaterial } from './cargoDrones3D.tsl.js';
+import { makeUniforms } from './tsl/uniformy.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 import {
   CARGO_DRONE,
   CARGO_DRONE_STRIDE,
@@ -164,163 +160,19 @@ export function buildDroneGeometry() {
 }
 
 // ---------------------------------------------------------------------------
-// GLSL
-// ---------------------------------------------------------------------------
-
-const DRONE_VERT = `
-attribute float aPart;
-attribute float aMat;
-attribute vec4 iPos;
-attribute vec4 iSize;
-attribute vec4 iState;
-${CARGO_VIEW_GLSL}
-uniform vec3 uCgSunRel;
-uniform vec3 uCgPortSun;
-varying vec3 vUnit;
-varying vec3 vObjN;
-varying vec3 vObjL;
-flat varying float vMat;
-flat varying vec4 vSize;
-flat varying vec4 vState;
-
-void main() {
-  vSize = iSize;
-  vState = iState;
-  vMat = aMat;
-  vec3 lp = position * iSize.xyz;
-  // Rama chwytaka opada o DROP, zastrzały sięgają za nią.
-  float drop = iState.z;
-  if (aPart > 0.5 && aPart < 1.5) lp.z -= drop;
-  if (aPart > 1.5 && aPart < 2.5 && position.z < 0.3) lp.z -= drop;
-  vUnit = position;
-  float c = cos(iPos.w);
-  float s = sin(iPos.w);
-  vec3 wp = vec3(iPos.x + c * lp.x - s * lp.y, iPos.y + s * lp.x + c * lp.y, iPos.z + lp.z);
-  wp.z = max(wp.z, iState.y);
-  vObjN = normal;
-  vec3 ls = normalize(vec3(uCgSunRel.xy - wp.xy, 600.0));
-  vec3 L = normalize(mix(ls, uCgPortSun, clamp(iState.x, 0.0, 1.0)));
-  vObjL = vec3(c * L.x + s * L.y, -s * L.x + c * L.y, L.z);
-  gl_Position = cgProject(wp);
-}
-`;
-
-const DRONE_FRAG = `
-uniform vec3 uDronePaint[6];
-${SUN_SHADOW_GLSL}
-${CARGO_LIGHT_GLSL}
-${CARGO_NOISE_GLSL}
-varying vec3 vUnit;
-varying vec3 vObjN;
-varying vec3 vObjL;
-flat varying float vMat;
-flat varying vec4 vSize;
-flat varying vec4 vState;
-
-void main() {
-  if (cgDitherOut(vSize.w)) discard;
-  int m = int(vMat + 0.5);
-  vec3 albedo = uDronePaint[m];
-  float specK = 0.5;
-  float specPow = 24.0;
-  vec3 N = normalize(vObjN);
-  vec3 wl = vUnit * vSize.xyz;
-  if (m == 3) {
-    // Zamki chwytaka: pasy ostrzegawcze.
-    float st = step(0.5, fract((wl.x + wl.y) / max(0.035 * min(vSize.x, vSize.y), 0.12)));
-    albedo = mix(albedo, vec3(0.02), st);
-  } else if (m == 0) {
-    // Panele korpusu i lekkie zabrudzenie.
-    albedo *= 0.88 + 0.2 * cgNoise(wl.xy * (3.0 / max(vSize.y, 1.0)) + vState.w * 13.0);
-    specK = 0.7;
-  } else if (m == 5) {
-    specK = 2.0; specPow = 64.0;
-  } else if (m == 4) {
-    specK = 1.1; specPow = 40.0;
-  }
-  vec3 col = cgShade(albedo, N, normalize(vObjL), vState.x, uCgShip.x, specK, specPow);
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
-
-// Światła: billboard w FG. iLight: środek (względem origin, prawdziwe z) i promień,
-// iColor: barwa × moc, kształt (0 punkt z poświatą, 1 błysk RCS).
-const LIGHT_VERT = `
-attribute vec4 iLight;
-attribute vec4 iColor;
-uniform vec4 uFgParallax;
-uniform vec3 uCamRight;
-uniform vec3 uCamUp;
-uniform float uBillboard;
-varying vec2 vQ;
-flat varying vec4 vColor;
-
-void main() {
-  vQ = position.xy * 2.0;
-  vColor = iColor;
-  vec3 p = iLight.xyz;
-  float r = iLight.w;
-  // Pass FG ma kamerę perspektywiczną nad z = 0: nad płaszczyzną lotu dron jest
-  // w passie ortho bez paralaksy, więc światło cofamy o nią (pozycja i skala).
-  if (uFgParallax.w > 0.5 && p.z > 0.0) {
-    float k = (uFgParallax.z - p.z) / uFgParallax.z;
-    p.xy = uFgParallax.xy + (p.xy - uFgParallax.xy) * k;
-    r *= k;
-  }
-  vec3 right = uBillboard > 0.5 ? uCamRight : vec3(1.0, 0.0, 0.0);
-  vec3 up = uBillboard > 0.5 ? uCamUp : vec3(0.0, 1.0, 0.0);
-  vec3 wp = p + (right * position.x + up * position.y) * 2.0 * r;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(wp, 1.0);
-}
-`;
-
-const LIGHT_FRAG = `
-uniform vec2 uLightGain;
-varying vec2 vQ;
-flat varying vec4 vColor;
-
-void main() {
-  float d = length(vQ);
-  if (d > 1.0) discard;
-  float core;
-  float halo;
-  if (vColor.w > 0.5) {
-    // Błysk RCS: miękki obłok bez twardego rdzenia.
-    core = exp(-d * d * 9.0);
-    halo = exp(-d * d * 3.0) * 0.25;
-  } else {
-    core = 1.0 - smoothstep(0.12, 0.22, d);
-    halo = pow(max(0.0, 1.0 - d), 2.4) * (1.0 - core);
-  }
-  vec3 col = vColor.rgb * (core + halo * uLightGain.x);
-  float a = clamp(core + halo * 0.5, 0.0, 1.0);
-  if (a < 0.003) discard;
-  gl_FragColor = vec4(col, a);
-}
-`;
-
-// ---------------------------------------------------------------------------
 // Zasoby
 // ---------------------------------------------------------------------------
 
 function makeInstanceAttr(geometry, name, itemSize, capacity) {
+  // Bez DynamicDrawUsage (WebGPU: pełna wysyłka przy każdym renderze) — zakresy zakresyWysylki.js.
   const attr = new THREE.InstancedBufferAttribute(new Float32Array(capacity * itemSize), itemSize);
-  attr.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute(name, attr);
   return attr;
 }
 
 function commitAttr(attr, count) {
   if (count <= 0) return;
-  const ranges = attr.updateRanges;
-  if (Array.isArray(ranges)) {
-    const r = attr.__cgRange || (attr.__cgRange = { start: 0, count: 0 });
-    r.start = 0;
-    r.count = count * attr.itemSize;
-    ranges.length = 0;
-    ranges.push(r);
-  }
-  attr.needsUpdate = true;
+  zbierzZakres(attr, 0, count * attr.itemSize);
 }
 
 function srgbToLinear(c) {
@@ -382,16 +234,9 @@ export const CargoDrones3D = {
         state: makeInstanceAttr(geo, 'iState', 4, CARGO_DRONE_LIMITS.drones)
       };
       geo.instanceCount = 0;
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { ...U, uDronePaint: { value: CARGO_DRONE_PAINT.map((h) => new THREE.Vector3(...hexToLinear(h))) } },
-        vertexShader: DRONE_VERT,
-        fragmentShader: DRONE_FRAG,
-        transparent: true,
-        depthWrite: true,
-        depthTest: true,
-        side: THREE.FrontSide,
-        forceSinglePass: true
-      });
+      const own = makeUniforms({ uDronePaint: CARGO_DRONE_PAINT.map((h) => new THREE.Vector3(...hexToLinear(h))) });
+      const mat = createDroneMaterial(U, own.uDronePaint);
+      mat.uniforms = { ...U, ...own };
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'CARGO3D_DRONES';
       mesh.frustumCulled = false;
@@ -411,21 +256,15 @@ export const CargoDrones3D = {
         color: makeInstanceAttr(geo, 'iColor', 4, CARGO_DRONE_LIMITS.lights)
       };
       geo.instanceCount = 0;
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          uFgParallax: { value: new THREE.Vector4() },
-          uCamRight: { value: new THREE.Vector3(1, 0, 0) },
-          uCamUp: { value: new THREE.Vector3(0, 1, 0) },
-          uBillboard: { value: 0 },
-          uLightGain: { value: new THREE.Vector2(CARGO_DRONE_TUNE.navHalo, 0) }
-        },
-        vertexShader: LIGHT_VERT,
-        fragmentShader: LIGHT_FRAG,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        depthTest: true
+      const own = makeUniforms({
+        uFgParallax: new THREE.Vector4(),
+        uCamRight: new THREE.Vector3(1, 0, 0),
+        uCamUp: new THREE.Vector3(0, 1, 0),
+        uBillboard: 0,
+        uLightGain: new THREE.Vector2(CARGO_DRONE_TUNE.navHalo, 0)
       });
+      const mat = createDroneLightMaterial(own);
+      mat.uniforms = own;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'CARGO3D_DRONE_LIGHTS';
       mesh.frustumCulled = false;

@@ -121,6 +121,31 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
   ]) {
     assert.equal(S.craterRadiusFor(src, v, dmg), 0, `${JSON.stringify(src)} ${v}`);
   }
+  // Warianty rozmiarowe broni specjalnej: krater ∝ √obrażeń względem rodzica (pole dziury ∝ obrażeń) —
+  // Kolec (S, 180) 14,7 j., Oszczep (M, 380) 21,4 j. przy 24,4 j. Valkyrie; Yamato L (450) 43,7 j. przy 60 j.
+  const vkR = S.craterRadiusFor({ vfxKey: 'special_valkyrie_railgun' }, 'impact', W.special_valkyrie_railgun.baseDamage);
+  const yamR = S.craterRadiusFor({ vfxKey: 'special_yamato_cannon' }, 'impact', W.special_yamato_cannon.baseDamage);
+  for (const [id, parentR, parentId, want] of [
+    ['special_valkyrie_s', vkR, 'special_valkyrie_railgun', 14.67], ['special_valkyrie_m', vkR, 'special_valkyrie_railgun', 21.39],
+    ['special_yamato_l', yamR, 'special_yamato_cannon', 43.65]
+  ]) {
+    const src = { vfxKey: id, type: W[id].category, weaponSize: W[id].size };
+    const r = S.craterRadiusFor(src, 'impact', W[id].baseDamage);
+    close(r, want, 0.05, `${id}: krater`);
+    assert.ok(r < parentR, `${id}: krater mniejszy niż u rodzica (${r} < ${parentR})`);
+    close(r / parentR, Math.sqrt(W[id].baseDamage / W[parentId].baseDamage), 0.01, `${id}: promień ∝ √obrażeń`);
+    assert.equal(S.trenchRadiusFor(src, 5000), 0, `${id}: bez rowu przebicia`);
+    assert.equal(C.hasTrench(src), false);
+  }
+  for (const id of ['special_valkyrie_s', 'special_valkyrie_m']) {
+    const fam = S.stampFamilyFor(id);
+    assert.equal(S.STAMP[fam].impact[S.S_CRATER], W[id].baseDamage, `${id}: wzorzec = obrażenia`);
+    assert.equal(S.STAMP[fam].exit[S.S_CRATER], 0.5 * W[id].baseDamage);
+    assert.equal(S.STAMP[fam].stuck[S.S_CRATER], 0.5 * W[id].baseDamage);
+    assert.equal(S.craterRadiusFor({ vfxKey: id }, 'kerf', 500), 0, `${id}: rzaz bez krateru`);
+    const exitR = S.craterRadiusFor({ vfxKey: id }, 'exit', 0.5 * W[id].baseDamage);
+    assert.ok(exitR > 0 && exitR < S.craterRadiusFor({ vfxKey: 'special_valkyrie_railgun' }, 'exit', 250), `${id}: krater wylotu`);
+  }
   // Opcje dla HullBodies.impact: wspólny obiekt, null bez krateru.
   assert.equal(C.craterOptsFor({ vfxKey: 'railgun_mk2' }, 'impact', 10), null);
   const o = C.craterOptsFor(yam, 'impact', 850);

@@ -40,9 +40,18 @@ Object.assign(globalThis.window, {
 
 const F = await import('../src/ai/fleetFormation.js');
 const { aiBattleship, aiFrigate, aiDestroyer } = await import('../src/ai/capitalAI.js');
-const { stepShipFlight } = await import('../src/game/flight/shipFlightModel.js');
+const { stepShipFlight, resolveShipFlightSpec } = await import('../src/game/flight/shipFlightModel.js');
 const Coord = await import('../src/ai/fleetCoordinator.js');
 const Aw = await import('../src/ai/fleetAwareness.js');
+const Grid = await import('../src/ai/aiSpatialGrid.js');
+const NO_GRID = window.queryAIGrid;
+// Siatka AI jak w grze (przebudowa co cykl mózgów): sąsiedzi dla przeszkód
+// i uniku CPA. Domyślnie pusta — wtedy test widzi sam szyk i separację.
+let gridOn = false;
+function useAIGrid(on) {
+  gridOn = on;
+  window.queryAIGrid = on ? Grid.queryAIGrid : NO_GRID;
+}
 
 window.aiPickTarget = (npc) => {
   if (npc.forceTarget && !npc.forceTarget.dead) return npc.forceTarget;
@@ -89,7 +98,7 @@ function makePlayer() {
   };
 }
 
-function simulate(npcs, player, seconds, playerVel = null) {
+function simulate(npcs, player, seconds, playerVel = null, onTick = null) {
   const steps = Math.round(seconds / DT);
   for (let i = 0; i < steps; i++) {
     window.__frameId++;
@@ -104,10 +113,12 @@ function simulate(npcs, player, seconds, playerVel = null) {
       player.y = player.pos.y;
     }
     if (i % 6 === 0) {
+      if (gridOn) Grid.rebuildAIGrid(npcs, true);
       Coord.updateFleetCoordinator(npcs, player, BRAIN_DT);
       for (const n of npcs) n.ai(BRAIN_DT);
     }
     for (const n of npcs) stepShipFlight(n, DT);
+    if (onTick) onTick();
   }
 }
 
@@ -342,6 +353,87 @@ test('escort stance: an approaching enemy gets a flagship line through the playe
   assert.ok(maxLeaderFromPlayer < 7500, `okręty flagowe daleko od gracza: ${maxLeaderFromPlayer.toFixed(0)}`);
   delete window.SupportWing;
   window.ship = null;
+});
+
+// Kurs i zetknięcia skrzydła co tick: lot bokiem (kadłub 45–135° od kierunku
+// lotu przy > 0,3 maxSpeed) i nowe zetknięcia par sojuszników (środki bliżej
+// niż 0,8 sumy promieni — kadłuby są wydłużone, promień to pół długości).
+// Postój burtą do celu zależy od gniazd dział — tests/npcWeaponArcs.test.mjs.
+function wingMetrics(wing) {
+  const m = { moving: 0, sideways: 0, contacts: 0 };
+  const touching = new Set();
+  const maxSpeed = new Map(wing.map(s => [s, resolveShipFlightSpec(s).maxSpeed]));
+  m.tick = () => {
+    for (const s of wing) {
+      const sp = Math.hypot(s.vx, s.vy);
+      if (sp > 0.3 * maxSpeed.get(s)) {
+        m.moving++;
+        const off = Math.abs(wrapAngle(Math.atan2(s.vy, s.vx) - s.angle));
+        if (off > Math.PI / 4 && off < Math.PI * 0.75) m.sideways++;
+      }
+    }
+    for (let i = 0; i < wing.length; i++) {
+      for (let j = i + 1; j < wing.length; j++) {
+        const a = wing[i];
+        const b = wing[j];
+        const lim = 0.8 * (a.radius + b.radius);
+        const key = i * 1000 + j;
+        const inContact = (a.x - b.x) ** 2 + (a.y - b.y) ** 2 < lim * lim;
+        if (inContact && !touching.has(key)) m.contacts++;
+        if (inContact) touching.add(key);
+        else touching.delete(key);
+      }
+    }
+  };
+  return m;
+}
+
+test('a big wing neither flies sideways nor rams itself', () => {
+  resetWorld();
+  const player = makePlayer();
+  const wing = spawnWing(player);
+  let gather;
+  let battle;
+  try {
+    useAIGrid(true);
+    window.ship = player;
+    window.SupportWing = { order: 'guard' };
+    world.push(...wing);
+    gather = wingMetrics(wing);
+    simulate(wing, player, 45, null, gather.tick);
+    const raiders = [makeShip('pirate', 'battleship', 10000, 4000, Math.PI), makeShip('pirate', 'destroyer', 11000, 4500, Math.PI)];
+    for (const r of raiders) r.ai = () => {};
+    world.push(...raiders);
+    battle = wingMetrics(wing);
+    simulate([...wing, ...raiders], player, 30, null, battle.tick);
+  } finally {
+    useAIGrid(false);
+    delete window.SupportWing;
+    window.ship = null;
+  }
+
+  const pct = (a, b) => (b ? (100 * a) / b : 0);
+  const sidewaysGather = pct(gather.sideways, gather.moving);
+  const sidewaysBattle = pct(battle.sideways, battle.moving);
+  // Dawniej w tym scenariuszu: 61% lotu bokiem przy zbiórce (kurs bojowy
+  // w pełnym biegu), 41% w walce (eskorty cofające się za okręt flagowy
+  // obracały się rufą do wroga i z powrotem); po zmianach ~8% i ~8% (reszta to
+  // chwile obrotu). Pełniejszy pomiar: node scripts/szyk-floty.mjs --seeds 1-6.
+  assert.ok(sidewaysGather < 15, `zbiórka: ${sidewaysGather.toFixed(1)}% lotu bokiem`);
+  assert.ok(sidewaysBattle < 15, `walka: ${sidewaysBattle.toFixed(1)}% lotu bokiem`);
+  assert.ok(gather.contacts + battle.contacts <= 3, `zetknięcia: zbiórka ${gather.contacts}, walka ${battle.contacts}`);
+});
+
+test('escort slots keep clear of the player hull', () => {
+  const fs = F.createFormationState();
+  const leader = bareShip('battleship', 0, 0);
+  const g = { leader, cls: 'battleship', escorts: [bareShip('frigate_pd'), bareShip('frigate_pd')], ex: [100, 2500], ey: [0, 2500], rE: 111 };
+  fs.leaders.push(leader);
+  fs.groups.set(leader, g);
+  F.keepEscortSlotsClear(fs, 0, 0, 915);
+  const clear = 915 + 111 + F.FORMATION_CONFIG.rootGap;
+  assert.ok(Math.abs(Math.hypot(g.ex[0], g.ey[0]) - clear) < 1e-6, 'miejsce na kadłubie gracza nie odsunięte');
+  assert.deepEqual([g.ex[1], g.ey[1]], [2500, 2500], 'miejsce poza strefą nie może się ruszyć');
 });
 
 test('a ship whose formation slot lies behind the player goes around it instead of stopping', () => {

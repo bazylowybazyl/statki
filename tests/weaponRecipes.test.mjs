@@ -71,8 +71,8 @@ function runAll() {
   cheapImpact(ctx, hit.x, hit.y, 2, 1, 0.5, 24);
 }
 
-test('27 broni: rodzina ma recepturę — wylot albo wiązka, pocisk (poza wiązkami), trafienie', () => {
-  assert.equal(WEAPON_FX_IDS.length, 27);
+test('27 broni + 3 warianty specjalne: rodzina ma recepturę — wylot albo wiązka, pocisk (poza wiązkami), trafienie', () => {
+  assert.equal(WEAPON_FX_IDS.length, 30);
   for (const id of WEAPON_FX_IDS) {
     const R = RECIPES[WEAPON_FX[id].fx];
     assert.ok(R, `${id}: brak receptury ${WEAPON_FX[id].fx}`);

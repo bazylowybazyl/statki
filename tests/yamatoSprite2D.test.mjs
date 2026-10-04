@@ -62,6 +62,47 @@ test('Yamato atlas preserves muzzle placement, fallback, and distant LOD', () =>
     draw();
     assert.ok(draws.length > 0, 'sprite remains drawable during recoil');
 
+    // Yamato L (special_yamato_l, 2 lufy na salwę): wieża rodzica z DWIEMA SKRAJNYMI lufami — środkowa
+    // kołyska pusta. Lufy salwy 0 / 1 wychodzą symetrycznie, każda narysowana lufa ma punkt wylotowy.
+    const twinDef = MASTER_WEAPONS.special_yamato_l;
+    const parentWeapons = entity.autoWeapons;
+    Turret2D.clear();
+    entity.autoWeapons = [{ def: twinDef, hpOffset: { x: 0, y: 0 }, visualAngle: Math.PI / 3 }];
+    try {
+      assert.equal(draw(), 1);
+      assert.equal(fills, 0, 'twin uses the parent sprite, not procedural geometry');
+      assert.equal(draws.length, 3, 'housing + two outer barrels');
+      assert.equal(images.length, 1, 'twin shares the parent atlas');
+      const spec = Turret2D.resolveSpec(twinDef.id, twinDef.category);
+      assert.notEqual(spec, Turret2D.resolveSpec('special_yamato_cannon', 'plasma'));
+      assert.deepEqual(spec.m, [[56, 6.75], [56, -6.75]]);
+      const tips = [];
+      for (const { args, matrix: [a, b, c, d, e, f] } of draws.slice(1)) {
+        const [, , , , , x, y, width, height] = args;
+        const tipX = a * (x + width) + c * (y + height / 2) + e - 400;
+        const tipY = b * (x + width) + d * (y + height / 2) + f - 400;
+        const muzzle = Turret2D.resolveMuzzle(Turret2D.findTurretKey(tipX, tipY, 'yamato'));
+        assert.ok(Math.hypot(muzzle.x - tipX, muzzle.y - tipY) < 1e-6, 'twin barrel tip = gameplay muzzle');
+        tips.push([tipX, tipY]);
+      }
+      assert.ok(Math.hypot(tips[0][0] - tips[1][0], tips[0][1] - tips[1][1]) > 1, 'two distinct barrels');
+      // Symulacja: lufy salwy 0..barrelsPerShot−1 = skrajne lufy (symetrycznie), w skali broni L × klasa kadłuba.
+      assert.equal(twinDef.barrelsPerShot, 2);
+      const k = 1.02; // SCALE_BY_SIZE.L × Capital (atlas)
+      const o0 = Turret2D.writeMuzzleOffset(entity, twinDef, 0, { x: 0, y: 0 });
+      const o1 = Turret2D.writeMuzzleOffset(entity, twinDef, 1, { x: 0, y: 0 });
+      assert.ok(Math.abs(o0.x - 56 * k) < 1e-9 && Math.abs(o1.x - 56 * k) < 1e-9);
+      assert.ok(Math.abs(o0.y - 6.75 * k) < 1e-9 && Math.abs(o1.y + 6.75 * k) < 1e-9);
+      // Rodzic bez zmian: trzy lufy, środkowa pod indeksem 1.
+      const p1 = Turret2D.writeMuzzleOffset(entity, MASTER_WEAPONS.special_yamato_cannon, 1, { x: 0, y: 0 });
+      assert.ok(Math.abs(p1.x - 58 * 1.75) < 1e-9 && Math.abs(p1.y) < 1e-9);
+      const shot = Turret2D.triggerShot('yamato', 0, 0, entity);
+      assert.ok(shot && shot.recoil === twinDef.recoil && shot.shake === twinDef.shake, 'odrzut i wstrząs z danych wariantu');
+    } finally {
+      Turret2D.clear();
+      entity.autoWeapons = parentWeapons;
+    }
+
     assert.equal(draw(0.04), 1);
     assert.equal(draws.length, 0, 'distant guns use the cheap silhouette');
     assert.equal(fills, 1);

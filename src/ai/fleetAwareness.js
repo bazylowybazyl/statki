@@ -19,6 +19,7 @@
 import { resolveShipSensors } from '../game/scannerTargeting.js';
 import { getEntitySizeModifier } from '../game/sensorSystem.js';
 import { SHIP_SENSOR_PROFILES } from '../data/ships.js';
+import { isCloakHidden } from '../game/cloak.js';
 
 export const AWARENESS_CONFIG = Object.freeze({
   // Odświeżanie obrazu sytuacji (s). Decyzje i tak zapadają co 50 ms.
@@ -206,7 +207,8 @@ function refreshSide(side, npcs, player) {
       if (isGone(e) || sideOfEntity(e, player) !== enemySide) continue;
       if (detectedBy(side, e)) upsertContact(side, e, player);
     }
-    if (enemySide === SIDE_FRIENDLY && player && !isGone(player) && detectedBy(side, player)) {
+    // Zamaskowany gracz (src/game/cloak.js) nie jest kontaktem — ani świeżym, ani duchem (niżej).
+    if (enemySide === SIDE_FRIENDLY && player && !isGone(player) && !isCloakHidden(player) && detectedBy(side, player)) {
       upsertContact(side, player, player);
     }
   }
@@ -216,7 +218,7 @@ function refreshSide(side, npcs, player) {
   for (let i = 0; i < contacts.length; i++) {
     const c = contacts[i];
     const expired = !c.visible && (clock - c.seenAt) > AWARENESS_CONFIG.ghostTtl;
-    const vanished = c.entity.__awarenessGen !== generation;
+    const vanished = c.entity.__awarenessGen !== generation || isCloakHidden(c.entity);
     if (isGone(c.entity) || expired || vanished) {
       side.byEntity.delete(c.entity);
       continue;

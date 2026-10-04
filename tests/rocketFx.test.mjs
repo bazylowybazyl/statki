@@ -383,8 +383,8 @@ test('Supernowa: implozja (przygaszenie) → błysk, bloom, fala, pozostałość
     // Post z klatki efektów: min ekspozycji, max podbicia (kasowane co klatkę FxFrame).
     fxFrame();
     assert.ok(fx.post.bloomBoost > 1);
-    for (let i = 0; i < 300; i++) director.update(1 / 60);
-    assert.equal(director.nN, 0, 'sekwencja wygasła');
+    for (let i = 0; i < 420; i++) director.update(1 / 60);
+    assert.equal(director.nN, 0, 'sekwencja wygasła (wir z pulsarem ~6,4 s)');
     assert.equal(director.exposure, 1);
     assert.equal(director.bloomBoost, 0);
     fxFrame();
@@ -588,7 +588,9 @@ test('efekty rakiet i iskier bez Math.random (fxRandom); stare pule rakiet usuni
     assert.throws(() => read(`src/effects3d/${f}.js`), /ENOENT/, `${f}.js usunięty`);
   }
   const rockets = stripComments(read('src/effects3d/rocketSystem3D.js'));
-  assert.equal((rockets.match(/Math\.random\(\)/g) || []).length, 3, 'losowanie wyrzutu gry bez zmian (3 na rakietę)');
+  // Losowanie gry w locie: JEDNO ziarno na rakietę (fire) albo na salwę (fireSalvo) — rozrzut wyrzutu,
+  // zapłonu, wachlarza i kluczenia z haszu ziarna (2026-09-30; dawniej 3 losowania wyrzutu na rakietę).
+  assert.equal((rockets.match(/Math\.random\(\)/g) || []).length, 2, 'losowanie gry: ziarno rakiety i ziarno salwy');
   assert.doesNotMatch(rockets, /new THREE\.(Mesh|InstancedMesh|Points|ShaderMaterial)/, 'lot bez własnych siatek');
 });
 
@@ -633,4 +635,79 @@ test('WGSL: kernele i materiały rakiet budują się; ≤ 8 buforów storage na 
     // pow tylko z nieujemną podstawą (NaN w HalfFloat rozlewa bloom): brak pow z gołym argumentem ujemnym.
     assert.doesNotMatch(fragment, /pow\(\s*-/, `${m.name}: pow z ujemną stałą`);
   }
+});
+
+// --- „Feel” rakiet (2026-09-30): rodzaje wyglądu nowych broni, wyrzut w pionie, Hydra, torpedy ---
+
+test('wygląd nowych broni: Grad / Rój / głowice Hydry — mikrorakieta, nosiciel Hydry — własny rodzaj', async () => {
+  const { VFX_MICRO, VFX_HYDRA } = await import('../src/3d/rockets/palette.js');
+  const { submunitionDef } = await import('../src/data/weapons.js');
+  assert.equal(rocketVfxIndex(MASTER_WEAPONS.grad_launcher), VFX_MICRO);
+  assert.equal(rocketVfxIndex(MASTER_WEAPONS.roj_pod), VFX_MICRO);
+  assert.equal(rocketVfxIndex(MASTER_WEAPONS.hydra_mirv), VFX_HYDRA);
+  assert.equal(rocketVfxIndex(submunitionDef(MASTER_WEAPONS.hydra_mirv)), VFX_MICRO);
+  assert.equal(rocketVfxIndex(MASTER_WEAPONS.missile_rack), VFX_CRUISE, 'dawne bronie bez zmian');
+  assert.equal(rocketVfxIndex(MASTER_WEAPONS.fast_missile_rack), VFX_FAST);
+  // Każdy rodzaj ma pełny profil (płomień, światło, smuga, wybuch) i paletę dymu w granicach puli.
+  for (const k of ['micro', 'hydra']) {
+    const v = MISSILE_VFX[k];
+    assert.ok(v.body && v.plume && v.light && v.trail && v.blast, k);
+    assert.ok(v.trail.kind >= 0 && v.trail.kind < 8, `${k}: paleta dymu`);
+  }
+  assert.equal(SMOKE_KIND.MICRO, 6);
+});
+
+test('wyrzut w pionie: słup dymu po zapłonie rozlewa się na boki (bez kierunku), dysza liczona w 3D', () => {
+  resetAll();
+  const r = fakeRocket(21, 'missile_rack', 0, 0, 0, 60);
+  r.nosePitch = 1.45;           // nos prawie w górę (tuż po zapłonie)
+  r.position.y = 60;
+  r.velocity.set(0, 400, 0);    // wznosi się
+  director.onLaunch(r);
+  director.onIgnite(r);
+  const puffs = recordPuffs(() => {
+    for (let i = 0; i < 12; i++) { r.position.y += 400 / 60; director.onFly(r, 1 / 60); }
+  });
+  assert.ok(puffs.length >= 12, `porcje wzdłuż drogi dyszy w górę: ${puffs.length}`);
+  // Prędkości w płaszczyźnie rozrzucone we wszystkich kierunkach (nie smuga do tyłu).
+  let neg = 0; let pos = 0;
+  for (const p of puffs) { if (p[3] < 0) neg++; else pos++; }
+  assert.ok(neg > 2 && pos > 2, `rozlew na boki: ${neg} / ${pos}`);
+  // z porcji rośnie z wysokością dyszy.
+  assert.ok(puffs[puffs.length - 1][2] > 60, `z porcji ${puffs[puffs.length - 1][2]}`);
+});
+
+test('Hydra: pęknięcie nosiciela — błysk ze światłem, iskry, obłok, fala (sama refrakcja)', () => {
+  resetAll();
+  const r = fakeRocket(23, 'hydra_mirv', 200, 100, 0, 1800);
+  director.onLaunch(r);
+  const sparks0 = SparkSystem3D.pool.stats.emitted;
+  const f0 = director.fN;
+  const s0 = director.sN;
+  const puffs = recordPuffs(() => director.onSplit(r));
+  assert.equal(director.stats.splits > 0, true);
+  assert.ok(director.fN > f0, 'błysk');
+  assert.ok(director.sN > s0, 'fala');
+  assert.ok(SparkSystem3D.pool.stats.emitted - sparks0 >= 30, 'iskry');
+  assert.ok(puffs.length >= 8, 'obłok gazu');
+});
+
+test('torpeda: kilwater w dymie wzdłuż drogi w klatce, w układzie wyrzutni, bez alokacji na porcję', () => {
+  resetAll();
+  const b = { x: 1000, y: 500, vx: 1400 + 300, vy: 0 - 100, ivx: 300, ivy: -100 };
+  const puffs = recordPuffs(() => director.torpedoWake(b, 1 / 60));
+  // 1400 j/s własnego ruchu / 60 = 23 j. na klatkę, odstęp 9 j. → 2 porcje (akumulator na pocisku).
+  assert.ok(puffs.length >= 2 && puffs.length <= 3, `porcje: ${puffs.length}`);
+  for (const p of puffs) {
+    assert.equal(p[5], 300, 'nośnik x = pęd wyrzutni');
+    assert.equal(p[6], -100, 'nośnik y');
+    assert.equal(p[11], SMOKE_KIND.MICRO);
+    assert.ok(p[0] < 1000, 'ślad za torpedą');
+  }
+  assert.ok(Number.isFinite(b.__wakeAcc) && b.__wakeAcc >= 0 && b.__wakeAcc < 9, 'akumulator drogi');
+  // Poza kadrem — bez porcji.
+  director.hasView = true;
+  director.vx0 = 50000; director.vy0 = 50000; director.vx1 = 51000; director.vy1 = 51000;
+  assert.equal(recordPuffs(() => director.torpedoWake(b, 1 / 60)).length, 0);
+  director.hasView = false;
 });

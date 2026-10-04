@@ -86,6 +86,33 @@ test('special sprites preserve player/NPC aim, every muzzle, recoil and distant 
       }
     }
     assert.equal(images.length, 4, 'atlases shared across ships and shots');
+
+    // Warianty rozmiarowe Valkyrie (Kolec S, Oszczep M): sprite i atlas rodzica (bez nowego obrazu),
+    // wieża mniejsza o skalę rozmiaru broni, obie lufy na punktach wylotowych rozgrywki.
+    for (const [id, sizeScale] of [['special_valkyrie_s', 0.52], ['special_valkyrie_m', 0.76]]) {
+      assert.ok(SpecialWeaponSprite2D.supports(id), id);
+      assert.ok(SpecialWeaponSprite2D.isReady(id), `${id}: atlas rodzica już wczytany`);
+      assert.equal(normalizeWeaponFxKey(id), normalizeWeaponFxKey('special_valkyrie_railgun'), id);
+      for (const npc of [false, true]) {
+        equip(id, npc); draw();
+        assert.equal(draws.length, 3, `${id}: korpus + 2 lufy`);
+        assert.equal(fills, 0, 'procedural artwork is not double drawn');
+        const [a, b] = draws[0].matrix;
+        const scale = Math.hypot(a, b);
+        if (!npc) assert.ok(Math.abs(scale - sizeScale) < 1e-9, `${id}: skala ${scale}`);
+        const fxKey = normalizeWeaponFxKey(id);
+        const tips = draws.slice(1).map(tip);
+        for (const p of tips) {
+          const muzzle = Turret2D.resolveMuzzle(Turret2D.findTurretKey(p.x, p.y, fxKey, entity));
+          assert.ok(Math.hypot(muzzle.x - p.x, muzzle.y - p.y) < 1e-6, `${id}: sprite muzzle matches gameplay`);
+        }
+        // Punkty wylotowe symulacji (writeMuzzleOffset) = końce narysowanych luf, w skali wieży.
+        const offs = [0, 1].map((i) => Turret2D.writeMuzzleOffset(entity, MASTER_WEAPONS[id], i, { x: 0, y: 0 }));
+        assert.ok(Math.abs(offs[0].x - 34 * scale) < 1e-9 && Math.abs(offs[1].x - 34 * scale) < 1e-9, id);
+        assert.ok(Math.abs(offs[0].y + offs[1].y) < 1e-9 && Math.abs(Math.abs(offs[0].y) - 5 * scale) < 1e-9, `${id}: lufy symetrycznie`);
+      }
+    }
+    assert.equal(images.length, 4, 'warianty rozmiarowe nie wczytują osobnych atlasów');
     images[0].onerror();
     equip('special_goliath_autocannon'); draw(); assert.ok(fills > 0);
     equip('special_plasma_gatling'); draw(); assert.equal(draws.length, 2);

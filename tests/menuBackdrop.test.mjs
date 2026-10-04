@@ -291,7 +291,10 @@ test('ujęcie menu: kamera poza ringiem i halami K-7 także po najeździe przy s
   const closest = MENU_SHOT.distance * Math.min(1, MENU_SHOT.launchDistanceMul);
   assert.ok(closest > hallReach * 1.5, `najbliżej ${closest} j.`);
   assert.ok(MENU_SHOT.shiftX > 0 && MENU_SHOT.shiftX < 0.35, 'planeta po prawej, menu po lewej');
-  assert.ok(MENU_SHOT.orbitDegPerSec > 0 && MENU_SHOT.orbitDegPerSec < 2, 'powolny obrót talerza');
+  // Fabuła (2026-09-30): kadr na stronę Ziemi z halą K-7 (kamera intro leci stamtąd prosto nad halę) — kołysanie
+  // zamiast pełnego obrotu, hala zostaje po stronie kamery.
+  assert.ok(MENU_SHOT.swayDeg > 0 && MENU_SHOT.swayDeg + Math.abs(MENU_SHOT.hallAzimuthOffsetDeg) < 45, 'K-7 w kadrze');
+  assert.ok(MENU_SHOT.swayPeriodSec >= 30, 'powolne kołysanie talerza');
   // intro kamery (scena `menu` harnessu = 150 klatek po gotowości) bez zmian
   assert.equal(MENU_SHOT.introSeconds, 7.5);
 });

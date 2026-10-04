@@ -22,6 +22,7 @@
 // Serwowanie: `npm run dev` → /dema/warp-webgpu.html
 //   ?scene=trip|arrival|fleet|ambush|free  ?from=earth&to=jupiter  ?t=8.5  ?pause=1
 //   ?particles=1500000  ?hull=supercapital|carrier|battleship|pirate_battleship  ?shot=1
+//   ?rulon=1 — siła zwinięcia rulonu (rulon.js; 0 = płasko, klawisz U)
 // Konsola: window.__demo (scene, seek, pause, stepFrames, state, setParticles).
 
 import * as THREE from 'three/webgpu';
@@ -46,8 +47,9 @@ import { PlanetSet } from './warp-webgpu/planets.js';
 import { WorldLensView } from './warp-webgpu/worldLens.js';
 import { buildSolarSystem, TRIP_IDS, PLANET_LABELS, SUN } from './warp-webgpu/solar.js';
 import { WarpPost } from './warp-webgpu/post.js';
+import { setRulon, rulonForwardCpu, rulonBoostCpu, RULON, RULON_TUNE } from './warp-webgpu/rulon.js';
 import {
-  STEP, createTripScene, createArrivalScene, createFleetScene, createAmbushScene, createFreeScene
+  STEP, BUBBLE_SHAPE, createTripScene, createArrivalScene, createFleetScene, createAmbushScene, createFreeScene
 } from './warp-webgpu/scenes.js';
 
 const params = new URLSearchParams(location.search);
@@ -99,7 +101,8 @@ const S = {
   bright: 1,
   streamGain: 1,
   lensGain: 1,
-  toggles: { medium: true, stars: true, lens: true, waves: true, bloom: true, glow: true, planets: true },
+  rulonGain: Number.isFinite(Number(params.get('rulon'))) && params.get('rulon') !== null ? Number(params.get('rulon')) : 1,
+  toggles: { medium: true, stars: true, lens: true, waves: true, bloom: true, glow: true, planets: true, rulon: true },
   arrivalHull: HULLS[params.get('hull')] && params.get('hull') !== 'atlas' ? params.get('hull') : 'supercapital',
   trip: { from: tripFrom, to: tripTo },
   userZoom: 1,
@@ -448,6 +451,8 @@ const _np = { x: 0, y: 0 };
 const _seam = [0, 0, 0];
 const _lensCtx = { ship: null, velAngle: 0, speed: 0, zoom: 1, W: 1, H: 1, shipSx: 0, shipSy: 0, beta: 0, bodyZoom: 1, target: null, hullHalfLen: 0, hullHalfWid: 0, dt: 0, sun: SUN, persp: { focal: 1, camZ: 1 } };
 let lastRealT = 0;
+const _rulonOut = { x: 0, y: 0, g: 1, vis: 1 };
+const _rulonMap = { map: (x, y) => rulonForwardCpu(x, y, _rulonOut), boost: rulonBoostCpu };
 
 function shakeOffset(amp, t) {
   return {
@@ -498,8 +503,22 @@ function render(frameDt) {
   planetCam.updateProjectionMatrix();
   planetCam.updateMatrixWorld(true);
 
+  // Rulon (rulon.js): oś = kurs skoku przez statek, w px od środka kadru (y w górę).
+  // Kieszeń lejka = bańka gracza (pół-wymiary w px): bańka zostaje płaska, świat zawija się na nią.
+  const heroType = F.ships[0]?.inst.type;
+  const bubbleRpx = (heroType ? heroType.length * BUBBLE_SHAPE.radiusK : 1000) * zoom;
+  setRulon({
+    bend: S.toggles.rulon ? (F.rulon || 0) : 0,
+    field: S.toggles.rulon ? (F.rulonField || 0) : 0,
+    strength: S.rulonGain,
+    hx: Math.cos(F.stars.angle), hy: -Math.sin(F.stars.angle),
+    shipX: (F.stars.refX - ax) * zoom - sh.x, shipY: -(F.stars.refY - ay) * zoom - sh.y,
+    bubbleW: bubbleRpx, bubbleL: bubbleRpx * BUBBLE_SHAPE.asp,
+    W, H, F: focalPx()
+  });
+
   // Niebo i gwiazdy.
-  sky.update(ax, -ay);
+  sky.update(ax, -ay, W, H);
   const sc = S.starCam;
   if (!Number.isFinite(sc.lx)) { sc.x = ax; sc.y = ay; sc.lx = ax; sc.ly = ay; }
   let dx = ax - sc.lx;
@@ -549,7 +568,7 @@ function render(frameDt) {
     c.persp.focal = focalPx();
     c.persp.camZ = camZ;
     const view = lensView.update(system.at(world.time), c);
-    planets.apply(view, W, H, S.t, true);
+    planets.apply(view, W, H, S.t, true, _rulonMap);
   } else {
     planets.hideAll();
   }
@@ -829,6 +848,16 @@ function bindUi() {
   slider('s-bright', 'o-bright', (v) => fmt(v, 2), (v) => { S.bright = v; });
   slider('s-stream', 'o-stream', (v) => fmt(v, 2), (v) => { S.streamGain = v; });
   slider('s-lens', 'o-lens', (v) => fmt(v, 2), (v) => { S.lensGain = v; });
+  $('s-rulon').value = String(S.rulonGain);
+  slider('s-rulon', 'o-rulon', (v) => fmt(v, 2), (v) => { S.rulonGain = v; });
+  slider('s-pinch', 'o-pinch', (v) => fmt(v, 2), (v) => { RULON.pinch.value = v; });
+  slider('s-edge', 'o-edge', (v) => fmt(v, 2), (v) => { RULON.edge.value = v; });
+  slider('s-suck', 'o-suck', (v) => fmt(v, 2), (v) => { RULON.suck.value = v; });
+  slider('s-spit', 'o-spit', (v) => fmt(v, 2), (v) => { RULON.spit.value = v; });
+  slider('s-throat', 'o-throat', (v) => fmt(v, 2), (v) => { RULON_TUNE.throatH = v; });
+  slider('s-boost', 'o-boost', (v) => fmt(v, 2), (v) => { RULON_TUNE.boost = v; });
+  slider('s-medw', 'o-medw', (v) => fmt(v, 2), (v) => { RULON.medW.value = v; });
+  slider('s-pocket', 'o-pocket', (v) => fmt(v, 2), (v) => { RULON_TUNE.pocket = v; });
   fillTripSelects();
   $('arrival-hull').value = S.arrivalHull;
   $('arrival-hull').addEventListener('change', (e) => {
@@ -847,6 +876,7 @@ function bindUi() {
   toggle('t-waves', 'waves');
   toggle('t-bloom', 'bloom');
   toggle('t-glow', 'glow');
+  toggle('t-rulon', 'rulon');
 
   const setToggle = (key, id) => { S.toggles[key] = !S.toggles[key]; $(id).checked = S.toggles[key]; };
   addEventListener('keydown', (e) => {
@@ -867,6 +897,7 @@ function bindUi() {
     else if (k === 'l') setToggle('lens', 't-lens');
     else if (k === 'b') setToggle('bloom', 't-bloom');
     else if (k === 'p') setToggle('planets', 't-planets');
+    else if (k === 'u') setToggle('rulon', 't-rulon');
   });
   addEventListener('keyup', (e) => S.keys.delete(e.key.toLowerCase()));
   addEventListener('blur', () => S.keys.clear());
@@ -927,9 +958,15 @@ window.__demo = {
     T: S.scene?.T, markers: S.scene?.markers, loopLen: S.scene?.frame.loopLen
   }),
   /** Ciała w soczewce w ostatniej klatce: id, środek [px od środka kadru], promień [px]. */
+  // Rulon ostatniej klatki: płaski punkt [px od środka, y w górę] → ekran.
+  rulonMap: (x, y) => ({ ...rulonForwardCpu(x, y) }),
+  // Tarcze narysowane w ostatniej klatce (po rulonie): px od środka (y w górę), promień.
+  planetsDrawn: () => [...planets.items].filter(([, it]) => it.group.visible)
+    .map(([id, it]) => ({ id, x: Math.round(it.group.position.x), y: Math.round(it.group.position.y), size: +it.group.scale.x.toFixed(1) })),
   lens: () => lensView.out.map((v) => ({ id: v.body.id, x: Math.round(v.x), y: Math.round(v.y), size: Math.round(v.size), target: v.isTarget })),
   S,
-  get renderer() { return renderer; }
+  get renderer() { return renderer; },
+  get medium() { return medium; }
 };
 
 requestAnimationFrame(frame);

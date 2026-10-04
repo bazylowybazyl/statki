@@ -135,7 +135,9 @@ test('normal flight speed does not drive warp stretch in the star shader', () =>
   const graph = starGraphSource(starSources().tsl);
   assert.doesNotMatch(graph, /speedFactor/);
   assert.doesNotMatch(graph, /u\.warpFactor|u\.exitWhipFactor|u\.moveDir/, 'dawne rozciąganie z WebGL');
+  // Rulon (src/3d/warp/rulon.js) zgina gwiazdy hakiem całej gry — materiał go nie zna.
   assert.match(graph, /const warpOn = W\.stretch\.greaterThan\(0\.001\);/);
+  assert.doesNotMatch(graph, /rulonForward/);
   assert.match(graph, /const L = st\.mul\(W\.stretchPx\)\.mul\(aLayerStretch\)\.toVar\(\);/);
 });
 
@@ -158,12 +160,14 @@ test('warp exit: front rzeczywistości od dziobu prostuje smugi (bez „bicza”
   assert.match(graph, /const real = W\.frontOn\.mul\(smoothstep\(W\.frontPx\.sub\(60\.0\), W\.frontPx\.add\(60\.0\), sAlong\)\);/);
   assert.match(graph, /const st = W\.stretch\.mul\(float\(1\.0\)\.sub\(real\)\)\.toVar\(\);/);
   assert.doesNotMatch(js, /exitWhipTimer|lastWarpState|lastWarpDirX/, 'StarSystem bez dawnego bicza');
-  // Krzywa dema: ładowanie 0,32·u², przestrzał ×1,4 przy kopnięciu, trzask do zera w 0,16 s po wyjściu.
+  // Krzywa dema: ładowanie 0,32·u², przestrzał ×1,4 przy kopnięciu; przy wyjściu smugi gasną przez
+  // zwolnienie rampy (WARP_EXIT.slow = 0,7 s — wyjście jak przylot NPC, 2026-10-03).
   const { warpStarStretch } = await import('../src/3d/warp/player.js');
   assert.ok(Math.abs(warpStarStretch(0, 1, Infinity, 0.5, 1) - 0.32 * 0.25) < 1e-12);
   assert.ok(Math.abs(warpStarStretch(1.12, 1, Infinity, 1, 1) - 1.4) < 1e-9);
   assert.ok(Math.abs(warpStarStretch(3, 1, Infinity, 1, 1) - 1.0) < 1e-9);
-  assert.ok(warpStarStretch(5.08, 1, 5, 1, 1) > 0 && warpStarStretch(5.16, 1, 5, 1, 1) === 0);
+  assert.ok(warpStarStretch(5.6, 1, 5, 1, 1) > 0 && warpStarStretch(5.7, 1, 5, 1, 1) === 0);
+  assert.ok(warpStarStretch(5.08, 1, 5, 1, 1, 0.16) > 0 && warpStarStretch(5.16, 1, 5, 1, 1, 0.16) === 0);
 });
 
 test('oddalenie kamery nie zagęszcza gwiazd: wzór rośnie z kadrem poniżej zoomu odniesienia', async () => {

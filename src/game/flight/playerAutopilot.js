@@ -250,19 +250,27 @@ function commandTuning(type) {
   return { maxSpeed: 940, speedK: 0.72, velocityTau: 0.68, arrivalBrake: 1.0 };
 }
 
-function computeLinearStopAccel(tuning) {
+// `brakeAccel` — hamowanie tłumika z tabeli lotu (turnCapability.brakeAccel): statek z tabeli hamuje
+// setkami j/s², nie tysiącami, więc droga hamowania musi wyjść z prawdziwej liczby (z zapasem 15%).
+function computeLinearStopAccel(tuning, brakeAccel = 0) {
+  if (brakeAccel > 0) return Math.max(20, brakeAccel * 0.85);
   return Math.max(140, SHIP_PHYSICS.SPEED * (Number(tuning?.stopAccelScale) || 0.9));
 }
 
-function computeCommandSpeedBudget(cmdType, dist, arrival, tuning) {
+function computeCommandSpeedBudget(cmdType, dist, arrival, tuning, brakeAccel = 0) {
   if (cmdType === 'orbit') return tuning.maxSpeed;
   if (cmdType === 'ram') return tuning.maxSpeed;
 
   const remaining = Math.max(0, dist - arrival);
   let budget = clamp(remaining * tuning.speedK, 0, tuning.maxSpeed);
+  if (brakeAccel > 0) {
+    // Każda komenda z postojem (ruch, dolot): nie szybciej, niż da się wyhamować przed celem.
+    const stop = computeLinearStopAccel(tuning, brakeAccel);
+    budget = Math.min(budget, Math.sqrt(2 * stop * remaining));
+  }
   if (cmdType !== 'approach') return budget;
 
-  const stopAccel = computeLinearStopAccel(tuning);
+  const stopAccel = computeLinearStopAccel(tuning, brakeAccel);
   const leadTime = Math.max(0, Number(tuning.stopLeadTime) || 0);
   const stopScale = Math.max(0.1, Number(tuning.stopSpeedScale) || 1);
   const safeStopSpeed = Math.max(0, Math.sqrt(2 * stopAccel * remaining) - (stopAccel * leadTime)) * stopScale;
@@ -295,7 +303,9 @@ function makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferS
   const forwardAccelScale = turnCapability && Number(turnCapability.mainAccel) > 1
     ? Number(turnCapability.mainAccel)
     : SHIP_PHYSICS.SPEED * 1.05;
-  const retroAccelScale = SHIP_PHYSICS.SPEED * 0.85;
+  const retroAccelScale = turnCapability && Number(turnCapability.brakeAccel) > 0
+    ? Number(turnCapability.brakeAccel)
+    : SHIP_PHYSICS.SPEED * 0.85;
   const sideAccelScale = turnCapability && Number(turnCapability.strafeAccel) > 1
     ? Number(turnCapability.strafeAccel)
     : SHIP_PHYSICS.SPEED * 0.9;
@@ -461,9 +471,10 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   const dirX = desiredVecX / len;
   const dirY = desiredVecY / len;
   const tuning = commandTuning(cmd.type);
+  const brakeAccel = turnCapability ? Math.max(0, Number(turnCapability.brakeAccel) || 0) : 0;
   let speedBudget = cmd.type === 'orbit'
     ? computeOrbitSpeedBudget(orbitNav, tuning)
-    : computeCommandSpeedBudget(cmd.type, dist, arrival, tuning);
+    : computeCommandSpeedBudget(cmd.type, dist, arrival, tuning, brakeAccel);
   if (turnCapability && Number.isFinite(turnCapability.speedLimit)) {
     // Szybciej i tak nie pozwoli governor trybu napędu — zadana prędkość ponad
     // limit kazała orbicie bez końca dopychać ciąg styczny i zjeżdżała z promienia.
@@ -520,7 +531,7 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
 
   if (cmd.type !== 'orbit' && !isRam) {
     const toTargetSpeed = (vx * dirX) + (vy * dirY);
-    const stopAccel = computeLinearStopAccel(tuning);
+    const stopAccel = computeLinearStopAccel(tuning, brakeAccel);
     const leadTime = Math.max(0, Number(tuning.stopLeadTime) || 0);
     const brakeDistance = arrival + Math.max(
       140,

@@ -16,7 +16,8 @@ function parseAutoMountDefaults() {
   const body = indexSource.match(/function autoMountDefaults\(\) \{([\s\S]*?)\n    \}/);
   assert.ok(body, 'nie znaleziono autoMountDefaults() w index.html');
   const out = [];
-  const call = /mountFirstFree\(HP\.([A-Z_]+),\s*'([^']+)',\s*(\d+)\)/g;
+  // Czwarty argument (`true` — montuj tylko, gdy broń mieści się rozmiarem) jest opcjonalny.
+  const call = /mountFirstFree\(HP\.([A-Z_]+),\s*'([^']+)',\s*(\d+)(?:,\s*true)?\)/g;
   let m;
   while ((m = call.exec(body[1]))) {
     out.push({ hpConst: m[1], weaponId: m[2], count: Number(m[3]) });

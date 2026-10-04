@@ -152,6 +152,33 @@ function getCicTintedSilhouette(source, width, height, tint) {
   return canvas;
 }
 
+// Obrys konturu sprite'a (hologram podglądu szyku i celu ruchu): tinta przesunięta w 8 kierunkach,
+// środek wycięty samą sylwetką. Płótno ma margines CIC_OUTLINE_PAD px z każdej strony.
+const CIC_OUTLINE_PAD = 2;
+function getCicOutlineSilhouette(source, width, height, tint) {
+  const filled = getCicTintedSilhouette(source, width, height, tint);
+  if (!filled) return null;
+  const key = `outline|${getCicSourceId(source)}|${filled.width}x${filled.height}|${tint}`;
+  let cached = CIC_SILHOUETTE_CACHE.get(key);
+  if (cached) return cached;
+  const pad = CIC_OUTLINE_PAD;
+  const canvas = document.createElement('canvas');
+  canvas.width = filled.width + pad * 2;
+  canvas.height = filled.height + pad * 2;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const step = 1.25;
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4;
+    ctx.drawImage(filled, pad + Math.cos(a) * step, pad + Math.sin(a) * step);
+  }
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.drawImage(filled, pad, pad);
+  ctx.globalCompositeOperation = 'source-over';
+  CIC_SILHOUETTE_CACHE.set(key, canvas);
+  return canvas;
+}
+
 function getEntityHullMetrics(entity, zoom) {
   const scaleX = getEntityScaleX(entity);
   const scaleY = getEntityScaleY(entity);
@@ -209,6 +236,25 @@ function getEntityHullMetrics(entity, zoom) {
 
 export function getCicEntityHullMetrics(entity, zoom) {
   return getEntityHullMetrics(entity, zoom);
+}
+
+// Połowy boków prostokąta ekranu (osiowego) opisanego na obróconym kadłubie — ramka zaznaczenia
+// jednostek (src/ui/commandOverlay.js). 0 / 0, gdy kadłub nie ma wymiarów.
+export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0 }) {
+  const metrics = getEntityHullMetrics(entity, zoom);
+  const w = metrics.drawW;
+  const h = metrics.drawH;
+  if (!(w > 0 && h > 0)) {
+    out.hx = 0;
+    out.hy = 0;
+    return out;
+  }
+  const angle = readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity);
+  const c = Math.abs(Math.cos(angle));
+  const s = Math.abs(Math.sin(angle));
+  out.hx = (w * c + h * s) * 0.5;
+  out.hy = (w * s + h * c) * 0.5;
+  return out;
 }
 
 function getContactPalette(isSelected, friendly, hostile) {
@@ -479,15 +525,76 @@ function drawCicHudRadarShipFootprint(ctx, contact, x, y, worldScale, color, alp
   return extent * 0.5;
 }
 
+// Radar klastra HUD w języku kopuły (cockpit-ui.css): okrągły i biegunowy zamiast kwadratowej
+// siatki świata. Pierścienie zasięgu wokół statku z podpisami na skosie w GÓRNEJ połowie (dolną
+// normalnie zakrywa cięciwa kopuły), podziałka namiaru na obrzeżu jak podziałka napędu, kurs
+// statku = pomarańczowy znacznik na obrzeżu i linia od statku, przemiatanie = zanikający ślad.
+// Kontakty: wróg romb, sojusznik kropka, nieznany kwadrat, duch przerywany romb; namierzony
+// i wybrany — narożniki celownika (kolor kontaktu zostaje: strona konfliktu czytelna zawsze).
+const HUD_RADAR_STYLE = Object.freeze({
+  bgCenter: 'rgba(9, 15, 22, 0.94)',
+  bgRim: 'rgba(3, 5, 8, 0.97)',
+  ring: 'rgba(255, 255, 255, 0.085)',
+  ringEdge: 'rgba(255, 255, 255, 0.15)',
+  ringLabel: 'rgba(214, 222, 230, 0.62)',
+  spoke: 'rgba(255, 255, 255, 0.045)',
+  tick: 'rgba(255, 255, 255, 0.2)',
+  tickMajor: 'rgba(255, 255, 255, 0.45)',
+  sweepRgb: '150, 210, 255',
+  headingRgb: '255, 138, 61',
+  friendly: '#3ddc84',
+  hostile: '#ff4a4a',
+  unknown: '#ffb347',
+  selected: '#5cc8ff',
+  locked: '#ff6e6e',
+  player: '#9fdcff',
+  outline: 'rgba(0, 0, 0, 0.65)'
+});
+const HUD_RADAR_RING_STEPS = Object.freeze([500, 1000, 2000, 2500, 5000, 10000, 15000, 20000, 25000, 50000, 100000]);
+const HUD_RADAR_SWEEP_TRAIL = 1.1;
+// Podpisy pierścieni na namiarze ~godz. 1–2 (w górę i w prawo od statku).
+const HUD_RADAR_LABEL_BEARING = -0.95;
+
+function hudRadarRingStep(range) {
+  const want = range / 4.5;
+  for (let i = 0; i < HUD_RADAR_RING_STEPS.length; i++) {
+    if (HUD_RADAR_RING_STEPS[i] >= want) return HUD_RADAR_RING_STEPS[i];
+  }
+  return HUD_RADAR_RING_STEPS[HUD_RADAR_RING_STEPS.length - 1];
+}
+
+function formatHudRadarDistance(value) {
+  const k = value / 1000;
+  return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+}
+
+// Narożniki celownika (kwadrat 2r, ramię arm) wokół (0, 0).
+function strokeHudRadarBrackets(ctx, r, arm) {
+  ctx.beginPath();
+  for (let q = 0; q < 4; q++) {
+    const sx = q === 0 || q === 3 ? -1 : 1;
+    const sy = q < 2 ? -1 : 1;
+    ctx.moveTo(sx * r, sy * (r - arm));
+    ctx.lineTo(sx * r, sy * r);
+    ctx.lineTo(sx * (r - arm), sy * r);
+  }
+  ctx.stroke();
+}
+
 export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
   if (!ctx || width <= 0 || height <= 0) return;
 
+  const S = HUD_RADAR_STYLE;
+  const TAU = Math.PI * 2;
   const range = Math.max(1, finiteNumber(view.range, finiteNumber(model?.range, 20000)));
   const panWorldX = finiteNumber(view.panWorldX, 0);
   const panWorldY = finiteNumber(view.panWorldY, 0);
   const radius = Math.max(1, Math.min(width, height) * 0.475);
   const worldScale = radius / range;
   const uiScale = Math.max(0.75, Math.min(width, height) / 176);
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const rim = Math.min(width, height) * 0.5;
   const shipPoint = projectCicHudRadarContact({ dx: 0, dy: 0 }, {
     width,
     height,
@@ -499,57 +606,54 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
   ctx.clearRect(0, 0, width, height);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, 0, width, height);
+  ctx.arc(cx, cy, rim, 0, TAU);
   ctx.clip();
 
-  ctx.fillStyle = CIC_CONFIG.colors.bg;
+  const background = ctx.createRadialGradient(cx, cy, 0, cx, cy, rim);
+  background.addColorStop(0, S.bgCenter);
+  background.addColorStop(1, S.bgRim);
+  ctx.fillStyle = background;
   ctx.fillRect(0, 0, width, height);
 
-  const gridSpacing = 5000;
-  const gridStartX = Math.floor((panWorldX - range) / gridSpacing) * gridSpacing;
-  const gridEndX = panWorldX + range;
-  const gridStartY = Math.floor((panWorldY - range) / gridSpacing) * gridSpacing;
-  const gridEndY = panWorldY + range;
-  for (let gx = gridStartX; gx <= gridEndX; gx += gridSpacing) {
-    const x = width * 0.5 + (gx - panWorldX) * worldScale;
-    const major = Math.abs(gx % 10000) < 1;
-    ctx.strokeStyle = major ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
-    ctx.lineWidth = (major ? 0.8 : 0.45) * uiScale;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-    ctx.stroke();
-  }
-  for (let gy = gridStartY; gy <= gridEndY; gy += gridSpacing) {
-    const y = height * 0.5 + (gy - panWorldY) * worldScale;
-    const major = Math.abs(gy % 10000) < 1;
-    ctx.strokeStyle = major ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
-    ctx.lineWidth = (major ? 0.8 : 0.45) * uiScale;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
-  }
+  // Krzyż przez statek (osie świata) — ledwie widoczny, do orientacji.
+  ctx.strokeStyle = S.spoke;
+  ctx.lineWidth = Math.max(0.6, 0.6 * uiScale);
+  ctx.beginPath();
+  ctx.moveTo(shipPoint.x, 0);
+  ctx.lineTo(shipPoint.x, height);
+  ctx.moveTo(0, shipPoint.y);
+  ctx.lineTo(width, shipPoint.y);
+  ctx.stroke();
 
-  ctx.strokeStyle = CIC_CONFIG.colors.rangeRing;
-  ctx.lineWidth = uiScale;
-  ctx.setLineDash([3 * uiScale, 5 * uiScale]);
-  ctx.font = `${7 * uiScale}px monospace`;
+  // Pierścienie zasięgu co „ładny” krok; skraj zasięgu jaśniej, bez podpisu (ma go odczyt nad radarem).
+  const ringStep = hudRadarRingStep(range);
+  const labelCos = Math.cos(HUD_RADAR_LABEL_BEARING);
+  const labelSin = Math.sin(HUD_RADAR_LABEL_BEARING);
+  ctx.font = `${7 * uiScale}px Consolas, monospace`;
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  for (const ringDistance of [5000, 10000, 20000, 50000]) {
-    const ringRadius = ringDistance * worldScale;
-    if (ringRadius < 8 * uiScale || ringRadius > Math.max(width, height) * 1.5) continue;
+  ctx.textBaseline = 'middle';
+  for (let distance = ringStep; distance < range - ringStep * 0.25; distance += ringStep) {
+    const ringRadius = distance * worldScale;
+    if (ringRadius < 8 * uiScale) continue;
+    ctx.strokeStyle = S.ring;
+    ctx.lineWidth = Math.max(0.6, 0.7 * uiScale);
     ctx.beginPath();
-    ctx.arc(shipPoint.x, shipPoint.y, ringRadius, 0, Math.PI * 2);
+    ctx.arc(shipPoint.x, shipPoint.y, ringRadius, 0, TAU);
     ctx.stroke();
-    const labelX = shipPoint.x + ringRadius + 3 * uiScale;
-    if (labelX < width - 14 * uiScale) {
-      ctx.fillStyle = CIC_CONFIG.colors.text;
-      ctx.fillText(`${ringDistance / 1000}k`, labelX, shipPoint.y - 2 * uiScale);
-    }
+    const label = formatHudRadarDistance(distance);
+    const lx = shipPoint.x + labelCos * ringRadius + 2 * uiScale;
+    const ly = shipPoint.y + labelSin * ringRadius;
+    ctx.lineWidth = 2.5 * uiScale;
+    ctx.strokeStyle = S.bgRim;
+    ctx.strokeText(label, lx, ly);
+    ctx.fillStyle = S.ringLabel;
+    ctx.fillText(label, lx, ly);
   }
-  ctx.setLineDash([]);
+  ctx.strokeStyle = S.ringEdge;
+  ctx.lineWidth = Math.max(0.7, 0.8 * uiScale);
+  ctx.beginPath();
+  ctx.arc(shipPoint.x, shipPoint.y, range * worldScale, 0, TAU);
+  ctx.stroke();
 
   drawCicHudRadarWorldFeatures(
     ctx,
@@ -563,28 +667,82 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
     panWorldY
   );
 
+  // Przemiatanie: ślad gasnący za wiązką (gradient stożkowy) i cienka wiązka.
   const sweepAngle = finiteNumber(model?.sweepAngle, 0);
-  const sweepRadius = Math.max(radius, finiteNumber(model?.range, range) * worldScale);
-  ctx.save();
-  ctx.globalAlpha = 0.12;
-  ctx.fillStyle = CIC_CONFIG.colors.sweep;
+  const sweepRadius = Math.hypot(width, height);
   ctx.beginPath();
   ctx.moveTo(shipPoint.x, shipPoint.y);
-  ctx.arc(shipPoint.x, shipPoint.y, sweepRadius, sweepAngle - 0.5, sweepAngle, false);
+  ctx.arc(shipPoint.x, shipPoint.y, sweepRadius, sweepAngle - HUD_RADAR_SWEEP_TRAIL, sweepAngle, false);
   ctx.closePath();
+  if (typeof ctx.createConicGradient === 'function') {
+    const trailEnd = HUD_RADAR_SWEEP_TRAIL / TAU;
+    const trail = ctx.createConicGradient(sweepAngle - HUD_RADAR_SWEEP_TRAIL, shipPoint.x, shipPoint.y);
+    trail.addColorStop(0, `rgba(${S.sweepRgb}, 0)`);
+    trail.addColorStop(trailEnd, `rgba(${S.sweepRgb}, 0.2)`);
+    trail.addColorStop(Math.min(1, trailEnd + 0.001), `rgba(${S.sweepRgb}, 0)`);
+    trail.addColorStop(1, `rgba(${S.sweepRgb}, 0)`);
+    ctx.fillStyle = trail;
+  } else {
+    ctx.fillStyle = `rgba(${S.sweepRgb}, 0.08)`;
+  }
   ctx.fill();
-  ctx.restore();
-  ctx.strokeStyle = CIC_CONFIG.colors.sweepLine;
-  ctx.globalAlpha = 0.58;
-  ctx.lineWidth = uiScale;
+  ctx.strokeStyle = `rgba(${S.sweepRgb}, 0.55)`;
+  ctx.lineWidth = Math.max(0.7, 0.9 * uiScale);
   ctx.beginPath();
   ctx.moveTo(shipPoint.x, shipPoint.y);
-  ctx.lineTo(
-    shipPoint.x + Math.cos(sweepAngle) * sweepRadius,
-    shipPoint.y + Math.sin(sweepAngle) * sweepRadius
-  );
+  ctx.lineTo(shipPoint.x + Math.cos(sweepAngle) * sweepRadius, shipPoint.y + Math.sin(sweepAngle) * sweepRadius);
   ctx.stroke();
-  ctx.globalAlpha = 1;
+
+  // Podziałka namiaru na obrzeżu (co 10°, co 30° dłuższa) — jak podziałka napędu na kopule.
+  for (let pass = 0; pass < 2; pass++) {
+    const major = pass === 1;
+    ctx.strokeStyle = major ? S.tickMajor : S.tick;
+    ctx.lineWidth = Math.max(0.7, (major ? 1.1 : 0.8) * uiScale);
+    ctx.beginPath();
+    for (let deg = 0; deg < 360; deg += 10) {
+      if ((deg % 30 === 0) !== major) continue;
+      const angle = deg * Math.PI / 180;
+      const inner = rim - (major ? 5.5 : 3) * uiScale;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      ctx.moveTo(cx + cos * inner, cy + sin * inner);
+      ctx.lineTo(cx + cos * rim, cy + sin * rim);
+    }
+    ctx.stroke();
+  }
+
+  // Kurs statku: przerywana linia od statku i trójkąt na obrzeżu, tam gdzie ją przetnie.
+  const heading = finiteNumber(model?.heading, 0);
+  const hx = Math.cos(heading);
+  const hy = Math.sin(heading);
+  const offX = shipPoint.x - cx;
+  const offY = shipPoint.y - cy;
+  const rimInner = rim - 1;
+  const b = offX * hx + offY * hy;
+  const disc = b * b - (offX * offX + offY * offY - rimInner * rimInner);
+  if (disc >= 0) {
+    const reach = -b + Math.sqrt(disc);
+    ctx.strokeStyle = `rgba(${S.headingRgb}, 0.32)`;
+    ctx.lineWidth = Math.max(0.7, 0.8 * uiScale);
+    ctx.setLineDash([3 * uiScale, 4 * uiScale]);
+    ctx.beginPath();
+    ctx.moveTo(shipPoint.x + hx * 9 * uiScale, shipPoint.y + hy * 9 * uiScale);
+    ctx.lineTo(shipPoint.x + hx * reach, shipPoint.y + hy * reach);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const tipX = shipPoint.x + hx * (reach - 6.5 * uiScale);
+    const tipY = shipPoint.y + hy * (reach - 6.5 * uiScale);
+    const baseX = shipPoint.x + hx * reach;
+    const baseY = shipPoint.y + hy * reach;
+    const wing = 3.2 * uiScale;
+    ctx.fillStyle = `rgb(${S.headingRgb})`;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX - hy * wing, baseY + hx * wing);
+    ctx.lineTo(baseX + hy * wing, baseY - hx * wing);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   const contacts = Array.isArray(model?.contacts) ? model.contacts : [];
   for (let i = contacts.length - 1; i >= 0; i--) {
@@ -603,72 +761,73 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
     const selected = !!contact.selected;
     const ghost = !!contact.isGhost;
     const asteroid = !!contact.isAsteroid;
+    const echoStrength = Math.max(0.2, finiteNumber(contact.radarEchoStrength, 1));
     const color = asteroid
       ? (ASTEROID_CIC_COLORS[contact.subType] || '#8aa0b8')
-      : locked
-        ? '#ff6e6e'
-        : selected
-          ? CIC_CONFIG.colors.selected
-          : contact.friendly
-            ? CIC_CONFIG.colors.friendly
-            : contact.hostile
-              ? CIC_CONFIG.colors.hostile
-              : CIC_CONFIG.colors.unknown;
+      : contact.friendly
+        ? S.friendly
+        : contact.hostile
+          ? S.hostile
+          : S.unknown;
     const size = asteroid
       ? (ASTEROID_CIC_DOT[contact.sizeClass] || 0.9) * uiScale
-      : (contact.isCapital ? 3.8 : (locked || selected ? 3.3 : 2.5)) * uiScale;
+      : (contact.isCapital ? 3.6 : 2.6) * uiScale;
     const hullExtent = asteroid || ghost
       ? 0
-      : drawCicHudRadarShipFootprint(
-        ctx,
-        contact,
-        point.x,
-        point.y,
-        worldScale,
-        color,
-        0.84 * Math.max(0.2, finiteNumber(contact.radarEchoStrength, 1))
-      );
+      : drawCicHudRadarShipFootprint(ctx, contact, point.x, point.y, worldScale, color, 0.82 * echoStrength);
 
     ctx.save();
     ctx.translate(point.x, point.y);
-    ctx.strokeStyle = color;
     ctx.fillStyle = color;
-    ctx.lineWidth = Math.max(0.8, uiScale);
-    const echoStrength = Math.max(0.2, finiteNumber(contact.radarEchoStrength, 1));
-    ctx.globalAlpha = (ghost ? 0.48 : (asteroid ? 0.72 : 0.92)) * echoStrength;
-    if (ghost) ctx.setLineDash([2 * uiScale, 2 * uiScale]);
-
+    ctx.strokeStyle = color;
     if (asteroid) {
+      ctx.globalAlpha = 0.72 * echoStrength;
       ctx.beginPath();
-      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.arc(0, 0, size, 0, TAU);
       ctx.fill();
     } else if (hullExtent > 0) {
-      ctx.globalAlpha = 0.7;
+      ctx.globalAlpha = 0.8 * echoStrength;
       ctx.beginPath();
-      ctx.arc(0, 0, Math.max(0.8 * uiScale, Math.min(2 * uiScale, hullExtent * 0.22)), 0, Math.PI * 2);
+      ctx.arc(0, 0, Math.max(0.8 * uiScale, Math.min(2 * uiScale, hullExtent * 0.22)), 0, TAU);
       ctx.fill();
-    } else if (contact.hostile || locked || ghost) {
-      ctx.beginPath();
-      ctx.moveTo(0, -size);
-      ctx.lineTo(size, 0);
-      ctx.lineTo(0, size);
-      ctx.lineTo(-size, 0);
-      ctx.closePath();
-      if (!ghost) ctx.fill();
-      ctx.stroke();
     } else {
+      // Poświata pod znakiem, potem znak z ciemnym obrysem (czytelny na smudze i planecie).
+      ctx.globalAlpha = (ghost ? 0.08 : 0.2) * echoStrength;
       ctx.beginPath();
-      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.arc(0, 0, size * 2.2, 0, TAU);
       ctx.fill();
-      ctx.stroke();
+      ctx.globalAlpha = (ghost ? 0.55 : 0.96) * echoStrength;
+      ctx.beginPath();
+      if (contact.hostile || ghost) {
+        ctx.moveTo(0, -size * 1.15);
+        ctx.lineTo(size * 1.15, 0);
+        ctx.lineTo(0, size * 1.15);
+        ctx.lineTo(-size * 1.15, 0);
+        ctx.closePath();
+      } else if (contact.friendly) {
+        ctx.arc(0, 0, size, 0, TAU);
+      } else {
+        ctx.rect(-size * 0.85, -size * 0.85, size * 1.7, size * 1.7);
+      }
+      if (ghost) {
+        ctx.setLineDash([2 * uiScale, 2 * uiScale]);
+        ctx.lineWidth = Math.max(0.8, 0.9 * uiScale);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.fill();
+        ctx.strokeStyle = S.outline;
+        ctx.lineWidth = Math.max(0.6, 0.7 * uiScale);
+        ctx.stroke();
+      }
     }
 
     if (locked || selected) {
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 0.72;
-      ctx.beginPath();
-      ctx.arc(0, 0, Math.max(size, hullExtent) + 3.5 * uiScale, 0, Math.PI * 2);
-      ctx.stroke();
+      const bracket = Math.max(size * 1.15, hullExtent) + 3.2 * uiScale;
+      ctx.globalAlpha = 0.95;
+      ctx.strokeStyle = locked ? S.locked : S.selected;
+      ctx.lineWidth = Math.max(0.9, 1.1 * uiScale);
+      strokeHudRadarBrackets(ctx, bracket, Math.max(2.4 * uiScale, bracket * 0.42));
     }
     ctx.restore();
   }
@@ -679,16 +838,16 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
     shipPoint.x,
     shipPoint.y,
     worldScale,
-    '#7dd3fc',
-    0.94
+    S.player,
+    0.95
   );
   if (playerHullExtent <= 0) {
     ctx.save();
     ctx.translate(shipPoint.x, shipPoint.y);
-    ctx.rotate(finiteNumber(model?.heading, 0));
-    ctx.fillStyle = '#7dd3fc';
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = uiScale;
+    ctx.rotate(heading);
+    ctx.fillStyle = S.player;
+    ctx.strokeStyle = S.outline;
+    ctx.lineWidth = Math.max(0.6, 0.7 * uiScale);
     ctx.beginPath();
     ctx.moveTo(5.5 * uiScale, 0);
     ctx.lineTo(-3.5 * uiScale, 3.4 * uiScale);
@@ -910,19 +1069,21 @@ export function createCicHudRadarModel({
   };
 }
 
+// Hologram podglądu szyku / celu ruchu (z `outline: true`): blade wypełnienie i obrys w kolorach
+// nakładek dowodzenia (src/ui/commandOverlay.js — ruch gracza jaśniejszy, skrzydło cyjan).
 export function getCicPlacementGhostPalette({ player = false } = {}) {
   return player
     ? {
-      marker: CIC_CONFIG.colors.selected,
-      body: 'rgba(6, 34, 46, 0.54)',
-      accent: 'rgba(126, 255, 226, 0.82)',
-      glow: 'rgba(126, 255, 226, 0.56)'
+      marker: '#9fdcff',
+      body: 'rgba(159, 220, 255, 0.13)',
+      accent: 'rgba(159, 220, 255, 0.95)',
+      glow: 'rgba(159, 220, 255, 0.5)'
     }
     : {
-      marker: '#7aa8ff',
-      body: 'rgba(10, 22, 48, 0.48)',
-      accent: 'rgba(154, 188, 255, 0.72)',
-      glow: 'rgba(122, 166, 255, 0.42)'
+      marker: '#5cc8ff',
+      body: 'rgba(92, 200, 255, 0.11)',
+      accent: 'rgba(92, 200, 255, 0.9)',
+      glow: 'rgba(92, 200, 255, 0.45)'
     };
 }
 
@@ -955,7 +1116,16 @@ function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, acc
   ctx.rotate(angle + getEntitySpriteRotation(entity));
   ctx.globalAlpha = readPositiveNumber(options?.alpha, 0.98);
   ctx.drawImage(bodyCanvas, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
-  if (accentCanvas) {
+  if (options?.outline) {
+    // Hologram: blade wypełnienie (body) i ostry obrys konturu w kolorze akcentu.
+    const outline = getCicOutlineSilhouette(source, drawW, drawH, palette.accent);
+    if (outline) {
+      const sx = drawW / (outline.width - CIC_OUTLINE_PAD * 2);
+      const sy = drawH / (outline.height - CIC_OUTLINE_PAD * 2);
+      ctx.globalAlpha = accentAlpha;
+      ctx.drawImage(outline, -drawW * 0.5 - CIC_OUTLINE_PAD * sx, -drawH * 0.5 - CIC_OUTLINE_PAD * sy, outline.width * sx, outline.height * sy);
+    }
+  } else if (accentCanvas) {
     ctx.globalAlpha = accentAlpha;
     ctx.shadowColor = palette.glow;
     ctx.shadowBlur = Math.max(4, Math.min(18, Math.max(drawW, drawH) * 0.08));
@@ -1003,7 +1173,7 @@ const SYSTEM_ZOOM_FULL  = 0.0008; // fully in system view
 let cicSystemBlend = 0;           // current blend factor (smoothed)
 
 // Context menu state (right-click)
-// items: array of { label, action: 'attack'|'move'|'cruise'|'drone'|'recallDrones'|null (disabled) }
+// items: array of { label, action: 'attack'|'move'|'travel'|'drone'|'recallDrones'|null (disabled) }
 let cicContextMenu = {
   open: false,
   screenX: 0, screenY: 0,
@@ -1149,9 +1319,12 @@ export const CICDisplay = {
               window.cicGroupAttackOrder(cicSelectedContacts.map(c => c.entity).filter(Boolean));
             }
           } else if (item.action === 'move') {
-            if (window.ship) window.ship.command = { type: 'moveTo', x: worldX, y: worldY };
-          } else if (item.action === 'cruise') {
-            if (window.setCruiseTarget) window.setCruiseTarget(worldX, worldY);
+            // Kształt createMoveCommand (worldCommandMenu.js): autopilot i linia rozkazu czytają `target`
+            // — dawne { type: 'moveTo', x, y } nie ruszało statku i nie miało linii.
+            if (window.ship) window.ship.command = { type: 'move', target: { x: worldX, y: worldY }, arrival: 90 };
+          } else if (item.action === 'travel') {
+            // TRAVEL TO (index.html: setTravelTarget) — napęd dobiera podróż (dziś warp odcinkami).
+            if (window.setTravelTarget) window.setTravelTarget(worldX, worldY);
           } else if (item.action === 'drone') {
             const droneSystem = window.SpotterDroneSystem;
             const ship = window.ship;
@@ -1210,7 +1383,7 @@ export const CICDisplay = {
         cicContextMenu.items = [
           { label: 'ATAK', action: hasSelected ? 'attack' : null },
           { label: 'RUCH', action: 'move' },
-          { label: 'CRUISE TO', action: 'cruise' },
+          { label: 'TRAVEL TO', action: 'travel' },
           { label: 'SEND DRONE', action: hasDroneSystem ? 'drone' : null },
           { label: 'RECALL DRONES', action: hasActiveDrones ? 'recallDrones' : null },
         ];
@@ -1731,21 +1904,21 @@ export const CICDisplay = {
       }
     }
 
-    // === CRUISE NAV MARKER ===
-    if (window.cruiseNav?.target) {
-      const ct = window.cruiseNav.target;
+    // === TRAVEL NAV MARKER ===
+    if (window.travelNav?.target) {
+      const ct = window.travelNav.target;
       const ctScr = toScreen(ct.x, ct.y);
 
       // Trasa (waypointy) — przejęte z usuniętej mapy sektora.
-      const waypoints = Array.isArray(window.cruiseNav.waypoints) ? window.cruiseNav.waypoints : [];
+      const waypoints = Array.isArray(window.travelNav.waypoints) ? window.travelNav.waypoints : [];
       ctx.save();
-      ctx.strokeStyle = window.cruiseNav.active ? 'rgba(34, 211, 238, 0.75)' : 'rgba(34, 211, 238, 0.4)';
+      ctx.strokeStyle = window.travelNav.active ? 'rgba(34, 211, 238, 0.75)' : 'rgba(34, 211, 238, 0.4)';
       ctx.lineWidth = 1.2;
       ctx.setLineDash([8, 6]);
       ctx.beginPath();
       ctx.moveTo(shipScr.x, shipScr.y);
       if (waypoints.length) {
-        const firstIdx = Math.max(0, Math.min(waypoints.length - 1, window.cruiseNav.waypointIndex | 0));
+        const firstIdx = Math.max(0, Math.min(waypoints.length - 1, window.travelNav.waypointIndex | 0));
         for (let i = firstIdx; i < waypoints.length; i++) {
           const wp = waypoints[i];
           if (!wp) continue;
@@ -1760,7 +1933,7 @@ export const CICDisplay = {
       ctx.restore();
 
       ctx.save();
-      ctx.globalAlpha = window.cruiseNav.active ? 1 : 0.6;
+      ctx.globalAlpha = window.travelNav.active ? 1 : 0.6;
       ctx.strokeStyle = '#22d3ee';
       ctx.fillStyle = 'rgba(34, 211, 238, 0.15)';
       ctx.lineWidth = 1.5;
@@ -1777,7 +1950,7 @@ export const CICDisplay = {
       ctx.font = '8px monospace';
       ctx.fillStyle = '#22d3ee';
       ctx.textAlign = 'center';
-      ctx.fillText('CRUISE TARGET', ctScr.x, ctScr.y + cmk + 12);
+      ctx.fillText('TRAVEL TARGET', ctScr.x, ctScr.y + cmk + 12);
       ctx.restore();
     }
 
@@ -1851,7 +2024,7 @@ export const CICDisplay = {
       const selCount = cicSelectedContacts.length;
       const hint = selCount > 1
         ? `${selCount} ZAZNACZONE  [PPM] ATAK`
-        : '[PPM] ATAK / RUCH / CRUISE / DRONE';
+        : '[PPM] ATAK / RUCH / TRAVEL TO / DRONE';
       ctx.fillText(hint, panelX + 10, panelY + 148);
     }
 
@@ -1862,7 +2035,7 @@ export const CICDisplay = {
     if (isSystemScale) {
       ctx.fillText('[TAB/M] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
     } else {
-      ctx.fillText('[TAB/M] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise/Drone', W / 2, H - 16);
+      ctx.fillText('[TAB/M] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Travel to/Drone', W / 2, H - 16);
     }
 
     ctx.restore();

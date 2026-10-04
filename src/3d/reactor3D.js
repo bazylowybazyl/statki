@@ -112,6 +112,19 @@ export function resolveReactorKind(core) {
   return 'terran';
 }
 
+// Ziarno z uid rdzenia: liczba (belki) albo napis `core_<base36>` (heksy) — dawniej `uid | 0`
+// z napisu dawało 0 i wszystkie reaktory pękały w tych samych cewkach.
+function uidHash(uid) {
+  if (typeof uid === 'number' && Number.isFinite(uid)) return uid | 0;
+  const str = String(uid ?? '');
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h | 0;
+}
+
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
@@ -158,7 +171,12 @@ function interleaveGeometry(base, target) {
 /**
  * @param {object} options
  *   scene — THREE.Scene (Core3D.scene), layer — warstwa (7), markLayerActive,
- *   kindFor(core) → 'terran' | 'pirate' | 'atlas', colorFor(core) → [r, g, b]
+ *   kindFor(core) → 'terran' | 'pirate' | 'atlas', colorFor(core) → [r, g, b],
+ *   frameOf(core, out) → out { x, y, axX, axY, ayX, ayY } — rama rdzenia w świecie gry (środek,
+ *     wektor promienia wzdłuż +x sprite'a i w dół obrazka); podaje ją rdzeń na kadłubie belkowym
+ *     (src/game/reactorCore.js reactorCoreFrame). Bez niej — siatka heksów (shipCore.js).
+ *   hostReady(host) → bool — kadłub gospodarza istnieje (domyślnie: hexGrid i nie martwy;
+ *     belki: reactorHull(host)).
  */
 export function createReactor3D(options = {}) {
   const scene = options.scene;
@@ -167,6 +185,9 @@ export function createReactor3D(options = {}) {
   const markLayerActive = typeof options.markLayerActive === 'function' ? options.markLayerActive : null;
   const kindFor = typeof options.kindFor === 'function' ? options.kindFor : resolveReactorKind;
   const colorFor = typeof options.colorFor === 'function' ? options.colorFor : () => [0.3, 0.7, 1.0];
+  const frameOf = typeof options.frameOf === 'function' ? options.frameOf : null;
+  const hostReady = typeof options.hostReady === 'function' ? options.hostReady : (h) => !!h?.hexGrid && !h.dead;
+  const _fr = { x: 0, y: 0, axX: 0, axY: 0, ayX: 0, ayY: 0 };
   const T = REACTOR3D_TUNE;
   const debug = { enabled: true, xray: false, structure: true, plasma: true };
   const stats = { instances: 0, drawCalls: 0, burnt: 0 };
@@ -275,7 +296,7 @@ export function createReactor3D(options = {}) {
       const k = kindFor(core);
       rec = {
         core, host: core.host, kind: kinds.has(k) ? k : 'terran',
-        seed: ((Math.imul((core.uid | 0) + 1, 2654435761) >>> 0) % 1000) / 1000 + Math.random() * 0.001,
+        seed: ((Math.imul(uidHash(core.uid) + 1, 2654435761) >>> 0) % 1000) / 1000 + Math.random() * 0.001,
         flowPhase: Math.random(), pulsePhase: Math.random() * Math.PI * 2,
         burnt: null, lastSeen: clock
       };
@@ -330,9 +351,17 @@ export function createReactor3D(options = {}) {
   function writeInstance(kd, rec, core, host, gridX, gridY, gridR) {
     if (kd.n >= MAX_PER_KIND) return false;
     const b = kd.n * 4;
-    gridToLocal(host, gridX, gridY, _l); localToWorld(host, _l.x, _l.y, _c);
-    gridToLocal(host, gridX + gridR, gridY, _l); localToWorld(host, _l.x, _l.y, _px);
-    gridToLocal(host, gridX, gridY + gridR, _l); localToWorld(host, _l.x, _l.y, _py);
+    if (frameOf) {
+      // Rdzeń na kadłubie belkowym: rama z logiki rdzenia (środek + promień w osiach sprite'a).
+      frameOf(core, _fr);
+      _c.x = _fr.x; _c.y = _fr.y;
+      _px.x = _fr.x + _fr.axX; _px.y = _fr.y + _fr.axY;
+      _py.x = _fr.x + _fr.ayX; _py.y = _fr.y + _fr.ayY;
+    } else {
+      gridToLocal(host, gridX, gridY, _l); localToWorld(host, _l.x, _l.y, _c);
+      gridToLocal(host, gridX + gridR, gridY, _l); localToWorld(host, _l.x, _l.y, _px);
+      gridToLocal(host, gridX, gridY + gridR, _l); localToWorld(host, _l.x, _l.y, _py);
+    }
     const B = kd.bufs;
     // scena: y odwrócone
     B.iBasis.arr[b] = _px.x - _c.x; B.iBasis.arr[b + 1] = -(_px.y - _c.y);
@@ -386,7 +415,7 @@ export function createReactor3D(options = {}) {
       for (const core of list) {
         if (!core || core.invalid || core.state === CORE_STATE.DETONATED) continue;
         const host = core.host;
-        if (!host?.hexGrid || host.dead) continue;
+        if (!hostReady(host)) continue;
         if (!debug.xray && coreStateRank(core.state) < coreStateRank(CORE_STATE.EXPOSED)) continue;
         const rec = recordFor(core);
         rec.lastSeen = clock;
@@ -411,7 +440,7 @@ export function createReactor3D(options = {}) {
       for (const rec of records.values()) {
         if (!rec.burnt) continue;
         const host = rec.host;
-        if (!host?.hexGrid || burntHostGone(host)) continue;
+        if (!hostReady(host) || burntHostGone(host)) continue;
         const kd = kinds.get(rec.kind);
         const t = clock - rec.burnt.t0;
         const core = rec.core;

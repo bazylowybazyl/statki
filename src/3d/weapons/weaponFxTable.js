@@ -22,7 +22,10 @@ import { MASTER_WEAPONS } from '../../data/weapons.js';
 
 const W = (fx, pattern, extra = null) => Object.freeze({ fx, pattern, charge: 0, pd: false, short: '', ...(extra || {}) });
 
-/** 27 broni z dema (działa Capital / L / M / S, wiązki, obrona punktowa). */
+/**
+ * 27 broni z dema (działa Capital / L / M / S, wiązki, obrona punktowa) + 3 warianty rozmiarowe
+ * broni specjalnej (Kolec S, Oszczep M, Yamato L — rodziny rodziców).
+ */
 export const WEAPON_FX = Object.freeze({
   // Capital / specjalne
   special_yamato_cannon: W('yamato', 'yamato', { short: 'Yamato' }),
@@ -31,6 +34,10 @@ export const WEAPON_FX = Object.freeze({
   special_valkyrie_railgun: W('valkyrie', 'charge', { charge: 0.28, short: 'Valkyrie' }),
   special_goliath_autocannon: W('goliath', 'alt', { short: 'Goliath' }),
   special_plasma_gatling: W('plasmaGatling', 'single', { short: 'Plasma Gatling' }),
+  // warianty rozmiarowe broni specjalnej (S / M / L) — receptury rodziców, bez nowych rodzin
+  special_yamato_l: W('yamato', 'twin', { short: 'Yamato L' }),
+  special_valkyrie_m: W('valkyrie', 'charge', { charge: 0.25, short: 'Oszczep' }),
+  special_valkyrie_s: W('valkyrie', 'charge', { charge: 0.2, short: 'Kolec' }),
   // L
   armata_mk1: W('armata', 'single', { short: 'Armata' }),
   tempest_ion_l: W('tempest', 'single', { short: 'Tempest L' }),

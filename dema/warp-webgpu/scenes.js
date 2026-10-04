@@ -24,10 +24,14 @@
 //   WYJŚCIE    gwałtowne (user: „jak w Star Wars”): w ~0,3 s statek staje,
 //              smugi gwiazd i ośrodka wracają do punktów, bańka zapada się od
 //              dziobu, cel wskakuje pod statek, błysk, fala, wstrząs, żar.
+// RULON (2026-10-03, rulon.js): ładowanie zwija tło w walec wokół kursu
+// (od kamery, „∩”), skok dociąga go szarpnięciem, wyjście rozwija w ~0,3 s.
+// Kurs ustawia się PRZED skokiem — od ładowania oś stoi (lot swobodny:
+// bez skrętu w ładowaniu i w warpie).
 // Przyloty i odloty NPC — tunelem (arrivals.js).
 
 import { createFreeWorld } from './freeWorld.js';
-import { planArrival, arrivalState, planDeparture, departureState } from './arrivals.js';
+import { planArrival, arrivalState, planDeparture, departureState, arrivalSpeed, brakeTime, brakeEffects, brakeBubbleFront } from './arrivals.js';
 import { buildTrip, tripProfile, tripKickAt, tripStopAt, TRAVEL } from './solar.js';
 import { planWarpFleetArrival } from '../../src/game/warpDrive.js';
 
@@ -37,6 +41,24 @@ export const STEP = 1 / 240;
 export const BUBBLE_SHAPE = Object.freeze({ radiusK: 0.62, asp: 1.35 });
 // Widoczna prędkość przepływu ośrodka w podróży (bieg I / II).
 export const WARP_FLOW = Object.freeze({ gear1: 16000, gear2: 21000 });
+
+// WYJŚCIE Atlasa z warpa = PRZYLOT jak u okrętów NPC (user 2026-10-03: spójność —
+// Atlas też ma „hamowanie”; zwolnienie wykorzystane na wyjście z warpa):
+//   ZWOLNIENIE `slow` s — przepływ spada z prędkości warpa do prędkości wlotu
+//                (arrivalSpeed), rulon się rozwija, smugi gwiazd i ośrodka gasną;
+//   WLOT `coast` s — statek leci z prędkością wlotu i WYSUWA SIĘ przed kamerę
+//                (kamera zwalnia wcześniej, nigdy go nie wyprzedza — user: kamera
+//                „leciała na Jowisza”, Atlasa nie było widać): w kadrze statek
+//                naprawdę leci (user: bez tego „ruch w miejscu”), bańka rozpycha
+//                ośrodek jak u NPC (turkus, warkocz);
+//   HAMOWANIE — brakeEffects z arrivals.js (droga RUSH.brakeDist × L); statek staje
+//                `ahead` × pół kadru przed środkiem, kamera dogania go w `settle` s.
+// Cel podróży WSUWA SIĘ w czasie całego wyjścia (user: „podczas lotu hamującego
+// powiększamy, wsuwamy destynację”, bez skoku na końcu): soczewka ciał gaśnie od
+// wyjścia do zatrzymania, prawdziwe położenie statku idzie za lotem (cel stoi
+// w świecie, statek do niego dolatuje), zoom wraca od początku wlotu do `zoomTail` s
+// po zatrzymaniu.
+export const EXIT = Object.freeze({ slow: 0.7, coast: 0.45, ahead: 0.4, settle: 1.3, zoomTail: 0.9 });
 
 export const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 export const smooth = (a, b, x) => {
@@ -95,6 +117,8 @@ export function newFrame() {
     seamLens: [],
     stars: { stretch: 0, angle: 0, frontOn: 0, frontS: 0, warpTint: 0, speedCap: 14000, refX: 0, refY: 0 },
     warpVis: 0,
+    rulon: 0,        // zwinięcie rzeczywistości 0..1 (rulon.js; > 1 — szarpnięcie przy skoku)
+    rulonField: 0,   // przewężenie przy statku 0..1 (wciąganie przed dziobem, wypluwanie za rufą)
     mediumFade: 0,   // [1/s] gaszenie całego ośrodka (po wyjściu z warpa)
     waves: [],
     flashes: [],
@@ -143,8 +167,24 @@ function playerBubble(bub, ship, R, c) {
   bub.lensAmp = 26 * c.A;
 }
 
+/** Zwinięcie rulonu: ładowanie → szarpnięcie przy skoku → lot → rozwinięcie przy wyjściu. */
+function rulonBend(charging, charge, tKick, tExit, t, exitDur = 0.3) {
+  if (charging) return Math.pow(smooth(0.05, 0.95, charge), 1.4);
+  if (t < tKick) return 0;
+  let b = 1 + 0.16 * pulse(t - tKick, 0.03, 0.3);
+  if (t >= tExit) b *= 1 - easeOut3((t - tExit) / exitDur);
+  return b;
+}
+
+/**
+ * Lejek (zawinięcie do statku) — JEDNA faza z rulonem (user 2026-10-03: zwinięcie
+ * i zawinięcie razem w ładowaniu, nie „dowijanie” po skoku): ta sama krzywa,
+ * bez szarpnięcia ponad 1.
+ */
+const rulonFieldOf = (bend) => Math.min(1, bend);
+
 /** Rozciągnięcie gwiazd: ładowanie → przestrzał przy kopnięciu → lot → trzask przy wyjściu. */
-function starStretch(tau, tKick, tExit, charge, speedFrac) {
+function starStretch(tau, tKick, tExit, charge, speedFrac, exitDur = 0.16) {
   if (tau < tKick) return 0.32 * charge * charge;
   let s;
   const k = tau - tKick;
@@ -152,7 +192,7 @@ function starStretch(tau, tKick, tExit, charge, speedFrac) {
   else s = lerp(1.4, 1.0, smooth(0.12, 0.55, k));
   s *= 0.55 + 0.45 * clamp01(speedFrac);
   if (tau >= tExit) {
-    const u = (tau - tExit) / 0.16;
+    const u = (tau - tExit) / exitDur;
     s *= u >= 1 ? 0 : Math.pow(1 - u, 1.6);
   }
   return s;
@@ -165,12 +205,13 @@ export function createTripScene(ctx) {
   const atlas = ctx.atlas;
   const L = atlas.type.length;
   const R = L * BUBBLE_SHAPE.radiusK;
-  const a = R * BUBBLE_SHAPE.asp;
   const F = newFrame();
   const ship = newShip(atlas);
   F.ships.push(ship);
   const bub = newBubble();
   const kickPos = { x: 0, y: 0 };
+  const push = newBubble();   // iskry ośrodka przy hamowaniu (brakeEffects)
+  const camExit = { sStop: 0, k0: 1 };
   const _prof = {};
   let trip = null;
   let visPath = null;
@@ -181,23 +222,51 @@ export function createTripScene(ctx) {
     trip = buildTrip(ctx.system, ctx.trip.from, ctx.trip.to, ctx.viewW, ctx.viewH, ctx.focal());
     const tKick = tripKickAt();
     const tStop = tripStopAt(trip);
-    T = { kick: tKick, stop: tStop, exit: tStop - TRAVEL.decel, loop: tStop + TRAVEL.hold };
+    const exit = tStop - TRAVEL.decel;
+    const vArr = arrivalSpeed(L);
+    const brake = brakeTime(L, vArr);
+    T = { kick: tKick, stop: tStop, exit, slowEnd: exit + EXIT.slow, brake: exit + EXIT.slow + EXIT.coast, vArr, brakeDur: brake };
+    T.halt = T.brake + brake;
+    T.loop = T.halt + TRAVEL.hold;
     F.loopLen = T.loop;
+    push.releaseT = T.brake + 0.02;
     // Widoczny przepływ: hipercruise w ładowaniu, kopnięcie w 0,45 s, przelot
-    // (wolniej przy mijanych ciałach), wyjście w 0,25 s.
+    // (wolniej przy mijanych ciałach); wyjście: zwolnienie do prędkości wlotu,
+    // wlot, hamowanie ze stałym opóźnieniem (jak przylot NPC).
+    const warpFlow = (tau) => {
+      const pr = tripProfile(trip, tau, _prof);
+      const U = Math.max(2500, WARP_FLOW.gear2 * Math.pow(clamp01(pr.v / pr.vc), 0.6));
+      return lerp(900, U, easeOut3((tau - tKick) / 0.45));
+    };
+    const vExit = warpFlow(exit - 1e-3);
     const flowAt = (tau) => {
       if (tau < TRAVEL.idle) return 260;
       if (tau < tKick) return lerp(260, 900, smooth(TRAVEL.idle, tKick, tau));
-      const pr = tripProfile(trip, tau, _prof);
-      const U = Math.max(2500, WARP_FLOW.gear2 * Math.pow(clamp01(pr.v / pr.vc), 0.6));
-      let v = lerp(900, U, easeOut3((tau - tKick) / 0.45));
-      if (tau >= T.exit) v = lerp(v, 160, easeOut3((tau - T.exit) / 0.25));
-      return v;
+      if (tau < exit) return warpFlow(tau);
+      if (tau < T.slowEnd) return lerp(vExit, vArr, smooth(exit, T.slowEnd, tau));
+      if (tau < T.brake) return vArr;
+      if (tau < T.halt) return vArr * (1 - (tau - T.brake) / brake);
+      return 0;
     };
     visPath = buildPath(flowAt, T.loop + 1);
     const pos = visPath(tKick);
     kickPos.x = vis0.x + Math.cos(trip.heading) * pos;
     kickPos.y = vis0.y + Math.sin(trip.heading) * pos;
+    // Miejsce zatrzymania (fala hamowania, prawdziwe położenie statku w wyjściu).
+    camExit.sStop = visPath(T.halt);
+    camExit.k0 = (trip.dist - tripProfile(trip, exit, _prof).s) / Math.max(1, camExit.sStop - visPath(exit));
+  }
+
+  /**
+   * Wysunięcie statku przed kamerę po wyjściu [px ekranu]: 0 do końca zwolnienia
+   * (statek na środku lejka), rośnie we wlocie i hamowaniu do `ahead` × pół kadru
+   * wzdłuż kursu, po zatrzymaniu kamera dogania statek.
+   */
+  function exitAheadPx(tau) {
+    const zx = Math.abs(Math.cos(trip.heading));
+    const zy = Math.abs(Math.sin(trip.heading));
+    const half = Math.min(zx > 1e-3 ? ctx.viewW * 0.5 / zx : Infinity, zy > 1e-3 ? ctx.viewH * 0.5 / zy : Infinity);
+    return EXIT.ahead * half * smooth(T.slowEnd, T.halt, tau) * (1 - smooth(T.halt, T.halt + EXIT.settle, tau));
   }
 
   function stateAt(tau) {
@@ -218,23 +287,22 @@ export function createTripScene(ctx) {
     ship.smear = 0;
     const charge = pr.charge;
     const inWarp = tau >= T.kick && tau < T.exit;
-    ship.plasma = tau < TRAVEL.idle ? 0 : (tau < T.kick ? smooth(0.05, 0.5, charge) * (0.55 + 0.45 * charge) : (tau < T.exit ? 1 : Math.exp(-(tau - T.exit) / 0.25)));
+    ship.plasma = tau < TRAVEL.idle ? 0 : (tau < T.kick ? smooth(0.05, 0.5, charge) * (0.55 + 0.45 * charge) : 1);
     ship.thrust = tau < TRAVEL.idle ? 0.35 : 0.2;
-    // Wyjście: front przechodzi przez kadłub w 0,2 s — szew i biały żar brzegu.
-    const fx = tau >= T.exit ? lerp(a * 1.3, -a * 1.3, clamp01((tau - T.exit) / 0.2)) : Infinity;
-    ship.seamLine = fx;
-    ship.seam = Number.isFinite(fx) && fx < L * 0.55 && fx > -L * 0.55 ? 1 : 0;
-    ship.heat = tau < T.exit ? 0 : (tau < T.exit + 0.12 ? smooth(T.exit, T.exit + 0.12, tau) : Math.exp(-(tau - T.exit - 0.12) / 2.2));
+    ship.seam = 0;
+    ship.heat = 0;
+    const tb = tau - T.brake;
 
     // Bańka gracza.
     const inhale = smooth(0.78, 1.0, charge) * (tau < T.kick + 0.2 ? 1 : 0);
-    bub.on = tau >= TRAVEL.idle && tau < T.exit + 0.5;
+    // Po wyjściu jak bańka przylotu NPC: zapada się od dziobu przy hamowaniu.
+    bub.on = tau >= TRAVEL.idle && tau < T.halt + 0.35;
     playerBubble(bub, ship, R, {
-      A: tau < T.kick ? Math.pow(smooth(0, 0.85, charge), 1.2) : (tau < T.exit + 0.3 ? 1 : 0),
-      front: Number.isFinite(fx) ? fx / a : 3,
-      strain: tau < T.kick ? 1.25 + 3.2 * inhale : 0.9,
-      excite: tau < T.kick ? 1.6 + 1.2 * inhale : 1,
-      rearT: T.exit + 0.19
+      A: tau < T.kick ? Math.pow(smooth(0, 0.85, charge), 1.2) : (tau < T.halt + 0.2 ? 1 : 0),
+      front: tau < T.exit ? 3 : brakeBubbleFront(tb, T.brakeDur),
+      strain: tau < T.kick ? 1.25 + 3.2 * inhale : (tau < T.exit ? 0.9 : 1.1),
+      excite: tau < T.kick ? 1.6 + 1.2 * inhale : (tau < T.exit ? 1 : 1.4),
+      rearT: T.halt + 0.05
     });
     if (bub.on) F.bubbles.push(bub);
 
@@ -244,44 +312,57 @@ export function createTripScene(ctx) {
     let zf = 1;
     if (tau >= TRAVEL.idle) zf = lerp(1, TRAVEL.zoomOut, smooth(TRAVEL.idle, T.kick, tau));
     if (tau >= T.kick) zf = TRAVEL.zoomOut * (1 - 0.1 * pulse(tau - T.kick, 0.04, 0.25));
-    if (tau >= T.exit) zf = lerp(TRAVEL.zoomOut, 1, easeOut3((tau - T.exit) / 1.4)) * (1 + 0.1 * pulse(tau - T.exit, 0.03, 0.18));
+    if (tau >= T.exit) zf = lerp(TRAVEL.zoomOut, 1, smooth(T.slowEnd, T.halt + EXIT.zoomTail, tau)) * (1 + 0.1 * pulse(tau - T.brake, 0.03, 0.18));
     const zoom = z0 * zf;
     const leadK = smooth(T.kick, T.kick + 0.7, tau) * (1 - smooth(T.exit, T.exit + 1.1, tau));
-    const lead = leadK * 0.26 * (ctx.viewW * 0.5) / zoom;
+    // Przewężenie rulonu: statek na środku kadru (widać wciąganie przed dziobem
+    // i wypluwanie za rufą) — wyprzedzenie gaśnie, gdy przewężenie się otwiera.
+    const rulonNow = rulonBend(tau < T.kick, tau >= TRAVEL.idle ? charge : 0, T.kick, T.exit, tau, EXIT.slow);
+    const lead = leadK * (1 - rulonFieldOf(rulonNow)) * 0.26 * (ctx.viewW * 0.5) / zoom;
     const lag = 140 * pulse(tau - T.kick, 0.05, 0.42) / zoom;
-    F.cam.x = ship.x + c * (lead - lag);
-    F.cam.y = ship.y + sn * (lead - lag);
+    let camOff = lead - lag;
+    // Po wyjściu kamera zostaje ZA statkiem (statek wysuwa się w stronę celu).
+    if (tau >= T.exit) camOff = -exitAheadPx(tau) / zoom;
+    F.cam.x = ship.x + c * camOff;
+    F.cam.y = ship.y + sn * camOff;
     F.cam.zoom = zoom;
     F.shake = (tau > TRAVEL.idle + 1.5 && tau < T.kick ? 4 * smooth(TRAVEL.idle + 1.5, T.kick, tau) : 0)
       + 9 * pulse(tau - T.kick, 0.02, 0.25)
-      + 11 * pulse(tau - T.exit, 0.02, 0.3);
+      + 4 * pulse(tau - T.exit, 0.05, 0.4);
 
     // Gwiazdy.
     const st = F.stars;
     st.angle = heading;
-    st.stretch = starStretch(tau, T.kick, T.exit, charge, pr.v / pr.vc);
+    st.stretch = starStretch(tau, T.kick, T.exit, charge, pr.v / pr.vc, EXIT.slow);
     st.frontOn = tau >= T.exit ? 1 : 0;
-    st.frontS = tau >= T.exit ? lerp(18000, -18000, clamp01((tau - T.exit) / 0.22)) : 0;
-    st.warpTint = inWarp ? 1 : charge * 0.4;
+    st.frontS = tau >= T.exit ? lerp(18000, -18000, smooth(T.exit, T.slowEnd, tau)) : 0;
+    st.warpTint = inWarp ? 1 : (tau >= T.exit ? 1 - smooth(T.exit, T.slowEnd, tau) : charge * 0.4);
     st.speedCap = 14000;
     st.refX = ship.x;
     st.refY = ship.y;
-    F.warpVis = smooth(T.kick, T.kick + 0.4, tau) * (tau < T.exit ? 1 : Math.max(0, 1 - (tau - T.exit) / 0.2));
-    // Po wyjściu ośrodek gaśnie w ~0,3 s (smugi i tak znikają, bo statek stanął) —
-    // bez chmury drobin wiszącej wokół okrętu.
-    F.mediumFade = tau >= T.exit + 0.1 && tau < T.exit + 1.6 ? 6 : 0;
+    F.warpVis = smooth(T.kick, T.kick + 0.4, tau) * (tau < T.exit ? 1 : 1 - smooth(T.exit, T.slowEnd, tau));
+    F.rulon = rulonNow;
+    F.rulonField = rulonFieldOf(rulonNow);
+    // Po zatrzymaniu (i iskrach hamowania) ośrodek gaśnie — bez chmury drobin
+    // wiszącej wokół okrętu.
+    F.mediumFade = tau >= T.halt + 0.6 && tau < T.halt + 2.2 ? 4 : 0;
 
-    // Świat (planety) — prawdziwe położenie statku na trasie. Od chwili wyjścia
-    // statek JUŻ JEST u celu (hamowanie z setek tys. j/s to ~27 tys. j. drogi —
-    // w skali ciał cel najpierw uciekałby z kadru, potem wracał): soczewka
-    // przechodzi wprost w prawdziwy widok i cel rośnie pod statkiem bez przerwy.
+    // Świat (planety) — prawdziwe położenie statku na trasie. Od wyjścia statek
+    // jest u celu MINUS reszta widocznej drogi do zatrzymania: cel stoi w świecie,
+    // a statek naprawdę do niego dolatuje (ciała przy ringu — 1:1 z kadłubem,
+    // w tle — z paralaksą). Soczewka ciał gaśnie płynnie do zatrzymania (dawniej
+    // w 0,3 s — cel „wskakiwał”), nominalna prędkość soczewki zostaje z lotu.
     const w = F.world || (F.world = { ship: { x: 0, y: 0 } });
-    const sTrue = tau >= T.exit ? trip.dist : pr.s;
+    // Ciągłość w chwili wyjścia: reszta prawdziwej drogi (k0 × widoczna) przechodzi
+    // w zwolnieniu w widoczną 1:1 — bez przeskoku celu w tył.
+    const sTrue = tau >= T.exit
+      ? trip.dist - Math.max(0, camExit.sStop - sVis) * lerp(camExit.k0, 1, smooth(T.exit, T.slowEnd, tau))
+      : pr.s;
     w.ship.x = trip.P0.x + trip.ux * sTrue;
     w.ship.y = trip.P0.y + trip.uy * sTrue;
     w.heading = heading;
-    w.speed = pr.vBase;
-    w.beta = pr.bodyBeta;
+    w.speed = tau >= T.exit ? pr.vc : pr.vBase;
+    w.beta = tau >= T.exit ? 1 - smooth(T.slowEnd, T.halt, tau) : pr.bodyBeta;
     w.bodyZoom = 1;
     if (tau < T.kick + TRAVEL.lensKick && trip.originAlt > 0) {
       w.bodyZoom = trip.originAlt / Math.max(trip.originAlt + pr.s, 1) / zf;
@@ -296,12 +377,15 @@ export function createTripScene(ctx) {
       F.waves.push({ x: kickPos.x, y: kickPos.y, r: 9000 * age, width: 320, amp: 8 * (1 - age / 1.4) ** 2 });
       if (age < 0.35) F.flashes.push({ x: kickPos.x - c * L * 0.62, y: kickPos.y - sn * L * 0.62, size: R * 0.5, k: (1 - age / 0.35) ** 2, pal: atlas.type.palette });
     }
-    if (tau >= T.exit && tau < T.exit + 1.6) {
-      const age = tau - T.exit;
-      F.waves.push({ x: ship.x, y: ship.y, r: 7500 * age, width: 420, amp: 12 * (1 - age / 1.6) ** 2 });
-      if (age < 0.3) F.flashes.push({ x: ship.x + c * L * 0.5, y: ship.y + sn * L * 0.5, size: R * 0.6, k: 1.3 * (1 - age / 0.3) ** 2, pal: null });
+    // Wyjście: hamowanie jak przylot NPC (ten sam kod, arrivals.js).
+    if (tau >= T.exit) {
+      const brakeShake = brakeEffects(F, {
+        ship, L, pal: atlas.type.palette, size: 1, dirX: c, dirY: sn, angle: heading, tb, v0: T.vArr, push,
+        stopX: vis0.x + c * camExit.sStop, stopY: vis0.y + sn * camExit.sStop
+      });
+      F.shake += 11 * brakeShake;
     }
-    F.phase = pr.phase;
+    F.phase = tau < T.exit ? pr.phase : tau < T.slowEnd ? 'wyjście z warpa' : tau < T.brake ? 'wlot' : tau < T.halt + 0.4 ? 'hamowanie' : pr.phase;
     F.speedLabel = vVis;
     F.trueSpeed = pr.v;
     return F;
@@ -344,11 +428,11 @@ export function createArrivalScene(ctx) {
     name: 'arrival',
     frame: F,
     T: { loop: 15 },
-    minZoom: 0.1,
+    minZoom: 0.085,
     markers: [
       { t: 0.3, label: 'zwiastun' },
-      { t: 2.6, label: 'rozdarcie' },
-      { t: 3.2, label: 'wyrzut' },
+      { t: 2.6, label: 'wlot' },
+      { t: 3.2, label: 'hamowanie' },
       { t: 8.8, label: 'odlot' }
     ],
     reset() {
@@ -356,6 +440,8 @@ export function createArrivalScene(ctx) {
       const ship = newShip(inst);
       const pirate = ctx.arrivalHull().startsWith('pirate');
       arr = planArrival({ ship, x: -2300, y: -1700, angle: -0.5, t0: 0.3, pirate });
+      this.markers[1].t = arr.tAppear;
+      this.markers[2].t = arr.tBrake;
       dep = planDeparture({ ship, x: -2300, y: -1700, angle: -0.5, t0: 8.8, pirate });
       F.loopLen = Math.max(15, dep.tEnd + 1.2);
     },
@@ -366,16 +452,17 @@ export function createArrivalScene(ctx) {
       F.ships.push(atlasShip);
       const shake = t < dep.t0 ? arrivalState(arr, t, F) : departureState(dep, t, F);
       F.ships.push(arr.ship);
-      F.cam.x = -900;
-      F.cam.y = -900;
-      F.cam.zoom = 0.13;
+      // Kadr: wlot zza brzegu, hamowanie, start odlotu i punkt skoku (4 L przed dziobem).
+      F.cam.x = -2300;
+      F.cam.y = -1200;
+      F.cam.zoom = 0.09;
       F.shake = shake * 6;
       F.stars.stretch = 0;
       F.stars.frontOn = 0;
       F.warpVis = 0;
       F.world = null;
       const ph = arr.sample.phase;
-      F.phase = t >= dep.t0 ? (t < dep.tDive ? 'ładowanie odlotu' : 'odlot') : ph === 'herald' ? 'zwiastun' : ph === 'tear' ? 'rozdarcie' : ph === 'emerge' ? 'wyrzut' : 'po przylocie';
+      F.phase = t >= dep.t0 ? (t < dep.tDive ? 'ładowanie odlotu' : 'odlot') : ph === 'wait' || t < arr.tAppear ? 'zwiastun' : t < arr.tBrake ? 'wlot' : t < arr.tStop + 0.4 ? 'hamowanie' : 'po przylocie';
       F.speedLabel = 0;
       return F;
     }
@@ -407,7 +494,7 @@ function seededRng(seed) {
   };
 }
 
-function summonFormation(pools, layout, t0, x, y, angle, seed, pirate = false) {
+function summonFormation(pools, layout, t0, x, y, angle, seed, pirate = false, rush = undefined) {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   const items = [];
@@ -424,7 +511,7 @@ function summonFormation(pools, layout, t0, x, y, angle, seed, pirate = false) {
     const py = f.abs ? f.y : y + f.ax * s + f.ay * c;
     const ang = f.abs ? f.angle : angle;
     const ship = newShip(inst);
-    return { ship, inst, arr: planArrival({ ship, x: px, y: py, angle: ang, t0: t0 + p.startTime, heraldExtra: p.heraldExtra, pirate }), dep: null };
+    return { ship, inst, arr: planArrival({ ship, x: px, y: py, angle: ang, t0: t0 + p.startTime, heraldExtra: p.heraldExtra, pirate, rush }), dep: null };
   });
 }
 
@@ -468,21 +555,22 @@ export function createFleetScene(ctx) {
       prev.departing = true;
       prev.units.forEach((u, k) => {
         const td = Math.max(t + 0.4 + k * 0.12, u.arr.tSettled + 0.5);
-        u.dep = planDeparture({ ship: u.ship, x: u.arr.x, y: u.arr.y, angle: u.arr.angle, t0: td });
+        u.dep = planDeparture({ ship: u.ship, x: u.arr.x, y: u.arr.y, angle: u.arr.angle, t0: td, rush: 2 });
       });
     }
     while (calls.length > 2) {
       const old = calls.shift();
       for (const u of old.units) pools.release(u.inst);
     }
-    calls.push({ units: summonFormation(pools, FLEET_FORMATION, t, x, y, angle, seed++), departing: false });
+    // Rozpęd floty 2 L: szeroka formacja przy brzegu kadru — szczeliny zostają w kadrze.
+    calls.push({ units: summonFormation(pools, FLEET_FORMATION, t, x, y, angle, seed++, false, 2), departing: false });
   }
 
   return {
     name: 'fleet',
     frame: F,
     T: { loop: 0 },
-    minZoom: 0.1,
+    minZoom: 0.1 * 0.95,
     markers: [],
     reset() {
       for (const cl of calls) for (const u of cl.units) pools?.release(u.inst);
@@ -513,7 +601,7 @@ export function createFleetScene(ctx) {
       for (const cl of calls) shake = Math.max(shake, fleetState(cl.units, t, F));
       F.cam.x = 600;
       F.cam.y = -300;
-      F.cam.zoom = 0.115;
+      F.cam.zoom = 0.1;     // formacja + szczeliny rozpędu (2 L) — więcej w kadrze
       F.shake = shake * 5;
       F.stars.stretch = 0;
       F.stars.frontOn = 0;
@@ -544,7 +632,7 @@ export function createAmbushScene(ctx) {
     name: 'ambush',
     frame: F,
     T,
-    minZoom: 0.1,
+    minZoom: 0.1 * 0.95,
     markers: [
       { t: 0.2, label: 'zwiastuny' },
       { t: 2.9, label: 'wyrzuty' },
@@ -560,9 +648,11 @@ export function createAmbushScene(ctx) {
         const y = Math.sin(ang) * r;
         return { type, abs: true, x, y, angle: Math.atan2(-y, -x) };
       });
-      units = summonFormation(pools, layout, 0.2, 0, 0, 0, 7, true);
+      // Pierścień dziobami do Atlasa: krótszy rozpęd (szczeliny tuż za kadrem pierścienia),
+      // odwrót do przodu — krótki (dalej leżałby Atlas).
+      units = summonFormation(pools, layout, 0.2, 0, 0, 0, 7, true, 2);
       units.forEach((u, k) => {
-        u.dep = planDeparture({ ship: u.ship, x: u.arr.x, y: u.arr.y, angle: u.arr.angle, t0: T.depart + k * 0.1, pirate: true });
+        u.dep = planDeparture({ ship: u.ship, x: u.arr.x, y: u.arr.y, angle: u.arr.angle, t0: T.depart + k * 0.1, pirate: true, rush: 1.2 });
       });
       const end = Math.max(...units.map((u) => u.dep.tEnd));
       F.loopLen = T.loop = Math.max(13.5, end + 0.8);
@@ -575,7 +665,7 @@ export function createAmbushScene(ctx) {
       const shake = fleetState(units, t, F);
       F.cam.x = 0;
       F.cam.y = 0;
-      F.cam.zoom = 0.125;
+      F.cam.zoom = 0.105;   // pierścień + szczeliny 2 L za nim (rozpęd) w kadrze
       F.shake = shake * 6;
       F.stars.stretch = 0;
       F.stars.frontOn = 0;
@@ -623,7 +713,9 @@ export function createFreeScene(ctx) {
       st.lastT = t;
       const turn = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0);
       if (st.mode === 'idle' || st.mode === 'charging') {
-        st.angVel += (turn * 0.6 - st.angVel) * (1 - Math.exp(-4 * dt));
+        // Kurs ustawia się przed skokiem: od ładowania A/D nie działa (oś rulonu stoi).
+        const steer = st.mode === 'idle' ? turn : 0;
+        st.angVel += (steer * 0.6 - st.angVel) * (1 - Math.exp(-4 * dt));
         const fwd = keys.has('w') ? 1 : keys.has('s') ? -0.5 : 0;
         st.speed += fwd * 420 * dt;
         st.speed *= Math.exp(-0.25 * dt);
@@ -644,7 +736,7 @@ export function createFreeScene(ctx) {
           if (st.charge <= 0) st.mode = 'idle';
         }
       } else if (st.mode === 'warp') {
-        st.angVel += (turn * 0.32 - st.angVel) * (1 - Math.exp(-3 * dt));
+        st.angVel *= Math.exp(-8 * dt);
         const target = st.gear === 1 ? WARP_FLOW.gear1 : WARP_FLOW.gear2;
         st.flow += (target - st.flow) * (1 - Math.exp(-(t - st.kickT < 0.5 ? 9 : 3.2) * dt));
         st.speed = st.flow;
@@ -714,7 +806,11 @@ export function createFreeScene(ctx) {
       });
       if (bub.on && bub.A > 0) F.bubbles.push(bub);
       const lag = 140 * pulse(t - st.kickT, 0.05, 0.42) / st.zoom;
-      const lead = st.leadK * 0.26 * (ctx.viewW * 0.5) / st.zoom;
+      // Rulon i lejek — jedna faza z ładowaniem; w lejku statek na środku kadru (jak w podróży).
+      const rulonNow = st.mode === 'charging' ? rulonBend(true, cT, 0, 0, t)
+        : (warp || exiting || st.mode === 'cooling') ? rulonBend(false, 1, st.kickT, st.mode === 'warp' ? Infinity : st.exitT, t) : 0;
+      const fieldNow = rulonFieldOf(rulonNow);
+      const lead = st.leadK * (1 - fieldNow) * 0.26 * (ctx.viewW * 0.5) / st.zoom;
       const zoom = st.zoom * (1 - 0.1 * pulse(t - st.kickT, 0.04, 0.25)) * (1 + 0.1 * pulse(t - st.exitT, 0.03, 0.18));
       F.cam.x = ship.x + c * (lead - lag);
       F.cam.y = ship.y + s * (lead - lag);
@@ -733,6 +829,8 @@ export function createFreeScene(ctx) {
       S2.refY = ship.y;
       F.warpVis = warp ? smooth(st.kickT, st.kickT + 0.4, t) : (st.mode === 'exit' ? Math.max(0, 1 - (t - st.exitT) / 0.2) : 0);
       F.mediumFade = t - st.exitT >= 0.1 && t - st.exitT < 1.6 ? 6 : 0;
+      F.rulon = rulonNow;
+      F.rulonField = fieldNow;
       F.world = world.state(t, st);
       if (t >= st.kickT && t - st.kickT < 1.4) {
         const age = t - st.kickT;

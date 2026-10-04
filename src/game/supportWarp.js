@@ -1,8 +1,9 @@
 // src/game/supportWarp.js
 //
-// Wezwania i powrót skrzydła wsparcia przez tunel warpa „Nurt” (efekt: src/3d/warp/warpNurt.js,
-// demo dema/warp-webgpu.html — scena „Wezwanie floty”: zwiastun → rozdarcie → wyrzut, a odlot
-// wspak: punkt skoku przed dziobem → szczelina → okręt znika w niej od dziobu).
+// Wezwania i powrót skrzydła wsparcia warpem „Nurt” (efekt: src/3d/warp/warpNurt.js, demo
+// dema/warp-webgpu.html — scena „Wezwanie floty”: zwiastun → okręt wpada z daleka → gwałtowne
+// hamowanie, a odlot wspak: punkt skoku przed dziobem → kop → okręt znika w nim od dziobu;
+// bez szczeliny — decyzja usera 2026-10-03).
 //
 // Magazynu floty i ekonomii jeszcze nie ma, więc portem macierzystym wezwań jest Ziemia:
 //  - WEZWANIE — okręt z zakładki wsparcia przylatuje OD Ziemi: kurs przylotu Ziemia → punkt
@@ -67,7 +68,10 @@ export function createSupportWarpCallIns({ warp, spawn, isHull = () => true, onS
       let write = 0;
       for (let i = 0; i < pending.length; i++) {
         const p = pending[i];
-        if (!(p.rec.fx.tBurst <= now)) { pending[write++] = p; continue; }
+        // Okręt powstaje w chwili pojawienia się daleko za celem (tSpawn) — wlot i hamowanie
+        // prowadzi efekt; stare plany bez tSpawn — w chwili wyrzutu.
+        const tSpawn = Number.isFinite(p.rec.fx.tSpawn) ? p.rec.fx.tSpawn : p.rec.fx.tBurst;
+        if (!(tSpawn <= now)) { pending[write++] = p; continue; }
         done++;
         const spawned = spawn(p.req);
         const list = Array.isArray(spawned) ? spawned.filter(Boolean) : (spawned ? [spawned] : []);

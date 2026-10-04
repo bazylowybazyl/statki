@@ -36,11 +36,12 @@ import { resolveShipFlightSpec } from '../game/flight/shipFlightModel.js';
 
 export const FORMATION_CONFIG = Object.freeze({
   // Odstęp eskort w pierścieniu i w bloku: nie mniej niż tyle, i nie mniej niż
-  // dwa promienie + zapas (strefa separacji fregat to ~360–420 j.).
-  escortSpacingMin: 460,
-  escortSpacingPad: 240,
+  // dwa promienie + zapas (strefa separacji fregat to ~360–420 j.; przy 460 j.
+  // fregaty wchodzące na miejsce ocierały się o sąsiadów).
+  escortSpacingMin: 540,
+  escortSpacingPad: 300,
   // Pierwszy pierścień eskorty: promienie okrętu flagowego i eskorty + zapas.
-  ringClearPad: 380,
+  ringClearPad: 450,
   // Luz między obrysami sąsiednich grup (przelot i walka).
   groupGap: 400,
   // Luz między obrysem korzenia (gracza) a pierścieniem grup.
@@ -661,6 +662,31 @@ export function layoutBattle(fs, frame) {
     }
   }
   for (let i = 0; i < fs.leaders.length; i++) layoutEscortBlock(fs.groups.get(fs.leaders[i]), dirX, dirY);
+}
+
+// Miejsca eskorty liczone od AKTUALNEJ pozycji okrętu flagowego potrafią
+// wypaść na graczu — okręt flagowy zostaje w tyle, gdy gracz się rozpędza, i
+// jego pierścień / blok nachodzi na kadłub gracza; fregaty pchały się wtedy na
+// Atlasa. Takie miejsce przesuwamy promieniście na brzeg strefy gracza.
+export function keepEscortSlotsClear(fs, cx, cy, rootRadius) {
+  const r0 = Math.max(0, Number(rootRadius) || 0);
+  if (!(r0 > 0)) return;
+  for (let i = 0; i < fs.leaders.length; i++) {
+    const g = fs.groups.get(fs.leaders[i]);
+    const clear = r0 + g.rE + FORMATION_CONFIG.rootGap;
+    for (let k = 0; k < g.escorts.length; k++) {
+      const dx = g.ex[k] - cx;
+      const dy = g.ey[k] - cy;
+      const d = Math.hypot(dx, dy);
+      if (d >= clear) continue;
+      if (d > 1e-3) {
+        g.ex[k] = cx + (dx / d) * clear;
+        g.ey[k] = cy + (dy / d) * clear;
+      } else {
+        g.ex[k] = cx + clear;
+      }
+    }
+  }
 }
 
 // Podgląd do konsoli (FleetAIDebug).

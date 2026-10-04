@@ -1,10 +1,11 @@
 // ============================================================
-// Demo WebGPU: Atlas 3D i modele 3D broni (strona dema/atlas3d-webgpu.html, Vite).
+// Demo WebGPU: okręty 3D (Atlas, flota Terra Nova i piratów) i modele 3D broni
+// (strona dema/atlas3d-webgpu.html, Vite).
 //
-// Model: src/3d/ships3d/ (atlasHull3D — kadłub ze sprite'a gry, weapons3D — 23 rodziny broni,
-// shipMaterials3D.tsl — materiały TSL). Tu: scena, światło i cienie, post jak w grze (pass
-// MSAA 4 → siatka HDR → bloom gry → ACES gry → sRGB), tryby (oględziny, lot, galeria),
-// kamery, sterowanie, ogień, cele i eksport GLB.
+// Modele: src/3d/ships3d/ (ships3D — rejestr, atlasHull3D / fleetHull3D — kadłuby ze sprite'ów
+// gry, weapons3D — 23 rodziny broni, shipMaterials3D.tsl — materiały TSL). Tu: scena, światło
+// i cienie, post jak w grze (pass MSAA 4 → siatka HDR → bloom gry → ACES gry → sRGB), tryby
+// (flota, oględziny, lot, galeria), wybór okrętu, kamery, sterowanie, ogień, cele i eksport GLB.
 // Układ jak Core3D: X ku dziobowi, Y = −y gry, Z w górę.
 // ============================================================
 import * as THREE from 'three/webgpu';
@@ -13,9 +14,11 @@ import { BloomGry, hdrBezpieczny } from '../src/3d/tsl/postGry.js';
 import { acesGry, linearDoSrgb } from '../src/3d/tsl/kolorGry.js';
 import { BLOOM_DEFAULTS } from '../src/3d/bloomConfig.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
-import { WEAPON3D_FAMILY } from '../src/3d/ships3d/weapons3D.js';
-import atlasUrl from '../assets/capital_ship_rect_v1.png';
-import { Atlas3D, defaultLoadout, fullLoadout } from './atlas3d-webgpu/statek.js';
+import { WEAPON3D_FAMILY } from '../src/3d/ships3d/weapons/weapons3D.js';
+import { SHIP3D_MODELS, SHIP3D_IDS } from '../src/3d/ships3d/ships/ships3D.js';
+import { createShipMaterial } from '../src/3d/ships3d/shipMaterials3D.tsl.js';
+import { FLEET3D_WEAPON_PALETTES } from '../src/3d/ships3d/ships/fleetHulls3D.js';
+import { Ship3D, defaultLoadout, fullLoadout } from './atlas3d-webgpu/statek.js';
 import { createSky } from './atlas3d-webgpu/niebo.js';
 import { Effects } from './atlas3d-webgpu/efekty.js';
 import { Targets } from './atlas3d-webgpu/cele.js';
@@ -56,6 +59,27 @@ function loadImage(url) {
 }
 
 const GROUP_LABEL = { main: 'główne', special: 'specjalne', aux: 'aux / PD', missile: 'rakietowe', special_missile: 'Supernova' };
+
+// Sprite okrętu: ścieżka z rejestru (serwer Vite podaje katalog repo).
+const spriteUrl = (id) => `/${SHIP3D_MODELS[id].sprite}`;
+
+// Tryb „Flota” i przyciski: Atlas + Terra Nova + piraci. Reszta kadłubów (lotniskowce,
+// superkapitały, myśliwiec, megafrachtowiec, ruch v2 — modele z automatu) w liście rozwijanej,
+// budowana dopiero przy wyborze.
+const FLEET_IDS = ['atlas', 'terran_battleship', 'terran_destroyer', 'terran_frigate', 'pirate_battleship', 'pirate_destroyer', 'pirate_frigate'];
+const MORE_GROUPS = [
+  ['okręty bojowe', ['terran_carrier', 'terran_supercapital', 'supercapital', 'capital_carrier', 'corvus', 'fighter']],
+  ['megafrachtowiec', ['megafreighter_front', 'megafreighter_wagon', 'megafreighter_back', 'megafreighter']],
+  ['ruch v2', null]
+];
+
+// Tryb „Flota”: Atlas w środku, Terra Nova po jednej stronie, piraci po drugiej (x, y świata).
+const FLEET_POS = {
+  atlas: [0, 0],
+  terran_battleship: [620, 780], terran_destroyer: [-40, 780], terran_frigate: [-500, 780],
+  pirate_battleship: [620, -780], pirate_destroyer: [-40, -780], pirate_frigate: [-500, -780]
+};
+const FLEET_CENTER = new THREE.Vector3(60, 0, 0);
 
 async function main() {
   if (!('gpu' in navigator)) { noWebGPU('navigator.gpu nie istnieje.'); return; }
@@ -106,15 +130,45 @@ async function main() {
   // ---------------------------------------------------------------------------
   // Atlas, cele, efekty, galeria
 
-  $('loading').textContent = 'wczytywanie sprite\'a Atlasa…';
-  const img = await loadImage(atlasUrl);
-  $('loading').textContent = 'budowa modelu 3D…';
-  const ship = new Atlas3D({ image: img, scene, anisotropy: 8 });
+  $('loading').textContent = 'wczytywanie sprite\'ów okrętów…';
+  const startId = SHIP3D_MODELS[params.get('statek')] ? params.get('statek') : 'atlas';
+  const images = {};
+  await Promise.all([...new Set([...FLEET_IDS, startId])].map(async (id) => { images[id] = await loadImage(spriteUrl(id)); }));
+  $('loading').textContent = 'budowa modeli 3D…';
+  const weaponMat = createShipMaterial({ panelW: 7, panelH: 3.5, name: 'okręty 3D — broń' });
+  const weaponMatPirate = createShipMaterial({ panelW: 7, panelH: 3.5, palette: FLEET3D_WEAPON_PALETTES.pirate, name: 'okręty 3D — broń piratów' });
+  const ships = {};
+  let uiReady = false;
+  function createShip(id) {
+    const wm = SHIP3D_MODELS[id].faction === 'pirate' ? weaponMatPirate : weaponMat;
+    const s = new Ship3D({ id, image: images[id], scene, anisotropy: 8, weaponMat: wm });
+    s.root.visible = false;
+    ships[id] = s;
+    if (uiReady) {
+      applyShipToggles(s);
+      s.setLoadout(S.loadoutName === 'pelny' ? fullLoadout(s.hull.mounts, s.faction) : defaultLoadout(s.hull.mounts, s.faction, s.id));
+    }
+    return s;
+  }
+  /** Okręt z rejestru — model budowany przy pierwszym wyborze (sprite wczytywany w tle). */
+  async function ensureShip(id) {
+    if (ships[id]) return ships[id];
+    $('loading').style.display = 'block';
+    $('loading').textContent = `budowa modelu: ${SHIP3D_MODELS[id].label}…`;
+    try {
+      if (!images[id]) images[id] = await loadImage(spriteUrl(id));
+      return ships[id] || createShip(id);
+    } finally {
+      $('loading').style.display = 'none';
+    }
+  }
+  for (const id of Object.keys(images)) createShip(id);
+  let ship = ships[startId];
   const fx = new Effects(scene);
   const targets = new Targets(scene, { seed: 11 });
-  targets.spawnDrones(8, ship.weaponMat);
-  const gallery = new WeaponGallery(scene, ship, ship.weaponMat, { y: -9000 });
-  const flight = new Flight();
+  targets.spawnDrones(8, weaponMat);
+  const gallery = new WeaponGallery(scene, ship, weaponMat, { y: -9000 });
+  const flight = new Flight(ship.id);
   const rig = new CameraRig(camera);
 
   // Post: pass (MSAA 4, HalfFloat) → siatka HDR → bloom gry → ACES gry → sRGB (jak Core3D i dema).
@@ -149,9 +203,12 @@ async function main() {
   // ---------------------------------------------------------------------------
   // Uzbrojenie (panel grup: jedna broń na grupę gniazd; fity: gra / pełny)
 
-  const mountTypes = [...new Set(ship.hull.mounts.map((m) => m.type))].filter((t) => GROUP_LABEL[t]);
   const groupsEl = $('groups');
   const selects = {};
+  function buildGroups() {
+  groupsEl.textContent = '';
+  for (const k of Object.keys(selects)) delete selects[k];
+  const mountTypes = [...new Set(ship.hull.mounts.map((m) => m.type))].filter((t) => GROUP_LABEL[t]);
   for (const type of mountTypes) {
     const row = document.createElement('div');
     row.className = 'sel';
@@ -175,9 +232,11 @@ async function main() {
     groupsEl.appendChild(row);
     selects[type] = sel;
   }
+  }
   function setLoadoutPreset(name) {
     S.loadoutName = name;
-    ship.setLoadout(name === 'pelny' ? fullLoadout(ship.hull.mounts) : defaultLoadout(ship.hull.mounts));
+    const list = S.mode === 'flota' ? FLEET_IDS.map((id) => ships[id]) : [ship];
+    for (const s of list) s.setLoadout(name === 'pelny' ? fullLoadout(s.hull.mounts, s.faction) : defaultLoadout(s.hull.mounts, s.faction, s.id));
     for (const s of Object.values(selects)) s.value = '';
     $('fit-gra').classList.toggle('on', name !== 'pelny');
     $('fit-pelny').classList.toggle('on', name === 'pelny');
@@ -191,29 +250,92 @@ async function main() {
   }
   $('fit-gra').addEventListener('click', () => setLoadoutPreset('gra'));
   $('fit-pelny').addEventListener('click', () => setLoadoutPreset('pelny'));
-  setLoadoutPreset(params.get('fit') === 'pelny' ? 'pelny' : 'gra');
+  buildGroups();
+  S.loadoutName = params.get('fit') === 'pelny' ? 'pelny' : 'gra';
+  for (const s of Object.values(ships)) s.setLoadout(S.loadoutName === 'pelny' ? fullLoadout(s.hull.mounts, s.faction) : defaultLoadout(s.hull.mounts, s.faction, s.id));
+  setLoadoutPreset(S.loadoutName);
+
+  // ---------------------------------------------------------------------------
+  // Wybór okrętu (przyciski na górze panelu, [ / ] — poprzedni / następny)
+
+  const shipBtns = {};
+  for (const id of FLEET_IDS) {
+    const b = document.createElement('button');
+    b.textContent = SHIP3D_MODELS[id].short;
+    b.title = SHIP3D_MODELS[id].label;
+    b.className = `f-${SHIP3D_MODELS[id].faction}`;
+    b.addEventListener('click', () => selectShip(id));
+    $('shipsel').appendChild(b);
+    shipBtns[id] = b;
+  }
+  // Pozostałe kadłuby: lista rozwijana w grupach (ruch v2 — wszystko, czego nie ma wyżej).
+  const moreSel = $('shipsel-more');
+  {
+    const listed = new Set([...FLEET_IDS, ...MORE_GROUPS.flatMap(([, ids]) => ids || [])]);
+    let html = '<option value="">— inne kadłuby (model z automatu) —</option>';
+    for (const [label, ids] of MORE_GROUPS) {
+      const list = (ids || SHIP3D_IDS.filter((id) => !listed.has(id))).filter((id) => SHIP3D_MODELS[id]);
+      html += `<optgroup label="${label}">${list.map((id) => `<option value="${id}">${SHIP3D_MODELS[id].label}</option>`).join('')}</optgroup>`;
+    }
+    moreSel.innerHTML = html;
+    moreSel.addEventListener('change', () => { if (moreSel.value) selectShip(moreSel.value); });
+  }
+  async function selectShip(id, keepMode = false) {
+    if (!SHIP3D_MODELS[id]) return;
+    const s = await ensureShip(id);
+    ship = s;
+    flight.setSpec(id);
+    buildGroups();
+    updateLoadoutInfo();
+    for (const [k, b] of Object.entries(shipBtns)) b.classList.toggle('on', k === id);
+    moreSel.value = shipBtns[id] ? '' : id;
+    $('ship-name').textContent = ship.label;
+    if (!keepMode) setMode(S.mode === 'flota' || S.mode === 'galeria' || !S.mode ? 'ogledziny' : S.mode);
+  }
+  function cycleShip(d) {
+    const i = SHIP3D_IDS.indexOf(ship.id);
+    selectShip(SHIP3D_IDS[(i + d + SHIP3D_IDS.length) % SHIP3D_IDS.length]);
+  }
 
   // ---------------------------------------------------------------------------
   // Tryby i kamery
 
   function setMode(m) {
-    if (!['ogledziny', 'lot', 'galeria'].includes(m)) m = 'ogledziny';
+    if (!['flota', 'ogledziny', 'lot', 'galeria'].includes(m)) m = 'flota';
     S.mode = m;
     for (const b of document.querySelectorAll('#modes button')) b.classList.toggle('on', b.dataset.m === m);
     const gal = m === 'galeria';
+    const fleet = m === 'flota';
     gallery.visible = gal;
-    ship.root.visible = !gal;
-    targets.group.visible = !gal;
-    $('labels').style.display = gal ? 'block' : 'none';
+    for (const s of Object.values(ships)) {
+      const inFleet = !!FLEET_POS[s.id];
+      s.root.visible = fleet ? inFleet : (!gal && s === ship);
+      if (fleet && inFleet) { const [x, y] = FLEET_POS[s.id]; s.root.position.set(x, y, 0); s.root.rotation.set(0, 0, 0); s.root.updateMatrixWorld(true); }
+    }
+    targets.group.visible = !gal && !fleet;
+    for (const d of targets.drones) d.mesh.visible = !fleet && S.drones && d.alive;
+    $('labels').style.display = gal || fleet ? 'block' : 'none';
+    for (const el of labelEls) el.style.display = gal ? 'block' : 'none';
+    for (const el of Object.values(fleetLabelEls)) el.style.display = fleet ? 'block' : 'none';
     fx.clear();
+    flight.pos.set(0, 0, 0); flight.vel.set(0, 0, 0); flight.heading = 0; flight.yawVel = 0; flight.bank = 0;
+    const L = ship.length;
     if (m === 'ogledziny') {
-      flight.pos.set(0, 0, 0); flight.vel.set(0, 0, 0); flight.heading = 0; flight.yawVel = 0; flight.bank = 0;
-      setCamera('orbita'); rig.az = -128; rig.el = 24; rig.dist = 2500; rig.pan.set(0, 0, 0);
+      setCamera('orbita'); rig.az = -128; rig.el = 24; rig.dist = L * 1.45 + 60; rig.pan.set(0, 0, 0);
     } else if (m === 'lot') {
-      setCamera(params.get('kamera') || 'taktyczna'); rig.dist = 3400; rig.az = 0; rig.pan.set(0, 0, 0);
+      setCamera(params.get('kamera') || 'taktyczna'); rig.dist = L * 2 + 150; rig.az = 0; rig.pan.set(0, 0, 0);
+    } else if (fleet) {
+      setCamera('orbita'); rig.az = -118; rig.el = 34; rig.dist = 3300; rig.pan.copy(FLEET_CENTER);
     } else {
       setCamera('orbita'); rig.az = -62; rig.el = 34; rig.dist = 1700; rig.pan.set(0, 0, 0);
     }
+    updateShadowCamera();
+  }
+  // Kamera cienia słońca: cały kadr floty albo okręt z zapasem.
+  function updateShadowCamera() {
+    const e = S.mode === 'flota' ? 1550 : S.mode === 'galeria' ? 1150 : Math.max(220, ship.length * 0.64);
+    sc.left = -e; sc.right = e; sc.top = e; sc.bottom = -e;
+    sc.updateProjectionMatrix();
   }
   function setCamera(c) {
     rig.setMode(c);
@@ -225,14 +347,26 @@ async function main() {
   // ---------------------------------------------------------------------------
   // Panel: przełączniki i suwaki
 
-  const U = ship.hullMat.userData.uniforms;
-  const W = ship.weaponMat.userData.uniforms;
+  const W = weaponMat.userData.uniforms;
   const bind = (id, fn) => { const el = $(id); el.addEventListener('change', () => fn(el.checked)); fn(el.checked); };
-  bind('c-deck', (on) => { U.deck.value = on ? 1 : 0; });
-  bind('c-bump', (on) => { U.bump.value = on ? 0.55 : 0; });
-  bind('c-seams', (on) => { U.seams.value = on ? 1 : 0; W.seams.value = on ? 1 : 0; });
-  bind('c-turrets', (on) => { ship.setTurretsVisible(on); });
-  bind('c-markers', (on) => { ship.markers.visible = on; });
+  const allShips = (fn) => { for (const s of Object.values(ships)) fn(s); };
+  const hullU = (fn) => allShips((s) => fn(s.hullMat.userData.uniforms));
+  // Okręt zbudowany później dostaje bieżący stan przełączników panelu.
+  function applyShipToggles(s) {
+    const U = s.hullMat.userData.uniforms;
+    U.deck.value = $('c-deck').checked ? 1 : 0;
+    U.bump.value = $('c-bump').checked ? 0.55 : 0;
+    U.seams.value = $('c-seams').checked ? 1 : 0;
+    s.setTurretsVisible($('c-turrets').checked);
+    s.markers.visible = $('c-markers').checked;
+    s.setSpriteMode($('c-sprite').checked);
+    s.setTurretScale(Number($('s-tscale').value) || 1);
+  }
+  bind('c-deck', (on) => { hullU((U) => { U.deck.value = on ? 1 : 0; }); });
+  bind('c-bump', (on) => { hullU((U) => { U.bump.value = on ? 0.55 : 0; }); });
+  bind('c-seams', (on) => { hullU((U) => { U.seams.value = on ? 1 : 0; }); W.seams.value = on ? 1 : 0; weaponMatPirate.userData.uniforms.seams.value = on ? 1 : 0; });
+  bind('c-turrets', (on) => { allShips((s) => s.setTurretsVisible(on)); });
+  bind('c-markers', (on) => { allShips((s) => { s.markers.visible = on; }); });
   bind('c-shadows', (on) => { sun.castShadow = on; });
   bind('c-bloom', (on) => { uBloomOn.value = on ? 1 : 0; });
   bind('c-bank', (on) => { S.banking = on; });
@@ -241,7 +375,7 @@ async function main() {
   bind('c-pd', (on) => { S.pd = on; });
   bind('c-drones', (on) => { S.drones = on; for (const d of targets.drones) { d.mesh.visible = on && d.alive; } });
   bind('c-gscale', (on) => { gallery.setGameScale(on); });
-  bind('c-sprite', (on) => { ship.setSpriteMode(on); });
+  bind('c-sprite', (on) => { allShips((s) => s.setSpriteMode(on)); });
   const sOpts = { plumes: true, lights: true };
   bind('c-plumes', (on) => { sOpts.plumes = on; });
   bind('c-lights', (on) => { sOpts.lights = on; });
@@ -258,10 +392,11 @@ async function main() {
     sky.u.sunDir.value.copy(sunDir);
   };
   slider('s-tilt', 'o-tilt', (v) => { rig.tilt = v; });
-  slider('s-tscale', 'o-tscale', (v) => { ship.setTurretScale(v); }, (v) => `×${v.toFixed(2)}`);
+  slider('s-tscale', 'o-tscale', (v) => { allShips((s) => s.setTurretScale(v)); }, (v) => `×${v.toFixed(2)}`);
   slider('s-sun', 'o-sun', (v) => { sunAz = v; updateSun(); envDirty = true; });
   slider('s-elev', 'o-elev', (v) => { sunEl = v; updateSun(); envDirty = true; });
   slider('s-exp', 'o-exp', (v) => { uExposure.value = v; }, (v) => v.toFixed(2));
+  uiReady = true;
   $('b-pause').addEventListener('click', () => { S.paused = !S.paused; });
   $('b-glb').addEventListener('click', () => exportGLB().catch((e) => showError(`GLB: ${e?.stack || e}`)));
 
@@ -299,6 +434,7 @@ async function main() {
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     const m = S.mouse;
+    m.down = { x: e.clientX, y: e.clientY };
     const flying = S.mode === 'lot';
     const orbitDrag = !flying || e.altKey || e.button === 1;
     if (e.button === 0 && orbitDrag) m.drag = { x: e.clientX, y: e.clientY, pan: false };
@@ -309,6 +445,11 @@ async function main() {
   });
   canvas.addEventListener('pointerup', (e) => {
     const m = S.mouse;
+    // Klik (bez przeciągania) w trybie floty: wybór okrętu pod kursorem → oględziny.
+    if (e.button === 0 && S.mode === 'flota' && m.down && Math.hypot(e.clientX - m.down.x, e.clientY - m.down.y) < 5) {
+      const id = pickFleetShip(e.clientX, e.clientY);
+      if (id) selectShip(id);
+    }
     if (e.button === 0) m.lmb = false;
     if (e.button === 2) m.rmb = false;
     m.drag = null;
@@ -321,6 +462,9 @@ async function main() {
     if (k === 'h') { $('panel').classList.toggle('hidden'); $('hud').classList.toggle('hidden'); }
     else if (k === 'p') S.paused = !S.paused;
     else if (k === 'o') setMode('ogledziny');
+    else if (k === 'v') setMode('flota');
+    else if (k === '[') cycleShip(-1);
+    else if (k === ']') cycleShip(1);
     else if (k === 'l') setMode('lot');
     else if (k === 'g') setMode('galeria');
     else if (k === 't') { const el = $('c-pd'); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
@@ -393,7 +537,7 @@ async function main() {
   }
 
   function fireHexlance() {
-    if (S.hexCd > 0 || S.mode === 'galeria') return false;
+    if (S.hexCd > 0 || S.mode === 'galeria' || S.mode === 'flota' || !ship.hull.hexlanceMuzzle) return false;
     S.hexCd = 6; S.hexBurst = 4; S.hexT = 0;
     return true;
   }
@@ -406,6 +550,7 @@ async function main() {
     S.hexT = 0.25;
     S.hexBurst--;
     const p = ship.hexlanceMuzzle(_v);
+    if (!p) { S.hexBurst = 0; return; }
     const dir = _v2.set(1, 0, 0).applyQuaternion(ship.root.quaternion);
     fx.flash(p, '#d0eaff', 60, 0.25, 9);
     fx.shoot({ pos: p, dir, speed: 12000, color: '#d0eaff', len: 900, width: 26, life: 1.6, damage: 2000, kind: 'lance', glow: 8, inherit: shipVelocity() });
@@ -419,10 +564,10 @@ async function main() {
     if (b.kind === 'enemy') {
       if (!ship.root.visible) return null;
       _v.copy(b.pos).applyMatrix4(_inv);
-      if (Math.abs(_v.x) > 900 || Math.abs(_v.y) > 320) return null;
+      if (Math.abs(_v.x) > ship.length * 0.6 || Math.abs(_v.y) > ship.width * 0.6) return null;
       if (!ship.hull.contains(_v.x, _v.y)) return null;
       const top = ship.hull.heightAt(_v.x, _v.y);
-      if (_v.z > top + 2 || _v.z < ship.hull.bottomAt(_v.x) - 2) return null;
+      if (_v.z > top + 2 || _v.z < ship.hull.bottomAt(_v.x, _v.y) - 2) return null;
       return ship;
     }
     _seg.set(b.prev, b.pos);
@@ -460,12 +605,24 @@ async function main() {
     } else if (dt > 0) {
       flight.throttle += (0.18 - flight.throttle) * Math.min(1, dt);
     }
-    flight.apply(ship.root, S.banking);
+    const fleetMode = S.mode === 'flota';
+    if (!fleetMode) flight.apply(ship.root, S.banking);
     ship.root.updateMatrixWorld(true);
     _inv.copy(ship.root.matrixWorld).invert();
 
+    // Flota: wszystkie okręty celują w punkt pod kursorem, Spacja — salwa wież głównych.
+    if (fleetMode) {
+      const aim = S.mouse.over || TEST ? aimAt(S.aim) : null;
+      for (const id of FLEET_IDS) {
+        const s = ships[id];
+        s.aim({ main: aim, special: aim, missile: aim, aux: aim }, dt);
+        if (dt > 0 && aim && K.has(' ')) { s.fire('main', spawnFromTurret); s.fire('special', spawnFromTurret, 0.35); }
+        s.throttle = 0.2;
+        s.update(dt, sOpts);
+      }
+    }
     // Celowanie: główne / specjalne / rakiety w kursor (cel pod kursorem), aux — najbliższy dron.
-    if (S.mode !== 'galeria') {
+    if (S.mode !== 'galeria' && !fleetMode) {
       const aim = S.mouse.over || TEST ? aimAt(S.aim) : null;
       const pdT = S.pd && S.drones ? targets.nearestDrone(flight.pos, 2800) : null;
       let pdPoint = null;
@@ -484,17 +641,21 @@ async function main() {
         stepHexlance(dt);
       }
     }
-    ship.throttle = flight.throttle;
-    ship.update(dt, sOpts);
+    if (!fleetMode) {
+      ship.throttle = flight.throttle;
+      ship.update(dt, sOpts);
+    }
 
-    if (S.mode !== 'galeria') {
+    if (fleetMode) {
+      // bez celów — czysty kadr floty
+    } else if (S.mode !== 'galeria') {
       if (dt > 0) targets.update(dt, flight, S.drones ? fx : null, S.drones);
     } else {
       gallery.update(dt, fx, !S.paused);
     }
     if (dt > 0) fx.update(dt, hitTest);
 
-    // Kamera: w galerii środek siatki, inaczej statek.
+    // Kamera: w galerii środek siatki, we flocie środek szyku (pan), inaczej statek.
     if (S.mode === 'galeria') {
       const g = gallery.frame();
       rig.update(dt || 1 / 60, { pos: g.center, heading: 0, forward: new THREE.Vector3(1, 0, 0) });
@@ -502,8 +663,8 @@ async function main() {
       rig.update(dt || 1 / 60, flight);
     }
 
-    // Słońce i cień za kadrem (środek = statek albo galeria).
-    const focus = S.mode === 'galeria' ? gallery.frame().center : flight.pos;
+    // Słońce i cień za kadrem (środek = statek, szyk floty albo galeria).
+    const focus = S.mode === 'galeria' ? gallery.frame().center : fleetMode ? FLEET_CENTER : flight.pos;
     sun.target.position.copy(focus);
     sun.position.copy(focus).addScaledVector(sunDir, 4000);
     sun.target.updateMatrixWorld();
@@ -532,8 +693,43 @@ async function main() {
     labelsEl.appendChild(d);
     return d;
   });
+  const fleetLabelEls = {};
+  for (const id of FLEET_IDS) {
+    const d = document.createElement('div');
+    d.textContent = SHIP3D_MODELS[id].short;
+    d.className = `fleet-label f-${SHIP3D_MODELS[id].faction}`;
+    d.style.display = 'none';
+    labelsEl.appendChild(d);
+    fleetLabelEls[id] = d;
+  }
+  const _box = new THREE.Box3();
+  function pickFleetShip(px, py) {
+    raycaster.setFromCamera({ x: (px / innerWidth) * 2 - 1, y: -(py / innerHeight) * 2 + 1 }, camera);
+    let best = null; let bd = Infinity;
+    for (const id of FLEET_IDS) {
+      const s = ships[id];
+      _box.copy(s.hullGeometry.boundingBox).applyMatrix4(s.root.matrixWorld);
+      const hit = raycaster.ray.intersectBox(_box, _v2);
+      if (!hit) continue;
+      const d = hit.distanceTo(raycaster.ray.origin);
+      if (d < bd) { bd = d; best = s.id; }
+    }
+    return best;
+  }
   const cross = $('crosshair');
   function updateOverlay() {
+    if (S.mode === 'flota') {
+      for (const id of FLEET_IDS) {
+        const s = ships[id];
+        const bb = s.hullGeometry.boundingBox;
+        _v.set(s.center.x, s.center.y, bb.max.z + 30).applyMatrix4(s.root.matrixWorld).project(camera);
+        const el = fleetLabelEls[s.id];
+        if (_v.z > 1) { el.style.display = 'none'; continue; }
+        el.style.display = 'block';
+        el.style.left = `${(_v.x * 0.5 + 0.5) * innerWidth}px`;
+        el.style.top = `${(-_v.y * 0.5 + 0.5) * innerHeight}px`;
+      }
+    }
     if (S.mode === 'galeria') {
       gallery.items.forEach((it, i) => {
         _v.copy(it.pos).add(gallery.group.position).add(_v2.set(0, 0, 70)).project(camera);
@@ -544,7 +740,7 @@ async function main() {
         el.style.top = `${(-_v.y * 0.5 + 0.5) * innerHeight}px`;
       });
     }
-    const showCross = S.mode === 'lot' && S.mouse.over;
+    const showCross = (S.mode === 'lot' || S.mode === 'flota') && S.mouse.over;
     cross.style.display = showCross ? 'block' : 'none';
     if (showCross) {
       cross.style.left = `${S.mouse.px}px`;
@@ -562,7 +758,8 @@ async function main() {
     if (now - lastPanel < 250) return;
     lastPanel = now;
     const st = ship.stats();
-      $('stats').textContent =
+    $('stats').textContent =
+      `${ship.label}\n` +
       `FPS ${S.fps.toFixed(0)}  CPU ${S.cpuMs.toFixed(1)} ms${timestamps ? `  GPU ${Number(S.gpuMs || 0).toFixed(2)} ms` : ''}\n` +
       `draw calls ${S.draw ?? '?'}  trójkąty ${(S.tris ?? 0).toLocaleString('pl-PL')}\n` +
       `kadłub ${st.hullTris.toLocaleString('pl-PL')} tr. · wieże ${st.turrets} (${st.turretTris.toLocaleString('pl-PL')} tr.)\n` +
@@ -576,18 +773,18 @@ async function main() {
       `CIĄG      ${(flight.throttle * 100).toFixed(0).padStart(3)}%    WYS. ${flight.pos.z.toFixed(0)} j\n` +
       `CEL       ${S.lock ? (S.lock.kind === 'drone' ? 'dron' : 'skała') + ` · ${S.lock.pos.distanceTo(flight.pos).toFixed(0)} j` : '—'}\n` +
       `TRAFIENIA ${S.hits}   ZESTRZELENIA ${S.kills}\n` +
-      `HEXLANCE  ${S.hexCd > 0 ? `${S.hexCd.toFixed(1)} s` : 'gotowy (X)'}${S.pd ? '   PD auto' : ''}${S.paused ? '   PAUZA' : ''}`;
+      `HEXLANCE  ${!ship.hull.hexlanceMuzzle ? '—' : S.hexCd > 0 ? `${S.hexCd.toFixed(1)} s` : 'gotowy (X)'}${S.pd ? '   PD auto' : ''}${S.paused ? '   PAUZA' : ''}`;
   }
 
   // ---------------------------------------------------------------------------
   // Eksport GLB: te same geometrie, materiały standardowe (paleta → grupy), pokład ze sprite'em.
 
   async function exportGLB() {
-    const { exportAtlasGLB } = await import('./atlas3d-webgpu/eksport.js');
-    const blob = await exportAtlasGLB(ship, img);
+    const { exportShipGLB } = await import('./atlas3d-webgpu/eksport.js');
+    const blob = await exportShipGLB(ship, images[ship.id]);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'atlas3d.glb';
+    a.download = `${ship.id}3d.glb`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     return blob.size;
@@ -610,7 +807,8 @@ async function main() {
     }
   }
 
-  setMode(params.get('tryb') || 'ogledziny');
+  selectShip(ship.id, true);
+  setMode(params.get('tryb') || (params.get('statek') ? 'ogledziny' : 'flota'));
   if (params.get('kamera')) setCamera(params.get('kamera'));
   updateSun();
   $('loading').style.display = 'none';
@@ -639,7 +837,12 @@ async function main() {
 
   window.__demo = {
     ready: true,
-    S, renderer, scene, camera, ship, flight, rig, fx, targets, gallery, sun,
+    S, renderer, scene, camera, ships, flight, rig, fx, targets, gallery, sun,
+    get ship() { return ship; },
+    /** Wybór okrętu (id z SHIP3D_MODELS, model budowany przy pierwszym wyborze); Promise → stats(). */
+    async ship3d(id, mode) { await selectShip(id, !!mode); if (mode) setMode(mode); return ship.stats(); },
+    ids: SHIP3D_IDS,
+    fleet() { setMode('flota'); },
     step(n = 1) {
       return new Promise((resolve) => { pendingSteps = Math.max(1, n | 0); stepDone = resolve; });
     },
@@ -667,7 +870,7 @@ async function main() {
     stats() {
       const st = ship.stats();
       return {
-        ...st, mode: S.mode, camera: rig.mode, bolts: fx.bolts.length, flashes: fx.flashes.length,
+        ...st, id: ship.id, mode: S.mode, camera: rig.mode, bolts: fx.bolts.length, flashes: fx.flashes.length,
         hits: S.hits, kills: S.kills, drawCalls: S.draw, triangles: S.tris,
         mounts: ship.hull.mounts.length, nozzles: ship.hull.nozzles.length, lights: ship.hull.lights.length,
         loadout: Object.values(ship.loadout).length, pos: flight.pos.toArray().map((v) => Math.round(v)), heading: Math.round(flight.heading / DEG)

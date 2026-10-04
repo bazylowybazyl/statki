@@ -7,12 +7,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
 import {
-  WARP_DEPARTURE_BASE, WARP_ARRIVAL_SHAPE, createWarpDeparture, sampleWarpDeparture, warpSizeScale
+  WARP_DEPARTURE_BASE, WARP_ARRIVAL_SHAPE, WARP_RUSH, WARP_EXIT, createWarpDeparture, sampleWarpDeparture, warpSizeScale,
+  createWarpArrival, planWarpRush, sampleWarpRush, warpArrivalSpeed, warpBrakeTime,
+  createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, warpRulonBend
 } from '../src/game/warpDrive.js';
 import { WarpPlayerFx, WARP_FLOW, WARP_BUBBLE } from '../src/3d/warp/player.js';
 import { WarpFrame, WARP_FRAME_CAPS, newWarpSlot } from '../src/3d/warp/frame.js';
 import {
-  planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, departFxPose, warpDepartureFxState, HERALD_REACH
+  planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, departFxPose, warpDepartureFxState, HERALD_REACH,
+  arrivalFxPose, setMovingBrake
 } from '../src/3d/warp/arrivals.js';
 import { writeWarpSkyBend, clearWarpSkyBend, warpSkyBendCount, warpSkyBendOffsetCpu } from '../src/3d/warp/skyBend.js';
 import { WarpMedium, growShare } from '../src/3d/warp/medium.js';
@@ -22,63 +25,112 @@ import { warpPalette, entityWarpPaletteId } from '../src/3d/warp/palette.js';
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 
-// ── odlot: czysta oś w warpDrive.js (1:1 z planDeparture / departureState dema) ──────────────
+// ── odlot: czysta oś w warpDrive.js (1:1 z planDeparture / departureState dema, iteracja 3) ────
 
-test('odlot: oś dema — ładowanie 1,6 + 0,8·s, szczelina 0,45 s przed wejściem, wejście 0,34 + 0,12·s', () => {
+test('odlot: oś dema — ładowanie 1,6 + 0,8·s, rozpęd ∝ t³ do punktu skoku 4 L przed dziobem, bez szczeliny', () => {
   for (const L of [1800, 1560, 420, 120]) {
     const s = warpSizeScale(L);
     const d = createWarpDeparture({ hullLength: L, startTime: 5, x: 100, y: -50, angle: 0.7 });
     assert.ok(near(d.charge, WARP_DEPARTURE_BASE.charge + WARP_DEPARTURE_BASE.chargePerSize * s));
     assert.ok(near(d.tDive, 5 + d.charge));
-    assert.ok(near(d.tSplit, d.tDive - 0.45));
-    assert.ok(near(d.dive, 0.34 + 0.12 * s));
-    assert.ok(near(d.tGone, d.tDive + d.dive));
+    assert.ok(near(d.rushDist, L * WARP_RUSH.departDist));
+    assert.ok(near(d.accel, WARP_RUSH.accel + WARP_RUSH.accelPerSize * s));
+    assert.ok(near(d.vEnd, 3 * d.rushDist / d.accel));
+    assert.ok(near(d.tIn, d.tDive + d.accel));
+    assert.ok(near(d.tGone, d.tIn + L * 1.1 / d.vEnd));
     assert.ok(near(d.tEnd, d.tGone + 0.45 + 0.2));
-    assert.ok(near(d.seamLength, L * WARP_ARRIVAL_SHAPE.seamLength));
-    assert.ok(near(d.seamHalfWidth, d.seamLength * WARP_ARRIVAL_SHAPE.seamOpen));
-    // Szczelina przed dziobem: jej tylny koniec w dziobie (ujście).
-    const ahead = L * 0.5 + d.seamLength * 0.5;
+    const ahead = L * 0.5 + d.rushDist;
     assert.ok(near(d.cx, 100 + Math.cos(0.7) * ahead, 1e-6) && near(d.cy, -50 + Math.sin(0.7) * ahead, 1e-6));
-    assert.ok(near(d.mouth, L * 0.5));
+    assert.ok(near(d.mouth, ahead));
+    assert.equal(d.seamLength, undefined, 'bez szczeliny');
   }
 });
 
-test('odlot: próbka — fazy po kolei, droga ∝ w² do 2,6 L, okręt znika za ujściem, szczelina zamyka się', () => {
+test('odlot: próbka — fazy po kolei, droga ∝ t³ (pochodna = prędkość), kadłub znika za punktem skoku', () => {
   const d = createWarpDeparture({ hullLength: 1000, startTime: 1 });
   const s = {};
   assert.equal(sampleWarpDeparture(d, 0.5, s).phase, 'wait');
-  assert.equal(s.riftOpen, 0);
   assert.equal(s.build, 0);
-  sampleWarpDeparture(d, d.tSplit - 0.01, s);
+  sampleWarpDeparture(d, d.tDive - 0.01, s);
   assert.equal(s.phase, 'charge');
-  assert.equal(s.riftOpen, 0, 'przed otwarciem szczeliny nic');
-  assert.ok(s.build > 0.5 && s.build < 1);
-  sampleWarpDeparture(d, d.tSplit + 0.01, s);
-  assert.ok(s.riftOpen > 0.08 && s.riftLen > 0.25);
-  sampleWarpDeparture(d, d.tDive, s);
-  assert.equal(s.phase, 'dive');
-  assert.ok(near(s.riftOpen, 1) && near(s.riftLen, 1));
+  assert.ok(s.build > 0.9 && s.build < 1);
   assert.equal(s.dist, 0);
-  assert.ok(near(s.flash, 1));
-  const mid = d.tDive + d.dive * 0.5;
-  sampleWarpDeparture(d, mid, s);
-  assert.ok(near(s.dist, 2600 * 0.25, 1e-6));
-  assert.ok(near(s.speed, 2 * 2600 * 0.5 / d.dive, 1e-6));
-  assert.ok(near(s.revealLine, 500 - s.dist, 1e-6));
+  sampleWarpDeparture(d, d.tDive + d.accel * 0.5, s);
+  assert.equal(s.phase, 'dive');
+  assert.ok(near(s.dist, d.rushDist * 0.125, 1e-6));
+  assert.ok(near(s.speed, d.vEnd * 0.25, 1e-6));
+  assert.ok(near(s.revealLine, d.mouth - s.dist, 1e-6));
+  assert.ok(s.shake > 0 && s.heat > 0.25);
+  sampleWarpDeparture(d, d.tIn, s);
+  assert.ok(near(s.dist, d.rushDist, 1e-6) && near(s.speed, d.vEnd, 1e-6), 'w punkcie skoku pełna prędkość');
   sampleWarpDeparture(d, d.tGone - 1e-6, s);
-  assert.equal(s.shipVisible, false, 'na końcu wejścia kadłub cały za ujściem');
-  sampleWarpDeparture(d, d.tGone + 0.45, s);
-  assert.equal(s.phase, 'close');
-  assert.ok(near(s.riftOpen, 0, 1e-9), 'szczelina zamknięta po 0,45 s');
+  assert.equal(s.shipVisible, false, 'rufa za punktem skoku');
+  assert.equal(sampleWarpDeparture(d, d.tGone + 0.1, s).phase, 'close');
   assert.equal(sampleWarpDeparture(d, d.tEnd + 0.01, s).phase, 'done');
-  // Byle jakie dane: wartości skończone.
   const bad = createWarpDeparture({ hullLength: NaN, x: undefined, angle: 'x', startTime: null });
   for (const t of [-1, 0, 1, 2.5, 100]) {
     sampleWarpDeparture(bad, t, s);
-    for (const k of ['build', 'riftOpen', 'riftLen', 'dist', 'speed', 'revealLine', 'heat', 'flash', 'shake']) {
-      assert.ok(Number.isFinite(s[k]), `${k} skończone`);
-    }
+    for (const k of ['build', 'dist', 'speed', 'revealLine', 'heat', 'shake']) assert.ok(Number.isFinite(s[k]), `${k} skończone`);
   }
+});
+
+// ── przylot: rozpęd i hamowanie (warpDrive.js: planWarpRush) ─────────────────────────────────
+
+test('przylot: wlot z prędkością 9 L/s z daleka, hamowanie na 0,9 L od chwili dawnego wyrzutu, staje w punkcie zwiastuna', () => {
+  for (const L of [1800, 1000, 300]) {
+    const a = planWarpRush(createWarpArrival({ x: 500, y: 700, angle: 0.3, hullLength: L, startTime: 2 }));
+    assert.ok(near(a.v0, warpArrivalSpeed(L)));
+    assert.ok(a.v0 >= WARP_RUSH.arriveSpeedMin && a.v0 <= WARP_RUSH.arriveSpeedMax);
+    assert.ok(near(a.tBrake, a.tBurst), 'hamowanie = dawny wyrzut (oś zwiastuna bez zmian)');
+    assert.ok(a.rushDist >= WARP_RUSH.arriveMin && a.coast >= WARP_RUSH.arriveCoast - 1e-9);
+    assert.ok(near(a.brake, warpBrakeTime(L, a.v0)));
+    const s = {};
+    sampleWarpRush(a, a.tAppear - 0.01, s);
+    assert.equal(s.appeared, false);
+    sampleWarpRush(a, a.tAppear + 0.1, s);
+    assert.ok(near(s.speed, a.v0) && near(s.along, a.v0 * 0.1, 1e-6));
+    sampleWarpRush(a, a.tBrake + a.brake * 0.5, s);
+    assert.ok(near(s.speed, a.v0 * 0.5, 1e-6));
+    sampleWarpRush(a, a.tStop + 0.01, s);
+    assert.ok(near(s.off, 0, 1e-6) && s.speed === 0, 'stoi w miejscu zatrzymania');
+    // Droga hamowania = 0,9 L (stałe opóźnienie).
+    const before = sampleWarpRush(a, a.tBrake, {}).along;
+    assert.ok(near(a.rushDist - before, L * WARP_RUSH.brakeDist, 1e-6));
+  }
+});
+
+test('wyjście gracza: rampa — zwolnienie do prędkości wlotu, wlot, hamowanie; droga zgodna z próbką', () => {
+  const L = 1800;
+  const r = createWarpExitRamp({ v0: 60000, hullLength: L, dirX: 0, dirY: 2 });
+  assert.ok(near(r.dirY, 1) && near(r.dirX, 0));
+  assert.ok(near(r.vArr, warpArrivalSpeed(L)));
+  assert.ok(near(r.tSlowEnd, WARP_EXIT.slow) && near(r.tBrake, WARP_EXIT.slow + WARP_EXIT.coast));
+  const s = {};
+  assert.ok(near(sampleWarpExitRamp(r, 0, s).speed, 60000));
+  assert.equal(sampleWarpExitRamp(r, r.tSlowEnd + 0.01, s).phase, 'coast');
+  assert.ok(near(s.speed, r.vArr));
+  assert.equal(sampleWarpExitRamp(r, r.tBrake + 1e-3, s).phase, 'brake');
+  assert.equal(sampleWarpExitRamp(r, r.tHalt + 1e-3, s).phase, 'done');
+  // Całka prędkości = warpExitRampDistance (travel to zaczyna wyjście z tej drogi).
+  let dist = 0;
+  const h = 1 / 4000;
+  for (let t = 0; t < r.tHalt; t += h) dist += sampleWarpExitRamp(r, t + h * 0.5, s).speed * h;
+  assert.ok(Math.abs(dist - warpExitRampDistance(60000, L)) < 30, `droga ${dist} vs ${warpExitRampDistance(60000, L)}`);
+  assert.ok(near(r.dist, warpExitRampDistance(60000, L)));
+  // Wolny warp nie przyspiesza przy wyjściu.
+  const slow = createWarpExitRamp({ v0: 8000, hullLength: L });
+  assert.ok(near(slow.vArr, 8000));
+});
+
+test('rulon: ładowanie zwija (0 → 1), skok szarpie ponad 1, wyjście rozwija w zwolnieniu; poza skokiem 0', () => {
+  assert.equal(warpRulonBend('charging', 0, 0, 0), 0);
+  assert.ok(near(warpRulonBend('charging', 1, 0, 0), 1));
+  let prev = -1;
+  for (let c = 0; c <= 1; c += 0.05) { const b = warpRulonBend('charging', c, 0, 0); assert.ok(b >= prev - 1e-12); prev = b; }
+  assert.ok(warpRulonBend('active', 1, 0.08, 0) > 1.05, 'szarpnięcie przy skoku');
+  assert.ok(near(warpRulonBend('active', 1, 30, 0), 1, 1e-9));
+  assert.ok(near(warpRulonBend('exit', 1, 30, WARP_EXIT.slow), 0, 1e-9));
+  assert.equal(warpRulonBend('idle', 1, 0, 0), 0);
 });
 
 // ── skok gracza (automat gry → fazy efektu) ─────────────────────────────────────────────────
@@ -86,10 +138,11 @@ test('odlot: próbka — fazy po kolei, droga ∝ w² do 2,6 L, okręt znika za 
 function playerRig() {
   const fx = new WarpPlayerFx();
   fx.bubble = newWarpSlot();
+  fx.push = newWarpSlot();
   const shakes = [];
   fx.onShake = (m, d) => shakes.push([m, d]);
   const frame = new WarpFrame();
-  const game = { state: 'idle', charge: 0, chargeTime: 0.8, gear: 1, speed: 0, angle: 0.3, x: 1000, y: 2000, length: 1800, width: 800, palette: 'magenta', vRelX: 0, vRelY: 0 };
+  const game = { state: 'idle', charge: 0, chargeTime: 0.8, gear: 1, speed: 0, angle: 0.3, x: 1000, y: 2000, length: 1800, width: 800, palette: 'magenta', vRelX: 0, vRelY: 0, exitRamp: null };
   const map = { camX: 900, camY: 1900 };
   const med = { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 };
   const step = (t, dt) => {
@@ -106,7 +159,7 @@ function playerRig() {
   return { fx, frame, game, map, med, step, shakes };
 }
 
-test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudzenie ×3,75^0,6), bańka rośnie', () => {
+test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudzenie ×3,75^0,6), bańka rośnie, rulon się zwija', () => {
   const { fx, frame, game, step } = playerRig();
   const dt = 1 / 60;
   let t = 0;
@@ -127,11 +180,11 @@ test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudz
   assert.ok(frame.bubbles[0].excite > 1.6 * 2, 'wzbudzenie wzmocnione (krótkie ładowanie gry)');
   assert.ok(frame.lens.count === 1, 'soczewka bańki na mgławicy');
   assert.ok(frame.stars.stretch > 0.3 && frame.stars.stretch < 0.33, 'gwiazdy płasko 0,32·ładowanie²');
-  // Kształt bańki z dema.
+  assert.ok(near(fx.rulonBend, 1, 1e-9) && near(fx.rulonField, 1, 1e-9), 'rulon i lejek zwinięte na końcu ładowania');
   assert.ok(near(frame.bubbles[0].R, 1800 * WARP_BUBBLE.radiusK) && near(frame.bubbles[0].asp, WARP_BUBBLE.asp));
 });
 
-test('skok gracza: kop — przepływ widoczny 900 → bieg I w 0,45 s, fala i błysk w punkcie skoku, wstrząs; wyjście — front, szew, żar, gaszenie ośrodka', () => {
+test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna); wyjście z rampy rozgrywki — zwolnienie, hamowanie (błysk, fala, żar, iskry), ośrodek gaśnie', () => {
   const { fx, frame, game, med, step, shakes } = playerRig();
   const dt = 1 / 60;
   let t = 1;
@@ -142,71 +195,94 @@ test('skok gracza: kop — przepływ widoczny 900 → bieg I w 0,45 s, fala i b�
   assert.equal(fx.mode, 'warp');
   assert.equal(shakes.length, 1, 'jeden wstrząs przy kopnięciu');
   assert.ok(near(fx.visibleFlow(fx.kickT), 900));
-  assert.ok(near(fx.visibleFlow(fx.kickT + 0.45), WARP_FLOW.gear1, 1e-6));
+  assert.ok(near(fx.visibleFlow(fx.kickT + 0.45), WARP_FLOW.travel, 1e-6));
   assert.equal(frame.waves.count, 1);
-  assert.equal(frame.flashes.count, 1);
-  // Punkt skoku zostaje w przestrzeni widocznej: kamera ośrodka odjeżdża, fala zostaje za rufą.
   for (let i = 0; i < 30; i++) { t += dt; step(t, dt); }
   const w = frame.waves.items[0];
-  const back = w.x * Math.cos(fx.angle) + w.y * Math.sin(fx.angle);
-  assert.ok(back < -1000, 'fala skoku za statkiem (przestrzeń widoczna)');
-  assert.ok(frame.stars.stretch > 0.9, 'smugi gwiazd w locie');
-  assert.ok(frame.warpVis > 0.99);
-  // Wyjście.
+  assert.ok(w.x * Math.cos(fx.angle) + w.y * Math.sin(fx.angle) < -1000, 'fala skoku za statkiem (przestrzeń widoczna)');
+  assert.ok(frame.stars.stretch > 0.9 && frame.warpVis > 0.99);
+  assert.ok(fx.rulonBend >= 1 - 1e-9, 'rulon w locie');
+  // Wyjście: rampa z gry (wiek rośnie zegarem gry).
+  const ramp = createWarpExitRamp({ v0: 40000, hullLength: 1800, dirX: Math.cos(0.3), dirY: Math.sin(0.3) });
+  game.exitRamp = ramp;
   game.state = 'idle';
   t += dt; step(t, dt);
   assert.equal(fx.mode, 'exit');
   assert.equal(frame.stars.frontOn, 1);
-  const f0 = fx.visibleFlow(t);
-  assert.ok(f0 > 1000);
-  assert.equal(fx.hull.seam, 0, 'front startuje przed dziobem (1,3 a)');
-  for (let i = 0; i < 3; i++) { t += dt; step(t, dt); }
-  assert.ok(fx.hull.on && fx.hull.seam === 1, 'po 0,05 s szew na linii frontu w kadłubie');
-  for (let i = 0; i < 6; i++) { t += dt; step(t, dt); }
-  assert.ok(fx.hull.heat > 0.9, 'żar brzegu po 0,15 s');
-  assert.equal(frame.mediumFade, 6, 'ośrodek gaśnie po wyjściu');
-  assert.ok(fx.visibleFlow(fx.exitT + 0.25) < 170, 'statek staje w przestrzeni widocznej w 0,25 s');
-  for (let i = 0; i < 120; i++) { t += dt; step(t, dt); }
+  assert.equal(shakes.length, 2, 'lekki wstrząs na początku wyjścia');
+  assert.ok(fx.visibleFlow(t) > 1000, 'zwolnienie z prędkości widocznej');
+  assert.ok(fx.visibleFlow(fx.exitT + ramp.slow + 0.01) === null, 'po zwolnieniu ośrodek idzie za prawdziwą kamerą');
+  const tEx = fx.exitT;
+  while (t < tEx + ramp.tBrake + 0.05) { t += dt; ramp.age = t - tEx; step(t, dt); }
+  assert.ok(near(fx.rulonBend, 0, 1e-9), 'rulon rozwinięty po zwolnieniu');
+  assert.ok(frame.glares.count === 1 && frame.flashes.count >= 1, 'błysk i blask na dziobie przy hamowaniu');
+  assert.ok(frame.bubbles.includes(fx.push), 'iskry ośrodka przed dziobem');
+  assert.ok(fx.bubble.front < 1.3, 'bańka zapada się od dziobu');
+  assert.equal(shakes.length, 3, 'wstrząs hamowania');
+  for (let i = 0; i < 6; i++) { t += dt; ramp.age = t - tEx; step(t, dt); }
+  assert.ok(fx.hull.on && fx.hull.heat > 0.8, 'żar kadłuba po hamowaniu');
+  while (t < tEx + ramp.tHalt + 1.0) { t += dt; step(t, dt); }
+  assert.equal(frame.mediumFade, 4, 'ośrodek gaśnie po zatrzymaniu');
+  for (let i = 0; i < 200; i++) { t += dt; step(t, dt); }
   assert.equal(fx.mode, 'idle');
+  assert.equal(fx.rulonBend, 0);
   assert.ok(med.camMX !== 0, 'kamera ośrodka jechała w skoku');
 });
 
 // ── przyloty i odloty NPC ────────────────────────────────────────────────────────────────────
 
-test('przylot (plan z wyprzedzeniem): zwiastun → szczelina → wyrzut z pchnięciem ośrodka, błysk i linia blasku w ujściu', () => {
+test('przylot (plan z wyprzedzeniem): zwiastun do miejsca zatrzymania → okręt wpada z daleka → hamowanie z błyskiem, blaskiem, iskrami', () => {
   const a = planWarpArrivalFx({ x: 0, y: 0, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstTime: 10 });
-  assert.ok(near(a.tBurst, 10, 1e-9), 'wyrzut w zadanej chwili');
+  assert.ok(near(a.tBrake, 10, 1e-9), 'hamowanie w zadanej chwili');
+  assert.ok(near(a.tSpawn, a.tAppear) && a.tAppear < 10, 'okręt pojawia się przed hamowaniem');
   assert.ok(near(a.pushSlot.releaseT, 10.02, 1e-9));
+  assert.ok(a.drive && !a.moving, 'wezwanie prowadzi efekt');
   const frame = new WarpFrame();
-  const ship = { x: 0, y: 0, angle: -0.5, vx: 0, vy: 0, visible: true };
   frame.reset();
   warpArrivalFxState(a, a.t0 + a.herald * 0.6, frame, 0, 0, null);
   assert.equal(frame.bubbles.length, 1, 'nić zwiastuna');
   assert.equal(frame.bubbles[0].heraldLen, HERALD_REACH);
   assert.ok(frame.flashes.count >= 1, 'punkt zbierania');
+  assert.equal(frame.rifts.count, 0, 'bez szczeliny');
+  // Wlot: pozycja z osi — daleko za celem, kadłub odsłania się od dziobu.
+  const pose = { x: 0, y: 0, vx: 0, vy: 0 };
+  arrivalFxPose(a, a.tAppear + 0.02, pose);
+  const back = pose.x * Math.cos(-0.5) + pose.y * Math.sin(-0.5);
+  assert.ok(back < -a.rushDist * 0.9, 'okręt za miejscem zatrzymania');
   frame.reset();
-  warpArrivalFxState(a, a.tTear + a.tear * 0.5, frame, 0, 0, null);
-  assert.equal(frame.rifts.count, 1, 'szczelina rozdarcia');
-  assert.equal(frame.seams.count, 1);
-  assert.equal(frame.seamLens.count, 1, 'wciąganie tła w szczelinę');
-  frame.reset();
-  warpArrivalFxState(a, 10.05, frame, 0, 0, ship);
-  assert.ok(frame.bubbles.includes(a.pushSlot), 'pchnięcie ośrodka przed dziób');
-  assert.ok(a.hull.on && a.hull.revealMode === 1, 'kadłub odsłaniany od dziobu');
-  assert.ok(a.hull.revealLine < 1560 * 0.56 && a.hull.revealLine > -1560 * 0.56);
-  assert.ok(frame.glares.count === 1 && frame.smears.count === 1);
+  warpArrivalFxState(a, a.tAppear + 0.02, frame, 0, 0, { ...pose, angle: -0.5, visible: true });
+  assert.ok(a.hull.on && a.hull.revealMode === 1, 'odsłanianie od dziobu');
   assert.equal(a.plasmaMode, 'active');
-  // Stojący okręt: ujście 0,45 L za dziobem (geometria dema), odsłonięcie w czasie.
-  const L = 1560;
-  const bowX = Math.cos(-0.5) * L * 0.5;
-  assert.ok(near(a.mx, bowX - Math.cos(-0.5) * L * WARP_ARRIVAL_SHAPE.emergeDist, 1e-6));
+  assert.equal(frame.smears.count, 0, 'bez smugi sylwetki');
+  // Hamowanie.
+  arrivalFxPose(a, 10.05, pose);
   frame.reset();
-  warpArrivalFxState(a, 10.5, frame, 0, 0, ship);
-  assert.equal(a.hull.revealMode, 0, 'po odsłonięciu cały kadłub');
-  assert.ok(!frame.bubbles.includes(a.pushSlot), 'pchnięcie jednorazowe (0,5 s)');
+  warpArrivalFxState(a, 10.05, frame, 0, 0, { ...pose, angle: -0.5, visible: true });
+  assert.ok(frame.bubbles.includes(a.pushSlot), 'iskry ośrodka przed dziobem');
+  assert.ok(frame.glares.count === 1, 'blask poprzeczny');
+  assert.equal(a.hull.revealMode, 0, 'kadłub cały');
+  assert.ok(a.hull.heat > 0.3, 'żar hamowania');
+  arrivalFxPose(a, a.tStop + 0.01, pose);
+  assert.ok(near(pose.x, 0, 1e-6) && near(pose.y, 0, 1e-6) && pose.vx === 0, 'stoi w miejscu zwiastuna');
 });
 
-test('odlot (drive): punkt skoku przed dziobem, okręt prowadzony drogą z osi, kadłub znika za ujściem', () => {
+test('przylot prowadzony przez grę (warp-in): odsłanianie od miejsca pojawienia się, hamowanie od wyjścia z warp-in', () => {
+  const a = planWarpArrivalFx({ x: 100, y: 0, angle: 0, hullLength: 900, hullWidth: 400, palette: 'crimson', pirate: true, moving: true, appearTime: 3, speed: 4000 });
+  a.x0 = 100; a.y0 = 0;
+  assert.equal(a.tBrake, Infinity);
+  const frame = new WarpFrame();
+  frame.reset();
+  warpArrivalFxState(a, 3.05, frame, 0, 0, { x: 300, y: 0, angle: 0, vx: 4000, vy: 0, visible: true });
+  assert.ok(near(a.hull.revealLine, 900 * 0.56 - 200, 1e-6));
+  assert.ok(!frame.bubbles.includes(a.heraldSlot), 'bez zwiastuna (gra zna okręt dopiero teraz)');
+  setMovingBrake(a, 3.5, 4000);
+  assert.ok(near(a.tStop, 3.5 + warpBrakeTime(900, 4000)) && Number.isFinite(a.tEnd));
+  frame.reset();
+  warpArrivalFxState(a, 3.55, frame, 0, 0, { x: 1600, y: 0, angle: 0, vx: 400, vy: 0, visible: true });
+  assert.ok(frame.glares.count === 1);
+});
+
+test('odlot (drive): punkt skoku przed dziobem, kop od rufy, okręt prowadzony drogą z osi, kadłub znika za punktem skoku', () => {
   const d = planWarpDepartureFx({ x: 100, y: 200, angle: 0.4, hullLength: 1200, hullWidth: 500, palette: 'crimson', pirate: true, drive: true, startTime: 3 });
   const frame = new WarpFrame();
   const pose = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -215,19 +291,19 @@ test('odlot (drive): punkt skoku przed dziobem, okręt prowadzony drogą z osi, 
   assert.ok(near(pose.x, 100) && near(pose.y, 200), 'w ładowaniu okręt stoi');
   warpDepartureFxState(d, d.t0 + 0.5, frame, 0, 0, { x: pose.x, y: pose.y, angle: 0.4 });
   assert.equal(frame.bubbles.length, 1, 'punkt skoku zbiera ośrodek');
-  assert.equal(frame.rifts.count, 0);
+  assert.equal(frame.rifts.count, 0, 'bez szczeliny');
   assert.equal(d.hull.revealMode, 0);
-  const t = d.tDive + d.dive * 0.6;
+  const t = d.tDive + d.accel * 0.8;
   departFxPose(d, t, pose);
   frame.reset();
   warpDepartureFxState(d, t, frame, 0, 0, { x: pose.x, y: pose.y, angle: 0.4 });
   const dist = Math.hypot(pose.x - 100, pose.y - 200);
-  assert.ok(near(dist, 1200 * 2.6 * 0.36, 1e-6));
-  assert.equal(d.hull.revealMode, -1, 'widać tylko część za ujściem');
-  assert.ok(near(d.hull.revealLine, 600 - dist, 1e-6));
-  assert.equal(frame.rifts.count, 1);
-  assert.equal(frame.rifts.items[0].dirty, 1, 'piraci: brudna szczelina');
-  assert.equal(frame.smears.count, 1);
+  assert.ok(near(dist, d.rushDist * 0.512, 1e-6));
+  assert.equal(d.hull.revealMode, -1, 'widać tylko część za punktem skoku');
+  assert.ok(near(d.hull.revealLine, d.mouth - dist, 1e-6));
+  assert.ok(frame.waves.count >= 1, 'fala kopu za rufą');
+  assert.ok(frame.bubbles.includes(d.bubbleSlot), 'bańka w rozpędzie');
+  assert.equal(frame.smears.count, 0);
   assert.equal(d.plasmaMode, 'active');
 });
 
@@ -422,14 +498,14 @@ test('ośrodek w skoku: kamera ośrodka = widoczna droga statku + zmiana offsetu
   // 0,6 s lotu: przepływ widoczny ustalony (bieg I — 16 tys. j/s).
   for (let i = 0; i < 36; i++) WarpNurt.update(o);
   const step = () => { const m = WarpNurt.camMX; WarpNurt.update(o); return WarpNurt.camMX - m; };
-  const flowStep = WARP_FLOW.gear1 / 60;
+  const flowStep = WARP_FLOW.travel / 60;
   const bub = WarpNurt.player.bubble;
   assert.ok(near(step(), flowStep, 1e-6), 'kamera przy statku: sam przepływ');
   cam.x += 50;   // kamera cofa się / wysuwa względem statku (kop, wyprzedzenie riga, zoom)
   assert.ok(near(step(), flowStep + 50, 1e-6), 'zmiana offsetu kamery idzie do ośrodka');
   // Smugi drobin biorą prędkość kamery ośrodka, bańka — prędkość widoczną statku (demo: ship.vx).
-  assert.ok(near(WarpNurt.flowX, WARP_FLOW.gear1 + 50 * 60, 1e-6));
-  assert.ok(near(bub.vx, WARP_FLOW.gear1, 1e-6) && near(bub.vy, 0, 1e-9), `bańka ${bub.vx}`);
+  assert.ok(near(WarpNurt.flowX, WARP_FLOW.travel + 50 * 60, 1e-6));
+  assert.ok(near(bub.vx, WARP_FLOW.travel, 1e-6) && near(bub.vy, 0, 1e-9), `bańka ${bub.vx}`);
   o.camFollow = false;   // RTS / przejście kamery: offset nie jest kamerą statku
   cam.x += 50;
   assert.ok(near(step(), flowStep, 1e-6), 'poza kamerą statku sam przepływ');
@@ -443,7 +519,42 @@ test('ośrodek w skoku: kamera ośrodka = widoczna droga statku + zmiana offsetu
   o.dt = 1 / 60;
   cam.x += 100000;
   assert.ok(near(step(), flowStep, 1e-6), 'skok kamery nie przesuwa ośrodka o offset');
-  assert.ok(near(bub.vx, WARP_FLOW.gear1, 1e-6));
+  assert.ok(near(bub.vx, WARP_FLOW.travel, 1e-6));
   const html = read('index.html');
   assert.match(html, /o\.camFollow = camera\.mode === 'ship' && !camera\.transition;/);
+});
+
+// ── Rulon: cała gra (hak w każdym materiale, src/3d/warp/rulon.js) ─────────────────────────────
+
+test('rulon całej gry: hak w wierzchołkach każdego materiału, bez passa cienia i bez rulonBend = false; czyste funkcje', async () => {
+  const { installRulonGlobal, RULON_STATE } = await import('../src/3d/warp/rulon.js');
+  installRulonGlobal();
+  // Punkt zaczepienia w three: setup() woła setupHardwareClipping tuż po wyjściu etapu wierzchołków.
+  const src = readFileSync(new URL('../node_modules/three/src/materials/nodes/NodeMaterial.js', import.meta.url), 'utf8');
+  assert.match(src, /builder\.stack\.outputNode = vertexNode;\s*this\.setupHardwareClipping\( builder \);/);
+  const plain = new THREE.NodeMaterial();
+  const v = buildMesh(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), plain)).vertex;
+  assert.match(v, /fn rulonForward \(/, 'przekształcenie jako czysta funkcja (budowane raz)');
+  assert.match(v, /rulonForward\( /);
+  assertNoReversedSmoothstep(v);
+  const flat = new THREE.NodeMaterial();
+  flat.rulonBend = false;
+  assert.doesNotMatch(buildMesh(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), flat)).vertex, /rulonForward/);
+  const shadow = new THREE.NodeMaterial();
+  shadow.isShadowPassMaterial = true;
+  assert.doesNotMatch(buildMesh(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), shadow)).vertex, /rulonForward/);
+  // Culling: płaszczyzny boczne odsunięte tylko przy zwiniętym rulonie.
+  const cam = new THREE.OrthographicCamera(-100, 100, 100, -100, 1, 1000);
+  cam.updateMatrixWorld();
+  const m = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+  const far = new THREE.Sphere(new THREE.Vector3(400, 0, -10), 1);
+  assert.equal(new THREE.Frustum().setFromProjectionMatrix(m).intersectsSphere(far), false);
+  RULON_STATE.cullMargin = 500;
+  assert.equal(new THREE.Frustum().setFromProjectionMatrix(m).intersectsSphere(far), true);
+  RULON_STATE.cullMargin = 0;
+  // Gwiazdy i ośrodek nie zginają się drugi raz; mgławica liczy odwrotność sama.
+  assert.doesNotMatch(read('src/3d/warp/medium.js'), /rulonForward\(/);
+  assert.match(read('src/3d/planet3d.assets.tsl.js'), /material\.rulonBend = false;/);
+  const core = read('src/3d/core3d.js');
+  assert.match(core, /RULON\.pass\.value = 1;\s*renderer\.render\(this\.scene, camera\);\s*RULON\.pass\.value = 0;/);
 });

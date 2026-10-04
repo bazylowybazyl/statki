@@ -1,7 +1,25 @@
 import { defineConfig } from 'vite';
 
+// /dema bez ukośnika dostawał od Vite grę (fallback na /index.html) —
+// przekierowanie do spisu dem (dema/index.html).
+const demaIndexRedirect = {
+  name: 'dema-index-redirect',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      if (req.url === '/dema' || req.url.startsWith('/dema?')) {
+        res.statusCode = 301;
+        res.setHeader('Location', '/dema/' + req.url.slice(5));
+        res.end();
+        return;
+      }
+      next();
+    });
+  },
+};
+
 export default defineConfig({
   base: './',
+  plugins: [demaIndexRedirect],
   define: {
     __HEX_SIM_BUILD__: JSON.stringify('hex-sim-v2'),
   },

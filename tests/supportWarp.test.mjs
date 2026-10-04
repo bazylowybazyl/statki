@@ -281,19 +281,27 @@ test('WarpNurt: wezwanie z Ziemi — nić od Ziemi, okręt podpięty w klatce wy
     WarpNurt.update(o);
   }
   assert.ok(spawnedAt >= 0, 'okręt powstał');
-  assert.ok(spawnedAt < rec.fx.tBurst && WarpNurt.time >= rec.fx.tBurst - 1e-9, 'w klatce, której render przekracza wyrzut');
+  // Okręt powstaje w chwili pojawienia się daleko za celem (tSpawn), hamowanie później (tBrake).
+  assert.ok(spawnedAt < rec.fx.tSpawn && WarpNurt.time >= rec.fx.tSpawn - 1e-9, 'w klatce, której render przekracza pojawienie się');
+  assert.ok(rec.fx.tSpawn < rec.fx.tBrake);
   assert.equal(rec.entity, entity);
   assert.equal(rec.sized, false, 'kadłub jeszcze niezbudowany');
-  // Gra buduje kadłub przy pierwszym rysunku — następna klatka przelicza efekt z prawdziwego kadłuba.
+  assert.ok(entity.x < 1000 - rec.fx.rushDist * 0.8, 'efekt prowadzi okręt — wlot zza celu');
+  assert.equal(entity.isCollidable, false, 'w locie duch');
+  // Gra buduje kadłub przy pierwszym rysunku — następna klatka przelicza wymiary z prawdziwego kadłuba.
   entity.beamHull = { srcWidth: 420, srcHeight: 170, scale: 1 };
   WarpNurt.update(o);
   assert.equal(rec.sized, true);
   assert.equal(rec.fx.hullLength, 420);
   assert.equal(rec.fx.heraldSlot, heraldSlot, 'ta sama przegródka zwiastuna');
-  assert.equal(rec.fx.pushSlot, pushSlot, 'ta sama przegródka pchnięcia (jednorazowe przy wyrzucie)');
-  assert.ok(near(pushSlot.releaseT, rec.fx.tBurst + 0.02));
+  assert.equal(rec.fx.pushSlot, pushSlot, 'ta sama przegródka iskier hamowania');
+  assert.ok(near(pushSlot.releaseT, rec.fx.tBrake + 0.02));
   assert.equal(rec.fx.heraldReach, 20000);
-  assert.ok(entity.__warpHullU, 'odsłanianie kadłuba z tunelu');
+  assert.ok(entity.__warpHullU, 'odsłanianie kadłuba od dziobu');
+  // Po zatrzymaniu: okręt w miejscu zwiastuna, znów zderza się.
+  for (let i = 0; i < 300 && WarpNurt.time < rec.fx.tStop + 0.05; i++) WarpNurt.update(o);
+  assert.ok(near(entity.x, 1000, 1e-6) && entity.vx === 0);
+  assert.equal(entity.isCollidable, true);
   WarpNurt.clear();
 });
 
@@ -313,7 +321,8 @@ test('WarpNurt: odlot z prowadzeniem — okręt wchodzi w szczelinę wzdłuż ku
   const dy = npc.y + 200;
   const along = dx * Math.cos(course) + dy * Math.sin(course);
   const across = -dx * Math.sin(course) + dy * Math.cos(course);
-  assert.ok(near(along, rec.fx.diveReach, 1e-6), `droga w szczelinie ${along}`);
+  // Rozpęd do punktu skoku i dalej pełną prędkością, aż rufa minie punkt skoku.
+  assert.ok(along >= rec.fx.rushDist + 400 * 1.1 - 1e-6, `droga rozpędu ${along}`);
   assert.ok(Math.abs(across) < 1e-6);
   assert.equal(npc.__warpHullU.a.y, -1, 'po wejściu kadłub schowany do usunięcia przez grę');
   // Gra usuwa okręt — efekt dogrywa zamknięcie szczeliny i zwalnia rekord.

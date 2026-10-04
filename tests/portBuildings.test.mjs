@@ -709,24 +709,15 @@ test('sceny: dane instancji skończone, grupy w limicie, style zmieniają wyglą
 
 // ---------------------------------------------------------------------------
 const read = (f) => readFileSync(new URL(`../src/3d/portBuildings/${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const glslBlocks = (text) => [...text.matchAll(/\/\* glsl \*\/`([\s\S]*?)`/g)].map((m) => m[1]);
 
-test('shadery: komentarze ASCII, pozycja przez modelViewMatrix (bez viewMatrix * świat), bez renderera', () => {
-  let blocks = 0;
-  for (const f of ['portBuildings3D.js', 'portHullBuild3D.js', 'portBuoys3D.js']) {
+test('shadery: TSL bez GLSL, pozycja przez modelViewMatrix (bez viewMatrix * świat), bez renderera', () => {
+  for (const f of ['portBuildings3D.js', 'portHullBuild3D.js', 'portBuoys3D.js', 'portBuildings3D.tsl.js', 'portHullBuild3D.tsl.js']) {
     const text = read(f);
     assert.doesNotMatch(text, /new THREE\.WebGLRenderer|WebGLRenderer\(/, `${f}: bez własnego renderera`);
-    for (const body of glslBlocks(text)) {
-      blocks++;
-      for (const line of body.split('\n')) assert.ok(!/[^\x00-\x7F]/.test(line), `${f}: nie-ASCII w GLSL: ${line.trim()}`);
-      for (const m of body.matchAll(/gl_Position\s*=\s*([^;]+);/g)) {
-        const expr = m[1];
-        if (/^vec4\(2\.0/.test(expr)) continue;
-        assert.match(expr, /projectionMatrix \* (modelViewMatrix|mv)\b/, `${f}: gl_Position = ${expr}`);
-      }
-    }
+    assert.doesNotMatch(text, /ShaderMaterial|\/\* glsl \*\/|gl_FragColor|gl_Position|haloRingGLSL|SUN_SHADOW_GLSL/, `${f}: bez GLSL (port WebGPU)`);
+    // ręczne cameraViewMatrix * modelWorldMatrix omija highPrecision (AGENTS.md: precyzja float32)
+    assert.doesNotMatch(text, /cameraViewMatrix\.mul\(\s*modelWorldMatrix/, `${f}: pozycja przez modelViewMatrix`);
   }
-  assert.ok(blocks >= 8);
   // dane boi przepisywane co klatkę względem początku przy kamerze (AGENTS.md: precyzja float32)
   const buoys = read('portBuoys3D.js');
   assert.match(buoys, /sceneOriginNearCamera\(this\.origin, camera\)/);

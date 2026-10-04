@@ -388,5 +388,5 @@ test('skóra belek: dane per kadłub w buforze slotu — w grupie „object” s
   assert.match(source, /HullObjectStore\.release\(hullSlot\.value\);/);
   assert.match(source, /Core3D\.addPassHook\('ortho', \(camera\) => \{ HullObjectStore\.commit\(camera\); \}\);/);
   const core = read('src/3d/core3d.js');
-  assert.match(core, /const hooks = this\._passHooks \? this\._passHooks\[pass\.name\] : null;\n\s*if \(hooks\) for \(let i = 0; i < hooks\.length; i\+\+\) hooks\[i\]\(camera, pass\);\n\s*renderer\.render\(this\.scene, camera\);/);
+  assert.match(core, /const hooks = this\._passHooks \? this\._passHooks\[pass\.name\] : null;\n\s*if \(hooks\) for \(let i = 0; i < hooks\.length; i\+\+\) hooks\[i\]\(camera, pass\);[\s\S]{0,200}?renderer\.render\(this\.scene, camera\);/);
 });

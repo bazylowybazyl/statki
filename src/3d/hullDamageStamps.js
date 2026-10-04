@@ -71,6 +71,19 @@ export const STAMP = Object.freeze({
     impact: st(40, 3.4, 0.9, 0.8, 0, 1, 0, 500), kerf: st(18, 3.2, 0.8, 0.78, 0, 2.4),
     exit: st(28, 3.2, 0.85, 0.78, 0, 1, 0, 250), stuck: st(40, 3.2, 0.9, 0.7, 0, 1, 0, 250)
   }),
+  // Warianty rozmiarowe broni specjalnej (Kolec S 180 obr., Oszczep M 380 obr., Yamato L 450 obr.): wpisy
+  // rodzica z promieniami × √(obrażenia / obrażenia rodzica) i wzorcem krateru w tej samej proporcji —
+  // krater i rana maleją z polem ∝ obrażeń (Kolec 14,7 j., Oszczep 21,4 j. przy 24,4 j. Valkyrie;
+  // Yamato L 43,7 j. przy 60 j. baterii Capital). Żar, osmalenie i brzeg jak u rodzica.
+  valkyrieM: Object.freeze({
+    impact: st(35, 3.4, 0.9, 0.8, 0, 1, 0, 380), kerf: st(16, 3.2, 0.8, 0.78, 0, 2.4),
+    exit: st(24, 3.2, 0.85, 0.78, 0, 1, 0, 190), stuck: st(35, 3.2, 0.9, 0.7, 0, 1, 0, 190)
+  }),
+  valkyrieS: Object.freeze({
+    impact: st(24, 3.4, 0.9, 0.8, 0, 1, 0, 180), kerf: st(11, 3.2, 0.8, 0.78, 0, 2.4),
+    exit: st(17, 3.2, 0.85, 0.78, 0, 1, 0, 90), stuck: st(24, 3.2, 0.9, 0.7, 0, 1, 0, 90)
+  }),
+  yamatoL: Object.freeze({ impact: st(95, 3.6, 1.0, 0.9, 0.4, 1, 0, 1037) }),
   // Wiązka ciągła: w demie stempel co klatkę × moc wiązki (0..1); w grze co trafienie (20 Hz).
   beamC: Object.freeze({ impact: st(11, 3.2, 0.12, 0.6, 0) }),
   beamP: Object.freeze({ impact: st(14, 3.0, 0.4, 0.6, 0) }),
@@ -134,12 +147,18 @@ export function trenchRadiusFor(src, damage = 0) {
   return craterRadiusFor(src, 'kerf', damage);
 }
 
-/** Broń gry → rodzina stempla (27 broni dema — kolumna `fx` tabeli WEAPON_FX zadania 17). */
+/**
+ * Broń gry → rodzina stempla (27 broni dema — kolumna `fx` tabeli WEAPON_FX zadania 17; warianty
+ * rozmiarowe broni specjalnej mają własne, mniejsze wpisy STAMP przy tej samej recepturze efektu).
+ */
 export const WEAPON_STAMP_FAMILY = Object.freeze({
   special_yamato_cannon: 'yamato',
+  special_yamato_l: 'yamatoL',
   hexlance_siege: 'hexlance',
   siege_railgun: 'mjolnir',
   special_valkyrie_railgun: 'valkyrie',
+  special_valkyrie_m: 'valkyrieM',
+  special_valkyrie_s: 'valkyrieS',
   special_goliath_autocannon: 'goliath',
   special_plasma_gatling: 'plasmaGatling',
   armata_mk1: 'armata',

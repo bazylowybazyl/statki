@@ -1,7 +1,7 @@
 // ============================================================
 // Lot i kamery dema 3D.
 // LOT: płaszczyzna gry (kurs = obrót wokół Z) jak w grze + opcjonalny ruch w pionie;
-// liczby z SHIP_FLIGHT_SPECS.atlas (maxSpeed, accel, decel, strafe, reverse, turnRate,
+// liczby z SHIP_FLIGHT_SPECS okrętu (maxSpeed, accel, decel, strafe, reverse, turnRate,
 // turnAccel). Przechył przy skręcie tylko wizualny (gra nie ma przechyłu).
 // KAMERY: 'gra' (z góry, północ w górę — jak kamera gry), 'taktyczna' (3/4, pochylenie),
 // 'poscig' (za rufą), 'orbita' (swobodna wokół statku), 'kinowa' (samoczynny przelot).
@@ -14,9 +14,8 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const approach = (v, t, s) => (v < t ? Math.min(t, v + s) : Math.max(t, v - s));
 
 export class Flight {
-  constructor() {
-    const s = SHIP_FLIGHT_SPECS.atlas;
-    this.spec = { ...s, lift: s.strafeAccel, maxLift: 160 };
+  constructor(specId = 'atlas') {
+    this.setSpec(specId);
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
     this.heading = 0;      // rad, 0 = +X
@@ -24,6 +23,12 @@ export class Flight {
     this.bank = 0;         // rad (wizualny)
     this.speedMul = 1;     // „szybki lot” (test)
     this.throttle = 0;     // 0..1.6 (struga)
+  }
+
+  /** Liczby lotu okrętu (SHIP_FLIGHT_SPECS[id], brak — Atlas). */
+  setSpec(id) {
+    const s = SHIP_FLIGHT_SPECS[id] || SHIP_FLIGHT_SPECS.atlas;
+    this.spec = { ...s, lift: s.strafeAccel, maxLift: Math.max(160, s.maxSpeed * 0.4) };
   }
 
   get forward() { return new THREE.Vector3(Math.cos(this.heading), Math.sin(this.heading), 0); }
@@ -86,7 +91,7 @@ export class CameraRig {
     this._first = true;
   }
 
-  zoom(f) { this.dist = clamp(this.dist * f, 220, 30000); }
+  zoom(f) { this.dist = clamp(this.dist * f, 60, 30000); }
 
   update(dt, flight) {
     const cam = this.camera;

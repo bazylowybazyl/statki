@@ -44,7 +44,7 @@ test('render() i renderBackdrop() robią jeden ręczny sync macierzy przed pierw
   assert.equal(renderBody.split('this._syncSceneMatrices()').length - 1, 1, 'jeden sync na render()');
   // Sync MUSI stać przed pierwszym przejściem sceny w klatce (maska cieni,
   // pre-pass halo, passy sceny), inaczej czyta macierze z poprzedniej klatki.
-  for (const pass of ['this._renderSunShadowMask(', 'this._renderPlanetHaloPrepass()', 'this._runScenePass(pass)']) {
+  for (const pass of ['this._renderSunShadowMask(', 'this._renderPlanetHaloPrepass()', 'this._runScenePass(pass, freePerspective)']) {
     const at = renderBody.indexOf(pass);
     assert.ok(at > 0, `render() woła ${pass}`);
     assert.ok(syncIdx < at, `sync przed ${pass}`);

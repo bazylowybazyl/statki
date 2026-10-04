@@ -27,7 +27,7 @@ export function lin(hex, k = 1) {
 // własnego [1/s], barwy żaru (gorący → chłodny) i czas stygnięcia, turbulencja [j./s],
 // skala pola wirowego, czas zaniku gęstości, wydłużenie świeżego kłębu. Emisja w paśmie
 // ciała — świeci tylko świeży gaz przy dyszy.
-export const SMOKE_KIND = Object.freeze({ EXHAUST: 0, FAST: 1, CHEM: 2, SOOT: 3, VAPOR: 4, DEBRIS: 5 });
+export const SMOKE_KIND = Object.freeze({ EXHAUST: 0, FAST: 1, CHEM: 2, SOOT: 3, VAPOR: 4, DEBRIS: 5, MICRO: 6 });
 
 export const SMOKE_PALETTES = Object.freeze([
   // 0 — spaliny rakiety manewrującej: jasnoszary dym, pomarańczowy żar.
@@ -41,7 +41,10 @@ export const SMOKE_PALETTES = Object.freeze([
   // 4 — zimny gaz wyrzutu (VLS): biała para, szybko rzednie.
   { albedo: lin('#e4ecf2', 0.95), drag: 4.0, hot: [0, 0, 0], warm: [0, 0, 0], tempTau: 0.1, turb: 36, turbScale: 140, fadeTau: 0.9, stretch: 0.2 },
   // 5 — dym płonących odłamków: szary z ciepłym żarem, cienki.
-  { albedo: lin('#8a827a', 0.9), drag: 1.2, hot: [3.0, 1.5, 0.5], warm: [1.0, 0.28, 0.06], tempTau: 0.1, turb: 50, turbScale: 200, fadeTau: 1.8, stretch: 0.5 }
+  { albedo: lin('#8a827a', 0.9), drag: 1.2, hot: [3.0, 1.5, 0.5], warm: [1.0, 0.28, 0.06], tempTau: 0.1, turb: 50, turbScale: 200, fadeTau: 1.8, stretch: 0.5 },
+  // 6 — mikrorakiety (Grad, Rój, głowice Hydry): cienka, jasna nitka spalin, szybko rzednie —
+  // salwa zostawia gęstą siatkę krętych smug, która nie zamienia się w jedną chmurę.
+  { albedo: lin('#e0dfdb', 0.95), drag: 3.8, hot: [3.4, 2.3, 1.1], warm: [1.1, 0.42, 0.1], tempTau: 0.06, turb: 42, turbScale: 150, fadeTau: 1.1, stretch: 1.7 }
 ].map((p) => Object.freeze(p)));
 
 /** Opór ruchu własnego palet (CPU: przesunięcie porcji o wiek początkowy). */
@@ -79,14 +82,35 @@ export const MISSILE_VFX = Object.freeze({
     light: Object.freeze({ color: Object.freeze([1.0, 0.3, 0.95]), intensity: 0.6, range: 560 }),
     trail: Object.freeze({ kind: SMOKE_KIND.CHEM, spacing: 5.5, size0: 4.2, growth: 40, lives: Object.freeze([0.36, 2.6, 7.0]), opacity: 0.36, temp: 1.0, exhaust: 1.03 }),
     blast: Object.freeze({ radius: 420, sparks: 1400, fragments: 0, smoke: 0, flash: 3.0, shock: 3.0 })
+  }),
+  // Mikrorakiety salw (Grad, Rój) i głowice potomne Hydry: mały jasny płomień, cienka smuga,
+  // mały wybuch — liczy się grad trafień, nie pojedynczy błysk.
+  micro: Object.freeze({
+    label: 'Mikrorakieta',
+    body: Object.freeze({ hull: Object.freeze(lin('#cfd3d8')), band: Object.freeze(lin('#3d7dff')) }),
+    plume: Object.freeze({ kind: 1, len: 6.4, width: 0.95, core: Object.freeze([9.5, 8.4, 6.4]), hot: Object.freeze(lin('#fff1c8', 1.0)), mid: Object.freeze(lin('#ffa94a', 0.85)) }),
+    light: Object.freeze({ color: Object.freeze([1.0, 0.7, 0.38]), intensity: 0.32, range: 200 }),
+    trail: Object.freeze({ kind: SMOKE_KIND.MICRO, spacing: 5.5, size0: 2.8, growth: 19, lives: Object.freeze([0.3, 1.05, 2.5]), opacity: 0.32, temp: 0.95, exhaust: 1.02 }),
+    blast: Object.freeze({ radius: 62, sparks: 34, fragments: 1, smoke: 7, flash: 0.42, shock: 0.32 })
+  }),
+  // Nosiciel głowicy kasetowej (Hydra): ciężki kadłubek, pomarańczowo-biały płomień, gęsta smuga.
+  hydra: Object.freeze({
+    label: 'Rakieta kasetowa',
+    body: Object.freeze({ hull: Object.freeze(lin('#b9bec6')), band: Object.freeze(lin('#ff9a3c')) }),
+    plume: Object.freeze({ kind: 0, len: 5.0, width: 1.0, core: Object.freeze([9, 7.2, 4.8]), hot: Object.freeze(lin('#ffd49a', 1.0)), mid: Object.freeze(lin('#ff7a24', 0.9)) }),
+    light: Object.freeze({ color: Object.freeze([1.0, 0.52, 0.2]), intensity: 0.85, range: 440 }),
+    trail: Object.freeze({ kind: SMOKE_KIND.EXHAUST, spacing: 4.2, size0: 3.2, growth: 36, lives: Object.freeze([0.3, 2.0, 6.0]), opacity: 0.34, temp: 1.0, exhaust: 1.04 }),
+    blast: Object.freeze({ radius: 110, sparks: 120, fragments: 5, smoke: 24, flash: 0.9, shock: 0.9 })
   })
 });
 
 /** Kolejność rodzajów w tablicach per rakieta (effects.js). */
-export const VFX_KEYS = Object.freeze(['cruise', 'fast', 'supernova']);
+export const VFX_KEYS = Object.freeze(['cruise', 'fast', 'supernova', 'micro', 'hydra']);
 export const VFX_CRUISE = 0;
 export const VFX_FAST = 1;
 export const VFX_NOVA = 2;
+export const VFX_MICRO = 3;
+export const VFX_HYDRA = 4;
 
 // Barwy pasa kadłubka według strony (colorTheme gry): sojusznik — niebieski dema, wróg —
 // czerwień (dawny kadłubek rakiety wroga był czerwony). Supernowa zostaje różowa.
@@ -94,12 +118,18 @@ export const BAND_FRIENDLY = Object.freeze(lin('#3d7dff'));
 export const BAND_HOSTILE = Object.freeze(lin('#ff3a2e'));
 
 /**
- * Rodzaj efektów rakiety z definicji broni gry: Supernowa (rocketExplosionVfx
- * 'supernova'), szybka (fast_missile_rack / mały kadłubek) albo manewrująca.
+ * Rodzaj efektów rakiety z definicji broni gry: jawnie z `rocketVfx` (cruise | fast | supernova |
+ * micro | hydra), a bez niego jak dawniej — Supernowa (rocketExplosionVfx 'supernova'), szybka
+ * (fast_missile_rack / mały kadłubek) albo manewrująca.
  */
 export function rocketVfxIndex(def) {
   const id = String(def?.id || '');
   if (id === 'supernova_missile' || String(def?.rocketExplosionVfx || '').toLowerCase() === 'supernova') return VFX_NOVA;
+  const key = String(def?.rocketVfx || '').toLowerCase();
+  if (key) {
+    const k = VFX_KEYS.indexOf(key);
+    if (k >= 0) return k;
+  }
   if (id === 'fast_missile_rack' || (Number(def?.bodyScale) || 1) < 0.8) return VFX_FAST;
   return VFX_CRUISE;
 }
@@ -115,8 +145,13 @@ export const NEBULA_COLORS = Object.freeze({
   halpha: Object.freeze(lin('#ff2f6a', 1.0)),
   oiii: Object.freeze(lin('#2ef2d0', 0.9)),
   sii: Object.freeze(lin('#c01848', 1.0)),
-  hot: Object.freeze(lin('#b8d6ff', 1.2))
+  hot: Object.freeze(lin('#b8d6ff', 1.2)),
+  // Dżety pulsara (wiatr relatywistyczny): biało-błękitne, stygną w turkus [O III].
+  jet: Object.freeze(lin('#a9c4ff', 1.15))
 });
+
+// Snopy światła pulsara (reżyser, duszki smug z jądra) — barwa HDR rdzenia snopu.
+export const PULSAR_BEAM = Object.freeze([1.1, 1.5, 2.6]);
 
 // Iskry (wygląd dawnego SparkSystem3D gry: biel → barwa → stygnięcie, migotanie).
 export const SPARK_COLORS = Object.freeze({

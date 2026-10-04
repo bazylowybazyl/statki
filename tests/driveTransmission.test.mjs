@@ -13,6 +13,8 @@ import {
   shiftDriveUp,
   updateDriveTransmission
 } from '../src/game/flight/driveTransmission.js';
+import { SHIP_PHYSICS } from '../src/game/flight/thrusterModel.js';
+import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 
 function settleTravelRpm(drive, targetRpm, frames = 180) {
   const targetRatio = targetRpm / DRIVE_RPM_MAX;
@@ -28,21 +30,43 @@ test('drive modes expose the requested speed envelopes', () => {
   assert.ok(DRIVE_MODES.travel.gears.length > 5);
 });
 
-test('hull classes scale handling while Atlas keeps its classic combat envelope', () => {
+// Jedna tabela lotu (2026-10-01): kadłub gracza lata w trybie bojowym liczbami SHIP_FLIGHT_SPECS —
+// tymi samymi co NPC (dawniej fregata 4800 j/s, Atlas 10 000 j/s).
+test('player hulls fly the shared flight table: speed limit, thrust and brake from SHIP_FLIGHT_SPECS', () => {
   const hulls = ['frigate', 'destroyer', 'battleship', 'carrier', 'atlas'];
+  const specs = ['terran_frigate', 'terran_destroyer', 'terran_battleship', 'terran_carrier', 'atlas'].map(id => SHIP_FLIGHT_SPECS[id]);
   const combat = hulls.map(hullClass => createDriveTransmission({ mode: 'combat', hullClass }));
   const maneuver = hulls.map(hullClass => createDriveTransmission({ mode: 'maneuver', hullClass }));
 
-  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [4800, 4200, 3600, 3000, 10000]);
-  assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [900, 700, 520, 400, 400]);
+  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), specs.map(s => s.maxSpeed));
+  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [1400, 1000, 650, 480, 500]);
+  assert.deepEqual(combat.map(drive => drive.brakeAccel), specs.map(s => s.decel));
+  assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [700, 500, 325, 240, 250]);
   assert.ok(combat[0].mainForceScale > combat[1].mainForceScale);
   assert.ok(combat[1].mainForceScale > combat[2].mainForceScale);
   assert.ok(combat[2].mainForceScale > combat[3].mainForceScale);
   assert.ok(combat[3].mainForceScale > combat[4].mainForceScale);
+  // Ciąg główny na pełnych obrotach daje tabelowe przyspieszenie z niewielkim zapasem.
+  for (let i = 0; i < 240; i++) updateDriveTransmission(combat[4], 480, 1, 1 / 60);
+  const accel = SHIP_PHYSICS.SPEED * combat[4].mainForceScale;
+  assert.ok(accel > specs[4].accel && accel < specs[4].accel * 1.3, `Atlas: ${accel.toFixed(0)} j/s² przy tabelowych ${specs[4].accel}`);
 
   setDriveHullClass(combat[0], 'atlas');
   assert.equal(combat[0].hullClass, 'supercapital');
-  assert.equal(combat[0].modeMaxSpeed, 10000);
+  assert.equal(combat[0].modeMaxSpeed, 500);
+});
+
+test('szarża: limit napędu rośnie na czas zrywu, potem napęd hamuje do limitu trybu', () => {
+  const drive = createDriveTransmission({ hullClass: 'atlas' });
+  const velocity = { x: 3000, y: 0 };
+  drive.burnLimit = 3000;
+  assert.equal(applyDriveSpeedGovernor(drive, velocity, 1 / 60), 3000, 'w zrywie governor nie hamuje');
+  drive.burnLimit = 0;
+  drive.burnBrake = 650;
+  const after = applyDriveSpeedGovernor(drive, velocity, 1);
+  assert.ok(Math.abs(after - (3000 - 650 * 0.12)) < 1e-6, 'po zrywie: hamowanie zrywu (krok ograniczony do 0,12 s)');
+  for (let i = 0; i < 600; i++) applyDriveSpeedGovernor(drive, velocity, 1 / 60);
+  assert.ok(Math.abs(Math.hypot(velocity.x, velocity.y) - drive.speedLimit) < 1e-6);
 });
 
 test('megafreighter has stronger train steering than a passive supercapital profile', () => {
@@ -59,7 +83,7 @@ test('Atlas exposes only combat and maneuver modes', () => {
   const drive = createDriveTransmission({ hullClass: 'atlas' });
 
   assert.equal(drive.mode, 'combat');
-  assert.equal(drive.modeMaxSpeed, 10000);
+  assert.equal(drive.modeMaxSpeed, 500);
   assert.deepEqual(drive.availableModes, ['combat', 'maneuver']);
   assert.equal(setDriveMode(drive, 'travel'), false);
   assert.equal(drive.mode, 'combat');

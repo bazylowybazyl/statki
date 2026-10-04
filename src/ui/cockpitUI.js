@@ -145,7 +145,10 @@ const RPM_WINDOW = Object.freeze({
 // Łuki tylko w górnej połowie — dolna jest ścięta (cockpit-ui.css), dopóki Alt nie wysunie radaru.
 // Zewnętrzny pierścień = przetrwanie (kadłub ↖, tarcza ↗ — spływają od góry), wewnętrzny,
 // cieńszy = napęd (prędkość pod kadłubem, obroty pod tarczą — rosną od dołu), w parze z odczytami.
-const CLUSTER = Object.freeze({ box: 340, center: 170, ring: 150, drive: 131, radar: 118 });
+// radar = tarcza w kopule; radarAlt = tarcza po Alt (pełny radar): rośnie do wnętrza pierścienia
+// kadłuba / tarczy (krawędź 144,5u) i przykrywa łuki napędu — ich liczby zostają na barkach.
+// Płótno radaru ma rozmiar radarAlt, w kopule CSS pomniejsza je do radar (cockpit-ui.css).
+const CLUSTER = Object.freeze({ box: 340, center: 170, ring: 150, drive: 131, radar: 118, radarAlt: 140 });
 const CLUSTER_ARCS = Object.freeze({
   hull: Object.freeze({ anchor: 275, span: 75, reverse: false }),
   shield: Object.freeze({ anchor: 85, span: 75, reverse: true }),
@@ -161,9 +164,10 @@ const VITAL_STYLE = Object.freeze({
   shield: Object.freeze({ color: '#2f7dff', track: 'rgba(47, 125, 255, 0.14)', ghost: 'rgba(190, 210, 255, 0.5)' })
 });
 const DRIVE_GLOW = Object.freeze({ normal: '#ff6600', cue: '#38e08a', danger: '#ff3a2a', warp: '#4fb8ff' });
+// Pole bez obudowy: gotowość błyska żarem wokół znaku i podpisu, nie ramką klawisza.
 const READY_FLASH = Object.freeze([
-  { boxShadow: '0 0 0 1px #ff6600, 0 0 18px rgba(255, 102, 0, 0.65)' },
-  { boxShadow: '0 0 0 1px rgba(255, 102, 0, 0), 0 0 0 rgba(255, 102, 0, 0)' }
+  { filter: 'brightness(1.7) drop-shadow(0 0 7px rgba(255, 102, 0, 0.95))' },
+  { filter: 'brightness(1) drop-shadow(0 0 0 rgba(255, 102, 0, 0))' }
 ]);
 const READY_FLASH_TIMING = Object.freeze({ duration: 550, easing: 'ease-out' });
 const SCAN_RESULTS_MS = 10000;
@@ -473,7 +477,7 @@ function cockpitMarkup(devMode) {
       </div>
 
       <section class="hud-bottom" id="hudBottom">
-        <div class="slot-bar weapons" id="weaponBar"></div>
+        <div class="slot-bar weapons" id="weaponBar"><canvas class="turret-panel" id="turretPanel" aria-hidden="true"></canvas></div>
         <div class="cluster" id="cluster">
           <div class="alert-line" id="alertLine"></div>
           <div class="telltales" id="telltales"><span class="mode-badge" id="spMode" title="Tryb napędu — V zmienia">B</span></div>
@@ -616,7 +620,7 @@ export class CockpitUI {
       'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText', 'tabletClose', 'stationTabsBar',
       'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane', 'missionFilters', 'missionList',
       'missionDetail', 'tabletCredits', 'tabletCargo', 'tabletFootLeft', 'tabletFootCenter', 'tabletFootRight',
-      'supportTooltip', 'dragGhost', 'deployReticle'
+      'supportTooltip', 'dragGhost', 'deployReticle', 'turretPanel'
     ];
     for (const id of ids) this.els[id] = this.shadow.getElementById(id);
     this.radarCtx = this.els.radarCanvas?.getContext('2d') || null;
@@ -833,14 +837,14 @@ export class CockpitUI {
       button.type = 'button';
       button.className = 'slot';
       button.title = definition.title || `${definition.label} [${definition.key}]`;
-      button.innerHTML = '<span class="slot-led"></span><span class="slot-key"></span><span class="slot-auto">AUTO</span><span class="slot-icon"></span><span class="slot-name"></span><span class="slot-mask"></span>';
+      button.innerHTML = '<span class="slot-key"></span><span class="slot-auto">AUTO</span><span class="slot-icon"></span><span class="slot-name"></span><span class="slot-charge"></span>';
       button.querySelector('.slot-key').textContent = definition.key;
       button.querySelector('.slot-icon').textContent = definition.icon;
       const name = button.querySelector('.slot-name');
       name.textContent = definition.label;
       button.addEventListener('click', () => this.useSlot(definition));
       root.appendChild(button);
-      this.slots.push({ definition, kind, button, name, mask: button.querySelector('.slot-mask'), state: Object.create(null) });
+      this.slots.push({ definition, kind, button, name, state: Object.create(null) });
     };
     for (const definition of WEAPON_SLOTS) make(definition, this.els.weaponBar, 'weapon');
     for (const definition of ABILITY_SLOTS) make(definition, this.els.abilityBar, 'ability');
@@ -893,7 +897,7 @@ export class CockpitUI {
       this.setSlotState(slot, 'auto', auto, value => slot.button.classList.toggle('auto', value));
       this.setSlotState(slot, 'on', on, value => slot.button.classList.toggle('on', value));
       this.setSlotState(slot, 'cool', cooling, value => slot.button.classList.toggle('cool', value));
-      this.setSlotState(slot, 'mask', cooling ? Math.round((1 - charge) * 100) : 0, value => { slot.mask.style.height = `${value}%`; });
+      this.setSlotState(slot, 'charge', cooling ? Math.round(charge * 100) : 100, value => { slot.button.style.setProperty('--charge', String(value / 100)); });
       this.setSlotState(slot, 'label', label, value => { slot.name.textContent = value; });
       this.setSlotState(slot, 'title', title, value => { slot.button.title = value; });
       if (slot.state.wasCooling && !cooling && !empty) slot.button.animate?.(READY_FLASH, READY_FLASH_TIMING);
@@ -951,6 +955,11 @@ export class CockpitUI {
     this.viewRange = range;
     if (this.els.rdRange) this.els.rdRange.textContent = `${range / 1000}K`;
     this.lastRadarDraw = 0;
+  }
+
+  // Sylwetka okrętu z wieżami nad szyną broni (src/ui/turretPanel.js) — rysuje ją gra co klatkę.
+  getTurretPanelCanvas() {
+    return this.els.turretPanel || null;
   }
 
   getRadarRange() {
@@ -1347,7 +1356,7 @@ export class CockpitUI {
     // Rozmiar z tej samej skali co CSS (średnica radaru = 2 × 118 × --s) — bez
     // getBoundingClientRect w pętli, który po zapisach DOM wymuszał layout.
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    const width = Math.max(1, Math.round(CLUSTER.radar * 2 * this.scale * dpr));
+    const width = Math.max(1, Math.round(CLUSTER.radarAlt * 2 * this.scale * dpr));
     const height = width;
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
     drawCicHudRadarSurface(this.radarCtx, width, height, this.radarModel, { range: this.viewRange });

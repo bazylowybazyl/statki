@@ -80,6 +80,27 @@ destruktor dostaje same ciała heksowe (`_hexDestructibles`, asteroidy).
   NPC → 100 tys.) i wartościami z localStorage. Masy gry idą teraz wyłącznie z szablonów;
   klucz `devDestructorMassConfig` został na liście `SAVE_KEYS.dev`, żeby `?reset` go sprzątnął.
 
+## Pancerz i zgniot (2026-10-04)
+
+`src/data/hullArmor.js` przypisuje pancerz mechaniczny do profilu kadłuba: fregata 1,
+niszczyciel 1,5, pancernik 3, lotniskowiec 4, superkapitał 10, Atlas 16. Frachtowce mają
+własne słabsze poszycie — duży rozmiar i masa nie oznaczają pancerza okrętu bojowego.
+Wszystkie ścieżki budowy w grze (gracz, zmiana kadłuba, P2, NPC) podają `hullProfileId`;
+`HullBodies.createHull` zapisuje wartość w `body.collisionArmor`. Cały wrak i odłamki
+dziedziczą ją po rodzicu. Nieznany/ręczny kadłub ma 1, jak przed zmianą.
+
+Globalne `crushStrength` i `globalBreakMul` zostają strojeniem materiału. Opór zgniotu
+jest mnożony przez pancerz słabszego uczestnika (przy ciele statycznym — statku).
+Podatność każdego kadłuba maleje z kwadratem jego pancerza; udziały zgniotu są
+normalizowane, więc mocne poszycie przekazuje zgniot słabszej stronie. Masa nadal
+wpływa na podział, impuls i obrót. Równe pancerze zachowują podział według mas;
+Atlas może się niszczyć w taranie innego ciężkiego okrętu. HP i kratery od broni
+nie są zmienione przez ten parametr.
+
+Test `tests/hullCollisionArmor.test.mjs`: rząd z misji 1, prawdziwe sprite'y, szarża
+z `SHIP_SYSTEMS.atlas`, zgniecenie co najmniej trzech jednostek i strata <1% kadłuba
+Atlasa; także taran Atlas–Atlas, dziedziczenie pancerza oraz niezmieniony budżet broni.
+
 ## Zderzenia
 
 - Filtr par: `isCollidable`, moduły jednego właściciela (poza wrakami), liny holownicze,
@@ -111,7 +132,9 @@ destruktor dostaje same ciała heksowe (`_hexDestructibles`, asteroidy).
 
 3. Zimne wraki na belkach (zrzut magazynów), budżet i LOD wraków pod bitwę.
 4. Mostki (`shipBridge*`, `bridge3D`, `bridgeFx3D`) — dziś wymagają `hexGrid`, na kadłubach belkowych nieaktywne.
-5. Rdzenie (`shipCore`, `coreFx3D`, `reactor3D`) — j.w.
+5. Rdzenie — wersja na belkach GOTOWA w demie (2026-09-30): logika `src/game/reactorCore.js`, wybuch
+   WebGPU `src/3d/reactorBlast/`, `dema/rdzen-webgpu.html`; kroki wpięcia: `docs/webgpu/DEMO-RDZEN.md` § 7.
+   Stare `shipCore` / `coreFx3D` (heksy) zostają dla dema heksowego.
 6. Reszta: panel destruktora / devTools (dotyczą asteroid), radar (plan z węzłów już jest), perf HUD.
 7. Asteroidy na belkach (materiał kruchy). Do tego czasu statek bez `hexGrid` ma z heksową
    asteroidą kolizję KOŁOWĄ (`asteroidField3D`), bez zgniotu.

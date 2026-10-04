@@ -22,7 +22,7 @@ import {
 test('normal target menu includes attack and keeps target entity commands live', () => {
   const target = { x: 100, y: 200, radius: 50 };
   assert.deepEqual(buildNormalCommandMenuItems({ targetEntity: target }).map((i) => i.action), [
-    'attack', 'ram', 'approach', 'orbit', 'jump', 'cruise', 'scan'
+    'attack', 'ram', 'approach', 'orbit', 'travel', 'scan'
   ]);
   assert.equal(createApproachCommand({ point: { x: 0, y: 0 }, targetEntity: target }).targetEntity, target);
   assert.equal(createOrbitCommand({ point: { x: 0, y: 0 }, targetEntity: target }).targetEntity, target);
@@ -31,13 +31,13 @@ test('normal target menu includes attack and keeps target entity commands live',
 
 test('normal empty-space menu omits attack', () => {
   assert.deepEqual(buildNormalCommandMenuItems({ targetEntity: null }).map((i) => i.action), [
-    'approach', 'orbit', 'jump', 'cruise', 'scan'
+    'approach', 'orbit', 'travel', 'scan'
   ]);
 });
 
 test('rts menu labels move formation only for multi selection', () => {
-  assert.equal(buildRtsCommandMenuItems({ selectedCount: 1 })[0].label, 'MOVE');
-  assert.equal(buildRtsCommandMenuItems({ selectedCount: 3 })[0].label, 'MOVE FORMATION');
+  assert.equal(buildRtsCommandMenuItems({ selectedCount: 1 })[0].label, 'RUCH');
+  assert.equal(buildRtsCommandMenuItems({ selectedCount: 3 })[0].label, 'RUCH W SZYKU');
   assert.ok(buildRtsCommandMenuItems({ selectedCount: 1 }).some((i) => i.action === 'ram'));
 });
 

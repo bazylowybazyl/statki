@@ -48,6 +48,11 @@ def(M.HANGAR, '#07090c', 0.8, 0.1, { emissive: '#ffb060', power: 0.35, seams: 0 
 /** Paleta w postaci danych (eksport GLB, testy). */
 export const SHIP3D_PALETTE = Object.freeze(PAL.map((p) => Object.freeze({ ...p })));
 
+/** Paleta z nadpisaniami okrętu (jak w createShipMaterial) — eksport GLB. */
+export function shipPalette(overrides = null) {
+  return PAL.map((p, i) => ({ ...p, ...(overrides?.[i] || {}) }));
+}
+
 // Hash 2D bez sinusa (Hoskins) — płyty paneli.
 const hash12 = Fn(([p]) => {
   const q = fract(p.mul(vec2(0.1031, 0.1030))).toVar();
@@ -74,9 +79,12 @@ export function createShipMaterial(o = {}) {
     panel: uniform(new THREE.Vector2(o.panelW ?? 88, o.panelH ?? 30)) // rozmiar płyty (px sprite'a)
   };
 
-  const colors = uniformArray(PAL.map((p) => new THREE.Color(p.color)), 'color');
-  const pbr = uniformArray(PAL.map((p) => new THREE.Vector4(p.rough, p.metal, p.power, p.seams)), 'vec4');
-  const emis = uniformArray(PAL.map((p) => new THREE.Color(p.emissive)), 'color');
+  // Paleta okrętu: domyślna + nadpisania (o.palette: { [SHIP3D_MAT]: { color, rough, metal, … } }) —
+  // farba Terra Nova / piratów; te same węzły, inne wartości w tablicach uniformów.
+  const pal = PAL.map((p, i) => ({ ...p, ...(o.palette?.[i] || {}) }));
+  const colors = uniformArray(pal.map((p) => new THREE.Color(p.color)), 'color');
+  const pbr = uniformArray(pal.map((p) => new THREE.Vector4(p.rough, p.metal, p.power, p.seams)), 'vec4');
+  const emis = uniformArray(pal.map((p) => new THREE.Color(p.emissive)), 'color');
 
   const aMat = attribute('aMat', 'float');
   const id = clamp(aMat.add(0.5), 0, SHIP3D_MAT_COUNT - 1).toInt();

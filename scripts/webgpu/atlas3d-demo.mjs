@@ -4,7 +4,7 @@
 // = błąd), zapisuje zrzuty do .tmp/atlas3d/. Sprawdza POPRAWNOŚĆ, nie wydajność.
 //
 // Użycie: serwer `npx vite --port 5199 --strictPort` w tle, potem
-//   node scripts/webgpu/atlas3d-demo.mjs [--url http://localhost:5199] [--tylko start,gra,lot,poscig,galeria,pelny,glb]
+//   node scripts/webgpu/atlas3d-demo.mjs [--url http://localhost:5199] [--tylko start,gra,lot,poscig,galeria,pelny,flota,glb]
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -148,6 +148,27 @@ const scenarios = {
     await shot(page, '12-pelny-fit');
     const st = await stats(page);
     notes.push(`[pelny] wieże ${st.turrets}, trójkąty wież ${st.turretTris}`);
+    await page.close();
+  },
+
+  // Flota (Terra Nova i piraci): tryb Flota na starcie, oględziny każdego okrętu, lot okrętem floty.
+  async flota(browser) {
+    const page = await openPage(browser, 'test=1');
+    await step(page, 3);
+    await shot(page, '13-flota');
+    const ids = await call(page, () => Object.keys(window.__demo.ships));
+    if (ids.length !== 7) problems.push(`[flota] okrętów ${ids.length}, oczekiwano 7`);
+    for (const id of ids) {
+      const st = await call(page, (k) => window.__demo.ship3d(k, 'ogledziny'), id);
+      await step(page, 2);
+      await shot(page, `14-${id}`);
+      if (!(st.mounts > 0 && st.hullTris > 2000)) problems.push(`[flota] ${id}: ${JSON.stringify(st)}`);
+    }
+    await call(page, () => { window.__demo.ship3d('pirate_destroyer', 'lot'); window.__demo.keys(['w', 'a']); window.__demo.mouse(0.3, 0.2, { lmb: true }); });
+    await step(page, 40);
+    const st = await stats(page);
+    if (!(st.pos[0] > 1 || st.pos[1] > 1)) problems.push('[flota] niszczyciel piratów się nie ruszył');
+    notes.push(`[flota] ${JSON.stringify(st)}`);
     await page.close();
   },
 

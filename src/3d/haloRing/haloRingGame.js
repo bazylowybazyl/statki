@@ -67,6 +67,8 @@ export class HaloRingGame {
     this._cut0 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
     this._cut1 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
     this._hallOpts = { poses: null, roofFade: 0, daylight: 1 };
+    // Fabuła: { key: 'earth', hall: 0, roofFade: 0..1 (1 = dachu nie ma), cut: 0..1 } albo null (dach z kadłuba gracza).
+    this.hallRoofOverride = null;
     this.stats = { rings: 0, visible: 0, updateMs: 0 };
     this.setPlanets(planets);
   }
@@ -169,6 +171,42 @@ export class HaloRingGame {
     return e ? this._ensureRing(e) : null;
   }
 
+  // Fabuła (lot kamery intro w tle menu, src/game/story/): wycięcie górnej ściany nad halą K-7 — to samo, które gra
+  // stawia, gdy dach hali znika (_portVisuals), żeby kadr z góry na końcu lotu = kadr gry.
+  showcaseHallCut(key, hallIndex = 0, strength = 1) {
+    const e = this.entries.find((v) => v.key === key);
+    const o = e?.collider?.registry?.halls?.[hallIndex];
+    if (!e?.ring || !o) return;
+    if (!(strength > 0)) { e.ring.setCutaway(0, null); return; }
+    this._setHallCut(e.ring, o, strength, true);
+  }
+
+  // Słońce gry w układzie ringu (jak _applySun): { az, el } [rad].
+  gameSunLocal(key, sun) {
+    const e = this.entries.find((v) => v.key === key);
+    if (!e) return null;
+    const sx = Number(sun?.x);
+    const sy = Number(sun?.y);
+    const world = Number.isFinite(sx) && Number.isFinite(sy) ? Math.atan2(-(sy - e.place.y), sx - e.place.x) : 0;
+    return { az: world - e.place.rot, el: HALO_GAME.sunElevationDeg * Math.PI / 180 };
+  }
+
+  _setHallCut(ring, o, strength, inHall) {
+    const f = o.frame;
+    const l = o.layout;
+    const z0 = f.floorZ - 100;
+    const z1 = inHall ? f.rimZ + 800 : l.openZ + 200;
+    const c = k7HubToWorld(f, 0, (z0 + z1) * 0.5, this._hubC);
+    const cut = this._cut0;
+    cut.x = c.x;
+    cut.y = c.y;
+    cut.angle = Math.atan2(f.ty, f.tx);
+    cut.a = (inHall ? l.halfWidth : l.halfWidth + 400) + 600;
+    cut.b = (z1 - z0) * 0.5;
+    cut.strength = strength;
+    ring.setCutaway(0, cut);
+  }
+
   releaseShowcase(key) {
     const e = this.entries.find((v) => v.key === key);
     if (!e?.ring) return;
@@ -207,6 +245,21 @@ export class HaloRingGame {
     cam.updateMatrixWorld(true);
   }
 
+  // Kamera ringu = kamera perspektywy Core3D w trybie free3d (poza, FOV, near / far).
+  _copyFreeCamera(vw, vh) {
+    const cam = this.camera;
+    const src = Core3D.cameraPersp;
+    if (!src) return;
+    cam.fov = src.fov;
+    cam.near = src.near;
+    cam.far = src.far;
+    cam.aspect = vw / Math.max(1, vh);
+    cam.updateProjectionMatrix();
+    cam.position.copy(src.position);
+    cam.quaternion.copy(src.quaternion);
+    cam.updateMatrixWorld(true);
+  }
+
   // Raz na klatkę renderu, przed Core3D.render. cam — kamera gry tej klatki
   // (x, y, zoom, z wstrząsem — ta sama, którą dostają passy), opts: sun
   // (Słońce gry), ship (gracz: wycięcia, dachy hal), quality, splitScreen.
@@ -219,9 +272,14 @@ export class HaloRingGame {
     const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
     const cx = Number(cam?.x) || 0;
     const cy = Number(cam?.y) || 0;
-    this._syncCamera(cx, cy, zoom, vw, vh);
+    // Kamery 3D gry (tryb free3d): kamera ringu = kamera perspektywy Core3D (render() woła
+    // Core3D.syncCamera przed ringiem); bez wycięć i zaniku dachu z kamery gry (gameView).
+    const free3d = Core3D.isFreePerspectiveCamera(cam);
+    if (free3d) this._copyFreeCamera(vw, vh);
+    else this._syncCamera(cx, cy, zoom, vw, vh);
     const halfW = (vw * 0.5) / zoom;
     const halfH = (vh * 0.5) / zoom;
+    const eye = this.camera.position;
     let visible = 0;
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i];
@@ -239,13 +297,17 @@ export class HaloRingGame {
       if (ring.pumpBuild) ring.pumpBuild();
       // podzielony ekran: ring liczy RTE dla jednej kamery — drugi kadr by go przesunął
       const reach = L.radii.max + HALO_GAME.hallReach + HALO_GAME.viewMargin;
-      const inView = !opts.splitScreen && Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach;
+      // free3d: ring widać z daleka (patrzymy wzdłuż płaszczyzny) — próg z odległości oka od
+      // środka ringu; resztę (bryła widzenia, LOD) liczy ring sam z kamery.
+      const inView = !opts.splitScreen && (free3d
+        ? Math.hypot(eye.x - e.place.x, eye.y + e.place.y, eye.z) < reach + HALO_GAME.activateDistance
+        : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach);
       ring.group.visible = inView;
       e.visible = inView;
       if (!inView) continue;
       visible++;
       ring.group.position.set(e.place.x, -e.place.y, 0);
-      ring.update(dt, { camera: this.camera, viewportHeight: vh, gameView: true });
+      ring.update(dt, { camera: this.camera, viewportHeight: vh, gameView: !free3d });
       this._applySun(e, opts.sun);
       this._portVisuals(e, dt, opts.ship || null);
     }
@@ -308,13 +370,18 @@ export class HaloRingGame {
       f.update(hull, dt);
       if (f.fade > e.bayFade) { e.bayFade = f.fade; e.bayIndex = i; }
     }
+    // Fabuła (src/game/story/): intro nad K-7 — dach zamknięty mimo Atlasa w środku, potem płynne otwarcie;
+    // wycięcie górnej ściany nad halą przez cały czas nadpisania (dach widać z góry).
+    const ov = this.hallRoofOverride;
+    const ovOn = !!ov && ov.key === e.key;
+    if (ovOn) { e.hallIndex = ov.hall | 0; e.hallFade = Number.isFinite(ov.cut) ? ov.cut : 1; e.bayIndex = -1; e.bayFade = 0; }
     const halls = ring.k7Halls;
     for (let i = 0; i < halls.length; i++) {
       const hall = halls[i];
       if (!hall.root.visible) continue;
       const o = hall.frame.origin;
       const opts = this._hallOpts;
-      opts.roofFade = e.hallFades[i]?.fade || 0;
+      opts.roofFade = (ovOn && i === (ov.hall | 0)) ? clamp01(Number(ov.roofFade) || 0) : (e.hallFades[i]?.fade || 0);
       opts.daylight = this._daylight(e, o.x, o.y);
       hall.update(dt, opts);
     }
@@ -327,19 +394,7 @@ export class HaloRingGame {
     const inHall = e.hallFade >= e.bayFade && e.hallIndex >= 0;
     if (inHall || e.bayIndex >= 0) {
       const o = inHall ? reg.halls[e.hallIndex] : reg.bays[e.bayIndex];
-      const f = o.frame;
-      const l = o.layout;
-      const z0 = f.floorZ - 100;
-      const z1 = inHall ? f.rimZ + 800 : l.openZ + 200;
-      const c = k7HubToWorld(f, 0, (z0 + z1) * 0.5, this._hubC);
-      const cut = this._cut0;
-      cut.x = c.x;
-      cut.y = c.y;
-      cut.angle = Math.atan2(f.ty, f.tx);
-      cut.a = (inHall ? l.halfWidth : l.halfWidth + 400) + 600;
-      cut.b = (z1 - z0) * 0.5;
-      cut.strength = inHall ? e.hallFade : e.bayFade;
-      ring.setCutaway(0, cut);
+      this._setHallCut(ring, o, inHall ? e.hallFade : e.bayFade, inHall);
     } else {
       ring.setCutaway(0, null);
     }
@@ -373,11 +428,11 @@ export class HaloRingGame {
   }
 
   // Punkt świata gry w płycie któregoś ringu (pociski).
-  pointInSlab(x, y) {
+  pointInSlab(x, y, z = 0) {
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i];
       e.collider.setPlanet(e.planet);
-      if (e.collider.pointInSlab(x, y)) return true;
+      if (e.collider.pointInSlab(x, y, z)) return true;
     }
     return false;
   }

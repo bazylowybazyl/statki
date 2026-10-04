@@ -6,8 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
-import { buildAtlasHull3D, ATLAS3D_SCALE, atlasEdgeHalfWidth } from '../src/3d/ships3d/atlasHull3D.js';
-import { buildWeapon3D, WEAPON3D_FAMILY, WEAPON3D_FAMILIES, weapon3DScale } from '../src/3d/ships3d/weapons3D.js';
+import { buildAtlasHull3D, ATLAS3D_SCALE, atlasEdgeHalfWidth } from '../src/3d/ships3d/ships/atlasHull3D.js';
+import { buildWeapon3D, WEAPON3D_FAMILY, WEAPON3D_FAMILIES, weapon3DScale } from '../src/3d/ships3d/weapons/weapons3D.js';
 import { createShipMaterial, SHIP3D_PALETTE } from '../src/3d/ships3d/shipMaterials3D.tsl.js';
 import { SHIP3D_MAT, SHIP3D_MAT_COUNT, MeshBuilder3D, offsetPolygon, octPoly } from '../src/3d/ships3d/meshBuilder3D.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
@@ -86,7 +86,7 @@ const GAME_MUZZLES = {
   armata: [55, [0]], beamC: [48, [0]], beamP: [38, [-6, 6]], ciws1: [22, [0]], ciws2: [22, [0]], heliosPd: [18, [0]],
   flakL: [29, [-3.5, 3.5]], flakH: [29, [-3.5, 3.5]], cruise: [16, [-5, 0, 5]], fast: [16, [-5, 0, 5]], osa: [10, [0]],
   supernova: [30, [7, -7]], torpedo: [26, [7, -7]], goliath: [58, [-7, 7]], plasmaGatling: [42, [0]], valkyrie: [34, [-5, 5]],
-  mjolnir: [80, [0]], yamato: [58, [-6.75, 0, 6.75]]
+  mjolnir: [80, [0]], yamato: [58, [-6.75, 0, 6.75]], yamato2: [56, [-6.75, 6.75]]
 };
 
 test('broń: każda broń gry ma model 3D (albo świadomie brak: hangar, Hexlance w kadłubie)', () => {
@@ -164,7 +164,7 @@ test('materiały TSL: WGSL kadłuba (pokład + paleta) i broni buduje się bez G
 
 test('bez GLSL i API WebGL w modelach 3D i demie (WebGPU + TSL)', () => {
   const files = [
-    ...readdirSync(new URL('../src/3d/ships3d/', import.meta.url)).map((f) => `src/3d/ships3d/${f}`),
+    ...['', 'ships/', 'weapons/'].flatMap((d) => readdirSync(new URL(`../src/3d/ships3d/${d}`, import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `src/3d/ships3d/${d}${f}`)),
     ...readdirSync(new URL('../dema/atlas3d-webgpu/', import.meta.url)).map((f) => `dema/atlas3d-webgpu/${f}`),
     'dema/atlas3d-webgpu.js'
   ];

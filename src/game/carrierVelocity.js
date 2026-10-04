@@ -66,7 +66,23 @@ export function writeCarrier(entity, x, y, fromRender, out) {
   out.t0 = fromRender
     ? (interpolated ? SimClock.render : SimClock.renderSim)
     : SimClock.sim;
+  out.z = entityRenderZ(e);
   return out;
+}
+
+/**
+ * Gra 3D: wysokość encji do rysunku efektów (z = 0 — płaszczyzna gry). Gracz — z interpolacji
+ * renderu (window.__interpShipPose.z), reszta — z encji.
+ */
+export function entityRenderZ(entity) {
+  const e = unwrap(entity);
+  if (!e) return 0;
+  if (typeof window !== 'undefined' && e === window.ship) {
+    const z = window.__interpShipPose?.z;
+    if (Number.isFinite(z)) return z;
+  }
+  const z = Number(e.z);
+  return Number.isFinite(z) ? z : 0;
 }
 
 /** Nośnik o znanej prędkości (np. prędkość odziedziczona przez pocisk). */
@@ -75,18 +91,20 @@ export function writeCarrierVelocity(vx, vy, clock, t0, out) {
   out.y = out.vy = finite(vy);
   out.clock = clock === CLOCK_RENDER ? CLOCK_RENDER : CLOCK_SIM;
   out.t0 = Number.isFinite(t0) ? t0 : SimClock.sim;
+  out.z = 0;
   return out;
 }
 
 export function clearCarrier(out) {
   out.x = out.y = out.vx = out.vy = 0;
+  out.z = 0;
   out.clock = CLOCK_SIM;
   out.t0 = SimClock.sim;
   return out;
 }
 
 export function createCarrier() {
-  return { x: 0, y: 0, vx: 0, vy: 0, clock: CLOCK_SIM, t0: 0 };
+  return { x: 0, y: 0, z: 0, vx: 0, vy: 0, clock: CLOCK_SIM, t0: 0 };
 }
 
 /**
@@ -100,11 +118,14 @@ export const ActiveCarrier = {
   vx: 0,
   vy: 0,
   t0: 0,
+  // Gra 3D: wysokość nośnika — pule efektów (weapons/gpuFx.js) rodzą paczki na z = 15 + z.
+  z: 0,
   clock: CLOCK_SIM,
   set(carrier) {
     this.vx = finite(carrier?.vx);
     this.vy = finite(carrier?.vy);
     this.t0 = finite(carrier?.t0);
+    this.z = finite(carrier?.z);
     this.clock = carrier?.clock === CLOCK_RENDER ? CLOCK_RENDER : CLOCK_SIM;
     return this;
   },
@@ -112,6 +133,7 @@ export const ActiveCarrier = {
     this.vx = 0;
     this.vy = 0;
     this.t0 = 0;
+    this.z = 0;
     this.clock = CLOCK_SIM;
     return this;
   }

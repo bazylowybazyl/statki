@@ -76,7 +76,7 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     scannerTargetPoint,
     getTargetX,
     getTargetY,
-    targetingMode: { wheelOpen: false },
+    shipModes: { wheel: { open: false } },
     mouse: { x: 0, y: 0 },
     isFlakWeapon: () => false,
     resolveFlakProfile: () => null,

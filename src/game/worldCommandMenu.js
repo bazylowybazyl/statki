@@ -1,11 +1,12 @@
+// Etykiety po polsku, jak reszta HUD kokpitu (menu rysuje src/ui/commandOverlay.js).
 const NORMAL_TARGET_ACTIONS = [
-  ['attack', 'ATTACK'],
-  ['ram', 'RAM'],
-  ['approach', 'APPROACH'],
-  ['orbit', 'ORBIT'],
-  ['jump', 'JUMP'],
-  ['cruise', 'CRUISE'],
-  ['scan', 'SCAN']
+  ['attack', 'ATAK'],
+  ['ram', 'TARAN'],
+  ['approach', 'PODEJDŹ'],
+  ['orbit', 'ORBITA'],
+  // TRAVEL TO (2026-10-03): dawne SKOK i PRZELOT — jeden rozkaz podróży (src/game/travelNav.js).
+  ['travel', 'TRAVEL TO'],
+  ['scan', 'SKAN']
 ];
 
 const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.filter(([action]) => action !== 'attack' && action !== 'ram');
@@ -13,17 +14,17 @@ const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.filter(([action]) => action !
 // Wraki dostają własne wejścia na górze listy — to jedyne cele, na których
 // odzysk łupu w ogóle ma sens.
 const WRECK_ACTIONS = [
-  ['salvage', 'SALVAGE'],
-  ['tow', 'TOW']
+  ['salvage', 'ODZYSK'],
+  ['tow', 'HOL']
 ];
 
 const RTS_ACTIONS = [
-  ['approach', 'APPROACH'],
-  ['orbit', 'ORBIT'],
-  ['attack', 'ATTACK'],
-  ['ram', 'RAM'],
-  ['hold', 'HOLD'],
-  ['scan', 'SCAN']
+  ['approach', 'PODEJDŹ'],
+  ['orbit', 'ORBITA'],
+  ['attack', 'ATAK'],
+  ['ram', 'TARAN'],
+  ['hold', 'STÓJ'],
+  ['scan', 'SKAN']
 ];
 
 const ORBIT_RANGE_PRESETS = [1000, 3000, 5000, 10000, 15000];
@@ -89,7 +90,7 @@ export function buildNormalCommandMenuItems({ targetEntity = null } = {}) {
 export function buildRtsCommandMenuItems({ selectedCount = 0, targetEntity = null } = {}) {
   const formation = Number(selectedCount) > 1;
   const items = [
-    { action: formation ? 'move-formation' : 'move', label: formation ? 'MOVE FORMATION' : 'MOVE' },
+    { action: formation ? 'move-formation' : 'move', label: formation ? 'RUCH W SZYKU' : 'RUCH' },
     ...RTS_ACTIONS.map(menuItem)
   ];
   if (targetEntity?.isWreck) items.push(...wreckActionItems(targetEntity));
@@ -98,7 +99,7 @@ export function buildRtsCommandMenuItems({ selectedCount = 0, targetEntity = nul
 
 export function buildOrbitRangeMenuItems({ currentRange = null } = {}) {
   const current = Math.max(80, Math.round(Number(currentRange) || 0));
-  const currentLabel = current > 80 ? `CURRENT RANGE ${current}` : 'CURRENT RANGE';
+  const currentLabel = current > 80 ? `OBECNY DYSTANS ${current}` : 'OBECNY DYSTANS';
   return [
     {
       action: 'orbit-range-current',
@@ -114,7 +115,7 @@ export function buildOrbitRangeMenuItems({ currentRange = null } = {}) {
     })),
     {
       action: 'orbit-range-custom',
-      label: 'X',
+      label: 'WŁASNY…',
       orbitRangeMode: 'custom',
       orbitRadius: null
     }

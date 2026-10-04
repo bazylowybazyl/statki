@@ -38,14 +38,15 @@
 //     tylko odczyt) wzdłuż ostatniego odcinka lotu; bez styku — w punkcie zapalnika.
 
 import {
-  MISSILE_VFX, VFX_KEYS, VFX_NOVA, SMOKE_KIND, SMOKE_DRAG, SPARK_COLORS, IGNITE_CORE, IGNITE_HALO,
-  BAND_FRIENDLY, BAND_HOSTILE, rocketVfxIndex
+  MISSILE_VFX, VFX_KEYS, VFX_NOVA, VFX_MICRO, SMOKE_KIND, SMOKE_DRAG, SPARK_COLORS, IGNITE_CORE, IGNITE_HALO,
+  BAND_FRIENDLY, BAND_HOSTILE, rocketVfxIndex, PULSAR_BEAM
 } from './palette.js';
 import { GLOW_ROUND } from './glow.js';
 import { fillRandom } from './rand.js';
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { getEntityShieldRadiusTowards } from '../../../shieldSystem.js';
 import { rocketHullContact } from '../../game/hullCraters.js';
+import { Turret2D, normalizeWeaponFxKey } from '../../vfx/turret2D.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -66,6 +67,10 @@ const ANAM_GLOW_A = Object.freeze([0.28, 0.6, 0.9]);
 const ANAM_CORE_B = Object.freeze([12, 10, 14]);
 const ANAM_GLOW_B = Object.freeze([0.45, 0.4, 0.9]);
 const NOVA_SPARK_PALE = Object.freeze([1, 0.85, 0.95]);
+// Pęknięcie nosiciela Hydry: biało-pomarańczowy błysk ładunku wyrzucającego.
+const SPLIT_CORE = Object.freeze([9, 7.5, 5.5]);
+const SPLIT_HALO = Object.freeze([0.5, 0.32, 0.16]);
+const SPLIT_LIGHT = Object.freeze([1.0, 0.66, 0.36]);
 // Barwa tarczy (shield3D.js: pełna = #5992f7, pusta = czerwień) — liniowo.
 const SHIELD_FULL = Object.freeze([0.0999, 0.2874, 0.9301]);
 const SHIELD_EMPTY = Object.freeze([1.0, 0.08, 0.04]);
@@ -73,8 +78,26 @@ const SHIELD_EMPTY = Object.freeze([1.0, 0.08, 0.04]);
 // Zasięg LOD smugi: poniżej tego zoomu porcje rzedną (do ×4 przy zoomie 0,0625).
 export const TRAIL_LOD_ZOOM = 0.25;
 export const TRAIL_LOD_MAX = 4;
+// Tłok salw: powyżej CROWD_START rakiet w locie (i w kolejkach salw) smugi rzedną jak w LOD
+// (krycie rośnie — gęstość zostaje), najwyżej ×CROWD_MAX.
+export const CROWD_START = 150;
+export const CROWD_MAX = 3;
 // Zapas kadru, w którym rakiety i odłamki sypią dym [j.] (plus 60% połowy kadru).
 const EMIT_MARGIN = 1500;
+// Skrót perspektywy z wysokości (kamera z góry, ortho): kadłubek, płomień i łuna rosną do
+// ×(1 + LIFT_K) na wysokości LIFT_H — rakieta wyskakująca z komory „podchodzi” ku kamerze.
+export const LIFT_K = 0.45;
+export const LIFT_H = 160;
+// Tryb wyrzutu głowicy potomnej Hydry (rocketSystem3D LAUNCH_SPLIT) — bez obłoku komory.
+const MODE_SPLIT = 2;
+
+// Supernowa: życie pozostałości (powłoka) i dżetów pulsara [s], prędkość dżetu [j./s];
+// sekwencja reżysera (jądro, snopy, światło) trwa NOVA_SEQ_END od wybuchu głowicy.
+export const NOVA_REMNANT_LIFE = 5.4;
+export const NOVA_JET_SPEED = 1050;
+export const NOVA_JET_SPAN = 4.2;
+export const NOVA_JET_LIFE = 1.25;
+export const NOVA_SEQ_END = 6.4;
 
 const FLASH_CAP = 256;
 const BLAST_CAP = 32;
@@ -146,8 +169,10 @@ export class RocketEffects {
     // Kadr (świat gry) z ostatniej klatki efektów — odrzucanie emisji poza nim.
     this.hasView = false;
     this.vx0 = 0; this.vy0 = 0; this.vx1 = 0; this.vy1 = 0;
-    this.opts = { trails: true, fragments: true, wakes: true, arcs: true, scorch: true, shieldRecipe: true, trailDensity: 1, blastGain: 1, novaShake: true };
-    this.stats = { flashes: 0, fragments: 0, novas: 0, lights: 0, puffs: 0, culledPuffs: 0 };
+    this.opts = { trails: true, fragments: true, wakes: true, arcs: true, scorch: true, shieldRecipe: true, trailDensity: 1, blastGain: 1, novaShake: true, launcherKick: true };
+    this.stats = { flashes: 0, fragments: 0, novas: 0, lights: 0, puffs: 0, culledPuffs: 0, splits: 0 };
+    // Tłok salw (beginUpdate): mnożnik odstępu porcji smugi przy setkach rakiet w locie.
+    this.crowd = 1;
 
     // ── Per rakieta (indeks slotu puli rocketSystem3D) ──
     const N = ROCKET_SLOTS;
@@ -155,7 +180,9 @@ export class RocketEffects {
     this.hostile = new Uint8Array(N);
     this.nx0 = new Float64Array(N);
     this.ny0 = new Float64Array(N);
+    this.nh0 = new Float64Array(N);   // wysokość dyszy (smuga liczona po drodze dyszy w 3D)
     this.acc = new Float64Array(N);
+    this.vAcc = new Float64Array(N);  // para zimnego wyrzutu (droga dyszy przed zapłonem)
     this.ionAcc = new Float64Array(N);
     this.arcT = new Float32Array(N);
     this.roll = new Float32Array(N);
@@ -195,6 +222,9 @@ export class RocketEffects {
     // ── Supernowe ──
     this.nN = 0; this.nvx = new Float64Array(NOVA_CAP); this.nvy = new Float64Array(NOVA_CAP); this.nt0 = new Float64Array(NOVA_CAP);
     this.nstage = new Uint8Array(NOVA_CAP);
+    // Wir pozostałości: obrót [rad/s] i oś dżetów pulsara (kąt startowy, obrót) — w układzie SCENY
+    // (y w górę), te same liczby dostaje kernel mgławicy (snopy z jądra = oś dżetów).
+    this.nSpin = new Float32Array(NOVA_CAP); this.nJetA = new Float32Array(NOVA_CAP); this.nJetW = new Float32Array(NOVA_CAP);
     // ── Ślady rakiet w dymie: wybór najbliższych kamerze (bez sortowania tablic obiektów) ──
     this._wakeIdx = new Int32Array(64);
     this._wakeD2 = new Float64Array(64);
@@ -222,16 +252,6 @@ export class RocketEffects {
     const hz = Number(d?.z) || 0;
     if (hx * hx + hz * hz > 1e-8) return Math.atan2(hz, hx);
     return 0;
-  }
-
-  /** Kurs z kwaternionu (przy starcie visualDir jest jeszcze z poprzedniej rakiety slotu). */
-  _headingFromQuat(r) {
-    const q = r.quaternion;
-    // Oś +Y (nos) po obrocie kwaternionem: (2(xy − wz), 1 − 2(x² + z²), 2(yz + wx)).
-    const fx = 2 * (q.x * q.y - q.w * q.z);
-    const fz = 2 * (q.y * q.z + q.w * q.x);
-    if (fx * fx + fz * fz > 1e-8) return Math.atan2(fz, fx);
-    return this.heading(r);
   }
 
   /** Kinematyka rakiety do tablic tej klatki: kurs z kierunku kadłubka, prędkość, ciąg. */
@@ -346,7 +366,16 @@ export class RocketEffects {
 
   // --- zdarzenia lotu (rocketSystem3D) ------------------------------------------
 
-  /** Start rakiety (fire). colorTheme 'red' = wróg (czerwony pas kadłubka). */
+  /** Początek kroku lotu: liczba rakiet w locie i w kolejkach salw (tłok — rzadsze smugi). */
+  beginUpdate(active) {
+    this.crowd = active > CROWD_START ? Math.min(CROWD_MAX, Math.sqrt(active / CROWD_START)) : 1;
+  }
+
+  /**
+   * Start rakiety (fire). colorTheme 'red' = wróg (czerwony pas kadłubka). Zimny wyrzut z komory:
+   * chłodny błysk, pierścień pary rozlany po pokładzie, szarpnięcie kasety wyrzutni (Turret2D).
+   * Głowica potomna Hydry (tryb podziału) — bez obłoku (od razu na silniku, zapłon w onIgnite).
+   */
   onLaunch(r, colorTheme = 'blue') {
     const rng = this.rng;
     const i = r.index;
@@ -354,38 +383,58 @@ export class RocketEffects {
     this.kind[i] = kind;
     this.hostile[i] = colorTheme === 'red' ? 1 : 0;
     const bs = Number(r.bodyScale) || 1;
-    const h = this._headingFromQuat(r);
-    this.ha[i] = h; this.hc[i] = Math.cos(h); this.hs[i] = Math.sin(h);
-    this.spd[i] = Math.sqrt(r.velocity.x * r.velocity.x + r.velocity.z * r.velocity.z);
-    this.thr[i] = 0;
+    this._kin(r);
+    const c = this.hc[i];
+    const s = this.hs[i];
     const px = r.position.x;
     const py = r.position.z;
     const L = ROCKET_BODY_LENGTH * bs;
-    this.nx0[i] = px - Math.cos(h) * L * 0.5;
-    this.ny0[i] = py - Math.sin(h) * L * 0.5;
-    this.acc[i] = 0; this.tick[i] = 0; this.ionAcc[i] = 0; this.termT[i] = 0;
+    const cp = Math.cos(Number(r.nosePitch) || 0);
+    const sp = Math.sin(Number(r.nosePitch) || 0);
+    this.nx0[i] = px - c * cp * L * 0.5;
+    this.ny0[i] = py - s * cp * L * 0.5;
+    this.nh0[i] = Math.max(0, r.position.y - sp * L * 0.5);
+    this.acc[i] = 0; this.vAcc[i] = 0; this.tick[i] = 0; this.ionAcc[i] = 0; this.termT[i] = 0;
     this.arcT[i] = 0.2 + rng.next() * 0.3;
     this.roll[i] = rng.next() * TAU;
     this.flick[i] = rng.next() * 10;
     this.seed[i] = rng.next();
+    if (r.mode === MODE_SPLIT) return;
+    // Szarpnięcie kasety wyrzutni przy każdej rakiecie salwy (odrzut z danych broni — Turret2D).
+    if (r.shooter && this.opts.launcherKick) {
+      try { Turret2D.triggerShot(normalizeWeaponFxKey(r.weaponDef?.id), px, py, r.shooter); } catch { /* bez wieżyczki */ }
+    }
     if (this._outside(px, py, EMIT_MARGIN)) return;
     const fx = r.frameVel.x;
     const fy = r.frameVel.z;
-    const mvx = r.velocity.x;
-    const mvy = r.velocity.z;
-    // Zimny gaz wyrzutu: obłok pary rozchodzący się od komory.
+    // Zimny gaz wyrzutu: pierścień pary rozlewa się po pokładzie od komory; mikrorakiety salwy —
+    // mniej porcji na rakietę (24 komory Gradu i tak dają gęsty obłok).
     const sq = Math.sqrt(bs);
-    const puffs = Math.round(14 * sq);
+    const micro = kind === VFX_MICRO;
+    const puffs = Math.round((micro ? 6 : 14) * sq + 2);
+    const S = this.smoke.s;
+    const R = this._rnd;
     for (let k = 0; k < puffs; k++) {
-      const a = rng.next() * TAU;
-      const sp = 60 + rng.next() * 240;
-      this._puff(px + Math.cos(a) * 4, py + Math.sin(a) * 4, Math.cos(a) * sp + mvx * 0.3, Math.sin(a) * sp + mvy * 0.3,
-        fx, fy, (5 + rng.next() * 4) * sq, (26 + rng.next() * 14) * sq, 0.9 + rng.next() * 0.7, 0, SMOKE_KIND.VAPOR, 0.3 + rng.next() * 0.18, 0, 14);
+      fillRandom(rng, R, 7);
+      const a = R[0] * TAU;
+      const spd = (70 + R[1] * 280) * (0.6 + 0.4 * sq);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      S.x = px + ca * 3 * sq; S.y = py + sa * 3 * sq;
+      S.vx = ca * spd; S.vy = sa * spd; S.cx = fx; S.cy = fy;
+      S.size0 = (5 + R[2] * 4) * sq; S.growth = (26 + R[3] * 16) * sq;
+      S.life = 0.6 + R[4] * 0.7; S.temp = 0; S.pal = SMOKE_KIND.VAPOR;
+      S.opacity = 0.26 + R[5] * 0.16; S.age = 0; S.z = 13 + R[6] * 2; S.angle = NaN;
+      this._puffStaged();
     }
     this._flash(px, py, 0.12, fx, fy, LAUNCH_CORE, 1, 26 * bs, 0.04, LAUNCH_HALO, 1, 120 * bs, 0.06);
   }
 
-  /** Zapłon silnika (EJECTED → POWERED). */
+  /**
+   * Zapłon silnika (EJECTED → POWERED). Dysza w 3D (nos może patrzeć w górę): błysk, impuls światła,
+   * kłąb spalin — z pionu strumień bije w pokład i rozlewa się pierścieniem, z poziomu idzie stożkiem
+   * do tyłu (mieszanka według wzniesienia nosa).
+   */
   onIgnite(r) {
     const rng = this.rng;
     const i = r.index;
@@ -396,30 +445,56 @@ export class RocketEffects {
     const c = this.hc[i];
     const s = this.hs[i];
     const L = ROCKET_BODY_LENGTH * bs;
-    const nx = r.position.x - c * L * 0.5;
-    const ny = r.position.z - s * L * 0.5;
-    this.nx0[i] = nx; this.ny0[i] = ny; this.acc[i] = 0;
+    const cp = Math.cos(Number(r.nosePitch) || 0);
+    const sp = Math.sin(Number(r.nosePitch) || 0);
+    const nx = r.position.x - c * cp * L * 0.5;
+    const ny = r.position.z - s * cp * L * 0.5;
+    const hN = Math.max(0, r.position.y - sp * L * 0.5);
+    this.nx0[i] = nx; this.ny0[i] = ny; this.nh0[i] = hN; this.acc[i] = 0;
     if (this._outside(nx, ny, EMIT_MARGIN)) return;
     const fx = r.frameVel.x;
     const fy = r.frameVel.z;
     const Lt = vfx.light;
+    const split = r.mode === MODE_SPLIT;
     this._flash(nx, ny, 0.3, fx, fy, IGNITE_CORE[kind], 1, 30 * bs, 0.05, IGNITE_HALO[kind], 1, 160 * bs, 0.1,
-      Lt.color, 3.0 * Lt.intensity, 0.08, 0, 1, Lt.range * 1.1, 40);
+      Lt.color, (split ? 1.6 : 3.0) * Lt.intensity, 0.08, 0, 1, Lt.range * 1.1, 40 + hN);
     // Kłąb gorących spalin przy zapłonie (chemiczny dym supernowej słabiej — świeci sam).
     const trailKind = vfx.trail.kind;
     const nova = kind === VFX_NOVA;
     const sq = Math.sqrt(bs);
-    for (let k = 0; k < (nova ? 7 : 12); k++) {
-      const sp = 250 + rng.next() * 550;
-      const spread = (rng.next() - 0.5) * 1.6;
-      const vx = -(c * Math.cos(spread) - s * Math.sin(spread)) * sp;
-      const vy = -(s * Math.cos(spread) + c * Math.sin(spread)) * sp;
-      this._puff(nx, ny, vx, vy, fx, fy, (4 + rng.next() * 3) * sq, (30 + rng.next() * 20) * sq,
-        0.8 + rng.next() * 1.4, nova ? 0.45 : 1.0, trailKind, 0.42 + rng.next() * 0.15, rng.next() * 0.02, 12);
+    const steep = sp > 0 ? sp : 0;
+    const n = split ? 3 : (nova ? 9 : (kind === VFX_MICRO ? 5 : 12));
+    const S = this.smoke.s;
+    const R = this._rnd;
+    for (let k = 0; k < n; k++) {
+      fillRandom(rng, R, 8);
+      let vx;
+      let vy;
+      if (R[7] < steep) {
+        // Strumień z pionu: uderza w pokład pod rakietą i rozlewa się pierścieniem.
+        const a = R[0] * TAU;
+        const v = (180 + R[1] * 460) * (0.55 + 0.45 * steep);
+        vx = Math.cos(a) * v;
+        vy = Math.sin(a) * v;
+      } else {
+        const v = 250 + R[1] * 550;
+        const spread = (R[0] - 0.5) * 1.6;
+        vx = -(c * Math.cos(spread) - s * Math.sin(spread)) * v;
+        vy = -(s * Math.cos(spread) + c * Math.sin(spread)) * v;
+      }
+      S.x = nx; S.y = ny; S.vx = vx; S.vy = vy; S.cx = fx; S.cy = fy;
+      S.size0 = (4 + R[2] * 3) * sq; S.growth = (30 + R[3] * 20) * sq;
+      S.life = 0.8 + R[4] * 1.4; S.temp = nova ? 0.45 : 1.0; S.pal = trailKind;
+      S.opacity = 0.42 + R[5] * 0.15; S.age = R[6] * 0.02; S.z = 12 + hN * 0.25; S.angle = NaN;
+      this._puffStaged();
     }
   }
 
-  /** Lot (po kroku pozycji rakiety w tej klatce): smuga porcji gazu wzdłuż odcinka dyszy. */
+  /**
+   * Lot (po kroku pozycji rakiety w tej klatce): smuga porcji gazu wzdłuż odcinka dyszy w 3D.
+   * Rakieta w pionie (zaraz po zapłonie) sypie dym w słup — z góry rozlewa się na boki; w poziomie
+   * gaz leci do tyłu jak dawniej. Przed zapłonem — rzadka para zimnego wyrzutu.
+   */
   onFly(r, dt) {
     const i = r.index;
     const bs = Number(r.bodyScale) || 1;
@@ -428,37 +503,55 @@ export class RocketEffects {
     const c = this.hc[i];
     const s = this.hs[i];
     const L = ROCKET_BODY_LENGTH * bs;
-    const nX = r.position.x - c * L * 0.5;
-    const nY = r.position.z - s * L * 0.5;
+    const pitch = Number(r.nosePitch) || 0;
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
+    const nX = r.position.x - c * cp * L * 0.5;
+    const nY = r.position.z - s * cp * L * 0.5;
+    const nH = Math.max(0, r.position.y - sp * L * 0.5);
     const kind = this.kind[i];
     if (kind === VFX_NOVA && r.guidancePhase === 'terminal') this.termT[i] += dt;
     const x0 = this.nx0[i];
     const y0 = this.ny0[i];
-    this.nx0[i] = nX; this.ny0[i] = nY;
-    if (r.state !== 'POWERED' || !this.opts.trails) return;
-    if (this._outside(nX, nY, EMIT_MARGIN + L)) { this.acc[i] = 0; this.ionAcc[i] = 0; return; }
-    const vfx = MISSILE_VFX[VFX_KEYS[kind]];
-    const tr = vfx.trail;
-    const rng = this.rng;
+    const h0 = this.nh0[i];
+    this.nx0[i] = nX; this.ny0[i] = nY; this.nh0[i] = nH;
+    if (!this.opts.trails) return;
+    if (this._outside(nX, nY, EMIT_MARGIN + L)) { this.acc[i] = 0; this.ionAcc[i] = 0; this.vAcc[i] = 0; return; }
+    // Przed zapłonem — para zimnego wyrzutu (osobna metoda: tylko pierwsze ułamki sekundy lotu).
+    if (r.state !== 'POWERED') { this._popVapor(r, dt); return; }
     const dx = nX - x0;
     const dy = nY - y0;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    const zl = this.zoom > 1e-4 ? this.zoom : 1e-4;
-    const lod = Math.min(TRAIL_LOD_MAX, Math.max(1, TRAIL_LOD_ZOOM / zl));
-    const spacing = tr.spacing * lod / Math.max(0.25, this.opts.trailDensity);
-    this.acc[i] += d;
-    const speed = this.spd[i];
-    const exhaust = Math.max(650, speed * tr.exhaust);
-    const spreadV = 55 + speed * 0.045;
-    const thr = 0.45 + 0.55 * this.thr[i];
-    const mvx = r.velocity.x;
-    const mvy = r.velocity.z;
-    const fx = r.frameVel.x;
-    const fy = r.frameVel.z;
-    const bsGrow = Math.pow(bs, 0.6);
-    const bsSize = Math.pow(bs, 0.7);
+    const dh = nH - h0;
+    const d = Math.sqrt(dx * dx + dy * dy + dh * dh);
+    const rng = this.rng;
     const R = this._rnd;
     const P = this.smoke.s;
+    const fx = r.frameVel.x;
+    const fy = r.frameVel.z;
+    const vfx = MISSILE_VFX[VFX_KEYS[kind]];
+    const tr = vfx.trail;
+    const zl = this.zoom > 1e-4 ? this.zoom : 1e-4;
+    const lod = Math.min(TRAIL_LOD_MAX, Math.max(1, TRAIL_LOD_ZOOM / zl));
+    const thin = lod * this.crowd;
+    const spacing = tr.spacing * thin / Math.max(0.25, this.opts.trailDensity);
+    this.acc[i] += d;
+    const speed = this.spd[i];
+    const vx3 = r.velocity.x;
+    const vy3 = r.velocity.y;
+    const vz3 = r.velocity.z;
+    const speed3 = Math.sqrt(vx3 * vx3 + vy3 * vy3 + vz3 * vz3);
+    const exhaust = Math.max(650, speed3 * tr.exhaust);
+    // Wylot w płaszczyźnie: składowa strumienia wzdłuż −kursu (× cos wzniesienia); składowa w dół
+    // (nos w górze) uderza w pokład / rozpręża się — rozrzut na boki we wszystkich kierunkach.
+    const exPlanar = exhaust * cp;
+    const radial = exhaust * (sp > 0 ? sp : 0) * 0.28;
+    const spreadV = 55 + speed * 0.045;
+    const thr = 0.45 + 0.55 * this.thr[i];
+    const mvx = vx3;
+    const mvy = vz3;
+    const bsGrow = Math.pow(bs, 0.6);
+    const bsSize = Math.pow(bs, 0.7);
+    const steepAngle = sp > 0.7;
     let guard = 0;
     while (this.acc[i] >= spacing && guard++ < 256) {
       this.acc[i] -= spacing;
@@ -466,40 +559,46 @@ export class RocketEffects {
       // 60 % krótkich (gorący ogon), 20 % średnich, 20 % długich (dym na sekundy).
       const tier = this.tick[i]++ % 10;
       const lifeIdx = tier < 6 ? 0 : (tier < 8 ? 1 : 2);
-      fillRandom(rng, R, 9);
+      fillRandom(rng, R, 11);
       let opac = tr.opacity * (lifeIdx === 0 ? 1.0 : (lifeIdx === 1 ? 0.75 : 0.7)) * (0.8 + R[1] * 0.4);
-      // LOD: rzadsze porcje, krycie tak, żeby nakładanie dawało tę samą gęstość smugi.
-      if (lod > 1) opac = 1 - Math.pow(1 - Math.min(0.95, opac), lod);
+      // LOD / tłok salw: rzadsze porcje, krycie tak, żeby nakładanie dawało tę samą gęstość smugi.
+      if (thin > 1) opac = 1 - Math.pow(1 - Math.min(0.95, opac), thin);
       const lat = (R[3] - 0.5) * 2 * spreadV;
       const lon = (R[4] - 0.5) * 0.08 * exhaust;
+      const ra = R[9] * TAU;
+      const rr = radial * (0.4 + 0.6 * R[10]);
       P.x = x0 + dx * u; P.y = y0 + dy * u;
-      P.vx = mvx - c * (exhaust + lon) - s * lat;
-      P.vy = mvy - s * (exhaust + lon) + c * lat;
+      P.vx = mvx - c * (exPlanar + lon) - s * lat + Math.cos(ra) * rr;
+      P.vy = mvy - s * (exPlanar + lon) + c * lat + Math.sin(ra) * rr;
       P.cx = fx; P.cy = fy;
       P.size0 = tr.size0 * bsSize * (0.8 + R[5] * 0.4);
       P.growth = tr.growth * (lifeIdx === 0 ? 0.55 : (lifeIdx === 1 ? 0.9 : 1.0)) * (0.75 + R[2] * 0.5) * bsGrow;
       P.life = tr.lives[lifeIdx] * (0.85 + R[0] * 0.3);
       P.temp = tr.temp * thr * (0.85 + R[6] * 0.3);
       P.pal = tr.kind; P.opacity = opac; P.age = (1 - u) * dt;
-      P.z = 10 + R[7] * 6; P.angle = h + (R[8] - 0.5) * 0.12;
+      P.z = 10 + R[7] * 6 + h0 + dh * u;
+      // Słup z pionu — kłęby bez kierunku (kąt losowy z bufora; nie NaN: stała NaN złączona
+      // z liczbą w jednym wyrażeniu kazała V8 pakować kąt w obiekt przy każdej porcji).
+      P.angle = steepAngle ? R[8] * TAU : h + (R[8] - 0.5) * 0.12;
       this._puffStaged();
     }
 
     if (kind === VFX_NOVA) {
       // Iskrzące jony w śladzie (migoczą w drugiej połowie życia) — wpis roboczy puli iskier.
-      this.ionAcc[i] += d;
+      const dp = Math.sqrt(dx * dx + dy * dy);
+      this.ionAcc[i] += dp;
       const ionStep = 16 * lod;
       const S = this.ionAcc[i] > ionStep ? this.sparks.stage() : null;
       while (this.ionAcc[i] > ionStep) {
         this.ionAcc[i] -= ionStep;
         if (!S) continue;
-        const u = d > 1e-6 ? Math.min(1, Math.max(0, 1 - this.ionAcc[i] / d)) : 1;
+        const u = dp > 1e-6 ? Math.min(1, Math.max(0, 1 - this.ionAcc[i] / dp)) : 1;
         fillRandom(rng, R, 7);
         const a = R[0] * TAU;
-        const sp = 20 + R[1] * 60;
+        const sp2 = 20 + R[1] * 60;
         const col = R[2] < 0.55 ? SPARK_COLORS.nova : SPARK_COLORS.ion;
         S.x = x0 + dx * u + (R[3] - 0.5) * 14; S.y = y0 + dy * u + (R[4] - 0.5) * 14;
-        S.vx = Math.cos(a) * sp; S.vy = Math.sin(a) * sp;
+        S.vx = Math.cos(a) * sp2; S.vy = Math.sin(a) * sp2;
         S.life = 0.9 + R[5] * 1.3; S.size = 0.14 + R[6] * 0.1; S.drag = 1.2;
         S.r = col[0]; S.g = col[1]; S.b = col[2]; S.gain = 0.55;
         S.cvx = fx; S.cvy = fy; S.t0 = SimClock.render; S.clock = CLOCK_RENDER;
@@ -517,6 +616,137 @@ export class RocketEffects {
         this.arcs.bolt(this.time - this.epoch, nX, nY, bx, by, rng, 0.07 + R[3] * 0.06, R[4] < 0.5 ? 1 : 0);
       }
     }
+  }
+
+  /**
+   * KILWATER TORPEDY (pocisk gry z `bullets`, nie rakieta — tryb torped, 2026-09-30): porcje bladej
+   * pary wzdłuż odcinka lotu w tej klatce — długi ślad, po którym widać wachlarz jak w World of
+   * Warships; świeża porcja przy silniku lekko się żarzy. Nośnik = pęd wyrzutni (ivx, ivy) —
+   * ślad stoi w układzie wyrzutni jak dym rakiet. Akumulator drogi na pocisku (`__wakeAcc`).
+   */
+  torpedoWake(b, dt) {
+    if (!(dt > 0) || !this.opts.trails) return;
+    const x1 = b.x;
+    const y1 = b.y;
+    if (this._outside(x1, y1, EMIT_MARGIN)) { b.__wakeAcc = 0; return; }
+    const cx = Number(b.ivx) || 0;
+    const cy = Number(b.ivy) || 0;
+    // Ruch własny w klatce (względem układu wyrzutni) — z niego odcinek i kierunek śladu.
+    const ux = (Number(b.vx) || 0) - cx;
+    const uy = (Number(b.vy) || 0) - cy;
+    const sp = Math.sqrt(ux * ux + uy * uy);
+    if (sp < 1) return;
+    const d = sp * dt;
+    const dx = ux / sp;
+    const dy = uy / sp;
+    const zl = this.zoom > 1e-4 ? this.zoom : 1e-4;
+    const lod = Math.min(TRAIL_LOD_MAX, Math.max(1, TRAIL_LOD_ZOOM / zl));
+    const spacing = 9 * lod * this.crowd;
+    let acc = (Number(b.__wakeAcc) || 0) + d;
+    const rng = this.rng;
+    const R = this._rnd;
+    const P = this.smoke.s;
+    let guard = 0;
+    while (acc >= spacing && guard++ < 64) {
+      acc -= spacing;
+      const u = Math.min(1, Math.max(0, 1 - acc / d));
+      fillRandom(rng, R, 6);
+      let opac = 0.2 + R[1] * 0.08;
+      if (lod > 1) opac = 1 - Math.pow(1 - opac, lod);
+      P.x = x1 - dx * d * (1 - u) - dx * 14; P.y = y1 - dy * d * (1 - u) - dy * 14;
+      P.vx = -dx * 60 + (R[2] - 0.5) * 50; P.vy = -dy * 60 + (R[3] - 0.5) * 50;
+      P.cx = cx; P.cy = cy;
+      P.size0 = 4 + R[4] * 2; P.growth = 22 + R[5] * 10;
+      P.life = 2.2 + R[0] * 1.2; P.temp = 0.35; P.pal = SMOKE_KIND.MICRO;
+      P.opacity = opac; P.age = (1 - u) * dt; P.z = 11;
+      P.angle = Math.atan2(dy, dx);
+      this._puffStaged();
+    }
+    b.__wakeAcc = acc;
+  }
+
+  /**
+   * Zimny wyrzut (przed zapłonem): rzadkie smużki pary z generatora gazu za rakietą — z góry biały
+   * obłoczek nad komorą, z którego wyłania się rakieta. Odcinek dyszy: poprzednia i bieżąca poza
+   * (nx0 / ny0 / nh0 ustawił już onFly; tu tylko z tablic — bez liczb w argumentach).
+   */
+  _popVapor(r, dt) {
+    const i = r.index;
+    const bs = Number(r.bodyScale) || 1;
+    const c = this.hc[i];
+    const s = this.hs[i];
+    const L = ROCKET_BODY_LENGTH * bs;
+    const pitch = Number(r.nosePitch) || 0;
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
+    // Poprzednia poza dyszy: bieżąca cofnięta o ruch tej klatki (prędkość własna + układ).
+    const x1 = this.nx0[i];
+    const y1 = this.ny0[i];
+    const h1 = this.nh0[i];
+    const x0 = x1 - (r.velocity.x + r.frameVel.x) * dt;
+    const y0 = y1 - (r.velocity.z + r.frameVel.z) * dt;
+    const h0 = Math.max(0, h1 - r.velocity.y * dt);
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dh = h1 - h0;
+    const d = Math.sqrt(dx * dx + dy * dy + dh * dh);
+    this.vAcc[i] += d;
+    const rng = this.rng;
+    const R = this._rnd;
+    const P = this.smoke.s;
+    const fx = r.frameVel.x;
+    const fy = r.frameVel.z;
+    const sq = Math.sqrt(bs);
+    let guard = 0;
+    while (this.vAcc[i] >= 7 && guard++ < 16) {
+      this.vAcc[i] -= 7;
+      const u = d > 1e-6 ? Math.min(1, Math.max(0, 1 - this.vAcc[i] / d)) : 1;
+      fillRandom(rng, R, 6);
+      const a = R[0] * TAU;
+      const v = 20 + R[1] * 50;
+      P.x = x0 + dx * u - c * cp * L * 0.1; P.y = y0 + dy * u - s * cp * L * 0.1;
+      P.vx = Math.cos(a) * v; P.vy = Math.sin(a) * v;
+      P.cx = fx; P.cy = fy;
+      P.size0 = (2.4 + R[2] * 1.6) * sq; P.growth = (12 + R[3] * 8) * sq;
+      P.life = 0.35 + R[4] * 0.3; P.temp = 0; P.pal = SMOKE_KIND.VAPOR;
+      P.opacity = (0.14 + R[5] * 0.08) * (0.5 + 0.5 * sp); P.age = (1 - u) * dt; P.z = 12 + h0 + dh * u; P.angle = NaN;
+      this._puffStaged();
+    }
+  }
+
+  /**
+   * Nosiciel głowicy kasetowej (Hydra) pęka przed celem: błysk ładunku wyrzucającego, światło,
+   * pierścień iskier i obłok gazu, krótka fala (sama refrakcja) — głowice potomne startują
+   * z tego punktu (ich zapłon — onIgnite).
+   */
+  onSplit(r) {
+    const rng = this.rng;
+    const px = r.position.x;
+    const py = r.position.z;
+    const hgt = Math.max(0, r.position.y);
+    this.stats.splits++;
+    if (this._outside(px, py, EMIT_MARGIN)) return;
+    const fx = r.frameVel.x;
+    const fy = r.frameVel.z;
+    this._flash(px, py, 0.4, fx, fy, SPLIT_CORE, 1, 34, 0.05, SPLIT_HALO, 1, 170, 0.1,
+      SPLIT_LIGHT, 2.4, 0.06, 0.35, 0.3, 760, 60 + hgt);
+    const vx0 = r.velocity.x;
+    const vy0 = r.velocity.z;
+    for (let k = 0; k < 40; k++) {
+      const a = rng.next() * TAU;
+      const v = 500 + rng.next() * 1300;
+      const col = rng.next() < 0.6 ? SPARK_COLORS.gold : SPARK_COLORS.warm;
+      this._spark(px, py, vx0 * 0.35 + Math.cos(a) * v, vy0 * 0.35 + Math.sin(a) * v, 0.25 + rng.next() * 0.4,
+        0.25 + rng.next() * 0.3, 2.6, col, 0.9, fx, fy, CLOCK_SIM);
+    }
+    for (let k = 0; k < 10; k++) {
+      const a = rng.next() * TAU;
+      const v = 160 + rng.next() * 360;
+      this._puff(px, py, vx0 * 0.4 + Math.cos(a) * v, vy0 * 0.4 + Math.sin(a) * v, fx, fy,
+        5 + rng.next() * 5, 30 + rng.next() * 18, 1.2 + rng.next() * 1.4, 0.6, SMOKE_KIND.SOOT, 0.24 + rng.next() * 0.1,
+        rng.next() * 0.02, 16 + hgt);
+    }
+    this._shock(px, py, 0.35, 1900, 0, 0, 40, 4, fx, fy, false);
   }
 
   /**
@@ -745,8 +975,16 @@ export class RocketEffects {
     this._shock(x, y, 1.3, 0, 2700, 0.42, 170, 22, 0, 0, true);
     this._blast(x, y, 1.3, 0, 2700, 0.42, 220, 16000, 0, 0);
     this._haze(x, y, 1.8, 700, 5, 0, 0);
-    // Pozostałość.
-    if (this.renderer) this.nebula.spawn(this.renderer, tl, x, y, 110000, 1250, 9, 4.2, 0.22);
+    // Pozostałość: wir (obrót różnicowy — kierunek losowy), dżety pulsara na obracającej się osi.
+    const dir = rng.next() < 0.5 ? -1 : 1;
+    const spin = dir * (0.95 + 0.35 * rng.next());
+    const jetA0 = rng.next() * TAU;
+    const jetW = dir * (2.0 + 0.7 * rng.next());
+    this.nSpin[i] = spin; this.nJetA[i] = jetA0; this.nJetW[i] = jetW;
+    const arms = rng.next() < 0.5 ? 2 : 3;
+    const armPhase = rng.next() * TAU;
+    if (this.renderer) this.nebula.spawn(this.renderer, tl, x, y, 110000, 1250, 9, NOVA_REMNANT_LIFE, 0.22,
+      spin, jetA0, jetW, NOVA_JET_SPEED, NOVA_JET_SPAN, NOVA_JET_LIFE, arms, armPhase);
     // Iskry gwiezdne (w próżni: bez nośnika — pozostałość stoi w świecie, jak w demie).
     const inView = !this._outside(x, y, EMIT_MARGIN + 3000);
     const n = inView ? Math.round(B.sparks * this.opts.blastGain) : 0;
@@ -787,9 +1025,10 @@ export class RocketEffects {
         boost = Math.max(boost, 1.3 * Math.exp(-b / 0.25));
         expo = Math.min(expo, 1 - 0.2 * Math.exp(-b / 0.05));
       }
-      if (a >= 4.6) {
+      if (a >= NOVA_SEQ_END) {
         const last = --this.nN;
         this.nvx[i] = this.nvx[last]; this.nvy[i] = this.nvy[last]; this.nt0[i] = this.nt0[last]; this.nstage[i] = this.nstage[last];
+        this.nSpin[i] = this.nSpin[last]; this.nJetA[i] = this.nJetA[last]; this.nJetW[i] = this.nJetW[last];
       }
     }
     this.bloomBoost = boost;
@@ -1061,9 +1300,12 @@ export class RocketEffects {
         const flick = 0.9 + 0.1 * Math.sin(time * 33 + this.seed[i] * 20);
         let I = Lt.intensity * (0.45 + 0.55 * this.thr[i]) * flick;
         if (kind === VFX_NOVA && r.guidancePhase === 'terminal') I *= 1 + 1.5 * novaPulse(this.termT[i]);
+        // Światło dyszy na wysokości rakiety: tuż po zapłonie nad pokładem plama światła na kadłubie
+        // jest ostra, a gdy rakieta się wznosi — szersza i słabsza.
+        const cpl = Math.cos(Number(r.nosePitch) || 0);
         const q = ln++ * 8;
-        LB[q] = r.position.x - this.hc[i] * bl * 1.4; LB[q + 1] = r.position.z - this.hs[i] * bl * 1.4;
-        LB[q + 2] = 40; LB[q + 3] = Lt.range;
+        LB[q] = r.position.x - this.hc[i] * bl * 1.4 * cpl; LB[q + 1] = r.position.z - this.hs[i] * bl * 1.4 * cpl;
+        LB[q + 2] = 40 + r.position.y; LB[q + 3] = Lt.range;
         LB[q + 4] = Lt.color[0] * I; LB[q + 5] = Lt.color[1] * I; LB[q + 6] = Lt.color[2] * I; LB[q + 7] = 0.9;
       }
     }
@@ -1100,9 +1342,12 @@ export class RocketEffects {
     }
     for (let i = 0; i < this.nN && ln < LIGHT_STAGE; i++) {
       const a = time - this.nt0[i];
-      // Implozja: narasta do detonacji; potem błysk gaśnie (e^(−t/1,6)), zasięg na pół kadru.
+      // Implozja: narasta do detonacji; potem błysk gaśnie (e^(−t/1,6)), zasięg na pół kadru;
+      // pulsar dokłada migotanie w rytm snopów, dopóki kręci się wir.
       const implode = a < 0.24;
-      const I = implode ? 3 * smooth(a / 0.24) : 1.4 * Math.exp(-(a - 0.24) / 1.6);
+      const pb = a - 0.24;
+      const ps = Math.max(0, Math.sin(pb * TAU * 6.5));
+      const I = implode ? 3 * smooth(a / 0.24) : 1.4 * Math.exp(-pb / 1.6) + 0.3 * Math.exp(-pb / 2.8) * (0.5 + 0.5 * ps * ps);
       if (!implode && !(I > 0.02)) continue;
       const q = ln++ * 8;
       LB[q] = this.nvx[i]; LB[q + 1] = this.nvy[i]; LB[q + 2] = implode ? 60 : 80; LB[q + 3] = implode ? 1400 : 2600;
@@ -1147,20 +1392,28 @@ export class RocketEffects {
       const s = this.hs[i];
       const on = r.state === 'POWERED';
       const band = kind === VFX_NOVA ? vfx.body.band : (this.hostile[i] ? BAND_HOSTILE : BAND_FRIENDLY);
-      // Kąt sceny = −kurs: cos(−h) = c, sin(−h) = −s.
-      B.x = px - ox; B.y = -py - oy; B.z = 44; B.cos = c; B.sin = -s; B.length = L;
+      // Wysokość: kadłubek na z sceny nad płaszczyzną (kamery 3D) i skrót perspektywy z góry.
+      const hgt = r.position.y > 0 ? r.position.y : 0;
+      const lift = 1 + LIFT_K * (hgt < LIFT_H ? hgt / LIFT_H : 1);
+      const Ll = L * lift;
+      const pitch = Number(r.nosePitch) || 0;
+      const cp = Math.cos(pitch);
+      // Kąt sceny = −kurs: cos(−h) = c, sin(−h) = −s; wzniesienie nosa — ku kamerze (+z sceny).
+      B.x = px - ox; B.y = -py - oy; B.z = 44 + hgt; B.cos = c; B.sin = -s; B.length = Ll;
+      B.pitchCos = cp; B.pitchSin = Math.sin(pitch);
       B.glow = on ? 1 : 0; B.roll = tl * 3.5 + this.seed[i] * TAU;
       bodies.push(vfx.body.hull, band);
-      if (!on) continue;
+      // Nos w górę: płomień schowany pod kadłubkiem (z góry widać łunę — addGlows), skrót strugi cos(el).
+      if (!on || cp < 0.12) continue;
       const P = vfx.plume;
       const fl = this.flick[i];
       const flick = 0.9 + 0.1 * Math.sin(tl * 41 + fl) * Math.sin(tl * 27 + fl * 3);
       const thr = this.thr[i];
       const t = Number(r.timeSinceLaunch) || 0;
       // Kierunek strugi w scenie: od dyszy do tyłu (świat (−c, −s) → scena (−c, s)).
-      Q.x = px - c * L * 0.5 - ox; Q.y = -(py - s * L * 0.5) - oy; Q.z = 46; Q.dx = -c; Q.dy = s;
-      Q.len = L * P.len * (0.5 + 0.5 * thr) * flick * (kind === VFX_NOVA ? 1 : (0.8 + 0.2 * Math.min(1, t * 2)));
-      Q.width = L * P.width; Q.throttle = Math.max(0.2, thr); Q.kind = P.kind; Q.seed = this.seed[i]; Q.intensity = 1;
+      Q.x = px - c * Ll * 0.5 * cp - ox; Q.y = -(py - s * Ll * 0.5 * cp) - oy; Q.z = 46 + hgt; Q.dx = -c; Q.dy = s;
+      Q.len = Ll * P.len * cp * (0.5 + 0.5 * thr) * flick * (kind === VFX_NOVA ? 1 : (0.8 + 0.2 * Math.min(1, t * 2)));
+      Q.width = Ll * P.width; Q.throttle = Math.max(0.2, thr); Q.kind = P.kind; Q.seed = this.seed[i]; Q.intensity = 1;
       plumes.push(P.core, P.hot, P.mid);
     }
   }
@@ -1194,12 +1447,28 @@ export class RocketEffects {
         const r = rockets[k];
         if (!r.active) continue;
         const i = r.index;
-        if (this.kind[i] !== VFX_NOVA) continue;
+        const kind = this.kind[i];
         const bs = Number(r.bodyScale) || 1;
         const bl = ROCKET_BODY_LENGTH * bs;
+        const hgt = r.position.y > 0 ? r.position.y : 0;
+        const pitch = Number(r.nosePitch) || 0;
+        const sp = Math.sin(pitch);
+        if (r.state === 'POWERED' && sp > 0.3 && !this._outside(r.position.x, r.position.z, 400)) {
+          // Nos w górę po zapłonie: dysza patrzy w pokład — z góry nie widać płomienia, tylko łunę
+          // w obłoku spalin pod rakietą (gaśnie, gdy rakieta kładzie się w kurs i płomień wychodzi spod kadłubka).
+          const lift = 1 + LIFT_K * (hgt < LIFT_H ? hgt / LIFT_H : 1);
+          const hot = MISSILE_VFX[VFX_KEYS[kind]].plume.hot;
+          const kk = (sp - 0.3) / 0.7 * (0.55 + 0.45 * this.thr[i]) * (0.85 + 0.15 * Math.sin(time * 37 + this.seed[i] * 20));
+          const cp = Math.cos(pitch);
+          S.x = r.position.x - this.hc[i] * bl * 0.5 * cp - ox; S.y = -(r.position.z - this.hs[i] * bl * 0.5 * cp) - oy; S.z = 45 + hgt;
+          S.size = 20 * bs * lift; S.r = hot[0] * 1.4 * kk; S.g = hot[1] * 1.4 * kk; S.b = hot[2] * 1.4 * kk;
+          glow.push();
+        }
+        if (kind !== VFX_NOVA) continue;
         let kk = 1.0 + 0.2 * Math.sin(time * 9 + this.seed[i] * 10);
         if (r.guidancePhase === 'terminal') kk += 2.2 * novaPulse(this.termT[i]);
-        S.x = r.position.x + this.hc[i] * bl * 0.42 - ox; S.y = -(r.position.z + this.hs[i] * bl * 0.42) - oy; S.z = 52;
+        const cpn = Math.cos(pitch);
+        S.x = r.position.x + this.hc[i] * bl * 0.42 * cpn - ox; S.y = -(r.position.z + this.hs[i] * bl * 0.42 * cpn) - oy; S.z = 52 + hgt;
         S.size = 11 * bs; S.r = 2.0 * kk; S.g = 0.6 * kk; S.b = 2.2 * kk;
         glow.push();
       }
@@ -1237,8 +1506,8 @@ export class RocketEffects {
         glow.push();
       } else {
         const b = a - 0.24;
-        // Stygnące jądro z pulsowaniem (gwiazda neutronowa w skrócie).
-        const core = Math.exp(-b / 1.1);
+        // Stygnące jądro z pulsowaniem (pulsar) — świeci przez całe życie wiru, gaśnie z nim.
+        const core = Math.exp(-b / 1.1) * 0.7 + 0.3 * Math.exp(-b / 3.2);
         const sp = Math.max(0, Math.sin(b * TAU * 6.5));
         const sp2 = sp * sp;
         const pul = core * (0.6 + 0.4 * sp2 * sp2 * sp2);
@@ -1247,6 +1516,29 @@ export class RocketEffects {
         const hot = Math.exp(-b / 0.9);
         S.x = x; S.y = y; S.z = 91; S.size = 420 + 900 * (1 - Math.exp(-b / 0.5)); S.r = 0.18 * hot; S.g = 0.26 * hot; S.b = 0.42 * hot;
         glow.push();
+        // Snopy pulsara: dwie przeciwne smugi z jądra wzdłuż osi dżetów (ta sama oś, która kreśli
+        // spiralę cząstek w mgławicy) — obracają się jak latarnia, błyskają w rytm pulsu.
+        const beamK = Math.min(1, b / 0.35) * Math.exp(-b / 2.8) * (0.55 + 0.45 * sp2);
+        if (beamK > 0.01) {
+          const th = this.nJetA[i] + this.nJetW[i] * b;
+          const len = 300 + 520 * Math.min(1, b / 1.4);
+          const ux = Math.cos(th);
+          const uy = Math.sin(th);
+          const Pb = PULSAR_BEAM;
+          for (let side = -1; side <= 1; side += 2) {
+            // Jasny koniec smugi (+kierunek) w jądrze: kierunek = −oś, środek = jądro + oś · len / 2.
+            // Wąski rdzeń snopu i szeroka, słaba poświata pod nim (snop w pyle pozostałości).
+            for (let layer = 0; layer < 2; layer++) {
+              const width = layer === 0 ? 46 : 190;
+              const k = layer === 0 ? beamK : beamK * 0.16;
+              const l = layer === 0 ? len : len * 0.8;
+              S.x = x + ux * side * l * 0.5; S.y = y + uy * side * l * 0.5; S.z = 94;
+              S.size = width; S.dx = -ux * side; S.dy = -uy * side; S.stretch = l / width;
+              S.r = Pb[0] * k; S.g = Pb[1] * k; S.b = Pb[2] * k;
+              glow.pushStreak();
+            }
+          }
+        }
       }
     }
   }

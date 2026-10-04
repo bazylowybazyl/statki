@@ -30,6 +30,7 @@ import {
   sin, max, min, abs, mod
 } from 'three/tsl';
 import { additiveMaterial } from './gpuFx.js';
+import { streakAcross } from '../tsl/billboard3D.js';
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
 import { liveRangeAttribute, markRange } from './liveRange.js';
 import { CLOCK_RENDER } from '../../game/simClock.js';
@@ -68,7 +69,7 @@ const MAX_STYLE_LIFE = Math.max(...TRAIL_STYLES.map((s) => s.life));
 /** Uchwyt smugi (z puli). */
 function createHandle() {
   return {
-    active: false, style: 0, width: 27, spacing: 45, pathUnit: 200, z: 14,
+    active: false, style: 0, width: 27, spacing: 45, pathUnit: 200, z: 14, lz: 14,
     lx: 0, ly: 0, lt: 0, lct: 0, lpath: 0, path: 0, acc: 0, dx: 1, dy: 0, seed: 0, energy: 1,
     cvx: 0, cvy: 0, clock: 0
   };
@@ -105,7 +106,7 @@ export class TrailSystem {
     this.styles = uniformArray(vals, 'vec4').setName('wfxTrailStyles');
     this.U = { gain: uniform(1).setName('wfxTrailGain') };
     this.mesh = null;
-    this._seg = new Float64Array(10);
+    this._seg = new Float64Array(12);
     this._free = [];
     for (let i = 0; i < HANDLE_CAP; i++) this._free.push(createHandle());
     this.stats = { segments: 0, handles: 0, dropped: 0 };
@@ -128,17 +129,18 @@ export class TrailSystem {
     const mat = additiveMaterial('wfxTrails');
     const S = (st, k) => styles.element(int(st).mul(int(STYLE_V4)).add(int(k)));
     // Koniec segmentu: dryf gazu, meandry, helisa, szerokość rosnąca z wiekiem, nośnik.
-    const endpoint = (P, side, width, path, seed, st, v, carrierT, cv, clockRender) => {
+    // Gra 3D: dir (kierunek segmentu) i side (bok) jako vec3 — w kamerze klasycznej bok w płaszczyźnie
+    // (dawny wynik), w kamerach 3D prostopadły do segmentu i kierunku patrzenia (tsl/billboard3D.js).
+    const endpoint = (P, side, dir, width, path, seed, st, v, carrierT, cv, clockRender) => {
       const age = max(T.sub(P.w), 0.0).toVar();
       const s4 = S(st, 4);
       const s5 = S(st, 5);
       const turb = S(st, 2).w;
-      const dir = vec2(side.y.negate(), side.x);
       const drift = min(age, 0.35).add(max(age.sub(0.35), 0.0).mul(0.26));
-      const p = P.xy.sub(dir.mul(s4.x.mul(drift))).toVar();
+      const p = P.xyz.sub(dir.mul(s4.x.mul(drift))).toVar();
       // nośnik: węzeł leci z prędkością odziedziczoną przez pocisk
       const Tc = select(clockRender, o.timeRender, o.timeSim);
-      p.addAssign(cv.mul(Tc.sub(carrierT)));
+      p.addAssign(vec3(cv, 0.0).mul(Tc.sub(carrierT)));
       const develop = smoothstep(0.15, 2.8, age);
       const wobble = sin(path.mul(2.7).add(seed).add(age.mul(0.75))).mul(0.68).add(sin(path.mul(6.1).sub(seed).sub(age.mul(0.9))).mul(0.28));
       p.addAssign(side.mul(wobble.mul(width).mul(turb).mul(develop).mul(0.46)));
@@ -147,7 +149,7 @@ export class TrailSystem {
       p.addAssign(side.mul(hel.mul(width).mul(0.5)));
       const neck = mix(float(0.30), float(1.0), smoothstep(0.0, 0.62, age));
       const w = width.mul(neck).mul(float(1.0).add(min(age.mul(s4.y), s4.z)));
-      return vec3(p.add(side.mul(v.mul(w))), P.z);
+      return p.add(side.mul(v.mul(w)));
     };
     mat.positionNode = Fn(() => {
       const i = instanceIndex.mul(uint(SEG_V4)).toVar();
@@ -166,9 +168,13 @@ export class TrailSystem {
       vB.assign(vec4(0.0));
       const ageB = T.sub(B.w);
       If(ageB.lessThan(life.add(0.05)).and(C.z.greaterThan(0.0)), () => {
-        const side = C.xy;
-        const pa = endpoint(A, side, C.z, D.x, D.z, st, v, E.z, E.xy, clockRender);
-        const pb = endpoint(B, side, C.z, D.y, D.z, st, v, E.w, E.xy, clockRender);
+        const side2 = C.xy;
+        const segD = B.xyz.sub(A.xyz).toVar();
+        const segL = segD.length();
+        const dir3 = select(segL.greaterThan(1e-3), segD.div(segL.max(1e-3)), vec3(side2.y.negate(), side2.x, 0.0)).toVar();
+        const side = streakAcross(dir3, side2).toVar();
+        const pa = endpoint(A, side, dir3, C.z, D.x, D.z, st, v, E.z, E.xy, clockRender);
+        const pb = endpoint(B, side, dir3, C.z, D.y, D.z, st, v, E.w, E.xy, clockRender);
         out.assign(mix(pa, pb, t));
         const birth = mix(A.w, B.w, t);
         vA.assign(vec4(v, max(T.sub(birth), 0.0), mix(D.x, D.y, t), D.z));
@@ -243,6 +249,7 @@ export class TrailSystem {
     h.spacing = Math.max(4, spacing);
     h.pathUnit = Math.max(1, pathUnit);
     h.z = z;
+    h.lz = z;
     h.lx = x; h.ly = y; h.lt = this.time; h.lct = ct;
     h.lpath = fxRandom.next() * 40;
     h.path = h.lpath;
@@ -260,48 +267,55 @@ export class TrailSystem {
    * Przesuwa smugę do (x, y) — emisja segmentów po drodze. ct — czas zegara gry pozy (x, y);
    * czasy efektów węzłów rozkłada się liniowo od ostatniego węzła do bieżącej klatki.
    */
-  advance(h, x, y, ct) {
+  advance(h, x, y, ct, z) {
     if (!h || !h.active) return;
     const sx = h.lx; const sy = h.ly;
+    // Gra 3D: wysokość węzłów (pocisk z nachyleniem) — bez z smuga w stałej wysokości uchwytu.
+    const sz = h.lz; const ez = z === undefined ? h.z : z;
     const ex = x - sx; const ey = y - sy;
-    const seg = Math.sqrt(ex * ex + ey * ey);
+    const dzs = ez - sz;
+    const seg = Math.sqrt(ex * ex + ey * ey + dzs * dzs);
     if (seg < 1e-6) return;
     const dx = (x - sx) / seg; const dy = (y - sy) / seg;
     h.dx = dx; h.dy = dy;
     const t0 = h.lt; const t1 = this.time;
     const c0 = h.lct;
     let d = h.spacing - h.acc;
-    let px = sx; let py = sy; let pt = t0; let pc = c0; let ppath = h.path;
+    let px = sx; let py = sy; let pz = sz; let pt = t0; let pc = c0; let ppath = h.path;
     const basePath = h.path;
     while (d <= seg) {
       const f = d / seg;
       const nx = sx + (x - sx) * f;
       const ny = sy + (y - sy) * f;
+      const nz = sz + dzs * f;
       const nt = t0 + (t1 - t0) * f;
       const nc = c0 + (ct - c0) * f;
       const npath = basePath + d / h.pathUnit;
       const N = this._seg;
       N[0] = px; N[1] = py; N[2] = pt; N[3] = pc; N[4] = ppath;
       N[5] = nx; N[6] = ny; N[7] = nt; N[8] = nc; N[9] = npath;
+      N[10] = pz; N[11] = nz;
       this._write(h);
-      px = nx; py = ny; pt = nt; pc = nc; ppath = npath;
+      px = nx; py = ny; pz = nz; pt = nt; pc = nc; ppath = npath;
       d += h.spacing;
     }
     h.acc = seg - (d - h.spacing);
     h.path = basePath + seg / h.pathUnit;
     // ostatni zapisany węzeł zostaje początkiem następnego segmentu
-    if (px !== sx || py !== sy) { h.lx = px; h.ly = py; h.lt = pt; h.lct = pc; h.lpath = ppath; }
+    if (px !== sx || py !== sy || pz !== sz) { h.lx = px; h.ly = py; h.lz = pz; h.lt = pt; h.lct = pc; h.lpath = ppath; }
   }
 
   /** Domyka smugę w punkcie (np. trafienia) i oddaje uchwyt do puli. */
-  end(h, x, y, ct) {
+  end(h, x, y, ct, z) {
     if (!h || !h.active) return;
-    const ex = x - h.lx; const ey = y - h.ly;
-    const d = Math.sqrt(ex * ex + ey * ey);
+    const ez = z === undefined ? h.lz : z;
+    const ex = x - h.lx; const ey = y - h.ly; const eze = ez - h.lz;
+    const d = Math.sqrt(ex * ex + ey * ey + eze * eze);
     if (d > 1) {
       const N = this._seg;
       N[0] = h.lx; N[1] = h.ly; N[2] = h.lt; N[3] = h.lct; N[4] = h.lpath;
       N[5] = x; N[6] = y; N[7] = this.time; N[8] = ct; N[9] = h.lpath + d / h.pathUnit;
+      N[10] = h.lz; N[11] = ez;
       this._write(h);
     }
     h.active = false;
@@ -321,6 +335,7 @@ export class TrailSystem {
     const N = this._seg;
     const ax = N[0], ay = N[1], at = N[2], act = N[3], apath = N[4];
     const bx = N[5], by = N[6], bt = N[7], bct = N[8], bpath = N[9];
+    const az = N[10], bz = N[11];
     const i = this.head;
     this.head = (this.head + 1) & (TRAIL_CAP - 1);
     if (this.head === 0) this.wrapped = true;
@@ -333,8 +348,8 @@ export class TrailSystem {
     const simE = og.simEpoch;
     // bok = kierunek obrócony o −90° w płaszczyźnie sceny (scena: y odwrócone)
     const sdx = h.dx; const sdy = -h.dy;
-    D[o] = ax - og.x; D[o + 1] = -ay - og.y; D[o + 2] = h.z; D[o + 3] = at - fxE;
-    D[o + 4] = bx - og.x; D[o + 5] = -by - og.y; D[o + 6] = h.z; D[o + 7] = bt - fxE;
+    D[o] = ax - og.x; D[o + 1] = -ay - og.y; D[o + 2] = az; D[o + 3] = at - fxE;
+    D[o + 4] = bx - og.x; D[o + 5] = -by - og.y; D[o + 6] = bz; D[o + 7] = bt - fxE;
     D[o + 8] = sdy; D[o + 9] = -sdx; D[o + 10] = h.width; D[o + 11] = h.style + 16 * h.clock;
     D[o + 12] = apath; D[o + 13] = bpath; D[o + 14] = h.seed; D[o + 15] = h.energy;
     const moving = h.cvx !== 0 || h.cvy !== 0;

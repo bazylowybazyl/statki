@@ -1532,6 +1532,13 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
 // w układzie ciała, mesh.position = początek ciała w świecie (z pozy RENDERU encji,
 // więc interpolacja gracza działa jak u heksów). Materiał = shader kadłubów gry.
 
+// Opcja „Statki 3D” (src/3d/ships3d/shipModels3DGame.js): encja rysowana modelem 3D — bez skóry sprite'a
+// (kadłub, cień SDF, lampy i efekty zostają). Predykat ustawia gra (index.html).
+let beamSkinSuppressor = null;
+export function setBeamSkinSuppressor(fn) {
+  beamSkinSuppressor = typeof fn === 'function' ? fn : null;
+}
+
 function isBeamHullEntity(entity) {
   const hull = entity?.beamHull;
   return !!hull && hull.entity === entity && !!hull.body && !hull.body.dead && hull.body.activeNodes > 0;
@@ -2053,6 +2060,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   const frameId = state.frameId;
   for (const entity of drawHex) {
     const beam = !entity.hexGrid;
+    // Model 3D zamiast skóry: nośnik chowa pętla pudła rozgrzania niżej (lastDrawFrame ≠ tej klatki).
+    if (beam && beamSkinSuppressor !== null && beamSkinSuppressor(entity)) continue;
     let data = state.entityMeshes.get(entity);
     // Encja zmieniła rodzaj ciała (heksy ↔ belki): stary mesh do zwolnienia.
     if (data && (data.kind === 'beam') !== beam) {

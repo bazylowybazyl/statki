@@ -19,7 +19,8 @@ export const YamatoSprite2D = {
     atlas.src = ATLAS_URL;
   },
 
-  draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack) {
+  // twin — wariant L (special_yamato_l): tylko skrajne lufy, środkowa kołyska zostaje pusta.
+  draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack, twin = false) {
     if (!this.enabled) return false;
     this.preload();
     if (!ready) return false; // Keep the procedural silhouette until loaded, or on failure.
@@ -33,9 +34,10 @@ export const YamatoSprite2D = {
 
     ctx.setTransform(a, b, c, d, sx - barrel * a, sy - barrel * b);
     // One barrel sprite reused three times. At rest the ends are exactly
-    // (56, -6.75), (58, 0), (56, 6.75), matching SPECS.yamato.m.
+    // (56, -6.75), (58, 0), (56, 6.75), matching SPECS.yamato.m
+    // (twin: outer pair only, matching SPECS.yamatoTwin.m).
     ctx.drawImage(atlas, 28, 962, 1198, 226, 6, -9.65, 50, 5.8);
-    ctx.drawImage(atlas, 28, 962, 1198, 226, 6, -3.1, 52, 6.2);
+    if (!twin) ctx.drawImage(atlas, 28, 962, 1198, 226, 6, -3.1, 52, 6.2);
     ctx.drawImage(atlas, 28, 962, 1198, 226, 6, 3.85, 50, 5.8);
     return true;
   }

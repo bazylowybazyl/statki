@@ -1,5 +1,7 @@
 // src/ai/aiUtils.js
 
+import { isCloakHidden } from '../game/cloak.js';
+
 const _clampTurnOut = { vx: 0, vy: 0 };
 export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg, out = _clampTurnOut) {
   // NaN recovery: if current velocity is NaN, treat as zero (stationary)
@@ -137,7 +139,8 @@ export function aiPickBestTarget(self, rangeLimit) {
   const amFighter = isAiFighterUnit(self);
 
   // In-place check for player ship
-  if (!self.friendly && window.ship && isEnemyUnit(self, window.ship)) {
+  // Zamaskowany gracz (src/game/cloak.js) nie jest kandydatem na cel.
+  if (!self.friendly && window.ship && !isCloakHidden(window.ship) && isEnemyUnit(self, window.ship)) {
     const u = window.ship;
     const dx = u.pos.x - self.x;
     const dy = u.pos.y - self.y;

@@ -8,8 +8,15 @@
 // kadrze trafiają do buforów, WZGLĘDEM POCZĄTKU PRZY KAMERZE (sceneOriginNearCamera
 // w mesh.position, dane w double na CPU) — bez drgań float32 przy 5–10 mln j.
 // Dwa draw calle, zero alokacji na klatkę.
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, Discard,
+  attribute, cameraProjectionMatrix, cameraViewMatrix, dot, exp, float, fract, int, length, max, modelViewMatrix,
+  normalView, normalize, positionGeometry, pow, select, step, uniform, varying, vec3, vec4
+} from 'three/tsl';
 import { sceneOriginNearCamera } from '../sceneOrigin.js';
+import { uniformsAdapter } from '../tsl/uniformy.js';
+import { blendAddytywnePremul } from '../tsl/mieszanie.js';
 import { resolvePortBuildingStyle } from './portBuildingStyle.js';
 import { BUOY_KIND } from './portBuoyLayout.js';
 
@@ -19,93 +26,99 @@ const MARGIN_PX = 64;
 // rozmiar per rodzaj: narożnik, brzeg, rząd — [promień pływaka, rozmiar światła]
 const KIND_SIZE = [[30, 70], [22, 48], [14, 30]];
 
-const BODY_VERTEX = /* glsl */`
-attribute vec4 iPos;    // x, y wzgledem poczatku, z, skala
-attribute vec4 iData;   // rodzaj, rola, faza, -
-uniform vec3 uSunDirW;
-varying vec3 vN;
-varying float vRole;
-varying vec3 vSun;
-varying float vLocalY;
-void main() {
-  vec3 p = position * vec3(iPos.w, iPos.w, iPos.w);
-  vec3 w = vec3(iPos.xy, iPos.z) + p;
-  vN = normalize(mat3(modelViewMatrix) * normal);
-  vSun = normalize(mat3(viewMatrix) * uSunDirW);
-  vRole = iData.y;
-  vLocalY = position.z;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(w, 1.0);
-}
-`;
-const BODY_FRAGMENT = /* glsl */`
-uniform vec3 uRoleCol[3];
-uniform float uSunVisS;
-varying vec3 vN;
-varying float vRole;
-varying vec3 vSun;
-varying float vLocalY;
-void main() {
-  vec3 N = normalize(vN);
-  float NdL = max(dot(N, normalize(vSun)), 0.0);
-  // plywak: ciemny grafit z pasem w barwie roli (zmatowionym), maszt jasny
-  int r = int(vRole + 0.5);
-  vec3 role = r == 0 ? uRoleCol[0] : (r == 1 ? uRoleCol[1] : uRoleCol[2]);
-  vec3 albedo = vLocalY > 0.55 ? vec3(0.42, 0.43, 0.42) : (vLocalY > 0.2 ? role * 0.16 : vec3(0.05, 0.055, 0.06));
-  vec3 col = albedo * (vec3(1.0, 0.97, 0.92) * NdL * uSunVisS + vec3(0.05, 0.056, 0.066));
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
+// Port WebGPU: materiały w TSL (NodeMaterial), wzory 1:1 z dawnym GLSL
+// (PortBuoyBody / PortBuoyLight). Graf budowany RAZ na egzemplarz PortBuoys3D
+// (materiał jest współdzielony przez przebudowy geometrii w setBuoys), wartości
+// w `material.uniforms` (adapter src/3d/tsl/uniformy.js — `.value` jak dawniej).
+// Pozycja zawsze przez węzeł modelViewMatrix (three składa go na CPU w double,
+// renderer.highPrecision) — dane instancji są względem początku przy kamerze.
 
-const LIGHT_VERTEX = /* glsl */`
-attribute vec4 iPos;    // x, y wzgledem poczatku, z, rozmiar [j.]
-attribute vec4 iData;   // rodzaj, rola, faza, -
-uniform vec4 uRhythm;   // okres [s], liczba blyskow, dlugosc blysku [s], czas
-uniform float uPxWorld; // jednostki swiata na piksel (z = 0)
-uniform vec3 uRoleCol[3];
-varying vec2 vQ;
-varying vec3 vCol;
-varying float vFlash;
-float buoyFlash(float t, float phase) {
-  float period = max(0.2, uRhythm.x);
-  float u = fract(t / period - phase * 0.35) * period;
-  float on = 0.0;
-  for (int k = 0; k < 3; k++) {
-    if (float(k) < uRhythm.y) {
-      float t0 = float(k) * uRhythm.z * 2.0;
-      on = max(on, step(t0, u) * step(u, t0 + uRhythm.z));
-    }
+// barwa roli: 0 cywilna, 1 wojskowa, 2 kolejka (trzy uniformy zamiast tablicy vec3 —
+// bez osobnego bufora uniformArray)
+function roleColor(U, roleF) {
+  const r = int(roleF.add(0.5));
+  return select(r.equal(0), U.uRoleCol0, select(r.equal(1), U.uRoleCol1, U.uRoleCol2));
+}
+
+function buildBodyMaterial(U) {
+  const iPos = attribute('iPos', 'vec4');   // x, y względem początku, z, skala
+  const iData = attribute('iData', 'vec4'); // rodzaj, rola, faza, -
+  const m = new THREE.NodeMaterial();
+  m.name = 'PortBuoyBody';
+  m.lights = false;
+  m.fog = false;
+  // pozycja lokalna siatki = dawne w = iPos.xyz + position * skala; dalej standardowo
+  // modelViewMatrix (double na CPU) i projekcja kamery
+  m.positionNode = positionGeometry.mul(iPos.w).add(iPos.xyz);
+  const vRole = varying(iData.y, 'vBuoyRole');
+  const vLocalY = varying(positionGeometry.z, 'vBuoyLocalY');
+  // dawne normalize(mat3(viewMatrix) * uSunDirW)
+  const vSun = varying(normalize(cameraViewMatrix.mul(vec4(U.uSunDirW, 0.0)).xyz), 'vBuoySun');
+  m.fragmentNode = Fn(() => {
+    const N = normalize(normalView);
+    const NdL = max(dot(N, normalize(vSun)), 0.0);
+    // pływak: ciemny grafit z pasem w barwie roli (zmatowionym), maszt jasny
+    const role = roleColor(U, vRole);
+    const albedo = select(vLocalY.greaterThan(0.55), vec3(0.42, 0.43, 0.42),
+      select(vLocalY.greaterThan(0.2), role.mul(0.16), vec3(0.05, 0.055, 0.06)));
+    const col = albedo.mul(vec3(1.0, 0.97, 0.92).mul(NdL).mul(U.uSunVisS).add(vec3(0.05, 0.056, 0.066)));
+    return vec4(col, 1.0);
+  })();
+  return m;
+}
+
+// rytm błysku: uRhythm = okres [s], liczba błysków, długość błysku [s], czas
+function buoyFlash(U, phase) {
+  const R = U.uRhythm;
+  const period = max(0.2, R.x);
+  const u = fract(R.w.div(period).sub(phase.mul(0.35))).mul(period);
+  let on = float(0.0);
+  for (let k = 0; k < 3; k++) {
+    const t0 = R.z.mul(k * 2.0);
+    const lit = step(t0, u).mul(step(u, t0.add(R.z)));
+    on = max(on, select(R.y.greaterThan(k), lit, float(0.0)));
   }
   return on;
 }
-void main() {
-  vQ = position.xy * 2.0;
-  int r = int(iData.y + 0.5);
-  vCol = r == 0 ? uRoleCol[0] : (r == 1 ? uRoleCol[1] : uRoleCol[2]);
-  // boje rzedow swieca stale, narozniki i brzegi w rytmie redy
-  vFlash = iData.x > 1.5 ? 0.55 : buoyFlash(uRhythm.w, iData.z);
-  float size = max(iPos.w, uPxWorld * 7.0);
-  vec4 mv = modelViewMatrix * vec4(iPos.xyz, 1.0);
-  mv.xy += position.xy * size;
-  gl_Position = projectionMatrix * mv;
-}
-`;
-const LIGHT_FRAGMENT = /* glsl */`
-varying vec2 vQ;
-varying vec3 vCol;
-varying float vFlash;
-void main() {
-  float d = length(vQ);
-  if (d > 1.0) discard;
-  // maly rdzen HDR (tylko w blysku) + poswiata gasnaca przed brzegiem kwadu
-  float core = exp(-d * d * 60.0);
-  float halo = pow(max(1.0 - d, 0.0), 2.2);
-  vec3 col = vCol * (halo * (0.18 + 0.62 * vFlash)) + vec3(1.0, 0.96, 0.9) * core * (0.4 + 5.2 * vFlash);
-  float a = max(col.r, max(col.g, col.b));
-  gl_FragColor = vec4(col, a);
-}
-`;
 
-export const PORT_BUOY_SHADERS = Object.freeze({ BODY_VERTEX, BODY_FRAGMENT, LIGHT_VERTEX, LIGHT_FRAGMENT });
+function buildLightMaterial(U) {
+  const iPos = attribute('iPos', 'vec4');   // x, y względem początku, z, rozmiar [j.]
+  const iData = attribute('iData', 'vec4'); // rodzaj, rola, faza, -
+  const m = new THREE.NodeMaterial();
+  m.name = 'PortBuoyLight';
+  m.lights = false;
+  m.fog = false;
+  m.transparent = true;
+  m.depthWrite = false;
+  m.depthTest = true;
+  // dawne AdditiveBlending + premultipliedAlpha (ONE, ONE) — shader pisze alfa = max(rgb)
+  blendAddytywnePremul(m);
+  m.forceSinglePass = true;
+  // kwad zwrócony do kamery w przestrzeni widoku (jak dawny shader — bez gl_PointSize)
+  m.vertexNode = Fn(() => {
+    const size = max(iPos.w, U.uPxWorld.mul(7.0));
+    const mv = modelViewMatrix.mul(vec4(iPos.xyz, 1.0)).toVar();
+    const off = positionGeometry.xy.mul(size);
+    return cameraProjectionMatrix.mul(vec4(mv.x.add(off.x), mv.y.add(off.y), mv.z, mv.w));
+  })();
+  const vQ = varying(positionGeometry.xy.mul(2.0), 'vBuoyQ');
+  const vCol = varying(roleColor(U, iData.y), 'vBuoyCol');
+  // boje rzędów świecą stale, narożniki i brzegi w rytmie redy
+  const vFlash = varying(select(iData.x.greaterThan(1.5), float(0.55), buoyFlash(U, iData.z)), 'vBuoyFlash');
+  m.fragmentNode = Fn(() => {
+    const d = length(vQ).toVar();
+    If(d.greaterThan(1.0), () => { Discard(); });
+    // mały rdzeń HDR (tylko w błysku) + poświata gasnąca przed brzegiem kwadu
+    const core = exp(d.mul(d).mul(-60.0));
+    // max(1 − d, 0) ≥ 0: potęga bez ujemnej podstawy
+    const halo = pow(max(float(1.0).sub(d), 0.0), 2.2);
+    const col = vCol.mul(halo.mul(vFlash.mul(0.62).add(0.18)))
+      .add(vec3(1.0, 0.96, 0.9).mul(core).mul(vFlash.mul(5.2).add(0.4))).toVar();
+    const a = max(col.r, max(col.g, col.b));
+    return vec4(col, a);
+  })();
+  return m;
+}
 
 // Pływak (sześciokąt) + maszt + latarnia — jedna geometria, oś z do góry,
 // wysokość w [0, 1] (z lokalne: 0–0,2 dno, 0,2–0,55 pas roli, 0,55–1 maszt).
@@ -156,8 +169,8 @@ function makeInstancedGeometry(base, capacity) {
   geo.index = base.index;
   geo.setAttribute('position', base.getAttribute('position'));
   if (base.getAttribute('normal')) geo.setAttribute('normal', base.getAttribute('normal'));
-  const iPos = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage);
-  const iData = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage);
+  const iPos = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
+  const iData = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
   geo.setAttribute('iPos', iPos);
   geo.setAttribute('iData', iData);
   geo.instanceCount = 0;
@@ -177,13 +190,16 @@ export class PortBuoys3D {
     this.origin = { x: 0, y: 0 };
     this._range = { start: 0, count: 0 };
     this.stats = { total: 0, drawn: 0 };
-    this._uniforms = {
-      uRoleCol: { value: [this.style.buoy.civil, this.style.buoy.military, this.style.buoy.queue].map((c) => new THREE.Vector3(...c)) },
-      uRhythm: { value: new THREE.Vector4(this.style.buoy.period, this.style.buoy.flashes, this.style.buoy.flash, 0) },
-      uPxWorld: { value: 1 },
-      uSunDirW: { value: new THREE.Vector3(0.4, 0.3, 0.87).normalize() },
-      uSunVisS: { value: 1 }
-    };
+    const sb = this.style.buoy;
+    this._uniforms = uniformsAdapter({
+      uRoleCol0: uniform(new THREE.Vector3(...sb.civil)),
+      uRoleCol1: uniform(new THREE.Vector3(...sb.military)),
+      uRoleCol2: uniform(new THREE.Vector3(...sb.queue)),
+      uRhythm: uniform(new THREE.Vector4(sb.period, sb.flashes, sb.flash, 0)),
+      uPxWorld: uniform(1),
+      uSunDirW: uniform(new THREE.Vector3(0.4, 0.3, 0.87).normalize()),
+      uSunVisS: uniform(1)
+    });
     this._bodyBase = makeBuoyGeometry();
     this._quad = new THREE.PlaneGeometry(1, 1);
     this.setBuoys(buoys);
@@ -205,11 +221,10 @@ export class PortBuoys3D {
       this._b = b;
       this._l = l;
       if (!this.bodyMat) {
-        this.bodyMat = new THREE.ShaderMaterial({ name: 'PortBuoyBody', uniforms: this._uniforms, vertexShader: BODY_VERTEX, fragmentShader: BODY_FRAGMENT });
-        this.lightMat = new THREE.ShaderMaterial({
-          name: 'PortBuoyLight', uniforms: this._uniforms, vertexShader: LIGHT_VERTEX, fragmentShader: LIGHT_FRAGMENT,
-          transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, premultipliedAlpha: true
-        });
+        this.bodyMat = buildBodyMaterial(this._uniforms);
+        this.lightMat = buildLightMaterial(this._uniforms);
+        this.bodyMat.uniforms = this._uniforms;
+        this.lightMat.uniforms = this._uniforms;
       }
       this.body = new THREE.Mesh(b.geo, this.bodyMat);
       this.light = new THREE.Mesh(l.geo, this.lightMat);

@@ -201,6 +201,8 @@ export const WeaponFx = {
   _muzzleBudget: MUZZLE_PER_FRAME,
   _impactBudget: IMPACT_PER_FRAME,
   _weaponShake: 0,
+  // Mnożnik wstrząsu kamery bieżącego strzału (1 = pełny). Ustawia go strzelający wokół fireWeaponCore.
+  shotShakeScale: 1,
   _states: [],
   _free: [],
   _active: [],
@@ -459,6 +461,9 @@ export const WeaponFx = {
     this._muzzle(w, x, y, detail.shooter || null, detail.dirX, detail.dirY);
   },
 
+  /** Kamery 3D: (encja, x, y) → wysokość lufy nad płaszczyzną (błysk wylotu) albo null. */
+  muzzleZOf: null,
+
   /**
    * Wylot broni w punkcie (x, y): lufa i kąt z wieżyczki strzelca (Turret2D — odrzut), a bez
    * wieżyczki (myśliwiec) z kierunku strzału. Zwraca true, gdy powstał efekt.
@@ -472,8 +477,12 @@ export const WeaponFx = {
     if (shot) {
       m.x = shot.x; m.y = shot.y; m.angle = shot.angle; m.scale = shot.scale;
       writeCarrier(shot.entity || shooter, shot.x, shot.y, true, _carrier);
+      // Kamery 3D: błysk na wysokości lufy wieży 3D (shipModels3DGame.turretMuzzleZ; w kamerze z góry 0).
+      if (this.muzzleZOf !== null) _carrier.z += this.muzzleZOf(shot.entity || shooter, shot.x, shot.y) || 0;
       // Wstrząs strzałów z profilu wieżyczki (jak dawny weapon3DSystem) — 18-D przełączy na dane.
-      this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(shot.shake) || 0));
+      // `shotShakeScale` — ułamek wstrząsu tego strzału: kierowanie ogniem gracza (index.html) ścisza
+      // wieże na auto, ekranem trzęsie tylko grupa w ręku.
+      this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(shot.shake) || 0) * this.shotShakeScale);
       shot.entity = null;
     } else {
       if (!this._inView(x, y, 200)) return false;
@@ -767,7 +776,7 @@ export const WeaponFx = {
     // koniec smugi pocisku w punkcie trafienia — chyba że pocisk przebija kadłub i leci dalej
     // (hit.through, 18-B: smuga kończy się w punkcie wyjścia / zakleszczenia)
     const st = b.__fx;
-    if (st && st.bullet === b && !hit?.through) { st.endX = x; st.endY = y; st.endSet = true; }
+    if (st && st.bullet === b && !hit?.through) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
     let family = projectileFamilyFor(b);
     const hx = hit ? hit.nx : 0; const hy = hit ? hit.ny : 0;
     const relVx = hit ? hit.relVx : (Number(b.vx) || 0) - (Number(b.ivx) || 0);
@@ -886,7 +895,7 @@ export const WeaponFx = {
     // pocisk kończy lot w materiale — smuga do punktu zakleszczenia
     if (stuck) {
       const st = b.__fx;
-      if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endSet = true; }
+      if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
     }
     if (!this._inView(x, y, 1200)) return false;
     const p = _imp;
@@ -925,7 +934,7 @@ export const WeaponFx = {
     if (!this.available) return false;
     if (!this._inView(x, y, radius * 2)) return false;
     const st = b?.__fx;
-    if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endSet = true; }
+    if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
     this._shakeAllowed = b?.owner === 'player' || b?.owner === 'player2';
     try { RECIPES.flak.burst(this.ctx, x, y, radius); } finally { this._shakeAllowed = true; }
     return true;
@@ -1101,6 +1110,9 @@ export const WeaponFx = {
       const lag = b.clock === CLOCK_RENDER ? renderLag : 0;
       const x = bx - vx * lag;
       const y = by - vy * lag;
+      // Gra 3D: wysokość pocisku (b.z, b.vz — strzał z wysokości statku w punkt celowania 3D).
+      const vz = Number(b.vz) || 0;
+      const z = (Number(b.z) || 0) - vz * lag;
       if (!st || st.bullet !== b) {
         st = this._free.pop() || null;
         if (!st) continue;
@@ -1112,19 +1124,23 @@ export const WeaponFx = {
       live++;
       const ivx = st.ivx; const ivy = st.ivy;
       st.rvx = vx - ivx; st.rvy = vy - ivy;
+      st.rvz = vz - st.ivz;
+      st.z = z;
       const ct = b.clock === CLOCK_RENDER ? SimClock.render : SimClock.sim;
       const inView = this._inView(x, y);
-      if (st.trail) trails.advance(st.trail, x, y, ct);
+      if (st.trail) trails.advance(st.trail, x, y, ct, 14 + z);
       if (inView) {
         if (st.recipe?.fly) {
-          ActiveCarrier.set(writeCarrierVelocity(ivx, ivy, st.clock, ct, _carrier));
+          writeCarrierVelocity(ivx, ivy, st.clock, ct, _carrier);
+          _carrier.z = z; // gra 3D: efekty lotu na wysokości pocisku
+          ActiveCarrier.set(_carrier);
           try { st.recipe.fly(this.ctx, st, st.lastX, st.lastY, x, y); } finally { ActiveCarrier.clear(); }
         }
         const L = st.conf.light;
         if (L) lights.point(x, y, L[0], L[1], L[2], L[3], L[4], 30);
-        this._addProjectile(st.conf, x, y, st.rvx, st.rvy, Number(b.age) || 0, st.wScale, st.seed, ox, oy);
+        this._addProjectile(st.conf, x, y, st.rvx, st.rvy, Number(b.age) || 0, st.wScale, st.seed, ox, oy, st);
       }
-      st.lastX = x; st.lastY = y;
+      st.lastX = x; st.lastY = y; st.lastZ = z;
     }
     this.stats.bullets = live;
     // pociski, których już nie ma w tablicy: smuga domknięta w punkcie trafienia albo ostatniej pozie
@@ -1133,7 +1149,7 @@ export const WeaponFx = {
       const st = A[i];
       if (st.frame === frame) continue;
       if (st.trail) {
-        trails.end(st.trail, st.endSet ? st.endX : st.lastX, st.endSet ? st.endY : st.lastY, st.clock === CLOCK_RENDER ? SimClock.render : SimClock.sim);
+        trails.end(st.trail, st.endSet ? st.endX : st.lastX, st.endSet ? st.endY : st.lastY, st.clock === CLOCK_RENDER ? SimClock.render : SimClock.sim, 14 + (st.endSet && Number.isFinite(st.endZ) ? st.endZ : (st.lastZ || 0)));
         st.trail = null;
       }
       if (st.bullet && st.bullet.__fx === st) st.bullet.__fx = null;
@@ -1162,6 +1178,8 @@ export const WeaponFx = {
     st.flyAcc = 0;
     st.seed = fxRandom.next();
     st.ivx = Number(b.ivx) || 0; st.ivy = Number(b.ivy) || 0;
+    st.ivz = Number(b.ivz) || 0;
+    st.z = Number(b.z) || 0; st.rvz = (Number(b.vz) || 0) - st.ivz; st.lastZ = st.z; st.endZ = NaN;
     st.clock = b.clock === CLOCK_RENDER ? CLOCK_RENDER : CLOCK_SIM;
     st.power = SIZE_POWER[b.weaponSize] || 1;
     st.endSet = false;
@@ -1176,19 +1194,23 @@ export const WeaponFx = {
     st.trail = null;
     if (conf.trail >= 0 && this._inView(x, y, 2000)) {
       const ct = (st.clock === CLOCK_RENDER ? SimClock.render : SimClock.sim) - age;
-      st.trail = this.trails.begin(conf.trail, sx, sy, rvx, rvy, conf.trailWidth * st.wScale, conf.trailSpacing, conf.trailPathUnit, st.ivx, st.ivy, ct, st.clock);
+      // Gra 3D: początek smugi na wysokości wylotu (z − vz · wiek).
+      const sz = st.z - (Number(b.vz) || 0) * age;
+      st.trail = this.trails.begin(conf.trail, sx, sy, rvx, rvy, conf.trailWidth * st.wScale, conf.trailSpacing, conf.trailPathUnit, st.ivx, st.ivy, ct, st.clock, 14 + sz);
     }
   },
 
   /** Pocisk do bufora rysunku: kierunek i długość z ruchu względem strzelca (rvx, rvy). */
-  _addProjectile(conf, x, y, rvx, rvy, age, wScale, seed, ox, oy) {
-    const spd = Math.sqrt(rvx * rvx + rvy * rvy);
-    let dxs = 1; let dys = 0;
-    if (spd > 1e-3) { dxs = rvx / spd; dys = -rvy / spd; }
+  _addProjectile(conf, x, y, rvx, rvy, age, wScale, seed, ox, oy, st) {
+    // Gra 3D: kierunek i długość smugi z ruchu 3D (st.rvz), głowa na wysokości pocisku (st.z).
+    const rvz = st ? (st.rvz || 0) : 0;
+    const spd = Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
+    let dxs = 1; let dys = 0; let dzs = 0;
+    if (spd > 1e-3) { dxs = rvx / spd; dys = -rvy / spd; dzs = rvz / spd; }
     const grow = Math.min(1, age * 40 + 0.15);
     const len = (conf.len * wScale + spd * conf.streak) * grow;
     const c = conf.color;
-    this.projectiles.add(x - ox, -y - oy, 14, conf.style, dxs, dys, len, conf.width * wScale, c[0], c[1], c[2], seed);
+    this.projectiles.add(x - ox, -y - oy, 14 + (st ? (st.z || 0) : 0), conf.style, dxs, dys, len, conf.width * wScale, c[0], c[1], c[2], seed, dzs);
   },
 
   _syncRicochets(ox, oy) {

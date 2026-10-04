@@ -112,7 +112,7 @@ test('Core3D: mapa cienia słońca per pass (warstwy passa jak WebGLShadowMap) �
   assert.doesNotMatch(core3d, /shadowMap\.(autoUpdate|needsUpdate)\s*=/, 'WebGL-owe flagi mapy cienia wróciły');
   const renderAt = core3d.indexOf('\n  render() {');
   const chainAt = core3d.indexOf('for (const pass of this._scenePasses)', renderAt);
-  const runAt = core3d.indexOf('this._runScenePass(pass);', chainAt);
+  const runAt = core3d.indexOf('this._runScenePass(pass, freePerspective);', chainAt);
   const orthoAt = core3d.indexOf('if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);', chainAt);
   const fgAt = core3d.indexOf('else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);', chainAt);
   assert.ok(renderAt > 0 && orthoAt > chainAt && fgAt > orthoAt && runAt > fgAt, 'odświeżenie mapy w pętli passów, przed passem ortho i FG');
@@ -367,7 +367,7 @@ test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakier
   assert.equal(indexHtml.match(/beginHexInitBudgetFrame\(\);/g)?.length, 1);
   assert.match(indexHtml, /&& hexInitBudgetAllows\(\)\) \{/);
   // Tekstura skóry kadłuba na belkach = pełny sprite (visualImage), rozgrzany przy budowie kadłuba.
-  assert.match(indexHtml, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image \}\);/);
+  assert.match(indexHtml, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image, hullProfileId: getNpcHullRenderProfileId\(npc\) \}\);/);
   assert.match(indexHtml, /if \(npc\.beamHull\) \{\s*prewarmHexShipVisual\(sprite\.image\);/);
   assert.match(hexShips, /export function prewarmHexShipVisual\(image\)/);
 });

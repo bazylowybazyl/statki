@@ -81,7 +81,7 @@ async function defaultSequence() {
 
   // Przylot i odlot okrętu (scena 2, superkapitał): fazy po nazwach z dema.
   await open('scene=arrival&hull=supercapital');
-  const burst = await phaseEdge(0.3, 6, (ph) => ph === 'wyrzut' || ph === 'po przylocie');
+  const burst = await phaseEdge(0.3, 6, (ph) => ph === 'hamowanie' || ph === 'po przylocie');
   const dive = await phaseEdge(8.8, 13, (ph) => ph === 'odlot');
   result.przylot = { wyrzut: +burst.toFixed(3), wejscie: +dive.toFixed(3) };
   await shot('demo-zwiastun', burst - 0.5);

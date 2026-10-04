@@ -9,49 +9,37 @@ import { TRAFFIC_HULLS, trafficHullRenderSize } from '../src/data/trafficHulls.j
 import { mainExhaustPaletteIndex } from '../src/data/engineFx.js';
 
 const source = readFileSync(new URL('../src/3d/shipProxyBatch3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const hullSource = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-
-function shaderConst(text, name) {
-  const match = text.match(new RegExp('const ' + name + ' = `([\\s\\S]*?)`;'));
-  assert.ok(match, `brak ${name}`);
-  return match[1];
-}
+const tslSource = readFileSync(new URL('../src/3d/shipProxyBatch3D.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const hullTslSource = readFileSync(new URL('../src/3d/hexShips3D.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const squash = (s) => s.replace(/\s+/g, ' ');
 
-test('shader proxy: instancje względem początku przy kamerze (precyzja float32)', () => {
-  const vertex = shaderConst(source, 'VERTEX_SHADER');
-  assert.match(vertex, /vec4 local = instanceMatrix \* vec4\(position\.xy, 0\.0, 1\.0\);/);
-  assert.match(vertex, /gl_Position = projectionMatrix \* modelViewMatrix \* local;/);
-  assert.doesNotMatch(vertex, /\bviewMatrix\s*\*/, 'bez viewMatrix * świat — to drga przy 7 mln j.');
+test('materiał proxy: TSL, instancje względem początku przy kamerze (precyzja float32)', () => {
+  assert.doesNotMatch(source, /new THREE\.ShaderMaterial|sunShadowMaskGLSL|SUN_SHADOW_GLSL|gl_Position|WebGLRenderer|setUsage\(/);
+  assert.doesNotMatch(tslSource, /new THREE\.ShaderMaterial|sunShadowMaskGLSL|gl_Position|cameraViewMatrix|positionWorld/);
+  assert.match(tslSource, /extends THREE\.NodeMaterial/);
+  assert.match(tslSource, /InstancedInterleavedBuffer/);
   assert.match(source, /sceneOriginNearCamera\(origin, camera\)/);
   assert.match(source, /mesh\.position\.set\(origin\.x, origin\.y, 0\)/);
-  assert.doesNotMatch(source, /WebGLRenderer/);
 });
 
-// Parzystość GLSL proxy (Z4, poza portem — PLAN §1 p. 5) z GLSL kadłubów straciła sens:
-// kadłuby są w TSL od zadania 04 (hexShips3D.tsl.js). Test zostaje jako todo.
-test('shader proxy: rdzeń światła = HEX_FRAGMENT_SHADER kadłubów (maska słońca, glow)', {
-  todo: 'Z4 przejdzie na TSL przy integracji (PLAN §1 p. 5) — wtedy parzystość z grafem kadłuba (hexShips3D.tsl.js)'
-}, () => {
-  const proxy = squash(shaderConst(source, 'FRAGMENT_SHADER'));
-  const hull = squash(shaderConst(hullSource, 'HEX_FRAGMENT_SHADER'));
+test('materiał proxy: rdzeń światła = fragment kadłubów (hexShips3D.tsl.js — maska słońca, glow)', () => {
+  const proxy = squash(tslSource);
+  const hull = squash(hullTslSource);
   const shared = [
-    'normalize(vec3(p.x * 0.45, -p.y * 0.45, 1.0))',
-    'float sunVis = sunVisibility();',
-    'float lightMul = uDayAmbient * sunFill(sunVis) + dayDiffuse * uDayDiffuseMul * sunVis;',
+    'normalize(vec3(p.x.mul(0.45), p.y.mul(-0.45), 1.0))',
+    'sunVisibility().toVar()',
+    '.mul(sunFill(sunVis)).add(dayDiffuse.mul(',
     'pow(max(dot(worldNormal, halfVector), 0.0), 32.0)',
-    'float litMask = smoothstep(-0.02, 0.08, NdotL);',
-    'color += vec3(spec * uSpecularMul * litMask * sunVis);',
-    'float isGlowing = step(0.6, sunlitColor.b) * step(sunlitColor.r, 0.5);',
-    'float fieldLit = 1.0 - fieldDarkness();',
-    'vec3 finalColor = color + (sunlitColor * isGlowing * 1.5) * (0.3 + 0.7 * fieldLit);'
+    'smoothstep(-0.02, 0.08, NdotL)',
+    '.mul(litMask).mul(sunVis)));',
+    'step(0.6, sunlitColor.z).mul(step(sunlitColor.x, 0.5))',
+    'float(1.0).sub(fieldDarkness())',
+    '.mul(isGlowing).mul(1.5).mul(fieldLit.mul(0.7).add(0.3))'
   ];
   for (const line of shared) {
-    assert.ok(hull.includes(line), `kadłuby zmieniły model światła — popraw lustro w shipProxyBatch3D: ${line}`);
+    assert.ok(hull.includes(line), `kadłuby zmieniły model światła — popraw lustro w shipProxyBatch3D.tsl.js: ${line}`);
     assert.ok(proxy.includes(line), `proxy nie ma: ${line}`);
   }
-  assert.match(source, /\$\{SUN_SHADOW_GLSL\}/);
-  assert.match(source, /\.\.\.sunShadowUniforms/);
 });
 
 // Atrapa Core3D bez WebGL: scena three, rozmiar widoku, obrazek {width, height}.
@@ -62,7 +50,9 @@ Core3D.height = 1080;
 ShipProxyBatch3D.setImageResolver((hullId) => ({ width: 64, height: 32, hullId }));
 
 const cam = { x: 7_080_000, y: 6_290_000, zoom: 0.5 };
-const meshOf = (file) => Core3D.scene.children.find((o) => o.isInstancedMesh && o.name === `shipProxy:${file}`);
+const meshOf = (file) => Core3D.scene.children.find((o) => o.isMesh && o.name === `shipProxy:${file}`);
+const dataOf = (mesh) => mesh.userData.shipProxyBuffer.array;
+const countOf = (mesh) => mesh.geometry.instanceCount;
 function actor(o) {
   return { courseId: o.id, unitClass: o.cls, hullId: o.hull, x: o.x, y: o.y, angle: o.angle ?? 0,
     prevX: o.px ?? o.x, prevY: o.py ?? o.y, prevAngle: o.pa ?? o.angle ?? 0,
@@ -74,10 +64,10 @@ test('instancja: środek względem początku przy kamerze, osie × wymiary sprit
   ShipProxyBatch3D.update([a], 1, cam);
   const mesh = meshOf('container_ship.png');
   assert.ok(mesh, 'rodzaj kontenerowca w scenie');
-  assert.equal(mesh.count, 1);
+  assert.equal(countOf(mesh), 1);
   assert.equal(mesh.visible, true);
   assert.deepEqual([mesh.position.x, mesh.position.y], [cam.x, -cam.y]);
-  const M = mesh.instanceMatrix.array;
+  const M = dataOf(mesh);
   const { w, h } = trafficHullRenderSize('container_ship');
   const c = Math.cos(-0.5);
   const s = Math.sin(-0.5);
@@ -93,7 +83,7 @@ test('interpolacja między krokami bańki (alpha) i przycinanie do kadru', () =>
   const a = actor({ id: 'haul-00002', hull: 'container_ship', x: cam.x + 100, y: cam.y, px: cam.x, py: cam.y, angle: 0.4, pa: 0 });
   const far = actor({ id: 'haul-00003', hull: 'container_ship', x: cam.x + 1e6, y: cam.y });
   ShipProxyBatch3D.update([a, far], 0.25, cam);
-  const M = meshOf('container_ship.png').instanceMatrix.array;
+  const M = dataOf(meshOf('container_ship.png'));
   assert.ok(Math.abs(M[12] - 25) < 1e-6, `x = prev + 0,25 · Δ, jest ${M[12]}`);
   assert.ok(Math.abs(M[8] - Math.cos(-0.1)) < 1e-6, 'kąt interpolowany');
   assert.equal(ShipProxyBatch3D.stats.drawn, 1);
@@ -103,21 +93,21 @@ test('interpolacja między krokami bańki (alpha) i przycinanie do kadru', () =>
 test('pusty rodzaj: count 0 i visible = false (zero draw calli)', () => {
   ShipProxyBatch3D.update([], 1, cam);
   const mesh = meshOf('container_ship.png');
-  assert.equal(mesh.count, 0);
+  assert.equal(countOf(mesh), 0);
   assert.equal(mesh.visible, false);
   assert.equal(ShipProxyBatch3D.stats.drawCalls, 0);
 });
 
-test('jeden InstancedMesh na teksturę: ciężki frachtowiec dzieli sprite i mesh z dalekiego zasięgu', () => {
+test('jedna siatka na teksturę: ciężki frachtowiec dzieli sprite i mesh z dalekiego zasięgu', () => {
   const list = [
     actor({ id: 'haul-00010', hull: 'long_haul_freighter', x: cam.x, y: cam.y }),
     actor({ id: 'haul-00011', cls: 'freighter-capital', x: cam.x + 300, y: cam.y })
   ];
   ShipProxyBatch3D.update(list, 1, cam);
   const mesh = meshOf('long_haul_freighter.png');
-  assert.equal(mesh.count, 2);
+  assert.equal(countOf(mesh), 2);
   assert.equal(ShipProxyBatch3D.stats.drawCalls, 1);
-  const M = mesh.instanceMatrix.array;
+  const M = dataOf(mesh);
   assert.equal(Math.round(M[16]), trafficHullRenderSize('heavy_freighter').w, 'druga instancja w skali 1800 j.');
 });
 
@@ -127,8 +117,8 @@ test('rodzaj rośnie ponad pojemność początkową bez gubienia instancji', () 
   ShipProxyBatch3D.update(list, 1, cam);
   const meshes = Core3D.scene.children.filter((o) => o.name === 'shipProxy:smuggler.png');
   assert.equal(meshes.length, 1, 'stary mesh odpięty');
-  assert.equal(meshes[0].count, 70);
-  assert.ok(Math.abs(meshes[0].instanceMatrix.array[69 * 16 + 12] - 690) < 1e-6);
+  assert.equal(countOf(meshes[0]), 70);
+  assert.ok(Math.abs(dataOf(meshes[0])[69 * 16 + 12] - 690) < 1e-6);
 });
 
 test('dysze: widok encji z układem MAIN kadłuba, postój bez dysz, budżet na flotę', () => {

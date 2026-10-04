@@ -36,6 +36,9 @@ const localParticles = [];
 const hexlanceProjectiles = [];
 // Rzaz pocisku z pędem (HullBodies.cutSegment, 2026-09-29): odłamki i odcięte części lecą wzdłuż toru.
 const HEXLANCE_CUT_OPTS = Object.freeze({ push: true });
+// Obrażenia jednego pocisku w stacji (tarcza, potem kadłub): budynek stoczni fabuły (16 000 + tarcza 4 000)
+// pada od dwóch salw Atlasa.
+export const HEXLANCE_STATION_DAMAGE = 6000;
 let globalTime = 0;
 const HEXLANCE_DEF = MASTER_WEAPONS?.hexlance_siege || {};
 
@@ -444,6 +447,35 @@ export function updateSuperweapon(dt, ship, aimPos) {
                         proj.exitY = biteY;
                         cutInside = true;
                     }
+                }
+            }
+        }
+
+        // Stacje wrogie (fabuła 2026-09-30: budynek stoczni piratów niszczy broń wbudowana). Stacja nie ma kadłuba
+        // na belkach — Hexlance przebija bryłę: obrażenia raz na pocisk przy wejściu w obrys, rozbłysk w punkcie wejścia.
+        // AGENT: rzaz przez bryłę stacji — gdy stacje dostaną silnik zniszczeń 3D.
+        const stationList = window.stations;
+        if (Array.isArray(stationList) && typeof window.applyDamageToStation === 'function') {
+            const lenSq = moveX * moveX + moveY * moveY;
+            for (const st of stationList) {
+                if (!st || st._destroyed3D || !(st.hp > 0) || st.ringPort || !(st.isPirate || st.hostile)) continue;
+                if (proj.bittenStations && proj.bittenStations.has(st)) continue;
+                const r = Math.max(60, Number(st.r) || 200);
+                let tp = 0;
+                if (lenSq > 0) tp = Math.max(0, Math.min(1, ((st.x - prevX) * moveX + (st.y - prevY) * moveY) / lenSq));
+                const cx = prevX + tp * moveX, cy = prevY + tp * moveY;
+                const d2 = (st.x - cx) ** 2 + (st.y - cy) ** 2;
+                if (d2 >= r * r) continue;
+                // punkt wejścia: cofnięcie od najbliższego punktu wzdłuż toru
+                const len = Math.sqrt(lenSq) || 1;
+                const back = Math.sqrt(Math.max(0, r * r - d2));
+                const ix = cx - (moveX / len) * back, iy = cy - (moveY / len) * back;
+                if (!proj.bittenStations) proj.bittenStations = new Set();
+                proj.bittenStations.add(st);
+                window.applyDamageToStation(st, HEXLANCE_STATION_DAMAGE);
+                if (WeaponFx.available) {
+                    const c = writeCarrier(st, ix, iy, false, _targetCarrier);
+                    WeaponFx.hexlanceImpact(ix, iy, proj.vx - c.vx, proj.vy - c.vy, c);
                 }
             }
         }

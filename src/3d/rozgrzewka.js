@@ -87,6 +87,7 @@ export class Rozgrzewka {
     this._waiting = [];          // wpisy z pustymi obiektami — ponownie przy flush()
     this._pending = new Set();   // obietnice compileAsync w locie
     this._done = new WeakMap();  // siatka → Set(materiał) — rozgrzane bez wariantu
+    this._donePersp = new WeakMap(); // to samo z kamerą perspektywy wymuszoną opcją ortho: false (gra 3D)
     this._doneShadow = new WeakMap(); // to samo dla passa mapy cienia (opcja shadow)
     this._scheduled = false;
     this._flushing = 0;
@@ -421,7 +422,8 @@ export class Rozgrzewka {
     const core = this.core;
     const renderer = core.renderer;
     const split = spec.split !== false;
-    if (split && !spec.variant && this._alreadyDone(obj)) {
+    const doneMap = spec.ortho === false ? this._donePersp : this._done;
+    if (split && !spec.variant && this._alreadyDone(obj, doneMap)) {
       this.stats.pominiete++;
       return;
     }
@@ -473,7 +475,7 @@ export class Rozgrzewka {
     this.stats.siatki++;
     this.stats.cpuMs += ms;
     if (ms > this.stats.maksZadanieMs) this.stats.maksZadanieMs = +ms.toFixed(1);
-    if (split && !spec.variant) this._markDone(obj);
+    if (split && !spec.variant) this._markDone(obj, doneMap);
     const tracked = promise.then(() => true, (err) => {
       this.stats.bledy++;
       if (!entry.failed) {

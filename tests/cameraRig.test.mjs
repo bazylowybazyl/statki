@@ -492,11 +492,15 @@ test('kop warpa w grze: zdarzenia z automatu (skok, wyjście), krok przed zoomem
   // Rozgrywka tylko zgłasza zdarzenie — jak sygnały walki (noteCameraRigCombat).
   const engage = sliceFunction(html, 'function engageWarp(dirToMouse) {');
   assert.match(engage, /warp\.state = 'active';[\s\S]*noteCameraRigWarp\(cameraRig, 'kick'\);/);
-  const exit = sliceFunction(html, 'function exitWarp() {');
-  assert.match(exit, /noteCameraRigWarp\(cameraRig, 'exit'\);/);
+  // Wyjście = rampa przylotu (warpDrive.js): impuls zoomu przy wyjściu bez rampy (hamowanie
+  // grawitacyjne) i na początku hamowania rampy (physicsStep).
+  const exit = sliceFunction(html, 'function exitWarp(opts) {');
+  assert.match(exit, /createWarpExitRamp\(/);
+  assert.match(exit, /if \(abrupt\) \{[\s\S]*?noteCameraRigWarp\(cameraRig, 'exit'\);/);
+  assert.match(html, /if \(!wasBrake && r\.age >= r\.tBrake\) \{[\s\S]*?noteCameraRigWarp\(cameraRig, 'exit'\);/);
   // Raz na klatkę renderu, przed zoomem; w pauzie czas gry 0 (oś stoi).
   const loop = sliceFunction(html, 'function loop(now) {');
-  assert.match(loop, /if \(PAUSED\) \{[\s\S]*?updateCameraWarpKick\(0\);\s*updateCameraZoom\(frame\);/);
+  assert.match(loop, /if \(PAUSED(?: \|\| StoryGame\.worldFrozen)?\) \{[\s\S]*?updateCameraWarpKick\(0\);\s*updateCameraZoom\(frame\);/);
   assert.match(loop, /updateCameraWarpKick\(frame\);\s*updateCameraZoom\(frame\);[\s\S]*?render\(alpha, frame\);/);
   const kick = sliceFunction(html, 'function updateCameraWarpKick(gameDt) {');
   assert.match(kick, /stepCameraRigWarp\(cameraRig, w, cameraRigTune\);/);
@@ -576,7 +580,7 @@ test('render: kamera statku z riga, bez dawnego ×2,0 za kursorem', () => {
 
 test('kursor zamrożony przy menu PPM, kole ŚPM, Alt, tablecie, CIC i poza kanwą', () => {
   const frozen = sliceFunction(html, 'function isCameraLookFrozen() {');
-  for (const cond of ['isHudPointerMode()', '!mouse.overCanvas', 'worldCommandMenu.open', 'targetingMode.wheelOpen', 'stationUI.open', 'CICDisplay.active']) {
+  for (const cond of ['isHudPointerMode()', '!mouse.overCanvas', 'worldCommandMenu.open', 'shipModes.wheel.open', 'stationUI.open', 'CICDisplay.active']) {
     assert.ok(frozen.includes(cond), cond);
   }
 });

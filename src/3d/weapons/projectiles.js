@@ -20,9 +20,10 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, uint, vec2, vec3, vec4, uniform, attributeArray, instanceIndex, positionGeometry,
-  varyingProperty, texture, If, mix, clamp, smoothstep, exp, sin, max, abs, length, atan
+  varyingProperty, texture, If, mix, clamp, smoothstep, exp, sin, max, abs, length, atan, floor, fract
 } from 'three/tsl';
 import { additiveMaterial } from './gpuFx.js';
+import { streakAcross } from '../tsl/billboard3D.js';
 import { liveRangeAttribute, markRange } from './liveRange.js';
 
 const sq = (x) => x.mul(x);
@@ -72,12 +73,16 @@ export class ProjectileSystem {
       const halo = max(B.w.mul(0.5), float(1.4).div(U.zoom)).toVar();
       const along = mix(len.add(halo).negate(), halo, g.x.add(0.5));
       const across = g.y.mul(2.0).mul(halo);
-      const dir = B.xy;
-      const perp = vec2(dir.y.negate(), dir.x);
+      // Gra 3D: A.w = styl + 0,5 + 0,49·dz (składowa pionowa kierunku), B.xy = składowe poziome
+      // kierunku 3D; w kamerze klasycznej dz = 0 i streakAcross daje dawną prostopadłą w płaszczyźnie.
+      const dz = fract(A.w).sub(0.5).div(0.49);
+      const dir3 = vec3(B.xy, dz).toVar();
+      const perp = vec2(B.y.negate(), B.x);
+      const acr = streakAcross(dir3, perp);
       vL.assign(vec4(along, across, len, halo));
-      vC.assign(vec4(C.xyz, A.w));
+      vC.assign(vec4(C.xyz, floor(A.w)));
       vS.assign(C.w);
-      return vec3(A.xy.add(dir.mul(along)).add(perp.mul(across)), A.z);
+      return vec3(A.xy, A.z).add(dir3.mul(along)).add(acr.mul(across));
     })();
     mat.fragmentNode = Fn(() => {
       const along = vL.x;
@@ -181,11 +186,14 @@ export class ProjectileSystem {
    * dirX, dirY — kierunek smugi w scenie (jednostkowy), len — długość smugi [j.],
    * width — szerokość [j.], barwa HDR, ziarno. Zwraca false, gdy bufor pełny.
    */
-  add(lx, ly, z, style, dirX, dirY, len, width, r, g, b, seed) {
+  add(lx, ly, z, style, dirX, dirY, len, width, r, g, b, seed, dirZ) {
     if (this.count >= PROJECTILE_MAX) return false;
     const o = this.count++ * FLOATS;
     const D = this.data;
-    D[o] = lx; D[o + 1] = ly; D[o + 2] = z; D[o + 3] = style;
+    // styl (całkowity) + składowa pionowa kierunku 3D w części ułamkowej (shader: floor / fract);
+    // dirX, dirY, dirZ — kierunek jednostkowy w scenie (bez dirZ: w płaszczyźnie)
+    const dz = dirZ > 1 ? 1 : (dirZ < -1 ? -1 : (dirZ || 0));
+    D[o] = lx; D[o + 1] = ly; D[o + 2] = z; D[o + 3] = style + 0.5 + 0.49 * dz;
     D[o + 4] = dirX; D[o + 5] = dirY; D[o + 6] = len; D[o + 7] = width;
     D[o + 8] = r; D[o + 9] = g; D[o + 10] = b; D[o + 11] = seed;
     return true;

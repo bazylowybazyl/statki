@@ -15,6 +15,7 @@ import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
 import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { WARP_STAR_CAMERA } from './warp/stars.js';
+import { createSky3D, getSky3D } from './sky3D.js';
 import {
     STAR_PLANET_MASK_CAP,
     createStarGeometry,
@@ -29,6 +30,30 @@ import {
 
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
+
+// Kamery 3D (src/game/game3D.js — sam widok, 2026-09-30): planety zostają na swoich miejscach (tło z paralaksą
+// pod płaszczyzną, planety ringów w płaszczyźnie), a kadr liczy się kulą w stożku kamery perspektywy —
+// kamera pościgowa patrzy do horyzontu, prostokąt widoku z góry chowałby widoczne planety. Płaska mgławica
+// i gwiazdy tła w kamerze 3D ustępują sferze nieba (sky3D.js).
+const _bodyFrustum = new THREE.Frustum();
+const _bodyFrustumMatrix = new THREE.Matrix4();
+const _bodySphere = new THREE.Sphere();
+let _bodyFrustumFrame = -1;
+
+function isSphereInFreeCamera(x, y, z, r) {
+    const cam = Core3D.cameraPersp;
+    if (!cam) return true;
+    const frame = Core3D.renderer?.info?.frame ?? 0;
+    if (frame !== _bodyFrustumFrame) {
+        _bodyFrustumFrame = frame;
+        cam.updateMatrixWorld(true);
+        _bodyFrustumMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+        _bodyFrustum.setFromProjectionMatrix(_bodyFrustumMatrix);
+    }
+    _bodySphere.center.set(x, y, z);
+    _bodySphere.radius = r;
+    return _bodyFrustum.intersectsSphere(_bodySphere);
+}
 // Planety z ringiem „Halo” (src/game/haloRingPlanets.js): rysowane w passie
 // ortho przy ringu, w promieniu świata z ringScale.js. Jowisz od Z6 (2026-09-26).
 const RING_PLANET_NAMES = new Set(['earth', 'mars', 'jupiter']);
@@ -199,6 +224,9 @@ const NebulaSystem = {
     },
     update: function (dt, gameCamera) {
         if (!this.uniforms || !gameCamera || !this.mesh) return;
+        const flat = !Core3D.isFreePerspectiveCamera(gameCamera);
+        if (this.mesh.visible !== flat) this.mesh.visible = flat;
+        if (!flat) return;
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
         const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
         const sunX = (window.SUN && window.SUN.x) || 0;
@@ -261,6 +289,9 @@ const StarSystem = {
     },
     update: function (dt, gameCamera, ship) {
         if (!this.uniforms || !gameCamera) return;
+        const flat = !Core3D.isFreePerspectiveCamera(gameCamera);
+        if (this.mesh && this.mesh.visible !== flat) this.mesh.visible = flat;
+        if (!flat) return;
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0; const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
         this.uniforms.time.value += dt;
         if (this.mesh) this.mesh.position.set(cx, -cy, this.layerZ);
@@ -315,6 +346,7 @@ function isCircleVisibleInGameCamera(x, y, radius, cam, viewportWidth, viewportH
 const BODY_ACTIVITY_NDC_PAD = 0.25;
 function isBodyLikelyOnScreen(gameX, gameY, visualZ, worldRadius, anchoredToRing, cam) {
     if (!cam) return true;
+    if (Core3D.isFreePerspectiveCamera(cam)) return isSphereInFreeCamera(gameX, -gameY, visualZ, Math.max(1, Number(worldRadius) || 1) * 1.25);
     if (window.splitScreenMode && Core3D.activeCam2) return true;
     const r = Math.max(1, Number(worldRadius) || 1);
     if (anchoredToRing) {
@@ -533,7 +565,10 @@ class DirectPlanet {
         if (typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(this.data.x, this.data.y, scale);
         let offScreen = false;
         const renderCamera = anchoredToRing ? Core3D.cameraOrtho : Core3D.cameraPersp;
-        if (anchoredToRing) {
+        if (Core3D.isFreePerspectiveCamera(cam)) {
+            offScreen = !isSphereInFreeCamera(this.group.position.x, this.group.position.y, this.group.position.z,
+                scale * Math.max(1.0, this.visibleRadiusMul || 1.0) * 1.05);
+        } else if (anchoredToRing) {
             // Culling uses the same world-space circle as the orthographic pass.
             // Test both viewports in split-screen; Core3D's shared camera ends a
             // frame on player two, so projecting against it alone can hide a
@@ -843,6 +878,11 @@ window.initPlanets3D = function (planetList, sunData) {
     for (const ent of _entities) if (ent && typeof ent.dispose === 'function') ent.dispose();
     _entities.length = 0;
     NebulaSystem.init(); StarSystem.init();
+    createSky3D(Core3D.scene, NebulaSystem.uniforms?.map?.value || null);
+    if (!Core3D.__sky3DWarm) {
+      Core3D.__sky3DWarm = true;
+      Core3D.warmup?.add({ name: 'kamery 3D: niebo', objects: () => getSky3D()?.mesh || null, layer: 1, phase: 'loading' });
+    }
     if (sunData) _entities.push(new DirectSun(sunData));
     let earthData = null;
     let jupiterData = null;

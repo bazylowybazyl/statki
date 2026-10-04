@@ -171,6 +171,8 @@ function makeCiwsScope({ weaponId, npcs, rockets = [], chips = false }) {
     PD_CHIP_ID,
     isFlakWeapon: (w) => w?.category === 'flak',
     isFighterNPC: (n) => !!n?.fighter || n?.type === 'fighter',
+    // Wróg gracza wg frakcji (index.html: isHostileNpc) — w teście: żywy i nie-przyjazny.
+    isHostileNpc: (n) => !!n && !n.dead && n.friendly === false,
     rotate: (v) => ({ x: v.x, y: v.y }),
     leadTarget: (base, vel, t) => ({ x: t.x, y: t.y }),
     wrapAngle: (a) => Math.atan2(Math.sin(a), Math.cos(a)),

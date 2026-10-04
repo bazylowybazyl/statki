@@ -143,9 +143,11 @@ test('uber w TSL: pętla po źródłach z uniformu int, czyste funkcje szumu, cl
   // odczyty w gałęziach zależnych od piksela — poziom 0 jawnie (bez wymogu jednolitego przepływu)
   assert.doesNotMatch(withBloom, /textureSample\(/);
   assert.match(withBloom, /textureSampleLevel\(/);
-  // bufory uniformów: grupa obiektu + dwie tablice (limit 12 na etap)
-  assert.equal((withBloom.match(/var<uniform>/g) || []).length, 3);
-  assert.equal((noBloom.match(/var<uniform>/g) || []).length, 3);
+  // bufory uniformów: grupa obiektu + dwie tablice + grupa renderu (rulon warpa — przyciemnienie
+  // horyzontu walca, src/3d/warp/rulon.js); limit 12 na etap
+  assert.equal((withBloom.match(/var<uniform>/g) || []).length, 4);
+  assert.equal((noBloom.match(/var<uniform>/g) || []).length, 4);
+  assert.match(withBloom, /fn rulonInverse \(/, 'odwrotność rulonu jako czysta funkcja');
   // tekstury: scena + bloom (jedno wiązanie na teksturę mimo 3 odczytów), bez macierzy UV tekstury
   assert.equal((withBloom.match(/texture_2d<f32>/g) || []).length, 2);
   assert.equal((noBloom.match(/texture_2d<f32>/g) || []).length, 1);

@@ -44,6 +44,19 @@ export const FLIGHT_PILOT = Object.freeze({
   separationHorizon: 0.6,
   // Poniżej tej zadanej prędkości kadłub nie „patrzy w kierunek ruchu".
   moveHeadingMinSpeed: 40,
+  // Szybki lot = dziób w kierunku lotu, nawet tuż przy punkcie (ruchome miejsce
+  // w szyku, linia jadąca z graczem): między tymi ułamkami maxSpeed kurs
+  // przechodzi z zadanego (`face`, np. na wroga) w kierunek lotu. Bez tego okręt
+  // trzymał kurs bojowy w pełnym biegu i leciał bokiem.
+  moveFaceSpeedLo: 0.12,
+  moveFaceSpeedHi: 0.3,
+  // Dolne granice pasma w j/s: wolne korekty (zygzak w walce ~100–170 j/s,
+  // dryf w szyku) nie obracają ciężkiego kadłuba z celu.
+  moveFaceSpeedMin: 180,
+  moveFaceSpeedSpanMin: 180,
+  // …przy kursie na wroga (`backFace`) tylko gdy kierunek lotu leży bliżej niż
+  // tyle od `face`; dalej (prawie wprost w tył) to cofanie dziobem do wroga.
+  moveFaceMaxOff: Math.PI * 5 / 6,
   // System dopalacza (np. niszczyciel dochodzący do flanki).
   boostAccelMul: 1.6,
   boostSpeedMul: 1.5,
@@ -182,6 +195,16 @@ export function flightTurnTime(spec, angle) {
   return th / w + w / a;
 }
 
+// Długość odskoku, od której obrót rufą do wroga (tam i z powrotem) jest
+// szybszy od cofania z prędkością `backSpeed`: 2·T(180°) = d/v_wst − d/v_max.
+// Fregata ~3 km, niszczyciel ~4 km, pancernik i cięższe ~5,5–7 km.
+export function flightBackTurnDist(spec, backSpeed) {
+  if (!spec) return Infinity;
+  const vf = spec.maxSpeed;
+  const vr = Math.min(Math.max(1, Number(backSpeed) || 0), vf * 0.999);
+  return (2 * flightTurnTime(spec, Math.PI) * vr * vf) / (vf - vr);
+}
+
 // ---------------------------------------------------------------------------
 // Intencja (ustawia mózg AI / komenda RTS)
 // ---------------------------------------------------------------------------
@@ -203,6 +226,7 @@ export function getFlightIntent(entity) {
       face: NaN,
       faceNear: 0,
       faceFar: 0,
+      backFace: false,
       sepAx: 0,
       sepAy: 0,
       dodgeVx: 0,
@@ -235,6 +259,8 @@ export function setFlightArrive(entity, x, y, opts = {}) {
   it.face = Number.isFinite(opts.face) ? opts.face : NaN;
   it.faceNear = Math.max(0, num(opts.faceNear, it.arrival));
   it.faceFar = Math.max(0, num(opts.faceFar, 0));
+  // `face` to kurs na wroga: cofanie zostaje dziobem do niego (resolveFlightFacing).
+  it.backFace = opts.backFace === true;
   return it;
 }
 
@@ -252,6 +278,7 @@ export function setFlightStop(entity, face = NaN) {
   it.face = Number.isFinite(face) ? face : NaN;
   it.faceNear = 0;
   it.faceFar = 0;
+  it.backFace = false;
   return it;
 }
 
@@ -335,18 +362,47 @@ export function limitFlightAccel(spec, angle, vx, vy, ax, ay, mul, out) {
   return out;
 }
 
-// Kurs kadłuba: daleko od celu — w kierunku lotu (najmocniejszy ciąg jest do
-// przodu), blisko — `face` (burta/działa na wroga). Mieszamy wektory, nie kąty,
-// a przy przeciwnych kierunkach bierzemy ten bliższy obecnemu kursowi, żeby
-// blend nie przerzucał obrotu raz w lewo, raz w prawo.
-export function resolveFlightFacing(it, desVx, desVy, dist, angle) {
+// Kurs kadłuba: daleko od celu albo w szybkim locie — w kierunku lotu
+// (najmocniejszy ciąg jest do przodu, a okręt nie leci bokiem), blisko i powoli
+// — `face` (działa na wroga, kurs szyku). Mieszamy wektory, nie kąty, a przy
+// przeciwnych kierunkach bierzemy ten bliższy obecnemu kursowi, żeby blend nie
+// przerzucał obrotu raz w lewo, raz w prawo. `speedLo` / `speedHi` — pasmo
+// prędkości zadanej (j/s), w którym kurs przechodzi z `face` w kierunek lotu
+// (bez nich tylko odległość od punktu). `backTurnDist` — od jakiej odległości
+// cofanie z kursem na wroga zamienia się w obrót rufą do niego.
+export function resolveFlightFacing(it, desVx, desVy, dist, angle, speedLo = Infinity, speedHi = Infinity, backTurnDist = Infinity) {
   const hasFace = Number.isFinite(it.face);
-  const moveOk = (desVx * desVx + desVy * desVy) > FLIGHT_PILOT.moveHeadingMinSpeed ** 2;
+  const desSq = desVx * desVx + desVy * desVy;
+  const moveOk = desSq > FLIGHT_PILOT.moveHeadingMinSpeed ** 2;
   if (!moveOk) return hasFace ? it.face : NaN;
   const moveH = Math.atan2(desVy, desVx);
   if (!hasFace) return moveH;
-  if (!(it.faceFar > it.faceNear)) return it.face;
-  const t0 = clamp((dist - it.faceNear) / (it.faceFar - it.faceNear), 0, 1);
+  let t0 = it.faceFar > it.faceNear
+    ? clamp((dist - it.faceNear) / (it.faceFar - it.faceNear), 0, 1)
+    : 0;
+  // Szybki ruch obraca dziób w kierunek lotu. Wyjątek (`it.backFace` — kurs
+  // bojowy na wroga): cofanie, czyli ruch prawie wprost od `face` (> 150°),
+  // zostaje dziobem do wroga — wolniej (pilot: najwyżej `speedHi`), jak w
+  // Starsectorze. Ukośne „cofanie" (120–150°) wyglądało jak lot bokiem — obraca
+  // dziób. Kurs szyku (przelot) wyjątku nie ma: okręt, który musi szybko w tył
+  // szyku, obraca się.
+  if (speedHi > speedLo) {
+    const sp = Math.sqrt(desSq);
+    if (!it.backFace || Math.abs(wrapFlightAngle(moveH - it.face)) < FLIGHT_PILOT.moveFaceMaxOff) {
+      t0 = Math.max(t0, clamp((sp - speedLo) / (speedHi - speedLo), 0, 1));
+    } else if (Math.abs(wrapFlightAngle(angle - moveH)) < Math.PI / 2) {
+      // Okręt już lecący dziobem naprzód (np. ruch obrócił się zza 150°) trzyma
+      // kierunek lotu, dopóki leci szybko — bez nawrotu na granicy 150°.
+      t0 = Math.max(t0, clamp((sp - speedLo) / (speedHi - speedLo), 0, 1));
+    } else {
+      // Dziobem do wroga: cofanie; rufą do wroga obraca się dopiero daleki
+      // odskok (> backTurnDist — tam obrót tam i z powrotem jest szybszy od
+      // cofania). Z progiem od prędkości albo z mieszaniem po odległości każdy
+      // szybszy odskok w szyku był dwoma nawrotami — za każdym razem chwilą
+      // lotu bokiem.
+      t0 = dist > backTurnDist ? 1 : 0;
+    }
+  }
   const t = t0 * t0 * (3 - 2 * t0);
   if (t <= 0) return it.face;
   if (t >= 1) return moveH;
@@ -430,13 +486,25 @@ export function stepShipFlight(entity, dt) {
     desVx *= k;
     desVy *= k;
   }
+  // Pasmo prędkości, w którym kurs przechodzi z `face` w kierunek lotu
+  // (resolveFlightFacing).
+  const faceLo = Math.max(FLIGHT_PILOT.moveFaceSpeedMin, spec.maxSpeed * FLIGHT_PILOT.moveFaceSpeedLo);
+  const faceHi = Math.max(faceLo + FLIGHT_PILOT.moveFaceSpeedSpanMin, spec.maxSpeed * FLIGHT_PILOT.moveFaceSpeedHi);
   // Cofanie (ruch rufą naprzód) ma własny, niższy limit — okręt, który chce
-  // szybko do tyłu, musi się najpierw obrócić.
+  // szybko do tyłu, musi się najpierw obrócić. Cofanie dziobem do wroga
+  // (`backFace`, ruch > 150° od `face`) najwyżej z górną granicą pasma: fregata
+  // (wsteczny 840 j/s) odskakiwała jak w ucieczce rufą naprzód. Ukośny ruch
+  // w tył (obrót w kierunek lotu) bez tego limitu — inaczej w trakcie obrotu
+  // zostaje sama składowa boczna i okręt dłużej sunie bokiem.
+  const backing = it.backFace && Number.isFinite(it.face)
+    && (moveVx * moveVx + moveVy * moveVy) > FLIGHT_PILOT.moveHeadingMinSpeed ** 2
+    && Math.abs(wrapFlightAngle(Math.atan2(moveVy, moveVx) - it.face)) >= FLIGHT_PILOT.moveFaceMaxOff;
+  const reverseCap = backing ? Math.min(spec.reverseSpeed, faceHi) : spec.reverseSpeed;
   const hfx = Math.cos(ang);
   const hfy = Math.sin(ang);
   const backDes = -(desVx * hfx + desVy * hfy);
-  if (backDes > spec.reverseSpeed) {
-    const excess = backDes - spec.reverseSpeed;
+  if (backDes > reverseCap) {
+    const excess = backDes - reverseCap;
     desVx += hfx * excess;
     desVy += hfy * excess;
   }
@@ -448,7 +516,8 @@ export function stepShipFlight(entity, dt) {
   const ay = _acc.ay;
 
   // --- kurs ---
-  const face = resolveFlightFacing(it, moveVx, moveVy, dist, ang);
+  const backTurnDist = backing ? flightBackTurnDist(spec, reverseCap) : Infinity;
+  const face = resolveFlightFacing(it, moveVx, moveVy, dist, ang, faceLo, faceHi, backTurnDist);
   const alpha = computeFlightTurnAccel(spec, ang, om, face, h);
 
   // --- integracja ---

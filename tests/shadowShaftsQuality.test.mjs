@@ -245,15 +245,15 @@ test('sun shadow mask module shares uniform nodes and keeps the backdrop tint', 
     assert.equal(U[k].isUniformNode, true, k);
     assert.equal(U[k].groupNode?.name, 'render', `${k} w grupie renderu`);
   }
-  // Legacy GLSL (tylko nieprzeniesione ShaderMaterial — na WebGPU i tak zamienniki):
-  // re-eksport z sunShadowMaskGLSL.js, tekst bez zmian, barwa smugi = SUN_SHAFT_BACKDROP_TINT.
+  // Legacy GLSL (sunShadowMaskGLSL.js — od portu Z4/Z5/Z7 bez importerów; TSL nie re-eksportuje):
+  // tekst bez zmian, barwa smugi = SUN_SHAFT_BACKDROP_TINT.
   const legacy = await import('../src/3d/sunShadowMaskGLSL.js');
-  assert.equal(mask.SUN_SHADOW_GLSL, legacy.SUN_SHADOW_GLSL);
+  assert.equal(mask.SUN_SHADOW_GLSL, undefined, 'sunShadowMask.js bez re-eksportu GLSL');
   const tint = mask.SUN_SHAFT_BACKDROP_TINT.map((v) => Number(v).toPrecision(6)).join(', ');
-  assert.ok(mask.SUN_SHADOW_GLSL.includes(`vec3(${tint})`), 'barwa smugi w legacy GLSL = SUN_SHAFT_BACKDROP_TINT');
-  assert.match(mask.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\) \* \(1\.0 - fieldDarkness\(\) \* uFieldFillCut\);/);
-  assert.match(mask.SUN_SHADOW_GLSL, /float sunVisibility\(\)/);
-  assert.match(mask.SUN_SHADOW_GLSL, /vec3 sunShaftBackdrop\(vec3 color\)/);
+  assert.ok(legacy.SUN_SHADOW_GLSL.includes(`vec3(${tint})`), 'barwa smugi w legacy GLSL = SUN_SHAFT_BACKDROP_TINT');
+  assert.match(legacy.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\) \* \(1\.0 - fieldDarkness\(\) \* uFieldFillCut\);/);
+  assert.match(legacy.SUN_SHADOW_GLSL, /float sunVisibility\(\)/);
+  assert.match(legacy.SUN_SHADOW_GLSL, /vec3 sunShaftBackdrop\(vec3 color\)/);
   const maskSource = readFileSync(new URL('../src/3d/sunShadowMask.js', import.meta.url), 'utf8');
   assert.doesNotMatch(maskSource, /gl_FragCoord\.xy \*|textureLod\(|#include|onBeforeCompile = /, 'sunShadowMask.js bez GLSL');
   // Wbudowane materiały: hak w polach materiału (NodeLibrary.fromMaterial kopiuje je na

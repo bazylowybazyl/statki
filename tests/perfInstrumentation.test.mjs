@@ -314,7 +314,7 @@ test('Core3D exposes renderer.info deltas per render pass', () => {
   // calle to render.drawCalls (render.calls w WebGPU liczy wywołania render()).
   const requiredCore3dSnippets = [
     'lastFrameRenderInfo',
-    '_runScenePass(pass)',
+    '_runScenePass(pass, ',
     "this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);",
     "this._addRenderInfoDelta('post', performance.now() - t0, before);",
     '_addRenderInfoDelta',

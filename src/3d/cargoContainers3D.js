@@ -44,7 +44,7 @@
 // składa modelViewMatrix w double) — świat leży przy 5–10 mln j., float32
 // w shaderze drgałby ~1 px (sceneOrigin.js, bridge3D._setOrigin).
 
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import {
   CONTAINER_FAMILY_CODE,
   COVER_PAINT,
@@ -65,9 +65,10 @@ import {
 } from '../data/cargoContainers.js';
 import { RESOURCE_KEYS, RESOURCES } from '../data/resources.js';
 import { sunShadowUniforms } from './sunShadowMask.js';
-// AGENT: moduł Z5 poza grą (dema/kontenery) — GLSL; przejdzie na TSL przy integracji ruchu v2 (PLAN §12 p. 1).
-// Napis maski GLSL wprost z biblioteki poza portem (gra ładuje tylko TSL z sunShadowMask.js).
-import { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
+// Materiały w TSL (port WebGPU): cargoContainers3D.tsl.js — wspólne klocki widoku i światła z dronami.
+import { createCargoUniforms, createContainerMaterial, createShadowMaterial } from './cargoContainers3D.tsl.js';
+import { makeUniforms } from './tsl/uniformy.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 
 // ---------------------------------------------------------------------------
 // Strojenie (window.__cargo3DTune)
@@ -152,446 +153,6 @@ RESOURCE_KEYS.forEach((id, i) => {
 });
 
 // ---------------------------------------------------------------------------
-// GLSL
-// ---------------------------------------------------------------------------
-
-// Paralaksa (ortho pass udający perspektywę portu) i ścisk głębi — wspólne
-// z dronami (cargoDrones3D.js). uCgParallax: środek kadru (względem origin),
-// wysokość kamery H, włącznik; uCgDepth: ścisk nad z = 0, włącznik.
-export const CARGO_VIEW_GLSL = `
-uniform vec4 uCgParallax;
-uniform vec2 uCgDepth;
-vec4 cgProject(vec3 wp) {
-  vec3 p = wp;
-  if (uCgParallax.w > 0.5 && p.z < 0.0) {
-    float k = uCgParallax.z / max(uCgParallax.z - p.z, 1.0);
-    p.xy = uCgParallax.xy + (p.xy - uCgParallax.xy) * k;
-  }
-  if (uCgDepth.y > 0.5 && p.z > 0.0) p.z *= uCgDepth.x;
-  return projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-}
-`;
-
-// Światło pokładu statku albo portu (mix). Wspólne z dronami.
-// uCgShip: otoczenie, rozproszone, połysk, (wolne); uCgPort: otoczenie,
-// rozproszone, połysk, dzień (0 = cień planety).
-export const CARGO_LIGHT_GLSL = `
-uniform vec4 uCgShip;
-uniform vec4 uCgPort;
-uniform vec3 uCgSunRel;
-uniform vec3 uCgPortSun;
-vec3 cgLightDir(vec3 wp, float lightMix) {
-  vec3 ls = normalize(vec3(uCgSunRel.xy - wp.xy, 600.0));
-  return normalize(mix(ls, uCgPortSun, clamp(lightMix, 0.0, 1.0)));
-}
-// hullL: jasność kadłuba pod obiektem (otoczenie + poduszkowa normalna), N i L
-// w tym samym układzie, top = udział „dachu” (0..1).
-vec3 cgShade(vec3 albedo, vec3 N, vec3 L, float lightMix, float hullL, float specK, float specPow) {
-  float sunVis = sunVisibility();
-  float NdotL = dot(N, L);
-  float up = max(N.z, 0.0);
-  float shipAmb = uCgShip.x * sunFill(sunVis) + max(hullL - uCgShip.x, 0.0) * sunVis;
-  float ship = shipAmb * (0.55 + 0.45 * up) + max(NdotL, 0.0) * uCgShip.y * sunVis;
-  float port = uCgPort.x * (0.55 + 0.45 * up) + max(NdotL, 0.0) * uCgPort.y * uCgPort.w;
-  float m = clamp(lightMix, 0.0, 1.0);
-  vec3 col = albedo * mix(ship, port, m);
-  vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
-  float sp = pow(max(dot(N, H), 0.0), specPow) * smoothstep(-0.02, 0.08, NdotL);
-  float spK = mix(uCgShip.z * sunVis, uCgPort.z * uCgPort.w, m);
-  col += vec3(sp * specK * spK);
-  // Powierzchnia nie świeci: jasne skosy łagodnie dochodzą do ~0,86 (pod
-  // progiem bloomu 0,9), jak model mostka.
-  float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  if (lum > 0.62) col *= (0.62 + 0.24 * (1.0 - exp(-(lum - 0.62) / 0.24))) / lum;
-  return col;
-}
-`;
-
-export const CARGO_NOISE_GLSL = `
-float cgHash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-float cgNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(cgHash(i), cgHash(i + vec2(1.0, 0.0)), f.x),
-             mix(cgHash(i + vec2(0.0, 1.0)), cgHash(i + vec2(1.0, 1.0)), f.x), f.y);
-}
-// Zanik z odległością: rozrzut w ekranie (bez przezroczystości — kontener
-// zostaje w passie nieprzezroczystym i pisze głębię).
-bool cgDitherOut(float a) {
-  if (a >= 0.999) return false;
-  return cgHash(floor(gl_FragCoord.xy)) > a;
-}
-`;
-
-const CONTAINER_VERT = `
-attribute vec3 aBevel;
-attribute vec4 iPos;
-attribute vec4 iSize;
-attribute vec4 iLook;
-attribute vec4 iExtra;
-${CARGO_VIEW_GLSL}
-uniform vec3 uCgSunRel;
-uniform vec3 uCgPortSun;
-varying vec3 vLocal;
-varying vec3 vObjN;
-varying vec3 vObjL;
-flat varying vec4 vLook;
-flat varying vec4 vExtra;
-flat varying vec4 vSize;
-
-void main() {
-  vSize = iSize;
-  vLook = iLook;
-  vExtra = iExtra;
-  float bev = min(0.07 * min(iSize.x, iSize.y), 0.3 * iSize.z);
-  vec3 lp = position * iSize.xyz + aBevel * bev;
-  float c = cos(iPos.w);
-  float s = sin(iPos.w);
-  vec3 wp = vec3(iPos.x + c * lp.x - s * lp.y, iPos.y + s * lp.x + c * lp.y, iPos.z + lp.z);
-  // Wyłaz windy placu: część poniżej płaszczyzny cięcia ściśnięta na nią.
-  wp.z = max(wp.z, iExtra.x);
-  vLocal = vec3(lp.xy, wp.z - iPos.z);
-  vObjN = normal;
-  vec3 ls = normalize(vec3(uCgSunRel.xy - wp.xy, 600.0));
-  vec3 L = normalize(mix(ls, uCgPortSun, clamp(iLook.w, 0.0, 1.0)));
-  vObjL = vec3(c * L.x + s * L.y, -s * L.x + c * L.y, L.z);
-  gl_Position = cgProject(wp);
-}
-`;
-
-const CONTAINER_FRAG = `
-uniform vec3 uStd[${STANDARD_PAINTS.length}];
-uniform vec3 uShell[${TANK_SHELLS.length}];
-uniform vec3 uFrame[${TANK_FRAMES.length}];
-uniform vec3 uBody[${HOPPER_BODIES.length}];
-uniform vec3 uRes[${RES_COUNT}];
-uniform vec3 uHazmat;
-uniform vec3 uCover;
-uniform vec3 uAmber;
-${SUN_SHADOW_GLSL}
-${CARGO_LIGHT_GLSL}
-${CARGO_NOISE_GLSL}
-varying vec3 vLocal;
-varying vec3 vObjN;
-varying vec3 vObjL;
-flat varying vec4 vLook;
-flat varying vec4 vExtra;
-flat varying vec4 vSize;
-
-vec3 cgStdPaint(float h) {
-  int i = int(clamp(floor(h * ${STANDARD_PAINTS.length}.0), 0.0, ${STANDARD_PAINTS.length - 1}.0));
-  return uStd[i];
-}
-
-// Pas ostrzegawczy (ukośne pasy żółto-czarne) i romb nalepki hazmat.
-vec3 cgHazmat(vec2 cc, vec2 hs, vec3 paint, vec3 accent) {
-  vec3 col = paint;
-  float band = smoothstep(hs.x * 0.62, hs.x * 0.66, abs(cc.x));
-  float stripe = step(0.5, fract((cc.x + cc.y) / max(hs.y * 0.55, 0.2)));
-  col = mix(col, mix(paint, vec3(0.018), stripe), band);
-  float r = min(hs.x, hs.y) * 0.46;
-  float dm = abs(cc.x) + abs(cc.y);
-  col = mix(col, vec3(0.8), 1.0 - smoothstep(r * 0.98, r * 1.04, dm));
-  col = mix(col, accent, 1.0 - smoothstep(r * 0.78, r * 0.84, dm));
-  return col;
-}
-
-void main() {
-  if (cgDitherOut(vSize.w)) discard;
-  vec3 N = normalize(vObjN);
-  float fam = vLook.x;
-  float seed = vLook.z;
-  float hullL = vExtra.w;
-  float packedGrid = vExtra.y;
-  float nx = max(1.0, mod(packedGrid, 8.0));
-  float ny = max(1.0, mod(floor(packedGrid / 8.0), 8.0));
-  float tiers = max(1.0, floor(packedGrid / 64.0));
-  float matCode = mod(vExtra.z, 16.0);
-  bool hazmat = vExtra.z >= 15.5;
-  int resI = int(vLook.y + 0.5);
-  vec3 accent = uRes[resI];
-  vec2 size = vSize.xy;
-  vec2 cell = size / vec2(nx, ny);
-  vec2 q = (vLocal.xy + size * 0.5) / cell;
-  vec2 cid = clamp(floor(q), vec2(0.0), vec2(nx, ny) - 1.0);
-  vec2 cc = (q - cid - 0.5) * cell;
-  vec2 hs = cell * 0.5;
-  float cellSeed = cgHash(cid + vec2(seed * 71.3, seed * 17.9));
-  vec3 Nb = N;
-  vec3 albedo;
-  float specK = 0.6;
-  float specPow = 24.0;
-  bool top = N.z > 0.9;
-  bool chamfer = N.z > 0.3 && !top;
-  vec2 fwc = fwidth(vLocal.xy);
-  float px = max(max(fwc.x, fwc.y), 1e-4);
-
-  if (fam > 2.5) {
-    // Płyta maski ładowni: grafit, bursztynowy obrys, zamki w narożach.
-    vec2 d = size * 0.5 - abs(vLocal.xy);
-    float edge = min(d.x, d.y);
-    albedo = uCover * (0.9 + 0.2 * cgNoise(vLocal.xy * 0.8));
-    float line = min(size.x, size.y) * 0.05;
-    albedo = mix(albedo, uAmber, (1.0 - smoothstep(line * 0.6, line * 0.6 + px, abs(edge - line * 1.6))) * 0.9);
-    float corner = step(d.x, line * 2.4) * step(d.y, line * 2.4);
-    albedo = mix(albedo, vec3(0.12), corner * 0.7);
-    specK = 0.2;
-  } else if (fam > 1.5) {
-    // ZSYP: burty i otwarty wierzch z usypanym ładunkiem (przegrody = podsiatka).
-    vec3 body = uBody[int(floor(cellSeed * ${HOPPER_BODIES.length}.0))];
-    albedo = body * (0.85 + 0.25 * cgNoise(vLocal.xy * 0.35 + seed));
-    if (top) {
-      float rim = 0.09 * min(cell.x, cell.y) + 0.25;
-      vec2 dd = hs - abs(cc);
-      float inner = min(dd.x, dd.y) - rim;
-      if (inner > 0.0) {
-        vec2 hn = cc / max(hs - rim, vec2(0.2));
-        float lump = 3.0 / max(min(cell.x, cell.y), 1.0);
-        vec2 np = cc * lump * 4.0 + cid * 7.1 + seed;
-        float n1 = cgNoise(np);
-        float n2 = cgNoise(np * 2.3 + 5.1);
-        // Kopiec: pochyła ku burtom, grudki z szumu (gradient → normalna).
-        vec2 g = -2.0 * hn * vec2(1.0 - hn.y * hn.y, 1.0 - hn.x * hn.x) * 0.6;
-        g += (vec2(cgNoise(np + vec2(0.4, 0.0)), cgNoise(np + vec2(0.0, 0.4))) - n1) * 2.2;
-        vec3 mat = accent;
-        float m = matCode;
-        if (m < 0.5) {
-          mat *= mix(0.55, 1.15, n1 * 0.7 + n2 * 0.3);
-        } else if (m < 1.5) {
-          mat = mix(accent, vec3(0.92, 0.97, 1.0), 0.45 + 0.35 * n2) * (0.85 + 0.3 * n1);
-          specK = 1.6; specPow = 60.0;
-        } else if (m < 2.5) {
-          float pick = cgHash(floor(np * 1.6));
-          mat = pick < 0.35 ? vec3(0.22, 0.12, 0.06) : pick < 0.7 ? accent : vec3(0.12, 0.14, 0.17);
-          mat *= 0.7 + 0.6 * n2;
-          g *= 1.8;
-          specK = 1.0;
-        } else if (m < 3.5) {
-          float bw = max(cell.y / 9.0, 0.3);
-          float fb = fract(cc.y / bw);
-          g = vec2(0.0, (fb - 0.5) * 3.0);
-          mat = accent * (0.75 + 0.4 * sin(fb * 3.1416)) * (0.9 + 0.2 * cgHash(vec2(floor(cc.y / bw), cid.x)));
-          specK = 1.2; specPow = 40.0;
-        } else if (m < 4.5) {
-          float cd = max(min(cell.x, cell.y) / 3.2, 0.4);
-          vec2 cq = fract(cc / cd) - 0.5;
-          float rr = length(cq) * 2.0;
-          float ring = 0.5 + 0.5 * cos(rr * 18.0);
-          mat = accent * (0.6 + 0.5 * ring) * step(rr, 0.95) + vec3(0.02) * step(0.95, rr);
-          g = cq * 1.5;
-          specK = 1.3; specPow = 36.0;
-        } else if (m < 5.5) {
-          mat *= 0.8 + 0.35 * cgNoise(np * 5.0);
-          g *= 0.4;
-        } else {
-          float f = cgNoise(np * 1.7);
-          mat = mix(accent * 0.6, vec3(0.95, 0.9, 1.0), smoothstep(0.62, 0.8, f));
-          g = (vec2(cgHash(floor(np * 1.7)), cgHash(floor(np * 1.7) + 3.3)) - 0.5) * 2.4;
-          specK = 2.0; specPow = 80.0;
-        }
-        // Cień przy burtach (ładunek niżej niż krawędź).
-        float ao = smoothstep(0.0, rim * 3.0 + 0.4, inner);
-        albedo = mat * (0.45 + 0.55 * ao);
-        Nb = normalize(vec3(g, 1.0));
-      } else {
-        albedo *= 1.12;
-      }
-    } else {
-      // Burty: pionowe żebra.
-      float rib = 0.5 + 0.5 * cos(dot(vLocal.xy, vec2(1.0)) / max(min(cell.x, cell.y) * 0.18, 0.2) * 3.1416);
-      albedo *= 0.88 + 0.12 * rib;
-    }
-  } else if (fam > 0.5) {
-    // ZBIORNIK (ISO tank): rama na końcach, walec wzdłuż, pas barwy ładunku, pomost.
-    vec3 shell = uShell[int(floor(cellSeed * ${TANK_SHELLS.length}.0))];
-    vec3 frame = uFrame[int(floor(cgHash(vec2(seed, 3.7)) * ${TANK_FRAMES.length}.0))];
-    albedo = frame;
-    if (top) {
-      // Z góry: walec wzdłuż ramy (mocne cieniowanie w poprzek, połysk na
-      // grzbiecie), dennice zaokrąglone ku ramom czołowym, dwa pasy w barwie
-      // ładunku, cienki pomost; ramy czołowe wąskie, z narożnikami.
-      float endW = 0.09 * cell.x;
-      float r = hs.y * 0.97;
-      float yy = cc.y / r;
-      float ax = abs(cc.x);
-      if (ax > hs.x - endW) {
-        vec2 dd = hs - abs(cc);
-        float cst = 0.16 * hs.y;
-        albedo = frame * (step(min(dd.x, dd.y), cst) > 0.5 ? 0.45 : 1.0);
-      } else if (abs(yy) < 1.0) {
-        float zz = sqrt(max(1.0 - yy * yy, 0.0));
-        // Dennica: ostatnie ~12% długości walca schodzi ku ramie.
-        float headZone = cell.x * 0.12;
-        float hd = smoothstep(hs.x - endW - headZone, hs.x - endW, ax);
-        Nb = normalize(vec3(sign(cc.x) * hd * 1.4, yy * 1.15, zz));
-        albedo = shell * (0.9 + 0.1 * cgNoise(cc * 0.6 + seed)) * (1.0 - 0.35 * hd);
-        float bandW = cell.x * 0.045;
-        float band = 1.0 - smoothstep(bandW, bandW + px, abs(ax - hs.x * 0.42));
-        albedo = mix(albedo, accent, band * (1.0 - hd));
-        float walk = 1.0 - smoothstep(hs.y * 0.05, hs.y * 0.05 + px, abs(cc.y));
-        albedo = mix(albedo, albedo * 0.55, walk * (1.0 - hd));
-        specK = 1.5; specPow = 40.0;
-      } else {
-        albedo = frame * 0.3;
-      }
-    } else {
-      // Boki: rama i cień walca między słupkami.
-      float post = smoothstep(hs.x - 0.13 * cell.x, hs.x - 0.1 * cell.x, abs(cc.x));
-      albedo = mix(shell * 0.55, frame, post);
-    }
-  } else {
-    // STANDARD: dach z przetłoczeniami w poprzek, narożniki, farba z palety.
-    vec3 paint = hazmat ? uHazmat : cgStdPaint(cellSeed);
-    albedo = paint;
-    if (top) {
-      // Przetłoczenia dachu w poprzek (normalna faluje — światło je rysuje),
-      // ciemniejszy pas drzwi na jednym końcu, narożniki.
-      float period = max(cell.x / 10.0, 0.2);
-      float ribAA = 1.0 - smoothstep(0.25, 0.6, px / period);
-      float ph = cc.x / period * 6.2832;
-      float rib = 0.5 + 0.5 * cos(ph);
-      albedo *= 1.0 - 0.16 * rib * ribAA;
-      Nb = normalize(vec3(-sin(ph) * 0.22 * ribAA, 0.0, 1.0));
-      float door = smoothstep(hs.x * 0.9, hs.x * 0.92, cc.x * (cgHash(vec2(seed, cid.x)) > 0.5 ? 1.0 : -1.0));
-      albedo *= 1.0 - 0.22 * door;
-      float cst = 0.075 * min(cell.x, cell.y) + 0.12;
-      vec2 dd = hs - abs(cc);
-      albedo = mix(albedo, vec3(0.06), step(dd.x, cst) * step(dd.y, cst));
-      if (hazmat) albedo = cgHazmat(cc, hs, albedo, accent);
-      float grime = smoothstep(0.55, 0.95, cgNoise(vLocal.xy * (0.9 / max(cell.y, 0.5)) + seed * 3.0));
-      albedo *= 1.0 - 0.18 * grime;
-    } else if (!chamfer) {
-      float period = max(cell.x / 18.0, 0.18);
-      float rib = 0.5 + 0.5 * cos((vLocal.x + vLocal.y) / period * 6.2832);
-      albedo *= 0.9 + 0.1 * rib;
-      if (hazmat) albedo = mix(albedo, vec3(0.018), step(0.5, fract((vLocal.x + vLocal.z) / max(cell.y * 0.3, 0.2))) * 0.8);
-    }
-  }
-  // Szczeliny podsiatki (moduł = kilka kontenerów w ramie) i piętra na bokach.
-  if (nx * ny > 1.5 && top) {
-    vec2 dd = hs - abs(cc);
-    float seam = 1.0 - smoothstep(0.0, max(0.035 * min(cell.x, cell.y), px), min(dd.x, dd.y));
-    albedo = mix(albedo, vec3(0.02), seam * 0.85);
-  }
-  if (tiers > 1.5 && !top) {
-    float tz = fract(vLocal.z / max(vSize.z / tiers, 0.1));
-    float seam = 1.0 - smoothstep(0.0, 0.06, min(tz, 1.0 - tz));
-    albedo *= 1.0 - 0.7 * seam;
-  }
-  if (chamfer) albedo *= 1.08;
-  vec3 col = cgShade(albedo, Nb, normalize(vObjL), vLook.w, hullL, specK, specPow);
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
-
-// Cień: prostokąt obrysu (L × W, kurs yaw) przeciągnięty od z0 do z1 wzdłuż
-// kierunku od słońca. Pokrycie liczone z odległości do przeciągniętego
-// prostokąta (6 próbek wzdłuż cienia), półcień rośnie z wysokością.
-const SHADOW_COMMON_GLSL = `
-float cgSdBox(vec2 p, vec2 b) {
-  vec2 d = abs(p) - b;
-  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-}
-float cgSwept(vec2 p, vec2 hs, vec2 o0, vec2 o1) {
-  float d = 1e9;
-  for (int i = 0; i < 6; i++) {
-    float t = float(i) / 5.0;
-    d = min(d, cgSdBox(p - mix(o0, o1, t), hs));
-  }
-  return d;
-}
-`;
-
-const SHADOW_VERT = `
-attribute vec4 iPos;
-attribute vec4 iBox;
-attribute vec4 iPar;
-${CARGO_VIEW_GLSL}
-uniform vec3 uCgSunRel;
-uniform vec3 uCgPortSun;
-uniform vec4 uShadow;
-varying vec2 vP;
-flat varying vec4 vBox;
-flat varying vec4 vPar;
-flat varying vec4 vOff;
-
-void main() {
-  vBox = iBox;
-  vPar = iPar;
-  float c = cos(iPos.w);
-  float s = sin(iPos.w);
-  // Kierunek od słońca i tangens wysokości: kadłub — „słońce cieni” (azymut
-  // prawdziwego słońca, niska wysokość), port — słońce ringu.
-  vec2 dirW;
-  float tanE;
-  float baseZ;
-  if (uShadow.w > 0.5) {
-    vec2 h = uCgPortSun.xy;
-    float hl = max(length(h), 1e-4);
-    dirW = -h / hl;
-    tanE = max(uCgPortSun.z / hl, 0.05);
-    baseZ = iPar.w;
-  } else {
-    dirW = -normalize(uCgSunRel.xy - iPos.xy + vec2(1e-3, 0.0));
-    tanE = uShadow.x;
-    baseZ = 0.0;
-  }
-  vec2 dirL = vec2(c * dirW.x + s * dirW.y, -s * dirW.x + c * dirW.y);
-  vec2 o0 = dirL * max(iBox.z - baseZ, 0.0) / tanE;
-  vec2 o1 = dirL * max(iBox.w - baseZ, 0.0) / tanE;
-  vOff = vec4(o0, o1);
-  vec2 hs = iBox.xy * 0.5;
-  float pad = uShadow.z * length(o1) + 0.25 * min(iBox.x, iBox.y) + 0.5;
-  vec2 lo = -hs + min(min(o0, o1), vec2(0.0)) - pad;
-  vec2 hi = hs + max(max(o0, o1), vec2(0.0)) + pad;
-  vec2 m = mix(lo, hi, position.xy + 0.5);
-  vP = m;
-  vec2 xy = vec2(iPos.x + c * m.x - s * m.y, iPos.y + s * m.x + c * m.y);
-  // Pokład portu: paralaksa jak płyta pod nim. Kadłub: tuż pod nim, bez
-  // paralaksy (kadłub jest ortho) — sama głębia za kadłubem dla testu GREATER.
-  gl_Position = uShadow.w > 0.5
-    ? cgProject(vec3(xy, baseZ + 0.3))
-    : projectionMatrix * modelViewMatrix * vec4(xy, ${HULL_SHADOW_Z.toFixed(2)}, 1.0);
-}
-`;
-
-const SHADOW_FRAG = `
-${SHADOW_COMMON_GLSL}
-${SUN_SHADOW_GLSL}
-uniform vec4 uShadow;
-uniform vec4 uShadowMix;
-varying vec2 vP;
-flat varying vec4 vBox;
-flat varying vec4 vPar;
-flat varying vec4 vOff;
-
-void main() {
-  vec2 hs = vBox.xy * 0.5;
-  float a;
-  if (vPar.z > 0.5) {
-    // Właz windy placu: ciemny prostokąt o ostrych brzegach.
-    float d = cgSdBox(vP, hs);
-    float aa = max(fwidth(d), 1e-3);
-    a = (1.0 - smoothstep(-aa, aa, d)) * vPar.x;
-  } else {
-    float d = cgSwept(vP, hs, vOff.xy, vOff.zw);
-    float reach = length(vOff.zw);
-    float soft = max(uShadow.y * reach + 0.06 * min(vBox.x, vBox.y), max(fwidth(d), 1e-3));
-    float body = 1.0 - smoothstep(-soft, soft, d);
-    // Kontakt: przy podstawie stojącego kontenera ciemniej (AO).
-    float contact = (1.0 - smoothstep(0.0, 0.18 * min(vBox.x, vBox.y) + 0.3, cgSdBox(vP, hs))) * vPar.y;
-    float vis = uShadow.w > 0.5 ? uShadowMix.x : sunVisibility();
-    a = max(body * vis, contact) * vPar.x;
-  }
-  if (a < 0.003) discard;
-  gl_FragColor = vec4(0.0, 0.0, 0.0, min(a, 0.9));
-}
-`;
-
-// ---------------------------------------------------------------------------
 // Geometria
 // ---------------------------------------------------------------------------
 
@@ -638,25 +199,18 @@ export function buildContainerGeometry() {
   };
 }
 
+// Bez DynamicDrawUsage (WebGPU wysyłałby cały atrybut przy każdym renderze) — wysyłka
+// zbieranego zakresu po needsUpdate (zakresyWysylki.js).
 function makeInstanceAttr(geometry, name, itemSize, capacity) {
   const attr = new THREE.InstancedBufferAttribute(new Float32Array(capacity * itemSize), itemSize);
-  attr.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute(name, attr);
   return attr;
 }
 
-// Upload tylko użytej części (jeden obiekt zakresu na atrybut — bez alokacji).
+// Upload tylko użytej części (zakres zbierany — bez alokacji).
 function commitAttr(attr, count) {
   if (count <= 0) return;
-  const ranges = attr.updateRanges;
-  if (Array.isArray(ranges)) {
-    const r = attr.__cgRange || (attr.__cgRange = { start: 0, count: 0 });
-    r.start = 0;
-    r.count = count * attr.itemSize;
-    ranges.length = 0;
-    ranges.push(r);
-  }
-  attr.needsUpdate = true;
+  zbierzZakres(attr, 0, count * attr.itemSize);
 }
 
 // ---------------------------------------------------------------------------
@@ -706,15 +260,9 @@ export const CargoContainers3D = {
     this.dispose();
     if (!scene) return false;
     this.scene = scene;
-    const U = {
-      uCgParallax: { value: new THREE.Vector4(0, 0, 1e6, 0) },
-      uCgDepth: { value: new THREE.Vector2(CARGO3D_TUNE.depthSquash, 1) },
-      uCgShip: { value: new THREE.Vector4() },
-      uCgPort: { value: new THREE.Vector4() },
-      uCgSunRel: { value: new THREE.Vector3(-1e6, 5e5, 600) },
-      uCgPortSun: { value: new THREE.Vector3(0.5, 0.3, 0.75).normalize() },
-      ...sunShadowUniforms
-    };
+    // Wspólne węzły uniformów (kontenery, cienie, drony) — `.value` jak dawniej.
+    const U = { ...createCargoUniforms(), ...sunShadowUniforms };
+    U.uCgDepth.value.set(CARGO3D_TUNE.depthSquash, 1);
     this.uniforms = U;
 
     // Kontenery.
@@ -732,26 +280,20 @@ export const CargoContainers3D = {
         extra: makeInstanceAttr(geo, 'iExtra', 4, CAPACITY)
       };
       geo.instanceCount = 0;
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          ...U,
-          uStd: { value: vecs(STANDARD_PAINTS) },
-          uShell: { value: vecs(TANK_SHELLS) },
-          uFrame: { value: vecs(TANK_FRAMES) },
-          uBody: { value: vecs(HOPPER_BODIES) },
-          uRes: { value: RESOURCE_KEYS.map((k) => new THREE.Vector3(...hexToLinear(RESOURCES[k].color))) },
-          uHazmat: { value: new THREE.Vector3(...hexToLinear(HAZMAT_PAINT)) },
-          uCover: { value: new THREE.Vector3(...hexToLinear(COVER_PAINT)) },
-          uAmber: { value: new THREE.Vector3(...hexToLinear('#c8861e')) }
-        },
-        vertexShader: CONTAINER_VERT,
-        fragmentShader: CONTAINER_FRAG,
-        transparent: true,
-        depthWrite: true,
-        depthTest: true,
-        side: THREE.FrontSide,
-        forceSinglePass: true
+      const palettes = makeUniforms({
+        uStd: vecs(STANDARD_PAINTS),
+        uShell: vecs(TANK_SHELLS),
+        uFrame: vecs(TANK_FRAMES),
+        uBody: vecs(HOPPER_BODIES),
+        uRes: RESOURCE_KEYS.map((k) => new THREE.Vector3(...hexToLinear(RESOURCES[k].color))),
+        uHazmat: new THREE.Vector3(...hexToLinear(HAZMAT_PAINT)),
+        uCover: new THREE.Vector3(...hexToLinear(COVER_PAINT)),
+        uAmber: new THREE.Vector3(...hexToLinear('#c8861e'))
       });
+      const mat = createContainerMaterial(U, palettes, {
+        std: STANDARD_PAINTS.length, shell: TANK_SHELLS.length, frame: TANK_FRAMES.length, body: HOPPER_BODIES.length
+      });
+      mat.uniforms = { ...U, ...palettes };
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'CARGO3D_CONTAINERS';
       mesh.frustumCulled = false;
@@ -774,16 +316,9 @@ export const CargoContainers3D = {
         par: makeInstanceAttr(geo, 'iPar', 4, capacity)
       };
       geo.instanceCount = 0;
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { ...U, uShadow: { value: new THREE.Vector4() }, uShadowMix: { value: new THREE.Vector4(1, 0, 0, 0) } },
-        vertexShader: SHADOW_VERT,
-        fragmentShader: SHADOW_FRAG,
-        transparent: true,
-        depthWrite: false,
-        depthTest: true,
-        depthFunc: deck ? THREE.LessEqualDepth : THREE.GreaterDepth,
-        blending: THREE.NormalBlending
-      });
+      const own = makeUniforms({ uShadow: new THREE.Vector4(), uShadowMix: new THREE.Vector4(1, 0, 0, 0) });
+      const mat = createShadowMaterial(U, own, deck, HULL_SHADOW_Z);
+      mat.uniforms = { ...U, ...own };
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = name;
       mesh.frustumCulled = false;

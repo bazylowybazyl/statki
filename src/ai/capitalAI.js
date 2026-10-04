@@ -8,8 +8,10 @@ import {
 } from './capitalAiTuning.js';
 import { getBattleSlot } from './fleetCoordinator.js';
 import { AWARENESS_CONFIG } from './fleetAwareness.js';
+import { isCloakHidden } from '../game/cloak.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
+import { mountFireArc } from '../game/weaponAim.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -42,11 +44,81 @@ function wrapAng(a) {
   return window.wrapAngle ? window.wrapAngle(a) : Math.atan2(Math.sin(a), Math.cos(a));
 }
 
+// Unik zderzeń między okrętami (najbliższe zbliżenie, CPA): gdy tor sąsiada
+// względem nas przetnie się bliżej niż suma promieni + zapas w ciągu horyzontu,
+// schodzimy w bok już teraz — tym mocniej, im bliżej chwili zbliżenia i im
+// głębiej. Lżejszy ustępuje bardziej. Separacja z index.html odpycha dopiero
+// przy nakładaniu się stref (lekką fregatę słabo: siła × masa^−¼), a ogranicznik
+// przeszkód widzi tylko POZYCJE — dwie fregaty lecące na skos przecinały sobie
+// drogę i obijały się. Gracza pomijamy: unik przed nim liczy applySeparationForces.
+const AVOID_HORIZON = 2.5;
+const AVOID_PAD = 140;
+const AVOID_MAX_ACCEL = 900;
+const AVOID_RANGE_MAX = 6000;
+const _avoid = { ax: 0, ay: 0 };
+export function computeTrafficAvoidance(npc, out = _avoid) {
+  out.ax = 0;
+  out.ay = 0;
+  const query = window.queryAIGrid;
+  if (typeof query !== 'function') return out;
+  const vx = Number(npc.vx) || 0;
+  const vy = Number(npc.vy) || 0;
+  const myR = Number(npc.radius) || 60;
+  const myMass = Math.max(1, Number(npc.mass) || 1);
+  const sp = Math.sqrt(vx * vx + vy * vy);
+  const range = Math.min(AVOID_RANGE_MAX, myR + 600 + (sp + 1500) * AVOID_HORIZON);
+  const ship = window.ship;
+  const q = query(npc.x, npc.y, range);
+  const buf = q.buffer;
+  const n = q.count;
+  for (let i = 0; i < n; i++) {
+    const o = buf[i];
+    if (!o || o === npc || o === ship || o.dead || o.fighter) continue;
+    const rx = (Number(o.x) || 0) - npc.x;
+    const ry = (Number(o.y) || 0) - npc.y;
+    const rvx = (Number(o.vx) || 0) - vx;
+    const rvy = (Number(o.vy) || 0) - vy;
+    const vv = rvx * rvx + rvy * rvy;
+    if (vv < 900) continue; // < 30 j/s względem siebie — to robota separacji
+    const t = -(rx * rvx + ry * rvy) / vv;
+    if (t <= 0 || t > AVOID_HORIZON) continue;
+    const cx = rx + rvx * t;
+    const cy = ry + rvy * t;
+    const d = Math.sqrt(cx * cx + cy * cy);
+    const safe = myR + (Number(o.radius) || 60) + AVOID_PAD;
+    if (d >= safe) continue;
+    // W bok od miejsca, w którym będzie sąsiad. Czołowo (d ≈ 0) — reguła prawej
+    // ręki względem prędkości względnej: obaj schodzą w przeciwne strony.
+    let ux;
+    let uy;
+    if (d > 1) {
+      ux = -cx / d;
+      uy = -cy / d;
+    } else {
+      const L = Math.sqrt(vv);
+      ux = -rvy / L;
+      uy = rvx / L;
+    }
+    const tt = Math.max(0.35, t);
+    const oMass = Math.max(1, Number(o.mass) || myMass);
+    const a = ((2 * (safe - d)) / (tt * tt)) * (2 * oMass / (oMass + myMass));
+    out.ax += ux * a;
+    out.ay += uy * a;
+  }
+  const mag = Math.sqrt(out.ax * out.ax + out.ay * out.ay);
+  if (mag > AVOID_MAX_ACCEL) {
+    out.ax *= AVOID_MAX_ACCEL / mag;
+    out.ay *= AVOID_MAX_ACCEL / mag;
+  }
+  return out;
+}
+
 // Zatwierdza intencję ustawioną przez mózg: dokłada separację (liczoną raz na
-// tick AI) i stan dopalacza.
+// tick AI), unik zderzeń i stan dopalacza.
 function commitCapitalFlight(npc, boostT = 0, dt = 1 / 20) {
   const sep = window.applySeparationForces ? window.applySeparationForces(npc, 0, 0) : null;
-  setFlightSeparation(npc, sep?.ax || 0, sep?.ay || 0);
+  const avoid = computeTrafficAvoidance(npc);
+  setFlightSeparation(npc, (sep?.ax || 0) + avoid.ax, (sep?.ay || 0) + avoid.ay);
   setFlightBoost(npc, boostT > 0);
   if (!usesShipFlightModel(npc)) legacyFollowIntent(npc, boostT, dt);
 }
@@ -239,7 +311,7 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
   let aimArrival = arrival;
   let refVx = Number(opts.matchVx) || 0;
   let refVy = Number(opts.matchVy) || 0;
-  let face = Number.isFinite(opts.combatFacing) ? opts.combatFacing : NaN;
+  const face = Number.isFinite(opts.combatFacing) ? opts.combatFacing : NaN;
   if (!opts.noObstacleCap) {
     const invD = dist > 1e-4 ? 1 / dist : 0;
     const vlen = Math.hypot(npc.vx || 0, npc.vy || 0);
@@ -248,16 +320,18 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
     const vdy = useVel ? (npc.vy || 0) / vlen : 0;
     approachCap = capitalObstacleSpeedCap(npc, dx * invD, dy * invD, vdx, vdy, spec);
     // Przeszkoda przed celem — objazd po stycznej (punkt pośredni jedzie z nią).
+    // Tylko gdy cel leży wyraźnie ZA strefą bezpieczeństwa przeszkody: przy
+    // przepychaniu się w szyku (sąsiad tuż obok miejsca) objazd kręciłby
+    // okrętem w kółko — tam wystarcza separacja i unik CPA.
     const blk = npc.__obsBlk;
-    if (blk && blk.on && blk.along < dist - arrival && computeObstacleDetour(npc, tx, ty, blk, _detour)) {
+    if (blk && blk.on && blk.along < dist - arrival && dist - arrival > blk.along + blk.c
+      && computeObstacleDetour(npc, tx, ty, blk, _detour)) {
       aimX = _detour.x;
       aimY = _detour.y;
       aimArrival = 0;
       refVx = blk.vx;
       refVy = blk.vy;
       approachCap = capitalObstacleSpeedCap(npc, _detour.dx, _detour.dy, vdx, vdy, spec, true);
-      // Objazd dziobem naprzód — ciężki kadłub ma słabe dysze boczne.
-      face = NaN;
     }
   }
 
@@ -271,7 +345,10 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
     refVy,
     face,
     faceNear: arrival,
-    faceFar: arrival + faceBlend
+    faceFar: arrival + faceBlend,
+    // Kurs na wroga: cofanie zostaje dziobem do niego (model lotu). Kurs szyku
+    // (przelot, eskorta lidera) — bez tego: szybki ruch zawsze dziobem naprzód.
+    backFace: opts.backFace === true
   });
   return { facing: face, dist, budget: Math.min(speedLimit, approachCap) };
 }
@@ -285,42 +362,55 @@ function capitalArriveTo(npc, tx, ty, opts = {}) {
   return ctl;
 }
 
-// Średni kąt montażu broni głównych względem dziobu. Statek z działami
-// frontowymi celuje dziobem, broadside ustawia się burtą do wroga.
-function resolveWeaponFacingBias(npc) {
-  if (Number.isFinite(npc.__weaponFacingBias)) return npc.__weaponFacingBias;
-  const weapons = npc.autoWeapons;
-  if (!Array.isArray(weapons) || weapons.length === 0) return 0;
-
-  let sumSin = 0;
-  let sumCos = 0;
-  let sumAbs = 0;
+// Kąt celu względem dziobu, przy którym NAJWIĘCEJ dział głównych ma go w łuku
+// (remis — bliżej dziobu). Przy łukach 180° (mountFireArc) z obu burt i ukosów
+// to zwykle 0: okręt staje dziobem do celu, a działa burtowe i tak go sięgają.
+// Okręt z działami tylko na jednej burcie wybierze burtę. (Dawniej: średni
+// kąt montażu przy łukach ±0,55 rad — każdy NPC był okrętem burtowym.)
+const FACING_BIAS_STEP = Math.PI / 36;
+const FACING_BOW_PREFERENCE = 0.75;
+function countMainInArc(weapons, beta, wrap) {
   let n = 0;
   for (let i = 0; i < weapons.length; i++) {
     const w = weapons[i];
-    if (!w || !(w.arc < 1.0)) continue; // tylko wąskołukowe baterie główne
-    const ma = window.wrapAngle ? window.wrapAngle(w.mountAngle || 0) : (w.mountAngle || 0);
-    sumSin += Math.sin(ma);
-    sumCos += Math.cos(ma);
-    sumAbs += Math.abs(ma);
-    n++;
+    if (!w || w.group !== 'main') continue;
+    if (Math.abs(wrap(beta - (w.mountAngle || 0))) <= w.arc) n++;
   }
-  if (n === 0) { npc.__weaponFacingBias = 0; return 0; }
-
-  const resultant = Math.hypot(sumSin, sumCos) / n;
-  // Spójny kierunek montażu → średnia kołowa. Symetryczna burta (wektory się
-  // znoszą) → średnia |kąta| (≈ π/2), znak wybierany per klatka w facing.
-  const bias = resultant > 0.5 ? Math.atan2(sumSin, sumCos) : (sumAbs / n);
-  npc.__weaponFacingBias = bias;
-  return bias;
+  return n;
+}
+// Eksport dla testów (tests/npcWeaponArcs.test.mjs).
+export function resolveWeaponFacingBias(npc) {
+  if (Number.isFinite(npc.__weaponFacingBias)) return npc.__weaponFacingBias;
+  const weapons = npc.autoWeapons;
+  if (!Array.isArray(weapons) || weapons.length === 0) return 0;
+  const wrap = window.wrapAngle || wrapAng;
+  // 0, +5°, −5°, +10°, … — przy remisie wygrywa mniejsze odchylenie od dziobu.
+  let best = 0;
+  let bestCount = -1;
+  let bowCount = 0;
+  for (let k = 0; k <= 72; k++) {
+    const beta = k === 0 ? 0 : ((k & 1) ? 1 : -1) * Math.ceil(k / 2) * FACING_BIAS_STEP;
+    const n = countMainInArc(weapons, beta, wrap);
+    if (k === 0) bowCount = n;
+    if (n > bestCount) { bestCount = n; best = beta; }
+  }
+  // Dziób wygrywa, jeśli daje prawie tyle luf (lotniskowiec z działami na rufie
+  // stawał tyłem-bokiem do wroga dla jednej lufy więcej).
+  if (bowCount >= bestCount * FACING_BOW_PREFERENCE) best = 0;
+  npc.__weaponFacingBias = best;
+  // Układ symetryczny: cel po drugiej burcie daje tyle samo luf — wtedy
+  // resolveCombatFacing wybiera stronę bliższą obecnemu kursowi.
+  npc.__weaponFacingSym = countMainInArc(weapons, -best, wrap) === bestCount;
+  return best;
 }
 
 function resolveCombatFacing(npc, toAng) {
   const bias = resolveWeaponFacingBias(npc);
   if (Math.abs(bias) < 0.2) return toAng;
-  const wrap = window.wrapAngle || ((a) => Math.atan2(Math.sin(a), Math.cos(a)));
-  const cur = npc.angle || 0;
   const optA = toAng - bias;
+  if (!npc.__weaponFacingSym) return optA;
+  const wrap = window.wrapAngle || wrapAng;
+  const cur = npc.angle || 0;
   const optB = toAng + bias;
   return Math.abs(wrap(optA - cur)) <= Math.abs(wrap(optB - cur)) ? optA : optB;
 }
@@ -358,6 +448,22 @@ function capitalIdleControls(npc, face = NaN) {
 // strzelniczą: fregata ±600 u, superkapitał ±150 u.
 const HOLD_BEARING_TAU = 6;
 const WEAVE_DIST_BY_CLASS = { frigate: 600, destroyer: 400, battleship: 220, carrier: 150, supercapital: 150 };
+// Zygzak w szyku (walka na smyczy wokół miejsca): mały, w bok od osi do celu.
+// Pełny zygzak (fregata ±600 j.) był szerszy niż odstęp eskorty w bloku —
+// sąsiedzi wpadali na siebie.
+const FORMATION_WEAVE_BY_CLASS = { frigate: 140, destroyer: 110, battleship: 70, carrier: 50, supercapital: 50 };
+const _engageHold = { x: 0, y: 0 };
+function computeFormationWeave(npc, dt) {
+  if (!Number.isFinite(npc.__formWeavePhase)) {
+    npc.__formWeavePhase = Math.random() * TWO_PI;
+    npc.__formWeavePeriod = 8 + Math.random() * 6;
+    npc.__formWeaveT = 0;
+  }
+  npc.__formWeaveT += dt;
+  const spec = resolveShipFlightSpec(npc);
+  const amp = FORMATION_WEAVE_BY_CLASS[spec?.flightClass] ?? 80;
+  return amp * Math.sin(npc.__formWeavePhase + (TWO_PI * npc.__formWeaveT) / npc.__formWeavePeriod);
+}
 function computeHoldPoint(npc, tk, target, idealRange, dt) {
   const current = Math.atan2(npc.y - tk.y, npc.x - tk.x);
   let bearing = npc.__holdBearing;
@@ -407,32 +513,46 @@ function engageTarget(npc, target, dt, arrival = 40, slot = null) {
   // bojowego, ale przed wrogiem, który sam się zbliża, nie uciekamy — stoimy,
   // dopóki nie wejdzie głębiej niż holdFrac × dystans.
   const clearance = (Number(npc.radius) || 60) + (Number(target.radius) || 60) + 300;
-  const band = resolveHoldRange(dist, idealRange, personality, pressure, clearance);
-  const hold = computeHoldPoint(npc, tk, target, band.range, dt);
-  let matchVx = band.holding ? 0 : tk.vx;
-  let matchVy = band.holding ? 0 : tk.vy;
   const leash = slot ? Number(slot.leash) : Infinity;
+  let hold;
+  let matchVx;
+  let matchVy;
+  let band;
   if (Number.isFinite(leash)) {
+    // W szyku cały blok przesuwa się RÓWNOLEGLE ku celowi: punkt = własne
+    // miejsce + tyle w stronę celu, ile miejscu brakuje do dystansu bojowego
+    // (na smyczy). Punkty na okręgu wokół celu zbiegały się promieniście —
+    // grupa bijąca jeden cel ściskała się (odstęp × dystans/odległość),
+    // a fregaty obijały się o siebie.
     const sx = slotPosX(slot);
     const sy = slotPosY(slot);
-    const dx = hold.x - sx;
-    const dy = hold.y - sy;
-    const d = Math.hypot(dx, dy);
-    if (d > leash) {
-      const k = leash / d;
-      hold.x = sx + dx * k;
-      hold.y = sy + dy * k;
-      // Na granicy smyczy jedziemy z miejscem w szyku, nie z celem.
-      matchVx = Number(slot.vx) || 0;
-      matchVy = Number(slot.vy) || 0;
-    }
+    const dxs = tk.x - sx;
+    const dys = tk.y - sy;
+    const ds = Math.hypot(dxs, dys) || 1;
+    band = resolveHoldRange(ds, idealRange, personality, pressure, clearance);
+    const step = clampNum(ds - band.range, -leash, leash);
+    const ux = dxs / ds;
+    const uy = dys / ds;
+    const weave = computeFormationWeave(npc, dt);
+    hold = _engageHold;
+    hold.x = sx + ux * step - uy * weave;
+    hold.y = sy + uy * step + ux * weave;
+    // Miejsce jedzie z szykiem — punkt też.
+    matchVx = Number(slot.vx) || 0;
+    matchVy = Number(slot.vy) || 0;
+  } else {
+    band = resolveHoldRange(dist, idealRange, personality, pressure, clearance);
+    hold = computeHoldPoint(npc, tk, target, band.range, dt);
+    matchVx = band.holding ? 0 : tk.vx;
+    matchVy = band.holding ? 0 : tk.vy;
   }
   return capitalArriveControls(npc, hold.x, hold.y, {
     arrival,
     matchVx,
     matchVy,
     speedMode: dist > band.range * 1.5 ? 'cruise' : 'combat',
-    combatFacing
+    combatFacing,
+    backFace: true
   });
 }
 
@@ -462,7 +582,8 @@ function computeFlankControls(npc, slot) {
     matchVx: tk.vx,
     matchVy: tk.vy,
     speedMode: distToVictim > slot.dist * 1.6 ? 'cruise' : 'combat',
-    combatFacing
+    combatFacing,
+    backFace: true
   });
   return { ctl, faceAngle: ctl.facing, distToVictim };
 }
@@ -507,6 +628,7 @@ function goToSlot(npc, slot, combatFacing, arrival, target = null) {
     arrival,
     speedMode,
     combatFacing,
+    backFace: true,
     matchVx: Number(slot.vx) || 0,
     matchVy: Number(slot.vy) || 0
   });
@@ -528,11 +650,16 @@ function goToCruiseSlot(npc, slot, target = null) {
       facing = resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x));
     }
   }
+  // Prędkość dolotu szyku („travel") tylko za szykiem, który sam szybko jedzie.
+  // Przy stojącym szyku fregaty pędziły na miejsca 3200 j/s przez środek floty.
+  const spec = resolveShipFlightSpec(npc);
+  const slotSpeed = Math.hypot(Number(slot.vx) || 0, Number(slot.vy) || 0);
+  const catchUp = dist > 3000 && (!spec || slotSpeed > spec.maxSpeed * 0.5);
   return capitalArriveControls(npc, sx, sy, {
     arrival: Math.max(60, (Number(npc.radius) || 60) * 0.35),
     matchVx: Number(slot.vx) || 0,
     matchVy: Number(slot.vy) || 0,
-    speedMode: dist > 3000 ? 'travel' : 'cruise',
+    speedMode: catchUp ? 'travel' : 'cruise',
     combatFacing: facing
   });
 }
@@ -630,6 +757,34 @@ function entityVelY(e) { return Number(e?.vel?.y ?? e?.vy) || 0; }
 // 2. NIEZALEŻNY SYSTEM UZBROJENIA (Zintegrowany z Hardpointami)
 // ============================================================================
 
+// Obrys kadłuba w układzie gniazd z edytora (piksele sprite'a): rozpiętość
+// wszystkich gniazd. Wystarcza do kierunku normalnej obrysu (mountFireArc
+// zaokrągla ją co 45°); gniazda NPC nie mają zapisanego kąta.
+function resolveMountShape(npc, out) {
+  let a = 0;
+  let b = 0;
+  const hps = npc.editorHardpoints;
+  if (Array.isArray(hps)) {
+    for (let i = 0; i < hps.length; i++) {
+      const p = hps[i]?.pos || hps[i];
+      a = Math.max(a, Math.abs(Number(p?.x) || 0));
+      b = Math.max(b, Math.abs(Number(p?.y) || 0));
+    }
+  }
+  out.halfLen = Math.max(1, a);
+  out.halfWid = Math.max(1, b);
+  return out;
+}
+
+// Łuk dział NPC: ten sam model co u gracza (src/game/weaponAim.js, MOUNT_ARCS):
+// 180° od normalnej obrysu kadłuba w miejscu gniazda. Dawniej kąt gniazda
+// zgadywano z |y| > 15 px (±90°), a łuk miał ±0,55 rad — każde gniazdo poza
+// osią było działem burtowym, okręty NIE mogły strzelać do przodu i stawały
+// (także w locie) burtą do celu. Zapas ponad 90°: działo burtowe sięga też
+// celu dokładnie na kursie dziobu.
+const MAIN_ARC_TOLERANCE = 0.12;
+const _mountShape = { halfLen: 1, halfWid: 1 };
+
 function initAutonomousWeapons(npc) {
   if (npc.autoWeapons !== undefined && npc._weaponsInit) return;
 
@@ -638,7 +793,8 @@ function initAutonomousWeapons(npc) {
   npc._shipScanCaches = Object.create(null);
 
   if (npc.weapons) {
-    const addWeaponsFromGroup = (group, arc, prefers, scanProfile) => {
+    const shape = resolveMountShape(npc, _mountShape);
+    const addWeaponsFromGroup = (group, groupName, arcDefault, prefers, scanProfile) => {
       if (!group || !Array.isArray(group)) return;
       for (let i = 0; i < group.length; i++) {
         const loadout = group[i];
@@ -647,8 +803,13 @@ function initAutonomousWeapons(npc) {
 
         const localY = loadout.hp?.y || loadout.hp?.pos?.y || 0;
         let baseAngle = loadout.hp?.rot || loadout.hp?.pos?.rot;
+        let arc = arcDefault;
         if (typeof baseAngle !== 'number') {
-          if (localY > 15) baseAngle = Math.PI / 2;
+          if (groupName === 'main') {
+            const fireArc = mountFireArc(loadout.hp, 'main', shape.halfLen, shape.halfWid);
+            baseAngle = fireArc.center;
+            arc = fireArc.half + MAIN_ARC_TOLERANCE;
+          } else if (localY > 15) baseAngle = Math.PI / 2;
           else if (localY < -15) baseAngle = -Math.PI / 2;
           else baseAngle = 0;
         }
@@ -667,6 +828,7 @@ function initAutonomousWeapons(npc) {
           hpOffset: loadout.hp,
           mountAngle: baseAngle,
           arc: arc,
+          group: groupName,
           prefers: prefers,
           // Obrona punktowa (gniazdo aux): kadłub spoza `prefers` to brak celu,
           // chyba że okręt ma PD CHIP (getTargetScoreForWeapon).
@@ -676,9 +838,9 @@ function initAutonomousWeapons(npc) {
       }
     };
 
-    addWeaponsFromGroup(npc.weapons.main, 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
-    addWeaponsFromGroup(npc.weapons.aux, Math.PI * 2, ['rocket', 'fighter'], 'fast');
-    addWeaponsFromGroup(npc.weapons.missile, 1.2, ['battleship', 'destroyer', 'frigate', 'fighter'], 'slow');
+    addWeaponsFromGroup(npc.weapons.main, 'main', 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
+    addWeaponsFromGroup(npc.weapons.aux, 'aux', Math.PI * 2, ['rocket', 'fighter'], 'fast');
+    addWeaponsFromGroup(npc.weapons.missile, 'missile', 1.2, ['battleship', 'destroyer', 'frigate', 'fighter'], 'slow');
   }
 
   // Układ broni mógł się zmienić — przelicz preferowane ustawienie kadłuba.
@@ -778,7 +940,8 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
   cache.maxRange = maxRange;
   const maxRangeSq = maxRange * maxRange;
 
-  if (!npc.friendly && window.ship && !window.ship.dead) {
+  // Zamaskowany gracz (src/game/cloak.js) nie trafia do listy celów wież.
+  if (!npc.friendly && window.ship && !window.ship.dead && !isCloakHidden(window.ship)) {
     const playerX = window.ship.pos?.x ?? window.ship.x ?? 0;
     const playerY = window.ship.pos?.y ?? window.ship.y ?? 0;
     const dx = playerX - npc.x;

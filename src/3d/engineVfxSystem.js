@@ -395,6 +395,9 @@ function resolveWarpMode(entity) {
     const w = GameState.warp;
     if (w?.state === 'charging') return 'charging';
     if (w?.state === 'active') return 'active';
+    // Wyjście z warpa = przylot jak u NPC (warpDrive.js: WARP_EXIT): plazma do hamowania.
+    const r = w?.exitRamp;
+    if (r && r.active && r.age < r.tBrake + 0.25) return 'active';
     return 'off';
   }
   if (entity.state === 'warping_in' || entity.phase === 'warping') return 'active';
@@ -405,11 +408,12 @@ function resolveWarpMode(entity) {
   return 'off';
 }
 
-/** Dopalacz silników MAIN (Shift w strefie planety; w edytorze — Shift testu). */
+/** Dopalacz silników MAIN (Shift w strefie planety, szarża pod F; w edytorze — Shift testu). */
 function resolveMainBoost(entity) {
   if (entity.__editorBoost === true) return true;
   const player = GameState.ship;
-  return !!(player && entity === player && GameState.boost?.state === 'active');
+  return !!(player && entity === player
+    && (GameState.boost?.state === 'active' || GameState.ramBurn?.active === true));
 }
 
 /**

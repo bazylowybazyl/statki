@@ -39,6 +39,8 @@ export class BeltVeil {
     const U = this.u;
     const mat = new THREE.NodeMaterial();
     mat.name = 'AsteroidBelt:veil';
+    // Zasłona pełnoekranowa (4 wierzchołki) — rulon warpa (src/3d/warp/rulon.js) jej nie zgina.
+    mat.rulonBend = false;
     mat.transparent = true;
     mat.depthTest = false;
     mat.depthWrite = false;

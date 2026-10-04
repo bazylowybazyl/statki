@@ -1,13 +1,14 @@
 // src/game/weaponController.js
 // Per-ship weapon controller for split-screen P1/P2 independence
 // Extracts firing logic from index.html into reusable instances
-import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim } from './weaponAim.js';
+import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim, turretDriveFor } from './weaponAim.js';
 import { Turret2D } from '../vfx/turret2D.js';
 import { writePointVelocity, writeCarrier, createCarrier } from './carrierVelocity.js';
 import {
   chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
   CHARGE_FIRE, CHARGE_CHARGING
 } from './weaponCharge.js';
+import { isTorpedoWeapon } from './torpedoAim.js';
 
 // Nośnik efektu ładowania (lufa okrętu) — jeden obiekt na moduł.
 const _chargeCarrier = createCarrier();
@@ -188,19 +189,29 @@ export class WeaponController {
     return this.weapons[window.HP?.AUX || 'aux'] || [];
   }
 
-  updateAim(dt) {
+  // `groups` — które grupy celować (domyślnie wszystkie). Kierowanie ogniem gracza
+  // (src/game/fireControl.js) samo prowadzi wieże `main` i `special`, a tu zostawia wyrzutnie.
+  updateAim(dt, groups = AIM_GROUPS) {
     const mouse = this.getMouseRef();
     const mouseWorld = this.screenToWorldFn(mouse.x, mouse.y);
     const ship = this.ship;
     const targets = this.lockedTargets || EMPTY_WEAPONS;
     const fallback = this.lockedTarget;
-    for (const group of AIM_GROUPS) {
+    // Tryb torped (klawisz 8, index.html): wyrzutnie torped gracza celuje ręcznie — kursor, bez namiaru.
+    const torpedoManual = this.owner === 'player' && typeof window !== 'undefined' && window.torpedoAim?.active === true;
+    for (const group of groups) {
       const loadouts = this.weapons[group] || EMPTY_WEAPONS;
       for (let i = 0; i < loadouts.length; i++) {
         const loadout = loadouts[i];
         if (!loadout?.weapon || !loadout.hp || loadout.hp.destroyed) continue;
         const weapon = loadout.weapon;
         const state = getMountedWeaponAim(ship, loadout);
+        if (torpedoManual && isTorpedoWeapon(weapon)) {
+          state.target = null;
+          mountedWeaponBase(ship, loadout.hp, _aimBase);
+          stepMountedWeaponAim(state, _aimBase, mouseWorld, dt, turretDriveFor(weapon, ship.turret));
+          continue;
+        }
         const range = (weapon.baseRange || weapon.range || 1000) * (ship.modifiers?.range || 1);
         // Stable round-robin assignment, shared by aiming and firing. No random
         // target switch at the instant of a shot, and no temporary target arrays.
@@ -234,7 +245,7 @@ export class WeaponController {
             aimPoint = _aimPoint;
           }
         }
-        stepMountedWeaponAim(state, _aimBase, aimPoint, dt, ship.turret);
+        stepMountedWeaponAim(state, _aimBase, aimPoint, dt, turretDriveFor(weapon, ship.turret));
       }
     }
   }
@@ -605,9 +616,11 @@ export class WeaponController {
 
   _selectMissileLoadout(side) {
     const entries = this.missileWeapons;
+    // Wyrzutnie torped strzelają tylko z trybu torped (wachlarz niekierowany, index.html) — nie z PPM.
     const available = entries.filter(e => {
       const hp = e?.hp;
-      return hp?.mount && !hp?.destroyed && (hp.ammo === null || hp.ammo > 0) && ((Number(hp.missileCd) || 0) <= 0);
+      return hp?.mount && !hp?.destroyed && !isTorpedoWeapon(e.weapon)
+        && (hp.ammo === null || hp.ammo > 0) && ((Number(hp.missileCd) || 0) <= 0);
     });
     if (!available.length) return null;
     const coord = (entry) => {

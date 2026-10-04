@@ -4,19 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Atlas 3D — demo WebGPU</title>
+<title>Okręty 3D — demo WebGPU</title>
 <!--
   Demo WebGPU (three.js r183 przez Vite: `npm run dev`, /dema/atlas3d-webgpu.html).
-  Model 3D Atlasa (kadłub ze sprite'a gry: obrys z alfy, pokład z tekstury, bryły, kil, rufa
-  z dyszami, kręgosłup Hexlance'a, płetwy startowe z hangarami, mostki gry) i modele 3D broni
-  (23 rodziny z atlasów sprite'ów, w skali i punktach wylotu gry) — w trzech trybach:
-  oględziny, lot (sterowanie, kamery 3D, ogień, drony i skały) i galeria broni.
+  Modele 3D okrętów: Atlas (gracz) i flota — Terra Nova (pancernik Bellator, niszczyciel Hasta,
+  fregata Custos) i piraci (pancernik Iron Skull, niszczyciel, fregata). Kadłuby ze sprite'ów gry
+  (obrys z alfy, pokład z tekstury, bryły, kil, gondole silników, kolce, mostki gry) i modele 3D
+  broni (23 rodziny, w skali i punktach wylotu gry) — w czterech trybach: flota (wszystkie okręty
+  obok siebie), oględziny, lot (sterowanie, kamery 3D, ogień, drony i skały) i galeria broni.
   Kod modeli: src/3d/ships3d/*, opis: docs/webgpu/DEMO-ATLAS-3D.md.
 
-  Parametry adresu: ?tryb=ogledziny|lot|galeria, ?kamera=gra|taktyczna|poscig|orbita|kinowa,
-  ?fit=gra|pelny, ?test=1 (klatki tylko przez __demo.step), ?dpr=1, ?cienie=2048.
-  Konsola: __demo.mode(tryb), camera(kamera), loadout('gra'|'pelny'), step(n), stats(),
-  fire('main'|'missile'|'special'|'hexlance'), exportGLB().
+  Parametry adresu: ?tryb=flota|ogledziny|lot|galeria, ?statek=<id z SHIP3D_MODELS> (np. terran_carrier),
+  ?kamera=gra|taktyczna|poscig|orbita|kinowa, ?fit=gra|pelny, ?test=1 (klatki tylko przez
+  __demo.step), ?dpr=1, ?cienie=2048.
+  Konsola: __demo.mode(tryb), ship3d(id, tryb), fleet(), camera(kamera), loadout('gra'|'pelny'),
+  step(n), stats(), fire('main'|'missile'|'special'|'hexlance'), exportGLB().
 -->
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
@@ -54,6 +56,14 @@
   #labels div { position: absolute; transform: translate(-50%, -100%); font: 11px system-ui, sans-serif; color: #dbeeff;
     background: rgba(6, 10, 18, .72); border: 1px solid rgba(110, 170, 230, .25); border-radius: 4px; padding: 2px 6px;
     white-space: nowrap; }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  #shipsel button { font-weight: 500; font-size: 10.5px; padding: 5px 1px; }
+  #shipsel button.f-terran { border-color: rgba(220, 215, 200, .35); }
+  #shipsel button.f-pirate { border-color: rgba(230, 120, 80, .38); }
+  #shipsel button.on { border-color: #8fd3ff; }
+  #ship-name { font-size: 11.5px; color: #bfe6ff; margin: 2px 0 4px; }
+  #labels div.fleet-label { font-size: 12px; font-weight: 600; letter-spacing: .03em; }
+  #labels div.fleet-label.f-pirate { color: #ffc2a6; border-color: rgba(230, 120, 80, .4); }
   #crosshair { position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
     border: 1.5px solid rgba(140, 220, 255, .75); border-radius: 50%; display: none; }
   #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .9);
@@ -71,13 +81,18 @@
 <div id="labels"></div>
 <div id="crosshair"></div>
 <div id="panel">
-  <h1>ATLAS 3D · MODELE BRONI · WEBGPU</h1>
+  <h1>OKRĘTY 3D · FLOTA · MODELE BRONI · WEBGPU</h1>
   <div id="backend">uruchamianie…</div>
-  <div class="grid g3" id="modes">
+  <div class="grid g4" id="modes">
+    <button data-m="flota">V · Flota</button>
     <button data-m="ogledziny">O · Oględziny</button>
     <button data-m="lot">L · Lot</button>
-    <button data-m="galeria">G · Galeria broni</button>
+    <button data-m="galeria">G · Galeria</button>
   </div>
+  <div class="sec">okręt ( [ / ] · klik w okręt we flocie )</div>
+  <div class="grid g4" id="shipsel"></div>
+  <select id="shipsel-more" style="width:100%;margin:2px 0 3px"></select>
+  <div id="ship-name"></div>
   <div class="sec">kamera</div>
   <div class="grid g5" id="cams">
     <button data-c="gra">1 Z góry</button>
@@ -92,7 +107,8 @@
     <button id="fit-pelny">Wszystkie gniazda</button>
   </div>
   <div id="groups"></div>
-  <div class="keys" id="keys-flight">Lot: W/S ciąg · A/D skręt · Q/E boki · R/F góra/dół · Shift dopalacz ·
+  <div class="keys" id="keys-flight">Flota: kursor — cel wież, Spacja — salwa, klik — oględziny okrętu.
+    Lot: W/S ciąg · A/D skręt · Q/E boki · R/F góra/dół · Shift dopalacz ·
     LPM ogień główny + specjalne · PPM / Spacja rakiety · X Hexlance · T auto-PD · kółko zoom ·
     Alt + przeciąganie lub ŚPM — obrót kamery · 1–5 kamery · H panel · P pauza</div>
   <details id="settings" open><summary>widok i model</summary>
@@ -125,11 +141,11 @@
   <div id="stats"></div>
 </div>
 <div id="hud"></div>
-<div id="loading">wczytywanie sprite'a Atlasa…</div>
+<div id="loading">wczytywanie sprite'ów okrętów…</div>
 <div id="err"></div>
 <div id="nogpu"><div>
   <b>WebGPU niedostępne.</b><br>
-  Demo rysuje model Atlasa i broni w TSL na WebGPU — potrzebuje przeglądarki z WebGPU
+  Demo rysuje modele okrętów i broni w TSL na WebGPU — potrzebuje przeglądarki z WebGPU
   (Chrome / Edge 113+ na Windowsie z aktualnym sterownikiem). Sprawdź <code>chrome://gpu</code>.
   <div id="nogpu-detail" style="margin-top:8px;color:#9fb3cf;font-size:12px"></div>
 </div></div>

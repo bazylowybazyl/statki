@@ -26,6 +26,12 @@ export function stepProjectileKinematics(projectile, dt, nowSim = null) {
   projectile.py = y;
   projectile.x = x + finite(projectile.vx, 0) * step;
   projectile.y = y + finite(projectile.vy, 0) * step;
+  // Gra 3D: wysokość pocisku (strzał z wysokości statku w punkt celowania 3D); bez vz — z stoi.
+  if (projectile.vz) {
+    const z = finite(projectile.z, 0);
+    projectile.pz = z;
+    projectile.z = z + projectile.vz * step;
+  }
   projectile.life = finite(projectile.life, 0) - step;
   projectile.age = Math.max(0, finite(projectile.age, 0)) + step;
 

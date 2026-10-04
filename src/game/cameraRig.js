@@ -24,11 +24,18 @@
 //   (cameraZoom.js: camera.zoom = zoomBase · e^człon) — targetZoom gracza nietknięty.
 //   Oś kopu biegnie w czasie gry (w pauzie stoi): stepCameraRigWarp raz na klatkę przed
 //   zoomem i rigiem; zdarzenia z automatu warpa gracza: noteCameraRigWarp('kick' | 'exit').
+// - Rulon warpa (2026-10-03, demo „Nurt” iteracja 3): w ładowaniu i w locie statek idzie na ŚRODEK
+//   kadru w lejku (wyprzedzenie i kursor × (1 − lejek)); WYJŚCIE = przylot jak u NPC — kamera
+//   zostaje ZA statkiem (nigdy go nie wyprzedza): statek wysuwa się w stronę celu do WARP_EXIT.ahead
+//   pół kadru i tam staje, kamera dogania go w WARP_EXIT.settle s; oddalenie trzymane do końca
+//   zwolnienia (input.exitAge / exitSlow / exitHalt — rampa wyjścia rozgrywki).
 //
 // Dawniej (do 2026-09-27) kamera brała 2× odległość kursora od środka bez
 // limitu i bez wygładzania: statek wypadał z kadru, gdy kursor odjechał o ćwierć
 // ekranu (270 px w pionie przy 1080 p), a świat pod kursorem jechał 3× szybciej
 // niż ręka.
+
+import { WARP_EXIT, warpRulonBend } from './warpDrive.js';
 
 export const CAMERA_RIG_DEFAULTS = Object.freeze({
   // Nawigacja
@@ -188,7 +195,11 @@ export function createCameraRig() {
     warpExitAge: -1,
     warpHold: 1,
     warpRelFrom: 1,
-    warpRelAge: -1
+    warpRelAge: -1,
+    // Rulon (stepCameraRigWarp → stepCameraRig): mnożnik celu offsetu (1 − lejek; 0 przy wyjściu)
+    // i wysunięcie statku przed kamerę przy wyjściu [× pół kadru wzdłuż kursu].
+    warpLeadScale: 1,
+    warpAheadK: 0
   };
 }
 
@@ -220,6 +231,10 @@ function smoothstep01(t) {
 function easeOut3(t) {
   const u = 1 - clamp(t, 0, 1);
   return 1 - u * u * u;
+}
+
+function smoothRange(a, b, x) {
+  return smoothstep01((x - a) / Math.max(1e-6, b - a));
 }
 
 /** Impuls 0 → 1 → 0 (demo: narasta w `rise`, gaśnie z czasem `fall`); szczyt po rise·ln((rise + fall) / rise). */
@@ -305,8 +320,10 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const margin = clamp(finite(tune.frameMargin, 0), 0, 0.49);
   const maxX = halfW * 2 * (0.5 - margin);
   const maxY = halfH * 2 * (0.5 - margin);
-  const targetX = clamp(lookX + leadX, -maxX, maxX);
-  const targetY = clamp(lookY + leadY, -maxY, maxY);
+  // Rulon warpa: statek na środku lejka (stepCameraRigWarp: warpLeadScale).
+  const leadScale = clamp(finite(rig.warpLeadScale, 1), 0, 1);
+  const targetX = clamp((lookX + leadX) * leadScale, -maxX, maxX);
+  const targetY = clamp((lookY + leadY) * leadScale, -maxY, maxY);
   rig.targetX = targetX;
   rig.targetY = targetY;
 
@@ -325,9 +342,20 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // --- Kop warpa: kamera cofa się wzdłuż kursu (statek wyrywa się do przodu), PO sprężynie —
   // impuls ma kształt z dema (sprężyna ω 3–8/s zjadłaby szczyt po 0,11 s). Kadr pilnuje sumy.
   // Px dema przy 1080 wierszach — w innym kadrze proporcjonalnie (jak wyprzedzenie).
-  const lag = finite(rig.warpLagPx, 0) * (halfH * 2 / WARP_KICK_REF_H);
-  rig.offsetX = clamp(rig.springX - finite(rig.warpDirX, 0) * lag, -maxX, maxX);
-  rig.offsetY = clamp(rig.springY - finite(rig.warpDirY, 0) * lag, -maxY, maxY);
+  // Wyjście: kamera ZA statkiem — statek wysuwa się wzdłuż kursu o warpAheadK pół kadru (pół
+  // kadru mierzone wzdłuż kursu: do brzegu w tym kierunku).
+  const wdx = finite(rig.warpDirX, 0);
+  const wdy = finite(rig.warpDirY, 0);
+  const ahK = Math.max(0, finite(rig.warpAheadK, 0));
+  let ahead = 0;
+  if (ahK > 0) {
+    const ax = Math.abs(wdx);
+    const ay = Math.abs(wdy);
+    ahead = ahK * Math.min(ax > 1e-3 ? halfW / ax : Infinity, ay > 1e-3 ? halfH / ay : Infinity);
+  }
+  const lag = finite(rig.warpLagPx, 0) * (halfH * 2 / WARP_KICK_REF_H) + ahead;
+  rig.offsetX = clamp(rig.springX - wdx * lag, -maxX, maxX);
+  rig.offsetY = clamp(rig.springY - wdy * lag, -maxY, maxY);
   return rig;
 }
 
@@ -349,6 +377,8 @@ export function noteCameraRigWarp(rig, event) {
 //                     oddalenie wraca do zoomu gracza (rozpoczęte impulsy dobiegają końca)
 //   suspend         — zoom prowadzi przejście kamery (fokus stacji / edytor): kop znika od razu
 //                     (przejście startuje z zoomu na ekranie, więc bez skoku)
+//   exitAge         — wiek rampy wyjścia [s] (< 0: brak), exitSlow / exitHalt — koniec zwolnienia
+//                     i zatrzymanie (warpDrive.js: createWarpExitRamp)
 // Wynik w rig: warpZoomLog (człon log(zoom)), warpLagPx, warpShakePx, warpDirX/Y.
 export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const dt = Math.max(0, finite(input.dt, 0));
@@ -364,6 +394,8 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     rig.warpZoomLog = 0;
     rig.warpLagPx = 0;
     rig.warpShakePx = 0;
+    rig.warpLeadScale = 1;
+    rig.warpAheadK = 0;
     return rig;
   }
 
@@ -387,10 +419,29 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const charge = clamp(finite(input.charge, 0), 0, 1);
   const zoomOut = clamp(finite(tune.warpZoomOut, 1), 0.05, 1);
   let target = 1;
+  const exitAge = finite(input.exitAge, -1);
+  const exitSlow = Math.max(0.05, finite(input.exitSlow, WARP_EXIT.slow));
+  const exitHalt = Math.max(exitSlow, finite(input.exitHalt, exitSlow));
   if (on) {
     if (state === 'active') target = zoomOut;
     else if (state === 'charging') target = 1 + (zoomOut - 1) * smoothstep01(charge);
+    // Wyjście: oddalenie zostaje do końca zwolnienia (demo: zoom wraca od wlotu).
+    else if (exitAge >= 0 && exitAge < exitSlow) target = Math.min(rig.warpHold, zoomOut);
   }
+  // Rulon: statek na środku lejka (ładowanie: × (1 − lejek), lot: 0), przy wyjściu kamera za nim.
+  let leadScale = 1;
+  let aheadK = 0;
+  if (on) {
+    if (state === 'charging') leadScale = 1 - Math.min(1, warpRulonBend('charging', charge, 0, 0));
+    else if (state === 'active') leadScale = 0;
+    else if (exitAge >= 0) {
+      const settle = WARP_EXIT.settle;
+      aheadK = WARP_EXIT.ahead * smoothRange(exitSlow, exitHalt, exitAge) * (1 - smoothRange(exitHalt, exitHalt + settle, exitAge));
+      leadScale = smoothRange(exitHalt, exitHalt + settle, exitAge);
+    }
+  }
+  rig.warpLeadScale = leadScale;
+  rig.warpAheadK = aheadK;
   if (target < rig.warpHold - 1e-9) {
     // oddalanie: za celem z limitem tempa (ładowanie — po krzywej dema, skok celu — rampa)
     rig.warpHold = Math.max(target, rig.warpHold - WARP_ZOOM_OUT_RATE * dt);

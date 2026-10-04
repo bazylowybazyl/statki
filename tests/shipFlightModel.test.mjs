@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 import {
   flightTurnTime,
+  resolveFlightFacing,
   resolveShipFlightSpec,
   setFlightArrive,
   setFlightSeparation,
@@ -160,6 +161,73 @@ test('ships without side thrust relocate sideways slower but still arrive while 
   assert.ok(rb.arriveT > rf.arriveT * 1.5, `pancernik ${rb.arriveT.toFixed(1)} s vs fregata ${rf.arriveT.toFixed(1)} s`);
   // Na pozycji kadłub trzyma zadany kierunek (burta/dziób na wroga).
   assert.ok(Math.abs(wrapFlightAngle(battleship.angle)) < 0.05);
+});
+
+test('fast flight turns the bow into the flight direction; backing off the enemy keeps it on the enemy', () => {
+  const lo = 180;
+  const hi = 360;
+  // Odległość blisko punktu (bez członu odległości): rozstrzyga sama prędkość.
+  const it = { face: 0, faceNear: 60, faceFar: 0, backFace: false };
+  assert.equal(resolveFlightFacing(it, 0, 150, 300, 0, lo, hi), 0, 'wolny dryf w bok trzyma kurs zadany');
+  assert.ok(Math.abs(resolveFlightFacing(it, 0, 400, 300, 0, lo, hi) - Math.PI / 2) < 1e-9, 'pełny bieg w bok — dziób w kierunku lotu');
+  assert.equal(resolveFlightFacing(it, 0, 400, 300, 0), 0, 'bez pasma prędkości — tylko odległość, jak dawniej');
+  // Kurs bojowy (backFace): cofanie od wroga zostaje dziobem do niego, także
+  // szybkie (prędkość cofania ogranicza pilot)…
+  const back = { face: 0, faceNear: 60, faceFar: 0, backFace: true };
+  assert.equal(resolveFlightFacing(back, -340, 0, 300, 0, lo, hi, 3000), 0);
+  assert.equal(resolveFlightFacing(back, -900, 0, 2500, 0, lo, hi, 3000), 0);
+  // …rufą do wroga obraca się dopiero daleki odskok. Okręt już lecący dziobem
+  // naprzód trzyma kierunek lotu, dopóki leci szybko (bez nawrotu na granicy
+  // 150°), a zwalniając wraca na kurs bojowy.
+  assert.ok(Math.abs(Math.abs(resolveFlightFacing(back, -900, 0, 3200, 0, lo, hi, 3000)) - Math.PI) < 1e-9);
+  assert.ok(Math.abs(Math.abs(resolveFlightFacing(back, -900, 0, 1400, Math.PI, lo, hi, 3000)) - Math.PI) < 1e-9);
+  assert.equal(resolveFlightFacing(back, -150, 0, 1400, Math.PI, lo, hi, 3000), 0);
+  // Ukos w tył (120°) to nie cofanie, tylko lot bokiem — dziób w kierunku lotu.
+  const a = (2 * Math.PI) / 3;
+  assert.ok(Math.abs(resolveFlightFacing(back, 400 * Math.cos(a), 400 * Math.sin(a), 300, 0, lo, hi, 3000) - a) < 1e-9);
+});
+
+test('a ship backing off the enemy keeps its bow on it instead of turning around twice', () => {
+  // Odskok 2 km w tył (np. eskorta za swój okręt flagowy przy przejściu w szyk
+  // bojowy). Dawniej fregata obracała się rufą do wroga i z powrotem — dwa
+  // nawroty, za każdym razem chwila lotu bokiem.
+  const ship = makeShip('terran_frigate', 'frigate_pd');
+  const spec = resolveShipFlightSpec(ship);
+  let maxOff = 0;
+  let maxBack = 0;
+  for (let i = 0; i < 120 * 12; i++) {
+    if (i % 6 === 0) {
+      setFlightArrive(ship, -2000, 0, { arrival: 60, face: 0, faceNear: 60, faceFar: 2000, backFace: true });
+    }
+    stepShipFlight(ship, DT);
+    maxOff = Math.max(maxOff, Math.abs(wrapFlightAngle(ship.angle)));
+    maxBack = Math.max(maxBack, -ship.vx);
+  }
+  assert.ok(maxOff < 0.15, `kadłub odwrócił się od wroga o ${(maxOff * 57.3).toFixed(0)}°`);
+  assert.ok(maxBack < spec.reverseSpeed * 0.6, `cofał się z ${maxBack.toFixed(0)} j/s (wsteczny ${spec.reverseSpeed})`);
+  assert.ok(Math.hypot(ship.x + 2000, ship.y) < 120, 'nie dojechał');
+});
+
+test('a ship relocating at speed flies bow-first, then turns back to its set heading', () => {
+  const ship = makeShip('terran_battleship', 'battleship');
+  const spec = resolveShipFlightSpec(ship);
+  // faceFar = 0: człon odległości wyłączony — przy samym kursie zadanym okręt
+  // przelatywał 8 km bokiem.
+  let maxSlip = 0;
+  let fastTicks = 0;
+  for (let i = 0; i < 120 * 60; i++) {
+    if (i % 6 === 0) setFlightArrive(ship, 0, 8000, { arrival: 60, face: 0, faceNear: 60, faceFar: 0 });
+    stepShipFlight(ship, DT);
+    const sp = Math.hypot(ship.vx, ship.vy);
+    if (sp > spec.maxSpeed * 0.6) {
+      fastTicks++;
+      maxSlip = Math.max(maxSlip, Math.abs(wrapFlightAngle(Math.atan2(ship.vy, ship.vx) - ship.angle)));
+    }
+  }
+  assert.ok(fastTicks > 120, 'nie rozpędził się');
+  assert.ok(maxSlip < 0.5, `poślizg ${(maxSlip * 57.3).toFixed(0)}° w pełnym biegu (bokiem = 90°)`);
+  assert.ok(Math.hypot(ship.x, ship.y - 8000) < 120, 'nie dojechał');
+  assert.ok(Math.abs(wrapFlightAngle(ship.angle)) < 0.05, 'na miejscu nie wrócił na kurs zadany');
 });
 
 test('ship keeps station on a moving reference point', () => {

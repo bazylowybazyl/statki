@@ -77,7 +77,7 @@ export class MissileBodies {
     // Wpis roboczy dla push(): wołający wypełnia pola i woła push() — w pętlach klatki bez
     // przekazywania liczb zmiennoprzecinkowych przez argumenty (V8 opakowuje je w obiekty
     // przy wywołaniu, którego nie wklei; add(...) zostaje dla wywołań rzadkich).
-    this.s = { x: 0, y: 0, z: 0, cos: 1, sin: 0, length: 0, glow: 0, roll: 0 };
+    this.s = { x: 0, y: 0, z: 0, cos: 1, sin: 0, length: 0, glow: 0, roll: 0, pitchCos: 1, pitchSin: 0 };
     const src = buildGeometry();
     const geo = new THREE.InstancedBufferGeometry();
     geo.setAttribute('position', src.getAttribute('position'));
@@ -110,23 +110,33 @@ export class MissileBodies {
     mat.positionNode = Fn(() => {
       const A = attribute('mb0', 'vec4');
       const B = attribute('mb1', 'vec4');
+      const C2 = attribute('mb2', 'vec4');
+      const C3 = attribute('mb3', 'vec4');
       const p = positionGeometry;
       const n = normalGeometry;
-      // Obrót wokół osi rakiety (X), potem kurs w płaszczyźnie (Z), skala = długość.
+      // Obrót wokół osi rakiety (X), wzniesienie nosa (X ku +Z sceny — ku kamerze z góry: rakieta
+      // w pionie to krążek, przy przechyle rozwija się na pełną długość), kurs w płaszczyźnie (Z),
+      // skala = długość. cos / sin wzniesienia w .w barw (C2.w, C3.w).
       const cr = cos(B.z);
       const sr = sin(B.z);
       const py = p.y.mul(cr).sub(p.z.mul(sr));
       const pz = p.y.mul(sr).add(p.z.mul(cr));
       const ny = n.y.mul(cr).sub(n.z.mul(sr));
       const nz = n.y.mul(sr).add(n.z.mul(cr));
-      const wx = p.x.mul(B.x).sub(py.mul(B.y));
-      const wy = p.x.mul(B.y).add(py.mul(B.x));
-      const local = vec3(wx, wy, pz).mul(A.w).add(A.xyz);
-      vN.assign(vec3(n.x.mul(B.x).sub(ny.mul(B.y)), n.x.mul(B.y).add(ny.mul(B.x)), nz));
+      const cp = C2.w;
+      const sp = C3.w;
+      const qx = p.x.mul(cp).sub(pz.mul(sp));
+      const qz = p.x.mul(sp).add(pz.mul(cp));
+      const mx = n.x.mul(cp).sub(nz.mul(sp));
+      const mz = n.x.mul(sp).add(nz.mul(cp));
+      const wx = qx.mul(B.x).sub(py.mul(B.y));
+      const wy = qx.mul(B.y).add(py.mul(B.x));
+      const local = vec3(wx, wy, qz).mul(A.w).add(A.xyz);
+      vN.assign(vec3(mx.mul(B.x).sub(ny.mul(B.y)), mx.mul(B.y).add(ny.mul(B.x)), mz));
       vP.assign(local);
       vX.assign(p.x);
-      vHull.assign(attribute('mb2', 'vec4').xyz);
-      vBand.assign(vec4(attribute('mb3', 'vec4').xyz, B.w));
+      vHull.assign(C2.xyz);
+      vBand.assign(vec4(C3.xyz, B.w));
       return local;
     })();
     mat.fragmentNode = Fn(() => {
@@ -172,7 +182,7 @@ export class MissileBodies {
     const B0 = this.b0.array; const B1 = this.b1.array; const B2 = this.b2.array; const B3 = this.b3.array;
     B0[o] = x; B0[o + 1] = y; B0[o + 2] = z; B0[o + 3] = length;
     B1[o] = Math.cos(angle); B1[o + 1] = Math.sin(angle); B1[o + 2] = roll; B1[o + 3] = glow;
-    B2[o] = hull[0]; B2[o + 1] = hull[1]; B2[o + 2] = hull[2]; B2[o + 3] = 0;
+    B2[o] = hull[0]; B2[o + 1] = hull[1]; B2[o + 2] = hull[2]; B2[o + 3] = 1;
     B3[o] = band[0]; B3[o + 1] = band[1]; B3[o + 2] = band[2]; B3[o + 3] = 0;
   }
 
@@ -185,8 +195,8 @@ export class MissileBodies {
     const B0 = this.b0.array; const B1 = this.b1.array; const B2 = this.b2.array; const B3 = this.b3.array;
     B0[o] = s.x; B0[o + 1] = s.y; B0[o + 2] = s.z; B0[o + 3] = s.length;
     B1[o] = s.cos; B1[o + 1] = s.sin; B1[o + 2] = s.roll; B1[o + 3] = s.glow;
-    B2[o] = hull[0]; B2[o + 1] = hull[1]; B2[o + 2] = hull[2]; B2[o + 3] = 0;
-    B3[o] = band[0]; B3[o + 1] = band[1]; B3[o + 2] = band[2]; B3[o + 3] = 0;
+    B2[o] = hull[0]; B2[o + 1] = hull[1]; B2[o + 2] = hull[2]; B2[o + 3] = s.pitchCos;
+    B3[o] = band[0]; B3[o + 1] = band[1]; B3[o + 2] = band[2]; B3[o + 3] = s.pitchSin;
   }
 
   commit(ox, oy) {

@@ -220,7 +220,7 @@ test('zoom liczony raz na klatkę renderu, nie w krokach fizyki', () => {
   const cameraTarget = sliceFunction(indexHtml, 'function updateCameraTarget(dt) {');
   assert.doesNotMatch(cameraTarget, /camera\.zoom \+=/);
   const loop = sliceFunction(indexHtml, 'function loop(now) {');
-  const paused = loop.match(/if \(PAUSED\) \{[\s\S]*?render\(0, frame\);/)?.[0] || '';
+  const paused = loop.match(/if \(PAUSED(?: \|\| StoryGame\.worldFrozen)?\) \{[\s\S]*?render\(0, frame\);/)?.[0] || '';
   assert.match(paused, /updateCameraZoom\(frame\);/);
   assert.match(loop, /updateCameraZoom\(frame\);[\s\S]*?render\(alpha, frame\);/);
   const wheel = indexHtml.match(/canvas\.addEventListener\('wheel', e => \{[\s\S]*?\}, \{ passive: false \}\);/)?.[0] || '';

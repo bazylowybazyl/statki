@@ -16,7 +16,7 @@
 //   bd.stop();                  // przed pierwszą klatką gry: ring wraca do gry
 import * as THREE from 'three';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
-import { HALO_HDR } from './haloRing/haloRingConfig.js';
+import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
 
 const DEG = Math.PI / 180;
@@ -27,8 +27,11 @@ const DEG = Math.PI / 180;
 export const MENU_SHOT = Object.freeze({
   distance: 196000,       // kamera od środka planety [j.]
   elevationDeg: 13,       // nad płaszczyzną ringu
-  azimuthDeg: 200,        // azymut startowy
-  orbitDegPerSec: 0.6,    // obrót „talerza”
+  // Azymut: strona Ziemi z halą K-7 portu gracza (fabuła 2026-09-30 — kamera intro leci z tego ujęcia prosto
+  // nad K-7, bez przelotu nad / przez planetę). Kamera = azymut hali + przesunięcie, lekko się kołysze.
+  hallAzimuthOffsetDeg: 22,
+  swayDeg: 7,             // kołysanie „talerza” zamiast pełnego obrotu (K-7 zostaje w kadrze)
+  swayPeriodSec: 90,
   sunOffsetDeg: 50,       // azymut słońca względem kamery
   sunElevationDeg: 27,    // słońce nad płaszczyzną ringu
   fovDeg: 30,
@@ -84,6 +87,8 @@ export class MenuBackdrop3D {
     this.readyAt = -1;
     this.time = 0;
     this.orbit = 0;
+    this.flight = null;       // lot kamery fabuły (fly)
+    this.sunLocal = { az: 0, el: 0 };
     this.focus = 0;
     this.focusTarget = 0;
     this.launchAt = -1;
@@ -103,6 +108,7 @@ export class MenuBackdrop3D {
     this._f = new THREE.Vector3();
     this._up = new THREE.Vector3();
     this._q = new THREE.Quaternion();
+    this._inv = new THREE.Matrix4();
     this._tick = (now) => this._frame(now);
     this._onVisibility = () => this._sync();
   }
@@ -187,6 +193,14 @@ export class MenuBackdrop3D {
   // Start gry: najazd kamery na ring, trwa do stop().
   launch() {
     if (this.launchAt < 0) this.launchAt = this.time;
+  }
+
+  // Ostatnia poza kamery kinowej (świat THREE): oko, cel = środek planety tła, góra (z przechyłem), fov.
+  // Fabuła (src/game/story/storyGame.js) zaczyna z niej lot kamery intro — przed stop(), który oddaje ring grze.
+  cameraPose() {
+    if (!this.ring || this.stats.frames < 1) return null;
+    const e = this.camera.position, t = this._t, u = this.camera.up;
+    return { eye: { x: e.x, y: e.y, z: e.z }, target: { x: t.x, y: t.y, z: t.z }, up: { x: u.x, y: u.y, z: u.z }, fov: this.camera.fov };
   }
 
   onReady(fn) {
@@ -351,7 +365,7 @@ export class MenuBackdrop3D {
     if (!ring || !o) return;
     const s = this.shot;
     this.time += dt;
-    this.orbit += dt * s.orbitDegPerSec;
+    this.orbit = s.swayDeg * Math.sin((this.time * Math.PI * 2) / Math.max(1, s.swayPeriodSec));
     // jakość z opcji menu (jak haloRings.update w grze): zmiana = przebudowa ringu
     this.haloRings.setQuality(window.OPTIONS?.planetQuality || this.haloRings.qualityKey);
     const L = ring.layout;
@@ -380,56 +394,62 @@ export class MenuBackdrop3D {
     const launch = this.launchAt >= 0 ? smooth01((this.time - this.launchAt) / s.launchSeconds) : 0;
 
     // słońce idzie z kamerą: stałe oświetlenie kadru
-    const az = (s.azimuthDeg + this.orbit) * DEG - pt.sx * s.parallaxDeg * DEG;
-    ring.setSun(az + s.sunOffsetDeg * DEG, s.sunElevationDeg * DEG);
-    // niebo obrócone o azymut kamery: w jego układzie kamera stoi na azymucie 0
-    o.sky.rotation.z = az;
-    this._skyFrame(o.skyUniforms, s);
-
-    // kamera w układzie ringu → świat (grupa ringu leży w scenie bez rodzica)
-    const dist = s.distance
-      * (1 + (s.introDistanceMul - 1) * (1 - intro))
-      * (1 + (s.launchDistanceMul - 1) * launch);
-    const el = (s.elevationDeg + s.introElevationDeg * (1 - intro) + pt.sy * s.parallaxDeg * 0.6) * DEG;
+    const az = this.flight ? this.flight.skyAz : menuAzimuth(s, this.orbit) - pt.sx * s.parallaxDeg * DEG;
     const cz = L.planetCenterZ;
     ring.group.updateMatrix();
     const M = ring.group.matrix;
-    const cosEl = Math.cos(el);
-    const pos = this._p.set(Math.cos(az) * cosEl * dist, Math.sin(az) * cosEl * dist, Math.sin(el) * dist + cz);
-    const tgt = this._t.set(0, 0, cz);
-    const camLocalX = pos.x;
-    const camLocalY = pos.y;
-    const camLocalZ = pos.z;
-    pos.applyMatrix4(M);
-    tgt.applyMatrix4(M);
     const cam = this.camera;
-    cam.position.copy(pos);
-    const fwd = this._f.subVectors(tgt, pos).normalize();
-    const up = this._up.set(0, 0, 1);
-    this._q.setFromAxisAngle(fwd, s.rollDeg * DEG);
-    up.applyQuaternion(this._q);
-    cam.up.copy(up);
-    cam.lookAt(tgt);
-
-    // near z analitycznej odległości do ringu (z halami K-7) i planety
-    const r = Math.hypot(camLocalX, camLocalY);
-    const dr = Math.max(L.radii.min - r, 0, r - L.radii.max - 9000);
-    const dzr = Math.max(L.bounds.zMin - camLocalZ, 0, camLocalZ - L.bounds.zMax);
-    const dRing = Math.hypot(dr, dzr);
-    const dCenter = Math.hypot(camLocalX, camLocalY, camLocalZ - cz);
-    const dPlanet = Math.max(1, dCenter - L.planetRadius);
     const target = Core3D.composerTarget;
     const vw = Math.max(1, target?.width || window.innerWidth);
     const vh = Math.max(1, target?.height || window.innerHeight);
-    cam.fov = s.fovDeg * (1 - 0.12 * launch);
-    cam.aspect = vw / vh;
-    cam.near = Math.min(20000, Math.max(1, Math.min(dRing, dPlanet) * 0.35));
-    cam.far = Math.max(cam.near * 1000, dCenter + L.radii.max + 90000);
-    // start gry: menu zjeżdża w lewo, planeta wraca na środek kadru
-    const shiftX = (s.shiftX + (s.focusShiftX - s.shiftX) * smooth01(this.focus)) * (1 - launch);
-    cam.setViewOffset(vw, vh, -shiftX * vw, s.shiftY * (1 - launch) * vh, vw, vh);
-    cam.updateProjectionMatrix();
-    cam.updateMatrixWorld(true);
+    // niebo obrócone o azymut kamery: w jego układzie kamera stoi na azymucie 0
+    o.sky.rotation.z = az;
+    this._skyFrame(o.skyUniforms, s);
+    if (this.flight) {
+      this._flightFrame(dt, ring, o, L, M, cz, vw, vh);
+    } else {
+      this.sunLocal.az = az + s.sunOffsetDeg * DEG;
+      this.sunLocal.el = s.sunElevationDeg * DEG;
+      ring.setSun(this.sunLocal.az, this.sunLocal.el);
+
+      // kamera w układzie ringu → świat (grupa ringu leży w scenie bez rodzica)
+      const dist = s.distance
+        * (1 + (s.introDistanceMul - 1) * (1 - intro))
+        * (1 + (s.launchDistanceMul - 1) * launch);
+      const el = (s.elevationDeg + s.introElevationDeg * (1 - intro) + pt.sy * s.parallaxDeg * 0.6) * DEG;
+      const cosEl = Math.cos(el);
+      const pos = this._p.set(Math.cos(az) * cosEl * dist, Math.sin(az) * cosEl * dist, Math.sin(el) * dist + cz);
+      const tgt = this._t.set(0, 0, cz);
+      const camLocalX = pos.x;
+      const camLocalY = pos.y;
+      const camLocalZ = pos.z;
+      pos.applyMatrix4(M);
+      tgt.applyMatrix4(M);
+      cam.position.copy(pos);
+      const fwd = this._f.subVectors(tgt, pos).normalize();
+      const up = this._up.set(0, 0, 1);
+      this._q.setFromAxisAngle(fwd, s.rollDeg * DEG);
+      up.applyQuaternion(this._q);
+      cam.up.copy(up);
+      cam.lookAt(tgt);
+
+      // near z analitycznej odległości do ringu (z halami K-7) i planety
+      const r = Math.hypot(camLocalX, camLocalY);
+      const dr = Math.max(L.radii.min - r, 0, r - L.radii.max - 9000);
+      const dzr = Math.max(L.bounds.zMin - camLocalZ, 0, camLocalZ - L.bounds.zMax);
+      const dRing = Math.hypot(dr, dzr);
+      const dCenter = Math.hypot(camLocalX, camLocalY, camLocalZ - cz);
+      const dPlanet = Math.max(1, dCenter - L.planetRadius);
+      cam.fov = s.fovDeg * (1 - 0.12 * launch);
+      cam.aspect = vw / vh;
+      cam.near = Math.min(20000, Math.max(1, Math.min(dRing, dPlanet) * 0.35));
+      cam.far = Math.max(cam.near * 1000, dCenter + L.radii.max + 90000);
+      // start gry: menu zjeżdża w lewo, planeta wraca na środek kadru
+      const shiftX = (s.shiftX + (s.focusShiftX - s.shiftX) * smooth01(this.focus)) * (1 - launch);
+      cam.setViewOffset(vw, vh, -shiftX * vw, s.shiftY * (1 - launch) * vh, vw, vh);
+      cam.updateProjectionMatrix();
+      cam.updateMatrixWorld(true);
+    }
 
     // Ziemia: obrót i przesunięcie chmur, macierz siatka → ring
     o.spin += dt * s.earthSpin;
@@ -443,7 +463,9 @@ export class MenuBackdrop3D {
     o.earthUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.earth.matrix);
     o.atmUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.atmosphere.matrix);
 
-    ring.update(dt, { camera: cam, viewportHeight: vh, gameView: false });
+    // lot fabuły: w końcówce (kamera prawie z góry) ring liczy jak w kamerze gry — wycięcia nad halą i górna ściana
+    const fl = this.flight;
+    ring.update(dt, { camera: cam, viewportHeight: vh, gameView: !!(fl && fl.gameView && fl.gameView(fl.w)) });
     // lampy hal K-7: noc w cieniu planety
     const sd = ring.uniforms.uSunDir.value;
     for (const hall of ring.k7Halls) {
@@ -461,5 +483,77 @@ export class MenuBackdrop3D {
 
     Core3D.renderBackdrop(cam);
     this.stats.frames++;
+    const f = this.flight;
+    if (f) {
+      f.onFrame?.(f.w, ring);
+      if (f.finished && !f.resolved) {
+        f.resolved = true;
+        // ostatnia klatka toru — w TYM SAMYM zadaniu co render (kanwa WebGPU po nim bywa pusta): kopia dla przenikania
+        try { f.onFinish?.(Core3D.canvas); } catch (err) { console.warn('[MenuBackdrop3D] onFinish', err); }
+        f.resolve?.();
+      }
+    }
   }
+
+  /**
+   * Lot kamery fabuły (src/game/story/storyGame.js — planMenuIntro): tor w świecie THREE od bieżącej pozy tła nad halę
+   * K-7, słońce ringu i Ziemi tła przechodzi w słońce gry (sun(w) → { az, el } w układzie ringu). flight:
+   *   { duration, sample(t, out{eye,target,up,fov}), sun?(w), gameView?(w), onFrame?(w, ring), onFinish?(canvas) }
+   *   → Promise (ostatnia klatka toru narysowana; onFinish dostaje kanwę w tym samym zadaniu co jej render).
+   * devTime (harness zrzutów) — stała chwila toru.
+   */
+  fly(flight) {
+    if (!flight || !(flight.duration > 0) || typeof flight.sample !== 'function') return Promise.resolve(false);
+    const s = this.shot;
+    this.flight = {
+      ...flight, t: 0, w: 0, devTime: NaN, finished: false, resolved: false, resolve: null,
+      skyAz: menuAzimuth(s, this.orbit),
+      pose: { eye: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, fov: 30 }
+    };
+    const f = this.flight;
+    return new Promise((resolve) => { f.resolve = () => resolve(true); });
+  }
+
+  _flightFrame(dt, ring, o, L, M, cz, vw, vh) {
+    const f = this.flight;
+    if (!Number.isFinite(f.devTime)) f.t = Math.min(f.duration, f.t + dt);
+    const t = Number.isFinite(f.devTime) ? f.devTime : f.t;
+    f.w = Math.min(1, Math.max(0, t / f.duration));
+    f.sample(t, f.pose);
+    const sun = f.sun ? f.sun(f.w) : null;
+    if (sun) {
+      this.sunLocal.az = sun.az;
+      this.sunLocal.el = sun.el;
+      ring.setSun(sun.az, sun.el);
+      // tarcza słońca na niebie tła: kierunek w układzie nieba (obróconego o skyAz)
+      const a = sun.az - f.skyAz;
+      o.skyUniforms.uSunDir.value.set(Math.cos(a) * Math.cos(sun.el), Math.sin(a) * Math.cos(sun.el), Math.sin(sun.el));
+    }
+    const p = f.pose;
+    const cam = this.camera;
+    cam.position.set(p.eye.x, p.eye.y, p.eye.z);
+    cam.up.set(p.up.x, p.up.y, p.up.z);
+    cam.lookAt(p.target.x, p.target.y, p.target.z);
+    // near / far jak w ujęciu menu: analityczna odległość do ringu i planety w układzie ringu
+    const loc = this._p.copy(cam.position).applyMatrix4(this._inv.copy(M).invert());
+    const r = Math.hypot(loc.x, loc.y);
+    const dr = Math.max(L.radii.min - r, 0, r - L.radii.max - 9000);
+    const dzr = Math.max(L.bounds.zMin - loc.z, 0, loc.z - L.bounds.zMax);
+    const dRing = Math.hypot(dr, dzr);
+    const dCenter = Math.hypot(loc.x, loc.y, loc.z - cz);
+    const dPlanet = Math.max(1, dCenter - L.planetRadius);
+    cam.fov = p.fov;
+    cam.aspect = vw / vh;
+    cam.near = Math.min(20000, Math.max(1, Math.min(dRing, dPlanet) * 0.35));
+    cam.far = Math.max(cam.near * 1000, dCenter + L.radii.max + 90000);
+    cam.clearViewOffset();
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+    if (t >= f.duration && !Number.isFinite(f.devTime)) f.finished = true;
+  }
+}
+
+// Azymut kamery menu (układ ringu): hala K-7 portu gracza + przesunięcie + kołysanie.
+function menuAzimuth(s, sway) {
+  return HALO_STATION_ANGLE + (s.hallAzimuthOffsetDeg + sway) * DEG;
 }

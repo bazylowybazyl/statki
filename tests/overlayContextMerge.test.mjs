@@ -63,7 +63,7 @@ test('overlay efektów usunięty: moduł, wpięcie w index.html, bloom overlaya'
 // Port WebGPU, zadanie 19: rakiety (lot: rocketSystem3D, wygląd: src/3d/rockets/) i iskry
 // (SparkSystem3D) w scenie Core3D; zadanie 20: wybuch reaktora też (krok klatki efektów).
 test('rakiety, iskry i wybuch reaktora w scenie Core3D (kroki klatki efektów)', () => {
-  assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);\s*initRocketSystem3D\(Core3D\.scene, \{ effects: createRocketFx\(Core3D\) \}\);/);
+  assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);\s*const rocketFx = createRocketFx\(Core3D\);\s*initRocketSystem3D\(Core3D\.scene, \{ effects: rocketFx \}\);/);
   assert.match(indexHtml, /window\.makeReactorBlow = createReactorBlowFactory\(Core3D\);/);
   assert.match(indexHtml, /Destruction3D\.init\(\{\s*scene:\s*Core3D\.scene,\s*reactorFactory:\s*window\.makeReactorBlow,/);
   const trigger = indexHtml.match(/function triggerReactorBlow3D\([^)]*\) \{[\s\S]*?\n    \}/)?.[0] || '';

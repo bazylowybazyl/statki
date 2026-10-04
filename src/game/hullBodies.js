@@ -19,6 +19,7 @@
  */
 
 import { DestructorBeams3D as D, createBeamConfig } from './destructorBeams3D.js';
+import { getHullCollisionArmor } from '../data/hullArmor.js';
 import { buildSpriteBeamStructure } from './beamSprite2D.js';
 import { defineLazyViews } from './beamStore3D.js';
 import { activeRegion, markSkinDirty } from './beamActiveRegion3D.js';
@@ -347,6 +348,7 @@ export const HullBodies = {
     const collisionMass = C.massPerArea * structure.area;
     const body = D.createBody(cloneStructure(structure), {
       name: String(entity.name || entity.type || 'kadłub'),
+      collisionArmor: getHullCollisionArmor(opts.hullProfileId || entity.shipFrame || entity.activeHullId || entity.model3DProfileId || entity.type),
       massMultiplier: collisionMass / structure.mass
     });
     const entityMass = Number(entity.mass);

@@ -218,23 +218,103 @@ export const MASTER_WEAPONS = {
 
   // ==========================================================================
   // RAKIETY
+  // Lot: src/effects3d/rocketSystem3D.js — zimny wyrzut z komory (rakieta wyskakuje nad
+  // kadłub i na chwilę zawisa), zapłon, przechył w kurs wachlarza salwy, potem naprowadzanie
+  // na cel z kluczeniem i zejście na płaszczyznę gry. Wysokość jest tylko obrazem (kamery 3D,
+  // światło, skrót perspektywy) — trafienia liczą się w 2D. Pola rakiet poza wspólnymi:
+  //   burstCount / burstDelay — SALWA: rakiet na jedno naciśnięcie i odstęp między nimi [s]
+  //     (ripple z kolejnych komór wyrzutni). Amunicja zaczepu (`ammo`) liczy SALWY.
+  //   launchElevation — kąt wyrzutu nad płaszczyzną gry [°] (90 = pionowo, VLS)
+  //   ejectSpeed [j./s], ignitionDelay [s] — zimny wyrzut i chwila zapłonu (zawis)
+  //   boostAccel — przyspieszenie silnika [j./s²]
+  //   launchTurnRate — obrót przy przechyle po zapłonie [°/s]
+  //   dispersal — połowa wachlarza salwy [°], dispersalTime — jak długo po zapłonie rakieta
+  //     trzyma kurs wachlarza [s] (rakiety rozkwitają, potem zbiegają na cel)
+  //   weave / weaveHz — kluczenie w locie [°, Hz] (gaśnie w fazie końcowej)
+  //   cruiseAltitude — wysokość przelotu nad płaszczyzną [j.] (obraz)
+  //   cellSpacing [j.] / launchPorts — rozstaw i liczba komór w rzędzie (skąd wychodzą rakiety salwy)
+  //   rocketVfx — wygląd (src/3d/rockets/palette.js): cruise | fast | supernova | micro | hydra
+  //   ordnancePerMissile — ile sztuk `missile_round` zjada JEDNA rakieta (mikrorakiety: ułamek)
+  //   submunition — głowica kasetowa (Hydra): { count, splitRange, …pola rakiety potomnej };
+  //     baseDamage broni kasetowej = obrażenia JEDNEJ głowicy potomnej
   // ==========================================================================
-  missile_rack: { 
+  missile_rack: {
     id: 'missile_rack', name: 'Cruise Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
-    baseDamage: 1000, baseRange: 24000, baseSpeed: 1800, cooldown: 2.5, ammo: 20,
+    baseDamage: 1000, baseRange: 24000, baseSpeed: 1800, cooldown: 7.5, ammo: 8,
+    burstCount: 3, burstDelay: 0.16,
     turnRate: 900, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77',
-    recoil: 4, shake: 2
+    recoil: 4, shake: 2,
+    rocketVfx: 'cruise',
+    launchElevation: 74, ejectSpeed: 520, ignitionDelay: 0.3, boostAccel: 2000, launchTurnRate: 260,
+    dispersal: 40, dispersalTime: 0.45, weave: 3, weaveHz: 1.1, cruiseAltitude: 95,
+    cellSpacing: 7, launchPorts: 3,
+    description: 'Salwa trzech ciężkich pocisków manewrujących: zimny wyrzut, zapłon nad pokładem, szeroki łuk na cel.'
   },
   fast_missile_rack: {
     id: 'fast_missile_rack', name: 'Fast Missile Rack', mountType: 'missile', category: 'rocket', size: 'S',
-    baseDamage: 700, baseRange: 12000, baseSpeed: 3200, cooldown: 1.6, ammo: 28,
+    baseDamage: 700, baseRange: 12000, baseSpeed: 3200, cooldown: 6.0, ammo: 8,
+    burstCount: 4, burstDelay: 0.09,
     turnRate: 1560, homingDelay: 0.08, explosionRadius: 42, vfxColor: '#ffd27a',
     recoil: 3, shake: 1.5,
     bodyScale: 0.56, exhaustScale: 0.6, fireScale: 0.58, smokeScale: 0.55, explosionVisualScale: 0.72,
     proximityRadius: 58, terminalRadius: 150, reacquireRadius: 420,
     reacquireTurnMultiplier: 2.75, reacquireSpeedFactor: 0.5, terminalSpeedFactor: 0.62,
     leadHorizon: 0.3, terminalLeadHorizon: 0.04,
-    description: 'Short-range high-agility missile rack. Smaller, faster missiles built for nimble targets.'
+    rocketVfx: 'fast',
+    launchElevation: 64, ejectSpeed: 380, ignitionDelay: 0.16, boostAccel: 3400, launchTurnRate: 440,
+    dispersal: 42, dispersalTime: 0.3, weave: 5, weaveHz: 2.2, cruiseAltitude: 60,
+    cellSpacing: 5, launchPorts: 3,
+    description: 'Short-range high-agility missile rack. Four fast missiles per trigger, built for nimble targets.'
+  },
+  roj_pod: {
+    id: 'roj_pod', name: 'Rój — Kaseta Mikrorakiet', mountType: 'missile', category: 'rocket', size: 'S',
+    baseDamage: 170, baseRange: 8500, baseSpeed: 2600, cooldown: 3.4, ammo: 16,
+    burstCount: 8, burstDelay: 0.05,
+    turnRate: 600, homingDelay: 0, explosionRadius: 34, vfxColor: '#9fe6ff',
+    recoil: 1.5, shake: 0.8,
+    bodyScale: 0.36, rocketVfx: 'micro',
+    proximityRadius: 50, terminalRadius: 170, reacquireRadius: 520,
+    reacquireTurnMultiplier: 2.4, reacquireSpeedFactor: 0.55, terminalSpeedFactor: 0.72,
+    leadHorizon: 0.4, terminalLeadHorizon: 0.06,
+    launchElevation: 70, ejectSpeed: 320, ignitionDelay: 0.1, boostAccel: 4400, launchTurnRate: 620,
+    dispersal: 50, dispersalTime: 0.26, weave: 14, weaveHz: 2.4, cruiseAltitude: 45,
+    cellSpacing: 3.2, launchPorts: 4, ordnancePerMissile: 0.2,
+    description: 'Osiem mikrorakiet na jedno naciśnięcie. Rozchodzą się wachlarzem i zbiegają na cel z kilku stron.'
+  },
+  grad_launcher: {
+    id: 'grad_launcher', name: 'Grad — Wyrzutnia Salwowa', mountType: 'missile', category: 'rocket', size: 'L',
+    baseDamage: 180, baseRange: 11000, baseSpeed: 2300, cooldown: 9.0, ammo: 8,
+    burstCount: 24, burstDelay: 0.034,
+    turnRate: 520, homingDelay: 0, explosionRadius: 40, vfxColor: '#ffc38a',
+    recoil: 2, shake: 1.2,
+    bodyScale: 0.4, rocketVfx: 'micro',
+    proximityRadius: 52, terminalRadius: 190, reacquireRadius: 560,
+    reacquireTurnMultiplier: 2.4, reacquireSpeedFactor: 0.55, terminalSpeedFactor: 0.72,
+    leadHorizon: 0.45, terminalLeadHorizon: 0.06,
+    launchElevation: 84, ejectSpeed: 400, ignitionDelay: 0.13, boostAccel: 3800, launchTurnRate: 560,
+    dispersal: 78, dispersalTime: 0.34, weave: 18, weaveHz: 1.9, cruiseAltitude: 55,
+    cellSpacing: 4, launchPorts: 6, ordnancePerMissile: 0.2,
+    description: 'Grad: 24 mikrorakiety w jednej salwie. Wyskakują z komór, rozkwitają wachlarzem i spadają na cel ze wszystkich stron. Pojedyncza głowica słaba — liczy się masa ognia.'
+  },
+  hydra_mirv: {
+    id: 'hydra_mirv', name: 'Hydra — Rakieta Kasetowa', mountType: 'missile', category: 'rocket', size: 'M',
+    baseDamage: 240, baseRange: 16000, baseSpeed: 2000, cooldown: 7.0, ammo: 10,
+    burstCount: 2, burstDelay: 0.24,
+    turnRate: 700, homingDelay: 0, explosionRadius: 60, vfxColor: '#ffb070',
+    recoil: 4, shake: 2,
+    bodyScale: 0.95, rocketVfx: 'hydra',
+    launchElevation: 78, ejectSpeed: 480, ignitionDelay: 0.26, boostAccel: 1900, launchTurnRate: 290,
+    dispersal: 18, dispersalTime: 0.3, weave: 2, weaveHz: 1.2, cruiseAltitude: 110,
+    cellSpacing: 8, launchPorts: 2,
+    submunition: {
+      count: 6, splitRange: 1700,
+      baseSpeed: 2600, turnRate: 640, explosionRadius: 36, bodyScale: 0.36, rocketVfx: 'micro',
+      boostAccel: 5200, launchTurnRate: 760, dispersal: 58, dispersalTime: 0.16, weave: 12, weaveHz: 2.2,
+      cruiseAltitude: 40, proximityRadius: 50, terminalRadius: 170, reacquireRadius: 520,
+      reacquireTurnMultiplier: 2.4, reacquireSpeedFactor: 0.55, terminalSpeedFactor: 0.72,
+      leadHorizon: 0.35, terminalLeadHorizon: 0.05
+    },
+    description: 'Nosiciel leci na cel i ~1,7 km przed nim pęka na sześć mikrorakiet, które obchodzą obronę wachlarzem.'
   },
   osa_micro_missile: {
     id: 'osa_micro_missile', name: 'Osa Mk I', mountType: 'missile', category: 'rocket', size: 'S',
@@ -262,6 +342,10 @@ export const MASTER_WEAPONS = {
     rocketFireVfx: 'supernova',
     rocketSmokeVfx: 'chemical',
     rocketExplosionVfx: 'supernova',
+    rocketVfx: 'supernova',
+    // Wyrzut: pionowo, wysoko i z długim zawisem — ciężka głowica rusza dopiero po zapłonie.
+    launchElevation: 88, ejectSpeed: 560, ignitionDelay: 0.5, boostAccel: 2600, launchTurnRate: 170,
+    dispersal: 0, dispersalTime: 0.42, cruiseAltitude: 150, cellSpacing: 10, launchPorts: 2,
     description: 'Capital-grade special missile. Fast guidance, long reach, chemical plume and a nova-style detonation.'
   },
   // ==========================================================================
@@ -335,29 +419,72 @@ export const MASTER_WEAPONS = {
   },
 
   // ==========================================================================
+  // WARIANTY ROZMIAROWE BRONI SPECJALNEJ (S / M / L)
+  // Gniazdo special przyjmuje broń nie większą niż klasa kadłuba (fregata S, niszczyciel M,
+  // pancernik / lotniskowiec L), a bronie wyżej są Capital — bez tych wariantów mniejsze kadłuby
+  // gracza nie miały czego zamontować (docs/BRIEF-kierowanie-ogniem.md § 6). Rodziny efektów,
+  // sprite'y i modele 3D rodziców (Valkyrie, Yamato); stemple ran i kratery — własne, mniejsze
+  // wpisy (src/3d/hullDamageStamps.js: valkyrieS / valkyrieM / yamatoL).
+  // ==========================================================================
+  // --- Valkyrie (rail, ładowanie + przebicie) ---  (Capital = special_valkyrie_railgun)
+  special_valkyrie_s: {
+    id: 'special_valkyrie_s', name: 'Kolec — Lekki Railgun Osiowy (Special)', mountType: 'special', category: 'rail', size: 'S',
+    baseDamage: 180, baseRange: 9000, baseSpeed: 12000, cooldown: 2.5, spread: 0.002,
+    penetration: 2, energyCost: 12, vfxColor: '#ff00ff',
+    // 60 j. materiału: płytkie przebicie (cienkie burty na wylot), głębiej zakleszczenie.
+    chargeTime: 0.2, penDepth: 60, penSpeedLoss: 0.35,
+    recoil: 8, shake: 4, impactScale: 1.2,
+    model3D: 'special_valkyrie_railgun', render3dOnly: true
+  },
+  special_valkyrie_m: {
+    id: 'special_valkyrie_m', name: 'Oszczep — Railgun Średni (Special)', mountType: 'special', category: 'rail', size: 'M',
+    baseDamage: 380, baseRange: 14000, baseSpeed: 13500, cooldown: 3.0, spread: 0.0015,
+    penetration: 3, energyCost: 22, vfxColor: '#ff00ff',
+    // 140 j. materiału: ma przebijać fregatę w burtę (BRIEF § 6), w większych zakleszczenie.
+    chargeTime: 0.25, penDepth: 140, penSpeedLoss: 0.35,
+    recoil: 12, shake: 7, impactScale: 2.0,
+    model3D: 'special_valkyrie_railgun', render3dOnly: true
+  },
+  // --- Yamato (plasma) ---  (Capital = special_yamato_cannon, 3 lufy)
+  // Dwie lufy na salwę: skrajne lufy wieży rodzica (środkowa kołyska pusta — Turret2D yamatoTwin).
+  special_yamato_l: {
+    id: 'special_yamato_l', name: 'Bateria Dwulufowa Klasy YAMATO (Special)', mountType: 'special', category: 'plasma', size: 'L',
+    baseDamage: 450, baseRange: 16000, baseSpeed: 9000, cooldown: 5.0, spread: 0.005,
+    penetration: 3, energyCost: 40, vfxColor: '#00ffff',
+    recoil: 34, shake: 12, impactScale: 2.8, barrelsPerShot: 2,
+    model3D: 'special_yamato_cannon', render3dOnly: true
+  },
+
+  // ==========================================================================
   // SIEGE / LONG-RANGE WEAPONS
   // ==========================================================================
+  // Torpedy gracza strzela się z TRYBU TORPED (klawisz 8, jak w World of Warships —
+  // src/game/torpedoAim.js): wachlarz `burstCount` NIEKIEROWANYCH torped z każdej gotowej
+  // wyrzutni, rozrzut `torpedoSpread` = [wąski°, szeroki°] (cały kąt wachlarza). Amunicja liczy
+  // wachlarze. turnRate / homingDelay zostają dla ścieżki strzału z rdzenia broni (bez trybu).
   siege_torpedo: {
     id: 'siege_torpedo', name: 'Siege Torpedo Mk I', mountType: 'missile', category: 'torpedo', size: 'L',
-    baseDamage: 800, baseRange: 60000, baseSpeed: 600, cooldown: 12.0, ammo: 6,
+    baseDamage: 800, baseRange: 18000, baseSpeed: 1150, cooldown: 14.0, ammo: 6,
     turnRate: 80, homingDelay: 1.0, vfxColor: '#ff4444',
+    burstCount: 3, torpedoSpread: [3, 11],
     explosionRadius: 200, armorPen: 3, recoil: 6, shake: 3,
-    description: 'Heavy anti-capital torpedo. Slow but devastating. Visible on enemy sensors.'
+    description: 'Ciężka torpeda przeciw okrętom liniowym: wachlarz trzech torped, wolna, ale niszczycielska.'
   },
   siege_torpedo_mk2: {
     id: 'siege_torpedo_mk2', name: 'Siege Torpedo Mk II', mountType: 'missile', category: 'torpedo', size: 'Capital',
-    baseDamage: 1400, baseRange: 80000, baseSpeed: 500, cooldown: 18.0, ammo: 4,
+    baseDamage: 1400, baseRange: 22000, baseSpeed: 1000, cooldown: 20.0, ammo: 4,
     turnRate: 60, homingDelay: 1.5, vfxColor: '#ff2222',
+    burstCount: 2, torpedoSpread: [2, 8],
     explosionRadius: 350, armorPen: 5, recoil: 8, shake: 4,
-    description: 'Capital-grade siege torpedo. Extremely powerful but slow and easy to intercept.'
+    description: 'Torpeda oblężnicza klasy Capital: dwie potężne torpedy w wąskim wachlarzu. Łatwo je wyminąć — trzeba dobrze wyprzedzić cel.'
   },
   torpedo_salvo: {
     id: 'torpedo_salvo', name: 'Torpedo Salvo Launcher', mountType: 'missile', category: 'torpedo', size: 'L',
-    baseDamage: 250, baseRange: 45000, baseSpeed: 800, cooldown: 15.0, ammo: 12,
+    baseDamage: 250, baseRange: 14000, baseSpeed: 1400, cooldown: 15.0, ammo: 12,
     turnRate: 120, homingDelay: 0.8, vfxColor: '#ff8844',
-    burstCount: 6, burstDelay: 0.3,
+    burstCount: 6, burstDelay: 0.3, torpedoSpread: [5, 18],
     explosionRadius: 120, recoil: 5, shake: 2.5,
-    description: 'Launches a salvo of 6 lighter torpedoes. Harder to intercept all of them.'
+    description: 'Wachlarz sześciu lżejszych torped — szeroki rozrzut zamyka drogę ucieczki, wąski kładzie wszystkie w jeden kadłub.'
   },
   siege_railgun: {
     id: 'siege_railgun', name: 'Mjolnir Siege Railgun', mountType: 'special', category: 'rail', size: 'Capital',
@@ -400,13 +527,20 @@ export const WEAPON_ICON_PATHS = {
   flak_capital: 'assets/weapons/flak.svg',
   missile_rack: 'assets/weapons/missile_rack.svg',
   fast_missile_rack: 'assets/weapons/missile_rack.svg',
+  roj_pod: 'assets/weapons/missile_rack.svg',
+  grad_launcher: 'assets/weapons/missile_rack.svg',
+  hydra_mirv: 'assets/weapons/missile_rack.svg',
   // S/M/L variants reuse the family icons
   tempest_ion_s: 'assets/weapons/railgun.svg',
   tempest_ion_l: 'assets/weapons/railgun.svg',
   helios_laser_s: 'assets/weapons/railgun.svg',
   helios_lance_l: 'assets/weapons/railgun.svg',
   gatling_s: 'assets/weapons/heavy_autocannon.svg',
-  heavy_autocannon_l: 'assets/weapons/heavy_autocannon.svg'
+  heavy_autocannon_l: 'assets/weapons/heavy_autocannon.svg',
+  // Warianty rozmiarowe broni specjalnej — ikony rodziców
+  special_valkyrie_s: 'assets/weapons/railgun.svg',
+  special_valkyrie_m: 'assets/weapons/railgun.svg',
+  special_yamato_l: 'assets/weapons/supercapitalmain.png'
 };
 
 // ===========================================================================
@@ -554,9 +688,68 @@ export function weaponAmmoPerShot(weaponOrId) {
   const profile = profileOf(def);
   if (!def || !profile?.ammo) return 0;
   const pociski = Math.max(1, Number(def.burstCount) || 1) * Math.max(1, Number(def.barrelsPerShot) || 1);
-  if (profile.shotsPerAmmo <= 1) return pociski * (ORDNANCE_SIZE_FACTOR[def.size] ?? 1);
+  if (profile.shotsPerAmmo <= 1) return pociski * ordnancePerMissile(def);
   const factor = AMMO_SIZE_FACTOR[def.size] ?? 1;
   return (pociski * factor) / profile.shotsPerAmmo;
+}
+
+/**
+ * Sztuk amunicji na JEDNĄ rakietę / torpedę: mikrorakieta salwy (Grad, Rój) jest ułamkiem
+ * pocisku manewrującego, reszta — czynnik rozmiaru wyrzutni.
+ */
+function ordnancePerMissile(def) {
+  const own = Number(def?.ordnancePerMissile);
+  if (Number.isFinite(own) && own > 0) return own;
+  return ORDNANCE_SIZE_FACTOR[def?.size] ?? 1;
+}
+
+/**
+ * Ile amunicji zjada JEDEN pocisk broni — bez salwy. Myśliwce noszą rakiety sztukami
+ * (`missileAmmo` eskadry) i odpalają je pojedynczo, więc ich przezbrojenie liczy się stąd,
+ * a nie z salwy wyrzutni okrętowej (fast_missile_rack: 4 rakiety na naciśnięcie).
+ */
+export function weaponAmmoPerMissile(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  const profile = profileOf(def);
+  if (!def || !profile?.ammo) return 0;
+  const salwa = Math.max(1, Number(def.burstCount) || 1);
+  return weaponAmmoPerShot(def) / salwa;
+}
+
+/** Liczba rakiet w salwie wyrzutni (burstCount rakiet; 1 — pojedynczy strzał). */
+export function rocketSalvoSize(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  const n = Math.round(Number(def?.burstCount) || 1);
+  return n > 1 ? n : 1;
+}
+
+/**
+ * Definicja rakiety POTOMNEJ głowicy kasetowej (Hydra) — zbudowana raz z pola `submunition`
+ * rodzica i trzymana na nim (nie trafia do MASTER_WEAPONS: nie da się jej kupić ani zamontować).
+ * Obrażenia potomnej = baseDamage rodzica (modyfikatory okrętu niesie wystrzał rodzica).
+ */
+export function submunitionDef(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  const sub = def?.submunition;
+  if (!sub) return null;
+  if (def.__subDef) return def.__subDef;
+  const child = Object.freeze({
+    id: `${def.id}__sub`,
+    name: `${def.name} (głowica)`,
+    mountType: 'submunition',
+    category: 'rocket',
+    size: 'S',
+    baseDamage: def.baseDamage,
+    baseRange: Math.max(3000, Number(sub.splitRange) * 3 || 6000),
+    vfxColor: def.vfxColor,
+    ...sub,
+    burstCount: 1,
+    submunition: null,
+    parentId: def.id
+  });
+  // Pole niewyliczalne: katalogi i serializacja widzą samą kartę broni.
+  Object.defineProperty(def, '__subDef', { value: child, enumerable: false, configurable: true });
+  return child;
 }
 
 /** Ile sztuk amunicji zjada minuta ognia ciągłego — miara dla zaopatrzenia. */

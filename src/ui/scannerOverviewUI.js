@@ -851,8 +851,8 @@ export function initScannerOverviewUI(opts = {}) {
 
       const actions = document.createElement('div');
       actions.className = 'scanner-actions';
-      for (const action of ['lock', 'scan', 'approach', 'orbit', 'jump']) {
-        const btn = makeButton(action.toUpperCase());
+      for (const action of ['lock', 'scan', 'approach', 'orbit', 'travel']) {
+        const btn = makeButton(action === 'travel' ? 'TRAVEL TO' : action.toUpperCase());
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           if (action === 'lock') opts.onToggleLock?.(target);

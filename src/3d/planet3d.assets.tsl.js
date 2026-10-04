@@ -47,6 +47,7 @@ import { uniformNode } from './tsl/uniformy.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { WARP_STARS } from './warp/stars.js';
 import { WARP_SKY_BEND, warpSkyBendOffset } from './warp/skyBend.js';
+import { RULON, rulonInverse } from './warp/rulon.js';
 // ── Maska słońca: JEDNO miejsce dla planet, chmur, poświat, mgławicy i gwiazd ──
 // Biblioteka TSL maski (zadanie 03, sunShadowMask.js): odczyt po screenUV, wspólne węzły uniformów
 // w grupie renderu. Planety tła (perspektywa, z = −50 000) maski nie czytają (uSunShadowRecv = 0 —
@@ -572,14 +573,31 @@ export function createNebulaMaterial(u) {
   // Zgięcie tła warpa „Nurt” (skyBend.js): próbka mgławicy z piksela przesuniętego o `off`
   // [px celu] — mgławica to płaszczyzna, więc uv(p + off) = uv + J·off (pochodne uv w pikselu).
   // Tekstura z chwili budowy (NebulaSystem jej nie podmienia; tło menu tylko ją pożycza).
+  // RULON (rulon.js, 2026-10-03): piksel ekranu cofany na płaską mgławicę odwrotnością walca —
+  // próbka przesunięta o różnicę przez pochodne uv (dema/warp-webgpu/sky.js). Płaszczyzna z 4
+  // wierzchołków — hak całej gry jej nie zgina (rulonBend = false), jasność horyzontu liczy post.
+  // Gałąź po jednolitym warunku (RULON.k > 0) — bez skoku obraz jak dawniej.
+  material.rulonBend = false;
   const nebulaTex = u.map.value;
   material.fragmentNode = Fn(() => {
-    const uvS = uv().toVar();
+    const base = uv();
+    // Pochodne przed gałęziami (pułapki 15, 29); dFdy w TSL — oś y w górę (pułapka 26).
+    const gx = vec2(0).toVar();
+    const gy = vec2(0).toVar();
+    gx.assign(dFdx(base));
+    gy.assign(dFdy(base));
+    const uvS = base.toVar();
     const head = WARP_SKY_BEND.element(0);
     If(head.x.add(head.y).greaterThan(0.5), () => {
       const off = warpSkyBendOffset(screenCoordinate.xy);
-      const base = uv();
-      uvS.addAssign(dFdx(base).mul(off.x).add(dFdy(base).mul(off.y)));
+      uvS.addAssign(gx.mul(off.x).add(gy.mul(off.y)));
+    });
+    If(RULON.k.greaterThan(1e-7), () => {
+      // Piksel [px, y w górę, od środka kadru]; screenCoordinate liczy y od góry.
+      const q = vec2(screenCoordinate.x.sub(RULON.viewHalf.x), RULON.viewHalf.y.sub(screenCoordinate.y));
+      const r = rulonInverse(q).toVar();
+      const off = r.xy.sub(q);
+      uvS.addAssign(gx.mul(off.x).add(gy.mul(off.y)));
     });
     const color = texture(nebulaTex, uvS).rgb;
     const boost = float(1.0).add(u.warpFactor.mul(0.8));
@@ -715,6 +733,7 @@ export function createStarMaterial(u) {
       const g = positionGeometry.xy;
       const alongPx = g.x.add(0.5).mul(L.add(w.mul(2.0))).sub(w);
       const side = g.y.mul(2.0).mul(w);
+      // Rulon warpa: kwad smugi zgina hak całej gry (rulon.js — wierzchołki w passach świata).
       const pix = s0.add(dir.mul(alongPx)).add(perp.mul(side));
       vAlong.assign(alongPx);
       vSide.assign(side);

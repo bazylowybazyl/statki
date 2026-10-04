@@ -23,13 +23,14 @@
 
 import { Core3D } from '../core3d.js';
 import { GameState } from '../../game/gameState.js';
-import { planWarpFleetArrival } from '../../game/warpDrive.js';
+import { planWarpFleetArrival, warpSizeScale } from '../../game/warpDrive.js';
 import { getEntityHullSprite } from '../hexShips3D.js';
-import { WarpMedium, BUBBLE_CAP, SEAM_CAP, MEDIUM_COUNT_DEFAULT } from './medium.js';
+import { WarpMedium, BUBBLE_CAP, SEAM_CAP, MEDIUM_COUNT_DEFAULT, RULON_BOX } from './medium.js';
 import { RiftSprites, GlowSprites, SmearPool, GLOW_ROUND, GLOW_LINE } from './sprites.js';
 import { WarpFrame, newWarpSlot, cullWarpFrameToView } from './frame.js';
-import { WarpPlayerFx } from './player.js';
-import { planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, warpDepartureFxState, departFxPose } from './arrivals.js';
+import { WarpPlayerFx, WARP_BUBBLE } from './player.js';
+import { planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, warpDepartureFxState, departFxPose, arrivalFxPose, setMovingBrake } from './arrivals.js';
+import { setRulon, resetRulon, RULON_STATE } from './rulon.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
@@ -132,6 +133,7 @@ export const WarpNurt = {
   _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0 },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
+  _rulonArgs: { bend: 0, field: 0, hx: 1, hy: 0, shipX: 0, shipY: 0, bubbleW: 50, bubbleL: 70, W: 1, H: 1, F: 1, strength: 1 },
   _medCtx: { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 },
   _fxStep: null,
   onShake: null,
@@ -148,6 +150,7 @@ export const WarpNurt = {
     this.frame = new WarpFrame();
     this.player = new WarpPlayerFx();
     this.player.bubble = newWarpSlot();
+    this.player.push = newWarpSlot();
     this.player.onShake = (mag, dur) => this.onShake?.(mag, dur);
     Core3D.scene.add(this.medium.mesh);
     this.rifts.mesh.layers.set(0);
@@ -232,6 +235,7 @@ export const WarpNurt = {
       g.width = entityHullWidth(ship);
       g.palette = entityWarpPaletteId(ship);
       g.entity = ship;
+      g.exitRamp = warp.exitRamp || null;
       player.advance(t, dt, g, map, med);
     } else {
       player.reset();
@@ -340,6 +344,7 @@ export const WarpNurt = {
     this._commitWaves(camX, camY, zoom);
     this._commitSky(o, camX, camY, zoom);
     this._commitStars(o, camX, camY, zoom, ship);
+    this._commitRulon(o, camX, camY, zoom);
     this._finishHulls();
 
     const s = this.stats;
@@ -528,7 +533,8 @@ export const WarpNurt = {
     const medium = this.medium;
     const cam = o.cam;
     const { bufW, bufH, focal, camZ } = this._view;
-    medium.setBoxes(zoom, bufW, bufH, focal);
+    // Zapas pudeł na rulon tylko na czas zwinięcia (poza skokiem gęstość jak przed rulonem).
+    medium.setBoxes(zoom, bufW, bufH, focal, 1 + (RULON_BOX - 1) * Math.min(1, this.player.rulonBend));
     const mesh = medium.mesh;
     mesh.position.set(Number(cam.x) || 0, -(Number(cam.y) || 0), 0);
     // Przesunięcie kamery ośrodka względem ostatniego kroku (scena: y w górę).
@@ -685,6 +691,36 @@ export const WarpNurt = {
     WARP_STAR_CAMERA.speedCap = cap;
   },
 
+  // RULON (rulon.js): oś = kurs skoku przez statek (y w górę na ekranie), kieszeń = bańka gracza,
+  // piksele = bufor celu sceny, F = ogniskowa kamery perspektywy ośrodka. Bez skoku — płasko.
+  _commitRulon(o, camX, camY, zoom) {
+    const p = this.player;
+    if (!(p.rulonBend > 1e-4) || !p.active) { resetRulon(); return; }
+    const st = this.frame.stars;
+    const shake = o.camShake || o.cam;
+    const scx = Number(shake?.x) || camX;
+    const scy = Number(shake?.y) || camY;
+    const v = this._view;
+    const R = Math.max(40, this._playerGame.length || 1800) * WARP_BUBBLE.radiusK * zoom;
+    const a = this._rulonArgs;
+    a.bend = p.rulonBend;
+    a.field = p.rulonField;
+    a.hx = Math.cos(p.angle);
+    a.hy = -Math.sin(p.angle);
+    a.shipX = (st.refX + camX - scx) * zoom;
+    a.shipY = -(st.refY + camY - scy) * zoom;
+    a.bubbleW = R;
+    a.bubbleL = R * WARP_BUBBLE.asp;
+    a.W = v.bufW;
+    a.H = v.bufH;
+    a.F = v.focal;
+    setRulon(a);
+    // Rulon wciąga do kadru świat zza jego brzegu (cała gra się zgina — rulon.js): culling three
+    // z płaszczyznami kadru odsuniętymi o szerokość kadru (dalej świat leży mikroskopijny przy horyzoncie
+    // walca; 3 kadry = ~2× rysunków i kilka ms CPU w skoku — scripts/webgpu/travel-gra.mjs --bezCullingu).
+    RULON_STATE.cullMargin = Math.max(v.bufW, v.bufH) / Math.max(1e-4, zoom);
+  },
+
   /** Kadłub encji: odsłanianie / szew / żar (fx w j. świata) → Vector4 materiału (px sprite'a). */
   _applyHull(entity, fx) {
     if (!entity || !fx || !fx.on) return;
@@ -737,27 +773,52 @@ export const WarpNurt = {
     for (let i = list.length - 1; i >= 0; i--) {
       const rec = list[i];
       const e = rec.entity;
-      if (e && e.dead && rec.kind === 'arrival') rec.entity = null;
+      if (e && e.dead && rec.kind === 'arrival') { this._releaseDrive(rec); rec.entity = null; }
       if (rec.kind === 'arrival') {
         // Długość kadłuba znana dopiero po zbudowaniu siatki (warp-in piratów, wezwanie podpięte
-        // w chwili wyrzutu) — przeliczenie PRZED próbką: stan i maska kadłuba z tego samego obiektu
-        // (dawniej klatka przeliczenia szła bez maski odsłaniania).
+        // w chwili pojawienia się) — przeliczenie PRZED próbką.
         if (rec.entity && !rec.sized && rec.entity.beamHull) this._resize(rec);
         const fx = rec.fx;
-        const pose = rec.entity ? entityPose(rec.entity, this._pose) : null;
+        const en = rec.entity;
+        let pose = null;
+        if (en) {
+          // Warp-in prowadzony przez grę: hamowanie od chwili, gdy okręt wyszedł z 'warping_in'.
+          if (fx.moving && fx.tBrake === Infinity && en.state !== 'warping_in') {
+            const p0 = entityPose(en, this._pose);
+            setMovingBrake(fx, t, Math.max(fx.v0, Math.sqrt(p0.vx * p0.vx + p0.vy * p0.vy)));
+          }
+          if (fx.drive && t < fx.tStop) {
+            // Wlot i hamowanie prowadzi efekt (duch — bez zderzeń; okręt pojawia się za kadrem).
+            if (!rec.driving) {
+              rec.driving = true;
+              rec.wasCollidable = en.isCollidable !== false;
+              en.isCollidable = false;
+            }
+            const p = arrivalFxPose(fx, t, this._drivePose);
+            this._writePose(en, p.x, p.y, p.vx, p.vy);
+            en.angle = fx.angle;
+            if (Number.isFinite(en.desiredAngle)) en.desiredAngle = fx.angle;
+            en.angVel = 0;
+          } else if (rec.driving) {
+            // Zatrzymanie: okręt stoi w miejscu zwiastuna i wraca do gry.
+            this._writePose(en, fx.x, fx.y, 0, 0);
+            this._releaseDrive(rec);
+          }
+          pose = entityPose(en, this._pose);
+        }
         const sh = warpArrivalFxState(fx, t, frame, camX, camY, pose);
         shake = Math.max(shake, sh);
-        if (rec.entity) {
-          // Podpięty przed wyrzutem (przylot planowany) — kadłub schowany w tunelu do wyrzutu.
-          if (t < rec.fx.tBurst) this._hideHull(rec.entity);
-          else this._applyHull(rec.entity, rec.fx.hull);
-          rec.entity.__warpNurtMode = rec.fx.plasmaMode;
+        if (en) {
+          if (t < fx.tAppear) this._hideHull(en);
+          else this._applyHull(en, fx.hull);
+          en.__warpNurtMode = fx.plasmaMode;
         }
-        if (!rec.burstShaken && t >= fx.tBurst) {
+        if (!rec.burstShaken && t >= fx.tBrake) {
           rec.burstShaken = true;
           this._burstShake(fx, camX, camY);
         }
         if (t > fx.tEnd) {
+          this._releaseDrive(rec);
           if (rec.entity) rec.entity.__warpNurtMode = null;
           list.splice(i, 1);
         }
@@ -766,12 +827,10 @@ export const WarpNurt = {
         let pose = null;
         if (e && !e.dead) {
           if (d.drive && t >= d.tDive) {
-            // Efekt prowadzi okręt w szczelinie (POWRÓT skrzydła na Ziemię — src/game/supportWarp.js;
+            // Efekt prowadzi okręt w rozpędzie (POWRÓT skrzydła na Ziemię — src/game/supportWarp.js;
             // harness). Okręt jest wtedy duchem (isCollidable = false), więc nikogo nie taranuje.
             const p = departFxPose(d, t, this._drivePose);
-            if (Number.isFinite(e.x)) { e.x = p.x; e.y = p.y; e.vx = p.vx; e.vy = p.vy; }
-            if (e.pos) { e.pos.x = p.x; e.pos.y = p.y; }
-            if (e.vel) { e.vel.x = p.vx; e.vel.y = p.vy; }
+            this._writePose(e, p.x, p.y, p.vx, p.vy);
           }
           pose = entityPose(e, this._pose);
         }
@@ -780,7 +839,7 @@ export const WarpNurt = {
           this._applyHull(e, d.hull);
           e.__warpNurtMode = d.plasmaMode;
           if (t >= d.tGone) {
-            // Po wejściu w szczelinę okręt zostaje schowany, dopóki gra go nie usunie.
+            // Po zniknięciu w punkcie skoku okręt zostaje schowany, dopóki gra go nie usunie.
             this._hideHull(e);
             if (!rec.goneFired) { rec.goneFired = true; rec.onGone?.(e); }
           }
@@ -794,6 +853,21 @@ export const WarpNurt = {
       }
     }
     frame.shake = shake;
+  },
+
+  // Pozycja i prędkość encji z osi efektu (NPC: x/y kanoniczne + lustro pos/vel).
+  _writePose(e, x, y, vx, vy) {
+    if (Number.isFinite(e.x)) { e.x = x; e.y = y; e.vx = vx; e.vy = vy; }
+    if (e.pos) { e.pos.x = x; e.pos.y = y; }
+    if (e.vel) { e.vel.x = vx; e.vel.y = vy; }
+  },
+
+  // Koniec prowadzenia przylotu: okręt znów zderza się i słucha gry.
+  _releaseDrive(rec) {
+    if (!rec.driving) return;
+    rec.driving = false;
+    const e = rec.entity;
+    if (e && !e.dead && rec.wasCollidable) e.isCollidable = true;
   },
 
   _hideHull(e) {
@@ -817,57 +891,45 @@ export const WarpNurt = {
     this.onShake(12 * (0.4 + 0.8 * fx.sizeScale) * near, 0.35);   // demo: 6 px × (0,4 + 0,8 s)
   },
 
+  // Wymiary z prawdziwego kadłuba (podpięty okręt): oś wlotu i hamowania zostaje (okręt może już
+  // lecieć), zmieniają się tylko wymiary efektu (bańka, błyski, odsłanianie).
   _resize(rec) {
     const e = rec.entity;
-    const L = entityHullLength(e);
-    const Wd = entityHullWidth(e);
     rec.sized = true;
-    const old = rec.fx;
-    const fresh = planWarpArrivalFx({
-      x: old.x, y: old.y, angle: old.angle, hullLength: L, hullWidth: Wd, palette: old.pal.id,
-      pirate: old.pirate, moving: old.moving, burstTime: old.tBurst, entity: e, heraldExtra: 0,
-      heraldReach: old.heraldReach
-    });
-    // Te same przegródki ośrodka (stały indeks na GPU i jednorazowe pchnięcie w chwili wyrzutu):
-    // przeliczenie wypada zwykle klatkę po wyrzucie, gdy gra zbuduje kadłub podpiętego okrętu.
-    fresh.heraldSlot = old.heraldSlot;
-    fresh.pushSlot = old.pushSlot;
-    fresh.pushSlot.releaseT = fresh.tBurst + 0.02;
-    if (rec.moving) {
-      // Ujście przy dziobie w chwili pojawienia się okrętu (pozycja z pierwszej klatki).
-      fresh.mx = rec.x0 + fresh.dirX * L * 0.5;
-      fresh.my = rec.y0 + fresh.dirY * L * 0.5;
-      fresh.sx = fresh.mx - fresh.dirX * L * 0.6;
-      fresh.sy = fresh.my - fresh.dirY * L * 0.6;
-    }
-    rec.fx = fresh;
+    const fx = rec.fx;
+    fx.hullLength = entityHullLength(e);
+    fx.hullWidth = entityHullWidth(e);
+    fx.sizeScale = warpSizeScale(fx.hullLength);
   },
 
   /**
-   * Przylot okrętu tunelem w chwili pojawienia się w grze (wyrzut teraz — zwiastuna i
-   * rozdarcia przed pojawieniem się nie ma, bo rozgrywka nie zna przylotu wcześniej).
-   * opts.moving — okręt płynie dalej (odsłanianie płaszczyzną ujścia, np. warp-in piratów).
+   * Przylot okrętu w chwili pojawienia się w grze (bez zapowiedzi — rozgrywka nie zna go
+   * wcześniej): okręt wpada z daleka i hamuje w miejscu, w którym postawiła go gra (efekt prowadzi
+   * go przez wlot — duch). opts.moving — pozycję prowadzi gra (warp-in piratów: odsłanianie od
+   * miejsca pojawienia się, hamowanie po wyjściu z 'warping_in').
    */
   arrive(entity, opts = {}) {
     if (!this.initialized || !entity || this.arrivals.length >= ARRIVAL_CAP) return null;
     const pose = entityPose(entity, this._pose);
     const angle = opts.angle ?? pose.angle;
-    const L = entityHullLength(entity);
+    const moving = !!opts.moving;
+    const speed = Math.max(Number(entity.warpData?.speed) || 0, Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy));
     const fx = planWarpArrivalFx({
-      x: pose.x, y: pose.y, angle, hullLength: L, hullWidth: entityHullWidth(entity),
+      x: pose.x, y: pose.y, angle, hullLength: entityHullLength(entity), hullWidth: entityHullWidth(entity),
       palette: opts.palette || entityWarpPaletteId(entity), pirate: !!(opts.pirate ?? entity.isPirate),
-      moving: !!opts.moving, burstTime: this.time, entity
+      moving, appearTime: this.time, speed, entity, rush: opts.rush
     });
-    const rec = { kind: 'arrival', fx, entity, sized: !!entity.beamHull, moving: !!opts.moving, x0: pose.x, y0: pose.y, burstShaken: false };
+    if (moving) { fx.x0 = pose.x; fx.y0 = pose.y; }
+    const rec = { kind: 'arrival', fx, entity, sized: !!entity.beamHull, moving, burstShaken: false, driving: false, wasCollidable: true };
     this.arrivals.push(rec);
     return rec;
   },
 
   /**
    * Wezwanie bez zapowiedzi: wynik spawnCallInShip (encja albo lista) — każdy okręt kadłubowy
-   * wypada z tunelu w chwili pojawienia się (myśliwce bez efektu). Zwykłe wezwanie z zakładki
-   * wsparcia idzie z wyprzedzeniem (planArrival + attach, src/game/supportWarp.js); tędy tylko
-   * tryb LINIE i wezwania bez punktu albo przy pełnej puli przylotów.
+   * wpada w chwili pojawienia się (myśliwce bez efektu). Zwykłe wezwanie z zakładki wsparcia
+   * idzie z wyprzedzeniem (planArrival + attach, src/game/supportWarp.js); tędy tylko tryb LINIE
+   * i wezwania bez punktu albo przy pełnej puli przylotów.
    */
   arriveAll(result) {
     if (!result) return;
@@ -880,21 +942,22 @@ export const WarpNurt = {
   },
 
   /**
-   * Przylot zaplanowany (zwiastun → rozdarcie → wyrzut): efekt zaczyna się teraz w (x, y), wyrzut
-   * po czasie zwiastuna i rozdarcia (albo `burstIn` s) — wołający stawia okręt w grze w chwili
-   * `rec.fx.tBurst` (czas WarpNurt.time) i podpina go `attach(rec, encja)` (wezwania z zakładki
+   * Przylot zaplanowany (zwiastun → wlot → hamowanie): efekt zaczyna się teraz w (x, y) = miejsce
+   * zatrzymania; hamowanie po czasie zwiastuna (albo `burstIn` s). Wołający stawia okręt w grze
+   * w chwili `rec.fx.tSpawn` (= pojawienie się daleko za celem, czas WarpNurt.time) i podpina go
+   * `attach(rec, encja)` — efekt prowadzi go przez wlot i hamowanie (wezwania z zakładki
    * wsparcia: src/game/supportWarp.js). o.heraldReach — nić krótsza (start przy Ziemi).
    */
   planArrival(o) {
     if (!this.initialized || this.arrivals.length >= ARRIVAL_CAP) return null;
     const fx = planWarpArrivalFx({
       x: o.x, y: o.y, angle: o.angle || 0, hullLength: o.hullLength, hullWidth: o.hullWidth,
-      palette: o.palette || 'magenta', pirate: !!o.pirate, moving: false,
+      palette: o.palette || 'magenta', pirate: !!o.pirate, moving: false, rush: o.rush,
       startTime: Number.isFinite(o.burstIn) ? undefined : this.time + (Number(o.delay) || 0),
       burstTime: Number.isFinite(o.burstIn) ? this.time + o.burstIn : undefined, heraldExtra: o.heraldExtra || 0,
       heraldReach: o.heraldReach
     });
-    const rec = { kind: 'arrival', fx, entity: null, sized: true, moving: false, x0: o.x, y0: o.y, burstShaken: false };
+    const rec = { kind: 'arrival', fx, entity: null, sized: true, moving: false, burstShaken: false, driving: false, wasCollidable: true };
     this.arrivals.push(rec);
     return rec;
   },
@@ -909,7 +972,7 @@ export const WarpNurt = {
     if (!rec || !entity) return;
     rec.entity = entity;
     rec.fx.entity = entity;
-    // Geometria (szczelina, ujście) z prawdziwego kadłuba, gdy już jest — ten sam czas wyrzutu.
+    // Wymiary z prawdziwego kadłuba, gdy już jest — oś wlotu i hamowania bez zmian.
     rec.sized = false;
     if (entity.beamHull) this._resize(rec);
   },
@@ -926,7 +989,7 @@ export const WarpNurt = {
       x: pose.x, y: pose.y, angle: opts.angle ?? pose.angle, hullLength: entityHullLength(entity),
       hullWidth: entityHullWidth(entity), startTime: this.time + (Number(opts.delay) || 0),
       palette: opts.palette || entityWarpPaletteId(entity), pirate: !!(opts.pirate ?? entity.isPirate),
-      drive: !!opts.drive, entity
+      drive: !!opts.drive, rush: opts.rush, entity
     });
     const rec = { kind: 'departure', fx: d, entity, onGone: opts.onGone || null, goneFired: false };
     this.arrivals.push(rec);

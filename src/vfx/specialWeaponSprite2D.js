@@ -26,6 +26,10 @@ const VARIANTS = {
     image: null, ready: false
   }
 };
+// Warianty rozmiarowe Valkyrie (Kolec S, Oszczep M): TEN SAM wpis co rodzic — jeden atlas i jeden
+// obraz na wszystkie trzy; rozmiar wieży daje skala broni w Turret2D (S 0,52 / M 0,76 / Capital 1,75).
+VARIANTS.special_valkyrie_s = VARIANTS.special_valkyrie_railgun;
+VARIANTS.special_valkyrie_m = VARIANTS.special_valkyrie_railgun;
 
 function preload(variant) {
   if (!variant || variant.image || typeof Image === 'undefined') return;
