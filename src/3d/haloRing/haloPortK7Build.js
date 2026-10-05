@@ -12,12 +12,14 @@
 // Kompleks = hala K-7 + jej otwarte zatoki (haloPortBays.js): stanowiska zatok
 // w tym samym standardzie (pola, pasy, napisy, lampki stanu) nagrywane w
 // układzie huba hali przez przejście ramek — te same instancje i draw calle.
+import { HALO_PORT } from './haloRingConfig.js';
 import {
   K7_ABOVE_SCALE,
-  K7_HEIGHTS,
-  k7CollarPosts,
+  k7ArmWidthAt,
+  k7HallArms,
   k7HeightToZ,
-  k7SolidList
+  k7SolidList,
+  k7ZToHeight
 } from './haloPortK7Layout.js';
 import { baySolidList, haloXfPoint } from './haloPortBays.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
@@ -166,8 +168,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
 
   // ---- ściany (K-7 buildWalls): bryły + detale od środka, bramy z ramami
   const solids = k7SolidList(l);
-  // (słupy kołnierza rysuje buildHabitatPlug — tu tylko kolizja)
-  for (const s of solids) if (!s.id.startsWith('COLLAR')) f.box(s.x, s.y, s.z, s.w, s.h, s.d, M[s.mat], -s.angle);
+  for (const s of solids) f.box(s.x, s.y, s.z, s.w, s.h, s.d, M[s.mat], -s.angle);
   for (const e of l.edges) {
     const gate = l.gates.find((g) => g.edge === e.i);
     const segments = gate ? [[0, gate.jamb], [e.length - gate.jamb, e.length]] : [[0, e.length]];
@@ -327,8 +328,8 @@ export function buildK7Scene(layout, ringInfo = {}) {
   else buildK7Roof(f, l);
   f.set = 'bg';
 
-  // ---- przypięcie do ringu: most do krawędzi dachu, zastrzały, tunele do habitatu
-  buildHabitatPlug(f, plates, labels, l, ringInfo, style);
+  // ---- pylony od płyty portu na podłodze habitatu do ściany tylnej hali
+  buildDockPylons(f, plates, labels, l, ringInfo, style);
 
   // ---- otwarte zatoki kompleksu (stanowiska w standardzie K-7)
   for (const bay of ringInfo.bays || []) buildBay(f, plates, labels, lamps, bay.layout, bay.xf, LC);
@@ -558,7 +559,8 @@ function recordBerths(f, lab, lamps, berths, LC = resolveHaloProfile('earth').po
 // oznakowaniem wjazdu i słupkami paliwowymi, podwójny grzebień z aleją
 // pośrodku, grzbiety serwisowe (listwa, słupki obsługi, pachołki, rurociąg)
 // między grzebieniem a pasami, napisy zatoki. Bryła
-// zatoki (pokład, ściany, kołnierz, klin, suwnice) jest w megastrukturze ringu.
+// zatoki (pokład, ściany, pylony z terminalem, suwnice) jest w megastrukturze
+// ringu (haloRingRoofPlan.js; archetypy — arch/archPort.js).
 function buildBay(f, plates, labels, lamps, bay, xf, LC = resolveHaloProfile('earth').port.labels) {
   const M = K7_MAT;
   const q = {};
@@ -783,78 +785,112 @@ function buildHose(f, b, a, addGroup) {
   return { berthId: b.id, anchor: a, group: g };
 }
 
-// Przypięcie K-7 do ringu (nowe, K-7 stał przy innym ringu). Hub-lokalne z
-// ringu: krawędź ścian habitatu na z = −originGap; podłoga habitatu na
-// z = floorBase − (rim + originGap). Wysokości tu już W Z ŚWIATA (mode 'lin'
-// nie dotyczy): zapis bezpośredni przez box/beam z konwersją odwrotną.
-// Wpięcie hali w podłogę habitatu (na środku wstęgi, w płaszczyźnie gry):
-// kołnierz na podłodze (słupy, nadproże, podstawa-terminal z oknami na kosmos)
-// i klin nośny pod pokładem od podłogi ku krawędzi ścian. Bez mostów i
-// zastrzałów — hala wyrasta z habitatu. Wysokości w świecie przeliczane na
-// wysokości K-7 (odwrotność k7HeightToZ), więc nad płaszczyzną lotu też
-// działa ściśnięcie ×0,42.
-const yW = (z) => (z <= 0 ? z + K7_HEIGHTS.hullTop : K7_HEIGHTS.hullTop + z / K7_ABOVE_SCALE);
-function buildHabitatPlug(f, plates, labels, l, ring, style = resolveHaloProfile('earth').port) {
+// Pylony hali (poprawki użytkownika 2026-10-05: doki „za mocno wciśnięte
+// w ring” — szkic: dok daleko za krawędzią ringu na dwóch ramionach; pylony
+// „za słabe, jakby nie miały utrzymać”; „dok leży NA pylonach, a pylony mają
+// wystawać BEZPOŚREDNIO z niego — ze ściany tylnej przechodzi się do pylonu”).
+// Hala stoi HALO_PORT.dockGap za krawędzią ścian habitatu; trzymają ją dwa
+// masywne pylony-korytarze NA WYSOKOŚCI HALI (k7HallArms — te same wielokąty
+// co kolizje): rozszerzona stopa na płycie portu (wieża do terminalu „PORT
+// KEPLER” pod płaszczyzną, z oknami na kosmos), zwężenie, dźwigar ze
+// ścianami-pasami i żebrami dachu, rozszerzenie i korzeń wpięty w ścianę
+// tylną; w ścianie od środka hali brama przejścia do pylonu. Pylony są
+// przeszkodą lotu (buildPortCollision), między nimi można przelecieć.
+// Wysokości w świecie przeliczane na wysokości K-7 (yW = k7ZToHeight).
+// Dawny kołnierz z nadprożem i klin nośny (hala wpięta w podłogę) usunięte.
+const yW = k7ZToHeight;
+function buildDockPylons(f, plates, labels, l, ring, style = resolveHaloProfile('earth').port) {
   const M = K7_MAT;
-  const floorZ = ring.floorZ ?? l.backZ;          // z huba powierzchni podłogi
-  const rimZ = ring.rimZ ?? floorZ + 1500;        // z huba krawędzi ścian
-  const zLow = -1250;                             // spód podstawy (z świata)
-  const zHall = -275;                             // pod kadłubem hali (spód −254)
-  const zTop = 360;                               // wierzch kołnierza
-  const posts = k7CollarPosts(l, floorZ);
-  const x1 = Math.abs(posts[0].x) + posts[0].w * 0.5;
-  const face = floorZ + 262;                      // lico kołnierza (od strony kosmosu)
+  // z huba powierzchni podłogi (płyta portu); bez ringu — pylony długości odsunięcia Ziemi
+  const floorZ = Number.isFinite(ring.floorZ) ? ring.floorZ : l.backZ - 4000;
+  const frame = { floorZ, floorR: ring.floorR || 42259 };
+  const zLow = HALO_PORT.plugZMin;                // spód terminalu i wież stóp (z świata)
+  const zTerm = -330;                             // dach terminalu
   const boxW = (x, z0w, z1w, zc, w, d, mat) => {
     const y0 = yW(z0w);
     const y1 = yW(z1w);
     f.box(x, (y0 + y1) * 0.5, zc, w, y1 - y0, d, mat);
   };
-  // hub jest styczny do podłogi na środku hali, a podłoga pod krawędziami
-  // opada (krzywizna ringu x²/2R: ~380 j. przy słupach) — bryły styku
-  // z podłogą sięgają do niej, żeby końce kołnierza nie wisiały nad terenem
-  const R = ring.floorR || 42259;
+  const R = frame.floorR;
   const floorAt = (x) => floorZ - (x * x) / (2 * R) - 20;
-  const toFloor = (x, zc, d) => {
-    const top = zc + d * 0.5;
-    const bot = Math.min(zc - d * 0.5, floorAt(Math.abs(x)));
-    return [(top + bot) * 0.5, top - bot];
-  };
-  // słupy po bokach hali (także przeszkody lotu — k7SolidList)
-  for (const p of posts) {
-    const [pzc, pd] = toFloor(Math.abs(p.x) + p.w * 0.5, p.z, p.d);
-    boxW(p.x, zLow, zTop, pzc, p.w, pd, M.dark);
-    boxW(p.x, zLow + 40, zTop - 40, p.z + p.d * 0.5 + 4, p.w - 60, 8, M.steel);
-    boxW(p.x - p.side * (p.w * 0.5 - 24), zLow + 80, zTop - 60, p.z + p.d * 0.5 + 10, 14, 8, M.cyan);
-    boxW(p.x + p.side * (p.w * 0.5 - 18), zLow, zTop, p.z + p.d * 0.5 + 6, 22, 10, M.yellow);
-  }
-  // nadproże nad dachem hali i podstawa-terminal pod kadłubem
-  boxW(0, 290, zTop, floorZ + 90, 2 * x1, 340, M.dark);
-  boxW(0, 300, zTop - 12, face + 4, 2 * x1 - 120, 8, M.steel);
+  const arms = k7HallArms(frame, l);
+  const xOut = Math.abs(arms[0].x) + arms[0].flareWidth * 0.5 + 300;
+  // ---- terminal na płycie portu (między stopami pylonów, okna na kosmos)
+  const face = floorZ + 400;
   {
-    const [bzc, bd] = toFloor(x1, floorZ + 90, 340);
-    boxW(0, zLow, zHall, bzc, 2 * x1, bd, M.dark);
+    const bot = floorAt(xOut);
+    boxW(0, zLow, zTerm, (face + bot) * 0.5, 2 * xOut, face - bot, M.dark);
   }
-  // okna terminalu: pasy ciepłego światła co ~120 j. + słupki
-  for (let row = 0; row < 7; row++) {
-    const z0 = zHall - 120 - row * 122;
+  boxW(0, zTerm, zTerm + 14, face - 20, 2 * xOut - 80, 40, M.pale);
+  for (let row = 0; row < 6; row++) {
+    const z0 = zTerm - 110 - row * 128;
     if (z0 < zLow + 60) break;
-    boxW(0, z0, z0 + 26, face + 4, 2 * x1 - 420, 6, row % 3 === 1 ? M.cyan : M.warm);
+    boxW(0, z0, z0 + 28, face + 4, 2 * xOut - 360, 6, row % 3 === 1 ? M.cyan : M.warm);
   }
-  for (let x = -x1 + 300; x <= x1 - 300; x += 520) boxW(x, zLow + 40, zHall - 40, face + 8, 18, 10, M.steel);
+  for (let x = -xOut + 260; x <= xOut - 260; x += 520) boxW(x, zLow + 40, zTerm - 40, face + 8, 18, 10, M.steel);
+  boxW(0, zLow + 10, zLow + 34, face + 6, 2 * xOut - 160, 8, M.cyan);
   labels.push({ text: style.name, small: style.terminal, color: style.labels.terminal, x: 0, z: face + 14, width: 2600, depth: 355, rotation: 0, y: -560, vertical: true, set: 'bg' });
-  // klin nośny pod pokładem: od podłogi (spód podstawy) do kadłuba hali za krawędzią ścian
-  const zEnd = Math.max(rimZ + 950, floorZ + 2400);
-  plates.push({ axis: 'x', points: [[floorZ + 110, zHall], [zEnd, zHall], [floorZ + 110, zLow]], z0: -(l.halfWidth - 60), z1: l.halfWidth - 60, mat: M.dark, set: 'bg' });
-  // żebra wzdłuż spadku klina i listwa świetlna przy podłodze
-  const ribA = [floorZ + 140, zLow + 30];
-  const ribB = [zEnd - 60, zHall - 12];
-  for (let x = -l.halfWidth + 300; x <= l.halfWidth - 300; x += 1100) {
-    const n = Math.hypot(ribB[0] - ribA[0], ribB[1] - ribA[1]);
-    const oz = -(ribB[1] - ribA[1]) / n * 34;   // odsunięcie pod powierzchnię spadku
-    const oy = (ribB[0] - ribA[0]) / n * 34;
-    f.beam([x, yW(ribA[1] - oy), ribA[0] + oz], [x, yW(ribB[1] - oy), ribB[0] + oz], 70, M.steel, 90);
+  // ---- pylony
+  const rail = 110;                                 // pasy na krawędziach (ściany korytarza)
+  for (const a of arms) {
+    const { x, width: W, flareWidth: WF, zw0, zw1, footEnd, rootStart, taper } = a;
+    const [foot, mid, root] = a.polys;
+    const midA = footEnd + taper;
+    const midB = rootStart - taper;
+    const midL = midB - midA;
+    const mc = (midA + midB) * 0.5;
+    const hw = W * 0.5;
+    const hf = WF * 0.5;
+    // bryła z wielokątów k7DockArms: stopa ze zwężeniem (wieża od terminalu pod
+    // płaszczyzną), dźwigar, rozszerzenie z korzeniem w ścianie tylnej
+    plates.push({ points: foot, z0: zLow, z1: zw1, mat: M.dark, set: 'bg' });
+    plates.push({ points: mid, z0: zw0, z1: zw1, mat: M.dark, set: 'bg' });
+    plates.push({ points: root, z0: zw0 - 20, z1: zw1, mat: M.dark, set: 'bg' });
+    // pasy-ściany wzdłuż obu krawędzi całego obrysu (z góry — kontur belki)
+    const rz = zw1 + 45 - rail * 0.5;
+    for (const sx of [-1, 1]) {
+      const path = [[x + sx * hf, a.z0 + 60], [x + sx * hf, footEnd], [x + sx * hw, midA], [x + sx * hw, midB], [x + sx * hf, rootStart], [x + sx * hf, a.z1 - 40]];
+      for (let k = 0; k + 1 < path.length; k++) {
+        const [xa, za] = path[k];
+        const [xb, zb] = path[(k + 1)];
+        const px = (xa + xb) * 0.5 - sx * rail * 0.5;
+        if (Math.abs(xb - xa) < 1) boxW(px, zw0, zw1 + 45, (za + zb) * 0.5, rail, zb - za, M.steel);
+        else f.beam([xa - sx * rail * 0.5, yW(rz), za], [xb - sx * rail * 0.5, yW(rz), zb], rail, M.steel);
+        if (k > 0) boxW(xa - sx * rail * 0.5, zw1 - 20, zw1 + 50, za, rail + 20, rail + 20, M.steel);
+      }
+    }
+    // żebra dachu w poprzek całej długości (szerokość z obrysu)
+    for (let z = a.z0 + 260; z < a.z1 - 120; z += 300) {
+      boxW(x, zw1, zw1 + 22, z, k7ArmWidthAt(a, z) - rail * 1.6, 64, M.pale);
+    }
+    // lica dźwigara: słupki i krzyżulce (kratownica Warrena), okna korytarza
+    const n = Math.max(2, Math.round(midL / 340));
+    const st = midL / n;
+    for (let i = 0; i <= n; i++) {
+      const z = midA + i * st;
+      for (const sx of [-1, 1]) {
+        const xf = x + sx * (hw + 10);
+        boxW(xf, zw0, zw1 + 20, z, 30, 60, M.pale);
+        if (i < n) {
+          const up = (i & 1) === 0;
+          f.beam([xf, yW(up ? zw0 + 30 : zw1 - 20), z + 30], [xf, yW(up ? zw1 - 20 : zw0 + 30), z + st - 30], 30, M.steel);
+        }
+      }
+    }
+    for (const sx of [-1, 1]) {
+      boxW(x + sx * (hw + 2), zw0 + 150, zw0 + 190, mc, 6, midL - 120, M.warm);
+      boxW(x + sx * (hw - rail - 6), zw1 + 4, zw1 + 12, mc, 12, midL - 60, M.cyan);
+    }
+    // światła przeszkodowe na narożnikach stopy i korzenia
+    for (const sx of [-1, 1]) {
+      boxW(x + sx * (hf - 40), zw1 + 45, zw1 + 85, footEnd - 60, 50, 50, M.red);
+      boxW(x + sx * (hf - 40), zw1 + 45, zw1 + 85, rootStart + 60, 50, 50, M.red);
+    }
+    // przejście z hali do pylonu: brama w ścianie tylnej od środka (rama, wrota, światło)
+    const zin = l.backZ + l.wallThickness * 0.5 + 6;
+    boxW(x, -116, 160, zin, W * 0.62, 10, M.black);
+    for (const sx of [-1, 1]) boxW(x + sx * W * 0.33, -116, 175, zin + 4, 40, 14, M.yellow);
+    boxW(x, 160, 180, zin + 4, W * 0.7, 14, M.yellow);
+    boxW(x, 140, 150, zin + 10, W * 0.5, 6, M.green);
   }
-  boxW(0, zLow + 10, zLow + 34, floorZ + 150, 2 * l.halfWidth - 200, 12, M.cyan);
-  // kotwy przy podłodze
-  for (let x = -l.halfWidth + 500; x <= l.halfWidth - 500; x += 1000) boxW(x, zLow, zLow + 160, floorZ + 60, 180, 150, M.steel);
 }

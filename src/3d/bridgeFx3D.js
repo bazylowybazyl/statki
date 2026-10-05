@@ -16,6 +16,13 @@
 // rozszczelnienia, wąski strumień wzdłuż tunelu ostrzału (plume), gaz
 // rozlatujący się szybko i gasnący bez dymu, iskry i kryształki lodu.
 // Siłę i czas daje oś BRIDGE_KILL_TIMELINE (sampleVentStrength).
+//
+// WARSTWA WEBGPU (2026-10-05, mostki na belkach — docs/PORT-mostki.md § 9): rozszczelnienie i błyski
+// pomieszczeń świecą też w SIATCE ŚWIATEŁ Core3D (oświetlają kadłub i sąsiadów), wyrwa dostaje
+// osmalenie na mapie ran kadłuba (HullDamageMap), a w agonii (przepięcia, gdy okna migają)
+// po nadbudówce przeskakują łuki z puli ARC broni (WeaponFx) z iskrami puli gry (SparkSystem3D).
+// Usługi podaje host: BridgeFx3D.attach(scena, { weaponFx }) — bez nich (dema heksowe) tylko
+// cząstki banku Fx3D jak dawniej.
 
 import * as THREE from 'three/webgpu';
 import {
@@ -37,6 +44,20 @@ import {
   sampleVentStrength,
   sampleWindowLight
 } from '../game/shipBridge.js';
+import {
+  beamLatticeToWorld,
+  beamWindowNode,
+  beamWindowWorld,
+  bridgeBeamHull,
+  bridgeCellNode,
+  isBeamBridgeState
+} from '../game/shipBridgeBeams.js';
+import { HullBodies } from '../game/hullBodies.js';
+import { ActiveCarrier, writeCarrier } from '../game/carrierVelocity.js';
+import { SimClock, CLOCK_SIM } from '../game/simClock.js';
+import { Core3D } from './core3d.js';
+import { HullDamageMap } from './hullDamageMap.js';
+import { SparkSystem3D } from './sparkSystem3D.js';
 
 const WINDOW_Z = 12;               // FG: nad kadłubem, pod lampami pozycyjnymi (13)
 const WINDOW_RENDER_ORDER = 51;    // lampy pozycyjne 52, bronie od 55
@@ -52,8 +73,19 @@ export const BRIDGE_FX_TUNE = {
   minPx: 0.6,        // długość okna na ekranie, przy której gaśnie
   fullPx: 1.8,       // ...i przy której świeci w pełni
   ventScale: 1.0,    // skala strumienia (mnożnik rozmiarów)
-  ventGain: 1.0      // jasność strumienia
+  ventGain: 1.0,     // jasność strumienia
+  // Warstwa WebGPU (siatka świateł, łuki, mapa ran) — 0 wyłącza daną część.
+  lightGain: 1.0,    // światła rozszczelnienia i pomieszczeń w siatce świateł Core3D
+  arcRate: 7,        // łuków przepięć na s na mostek na początku agonii (gasną do arcEnd)
+  arcEnd: 1.4,       // s — koniec przepięć (okna już gasną falą)
+  scorch: 1.0        // osmalenie wyrwy na mapie ran kadłuba
 };
+
+// Barwy łuków przepięć (HDR, rdzeń nad progiem bloomu) — chłodna biel Terran / brudny pomarańcz piratów.
+const ARC_COOL = [3.4, 3.9, 4.8];
+const ARC_WARM = [4.8, 3.0, 1.6];
+const SPARK_COOL = [2.6, 2.9, 3.6];
+const TAU = Math.PI * 2;
 
 // Szczelina okna (port WebGPU, zadanie 15: TSL, wzory 1:1 z dawnym GLSL).
 // aParams: x — jasność, y — pół-długość, z — pół-szerokość, w — zasięg poświaty
@@ -95,6 +127,7 @@ function smooth01(e0, e1, x) {
 
 const _w = { x: 0, y: 0 };
 const _w2 = { x: 0, y: 0 };
+const _carrier = { x: 0, y: 0, vx: 0, vy: 0, clock: 0, t0: 0, z: 0 };
 const _origin = { x: 0, y: 0 };
 const _pos = new THREE.Vector3();
 const _dir = new THREE.Vector3();
@@ -103,7 +136,8 @@ const _v = new THREE.Vector3();
 
 // Skala efektów względem Bellatora (długość renderu 624 j.).
 function hullFxScale(entity) {
-  const g = entity.hexGrid;
+  const g = entity.hexGrid || entity.beamHull;
+  if (!g) return 1;
   const s = Math.max(Number(entity.visual?.spriteScaleX) || Number(entity.visual?.spriteScale) || 1, 0.0001);
   const len = Math.max(g.srcWidth, g.srcHeight) * s;
   return Math.sqrt(Math.max(0.2, len / 624));
@@ -125,6 +159,8 @@ export function spawnBridgeRoomFlash(x, y, col, S) {
   o.r1 = col[0] * 0.6; o.g1 = col[1] * 0.4; o.b1 = col[2] * 0.3; o.mix = 10;
   o.alpha = 0.9; o.fadeIn = 0.004; o.fadeOut = 2.0; o.grow = 0.4;
   Fx3D.glow.spawn(o);
+  // Pomieszczenie rozświetla blachę wokół (siatka świateł Core3D).
+  BridgeFx3D._light(x, y, col[0], col[1], col[2], 1.6, 46 * S, 0.18, 14);
 }
 
 export const BridgeFx3D = {
@@ -135,10 +171,15 @@ export const BridgeFx3D = {
   params: null,
   colors: null,
   count: 0,
-  stats: { windows: 0, vents: 0, flashes: 0 },
+  weaponFx: null,
+  stats: { windows: 0, vents: 0, flashes: 0, arcs: 0, lights: 0 },
 
-  /** Podpina moduł do sceny (w grze: Core3D.scene). Bez własnego renderera. */
-  attach(scene) {
+  /**
+   * Podpina moduł do sceny (w grze: Core3D.scene). Bez własnego renderera.
+   * services.weaponFx — fasada WeaponFx (pula ARC łuków przepięć); bez niej łuków nie ma.
+   */
+  attach(scene, services = null) {
+    if (services && services.weaponFx) this.weaponFx = services.weaponFx;
     if (this.scene === scene && this.mesh) return true;
     this.dispose();
     if (!scene) return false;
@@ -210,12 +251,17 @@ export const BridgeFx3D = {
     let flashes = 0;
     let vents = 0;
 
+    const visibility = typeof opts.visibility === 'function' ? opts.visibility : null;
+    let arcs = 0;
     for (let e = 0; e < entities.length; e++) {
       const entity = entities[e];
       const st = entity?.bridgeState;
       const grid = entity?.hexGrid;
-      if (!st || !grid || st.grid !== grid || entity.hideHexVisual === true) continue;
+      const beam = isBeamBridgeState(st);
+      if (!st || entity.hideHexVisual === true) continue;
+      if (beam ? !st.backend.owns(entity, st) : (!grid || st.grid !== grid)) continue;
       const pose = poseOf ? poseOf(entity) : null;
+      const vis = visibility ? visibility(entity, true) : 1;
 
       // Wyrzut atmosfery — każdy mostek osobno, od chwili jego śmierci.
       for (let b = 0; b < st.bridges.length; b++) {
@@ -224,6 +270,8 @@ export const BridgeFx3D = {
         const age = now - bridge.deadAt;
         if (age < 0 || age > BRIDGE_KILL_TIMELINE.ventEnd) continue;
         if (this._emitVent(entity, bridge, age, dt, pose)) vents++;
+        // Przepięcia: łuki po nadbudówce, dopóki okna migają (tylko przy usługach WebGPU).
+        if (beam && dt > 0 && age < T.arcEnd && vis > 0.05) arcs += this._agonyArcs(entity, st, bridge, age, dt);
       }
 
       // Kadłub z modelem 3D mostka (bridge3D.js) ma okna na modelu — szczeliny
@@ -240,12 +288,16 @@ export const BridgeFx3D = {
       const halfWid = win.width * 0.5 * sx;
       const halo = win.width * sx * T.haloScale;
 
+      const ns = beam ? bridgeBeamHull(entity)?.body.nodeStore : null;
       for (let i = 0; i < win.count; i++) {
-        const s = win.shard[i];
-        if (!bridgeShardIsAlive(grid, s)) {
+        const s = beam ? null : win.shard[i];
+        // Belki: węzeł komórki pod oknem (−1 = wybita albo na innym ciele rodu).
+        const node = beam ? beamWindowNode(entity, win, i) : -1;
+        if (beam ? node < 0 : !bridgeShardIsAlive(grid, s)) {
           // Pomieszczenie wybite: krótki błysk w chwili śmierci heksa pod oknem.
           if (win.lit[i] && flashes < MAX_ROOM_FLASHES_PER_FRAME && fade > 0.05 && age < 0) {
-            bridgeGridToWorld(entity, s.gridX + s.deformation.x + win.offX[i], s.gridY + s.deformation.y + win.offY[i], _w, pose);
+            if (beam) beamWindowWorld(entity, win, i, _w, pose);
+            else bridgeGridToWorld(entity, s.gridX + s.deformation.x + win.offX[i], s.gridY + s.deformation.y + win.offY[i], _w, pose);
             this._roomFlash(_w.x, _w.y, win.colorsLinear[win.bridge[i]], hullFxScale(entity));
             flashes++;
           }
@@ -268,15 +320,18 @@ export const BridgeFx3D = {
           // Spokojne, lekko nierówne oświetlenie; uszkodzony heks mruga.
           const seed = win.seed[i];
           I = 0.82 + 0.18 * Math.sin(now * (0.7 + seed * 1.3) + seed * 40);
-          const hpFrac = s.maxHp > 0 ? s.hp / s.maxHp : 1;
+          const hpFrac = beam
+            ? (ns && ns.maxHp[node] > 0 ? ns.hp[node] / ns.maxHp[node] : 1)
+            : (s.maxHp > 0 ? s.hp / s.maxHp : 1);
           if (hpFrac < 0.55) {
             const slot = Math.floor(now * (9 + seed * 7));
             if (bridgeHash01(slot, i + 101) < 0.45 * (1 - hpFrac / 0.55) + 0.1) I *= 0.18;
           }
         }
-        I *= fade * (win.level ? win.level[i] : 1);
+        I *= fade * vis * (win.level ? win.level[i] : 1);
         if (I <= 0.003) continue;
-        bridgeGridToWorld(entity, s.gridX + s.deformation.x + win.offX[i], s.gridY + s.deformation.y + win.offY[i], _w, pose);
+        if (beam) beamWindowWorld(entity, win, i, _w, pose);
+        else bridgeGridToWorld(entity, s.gridX + s.deformation.x + win.offX[i], s.gridY + s.deformation.y + win.offY[i], _w, pose);
         const rot = -(baseAngle + win.angle[i]);
         const c = Math.cos(rot);
         const sn = Math.sin(rot);
@@ -310,10 +365,102 @@ export const BridgeFx3D = {
     this.stats.windows = n;
     this.stats.vents = vents;
     this.stats.flashes += flashes;
+    this.stats.arcs += arcs;
   },
 
   _roomFlash(x, y, col, S) {
     spawnBridgeRoomFlash(x, y, col, S);
+  },
+
+  // Światło efektu w siatce świateł Core3D (świat gry): krótki błysk. Bez Core3D.fx — nic.
+  _light(x, y, r, g, b, power, range, life, z = 30) {
+    const L = Core3D?.fx?.lights;
+    const gain = BRIDGE_FX_TUNE.lightGain;
+    if (!L || !(gain > 0)) return;
+    if (L.flash(x, y, r, g, b, power * gain, range, life, 2, 0.35, z) >= 0) this.stats.lights++;
+  },
+
+  /**
+   * Przepięcia w agonii: łuki z puli ARC broni po nadbudówce (od żywej komórki strefy do sąsiedniej
+   * blachy), iskry z puli gry i błysk w siatce świateł. Tempo gaśnie do BRIDGE_FX_TUNE.arcEnd.
+   * Zwraca liczbę łuków tej klatki.
+   */
+  _agonyArcs(entity, st, bridge, age, dt) {
+    const T = BRIDGE_FX_TUNE;
+    const W = this.weaponFx;
+    if (!W || !(T.arcRate > 0)) return 0;
+    if (!W.gpu && typeof W.ensure === 'function') W.ensure();
+    const gpu = W.gpu;
+    if (!gpu?.arc) return 0;
+    const hull = bridgeBeamHull(entity);
+    if (!hull || !bridge.total) return 0;
+    const k = 1 - age / Math.max(0.05, T.arcEnd);
+    bridge.fxArc = (bridge.fxArc || 0) + T.arcRate * k * k * dt * (0.6 + 0.4 * Math.min(1, bridge.total / 12));
+    let made = 0;
+    const cs = hull.body.cellSize;
+    const col = st.hullKey && st.hullKey.startsWith('pirate') ? ARC_WARM : ARC_COOL;
+    const def = bridge.def;
+    while (bridge.fxArc >= 1 && made < 3) {
+      bridge.fxArc -= 1;
+      // Początek: losowa żywa komórka mostka, a gdy wyrwa zabrała całą strefę — blacha wokół niej
+      // (punkt w strefie poszerzonej ×1,6, sonda kadłuba); koniec: blacha 1–3 komórek dalej.
+      let found = false;
+      for (let t = 0; t < 6 && !found; t++) {
+        const c = Math.floor(fxRandom.next() * bridge.total);
+        if (bridgeCellNode(hull, bridge.cellX[c], bridge.cellY[c]) < 0) continue;
+        beamLatticeToWorld(hull, (bridge.cellX[c] + fxRandom.next()) * cs, (bridge.cellY[c] + fxRandom.next()) * cs, _w);
+        found = true;
+      }
+      for (let t = 0; t < 8 && !found; t++) {
+        const r = def.rot * Math.PI / 180;
+        const u = (fxRandom.next() - 0.5) * def.w * 1.6;
+        const v = (fxRandom.next() - 0.5) * def.h * 1.6;
+        bridgePngToWorld(entity, def.x + u * Math.cos(r) - v * Math.sin(r), def.y + u * Math.sin(r) + v * Math.cos(r), _w);
+        found = HullBodies.probe(entity, _w.x, _w.y);
+      }
+      if (!found) break;
+      let tx = _w.x;
+      let ty = _w.y;
+      for (let t = 0; t < 6; t++) {
+        const a = fxRandom.next() * TAU;
+        const r = cs * (1 + fxRandom.next() * 2);
+        const qx = _w.x + Math.cos(a) * r;
+        const qy = _w.y + Math.sin(a) * r;
+        if (HullBodies.probe(entity, qx, qy)) { tx = qx; ty = qy; break; }
+      }
+      const dx = tx - _w.x;
+      const dy = ty - _w.y;
+      const L = Math.sqrt(dx * dx + dy * dy);
+      if (L < 1) continue;
+      ActiveCarrier.set(writeCarrier(entity, _w.x, _w.y, false, _carrier));
+      try {
+        gpu.arc.begin(0, 1).at(_w.x, -_w.y).dir(dx, -dy).speed(L, L).life(0.05, 0.13)
+          .color(col[0], col[1], col[2]).x01(cs * 0.12, 1.3).z(17).emit();
+        this._light(tx, ty, col[0] * 0.25, col[1] * 0.25, col[2] * 0.25, 1.2 * k + 0.4, cs * 4, 0.1, 18);
+        for (let q = 0; q < 2; q++) {
+          const a = fxRandom.next() * TAU;
+          const sp = 160 + fxRandom.next() * 380;
+          this._spark(entity, tx, ty, Math.cos(a) * sp, Math.sin(a) * sp, 0.12 + fxRandom.next() * 0.2, SPARK_COOL);
+        }
+      } finally {
+        ActiveCarrier.clear();
+      }
+      made++;
+    }
+    return made;
+  },
+
+  // Iskra z puli gry (SparkSystem3D — zegar symulacji, nośnik = kadłub).
+  _spark(entity, x, y, vx, vy, life, col) {
+    const S = SparkSystem3D.stage?.();
+    if (!S) return;
+    const cvx = Number(entity.vx) || 0;
+    const cvy = Number(entity.vy) || 0;
+    // vx, vy — ruch własny iskry; prędkość kadłuba niesie nośnik (cvx, cvy).
+    S.x = x; S.y = y; S.vx = vx; S.vy = vy; S.life = life; S.size = 0.25; S.drag = 2;
+    S.r = col[0]; S.g = col[1]; S.b = col[2]; S.gain = 0.9;
+    S.cvx = cvx; S.cvy = cvy; S.t0 = SimClock.sim; S.clock = CLOCK_SIM;
+    SparkSystem3D.pushStaged();
   },
 
   // Jedna klatka strumienia z wyrwy mostka. Gaz idzie tunelem ostrzału od
@@ -347,6 +494,13 @@ export const BridgeFx3D = {
     // Pierwsza klatka: błysk rozszczelnienia w wyrwie, iskry z wylotu.
     if (!bridge.fxBurst) {
       bridge.fxBurst = true;
+      // Siatka świateł: chłodny błysk rozszczelnienia w wyrwie i u wylotu tunelu.
+      this._light(_w.x, _w.y, 0.72, 0.84, 1.0, 5.5, 240 * S, 0.32, 26);
+      if (tunnel > 4) this._light(_w2.x, _w2.y, 0.6, 0.74, 1.0, 2.6, 300 * S, 0.55, 26);
+      // Mapa ran: osmalona, rozciągnięta wzdłuż tunelu plama wokół wyrwy (żar gaśnie, osmalenie zostaje).
+      if (BRIDGE_FX_TUNE.scorch > 0 && entity.beamHull && HullDamageMap?.enabled) {
+        HullDamageMap.stampRecipe(entity, _w.x, _w.y, 22 * S, 0.45 * BRIDGE_FX_TUNE.scorch, 0.95 * BRIDGE_FX_TUNE.scorch, 0, 0, dx, dy, 1.7);
+      }
       _pos.set(_w.x, -_w.y, FX_PLANE_Z);
       let o = sp();
       o.x = _pos.x; o.y = _pos.y; o.z = _pos.z;

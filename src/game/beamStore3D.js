@@ -13,8 +13,10 @@
 // liczby co zwykłe pola obiektów JS, więc symulacja jest bit w bit jak dawniej.
 // heat / heatStamp: żar blachy (szczyt 0–1 i czas w sekundach zegara renderera) —
 // tylko do rysowania, fizyka ich nie czyta.
+// temp: temperatura węzła z broni cieplnej (beamPhysicalWeapons3D: 1 = mięknie, 2 = topnienie) —
+// solver jej nie czyta; osłabienie belek liczy moduł broni wprost na `brk` / `stiffness`.
 const NODE_F64 = ['x', 'y', 'z', 'ox', 'oy', 'oz', 'px', 'py', 'pz', 'vx', 'vy', 'vz',
-  'mass', 'invMass', 'hp', 'maxHp', 'coverage', 'r', 'g', 'b', 'crushDepth', 'heat', 'heatStamp'];
+  'mass', 'invMass', 'hp', 'maxHp', 'coverage', 'r', 'g', 'b', 'crushDepth', 'heat', 'heatStamp', 'temp'];
 const NODE_I32 = ['ix', 'iy', 'iz', 'depth', 'beamCount', 'localBeamCount', 'platingCount',
   'quiet', 'solveStamp', 'outerStamp', 'islandStamp', 'massStamp', 'crushStamp', 'hashNext'];
 const NODE_U8 = ['active', 'surface', 'act', 'skinDirty'];
@@ -53,7 +55,7 @@ export class BeamNodeStore {
     this.vx = f64(); this.vy = f64(); this.vz = f64();
     this.mass = f64(); this.invMass = f64(); this.hp = f64(); this.maxHp = f64();
     this.coverage = f64(); this.r = f64(); this.g = f64(); this.b = f64(); this.crushDepth = f64();
-    this.heat = f64(); this.heatStamp = f64();
+    this.heat = f64(); this.heatStamp = f64(); this.temp = f64();
     this.ix = i32(); this.iy = i32(); this.iz = i32(); this.depth = i32();
     this.beamCount = i32(); this.localBeamCount = i32(); this.platingCount = i32();
     this.quiet = i32(); this.solveStamp = i32(); this.outerStamp = i32(); this.islandStamp = i32();

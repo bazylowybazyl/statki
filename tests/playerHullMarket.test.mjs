@@ -16,7 +16,7 @@ test('hangar market exposes every playable ship frame exactly once', () => {
   );
 
   const marketFrames = new Set(Object.values(PLAYER_HULL_MARKET).map(entry => entry.shipFrame));
-  assert.deepEqual(marketFrames, new Set(Object.keys(SHIPS)));
+  assert.deepEqual(marketFrames, new Set(Object.keys(SHIPS).filter(id => !SHIPS[id].npcOnly)));
 });
 
 test('balanced hull prices rise with capability while captured pirate hulls stay cheaper', () => {

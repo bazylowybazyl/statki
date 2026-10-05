@@ -302,3 +302,57 @@ test('lot bez NaN i w pułapie: pozycja, wysokość i nos skończone przez cał�
   }
   delete window.applyDamageToNPC;
 });
+
+test('salwa na kilka celów (planNextSalvo): każda rakieta leci w swój cel, plan jednorazowy', () => {
+  clearSystem();
+  const def = MASTER_WEAPONS.grad_launcher;
+  const a = { x: 5000, y: 1500, radius: 80, dead: false, vx: 0, vy: 0 };
+  const b = { x: 5000, y: -1500, radius: 80, dead: false, vx: 0, vy: 0 };
+  const hits = new Map([[a, 0], [b, 0]]);
+  window.applyDamageToNPC = (npc) => { if (hits.has(npc)) hits.set(npc, hits.get(npc) + 1); };
+  const plan = [];
+  for (let k = 0; k < 24; k++) plan.push(k < 14 ? a : b);
+  system.planNextSalvo(plan);
+  system.fireSalvo({ x: 0, y: 0, angle: 0 }, 0, 0, a, 180, def, 'blue', 0, 0, 24, def.burstDelay, 0, LAUNCH_ELEVATED);
+  // Rakiety w locie i w kolejce liczą się do budżetu celów.
+  const incoming = system.collectIncoming(new Map(), false);
+  assert.equal(incoming.get(a), 14 * 180);
+  assert.equal(incoming.get(b), 10 * 180);
+  assert.equal(system.collectIncoming(new Map(), true).size, 0, 'strona wroga — nic');
+  stepFor(8);
+  assert.equal(hits.get(a), 14);
+  assert.equal(hits.get(b), 10);
+  // Następna salwa bez planu — cała w cel salwy.
+  system.fireSalvo({ x: 0, y: 0, angle: 0 }, 0, 0, b, 180, def, 'blue', 0, 0, 4, 0.03, 0, LAUNCH_ELEVATED);
+  assert.equal(system.collectIncoming(new Map(), false).get(b), 4 * 180);
+  stepFor(8);
+  delete window.applyDamageToNPC;
+});
+
+test('pole widzenia głowicy: cel zginął w locie — hak retarget daje nowy, rakieta go trafia', () => {
+  clearSystem();
+  const def = MASTER_WEAPONS.missile_rack;
+  const dead = { x: 9000, y: 0, radius: 80, dead: false, vx: 0, vy: 0 };
+  const next = { x: 9000, y: 900, radius: 80, dead: false, vx: 0, vy: 0 };
+  let hitNext = 0;
+  window.applyDamageToNPC = (npc) => { if (npc === next) hitNext++; };
+  let asked = 0;
+  system.retarget = (r) => { asked++; return r.hostile ? null : next; };
+  system.fire(0, 0, dead, 1000, def, 'blue');
+  stepFor(1.5);
+  dead.dead = true;
+  stepFor(10);
+  assert.ok(asked >= 1);
+  assert.equal(hitNext, 1, 'rakieta przejęła nowy cel i go trafiła');
+  // Bez haka — leci dalej prosto (jak dawniej).
+  system.retarget = null;
+  clearSystem();
+  const dead2 = { x: 9000, y: 0, radius: 80, dead: false, vx: 0, vy: 0 };
+  hitNext = 0;
+  system.fire(0, 0, dead2, 1000, def, 'blue');
+  stepFor(1.5);
+  dead2.dead = true;
+  stepFor(10);
+  assert.equal(hitNext, 0);
+  delete window.applyDamageToNPC;
+});

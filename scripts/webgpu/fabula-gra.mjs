@@ -1,6 +1,6 @@
 // Fabuła w PRAWDZIWEJ grze (2026-09-30, src/game/story/): Vite + headless Chrome z WebGPU (CDP).
 //
-//   node scripts/webgpu/fabula-gra.mjs [--intro] [--faza approach|ram|defences|shipyard|counter|return]
+//   node scripts/webgpu/fabula-gra.mjs [--intro] [--faza scout|approach|ram|defences|shipyard|counter|return]
 //        [--kadry 0,2,4,6,8,10,12,14] [--rozmiar 1600x900] [--out .tmp/fabula] [--czas 20]
 //
 // --intro (domyślnie): nowa gra w trybie kampanii — kadry lotu kamery w stałych chwilach toru (StoryGame.cine.devTime),

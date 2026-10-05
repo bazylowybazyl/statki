@@ -66,6 +66,8 @@ import { writePointVelocity } from "../game/carrierVelocity.js";
 
 /** World scale: converts rakiety.html units → game world units. */
 const WS = 0.1;
+// Głowica przez przebicie tarczy: obrażenia w pancerz (jeden obiekt — bez alokacji na trafienie).
+const ROCKET_BREACH_DAMAGE_OPTS = Object.freeze({ bypassShield: true });
 
 const ROCKET = Object.freeze({
     mass:            8000,
@@ -90,6 +92,8 @@ const TURN_RAMP = 1.0;
 const TURN_RAMP_START = 0.4;
 /** Zawis: prędkość wyrzutu gaśnie jak e^(−k·t), k = POP_DECAY / ignitionDelay (przy zapłonie ~16 %). */
 const POP_DECAY = 1.8;
+/** Głowica bez celu (cel zginął w locie) pyta hak `retarget` o nowy co tyle sekund. */
+const RETARGET_EVERY = 0.2;
 
 const TAU = Math.PI * 2;
 
@@ -339,6 +343,7 @@ class RocketSystem3D {
                 lastTargetDist: Infinity,
                 missCount: 0,
                 reacquireUntil: 0,
+                retargetAt:     0,
                 terminalEnteredAtDist: Infinity,
                 missGrowTime: 0,
                 // Kurs nosa w płaszczyźnie gry (x, 0, z — jednostkowy) i jego wzniesienie [rad]:
@@ -395,10 +400,56 @@ class RocketSystem3D {
         this._qTheme = new Uint8Array(SALVO_CAP);
         this._qMode = new Uint8Array(SALVO_CAP);
         this._qLocal = new Uint8Array(SALVO_CAP);     // 1 — komora w układzie strzelca
+
+        // Cele per rakieta NASTĘPNEJ salwy (planNextSalvo; kierowanie ogniem gracza dzieli salwę
+        // na kilka celów) — fireSalvo zużywa je raz.
+        this._nextTargets = null;
+        // POLE WIDZENIA głowicy: `(rakieta) => encja | null` — nowy cel dla rakiety, której cel
+        // zginął w locie (pyta co RETARGET_EVERY s). null — rakieta leci dalej prosto (jak dawniej).
+        this.retarget = null;
     }
 
     /** Rakiety czekające w kolejkach salw (HUD, testy). */
     get pendingLaunches() { return this._qN; }
+
+    /**
+     * Cele per rakieta dla NASTĘPNEGO `fireSalvo` (indeks = numer rakiety w salwie; brak wpisu —
+     * cel salwy). Jednorazowe; `null` kasuje plan (wołający czyści go po strzale).
+     */
+    planNextSalvo(targets) {
+        this._nextTargets = targets || null;
+    }
+
+    /** Czy następna salwa ma już rozpisane cele (planNextSalvo). */
+    get hasSalvoPlan() { return this._nextTargets !== null; }
+
+    /**
+     * Obrażenia rakiet W LOCIE i w kolejkach salw, które lecą na żywe cele (Map cel → suma),
+     * dla strony `hostile` (false — gracz i sojusznicy). Nosiciel kasetowy liczy wszystkie głowice.
+     * Budżet celów kierowania ogniem: nie dosyłać rakiet celowi, który już ma swoje w drodze.
+     */
+    collectIncoming(out, hostile = false) {
+        out.clear();
+        let seen = 0;
+        for (let i = 0; seen < this.activeRockets && i < ROCKET.maxRockets; i++) {
+            const r = this.rockets[i];
+            if (!r.active) continue;
+            seen++;
+            if (r.hostile !== hostile) continue;
+            const t = r.target;
+            if (!t || t.dead || t._isPositionTarget) continue;
+            out.set(t, (out.get(t) || 0) + r.damage * (r.splitCount > 0 ? r.splitCount : 1));
+        }
+        const theme = hostile ? 1 : 0;
+        for (let q = 0; q < this._qN; q++) {
+            if (this._qTheme[q] !== theme) continue;
+            const t = this._qTarget[q];
+            if (!t || t.dead || t._isPositionTarget) continue;
+            const split = Math.round(Number(this._qDef[q]?.submunition?.count) || 0);
+            out.set(t, (out.get(t) || 0) + this._qDmg[q] * (split > 0 ? split : 1));
+        }
+        return out;
+    }
 
     /* ─────────────────── FIRE ─────────────────── */
 
@@ -492,6 +543,7 @@ class RocketSystem3D {
         r.lastTargetDist = Infinity;
         r.missCount = 0;
         r.reacquireUntil = 0;
+        r.retargetAt = 0;
         r.terminalEnteredAtDist = Infinity;
         r.missGrowTime = 0;
 
@@ -599,6 +651,9 @@ class RocketSystem3D {
         count = 1, gap = 0, azimuth = NaN, mode = LAUNCH_ELEVATED) {
         const n = Math.max(1, Math.min(SALVO_MAX, Math.round(Number(count)) || 1));
         const seed = Math.random();
+        // Cele per rakieta (planNextSalvo) — jednorazowe.
+        const perTarget = this._nextTargets;
+        this._nextTargets = null;
         const hasShooter = !!shooter && !entGone(shooter);
         let az = Number(azimuth);
         if (!Number.isFinite(az)) {
@@ -632,16 +687,17 @@ class RocketSystem3D {
             const px = gameX + ca * lon - sa * lat;
             const py = gameY + sa * lon + ca * lat;
             const delay = k * gapS * (k > 0 ? 0.85 + 0.3 * seedHash(seed, 2000 + k) : 0);
+            const tk = (perTarget && perTarget[k]) || target;
             if (delay <= 0 || this._qN >= SALVO_CAP) {
                 L.index = k;
                 L.azimuth = az;
                 L.shooter = hasShooter ? shooter : null;
-                if (this.fire(px, py, target, damage, weaponDef, colorTheme, launchVx, launchVy, L)) fired++;
+                if (this.fire(px, py, tk, damage, weaponDef, colorTheme, launchVx, launchVy, L)) fired++;
                 continue;
             }
             const q = this._qN++;
             this._qShooter[q] = hasShooter ? shooter : null;
-            this._qTarget[q] = target || null;
+            this._qTarget[q] = tk || null;
             this._qDef[q] = weaponDef;
             this._qT[q] = delay;
             if (hasShooter) {
@@ -782,8 +838,26 @@ class RocketSystem3D {
             let azRate = Math.max(0.001, r.turnRateRad);
             let elRate = Math.max(azRate, r.launchTurnRateRad);
             let steer = false;
-            const target = r.target;
-            const live = !!target && !target.dead;
+            let target = r.target;
+            let live = !!target && !target.dead;
+            // POLE WIDZENIA głowicy: cel zginął w locie — hak `retarget` szuka nowego (przed nosem).
+            if (!live && target && !target._isPositionTarget && this.retarget !== null && t >= r.retargetAt) {
+                r.retargetAt = t + RETARGET_EVERY;
+                const next = this.retarget(r);
+                if (next && !next.dead) {
+                    r.target = target = next;
+                    live = true;
+                    if (r.guidancePhase !== "launch") {
+                        r.guidancePhase = "intercept";
+                        r.interceptAt = t - TURN_RAMP;   // pełny obrót od razu — rakieta jest już w locie
+                    }
+                    r.closestTargetDist = Infinity;
+                    r.lastTargetDist = Infinity;
+                    r.missCount = 0;
+                    r.missGrowTime = 0;
+                    r.terminalEnteredAtDist = Infinity;
+                }
+            }
             let dist2D = Infinity;
 
             /* ── Faza wyrzutu: zawis, zapłon, przechył w kurs wachlarza salwy ── */
@@ -1140,7 +1214,11 @@ class RocketSystem3D {
 
         // Rakiety zdejmowały HP tarczy przez applyDamageTo*, ale nigdy nie
         // rejestrowały trafienia — pole nie dostawało ani ripple, ani cząsteczek.
-        const shieldBlocking = isEntityShieldBlocking(target);
+        let shieldBlocking = isEntityShieldBlocking(target);
+        // Przebicie tarczy (src/3d/shield3D.js): głowica w dziurze przegrzanego pola trafia pancerz.
+        const breach = shieldBlocking && typeof window !== "undefined" && !!(target._realEntity || target).__shieldBreach
+            && typeof window.isShieldBreachedAt === "function" && window.isShieldBreachedAt(target, r.position.x, r.position.z);
+        if (breach) shieldBlocking = false;
         if (shieldBlocking && typeof window !== "undefined" && window.registerShieldImpact) {
             window.registerShieldImpact(
                 target, r.position.x, r.position.z, dmg, shieldImpactClass(r.weaponDef)
@@ -1166,10 +1244,11 @@ class RocketSystem3D {
 
         // Determine if target is the player
         const isPlayer = (target === window.ship) || !!target._isPlayerShip || (target === window.Game?.player);
+        const dmgOpts = breach ? ROCKET_BREACH_DAMAGE_OPTS : undefined;
         if (isPlayer) {
-            if (applyPlayer) applyPlayer(dmg);
+            if (applyPlayer) applyPlayer(dmg, dmgOpts);
         } else {
-            if (applyNpc) applyNpc(target, dmg, "rocket");
+            if (applyNpc) applyNpc(target, dmg, "rocket", dmgOpts);
         }
         r.didImpactDamage = true;
     }
@@ -1224,6 +1303,26 @@ class RocketSystem3D {
         }
     }
 
+    /**
+     * Ciała budowli w zasięgu wybuchu (kawałki doku w bańce gracza, src/game/worldBodies.js): front ciśnienia
+     * przez solver — belki gną się i pękają, wyspy bez kotwic odpadają. Obrażenia budowli raz na wybuch.
+     * Piraci we własny dok nie strzelają (jak pociski).
+     */
+    _blastWorldBodies(r, ex, ez) {
+        const W = typeof window !== "undefined" ? window.WorldBodies : null;
+        if (!W || !(W.stats?.live > 0) || r.shooter?.isPirate) return;
+        const radius = Math.max(0, Number(r.blastRadius) || 0);
+        const dmg = Math.max(0, Number(r.damage) || 0);
+        if (radius <= 0 || dmg <= 0) return;
+        const owners = W.detonateDamage(ex, ez, radius, dmg, r.velocity.x + r.frameVel.x, r.velocity.z + r.frameVel.z);
+        const applyStation = window.applyDamageToStation;
+        if (!owners || !owners.length || typeof applyStation !== "function") return;
+        for (let i = 0; i < owners.length; i++) {
+            const st = owners[i];
+            if (st && !st._destroyed3D && st.hp > 0) applyStation(st, dmg);
+        }
+    }
+
     /* ─────────────────── EXPLOSION ─────────────────── */
 
     _explode(r) {
@@ -1233,6 +1332,7 @@ class RocketSystem3D {
         const ex = r.position.x;
         const ez = r.position.z;
         this._applyBlastDamage(r, ex, ez);
+        this._blastWorldBodies(r, ex, ez);
 
         // Wygląd wybuchu (src/3d/rockets/effects.js): głowica na polu tarczy — receptura
         // tarczy (pole ma też własne wstęgi i bańkę), na kadłubie — kula ognia z nośnikiem

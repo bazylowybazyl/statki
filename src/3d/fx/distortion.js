@@ -40,7 +40,7 @@ export const DISTORT_TIME_WRAP = 600;   // [s] zawinięcie zegara wzoru (float32
 
 // A = (x, y [px, oś y w górę, względem środka ekranu], promień [px], szerokość [px])
 // B = (siła [px], typ, dyspersja, zasięg [px] — wcześniejsze odrzucenie piksela)
-// C = (kierunek x, y [scena, jednostkowy albo 0], wydłużenie, —)
+// C = (kierunek x, y [scena, jednostkowy albo 0], wydłużenie, skala wzoru gorącego powietrza)
 // D = fazy wzoru gorącego powietrza (4 człony sinusów)
 
 // Zasięg profilu w promieniach / szerokościach — poza nim wkład < 1% maksimum.
@@ -48,6 +48,7 @@ const SHOCK_REACH_W = 3.2;     // |x| = (r − R) / w: x·e^(−x²) < 0,01·max
 const IMPLODE_REACH_R = 2.0;   // u·e^(−2,2u²) < 0,01·max przy u > ~1,9
 
 const TWO_PI = Math.PI * 2;
+const Q = 10;                  // liczb na zgłoszenie w kolejce CPU
 const wrapPhase = (a) => a - Math.floor(a / TWO_PI) * TWO_PI;
 
 export class DistortionField {
@@ -59,7 +60,7 @@ export class DistortionField {
     // Kolejka zgłoszeń (SoA): pozycja świata w double.
     this.qx = new Float64Array(queue);
     this.qy = new Float64Array(queue);
-    this.qdata = new Float32Array(queue * 9);   // typ, promień, szer., siła, dyspersja, dirX, dirY, wydłużenie, ziarno
+    this.qdata = new Float32Array(queue * Q);   // typ, promień, szer., siła, dyspersja, dirX, dirY, wydłużenie, ziarno, skala wzoru
     this.count = 0;
     this._pick = new Int32Array(queue);
     this.on = 1;
@@ -78,19 +79,21 @@ export class DistortionField {
    * Źródło w świecie gry: typ (DISTORT.*), środek (x, y), promień [j.] (fala: promień
    * frontu), szerokość [j.] (fala: grubość pierścienia), siła [px ekranu], dyspersja
    * 0..1; gorące powietrze: kierunek strumienia (świat, 0 = bez), wydłużenie ≥ 1, ziarno
-   * fazy. Zwraca false, gdy siła za mała albo kolejka pełna.
+   * fazy, skala wzoru (< 1 — grubsze fale; duże źródła przy dalekim zoomie, np. Supernowa —
+   * wzór 1:1 zawijał się tam w kratkę). Zwraca false, gdy siła za mała albo kolejka pełna.
    */
-  add(type, x, y, radius, width, strengthPx, dispersion = 1, dirX = 0, dirY = 0, stretch = 1, seed = 0) {
+  add(type, x, y, radius, width, strengthPx, dispersion = 1, dirX = 0, dirY = 0, stretch = 1, seed = 0, scale = 1) {
     // Promień 0 jest ważny (fala tuż po wybuchu: front w środku, grubość > 0 — jak demo).
     if (!(strengthPx > 0.02) || !(radius >= 0) || !Number.isFinite(x) || !Number.isFinite(y)) return false;
     if (this.count >= this.queue) { this.stats.dropped++; return false; }
     const i = this.count++;
     this.qx[i] = x;
     this.qy[i] = y;
-    const o = i * 9;
+    const o = i * Q;
     const q = this.qdata;
     q[o] = type; q[o + 1] = radius; q[o + 2] = width > 0 ? width : 0; q[o + 3] = strengthPx;
     q[o + 4] = dispersion; q[o + 5] = dirX; q[o + 6] = dirY; q[o + 7] = stretch >= 1 ? stretch : 1; q[o + 8] = seed;
+    q[o + 9] = scale > 0 ? scale : 1;
     this.stats.queued++;
     return true;
   }
@@ -106,8 +109,8 @@ export class DistortionField {
   }
 
   /** Gorące powietrze; z kierunkiem (świat) wzór płynie z prądem i wydłuża się (`stretch`). */
-  heat(x, y, radius, strengthPx, dirX = 0, dirY = 0, stretch = 1, dispersion = 0, seed = 0) {
-    return this.add(DISTORT.HEAT, x, y, radius, 0, strengthPx, dispersion, dirX, dirY, stretch, seed);
+  heat(x, y, radius, strengthPx, dirX = 0, dirY = 0, stretch = 1, dispersion = 0, seed = 0, scale = 1) {
+    return this.add(DISTORT.HEAT, x, y, radius, 0, strengthPx, dispersion, dirX, dirY, stretch, seed, scale);
   }
 
   /**
@@ -125,7 +128,7 @@ export class DistortionField {
     let vis = 0;
     let culled = 0;
     for (let i = 0; i < this.count; i++) {
-      const o = i * 9;
+      const o = i * Q;
       const sx = (this.qx[i] - camX) * z;
       const sy = -(this.qy[i] - camY) * z;
       const reach = this._reach(q[o], q[o + 1], q[o + 2], q[o + 7]) * z;
@@ -138,7 +141,7 @@ export class DistortionField {
       for (let k = 0; k < this.cap; k++) {
         let best = k;
         for (let j = k + 1; j < vis; j++) {
-          if (q[pick[j] * 9 + 3] > q[pick[best] * 9 + 3]) best = j;
+          if (q[pick[j] * Q + 3] > q[pick[best] * Q + 3]) best = j;
         }
         if (best !== k) {
           const t = pick[best];
@@ -150,7 +153,7 @@ export class DistortionField {
     }
     for (let k = 0; k < n; k++) {
       const i = pick[k];
-      const o = i * 9;
+      const o = i * Q;
       const b = DISTORT_HEADER + k * DISTORT_STRIDE;
       const type = q[o];
       const sx = (this.qx[i] - camX) * z;
@@ -162,11 +165,12 @@ export class DistortionField {
       let dy = 0 - q[o + 6];
       const dl = Math.hypot(dx, dy);
       if (dl > 1e-6) { dx /= dl; dy /= dl; } else { dx = 0; dy = 0; }
-      A[b + 2].set(dx, dy, q[o + 7], 0);
+      const sc = q[o + 9];
+      A[b + 2].set(dx, dy, q[o + 7], sc);
       if (dx === 0 && dy === 0) {
-        // Wzór zakotwiczony w świecie jak w demie: fazy z pozycji sceny źródła (double).
-        const X = this.qx[i];
-        const Y = -this.qy[i];
+        // Wzór zakotwiczony w świecie jak w demie: fazy z pozycji sceny źródła (double, w skali wzoru).
+        const X = this.qx[i] * sc;
+        const Y = -this.qy[i] * sc;
         A[b + 3].set(wrapPhase(X * 0.021), wrapPhase(Y * 0.034), wrapPhase(Y * 0.025), wrapPhase(X * 0.029));
       } else {
         const s = q[o + 8];
@@ -236,11 +240,13 @@ export function distortionOffset(block, uvIn = screenUV) {
         }).Else(() => {
           const C = block.element(base.add(2)).toVar();
           const D = block.element(base.add(3)).toVar();
+          // Skala wzoru (C.w; 1 — wzór dema, < 1 — grubsze fale).
+          const ws = invZoom.mul(max(C.w, 1e-3)).toVar();
           If(abs(C.x).add(abs(C.y)).lessThan(0.5), () => {
             // Bez kierunku — wzór dema (fazy D z pozycji źródła w świecie).
             const u = r.div(max(A.z, 1.0));
             const fall = float(1.0).sub(smoothstep(0.3, 1.0, u));
-            const P = d.mul(invZoom);
+            const P = d.mul(ws);
             const w = vec2(
               sin(P.x.mul(0.021).add(D.x).add(t.mul(7.3))).add(sin(P.y.mul(0.034).add(D.y).sub(t.mul(5.1)))),
               cos(P.y.mul(0.025).add(D.z).add(t.mul(6.1))).add(cos(P.x.mul(0.029).add(D.w).add(t.mul(4.7))))
@@ -255,8 +261,8 @@ export function distortionOffset(block, uvIn = screenUV) {
             const s = C.z.sub(1.0).mul(0.5).mul(A.z);
             const u = length(vec2(a.sub(s).div(C.z), c)).div(max(A.z, 1.0));
             const fall = float(1.0).sub(smoothstep(0.3, 1.0, u));
-            const Pa = a.mul(invZoom);
-            const Pc = c.mul(invZoom);
+            const Pa = a.mul(ws);
+            const Pc = c.mul(ws);
             const wa = sin(Pa.mul(0.021).add(D.x).sub(t.mul(7.3))).add(sin(Pc.mul(0.034).add(D.y).sub(t.mul(5.1)))).mul(0.5);
             const wc = cos(Pc.mul(0.025).add(D.z).add(t.mul(6.1))).add(cos(Pa.mul(0.029).add(D.w).sub(t.mul(4.7)))).mul(0.5);
             o.assign(C.xy.mul(wa).add(perp.mul(wc)).mul(B.x.mul(fall)));
@@ -320,8 +326,9 @@ export function distortionOffsetCpu(field, px, py, out = { x: 0, y: 0, dx: 0, dy
     } else if (Math.abs(C.x) + Math.abs(C.y) < 0.5) {
       const u = r / Math.max(a.z, 1);
       const fall = 1 - smooth(0.3, 1, u);
-      const Px = dx * invZoom;
-      const Py = dy * invZoom;
+      const ws = invZoom * Math.max(C.w, 1e-3);
+      const Px = dx * ws;
+      const Py = dy * ws;
       ox = (Math.sin(Px * 0.021 + D.x + t * 7.3) + Math.sin(Py * 0.034 + D.y - t * 5.1)) * 0.5 * B.x * fall;
       oy = (Math.cos(Py * 0.025 + D.z + t * 6.1) + Math.cos(Px * 0.029 + D.w + t * 4.7)) * 0.5 * B.x * fall;
     } else {
@@ -332,8 +339,9 @@ export function distortionOffsetCpu(field, px, py, out = { x: 0, y: 0, dx: 0, dy
       const s = (C.z - 1) * 0.5 * a.z;
       const u = Math.hypot((al - s) / C.z, ac) / Math.max(a.z, 1);
       const fall = 1 - smooth(0.3, 1, u);
-      const Pa = al * invZoom;
-      const Pc = ac * invZoom;
+      const ws = invZoom * Math.max(C.w, 1e-3);
+      const Pa = al * ws;
+      const Pc = ac * ws;
       const wa = (Math.sin(Pa * 0.021 + D.x - t * 7.3) + Math.sin(Pc * 0.034 + D.y - t * 5.1)) * 0.5;
       const wc = (Math.cos(Pc * 0.025 + D.z + t * 6.1) + Math.cos(Pa * 0.029 + D.w - t * 4.7)) * 0.5;
       ox = (C.x * wa + px2 * wc) * B.x * fall;

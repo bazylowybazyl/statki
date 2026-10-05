@@ -93,6 +93,7 @@ function getEntityHullProfileId(entity) {
   if (type.includes('destroyer')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_destroyer' : 'terran_destroyer');
   if (type.includes('frigate')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_frigate' : 'terran_frigate');
   if (type === 'supercapital') return resolveHullRenderProfileId('terran_supercapital');
+  if (type === 'pirate_supercapital') return resolveHullRenderProfileId('pirate_supercapital');
   if (type === 'carrier') return resolveHullRenderProfileId('terran_carrier');
   if (type === 'capital_carrier') return resolveHullRenderProfileId('capital_carrier');
   return null;
@@ -922,6 +923,8 @@ export function createCicHudRadarModel({
     const contactAwareness = finiteNumber(vis?.awareness, 0);
     const isLocked = locks.has(npc);
     const isSelected = selectedTarget === npc;
+    // Mgła wojny (SensorSystem.hides): namiar ani zaznaczenie nie pokazują tego, czego strona gracza nie widzi.
+    if (SensorSystem?.hides?.(npc)) continue;
     if (contactAwareness < detected && !isLocked && !isSelected) continue;
 
     pushContact({
@@ -2305,6 +2308,7 @@ function drawStationMarkers(ctx, W, H, toScreen, zoom) {
 
   for (const st of stations) {
     if (!st || !Number.isFinite(st.x)) continue;
+    if (window.SensorSystem?.hides?.(st)) continue;   // mgła wojny: stacja piracka nierozpoznana
     const scr = toScreen(st.x, st.y);
     if (scr.x < -90 || scr.x > W + 90 || scr.y < -90 || scr.y > H + 90) continue;
 

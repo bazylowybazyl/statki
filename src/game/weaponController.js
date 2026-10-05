@@ -345,7 +345,18 @@ export class WeaponController {
 
     const loadout = this._selectMissileLoadout(side);
     if (!loadout) return;
+    return this.fireRocketLoadout(loadout);
+  }
 
+  /** Wyrzutnia gotowa do salwy: zamontowana, cała, nie torpedy, z amunicją, po przeładowaniu. */
+  missileLoadoutReady(loadout) {
+    const hp = loadout?.hp;
+    return !!(hp?.mount && !hp.destroyed && loadout.weapon && !isTorpedoWeapon(loadout.weapon)
+      && (hp.ammo === null || hp.ammo > 0) && (Number(hp.missileCd) || 0) <= 0);
+  }
+
+  /** Salwa z KONKRETNEJ wyrzutni w cel jej stanu celowania (kierowanie ogniem wybiera wyrzutnię i cel). */
+  fireRocketLoadout(loadout) {
     const ship = this.ship;
     const aim = getMountedWeaponAim(ship, loadout);
     const target = targetIsAlive(aim.target) ? aim.target : null;

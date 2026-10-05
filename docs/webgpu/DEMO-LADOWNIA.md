@@ -68,7 +68,7 @@ Pliki Z5 (`src/3d/cargoContainers3D.js`, `src/3d/cargoDrones3D.js`, `src/game/ca
   - `over` (Venator): skrzydło odrywa się w górę, jedzie PO poszyciu i osiada na szynach obok otworu — potrzebny wolny
     pas parkowania (sylwetka, bez wieżyczek i mostków); `leaves` = skrzydła na stronę (1 — klasyczny, 2–3 — teleskop:
     węższy pas, skrzydła jadą z różną prędkością i zostają w stosie, wewnętrzne wyżej).
-  - `pocket` (kieszeń): skrzydło opada i chowa się pod poszycie — dla kadłubów, gdzie obok otworu stoją wieżyczki
+  - `pocket` (kieszeń): skrzydło opada i chowa się pod poszycie — dla kadłubów, gdzie obok otworu stoją wieżyczki; ładownia jest głębsza o zjazd skrzydeł (`pocketDrop` — stos stoi pod nimi, test w `tests/cargoBays.test.mjs`), a część skrzydła poza otworem nie jest rysowana (wąskie kadłuby: skrzydło wystawałoby za sprite)
     (w ścianach wnętrza widać szczelinę, w którą wjeżdżają).
   - Wierzch skrzydła to **wycinek sprite'a kadłuba** — zamknięta ładownia wygląda dokładnie jak dziś; napis IRON SKULL
     czy namalowane pokrywy luków frachtowców rozjeżdżają się razem ze skrzydłami. Faza krawędzi (normalna pochyla się na
@@ -98,17 +98,17 @@ więc pojemność rośnie z objętością ładowni — duże kadłuby mieszczą 
 | Atlas | 1800 | 312 × 131 × 17,5, over ×1, 9×7 × 2×2×2 | 504 | 20 | 252 | 504 | **1008** | 2520 | 7,3 |
 | Custos | 192 | 54 × 21 × 9,5, over ×2, 3×2 × 1×1×1 | 6 | 16 | 3 | 6 | **12** | 30 | 0,1 |
 | Hasta | 288 | 55 × 35 × 9,5, over ×2, 3×3 × 1×1×1 | 9 | 30 | 4,5 | 9 | **18** | 45 | 0,1 |
-| Bellator | 624 | 302 × 39 × 17,5, pocket, 17×4 × 1×1×2 | 136 | 40 | 68 | 136 | **272** | 680 | 2 |
-| Citadella | 1080 | 2 × (382 × 69 × 17,5), pocket, 11×3 × 2×2×2 | 528 | 80 | 264 | 528 | **1056** | 2640 | 7,7 |
+| Bellator | 624 | 302 × 39 × 19,9, pocket, 17×4 × 1×1×2 | 136 | 40 | 68 | 136 | **272** | 680 | 2 |
+| Citadella | 1080 | 2 × (382 × 69 × 21,4), pocket, 11×3 × 2×2×2 | 528 | 80 | 264 | 528 | **1056** | 2640 | 7,7 |
 | Colossus | 1560 | 470 × 105 × 17,5, over ×2, 14×5 × 2×2×2 | 560 | 120 | 280 | 560 | **1120** | 2800 | 8,1 |
-| Marauder | 192 | 31 × 10 × 9,5, pocket, 1×1 × 1×1×1 | 1 | 12 | 0,5 | 1 | **2** | 5 | 0 |
-| Reaver | 360 | 70 × 26 × 9,5, pocket, 4×2 × 1×1×1 | 8 | 22 | 4 | 8 | **16** | 40 | 0,1 |
-| Iron Skull | 720 | 133 × 58 × 17,5, pocket, 7×6 × 1×1×2 | 84 | 32 | 42 | 84 | **168** | 420 | 1,2 |
-| Prom międzystacyjny | 120 | 19 × 19 × 9,5, pocket, 1×2 × 1×1×1 | 2 | 60 | 1 | 2 | **4** | 10 | 0 |
-| Kontenerowiec | 312 | 121 × 45 × 17,5, pocket, 7×4 × 1×1×2 | 56 | 160 | 28 | 56 | **112** | 280 | 0,8 |
-| Frachtowiec dalekiego zasięgu | 540 | 154 × 58 × 17,5, pocket, 9×6 × 1×1×2 | 108 | 380 | 54 | 108 | **216** | 540 | 1,6 |
-| Ciężki frachtowiec | 1800 | 658 × 349 × 17,5, pocket, 19×20 × 2×2×2 | 3040 | 900 | 1520 | 3040 | **6080** | 15 200 | 44 |
-| Wagon megafrachtowca | 2760 | 2 × (1499 × 238 × 17,5), pocket, 22×7 × 4×4×2 | 9856 | 100¹ | 4928 | 9856 | **19 712** | 49 280 | 143 |
+| Marauder | 192 | 31 × 10 × 11,4, pocket, 1×1 × 1×1×1 | 1 | 12 | 0,5 | 1 | **2** | 5 | 0 |
+| Reaver | 360 | 70 × 26 × 11,4, pocket, 4×2 × 1×1×1 | 8 | 22 | 4 | 8 | **16** | 40 | 0,1 |
+| Iron Skull | 720 | 133 × 58 × 20,9, pocket, 7×6 × 1×1×2 | 84 | 32 | 42 | 84 | **168** | 420 | 1,2 |
+| Prom międzystacyjny | 120 | 19 × 19 × 11,4, pocket, 1×2 × 1×1×1 | 2 | 60 | 1 | 2 | **4** | 10 | 0 |
+| Kontenerowiec | 312 | 121 × 45 × 20,2, pocket, 7×4 × 1×1×2 | 56 | 160 | 28 | 56 | **112** | 280 | 0,8 |
+| Frachtowiec dalekiego zasięgu | 540 | 154 × 58 × 20,9, pocket, 9×6 × 1×1×2 | 108 | 380 | 54 | 108 | **216** | 540 | 1,6 |
+| Ciężki frachtowiec | 1800 | 658 × 349 × 26,9, pocket, 19×20 × 2×2×2 | 3040 | 900 | 1520 | 3040 | **6080** | 15 200 | 44 |
+| Wagon megafrachtowca | 2760 | 2 × (1499 × 238 × 26,9), pocket, 22×7 × 4×4×2 | 9856 | 100¹ | 4928 | 9856 | **19 712** | 49 280 | 143 |
 
 ¹ cargoCap składu gracza 600 / 6 wagonów; klasa ruchu `mega` = 2400 t na cały frachtowiec.
 

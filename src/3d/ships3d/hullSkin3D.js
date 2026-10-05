@@ -72,6 +72,15 @@ function freeCells(start, n) {
   }
 }
 
+/**
+ * Węzeł pola przesunięć (bufor storage vec4 na grę) — dla własnych grafów skóry FFD (budowle świata:
+ * portBuildings3D.tsl.js, wariant „skin”). Komórka: (dx, dy, dz, stan) — stan 1 żywy, 0,5 nigdy, 0 martwy.
+ */
+export function hullSkinField() {
+  ensureField();
+  return _node;
+}
+
 export function hullSkinFieldStats() {
   let freeN = 0;
   for (const f of _free) freeN += f[1] - f[0];

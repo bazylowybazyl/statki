@@ -6,9 +6,13 @@ const NORMAL_TARGET_ACTIONS = [
   ['orbit', 'ORBITA'],
   // TRAVEL TO (2026-10-03): dawne SKOK i PRZELOT — jeden rozkaz podróży (src/game/travelNav.js).
   ['travel', 'TRAVEL TO'],
-  ['scan', 'SKAN']
+  ['scan', 'SKAN'],
+  // Dron zwiadowczy (mgła wojny, 2026-10-04) — też na celu (2026-10-05): PPM obok dużej stacji (suchy dok
+  // piratów) łapał stację i menu bez drona.
+  ['drone', 'DRON ZWIADU']
 ];
 
+// Pusta przestrzeń: bez ataku i taranu.
 const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.filter(([action]) => action !== 'attack' && action !== 'ram');
 
 // Wraki dostają własne wejścia na górze listy — to jedyne cele, na których

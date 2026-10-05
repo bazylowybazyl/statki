@@ -316,7 +316,11 @@ export function createHaloRing(options = {}) {
     const Rf = layout.radii.floorMid;
     const Rc = Math.hypot(camLocal.x, camLocal.y);
     const nearBand = Math.abs(camLocal.z - layout.z.floorMid) < layout.width;
-    const horizon = Math.acos(Math.min(1, Rf / Math.max(Rc, Rf + 1))) + Math.acos(Rf / (Rf + 9000)) + 0.05;
+    // zasięg kompleksów nad podłogą: płyta przed bramą G-01 (od 2026-10-05 doki
+    // stoją za krawędzią ścian — na Ziemi ~12,4 tys. j. zamiast ~8,3 tys.)
+    let reach = 9000;
+    for (const hall of halls) reach = Math.max(reach, hall.frame.radius + hall.layout.frontZ + hall.layout.apronDepth - Rf);
+    const horizon = Math.acos(Math.min(1, Rf / Math.max(Rc, Rf + 1))) + Math.acos(Rf / (Rf + reach)) + 0.05;
     const camTh = Math.atan2(camLocal.y, camLocal.x);
     const pc = uniforms.uPlanet.value;
     const minPx = haloQualityLod(parts.quality).k7Pixels;

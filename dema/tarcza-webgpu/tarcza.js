@@ -63,11 +63,18 @@ const HIT_LIGHT = {
   main: { life: 0.34, power: 4.2, radius: 850, falloff: 170 },
   special: { life: 0.95, power: 8.5, radius: 1700, falloff: 340 },
   shield: { life: 0.5, power: 3.6, radius: 950, falloff: 210 },
-  // Pęknięcie: błysk całej czaszy.
-  break: { life: 0.7, power: 11.0, radius: 3400, falloff: 760 }
+  // Pęknięcie: błysk w punkcie, w którym pole pękło, i słabe przygaśnięcie całej czaszy
+  // (dawniej dwa błyski mocy 11 — razem z iskrami wyglądało to na wybuch okrętu).
+  break: { life: 0.45, power: 6.0, radius: 2400, falloff: 560 },
+  breakDome: { life: 0.6, power: 1.8, radius: 3000, falloff: 900 }
 };
 const MAX_FLASHES = 64;
 const MAX_HOTSPOTS = 32;
+
+// Iskry pęknięcia: snop w punkcie pęknięcia (głównie ślizg po czaszy, mało lotu w przestrzeń)
+// i drobne trzaski w losowych płytkach, gdy dochodzi do nich czoło pęknięcia.
+const BREAK_SPARKS = { count: 240, speed: [260, 1100], life: [0.3, 0.8], fly: 0.3, heat: 1.1, width: 2.6, spread: 1.1 };
+const CRACKLE = { count: 10, sparks: [16, 34], speed: [120, 520], life: [0.14, 0.38], jitter: 0.05 };
 
 // Widok kontrolny: siatka pola (izolinie t z tekstury maski), czasza (izolinie t
 // z geometrii), pole (h czerwień/granat, E zieleń, B błękit) i pierścień znacznika.
@@ -170,6 +177,8 @@ export class Tarcza {
     // Światła: błyski trafień i gorące punkty energii (pule, bez alokacji w klatce).
     this.flashes = Array.from({ length: MAX_FLASHES }, () => ({ on: false, x: 0, y: 0, z: 0, age: 0, life: 1, power: 1, radius: 1, falloff: 1 }));
     this.hotspots = Array.from({ length: MAX_HOTSPOTS }, () => ({ on: false, x: 0, y: 0, z: 0, e: 0 }));
+    // Trzaski pęknięcia zaplanowane na chwilę przejścia czoła (pula, bez alokacji w klatce).
+    this.crackles = Array.from({ length: CRACKLE.count }, () => ({ on: false, t: 0, x: 0, y: 0, z: 0 }));
     this._lv = new THREE.Vector3();
     this._lc = new THREE.Color();
     this._hc = new THREE.Color();
@@ -443,6 +452,7 @@ export class Tarcza {
     if (sweeping) this.wake(0);
     if (lowPower > 0 || this.showField) this.wake(0);
     if (this.debugMarker) this.debugSources(dt, time);
+    this.emitCrackles(time);
     this.sparks.update(time);
     this.sparks.uMinW.value = 1.3 / Math.max(1e-4, pxPerUnit);
     this.sparks.uGroupRot.value = this.group.rotation.z;
@@ -466,7 +476,9 @@ export class Tarcza {
     }
 
     // Wyłączona tarcza: pole od zera przy następnym rozruchu, płytki czekają na rozruch.
-    if (sh.state === 'off') {
+    // Po pęknięciu dopiero, gdy czoło przejdzie i odłamki zgasną — stan 'off' przychodzi po 0,28 s,
+    // a zerowanie przyczepionych płytek gasiło rysy przed czołem w połowie przebiegu.
+    if (sh.state === 'off' && !flying) {
       if (!this.offReset) {
         this.field.reset(); this.field.clearBreachMap(); this.clearHeat();
         this.hexes.resetAttached();
@@ -516,18 +528,44 @@ export class Tarcza {
     }
   }
 
-  // Pęknięcie (nowy wygląd): siatka rozrywa się falą od ostatniego trafienia —
-  // płytki odlatują jako odłamki, błysk i światło, snop iskier.
+  // Pęknięcie (nowy wygląd): czoło od ostatniego trafienia kruszy siatkę — szwy błyskają,
+  // płytki gasną w miejscu albo odpadają jako dryfujące odłamki (heksy.js, SHATTER);
+  // błysk i światło w punkcie pęknięcia, snop iskier, trzaski za czołem.
   onBreak(time) {
     if (this.mode !== 'new') return;
     const hx = this.lastHitLocal.x, hy = this.lastHitLocal.y;
     this.hexes.shatter(hx, hy, time);
-    this.addFlash(hx, hy, 'break', 400);
-    this.addFlash(0, 0, 'break', 200);
-    if (FIELD_PARAMS.sparksOn) {
-      const r = Math.hypot(hx, hy) || 1;
-      this.sparks.spawn(hx, hy, this.domeZ(hx * 0.95, hy * 0.95) + 2, hx / r, hy / r, 0.6,
-        1400 * FIELD_PARAMS.sparkMult, 500, 2600, 0.5, 1.4, 0.55, 1.4, 3.6, 1.4, time);
+    this.addFlash(hx, hy, 'break', 300);
+    this.addFlash(0, 0, 'breakDome', 150);
+    for (let i = 0; i < this.crackles.length; i++) this.crackles[i].on = false;
+    if (!FIELD_PARAMS.sparksOn || FIELD_PARAMS.sparkMult <= 0) return;
+    const r = Math.hypot(hx, hy) || 1;
+    const B = BREAK_SPARKS;
+    this.sparks.spawn(hx, hy, this.domeZ(hx * 0.95, hy * 0.95) + 2, hx / r, hy / r, 0.6,
+      B.count * FIELD_PARAMS.sparkMult, B.speed[0], B.speed[1], B.life[0], B.life[1], B.fly, B.heat, B.width, B.spread, time);
+    // Trzaski: losowe płytki, każda w chwili, gdy dojdzie do niej czoło pęknięcia.
+    const rest = this.hexes.rest, n = this.hexes.count, speed = this.hexes.frontSpeed;
+    for (let i = 0; i < this.crackles.length; i++) {
+      const c = this.crackles[i];
+      const k = (Math.random() * n) | 0;
+      c.x = rest[k * 4]; c.y = rest[k * 4 + 1]; c.z = rest[k * 4 + 2];
+      c.t = time + Math.hypot(c.x - hx, c.y - hy) / speed + Math.random() * CRACKLE.jitter;
+      c.on = true;
+    }
+  }
+
+  // Zaplanowane trzaski pęknięcia, których czas nadszedł: mały snop iskier ślizgających się po czaszy.
+  emitCrackles(time) {
+    const C = CRACKLE;
+    for (let i = 0; i < this.crackles.length; i++) {
+      const c = this.crackles[i];
+      if (!c.on || time < c.t) continue;
+      c.on = false;
+      if (!FIELD_PARAMS.sparksOn || FIELD_PARAMS.sparkMult <= 0) continue;
+      const r = Math.hypot(c.x, c.y) || 1;
+      const count = (C.sparks[0] + Math.random() * (C.sparks[1] - C.sparks[0])) * FIELD_PARAMS.sparkMult;
+      this.sparks.spawn(c.x, c.y, c.z + 2, c.x / r, c.y / r, 0.5, count,
+        C.speed[0], C.speed[1], C.life[0], C.life[1], 0.12, 1.0, 1.8, 0.8, time);
     }
   }
 

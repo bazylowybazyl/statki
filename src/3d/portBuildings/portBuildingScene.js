@@ -36,8 +36,10 @@ export const PB_MAX_LAMPS = 8;
  *   show    bryła widoczna, gdy (int(kanał[parametr]) & int(faza)) ≠ 0 (flagi bitowe)
  *   launch  bieg świateł pasa (1,2 Hz, faza = pozycja) tylko, gdy kanał[parametr] ≥ 0,5
  *           (zejście okrętu z pochylni); inaczej przygaszone stałe
+ *   alarm   obrotowy kogut (1,6 Hz, faza = przesunięcie) tylko, gdy kanał[parametr] ≥ 0,5; inaczej prawie
+ *           zgaszony (suchy dok piratów: alarm stoczni)
  */
-export const PB_FX = Object.freeze({ steady: 0, blink: 1, chase: 2, fill: 3, weld: 4, status: 5, queue: 6, show: 7, launch: 8 });
+export const PB_FX = Object.freeze({ steady: 0, blink: 1, chase: 2, fill: 3, weld: 4, status: 5, queue: 6, show: 7, launch: 8, alarm: 9 });
 
 // Kanały (uniform vec4 × 4 = 16 liczb) — ustawia render co klatkę ze stanu.
 export const YARD_CH = Object.freeze({
@@ -94,9 +96,9 @@ function mapScale(y, extent) {
 export class PortRecorder {
   constructor() {
     this.sets = {
-      bg: { box: [], cyl: [], torus: [] },
-      fg: { box: [], cyl: [], torus: [] },
-      roof: { box: [], cyl: [], torus: [] }
+      bg: { box: [], cyl: [], torus: [], cone: [] },
+      fg: { box: [], cyl: [], torus: [], cone: [] },
+      roof: { box: [], cyl: [], torus: [], cone: [] }
     };
     this.set = 'bg';
     this.group = 0;
@@ -157,6 +159,18 @@ export class PortRecorder {
     // grubość rurki = geometria torusa (jak w K-7); t zostaje w sygnaturze dla zgodności
     const q = rot ? quatEuler(rot[0], rot[1], rot[2]) : [0, 0, 0, 1];
     this._push('torus', x, this._y(y), z, this._vs(y, r), r, r, r, mat, q);
+    return this;
+  }
+  // stożek (kolec): podstawa promienia r, wysokość h; oś +Y bryły (szpic) — bez obrotu w górę,
+  // dir = [dx, dy, dz] (wysokości K-7) — szpic w tym kierunku, środek bryły w (x, y, z)
+  cone(x, y, z, r, h, mat, dir = null) {
+    if (!dir) {
+      const [cy, hh] = this._range(y, h);
+      this._push('cone', x, cy, z, 1, r, hh, r, mat, [0, 0, 0, 1]);
+    } else {
+      const ext = Math.max(r, h / 2);
+      this._push('cone', x, this._y(y), z, this._vs(y, ext), r, h, r, mat, quatFromY(dir[0], dir[1], dir[2]));
+    }
     return this;
   }
   count() {
@@ -1292,3 +1306,6 @@ export function buildHangarScene(l, style) {
   };
 }
 
+
+// Pomocniki rejestratora dla innych budowli z tym samym shaderem (suchy dok piratów — pirateDryDockScene.js).
+export { plate as pbPlate, label as pbLabel, stripe as pbStripe, arrow as pbArrow, hazard as pbHazard, hatchFrame as pbHatchFrame, hash1 as pbHash1 };

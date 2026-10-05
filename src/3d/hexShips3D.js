@@ -44,6 +44,7 @@ import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
 import { HullSkinBatch } from './hullSkinBatch.js';
 import { HullDamageMap } from './hullDamageMap.js';
+import { cloakHidesShadow, cloakHullHolder, syncCloakDist, updateCloakLooks } from './cloak/hullCloak.js';
 
 // Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
 // są w TSL: src/3d/hexShips3D.tsl.js — graf na wariant, wartości per encja
@@ -1045,6 +1046,13 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       uWarpA: warpHullHolder(entity, 'a'),
       uWarpB: warpHullHolder(entity, 'b'),
       uWarpC: warpHullHolder(entity, 'c'),
+      // Maskowanie (2026-10-04, src/game/cloakLook.js → entity.__cloakLook): mozaika heksów, poświata
+      // brzegu, zakłócenie; bez wyglądu — wyłączone (gałąź shadera pominięta).
+      uCloakA: cloakHullHolder(entity, 'a'),
+      uCloakB: cloakHullHolder(entity, 'b'),
+      uCloakC: cloakHullHolder(entity, 'c'),
+      uCloakD: cloakHullHolder(entity, 'd'),
+      uCloakE: cloakHullHolder(entity, 'e'),   // heksy-ekrany (2026-10-05)
       // Skóra belek (zadanie 23): slot w HullObjectStore — wartości wyżej i macierze kadłuba trafiają
       // do bufora storage przed passem ortho; w grupie „object” materiału zostaje tylko ten numer.
       uHullSlot: { value: 0 }
@@ -1092,6 +1100,8 @@ function syncSkinBatches() {
     const vis = batch.anyVisible();
     if (batch.mesh.visible !== vis) batch.mesh.visible = vis;
   }
+  // Maskowanie: refrakcja tła w warstwie DIST na geometrii partii z maskowanym kadłubem (hullCloak.js).
+  syncCloakDist(_skinBatches.values(), Core3D.scene);
 }
 
 // Zapis slotów HullObjectStore przed passem ortho (kamera TEGO passa — macierz model-widok jak three).
@@ -1537,6 +1547,13 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
 let beamSkinSuppressor = null;
 export function setBeamSkinSuppressor(fn) {
   beamSkinSuppressor = typeof fn === 'function' ? fn : null;
+}
+
+// Mgła wojny (src/game/fogOfWar.js): encja ukryta przed graczem — bez kadłuba, lamp, wież, dysz i cienia, ale
+// siatka ZOSTAJE (jak poza kadrem), żeby okręt na brzegu kręgu wzroku nie przebudowywał skóry. Predykat — gra.
+let entityHiddenTest = null;
+export function setEntityHiddenTest(fn) {
+  entityHiddenTest = typeof fn === 'function' ? fn : null;
 }
 
 function isBeamHullEntity(entity) {
@@ -2011,6 +2028,14 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     }
     const hasBody = !!entity.hexGrid || isBeamHullEntity(entity);
     if (hasBody) validSet.add(entity);
+    if (entityHiddenTest && entityHiddenTest(entity)) {
+      entity.__hiddenFromView = true;
+      const data = state.entityMeshes.get(entity);
+      if (data?.mesh) data.mesh.visible = false;
+      if (data?.armorMesh) data.armorMesh.visible = false;
+      continue;
+    }
+    entity.__hiddenFromView = false;
 
     const visible = isEntityInCull(entity, cullInfo);
     if (!visible) {
@@ -2029,6 +2054,11 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     visibleHex.push(entity);
     if (inDrawBox) drawHex.push(entity);
   }
+
+  // Maskowanie (src/3d/cloak/hullCloak.js): wygląd encji z `cloak` PRZED światłami, wieżyczkami i dyszami
+  // tej klatki (gaszą się z komórką pod sobą — cloakVisAtWorld), cząstki frontu i zerwania.
+  updateCloakLooks(valid, now, getInterpolatedRenderPose, cameraZoom * (Core3D.pixelRatio || 1),
+    typeof window !== 'undefined' ? window.ship : null);
 
   // Emitery świateł drogowych z CAŁEGO pudła rozgrzania: statek tuż poza
   // kadrem może oświetlać kadłub, który w kadrze jest.
@@ -2118,6 +2148,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     for (const entity of valid) {
       if (entity.isRingSegment) continue;
       if (entity.hideHexVisual === true || entity.visual?.hideHexMesh === true) continue;
+      if (entity.__hiddenFromView === true) continue;   // mgła wojny: cień zdradzałby okręt
+      if (cloakHidesShadow(entity)) continue;            // maskowanie: ukryty kadłub nie rzuca cienia
       const beam = !entity.hexGrid && isBeamHullEntity(entity);
       if (!entity.hexGrid && !beam) continue;
       const grid = beam ? beamShadowGrid(entity.beamHull) : entity.hexGrid;

@@ -5,7 +5,7 @@ import {
 } from './fighterSquadrons.js';
 
 /**
- * MASTER_WEAPONS - Ustandaryzowana baza uzbrojenia Super Capital
+ * MASTER_WEAPONS - Ustandaryzowana baza uzbrojenia HULLFALL
  * * Parametry:
  * - mountType: 'main', 'aux', 'missile', 'hangar', 'special', 'special_missile', 'builtin' (gdzie można zamontować)
  * - category: 'rail', 'beam', 'plasma', 'autocannon', 'rocket', 'ciws', 'flak', 'superweapon' (dla renderera)
@@ -82,6 +82,7 @@ export const MASTER_WEAPONS = {
     baseDamage: 8, baseRange: 6000, baseSpeed: Infinity, cooldown: 0.05, spread: 0.0, duration: 0.06,
     penetration: 0, energyCost: 8, vfxColor: '#00ffcc',
     recoil: 1, shake: 1.5, impactScale: 0.4, beamMode: 'continuous', barrelsPerShot: 1,
+    beamOnTime: 2.6, beamOffTime: 1.1,
     model3D: 'beam_continuous', render3dOnly: true
   },
   beam_pulse: {
@@ -330,9 +331,16 @@ export const MASTER_WEAPONS = {
     description: 'Lekka, zwrotna rakieta myśliwska. Krótki zasięg, wysoka kadencja, plazmowy ogon.'
   },
   supernova_missile: {
-    id: 'supernova_missile', name: 'Supernova Missile', mountType: 'special_missile', category: 'rocket', size: 'Capital',
+    // SUPERNOVA BARRAGE (2026-10-05, user: „4 naraz — do niszczenia grup przeciwników”): salwa 4 głowic,
+    // każda na inny okręt grupy wokół celu (`barrage`, src/game/barrage.js); id zostaje (zapisane wyposażenie).
+    id: 'supernova_missile', name: 'Supernova Barrage', mountType: 'special_missile', category: 'rocket', size: 'Capital',
     baseDamage: 10000, baseRange: 42000, baseSpeed: 3600, cooldown: 6.0, ammo: 8,
-    turnRate: 980, homingDelay: 0.06, explosionRadius: 132, vfxColor: '#ff7cf2',
+    burstCount: 4, burstDelay: 0.07,
+    // radius — promień szukania grupy wokół celu [j.], spacing — najmniejszy odstęp punktów wybuchu
+    // (wróg bliżej wybranego punktu i tak stoi w jego fali).
+    barrage: { radius: 6000, spacing: 1500 },
+    // explosionRadius: promień rażenia (2026-10-05, user: wybuch większy razem z obrazem — było 132).
+    turnRate: 980, homingDelay: 0.06, explosionRadius: 1200, vfxColor: '#ff7cf2',
     recoil: 9, shake: 5,
     bodyScale: 1.95, exhaustScale: 1.5, fireScale: 1.6, smokeScale: 1.45, explosionVisualScale: 2.15,
     proximityRadius: 98, terminalRadius: 260, reacquireRadius: 760,
@@ -345,8 +353,8 @@ export const MASTER_WEAPONS = {
     rocketVfx: 'supernova',
     // Wyrzut: pionowo, wysoko i z długim zawisem — ciężka głowica rusza dopiero po zapłonie.
     launchElevation: 88, ejectSpeed: 560, ignitionDelay: 0.5, boostAccel: 2600, launchTurnRate: 170,
-    dispersal: 0, dispersalTime: 0.42, cruiseAltitude: 150, cellSpacing: 10, launchPorts: 2,
-    description: 'Capital-grade special missile. Fast guidance, long reach, chemical plume and a nova-style detonation.'
+    dispersal: 14, dispersalTime: 0.42, cruiseAltitude: 150, cellSpacing: 10, launchPorts: 2,
+    description: 'Salwa czterech głowic Supernowa: każda rozchodzi się na inny okręt grupy wokół celu (bez wroga obok — wszystkie w cel), cztery wybuchy niemal naraz.'
   },
   // ==========================================================================
   // HANGARY
@@ -638,7 +646,7 @@ function profileOf(weaponOrId) {
 }
 
 /**
- * Klasa trafienia w tarczę dla efektów cząsteczkowych (src/3d/shieldImpactFx.js):
+ * Klasa trafienia w tarczę dla efektów tarczy (src/3d/shield3D.js — płytki, fala, iskry):
  * `pd` | `main` | `special`. Rolę niesie `mountType` — aux to broń defensywna,
  * special/builtin to superciężkie. Jedyny dodatek: kaliber Capital na zaczepie
  * głównym/rakietowym (torpeda oblężnicza) liczy się jak special, bo trafienie

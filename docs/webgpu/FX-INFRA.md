@@ -239,7 +239,9 @@ renderu, rozmiar celu sceny)` — źródła z `Core3D.fxDistortion()` (świat gr
 pierwsze zgłoszenie po renderze albo render następnej klatki bez zgłoszeń); wolna kamera, tło menu i
 `perfToggles.fxDistortion = false` → 0 źródeł. Warstwa DIST (`FX_DISTORT_LAYER` = 10; 8 = nowy warp, 9 = tło menu):
 gdy właściciel zgłosił zawartość (`Core3D.setDistortLayerActive(true)` — co klatkę), pass kamery ortho do
-`Core3D.distortionTarget` (RG HalfFloat, bez MSAA i głębi, rozmiar bufora sceny; czyszczony co pass) i `uDistLayerOn = 1`.
+`Core3D.distortionTarget` (RGBA HalfFloat — od 2026-10-05, wcześniej RG; RG = przesunięcie, B / A — heksy-ekrany
+maskowania i znacznik refrakcji kadłuba, inne źródła piszą 0; bez MSAA i głębi, rozmiar bufora sceny; czyszczony co pass)
+i `uDistLayerOn = 1`.
 „Uber” (`postGry.js`): gałąź efektów tylko przy źródłach (licznik bloku > 0) albo warstwie — inaczej dawna ścieżka dysz z
 02 co do instrukcji (obraz bit w bit, kontrola A). W gałęzi: przesunięcie `DistortionField` (część z dyspersją ×0,82 /
 ×1 / ×1,22 jak dysze) + warstwa DIST: przesunięcie w px w osiach SCENY (x w prawo, y w górę) → próbka z `p − o` w osiach

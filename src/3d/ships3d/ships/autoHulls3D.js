@@ -71,6 +71,11 @@ export const AUTO3D_TABLE = {
     label: 'Colossus — superkapitał Terra Nova', short: 'Colossus', faction: 'terran', profile: 'terran_supercapital',
     sprite: 'src/assets/ships/terransupercapital.png', editor: 'terran_supercapital', bridge: 'colossus', nozzles: 'editor'
   },
+  // Supercapital piratów z własnym układem użytkownika.
+  pirate_supercapital: {
+    label: 'Iron Skull — Supercapital piratów', short: 'Iron Skull SC', faction: 'pirate', profile: 'pirate_supercapital',
+    sprite: 'src/assets/ships/piratecapital.png', editor: 'pirate_supercapital', bridge: 'pirate_supercapital', nozzles: 'editor'
+  },
   // Profil `supercapital` (2000 × 0,6) — ten sam sprite Colossusa, mniejsza skala.
   supercapital: {
     label: 'Superkapitał (profil supercapital)', short: 'Superkapitał', faction: 'terran', profile: 'supercapital',

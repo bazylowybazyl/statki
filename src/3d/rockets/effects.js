@@ -22,7 +22,7 @@
 //     dymu) → pozostałość (nebula.js) → stygnące jądro z pulsowaniem;
 //   • TARCZA (nowe — propozycja zadania 19, demo jej nie miało): głowica pęka na polu —
 //     błysk w barwie tarczy, iskry rozlane stycznie po polu, krótka fala, garść sadzy na
-//     zewnątrz; bez kuli ognia i przypalenia (pole ma własne wstęgi — shieldImpactFx).
+//     zewnątrz; bez kuli ognia i przypalenia (pole ma własne płytki i iskry — shield3D.js).
 //
 // Różnice względem dema (gra):
 //   • pozycje w ŚWIECIE gry (double), do GPU względem początku pul Core3D.fx.origin;
@@ -93,11 +93,26 @@ const MODE_SPLIT = 2;
 
 // Supernowa: życie pozostałości (powłoka) i dżetów pulsara [s], prędkość dżetu [j./s];
 // sekwencja reżysera (jądro, snopy, światło) trwa NOVA_SEQ_END od wybuchu głowicy.
-export const NOVA_REMNANT_LIFE = 5.4;
-export const NOVA_JET_SPEED = 1050;
-export const NOVA_JET_SPAN = 4.2;
-export const NOVA_JET_LIFE = 1.25;
-export const NOVA_SEQ_END = 6.4;
+// 2026-10-05 (user): wybuch ~2× większy, wir po wybuchu krótki (5,4 s → 2,2 s).
+export const NOVA_REMNANT_LIFE = 2.2;
+export const NOVA_JET_SPEED = 2000;
+export const NOVA_JET_SPAN = 1.5;
+export const NOVA_JET_LIFE = 0.8;
+export const NOVA_SEQ_END = 2.8;
+// Skala wybuchu (promienie błysku, fali, pozostałości, snopów, światła) względem dema.
+const NOVA_SCALE = 2;
+// Fala uderzeniowa i gorące powietrze supernowej (2026-10-05, user: mocniejsze; promienie × NOVA_SCALE).
+// Dawniej: fala 1,3 s, zasięg 2700, τ 0,42, grubość 170, siła 22 px; haze 1,6 s, promień 700, siła 5 px.
+// strength [px ekranu], capPerWidth — sufit siły na px grubości frontu, echo — siła fali odbitej.
+export const NOVA_SHOCK = { life: 1.8, rMax: 3000, tau: 0.5, width: 230, strength: 55, echo: 0.4, capPerWidth: 0.6 };
+// Haze: core — siła wewnętrznego, krótszego kłębu; scale — skala wzoru szumu (distortion.js: najkrótszy okres
+// ~185 j. świata przy 1 — przy dalekim zoomie silne przesunięcie zawijało go w kratkę, „wafel” z A/B 2026-10-05;
+// 0,3 → okres ~620 j., fale na miarę kilkukilometrowego wybuchu); capPerZoom — sufit siły [px] na jednostkę
+// zoomu (~0,2 okresu na ekranie przy nakładaniu się wybuchów salwy: zoom 0,12 → 9 px, 0,2 → pełna siła).
+export const NOVA_HAZE = { life: 2.6, radius: 1000, strength: 13, core: 1.3, scale: 0.3, capPerZoom: 75 };
+// Pozostałość: cząstek na jedną supernową — salwa 4 mieści się w pierścieniu mgławicy (NEBULA_CAP 262 144),
+// więc czwarta głowica nie zjada pozostałości pierwszej (dawniej 110 000 na jedną).
+const NOVA_REMNANT_PARTICLES = 64000;
 
 const FLASH_CAP = 256;
 const BLAST_CAP = 32;
@@ -213,6 +228,7 @@ export class RocketEffects {
     this.sd = new Float32Array(SHOCK_CAP * 9);   // life, speed, rMax, tauR, width, strength, cx, cy, nova
     this.hN = 0; this.hx = new Float64Array(HAZE_CAP); this.hy = new Float64Array(HAZE_CAP); this.ht0 = new Float64Array(HAZE_CAP);
     this.hd = new Float32Array(HAZE_CAP * 5);    // life, radius, strength, cx, cy
+    this.hNova = new Uint8Array(HAZE_CAP);       // 1 — supernowa (sufit siły z zoomu)
     // ── Płonące odłamki ──
     this.gN = 0; this.gx = new Float64Array(FRAG_CAP); this.gy = new Float64Array(FRAG_CAP); this.gt0 = new Float64Array(FRAG_CAP);
     this.gd = new Float32Array(FRAG_CAP * 9);    // vx, vy, cx, cy, life, drag, acc, heat, size
@@ -355,10 +371,10 @@ export class RocketEffects {
     S[o] = life; S[o + 1] = speed; S[o + 2] = rMax; S[o + 3] = tauR; S[o + 4] = width; S[o + 5] = strength; S[o + 6] = cx; S[o + 7] = cy; S[o + 8] = nova ? 1 : 0;
   }
 
-  _haze(x, y, life, radius, strength, cx, cy) {
+  _haze(x, y, life, radius, strength, cx, cy, nova = false) {
     if (this.hN >= HAZE_CAP) return;
     const i = this.hN++;
-    this.hx[i] = x; this.hy[i] = y; this.ht0[i] = this.time;
+    this.hx[i] = x; this.hy[i] = y; this.ht0[i] = this.time; this.hNova[i] = nova ? 1 : 0;
     const o = i * 5;
     const H = this.hd;
     H[o] = life; H[o + 1] = radius; H[o + 2] = strength; H[o + 3] = cx; H[o + 4] = cy;
@@ -966,15 +982,21 @@ export class RocketEffects {
     const B = MISSILE_VFX.supernova.blast;
     const x = this.nvx[i];
     const y = this.nvy[i];
-    this._flash(x, y, 2.2, 0, 0, NOVA_CORE, 1, 150, 0.09, NOVA_HALO, 1, 1900, 0.32, NOVA_LIGHT, 26, 0.12, 4.0, 0.95, 8000, 400);
+    const S = NOVA_SCALE;
+    this._flash(x, y, 1.6, 0, 0, NOVA_CORE, 1, 150 * S, 0.09, NOVA_HALO, 1, 1900 * S, 0.32, NOVA_LIGHT, 26, 0.12, 4.0, 0.7, 8000 * S, 400);
     // Linia anamorficzna (w poziomie ekranu), cienka i krótka.
     const tl = this.time - this.epoch;
-    this.arcs.line(tl, x - 1500, y, x + 1500, y, 0.4, 1.1, 5, ANAM_CORE_A, ANAM_GLOW_A, 95);
-    this.arcs.line(tl, x - 520, y, x + 520, y, 0.22, 1.8, 9, ANAM_CORE_B, ANAM_GLOW_B, 96);
-    // Fala: refrakcja i wymiatanie dymu (front hamuje jak fala Sedova).
-    this._shock(x, y, 1.3, 0, 2700, 0.42, 170, 22, 0, 0, true);
-    this._blast(x, y, 1.3, 0, 2700, 0.42, 220, 16000, 0, 0);
-    this._haze(x, y, 1.8, 700, 5, 0, 0);
+    this.arcs.line(tl, x - 1500 * S, y, x + 1500 * S, y, 0.4, 1.1, 5 * S, ANAM_CORE_A, ANAM_GLOW_A, 95);
+    this.arcs.line(tl, x - 520 * S, y, x + 520 * S, y, 0.22, 1.8, 9 * S, ANAM_CORE_B, ANAM_GLOW_B, 96);
+    // Fala: refrakcja i wymiatanie dymu (front hamuje jak fala Sedova). 2026-10-05 (user: „haze i fala
+    // mocniejsze”): front grubszy, dłuższy i ~2,5× silniejszy (sufit z grubości na ekranie —
+    // fillDistortion), za nim druga, słabsza fala odbita; gorące powietrze szersze, silniejsze i dłuższe.
+    this._shock(x, y, NOVA_SHOCK.life, 0, NOVA_SHOCK.rMax * S, NOVA_SHOCK.tau, NOVA_SHOCK.width * S, NOVA_SHOCK.strength, 0, 0, true);
+    this._shock(x, y, NOVA_SHOCK.life * 1.25, 0, NOVA_SHOCK.rMax * 0.62 * S, NOVA_SHOCK.tau * 1.6, NOVA_SHOCK.width * 0.7 * S,
+      NOVA_SHOCK.strength * NOVA_SHOCK.echo, 0, 0, true);
+    this._blast(x, y, 1.3, 0, 2700 * S, 0.42, 220 * S, 16000 * S, 0, 0);
+    this._haze(x, y, NOVA_HAZE.life, NOVA_HAZE.radius * S, NOVA_HAZE.strength, 0, 0, true);
+    this._haze(x, y, NOVA_HAZE.life * 0.45, NOVA_HAZE.radius * 0.45 * S, NOVA_HAZE.strength * NOVA_HAZE.core, 0, 0, true);
     // Pozostałość: wir (obrót różnicowy — kierunek losowy), dżety pulsara na obracającej się osi.
     const dir = rng.next() < 0.5 ? -1 : 1;
     const spin = dir * (0.95 + 0.35 * rng.next());
@@ -983,14 +1005,14 @@ export class RocketEffects {
     this.nSpin[i] = spin; this.nJetA[i] = jetA0; this.nJetW[i] = jetW;
     const arms = rng.next() < 0.5 ? 2 : 3;
     const armPhase = rng.next() * TAU;
-    if (this.renderer) this.nebula.spawn(this.renderer, tl, x, y, 110000, 1250, 9, NOVA_REMNANT_LIFE, 0.22,
+    if (this.renderer) this.nebula.spawn(this.renderer, tl, x, y, NOVA_REMNANT_PARTICLES, 1250 * S, 10.5, NOVA_REMNANT_LIFE, 0.27,
       spin, jetA0, jetW, NOVA_JET_SPEED, NOVA_JET_SPAN, NOVA_JET_LIFE, arms, armPhase);
     // Iskry gwiezdne (w próżni: bez nośnika — pozostałość stoi w świecie, jak w demie).
     const inView = !this._outside(x, y, EMIT_MARGIN + 3000);
     const n = inView ? Math.round(B.sparks * this.opts.blastGain) : 0;
     for (let s = 0; s < n; s++) {
       const a = rng.next() * TAU;
-      const sp = 900 + rng.next() * 3900;
+      const sp = (900 + rng.next() * 3900) * S;
       const col = rng.next() < 0.7 ? SPARK_COLORS.nova : (rng.next() < 0.5 ? SPARK_COLORS.ion : NOVA_SPARK_PALE);
       this._spark(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 0.6 + rng.next() * 1.3, 0.3 + rng.next() * 0.5, 0.8 + rng.next() * 0.9, col, 0.8, 0, 0, CLOCK_SIM);
     }
@@ -1158,6 +1180,7 @@ export class RocketEffects {
     if (i === last) return;
     this.hx[i] = this.hx[last]; this.hy[i] = this.hy[last]; this.ht0[i] = this.ht0[last];
     this.hd.copyWithin(i * 5, last * 5, last * 5 + 5);
+    this.hNova[i] = this.hNova[last];
   }
 
   _removeFrag(g) {
@@ -1231,8 +1254,8 @@ export class RocketEffects {
       const a = time - this.nt0[i];
       if (a < 0.26) {
         const t = smooth(a / 0.24);
-        A[nb].set(this.nvx[i] - ox, -this.nvy[i] - oy, 0, 60);
-        Bv[nb].set(5200 * t, 1, 1500, 0);
+        A[nb].set(this.nvx[i] - ox, -this.nvy[i] - oy, 0, 60 * NOVA_SCALE);
+        Bv[nb].set(5200 * NOVA_SCALE * t, 1, 1500 * NOVA_SCALE, 0);
         nb++;
       }
     }
@@ -1347,10 +1370,10 @@ export class RocketEffects {
       const implode = a < 0.24;
       const pb = a - 0.24;
       const ps = Math.max(0, Math.sin(pb * TAU * 6.5));
-      const I = implode ? 3 * smooth(a / 0.24) : 1.4 * Math.exp(-pb / 1.6) + 0.3 * Math.exp(-pb / 2.8) * (0.5 + 0.5 * ps * ps);
+      const I = implode ? 3 * smooth(a / 0.24) : 1.4 * Math.exp(-pb / 0.8) + 0.3 * Math.exp(-pb / 1.0) * (0.5 + 0.5 * ps * ps);
       if (!implode && !(I > 0.02)) continue;
       const q = ln++ * 8;
-      LB[q] = this.nvx[i]; LB[q + 1] = this.nvy[i]; LB[q + 2] = implode ? 60 : 80; LB[q + 3] = implode ? 1400 : 2600;
+      LB[q] = this.nvx[i]; LB[q + 1] = this.nvy[i]; LB[q + 2] = (implode ? 60 : 80) * NOVA_SCALE; LB[q + 3] = (implode ? 1400 : 2600) * NOVA_SCALE;
       LB[q + 4] = (implode ? 0.8 : 0.6) * I; LB[q + 5] = (implode ? 0.6 : 0.75) * I; LB[q + 6] = I; LB[q + 7] = 1.0;
     }
     this._lN = ln;
@@ -1502,26 +1525,26 @@ export class RocketEffects {
       const y = -this.nvy[i] - oy;
       if (a < 0.24) {
         const t = smooth(a / 0.24);
-        S.x = x; S.y = y; S.z = 94; S.size = 10 + 40 * t; S.r = 8 + 22 * t; S.g = 7 + 18 * t; S.b = 10 + 24 * t;
+        S.x = x; S.y = y; S.z = 94; S.size = (10 + 40 * t) * NOVA_SCALE; S.r = 8 + 22 * t; S.g = 7 + 18 * t; S.b = 10 + 24 * t;
         glow.push();
       } else {
         const b = a - 0.24;
         // Stygnące jądro z pulsowaniem (pulsar) — świeci przez całe życie wiru, gaśnie z nim.
-        const core = Math.exp(-b / 1.1) * 0.7 + 0.3 * Math.exp(-b / 3.2);
+        const core = Math.exp(-b / 0.6) * 0.7 + 0.3 * Math.exp(-b / 1.0);
         const sp = Math.max(0, Math.sin(b * TAU * 6.5));
         const sp2 = sp * sp;
         const pul = core * (0.6 + 0.4 * sp2 * sp2 * sp2);
-        S.x = x; S.y = y; S.z = 93; S.size = 26; S.r = 6 * pul; S.g = 7 * pul; S.b = 10 * pul;
+        S.x = x; S.y = y; S.z = 93; S.size = 26 * NOVA_SCALE; S.r = 6 * pul; S.g = 7 * pul; S.b = 10 * pul;
         glow.push();
-        const hot = Math.exp(-b / 0.9);
-        S.x = x; S.y = y; S.z = 91; S.size = 420 + 900 * (1 - Math.exp(-b / 0.5)); S.r = 0.18 * hot; S.g = 0.26 * hot; S.b = 0.42 * hot;
+        const hot = Math.exp(-b / 0.7);
+        S.x = x; S.y = y; S.z = 91; S.size = (420 + 900 * (1 - Math.exp(-b / 0.5))) * NOVA_SCALE; S.r = 0.18 * hot; S.g = 0.26 * hot; S.b = 0.42 * hot;
         glow.push();
         // Snopy pulsara: dwie przeciwne smugi z jądra wzdłuż osi dżetów (ta sama oś, która kreśli
         // spiralę cząstek w mgławicy) — obracają się jak latarnia, błyskają w rytm pulsu.
-        const beamK = Math.min(1, b / 0.35) * Math.exp(-b / 2.8) * (0.55 + 0.45 * sp2);
+        const beamK = Math.min(1, b / 0.25) * Math.exp(-b / 0.8) * (0.55 + 0.45 * sp2);
         if (beamK > 0.01) {
           const th = this.nJetA[i] + this.nJetW[i] * b;
-          const len = 300 + 520 * Math.min(1, b / 1.4);
+          const len = (300 + 520 * Math.min(1, b / 0.8)) * NOVA_SCALE;
           const ux = Math.cos(th);
           const uy = Math.sin(th);
           const Pb = PULSAR_BEAM;
@@ -1529,7 +1552,7 @@ export class RocketEffects {
             // Jasny koniec smugi (+kierunek) w jądrze: kierunek = −oś, środek = jądro + oś · len / 2.
             // Wąski rdzeń snopu i szeroka, słaba poświata pod nim (snop w pyle pozostałości).
             for (let layer = 0; layer < 2; layer++) {
-              const width = layer === 0 ? 46 : 190;
+              const width = (layer === 0 ? 46 : 190) * NOVA_SCALE;
               const k = layer === 0 ? beamK : beamK * 0.16;
               const l = layer === 0 ? len : len * 0.8;
               S.x = x + ux * side * l * 0.5; S.y = y + uy * side * l * 0.5; S.z = 94;
@@ -1553,14 +1576,19 @@ export class RocketEffects {
       const a = time - this.st0[i];
       const R = this._shockRadius(S[o + 2], S[o + 3], S[o + 1], a);
       const k = 1 - a / S[o];
-      field.shock(this.sx[i] + S[o + 6] * a, this.sy[i] + S[o + 7] * a, R, S[o + 4] * (1 + a * 0.8), S[o + 5] * k * k, S[o + 8] ? 0.45 : 0.35);
+      const width = S[o + 4] * (1 + a * 0.8);
+      let strength = S[o + 5] * k * k;
+      // Fala supernowej: siła w px ekranu z sufitem z grubości frontu na ekranie — przy dalekim
+      // zoomie cienki pierścień z dużym przesunięciem zawijałby obraz.
+      if (S[o + 8]) strength = Math.min(strength, width * this.zoom * NOVA_SHOCK.capPerWidth);
+      field.shock(this.sx[i] + S[o + 6] * a, this.sy[i] + S[o + 7] * a, R, width, strength, S[o + 8] ? 0.45 : 0.35);
     }
     for (let i = 0; i < this.nN; i++) {
       const a = time - this.nt0[i];
       if (a < 0.3) {
         const t = smooth(Math.min(1, a / 0.24));
         const out = a > 0.24 ? 1 - (a - 0.24) / 0.06 : 1;
-        field.implode(this.nvx[i], this.nvy[i], 720, 30 * t * Math.max(0, out), 0.35);
+        field.implode(this.nvx[i], this.nvy[i], 720 * NOVA_SCALE, 30 * t * Math.max(0, out), 0.35);
       }
     }
     const H = this.hd;
@@ -1568,7 +1596,11 @@ export class RocketEffects {
       const o = i * 5;
       const a = time - this.ht0[i];
       const k = 1 - a / H[o];
-      field.heat(this.hx[i] + H[o + 3] * a, this.hy[i] + H[o + 4] * a, H[o + 1] * (1 + a * 0.6), H[o + 2] * k);
+      let strength = H[o + 2] * k;
+      const nova = this.hNova[i] === 1;
+      if (nova) strength = Math.min(strength, this.zoom * NOVA_HAZE.capPerZoom);
+      field.heat(this.hx[i] + H[o + 3] * a, this.hy[i] + H[o + 4] * a, H[o + 1] * (1 + a * 0.6), strength,
+        0, 0, 1, 0, 0, nova ? NOVA_HAZE.scale : 1);
     }
   }
 

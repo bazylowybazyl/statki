@@ -3,6 +3,17 @@ import {
   LIGHT_KINDS,
   normalizeLightsBlock
 } from '../ui/shipLightEditorModel.js';
+// Maskowanie (2026-10-04): lampy gasną z komórką kadłuba pod sobą, reflektory i rozlew lamp z resztą okrętu.
+import { cloakLightGain, entityCloakVisAt } from './cloakLook.js';
+// Rozpad kadłuba belkowego (2026-10-05): lampa gaśnie, gdy komórka pod nią nie jest już żywym węzłem ciała
+// właściciela (odcięta z odłamem albo zestrzelona) — hullMounts.js.
+import {
+  beginHullMountBind,
+  bindHullMount,
+  createHullMountSet,
+  mountHullOf,
+  refreshHullMountSet
+} from './hullMounts.js';
 
 // 64, nie 32: Atlas ma 42 lampy pozycyjne + 2 reflektory + 5 reflektorów
 // otoczenia; przy 32 reflektory wypadały z shadera kadłuba (lampy pozycyjne
@@ -175,6 +186,8 @@ export function getEntityLights(entity) {
     addAutoFloodMarkers(block, source.autoFlood !== false);
     normalizedLightsCache.set(source, block);
   }
+  // Kadłub belkowy: bez lamp, których komórka nie jest już żywym węzłem ciała encji (liveLightsBlock).
+  block = liveLightsBlock(entity, block);
   // Reflektory wyłączone (`entity.roadLightsOff`, klawisz L gracza): ten sam blok bez
   // lamp `road` i `flood` — pozycyjne i długość obrysu zostają. Wariant w cache per źródło.
   if (entity.roadLightsOff) {
@@ -193,6 +206,93 @@ export function getEntityLights(entity) {
   return block;
 }
 const darkLightsCache = new WeakMap();
+
+// Lampy na kadłubie belkowym (hullBodies.js) leżą w pikselach sprite'a właściciela. Po rozpadzie lampy odpadłej
+// części zostawały na rodzicu w tym samym miejscu sprite'a: nad dryfującym wrakiem, potem w pustce — i dalej
+// świeciły na skały i inne okręty. Każda lampa bloku (także automatyczne reflektory otoczenia) ma komórkę siatki
+// belek (hullMounts.js); blok encji = lampy, których komórka jest żywym węzłem jej BIEŻĄCEGO ciała. Wiązanie
+// raz na blok (agonia hulka podmienia źródło — nowy blok, nowe wiązanie po siatce spoczynkowej, więc zgaszona
+// lampa nie wraca), żywotność tylko przy zmianie ciała; ten sam stan = ten sam obiekt bloku (cache payloadu
+// kadłuba i grup lamp trzymają się tożsamości). Długość obrysu (`hullLenPx`, progi reflektorów) zostaje z bloku.
+const liveLightsCache = new WeakMap();
+const LIGHT_KIND_ORDER = [LIGHT_KINDS.POSITION, LIGHT_KINDS.ROAD, LIGHT_KINDS.FLOOD];
+
+// Skale hardpointów jak getEntityLightScale, bez obiektu (getEntityLights idzie kilka razy na encję na klatkę).
+function lightScaleX(entity) {
+  const raw = Number(entity.__hardpointScaleX);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  const u = Number(entity.__hardpointScale);
+  return Number.isFinite(u) && u > 0 ? u : 1;
+}
+
+function lightScaleY(entity) {
+  const raw = Number(entity.__hardpointScaleY);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  const u = Number(entity.__hardpointScale);
+  return Number.isFinite(u) && u > 0 ? u : 1;
+}
+
+function liveLightsBlock(entity, block) {
+  const hull = mountHullOf(entity);
+  if (!hull) return block;
+  let rec = liveLightsCache.get(entity);
+  if (rec === undefined) {
+    rec = { block: null, hsx: 0, hsy: 0, set: createHullMountSet(), version: -1, filtered: block };
+    liveLightsCache.set(entity, rec);
+  }
+  const set = rec.set;
+  const hsx = lightScaleX(entity), hsy = lightScaleY(entity);
+  if (rec.block !== block || set.lineage !== hull.dmgKey || rec.hsx !== hsx || rec.hsy !== hsy) {
+    let n = 0;
+    for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) n += block[LIGHT_KIND_ORDER[k]].length;
+    const rest = beginHullMountBind(set, hull, n);
+    let at = 0;
+    for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) {
+      const list = block[LIGHT_KIND_ORDER[k]];
+      for (let i = 0; i < list.length; i++) {
+        set.cells[at++] = bindHullMount(hull, (Number(list[i].x) || 0) * hsx, (Number(list[i].y) || 0) * hsy, rest);
+      }
+    }
+    rec.block = block;
+    rec.hsx = hsx;
+    rec.hsy = hsy;
+  }
+  refreshHullMountSet(set, hull);
+  if (rec.version !== set.version) {
+    rec.version = set.version;
+    rec.filtered = set.dead === 0 ? block : filterLightsBlock(block, set.alive);
+  }
+  return rec.filtered;
+}
+
+// Blok z samymi żywymi lampami (kolejność rodzajów jak przy wiązaniu). Markery wspólne z blokiem źródłowym.
+function filterLightsBlock(block, alive) {
+  const out = { hullLenPx: block.hullLenPx };
+  let at = 0;
+  for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) {
+    const kind = LIGHT_KIND_ORDER[k];
+    const list = block[kind];
+    const kept = [];
+    for (let i = 0; i < list.length; i++) if (alive[at++]) kept.push(list[i]);
+    out[kind] = kept;
+  }
+  return out;
+}
+
+/**
+ * Ile WŁASNYCH reflektorów dalekich ma okręt (znaczniki `road` w źródle lamp) — także zgaszonych: komórka
+ * kadłuba pod lampą martwa albo odcięta odłamem (liveLightsBlock), agonia hulka (shipBridge.js: pierwotne lampy
+ * w `bridgeState.navOriginal`). Światło pola (lightGrid.addShipLights) daje zastępczą parę na dziobie tylko
+ * okrętom bez własnych (0) — zgaszone nie wracają jako zastępcze — i dzieli moc przez liczbę z układu, nie
+ * przez żywe (lampa nie jaśnieje, gdy sąsiednia zgaśnie).
+ */
+export function entityOwnRoadLightCount(entity) {
+  const source = getEntityLightSource(entity);
+  const n = source && typeof source === 'object' && Array.isArray(source.road) ? source.road.length : 0;
+  const orig = entity?.bridgeState?.navOriginal;
+  const m = orig && Array.isArray(orig.road) ? orig.road.length : 0;
+  return n > m ? n : m;
+}
 
 // Obrys kadłuba z lamp (px sprite'a, +X = dziób): pozycyjne leżą na krawędzi.
 function lightsOutline(block) {
@@ -541,6 +641,15 @@ function packOwnShipLights(lights, scale, limit, hullLen, grid) {
   };
 }
 
+// Ród kadłuba belkowego (hullBodies.js: `dmgKey` — kadłub, jego wrak i odłamy z rozpadu), 0 = brak.
+// Lampy leżą w pikselach sprite'a WŁAŚCICIELA, więc po rozpadzie lampy odpadłej części stoją dokładnie
+// na odłamie: jako światło „innego statku” zalewały go rozlewem z odległości 0 (różowa rufa Atlasa,
+// biały klin reflektora). Przed rozpadem kadłub nie dostaje rozlewu własnych lamp — odłam rodu też nie.
+function lightLineageOf(entity) {
+  const key = entity?.beamHull?.dmgKey;
+  return key > 0 ? key : 0;
+}
+
 export function buildRoadLightWorldEmitters(entities, options = {}) {
   const out = Array.isArray(options.out) ? options.out : [];
   if (options.clear !== false) out.length = 0;
@@ -557,6 +666,8 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
     const roads = Array.isArray(lights?.road) ? lights.road : [];
     const floods = withFloods && Array.isArray(lights?.flood) ? lights.flood : EMPTY_LIGHTS_BLOCK.flood;
     if (!roads.length && !floods.length) continue;
+    const cloakGain = cloakLightGain(entity);
+    if (cloakGain <= 0.01) continue;
 
     const hardpointScale = getEntityLightScale(entity);
     const spriteScale = getEntitySpriteScale(entity, options);
@@ -566,6 +677,7 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
     const s = Math.sin(angle);
     const hullLen = floods.length ? getEntityHullLengthWorld(entity, lights, options) : 0;
     const total = roads.length + floods.length;
+    const lineage = lightLineageOf(entity);
 
     for (let i = 0; i < total && out.length < maxEmitters; i++) {
       const flood = i >= roads.length;
@@ -595,6 +707,7 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
       out.push({
         owner: entity,
         ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
+        lineage,
         id: marker?.id || `road${i}`,
         flood,
         x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
@@ -602,7 +715,7 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
         dir: worldDir,
         color: hexToRgb01(marker?.color, defaults.color),
         radiusWorld: round2(radiusPx * (Number(spriteScale?.uniform) || 1)),
-        power: round2(clamp(marker?.power, 0.05, 20, defaults.power)),
+        power: round2(clamp(marker?.power, 0.05, 20, defaults.power) * cloakGain),
         rangeWorld: round2(rangePx * spriteDirectionalScale),
         coneDeg: round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg))
       });
@@ -675,6 +788,8 @@ export function buildNavLightClusters(entities, options = {}) {
     if (!entity || entity.dead) continue;
     const lights = getEntityLights(entity);
     if (!lights?.[LIGHT_KINDS.POSITION]?.length) continue;
+    const cloakGain = cloakLightGain(entity);
+    if (cloakGain <= 0.01) continue;
     const groups = getNavGroups(lights);
     const hardpointScale = getEntityLightScale(entity);
     const spriteScale = getEntitySpriteScale(entity, options);
@@ -686,6 +801,7 @@ export function buildNavLightClusters(entities, options = {}) {
     const width = Math.max(1, Number(grid?.srcWidth) || (lights.hullLenPx * hardpointScale.x * 1.1) || 1);
     const pivotX = Number(grid?.pivot?.x) || 0;
     const worldScale = (Number(hardpointScale.uniform) || 1) * (Number(spriteScale.uniform) || 1);
+    const lineage = lightLineageOf(entity);
     for (let gi = 0; gi < groups.length && out.length < maxClusters; gi++) {
       const g = groups[gi];
       const lx = g.x * hardpointScale.x * spriteScale.x;
@@ -699,11 +815,12 @@ export function buildNavLightClusters(entities, options = {}) {
       out.push({
         owner: entity,
         ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
+        lineage,
         id: `nav${gi}`,
         x: pos.x + lx * c - ly * s,
         y: pos.y + lx * s + ly * c,
         color: g.color,
-        power: g.power,
+        power: cloakGain < 1 ? g.power * cloakGain : g.power,
         count: g.count,
         spreadWorld: g.spreadPx * worldScale,
         rangeWorld: g.spreadPx * worldScale + NAV_CLUSTER.reachWorld,
@@ -773,15 +890,20 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
       const radiusPx = clamp(marker?.radius, 1, 48, 4) * (Number(hardpointScale?.uniform) || 1);
       const coreWorld = Math.max(0.25, radiusPx * (Number(spriteScale?.uniform) || 1));
       const haloWorld = Math.max(coreWorld * haloScale, minHaloWorld);
+      const wx = pos.x + scaledLocalX * c - scaledLocalY * s;
+      const wy = pos.y + scaledLocalX * s + scaledLocalY * c;
+      // Maskowanie: lampa gaśnie razem z komórką kadłuba pod sobą (lustro wzoru z shadera).
+      const cloakVis = entity.__cloakLook ? entityCloakVisAt(entity, wx, wy) : 1;
+      if (cloakVis <= 0.01) continue;
 
       out.push({
-        x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
-        y: round2(pos.y + scaledLocalX * s + scaledLocalY * c),
+        x: round2(wx),
+        y: round2(wy),
         phase: round2(phase),
         color: hexToRgb01(marker?.color, '#ff2b2b'),
         coreWorld: round2(coreWorld),
         haloWorld: round2(haloWorld),
-        intensity: round2(clamp(marker?.power, 0.05, 20, 0.8) * fade)
+        intensity: round2(clamp(marker?.power, 0.05, 20, 0.8) * fade * cloakVis)
       });
     }
   }
@@ -938,6 +1060,8 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   const tx = targetPos.x;
   const ty = targetPos.y;
   const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
+  // Światła rodu celu (rodzic odłamu / wraku) to nie światła innego statku — patrz lightLineageOf.
+  const lineage = lightLineageOf(entity);
 
   // Rozlew czerwieni z grup lamp innych statków (przed reflektorami — to one
   // mają osobny, mały budżet MAX_EXTERNAL_OMNI_SHADER_LIGHTS).
@@ -947,7 +1071,7 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
     let near = 0;
     for (let i = 0; i < omni.length; i++) {
       const light = omni[i];
-      if (!light || light.owner === entity || !(light.power > 0)) continue;
+      if (!light || light.owner === entity || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
       const distSq = omniLightReachDistSq(light, tx, ty, targetRadius);
       if (distSq >= 0) near = insertNearest(near, limit, distSq, light);
     }
@@ -980,7 +1104,7 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   let anyCandidate = false;
   for (let i = 0; i < emitters.length; i++) {
     const emitter = emitters[i];
-    if (!emitter || emitter.owner === entity) continue;
+    if (!emitter || emitter.owner === entity || (lineage !== 0 && emitter.lineage === lineage)) continue;
     const distSq = roadEmitterReachDistSq(emitter, tx, ty, targetRadius);
     if (distSq < 0) continue;
     anyCandidate = true;

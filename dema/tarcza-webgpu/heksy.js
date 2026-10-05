@@ -17,7 +17,8 @@
 //    w barwach tarczy: głęboki błękit → barwa tarczy → błękitna biel → biel;
 //  • przeciążenie (energia pola blisko progu) barwi płytki na pomarańcz, przebicie
 //    (B pola) odrywa je — lecą jako odłamki i wracają, gdy pole się zamknie;
-//  • pęknięcie tarczy rozrywa całą siatkę falą od ostatniego trafienia.
+//  • pęknięcie tarczy przebiega przez siatkę czołem rys od ostatniego trafienia i ją
+//    kruszy (SHATTER niżej).
 // W spoczynku płytki mają zerową wielkość — tarcza jest przezroczysta, widać ją
 // tylko tam, gdzie coś w nią uderzyło.
 // Siatka trójkątna w płaszczyźnie kadłuba (klatka lokalna 3D grupy tarczy);
@@ -27,8 +28,8 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, uniformArray, float, int, vec2, vec3, vec4, instancedArray, instanceIndex, attribute, varying,
-  positionGeometry, positionView, normalize, cross, cos, sin, dot, length, exp, max, min, abs, mix,
-  smoothstep, saturate, select, sqrt, pow, step, If, Loop, cameraViewMatrix, transformNormalToView, screenUV
+  positionGeometry, positionView, normalize, cross, cos, sin, atan, dot, length, exp, max, min, abs, mix,
+  floor, fract, smoothstep, saturate, select, sqrt, pow, step, If, Loop, cameraViewMatrix, transformNormalToView, screenUV
 } from 'three/tsl';
 import { sampleShieldProfileRadius } from '../../shieldSystem.js';
 import { uTime, uDt, hash12, mulberry32, clamp, SHIELD_BREAK_COLOR } from './wspolne.js';
@@ -36,9 +37,35 @@ import { sceneBehind, sstepDown } from './czasza.js';
 
 const SQ3_2 = 0.8660254;
 export const HEX_MAX_SUBSTEPS = 16;
-const FLY_LIFE = 1.25;          // s — odłamek płytki gaśnie
-const SHATTER_SPEED = 3600;     // j./s — fala rozpadu przy pęknięciu (jak dawne odłamki)
+const FLY_LIFE = 1.25;          // s — odłamek płytki z przebicia gaśnie
 const HEAL_TIME = 1.1;          // s — gojenie wgniecenia (zimna płytka; gorąca ~3× wolniej)
+
+// Pęknięcie tarczy: czoło biegnie od ostatniego trafienia przez całą siatkę, szwy przed
+// nim błyskają (jasno na rysach), płytki za nim kruszą się w postrzępionej kolejności.
+// Większość to „pył” — zostają same linie rys, które gasną prawie w miejscu w ułamku
+// sekundy; nieliczne płytki odpadają jako odłamki: przy punkcie trafienia odrzucone od
+// niego, dalej tylko dryfują od środka tarczy, zwalniają, stygną, maleją i gasną. Pole
+// pęka, okręt nie wybucha — dawny rozpad (cała siatka pełnymi płytkami, 220–1500 j./s,
+// 1,25 s) wyglądał jak eksplozja kadłuba.
+export const SHATTER = {
+  crossTime: 0.62,        // s — czoło przechodzi przez całą tarczę (2·maxR)…
+  speedMin: 1300,         // … w granicach prędkości [j./s]
+  speedMax: 4500,
+  lag: 0.07,              // s — rozrzut chwili oderwania za czołem (kruszenie, nie równa linia)
+  lead: 0.05,             // s — szwy świecą przed czołem
+  crack: 0.22,            // szansa rysy na szwie płytek…
+  crackRadial: 0.45,      // … i dodatek dla szwów biegnących promieniście od punktu pęknięcia
+  shardFrac: 0.08,        // część płytek odpadająca jako odłamki (suwak; przy trafieniu ~2× więcej)
+  kickNear: 260,          // j./s — odrzut odłamków od punktu trafienia…
+  kickRadius: 240,        // j. — … gasnący jak e^(−d/R)
+  drift: 60,              // j./s — dryf odłamków od środka tarczy
+  jitter: 28,             // j./s — losowy rozrzut
+  dustSpeed: 0.2,         // prędkość pyłu względem odłamka
+  drag: 1.8,              // 1/s — opór: odłamki zwalniają i wiszą, zamiast lecieć
+  spin: 3.5,              // rad/s — największy obrót odłamka
+  shardLife: [0.5, 1.1],  // s
+  dustLife: [0.09, 0.2]   // s
+};
 const ELASTIC_TIME = 0.5;       // s — sprężysta część przesunięcia wraca do wgniecenia
 const YIELD = 0.1;              // granica płynięcia: sprężyste przesunięcie ≤ 10% komórki
 const STRESS_TIME = 0.22;       // s — wygasanie poświaty stresu
@@ -145,6 +172,15 @@ export function createHexShared() {
     uHeatOn: uniform(1),
     // Stany tarczy
     uShatter: uniform(new THREE.Vector4(0, 0, 0, 0)), // x, y, start, wł.
+    // Strojenie pęknięcia z SHATTER (przepisywane przy każdym pęknięciu — zmiany z konsoli
+    // działają od następnego): czoło, prędkości, życie, ruch odłamka.
+    uShatterK: uniform(new THREE.Vector4(SHATTER.speedMin, SHATTER.lag, SHATTER.lead, 0)), // prędkość czoła, rozrzut, wyprzedzenie szwów
+    uShatterV: uniform(new THREE.Vector4()), // odrzut przy trafieniu, jego zasięg, dryf, rozrzut [j./s, j.]
+    uShatterL: uniform(new THREE.Vector4()), // życie odłamka min/maks, pyłu min/maks [s]
+    uShatterD: uniform(new THREE.Vector4()), // opór [1/s], obrót [rad/s], prędkość pyłu względem odłamka
+    uShatterC: uniform(new THREE.Vector2(SHATTER.crack, SHATTER.crackRadial)), // rysy: szansa, dodatek promienisty
+    uShatterPow: uniform(1),    // suwak „pęknięcie: siła” (prędkości odłamków)
+    uShardFrac: uniform(SHATTER.shardFrac), // suwak „pęknięcie: odłamki”
     uShatterMix: uniform(0),    // szwy i odłamki w barwie pęknięcia
     uRegrowOK: uniform(1),      // płytki mogą wracać (tarcza aktywna / rozruch)
     uSweep: uniform(-1),        // czoło rozruchu / gaszenia w t (−1 = brak)
@@ -178,13 +214,16 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
   const nbrB = instancedArray(L.nbr, 'int');      // 6 sąsiadów (−1 brak)
   const defA = instancedArray(n, 'vec4');         // przesunięcie xy, prędkość xy
   const defB = instancedArray(n, 'vec4');
-  const heatA = instancedArray(n, 'vec4');        // żar, stres, wgniecenie xy (plastyczne)
+  // Żar, stres, wgniecenie xy (plastyczne); odłamek: żar, życie [s], rodzaj (0 przebicie,
+  // 1 odłamek pęknięcia, 2 pył pęknięcia), — (podkroki przepisują nieprzyczepione bez zmian).
+  const heatA = instancedArray(n, 'vec4');
   const heatB = instancedArray(n, 'vec4');
   const stB = instancedArray(n, 'vec4');          // wiek oderwania (< 0 przyczepiona), wzrost, błysk, pęknięcie
   const flyV = instancedArray(n, 'vec4');         // odłamek: prędkość xyz, prędkość obrotu
   // Dla rysunku (i lotu odłamka — limit 8 buforów storage na etap compute):
   const poseB = instancedArray(n, 'vec4');        // przesunięcie xyz, wiek lotu (0 = przyczepiona)
-  const lookB = instancedArray(n, 'vec4');        // żar, stres, błysk | pęknięcie, wzrost | prędkość obrotu
+  // Przyczepiona: żar, stres, błysk, wzrost; odłamek: żar, życie, rodzaj, prędkość obrotu.
+  const lookB = instancedArray(n, 'vec4');
 
   // ── Zerowanie (start, przebudowa): płytki na miejscu, bez żaru.
   const init = Fn(() => {
@@ -377,43 +416,70 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
     const dt = uDt.toVar();
     const shOn = X.uShatter.w.greaterThan(0.5).toVar();
     const distS = length(r.xy.sub(X.uShatter.xy)).toVar();
-    const tReach = X.uShatter.z.add(distS.div(SHATTER_SPEED)).toVar();
-    const hitS = shOn.and(uTime.greaterThanEqual(tReach)).toVar();
+    // Czoło pęknięcia dochodzi do płytki w tReach; płytka odpada chwilę później
+    // (losowy rozrzut) — siatka kruszy się, zamiast schodzić równą linią.
+    const tReach = X.uShatter.z.add(distS.div(X.uShatterK.x)).toVar();
+    const tDetach = tReach.add(hash12(vec2(r.w.mul(71.0), 5.1)).mul(X.uShatterK.y));
+    const hitS = shOn.and(uTime.greaterThanEqual(tDetach)).toVar();
     // Każda płytka ma własny próg przebicia — odpadają po jednej, nie całą łatą.
     const thrB = hash12(vec2(r.w.mul(97.0), 3.7)).mul(0.25).add(0.45);
     const hitB = bMax.greaterThan(thrB).toVar();
     const sweepOK = X.uSweep.lessThan(0.0).or(nr.w.lessThan(X.uSweep)).toVar();
-    const pre = select(shOn, smoothstep(-0.1, 0.0, uTime.sub(tReach)), float(0.0)).toVar();
+    // Szwy zapalają się przed czołem (wyprzedzenie płytki losowe — brzeg poświaty postrzępiony),
+    // najjaśniej w chwili przejścia czoła, potem przygasają do oderwania; jasność różna
+    // dla każdej płytki, żeby siatka rys nie była równą kratką.
+    const lead = X.uShatterK.z.mul(hash12(vec2(r.w.mul(43.0), 8.2)).mul(0.8).add(0.6));
+    const since = uTime.sub(tReach).toVar();
+    const preVar = hash12(vec2(r.w.mul(29.0), 6.6)).mul(0.7).add(0.6);
+    const pre = select(shOn, smoothstep(lead.negate(), 0.0, since)
+      .mul(float(1.0).sub(smoothstep(0.0, X.uShatterK.y.add(0.02), since).mul(0.4))).mul(preVar), float(0.0)).toVar();
     const h1 = hash12(vec2(r.w.mul(311.0), X.uShatter.z.mul(0.37).add(1.0))).toVar();
     const h2 = hash12(vec2(r.w.mul(173.0).add(5.0), X.uShatter.z.mul(0.53).add(2.0))).toVar();
     const h3 = hash12(vec2(r.w.mul(59.0).add(9.0), X.uShatter.z.mul(0.71).add(3.0))).toVar();
 
     If(s.x.lessThan(0.0), () => {
-      If(hitS.or(hitB), () => {
-        // Oderwanie: przy pęknięciu od punktu trafienia i na zewnątrz czaszy (jak
-        // dawne odłamki), przy przebiciu wyrzut wzdłuż normalnej z ruchem płytki.
+      If(hitS, () => {
+        // Pęknięcie: przy punkcie trafienia odrzut od niego (e^(−d/R)), dalej powolny
+        // dryf od środka tarczy i wzdłuż normalnej czaszy; pył prawie stoi. Odłamków
+        // przy trafieniu więcej (tam pole pękło), z dala płytki raczej gasną w miejscu.
+        const SV = X.uShatterV, SL = X.uShatterL, SD = X.uShatterD;
+        const near = exp(distS.div(max(SV.y, 1.0)).negate()).toVar();
+        const shard = hash12(vec2(r.w.mul(211.0), 7.3)).lessThan(X.uShardFrac.mul(mix(float(0.75), float(1.9), near))).toVar();
         const away = r.xy.sub(X.uShatter.xy).div(max(distS, 1.0));
-        const spS = exp(distS.div(-520.0)).mul(900.0).add(220.0);
-        const sp = select(hitS, spS, float(260.0)).mul(h1.mul(0.8).add(0.6));
-        const lat = select(hitS, away.mul(sp.mul(0.75)), dd.zw.mul(0.6));
-        const v3 = vec3(lat, 0.0).add(nr.xyz.mul(sp.mul(0.55))).add(vec3(h2.sub(0.5), h3.sub(0.5), h1.mul(0.5)).mul(160.0));
+        const radial = r.xy.div(max(length(r.xy), 1.0));
+        const sp = X.uShatterPow.mul(h1.mul(0.7).add(0.65)).mul(select(shard, float(1.0), SD.z)).toVar();
+        const lat = away.mul(near.mul(SV.x)).add(radial.mul(SV.z));
+        const v3 = vec3(lat, 0.0).add(nr.xyz.mul(SV.z.mul(0.6)))
+          .add(vec3(h2.sub(0.5), h3.sub(0.5), h1.mul(0.5)).mul(SV.w.mul(2.0))).mul(sp);
+        const hl = hash12(vec2(r.w.mul(131.0), 2.9));
+        const life = select(shard, mix(SL.x, SL.y, hl), mix(SL.z, SL.w, hl));
+        fp.assign(vec4(dd.x, dd.y, 0.0, 1e-4));
+        fv.assign(vec4(v3, h2.sub(0.5).mul(SD.y.mul(2.0)).mul(select(shard, float(1.0), float(0.4)))));
+        s.assign(vec4(0.0, s.y, 0.0, 1.0));
+        hh.assign(vec4(max(hh.x, 0.8), life, select(shard, float(1.0), float(2.0)), 0.0));
+      }).ElseIf(hitB, () => {
+        // Przebicie: wyrzut wzdłuż normalnej z ruchem płytki.
+        const sp = h1.mul(0.8).add(0.6).mul(260.0);
+        const v3 = vec3(dd.zw.mul(0.6), 0.0).add(nr.xyz.mul(sp.mul(0.55))).add(vec3(h2.sub(0.5), h3.sub(0.5), h1.mul(0.5)).mul(160.0));
         fp.assign(vec4(dd.x, dd.y, 0.0, 1e-4));
         fv.assign(vec4(v3, h2.sub(0.5).mul(16.0)));
-        s.assign(vec4(0.0, s.y, 0.0, select(hitS, float(1.0), float(0.0))));
-        hh.assign(vec4(max(hh.x, select(hitS, float(0.8), float(1.0))), 0.0, 0.0, 0.0));
+        s.assign(vec4(0.0, s.y, 0.0, 0.0));
+        hh.assign(vec4(max(hh.x, 1.0), FLY_LIFE, 0.0, 0.0));
       }).Else(() => {
         const grow = select(X.uRegrowOK.greaterThan(0.5).and(sweepOK), dt.div(0.35), float(0.0));
         s.assign(vec4(s.x, min(s.y.add(grow), 1.0), s.z.mul(exp(dt.mul(-11.0))), s.w));
       });
     }).Else(() => {
       const age = s.x.add(dt).toVar();
-      const nv = fv.xyz.mul(exp(dt.mul(-0.9))).toVar();
+      // Odłamki pęknięcia mocno hamują (wiszą i gasną), przebicia lecą dalej.
+      const drag = select(hh.z.greaterThan(0.5), X.uShatterD.x, float(0.9));
+      const nv = fv.xyz.mul(exp(dt.mul(drag).negate())).toVar();
       fp.assign(vec4(fp.xyz.add(nv.mul(dt)), age));
       fv.assign(vec4(nv, fv.w));
-      hh.assign(vec4(hh.x.mul(exp(dt.mul(-1.6))), 0.0, 0.0, 0.0));
+      hh.assign(vec4(hh.x.mul(exp(dt.mul(-1.6))), hh.y, hh.z, 0.0));
       // Powrót: odłamek zgasł, pole zamknięte, tarcza aktywna (za czołem rozruchu).
       const back = X.uRegrowOK.greaterThan(0.5).and(sweepOK).and(bMax.lessThan(0.25))
-        .and(age.greaterThan(FLY_LIFE)).and(shOn.not());
+        .and(age.greaterThan(max(hh.y, 0.05))).and(shOn.not());
       If(back, () => {
         s.assign(vec4(-1.0, h2.mul(-0.9), 0.0, 0.0));
         fp.assign(vec4(0.0));
@@ -432,8 +498,8 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
     poseB.element(id).assign(select(att, vec4(dd.x, dd.y, 0.0, 0.0), vec4(fp.xyz, max(s.x, 1e-4))));
     lookB.element(id).assign(vec4(
       hh.x,
-      select(att, hh.y.add(pre.mul(1.4)), float(0.0)),
-      select(att, s.z, s.w),
+      select(att, hh.y.add(pre), hh.y),
+      select(att, s.z, hh.z),
       select(att, s.y, fv.w)));
   })().compute(n);
 
@@ -482,13 +548,21 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
   // Martwe strefy: drobne drgania i resztki żaru nie zapalają płytek (tarcza przezroczysta).
   const stressVis = max(lookA.y.sub(0.3), 0.0).div(0.7);
   const visAtt = max(lookA.x.sub(0.035), 0.0).add(stressVis).add(lookA.z).add(forming).add(sweepBand).add(X.uShow);
+  // Odłamek: życie, rodzaj (0 przebicie, 1 odłamek pęknięcia, 2 pył pęknięcia), postęp życia.
+  // Pył (siatka rys) gaśnie prawie w miejscu, lekko się zwijając; odłamek pęknięcia to
+  // kawałek płytki (70%), który maleje do ~25%; odłamek przebicia leci w całości.
+  const flyLife = max(lookA.y, 0.05);
+  const flyK = saturate(poseA.w.div(flyLife));
+  const flyScale = mix(float(1.0),
+    mix(float(0.7).sub(flyK.mul(0.45)), float(0.92).sub(flyK.mul(0.35)), step(1.5, lookA.z)),
+    step(0.5, lookA.z));
   // Odłamek rysowany tylko w locie; zgasły czeka na powrót bez rysowania.
-  const shown = select(isFly.greaterThan(0.5), step(poseA.w, FLY_LIFE), step(0.004, visAtt));
+  const shown = select(isFly.greaterThan(0.5), step(poseA.w, flyLife), step(0.004, visAtt));
 
   mat.positionNode = Fn(() => {
     const flying = isFly.toVar();
     const N = normalize(mix(nTilt, n0, flying)).toVar();
-    const scale = mix(grow, float(1.0), flying).mul(X.uGap.oneMinus()).mul(shown).mul(circR).toVar();
+    const scale = mix(grow, flyScale, flying).mul(X.uGap.oneMinus()).mul(shown).mul(circR).toVar();
     const o2 = positionGeometry.xy.mul(scale).toVar();
     // Płaszczyzna styczna nad punktem siatki: rzut z góry pokrywa się z komórką.
     const lift = o2.x.mul(N.x).add(o2.y.mul(N.y)).negate().div(max(N.z, 0.3));
@@ -531,10 +605,27 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
     const body = rim.mul(rim).mul(0.45).add(0.1);
     const heatE = ramp.mul(I).mul(body.add(edge.mul(1.3)));
 
+    // Rysy pęknięcia: wspólna krawędź dwóch płytek (jej środek w siatce spoczynkowej) losuje
+    // raz — rysa jest ciągła przez szew obu płytek; szwy biegnące promieniście od punktu
+    // pęknięcia pękają chętniej. Krawędź fragmentu: sektor kąta w heksie (ostrym
+    // wierzchołkiem w górę → normalne krawędzi co 60° od 0°, jak sąsiedzi w siatce).
+    const pg = positionGeometry.xy.add(vec2(1.3e-4, 0.7e-4)).toVar();
+    const eTh = floor(atan(pg.y, pg.x).add(Math.PI / 6).div(Math.PI / 3)).mul(Math.PI / 3);
+    const eDir = vec2(cos(eTh), sin(eTh)).toVar();
+    const eMid = restA.xy.add(eDir.mul(L.cell * 0.5)).toVar();
+    const eKey = floor(eMid.div(L.cell * 0.25).add(0.5));
+    const eRad = normalize(eMid.sub(X.uShatter.xy).add(vec2(1e-3, 0.0)));
+    const eAl = abs(dot(vec2(eDir.y.negate(), eDir.x), eRad)).toVar();
+    const pCrack = eAl.mul(eAl).mul(eAl.mul(eAl)).mul(X.uShatterC.y).add(X.uShatterC.x);
+    const crack = step(hash12(eKey.mul(vec2(0.0731, 0.0517)).add(fract(X.uShatter.z.mul(0.123)).mul(37.0))), pCrack).toVar();
+
     // Stres: szwy płytek w barwie tarczy (przy pęknięciu — w barwie pęknięcia).
     const sCol = mix(mix(base, vec3(0.8, 0.93, 1.0), 0.35), breakCol, X.uShatterMix).toVar();
     const st = min(stressVis, 2.2).toVar();
-    const stressE = sCol.mul(st.mul(st).mul(0.5).add(st.mul(0.5))).mul(X.uStressGain).mul(edge.mul(1.5).add(0.12));
+    // Przy pęknięciu same szwy, jasne na rysach (bez wypełnienia płytek).
+    const crackK = mix(float(1.0), mix(float(0.2), float(1.35), crack), X.uShatterMix);
+    const stressE = sCol.mul(st.mul(st).mul(0.5).add(st.mul(0.5))).mul(X.uStressGain)
+      .mul(edge.mul(1.5).mul(crackK).add(mix(float(0.12), float(0.025), X.uShatterMix)));
     // Błysk rdzenia świeżego trafienia.
     const flashE = vec3(1.0, 0.97, 0.94).mul(lk.z).mul(edge.mul(0.8).add(0.6)).mul(2.6);
     // Odrastanie, fronty rozruchu, „pokaż heksy” — same szwy.
@@ -552,19 +643,34 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
 
     const attE = heatE.add(stressE).add(flashE).add(formE).add(spec);
 
-    // Odłamek: barwa pęknięcia z białym rozbłyskiem przy oderwaniu, gaśnie w FLY_LIFE.
-    const k = saturate(flyAge.div(FLY_LIFE));
-    const fade = k.oneMinus().mul(k.oneMinus());
-    const hot = exp(flyAge.mul(-6.0));
-    const debCol = mix(mix(ramp, breakCol, 0.6), breakCol, lk.z);
-    // Przy pęknięciu leci cała siatka naraz — odłamek ciemniejszy niż pojedynczy z przebicia.
-    const debrisE = debCol.mul(edge.mul(2.1).add(0.3)).add(vec3(1.25, 1.1, 0.95).mul(hot).mul(edge.mul(0.6).add(0.4)))
-      .mul(fade).mul(heat.mul(0.5).add(0.6)).mul(mix(float(1.0), float(0.55), lk.z));
+    // Odłamek przebicia: barwa żaru i pęknięcia, biały rozbłysk przy oderwaniu, gaśnie w FLY_LIFE.
+    const k = saturate(flyAge.div(max(lk.y, 0.05))).toVar();
+    const fade = k.oneMinus().mul(k.oneMinus()).toVar();
+    const white = vec3(1.3, 1.15, 1.0);
+    const breachE = mix(ramp, breakCol, 0.6).mul(edge.mul(2.1).add(0.3))
+      .add(white.mul(exp(flyAge.mul(-6.0))).mul(edge.mul(0.6).add(0.4)))
+      .mul(fade).mul(heat.mul(0.5).add(0.6));
+    // Pęknięcie: szkło pola — jasny brzeg, prawie przezroczyste wnętrze. Odłamek przy
+    // oderwaniu krótko błyska jaśniej, potem stygnie do ciemnej czerwieni; pył to same
+    // linie rys gasnące w ułamku sekundy (bez błysku i bez reszty szwów — inaczej za
+    // czołem zostaje morze obrysów).
+    const hot = exp(flyAge.mul(-12.0)).toVar();
+    const ember = mix(breakCol, vec3(0.5, 0.05, 0.03), smoothstep(0.15, 0.85, k));
+    // Odłamki z dala od punktu pęknięcia przygaszone — jasne tylko tam, gdzie pole pękło.
+    const nearS = exp(length(restA.xy.sub(X.uShatter.xy)).div(max(X.uShatterV.y, 1.0)).negate());
+    // Jasność brzegu ~1,4: wyżej tone mapping wybiela pomarańcz do bladego różu.
+    const shardE = mix(ember, white, hot.mul(0.45)).mul(edge.mul(1.45)).add(ember.mul(0.05)).add(white.mul(hot).mul(0.12))
+      .mul(fade).mul(mix(float(0.55), float(1.0), nearS));
+    const dustE = breakCol.mul(edge.mul(crack).mul(1.5)).mul(fade);
+    const debrisE = mix(breachE, mix(shardE, dustE, step(1.5, lk.z)), step(0.5, lk.z));
 
     const emis = mix(attE, debrisE, fly).toVar();
 
     // Załamanie: tło za płytką przesunięte o jej przechył, tylko tam, gdzie świeci.
-    const mask = saturate(I.mul(0.12).add(st.mul(0.25)).add(lk.z.mul(0.4))).mul(fly.oneMinus()).mul(G.refrOn).toVar();
+    // Szwy pęknięcia prawie nie załamują (tło za nimi barwione na czerwono przy HP 0
+    // zlewało się w łososiową płytę na całej czaszy).
+    const stRefr = st.mul(mix(float(0.25), float(0.04), X.uShatterMix));
+    const mask = saturate(I.mul(0.12).add(stRefr).add(lk.z.mul(0.4))).mul(fly.oneMinus()).mul(G.refrOn).toVar();
     const off = vec2(dN.x.div(G.aspect), dN.y.negate()).mul(G.refrK.mul(G.refr).mul(2.5)).mul(mask);
     const bg = sceneBehind.sample(screenUV.add(off)).rgb;
     const tint = mix(vec3(1.0), base.mul(1.2).add(0.1), 0.3);
@@ -584,12 +690,23 @@ export function createHexLattice({ renderer, group, profile, domeHeight, P, U, G
   const maxDist = profile.maxR * 2;
 
   return {
-    mesh, count: n, cell: L.cell, substeps: 0,
+    mesh, count: n, cell: L.cell, substeps: 0, frontSpeed: SHATTER.speedMin,
+    // Środki płytek (x, y, z czaszy, ziarno) — miejsca trzasków przy pęknięciu.
+    rest: L.rest,
     describe() { return `${n.toLocaleString('pl-PL')} płytek · ${L.cell.toFixed(1)} j.`; },
-    // Pęknięcie: rozpad całej siatki falą od punktu (ox, oy).
+    // Pęknięcie: czoło od punktu (ox, oy) kruszy całą siatkę. Czoło przechodzi przez całą
+    // tarczę w ~crossTime (mała tarcza — wolniej, duża — szybciej, w granicach prędkości).
     shatter(ox, oy, time) {
+      const S = SHATTER;
+      this.frontSpeed = clamp(maxDist / S.crossTime, S.speedMin, S.speedMax);
       X.uShatter.value.set(ox, oy, time, 1);
-      flyUntil = time + FLY_LIFE + maxDist / SHATTER_SPEED + 0.2;
+      X.uShatterK.value.set(this.frontSpeed, S.lag, S.lead, 0);
+      X.uShatterV.value.set(S.kickNear, S.kickRadius, S.drift, S.jitter);
+      X.uShatterL.value.set(S.shardLife[0], S.shardLife[1], S.dustLife[0], S.dustLife[1]);
+      X.uShatterD.value.set(S.drag, S.spin, S.dustSpeed, 0);
+      X.uShatterC.value.set(S.crack, S.crackRadial);
+      // Do końca lotu ostatniego odłamka (i odłamków przebicia, które leciały już wcześniej).
+      flyUntil = time + Math.max(maxDist / this.frontSpeed + S.lag + Math.max(S.shardLife[1], S.dustLife[1]), FLY_LIFE) + 0.2;
     },
     clearShatter() { X.uShatter.value.w = 0; },
     flying(time) { return time < flyUntil; },

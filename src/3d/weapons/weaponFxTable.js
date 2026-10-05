@@ -68,6 +68,15 @@ export const WEAPON_FX = Object.freeze({
 /** Kategorie MASTER_WEAPONS poza zakresem efektów broni (rakiety — zadanie 19, hangary). */
 export const WEAPON_FX_EXCLUDED_CATEGORIES = Object.freeze(new Set(['rocket', 'torpedo', 'hangar']));
 
+/**
+ * Rodziny, których pociski zostawiają smugę gazu (TrailSystem, trails.js). Decyzja użytkownika
+ * 2026-10-04: zwykłe pociski NIE zostawiają śladu. Receptury z dema (zadanie 17) dawały smugę 10
+ * rodzinom (Tempest, Helios, autokanony, Armata, Goliath, Yamato, Plasma Gatling, Valkyrie…) —
+ * przed portem miały ją tylko Yamato i Hexlance. Zostają pojedyncze, ładowane strzały superbroni:
+ * Hexlance (smuga z gry od zawsze) i Mjolnir (kanał plazmy po 3 s ładowania).
+ */
+export const TRAIL_FAMILIES = Object.freeze(new Set(['hexlance', 'mjolnir']));
+
 /** Skala efektu z rozmiaru broni (poza skalą wieżyczki) — S lżej, Capital ciężej (demo). */
 export const SIZE_POWER = Object.freeze({ S: 0.8, M: 1.0, L: 1.25, Capital: 1.6 });
 

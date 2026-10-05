@@ -4,8 +4,8 @@
 //
 // Ramka = kształt k7Frame (haloPortK7Layout.js): { origin, tx, ty (oś x układu),
 // rx, ry (oś z układu) } w układzie SCENY gospodarza (x, −y gry). Na ringu:
-// k7Frame(ringLayout, kąt) — z układu = promieniowo na zewnątrz, tył na płycie
-// portu na podłodze; gospodarz = grupa ringu (środek planety). Na megadoku (Z8):
+// k7FloorFrame(ringLayout, kąt) — z układu = promieniowo na zewnątrz, tył na
+// płycie portu na podłodze; gospodarz = grupa ringu (środek planety). Na megadoku (Z8):
 // portModuleFrame(x, y, kąt) wokół stacji; gospodarz = środek stacji.
 // Do układu gry: (stacja.x + X, stacja.y − Y), kąty z przeciwnym znakiem
 // (Three odwraca oś y gry) — dokładnie jak haloPortTraffic.js. Ring obrócony
@@ -14,7 +14,7 @@
 import {
   K7CollisionWorld,
   k7BoxPoly,
-  k7Frame,
+  k7FloorFrame,
   k7HeadingToWorld,
   k7HubToWorld,
   k7WorldToHub
@@ -51,7 +51,9 @@ export function portModuleFrame(x = 0, y = 0, angle = Math.PI / 2) {
  * `rotation` — obrót grupy ringu (tylko dla ramki ruchu/kolizji w układzie gry).
  */
 export function portRingModuleFrame(ringLayout, theta, rotation = 0) {
-  return k7Frame(ringLayout, theta + (Number(rotation) || 0));
+  // budowle Z7 zostają wpięte w podłogę (hale K-7 i zatoki od 2026-10-05 stoją
+  // na pylonach za krawędzią ringu — k7Frame)
+  return k7FloorFrame(ringLayout, theta + (Number(rotation) || 0));
 }
 
 /** Macierz układ → scena gospodarza (kolumnami, jak Matrix4.elements): hub huba K-7. */

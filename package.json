@@ -1,7 +1,7 @@
 {
   "name": "statki",
   "version": "1.0.0",
-  "description": "Space Survivor: Battleship - prosta gra w HTML/JS",
+  "description": "HULLFALL - gra w HTML/JS",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.statki.demo",
-    "productName": "Statki Demo",
+    "productName": "HULLFALL",
     "directories": {
       "output": "dist-electron"
     },
@@ -25,12 +25,13 @@
     },
     "files": [
       "dist/**/*",
+      "!dist/sounds/menu/**",
       "electron/**/*"
     ]
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "http-server": "^14.1.1",
     "vite": "^7.3.0"
   },

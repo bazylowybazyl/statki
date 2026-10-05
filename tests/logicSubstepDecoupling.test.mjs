@@ -101,7 +101,9 @@ test('projectiles and the destructor stay on the physics substep', () => {
 
   // Pociski MUSZĄ chodzić co podkrok — inaczej tunelują. Kadłuby: silnik belek (HullBodies),
   // heksowy destruktor tylko dla ciał heksowych (asteroidy) — oba w każdym podkroku.
-  assert.match(physicsSlice, /HullBodies\.step\(dt, allDestructibles\)/);
+  // (z encjami budowli — ciała świata, src/game/worldBodies.js — w tym samym kroku)
+  assert.match(physicsSlice, /worldBodies\.step\(dt, _worldFocus\);/);
+  assert.match(physicsSlice, /HullBodies\.step\(dt, worldBodies\.withEntities\(allDestructibles\)\)/);
   assert.match(physicsSlice, /DestructorSystem\.update\(dt, _hexDestructibles\)/);
   assert.doesNotMatch(physicsSlice, /if \(runAiLogic\)[\s\S]{0,200}(DestructorSystem\.update|HullBodies\.step)/);
   assert.match(physicsSlice, /TowSystem\.update\(dt\)/);

@@ -19,7 +19,7 @@
 //   [0] środek ładowni w świecie (x, y), cos i sin kursu osi a,
 //   [1] halfA, halfB, głębokość, liczba lamp na ścianę,
 //   [2] odsłonięta połowa otworu (open · halfB) [j.], fala lamp 0…1, odstęp lamp, ziarno,
-//   [3] koguty 0/1, kieszeń 0/1 (pocket), grubość skrzydła, —.
+//   [3] koguty 0/1, kieszeń: dół skrzydeł pocketDrop (0 = over), grubość skrzydła, z lamp.
 // Wnętrze czyta rekord po indeksie obiektu, kontenery i drony po indeksie z instancji
 // (−1 = poza ładownią: samo słońce).
 //
@@ -32,6 +32,7 @@ import {
   select, sin, smoothstep, uniform, uniformArray, vec2, vec3
 } from 'three/tsl';
 import { sunFill, sunVisibility } from '../sunShadowMask.js';
+import { cargoBayLampZ } from '../../data/cargoBays.js';
 
 /** Najwięcej ładowni w tablicy (scena: kadłuby galerii + statek sceny). */
 export const CARGO_MAX_BAYS = 40;
@@ -87,15 +88,12 @@ export const CargoBayTable = {
     _rows[r].set(x, y, Math.cos(yaw), Math.sin(yaw));
     _rows[r + 1].set(geo.halfA, geo.halfB, geo.depth, geo.lamps);
     _rows[r + 2].set((pose?.open ?? 1) * geo.halfB, pose?.lamps ?? 1, geo.lampSpacing, seed);
-    _rows[r + 3].set(pose?.warn ?? 0, geo.door === 'pocket' ? 1 : 0, geo.leafT, cargoBayLampZ(geo));
+    _rows[r + 3].set(pose?.warn ?? 0, geo.pocketDrop || 0, geo.leafT, cargoBayLampZ(geo));
     this.count = Math.max(this.count, k + 1);
   }
 };
 
-/** Wysokość lamp pod krawędzią [z]: przy kieszeni pod szczeliną skrzydeł (cargoBayLamps). */
-export function cargoBayLampZ(geo) {
-  return geo.door === 'pocket' ? -(geo.leafT + 1.6) : -0.9;
-}
+export { cargoBayLampZ };
 
 /** Rekord ładowni k (int) jako cztery vec4. */
 export function bayRecord(k) {

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 
 import * as THREE from 'three';
 import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
-import { K7_ATLAS, K7_HEIGHTS, k7BoxPoly, k7ConvexOverlap, k7Frame } from '../src/3d/haloRing/haloPortK7Layout.js';
+import { K7_ATLAS, K7_HEIGHTS, k7BoxPoly, k7ConvexOverlap, k7FloorFrame } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { buildHaloPortTrafficLayout } from '../src/3d/haloRing/haloPortTraffic.js';
 import { WARSHIP_CLASSES } from '../src/game/traffic/shipyards.js';
 import { BERTH_ROLE, findBerth, hullFitsBerth, hullFootprint } from '../src/game/traffic/dockLayout.js';
@@ -529,11 +529,12 @@ test('adapter: place piasty = dok floty z refitem (findBerth), pochylnie w ukła
   assert.equal(t.solids.filter((s) => s.door).length, 0);
 });
 
-test('adapter na ringu: ramka k7Frame z obrotem grupy (Mars −π), tył na płycie podłogi', () => {
+test('adapter na ringu: ramka k7FloorFrame z obrotem grupy (Mars −π), tył na płycie podłogi', () => {
   const l = createShipyardLayout({ id: 'Y-R' });
   const theta = 0.55;
   const plain = portRingModuleFrame(ring, theta);
-  const ref = k7Frame(ring, theta);
+  // budowle Z7 zostają wpięte w podłogę (hale K-7 i zatoki od 2026-10-05 stoją na pylonach — k7Frame)
+  const ref = k7FloorFrame(ring, theta);
   assert.deepEqual(plain.origin, ref.origin);
   // tył układu (z = K7_PLACEMENT.backZ) leży na płycie portu jak ściana tylna K-7
   assert.equal(l.backZ, 250);

@@ -1,7 +1,6 @@
 # Prompt startowy: port renderu 3D na WebGPU — Faza 0 (przygotowanie)
 
-Pracujesz lokalnie na Windowsie użytkownika, w repozytorium gry „Super Capital: Battle for
-Solar System” (three.js r183, Vite, Electron). Użytkownik chce przenieść warstwę renderu 3D
+Pracujesz lokalnie na Windowsie użytkownika, w repozytorium gry „HULLFALL” (three.js r183, Vite, Electron). Użytkownik chce przenieść warstwę renderu 3D
 z `WebGLRenderer` + GLSL na `WebGPURenderer` + TSL. Masz prawdziwe GPU, Chrome i Node —
 możesz sam uruchamiać grę w headless Chrome i oglądać zrzuty.
 

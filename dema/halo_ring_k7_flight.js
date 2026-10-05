@@ -386,11 +386,13 @@ export class K7FlightDemo {
       const o = inHall ? this.registry.halls[this.hallIndex] : this.registry.bays[this.bayIndex];
       const f = o.frame;
       const l = o.layout;
-      const z0 = f.floorZ - 100;
-      const z1 = inHall ? f.rimZ + 800 : l.openZ + 200;
+      // jak HaloRingGame._setHallCut: tylko część doku pod górną ścianą (doki za krawędzią ścian — nic)
+      const z0 = Math.max(f.floorZ, l.backZ) - 100;
+      const z1 = Math.min(inHall ? f.rimZ + 800 : l.openZ + 200, f.rimZ + 800);
       const half = (inHall ? l.halfWidth : l.halfWidth + 400) + 600;
       const c = k7HubToWorld(f, 0, (z0 + z1) * 0.5, this._h);
-      ring.setCutaway(0, { x: c.x, y: c.y, angle: Math.atan2(f.ty, f.tx), a: half, b: (z1 - z0) * 0.5, strength: inHall ? this.roof.fade : this.bayFade });
+      if (z1 > z0 + 1) ring.setCutaway(0, { x: c.x, y: c.y, angle: Math.atan2(f.ty, f.tx), a: half, b: (z1 - z0) * 0.5, strength: inHall ? this.roof.fade : this.bayFade });
+      else ring.setCutaway(0, null);
     } else ring.setCutaway(0, null);
     const s = this.shipWorld;
     const r = Math.hypot(s.x, s.y);

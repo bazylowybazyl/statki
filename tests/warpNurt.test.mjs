@@ -524,6 +524,42 @@ test('ośrodek w skoku: kamera ośrodka = widoczna droga statku + zmiana offsetu
   assert.match(html, /o\.camFollow = camera\.mode === 'ship' && !camera\.transition;/);
 });
 
+test('ośrodek: krok 240 Hz cofa przegródki (pakowane raz na klatkę) do swojej chwili — warkocz bez kłębów', async () => {
+  // Przylot wpada z 12–30 tys. j/s: bańka stojąca całą klatkę w miejscu z jej końca skakała o v·Δt
+  // (200–500 j.), a zapłon talii zostawiał warkocz kłębami co klatkę (demo ustawiało bańki co krok).
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { WarpNurt, WARP_STEP } = await import('../src/3d/warp/warpNurt.js');
+  Core3D.isInitialized = true;
+  Core3D.scene = Core3D.scene || new THREE.Scene();
+  Core3D.addFxStep = () => {};
+  if (!WarpNurt.initialized) WarpNurt.init({ count: 4096 });
+  const frame = { bubbles: [], seams: { count: 0, items: [] } };
+  WarpNurt.stepAcc = 0.0011;
+  WarpNurt.flowX = 1200;
+  WarpNurt.flowY = -300;
+  const t = 20;
+  const dt = 1 / 60;
+  WarpNurt._planSteps(t, dt, frame);
+  const n = WarpNurt._stepCount;
+  assert.ok(n >= 3 && n <= 5, `kroków w klatce: ${n}`);
+  for (let i = 0; i < n; i++) {
+    const st = WarpNurt._steps[i];
+    const ts = st.t + WarpNurt.wakeT;
+    assert.ok(near(st.back, t - ts, 1e-9), `krok ${i}: cofnięcie ${st.back}`);
+    if (i > 0) assert.ok(near(WarpNurt._steps[i - 1].back - st.back, WARP_STEP, 1e-9));
+  }
+  assert.ok(near(WarpNurt._steps[n - 1].back, WarpNurt.stepAcc, 1e-9), 'ostatni krok: reszta do klatki');
+  const flow = WarpNurt.medium.U.bubbleFlow.value;
+  assert.ok(flow.x === 1200 && flow.y === 300, 'przepływ kamery ośrodka w scenie (y w górę)');
+  WarpNurt._stepCount = 0;
+  // Kernel kroku liczy środek przegródki z cofnięciem (pozycja − (v − przepływ) · czas).
+  const m = new WarpMedium({ count: 1024 });
+  const w = buildCompute(m.stepNode);
+  assert.match(w, /warpMedBubbleBack/);
+  assert.match(w, /warpMedBubbleFlow/);
+  assert.match(read('src/3d/warp/warpNurt.js'), /medium\.step\(renderer, WARP_STEP, st\.t, st\.sx, st\.sy, st\.back\);/);
+});
+
 // ── Rulon: cała gra (hak w każdym materiale, src/3d/warp/rulon.js) ─────────────────────────────
 
 test('rulon całej gry: hak w wierzchołkach każdego materiału, bez passa cienia i bez rulonBend = false; czyste funkcje', async () => {

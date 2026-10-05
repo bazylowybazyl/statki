@@ -97,8 +97,38 @@
       Mysz kieruje dziobem w widoku za statkiem. Kółko: odległość kamery. Wyłącz sterowanie myszą, żeby latać samą klawiaturą.</div>
 
     <h2>UZBROJENIE</h2>
-    <div class="legend"><kbd>LPM</kbd> laser · przytrzymaj: 18 strzałów/s<br><kbd>PPM</kbd> rakiety · przytrzymaj: salwy co 0,67 s<br>Celownik pokazuje kierunek dział. Rakiety lecą prosto i wybuchają przy trafieniu. Amunicja testowa: bez limitu.</div>
+    <div class="legend"><kbd>LPM</kbd> wybrana broń · <kbd>PPM</kbd> rakiety<br>
+      <kbd>1</kbd> działo (pęd) · <kbd>2</kbd> rakieta (ciśnienie)<br>
+      <kbd>3</kbd> wiązka (ciepło, trzymaj) · <kbd>4</kbd> Hexlance (pręt)<br>
+      <kbd>M</kbd> trafienia: fizyczne ↔ stare (A/B)<br>
+      Fizyczne: broń oddaje pęd, ciśnienie albo ciepło, a rwie solver — nic nie znika w kroku trafienia. Stare: krater, przesunięcie węzłów, kasowanie pasa (jak dziś w grze).</div>
+    <div class="row"><label for="opt-weapon">Broń (1–4)</label><select id="opt-weapon">
+      <option value="0">działo — pęd</option><option value="1">rakieta — ciśnienie</option>
+      <option value="2">wiązka — ciepło</option><option value="3">Hexlance — pręt</option>
+    </select></div>
+    <div class="row"><label><input type="checkbox" id="cb-legacy"> Stare trafienia (A/B — <kbd>M</kbd>)</label></div>
+    <div class="row"><label for="opt-target">Cel</label><select id="opt-target">
+      <option value="station">stacja swobodna</option>
+      <option value="anchored">stacja zakotwiczona</option>
+      <option value="wall">ściana K-7 (przęsło)</option>
+      <option value="drydock">suchy dok piratów (brama taranowa parkingu)</option>
+    </select></div>
     <button class="wide" id="btn-fire-test" disabled>Próba ostrzału — 10 s</button>
+
+    <h2>FIZYKA BRONI (F0)</h2>
+    <div class="row"><label>Działo: masa</label><input type="range" id="sl-cannon-mass" min="5" max="200" step="5" value="40"><output id="o-cannon-mass">40</output></div>
+    <div class="row"><label>Działo: prędkość</label><input type="range" id="sl-cannon-speed" min="100" max="1500" step="20" value="420"><output id="o-cannon-speed">420</output></div>
+    <div class="row"><label>Niecka: pierścienie</label><input type="range" id="sl-dish-rings" min="0" max="4" step="1" value="2"><output id="o-dish-rings">2</output></div>
+    <div class="row"><label>Niecka: udział</label><input type="range" id="sl-dish-weight" min="0" max="1" step="0.05" value="0.4"><output id="o-dish-weight">0.4</output></div>
+    <div class="row" title="Niecka maleje z prędkością uderzenia: szybki pocisk wybija korek, wolny wgniata szeroko"><label>Niecka: prędkość</label><input type="range" id="sl-dish-speed" min="20" max="600" step="10" value="90"><output id="o-dish-speed">90</output></div>
+    <div class="row"><label>Hexlance: masa</label><input type="range" id="sl-lance-mass" min="50" max="5000" step="50" value="600"><output id="o-lance-mass">600</output></div>
+    <div class="row"><label>Hexlance: prędkość</label><input type="range" id="sl-lance-speed" min="50" max="2500" step="10" value="320"><output id="o-lance-speed">320</output></div>
+    <div class="row"><label>Miękkość grotu</label><input type="range" id="sl-lance-soft" min="0" max="1" step="0.05" value="0.25"><output id="o-lance-soft">0.25</output></div>
+    <div class="row"><label>Odrzut strzelca</label><input type="range" id="sl-recoil" min="0" max="1" step="0.05" value="0.35"><output id="o-recoil">0.35</output></div>
+    <div class="row"><label>Fala: siła</label><input type="range" id="sl-blast-kick" min="40" max="900" step="10" value="260"><output id="o-blast-kick">260</output></div>
+    <div class="row"><label>Fala: czas frontu</label><input type="range" id="sl-blast-time" min="0.04" max="0.6" step="0.02" value="0.16"><output id="o-blast-time">0.16</output></div>
+    <div class="row"><label>Wiązka: moc</label><input type="range" id="sl-beam-power" min="0.5" max="12" step="0.25" value="3.2"><output id="o-beam-power">3.2</output></div>
+    <div class="legend">Niecka = pierścienie sąsiadów po belkach, które jadą z trafionym węzłem: więcej → wgniecenie i płatki zamiast czystej dziury. Miękkość grotu = ile reakcji gniecie sam pręt. Masy węzłów stacji ≈ 8,5, myśliwiec ≈ 3 800.</div>
 
     <button class="wide" id="btn-swap">⇄ Zamień: ciężki statek, lekka stacja</button>
 
@@ -224,9 +254,16 @@
       <div><span>Trójkąty skóry</span><span id="st-skin">—</span></div>
       <div><span>Krawędzie / wnętrze</span><span id="st-interior">—</span></div>
       <div><span>Odłamki: blacha / profile</span><span id="st-debris">0 / 0</span></div>
-      <div><span>Wystrzelono: laser / rakiety</span><span id="st-shots">0 / 0</span></div>
-      <div><span>Trafienia: laser / rakiety</span><span id="st-hits">0 / 0</span></div>
-      <div><span>Pociski w locie</span><span id="st-projectiles">0</span></div>
+      <div><span>Trafienia</span><span id="st-mode">FIZYCZNE</span></div>
+      <div><span>Broń</span><span id="st-weapon">DZIAŁO</span></div>
+      <div title="Działo / rakieta / wiązka / Hexlance"><span>Strzały: D / R / W / H</span><span id="st-shots">0 / 0 / 0 / 0</span></div>
+      <div title="Działo / rakieta / wiązka (takty) / Hexlance"><span>Trafienia: D / R / W / H</span><span id="st-hits">0 / 0 / 0 / 0</span></div>
+      <div><span>Pociski i pręty w locie</span><span id="st-projectiles">0</span></div>
+      <div title="Suma |J| oddanego konstrukcjom (zanika 1,5/s)"><span>Pęd oddany</span><span id="st-impulse">—</span></div>
+      <div title="Zmiana prędkości i obrotu celu od pierwszego trafienia serii"><span>Cel Δv / Δω</span><span id="st-target-dv">—</span></div>
+      <div title="Od pierwszego trafienia serii do ostatniej zerwanej belki — jak długo narastają zniszczenia"><span>Narastanie zniszczeń</span><span id="st-growth">—</span></div>
+      <div><span>Zerwania od trafienia</span><span id="st-hit-breaks">—</span></div>
+      <div><span>Węzły stopione (wiązka)</span><span id="st-ablated">0</span></div>
       <div><span>Broń CPU / max klatki</span><span id="st-weapons">0 / 0 ms</span></div>
       <div><span>Obiekty na starcie</span><span id="st-fleet">1 + 1</span></div>
       <div><span>Stress test</span><span id="st-benchmark">—</span></div>
@@ -242,7 +279,8 @@
     <kbd>W/S</kbd> ciąg / wstecz &nbsp;|&nbsp; <kbd>A/D</kbd> skręt &nbsp;|&nbsp; <kbd>↑/↓</kbd> dziób góra / dół
     &nbsp;|&nbsp; <kbd>Q/E</kbd> przechył &nbsp;|&nbsp; <kbd>X</kbd> hamulec &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz<br>
     <kbd>Spacja/Ctrl</kbd> góra / dół &nbsp;|&nbsp; <kbd>Z/C</kbd> w bok &nbsp;|&nbsp; <kbd>V</kbd> kamera
-    &nbsp;|&nbsp; <kbd>LPM</kbd> laser &nbsp;|&nbsp; <kbd>PPM</kbd> rakiety &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>R</kbd> reset
+    &nbsp;|&nbsp; <kbd>LPM</kbd> broń <kbd>1–4</kbd> &nbsp;|&nbsp; <kbd>PPM</kbd> rakiety &nbsp;|&nbsp; <kbd>M</kbd> fizyczne / stare
+    &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>R</kbd> reset
   </div>
 </div>
 
@@ -257,7 +295,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { voxelizeTriangles } from './src/game/voxelBody3D.js';
 import { buildBeamStructure } from './src/game/beamBody3D.js';
 import { buildModelBeamStructure, disposeModelResources } from './src/3d/beamModel3D.js';
-import { DestructorBeams3D, createBeamConfig } from './src/game/destructorBeams3D.js';
+import { DestructorBeams3D, createBeamConfig, pinBeamNodes } from './src/game/destructorBeams3D.js';
 import { BeamShips3D } from './src/3d/beamShips3D.js';
 import {
   CRASH_TARGET_SIZE, DEFAULT_CRASH_SPEED, CRASH_BREAK_MULTIPLIER, buildRamShipTriangles,
@@ -266,9 +304,14 @@ import {
 import { BeamCrashBenchmark } from './src/game/beamCrashBenchmark.js';
 import { applyFlightControls, readFlightInput } from './src/game/beamFlightControls3D.js';
 import { BeamFlightCamera3D } from './src/3d/beamFlightCamera3D.js';
-import { BeamWeapons3D } from './src/game/beamWeapons3D.js';
-import { BeamWeaponsVisual3D } from './src/3d/beamWeaponsVisual3D.js';
+import { PhysicalWeapons3D, PW, PW_NAMES } from './src/game/beamPhysicalWeapons3D.js';
+import { BeamPhysicalWeaponsVisual3D } from './src/3d/beamPhysicalWeaponsVisual3D.js';
 import { createBeamFighterModel } from './src/3d/beamFighter3D.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createPirateDryDockLayout } from './src/3d/portBuildings/pirateDryDockLayout.js';
+import { buildPirateDryDockScene } from './src/3d/portBuildings/pirateDryDockScene.js';
+import { resolvePortBuildingStyle } from './src/3d/portBuildings/portBuildingStyle.js';
+import { DRYDOCK_TEST_MODULE, dryDockChunkSolids } from './src/3d/portBuildings/pirateDryDockChunks.js';
 
 const TARGET_SIZE = CRASH_TARGET_SIZE;
 const DEFAULT_GLB = new URL('./src/stations/earth-station.glb', import.meta.url).href;
@@ -319,13 +362,185 @@ scene.add(grid);
 
 BeamShips3D.init(scene);
 BeamShips3D.setLightDir(0.35, 0.8, 0.5);
-const weapons = new BeamWeapons3D(DestructorBeams3D);
-const weaponVisuals = new BeamWeaponsVisual3D(scene, weapons);
-const weaponInput = { laser: false, missile: false };
+// Fizyczne bronie (F0 planu docs/PLAN-zniszczenia-swiata-3d.md): pęd / ciśnienie / ciepło przez solver;
+// M przełącza na stare trafienia (krater, teleport węzłów, kasowanie pasa) do porównania A/B.
+const weapons = new PhysicalWeapons3D(DestructorBeams3D);
+const weaponVisuals = new BeamPhysicalWeaponsVisual3D(scene, weapons);
+const weaponInput = { primary: false, secondary: false };
 let weaponDamage = 450, weaponRadius = 3, weaponMs = 0, weaponPeakMs = 0;
 let combatMode = true, fireTest = false;
 const aimEl = document.getElementById('aim'), aimPoint = new THREE.Vector3();
 let previousHits = 0, hitUntil = 0;
+// Cel: stacja swobodna, stacja zakotwiczona (kotwice na spodzie) albo przęsło ściany K-7 (kotwice na obwodzie).
+let targetMode = 'station';
+let lanceStructure = null, lanceCellSize = 0, wallStructure = null, wallCellSize = 0, dockStructure = null, dockCellSize = 0;
+// Seria trafień: od pierwszego trafienia do ostatniej zerwanej belki (jak długo narastają zniszczenia).
+const hitTrack = { lastHit: -1, burstAt: -1, breaksAt: 0, lastBreakAt: -1, lastBroken: 0, body: null,
+  vel: { x: 0, y: 0, z: 0 }, ang: { x: 0, y: 0, z: 0 } };
+const sumOf = list => list.reduce((a, b) => a + b, 0);
+
+// Pręt Hexlance: model +X (trzon, grot, pierścienie), ten sam importer co GLB — ma skórę i belki.
+function createLanceModel() {
+  const root = new THREE.Group();
+  const steel = new THREE.MeshBasicMaterial({ color: 0xb9c8da });
+  const tip = new THREE.MeshBasicMaterial({ color: 0xeef7ff });
+  const ring = new THREE.MeshBasicMaterial({ color: 0x74d6ff });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 8.4, 10), steel);
+  shaft.rotation.z = -Math.PI / 2; root.add(shaft);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 2.6, 10), tip);
+  cone.rotation.z = -Math.PI / 2; cone.position.x = 5.5; root.add(cone);
+  for (const x of [-3.2, -0.8, 1.6]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.5, 10), ring);
+    band.rotation.z = -Math.PI / 2; band.position.x = x; root.add(band);
+  }
+  return root;
+}
+
+// Przęsło ściany hali K-7 (twarz +X): płyta, pasy góra/dół, żebra od tyłu, przypory po bokach, pas ostrzegawczy.
+function createWallModel() {
+  const root = new THREE.Group();
+  const plate = new THREE.MeshBasicMaterial({ color: 0x8b939e });
+  const frame = new THREE.MeshBasicMaterial({ color: 0x5d6673 });
+  const stripe = new THREE.MeshBasicMaterial({ color: 0xd8b13a });
+  const box = (w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); root.add(m); };
+  box(6, 66, 110, 0, 0, 0, plate);
+  box(10, 5, 110, -1.5, 33, 0, frame); box(10, 5, 110, -1.5, -33, 0, frame);
+  for (const z of [-36, 0, 36]) box(7, 66, 4, -5, 0, z, frame);
+  for (const z of [-56, 56]) box(14, 70, 6, -2, 0, z, frame);
+  box(0.6, 3, 104, 3.2, -26, 0, stripe);
+  return root;
+}
+
+// Moduł suchego doku piratów (misja 1): koniec parkingu od strony wjazdu — odcinek trzonu, rama z pylonami, cienka
+// brama taranowa G-W, ogrodzenie z bramami pierwszych stanowisk — te same bryły co render gry
+// (pirateDryDockScene.js, kawałki = grupy renderu). Układ dema: obrót o 180° wokół pionu — X = −x doku (brama
+// G-W od strony +X: statek taranuje wzdłuż toru parkingu), Y = wysokość, Z = −z doku.
+function createDryDockModel() {
+  const layout = createPirateDryDockLayout();
+  const style = resolvePortBuildingStyle('pirate');
+  const scene = buildPirateDryDockScene(layout, style);
+  const solids = dryDockChunkSolids(layout, scene, DRYDOCK_TEST_MODULE);
+  const toDemo = new THREE.Matrix4().set(-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1);
+  const byMat = new Map();
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  const cyl = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false);
+  const cone = new THREE.ConeGeometry(1, 1, 8, 1);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Matrix4(), t = new THREE.Matrix4(), v = new THREE.Matrix4();
+  for (const so of solids) {
+    q.set(so.q[0], so.q[1], so.q[2], so.q[3]);
+    // jak shader instancji: środek + (obrót · (bryła × rozmiar)) ze ściskiem pionowym
+    m.copy(toDemo).multiply(t.makeTranslation(so.center[0], so.center[1], so.center[2]))
+      .multiply(v.makeScale(1, so.vs, 1)).multiply(s.makeRotationFromQuaternion(q))
+      .multiply(new THREE.Matrix4().makeScale(so.size[0], so.size[1], so.size[2]));
+    const g = (so.kind === 'box' ? box : so.kind === 'cone' ? cone : cyl).clone().applyMatrix4(m);
+    const k = Math.round(so.mat);
+    if (!byMat.has(k)) byMat.set(k, []);
+    byMat.get(k).push(g);
+  }
+  const root = new THREE.Group();
+  for (const [k, list] of byMat) {
+    const c = style.palette[Math.min(13, k)] || [0.5, 0.5, 0.5];
+    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(c[0], c[1], c[2], THREE.LinearSRGBColorSpace) });
+    const merged = mergeGeometries(list, false);
+    for (const g of list) g.dispose();
+    root.add(new THREE.Mesh(merged, mat));
+  }
+  box.dispose(); cyl.dispose(); cone.dispose();
+  return root;
+}
+
+// Struktury pomocnicze w siatce bieżącej konstrukcji: pręt drobniej (żeby grot się giął), ściana w siatce stacji.
+function ensureAuxStructures() {
+  const lanceCs = Math.max(0.35, cellSize * 0.25);
+  if (!lanceStructure || lanceCellSize !== lanceCs) {
+    if (lanceStructure?.skin) BeamShips3D.disposeSkinAssets(lanceStructure.skin);
+    const root = createLanceModel();
+    lanceStructure = buildModelBeamStructure(root, { targetSize: 11, cellSize: lanceCs, shellLayers: 0,
+      frameStride: 1, bulkheadEvery: 0, forwardAxis: '+x' });
+    disposeModelResources(root);
+    if (lanceStructure.skin) BeamShips3D._ensureSkinGeometries(lanceStructure.skin);
+    lanceCellSize = lanceCs;
+    weapons.setLanceStructure(lanceStructure);
+  }
+  if (targetMode === 'wall' && (!wallStructure || wallCellSize !== cellSize)) {
+    if (wallStructure?.skin) BeamShips3D.disposeSkinAssets(wallStructure.skin);
+    const root = createWallModel();
+    wallStructure = buildModelBeamStructure(root, { targetSize: 112, cellSize, shellLayers: 0, frameStride: 2, bulkheadEvery: 0 });
+    disposeModelResources(root);
+    if (wallStructure.skin) BeamShips3D._ensureSkinGeometries(wallStructure.skin);
+    wallCellSize = cellSize;
+  }
+  // moduł doku: większy od stacji (koniec parkingu z bramą) — komórka ×1,4, skorupa 1 warstwa (wnętrza puste, wręgi)
+  if (targetMode === 'drydock' && (!dockStructure || dockCellSize !== cellSize)) {
+    if (dockStructure?.skin) BeamShips3D.disposeSkinAssets(dockStructure.skin);
+    const root = createDryDockModel();
+    dockStructure = buildModelBeamStructure(root, { targetSize: 170, cellSize: cellSize * 1.4, shellLayers: 1, frameStride: 2, bulkheadEvery: 0 });
+    disposeModelResources(root);
+    if (dockStructure.skin) BeamShips3D._ensureSkinGeometries(dockStructure.skin);
+    dockCellSize = cellSize;
+  }
+}
+
+// Kotwice celu: stacja — spód (pylon), ściana — cały obwód (przypory, podłoga, strop hali).
+function pinTarget(body) {
+  const s = body.nodeStore, cs = body.cellSize;
+  let minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    minY = Math.min(minY, s.oy[i]); maxY = Math.max(maxY, s.oy[i]);
+    minZ = Math.min(minZ, s.oz[i]); maxZ = Math.max(maxZ, s.oz[i]);
+  }
+  if (targetMode === 'wall') {
+    return pinBeamNodes(body, (x, y, z) => y < minY + 1.2 * cs || y > maxY - 1.2 * cs || z < minZ + 1.2 * cs || z > maxZ - 1.2 * cs);
+  }
+  if (targetMode === 'drydock') {
+    // moduł wycięty z doku (X = −x doku, Z = −z doku): tył trzonu od strony hali (największe Z) i cięcie ku reszcie
+    // parkingu i trzonu (najmniejsze X) trzyma reszta doku; brama G-W (największe X) wolna — do taranu
+    let minX = Infinity;
+    for (let i = 0; i < s.count; i++) if (s.active[i] && s.ox[i] < minX) minX = s.ox[i];
+    return pinBeamNodes(body, (x, y, z) => z > maxZ - 1.2 * cs || x < minX + 1.2 * cs);
+  }
+  return pinBeamNodes(body, (x, y) => y < minY + 1.5 * cs);
+}
+
+function resetHitTrack() {
+  hitTrack.lastHit = -1; hitTrack.burstAt = -1; hitTrack.breaksAt = 0; hitTrack.lastBreakAt = -1;
+  hitTrack.lastBroken = DestructorBeams3D.perf.beamsBroken; hitTrack.body = null;
+}
+
+function trackHits() {
+  const lh = weapons.stats.lastHit;
+  if (lh >= 0 && lh !== hitTrack.lastHit) {
+    if (hitTrack.lastHit < 0 || lh - hitTrack.lastHit > 0.6) {
+      hitTrack.burstAt = simulationTime;
+      hitTrack.breaksAt = DestructorBeams3D.perf.beamsBroken;
+      hitTrack.lastBreakAt = -1;
+      hitTrack.body = stationBody && !stationBody.dead ? stationBody : null;
+      if (hitTrack.body) {
+        Object.assign(hitTrack.vel, hitTrack.body.vel);
+        Object.assign(hitTrack.ang, hitTrack.body.angVel);
+      }
+    }
+    hitTrack.lastHit = lh;
+  }
+  const broken = DestructorBeams3D.perf.beamsBroken;
+  if (broken > hitTrack.lastBroken && hitTrack.burstAt >= 0) hitTrack.lastBreakAt = simulationTime;
+  hitTrack.lastBroken = broken;
+}
+
+function selectWeapon(kind) {
+  weapons.selected = kind;
+  document.getElementById('opt-weapon').value = String(kind);
+  toast(`Broń: ${PW_NAMES[kind]}${weapons.legacy ? ' (stare trafienia)' : ''}`, 1400);
+  updateStats();
+}
+
+function setLegacy(on) {
+  weapons.legacy = !!on;
+  document.getElementById('cb-legacy').checked = weapons.legacy;
+  toast(weapons.legacy ? 'Trafienia: STARE (krater, kasowanie pasa)' : 'Trafienia: FIZYCZNE (pęd, ciśnienie, ciepło)', 1800);
+  updateStats();
+}
 
 // ============================== STAN ==============================
 let bodies = [];
@@ -476,7 +691,14 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
   // Struktury są mutowane przez fizykę (pozycje, długości spoczynkowe), więc
   // każde ciało dostaje własną, głęboką kopię węzłów i belek.
   cfg.maxWrecks = createBeamConfig(cellSize).maxWrecks * pairCount;
-  const fleet = createCrashFleet(DestructorBeams3D, stationStructure, ramStructure, { pairCount, heavyShip, combat: combatMode, massRatio: massRatio() });
+  try { ensureAuxStructures(); } catch (err) { console.error(err); toast(`Błąd budowy pręta / ściany: ${err.message}`, 5200); }
+  const auxTarget = targetMode === 'wall' ? wallStructure : targetMode === 'drydock' ? dockStructure : null;
+  const anchoredTarget = targetMode !== 'station' && ((targetMode !== 'wall' && targetMode !== 'drydock') || !!auxTarget);
+  if (anchoredTarget) heavyShip = false;
+  const targetStructure = auxTarget || stationStructure;
+  const fleet = createCrashFleet(DestructorBeams3D, targetStructure, ramStructure,
+    { pairCount, heavyShip, combat: combatMode, massRatio: massRatio(), anchored: anchoredTarget });
+  if (anchoredTarget) for (const pair of fleet.pairs) pinTarget(pair.station);
   bodies = fleet.bodies;
   crashPairs = fleet.pairs;
   fleetBounds = fleet.bounds;
@@ -484,7 +706,7 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
   ramBody = crashPairs[0].ship;
   crashStarted = false;
   fireTest = false;
-  weapons.reset(); weaponVisuals.sync();
+  weapons.reset(); weaponVisuals.sync(); resetHitTrack();
   weaponMs = weaponPeakMs = previousHits = hitUntil = 0;
   simulationTime = 0;
   BeamShips3D.debris?.reset();
@@ -508,9 +730,10 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
   }
   updateCrashModeUi();
 
-  const s = stationStructure.stats;
+  const s = targetStructure.stats;
+  const label = targetMode === 'wall' ? 'Ściana K-7' : targetMode === 'drydock' ? 'Suchy dok (moduł)' : targetMode === 'anchored' ? 'Stacja zakotwiczona' : 'Stacja';
   toast(
-    `Stacja: ${s.nodes} węzłów, ${s.beams} belek ` +
+    `${label}: ${s.nodes} węzłów, ${s.beams} belek ` +
     `(poszycie ${s.plating}, wręgi ${s.frames}, grodzie ${s.bulkheads})`,
     4200
   );
@@ -575,7 +798,7 @@ function selectFighter() {
   disposeModelResources(previous);
   setCameraMode('chase');
   renderer.domElement.focus({ preventScroll: true });
-  toast('Myśliwiec: mysz kieruje lotem, LPM laser, PPM rakiety. W — ciąg, X — hamulec.', 4200);
+  toast('Myśliwiec: mysz kieruje lotem, LPM broń (1 działo, 2 rakieta, 3 wiązka, 4 Hexlance), PPM rakiety, M — stare/fizyczne trafienia.', 5200);
   return true;
 }
 document.getElementById('btn-fighter').addEventListener('click', selectFighter);
@@ -590,7 +813,7 @@ document.getElementById('btn-fire-test').addEventListener('click', async () => {
     clearFlightInput();
     fireTest = true; piloting = false; paused = false;
     benchmark.start(); lastFrame = performance.now(); accumulator = 0;
-    toast('Próba ostrzału: laser + rakiety przez 10 s, potem pauza.', 2400);
+    toast(`Próba ostrzału: ${PW_NAMES[weapons.selected].toLowerCase()} + rakiety przez 10 s, potem pauza.`, 2400);
   } catch (err) { toast(`Błąd próby ostrzału: ${err.message}`, 6000); console.error(err); }
   finally { startingStress = false; updateCrashModeUi(); }
 });
@@ -665,8 +888,33 @@ document.getElementById('btn-swap').addEventListener('click', () => {
   if (stationStructure && ramStructure) rebuildBodies();
 });
 bindSlider('sl-thrust', 'o-thrust', value => { engineThrust = value; });
-bindSlider('sl-dmg', 'o-dmg', value => { weaponDamage = value; });
-bindSlider('sl-radius', 'o-radius', value => { weaponRadius = value; });
+bindSlider('sl-dmg', 'o-dmg', value => { weaponDamage = value; weapons.tune.legacyDamage = value; });
+bindSlider('sl-radius', 'o-radius', value => { weaponRadius = value; weapons.tune.blastRadius = weapons.tune.legacyRadius = value; });
+// Strojenie fizycznych broni na żywo (F0).
+for (const [slider, output, key] of [
+  ['sl-cannon-mass', 'o-cannon-mass', 'cannonMass'], ['sl-cannon-speed', 'o-cannon-speed', 'cannonSpeed'],
+  ['sl-dish-rings', 'o-dish-rings', 'dishRings'], ['sl-dish-weight', 'o-dish-weight', 'dishWeight'],
+  ['sl-dish-speed', 'o-dish-speed', 'dishSpeed'],
+  ['sl-lance-mass', 'o-lance-mass', 'lanceMass'], ['sl-lance-speed', 'o-lance-speed', 'lanceSpeed'],
+  ['sl-lance-soft', 'o-lance-soft', 'lanceSoftness'], ['sl-recoil', 'o-recoil', 'recoil'],
+  ['sl-blast-kick', 'o-blast-kick', 'blastKick'], ['sl-blast-time', 'o-blast-time', 'blastTime'],
+  ['sl-beam-power', 'o-beam-power', 'beamPower']
+]) {
+  document.getElementById(slider).value = String(weapons.tune[key]);
+  document.getElementById(output).textContent = String(weapons.tune[key]);
+  bindSlider(slider, output, value => { weapons.tune[key] = value; });
+}
+document.getElementById('opt-weapon').addEventListener('change', e => {
+  selectWeapon(Number(e.target.value)); renderer.domElement.focus({ preventScroll: true });
+});
+document.getElementById('cb-legacy').addEventListener('change', e => {
+  setLegacy(e.target.checked); renderer.domElement.focus({ preventScroll: true });
+});
+document.getElementById('opt-target').addEventListener('change', e => {
+  targetMode = e.target.value;
+  if (stationStructure && ramStructure) rebuildBodies();
+  renderer.domElement.focus({ preventScroll: true });
+});
 
 const toggles = [
   ['cb-skin', 'skinEnabled', 'Skóra'],
@@ -723,7 +971,7 @@ function clearMouseStick() {
 
 function clearFlightInput() {
   for (const code in keys) keys[code] = false;
-  weaponInput.laser = weaponInput.missile = false;
+  weaponInput.primary = weaponInput.secondary = false;
   clearMouseStick();
 }
 
@@ -812,6 +1060,8 @@ window.addEventListener('keydown', (e) => {
     DestructorBeams3D.repair(bodies, 0.4);
     toast('Naprawa konstrukcji…', 1200);
   }
+  if (/^Digit[1-4]$/.test(e.code)) selectWeapon(Number(e.code.slice(5)) - 1);
+  if (e.code === 'KeyM') setLegacy(!weapons.legacy);
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 window.addEventListener('blur', clearFlightInput);
@@ -823,10 +1073,10 @@ document.addEventListener('focusin', e => { if (e.target.closest('input, select,
 renderer.domElement.addEventListener('mousedown', e => {
   renderer.domElement.focus({ preventScroll: true });
   if ((e.button !== 0 && e.button !== 2) || paused || initialModelsLoading || startingStress || fireTest || !ramBody || ramBody.dead) return;
-  if (e.button === 0) weaponInput.laser = true;
-  else weaponInput.missile = true;
-  // A short click still fires once, even between two fixed physics steps.
-  weapons.triggers(0, ramBody, e.button === 0, e.button === 2, weaponDamage, weaponRadius);
+  if (e.button === 0) weaponInput.primary = true;
+  else weaponInput.secondary = true;
+  // A short click still fires once, even between two fixed physics steps (wiązka — tylko trzymana).
+  weapons.fire(e.button === 0 ? weapons.selected : PW.ROCKET, ramBody, bodies);
 });
 renderer.domElement.addEventListener('pointermove', e => {
   if (!mouseFlight || cameraMode !== 'chase' || !piloting || paused) return;
@@ -835,14 +1085,14 @@ renderer.domElement.addEventListener('pointermove', e => {
   mouseStick.pitch = steer(1 - 2 * e.clientY / window.innerHeight);
 });
 window.addEventListener('mouseup', e => {
-  if (e.button === 0) weaponInput.laser = false;
-  if (e.button === 2) weaponInput.missile = false;
+  if (e.button === 0) weaponInput.primary = false;
+  if (e.button === 2) weaponInput.secondary = false;
 });
 for (const event of ['pointercancel', 'lostpointercapture']) renderer.domElement.addEventListener(event, () => {
-  weaponInput.laser = weaponInput.missile = false;
+  weaponInput.primary = weaponInput.secondary = false;
 });
 renderer.domElement.addEventListener('pointerleave', () => {
-  clearMouseStick(); weaponInput.laser = weaponInput.missile = false;
+  clearMouseStick(); weaponInput.primary = weaponInput.secondary = false;
 });
 renderer.domElement.addEventListener('wheel', e => {
   if (cameraMode !== 'chase') return;
@@ -893,7 +1143,7 @@ function frame() {
   let dt = (now - lastFrame) / 1000;
   const frameMs = dt * 1000;
   lastFrame = now;
-  const measuring = (crashStarted || fireTest || weapons.stats.lasers > 0 || weapons.stats.missiles > 0) && !paused && !benchmark.finished;
+  const measuring = (crashStarted || fireTest || sumOf(weapons.stats.shots) > 0) && !paused && !benchmark.finished;
   if (measuring) framePeakMs = Math.max(framePeakMs, frameMs);
   if (dt > 0.25) dt = 0.25;
   readFlightInput(keys, mouseStick.yaw, mouseStick.pitch, flightInput);
@@ -908,11 +1158,12 @@ function frame() {
       if (piloting && !initialModelsLoading && !startingStress) applyFlightControls(ramBody, flightInput, FIXED_DT, engineThrust, flightAssist);
       DestructorBeams3D.integrate(FIXED_DT, bodies);
       const weaponStart = performance.now();
-      weapons.triggers(FIXED_DT, ramBody, weaponInput.laser || fireTest, weaponInput.missile || fireTest, weaponDamage, weaponRadius);
+      weapons.hold(FIXED_DT, ramBody, bodies, weaponInput.primary || fireTest, weaponInput.secondary || fireTest);
       weapons.update(FIXED_DT, bodies);
       weaponMs += performance.now() - weaponStart;
       DestructorBeams3D.update(FIXED_DT, bodies);
       simulationTime += FIXED_DT;
+      trackHits();
       if (measuring) {
         crashPerf.split = Math.max(crashPerf.split, DestructorBeams3D.perf.lastSplitMs);
         crashPerf.collision = Math.max(crashPerf.collision, DestructorBeams3D.perf.lastCollisionMs);
@@ -951,7 +1202,8 @@ function frame() {
     aimPoint.set(450, 0, 0).applyQuaternion(ramBody.quat).add(ramBody.pos).project(camera);
     aimEl.style.left = `${(aimPoint.x * 0.5 + 0.5) * window.innerWidth}px`;
     aimEl.style.top = `${(-aimPoint.y * 0.5 + 0.5) * window.innerHeight}px`;
-    if (weapons.stats.hits !== previousHits) { hitUntil = simulationTime + 0.12; previousHits = weapons.stats.hits; }
+    const hitsNow = sumOf(weapons.stats.hits);
+    if (hitsNow !== previousHits) { hitUntil = simulationTime + 0.12; previousHits = hitsNow; }
     aimEl.classList.toggle('hit', simulationTime < hitUntil);
   }
   const renderMs = performance.now() - renderStart;
@@ -1003,9 +1255,21 @@ function updateStats() {
   set('st-interior', `${(s.interiorTriangles / 1000).toFixed(1)}k`);
   const debris = BeamShips3D.debris;
   set('st-debris', `${debris?.batches[0].alive || 0} / ${debris?.batches[1].alive || 0}`);
-  set('st-shots', `${weapons.stats.lasers} / ${weapons.stats.missiles}`);
-  set('st-hits', `${weapons.stats.laserHits} / ${weapons.stats.missileHits}`);
+  set('st-mode', weapons.legacy ? 'STARE' : 'FIZYCZNE');
+  set('st-weapon', PW_NAMES[weapons.selected]);
+  set('st-shots', weapons.stats.shots.join(' / '));
+  set('st-hits', weapons.stats.hits.join(' / '));
   set('st-projectiles', String(weapons.stats.active));
+  set('st-impulse', weapons.stats.impulse > 1 ? weapons.stats.impulse.toFixed(0) : '—');
+  const tb = hitTrack.body;
+  set('st-target-dv', tb && !tb.dead && hitTrack.burstAt >= 0
+    ? `${Math.hypot(tb.vel.x - hitTrack.vel.x, tb.vel.y - hitTrack.vel.y, tb.vel.z - hitTrack.vel.z).toFixed(1)} / ` +
+      `${Math.hypot(tb.angVel.x - hitTrack.ang.x, tb.angVel.y - hitTrack.ang.y, tb.angVel.z - hitTrack.ang.z).toFixed(2)}`
+    : tb && tb.anchored ? 'ZAKOTWICZONY' : '—');
+  set('st-growth', hitTrack.burstAt >= 0 && hitTrack.lastBreakAt >= hitTrack.burstAt
+    ? `${(hitTrack.lastBreakAt - hitTrack.burstAt).toFixed(2)} s` : '—');
+  set('st-hit-breaks', hitTrack.burstAt >= 0 ? String(p.beamsBroken - hitTrack.breaksAt) : '—');
+  set('st-ablated', String(weapons.stats.ablated));
   set('st-weapons', `${weaponMs.toFixed(2)} / ${weaponPeakMs.toFixed(2)} ms`);
   set('st-benchmark', benchmark.finished ? 'ZAKOŃCZONY' : benchmark.running ? (paused ? 'WSTRZYMANY' : `${(benchmark.wallMs / 1000).toFixed(1)} / 10 s`) : '—');
   set('st-average-fps', benchmark.frames ? benchmark.fps.toFixed(1) : '—');
@@ -1032,12 +1296,35 @@ window.__demo = {
   get ram() { return ramBody; },
   launch: launchRam,
   rebuild: (opts) => rebuildBodies(opts),
-  step(dt = 1 / 120, steps = 1) {
+  PW, hitTrack, selectWeapon, setLegacy, controls, setCameraMode,
+  get station() { return stationBody; },
+  // Kadr do zrzutów: kamera swobodna z punktu `eye` na `target`, bez paneli.
+  view(eye, target, hidePanels = true) {
+    setCameraMode('orbit');
+    followToggle.checked = false;      // stały kadr — bez gonienia statku po zderzeniu
+    controls.target.set(target[0], target[1], target[2]);
+    camera.position.set(eye[0], eye[1], eye[2]);
+    controls.update();
+    for (const id of ['panel-left', 'panel-stats', 'panel-help', 'hud-controls', 'toast', 'aim']) {
+      document.getElementById(id).style.display = hidePanels ? 'none' : '';
+    }
+  },
+  // Pętla rAF bez kroków fizyki (zrzuty krok po kroku przez step()).
+  setPaused(value) { paused = !!value; accumulator = 0; clearFlightInput(); },
+  setTarget(mode) {
+    targetMode = mode;
+    document.getElementById('opt-target').value = mode;
+    return rebuildBodies();
+  },
+  // Kroki z trzymanym spustem (primary — wybrana broń, secondary — rakiety), jak pętla dema.
+  step(dt = 1 / 120, steps = 1, primary = false, secondary = false) {
     for (let i = 0; i < steps; i++) {
       DestructorBeams3D.integrate(dt, bodies);
+      if (ramBody && !ramBody.dead) weapons.hold(dt, ramBody, bodies, primary, secondary);
       weapons.update(dt, bodies);
       DestructorBeams3D.update(dt, bodies);
       simulationTime += dt;
+      trackHits();
     }
     pruneBodies();
   },

@@ -6,11 +6,12 @@
 // model lotu z dema K-7 (NIE thrusterModel.js gry — przy porcie podpiąć napęd gry).
 //
 // Układ lokalny huba jak w K-7: x wzdłuż ringu, z promieniowo NA ZEWNĄTRZ
-// (tył hali na podłodze habitatu, brama główna daleko od niej), y = wysokość
+// (tył hali od strony ringu, brama główna daleko od niego), y = wysokość
 // nad pokładem. Płaszczyzna lotu gry (z = 0 świata) = szczyt kadłuba K-7
-// (y = 116) = środek szerokości wstęgi (flightLevel 0,5): hala jest WPIĘTA
-// W PODŁOGĘ na środku habitatu (poprawka użytkownika 2026-09-23 — wcześniej
-// wisiała na moście przy dachu).
+// (y = 116) = środek szerokości wstęgi (flightLevel 0,5): hala stoi na
+// środku wstęgi (poprawka użytkownika 2026-09-23 — wcześniej wisiała na
+// moście przy dachu), od 2026-10-05 w kosmosie za krawędzią ścian, na
+// pylonach od podłogi habitatu (k7Frame, k7DockArms).
 import { HALO_PORT, HALO_STATION_ANGLE } from './haloRingConfig.js';
 
 const TAU = Math.PI * 2;
@@ -30,6 +31,10 @@ export const K7_ABOVE_SCALE = 0.42;
 export function k7HeightToZ(y) {
   const d = y - K7_HEIGHTS.hullTop;
   return d > 0 ? d * K7_ABOVE_SCALE : d;
+}
+// odwrotność: z świata → wysokość K-7
+export function k7ZToHeight(z) {
+  return z <= 0 ? z + K7_HEIGHTS.hullTop : K7_HEIGHTS.hullTop + z / K7_ABOVE_SCALE;
 }
 
 // Atlas: getHullRenderSize('atlas', 3747, 1677) = 1800 × 806 (index.html ≈ :5563).
@@ -149,20 +154,28 @@ export function createK7Layout() {
 }
 
 // ---------------------------------------------------------------------------
-// Osadzenie na ringu: hub przy kącie stacji Ziemi, ściana tylna hali (z huba
-// = backZ) na płycie portu na podłodze habitatu, oś z promieniowo na zewnątrz.
-// Hala przechodzi przez wąwóz habitatu (pod górną ścianą) i wychodzi poza
-// krawędź ścian; stacja orbitalna znika (decyzja użytkownika), więc K-7 może
-// sięgać przez jej orbitę.
+// Osadzenie na ringu: hub przy kącie kompleksu, oś z promieniowo na zewnątrz.
+// Od 2026-10-05 (poprawka użytkownika: „doki za mocno wciśnięte w ring”)
+// ściana tylna hali (z huba = backZ) stoi HALO_PORT.dockGap za krawędzią ścian
+// habitatu, a dok trzymają dwa pylony od płyty portu na podłodze (k7DockArms).
+// Wcześniej tył hali leżał na podłodze, a hala przechodziła przez wąwóz
+// habitatu pod górną ścianą. Stacja orbitalna znika (decyzja użytkownika),
+// więc K-7 może sięgać przez jej orbitę.
 export const K7_PLACEMENT = Object.freeze({
   angle: HALO_STATION_ANGLE,
-  backZ: 250,           // createK7Layout().backZ — ta głębokość huba leży na podłodze
+  backZ: 250,           // createK7Layout().backZ — ściana tylna hali (płaszczyzna tylna doku)
   padH: 7               // płyta portu nad podłogą bazową (haloRingWorldGen)
 });
 
-export function k7Frame(ringLayout, angle = K7_PLACEMENT.angle) {
+// Promień ściany tylnej doków (hal K-7 i zatok): dockGap za krawędzią ścian.
+export function k7DockBackRadius(ringLayout) {
+  const r = ringLayout.radii;
+  return Math.max(r.rim, r.floorMid + K7_PLACEMENT.padH) + HALO_PORT.dockGap;
+}
+
+function makeK7Frame(ringLayout, angle, backR) {
   const floorR = ringLayout.radii.floorMid + K7_PLACEMENT.padH;
-  const R0 = floorR - K7_PLACEMENT.backZ;
+  const R0 = backR - K7_PLACEMENT.backZ;
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   return {
@@ -171,18 +184,73 @@ export function k7Frame(ringLayout, angle = K7_PLACEMENT.angle) {
     origin: { x: c * R0, y: s * R0 },
     tx: -s, ty: c,      // lokalne +x (wzdłuż ringu)
     rx: c, ry: s,       // lokalne +z (promieniowo na zewnątrz)
-    floorZ: floorR - R0,                        // z huba powierzchni podłogi
+    floorZ: floorR - R0,                        // z huba powierzchni podłogi (płyta portu)
     rimZ: ringLayout.radii.rim - R0,            // z huba krawędzi ścian habitatu
-    floorR
+    floorR,
+    backR,                                      // promień ściany tylnej doku (z huba = backZ)
+    standoff: backR - floorR                    // od płyty portu do ściany tylnej (długość pylonów)
   };
 }
 
-// Kołnierz K-7 na podłodze (słupy po bokach hali) — bryły w płaszczyźnie lotu,
-// wspólne dla renderu i kolizji.
-export function k7CollarPosts(l, floorZ = K7_PLACEMENT.backZ) {
-  const w = HALO_PORT.collar + 100;
-  const x0 = l.halfWidth + 50;
-  return [-1, 1].map((side) => ({ side, x: side * (x0 + w * 0.5), z: floorZ + 90, w, d: 340 }));
+// Ramka doku portu (hala K-7, zatoka): ściana tylna dockGap za krawędzią ścian.
+export function k7Frame(ringLayout, angle = K7_PLACEMENT.angle) {
+  return makeK7Frame(ringLayout, angle, k7DockBackRadius(ringLayout));
+}
+
+// Ramka z tyłem NA PŁYCIE PORTU (dawne osadzenie hal) — budowle Z7 poza grą
+// (portModuleTraffic.js) wpięte w podłogę habitatu.
+export function k7FloorFrame(ringLayout, angle = K7_PLACEMENT.angle) {
+  return makeK7Frame(ringLayout, angle, ringLayout.radii.floorMid + K7_PLACEMENT.padH);
+}
+
+// Pylony doku (dwa na dok) w układzie ramki — JEDNO źródło dla renderu
+// i kolizji. Pylon wystaje wprost ze ściany tylnej doku, na jego wysokości
+// (z świata zw0..zw1 — w płaszczyźnie gry, przeszkoda lotu): rozszerzona stopa
+// na płycie portu (od podłogi, która pod pylonem opada x²/2R, do footEnd),
+// zwężenie, dźwigar szerokości `width`, rozszerzenie i korzeń wpięty w ścianę
+// tylną (od rootStart do z1 = lico ściany + `into`). `polys` — trzy wielokąty
+// wypukłe (x, z ramki): stopa ze zwężeniem, dźwigar, rozszerzenie z korzeniem.
+// `spec` — HALO_PORT.armHall / armBay, `half` — pół szerokości doku wzdłuż
+// ringu, `wallFace` — zewnętrzne lico ściany tylnej doku (z ramki).
+export function k7DockArms(frame, half, wallFace, spec = HALO_PORT.armHall, into = 60) {
+  const [zw0, zw1] = spec.z;
+  const R = frame.floorR || 42259;
+  const W = spec.width;
+  const WF = W * (spec.flare || 1);
+  const hw = W * 0.5;
+  const hf = WF * 0.5;
+  const footEnd = frame.floorZ + spec.foot;
+  const rootStart = wallFace - spec.root;
+  const taper = Math.max(0, Math.min(spec.taper, (rootStart - footEnd) * 0.4));
+  const z1 = wallFace + into;
+  return [-1, 1].map((side) => {
+    const x = side * half * spec.x;
+    const xo = Math.abs(x) + hf;
+    const z0 = frame.floorZ - (xo * xo) / (2 * R) - 40;
+    const a = footEnd + taper;
+    const b = rootStart - taper;
+    return {
+      side, x, width: W, flareWidth: WF, zw0, zw1, z0, footEnd, rootStart, taper, z1, wallFace,
+      polys: [
+        [[x - hf, z0], [x + hf, z0], [x + hf, footEnd], [x + hw, a], [x - hw, a], [x - hf, footEnd]],
+        [[x - hw, a], [x + hw, a], [x + hw, b], [x - hw, b]],
+        [[x - hw, b], [x + hw, b], [x + hf, rootStart], [x + hf, z1], [x - hf, z1], [x - hf, rootStart]]
+      ]
+    };
+  });
+}
+// Szerokość pylonu w miejscu z ramki (stopa / korzeń — rozszerzone, zwężenia — liniowo).
+export function k7ArmWidthAt(a, z) {
+  if (z <= a.footEnd || z >= a.rootStart) return a.flareWidth;
+  const t = Math.min(1, Math.max(0, z <= a.footEnd + a.taper
+    ? (z - a.footEnd) / (a.taper || 1)
+    : (a.rootStart - z) / (a.taper || 1)));
+  return a.flareWidth + (a.width - a.flareWidth) * t;
+}
+// Pylony hali K-7 i zatoki w ich ramkach (lico ściany tylnej: hala —
+// backZ − pół grubości ściany, zatoka — baseZ).
+export function k7HallArms(frame, l) {
+  return k7DockArms(frame, l.halfWidth, l.backZ - l.wallThickness * 0.5, HALO_PORT.armHall);
 }
 export function k7HubToWorld(frame, x, z, out = {}) {
   out.x = frame.origin.x + x * frame.tx + z * frame.rx;
@@ -353,8 +421,8 @@ export function k7SolidList(l) {
     }
   }
   for (const side of [-1, 1]) add('APPROACH BEACON ' + side, side * (l.frontHalfWidth + 160), 132, l.frontZ - 90, 87, 264, 96, 'dark');
-  // słupy kołnierza na podłodze habitatu (poza halą, w płaszczyźnie lotu)
-  for (const p of k7CollarPosts(l)) add('COLLAR ' + (p.side < 0 ? 'W' : 'E'), p.x, 300, p.z, p.w, 600, p.d, 'dark');
+  // (dawne słupy kołnierza na podłodze — hala stoi od 2026-10-05 na pylonach
+  // pod płaszczyzną lotu, bez przeszkód poza halą)
   return out;
 }
 

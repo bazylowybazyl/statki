@@ -193,6 +193,8 @@
 }
 #main-menu .mm-logo-main {
   display: block;
+  width: max-content; /* background-clip: text maluje tylko w pudełku — szerokie słowo ucinało ostatnią literę */
+  white-space: nowrap;
   font-size: calc(122 * var(--mm-u));
   letter-spacing: 0.03em;
   margin-left: calc(-4 * var(--mm-u));

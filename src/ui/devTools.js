@@ -210,6 +210,7 @@ const HTML = `
         <option value="call:pirate_battleship">Pancernik piracki</option>
         <option value="call:carrier">Lotniskowiec</option>
         <option value="call:supercapital">Superkapital</option>
+        <option value="call:pirate_supercapital">Superkapital piracki — Iron Skull</option>
         <option value="call:atlas">Atlas</option>
       </optgroup>
     </select>
@@ -1138,7 +1139,7 @@ function wireDevToolsLogic() {
 
         // Szereg w poprzek kursu, przed dziobem gracza.
         const angle = Number(ship.angle) || 0;
-        const big = kind === 'call' && ['carrier', 'supercapital', 'atlas', 'megafreighter'].includes(key);
+        const big = kind === 'call' && ['carrier', 'supercapital', 'pirate_supercapital', 'atlas', 'megafreighter'].includes(key);
         const spawnDist = big ? 6000 : 3000;
         const spacing = big ? 2200 : 900;
         const cx = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;

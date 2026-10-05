@@ -284,6 +284,8 @@ export class ReactorCoreGame {
       time: this.time, hooks: this._hooks, sourceKey: core.lineage, sourceRadius: host.radius
     }).slice();
     this.detonations++;
+    // ciała świata (budowle w bańce gracza): front ciśnienia przez solver — gra (env.onDetonate)
+    this.env.onDetonate?.(ev, res);
     const fx = this.env.fx?.();
     fx?.detonation?.(ev, res, hits);
     if (res.variant === 'jet') {

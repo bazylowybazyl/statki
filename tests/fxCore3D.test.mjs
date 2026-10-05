@@ -258,8 +258,9 @@ test('„uber” 12-B: blok źródeł zniekształceń i warstwa DIST w gałęzi,
   const m = new THREE.NodeMaterial();
   m.fragmentNode = createUberPost({ sceneTexture: rt.texture, bloomTexture: bloom.getTextureNode(), uniforms: createPostUniforms(), distortion: F.node, distortionLayer: dist.texture });
   const w = buildWGSL(m);
-  // bufory uniformów: obiekt + 2 tablice gorącego powietrza + blok źródeł + grupa renderu (rulon warpa) (limit 12)
-  assert.equal((w.match(/var<uniform>/g) || []).length, 5);
+  // bufory uniformów: obiekt + 2 tablice gorącego powietrza + blok mgły wojny + blok źródeł + grupa renderu (rulon warpa)
+  // (limit 12)
+  assert.equal((w.match(/var<uniform>/g) || []).length, 6);
   assert.equal((w.match(/var<uniform> fxDistort\b/g) || []).length, 1);
   assert.equal((w.match(/texture_2d<f32>/g) || []).length, 3, 'scena, bloom, warstwa DIST');
   assert.doesNotMatch(w, /textureSample\(/, 'wszystkie odczyty z poziomem 0 (gałęzie zależne od piksela)');
@@ -268,9 +269,14 @@ test('„uber” 12-B: blok źródeł zniekształceń i warstwa DIST w gałęzi,
   assert.match(w, /for \( var distortItem : i32 = 0; distortItem < i32\( nodeVar\d+\.x \)/);
   assert.match(w, /\} else \{\s*if \( \( dot\( nodeVar3, nodeVar3 \) > 1e-12 \) \) \{/, 'else = stara gałąź dysz (02)');
   // warstwa DIST: px osi sceny → UV (x ujemne, y bez zmiany — y ekranu w dół), rozmiar z nagłówka
-  assert.match(w, /vec2<f32>\( \( - nodeVar\d+\.xy\.x \), nodeVar\d+\.xy\.y \) \/ max\( fxDistort\.value\[ 1u \]\.xy, vec2<f32>\( 1\.0, 1\.0 \) \)/);
-  // aberracja warstwy ×1,12 / ×0,88 (±0,12 · przesunięcie)
-  assert.match(w, /\* vec2<f32>\( 0\.12 \) \) \)/);
+  assert.match(w, /vec2<f32>\( \( - nodeVar\d+\.x \), nodeVar\d+\.y \) \/ nodeVar\d+ \)/);
+  assert.match(w, /= max\( fxDistort\.value\[ 1u \]\.xy, vec2<f32>\( 1\.0, 1\.0 \) \);/);
+  // aberracja warstwy ×1,12 / ×0,88 (±0,12 · przesunięcie) z sufitem LAYER_ABER_MAX_PX (poniżej — × 1, bit w bit jak
+  // wcześniej); na heksach-ekranach maskowania (B / A warstwy) zamiast niej stałe rozszczepienie
+  assert.match(w, /(nodeVar\d+) = \( nodeVar\d+ \* vec2<f32>\( 0\.12 \) \);\s*\1 = \( \1 \* vec2<f32>\( min\( 1\.0, \( 2\.5 \/ max\( length\( \( \1 \* nodeVar\d+ \) \), 0\.000001 \) \) \) \) \);/);
+  // (refrakcja maskowania — B < 0 — bez rozszczepienia: × 0)
+  assert.match(w, /if \( \( nodeVar\d+\.z < -0\.0002 \) \) \{/);
+  assert.match(w, /\( \( nodeVar\d+ \* vec2<f32>\( \( 1\.0 - nodeVar\d+ \) \) \) \* vec2<f32>\( nodeVar\d+ \) \) \+ vec2<f32>\( \( \( nodeVar\d+ \* 1\.2 \) \/ nodeVar\d+\.x \), 0\.0 \)/);
   // siatka bezpieczeństwa: czysta funkcja, bity wykładnika, na KAŻDYM odczycie sceny
   const safe = fnBody(w, 'hdrBezpieczny');
   assert.match(safe, /fn hdrBezpieczny \( c : vec4<f32> \) -> vec4<f32>/);
@@ -287,7 +293,7 @@ test('„uber” bez bloku efektów (np. testy 02) — kod jak przed 12-B, siatk
   const m = new THREE.NodeMaterial();
   m.fragmentNode = createUberPost({ sceneTexture: rt.texture, bloomTexture: null, uniforms: createPostUniforms() });
   const w = buildWGSL(m);
-  assert.equal((w.match(/var<uniform>/g) || []).length, 4);   // + grupa renderu (rulon warpa)
+  assert.equal((w.match(/var<uniform>/g) || []).length, 5);   // + blok mgły wojny, grupa renderu (rulon warpa)
   assert.doesNotMatch(w, /fxDistort|distortItem/);
   assert.equal((w.match(/texture_2d<f32>/g) || []).length, 1);
 });

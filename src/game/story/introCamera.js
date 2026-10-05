@@ -7,7 +7,7 @@
 // odcinkach różnej długości; `stop: true` zeruje styczną (kamera zwalnia do zera i rusza łagodnie — zawis
 // przed nagłym najazdem). up i fov — liniowo z wygładzeniem. Po ostatniej klatce: poza ostatniej klatki.
 //
-// buildDockIntroKeys(p) — ujęcie „Ziemia z menu → do Ziemi → skos nad K-7 → pion nad halą w kadrze kamery gry”;
+// buildDockIntroKeys(p) — ujęcie „Ziemia z menu → jednym najazdem skos nad K-7 → pion nad halą w kadrze kamery gry”;
 // dalej kamera 2D gry i otwarcie dachu (reżyser: src/game/story/storyGame.js). blendPose — mieszanie dwóch póz.
 // ============================================================
 
@@ -117,18 +117,17 @@ export function topDownPose(gx, gy, zoom, viewH, fov, out = { eye: v3(), target:
 
 // Strojenie ujęcia K-7 (j. świata, s). Decyzja użytkownika 2026-09-30: „pokaż Ziemię, leć do Ziemi i skończ na K-7;
 // jak najmniej statku 3D — pokaż dach K-7, wyprostuj kamerę, wtedy usuń dach, pokaż statek 2D zadokowany od góry”.
+// Poprawka 2026-10-05: JEDEN ciągły najazd z ujęcia menu prosto na dok (dawniej: do Ziemi, odjazd w górę na skos nad
+// halą i drugi najazd — „leci do Ziemi, oddala się, drugi raz na dock”). Odległość oka od hali maleje przez cały tor.
 // Tor kończy się POZĄ Z GÓRY identyczną z kamerą klasyczną gry (topDownPose) — dalej przejmuje kamera 2D, a dach
 // otwiera reżyser (HaloRingGame.hallRoofOverride). Hala K-7 ma ~10 440 × 7 150 j.
 export const DOCK_INTRO_TUNE = Object.freeze({
-  toEarthSec: 3.4,        // najazd na Ziemię (oko bliżej planety po linii z menu)
-  toEarthMul: 0.5,        // odległość oka od środka Ziemi względem pozy menu
-  toEarthFov: 34,
-  overHallSec: 3.6,       // skos nad K-7: hala w dole, Ziemia w tle u góry kadru
-  overHallHeight: 52000,
-  overHallOut: 30000,     // oko na zewnątrz ringu (od strony bramy hali)
-  overHallFov: 38,
-  alignSec: 2.8,          // prostowanie do pionu — kadr gry
-  holdSec: 0.7            // zawis nad zamkniętym dachem
+  approachSec: 5.2,       // najazd z ujęcia menu na skos nad K-7 (hala w dole, Ziemia w tle u góry kadru)
+  overHallHeight: 44000,
+  overHallOut: 26000,     // oko na zewnątrz ringu (od strony bramy hali)
+  overHallFov: 36,
+  alignSec: 3.2,          // dalej w dół i prostowanie do pionu — kadr gry
+  holdSec: 0.6            // zawis nad zamkniętym dachem
 });
 
 /**
@@ -147,24 +146,12 @@ export function buildDockIntroKeys(p) {
   const on = Math.hypot(ox, oy) || 1;
   const outX = ox / on, outY = oy / on;
   const s = p.start;
-  const ec = s.target;
 
   keys.push({ t, eye: { ...s.eye }, target: { ...s.target }, up: { ...(s.up || UP_Z) }, fov: s.fov || 30, stop: true });
 
-  // 1. Do Ziemi: p.mid (łuk po stronie dziennej ku hali) albo oko po linii ze startu; cel płynie ku hali.
-  t += T.toEarthSec;
-  const k = T.toEarthMul;
-  const midEye = p.mid ? p.mid : v3(ec.x + (s.eye.x - ec.x) * k, ec.y + (s.eye.y - ec.y) * k, ec.z + (s.eye.z - ec.z) * k);
-  keys.push({
-    t,
-    eye: v3(midEye.x, midEye.y, midEye.z),
-    target: v3(ec.x + (hall.x - ec.x) * 0.45, ec.y + (hall.y - ec.y) * 0.45, 0),
-    up: v3(0, 0, 1),
-    fov: T.toEarthFov
-  });
-
-  // 2. Skos nad K-7 od strony bramy: dach hali w dole kadru, Ziemia w tle (góra kadru ku planecie).
-  t += T.overHallSec;
+  // 1. Najazd na skos nad K-7 od strony bramy: dach hali w dole kadru, Ziemia w tle (góra kadru ku planecie).
+  //    Bez zatrzymania — styczna z sąsiadów, kamera płynie dalej w dół.
+  t += T.approachSec;
   keys.push({
     t,
     eye: v3(hall.x + outX * T.overHallOut, hall.y + outY * T.overHallOut, T.overHallHeight),
@@ -173,7 +160,7 @@ export function buildDockIntroKeys(p) {
     fov: T.overHallFov
   });
 
-  // 3. Prostowanie do pionu: kadr kamery gry (środek na Atlasie, góra ekranu = −y gry).
+  // 2. W dół i do pionu: kadr kamery gry (środek na Atlasie, góra ekranu = −y gry).
   const e = p.end;
   t += T.alignSec;
   keys.push({ t, eye: { ...e.eye }, target: { ...e.target }, up: { ...e.up }, fov: e.fov, stop: true });

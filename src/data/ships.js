@@ -177,13 +177,18 @@ function cloneFactionFrame(baseFrameId, id, name) {
   };
 }
 
-// Playable captured hulls use the same hardpoint standard as their Terran
-// weight class. Keeping them in SHIPS makes the hangar, mechanic and saved
-// per-hull loadouts use one authoritative frame catalog.
+// Faction hulls share the frame catalog used by the editor and NPC weapons.
+// Captured hulls are playable; npcOnly frames have no hangar market entry.
 Object.assign(SHIPS, {
   pirate_frigate: cloneFactionFrame('terran_frigate', 'pirate_frigate', 'Marauder-class'),
   pirate_destroyer: cloneFactionFrame('terran_destroyer', 'pirate_destroyer', 'Reaver-class'),
   pirate_battleship: cloneFactionFrame('terran_battleship', 'pirate_battleship', 'Iron Skull-class'),
+  pirate_supercapital: {
+    ...cloneFactionFrame('terran_supercapital', 'pirate_supercapital', 'Iron Skull — Supercapital'),
+    npcOnly: true,
+    spec: { main: 6, missile: 0, aux: 4, hangar: 0, special: 9 },
+    defaultNpcLoadout: { special: 'special_goliath_autocannon' }
+  },
   megafreighter: {
     id: 'megafreighter',
     name: 'Megafreighter-class',
@@ -210,6 +215,7 @@ export const HULL_RENDER_PROFILES = {
   pirate_frigate: { id: 'pirate_frigate', length: 320, radius: 120 },
   pirate_destroyer: { id: 'pirate_destroyer', length: 600, radius: 170 },
   pirate_battleship: { id: 'pirate_battleship', length: 1200, radius: 220 },
+  pirate_supercapital: { id: 'pirate_supercapital', length: 2000, radius: 500 },
   capital_carrier: { id: 'capital_carrier', length: 1200, radius: 250 },
   // Frachtowce cywilne — sylwetki celowo inne niż okrętów bojowych, żeby
   // transportu nie dało się pomylić z celem w walce. Rozmiary skalowane
@@ -292,6 +298,7 @@ export const WEAPON_TIER_BY_HULL = Object.freeze({
   terran_battleship: 'L',
   terran_carrier: 'L',
   terran_supercapital: 'Capital',
+  pirate_supercapital: 'Capital',
   pirate_battleship: 'L',
   capital_carrier: 'L',
   // Kadłuby ruchu v2 z uzbrojeniem po awansie do NPC (bez wpisu: Capital).
@@ -323,6 +330,7 @@ export function resolveEntityHullProfileId(entity) {
   if (type.includes('frigate')) return pirate ? 'pirate_frigate' : 'terran_frigate';
   if (type === 'megafreighter' || type.startsWith('megafreighter_')) return 'megafreighter';
   if (type === 'supercapital') return 'terran_supercapital';
+  if (type === 'pirate_supercapital') return 'pirate_supercapital';
   if (type === 'carrier') return 'terran_carrier';
   if (type === 'capital_carrier') return 'capital_carrier';
   if (entity.isCapitalShip) return 'terran_carrier';
@@ -633,5 +641,22 @@ export const CAPITAL_SHIP_TEMPLATES = {
       engineGlowSize: 0,
       engineOffsetMode: 'relative'
     }
+  }
+};
+
+// Osobna jednostka piracka; geometria i uzbrojenie pochodzą z jej układu edytora.
+CAPITAL_SHIP_TEMPLATES.pirate_supercapital = {
+  ...CAPITAL_SHIP_TEMPLATES.supercapital,
+  id: 'pirate_supercapital', faction: 'pirate', pirate: true,
+  shipName: 'Iron Skull', displayName: 'Iron Skull — Supercapital',
+  roleText: 'Supercapital — Piraci',
+  ...flightTemplateStats('pirate_supercapital'),
+  hardpoints: { large: 15, medium: 4 },
+  profile: {
+    ...CAPITAL_SHIP_TEMPLATES.supercapital.profile,
+    hullColor: '#4a4440', deckColor: '#39332f', accentColor: '#a64a32',
+    engineColor: 'rgba(255, 125, 55, 0.85)',
+    spriteSrc: 'src/assets/ships/piratecapital.png',
+    engineOffsets: []
   }
 };

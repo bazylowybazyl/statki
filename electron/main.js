@@ -6,6 +6,10 @@ const APP_SCHEME = 'app';
 const APP_HOST = 'bundle';
 const DIST_ROOT = path.resolve(__dirname, '../dist');
 
+// Katalog danych (localStorage: zapisy, edytor gniazd) z czasów nazwy "Statki Demo" — zmiana productName
+// na HULLFALL przeniosłaby go do nowego folderu i zgubiła zapisy.
+app.setPath('userData', path.join(app.getPath('appData'), 'Statki Demo'));
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
@@ -35,7 +39,13 @@ function resolveBundledPath(requestUrl) {
 async function handleAppRequest(request) {
   const bundledPath = resolveBundledPath(request.url);
   if (!bundledPath) return new Response('Not found', { status: 404 });
-  const response = await net.fetch(pathToFileURL(bundledPath).toString());
+  let response;
+  try {
+    response = await net.fetch(pathToFileURL(bundledPath).toString());
+  } catch (err) {
+    console.warn(`[app://] brak pliku: ${path.relative(DIST_ROOT, bundledPath)}`);
+    return new Response('Not found', { status: 404 });
+  }
   const headers = new Headers(response.headers);
   headers.set('Cross-Origin-Opener-Policy', 'same-origin');
   headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
@@ -53,7 +63,7 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: 'Statki Demo',
+    title: 'HULLFALL',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -65,8 +75,14 @@ function createWindow() {
 
   win.loadURL(`${APP_SCHEME}://${APP_HOST}/index.html`);
 
-  // DevTools w osobnym oknie — zamknij po debugowaniu
-  win.webContents.openDevTools({ mode: 'detach' });
+  // Demo: DevTools tylko na żądanie — Ctrl+Shift+F12 (samo F12 to panel gry) albo zmienna HULLFALL_DEVTOOLS=1.
+  if (process.env.HULLFALL_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' });
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12' && input.control && input.shift) {
+      win.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
 }
 
 app.whenReady().then(() => {

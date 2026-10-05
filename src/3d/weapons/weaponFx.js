@@ -29,7 +29,7 @@ import { ProjectileSystem, PSTYLE } from './projectiles.js';
 import { TrailSystem } from './trails.js';
 import { BeamSystem, BEAM, PULSE_SPEED } from './beams.js';
 import { RECIPES, runAfter, burnStep, droneBlast, cheapMuzzle, cheapImpact, createChargeState } from './recipes.js';
-import { WEAPON_FX, projectileFamilyFor, hexHdr, SIZE_POWER } from './weaponFxTable.js';
+import { WEAPON_FX, projectileFamilyFor, hexHdr, SIZE_POWER, TRAIL_FAMILIES } from './weaponFxTable.js';
 import { fxNoise } from '../fx/noise.js';
 import { FX_DISTORT_LAYER } from '../fx/fxFrame.js';
 import { fxRandom } from '../fx/fxRandom.js';
@@ -103,6 +103,8 @@ function projectileConf(family, size) {
   if (!c) {
     const r = RECIPES[family];
     c = r?.projectile ? r.projectile(size) : RECIPES.vulcan.projectile(size);
+    // Smuga gazu tylko rodzinom z TRAIL_FAMILIES (zwykłe pociski bez śladu — weaponFxTable.js).
+    if (!TRAIL_FAMILIES.has(family)) c.trail = -1;
     _confCache.set(key, c);
   }
   return c;
@@ -409,6 +411,9 @@ export const WeaponFx = {
       b.nx = b.lnx * c - b.lny * s;
       b.ny = b.lnx * s + b.lny * c;
       if (!this._inView(b.x, b.y, 400)) continue;
+      // Maskowanie (src/game/cloakLook.js): ukryty kadłub nie kopci z wyrwy (zdradzałoby okręt).
+      const cl = e.__cloakLook;
+      if (cl && cl.active && cl.vis < 0.5) continue;
       ActiveCarrier.set(writeCarrier(e, b.x, b.y, false, _carrier));
       try { burnStep(this.ctx, b, dt); } finally { ActiveCarrier.clear(); }
     }
@@ -686,7 +691,9 @@ export const WeaponFx = {
       const b = C[i];
       if (!b.active) continue;
       const since = time - b.lastEvent;
-      const recent = since <= 0.18;
+      // Krótki zapas między taktami 20 Hz: wygaszanie zaczyna się tuż po
+      // wyłączeniu emitera, bez dawnego podtrzymania przez 0,18 s.
+      const recent = since <= Math.max(0.06, (MASTER_WEAPONS[b.weaponId]?.cooldown || 0.05) * 1.5);
       b.charge = recent ? Math.min(1, b.charge + dt * cfgC.rampUp) : Math.max(0, b.charge - dt * cfgC.rampDown);
       if (since > 0.55 && b.charge <= 0.002) {
         b.active = false;

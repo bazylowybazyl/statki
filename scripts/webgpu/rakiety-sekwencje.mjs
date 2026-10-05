@@ -27,8 +27,12 @@ try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1919};\n${INJECT}` });
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
-  await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
-  if (!await waitFor(cdp, '(window.__frameId || 0) > 30', 300000, 400)) throw new Error('gra nie ruszyła');
+  // Menu: Nowa gra → Swobodna (bez kampanii) → start.
+  await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 500);
+  await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
+  await new Promise((r) => setTimeout(r, 900));
+  await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
+  if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && (window.__frameId || 0) > 30", 300000, 400)) throw new Error('gra nie ruszyła');
   if (!await waitFor(cdp, 'window.DevScene.preloadHullSprites()', 120000, 250)) throw new Error('sprite’y');
   await ev('window.__harness.hold(true)');
   await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(true);

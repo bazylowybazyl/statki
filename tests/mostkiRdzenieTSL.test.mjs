@@ -118,6 +118,11 @@ test('mostek 3D: jeden graf i materiał bryły na wszystkie rodzaje, bez uuid w 
     assert.doesNotMatch(b.fragmentShader, /textureSample\(/);
     // Dane instancji płaskie (stałe na instancję — flat jak w GLSL).
     assert.match(b.vertexShader, /@interpolate\( flat \) vB3ModelaB3Dmg/);
+    // Kadłuby belkowe (docs/PORT-mostki.md § 9): ten sam graf ma tryb siatki kwadratowej (aB3State.w < 0)
+    // — komórka = floor(współrzędne komórek), maska 8 sąsiadów (bity do 7) i poszarpany brzeg (discard).
+    assert.match(b.fragmentShader, /floor\(/);
+    assert.match(b.fragmentShader, />> 7u|>> u32\( 7 \)|7u\)/, 'maska 8 sąsiadów siatki belek');
+    assert.ok((b.fragmentShader.match(/discard/g) || []).length >= 2, 'wyrwa + poszarpany brzeg');
   } finally {
     Bridge3D.dispose();
   }

@@ -164,6 +164,11 @@ export class WarpMedium {
       cloudBase: uniform(this.cfg.cloudBase),
       bCount: uniform(0, 'int'),
       sCount: uniform(0, 'int'),
+      // Przegródki są pakowane RAZ na klatkę (pozycje z końca klatki), kroków 240 Hz w klatce
+      // jest kilka: krok cofa bańkę o jej ruch względem kamery ośrodka — (prędkość przegródki −
+      // przepływ kamery) × czas od kroku do końca klatki (setBubbleFlow, step).
+      bubbleFlow: uniform(new THREE.Vector2()).setName('warpMedBubbleFlow'),
+      bubbleBack: uniform(0).setName('warpMedBubbleBack'),
       // Render
       camVel: uniform(new THREE.Vector3()),
       offset: uniform(new THREE.Vector3()),
@@ -299,8 +304,13 @@ export class WarpMedium {
           const C0 = S.element(base.add(2)).toVar();
           const dx = A0.z;
           const dy = A0.w;
-          const rx = p.x.sub(A0.x);
-          const ry = p.y.sub(A0.y);
+          // Środek przegródki W CHWILI KROKU (U.bubbleFlow / bubbleBack). Bez cofnięcia bańka
+          // stała całą klatkę w miejscu z jej końca i skakała o v·Δt (12–30 tys. j/s przylotu:
+          // 200–500 j. na klatkę), a zapłon talii zostawiał warkocz KŁĘBAMI co klatkę.
+          const ax = A0.x.sub(C0.x.sub(U.bubbleFlow.x).mul(U.bubbleBack)).toVar();
+          const ay = A0.y.sub(C0.y.sub(U.bubbleFlow.y).mul(U.bubbleBack)).toVar();
+          const rx = p.x.sub(ax);
+          const ry = p.y.sub(ay);
           const xl = rx.mul(dx).add(ry.mul(dy)).toVar();
           const yl = rx.mul(dy.negate()).add(ry.mul(dx)).toVar();
           const R = B0.x.toVar();
@@ -325,7 +335,7 @@ export class WarpMedium {
           });
           // PUNKT ZBIERANIA na końcu nici (punkt wyjścia / skoku).
           If(D0.y.greaterThan(0.0), () => {
-            const P0 = vec3(A0.x.add(dx.mul(E0.x)), A0.y.add(dy.mul(E0.x)), 0.0);
+            const P0 = vec3(ax.add(dx.mul(E0.x)), ay.add(dy.mul(E0.x)), 0.0);
             const d3 = p.sub(P0).toVar();
             const dist = max(length(d3), 1.0).toVar();
             If(dist.lessThan(D0.x.mul(3.0)), () => {
@@ -773,9 +783,13 @@ export class WarpMedium {
     this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly || (this._gpuOnly = [this.pos, this.vel, this.aux, this.vis]));
   }
 
-  /** Jeden krok symulacji; shift — przesunięcie kamery ośrodka w scenie od poprzedniego kroku. */
-  step(renderer, dt, time, shiftX, shiftY) {
+  /**
+   * Jeden krok symulacji; shift — przesunięcie kamery ośrodka w scenie od poprzedniego kroku;
+   * bubbleBack — czas od kroku do końca klatki [s] (cofnięcie przegródek — setBubbleFlow).
+   */
+  step(renderer, dt, time, shiftX, shiftY, bubbleBack = 0) {
     if (!this.count || !renderer) return;
+    this.U.bubbleBack.value = bubbleBack;
     // Drobiny liczy tylko GPU — kopie CPU (~52 MB przy milionie) oddane, gdy bufory już są (zadanie 23).
     if (this._kopieCpu !== 0) this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly || (this._gpuOnly = [this.pos, this.vel, this.aux, this.vis]));
     const U = this.U;
@@ -818,6 +832,11 @@ export class WarpMedium {
       A[o + 4].set(b.heraldLen || 0, b.heraldGain || 0, b.excite, b.rear ? 1 : 0);
     }
     this.U.bCount.value = last;
+  }
+
+  /** Prędkość kamery ośrodka w tej klatce (scena: y w górę) — do cofania przegródek w krokach. */
+  setBubbleFlow(vx, vy) {
+    this.U.bubbleFlow.value.set(vx, vy);
   }
 
   /** Szczeliny tuneli: { x, y, dx, dy, halfLen, halfWidth, push, flow } (scena). */

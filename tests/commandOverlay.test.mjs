@@ -50,3 +50,9 @@ test('układ podpisów: poprzednie miejsce zostaje, dopóki jest wolne; wpis bez
   assert.deepEqual(kept.place, prev);
   assert.equal(silent.place, null);
 });
+
+test('układ podpisów: panel samouczka i cel misji blokują miejsce także poza ramkami jednostek', () => {
+  const entry = frame(300, 400, 360, 470);
+  const [placed] = layoutSelectionLabels([entry], 1600, 900, [{ x0: 365, y0: 220, x1: 700, y1: 410 }]);
+  assert.notDeepEqual(placed.place, { sx: 1, sy: -1, gap: 10 }, 'podpis omija panel nad prawym narożnikiem');
+});

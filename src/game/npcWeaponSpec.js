@@ -26,6 +26,7 @@ export function resolveNpcSpecFrameId(npc, ships) {
   else if (type.includes('frigate')) id = pirate ? 'pirate_frigate' : 'terran_frigate';
   else if (type === 'carrier' || type === 'capital_carrier') id = 'terran_carrier';
   else if (type === 'supercapital') id = 'terran_supercapital';
+  else if (type === 'pirate_supercapital') id = 'pirate_supercapital';
   else if (type === 'atlas' || type === 'corvus') id = type;
   return id && ships[id]?.spec ? id : null;
 }

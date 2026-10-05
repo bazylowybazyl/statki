@@ -56,7 +56,10 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       shield: {
         max: BASE_PLAYER_PROFILE.shieldMax,
         regenRate: BASE_PLAYER_PROFILE.shieldRegen,
-        regenDelay: BASE_PLAYER_PROFILE.shieldDelay
+        regenDelay: BASE_PLAYER_PROFILE.shieldDelay,
+        // Twardość pola na przebicie heksów (src/3d/shield3D.js; 2026-10-05, user: „heksy zbyt szybko
+        // się niszczą”) — próg × 2,5, dziura rośnie ~1,6× wolniej. Tryb TARCZE mnoży ją dalej.
+        hardness: 2.5
       },
       mass: Number(atlas?.mass),
       rammingMass: Number(atlas?.rammingMass),

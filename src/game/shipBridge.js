@@ -206,6 +206,18 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     }),
     defaultVariant: 'standard'
   }),
+  // --- Supercapital piratów ---
+  pirate_supercapital: Object.freeze({
+    label: 'Iron Skull — Supercapital',
+    windowColor: '#ff9a4a',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Rufowy bunkier i krata obok niego, między silnikami a SPECIAL (1671 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -335.5, y: 9.5, w: 176, h: 246, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
   // --- Megafrachtowiec: mostek ma tylko lokomotywa (wagony to ładunek) ---
   megafreighter: Object.freeze({
     label: 'Megafrachtowiec — lokomotywa',
@@ -544,6 +556,9 @@ function spriteScaleY(entity) {
 
 /** Punkt w przestrzeni SIATKI (gridX/Y) → świat gry. */
 export function bridgeGridToWorld(entity, gx, gy, out = { x: 0, y: 0 }, pose = null) {
+  // Kadłub belkowy (shipBridgeBeams.js): „siatka” = piksele obrazu kadłuba.
+  const be = entity?.bridgeState?.backend;
+  if (be) return be.gridToWorld(entity, gx, gy, out, pose);
   const grid = entity.hexGrid;
   const lx = gx - grid.srcWidth * 0.5 - (grid.pivot ? grid.pivot.x : 0);
   const ly = gy - grid.srcHeight * 0.5 - (grid.pivot ? grid.pivot.y : 0);
@@ -562,6 +577,7 @@ export function bridgeGridToWorld(entity, gx, gy, out = { x: 0, y: 0 }, pose = n
 /** Punkt w przestrzeni PNG → świat gry (skala hardpointów ze stanu mostków). */
 export function bridgePngToWorld(entity, px, py, out = { x: 0, y: 0 }, pose = null) {
   const st = entity?.bridgeState;
+  if (st?.backend) return st.backend.pngToWorld(entity, px, py, out, pose);
   const grid = entity.hexGrid;
   const kx = st ? st.scaleX : positive(entity.__hardpointScaleX, 1);
   const ky = st ? st.scaleY : positive(entity.__hardpointScaleY, 1);
@@ -571,6 +587,7 @@ export function bridgePngToWorld(entity, px, py, out = { x: 0, y: 0 }, pose = nu
 /** Świat gry → przestrzeń PNG (bez pivota: dla kadłuba, nie fragmentu). */
 export function bridgeWorldToPng(entity, wx, wy, out = { x: 0, y: 0 }) {
   const st = entity?.bridgeState;
+  if (st?.backend) return st.backend.worldToPng(entity, wx, wy, out);
   const kx = st ? st.scaleX : positive(entity.__hardpointScaleX, 1);
   const ky = st ? st.scaleY : positive(entity.__hardpointScaleY, 1);
   const a = (Number(entity.angle) || 0) + entitySpriteRotation(entity);
@@ -746,7 +763,8 @@ function restoreArmor(state) {
 export function detachShipBridges(entity) {
   const st = entity?.bridgeState;
   if (!st) return false;
-  if (st.grid === entity.hexGrid) restoreArmor(st);
+  if (st.backend) st.backend.detach(entity);
+  else if (st.grid === entity.hexGrid) restoreArmor(st);
   return releaseShipBridges(entity);
 }
 
@@ -762,6 +780,7 @@ export function releaseShipBridges(entity) {
   restoreThrusters(entity.visual?.mainThrusters);
   restoreThrusters(entity.visual?.torqueThrusters);
   if (st.navOriginal) entity.editorLights = st.navOriginal;
+  if (entity.isBridgeHulk) entity.isBridgeHulk = false;
   entity.bridgeState = null;
   return true;
 }
@@ -779,6 +798,7 @@ export function releaseShipBridges(entity) {
 export function updateShipBridges(entity, dt = 0, nowSec = 0) {
   const st = entity?.bridgeState;
   if (!st || st.commandLost) return BRIDGE_EVENT.NONE;
+  if (st.backend) return st.backend.update(entity, dt, nowSec);
   if (entity.hexGrid !== st.grid) return BRIDGE_EVENT.NONE;
   st.probeTimer -= dt;
   if (st.probeTimer > 0) return BRIDGE_EVENT.NONE;
@@ -790,6 +810,7 @@ export function updateShipBridges(entity, dt = 0, nowSec = 0) {
 export function evaluateShipBridges(entity, nowSec = 0) {
   const st = entity?.bridgeState;
   if (!st || st.commandLost) return BRIDGE_EVENT.NONE;
+  if (st.backend) return st.backend.evaluate(entity, nowSec);
   const grid = entity.hexGrid;
   if (!grid || grid !== st.grid) return BRIDGE_EVENT.NONE;
   const shards = grid.shards;
@@ -1043,6 +1064,7 @@ function marchLine(grid, gx0, gy0, gx1, gy1, ignore, limit, wantFirst) {
  */
 export function getBridgeAimPoint(entity, out = { x: 0, y: 0 }, opts = {}) {
   const st = entity?.bridgeState;
+  if (st?.backend) return st.backend.aimPoint(entity, out, opts);
   if (!st || !entity.hexGrid) return null;
   const grid = entity.hexGrid;
   const mode = opts.mode || 'breach';
@@ -1173,6 +1195,8 @@ export function getBridgeAimPoint(entity, out = { x: 0, y: 0 }, opts = {}) {
 
 /** Świat gry → przestrzeń SIATKI (z pivotem fragmentu). */
 export function bridgeWorldToGrid(entity, wx, wy, out = { x: 0, y: 0 }) {
+  const be = entity?.bridgeState?.backend;
+  if (be) return be.worldToGrid(entity, wx, wy, out);
   const grid = entity.hexGrid;
   const a = (Number(entity.angle) || 0) + entitySpriteRotation(entity);
   const c = Math.cos(a);
@@ -1310,7 +1334,7 @@ export function sampleVentStrength(t) {
  */
 export function stepCommandLossDrift(entity, dt, nowSec, opts = {}) {
   const st = entity?.bridgeState;
-  if (!st || !st.commandLost || !entity.hexGrid) return;
+  if (!st || !st.commandLost || (!entity.hexGrid && !st.backend)) return;
   const steps = dt * 120;
   const damp = Math.pow(finite(opts.damping, 0.99985), steps);
   const angDamp = Math.pow(finite(opts.angDamping, 0.99992), steps);
@@ -1321,11 +1345,14 @@ export function stepCommandLossDrift(entity, dt, nowSec, opts = {}) {
   if (!vent) return;
   const strength = sampleVentStrength(nowSec - st.commandLostAt);
   if (strength <= 0) return;
-  const grid = entity.hexGrid;
+  // Wymiary obrazu kadłuba (heksy: siatka; belki: stan mostków — wrak liczy od środka masy, ale
+  // dryfuje tylko hulk, a ten ma kotwicę w środku sprite'a).
+  const srcW = st.backend ? st.srcW : entity.hexGrid.srcWidth;
+  const srcH = st.backend ? st.srcH : entity.hexGrid.srcHeight;
   const sx = spriteScaleX(entity);
   const sy = spriteScaleY(entity);
-  const L = grid.srcWidth * sx;
-  const W = grid.srcHeight * sy;
+  const L = srcW * sx;
+  const W = srcH * sy;
   const accel = finite(opts.ventAccel, 0.028) * Math.max(L, W) * strength;
   const a = (Number(entity.angle) || 0) + entitySpriteRotation(entity);
   const c = Math.cos(a);

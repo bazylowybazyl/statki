@@ -14,9 +14,9 @@ export const MISSION01_DIALOGUE = Object.freeze({
   // Atlas w hali K-7, po locie kamery. Odprawa: kto, co, gdzie, dlaczego.
   briefing: [
     { who: 'k7', text: '[Kontrola K-7 potwierdza gotowość Atlasa w stanowisku C-01.]' },
-    { who: 'admiral', text: '[Odprawa: wywiad namierzył ukrytą stocznię piratów na obrzeżach układu.]' },
-    { who: 'intel', text: '[Wywiad: stocznia stoi w cieniu, pełno zaparkowanych kadłubów, słaba obrona — na razie.]' },
-    { who: 'admiral', text: '[Rozkaz: wejść po cichu, zniszczyć stocznię, zanim zwodują flotę.]' },
+    { who: 'admiral', text: '[Odprawa: na obrzeżach układu coś się dzieje — ruch piratów, nic pewnego.]' },
+    { who: 'intel', text: '[Wywiad: podejrzewamy ukrytą stocznię, ale nikt jej nie widział. Bez potwierdzenia.]' },
+    { who: 'admiral', text: '[Rozkaz: skok w pobliże, rozpoznanie. Jeśli to stocznia — wejść po cichu i zniszczyć, zanim zwodują flotę.]' },
     { who: 'player', text: '[Dowódca przyjmuje rozkaz.]' }
   ],
   // Suwnice puszczają kadłub.
@@ -25,12 +25,21 @@ export const MISSION01_DIALOGUE = Object.freeze({
   ],
   // Poza halą — kurs na cel.
   course: [
-    { who: 'xo', text: '[Pierwszy oficer: kurs na obrzeża wyznaczony. Czekamy na skok.]' }
+    { who: 'xo', text: '[Pierwszy oficer: kurs na obrzeża wyznaczony. Wyjdziemy z warpa w bezpiecznej odległości.]' }
   ],
-  // Wyjście z warpa w pobliżu stoczni.
+  // Wyjście z warpa na obrzeżach — mgła wojny: czujniki grawitacyjne widzą tylko dużą masę (bez tożsamości).
+  massContact: [
+    { who: 'xo', text: '[Wyszliśmy z warpa. Czujniki grawitacyjne: duża masa przed nami, kilkadziesiąt kilometrów. Nic więcej nie widać.]' },
+    { who: 'xo', text: '[Proponuję zwiad — dron albo ostrożne podejście. Nie dajmy się zobaczyć.]' }
+  ],
+  // Rozpoznanie: to jest stocznia piratów.
+  identified: [
+    { who: 'xo', text: '[Mamy obraz! To stocznia piratów — zaparkowany rząd okrętów, eskorta, a w hali coś dużego.]' },
+    { who: 'intel', text: '[Wywiad: potwierdzamy. Plan bez zmian — wejść po cichu.]' }
+  ],
+  // Po rozpoznaniu — podejście w maskowaniu.
   arrival: [
-    { who: 'xo', text: '[Jesteśmy na miejscu. Czujniki piratów nas jeszcze nie widzą.]' },
-    { who: 'intel', text: '[Wywiad: stocznia przed wami. Maskowanie teraz.]' }
+    { who: 'xo', text: '[Nas jeszcze nie widzą. Maskowanie teraz.]' }
   ],
   // Maskowanie włączone.
   cloaked: [
@@ -43,7 +52,7 @@ export const MISSION01_DIALOGUE = Object.freeze({
   // Alarm w stoczni — po taranie (albo po wykryciu).
   alarm: [
     { who: 'pirate', text: '[Herszt: alarm! Kto to jest?! Wszyscy do dział!]' },
-    { who: 'xo', text: '[Wieżyczki i eskorta budzą się. Bierzemy ich.]' }
+    { who: 'xo', text: '[Z hali wylatuje eskorta — i supercapital. Bierzemy ich.]' }
   ],
   // Wykrycie przed taranem (maskowanie zdjęte za wcześnie).
   spotted: [

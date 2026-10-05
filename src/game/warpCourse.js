@@ -40,9 +40,13 @@ export function warpCourseAligned(err, tune = WARP_COURSE_TUNE) {
   return Math.abs(err) <= tune.tolerance + 1e-12;
 }
 
-/** WARP kończy wskazania przy przejściu na dolot napędem. Zamrożony punkt żyje do końca skoku/rampy. */
+/**
+ * WARP kończy wskazania przy przejściu na DOLOT napędem (ostatni odcinek). Zamrożony punkt żyje do końca
+ * skoku/rampy. Odcinek napędem, który nie jest ostatni (objazd studni grawitacji tuż przy okręcie),
+ * zostaje na HUD-zie — inaczej znacznik kursu znikał na czas objazdu planety (2026-10-05).
+ */
 export function warpCourseHudVisible(leg, lockedAim, busy) {
-  return !!(busy && lockedAim) || leg?.kind === 'warp';
+  return !!(busy && lockedAim) || leg?.kind === 'warp' || (leg?.kind === 'drive' && leg.final === false);
 }
 
 /**

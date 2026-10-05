@@ -79,7 +79,7 @@ export const B3_MODEL_LAYOUT = Object.freeze({
   aB3GridA: 8,   // (zgx, zgy, m00, m01) — model → siatka heksów
   aB3GridB: 12,  // (m10, m11, c0, r0) — … i początek bloku komórek
   aB3Dmg: 16,    // (wiersz, szer. bloku, wys. bloku, są wyrwy)
-  aB3State: 20,  // (zanik, żar od zapisu, rodzaj, promień heksa)
+  aB3State: 20,  // (zanik, żar od zapisu, rodzaj, promień heksa > 0 | −komórka belek [px obrazu])
   aB3Hull: 24,   // (światło kadłuba pod środkiem, LOD, 0, 0)
   aB3Mask: 28    // (maska modułów 0–23, 24–47)
 });
@@ -134,6 +134,18 @@ const B3_HEX_DIRS = [
   [-0.8660254, -0.5], [-0.8660254, 0.5], [0.0, 1.0]
 ];
 
+// Siatka belek (kadłuby gry od zadania 21 — docs/PORT-mostki.md § 9): komórki kwadratowe, maska
+// martwych sąsiadów w 8 bitach (lustro BRIDGE3D_SQUARE_NEIGHBORS w bridge3D.js) — boki: +x, +y, −x, −y
+// (bity 0–3), narożniki: (+,+), (−,+), (−,−), (+,−) (bity 4–7). Układ siatki: Y w górę.
+export const B3_SQUARE_DIRS = Object.freeze([
+  [1, 0], [0, 1], [-1, 0], [0, -1],
+  [1, 1], [-1, 1], [-1, -1], [1, -1]
+]);
+// Poszarpany brzeg wyrwy w siatce belek (jak rozdarcia skóry kadłuba — hullTearFray): przy martwym
+// sąsiedzie komórka traci pas o szerokości do `frayMax` komórki wg szumu przyklejonego do siatki
+// rodu (wyrwa nie „pływa” przy obrocie i jest ta sama na kadłubie, wraku i odłamach).
+export const B3_SQUARE_FRAY = Object.freeze({ frayMax: 0.34, period: 0.62, rimMul: 1.7 });
+
 /**
  * Wspólne klocki modelu i cienia: dane instancji jako varyingi (V), tablica
  * rodzajów, bufor obrażeń, atlas wysokości, uniformy (U).
@@ -142,6 +154,9 @@ function b3Library(ctx, V) {
   const { kindTable, damage, heightTex, U } = ctx;
   const kindBase = int(V.state.z.add(0.5)).mul(B3_KIND_STRIDE).toVar();
   const kindVec = (slot) => kindTable.element(kindBase.add(slot));
+  // Siatka belek: state.w < 0 (−bok komórki w px obrazu); heksy: state.w = promień heksa.
+  const square = V.state.w.lessThan(0.0).toVar();
+  const cellPx = abs(V.state.w).toVar();
   const hexR = select(V.state.w.greaterThan(0.0), V.state.w, float(5.0)).toVar();
 
   const grid = (m) => V.gridA.xy.add(vec2(dot(V.gridA.zw, m), dot(V.gridB.xy, m)));
@@ -165,6 +180,18 @@ function b3Library(ctx, V) {
   };
 
   const hexCenter = (cr) => vec2(cr.x.mul(1.5).mul(hexR), cr.y.add(mod(cr.x, 2.0).mul(0.5)).mul(1.7320508076).mul(hexR));
+
+  // Komórka pod punktem siatki: belki — floor (grid() daje wtedy współrzędne w komórkach),
+  // heksy — zaokrąglenie heksowe.
+  const cellCoord = (g) => {
+    const cr = vec2(0.0).toVar();
+    If(square, () => {
+      cr.assign(floor(g));
+    }).Else(() => {
+      cr.assign(hexCell(g));
+    });
+    return cr;
+  };
 
   // Komórka bloku rekordu (RGBA8 → 0..1 jak texelFetch z tekstury RGBA8).
   const cell = (cr) => {
@@ -198,7 +225,7 @@ function b3Library(ctx, V) {
       h.assign(texture(heightTex, rg.xy.add(t.mul(rg.zw))).level(0.0).x.mul(top()));
       // Bez uszkodzeń nie szukamy heksa (typowy przypadek: 1 odczyt na krok).
       If(h.greaterThan(0.02).and(V.dmg.w.greaterThanEqual(0.5)), () => {
-        If(cell(hexCell(grid(m))).x.lessThanEqual(0.2), () => {
+        If(cell(cellCoord(grid(m))).x.lessThanEqual(0.2), () => {
           h.assign(0.0);
         });
       });
@@ -245,7 +272,7 @@ function b3Library(ctx, V) {
     return float(1.0).sub(U.uB3Ao.y.mul(occ).mul(0.125));
   };
 
-  return { kindVec, hexR, grid, hexCell, hexCenter, cell, detail, top, height, shadow, occlusion };
+  return { kindVec, square, cellPx, hexR, grid, hexCell, hexCenter, cellCoord, cell, detail, top, height, shadow, occlusion };
 }
 
 // Dane instancji jako varyingi płaskie (stałe na instancję — jak flat w GLSL).
@@ -336,28 +363,51 @@ export function createBridgeModelMaterial(ctx) {
     const kind = (slot) => L3.kindVec(slot);
     const P = vPos.toVar();
     const jit = b3Dither(P).toVar();
-    // Wyrwa: heks siatki pod fragmentem zginął (albo należy już do innej encji).
+    // Wyrwa: komórka siatki pod fragmentem zginęła (albo należy już do innej encji).
     const g = L3.grid(P.xy).toVar();
-    const cr = L3.hexCell(g).toVar();
+    const cr = L3.cellCoord(g).toVar();
     const cell = L3.cell(cr).toVar();
     If(cell.x.lessThan(0.2), () => {
       Discard();
     });
     const hpFrac = clamp(cell.x.mul(255.0).sub(64.0).div(191.0), 0.0, 1.0).toVar();
 
-    // Brzeg rany: odległość do krawędzi heksa, za którą leży martwy sąsiad.
+    // Brzeg rany: odległość do krawędzi komórki, za którą leży martwy sąsiad.
     const rim = float(0.0).toVar();
     const nmask = int(cell.z.mul(255.0).add(0.5)).toVar();
     If(nmask.greaterThan(int(0)), () => {
-      const off = g.sub(L3.hexCenter(cr)).toVar();
-      const ap = L3.hexR.mul(0.8660254).toVar();
-      for (let i = 0; i < 6; i++) {
-        // WGSL: przesunięcie o u32.
-        If(nmask.shiftRight(uint(i)).bitAnd(int(1)).equal(int(1)), () => {
-          const d = ap.sub(dot(off, vec2(B3_HEX_DIRS[i][0], B3_HEX_DIRS[i][1])));
-          rim.assign(max(rim, float(1.0).sub(smoothstep(0.0, U.uB3Wound.x, d))));
+      If(L3.square, () => {
+        // Belki: boki i narożniki kwadratu (px obrazu = komórki × bok komórki), poszarpany brzeg.
+        const F = B3_SQUARE_FRAY;
+        const off = g.sub(cr).sub(0.5).toVar();
+        const edge = float(1e4).toVar();
+        for (let i = 0; i < 8; i++) {
+          If(nmask.shiftRight(uint(i)).bitAnd(int(1)).equal(int(1)), () => {
+            const dir = vec2(B3_SQUARE_DIRS[i][0], B3_SQUARE_DIRS[i][1]);
+            const d = i < 4
+              ? float(0.5).sub(dot(off, dir)).mul(L3.cellPx)
+              : length(off.sub(dir.mul(0.5))).mul(L3.cellPx);
+            edge.assign(min(edge, d));
+          });
+        }
+        // Szum przyklejony do siatki rodu: dwie oktawy, kęs do frayMax komórki.
+        const n = b3Noise(g.div(F.period)).mul(0.65).add(b3Noise(g.div(F.period * 0.37).add(vec2(7.3, 1.9))).mul(0.35));
+        const bite = n.mul(F.frayMax).mul(L3.cellPx).toVar();
+        If(edge.lessThan(bite), () => {
+          Discard();
         });
-      }
+        rim.assign(float(1.0).sub(smoothstep(0.0, U.uB3Wound.x.mul(F.rimMul), edge.sub(bite))));
+      }).Else(() => {
+        const off = g.sub(L3.hexCenter(cr)).toVar();
+        const ap = L3.hexR.mul(0.8660254).toVar();
+        for (let i = 0; i < 6; i++) {
+          // WGSL: przesunięcie o u32.
+          If(nmask.shiftRight(uint(i)).bitAnd(int(1)).equal(int(1)), () => {
+            const d = ap.sub(dot(off, vec2(B3_HEX_DIRS[i][0], B3_HEX_DIRS[i][1])));
+            rim.assign(max(rim, float(1.0).sub(smoothstep(0.0, U.uB3Wound.x, d))));
+          });
+        }
+      });
     });
 
     const front = frontFacing;
@@ -610,4 +660,4 @@ export function createBridgeEmitterMaterial() {
 }
 
 // Eksport węzłów do testów struktury grafu (bez GPU).
-export const BRIDGE3D_TSL_INTERNALS = Object.freeze({ b3Hash, b3Noise, B3_HEX_DIRS });
+export const BRIDGE3D_TSL_INTERNALS = Object.freeze({ b3Hash, b3Noise, B3_HEX_DIRS, B3_SQUARE_DIRS });

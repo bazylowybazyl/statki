@@ -131,7 +131,9 @@ Atlasa; także taran Atlas–Atlas, dziedziczenie pancerza oraz niezmieniony bud
 ## Czego jeszcze nie ma (kolejne etapy)
 
 3. Zimne wraki na belkach (zrzut magazynów), budżet i LOD wraków pod bitwę.
-4. Mostki (`shipBridge*`, `bridge3D`, `bridgeFx3D`) — dziś wymagają `hexGrid`, na kadłubach belkowych nieaktywne.
+4. ~~Mostki~~ — **zrobione 2026-10-05**: logika na komórkach siatki belek (`src/game/shipBridgeBeams.js`, backend
+   stanu dla funkcji `shipBridge.js`), model 3D z wyrwami po komórkach, efekty agonii na pulach WebGPU, demo
+   `dema/mostki-webgpu.html` — `docs/PORT-mostki.md` § 9.
 5. Rdzenie — wersja na belkach GOTOWA w demie (2026-09-30): logika `src/game/reactorCore.js`, wybuch
    WebGPU `src/3d/reactorBlast/`, `dema/rdzen-webgpu.html`; kroki wpięcia: `docs/webgpu/DEMO-RDZEN.md` § 7.
    Stare `shipCore` / `coreFx3D` (heksy) zostają dla dema heksowego.

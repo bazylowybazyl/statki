@@ -188,7 +188,7 @@ export class RocketFx {
    * Rozgrzewka (raz przy gotowym urządzeniu): puste dispatche kerneli (licznik 0), mapa
    * gęstości (własny kontekst renderu — HalfFloat bez MSAA) i compileAsync siatek w passie
    * ortho (cel composerTarget; niewidoczne i count 0/1 compileAsync pomija — odsłonięte na
-   * czas projekcji, jak shieldImpactFx.prewarm).
+   * czas projekcji, jak prewarmShields3D).
    */
   _warm(ctx) {
     const renderer = ctx.renderer;

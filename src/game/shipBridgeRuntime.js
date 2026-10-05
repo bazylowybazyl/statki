@@ -1,6 +1,7 @@
-// Mostki w grze — klej między index.html a shipBridge.js.
+// Mostki w grze — klej między index.html a shipBridge.js (heksy) / shipBridgeBeams.js (belki).
 //
-// Który kadłub ma mostki i w jakim układzie, podpięcie po initHexBody, hulk po
+// Który kadłub ma mostki i w jakim układzie, podpięcie po HullBodies.createHull (kadłuby
+// belkowe — jedyne w grze od zadania 21) albo initHexBody (dema heksowe), hulk po
 // utracie dowodzenia (agonia: bez AI, broni i ciągu, tylko dryf; po
 // BRIDGE_KILL_TIMELINE.sequenceEnd gra zamienia go we wrak) i stan wizualny
 // hulka. Bez DOM i bez three — ścieżki śmierci (wrak, reputacja, gracz) zostają
@@ -20,6 +21,7 @@ import {
   stepCommandLossDrift,
   updateShipBridges
 } from './shipBridge.js';
+import { attachBeamBridges } from './shipBridgeBeams.js';
 
 export { BRIDGE_EVENT, bridgePngToWorld, getBridgeAimPoint, noteBridgeHit, updateShipBridges, releaseShipBridges };
 
@@ -62,6 +64,7 @@ export function resolveBridgeHullKey(entity) {
   const frame = normalizeBridgeHullKey(entity.shipFrame);
   if (frame && BRIDGE_LAYOUT_PROPOSALS[frame]) return frame;
   if (type === 'atlas') return 'atlas';
+  if (type === 'pirate_supercapital') return 'pirate_supercapital';
   if (type === 'supercapital') return 'terran_supercapital';
   if (type === 'carrier') return 'terran_carrier';
   if (type === 'battleship') return entity.isPirate ? 'pirate_battleship' : 'battleship';
@@ -78,17 +81,27 @@ export function resolveBridgeLayout(key, variant = null) {
 }
 
 /**
- * Po initHexBody: znakuje heksy stref i nakłada pancerz. `bridges` — lista z
- * konfiguracji edytora (gdy kiedyś będzie), inaczej domyślny wariant z
- * BRIDGE_LAYOUT_PROPOSALS. Skala stref = skala hardpointów (render px / PNG px).
+ * Po HullBodies.createHull (albo initHexBody w demach heksowych): zaznacza komórki / heksy stref
+ * i nakłada pancerz. `bridges` — lista z konfiguracji edytora (gdy kiedyś będzie), inaczej
+ * domyślny wariant z BRIDGE_LAYOUT_PROPOSALS. Kadłub belkowy: skala stref z obrazów kadłuba
+ * (render px / PNG px — jak rdzenie), heksowy: skala hardpointów.
  */
 export function attachEntityBridges(entity, { key: keyIn = null, bridges = null, variant = null } = {}) {
   if (!entity) return null;
   const key = keyIn != null ? normalizeBridgeHullKey(keyIn) : resolveBridgeHullKey(entity);
   const list = Array.isArray(bridges) && bridges.length ? bridges : resolveBridgeLayout(key, variant);
-  if (!list || !entity.hexGrid) {
+  const beam = !!entity.beamHull && entity.beamHull.entity === entity;
+  if (!list || (!beam && !entity.hexGrid)) {
     if (entity.bridgeState) releaseShipBridges(entity);
     return null;
+  }
+  if (beam) {
+    // Stan z innego kadłuba (zmiana kadłuba gracza) — oddaj dysze i lampy.
+    if (entity.bridgeState && entity.bridgeState.lineage !== entity.beamHull.dmgKey) releaseShipBridges(entity);
+    return attachBeamBridges(entity, list, {
+      windowColor: BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor,
+      hullKey: key
+    });
   }
   return attachShipBridges(entity, list, {
     scaleX: entity.__hardpointScaleX,
@@ -109,6 +122,8 @@ export function isBridgeHulk(entity) {
  */
 export function beginBridgeHulk(entity) {
   if (!entity) return;
+  // Flaga encji (EngineVfxSystem: bez plazmy skoku na hulku).
+  entity.isBridgeHulk = true;
   const main = entity.visual?.mainThrusters;
   let sum = 0;
   let n = 0;

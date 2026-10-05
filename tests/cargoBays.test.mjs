@@ -181,6 +181,14 @@ test('door timeline: closed at 0, open at the end, the opening grows monotonical
         if (g.door === 'over') assert.ok(q.z0 >= 0, `${id}/${g.id}: skrzydło „over” pod poszyciem`);
         else assert.ok(q.z1 < 0, `${id}/${g.id}: skrzydło „pocket” nad poszyciem`);
       });
+      // Skrzydło w przejeździe nad otworem nie wchodzi w pełny stos (wierzch: −depth + H modułu).
+      const stackTop = -g.depth + g.module.H;
+      for (let p = 0; p <= T.total + 1e-9; p += T.total / 40) {
+        for (const q of cargoBayDoorPose(g, p).leaves) {
+          if (Math.abs(q.db) < 1e-6) continue;
+          assert.ok(q.z0 > stackTop + 0.5, `${id}/${g.id}: skrzydło jedzie przez kontenery (z0 ${q.z0}, stos ${stackTop})`);
+        }
+      }
       // Odsłonięty pas |b| < open · halfB; skrzydła pokrywają resztę połowy otworu bez szpar.
       let prev = -1;
       for (let p = 0; p <= T.total + 1e-9; p += T.total / 40) {

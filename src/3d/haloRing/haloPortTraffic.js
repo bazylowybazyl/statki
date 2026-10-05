@@ -148,7 +148,8 @@ export function buildHaloPortTrafficLayout(ringLayout, station = { id: 'earth', 
     .filter((r) => r.kind !== 'transit')
     .map((r) => Math.abs(r.ds) + r.halfS));
 
-  const dockRadius = ringLayout.radii.rim + 2000;
+  // doki stoją HALO_PORT.dockGap za krawędzią ringu (od 2026-10-05)
+  const dockRadius = ringLayout.radii.rim + HALO_PORT.dockGap + 2000;
   return {
     stationId: sid,
     hasRing: true,
@@ -156,7 +157,7 @@ export function buildHaloPortTrafficLayout(ringLayout, station = { id: 'earth', 
     dockRadius,
     docks,
     berths: docks.flatMap((d) => d.berths),
-    // Orbita postojowa i łuki oczekiwania za kompleksami (port K-7 sięga do r ≈ 51 tys.)
+    // Orbita postojowa i łuki oczekiwania za kompleksami (port K-7 sięga do r ≈ 54,6 tys.)
     parkingRadius: dockRadius * 1.25,
     parkingSlots: Math.max(8, Math.floor(options.parkingSlots ?? 24)),
     ring: {

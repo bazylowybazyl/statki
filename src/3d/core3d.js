@@ -30,6 +30,7 @@ import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
 import { syncSky3D } from './sky3D.js';
 import { setBillboard3DCamera } from './tsl/billboard3D.js';
 import { installRulonGlobal, RULON, rulonActive, rulonInverse } from './warp/rulon.js';
+import { packFogView } from './fog/fogOfWarView.js';
 
 // Rulon warpa zgina CAŁĄ grę (src/3d/warp/rulon.js): hak w każdym materiale węzłowym — zainstalowany
 // przed budową pierwszego materiału. Passy świata włączają go uniformem RULON.pass (_runScenePass).
@@ -458,6 +459,9 @@ const gpuReadyPromise = new Promise((resolve) => { resolveGpuReady = resolve; })
 const _bbRight = new THREE.Vector3();
 const _bbUp = new THREE.Vector3();
 const _bbFwd = new THREE.Vector3();
+// Mgła wojny: widok renderu (packFogView) — pola przepisywane w miejscu.
+const _fogView = { persp: false, refX: 0, refY: 0, zoom: 1, bufW: 1, bufH: 1, camZ: 1, inv: new THREE.Matrix4() };
+const _fogRot = new THREE.Matrix4();
 
 export const Core3D = {
   activeCam1: { x: 0, y: 0, zoom: 1 },
@@ -475,6 +479,9 @@ export const Core3D = {
 
   renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassWarp: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
+  // Mgła wojny (src/game/fogOfWar.js → src/3d/fog/): świat mgły (createFogWorld) ustawia gra raz na klatkę
+  // (setFogOfWar); rzut na kamerę KAŻDEGO renderu w _updateFogUniforms (podzielony ekran — widok swój).
+  fogOfWar: null,
   // shadowShaftsPass (QuadMesh + NodeMaterial, createShadowShaftsPass) pisze maskę
   // widoczności słońca do sunShadowTarget (RGBA8, rozmiar bufora sceny, bez MSAA) —
   // patrz sunShadowMask.js; materiały czytają ją po screenUV.
@@ -795,11 +802,12 @@ export const Core3D = {
     sunShadowUniforms.uSunShadowMap.value = SUN_SHADOW_MAP_PLACEHOLDER;
     sunShadowUniforms.uSunShadowOn.value = 0;
     // Efekty GPU (fxFrame.js): klatka efektów przeżywa ponowny init (kroki i pule zostają).
-    // Warstwa DIST: przesunięcie w px (osie sceny) w RG HalfFloat, rozmiar bufora sceny.
+    // Warstwa DIST: przesunięcie w px (osie sceny) w RG HalfFloat, rozmiar bufora sceny; B / A — maska ekranu
+    // i śnieg heksów-ekranów maskowania (src/3d/cloak/cloakTSL.js → cloakView.js; pule broni piszą zera).
     this.fx = this.fx || new FxFrame();
     this.fxStats = this.fx.stats;
     this.distortionTarget = new THREE.RenderTarget(w0, h0, {
-      format: THREE.RGFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
       generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
     });
     // Pre-pass halo: głębia planet bez koloru (overrideMaterial, SPIKE 12).
@@ -1757,6 +1765,7 @@ export const Core3D = {
     // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
     // każdego passa), potem post bez MSAA na kanwę.
     this.syncCamera(this.activeCam1, this.composerTarget.width, this.composerTarget.height);
+    this._updateFogUniforms(freePerspective);
     renderer.setRenderTarget(this.composerTarget);
     for (const pass of this._scenePasses) {
       if (!pass || pass.enabled === false) continue;
@@ -1839,6 +1848,8 @@ export const Core3D = {
     // float32 (kanciasty szum). Skok wzoru co 10 min jest niewidoczny.
     if (Number.isFinite(nowSec)) u.uTime.value = nowSec % 600;
     u.uAspect.value = this.width / Math.max(1, this.height);
+    // Mgła wojny: domyślnie wyłączona (tło menu); render() włącza ją po syncCamera (_updateFogUniforms).
+    if (u.uFogOn) u.uFogOn.value = 0;
     if (count > 0 && this.heatHazeSources && this.heatHazeDirs) {
       const dst = u.uHeatSources.value;
       const dstDirs = u.uHeatDirs.value;
@@ -1850,6 +1861,43 @@ export const Core3D = {
         dstDirs[i].set(srcDirs[i * 2], srcDirs[i * 2 + 1]);
       }
     }
+  },
+
+  /** Mgła wojny: świat mgły gry (createFogWorld z src/3d/fog/fogOfWarView.js) albo null — bez mgły. */
+  setFogOfWar(world) {
+    this.fogOfWar = world || null;
+  },
+
+  // Mgła wojny do „uber”: koła wzroku i sygnatury rzutowane na kamerę TEGO renderu (po syncCamera — kamera
+  // z góry: środek kadru i zoom; kamery 3D: oko nad płaszczyzną gry i odwrotność rzutu bez przesunięcia).
+  _updateFogUniforms(freePerspective) {
+    const u = this._postUniforms;
+    if (!u || !u.uFogOn) return;
+    const cam = this.activeCam1;
+    const world = this.fogOfWar;
+    if (!world || !world.on || !cam || !this.composerTarget) {
+      u.uFogOn.value = 0;
+      return;
+    }
+    const v = _fogView;
+    v.bufW = this.composerTarget.width;
+    v.bufH = this.composerTarget.height;
+    if (freePerspective) {
+      const cp = this.cameraPersp;
+      v.persp = true;
+      v.refX = cp.position.x;
+      v.refY = -cp.position.y;
+      v.zoom = 1;
+      v.camZ = cp.position.z;
+      _fogRot.copy(cp.matrixWorld).setPosition(0, 0, 0);
+      v.inv.multiplyMatrices(_fogRot, cp.projectionMatrixInverse);
+    } else {
+      v.persp = false;
+      v.refX = Number(cam.x) || 0;
+      v.refY = Number(cam.y) || 0;
+      v.zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+    }
+    packFogView(u, world, v);
   },
 
   // Post na kanwę (bieżący cel = null): bloom (gdy włączony — jeden pass compute, bloomCompute.js,

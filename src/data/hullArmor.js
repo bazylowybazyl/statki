@@ -5,6 +5,7 @@ export const HULL_COLLISION_ARMOR = Object.freeze({
   atlas: 16,
   supercapital: 10,
   terran_supercapital: 10,
+  pirate_supercapital: 10,
   terran_carrier: 4,
   capital_carrier: 4,
   terran_battleship: 3,

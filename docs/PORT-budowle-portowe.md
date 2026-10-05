@@ -28,6 +28,18 @@ i refitu — **Ziemia: okrąg z wypustkami, inne frakcje: litera U** (stocznie f
 Demo: `dema/budowle-portowe.html` (+ `.js`, zrzuty `node dema/budowle-portowe-shots.js [katalog]`).
 Testy: `tests/portBuildings.test.mjs`.
 
+**Suchy dok piratów (2026-10-05, misja 1 — W GRZE):** ta sama podstawa (rejestrator, shader, `PortBuilding3D`), pliki
+`pirateDryDockLayout.js` (układ wg szkicu użytkownika i poprawki tego dnia: trzon, zamknięty parking z 10 okrętami burta
+w burtę, cienkimi bramami taranowymi i masztami reflektorów, hala jak K-7 wpięta w trzon, brama od kosmosu; bez suwnic),
+`pirateDryDockScene.js` (bryły; kawałki = grupy), `pirateDryDock3D.js` (render: alarm, wylot, dach, lampki stanowisk,
+`breakChunk` / `ramChunk` / `hideChunk`, reflektory w siatce świateł `pushGridLights`, pochylnie z `PortHullBuild3D`),
+`pirateDryDockChunks.js` (bryły kawałków → trójkąty / rzut z góry dla silnika zniszczeń), styl `PIRATE_PORT_STYLE`
+(`resolvePortBuildingStyle('pirate')` — jak sprite'y „Iron Skull”, bez czaszek). Demo `dema/suchy-dok-piratow.html`, opis
+w AGENTS.md § „Suchy dok piratów”. Zmiany wspólnego kodu budowli: tryb efektu `PB_FX.alarm` (9 — kogut przy kanale ≥ 0,5),
+GRUPA UKRYTA (macierz grupy z `elements[15] = 0` — cała grupa poza bryłą obcinania; tak schowa się statyczny odpowiednik
+kawałka, gdy przejmie go ciało silnika zniszczeń) i STOŻEK (`PortRecorder.cone`, geometria 8-boczna — kolce; płaski
+stożek = ośmiokątna rama włazu).
+
 ## Układ lokalny i stanowiska
 
 Jak hub K-7 (`haloPortK7Layout.js`): x wzdłuż (ringu albo lica megadoku), z na zewnątrz

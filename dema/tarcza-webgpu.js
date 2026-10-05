@@ -16,6 +16,7 @@ import { createSky } from './tarcza-webgpu/tlo.js';
 import { loadAtlasSprite, createAtlasHullMesh } from './tarcza-webgpu/kadlub.js';
 import { buildShip, placeShip, aimTurret, shipPoint, footprintShards } from './tarcza-webgpu/wrogowie.js';
 import { Tarcza, FIELD_PARAMS } from './tarcza-webgpu/tarcza.js';
+import { SHATTER } from './tarcza-webgpu/heksy.js';
 import { sstepDown } from './tarcza-webgpu/czasza.js';
 import { createWeapons, WEAPONS } from './tarcza-webgpu/bronie.js';
 import { createClash } from './tarcza-webgpu/zderzenie.js';
@@ -335,6 +336,9 @@ async function main() {
   bindRange('s-hex', (v) => { shield.setHexScale(v); eShield.setHexScale(v); }, (v) => v.toFixed(2), true);
   bindRange('s-light', (v) => { uLightGain.value = v; });
   bindRange('s-sparks', (v) => { FIELD_PARAMS.sparkMult = v; });
+  // Pęknięcie: prędkości odłamków (×) i część płytek odpadająca jako odłamki (reszta gaśnie w miejscu).
+  bindRange('s-shpow', (v) => { shield.X.uShatterPow.value = v; eShield.X.uShatterPow.value = v; });
+  bindRange('s-shfrac', (v) => { shield.X.uShardFrac.value = v; eShield.X.uShardFrac.value = v; });
   bindRange('s-bloom', (v) => { S.bloomStrength = v; if (S.bloom) bloomNode.strength.value = v; });
   bindRange('s-wave', (v) => { FIELD_PARAMS.waveSpeed = v; }, (v) => v.toFixed(0));
   bindRange('s-damp', (v) => { FIELD_PARAMS.damping = v; }, (v) => v.toFixed(1));
@@ -526,6 +530,8 @@ async function main() {
   window.__demo = {
     ready: true,
     S, cam, atlas, enemies, shield, eShield, weapons, clash, renderer, scene, camera,
+    // Strojenie pęknięcia (heksy.js) — zmiany działają od następnego pęknięcia (B).
+    SHATTER,
     step(n = 1) {
       return new Promise((resolve) => {
         pendingSteps = Math.max(1, n | 0);

@@ -409,7 +409,7 @@ function makeInstanced(base, data, sphere) {
   geo.setAttribute('iQ', new THREE.InterleavedBufferAttribute(buf, 4, 8));
   geo.setAttribute('iC', new THREE.InterleavedBufferAttribute(buf, 4, 12));
   geo.instanceCount = arr.length / K7_INSTANCE_STRIDE;
-  // cały kompleks (hala z kołnierzem i klinem, zatoki; układ huba): obcinanie
+  // cały kompleks (hala z pylonami i terminalem, zatoki; układ huba): obcinanie
   // przez three, gdy jest poza kadrem
   geo.boundingSphere = sphere.clone();
   return { geo, arr, buf };
@@ -437,7 +437,7 @@ function complexSphere(sets) {
 }
 
 // Wypukłe wielokąty wytłoczone w pionie (y = z świata), jedna geometria na zestaw.
-// axis 'x': wielokąt w (z huba, y) wytłoczony wzdłuż x (klin pod halą) — ta
+// axis 'x': wielokąt w (z huba, y) wytłoczony wzdłuż x (np. dawny klin pod halą) — ta
 // sama budowa w osiach przestawionych cyklicznie (obrót, nawinięcie zostaje).
 function makePlates(plates) {
   const pos = [];

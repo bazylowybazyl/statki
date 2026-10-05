@@ -18,7 +18,7 @@
 |---|---|
 | `src/3d/planetaryRing3D.js` (render ringu, pass FG layer 2) | `createHaloRing()` z `src/3d/haloRing/index.js`: wszystko w **BG persp, layer 1** (pod statkami) poza górną ścianą z dachem → **FG, layer 2** (leży nad płaszczyzną gry) |
 | `src/3d/ringCity*.js` (miasto-pudełka, SynthCity) | teren CDLOD + mapy GPU + budynki/drzewa instancjami (`haloRingCity.js`) |
-| dok/stacja Ziemi na orbicie 46 020 | port ringu: **4 kompleksy co 90°** (pierwszy przy kącie stacji), w każdym **3 doki: hala K-7 pośrodku** (28 stanowisk, 4 capital) i **po jednej otwartej zatoce z każdej strony** ze stanowiskami w standardzie K-7 (2 pasy MEGA + 4 L, 4 M, 4 S), wszystko **wpięte w podłogę habitatu na środku wstęgi**, w płaszczyźnie gry |
+| dok/stacja Ziemi na orbicie 46 020 | port ringu: **4 kompleksy co 90°** (pierwszy przy kącie stacji), w każdym **3 doki: hala K-7 pośrodku** (28 stanowisk, 4 capital) i **po jednej otwartej zatoce z każdej strony** ze stanowiskami w standardzie K-7 (2 pasy MEGA + 4 L, 4 M, 4 S), na środku wstęgi, w płaszczyźnie gry; od 2026-10-05 **doki stoją 2 500 j. za krawędzią ringu na dwóch pylonach** od płyty portu na podłodze (§ „Odsunięcie doków”) |
 | „teoretyczny” dok ruchu v2 (`buildStationDocks`, 4 pomosty × 13 × mnożnik) | `buildHaloPortTrafficLayout()` z `src/3d/haloRing/haloPortTraffic.js` — ten sam format (`berths`, `docks`, `parkingRadius`), 224 stanowiska: 16 capital, 16 mega, 48 L, 64 M, 80 S |
 | pas-hak cienia ringu w `EARTH_FRAGMENT`/`CLOUD_FRAGMENT` (`uRingShadow*`) | zostaje, ale do przestrojenia (niżej) |
 
@@ -306,23 +306,50 @@ węże od rufy, sekwencje dokowania 9,3/9,5 s, zanik dachu); od 2026-09-23 **28 
 (hala 10 440 j. szerokości, brama główna 6 180 j. — każde capital ma własny pas). Na ringu 4 hale:
 hala gracza przy kącie stacji (lot, dokowanie), 3 statyczne (obcinane poza kadrem, za horyzontem
 podłogi i za planetą):
-- `haloPortK7Layout.js` — czysta logika: układ hali, osadzenie przy kącie stacji (**ściana tylna
-  hali na płycie portu na podłodze habitatu**, hala przechodzi przez wąwóz habitatu i wychodzi poza
-  krawędź ścian; kołnierz na podłodze = przeszkoda lotu), kolizje (wielokąty wypukłe, SAT), automat
+- `haloPortK7Layout.js` — czysta logika: układ hali, osadzenie przy kącie stacji (`k7Frame`:
+  **ściana tylna hali `HALO_PORT.dockGap` za krawędzią ścian habitatu** — od 2026-10-05, wcześniej
+  na płycie portu na podłodze; `k7DockArms` — pylony), kolizje (wielokąty wypukłe, SAT), automat
   dokowania, referencyjny model lotu K-7 (**przy porcie podpiąć napęd gry** — to nie
   `thrusterModel.js`), zanik dachu;
 - `haloPortK7Build.js` — bryły jako dane (port funkcji budujących K-7); `haloPortK7.js` — render
   (instancje + pokład + napisy z atlasu + węże), ~11 draw calli, obcinany gdy poza kadrem;
-  wpięcie w podłogę: kołnierz (słupy, nadproże, podstawa-terminal „PORT KEPLER” z oknami) i klin
-  nośny pod pokładem (wielokąt wytłoczony wzdłuż x) — bez mostów i zastrzałów;
+  przypięcie do ringu: dwa pylony-kratownice z rękawem od terminalu „PORT KEPLER” na płycie portu
+  do siodła pod ścianą tylną (`buildDockPylons`; dawny kołnierz i klin usunięte 2026-10-05);
 - **warstwy**: pokład, ściany, stanowiska → BG (layer 1, pod statkami); suwnice, węże i dach →
   **FG (layer 2, po świecie ortho)** — celowo nad statkiem stojącym pod mostem suwnicy;
 - wysokości nad płaszczyzną lotu ściśnięte ×0,42 (`k7HeightToZ`), żeby kamera persp przy
   zoomie 3,2 (535 j. nad z = 0) była nad dachem; pokład hali na z = −116;
-- stacja Ziemi na orbicie 46 020 przestaje istnieć (K-7 sięga do r ≈ 50,8 tys.); kolizje:
-  hale K-7 wszystkich kompleksów, zatoki (ściany, kołnierze, słupki, nogi suwnic), tranzyty
-  i podłoga z terenem.
+- stacja Ziemi na orbicie 46 020 przestaje istnieć (K-7 sięga do r ≈ 54,6 tys. — od 2026-10-05,
+  wcześniej 50,8 tys.); kolizje: hale K-7 wszystkich kompleksów, zatoki (ściany, słupki, nogi
+  suwnic), tranzyty i podłoga z terenem.
 - rozgrywka w demie: `dema/halo_ring_k7_flight.js` (tryb „Lot”, klawisz L; V = kadłub).
+
+### Odsunięcie doków (poprawka użytkownika 2026-10-05)
+
+„Doki na ringach są za mocno wciśnięte w ring” (szkic: hala i zatoki daleko za krawędzią ringu,
+każdy dok przypięty dwoma ramionami). Wszystkie trzy ringi (Ziemia, Mars, Jowisz):
+- `HALO_PORT.dockGap` (2 500 j.) — ściana tylna hali K-7 i zatok leży tyle za krawędzią ścian
+  habitatu (`k7DockBackRadius`); `k7Frame` liczy z tego ramkę, więc stanowiska, kolizje, ruch v2,
+  stacja-port, fabuła i router ringu przesuwają się same. `frame.floorZ` (płyta portu) jest teraz
+  < 0 w układzie huba, `frame.standoff` = długość pylonów. Zatoka: `baseZ` (dawne `floorZ`) =
+  płaszczyzna tylna zatoki, nie podłoga ringu;
+- dwa pylony na dok WYSTAJĄ WPROST ZE ŚCIANY TYLNEJ, na wysokości doku (kolejne poprawki tego
+  dnia: „za słabe, jakby nie miały utrzymać” i „dok leży NA pylonach — mają wychodzić z niego,
+  ze ściany tylnej przechodzi się do pylonu”): masywny dźwigar-korytarz (`HALO_PORT.armHall` /
+  `armBay`: rozstaw, szerokość 1 100 / 700, rozszerzenie ×1,5, przekrój `z` jak ściana tylna) od
+  rozszerzonej stopy na płycie portu (wieża do terminalu pod płaszczyzną) do rozszerzonego korzenia
+  wpiętego w ścianę tylną, z bramą przejścia od środka doku. Geometria w JEDNYM miejscu:
+  `k7DockArms` (`k7HallArms`, `bayArms`) — trzy wielokąty wypukłe na pylon, z których rysuje się
+  bryła i liczy kolizja. Pylony są PRZESZKODĄ lotu (`buildPortCollision`, `PYLON …`); między
+  pylonami jednego doku jest prześwit (hala ~3 600 j.) — można tamtędy przelecieć. Bryły: K-7 —
+  `buildDockPylons` (`haloPortK7Build.js`, wytłaczane wielokąty), zatoki Ziemi —
+  `haloRingRoofPlan.js`, zatoki Marsa i Jowisza — `arch/archPort.js` (skośne boki zwężeń jako
+  obrócone płyty);
+- płyta portu i strefa przemysłowa na podłodze zostają (stopy pylonów); wycięcie górnej ściany
+  nad halą / zatoką (`_setHallCut`) obejmuje tylko część doku pod ścianą — dziś żadną;
+- budowle Z7 poza grą (`portRingModuleFrame`) zostają wpięte w podłogę (`k7FloorFrame`);
+- front płyty przed G-01 jest 2 670 j. przed punktem startu wolnej gry (57 252); brama warp
+  stacji-portu (hub z 10 200) wypada tuż za studnią grawitacji Ziemi.
 
 ## Budżet (zmierzone, RTX 5080, 1440p, jakość „Wysoka”)
 

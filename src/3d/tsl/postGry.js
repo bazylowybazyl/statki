@@ -48,16 +48,21 @@
 import { Vector2, Vector4, NodeUpdateType } from 'three/webgpu';
 import BloomNode from 'three/addons/tsl/display/BloomNode.js';
 import {
-  Continue, Fn, If, Loop, abs, clamp, dot, exp, float, floatBitsToUint, floor, fract, length, max, mix, select, smoothstep,
-  texture, uint, uniform, uniformArray, uv, vec2, vec4
+  Continue, Fn, If, Loop, abs, clamp, dot, exp, float, floatBitsToUint, floor, fract, length, max, min, mix, select, smoothstep,
+  texture, uint, uniform, uniformArray, uv, vec2, vec3, vec4
 } from 'three/tsl';
 import { uniformsAdapter, uniformNode } from './uniformy.js';
 import { acesGry, linearDoSrgb } from './kolorGry.js';
 import { distortionOffset } from '../fx/distortion.js';
 import { RULON, rulonInverse } from '../warp/rulon.js';
+import { applyFogOfWar, createFogPostUniforms } from '../fog/fogOfWarPost.js';
+import { CLOAK_SCREEN, applyCloakScreens, applyCloakView, cloakViewUniform } from '../cloak/cloakView.js';
 
 /** Ile źródeł gorącego powietrza przyjmuje uber w klatce (Core3D.pushHeatHazeWorld). */
 export const MAX_HEAT_HAZE_SOURCES = 24;
+
+/** Najwięcej rozszczepienia barw (aberracji) warstwy DIST [px bufora] — ×0,12 przesunięcia, z sufitem. */
+export const LAYER_ABER_MAX_PX = 2.5;
 
 /**
  * BloomNode gry: rozmiar z bufora rysowania × resolutionScale (bloomConfig.js /
@@ -132,8 +137,8 @@ export const hdrBezpieczny = /*@__PURE__*/ Fn(([c]) => {
  * ustawia `.value` jak na WebGL, bez przebudowy pipeline'u. uHeatOn zastępuje define
  * HEAT_HAZE (perfToggles.heatHaze), uSourceCount ogranicza pętlę (tablice zawsze po 24),
  * uDistLayerOn — warstwa DIST ma w tym renderze zawartość (12-B).
- * Bufory uniformów etapu: grupa obiektu + dwie tablice = 3 (+ blok źródeł zniekształceń = 4;
- * limit 12).
+ * Bufory uniformów etapu: grupa obiektu + dwie tablice + blok mgły wojny = 4 (+ blok źródeł zniekształceń
+ * = 5, + grupa renderu rulonu; limit 12). Mgła wojny (src/3d/fog/fogOfWarPost.js): uFogOn = 0 — gałąź pominięta.
  */
 export function createPostUniforms() {
   return uniformsAdapter({
@@ -149,7 +154,10 @@ export function createPostUniforms() {
     // xy = środek (UV, v od dołu ekranu), z = promień w jednostkach osi v, w = siła
     uHeatSources: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector4(2, 2, 0, 0)), 'vec4'),
     // kierunek wydechu dyszy w przestrzeni ekranu; (0, 0) = źródło izotropowe
-    uHeatDirs: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector2(0, 0)), 'vec2')
+    uHeatDirs: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector2(0, 0)), 'vec2'),
+    ...createFogPostUniforms(),
+    // Wizjer maskowania gracza (src/3d/cloak/cloakView.js): wartość odświeżana co render, bez zgłoszenia — wyłączony.
+    uCloakView: cloakViewUniform()
   });
 }
 
@@ -173,6 +181,12 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
   const uHeatDirs = uniformNode(uniforms.uHeatDirs);
   const uDistLayerOn = uniforms.uDistLayerOn ? uniformNode(uniforms.uDistLayerOn) : null;
   const uFxExposure = uniforms.uFxExposure ? uniformNode(uniforms.uFxExposure) : null;
+  const uCloakView = uniforms.uCloakView ? uniformNode(uniforms.uCloakView) : null;
+  // Mgła wojny — tylko z uniformami mgły (createPostUniforms); węzły po uniformNode.
+  const fog = uniforms.uFogOn ? {} : null;
+  if (fog) {
+    for (const key of Object.keys(uniforms)) if (key.startsWith('uFog')) fog[key] = uniformNode(uniforms[key]);
+  }
 
   // UV kwadu WebGPU ma v = 0 u GÓRY; źródła i przesunięcia liczymy jak w GLSL (v od dołu),
   // przesunięcie wraca do UV tekstury z odwróconą składową y.
@@ -290,40 +304,73 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
       // UV tekstury (y w dół), zw — jego część z dyspersją (×0,82 / ×1 / ×1,22 jak dysze). Warstwa
       // DIST: przesunięcie w px w osiach sceny (x w prawo, y w górę) — próbka z p − o w osiach sceny
       // w OBU osiach (demo broni odejmowało je od UV ekranu, co w osi y odwracało kierunek),
-      // aberracja ×1,12 / ×1 / ×0,88 jak demo; rozmiar celu z nagłówka bloku.
+      // aberracja ×1,12 / ×1 / ×0,88 jak demo, najwyżej LAYER_ABER_MAX_PX (fale broni mają ją mniejszą — bez
+      // zmian); rozmiar celu z nagłówka bloku. B / A warstwy — maskowanie (src/3d/cloak/cloakTSL.js): B > 0 maska
+      // heksa-ekranu, A śnieg (cloakView.js — na ekranie zamiast aberracji stałe rozszczepienie R / B jak
+      // w kineskopie, kanał leży setki px dalej), B < 0 refrakcja kadłuba bez ekranu — bez rozszczepienia (cienka
+      // poświata brzegu w soczewce rozpadała się na tęczę).
       const layerOn = uDistLayerOn ? uDistLayerOn.greaterThan(0.5) : null;
       const fxOn = layerOn ? fxBlock.element(0).x.greaterThan(0.5).or(layerOn) : fxBlock.element(0).x.greaterThan(0.5);
       If(fxOn, () => {
         const fxOff = distortionOffset(fxBlock, uvTex).toVar();
         const layerOff = vec2(0.0).toVar();
+        const layerAber = vec2(0.0).toVar();
+        const cloakTv = vec2(0.0).toVar();
         if (distLayerBase) {
           If(layerOn, () => {
             const size = max(fxBlock.element(1).xy, vec2(1.0));
-            const o = level0(distLayerBase, uvTex).xy;
+            const o = level0(distLayerBase, uvTex).toVar();
             layerOff.assign(vec2(o.x.negate(), o.y).div(size));
+            cloakTv.assign(clamp(o.zw, vec2(0.0), vec2(1.0)));
+            const tvK = clamp(cloakTv.x.add(cloakTv.y).mul(6.0), 0.0, 1.0);
+            const cloakRefract = select(o.z.lessThan(-0.0002), float(0.0), float(1.0));
+            const ab = layerOff.mul(0.12).toVar();
+            ab.mulAssign(min(1.0, float(LAYER_ABER_MAX_PX).div(max(length(ab.mul(size)), 1e-6))));
+            layerAber.assign(ab.mul(float(1.0).sub(tvK)).mul(cloakRefract).add(vec2(tvK.mul(CLOAK_SCREEN.splitPx).div(size.x), 0.0)));
           });
         }
         const base = uvTex.add(toTextureUv(distortion)).add(fxOff.xy.sub(fxOff.zw)).add(layerOff).toVar();
         const nh = toTextureUv(nozzleHaze).add(fxOff.zw).toVar();
         If(dot(nh, nh).add(dot(layerOff, layerOff)).greaterThan(1.0e-12), () => {
-          const cr = sampleScene(base.add(nh.mul(0.82)).add(layerOff.mul(0.12))).r;
+          const cr = sampleScene(base.add(nh.mul(0.82)).add(layerAber)).r;
           const cg = sampleScene(base.add(nh)).toVar();
-          const cb = sampleScene(base.add(nh.mul(1.22)).sub(layerOff.mul(0.12))).b;
+          const cb = sampleScene(base.add(nh.mul(1.22)).sub(layerAber)).b;
           sceneColor.assign(vec4(cr, cg.g, cb, cg.a));
         }).Else(() => {
           sceneColor.assign(sampleScene(base));
         });
         // Przygaszenie od efektów (implozja Supernowej) — tylko przy źródłach; 1 = bez zmian.
         if (uFxExposure) sceneColor.rgb.mulAssign(uFxExposure);
+        // Heksy-ekrany maskowania: luminofor, linie, śnieg (tylko piksele ekranów).
+        if (distLayerBase) {
+          If(cloakTv.x.add(cloakTv.y).greaterThan(1.0e-4), () => {
+            applyCloakScreens(sceneColor, cloakTv, uvTex, max(fxBlock.element(1).xy, vec2(1.0)), uTime);
+          });
+        }
       }).Else(zDyszami);
     }
 
     // Rulon warpa (src/3d/warp/rulon.js — cała gra zgina się w wierzchołkach): przyciemnienie przy
     // horyzoncie walca i zanik za nim RAZ na piksel (odwrotność rulonu), zamiast w każdym materiale.
-    If(RULON.k.greaterThan(1e-7), () => {
+    // Odwrotność liczona raz: punkt płaski (xy, px od środka, y w górę) bierze też mgła wojny.
+    const rulonOn = RULON.k.greaterThan(1e-7);
+    const rulonInv = vec3(0.0, 0.0, 1.0).toVar();
+    If(rulonOn, () => {
       const q = vec2(uv().x.sub(0.5).mul(RULON.viewHalf.x.mul(2.0)), float(0.5).sub(uv().y).mul(RULON.viewHalf.y.mul(2.0)));
-      sceneColor.rgb.mulAssign(rulonInverse(q).z);
+      rulonInv.assign(rulonInverse(q));
     });
+    // Mgła wojny (przed przyciemnieniem rulonu — mgła gnie się ze światem).
+    if (fog) {
+      const flatPx = select(rulonOn, rulonInv.xy,
+        vec2(uvTex.x.sub(0.5).mul(fog.uFogBuf.x), float(0.5).sub(uvTex.y).mul(fog.uFogBuf.y)));
+      applyFogOfWar(fog, sceneColor, uvTex, flatPx);
+    }
+    If(rulonOn, () => {
+      sceneColor.rgb.mulAssign(rulonInv.z);
+    });
+
+    // Wizjer maskowania gracza (na „szybie” — po rulonie, przed ACES); wyłączony = gałąź pominięta.
+    if (uCloakView) applyCloakView(uCloakView, sceneColor, uvTex, uAspect);
 
     return vec4(linearDoSrgb(acesGry(sceneColor.rgb)), sceneColor.a);
   })();

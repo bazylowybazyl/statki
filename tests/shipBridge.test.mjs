@@ -402,6 +402,7 @@ const BRIDGE_HULL_SPRITES = {
   terran_supercapital: ['src/assets/ships/terransupercapital.png', 1672, 941, 'terran_supercapital'],
   pirate_frigate: ['src/assets/ships/piratefrigate.png', 1942, 809, 'pirate_frigate'],
   pirate_destroyer: ['src/assets/ships/piratedestroyer.png', 1840, 854, 'pirate_destroyer'],
+  pirate_supercapital: ['src/assets/ships/piratecapital.png', 1671, 941, 'pirate_supercapital'],
   megafreighter: ['assets/megafreighterfront.png', 1672, 941, 'megafreighter']
 };
 

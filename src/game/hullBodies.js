@@ -18,7 +18,7 @@
  * Encja z kadłubem ma `beamHull` (rekord niżej); `hexGrid` jej nie dotyczy.
  */
 
-import { DestructorBeams3D as D, createBeamConfig } from './destructorBeams3D.js';
+import { DestructorBeams3D as D, createBeamConfig, pinBeamNodes } from './destructorBeams3D.js';
 import { getHullCollisionArmor } from '../data/hullArmor.js';
 import { buildSpriteBeamStructure } from './beamSprite2D.js';
 import { defineLazyViews } from './beamStore3D.js';
@@ -260,6 +260,9 @@ export const HullBodies = {
   // skóry i punkt świata gry. Trafienia (impact, cutSegment) mają własny hak onImpact. Mapa ran: rozdarcie
   // (poszarpany, osmalony brzeg dziury). Domyślnie brak.
   onNodeLost: null,
+  // (islandEntity, parentEntity) — wyspa ciała ŚWIATA, która przy rozpadzie dalej trzyma się kotwicy: osobna encja
+  // budowli (isWorldPiece, stoi), nie wrak. Gra (worldBodies.js) dopisuje ją do swojego kawałka. Domyślnie brak.
+  onWorldIsland: null,
   // > 0 w trakcie impact() / cutSegment(): zniszczone węzły należą do krateru / rzazu (onImpact).
   _weaponDepth: 0,
 
@@ -289,17 +292,22 @@ export const HullBodies = {
 
   // --------------------------- BUDOWA ---------------------------
 
-  /** Konstrukcja z obrazu (jedna na obraz × rozmiar × skalę — flota jednego typu dzieli budowę). */
-  structureFor(image, scale = 1) {
+  /**
+   * Konstrukcja z obrazu (jedna na obraz × rozmiar × skalę — flota jednego typu dzieli budowę).
+   * `cellPx` — bok komórki w pikselach obrazu (domyślnie siatka kadłubów; raster budowli świata ma
+   * kilka j. na piksel, więc komórka 15 j. to parę pikseli).
+   */
+  structureFor(image, scale = 1, cellPx = C.cellPx) {
     const W = Math.max(1, Math.round(Number(image?.width) || Number(image?.naturalWidth) || 0));
     const H = Math.max(1, Math.round(Number(image?.height) || Number(image?.naturalHeight) || 0));
-    const key = `${W}x${H}|${scale}|${C.cellPx}`;
+    const px = Number(cellPx) > 0 ? Number(cellPx) : C.cellPx;
+    const key = `${W}x${H}|${scale}|${px}`;
     let byKey = this._structures.get(image);
     const cached = byKey?.get(key);
     if (cached) return cached;
     const rgba = readImageRGBA(image);
     if (!rgba) return null;
-    const cellsAlong = Math.max(4, Math.round(W / C.cellPx));
+    const cellsAlong = Math.max(4, Math.round(W / px));
     const structure = buildSpriteBeamStructure(rgba, {
       worldLength: W * scale,
       cellsAlong,
@@ -330,6 +338,11 @@ export const HullBodies = {
   /**
    * Kadłub dla encji z obrazu sprite'a (ten sam, który dostawał initHexBody).
    * Zwraca rekord `entity.beamHull` albo null (pusty obraz, błąd odczytu).
+   * Ciała ŚWIATA (budowle — src/game/worldBodies.js, docs/PLAN-zniszczenia-swiata-3d.md F1/F2): raster z góry
+   * zamiast sprite'a i opcje: `cellPx` (bok komórki w pikselach rastra), `anchored` + `pins(x, y)` — kotwice
+   * (węzły z invMass 0; test w układzie sprite'a od jego środka: x — w prawo obrazu, y — w GÓRĘ obrazu,
+   * j. świata), `massPerArea`, `collisionArmor`, `hexPerNode` (HP węzła), `world` (rekord kawałka — idzie
+   * za odłamami: HullBodies.onWorldIsland).
    */
   createHull(entity, image, opts = {}) {
     if (!entity || !image) return null;
@@ -337,7 +350,7 @@ export const HullBodies = {
     const scale = entitySpriteScale(entity);
     let structure = null;
     try {
-      structure = this.structureFor(image, scale);
+      structure = this.structureFor(image, scale, opts.cellPx);
     } catch (err) {
       if (typeof console !== 'undefined') console.warn('[HullBodies] budowa kadłuba nie powiodła się:', err);
       return null;
@@ -345,11 +358,15 @@ export const HullBodies = {
     if (!structure) return null;
     // Masa zderzeń z powierzchni (jedna gęstość dla wszystkich kadłubów); masa gry encji bez zmian,
     // a bez niej (transportowce) — masa zderzeń.
-    const collisionMass = C.massPerArea * structure.area;
+    const density = Number(opts.massPerArea) > 0 ? Number(opts.massPerArea) : C.massPerArea;
+    const collisionMass = density * structure.area;
+    const armor = Number(opts.collisionArmor) > 0 ? Number(opts.collisionArmor)
+      : getHullCollisionArmor(opts.hullProfileId || entity.shipFrame || entity.activeHullId || entity.model3DProfileId || entity.type);
     const body = D.createBody(cloneStructure(structure), {
       name: String(entity.name || entity.type || 'kadłub'),
-      collisionArmor: getHullCollisionArmor(opts.hullProfileId || entity.shipFrame || entity.activeHullId || entity.model3DProfileId || entity.type),
-      massMultiplier: collisionMass / structure.mass
+      collisionArmor: armor,
+      massMultiplier: collisionMass / structure.mass,
+      anchored: !!opts.anchored
     });
     const entityMass = Number(entity.mass);
     const mass = Number.isFinite(entityMass) && entityMass > 0 ? entityMass : body.mass;
@@ -374,9 +391,13 @@ export const HullBodies = {
       anchorDX: W * 0.5 * scale,
       anchorDY: skin.ny * body.cellSize - H * 0.5 * scale,
       baseNodes: body.activeNodes,
-      hexPerNode: structure.hexPerNode,  // dawne heksy na węzeł (krater, łup, tempo cięcia)
+      // dawne heksy na węzeł (krater, łup, tempo cięcia); ciało świata — z opcji (raster ma inny piksel)
+      hexPerNode: Number(opts.hexPerNode) > 0 ? Number(opts.hexPerNode) : structure.hexPerNode,
       massScale: mass / body.mass,       // masa gry na jednostkę masy zderzeń (przy budowie)
       isFragment: false,
+      world: opts.world || null,         // ciało świata: rekord kawałka (worldBodies.js), dziedziczą go odłamy
+      cellPx: Number(opts.cellPx) > 0 ? Number(opts.cellPx) : C.cellPx,  // bok komórki w pikselach obrazu (klucz konstrukcji)
+      pins: 0,
       // Klucz mapy ran: nowy kadłub = nowy numer; wrak i odłamy dziedziczą go (makeWreckEntity),
       // więc rany rodu leżą w jednej warstwie w uv rodzica.
       dmgKey: ++_nextDmgKey,
@@ -393,6 +414,16 @@ export const HullBodies = {
     entity.mass = mass;
     entity.radius = hull.radius;
     entity._bpRadius = hull.radius;
+    // HP węzła z opcji (ciało świata: piksel rastra ≠ piksel sprite'a, więc heksy na węzeł z obrazu nie pasują).
+    if (Number(opts.hexPerNode) > 0 && structure.hexPerNode > 0 && opts.hexPerNode !== structure.hexPerNode) {
+      const k = opts.hexPerNode / structure.hexPerNode, s = body.nodeStore;
+      for (let i = 0; i < s.count; i++) { s.hp[i] *= k; s.maxHp[i] *= k; }
+    }
+    // Kotwice ciała świata: test w układzie sprite'a (od środka obrazu; x w prawo, y w górę obrazu).
+    if (opts.anchored && typeof opts.pins === 'function') {
+      const ax = body.latticeMin.x + hull.anchorDX, ay = body.latticeMin.y + hull.anchorDY;
+      hull.pins = pinBeamNodes(body, (ox, oy) => !!opts.pins(ox - ax, oy - ay));
+    }
     syncBodyPose(hull);
     return hull;
   },
@@ -1443,6 +1474,9 @@ function pairFilter(A, B) {
   if (!ea.isWreck && !eb.isWreck) {
     const ra = ea.owner || ea, rb = eb.owner || eb;
     if (ra === rb || ra === eb || rb === ea) return false;
+    // Ciała budowli (worldBodies.js): gospodarz miejsca decyduje, kto przez nie przelatuje (piraci przez własny dok).
+    if (ea.isWorldPiece && ea.worldPiece?.site?.passes?.(eb)) return false;
+    if (eb.isWorldPiece && eb.worldPiece?.site?.passes?.(ea)) return false;
   }
   if (areTowBodiesCollisionDisabled(ea, eb)) return false;
   // Dwa stare, wolne wraki nie mielą się bez końca w stosie złomu.
@@ -1657,6 +1691,9 @@ function makeWreckEntity(parent, body, parentHull) {
     massScale,
     isFragment: true,
     dmgKey: parentHull.dmgKey,         // rany rodzica (wrak z całego kadłuba, odłamy, wybuch reaktora)
+    world: parentHull.world || null,   // odłam ciała świata: render rysuje go bryłą 3D kawałka budowli
+    cellPx: parentHull.cellPx || C.cellPx,
+    pins: 0,
     radius: body.radius,
     revision: 0,
     shieldCells: null,
@@ -1692,9 +1729,24 @@ function onWreck(parentBody, wreckBody) {
   const parentHull = parentBody.hull;
   const parent = parentBody.entity;
   if (!parentHull) return;
+  // Ciało świata (budowla): wyspa, która dalej trzyma się kotwicy, zostaje BUDOWLĄ — stoi, bez listy wraków,
+  // łupu i holowania; gra (worldBodies.js) dopisuje ją do kawałka przez hak onWorldIsland. Wyspa bez kotwicy
+  // to zwykły wrak (lista wraków całkuje jego ruch) z obrazem budowli (hull.world).
+  if (parentHull.world && wreckBody.anchored) {
+    const island = makeWreckEntity(parent || { visual: null }, wreckBody, parentHull);
+    island.isWreck = false;
+    island.isWorldPiece = true;
+    island.vx = 0; island.vy = 0; island.angVel = 0;
+    island.friction = 1;
+    island.beamHull._inNodes = wreckBody.activeNodes;
+    wreckBody.isWreck = false;
+    if (typeof HullBodies.onWorldIsland === 'function') HullBodies.onWorldIsland(island, parent);
+    return;
+  }
   // Odłam z rzazu z pędem (Hexlance): pęd brzegu rzazu, zanim encja wraku weźmie prędkość ciała.
   applyCutEdgeImpulse(parentHull, wreckBody);
   const wreck = makeWreckEntity(parent || { visual: null }, wreckBody, parentHull);
+  if (parentHull.world) wreck.worldDebris = true;
   // Nowy wrak nie był w syncIn tego kroku — jego stan to od razu stan silnika.
   wreck.beamHull._inNodes = wreckBody.activeNodes;
   finishWreck(wreck, parent, wreckBody.activeNodes, parentBody);

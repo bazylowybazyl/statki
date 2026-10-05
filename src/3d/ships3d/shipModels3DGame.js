@@ -31,6 +31,7 @@ import { applySunShadowToBuiltinMaterial } from '../sunShadowMask.js';
 import { HullBodies, hullSpriteRotation } from '../../game/hullBodies.js';
 import { HullDamageMap } from '../hullDamageMap.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
+import { entityCloakVisAt } from '../../game/cloakLook.js';
 
 const DEG = Math.PI / 180;
 
@@ -73,6 +74,9 @@ function liveHull(e) {
 /** Id modelu, którym encja rysuje się w tej klatce (opcja „Statki 3D”), albo null (skóra sprite'a). */
 export function shipModel3DIdFor(e) {
   if (!shipsOn() || !e || e.dead) return null;
+  // Maskowanie (src/game/cloakLook.js): na czas efektu okręt rysuje skóra sprite'a z shaderem maskowania
+  // (mozaika heksów, refrakcja w warstwie DIST). AGENT: rozpuszczanie samej bryły 3D tym samym wzorem.
+  if (e.__cloakLook && e.__cloakLook.active) return null;
   const hull = liveHull(e);
   if (!hull) return null;
   let id = _cfg.modelIdOf ? _cfg.modelIdOf(e) : null;
@@ -744,6 +748,11 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
       inst.turrets.set(rec.key, t);
     }
     t.seen = _frame;
+    // Maskowanie: wieża znika razem z komórką kadłuba pod sobą (lustro wzoru z shadera).
+    if (e.__cloakLook && entityCloakVisAt(e, rec.wx, rec.wy) < 0.5) {
+      if (t.root.visible) t.root.visible = false;
+      continue;
+    }
     // Świat (x, −y) → układ ciała (odwrotny obrót) → grupa modelu (środek sprite'a, skala sprite'a).
     const dx = rec.wx - ox, dy = -rec.wy - oy;
     const lx = (c * dx + s * dy - scx) / k;

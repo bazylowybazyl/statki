@@ -68,12 +68,14 @@ test('index.html: wybór w „Nowej grze”, skóra sprite\'a i wieżyczki kanwy
   const html = read('index.html');
   assert.match(html, /data-visual-ships="0">2D<\/button>/);
   assert.match(html, /data-visual-weapons="1">3D<\/button>/);
-  // Predykat skóry: model z opcji „Statki 3D” albo z kamery 3D (setShipModels3DView) — shipModel3DIdFor.
-  assert.match(html, /setBeamSkinSuppressor\(\(e\) => !!shipModel3DIdFor\(e\)\);/);
+  // Predykat skóry: model z opcji „Statki 3D” albo z kamery 3D (setShipModels3DView) — shipModel3DIdFor;
+  // ciała świata (budowle i ich odłamy, hull.world) rysuje skóra brył — src/3d/worldBodies3D.js.
+  assert.match(html, /setBeamSkinSuppressor\(\(e\) => !!e\.beamHull\?\.world \|\| !!shipModel3DIdFor\(e\)\);/);
   assert.match(html, /setShipModels3DView\(View3D\.active\);/);
   assert.match(html, /if \(!View3D\.active\) Turret2D\.draw\(ctx, cam\);/);
   assert.match(html, /Turret2D\.skipDraw = \(rec\) => VisualMode\.weapons3D && !!WEAPON3D_FAMILY\[rec\.weaponId\];/);
-  assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);\s*\/\/[^\n]*\n\s*syncShipModels3D\(\{ entities: renderEntities,/);
+  // modele bez bytów ukrytych w mgle wojny (renderSeen — lista po fogSeenInto, src/game/fogOfWar.js)
+  assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);\s*\/\/[^\n]*\n\s*syncShipModels3D\(\{ entities: renderSeen,/);
   // Rozgrywka bez zmian: kadłuby dalej ze sprite'a (HullBodies.createHull), bez gałęzi 3D.
   assert.match(html, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image, hullProfileId: getNpcHullRenderProfileId\(npc\) \}\);/);
   // Kamery 3D to sam widok: bez kadłubów 3D, lotu w pionie i 6DoF (wycofana gra 3D).

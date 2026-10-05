@@ -68,9 +68,9 @@ export function drawWarpCourseHud(ctx, s) {
   else if (s.state === 'charging') status = s.autoExit ? 'ŁADOWANIE · WYJŚCIE AUTO' : 'ŁADOWANIE · WYJŚCIE RĘCZNE';
   else if (s.state === 'active') {
     if (s.autoExit) status = `WYJŚCIE AUTO ZA ${Math.max(0, s.exitIn).toFixed(1)} s`;
-    else status = s.along <= 0 ? 'CEL ZA STATKIEM' : (s.exitIn < -0.15 ? 'ZA PÓŹNO' : (s.exitIn <= 0.15 ? 'WYJDŹ TERAZ [9 / SHIFT]' : `WYJŚCIE ZA ${s.exitIn.toFixed(1)} s`));
-  } else if (!s.canWarp) status = 'BLISKO CELU · DOLEĆ NAPĘDEM';
-  else if (s.aligned) status = 'KURS OK · ±5° · [9 / SHIFT]';
+    else status = s.along <= 0 ? 'CEL ZA STATKIEM' : (s.exitIn < -0.15 ? 'ZA PÓŹNO' : (s.exitIn <= 0.15 ? 'WYJDŹ TERAZ [CAPS / 9]' : `WYJŚCIE ZA ${s.exitIn.toFixed(1)} s`));
+  } else if (!s.canWarp) status = s.detour ? 'OBJAZD STUDNI · LEĆ NAPĘDEM' : 'BLISKO CELU · DOLEĆ NAPĘDEM';
+  else if (s.aligned) status = 'KURS OK · ±5° · [CAPS / 9]';
   else status = `${s.err < 0 ? '← A · W LEWO' : 'D · W PRAWO →'} ${Math.abs(s.err * 180 / Math.PI).toFixed(1)}°`;
   ctx.fillText(status, x, y + 46, width - 24);
   ctx.font = '11px monospace';
@@ -78,6 +78,6 @@ export function drawWarpCourseHud(ctx, s) {
   ctx.fillText(busy ? `MINIĘCIE PUNKTU: ${units(s.miss)}` : `DO PUNKTU: ${units(s.dist)}`, x, y + 68, width - 24);
   ctx.fillText(s.exiting ? 'Rampa wyjścia zatrzymuje okręt'
     : (good ? (busy ? 'Komputer zakończy skok przy punkcie kursu' : 'Komputer doprecyzuje kurs i zakończy skok')
-      : (busy ? 'Bez automatu · puść Shift lub naciśnij 9' : 'Obróć dziób według strzałki · tolerancja ±5°')), x, y + 90, width - 24);
+      : (busy ? 'Bez automatu · wyjście: CapsLock lub 9' : 'Obróć dziób według strzałki · tolerancja ±5°')), x, y + 90, width - 24);
   ctx.restore();
 }

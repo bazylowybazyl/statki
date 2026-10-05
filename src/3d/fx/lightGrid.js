@@ -48,7 +48,11 @@ import {
   floor, max, abs, length, smoothstep, dot, normalize,
   positionView, positionWorld, cameraViewMatrix, cameraWorldMatrix, renderGroup
 } from 'three/tsl';
-import { buildNavLightClusters, buildRoadLightWorldEmitters } from '../../game/shipLightRuntime.js';
+import { buildNavLightClusters, buildRoadLightWorldEmitters, entityOwnRoadLightCount } from '../../game/shipLightRuntime.js';
+import { cloakLightGain } from '../../game/cloakLook.js';
+import {
+  beginHullMountBind, bindHullMount, createHullMountSet, mountHullOf, refreshHullMountSet
+} from '../../game/hullMounts.js';
 
 export const LIGHT_CAP = 1536;          // świateł na klatkę (demo asteroid: 1024 przy teście „~4 ms”)
 export const GRID_NX = 64;              // komórki siatki w poprzek kadru
@@ -606,6 +610,31 @@ function pushFar(x, y, dx, dy) {
   _farCount++;
 }
 
+// Zastępcza para reflektorów na dziobie (okręt bez własnych `road`) na kadłubie belkowym gaśnie z dziobem —
+// komórka pod lampą martwa albo odcięta odłamem (hullMounts.js), jak lampy edytora. Wiązanie raz na encję
+// i położenie pary (długość kadłuba), żywotność przy zmianie ciała. Zwraca maskę: bit 0 — lewa (s = −1), bit 1 — prawa.
+const _bowPairs = new WeakMap();
+function bowPairAlive(entity, along, side) {
+  const hull = mountHullOf(entity);
+  if (!hull) return 3;
+  let rec = _bowPairs.get(entity);
+  if (rec === undefined) {
+    rec = { along: NaN, side: NaN, set: createHullMountSet() };
+    _bowPairs.set(entity, rec);
+  }
+  const set = rec.set;
+  if (rec.along !== along || rec.side !== side || set.lineage !== hull.dmgKey) {
+    const rest = beginHullMountBind(set, hull, 2);
+    const k = 1 / Math.max(1e-6, hull.scale);   // j. świata → px sprite'a
+    set.cells[0] = bindHullMount(hull, along * k, -side * k, rest);
+    set.cells[1] = bindHullMount(hull, along * k, side * k, rest);
+    rec.along = along;
+    rec.side = side;
+  }
+  refreshHullMountSet(set, hull);
+  return set.alive[0] | (set.alive[1] << 1);
+}
+
 /**
  * Światła pola statku: reflektory dalekie (znaczniki `road` edytora), reflektory
  * otoczenia (`flood`, z obrysu: rufa i burty), światło dookoła, grupy czerwonych lamp
@@ -635,7 +664,9 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
   const far = _farInfo;
   far.n = 0; far.x = 0; far.y = 0; far.z = sp.z; far.ax = 0; far.ay = 0; far.az = 0; far.shadow = 0;
   if (!entity) return far;
-  const k = opts.strength ?? 1;
+  // Maskowanie (src/game/cloakLook.js): światła okrętu gasną razem z kadłubem (ukryty — żadnych).
+  const k = (opts.strength ?? 1) * cloakLightGain(entity);
+  if (!(k > 0.002)) return far;
   const L = Math.max(100, hullLength || 600);
   const range = Math.min(sp.maxRange, Math.max(sp.minRange, L * sp.rangeMul));
   const angle = Number(entity.angle) || 0;
@@ -650,18 +681,28 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
   // Reflektory wyłączone (`entity.roadLightsOff`, klawisz L gracza): bez dalekich
   // i otoczenia — światło dookoła i lampy pozycyjne zostają.
   const beamsOn = !entity.roadLightsOff;
-  // Reflektory dalekie: ze znaczników `road` albo para na dziobie.
+  // Reflektory dalekie: ze znaczników `road` albo para na dziobie — tylko okrętom bez własnych (zgaszone przez
+  // rozpad kadłuba albo agonię hulka nie wracają jako zastępcze; para gaśnie z dziobem).
   _farCount = 0;
   const a = _axis;
+  // Moc dzielona przez liczbę reflektorów z układu (zastępcza para: 2), nie przez żywe.
+  let farShare = 2;
   if (beamsOn) {
     for (let i = 0; i < _emitters.length; i++) {
       const em = _emitters[i];
       if (!em.flood) pushFar(em.x, em.y, em.dir.x, em.dir.y);
     }
-    if (!_farCount) {
+    const own = entityOwnRoadLightCount(entity);
+    if (own > 0) farShare = Math.max(_farCount, own);
+    else if (!_farCount) {
       const side = L * 0.035;
-      for (let s = -1; s <= 1; s += 2) pushFar(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy);
-    }
+      const pair = bowPairAlive(entity, L * 0.47, side);
+      for (let s = -1; s <= 1; s += 2) {
+        if (pair & (s < 0 ? 1 : 2)) pushFar(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy);
+      }
+    } else farShare = _farCount;
+  }
+  if (beamsOn && _farCount > 0) {
     for (let i = 0; i < _farCount; i++) {
       const f = _far[i];
       spotAxis(f.dx, f.dy, sp.tiltDeg, a);
@@ -677,7 +718,7 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
     far.range = range;
     if (atlas && opts.spotShadows !== false) far.shadow = atlas.request(true, far.x, far.y, sp.z, far.ax, far.ay, far.az, sp.coneDeg, range);
     const half = Math.max(1, Math.min(170, sp.coneDeg)) * Math.PI / 360;
-    const I = sp.intensity / Math.sqrt(_farCount);
+    const I = sp.intensity / Math.sqrt(farShare);
     for (let i = 0; i < _farCount; i++) {
       const f = _far[i];
       grid.add(

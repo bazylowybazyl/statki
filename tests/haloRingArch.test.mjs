@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { haloRingLayoutFor } from '../src/game/haloRingPlanets.js';
 import { PORT_PAD_H } from '../src/3d/haloRing/haloRingRoofPlan.js';
+import { HALO_PORT } from '../src/3d/haloRing/haloRingConfig.js';
 import { archBeamMatrix, archDockBox, archMatrix } from '../src/3d/haloRing/arch/archFrame.js';
 import { buildArchPortBodies } from '../src/3d/haloRing/arch/archPort.js';
 import {
@@ -164,14 +165,15 @@ test('Fable: konstrukcja jedną partią na stronę; kadłub z żebrami mieści s
   assert.ok(L.n > 3000, 'światła pozycyjne');
 });
 
-test('bryły portu: 8 zatok i 4 tranzyty w stylu dema, przy podłodze', () => {
+test('bryły portu: 8 zatok (za krawędzią ringu, na pylonach z płyty portu) i 4 tranzyty w stylu dema', () => {
   for (const [L, dress] of [[mars, 'ecumene'], [jupiter, 'fable']]) {
     const p = buildArchPortBodies(L, L.planetProfile.port, dress);
     assert.ok(p.solid.count > 8 * 40 + 4 * 20, `${dress}: brył ${p.solid.count}`);
     assert.ok(allFinite(p.solid));
     for (const [x, y] of centers(p.solid)) {
       const r = Math.hypot(x, y);
-      assert.ok(r > L.radii.back - 400 && r < L.radii.floorMid + 4500, `${dress}: bryła na r = ${r.toFixed(0)}`);
+      // od kadłuba (tranzyty) do wylotu zatoki stojącej dockGap za krawędzią ścian
+      assert.ok(r > L.radii.back - 400 && r < L.radii.rim + HALO_PORT.dockGap + HALO_PORT.bayDepth + 300, `${dress}: bryła na r = ${r.toFixed(0)}`);
     }
     assert.ok(p.lights.length > 100);
   }

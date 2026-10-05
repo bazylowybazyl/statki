@@ -17,7 +17,9 @@ function makeWorld() {
   const ship = { pos: { x: earth.x + 50000, y: earth.y }, vel: { x: 0, y: 0 }, angle: 0, angVel: 0, w: 1800, h: 800, x: 0, y: 0 };
   const w = {
     AU, sun, earth, ship, npcs: [], stations: [], credits: 0, rep: [], journal: [], completed: [], phases: [],
-    warpedOut: 0, blows: 0, courses: [], course: null
+    warpedOut: 0, blows: 0, courses: [], course: null,
+    // mgła wojny (atrapa SensorSystem): co strona gracza widzi, sygnatury masy
+    fogSeen: new Set(), masses: new Map()
   };
   let id = 0;
   const mkNpc = (key, opts, mode) => {
@@ -57,6 +59,7 @@ function makeWorld() {
     spawnTurret: (spec) => mkNpc('turret', { spawnPos: spec }, 'pirate'),
     sleepNpc: (n) => { n.asleep = true; },
     wakeNpc: (n) => { n.asleep = false; },
+    launchNpc: (n, path, delay) => { n.asleep = false; n.launch = { path, delay }; },
     killNpc: (n) => { n.dead = true; n.hp = 0; },
     destroyStation: (st) => { st._destroyed3D = true; st.hp = 0; },
     callInWarp: (key, opts) => { const n = mkNpc(key, opts, opts.mode); opts.onSpawned?.([n]); return { planned: true, eta: 1 }; },
@@ -72,7 +75,12 @@ function makeWorld() {
     completeMission: (idm) => w.completed.push(idm),
     onPhase: (p) => w.phases.push(p),
     log: () => {},
-    warn: () => {}
+    warn: () => {},
+    fogEnabled: () => true,
+    fogSeen: (e) => w.fogSeen.has(e),
+    setMassSignature: (sid, spec) => { const m = { ...spec, resolved: false }; w.masses.set(sid, m); return m; },
+    clearMassSignature: (sid) => { w.masses.delete(sid); },
+    massResolved: (sid) => !w.masses.has(sid) || w.masses.get(sid).resolved
   };
   return w;
 }
@@ -138,14 +146,35 @@ test('misja 1 od doku do powrotu na atrapie gry: fazy, dok, fale, nagrody, dzien
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'course');
   assert.ok(S.site && S.site.station, 'stocznia postawiona');
-  assert.equal(S.site.parkedList.length, 10);
+  assert.equal(S.site.parkedList.length, 10, 'dziesięć okrętów na parkingu suchego doku');
   assert.ok(S.site.parkedList.every((n) => n.asleep), 'zaparkowane bez załogi');
-  assert.equal(S.site.turretList.length, 6);
+  assert.equal(S.site.turretList.length, 0, 'bez wieżyczek (2026-10-05)');
   assert.equal(w.courses.length >= 1, true, 'kurs wyznaczony');
-  // skok: przy punkcie zbiórki
+  // skok „kawałek dalej”: kurs na punkt wyjścia z warpa, poza zasięgiem wzroku Atlasa (mgła wojny)
+  assert.deepEqual(w.course, { x: S.site.warpIn.x, y: S.site.warpIn.y }, 'kurs na wyjście z warpa, nie na zbiórkę');
+  assert.ok(Math.hypot(S.site.warpIn.x - S.site.building.x, S.site.warpIn.y - S.site.building.y) > 50000, 'stocznia za mgłą');
+  w.ship.pos.x = S.site.warpIn.x; w.ship.pos.y = S.site.warpIn.y;
+  await frames(S, w, 3, view);
+  assert.equal(S.phase, 'scout');
+  const mass = w.masses.get('m01-yard-mass');
+  assert.ok(mass, 'czujniki grawitacyjne: sygnatura masy');
+  assert.equal(mass.entity, S.site.station, 'rozpoznanie sygnatury = zobaczenie budynku');
+  assert.ok(mass.offset && Math.hypot(mass.offset.x, mass.offset.y) > 1000, 'miejsce niepewne (odchyłka)');
+  assert.ok(/sygnatur/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
+  assert.ok(S.ui.hint, 'samouczek: mgła wojny i dron zwiadu');
+  await frames(S, w, 30, view);
+  assert.equal(S.phase, 'scout', 'bez rozpoznania misja czeka');
+  assert.ok(!S.site.alarmed, 'zwiad z daleka nie budzi stoczni');
+  // dron zwiadu / podejście: budynek w zasięgu wzroku strony gracza
+  w.fogSeen.add(S.site.station);
+  await frames(S, w, 3, view);
+  assert.equal(S.phase, 'approach');
+  assert.equal(w.masses.size, 0, 'sygnatura zdjęta po rozpoznaniu');
+  // podejście: na punkt zbiórki
   w.ship.pos.x = S.site.rally.x; w.ship.pos.y = S.site.rally.y;
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'approach');
+  assert.equal(S.ui.targets.size, 0, 'podejście ma punkt nawigacji, bez etykiet wszystkich statków');
   // maskowanie
   engageCloak(w.ship.cloak);
   stepCloak(w.ship.cloak, 3);
@@ -156,19 +185,40 @@ test('misja 1 od doku do powrotu na atrapie gry: fazy, dok, fale, nagrody, dzien
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'ram');
   assert.ok(!S.site.alarmed);
-  // taran: trzy kadłuby zmiażdżone
-  for (const n of S.site.parkedList.slice(0, 3)) { n.dead = true; n.hp = 0; }
+  // taran: znaczniki na okrętach parkingu; trzy kadłuby zmiażdżone — każdy zdejmuje znacznik i pokazuje baner
+  assert.equal(S.ui.targets.size, 10, 'znacznik na każdym okręcie parkingu');
+  S.site.parkedList[0].dead = true; S.site.parkedList[0].hp = 0;
+  await frames(S, w, 2, view);
+  assert.equal(S.ui.targets.size, 9);
+  assert.ok(/PRZECIĘTY 1 \/ 3/.test(S.ui.banner?.text || ''), 'bez styku z Atlasem = zniszczony z dystansu (Hexlance): ' + S.ui.banner?.text);
+  assert.ok(/\(F\).*\(4\)/.test(S.ui.objective?.text || ''), 'cel podaje obie drogi: ' + S.ui.objective?.text);
+  for (const n of S.site.parkedList.slice(1, 3)) { n.dead = true; n.hp = 0; }
   await frames(S, w, 4, view);
   assert.ok(S.site.alarmed, 'alarm po taranie');
-  assert.ok(S.site.turretList.every((n) => !n.asleep), 'wieżyczki obudzone');
+  // eskorta wylatuje z hali suchego doku bramami (trasa z planu), kolejno
+  // eskorta i supercapital wylatują z hali suchego doku bramami (trasa z planu): supercapital pierwszy
+  assert.ok(S.site.defenderList.length === 6 && S.site.defenderList.every((n) => n.launch && n.launch.path.length >= 3), 'wylot eskorty trasą');
+  assert.equal(S.site.defenderList[0].type, 'pirate_supercapital');
+  assert.equal(S.site.flagship, S.site.defenderList[0]);
+  const delays = S.site.defenderList.map((n) => n.launch.delay);
+  assert.ok(delays.slice(1).every((d) => d > delays[0]), 'supercapital wylatuje pierwszy');
+  assert.equal(new Set(delays).size, delays.length, 'kolejno, bez dwóch naraz');
   assert.equal(S.phase, 'defences');
+  assert.equal(S.ui.targets.size, 6, 'znaczniki na okrętach obrony (bez zaparkowanych)');
+  assert.deepEqual([...S.ui.targets.values()].map((m) => m.entity), S.site.defenderList);
   for (const n of [...S.site.turretList, ...S.site.defenderList]) { n.dead = true; n.hp = 0; }
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'shipyard');
+  assert.deepEqual([...S.ui.targets.keys()], ['yard'], 'poprzednie cele zdjęte po zakończeniu obrony');
+  assert.equal(S.ui.targets.get('yard').entity, S.site.station, 'budynek śledzi żywą stację');
+  assert.equal(S.ui.targets.get('yard').radius, S.site.buildingRadius, 'ramka otacza bryłę, nie małą kolizję stacji');
+  assert.equal(S.ui.markers.has('yard'), false, 'budynek nie ma drugiej etykiety nawigacji');
+  assert.deepEqual(S.journalEntry.pos, S.site.building, 'CIC i dziennik dalej wskazują budynek');
   assert.ok(/wbudowaną/.test(S.ui.objective?.text || ''));
   // budynek: Hexlance
   S.site.station.hp = 0; S.site.station._destroyed3D = true;
   await frames(S, w, 30 * 5, view);
+  assert.equal(S.ui.targets.size, 0, 'po zniszczeniu budynku nie zostaje marker na wraku');
   assert.ok(w.blows >= 7, `łańcuch wybuchów (${w.blows})`);
   assert.ok(S.site.parkedList.every((n) => n.dead), 'reszta rzędu idzie z zakładem');
   // odwet: fale przez kolejkę przylotów
@@ -218,6 +268,7 @@ test('misja 1 od doku do powrotu na atrapie gry: fazy, dok, fale, nagrody, dzien
   assert.equal(S.runner.result, 'complete');
   assert.equal(w.course, null, 'po zakończeniu misji stary kurs nie wraca');
   S.abort('test');
+  assert.equal(S.ui.targets.size, 0);
 });
 
 test('skok dev ?story=counter: stocznia zburzona, od razu odwet', async () => {
@@ -227,11 +278,41 @@ test('skok dev ?story=counter: stocznia zburzona, od razu odwet', async () => {
   const view = new ViewState3D();
   S.beginNewGame({ tutorial: false, startPhase: 'counter' });
   await flush();
-  await frames(S, w, 30 * 6, view);
+  await frames(S, w, 30 * 8, view);
   assert.equal(S.phase, 'counter');
   assert.ok(S.site.station._destroyed3D);
   assert.equal(S.ui.hint, null, 'bez samouczka');
-  await frames(S, w, 30 * 12, view);
+  // łańcuch rozpadu suchego doku (~6 s) + fale odwetu
+  await frames(S, w, 30 * 14, view);
   assert.equal(w.npcs.filter((n) => n.__storyTag === 'counter').length, 30);
+  S.abort('test');
+});
+
+test('skok dev ?story=scout: Atlas w punkcie wyjścia z warpa, sygnatura masy; przerwanie ją zdejmuje', async () => {
+  const w = makeWorld();
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  S.beginNewGame({ tutorial: false, startPhase: 'scout' });
+  await flush();
+  await frames(S, w, 3, view);
+  assert.equal(S.phase, 'scout');
+  assert.ok(Math.hypot(w.ship.pos.x - S.site.warpIn.x, w.ship.pos.y - S.site.warpIn.y) < 1, 'teleport do wyjścia z warpa');
+  assert.ok(w.masses.has('m01-yard-mass'));
+  S.abort('test');
+  assert.equal(w.masses.size, 0, 'reset fabuły zdejmuje sygnatury misji');
+});
+
+test('przerwanie i nowa misja usuwają poprzednie cele bojowe', async () => {
+  const w = makeWorld(), S = StoryGame;
+  S.init(w.deps);
+  S.beginNewGame({ tutorial: false, startPhase: 'defences' });
+  await flush();
+  assert.equal(S.ui.targets.size, 6, 'okręty obrony stoczni');
+  S.abort('test');
+  assert.equal(S.ui.targets.size, 0, 'przerwanie nie zostawia podpisów');
+  S.beginNewGame({ tutorial: false, startPhase: 'shipyard' });
+  await flush();
+  assert.deepEqual([...S.ui.targets.keys()], ['yard'], 'druga misja ma tylko własne aktualne cele');
   S.abort('test');
 });

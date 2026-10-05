@@ -18,8 +18,19 @@ import {
 } from './mainExhaust3D.js';
 import { WarpPlume3D } from './warpPlume3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
+// Dysze MAIN tej klatki per okręt — dla poświaty dysz na pyle kosmicznym (src/3d/dust/).
+import { EngineFrame } from './engineFrame.js';
 import { GameState } from '../game/gameState.js';
 import { buildEntityEngineFx, fallbackNozzleRadius } from '../data/engineFx.js';
+import { cloakVisAtWorld } from '../game/cloakLook.js';
+// Rozpad kadłuba belkowego: dysza gaśnie, gdy komórka pod nią nie jest już żywym węzłem ciała właściciela.
+import {
+  beginHullMountBind,
+  bindHullMount,
+  createHullMountSet,
+  mountHullOf,
+  refreshHullMountSet
+} from '../game/hullMounts.js';
 import {
   getHullRenderProfile,
   resolveEntityHullProfileId,
@@ -353,6 +364,8 @@ function slotInputHash(entity) {
 
 // Dla testów: odcisk musi się zmieniać zawsze, gdy zmienia się klucz slotów.
 export const EngineSlotKeyInternals = Object.freeze({ buildSlots, makeSlotKey, slotInputHash });
+// Dla testów: dysze gasną z komórką kadłuba belkowego (syncNozzleMounts — niżej).
+export const EngineNozzleInternals = Object.freeze({ buildSlots, syncNozzleMounts: (e, fx) => syncNozzleMounts(e, fx) });
 
 // Dysza nie ma juz wlasnych obiektow w scenie — zostaje sam stan wygladzania,
 // ktory batch przepisuje na atrybuty instancji. Cala flota rysuje sie stala
@@ -364,7 +377,40 @@ function createEffects(slots) {
     if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), slot, main: null, warp: null });
     else exhausts.push({ state: null, slot, main: createMainExhaustState(), warp: null });
   }
-  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0 };
+  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0, mounts: null };
+}
+
+// Dysze na kadłubie belkowym (hullBodies.js) leżą w pikselach sprite'a właściciela: po rozpadzie dysze odpadłej
+// części paliły się dalej na rodzicu — nad dryfującym wrakiem, potem w pustce. Dysza = mocowanie (hullMounts.js):
+// komórka siatki belek pod wylotem (offset w px renderu, jak niżej), wiązanie raz na układ dysz i ród kadłuba,
+// żywotność przy zmianie ciała. Zwraca maskę `alive` (indeksy jak fxData.exhausts) albo null (bez kadłuba).
+function syncNozzleMounts(entity, fxData) {
+  const hull = mountHullOf(entity);
+  if (!hull) return null;
+  const exhausts = fxData.exhausts;
+  let set = fxData.mounts;
+  if (!set) set = fxData.mounts = createHullMountSet();
+  if (set.lineage !== hull.dmgKey || set.count !== exhausts.length) {
+    const rest = beginHullMountBind(set, hull, exhausts.length);
+    for (let i = 0; i < exhausts.length; i++) {
+      const slot = exhausts[i].slot;
+      // Dawne offsety znormalizowane (capitalProfile.engineOffsets) zależą od promienia — bez wiązania.
+      if (!slot || slot.mode === 'normalized' || !slot.offset) continue;
+      set.cells[i] = bindHullMount(hull, Number(slot.offset.x) || 0, Number(slot.offset.y) || 0, rest);
+    }
+  }
+  refreshHullMountSet(set, hull);
+  return set.alive;
+}
+
+// Dysza zgasła z komórką kadłuba: struga oddaje właściciela (jej kwady dogasają tam, gdzie były — ≤ 0,3 s),
+// plazma skoku wraca do puli. Bez instancji SIDE, poświaty na pyle i gorącego powietrza.
+function cutNozzle(item) {
+  if (item.main && item.main.owner >= 0) releaseMainExhaustState(item.main);
+  if (item.warp) {
+    WarpPlume3D.release(item.warp);
+    item.warp = null;
+  }
 }
 
 /**
@@ -502,8 +548,21 @@ function updateEffects(entity, fxData, dt) {
   const jetGainRaw = (isPlayerEntity && typeof window !== 'undefined') ? Number(window.OPTIONS?.vfx?.bloomGain) : NaN;
   const jetGain = Number.isFinite(jetGainRaw) && jetGainRaw >= 0 ? jetGainRaw : 1;
   const sparkMul = isPlayerEntity ? 1 : NPC_SPARK_MUL;
+  // Maskowanie (src/game/cloakLook.js): dysza gaśnie z komórką kadłuba pod sobą; ukryty okręt zostawia
+  // samo drżenie gorącego powietrza (refrakcja — jak reszta maskowania).
+  const cloakLook = entity.__cloakLook && entity.__cloakLook.active ? entity.__cloakLook : null;
+  // dysze MAIN tego okrętu do listy klatki (poświata dysz na pyle); prędkość w scenie (y w górę)
+  EngineFrame.beginShip(entity, Number(entity.vel?.x ?? entity.vx) || 0, -(Number(entity.vel?.y ?? entity.vy) || 0), isPlayerEntity);
+  // Kadłub belkowy: dysze, których komórka nie jest już żywym węzłem ciała (odcięta z odłamem, zestrzelona).
+  const nozzleAlive = syncNozzleMounts(entity, fxData);
 
-  for (const item of fxData.exhausts) {
+  const exhausts = fxData.exhausts;
+  for (let n = 0; n < exhausts.length; n++) {
+    const item = exhausts[n];
+    if (nozzleAlive !== null && nozzleAlive[n] === 0) {
+      cutNozzle(item);
+      continue;
+    }
     const slot = item.slot || {};
     const slotForward = resolveSlotForward(slot);
     const nozzleRot = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
@@ -540,6 +599,8 @@ function updateEffects(entity, fxData, dt) {
     // pozycji i jednego kata na dysze.
     const nozzleWorldX = ex + (lx * scale) * cA - (ly * scale) * sA;
     const nozzleWorldY = sceneOriginY + (lx * scale) * sA + (ly * scale) * cA;
+    // (nozzleWorldY jest w układzie sceny — świat gry ma y odwrócone)
+    const cloakVis = cloakLook ? cloakVisAtWorld(cloakLook, nozzleWorldX, -nozzleWorldY) : 1;
 
     // Kierunek wydechu = os dyszy (slotForward) obrocona do sceny,
     // spojnie z meshem plomienia — nie wektor srodek statku -> dysza.
@@ -577,11 +638,14 @@ function updateEffects(entity, fxData, dt) {
       p.lengthMul = Number(engineFx.mainLength) > 0 ? Number(engineFx.mainLength) : 1;
       p.widthMul = Number(engineFx.mainWidth) > 0 ? Number(engineFx.mainWidth) : 1;
       p.palette = engineFx.mainPaletteIndex | 0;
-      p.jetGain = jetGain;
-      p.sparkMul = sparkMul;
+      p.jetGain = jetGain * cloakVis;
+      p.sparkMul = sparkMul * cloakVis;
       p.pixelRadius = nozzleR * frameCtx.zoom;
       p.dt = dt;
       MainExhaust3D.push(item.main, p);
+      // moc strugi po rampie (dopalacz do 1,5); plazma warpa i hulk — bez poświaty
+      EngineFrame.nozzle(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR,
+        warpOn || isHulk ? 0 : (Number(item.main.power) || 0) * cloakVis, p.palette);
 
       // Gorące powietrze jak w demie plazmy: źródło = wylot (promień dyszy),
       // siła = rampa mocy × (1 + 0,5 · dopalacz); kształt stożka liczy uberPass.
@@ -589,7 +653,7 @@ function updateEffects(entity, fxData, dt) {
         const plume = warpOn ? item.warp : null;
         const hazePower = plume ? plume.ch.power : Math.min(1, item.main.power);
         const hazeBoost = plume ? plume.ch.boost : (item.main.boosting ? 1 : 0);
-        const hazeK = smoothstep(0.08, 0.45, hazePower) * (1 + 0.5 * hazeBoost);
+        const hazeK = smoothstep(0.08, 0.45, hazePower) * (1 + 0.5 * hazeBoost) * (0.55 + 0.45 * cloakVis);
         if (hazeK > 0.01) {
           Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, nozzleR * (plume ? 1 : p.widthMul), hazeK, dirX, dirY);
         }
@@ -619,14 +683,17 @@ function updateEffects(entity, fxData, dt) {
     }
 
     // Dalej łańcuch dyszy bocznej: . Rz(nozzleRot) . S(widthMul*effectScale,
-    // lengthMul*effectScale) — para skal na instancję.
+    // lengthMul*effectScale) — para skal na instancję. Maskowanie: jasność × widoczność komórki dyszy,
+    // ukryta dysza bez instancji.
+    if (cloakVis <= 0.01) continue;
     EngineExhaustBatch.push(state, {
       x: nozzleWorldX,
       y: nozzleWorldY,
       rot: sceneAngle + nozzleRot,
       scaleX: scale * widthMul * effectScale,
       scaleY: scale * lengthMul * effectScale,
-      dt
+      dt,
+      gain: cloakVis
     });
 
     // Ten sam model gorącego powietrza co MAIN (stożek od wylotu w uberPass),
@@ -637,6 +704,7 @@ function updateEffects(entity, fxData, dt) {
       Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, sideR, sideHaze, dirX, dirY);
     }
   }
+  EngineFrame.endShip();
 }
 
 function disposeEffects(fxData) {
@@ -687,6 +755,7 @@ export const EngineVfxSystem = {
 
     EngineExhaustBatch.begin();
     MainExhaust3D.begin(frameOrigin.x, frameOrigin.y, dt);
+    EngineFrame.begin();
 
     for (const entity of entities) {
       if (!entity || entity.dead) continue;

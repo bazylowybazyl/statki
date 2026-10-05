@@ -22,16 +22,16 @@ import {
 test('normal target menu includes attack and keeps target entity commands live', () => {
   const target = { x: 100, y: 200, radius: 50 };
   assert.deepEqual(buildNormalCommandMenuItems({ targetEntity: target }).map((i) => i.action), [
-    'attack', 'ram', 'approach', 'orbit', 'travel', 'scan'
+    'attack', 'ram', 'approach', 'orbit', 'travel', 'scan', 'drone'
   ]);
   assert.equal(createApproachCommand({ point: { x: 0, y: 0 }, targetEntity: target }).targetEntity, target);
   assert.equal(createOrbitCommand({ point: { x: 0, y: 0 }, targetEntity: target }).targetEntity, target);
   assert.equal(createRamCommand({ point: { x: 0, y: 0 }, targetEntity: target }).targetEntity, target);
 });
 
-test('normal empty-space menu omits attack', () => {
+test('normal empty-space menu omits attack, offers a recon drone', () => {
   assert.deepEqual(buildNormalCommandMenuItems({ targetEntity: null }).map((i) => i.action), [
-    'approach', 'orbit', 'travel', 'scan'
+    'approach', 'orbit', 'travel', 'scan', 'drone'
   ]);
 });
 

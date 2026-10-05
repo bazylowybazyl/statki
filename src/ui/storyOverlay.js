@@ -206,11 +206,26 @@ export function createStoryOverlay(story) {
         const arrow = el('div', 'st-arrow', e);
         el('div', 'st-diamond', e);
         const label = el('div', 'st-label', e);
+        // Podpowiedź akcji przy znaczniku (np. ikona myszy z podświetlonym PPM — „wyślij drona tutaj”).
+        const action = el('div', 'st-action', e);
+        const mouseIcon = el('i', 'st-mouse', action);
+        el('b', 'st-mouse-l', mouseIcon);
+        el('b', 'st-mouse-r', mouseIcon);
+        const actionText = el('span', null, action);
         const dist = el('div', 'st-dist', e);
-        node = { el: e, arrow, label, dist, lastLabel: null, lastDist: null };
+        node = { el: e, arrow, label, dist, action, mouseIcon, actionText, lastLabel: null, lastDist: null, lastAction: null };
         markerEls.set(id, node);
       }
       if (node.lastLabel !== m.label) { node.label.textContent = m.label || ''; node.lastLabel = m.label; }
+      const actionKey = m.action ? `${m.action.mouse || ''}|${m.action.text || ''}` : '';
+      if (node.lastAction !== actionKey) {
+        node.lastAction = actionKey;
+        node.action.hidden = !m.action;
+        node.mouseIcon.className = `st-mouse${m.action?.mouse ? ` ${m.action.mouse}` : ''}`;
+        node.mouseIcon.hidden = !m.action?.mouse;
+        node.actionText.textContent = m.action?.text || '';
+        node.el.classList.toggle('has-action', !!m.action);
+      }
       const s = env.worldToScreen(m.x, m.y, _s);
       let x = s.x, y = s.y;
       const margin = 48;

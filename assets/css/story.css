@@ -230,6 +230,39 @@
 .st-marker.edge .st-arrow { display: block; }
 .st-marker.edge .st-diamond { display: none; }
 .st-dist { color: var(--st-muted); }
+/* podpowiedź akcji przy znaczniku: ikona myszy z podświetlonym przyciskiem + tekst */
+.st-action {
+  display: flex;
+  align-items: center;
+  gap: calc(7 * var(--st-u));
+  margin-top: calc(4 * var(--st-u));
+  padding: calc(4 * var(--st-u)) calc(9 * var(--st-u));
+  color: var(--st-text);
+  background: rgba(5, 7, 10, 0.78);
+  border: 1px solid var(--st-accent-soft);
+  border-radius: 3px;
+}
+.st-action[hidden] { display: none; }
+.st-mouse {
+  position: relative;
+  display: inline-block;
+  width: calc(15 * var(--st-u));
+  height: calc(22 * var(--st-u));
+  border: 2px solid var(--st-text);
+  border-radius: calc(8 * var(--st-u)) calc(8 * var(--st-u)) calc(9 * var(--st-u)) calc(9 * var(--st-u));
+}
+.st-mouse[hidden] { display: none; }
+.st-mouse b {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 45%;
+  border-bottom: 2px solid var(--st-text);
+}
+.st-mouse .st-mouse-l { left: 0; border-right: 1px solid var(--st-text); border-top-left-radius: calc(6 * var(--st-u)); }
+.st-mouse .st-mouse-r { right: 0; border-left: 1px solid var(--st-text); border-top-right-radius: calc(6 * var(--st-u)); }
+.st-mouse.rmb .st-mouse-r, .st-mouse.lmb .st-mouse-l { background: var(--st-accent); animation: st-pulse 1.1s ease-in-out infinite; }
+.st-marker.edge .st-action { display: none; }
 
 /* ---------- baner ---------- */
 .st-banner {

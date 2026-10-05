@@ -231,7 +231,8 @@ const _geoCache = new Map();
 /**
  * Geometria ładowni w układzie statku 3D i ładowni (zamrożona, z pamięci podręcznej):
  *   cx, cy — środek ładowni w układzie statku 3D; halfA, halfB — pół boku otworu;
- *   depth — głębokość (dno w z = −depth); leafT — grubość skrzydła;
+ *   depth — głębokość (dno w z = −depth); leafT — grubość skrzydła; pocketDrop — dół
+ *   najgłębszego skrzydła „pocket” pod poszyciem (0 dla „over”);
  *   module — wymiary modułu; cols, rows, pitchA, pitchB, a0, b0 — siatka slotów
  *   (środek slotu (a0 + i·pitchA, b0 + j·pitchB)); slots, containers — ile modułów i kontenerów;
  *   lamps — lampy na ścianę (wzdłuż a), lampSpacing;
@@ -253,9 +254,12 @@ export function cargoBayGeometry(h, bayDef) {
   const pitchB = mod.W + P.moduleGap;
   const cols = Math.max(0, Math.floor((2 * halfA - 2 * P.wallGap + P.moduleGap) / pitchA));
   const rows = Math.max(0, Math.floor((2 * halfB - 2 * P.wallGap + P.moduleGap) / pitchB));
-  const depth = mod.H + P.depthClear;
   const leafT = clamp(2 * halfB * P.leafPerWidth, P.leafMin, P.leafMax);
   const n = Math.max(1, B.leaves | 0);
+  // Kieszeń: skrzydła opadają pod poszycie do z = −pocketDrop (najgłębsze skrzydło, lustro
+  // cargoBayDoorPose) — stos musi stać pod nimi, inaczej skrzydło jedzie przez kontenery.
+  const pocketDrop = B.door === 'pocket' ? n * (leafT + P.liftGap) + leafT : 0;
+  const depth = mod.H + P.depthClear + pocketDrop;
   const leafW = halfB / n;
   const leaves = [];
   for (const side of [1, -1]) {
@@ -268,7 +272,7 @@ export function cargoBayGeometry(h, bayDef) {
   geo = Object.freeze({
     hull: H, bay: B, id: B.id, scale: s,
     cx: B.x * s, cy: -B.y * s,
-    halfA, halfB, depth, leafT, door: B.door, leafCount: n, leafW,
+    halfA, halfB, depth, leafT, door: B.door, leafCount: n, leafW, pocketDrop,
     module: Object.freeze(mod),
     cols, rows, pitchA, pitchB,
     a0: -((cols - 1) * pitchA) / 2,
@@ -488,13 +492,18 @@ export function cargoBayDoorProgress(geo, t, tOpen = 0, tClose = null) {
   return Math.max(0, at - (t - tClose));
 }
 
+/** Wysokość lamp pod krawędzią [z]: przy kieszeni pod szczeliną skrzydeł. */
+export function cargoBayLampZ(geo) {
+  return geo.door === 'pocket' ? -(geo.pocketDrop + 1.0) : -0.9;
+}
+
 /**
  * Lampy ładowni: pozycje w układzie ładowni (obie długie ściany, pod krawędzią; przy wrotach
  * „pocket” pod szczeliną, w którą chowają się skrzydła). Lustro shadera (cargoLight.tsl.js).
  */
 export function cargoBayLamps(geo) {
   const out = [];
-  const z = geo.door === 'pocket' ? -(geo.leafT + 1.6) : -0.9;
+  const z = cargoBayLampZ(geo);
   for (const side of [1, -1]) {
     for (let k = 0; k < geo.lamps; k++) {
       out.push({ k, side, a: -geo.halfA + (k + 0.5) * geo.lampSpacing, b: side * (geo.halfB - 0.6), z });

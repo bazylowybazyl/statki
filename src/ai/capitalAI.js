@@ -373,7 +373,7 @@ function countMainInArc(weapons, beta, wrap) {
   let n = 0;
   for (let i = 0; i < weapons.length; i++) {
     const w = weapons[i];
-    if (!w || w.group !== 'main') continue;
+    if (!w || (w.group !== 'main' && w.group !== 'special')) continue;
     if (Math.abs(wrap(beta - (w.mountAngle || 0))) <= w.arc) n++;
   }
   return n;
@@ -805,7 +805,7 @@ function initAutonomousWeapons(npc) {
         let baseAngle = loadout.hp?.rot || loadout.hp?.pos?.rot;
         let arc = arcDefault;
         if (typeof baseAngle !== 'number') {
-          if (groupName === 'main') {
+          if (groupName === 'main' || groupName === 'special') {
             const fireArc = mountFireArc(loadout.hp, 'main', shape.halfLen, shape.halfWid);
             baseAngle = fireArc.center;
             arc = fireArc.half + MAIN_ARC_TOLERANCE;
@@ -839,6 +839,7 @@ function initAutonomousWeapons(npc) {
     };
 
     addWeaponsFromGroup(npc.weapons.main, 'main', 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
+    addWeaponsFromGroup(npc.weapons.special, 'special', 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
     addWeaponsFromGroup(npc.weapons.aux, 'aux', Math.PI * 2, ['rocket', 'fighter'], 'fast');
     addWeaponsFromGroup(npc.weapons.missile, 'missile', 1.2, ['battleship', 'destroyer', 'frigate', 'fighter'], 'slow');
   }

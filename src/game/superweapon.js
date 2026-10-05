@@ -15,6 +15,7 @@ import { buildHexlanceBurst } from './weaponCharge.js';
 import { weaponRecoil, weaponShake } from './weaponFeel.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from '../3d/fx/fxRandom.js';
+import { dryDockSegmentHit } from './story/shipyardLayout.js';
 
 // Nośniki (src/game/carrierVelocity.js): lufa okrętu — ładowanie, rozbłysk,
 // smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia, rzaz i wyjście.
@@ -23,6 +24,7 @@ import { fxRandom } from '../3d/fx/fxRandom.js';
 // rzaz, wyjście za burtą.
 const _muzzleCarrier = createCarrier();
 const _targetCarrier = createCarrier();
+const _dockHit = { t: 0, x: 0, y: 0, chunk: null };
 
 const VFX_CONFIG = {
     newMinSize: 2.0,
@@ -459,7 +461,54 @@ export function updateSuperweapon(dt, ship, aimPos) {
             const lenSq = moveX * moveX + moveY * moveY;
             for (const st of stationList) {
                 if (!st || st._destroyed3D || !(st.hp > 0) || st.ringPort || !(st.isPirate || st.hostile)) continue;
+                // Kawałki doku w bańce gracza są CIAŁAMI silnika (src/game/worldBodies.js): pręt orze węzły — masa
+                // pręta dema (ocena 2026-10-05: „zdecydowanie większa masa”), szeroka niecka; hamuje o oddany pęd,
+                // utyka albo przechodzi na wylot. Ich bryły statyczne wyłączone (_dockGone).
+                if (st.hitShapes && st._worldSite && window.WorldBodies) {
+                    const wh = window.WorldBodies.plowLance(st._worldSite, proj, prevX, prevY, proj.x, proj.y);
+                    if (wh) {
+                        const first = !(proj.bittenStations && proj.bittenStations.has(st));
+                        if (first) {
+                            if (!proj.bittenStations) proj.bittenStations = new Set();
+                            proj.bittenStations.add(st);
+                            window.applyDamageToStation(st, HEXLANCE_STATION_DAMAGE);
+                        }
+                        st.lastHitX = wh.x;
+                        st.lastHitY = wh.y;
+                        if (WeaponFx.available && (first || proj.cutCd <= 0)) {
+                            proj.cutCd = 0.05;
+                            const c = writeCarrier(st, wh.x, wh.y, false, _targetCarrier);
+                            if (first) WeaponFx.hexlanceImpact(wh.x, wh.y, proj.vx - c.vx, proj.vy - c.vy, c);
+                            else WeaponFx.hexlanceKerf(wh.x, wh.y, proj.vx - c.vx, proj.vy - c.vy, c);
+                        }
+                        if (wh.stopped) {
+                            // utknął w konstrukcji — koniec lotu w punkcie zatrzymania
+                            proj.x = prevX + moveX * wh.stopT;
+                            proj.y = prevY + moveY * wh.stopT;
+                            proj.life = 0;
+                            break;
+                        }
+                        continue;
+                    }
+                }
                 if (proj.bittenStations && proj.bittenStations.has(st)) continue;
+                // Suchy dok piratów (misja 1): pręt przebija bryły trzonu i ścian hali (shipyardLayout.placeDryDock) —
+                // wejście w pierwszą bryłę na torze tego kroku, nie okrąg wokół środka 8-kilometrowej budowli.
+                if (st.hitShapes) {
+                    const dh = dryDockSegmentHit(st.hitShapes, prevX, prevY, prevX + moveX, prevY + moveY, _dockHit, st._dockGone)
+                        || (st.hallShapes && dryDockSegmentHit(st.hallShapes, prevX, prevY, prevX + moveX, prevY + moveY, _dockHit));
+                    if (!dh) continue;
+                    if (!proj.bittenStations) proj.bittenStations = new Set();
+                    proj.bittenStations.add(st);
+                    st.lastHitX = dh.x;
+                    st.lastHitY = dh.y;
+                    window.applyDamageToStation(st, HEXLANCE_STATION_DAMAGE);
+                    if (WeaponFx.available) {
+                        const c = writeCarrier(st, dh.x, dh.y, false, _targetCarrier);
+                        WeaponFx.hexlanceImpact(dh.x, dh.y, proj.vx - c.vx, proj.vy - c.vy, c);
+                    }
+                    continue;
+                }
                 const r = Math.max(60, Number(st.r) || 200);
                 let tp = 0;
                 if (lenSq > 0) tp = Math.max(0, Math.min(1, ((st.x - prevX) * moveX + (st.y - prevY) * moveY) / lenSq));

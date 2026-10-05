@@ -6,6 +6,7 @@ import terranSupercapitalImg from '../assets/ships/terransupercapital.png';
 import pirateFrigateImg from '../assets/ships/piratefrigate.png';
 import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
+import pirateSupercapitalImg from '../assets/ships/piratecapital.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
 import { migratePirateSpriteLayout } from '../data/pirateSpriteMigration.js';
@@ -89,6 +90,7 @@ const SHIP_DEFS = [
   { id: 'battleship', label: 'Bellator', sprite: terranBattleshipImg },
   { id: 'destroyer', label: 'Hasta', sprite: terranDestroyerImg },
   { id: 'frigate', label: 'Custos', sprite: terranFrigateImg },
+  { id: 'pirate_supercapital', label: 'Piraci: Supercapital', sprite: pirateSupercapitalImg },
   { id: 'pirate_battleship', label: 'Piraci: Battleship', sprite: pirateBattleshipImg },
   { id: 'pirate_destroyer', label: 'Piraci: Destroyer', sprite: pirateDestroyerImg },
   { id: 'pirate_frigate', label: 'Piraci: Fregata', sprite: pirateFrigateImg }
@@ -796,7 +798,12 @@ function fillSelects() {
 
 // Default slot size for the ship currently open in the editor (frigate=S … atlas=Capital).
 function editorDefaultHardpointSize() {
-  return getWeaponTierForHull(resolveHullRenderProfileId(resolveEditorShipId(state.shipId)));
+  return getWeaponTierForHull(getEditorHullRenderProfileId());
+}
+
+function getEditorHullRenderProfileId() {
+  const shipId = resolveEditorShipId(state.shipId);
+  return resolveHullRenderProfileId(getShipDef(shipId)?.renderProfile || shipId);
 }
 
 function refreshEngineMountSelect() {
@@ -2118,7 +2125,7 @@ function getEditorWorldPerPx() {
   const sw = Number(sprite?.width ?? sprite?.naturalWidth ?? 0);
   const sh = Number(sprite?.height ?? sprite?.naturalHeight ?? 0);
   if (!(sw > 2 && sh > 2)) return 0;
-  const size = getHullRenderSize(resolveHullRenderProfileId(resolveEditorShipId(state.shipId)), sw, sh);
+  const size = getHullRenderSize(getEditorHullRenderProfileId(), sw, sh);
   return Math.max(size.w, size.h) / Math.max(sw, sh);
 }
 

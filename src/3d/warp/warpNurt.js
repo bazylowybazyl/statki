@@ -119,7 +119,7 @@ export const WarpNurt = {
   _seamPacked: Array.from({ length: SEAM_CAP }, () => ({ x: 0, y: 0, dx: 1, dy: 0, halfLen: 0, halfWidth: 0, push: 0, flow: 0 })),
   _seamCount: 0,
   // plan kroków tej klatki (wykonuje krok efektów Core3D)
-  _steps: Array.from({ length: MAX_STEPS_PER_FRAME }, () => ({ sx: 0, sy: 0, t: 0 })),
+  _steps: Array.from({ length: MAX_STEPS_PER_FRAME }, () => ({ sx: 0, sy: 0, t: 0, back: 0 })),
   _stepCount: 0,
   // przyloty / odloty NPC
   arrivals: [],
@@ -404,6 +404,8 @@ export const WarpNurt = {
       st.sx = cx - this.anchorMX;
       st.sy = -(cy - this.anchorMY);
       st.t = ts - this.wakeT;
+      // Przegródki (pakowane niżej raz na klatkę) mają pozycje z chwili t — krok cofa je o tyle.
+      st.back = Math.max(0, t - ts);
       this.anchorMX = cx;
       this.anchorMY = cy;
       const tPrev = ts - WARP_STEP;
@@ -457,6 +459,9 @@ export const WarpNurt = {
       p.flow = s.flow;
     }
     this._seamCount = ns;
+    // Kamera ośrodka w krokach tej klatki jedzie liniowo (cx, cy wyżej) — z tą prędkością
+    // (scena: y w górę) krok cofa przegródki do swojej chwili (medium.js: bubbleBack).
+    this.medium.setBubbleFlow(this.flowX, -this.flowY);
     this.medium.setCloudOrigin(this.camMX, -this.camMY);
     this.stats.stepsTotal += n;
   },
@@ -485,7 +490,7 @@ export const WarpNurt = {
       }
       if (i === 0 || flags) medium.setBubbles(this._packedList, BUBBLE_CAP);
       const st = this._steps[i];
-      medium.step(renderer, WARP_STEP, st.t, st.sx, st.sy);
+      medium.step(renderer, WARP_STEP, st.t, st.sx, st.sy, st.back);
     }
     this._stepCount = 0;
   },

@@ -1,4 +1,5 @@
 import { ATLAS_EDITOR_DEFAULTS } from './atlasHardpointDefaults.js';
+import { PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS } from './pirateSupercapitalDefaults.js';
 
 export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 
@@ -7,6 +8,7 @@ export const SHIP_EDITOR_DEFAULTS = {
   source: 'hardpoint-editor-defaults',
   ships: {
     atlas: PLAYER_EDITOR_DEFAULTS,
+    pirate_supercapital: PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS,
     // The freight locomotive intentionally has no weapon mounts or reactor
     // markers yet. Keeping an explicit empty profile is important: without it
     // the player layout resolver falls back to Atlas (including any markers

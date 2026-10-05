@@ -536,7 +536,7 @@ export function resizeShieldSystem() {
   return true;
 }
 
-// fxClass — klasa trafienia dla efektów cząsteczkowych (src/3d/shieldImpactFx.js):
+// fxClass — klasa trafienia dla efektów tarczy (src/3d/shield3D.js — płytki, fala, iskry):
 // 'pd' broń defensywna | 'main' broń główna | 'special' broń special |
 // 'shield' zderzenie tarcza-tarcza. Nie wpływa na gameplay, tylko na wizual.
 export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0, fxClass = 'main') {
@@ -563,6 +563,7 @@ export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0, fxCl
     localAngle,
     gridAngle,
     intensity,
+    damage: dmg,
     fxClass,
     life: 1.0,
     deformation,

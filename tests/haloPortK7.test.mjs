@@ -15,13 +15,14 @@ import {
   buildK7Collision,
   createK7Layout,
   k7BoxPoly,
-  k7CollarPosts,
+  k7HallArms,
   k7Frame,
   k7HeightToZ,
   k7HubToWorld,
   k7WorldToHub
 } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { buildK7Scene } from '../src/3d/haloRing/haloPortK7Build.js';
+import { buildPortCollision, createPortRegistry } from '../src/3d/haloRing/haloPortDocking.js';
 
 test('układ K-7: 28 stanowisk (4 capital jak dok stacji z ringiem w ruchu v2), 3 bramy', () => {
   const l = createK7Layout();
@@ -120,23 +121,29 @@ test('dach znika, gdy kadłub wchodzi do hali', () => {
   assert.equal(roof.update(ship.polygon(), 0, true), 1, 'w hali: dach zniknął');
 });
 
-test('osadzenie na ringu: K-7 wpięty w podłogę na środku wstęgi, przed orbitą spawnu', () => {
+test('osadzenie na ringu: K-7 za krawędzią ścian na pylonach, na środku wstęgi, przed orbitą spawnu', () => {
   const ring = createHaloRingLayout({});
   const f = k7Frame(ring);
   const l = createK7Layout();
   assert.equal(l.backZ, K7_PLACEMENT.backZ, 'K7_PLACEMENT.backZ = createK7Layout().backZ');
   assert.equal(l.halfWidth, HALO_PORT.k7HalfWidth, 'HALO_PORT.k7HalfWidth = createK7Layout().halfWidth');
-  // ściana tylna hali na płycie portu (podłoga + 7), płaszczyzna lotu = środek podłogi
+  // ściana tylna hali dockGap za krawędzią ścian (poprawka użytkownika 2026-10-05:
+  // doki „za mocno wciśnięte w ring”), płaszczyzna lotu = środek podłogi
   const back = k7HubToWorld(f, 0, l.backZ);
-  assert.ok(Math.abs(Math.hypot(back.x, back.y) - (ring.radii.floorMid + 7)) < 1e-6, 'tył hali na podłodze');
+  assert.ok(Math.abs(Math.hypot(back.x, back.y) - (ring.radii.rim + HALO_PORT.dockGap)) < 1e-6, 'tył hali za krawędzią ścian');
+  assert.ok(HALO_PORT.dockGap >= 2000, 'dok wyraźnie odsunięty od ringu');
   assert.equal(ring.z.floorMid, 0, 'płaszczyzna lotu na środku szerokości wstęgi');
-  assert.ok(f.rimZ > l.backZ + 1400 && f.rimZ < l.backZ + 1600, 'krawędź ścian ~1500 j. przed tyłem hali');
+  assert.ok(Math.abs(f.rimZ - (l.backZ - HALO_PORT.dockGap)) < 1e-6, 'krawędź ścian dockGap za tyłem hali');
+  assert.ok(Math.abs(f.floorZ - (f.rimZ - (ring.radii.rim - ring.radii.floorMid - 7))) < 1e-6, 'płyta portu pod krawędzią ścian');
+  assert.ok(Math.abs(f.standoff - (l.backZ - f.floorZ)) < 1e-6, 'pylony od płyty portu do ściany tylnej');
   let rMax = 0;
   for (const [x, z] of l.footprint) {
     const p = k7HubToWorld(f, x, z + (z === l.frontZ ? l.apronDepth : 0));
     rMax = Math.max(rMax, Math.hypot(p.x, p.y));
   }
-  assert.ok(rMax < 57252 - 3000, `front K-7 ${rMax.toFixed(0)} przed orbitą spawnu`);
+  // spawn wolnej gry: studnia grawitacji Ziemi + 1500 = 57 252 — Atlas (pół
+  // długości 900 j.) nie rodzi się na płycie przed bramą G-01
+  assert.ok(rMax < 57252 - 2000, `front K-7 ${rMax.toFixed(0)} przed orbitą spawnu`);
   // środek hali pod kątem stacji
   const mid = k7HubToWorld(f, 0, 3000);
   let dd = Math.atan2(mid.y, mid.x) - HALO_STATION_ANGLE;
@@ -171,7 +178,8 @@ test('osadzenie na ringu: K-7 wpięty w podłogę na środku wstęgi, przed orbi
   }
   // pas fabryczny i domy wokół doków: strefa domów szersza niż fabryk
   for (const s of sites) assert.ok(s.zoneRes === 0 || s.zoneRes > s.zoneInd, `strefy ${s.kind}`);
-  assert.ok(sites[0].halfS >= l.halfWidth + HALO_PORT.collar + 100, 'płyta pod całym kołnierzem K-7');
+  const arms = k7HallArms(f, l);
+  assert.ok(sites[0].halfS >= Math.abs(arms[0].x) + arms[0].flareWidth * 0.5 + 200, 'płyta pod stopami pylonów i terminalem K-7');
   for (let i = 0; i < sites.length; i++) {
     for (let j = i + 1; j < sites.length; j++) {
       let d = sites[i].theta - sites[j].theta;
@@ -179,10 +187,28 @@ test('osadzenie na ringu: K-7 wpięty w podłogę na środku wstęgi, przed orbi
       assert.ok(Math.abs(d) * ring.radii.floorMid > sites[i].halfS + sites[j].halfS, `miejsca portu ${i} i ${j} zachodzą na siebie`);
     }
   }
-  // słupy kołnierza są przeszkodami lotu (poza halą), wejście do hali zostaje wolne
-  const posts = k7CollarPosts(l);
-  const world = buildK7Collision(l);
-  for (const p of posts) assert.ok(world.test(k7BoxPoly(p.x, p.z, 50, 50)), 'słup kołnierza w świecie kolizji');
+  // pylony wystają wprost ze ściany tylnej hali, na jej wysokości (poprawka
+  // użytkownika 2026-10-05: „ze ściany tylnej przechodzi się do pylonu”), od
+  // płyty portu; są przeszkodą lotu, a między nimi można przelecieć
+  const wallOut = l.backZ - l.wallThickness * 0.5;
+  for (const a of arms) {
+    assert.ok(a.zw0 <= -232 && a.zw1 >= 100, 'przekrój pylonu na wysokości hali (pokład … ściany)');
+    assert.ok(a.z0 < f.floorZ, 'stopa pylonu na płycie portu');
+    assert.ok(a.z1 > wallOut && a.z1 < l.backZ + l.wallThickness * 0.5, 'korzeń pylonu w ścianie tylnej');
+    assert.ok(a.flareWidth >= a.width * 1.4 && a.width >= 1000, 'pylon masywny, końce rozszerzone');
+  }
+  const registry = createPortRegistry({ halls: [{ index: 0, frame: f, layout: l }], bays: [], frame: f });
+  const world = buildPortCollision({ registry, frame: f, ringLayout: ring });
+  const armMid = (a) => (a.footEnd + a.rootStart) * 0.5;
+  for (const a of arms) {
+    for (const z of [a.footEnd - 200, armMid(a), a.rootStart + 100]) {
+      assert.match(String(world.test(k7BoxPoly(a.x, z, 200, 200))), /^PYLON/, `pylon w świecie kolizji (z = ${z.toFixed(0)})`);
+    }
+  }
+  const gap = 2 * (Math.abs(arms[0].x) - arms[0].flareWidth * 0.5);
+  assert.ok(gap > K7_ATLAS.h + 1500, `prześwit między pylonami ${gap.toFixed(0)} j.`);
+  assert.equal(world.test(k7BoxPoly(0, armMid(arms[0]), gap - 200, 800)), null, 'między pylonami wolne');
+  assert.notEqual(world.test(k7BoxPoly(0, l.backZ, 400, 100)), null, 'ściana tylna hali');
   assert.equal(world.test(k7BoxPoly(0, l.frontZ + 400, 200, 200)), null, 'przed bramą G-01 wolne');
 });
 

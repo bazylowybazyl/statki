@@ -11,7 +11,8 @@
   Stan pola liczony na GPU (fala, energia, przebicie); tarcza to siatka płytek-heksów
   jak kadłub w starym destruktorze GPU: ciało miękkie (wgniecenia rozchodzą się po
   sąsiadach), poświata stresu, żar stygnący od bieli do głębokiego błękitu,
-  przeciążone płytki odpadają przy przebiciu, pęknięcie rozrywa całą siatkę.
+  przeciążone płytki odpadają przy przebiciu, pęknięcie przebiega przez siatkę
+  czołem rys i ją kruszy (strojenie: suwaki „pęknięcie”, konsola __demo.SHATTER).
   Światła trafień, poświata na kadłubie, załamanie, iskry na czaszy.
   Obrys, stany i czasy z gry (shieldSystem.js).
 
@@ -101,6 +102,8 @@
     <div class="row"><span>regeneracja HP [%/s]</span><input type="range" id="s-regen" min="0" max="25" step="0.5" value="4"><output id="o-regen"></output></div>
     <div class="row"><span>jakość siatki pola</span><input type="range" id="s-grid" min="256" max="1024" step="128" value="512"><output id="o-grid"></output></div>
     <div class="row"><span>liczba iskier [×]</span><input type="range" id="s-sparks" min="0" max="3" step="0.05" value="1"><output id="o-sparks"></output></div>
+    <div class="row"><span>pęknięcie: siła</span><input type="range" id="s-shpow" min="0" max="2.5" step="0.05" value="1"><output id="o-shpow"></output></div>
+    <div class="row"><span>pęknięcie: odłamki</span><input type="range" id="s-shfrac" min="0" max="0.6" step="0.01" value="0.08"><output id="o-shfrac"></output></div>
     <div class="row"><span>moc świateł</span><input type="range" id="s-light" min="0" max="3" step="0.05" value="1"><output id="o-light"></output></div>
     <div class="row"><span>bloom</span><input type="range" id="s-bloom" min="0" max="2" step="0.05" value="0.85"><output id="o-bloom"></output></div>
     <div class="row"><span>tone mapping</span>

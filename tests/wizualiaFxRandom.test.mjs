@@ -21,7 +21,7 @@ const WIZUALIA = [
   'src/3d/mainExhaust3D.js',
   'src/3d/warpPlume3D.js',
   'src/3d/hullDebris3D.js',
-  'src/3d/shieldImpactFx.js',
+  'src/3d/shield3D.js',
   'src/3d/fxParticles3D.js',
   'src/3d/engineExhaustBatch.js',
   'src/3d/bridgeFx3D.js',

@@ -11,7 +11,8 @@ const {
 } = await import('../src/game/weaponAim.js');
 const {
   FC_TUNE, createFireControl, fcResolveInHand, fcSetInHand, fcToggleAuto, fcCyclePosture,
-  fcAimTolerance, fcHitFactor, fcPickTarget, fcPickNearPoint, stepFireControl
+  fcAimTolerance, fcHitFactor, fcPickTarget, fcPickNearPoint, stepFireControl,
+  fcPlanMissileSalvo, fcMissileRole, fcMissileDamage, fcSalvoSize
 } = await import('../src/game/fireControl.js');
 const { chargeTimeOf } = await import('../src/game/weaponCharge.js');
 const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
@@ -89,12 +90,19 @@ test('skok punktu celowania nie jest prędkością kątową (zmiana celu nie sza
 const loadout = (weaponId, x, y, id) => ({ hp: { id, pos: { x, y }, mount: weaponId }, weapon: MASTER_WEAPONS[weaponId] });
 const enemy = (x, y, kind, extra = {}) => ({ x, y, vx: 0, vy: 0, radius: kind === 'battleship' ? 300 : kind === 'destroyer' ? 150 : 90, kind, hp: 2000, ...extra });
 
-function makeScene({ main = 0, special = 0, missile = 0, mainId = 'railgun_mk2', specialId = 'special_yamato_cannon' } = {}) {
+function makeScene({ main = 0, special = 0, missile = 0, mainId = 'railgun_mk2', specialId = 'special_yamato_cannon', missileIds = null } = {}) {
   const ship = { pos: { x: 0, y: 0 }, angle: 0, vel: { x: 0, y: 0 } };
   const weapons = { main: [], special: [], missile: [] };
   for (let i = 0; i < main; i++) weapons.main.push(loadout(mainId, (i - main / 2) * 100, i % 2 ? 300 : -300, `m${i}`));
   for (let i = 0; i < special; i++) weapons.special.push(loadout(specialId, -200 - i * 150, i % 2 ? 250 : -250, `s${i}`));
-  for (let i = 0; i < missile; i++) weapons.missile.push(loadout('missile_rack', 0, 0, `r${i}`));
+  for (let i = 0; i < missile; i++) {
+    const lo = loadout(missileIds?.[i] || 'missile_rack', 0, 0, `r${i}`);
+    lo.hp.ammo = lo.weapon.ammo;
+    lo.hp.missileCd = 0;
+    weapons.missile.push(lo);
+  }
+  // Rakiety w locie (budżet celu): cel → obrażenia; testy „lądują” je ręcznie (flying.clear()).
+  const flying = new Map();
   const fc = createFireControl();
   const shots = [];
   const leadOut = { x: 0, y: 0 };
@@ -119,20 +127,31 @@ function makeScene({ main = 0, special = 0, missile = 0, mainId = 'railgun_mk2',
     fireSpecial: (i, lo, auto) => { shots.push({ group: 'special', i, target: getMountedWeaponAim(ship, lo).target, auto }); lo.hp.specialCd = lo.weapon.cooldown; },
     chargeSpecial: (i, lo, manual) => { shots.push({ group: 'charge', i, manual }); },
     fireMissile: (target) => { shots.push({ group: 'missile', target }); return true; },
-    missileInRange: (t) => Math.hypot(t.x, t.y) <= 24000
+    missileReady: (lo) => lo.hp.ammo > 0 && !(lo.hp.missileCd > 0),
+    missileIncoming: (out) => { out.clear(); for (const [k, v] of flying) out.set(k, v); return out; },
+    fireMissileSalvo: (lo, targets, count) => {
+      const list = targets.slice(0, count);
+      const per = fcMissileDamage(lo.weapon);
+      for (const t of list) flying.set(t, (flying.get(t) || 0) + per);
+      shots.push({ group: 'salvo', lo, targets: list, target: list[0] });
+      lo.hp.ammo--;
+      lo.hp.missileCd = lo.weapon.cooldown;
+      return true;
+    }
   };
   const setCandidates = (list, priority = []) => {
     env.priority = priority;
-    fc.candidates = list.map((e) => ({ e, kind: e.kind, need: e.hp, prio: priority.indexOf(e) }));
+    fc.candidates = list.map((e) => ({ e, kind: e.kind, need: e.hp, needMax: e.hp, threat: e.threat || 0, prio: priority.indexOf(e) }));
     fc.candidateCount = list.length;
   };
   const run = (seconds) => {
     for (let i = 0; i < seconds / DT; i++) {
       for (const lo of weapons.special) lo.hp.specialCd = Math.max(0, (lo.hp.specialCd || 0) - DT);
+      for (const lo of weapons.missile) lo.hp.missileCd = Math.max(0, (lo.hp.missileCd || 0) - DT);
       stepFireControl(fc, env);
     }
   };
-  return { ship, weapons, fc, env, shots, setCandidates, run };
+  return { ship, weapons, fc, env, shots, setCandidates, run, flying };
 }
 
 test('grupa w ręku: domyślnie special, bez niej main; auto i postawa przełączane', () => {
@@ -292,7 +311,7 @@ test('wyprzedzenie przy kursorze: bateria w ręku trafia w punkt wskazany na kad
   assert.equal(aim.target, target);
 });
 
-test('broń z ładowaniem zgłasza strzał (ładuje gra); rakiety na auto tylko w cel priorytetowy w zasięgu', () => {
+test('broń z ładowaniem zgłasza strzał (ładuje gra); rakiety na auto: bierny cel tylko jako priorytetowy, w zasięgu', () => {
   const s = makeScene({ special: 1, missile: 2, specialId: 'special_valkyrie_railgun' });
   s.fc.inHand = 'main'; // nie ma dział — w ręku wypada special
   assert.equal(fcResolveInHand(s.fc, s.weapons), 'special');
@@ -303,21 +322,104 @@ test('broń z ładowaniem zgłasza strzał (ładuje gra); rakiety na auto tylko 
   s.env.trigger = true;
   s.run(1);
   assert.ok(s.shots.some((x) => x.group === 'charge' && x.manual === true));
-  assert.equal(s.shots.filter((x) => x.group === 'missile').length, 0, 'bez celu priorytetowego rakiety zostają w wyrzutniach');
+  assert.equal(s.shots.filter((x) => x.group === 'salvo').length, 0, 'bierny wróg (bez zagrożenia) — rakiety zostają w wyrzutniach');
   s.shots.length = 0;
   s.setCandidates([a, far], [far]);
   s.run(1);
-  assert.equal(s.shots.filter((x) => x.group === 'missile').length, 0, 'cel priorytetowy poza zasięgiem rakiet');
+  assert.equal(s.shots.filter((x) => x.group === 'salvo').length, 0, 'cel priorytetowy poza zasięgiem rakiet');
   s.setCandidates([a, far], [far, a]);
   s.run(1);
-  const rockets = s.shots.filter((x) => x.group === 'missile');
-  assert.ok(rockets.length >= 2 && rockets.every((x) => x.target === a), 'rakiety idą w pierwszy cel priorytetowy w zasięgu');
+  const rockets = s.shots.filter((x) => x.group === 'salvo');
+  assert.ok(rockets.length >= 1 && rockets.every((x) => x.targets.every((t) => t === a)), 'rakiety idą w cel priorytetowy w zasięgu');
   // Rakiety w ręku: spust wysyła salwę w pierwszy cel priorytetowy.
   s.shots.length = 0;
   s.fc.inHand = 'missile';
   s.fc.auto.missile = false;
   s.run(0.5);
   assert.ok(s.shots.filter((x) => x.group === 'missile').every((x) => x.target === far));
+});
+
+test('rakiety na auto: salwa dzieli się na kilka celów wg budżetu, rakiety w locie odejmują się od potrzeb', () => {
+  // Domyślny Atlas: Grad (24 × 180) + wyrzutnia pocisków manewrujących (3 × 1000).
+  const s = makeScene({ main: 1, missile: 2, missileIds: ['grad_launcher', 'missile_rack'] });
+  s.fc.inHand = 'main'; // w ręku działa — rakiety na auto
+  const f1 = enemy(4000, 500, 'frigate', { hp: 1850, threat: 1 });
+  const f2 = enemy(4200, -600, 'frigate', { hp: 1850, threat: 1 });
+  const f3 = enemy(-3500, 300, 'frigate', { hp: 1850, threat: 1 });
+  const dd = enemy(7000, 0, 'destroyer', { hp: 6400, threat: 1 });
+  const parked = enemy(5000, 3000, 'battleship', { hp: 19200, threat: 0 });
+  s.setCandidates([f1, f2, f3, dd, parked]);
+  s.run(0.5);
+  const salvos = s.shots.filter((x) => x.group === 'salvo');
+  assert.equal(salvos.length, 2, 'obie wyrzutnie odpaliły');
+  const grad = salvos.find((x) => x.lo.weapon.id === 'grad_launcher');
+  const cruise = salvos.find((x) => x.lo.weapon.id === 'missile_rack');
+  const gradTargets = new Set(grad.targets);
+  assert.equal(grad.targets.length, 24);
+  assert.ok(gradTargets.size >= 2, `Grad na kilka fregat: ${gradTargets.size}`);
+  assert.ok([...gradTargets].every((t) => t.kind === 'frigate'), 'mikrorakiety w drobnicę');
+  // Żaden cel nie dostaje więcej, niż potrzebuje (z zapasem na obronę punktową).
+  for (const t of gradTargets) {
+    const n = grad.targets.filter((x) => x === t).length;
+    assert.ok(n * 180 <= t.hp * FC_TUNE.missileMargin + 180, `${n} mikrorakiet na fregatę ${t.hp}`);
+  }
+  assert.ok(cruise.targets.every((t) => !gradTargets.has(t)), 'manewrujące nie dokładają do celów Grada');
+  assert.ok(!salvos.some((x) => x.targets.includes(parked)), 'bierny pancernik (bez zagrożenia) — bez rakiet');
+  // Wszystko pokryte rakietami w locie — wyrzutnie czekają (nie marnują salw).
+  s.shots.length = 0;
+  for (const t of [f1, f2, f3, dd]) s.flying.set(t, t.hp * 2);
+  s.run(10);
+  assert.equal(s.shots.filter((x) => x.group === 'salvo').length, 0);
+  // Rakiety doleciały (cele dalej żyją): po przeładowaniu salwy wracają.
+  s.flying.clear();
+  s.run(0.5);
+  assert.equal(s.shots.filter((x) => x.group === 'salvo').length, 2);
+  // Postawa „tylko cel”: wyłącznie cele priorytetowe, także bierny pancernik.
+  s.shots.length = 0;
+  s.flying.clear();
+  s.fc.posture = 'focus';
+  s.setCandidates([f1, f2, f3, dd, parked], [parked]);
+  s.run(10);
+  const focus = s.shots.filter((x) => x.group === 'salvo');
+  assert.ok(focus.length >= 2 && focus.every((x) => x.targets.every((t) => t === parked)));
+  // Wstrzymać ogień — nic.
+  s.shots.length = 0;
+  s.flying.clear();
+  s.fc.posture = 'hold';
+  s.run(10);
+  assert.equal(s.shots.filter((x) => x.group === 'salvo').length, 0);
+});
+
+test('plan salwy: dobór rakiety do klasy, cel prawie pokryty nie ściąga całej salwy, reszta na największą potrzebę', () => {
+  assert.equal(fcMissileRole(MASTER_WEAPONS.grad_launcher), 'light');
+  assert.equal(fcMissileRole(MASTER_WEAPONS.roj_pod), 'light');
+  assert.equal(fcMissileRole(MASTER_WEAPONS.fast_missile_rack), 'light');
+  assert.equal(fcMissileRole(MASTER_WEAPONS.missile_rack), 'heavy');
+  assert.equal(fcMissileRole(MASTER_WEAPONS.hydra_mirv), 'heavy');
+  assert.equal(fcMissileDamage(MASTER_WEAPONS.hydra_mirv), 240 * 6, 'kasetowa liczy wszystkie głowice');
+  assert.equal(fcSalvoSize(MASTER_WEAPONS.grad_launcher), 24);
+  const s = makeScene({ missile: 1, missileIds: ['missile_rack'] });
+  const lo = s.weapons.missile[0];
+  const fighter = enemy(3000, 0, 'fighter', { hp: 150, threat: 1, radius: 12 });
+  const bs = enemy(9000, 0, 'battleship', { hp: 19200, threat: 1 });
+  s.setCandidates([fighter, bs]);
+  s.fc._incoming.clear();
+  assert.equal(fcPlanMissileSalvo(s.fc, lo, s.env), 3);
+  assert.ok(s.fc._salvoTargets.slice(0, 3).every((t) => t === bs), 'ciężkie rakiety nie lecą w myśliwca');
+  // Fregata, której brakuje ~1 rakiety: salwa trzech manewrujących (3000) czeka.
+  const hurt = enemy(3000, 0, 'frigate', { hp: 600, threat: 1 });
+  s.setCandidates([hurt]);
+  s.fc._incoming.clear();
+  assert.equal(fcPlanMissileSalvo(s.fc, lo, s.env), 0, 'dobijanie jednym strzałem salwy — zostaje działom');
+  // Niszczycielowi brakuje jednej rakiety, pancernikowi — wielu: reszta salwy w pancernik.
+  const d1 = enemy(4000, 0, 'destroyer', { hp: 6400, threat: 1 });
+  s.setCandidates([d1, bs]);
+  s.fc._incoming.clear();
+  s.fc._incoming.set(d1, 6400 * FC_TUNE.missileMargin - 900);
+  assert.equal(fcPlanMissileSalvo(s.fc, lo, s.env), 3);
+  const plan = s.fc._salvoTargets.slice(0, 3);
+  assert.equal(plan.filter((t) => t === d1).length, 1, 'niszczycielowi brakuje jednej rakiety');
+  assert.equal(plan.filter((t) => t === bs).length, 2);
 });
 
 test('wybór celu: dopasowanie kalibru i chwyt kursora', () => {

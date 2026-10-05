@@ -1,4 +1,4 @@
-/* Super Capital cockpit HUD — scoped for a ShadowRoot.
+/* HULLFALL cockpit HUD — scoped for a ShadowRoot.
    Układ „jeden klaster + kontekst” (makieta: dema/hud-koncept.html).
    Wymiary skalują się przez --u (1px przy 1080p); --s ustawia CockpitUI.applyScale(). */
 :host {

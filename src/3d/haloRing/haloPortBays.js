@@ -7,20 +7,22 @@
 // usuniętej trzeciej. Czysta matematyka, bez Three.
 //
 // Układ zatoki jak hub K-7 (k7Frame pod kątem zatoki): x wzdłuż ringu (0 =
-// środek zatoki), z promieniowo na zewnątrz, z = K7_PLACEMENT.backZ = płyta
-// portu na podłodze habitatu; wylot (otwarty bok, w kosmos) na z = floorZ +
-// HALO_PORT.bayDepth. Wysokości (y) jak w K-7: pokład zatoki = pokład hali.
+// środek zatoki), z promieniowo na zewnątrz, z = K7_PLACEMENT.backZ = baseZ —
+// płaszczyzna tylna zatoki (od 2026-10-05 dockGap za krawędzią ścian
+// habitatu, na dwóch pylonach od płyty portu na podłodze — k7DockArms);
+// wylot (otwarty bok, w kosmos) na z = baseZ + HALO_PORT.bayDepth. Wysokości
+// (y) jak w K-7: pokład zatoki = pokład hali.
 //
 // Zatoka jest symetryczna (x od ściany do ściany):
 //   [pas MEGA][grzbiet][grzebień ← aleja → grzebień][grzbiet][pas MEGA]
-//  - 2 pasy MEGA przy ścianach, prosto od wylotu, dziobem do podłogi (jak
+//  - 2 pasy MEGA przy ścianach, prosto od wylotu, dziobem do ściany tylnej (jak
 //    stanowiska capital K-7 z własnym pasem): megafrachtowiec 2760 × 912 j.,
 //    też capital;
 //  - podwójny grzebień jak boczne banki K-7: wspólna aleja od wylotu w głąb
 //    i po obu jej stronach stanowiska L, M, S dziobem do grzbietu serwisowego
 //    (wjazd dziobem z alei, wyjazd tyłem); grzbiet oddziela grzebień od pasa MEGA.
 import { HALO_PORT, haloPortSites } from './haloRingConfig.js';
-import { K7_BANK_SLOTS, K7_PLACEMENT, k7Frame, k7WorldToHub } from './haloPortK7Layout.js';
+import { K7_BANK_SLOTS, K7_PLACEMENT, k7DockArms, k7Frame, k7WorldToHub } from './haloPortK7Layout.js';
 
 export const HALO_BAY = Object.freeze({
   innerHalf: (HALO_PORT.dockLength - 2 * HALO_PORT.sideWall) / 2,   // 2900: lica ścian bocznych
@@ -29,7 +31,7 @@ export const HALO_BAY = Object.freeze({
   // suwnice pasów MEGA (most od ściany do grzbietu, noga na grzbiecie): ułamek głębokości zatoki
   gantryAt: Object.freeze([0.42, 0.78]),
   mega: Object.freeze({ size: 'MEGA', padLength: 2900, padBeam: 1150, maxLength: 2900, maxBeam: 1100 }),
-  // grzebień (po każdej stronie alei): od podłogi ku wylotowi (jak w K-7: duże najgłębiej)
+  // grzebień (po każdej stronie alei): od ściany tylnej ku wylotowi (jak w K-7: duże najgłębiej)
   comb: Object.freeze([
     Object.freeze({ ...K7_BANK_SLOTS.L, count: 2 }),
     Object.freeze({ ...K7_BANK_SLOTS.M, count: 2 }),
@@ -53,7 +55,7 @@ export function createBayLayout({ index = 0, complex = 0, depth = HALO_PORT.bayD
   const openZ = F + depth;
   const l = {
     id: 'Z-' + String(index + 1).padStart(2, '0'), tag, index, complex,
-    floorZ: F, backZ, openZ, depth, halfWidth: half, berths: [], lanes: [], spines: []
+    baseZ: F, backZ, openZ, depth, halfWidth: half, berths: [], lanes: [], spines: []
   };
   // przekrój w x: aleja pośrodku, pola grzebienia, grzbiety, pasy MEGA przy ścianach
   const aisleHalf = B.aisleWidth / 2;
@@ -110,15 +112,22 @@ export function createBayLayout({ index = 0, complex = 0, depth = HALO_PORT.bayD
   return l;
 }
 
+// Pylony zatoki w jej ramce (k7DockArms: wystają wprost ze ściany tylnej —
+// lico na baseZ — do płyty portu na podłodze; render i kolizje).
+export function bayArms(bay, frame = bay.frame) {
+  return k7DockArms(frame, HALO_PORT.dockLength * 0.5, bay.baseZ, HALO_PORT.armBay);
+}
+
 // Pas MEGA stanowiska (albo null dla grzebienia).
 export function bayLaneOf(bay, berth) {
   return bay.lanes.find((v) => v.berthId === berth.id) || null;
 }
 
 // Bryły zatoki w płaszczyźnie lotu (wysokości K-7: y nad pokładem) — wspólne
-// dla renderu (słupki serwisowe) i kolizji (ściany, kołnierz, słupki, paliwo).
-// Ściany i kołnierz rysuje megastruktura (haloRingRoofPlan.js); grzbiety są
-// niskie (poniżej kadłuba), więc nie są przeszkodą.
+// dla renderu (słupki serwisowe) i kolizji (ściany, słupki, paliwo). Ściany
+// rysuje megastruktura (haloRingRoofPlan.js / arch/archPort.js); grzbiety są
+// niskie (poniżej kadłuba). Pylony (bayArms) zależą od ramki — kolizje
+// dokłada buildPortCollision.
 const yOfZ = (z) => (z <= 0 ? z + 116 : 116 + z / 0.42);
 export function baySolidList(l) {
   const P = HALO_PORT;
@@ -126,14 +135,11 @@ export function baySolidList(l) {
   const add = (id, x, y, z, w, h, d, mat = 'dark', angle = 0) => out.push({ id, x, y, z, w, h, d, mat, angle });
   const y0 = yOfZ(P.deckTop - 60);
   const y1 = yOfZ(P.wallTop);
-  const depth = l.openZ - l.floorZ;
+  const depth = l.openZ - l.baseZ;
   for (const sd of [-1, 1]) {
-    add('WALL ' + l.tag + (sd < 0 ? ' W' : ' E'), sd * (l.halfWidth + P.sideWall / 2), (y0 + y1) / 2, l.floorZ + depth / 2, P.sideWall, y1 - y0, depth);
-    // słup kołnierza na podłodze (za ścianą boczną)
-    const cy1 = yOfZ(P.wallTop + 80);
-    add('COLLAR ' + l.tag + (sd < 0 ? ' W' : ' E'), sd * (l.halfWidth + P.sideWall + P.collar / 2), (y0 + cy1) / 2, l.floorZ + P.collarDepth / 2 - 30, P.collar, cy1 - y0, P.collarDepth + 60);
+    add('WALL ' + l.tag + (sd < 0 ? ' W' : ' E'), sd * (l.halfWidth + P.sideWall / 2), (y0 + y1) / 2, l.baseZ + depth / 2, P.sideWall, y1 - y0, depth);
   }
-  add('BACK ' + l.tag, 0, (y0 + y1) / 2, l.floorZ + P.backWall / 2, 2 * (l.halfWidth + P.sideWall), y1 - y0, P.backWall);
+  add('BACK ' + l.tag, 0, (y0 + y1) / 2, l.baseZ + P.backWall / 2, 2 * (l.halfWidth + P.sideWall), y1 - y0, P.backWall);
   for (const b of l.berths) {
     if (b.servicePoint) add('SERVICE ' + b.id, b.servicePoint.x, 79, b.servicePoint.z, 60, 158, 78, 'dark');
   }
@@ -143,7 +149,7 @@ export function baySolidList(l) {
   }
   // nogi suwnic pasów MEGA na grzbietach (most wisi nad płaszczyzną lotu)
   for (const sp of l.spines) {
-    for (const g of HALO_BAY.gantryAt) add('GANTRY LEG ' + l.tag + '/' + sp.side, sp.x, 239, l.floorZ + depth * g, 60, 478, 80, 'dark');
+    for (const g of HALO_BAY.gantryAt) add('GANTRY LEG ' + l.tag + '/' + sp.side, sp.x, 239, l.baseZ + depth * g, 60, 478, 80, 'dark');
   }
   return out;
 }

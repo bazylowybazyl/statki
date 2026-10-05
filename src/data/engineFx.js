@@ -235,6 +235,7 @@ export const ENGINE_FX_DEFAULTS = Object.freeze({
   battleship: Object.freeze({ mainNozzle: 58, ...PLUME, ...TERRAN }),
   destroyer: Object.freeze({ mainNozzle: 32, ...PLUME, ...TERRAN }),
   frigate: Object.freeze({ mainNozzle: 110, ...PLUME, ...TERRAN }),
+  pirate_supercapital: Object.freeze({ mainNozzle: 100, ...PLUME, ...PIRATE }),
   pirate_battleship: Object.freeze({ mainNozzle: 105, ...PLUME, ...PIRATE }),
   pirate_destroyer: Object.freeze({ mainNozzle: 115, ...PLUME, ...PIRATE }),
   pirate_frigate: Object.freeze({ mainNozzle: 120, ...PLUME, ...PIRATE })

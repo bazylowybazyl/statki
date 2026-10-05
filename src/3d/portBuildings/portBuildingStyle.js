@@ -63,9 +63,34 @@ function asTriple(v, fallback) {
   return fallback.slice();
 }
 
+// Piraci „Iron Skull” (suchy dok misji 1, pirateDryDockScene.js) — jak sprite'y okrętów piratów
+// (src/assets/ships/pirate*.png): ciemne żelazo z nitami przeżarte rdzą (brąz, pomarańcz rdzy), czerwone ukośne
+// pasy farby, napisy, okrągłe włazy w ośmiokątnych ramach, kratki, kolce (bez czaszek — decyzja użytkownika
+// 2026-10-05). Kody K7_MAT:
+// stal = żelazo z rdzą, ciemny = poczerniałe żelazo, jasny = wytarta krawędź blachy, „żółty” = czerwień pasów
+// (piraci nie mają żółtego), pomarańcz = rdza, turkus = brąz rdzy, pokład = żelazna blacha, szkło przydymione.
+// Emisja: listwy bursztynowe (ogień), sodowe reflektory, biel, czerwień przeszkodowa, zieleń sygnałów.
+export const PIRATE_PORT_STYLE = Object.freeze({
+  key: 'pirate',
+  name: 'SUCHY DOK PIRATÓW',
+  k7Palette: [0x6e5a4e, 0x2c2522, 0x8e7e70, 0x9c3128, 0x9a5430, 0x6a4632, 0x55483f, 0x7a7068,
+    0x141110, 0x3a2a24, 0x8a5636, 0x2a1a16, 0x962c26, 0xd8ccb0],
+  k7Emit: [[1.38, 0.62, 0.16], [1.34, 0.80, 0.36], [1.40, 1.30, 1.16], [1.40, 0.08, 0.05], [0.42, 1.18, 0.55]],
+  k7Glow: [[0.060, 0.026, 0.010], [0.090, 0.040, 0.016]],
+  labels: {
+    gate: '#c8b896', hub: '#a2342b', clear: '#a49a8a', bank: '#b0a493', control: '#c2b7a5',
+    logistics: '#9a8e7d', capital: '#c23a30', berthLead: '#d8ccb0', berth: '#c9b88e', stop: '#7a7066',
+    terminal: '#d8cdbb', bayLane: '#a49a8a', bayBank: '#b0a493', bayId: '#8a7f73'
+  },
+  roof: 'k7',
+  walls: 'k7',
+  buildings: Object.freeze({ family: 'k7', walls: 'k7', shipyardHub: 'u', weld: [4.6, 3.6, 5.8] })
+});
+
 // Styl doków (kształt `profile.port`) z dowolnego wejścia.
 function portStyleOf(input) {
   if (!input) return resolveHaloProfile('earth').port;
+  if (input === 'pirate') return PIRATE_PORT_STYLE;
   if (typeof input === 'string') return resolveHaloProfile(input).port;
   if (input.port && typeof input.port === 'object') return input.port;
   if (Array.isArray(input.k7Palette)) return input;
@@ -75,6 +100,7 @@ function portStyleOf(input) {
 
 function keyOf(input, port) {
   if (!input) return resolveHaloProfile('earth').key;
+  if (input === 'pirate') return 'pirate';
   if (typeof input === 'string') return resolveHaloProfile(input).key;
   if (input?.key && typeof input.key === 'string') return input.key;
   if (port?.key && typeof port.key === 'string') return port.key;

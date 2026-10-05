@@ -70,6 +70,13 @@ function ensurePrebuiltPirateStation() {
 Core3D.warmup?.add({ name: 'stacja piracka: bryła', objects: () => ensurePrebuiltPirateStation()?.object3d || null, layer: 2, phase: 'loading' });
 Core3D.warmup?.add({ name: 'stacja piracka: cień', objects: () => ensurePrebuiltPirateStation()?.object3d || null, shadow: true, phase: 'loading' });
 
+// Mgła wojny (src/game/fogOfWar.js): stacja nierozpoznana przez gracza — bez bryły i latarni. Predykat ustawia gra.
+let stationHiddenTest = null;
+let stationFogHidden = false;   // przełączamy widoczność bryły tylko przy zmianie (inne moduły też ją ruszają)
+export function setWorld3DHiddenTest(fn) {
+  stationHiddenTest = typeof fn === 'function' ? fn : null;
+}
+
 export function initWorld3D() {
   // Nie tworzymy tu już żadnych ukrytych scen ani render targetów.
   // Gra polega w całości na Core3D.
@@ -121,6 +128,7 @@ export function dettachPirateStation3D(_sceneIgnored) {
   pirateStation3D.dispose();
   pirateStation3D = null;
   pirateStation2D = null;
+  stationFogHidden = false;
   initialRadius = null;
   // światła latarni zostają w scenie (stały zestaw świateł passa FG) — zgaszone
   if (beaconLights) for (const light of beaconLights) light.intensity = 0;
@@ -130,6 +138,17 @@ export function updateWorld3D(dt, t) {
   if (!Core3D.isInitialized || !pirateStation3D) return;
   if (pirateStation3D.object3d?.userData?.destructionOwned || pirateStation2D?._destroyed3D) {
     // rozpad: latarnie gasną razem ze stacją (światła są pożyczone ze sceny)
+    if (beaconLights) for (const light of beaconLights) light.intensity = 0;
+    return;
+  }
+
+  // Mgła wojny: stacja jeszcze nierozpoznana — schowana (latarnie zgaszone: to stałe światła sceny).
+  const hidden = !!(stationHiddenTest && pirateStation2D && stationHiddenTest(pirateStation2D));
+  if (hidden !== stationFogHidden) {
+    stationFogHidden = hidden;
+    pirateStation3D.object3d.visible = !hidden;
+  }
+  if (hidden) {
     if (beaconLights) for (const light of beaconLights) light.intensity = 0;
     return;
   }

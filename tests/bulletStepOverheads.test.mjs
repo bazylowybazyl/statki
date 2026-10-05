@@ -112,6 +112,7 @@ test('liczba porcji smugi zależy od czasu klatki, nie od liczby kroków fizyki'
 test('porcje smugi leżą wzdłuż drogi pocisku w tej klatce, bez obiektów pozycji', () => {
   const spawns = [];
   const spawnBulletTrail = loadIndexFunction(html, 'function spawnBulletTrail(b, count, frameDt) {', 'spawnBulletTrail', {
+    WeaponFx: { available: false },
     CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) },
     fxRandom
   });

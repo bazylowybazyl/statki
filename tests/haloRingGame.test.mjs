@@ -209,7 +209,8 @@ test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje
   const phys = html.indexOf('function physicsStep(');
   const ast = html.indexOf('stepShipAsteroidCollisions(dt);', phys);
   const ring = html.indexOf('stepShipRingCollisions(dt);', phys);
-  const destr = html.indexOf('HullBodies.step(dt, allDestructibles);', phys);
+  // krok silnika belek z encjami budowli (ciała świata — src/game/worldBodies.js)
+  const destr = html.indexOf('HullBodies.step(dt, worldBodies.withEntities(allDestructibles));', phys);
   assert.ok(ast > 0 && ring > ast && destr > ring, 'kolejność kolizji w physicsStep');
   assert.match(html, /haloRings\.constrainShip\(ship, true\)/);
   // NPC: widok kinematyki x/y/vx/vy (zachowanie: tests/npcWorldCollisions.test.mjs)

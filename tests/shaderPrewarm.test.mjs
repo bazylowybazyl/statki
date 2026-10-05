@@ -68,25 +68,18 @@ test('rakiety i iskry (Core3D): rozgrzewka kroków efektów — compute, mapa g�
   assert.match(sparks, /m\.visible = true;[\s\S]{0,200}ctx\.core\.prewarmPass\(m, 0\)/);
 });
 
-test('tarcze: materiały-trzymacze obu wariantów, rozgrzewka na ekranie ładowania', () => {
+test('tarcze: pula płytek i iskier rozgrzana na ekranie ładowania (pass tarcz, warstwa DIST, kernele)', () => {
   const body = functionBody(shield3d, 'export function prewarmShields3D(');
-  assert.match(body, /createHullShieldMaterial\(/);
-  assert.match(body, /createShieldMaterial\(\)/);
-  assert.match(body, /ShieldImpactFX\.init\(Core3D\.scene\)/, 'pule cząstek trafień w scenie przed kompilacją');
-  // WebGPU: compileAsync bez blokowania dla passa tarcz (warstwa 7, cel sceny) —
-  // Core3D.prewarmPass (renderer.compile to tam alias compileAsync, zwraca Promise).
-  assert.match(body, /Core3D\.prewarmPass\(probe, 7\)/);
-  assert.match(body, /_programKeepers = \[hull\.material, sphere\.material\]/, 'materiały bez dispose trzymają programy');
+  assert.match(body, /ensurePool\(\)/, 'pula w scenie przed kompilacją');
+  // compileAsync pomija niewidoczne — siatki odsłonięte na czas projekcji (Core3D.prewarmPass).
+  assert.match(body, /p\.tileMesh\.visible = p\.sparkSprite\.visible = p\.distMesh\.visible = p\.glowMesh\.visible = true;/);
+  assert.match(body, /Core3D\.prewarmPass\(p\.glowMesh, 7\)/);
+  assert.match(body, /Core3D\.prewarmPass\(p\.tileMesh, 7\)/);
+  assert.match(body, /Core3D\.prewarmPass\(p\.sparkSprite, 7\)/);
+  assert.match(body, /Core3D\.prewarmPass\(p\.distMesh, FX_DISTORT_LAYER\)/);
   assert.doesNotMatch(body, /\.dispose\(/);
-  // Klucz stanu budowy i układ wierzchołków pipeline'u zależą od zestawu atrybutów geometrii:
-  // próbka obrysu na geometrii obrysu (aEdge), nie na sferze (port WebGPU, zadanie 14).
-  assert.match(body, /new THREE\.Mesh\(buildHullShieldGeometry\(PREWARM_PROFILE\), createHullShieldMaterial\(PREWARM_PROFILE\)\)/);
-  // Wstęgi i bańki trafień (ukryte do pierwszego trafienia) — rozgrzewka w passie tarcz.
-  assert.match(body, /ShieldImpactFX\.prewarm\(\)/);
-  const fx = readFileSync(new URL('../src/3d/shieldImpactFx.js', import.meta.url), 'utf8');
-  const fxPrewarm = functionBody(fx, '    prewarm() {');
-  assert.match(fxPrewarm, /mesh\.visible = true;[\s\S]*flashMesh\.visible = true;[\s\S]*Core3D\.prewarmPass\(root, 7\)/, 'compileAsync pomija niewidoczne — pule odsłonięte na czas projekcji');
-  assert.doesNotMatch(fxPrewarm, /\.dispose\(/);
+  // Kernele compute (pipeline synchronicznie) — krok efektów „tarcze” z warm.
+  assert.match(shield3d, /name: 'tarcze',[\s\S]{0,600}warm\(ctx\)/);
   const loading = indexHtml.indexOf("setLoadingProgress(70, 'Kompilacja shaderów broni')");
   // zadanie 11: wywołanie przez rejestr (Core3D.warmup.run('tarcze …', () => prewarmShields3D())) — ta sama chwila
   const call = indexHtml.indexOf('prewarmShields3D()', loading);

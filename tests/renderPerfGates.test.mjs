@@ -232,7 +232,8 @@ test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
   const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
   assert.match(planets, /Core3D\.beginPlanetLayerFrame\(\)/);
   assert.match(planets, /markPlanetLayersActive\(anchoredToRing, true\)/);
-  assert.match(shield3d, /Core3D\.setShieldLayerActive\(anyDomeVisible \|\| ShieldImpactFX\.hasVisibleContent\(\)\)/);
+  // Tarcze (pula slotów z dema WebGPU): pass tylko, gdy któryś slot ma tarczę z płytkami.
+  assert.match(shield3d, /Core3D\.setShieldLayerActive\(anyAlive\)/);
 });
 
 test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
@@ -261,10 +262,12 @@ test('hexShips3D: lampy i strefy dysz w buforze storage — wysyłka tylko przy 
   assert.match(hexShips, /HullLightStore\.release\(data\.lightSlot\);/);
 });
 
-test('shield3D: próg kopuły = próg cząstek ShieldImpactFX (9 px)', async () => {
-  assert.match(shield3d, /const SHIELD_DOME_MIN_PX = 9;/);
-  const src = readFileSync(new URL('../src/3d/shieldImpactFx.js', import.meta.url), 'utf8');
-  assert.match(src, /if \(px < 9\) return 0;/);
+test('shield3D: tarcza mniejsza niż 9 px na ekranie nie dostaje slotu puli (płytek, iskier, compute)', async () => {
+  assert.match(shield3d, /minPx: 9,/);
+  assert.match(shield3d, /rec\.onScreen = viewContains\(rec\) && rec\.rPx >= SHIELD_TUNING\.minPx;/);
+  // W spoczynku zero: bez żywego slotu ani dispatchy, ani rysunków.
+  assert.match(shield3d, /if \(!anyAlive && !resetPending\) \{/);
+  assert.match(shield3d, /p\.tileMesh\.visible = anyAlive;/);
 });
 
 test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / radar wyłączony', () => {

@@ -236,11 +236,11 @@ export const HALO_ROOF = Object.freeze({
 });
 
 // Port pod kątem stacji Ziemi (decyzja 2026-09-23: port ringu zastąpi stację).
-// Doki WPIĘTE W PODŁOGĘ habitatu na środku wstęgi, w płaszczyźnie gry
-// (poprawka użytkownika 2026-09-23: nie na dachu, bez wsporników-balkonów).
-// Każdy dok siedzi w kołnierzu na podłodze (terminal z oknami), pod pokładem
-// ma klin nośny do podłogi; zatoka wychodzi przez otwarty bok habitatu poza
-// krawędź ścian, żeby stanowisko było widać z kamery gry spod górnej ściany.
+// Doki na środku wstęgi, w płaszczyźnie gry (poprawka użytkownika 2026-09-23:
+// nie na dachu). Od 2026-10-05 (poprawka użytkownika: „za mocno wciśnięte
+// w ring”) dok stoi w kosmosie dockGap za krawędzią ścian habitatu, na dwóch
+// pylonach od płyty portu na podłodze (stopa z terminalem); płyta i strefa
+// przemysłowa wokół niej zostają na podłodze.
 // Zatoki mają stanowiska w standardzie K-7 (haloPortBays.js) — gracz lata
 // frachtowcami jak NPC i dokuje także poza halą (poprawka użytkownika
 // 2026-09-23). Kompleks = K-7 pośrodku i po jednej zatoce z każdej strony
@@ -260,16 +260,31 @@ export const HALO_PORT = Object.freeze({
   // wzdłuż ringu: wnętrze 5800 (pas MEGA 1300 + grzbiet 150 + stanowiska 1000 +
   // aleja 900 + stanowiska 1000 + grzbiet 150 + pas MEGA 1300) + ściany
   dockLength: 6160,
-  bayDepth: 3400,         // od podłogi do wylotu (pas MEGA: megafrachtowiec 2760 j. dziobem do podłogi)
+  bayDepth: 3400,         // od ściany tylnej do wylotu (pas MEGA: megafrachtowiec 2760 j. dziobem do ściany tylnej)
   backWall: 160,
   sideWall: 180,
   deckTop: -116,          // wierzch pokładu zatoki = pokład K-7 (z świata; statki na z = 0)
   wallTop: 140,           // górna krawędź ścian zatoki
-  collar: 320,            // kołnierz na podłodze wokół doku (każda strona)
-  collarDepth: 240,       // wysunięcie kołnierza z podłogi
-  plugZMin: -1250,        // spód podstawy doku (klin + terminal) — z świata
-  plugZMax: 420,          // wierzch kołnierza
+  collar: 320,            // margines płyty portu na podłodze wokół rzutu doku (każda strona)
+  collarDepth: 240,       // wysunięcie terminalu u stóp pylonów z podłogi
+  plugZMin: -1250,        // spód płyty portu i terminalu u stóp pylonów — z świata
+  plugZMax: 420,          // wierzch płyty portu (zakres z płaskiej płyty w terenie)
   gantryProfile: 60,      // ≤ 1/20 rozpiętości mostu (hangar-dock-demo)
+  // Odsunięcie doków od ringu (poprawki użytkownika 2026-10-05, szkic: „doki
+  // za mocno wciśnięte w ring — znacznie dalej od ringu”; „pylony za słabe,
+  // jakby nie miały utrzymać tych budowli”; „doki leżą NA pylonach, a pylony
+  // mają wystawać BEZPOŚREDNIO z nich — ze ściany tylnej doku przechodzi się
+  // do pylonu”): ściana tylna hali K-7 i zatok leży dockGap za krawędzią ścian
+  // habitatu, a dok trzymają DWA PYLONY — masywne dźwigary-korytarze na
+  // wysokości doku (z świata `z`, jak ściana tylna), od rozszerzonej stopy na
+  // płycie portu (wieża do terminalu pod płaszczyzną) do rozszerzonego korzenia
+  // wpiętego w ścianę tylną (przejście z doku). Pylony leżą W płaszczyźnie gry
+  // — są przeszkodą lotu (świat kolizji portu); między nimi można przelecieć.
+  // Wymiary: x = ± ułamek pół szerokości doku, width — dźwigar, flare — mnożnik
+  // szerokości stopy i korzenia, foot / root — ich długość, taper — zwężenie.
+  dockGap: 2500,
+  armHall: Object.freeze({ x: 0.5, width: 1100, flare: 1.5, z: Object.freeze([-250, 150]), foot: 700, root: 450, taper: 550 }),
+  armBay: Object.freeze({ x: 0.32, width: 700, flare: 1.5, z: Object.freeze([-200, 110]), foot: 600, root: 400, taper: 450 }),
   // strefy wokół doku na podłodze (poprawki użytkownika 2026-09-23: dok wbity
   // w ziemię generuje wokół siebie przemysł — TYLKO wokół doków — dalej domy;
   // góry sektora przy brzegach wstęgi mogą zostać obok doków, nie muszą):

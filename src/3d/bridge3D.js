@@ -55,6 +55,14 @@
 // gdy gospodarz zniknie, znajduje nowego po przynależności heksów i zostaje
 // na wraku — zgaszony, z wyrwami (łup do holowania). Tak samo przy rozpadzie
 // kadłuba: część mostka na odłamku dostaje własny rekord.
+//
+// KADŁUBY BELKOWE (gra od zadania 21; stan z shipBridgeBeams.js, docs/PORT-mostki.md § 9):
+// komórki = kwadraty siatki belek (ix, iy) — tożsamość wspólna dla rodu (`hull.dmgKey`:
+// kadłub, wrak, odłamy), więc rekord idzie za komórkami na wrak (convertToWreck oddaje ciało
+// nowej encji) i na odłamy jak przy heksach. W buforze obrażeń: R — żywa (HP), G — żar węzła
+// (heat/heatStamp silnika), B — maska 8 martwych sąsiadów (boki i narożniki), A — świeże cięcie;
+// shader w trybie siatki kwadratowej (aB3State.w < 0) wycina wyrwę po komórkach z poszarpanym
+// brzegiem jak rozdarcia skóry kadłuba.
 
 import * as THREE from 'three/webgpu';
 import { Core3D } from './core3d.js';
@@ -69,6 +77,14 @@ import {
 } from '../game/shipBridge.js';
 import { resolveBridgeHullKey } from '../game/shipBridgeRuntime.js';
 import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructor.js';
+import { HULL_BODY_CONFIG } from '../game/hullBodies.js';
+import {
+  beamImageToLattice,
+  beamLatticeToWorld,
+  bridgeBeamHull,
+  bridgeCellNode,
+  isBeamBridgeState
+} from '../game/shipBridgeBeams.js';
 import {
   BRIDGE3D_EMIT,
   BRIDGE3D_KINDS,
@@ -183,6 +199,7 @@ export const BRIDGE3D_KIND_STYLE = {
   colossus: { palette: ['#cfcdc7', '#b3b0a8', '#4a4c4f', '#8e9196', '#141c25', '#394045', '#e6e5e0', '#7b7870'], spec: 1.0, seams: 0.12, grime: 0.1, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' },
   pirate_frigate: { palette: ['#4a4440', '#39332f', '#15110f', '#7a4127', '#24130a', '#211b18', '#b6a595', '#4d3021'], spec: 0.6, seams: 0.22, grime: 0.3, rivets: 1, rust: 0.4, sky: 0.55, interior: '#140f0c' },
   pirate_destroyer: { palette: ['#4b4541', '#3a3430', '#16120f', '#7c4328', '#24130a', '#211b18', '#b3a292', '#4f3122'], spec: 0.6, seams: 0.22, grime: 0.3, rivets: 1, rust: 0.4, sky: 0.55, interior: '#140f0c' },
+  pirate_supercapital: { palette: ['#4a4440', '#39332f', '#15110f', '#7a4127', '#24130a', '#211b18', '#b6a595', '#4d3021'], spec: 0.6, seams: 0.22, grime: 0.3, rivets: 1, rust: 0.4, sky: 0.55, interior: '#140f0c' },
   // Megafrachtowiec: przemysłowa stal, pomarańczowe znaczniki.
   megafreighter: { palette: ['#555960', '#43474d', '#1c1e21', '#c8741e', '#10161c', '#2a2d31', '#a3a9b0', '#3a3530'], spec: 0.8, seams: 0.18, grime: 0.14, rivets: 0, rust: 0, sky: 0.9, interior: '#111316' }
 };
@@ -312,6 +329,279 @@ function shardAliveIn(grid, s) {
 
 function shardPhysicallyAlive(s) {
   return !!s && s.active === true && s.isDebris !== true && s.hp > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Kadłuby belkowe (shipBridgeBeams.js)
+// ---------------------------------------------------------------------------
+
+/** Sąsiedzi komórki kwadratowej (lustro B3_SQUARE_DIRS w bridge3D.tsl.js; Y siatki w górę). */
+export const BRIDGE3D_SQUARE_NEIGHBORS = Object.freeze([
+  [1, 0], [0, 1], [-1, 0], [0, -1],
+  [1, 1], [-1, 1], [-1, -1], [1, -1]
+]);
+
+const _sqTables = new Map();
+function squareNeighbourTable(w, h) {
+  const key = `${w}x${h}`;
+  let nb = _sqTables.get(key);
+  if (nb) return nb;
+  nb = new Int16Array(w * h * 8).fill(-1);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const k = i + j * w;
+      for (let d = 0; d < 8; d++) {
+        const ni = i + BRIDGE3D_SQUARE_NEIGHBORS[d][0];
+        const nj = j + BRIDGE3D_SQUARE_NEIGHBORS[d][1];
+        if (ni >= 0 && nj >= 0 && ni < w && nj < h) nb[k * 8 + d] = ni + nj * w;
+      }
+    }
+  }
+  _sqTables.set(key, nb);
+  return nb;
+}
+
+/**
+ * Model → współrzędne komórek siatki belek (ciągłe; komórka = floor): obraz kadłuba (map) →
+ * siatka (względem latticeMin, Y w górę) ÷ bok komórki. Wynik: { a0, b0, n00, n01, n10, n11 }.
+ */
+export function bridgeModelCellMap(map, st) {
+  const k = st.spriteScale / st.cellSize;
+  return {
+    a0: (st.anchorDX + (map.zgx - st.srcW * 0.5) * st.spriteScale) / st.cellSize,
+    b0: (st.anchorDY - (map.zgy - st.srcH * 0.5) * st.spriteScale) / st.cellSize,
+    n00: map.m00 * k, n01: map.m01 * k,
+    n10: -map.m10 * k, n11: -map.m11 * k
+  };
+}
+
+function cellOfModel(cm, x, y, out) {
+  out.x = cm.a0 + cm.n00 * x + cm.n01 * y;
+  out.y = cm.b0 + cm.n10 * x + cm.n11 * y;
+  return out;
+}
+
+/**
+ * Rekord kadłuba belkowego (dane CPU, bez three): mapowanie modelu, blok komórek siatki belek
+ * pod modelem (obrys mapy wysokości + pierścień), sąsiedzi (8), emitery z komórkami pod nimi.
+ */
+export function createBeamBridgeRecordCore(host, st, bridgeIndex, kind, row) {
+  const hull = bridgeBeamHull(host);
+  const bridge = st.bridges[bridgeIndex];
+  const def = bridge.def;
+  const model = kind.model;
+  const map = bridgeModelGridMap(def, st.scaleX, st.scaleY, st.srcW, st.srcH, model.design);
+  const cm = bridgeModelCellMap(map, st);
+  const f = model.heightField;
+  const x1 = f.x0 + (f.width - 1) * f.texel;
+  const y1 = f.y0 + (f.height - 1) * f.texel;
+  let u0 = Infinity; let v0 = Infinity; let u1 = -Infinity; let v1 = -Infinity;
+  const p = { x: 0, y: 0 };
+  for (const [x, y] of [[f.x0, f.y0], [x1, f.y0], [x1, y1], [f.x0, y1]]) {
+    cellOfModel(cm, x, y, p);
+    if (p.x < u0) u0 = p.x; if (p.x > u1) u1 = p.x;
+    if (p.y < v0) v0 = p.y; if (p.y > v1) v1 = p.y;
+  }
+  const c0 = Math.floor(u0) - 1;
+  const r0 = Math.floor(v0) - 1;
+  const w = Math.floor(u1) + 1 - c0 + 1;
+  const h = Math.floor(v1) + 1 - r0 + 1;
+  const n = w * h;
+  const existed = new Uint8Array(n);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      if (bridgeCellNode(hull, c0 + i, r0 + j) >= 0) existed[i + j * w] = 1;
+    }
+  }
+  const E = kind.emit;
+  const emCellX = new Int16Array(E.count).fill(-32768);
+  const emCellY = new Int16Array(E.count);
+  const emPngX = new Float32Array(E.count);
+  const emPngY = new Float32Array(E.count);
+  const g = { x: 0, y: 0 };
+  for (let i = 0; i < E.count; i++) {
+    bridgeModelToGrid(map, E.cx[i], E.cy[i], g);
+    emPngX[i] = (g.x - st.srcW * 0.5) / st.scaleX;
+    emPngY[i] = (g.y - st.srcH * 0.5) / st.scaleY;
+    cellOfModel(cm, E.cx[i], E.cy[i], p);
+    const ix = Math.floor(p.x);
+    const iy = Math.floor(p.y);
+    if (ix >= c0 && iy >= r0 && ix < c0 + w && iy < r0 + h && existed[(ix - c0) + (iy - r0) * w]) {
+      emCellX[i] = ix;
+      emCellY[i] = iy;
+    }
+  }
+  const b = model.bounds;
+  const reach = b.zMax / Math.tan(Math.max(5, BRIDGE3D_TUNE.shadowElevDeg) * DEG);
+  const cellPx = st.cellSize / Math.max(1e-6, st.spriteScale);
+  return {
+    kind, host, st, bridge, bridgeIndex, def,
+    beam: true,
+    lineage: st.lineage,
+    hullKey: st.hullKey || null,
+    map, cellMap: cm,
+    // aB3State.w: −bok komórki w px obrazu (tryb siatki kwadratowej shadera)
+    hexR: -cellPx,
+    srcW: st.srcW, srcH: st.srcH,
+    c0, r0, blockW: w, blockH: h, cellCount: n,
+    rowCount: Math.ceil(n / DAMAGE_W),
+    cellShard: null, existed, nb: squareNeighbourTable(w, h),
+    alive: new Uint8Array(n),
+    aliveWas: Uint8Array.from(existed),
+    cutAt: new Float32Array(n).fill(-1),
+    nodeOf: new Int32Array(n),
+    row,
+    rowTime: 0,
+    anyDead: 0,
+    moved: 0,
+    lastShardsRef: null,
+    lastActive: -1,
+    lastRefresh: -Infinity,
+    moveSearchFrame: -1e9,
+    emShard: null, emCellX, emCellY, emPngX, emPngY,
+    emWas: new Uint8Array(E.count).fill(1),
+    emDelayOwn: new Float32Array(E.count),
+    emDelayCmd: new Float32Array(E.count),
+    emDelayPower: new Float32Array(E.count),
+    emOwnVent: null,
+    emCmdVent: null,
+    emPowerReady: false,
+    winColor: [1, 1, 1],
+    powerLostAt: -1,
+    radiusGrid: (Math.hypot(Math.max(-b.x0, b.x1), Math.max(-b.y0, b.y1)) + reach) * Math.max(map.sxZ, map.syZ),
+    seenFrame: -1,
+    lastSeenAt: 0,
+    orphanSince: -1,
+    maskLo: 0,
+    maskHi: 0,
+    index: -1,
+    dead: false
+  };
+}
+
+/** Żar węzła teraz (szczyt × zanik od znacznika — jak skóra kadłuba, beamHullSkin.js). */
+function nodeHeatNow(ns, i, now, decay) {
+  const peak = ns.heat[i];
+  if (!(peak > 0)) return 0;
+  const age = now - ns.heatStamp[i];
+  return age > 0 ? peak * Math.exp(-age * decay) : peak;
+}
+
+/**
+ * Wiersze bufora obrażeń rekordu belkowego (RGBA8 jak refreshBridgeRecordDamage): R — żywa
+ * (64..255 = HP), G — żar węzła, B — maska 8 martwych sąsiadów (BRIDGE3D_SQUARE_NEIGHBORS),
+ * A — żar świeżego cięcia. `hull` — kadłub gospodarza (null: wszystko martwe). Zwraca true,
+ * gdy bajty wiersza się zmieniły.
+ */
+export function refreshBeamBridgeRecordDamage(rec, hull, data, heatNow, rowStride = DAMAGE_W) {
+  const n = rec.cellCount;
+  const alive = rec.alive;
+  const w = rec.blockW;
+  const nodeOf = rec.nodeOf;
+  const body = hull ? hull.body : null;
+  const ns = body ? body.nodeStore : null;
+  let anyDead = 0;
+  let missing = 0;
+  for (let k = 0; k < n; k++) {
+    let i = -1;
+    if (rec.existed[k] && hull) i = bridgeCellNode(hull, rec.c0 + (k % w), rec.r0 + ((k / w) | 0));
+    nodeOf[k] = i;
+    alive[k] = i >= 0 ? 1 : 0;
+    if (i < 0 && rec.existed[k]) { anyDead = 1; missing++; }
+  }
+  // Świeże cięcia: żywa komórka, której sąsiad zginął od ostatniego zapisu.
+  const nb = rec.nb;
+  for (let k = 0; k < n; k++) {
+    if (!rec.aliveWas[k] || alive[k] || !rec.existed[k]) continue;
+    for (let d = 0; d < 8; d++) {
+      const m = nb[k * 8 + d];
+      if (m >= 0 && alive[m]) rec.cutAt[m] = heatNow;
+    }
+  }
+  const decay = Math.max(0, Number(HULL_BODY_CONFIG.heatDecay) || 0);
+  const base = rec.row * rowStride * 4;
+  let changed = false;
+  for (let k = 0; k < n; k++) {
+    const o = base + k * 4;
+    let R = 0; let G = 0; let B = 0; let A = 0;
+    if (alive[k]) {
+      const i = nodeOf[k];
+      const m = ns.maxHp[i];
+      const hpFrac = m > 0 ? Math.max(0, Math.min(1, ns.hp[i] / m)) : 1;
+      R = 64 + Math.round(hpFrac * 191);
+      const heat = nodeHeatNow(ns, i, heatNow, decay);
+      G = heat > 0 ? Math.min(255, Math.round(heat * 255)) : 0;
+      for (let d = 0; d < 8; d++) {
+        const mm = nb[k * 8 + d];
+        if (mm >= 0 && rec.existed[mm] && !alive[mm]) B |= (1 << d);
+      }
+      const cut = rec.cutAt[k];
+      if (cut >= 0) {
+        const v = Math.exp(-(heatNow - cut) * decay);
+        A = v > 0.004 ? Math.round(v * 255) : 0;
+        if (!A) rec.cutAt[k] = -1;
+      }
+    }
+    if (data[o] !== R || data[o + 1] !== G || data[o + 2] !== B || data[o + 3] !== A) {
+      data[o] = R; data[o + 1] = G; data[o + 2] = B; data[o + 3] = A;
+      changed = true;
+    }
+  }
+  rec.aliveWas.set(alive);
+  rec.anyDead = anyDead;
+  rec.moved = missing;
+  rec.rowTime = heatNow;
+  rec.lastShardsRef = body;
+  rec.lastActive = body ? body.activeNodes : -1;
+  return changed;
+}
+
+// Czy encja (kadłub rodu rekordu) ma któraś żywą komórkę bloku rekordu. `notAtHull` — liczą się
+// tylko komórki martwe u tego kadłuba (szukanie odłamu z częścią mostka).
+function beamEntityOwnsAny(rec, e, notAtHull = null) {
+  const hull = bridgeBeamHull(e);
+  if (!hull || hull.dmgKey !== rec.lineage || hull === notAtHull) return false;
+  const w = rec.blockW;
+  for (let k = 0; k < rec.cellCount; k++) {
+    if (!rec.existed[k]) continue;
+    const ix = rec.c0 + (k % w);
+    const iy = rec.r0 + ((k / w) | 0);
+    if (notAtHull && bridgeCellNode(notAtHull, ix, iy) >= 0) continue;
+    if (bridgeCellNode(hull, ix, iy) >= 0) return true;
+  }
+  return false;
+}
+
+const _lat = { x: 0, y: 0 };
+const _bo = { x: 0, y: 0 };
+const _bpx = { x: 0, y: 0 };
+const _bpy = { x: 0, y: 0 };
+
+/** Baza instancji rekordu belkowego (jak bridgeInstanceBasis — obraz kadłuba → świat przez siatkę rodu). */
+export function beamBridgeInstanceBasis(rec, host, pose, out = {}) {
+  const hull = host.beamHull;
+  const st = rec.st;
+  const map = rec.map;
+  beamImageToLattice(st, map.zgx, map.zgy, _lat);
+  beamLatticeToWorld(hull, _lat.x, _lat.y, _bo, pose);
+  beamImageToLattice(st, map.zgx + 1, map.zgy, _lat);
+  beamLatticeToWorld(hull, _lat.x, _lat.y, _bpx, pose);
+  beamImageToLattice(st, map.zgx, map.zgy + 1, _lat);
+  beamLatticeToWorld(hull, _lat.x, _lat.y, _bpy, pose);
+  const gxX = _bpx.x - _bo.x; const gxY = _bpx.y - _bo.y;
+  const gyX = _bpy.x - _bo.x; const gyY = _bpy.y - _bo.y;
+  out.sgx = Math.hypot(gxX, gxY);
+  out.sgy = Math.hypot(gyX, gyY);
+  out.ax = gxX * map.m00 + gyX * map.m10;
+  out.ay = -(gxY * map.m00 + gyY * map.m10);
+  out.bx = gxX * map.m01 + gyX * map.m11;
+  out.by = -(gxY * map.m01 + gyY * map.m11);
+  out.sz = Math.sqrt(out.sgx * out.sgy);
+  out.wx = _bo.x;
+  out.wy = _bo.y;
+  out.ox = _bo.x;
+  out.oy = -_bo.y;
+  return out;
 }
 
 /**
@@ -957,6 +1247,7 @@ export const Bridge3D = {
       rec.alive = new Uint8Array(source.cellCount);
       rec.aliveWas = Uint8Array.from(source.existed);
       rec.cutAt = new Float32Array(source.cellCount).fill(-1);
+      if (source.beam) rec.nodeOf = new Int32Array(source.cellCount);
       rec.emWas = new Uint8Array(source.kind.emit.count).fill(1);
       rec.emDelayPower = new Float32Array(source.kind.emit.count);
       rec.emPowerReady = false;
@@ -968,7 +1259,9 @@ export const Bridge3D = {
       rec.orphanSince = -1;
       rec.dead = false;
     } else {
-      rec = createBridgeRecordCore(host, st, bridgeIndex, K, -1);
+      rec = isBeamBridgeState(st)
+        ? createBeamBridgeRecordCore(host, st, bridgeIndex, K, -1)
+        : createBridgeRecordCore(host, st, bridgeIndex, K, -1);
       if (rec.rowCount > DAMAGE_MAX_ROWS) return null;
       rec.row = this._allocRows(rec.rowCount);
       if (rec.row < 0) return null;
@@ -981,7 +1274,7 @@ export const Bridge3D = {
     this.records.push(rec);
     if (!host.__bridge3D) host.__bridge3D = [];
     host.__bridge3D.push(rec);
-    this._refresh(rec, host.hexGrid, ctx);
+    this._refreshFor(rec, host, ctx);
     // Faza okresowego odświeżenia rozłożona po rekordach.
     rec.lastRefresh -= ((rec.row * 7) % 16) / 16 * REFRESH_SEC;
     return rec;
@@ -1014,7 +1307,7 @@ export const Bridge3D = {
     rec.lastShardsRef = null;
     // aliveWas zostaje z ostatniego zapisu: świeży żar dostaną tylko cięcia
     // powstałe pod nieobecność, nie wszystkie stare wyrwy.
-    if (host.hexGrid) this._refresh(rec, host.hexGrid, ctx);
+    this._refreshFor(rec, host, ctx);
     return true;
   },
 
@@ -1025,8 +1318,30 @@ export const Bridge3D = {
     rec.lastRefresh = ctx.heatNow;
   },
 
+  // Odświeżenie wg rodzaju rekordu: belki — komórki w kadłubie gospodarza, heksy — siatka.
+  _refreshFor(rec, host, ctx) {
+    if (rec.beam) {
+      if (refreshBeamBridgeRecordDamage(rec, bridgeBeamHull(host), this.damage.data, ctx.heatNow)) this._markRows(rec);
+      rec.lastRefresh = ctx.heatNow;
+      return;
+    }
+    if (host?.hexGrid) this._refresh(rec, host.hexGrid, ctx);
+  },
+
+  // Czy wiersz rekordu trzeba odświeżyć, bo w kadłubie gospodarza zginęła komórka / heks.
+  _hostChanged(rec, host) {
+    if (rec.beam) {
+      const hull = host?.beamHull;
+      const body = hull && hull.entity === host ? hull.body : null;
+      return body !== rec.lastShardsRef || (body ? body.activeNodes : -1) !== rec.lastActive;
+    }
+    const grid = host.hexGrid;
+    return grid.shards !== rec.lastShardsRef || grid.activeStructuralCount !== rec.lastActive;
+  },
+
   // Czy gospodarz nadal ma któryś heks rekordu (żywy, w bieżącej siatce).
   _hostOwns(rec, host) {
+    if (rec.beam) return !!host && !host.dead && beamEntityOwnsAny(rec, host);
     const grid = host?.hexGrid;
     if (!grid || host.dead) return false;
     const shards = grid.shards;
@@ -1037,13 +1352,33 @@ export const Bridge3D = {
     return false;
   },
 
-  _anyAlive(rec) {
+  _anyAlive(rec, entities) {
+    if (rec.beam) {
+      // Komórki rodu żyją u gospodarza albo u którejś encji z listy (wrak, odłam).
+      if (this._hostOwns(rec, rec.host)) return true;
+      return !!this._findHost(rec, entities, rec.host);
+    }
     for (let k = 0; k < rec.cellCount; k++) if (rec.existed[k] && shardPhysicallyAlive(rec.cellShard[k])) return true;
     return false;
   },
 
   // Nowy gospodarz dla rekordu, którego heksy przeszły do innej encji.
   _findHost(rec, entities, except) {
+    if (rec.beam) {
+      if (Array.isArray(entities)) {
+        for (let i = 0; i < entities.length; i++) {
+          const e = entities[i];
+          if (!e || e === except || e.dead) continue;
+          if (beamEntityOwnsAny(rec, e)) return e;
+        }
+      }
+      // Trop ciała: convertToWreck oddaje wrakowi TO SAMO ciało silnika (body.entity = wrak),
+      // a wrak trafia na listę renderu dopiero w kolejnej klatce (mgła wojny: po pierwszej ocenie).
+      const body = rec.lastShardsRef;
+      const owner = body && !body.dead ? body.entity : null;
+      if (owner && owner !== except && !owner.dead && beamEntityOwnsAny(rec, owner)) return owner;
+      return null;
+    }
     const n = rec.cellCount;
     for (let k = 0; k < n; k++) {
       const s = rec.cellShard[k];
@@ -1098,6 +1433,8 @@ export const Bridge3D = {
     ctx.free = !!Core3D.isFreePerspectiveCamera?.(opts.camera || Core3D.activeCam1);
     ctx.heatNow = performance.now() * 0.001;
     ctx.entities = entities;
+    ctx.visibility = typeof opts.visibility === 'function' ? opts.visibility : null;
+    ctx.vis = 1;
     ctx.flashes = 0;
     ctx.heatDecay = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
     if (ctx.free && Core3D.cameraPersp) {
@@ -1141,11 +1478,15 @@ export const Bridge3D = {
       const e = entities[i];
       if (!e || e.dead) continue;
       const st = e.bridgeState;
-      if (st && st.grid === e.hexGrid && e.__bridge3DState !== st && adoptLeft > 0) { this._adopt(e, st, ctx); adoptLeft--; }
+      const owned = st && (st.backend ? st.backend.owns(e, st) : st.grid === e.hexGrid);
+      if (owned && e.__bridge3DState !== st && adoptLeft > 0) { this._adopt(e, st, ctx); adoptLeft--; }
       else if (st && e.__bridge3DFull && st.model3D !== true && e.__bridge3DState === st) st.model3D = true;
       const list = e.__bridge3D;
       if (!list || !list.length) continue;
-      const hidden = e.hideHexVisual === true;
+      // Widoczność modelu (gra: 0 — okręt rysuje model 3D statku, mnożnik — maskowanie).
+      const vis = ctx.visibility ? ctx.visibility(e) : 1;
+      ctx.vis = Number.isFinite(vis) ? Math.max(0, Math.min(1, vis)) : 1;
+      const hidden = e.hideHexVisual === true || ctx.vis <= 0.002;
       for (let j = 0; j < list.length; j++) {
         const rec = list[j];
         rec.seenFrame = frame;
@@ -1172,7 +1513,7 @@ export const Bridge3D = {
         else if (away > ROW_RELEASE_SEC && rec.row >= 0) this._freeRows(rec);
         continue;
       }
-      if (!this._anyAlive(rec)) { this._retire(rec); continue; }
+      if (!this._anyAlive(rec, entities)) { this._retire(rec); continue; }
       const next = this._findHost(rec, entities, rec.host);
       if (next) {
         if (this._hostHas(next, rec.st, rec.bridgeIndex)) { this._retire(rec); continue; }
@@ -1185,7 +1526,10 @@ export const Bridge3D = {
         rec.lastShardsRef = null;
         rec.seenFrame = frame;
         rec.orphanSince = -1;
-        if (next.hideHexVisual !== true) this._frameRecord(rec, next, ctx);
+        const vis = ctx.visibility ? ctx.visibility(next) : 1;
+        ctx.vis = Number.isFinite(vis) ? Math.max(0, Math.min(1, vis)) : 1;
+        // Gospodarz spoza listy (trop ciała) — rysuje go pętla encji, gdy pojawi się na liście.
+        if (next.hideHexVisual !== true && ctx.vis > 0.002 && (!rec.beam || entities.includes(next))) this._frameRecord(rec, next, ctx);
         continue;
       }
       // Wrak może trafić na listę klatkę później (albo po powrocie z lotu).
@@ -1254,11 +1598,12 @@ export const Bridge3D = {
   },
 
   _frameRecord(rec, host, ctx) {
-    const grid = host.hexGrid;
-    if (!grid || rec.row < 0) return;
+    const grid = rec.beam ? null : host.hexGrid;
+    if (rec.beam ? !bridgeBeamHull(host) : !grid) return;
+    if (rec.row < 0) return;
     const T = BRIDGE3D_TUNE;
     const pose = ctx.poseOf ? ctx.poseOf(host) : null;
-    const B = bridgeInstanceBasis(rec.map, host, pose, _basis);
+    const B = rec.beam ? beamBridgeInstanceBasis(rec, host, pose, _basis) : bridgeInstanceBasis(rec.map, host, pose, _basis);
     const sgx = B.sgx;
     const sgy = B.sgy;
 
@@ -1276,14 +1621,14 @@ export const Bridge3D = {
     }
 
     const zonePx = rec.map.zoneW * sgx * zoomAt;
-    const fade = smooth01(T.minPx, T.fullPx, zonePx);
+    const fade = smooth01(T.minPx, T.fullPx, zonePx) * ctx.vis;
 
     // Obrażenia: zawsze, gdy w siatce zginął heks (wyrwy, rozpad), a okresowo
     // (HP, żar) tylko dla rysowanych — fazy rozłożone przy tworzeniu rekordu,
     // więc flota nie odświeża się w jednej klatce.
-    const changed = grid.shards !== rec.lastShardsRef || grid.activeStructuralCount !== rec.lastActive;
+    const changed = this._hostChanged(rec, host);
     if (changed || (fade > 0.002 && ctx.heatNow - rec.lastRefresh > REFRESH_SEC)) {
-      this._refresh(rec, grid, ctx);
+      this._refreshFor(rec, host, ctx);
       // Heksy mostka na innym gospodarzu (rozpad) — jego część modelu.
       if (rec.moved > 0 && ctx.frame - rec.moveSearchFrame > 20) {
         rec.moveSearchFrame = ctx.frame;
@@ -1329,6 +1674,15 @@ export const Bridge3D = {
   },
 
   _findMoved(rec, entities, host) {
+    if (rec.beam) {
+      const hostHull = bridgeBeamHull(host);
+      for (let i = 0; i < entities.length; i++) {
+        const e = entities[i];
+        if (!e || e === host || e.dead) continue;
+        if (beamEntityOwnsAny(rec, e, hostHull)) return e;
+      }
+      return null;
+    }
     const grid = host.hexGrid;
     for (let k = 0; k < rec.cellCount; k++) {
       const s = rec.cellShard[k];
@@ -1355,9 +1709,13 @@ export const Bridge3D = {
     const zMode = ctx.free ? 1 : 0;
     const beforeLoss = !st.commandLost && rec.powerLostAt < 0;
     prepareEmitterDelays(rec);
+    const beamHull = rec.beam ? bridgeBeamHull(host) : null;
+    const ns = beamHull ? beamHull.body.nodeStore : null;
     for (let i = 0; i < E.count; i++) {
-      const s = rec.emShard[i];
-      if (!shardAliveIn(grid, s)) {
+      const s = rec.beam ? null : rec.emShard[i];
+      // Belki: węzeł komórki pod oknem (−1 = wybita albo poza gospodarzem).
+      const node = rec.beam ? bridgeCellNode(beamHull, rec.emCellX[i], rec.emCellY[i]) : -1;
+      if (rec.beam ? node < 0 : !shardAliveIn(grid, s)) {
         // Pomieszczenie wybite: krótki błysk w chwili śmierci heksa pod oknem.
         if (rec.emWas[i] && beforeLoss && ctx.flashes < MAX_ROOM_FLASHES_PER_FRAME && winFade > 0.05 && E.type[i] === BRIDGE3D_EMIT.WINDOW) {
           const wx = ox + ax * E.cx[i] + bx * E.cy[i];
@@ -1370,7 +1728,9 @@ export const Bridge3D = {
       }
       rec.emWas[i] = 1;
       if (winFade <= 0.001 || Em.count >= Em.capacity || !T.drawEmitters) continue;
-      const hpFrac = s.maxHp > 0 ? s.hp / s.maxHp : 1;
+      const hpFrac = rec.beam
+        ? (ns.maxHp[node] > 0 ? ns.hp[node] / ns.maxHp[node] : 1)
+        : (s.maxHp > 0 ? s.hp / s.maxHp : 1);
       let I = bridgeEmitterLight(rec, i, ctx.now, hpFrac) * winFade;
       if (I <= 0.003) continue;
       const type = E.type[i];
@@ -1441,6 +1801,20 @@ export const Bridge3D = {
     if (lo) rec.maskLo = next; else rec.maskHi = next;
   },
 
+  /**
+   * Siatki do rejestru rozgrzewki (Core3D.warmup): bryła (jeden materiał na wszystkie rodzaje —
+   * wystarczy pierwszy rodzaj), cień na kadłubie (pass ortho) i okna (FG). Bez tego pierwszy mostek
+   * w kadrze kompilowałby pipeline'y synchronicznie w swojej klatce.
+   */
+  warmupMeshes() {
+    if (!this.ready) return [];
+    const out = [];
+    if (this.kinds[0]?.mesh) out.push(this.kinds[0].mesh);
+    if (this.receiver?.mesh) out.push(this.receiver.mesh);
+    if (this.emitters?.mesh) out.push(this.emitters.mesh);
+    return out;
+  },
+
   /** Rekordy (instancje) hostowane przez encję — do debugowania i silnika destrukcji. */
   recordsOf(entity) {
     return entity?.__bridge3D ? entity.__bridge3D.slice() : [];
@@ -1492,11 +1866,19 @@ function writeInstance(A, o, ax, ay, bx, by, sz, ox, oy) {
 }
 
 function writeInstanceData(A, o, L, rec, fade, heatMul) {
-  const m = rec.map;
   let k = o + L.aB3GridA;
-  A[k] = m.zgx; A[k + 1] = m.zgy; A[k + 2] = m.m00; A[k + 3] = m.m01;
-  k = o + L.aB3GridB;
-  A[k] = m.m10; A[k + 1] = m.m11; A[k + 2] = rec.c0; A[k + 3] = rec.r0;
+  if (rec.beam) {
+    // Siatka belek: model → współrzędne komórek (shader: komórka = floor).
+    const c = rec.cellMap;
+    A[k] = c.a0; A[k + 1] = c.b0; A[k + 2] = c.n00; A[k + 3] = c.n01;
+    k = o + L.aB3GridB;
+    A[k] = c.n10; A[k + 1] = c.n11; A[k + 2] = rec.c0; A[k + 3] = rec.r0;
+  } else {
+    const m = rec.map;
+    A[k] = m.zgx; A[k + 1] = m.zgy; A[k + 2] = m.m00; A[k + 3] = m.m01;
+    k = o + L.aB3GridB;
+    A[k] = m.m10; A[k + 1] = m.m11; A[k + 2] = rec.c0; A[k + 3] = rec.r0;
+  }
   k = o + L.aB3Dmg;
   A[k] = rec.row; A[k + 1] = rec.blockW; A[k + 2] = rec.blockH; A[k + 3] = rec.anyDead;
   k = o + L.aB3State;

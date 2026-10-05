@@ -85,6 +85,16 @@ const REVISIONS = {
 
 /** Pure, idempotent migration shared by the player, NPCs and layout editor. */
 export function migratePirateSpriteLayout(id, layout) {
+  // Eksport pierwszego układu supercapitala zawierał dwa SPECIAL na jednej podstawie.
+  // Usuwamy tylko zatwierdzony duplikat, również z hpEditor.v1; przesunięte gniazdo zostaje.
+  if (id === 'pirate_supercapital' && Array.isArray(layout?.hardpoints)
+      && layout.hardpoints.filter((p) => p.type === 'special').length === 10) {
+    const kept = layout.hardpoints.find((p) => p.id === 'm_kn6ptwj' && p.type === 'special');
+    const duplicate = layout.hardpoints.find((p) => p.id === 'm_elbzlpw' && p.type === 'special');
+    if (kept && duplicate && Math.hypot(kept.x - duplicate.x, kept.y - duplicate.y) < 3) {
+      return { ...layout, hardpoints: layout.hardpoints.filter((p) => p !== duplicate) };
+    }
+  }
   const rev = REVISIONS[id];
   if (!rev || !layout || typeof layout !== 'object' || Number(layout.spriteRevision) >= 2) return layout;
   const sx = rev.to[0] / rev.from[0];

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki tekstur gry (assets/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Suchy dok piratów — misja 1</title>
+<style>
+  :root { --ink: #e2dcd6; --muted: #8f857c; --line: #d24a3a33; --panel: #0d0909e6; --accent: #ff6a52; --warn: #f0b060; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030305; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030305; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: grab; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 300px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 320px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .views { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .views button { text-align: left; padding: 6px 9px; font-size: 12px; }
+  .views button small { display: block; color: var(--muted); font-size: 11px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button { background: #1a0f0e; color: var(--ink); border: 1px solid #4a2a26; border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #3a1914; border-color: var(--accent); color: #fff; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #caption { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 40; padding: 6px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 12px ui-monospace, Consolas, monospace; letter-spacing: .03em; pointer-events: none; }
+  body.shot #panel, body.shot #hud { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Suchy dok piratów: trzon, zamknięty parking z dziesięcioma okrętami i cienkimi bramami, hala jak K-7 z bramą od kosmosu"></canvas>
+</div>
+<div id="hud">ładowanie…</div>
+<div id="caption"></div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>SUCHY DOK PIRATÓW</h1>
+  <div class="sub">Misja 1 „Cicha stocznia”. Trzon 5,7 km; po jednej stronie parking zamknięty ogrodzeniem — 10 okrętów burta w burtę, cienkie bramy do taranowania, reflektory; po drugiej hala jak K-7 z bramą G-01 od kosmosu. Prawdziwe Core3D gry; okręty = proxy.</div>
+  <h2>Widoki (1–9)</h2>
+  <div class="views" id="views"></div>
+  <h2>Stan</h2>
+  <div class="btns" id="actions"></div>
+  <div class="hint">Alarm otwiera dach hali i zapala koguty; wylot — eskorta wychodzi bramami (G-01 i logistyczne na skosach). Taran — kadłub zastępczy rozbija bramę G-W i rząd okrętów (w grze robi to Atlas, kadłuby miażdży fizyka belek). Zniszczenie — kawałki (przyszłe ciała silnika zniszczeń) odpadają po kolei.</div>
+  <h2>Czas</h2>
+  <div class="btns" id="speeds"></div>
+  <div class="hint">Mysz: przeciąganie = przesuw, kółko = zoom (w kinie: przeciąganie = orbita). Klawisze 1–9 = widoki, A = alarm, L = wylot, T = taran, D = zniszczenie, R = od nowa, spacja = pauza.</div>
+</div>
+<script type="module" src="/dema/suchy-dok-piratow.js"></script>
+</body>
+</html>

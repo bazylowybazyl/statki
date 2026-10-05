@@ -392,7 +392,9 @@ export const EngineExhaustBatch = {
     const totalWidth = 96 * throttleWidthFactor * (1.0 + warp * 0.3) * pulse;
 
     const finalCol = kelvinToRGB(_scratchColor, state.colorTempK + throttle * 4000).lerp(_warpBlue, warp);
-    const edgeMul = state.bloomGain * ENGINE_HDR;
+    // gain — jasność całej dyszy (maskowanie: widoczność komórki kadłuba pod dyszą); 1 = bez zmian.
+    const gain = p.gain === undefined ? 1 : Math.max(0, Math.min(1, Number(p.gain) || 0));
+    const edgeMul = state.bloomGain * ENGINE_HDR * gain;
 
     // Pozycja względem początku przy kamerze — małe liczby dla float32.
     const px = p.x - origin.x;
@@ -413,9 +415,9 @@ export const EngineExhaustBatch = {
     d[b + L.aThrottle] = throttle;
     d[b + L.aBoost] = warp;
     d[b + L.aCurve] = state.curve;
-    d[b + L.aColorCore] = ENGINE_HDR;
-    d[b + L.aColorCore + 1] = ENGINE_HDR;
-    d[b + L.aColorCore + 2] = ENGINE_HDR;
+    d[b + L.aColorCore] = ENGINE_HDR * gain;
+    d[b + L.aColorCore + 1] = ENGINE_HDR * gain;
+    d[b + L.aColorCore + 2] = ENGINE_HDR * gain;
     d[b + L.aColorEdge] = finalCol.r * edgeMul;
     d[b + L.aColorEdge + 1] = finalCol.g * edgeMul;
     d[b + L.aColorEdge + 2] = finalCol.b * edgeMul;
@@ -435,7 +437,7 @@ export const EngineExhaustBatch = {
         px, py,
         (100 + warp * 150) * throttleWidthFactor * p.scaleX,
         (6 + warp * 4) * p.scaleY,
-        _glowColor, state.flareOpacity);
+        _glowColor, state.flareOpacity * gain);
     } else {
       pushGlowInstance(flare, i, 0, 0, 0, 0, flare.defaultColor, 0);
     }
@@ -450,12 +452,12 @@ export const EngineExhaustBatch = {
         glowX, glowY,
         70 * (1.0 + warp * 0.4) * throttleWidthFactor * p.scaleX,
         70 * p.scaleY,
-        _glowColor, state.heat);
+        _glowColor, state.heat * gain);
       pushGlowInstance(ring, i,
         px, py,
         50 * (1.0 + warp * 0.3) * throttleWidthFactor * p.scaleX,
         30 * p.scaleY,
-        ring.defaultColor, state.heat);
+        ring.defaultColor, state.heat * gain);
     } else {
       pushGlowInstance(glow, i, 0, 0, 0, 0, glow.defaultColor, 0);
       pushGlowInstance(ring, i, 0, 0, 0, 0, ring.defaultColor, 0);

@@ -120,6 +120,24 @@ export function createBeamConfig(cellSize = 1) {
   };
 }
 
+/**
+ * Kotwice ciała zakotwiczonego (`createBody(…, { anchored: true })`): węzły, dla których
+ * `test(ox, oy, oz, i)` (pozycja SPOCZYNKOWA w układzie ciała) zwraca true, dostają invMass 0 —
+ * solver, zgniot i trafienia ich nie przesuwają, a belki do nich mogą pęknąć (wyspa bez kotwicy
+ * odpada jako swobodny wrak). Masa węzła zostaje (bezwładność, pęd sekcji). Zwraca liczbę kotwic.
+ */
+export function pinBeamNodes(body, test) {
+  const s = body.nodeStore;
+  let pins = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i] || !test(s.ox[i], s.oy[i], s.oz[i], i)) continue;
+    s.invMass[i] = 0;
+    s.vx[i] = 0; s.vy[i] = 0; s.vz[i] = 0;
+    pins++;
+  }
+  return pins;
+}
+
 // ============================ MATEMATYKA ============================
 
 function quatToMat3(q, m) {
@@ -154,7 +172,7 @@ function nowMs() {
 
 const _ii = { x: 0, y: 0, z: 0 };
 function applyInvInertia(body, vx, vy, vz, o) {
-  if (body.static) { o.x = 0; o.y = 0; o.z = 0; return o; }
+  if (body.static || body.anchored) { o.x = 0; o.y = 0; o.z = 0; return o; }
   const m = body._rot;
   matVecT(m, vx, vy, vz, _ii);
   const I = body.invInertiaLocal;
@@ -198,6 +216,7 @@ function gatherNodeFields(src, dst, order, count) {
   gatherF64(src.coverage, dst.coverage, order, count);
   gatherF64(src.r, dst.r, order, count); gatherF64(src.g, dst.g, order, count); gatherF64(src.b, dst.b, order, count);
   gatherF64(src.heat, dst.heat, order, count); gatherF64(src.heatStamp, dst.heatStamp, order, count);
+  gatherF64(src.temp, dst.temp, order, count);
   gatherI32(src.ix, dst.ix, order, count); gatherI32(src.iy, dst.iy, order, count); gatherI32(src.iz, dst.iz, order, count);
   gatherI32(src.depth, dst.depth, order, count); gatherI32(src.localBeamCount, dst.localBeamCount, order, count);
   gatherI32(src.platingCount, dst.platingCount, order, count); gatherI32(src.quiet, dst.quiet, order, count);
@@ -377,8 +396,12 @@ export const DestructorBeams3D = {
       quat: { x: 0, y: 0, z: 0, w: 1, ...(opts.quaternion || {}) },
       angVel: { x: 0, y: 0, z: 0, ...(opts.angularVelocity || {}) },
       mass: structure.mass * massMultiplier,
-      invMass: opts.static ? 0 : 1 / (structure.mass * massMultiplier),
+      invMass: opts.static || opts.anchored ? 0 : 1 / (structure.mass * massMultiplier),
       static: !!opts.static,
+      // Zakotwiczone, ale niszczalne (świat: ściany, budowle): ciało jako całość stoi (masa ∞,
+      // bez całkowania), węzły się gną, belki pękają. Kotwice = węzły z invMass 0 (pinBeamNodes);
+      // wyspa bez kotwicy odpada jako swobodny wrak. `static` dalej = nieruchome I niezniszczalne.
+      anchored: !!opts.anchored,
       invInertiaLocal: structure.invInertia.map(v => v / massMultiplier),
       radius: structure.radius,
       config: cfg,
@@ -513,7 +536,7 @@ export const DestructorBeams3D = {
     const angK = Math.exp(-cfg.angularDamping * dt);
     const planar = !!cfg.planar;
     for (const b of bodies) {
-      if (!b || b.dead || b.static) continue;
+      if (!b || b.dead || b.static || b.anchored) continue;
       if (planar) {
         // Odrzut odłamu (_spawnWreck) i szum numeryczny nie wyprowadzą kadłuba z płaszczyzny.
         b.vel.z = 0; b.angVel.x = 0; b.angVel.y = 0;
@@ -609,6 +632,7 @@ export const DestructorBeams3D = {
 
       // 4) Przenieś wspólny ruch węzłów na ciało, zachowując pozycje świata.
       // Samo odjęcie średniej cofało zgniot i teleportowało oderwane sekcje.
+      // Ciało zakotwiczone stoi: ruch węzłów zostaje w węzłach, trzymają go kotwice.
       let mx = 0, my = 0, mz = 0, msum = 0;
       let mvx = 0, mvy = 0, mvz = 0;
       for (let i = 0; i < count; i++) {
@@ -619,7 +643,7 @@ export const DestructorBeams3D = {
         mvx += vx[i] * mass[i]; mvy += vy[i] * mass[i]; mvz += vz[i] * mass[i];
         msum += mass[i];
       }
-      if (msum > 0) {
+      if (msum > 0 && !body.anchored) {
         mx /= msum; my /= msum; mz /= msum;
         mvx /= msum; mvy /= msum; mvz /= msum;
         const shift = matVec(this._refreshRot(body), mx, my, mz, this._s1);
@@ -864,8 +888,9 @@ export const DestructorBeams3D = {
     list.length = write;
 
     // 7) Pęd do ciała sztywnego: reakcja pierścienia i pęd uspokojonych węzłów.
+    // Ciało zakotwiczone go nie przyjmuje (masa ∞ — reakcję bierze świat przez kotwice).
     const M = body.mass;
-    if (M > 0) {
+    if (M > 0 && !body.anchored) {
       const w = matVec(this._refreshRot(body), (qx - jx) / M, (qy - jy) / M, (qz - jz) / M, this._s2);
       body.vel.x += w.x; body.vel.y += w.y;
       if (!planar) body.vel.z += w.z;
@@ -932,7 +957,8 @@ export const DestructorBeams3D = {
       msum += mass[i];
     }
     if (body._region) body._region.drift = 0;
-    if (msum > 0) {
+    // Zakotwiczone: układ ciała stoi z kotwicami (węzły z invMass 0 trzymają pozycje lokalne).
+    if (msum > 0 && !body.anchored) {
       mx /= msum; my /= msum; mz /= msum;
       if (Math.abs(mx) + Math.abs(my) + Math.abs(mz) > 1e-9) {
         // Wszystkie węzły przesuwają się w układzie ciała — skóra całego kadłuba do przepisania.
@@ -985,7 +1011,7 @@ export const DestructorBeams3D = {
         const B = bodies[key % stride];
         if (!A || A.dead || A.activeNodes <= 0) continue;
         if (!B || B.dead || B.activeNodes <= 0) continue;
-        if (A.static && B.static) continue;
+        if ((A.static || A.anchored) && (B.static || B.anchored)) continue;
         if (this.pairFilter !== null && !this.pairFilter(A, B)) continue;
         this.perf.broadphasePairs++;
 
@@ -1097,7 +1123,8 @@ export const DestructorBeams3D = {
           const j = owner[en];
           if (j <= i || seen[j] === mark) continue;
           seen[j] = mark;
-          if (A.static && bodies[j].static) continue;
+          const Bj = bodies[j];
+          if ((A.static || A.anchored) && (Bj.static || Bj.anchored)) continue;
           this._bpPush(i * stride + j);
         }
       }
@@ -1109,7 +1136,7 @@ export const DestructorBeams3D = {
         for (let j = 0; j < count; j++) {
           if (j === i || (big[j] && j < i)) continue;
           const B = bodies[j];
-          if (!B || B.dead || B.activeNodes <= 0 || (A.static && B.static)) continue;
+          if (!B || B.dead || B.activeNodes <= 0 || ((A.static || A.anchored) && (B.static || B.anchored))) continue;
           this._bpPush(i < j ? i * stride + j : j * stride + i);
         }
       }
@@ -1288,7 +1315,7 @@ export const DestructorBeams3D = {
     const massRatio = Math.max(A.mass, B.mass) / Math.max(1, Math.min(A.mass, B.mass));
     if (speed > cfg.crushSpeedThreshold &&
         ((closing < 0 && dvx * nX + dvy * nY + dvz * nZ >= 0) ||
-          ((A.static || B.static || massRatio > 4) && penetration > contactDist * 0.2))) {
+          ((A.static || B.static || A.anchored || B.anchored || massRatio > 4) && penetration > contactDist * 0.2))) {
       nX = -dvx / speed; nY = -dvy / speed; nZ = -dvz / speed;
     }
     const velAlongNormal = dvx * nX + dvy * nY + dvz * nZ;
@@ -1297,8 +1324,10 @@ export const DestructorBeams3D = {
     const massA = Math.max(1, A.mass * A.rammingMassMult);
     const massB = Math.max(1, B.mass * B.rammingMassMult);
     const armorA = A.collisionArmor, armorB = B.collisionArmor;
-    const invMassA = A.static ? 0 : 1 / massA;
-    const invMassB = B.static ? 0 : 1 / massB;
+    // Zakotwiczone jak statyczne dla ruchu sztywnego (masa ∞), ale gniecie się (niżej).
+    const fixedA = A.static || A.anchored, fixedB = B.static || B.anchored;
+    const invMassA = fixedA ? 0 : 1 / massA;
+    const invMassB = fixedB ? 0 : 1 / massB;
     const crushing = approach > cfg.crushSpeedThreshold;
     const transfer = crushing ? Math.max(0, Math.min(1, cfg.crushTransfer)) : 0;
     let impulse = 0;
@@ -1327,17 +1356,20 @@ export const DestructorBeams3D = {
         if (crushing && cfg.crushStrength > 0) {
           // Stal ustępuje przy stałej sile na jednostkę frontu styku: nadmiar pędu
           // nie znika, tylko dalej gniecie — czas zgniatania wychodzi z pędu.
-          const light = A.static ? B : B.static ? A : (A.mass <= B.mass ? A : B);
+          const light = fixedA ? B : fixedB ? A : (A.mass <= B.mass ? A : B);
           const nodeMass = light.mass / Math.max(1, light.activeNodes);
           // Najpierw ustępuje słabsze poszycie. Sama duża masa cywilnego kadłuba
           // nie daje pancerza; ściana statyczna nie ogranicza odporności statku.
-          const armor = A.static ? armorB : B.static ? armorA : Math.min(armorA, armorB);
+          // Ściana ZAKOTWICZONA (niszczalna budowla) — jak dwa kadłuby: słabszy materiał ogranicza
+          // siłę styku (cienka brama nie zatrzyma pancernego Atlasa — pęka; pancerz 16 statku
+          // przy ścianie traktowanej jak statyczna zatrzymywał go na bramie z 40 j. blachy).
+          const armor = (A.static || B.static) ? (fixedA ? armorB : armorA) : Math.min(armorA, armorB);
           const jYield = cfg.crushStrength * count * nodeMass / Math.max(1e-6, light.cellSize) * dt * armor;
           j = doDamage ? Math.min(j, jYield) : 0;
         } else if (crushing) {
           // Pojedyncza warstwa poszycia nie zatrzymuje całej masy statku.
           // Opór rośnie wraz z masą materiału faktycznie objętego kontaktem.
-          const contactShare = A.static ? contactMassB / B.mass : B.static ? contactMassA / A.mass
+          const contactShare = fixedA ? contactMassB / B.mass : fixedB ? contactMassA / A.mass
             : Math.max(contactMassA / A.mass, contactMassB / B.mass);
           j *= doDamage ? (1 - Math.pow(transfer, dt * 60)) * Math.max(0.04, Math.min(1, contactShare)) : 0;
         }
@@ -1369,8 +1401,11 @@ export const DestructorBeams3D = {
       // Podatność poszycia maleje z kwadratem pancerza. Normalizacja zachowuje
       // cały zgniot: odporny kadłub przekazuje go słabszemu, zamiast kasować.
       // Równy pancerz = dawny podział wg masy, także Atlas kontra Atlas.
-      const weightA = A.static ? 0 : (B.static ? 1 : Math.pow(massB / total, bias)) / (armorA * armorA);
-      const weightB = B.static ? 0 : (A.static ? 1 : Math.pow(massA / total, bias)) / (armorB * armorB);
+      // Para z ciałem zakotwiczonym: podział tylko z pancerza (materiału), nie z masy —
+      // masa ∞ ściany oddawałaby cały zgniot statkowi, a ściana ma pękać.
+      const anchoredPair = A.anchored || B.anchored;
+      const weightA = A.static ? 0 : (B.static || anchoredPair ? 1 : Math.pow(massB / total, bias)) / (armorA * armorA);
+      const weightB = B.static ? 0 : (A.static || anchoredPair ? 1 : Math.pow(massA / total, bias)) / (armorB * armorB);
       const weightSum = weightA + weightB || 1;
       const shareA = weightA / weightSum, shareB = weightB / weightSum;
       const travel = approach * dt;
@@ -1396,13 +1431,14 @@ export const DestructorBeams3D = {
         const nb = contactsB[i];
         const depth = Math.min(contactDist * 0.65, Math.max(depths[i], travel)) * transfer;
         // Obrys rośnie o zgniecione węzły zamiast pełnego przeliczenia (dawniej 2× na parę na iterację).
-        if (sa.active[na] && shareA > 0) {
+        // Kotwica (invMass 0) się nie przesuwa — ustępują belki do niej.
+        if (sa.active[na] && shareA > 0 && sa.invMass[na] > 0) {
           this._crushNode(sa, na, lnA, depth * shareA, dt, stamp, cfg.crushBuckling);
           extendBeamBounds(A, sa.x[na], sa.y[na], sa.z[na]);
           if (heatNow > 0) this._heatCrushed(A, na, heat, heatNow, local);
           if (local) activateNode(A, na);
         }
-        if (sb.active[nb] && shareB > 0) {
+        if (sb.active[nb] && shareB > 0 && sb.invMass[nb] > 0) {
           this._crushNode(sb, nb, lnB, depth * shareB, dt, stamp, cfg.crushBuckling);
           extendBeamBounds(B, sb.x[nb], sb.y[nb], sb.z[nb]);
           if (heatNow > 0) this._heatCrushed(B, nb, heat, heatNow, local);
@@ -1613,7 +1649,9 @@ export const DestructorBeams3D = {
       // Węzeł krateru wymuszonego i tak ginie niżej: bez wgniecenia — odłamek rusza z miejsca
       // blachy (z odrzutem), a okno trafień nie puchnie o przesunięcie martwych węzłów.
       if (killR > 0 && d2 <= killRSq) continue;
-      if (impulseTime > 0) {
+      if (s.invMass[i] <= 0) {
+        // Kotwica ciała zakotwiczonego: trafienie jej nie przesuwa (HP i śmierć — jak każdy węzeł).
+      } else if (impulseTime > 0) {
         // Pressure changes velocity; the solver moves and buckles the metal
         // over subsequent steps instead of teleporting it at detonation.
         const length = Math.sqrt(d2);
@@ -1871,7 +1909,7 @@ export const DestructorBeams3D = {
     body.structureDirty = true;
     body._hashTick = -1;
     body.mass = Math.max(1, body.mass - s.mass[i]);
-    if (!body.static) body.invMass = 1 / body.mass;
+    if (!body.static && !body.anchored) body.invMass = 1 / body.mass;
 
     const broken = body.beamStore.broken, adj = s.adj;
     for (let q = s.adjStart[i]; q < s.adjStart[i + 1]; q++) {
@@ -2121,8 +2159,26 @@ export const DestructorBeams3D = {
 
       const groups = this.findIslands(body);
       if (groups.length === 0) { body.dead = true; continue; }
-      if (groups.length === 1) continue;
+      if (groups.length === 1) {
+        // Zakotwiczone ciało, które straciło ostatnią kotwicę (zniszczony węzeł-kotwica), odpada.
+        if (body.anchored && !this._groupPinned(body, groups[0])) this._releaseAnchor(body, true);
+        continue;
+      }
       groups.sort((a, b) => b.length - a.length);
+      // Zakotwiczone: zostaje największa wyspa Z KOTWICĄ, inne zakotwiczone wyspy też stoją
+      // (osobne ciała), wyspy bez kotwicy odpadają jako swobodne wraki.
+      let pinned = null;
+      if (body.anchored) {
+        pinned = groups.map(g => this._groupPinned(body, g));
+        const stay = pinned.indexOf(true);
+        if (stay > 0) {
+          const g = groups[0]; groups[0] = groups[stay]; groups[stay] = g;
+          pinned[stay] = pinned[0]; pinned[0] = true;
+        } else if (stay < 0) {
+          this._releaseAnchor(body, false);
+          pinned = null;
+        }
+      }
 
       let fragments = 0;
       for (let gi = 1; gi < groups.length; gi++) {
@@ -2132,7 +2188,7 @@ export const DestructorBeams3D = {
           for (const i of group) this.destroyNode(body, i);
           continue;
         }
-        this._spawnWreck(body, group, bodies);
+        this._spawnWreck(body, group, bodies, pinned !== null && pinned[gi]);
         fragments++;
         wreckCount++;
       }
@@ -2141,6 +2197,25 @@ export const DestructorBeams3D = {
       // w kółko. Pełny solver zachowuje dawną przebudowę (środek masy i tensor po odprysku).
       if (fragments > 0 || !cfg.localSolver) this._rebuildBody(body, groups[0]);
     }
+  },
+
+  /** Czy wyspa ciała zakotwiczonego trzyma się kotwicy (węzeł z invMass 0). */
+  _groupPinned(body, group) {
+    const invMass = body.nodeStore.invMass;
+    for (let k = 0; k < group.length; k++) if (invMass[group[k]] === 0) return true;
+    return false;
+  },
+
+  /**
+   * Ciało zakotwiczone bez kotwic staje się swobodne: masa skończona, a ruch węzłów (zgniot,
+   * pchnięcie pocisku) przechodzi na ruch sztywny. `transfer` = bez przebudowy (rozpad bez
+   * podziału) — przy przebudowie robi to _rebuildBody.
+   */
+  _releaseAnchor(body, transfer) {
+    body.anchored = false;
+    body.invMass = 1 / Math.max(1, body.mass);
+    if (transfer) this._transferFragmentMotion(body);
+    this.wake(body, this.config.wakeHoldFrames);
   },
 
   _partitionMap: new Int32Array(0),
@@ -2277,9 +2352,9 @@ export const DestructorBeams3D = {
     }
     body.activeNodes = group.length;
     body.mass = Math.max(1, info.mass);
-    if (!body.static) body.invMass = 1 / body.mass;
+    if (!body.static && !body.anchored) body.invMass = 1 / body.mass;
     body.invInertiaLocal = info.invInertia;
-    this._transferFragmentMotion(body);
+    if (!body.anchored) this._transferFragmentMotion(body);
     this._updateRadius(body);
     body.meshDirty = true;
     body._hashTick = -1;
@@ -2323,7 +2398,9 @@ export const DestructorBeams3D = {
     resetActiveRegion(body);
   },
 
-  _spawnWreck(parent, group, bodies) {
+  // `anchored` — wyspa zakotwiczonego rodzica, która dalej trzyma się kotwicy: osobne ciało
+  // zakotwiczone (stoi, bez prędkości i odrzutu), kotwice przechodzą z węzłami (invMass 0).
+  _spawnWreck(parent, group, bodies, anchored = false) {
     const cfg = this.config;
     const part = this._partitionBeams(parent, group);
     const info = computeStoreInertia(part.nodeStore, parent.cellSize);
@@ -2344,16 +2421,17 @@ export const DestructorBeams3D = {
       id: NEXT_BODY_ID++,
       name: `${parent.name}-wrak`,
       pos: { x: parent.pos.x + comW.x, y: parent.pos.y + comW.y, z: parent.pos.z + comW.z },
-      vel: {
+      vel: anchored ? { x: 0, y: 0, z: 0 } : {
         x: parent.vel.x + (parent.angVel.y * comW.z - parent.angVel.z * comW.y),
         y: parent.vel.y + (parent.angVel.z * comW.x - parent.angVel.x * comW.z),
         z: parent.vel.z + (parent.angVel.x * comW.y - parent.angVel.y * comW.x)
       },
       quat: { ...parent.quat },
-      angVel: { ...parent.angVel },
+      angVel: anchored ? { x: 0, y: 0, z: 0 } : { ...parent.angVel },
       mass: Math.max(1, info.mass),
-      invMass: 1 / Math.max(1, info.mass),
+      invMass: anchored ? 0 : 1 / Math.max(1, info.mass),
       static: false,
+      anchored: !!anchored,
       invInertiaLocal: info.invInertia,
       radius: radius + parent.cellSize,
       config: cfg,
@@ -2397,11 +2475,11 @@ export const DestructorBeams3D = {
     };
     defineLazyViews(wreck, part.nodes, null);
     quatToMat3(wreck.quat, wreck._rot);
-    this._transferFragmentMotion(wreck);
+    if (!anchored) this._transferFragmentMotion(wreck);
     this._updateRadius(wreck);
 
     const outLen = Math.sqrt(comW.x * comW.x + comW.y * comW.y + comW.z * comW.z);
-    if (outLen > 1e-4) {
+    if (outLen > 1e-4 && !anchored) {
       const kick = cfg.wreckOutwardKick;
       wreck.vel.x += (comW.x / outLen) * kick;
       wreck.vel.y += (comW.y / outLen) * kick;

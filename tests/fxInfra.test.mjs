@@ -424,7 +424,7 @@ test('zniekształcenia: pakowanie do JEDNEGO bloku — piksele względem środka
   assert.deepEqual(A[s0 + 1].toArray().slice(0, 3), [12, DISTORT.SHOCK, Math.fround(0.35)]);
   close(A[s0 + 1].w, (400 + 3.2 * 60) * 0.5, 1e-9, 'zasięg fali');
   const s2 = DISTORT_HEADER + 2 * DISTORT_STRIDE;
-  assert.deepEqual(A[s2 + 2].toArray(), [1, 0, 2.5, 0], 'kierunek (scena), wydłużenie');
+  assert.deepEqual(A[s2 + 2].toArray(), [1, 0, 2.5, 1], 'kierunek (scena), wydłużenie, skala wzoru (domyślnie 1)');
   // czas zawinięty (600 s)
   F.begin(); F.shock(6_000_000, -2_000_000, 100, 10, 5);
   F.commit(6_000_000, -2_000_000, 1, 800, 600, 1234.5);

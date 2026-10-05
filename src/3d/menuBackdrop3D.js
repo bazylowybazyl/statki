@@ -12,7 +12,7 @@
 //   const bd = new MenuBackdrop3D({ haloRings });
 //   bd.start();                 // DOMContentLoaded, po initHaloRings
 //   bd.setActive(menuVisible);  // pętla rAF tylko przy widocznym menu
-//   bd.launch();                // start gry: przejazd kamery
+//   bd.launch();                // start gry: przejazd kamery ({ dolly: false } — tylko planeta na środek kadru)
 //   bd.stop();                  // przed pierwszą klatką gry: ring wraca do gry
 import * as THREE from 'three';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
@@ -92,6 +92,7 @@ export class MenuBackdrop3D {
     this.focus = 0;
     this.focusTarget = 0;
     this.launchAt = -1;
+    this.launchDolly = true;
     this.frozen = false;
     this.stats = { frames: 0, frameMs: 0, mapsReady: false, texturesReady: false, warmupMs: 0, ringBuildMs: 0, compileMs: 0, readyAtMs: 0 };
     this._live = false;
@@ -190,9 +191,18 @@ export class MenuBackdrop3D {
     this.focusTarget = Math.max(0, Math.min(1, Number(k) || 0));
   }
 
-  // Start gry: najazd kamery na ring, trwa do stop().
-  launch() {
-    if (this.launchAt < 0) this.launchAt = this.time;
+  // Start gry: najazd kamery na ring, trwa do stop(). dolly: false — kamera stoi, tylko planeta wraca na środek kadru
+  // (kampania: dalej leci jeden tor intro z tej pozy — dojazd tu dawał „do Ziemi, odjazd, drugi najazd na dok”).
+  launch({ dolly = true } = {}) {
+    if (this.launchAt < 0) {
+      this.launchAt = this.time;
+      this.launchDolly = dolly !== false;
+    }
+  }
+
+  /** Przejazd startu gry zakończony (kadr stoi — można zacząć lot fabuły bez skoku). */
+  get launchDone() {
+    return this.launchAt >= 0 && this.time - this.launchAt >= this.shot.launchSeconds;
   }
 
   // Ostatnia poza kamery kinowej (świat THREE): oko, cel = środek planety tła, góra (z przechyłem), fov.
@@ -413,9 +423,10 @@ export class MenuBackdrop3D {
       ring.setSun(this.sunLocal.az, this.sunLocal.el);
 
       // kamera w układzie ringu → świat (grupa ringu leży w scenie bez rodzica)
+      const dolly = this.launchDolly ? launch : 0;
       const dist = s.distance
         * (1 + (s.introDistanceMul - 1) * (1 - intro))
-        * (1 + (s.launchDistanceMul - 1) * launch);
+        * (1 + (s.launchDistanceMul - 1) * dolly);
       const el = (s.elevationDeg + s.introElevationDeg * (1 - intro) + pt.sy * s.parallaxDeg * 0.6) * DEG;
       const cosEl = Math.cos(el);
       const pos = this._p.set(Math.cos(az) * cosEl * dist, Math.sin(az) * cosEl * dist, Math.sin(el) * dist + cz);
@@ -440,7 +451,7 @@ export class MenuBackdrop3D {
       const dRing = Math.hypot(dr, dzr);
       const dCenter = Math.hypot(camLocalX, camLocalY, camLocalZ - cz);
       const dPlanet = Math.max(1, dCenter - L.planetRadius);
-      cam.fov = s.fovDeg * (1 - 0.12 * launch);
+      cam.fov = s.fovDeg * (1 - 0.12 * dolly);
       cam.aspect = vw / vh;
       cam.near = Math.min(20000, Math.max(1, Math.min(dRing, dPlanet) * 0.35));
       cam.far = Math.max(cam.near * 1000, dCenter + L.radii.max + 90000);

@@ -8,8 +8,11 @@
 //     gdy lufa jest wycelowana i na linii ognia nie ma sojusznika — kilka celów naraz bez namierzania;
 //   • ŁUKI OSTRZAŁU (env.arcOf, src/game/weaponAim.js): działa 180°, broń specjalna 270° — wieża bije
 //     tylko to, co ma po swojej stronie kadłuba;
-//   • CEL PRIORYTETOWY (klawisz T, lista `lockedTargets` gry): wieże, które mogą go razić, biorą go
-//     przed innymi; rakiety na auto strzelają TYLKO w niego i tylko w zasięgu;
+//   • CEL PRIORYTETOWY (klawisz T, lista `lockedTargets` gry; T trzymane + kursor = malowanie kilku):
+//     wieże, które mogą go razić, biorą go przed innymi;
+//   • RAKIETY NA AUTO (fcPlanMissileSalvo): każda salwa sama wybiera cele w zasięgu — cele priorytetowe,
+//     a w postawie „swobodny” także wrogów, którzy zagrażają — z budżetem (rakiety w locie odejmują się
+//     od potrzeb celu) i dzieli się na kilka celów; postawa „tylko cel” — wyłącznie cele priorytetowe;
 //   • POSTAWA OGNIA: swobodny / tylko cel priorytetowy / wstrzymać (pod maskowaniem zawsze cisza —
 //     strzał zrywa maskowanie).
 //
@@ -70,8 +73,40 @@ export const FC_TUNE = {
   }),
   salvoStep: 0.085,         // [s] odstęp luf jednej wieży (jak SALVO_STEP broni specjalnej)
   cdJitter: 0.12,           // rozrzut przeładowania wież na auto (bateria nie strzela jednym taktem)
-  rocketInterval: 0.11      // [s] odstęp wyrzutni rakiet
+  rocketInterval: 0.11,     // [s] odstęp wyrzutni rakiet
+  // RAKIETY NA AUTO (2026-10-04, wzór Starsector): każda salwa sama wybiera cele z BUDŻETEM — obrażenia
+  // rakiet w locie odejmują się od potrzeb celu (tarcza + kadłub × missileMargin, zapas na obronę
+  // punktową), salwa dzieli się na kilka celów (najwyżej missileSplitMax). Dawniej cała salwa szła
+  // w pierwszy cel priorytetowy — fregata (~2,5 tys.) dostawała Grada + manewrujące (~7,3 tys.).
+  missileMargin: 1.3,
+  missileSplitMax: 4,
+  missileMinUse: 0.3,       // salwa rusza, gdy co najmniej tyle jej obrażeń ma cel do pokrycia (bez dobijania jednym Gradem)
+  missileMinMatch: 0.25,    // poniżej — rodzaj rakiety nie leci na auto w tę klasę (ciężkie w myśliwce)
+  // Dopasowanie RODZAJU rakiety do klasy celu: lekkie (mikrorakiety, szybkie) na drobnicę, ciężkie na duże.
+  missileMatch: Object.freeze({
+    light: Object.freeze({ fighter: 0.6, frigate: 1, destroyer: 0.75, battleship: 0.5, station: 0.4, other: 0.8 }),
+    heavy: Object.freeze({ fighter: 0.1, frigate: 0.6, destroyer: 1, battleship: 1, station: 1, other: 0.8 })
+  })
 };
+
+/** Rodzaj rakiety do doboru celu: `missileRole` z karty broni albo z wyglądu (mikro / szybka = lekka). */
+export function fcMissileRole(weapon) {
+  const own = weapon?.missileRole;
+  if (own === 'light' || own === 'heavy') return own;
+  return (weapon?.rocketVfx === 'micro' || weapon?.rocketVfx === 'fast') ? 'light' : 'heavy';
+}
+
+/** Rakiet w salwie wyrzutni (jak rocketSalvoSize w src/data/weapons.js). */
+export function fcSalvoSize(weapon) {
+  const n = Math.round(Number(weapon?.burstCount) || 1);
+  return n > 1 ? n : 1;
+}
+
+/** Obrażenia JEDNEJ rakiety salwy (kasetowa — wszystkie głowice), bez modyfikatorów okrętu. */
+export function fcMissileDamage(weapon) {
+  const split = Math.round(Number(weapon?.submunition?.count) || 0);
+  return (Number(weapon?.baseDamage) || 0) * (split > 0 ? split : 1);
+}
 
 // Stan wieży dla HUD (celownik — src/ui/weaponReticle.js, sylwetka okrętu — src/ui/turretPanel.js).
 export const FC_TURRET = Object.freeze({
@@ -120,6 +155,17 @@ export function createFireControl() {
     scanCd: 0,
     rocketCd: 0,
     _load: new Map(),        // cel → przydzielone obrażenia/s
+    // Rakiety na auto: obrażenia rakiet w locie na cel (env.missileIncoming), kolejna wyrzutnia,
+    // plan salwy (cel per rakieta) i najlepsze cele planu.
+    _incoming: new Map(),
+    _missileNext: 0,
+    _salvoTargets: [],
+    _pickE: [],
+    _pickScore: [],
+    _pickRem: [],
+    _pickNeed: [],
+    // Ostatnia salwa na auto (HUD, diagnostyka): ile celów, ile rakiet.
+    lastSalvo: { targets: 0, rockets: 0 },
     // Stan wież dla HUD po ostatnim kroku: turrets[grupa][0..turretCount[grupa]) (FC_TURRET).
     turrets: { main: [], special: [] },
     turretCount: { main: 0, special: 0 },
@@ -481,16 +527,121 @@ export function stepFireControl(fc, env, tune = FC_TUNE) {
         if (env.fireMissile(env.priority.length ? env.priority[0] : env.cursorTarget)) fc.rocketCd = tune.rocketInterval;
       }
     } else if (fc.auto.missile && !holding && fc.rocketCd <= 0) {
-      // Na auto: tylko cel priorytetowy i tylko w zasięgu (amunicja nie idzie w pustkę).
-      for (let p = 0; p < env.priority.length; p++) {
-        const target = env.priority[p];
-        if (!env.alive(target) || !env.missileInRange(target)) continue;
-        if (env.fireMissile(target)) fc.rocketCd = tune.rocketInterval;
-        break;
-      }
+      stepAutoMissiles(fc, env, tune, missiles);
     }
   }
   return stats;
+}
+
+// Rakiety na auto: najwyżej jedna salwa na krok (odstęp rocketInterval), wyrzutnie po kolei.
+function stepAutoMissiles(fc, env, tune, list) {
+  const n = list.length;
+  let incoming = false;
+  for (let k = 0; k < n; k++) {
+    const idx = (fc._missileNext + k) % n;
+    const lo = list[idx];
+    if (!lo?.weapon || !lo.hp || !env.missileReady(lo)) continue;
+    if (!incoming) {
+      // Rakiety w locie i w kolejkach salw — także te z poprzednich kroków (budżet celu).
+      if (env.missileIncoming) env.missileIncoming(fc._incoming); else fc._incoming.clear();
+      incoming = true;
+    }
+    const count = fcPlanMissileSalvo(fc, lo, env, tune);
+    if (count <= 0) continue;
+    if (!env.fireMissileSalvo(lo, fc._salvoTargets, count)) continue;
+    fc.rocketCd = tune.rocketInterval;
+    fc._missileNext = (idx + 1) % n;
+    return;
+  }
+}
+
+/**
+ * Plan salwy wyrzutni `lo` na auto: cele per rakieta w `fc._salvoTargets[0..count)`. Zwraca liczbę
+ * rakiet albo 0 (nic wartego salwy w zasięgu). Kandydaci: cele priorytetowe, a w postawie
+ * „ogień swobodny” także wrogowie z zagrożeniem (`threat` > 0 — strzelają do gracza albo jego
+ * skrzydła; uśpionych i biernych rakiety same nie biją). Każdy cel dostaje tyle rakiet, ile
+ * brakuje mu po odjęciu rakiet już w locie (`fc._incoming`), najlepsze cele pierwsze; reszta
+ * salwy (wszystko pokryte) — na cel z największą potrzebą.
+ */
+export function fcPlanMissileSalvo(fc, lo, env, tune = FC_TUNE) {
+  const weapon = lo.weapon;
+  const count = Math.min(64, fcSalvoSize(weapon));
+  const per = Math.max(1, env.missileDamage ? env.missileDamage(weapon) : fcMissileDamage(weapon));
+  const range = env.rangeOf(weapon);
+  const match = tune.missileMatch[fcMissileRole(weapon)];
+  const focusOnly = fc.posture === 'focus';
+  const cap = Math.max(1, tune.missileSplitMax | 0);
+  const pickE = fc._pickE, pickScore = fc._pickScore, pickRem = fc._pickRem, pickNeed = fc._pickNeed;
+  env.baseOf(lo, _base);
+  let m = 0;
+  const list = fc.candidates;
+  for (let i = 0; i < fc.candidateCount; i++) {
+    const c = list[i];
+    const e = c.e;
+    if (!env.alive(e)) continue;
+    const prio = c.prio >= 0;
+    if (focusOnly && !prio) continue;
+    const threat = Number(c.threat) || 0;
+    if (!prio && !(threat > 0)) continue;
+    const fit = match[c.kind] ?? match.other;
+    if (!prio && fit < tune.missileMinMatch) continue;
+    const dx = env.tx(e) - _base.x;
+    const dy = env.ty(e) - _base.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > range + env.tr(e)) continue;
+    const need = Math.max(1, Number(c.need) || 1) * tune.missileMargin;
+    const rem = need - (fc._incoming.get(e) || 0);
+    if (rem < per * 0.5) continue;   // pokryty rakietami w locie
+    let score = tune.matchWeight * fit;
+    if (prio) score += tune.priorityBonus - c.prio * 10;
+    if (threat > 0) score += tune.threatWeight * (threat > 1 ? 1 : threat);
+    const needMax = Number(c.needMax) || 0;
+    if (needMax > c.need) score += tune.woundWeight * (1 - c.need / needMax);
+    if (c.need < tune.killRef) score += tune.killWeight * (1 - c.need / tune.killRef);
+    score -= (dist / Math.max(1, range)) * tune.rangePenalty;
+    // Wstawienie do listy najlepszych (malejąco), najwyżej `cap` celów.
+    let at = m;
+    while (at > 0 && pickScore[at - 1] < score) at--;
+    if (at >= cap) continue;
+    const last = m < cap ? m : cap - 1;
+    for (let j = last; j > at; j--) {
+      pickE[j] = pickE[j - 1];
+      pickScore[j] = pickScore[j - 1];
+      pickRem[j] = pickRem[j - 1];
+      pickNeed[j] = pickNeed[j - 1];
+    }
+    pickE[at] = e;
+    pickScore[at] = score;
+    pickRem[at] = rem;
+    pickNeed[at] = need;
+    if (m < cap) m++;
+  }
+  if (m === 0) return 0;
+  const out = fc._salvoTargets;
+  let k = 0;
+  let used = 0;
+  let useful = 0;
+  for (let i = 0; i < m && k < count; i++) {
+    const take = Math.min(count - k, Math.ceil(pickRem[i] / per));
+    for (let j = 0; j < take; j++) out[k++] = pickE[i];
+    useful += Math.min(take * per, pickRem[i]);
+    used++;
+  }
+  // Salwa w cele prawie pokryte (dobijanie jednym Gradem) — zostaje w wyrzutni; dobiją działa.
+  if (useful < tune.missileMinUse * count * per) {
+    for (let j = 0; j < k; j++) out[j] = null;
+    for (let i = 0; i < m; i++) pickE[i] = null;
+    return 0;
+  }
+  if (k < count) {
+    let big = 0;
+    for (let i = 1; i < m; i++) if (pickNeed[i] > pickNeed[big]) big = i;
+    while (k < count) out[k++] = pickE[big];
+  }
+  fc.lastSalvo.targets = used;
+  fc.lastSalvo.rockets = count;
+  for (let i = 0; i < m; i++) pickE[i] = null;
+  return count;
 }
 
 function fireMainNow(hp, index, lo, target, auto, env, tune) {

@@ -257,6 +257,27 @@ test('grupy lamp pozycyjnych: do 4 na statek, sekwencja w [rest, 1], rozlew na i
   assert.equal(far.count, 0);
 });
 
+test('odłam / wrak rodu nie dostaje rozlewu ani reflektorów rodzica (różowa rufa Atlasa po rozpadzie)', () => {
+  // Rodzic: kadłub belkowy z lampami Atlasa; odłam rufy (ten sam dmgKey — hullBodies.makeWreckEntity)
+  // leży pod lampami rufy rodzica. Obcy kadłub w tym samym miejscu dostaje rozlew jak dotąd.
+  const parent = { id: 'atlas', x: 0, y: 0, angle: 0, radius: 900, beamHull: { dmgKey: 7 }, editorLights: ATLAS_EDITOR_DEFAULTS.lights };
+  const stern = { id: 'wrak', x: -400, y: 0, angle: 0, radius: 450, isWreck: true, beamHull: { dmgKey: 7 } };
+  const stranger = { ...stern, id: 'obcy', isWreck: false, beamHull: { dmgKey: 8 } };
+  const grid = { srcWidth: 1000, srcHeight: 400 };
+  const clusters = buildNavLightClusters([parent], { time: 1.3 });
+  const emitters = buildRoadLightWorldEmitters([parent]);
+  assert.ok(clusters.length > 0 && emitters.some((e) => e.flood), 'rodzic ma grupy lamp i reflektory otoczenia');
+  const opts = { externalOmniLights: clusters };
+  const strangerLit = buildCombinedShipLightShaderPayload(stranger, grid, emitters, opts);
+  assert.ok(strangerLit.lights.some((l) => l.kind === 'omni'), 'obcy kadłub: rozlew czerwieni');
+  const sternLit = buildCombinedShipLightShaderPayload(stern, grid, emitters, opts);
+  assert.equal(sternLit.count, 0, 'odłam rodu: bez świateł rodzica');
+  // Bez rodu (heksy, encje bez kadłuba belkowego) — po staremu.
+  const plain = { ...stern, beamHull: undefined };
+  const plainClusters = buildNavLightClusters([{ ...parent, beamHull: undefined }], { time: 1.3 });
+  assert.ok(buildCombinedShipLightShaderPayload(plain, grid, [], { externalOmniLights: plainClusters }).count > 0);
+});
+
 test('road lights can be exported as world-space emitters for other ships', () => {
   const source = {
     id: 'source',

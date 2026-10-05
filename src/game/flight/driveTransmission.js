@@ -443,6 +443,8 @@ export function createDriveTransmission(options = {}) {
     // i hamowanie napędu przy powrocie do limitu trybu.
     burnLimit: 0,
     burnBrake: 0,
+    // Dopalacz (Shift, 2026-10-05): limit prędkości na czas dopalacza (driveBoostSpeed), 0 = wyłączony.
+    boostLimit: 0,
     // Postawa okrętu (src/game/shipModes.js — TARCZE / PRZELOT): mnożnik limitu prędkości regulatora
     // i ciągu głównego. 1 = bojowy.
     stanceLimit: 1,
@@ -588,13 +590,24 @@ export function updateDriveTransmission(state, speed, throttle, dt) {
   return state;
 }
 
+// Limit prędkości dopalacza (Shift): tabela lotu (`boostSpeed` / `cruiseBoostSpeed`, Atlas 1500 / 3000 j/s),
+// bez wpisu — 3× / 6× limitu bojowego. `cruise` = postawa PRZELOT.
+export function driveBoostSpeed(state, cruise = false) {
+  if (!state) return 0;
+  const spec = state.flightSpec;
+  const base = Math.max(1, Number(state.speedLimit) || 1);
+  if (cruise) return Number(spec?.cruiseBoostSpeed) || base * 6;
+  return Number(spec?.boostSpeed) || base * 3;
+}
+
 export function applyDriveSpeedGovernor(state, velocity, dt) {
   if (!state || !velocity) return 0;
   const vx = Number(velocity.x) || 0;
   const vy = Number(velocity.y) || 0;
   const speed = Math.hypot(vx, vy);
   // Zryw podnosi limit; po nim napęd wraca do limitu trybu hamowaniem zrywu (burnBrake).
-  const limit = Math.max(1, (Number(state.speedLimit) || 1) * (Number(state.stanceLimit) || 1), Number(state.burnLimit) || 0);
+  const limit = Math.max(1, (Number(state.speedLimit) || 1) * (Number(state.stanceLimit) || 1),
+    Number(state.burnLimit) || 0, Number(state.boostLimit) || 0);
   if (speed <= limit || speed <= 1e-6) return speed;
 
   const overshoot = speed - limit;

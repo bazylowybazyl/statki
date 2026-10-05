@@ -4,7 +4,9 @@
 // przytrzymaj ŚPM, wskaż sektor, puść; szybkie stuknięcie ŚPM wraca do poprzedniego trybu. Czas NIE
 // zwalnia przy otwartym kole. Tryby się wykluczają, a każdy przejmuje celownik:
 //   • BOJOWY    — pierścień wież grupy w ręku (src/ui/weaponReticle.js);
-//   • TARCZE    — wzmocnienie tarczy kosztem napędu (szybsza regeneracja, tarcza przyjmuje mniej, wolniejszy lot);
+//   • TARCZE    — wzmocnienie tarczy kosztem napędu (szybsza regeneracja, tarcza przyjmuje mniej, pole
+//                 znacznie twardsze na przebicie i WIDOCZNE — domyślnie tarcza jest niewidoczna; lot
+//                 i obrót wyraźnie wolniejsze — 2026-10-05, decyzja użytkownika);
 //   • PRZELOT   — szybki lot z zimną bronią na BIEGACH (QOL 2026-10-03: biegi przeniesione z warpa —
 //                 warp ma jedną prędkość): 4 biegi do 3× limitu bojowego (Atlas 500 → 1500 j/s), bieg
 //                 w górę sam przy gazie pod limitem biegu, Ctrl w dół; wieże milczą, tarcza wolniej;
@@ -28,12 +30,16 @@ export const SHIP_MODE_DEFS = Object.freeze({
 });
 
 // Nastawy postaw (start do strojenia — user ocenia feel sam).
+// turn — przyspieszenie kątowe, turnRate — sufit prędkości obrotu; shieldHardness — mnożnik twardości pola (próg przebicia heksów, src/3d/shield3D.js — twardość kadłuba
+// × postawa); shieldShow — tarcza widoczna stale (siatka heksów), nie tylko w miejscu trafienia.
 export const SHIP_STANCE_TUNE = Object.freeze({
-  combat: Object.freeze({ speed: 1, thrust: 1, turn: 1, shieldRegen: 1, shieldDelay: 1, shieldTaken: 1, weaponsCold: false }),
-  // TARCZE: tarcza ładuje się 2,5× szybciej, zaczyna 2× wcześniej i przyjmuje 35% mniej; okręt wolniejszy.
-  shield: Object.freeze({ speed: 0.6, thrust: 0.75, turn: 0.75, shieldRegen: 2.5, shieldDelay: 0.5, shieldTaken: 0.65, weaponsCold: false }),
+  combat: Object.freeze({ speed: 1, thrust: 1, turn: 1, shieldRegen: 1, shieldDelay: 1, shieldTaken: 1, turnRate: 1, shieldHardness: 1, shieldShow: false, weaponsCold: false }),
+  // TARCZE: tarcza ładuje się 2,5× szybciej, zaczyna 2× wcześniej, przyjmuje 35% mniej, pole 3× twardsze
+  // na przebicie i widoczne; okręt znacznie wolniejszy (limit × 0,4, ciąg × 0,5) i mniej zwrotny (przyspieszenie
+  // kątowe × 0,45, największa prędkość obrotu × 0,55).
+  shield: Object.freeze({ speed: 0.4, thrust: 0.5, turn: 0.45, turnRate: 0.55, shieldRegen: 2.5, shieldDelay: 0.5, shieldTaken: 0.65, shieldHardness: 3, shieldShow: true, weaponsCold: false }),
   // PRZELOT: limit z biegu (CRUISE_GEARS — speed to bieg 1), ciąg × 1,6; wieże milczą, tarcza ładuje się o połowę wolniej.
-  cruise: Object.freeze({ speed: 1.5, thrust: 1.6, turn: 0.85, shieldRegen: 0.5, shieldDelay: 1, shieldTaken: 1, weaponsCold: true })
+  cruise: Object.freeze({ speed: 1.5, thrust: 1.6, turn: 0.85, shieldRegen: 0.5, shieldDelay: 1, shieldTaken: 1, turnRate: 1, shieldHardness: 1, shieldShow: false, weaponsCold: true })
 });
 
 /**

@@ -99,9 +99,14 @@ test('WGSL kadłuba: tekstury per obiekt w liście aktualizacji, lampy w jednym 
   for (const [v, r] of Object.entries(built)) {
     // Sprite, mapa normalnych i mapa kształtu lakieru — per obiekt (węzeł w updateNodes). Sprite
     // dwa razy: próbka zwykła i z jawnym poziomem mip (pas żaru brzegu warpa „Nurt”, zadanie 22) —
-    // klon tego samego węzła, to samo wiązanie tekstury (liczba tekstur w WGSL bez zmian).
+    // klon tego samego węzła, to samo wiązanie tekstury (liczba tekstur w WGSL bez zmian). Skóra belek:
+    // maskowanie (src/3d/cloak/cloakTSL.js, 2026-10-04) — trzeci klon sprite'a (poświata brzegu) i mapa
+    // normalnych z jawnym poziomem (szkło ukrytego kadłuba: węzeł i klon) — te same wiązania.
     const keys = r.updateNodes.filter((n) => n.hullKey).map((n) => n.hullKey).sort();
-    assert.deepEqual(keys, ['uNormalMap', 'uShapeMap', 'uSprite', 'uSprite'], v);
+    const expected = v === 'beam'
+      ? ['uNormalMap', 'uNormalMap', 'uNormalMap', 'uShapeMap', 'uSprite', 'uSprite', 'uSprite']
+      : ['uNormalMap', 'uShapeMap', 'uSprite', 'uSprite'];
+    assert.deepEqual(keys, expected, v);
     // Skóra belek: +1 wspólna tekstura — kafel szumu fxNoise poszarpanego brzegu rany (mapa ran, 18-C).
     const texLimit = v === 'beam' ? 7 : 6;
     assert.ok((r.fragment.match(/: texture_2d<f32>/g) || []).length <= texLimit, `${v}: bez nowego wiązania tekstury`);

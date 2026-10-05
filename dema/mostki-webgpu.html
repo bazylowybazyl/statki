@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mostki — WebGPU</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #d9e4ea; --muted: #7f929c; --line: #9fc6d626; --panel: #060c12e8; --accent: #7cc9ff; --warn: #f0b060; --bad: #ff5a52; --good: #7be0a0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.4 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: crosshair; }
+  #title { position: fixed; left: 14px; top: 12px; z-index: 40; pointer-events: none; }
+  #title .name { font: 600 15px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+  #title .scene { margin-top: 4px; font: 600 20px/1.2 "Segoe UI", system-ui, sans-serif; color: #fff; text-shadow: 0 0 12px #000; }
+  #title .hint { margin-top: 3px; color: var(--muted); font-size: 12px; text-shadow: 0 0 8px #000; max-width: 560px; }
+  #hud { position: fixed; left: 14px; bottom: 14px; z-index: 40; padding: 8px 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace; min-width: 300px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .bad { color: var(--bad); } #hud .warn { color: var(--warn); } #hud .good { color: var(--good); }
+  #log { position: fixed; left: 340px; bottom: 14px; z-index: 40; width: 470px; max-height: 26vh; overflow: hidden; padding: 6px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; pointer-events: none; }
+  #log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #banner { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 45; padding: 8px 20px; border: 1px solid var(--bad); border-radius: 6px; background: #2a0808e8; color: #ffd6d0; font: 700 16px/1.3 ui-monospace, Consolas, monospace; letter-spacing: .08em; display: none; text-align: center; pointer-events: none; }
+  #banner .bar { margin-top: 6px; height: 4px; background: #ffffff22; border-radius: 2px; overflow: hidden; }
+  #banner .bar i { display: block; height: 100%; background: var(--bad); width: 0%; }
+  #panel { position: fixed; right: 12px; top: 12px; bottom: 12px; z-index: 40; width: 300px; overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .08em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .scenes { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .scenes button { text-align: left; padding: 6px 8px; }
+  .scenes button kbd { float: right; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 92px; color: var(--muted); }
+  .row select { flex: 1 1 auto; min-width: 0; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button, select { background: #0d1822; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #163045; border-color: var(--accent); color: #fff; }
+  button.danger { border-color: #6a2a2a; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #bridges .b { margin: 4px 0; }
+  #bridges .bar { height: 5px; background: #ffffff18; border-radius: 2px; overflow: hidden; position: relative; }
+  #bridges .bar i { display: block; height: 100%; background: var(--good); }
+  #bridges .bar s { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--bad); }
+  #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 12px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #nogpu { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: #030406f2; font-size: 15px; text-align: center; }
+  body.clean #panel, body.clean #log, body.clean #hud, body.clean #title { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Demo mostków: kadłuby na silniku belek, model 3D mostka, utrata dowodzenia"></canvas>
+</div>
+<div id="title"><div class="name">Mostki · WebGPU</div><div class="scene" id="scene-name">…</div><div class="hint" id="scene-hint"></div></div>
+<div id="hud">ładowanie…</div>
+<div id="banner"><div id="banner-text"></div><div class="bar"><i id="banner-bar"></i></div></div>
+<div id="log"></div>
+<div id="loading">Ładowanie kadłubów i shaderów…</div>
+<div id="errors"></div>
+<div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
+<div id="panel">
+  <h1>MOSTKI — DEMO</h1>
+  <div class="sub">Zniszczenie mostka = utrata dowodzenia: okręt gaśnie, dryfuje i zostaje prawie całym wrakiem — bez wybuchu reaktora. Kadłuby na silniku belek, model 3D mostka i efekty na WebGPU — jak w grze.</div>
+
+  <h2>Sceny</h2>
+  <div class="scenes">
+    <button data-scene="kill">Utrata dowodzenia<kbd>1</kbd></button>
+    <button data-scene="atlas">Atlas: mostek zapasowy<kbd>2</kbd></button>
+    <button data-scene="sever">Odcięcie mostka (Hexlance)<kbd>3</kbd></button>
+    <button data-scene="fleet">Flota: wszystkie mostki<kbd>4</kbd></button>
+    <button data-scene="close">Zbliżenie: wyrwy w modelu<kbd>5</kbd></button>
+    <button data-scene="range">Strzelnica<kbd>6</kbd></button>
+  </div>
+
+  <h2>Kadłub</h2>
+  <div class="row"><label for="hull">Kadłub</label><select id="hull"></select></div>
+  <div class="btns">
+    <button id="btn-kill" class="danger" title="K">Zniszcz mostek (K)</button>
+    <button id="btn-sever" class="danger" title="X">Odetnij Hexlance'em (X)</button>
+    <button id="btn-reset" title="R">Od nowa (R)</button>
+  </div>
+  <div id="bridges"></div>
+
+  <h2>Czas i kamera</h2>
+  <div class="btns">
+    <button id="btn-pause" title="Spacja">Pauza (spacja)</button>
+    <button id="btn-slow" title="T">Zwolnienie ×0,25 (T)</button>
+    <button id="btn-fit" title="F">Kadr (F)</button>
+    <button id="btn-zoom" title="Z">Zbliż na mostek (Z)</button>
+    <button id="btn-clean" title="H">Bez paneli (H)</button>
+  </div>
+  <div class="hint">Kółko — zoom do kursora · ŚPM / Alt+LPM — przesuw · strzałki — przesuw</div>
+
+  <h2>Warstwy (A/B)</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="o-model" checked> model 3D (M)</label>
+    <label><input type="checkbox" id="o-zones"> strefy mostków (S)</label>
+    <label><input type="checkbox" id="o-arcs" checked> łuki przepięć</label>
+    <label><input type="checkbox" id="o-lights" checked> światła w siatce</label>
+    <label><input type="checkbox" id="o-scorch" checked> osmalenie wyrwy</label>
+    <label><input type="checkbox" id="o-receiver" checked> cień na kadłubie</label>
+  </div>
+
+  <h2>Strzelnica</h2>
+  <div class="row"><label for="weapon">Broń (1–5)</label><select id="weapon"></select></div>
+  <div class="checks">
+    <label><input type="checkbox" id="lock" checked> namiar na mostek (L)</label>
+    <label><input type="checkbox" id="autofire"> ogień ciągły (G)</label>
+  </div>
+  <div class="hint">LPM — strzał (z namiarem: tryb „wyrwa” — środek mostka, a po przebiciu najmniej zasłonięta komórka przy wyrwie). PPM — działo w kursor.</div>
+</div>
+<script type="module" src="./mostki-webgpu.js"></script>
+</body>
+</html>

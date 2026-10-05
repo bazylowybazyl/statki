@@ -93,8 +93,8 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
 
 test('shields render in ortho without clearing depth and never read the mask', () => {
   const shieldSource = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
-  // Port WebGPU (zadanie 14): graf TSL tarcz w pliku obok — ten sam strażnik.
-  const shieldTslSource = readFileSync(new URL('../src/3d/shield3D.tsl.js', import.meta.url), 'utf8');
+  // Tarcza z dema WebGPU (2026-10-05): graf TSL puli tarcz — ten sam strażnik.
+  const shieldTslSource = readFileSync(new URL('../src/3d/shield/shieldPool.js', import.meta.url), 'utf8');
   // Tarcza to emisja, nie oswietlona powierzchnia.
   assert.ok(!/sunShadow|SUN_SHADOW_GLSL/.test(shieldSource), 'shield glow must not be dimmed by the sun shadow mask');
   assert.ok(!/sunShadow|SUN_SHADOW_GLSL|sunVisibility|sunFill/.test(shieldTslSource), 'shield TSL graph must not read the sun shadow mask');
@@ -105,9 +105,9 @@ test('shields render in ortho without clearing depth and never read the mask', (
   const chain = (coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '').split(',').map((s) => s.trim()).filter(Boolean);
   assert.equal(chain.indexOf('this.renderPassShields'), chain.indexOf('this.renderPassOrtho') + 1, 'tarcze zaraz po świecie ortho');
   assert.match(coreSource, /const camera = this\.getPassCamera\(pass\.ortho\);/);
-  // Obie tarcze (obrys kadluba i banka) musza trafic na warstwe tarcz.
-  const shieldLayerCalls = shieldSource.match(/Core3D\.enableShield3D\(mesh\)/g) || [];
-  assert.equal(shieldLayerCalls.length, 2, 'both hull and sphere shield meshes must use the shield layer');
+  // Płytki i iskry puli tarcz muszą trafić na warstwę tarcz.
+  assert.match(shieldSource, /Core3D\.enableShield3D\(pool\.tileMesh\)/);
+  assert.match(shieldSource, /Core3D\.enableShield3D\(pool\.sparkSprite\)/);
 });
 
 test('analytic occluders skip interiors so surfaces keep their own lighting', () => {
@@ -320,7 +320,7 @@ test('emitters and the Halo ring never read the sun shadow mask', () => {
   // Emisja swieci w cieniu jak poza nim — to one maja rozswietlac umbre.
   // Efekty broni (zadanie 17): pociski, smugi i wiązki z dema bronie-webgpu (src/3d/weapons/).
   for (const rel of ['mainExhaust3D.js', 'warpPlume3D.js', 'engineExhaustBatch.js',
-    'fxParticles3D.js', 'shipLights3D.js', 'shieldImpactFx.js', 'bridgeFx3D.js',
+    'fxParticles3D.js', 'shipLights3D.js', 'shield/shieldPool.js', 'shield3D.js', 'bridgeFx3D.js',
     'weapons/projectiles.js', 'weapons/trails.js', 'weapons/beams.js', 'weapons/recipes.js', 'weapons/weaponFx.js']) {
     assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(read(rel)), `${rel} must not read the sun shadow mask`);
   }

@@ -21,6 +21,8 @@
 //   cruiseBonus  — dodatek do maxSpeed, gdy w pobliżu nie ma wroga — odpowiednik
 //                  „zero-flux boost": płaski, więc ciężkim daje procentowo więcej
 //   travelSpeed  — limit dojazdu do formacji za szybkim liderem (bez wroga w pobliżu)
+//   boostSpeed / cruiseBoostSpeed — limit dopalacza gracza (Shift) w walce / w PRZELOCIE
+//                  (driveBoostSpeed w driveTransmission.js; bez wpisu 3× / 6× maxSpeed)
 //   reverseSpeedFrac — ułamek maxSpeed przy cofaniu (ruch rufą naprzód). Okręt
 //                  cofający się przed wrogiem jest wolniejszy od goniącego go
 //                  dziobem — bez tego snajper uciekał przed brawlerem bez końca.
@@ -108,12 +110,20 @@ export const SHIP_FLIGHT_SPECS = Object.freeze({
     maxSpeed: 380, accel: 120, decel: 150, strafeAccel: 55, reverseAccel: 45,
     turnRate: 15, turnAccel: 10, cruiseBonus: 450, travelSpeed: 2200
   }),
+  // Piracki supercapital — manewrowość ciężkiej jednostki tej samej klasy.
+  pirate_supercapital: Object.freeze({
+    flightClass: 'supercapital',
+    maxSpeed: 380, accel: 120, decel: 150, strafeAccel: 55, reverseAccel: 45,
+    turnRate: 15, turnAccel: 10, cruiseBonus: 450, travelSpeed: 2200
+  }),
   // Atlas — te same liczby dla gracza i dla Atlasa-NPC (decyzja użytkownika 2026-10-01: jedna tabela,
   // limit bojowy 500 j/s; napęd gracza kalibruje się do tej tabeli — driveTransmission.js).
   atlas: Object.freeze({
     flightClass: 'supercapital',
     maxSpeed: 500, accel: 160, decel: 200, strafeAccel: 70, reverseAccel: 60,
-    turnRate: 18, turnAccel: 12, cruiseBonus: 450, travelSpeed: 2200
+    turnRate: 18, turnAccel: 12, cruiseBonus: 450, travelSpeed: 2200,
+    // Dopalacz gracza (Shift, decyzja użytkownika 2026-10-05): ~1500 j/s, w PRZELOCIE do 3000 j/s.
+    boostSpeed: 1500, cruiseBoostSpeed: 3000
   })
 });
 

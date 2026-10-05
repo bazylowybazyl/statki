@@ -40,6 +40,7 @@ export class HullSkinBatch {
     this.iUsed = 0;
     this.vDead = 0;          // wierzchołki w dziurach (po usuniętych kadłubach)
     this.stats = { adds: 0, removes: 0, compactions: 0, grows: 0 };
+    this.distMesh = null;    // maskowanie: refrakcja w warstwie DIST (attachDist)
     this._alloc(V_INIT, I_INIT);
     this.mesh = new THREE.Mesh(this.geometry, material);
     this.mesh.name = `hullSkinBatch:${key}`;
@@ -80,6 +81,7 @@ export class HullSkinBatch {
     this.geometry = g;
     if (this.mesh) {
       this.mesh.geometry = g;
+      if (this.distMesh) this.distMesh.geometry = g;
       old?.dispose();
     }
   }
@@ -91,6 +93,34 @@ export class HullSkinBatch {
     const E = this.entries;
     for (let i = 0; i < E.length; i++) if (!E[i].proxy || E[i].proxy.visible) return true;
     return false;
+  }
+
+  /** Maskowanie (src/3d/cloak/hullCloak.js): czy widoczny kadłub partii ma aktywny wygląd maskowania. */
+  anyCloaked() {
+    const E = this.entries;
+    for (let i = 0; i < E.length; i++) {
+      const p = E[i].proxy;
+      const a = p && p.visible ? p.material?.uniforms?.uCloakA : null;
+      if (a && a.value.y !== 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Druga siatka na TEJ SAMEJ geometrii (maskowanie: refrakcja w warstwie DIST) — materiał z grafem
+   * 'cloakDist' (sloty z atrybutu jak partia), warstwa `layer`. Przy przebudowie buforów partii (_alloc)
+   * dostaje nową geometrię razem z siatką partii.
+   */
+  attachDist(material, layer) {
+    if (this.distMesh) return this.distMesh;
+    const m = new THREE.Mesh(this.geometry, material);
+    m.name = `hullSkinBatch:${this.key}:maskowanie`;
+    m.frustumCulled = false;
+    m.renderOrder = 2;
+    m.visible = false;
+    m.layers.set(layer);
+    this.distMesh = m;
+    return m;
   }
 
   /**
@@ -234,6 +264,11 @@ export class HullSkinBatch {
 
   dispose() {
     this.mesh.removeFromParent();
+    if (this.distMesh) {
+      this.distMesh.removeFromParent();
+      this.distMesh.material.dispose();
+      this.distMesh = null;
+    }
     this.geometry.dispose();
     this.material.dispose();
   }

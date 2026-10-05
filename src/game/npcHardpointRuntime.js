@@ -175,8 +175,10 @@ function getEditorShipIdForNpc(npc) {
   if (shipFrame === 'atlas') return 'atlas';
   if (shipFrame === 'terran_carrier') return 'terran_carrier';
   if (shipFrame === 'terran_supercapital') return 'terran_supercapital';
+  if (shipFrame === 'pirate_supercapital') return 'pirate_supercapital';
   const type = String(npc.type || '').toLowerCase();
   if (type === 'atlas') return 'atlas';
+  if (type === 'pirate_supercapital') return 'pirate_supercapital';
   if (type === 'supercapital') return 'terran_supercapital';
   if (type === 'carrier') return 'terran_carrier';
   if (type === 'capital_carrier') return 'capital_carrier';

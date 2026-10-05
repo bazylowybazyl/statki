@@ -1,4 +1,18 @@
 // src/game/sensorSystem.js
+//
+// Czujniki gracza: źródła (statek, sondy, drony, stacje czujników), poziom świadomości NPC (`_sensorAwareness` —
+// radar kokpitu, CIC, znaczniki krawędzi) i duchy kontaktów. Od 2026-10-04 także MGŁA WOJNY (src/game/fogOfWar.js):
+// z mgłą włączoną świadomość = WZROK strony gracza (Atlas, sojusznicy, drony, sondy, stacje) — w zasięgu wzroku
+// TRACKED, poza nim duch, potem HIDDEN; `hides(byt)` pyta render, celowanie i HUD. Bez mgły — dawne koło 18 km.
+import {
+  FOG_KIND, advanceFogClock, clearFogArea, clearMassSignature, collectFogSources, createFogState, createFogWorld,
+  exportFogWorld, fogHides, fogPointVisible, getMassSignature, isMassSignatureResolved, revealFogArea, revealFogEntity,
+  setMassSignature, stepFogEntities, stepMassSignatures, visionRangeOf
+} from './fogOfWar.js';
+
+const fogState = createFogState();
+const fogWorld = createFogWorld();
+
 export const SENSOR_CONFIG = {
   shipPassiveRange: 18000,
   shipActiveScanRange: 10000,
@@ -77,7 +91,42 @@ export const SensorSystem = {
     ghostContacts.clear();
     deployedProbes.length = 0;
     probeCooldownTimer = 0;
+    // mgła: strefy, sygnatury i zegar od nowa (włączenie zostaje — ustawia je start gry)
+    fogState.time = 0;
+    fogState.sourceCount = 0;
+    fogState.reveals.length = 0;
+    fogState.masses.length = 0;
+    fogWorld.count = 0;
+    fogWorld.massCount = 0;
   },
+
+  // ---------------------------------------------------------------- MGŁA WOJNY (fogOfWar.js)
+  fog: fogState,
+  fogWorld,
+  FOG_KIND,
+  /** Mgła włączona (opcja nowej gry / konsola). */
+  get fogEnabled() { return !!fogState.enabled; },
+  setFogEnabled(on) {
+    fogState.enabled = !!on;
+    fogWorld.on = !!on;
+  },
+  /** Czy mgła chowa byt (render, celowanie, HUD). Gracz i sojusznicy nigdy. */
+  hides(entity) {
+    return fogHides(fogState, entity, typeof window !== 'undefined' ? window.ship : null);
+  },
+  /** Czy punkt świata leży w zasięgu wzroku strony gracza (bez mgły — zawsze). */
+  pointVisible(x, y, margin = 0) {
+    return !fogState.enabled || fogPointVisible(fogState, x, y, margin);
+  },
+  visionRangeOf,
+  revealArea(id, x, y, r, sec) { return revealFogArea(fogState, id, x, y, r, sec); },
+  clearArea(id) { clearFogArea(fogState, id); },
+  revealEntity(entity, sec) { revealFogEntity(fogState, entity, sec); },
+  setMassSignature(id, spec) { return setMassSignature(fogState, id, spec); },
+  clearMassSignature(id) { clearMassSignature(fogState, id); },
+  getMassSignature(id) { return getMassSignature(fogState, id); },
+  isMassResolved(id) { return isMassSignatureResolved(fogState, id); },
+  getMassSignatures() { return fogState.masses; },
 
   getProbes() { return deployedProbes; },
   getGhosts() { return ghostContacts; },
@@ -91,7 +140,8 @@ export const SensorSystem = {
     return true;
   },
 
-  update(dt, ship, npcs, infrastructure, stations, frameCount) {
+  // extra: { player2, wrecks } — gracz 2 (podzielony ekran) widzi dla strony, wraki znane od zobaczenia.
+  update(dt, ship, npcs, infrastructure, stations, frameCount, extra = null) {
     if (probeCooldownTimer > 0) probeCooldownTimer = Math.max(0, probeCooldownTimer - dt);
 
     for (let i = deployedProbes.length - 1; i >= 0; i--) {
@@ -103,9 +153,11 @@ export const SensorSystem = {
 
     activeSourceCount = 0; // Resetujemy pulę (zamiast alokować nowe tablice)
 
+    const fogOn = !!fogState.enabled;
     if (ship && !ship.dead) {
       const src = getNextSensorSource();
-      src.x = ship.pos.x; src.y = ship.pos.y; src.range = SENSOR_CONFIG.shipPassiveRange; src.type = 'ship';
+      // z mgłą koło statku = zasięg wzroku kadłuba (to samo, co rysuje mgła)
+      src.x = ship.pos.x; src.y = ship.pos.y; src.range = fogOn ? visionRangeOf(ship) : SENSOR_CONFIG.shipPassiveRange; src.type = 'ship';
     }
 
     for (let i=0; i<deployedProbes.length; i++) {
@@ -133,6 +185,18 @@ export const SensorSystem = {
       if (ghost.age >= ghost.maxAge) ghostContacts.delete(id);
     }
 
+    // Mgła wojny: źródła wzroku (statek, P2, sojusznicy, drony, sondy, stacje czujników, przyjazne stacje, strefy
+    // fabuły) → flagi bytów, sygnatury masy, świat mgły dla Core3D.
+    if (fogOn) {
+      advanceFogClock(fogState, dt);
+      collectFogSources(fogState, {
+        player: ship, player2: extra?.player2 || null, npcs, stations, extra: sensorSources, extraCount: activeSourceCount
+      });
+    }
+    stepFogEntities(fogState, { player: ship, npcs, stations, wrecks: extra?.wrecks || null });
+    stepMassSignatures(fogState, dt);
+    exportFogWorld(fogState, fogWorld);
+
     if (!npcs) return;
 
     for (let i=0; i<npcs.length; i++) {
@@ -145,7 +209,13 @@ export const SensorSystem = {
         continue;
       }
 
-      computeEntityVisibility(npc);
+      if (fogOn) {
+        // świadomość = wzrok strony gracza (mgła); duch z ostatnią pozycją jak dawniej
+        npc._sensorAwareness = npc.__fogVisible === true ? SENSOR_CONFIG.AWARENESS.TRACKED : SENSOR_CONFIG.AWARENESS.HIDDEN;
+        npc._sensorDist = 0;
+      } else {
+        computeEntityVisibility(npc);
+      }
 
       const npcId = npc.id || npc._sensorId || (npc._sensorId = Math.random().toString(36).substr(2, 9));
 

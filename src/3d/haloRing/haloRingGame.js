@@ -194,8 +194,11 @@ export class HaloRingGame {
   _setHallCut(ring, o, strength, inHall) {
     const f = o.frame;
     const l = o.layout;
-    const z0 = f.floorZ - 100;
-    const z1 = inHall ? f.rimZ + 800 : l.openZ + 200;
+    // wycięcie tylko tam, gdzie dok wchodzi pod górną ścianę (od 2026-10-05
+    // doki stoją za krawędzią ścian — wtedy hala nie ma czego wycinać)
+    const z0 = Math.max(f.floorZ, l.backZ) - 100;
+    const z1 = Math.min(inHall ? f.rimZ + 800 : l.openZ + 200, f.rimZ + 800);
+    if (!(z1 > z0 + 1)) { ring.setCutaway(0, null); return; }
     const c = k7HubToWorld(f, 0, (z0 + z1) * 0.5, this._hubC);
     const cut = this._cut0;
     cut.x = c.x;

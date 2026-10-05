@@ -66,6 +66,12 @@ test('postawy: TARCZE kosztem napędu, PRZELOT szybciej z zimną bronią, BOJOWY
   assert.ok(shield.shieldRegen > 1 && shield.shieldDelay < 1 && shield.shieldTaken < 1);
   assert.ok(shield.speed < 1 && shield.thrust < 1 && shield.turn < 1);
   assert.equal(shield.weaponsCold, false);
+  // 2026-10-05: TARCZE — pole znacznie twardsze i widoczne, okręt ZNACZNIE wolniejszy i ociężały.
+  assert.ok(shield.shieldHardness >= 2 && shield.shieldShow === true);
+  assert.ok(shield.speed <= 0.5 && shield.thrust <= 0.6 && shield.turn <= 0.6 && shield.turnRate < 1);
+  for (const k of ['turnRate', 'shieldHardness']) assert.equal(combat[k], 1, k);
+  assert.equal(combat.shieldShow, false, 'domyślnie tarcza niewidoczna');
+  assert.equal(SHIP_STANCE_TUNE.cruise.shieldShow, false);
   const cruise = SHIP_STANCE_TUNE.cruise;
   assert.ok(cruise.speed > 1 && cruise.thrust > 1);
   assert.equal(cruise.weaponsCold, true);

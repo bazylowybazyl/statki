@@ -142,6 +142,23 @@ export const TRAFFIC_HULLS = Object.freeze({
     sprite: new URL('../assets/ships/terrancarrier.png', import.meta.url).href,
     png: [1672, 941],
     editorKey: 'terran_carrier'
+  }),
+  // Okręty piratów: suchy dok misji 1 (demo dema/suchy-dok-piratow.html — okręty w stanowiskach i eskorta
+  // wylatująca z hali jako proxy); w grze te kadłuby mają pełni NPC (index.html, HULL_SPRITE_PATHS_BY_ID).
+  pirate_frigate: Object.freeze({
+    sprite: new URL('../assets/ships/piratefrigate.png', import.meta.url).href,
+    png: [1942, 809],
+    editorKey: 'pirate_frigate'
+  }),
+  pirate_destroyer: Object.freeze({
+    sprite: new URL('../assets/ships/piratedestroyer.png', import.meta.url).href,
+    png: [1840, 854],
+    editorKey: 'pirate_destroyer'
+  }),
+  pirate_battleship: Object.freeze({
+    sprite: new URL('../assets/ships/piratebattleship.png', import.meta.url).href,
+    png: [1727, 911],
+    editorKey: 'pirate_battleship'
   })
 });
 

@@ -85,7 +85,7 @@ test('8 zatok (po jednej z każdej strony K-7): unikalne stanowiska, bez zachodz
     const l = createK7Layout();
     return world(f, rect(l.halfWidth + HALO_PORT.collar + 100, l.backZ, l.bodyEndZ));
   });
-  const bayPolys = bays.map((b) => world(b.frame, rect(b.halfWidth + HALO_PORT.sideWall + HALO_PORT.collar, b.floorZ, b.openZ)));
+  const bayPolys = bays.map((b) => world(b.frame, rect(b.halfWidth + HALO_PORT.sideWall + HALO_PORT.collar, b.baseZ, b.openZ)));
   // po jednej zatoce z każdej strony hali (symetrycznie)
   assert.deepEqual([...HALO_PORT.dockOffsets].sort((a, b) => a - b), [-HALO_PORT.dockOffsets[1], HALO_PORT.dockOffsets[1]]);
   bayPolys.forEach((p, i) => {
@@ -202,8 +202,9 @@ test('port bez udawanego życia: wszystkie stanowiska wolne, bez statków NPC w 
   const f = k7Frame(ring, haloPortComplexAngles()[0]);
   const bays = haloBayLayouts(ring).filter((b) => b.complex === 0).map((b) => ({ layout: b, xf: haloFrameToFrame(b.frame, f) }));
   const s = buildK7Scene(createK7Layout(), { floorZ: f.floorZ, rimZ: f.rimZ, floorR: f.floorR, bays });
-  // płaskie wielokąty: pokład, pokład ciemny, fartuchy 3 bram, klin, dach — bez kadłubów NPC
-  assert.ok(s.plates.length <= 7, `wielokąty sceny: ${s.plates.length}`);
+  // płaskie wielokąty: pokład, pokład ciemny, fartuchy 3 bram, dach i bryły dwóch
+  // pylonów (stopa, dźwigar, korzeń; od 2026-10-05, dawny klin usunięty) — bez kadłubów NPC
+  assert.ok(s.plates.length <= 12, `wielokąty sceny: ${s.plates.length}`);
 });
 
 test('scena kompleksu: stanowiska zatok w tych samych instancjach co hala (lampki, napisy, grupy ≤ 40)', async () => {
@@ -220,7 +221,7 @@ test('scena kompleksu: stanowiska zatok w tych samych instancjach co hala (lampk
   // instancje zatok leżą w obrysie zatok (hub hali), pod płaszczyzną lotu pokładu
   const q = {};
   for (const { layout: bay, xf } of bays) {
-    const c = haloXfPoint(xf, 0, (bay.floorZ + bay.openZ) / 2, q);
+    const c = haloXfPoint(xf, 0, (bay.baseZ + bay.openZ) / 2, q);
     const near = s.sets.bg.box.filter((_, i, a) => i % 16 === 0 && Math.hypot(a[i] - c.x, a[i + 2] - c.z) < 2600);
     assert.ok(near.length > 150, `${bay.id}: mało instancji w zatoce (${near.length})`);
   }

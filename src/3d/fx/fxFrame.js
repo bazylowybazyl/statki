@@ -227,10 +227,11 @@ export class FxFrame {
     grid.begin(origin.x, origin.y);
     grid.setBounds(v.x0 - origin.x, -v.y1 - origin.y, v.x1 - origin.x, -v.y0 - origin.y);
     const lights = this.lights;
-    if (lights.flashes > 0 || lights.points > 0) {
-      lights.setView(v.x0, v.y0, v.x1, v.y1);
-      lights.commit(grid, this.time);
-    }
+    // Kadr odrzucania świateł co klatkę, nie tylko przy oczekujących: `point` / `flash` odrzucają według
+    // OSTATNIEGO kadru — gdy wszystkie światła leżały poza starym kadrem (kamera przeniesiona: RTS, teleport),
+    // kadr nigdy się nie odświeżał i światła przepadały w kółko (reflektory suchego doku, 2026-10-05).
+    lights.setView(v.x0, v.y0, v.x1, v.y1);
+    if (lights.flashes > 0 || lights.points > 0) lights.commit(grid, this.time);
     // Starzenie PO zapisie: błysk zgłoszony w tej klatce (przed renderem) świeci od wieku 0 —
     // jak w demie broni (update przed strzałem).
     lights.update(dt);

@@ -14,7 +14,7 @@
 // program na wszystkie ładownie. Światło: cargoLight.tsl.js (rekord ładowni z tablicy).
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, abs, attribute, clamp, float, floor, fract, fwidth, int, length, max, min, mix, normalize, positionGeometry,
+  Discard, Fn, If, abs, attribute, clamp, float, floor, fract, fwidth, int, length, max, min, mix, normalize, positionGeometry,
   positionLocal, select, sign, sin, smoothstep, step, uniform, varyingProperty, vec2, vec3, vec4
 } from 'three/tsl';
 import { cargoBayDoorPose, cargoShipToWorld, cargoBayWorldYaw } from '../../data/cargoBays.js';
@@ -115,8 +115,7 @@ function buildInteriorMaterial() {
     const hB = rec.r1.y;
     const D = rec.r1.z;
     const spacing = rec.r2.z;
-    const pocket = rec.r3.y;
-    const leafT = rec.r3.z;
+    const pocket = rec.r3.y; // dół skrzydeł w kieszeni (0 = over)
     const lampZ = rec.r3.w;
     // Pochodne przed gałęziami.
     const fw = fwidth(P);
@@ -165,7 +164,7 @@ function buildInteriorMaterial() {
       const str = abs(fract(hz.div(D.div(3.0)).add(0.5)).sub(0.5)).mul(D.div(3.0));
       albedo.mulAssign(float(1.0).sub(smoothDown(0.35, 0.1, str).mul(0.35)));
       // Szczelina skrzydeł (kieszeń) i pas ostrzegawczy tuż pod nią / pod krawędzią.
-      const slotBot = select(pocket.greaterThan(0.5).and(longWall), leafT.add(0.9).negate(), float(0.0));
+      const slotBot = select(pocket.greaterThan(0.5).and(longWall), pocket.add(0.3).negate(), float(0.0));
       const inSlot = step(slotBot, P.z).mul(select(pocket.greaterThan(0.5).and(longWall), float(1.0), float(0.0)));
       const bandTop = min(slotBot, float(-0.12));
       const inBand = step(bandTop.sub(0.85), P.z).mul(step(P.z, bandTop));
@@ -242,6 +241,9 @@ function buildLeafMaterial() {
     const specK = float(0.5).toVar();
     // Odległość od krawędzi przy szczelinie (bok −y dla strony +, bok +y dla strony −).
     const dIn = select(side.greaterThan(0.0), u.y.add(0.5), float(0.5).sub(u.y)).mul(W).toVar();
+    // Kieszeń: część skrzydła poza otworem jest już w kadłubie — bez rysunku (poza sylwetką
+    // wąskiego kadłuba wystawałaby za sprite). uInfo.w = środek skrzydła w b ładowni (update).
+    If(uInfo.z.greaterThan(0.5).and(abs(uInfo.w.add(lb)).greaterThan(rec.r1.y)), () => { Discard(); });
     If(face.equal(0), () => {
       // WIERZCH: sprite kadłuba z poduszkową normalną jak kadłub gry (ciągłość z otoczeniem)
       // i fazą krawędzi (normalna pochyla się na zewnątrz — strona ku słońcu łapie światło,
@@ -365,6 +367,7 @@ export class CargoBayRig {
       const lf = this.leaves[k];
       const q = pose.leaves[k];
       lf.mesh.position.set(q.da, lf.bc + q.db, q.z0);
+      lf.mesh.material.uniforms.uLeafInfo.value.w = lf.bc + q.db;
       // Skrzydło „pocket” schowane całe pod poszyciem — bez rysunku.
       lf.mesh.visible = !(geo.door === 'pocket' && Math.abs(q.db) >= Math.abs(lf.def.b1 - lf.def.b0) + geo.halfB * 0 && pose.open >= 0.999);
     }

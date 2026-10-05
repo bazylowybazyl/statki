@@ -28,6 +28,7 @@ import { MainWeaponSprite2D } from './mainWeaponSprite2D.js';
 import { PdWeaponSprite2D } from './pdWeaponSprite2D.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
+import { entityCloakVisAt } from '../game/cloakLook.js';
 
 // Barwy odpowiadają materiałom Lambert z dawnego weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
@@ -1078,6 +1079,7 @@ export const Turret2D = {
 
     let drawn = 0;
     const skipDraw = typeof this.skipDraw === 'function' ? this.skipDraw : null;
+    let alpha = 1;
     ctx.save();
     for (let i = 0; i < frameCount; i++) {
       const rec = frameRecords[i];
@@ -1091,6 +1093,10 @@ export const Turret2D = {
       const sx = ox + rec.wx * zoom;
       const sy = oy + rec.wy * zoom;
       if (vw > 0 && (sx < -screenR * 2 || sy < -screenR * 2 || sx > vw + screenR * 2 || sy > vh + screenR * 2)) continue;
+      // Maskowanie (src/game/cloakLook.js): wieżyczka gaśnie razem z komórką kadłuba pod sobą.
+      const vis = rec.entity && rec.entity.__cloakLook ? entityCloakVisAt(rec.entity, rec.wx, rec.wy) : 1;
+      if (vis <= 0.01) continue;
+      if (vis !== alpha) { alpha = vis; ctx.globalAlpha = vis; }
 
       const st = rec.state;
       const k = worldScale * zoom;

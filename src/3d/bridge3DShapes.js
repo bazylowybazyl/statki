@@ -105,6 +105,7 @@ const KIND_DEFS = [
   ['colossus', { label: 'Colossus — mostek', hull: 'terran_supercapital', zone: 'mostek', png: [1672, 941], profile: 'terran_supercapital', capacity: 64 }],
   ['pirate_frigate', { label: 'Fregata piratów — mostek', hull: 'pirate_frigate', zone: 'mostek', png: [1942, 809], profile: 'pirate_frigate', capacity: 256 }],
   ['pirate_destroyer', { label: 'Niszczyciel piratów — mostek', hull: 'pirate_destroyer', zone: 'mostek', png: [1840, 854], profile: 'pirate_destroyer', capacity: 256 }],
+  ['pirate_supercapital', { label: 'Supercapital piratów — mostek', hull: 'pirate_supercapital', zone: 'mostek', png: [1671, 941], profile: 'pirate_supercapital', capacity: 64 }],
   ['megafreighter', { label: 'Megafrachtowiec — mostek lokomotywy', hull: 'megafreighter', zone: 'mostek', png: [1672, 941], profile: 'megafreighter', capacity: 32 }]
 ];
 
@@ -1373,6 +1374,40 @@ function buildMegafreighter(B, W, H, P) {
   B.end();
 }
 
+// Rufowy blok dowodzenia supercapitala: wysoki bunkier, boczna krata i warstwowe płyty.
+function buildPirateSupercapital(B, W, H, P) {
+  const plateZ = 2;
+  const bunkerZ = 11;
+  B.begin('plyta', 'Płyta nadbudówki');
+  block(B, octPoly(-W / 2, -H / 2, W / 2, H / 2, 3), 0, plateZ,
+    { chamfer: [0.7, 0.8], mat: M.PANEL, chamferMat: M.GRIME, capMat: M.PANEL });
+  B.end();
+
+  B.begin('bunkier', 'Bunkier dowodzenia');
+  const bunker = block(B, octPoly(P.x(-405), P.y(120), P.x(-311), P.y(-100), 3), plateZ, bunkerZ,
+    { slope: 1.5, chamfer: [2, 2.5], mat: M.PAINT, chamferMat: M.GRIME, capMat: M.PANEL });
+  for (const side of [0, 2, 4, 6]) {
+    windowRow(B, bunker.chamfer[side], { at: 0.5, paneW: 2.8, paneH: 0.8,
+      margin: 1.4, frameExtra: 0.3, pitch: 4.4, seed: 140 + side, allLit: side === 2 });
+  }
+  boxRot(B, P.x(-355), P.y(12), bunkerZ, 28, 48, 1.2, 0, { mat: M.DARK });
+  B.end();
+
+  B.begin('kraty', 'Krata chłodnic');
+  grille(B, P.x(-303), P.y(100), P.x(-259), P.y(-92), plateZ, 2, 9, 1);
+  B.end();
+
+  B.begin('plyty', 'Płyty pancerza');
+  for (const y of [-94, 111]) {
+    boxRot(B, P.x(-354), P.y(y), plateZ, W * 0.6, 8, 2, 0, { mat: M.TRIM, chamfer: [0.5, 0.8] });
+  }
+  B.end();
+  B.begin('latarnia', 'Latarnia dowodzenia');
+  cylinder(B, P.x(-355), P.y(-38), bunkerZ + 1.2, bunkerZ + 10.2, 1.3, 1.1, { seg: 8, mat: M.DARK });
+  beacon(B, P.x(-355), P.y(-38), bunkerZ + 10.4, 'beacon_pirate', { period: 0.9, size: 0.8, core: 1.4 });
+  B.end();
+}
+
 const BUILDERS = {
   bellator: buildBellator,
   ironskull: buildIronSkull,
@@ -1384,6 +1419,7 @@ const BUILDERS = {
   colossus: buildColossus,
   pirate_frigate: buildPirateFrigate,
   pirate_destroyer: buildPirateDestroyer,
+  pirate_supercapital: buildPirateSupercapital,
   megafreighter: buildMegafreighter
 };
 

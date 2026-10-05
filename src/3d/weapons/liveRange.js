@@ -4,9 +4,11 @@
 // three czyści `updateRanges` po każdej wysyłce (`clearUpdateRanges` → length = 0), a
 // ponowne `addUpdateRange` alokuje obiekt zakresu (~150 B na atrybut na klatkę). Tu atrybut
 // dostaje NA STAŁE listę dwóch obiektów zakresu (drugi — pierścień zawinięty w tej klatce)
-// i wyłączone czyszczenie; klatka przestawia tylko liczby. Nieużywany drugi zakres to 4
-// pierwsze liczby tablicy (16 B powtórzonej wysyłki — tablica CPU jest źródłem prawdy),
-// bez zmiany długości listy (żadnej realokacji tablicy zakresów).
+// i wyłączone czyszczenie; klatka przestawia tylko liczby. Nieużywany drugi zakres POWTARZA
+// pierwszy (ta sama, świeża część tablicy — bez zmiany długości listy, żadnej realokacji).
+// Nie „4 pierwsze liczby”: tablica CPU NIE jest wszędzie źródłem prawdy — dane smug przesuwa
+// po przeskoku początku pul kernel na GPU (gpuPoolOrigin.js), a kopia CPU zostaje w starej
+// ramie; wysłany ponownie początek tablicy cofał węzeł A segmentu 0 o całe przesunięcie.
 
 function keepUpdateRanges() {}
 
@@ -41,8 +43,8 @@ export function markRange(attr, start, count, start2 = 0, count2 = 0) {
     R[1].start = start2;
     R[1].count = count2;
   } else {
-    R[1].start = 0;
-    R[1].count = Math.min(4, attr.array.length);
+    R[1].start = R[0].start;
+    R[1].count = R[0].count;
   }
   attr.needsUpdate = true;
 }

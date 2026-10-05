@@ -54,7 +54,7 @@ import {
   float, int, uint, vec2, vec3, vec4, mat4, nodeObject,
   uniform, attribute, storage, varying, texture,
   positionGeometry, positionLocal, modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, uv,
-  abs, clamp, cos, sin, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
+  abs, clamp, cos, sin, dFdx, dFdy, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
 } from 'three/tsl';
 import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
@@ -64,6 +64,8 @@ import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } 
 import { getBeltMedium } from './asteroids/beltMedium.js';
 import { fxNoise } from './fx/noise.js';
 import { zbierzZakres } from './zakresyWysylki.js';
+import { cloakDistOffset, hullCloakSurface } from './cloak/cloakTSL.js';
+import { CLOAK_LOOK_OFF } from '../game/cloakLook.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
 // Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
@@ -281,11 +283,13 @@ export const HullLightStore = {
 // Układ slotu (vec4): 0–3 macierz MV (kolumny), 4–7 macierz świata, 8 (uHasNormalMap, uRotation,
 // uLodOpacity, uBillboardLighting), 9 (uSpriteSize.xy, uDmgWorld.xy), 10 (uLightDir.xyz, uLacquerWeight),
 // 11 (uShipLightCount, uEngineZoneCount, uLightBase, uLacquerGlint), 12 uDmgSlot, 13 (uGridOwner, widoczność),
-// 14–16 uWarpA / uWarpB / uWarpC. Slot 0 = zera (trzymacze grafu, rozgrzewka, pula pełna).
+// 14–16 uWarpA / uWarpB / uWarpC, 17–21 uCloakA..E (maskowanie, src/game/cloakLook.js — 2026-10-04;
+// E — heksy-ekrany, 2026-10-05).
+// Slot 0 = zera (trzymacze grafu, rozgrzewka, pula pełna).
 // Partie kadłubów (hullSkinBatch.js): numer slotu w atrybucie wierzchołka, siatka kadłuba (nośnik
 // macierzy i material.uniforms) poza sceną — zapis co render niezależnie od rodzica, z flagą widoczności
 // (niewidoczny kadłub zwija się w wierzchołku — bez przepisywania indeksów partii).
-export const HULL_OBJECT_SLOT_VEC4 = 17;
+export const HULL_OBJECT_SLOT_VEC4 = 22;
 export const HULL_OBJECT_SLOTS = 1024;
 const _hullMV = new THREE.Matrix4();
 
@@ -385,6 +389,15 @@ export const HullObjectStore = {
       A[o + 56] = wa.x; A[o + 57] = wa.y; A[o + 58] = wa.z; A[o + 59] = wa.w;
       A[o + 60] = wb.x; A[o + 61] = wb.y; A[o + 62] = wb.z; A[o + 63] = wb.w;
       A[o + 64] = wc.x; A[o + 65] = wc.y; A[o + 66] = wc.z; A[o + 67] = wc.w;
+      // Maskowanie (cloakLook.js): trzymacze opcjonalne (materiały bez nich — testy, trzymacze grafu).
+      const ka = u.uCloakA ? u.uCloakA.value : CLOAK_LOOK_OFF.a; const kb = u.uCloakB ? u.uCloakB.value : CLOAK_LOOK_OFF.b;
+      const kc = u.uCloakC ? u.uCloakC.value : CLOAK_LOOK_OFF.c; const kd = u.uCloakD ? u.uCloakD.value : CLOAK_LOOK_OFF.d;
+      const ke = u.uCloakE ? u.uCloakE.value : CLOAK_LOOK_OFF.e;
+      A[o + 68] = ka.x; A[o + 69] = ka.y; A[o + 70] = ka.z; A[o + 71] = ka.w;
+      A[o + 72] = kb.x; A[o + 73] = kb.y; A[o + 74] = kb.z; A[o + 75] = kb.w;
+      A[o + 76] = kc.x; A[o + 77] = kc.y; A[o + 78] = kc.z; A[o + 79] = kc.w;
+      A[o + 80] = kd.x; A[o + 81] = kd.y; A[o + 82] = kd.z; A[o + 83] = kd.w;
+      A[o + 84] = ke.x; A[o + 85] = ke.y; A[o + 86] = ke.z; A[o + 87] = ke.w;
       if (slot < lo) lo = slot;
       if (slot > hi) hi = slot;
       n++;
@@ -445,6 +458,12 @@ function objectStoreNodesFor(slot) {
     uWarpA: v(14),
     uWarpB: v(15),
     uWarpC: v(16),
+    // Maskowanie (src/3d/cloak/cloakTSL.js) — tylko skóra belek (sloty).
+    uCloakA: v(17),
+    uCloakB: v(18),
+    uCloakC: v(19),
+    uCloakD: v(20),
+    uCloakE: v(21),
     hullVisible: v(13).y
   };
 }
@@ -838,8 +857,30 @@ function hullFragmentNode(opts) {
     out.assign(out.mul(vol.a).add(vol.rgb));
 
     hullWarp(ctx, out, alpha);
+    // Maskowanie (2026-10-04, src/3d/cloak/cloakTSL.js): mozaika heksów, poświata brzegu, zakłócenie —
+    // tylko skóra belek (dane w slocie kadłuba); wyłączone = gałąź pominięta (jednolity warunek slotu).
+    if (ctx.damage) hullCloakSurface(ctx, out, alpha, uTime, perObjectTexture('uNormalMap', PLACEHOLDER_NORMAL, spriteUV));
 
     return vec4(out, alpha);
+  })();
+}
+
+// Fragment warstwy DIST maskowania: RG — przesunięcie tła w px bufora (osie sceny), B / A — maska ekranu
+// i śnieg heksów-ekranów (cloakTSL.js → „uber”); cel Core3D.distortionTarget, sumowane addytywnie z innymi
+// źródłami (pule broni piszą B = A = 0). Pokrycie = alfa sprite'a (próbka w jednolitym przepływie, przed
+// gałęziami cloakDistOffset); pochodne piksela kanonicznego (odwzorowanie komórki na ekran) — przed odrzuceniem.
+function cloakDistFragmentNode(P) {
+  return Fn(() => {
+    const suv = P.uvSlot.xy.toVar();
+    const lpx = suv.sub(0.5).mul(P.uSpriteSize).toVar();
+    const jx = vec2(0.0).toVar();
+    const jy = vec2(0.0).toVar();
+    jx.assign(dFdx(lpx));
+    jy.assign(dFdy(lpx));
+    const sprite = perObjectTexture('uSprite', PLACEHOLDER_SPRITE, suv);
+    const cov = sprite.a.toVar();
+    Discard(cov.lessThan(0.02));
+    return cloakDistOffset({ uv: suv, P, sprite, uTime: HULL_SHARED.uTime, coverage: cov, jx, jy });
   })();
 }
 
@@ -905,6 +946,24 @@ export function getHullVariant(name) {
         heatPeak: HULL_SHARED.beamHeatPeak,
         damage: true
       })
+    };
+  } else if (name === 'cloakDist') {
+    // Maskowanie (2026-10-04): refrakcja tła przez sylwetkę ukrytego kadłuba w warstwie DIST — ta sama
+    // geometria partii skór (hullSkinBatch.js) i ten sam slot; kadłub bez maskowania zwija się w
+    // wierzchołku (jak niewidoczny), więc rysunek kosztuje tylko fragmenty maskowanych okrętów.
+    const P = hullBatchStoreNodes();
+    // Pozycja z WŁASNYM węzłem slotu: wspólna baza slotu (P) użyta w pozycji widoku (varying bez odbiorcy we
+    // fragmencie — lokalna zmienna na początku main) i w warunku widoczności dawała w WGSL odczyt macierzy PRZED
+    // przypisaniem zmiennej bazy (slot 0 = zera → kadłub w warstwie DIST nie rysował nic). Strażnik:
+    // tests/hullCloakTSL.test.mjs (kolejność w etapie wierzchołków).
+    const PV = objectStoreNodesFor(uint(round(attribute('aUvSlot', 'vec3').z)));
+    v = {
+      name,
+      side: THREE.DoubleSide,
+      positionNode: null,
+      positionView: PV.modelView.mul(positionLocal).xyz,
+      hullVisible: P.hullVisible.mul(step(0.5, abs(P.uCloakA.y))),
+      fragmentNode: cloakDistFragmentNode(P)
     };
   } else if (name === 'hex') {
     const P = hullPerObjectNodes();
@@ -1000,6 +1059,53 @@ export class HullNodeMaterial extends THREE.NodeMaterial {
 /** Czy materiał to kadłub z grafem wariantu (testy, spis). */
 export function isHullNodeMaterial(material) {
   return material?.isHullNodeMaterial === true;
+}
+
+/**
+ * Maskowanie (2026-10-04): materiał partii skór w warstwie DIST (FX_DISTORT_LAYER) — refrakcja tła przez
+ * sylwetkę ukrytego kadłuba. `uniforms` = trzymacze partii (sprite, mapa normalnych — wspólne z materiałem
+ * partii), graf wspólny dla wszystkich partii (jeden NodeBuilder, jeden pipeline). Mieszanie ONE / ONE
+ * (warstwa sumuje przesunięcia, także ujemne — jak pula DIST broni), bez głębi.
+ */
+export class HullCloakDistNodeMaterial extends THREE.NodeMaterial {
+  static get type() {
+    return 'HullCloakDistNodeMaterial';
+  }
+
+  constructor(uniforms) {
+    super();
+    const variant = getHullVariant('cloakDist');
+    this.isHullCloakDistMaterial = true;
+    this.name = 'hull:cloakDist';
+    this.uniforms = uniforms;
+    this.lights = false;
+    this.fog = false;
+    this.transparent = true;
+    this.depthWrite = false;
+    this.depthTest = false;
+    this.side = variant.side;
+    this.forceSinglePass = true;
+    this.premultipliedAlpha = false;
+    this.blending = THREE.CustomBlending;
+    this.blendEquation = THREE.AddEquation;
+    this.blendSrc = THREE.OneFactor;
+    this.blendDst = THREE.OneFactor;
+    this.blendEquationAlpha = THREE.AddEquation;
+    this.blendSrcAlpha = THREE.OneFactor;
+    this.blendDstAlpha = THREE.OneFactor;
+    this.fragmentNode = variant.fragmentNode;
+    this.hullPositionView = variant.positionView;
+    this.hullVisible = variant.hullVisible;
+  }
+
+  setupPositionView(builder) {
+    return this.hullPositionView || super.setupPositionView(builder);
+  }
+
+  setupModelViewProjection(builder) {
+    const clip = super.setupModelViewProjection(builder);
+    return select(this.hullVisible.greaterThan(0.5), clip, vec4(2.0, 2.0, 2.0, 1.0));
+  }
 }
 
 // ── Pula szczątków GPU kadłubów heksowych (DEBRIS_*) ─────────────────────────

@@ -18,11 +18,13 @@ import {
   k7AngleDelta,
   k7BoxPoly,
   k7ConvexOverlap,
+  k7HallArms,
   k7Phase,
-  k7WorldToHub
+  k7WorldToHub,
+  k7ZToHeight
 } from './haloPortK7Layout.js';
 import { HALO_TRANSIT, haloTransitAngles } from './haloRingConfig.js';
-import { bayLaneOf, baySolidList, haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
+import { bayArms, bayLaneOf, baySolidList, haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
 import { haloHullFits } from './haloPortHulls.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -75,24 +77,35 @@ export function createPortRegistry({ halls, bays, frame }) {
 
 /**
  * Świat kolizji portu w układzie huba `frame` (hala gracza): hale wszystkich
- * kompleksów (ściany, przypory, słupy kołnierza, ładunki, nogi suwnic,
- * piedestały paliwowe), otwarte zatoki (ściany, kołnierze, słupki serwisowe
- * i paliwowe, nogi suwnic) i tunele tranzytów (ściany, portale obu wylotów).
+ * kompleksów (ściany, przypory, ładunki, nogi suwnic, piedestały paliwowe),
+ * otwarte zatoki (ściany, słupki serwisowe i paliwowe, nogi suwnic), pylony
+ * doków (wystają ze ścian tylnych na wysokości doku) i tunele tranzytów
+ * (ściany, portale obu wylotów).
  * Statki NPC dołoży system ruchu jako przedmioty ruchome (refresh).
  */
 export function buildPortCollision({ registry, frame, ringLayout }) {
   const col = new K7CollisionWorld();
   const q = {};
   const toHub = (o, pts) => pts.map((p) => { haloXfPoint(o.xf, p.x, p.z, q); return { x: q.x, z: q.z }; });
+  // pylony doków (stopa, dźwigar, korzeń — wielokąty wypukłe z k7DockArms) w płaszczyźnie lotu
+  const addArms = (o, arms, tag) => {
+    for (const a of arms) {
+      a.polys.forEach((poly, k) => {
+        col.addPolygon(`PYLON ${tag}${a.side < 0 ? ' W' : ' E'}/${k}`, toHub(o, poly.map(([x, z]) => ({ x, z }))), k7ZToHeight(a.zw0), k7ZToHeight(a.zw1));
+      });
+    }
+  };
   for (const o of registry.halls) {
     for (const it of buildK7Collision(o.layout).items) {
       if (it.id === 'player') continue;
       col.addPolygon(o.index === 0 ? it.id : `K${o.index + 1} ${it.id}`, toHub(o, it.polygon), it.y0, it.y1);
     }
+    if (o.frame) addArms(o, k7HallArms(o.frame, o.layout), o.index === 0 ? 'K-7' : `K${o.index + 1}`);
   }
   for (const o of registry.bays) {
     const bay = o.layout;
     for (const s of baySolidList(bay)) col.addPolygon(s.id, toHub(o, k7BoxPoly(s.x, s.z, s.w, s.d, s.angle)), s.y - s.h / 2, s.y + s.h / 2);
+    if (o.frame) addArms(o, bayArms(bay, o.frame), bay.tag);
   }
   // tunele tranzytów w płycie podłogi (x wzdłuż ringu, y od płyty portu na zewnątrz)
   const T = HALO_TRANSIT;

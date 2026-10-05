@@ -265,12 +265,12 @@ export class HUDSystem {
             
             if (this.menuState === 'IDLE') {
                 if (digitKey === '8' || e.key === '8') this.setBottomMenuState('MODE');
-                if (e.code === 'CapsLock') this.setBottomMenuState('SCAN');
+                if (e.code === 'Backquote') this.setBottomMenuState('SCAN');   // CapsLock = warp (2026-10-05)
             } else if (this.menuState === 'MODE') {
                 if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
             } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
                 if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
-                if (e.key === '0' || e.key === 'Escape' || e.code === 'CapsLock') {
+                if (e.key === '0' || e.key === 'Escape' || e.code === 'Backquote') {
                     this.handleMenuAction('close');
                     e.preventDefault();
                     e.stopImmediatePropagation();

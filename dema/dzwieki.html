@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dźwięki — synteza</title>
+<style>
+  :root {
+    --bg: #070a10;
+    --panel: #0e131c;
+    --panel-2: #141b28;
+    --line: #1e2735;
+    --text: #d8e0ec;
+    --muted: #7d8aa0;
+    --accent: #5fc8ff;
+    --hot: #ffb347;
+    --ok: #8ef0b0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 20px 16px 64px; }
+  header.top { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: end; justify-content: space-between; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: .02em; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+  .status { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-variant-numeric: tabular-nums; }
+  .status.on { color: var(--ok); border-color: #2c5a44; }
+  .globals {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 18px; align-items: end;
+    margin: 14px 0 12px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12px; color: var(--muted); min-width: 0; }
+  .row output { color: var(--text); font-variant-numeric: tabular-nums; }
+  .row input[type=range], .row select { grid-column: 1 / -1; width: 100%; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+  input[type=range] { accent-color: var(--accent); margin: 4px 0 0; }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+  select { font: inherit; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; margin-top: 3px; }
+  button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #stop { justify-self: start; }
+  .viz { position: relative; height: 210px; background: #04060a; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .viz canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .viz .hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; transition: opacity .4s; }
+  .viz.live .hint { opacity: 0; }
+  section { margin-top: 24px; }
+  h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+  .card { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; transition: border-color .15s, background .15s; }
+  .card.flash { border-color: var(--accent); background: #101a26; }
+  .card.on { border-color: var(--hot); background: #1a1610; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .card h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .kind { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+  .card .desc { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .params { display: grid; gap: 8px; }
+  .actions { display: flex; gap: 8px; margin-top: auto; padding-top: 2px; }
+  button.play { flex: 1; font-weight: 600; touch-action: none; }
+  .card.on button.play { background: #3a2a12; border-color: var(--hot); color: #ffe2b8; }
+  button.wav { color: var(--muted); font-size: 12px; }
+  button.wav:disabled { opacity: .5; cursor: progress; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 560px) {
+    .viz { height: 150px; }
+    h1 small { display: block; margin: 2px 0 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Dźwięki<small>synteza Web Audio, bez plików</small></h1>
+    <div class="status" id="status">Kliknij dowolny dźwięk, żeby włączyć audio</div>
+  </header>
+
+  <div class="globals">
+    <label class="row"><span>Głośność</span><output id="o-vol"></output>
+      <input id="g-vol" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+    <label class="row"><span>Pogłos</span><output id="o-rev"></output>
+      <input id="g-rev" type="range" min="0" max="1.5" step="0.01" value="0.5"></label>
+    <label class="row"><span>Odległość</span><output id="o-dist"></output>
+      <input id="g-dist" type="range" min="0" max="1" step="0.01" value="0.15"></label>
+    <label class="row"><span>Panorama</span><output id="o-pan"></output>
+      <input id="g-pan" type="range" min="-1" max="1" step="0.01" value="0"></label>
+    <label class="check"><input id="g-rand" type="checkbox"> Losowa pozycja</label>
+    <button id="stop" type="button">Zatrzymaj wszystko (Esc)</button>
+  </div>
+
+  <div class="viz" id="viz">
+    <canvas id="spec"></canvas>
+    <canvas id="scope"></canvas>
+    <div class="hint">Spektrogram: 30 Hz – 18 kHz</div>
+  </div>
+
+  <main id="groups"></main>
+
+  <footer>Dźwięki ciągłe: stuknij — włącz / wyłącz, przytrzymaj — gra, póki trzymasz. WAV pobiera bieżący wariant (render offline).</footer>
+</div>
+<script type="module" src="./dzwieki.js"></script>
+</body>
+</html>

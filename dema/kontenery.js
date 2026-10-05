@@ -16,7 +16,12 @@
 //    ładowni na sprite'ach z domalowanym ładunkiem.
 // Statki są tu tylko dla dema kontenerów — ring nie udaje życia (w grze statki
 // przyjdą z ruchu v2, Z14).
-import * as THREE from 'three';
+//
+// WebGPU (2026-10-04): host jak demo ringu (halo_ring_demo.js) — WebGPURenderer
+// z limitami adaptera, sprite kadłuba w TSL, budowa ringu asynchroniczna
+// (await ring.ready przed trybem lotu K-7 — hale i zatoki są dopiero po niej).
+import * as THREE from 'three/webgpu';
+import { Discard, Fn, If, cos, dot, float, max, normalize, pow, sin, smoothstep, texture, uniform, uv, vec3, vec4 } from 'three/tsl';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
 import { HALO_GEOMETRY_DEFAULTS, HALO_QUALITY } from '../src/3d/haloRing/haloRingConfig.js';
 import { computeGameCameraHeight } from '../src/3d/haloRing/haloRingLayout.js';
@@ -39,6 +44,7 @@ import {
 import { CARGO3D_TUNE, CargoContainers3D } from '../src/3d/cargoContainers3D.js';
 import { CARGO_DRONE_TUNE, CargoDrones3D, pushCargoScene } from '../src/3d/cargoDrones3D.js';
 import { RESOURCES } from '../src/data/resources.js';
+import { getPlaceholderStats, installPlaceholders } from '../src/3d/tsl/zamiennik.js';
 
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
@@ -56,16 +62,34 @@ function reportError(text) {
 window.addEventListener('error', (e) => reportError(`JS: ${e.message} @ ${e.filename}:${e.lineno}`));
 
 // ---------------------------------------------------------------------------
-// Renderer i scena (demo jest hostem — moduły go nie tworzą)
+// Renderer i scena (demo jest hostem — moduły go nie tworzą). Tylko WebGPU:
+// limity z adaptera (domyślne urządzenie ma 8192 px tekstury — mapy „Ultra” 16K).
 const canvas = $('view');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: shotMode });
+const WANTED_LIMITS = ['maxTextureDimension2D', 'maxTextureArrayLayers', 'maxSampledTexturesPerShaderStage',
+  'maxInterStageShaderVariables', 'maxVertexAttributes', 'maxStorageBuffersPerShaderStage', 'maxStorageTexturesPerShaderStage',
+  'maxColorAttachmentBytesPerSample', 'maxBufferSize', 'maxStorageBufferBindingSize'];
+const adapter = navigator.gpu ? await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }) : null;
+if (!adapter) {
+  reportError('Demo wymaga przeglądarki z WebGPU (brak adaptera).');
+  throw new Error('brak WebGPU');
+}
+const requiredLimits = {};
+for (const k of WANTED_LIMITS) if (Number.isFinite(adapter.limits[k])) requiredLimits[k] = adapter.limits[k];
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, alpha: false, requiredLimits });
+await renderer.init();
+if (!renderer.backend.isWebGPUBackend) {
+  reportError('Demo wymaga WebGPU (three przeszedł na zapasowy backend WebGL2).');
+  throw new Error('brak WebGPU');
+}
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.autoClear = false;
 renderer.info.autoReset = false;
-renderer.debug.onShaderError = (gl, program, vs, fs) => {
-  reportError(`SHADER: ${[gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs)].filter(Boolean).join('\n')}`);
-};
+renderer.highPrecision = true;
+// bezpiecznik: ShaderMaterial (GLSL) rysuje się magentą z ostrzeżeniem (licznik w stats)
+installPlaceholders(renderer);
+// błędy walidacji WebGPU / WGSL (odpowiednik debug.onShaderError z WebGL)
+renderer.backend.device.addEventListener('uncapturederror', (e) => reportError(`WEBGPU: ${e.error?.message || e.error}`));
 
 const quality = HALO_QUALITY[params.get('quality')] ? params.get('quality') : 'high';
 const scene = new THREE.Scene();
@@ -80,6 +104,12 @@ scene.add(sky.mesh);
 const gameBg = createGameBackground(renderer, { starsZ: -(HALO_GEOMETRY_DEFAULTS.width + 3000) });
 scene.add(gameBg.group);
 const post = createPost(renderer);
+
+// Budowa ringu jest asynchroniczna (mapy, bryły, hale K-7 i zatoki) — tryb lotu
+// i rejestr stanowisk potrzebują hal, więc dalej dopiero po niej.
+$('loading').style.display = 'block';
+const ringOk = await ring.ready;
+if (!ringOk) reportError(`Budowa ringu nie wyszła: ${ring.error?.message || ring.error}`);
 
 // Kontenery i drony (warstwa świata ortho; światła dronów w FG).
 CargoContainers3D.attach(scene);
@@ -123,34 +153,38 @@ function shipTexture(path) {
   if (!t) {
     t = texLoader.load(path.startsWith('/') ? path : '/' + path);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    t.anisotropy = renderer.getMaxAnisotropy();
     texCache.set(path, t);
   }
   return t;
 }
+// TSL (dawny ShaderMaterial 1:1): graf na sprite (kilkanaście statków dema),
+// wartości w material.uniforms — obiekty z .value, placeSprite / setDeckMode bez zmian.
 function litSpriteMaterial(tex) {
-  return new THREE.ShaderMaterial({
-    uniforms: { uMap: { value: tex }, uLightDir: { value: new THREE.Vector3(0, 0, 1) }, uRot: { value: 0 } },
-    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: /* glsl */`
-      uniform sampler2D uMap; uniform vec3 uLightDir; uniform float uRot;
-      varying vec2 vUv;
-      void main() {
-        vec4 t = texture2D(uMap, vUv);
-        if (t.a < 0.45) discard;
-        vec2 p = vUv * 2.0 - 1.0;
-        vec3 n = normalize(vec3(p.x * 0.45, p.y * 0.45, 1.0));
-        float c = cos(uRot); float s = sin(uRot);
-        n = normalize(vec3(n.x * c - n.y * s, n.x * s + n.y * c, n.z));
-        float d = max(0.0, dot(n, uLightDir));
-        vec3 col = t.rgb * (0.24 + 1.18 * d);
-        vec3 h = normalize(uLightDir + vec3(0.0, 0.0, 1.0));
-        col += vec3(pow(max(dot(n, h), 0.0), 32.0) * 0.3 * smoothstep(-0.02, 0.08, dot(n, uLightDir)));
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-    depthWrite: true,
-    depthTest: true
-  });
+  const uMap = texture(tex);
+  const uLightDir = uniform(new THREE.Vector3(0, 0, 1));
+  const uRot = uniform(0);
+  const m = new THREE.NodeMaterial();
+  m.name = 'KonteneryDemoSprite';
+  m.fragmentNode = Fn(() => {
+    const vUv = uv();
+    const t = uMap.sample(vUv).toVar();
+    If(t.a.lessThan(0.45), () => { Discard(); });
+    const p = vUv.mul(2.0).sub(1.0);
+    const n0 = normalize(vec3(p.x.mul(0.45), p.y.mul(0.45), 1.0)).toVar();
+    const c = cos(uRot);
+    const s = sin(uRot);
+    const n = normalize(vec3(n0.x.mul(c).sub(n0.y.mul(s)), n0.x.mul(s).add(n0.y.mul(c)), n0.z)).toVar();
+    const ndl = dot(n, uLightDir).toVar();
+    const col = t.rgb.mul(float(0.24).add(max(0.0, ndl).mul(1.18))).toVar();
+    const h = normalize(uLightDir.add(vec3(0.0, 0.0, 1.0)));
+    col.addAssign(vec3(pow(max(dot(n, h), 0.0), 32.0).mul(0.3).mul(smoothstep(-0.02, 0.08, ndl))));
+    return vec4(col, 1.0);
+  })();
+  m.depthWrite = true;
+  m.depthTest = true;
+  m.uniforms = { uMap, uLightDir, uRot };
+  return m;
 }
 function makeShipSprite(w, h, tex) {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), litSpriteMaterial(tex));
@@ -410,8 +444,9 @@ function deckSummary(deck) {
 let viewW = 1;
 let viewH = 1;
 function onResize() {
-  viewW = window.innerWidth;
-  viewH = window.innerHeight;
+  // ≥ 1 px: okno 0 × 0 (karta w tle) to w WebGPU pusty cel głębi i łańcucha wymiany
+  viewW = Math.max(1, window.innerWidth);
+  viewH = Math.max(1, window.innerHeight);
   const q = HALO_QUALITY[quality];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2) * q.pixelRatio);
   post.configure({ msaa: q.msaa, bloomResolution: q.bloomScale });
@@ -782,7 +817,7 @@ function step(dt) {
   renderer.info.reset();
   prepareFrame(dt);
   renderScene();
-  lastStats.calls = renderer.info.render.calls;
+  lastStats.calls = renderer.info.render.drawCalls;
   lastStats.triangles = renderer.info.render.triangles;
   post.finish(dt);
 }
@@ -829,7 +864,7 @@ window.__cargo = {
   ready: false,
   ring,
   get stats() {
-    return { ...lastStats, containers: { ...CargoContainers3D.stats }, drones: { ...CargoDrones3D.stats }, errors: shaderErrors.slice(), mode, zoom: gameCam.zoom, T: clock.T };
+    return { ...lastStats, containers: { ...CargoContainers3D.stats }, drones: { ...CargoDrones3D.stats }, errors: shaderErrors.slice(), placeholders: getPlaceholderStats().builds, mode, zoom: gameCam.zoom, T: clock.T };
   },
   view(i) { applyView(i - 1); return VIEWS[viewIndex].name; },
   center(label, zoom, du = 0, dv = 0) { return centerOn(label, zoom, du, dv); },
@@ -859,7 +894,8 @@ window.__cargo = {
     for (let i = 0; i < n; i++) step(dt);
     return { ...lastStats };
   },
-  waitMaps() {
+  async waitMaps() {
+    await ring.ready;
     return new Promise((resolve) => {
       const tick = () => {
         const texReady = [...texCache.values()].every((t) => t.image && t.image.complete !== false && (t.image.width || t.image.naturalWidth));

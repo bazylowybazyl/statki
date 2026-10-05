@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dema — Super Capital</title>
+<title>Dema — HULLFALL</title>
 <style>
   :root {
     --bg: #070a10;
@@ -76,13 +76,16 @@ const GROUPS = [
     ['warp-webgpu.html', 'Warp „Nurt”'],
     ['atlas3d-webgpu.html', 'Okręty 3D'],
     ['rdzen-webgpu.html', 'Rdzeń reaktora'],
+    ['mostki-webgpu.html', 'Mostki — utrata dowodzenia'],
     ['destruktor2d-webgpu.html', 'Destruktor 2D — belki na GPU'],
     ['tarcza-webgpu.html', 'Tarcza nowej generacji'],
     ['laser-webgpu.html', 'Działo laserowe'],
     ['ladownia-webgpu.html', 'Ładownie à la Venator'],
     ['gazy-webgpu.html', 'Gazy i pył'],
+    ['wybuchy-webgpu.html', 'Wybuchy i dym — gaz 3D jak Niagara Fluids'],
     ['tlo-kosmosu-webgpu.html', 'Tło kosmosu — generator'],
     ['halo_ring_demo.html', 'Halo — ring planetarny'],
+    ['kontenery.html', 'Kontenery i drony (Z5)'],
     ['webgpu-spike.html', 'Spike WebGPU — port renderu'],
   ]],
   ['Ringi, porty i budowle', [
@@ -92,14 +95,14 @@ const GROUPS = [
     ['orbital_ring_gameplay_hub_v3.html', 'K-7 v2 — 26 stanowisk'],
     ['ringprocedural.html', 'Ring City — miasto na pierścieniu'],
     ['budowle-portowe.html', 'Budowle portowe (Z7)'],
-    ['kontenery.html', 'Kontenery i drony (Z5)'],
+    ['suchy-dok-piratow.html', 'Suchy dok piratów (misja 1)'],
     ['gigantyczny_dok_kosmiczny_3d.html', 'Gigantyczny dok — 3D'],
     ['gigantyczny_dok_kosmiczny (1).html', 'Gigantyczny dok'],
     ['dok_bebnowy_2d.html', 'Dok bębnowy — 2D'],
     ['fighter production array.html', 'Orbitalna fabryka myśliwców'],
   ]],
   ['Zniszczenia, mostki, rdzenie', [
-    ['mostki-demo.html', 'Mostki — kill przez mostek'],
+    ['mostki-demo.html', 'Mostki — kill przez mostek (heksy, wersja pierwsza)'],
     ['rdzen-demo.html', 'Rdzeń statku'],
     ['damage-fx-demo.html', 'Zniszczenia — hardpoint, silnik, rozszczelnienie'],
     ['destructioneffects.html', 'Destruction effects — chain / cut / scatter'],
@@ -141,6 +144,9 @@ const GROUPS = [
     ['celownik/celownik group.html', 'Celownik — grupa'],
     ['celownik/celownik subsytem.html', 'Celownik — podsystem'],
   ]],
+  ['Dźwięk', [
+    ['dzwieki.html', 'Dźwięki — synteza Web Audio'],
+  ]],
 ];
 
 // /dema bez ukośnika — linki względne liczone od katalogu dem.
@@ -156,7 +162,7 @@ for (const [title, demos] of GROUPS) {
     a.className = 'demo';
     a.href = new URL(file.split('/').map(encodeURIComponent).join('/'), base).href;
     a.dataset.q = (name + ' ' + file).toLowerCase();
-    const gpu = /webgpu/i.test(file) || file === 'halo_ring_demo.html';
+    const gpu = /webgpu/i.test(file) || file === 'halo_ring_demo.html' || file === 'kontenery.html';
     a.innerHTML = `<div class="name"></div><div class="file"></div>`;
     a.firstChild.textContent = name;
     if (gpu) a.firstChild.insertAdjacentHTML('beforeend', '<span class="tag">WebGPU</span>');

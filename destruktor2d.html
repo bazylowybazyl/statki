@@ -86,6 +86,7 @@
       <option value="terran_carrier">Lotniskowiec Terran</option>
       <option value="pirate_destroyer">Niszczyciel piracki</option>
       <option value="long_haul_freighter">Frachtowiec daleki</option>
+      <option value="drydock">Suchy dok piratów (brama taranowa parkingu, zakotwiczony)</option>
       <option value="none">brak (tylko ściana)</option>
     </select></div>
     <div class="row"><label for="opt-pose">Ustawienie</label><select id="opt-pose">
@@ -207,7 +208,7 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { DestructorBeams3D, createBeamConfig } from './src/game/destructorBeams3D.js';
+import { DestructorBeams3D, createBeamConfig, pinBeamNodes } from './src/game/destructorBeams3D.js';
 import { BeamShips3D } from './src/3d/beamShips3D.js';
 import { buildSpriteBeamStructure } from './src/game/beamSprite2D.js';
 import { cloneBeamStructure } from './src/game/beamCrashScene3D.js';
@@ -217,6 +218,11 @@ import {
 import { BeamWeapons3D } from './src/game/beamWeapons3D.js';
 import { BeamWeaponsVisual3D } from './src/3d/beamWeaponsVisual3D.js';
 import { getHullRenderSize } from './src/data/ships.js';
+// Suchy dok piratów (misja 1): rzut modułu stanowisk z góry = płaska kratownica (ocena F0: ciała świata w grze płaskie)
+import { createPirateDryDockLayout } from './src/3d/portBuildings/pirateDryDockLayout.js';
+import { buildPirateDryDockScene } from './src/3d/portBuildings/pirateDryDockScene.js';
+import { resolvePortBuildingStyle } from './src/3d/portBuildings/portBuildingStyle.js';
+import { DRYDOCK_TEST_MODULE, dryDockPlanarSolids, dryDockTopRaster } from './src/3d/portBuildings/pirateDryDockChunks.js';
 
 const D = DestructorBeams3D;
 const asset = (path) => new URL(path, import.meta.url).href;
@@ -321,8 +327,44 @@ function toast(msg, holdMs = 2600) {
 }
 
 // ============================== KADŁUBY ==============================
+// Moduł suchego doku: koniec parkingu od strony wjazdu — odcinek trzonu, rama z pylonami, cienka brama taranowa
+// G-W, ogrodzenie z bramami pierwszych stanowisk (bryły przecinające płaszczyznę gry) — rzut z góry jest maską
+// kratownicy i skórą (jak sprite kadłuba). Obraz: x wzdłuż trzonu (brama po lewej), w górę parking. Atlas
+// taranuje bramę wzdłuż toru (kukła stoi bramą do Atlasa, bez wyboru ustawienia). Kotwice (resztę doku trzyma
+// reszta konstrukcji): tył trzonu od hali, cięcia trzonu na końcach odcinka, cięcie ogrodzenia ku dalszym
+// stanowiskom. Komórka ×1,5 — cienkie bramy (40 j.) mają zostać w kratownicy.
+function dryDockHull() {
+  const layout = createPirateDryDockLayout();
+  const style = resolvePortBuildingStyle('pirate');
+  const solids = dryDockPlanarSolids(layout, buildPirateDryDockScene(layout, style), DRYDOCK_TEST_MODULE);
+  const r = dryDockTopRaster(solids, { unitsPerPx: 4, palette: style.palette });
+  const canvas = document.createElement('canvas');
+  canvas.width = r.width;
+  canvas.height = r.height;
+  canvas.getContext('2d').putImageData(new ImageData(r.data, r.width, r.height), 0, 0);
+  // lokalne kratownicy (sampleSpriteLattice: lewy brzeg siatki = lewy brzeg obrazu, górny = górny, y w górę; węzły
+  // względem środka masy — latticeMin = początek siatki − środek masy) → układ doku (x, z)
+  const zq = layout.spec.spineHalfDepth;
+  const seg = layout.spine.segments.find((q) => q.id === 'S-1');
+  const xMax = r.x0 + r.worldW;
+  const zBottom = (st) => r.z1 - st.spriteSkin.ny * st.spriteSkin.cellSize;
+  const pin = (x, y, cs, st) => {
+    const hx = x - st.latticeMin.x + r.x0;
+    const hz = y - st.latticeMin.y + zBottom(st);
+    return hz < -zq + 1.2 * cs || (hz < zq && (hx < seg.x0 + 1.2 * cs || hx > seg.x1 - 1.2 * cs)) || hx > xMax - 1.2 * cs;
+  };
+  // y lokalne toru taranu (środek bramy G-W) — na osi dziobu Atlasa
+  const laneY = (st) => layout.parking.laneZ - zBottom(st) + st.latticeMin.y;
+  return { id: 'drydock', img: canvas, w: r.worldW, h: r.worldH, imageData: r, cellScale: 1.5, anchored: true, pin, pose: 0, laneY };
+}
+
 async function loadHull(id) {
   if (hullCache.has(id)) return hullCache.get(id);
+  if (id === 'drydock') {
+    const hull = dryDockHull();
+    hullCache.set(id, hull);
+    return hull;
+  }
   const def = HULLS[id];
   const img = new Image();
   img.src = def.src;
@@ -342,7 +384,7 @@ async function loadHull(id) {
 
 function hullStructure(hull) {
   const frames = val('opt-frame'), bulkheads = val('opt-bulkhead');
-  const cellsAlong = Math.max(4, Math.round(hull.w / cellSize));
+  const cellsAlong = Math.max(4, Math.round(hull.w / (cellSize * (hull.cellScale || 1))));
   const key = `${hull.id}|${cellsAlong}|${frames}|${bulkheads}`;
   let structure = structureCache.get(key);
   if (!structure) {
@@ -438,8 +480,14 @@ async function resetScene() {
   let frontX = ab[0] + ab[3];   // najdalszy punkt na osi dziobu (Atlas albo kukła)
   dummy = null;
   if (dummyStructure) {
-    dummy = D.createBody(dummyStructure, { name: 'kukła', massMultiplier: density * val('opt-mass') });
-    const pose = val('opt-pose') * Math.PI / 180;
+    dummy = D.createBody(dummyStructure, { name: dummyHull.anchored ? 'suchy dok' : 'kukła', massMultiplier: density * val('opt-mass'), anchored: !!dummyHull.anchored });
+    if (dummyHull.anchored) {
+      // kotwice modułu (dryDockHull: tył trzonu, cięcia trzonu i ogrodzenia ku reszcie doku)
+      const cs = dummy.cellSize;
+      pinBeamNodes(dummy, (x, y) => dummyHull.pin(x, y, cs, dummyStructure));
+    }
+    // moduł doku stoi bramą taranową do Atlasa; kadłuby — ustawienie z panelu
+    const pose = Number.isFinite(dummyHull.pose) ? dummyHull.pose : val('opt-pose') * Math.PI / 180;
     setPlanarHeading(dummy, pose);
     // Kukła na osi dziobu: odstęp liczony od zasięgu obróconego kadłuba wzdłuż X.
     const db = dummy._localBounds;
@@ -447,7 +495,8 @@ async function resetScene() {
     const reachX = Math.abs(c) * db[3] + Math.abs(s) * db[4];
     const centerX = c * db[0] - s * db[1], centerY = s * db[0] + c * db[1];
     dummy.pos.x = ab[0] + ab[3] + DUMMY_GAP + reachX - centerX;
-    dummy.pos.y = -centerY;
+    // moduł doku: na osi dziobu leży tor taranu (środek bramy G-W), nie środek obwiedni modułu
+    dummy.pos.y = dummyHull.laneY ? -(c * dummyHull.laneY(dummyStructure)) : -centerY;
     frontX = dummy.pos.x + centerX + reachX;
     bodies.push(dummy);
   }

@@ -19,6 +19,7 @@ import { createProgress, grantExp, rankProgress } from './progression.js';
 import { buildDockIntroKeys, keysDuration, sampleKeys, topDownPose } from './introCamera.js';
 import { k7AxesGame, k7BerthPose, k7FrameFor, k7HallCenter, k7HubToGame, k7IsOutsideHall, k7LayoutTemplate } from './k7Dock.js';
 import { planFleetWave, planShipyard, SHIPYARD_TUNE } from './shipyardLayout.js';
+import { dryDockChunkAt, dryDockNearestChunk, planDryDockChain } from '../../3d/portBuildings/pirateDryDockLayout.js';
 import { createCloak, isCloakHidden } from '../cloak.js';
 import { mission01, MISSION01 } from './missions/mission01.js';
 
@@ -31,11 +32,17 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 
+// Odległość punktu (px, py) od odcinka (x0, y0) → (x0 + dx, y0 + dy) o długości len.
+function segPointDist(x0, y0, dx, dy, len, px, py) {
+  const t = Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / (len * len)));
+  return Math.hypot(x0 + dx * t - px, y0 + dy * t - py);
+}
+
 function newPose() {
   return { eye: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, fov: 40 };
 }
 
-export const STORY_PHASES = Object.freeze(['intro', 'briefing', 'undock', 'course', 'approach', 'ram', 'defences', 'shipyard', 'counter', 'victory', 'return', 'done']);
+export const STORY_PHASES = Object.freeze(['intro', 'briefing', 'undock', 'course', 'scout', 'approach', 'ram', 'defences', 'shipyard', 'counter', 'victory', 'return', 'done']);
 
 // Stany suwnic: płynne przejście między „podpięta” i „schowana”.
 const CRANE_KEYS = ['bridge', 'trolley', 'lower', 'clamp', 'extension', 'lock', 'flow'];
@@ -82,6 +89,7 @@ export const StoryGame = {
     objective: null,      // { id, text, progress: () => string }
     hint: null,           // { spec, until, done, doneAt, shownAt }
     markers: new Map(),   // id → { x, y, label }
+    targets: new Map(),   // id → { entity, label, radius } — wybrane cele do zniszczenia, śledzone na żywo
     summary: null,        // { title, subtitle, reward, resolve }
     banner: null,         // { text, until }
     course: null          // { x, y, label }
@@ -91,6 +99,7 @@ export const StoryGame = {
   _timers: [],
   _arrivalQueue: [],
   _groups: [],
+  _fogMassIds: new Set(),   // sygnatury masy postawione przez misję (mgła wojny) — zdejmowane przy resecie
   site: null,
   journalEntry: null,
 
@@ -195,6 +204,8 @@ export const StoryGame = {
     this.site = null;
     this.journalEntry = null;
     this.phase = null;
+    for (const id of this._fogMassIds) this.deps?.clearMassSignature?.(id);
+    this._fogMassIds.clear();
   },
 
   emit(name, data = {}) {
@@ -497,6 +508,7 @@ export const StoryGame = {
     this.ui.objective = null;
     this.ui.hint = null;
     this.ui.markers.clear();
+    this.ui.targets.clear();
     this.ui.course = null;
     if (this.ui.summary) { const r = this.ui.summary.resolve; this.ui.summary = null; r?.(); }
   },
@@ -577,24 +589,43 @@ export const StoryGame = {
     const earth = this._earth() || d.ship().pos;
     const au = d.worldUnitsPerAu?.() || 42253.52;
     const belt = d.belt?.();
-    const ea = Math.atan2(earth.y - sun.y, earth.x - sun.x);
     // Obrzeża (decyzja użytkownika): za pasem i za orbitą Jowisza (50,2 AU mapy — jego ring i księżyce sięgają
-    // ~250 tys. j.), przed Saturnem (80,6 AU). Kąt: jak najbliżej kierunku Ziemi (krótszy skok), z dala od planet.
+    // ~250 tys. j.), przed Saturnem (80,6 AU).
     const r = Math.max(belt && belt.outer > 0 ? belt.outer + 8 * au : 0, 57 * au);
-    const clear = 420000;
+    // Kierunek (poprawka 2026-10-05): stocznia leży PRZED BRAMĄ hali K-7, nie „za Ziemią od Słońca”. Ring ma
+    // stały obrót, a Ziemia krąży — brama często patrzyła w stronę Słońca i stocznia wypadała za planetą:
+    // gracz objeżdżał studnię, a kurs warpa pojawiał się dopiero za nią. Teraz prosta brama → stocznia nie
+    // przecina studni Ziemi, omija Słońce i studnie innych planet; liczy się odchyłka od osi bramy.
+    const frame = this._earth() && k7FrameFor(earth, 0);
+    const hall = frame && k7HallCenter(earth, 0);
+    const gate = hall ? { x: hall.x, y: hall.y } : { x: earth.x, y: earth.y };
+    let outA = Math.atan2(earth.y - sun.y, earth.x - sun.x);
+    if (frame) { const { out } = k7AxesGame(frame); outA = Math.atan2(out.y, out.x); }
+    const clear = 420000;          // [j.] stocznia z dala od planet (studnie, księżyce)
+    const pathClear = 300000;      // [j.] tor skoku z dala od innych planet
+    const sunClear = 4 * au;       // [j.] tor skoku z dala od Słońca
     const planets = d.planets?.() || [];
+    const ea = Math.atan2(gate.y - sun.y, gate.x - sun.x);
     let best = null;
-    for (let i = -18; i <= 18; i++) {
+    for (let i = -52; i <= 52; i++) {
       const a = ea + i * 0.06;
       const x = sun.x + Math.cos(a) * r, y = sun.y + Math.sin(a) * r;
+      const dx = x - gate.x, dy = y - gate.y;
+      const len = Math.hypot(dx, dy) || 1;
+      let dev = Math.atan2(dy, dx) - outA;
+      dev = Math.abs(Math.atan2(Math.sin(dev), Math.cos(dev)));
+      let score = -dev * 6 * au;
       let minD = Infinity;
       for (const p of planets) {
         if (!p || p === earth) continue;
         const dd = Math.hypot(p.x - x, p.y - y);
         if (dd < minD) minD = dd;
+        const seg = segPointDist(gate.x, gate.y, dx, dy, len, p.x, p.y);
+        if (seg < pathClear) score += (seg - pathClear) * 4;
       }
-      // za blisko planety — kara rośnie szybko; dalej od Ziemi (kąt) — łagodnie
-      const score = (minD >= clear ? 0 : (minD - clear) * 4) - Math.abs(i) * 0.06 * au;
+      if (minD < clear) score += (minD - clear) * 4;
+      const sunSeg = segPointDist(gate.x, gate.y, dx, dy, len, sun.x, sun.y);
+      if (sunSeg < sunClear) score += (sunSeg - sunClear) * 4;
       if (!best || score > best.score) best = { x, y, score };
     }
     return { x: best.x, y: best.y };
@@ -603,18 +634,23 @@ export const StoryGame = {
   _planSite() {
     const center = this._shipyardCenter();
     const earth = this._earth() || this.deps.ship().pos;
-    // obrys budynku (stacja piracka w skali gry) — rząd, wieżyczki i eskorta za nim
-    const buildingRadius = Math.max(600, Number(this.deps.pirateStationVisualRadius?.(280)) || 1000);
-    const plan = planShipyard(center, earth, { buildingRadius });
+    // budynek = suchy dok piratów (src/3d/portBuildings/pirateDryDockLayout.js): okręty w stanowiskach,
+    // eskorta w hali, wieżyczki w punktach obrony; obrys (ramka celu) = połowa przekątnej obwiedni doku
+    const plan = planShipyard(center, earth);
     const self = this;
     const site = {
       ...plan,
-      station: null, parkedList: [], turretList: [], defenderList: [], alarmed: false, origin: null,
+      station: null, parkedList: [], turretList: [], defenderList: [], alarmed: false, alarmAt: -1, origin: null,
       parkedCount() { return site.parkedList.length; },
       // Zmiażdżony = zniszczony albo z kadłuba została mniej niż trzecia część konstrukcji (taran zostawia
       // resztkę z ułamkiem punktu — sufit punktów z konstrukcji nie schodzi do zera).
-      parkedKilled() { return site.parkedList.filter((n) => n.dead || n.hp <= 0 || (self.deps.hullRatio?.(n) ?? 1) < 0.3).length; },
-      rammed() { return site.parkedList.some((n) => n.dead || n.hp < (n.maxHp || n.hp) * 0.995 || self.deps.hasContact?.(self.deps.ship(), n)); },
+      parkedCrushed(n) { return !!n && (n.dead || n.hp <= 0 || (self.deps.hullRatio?.(n) ?? 1) < 0.3); },
+      parkedKilled() { return site.parkedList.filter((n) => site.parkedCrushed(n)).length; },
+      // okręt z parkingu w styku z Atlasem (taran) — inaczej zniszczony z dystansu (Hexlance)
+      parkedTouching(n) { return !!n && !!self.deps.hasContact?.(self.deps.ship(), n); },
+      // taran: staranowana brama parkingu (gra ustawia gateRammed) albo dotknięty okręt z rzędu
+      gateRammed: false,
+      rammed() { return site.gateRammed || site.parkedList.some((n) => n.dead || n.hp < (n.maxHp || n.hp) * 0.995 || self.deps.hasContact?.(self.deps.ship(), n)); },
       turretCount() { return site.turretList.length; },
       turretsAlive() { return site.turretList.filter((n) => !n.dead && n.hp > 0).length; },
       turretsKilled() { return site.turretCount() - site.turretsAlive(); },
@@ -634,13 +670,17 @@ export const StoryGame = {
 
   _spawnSite(site) {
     const d = this.deps;
-    site.station = d.spawnPirateStation({ id: 'PIR_YARD', x: site.building.x, y: site.building.y, r: 280, hp: 16000, shield: 4000, name: 'Stocznia piratów' });
-    for (const p of site.parked) {
+    // Budynek: suchy dok piratów (bryła 3D + byt stacji z bryłami trafień); bez kleju doku (atrapy testów) —
+    // zwykła stacja piracka w środku zakładu.
+    const spec = { id: 'PIR_YARD', x: site.building.x, y: site.building.y, r: 600, hp: 16000, shield: 4000, name: 'Suchy dok piratów', dock: site.dock };
+    site.station = (d.spawnPirateDryDock || d.spawnPirateStation)(spec);
+    site.parked.forEach((p, i) => {
       const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
-      if (!e) continue;
+      if (!e) return;
+      e.__dockBerth = i;
       this._park(e, 'parked');
       site.parkedList.push(e);
-    }
+    });
     for (const t of site.turrets) {
       const e = d.spawnTurret?.({ x: t.x, y: t.y, angle: t.angle });
       if (!e) continue;
@@ -652,6 +692,11 @@ export const StoryGame = {
     for (const p of site.defenders) {
       const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
       if (!e) continue;
+      // eskorta czeka na polu hali; na alarm wylatuje bramą (trasa z układu doku)
+      e.__storyLaunch = p.launch || null;
+      e.__storyLaunchDelay = Number.isFinite(p.delay) ? p.delay : null;
+      e.__dockGate = p.gate || null;
+      if (p.flagship) { e.__storyFlagship = true; site.flagship = e; }
       this._park(e, 'defender');
       site.defenderList.push(e);
     }
@@ -678,9 +723,22 @@ export const StoryGame = {
   _alarm(site) {
     if (site.alarmed) return;
     site.alarmed = true;
+    site.alarmAt = this.time;
     for (const e of site.turretList) if (!e.dead) this.deps.wakeNpc(e);
-    for (const e of site.defenderList) if (!e.dead) this.deps.wakeNpc(e);
+    // eskorta wylatuje z hali kolejno bramami (gra prowadzi trasę i oddaje okręt mózgowi bojowemu za bramą)
+    site.defenderList.forEach((e, i) => {
+      if (e.dead) return;
+      if (e.__storyLaunch && this.deps.launchNpc) this.deps.launchNpc(e, e.__storyLaunch, e.__storyLaunchDelay ?? 0.8 + i * 1.3);
+      else this.deps.wakeNpc(e);
+    });
     this.deps.shake?.(10, 0.4);
+  },
+
+  _scouted(site) {
+    const seen = this.deps.fogSeen;
+    if (!seen) return true;
+    const ok = (e) => !!e && !e.dead && !!seen(e);
+    return ok(site.station) || site.parkedList.some(ok) || site.turretList.some(ok) || site.defenderList.some(ok);
   },
 
   _detected(site) {
@@ -688,7 +746,9 @@ export const StoryGame = {
     if (!ship || isCloakHidden(ship)) return false;
     const R = 9000;
     const near = (e) => e && !e.dead && Math.hypot((e.pos ? e.pos.x : e.x) - ship.pos.x, (e.pos ? e.pos.y : e.y) - ship.pos.y) < R;
-    if (site.station && Math.hypot(site.station.x - ship.pos.x, site.station.y - ship.pos.y) < R + 2000) return true;
+    // dok: odległość od obwiedni bryły (8 × 6,5 km), nie od środka
+    if (site.dock ? site.dock.distance(ship.pos.x, ship.pos.y) < R
+      : (site.station && Math.hypot(site.station.x - ship.pos.x, site.station.y - ship.pos.y) < R + 2000)) return true;
     return site.parkedList.some(near) || site.turretList.some(near) || site.defenderList.some(near);
   },
 
@@ -696,28 +756,77 @@ export const StoryGame = {
     return new Promise((resolve) => {
       const d = this.deps;
       const c = site.building;
-      // rozmiar wybuchu reaktora w j. świata (Atlas ≈ 280); zakład = seria po obwodzie, potem główny
-      const pts = [{ x: c.x, y: c.y, size: 420, t: 0 }];
-      for (let i = 0; i < 6; i++) {
-        const a = site.axis + i * (Math.PI * 2 / 6) + 0.3;
-        const r = 900 + (i % 2) * 700;
-        pts.push({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r, size: 240 + (i % 3) * 90, t: 0.35 + i * 0.32 });
-      }
-      pts.push({ x: c.x, y: c.y, size: 900, t: 2.5 });
       let tLast = 0;
-      const victims = [...site.parkedList, ...site.turretList].filter((e) => e && !e.dead);
+      const dock = site.dock;
+      if (dock) {
+        // Suchy dok: kawałki (przyszłe ciała silnika zniszczeń) odpadają po kotwicach od miejsca ostatniego
+        // trafienia (Hexlance), każdy z wybuchem; okręty na parkingu idą z odcinkami trzonu (rękawy, cumy).
+        const st = site.station;
+        let start = 'R-2';
+        if (st && Number.isFinite(st.lastHitX) && Number.isFinite(st.lastHitY)) {
+          const h = dock.toHub(st.lastHitX, st.lastHitY);
+          start = dryDockChunkAt(dock.layout, h.x, h.z) || dryDockNearestChunk(dock.layout, h.x, h.z)?.id || start;
+        }
+        const broken = new Set(d.dockBrokenChunks?.() || []);
+        const chain = planDryDockChain(dock.layout, start, { skip: broken });
+        for (const ch of chain) {
+          tLast = Math.max(tLast, ch.t);
+          this._after(ch.t, () => {
+            d.dockBreak?.(ch.id);
+            const box = dock.layout.chunkById.get(ch.id).box;
+            const p = dock.toGame((box.x0 + box.x1) / 2, (box.z0 + box.z1) / 2);
+            if (ch.size > 0) d.reactorBlow?.({ x: p.x, y: p.y, size: ch.size });
+            if (ch.kind === 'spine' || ch.kind === 'collar') d.shake?.(Math.min(40, 8 + ch.size * 0.03), 0.6);
+            if (ch.kind === 'spine') {
+              // okręt stanowiska przy tym odcinku trzonu idzie z nim — chwilę po nim, kolejne okręty odcinka
+              // co 0,3 s (reaktory okrętów nie biją naraz)
+              let k = 0;
+              for (const e of site.parkedList) {
+                if (!e || e.dead || dock.layout.berths[e.__dockBerth]?.segment !== ch.id) continue;
+                this._after(0.45 + 0.3 * k++, () => { if (!e.dead) d.killNpc?.(e, 'shipyard-chain'); });
+              }
+            }
+          });
+        }
+        // finał: wybuch w środku hali (magazyny paliwa przy ścianie tylnej)
+        tLast += 0.8;
+        const hc = dock.layout.hall.center;
+        const pc = dock.toGame(hc.x, hc.z + 600);
+        this._after(tLast, () => {
+          d.reactorBlow?.({ x: pc.x, y: pc.y, size: 520 });
+          d.shake?.(30, 0.9);
+        });
+      } else {
+        // rozmiar wybuchu reaktora w j. świata (Atlas ≈ 280); zakład = seria po obwodzie, potem główny
+        const pts = [{ x: c.x, y: c.y, size: 420, t: 0 }];
+        for (let i = 0; i < 6; i++) {
+          const a = site.axis + i * (Math.PI * 2 / 6) + 0.3;
+          const r = 900 + (i % 2) * 700;
+          pts.push({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r, size: 240 + (i % 3) * 90, t: 0.35 + i * 0.32 });
+        }
+        pts.push({ x: c.x, y: c.y, size: 900, t: 2.5 });
+        for (const p of pts) {
+          tLast = Math.max(tLast, p.t);
+          this._after(p.t, () => {
+            d.reactorBlow?.({ x: p.x, y: p.y, size: p.size });
+            d.shake?.(Math.min(40, 8 + p.size * 0.03), 0.6);
+          });
+        }
+      }
+      // reszta rzędu (niezabrana z trzonem — odcinek trzonu już wcześniej odpadł) i wieżyczki — wybuchy reaktorów
+      // po kolei
+      const withSpine = new Set();
+      if (dock) {
+        const left = new Set(planDryDockChain(dock.layout, 'R-2', { skip: new Set(d.dockBrokenChunks?.() || []) }).map((c) => c.id));
+        for (const e of site.parkedList) if (left.has(dock.layout.berths[e?.__dockBerth]?.segment)) withSpine.add(e);
+      }
+      const victims = [...site.parkedList, ...site.turretList].filter((e) => e && !e.dead && !withSpine.has(e));
+      const t0 = dock ? Math.max(1.2, tLast * 0.55) : 0.8;
       victims.forEach((e, i) => {
-        const t = 0.8 + i * 0.22;
+        const t = t0 + i * 0.22;
         tLast = Math.max(tLast, t);
         this._after(t, () => { if (!e.dead) d.killNpc?.(e, 'shipyard-chain'); });
       });
-      for (const p of pts) {
-        tLast = Math.max(tLast, p.t);
-        this._after(p.t, () => {
-          d.reactorBlow?.({ x: p.x, y: p.y, size: p.size });
-          d.shake?.(Math.min(40, 8 + p.size * 0.03), 0.6);
-        });
-      }
       this._after(tLast + 1.2, resolve);
     });
   },
@@ -746,11 +855,22 @@ export const StoryGame = {
           if (!spec) { self.ui.hint = null; return; }
           self.ui.hint = { spec, until: typeof until === 'function' ? until : null, done: false, doneAt: 0, shownAt: self.time };
         },
-        marker(id, point, label = '') {
+        // options.action: { mouse: 'rmb' | 'lmb', text } — podpowiedź akcji przy znaczniku (ikona myszy).
+        marker(id, point, label = '', options = {}) {
           if (!point) { self.ui.markers.delete(id); return; }
-          self.ui.markers.set(id, { x: point.x, y: point.y, label });
+          self.ui.markers.set(id, { x: point.x, y: point.y, label, action: options.action || null });
           if (self.journalEntry) self.journalEntry.pos = { x: point.x, y: point.y };
         },
+        // Cel bojowy wskazany przez skrypt misji; pozycję i stan czyta HUD z encji, nie ze snapshotu.
+        target(id, entity, label = '', options = {}) {
+          if (!entity) { self.ui.targets.delete(id); return; }
+          self.ui.targets.set(id, { entity, label: String(label || ''), radius: Number(options.radius) || 0 });
+          if (options.primary && self.journalEntry) {
+            const p = entity.pos || entity;
+            self.journalEntry.pos = { x: p.x, y: p.y };
+          }
+        },
+        clearTargets() { self.ui.targets.clear(); },
         banner(text, sec = 3) { self.ui.banner = { text, until: self.time + sec }; },
         summary(data) {
           return new Promise((resolve) => {
@@ -868,6 +988,20 @@ export const StoryGame = {
             self.setHud(false);
           });
         },
+        // Ujęcie w grze: kamera statku odjeżdża nad punkt świata, trzyma kadr i wraca (świat żyje; sterowanie
+        // zablokowane na czas dojazdu). spec: { viewHeight (j. świata w pionie kadru), inSec, holdSec, outSec,
+        // holdUntil() — kadr trzyma się do spełnienia warunku (holdSec = limit), wejście odblokowane w kadrze }.
+        lookAt(point, spec = {}) {
+          if (!point || !d.lookAt) return Promise.resolve();
+          self._block.add('look');
+          return new Promise((resolve) => {
+            d.lookAt({
+              ...spec, x: point.x, y: point.y,
+              onArrive: () => { if (spec.holdUntil) self._block.delete('look'); },
+              onDone: () => { self._block.delete('look'); resolve(); }
+            });
+          });
+        },
         // Koniec ujęć fabularnych: pasy, HUD i sterowanie wracają.
         release() {
           self._endCinema();
@@ -892,6 +1026,8 @@ export const StoryGame = {
         plan: () => self._planSite(),
         spawn: (site) => self._spawnSite(site),
         detected: (site) => self._detected(site),
+        // Rozpoznanie przez mgłę wojny: budynek albo okręt stoczni widziany przez stronę gracza (bez mgły — od razu).
+        scouted: (site) => self._scouted(site),
         alarm: (site) => self._alarm(site),
         chainExplosion: (site) => self._chainExplosion(site)
       },
@@ -910,6 +1046,22 @@ export const StoryGame = {
         },
         inWarp: () => (d.warpState?.() || 'idle') !== 'idle',
         distanceTo: (p) => dist(p)
+      },
+
+      // Mgła wojny (src/game/fogOfWar.js, SensorSystem): sygnatury masy (czujniki grawitacyjne — miejsce i masa
+      // bez tożsamości) i rozpoznanie bytu. Bez mgły (opcja) wszystko „widziane”, sygnatury rozpoznane od razu.
+      fog: {
+        enabled: () => !!d.fogEnabled?.(),
+        seen: (e) => !!e && (d.fogSeen ? !!d.fogSeen(e) : true),
+        mass(id, spec) {
+          self._fogMassIds.add(id);
+          return d.setMassSignature?.(id, spec) || null;
+        },
+        clearMass(id) {
+          self._fogMassIds.delete(id);
+          d.clearMassSignature?.(id);
+        },
+        massResolved: (id) => (d.massResolved ? !!d.massResolved(id) : true)
       },
 
       cloak: {

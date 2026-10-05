@@ -1,5 +1,10 @@
 # PORT: mostki — zniszczenie mostka = kill
 
+> **Stan 2026-10-05: mostki działają na kadłubach belkowych gry** (§ 9) — logika na komórkach siatki
+> belek (`src/game/shipBridgeBeams.js`), model 3D z wyrwami po komórkach (tryb siatki kwadratowej),
+> efekty agonii na pulach WebGPU, nowe demo `dema/mostki-webgpu.html`. Opisy heksowe niżej (§ 0–8)
+> zostają dla dema heksowego (`dema/mostki-demo.html`) i jako źródło liczb (strefy, oś czasu, benchmark).
+
 Stan na 2026-09-25: **mechanika jest wpięta do gry** (§0), a **model 3D
 mostka** (nadbudówka z oknami, cieniem i wyrwami z heksów 2D) też (§8) — na
 **całej flocie bojowej** Terra Nova i piratów oraz na lokomotywie
@@ -834,6 +839,110 @@ usunięty (razem z rdzeniami z dem: `reactor3D.tsl.js`, `coreFx3D.tsl.js` —
   `tests/mostkiRdzenieTSL.test.mjs` (WGSL w Node: limity, jeden materiał bryły,
   `GreaterDepth`, ONE/ONE rdzeni), `tests/shipLights3D.test.mjs`,
   `tests/shadowShaftsQuality.test.mjs` (maska w grafie TSL mostka).
+
+## 9. Kadłuby belkowe i WebGPU (2026-10-05)
+
+Od zadania 21 gra nie tworzy ciał heksowych — kadłuby statków, NPC i wraków stoją na silniku belek
+(`hullBodies.js`), a mostki (wszystko z § 0–8) wymagały `hexGrid`, więc były nieaktywne (etap 4
+w `docs/PORT-silnik-belek.md`). Port według wzorca rdzenia reaktora (`reactorCore.js`, `DEMO-RDZEN.md`):
+
+| plik | rola |
+|---|---|
+| `src/game/shipBridgeBeams.js` | **logika na belkach**: strefa → komórki siatki (ix, iy), pancerz węzłów, integralność, utrata dowodzenia, odcięcie z odłamem, wyrwa i wylot tunelu (obrys z chwili montażu), lock na mostek (`breach` / `exposed` / `centroid` / `center`), okna (dane szczelin), przekształcenia PNG ↔ siatka ↔ świat z pozą renderu; backend `BEAM_BRIDGE_BACKEND` |
+| `src/game/shipBridge.js` | funkcje ogólne oddają pracę backendowi stanu (`st.backend`): `bridgeGridToWorld`, `bridgePngToWorld`, `bridgeWorldToPng`, `bridgeWorldToGrid`, `updateShipBridges`, `evaluateShipBridges`, `getBridgeAimPoint`, `detachShipBridges`; `stepCommandLossDrift` bierze wymiary obrazu ze stanu; `releaseShipBridges` gasi flagę `isBridgeHulk` |
+| `src/game/shipBridgeRuntime.js` | `attachEntityBridges`: kadłub belkowy → `attachBeamBridges` (skala stref z obrazów kadłuba: render / PNG, jak rdzenie), heksowy → po staremu; `beginBridgeHulk` stawia `entity.isBridgeHulk` (EngineVfxSystem: bez plazmy skoku na hulku) |
+| `src/3d/bridge3D.js` | rekordy belkowe (`createBeamBridgeRecordCore`, `refreshBeamBridgeRecordDamage`, `beamBridgeInstanceBasis`): blok komórek pod modelem, maska 8 sąsiadów, żar węzła (`heat`/`heatStamp` jak skóra), gospodarz po rodzie `dmgKey` i po ciele silnika (wrak), odłamy z częścią mostka; `opts.visibility(e)`; `warmupMeshes()` do rejestru rozgrzewki |
+| `src/3d/bridge3D.tsl.js` | ten sam graf: tryb siatki kwadratowej (`aB3State.w < 0` = −bok komórki w px obrazu) — komórka = floor, brzeg rany od boków i narożników (8 bitów), poszarpany brzeg (`B3_SQUARE_FRAY`, szum przyklejony do siatki rodu); heksy bez zmian |
+| `src/3d/bridgeFx3D.js` | belki (okna i wyrzut przez backend) + **warstwa WebGPU**: rozszczelnienie i błyski pomieszczeń w siatce świateł Core3D, osmalenie wyrwy na mapie ran (`HullDamageMap.stampRecipe`), łuki przepięć w agonii (pula ARC `WeaponFx`, iskry `SparkSystem3D`); usługi z `attach(scena, { weaponFx })`, strojenie `BRIDGE_FX_TUNE.lightGain / arcRate / arcEnd / scorch` |
+| `dema/mostki-webgpu.html`, `.js`, `dema/mostki-webgpu/` | **demo WebGPU** (§ 9.3) |
+| `tests/shipBridgeBeams.test.mjs` (+ `tests/helpers/bridgeHulls.mjs`) | 9 testów na prawdziwych sprite'ach 11 kadłubów |
+| `scripts/webgpu/mostki-webgpu.mjs`, `scripts/webgpu/mostki-gra.mjs` | harness dema i gry (§ 9.4) |
+
+### 9.1 Model na belkach
+
+- **Komórki zamiast heksów.** Komórka należy do mostka, gdy jej środek spoczynkowy (= węzeł) leży
+  w strefie (pierwsza pasująca strefa). (ix, iy) i wymiary siatki są wspólne dla kadłuba, wraku
+  i odłamów (ród `hull.dmgKey`), więc rekordy, wyrwa i odcięcie liczą się jak u rdzenia. Strefa węższa
+  niż komórka (fregata piratów — 1 komórka, Custos — 3) dostaje komórkę pod swoim środkiem.
+  Komórek mostka (siatka 15 px): Bellator 36, Iron Skull 28, Atlas 51 + 16, Colossus 176, lokomotywa 576,
+  Citadella 28, Hasta 8, niszczyciel piratów 9, supercapital piratów 96.
+- **Pancerz**: maxHp i hp węzłów strefy × `armorMul` (1,5), baza w `Float64Array` (ponowny montaż
+  nie mnoży drugi raz, `detachShipBridges` przywraca). Jak u rdzenia czyta go tylko krater z budżetu
+  HP — ciężka broń z kraterem na miarę rany kopie tunel bez patrzenia na HP. **Lekkie działa
+  (działko, railgun Mk II) tylko wgniatają blachę** — w demie nie zabiją mostka wcale; armata
+  Bellatora: 23 strzały / ~7 s, Valkyrie ~6 s, Yamato ~3 s (pomiar w demie, `rateMul` 0,12).
+- **Integralność** = żywe komórki strefy w bieżącym ciele gospodarza ÷ startowe; sprawdzenie O(1),
+  gdy ciało i `activeNodes` bez zmian. Mostek odcięty rzazem (Hexlance) z kawałkiem kadłuba liczy
+  się jako zniszczony (komórki żyją na odłamie) — kadłub-matka traci dowodzenie.
+- Kill, oś czasu, hulk, dryf, okna, wylot tunelu — liczby z § 2 bez zmian (`BRIDGE_DEFAULTS`,
+  `BRIDGE_KILL_TIMELINE`).
+
+### 9.2 Model 3D i efekty
+
+- **Wyrwy po komórkach**: shader liczy ciągłe współrzędne komórek z modelu (`bridgeModelCellMap` —
+  obraz kadłuba → siatka belek ÷ bok komórki, w `aB3GridA/B`), komórka = floor; martwa — `discard`;
+  przy martwym sąsiedzie (boki i narożniki) — kęs do 0,34 komórki wg szumu (brzeg poszarpany jak
+  rozdarcia skóry, `hullTearFray`), przypalony brzeg × 1,7 i żar świeżego cięcia. Bez tego dziury
+  15 px wyglądały jak kwadraty.
+- **Wrak**: `convertToWreck` oddaje wrakowi to samo ciało silnika; rekord szuka gospodarza po rodzie
+  na liście renderu, a gdy wraku jeszcze na niej nie ma (mgła wojny: po pierwszej ocenie) — po
+  `body.entity`. Bez tropu ciała model znikał w klatce zamiany hulka we wrak.
+- **Widoczność** (`bridgeModelVisibility` w `index.html`): okręt rysowany modelem 3D statku (opcja
+  „Statki 3D”) ma nadbudówkę w modelu — mostek 3D się nie rysuje (logika działa); maskowanie gasi
+  model i okna jak światła okrętu (`cloakLightGain`).
+- **Agonia na WebGPU**: przepięcia (łuki 7/s gasnące do 1,4 s, od żywej komórki mostka albo blachy
+  przy strefie, gdy wyrwa zabrała całą), chłodny błysk rozszczelnienia w siatce świateł (oświetla
+  kadłub i sąsiadów), błyski pomieszczeń świecą w siatce, osmalona plama wzdłuż tunelu na mapie ran.
+  Tarcza hulka pęka (bez zasilania — `shield.val = 0`, efekt pęknięcia z puli tarcz).
+- **Rozgrzewka**: wpis `mostki 3D (bridge3D, szczeliny)` (bryła, cień na kadłubie, okna, szczeliny) —
+  w grze pipeline'y tworzone w klatkach od pojawienia się mostka do wraku: **0** (`mostki-gra.mjs`).
+
+### 9.3 Demo `dema/mostki-webgpu.html`
+
+`npm run dev` → `/dema/mostki-webgpu.html` (`?scene=kill|atlas|sever|fleet|close|range`, `?hull=`,
+`?clean=1`, `?test=1`). Wszystko jak w grze: Core3D, skóra kadłubów belkowych z dyszami i światłami
+pozycyjnymi z edytora (gasną w agonii), mapa ran, WeaponFx, siatka świateł, 11 kadłubów z mostkami.
+
+| klawisz | scena |
+|---|---|
+| 1 | **Utrata dowodzenia**: kolejne kadłuby, ostrzał z burty z namiarem „wyrwa” → mostek pada → agonia → wrak |
+| 2 | **Atlas: mostek zapasowy**: rufowy pada (okna gasną jego falą), dowodzi zapasowy, potem utrata |
+| 3 | **Odcięcie mostka (Hexlance)**: rzaz z pędem przed nadbudówką — rufa z mostkiem odlatuje, model zostaje na odłamie bez zasilania |
+| 4 | **Flota**: 11 kadłubów, mostki padają po kolei — agonie w skali bitwy |
+| 5 | **Zbliżenie**: kanał od burty do nadbudówki + precyzyjne kratery („wiertło”) — wyrwy w modelu z bliska, czas × 0,4 |
+| 6 | **Strzelnica**: LPM strzał (T — namiar na mostek), 1–5 broń, G — ogień ciągły, X — Hexlance przez kursor, PPM — działo |
+
+K — zniszcz mostek, X — odetnij, S — strefy, M — model 3D wł./wył., Z — zbliż, F — kadr, T — × 0,25.
+API: `window.__mostki2` (`scene`, `kill`, `sever`, `runFrames(n, fps, { realtime })`, `still(ukryte)`,
+`meshNames`, `stats`). Stare demo heksowe zostaje do porównania.
+
+### 9.4 Harness i pomiary
+
+```
+node scripts/webgpu/mostki-webgpu.mjs --tryb test        # 6 scen, błędy WebGPU/WGSL/JS
+node scripts/webgpu/mostki-webgpu.mjs --tryb zrzuty --scena close --czasy 1.5,4,6 [--kadlub battleship] [--czyste]
+node scripts/webgpu/mostki-webgpu.mjs --tryb wydajnosc --scena fleet
+node scripts/webgpu/mostki-gra.mjs                       # prawdziwa gra: pirat, utrata, wrak, Atlas, kompilacje w klatkach
+node --test tests/shipBridgeBeams.test.mjs tests/mostkiRdzenieTSL.test.mjs tests/shipBridge.test.mjs
+```
+
+- **Pułapka harnessu**: zegar efektów Core3D (światła, pule broni) idzie z klatką rAF. Kilka klatek
+  symulacji na jedną rAF (`runFrames` bez `realtime`) zostawia błyski żywe kilka razy dłużej —
+  światła kumulują się (115 → 230 żywych) i przepalają kadr. Zrzuty tylko z `realtime: true`
+  (harness tak robi; `--szybko` wyłącza).
+- Koszt (demo, flota 11 kadłubów): `Bridge3D.update` mediana 0,075 ms (p95 0,3), GPU klatki 0,28 ms.
+- W grze (`mostki-gra.mjs`): Atlas gracza — 51 + 16 komórek, model 3D; pirat-pancernik — 28 komórek,
+  model 3D; utrata dowodzenia 4 klatki po wyrwie, agonia z wyrzutem, łukami i światłami, wrak po
+  4 s z modelem; rufowy Atlasa pada — dowodzi zapasowy; 0 pipeline'ów w klatkach, bez błędów konsoli.
+
+### 9.5 Otwarte
+
+- Gracz nie ma już namiaru na mostek (tryb SUB usunięty przy kierowaniu ogniem, 2026-10-03) —
+  `getBridgeAimPoint` działa (demo), w grze trzeba by go wpiąć w cele priorytetowe / skaner.
+- Balans: pula HP kontra mostek (§ 3, § 7) — na belkach koszt to dalej tunel; benchmark z aneksu
+  liczony był na heksach (do powtórki na belkach, jak u rdzenia).
+- P2 (podzielony ekran) nie dostaje mostków — utrata dowodzenia drugiego gracza nie ma ścieżki śmierci.
+- Zimne wraki na belkach nie istnieją jeszcze (etap 3) — rekord modelu na wraku zostaje do TTL.
 
 ## Aneks: benchmark
 

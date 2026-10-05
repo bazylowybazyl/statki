@@ -240,7 +240,8 @@ function baseGeometries() {
   return {
     box: new THREE.BoxGeometry(1, 1, 1),
     cyl: new THREE.CylinderGeometry(1, 1, 1, 16, 1, false),
-    torus: new THREE.TorusGeometry(1, 0.13, 6, 24)
+    torus: new THREE.TorusGeometry(1, 0.13, 6, 24),
+    cone: new THREE.ConeGeometry(1, 1, 8, 1)
   };
 }
 
@@ -322,9 +323,9 @@ export class PortBuilding3D {
     };
     this.roofMaterials = [mats.roof];
     for (const set of ['bg', 'fg', 'roof']) {
-      for (const kind of ['box', 'cyl', 'torus']) {
+      for (const kind of ['box', 'cyl', 'torus', 'cone']) {
         const data = sc.sets[set][kind];
-        if (!data.length) continue;
+        if (!data || !data.length) continue;
         const inst = makeInstanced(bases[kind], data, this.sphere);
         const mesh = new THREE.Mesh(inst.geo, mats[set]);
         mesh.name = `${this.root.name}_${set}_${kind}`;
@@ -373,6 +374,17 @@ export class PortBuilding3D {
         if (set === 'roof') this.roofMaterials.push(mat);
       }
     }
+  }
+
+  /**
+   * Materiał SKÓRY CIAŁA ŚWIATA (wariant „skin” grafu — portBuildings3D.tsl.js; src/3d/worldBodies3D.js): kawałek
+   * budowli, który stał się ciałem silnika belek, rysuje się tym samym cieniowaniem co jego bryły (zestaw bg / fg,
+   * te same uniformy budowli: kanały, lampy, paleta, słońce). Jeden na zestaw — wartości ciała w userData siatki.
+   */
+  skinMaterial(set = 'bg') {
+    if (!this._skinMats) this._skinMats = {};
+    if (!this._skinMats[set]) this._skinMats[set] = this._material(`PortBuildingSkin_${set}`, this.graphs.skin, this._common);
+    return this._skinMats[set];
   }
 
   /** Warstwy gospodarza: BG pod statkami, FG nad nimi (dach też w FG). */

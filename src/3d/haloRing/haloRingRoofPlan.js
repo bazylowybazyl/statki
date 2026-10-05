@@ -16,7 +16,8 @@
 // (segment, przesunięcie wzdłuż w skali floorMid, dr = r − floorMid, z) —
 // shader liczy ją względem kamery (RTE), więc nie drży przy żadnym zoomie.
 import { HALO_PORT, HALO_ROOF, HALO_STATION_ANGLE, HALO_TAU, HALO_TRANSIT, haloTransitAngles } from './haloRingConfig.js';
-import { HALO_BAY, haloBayLayouts } from './haloPortBays.js';
+import { HALO_BAY, bayArms, haloBayLayouts } from './haloPortBays.js';
+import { k7ArmWidthAt } from './haloPortK7Layout.js';
 import { haloLandmarkParts, haloLandmarkSegment } from './haloRingLandmarks.js';
 import { haloDomeParts } from './haloRingDomes.js';
 
@@ -322,21 +323,30 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     (set === 'landmark' ? landmarkLights : lights)[seg].data.push(seg, along * floorMid, r - floorMid, z, size, phase, color, mode);
   }
 
-  // Otwarte zatoki (decyzja 2026-09-23): wpięte w podłogę na środku wstęgi,
-  // w płaszczyźnie gry — nie dotykają dachu ani krawędzi ścian. Stanowiska
-  // w standardzie K-7 (haloPortBays.js) rysuje render kompleksu K-7; tu bryła
-  // zatoki. lanes / spines — pasy MEGA i grzbiety (światła, suwnice).
+  // Otwarte zatoki (decyzja 2026-09-23) na środku wstęgi, w płaszczyźnie gry;
+  // od 2026-10-05 (poprawka użytkownika: „za mocno wciśnięte w ring”) stoją
+  // dockGap za krawędzią ścian, na dwóch pylonach od płyty portu na podłodze.
+  // Stanowiska w standardzie K-7 (haloPortBays.js) rysuje render kompleksu
+  // K-7; tu bryła zatoki. frameR — promień ściany tylnej zatoki, floorY —
+  // płyta portu w układzie zatoki (< 0), lanes / spines — pasy MEGA i grzbiety
+  // (światła, suwnice), arms — pylony w układzie zatoki.
   const docks = [];
   const portOn = sigma > 0 && layout.flightLevel !== 'roof';
   if (portOn) {
     const P = HALO_PORT;
     for (const bay of haloBayLayouts(layout)) {
       const mega = bay.berths[0];
+      const frameR = bay.frame.radius + bay.baseZ;
       const dock = {
-        index: bay.index, complex: bay.complex, id: bay.id, theta: bay.theta, frameR: floorMid + PORT_PAD_H,
+        index: bay.index, complex: bay.complex, id: bay.id, theta: bay.theta, frameR,
+        floorY: floorMid + PORT_PAD_H - frameR,
         depth: bay.depth, length: P.dockLength, hallSide: bay.hallSide,
         lanes: bay.lanes.map((v) => v.x), berthIds: bay.lanes.map((v) => v.berthId), spines: bay.spines.map((v) => v.x),
-        berthY: mega.z - bay.floorZ
+        berthY: mega.z - bay.baseZ,
+        // pylony (k7DockArms) w układzie zatoki: y = z ramki − baseZ
+        arms: bayArms(bay).map((v) => ({
+          ...v, y0: v.z0 - bay.baseZ, y1: v.z1 - bay.baseZ, footEnd: v.footEnd - bay.baseZ, rootStart: v.rootStart - bay.baseZ
+        }))
       };
       docks.push(dock);
     }
@@ -471,12 +481,13 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     }
   }
 
-  // ---- port: zatoki wpięte w podłogę habitatu --------------------------
-  // Układ zatoki: x wzdłuż ringu, y od podłogi (promieniowo na zewnątrz),
-  // z świata (płaszczyzna gry z = 0 na środku wstęgi). Tył zatoki w kołnierzu
-  // na podłodze (terminal z oknami), pokład od ściany tylnej do wylotu poza
-  // krawędzią ścian (widać go z kamery gry). Pokład bez znaczeń: stanowiska
-  // K-7 (pas MEGA i grzebień L/M/S) rysuje render kompleksu.
+  // ---- port: zatoki na pylonach przed ringiem ------------------------------
+  // Układ zatoki: x wzdłuż ringu, y od ściany tylnej zatoki promieniowo na
+  // zewnątrz (płyta portu na podłodze habitatu na y = floorY < 0), z świata
+  // (płaszczyzna gry z = 0 na środku wstęgi). Zatoka stoi w kosmosie za
+  // krawędzią ścian; dwa pylony-korytarze na wysokości zatoki (bayArms —
+  // przeszkoda lotu) od płyty portu do ściany tylnej. Pokład bez znaczeń:
+  // stanowiska K-7 (pas MEGA i grzebień L/M/S) rysuje render kompleksu.
   for (const dock of docks) {
     const P = HALO_PORT;
     const seg = Math.floor(dock.theta / segAngle) % segCount;
@@ -488,20 +499,20 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     const zD = P.deckTop;                     // wierzch pokładu
     const zB = zD - 60;                       // spód pokładu
     const zW = P.wallTop;
-    const cW = P.collar;
     const cD = P.collarDepth;
     const zBase = Math.round(P.plugZMin * 0.75);
+    const fY = dock.floorY;
     const box = (x, y0, y1, z0, z1, sx, mat) => push(L, HALO_PRIM.box, seg, th, rF, x, (y0 + y1) * 0.5, z0, sx, y1 - y0, z1 - z0, mat);
-    // bryły prostopadłe do promienia na środku zatoki, a podłoga pod ich końcami
-    // opada (krzywizna ringu: x²/2R — przy zatoce 6 800 j. ~140 j.): części
-    // stykające się z podłogą sięgają głębiej, żeby końce nie wisiały nad terenem
-    const sink = (x) => (x * x) / (2 * rF) + 20;
-    const sinkAll = sink(len * 0.5 + cW);
-    // pokład zatoki (tylko nocna poświata ścian) i ściany
+    // bryły prostopadłe do promienia na środku zatoki, a płyta portu pod ich
+    // końcami opada (krzywizna ringu x²/2R): części stykające się z podłogą
+    // (terminal, stopy pylonów) sięgają głębiej, żeby nie wisiały nad terenem
+    const sink = (x) => (x * x) / (2 * (rF + fY)) + 20;
+    // pokład zatoki (tylko nocna poświata ścian), spód nośny i ściany
     box(0, P.backWall, D, zB, zD, len - 2 * P.sideWall, HALO_MAT.bayFloor + 32 * HALO_EMIT.deck);
-    box(0, -sinkAll, P.backWall, zB, zW, len, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
+    box(0, 40, D - 60, zB - 110, zB, len - 2 * P.sideWall - 40, HALO_MAT.roofMid);
+    box(0, 0, P.backWall, zB, zW, len, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
     for (const sd of [-1, 1]) {
-      box(sd * (len - P.sideWall) * 0.5, -sink(len * 0.5), D, zB, zW, P.sideWall, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
+      box(sd * (len - P.sideWall) * 0.5, 0, D, zB, zW, P.sideWall, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
       // listwy: górą ściany od strony zatoki i przy wylocie (błękit)
       box(sd * (len * 0.5 - P.sideWall - 3), P.backWall, D, zW - 30, zW - 22, 6, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
       box(sd * (len * 0.5 - P.sideWall - 6), D - 60, D, zW - 8, zW, 12, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
@@ -529,24 +540,97 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     });
     // sterownia na ścianie tylnej (przeszklenie ku zatoce)
     box(0, P.backWall - 20, P.backWall + 60, zW - 10, zW + 90, 520, HALO_MAT.glass + 32 * HALO_EMIT.windowsCool);
-    // kołnierz na podłodze: słupy, nadproże i podstawa-terminal z pasami okien
-    const cx = len * 0.5 + cW * 0.5;
-    for (const sd of [-1, 1]) {
-      box(sd * cx, -60 - sink(len * 0.5 + cW), cD, zBase, zW + 80, cW, HALO_MAT.roofMid);
-      box(sd * (len * 0.5 + 8), cD - 4, cD + 4, zBase + 60, zW + 60, 10, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
-    }
-    box(0, -60, cD, zW, zW + 80, len, HALO_MAT.roofMid);
-    box(0, -60 - sink(len * 0.5), cD, zBase, zB, len, HALO_MAT.dark);
-    for (let row = 0; row < 5; row++) {
-      const zr = zB - 110 - row * 115;
+    // ---- pylony: wystają wprost ze ściany tylnej zatoki, na jej wysokości
+    // (bayArms — te same wielokąty co kolizje): rozszerzona stopa na płycie
+    // portu (wieża do terminalu pod płaszczyzną), zwężenie, dźwigar-korytarz,
+    // rozszerzenie i korzeń wpięty w ścianę tylną; od środka zatoki brama
+    // przejścia do pylonu. Terminal z oknami na kosmos między stopami.
+    const zTermTop = -340;
+    const xOut = Math.abs(dock.arms[0].x) + dock.arms[0].flareWidth * 0.5 + 220;
+    const face = fY + cD;
+    box(0, fY - 60 - sink(xOut), face, zBase, zTermTop, 2 * xOut, HALO_MAT.dark);
+    for (let row = 0; row < 4; row++) {
+      const zr = zTermTop - 110 - row * 120;
       if (zr < zBase + 60) break;
-      box(0, cD, cD + 6, zr, zr + 20, len - 240, HALO_MAT.glass + 32 * HALO_EMIT.windowsWarm);
+      box(0, face, face + 6, zr, zr + 22, 2 * xOut - 240, HALO_MAT.glass + 32 * HALO_EMIT.windowsWarm);
     }
-    // klin nośny pod pokładem: schodkami od podłogi ku wylotowi zatoki
-    const steps = [[-sink(len * 0.5 - 150), 900, zBase], [900, 1800, Math.round(zBase * 0.66)], [1800, 2700, Math.round(zBase * 0.38)]];
-    for (const [y0, y1, z0] of steps) {
-      box(0, y0, y1, z0, zB, len - 300, HALO_MAT.roofMid);
-      for (const sd of [-1, 1]) box(sd * (len * 0.5 - 150 - 3), y0, y1 - 20, z0 + 30, z0 + 38, 6, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
+    // skośny bok zwężenia: płyta wzdłuż przeciwprostokątnej (xa, ya) → (xb, yb),
+    // grubości wysokości trójkąta, po stronie osi pylonu (inward = znak ku osi)
+    const taperSide = (xa, ya, xb, yb, inward, z0, z1, mat) => {
+      const dx = xb - xa;
+      const dy = yb - ya;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) return;
+      const T = (Math.abs(dx) * Math.abs(dy)) / len + 10;
+      let nx = -dy / len;
+      let ny = dx / len;
+      if (nx * inward < 0) { nx = -nx; ny = -ny; }
+      const phi = Math.atan2(-dx, dy);
+      push(L, HALO_PRIM.box, seg, th, rF, (xa + xb) * 0.5 + nx * T * 0.5, (ya + yb) * 0.5 + ny * T * 0.5, z0, T, len, z1 - z0, mat,
+        [0, 0, Math.sin(phi * 0.5), Math.cos(phi * 0.5)]);
+    };
+    const rail = 80;                             // pasy na krawędziach (ściany korytarza)
+    for (const a of dock.arms) {
+      const { x, width: W, flareWidth: WF, zw0, zw1, taper } = a;
+      const hw = W * 0.5;
+      const hf = WF * 0.5;
+      const midA = a.footEnd + taper;
+      const midB = a.rootStart - taper;
+      // bryła: stopa (wieża od terminalu), zwężenia, dźwigar, korzeń w ścianie tylnej
+      box(x, a.y0, a.footEnd, zBase, zw1, WF, HALO_MAT.dark);
+      box(x, a.footEnd, a.rootStart, zw0, zw1, W, HALO_MAT.dark);
+      box(x, a.rootStart, a.y1, zw0 - 20, zw1, WF, HALO_MAT.dark);
+      for (const sx of [-1, 1]) {
+        taperSide(x + sx * hf, a.footEnd, x + sx * hw, midA, -sx, zw0, zw1, HALO_MAT.dark);
+        taperSide(x + sx * hw, midB, x + sx * hf, a.rootStart, -sx, zw0 - 20, zw1, HALO_MAT.dark);
+      }
+      // pasy-ściany wzdłuż obu krawędzi całego obrysu (z góry — kontur belki)
+      for (const sx of [-1, 1]) {
+        const path = [[x + sx * hf, a.y0 + 60], [x + sx * hf, a.footEnd], [x + sx * hw, midA], [x + sx * hw, midB], [x + sx * hf, a.rootStart], [x + sx * hf, a.y1 - 40]];
+        const ox = -sx * rail * 0.5;
+        for (let k = 0; k + 1 < path.length; k++) {
+          const [xa, ya] = path[k];
+          const [xb, yb] = path[k + 1];
+          if (Math.abs(xb - xa) < 1) box(xa + ox, ya, yb, zw0, zw1 + 35, rail, HALO_MAT.roofLight);
+          else push(L, HALO_PRIM.box, seg, th, rF, xa + ox, ya, zw1 + 35 - rail * 0.5, rail, rail, Math.hypot(xb - xa, yb - ya), HALO_MAT.roofLight, quatAxis(xb - xa, yb - ya, 0));
+          if (k > 0) box(xa + ox, ya - rail * 0.6, ya + rail * 0.6, zw1 - 20, zw1 + 40, rail + 20, HALO_MAT.roofLight);
+        }
+      }
+      // żebra dachu w poprzek całej długości (szerokość z obrysu)
+      for (let y = a.y0 + 220; y < a.y1 - 100; y += 280) box(x, y - 26, y + 26, zw1, zw1 + 18, k7ArmWidthAt(a, y) - rail * 1.6, HALO_MAT.roofMid);
+      // lica dźwigara: słupki i krzyżulce (kratownica Warrena)
+      const n = Math.max(2, Math.round((midB - midA) / 320));
+      const st = (midB - midA) / n;
+      const h = zw1 - zw0 - 50;
+      for (let i = 0; i <= n; i++) {
+        const y = midA + i * st;
+        for (const sx of [-1, 1]) {
+          const xf = x + sx * (hw + 10);
+          box(xf, y - 28, y + 28, zw0, zw1 + 20, 30, HALO_MAT.roofLight);
+          if (i < n) {
+            const up = (i & 1) === 0;
+            push(L, HALO_PRIM.box, seg, th, rF, xf, y + 28, up ? zw0 + 25 : zw1 - 25, 26, 26, Math.hypot(st - 56, h), HALO_MAT.truss,
+              quatAxis(0, st - 56, up ? h : -h));
+          }
+        }
+      }
+      // okna korytarza i listwy świetlne wzdłuż pasów
+      for (const sx of [-1, 1]) {
+        box(x + sx * (hw + 2), midA + 60, midB - 60, zw0 + 120, zw0 + 150, 6, HALO_MAT.glass + 32 * HALO_EMIT.windowsWarm);
+        box(x + sx * (hw - rail - 6), midA + 30, midB - 30, zw1 + 4, zw1 + 12, 12, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
+      }
+      // światła przeszkodowe na narożnikach stopy i korzenia, bieg świateł wzdłuż dachu
+      for (const sx of [-1, 1]) {
+        light(seg, th, rF, x + sx * (hf - 40), a.footEnd - 60, zw1 + 60, 2.8, 0.3 + 0.2 * sx, HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.pulse, L);
+        light(seg, th, rF, x + sx * (hf - 40), a.rootStart + 60, zw1 + 60, 2.8, 0.55 + 0.2 * sx, HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.pulse, L);
+      }
+      for (let k = 0; k < 5; k++) {
+        light(seg, th, rF, x, midA + 150 + k * (midB - midA - 300) / 4, zw1 + 30, 2.0, k * 0.12, HALO_LIGHT_COLOR.white, HALO_LIGHT_MODE.chase, L);
+      }
+      // przejście z zatoki do pylonu: brama na licu ściany tylnej od środka
+      box(x, P.backWall + 2, P.backWall + 12, zD, zW - 20, W * 0.62, HALO_MAT.dark);
+      for (const sx of [-1, 1]) box(x + sx * W * 0.33, P.backWall + 2, P.backWall + 16, zD, zW - 10, 40, HALO_MAT.hazard);
+      box(x, P.backWall + 2, P.backWall + 16, zW - 20, zW - 4, W * 0.7, HALO_MAT.hazard);
     }
     // styl zatoki z profilu planety (tylko wygląd: bryły na ścianach, nad nimi
     // albo pod płaszczyzną lotu — stanowiska i kolizje jak w standardzie K-7)
@@ -565,7 +649,7 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
       for (const sx of [-0.3, 0, 0.3]) box(sx * len, P.backWall, P.backWall + 40, zW, zW + 110, 60, HALO_MAT.white);
     } else if (bayStyle === 'industrial') {
       // Jowisz: żebra radiatorów na koronie ścian bocznych, rurociągi na
-      // licu zewnętrznym (pod płaszczyzną lotu), zbiorniki na słupach kołnierza
+      // licu zewnętrznym (pod płaszczyzną lotu), zbiorniki na narożnikach ściany tylnej
       for (const sd of [-1, 1]) {
         const xw = sd * (len - P.sideWall) * 0.5;
         for (let y = 700; y < D - 120; y += 95) {
@@ -576,18 +660,17 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
           push(L, HALO_PRIM.cylinder, seg, th, rF, sd * (len * 0.5 + 26), 200, zc, 22, 22, D - 400, HALO_MAT.pipe, qAlongY);
         }
         for (let y = 300; y < D - 200; y += 420) box(sd * (len * 0.5 + 26), y - 12, y + 12, zB - 40, -50, 70, HALO_MAT.dark);
-        const cxT = sd * (len * 0.5 + P.collar * 0.5);
+        const cxT = sd * (len * 0.5 - P.sideWall * 0.5);
         push(L, HALO_PRIM.cylinder, seg, th, rF, cxT, P.collarDepth * 0.4, zW + 80, 240, 240, 26, HALO_MAT.truss);
         push(L, HALO_PRIM.dome, seg, th, rF, cxT, P.collarDepth * 0.4, zW + 106, 250, 250, 118, HALO_MAT.tank);
         light(seg, th, rF, cxT, P.collarDepth * 0.4, zW + 230, 3.0, 0.2 * (sd + 1), HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.pulse, L);
       }
     }
-    // światła: stroboskopy przy wylocie, czerwone na kołnierzu, reflektory na
-    // ścianach, nawigacja wylotu (zielone po prawej +x, czerwone po lewej) i
-    // biały bieg wzdłuż krawędzi pasa MEGA na progu
+    // światła: stroboskopy przy wylocie, reflektory na ścianach, nawigacja
+    // wylotu (zielone po prawej +x, czerwone po lewej) i biały bieg wzdłuż
+    // krawędzi pasa MEGA na progu
     for (const sd of [-1, 1]) {
       light(seg, th, rF, sd * len * 0.5, D, zW + 6, 3.4, 0.25 * (sd + 1), HALO_LIGHT_COLOR.white, HALO_LIGHT_MODE.strobe, L);
-      light(seg, th, rF, sd * (len * 0.5 + cW), cD, zW + 86, 3.0, 0.3, HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.pulse, L);
       for (let k = 1; k <= 3; k++) {
         light(seg, th, rF, sd * (len * 0.5 - P.sideWall * 0.5), D * k / 4, zW + 6, 2.6, 0, HALO_LIGHT_COLOR.warm, HALO_LIGHT_MODE.steady, L);
       }

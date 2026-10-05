@@ -8,6 +8,7 @@ import terranSupercapitalSprite from '../assets/ships/terransupercapital.png';
 import pirateFrigateSprite from '../assets/ships/piratefrigate.png';
 import pirateDestroyerSprite from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipSprite from '../assets/ships/piratebattleship.png';
+import pirateSupercapitalSprite from '../assets/ships/piratecapital.png';
 import atlasSprite from '../../assets/capital_ship_rect_v1.png';
 import megafreighterSprite from '../../assets/megafreighter.png';
 import { CAPITAL_SHIP_TEMPLATES, SUPPORT_SHIP_TEMPLATES } from '../data/ships.js';
@@ -24,7 +25,7 @@ import {
 // Warstwy: stałe (klaster, paski broni/umiejętności, komunikaty, kontrolki),
 // kontekstowe (karta celu, skrzydło, wyniki skanu — same się pokazują),
 // na żądanie (Alt przełącza tryb interfejsu: pełny radar, rezerwa, overview, panel centralny;
-// CapsLock = łączność, J = misje, Tab = CIC). Klaster normalnie pokazuje kopułę — radar
+// ` = łączność (CapsLock = warp), J = misje, Tab = CIC). Klaster normalnie pokazuje kopułę — radar
 // ścięty cięciwą na linii pasków (wszystkie łuki są w górnej połowie); Alt wysuwa pełny radar.
 
 const RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
@@ -66,6 +67,7 @@ const SUPPORT_FACTIONS = Object.freeze({
       { key: 'frigate_pd', name: 'Pirate Frigate', role: 'Fregata rajderska', count: '×50', icon: 'frigate' },
       { key: 'destroyer', name: 'Pirate Destroyer', role: 'Niszczyciel rajderski', count: '×5', icon: 'destroyer' },
       { key: 'pirate_battleship', name: 'Pirate Battleship', role: 'Pancernik rajderski', count: '×1', icon: 'battleship' },
+      { key: 'pirate_supercapital', name: 'Iron Skull — Supercapital', role: 'Supercapital piratów', count: '×1', icon: 'supercapital' },
       // Kadłuby ruchu v2 bez AI i broni (spawnDevHull w index.html).
       { key: 'smuggler', name: 'Przemytnik', role: 'Bez broni i AI', count: '×1', icon: 'frigate', hull: 'smuggler', hp: 600, speed: 240 },
       { key: 'pirate_raider', name: 'Rajder', role: 'Bez broni i AI', count: '×1', icon: 'destroyer', hull: 'pirate_raider', hp: 1400, speed: 220 }
@@ -189,7 +191,8 @@ const SUPPORT_SPRITES = Object.freeze({
   pirate: Object.freeze({
     frigate_pd: pirateFrigateSprite,
     destroyer: pirateDestroyerSprite,
-    pirate_battleship: pirateBattleshipSprite
+    pirate_battleship: pirateBattleshipSprite,
+    pirate_supercapital: pirateSupercapitalSprite
   }),
   independent: Object.freeze({
     atlas: atlasSprite,
@@ -205,6 +208,7 @@ const SUPPORT_CLASS_META = Object.freeze({
   pirate_battleship: { label: 'Battleship', code: 'B', hardpoints: 2 },
   carrier: { label: 'Carrier', code: 'CV', hardpoints: 4 },
   supercapital: { label: 'Supercapital', code: 'SC', hardpoints: 8 },
+  pirate_supercapital: { label: 'Supercapital', code: 'SC', hardpoints: 19 },
   atlas: { label: 'Supercapital', code: 'SC', hardpoints: 8 },
   megafreighter: { label: 'Megafreighter', code: 'MF', hardpoints: 0 },
   frigate_laser: { label: 'Frigate', code: 'F', hardpoints: 2 },
@@ -293,6 +297,7 @@ function spriteForEntity(entity) {
   const faction = String(entity?.faction || '').toLowerCase();
   const pirate = !!entity?.isPirate || faction.includes('pira');
   if (type.includes('megafreighter')) return megafreighterSprite;
+  if (type === 'pirate_supercapital' || entity?.shipFrame === 'pirate_supercapital') return pirateSupercapitalSprite;
   if (type.includes('supercap') || type.includes('capital') || type.includes('atlas')) return pirate ? pirateBattleshipSprite : terranSupercapitalSprite;
   if (type.includes('carrier')) return pirate ? pirateBattleshipSprite : terranCarrierSprite;
   if (type.includes('battleship')) return pirate ? pirateBattleshipSprite : terranBattleshipSprite;
@@ -499,7 +504,7 @@ function cockpitMarkup(devMode) {
           <span class="module-label">PANEL CENTRALNY / TRYB</span>
           <div class="infotainment-screen"><div class="screen-content" id="modeTrack"><div class="menu-item active" data-mode="combat">BOJOWY</div><div class="menu-item" data-mode="maneuver">MANEWROWY</div><div class="menu-item" data-mode="travel">PODRÓŻ</div></div><div class="selection-indicator"></div></div>
           <div class="controls-area">
-            <div class="btn-group"><button type="button" class="physical-btn" id="pbComm" title="[CapsLock]"><span>Łączność</span><div class="led-indicator blue"></div></button><button type="button" class="physical-btn" id="pbMissions" title="[J]"><span>Misje</span><div class="led-indicator orange"></div></button></div>
+            <div class="btn-group"><button type="button" class="physical-btn" id="pbComm" title="[\`]"><span>Łączność</span><div class="led-indicator blue"></div></button><button type="button" class="physical-btn" id="pbMissions" title="[J]"><span>Misje</span><div class="led-indicator orange"></div></button></div>
             <div class="center-console"><button type="button" class="shortcut-btn pos-t" id="scScan" title="[X]">Skan</button><button type="button" class="shortcut-btn pos-b" id="scLock" title="Namierz / zwolnij cel">Cel</button><button type="button" class="shortcut-btn pos-l" id="scAuto" title="[7]">Auto</button><button type="button" class="shortcut-btn pos-r" id="scStab" title="[B]">Stab</button><div class="rotary-knob" id="rotaryKnob" title="Przeciągnij lub użyj kółka; V zmienia tryb"><div class="knob-indicator"></div><div class="knob-touchpad"><div class="knob-center-logo">///</div></div></div></div>
             <div class="btn-group"><button type="button" class="physical-btn" id="pbShip"><span>Statek</span><div class="led-indicator green"></div></button><button type="button" class="physical-btn" id="pbMap" title="[Tab / M]"><span>CIC</span><div class="led-indicator red"></div></button></div>
           </div>
@@ -601,7 +606,7 @@ export class CockpitUI {
     this.applyScale();
     window.addEventListener('resize', () => this.applyScale());
     this.log('Inicjalizacja systemów kokpitu — OK', 'ok');
-    this.log('Alt wysuwa radar i przełącza tryb interfejsu. CapsLock otwiera łączność ze stacjami.', 'orbit');
+    this.log('Alt wysuwa radar i przełącza tryb interfejsu. Klawisz ` otwiera łączność ze stacjami, CapsLock — warp.', 'orbit');
     window.CockpitUI = this;
     window.cockpitUI = this;
     return this;

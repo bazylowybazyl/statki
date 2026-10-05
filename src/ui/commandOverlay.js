@@ -264,7 +264,7 @@ const SELECTION_LABEL_ANGLE = 0.56;
 const SELECTION_LABEL_COS = Math.cos(SELECTION_LABEL_ANGLE);
 const SELECTION_LABEL_SIN = Math.sin(SELECTION_LABEL_ANGLE);
 // Kolejne próby układu: dłuższa kreska wyprowadzenia i cztery narożniki (w górę-prawo pierwszy).
-const SELECTION_LABEL_GAPS = Object.freeze([10, 30, 52]);
+const SELECTION_LABEL_GAPS = Object.freeze([10, 30, 52, 80, 120, 180]);
 const SELECTION_LABEL_DIRS = Object.freeze([[1, -1], [-1, -1], [1, 1], [-1, 1]]);
 // Pół grubości pasa podpisu w poprzek kreski (tytuł nad nią, masa pod nią) i margines ekranu.
 const SELECTION_LABEL_HALF = 13;
@@ -343,10 +343,12 @@ function quadInView(q, viewW, viewH) {
  * ważności; każdy wpis z len > 0 dostaje `place` = { sx, sy, gap }: najpierw poprzednie miejsce
  * (podpis nie skacze przy ruchu), potem narożniki i dłuższe kreski — pierwsze, które mieści się
  * w ekranie i nie przecina ułożonych już podpisów ani cudzych ramek. Bez wolnego miejsca: poprzednie
- * albo domyślne (w górę-prawo). Ramki wpisów bez podpisu też są przeszkodą.
+ * albo domyślne (w górę-prawo). Ramki wpisów bez podpisu też są przeszkodą; opcjonalne blockedRects
+ * [{ x0, y0, x1, y1 }] rezerwują miejsca zajęte przez panele HUD.
  */
-export function layoutSelectionLabels(entries, viewW = Infinity, viewH = Infinity) {
+export function layoutSelectionLabels(entries, viewW = Infinity, viewH = Infinity, blockedRects = []) {
   const frames = entries.map((e) => rectQuad(e.x0 - 3, e.y0 - 3, e.x1 + 3, e.y1 + 3));
+  for (const r of blockedRects) frames.push(rectQuad(r.x0, r.y0, r.x1, r.y1));
   const placed = [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -559,6 +561,7 @@ const COMMAND_MENU_ICONS = Object.freeze({
   orbit: '↻',
   travel: '»',
   scan: '◎',
+  drone: '⌖',
   salvage: '⌁',
   tow: '⊸',
   move: '✛',
@@ -571,6 +574,7 @@ const COMMAND_MENU_ROW_RGB = Object.freeze({
   approach: COMMAND_RGB.approach,
   orbit: COMMAND_RGB.orbit,
   scan: COMMAND_RGB.scan,
+  drone: COMMAND_RGB.scan,
   salvage: COMMAND_RGB.salvage,
   tow: COMMAND_RGB.salvage
 });

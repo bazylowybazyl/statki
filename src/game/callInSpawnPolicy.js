@@ -42,6 +42,7 @@ export function getCallInHullFrame(type, policy, template = {}) {
 
   if (key === 'fighter' || key === 'interceptor') return null;
   if (key === 'atlas') return 'atlas';
+  if (key === 'pirate_supercapital') return 'pirate_supercapital';
   if (key.includes('frigate')) return pirateHull ? 'pirate_frigate' : 'terran_frigate';
   if (key === 'destroyer') return pirateHull ? 'pirate_destroyer' : 'terran_destroyer';
   if (key === 'battleship' || key === 'pirate_battleship') return pirateHull ? 'pirate_battleship' : 'terran_battleship';

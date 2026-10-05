@@ -70,7 +70,7 @@ const MAX_STYLE_LIFE = Math.max(...TRAIL_STYLES.map((s) => s.life));
 function createHandle() {
   return {
     active: false, style: 0, width: 27, spacing: 45, pathUnit: 200, z: 14, lz: 14,
-    lx: 0, ly: 0, lt: 0, lct: 0, lpath: 0, path: 0, acc: 0, dx: 1, dy: 0, seed: 0, energy: 1,
+    lx: 0, ly: 0, lt: 0, lct: 0, lpath: 0, path: 0, dx: 1, dy: 0, seed: 0, energy: 1,
     cvx: 0, cvy: 0, clock: 0
   };
 }
@@ -253,7 +253,6 @@ export class TrailSystem {
     h.lx = x; h.ly = y; h.lt = this.time; h.lct = ct;
     h.lpath = fxRandom.next() * 40;
     h.path = h.lpath;
-    h.acc = 0;
     h.dx = dx / l; h.dy = dy / l;
     h.seed = fxRandom.next() * 100;
     h.energy = 1;
@@ -266,6 +265,13 @@ export class TrailSystem {
   /**
    * Przesuwa smugę do (x, y) — emisja segmentów po drodze. ct — czas zegara gry pozy (x, y);
    * czasy efektów węzłów rozkłada się liniowo od ostatniego węzła do bieżącej klatki.
+   *
+   * Wszystko liczone od OSTATNIEGO ZAPISANEGO węzła (h.lx…, h.lpath): następny węzeł co
+   * `spacing` j. od niego, droga wzoru = jego droga + d / pathUnit. Węzeł wspólny dwóch
+   * segmentów ma więc tę samą pozycję, czas i drogę. (Demo mieszało dwa układy — odległość od
+   * węzła, a start `spacing − acc` i droga od pozy pocisku z poprzedniej klatki: odstępy 2–36 j.
+   * i skok drogi ~0,2 na złączu każdej klatki — szum, włókna i helisa zaczynały się od nowa,
+   * smuga rozpadała się na skośne kreski.)
    */
   advance(h, x, y, ct, z) {
     if (!h || !h.active) return;
@@ -280,9 +286,9 @@ export class TrailSystem {
     h.dx = dx; h.dy = dy;
     const t0 = h.lt; const t1 = this.time;
     const c0 = h.lct;
-    let d = h.spacing - h.acc;
-    let px = sx; let py = sy; let pz = sz; let pt = t0; let pc = c0; let ppath = h.path;
-    const basePath = h.path;
+    let d = h.spacing;
+    let px = sx; let py = sy; let pz = sz; let pt = t0; let pc = c0; let ppath = h.lpath;
+    const basePath = h.lpath;
     while (d <= seg) {
       const f = d / seg;
       const nx = sx + (x - sx) * f;
@@ -299,7 +305,6 @@ export class TrailSystem {
       px = nx; py = ny; pz = nz; pt = nt; pc = nc; ppath = npath;
       d += h.spacing;
     }
-    h.acc = seg - (d - h.spacing);
     h.path = basePath + seg / h.pathUnit;
     // ostatni zapisany węzeł zostaje początkiem następnego segmentu
     if (px !== sx || py !== sy || pz !== sz) { h.lx = px; h.ly = py; h.lz = pz; h.lt = pt; h.lct = pc; h.lpath = ppath; }

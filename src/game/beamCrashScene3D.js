@@ -41,9 +41,11 @@ export function cloneBeamStructure(src) {
 }
 
 export function createCrashBodies(system, stationStructure, ramStructure, options = {}) {
-  const { heavyShip = false, rammingMassMult = 1, combat = false } = options;
+  const { heavyShip = false, rammingMassMult = 1, combat = false, anchored = false } = options;
   const massRatio = Math.max(1, Number(options.massRatio) || STATION_MASS_RATIO);
-  const station = system.createBody(cloneBeamStructure(stationStructure), {
+  // anchored: cel zakotwiczony, ale niszczalny (świat — ściana K-7, stacja na pylonie): masy naturalne,
+  // kotwice nakłada wołający (pinBeamNodes). Bez tej opcji — dawne zachowanie bit w bit.
+  const station = system.createBody(cloneBeamStructure(stationStructure), anchored ? { name: 'stacja', anchored: true } : {
     name: 'stacja', static: !heavyShip && !combat, noSplit: !heavyShip && !combat,
     massMultiplier: heavyShip || combat ? 1 : massRatio * ramStructure.mass / stationStructure.mass
   });
