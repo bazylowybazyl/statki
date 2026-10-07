@@ -3,6 +3,18 @@ import { PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS } from './pirateSupercapitalDefault
 
 export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 
+// Dysza SIDE kadłuba cywilnego (wpisy `sideOnly` niżej): deg 0 — wydech na prawą burtę (+y obrazka), 180 — na lewą.
+const civilSide = (id, x, y, mount) => ({
+  id, x, y, deg: y < 0 ? 180 : 0, offsetX: 0, offsetY: 0, mount, gimbalMinDeg: -90, gimbalMaxDeg: 90
+});
+// Frachtowiec dalekiego zasięgu — ten sam sprite rysuje dziś ciężki frachtowiec (TRAFFIC_HULLS.heavy_freighter).
+const LONG_HAUL_SIDE = [
+  civilSide('side_front_left', 300, -196, 'upper_left'),
+  civilSide('side_front_right', 300, 165, 'upper_right'),
+  civilSide('side_rear_left', -662, -206, 'lower_left'),
+  civilSide('side_rear_right', -662, 173, 'lower_right')
+];
+
 export const SHIP_EDITOR_DEFAULTS = {
   version: 1,
   source: 'hardpoint-editor-defaults',
@@ -21,6 +33,68 @@ export const SHIP_EDITOR_DEFAULTS = {
       cores: [],
       engines: { main: [], side: [] },
       lights: { position: [], road: [] }
+    },
+    // Frachtowce cywilne i lokomotywa megafrachtowca NPC (2026-10-07): SAME dysze SIDE — modele 3D dysz w szarej
+    // palecie cywilnej (sideThrusterPaletteFor) i strugi SIDE. `sideOnly`: runtime NPC (npcHardpointRuntime.js)
+    // bierze z wpisu tylko dysze SIDE — bez dysz MAIN (npcHasPhysicalThrusters przełączyłby frachtowcom ścieżkę
+    // lotu), gniazd, rdzeni i świateł. Po 4 w narożnikach kadłuba: oś dyszy na płaskim odcinku krawędzi alfy
+    // sprite'a, ~0,5 promienia wylotu (SIDE_NOZZLE_RADIUS × skala klasy kadłuba) w głąb, sponson poza lukami
+    // ładowni (cargoBays.js) i strefą mostka lokomotywy; px PNG od środka płótna, y w dół = prawa burta.
+    // Lokomotywa ma własny klucz: wpis `megafreighter` czyta układ gracza (applyPlayerEditorEngineLayoutFromStorage
+    // podmieniłby graczowi dysze MAIN i SIDE składu). Pilnuje tests/freighterSideThrusters.test.mjs.
+    inter_station_shuttle: {
+      label: 'Wahadłowiec międzystacyjny',
+      frontAxis: '+X',
+      sideOnly: true,
+      engines: {
+        main: [],
+        side: [
+          civilSide('side_front_left', 160, -131, 'upper_left'),
+          civilSide('side_front_right', 160, 120, 'upper_right'),
+          civilSide('side_rear_left', -295, -188, 'lower_left'),
+          civilSide('side_rear_right', -295, 176, 'lower_right')
+        ]
+      }
+    },
+    container_ship: {
+      label: 'Kontenerowiec',
+      frontAxis: '+X',
+      sideOnly: true,
+      engines: {
+        main: [],
+        side: [
+          civilSide('side_front_left', 375, -221, 'upper_left'),
+          civilSide('side_front_right', 375, 194, 'upper_right'),
+          civilSide('side_rear_left', -612, -231, 'lower_left'),
+          civilSide('side_rear_right', -612, 205, 'lower_right')
+        ]
+      }
+    },
+    long_haul_freighter: {
+      label: 'Frachtowiec dalekiego zasięgu',
+      frontAxis: '+X',
+      sideOnly: true,
+      engines: { main: [], side: LONG_HAUL_SIDE }
+    },
+    heavy_freighter: {
+      label: 'Ciężki frachtowiec',
+      frontAxis: '+X',
+      sideOnly: true,
+      engines: { main: [], side: LONG_HAUL_SIDE }
+    },
+    megafreighter_front: {
+      label: 'Megafrachtowiec — lokomotywa',
+      frontAxis: '+X',
+      sideOnly: true,
+      engines: {
+        main: [],
+        side: [
+          civilSide('side_front_left', 412, -209, 'upper_left'),
+          civilSide('side_front_right', 412, 200, 'upper_right'),
+          civilSide('side_rear_left', -600, -334, 'lower_left'),
+          civilSide('side_rear_right', -600, 319, 'lower_right')
+        ]
+      }
     },
     "capital_carrier": {
     "label": "Legacy Capital Carrier",

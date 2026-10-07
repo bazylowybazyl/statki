@@ -169,6 +169,44 @@ function normalizeEditorEngine(marker, idx, kind = 'main') {
   };
 }
 
+// Dysze SIDE (visual.torqueThrusters) z markerów edytora: pozycje w px PNG × skala hardpointów kadłuba.
+function buildSideThrusters(markers, hpScaleX, hpScaleY) {
+  const sideThrusters = [];
+  if (!Array.isArray(markers)) return sideThrusters;
+  for (let i = 0; i < markers.length; i++) {
+    const engine = normalizeEditorEngine(markers[i], i, 'side');
+    if (!engine) continue;
+    sideThrusters.push({
+      offset: { x: engine.x * hpScaleX, y: engine.y * hpScaleY },
+      forward: forwardFromEditorDeg(engine.nozzleDeg),
+      mount: engine.mount,
+      baseDeg: engine.baseDeg,
+      nozzleDeg: engine.nozzleDeg,
+      gimbalMinDeg: engine.gimbalMinDeg,
+      gimbalMaxDeg: engine.gimbalMaxDeg,
+      side: inferEditorEngineSide(engine.mount, engine.y),
+      yNudge: engine.offsetY * hpScaleY,
+      vfxWidthMin: engine.vfxWidthMin,
+      vfxWidthMax: engine.vfxWidthMax,
+      vfxLengthMin: engine.vfxLengthMin,
+      vfxLengthMax: engine.vfxLengthMax
+    });
+  }
+  return sideThrusters;
+}
+
+// Frachtowce cywilne (wpisy edytora `sideOnly` — same dysze SIDE). Wpis = sprite, który gra rysuje: rama kadłuba
+// (profil frachtowca — kadłuby dev i ruchu), bez ramy — typ jak FREIGHTER_HULL_BY_TYPE w index.html (lustro,
+// pilnuje test). Furgony ładunku (materializeCargoOrder: rama terran_frigate) rysują się sprite'em fregaty, więc
+// dysz frachtowca nie dostają.
+const FREIGHTER_EDITOR_FRAMES = new Set(['inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter']);
+const FREIGHTER_HULL_BY_TYPE = Object.freeze({
+  'freighter-small': 'inter_station_shuttle',
+  'freighter-medium': 'container_ship',
+  'freighter-large': 'long_haul_freighter',
+  'freighter-capital': 'long_haul_freighter'
+});
+
 function getEditorShipIdForNpc(npc) {
   if (!npc) return null;
   const shipFrame = String(npc.shipFrame || '').toLowerCase();
@@ -176,7 +214,11 @@ function getEditorShipIdForNpc(npc) {
   if (shipFrame === 'terran_carrier') return 'terran_carrier';
   if (shipFrame === 'terran_supercapital') return 'terran_supercapital';
   if (shipFrame === 'pirate_supercapital') return 'pirate_supercapital';
+  if (FREIGHTER_EDITOR_FRAMES.has(shipFrame)) return shipFrame;
   const type = String(npc.type || '').toLowerCase();
+  if (!shipFrame && FREIGHTER_HULL_BY_TYPE[type]) return FREIGHTER_HULL_BY_TYPE[type];
+  // Megafrachtowiec: dysze SIDE ma lokomotywa (jak mostek), wagony i ogon to ładunek bez napędu.
+  if (type === 'megafreighter_front') return 'megafreighter_front';
   if (type === 'atlas') return 'atlas';
   if (type === 'pirate_supercapital') return 'pirate_supercapital';
   if (type === 'supercapital') return 'terran_supercapital';
@@ -303,8 +345,35 @@ export function createNpcHardpointRuntime({
     return refreshCache(false);
   }
 
+  // Kadłub cywilny (wpis `sideOnly` — frachtowce, lokomotywa megafrachtowca): z edytora SAME dysze SIDE — modele 3D
+  // i strugi, sam wygląd (bez dysz MAIN npcHasPhysicalThrusters nie przełącza ścieżki lotu). Gniazd, rdzeni, świateł
+  // i dysz MAIN NPC nie dotyka, więc idzie też przy disableEditorLayout (lokomotywa — staticDummy). Dysze dopiero
+  // z kadłubem: skala markerów z obrazu kadłuba (__hardpointScaleX/Y — index.html przy budowie kadłuba), bez niej
+  // offsety w px PNG wypadałyby daleko za sprite'em.
+  function applySideOnlyLayout(npc, editorShipId, cfg) {
+    const hpScaleX = Number(npc.__hardpointScaleX);
+    const hpScaleY = Number(npc.__hardpointScaleY);
+    if (!(hpScaleX > 0 && hpScaleY > 0)) return false;
+    if (npc.__editorLayoutVersion === state.version && npc.__editorLayoutShipId === editorShipId &&
+        npc.__editorEngineScaleX === hpScaleX && npc.__editorEngineScaleY === hpScaleY) {
+      return true;
+    }
+    const sideThrusters = buildSideThrusters(cfg.engines?.side, hpScaleX, hpScaleY);
+    npc.visual = npc.visual || {};
+    if (sideThrusters.length) npc.visual.torqueThrusters = sideThrusters;
+    else delete npc.visual.torqueThrusters;
+    npc.__editorEngineScaleX = hpScaleX;
+    npc.__editorEngineScaleY = hpScaleY;
+    npc.__editorLayoutShipId = editorShipId;
+    npc.__editorLayoutVersion = state.version;
+    return true;
+  }
+
   function applyLayoutToNpc(npc) {
     if (!npc || npc.dead) return false;
+    const editorShipId = getEditorShipIdForNpc(npc);
+    const cfg = editorShipId ? state.ships?.[editorShipId] : null;
+    if (cfg && cfg.sideOnly === true) return applySideOnlyLayout(npc, editorShipId, cfg);
     if (npc.disableEditorLayout) {
       npc.editorHardpoints = [];
       npc.editorCores = [];
@@ -321,10 +390,7 @@ export function createNpcHardpointRuntime({
       npc.__editorLayoutVersion = state.version;
       return true;
     }
-    const editorShipId = getEditorShipIdForNpc(npc);
     if (!editorShipId) return false;
-
-    const cfg = state.ships?.[editorShipId];
     if (!cfg || typeof cfg !== 'object') return false;
 
     const hpScaleX = (Number.isFinite(Number(npc.__hardpointScaleX)) && Number(npc.__hardpointScaleX) > 0) ? Number(npc.__hardpointScaleX) : 1;
@@ -406,26 +472,7 @@ export function createNpcHardpointRuntime({
     }
 
     if (enginesSideRaw.length) {
-      const sideThrusters = [];
-      for (let i = 0; i < enginesSideRaw.length; i++) {
-        const engine = normalizeEditorEngine(enginesSideRaw[i], i, 'side');
-        if (!engine) continue;
-        sideThrusters.push({
-          offset: { x: engine.x * hpScaleX, y: engine.y * hpScaleY },
-          forward: forwardFromEditorDeg(engine.nozzleDeg),
-          mount: engine.mount,
-          baseDeg: engine.baseDeg,
-          nozzleDeg: engine.nozzleDeg,
-          gimbalMinDeg: engine.gimbalMinDeg,
-          gimbalMaxDeg: engine.gimbalMaxDeg,
-          side: inferEditorEngineSide(engine.mount, engine.y),
-          yNudge: engine.offsetY * hpScaleY,
-          vfxWidthMin: engine.vfxWidthMin,
-          vfxWidthMax: engine.vfxWidthMax,
-          vfxLengthMin: engine.vfxLengthMin,
-          vfxLengthMax: engine.vfxLengthMax
-        });
-      }
+      const sideThrusters = buildSideThrusters(enginesSideRaw, hpScaleX, hpScaleY);
       if (sideThrusters.length) {
         npc.visual.torqueThrusters = sideThrusters;
       }

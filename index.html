@@ -6290,6 +6290,10 @@
     function getHullSpriteForNpc(npc) {
       const hullProfileId = getNpcHullRenderProfileId(npc);
       if (!hullProfileId) return null;
+      // Moduły składu megafrachtowca (lokomotywa, wagon, ogon — megafreighterTrain.js) mają własne sprite'y
+      // (npc.capitalSprite — zapas wywołującego): TRAFFIC_HULLS.megafreighter to cały skład jednym obrazkiem (proxy
+      // ruchu v2), z którego moduł dostawał kadłub, skórę, mostek i dysze SIDE w miejscach z obrazka całego składu.
+      if (String(npc?.type || '').startsWith('megafreighter_')) return null;
       const src = HULL_SPRITE_PATHS_BY_ID[hullProfileId] || TRAFFIC_HULLS[hullProfileId]?.sprite || null;
       if (!src) return null;
       const sprite = loadHullSprite(src);
