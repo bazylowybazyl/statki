@@ -1157,6 +1157,7 @@
       COMMAND_RGB,
       commandRgbFor,
       describeSelectedUnit,
+      describeUnitTitle,
       drawArrivalRing,
       drawCommandMenu,
       drawCommandPath,
@@ -9096,7 +9097,8 @@
     const _missileReticle = { ready: 0, total: 0, progress: 1, left: 0 };
     const _reticleOpts = { scale: 1, distance: NaN, cold: false, dim: false, tag: '', tagColor: '', missiles: null };
     const COMPASS_SHOW_AFTER_SWITCH = 2.5;   // [s] kompas po zmianie grupy w ręku
-    const _turretPanel = { canvas: null, ctx: null, sil: null, silKey: '', visible: null, groups: [
+    // cw / ch — rozmiar CSS płótna z ResizeObservera (−1: jeszcze nie znany); ro — obserwator.
+    const _turretPanel = { canvas: null, ctx: null, sil: null, silKey: '', visible: null, cw: -1, ch: -1, ro: null, groups: [
       { list: null, count: 0, hand: false, big: false },
       { list: null, count: 0, hand: false, big: true }
     ] };
@@ -26914,6 +26916,16 @@
         if (!tp.canvas || !tp.canvas.isConnected) {
           tp.canvas = window.CockpitUI?.getTurretPanelCanvas?.() || null;
           tp.ctx = tp.canvas ? tp.canvas.getContext('2d') : null;
+          // Rozmiar CSS z ResizeObservera: odczyt clientWidth / clientHeight co klatkę wymuszał przeliczenie układu
+          // strony po zapisach DOM kokpitu (~0,2–0,3 ms w bitwie). Obserwator podaje rozmiar po układzie.
+          tp.cw = tp.ch = -1;
+          if (tp.ro) tp.ro.disconnect();
+          if (tp.canvas && typeof ResizeObserver === 'function') {
+            if (!tp.ro) tp.ro = new ResizeObserver((entries) => {
+              for (const e of entries) if (e.target === _turretPanel.canvas) { _turretPanel.cw = e.target.clientWidth | 0; _turretPanel.ch = e.target.clientHeight | 0; }
+            });
+            tp.ro.observe(tp.canvas);
+          }
         }
         if (!tp.canvas || !tp.ctx) return;
         const hand = fcResolveInHand(fireControl, _fcHudWeapons());
@@ -26924,7 +26936,7 @@
           tp.canvas.style.visibility = show ? 'visible' : 'hidden';
         }
         if (!show) return;
-        const cw = tp.canvas.clientWidth | 0, ch = tp.canvas.clientHeight | 0;
+        const cw = tp.cw >= 0 ? tp.cw : (tp.canvas.clientWidth | 0), ch = tp.ch >= 0 ? tp.ch : (tp.canvas.clientHeight | 0);
         if (cw < 8 || ch < 8) return;
         const dpr = Math.min(2, window.devicePixelRatio || 1);
         const bw = Math.round(cw * dpr), bh = Math.round(ch * dpr);

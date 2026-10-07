@@ -535,13 +535,24 @@ const recordsByEntity = new Map();
 const entityRecordLists = [];
 let entityRecordListCount = 0;
 
+// Ostatnia encja i jej lista: sync() zbiera wieżyczki encja po encji, więc kolejne rekordy tej samej encji
+// nie pytają mapy (w bitwie ~1500 wieżyczek na klatkę).
+let lastIndexedEntity = null;
+let lastIndexedList = null;
+
 function resetEntityRecordIndex() {
   for (let i = 0; i < entityRecordListCount; i++) entityRecordLists[i].length = 0;
   entityRecordListCount = 0;
   recordsByEntity.clear();
+  lastIndexedEntity = null;
+  lastIndexedList = null;
 }
 
 function indexRecordForEntity(entity, rec) {
+  if (entity === lastIndexedEntity && lastIndexedList !== null) {
+    lastIndexedList.push(rec);
+    return;
+  }
   let list = recordsByEntity.get(entity);
   if (!list) {
     list = entityRecordLists[entityRecordListCount];
@@ -549,6 +560,8 @@ function indexRecordForEntity(entity, rec) {
     entityRecordListCount++;
     recordsByEntity.set(entity, list);
   }
+  lastIndexedEntity = entity;
+  lastIndexedList = list;
   list.push(rec);
 }
 

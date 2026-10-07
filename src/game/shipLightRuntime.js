@@ -143,6 +143,24 @@ export function hexToRgb01(value, fallback = '#ffffff') {
   };
 }
 
+// Barwa lampy z napisu w gorących pętlach klatki (emitery reflektorów, sprite'y lamp): ten sam wynik co
+// hexToRgb01, z pamięci po (napis, zapas) — parsowanie (trim, regex, slice, parseInt) i nowy obiekt szły co klatkę
+// na każdą lampę w kadrze. Obiekt barwy wspólny — konsumenci (shader kadłuba, siatka świateł, billboardy)
+// tylko go czytają.
+const _rgbByFallback = new Map();
+function cachedRgb01(value, fallback) {
+  if (typeof value !== 'string') return hexToRgb01(value, fallback);
+  let byValue = _rgbByFallback.get(fallback);
+  if (byValue === undefined) { byValue = new Map(); _rgbByFallback.set(fallback, byValue); }
+  let rgb = byValue.get(value);
+  if (rgb === undefined) {
+    if (byValue.size >= 4096) byValue.clear();
+    rgb = hexToRgb01(value, fallback);
+    byValue.set(value, rgb);
+  }
+  return rgb;
+}
+
 export function getEntityLightScale(entity) {
   const scaleXRaw = Number(entity?.__hardpointScaleX);
   const scaleYRaw = Number(entity?.__hardpointScaleY);
@@ -713,7 +731,7 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
         x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
         y: round2(pos.y + scaledLocalX * s + scaledLocalY * c),
         dir: worldDir,
-        color: hexToRgb01(marker?.color, defaults.color),
+        color: cachedRgb01(marker?.color, defaults.color),
         radiusWorld: round2(radiusPx * (Number(spriteScale?.uniform) || 1)),
         power: round2(clamp(marker?.power, 0.05, 20, defaults.power) * cloakGain),
         rangeWorld: round2(rangePx * spriteDirectionalScale),
@@ -900,7 +918,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
         x: round2(wx),
         y: round2(wy),
         phase: round2(phase),
-        color: hexToRgb01(marker?.color, '#ff2b2b'),
+        color: cachedRgb01(marker?.color, '#ff2b2b'),
         coreWorld: round2(coreWorld),
         haloWorld: round2(haloWorld),
         intensity: round2(clamp(marker?.power, 0.05, 20, 0.8) * fade * cloakVis)
@@ -1001,6 +1019,258 @@ function insertNearest(count, limit, score, item) {
   return count + 1;
 }
 
+// To samo co insertNearest dla kandydatów w DOWOLNEJ kolejności (indeks przestrzenny niżej): remis rozstrzyga
+// indeks światła na liście — wynik = stabilny sort całej listy po odległości i pierwsze `limit`.
+const _nearIdx = new Int32Array(NEAREST_CAPACITY);
+function insertNearestIdx(count, limit, score, idx, item) {
+  if (count >= limit) {
+    if (limit <= 0) return count;
+    const ws = _nearScores[limit - 1];
+    if (!(score < ws || (score === ws && idx < _nearIdx[limit - 1]))) return count;
+    count = limit - 1;
+  }
+  let i = count;
+  while (i > 0 && (_nearScores[i - 1] > score || (_nearScores[i - 1] === score && _nearIdx[i - 1] > idx))) {
+    _nearScores[i] = _nearScores[i - 1];
+    _nearIdx[i] = _nearIdx[i - 1];
+    _nearItems[i] = _nearItems[i - 1];
+    i--;
+  }
+  _nearScores[i] = score;
+  _nearIdx[i] = idx;
+  _nearItems[i] = item;
+  return count + 1;
+}
+
+// ── Indeks przestrzenny świateł zewnętrznych klatki (2026-10-07, koszt renderu w bitwie) ────────────
+// buildCombinedShipLightShaderPayload sprawdzał KAŻDY reflektor i KAŻDĄ grupę lamp z kadru dla każdego
+// kadłuba: 166 okrętów × ~1300 świateł ≈ 220 tys. testów na klatkę (~70% kosztu payloadu). Indeks: siatka
+// komórek (CSR) nad pudłami zasięgu świateł; kadłub sprawdza tylko światła z komórek swojego pudła.
+// Pudła jak computeRoadEmitterReach / roadEmittersMayReach: reflektor ±range·(1+tan φ), cel ±R·(2+tan φmax)
+// (test stożka przepuszcza środek celu do range+R wzdłuż osi i along·tan φ+R w bok, więc |cel−reflektor| ≤
+// range·(1+tan φ)+R·(2+tan φ)); grupa lamp ±range, cel ±R. Do tego 1 j. zapasu na zaokrąglenia — światło, które
+// przechodzi test, ma komórkę wspólną z pudłem celu. Testy, ranking i pakowanie bez zmian (remisy po indeksie).
+const LIGHT_INDEX_CELL = 1536;
+const LIGHT_INDEX_MAX_CELLS = 96;
+const LIGHT_INDEX_PAD = 1;
+
+export function createExternalLightIndex() {
+  return {
+    valid: false, emitters: null, omni: null, emitterCount: -1, omniCount: -1,
+    x0: 0, y0: 0, inv: 1, nx: 0, ny: 0, tanMax: 0,
+    e: createLightCellList(), o: createLightCellList()
+  };
+}
+
+function createLightCellList() {
+  return {
+    start: new Int32Array(2), items: new Int32Array(16), boxes: new Float64Array(16), seen: new Int32Array(16), stamp: 0
+  };
+}
+
+function emitterReachBox(emitter, out, k) {
+  const range = Math.max(1, Number(emitter.rangeWorld) || 1);
+  const tan = Math.tan(clamp(emitter.coneDeg, 8, 160, 40) * Math.PI / 360);
+  const reach = range * (1 + tan) + LIGHT_INDEX_PAD;
+  const x = Number(emitter.x) || 0;
+  const y = Number(emitter.y) || 0;
+  out[k] = x - reach; out[k + 1] = y - reach; out[k + 2] = x + reach; out[k + 3] = y + reach;
+}
+
+function omniReachBox(light, out, k) {
+  const reach = Math.max(1, Number(light.rangeWorld) || 1) + LIGHT_INDEX_PAD;
+  const x = Number(light.x) || 0;
+  const y = Number(light.y) || 0;
+  out[k] = x - reach; out[k + 1] = y - reach; out[k + 2] = x + reach; out[k + 3] = y + reach;
+}
+
+function fillLightBoxes(cells, list, boxOf) {
+  const n = list.length;
+  if (cells.boxes.length < n * 4) cells.boxes = new Float64Array(Math.max(n * 4, cells.boxes.length * 2));
+  if (cells.seen.length < n) { cells.seen = new Int32Array(Math.max(n, cells.seen.length * 2)); cells.stamp = 0; }
+  const B = cells.boxes;
+  for (let i = 0; i < n; i++) {
+    const item = list[i];
+    if (item) boxOf(item, B, i * 4);
+    else { B[i * 4] = Infinity; B[i * 4 + 1] = Infinity; B[i * 4 + 2] = -Infinity; B[i * 4 + 3] = -Infinity; }
+  }
+}
+
+function fillLightCells(index, cells, n) {
+  const cellCount = index.nx * index.ny;
+  if (cells.start.length < cellCount + 1) cells.start = new Int32Array(cellCount + 1);
+  const start = cells.start;
+  start.fill(0, 0, cellCount + 1);
+  const B = cells.boxes;
+  const { x0, y0, inv, nx, ny } = index;
+  // przebieg 1: liczba wpisów w komórce, przebieg 2: wpisy (rosnąco po indeksie światła)
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const k = i * 4;
+    if (!(B[k] <= B[k + 2])) continue;
+    const cx0 = Math.max(0, Math.floor((B[k] - x0) * inv));
+    const cy0 = Math.max(0, Math.floor((B[k + 1] - y0) * inv));
+    const cx1 = Math.min(nx - 1, Math.floor((B[k + 2] - x0) * inv));
+    const cy1 = Math.min(ny - 1, Math.floor((B[k + 3] - y0) * inv));
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) { start[cy * nx + cx + 1]++; total++; }
+  }
+  for (let c = 0; c < cellCount; c++) start[c + 1] += start[c];
+  if (cells.items.length < total) cells.items = new Int32Array(Math.max(total, cells.items.length * 2));
+  const items = cells.items;
+  // kursor zapisu = start komórki (przesunięty o jeden; po wypełnieniu start[c] wraca na początek komórki)
+  for (let i = 0; i < n; i++) {
+    const k = i * 4;
+    if (!(B[k] <= B[k + 2])) continue;
+    const cx0 = Math.max(0, Math.floor((B[k] - x0) * inv));
+    const cy0 = Math.max(0, Math.floor((B[k + 1] - y0) * inv));
+    const cx1 = Math.min(nx - 1, Math.floor((B[k + 2] - x0) * inv));
+    const cy1 = Math.min(ny - 1, Math.floor((B[k + 3] - y0) * inv));
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) items[start[cy * nx + cx]++] = i;
+  }
+  for (let c = cellCount; c > 0; c--) start[c] = start[c - 1];
+  start[0] = 0;
+}
+
+/**
+ * Indeks świateł zewnętrznych tej klatki: reflektory (buildRoadLightWorldEmitters) i grupy lamp / światła
+ * świata (buildNavLightClusters + dopisane). Ważny, dopóki listy (te same tablice, te same długości) się nie
+ * zmienią — buildCombinedShipLightShaderPayload sprawdza to sam i bez ważnego indeksu przegląda listy w całości.
+ */
+export function buildExternalLightIndex(index, emitters, omni) {
+  const E = Array.isArray(emitters) ? emitters : [];
+  const O = Array.isArray(omni) ? omni : [];
+  fillLightBoxes(index.e, E, emitterReachBox);
+  fillLightBoxes(index.o, O, omniReachBox);
+  let tanMax = 0;
+  for (let i = 0; i < E.length; i++) {
+    const e = E[i];
+    if (!e) continue;
+    const tan = Math.tan(clamp(e.coneDeg, 8, 160, 40) * Math.PI / 360);
+    if (tan > tanMax) tanMax = tan;
+  }
+  index.tanMax = tanMax;
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  for (const [cells, n] of [[index.e, E.length], [index.o, O.length]]) {
+    const B = cells.boxes;
+    for (let i = 0; i < n; i++) {
+      const k = i * 4;
+      if (!(B[k] <= B[k + 2])) continue;
+      if (B[k] < minX) minX = B[k];
+      if (B[k + 1] < minY) minY = B[k + 1];
+      if (B[k + 2] > maxX) maxX = B[k + 2];
+      if (B[k + 3] > maxY) maxY = B[k + 3];
+    }
+  }
+  index.emitters = E;
+  index.omni = O;
+  index.emitterCount = E.length;
+  index.omniCount = O.length;
+  if (!(minX <= maxX) || !Number.isFinite(minX + minY + maxX + maxY)) {
+    // nic do indeksowania (albo pudło nieskończone) — przegląd całych list
+    index.valid = false;
+    return index;
+  }
+  const cell = Math.max(LIGHT_INDEX_CELL, (maxX - minX) / LIGHT_INDEX_MAX_CELLS, (maxY - minY) / LIGHT_INDEX_MAX_CELLS);
+  index.x0 = minX;
+  index.y0 = minY;
+  index.inv = 1 / cell;
+  index.nx = Math.max(1, Math.min(LIGHT_INDEX_MAX_CELLS, Math.floor((maxX - minX) / cell) + 1));
+  index.ny = Math.max(1, Math.min(LIGHT_INDEX_MAX_CELLS, Math.floor((maxY - minY) / cell) + 1));
+  fillLightCells(index, index.e, E.length);
+  fillLightCells(index, index.o, O.length);
+  index.valid = true;
+  return index;
+}
+
+function externalIndexFor(options, emitters, omni) {
+  const index = options?.externalIndex;
+  if (!index || !index.valid) return null;
+  if (index.emitters !== emitters || index.omni !== omni) return null;
+  if (index.emitterCount !== emitters.length || index.omniCount !== omni.length) return null;
+  return index;
+}
+
+function nextLightStamp(cells) {
+  let stamp = cells.stamp + 1;
+  if (stamp > 0x3fffffff) { cells.seen.fill(0); stamp = 1; }
+  cells.stamp = stamp;
+  return stamp;
+}
+
+// Najbliższe grupy lamp (koło zasięgu) z komórek pudła celu — wynik jak pętla po całej liście w buildCombined….
+function nearestOmniIndexed(index, omni, entity, lineage, tx, ty, R, limit) {
+  const cells = index.o;
+  const stamp = nextLightStamp(cells);
+  const seen = cells.seen;
+  const start = cells.start;
+  const items = cells.items;
+  const x0 = index.x0;
+  const y0 = index.y0;
+  const inv = index.inv;
+  const nx = index.nx;
+  const ny = index.ny;
+  const cx0 = Math.max(0, Math.min(nx - 1, Math.floor((tx - R - x0) * inv)));
+  const cx1 = Math.max(0, Math.min(nx - 1, Math.floor((tx + R - x0) * inv)));
+  const cy0 = Math.max(0, Math.min(ny - 1, Math.floor((ty - R - y0) * inv)));
+  const cy1 = Math.max(0, Math.min(ny - 1, Math.floor((ty + R - y0) * inv)));
+  let near = 0;
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const c = cy * nx + cx;
+      for (let k = start[c], end = start[c + 1]; k < end; k++) {
+        const i = items[k];
+        if (seen[i] === stamp) continue;
+        seen[i] = stamp;
+        const light = omni[i];
+        if (!light || light.owner === entity || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
+        const distSq = omniLightReachDistSq(light, tx, ty, R);
+        if (distSq >= 0) near = insertNearestIdx(near, limit, distSq, i, light);
+      }
+    }
+  }
+  return near;
+}
+
+// Reflektory (stożek) z komórek pudła celu; _emitterAny — czy któryś sięgnął celu (jak anyCandidate).
+let _emitterAny = false;
+function nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, R, keep) {
+  const cells = index.e;
+  const Q = R * (2 + index.tanMax) + LIGHT_INDEX_PAD;
+  const stamp = nextLightStamp(cells);
+  const seen = cells.seen;
+  const start = cells.start;
+  const items = cells.items;
+  const x0 = index.x0;
+  const y0 = index.y0;
+  const inv = index.inv;
+  const nx = index.nx;
+  const ny = index.ny;
+  const cx0 = Math.max(0, Math.min(nx - 1, Math.floor((tx - Q - x0) * inv)));
+  const cx1 = Math.max(0, Math.min(nx - 1, Math.floor((tx + Q - x0) * inv)));
+  const cy0 = Math.max(0, Math.min(ny - 1, Math.floor((ty - Q - y0) * inv)));
+  const cy1 = Math.max(0, Math.min(ny - 1, Math.floor((ty + Q - y0) * inv)));
+  let near = 0;
+  let any = false;
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const c = cy * nx + cx;
+      for (let k = start[c], end = start[c + 1]; k < end; k++) {
+        const i = items[k];
+        if (seen[i] === stamp) continue;
+        seen[i] = stamp;
+        const emitter = emitters[i];
+        if (!emitter || emitter.owner === entity || (lineage !== 0 && emitter.lineage === lineage)) continue;
+        const distSq = roadEmitterReachDistSq(emitter, tx, ty, R);
+        if (distSq < 0) continue;
+        any = true;
+        near = insertNearestIdx(near, keep, distSq, i, emitter);
+      }
+    }
+  }
+  _emitterAny = any;
+  return near;
+}
+
 function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
   const targetScale = getEntitySpriteScale(entity, options);
   const dir = worldDirToEntitySpriteDir(emitter?.dir, entity, options);
@@ -1062,6 +1332,8 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
   // Światła rodu celu (rodzic odłamu / wraku) to nie światła innego statku — patrz lightLineageOf.
   const lineage = lightLineageOf(entity);
+  // Indeks przestrzenny klatki (buildExternalLightIndex) — tylko dla tych samych list; bez niego cała lista.
+  const index = externalIndexFor(options, emitters, omni);
 
   // Rozlew czerwieni z grup lamp innych statków (przed reflektorami — to one
   // mają osobny, mały budżet MAX_EXTERNAL_OMNI_SHADER_LIGHTS).
@@ -1069,11 +1341,15 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   if (omni.length) {
     const limit = Math.min(MAX_EXTERNAL_OMNI_SHADER_LIGHTS, maxLights - payload.count);
     let near = 0;
-    for (let i = 0; i < omni.length; i++) {
-      const light = omni[i];
-      if (!light || light.owner === entity || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
-      const distSq = omniLightReachDistSq(light, tx, ty, targetRadius);
-      if (distSq >= 0) near = insertNearest(near, limit, distSq, light);
+    if (index !== null) {
+      near = nearestOmniIndexed(index, omni, entity, lineage, tx, ty, targetRadius, limit);
+    } else {
+      for (let i = 0; i < omni.length; i++) {
+        const light = omni[i];
+        if (!light || light.owner === entity || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
+        const distSq = omniLightReachDistSq(light, tx, ty, targetRadius);
+        if (distSq >= 0) near = insertNearest(near, limit, distSq, light);
+      }
     }
     for (let i = 0; i < near; i++) {
       const light = packExternalOmniLightForTarget(_nearItems[i], entity, grid, options);
@@ -1102,13 +1378,18 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   const keep = Math.ceil(externalLimit);
   let near = 0;
   let anyCandidate = false;
-  for (let i = 0; i < emitters.length; i++) {
-    const emitter = emitters[i];
-    if (!emitter || emitter.owner === entity || (lineage !== 0 && emitter.lineage === lineage)) continue;
-    const distSq = roadEmitterReachDistSq(emitter, tx, ty, targetRadius);
-    if (distSq < 0) continue;
-    anyCandidate = true;
-    near = insertNearest(near, keep, distSq, emitter);
+  if (index !== null) {
+    near = nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, targetRadius, keep);
+    anyCandidate = _emitterAny;
+  } else {
+    for (let i = 0; i < emitters.length; i++) {
+      const emitter = emitters[i];
+      if (!emitter || emitter.owner === entity || (lineage !== 0 && emitter.lineage === lineage)) continue;
+      const distSq = roadEmitterReachDistSq(emitter, tx, ty, targetRadius);
+      if (distSq < 0) continue;
+      anyCandidate = true;
+      near = insertNearest(near, keep, distSq, emitter);
+    }
   }
 
   if (!anyCandidate) return payload;

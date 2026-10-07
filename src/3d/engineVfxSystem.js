@@ -55,10 +55,11 @@ function getEntityScale(entity) {
   return 1.0;
 }
 
+// window.ship i __interpShipPose czytane raz na klatkę (EngineVfxSystem.update → frameCtx), nie na każdy okręt.
 function getInterpolatedPose(entity) {
-  if (typeof window === 'undefined') return null;
-  if (!window.ship || entity !== window.ship) return null;
-  const pose = window.__interpShipPose;
+  const player = frameCtx.playerShip;
+  if (!player || entity !== player) return null;
+  const pose = frameCtx.playerPose;
   if (!pose) return null;
   if (!Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.angle)) return null;
   return pose;
@@ -120,9 +121,28 @@ function inferSideFromMount(mount, y = 0) {
   return (Number(y) || 0) < 0 ? 'left' : 'right';
 }
 
+// Kierunek dyszy zależy od slotu (stały od buildSlots) i czterech pól źródła — nozzleDeg zmienia się tylko przy
+// ruchu gimbala. Pamięć per slot: te same surowe wartości = ten sam wynik (bez normalizacji i trzech obiektów
+// na dyszę na klatkę). Wynik tylko do odczytu.
 function resolveSlotForward(slot) {
   if (!slot) return { x: 0, y: 1 };
   const source = slot.source;
+  const b = source?.baseDeg;
+  const g0 = source?.gimbalMinDeg;
+  const g1 = source?.gimbalMaxDeg;
+  const nz = source?.nozzleDeg;
+  const memo = slot._fwdMemo;
+  if (memo !== undefined && memo.b === b && memo.g0 === g0 && memo.g1 === g1 && memo.nz === nz) return memo.fwd;
+  const fwd = computeSlotForward(slot, source);
+  if (memo !== undefined) {
+    memo.b = b; memo.g0 = g0; memo.g1 = g1; memo.nz = nz; memo.fwd = fwd;
+  } else {
+    slot._fwdMemo = { b, g0, g1, nz, fwd };
+  }
+  return fwd;
+}
+
+function computeSlotForward(slot, source) {
   const baseDeg = Number.isFinite(Number(source?.baseDeg))
     ? normalizeDeg(source.baseDeg, slot.baseDeg)
     : normalizeDeg(slot.baseDeg, forwardToDeg(slot.forward));
@@ -362,8 +382,65 @@ function slotInputHash(entity) {
   return hash >>> 0;
 }
 
+// Odcisk liczył się co klatkę dla każdej encji w pudle (~1,5 µs na okręt, w bitwie 166 okrętów ~0,25 ms
+// na klatkę), choć układ dysz zmienia się tylko podmianą tablic (edytor, układ NPC, konfiguracja gracza).
+// Szybka ścieżka: te same obiekty wejść co przy ostatnim odcisku = ten sam układ. Zapis W MIEJSCU pól dyszy
+// (np. thrusterModel uzupełnia brakujące baseDeg w pierwszych krokach) łapie pełny odcisk: co klatkę przez
+// SLOT_INPUT_SETTLE klatek po (prze)budowie, potem co SLOT_INPUT_RECHECK klatek (faza rozłożona po encjach).
+const SLOT_INPUT_SETTLE = 16;
+const SLOT_INPUT_RECHECK = 32;
+let slotInputPhase = 0;
+
+function createSlotInputRefs() {
+  return {
+    visual: undefined, main: undefined, mainLen: -1, side: undefined, sideLen: -1,
+    engine: undefined, engineOffset: undefined, engineForward: undefined, legacy: undefined, legacyLen: -1,
+    settle: SLOT_INPUT_SETTLE, phase: (slotInputPhase++) % SLOT_INPUT_RECHECK
+  };
+}
+
+// Te same pola, które czyta slotInputHash, jako tożsamości obiektów i długości tablic.
+function slotInputRefsSame(entity, refs, frame) {
+  if (refs.settle > 0) return false;
+  if (((frame + refs.phase) % SLOT_INPUT_RECHECK) === 0) return false;
+  const visual = entity.visual;
+  if (refs.visual !== visual) return false;
+  const main = visual?.mainThrusters;
+  if (refs.main !== main || refs.mainLen !== (Array.isArray(main) ? main.length : -1)) return false;
+  const side = visual?.torqueThrusters;
+  if (refs.side !== side || refs.sideLen !== (Array.isArray(side) ? side.length : -1)) return false;
+  const engine = entity.engines?.main;
+  if (refs.engine !== engine) return false;
+  if (engine && (refs.engineOffset !== (engine.vfxOffset || engine.visualOffset || engine.offset)
+    || refs.engineForward !== engine.vfxForward)) return false;
+  const legacy = entity.capitalProfile?.engineOffsets;
+  return refs.legacy === legacy && refs.legacyLen === (Array.isArray(legacy) ? legacy.length : -1);
+}
+
+function rememberSlotInputRefs(entity, refs) {
+  const visual = entity.visual;
+  refs.visual = visual;
+  const main = visual?.mainThrusters;
+  refs.main = main;
+  refs.mainLen = Array.isArray(main) ? main.length : -1;
+  const side = visual?.torqueThrusters;
+  refs.side = side;
+  refs.sideLen = Array.isArray(side) ? side.length : -1;
+  const engine = entity.engines?.main;
+  refs.engine = engine;
+  refs.engineOffset = engine ? (engine.vfxOffset || engine.visualOffset || engine.offset) : undefined;
+  refs.engineForward = engine ? engine.vfxForward : undefined;
+  const legacy = entity.capitalProfile?.engineOffsets;
+  refs.legacy = legacy;
+  refs.legacyLen = Array.isArray(legacy) ? legacy.length : -1;
+  if (refs.settle > 0) refs.settle--;
+}
+
 // Dla testów: odcisk musi się zmieniać zawsze, gdy zmienia się klucz slotów.
-export const EngineSlotKeyInternals = Object.freeze({ buildSlots, makeSlotKey, slotInputHash });
+export const EngineSlotKeyInternals = Object.freeze({
+  buildSlots, makeSlotKey, slotInputHash, createSlotInputRefs, slotInputRefsSame, rememberSlotInputRefs,
+  SLOT_INPUT_SETTLE, SLOT_INPUT_RECHECK, resolveSlotForward, computeSlotForward
+});
 // Dla testów: dysze gasną z komórką kadłuba belkowego (syncNozzleMounts — niżej).
 export const EngineNozzleInternals = Object.freeze({ buildSlots, syncNozzleMounts: (e, fx) => syncNozzleMounts(e, fx) });
 
@@ -377,7 +454,7 @@ function createEffects(slots) {
     if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), slot, main: null, warp: null });
     else exhausts.push({ state: null, slot, main: createMainExhaustState(), warp: null });
   }
-  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0, mounts: null };
+  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0, inputRefs: createSlotInputRefs(), mounts: null };
 }
 
 // Dysze na kadłubie belkowym (hullBodies.js) leżą w pikselach sprite'a właściciela: po rozpadzie dysze odpadłej
@@ -500,7 +577,12 @@ const frameCtx = {
   zoom: 1,
   camera: null,
   isOrtho: true,
-  viewportH: 1080
+  viewportH: 1080,
+  // odczyty window raz na klatkę (update): statek gracza i jego poza interpolowana, strojenie dysz SIDE
+  playerShip: null,
+  playerPose: null,
+  tune: null,
+  sideWidthMul: 1
 };
 const mainPush = {
   x: 0, y: 0, dirX: 0, dirY: -1, radius: 0, throttle: 0, boost: false,
@@ -565,7 +647,6 @@ function updateEffects(entity, fxData, dt) {
     }
     const slot = item.slot || {};
     const slotForward = resolveSlotForward(slot);
-    const nozzleRot = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
     const offset = slot.offset || { x: 0, y: 0 };
     const lx = slot.mode === 'normalized'
       ? (offset.x || 0) * halfL
@@ -661,8 +742,8 @@ function updateEffects(entity, fxData, dt) {
       continue;
     }
 
-    const tune = (typeof window !== 'undefined' && window.VFX_TUNE) ? window.VFX_TUNE : null;
-    const widthMul = Math.max(0.05, Number(tune?.sideW) || 1);
+    const tune = frameCtx.tune;
+    const widthMul = frameCtx.sideWidthMul;
     const lengthMul = Math.max(0.05, Number(tune?.sideL) || 1);
     const curveVal = Number(tune?.sideCurve ?? tune?.curve);
     const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
@@ -686,6 +767,7 @@ function updateEffects(entity, fxData, dt) {
     // lengthMul*effectScale) — para skal na instancję. Maskowanie: jasność × widoczność komórki dyszy,
     // ukryta dysza bez instancji.
     if (cloakVis <= 0.01) continue;
+    const nozzleRot = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
     EngineExhaustBatch.push(state, {
       x: nozzleWorldX,
       y: nozzleWorldY,
@@ -724,6 +806,7 @@ export const EngineVfxSystem = {
   entityEffects: new Map(),
   _activeScratch: new Set(),
   _lastUpdateSec: 0,
+  _frame: 0,
 
   update(entities = []) {
     if (!Core3D.isInitialized || !Core3D.scene) return;
@@ -751,27 +834,38 @@ export const EngineVfxSystem = {
     frameCtx.camera = Core3D.getPassCamera(true);
     frameCtx.isOrtho = frameCtx.camera === Core3D.cameraOrtho;
     frameCtx.viewportH = Math.max(1, Number(Core3D.renderer?.domElement?.height) || Number(Core3D.height) || 1080);
+    const hasWindow = typeof window !== 'undefined';
+    frameCtx.playerShip = hasWindow ? (window.ship || null) : null;
+    frameCtx.playerPose = frameCtx.playerShip ? (window.__interpShipPose || null) : null;
+    frameCtx.tune = (hasWindow && window.VFX_TUNE) ? window.VFX_TUNE : null;
+    frameCtx.sideWidthMul = Math.max(0.05, Number(frameCtx.tune?.sideW) || 1);
     sceneOriginNearCamera(frameOrigin, cam);
 
     EngineExhaustBatch.begin();
     MainExhaust3D.begin(frameOrigin.x, frameOrigin.y, dt);
     EngineFrame.begin();
 
+    const frame = ++this._frame;
     for (const entity of entities) {
       if (!entity || entity.dead) continue;
 
       let fxData = this.entityEffects.get(entity);
-      const inputHash = slotInputHash(entity);
-      if (!fxData || fxData.inputHash !== inputHash) {
-        const slots = buildSlots(entity);
-        if (!slots.length) continue;
-        const slotKey = makeSlotKey(slots);
-        if (!fxData || fxData.slotKey !== slotKey) {
-          if (fxData) disposeEffects(fxData);
-          fxData = createEffects(slots);
-          this.entityEffects.set(entity, fxData);
+      // Te same obiekty wejść układu dysz co przy ostatnim odcisku — bez odcisku (slotInputRefsSame).
+      if (!fxData || !slotInputRefsSame(entity, fxData.inputRefs, frame)) {
+        const inputHash = slotInputHash(entity);
+        if (!fxData || fxData.inputHash !== inputHash) {
+          const slots = buildSlots(entity);
+          if (!slots.length) continue;
+          const slotKey = makeSlotKey(slots);
+          if (!fxData || fxData.slotKey !== slotKey) {
+            if (fxData) disposeEffects(fxData);
+            fxData = createEffects(slots);
+            this.entityEffects.set(entity, fxData);
+          }
+          fxData.inputHash = inputHash;
+          fxData.inputRefs.settle = SLOT_INPUT_SETTLE;
         }
-        fxData.inputHash = inputHash;
+        rememberSlotInputRefs(entity, fxData.inputRefs);
       }
       activeEntities.add(entity);
 

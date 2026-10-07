@@ -119,3 +119,74 @@ test('odcisk pomija pozycję dyszy w gimbalu (nozzleDeg nie wchodzi do klucza)',
   thruster.offset.x = -690;
   assert.notEqual(slotInputHash(entity), hash);
 });
+
+// Szybka ścieżka (2026-10-07, koszt renderu w bitwie): odcisk nie liczy się, gdy wejścia to te same obiekty
+// i długości tablic co przy ostatnim odcisku. Podmiana tablicy / obiektu albo zmiana długości — od razu;
+// zapis w miejscu — co klatkę przez SLOT_INPUT_SETTLE klatek po budowie, potem najpóźniej po SLOT_INPUT_RECHECK.
+test('szybka ścieżka odcisku: podmiana wejść od razu, zapis w miejscu najpóźniej po SLOT_INPUT_RECHECK', () => {
+  const { createSlotInputRefs, slotInputRefsSame, rememberSlotInputRefs, SLOT_INPUT_SETTLE, SLOT_INPUT_RECHECK } = EngineSlotKeyInternals;
+  const e = {
+    visual: { mainThrusters: [{ offset: { x: -700, y: 40 }, mount: 'rear_left' }], torqueThrusters: [] },
+    engines: { main: { offset: { x: 0, y: 0 }, vfxForward: { x: 0, y: 1 } } },
+    capitalProfile: { engineOffsets: [{ x: 1, y: 2 }] }
+  };
+  const refs = createSlotInputRefs();
+  let frame = 0;
+  for (let i = 0; i < SLOT_INPUT_SETTLE; i++) {
+    assert.equal(slotInputRefsSame(e, refs, ++frame), false, 'po budowie: pełny odcisk co klatkę');
+    rememberSlotInputRefs(e, refs);
+  }
+  let full = 0;
+  for (let i = 0; i < SLOT_INPUT_RECHECK * 3; i++) {
+    if (!slotInputRefsSame(e, refs, ++frame)) { full++; rememberSlotInputRefs(e, refs); }
+  }
+  assert.equal(full, 3, 'te same wejścia: pełny odcisk raz na SLOT_INPUT_RECHECK klatek');
+  const changes = [
+    () => { e.visual.mainThrusters = e.visual.mainThrusters.slice(); },
+    () => { e.visual.mainThrusters.push({ offset: { x: 1, y: 1 } }); },
+    () => { e.visual.torqueThrusters = [{ offset: { x: 0, y: 5 } }]; },
+    () => { e.visual.torqueThrusters.length = 0; },
+    () => { e.engines.main = { offset: { x: 0, y: 0 } }; },
+    () => { e.engines.main.vfxOffset = { x: 3, y: 4 }; },
+    () => { e.engines.main.vfxForward = { x: 1, y: 0 }; },
+    () => { e.capitalProfile.engineOffsets = []; },
+    () => { e.visual = { mainThrusters: e.visual.mainThrusters, torqueThrusters: e.visual.torqueThrusters }; }
+  ];
+  for (const change of changes) {
+    // klatka zwykła (nie kontrolna)
+    while (((frame + 1 + refs.phase) % SLOT_INPUT_RECHECK) === 0) frame++;
+    assert.equal(slotInputRefsSame(e, refs, frame + 1), true);
+    change();
+    assert.equal(slotInputRefsSame(e, refs, ++frame), false, `zmiana wejść od razu: ${change}`);
+    rememberSlotInputRefs(e, refs);
+  }
+  // Zapis w miejscu (liść) — wykryty najpóźniej w klatce kontrolnej.
+  const hash = slotInputHash(e);
+  e.visual.mainThrusters[0].offset.x = -650;
+  assert.notEqual(slotInputHash(e), hash);
+  let seen = -1;
+  for (let i = 1; i <= SLOT_INPUT_RECHECK; i++) {
+    if (!slotInputRefsSame(e, refs, ++frame)) { seen = i; break; }
+  }
+  assert.ok(seen > 0 && seen <= SLOT_INPUT_RECHECK, `zapis w miejscu złapany po ${seen} klatkach`);
+});
+
+test('kierunek dyszy z pamięci slotu = kierunek liczony od nowa (gimbal, baza, zakres w biegu)', () => {
+  const { resolveSlotForward, computeSlotForward } = EngineSlotKeyInternals;
+  let checks = 0;
+  for (let i = 0; i < 400; i++) {
+    const entity = makeEntity();
+    const slots = buildSlots(entity);
+    for (let step = 0; step < 12; step++) {
+      for (const slot of slots) {
+        const src = slot.source;
+        if (src && rnd() < 0.5) src[pick(['nozzleDeg', 'nozzleDeg', 'baseDeg', 'gimbalMinDeg', 'gimbalMaxDeg'])] = value();
+        const got = resolveSlotForward(slot);
+        const want = computeSlotForward(slot, src);
+        assert.ok(Object.is(got.x, want.x) && Object.is(got.y, want.y), `${JSON.stringify(src)} → ${got.x},${got.y} ≠ ${want.x},${want.y}`);
+        checks++;
+      }
+    }
+  }
+  assert.ok(checks > 1000, `za mało prób: ${checks}`);
+});

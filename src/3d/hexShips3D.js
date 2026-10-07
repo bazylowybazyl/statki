@@ -14,7 +14,9 @@ import {
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
+  buildExternalLightIndex,
   computeRoadEmitterReach,
+  createExternalLightIndex,
   createRoadEmitterReach,
   hasEntityLightSource,
   roadEmittersMayReach
@@ -77,6 +79,8 @@ const state = {
   roadLightEmitters: [],
   // Pudło zasięgu emiterów drogowych klatki (computeRoadEmitterReach).
   roadLightReach: createRoadEmitterReach(),
+  // Indeks przestrzenny emiterów i grup lamp klatki — payload kadłuba sprawdza tylko światła z komórek swojego pudła.
+  externalLightIndex: createExternalLightIndex(),
   navLightClusters: [],
   worldOmniLights: [],
   navLightSprites: [],
@@ -387,7 +391,9 @@ const NAV_CLUSTER_OPTIONS = {
 };
 const SHIP_LIGHT_PAYLOAD_OPTIONS = {
   ...SHIP_LIGHT_TRANSFORM_OPTIONS,
-  externalOmniLights: null
+  externalOmniLights: null,
+  // indeks przestrzenny świateł klatki (buildExternalLightIndex w updateHexShips3D)
+  externalIndex: null
 };
 
 const NAV_LIGHT_SPRITE_OPTIONS = {
@@ -2075,6 +2081,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // ścieżka co grupy lamp: rozlew na pancerzu (typ 2), bez rdzenia lampy.
   for (let i = 0; i < state.worldOmniLights.length; i++) state.navLightClusters.push(state.worldOmniLights[i]);
   extendReachWithOmniLights(state.roadLightReach, state.navLightClusters);
+  SHIP_LIGHT_PAYLOAD_OPTIONS.externalIndex = buildExternalLightIndex(state.externalLightIndex, state.roadLightEmitters, state.navLightClusters);
 
   // Światła pozycyjne jako addytywne billboardy na warstwie FG: emisja, maski
   // cienia nie czytają — świecą HDR-owo pod bloom także w cieniu planety.

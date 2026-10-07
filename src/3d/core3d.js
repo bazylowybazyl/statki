@@ -61,6 +61,41 @@ const _shadowScanStack = [];
 const _shadowScanFrustum = new THREE.Frustum();
 const _shadowScanMatrix = new THREE.Matrix4();
 
+// Pełna wysyłka bufora uniformów bez zakresów (bufor tablicy uniformów — NodeUniformBuffer / uniformArray):
+// three r183 woła ją przy KAŻDYM rysunku i dispatchu, który wiąże bufor grupy obiektu (Buffer.update() zawsze
+// true), także z tą samą treścią — w bitwie m.in. podkroki tarcz (te same kernele 6–8 razy w jednej liście:
+// ~28 zapisów i ~30 KB na klatkę). Bufor uniformów zapisuje tylko writeBuffer (shader nie może), więc po
+// wysyłce GPU ma dokładnie tę treść: ta sama treść (bit w bit, porównanie z kopią ostatnio wysłanej) = bez
+// zapisu, a stan GPU jest ten sam co po ponownej wysyłce. Nowy bufor GPU (przebudowa wiązania) albo inna
+// tablica — zwykła wysyłka i nowa kopia. Licznik: uniformUploadStats.skippedFull / skippedBytes.
+function uploadFullUnlessSame(utils, binding, orig, stats) {
+  const array = binding.buffer;
+  if (!ArrayBuffer.isView(array) || (array.byteOffset & 3) !== 0 || (array.byteLength & 3) !== 0) return orig.call(utils, binding);
+  const data = utils.backend.get(binding);
+  const gpu = data.buffer;
+  let rec = data.__core3dShadow;
+  if (rec !== undefined && rec.gpu === gpu && rec.src === array) {
+    const a = rec.srcWords;
+    const b = rec.words;
+    const len = a.length;
+    let i = 0;
+    while (i < len && a[i] === b[i]) i++;
+    if (i === len) {
+      stats.skippedFull++;
+      stats.skippedBytes += array.byteLength;
+      return;
+    }
+    orig.call(utils, binding);
+    b.set(a);
+    return;
+  }
+  orig.call(utils, binding);
+  const words = array.byteLength >> 2;
+  rec = { gpu, src: array, srcWords: new Uint32Array(array.buffer, array.byteOffset, words), words: new Uint32Array(words) };
+  rec.words.set(rec.srcWords);
+  data.__core3dShadow = rec;
+}
+
 // Czy mapa cienia passa (rzucający z warstw `mask`) wyjdzie niepusta albo czyta ją ktoś poza łapaczem —
 // warunek jak Renderer._projectObject three r183 dla kamery cienia (widoczne gałęzie, warstwy, kadr cienia;
 // rysują tylko siatki, linie, punkty i sprite'y — światło słońca też ma castShadow) i filtr passa cienia
@@ -490,7 +525,7 @@ export const Core3D = {
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
   // Scalone wysyłki buforów uniformów (_coalesceUniformUploads): bufory z ≥ 2 zakresami, oszczędzone zapisy.
-  uniformUploadStats: { merged: 0, savedWrites: 0 },
+  uniformUploadStats: { merged: 0, savedWrites: 0, skippedFull: 0, skippedBytes: 0 },
   // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
   shadowPassStats: { updated: 0, skipped: 0 },
   _shadowMapEmpty: false,
@@ -1060,6 +1095,13 @@ export const Core3D = {
     utils.updateBinding = function (binding) {
       const ranges = binding.updateRanges;
       const n = ranges ? ranges.length : 0;
+      // Tablica uniformów (uniformArray): pełna wysyłka tej samej treści — bez zapisu (uploadFullUnlessSame);
+      // wysyłka zakresami (rzadka) unieważnia kopię porównawczą.
+      if (binding.isNodeUniformBuffer === true) {
+        if (n === 0) return uploadFullUnlessSame(this, binding, orig, stats);
+        const d = this.backend.get(binding);
+        if (d.__core3dShadow !== undefined) d.__core3dShadow = undefined;
+      }
       const array = n > 1 ? binding.buffer : null;
       if (n < 2 || !ArrayBuffer.isView(array)) return orig.call(this, binding);
       let lo = Infinity;

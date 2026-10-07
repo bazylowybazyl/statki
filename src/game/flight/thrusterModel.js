@@ -129,6 +129,40 @@ function resolveRetroThrusterState(ship, retroInput = 0) {
   return state;
 }
 
+// Rodzaj dyszy SIDE z `mount` i `side` (burta, dziób / rufa / środek, brak mocowania). Liczony był co krok
+// stanu dysz (30 Hz) dla każdej dyszy SIDE każdego okrętu: String + toLowerCase + 7 × endsWith / startsWith
+// (w bitwie ~1000 dysz). Pamięć per obiekt dyszy po surowych (mount, side) — te same flagi co wyrażenia niżej.
+const SIDE_MOUNT_LEFT = 1;
+const SIDE_MOUNT_RIGHT = 2;
+const SIDE_MOUNT_FRONT = 4;
+const SIDE_MOUNT_REAR = 8;
+const SIDE_MOUNT_CENTER = 16;
+const SIDE_MOUNT_NONE = 32;
+const _sideMountFlags = new WeakMap();
+
+function sideMountFlags(t) {
+  const raw = t.mount;
+  const side = t.side;
+  let e = _sideMountFlags.get(t);
+  if (e !== undefined && e.raw === raw && e.side === side) return e.flags;
+  const mount = String(raw || '').toLowerCase();
+  let flags = 0;
+  if (mount.endsWith('_left') || side === 'left') flags |= SIDE_MOUNT_LEFT;
+  if (mount.endsWith('_right') || side === 'right') flags |= SIDE_MOUNT_RIGHT;
+  if (mount.startsWith('front_') || mount.startsWith('upper_')) flags |= SIDE_MOUNT_FRONT;
+  if (mount.startsWith('rear_') || mount.startsWith('lower_')) flags |= SIDE_MOUNT_REAR;
+  if (mount.startsWith('center_')) flags |= SIDE_MOUNT_CENTER;
+  if (!mount) flags |= SIDE_MOUNT_NONE;
+  if (e === undefined) _sideMountFlags.set(t, { raw, side, flags });
+  else { e.raw = raw; e.side = side; e.flags = flags; }
+  return flags;
+}
+
+// Dla testów: flagi z pamięci = flagi z wyrażeń na napisie mocowania.
+export const ThrusterMountInternals = Object.freeze({
+  sideMountFlags, SIDE_MOUNT_LEFT, SIDE_MOUNT_RIGHT, SIDE_MOUNT_FRONT, SIDE_MOUNT_REAR, SIDE_MOUNT_CENTER, SIDE_MOUNT_NONE
+});
+
 export function applyPlayerThrusterVisualState(ship, target) {
   if (!ship?.visual) return;
   const mainInput = clamp01(target.main);
@@ -169,9 +203,9 @@ export function applyPlayerThrusterVisualState(ship, target) {
   let rightPosArm = 0;
   for (let i = 0; i < sideThrusters.length; i++) {
     const t = sideThrusters[i];
-    const mount = String(t.mount || '').toLowerCase();
-    const isLeft = mount.endsWith('_left') || t.side === 'left';
-    const isRight = mount.endsWith('_right') || t.side === 'right';
+    const mf = sideMountFlags(t);
+    const isLeft = (mf & SIDE_MOUNT_LEFT) !== 0;
+    const isRight = (mf & SIDE_MOUNT_RIGHT) !== 0;
     const ox = Number(t.offset?.x) || 0;
     if (isLeft) {
       if (ox < -1e-3) leftNegArm += -ox;
@@ -189,12 +223,13 @@ export function applyPlayerThrusterVisualState(ship, target) {
 
   for (let i = 0; i < sideThrusters.length; i++) {
     const t = sideThrusters[i];
-    const mount = String(t.mount || '').toLowerCase();
-    const isLeft = mount.endsWith('_left') || t.side === 'left';
-    const isRight = mount.endsWith('_right') || t.side === 'right';
-    const isFront = mount.startsWith('front_') || mount.startsWith('upper_');
-    const isRear = mount.startsWith('rear_') || mount.startsWith('lower_');
-    const isCenter = mount.startsWith('center_');
+    const mf = sideMountFlags(t);
+    const isLeft = (mf & SIDE_MOUNT_LEFT) !== 0;
+    const isRight = (mf & SIDE_MOUNT_RIGHT) !== 0;
+    const isFront = (mf & SIDE_MOUNT_FRONT) !== 0;
+    const isRear = (mf & SIDE_MOUNT_REAR) !== 0;
+    const isCenter = (mf & SIDE_MOUNT_CENTER) !== 0;
+    const noMount = (mf & SIDE_MOUNT_NONE) !== 0;
 
     let throttle = 0;
     let turnWeight = 0;
@@ -219,13 +254,13 @@ export function applyPlayerThrusterVisualState(ship, target) {
       else if (isCenter && isLeft) { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = 0.55; }
       else if (isRear && isRight) { throttle = Math.max(throttle, turnMag * (pureTurn ? 1 : 0.75)); turnWeight = 0.75; }
       else if (isCenter && isRight) { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = 0.35; }
-      else if (!mount && isLeft && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = 0.8; }
+      else if (noMount && isLeft && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = 0.8; }
     } else if (torqueInput < 0) {
       if (isRear && isLeft) { throttle = Math.max(throttle, turnMag); turnWeight = -1.0; }
       else if (isCenter && isLeft) { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = -0.35; }
       else if (isFront && isRight) { throttle = Math.max(throttle, turnMag * (pureTurn ? 1 : 0.75)); turnWeight = -0.75; }
       else if (isCenter && isRight) { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = -0.55; }
-      else if (!mount && isRight && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = -0.8; }
+      else if (noMount && isRight && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = -0.8; }
     }
     if (turnMag > 1e-3 && throttle > strafeThrottle + 1e-4) {
       forceScale = 1;
@@ -365,9 +400,9 @@ export function updateShipThrusterState(ship, dt) {
     const t = sides[i];
     stepThrusterActuator(t, clampedDt, true);
     const throttle = clamp01(t.__throttle);
-    const mount = String(t.mount || '').toLowerCase();
-    if (mount.endsWith('_left') || t.side === 'left') { leftSum += throttle; leftCount++; }
-    if (mount.endsWith('_right') || t.side === 'right') { rightSum += throttle; rightCount++; }
+    const mf = sideMountFlags(t);
+    if ((mf & SIDE_MOUNT_LEFT) !== 0) { leftSum += throttle; leftCount++; }
+    if ((mf & SIDE_MOUNT_RIGHT) !== 0) { rightSum += throttle; rightCount++; }
     const nozzle = Number.isFinite(Number(t.nozzleDeg)) ? Number(t.nozzleDeg) : (Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 0);
     const retroAlign = clamp01(1 - (Math.abs(normalizeDeg(nozzle - (-90), 0)) / 55));
     if (retroAlign > 1e-3) {

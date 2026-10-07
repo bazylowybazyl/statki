@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   describeSelectedUnit,
+  describeUnitTitle,
   formatUnitMass,
   layoutSelectionLabels,
   unitClassLabel
@@ -24,6 +25,26 @@ test('podpis jednostki: nazwa kadłuba Terra Nova, klasa po polsku, masa w tonac
   // Pirat nie dostaje imienia kadłuba Terra Nova.
   assert.equal(describeSelectedUnit({ isPirate: true, type: 'destroyer' }).title, 'NISZCZYCIEL');
   assert.equal(unitClassLabel('frigate_laser'), 'FREGATA LASEROWA');
+});
+
+test('sam tytuł (radar, skan X) = tytuł podpisu, bez liczenia masy', () => {
+  const units = [
+    [{ friendly: true, callInTemplateKey: 'battleship', type: 'battleship', mass: 50000 }],
+    [{ friendly: true, displayName: 'Citadella', type: 'carrier', mass: 100000 }],
+    [{ mass: 200000 }, { name: 'Atlas', typeKey: 'atlas' }],
+    [{ isPirate: true, type: 'destroyer', name: 'destroyer' }],
+    [{ isPirate: true, type: 'pirate_battleship', name: 'Iron Maw' }],
+    [{ friendly: true, type: 'frigate_laser', callInTemplateKey: 'frigate_laser' }],
+    [{ type: 'freighter_container' }],
+    [null],
+    [{ isCapitalShip: true, type: '???' }]
+  ];
+  for (const [unit, opts] of units) {
+    assert.equal(describeUnitTitle(unit, opts), describeSelectedUnit(unit, opts).title);
+  }
+  // Masa nie jest czytana (getter rzuca — tytuł i tak wychodzi).
+  const noMass = { type: 'destroyer', get mass() { throw new Error('masa'); } };
+  assert.equal(describeUnitTitle(noMass), 'NISZCZYCIEL');
 });
 
 test('układ podpisów: sąsiednie ramki nie dostają tego samego miejsca, podpis mieści się w ekranie', () => {

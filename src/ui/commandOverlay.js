@@ -479,16 +479,25 @@ export function formatUnitMass(mass) {
 }
 
 /**
+ * Sam tytuł podpisu jednostki („BELLATOR · PANCERNIK”), bez masy. Radar kokpitu i skan X pytają o niego dla
+ * każdego kontaktu (~10 Hz × setki okrętów) — `formatUnitMass` (toLocaleString) kosztował tam ~0,7 ms/klatkę.
+ * opts: { name, typeKey } — jak describeSelectedUnit.
+ */
+export function describeUnitTitle(unit, opts = null) {
+  const typeKey = String(opts?.typeKey || unit?.callInTemplateKey || unit?.type || '').toLowerCase();
+  const cls = unitClassLabel(typeKey, unit);
+  let name = String(opts?.name || unit?.displayName || '').trim();
+  if (!name && typeof unit?.name === 'string' && unit.name.trim() && unit.name.trim().toLowerCase() !== typeKey) name = unit.name.trim();
+  if (!name && unit?.friendly && !unit?.isPirate) name = TERRAN_HULL_NAMES[unit?.callInTemplateKey || typeKey] || '';
+  return name && name.toUpperCase() !== cls ? `${name.toUpperCase()} · ${cls}` : cls;
+}
+
+/**
  * Podpis zaznaczonej jednostki: { title: „BELLATOR · PANCERNIK”, sub: „MASA 50 000 t” }.
  * opts: { name, typeKey } — nadpisania (statek gracza: nazwa i id kadłuba z katalogu).
  */
 export function describeSelectedUnit(unit, opts = {}) {
-  const typeKey = String(opts.typeKey || unit?.callInTemplateKey || unit?.type || '').toLowerCase();
-  const cls = unitClassLabel(typeKey, unit);
-  let name = String(opts.name || unit?.displayName || '').trim();
-  if (!name && typeof unit?.name === 'string' && unit.name.trim() && unit.name.trim().toLowerCase() !== typeKey) name = unit.name.trim();
-  if (!name && unit?.friendly && !unit?.isPirate) name = TERRAN_HULL_NAMES[unit?.callInTemplateKey || typeKey] || '';
-  const title = name && name.toUpperCase() !== cls ? `${name.toUpperCase()} · ${cls}` : cls;
+  const title = describeUnitTitle(unit, opts);
   const mass = formatUnitMass(unit?.mass);
   return { title, sub: mass ? `MASA ${mass}` : '' };
 }
