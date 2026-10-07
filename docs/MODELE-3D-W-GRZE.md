@@ -40,8 +40,18 @@ modele (`src/3d/ships3d/`) i skóra FFD, przepięta na kadłuby 2D.
 - Wieże z `src/3d/ships3d/weapons/weapons3D.js` w miejscach wieżyczek gry: rekordy `Turret2D.recordsFor(encja)` tej
   klatki (pozycja, kurs lufy, odrzut), na modelu (wysokość pokładu z modelu) albo na sprite'cie. Kanwa nie rysuje wieżyczek
   z modelem 3D (`Turret2D.skipDraw`); hangary i Hexlance wieżyczek nie mają.
-- LOD jak `Turret2D`: poniżej 2 px na ekranie wieży nie ma. Każda wieża to kilka siatek (kilka rysunków) — przy dużej
-  bitwie z bliska to widoczny koszt CPU; instancjonowanie wież to następny krok.
+- LOD jak `Turret2D`: poniżej 2 px na ekranie wieży nie ma.
+- **Partie** (`src/3d/ships3d/turretBatch3D.js`, 2026-10-07): jeden rysunek na RODZINĘ broni (`WEAPON3D_FAMILY`, 24
+  rodziny) dla wszystkich wież tej rodziny w kadrze — dawniej każda wieża była drzewem siatek (pierścień, obudowa, każda
+  lufa, wirnik: 3–6 rysunków po ~15–20 µs CPU w three r183). Geometria rodziny = scalone części z atrybutem `aTurPart`
+  (część, przesunięcie kopii lufy), `Mesh` + `InstancedBufferGeometry` z jednym przeplecionym buforem instancji (rekord
+  wieży: podstawa względem początku przy kamerze i skala, kurs lufy i kadłuba, pochylenie, odrzut, wirnik, warstwa głębi),
+  jeden materiał `TurretBatchNodeMaterial` (materiał broni z pozą części liczoną w etapie wierzchołków — pozycja i
+  normalna jak `InstanceNode` three), wysyłka zakresem (`zakresyWysylki.js`). Stan wieży (pochylenie wyrzutni, kąt
+  wirnika, wylot dla `turretMuzzleZ`) zostaje w `shipModels3DGame.js` (`TurretState`). Poza części = dawne drzewo
+  `Object3D` (lustro CPU `turretVertexCpu`, test `tests/turretBatch3D.test.mjs`); A/B obrazu na zatrzymanej klatce —
+  różnice tylko pojedyncze piksele krawędzi świecących pasków. Bitwa 166 okrętów (`.tmp/bronie3d-ab.mjs`): zoom 0,1 —
+  dawniej 873 rysunki i 27 fps, teraz +7 rysunków względem broni 2D i fps jak 2D.
 
 ## Kamery 3D (`src/game/game3D.js`, `camera3DRig.js`, `view3D.js`) — sam widok
 
@@ -82,5 +92,6 @@ Precyzja: `depth24plus`, near 1 / far 400 000 → ~0,024 j. na stopień głębi 
   [--fokus cel] [--odleglosc 1.0] [--bez-pauzy] [--env 3,5] [--eval "…"]` — panel „Nowa gra”, mała bitwa z kraterami,
   pauza i wszystkie warianty na tej samej klatce (cała bitwa, Atlas, pancernik z kraterami), kamery 3D (z `--fokus cel` —
   wokół uszkodzonego pancernika), potem ciąg W; `raport.json` z błędami konsoli i liczbą modeli / wież / draw calli.
-- Testy: `tests/modele3dGra.test.mjs` (wybór, kratownica skóry, kolejność warstw, wpięcie), modele — `atlas3dModel`,
+- Testy: `tests/modele3dGra.test.mjs` (wybór, kratownica skóry, kolejność warstw, wpięcie), partie wież —
+  `turretBatch3D` (układ rekordu, scalone rodziny, poza części vs dawne drzewo, WGSL bez GPU), modele — `atlas3dModel`,
   `fleet3dModel`, `auto3dModel`.

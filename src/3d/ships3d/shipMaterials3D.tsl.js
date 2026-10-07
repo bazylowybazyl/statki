@@ -63,10 +63,11 @@ const hash12 = Fn(([p]) => {
 /**
  * Materiał okrętu. deckMap — tekstura sprite'a (pokład), deckNormalMap — normalne z
  * luminancji (createDeckNormalTexture); bez deckMap materiał broni (bez gałęzi pokładu).
+ * materialClass — podklasa MeshStandardNodeMaterial (partie wież: turretBatch3D.js).
  * @returns {THREE.MeshStandardNodeMaterial} z `userData.uniforms` (engine, seams, bump, emissive)
  */
 export function createShipMaterial(o = {}) {
-  const mat = new THREE.MeshStandardNodeMaterial();
+  const mat = new (o.materialClass || THREE.MeshStandardNodeMaterial)();
   mat.name = o.name || (o.deckMap ? 'okręt 3D (pokład)' : 'broń 3D');
 
   const u = {

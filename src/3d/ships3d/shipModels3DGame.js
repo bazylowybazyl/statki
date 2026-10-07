@@ -8,7 +8,8 @@
 //    Wraki i odłamy dziedziczą model rodu (hull.dmgKey).
 //  • Bronie 3D: wieże 3D (weapons/weapons3D.js) w miejscach wieżyczek gry z rekordów Turret2D tej klatki
 //    (kurs lufy, odrzut) — na modelu i na sprite'cie; wieżyczek kanwy z modelem 3D Turret2D nie rysuje
-//    (Turret2D.skipDraw, index.html).
+//    (Turret2D.skipDraw, index.html). Rysunek w PARTIACH (turretBatch3D.js): jeden na rodzinę broni dla
+//    wszystkich wież w kadrze — tu tylko stan wieży (pochylenie, wirnik, wylot) i jej rekord instancji.
 //
 // Poza jak skóra sprite'a (hexShips3D): korzeń = początek ciała (pozycja renderu encji − R·kotwica lokalna),
 // kąt θ = −(kąt + obrót sprite'a); grupa modelu w środku sprite'a (latticeMin + anchorD) ze skalą sprite'a.
@@ -20,7 +21,7 @@ import * as THREE from 'three/webgpu';
 import { Fn, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, fract, min } from 'three/tsl';
 import { Core3D } from '../core3d.js';
 import { buildShip3D, SHIP3D_MODELS } from './ships/ships3D.js';
-import { buildWeapon3D, WEAPON3D_FAMILY, weapon3DScale } from './weapons/weapons3D.js';
+import { WEAPON3D_FAMILY, weapon3DScale } from './weapons/weapons3D.js';
 import { createShipMaterial, createDeckTexture, createDeckNormalTexture } from './shipMaterials3D.tsl.js';
 import {
   hullSkinLattice, buildHullSkinGeometry, makeHullSkinMaterial, makeHullCutMaterial, ensureHullSkinSlot, releaseHullSkinSlot,
@@ -30,8 +31,13 @@ import { applyModelSlabDepth, setSlab, setModelSlabDepthOn, SLAB_HULL, SLAB_TURR
 import { applySunShadowToBuiltinMaterial } from '../sunShadowMask.js';
 import { HullBodies, hullSpriteRotation } from '../../game/hullBodies.js';
 import { HullDamageMap } from '../hullDamageMap.js';
+import { sceneOriginNearCamera } from '../sceneOrigin.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { entityCloakVisAt } from '../../game/cloakLook.js';
+import {
+  TurretBatchSet, createTurretBatchMaterial, buildTurretFamilyArrays, turretInstanceScratch,
+  turretBatchWarmHolder
+} from './turretBatch3D.js';
 
 const DEG = Math.PI / 180;
 
@@ -92,8 +98,6 @@ export function shipModel3DIdFor(e) {
 // Zasoby per model (raz na grę): kadłub, geometria, tekstury pokładu, materiały
 // ---------------------------------------------------------------------------
 const _models = new Map();   // id → { hull, geometry, material, skinMaterial, skinGeo: Map(klucz → { geo, lat }) }
-let _weaponMat = null;
-const _weaponGeo = new Map(); // rodzina → { model, geo, height }
 
 function loadImage(src) {
   return new Promise((ok, fail) => {
@@ -197,9 +201,21 @@ function skinWarmGeometry() {
   return g;
 }
 
-function weaponMaterial() {
-  if (!_weaponMat) _weaponMat = gameMaterial(createShipMaterial({ panelW: 7, panelH: 3.5, name: 'broń 3D' }));
-  return _weaponMat;
+// Wieże w partiach (turretBatch3D.js): materiał partii (pozycja z rekordu wieży, warstwa głębi z rekordu) z mapą
+// otoczenia i maską słońca jak reszta modeli; zestaw partii — jeden na grę, siatki w Core3D.scene.
+let _turretMat = null;
+function turretMaterial() {
+  if (!_turretMat) {
+    _turretMat = createTurretBatchMaterial();
+    applyShipEnv(_turretMat);
+    applySunShadowToBuiltinMaterial(_turretMat);
+  }
+  return _turretMat;
+}
+let _batches = null;
+function turretBatches() {
+  if (!_batches) _batches = new TurretBatchSet(Core3D.scene, turretMaterial());
+  return _batches;
 }
 
 // Mapa otoczenia modeli 3D (tylko materiały okrętów — reszta sceny bez zmian): w kosmosie bez niej
@@ -249,26 +265,6 @@ function applyShipEnv(mat) {
       }
     }, 0);
   });
-}
-
-function weaponGeometry(family) {
-  let e = _weaponGeo.get(family);
-  if (e) return e;
-  const model = buildWeapon3D(family);
-  const geo = {
-    ring: model.parts.ring.toGeometry(THREE),
-    housing: model.parts.housing.toGeometry(THREE),
-    barrel: model.parts.barrel.toGeometry(THREE),
-    spin: model.parts.spin ? model.parts.spin.toGeometry(THREE) : null
-  };
-  // wysokość wieży (jednostki modelu broni): obudowa albo lufa na czopie
-  let height = 1;
-  for (const g of [geo.ring, geo.housing]) { g.computeBoundingBox(); height = Math.max(height, g.boundingBox.max.z); }
-  geo.barrel.computeBoundingBox();
-  height = Math.max(height, (model.trunnion?.[1] || 0) + geo.barrel.boundingBox.max.z);
-  e = { model, geo, height };
-  _weaponGeo.set(family, e);
-  return e;
 }
 
 function _warmHolder(geometry, material) {
@@ -337,60 +333,49 @@ function lightsGeometry(m) {
 // ---------------------------------------------------------------------------
 // Wieża 3D
 // ---------------------------------------------------------------------------
-class Turret3D {
-  constructor(family, weaponId, material, hullTier) {
-    const { model, geo, height } = weaponGeometry(family);
-    this.model = model;
-    this.height = height;
-    this.def = MASTER_WEAPONS[weaponId] || null;
+// Stan wieży między klatkami (rysuje ją partia rodziny — turretBatch3D.js): pochylenie lufy, kąt wirnika,
+// wylot dla kamer 3D.
+const TWO_PI = Math.PI * 2;
+class TurretState {
+  constructor(family, weaponId, hullTier) {
+    const fa = buildTurretFamilyArrays(family);
+    this.family = family;
+    this.model = fa.model;
+    this.height = fa.height;
     this.weaponId = weaponId;
-    this.scale = weapon3DScale(this.def, hullTier);
-    this.slab = new THREE.Vector4();
-    this.root = new THREE.Object3D();
-    this.root.scale.setScalar(this.scale);
-    const mk = (g) => {
-      const m = new THREE.Mesh(g, material);
-      m.receiveShadow = true;
-      m.userData.slab = this.slab;
-      m.layers.set(0);
-      return m;
-    };
-    this.root.add(mk(geo.ring));
-    this.yaw = new THREE.Object3D();
-    this.root.add(this.yaw);
-    this.yaw.add(mk(geo.housing));
-    this.pitch = new THREE.Object3D();
-    this.pitch.position.set(model.trunnion[0], 0, model.trunnion[1]);
-    this.yaw.add(this.pitch);
-    this.barrels = [];
-    model.barrels.forEach(([y, z], i) => {
-      const b = new THREE.Object3D();
-      const shift = model.barrelShift ? model.barrelShift[i] : 0;
-      b.position.set(shift, y, z);
-      b.userData.x0 = shift;
-      b.add(mk(geo.barrel));
-      let spin = null;
-      if (geo.spin) { spin = new THREE.Object3D(); spin.add(mk(geo.spin)); b.add(spin); }
-      this.pitch.add(b);
-      this.barrels.push({ obj: b, spin });
-    });
-    this.pitchAngle = (model.rest || 0) * DEG;
+    this.scale = weapon3DScale(MASTER_WEAPONS[weaponId] || null, hullTier);
+    const m = this.model;
+    // lufa poziomo (wyrzutnie — podniesione); od spoczynku `rest` z prędkością 1,6 rad/s
+    this.pitchWant = Math.min(m.pitch[1] * DEG, Math.max(m.pitch[0] * DEG, m.launcher ? 25 * DEG : 0));
+    this.pitchAngle = (m.rest || 0) * DEG;
+    this.pitchCos = Math.cos(this.pitchAngle);
+    this.pitchSin = Math.sin(this.pitchAngle);
+    this.spin = 0;
+    this.hasSpin = !!m.parts.spin;
+    this.muzzleK = (m.trunnion?.[1] || 0) + (m.barrels?.[0]?.[1] || 0);
+    this.key = '';
     this.seen = 0;
+    this.shown = 0; // klatka, w której wieża trafiła do partii (widoczna)
+    this.wx = 0;
+    this.wy = 0;
+    this.muzzleZ = 0;
   }
 
-  /** yawLocal (rad, układ kadłuba), recoil 0..1, dt. Lufa poziomo (wyrzutnie — podniesione). */
-  pose(yawLocal, recoil01, dt) {
+  /** recoil 0..1, dt → odrzut lufy (j. lokalne); pochylenie i wirnik jak dawne drzewo siatek wieży. */
+  pose(recoil01, dt) {
     const m = this.model;
-    const want = Math.min(m.pitch[1] * DEG, Math.max(m.pitch[0] * DEG, m.launcher ? 25 * DEG : 0));
-    const step = 1.6 * dt;
-    this.pitchAngle += Math.max(-step, Math.min(step, want - this.pitchAngle));
-    this.yaw.rotation.z = yawLocal;
-    this.pitch.rotation.y = -this.pitchAngle;
-    const back = m.recoil * Math.max(0, Math.min(1, recoil01));
-    for (const b of this.barrels) {
-      b.obj.position.x = b.obj.userData.x0 - back;
-      if (b.spin && recoil01 > 0.05) b.spin.rotation.x += 30 * dt;
+    const d = this.pitchWant - this.pitchAngle;
+    if (d !== 0) {
+      const step = 1.6 * dt;
+      this.pitchAngle += Math.max(-step, Math.min(step, d));
+      this.pitchCos = Math.cos(this.pitchAngle);
+      this.pitchSin = Math.sin(this.pitchAngle);
     }
+    if (this.hasSpin && recoil01 > 0.05) {
+      this.spin += 30 * dt;
+      if (this.spin > TWO_PI) this.spin -= TWO_PI * Math.floor(this.spin / TWO_PI);
+    }
+    return m.recoil * Math.max(0, Math.min(1, recoil01));
   }
 }
 
@@ -405,13 +390,10 @@ function createInstance(entity) {
   const modelGroup = new THREE.Group();
   modelGroup.name = 'model';
   root.add(modelGroup);
-  const turretGroup = new THREE.Group();
-  turretGroup.name = 'wieże 3D';
-  modelGroup.add(turretGroup);
   root.visible = false;
   Core3D.scene.add(root);
   const inst = {
-    entity, modelId: null, assets: null, root, modelGroup, turretGroup,
+    entity, modelId: null, assets: null, root, modelGroup,
     hullMesh: null, skinMesh: null, skinKey: null, lightMesh: null, slab: new THREE.Vector4(),
     turrets: new Map(), frame: 0
   };
@@ -640,9 +622,16 @@ let _frame = 0;
  *   zoomAt(x, y) — px ekranu na jednostkę świata w punkcie (kamera 3D: rzut perspektywy); bez niej — zoom
  *   dt       — czas klatki
  */
+const _org = { x: 0, y: 0 };
 export function syncShipModels3D(p) {
   _frame++;
   let shown = 0;
+  // Partie wież: liczniki na zero i początek przy kamerze (x, −y świata gry) — rekordy tej klatki względem niego.
+  const batches = weaponsOn() && Core3D.scene ? turretBatches() : _batches;
+  if (batches) {
+    if (weaponsOn()) sceneOriginNearCamera(_org);
+    batches.begin(_org.x, _org.y);
+  }
   if (shipsOn() || weaponsOn()) {
     const dt = Math.max(0, Number(p.dt) || 0);
     for (const e of p.entities) {
@@ -695,14 +684,16 @@ export function syncShipModels3D(p) {
         if (inst.skinMesh) inst.skinMesh.visible = false;
         if (inst.cut?.mesh) inst.cut.mesh.visible = false;
       }
-      // Wieże 3D.
-      if (nRecs > 0) syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, !!id, Number(p.zoom) || 1, p.zoomAt || null);
-      else hideTurrets(inst);
-      inst.root.visible = true;
-      inst.root.updateMatrixWorld(true);
+      // Wieże 3D (rekordy partii).
+      if (nRecs > 0 && batches) syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, !!id, Number(p.zoom) || 1, p.zoomAt || null);
+      // Korzeń egzemplarza niesie tylko bryłę modelu — bez niej (wieże na sprite'cie) nie ma czego liczyć.
+      const showRoot = !!(id && inst.assets?.ready);
+      if (inst.root.visible !== showRoot) inst.root.visible = showRoot;
+      if (showRoot) inst.root.updateMatrixWorld(true);
       shown++;
     }
   }
+  if (batches) batches.end();
   // Encje nieobecne w tej klatce (zniknęły, poza kadrem, opcje wyłączone) — chowamy; martwe po chwili zwalniamy.
   for (const inst of _instances.values()) {
     if (inst.frame === _frame) continue;
@@ -723,18 +714,24 @@ function spriteScale(e) {
   return Number.isFinite(sc) && sc > 0 ? sc : 1;
 }
 
-function hideTurrets(inst) {
-  for (const t of inst.turrets.values()) if (t.root.visible) t.root.visible = false;
-}
-
-// Wieża mniejsza na ekranie (promień sylwetki Turret2D × zoom) — bez modelu: kilka siatek na wieżę to kilka
-// rysunków (~20 µs CPU każdy), a z daleka wieża ma 1–2 px.
+// Wieża mniejsza na ekranie (promień sylwetki Turret2D × zoom) — bez modelu, jak na kanwie (z daleka wieża ma
+// 1–2 px, a jej wierzchołki i rekord nic nie wnoszą).
 export const TURRET3D_HIDE_PX = 2.0; // = TURRET_HIDE_PX Turret2D (kanwa od tego progu też nie rysuje)
+
+// Rekord instancji wieży (pola — bez wywołań z liczbami double w gorącej pętli).
+const _rec = turretInstanceScratch();
 
 function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom, zoomAt) {
   const hull3D = onModel ? inst.assets?.hull : null;
   const tier = e.isPlayer ? 'Capital' : (e.weaponTier || 'Capital');
   const slab = onModel ? SLAB_TURRET_ON_MODEL : SLAB_TURRET_ON_SPRITE;
+  const B = _batches;
+  const T = _rec;
+  // pierścień obraca się z kadłubem (θ), obudowa i lufy z kursem lufy
+  T.hullCos = c;
+  T.hullSin = s;
+  T.lo = slab.lo;
+  T.hi = slab.hi;
   for (let i = 0; i < recs.length; i++) {
     const rec = recs[i];
     const fam = WEAPON3D_FAMILY[rec.weaponId];
@@ -742,41 +739,49 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     const z = zoomAt ? zoomAt(rec.wx, rec.wy) : zoom;
     if ((Number(rec.spec?.r) || 10) * (Number(rec.scale) || 1) * z < TURRET3D_HIDE_PX) continue;
     let t = inst.turrets.get(rec.key);
-    if (!t) {
-      t = new Turret3D(fam, rec.weaponId, weaponMaterial(), tier);
-      inst.turretGroup.add(t.root);
+    if (!t || t.weaponId !== rec.weaponId) {
+      t = new TurretState(fam, rec.weaponId, tier);
+      t.key = rec.key;
       inst.turrets.set(rec.key, t);
     }
     t.seen = _frame;
     // Maskowanie: wieża znika razem z komórką kadłuba pod sobą (lustro wzoru z shadera).
-    if (e.__cloakLook && entityCloakVisAt(e, rec.wx, rec.wy) < 0.5) {
-      if (t.root.visible) t.root.visible = false;
-      continue;
+    if (e.__cloakLook && entityCloakVisAt(e, rec.wx, rec.wy) < 0.5) continue;
+    // Pokład pod wieżą (model): świat (x, −y) → układ ciała (odwrotny obrót) → grupa modelu (środek i skala sprite'a).
+    let hzs = 0;
+    if (hull3D && hull3D.heightAt) {
+      const dx = rec.wx - ox, dy = -rec.wy - oy;
+      const hz = hull3D.heightAt((c * dx + s * dy - scx) / k, (-s * dx + c * dy - scy) / k);
+      if (Number.isFinite(hz)) hzs = hz;
     }
-    // Świat (x, −y) → układ ciała (odwrotny obrót) → grupa modelu (środek sprite'a, skala sprite'a).
-    const dx = rec.wx - ox, dy = -rec.wy - oy;
-    const lx = (c * dx + s * dy - scx) / k;
-    const ly = (-s * dx + c * dy - scy) / k;
-    const hz = hull3D && hull3D.heightAt ? hull3D.heightAt(lx, ly) : 0;
-    const hzs = Number.isFinite(hz) ? hz : 0;
-    t.root.position.set(lx, ly, hzs);
-    // Kurs lufy z rekordu (świat gry, y w dół) w układzie kadłuba.
-    const ca = Math.cos(rec.ang), sa = -Math.sin(rec.ang);
-    const yawLocal = Math.atan2(-s * ca + c * sa, c * ca + s * sa);
     const kick = Math.max(0.1, Number(rec.recoil) || 0.1);
     const recoil01 = rec.state ? (Number(rec.state.barrel) || 0) / kick : 0;
-    t.pose(yawLocal, recoil01, dt);
+    const back = t.pose(recoil01, dt);
+    const K = t.scale * k;
     const zb = hzs * k;
-    setSlab(t.slab, zb, zb + t.height * t.scale * k, slab);
+    // Kurs lufy z rekordu (świat gry, y w dół): α = −kąt w układzie sceny.
+    T.x = rec.wx - B.orgX;
+    T.y = -rec.wy - B.orgY;
+    T.z = zb;
+    T.scale = K;
+    T.yawCos = Math.cos(rec.ang);
+    T.yawSin = -Math.sin(rec.ang);
+    T.pitchCos = t.pitchCos;
+    T.pitchSin = t.pitchSin;
+    T.back = back;
+    T.spin = t.spin;
+    T.zb = zb;
+    T.zt = Math.max(zb + t.height * K, zb + 1e-3);
     // wylot lufy nad płaszczyzną (turretMuzzleZ — błysk i pocisk w kamerach 3D)
-    t.wx = rec.wx; t.wy = rec.wy;
-    t.muzzleZ = zb + ((t.model.trunnion?.[1] || 0) + (t.model.barrels?.[0]?.[1] || 0)) * t.scale * k;
-    if (!t.root.visible) t.root.visible = true;
+    t.wx = rec.wx;
+    t.wy = rec.wy;
+    t.muzzleZ = zb + t.muzzleK * K;
+    t.shown = _frame;
+    B.family(fam).push(T);
   }
-  for (const [key, t] of inst.turrets) {
-    if (t.seen === _frame) continue;
-    if (t.root.visible) t.root.visible = false;
-    if (_frame - t.seen > 300) { inst.turretGroup.remove(t.root); inst.turrets.delete(key); }
+  // Stan wież niewidzianych od 300 klatek (zdjęta broń, odcięta część) — przegląd co 64 klatki.
+  if ((_frame & 63) === 0) {
+    for (const t of inst.turrets.values()) if (_frame - t.seen > 300) inst.turrets.delete(t.key);
   }
 }
 
@@ -791,7 +796,7 @@ export function turretMuzzleZ(entity, x, y) {
   if (!inst) return 0;
   let best = null, bd = Infinity;
   for (const t of inst.turrets.values()) {
-    if (!t.root.visible || !Number.isFinite(t.muzzleZ)) continue;
+    if (t.shown !== _frame || !Number.isFinite(t.muzzleZ)) continue;
     const dx = t.wx - x, dy = t.wy - y;
     const d = dx * dx + dy * dy;
     if (d < bd) { bd = d; best = t; }
@@ -802,7 +807,7 @@ export function turretMuzzleZ(entity, x, y) {
 
 // ---------------------------------------------------------------------------
 // Rozgrzewka (rejestr Core3D.warmup, ekran ładowania): modele obecne w świecie (lista od gry) — bryła
-// sztywna, skóra i wieża, pass ortho (warstwa 0).
+// sztywna, skóra i partia wież (jeden program na wszystkie rodziny), pass ortho (warstwa 0).
 // ---------------------------------------------------------------------------
 export function warmupShipModels3D(ids = []) {
   // Modele rysują też kamery 3D (niezależnie od opcji) — rozgrzewka zawsze.
@@ -823,8 +828,9 @@ export function warmupShipModels3D(ids = []) {
     out.push(_warmHolder(cg, cutMaterial()));
   }
   {
+    // partia wież: układ atrybutów i stan jak siatki partii (receiveShadow — w kluczu programu three)
     const fam = WEAPON3D_FAMILY.railgun_mk2 || Object.values(WEAPON3D_FAMILY).find(Boolean);
-    if (fam) out.push(_warmHolder(weaponGeometry(fam).geo.housing, weaponMaterial()));
+    if (fam) out.push(turretBatchWarmHolder(turretMaterial(), fam));
   }
   return out;
 }
@@ -834,13 +840,21 @@ export function setShipModels3DWarmIds(fn) { if (typeof fn === 'function') _warm
 Core3D.warmup?.add({ name: 'modele 3D statków i broni', objects: () => warmupShipModels3D(_warmIds()), layer: 0, phase: 'loading' });
 Core3D.warmup?.add({ name: 'modele 3D statków i broni (kamery 3D)', objects: () => warmupShipModels3D(_warmIds()), layer: 0, ortho: false, phase: 'loading' });
 
+/** Stan ostatniej klatki: egzemplarze, widoczne (model albo wieże), wieże w partiach, skóry, rysunki partii. */
 export function shipModels3DStats() {
   let turrets = 0, skins = 0, visible = 0;
   for (const inst of _instances.values()) {
-    if (!inst.root.visible) continue;
+    if (inst.frame !== _frame) continue;
+    let n = 0;
+    for (const t of inst.turrets.values()) if (t.shown === _frame) n++;
+    if (!inst.root.visible && n === 0) continue;
     visible++;
-    for (const t of inst.turrets.values()) if (t.root.visible) turrets++;
+    turrets += n;
     if (inst.skinMesh?.visible) skins++;
   }
-  return { instances: _instances.size, visible, turrets, skins, models: [..._models.keys()] };
+  const b = _batches;
+  return {
+    instances: _instances.size, visible, turrets, skins, models: [..._models.keys()],
+    turretDraws: b ? b.draws || 0 : 0, turretFamilies: b ? b.list.length : 0
+  };
 }

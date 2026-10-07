@@ -10,7 +10,8 @@
 //     nad skałami pasa (szczyt skały PLAY ≤ −0,45 r, r ≥ 40 → z ≤ ~−11) i płatami mgły (z ≤ −200);
 //   • wieże na modelu [−4,6; −0,4] — zawsze nad pokładem swojego kadłuba;
 //   • wieże na sprite'ach [0,05; 1,8] — nad skórą sprite'a, pod efektami.
-// Warstwa per obiekt: userData.slab = Vector4(zb, zt, lo, hi) (z świata; uniform().onObjectUpdate).
+// Warstwa per obiekt: userData.slab = Vector4(zb, zt, lo, hi) (z świata; uniform().onObjectUpdate); partie wież
+// (turretBatch3D.js) — per instancja, węzeł vec4 z rekordu wieży.
 // Precyzja: depth24plus przy near 1 / far 400 000 = ~0,024 j. na stopień — ~210 stopni na kadłub.
 // ============================================================
 import * as THREE from 'three/webgpu';
@@ -28,9 +29,9 @@ export function setModelSlabDepthOn(on) {
   uSlabOn.value = on ? 1 : 0;
 }
 
-/** Materiał zapisuje głębię w warstwie obiektu (userData.slab). */
-export function applyModelSlabDepth(mat) {
-  const uSlab = uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.slab || _default);
+/** Materiał zapisuje głębię w warstwie obiektu (userData.slab) albo z węzła `slab` (vec4: zb, zt, lo, hi). */
+export function applyModelSlabDepth(mat, slab = null) {
+  const uSlab = slab || uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.slab || _default);
   mat.depthNode = Fn(() => {
     const zw = positionWorld.z;
     const t = clamp(zw.sub(uSlab.x).div(max(uSlab.y.sub(uSlab.x), 1e-3)), 0, 1);

@@ -61,6 +61,8 @@ async function shot(v, sc, info = null) {
 }
 
 try {
+  // Gra swobodna bez samouczka — „Start” w kampanii (domyślnej od misji 1) zaczyna intrem w doku K-7, nie przy Ziemi.
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); } catch {} })();` });
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.setVisualMode)', 240000, 400)) throw new Error('gra nie wstała');
   // Menu „Nowa gra” z przełącznikami (3D / 3D — zrzut z aktywnymi chipami).
