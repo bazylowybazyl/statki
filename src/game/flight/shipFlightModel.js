@@ -222,17 +222,23 @@ export function getFlightIntent(entity) {
       arrival: 0,
       speedLimit: 0,
       approachCap: Infinity,
+      totalCap: Infinity,
       noBrake: false,
       face: NaN,
       faceNear: 0,
       faceFar: 0,
       backFace: false,
+      faceLock: false,
       sepAx: 0,
       sepAy: 0,
       dodgeVx: 0,
       dodgeVy: 0,
       dodgeT: 0,
-      boost: false
+      boost: false,
+      // Mnożniki dopalacza (0 = FLIGHT_PILOT.boostSpeedMul / boostAccelMul) — zryw silników, system F
+      // (src/ai/npcShipSystem.js).
+      boostSpeedMul: 0,
+      boostAccelMul: 0
     };
   }
   return it;
@@ -255,12 +261,19 @@ export function setFlightArrive(entity, x, y, opts = {}) {
   it.speedLimit = limit > 0 ? limit : flightSpeedLimit(spec, opts.speedMode || 'combat');
   const cap = num(opts.approachCap, Infinity);
   it.approachCap = cap > 0 ? cap : 0;
+  // Sufit CAŁEJ zadanej prędkości (z punktem odniesienia) — przeszkoda na kursie, której
+  // nie wolno taranować niezależnie od tego, jak szybko jedzie punkt (capitalAI: wraki).
+  const total = num(opts.totalCap, Infinity);
+  it.totalCap = total > 0 ? total : 0;
   it.noBrake = !!opts.noBrake;
   it.face = Number.isFinite(opts.face) ? opts.face : NaN;
   it.faceNear = Math.max(0, num(opts.faceNear, it.arrival));
   it.faceFar = Math.max(0, num(opts.faceFar, 0));
   // `face` to kurs na wroga: cofanie zostaje dziobem do niego (resolveFlightFacing).
   it.backFace = opts.backFace === true;
+  // `faceLock` — kurs `face` bez względu na ruch (manewry bokiem przy innym kadłubie: holownik serwisowy —
+  // obrót 5-km kadłuba przy burcie statku zmiótłby go końcami).
+  it.faceLock = opts.faceLock === true;
   return it;
 }
 
@@ -274,11 +287,13 @@ export function setFlightStop(entity, face = NaN) {
   it.age = 0;
   it.speedLimit = flightSpeedLimit(spec, 'combat');
   it.approachCap = Infinity;
+  it.totalCap = Infinity;
   it.noBrake = false;
   it.face = Number.isFinite(face) ? face : NaN;
   it.faceNear = 0;
   it.faceFar = 0;
   it.backFace = false;
+  it.faceLock = false;
   return it;
 }
 
@@ -328,7 +343,9 @@ export function computeFlightTurnAccel(spec, angle, omega, target, dt) {
 //  1) składowa przeciwna do bieżącej prędkości to HAMOWANIE (≤ decel, izotropowe),
 //  2) reszta idzie w osiach kadłuba: przód ≤ accel, tył ≤ reverseAccel,
 //     bok ≤ strafeAccel, na elipsie (skos nie jest darmowy).
-export function limitFlightAccel(spec, angle, vx, vy, ax, ay, mul, out) {
+// `fwdMul` — sprawność ciągu głównego (src/game/engineDamage.js: żywe dysze MAIN / wszystkie): mnoży tylko
+// przyspieszenie do przodu; 0 = bez ciągu głównego (hamowanie, wsteczny i bok zostają — dysze manewrowe).
+export function limitFlightAccel(spec, angle, vx, vy, ax, ay, mul, out, fwdMul = 1) {
   const m = mul > 0 ? mul : 1;
   let bx = 0;
   let by = 0;
@@ -349,7 +366,9 @@ export function limitFlightAccel(spec, angle, vx, vy, ax, ay, mul, out) {
   const s = Math.sin(angle);
   let af = ax * c + ay * s;
   let ar = -ax * s + ay * c;
-  const limF = (af >= 0 ? spec.accel : spec.reverseAccel) * m;
+  const fwd = fwdMul < 1 ? (fwdMul > 0 ? fwdMul : 0) : 1;
+  if (af > 0 && fwd === 0) af = 0;
+  const limF = (af >= 0 ? spec.accel * (fwd > 0 ? fwd : 1) : spec.reverseAccel) * m;
   const limR = spec.strafeAccel * m;
   const q = (af * af) / (limF * limF) + (ar * ar) / (limR * limR);
   if (q > 1) {
@@ -372,6 +391,7 @@ export function limitFlightAccel(spec, angle, vx, vy, ax, ay, mul, out) {
 // cofanie z kursem na wroga zamienia się w obrót rufą do niego.
 export function resolveFlightFacing(it, desVx, desVy, dist, angle, speedLo = Infinity, speedHi = Infinity, backTurnDist = Infinity) {
   const hasFace = Number.isFinite(it.face);
+  if (it.faceLock && hasFace) return it.face;
   const desSq = desVx * desVx + desVy * desVy;
   const moveOk = desSq > FLIGHT_PILOT.moveHeadingMinSpeed ** 2;
   if (!moveOk) return hasFace ? it.face : NaN;
@@ -441,10 +461,10 @@ export function stepShipFlight(entity, dt) {
 
   it.age += h;
   const boost = it.boost === true;
-  const accelMul = boost ? FLIGHT_PILOT.boostAccelMul : 1;
+  const accelMul = boost ? (it.boostAccelMul > 0 ? it.boostAccelMul : FLIGHT_PILOT.boostAccelMul) : 1;
+  const speedMul = boost ? (it.boostSpeedMul > 0 ? it.boostSpeedMul : FLIGHT_PILOT.boostSpeedMul) : 1;
   const baseLimit = it.speedLimit > 0 ? it.speedLimit : spec.maxSpeed;
-  const cap = Math.min(spec.travelSpeed * (boost ? FLIGHT_PILOT.boostSpeedMul : 1),
-    baseLimit * (boost ? FLIGHT_PILOT.boostSpeedMul : 1));
+  const cap = Math.min(spec.travelSpeed * speedMul, baseLimit * speedMul);
 
   // --- zadana prędkość ---
   let desVx = 0;
@@ -468,6 +488,14 @@ export function stepShipFlight(entity, dt) {
     const inv = dist > 1e-3 ? 1 / dist : 0;
     desVx = it.refVx + dx * inv * s;
     desVy = it.refVy + dy * inv * s;
+    if (it.totalCap < Infinity) {
+      const sp = Math.hypot(desVx, desVy);
+      if (sp > it.totalCap) {
+        const k = it.totalCap / sp;
+        desVx *= k;
+        desVy *= k;
+      }
+    }
   }
   // Kurs „w kierunku lotu" liczymy z samej intencji — odpychanie przez sąsiada
   // albo unik nie może obracać kadłuba (stojący szyk kręciłby się w miejscu).
@@ -511,7 +539,10 @@ export function stepShipFlight(entity, dt) {
 
   // --- przyspieszenie w granicach specyfikacji ---
   const tau = FLIGHT_PILOT.velocityTau;
-  limitFlightAccel(spec, ang, vx, vy, (desVx - vx) / tau, (desVy - vy) / tau, accelMul, _acc);
+  // Zniszczone dysze MAIN (src/game/engineDamage.js — stan na encji, bez importu): mniej ciągu do przodu.
+  const engineDmg = entity.__engineDamage;
+  const engineMul = engineDmg && engineDmg.count > 0 ? engineDmg.frac : 1;
+  limitFlightAccel(spec, ang, vx, vy, (desVx - vx) / tau, (desVy - vy) / tau, accelMul, _acc, engineMul);
   const ax = _acc.ax;
   const ay = _acc.ay;
 

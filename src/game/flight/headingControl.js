@@ -39,7 +39,9 @@ export function resolveShipTurnCapability(ship, drive = null, {
   mainAssist = false,
   mainThrottle = 0,
   mainBoost = 1,
-  physics = SHIP_PHYSICS
+  physics = SHIP_PHYSICS,
+  // true — jak nietknięty kadłub (kalibracja do tabeli lotu: zniszczone dysze MAIN nie mogą jej podbić)
+  intact = false
 } = NO_CAPABILITY_OPTIONS, out = null) {
   const sideForceMul = drive ? Math.max(1e-6, Number(drive.sideForceScale) || 0) : 1.6;
   const mainForceMul = (drive ? Math.max(1e-6, (Number(drive.mainForceScale) || 0) * (Number(drive.shiftBoostMultiplier) || 1)) : 1)
@@ -53,12 +55,16 @@ export function resolveShipTurnCapability(ship, drive = null, {
   const geometry = thrusterGeometrySignature(ship);
   const mass = Math.max(1, Number(ship?.mass) || SHIP_PHYSICS.PLAYER_MASS || 1);
   const inertia = Math.max(1, Number(ship?.inertia) || ((1 / 12) * mass * (((ship?.w || 450) ** 2) + ((ship?.h || 250) ** 2))));
+  // Zniszczone dysze MAIN (src/game/engineDamage.js): sonda liczy bez nich — wersja zatrzasków w kluczu.
+  const damage = intact ? -1 : (Number(ship?.__engineDamage?.version) || 0);
   const result = out || {};
   const fresh = !(out && out._memoShip === ship && out._memoGeometry === geometry && out._memoMass === mass
     && out._memoInertia === inertia && out._memoSide === sideForceMul && out._memoMain === mainForceMul
-    && out._memoThrottle === throttle && out._memoTurn === turnScale && out._memoSpeed === SHIP_PHYSICS.SPEED);
+    && out._memoThrottle === throttle && out._memoTurn === turnScale && out._memoSpeed === SHIP_PHYSICS.SPEED
+    && out._memoDamage === damage);
   if (fresh) {
     const probe = resolveTurnProbe(result, ship, geometry, mass);
+    syncProbeDamage(probe.visual.mainThrusters, ship?.visual?.mainThrusters, intact);
     const sidePlus = measureSteadyTurnTorque(probe, 1, 0, throttle, mainForceMul, sideForceMul);
     const sideMinus = -measureSteadyTurnTorque(probe, -1, 0, throttle, mainForceMul, sideForceMul);
     const vectorPlus = measureSteadyTurnTorque(probe, 1, 1, throttle, mainForceMul, sideForceMul);
@@ -99,6 +105,7 @@ export function resolveShipTurnCapability(ship, drive = null, {
     result._memoThrottle = throttle;
     result._memoTurn = turnScale;
     result._memoSpeed = SHIP_PHYSICS.SPEED;
+    result._memoDamage = damage;
   }
   const useMain = mainAssist === 'auto'
     ? result.sideAccel < SIDE_TURN_WEAK_SHARE * result.vectorAccel
@@ -180,6 +187,13 @@ function cloneProbeThrusters(list) {
     gimbalMinDeg: t?.gimbalMinDeg,
     gimbalMaxDeg: t?.gimbalMaxDeg
   }));
+}
+
+// Flagi zniszczenia dysz MAIN statku na kopię w sondzie (te same indeksy — kopia odtwarzana po zmianie układu).
+function syncProbeDamage(probeList, shipList, intact) {
+  for (let i = 0; i < probeList.length; i++) {
+    probeList[i].__destroyed = !intact && Array.isArray(shipList) && shipList[i]?.__destroyed === true;
+  }
 }
 
 function settleProbeThrusters(list) {

@@ -32,6 +32,16 @@ function unregisterCollisionExclusion(a, b) {
   removeCollisionExclusion(b, a);
 }
 
+// Para ciał bez zderzeń poza liną (holownik serwisowy: statek na pokładzie — src/game/serviceTug.js). Licznik:
+// każde włączenie potrzebuje jednego wyłączenia.
+export function excludeBodyCollisions(a, b) {
+  registerCollisionExclusion(a, b);
+}
+
+export function restoreBodyCollisions(a, b) {
+  unregisterCollisionExclusion(a, b);
+}
+
 export function areTowBodiesCollisionDisabled(a, b) {
   if (!a || !b) return false;
 

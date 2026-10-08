@@ -459,3 +459,163 @@ test('a ship whose formation slot lies behind the player goes around it instead 
   assert.ok(minDist > 1026, `przeleciał przez gracza: ${minDist.toFixed(0)}`);
   window.ship = null;
 });
+
+// ---------------------------------------------------------------------------
+// Formacje skrzydła (rozkaz gracza: LINIA, KLIN, KOLUMNA, SIERP, PIERŚCIEŃ)
+
+function bareWing(nb, nd, nf, nc = 0) {
+  const out = [];
+  let k = 0;
+  const put = (kind) => { out.push(bareShip(kind, -4000 + (k % 9) * 900, 2000 + Math.floor(k / 9) * 700)); k++; };
+  for (let i = 0; i < nb; i++) put('battleship');
+  for (let i = 0; i < nd; i++) put('destroyer');
+  for (let i = 0; i < nf; i++) put('frigate_pd');
+  for (let i = 0; i < nc; i++) put('carrier');
+  return out;
+}
+
+test('formations: every ship gets one place, hulls keep their spacing, the player place stays free', () => {
+  const shapes = F.FLEET_FORMATIONS.filter(f => f !== 'groups');
+  const reserve = 915 + F.FORMATION_CONFIG.rootReservePad;
+  for (const wing of [bareWing(1, 0, 0), bareWing(0, 0, 3), bareWing(4, 6, 15), bareWing(5, 5, 50), bareWing(2, 3, 8, 1)]) {
+    for (const shape of shapes) {
+      for (const withPlayer of [true, false]) {
+        const out = F.layoutShape(F.createShapeLayout(), wing, shape,
+          { x: 0, y: 0, dirX: 1, dirY: 0, reserve: withPlayer ? reserve : 0, alignFront: !withPlayer });
+        const tag = `${shape} n=${wing.length} ${withPlayer ? 'gracz' : 'front'}`;
+        assert.equal(out.count, wing.length, tag);
+        assert.equal(new Set(out.members).size, wing.length, `${tag}: okręt dwa razy`);
+        let fMax = -Infinity;
+        for (let i = 0; i < out.count; i++) {
+          const a = out.members[i];
+          assert.ok(Number.isFinite(out.lat[i]) && Number.isFinite(out.fwd[i]), `${tag}: NaN`);
+          fMax = Math.max(fMax, out.fwd[i]);
+          if (withPlayer) {
+            const d = Math.hypot(out.lat[i], out.fwd[i]);
+            assert.ok(d >= reserve + a.radius - 1, `${tag}: miejsce na graczu (${d.toFixed(0)})`);
+          }
+          for (let j = i + 1; j < out.count; j++) {
+            const b = out.members[j];
+            const gap = Math.hypot(out.lat[j] - out.lat[i], out.fwd[j] - out.fwd[i]) - a.radius - b.radius;
+            assert.ok(gap >= F.SHAPE_CONFIG.spacingPad - 5, `${tag}: kadłuby za blisko (${gap.toFixed(0)})`);
+          }
+        }
+        if (!withPlayer) assert.ok(Math.abs(fMax) < 1e-6, `${tag}: czoło nie w punkcie frontu`);
+      }
+    }
+  }
+});
+
+test('line formation: several rows — battleships in front, then destroyers, frigates, carriers last', () => {
+  const wing = bareWing(4, 6, 30, 1);
+  const out = F.layoutShape(F.createShapeLayout(), wing, 'line', { x: 0, y: 0, dirX: 0, dirY: 1, reserve: 1415, alignFront: false });
+  const rows = new Map();
+  for (let i = 0; i < out.count; i++) {
+    const key = Math.round(out.fwd[i]);
+    rows.set(key, (rows.get(key) || 0) + 1);
+  }
+  assert.ok(rows.size >= 4, `rzędów: ${rows.size}`);
+  for (const count of rows.values()) assert.ok(count <= F.SHAPE_CONFIG.lineRowMax, `rząd ${count} okrętów`);
+  const meanFwd = (type) => {
+    let s = 0;
+    let n = 0;
+    for (let i = 0; i < out.count; i++) if (out.members[i].type === type) { s += out.fwd[i]; n++; }
+    return s / n;
+  };
+  assert.ok(meanFwd('battleship') > meanFwd('destroyer'));
+  assert.ok(meanFwd('destroyer') > meanFwd('frigate_pd'));
+  assert.ok(meanFwd('frigate_pd') > meanFwd('carrier'));
+  // Pierwszy rząd przez gracza: pancerniki po obu stronach, w jednej linii z nim.
+  for (let i = 0; i < out.count; i++) if (out.members[i].type === 'battleship') assert.equal(out.fwd[i], 0);
+});
+
+test('a ship keeps its side of the row (places matched by position, no crossing)', () => {
+  const wing = bareWing(0, 0, 5);
+  // Fregaty od lewej do prawej względem osi +x (bok = +y).
+  wing.forEach((s, i) => { s.x = -3000; s.y = -4000 + i * 1000; });
+  const out = F.layoutShape(F.createShapeLayout(), wing, 'line', { x: 0, y: 0, dirX: 1, dirY: 0, reserve: 0, alignFront: false });
+  const latOf = new Map(out.members.map((m, i) => [m, out.lat[i]]));
+  for (let i = 1; i < wing.length; i++) assert.ok(latOf.get(wing[i]) > latOf.get(wing[i - 1]), 'kolejność w rzędzie się skrzyżowała');
+});
+
+for (const formation of ['line', 'wedge', 'column', 'crescent', 'ring']) {
+  test(`${formation} formation: the escort wing flies into its places around the player without ramming itself`, () => {
+    resetWorld();
+    const player = makePlayer();
+    const wing = spawnWing(player);
+    let m;
+    try {
+      useAIGrid(true);
+      window.ship = player;
+      window.SupportWing = { order: 'guard', formation };
+      world.push(...wing);
+      simulate(wing, player, 60);
+      m = wingMetrics(wing);
+      simulate(wing, player, 20, { x: 400, y: 0 }, m.tick);
+    } finally {
+      useAIGrid(false);
+    }
+    try {
+      assert.equal(Coord.getFleetPhase('friendly').shape, formation);
+      let far = 0;
+      for (const s of wing) {
+        const slot = Coord.getBattleSlot(s);
+        assert.ok(slot && slot.kind === 'cruise', 'bez miejsca w formacji');
+        if (Math.hypot(s.x - slot.cx, s.y - slot.cy) > 1500) far++;
+      }
+      // Gracz leci 400 j/s — szyk jedzie z nim, prawie wszyscy na miejscach.
+      assert.ok(far <= wing.length * 0.15, `${far} z ${wing.length} daleko od miejsca`);
+      assert.ok(m.contacts <= 3, `zetknięcia: ${m.contacts}`);
+      assert.ok((100 * m.sideways) / Math.max(1, m.moving) < 15, 'lot bokiem');
+    } finally {
+      delete window.SupportWing;
+      window.ship = null;
+    }
+  });
+}
+
+for (const order of ['guard', 'engage']) {
+  test(`line formation in battle (${order === 'guard' ? 'ESKORTA' : 'ATAK'}): rows face the enemy, battleships in the first row`, () => {
+    resetWorld();
+    const player = makePlayer();
+    const wing = spawnWing(player);
+    try {
+      useAIGrid(true);
+      window.ship = player;
+      window.SupportWing = { order: 'guard', formation: 'line' };
+      world.push(...wing);
+      simulate(wing, player, 40);
+      // Wróg ~12 km z przodu i z boku, stoi.
+      const raiders = [makeShip('pirate', 'battleship', 9000, 8000, Math.PI), makeShip('pirate', 'destroyer', 10000, 8500, Math.PI)];
+      for (const r of raiders) r.ai = () => {};
+      world.push(...raiders);
+      window.SupportWing.order = order;
+      simulate([...wing, ...raiders], player, 6);
+    } finally {
+      useAIGrid(false);
+    }
+    try {
+      const st = Coord.getFleetPhase('friendly');
+      assert.equal(st.shape, 'line');
+      const ax = Math.cos(st.axisAng);
+      const ay = Math.sin(st.axisAng);
+      // Oś szyku w stronę wroga.
+      const toEnemy = Math.atan2(8250 - player.y, 9500 - player.x);
+      assert.ok(Math.abs(wrapAngle(st.axisAng - toEnemy)) < 0.5, `oś ${st.axisAng.toFixed(2)} vs ${toEnemy.toFixed(2)}`);
+      const proj = { battleship: [], destroyer: [], frigate_pd: [] };
+      for (const s of wing) {
+        const slot = Coord.getBattleSlot(s);
+        if (!slot || slot.kind === 'flank') continue;
+        assert.equal(slot.kind, 'line');
+        proj[s.type].push(slot.x * ax + slot.y * ay);
+      }
+      const minBs = Math.min(...proj.battleship);
+      const maxDd = Math.max(...proj.destroyer);
+      const maxFf = Math.max(...proj.frigate_pd);
+      assert.ok(minBs > maxDd && maxDd > maxFf, `rzędy: BS ${minBs.toFixed(0)} DD ${maxDd.toFixed(0)} FF ${maxFf.toFixed(0)}`);
+    } finally {
+      delete window.SupportWing;
+      window.ship = null;
+    }
+  });
+}

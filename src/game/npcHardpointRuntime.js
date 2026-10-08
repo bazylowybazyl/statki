@@ -218,6 +218,8 @@ function getEditorShipIdForNpc(npc) {
   if (shipFrame === 'terran_supercapital') return 'terran_supercapital';
   if (shipFrame === 'pirate_supercapital') return 'pirate_supercapital';
   if (FREIGHTER_EDITOR_FRAMES.has(shipFrame)) return shipFrame;
+  // Holownik serwisowy: pełny wpis edytora (dysze MAIN i SIDE, światła) — src/game/serviceTug.js.
+  if (shipFrame === 'service_tug') return 'service_tug';
   const type = String(npc.type || '').toLowerCase();
   if (!shipFrame && FREIGHTER_HULL_BY_TYPE[type]) return FREIGHTER_HULL_BY_TYPE[type];
   // Megafrachtowiec: dysze SIDE ma lokomotywa (jak mostek), wagony i ogon to ładunek bez napędu.

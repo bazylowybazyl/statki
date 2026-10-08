@@ -6,7 +6,8 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { getMountedWeaponAim } from '../src/game/weaponAim.js';
 
 test('every main weapon has a main or existing Tempest sprite', () => {
-  const tempests = new Set(['railgun_mk1', 'railgun_mk2', 'tempest_ion_s', 'tempest_ion_l']);
+  // Lanca (klasa snajperska) — atlas Tempesta z dłuższą lufą (tempestSprite2D.js, wariant LANCE).
+  const tempests = new Set(['railgun_mk1', 'railgun_mk2', 'tempest_ion_s', 'tempest_ion_l', 'lance_rail_m', 'lance_rail_l']);
   for (const def of Object.values(MASTER_WEAPONS)) {
     if (def.mountType === 'main') assert.ok(MainWeaponSprite2D.supports(def.id) || tempests.has(def.id), def.id);
     else assert.equal(MainWeaponSprite2D.supports(def.id), false, `${def.id}: keep auxiliary and special artwork`);

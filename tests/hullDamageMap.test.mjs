@@ -390,14 +390,16 @@ test('źródło stempla: pocisk, broń, id; rodziny 27 broni dema zgodne z tabel
   assert.equal(S.stampFamilyFor('mjolnir'), 'mjolnir', 'nazwa rodziny wprost');
   assert.equal(S.stampFamilyFor(null), 'generic');
   assert.equal(S.stampPowerFor({ weaponSize: 'Capital' }), 1.6);
-  // 27 broni dema + 3 warianty rozmiarowe broni specjalnej (własne, mniejsze wpisy stempla).
-  assert.equal(Object.keys(S.WEAPON_STAMP_FAMILY).length, 30);
+  // 27 broni dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L (własne, mniejsze wpisy stempla).
+  assert.equal(Object.keys(S.WEAPON_STAMP_FAMILY).length, 32);
   for (const fam of new Set(Object.values(S.WEAPON_STAMP_FAMILY))) assert.ok(S.STAMP[fam]?.impact, `rodzina ${fam} ma stempel trafienia`);
   assert.equal(S.stampFamilyFor({ vfxKey: 'special_valkyrie_s', type: 'rail', weaponSize: 'S' }), 'valkyrieS');
   assert.equal(S.stampFamilyFor({ vfxKey: 'special_valkyrie_m', type: 'rail', weaponSize: 'M' }), 'valkyrieM');
   assert.equal(S.stampFamilyFor({ vfxKey: 'special_yamato_l', type: 'plasma', weaponSize: 'L' }), 'yamatoL');
+  assert.equal(S.stampFamilyFor({ vfxKey: 'lance_rail_m', type: 'rail', weaponSize: 'M' }), 'lanceM');
+  assert.equal(S.stampFamilyFor({ vfxKey: 'lance_rail_l', type: 'rail', weaponSize: 'L' }), 'lanceL');
   // Warianty przebijające mają te same warianty stempla co Valkyrie (rzaz, wylot, zakleszczenie).
-  for (const fam of ['valkyrieS', 'valkyrieM']) {
+  for (const fam of ['valkyrieS', 'valkyrieM', 'lanceM', 'lanceL']) {
     for (const v of ['impact', 'kerf', 'exit', 'stuck']) {
       assert.ok(S.STAMP[fam][v], `${fam}.${v}`);
       assert.ok(S.STAMP[fam][v][S.S_R] < S.STAMP.valkyrie[v][S.S_R], `${fam}.${v}: mniejszy od rodzica`);

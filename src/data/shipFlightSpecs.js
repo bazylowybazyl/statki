@@ -124,6 +124,13 @@ export const SHIP_FLIGHT_SPECS = Object.freeze({
     turnRate: 18, turnAccel: 12, cruiseBonus: 450, travelSpeed: 2200,
     // Dopalacz gracza (Shift, decyzja użytkownika 2026-10-05): ~1500 j/s, w PRZELOCIE do 3000 j/s.
     boostSpeed: 1500, cruiseBoostSpeed: 3000
+  }),
+  // Holownik serwisowy (src/game/serviceTug.js) — 5 km, ale z mocnymi dyszami manewrowymi: trzyma pozycję przy
+  // statku i wsuwa się pod niego bokiem (strafe), szybciej zawraca niż superkapitał tego tonażu.
+  service_tug: Object.freeze({
+    flightClass: 'supercapital',
+    maxSpeed: 520, accel: 170, decel: 230, strafeAccel: 110, reverseAccel: 90,
+    turnRate: 16, turnAccel: 12, cruiseBonus: 450, travelSpeed: 2400
   })
 });
 

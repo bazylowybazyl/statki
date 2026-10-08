@@ -53,6 +53,8 @@ export const WEAPON3D_FAMILY = Object.freeze({
   special_valkyrie_railgun: 'valkyrie', special_yamato_cannon: 'yamato', siege_railgun: 'mjolnir',
   // warianty rozmiarowe broni specjalnej: model rodzica (Yamato L — ta sama wieża z dwiema skrajnymi lufami)
   special_valkyrie_s: 'valkyrie', special_valkyrie_m: 'valkyrie', special_yamato_l: 'yamato2',
+  // Lanca M / L (klasa snajperska): wieża Tempesta z długą lufą
+  lance_rail_m: 'lance', lance_rail_l: 'lance',
   hexlance_siege: null,
   fighter_bay: null, fighter_squad_interceptor: null, fighter_squad_multirole: null, fighter_squad_strike: null
 });
@@ -65,7 +67,7 @@ export const WEAPON3D_FAMILY_LABEL = Object.freeze({
   flakL: 'Kartacz Flak', flakH: 'Grad / Perun Flak', cruise: 'Wyrzutnia Cruise', fast: 'Fast Missile Rack',
   osa: 'Osa Mk I', supernova: 'Supernova', torpedo: 'Torpedy oblężnicze', goliath: 'Goliath',
   plasmaGatling: 'Ion Plasma Gatling', valkyrie: 'Valkyrie', mjolnir: 'Mjolnir', yamato: 'Yamato',
-  yamato2: 'Yamato (2 lufy)'
+  yamato2: 'Yamato (2 lufy)', lance: 'Lanca (klasa snajperska)'
 });
 
 // ---------------------------------------------------------------------------
@@ -191,6 +193,9 @@ const FAMILIES = {
   // TEMPEST ION — niska sześcioboczna obudowa, akcelerator z cewkami, cyjan.
   tempest1: (P) => tempest(P, { hy: 8, barrels: [0] }),
   tempest2: (P) => tempest(P, { hy: 11.6, barrels: [-5, 5] }),
+  // LANCA (klasa snajperska) — korpus Tempesta, długi akcelerator z magentą (barwa strzału Valkyrie), wylot 48
+  // jak SPECS.lance w turret2D.js.
+  lance: (P) => tempest(P, { hy: 8, barrels: [0], muzzle: 48, glow: M.E_MAGENTA, light: 'magenta', kind: 'rail', recoil: 1.8, pitch: [-6, 55] }),
 
   // VULCAN — przysadzista obudowa, skrzynie amunicji, wirnik z tyłu, blok luf obrotowych.
   vulcan: ({ R, H, L, S }) => {
@@ -452,27 +457,35 @@ function yamato({ R, H, L }, twin) {
   return { ...layout, barrels: [[-6.75, -0.8], [0, 0], [6.75, -0.8]], barrelShift: [-2, 0, -2] };
 }
 
+// o.muzzle — wylot lufy w lokalnym x wieży (domyślnie 34 — Tempest; Lanca 48): akcelerator, cewki co 3,5 j.,
+// pasek i kołnierz idą za nim. o.glow — materiał świecących pasków (domyślnie cyjan Tempesta). Domyślne
+// wartości dają geometrię Tempesta bit w bit.
 function tempest({ R, H, L }, o) {
   const hy = o.hy;
+  const mx = o.muzzle ?? 34;
+  const glow = o.glow ?? M.E_CYAN;
   ring(R, hy * 0.95);
   const z0 = 1.2;
   shell(H, [[-7, -hy + 3.5], [-4, -hy], [9, -hy], [13, -hy + 3.5], [13, hy - 3.5], [9, hy], [-4, hy], [-7, hy - 3.5]], z0, 6.4);
   H.box(2.5, 0, z0 + 6.4 + 0.5, 11, hy * 0.9, 1, { mat: M.STEEL, bevel: [0.4, 0.4] });
   H.mirrorY(() => {
     vent(H, -6, -2.2, hy * 0.45, hy - 1.6, z0 + 6.4, 3);
-    strip(H, -1, 9, hy - 1.4, z0 + 6.4, 0.7, M.E_CYAN);
+    strip(H, -1, 9, hy - 1.4, z0 + 6.4, 0.7, glow);
   });
   for (const y of o.barrels) receiver(H, 10.5, 13.4, y, z0 + 3.8, 5.4, 4.6);
   const tx = 9; const tz = z0 + 3.8;
   // Akcelerator: zamek, rura, cewki, pasek cyjanu, kołnierz ogniskujący, płaski wylot.
   boxX(L, 5 - tx, 11 - tx, 3.4, 3.0, { mat: M.PANEL });
-  L.alongX(11 - tx, 31 - tx, octPoly(-2.3, -2.3, 2.3, 2.3, 0.8), { mat: M.METAL, bevel: [0.2, 0.2] });
-  for (const x of [14, 17.5, 21, 24.5]) boxX(L, x - tx, x + 1.5 - tx, 3.0, 3.0, { mat: M.PANEL, c: 0.8 });
-  L.box(21 - tx, 0, 2.4, 20, 0.7, 0.3, { mat: M.E_CYAN });
-  boxX(L, 28 - tx, 31 - tx, 3.1, 3.1, { mat: M.STEEL, c: 0.9 });
-  boxX(L, 31 - tx, 34 - tx, 2.3, 2.3, { mat: M.PANEL, c: 0.5 });
-  L.face([[34 - tx + 0.02, -1.2, -1.2], [34 - tx + 0.02, 1.2, -1.2], [34 - tx + 0.02, 1.2, 1.2], [34 - tx + 0.02, -1.2, 1.2]], M.E_CYAN, [1, 0, 0]);
-  return { trunnion: [tx, tz], barrels: o.barrels.map((y) => [y, 0]), muzzleX: 34 - tx, recoil: 1.4, light: 'cyan', kind: 'energy', pitch: [-8, 70] };
+  L.alongX(11 - tx, mx - 3 - tx, octPoly(-2.3, -2.3, 2.3, 2.3, 0.8), { mat: M.METAL, bevel: [0.2, 0.2] });
+  for (let x = 14; x + 1.5 <= mx - 6; x += 3.5) boxX(L, x - tx, x + 1.5 - tx, 3.0, 3.0, { mat: M.PANEL, c: 0.8 });
+  L.box((8 + mx) / 2 - tx, 0, 2.4, mx - 14, 0.7, 0.3, { mat: glow });
+  boxX(L, mx - 6 - tx, mx - 3 - tx, 3.1, 3.1, { mat: M.STEEL, c: 0.9 });
+  boxX(L, mx - 3 - tx, mx - tx, 2.3, 2.3, { mat: M.PANEL, c: 0.5 });
+  L.face([[mx - tx + 0.02, -1.2, -1.2], [mx - tx + 0.02, 1.2, -1.2], [mx - tx + 0.02, 1.2, 1.2], [mx - tx + 0.02, -1.2, 1.2]], glow, [1, 0, 0]);
+  return {
+    trunnion: [tx, tz], barrels: o.barrels.map((y) => [y, 0]), muzzleX: mx - tx, recoil: o.recoil ?? 1.4,
+    light: o.light ?? 'cyan', kind: o.kind ?? 'energy', pitch: o.pitch ?? [-8, 70]
+  };
 }
 
 function ciws({ R, H, L, S }, o) {

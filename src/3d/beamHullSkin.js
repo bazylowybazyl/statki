@@ -11,6 +11,10 @@
 //    komórki albo zerwane belki): interpolowane po czworokącie daje we fragmencie odległość do
 //    brzegu dziury, a szum wycina poszarpany pas — dziura po zniszczonych węzłach nie ma kwadratowych
 //    rogów siatki (hexShips3D.tsl.js, hullTearFray). Zapis opcjonalny (tablica `tear`).
+//  - ŁATA polowa (pole węzła `patch` — rój dronów naprawczych, src/game/repairRig.js): jasność narożnika węzła-łaty to
+//    2 + SPAW (1 — narożnik dzieli komórkę ze starą blachą: żywy węzeł bez łaty), interpolowana po czworokącie daje we
+//    fragmencie pas spawu wokół obszaru łat; shader rysuje podkład zamiast farby sprite'a (HULL_PATCH_SHADE,
+//    decodeHullPatchShade w hexShips3D.tsl.js). Węzeł bez łaty — jasność jak dotąd (0,2–1).
 // Moduł nie importuje three.
 
 import { buildSpriteSkinTopology, SPRITE_CORNERS } from './beamSpriteSkin2D.js';
@@ -59,6 +63,9 @@ function nodeDent(s, e, i) {
 /** Rozdarcie narożnika z liczby martwych komórek / zerwanych belek, które go dzielą (0–3). */
 export const HULL_SKIN_TEAR = Object.freeze([0, 0.5, 0.75, 1]);
 
+/** Jasność narożnika węzła-łaty = HULL_PATCH_SHADE + spaw (0 / 1); ≥ 1,5 — łata (dekoduje shader). */
+export const HULL_PATCH_SHADE = 2;
+
 // Czworokąt węzła i (układ lokalny ciała). Martwy węzeł = czworokąt zwinięty do punktu.
 function writeQuad(i, topo, half, positions, shade, heat, tear) {
   const s = topo.store, e = topo.beamStore, links = topo.links;
@@ -78,9 +85,10 @@ function writeQuad(i, topo, half, positions, shade, heat, tear) {
   const dent = nodeDent(s, e, i);
   const now = topo.heatNow, decay = topo.heatDecay;
   const ownHeat = heatAt(s, i, now, decay);
+  const patch = s.patch, patched = patch ? patch[i] === 1 : false;
   for (let k = 0; k < 4; k++) {
     const sx = SPRITE_CORNERS[k][0], sy = SPRITE_CORNERS[k][1];
-    let sumX = dxn, sumY = dyn, weight = 1, torn = 0;
+    let sumX = dxn, sumY = dyn, weight = 1, torn = 0, seam = 0;
     // Żar narożnika = najgorętsza z żywych komórek, które go dzielą: rozżarzona blacha
     // przechodzi płynnie w zimną zamiast świecić kwadratami pojedynczych komórek.
     let cornerHeat = ownHeat;
@@ -90,6 +98,7 @@ function writeQuad(i, topo, half, positions, shade, heat, tear) {
       if (bi < 0) continue;
       const m = ea[bi] === i ? eb[bi] : ea[bi];
       if (!active[m]) { torn++; continue; }
+      if (patched && patch[m] !== 1) seam = 1;
       const hm = heatAt(s, m, now, decay);
       if (hm > cornerHeat) cornerHeat = hm;
       if (broken[bi]) { torn++; continue; }
@@ -99,8 +108,8 @@ function writeQuad(i, topo, half, positions, shade, heat, tear) {
     positions[o] = ox[i] + sx * half + sumX / weight;
     positions[o + 1] = oy[i] + sy * half + sumY / weight;
     positions[o + 2] = 0;
-    // Brzeg rozdarcia ciemnieje — widać, gdzie szew puścił.
-    shade[v + k] = Math.max(0.2, 1 - 0.42 * dent - (torn ? 0.3 : 0));
+    // Brzeg rozdarcia ciemnieje — widać, gdzie szew puścił. Łata: kod podkładu i spawu (HULL_PATCH_SHADE).
+    shade[v + k] = patched ? HULL_PATCH_SHADE + seam : Math.max(0.2, 1 - 0.42 * dent - (torn ? 0.3 : 0));
     // Żar zapisany na chwilę zapisu (zanik dalej liczy shader od tego znacznika).
     heat[h + k * 2] = cornerHeat;
     heat[h + k * 2 + 1] = now;

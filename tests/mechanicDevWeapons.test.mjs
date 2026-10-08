@@ -22,8 +22,11 @@ test('developer fill tops up every weapon in the master catalog', () => {
 
 test('mechanic cheat control is gated behind the dev query flag', () => {
   const source = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const panel = readFileSync(new URL('../src/ui/station/fittingPanel.js', import.meta.url), 'utf8');
 
   assert.match(source, /new URLSearchParams\(window\.location\.search\)\.has\('dev'\)/);
-  assert.match(source, /isMechanicDevMode\(\) \? '<button class="mechanic-tab-btn" id="mechanic-fill-weapons"/);
-  assert.match(source, /getElementById\('mechanic-fill-weapons'\)\?\.addEventListener\('click', fillMechanicWeapons\)/);
+  // WYPOSAŻENIE (src/ui/station/fittingPanel.js): przycisk DEV tylko z api.dev, które klej daje tylko z ?dev.
+  assert.match(source, /dev: isMechanicDevMode\(\) \? \{ fillWeapons: fillMechanicWeapons \} : null/);
+  assert.match(panel, /\$\{api\.dev \? '<button class="fit-btn" type="button" data-act="dev-fill">/);
+  assert.match(panel, /act === 'dev-fill'\) \{ api\.dev\?\.fillWeapons\?\.\(\);/);
 });

@@ -3670,6 +3670,28 @@
       margin-top: 4px;
     }
 
+    /* Nagłówek zakładki MECHANIK: usługi doku (uzupełnienie amunicji) nad obiema kartami. */
+    .mechanic-services {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .mechanic-services-status {
+      min-width: 0;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: #b8c9f3;
+    }
+
+    .mechanic-service-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
     .mechanic-batch-label {
       font-size: 11px;
       letter-spacing: 0.06em;

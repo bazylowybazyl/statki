@@ -689,6 +689,526 @@ export function keepEscortSlotsClear(fs, cx, cy, rootRadius) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Formacje skrzydła (rozkaz gracza — przyciski pod listą jednostek na Alt)
+// ---------------------------------------------------------------------------
+//
+// 'groups' to szyk grup bojowych wyżej (pierścienie grup, w walce linia okrętów
+// flagowych z blokami eskorty). Pozostałe formacje to SZTYWNE kształty całej
+// floty w układzie szyku (oś `dir` — kurs przelotu albo oś natarcia, bok
+// `lat`), każdy okręt ma swoje miejsce względem PUNKTU ODNIESIENIA:
+//   - przelot i ESKORTA — gracz (miejsce w środku kształtu zostaje wolne:
+//     `reserve` = promień gracza + zapas),
+//   - ATAK — punkt frontu (`alignFront`: najdalej wysunięte miejsce w punkcie,
+//     reszta za nim).
+// Kolejność: najcięższe najbliżej czoła / środka (superkapitały i pancerniki,
+// niszczyciele, fregaty, lotniskowce na końcu). Okręt dostaje miejsce w swoim
+// rzędzie (łuku, pierścieniu) wg aktualnego położenia — bez krzyżowania kursów.
+// Grupy bojowe (organizeTaskGroups) zostają: rola okrętu flagowego / eskorty
+// i skupienie ognia eskorty na celu jej okrętu flagowego działają jak w 'groups'.
+
+export const FLEET_FORMATIONS = Object.freeze(['groups', 'line', 'wedge', 'column', 'crescent', 'ring']);
+export const DEFAULT_FLEET_FORMATION = 'groups';
+
+export function normalizeFleetFormation(id) {
+  return FLEET_FORMATIONS.includes(id) ? id : DEFAULT_FLEET_FORMATION;
+}
+
+export const SHAPE_CONFIG = Object.freeze({
+  // Odstęp sąsiadów w rzędzie (środki): nie mniej niż tyle i nie mniej niż
+  // dwa promienie największego okrętu rzędu + zapas.
+  spacingMin: 640,
+  spacingPad: 420,
+  // Luz między rzędami (promienie sąsiednich rzędów + tyle).
+  rowPad: 420,
+  // Kolumna: okręty jeden za drugim — luz większy (dopalacz, hamowanie).
+  columnRowPad: 650,
+  // Linia: okrętów w rzędzie (z liczebności floty, w tych granicach).
+  lineRowMin: 5,
+  lineRowMax: 12,
+  // Przesunięcie co drugiego rzędu w bok (× odstęp): tylny rząd strzela
+  // w przerwy przedniego, zamiast w rufy (isLineOfFireBlocked).
+  stagger: 0.25,
+  // Klin: rząd za rzędem co tyle odstępów (pół-kąt ramion ~29°).
+  wedgeDepth: 0.9,
+  // Kolumna: kolumny wg liczebności floty (1 / 2 / 3 / 4).
+  columnSingleMax: 6,
+  columnDoubleMax: 20,
+  columnTripleMax: 42,
+  // Sierp: łuk ±tyle radianów od środka (rogi do przodu), najmniejszy promień,
+  // ile okrętów mieści pierwszy łuk.
+  crescentArc: 1.22,
+  crescentRadiusMin: 3600,
+  crescentFirstArc: 14,
+  // Pierścień: luz pierścienia wewnętrznego od gracza.
+  ringPad: 450
+});
+
+// Ranga okrętu w kształcie (0 — najbliżej czoła / środka).
+const SHAPE_RANK = Object.freeze({ supercapital: 0, battleship: 1, destroyer: 2, frigate: 3, carrier: 4 });
+// Pasmo rzędu linii / pierścienia: okręty liniowe razem, potem niszczyciele,
+// fregaty, lotniskowce.
+const SHAPE_BAND = Object.freeze([0, 0, 1, 2, 3]);
+
+const _shIdx = [];
+const _shBand = [];
+const _shKey = [];
+const _shUid = [];
+const _shSrc = [];
+const _pLat = [];
+const _pFwd = [];
+const _pOrder = [];
+const _tiers = [];
+let _pn = 0;
+let _tn = 0;
+const _blkMem = [];
+const _blkPos = [];
+const _blkKey = [];
+const _shRingItems = [];
+const _shRingAng = [];
+const _shRingIdx = [];
+
+function shapeRankOf(m) {
+  const r = SHAPE_RANK[m.__formClass || formationClassOf(m)];
+  return r === undefined ? 3 : r;
+}
+
+// Kolejność członków: pasmo, potem klucz (rzędy — najbardziej z przodu
+// pierwsze; pierścienie — najbliżsi środka), na końcu trwały uid.
+function byShapeOrder(a, b) {
+  return (_shBand[a] - _shBand[b]) || (_shKey[a] - _shKey[b]) || (_shUid[a] - _shUid[b]);
+}
+
+function shapeSpacing(rMax) {
+  const C = SHAPE_CONFIG;
+  return Math.max(C.spacingMin, 2 * rMax + C.spacingPad);
+}
+
+function shapeRadius(i) {
+  return radiusOf(_shSrc[_shIdx[i]], FORMATION_CONFIG.defaultEscortRadius);
+}
+
+function shapeMaxRadius(i0, i1) {
+  let r = 0;
+  for (let i = i0; i < i1; i++) r = Math.max(r, shapeRadius(i));
+  return r > 0 ? r : FORMATION_CONFIG.defaultEscortRadius;
+}
+
+// Koniec rzędu: okręty jednego pasma, najwyżej `cap`.
+function shapeBandEnd(i, n, cap) {
+  const band = _shBand[_shIdx[i]];
+  let j = i;
+  while (j < n && j - i < cap && _shBand[_shIdx[j]] === band) j++;
+  return j;
+}
+
+function pushPos(lat, fwd) {
+  _pLat[_pn] = lat;
+  _pFwd[_pn] = fwd;
+  _pn++;
+}
+
+function pushTier(m0, m1, p0, p1, ring) {
+  let t = _tiers[_tn];
+  if (!t) t = _tiers[_tn] = { m0: 0, m1: 0, p0: 0, p1: 0, ring: false };
+  t.m0 = m0;
+  t.m1 = m1;
+  t.p0 = p0;
+  t.p1 = p1;
+  t.ring = ring;
+  _tn++;
+}
+
+// k miejsc z rzędu `count` równych odstępów `s` (środek w 0): przy k < count —
+// środkowe miejsca (rząd zostaje symetryczny).
+function pushCenteredRow(k, count, s, fwd, offset) {
+  const half = (count - 1) / 2;
+  const skip = Math.floor((count - k) / 2);
+  for (let q = 0; q < k; q++) pushPos((q + skip - half) * s + offset, fwd);
+}
+
+// LINIA: rzędy prostopadłe do osi — pancerniki, za nimi niszczyciele, fregaty,
+// lotniskowce; gracz w środku pierwszego rzędu.
+function shapeLine(n, reserve) {
+  const C = SHAPE_CONFIG;
+  const perRow = Math.max(C.lineRowMin, Math.min(C.lineRowMax, Math.ceil(Math.sqrt(n * 2)) + 1));
+  let i = 0;
+  let row = 0;
+  let fwd = 0;
+  let prevR = 0;
+  while (i < n) {
+    const j = shapeBandEnd(i, n, perRow);
+    const k = j - i;
+    const rMax = shapeMaxRadius(i, j);
+    const s = shapeSpacing(rMax);
+    if (row > 0) fwd -= prevR + rMax + C.rowPad;
+    const p0 = _pn;
+    if (row === 0 && reserve > 0) {
+      const left = k >> 1;
+      for (let q = 0; q < left; q++) pushPos(-(reserve + s * (q + 0.5)), fwd);
+      for (let q = 0; q < k - left; q++) pushPos(reserve + s * (q + 0.5), fwd);
+    } else {
+      const offset = row > 0 ? ((row & 1) ? 1 : -1) * C.stagger * s : 0;
+      pushCenteredRow(k, k, s, fwd, offset);
+    }
+    pushTier(i, j, p0, _pn, false);
+    // Gracz stoi w pierwszym rzędzie — drugi rząd za jego kadłubem.
+    prevR = row === 0 ? Math.max(rMax, reserve) : rMax;
+    row++;
+    i = j;
+  }
+}
+
+// KLIN (delta): wierzchołek w czole (gracz albo najcięższy okręt), rząd r ma
+// r + 1 miejsc — wypełniony trójkąt; najcięższe najbliżej wierzchołka i osi.
+function shapeWedge(n, reserve) {
+  const C = SHAPE_CONFIG;
+  const s = shapeSpacing(shapeMaxRadius(0, n));
+  let i = 0;
+  let r = reserve > 0 ? 1 : 0;
+  let fwd = 0;
+  let prevR = reserve;
+  while (i < n) {
+    const cap = r + 1;
+    const j = Math.min(n, i + cap);
+    const rMax = shapeMaxRadius(i, j);
+    if (r > 0) fwd -= Math.max(prevR + rMax + C.rowPad, s * C.wedgeDepth);
+    const p0 = _pn;
+    pushCenteredRow(j - i, cap, s, fwd, 0);
+    pushTier(i, j, p0, _pn, false);
+    prevR = rMax;
+    r++;
+    i = j;
+  }
+}
+
+// KOLUMNA: 1–4 kolumny wzdłuż osi, gracz na czele.
+function shapeColumn(n, reserve) {
+  const C = SHAPE_CONFIG;
+  const cols = n <= C.columnSingleMax ? 1 : (n <= C.columnDoubleMax ? 2 : (n <= C.columnTripleMax ? 3 : 4));
+  const sCol = shapeSpacing(shapeMaxRadius(0, n));
+  let i = 0;
+  let row = 0;
+  let fwd = 0;
+  let prevR = reserve;
+  while (i < n) {
+    const j = Math.min(n, i + cols);
+    const rMax = shapeMaxRadius(i, j);
+    if (row > 0 || reserve > 0) fwd -= prevR + rMax + C.columnRowPad;
+    const p0 = _pn;
+    pushCenteredRow(j - i, cols, sCol, fwd, 0);
+    pushTier(i, j, p0, _pn, false);
+    prevR = rMax;
+    row++;
+    i = j;
+  }
+}
+
+// SIERP (półksiężyc): łuki o wspólnym środku krzywizny PRZED szykiem — rogi
+// wysunięte do przodu obejmują wroga. Gracz (albo najcięższy) na dnie
+// pierwszego łuku, ciężkie w środku łuku, lekkie na rogach; dalsze łuki za nim.
+// Promień pierwszego łuku sierpa (środek krzywizny R0 przed punktem odniesienia).
+function crescentRadius(n, rAll, reserve) {
+  const C = SHAPE_CONFIG;
+  const first = Math.min(n + (reserve > 0 ? 1 : 0), C.crescentFirstArc);
+  return Math.max(C.crescentRadiusMin, reserve * 2, ((first - 1) * shapeSpacing(rAll)) / (2 * C.crescentArc));
+}
+
+function shapeCrescent(n, reserve) {
+  const C = SHAPE_CONFIG;
+  const rAll = shapeMaxRadius(0, n);
+  const s = shapeSpacing(rAll);
+  const arc = C.crescentArc;
+  const R0 = crescentRadius(n, rAll, reserve);
+  const clear = reserve > 0 ? reserve + rAll : 0;
+  let i = 0;
+  let R = R0;
+  let guard = 0;
+  while (i < n && guard++ < 64) {
+    const cap = Math.max(2, Math.floor((2 * arc * R) / s) + 1);
+    // Wolne miejsca łuku (na pierwszym — poza strefą gracza na dnie).
+    const p0 = _pn;
+    for (let q = 0; q < cap; q++) {
+      const phi = -arc + (2 * arc * q) / (cap - 1);
+      const lat = R * Math.sin(phi);
+      const fwd = R0 - R * Math.cos(phi);
+      if (clear > 0 && lat * lat + fwd * fwd < clear * clear) continue;
+      pushPos(lat, fwd);
+    }
+    const avail = _pn - p0;
+    const take = Math.min(n - i, avail);
+    if (take < avail) {
+      // Niepełny łuk: miejsca rozłożone równo po całym łuku (rogi zostają).
+      for (let q = 0; q < take; q++) {
+        const src = take === 1 ? p0 + (avail >> 1) : p0 + Math.round((q * (avail - 1)) / (take - 1));
+        _blkPos[q] = src;
+      }
+      for (let q = 0; q < take; q++) {
+        const src = _blkPos[q];
+        _pLat[p0 + q] = _pLat[src];
+        _pFwd[p0 + q] = _pFwd[src];
+      }
+      _pn = p0 + take;
+    }
+    pushTier(i, i + take, p0, _pn, false);
+    i += take;
+    R += 2 * rAll + C.rowPad;
+  }
+}
+
+// PIERŚCIEŃ: pierścienie wokół gracza (bez gracza — wokół najcięższego okrętu
+// w środku); ciężkie na wewnętrznym, każdy pierścień jednego pasma.
+function shapeRing(n, reserve) {
+  const C = SHAPE_CONFIG;
+  let i = 0;
+  let R;
+  if (reserve > 0) {
+    R = reserve + shapeMaxRadius(0, Math.min(n, 1)) + C.ringPad;
+  } else {
+    // Środek: najcięższy okręt.
+    const p0 = _pn;
+    pushPos(0, 0);
+    pushTier(0, 1, p0, _pn, false);
+    i = 1;
+    R = shapeRadius(0) + shapeMaxRadius(1, Math.min(n, 2)) + C.ringPad;
+  }
+  let prevR = 0;
+  while (i < n) {
+    const rRing = shapeMaxRadius(i, Math.min(n, i + 1));
+    const s = shapeSpacing(rRing);
+    if (prevR > 0) R += prevR + rRing + C.rowPad;
+    R = Math.max(R, (s * 3) / TWO_PI);
+    const cap = Math.max(3, Math.floor((TWO_PI * R) / s));
+    const j = shapeBandEnd(i, n, cap);
+    const rMax = shapeMaxRadius(i, j);
+    const k = j - i;
+    const p0 = _pn;
+    for (let q = 0; q < k; q++) {
+      const a = (TWO_PI * (q + 0.5)) / k;
+      pushPos(R * Math.sin(a), R * Math.cos(a));
+    }
+    pushTier(i, j, p0, _pn, true);
+    prevR = rMax;
+    i = j;
+  }
+}
+
+const _memLat = [];
+const _shKeep = [];
+function byPosKey(a, b) { return _blkKey[a] - _blkKey[b]; }
+function byMemLat(a, b) { return _memLat[a] - _memLat[b]; }
+
+// Rząd / łuk: miejsca od środka (|bok|) — każda ranga zajmuje kolejne, a w
+// randze okręty i miejsca łączymy po boku (bez krzyżowania kursów).
+function assignRowTier(t, out, frame, latX, latY) {
+  const k = t.p1 - t.p0;
+  _pOrder.length = 0;
+  for (let p = t.p0; p < t.p1; p++) {
+    _pOrder.push(p);
+    _blkKey[p] = Math.abs(_pLat[p]) - 1e-6 * _pFwd[p];
+  }
+  _pOrder.sort(byPosKey);
+  let i = t.m0;
+  let used = 0;
+  while (i < t.m1 && used < k) {
+    const rank = shapeRankOf(_shSrc[_shIdx[i]]);
+    let j = i;
+    while (j < t.m1 && shapeRankOf(_shSrc[_shIdx[j]]) === rank) j++;
+    const cnt = Math.min(j - i, k - used);
+    _blkPos.length = 0;
+    _blkMem.length = 0;
+    for (let q = 0; q < cnt; q++) {
+      _blkPos.push(_pOrder[used + q]);
+      const mi = i + q;
+      const e = _shSrc[_shIdx[mi]];
+      _blkMem.push(mi);
+      _memLat[mi] = ((Number(e.x) || 0) - frame.x) * latX + ((Number(e.y) || 0) - frame.y) * latY;
+    }
+    // Klucz miejsc z rzędu już posortowanego — teraz po boku.
+    for (let q = 0; q < cnt; q++) _blkKey[_blkPos[q]] = _pLat[_blkPos[q]];
+    _blkPos.sort(byPosKey);
+    _blkMem.sort(byMemLat);
+    for (let q = 0; q < cnt; q++) {
+      const mi = _blkMem[q];
+      out.lat[mi] = _pLat[_blkPos[q]];
+      out.fwd[mi] = _pFwd[_blkPos[q]];
+    }
+    used += cnt;
+    i = j;
+  }
+}
+
+// Pierścień: przydział cykliczny po kącie wokół środka (jak pierścienie grup).
+function assignRingTier(t, out, frame, dirX, dirY, latX, latY, originX, originY) {
+  const k = t.m1 - t.m0;
+  _shRingItems.length = 0;
+  for (let q = 0; q < k; q++) {
+    _shRingItems.push(_shSrc[_shIdx[t.m0 + q]]);
+    const p = t.p0 + q;
+    _shRingAng[q] = Math.atan2(dirY * _pFwd[p] + latY * _pLat[p], dirX * _pFwd[p] + latX * _pLat[p]);
+  }
+  assignCyclic(_shRingItems, k, originX, originY, _shRingAng, _shRingIdx);
+  for (let q = 0; q < k; q++) {
+    const p = t.p0 + _shRingIdx[q];
+    out.lat[t.m0 + q] = _pLat[p];
+    out.fwd[t.m0 + q] = _pFwd[p];
+  }
+}
+
+export function createShapeLayout() {
+  // prev — trwały przydział: okręt → { lat, fwd } z ostatniego pełnego rozstawienia; sig — jego podpis.
+  return { shape: '', members: [], lat: [], fwd: [], count: 0, depth: 0, width: 0, reach: 0, sig: '', prev: new Map() };
+}
+
+// Podpis rozstawienia: kształt, liczebność, miejsce gracza, czoło frontu i
+// promienie (kadłub budowany po spawnie zmienia promień — inne odstępy).
+function shapeSignature(members, shape, reserve, alignFront) {
+  let rSum = 0;
+  for (let i = 0; i < members.length; i++) rSum += radiusOf(members[i], FORMATION_CONFIG.defaultEscortRadius);
+  return `${shape}|${members.length}|${Math.round(reserve)}|${alignFront ? 1 : 0}|${Math.round(rSum)}`;
+}
+
+// Wymiary rozstawienia; reach — najdalsze miejsce od punktu odniesienia
+// (dowódca ogranicza nim prędkość obrotu szyku).
+function finishShapeExtent(out) {
+  let fMin = 0;
+  let fMax = 0;
+  let wMax = 0;
+  let reach = 0;
+  for (let i = 0; i < out.count; i++) {
+    fMin = Math.min(fMin, out.fwd[i]);
+    fMax = Math.max(fMax, out.fwd[i]);
+    wMax = Math.max(wMax, Math.abs(out.lat[i]));
+    reach = Math.max(reach, Math.hypot(out.lat[i], out.fwd[i]));
+  }
+  out.depth = fMax - fMin;
+  out.width = 2 * wMax;
+  out.reach = reach;
+}
+
+// Rozstawienie formacji `shape` dla `members` w układzie `frame`:
+//   { x, y } — punkt odniesienia (gracz albo punkt frontu),
+//   { dirX, dirY } — oś szyku (jednostkowa: kurs przelotu albo ku wrogowi),
+//   reserve — promień miejsca gracza w punkcie odniesienia (0 — bez gracza),
+//   alignFront — najdalej wysunięte miejsce w punkcie odniesienia (front ATAKU).
+// Wynik w `out`: members[i] → miejsce (lat, fwd) względem punktu odniesienia.
+export function layoutShape(out, members, shape, frame) {
+  out.shape = shape;
+  out.members.length = 0;
+  out.lat.length = 0;
+  out.fwd.length = 0;
+  const n = members.length;
+  out.count = n;
+  out.depth = 0;
+  out.width = 0;
+  if (n === 0) {
+    out.sig = '';
+    out.reach = 0;
+    out.prev.clear();
+    return out;
+  }
+  const dirX = frame.dirX;
+  const dirY = frame.dirY;
+  const latX = -dirY;
+  const latY = dirX;
+  const reserve = Math.max(0, Number(frame.reserve) || 0);
+  const ring = shape === 'ring';
+
+  // Trwały przydział: ten sam skład i kształt — każdy okręt zostaje na swoim
+  // miejscu, a szyk obraca się jak bryła (zakręt gracza, przejście z przelotu do
+  // walki). Przydział od nowa przy obrocie zamieniał rzędy w kolumny (kto teraz
+  // „z przodu”) — okręty przelatywały przez siebie (LINIA: 13 zetknięć w zakręcie 90°).
+  const sig = shapeSignature(members, shape, reserve, !!frame.alignFront);
+  if (sig === out.sig && out.prev.size === n) {
+    let same = true;
+    for (let i = 0; i < n; i++) {
+      if (!out.prev.has(members[i])) { same = false; break; }
+    }
+    if (same) {
+      for (let i = 0; i < n; i++) {
+        const m = members[i];
+        const p = out.prev.get(m);
+        out.members.push(m);
+        out.lat.push(p.lat);
+        out.fwd.push(p.fwd);
+      }
+      finishShapeExtent(out);
+      return out;
+    }
+  }
+
+  // Kolejność: pasmo rang, potem położenie — rzędy: z przodu pierwsze;
+  // pierścień: od środka; sierp: od środka krzywizny (łuk wewnętrzny pierwszy —
+  // na łuku najbardziej z przodu są rogi, więc „z przodu” mieszałoby łuki).
+  let cFwd = 0;
+  if (shape === 'crescent') {
+    let rAll = 0;
+    for (let i = 0; i < n; i++) rAll = Math.max(rAll, radiusOf(members[i], FORMATION_CONFIG.defaultEscortRadius));
+    cFwd = crescentRadius(n, rAll, reserve);
+    // Front ATAKU: kształt przesunięty tak, by rogi stały w punkcie odniesienia.
+    if (frame.alignFront) cFwd -= cFwd * (1 - Math.cos(SHAPE_CONFIG.crescentArc));
+  }
+  _shIdx.length = 0;
+  _shSrc.length = 0;
+  for (let i = 0; i < n; i++) {
+    const m = members[i];
+    const rank = shapeRankOf(m);
+    const rx = (Number(m.x) || 0) - frame.x;
+    const ry = (Number(m.y) || 0) - frame.y;
+    _shSrc.push(m);
+    _shIdx.push(i);
+    _shBand[i] = shape === 'line' || ring ? SHAPE_BAND[rank] : rank;
+    if (ring) _shKey[i] = rx * rx + ry * ry;
+    else if (shape === 'crescent') {
+      const f = rx * dirX + ry * dirY - cFwd;
+      const l = rx * latX + ry * latY;
+      _shKey[i] = f * f + l * l;
+    } else _shKey[i] = -(rx * dirX + ry * dirY);
+    _shUid[i] = formUid(m);
+  }
+  _shIdx.sort(byShapeOrder);
+
+  _pn = 0;
+  _tn = 0;
+  if (shape === 'line') shapeLine(n, reserve);
+  else if (shape === 'wedge') shapeWedge(n, reserve);
+  else if (shape === 'column') shapeColumn(n, reserve);
+  else if (shape === 'crescent') shapeCrescent(n, reserve);
+  else shapeRing(n, reserve);
+
+  // Front ATAKU: najdalej wysunięte miejsce w punkcie odniesienia.
+  if (frame.alignFront && _pn > 0) {
+    let top = -Infinity;
+    for (let p = 0; p < _pn; p++) top = Math.max(top, _pFwd[p]);
+    for (let p = 0; p < _pn; p++) _pFwd[p] -= top;
+  }
+  // Wyniki w kolejności posortowanej (members[i] ↔ lat[i], fwd[i]).
+  for (let i = 0; i < n; i++) {
+    out.members.push(_shSrc[_shIdx[i]]);
+    out.lat.push(0);
+    out.fwd.push(0);
+  }
+  for (let t = 0; t < _tn; t++) {
+    const tier = _tiers[t];
+    if (tier.ring) assignRingTier(tier, out, frame, dirX, dirY, latX, latY, frame.x, frame.y);
+    else assignRowTier(tier, out, frame, latX, latY);
+  }
+  finishShapeExtent(out);
+  // Zapamiętanie przydziału (obiekty miejsc wielokrotnego użytku).
+  const keep = _shKeep;
+  keep.length = 0;
+  for (const v of out.prev.values()) keep.push(v);
+  out.prev.clear();
+  for (let i = 0; i < n; i++) {
+    const p = keep.pop() || { lat: 0, fwd: 0 };
+    p.lat = out.lat[i];
+    p.fwd = out.fwd[i];
+    out.prev.set(out.members[i], p);
+  }
+  out.sig = sig;
+  return out;
+}
+
 // Podgląd do konsoli (FleetAIDebug).
 export function describeFormation(fs) {
   const out = [];

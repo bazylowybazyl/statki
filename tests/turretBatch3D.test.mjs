@@ -73,8 +73,9 @@ test('rodziny: scalone części (pierścień, obudowa, n luf, n wirników), prze
     assert.ok(Math.abs(fa.height - height) < 1e-9, `${fam}: wysokość ${fa.height} ≠ ${height}`);
     assert.ok(fa.index.every((i) => i < fa.vertexCount));
   }
-  assert.equal(WEAPON3D_FAMILIES.length, 24);
-  assert.equal(parts, 76, 'dawniej 76 osobnych części (rysunków na wieżę) — teraz 1 na rodzinę');
+  // 24 rodziny z dawnego drzewa wież + Lanca (2026-10-08: pierścień, obudowa, lufa).
+  assert.equal(WEAPON3D_FAMILIES.length, 25);
+  assert.equal(parts, 79, 'dawniej 76 osobnych części (rysunków na wieżę) + 3 Lancy — teraz 1 na rodzinę');
   for (const fam of new Set(Object.values(WEAPON3D_FAMILY).filter(Boolean))) assert.ok(WEAPON3D_FAMILIES.includes(fam), fam);
 });
 

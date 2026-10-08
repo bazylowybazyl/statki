@@ -115,7 +115,7 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
   // Bez krateru na miarę rany: lekka broń, Goliath (decyzja 25c), gatling plazmowy, rykoszet, rzaz, wiązki, bez źródła.
   for (const [src, v, dmg] of [
     [{ vfxKey: 'railgun_mk2', type: 'rail' }, 'impact', 10], [{ vfxKey: 'heavy_autocannon_l' }, 'impact', 60],
-    [{ vfxKey: 'special_goliath_autocannon' }, 'impact', 45], [{ vfxKey: 'special_plasma_gatling' }, 'impact', 60],
+    [{ vfxKey: 'special_goliath_autocannon' }, 'impact', 45], [{ vfxKey: 'special_plasma_gatling' }, 'impact', W.special_plasma_gatling.baseDamage],
     [{ vfxKey: 'vulcan_minigun' }, 'ricochet', 4], [{ vfxKey: 'special_valkyrie_railgun' }, 'kerf', 500],
     [{ id: 'beam_pulse', category: 'beam' }, 'impact', 45], [null, 'impact', 1000], [yam, 'impact', 0]
   ]) {
@@ -123,11 +123,13 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
   }
   // Warianty rozmiarowe broni specjalnej: krater ∝ √obrażeń względem rodzica (pole dziury ∝ obrażeń) —
   // Kolec (S, 180) 14,7 j., Oszczep (M, 380) 21,4 j. przy 24,4 j. Valkyrie; Yamato L (450) 43,7 j. przy 60 j.
+  // Lanca (main, klasa snajperska, receptura Valkyrie): M (48) 7,6 j., L (100) 10,9 j.
   const vkR = S.craterRadiusFor({ vfxKey: 'special_valkyrie_railgun' }, 'impact', W.special_valkyrie_railgun.baseDamage);
   const yamR = S.craterRadiusFor({ vfxKey: 'special_yamato_cannon' }, 'impact', W.special_yamato_cannon.baseDamage);
   for (const [id, parentR, parentId, want] of [
     ['special_valkyrie_s', vkR, 'special_valkyrie_railgun', 14.67], ['special_valkyrie_m', vkR, 'special_valkyrie_railgun', 21.39],
-    ['special_yamato_l', yamR, 'special_yamato_cannon', 43.65]
+    ['special_yamato_l', yamR, 'special_yamato_cannon', 43.65],
+    ['lance_rail_m', vkR, 'special_valkyrie_railgun', 7.58], ['lance_rail_l', vkR, 'special_valkyrie_railgun', 10.94]
   ]) {
     const src = { vfxKey: id, type: W[id].category, weaponSize: W[id].size };
     const r = S.craterRadiusFor(src, 'impact', W[id].baseDamage);
@@ -137,7 +139,7 @@ test('craterRadiusFor: ciężka broń na miarę rany (√ obrażeń), reszta —
     assert.equal(S.trenchRadiusFor(src, 5000), 0, `${id}: bez rowu przebicia`);
     assert.equal(C.hasTrench(src), false);
   }
-  for (const id of ['special_valkyrie_s', 'special_valkyrie_m']) {
+  for (const id of ['special_valkyrie_s', 'special_valkyrie_m', 'lance_rail_m', 'lance_rail_l']) {
     const fam = S.stampFamilyFor(id);
     assert.equal(S.STAMP[fam].impact[S.S_CRATER], W[id].baseDamage, `${id}: wzorzec = obrażenia`);
     assert.equal(S.STAMP[fam].exit[S.S_CRATER], 0.5 * W[id].baseDamage);

@@ -4,8 +4,9 @@
 //   szkło (gradient + ziarno) → podkład terenu (ląd, ring, pas, budowle; radarTerrain.js) z POŚWIATĄ
 //   PRZEMIATANIA (teren jaśnieje, gdy przejdzie wiązka) → pierścienie zasięgu i podziałka namiaru →
 //   zasięg wzroku (mgła) i zasięg broni w ręku → wiązka anteny → SUROWE ECHO śladów (luminofor, gaśnie)
-//   i ślad ostatnich pozycji → znaczniki zniszczeń, sygnatury masy, duchy → SYMBOLE śladów z wektorami
-//   prędkości, namiar / zaznaczenie, etykiety (numer śladu, klasa, odległość) → cel podróży i cele misji
+//   → znaczniki zniszczeń, sygnatury masy, duchy → SYMBOLE śladów (stemple; bez wektorów prędkości i śladu
+//   pozycji — kierunku lotu kontaktów tarcza nie pokazuje), namiar / zaznaczenie, etykiety (numer śladu, klasa,
+//   odległość) → cel podróży i cele misji
 //   → własny okręt (sylwetka, linia kursu, wektor prędkości) → impuls skanera X → znaczniki na obrzeżu
 //   (kurs, północ), zagrożenia z tyłu (kopuła), linia namiaru i znacznik odległości pod kursorem (Alt).
 //
@@ -17,13 +18,17 @@ import { RADAR_TUNE, RADAR_RGB, formatRadarDistance, formatRadarRing, scanPulseR
 import { radarEchoLevel, relativeBearing, normAngle } from './radarTracker.js';
 import { createRadarTerrain } from './radarTerrain.js';
 import {
-  drawRadarSymbol, drawRadarText, radarAffRgb, radarColor, radarSymbolSize, strokeRadarBrackets
+  drawRadarText, radarAffRgb, radarColor, radarSymbolSize, stampRadarSymbol, strokeRadarBrackets
 } from './radarSymbols.js';
 
 const TAU = Math.PI * 2;
 const RING_STEPS = Object.freeze([500, 1000, 2000, 2500, 5000, 10000, 15000, 20000, 25000, 50000, 100000]);
 // Podpisy pierścieni na namiarze ~godz. 1 (w kopule widoczne, nad prawym barkiem).
 const RING_LABEL_ANGLE = -Math.PI / 2 + 0.42;
+// Kopuła kokpitu: cięciwa 12u (CSS klastra) pod środkiem tarczy pomniejszonej do 0,842857 = 14,24 jednostki
+// płótna (u = W / 280). Co leży niżej, jest schowane — rysunek tarczy to pomija (w bitwie zwykle pół floty
+// za rufą). Zagrożenia z tyłu pokazują groty nad cięciwą (drawRim).
+export const RADAR_DOME_CUT_U = 12 / 0.842857;
 
 export function radarRingStep(range) {
   const want = range / 4.2;
@@ -44,7 +49,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
   const terrain = createRadarTerrain(tune);
   const scratch = makeCanvas();
   const scratchCtx = scratch ? scratch.getContext('2d') : null;
-  const cache = { bg: null, bgKey: '', face: null, faceKey: '' };
+  const cache = { bg: null, bgKey: '', face: null, faceKey: '', ranges: null, rangesKey: '', rangesDrawn: false };
   const blobs = new Map();          // rgb → kropla echa (radialny gradient)
   const silhouettes = new Map();    // klucz → zabarwiona sylwetka kadłuba
   const silIds = new WeakMap();
@@ -55,6 +60,8 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
   let tagRectCount = 0;
   const _p = { x: 0, y: 0 };
   const _q = { x: 0, y: 0 };
+  // jeden obiekt opcji symbolu na wszystkie ślady (bez literału na ślad w każdej klatce)
+  const _sym = { kind: 'ship', aff: 'unknown', rgb: null, cls: '', capital: false, s: 4, alpha: 1, rotation: 0, lw: 1.2, fill: null, dashed: false, halo: 0, shape: null };
   const stats = { drawMs: 0, tracks: 0, echoes: 0 };
   let hovered = null;
 
@@ -358,40 +365,35 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
     const echoBlob = blob(RADAR_RGB.echo);
     if (!echoBlob) return;
     const beam = tune.beamWidth;
-    const histLife = tune.historyLen * tune.sweepPeriod;
     let n = 0;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < list.length; i++) {
       const t = list[i];
-      if (!(t.paints > 0)) continue;
-      const level = radarEchoLevel(tr, t, tune);
-      // ślad ostatnich pozycji (malowania sprzed obecnego)
-      if (t.hN > 1 && t.kind !== 'station') {
-        const rgb = radarAffRgb(t.aff, t.kind);
-        const dot = Math.max(0.8, 0.95 * f.u);
-        for (let j = 1; j < t.hN; j++) {
-          const idx = (t.hHead - 1 - j + tune.historyLen * 2) % tune.historyLen;
-          const age = tr.time - t.hT[idx];
-          const a = 0.5 * (1 - age / histLife);
-          if (a <= 0.02) continue;
-          proj(t.hx[idx] - f.own.x, t.hy[idx] - f.own.y, f, _p);
-          if (!inDisc(_p.x, _p.y, f)) continue;
-          ctx.fillStyle = radarColor(rgb, a);
-          ctx.fillRect(_p.x - dot * 0.5, _p.y - dot * 0.5, dot, dot);
-        }
-      }
       // stacje: echo lądu robi podkład terenu (prawdziwy obrys), kropla tylko by go zalała
-      if (level < 0.025 || t.kind === 'station') continue;
+      if (!(t.paints > 0) || t.kind === 'station') continue;
+      const level = radarEchoLevel(tr, t, tune);
+      if (level < 0.025) continue;
       proj(t.px - f.own.x, t.py - f.own.y, f, _p);
-      if (!inDisc(_p.x, _p.y, f, 6 * f.u)) continue;
       const lenPx = t.length * f.k;
       const widPx = t.width * f.k;
       const big = Math.max(lenPx, widPx);
+      // kopuła: echo pod cięciwą (za rufą) i tak schowane
+      if (_p.y - big - beam * f.R - 4 * f.u > f.cutY) continue;
+      if (!inDisc(_p.x, _p.y, f, 6 * f.u)) continue;
       const alpha = Math.min(1, level);
       // kadłub większy niż kropla: echo w kształcie sylwetki (jak radar wysokiej rozdzielczości)
       if (big >= 8 * f.u && t.sprite) {
-        const sil = silhouette(t.sprite, lenPx, widPx, RADAR_RGB.echo);
+        // sylwetka z ostatniego rysunku śladu, póki ten sam obraz i rozmiar (bez klucza-napisu co klatkę)
+        const qw = Math.max(4, Math.round(lenPx / 4) * 4);
+        const qh = Math.max(4, Math.round(widPx / 4) * 4);
+        if (t._silSrc !== t.sprite || t._silW !== qw || t._silH !== qh) {
+          t._silSrc = t.sprite;
+          t._silW = qw;
+          t._silH = qh;
+          t._sil = silhouette(t.sprite, lenPx, widPx, RADAR_RGB.echo);
+        }
+        const sil = t._sil;
         if (sil) {
           const rot = t.pAngle + t.spriteRot + f.theta;
           const c = Math.cos(rot);
@@ -436,9 +438,10 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       const a = Math.max(0, 1 - age / life);
       if (a <= 0) continue;
       proj(k.x - f.own.x, k.y - f.own.y, f, _p);
-      if (!inDisc(_p.x, _p.y, f)) continue;
-      const rgb = radarAffRgb(k.aff, k.kind);
       const s = (k.capital ? 4.6 : 3.2) * f.su;
+      const ring = s + age * 10 * f.u;
+      if (_p.y - ring > f.cutY || !inDisc(_p.x, _p.y, f)) continue;
+      const rgb = radarAffRgb(k.aff, k.kind);
       const blink = age < 0.9 ? (Math.floor(age * 8) % 2 === 0 ? 1 : 0.35) : 1;
       ctx.strokeStyle = radarColor(rgb, a * blink);
       ctx.lineWidth = Math.max(0.9, 1.2 * f.u);
@@ -446,7 +449,6 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       ctx.moveTo(_p.x - s, _p.y - s); ctx.lineTo(_p.x + s, _p.y + s);
       ctx.moveTo(_p.x + s, _p.y - s); ctx.lineTo(_p.x - s, _p.y + s);
       ctx.stroke();
-      const ring = s + age * 10 * f.u;
       ctx.strokeStyle = radarColor(rgb, a * 0.35);
       ctx.beginPath();
       ctx.arc(_p.x, _p.y, ring, 0, TAU);
@@ -466,7 +468,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       if (alpha <= 0.02) continue;
       proj(m.x - f.own.x, m.y - f.own.y, f, _p);
       const r = Math.max(5 * f.u, (Number(m.spread) || 4000) * f.k);
-      if (!inDisc(_p.x, _p.y, f, r)) continue;
+      if (_p.y - r > f.cutY || !inDisc(_p.x, _p.y, f, r)) continue;
       const pulse = 0.65 + 0.35 * Math.sin(f.time * 2.6 + i);
       ctx.fillStyle = radarColor(RADAR_RGB.mass, 0.07 * alpha);
       ctx.beginPath();
@@ -497,11 +499,12 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       const a = Math.max(0, 1 - (Number(g.age) || 0) / life) * 0.7;
       if (a <= 0.03) continue;
       proj(g.x - f.own.x, g.y - f.own.y, f, _p);
-      if (!inDisc(_p.x, _p.y, f)) continue;
-      drawRadarSymbol(ctx, _p.x, _p.y, {
-        kind: 'ship', aff: 'hostile', rgb: RADAR_RGB.ghost, s: (g.isCapital ? 4.6 : 3.4) * f.su,
-        alpha: a, fill: 0, dashed: true, lw: 1 * f.u
-      });
+      const s = (g.isCapital ? 4.6 : 3.4) * f.su;
+      if (_p.y - s * 1.6 > f.cutY || !inDisc(_p.x, _p.y, f)) continue;
+      const o = _sym;
+      o.kind = 'ship'; o.aff = 'hostile'; o.rgb = RADAR_RGB.ghost; o.shape = null; o.s = s; o.alpha = a; o.fill = 0;
+      o.dashed = true; o.lw = 1 * f.u; o.cls = ''; o.capital = false; o.rotation = 0; o.halo = 0;
+      stampRadarSymbol(ctx, _p.x, _p.y, o);
       drawRadarText(ctx, '?', _p.x + 6.5 * f.su, _p.y - 5.5 * f.su, RADAR_RGB.ghost, a, 'left', 'middle', 2.5 * f.u);
     }
   }
@@ -534,6 +537,10 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
     return 9 + t.dist * 1e-7;
   }
 
+  function compareTagPriority(a, b) {
+    return trackPriority(a) - trackPriority(b);
+  }
+
   const _tagQueue = [];
   function drawTracks(ctx, f, tr) {
     const list = tr.list;
@@ -555,40 +562,30 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
           if (top) drawRimPointer(ctx, f, t, _p);
           continue;
         }
+        const s = radarSymbolSize(t.kind, t.classified ? t.cls : '', t.capital) * f.su;
+        // kopuła: symbol pod cięciwą (za rufą) i tak schowany — zagrożenia z tyłu pokazuje drawRim
+        if (_p.y - s * 1.8 - 3 * f.u > f.cutY) continue;
         const rgb = radarAffRgb(t.aff, t.kind);
         const mature = t.no > 0 || t.continuous;
-        // Ślad bez ustalenia (jedno malowanie): kwadrat pozyskiwania, przerywany.
-        const fresh = !mature;
         const echoA = t.continuous ? 1 : Math.max(0.42, Math.min(1, radarEchoLevel(tr, t, tune) + 0.45));
         const alpha = t.kind === 'station' ? 0.92 : echoA;
-        const s = radarSymbolSize(t.kind, t.classified ? t.cls : '', t.capital) * f.su;
-        // wektor prędkości
-        const speed = Math.hypot(t.svx, t.svy);
-        if (mature && speed > tune.vectorMinSpeed && t.kind !== 'station' && t.kind !== 'wreck') {
-          vectorEnd(_p.x, _p.y, t.svx, t.svy, f, _q);
-          ctx.strokeStyle = radarColor(rgb, alpha * (t.kind === 'missile' ? 0.95 : 0.7));
-          ctx.lineWidth = Math.max(0.75, (t.kind === 'missile' ? 1.1 : 0.9) * f.u);
-          ctx.beginPath();
-          const ang = Math.atan2(_q.y - _p.y, _q.x - _p.x);
-          ctx.moveTo(_p.x + Math.cos(ang) * s * 1.1, _p.y + Math.sin(ang) * s * 1.1);
-          ctx.lineTo(_q.x, _q.y);
-          ctx.stroke();
-        }
-        const rot = Math.atan2(t.svy, t.svx) + f.theta;
-        const heading = (t.kind === 'fighter' || t.kind === 'missile')
-          ? (speed > 5 ? rot : t.angle + f.theta) : 0;
-        if (fresh && t.kind !== 'station' && t.kind !== 'missile' && t.kind !== 'fighter' && t.kind !== 'drone') {
-          ctx.setLineDash([2 * f.u, 2 * f.u]);
-          ctx.strokeStyle = radarColor(rgb, 0.75 * echoA);
-          ctx.lineWidth = Math.max(0.75, 0.9 * f.u);
-          ctx.strokeRect(_p.x - s, _p.y - s, s * 2, s * 2);
-          ctx.setLineDash([]);
+        // Symbol ze stempla; kierunku lotu nie pokazujemy (bez wektorów) — klin myśliwca i grot rakiety
+        // to kształty symboli, obrócone wzdłuż lotu.
+        const o = _sym;
+        o.kind = t.kind; o.aff = t.aff; o.rgb = null; o.cls = t.classified ? t.cls : ''; o.capital = t.capital; o.s = s;
+        o.fill = null; o.dashed = false; o.halo = 0; o.rotation = 0; o.shape = null;
+        if (!mature && t.kind !== 'station' && t.kind !== 'missile' && t.kind !== 'fighter' && t.kind !== 'drone') {
+          // Ślad bez ustalenia (jedno malowanie): kwadrat pozyskiwania, przerywany.
+          o.shape = 'acq'; o.rgb = rgb; o.alpha = 0.75 * echoA; o.lw = Math.max(0.75, 0.9 * f.u);
         } else {
-          drawRadarSymbol(ctx, _p.x, _p.y, {
-            kind: t.kind, aff: t.aff, cls: t.classified ? t.cls : '', capital: t.capital, s, alpha,
-            rotation: heading, lw: Math.max(0.85, 1.15 * f.u), halo: t.kind === 'missile' ? 1 : (t.aff === 'hostile' ? 0.6 : 0.3)
-          });
+          o.alpha = alpha;
+          o.lw = Math.max(0.85, 1.15 * f.u);
+          o.halo = t.kind === 'missile' ? 1 : (t.aff === 'hostile' ? 0.6 : 0.3);
+          if (t.kind === 'fighter' || t.kind === 'missile') {
+            o.rotation = (t.svx * t.svx + t.svy * t.svy > 25 ? Math.atan2(t.svy, t.svx) : t.angle) + f.theta;
+          }
         }
+        stampRadarSymbol(ctx, _p.x, _p.y, o);
         // nowy wrogi ślad: rozchodzący się pierścień
         const newAge = time - t.newT;
         if (newAge >= 0 && newAge < tune.newContactSec) {
@@ -646,7 +643,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
         const p = picks[i];
         pushRect(p.x - p.r, p.y - p.r, p.x + p.r, p.y + p.r);
       }
-      _tagQueue.sort((a, b) => trackPriority(a) - trackPriority(b));
+      _tagQueue.sort(compareTagPriority);
       const limit = f.mode === 'full' ? tune.tagsFull : tune.tagsDome;
       let placed = 0;
       for (let i = 0; i < _tagQueue.length; i++) {
@@ -805,13 +802,40 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
     if (isNav && f.mode === 'full' && label) drawRadarText(ctx, label.toUpperCase(), tx, ty + f.fontPx * 1.05, rgb, 0.6, 'center', 'middle', 2.6 * f.u);
   }
 
+  // Okręgi zasięgu (wzrok, broń w ręku) zmieniają się rzadko — do pamięci podręcznej jak pierścienie tarczy
+  // (klucz: rozmiar, zasięg, tryb, promienie, podpisy); przerywane okręgi rysowane co klatkę tarczy kosztowały
+  // tyle co połowa symboli.
   function drawRanges(ctx, f) {
     const ov = f.overlay;
     if (!ov) return;
+    const vision = Number(ov.vision) || 0;
+    const weapons = Array.isArray(ov.weapons) ? ov.weapons : null;
+    let key = `${f.W}|${f.H}|${Math.round(f.range)}|${f.mode}|${Math.round(f.fontPx * 10)}|${Math.round(vision)}`;
+    if (weapons) {
+      for (let i = 0; i < weapons.length; i++) {
+        const w = weapons[i];
+        key += `|${Math.round(Number(w?.r) || 0)}|${w?.label || ''}|${w?.rgb || ''}`;
+      }
+    }
+    let c = cache.ranges;
+    if (!c || cache.rangesKey !== key) {
+      if (!c) { c = makeCanvas(); cache.ranges = c; }
+      if (!c) return;
+      if (c.width !== f.W || c.height !== f.H) { c.width = f.W; c.height = f.H; }
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, c.width, c.height);
+      cache.rangesDrawn = paintRanges(g, f, vision, weapons);
+      cache.rangesKey = key;
+    }
+    if (cache.rangesDrawn) ctx.drawImage(c, 0, 0);
+  }
+
+  function paintRanges(ctx, f, vision, weapons) {
+    let drawn = false;
     ctx.save();
     ctx.font = `${f.fontPx}px Consolas, monospace`;
     // zasięg wzroku strony gracza (mgła wojny)
-    const vision = Number(ov.vision) || 0;
     if (vision > 0) {
       const r = vision * f.k;
       if (r < f.R * 1.02 && r > 8 * f.u) {
@@ -822,6 +846,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
         ctx.arc(f.cx, f.cy, r, 0, TAU);
         ctx.stroke();
         ctx.setLineDash([]);
+        drawn = true;
         if (f.mode === 'full') {
           const a = -Math.PI / 2 - 0.5;
           drawRadarText(ctx, 'WZROK', f.cx + Math.cos(a) * r - 2 * f.u, f.cy + Math.sin(a) * r, RADAR_RGB.mass, 0.6, 'right', 'middle', 2.5 * f.u);
@@ -829,8 +854,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       }
     }
     // zasięg broni w ręku
-    const weapons = ov.weapons;
-    if (Array.isArray(weapons)) {
+    if (weapons) {
       for (let i = 0; i < weapons.length; i++) {
         const w = weapons[i];
         const r = (Number(w?.r) || 0) * f.k;
@@ -843,6 +867,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
         ctx.arc(f.cx, f.cy, r, 0, TAU);
         ctx.stroke();
         ctx.setLineDash([]);
+        drawn = true;
         if (w.label && f.mode === 'full') {
           const a = -Math.PI / 2 + 0.95 + i * 0.22;
           drawRadarText(ctx, w.label, f.cx + Math.cos(a) * r + 2 * f.u, f.cy + Math.sin(a) * r, rgb, 0.7, 'left', 'middle', 2.5 * f.u);
@@ -850,6 +875,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       }
     }
     ctx.restore();
+    return drawn;
   }
 
   function drawOwnShip(ctx, f) {
@@ -1122,6 +1148,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       const tr = f.tracker;
       const size = Math.min(W, H);
       f.W = size;
+      f.H = H;
       f.cx = W / 2;
       f.cy = H / 2;
       f.rim = size / 2;
@@ -1132,6 +1159,8 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       f.cosT = Math.cos(f.theta);
       f.sinT = Math.sin(f.theta);
       f.sweep = tr.sweep;
+      // kopuła (f.domeCut — po przejściu CSS ze stanu po Alt): poniżej cięciwy nic nie widać
+      f.cutY = f.domeCut ? f.cy + RADAR_DOME_CUT_U * f.u : Infinity;
       tagRectCount = 0;
       hovered = null;
       if (f.hover) {
@@ -1151,7 +1180,13 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       ctx.clearRect(0, 0, W, H);
       ctx.save();
       ctx.beginPath();
-      ctx.arc(f.cx, f.cy, f.rim, 0, TAU);
+      if (f.cutY < f.cy + f.rim) {
+        const phi = Math.asin(Math.max(0, f.cutY - f.cy) / f.rim);
+        ctx.arc(f.cx, f.cy, f.rim, phi, Math.PI - phi, true);
+        ctx.closePath();
+      } else {
+        ctx.arc(f.cx, f.cy, f.rim, 0, TAU);
+      }
       ctx.clip();
       ctx.drawImage(background(size), f.cx - size / 2, f.cy - size / 2);
       drawTerrain(ctx, f);

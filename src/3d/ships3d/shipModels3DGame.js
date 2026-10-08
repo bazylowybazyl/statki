@@ -32,7 +32,7 @@ import {
   writeHullSkinField
 } from './hullSkin3D.js';
 import {
-  applyModelSlabDepth, setSlab, setModelSlabDepthOn, SLAB_HULL, SLAB_TURRET_ON_MODEL, SLAB_TURRET_ON_SPRITE,
+  applyModelSlabDepth, setSlab, setModelSlabDepthOn, SLAB_HULL, SLAB_HULL_UNDER, SLAB_HULL_OVER, SLAB_TURRET_ON_MODEL, SLAB_TURRET_ON_SPRITE,
   SLAB_NOZZLE_ON_MODEL, SLAB_NOZZLE_ON_SPRITE
 } from './modelSlabDepth.js';
 import { applySunShadowToBuiltinMaterial } from '../sunShadowMask.js';
@@ -173,7 +173,7 @@ function modelAssets(id) {
       };
       const w = Core3D.warmup;
       if (!w?.now) { swap(); return; }
-      w.now([_warmHolder(m.geometry, mat), _warmHolder(skinWarmGeometry(), skin)], { layer: 0 }).then(swap, swap);
+      w.now([_warmHolder(m.geometry, mat, true), _warmHolder(skinWarmGeometry(), skin, true)], { layer: 0 }).then(swap, swap);
     }).catch((err) => console.warn('[ships3D]', err.message));
   }
   return m;
@@ -265,6 +265,9 @@ export function setShipModels3DLook({ env } = {}) {
   }
   return { env: SHIP3D_ENV_INTENSITY };
 }
+/** Mapa otoczenia modeli okrętów dla materiału spoza modułu (drony naprawcze — src/3d/repair/repairDrones3D.js). */
+export function applyShip3DEnv(mat) { applyShipEnv(mat); }
+
 function applyShipEnv(mat) {
   if (!mat) return;
   _envMats.add(mat);
@@ -298,9 +301,12 @@ function applyShipEnv(mat) {
   });
 }
 
-function _warmHolder(geometry, material) {
+// receiveShadow wchodzi do klucza programu three — trzymacz kadłuba, skóry i przekroju musi go mieć jak prawdziwe siatki
+// (bez tego model, który pojawił się w trakcie gry — np. wezwany holownik — kompilował skórę synchronicznie).
+function _warmHolder(geometry, material, receiveShadow = false) {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = false;
+  mesh.receiveShadow = receiveShadow;
   return mesh;
 }
 
@@ -700,7 +706,9 @@ export function syncShipModels3D(p) {
       inst.modelGroup.scale.setScalar(k);
       // Kadłub: skóra FFD (zapas — bryła sztywna, gdy brak miejsca w polu).
       if (id && inst.assets?.ready) {
-        setSlab(inst.slab, inst.assets.minZ * k, inst.assets.maxZ * k, SLAB_HULL);
+        // Holownik serwisowy pod statkiem na pokładzie (__skinZ < 0 / __carriedBy — serviceTugGame.js).
+        const slab = e.__skinZ < 0 ? SLAB_HULL_UNDER : (e.__lightMate ? SLAB_HULL_OVER : SLAB_HULL);
+        setSlab(inst.slab, inst.assets.minZ * k, inst.assets.maxZ * k, slab);
         const skinned = syncSkin(inst, hull);
         if (inst.hullMesh) inst.hullMesh.visible = !skinned;
         syncCutWalls(inst, hull, skinned && _cfg.view3D);
@@ -952,7 +960,7 @@ export function warmupShipModels3D(ids = []) {
     for (const id of ids) {
       const a = modelAssets(id);
       if (!a?.ready) continue;
-      out.push(_warmHolder(a.geometry, a.material), _warmHolder(skinWarmGeometry(), a.skinMaterial));
+      out.push(_warmHolder(a.geometry, a.material, true), _warmHolder(skinWarmGeometry(), a.skinMaterial, true));
       const lg = lightsGeometry(a);
       if (lg) out.push(_warmHolder(lg, lightMaterial()));
     }
@@ -961,7 +969,7 @@ export function warmupShipModels3D(ids = []) {
     cg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
     cg.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([1, 0, 0, 1, 0, 0, 1, 0, 0]), 3));
     cg.setAttribute('aLat', new THREE.BufferAttribute(new Float32Array(9), 3));
-    out.push(_warmHolder(cg, cutMaterial()));
+    out.push(_warmHolder(cg, cutMaterial(), true));
   }
   {
     // partia wież: układ atrybutów i stan jak siatki partii (receiveShadow — w kluczu programu three)

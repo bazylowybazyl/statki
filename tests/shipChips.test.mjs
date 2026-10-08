@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { CHIPS, CHIP_ORDER, CHIP_REMOVE_REFUND, PD_CHIP_ID, getChipDef } from '../src/data/chips.js';
 import {
@@ -142,24 +143,27 @@ test('zdjęcie zwraca połowę ceny; chip postawiony za darmo (dev) nic nie zwra
 });
 
 // ---------------------------------------------------------------------------
-// UI — zakładka „Chipy” w MECHANIC
+// UI — sekcja CHIPY w reficie ręcznym zakładki WYPOSAŻENIE (src/ui/station/fittingPanel.js)
 
-test('warsztat ma zakładkę „Chipy” w rzędzie filtrów magazynu', () => {
-  const panel = sliceFunction(html, 'function buildMechanicPanel() {');
-  const tabs = panel.slice(panel.indexOf('id="weapon-filter-tabs"'), panel.indexOf('id="mechanic-available"'));
-  assert.match(tabs, /<button class="mechanic-tab-btn" data-filter="chips">Chipy<\/button>/);
-  const render = sliceFunction(html, 'function renderAvailableWeapons(root) {');
-  assert.match(render, /if \(mechanicWeaponFilter === 'chips'\) \{\s*renderMechanicChips\(root\);\s*return;/);
+const fittingPanelSrc = readFileSync(new URL('../src/ui/station/fittingPanel.js', import.meta.url), 'utf8');
+
+test('refit ręczny WYPOSAŻENIA ma sekcję CHIPY z katalogu (klik — instalacja albo zdjęcie)', () => {
+  assert.match(fittingPanelSrc, /<div class="fit-m-sub">CHIPY<\/div>/);
+  assert.match(fittingPanelSrc, /const chips = api\.chips\(\);/);
+  assert.match(fittingPanelSrc, /api\.toggleChip\(c\.id\)/);
+  const api = sliceFunction(html, 'function buildFittingApi() {');
+  assert.match(api, /chips: \(\) => CHIP_ORDER\.map\(\(id\) => CHIPS\[id\]\)/);
+  assert.match(api, /if \(hullHasChip\(PLAYER\.hullChips, PLAYER\.activeHullId, id\)\) removeMechanicChip\(id\);\s*else installMechanicChip\(id\);/);
 });
 
-test('lista chipów: kredyty blokują zakup, z ?dev instalacja za darmo, komunikat mówi o PD', () => {
-  const list = sliceFunction(html, 'function renderMechanicChips(root) {');
-  assert.match(list, /btn\.disabled = PLAYER\.credits < cost;/);
-  assert.match(list, /const devFree = isMechanicDevMode\(\);/);
-  assert.match(list, /Zainstaluj/);
-  assert.match(list, /Zdejmij/);
+test('lista chipów: kredyty blokują zakup, z ?dev instalacja za darmo, opis mówi o PD', () => {
+  assert.match(fittingPanelSrc, /b\.disabled = !c\.installed && c\.cost > api\.credits\(\);/);
+  const api = sliceFunction(html, 'function buildFittingApi() {');
+  assert.match(api, /cost: isMechanicDevMode\(\) \? 0 : \(Number\(def\.cost\) \|\| 0\)/);
   const install = sliceFunction(html, 'function installMechanicChip(chipId) {');
   assert.match(install, /const cost = isMechanicDevMode\(\) \? 0 :/);
   assert.match(install, /PLAYER\.credits -= cost;/);
-  assert.match(html, /Bez PD CHIP obrona punktowa/);
+  // Opis chipa (pokazywany pod przyciskiem) mówi, co się dzieje BEZ chipa.
+  assert.match(CHIPS[PD_CHIP_ID].desc, /Bez chipa PD strzela WYŁĄCZNIE do rakiet/);
+  assert.match(fittingPanelSrc, /<small>\$\{esc\(c\.desc \|\| ''\)\}<\/small>/);
 });

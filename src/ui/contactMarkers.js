@@ -7,7 +7,7 @@
 // Kontakty w kadrze (drawOnscreen): narożniki celownika i ten sam odczyt.
 
 import { RADAR_RGB, formatRadarDistance, radarClassCode } from './radar/radarConfig.js';
-import { drawRadarSymbol, drawRadarText, radarColor, strokeRadarBrackets } from './radar/radarSymbols.js';
+import { drawRadarText, radarColor, stampRadarSymbol, stampRadarText, strokeRadarBrackets } from './radar/radarSymbols.js';
 
 const AWARENESS = { HIDDEN: 0, GHOST: 1, DETECTED: 2, TRACKED: 3 };
 
@@ -89,6 +89,8 @@ const _onscreen = [];
 const _offscreen = [];
 const _edgeBuckets = new Map();
 const _edgePt = { x: 0, y: 0 };
+const _scr = { x: 0, y: 0 };
+const _sym = { kind: 'ship', aff: 'hostile', rgb: null, s: 4, alpha: 1, fill: 0.25, dashed: false, capital: false, lw: 1.3, cls: '', rotation: 0, halo: 0, shape: null };
 
 // Najpierw „żywe” kontakty, potem duchy; w obrębie — bliższe pierwsze.
 function compareOffscreenContacts(a, b) {
@@ -102,23 +104,45 @@ function contactRgb(c) {
        : RADAR_RGB.hostile;
 }
 
-// Odczyt: numer śladu z radaru kokpitu (gdy jest) i kod klasy; duch — „?”.
-function contactCode(c) {
+// Odczyt: numer śladu z radaru kokpitu (gdy jest) i kod klasy; duch — „?”. Pamięć per byt: napis kodu (zmienia
+// się tylko z numerem śladu albo typem) i stemple obu odczytów (radarSymbols.stampRadarText) — znaczniki
+// rysują się w każdej klatce, a napisy prawie stoją.
+const _marks = new WeakMap();
+function markOf(entity) {
+  if (!entity) return null;
+  let m = _marks.get(entity);
+  if (!m) { m = { no: -1, type: '', capital: false, code: '', codeSt: null, distSt: null }; _marks.set(entity, m); }
+  return m;
+}
+function contactCode(c, tracks, m = markOf(c.entity)) {
   if (c.isStation) return 'ST';
+  if (c.isGhost) return `${radarClassCode(c.type, { isCapitalShip: c.isCapital })} ?`;
+  const no = c.entity && tracks ? (tracks.get(c.entity)?.no || 0) : 0;
+  if (m && m.no === no && m.type === c.type && m.capital === c.isCapital) return m.code;
   const cls = radarClassCode(c.type, { isCapitalShip: c.isCapital });
-  if (c.isGhost) return `${cls} ?`;
-  const no = c.entity ? (globalThis.window?.cockpitUI?.radar?.tracker?.tracks?.get(c.entity)?.no || 0) : 0;
-  return no ? `T${no < 10 ? '0' + no : no} ${cls}` : cls;
+  const code = no ? `T${no < 10 ? '0' + no : no} ${cls}` : cls;
+  if (m) { m.no = no; m.type = c.type; m.capital = c.isCapital; m.code = code; }
+  return code;
 }
 
-// Grot przy krawędzi ekranu w stronę kontaktu (jeden obrót na znacznik).
+// Odczyt znacznika: kod (slot 0) albo odległość (slot 1) ze stempla w pamięci kontaktu; bez bytu — wprost.
+function markText(ctx, m, slot, text, font, x, y, rgb, alpha, align, baseline) {
+  if (!m) {
+    ctx.font = font;
+    drawRadarText(ctx, text, x, y, rgb, alpha, align, baseline);
+  } else if (slot === 0) {
+    m.codeSt = stampRadarText(ctx, m.codeSt, text, font, x, y, rgb, alpha, align, baseline);
+  } else {
+    m.distSt = stampRadarText(ctx, m.distSt, text, font, x, y, rgb, alpha, align, baseline);
+  }
+}
+
+// Grot przy krawędzi ekranu w stronę kontaktu (jeden obrót na znacznik). Płótno ma tu przekształcenie
+// tożsamościowe (draw: resetTransform) — powrót bez save / restore.
 function drawEdgeCaret(ctx, x, y, angle, rgb, alpha, capital) {
-  ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
   const s = capital ? 1.25 : 1;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(-5 * s, -7 * s);
   ctx.lineTo(4 * s, 0);
@@ -134,7 +158,7 @@ function drawEdgeCaret(ctx, x, y, angle, rgb, alpha, capital) {
   ctx.strokeStyle = radarColor(rgb, alpha);
   ctx.lineWidth = 2;
   ctx.stroke();
-  ctx.restore();
+  ctx.resetTransform();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -148,6 +172,9 @@ export const ContactMarkers = {
     const bottomMargin = Math.max(MC.edgeMargin, Number(layout?.bottom) || 0);
     const wts = window.worldToScreen;
     if (!wts) return;
+    // rzut do bufora (bez obiektu na kontakt w każdej klatce), gdy gra go ma
+    const wtsInto = window.worldToScreenInto;
+    const tracks = window.cockpitUI?.radar?.tracker?.tracks || null;
 
     const shipX = ship.pos.x;
     const shipY = ship.pos.y;
@@ -233,7 +260,7 @@ export const ContactMarkers = {
     offscreen.length = 0;
 
     for (const c of contacts) {
-      const scr = wts(c.x, c.y, camera);
+      const scr = wtsInto ? wtsInto(c.x, c.y, camera, _scr) : wts(c.x, c.y, camera);
       c.sx = scr.x;
       c.sy = scr.y;
       const inBounds = scr.x > thresh && scr.x < W - thresh
@@ -249,6 +276,8 @@ export const ContactMarkers = {
 
     ctx.save();
     ctx.resetTransform();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
 
     // ── KONTAKTY NA EKRANIE: narożniki celownika i odczyt ────────────────
 
@@ -263,7 +292,7 @@ export const ContactMarkers = {
         strokeRadarBrackets(ctx, c.sx, c.sy, gap, Math.max(6, gap * 0.4));
         ctx.setLineDash([]);
         ctx.font = MC.font;
-        drawRadarText(ctx, contactCode(c), c.sx, c.sy - gap - 7, rgb, alpha, 'center', 'bottom');
+        drawRadarText(ctx, contactCode(c, tracks), c.sx, c.sy - gap - 7, rgb, alpha, 'center', 'bottom');
         ctx.font = MC.fontSmall;
         drawRadarText(ctx, formatRadarDistance(c.dist), c.sx, c.sy + gap + 6, RADAR_RGB.label, alpha * 0.9, 'center', 'top');
       }
@@ -319,32 +348,29 @@ export const ContactMarkers = {
         // Symbol śladu (jak na radarze) od strony środka ekranu, prosto (bez obrotu).
         const ix = ax - Math.cos(angle) * 15;
         const iy = ay - Math.sin(angle) * 15;
-        drawRadarSymbol(ctx, ix, iy, {
-          kind: c.isStation ? 'station' : 'ship', aff: 'hostile', rgb,
-          s: c.isStation ? 4.6 : (c.isCapital ? 4.8 : 3.8), alpha, fill: c.isGhost ? 0 : 0.25,
-          dashed: c.isGhost, capital: c.isCapital, lw: 1.3
-        });
+        const o = _sym;
+        o.kind = c.isStation ? 'station' : 'ship'; o.rgb = rgb; o.s = c.isStation ? 4.6 : (c.isCapital ? 4.8 : 3.8);
+        o.alpha = alpha; o.fill = c.isGhost ? 0 : 0.25; o.dashed = c.isGhost; o.capital = c.isCapital;
+        stampRadarSymbol(ctx, ix, iy, o);
 
         // Odczyt w stronę środka ekranu: przy bocznej krawędzi obok symbolu, przy górnej / dolnej — pod / nad
         // nim (stos idzie wzdłuż krawędzi, odczyty obok siebie wchodziłyby na sąsiadów).
-        ctx.font = MC.font;
-        const code = contactCode(c);
+        // (stemple napisów w pamięci kontaktu; duch bez bytu — rysowany wprost)
+        const m = markOf(c.entity);
+        const code = contactCode(c, tracks, m);
         const dist = formatRadarDistance(c.dist);
         if (onTop) {
-          drawRadarText(ctx, code, ix, iy + 8, rgb, alpha, 'center', 'top');
-          ctx.font = MC.fontSmall;
-          drawRadarText(ctx, dist, ix, iy + 19, RADAR_RGB.label, alpha * 0.9, 'center', 'top');
+          markText(ctx, m, 0, code, MC.font, ix, iy + 8, rgb, alpha, 'center', 'top');
+          markText(ctx, m, 1, dist, MC.fontSmall, ix, iy + 19, RADAR_RGB.label, alpha * 0.9, 'center', 'top');
         } else if (onBottom) {
-          drawRadarText(ctx, code, ix, iy - 19, rgb, alpha, 'center', 'bottom');
-          ctx.font = MC.fontSmall;
-          drawRadarText(ctx, dist, ix, iy - 8, RADAR_RGB.label, alpha * 0.9, 'center', 'bottom');
+          markText(ctx, m, 0, code, MC.font, ix, iy - 19, rgb, alpha, 'center', 'bottom');
+          markText(ctx, m, 1, dist, MC.fontSmall, ix, iy - 8, RADAR_RGB.label, alpha * 0.9, 'center', 'bottom');
         } else {
           const leftSide = ax < W / 2;
           const tx = ix + (leftSide ? 9 : -9);
           const align = leftSide ? 'left' : 'right';
-          drawRadarText(ctx, code, tx, iy - 1, rgb, alpha, align, 'bottom');
-          ctx.font = MC.fontSmall;
-          drawRadarText(ctx, dist, tx, iy + 1, RADAR_RGB.label, alpha * 0.9, align, 'top');
+          markText(ctx, m, 0, code, MC.font, tx, iy - 1, rgb, alpha, align, 'bottom');
+          markText(ctx, m, 1, dist, MC.fontSmall, tx, iy + 1, RADAR_RGB.label, alpha * 0.9, align, 'top');
         }
       }
 

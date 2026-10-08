@@ -54,7 +54,7 @@ import {
   float, int, uint, vec2, vec3, vec4, mat4, nodeObject,
   uniform, attribute, storage, varying, texture,
   positionGeometry, positionLocal, modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, uv,
-  abs, clamp, cos, sin, dFdx, dFdy, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
+  abs, clamp, cos, sin, dFdx, dFdy, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
 } from 'three/tsl';
 import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
@@ -198,6 +198,44 @@ export const HULL_SHARED = {
   hexHeatDecay: shared(0.45),
   hexHeatPeak: shared(10.0)
 };
+
+// ── Łata polowa (rój dronów naprawczych — src/game/repairRig.js) ────────────
+// Węzeł-łata (pole magazynu `patch`) ma w jasności narożnika kod HULL_PATCH_SHADE + spaw (beamHullSkin.js): skóra
+// rysuje go PODKŁADEM (szara blacha bez farby sprite'a, plamy z szumu w j. świata kadłuba), matowym (bez lakieru),
+// z płaską normalną nowej płyty i pasem SPAWU tam, gdzie łata styka się ze starą blachą. Świeży spaw świeci z mapy ran
+// (HullDamageMap.patchCell — żar przy krawędzi komórki). Do remontu w doku (HullBodies.restoreHull).
+// uOn = 0 — porównanie A/B: łata rysuje się farbą sprite'a (demo „łata ↔ farba”).
+export const HULL_PATCH = {
+  uOn: shared(1)
+};
+// Konsola / harness (scripts/webgpu/naprawa-gra.mjs, demo dema/naprawa-webgpu.html): A/B łata ↔ farba.
+if (typeof window !== 'undefined') window.__hullPatchUniforms = HULL_PATCH;
+/** Wygląd łaty (barwy liniowe). */
+export const HULL_PATCH_LOOK = Object.freeze({
+  primer: [0.105, 0.112, 0.118],   // szary podkład (sRGB ~#5b5e61)
+  mottle: 0.22,                     // plamy podkładu (± udział)
+  mottleScale: 46,                  // okres plam [j. świata]
+  seamLo: 0.52, seamHi: 0.86,       // pas spawu z interpolowanej flagi narożników
+  bead: [0.075, 0.072, 0.068],      // ścieg spawu (ciemny, nadpalony)
+  beadSpeck: 0.6,                   // jasne punkty ściegu (metal)
+  plateTint: 0.12,                  // rozrzut odcienia płyt (± udział, per komórka)
+  plateSeam: 0.42,                  // przyciemnienie szwu między płytami
+  plateSeamW: 0.07,                 // szerokość szwu (ułamek komórki od krawędzi)
+  flatten: 0.85                     // ile płaskiej normalnej (nowa płyta) zamiast reliefu sprite'a
+});
+
+/**
+ * Jasność narożnika skóry belek → { shade, patch, seam } (węzły TSL). Łata: kod ≥ 1,5 (HULL_PATCH_SHADE + spaw); wtedy
+ * jasność blachy 1, spaw = kod − 2 (0..1, interpolowany po czworokącie).
+ */
+export function decodeHullPatchShade(raw) {
+  const patch = step(1.5, raw);
+  return {
+    shade: mix(raw, float(1.0), patch),
+    patch,
+    seam: clamp(raw.sub(2.0), 0.0, 1.0).mul(patch)
+  };
+}
 
 // ── Bufor lamp i stref dysz (storage) ────────────────────────────────────────
 // Slot na kadłub: MAX_SHADER_SHIP_LIGHTS × (dane, barwa, dodatki) + MAX_ENGINE_ZONES
@@ -392,7 +430,8 @@ export const HullObjectStore = {
       A[o + 47] = u.uLacquerGlint.value;
       const ds = u.uDmgSlot.value;
       A[o + 48] = ds.x; A[o + 49] = ds.y; A[o + 50] = ds.z; A[o + 51] = ds.w;
-      A[o + 52] = u.uGridOwner.value; A[o + 53] = mesh.visible ? 1 : 0; A[o + 54] = 0; A[o + 55] = 0;
+      const cg = u.uCellGrid ? u.uCellGrid.value : null;
+      A[o + 52] = u.uGridOwner.value; A[o + 53] = mesh.visible ? 1 : 0; A[o + 54] = cg ? cg.x : 0; A[o + 55] = cg ? cg.y : 0;
       const wa = u.uWarpA.value; const wb = u.uWarpB.value; const wc = u.uWarpC.value;
       A[o + 56] = wa.x; A[o + 57] = wa.y; A[o + 58] = wa.z; A[o + 59] = wa.w;
       A[o + 60] = wb.x; A[o + 61] = wb.y; A[o + 62] = wb.z; A[o + 63] = wb.w;
@@ -472,7 +511,9 @@ function objectStoreNodesFor(slot) {
     uCloakC: v(19),
     uCloakD: v(20),
     uCloakE: v(21),
-    hullVisible: v(13).y
+    hullVisible: v(13).y,
+    // Siatka komórek kadłuba w uv sprite'a (płyty łat polowych; 0 — nieznana).
+    uCellGrid: v(13).zw
   };
 }
 
@@ -569,7 +610,9 @@ function hullDamageHeat(ctx, skinGlow) {
 // nie zależy od albedo — czarny lej z pełnym lakierem wyglądał jak cała blacha; demo: połysk
 // × (1 − 0,8·osmalenie)). Mnożnik per piksel wchodzi do wagi po warunku jednolitym bloku lakieru.
 function hullDamageLacquer(ctx, weight) {
-  return ctx.damage ? weight.mul(ctx.woundGloss) : weight;
+  const w = ctx.damage ? weight.mul(ctx.woundGloss) : weight;
+  // Łata polowa: podkład jest matowy — bez odbicia nieba lakieru.
+  return ctx.patchK ? w.mul(float(1.0).sub(ctx.patchK)) : w;
 }
 
 // Zadanie 18-C — światła efektów z siatki świateł (zadanie 12: błyski, trafienia, pociski,
@@ -644,6 +687,7 @@ function hullTearFray(tear, uvNode, P) {
 // opts.perObject  węzły per kadłub (domyślnie uniformy obiektu — hullPerObjectNodes; skóra belek: bufor
 //                 storage slotu — hullObjectStoreNodes, zadanie 23)
 // opts.tear       float|null — rozdarcie narożnika (partie skór belek): poszarpany brzeg dziur, hullTearFray
+// opts.patchCode  bool — `shade` niesie kod łaty polowej (decodeHullPatchShade; skóra belek)
 function hullFragmentNode(opts) {
   const P = opts.perObject || hullPerObjectNodes();
   const L = HullLacquer.uniforms;
@@ -658,14 +702,42 @@ function hullFragmentNode(opts) {
 
     const sprite = perObjectTexture('uSprite', PLACEHOLDER_SPRITE, spriteUV);
     const armorRgb = sprite.rgb.toVar();
-    if (opts.shade) armorRgb.mulAssign(opts.shade);
+    const patchInfo = opts.shade && opts.patchCode ? decodeHullPatchShade(opts.shade) : null;
+    if (patchInfo) armorRgb.mulAssign(patchInfo.shade);
+    else if (opts.shade) armorRgb.mulAssign(opts.shade);
     const alpha = sprite.a.mul(opts.lodOpacity).toVar();
     If(alpha.lessThan(0.01), () => {
       Discard();
     });
     if (opts.tear) armorRgb.mulAssign(float(1.0).sub(hullTearFray(opts.tear, spriteUV, P).mul(HULL_TEAR_FRAY.dark)));
+    // Łata polowa: podkład z plamami i ścieg spawu przy starej blasze (próbki szumu z poziomu 0 — bez pochodnych).
+    const patchK = patchInfo ? patchInfo.patch.mul(HULL_PATCH.uOn).toVar() : null;
+    if (patchInfo) {
+      const PL = HULL_PATCH_LOOK;
+      const tex = fxNoise.tile2D();
+      const pw = spriteUV.mul(P.uDmgWorld).toVar();
+      const mottle = texture(tex, pw.div(PL.mottleScale), float(0.0)).g.mul(0.65)
+        .add(texture(tex, pw.div(PL.mottleScale * 0.31), float(0.0)).b.mul(0.35));
+      const primer = vec3(PL.primer[0], PL.primer[1], PL.primer[2]).mul(float(1.0).add(mottle.sub(0.5).mul(PL.mottle * 2)));
+      const speck = smoothstep(0.62, 0.9, texture(tex, pw.div(4.2), float(0.0)).r);
+      const bead = vec3(PL.bead[0], PL.bead[1], PL.bead[2]).mul(float(1.0).add(speck.mul(PL.beadSpeck * 4)));
+      const seamK = smoothstep(PL.seamLo, PL.seamHi, patchInfo.seam);
+      // Płyty łat wyrównane do komórek kadłuba (siatka z bufora slotu; bez niej — bez wzoru płyt): odcień per płyta,
+      // cienki szew między płytami (spoina w obrębie obszaru łat; brzeg przy starej blasze — ścieg wyżej).
+      const grid = P.uCellGrid ? P.uCellGrid : vec2(0.0);
+      const hasGrid = step(0.5, grid.x);
+      const cc = spriteUV.mul(grid).toVar();
+      const cid = floor(cc);
+      const fc = fract(cc);
+      const plateH = fract(sin(dot(cid, vec2(12.9898, 78.233))).mul(43758.5453));
+      const plateTint = float(1.0).add(plateH.sub(0.5).mul(PL.plateTint * 2).mul(hasGrid));
+      const edgeD = min(min(fc.x, float(1.0).sub(fc.x)), min(fc.y, float(1.0).sub(fc.y)));
+      const plateSeam = float(1.0).sub(smoothstep(PL.plateSeamW * 0.5, PL.plateSeamW, edgeD)).mul(hasGrid).mul(PL.plateSeam);
+      const plate = primer.mul(plateTint).mul(float(1.0).sub(plateSeam));
+      armorRgb.assign(mix(armorRgb, mix(plate, bead, seamK), patchK));
+    }
 
-    const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P };
+    const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P, patchK };
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -692,6 +764,8 @@ function hullFragmentNode(opts) {
         const p = spriteUV.mul(2.0).sub(1.0);
         localNormal.assign(normalize(vec3(p.x.mul(0.45), p.y.mul(-0.45), 1.0)));
       });
+      // Łata: nowa płyta jest płaska (relief paneli sprite'a jej nie dotyczy).
+      if (patchK) localNormal.assign(normalize(mix(localNormal, vec3(0.0, 0.0, 1.0), patchK.mul(HULL_PATCH_LOOK.flatten))));
 
       const c = cos(P.uRotation).toVar();
       const s = sin(P.uRotation).toVar();
@@ -1015,6 +1089,7 @@ export function getHullVariant(name) {
         perObject: P,
         spriteUV: uv(),
         shade: attribute('aShade', 'float'),
+        patchCode: true,
         stress: null,
         heat: attribute('aHeat', 'vec2'),
         localWorld: localWorldOf(positionGeometry, P.modelWorld),
@@ -1038,6 +1113,7 @@ export function getHullVariant(name) {
         perObject: P,
         spriteUV: P.uvSlot.xy,
         shade: P.shadeHeat.x,
+        patchCode: true,
         stress: null,
         heat: P.shadeHeat.yz,
         tear: P.shadeHeat.w,

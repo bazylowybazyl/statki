@@ -62,6 +62,11 @@ import {
   createHullDamageKernel, damageHotSeconds, hullDamagePool
 } from './hullDamageMap.tsl.js';
 
+/** Żar świeżego spawu łaty (pas przy krawędzi komórki — stygnie jak rana: czerwień ~2–3 s). */
+export const DMG_PATCH_SEAM_HEAT = 1.6;
+/** Pół boku kwadratu łaty względem pół komórki (zakładka — sąsiednie łaty bez szpar). */
+export const DMG_PATCH_OVERLAP = 1.04;
+
 // ── Konfiguracja ────────────────────────────────────────────────────────────
 
 // Klasy slotów i rozmiar puli: jedno źródło przy puli (hullDamageMap.tsl.js — materiał i kernel).
@@ -131,6 +136,7 @@ function permanentUpdateRange(attr) {
 
 const _pose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
 const _uv = { u: 0, v: 0, du: 0, dv: 0 };
+const _patchWorld = { x: 0, y: 0 };
 
 // Parametry stempla dla _enqueueStamp — tablica zamiast argumentów: liczby double w argumentach
 // wywołań nieinlinowanych V8 pakuje w obiekty (~45 B na trafienie, pomiar w teście alokacji).
@@ -180,7 +186,7 @@ export const HullDamageMap = {
     poolBytes: TEXELS * DMG_TEXEL_BYTES, cpuCopyBytes: TEXELS * DMG_TEXEL_BYTES, slotsL: 0, slotsM: 0, slotsS: 0,
     stamps: 0, droppedStamps: 0, offView: 0, noSlot: 0, evictions: 0, downgrades: 0, upgrades: 0,
     jobs: 0, threads: 0, dispatch: 0, heals: 0, recipeStamps: 0, recipeDup: 0,
-    tearStamps: 0, tearMerged: 0, tearCapped: 0
+    tearStamps: 0, tearMerged: 0, tearCapped: 0, patchStamps: 0
   },
 
   // ── Przydział ─────────────────────────────────────────────────────────────
@@ -501,6 +507,55 @@ export const HullDamageMap = {
     const s = key > 0 ? self._byKey.get(key) : undefined;
     if (s === undefined) return;
     s.heal += changed ? Math.max(0, Number(dt) || 0) * DMG_HEAL_RATE : 1;
+  },
+
+  /**
+   * ŁATA (rój dronów naprawczych, src/game/repairRig.js): odbudowana komórka (ix, iy) kadłuba to nowa blacha — w jej
+   * kwadracie mapa ran gaśnie (osmalenie, lej, brzeg, otwór, jony), przy krawędzi zostaje świeży spaw (żar `seamHeat`
+   * stygnący jak rana). Podkład ze spawami rysuje skóra (beamHullSkin.js → hexShips3D.tsl.js). Bez slotu — slot
+   * dostaje (świeży spaw też jest raną). Zwraca, czy stempel trafił do kolejki.
+   */
+  patchCell(entity, ix, iy, seamHeat = DMG_PATCH_SEAM_HEAT) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !(hull.dmgKey > 0) || !this.enabled) return false;
+    const w = HullBodies.cellWorld(entity, ix, iy, _patchWorld);
+    if (w && this._offView(w.x, w.y)) return false;
+    const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
+    if (!slot) return false;
+    if (this._qCount >= DMG_STAMP_CAP || slot.pending >= DMG_SLOT_STAMP_CAP) {
+      this.stats.droppedStamps++;
+      return false;
+    }
+    // uv środka komórki (konwencja skóry: v = 0 u góry obrazu) i pół boku w jednostkach wysokości kadłuba (kernel).
+    const pp = hull.pixelPitch;
+    const u = (ix + 0.5) * pp / hull.srcWidth;
+    const v = (hull.ny - (iy + 0.5)) * pp / hull.srcHeight;
+    const half = 0.5 * pp / hull.srcHeight * DMG_PATCH_OVERLAP;
+    const hu = half / slot.aspect;
+    const x0 = Math.max(0, Math.floor((u - hu) * slot.w - 0.5));
+    const x1 = Math.min(slot.w - 1, Math.ceil((u + hu) * slot.w - 0.5));
+    const y0 = Math.max(0, Math.floor((v - half) * slot.h - 0.5));
+    const y1 = Math.min(slot.h - 1, Math.ceil((v + half) * slot.h - 0.5));
+    if (!(x0 <= x1 && y0 <= y1)) return false;
+    const i = this._qCount++;
+    const o = i * SF;
+    const Q = this._qData;
+    Q[o] = u; Q[o + 1] = v; Q[o + 2] = half; Q[o + 3] = 0;
+    Q[o + 4] = 0; Q[o + 5] = 0; Q[o + 6] = 0; Q[o + 7] = 0;
+    Q[o + 8] = 1; Q[o + 9] = 0; Q[o + 10] = 1; Q[o + 11] = 0;
+    Q[o + 12] = 0; Q[o + 13] = half; Q[o + 14] = Math.max(0, Number(seamHeat) || 0); Q[o + 15] = 0;
+    this._qSlot[i] = slot.index;
+    if (slot.pending === 0) { slot.px0 = x0; slot.py0 = y0; slot.px1 = x1; slot.py1 = y1; }
+    else {
+      if (x0 < slot.px0) slot.px0 = x0;
+      if (y0 < slot.py0) slot.py0 = y0;
+      if (x1 > slot.px1) slot.px1 = x1;
+      if (y1 > slot.py1) slot.py1 = y1;
+    }
+    slot.pending++;
+    this.stats.stamps++;
+    this.stats.patchStamps = (this.stats.patchStamps | 0) + 1;
+    return true;
   },
 
   /** Naprawa slotu rodu wprost (amount ≥ 1 = pełna: slot czyszczony i zwalniany). */

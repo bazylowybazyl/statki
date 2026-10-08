@@ -84,6 +84,16 @@ export const STAMP = Object.freeze({
     exit: st(17, 3.2, 0.85, 0.78, 0, 1, 0, 90), stuck: st(24, 3.2, 0.9, 0.7, 0, 1, 0, 90)
   }),
   yamatoL: Object.freeze({ impact: st(95, 3.6, 1.0, 0.9, 0.4, 1, 0, 1037) }),
+  // Lanca M / L (main, klasa snajperska, 48 / 100 obr. — receptura Valkyrie): te same wpisy Valkyrie × √(obrażenia
+  // / 500), wzorzec krateru = obrażenia — mała czysta przestrzelina (krater 7,6 j. / 10,9 j. przy 24,4 j. Valkyrie).
+  lanceM: Object.freeze({
+    impact: st(12.4, 3.4, 0.9, 0.8, 0, 1, 0, 48), kerf: st(5.6, 3.2, 0.8, 0.78, 0, 2.4),
+    exit: st(8.7, 3.2, 0.85, 0.78, 0, 1, 0, 24), stuck: st(12.4, 3.2, 0.9, 0.7, 0, 1, 0, 24)
+  }),
+  lanceL: Object.freeze({
+    impact: st(17.9, 3.4, 0.9, 0.8, 0, 1, 0, 100), kerf: st(8, 3.2, 0.8, 0.78, 0, 2.4),
+    exit: st(12.5, 3.2, 0.85, 0.78, 0, 1, 0, 50), stuck: st(17.9, 3.2, 0.9, 0.7, 0, 1, 0, 50)
+  }),
   // Wiązka ciągła: w demie stempel co klatkę × moc wiązki (0..1); w grze co trafienie (20 Hz).
   beamC: Object.freeze({ impact: st(11, 3.2, 0.12, 0.6, 0) }),
   beamP: Object.freeze({ impact: st(14, 3.0, 0.4, 0.6, 0) }),
@@ -149,7 +159,7 @@ export function trenchRadiusFor(src, damage = 0) {
 
 /**
  * Broń gry → rodzina stempla (27 broni dema — kolumna `fx` tabeli WEAPON_FX zadania 17; warianty
- * rozmiarowe broni specjalnej mają własne, mniejsze wpisy STAMP przy tej samej recepturze efektu).
+ * rozmiarowe broni specjalnej i Lanca mają własne, mniejsze wpisy STAMP przy tej samej recepturze efektu).
  */
 export const WEAPON_STAMP_FAMILY = Object.freeze({
   special_yamato_cannon: 'yamato',
@@ -165,6 +175,8 @@ export const WEAPON_STAMP_FAMILY = Object.freeze({
   tempest_ion_l: 'tempest',
   helios_lance_l: 'helios',
   heavy_autocannon_l: 'autocannon',
+  lance_rail_l: 'lanceL',
+  lance_rail_m: 'lanceM',
   railgun_mk1: 'tempest',
   railgun_mk2: 'tempest',
   helios_laser: 'helios',

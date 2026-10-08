@@ -88,6 +88,7 @@
 
   <link rel="stylesheet" href="assets/css/main.css">
   <link rel="stylesheet" href="assets/css/cockpit-ui-bridge.css">
+  <link rel="stylesheet" href="assets/css/station-fitting.css">
   <link rel="stylesheet" href="assets/css/ring-city-flight.css">
   <link rel="stylesheet" href="assets/css/perf-hud.css">
   <!-- Menu główne i ekran ładowania (osobny plik, po main.css). -->
@@ -117,7 +118,6 @@
           <!-- Zakładki generowane przez JS -->
         </div>
         <div class="station-content" id="station-content-area">
-          <div id="tab-upgrades" class="station-tab"></div>
           <div id="tab-trade" class="station-tab hidden"></div>
           <div id="tab-cantina" class="station-tab hidden"></div>
           <div id="tab-hangar" class="station-tab hidden"></div>
@@ -862,9 +862,20 @@
       updateDriveTransmission
     } from "./src/game/flight/driveTransmission.js";
     import { computePlayerCommandControl, computePlayerHoldControl as computePlayerHoldControlFromFlight } from "./src/game/flight/playerAutopilot.js";
-    // Szarża — system okrętu pod F (src/data/shipSystems.js): stan zrywu i ładunek reaktora.
-    import { createRamBurn, canStartRamBurn, startRamBurn, stopRamBurn, stepRamBurn, RAM_BURN_END, RAM_BURN_READY } from "./src/game/flight/ramBurn.js";
-    import { shipSystemFor } from "./src/data/shipSystems.js";
+    // System okrętu pod F — „specjale F” (src/data/shipSystems.js): szarża, manewr, zryw silników, szybki ogień.
+    import { shipSystemFor, shipSystemDefFor, shipSystemOptionsFor } from "./src/data/shipSystems.js";
+    import {
+      createShipSystemState, bindShipSystem, shipSystemReady, startShipSystemBurst, stopShipSystem, stepShipSystem,
+      shipSystemActive, shipSystemFireRateMul, shipSystemMainBoost, shipSystemGauge, SYS_END, SYS_READY,
+      startManeuverJump, stepManeuverJump, maneuverJumpPhase, startManeuverTurn, stepManeuverTurn, maneuverTurnTorque,
+      maneuverTurnDelta, maneuverFacingOffset
+    } from "./src/game/shipSystem.js";
+    import { NPC_SYSTEM_STATS } from "./src/ai/npcShipSystem.js";
+    // Modyfikatory okrętu (ship.modifiers) ze źródeł: 'system' — szybki ogień, 'fit' — fitowanie.
+    import {
+      setModifierSource, clearModifierSource, modifierFireRate, fireRateModifier,
+      setModifierSourceWithClasses, weaponRangeFor, weaponSpeedMul
+    } from "./src/game/shipModifiers.js";
     // Warstwa wejścia (docs/PLAN-pad.md, etap 1): pady, akcje, konteksty — klej w bloku „WEJŚCIE / PAD”.
     import { createInput } from "./src/input/input.js";
     import { buildKeydownMap } from "./src/input/inputActions.js";
@@ -884,7 +895,9 @@
     } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase } from "./src/ai/fleetCoordinator.js";
+    import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
+    import { capitalCommandFreePoint, capitalCommandSeparate, capitalCommandSteer } from "./src/ai/capitalAI.js";
     import {
       buildNormalCommandMenuItems,
       buildRtsCommandMenuItems,
@@ -932,6 +945,9 @@
     import { HullBodies } from "./src/game/hullBodies.js";
     // Sufit punktów kadłuba z konstrukcji (enforceNpcHexIntegrityBalance) i punkty rosnące z odrostem węzłów.
     import { HULL_INTEGRITY, raiseHullHpForRegrowth } from "./src/game/hullIntegrity.js";
+    // Uszkodzenie silników głównych (2026-10-08): dysza MAIN nad martwą komórką zniszczona do remontu w doku,
+    // ciąg główny × żywe / wszystkie (thrusterModel.js, shipFlightModel.js czytają stan z encji).
+    import { stepEngineDamage, repairEngines, isMainDriveDestroyed, mainEngineCounts, mainEngineFraction, destroyMainEngines, ENGINE_REPAIR } from "./src/game/engineDamage.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
@@ -939,6 +955,15 @@
     import { craterOptsFor, rocketCraterHit, hasTrench, trenchCraters } from "./src/game/hullCraters.js";
     HullBodies.onImpact = HullDamageMap.onHullImpact;
     HullBodies.onRepair = HullDamageMap.onHullRepair;
+    // Rój dronów naprawczych okrętów (src/game/repairRig.js, rejestr src/game/repairSwarm.js, dane src/data/repairDrones.js,
+    // obraz src/3d/repair/): R wypuszcza i odwołuje drony gracza, holownik serwisowy ma własny rig (nosiciel ≠ cel).
+    // Strojenie z konsoli: RepairTune (weldTime, maxSpeed, cellsPerUnit…), RepairDroneLook (iskry, palnik).
+    import { RepairSwarm } from "./src/game/repairSwarm.js";
+    import { REPAIR_MSG } from "./src/game/repairRig.js";
+    import { REPAIR_TUNE, REPAIR_START_CARGO, repairDroneCountFor } from "./src/data/repairDrones.js";
+    import { syncRepairDrones3D } from "./src/3d/repair/repairDrones3D.js";
+    window.RepairSwarm = RepairSwarm;
+    window.RepairTune = REPAIR_TUNE;
     HullBodies.onNodeLost = HullDamageMap.onHullNodeLost;
     HullBodies.onRegrow = raiseHullHpForRegrowth;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
@@ -946,6 +971,24 @@
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
     import { buildWreckFields } from "./src/game/wreckFields.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
+    import { assignHardpointEntries, restoreWeaponStock, serializeWeaponStock } from "./src/game/loadoutSave.js";
+    // WYPOSAŻENIE — karty konfiguracji, automat refitu, moduły, ekran (docs/PLAN-fitowanie.md).
+    import { FIT_PRESETS, FIT_PRESET_IDS, FIT_KIT_STOCK, FIT_KIT_PARTS, FIT_START_PRESET } from "./src/data/fitPresets.js";
+    import {
+      SHIP_MODULES, SHIP_SYSTEM_PART_PRICES, shipModuleById, moduleSlotsForHull, moduleSlotType, moduleShieldMul,
+      moduleMissileAmmoMul, moduleModifierSource
+    } from "./src/data/shipModules.js";
+    import { planFit, presetFromHardpoints } from "./src/game/fitPlanner.js";
+    import { fitStats } from "./src/game/fitStats.js";
+    import { weaponPriceAt, weaponBuildCost } from "./src/game/weaponEconomy.js";
+    import { createFittingPanel } from "./src/ui/station/fittingPanel.js";
+    import {
+      HARDPOINT_SERVICE,
+      countDestroyedHardpoints,
+      hardpointAmmoState,
+      refillHardpointAmmo,
+      restoreDestroyedHardpoints
+    } from "./src/game/hardpointService.js";
     import { CHIPS, CHIP_ORDER, PD_CHIP_ID } from "./src/data/chips.js";
     import {
       chipListHas,
@@ -1335,6 +1378,8 @@
       normalizeCallInSpawnMode
     } from "./src/game/callInSpawnPolicy.js";
     import { createSupportWarpCallIns, createSupportReturn, supportWarpCourse } from "./src/game/supportWarp.js";
+    // Holownik serwisowy (2026-10-08): naprawa rojem, „paka” i lot do K-7 — logika src/game/serviceTug.js, klej serviceTugGame.js.
+    import { ServiceTugGame, TUG_PHASE } from "./src/game/serviceTugGame.js";
     import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
@@ -1494,6 +1539,8 @@
         // Wołają `window.makeReactorBlow({ x, y, size, profile })`: rozpad stacji (Destruction3D), progi i łańcuch
         // rozpadu suchego doku, śmierć gracza bez rdzenia (triggerReactorBlow3D), skrypty misji.
         window.makeReactorBlow = createExplosionFactory(Core3D, { rocketFx, weaponFx: WeaponFx });
+        // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
+        window.makeReactorBlow = withRepairDroneBlast(window.makeReactorBlow);
         window.Destruction3D.init({
           scene:            Core3D.scene,
           reactorFactory:   window.makeReactorBlow,
@@ -1969,9 +2016,15 @@
       ships: []
     });
 
+    // Formacja skrzydła (src/ai/fleetFormation.js FLEET_FORMATIONS) — przyciski pod listą
+    // jednostek na Alt; wybór zostaje między grami.
+    function loadWingFormation() {
+      try { return normalizeFleetFormation(localStorage.getItem('sc_wing_formation') || DEFAULT_FLEET_FORMATION); } catch { return DEFAULT_FLEET_FORMATION; }
+    }
     const SupportWing = window.SupportWing || (window.SupportWing = {
       units: [],
       order: 'guard',
+      formation: loadWingFormation(),
       faction: 'terran',
       spawnMode: 'friendly',
       ui: {
@@ -2856,7 +2909,7 @@
       // przed pierwszą przebudową szyku po wezwaniu: zwarty pierścień wokół lidera
       // z luką przed dziobem. (Dawny szyk „abreast" stawiał okręty naprzemiennie
       // na boki co 1500 j. — 60 wezwanych dawało linię na ±45 km.)
-      const allCapitals = SupportWing.units.filter(u => u && !u.npc?.dead && u.type !== 'fighter');
+      const allCapitals = SupportWing.units.filter(u => u && !u.npc?.dead && u.type !== 'fighter' && !u.npc?.serviceTug);
       const capitalIndex = Math.max(0, allCapitals.indexOf(data));
       const capitalCount = Math.max(1, allCapitals.length);
       const ringRadius = Math.max(2600, (capitalCount * 900) / (Math.PI * 2));
@@ -2892,6 +2945,21 @@
       }
     }
 
+    // Formacja skrzydła: dowódca floty (fleetCoordinator.js) czyta ją przy najbliższej przebudowie
+    // szyku. Jak kliknięty rozkaz — okręty z pojedynczym rozkazem RTS wracają do szyku.
+    function setSupportFormation(id) {
+      const normalized = normalizeFleetFormation(id);
+      for (const data of SupportWing.units) {
+        const unit = data?.npc;
+        if (!unit || unit.dead || unit.__warpReturn) continue;
+        unit.command = null;
+        unit.forceTarget = null;
+      }
+      SupportWing.formation = normalized;
+      try { localStorage.setItem('sc_wing_formation', normalized); } catch { /* bez zapisu */ }
+      return normalized;
+    }
+
     function getSupportSpawnMode() {
       return normalizeCallInSpawnMode(SupportWing?.spawnMode || getSupportModeForFaction(SupportWing?.faction));
     }
@@ -2918,6 +2986,8 @@
       setOrder: order => setSupportOrder(order === 'engage' ? 'engage' : 'guard', { force: true, regroup: true }),
       // POWRÓT — jednorazowy rozkaz, nie postawa: skrzydło skacze tunelem na Ziemię (niżej).
       returnToEarth: () => returnSupportWingToEarth(),
+      setFormation: id => setSupportFormation(id),
+      getFormation: () => normalizeFleetFormation(SupportWing.formation),
       getFaction: () => getSupportFaction(),
       getOrder: () => SupportWing.order
     };
@@ -3541,7 +3611,11 @@
           getTargetPos: (unit, command) => getCommandTargetPos(unit, command),
           pickTarget: (unit) => aiPickTarget(unit),
           triggerRam: (unit, impulse) => triggerRamImpulse(unit, impulse, { effects: true, shakePower: 8 }),
-          defaultOrbitRadius: RTS_DEFAULT_ORBIT_RADIUS
+          defaultOrbitRadius: RTS_DEFAULT_ORBIT_RADIUS,
+          // Omijanie przeszkód (okręty, gracz, wraki) jak u mózgów — src/ai/npcCommandPilot.js.
+          steer: capitalCommandSteer,
+          freePoint: capitalCommandFreePoint,
+          separate: capitalCommandSeparate
         };
       }
       return _npcCommandPilotDeps;
@@ -3552,7 +3626,7 @@
       // Okręty z modelem lotu: komenda to tylko intencja, a lot liczy
       // stepShipFlight w npcStep — ta sama fizyka i pilot co w walce.
       if (usesShipFlightModel(npc)) {
-        return applyNpcCommandIntent(npc, cmd, getNpcCommandPilotDeps());
+        return applyNpcCommandIntent(npc, cmd, getNpcCommandPilotDeps(), dt);
       }
       if (cmd.type === 'hold' && npcHasPhysicalThrusters(npc)) {
         const flight = executeNpcFlightCommand(npc, cmd, dt, {
@@ -4594,11 +4668,13 @@
       }
       hp.mount = weaponId;
       if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
-      const baseMax = weapon.ammo != null ? weapon.ammo : null;
+      // Komory rakietowe (moduł gracza, src/data/shipModules.js): magazynki wyrzutni × `hp.__fitAmmoMul`
+      // (ustawia applyPlayerModuleSlotTypes tylko na gniazdach gracza).
+      const baseMax = weapon.ammo != null ? Math.round(weapon.ammo * (hp.type === HP.MISSILE ? (Number(hp.__fitAmmoMul) || 1) : 1)) : null;
       hp.maxAmmo = opts.hasOwnProperty('maxAmmo') ? opts.maxAmmo : baseMax;
       hp.missileCd = 0;
       if (weapon.ammo != null) {
-        const desiredAmmo = opts.hasOwnProperty('ammo') ? opts.ammo : weapon.ammo;
+        const desiredAmmo = opts.hasOwnProperty('ammo') ? opts.ammo : baseMax;
         hp.ammo = Math.max(0, desiredAmmo);
         // Rakieta specjalna: magazynek zawsze z karty broni (Supernova Barrage — 2 salwy; stare zapisy miały 8).
         if (hp.type === HP.SPECIAL_MISSILE) {
@@ -4628,6 +4704,8 @@
       const bounds = getPlayerHardpointBoundsForFrame(Game.player.shipFrame);
       reclaimMountedWeaponsToInventory();
       Game.player.hardpoints = generatePlayerHardpointsForFrame(Game.player.shipFrame, frame, bounds);
+      // Moduł kadłuba zmienia typy gniazd (Komory rakietowe: special → missile) — przed automountem.
+      applyPlayerModuleSlotTypes(Game.player.hardpoints, safePlayerFitModule());
       Game.player.editorCores = buildPlayerDefaultEditorCores();
       Game.player.editorLights = buildPlayerDefaultEditorLights(Game.player.shipFrame);
       autoMountDefaults();
@@ -4662,35 +4740,24 @@
       mountFirstFree(HP.SPECIAL_MISSILE, 'supernova_missile', 4);
     }
 
-    // Kampania (misja 1, demo — decyzja użytkownika 2026-10-05): stałe uzbrojenie Atlasa niezależnie od zapisu
-    // `loadout`. Gniazda bez wpisu (hangary, Hexlance w builtin — misja go wymaga) zostają bez zmian; gniazdo,
-    // w którym broń się nie mieści rozmiarem, zostaje puste. Pociski manewrujące startują z podwójnym zapasem salw, reszta z pełnym.
-    const CAMPAIGN_LOADOUT = Object.freeze({
-      [HP.MAIN]: 'tempest_ion_l',
-      [HP.SPECIAL]: 'special_yamato_cannon',
-      [HP.AUX]: 'ciws_mk1',
-      [HP.MISSILE]: 'missile_rack',
-      [HP.SPECIAL_MISSILE]: 'supernova_missile'
-    });
+    // Kampania (misja startowa — decyzje użytkownika 2026-10-05 i 2026-10-08): start zawsze na karcie UNIWERSALNA
+    // (src/data/fitPresets.js — dawny CAMPAIGN_LOADOUT: Tempest Ciężki, Yamato, 2× Cruise, Supernova, Hexlance)
+    // niezależnie od zapisu, a komplety pozostałych kart leżą w hangarze (grantFitKits) — w doku K-7 przed ODDOKUJ
+    // gracz może przełączyć kartę za darmo. Brakującą sztukę UNIWERSALNEJ kampania DAJE (automat w trybie „kup” bez
+    // ceny — jedyny wyjątek od „magazyn + zamontowane = const” poza migracją zapisu bez `weaponStock`); zdjęta broń
+    // wraca do magazynu. Wyrzutnie startują z podwójnym zapasem salw.
     const CAMPAIGN_MISSILE_AMMO_MUL = 2;
     function equipCampaignLoadout() {
-      const inventory = Game.player?.inventory;
+      grantFitKits();
+      const plan = buildPlayerFitPlan(FIT_PRESETS[FIT_START_PRESET], 'buy', null, { weaponPrice: () => 0 });
+      applyPlayerFitPlan(plan, { free: true, quiet: true });
       for (const hp of Game.player.hardpoints || []) {
-        if (!hp || hp.destroyed) continue;
-        const weaponId = CAMPAIGN_LOADOUT[hp.type];
-        if (!weaponId) continue;
-        const weapon = WEAPONS[weaponId];
-        if (!weapon || !canMountWeaponOnHardpoint(weapon, hp)) {
-          setHardpointMount(hp, null);
-          continue;
-        }
-        if (inventory && hp.mount !== weaponId && !inventory.has(weaponId)) inventory.give(weaponId, 1);
-        setHardpointMount(hp, weaponId);
-        if (hp.mount === weaponId && weapon.ammo != null) {
-          const full = Math.round(weapon.ammo * (hp.type === HP.MISSILE ? CAMPAIGN_MISSILE_AMMO_MUL : 1));
-          hp.maxAmmo = full;
-          hp.ammo = full;
-        }
+        if (!hp || hp.destroyed || hp.type !== HP.MISSILE || !hp.mount) continue;
+        const weapon = WEAPONS[hp.mount];
+        if (!weapon || weapon.ammo == null) continue;
+        const full = Math.round(weapon.ammo * CAMPAIGN_MISSILE_AMMO_MUL * (Number(hp.__fitAmmoMul) || 1));
+        hp.maxAmmo = full;
+        hp.ammo = full;
       }
       syncWeaponSystems();
       saveLoadout();
@@ -4891,6 +4958,9 @@
     function markHardpointDestroyed(entity, hp, hardpointCount) {
       if (!hp || hp.destroyed) return false;
       hp.destroyed = true;
+      // Rój dronów naprawczych (restorePlayerRepairSocket): gniazdo wraca nad odbudowanym kadłubem, a tę broń drony
+      // montują tylko z inwentarza — pamiętamy, co gniazdo straciło.
+      if (hp.mount) hp.__lostMount = hp.mount;
       hp.mount = null;
       hp.ammo = null;
       hp.maxAmmo = null;
@@ -5082,6 +5152,8 @@
       if (updateEntityHardpointIntegrity(ship, dt)) playerChanged = true;
       if (updateEntityCoreIntegrity(ship, dt)) playerChanged = true;
       tickShipBridges(ship, dt);
+      // Dysze MAIN nad martwą komórką kadłuba: zniszczone do remontu w doku (src/game/engineDamage.js).
+      if (ship && !ship.destroyed && stepEngineDamage(ship) > 0) notePlayerEngineLoss(ship);
       if (Array.isArray(entities)) {
         for (let i = 0; i < entities.length; i++) {
           const entity = entities[i];
@@ -5089,6 +5161,7 @@
           updateEntityHardpointIntegrity(entity, dt);
           updateEntityCoreIntegrity(entity, dt);
           tickShipBridges(entity, dt);
+          if (stepEngineDamage(entity) > 0 && entity === player2Ship) notePlayerEngineLoss(entity);
         }
       }
       if (playerChanged) {
@@ -5096,6 +5169,28 @@
         if (typeof renderMechanic === 'function') renderMechanic();
       }
     }
+
+    // Komunikat o utracie dysz MAIN gracza (krok integralności, ~40 Hz — najwyżej raz na zmianę).
+    const _engineCountsScratch = { live: 0, total: 0 };
+    function notePlayerEngineLoss(entity) {
+      const c = mainEngineCounts(entity, _engineCountsScratch);
+      if (c.live <= 0) {
+        pushZoneMessage('NAPĘD GŁÓWNY ZNISZCZONY — WEZWIJ HOLOWNIK (REZERWA)', 4.5, { label: 'SILNIKI', tone: 'warn' });
+      } else {
+        pushZoneMessage(`SILNIK GŁÓWNY ZNISZCZONY — SPRAWNE ${c.live}/${c.total}`, 2.6, { label: 'SILNIKI', tone: 'warn' });
+      }
+    }
+
+    // Konsola / narzędzia (scripts/webgpu/holownik-gra.mjs): zniszczenie i remont dysz MAIN.
+    window.EngineDamage = {
+      destroy: (entity = ship, indices = null) => {
+        const n = destroyMainEngines(entity, indices);
+        if (n > 0 && (entity === ship || entity === player2Ship)) notePlayerEngineLoss(entity);
+        return n;
+      },
+      repair: (entity = ship) => repairEngines(entity),
+      state: (entity = ship) => ({ ...mainEngineCounts(entity), frac: mainEngineFraction(entity), disabled: isMainDriveDestroyed(entity) })
+    };
 
     function syncCiwsFromAuxLoadout(auxLoadouts) {
       const prev = Array.isArray(ship.ciws) ? ship.ciws : [];
@@ -5167,7 +5262,12 @@
       return total;
     }
 
-    function restoreHardpointMountEntry(hp, entry) {
+    // `opts.createMissing` — tylko odczyt zapisu BEZ magazynu (`weaponStock`, zapis sprzed 2026-10-08): wtedy
+    // ładownia nie przeżyła F5, a zapisany fit jest źródłem prawdy dla tego, co WISI NA KADŁUBIE — brakującą
+    // sztukę dokładamy i zaraz zdejmujemy montażem (warunek `hp.mount !== weaponId` pilnuje, żeby odtworzenie
+    // TEGO SAMEGO działa nie wyprodukowało sztuki z niczego). Każda inna ścieżka bierze broń wyłącznie z magazynu
+    // (magazyn + zamontowane = const): bez sztuki gniazdo zostaje, jakie było.
+    function restoreHardpointMountEntry(hp, entry, opts = {}) {
       if (!hp || !entry) return;
       if (hp.type === HP.HANGAR) {
         const squadronMounts = Array.isArray(entry.hangarSquadrons) && entry.hangarSquadrons.length
@@ -5176,37 +5276,55 @@
         setHardpointHangarSquadrons(hp, squadronMounts);
         return;
       }
-      // Zapisany fit jest źródłem prawdy dla tego, co WISI NA KADŁUBIE — ładownia
-      // ma tylko tego nie dublować. Wcześniej stało tu `skipInventory: true`, przez
-      // co sztuki zdjęte z ładowni przez automount przepadały razem ze starą tablicą
-      // hardpointów. Teraz montaż normalnie je pobiera, a gdy sztuki brakuje (broń
-      // kupiona albo zlootowana — ładownia nie jest zapisywana do localStorage),
-      // dokładamy ją i zaraz zdejmujemy montażem. Warunek `hp.mount !== weaponId`
-      // pilnuje, żeby odtworzenie TEGO SAMEGO działa nie wyprodukowało sztuki z niczego.
       const inventory = Game.player?.inventory;
-      if (entry.weaponId && inventory && hp.mount !== entry.weaponId && !inventory.has(entry.weaponId)) {
+      if (opts.createMissing && entry.weaponId && inventory && hp.mount !== entry.weaponId && !inventory.has(entry.weaponId)) {
         inventory.give(entry.weaponId, 1);
       }
       setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo });
     }
 
+    // Migawka gniazd (zapis, przebudowa tablicy: zmiana kadłuba, wczytany sprite, edytor gniazd). `id` — gniazdo
+    // wraca na swoje miejsce (assignHardpointEntries), nie kolejnością w rodzaju.
+    function snapshotPlayerHardpoints() {
+      return (Game.player?.hardpoints || []).map(h => ({
+        id: h.id,
+        type: h.type,
+        mount: h.mount,
+        ammo: h.ammo,
+        maxAmmo: h.maxAmmo,
+        hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
+      }));
+    }
+
+    // Rodzaj gniazda, do którego wpis zapisu / migawki pasuje DZIŚ — po aktualnym mountType broni, nie po typie
+    // z zapisu: hexlance przeszedł ze `special` na `builtin` (2026-04-11) i z typem z zapisu ginął bez śladu.
+    // null = wpis pusty (gniazdo bez broni, zniszczone, broń spoza katalogu).
+    function savedHardpointBucket(saved) {
+      if (saved?.mount && WEAPONS[saved.mount]) return WEAPONS[saved.mount].mountType || saved.type || null;
+      if (Array.isArray(saved?.hangarSquadrons) && saved.hangarSquadrons.some(id => WEAPONS[id])) return HP.HANGAR;
+      return null;
+    }
+
+    function hardpointEntryToMount(saved) {
+      return {
+        weaponId: saved.mount,
+        ammo: saved.ammo,
+        maxAmmo: saved.maxAmmo,
+        hangarSquadrons: saved.hangarSquadrons
+      };
+    }
+
+    // Po przebudowie tablicy gniazd (reclaim → nowe gniazda → automount) wraca poprzedni fit: wpis do gniazda o tym
+    // samym `id`, reszta kolejnością w rodzaju (inny kadłub). Najpierw gniazda z planu oddają to, co automount
+    // właśnie w nich obsadził — broń wpisów wróciła do magazynu przy przebudowie, więc montaż nie potrzebuje sztuk
+    // z powietrza, a gniazdo puste przed przebudową zostaje puste. Gniazda bez pary (nowy kadłub ma ich więcej)
+    // zostają z automountem.
     function tryPreserveMounts(previous) {
-      if (!previous) return;
-      const byType = new Map();
-      for (const hp of previous) {
-        const hangarSquadrons = hp.type === HP.HANGAR ? getHardpointHangarSquadrons(hp) : [];
-        if (!hp.mount && hangarSquadrons.length === 0) continue;
-        const entry = { weaponId: hp.mount, ammo: hp.ammo, maxAmmo: hp.maxAmmo, hangarSquadrons };
-        if (!byType.has(hp.type)) byType.set(hp.type, []);
-        byType.get(hp.type).push(entry);
-      }
-      for (const hp of Game.player.hardpoints) {
-        const arr = byType.get(hp.type);
-        if (arr && arr.length) {
-          const entry = arr.shift();
-          restoreHardpointMountEntry(hp, entry);
-        }
-      }
+      if (!previous || !previous.length) return;
+      const plan = assignHardpointEntries(Game.player.hardpoints, previous, { bucketOf: savedHardpointBucket });
+      for (const hp of plan.reserved) setHardpointMount(hp, null);
+      for (const { hp } of plan.pairs) setHardpointMount(hp, null);
+      for (const { hp, entry } of plan.pairs) restoreHardpointMountEntry(hp, hardpointEntryToMount(entry));
     }
 
     function saveLoadout() {
@@ -5222,21 +5340,26 @@
           ownedHullIds: [...getPlayerOwnedHullIds()],
           shipFrame: activeHullDef?.shipFrame || Game.player.shipFrame || DEFAULT_PLAYER_HULL_ID,
           hullChips: serializeHullChips(PLAYER.hullChips),
-          hardpoints: Game.player.hardpoints.map(h => ({
-            id: h.id,
-            type: h.type,
-            mount: h.mount,
-            ammo: h.ammo,
-            maxAmmo: h.maxAmmo,
-            hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
-          }))
+          // Magazyn broni (od 2026-10-08, loadoutSave.js): loadLoadout odtwarza go zamiast zapasu startowego.
+          weaponStock: Game.player.inventory ? serializeWeaponStock(Game.player.inventory) : undefined,
+          // WYPOSAŻENIE (docs/PLAN-fitowanie.md § 4.7): moduły i systemy F per kadłub, części w hangarze, aktywne karty,
+          // własne konfiguracje, komplety misji startowej wydane.
+          ...serializePlayerFitState(),
+          hardpoints: snapshotPlayerHardpoints()
         }));
       } catch (e) { console.warn('Loadout save error', e); }
     }
 
     function loadLoadout() {
       const raw = localStorage.getItem('loadout');
-      if (!raw) { syncWeaponSystems(); return; }
+      if (!raw) {
+        // Czysty start: komplety kart w hangarze (misja startowa, D2) i karta startowa UNIWERSALNA z magazynu.
+        grantFitKits();
+        applyPlayerFitPlan(buildPlayerFitPlan(FIT_PRESETS[FIT_START_PRESET], 'own', null), { quiet: true, save: false });
+        applyPlayerModuleEffects();
+        syncWeaponSystems();
+        return;
+      }
       try {
         const data = JSON.parse(raw);
         const loadedOwned = Array.isArray(data?.ownedHullIds) ? data.ownedHullIds : [];
@@ -5245,6 +5368,8 @@
         PLAYER.hullChips = normalizeHullChips(data?.hullChips, {
           isValidHull: (hullId) => !!PLAYER_HULL_CATALOG[hullId]
         });
+        // Wyposażenie (moduły, systemy F, części, karty) — PRZED profilem kadłuba: moduł zmienia tarczę i typy gniazd.
+        restorePlayerFitState(data);
         const requestedHull = normalizePlayerHullId(data?.activeHullId || PLAYER.activeHullId || DEFAULT_PLAYER_HULL_ID);
         ensurePlayerOwnsHull(requestedHull);
         applyPlayerHullProfile(requestedHull, { preserveDamageRatio: true, syncVisuals: true, persist: false });
@@ -5254,49 +5379,44 @@
         if (frame) {
           const bounds = getPlayerHardpointBoundsForFrame(Game.player.shipFrame);
           const fresh = generatePlayerHardpointsForFrame(Game.player.shipFrame, frame, bounds);
-          const savedByType = new Map();
-          for (const saved of (data.hardpoints || [])) {
-            // BEZPIECZEŃSTWO: Jeśli broń nie istnieje w nowym systemie, omiń ją (zapobiegnie znikaniu i crashom)
-            const hangarSquadrons = saved.type === HP.HANGAR
+          applyPlayerModuleSlotTypes(fresh, playerFitModule(requestedHull));
+          const savedEntries = (Array.isArray(data.hardpoints) ? data.hardpoints : []).filter(Boolean).map(saved => ({
+            ...saved,
+            hangarSquadrons: saved.type === HP.HANGAR
               ? normalizeHangarSquadronMounts(
                 Array.isArray(saved.hangarSquadrons) && saved.hangarSquadrons.length
                   ? saved.hangarSquadrons
                   : (saved.mount ? [saved.mount] : []),
                 99
               )
-              : [];
-            if ((!saved.mount || !WEAPONS[saved.mount]) && hangarSquadrons.length === 0) continue;
-            // Broń mogła zmienić rodzaj gniazda już po zapisie — hexlance przeszedł
-            // ze `special` na `builtin` (2026-04-11). Kubełkujemy po AKTUALNYM
-            // mountType, nie po typie z zapisu: inaczej wpis ląduje na gnieździe
-            // special, setHardpointMount go odrzuca (mountType !== hp.type)
-            // i broń znika bez śladu, a gniazdo builtin zostaje puste.
-            const bucket = WEAPONS[saved.mount]?.mountType || saved.type;
-            if (!savedByType.has(bucket)) savedByType.set(bucket, []);
-            savedByType.get(bucket).push({ ...saved, hangarSquadrons });
-          }
+              : []
+          }));
+          // Wpis wraca do gniazda o tym samym `id`, reszta kolejnością w rodzaju; broń spoza katalogu pomijamy
+          // (zapobiega znikaniu i crashom), rodzaj gniazda po AKTUALNYM mountType (savedHardpointBucket).
+          const plan = assignHardpointEntries(fresh, savedEntries, { bucketOf: savedHardpointBucket });
           // Automount przed chwilą wyjął domyślny fit z ładowni, a my zaraz
           // podmienimy całą tablicę hardpointów na `fresh`. Bez zwrotu te sztuki
           // wyparowują — tak właśnie ginął hexlance przy zapisie bez gniazda
           // built-in: nie było go ani na kadłubie, ani w magazynie.
           reclaimMountedWeaponsToInventory();
-          for (const hp of fresh) {
-            const arr = savedByType.get(hp.type);
-            if (arr && arr.length) {
-              const saved = arr.shift();
-              restoreHardpointMountEntry(hp, {
-                weaponId: saved.mount,
-                ammo: saved.ammo,
-                maxAmmo: saved.maxAmmo,
-                hangarSquadrons: saved.hangarSquadrons
-              });
-            }
+          // Magazyn broni z zapisu (od 2026-10-08; loadoutSave.js — tam reguła migracji): zapis + broń zapisanych
+          // gniazd, którą montaż niżej zdejmuje (eskadry hangarów nie są liczone sztukowo) — magazyn + zamontowane
+          // = zapis. Zapis bez pola: magazyn jak dawniej (zapas startowy − zamontowane), montaż tworzy brakujące sztuki.
+          const stockRestored = restoreWeaponStock(Game.player.inventory, data?.weaponStock, {
+            isKnown: (id) => !!WEAPONS[id],
+            mounts: savedEntries.map(saved => (WEAPONS[saved.mount] && WEAPONS[saved.mount].mountType !== HP.HANGAR ? saved.mount : null))
+          });
+          for (const { hp, entry } of plan.pairs) {
+            restoreHardpointMountEntry(hp, hardpointEntryToMount(entry), { createMissing: !stockRestored });
           }
           Game.player.hardpoints = fresh;
         }
+        // Zapis sprzed kompletów (D2): części kart dokładane raz do magazynu — fit zostaje, jaki był.
+        if (!PLAYER.kitsGranted) grantFitKits();
       } catch (e) {
         console.warn('Loadout parse error', e);
       }
+      applyPlayerModuleWeaponMods();
       syncPlayerHullSnapshot();
       syncWeaponSystems();
       if (typeof renderMechanic === 'function') renderMechanic();
@@ -5307,15 +5427,7 @@
         npcHardpointRuntime.refreshCache(true);
       } catch { }
 
-      const prev = Array.isArray(Game.player?.hardpoints)
-        ? Game.player.hardpoints.map(h => ({
-          type: h.type,
-          mount: h.mount,
-          ammo: h.ammo,
-          maxAmmo: h.maxAmmo,
-          hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
-        }))
-        : [];
+      const prev = snapshotPlayerHardpoints();
 
       applyPlayerEditorEngineLayoutFromStorage();
       rebuildHardpointsForFrame();
@@ -5530,11 +5642,11 @@
       for (let i = 0; i < entries.length; i++) {
         const hp = entries[i]?.hp;
         if (hp?.destroyed) continue;
-        const range = Number(entries[i]?.weapon?.baseRange ?? entries[i]?.weapon?.range) || 0;
+        const weapon = entries[i]?.weapon;
+        const range = weaponRangeFor(ship, weapon, Number(weapon?.baseRange ?? weapon?.range) || 0);
         if (range > r) r = range;
       }
-      const mod = Number(ship?.modifiers?.range);
-      return Number.isFinite(mod) && mod > 0 ? r * mod : r;
+      return r;
     }
 
     // Zasięg grupy w ręku (jak okrąg zasięgu w świecie) + rakiet, gdy w ręku działa.
@@ -5640,9 +5752,13 @@
         target: scannerSelectedTarget || lockedTarget || null,
         lockedTargets,
         scanSerial: scannerState.burstSerial,
-        repairActive: playerRepairActive,
+        repairActive: isPlayerRepairActive(),
+        // Rój dronów naprawczych (kokpit: przycisk NAPRAWA — drony żywe / wszystkie, materiał, postęp).
+        repair: playerRepairRig.stats,
         boostActive: boost?.state === 'active',
-        hangar: getHudHangarState()
+        hangar: getHudHangarState(),
+        // System okrętu pod F (pole F na szynie kokpitu).
+        shipSystem: getHudShipSystemState()
       };
       window.hudSystem.update(ship, sysData, envData);
     }
@@ -6469,6 +6585,8 @@
       add(ship);
       if (player2Ship) add(player2Ship);
       for (let i = 0; i < npcs.length; i++) add(npcs[i]);
+      // Holownik serwisowy (karta Rezerwy — może przylecieć w każdej chwili): materiały modelu gotowe przed przylotem.
+      ids.add('service_tug');
       return [...ids];
     });
     // LOD wież 3D w kamerze 3D: px ekranu na jednostkę świata w punkcie (rzut perspektywy).
@@ -6681,13 +6799,7 @@
       ship.spriteH = Math.max(1, Number(renderImage.height) || Number(shipSprite.naturalHeight) || 1);
       Game.player.spriteW = ship.spriteW;
       Game.player.spriteH = ship.spriteH;
-      const prev = Game.player.hardpoints.map(h => ({
-        type: h.type,
-        mount: h.mount,
-        ammo: h.ammo,
-        maxAmmo: h.maxAmmo,
-        hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
-      }));
+      const prev = snapshotPlayerHardpoints();
       rebuildHardpointsForFrame();
       applyHullThrusterLayout(activeHullKey);
       tryPreserveMounts(prev);
@@ -8418,6 +8530,8 @@
       if (templateKey === 'megafreighter') {
         return spawnCapitalCallIn('megafreighter', { ...opts, mode });
       }
+      // Holownik serwisowy (blok „HOLOWNIK SERWISOWY”): bez broni i mózgu walki, misję prowadzi ServiceTugGame.
+      if (templateKey === 'service_tug') return spawnServiceTug(opts);
       // Frachtowce i kadłuby ruchu v2 (roster dev „Niezależni”/„Piraci”).
       if (DEV_HULL_SPAWNS[templateKey]) {
         const pos = opts.spawnPos || opts.pos || {
@@ -8490,6 +8604,8 @@
       if (dev) {
         profileId = dev.hull;
         isPirate = mode === 'pirate';
+      } else if (key === 'service_tug') {
+        profileId = 'service_tug';
       } else {
         const capital = CAPITAL_SHIP_TEMPLATES[key] || null;
         const template = capital || SUPPORT_SHIP_TEMPLATES[key];
@@ -8546,6 +8662,8 @@
     // kadłuba albo przy pełnej puli przylotów — spawn od razu i wyrzut „teraz”, jak dawniej.
     // Zwraca { planned, eta [s], from: 'earth' | 'belt' } albo null.
     function callInSupport(key, opts = {}) {
+      // Holownik: cel (statek przy punkcie zrzutu albo gracz) i punkt przylotu przy nim wybiera callServiceTug.
+      if (key === 'service_tug' && !opts.__tugCall) return callServiceTug(opts);
       const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
       // Lotniskowiec Terra Novy jest jeden: kolejne wezwanie oddaje istniejący (spawnCapitalCallIn).
       if (key === 'carrier' && mode === 'friendly' && getFriendlyCarrierEntity()) {
@@ -8660,6 +8778,8 @@
       for (const data of SupportWing.units) {
         const npc = data?.npc;
         if (!npc || npc.dead || npc.__warpReturn || list.includes(npc)) continue;
+        // Holownik ze statkiem na pokładzie leci z nim do K-7 (to jego powrót).
+        if (npc.serviceTug && ServiceTugGame.missionOf(npc)?.carried) continue;
         list.push(npc);
         const hangar = npc.__hangarFighters;
         if (!Array.isArray(hangar)) continue;
@@ -8679,6 +8799,7 @@
       supportCallIns.flush(frameDt);
       supportReturn.step(frameDt, frameDt);
       storyWarpOut.step(frameDt, frameDt);
+      tugWarpOut.step(frameDt, frameDt);
     }
 
     // Fabuła: odlot tunelem dowolnej grupy (np. ucieczka piratów) do wskazanego punktu — ten sam automat co
@@ -8698,6 +8819,281 @@
       const count = storyWarpOut.begin(list);
       for (const npc of list) if (npc?.__warpReturn) releaseSupportReturnUnit(npc);
       return count;
+    }
+
+    // ============================================================================
+    // HOLOWNIK SERWISOWY (2026-10-08, src/game/serviceTug.js — fazy, serviceTugGame.js — klej): karta „Holownik”
+    // w Rezerwie (klucz 'service_tug'), przylot „Nurtem” z Ziemi przy statku, trzymanie pozycji burta w burtę, naprawa
+    // rojem dronów HOLOWNIKA z jego ładowni (rig sesji „Rój naprawczy” — window.RepairSwarmGame.createRig, gdy jest),
+    // statek bez napędu głównego (engineDamage.js) — na pokład i do K-7 (stanowisko C-01, remont w doku). Holownik nie
+    // walczy i nie słucha RTS (bez mózgu — fazy prowadzi ServiceTugGame), jest w skrzydle (panel, POWRÓT).
+    // ============================================================================
+    const SERVICE_TUG_SPAWN = Object.freeze({
+      hp: 30000,
+      mass: 1600000,
+      // [j.] przylot tunelem tyle przed statkiem (od strony Ziemi) — potem podejście burta w burtę
+      standoff: 9000,
+      // ładownia: materiał roju naprawczego (src/data/repairDrones.js — złom, stal, płyty)
+      cargo: Object.freeze({ steel: 40, hull_plate: 4 }),
+      drones: 8,
+      // cel spod punktu zrzutu karty: najbliższy sojusznik w tym promieniu (inaczej gracz)
+      pickRadius: 6000
+    });
+    let serviceTugPending = null;   // { target, t } — wezwanie w tunelu (jedno naraz)
+    // Odlot holownika tunelem (po wyładunku przy K-7 — od hali na zewnątrz, nie przez ring ku Ziemi).
+    let tugWarpOutOrigin = null;
+    const tugWarpOut = createSupportReturn({
+      warp: WarpNurt,
+      origin: () => tugWarpOutOrigin,
+      hold: holdSupportReturnUnit,
+      keep: keepSupportReturnUnit,
+      dive: diveSupportReturnUnit,
+      remove: dematerializeSupportUnit
+    });
+
+    function spawnServiceTug(opts = {}) {
+      const pos = opts.spawnPos || opts.pos;
+      if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return null;
+      const npc = makeNPCBase({ x: pos.x, y: pos.y }, {
+        hp: SERVICE_TUG_SPAWN.hp,
+        maxSpeed: 520,
+        accel: 170,
+        turn: 0.28,
+        friction: 0.99,
+        mass: SERVICE_TUG_SPAWN.mass,
+        rammingMass: SERVICE_TUG_SPAWN.mass,
+        radius: Math.round((HULL_RENDER_PROFILES.service_tug?.radius || 1520) * HULL_RENDER_WORLD_SCALE),
+        isCollidable: true
+      });
+      npc.id = `service-tug:${Math.random().toString(36).slice(2, 8)}`;
+      npc.type = 'service_tug';
+      npc.shipFrame = 'service_tug';
+      npc.serviceTug = true;
+      npc.mission = true;
+      npc.friendly = true;
+      npc.isPirate = false;
+      npc.factionId = 'terra_nova';
+      npc.callInMode = 'friendly';
+      npc.callInFaction = 'terran';
+      npc.callInTemplateKey = 'service_tug';
+      npc.color = '#ffd24a';
+      npc.displayName = 'Holownik serwisowy';
+      npc.angle = Number.isFinite(opts.spawnAngle) ? opts.spawnAngle : (ship?.angle || 0);
+      npc.desiredAngle = npc.angle;
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      npc.cargo = { ...SERVICE_TUG_SPAWN.cargo };
+      // Skrzydło: panel jednostek i POWRÓT (szyk i walka nie — supportGuardSlot / koordynator go pomijają).
+      npc.supportData = { npc, type: 'service_tug', slotIndex: SupportWing.units.length, leader: ship };
+      SupportWing.units.push(npc.supportData);
+      npcs.push(npc);
+      return npc;
+    }
+
+    // Cel holownika: najbliższy sojusznik (gracz, okręt skrzydła) przy punkcie zrzutu karty; bez punktu — gracz.
+    function pickServiceTugTarget(pos) {
+      if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return ship && !ship.destroyed ? ship : null;
+      let best = null, bestD = SERVICE_TUG_SPAWN.pickRadius;
+      const consider = (e, x, y) => {
+        const d = Math.hypot(x - pos.x, y - pos.y);
+        if (d < bestD) { bestD = d; best = e; }
+      };
+      if (ship && !ship.destroyed) consider(ship, ship.pos.x, ship.pos.y);
+      for (const n of npcs) {
+        if (!n || n.dead || !n.friendly || n.serviceTug || n.fighter || !HullBodies.hasHull(n)) continue;
+        consider(n, n.x, n.y);
+      }
+      return best || (ship && !ship.destroyed ? ship : null);
+    }
+
+    function serviceTugBusy() {
+      if (serviceTugPending && WarpNurt.time - serviceTugPending.t < 40) return true;
+      for (const m of ServiceTugGame.missions) if (m.phase !== TUG_PHASE.DEPART && m.phase !== TUG_PHASE.DONE) return true;
+      return false;
+    }
+
+    // Wezwanie (Rezerwa → callInSupport('service_tug')): przylot tunelem przed statkiem od strony Ziemi, potem misja.
+    // opts.target — cel wprost (fabuła), opts.carry / opts.repair — jak createServiceTug (fabuła: bez „paki” w misji).
+    function callServiceTug(opts = {}) {
+      if (serviceTugBusy()) return { planned: false, eta: 0, existing: true };
+      const target = opts.target || pickServiceTugTarget(opts.spawnPos || opts.pos);
+      if (!target) return null;
+      const tx = target.pos ? target.pos.x : target.x, ty = target.pos ? target.pos.y : target.y;
+      const home = getSupportWarpHome();
+      let dx = home ? home.x - tx : Math.cos((target.angle || 0) + Math.PI / 2);
+      let dy = home ? home.y - ty : Math.sin((target.angle || 0) + Math.PI / 2);
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len; dy /= len;
+      // Statek w studni planety z ringiem (port K-7): holownik wychodzi z tunelu NA ZEWNĄTRZ planety — kierunek „ku
+      // Ziemi” kładł punkt przylotu nad płytą ringu (przeszkoda NPC).
+      for (const planet of planets) {
+        if (!planet || !haloRingKey(planet)) continue;
+        const px = tx - planet.x, py = ty - planet.y, pd = Math.hypot(px, py);
+        const radii = planetOrbitRadii(planet);
+        const well = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+        if (pd > 1 && pd < well + SERVICE_TUG_SPAWN.standoff) { dx = px / pd; dy = py / pd; break; }
+      }
+      const at = { x: tx + dx * SERVICE_TUG_SPAWN.standoff, y: ty + dy * SERVICE_TUG_SPAWN.standoff };
+      const pending = serviceTugPending = { target, t: WarpNurt.time };
+      // „Paka” tylko dla gracza: skok z ładunkiem robi automat skoku gracza (AGENT: sojusznik bez napędu — odlot
+      // tunelem razem z holownikiem albo własny skok holownika); sojusznika holownik tylko naprawia.
+      const missionOpts = { carry: opts.carry !== false && target === ship, repair: opts.repair !== false };
+      const userSpawned = opts.onSpawned;
+      const res = callInSupport('service_tug', {
+        __tugCall: true,
+        mode: 'friendly',
+        spawnPos: at,
+        pos: at,
+        onSpawned: (list) => {
+          if (serviceTugPending === pending) serviceTugPending = null;
+          const npc = Array.isArray(list) ? list.find((e) => e?.serviceTug) : null;
+          if (npc) ServiceTugGame.attach(npc, target, missionOpts);
+          if (typeof userSpawned === 'function') userSpawned(list);
+        }
+      });
+      if (!res && serviceTugPending === pending) serviceTugPending = null;
+      return res;
+    }
+    window.callServiceTug = callServiceTug;
+
+    // Statek gracza bez napędu głównego, chyba że jedzie na pokładzie holownika (skok robi wtedy holownik).
+    function playerDriveDown() {
+      return isMainDriveDestroyed(ship) && !ship.__carriedBy;
+    }
+
+    // Skok gracza z ładunkiem (holownik pod nim): automat skoku gracza (rulon, soczewka, ośrodek „Nurtu”) z wyjściem
+    // w końcu odcinka; paliwo skoku daje holownik (zapas gracza wraca po skoku).
+    const _tugWarp = { active: false, fuel: 0, aim: null, npc: null };
+    function tugCarryWarpStart(m, leg, bearing) {
+      if (warp.state !== 'idle' || warp.exitRamp?.active || ship.destroyed) return false;
+      _tugWarp.active = true;
+      _tugWarp.fuel = warp.fuel;
+      _tugWarp.aim = { x: leg.x, y: leg.y };
+      _tugWarp.npc = m.npc;
+      warp.fuel = warp.fuelMax;
+      warpCourse.aim = _tugWarp.aim;
+      warpCourse.autoExit = true;
+      warp.chargeAngle = bearing;
+      warp.state = 'charging';
+      warp.charge = 0;
+      return true;
+    }
+    function tugCarryWarpBusy() {
+      return warp.state !== 'idle' || !!warp.exitRamp?.active;
+    }
+    function tugCarryWarpStep() {
+      if (!_tugWarp.active) return;
+      const npc = _tugWarp.npc;
+      // Plazma skoku na dyszach holownika (engineVfxSystem: __warpNurtMode); dysze gracza i tak bywają zniszczone.
+      if (npc && !npc.dead) npc.__warpNurtMode = warp.state === 'charging' ? 'charging' : (warp.state === 'active' ? 'active' : null);
+      if (warp.state === 'active' && _tugWarp.aim && warpCourseExitDue(ship.pos, warp.dir.x, warp.dir.y,
+        _tugWarp.aim, warpExitRampDistance(getPlayerSpeed(), playerWarpHullLength()))) {
+        warp.state = 'idle';
+        exitWarp();
+      }
+      if (!tugCarryWarpBusy()) {
+        _tugWarp.active = false;
+        if (npc) npc.__warpNurtMode = null;
+        warp.fuel = Math.min(warp.fuelMax, _tugWarp.fuel);
+        if (warpCourse.aim === _tugWarp.aim) { warpCourse.aim = null; warpCourse.autoExit = false; }
+        _tugWarp.aim = null;
+        _tugWarp.npc = null;
+      }
+    }
+
+    // Gracz na pokładzie: sterowanie i broń wyłączone jak w doku K-7 (powód 'tug' w blokadzie wejścia fabuły — ta sama
+    // bramka dla klawiszy, myszy, pada i kierowania ogniem; Esc zostaje), rozkazy i podróż skasowane.
+    function lockPlayerOnTug(on) {
+      if (on) {
+        StoryGame._block.add('tug');
+        cancelTravel(null);
+        ship.command = null;
+        clearPlayerAttackState();
+        if (warp.state === 'charging') { warp.state = 'idle'; warp.charge = 0; }
+      } else {
+        StoryGame._block.delete('tug');
+      }
+    }
+
+    function departServiceTug(npc, angle) {
+      if (!npc || npc.dead || npc.__warpReturn) return;
+      if (Number.isFinite(angle)) {
+        tugWarpOutOrigin = { x: npc.x + Math.cos(angle) * 1e7, y: npc.y + Math.sin(angle) * 1e7 };
+        tugWarpOut.begin([npc]);
+      } else {
+        supportReturn.begin([npc]);
+      }
+      if (npc.__warpReturn) releaseSupportReturnUnit(npc);
+      cleanupSupportWing();
+    }
+
+    ServiceTugGame.init({
+      player: () => ship,
+      earth: () => getSupportWarpHome(),
+      berthId: () => 'C-01',
+      planRoute: (from, to) => planCruiseRoute(from, to),
+      wells: () => getTravelWells(),
+      carryWarpStart: tugCarryWarpStart,
+      carryWarpBusy: tugCarryWarpBusy,
+      carryWarpStep: tugCarryWarpStep,
+      lockPlayer: (on) => lockPlayerOnTug(on),
+      remont: (target) => {
+        dockRemontShip(target);
+        if (target === ship && stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
+      },
+      depart: departServiceTug,
+      say: (text) => pushZoneMessage(text, 3.2, { label: 'HOLOWNIK', tone: 'status' }),
+      // Rój naprawczy HOLOWNIKA (src/game/repairRig.js — sesja „Rój naprawczy”): nosiciel = holownik (dok na grzbiecie,
+      // materiał z JEGO ładowni), cel = statek; ten sam env gry co rig gracza (zajęte komórki, gniazda broni gracza,
+      // łaty w mapie ran). Krok, trafienia i obraz — RepairSwarm (wszystkie rigi). Fabryka sesji roju bierze górę.
+      rigStart: (npc, target) => {
+        const factory = window.RepairSwarmGame?.createRig;
+        const opts = { cargo: npc.cargo, drones: SERVICE_TUG_SPAWN.drones, dock: { along: -0.05, side: 0 } };
+        const rig = typeof factory === 'function' ? factory(npc, opts) : RepairSwarm.create({
+          carrier: npc, ...opts,
+          env: {
+            friendly: () => true,
+            cellBlocked: repairCellBlocked,
+            sockets: playerRepairSockets,
+            restoreSocket: restorePlayerRepairSocket,
+            onCellRegrown: (e, ix, iy) => HullDamageMap.patchCell(e, ix, iy)
+          }
+        });
+        if (!rig) return null;
+        const h = { rig, done: '', own: typeof factory !== 'function' };
+        rig.onMessage = (text, kind) => {
+          if (kind === REPAIR_MSG.DONE || kind === REPAIR_MSG.NO_MATERIAL || kind === REPAIR_MSG.NOTHING || kind === REPAIR_MSG.NO_DRONES) h.done = kind;
+          pushZoneMessage(text, 2.6, { label: 'HOLOWNIK', tone: 'status' });
+        };
+        rig.setTarget(target);
+        if (!rig.launch()) h.done = h.done || REPAIR_MSG.NO_DRONES;
+        _tugRigs.push(h);
+        return h;
+      },
+      rigStatus: (h) => (h.done || (h.rig && !h.rig.launched ? REPAIR_MSG.DONE : '')),
+      rigStop: (h) => {
+        if (!h?.rig) return;
+        if (h.rig.launched && !h.rig.recalling) h.rig.recall('done');
+        h.release = true;
+      }
+    });
+    window.ServiceTugGame = ServiceTugGame;
+
+    // Rigi holowników: zwolnione (koniec naprawy, odlot) wypadają z rejestru, gdy drony wróciły albo holownika już nie ma.
+    const _tugRigs = [];
+    function releaseFinishedTugRigs() {
+      let w = 0;
+      for (let i = 0; i < _tugRigs.length; i++) {
+        const h = _tugRigs[i];
+        const carrier = h.rig.carrier;
+        const gone = !carrier || carrier.dead || carrier.removed;
+        if (h.release && (gone || !h.rig.launched)) {
+          if (h.own) RepairSwarm.remove(h.rig);
+          else window.RepairSwarmGame?.releaseRig?.(h.rig);
+          continue;
+        }
+        _tugRigs[w++] = h;
+      }
+      _tugRigs.length = w;
     }
 
     function initFleet() {
@@ -9305,7 +9701,7 @@
       { list: null, count: 0, hand: false, big: false },
       { list: null, count: 0, hand: false, big: true }
     ] };
-    const _panelArgs = { W: 0, H: 0, dpr: 1, sil: null, hullLen: 1, hullWid: 1, heading: 0, groups: null, cursorRel: NaN, title: '', titleColor: '', sub: '', subColor: '' };
+    const _panelArgs = { W: 0, H: 0, dpr: 1, sil: null, hullLen: 1, hullWid: 1, heading: 0, groups: null, cursorRel: NaN, title: '', titleColor: '', sub: '', subColor: '', engines: [], engineCount: 0 };
 
     /** Powód, dla którego trybu nie da się teraz włączyć (tekst komunikatu), albo ''. */
     function shipModeBlockReason(id) {
@@ -9878,9 +10274,11 @@
       const isP1Ship = (shooter === window.ship);
       const isP2Ship = (shooter === window.player2Ship);
       const isPlayerShip = isP1Ship || isP2Ship;
-      const range = (weapon.baseRange || 1000) * (mods.range || 1.0);
+      // Zasięg i prędkość pocisku z modyfikatorów okrętu — ogólne × klasa broni (komputer balistyczny: działa
+      // snajperskie, shipModifiers.js weaponRangeFor / weaponSpeedMul).
+      const range = weaponRangeFor(shooter, weapon, weapon.baseRange || 1000);
       const damage = (weapon.baseDamage || 10) * (mods.damage || 1.0);
-      const speed = (weapon.baseSpeed || 1000) * (mods.projectileSpeed || 1.0);
+      const speed = (weapon.baseSpeed || 1000) * weaponSpeedMul(shooter, weapon);
       const cd = (weapon.cooldown || 1.0) * (mods.fireRate || 1.0);
 
       const shooterIsFriendly = shooter === window.ship || shooter?.friendly === true;
@@ -9959,6 +10357,8 @@
           const beamHit = (pdBeam && muzzleData.pdTarget)
             ? resolvePdBeamHit(_pdBeamHit, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, range, muzzleData.pdTarget, PD_BEAM_DEPS)
             : resolveBeamWorldHit(shooter, weapon, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, range, _beamWorldHit);
+          // Dron naprawczy wroga na linii wiązki przed celem — wiązka kończy się na dronie (src/game/repairSwarm.js).
+          if (RepairSwarm.out > 0) clipBeamAtRepairDrone(beamHit, shooter, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, damage);
           const hitDist = beamHit.dist;
           const hitEntity = beamHit.entity;
           const hitType = beamHit.kind;
@@ -10714,7 +11114,7 @@
       const phase = (side) => {
         const st = getFleetPhase(side);
         // groups — grupy bojowe (okręt flagowy + liczba eskort), src/ai/fleetFormation.js.
-        return st ? { phase: st.phase, members: st.members, threats: st.threats, frontDist: Math.round(st.frontDist) || null, groups: describeFleetFormation(side) } : null;
+        return st ? { phase: st.phase, formation: st.shape, members: st.members, threats: st.threats, frontDist: Math.round(st.frontDist) || null, groups: describeFleetFormation(side) } : null;
       };
       const out = { awareness: describeFleetAwareness(), friendly: phase('friendly'), pirate: phase('pirate'), wingOrder: SupportWing?.order };
       console.log(out);
@@ -10842,6 +11242,17 @@
         fireSpecial() {
           return tryFireMountedSpecialWeapons(true);
         },
+        // Działa main (2026-10-08, klasa dział snajperskich): broń na zaczepach main gracza bez ładowni
+        // (wszystkie albo `count` pierwszych) — Lanca w grze (scripts/webgpu/lanca-gra.mjs).
+        mountMain(weaponId, count = Infinity) {
+          let n = 0;
+          for (const hp of Game.player.hardpoints) {
+            if (hp.type !== HP.MAIN || hp.destroyed) continue;
+            if (n < count) { setHardpointMount(hp, weaponId, { skipInventory: true }); n++; }
+          }
+          syncWeaponSystems();
+          return n;
+        },
         // Rakiety i torpedy (2026-09-30): broń na zaczepach rakietowych gracza bez ładowni
         // (wszystkie albo `count` pierwszych) — salwy, tryb torped (klawisz 8) w kadrze.
         mountMissile(weaponId, count = Infinity) {
@@ -10859,6 +11270,15 @@
           mouse.x = _torpS2.x;
           mouse.y = _torpS2.y;
           return { x: mouse.x, y: mouse.y };
+        },
+        // Kadłub gracza jak „Aktywuj” w hangarze, bez kredytów i zapisu (system F kadłuba — scripts/webgpu/specjale-f-gra.mjs).
+        setHull(hullId) {
+          ensurePlayerOwnsHull(hullId);
+          return applyPlayerHullProfile(hullId, { preserveDamageRatio: false, syncVisuals: true, persist: false });
+        },
+        // Czas symulacji [s] (SimClock.sim — rośnie w physicsStep; pomiary tempa w czasie gry).
+        simTime() {
+          return SimClock.sim;
         },
         // Stan ładowania zaczepów special (charge < 0 — bezczynne, u — postęp, cd — przeładowanie).
         specialCharge() {
@@ -11191,7 +11611,7 @@
       { id: 'hangar', label: 'HANGAR', key: '1' },
       { id: 'trade', label: 'TRADE', key: '2' },
       { id: 'cantina', label: 'CANTINA', key: '3' },
-      { id: 'mechanic', label: 'MECHANIC', key: '4' },
+      { id: 'mechanic', label: 'WYPOSAŻENIE', key: '4' },
       { id: 'infrastructure', label: 'INFRASTRUCTURE', key: '5' },
     ];
     const STATION_TERMINAL_TAB_IDS = STATION_TERMINAL_TABS.map(tab => tab.id);
@@ -11705,6 +12125,8 @@
 
       if (shouldShow) {
         renderStationOverlay(stationUI.tab, stationUI.station);
+      } else {
+        stationOverlayState.fitSig = '';
       }
     }
 
@@ -11718,19 +12140,7 @@
       // Zachowujemy ją tylko dla kompatybilności, jeśli coś ją wywołuje.
     }
 
-    const HP_GROUP_META = {
-      [HP.MAIN]: { title: 'Broń główna', css: 'hp-main' },
-      [HP.MISSILE]: { title: 'Rakiety', css: 'hp-miss' },
-      [HP.AUX]: { title: 'Broń dodatkowa', css: 'hp-aux' },
-      [HP.HANGAR]: { title: 'Hangary', css: 'hp-hangar' },
-      [HP.SPECIAL]: { title: 'Broń specjalna', css: 'hp-spec' },
-      [HP.SPECIAL_MISSILE]: { title: 'Rakieta specjalna', css: 'hp-spec' },
-      [HP.BUILTIN]: { title: 'Built-In', css: 'hp-spec' },
-    };
-    let mechanicWeaponFilter = 'all';
-    let mechanicHardpointFilter = 'all';
-    let mechanicBatchMode = '1';
-    let mechanicDragWeaponId = null;
+    const _mechanicAmmoState = { have: 0, max: 0, slots: 0, missing: 0 };
     const MECHANIC_DEV_WEAPON_STOCK = 99;
 
     function isMechanicDevMode() {
@@ -11752,47 +12162,9 @@
         Object.values(MASTER_WEAPONS),
         MECHANIC_DEV_WEAPON_STOCK
       );
-      mechanicWeaponFilter = 'all';
       renderMechanic();
       toast(`DEV: wszystkie bronie w magazynie (×${MECHANIC_DEV_WEAPON_STOCK})`);
       return changed;
-    }
-
-    function weaponMetaText(weapon) {
-      if (!weapon) return '';
-      const parts = [];
-      if (weapon.baseDamage != null) parts.push(`${weapon.baseDamage} dmg`);
-      if (weapon.cooldown != null) parts.push(`${weapon.cooldown}s cd`);
-      if (weapon.baseRange != null) parts.push(`zas. ${weapon.baseRange}`);
-      if (weapon.ammo != null) parts.push(`${weapon.ammo} ammo`);
-      if (weapon.energyCost != null) parts.push(`${weapon.energyCost} e`);
-      return parts.join(' | ');
-    }
-
-    function mechanicCompactWeaponStats(weapon) {
-      if (!weapon) return '';
-      if (weapon.mountType === HP.HANGAR && weapon.squadronId) {
-        const squadron = getFighterSquadronDef(weapon.squadronId);
-        return `${squadron.squadSize} fighters / v${squadron.maxSpeed} / turn ${squadron.turn}`;
-      }
-      const parts = [];
-      if (weapon.baseDamage != null) parts.push(`${weapon.baseDamage}dmg`);
-      if (weapon.cooldown != null) parts.push(`${weapon.cooldown}s`);
-      if (weapon.ammo != null) parts.push(`${weapon.ammo} ammo`);
-      return parts.length ? parts.join(' / ') : weaponMetaText(weapon);
-    }
-
-    function mechanicHardpointGlyph(hp) {
-      switch (hp?.type) {
-        case HP.MAIN: return 'MN';
-        case HP.MISSILE: return 'MS';
-        case HP.AUX: return 'AX';
-        case HP.HANGAR: return 'HG';
-        case HP.SPECIAL: return 'SP';
-        case HP.SPECIAL_MISSILE: return 'SM';
-        case HP.BUILTIN: return 'BI';
-        default: return 'HP';
-      }
     }
 
     function addHangarSquadronToHardpoint(hp, weaponId) {
@@ -11824,349 +12196,21 @@
         saveLoadout();
         return true;
       }
+      // Broń innego rodzaju gniazda setHardpointMount zdjąłby z gniazda — nic nie zmieniamy.
+      if (weapon && weapon.mountType !== hp.type) return false;
       setHardpointMount(hp, weaponId);
-      if (weapon && weapon.ammo != null) {
-        hp.ammo = weapon.ammo;
-        hp.maxAmmo = weapon.ammo;
+      // Brak sztuki w magazynie: setHardpointMount zostawia gniazdo nietknięte (stara broń, jej amunicja) —
+      // bez amunicji nowej broni, bez zapisu, z komunikatem (seria pyta magazyn sama i mówi raz).
+      if (weapon && hp.mount !== weaponId) {
+        if (!options?.quiet) toast(`Brak w magazynie: ${weapon.name}`);
+        return false;
       }
+      // Pełny magazynek ustawia setHardpointMount (z mnożnikiem komór rakietowych gniazda gracza).
       if (options?.deferFinalize) return true;
       syncWeaponSystems();
       renderMechanic();
       saveLoadout();
       return true;
-    }
-
-    function applyWeaponBatchToHardpoints(startHp, weaponId) {
-      if (!startHp || !weaponId) return;
-      if (startHp.destroyed) return;
-      const weapon = WEAPONS[weaponId];
-      if (!weapon || weapon.mountType !== startHp.type) return;
-      if (!canMountWeaponOnHardpoint(weapon, startHp)) {
-        toast(`${weapon.name} (${weapon.size}) nie mieści się w slocie ${getHardpointSize(startHp)}`);
-        return;
-      }
-      const typeHardpoints = Game.player.hardpoints.filter(h => h.type === startHp.type && !h.destroyed);
-      const startIdx = typeHardpoints.indexOf(startHp);
-      if (startIdx < 0) return;
-
-      if (mechanicBatchMode === '1') {
-        applyWeaponToHardpoint(startHp, weaponId);
-        return;
-      }
-
-      let extraSlots = 0;
-      if (mechanicBatchMode === 'all') {
-        extraSlots = Number.MAX_SAFE_INTEGER;
-      } else {
-        const parsed = Number(mechanicBatchMode);
-        extraSlots = Number.isFinite(parsed) ? Math.max(0, parsed | 0) : 0;
-      }
-
-      applyWeaponToHardpoint(startHp, weaponId, { deferFinalize: true });
-      let assignedExtra = 0;
-      for (let i = startIdx + 1; i < typeHardpoints.length; i++) {
-        if (assignedExtra >= extraSlots) break;
-        // Only counts when the weapon actually fits this slot's size.
-        if (applyWeaponToHardpoint(typeHardpoints[i], weaponId, { deferFinalize: true })) assignedExtra++;
-      }
-
-      syncWeaponSystems();
-      renderMechanic();
-      saveLoadout();
-    }
-
-    function attachSlotDnD(slot, hp) {
-      slot.addEventListener('dragover', (e) => {
-        if (hp?.destroyed) return;
-        const weaponId = mechanicDragWeaponId || e.dataTransfer?.getData('text/plain');
-        const weapon = weaponId ? WEAPONS[weaponId] : null;
-        // Type + size gate — incompatible slots won't accept the drop.
-        if (!canAcceptWeaponOnHardpoint(weapon, hp)) {
-          if (weapon && weapon.mountType === hp.type) slot.classList.add('size-reject');
-          return;
-        }
-        e.preventDefault();
-        slot.classList.add('drag-over');
-      });
-      slot.addEventListener('dragleave', () => { slot.classList.remove('drag-over'); slot.classList.remove('size-reject'); });
-      slot.addEventListener('drop', (e) => {
-        if (hp?.destroyed) return;
-        const weaponId = e.dataTransfer?.getData('text/plain') || mechanicDragWeaponId;
-        const weapon = weaponId ? WEAPONS[weaponId] : null;
-        slot.classList.remove('drag-over');
-        slot.classList.remove('size-reject');
-        if (!weapon || weapon.mountType !== hp.type) return;
-        e.preventDefault();
-        applyWeaponBatchToHardpoints(hp, weapon.id);
-      });
-    }
-
-    function quickMountWeapon(weapon) {
-      if (!weapon) return;
-      // First free slot whose type AND size accept this weapon.
-      const targetHp = Game.player.hardpoints.find(h => {
-        if (!canAcceptWeaponOnHardpoint(weapon, h)) return false;
-        return h.type === HP.HANGAR ? true : !h.mount;
-      });
-      if (targetHp) {
-        applyWeaponToHardpoint(targetHp, weapon.id);
-      } else {
-        toast(`Brak wolnego slotu ${weapon.size}+ dla: ${weapon.name}`);
-      }
-    }
-
-    function createWeaponRow(weapon) {
-      const row = document.createElement('div');
-      row.className = 'weapon-row'; // Nowa klasa CSS
-      row.draggable = true;
-      row.dataset.weaponId = weapon.id;
-      row.dataset.weaponType = weapon.type;
-
-      // 1. Mała ikona
-      const iconWrap = document.createElement('div');
-      const iconPath = WEAPON_ICON_PATHS[weapon.id];
-      if (iconPath) {
-        iconWrap.className = 'weapon-row-icon';
-        const img = document.createElement('img');
-        img.src = iconPath;
-        iconWrap.appendChild(img);
-      } else {
-        iconWrap.className = 'weapon-row-icon placeholder';
-        iconWrap.textContent = 'IMG';
-      }
-      row.appendChild(iconWrap);
-
-      // 1b. Plakietka rozmiaru (S/M/L/C)
-      const sizeBadge = document.createElement('div');
-      const wSize = weapon.size || 'M';
-      sizeBadge.className = 'weapon-size-badge size-' + wSize;
-      sizeBadge.textContent = WEAPON_SIZE_LABEL[wSize] || wSize;
-      sizeBadge.title = `Rozmiar broni: ${wSize}`;
-      row.appendChild(sizeBadge);
-
-      // 2. Nazwa + liczba sztuk w ładowni
-      const nameEl = document.createElement('div');
-      nameEl.className = 'weapon-row-name';
-      nameEl.textContent = weapon.name;
-      const stock = Game.player?.inventory?.count?.(weapon.id) ?? 0;
-      if (stock > 0) {
-        const countEl = document.createElement('span');
-        countEl.className = 'weapon-row-count';
-        countEl.textContent = `×${stock}`;
-        countEl.title = `Sztuk w ładowni: ${stock}`;
-        nameEl.appendChild(countEl);
-      }
-      row.appendChild(nameEl);
-
-      // 3. Statystyki (Dmg/Cd) - kompatybilne z nowym słownikiem
-      const metaEl = document.createElement('div');
-      metaEl.className = 'weapon-row-meta';
-      metaEl.textContent = mechanicCompactWeaponStats(weapon);
-      row.appendChild(metaEl);
-
-      // Obsługa przeciągania (Drag & Drop)
-      row.addEventListener('dragstart', (e) => {
-        mechanicDragWeaponId = weapon.id;
-        row.classList.add('dragging');
-        if (e.dataTransfer) {
-          e.dataTransfer.setData('text/plain', weapon.id);
-          e.dataTransfer.effectAllowed = 'copy';
-        }
-      });
-      row.addEventListener('dragend', () => {
-        mechanicDragWeaponId = null;
-        row.classList.remove('dragging');
-      });
-      row.addEventListener('dblclick', () => quickMountWeapon(weapon));
-
-      return row;
-    }
-
-    function setMechanicFilterActive(containerId, value) {
-      const container = document.getElementById(containerId);
-      if (!container) return;
-      container.querySelectorAll('button[data-filter]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === value);
-      });
-    }
-
-    function initMechanicFilter(containerId, getValue, setValue) {
-      const container = document.getElementById(containerId);
-      if (!container) return;
-      container.querySelectorAll('button[data-filter]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const val = btn.dataset.filter;
-          if (!val) return;
-          setValue(val);
-          renderMechanic();
-        });
-      });
-      setMechanicFilterActive(containerId, getValue());
-    }
-
-    function setMechanicBatchActive(value) {
-      const container = document.getElementById('hp-batch-tabs');
-      if (!container) return;
-      container.querySelectorAll('button[data-batch]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.batch === value);
-      });
-    }
-
-    function initMechanicBatchControls() {
-      const container = document.getElementById('hp-batch-tabs');
-      if (!container) return;
-      container.querySelectorAll('button[data-batch]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const val = btn.dataset.batch;
-          if (!val) return;
-          mechanicBatchMode = val;
-          setMechanicBatchActive(mechanicBatchMode);
-        });
-      });
-      setMechanicBatchActive(mechanicBatchMode);
-    }
-
-    function renderAvailableWeapons(root) {
-      if (!root) return;
-      root.innerHTML = '';
-      // Zakładka „Chipy” zajmuje lewą kartę zamiast magazynu broni.
-      if (mechanicWeaponFilter === 'chips') {
-        renderMechanicChips(root);
-        return;
-      }
-      const inventory = Game.player?.inventory || new Set();
-      const filter = mechanicWeaponFilter;
-      const weapons = [...inventory]
-        .map(id => WEAPONS[id])
-        .filter(Boolean)
-        // ZMIANA Z type NA mountType:
-        .filter(w => filter === 'all' || w.mountType === filter || (filter === 'special' && w.mountType === 'special_missile'));
-
-      // Sortowanie i grupowanie (BEZPIECZNIE)
-      const grouped = {};
-      for (const t of Object.values(HP)) grouped[t] = [];
-
-      for (const w of weapons) {
-        // Zabezpieczenie: jeśli broń nie ma zdefiniowanego mountType lub uderza w nieistniejącą grupę, pomiń
-        const typeKey = w.mountType;
-        if (grouped[typeKey]) {
-          grouped[typeKey].push(w);
-        }
-      }
-
-      for (const type of Object.values(HP)) {
-        if (!grouped[type] || !grouped[type].length) continue;
-
-        // Naglowek grupy (np. "MAIN") - jako prosty tekst
-        const header = document.createElement('div');
-        header.className = 'list-group-header';
-        const meta = HP_GROUP_META[type];
-        header.textContent = meta ? meta.title : type.toUpperCase();
-        root.appendChild(header);
-
-        // Sortowanie alfabetyczne (z ochrona przed brakujacymi nazwami)
-        grouped[type].sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
-
-        // Generowanie wierszy
-        for (const weapon of grouped[type]) {
-          root.appendChild(createWeaponRow(weapon));
-        }
-      }
-
-      if (weapons.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.padding = '10px';
-        empty.style.color = '#777';
-        empty.textContent = filter === 'all' ? 'Pusty magazyn.' : 'Brak broni w wybranej kategorii.';
-        root.appendChild(empty);
-      }
-    }
-
-    // Nagłówek lewej karty warsztatu: magazyn broni albo chipy.
-    const MECHANIC_LEFT_CARD_TEXT = {
-      weapons: {
-        title: 'Magazyn broni',
-        badge: 'Loadout',
-        desc: 'Przeciagnij bron na slot po prawej stronie.'
-      },
-      chips: {
-        title: 'Chipy',
-        badge: 'Kadłub',
-        desc: 'Chip działa na kadłubie, na którym go zainstalujesz. Bez PD CHIP obrona punktowa '
-          + '(CIWS, laser PD, flak) strzela tylko do rakiet, torped i myśliwców — w kadłuby nie celuje.'
-      }
-    };
-
-    function syncMechanicLeftCardHeader() {
-      const text = mechanicWeaponFilter === 'chips' ? MECHANIC_LEFT_CARD_TEXT.chips : MECHANIC_LEFT_CARD_TEXT.weapons;
-      const title = document.getElementById('mechanic-left-title');
-      if (title && title.textContent !== text.title) title.textContent = text.title;
-      const badge = document.getElementById('mechanic-left-badge');
-      if (badge && badge.textContent !== text.badge) badge.textContent = text.badge;
-      const desc = document.getElementById('mechanic-left-desc');
-      if (desc && desc.textContent !== text.desc) desc.textContent = text.desc;
-    }
-
-    // Zakładka „Chipy”: katalog (src/data/chips.js) dla AKTYWNEGO kadłuba — chip
-    // jest per kadłub, jak loadout. Instalacja kosztuje CR (z ?dev za darmo),
-    // zdjęcie zwraca 50% ceny (CHIP_REMOVE_REFUND); w ?dev zdjęcie nic nie zwraca,
-    // żeby darmowa instalacja nie drukowała kredytów.
-    function renderMechanicChips(root) {
-      const hullId = PLAYER.activeHullId;
-      const hullName = getPlayerHullDef(hullId)?.name || hullId;
-      const devFree = isMechanicDevMode();
-
-      const header = document.createElement('div');
-      header.className = 'list-group-header';
-      header.textContent = `Kadłub: ${hullName}`;
-      root.appendChild(header);
-
-      for (const chipId of CHIP_ORDER) {
-        const def = CHIPS[chipId];
-        if (!def) continue;
-        const installed = hullHasChip(PLAYER.hullChips, hullId, chipId);
-        const row = document.createElement('div');
-        row.className = installed ? 'mechanic-chip-row installed' : 'mechanic-chip-row';
-        row.dataset.chipId = chipId;
-
-        const head = document.createElement('div');
-        head.className = 'mechanic-chip-head';
-        const name = document.createElement('span');
-        name.className = 'weapon-row-name';
-        name.textContent = def.name;
-        const status = document.createElement('span');
-        status.className = installed ? 'mechanic-chip-status installed' : 'mechanic-chip-status';
-        status.textContent = installed ? 'Zainstalowany' : 'Dostępny';
-        head.append(name, status);
-
-        const desc = document.createElement('div');
-        desc.className = 'card-desc';
-        desc.textContent = def.desc;
-
-        const actions = document.createElement('div');
-        actions.className = 'card-actions';
-        const price = document.createElement('span');
-        price.className = 'card-price';
-        price.textContent = devFree ? `${def.cost} CR (DEV: 0)` : `${def.cost} CR`;
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        if (installed) {
-          const refund = chipRemovalRefund(def, { freeInstall: devFree });
-          btn.dataset.chipAction = 'remove';
-          btn.textContent = refund > 0 ? `Zdejmij (+${refund} CR)` : 'Zdejmij';
-          btn.addEventListener('click', () => removeMechanicChip(chipId));
-        } else {
-          const cost = devFree ? 0 : (Number(def.cost) || 0);
-          btn.dataset.chipAction = 'install';
-          btn.dataset.cost = String(cost);
-          btn.textContent = 'Zainstaluj';
-          btn.disabled = PLAYER.credits < cost;
-          btn.addEventListener('click', () => installMechanicChip(chipId));
-        }
-        actions.append(price, btn);
-        row.append(head, desc, actions);
-        root.appendChild(row);
-      }
     }
 
     function installMechanicChip(chipId) {
@@ -12200,168 +12244,556 @@
       return true;
     }
 
-    function mechanicHangarMountNames(hp) {
-      return getHardpointHangarSquadrons(hp)
-        .map(id => WEAPONS[id]?.name)
-        .filter(Boolean);
+    // ========================================================================
+    // WYPOSAŻENIE — karty konfiguracji, automat refitu, moduły i części (docs/PLAN-fitowanie.md; decyzje użytkownika
+    // 2026-10-08): UNIWERSALNA / BLISKI TANK / SNAJPER / RAKIETOWIEC (src/data/fitPresets.js) + refit ręczny; w misji
+    // startowej komplety wszystkich kart w hangarze (grantFitKits), potem karta kosztuje tylko BRAKUJĄCE części — broń
+    // po cenach portu (weaponEconomy.js: weaponPriceAt; składniki z magazynu portu — fitBuyWeaponPiece), moduły i silniki
+    // manewrowe po cenach stałych.
+    // Stan: PLAYER.hullModules / partStock / hullPresets / fitCustoms / kitsGranted, system F — PLAYER.hullSystems
+    // (sesja „specjale F”). Moduł: tarcza kadłuba (applyPlayerShieldStats), źródło 'fit' modyfikatorów okrętu (zasięg
+    // i pocisk klasy snajperskiej — weaponRangeFor), typy gniazd (Komory rakietowe: special → missile,
+    // applyPlayerModuleSlotTypes) i magazynki wyrzutni (hp.__fitAmmoMul). Ekran: src/ui/station/fittingPanel.js.
+    // Niezmiennik: magazyn + zamontowane = const poza zakupem (i kampanią, która daje brakującą broń karty startowej).
+    // ========================================================================
+    let fittingPanel = null;
+    const FIT_MAX_CUSTOMS_PER_HULL = 2; // własne konfiguracje na kadłub (najstarsza wypada)
+
+    function playerFitModule(hullId = PLAYER.activeHullId) {
+      const id = PLAYER.hullModules?.[hullId] || null;
+      return id && shipModuleById(id) && moduleSlotsForHull(hullId) > 0 ? id : null;
+    }
+    // Wołane też z budowy tablicy gniazd (rebuildHardpointsForFrame), która może ruszyć przed definicją PLAYER.
+    function safePlayerFitModule() {
+      try { return playerFitModule(); } catch { return null; }
+    }
+    function playerSlotBaseType(hp) {
+      return hp?.baseType || hp?.type;
     }
 
-    function mechanicHangarMetaText(hp) {
-      const mounts = getHardpointHangarSquadrons(hp);
-      const capacity = getHardpointHangarCapacity(hp);
-      let fighters = 0;
-      for (const mountId of mounts) {
-        const squadron = getFighterSquadronDef(WEAPONS[mountId]?.squadronId);
-        fighters += Number(squadron.squadSize) || 0;
+    // Typy gniazd gracza po module + mnożnik magazynków wyrzutni. Wołane po każdej budowie tablicy gniazd gracza
+    // (rebuildHardpointsForFrame, loadLoadout) i przy zmianie modułu.
+    function applyPlayerModuleSlotTypes(hardpoints, moduleId) {
+      const ammoMul = moduleMissileAmmoMul(moduleId);
+      for (const hp of hardpoints || []) {
+        if (!hp) continue;
+        if (!hp.baseType) hp.baseType = hp.type;
+        hp.type = moduleSlotType(hp.baseType, moduleId);
+        hp.__fitAmmoMul = hp.type === HP.MISSILE ? ammoMul : 1;
       }
-      return `${mounts.length}/${capacity} esk. | ${fighters} fighters`;
     }
 
-    function createHpRow(hp, idx) {
-      const row = document.createElement('div');
-      row.className = 'hp-row'; // Nowa klasa CSS
-      row.dataset.hpId = hp.id;
-      row.dataset.hpType = hp.type;
-      if (hp.destroyed) row.classList.add('destroyed');
+    // Tarcza kadłuba × moduł (wołane z applyPlayerHullProfile i przy zmianie modułu); `shieldRatio` — napełnienie.
+    function applyPlayerShieldStats(hull, shieldRatio, hullId = PLAYER.activeHullId) {
+      if (!ship.shield || !hull) return;
+      const mul = moduleShieldMul(playerFitModule(hullId));
+      ship.shield.max = Math.max(0, Math.round((Number(hull?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax) * mul.max));
+      ship.shield.regenRate = Math.max(0, (Number(hull?.shield?.regenRate) || BASE_PLAYER_PROFILE.shieldRegen) * mul.regen);
+      ship.shield.regenDelay = Math.max(0.1, (Number(hull?.shield?.regenDelay) || BASE_PLAYER_PROFILE.shieldDelay) * mul.delay);
+      ship.shield.baseHardness = Math.max(0.25, (Number(hull?.shield?.hardness) || 1) * mul.hardness);
+      ship.shield.hardness = ship.shield.baseHardness;
+      ship.shield.val = Math.max(0, Math.round(ship.shield.max * clamp(shieldRatio, 0, 1)));
+    }
 
-      // 1. Ikona zamontowanej broni (lub puste miejsce)
-      const hangarMounts = hp.type === HP.HANGAR ? getHardpointHangarSquadrons(hp) : [];
-      const weapon = hp.mount ? WEAPONS[hp.mount] : (hangarMounts[0] ? WEAPONS[hangarMounts[0]] : null);
-      const iconWrap = document.createElement('div');
-      const iconPath = weapon ? WEAPON_ICON_PATHS[weapon.id] : null;
+    function applyPlayerModuleWeaponMods() {
+      const src = moduleModifierSource(playerFitModule());
+      if (src) setModifierSourceWithClasses(ship, 'fit', src);
+      else clearModifierSource(ship, 'fit');
+    }
 
-      if (iconPath) {
-        iconWrap.className = 'weapon-row-icon';
-        iconWrap.innerHTML = `<img src="${iconPath}">`;
-      } else {
-        iconWrap.className = 'weapon-row-icon hardpoint-glyph';
-        iconWrap.textContent = mechanicHardpointGlyph(hp);
-        iconWrap.title = weapon ? `Brak ikony: ${weapon.name}` : `Pusty hardpoint: ${hp.type}`;
+    function applyPlayerModuleEffects() {
+      const hull = getPlayerHullDef(PLAYER.activeHullId);
+      const ratio = ship.shield?.max > 0 ? ship.shield.val / ship.shield.max : 1;
+      applyPlayerShieldStats(hull, ratio);
+      applyPlayerModuleWeaponMods();
+    }
+
+    // Zmiana modułu aktywnego kadłuba: stary wraca do hangaru (partStock), nowy z hangaru (kupno — wcześniej, osobno).
+    // Gniazda, które zmieniają typ, oddają broń do magazynu. false — kadłub bez gniazda modułu / nieznany moduł.
+    function setPlayerFitModule(moduleId) {
+      const hullId = PLAYER.activeHullId;
+      const next = moduleId || null;
+      if (next && (!shipModuleById(next) || moduleSlotsForHull(hullId) <= 0)) return false;
+      const prev = playerFitModule(hullId);
+      if (prev === next) return true;
+      if (prev) PLAYER.partStock[prev] = (Number(PLAYER.partStock[prev]) || 0) + 1;
+      if (next) PLAYER.partStock[next] = Math.max(0, (Number(PLAYER.partStock[next]) || 0) - 1);
+      if (next) PLAYER.hullModules[hullId] = next;
+      else delete PLAYER.hullModules[hullId];
+      for (const hp of Game.player.hardpoints || []) {
+        if (!hp) continue;
+        if (!hp.baseType) hp.baseType = hp.type;
+        const nextType = moduleSlotType(hp.baseType, next);
+        if (nextType !== hp.type && hp.mount && !hp.destroyed) setHardpointMount(hp, null); // broń wraca do magazynu
       }
-      row.appendChild(iconWrap);
-
-      // 1b. Plakietka rozmiaru slotu (S/M/L/C)
-      const hpSize = getHardpointSize(hp);
-      const slotBadge = document.createElement('div');
-      slotBadge.className = 'weapon-size-badge slot size-' + hpSize;
-      slotBadge.textContent = WEAPON_SIZE_LABEL[hpSize] || hpSize;
-      slotBadge.title = `Rozmiar slotu: ${hpSize}`;
-      row.appendChild(slotBadge);
-
-      // 1c. Plakietka rozmiaru aktualnie zamontowanej broni (S/M/L/C)
-      const mountedBadge = document.createElement('div');
-      const mountedSize = (!hp.destroyed && weapon?.size) ? weapon.size : null;
-      if (mountedSize) {
-        mountedBadge.className = 'weapon-size-badge mounted size-' + mountedSize;
-        mountedBadge.textContent = WEAPON_SIZE_LABEL[mountedSize] || mountedSize;
-        mountedBadge.title = `Rozmiar zamontowanej broni: ${mountedSize}`;
-      } else {
-        mountedBadge.className = 'weapon-size-badge mounted empty';
-        mountedBadge.textContent = '-';
-        mountedBadge.title = 'Brak zamontowanej broni';
+      applyPlayerModuleSlotTypes(Game.player.hardpoints, next);
+      // Wyrzutnie, które zostają w gniazdach: magazynek w proporcji mnożników modułów (zachowuje też podwójny zapas
+      // kampanii); nowe montaże dostają pełny magazynek z mnożnikiem w setHardpointMount.
+      const prevMul = moduleMissileAmmoMul(prev);
+      const nextMul = moduleMissileAmmoMul(next);
+      if (prevMul !== nextMul) {
+        for (const hp of Game.player.hardpoints || []) {
+          if (!hp || hp.destroyed || hp.type !== HP.MISSILE || !hp.mount || hp.maxAmmo == null) continue;
+          hp.maxAmmo = Math.max(1, Math.round(hp.maxAmmo * nextMul / prevMul));
+          hp.ammo = Math.min(Math.max(0, Number(hp.ammo) || 0), hp.maxAmmo);
+        }
       }
-      row.appendChild(mountedBadge);
+      applyPlayerModuleEffects();
+      return true;
+    }
 
-      // 2. Typ slotu (np. MAIN #1) - mała etykieta
-      const label = document.createElement('div');
-      label.className = 'hp-row-label';
-      const hpLabel = hp.type === 'special_missile' ? 'MISSILE SPECIAL' : hp.type.toUpperCase();
-      label.textContent = `${hpLabel} #${idx + 1}`;
-      row.appendChild(label);
+    // System F jako część: domyślny system kadłuba (i systemy bez ceny) są wbudowane, reszta (silniki manewrowe Atlasa)
+    // leży w hangarze albo w kadłubie.
+    function playerSystemIsBuiltin(id, hullId = PLAYER.activeHullId) {
+      return !id || shipSystemFor(hullId)?.id === id || !(Number(SHIP_SYSTEM_PART_PRICES[id]) > 0);
+    }
+    function playerHasFitPart(id) {
+      if (!id) return true;
+      const hullId = PLAYER.activeHullId;
+      if (SHIP_MODULES[id]) return playerFitModule(hullId) === id || (Number(PLAYER.partStock?.[id]) || 0) > 0;
+      if (playerSystemIsBuiltin(id, hullId)) return true;
+      return playerShipSystem()?.id === id || (Number(PLAYER.partStock?.[id]) || 0) > 0;
+    }
+    function setPlayerFitSystem(id) {
+      const hullId = PLAYER.activeHullId;
+      const def = id ? shipSystemDefFor(hullId, id) : shipSystemFor(hullId);
+      if (!def) return false;
+      const cur = playerShipSystem()?.id || null;
+      if (cur === def.id) return true;
+      if (cur && !playerSystemIsBuiltin(cur, hullId)) PLAYER.partStock[cur] = (Number(PLAYER.partStock[cur]) || 0) + 1;
+      if (!playerSystemIsBuiltin(def.id, hullId)) PLAYER.partStock[def.id] = Math.max(0, (Number(PLAYER.partStock[def.id]) || 0) - 1);
+      setPlayerShipSystem(def.id, hullId);
+      return true;
+    }
 
-      // 3. Nazwa zamontowanej broni lub "Puste"
-      const mountInfo = document.createElement('div');
-      mountInfo.className = 'hp-row-mount';
-      if (hp.destroyed) {
-        mountInfo.textContent = 'Zniszczony';
-        mountInfo.classList.add('empty');
-      } else if (hp.type === HP.HANGAR && hangarMounts.length) {
-        mountInfo.textContent = mechanicHangarMountNames(hp).join(', ');
-        mountInfo.classList.remove('empty');
-      } else if (weapon) {
-        mountInfo.textContent = weapon.name;
-        mountInfo.classList.remove('empty');
-      } else {
-        mountInfo.textContent = 'Puste';
-        mountInfo.classList.add('empty');
+    // Ceny: broń w porcie (null — port nie sprzeda: brak gospodarki albo składników), moduły i system F — stałe.
+    function fitWeaponPrice(id, station = stationUI.station) {
+      const def = WEAPONS[id];
+      if (!def || def.mountType === HP.HANGAR || !station) return null;
+      const econ = getTradeEconomy(station);
+      if (!econ) return null;
+      const quote = weaponPriceAt(station, econ, id);
+      if (!quote || !quote.inStock) return null;
+      return Math.max(1, Math.round(quote.sell));
+    }
+    function fitPartPrice(id) {
+      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? 0) || 0;
+    }
+    // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — pod ?trafficV2 most do
+    // workera), wycena weaponPriceAt. false — port jej tu nie złoży.
+    function fitBuyWeaponPiece(station, econ, id) {
+      const quote = weaponPriceAt(station, econ, id);
+      if (!quote || !quote.inStock) return false;
+      for (const [res, qty] of Object.entries(quote.cost)) adjustStationStock(station, econ, res, -qty);
+      return true;
+    }
+    // Czy port złoży wszystkie sztuki z listy zakupów naraz (weaponPriceAt sprawdza jedną).
+    function fitStationCanSupply(econ, buyMap) {
+      if (!econ?.resources) return false;
+      const need = {};
+      for (const [id, n] of buyMap) {
+        const cost = weaponBuildCost(id);
+        if (!cost) return false;
+        for (const [res, qty] of Object.entries(cost)) need[res] = (need[res] || 0) + qty * n;
       }
-      row.appendChild(mountInfo);
+      return Object.entries(need).every(([res, qty]) => (Number(econ.resources[res]) || 0) >= qty);
+    }
 
-      // 4. Statystyki zamontowanej broni
-      const metaEl = document.createElement('div');
-      metaEl.className = 'hp-row-meta';
-      metaEl.textContent = (!hp.destroyed && hp.type === HP.HANGAR)
-        ? mechanicHangarMetaText(hp)
-        : ((!hp.destroyed && weapon) ? mechanicCompactWeaponStats(weapon) : '-');
-      row.appendChild(metaEl);
+    // Gniazda gracza w postaci dla automatu (typ BAZOWY — przepis karty opisuje gniazda tam, gdzie leżą).
+    function playerFitCurrentMount(hp) {
+      if (hp?.type === HP.HANGAR) return getHardpointHangarSquadrons(hp)[0] || null;
+      return hp?.mount || null;
+    }
+    function playerFitSlots() {
+      return (Game.player.hardpoints || []).map((hp) => ({
+        id: hp.id,
+        type: playerSlotBaseType(hp),
+        effType: hp.type,
+        pos: hp.pos || { x: 0, y: 0 },
+        destroyed: !!hp.destroyed,
+        size: getHardpointSize(hp),
+        mount: playerFitCurrentMount(hp)
+      }));
+    }
+    function playerFitFits(def, slot) {
+      return !!def && weaponFitsHardpointSize(def.size, slot?.size || getHardpointSize(slot));
+    }
 
-      // 5. Przycisk "X" do odczepiania
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'hp-row-clear';
-      clearBtn.textContent = '×';
-      clearBtn.title = "Odczep broń";
-      clearBtn.disabled = (!(hp.mount || hangarMounts.length)) || !!hp.destroyed;
-      clearBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        applyWeaponToHardpoint(hp, null);
+    function buildPlayerFitPlan(preset, mode, station = stationUI.station, opts = {}) {
+      const hullId = PLAYER.activeHullId;
+      return planFit({
+        hardpoints: playerFitSlots(),
+        preset,
+        mode,
+        stock: Game.player.inventory,
+        weapons: WEAPONS,
+        currentOf: (slot) => slot.mount ?? null,
+        slotType: (slot, moduleId) => moduleSlotType(slot.type, moduleId),
+        fits: playerFitFits,
+        isFree: (id) => WEAPONS[id]?.mountType === HP.HANGAR,
+        hasPart: playerHasFitPart,
+        weaponPrice: opts.weaponPrice || ((id) => fitWeaponPrice(id, station)),
+        partPrice: opts.weaponPrice ? () => 0 : fitPartPrice,
+        moduleOk: (id) => !!SHIP_MODULES[id] && moduleSlotsForHull(hullId) > 0,
+        systemOk: (id) => !!shipSystemDefFor(hullId, id),
+        currentModule: playerFitModule(hullId),
+        currentSystem: playerShipSystem()?.id || null
       });
-      row.appendChild(clearBtn);
-
-      // Podpięcie upuszczania (Drop)
-      attachSlotDnD(row, hp); // Ta funkcja pomocnicza zostaje bez zmian w kodzie
-      return row;
     }
 
-    function renderInstalledHardpoints(root) {
-      if (!root) return;
-      root.innerHTML = '';
-
-      const filter = mechanicHardpointFilter;
-      const source = filter === 'all'
-        ? Game.player.hardpoints
-        : Game.player.hardpoints.filter(hp => hp.type === filter || (filter === 'special' && hp.type === 'special_missile'));
-
-      const listByType = {};
-      for (const t of Object.values(HP)) listByType[t] = [];
-      for (const hp of source) listByType[hp.type].push(hp);
-
-      for (const type of Object.values(HP)) {
-        const slots = listByType[type];
-        if (!slots || slots.length === 0) continue;
-
-        // Nagłówek grupy (np. "MAIN (4)")
-        const meta = HP_GROUP_META[type];
-        const header = document.createElement('div');
-        header.className = 'list-group-header';
-        header.textContent = `${meta ? meta.title : type} (${slots.length})`;
-        header.style.marginBottom = '4px';
-        root.appendChild(header);
-
-        // Generowanie wierszy slotów
-        slots.forEach((hp, idx) => {
-          root.appendChild(createHpRow(hp, idx));
-        });
+    // Wykonanie planu karty jedną transakcją: zakupy (kredyty i części portu sprawdzone z góry) → moduł → broń
+    // (najpierw zdjęte do magazynu, potem założone) → system F. `free` — kampania: brakująca broń bez zapłaty.
+    function applyPlayerFitPlan(plan, { station = stationUI.station, free = false, quiet = false, save = true } = {}) {
+      if (!plan) return false;
+      const inventory = Game.player.inventory;
+      // Karta z bronią, której port nie sprzeda: odmowa w całości (także gdy reszty nie trzeba kupować).
+      if (plan.mode === 'buy' && !free && plan.blocked) {
+        if (!quiet) toast('W porcie brak części do tej konfiguracji');
+        return false;
       }
+      if (plan.mode === 'buy' && plan.toBuyCount > 0) {
+        if (!free && PLAYER.credits < plan.price) { if (!quiet) toast('Za mało kredytów'); return false; }
+        const econ = free ? null : getTradeEconomy(station);
+        if (!free && plan.buy.size && !fitStationCanSupply(econ, plan.buy)) {
+          if (!quiet) toast('W porcie za mało części na całą konfigurację');
+          return false;
+        }
+        for (const [id, n] of plan.buy) {
+          for (let k = 0; k < n; k++) {
+            if (!free) fitBuyWeaponPiece(station, econ, id);
+            inventory?.give(id, 1);
+          }
+        }
+        for (const id of plan.partsToBuy) PLAYER.partStock[id] = (Number(PLAYER.partStock[id]) || 0) + 1;
+        if (!free) PLAYER.credits -= plan.price;
+      }
+      if ((plan.module || null) !== playerFitModule()) setPlayerFitModule(plan.module || null);
+      const byId = new Map((Game.player.hardpoints || []).map((hp) => [hp.id, hp]));
+      const changes = [];
+      for (const [hpId, target] of plan.mounts) {
+        const hp = byId.get(hpId);
+        if (!hp || hp.destroyed) continue;
+        if ((playerFitCurrentMount(hp) || null) === (target || null)) continue;
+        changes.push([hp, target || null]);
+      }
+      for (const [hp] of changes) {
+        if (hp.type === HP.HANGAR) setHardpointHangarSquadrons(hp, []);
+        else setHardpointMount(hp, null);
+      }
+      let failed = 0;
+      for (const [hp, target] of changes) {
+        if (!target) continue;
+        if (hp.type === HP.HANGAR) { setHardpointHangarSquadrons(hp, [target]); continue; }
+        setHardpointMount(hp, target);
+        if (hp.mount !== target) failed++;
+      }
+      if (plan.system) setPlayerFitSystem(plan.system);
+      const custom = plan.mode === 'own' && (plan.subs.length > 0 || plan.empties.length > 0);
+      PLAYER.hullPresets[PLAYER.activeHullId] = custom ? 'custom' : (plan.preset?.id || 'custom');
+      syncWeaponSystems();
+      if (save) saveLoadout();
+      if (failed && !quiet) toast(`Brak w magazynie — puste gniazda: ${failed}`);
+      return true;
+    }
 
-      if (source.length === 0) {
-        const empty = document.createElement('div');
-        empty.textContent = filter === 'all' ? 'Brak slotów na uzbrojenie.' : 'Brak slotów dla wybranego filtra.';
-        empty.style.padding = '10px';
-        root.appendChild(empty);
+    // Komplety misji startowej (D2): broń i części wszystkich kart do hangaru — raz na zapis.
+    function grantFitKits() {
+      if (PLAYER.kitsGranted) return false;
+      const inventory = Game.player?.inventory;
+      if (!inventory) return false;
+      for (const [id, n] of Object.entries(FIT_KIT_STOCK)) if (WEAPONS[id]) inventory.give(id, n);
+      for (const [id, n] of Object.entries(FIT_KIT_PARTS)) PLAYER.partStock[id] = (Number(PLAYER.partStock[id]) || 0) + n;
+      PLAYER.kitsGranted = true;
+      return true;
+    }
+
+    function serializePlayerFitState() {
+      const counts = {};
+      for (const [id, n] of Object.entries(PLAYER.partStock || {})) if (Number(n) > 0) counts[id] = Math.floor(Number(n));
+      return {
+        hullModules: { ...(PLAYER.hullModules || {}) },
+        hullSystems: { ...(PLAYER.hullSystems || {}) },
+        partStock: counts,
+        hullPresets: { ...(PLAYER.hullPresets || {}) },
+        fitCustoms: Array.isArray(PLAYER.fitCustoms) ? PLAYER.fitCustoms : [],
+        kitsGranted: !!PLAYER.kitsGranted
+      };
+    }
+    function restorePlayerFitState(data) {
+      const modules = {};
+      for (const [hull, id] of Object.entries(data?.hullModules || {})) if (PLAYER_HULL_CATALOG[hull] && SHIP_MODULES[id]) modules[hull] = id;
+      PLAYER.hullModules = modules;
+      const parts = {};
+      for (const [id, n] of Object.entries(data?.partStock || {})) {
+        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null) && Number(n) > 0) parts[id] = Math.floor(Number(n));
+      }
+      PLAYER.partStock = parts;
+      const presets = {};
+      for (const [hull, id] of Object.entries(data?.hullPresets || {})) if (PLAYER_HULL_CATALOG[hull] && typeof id === 'string') presets[hull] = id;
+      PLAYER.hullPresets = presets;
+      PLAYER.fitCustoms = (Array.isArray(data?.fitCustoms) ? data.fitCustoms : [])
+        .filter((c) => c && typeof c.id === 'string' && c.slots && typeof c.slots === 'object')
+        .slice(-FIT_MAX_CUSTOMS_PER_HULL * 4);
+      PLAYER.kitsGranted = data?.kitsGranted === true;
+      if (!PLAYER.hullSystems) PLAYER.hullSystems = {};
+      for (const [hull, id] of Object.entries(data?.hullSystems || {})) {
+        if (typeof id === 'string' && shipSystemDefFor(hull, id)) PLAYER.hullSystems[hull] = id;
       }
     }
+
+    // ---- Refit ręczny (ekran) ----------------------------------------------------------------------------------
+
+    function finishPlayerFitChange(presetId = 'custom') {
+      if (presetId) PLAYER.hullPresets[PLAYER.activeHullId] = presetId;
+      syncWeaponSystems();
+      saveLoadout();
+    }
+
+    // Montaż broni na zaznaczonych gniazdach: najpierw sztuki z hangaru, brakujące — zakup w porcie (cena z wiersza).
+    function fitUiMountSlots(ids, weaponId) {
+      const byId = new Map((Game.player.hardpoints || []).map((hp) => [hp.id, hp]));
+      const slots = (ids || []).map((id) => byId.get(id)).filter((hp) => hp && !hp.destroyed);
+      if (!slots.length) return null;
+      const inventory = Game.player.inventory;
+      if (!weaponId) {
+        let n = 0;
+        for (const hp of slots) {
+          if (!playerFitCurrentMount(hp)) continue;
+          if (hp.type === HP.HANGAR) setHardpointHangarSquadrons(hp, []);
+          else setHardpointMount(hp, null);
+          n++;
+        }
+        finishPlayerFitChange();
+        return { message: n ? `Zdjęto: ${n} — broń wróciła do hangaru` : 'Gniazda już puste' };
+      }
+      const def = WEAPONS[weaponId];
+      if (!def) return null;
+      const targets = slots.filter((hp) => playerFitCurrentMount(hp) !== weaponId && canMountWeaponOnHardpoint(def, hp));
+      if (!targets.length) return { message: 'Nic do zmiany' };
+      if (def.mountType === HP.HANGAR) {
+        for (const hp of targets) setHardpointHangarSquadrons(hp, [weaponId]);
+        finishPlayerFitChange();
+        return { message: `Hangary: ${targets.length}× ${def.name}` };
+      }
+      const have = inventory?.count(weaponId) || 0;
+      const missing = Math.max(0, targets.length - have);
+      let bought = 0;
+      let cost = 0;
+      let note = '';
+      if (missing > 0) {
+        const price = fitWeaponPrice(weaponId);
+        const station = stationUI.station;
+        const econ = station ? getTradeEconomy(station) : null;
+        if (price == null || !econ) {
+          note = ' · w porcie brak tej broni';
+        } else {
+          const affordable = Math.floor(PLAYER.credits / price);
+          const want = Math.min(missing, affordable);
+          for (let k = 0; k < want; k++) {
+            if (!fitBuyWeaponPiece(station, econ, weaponId)) break;
+            inventory.give(weaponId, 1);
+            bought++;
+          }
+          cost = bought * price;
+          PLAYER.credits -= cost;
+          if (bought < missing) note = affordable < missing ? ' · za mało kredytów' : ' · w porcie za mało części';
+        }
+      }
+      let mounted = 0;
+      for (const hp of targets) {
+        if ((inventory?.count(weaponId) || 0) <= 0) break;
+        setHardpointMount(hp, weaponId);
+        if (hp.mount === weaponId) mounted++;
+      }
+      finishPlayerFitChange();
+      const rest = targets.length - mounted;
+      return {
+        message: `Zamontowano ${mounted}× ${def.name}${bought ? ` · kupiono ${bought} za ${Math.round(cost)} CR` : ''}${rest > 0 ? ` · ${rest} bez sztuk${note}` : ''}`
+      };
+    }
+
+    function fitUiSetModule(id) {
+      const next = id || null;
+      if (next === playerFitModule()) return null;
+      if (next && moduleSlotsForHull(PLAYER.activeHullId) <= 0) return { message: 'Ten kadłub nie ma gniazda modułu' };
+      let bought = '';
+      if (next && !playerHasFitPart(next)) {
+        const price = fitPartPrice(next);
+        if (PLAYER.credits < price) return { message: 'Za mało kredytów' };
+        PLAYER.credits -= price;
+        PLAYER.partStock[next] = (Number(PLAYER.partStock[next]) || 0) + 1;
+        bought = `Kupiono: ${SHIP_MODULES[next].label} · ${price} CR`;
+      }
+      const mountedBefore = (Game.player.hardpoints || []).filter((hp) => hp.mount).length;
+      setPlayerFitModule(next);
+      const returned = mountedBefore - (Game.player.hardpoints || []).filter((hp) => hp.mount).length;
+      finishPlayerFitChange();
+      return {
+        message: [bought, next ? `Moduł: ${SHIP_MODULES[next].label}` : 'Moduł zdjęty — wrócił do hangaru',
+          returned > 0 ? `gniazda zmieniły typ — ${returned} szt. broni wróciło do hangaru` : ''].filter(Boolean).join(' · ')
+      };
+    }
+
+    function fitUiSetSystem(id) {
+      const def = shipSystemDefFor(PLAYER.activeHullId, id);
+      if (!def) return { message: 'Ten kadłub nie ma tego systemu' };
+      if (playerShipSystem()?.id === def.id) return null;
+      let bought = '';
+      if (!playerHasFitPart(def.id)) {
+        const price = fitPartPrice(def.id);
+        if (PLAYER.credits < price) return { message: 'Za mało kredytów' };
+        PLAYER.credits -= price;
+        PLAYER.partStock[def.id] = (Number(PLAYER.partStock[def.id]) || 0) + 1;
+        bought = `Kupiono: ${def.label} · ${price} CR`;
+      }
+      setPlayerFitSystem(def.id);
+      finishPlayerFitChange();
+      return { message: [bought, `System F: ${def.label}`].filter(Boolean).join(' · ') };
+    }
+
+    function fitUiCustoms() {
+      const hullId = PLAYER.activeHullId;
+      return (PLAYER.fitCustoms || []).filter((c) => (c.hull || 'atlas') === hullId);
+    }
+    function fitUiSaveCustom() {
+      const hullId = PLAYER.activeHullId;
+      const all = PLAYER.fitCustoms || (PLAYER.fitCustoms = []);
+      const mine = all.filter((c) => (c.hull || 'atlas') === hullId);
+      // Limit na kadłub: najstarsza własna konfiguracja ustępuje nowej (pod tą samą nazwą).
+      let name;
+      let replaced = false;
+      if (mine.length >= FIT_MAX_CUSTOMS_PER_HULL) {
+        name = mine[0].name;
+        all.splice(all.indexOf(mine[0]), 1);
+        replaced = true;
+      } else {
+        const used = new Set(mine.map((c) => c.name));
+        let n = 1;
+        while (used.has(`WŁASNA ${n}`)) n++;
+        name = `WŁASNA ${n}`;
+      }
+      const stamp = Date.now().toString(36);
+      let id = `own_${stamp}`;
+      for (let k = 2; all.some((c) => c.id === id); k++) id = `own_${stamp}_${k}`;
+      const preset = presetFromHardpoints(playerFitSlots(), {
+        id,
+        name,
+        module: playerFitModule(),
+        system: playerShipSystem()?.id || null,
+        currentOf: (slot) => slot.mount ?? null
+      });
+      preset.hull = hullId;
+      all.push(preset);
+      PLAYER.hullPresets[hullId] = preset.id;
+      saveLoadout();
+      return {
+        message: replaced
+          ? `Nadpisano ${name} — najstarszą (najwyżej ${FIT_MAX_CUSTOMS_PER_HULL} własne na kadłub)`
+          : `Zapisano jako ${name}`
+      };
+    }
+
+    function fitUiActivePresetLabel() {
+      const id = PLAYER.hullPresets?.[PLAYER.activeHullId];
+      if (id && FIT_PRESETS[id]) return FIT_PRESETS[id].name;
+      const own = fitUiCustoms().find((c) => c.id === id);
+      return own ? own.name : 'WŁASNA';
+    }
+
+    function buildFittingApi() {
+      const hullDef = () => getPlayerHullDef(PLAYER.activeHullId);
+      return {
+        weapons: WEAPONS,
+        dev: isMechanicDevMode() ? { fillWeapons: fillMechanicWeapons } : null,
+        isOpen: () => !!stationUI.open && stationUI.tab === 'mechanic',
+        log: (msg) => window.hudSystem?.logEvent?.(msg),
+        hull: () => ({
+          id: PLAYER.activeHullId,
+          name: hullDef()?.name || PLAYER.activeHullId || 'Okręt',
+          image: ship.renderSpriteImage || shipSprite,
+          w: Number(ship.w) || 1,
+          h: Number(ship.h) || 1,
+          hardpoints: playerFitSlots()
+        }),
+        presets: () => FIT_PRESET_IDS.map((id) => FIT_PRESETS[id]),
+        plan: (preset, mode) => buildPlayerFitPlan(preset, mode),
+        stats: (mounts, moduleId) => fitStats({
+          hardpoints: playerFitSlots(), mounts, currentOf: (slot) => slot.mount ?? null, weapons: WEAPONS,
+          module: moduleId, shieldBase: { max: Number(hullDef()?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax }
+        }),
+        startStats: () => {
+          const plan = buildPlayerFitPlan(FIT_PRESETS[FIT_START_PRESET], 'buy', null, { weaponPrice: () => 0 });
+          return fitStats({
+            hardpoints: playerFitSlots(), mounts: plan.mounts, weapons: WEAPONS, module: plan.module,
+            shieldBase: { max: Number(hullDef()?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax }
+          });
+        },
+        apply: (plan) => applyPlayerFitPlan(plan, { station: stationUI.station }),
+        activePresetId: () => PLAYER.hullPresets?.[PLAYER.activeHullId] || null,
+        activePresetLabel: fitUiActivePresetLabel,
+        customs: fitUiCustoms,
+        saveCustom: fitUiSaveCustom,
+        currentModule: () => playerFitModule(),
+        moduleSlots: () => moduleSlotsForHull(PLAYER.activeHullId),
+        modules: () => Object.values(SHIP_MODULES).map((m) => ({
+          id: m.id, label: m.label, desc: m.desc, price: m.price,
+          installed: playerFitModule() === m.id,
+          owned: (Number(PLAYER.partStock?.[m.id]) || 0) > 0
+        })),
+        setModule: fitUiSetModule,
+        systems: () => getPlayerShipSystemOptions().map((d) => ({
+          id: d.id, label: d.label, desc: d.desc,
+          builtin: playerSystemIsBuiltin(d.id),
+          installed: playerShipSystem()?.id === d.id,
+          owned: (Number(PLAYER.partStock?.[d.id]) || 0) > 0,
+          price: fitPartPrice(d.id)
+        })),
+        currentSystemLabel: () => playerShipSystem()?.label || '—',
+        systemLabel: (id) => (id ? (shipSystemDefFor(PLAYER.activeHullId, id)?.label || id) : '—'),
+        setSystem: fitUiSetSystem,
+        partLabel: (id) => SHIP_MODULES[id]?.label || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
+        partPrice: fitPartPrice,
+        weaponPrice: (id) => fitWeaponPrice(id),
+        fits: (id, slot) => playerFitFits(WEAPONS[id], slot),
+        stockCount: (id) => Game.player.inventory?.count(id) || 0,
+        stockTotal: () => (Game.player.inventory?.entries() || []).reduce((s, [, n]) => s + (Number(n) || 0), 0),
+        credits: () => PLAYER.credits,
+        mountSlots: fitUiMountSlots,
+        chips: () => CHIP_ORDER.map((id) => CHIPS[id]).filter(Boolean).map((def) => ({
+          id: def.id, name: def.name, desc: def.desc,
+          cost: isMechanicDevMode() ? 0 : (Number(def.cost) || 0),
+          installed: hullHasChip(PLAYER.hullChips, PLAYER.activeHullId, def.id)
+        })),
+        toggleChip: (id) => {
+          if (hullHasChip(PLAYER.hullChips, PLAYER.activeHullId, id)) removeMechanicChip(id);
+          else installMechanicChip(id);
+          return null;
+        },
+        ammoState: () => hardpointAmmoState(Game.player?.hardpoints, playerWeaponAmmo, _mechanicAmmoState),
+        refillAmmo: () => { refillPlayerAmmo(); return null; },
+        repairInfo: () => playerDockRepairQuote(),
+        repair: () => { handleRepair(); return null; }
+      };
+    }
+
+    // Konsola i skrypty w grze (scripts/webgpu/wyposazenie-gra.mjs): plan i wykonanie karty, ceny portu, stan.
+    window.PlayerFit = {
+      presets: FIT_PRESETS,
+      plan: (id, mode = 'own', station = stationUI.station) => buildPlayerFitPlan(FIT_PRESETS[id] || id, mode, station),
+      apply: (plan, opts) => applyPlayerFitPlan(plan, opts),
+      weaponPrice: (id, station = stationUI.station) => fitWeaponPrice(id, station),
+      module: () => playerFitModule(),
+      range: (weaponId) => getPlayerWeaponRange(WEAPONS[weaponId]),
+      state: () => serializePlayerFitState()
+    };
+
     function renderMechanic() {
-      setMechanicFilterActive('weapon-filter-tabs', mechanicWeaponFilter);
-      syncMechanicLeftCardHeader();
-      setMechanicFilterActive('hp-filter-tabs', mechanicHardpointFilter);
-      setMechanicBatchActive(mechanicBatchMode);
-      renderAvailableWeapons(document.getElementById('mechanic-available'));
-      renderInstalledHardpoints(document.getElementById('hp-groups'));
-      const sel = document.getElementById('ship-frame-select');
-      if (sel && sel.value !== Game.player.shipFrame) {
-        sel.value = Game.player.shipFrame;
-      }
+      fittingPanel?.render();
     }
+
+
+
+
 
     const DEFAULT_PLAYER_HULL_ID = 'atlas';
     const BASE_PLAYER_PHYSICS = {
@@ -12437,6 +12869,14 @@
       // Chipy per kadłub: { [hullId]: string[] } (katalog: src/data/chips.js).
       // Zapis w 'loadout' (saveLoadout/loadLoadout); brak pola = brak chipów.
       hullChips: {},
+      // WYPOSAŻENIE (docs/PLAN-fitowanie.md): moduł per kadłub { [hullId]: moduleId }, części w hangarze
+      // { moduł / system F: sztuk }, aktywna karta per kadłub ('custom' — po refit ręcznym), własne konfiguracje,
+      // komplety misji startowej wydane. Zapis w 'loadout' (serializePlayerFitState / restorePlayerFitState).
+      hullModules: {},
+      partStock: {},
+      hullPresets: {},
+      fitCustoms: [],
+      kitsGranted: false,
       ownedHulls: new Set([
         DEFAULT_PLAYER_HULL_ID,
         normalizePlayerHullId(persistedActiveHull),
@@ -12448,6 +12888,149 @@
     // startowy z src/data/miningCharges.js, dokupowany w doku (rynek → Ładunki górnicze).
     PLAYER.miningCharges = createMiningChargeStock();
 
+    // ── ROJ DRONÓW NAPRAWCZYCH GRACZA (src/game/repairRig.js, decyzje użytkownika 2026-10-08 w src/data/repairDrones.js) ──
+    // Nosiciel i cel = statek gracza: R wypuszcza / odwołuje drony (nic z automatu), drony prostują wgniecenia, odbudowują
+    // zniszczone komórki (dziury, odcięte sekcje) z materiału z ładowni (złom → stal → płyty kadłubowe) i oddają punkty;
+    // łata — podkład ze spawami, trochę słabsza, do remontu w doku. Liczba dronów z kadłuba (REPAIR_DRONE_COUNTS),
+    // zestrzelone uzupełnia dok (HANGAR). Krok: stepPlayerRepairRig + RepairSwarm.step w physicsStep.
+    const playerRepairRig = RepairSwarm.create({
+      carrier: ship,
+      cargo: PLAYER.cargo,
+      drones: repairDroneCountFor(PLAYER.activeHullId),
+      env: {
+        friendly: () => true,
+        cellBlocked: repairCellBlocked,
+        sockets: playerRepairSockets,
+        restoreSocket: restorePlayerRepairSocket,
+        // Łata czyści lej i osmalenie komórki w mapie ran, przy krawędzi zostaje świeży spaw.
+        onCellRegrown: (e, ix, iy) => HullDamageMap.patchCell(e, ix, iy)
+      }
+    });
+    playerRepairRig.onMessage = (text, kind) => {
+      if (kind === REPAIR_MSG.DONE || kind === REPAIR_MSG.LAUNCH || kind === REPAIR_MSG.RECALL) pushZoneMessage(text, 1.4, { label: 'NAPRAWA' });
+      else pushZoneMessage(text, 2.4, { label: 'NAPRAWA' });
+    };
+    window.playerRepairRig = playerRepairRig;
+
+    // Tarcza chroni drony pod sobą jak kadłub (wszystkie rigi — RepairSwarm.shielded): punkt w obrysie BLOKUJĄCEJ tarczy
+    // encji, poza przebiciem pola. Pociski i wiązki i tak kończą się na obrysie — test zamyka wybuchy i krok tuż za nim.
+    RepairSwarm.shielded = repairDroneShielded;
+    function repairDroneShielded(e, x, y) {
+      if (!e || !e.shield) return false;
+      const prog = getEntityShieldBlockingProgress(e);
+      if (!(prog > 0)) return false;
+      const r = getEntityShieldRadiusTowards(e, x, y) * prog;
+      const ex = Number.isFinite(e.x) ? e.x : (Number(e.pos?.x) || 0);
+      const ey = Number.isFinite(e.y) ? e.y : (Number(e.pos?.y) || 0);
+      const dx = x - ex, dy = y - ey;
+      if (dx * dx + dy * dy > r * r) return false;
+      return !((e._realEntity || e).__shieldBreach && isShieldBreachedAt(e, x, y));
+    }
+
+    // Start kampanii: zapas naprawczy w ładowni (REPAIR_START_CARGO — naprawa w polu w misji 2 działa, zanim przyleci
+    // holownik serwisowy); dopełnia do ilości startowej w granicach ładowności.
+    function grantCampaignRepairCargo() {
+      const want = {};
+      for (const [key, amount] of Object.entries(REPAIR_START_CARGO)) {
+        const have = Math.floor(Number(PLAYER.cargo[key]) || 0);
+        if (have < amount) want[key] = amount - have;
+      }
+      return addToPlayerCargo(want);
+    }
+
+    // Wybuch (window.makeReactorBlow — rozpad stacji i doku, śmierć bez rdzenia) zmiata drony naprawcze w promieniu
+    // ~½ rozmiaru wybuchu, bez strony.
+    function withRepairDroneBlast(factory) {
+      return (opts) => {
+        if (RepairSwarm.out > 0 && opts && Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
+          RepairSwarm.blast(opts.x, opts.y, Math.max(60, (Number(opts.size) || 280) * 0.55), REPAIR_TUNE.droneHp * 4, null);
+        }
+        return factory(opts);
+      };
+    }
+
+    // Opcje rysunku dronów (render) — jeden obiekt na grę; nosiciel wroga w mgle wojny chowa swoje drony.
+    const _repairDronesSync = {
+      poseOf: (e) => bridgeRenderPose(e), dt: 0, zoom: 1, time: 0,
+      hidden: (e) => e !== ship && SensorSystem.hides(e)
+    };
+
+    function stepPlayerRepairRig() {
+      const rig = playerRepairRig;
+      rig.cargo = PLAYER.cargo;
+      if (!rig.launched) {
+        const want = repairDroneCountFor(PLAYER.activeHullId);
+        if (rig.drones.length !== want) rig.setDroneCount(want);
+      }
+      // W doku stacji drony są w ładowni (bez lotu powrotnego); zniszczony statek — rig stoi.
+      if (rig.launched && (stationUI.open || ship.destroyed || !HullBodies.hasHull(ship))) rig.dockAll();
+    }
+
+    // Komórka odbudowy zajęta przez INNE ciało (wrak odciętej sekcji obok, okręt w styku): silnik zderzyłby je z odrośniętą
+    // częścią (pairFilter zderza wrak z rodzicem) — dron czeka (blockedCooldown).
+    function repairCellBlocked(target, x, y, r) {
+      const lists = [window.wrecks, npcs];
+      for (let l = 0; l < lists.length; l++) {
+        const list = lists[l];
+        if (!Array.isArray(list)) continue;
+        for (let i = 0; i < list.length; i++) {
+          const e = list[i];
+          if (!e || e === target || (e.dead && !e.isWreck) || !e.beamHull) continue;
+          const ex = e.pos ? e.pos.x : e.x, ey = e.pos ? e.pos.y : e.y;
+          const reach = (Number(e.radius) || 0) + r;
+          const dx = ex - x, dy = ey - y;
+          if (dx * dx + dy * dy > reach * reach) continue;
+          if (HullBodies.probe(e, x, y)) return true;
+        }
+      }
+      if (player2Ship && player2Ship !== target && player2Ship.beamHull && HullBodies.probe(player2Ship, x, y)) return true;
+      if (target !== ship && ship?.beamHull && HullBodies.probe(ship, x, y)) return true;
+      return false;
+    }
+
+    // Gniazda broni gracza do odbudowy: zniszczone gniazdo nad żywym (odrośniętym) kadłubem. Klucz = indeks gniazda.
+    const _repairSocketPool = [];
+    function playerRepairSockets(target, out) {
+      if (target !== ship) return 0;
+      const hps = Game.player?.hardpoints;
+      if (!Array.isArray(hps)) return 0;
+      let n = 0;
+      for (let i = 0; i < hps.length; i++) {
+        const hp = hps[i];
+        if (!hp?.destroyed || !isHardpointHexSupported(ship, hp)) continue;
+        const pos = getEntityHardpointWorldPos(ship, hp);
+        if (!pos) continue;
+        const rec = _repairSocketPool[n] || (_repairSocketPool[n] = { key: 0, x: 0, y: 0 });
+        rec.key = i; rec.x = pos.x; rec.y = pos.y;
+        out.push(rec);
+        n++;
+      }
+      return n;
+    }
+
+    // Dron skończył gniazdo: gniazdo wraca; broń, którą gniazdo straciło, tylko z inwentarza (ładowni) — drony ją montują
+    // (setHardpointMount zdejmuje sztukę z inwentarza). Bez sztuki — gniazdo puste do montażu u mechanika.
+    function restorePlayerRepairSocket(target, key) {
+      if (target !== ship) return false;
+      const hp = Game.player?.hardpoints?.[key];
+      if (!hp?.destroyed || !isHardpointHexSupported(ship, hp)) return false;
+      hp.destroyed = false;
+      hp.__supportMisses = 0;
+      const lost = hp.__lostMount || null;
+      hp.__lostMount = null;
+      let mounted = null;
+      // AGENT: hangar (eskadry) wraca pusty — eskadry przez mechanika (setHardpointHangarSquadrons).
+      if (lost && hp.type !== HP.HANGAR && Game.player?.inventory?.has?.(lost)) {
+        setHardpointMount(hp, lost);
+        if (hp.mount === lost) mounted = WEAPONS[lost];
+      }
+      syncWeaponSystems();
+      if (typeof renderMechanic === 'function') renderMechanic();
+      pushZoneMessage(mounted ? `DRONY: GNIAZDO ODBUDOWANE — ZAMONTOWANO ${String(mounted.name || lost).toUpperCase()}`
+        : (lost ? 'DRONY: GNIAZDO ODBUDOWANE — BRAK BRONI W ŁADOWNI' : 'DRONY: GNIAZDO ODBUDOWANE'), 2.4, { label: 'NAPRAWA' });
+      return true;
+    }
+
     // Chip okrętu (src/data/chips.js). Gracz: PLAYER.hullChips[aktywny kadłub],
     // NPC: opcjonalne entity.chips (Set albo tablica). Pytają o to pętle broni —
     // AI PD przy każdej decyzji, ciwsStep co krok — więc zero alokacji.
@@ -12458,24 +13041,10 @@
     }
     window.hasShipChip = hasShipChip;
 
+    // Dawne „ulepszenia” HANGARU (chłodzenie raila, boost, zwrotność) usunięte 2026-10-08 (decyzja użytkownika D7
+    // planu fitowania): nie zapisywały się, kumulowały przy ponownym kupnie, a część zmieniała pola, których model
+    // lotu nie czyta. Ich rolę przejmą moduły okrętu (docs/PLAN-fitowanie.md § 4.3).
     const BLUEPRINTS = {
-      upgrades: [
-        { id: 'rail_cooler', name: 'Chłodzenie raila', cost: 600, apply() { rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
-        {
-          id: 'boost_core', name: 'Wzmocniony boost', cost: 700, apply() {
-            boost.extraThrustMul *= 1.15;
-            boost.consumeRate *= 0.9;
-            boost.handlingMultiplier *= 1.05;
-          }
-        },
-        {
-          id: 'agility', name: 'Zwrotność +', cost: 500, apply() {
-            ship.angularDamping *= 0.9;
-            ship.engines.torqueLeft.maxThrust = Math.round(ship.engines.torqueLeft.maxThrust * 1.12);
-            ship.engines.torqueRight.maxThrust = Math.round(ship.engines.torqueRight.maxThrust * 1.12);
-          }
-        },
-      ],
       ships: PLAYER_HULL_ORDER.map(id => PLAYER_HULL_CATALOG[id]).filter(Boolean),
     };
 
@@ -12488,7 +13057,7 @@
       trade: 'Handel',
       cantina: 'Kantyna',
       hangar: 'Hangar',
-      mechanic: 'Mechanik',
+      mechanic: 'Wyposażenie',
       infrastructure: 'Infrastruktura'
     };
     const STATION_TAB_CONFIG = STATION_TERMINAL_TABS.map(tab => ({
@@ -12529,7 +13098,6 @@
       subtitle: document.getElementById('station-subtitle'),
       credits: document.getElementById('station-credits'),
       panels: {
-        upgrades: document.getElementById('tab-upgrades'),
         trade: document.getElementById('tab-trade'),
         cantina: document.getElementById('tab-cantina'),
         hangar: document.getElementById('tab-hangar'),
@@ -12541,7 +13109,8 @@
     const stationOverlayState = {
       built: false,
       activeTab: null,
-      stationKey: null
+      stationKey: null,
+      fitSig: '' // WYPOSAŻENIE: stacja, dla której panel jest wyrenderowany (pusty — schowany)
     };
 
     function createResourceIcon(key) {
@@ -12948,7 +13517,7 @@
       const marketDefs = allHullDefs.filter(def => !ownedHulls.has(def.id));
       const ownedDefs = allHullDefs.filter(def => ownedHulls.has(def.id));
 
-      // --- Helper: create a service row (repair / upgrade style) ---
+      // --- Helper: create a service row (repair style) ---
       function createServiceRow(label, subtitle, btnText, btnAttrs, onClick, disabled) {
         const row = document.createElement('div');
         row.className = 'hangar-hull-entry';
@@ -12990,39 +13559,35 @@
         return { row, roleEl, btn };
       }
 
-      // --- Repair row ---
+      // --- Repair row (wycena jak w handleRepair — playerDockRepairQuote) ---
       {
-        const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
-        const hullVal = Math.max(0, Number(ship?.hull?.val) || 0);
-        const damageFrac = 1 - (hullVal / hullMax);
-        const damagePct = Math.ceil(damageFrac * 100);
-        const repairCost = Math.ceil(damageFrac * 600);
+        const repair = playerDockRepairQuote();
         const { row, roleEl, btn } = createServiceRow(
           'Napraw kadlub',
-          `Uszkodzenia: ${damagePct}% \u2022 Koszt: ${repairCost} CR`,
+          hangarRepairStatusText(repair),
           'Napraw',
           { 'data-hangar-action': 'repair' },
           () => handleRepair(),
-          damagePct <= 0 || PLAYER.credits < repairCost
+          !repair.needed || PLAYER.credits < repair.cost
         );
         roleEl.setAttribute('data-hangar-repair-status', '1');
         pane.appendChild(row);
       }
 
-      // --- Upgrade rows ---
-      if (BLUEPRINTS.upgrades && BLUEPRINTS.upgrades.length) {
-        for (const upgrade of BLUEPRINTS.upgrades) {
-          const cost = upgrade.cost || 0;
-          const { row, btn } = createServiceRow(
-            upgrade.name,
-            `Ulepszenie \u2022 Koszt: ${cost} CR`,
-            'Kup',
-            { 'data-upgrade-id': upgrade.id, 'data-cost': String(cost) },
-            () => purchaseUpgrade(upgrade),
-            PLAYER.credits < cost
-          );
-          pane.appendChild(row);
-        }
+      // --- Drony naprawcze: uzupełnienie zestrzelonych (src/game/repairRig.js; cena REPAIR_TUNE.refillPrice) ---
+      {
+        const missing = playerRepairRig.missing();
+        const cost = missing * REPAIR_TUNE.refillPrice;
+        const { row, roleEl, btn } = createServiceRow(
+          'Drony naprawcze',
+          repairDroneRefillStatus(),
+          'Uzupełnij',
+          { 'data-hangar-action': 'drones' },
+          () => handleRepairDroneRefill(),
+          missing <= 0 || PLAYER.credits < cost
+        );
+        roleEl.setAttribute('data-hangar-drones-status', '1');
+        pane.appendChild(row);
       }
 
       // --- Ship lists (full width, below service rows) ---
@@ -13220,81 +13785,35 @@
       wrap.appendChild(ownedColumn);
     }
 
+    // Zakładka WYPOSAŻENIE (dawny MECHANIK): karty konfiguracji i refit ręczny (src/ui/station/fittingPanel.js; klej —
+    // blok „WYPOSAŻENIE” wyżej). Panel budowany raz na DOM stacji, potem render przy zmianie stanu, tick co klatkę.
     function buildMechanicPanel() {
       const pane = stationOverlayDom.panels.mechanic;
       if (!pane) return;
+      fittingPanel?.destroy();
+      fittingPanel = createFittingPanel(pane, buildFittingApi());
+      renderMechanic();
+    }
 
-      pane.innerHTML = `
-      <div class="station-card-aero mechanic-station-card mechanic-list-panel">
-        <div class="card-header">
-          <div class="card-title" id="mechanic-left-title">Magazyn broni</div>
-          <span class="card-badge" id="mechanic-left-badge">Loadout</span>
-        </div>
-        <p class="card-desc" id="mechanic-left-desc">Przeciagnij bron na slot po prawej stronie.</p>
-        <div class="mechanic-tabs" id="weapon-filter-tabs">
-          <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
-          <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
-          <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
-          <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
-          <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
-          <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
-          <button class="mechanic-tab-btn" data-filter="builtin">Wbudowane</button>
-          <button class="mechanic-tab-btn" data-filter="chips">Chipy</button>
-          ${isMechanicDevMode() ? '<button class="mechanic-tab-btn" id="mechanic-fill-weapons" type="button">Fill weapons</button>' : ''}
-        </div>
-        <div id="mechanic-available" class="weapon-pool mechanic-list-scroll"></div>
-      </div>
-
-      <div class="station-card-aero mechanic-station-card mechanic-list-panel">
-        <div class="card-header">
-          <div class="card-title">Hardpointy</div>
-          <span class="card-badge">Statek</span>
-        </div>
-        <p class="card-desc">Upusc bron na slot, aby podmienic uzbrojenie.</p>
-        <div class="mechanic-tabs" id="hp-filter-tabs">
-          <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
-          <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
-          <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
-          <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
-          <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
-          <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
-          <button class="mechanic-tab-btn" data-filter="builtin">Wbudowane</button>
-        </div>
-        <div class="mechanic-batch-row">
-          <span class="mechanic-batch-label">Hardpointy:</span>
-          <div id="hp-batch-tabs" class="mechanic-batch-tabs">
-            <button class="mechanic-batch-btn" data-batch="1">1</button>
-            <button class="mechanic-batch-btn" data-batch="3">3</button>
-            <button class="mechanic-batch-btn" data-batch="5">5</button>
-            <button class="mechanic-batch-btn" data-batch="10">10</button>
-            <button class="mechanic-batch-btn" data-batch="all">ALL</button>
-          </div>
-        </div>
-        <div id="hp-groups" class="hp-groups mechanic-list-scroll"></div>
-      </div>
-      `;
-
-      const sel = document.getElementById('ship-frame-select');
-      if (sel) {
-        const activeHull = getPlayerHullDef(PLAYER.activeHullId || ship.activeHullId || DEFAULT_PLAYER_HULL_ID);
-        const activeFrame = activeHull?.shipFrame && SHIPS[activeHull.shipFrame]
-          ? SHIPS[activeHull.shipFrame]
-          : SHIPS[Game.player.shipFrame];
-        sel.innerHTML = activeFrame
-          ? `<option value="${activeFrame.id}" selected>${activeFrame.name}</option>`
-          : '';
-        sel.disabled = true;
-        sel.title = 'Rama wynika z aktualnie wybranego hulla.';
-        sel.onchange = null;
+    // Usługa doku w nagłówku WYPOSAŻENIA (etap 0 planu fitowania): magazynki gniazd gracza (rakiety, torpedy,
+    // Supernova) do pełna — na razie bez opłaty. Dawniej tylko przez ponowne upuszczenie tej samej broni na gniazdo.
+    function playerWeaponAmmo(weaponId) {
+      return WEAPONS[weaponId]?.ammo ?? null;
+    }
+    function refillPlayerAmmo() {
+      const refilled = refillHardpointAmmo(Game.player?.hardpoints, playerWeaponAmmo);
+      if (refilled <= 0) {
+        toast('Amunicja pełna');
+        return 0;
       }
-
-      initMechanicFilter('weapon-filter-tabs', () => mechanicWeaponFilter, (val) => { mechanicWeaponFilter = val; });
-      initMechanicFilter('hp-filter-tabs', () => mechanicHardpointFilter, (val) => { mechanicHardpointFilter = val; });
-      initMechanicBatchControls();
-      document.getElementById('mechanic-fill-weapons')?.addEventListener('click', fillMechanicWeapons);
+      syncWeaponSystems();
+      saveLoadout();
       renderMechanic();
       updateMechanicCards();
+      toast(`Uzupełniono amunicję (gniazda: ${refilled})`);
+      return refilled;
     }
+    window.refillPlayerAmmo = refillPlayerAmmo;
 
     function buildInfrastructurePanel() {
       const pane = stationOverlayDom.panels.infrastructure;
@@ -13377,15 +13896,6 @@
       }
     }
 
-    function updateUpgradeButtons() {
-      const buttons = stationOverlayDom.panels.hangar?.querySelectorAll('button[data-upgrade-id]');
-      if (!buttons) return;
-      buttons.forEach(btn => {
-        const cost = Number(btn.dataset.cost) || 0;
-        btn.disabled = PLAYER.credits < cost;
-      });
-    }
-
     function updateTradeResourceTable(station) {
       const pane = stationOverlayDom.panels.trade;
       if (!pane) return;
@@ -13464,14 +13974,10 @@
     }
 
     function updateMechanicCards() {
-      // Naprawa przeniesiona do hangaru. Tu tylko przyciski „Zainstaluj” chipów
-      // idą za stanem kredytów (jak przyciski rynku w hangarze).
-      const pane = stationOverlayDom.panels.mechanic;
-      if (!pane) return;
-      for (const btn of pane.querySelectorAll('button[data-chip-action="install"]')) {
-        btn.disabled = PLAYER.credits < (Number(btn.dataset.cost) || 0);
-      }
+      // WYPOSAŻENIE co klatkę: same liczby (kredyty, amunicja) — DOM przebudowuje render przy zmianie stanu.
+      fittingPanel?.tick();
     }
+
     function renderStationOverlay(tab, station) {
       if (!stationOverlayState.built) initStationOverlay();
       if (!stationOverlayDom.root) return;
@@ -13481,8 +13987,13 @@
         stationOverlayState.activeTab = tab;
         stationOverlayState.stationKey = stationKey;
       }
+      // WYPOSAŻENIE: pełny render przy wejściu na zakładkę, pokazaniu doku i zmianie stacji (ceny portu).
+      const fitSig = tab === 'mechanic' ? stationKey : '';
+      if (fitSig !== stationOverlayState.fitSig) {
+        stationOverlayState.fitSig = fitSig;
+        if (fitSig) renderMechanic();
+      }
       updateStationHeader(station);
-      updateUpgradeButtons();
       updateTradeCards(station);
       updateMechanicCards();
       updateHangarCards();
@@ -14472,17 +14983,6 @@
       updateWreckTow();
     }
 
-    function purchaseUpgrade(upgrade) {
-      if (!upgrade) return;
-      if (PLAYER.credits >= upgrade.cost) {
-        PLAYER.credits -= upgrade.cost;
-        upgrade.apply();
-        toast('Zainstalowano: ' + upgrade.name);
-      } else {
-        toast('Za mało kredytów');
-      }
-      updateStationOverlay(stationUI.tab, stationUI.station);
-    }
     function updateHangarCards() {
       const pane = stationOverlayDom.panels.hangar;
       if (!pane) return;
@@ -14497,16 +14997,47 @@
           btn.disabled = hullId === activeHullId;
         }
       }
-      // Update repair row
-      const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
-      const hullVal = Math.max(0, Number(ship?.hull?.val) || 0);
-      const damageFrac = 1 - (hullVal / hullMax);
-      const damagePct = Math.ceil(damageFrac * 100);
-      const repairCost = Math.ceil(damageFrac * 600);
+      // Update repair row (wycena jak w handleRepair — playerDockRepairQuote)
+      const repair = playerDockRepairQuote();
       const repairStatus = pane.querySelector('[data-hangar-repair-status]');
-      if (repairStatus) repairStatus.textContent = `Uszkodzenia: ${damagePct}% • Koszt: ${repairCost} CR`;
+      if (repairStatus) repairStatus.textContent = hangarRepairStatusText(repair);
       const repairBtn = pane.querySelector('button[data-hangar-action="repair"]');
-      if (repairBtn) repairBtn.disabled = damagePct <= 0 || PLAYER.credits < repairCost;
+      if (repairBtn) repairBtn.disabled = !repair.needed || PLAYER.credits < repair.cost;
+      const dronesStatus = pane.querySelector('[data-hangar-drones-status]');
+      if (dronesStatus) dronesStatus.textContent = repairDroneRefillStatus();
+      const dronesBtn = pane.querySelector('button[data-hangar-action="drones"]');
+      if (dronesBtn) {
+        const missing = playerRepairRig.missing();
+        dronesBtn.disabled = missing <= 0 || PLAYER.credits < missing * REPAIR_TUNE.refillPrice;
+      }
+    }
+
+    // Wymiana łat polowych w doku: 300 CR za łaty na całym kadłubie (proporcjonalnie do udziału łat w konstrukcji).
+    function repairPatchCost(patches) {
+      if (!(patches > 0)) return 0;
+      const base = Math.max(1, ship?.beamHull?.baseNodes || 1);
+      return Math.ceil(Math.min(1, patches / base) * 300);
+    }
+
+    function repairDroneRefillStatus() {
+      const rig = playerRepairRig;
+      const missing = rig.missing();
+      const alive = rig.drones.length - missing;
+      return missing > 0
+        ? `Sprawne: ${alive} / ${rig.drones.length} • Uzupełnienie: ${missing * REPAIR_TUNE.refillPrice} CR`
+        : `Sprawne: ${alive} / ${rig.drones.length} • Materiał: ${rig.materialCells()} komórek`;
+    }
+
+    // Dok: zestrzelone drony naprawcze wracają (pełne HP), po REPAIR_TUNE.refillPrice za sztukę.
+    function handleRepairDroneRefill() {
+      const missing = playerRepairRig.missing();
+      if (missing <= 0) { toast('Wszystkie drony naprawcze sprawne'); return; }
+      const cost = missing * REPAIR_TUNE.refillPrice;
+      if (PLAYER.credits < cost) { toast('Za mało kredytów'); return; }
+      PLAYER.credits -= cost;
+      playerRepairRig.refill();
+      toast(`Uzupełniono drony naprawcze (${missing})`);
+      updateStationOverlay(stationUI.tab, stationUI.station);
     }
 
     function purchaseShip(shipBP, opts = {}) {
@@ -14541,24 +15072,71 @@
       return true;
     }
 
+    // Wycena remontu w doku — jedno źródło dla HANGARU, WYPOSAŻENIA i handleRepair: punkty kadłuba, zniszczone dysze
+    // MAIN (engineDamage.js — wracają tylko w doku), łaty polowe roju dronów (HullBodies.patchedCount — remont wymienia
+    // je na blachę z farbą), zniszczone gniazda broni (markHardpointDestroyed — remont je przywraca, puste;
+    // hardpointService.js).
+    function playerDockRepairQuote() {
+      const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
+      const hullVal = Math.max(0, Number(ship?.hull?.val) || 0);
+      const damageFrac = Math.max(0, 1 - (hullVal / hullMax));
+      const engines = mainEngineCounts(ship, _engineCountsScratch);
+      const deadEngines = Math.max(0, engines.total - engines.live);
+      const patches = HullBodies.patchedCount(ship);
+      const sockets = ship.hardpoints?.length || 0;
+      const deadSockets = countDestroyedHardpoints(ship.hardpoints);
+      const cost = Math.ceil(damageFrac * 600) + deadEngines * ENGINE_REPAIR.dockCostPerNozzle + repairPatchCost(patches)
+        + deadSockets * HARDPOINT_SERVICE.dockCostPerSocket;
+      return {
+        needed: damageFrac > 0 || deadEngines > 0 || patches > 0 || deadSockets > 0,
+        cost,
+        damagePct: Math.ceil(damageFrac * 100),
+        enginesLive: engines.live,
+        enginesTotal: engines.total,
+        deadEngines,
+        patches,
+        sockets,
+        deadSockets
+      };
+    }
+    function hangarRepairStatusText(q) {
+      return `Uszkodzenia: ${q.damagePct}%${q.deadEngines > 0 ? ` • Silniki: ${q.enginesLive}/${q.enginesTotal}` : ''}`
+        + `${q.patches > 0 ? ` • Łaty: ${q.patches}` : ''}${q.deadSockets > 0 ? ` • Gniazda: ${q.sockets - q.deadSockets}/${q.sockets}` : ''}`
+        + ` • Koszt: ${q.cost} CR`;
+    }
+
     function handleRepair() {
-      const damageFrac = 1 - (ship.hull.val / ship.hull.max);
-      const repairCost = Math.ceil(damageFrac * 600);
-      if (damageFrac <= 0) {
+      const quote = playerDockRepairQuote();
+      if (!quote.needed) {
         toast('Kadłub jest w pełni sprawny');
         return;
       }
-      if (PLAYER.credits >= repairCost) {
-        PLAYER.credits -= repairCost;
-        // Pełny remont: zniszczone węzły odrastają, kadłub wraca do szablonu. Bez tego sufit punktów z konstrukcji
-        // (enforceNpcHexIntegrityBalance) cofał naprawę zaraz po zapłacie, gdy brakowało węzłów.
-        HullBodies.restoreHull(ship);
-        ship.hull.val = ship.hull.max;
-        toast('Naprawiono kadłub.');
+      if (PLAYER.credits >= quote.cost) {
+        PLAYER.credits -= quote.cost;
+        dockRemontShip(ship);
+        const fixed = [];
+        if (quote.deadEngines > 0) fixed.push(`silniki (${quote.deadEngines})`);
+        if (quote.deadSockets > 0) fixed.push(`gniazda broni (${quote.deadSockets}, puste)`);
+        toast(fixed.length ? `Naprawiono kadłub i ${fixed.join(', ')}.` : 'Naprawiono kadłub.');
       } else {
         toast('Za mało kredytów');
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
+    }
+
+    // Pełny remont w doku (stacja, holownik po wyładunku): zniszczone węzły odrastają, kadłub wraca do szablonu
+    // (bez tego sufit punktów z konstrukcji — enforceNpcHexIntegrityBalance — cofał naprawę zaraz po zapłacie),
+    // dysze MAIN sprawne (zatrzaski zdjęte PO odroście — komórki pod nimi muszą żyć).
+    function dockRemontShip(target) {
+      if (!target) return;
+      HullBodies.restoreHull(target);
+      repairEngines(target);
+      if (target.hull) target.hull.val = target.hull.max;
+      // Gniazda broni gracza, które zginęły z kadłubem pod sobą, wracają — puste (broń przepadła z gniazdem;
+      // obsadza się je u mechanika). AGENT: remont NPC (sojusznik z holownika) — jego gniazda i broń tu nie wracają.
+      if (target === ship && restoreDestroyedHardpoints(target.hardpoints) > 0 && typeof renderMechanic === 'function') {
+        renderMechanic();
+      }
     }
 
     function updateStationOverlay(tab, station) {
@@ -14850,56 +15428,372 @@
     window.flightAssist = flightAssist;
 
     // ========================================================================
-    // SZARŻA — system okrętu pod F (src/data/shipSystems.js, src/game/flight/ramBurn.js).
-    // Krótki zryw na wprost do prędkości taranu kosztem całego ładunku reaktora; mają go tylko
-    // niektóre kadłuby. Fizyka zrywu: physicsStep gracza (ciąg wzdłuż dziobu, limit napędu
-    // `driveState.burnLimit`, przycięty obrót), dopalacz dysz MAIN: GameState.ramBurn.
+    // SYSTEM OKRĘTU (F) — „specjale F” (src/data/shipSystems.js, stan: src/game/shipSystem.js). System kadłuba
+    // gracza: domyślny albo wybrany (PLAYER.hullSystems[kadłub] — setPlayerShipSystem z walidacją przez listę
+    // opcji kadłuba; zapis wyboru i UI zrobi fitowanie, docs/PLAN-fitowanie.md). Rodzaje:
+    //   SZARŻA (ram_burn)     — zryw na wprost do prędkości taranu: ciąg wzdłuż dziobu, limit napędu
+    //                           `driveState.burnLimit`, przycięty obrót (physicsStep gracza);
+    //   MANEWR (maneuver)     — Q/E + F skok w bok, A/D + F (samo F — najkrótszą drogą) szybki obrót dziobem albo
+    //                           burtą na cel priorytetowy / kursor; prędkość boczną i obrót nakłada
+    //                           applyPlayerManeuver tuż przed całkowaniem kursu, dysze SIDE pracują pełnym ciągiem;
+    //   ZRYW (engine_burst)   — limit napędu × speedMul, ciąg silników głównych × thrustMul;
+    //   SZYBKI OGIEŃ (rapid_fire) — szybkostrzelność broni × fireRateMul: źródło 'system' modyfikatorów okrętu
+    //                           (src/game/shipModifiers.js, syncPlayerSystemModifiers).
+    // Struga MAIN jak przy dopalaczu: ship.__fSysBoost (engineVfxSystem.js). `ramBurn` (GameState / window) — stan
+    // systemu każdego rodzaju (nazwa sprzed 2026-10-08; czytają go skrypty w grze).
     // ========================================================================
-    const ramBurn = createRamBurn();
+    const ramBurn = createShipSystemState();
     publishGameState({ ramBurn });
     window.ramBurn = ramBurn;
+    if (!PLAYER.hullSystems) PLAYER.hullSystems = {};
+    const _playerSys = { hull: '', pick: undefined, def: null };
     function playerShipSystem() {
-      return shipSystemFor(PLAYER.activeHullId);
+      const hull = PLAYER.activeHullId;
+      const pick = PLAYER.hullSystems[hull];
+      if (_playerSys.hull !== hull || _playerSys.pick !== pick) {
+        _playerSys.hull = hull;
+        _playerSys.pick = pick;
+        _playerSys.def = shipSystemDefFor(hull, pick || '') || shipSystemFor(hull);
+      }
+      const def = _playerSys.def;
+      // Nowy kadłub albo wybór: system pełny, zryw i akcja manewru w toku gasną.
+      if (ramBurn.def !== def) bindShipSystem(ramBurn, def);
+      return def;
     }
-    function tryStartPlayerRamBurn(silent = false) {
+    function playerRamBurnActive() {
+      return ramBurn.active && ramBurn.def?.id === 'ram_burn';
+    }
+    // Zryw silników: mnożnik ciągu silników głównych (1 bez zrywu). Tylko poniżej limitu zrywu — ciąg × thrustMul
+    // przewyższa hamowanie regulatora prędkości (tabelowe decel × 2), przy limicie zostaje zwykły ciąg.
+    function playerBurstThrustMul() {
+      if (!ramBurn.active || ramBurn.def?.id !== 'engine_burst' || getPlayerSpeed() >= driveState.burnLimit) return 1;
+      return Math.max(1, Number(ramBurn.def.thrustMul) || 1);
+    }
+    // Szybki ogień = źródło 'system' modyfikatorów okrętu (src/game/shipModifiers.js): fireRate (mnożnik
+    // przeładowania, < 1 — szybciej) = 1 / fireRateMul; czyta go fireWeaponCore (wieże main, bateria, rakiety,
+    // torpedy). Zmiana przelicza przeładowania W TOKU, więc F działa od razu, a koniec szybkiego ognia ich nie skraca.
+    let _playerSysRateMul = 1;
+    const _playerSysMods = { fireRate: 1 };
+    const _playerReloadGroups = Object.freeze([HP.MAIN, HP.SPECIAL, HP.MISSILE, HP.SPECIAL_MISSILE]);
+    function syncPlayerSystemModifiers() {
+      const mul = shipSystemFireRateMul(ramBurn, ramBurn.def);
+      if (mul === _playerSysRateMul) return;
+      _playerSysRateMul = mul;
+      const before = modifierFireRate(ship);
+      if (mul > 1) {
+        _playerSysMods.fireRate = fireRateModifier(mul);
+        setModifierSource(ship, 'system', _playerSysMods);
+      } else {
+        clearModifierSource(ship, 'system');
+      }
+      const ratio = modifierFireRate(ship) / before;
+      if (ratio === 1) return;
+      const w = Game.player?.weapons || {};
+      for (let g = 0; g < _playerReloadGroups.length; g++) {
+        const list = w[_playerReloadGroups[g]];
+        for (let i = 0; list && i < list.length; i++) {
+          const hp = list[i]?.hp;
+          if (!hp) continue;
+          if (hp.fcCd > 0) hp.fcCd *= ratio;
+          if (hp.specialCd > 0) hp.specialCd *= ratio;
+          if (hp.missileCd > 0) hp.missileCd *= ratio;
+        }
+      }
+    }
+    /** Systemy F do wyboru dla kadłuba (domyślnie aktywnego) — pierwszy = domyślny (fitowanie). */
+    function getPlayerShipSystemOptions(hullId = PLAYER.activeHullId) {
+      return shipSystemOptionsFor(hullId);
+    }
+    /**
+     * Wybór systemu F kadłuba gracza bez UI (fitowanie, konsola, ?fsys=): `id` z listy opcji kadłuba (domyślnie
+     * aktywnego), pusty — domyślny. Zwraca definicję systemu albo null, gdy kadłub takiego nie ma.
+     */
+    function setPlayerShipSystem(id, hullId = PLAYER.activeHullId) {
+      const hull = String(hullId || '');
+      const def = id ? shipSystemDefFor(hull, String(id)) : shipSystemFor(hull);
+      if (!def) return null;
+      if (def === shipSystemFor(hull)) delete PLAYER.hullSystems[hull];
+      else PLAYER.hullSystems[hull] = def.id;
+      return def;
+    }
+    /** Następny system z listy aktywnego kadłuba (konsola / ?dev). */
+    function cyclePlayerShipSystem() {
+      const list = getPlayerShipSystemOptions();
+      const cur = playerShipSystem();
+      if (list.length < 2 || !cur) return cur;
+      const next = list[(list.indexOf(cur) + 1) % list.length];
+      setPlayerShipSystem(next.id);
+      pushZoneMessage(`SYSTEM F: ${next.label}`, 1.4);
+      return next;
+    }
+    window.playerShipSystem = playerShipSystem;
+    window.getPlayerShipSystemOptions = getPlayerShipSystemOptions;
+    window.setPlayerShipSystem = setPlayerShipSystem;
+    window.cyclePlayerShipSystem = cyclePlayerShipSystem;
+    window.NpcShipSystemStats = NPC_SYSTEM_STATS;
+    // Próby (dev): ?fsys=maneuver — system aktywnego kadłuba przy starcie.
+    {
+      const fsys = new URLSearchParams(location.search).get('fsys');
+      if (fsys && !setPlayerShipSystem(fsys)) console.warn(`[F] kadłub ${PLAYER.activeHullId} nie ma systemu ${fsys}`);
+    }
+
+    function playerShipSystemBlocked() {
+      return ship.destroyed || PAUSED || warp.state !== 'idle' || warp.isBusy() || StoryGame.blocksInput || stationUI.open;
+    }
+    const fmtSysMul = (v) => String(Math.round((Number(v) || 1) * 10) / 10).replace('.', ',');
+    function tryStartPlayerShipSystem(silent = false) {
       const def = playerShipSystem();
-      if (!def) return false;
-      if (ship.destroyed || PAUSED || warp.state !== 'idle' || StoryGame.blocksInput || stationUI.open) return false;
+      if (!def || playerShipSystemBlocked()) return false;
+      if (def.id === 'maneuver') return tryStartPlayerManeuver(def, silent);
       if (ramBurn.active) return false;
-      if (!canStartRamBurn(ramBurn, def)) {
-        if (!silent) pushZoneMessage(`${def.label}: REAKTOR ${Math.round(ramBurn.charge * 100)}%`, 1.2, { tone: 'warn' });
+      // Szarża i zryw ciągną silniki główne — bez żadnej sprawnej dyszy MAIN nie ma czym (engineDamage.js).
+      if (def.id !== 'rapid_fire' && playerDriveDown()) {
+        if (!silent) pushZoneMessage(`${def.label}: NAPĘD GŁÓWNY ZNISZCZONY`, 1.6, { tone: 'warn' });
         return false;
       }
-      startRamBurn(ramBurn, def);
-      ship.command = null;
-      cancelTravel(null);
-      camera.addShake(10, 0.35);
-      pushZoneMessage(`${def.label}: PEŁNA MOC`, 1.4, { tone: 'good' });
+      if (!shipSystemReady(ramBurn, def)) {
+        const wait = def.id === 'ram_burn' ? 'REAKTOR' : (def.id === 'rapid_fire' ? 'CHŁODZENIE' : 'ŁADOWANIE');
+        if (!silent) pushZoneMessage(`${def.label}: ${wait} ${Math.round(ramBurn.charge * 100)}%`, 1.2, { tone: 'warn' });
+        return false;
+      }
+      startShipSystemBurst(ramBurn, def);
+      if (def.id === 'ram_burn') {
+        ship.command = null;
+        cancelTravel(null);
+        camera.addShake(10, 0.35);
+        pushZoneMessage(`${def.label}: PEŁNA MOC`, 1.4, { tone: 'good' });
+      } else if (def.id === 'engine_burst') {
+        camera.addShake(5, 0.3);
+        pushZoneMessage(`${def.label}: PRĘDKOŚĆ ×${fmtSysMul(def.speedMul)}`, 1.4, { tone: 'good' });
+      } else {
+        pushZoneMessage(`${def.label}: PRZEŁADOWANIE ×${fmtSysMul(def.fireRateMul)}`, 1.4, { tone: 'good' });
+      }
       return true;
     }
-    window.tryStartPlayerRamBurn = tryStartPlayerRamBurn;
-    function stepPlayerRamBurn(dt) {
-      const def = playerShipSystem();
-      if (!def) {
-        stopRamBurn(ramBurn);
-        driveState.burnLimit = 0;
-        driveState.burnBrake = 0;
+    window.tryStartPlayerShipSystem = tryStartPlayerShipSystem;
+    window.tryStartPlayerRamBurn = tryStartPlayerShipSystem;
+
+    // MANEWR: Q / E + F — skok w bok, A / D + F — obrót w tę stronę, samo F — najkrótszą drogą.
+    // Obrót: na cel priorytetowy (T), bez niego na kursor (śledzony w trakcie obrotu), dziobem albo burtą — namiar
+    // z największą liczbą dział w łuku (dziób przy ≥ 75% najlepszej burty, jak AI: resolveWeaponFacingBias).
+    const MANEUVER_BOW_PREFERENCE = 0.75;
+    const MANEUVER_ALIGNED = 2 * Math.PI / 180;      // już na kursie — obrót nie bierze ładunku
+    const MANEUVER_JUMP_ABORT_MIN = 120;            // zerwanie skoku: zmiana prędkości bocznej spoza skoku [j/s]…
+    const MANEUVER_JUMP_ABORT_K = 0.15;             // …albo ułamek szczytu skoku (zderzenie, ściana ringu)
+    const _manArcs = new Float64Array(128);
+    const _manFacing = { offset: 0, count: 0, symmetric: false };
+    const _manPoint = { x: 0, y: 0 };
+    let _manTorque = 0;   // obraz dysz w następnym kroku: kierunek momentu obrotu manewru
+    let _manSide = 0;     // …skoku: +1 — dysze pchają w prawo (lewa burta), −1 — w lewo
+    function maneuverAimTarget() {
+      const t = lockedTargets[0];
+      return isTargetAlive(t) && !SensorSystem.hides(t) ? t : null;
+    }
+    function maneuverAimPoint(out) {
+      const t = ramBurn.turnTarget;
+      if (t && isTargetAlive(t)) {
+        out.x = getTargetX(t);
+        out.y = getTargetY(t);
+      } else {
+        out.x = _fcEnv.cursor.x;
+        out.y = _fcEnv.cursor.y;
+      }
+      return out;
+    }
+    // Namiar celu względem dziobu z łuków dział (main / special, bez Hexlance'a — mountFireArc).
+    function maneuverFacing(out) {
+      let n = 0;
+      const halfLen = (Number(ship.w) || 0) * 0.5;
+      const halfWid = (Number(ship.h) || 0) * 0.5;
+      for (let g = 0; g < 2; g++) {
+        const group = g === 0 ? 'main' : 'special';
+        const list = Game.player?.weapons?.[g === 0 ? HP.MAIN : HP.SPECIAL];
+        for (let i = 0; list && i < list.length && n < 64; i++) {
+          const lo = list[i];
+          if (!lo?.weapon || !lo.hp || lo.hp.destroyed || lo.weapon.id === 'hexlance_siege') continue;
+          const arc = mountFireArc(lo.hp, group, halfLen, halfWid);
+          if (!arc) continue;
+          _manArcs[2 * n] = arc.center;
+          _manArcs[2 * n + 1] = arc.half;
+          n++;
+        }
+      }
+      if (n === 0) {
+        out.offset = 0;
+        out.count = 0;
+        out.symmetric = false;
+        return out;
+      }
+      return maneuverFacingOffset(_manArcs, n, MANEUVER_BOW_PREFERENCE, out);
+    }
+    function tryStartPlayerManeuver(def, silent) {
+      if (ramBurn.action || isRtsModeActive()) return false;
+      if (ramBurn.charges < 1) {
+        if (!silent) pushZoneMessage(`${def.label}: ŁADOWANIE ${Math.round(ramBurn.regen * 100)}%`, 1.2, { tone: 'warn' });
+        return false;
+      }
+      const keys = keyboardOwnsP1();
+      const jumpL = keys && Input.keyHeld('fly.strafeLeft');
+      const jumpR = keys && Input.keyHeld('fly.strafeRight');
+      if (jumpL !== jumpR) {
+        // Oś „w prawo” kadłuba: (−sin, cos) — E w prawo, Q w lewo.
+        const s = jumpR ? 1 : -1;
+        const dx = -Math.sin(ship.angle) * s;
+        const dy = Math.cos(ship.angle) * s;
+        if (!startManeuverJump(ramBurn, def, dx, dy, Number(ship.w) || 0, ship.vel.x * dx + ship.vel.y * dy)) return false;
+        ship.command = null;
+        camera.addShake(6, 0.25);
+        if (!silent) pushZoneMessage(`${def.label}: SKOK ${jumpR ? 'W PRAWO' : 'W LEWO'}`, 1.0, { tone: 'good' });
+        return true;
+      }
+      const turnL = keys && Input.keyHeld('fly.left');
+      const turnR = keys && Input.keyHeld('fly.right');
+      const dir = turnL === turnR ? 0 : (turnR ? 1 : -1);
+      const target = maneuverAimTarget();
+      ramBurn.turnTarget = target;
+      const p = maneuverAimPoint(_manPoint);
+      const bearing = Math.atan2(p.y - ship.pos.y, p.x - ship.pos.x);
+      const f = maneuverFacing(_manFacing);
+      // Układ symetryczny: z dwóch burt ta, która przyjdzie pierwsza (w tę stronę albo najkrótszą drogą).
+      let offset = f.offset;
+      if (f.symmetric) {
+        const a1 = wrapAngle(bearing - f.offset);
+        const a2 = wrapAngle(bearing + f.offset);
+        const d1 = dir ? maneuverTurnDelta(ship.angle, a1, dir) : Math.abs(wrapAngle(a1 - ship.angle));
+        const d2 = dir ? maneuverTurnDelta(ship.angle, a2, dir) : Math.abs(wrapAngle(a2 - ship.angle));
+        if (d2 < d1) offset = -f.offset;
+      }
+      const aim = wrapAngle(bearing - offset);
+      if (Math.abs(wrapAngle(aim - ship.angle)) < MANEUVER_ALIGNED) {
+        ramBurn.turnTarget = null;
+        if (!silent) pushZoneMessage(`${def.label}: JUŻ NA KURSIE`, 1.0);
+        return false;
+      }
+      if (!startManeuverTurn(ramBurn, def, dir, ship.angle, aim, offset, Number(ship.angVel) || 0)) {
+        ramBurn.turnTarget = null;
+        return false;
+      }
+      ramBurn.turnTarget = target;
+      ship.command = null;
+      if (!silent) {
+        const side = offset === 0 ? 'DZIOBEM' : 'BURTĄ';
+        pushZoneMessage(`${def.label}: OBRÓT ${side} NA ${target ? 'CEL' : 'KURSOR'}`, 1.0, { tone: 'good' });
+      }
+      return true;
+    }
+
+    // Akcja manewru w toku: prędkość boczna skoku albo prędkość kątowa obrotu — tuż przed całkowaniem kursu
+    // w physicsStep (po regulatorze prędkości i limicie obrotu napędu).
+    function applyPlayerManeuver(dt) {
+      const st = ramBurn;
+      if (!st.action || !st.def) {
+        _manTorque = 0;
+        _manSide = 0;
         return;
       }
-      if (ramBurn.active) {
-        // Hamulec (S albo lewa gałka w dół), skok albo zniszczenie przerywają zryw — zużyty ładunek nie wraca.
-        const braking = !isRtsModeActive() && ((keyboardOwnsP1() && Input.keyHeld('fly.back')) || Input.padAxis('fly.thrust', 0) < -0.15);
-        if (ship.destroyed || warp.state !== 'idle' || braking) {
-          stopRamBurn(ramBurn);
+      if (st.action === 'jump') {
+        const lat = ship.vel.x * st.jumpDirX + ship.vel.y * st.jumpDirY;
+        const want = stepManeuverJump(st, dt, lat, Math.max(MANEUVER_JUMP_ABORT_MIN, st.jumpPeak * MANEUVER_JUMP_ABORT_K));
+        if (want === want) {
+          ship.vel.x += st.jumpDirX * (want - lat);
+          ship.vel.y += st.jumpDirY * (want - lat);
+        } else if (st.jumpAborted) {
+          pushZoneMessage(`${st.def.label}: SKOK PRZERWANY`, 1.0, { tone: 'warn' });
+        }
+        // Dysze: wybicie — burta przeciwna kierunkowi skoku, hamowanie — druga.
+        const toRight = -Math.sin(ship.angle) * st.jumpDirX + Math.cos(ship.angle) * st.jumpDirY >= 0 ? 1 : -1;
+        _manSide = st.action ? toRight * maneuverJumpPhase(st) : 0;
+        _manTorque = 0;
+        return;
+      }
+      const p = maneuverAimPoint(_manPoint);
+      const aim = wrapAngle(Math.atan2(p.y - ship.pos.y, p.x - ship.pos.x) - st.turnOffset);
+      // Profil obrotu prowadzi własną prędkość kątową (limit obrotu napędu przyciął ship.angVel wyżej w kroku).
+      const w0 = st.turnOmega;
+      const w = stepManeuverTurn(st, st.def, dt, ship.angle, aim);
+      if (w === w) ship.angVel = w;
+      _manTorque = st.action ? maneuverTurnTorque(st, w0, w) : 0;
+      _manSide = 0;
+    }
+
+    function stepPlayerShipSystem(dt) {
+      const def = playerShipSystem();
+      if (!def) {
+        stopShipSystem(ramBurn);
+        driveState.burnLimit = 0;
+        driveState.burnBrake = 0;
+        ship.__fSysBoost = false;
+        syncPlayerSystemModifiers();
+        return;
+      }
+      if (shipSystemActive(ramBurn)) {
+        // Skok i zniszczenie przerywają system; szarżę także hamulec (S albo lewa gałka w dół) — zużyty ładunek
+        // nie wraca.
+        let braking = false;
+        if (playerRamBurnActive()) {
+          braking = !isRtsModeActive() && ((keyboardOwnsP1() && Input.keyHeld('fly.back')) || Input.padAxis('fly.thrust', 0) < -0.15);
+        }
+        if (ship.destroyed || warp.state !== 'idle' || warp.isBusy() || braking) {
+          stopShipSystem(ramBurn);
           if (braking) pushZoneMessage(`${def.label}: PRZERWANA`, 1.1, { tone: 'warn' });
         }
       }
-      const ev = stepRamBurn(ramBurn, def, dt);
-      if (ev === RAM_BURN_END) pushZoneMessage(`${def.label}: KONIEC — REAKTOR ROZŁADOWANY`, 1.4, { tone: 'warn' });
-      else if (ev === RAM_BURN_READY) pushZoneMessage(`${def.label}: GOTOWA (F)`, 1.2, { tone: 'good' });
-      driveState.burnLimit = ramBurn.active ? def.speed : 0;
+      const ev = stepShipSystem(ramBurn, def, dt);
+      if (ev === SYS_END) {
+        const end = def.id === 'ram_burn' ? 'KONIEC — REAKTOR ROZŁADOWANY' : (def.id === 'rapid_fire' ? 'KONIEC — CHŁODZENIE' : 'KONIEC — ŁADOWANIE');
+        pushZoneMessage(`${def.label}: ${end}`, 1.4, { tone: 'warn' });
+      } else if (ev === SYS_READY) {
+        pushZoneMessage(`${def.label}: ${def.id === 'ram_burn' ? 'GOTOWA' : 'GOTOWY'} (F)`, 1.2, { tone: 'good' });
+      }
+      // Limit napędu: szarża — prędkość zrywu, zryw — limit trybu × speedMul, skok manewru — z zapasem nad skokiem
+      // (prędkość boczną prowadzi profil skoku, regulator jej nie ścina).
+      const baseLimit = (Number(driveState.speedLimit) || 0) * (Number(driveState.stanceLimit) || 1);
+      let limit = 0;
+      let brake = 0;
+      if (def.id === 'ram_burn') {
+        limit = ramBurn.active ? def.speed : 0;
+        brake = def.brake;
+      } else if (def.id === 'engine_burst') {
+        limit = ramBurn.active ? baseLimit * Math.max(1, Number(def.speedMul) || 1) : 0;
+        brake = def.brake;
+      } else if (def.id === 'maneuver' && ramBurn.action === 'jump') {
+        limit = getPlayerSpeed() + Math.abs(ramBurn.jumpBase) + ramBurn.jumpPeak + 50;
+      }
+      driveState.burnLimit = limit;
       // Po zrywie napęd wraca do limitu trybu hamowaniem zrywu (tylko dopóki okręt leci ponad limit).
-      driveState.burnBrake = !ramBurn.active && getPlayerSpeed() > driveState.speedLimit + 1 ? def.brake : 0;
+      driveState.burnBrake = !limit && brake > 0 && getPlayerSpeed() > baseLimit + 1 ? brake : 0;
+      ship.__fSysBoost = shipSystemMainBoost(ramBurn, def);
+      syncPlayerSystemModifiers();
+    }
+
+    // HUD (kokpit — pole F na szynie, src/ui/cockpitUI.js): jeden obiekt na cały bieg.
+    const hudShipSystem = { id: '', label: '', short: '', icon: '', active: false, ready: false, gauge: 1, charges: 0, max: 0, title: '' };
+    const SHIP_SYSTEM_HINTS = Object.freeze({
+      ram_burn: 'zryw na wprost do prędkości taranu; S przerywa',
+      maneuver: 'Q/E + F — skok w bok · A/D + F — obrót w tę stronę · F — obrót najkrótszą drogą (na cel T albo kursor)',
+      engine_burst: 'silniki główne ponad limit: prędkość i ciąg',
+      rapid_fire: 'broń przeładowuje się szybciej'
+    });
+    function getHudShipSystemState() {
+      const def = playerShipSystem();
+      const h = hudShipSystem;
+      if (!def) {
+        h.id = '';
+        return h;
+      }
+      if (h.id !== def.id || h.label !== def.label) {
+        h.id = def.id;
+        h.label = def.label;
+        h.short = def.short || def.label;
+        h.icon = def.icon || '➶';
+        h.title = `${def.label} [F] — ${SHIP_SYSTEM_HINTS[def.id] || def.desc || ''}`;
+      }
+      h.active = shipSystemActive(ramBurn);
+      h.ready = shipSystemReady(ramBurn, def);
+      h.gauge = shipSystemGauge(ramBurn, def);
+      h.charges = def.id === 'maneuver' ? ramBurn.charges : 0;
+      h.max = def.id === 'maneuver' ? Math.max(0, def.charges | 0) : 0;
+      return h;
     }
     function getShipStabilizerState(shipRef = ship) {
       return shipRef.__stabilizerState || (shipRef.__stabilizerState = {});
@@ -15204,9 +16098,10 @@
     // ========================================================================
     function playerWarpHullLength() {
       const h = ship?.beamHull;
-      if (h && h.srcWidth > 0 && h.scale > 0) return h.srcWidth * h.scale;
       const sc = Number(ship?.visual?.spriteScale) || 1;
-      return Number(ship?.w) > 0 ? ship.w * sc : 1800;
+      const own = (h && h.srcWidth > 0 && h.scale > 0) ? h.srcWidth * h.scale : (Number(ship?.w) > 0 ? ship.w * sc : 1800);
+      // Na pokładzie holownika (serviceTugGame.js) skacze cały zestaw — rampa wyjścia liczy dłuższy kadłub.
+      return ship?.__carriedBy ? ServiceTugGame.carriedHullLength(ship, own) : own;
     }
 
     // === SKOK GRACZA: CIAŁA, CEL, PRĘDKOŚĆ (demo „Nurt”, user 2026-10-07: planety w skoku i tempo jak w demie) ===
@@ -15463,6 +16358,11 @@
         if (!ship.command) ship.command = nav.cmd;
         const err = Math.abs(wrapAngle(bearing - ship.angle));
         const fuelOk = DevFlags.unlimitedWarp || warp.fuel >= Math.min(TRAVEL_TUNE.minFuel, warp.fuelMax);
+        // Skok pali z dysz MAIN (plazma warpa) — bez nich podróż staje (holownik).
+        if (playerDriveDown()) {
+          cancelTravel('TRAVEL: NAPĘD GŁÓWNY ZNISZCZONY — SKOK NIEMOŻLIWY');
+          return;
+        }
         if (err <= TRAVEL_TUNE.alignTolerance && Math.abs(ship.angVel) <= TRAVEL_TUNE.alignSpin
           && fuelOk && warp.state === 'idle' && !warp.exitRamp?.active) {
           ship.command = null;
@@ -15558,6 +16458,11 @@
     function startManualWarpCharge() {
       takeManualWarpCourse();
       if (warp.state !== 'idle' || warp.exitRamp?.active || !(DevFlags.unlimitedWarp || warp.fuel > 0)) return;
+      // Plazma skoku idzie z dysz MAIN (engineDamage.js): bez żadnej sprawnej — skoku nie ma.
+      if (playerDriveDown()) {
+        pushZoneMessage('WARP: NAPĘD GŁÓWNY ZNISZCZONY — WEZWIJ HOLOWNIK', 2.2, { label: 'SILNIKI', tone: 'warn' });
+        return;
+      }
       ship.command = null;
       clearPlayerAttackState();
       const leg = travelNav.target ? nextTravelLeg() : null;
@@ -15756,10 +16661,10 @@
         ship.command = result.nextCommand;
       }
       if (result.control) applyPlayerInput(ship, result.control, input);
-      if (result.ramImpulse && cmd && !cmd.ramImpulseDone && playerShipSystem()) {
+      if (result.ramImpulse && cmd && !cmd.ramImpulseDone && playerShipSystem()?.id === 'ram_burn') {
         // Rozkaz RAM kadłuba z szarżą: zamiast impulsu grawitacyjnego — zryw (gdy reaktor naładowany;
         // inaczej autopilot dalej prowadzi na cel z prędkością napędu).
-        if (tryStartPlayerRamBurn(true)) cmd.ramImpulseDone = true;
+        if (tryStartPlayerShipSystem(true)) cmd.ramImpulseDone = true;
       } else if (result.ramImpulse && cmd && !cmd.ramImpulseDone) {
         if (triggerRamImpulse(ship, result.ramImpulse, { effects: true })) {
           cmd.ramImpulseDone = true;
@@ -15787,7 +16692,8 @@
     let specialAutoFire = false;
     let rocketAutoFire = false;
     let specialMissileAutoFire = false;
-    let playerRepairActive = false;
+    // Naprawa gracza = rój dronów naprawczych (playerRepairRig — R wypuszcza i odwołuje); drony pracują = poza dokiem.
+    function isPlayerRepairActive() { return playerRepairRig.launched; }
     const playerAttackState = {
       active: false,
       target: null,
@@ -15990,8 +16896,8 @@
           return GA_HALT;
         }
       },
-      // System okrętu (szarża): krótki zryw do prędkości taranu kosztem ładunku reaktora.
-      'ship.ram': { gate: () => !stationUI.open && !!playerShipSystem(), run() { tryStartPlayerRamBurn(); } },
+      // System okrętu (F): szarża, manewr (z Q / E / A / D), zryw silników albo szybki ogień — wg kadłuba.
+      'ship.ram': { gate: () => !stationUI.open && !!playerShipSystem(), run() { tryStartPlayerShipSystem(); } },
       // Kadłub bez systemu okrętu: F — rakieta, burta z położenia kursora.
       'wpn.rocketKey': { gate: () => !stationUI.open && !warp.isBusy() && !playerShipSystem(), run() { fireRocketTowardCursor(); } },
       'tgt.drone': {
@@ -16038,10 +16944,13 @@
         }
       },
       'ship.repair': {
+        // Rój dronów naprawczych: wypuść / odwołaj (komunikaty — playerRepairRig.onMessage). Dawne prostowanie całego
+        // kadłuba pod R usunięte (decyzja 2026-10-08) — prostują drony, lokalnie.
         run(ev) {
           ev.preventDefault();
-          playerRepairActive = !playerRepairActive;
-          pushZoneMessage(playerRepairActive ? 'REPAIR: ON' : 'REPAIR: OFF', 0.8);
+          if (stationUI.open || ship.destroyed || !HullBodies.hasHull(ship)) return;
+          playerRepairRig.cargo = PLAYER.cargo;
+          playerRepairRig.toggle();
         }
       },
       'fly.driveMode': { gate: () => !CICDisplay.active, run() { cyclePlayerDriveMode(1); } },
@@ -17281,7 +18190,8 @@
       const allies = [];
       if (ship) allies.push(ship);
       for (const npc of npcs) {
-        if (!npc || npc.dead || !npc.friendly) continue;
+        // Holownik serwisowy prowadzi własna misja (ServiceTugGame) — bez rozkazów RTS.
+        if (!npc || npc.dead || !npc.friendly || npc.serviceTug) continue;
         allies.push(npc);
       }
       return allies;
@@ -17875,9 +18785,7 @@
         range = Number(Superweapon?.superweaponState?.range);
       }
       if (!Number.isFinite(range) || range <= 0) return 0;
-      const modRange = Number(ship?.modifiers?.range);
-      if (Number.isFinite(modRange) && modRange > 0) range *= modRange;
-      return range;
+      return weaponRangeFor(ship, weapon, range);
     }
 
     function getPlayerMainWeaponRanges() {
@@ -19980,7 +20888,7 @@
       baseOf: (lo, out) => mountedWeaponBase(ship, lo.hp, out),
       velAt: (x, y, out) => writePointVelocity(ship, x, y, out),
       lead: (base, target, speed, vel) => window.getLeadAim(base, target, speed, _fcLead, vel),
-      speedOf: (weapon) => (weapon.baseSpeed || 1000) * (ship.modifiers?.projectileSpeed || 1),
+      speedOf: (weapon) => (weapon.baseSpeed || 1000) * weaponSpeedMul(ship, weapon),
       rangeOf: (weapon) => getPlayerWeaponRange(weapon),
       chargeTime: chargeTimeOf,
       skip: (group, lo) => lo.weapon.id === 'hexlance_siege',
@@ -20604,6 +21512,8 @@
           applyDamageToNPC(target._realEntity || target, hit.damage, 'flak');
         }
       }
+      // Drony naprawcze strony przeciwnej w chmurze odłamków (src/game/repairSwarm.js).
+      if (RepairSwarm.out > 0) RepairSwarm.blast(b.x, b.y, radius, Number(b.damage) || 0, shooterFriendly);
 
       // 2. Rakiety i torpedy w chmurze odłamków — korzystamy z listy zagrożeń
       // zbudowanej już raz przez CIWS, zamiast ponownie skanować wszystkie pociski.
@@ -21035,6 +21945,8 @@
       // budowle w bańce gracza (kawałki doku — src/game/worldBodies.js): fala reaktora jako front ciśnienia
       onDetonate: (ev) => {
         if (ev?.blast && worldBodies.stats.live > 0) worldBodies.detonateDamage(ev.x, ev.y, Number(ev.blast.aoeRadius) || 0, Number(ev.blast.aoeDamage) || 0);
+        // fala reaktora zmiata drony naprawcze w zasięgu (bez strony)
+        if (ev?.blast && RepairSwarm.out > 0) RepairSwarm.blast(ev.x, ev.y, Number(ev.blast.aoeRadius) || 0, Number(ev.blast.aoeDamage) || 0, null);
       },
       onShake: (x, y, power) => {
         if (!ship || ship.destroyed) return;
@@ -21208,7 +22120,6 @@
     let _integrityTick = 0;
     const _dynamicDestructibles = [];
     const _hexDestructibles = [];
-    const _playerRepairBuffer = [];
     const _worldFocus = [null, null];   // punkty bańki ciał świata (gracz, P2)
 
     function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
@@ -21323,6 +22234,36 @@
     const _bulletStepStations = [];
     const _bulletStepPlatforms = [];
     const _dockBulletHit = { t: 0, x: 0, y: 0, chunk: null };
+
+    // Drony naprawcze (src/game/repairSwarm.js): pocisk strony przeciwnej na odcinku ruchu trafia drona w powietrzu —
+    // obrażenia pocisku, trafienie jak w kadłub (efekt z WeaponFx), pocisk znika. Ogień własnej strony przelatuje.
+    function repairDroneBulletHit(b) {
+      const friendly = b.owner === 'player' || b.owner === 'player2' || b.source?.friendly === true;
+      const hit = RepairSwarm.hitSegment(b.px, b.py, b.x, b.y, Number(b.r) || 0, friendly);
+      if (!hit) return false;
+      const hx = hit.x, hy = hit.y;
+      RepairSwarm.damage(hit, Number(b.damage) || 0);
+      spawnBulletImpactEffect(b, hx, hy, 0.55);
+      return true;
+    }
+
+    // Wiązka strony przeciwnej: dron na odcinku [lufa, trafienie] — wiązka kończy się na nim (obrażenia taktu w drona).
+    function clipBeamAtRepairDrone(beamHit, shooter, x0, y0, dirX, dirY, damage) {
+      const friendly = shooter === ship || shooter === player2Ship || shooter?.friendly === true;
+      const dist = Number(beamHit.dist) || 0;
+      const hit = RepairSwarm.hitSegment(x0, y0, x0 + dirX * dist, y0 + dirY * dist, 0, friendly);
+      if (!hit) return false;
+      const t = hit.t;
+      RepairSwarm.damage(hit, Number(damage) || 0);
+      beamHit.dist = dist * t;
+      beamHit.entity = null;
+      beamHit.kind = null;
+      beamHit.shard = null;
+      beamHit.shield = false;
+      beamHit.breach = false;
+      beamHit.world = null;
+      return true;
+    }
 
     function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {
       const tBulletGrid0 = performance.now();
@@ -21495,6 +22436,9 @@
         }
 
         if (b.life <= 0) { removeBulletAt(i); continue; }
+
+        // Drony naprawcze w powietrzu (src/game/repairSwarm.js): pocisk wroga trafia drona na odcinku ruchu i znika.
+        if (RepairSwarm.out > 0 && !b.pen && repairDroneBulletHit(b)) { removeBulletAt(i); continue; }
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- CIWS INTERCEPT RAKIET ---
@@ -22011,6 +22955,8 @@
         // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
         const tAiGrid0 = performance.now();
         if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
+        // Duże wraki jako przeszkody lotu NPC (src/ai/aiWreckIndex.js) — osobny indeks, nie siatka AI.
+        if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks);
         window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
         // Koordynator bitewny: sloty linii walki + flankowania dla capitali
         // (throttling wewnątrz — pełny rebuild co ~0.45s).
@@ -23088,6 +24034,8 @@
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
+      // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
+      ServiceTugGame.restorePose();
       let tPhysSection0 = performance.now();
       const tPreAiTotal0 = tPhysSection0;
       let tPreSection0 = tPhysSection0;
@@ -23432,8 +24380,8 @@
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
       updateEnginePower(dt);
-      // Szarża (F): stan zrywu i ładunek reaktora, limit napędu na czas zrywu.
-      stepPlayerRamBurn(dt);
+      // System okrętu (F): ładunek, przerwania, limit napędu na czas szarży / zrywu / skoku manewru.
+      stepPlayerShipSystem(dt);
       // Postawa okrętu (TARCZE / PRZELOT): limit i ciąg napędu.
       applyShipStance(dt);
       // Tabela lotu: mnożniki dysz kadłuba dopasowane do SHIP_FLIGHT_SPECS (liczy tylko po zmianie
@@ -23442,7 +24390,7 @@
       updateDriveTransmission(
         driveState,
         getPlayerSpeed(),
-        warp.state === 'idle' ? Math.max(input.main, input.retro || 0, ramBurn.active ? 1 : 0) : 0,
+        warp.state === 'idle' ? Math.max(input.main, input.retro || 0, playerRamBurnActive() ? 1 : 0) : 0,
         dt
       );
       if (driveState.shiftSerial !== lastDriveShiftSerial) {
@@ -23456,7 +24404,9 @@
       let stabilizerAssistLeft = 0;
       let stabilizerAssistRight = 0;
       let stabilizerMainTurning = false;
-      const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive;
+      // Akcja manewru (system F) prowadzi kurs i prędkość boczną sama — stabilizator czeka, potem trzyma nowy kurs.
+      const maneuverAction = ramBurn.action;
+      const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive && !maneuverAction;
       if (stabilizerActive) {
         // Ręczny skręt przesuwa strzałkę kursu: A / D albo lewa gałka (B3 — dawniej tylko klawisze, a ręczny
         // moment był tłumiony, więc z włączonym stabilizatorem gałka nie skręcała).
@@ -23529,12 +24479,18 @@
           physics: SHIP_PHYSICS
         });
       }
+      // Manewr (system F): dysze SIDE pełnym ciągiem — obrót: moment w kierunku przyspieszenia kątowego (ręczne A / D
+      // stłumione), skok: burta pchająca w stronę skoku, w hamowaniu druga (ręczne Q / E stłumione).
+      if (maneuverAction === 'jump') {
+        input.leftSide = 0;
+        input.rightSide = 0;
+      }
       const thrusterCommand = composeShipThrusterCommand(ship, {
         // Szarża: silniki główne na pełnym ciągu przez cały zryw.
-        main: ramBurn.active ? 1 : 0,
-        torque: stabilizerAssistTorque,
-        leftSide: stabilizerAssistLeft,
-        rightSide: stabilizerAssistRight,
+        main: playerRamBurnActive() ? 1 : 0,
+        torque: maneuverAction === 'turn' ? _manTorque : stabilizerAssistTorque,
+        leftSide: maneuverAction === 'jump' ? (_manSide > 0 ? 1 : 0) : stabilizerAssistLeft,
+        rightSide: maneuverAction === 'jump' ? (_manSide < 0 ? 1 : 0) : stabilizerAssistRight,
         // Czyste A/D obraca statek parą dysz manewrowych. Główne silniki
         // pomagają w zakręcie tylko przy ciągu naprzód — albo zawsze, gdy
         // kadłub nie ma dysz bocznych (inaczej w ogóle by nie skręcał).
@@ -23542,7 +24498,9 @@
         // (gaz skrętu ≥18%) pchały statek w bok od celu i przy dolocie krążył.
         // Przy stabilizatorze dysze główne dostają tylko jego moment — surowe
         // A/D omijało regulator.
-        mainTorque: commandHeadingActive
+        mainTorque: maneuverAction
+          ? 0
+          : commandHeadingActive
           ? (_playerCommandTurnCapability.mainAssist ? manualTorqueInput : 0)
           : stabilizerActive
             ? (stabilizerMainTurning ? stabilizerAssistTorque : 0)
@@ -23550,7 +24508,7 @@
               || (Math.abs(manualTorqueInput) > 1e-3 && playerNeedsMainEngineTurning()))
               ? manualTorqueInput
               : 0),
-        suppressManualTorque: stabilizerActive
+        suppressManualTorque: stabilizerActive || maneuverAction === 'turn'
       });
       const thrusterDrive = updateShipThrusterState(ship, dt);
       const driveMain = clamp(thrusterDrive?.main ?? input.main, 0, 1);
@@ -23588,6 +24546,12 @@
         } else {
           warp.fuel = warp.fuelMax;
         }
+      }
+      else if (warp.state === 'charging' && playerDriveDown()) {
+        // Ostatnia dysza MAIN padła w trakcie ładowania — skok przerwany (engineDamage.js).
+        warp.state = 'idle';
+        warp.charge = 0;
+        pushZoneMessage('WARP: PRZERWANY — NAPĘD GŁÓWNY ZNISZCZONY', 2.2, { label: 'SILNIKI', tone: 'warn' });
       }
       else if (warp.state === 'charging') {
         // Kurs stoi od ładowania (rulon zwija tło wokół osi skoku — decyzja usera 2026-10-03):
@@ -23664,7 +24628,9 @@
           mainForceMul: driveState.mainForceScale
             * driveState.shiftBoostMultiplier
             * (boostActive ? SHIP_PHYSICS.BOOST_MULT : 1.0)
-            * counterThrustMul,
+            * counterThrustMul
+            // Zryw silników (system F): ciąg główny × thrustMul.
+            * playerBurstThrustMul(),
           sideForceMul: driveState.sideForceScale,
           reverseInput: reverseThrustInput
         }, _p1ForceScratch);
@@ -23676,11 +24642,12 @@
 
         // Szarża (F): ciąg wzdłuż dziobu do prędkości zrywu; znoszenie bokiem gaśnie — okręt leci
         // tam, gdzie patrzy dziób (taran), a zwrotność jest przycięta niżej.
-        const burnDef = ramBurn.active ? playerShipSystem() : null;
+        const burnDef = playerRamBurnActive() ? ramBurn.def : null;
         if (burnDef) {
           const along = (ship.vel.x * forward.x) + (ship.vel.y * forward.y);
           if (along < burnDef.speed) {
-            const dv = Math.min(burnDef.accel * dt, burnDef.speed - along);
+            // Zryw ciągną silniki główne — ze zniszczonymi dyszami MAIN słabszy (engineDamage.js).
+            const dv = Math.min(burnDef.accel * mainEngineFraction(ship) * dt, burnDef.speed - along);
             ship.vel.x += forward.x * dv;
             ship.vel.y += forward.y * dv;
           }
@@ -23797,6 +24764,8 @@
         })) {
           ship.angVel = 0;
         }
+        // Manewr (system F): skok — prędkość boczna z profilu, obrót — prędkość kątowa ponad limit napędu.
+        applyPlayerManeuver(dt);
         ship.angle = wrapAngle(ship.angle + ship.angVel * dt);
 
         if (boostActive) {
@@ -24068,7 +25037,12 @@
       window.__aiGridMs = 0;
       window.__aiNpcEnemyBrainMs = 0;
       window.__aiNpcFriendlyBrainMs = 0;
+      // Holownik serwisowy (src/game/serviceTug.js): fazy i intencje lotu przed krokiem NPC, poza ładunku na pokładzie
+      // (albo holownik pod graczem w skoku) po nim — w tym samym podkroku, bez opóźnienia o krok.
+      ServiceTugGame.step(dt);
       npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runAiLogic, aiLogicDt, aiBrainPhase, aiBrainPhaseCount);
+      ServiceTugGame.afterNpc(dt);
+      releaseFinishedTugRigs();
       const npcStepMs = performance.now() - tNpcStep0;
       // Ograniczenia holownicze rozwiązujemy po integracji wszystkich ruchomych
       // ciał, ale przed pociskami i destruktorem. Dzięki temu kontakt i damage
@@ -24176,18 +25150,11 @@
       PerfHUD.addTiming('destructiblePrepTime', performance.now() - tPhysSection0);
 
       const tDestructor0 = performance.now();
-      if (playerRepairActive && (!HullBodies.hasHull(ship) || ship.destroyed || stationUI.open)) {
-        playerRepairActive = false;
-      }
-      if (playerRepairActive) {
-        _playerRepairBuffer.length = 0;
-        _playerRepairBuffer.push(ship);
-        const didRepair = HullBodies.repair(_playerRepairBuffer, dt);
-        if (!didRepair) {
-          playerRepairActive = false;
-          pushZoneMessage('REPAIR: COMPLETE', 0.8);
-        }
-      }
+      // Roje dronów naprawczych (src/game/repairSwarm.js): gracz i holownik serwisowy, czas gry — prostowanie lokalne,
+      // odrost komórek z materiału z ładowni nosiciela, gniazda broni (przed krokiem silnika: odrośnięte węzły biorą
+      // udział w kolizjach od razu).
+      stepPlayerRepairRig();
+      RepairSwarm.step(dt);
       // Ciała świata (budowle — src/game/worldBodies.js): bańka wokół gracza (kawałki budowli stają się ciałami),
       // kotwice i odłamy, fale i ciepło broni. Encje budowli idą do kroku silnika razem z kadłubami — taran to
       // zwykłe zderzenie (zgniot, pękanie belek).
@@ -24430,9 +25397,9 @@
         hp.ammo = Math.max(0, hp.ammo - 1);
       }
       const mods = ship.modifiers || {};
-      const range = (weapon.baseRange || 10000) * (mods.range || 1.0);
+      const range = weaponRangeFor(ship, weapon, weapon.baseRange || 10000);
       const damage = (weapon.baseDamage || 100) * (mods.damage || 1.0);
-      const speed = (weapon.baseSpeed || 1000) * (mods.projectileSpeed || 1.0);
+      const speed = (weapon.baseSpeed || 1000) * weaponSpeedMul(ship, weapon);
       hp.missileCd = Math.max(0.01, (weapon.cooldown || 10) * (mods.fireRate || 1.0));
       const aim = getMountedWeaponAim(ship, lo);
       const n = writeTorpedoFan(aim.angle, torpedoTubesOf(weapon), torpedoSpreadRad(weapon, torpedoAim.wide), _torpFan);
@@ -24500,9 +25467,8 @@
         const cd = Math.max(0, Number(hp.missileCd) || 0);
         const st = torpedoLauncherState(cd, hp.ammo, aim.aimErr);
         const col = TORPEDO_STATE_COLOR[st];
-        const mods = ship.modifiers || {};
-        const range = (weapon.baseRange || 10000) * (mods.range || 1.0);
-        const speed = (weapon.baseSpeed || 1000) * (mods.projectileSpeed || 1.0);
+        const range = weaponRangeFor(ship, weapon, weapon.baseRange || 10000);
+        const speed = (weapon.baseSpeed || 1000) * weaponSpeedMul(ship, weapon);
         if (!leadReady && (st === 'ready' || leadSpeed === 0)) {
           leadSpeed = speed; leadRange = range; leadReady = st === 'ready';
           leadX = _torpBase.x; leadY = _torpBase.y;
@@ -25849,7 +26815,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hexInitRetryAtMs > nowMs) && hexInitBudgetAllows()) {
@@ -25943,6 +26909,8 @@
         return interpAngleShort(from, c.angle, alpha);
       });
       window.__interpShipPose = { x: interpPos.x, y: interpPos.y, angle: interpAngle };
+      // Gracz na pokładzie holownika: holownik w pozie renderu gracza (oba z interpolacji — bez drżenia, też w skoku).
+      ServiceTugGame.beginRender(window.__interpShipPose);
       window.__interpShipTurretAngles = {
         turret1: interpTurretAngle,
         turret2: interpTurretAngle2,
@@ -26269,6 +27237,11 @@
         updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.
         syncShipModels3D({ entities: renderSeen, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
+        // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.
+        _repairDronesSync.dt = PAUSED ? 0 : frameDt;
+        _repairDronesSync.zoom = cam.zoom;
+        _repairDronesSync.time = SimClock.render;
+        syncRepairDrones3D(_repairDronesSync);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -26988,10 +27961,12 @@
         let maxRange = 0;
         const weapons = shipRef.weapons;
         const handGroup = shipRef === ship ? fcResolveInHand(fireControl, _fcHudWeapons()) : null;
+        // Zasięg każdej broni z modyfikatorami okrętu (ogólne × klasa — komputer balistyczny: działa snajperskie).
         if (handGroup) {
           const entries = _fcHudWeapons()[handGroup] || [];
           for (let i = 0; i < entries.length; i++) {
-            const range = Number(entries[i]?.weapon?.baseRange) || 0;
+            const weapon = entries[i]?.weapon;
+            const range = weaponRangeFor(shipRef, weapon, Number(weapon?.baseRange) || 0);
             if (range > maxRange) maxRange = range;
           }
         } else if (weapons) {
@@ -27004,12 +27979,12 @@
               if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
                 range = Number(Superweapon?.superweaponState?.range);
               }
-              if (Number.isFinite(range) && range > maxRange) maxRange = range;
+              if (!Number.isFinite(range)) continue;
+              range = weaponRangeFor(shipRef, weapon, range);
+              if (range > maxRange) maxRange = range;
             }
           }
         }
-        const rangeMod = Number(shipRef?.modifiers?.range);
-        if (Number.isFinite(rangeMod) && rangeMod > 0) maxRange *= rangeMod;
         const key = shipRef === ship ? 'p1' : 'p2';
         _rangeDraw[key] += (maxRange - _rangeDraw[key]) * 0.1;
 
@@ -27038,7 +28013,7 @@
         if (!weapon || weapon.category === 'beam' || handGroup === 'missile') return null;
         _fcHudBase.x = interpPos.x;
         _fcHudBase.y = interpPos.y;
-        const speed = (weapon.baseSpeed || 1000) * (ship.modifiers?.projectileSpeed || 1);
+        const speed = (weapon.baseSpeed || 1000) * weaponSpeedMul(ship, weapon);
         const lead = window.getLeadAim(_fcHudBase, target, speed, _fcHudLead, ship.vel);
         return worldToScreen(lead.x, lead.y, camRef);
       }
@@ -27273,11 +28248,27 @@
         if (isPrimary) _drawShipSystemStatus(clipX);
       }
 
-      // Szarża (F): ładunek reaktora — pasek w lewym dolnym rogu (stan grup i postawę pokazują szyna broni,
-      // sylwetka okrętu i celownik).
+      // System okrętu (F): stan — pasek w lewym dolnym rogu (stan grup i postawę pokazują szyna broni,
+      // sylwetka okrętu i celownik); manewr — ładunki i kombinacje klawiszy.
+      function _shipSystemStatusText(sys, st) {
+        const pct = (v) => `${Math.round(clamp(v, 0, 1) * 100)}%`;
+        const left = () => `${String(Math.max(0, (Number(sys.duration) || 0) - st.t).toFixed(1)).replace('.', ',')} s`;
+        switch (sys.id) {
+          case 'ram_burn': return st.active ? ' — ZRYW' : (st.charge >= 1 ? ' — GOTOWA' : ` — REAKTOR ${pct(st.charge)}`);
+          case 'engine_burst': return st.active ? ` — AKTYWNY ${left()}` : (st.charge >= 1 ? ' — GOTOWY' : ` — ŁADOWANIE ${pct(st.charge)}`);
+          case 'rapid_fire': return st.active ? ` — ×${fmtSysMul(sys.fireRateMul)} ${left()}` : (st.charge >= 1 ? ' — GOTOWY' : ` — CHŁODZENIE ${pct(st.charge)}`);
+          case 'maneuver': {
+            const max = Math.max(0, sys.charges | 0);
+            const act = st.action === 'jump' ? ' — SKOK' : (st.action === 'turn' ? ' — OBRÓT' : '');
+            return ` — ${st.charges}/${max}${act}${st.charges < max ? ` (${pct(st.regen)})` : ''}`;
+          }
+          default: return '';
+        }
+      }
       function _drawShipSystemStatus(clipX) {
         const sys = playerShipSystem();
         if (!sys) return;
+        const st = ramBurn;
         // Nad szyną broni kokpitu (pod nią pasek wchodził na pola 1–6).
         const w = 150, x = clipX + 10, y = H - 150;
         ctx.save();
@@ -27288,10 +28279,14 @@
         ctx.lineWidth = 1;
         ctx.strokeRect(x, y, w, 6);
         ctx.globalAlpha = 0.9;
-        ctx.fillStyle = ramBurn.active ? '#fff2c0' : (ramBurn.charge >= 1 ? '#7fd8ff' : '#3f6f86');
-        ctx.fillRect(x + 1, y + 1, Math.max(0, (w - 2) * clamp(ramBurn.charge, 0, 1)), 4);
+        ctx.fillStyle = shipSystemActive(st) ? '#fff2c0' : (shipSystemReady(st, sys) ? '#7fd8ff' : '#3f6f86');
+        ctx.fillRect(x + 1, y + 1, Math.max(0, (w - 2) * shipSystemGauge(st, sys)), 4);
         ctx.fillStyle = '#7fd8ff';
-        ctx.fillText(`[F] ${sys.label}${ramBurn.active ? ' — ZRYW' : (ramBurn.charge >= 1 ? ' — GOTOWA' : ` — REAKTOR ${Math.round(ramBurn.charge * 100)}%`)}`, x + w + 8, y + 7);
+        ctx.fillText(`[F] ${sys.label}${_shipSystemStatusText(sys, st)}`, x + w + 8, y + 7);
+        if (sys.id === 'maneuver') {
+          ctx.globalAlpha = 0.6;
+          ctx.fillText('Q/E+F SKOK · A/D+F OBRÓT · F NA CEL', x + w + 8, y + 21);
+        }
         ctx.restore();
       }
 
@@ -27370,6 +28365,26 @@
           : fireControl.posture === 'free' ? (SHIP_MODE_DEFS[mode]?.label || '')
           : FC_POSTURE_LABEL[fireControl.posture];
         _panelArgs.subColor = mode === 'cruise' || fireControl.posture === 'hold' ? '#ff8a94' : '#8fa3b0';
+        // Dysze MAIN na sylwetce i stan napędu (src/game/engineDamage.js — zniszczone do remontu w doku).
+        const mains = ship.visual?.mainThrusters;
+        const nEng = Array.isArray(mains) ? mains.length : 0;
+        let deadEng = 0;
+        for (let i = 0; i < nEng; i++) {
+          const t = mains[i];
+          let rec = _panelArgs.engines[i];
+          if (!rec) rec = _panelArgs.engines[i] = { x: 0, y: 0, dead: false };
+          rec.x = Number(t?.offset?.x) || 0;
+          rec.y = Number(t?.offset?.y) || 0;
+          rec.dead = t?.__destroyed === true;
+          if (rec.dead) deadEng++;
+        }
+        _panelArgs.engineCount = nEng;
+        if (deadEng > 0) {
+          // Panel jest wąski (~18 znaków) — stan napędu zamiast trybu.
+          const all = deadEng >= nEng;
+          _panelArgs.sub = all ? 'NAPĘD ZNISZCZONY' : `SILNIKI ${nEng - deadEng}/${nEng}`;
+          _panelArgs.subColor = all ? '#ff4d5e' : '#ffb86b';
+        }
         drawTurretPanel(tp.ctx, _panelArgs);
       }
 
@@ -27879,15 +28894,7 @@
       const shieldRatio = preserveDamageRatio ? clamp(prevShieldVal / prevShieldMax, 0, 1) : 1;
 
       const activeHullId = normalizePlayerHullId(hull.id);
-      const previousHardpoints = Array.isArray(Game.player?.hardpoints)
-        ? Game.player.hardpoints.map(h => ({
-          type: h.type,
-          mount: h.mount,
-          ammo: h.ammo,
-          maxAmmo: h.maxAmmo,
-          hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
-        }))
-        : [];
+      const previousHardpoints = snapshotPlayerHardpoints();
 
       ensurePlayerOwnsHull(activeHullId);
       PLAYER.activeHullId = activeHullId;
@@ -27942,14 +28949,8 @@
       ship.cargoCap = Math.max(8, Number(hull.cargoCap) || BASE_PLAYER_PROFILE.cargoCap);
       ship.hull.max = Math.max(100, Math.round(Number(hull.hullMax) || BASE_PLAYER_PROFILE.hullMax));
       ship.hull.val = Math.max(1, Math.round(ship.hull.max * hullRatio));
-      if (ship.shield) {
-        ship.shield.max = Math.max(0, Math.round(Number(hull?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax));
-        ship.shield.regenRate = Math.max(0, Number(hull?.shield?.regenRate) || BASE_PLAYER_PROFILE.shieldRegen);
-        ship.shield.regenDelay = Math.max(0.1, Number(hull?.shield?.regenDelay) || BASE_PLAYER_PROFILE.shieldDelay);
-        ship.shield.baseHardness = Math.max(0.25, Number(hull?.shield?.hardness) || 1);
-        ship.shield.hardness = ship.shield.baseHardness;
-        ship.shield.val = Math.max(0, Math.round(ship.shield.max * shieldRatio));
-      }
+      // Tarcza kadłuba × moduł (Wzmacniacz tarcz — src/data/shipModules.js); te same liczby przy zmianie modułu.
+      applyPlayerShieldStats(hull, shieldRatio, hullId);
 
       const targetFrame = SHIPS[hull.shipFrame] ? hull.shipFrame : DEFAULT_PLAYER_HULL_ID;
       Game.player.shipFrame = targetFrame;
@@ -27957,6 +28958,8 @@
       rebuildHardpointsForFrame();
       if (previousHardpoints.length) tryPreserveMounts(previousHardpoints);
       syncWeaponSystems();
+      // Moduł nowego kadłuba: premie broni (źródło 'fit' modyfikatorów okrętu).
+      applyPlayerModuleWeaponMods();
 
       if (syncVisuals) {
         ship.capitalProfile = ship.capitalProfile || {};
@@ -28473,14 +29476,19 @@
       openDockGate: (id, dirX, dirY) => storyDryDockOpenGate(id, dirX, dirY),
       isHulk: (e) => isBridgeHulk(e),
       bridgeAimPoint: (e, out) => getBridgeAimPoint(e, out, { mode: 'center' }),
-      // Naprawa Atlasa przed odwetem (misja 2): dziś naprawa własna (R). AGENT: okręt wsparcia z rojem dronów
-      // naprawczych — podmienić te dwie zależności.
+      // Naprawa Atlasa przed odwetem (misja 2): rój dronów naprawczych Atlasa (R — playerRepairRig) wypuszczony
+      // z zależności; „naprawia” = drony gracza albo drony innego nosiciela (holownik serwisowy) pracują przy Atlasie.
       repairPlayer: () => {
         if (!HullBodies.hasHull(ship) || ship.destroyed) return false;
-        playerRepairActive = true;
-        return true;
+        playerRepairRig.cargo = PLAYER.cargo;
+        return playerRepairRig.launched || playerRepairRig.launch();
       },
-      repairActive: () => playerRepairActive,
+      repairActive: () => playerRepairRig.launched || !!RepairSwarm.rigRepairing(ship),
+      // Holownik serwisowy (src/game/serviceTug.js) dla skryptu misji: przylot przy Atlasie, naprawa rojem holownika;
+      // bez „paki” (carry: false — misja nie odlatuje do K-7 w środku akcji), chyba że skrypt poda carry: true.
+      // Zwraca wynik wezwania ({ planned, eta } | { existing } | null). Aktywny = w drodze, przy Atlasie albo z nim.
+      callRepairShip: (opts = {}) => callServiceTug({ target: ship, carry: false, ...opts }),
+      repairShipActive: () => ServiceTugGame.busy(ship) || serviceTugBusy(),
       dockBreak: (id) => storyDryDockBreak(id),
       dockBrokenChunks: () => pirateDryDockBrokenChunks(),
       // Mgła wojny (src/game/fogOfWar.js przez SensorSystem): sygnatury masy i rozpoznanie.
@@ -28766,6 +29774,7 @@
       // Kampania: Atlas w doku K-7, intro (po locie w menu — od razu otwarcie dachu; świat stoi).
       if (storyCampaign) {
         equipCampaignLoadout();
+        grantCampaignRepairCargo();
         StoryGame.beginNewGame({ tutorial: StoryOptions.tutorial, menuPose: storyMenuPose, introFromMenu: storyFlight, startPhase: storyDevPhase });
       }
       requestAnimationFrame(loop);

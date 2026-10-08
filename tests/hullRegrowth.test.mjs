@@ -12,6 +12,8 @@ const { createHullMountSet, beginHullMountBind, bindHullMount, refreshHullMountS
 const { computeStoreInertia } = await import('../src/game/beamBody3D.js');
 const { hullImage } = await import('./helpers/reactorHulls.mjs');
 const { readIndexHtml, loadIndexFunction } = await import('./helpers/indexSource.mjs');
+const ED = await import('../src/game/engineDamage.js');
+const HPS = await import('../src/game/hardpointService.js');
 const D = HullBodies.engine;
 
 // Płyta w × h px; `notch` wycina prawą górną ćwiartkę obrazu (kształt nie jest prostokątem).
@@ -539,6 +541,23 @@ test('naprawa w doku: kadłub odrasta do szablonu, punkty pełne — sufit konst
     applyDamageToPlayer: (amount) => { ship.hull.val = Math.max(0, ship.hull.val - amount); },
     applyDamageToNPC: () => {}, isBridgeHulk: () => false, NPC_CRUSH_DEATH_RATIO: HULL_INTEGRITY.npcCrushDeathRatio
   };
+  // Remont w doku zdejmuje też zatrzaski zniszczonych dysz MAIN (src/game/engineDamage.js; ten kadłub bez dysz).
+  Object.assign(scope, {
+    mainEngineCounts: ED.mainEngineCounts, repairEngines: ED.repairEngines, ENGINE_REPAIR: ED.ENGINE_REPAIR,
+    _engineCountsScratch: { live: 0, total: 0 }
+  });
+  // Remont wymienia też łaty polowe roju dronów (src/game/repairRig.js; tu kadłub bez łat — koszt 0).
+  scope.repairPatchCost = loadIndexFunction(html, 'function repairPatchCost(patches) {', 'repairPatchCost', scope);
+  // Remont przywraca też zniszczone gniazda broni gracza (src/game/hardpointService.js; tu statek bez gniazd —
+  // koszt 0; gniazda: tests/playerFitSave.test.mjs).
+  Object.assign(scope, {
+    HARDPOINT_SERVICE: HPS.HARDPOINT_SERVICE,
+    countDestroyedHardpoints: HPS.countDestroyedHardpoints,
+    restoreDestroyedHardpoints: HPS.restoreDestroyedHardpoints
+  });
+  scope.dockRemontShip = loadIndexFunction(html, 'function dockRemontShip(target) {', 'dockRemontShip', scope);
+  // Wycena remontu — wspólna dla hangaru, WYPOSAŻENIA i handleRepair.
+  scope.playerDockRepairQuote = loadIndexFunction(html, 'function playerDockRepairQuote() {', 'playerDockRepairQuote', scope);
   scope.getHullStructuralState = loadIndexFunction(html, 'function getHullStructuralState(entity) {', 'getHullStructuralState', scope);
   const enforce = loadIndexFunction(html, 'function enforceNpcHexIntegrityBalance() {', 'enforceNpcHexIntegrityBalance', scope);
   const handleRepair = loadIndexFunction(html, 'function handleRepair() {', 'handleRepair', scope);

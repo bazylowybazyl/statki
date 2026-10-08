@@ -64,6 +64,14 @@ test('weapon fx keys match the ones WeaponFx asks for; every weapon with a recip
   assert.equal(twin.m.length, MASTER_WEAPONS.special_yamato_l.barrelsPerShot);
   assert.equal(twin.r, Turret2D.resolveSpec('special_yamato_cannon', 'plasma').r);
   assert.equal(twin.m[0][1], -twin.m[1][1], 'lufy salwy symetrycznie względem osi wieży');
+  // Lanca (klasa snajperska, 2026-10-08): własny klucz i sylwetka z długą lufą; Helios Lance zostaje Heliosem.
+  assert.equal(normalizeWeaponFxKey('lance_rail_m'), 'lance');
+  assert.equal(normalizeWeaponFxKey('lance_rail_l'), 'lance');
+  assert.equal(normalizeWeaponFxKey('helios_lance_l'), 'helios');
+  const lance = Turret2D.resolveSpec('lance_rail_l', 'rail');
+  assert.equal(Turret2D.resolveSpec('lance_rail_m', 'rail'), lance);
+  assert.deepEqual(lance.m, [[48, 0]]);
+  assert.ok(lance.m[0][0] > Turret2D.resolveSpec('tempest_ion_l', 'rail').m[0][0], 'lufa dłuższa niż u Tempesta');
   const { WEAPON_FX_IDS } = await import('../src/3d/weapons/weaponFxTable.js');
   for (const id of WEAPON_FX_IDS) assert.ok(normalizeWeaponFxKey(id), `${id}: bez klucza wieżyczki`);
 });

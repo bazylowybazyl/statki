@@ -82,6 +82,43 @@ export const SHIP_EDITOR_DEFAULTS = {
       sideOnly: true,
       engines: { main: [], side: LONG_HAUL_SIDE }
     },
+    // Holownik serwisowy (src/game/serviceTug.js; sprite zastępczy = przebarwiony heavy_freighter_empty.png, px płótna
+    // 1774 × 887 od środka): 4 bębny dysz MAIN na rufie (ciąg i plazma skoku z ładunkiem), 4 dysze SIDE poza pokładem
+    // (trzymanie pozycji, wsuwanie się pod statek), pomarańczowe koguty i światła obrysu — jednostka serwisowa.
+    // Bez broni i mostka (cywilny).
+    service_tug: {
+      label: 'Holownik serwisowy',
+      frontAxis: '+X',
+      hardpoints: [],
+      cores: [],
+      engines: {
+        main: [
+          { id: 'tug_main_1', x: -822, y: -181, deg: 90, offsetX: 0, offsetY: 0 },
+          { id: 'tug_main_2', x: -822, y: -71, deg: 90, offsetX: 0, offsetY: 0 },
+          { id: 'tug_main_3', x: -822, y: 40, deg: 90, offsetX: 0, offsetY: 0 },
+          { id: 'tug_main_4', x: -822, y: 148, deg: 90, offsetX: 0, offsetY: 0 }
+        ],
+        side: [
+          civilSide('side_front_left', 360, -232, 'upper_left'),
+          civilSide('side_front_right', 360, 194, 'upper_right'),
+          civilSide('side_rear_left', -560, -282, 'lower_left'),
+          civilSide('side_rear_right', -560, 250, 'lower_right')
+        ]
+      },
+      lights: {
+        position: [
+          { id: 'tug_nav_bow', x: 850, y: -4, color: '#ffffff', power: 0.8, radius: 4, sequenceGroup: 'edge' },
+          { id: 'tug_nav_port', x: 160, y: -248, color: '#ff2b2b', power: 0.8, radius: 4, sequenceGroup: 'edge' },
+          { id: 'tug_nav_stbd', x: 160, y: 210, color: '#2bff6a', power: 0.8, radius: 4, sequenceGroup: 'edge' },
+          { id: 'tug_beacon_fl', x: -440, y: -262, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' },
+          { id: 'tug_beacon_fr', x: -440, y: 230, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' },
+          { id: 'tug_beacon_al', x: 190, y: -200, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' },
+          { id: 'tug_beacon_ar', x: 190, y: 220, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' }
+        ],
+        road: [],
+        flood: []
+      }
+    },
     megafreighter_front: {
       label: 'Megafrachtowiec — lokomotywa',
       frontAxis: '+X',

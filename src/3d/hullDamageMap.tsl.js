@@ -67,9 +67,15 @@ export const DMG_HEAT_EPS = 0.02;
 export const DMG_JOB_VEC4 = 4;
 /**
  * vec4 stempla: A (u, v, promień / H świata, otwór), B (żar, osmalenie, brzeg, jony), C (kierunek uv,
- * wydłużenie, ziarno), D (promień prawdziwej dziury / H świata — 0 = bez dziury, 0, 0, 0).
+ * wydłużenie, ziarno), D (promień prawdziwej dziury / H świata — 0 = bez dziury, pół boku ŁATY / H — 0 = zwykły
+ * stempel, żar spawu łaty, 0).
+ * ŁATA (D.y > 0, rój dronów naprawczych — HullDamageMap.patchCell): kwadrat komórki o pół boku D.y wokół (A.x, A.y)
+ * czyści ranę (osmalenie, brzeg, otwór, lej, jony) — odbudowana komórka to nowa blacha; żar = D.z w pasie ~1,5 teksela
+ * przy krawędzi kwadratu (świeży spaw stygnie jak rana), wewnątrz 0.
  */
 export const DMG_STAMP_VEC4 = 4;
+/** Pas żaru spawu łaty przy krawędzi kwadratu [teksele slotu]. */
+export const DMG_PATCH_SEAM_TEXELS = 1.5;
 
 /** Flagi zadania. */
 export const DMG_FLAG_CLEAR = 1;
@@ -147,6 +153,16 @@ export function damageHotSeconds(h0 = DMG_HEAT_MAX, eps = DMG_HEAT_EPS) {
 export function damageStampCpu(T, A, B, C, cx, cy, aspect, D = null, slotH = 128) {
   const dx = (cx - A[0]) * aspect;
   const dy = cy - A[1];
+  if (D && D[1] > 0) {
+    // Łata: kwadrat komórki czyści ranę, żar spawu w pasie przy krawędzi.
+    const h = D[1];
+    if (Math.abs(dx) < h && Math.abs(dy) < h) {
+      T.scorch = 0; T.rim = 0; T.cut = 0; T.crater = 0; T.ion = 0;
+      const edge = (h - Math.max(Math.abs(dx), Math.abs(dy))) * slotH;
+      T.heat = Math.min(1, Math.max(0, 1 - edge / DMG_PATCH_SEAM_TEXELS)) * (D[2] || 0);
+    }
+    return T;
+  }
   const el = Math.max(C[2], 1);
   const reach = A[2] * DMG_STAMP_REACH * el;
   if (!(Math.abs(dx) < reach && Math.abs(dy) < reach)) return T;
@@ -267,13 +283,21 @@ export function createHullDamageKernel(pool, jobs, stamps, U, jobCap) {
       const k = dmgStamp.mul(uint(DMG_STAMP_VEC4)).toVar();
       const A = stamps.element(k).toVar();
       const C = stamps.element(k.add(uint(2))).toVar();
+      const Dv = stamps.element(k.add(uint(3))).toVar();
       const dx = cx.sub(A.x).mul(aspect).toVar();
       const dy = cy.sub(A.y).toVar();
       const reach = A.z.mul(DMG_STAMP_REACH).mul(max(C.z, 1.0));
-      If(abs(dx).lessThan(reach).and(abs(dy).lessThan(reach)), () => {
+      If(Dv.y.greaterThan(0.0), () => {
+        // Łata (rój dronów naprawczych): kwadrat komórki o pół boku D.y — nowa blacha bez rany, świeży spaw
+        // (żar D.z) w pasie przy krawędzi.
+        If(abs(dx).lessThan(Dv.y).and(abs(dy).lessThan(Dv.y)), () => {
+          scorch.assign(0.0); rim.assign(0.0); cut.assign(0.0); crater.assign(0.0); ion.assign(0.0);
+          const edge = Dv.y.sub(max(abs(dx), abs(dy))).mul(slotH);
+          heat.assign(clamp(float(1.0).sub(edge.div(DMG_PATCH_SEAM_TEXELS)), 0.0, 1.0).mul(Dv.z));
+        });
+      }).ElseIf(abs(dx).lessThan(reach).and(abs(dy).lessThan(reach)), () => {
         // Prawdziwa dziura (zadanie 25c): koło o promieniu zasięgu zabitych węzłów (bez wydłużenia i
         // falowania obrysu — dziura w belkach), brzeg jeden teksel. Tu i tylko tu materiał maluje lej.
-        const Dv = stamps.element(k.add(uint(3))).toVar();
         If(Dv.x.greaterThan(0.0), () => {
           crater.assign(max(crater, clamp(Dv.x.sub(length(vec2(dx, dy))).mul(slotH).add(0.5), 0.0, 1.0)));
         });

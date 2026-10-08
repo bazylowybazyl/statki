@@ -40,14 +40,16 @@ export function hullIntegrityCapFrac(ratio, exponent) {
  * Odrost konstrukcji (udział żywych węzłów ratioBefore → ratioAfter): punkty kadłuba rosną o RÓŻNICĘ SUFITÓW
  * (maks. HP × (po^k − przed^k)), najwyżej do maks. HP. Okręt, który miał punkty pod sufitem (trafienia bez utraty
  * węzłów), zostaje pod nim o tyle samo; zniszczony (zero punktów, wrak, martwy) nie ożywa. Zwraca przyrost punktów.
- * Gracz i P2: `hull.val`, NPC: `hp`.
+ * Gracz i P2: `hull.val`, NPC: `hp`. `worth` — ile wart jest odrośnięty węzeł (łata polowa roju dronów: patchHpMul)
+ * — przyrost × worth.
  */
-export function raiseHullHpForRegrowth(entity, ratioBefore, ratioAfter) {
+export function raiseHullHpForRegrowth(entity, ratioBefore, ratioAfter, worth = 1) {
   if (!entity || entity.dead || entity.destroyed || entity.isWreck) return 0;
   const pts = hullPoints(entity);
   if (!pts) return 0;
   const k = hullIntegrityExponent(entity);
-  const gain = pts.max * (hullIntegrityCapFrac(ratioAfter, k) - hullIntegrityCapFrac(ratioBefore, k));
+  const w = Number.isFinite(worth) ? clamp01(worth) : 1;
+  const gain = pts.max * (hullIntegrityCapFrac(ratioAfter, k) - hullIntegrityCapFrac(ratioBefore, k)) * w;
   if (!(gain > 0)) return 0;
   if (pts.player) {
     const val = Number(entity.hull.val) || 0;

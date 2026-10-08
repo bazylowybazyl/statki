@@ -829,7 +829,7 @@ export class HUDSystem {
                 }
             }
             if (!station) return;
-            const rawTab = String(payload || 'upgrades').toLowerCase();
+            const rawTab = String(payload || 'hangar').toLowerCase();
             const tabId = rawTab === 'market' ? 'trade' : rawTab;
             if (window.stationUI) {
                 window.stationUI.tab = tabId;
@@ -1060,7 +1060,6 @@ export class HUDSystem {
                 content = `
                     <div class="term-text" style="color: #4ade80;">> CONNECTION ESTABLISHED. AVAILABLE SERVICES:</div>
                     <div class="term-grid">
-                        <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'upgrades')">UPGRADES</button>
                         <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'trade')">MARKET</button>
                         <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'hangar')">HANGAR</button>
                         <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'mechanic')">MECHANIC</button>

@@ -246,7 +246,12 @@ export const HULL_RENDER_PROFILES = {
   repair_drone: { id: 'repair_drone', length: 160, radius: 60 },
   // Jak statek ratunkowy z Z11 (rescue_ship), którego zastępuje: kadłub bez
   // masztu 1179 × 410 px płótna 1774 → w grze ~160 × 55.
-  distress_beacon_ship: { id: 'distress_beacon_ship', length: 400, radius: 150 }
+  distress_beacon_ship: { id: 'distress_beacon_ship', length: 400, radius: 150 },
+  // Holownik serwisowy (2026-10-08, src/game/serviceTug.js): naprawia rojem dronów i zabiera „na pakę” statek bez
+  // napędu — pokład (ładownia sprite'a, 648 × 344 px płótna 1774) mieści Atlasa (1800 × ~600 j.): 8300 × 0,6 =
+  // 4980 j. kadłuba, ~1820 × 970 j. pokładu. Za duży na stanowiska portu (berthClassForHull → null) — przy K-7 stoi
+  // przed bramą, ładunek zjeżdża pasem do stanowiska. Sprite zastępczy: przebarwiony heavy_freighter_empty.png.
+  service_tug: { id: 'service_tug', length: 8300, radius: 1520 }
 };
 
 export const HULL_RENDER_PROFILE_ALIASES = {

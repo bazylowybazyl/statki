@@ -14,8 +14,8 @@ import {
 const FAMILIES = new Set(['tempest', 'vulcan', 'autocannon', 'helios', 'armata', 'goliath', 'yamato', 'plasmaGatling',
   'hexlance', 'mjolnir', 'valkyrie', 'beamC', 'beamP', 'laserPD', 'ciws', 'flak']);
 
-test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej mają wpis w tabeli efektów, rodziny z listy receptur', () => {
-  assert.equal(WEAPON_FX_IDS.length, 30);
+test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L mają wpis w tabeli efektów, rodziny z listy receptur', () => {
+  assert.equal(WEAPON_FX_IDS.length, 32);
   for (const id of WEAPON_FX_IDS) {
     assert.ok(MASTER_WEAPONS[id], `${id}: brak w MASTER_WEAPONS`);
     assert.ok(FAMILIES.has(WEAPON_FX[id].fx), `${id}: nieznana rodzina ${WEAPON_FX[id].fx}`);
@@ -66,6 +66,23 @@ test('warianty rozmiarowe broni specjalnej: S / M / L na rodzinach Valkyrie i Ya
   // W każdej klasie rozmiaru jest co najmniej jedna broń special.
   const sizes = new Set(Object.values(MASTER_WEAPONS).filter((d) => d.mountType === 'special').map((d) => d.size));
   assert.deepEqual(['S', 'M', 'L', 'Capital'].filter((s) => !sizes.has(s)), []);
+});
+
+// Klasa dział snajperskich (2026-10-08, docs/PLAN-fitowanie.md § 4.3.1): działa main Lanca M / L — kategoria rail
+// (ekonomia, kratery), obraz z receptury Valkyrie, bez ładowania.
+test('Lanca M / L: działa main klasy snajperskiej na recepturze Valkyrie, bez ładowania', () => {
+  for (const [id, size] of [['lance_rail_m', 'M'], ['lance_rail_l', 'L']]) {
+    const def = MASTER_WEAPONS[id];
+    assert.ok(def, id);
+    assert.equal(def.mountType, 'main', id);
+    assert.equal(def.category, 'rail', `${id}: kategoria rail (nie nowa)`);
+    assert.equal(def.size, size, id);
+    assert.equal(def.weaponClass, 'sniper', id);
+    assert.equal(WEAPON_FX[id].fx, 'valkyrie', id);
+    assert.equal(WEAPON_FX[id].charge, 0, `${id}: bez ładowania`);
+    assert.equal(def.chargeTime, undefined, `${id}: bez ładowania w danych`);
+    assert.equal(projectileFamilyFor({ vfxKey: id, type: def.category }), 'valkyrie', id);
+  }
 });
 
 test('pocisk spoza tabeli: rodzina po type (PROJEKT-BRONI §1.2 F)', () => {

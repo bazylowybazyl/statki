@@ -24,7 +24,8 @@ const W = (fx, pattern, extra = null) => Object.freeze({ fx, pattern, charge: 0,
 
 /**
  * 27 broni z dema (działa Capital / L / M / S, wiązki, obrona punktowa) + 3 warianty rozmiarowe
- * broni specjalnej (Kolec S, Oszczep M, Yamato L — rodziny rodziców).
+ * broni specjalnej (Kolec S, Oszczep M, Yamato L — rodziny rodziców) + 2 działa main klasy
+ * snajperskiej (Lanca M / L, 2026-10-08 — receptura Valkyrie, bez ładowania).
  */
 export const WEAPON_FX = Object.freeze({
   // Capital / specjalne
@@ -43,7 +44,9 @@ export const WEAPON_FX = Object.freeze({
   tempest_ion_l: W('tempest', 'single', { short: 'Tempest L' }),
   helios_lance_l: W('helios', 'alt', { short: 'Helios Lance' }),
   heavy_autocannon_l: W('autocannon', 'single', { short: 'Autokanon L' }),
+  lance_rail_l: W('valkyrie', 'single', { short: 'Lanca L' }),
   // M
+  lance_rail_m: W('valkyrie', 'single', { short: 'Lanca' }),
   railgun_mk1: W('tempest', 'single', { short: 'Tempest Mk I' }),
   railgun_mk2: W('tempest', 'twin', { short: 'Tempest Mk II' }),
   helios_laser: W('helios', 'alt', { short: 'Helios' }),

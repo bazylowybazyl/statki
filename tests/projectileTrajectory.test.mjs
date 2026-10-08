@@ -43,15 +43,16 @@ test('solid hulls stop every projectile except weapons with penDepth (Mjolnir, V
   assert.equal(shouldRemoveProjectileAfterImpact(yamato, true), true);
 
   const normal = { nx: -1, ny: 0 };
-  // Mjolnir, Valkyrie i jej warianty rozmiarowe (Kolec S, Oszczep M — broń special mniejszych klas).
-  const piercing = new Set(['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_s', 'special_valkyrie_m']);
+  // Mjolnir, Valkyrie i jej warianty rozmiarowe (Kolec S, Oszczep M — broń special mniejszych klas) oraz
+  // Lanca M / L (działa main klasy snajperskiej, 2026-10-08 — płytkie przebicie jak Valkyrie).
+  const piercing = new Set(['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_s', 'special_valkyrie_m', 'lance_rail_m', 'lance_rail_l']);
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     if (def.category === 'beam' || def.category === 'rocket' || def.category === 'torpedo') continue;
     const b = { serial: 1, vx: 1000, vy: 0, damage: def.baseDamage };
     const decision = resolveHullHit(b, def, normal, { x: 1000, y: 0 }, 0, null, 0, 0);
     const passes = penetrationDepthOf(def) > 0;
     assert.equal(decision, passes ? HIT_PENETRATE : HIT_STOP, `${id}: ${decision}`);
-    assert.equal(passes, piercing.has(id), `${id}: przebija tylko Mjolnir i rodzina Valkyrie`);
+    assert.equal(passes, piercing.has(id), `${id}: przebija tylko Mjolnir, rodzina Valkyrie i Lanca`);
   }
 });
 

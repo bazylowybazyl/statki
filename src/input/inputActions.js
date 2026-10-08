@@ -47,7 +47,7 @@ export const INPUT_ACTIONS = Object.freeze([
   { id: 'fly.stabilizer', name: 'Stabilizator kursu', cat: 'lot', kind: 'edge', ctx: G },
   { id: 'nav.warp', name: 'Warp', cat: 'lot', kind: 'edge', ctx: GC },
   // --- okręt i tryby ---
-  { id: 'ship.ram', name: 'Szarża (system okrętu)', cat: 'okret', kind: 'edge', ctx: G },
+  { id: 'ship.ram', name: 'System okrętu: szarża / manewr (z Q, E, A, D) / zryw / szybki ogień', cat: 'okret', kind: 'edge', ctx: G },
   { id: 'wpn.rocketKey', name: 'Rakieta (kadłub bez systemu okrętu)', cat: 'bron', kind: 'edge', ctx: G, shares: 'ship.ram' },
   { id: 'ship.cloak', name: 'Maskowanie', cat: 'okret', kind: 'edge', ctx: G },
   { id: 'ship.lights', name: 'Reflektory', cat: 'okret', kind: 'edge', ctx: G },

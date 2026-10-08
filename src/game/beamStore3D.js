@@ -15,11 +15,14 @@
 // tylko do rysowania, fizyka ich nie czyta.
 // temp: temperatura węzła z broni cieplnej (beamPhysicalWeapons3D: 1 = mięknie, 2 = topnienie) —
 // solver jej nie czyta; osłabienie belek liczy moduł broni wprost na `brk` / `stiffness`.
+// patch: ŁATA polowa (1 = komórka odbudowana przez rój dronów naprawczych z materiału z ładowni — src/game/repairRig.js):
+// słabsza (sufit HP węzła × łata), rysuje się podkładem ze spawami (beamHullSkin.js → hexShips3D.tsl.js) aż do remontu
+// w doku (HullBodies.restoreHull). Fizyka jej nie czyta.
 const NODE_F64 = ['x', 'y', 'z', 'ox', 'oy', 'oz', 'px', 'py', 'pz', 'vx', 'vy', 'vz',
   'mass', 'invMass', 'hp', 'maxHp', 'coverage', 'r', 'g', 'b', 'crushDepth', 'heat', 'heatStamp', 'temp'];
 const NODE_I32 = ['ix', 'iy', 'iz', 'depth', 'beamCount', 'localBeamCount', 'platingCount',
   'quiet', 'solveStamp', 'outerStamp', 'islandStamp', 'massStamp', 'crushStamp', 'hashNext'];
-const NODE_U8 = ['active', 'surface', 'act', 'skinDirty'];
+const NODE_U8 = ['active', 'surface', 'act', 'skinDirty', 'patch'];
 // Dawne nazwy pól wewnętrznych obiektu węzła → pola magazynu.
 const NODE_ALIASES = {
   _act: 'act', _quiet: 'quiet', _solveStamp: 'solveStamp', _outerStamp: 'outerStamp',
@@ -60,7 +63,7 @@ export class BeamNodeStore {
     this.beamCount = i32(); this.localBeamCount = i32(); this.platingCount = i32();
     this.quiet = i32(); this.solveStamp = i32(); this.outerStamp = i32(); this.islandStamp = i32();
     this.massStamp = i32(); this.crushStamp = i32(); this.hashNext = i32().fill(-1);
-    this.active = u8(); this.surface = u8(); this.act = u8(); this.skinDirty = u8();
+    this.active = u8(); this.surface = u8(); this.act = u8(); this.skinDirty = u8(); this.patch = u8();
     // Lista belek węzła i: adj[adjStart[i] .. adjStart[i + 1]) — indeksy belek.
     this.adjStart = new Int32Array(count + 1);
     this.adj = new Int32Array(0);

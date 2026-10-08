@@ -71,6 +71,8 @@ export function createStoryNpcControl({ gameTime, wake }) {
       if (!npc || npc.dead || !point) return;
       const x = point.x, y = point.y;
       npc.combatDisabled = false;
+      // Ucieczka: zryw silników (system F, src/ai/npcShipSystem.js) wolno odpalić mimo wroga w zasięgu.
+      npc.__fleeing = true;
       npc.ai = (dt) => {
         if (npc.dead) return;
         if (usesShipFlightModel(npc)) setFlightArrive(npc, x, y, { arrival: 0, speedMode: 'combat', faceNear: 0, faceFar: 0 });

@@ -36,7 +36,8 @@ const TRAFFIC_LABELS = {
   pirate_raider: ['Rajder piratów', 'Rajder'],
   smuggler: ['Przemytnik', 'Przemytnik'],
   repair_drone: ['Dron naprawczy', 'Dron naprawczy'],
-  distress_beacon_ship: ['Statek z boją alarmową', 'Boja alarmowa']
+  distress_beacon_ship: ['Statek z boją alarmową', 'Boja alarmowa'],
+  service_tug: ['Holownik serwisowy', 'Holownik serwisowy']
 };
 
 // Ścieżki PNG w repo (TRAFFIC_HULLS ma URL-e modułu — tu ścieżki do testów, dema i generatora).
@@ -56,7 +57,8 @@ const TRAFFIC_SPRITES = {
   pirate_raider: 'assets/pirate_raider.png',
   smuggler: 'assets/smuggler.png',
   repair_drone: 'assets/repair_drone.png',
-  distress_beacon_ship: 'assets/distress_beacon_ship.png'
+  distress_beacon_ship: 'assets/distress_beacon_ship.png',
+  service_tug: 'assets/ships/service_tug.png'
 };
 
 const PIRATE_TRAFFIC = new Set(['pirate_raider', 'smuggler']);

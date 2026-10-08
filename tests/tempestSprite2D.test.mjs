@@ -76,6 +76,19 @@ test('Tempest sprites retain all variant scales, mounted aim, muzzles and fallba
         assert.ok(x >= 0 && y >= 0 && x + w <= 1254 && y + h <= 1254, `${id}: valid atlas crop`);
       }
     }
+    // Lanca (klasa snajperska, 2026-10-08): atlas SINGLE bez trzeciego obrazu, jedna dłuższa lufa, wylot (48, 0).
+    for (const [id, scale] of [['lance_rail_m', .76], ['lance_rail_l', 1.02]]) {
+      equip(id);
+      assert.equal(draw(), 1, id);
+      assert.equal(fills, 0, `${id}: sprite, bez sylwetki proceduralnej`);
+      assert.equal(draws.length, 2, `${id}: korpus i jedna lufa`);
+      const [a, b] = draws[0].matrix;
+      assert.ok(Math.abs(Math.hypot(a, b) - scale) < 1e-9, `${id}: rozmiar`);
+      assert.ok(draws[1].args[7] > 29 * 1.4, `${id}: lufa dłuższa niż u Tempesta`);
+      const p = tip(draws[1]);
+      const muzzle = Turret2D.resolveMuzzle(Turret2D.findTurretKey(p.x, p.y, 'lance'));
+      assert.ok(Math.hypot(muzzle.x - p.x, muzzle.y - p.y) < 1e-6, `${id}: lufa i wylot efektu w tym samym punkcie`);
+    }
     assert.equal(images.length, 2, 'all sizes reuse the two atlases');
 
     equip('railgun_mk2');

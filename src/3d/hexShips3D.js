@@ -1063,6 +1063,9 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       uDmgSlot: { value: new THREE.Vector4(0, 1, 1, 0) },
       uDmgWorld: { value: new THREE.Vector2(1, 1) },
       uGridOwner: { value: 0 },
+      // Siatka komórek kadłuba w uv sprite'a (komórki wzdłuż u, wzdłuż v; 0 — nieznana): płyty łat polowych roju
+      // dronów naprawczych wyrównane do komórek (hexShips3D.tsl.js — wygląd łaty).
+      uCellGrid: { value: new THREE.Vector2(0, 0) },
       // Warp „Nurt” (zadanie 22): odsłanianie, szew i żar brzegu — wartości pisze sterownik
       // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
       uWarpA: warpHullHolder(entity, 'a'),
@@ -1650,6 +1653,7 @@ function createBeamSkinMesh(entity) {
   // Rozmiar kadłuba w świecie od razu (nie dopiero z slotem mapy ran): skala szumu poszarpanego brzegu
   // dziur (hullTearFray) i rany; HullDamageMap.bind wpisuje tę samą wartość.
   material.uniforms.uDmgWorld.value.set(hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
+  if (hull.pixelPitch > 0) material.uniforms.uCellGrid.value.set(hull.srcWidth / hull.pixelPitch, hull.srcHeight / hull.pixelPitch);
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;
@@ -1827,7 +1831,8 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   HullDamageMap.bind(hull.dmgKey, uniforms);
   uniforms.uRotation.value = theta;
 
-  mesh.position.set(originX, originY, 0);
+  // __skinZ: kadłub pod innym w passie ortho (holownik serwisowy pod statkiem na pokładzie — serviceTugGame.js).
+  mesh.position.set(originX, originY, Number(entity.__skinZ) || 0);
   mesh.rotation.set(0, 0, theta);
   mesh.scale.set(1, 1, 1);
   mesh.visible = data.visibleQuads > 0;

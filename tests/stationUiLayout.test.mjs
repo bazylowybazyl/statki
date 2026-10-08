@@ -77,20 +77,23 @@ for (const cssFile of cssFiles) {
 
 const indexHtml = readFileSync(join(root, 'index.html'), 'utf8');
 assert.ok(
-  indexHtml.includes("metaEl.className = 'hp-row-meta'"),
-  'mechanic hardpoint rows must render a dedicated stats cell after the weapon name'
-);
-assert.ok(
   indexHtml.includes("const hpSize = resolvedKey === 'atlas'"),
   'Atlas editor hardpoints must display as Capital slots even when legacy markers carry a smaller size'
 );
+// Zakładka WYPOSAŻENIE (dawny MECHANIK, 2026-10-08): karty konfiguracji i refit ręczny (src/ui/station/fittingPanel.js)
+// zamiast list magazynu i gniazd.
 assert.ok(
-  indexHtml.includes('function mechanicHardpointGlyph(hp)'),
-  'mechanic hardpoint rows need a non-empty fallback glyph for empty or iconless slots'
+  indexHtml.includes('fittingPanel = createFittingPanel(pane, buildFittingApi());'),
+  'the WYPOSAŻENIE tab must mount the fitting panel (configuration cards + manual refit)'
+);
+const fittingCss = readFileSync(join(root, 'assets/css/station-fitting.css'), 'utf8');
+assert.ok(
+  fittingCss.includes('#cockpit-ui-host .cockpit-station-slot #tab-mechanic-html.fit-mode.active'),
+  'the fitting panel must override the station card grid inside the cockpit tablet'
 );
 assert.ok(
-  indexHtml.includes("mountedBadge.className = 'weapon-size-badge mounted size-' + mountedSize"),
-  'mechanic hardpoint rows must render a second size badge for the mounted weapon'
+  fittingCss.includes('container: fit / size'),
+  'the fitting panel must lay out by its own size (container queries), not by the viewport'
 );
 
 const cockpitCss = readFileSync(join(root, 'assets/css/cockpit-ui.css'), 'utf8');

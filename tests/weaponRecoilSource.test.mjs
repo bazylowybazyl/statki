@@ -48,6 +48,11 @@ test('dane: każda broń z efektem ma recoil i shake (wartości FX_PROFILE sprze
     assert.equal(weaponImpactScale(MASTER_WEAPONS[id]), k, `${id}: skala trafienia`);
     assert.ok(k < weaponImpactScale(MASTER_WEAPONS[parent]) && r < weaponRecoil(MASTER_WEAPONS[parent]), `${id}: lżej niż rodzic`);
   }
+  // Lanca (klasa snajperska, 2026-10-08): odrzut i wstrząs jak Oszczep (Valkyrie M), wersja L mocniej.
+  assert.equal(weaponRecoil(MASTER_WEAPONS.lance_rail_m), weaponRecoil(MASTER_WEAPONS.special_valkyrie_m));
+  assert.equal(weaponShake(MASTER_WEAPONS.lance_rail_m), weaponShake(MASTER_WEAPONS.special_valkyrie_m));
+  assert.ok(weaponRecoil(MASTER_WEAPONS.lance_rail_l) > weaponRecoil(MASTER_WEAPONS.lance_rail_m));
+  assert.ok(weaponShake(MASTER_WEAPONS.lance_rail_l) > weaponShake(MASTER_WEAPONS.lance_rail_m));
   assert.equal(weaponRecoil({}), WEAPON_RECOIL_FALLBACK);
   assert.equal(weaponShake({}), WEAPON_SHAKE_FALLBACK);
   assert.equal(weaponImpactScale(MASTER_WEAPONS.siege_railgun), 5);

@@ -43,7 +43,7 @@ const STATION_TABS = Object.freeze([
   { id: 'hangar', label: 'HANGAR' },
   { id: 'trade', label: 'HANDEL' },
   { id: 'cantina', label: 'KANTYNA' },
-  { id: 'mechanic', label: 'MECHANIK' },
+  { id: 'mechanic', label: 'WYPOSAŻENIE' },
   { id: 'infrastructure', label: 'INFRASTRUKTURA' }
 ]);
 
@@ -59,6 +59,9 @@ const SUPPORT_FACTIONS = Object.freeze({
       { key: 'carrier', name: 'Citadella', role: 'Lotniskowiec', count: '×1', icon: 'carrier' },
       { key: 'supercapital', name: 'Colossus', role: 'Supercapital', count: '×1', icon: 'supercapital' },
       { key: 'fighter', name: 'Fighter Wing', role: 'Skrzydło myśliwców', count: '×200', icon: 'fighter', click: true },
+      // Holownik serwisowy (src/game/serviceTug.js): przylatuje do Atlasa, naprawia rojem dronów z własnej ładowni,
+      // a statek bez napędu głównego bierze na pokład i wiezie do K-7. Kliknięcie — do Atlasa (index.html: callServiceTug).
+      { key: 'service_tug', name: 'Holownik', role: 'Serwis — naprawa, transport do K-7', count: '×1', icon: 'carrier', click: true, hull: 'service_tug' },
       // `dev: true` — karta tylko z ?dev (spawner testowy), nie w rezerwie gracza.
       { key: 'frigate_laser', name: 'Custos-L', role: 'Fregata laserowa', count: '×50', icon: 'frigate', dev: true },
       { key: 'interceptor', name: 'Interceptor Wing', role: 'Skrzydło przechwytujące', count: '×200', icon: 'fighter', click: true, dev: true }
@@ -102,6 +105,31 @@ const SUPPORT_FACTIONS = Object.freeze({
 // src/game/supportWarp.js), nie postawa: ESKORTA / ATAK zostaje dla kolejnych wezwań.
 const SUPPORT_ORDER_LABELS = Object.freeze({ guard: 'ESKORTA', engage: 'ATAK' });
 
+// Formacje skrzydła (src/ai/fleetFormation.js FLEET_FORMATIONS) — przyciski pod rozkazami na Alt.
+// Piktogram: widok z góry, czoło szyku u góry, romb — miejsce Atlasa.
+const WING_FORMATIONS = Object.freeze([
+  { id: 'groups', label: 'GRUPY', title: 'Grupy bojowe: pancerniki z eskortą wokół siebie, grupy pierścieniem wokół Atlasa; w walce linia pancerników, eskorta za nimi',
+    dots: [[5, 5, 1.7], [3, 3, 1], [7, 3, 1], [3, 7, 1], [7, 7, 1], [19, 5, 1.7], [17, 3, 1], [21, 3, 1], [17, 7, 1], [21, 7, 1], [12, 14, 1.7], [10, 12, 1], [14, 12, 1], [10, 16, 1], [14, 16, 1]], player: [12, 6] },
+  { id: 'line', label: 'LINIA', title: 'Linia: kilka rzędów w szachownicę — pancerniki z przodu, za nimi niszczyciele i fregaty; Atlas w środku pierwszego rzędu',
+    dots: [[4, 4, 1.7], [8, 4, 1.7], [16, 4, 1.7], [20, 4, 1.7], [3, 9, 1.2], [7.5, 9, 1.2], [12, 9, 1.2], [16.5, 9, 1.2], [21, 9, 1.2], [5, 14, 1], [9.5, 14, 1], [14, 14, 1], [18.5, 14, 1]], player: [12, 4] },
+  { id: 'wedge', label: 'KLIN', title: 'Klin: Atlas w wierzchołku, ciężkie okręty najbliżej czoła, skrzydła ukosem do tyłu',
+    dots: [[9.5, 6.5, 1.7], [14.5, 6.5, 1.7], [7, 10.5, 1.3], [12, 10.5, 1.3], [17, 10.5, 1.3], [4.5, 14.5, 1], [9.5, 14.5, 1], [14.5, 14.5, 1], [19.5, 14.5, 1]], player: [12, 2.5] },
+  { id: 'column', label: 'KOLUMNA', title: 'Kolumna: okręty jeden za drugim za Atlasem (przeloty, tranzyty ringu)',
+    dots: [[9.5, 6.5, 1.7], [14.5, 6.5, 1.7], [9.5, 10, 1.3], [14.5, 10, 1.3], [9.5, 13.5, 1], [14.5, 13.5, 1], [9.5, 17, 1], [14.5, 17, 1]], player: [12, 2.5] },
+  { id: 'crescent', label: 'SIERP', title: 'Sierp: łuk z rogami wysuniętymi do przodu — skrzydła obejmują wroga, ciężkie w środku łuku',
+    dots: [[2.5, 3, 1], [3.5, 7.5, 1.2], [6, 11.5, 1.4], [9, 13.8, 1.7], [15, 13.8, 1.7], [18, 11.5, 1.4], [20.5, 7.5, 1.2], [21.5, 3, 1]], player: [12, 14.5] },
+  { id: 'ring', label: 'PIERŚCIEŃ', title: 'Pierścień: osłona dookoła Atlasa — ciężkie na wewnętrznym pierścieniu, fregaty na zewnętrznym',
+    dots: [[12, 4.5, 1.6], [17, 9.5, 1.6], [12, 14.5, 1.6], [7, 9.5, 1.6], [12, 1, 1], [18, 3.5, 1], [21, 9.5, 1], [18, 15.5, 1], [12, 18, 1], [6, 15.5, 1], [3, 9.5, 1], [6, 3.5, 1]], player: [12, 9.5] }
+]);
+const WING_FORMATION_LABELS = Object.freeze(Object.fromEntries(WING_FORMATIONS.map(f => [f.id, f.label])));
+
+function wingFormationIcon(f) {
+  const dots = f.dots.map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}"/>`).join('');
+  const [px, py] = f.player;
+  return `<svg class="formation-icon" viewBox="0 0 24 19" aria-hidden="true"><g fill="currentColor">${dots}</g>`
+    + `<path class="formation-player" d="M${px} ${py - 2.2}L${px + 1.8} ${py}L${px} ${py + 2.2}L${px - 1.8} ${py}Z"/></svg>`;
+}
+
 // Pasek broni: te same klawisze 1–6 co dotąd; stan z buildWeaponHudState() w index.html.
 const WEAPON_SLOTS = Object.freeze([
   { key: '1', type: 'main', label: 'GŁÓWNA', icon: '◆', code: 'Digit1' },
@@ -115,7 +143,7 @@ const ABILITY_SLOTS = Object.freeze([
   { key: 'X', id: 'scan', label: 'SKAN', icon: '◎', code: 'KeyX', title: 'Aktywny skan — impuls [X]' },
   { key: 'F', id: 'salvo', label: 'SALWA', icon: '➶', code: 'KeyF', title: 'Salwa rakiet w stronę kursora [F]' },
   { key: 'Z', id: 'hangar', label: 'MYŚLIWCE', icon: '▲', code: 'KeyZ', title: 'Start / powrót myśliwców [Z]' },
-  { key: 'R', id: 'repair', label: 'NAPRAWA', icon: '✚', code: 'KeyR', title: 'Naprawa kadłuba — wł./wył. [R]' }
+  { key: 'R', id: 'repair', label: 'NAPRAWA', icon: '✚', code: 'KeyR', title: 'Drony naprawcze — wypuść / odwołaj [R]' }
 ]);
 // Kontrolki jak w aucie: świecą tylko włączone systemy.
 const TELLTALES = Object.freeze([
@@ -231,6 +259,7 @@ const SUPPORT_CLASS_META = Object.freeze({
   surveyor: { label: 'Survey', code: 'S', hardpoints: 0 },
   salvage_hauler: { label: 'Salvage', code: 'U', hardpoints: 0 },
   construction_tug: { label: 'Tug', code: 'U', hardpoints: 0 },
+  service_tug: { label: 'Service', code: 'U', hardpoints: 0 },
   repair_drone: { label: 'Drone', code: 'U', hardpoints: 0 },
   distress_beacon_ship: { label: 'Rescue', code: 'U', hardpoints: 0 },
   smuggler: { label: 'Smuggler', code: 'P', hardpoints: 0 },
@@ -304,6 +333,7 @@ function spriteForEntity(entity) {
   const faction = String(entity?.faction || '').toLowerCase();
   const pirate = !!entity?.isPirate || faction.includes('pira');
   if (type.includes('megafreighter')) return megafreighterSprite;
+  if (type === 'service_tug') return TRAFFIC_HULLS.service_tug.sprite;
   if (type === 'pirate_supercapital' || entity?.shipFrame === 'pirate_supercapital') return pirateSupercapitalSprite;
   if (type.includes('supercap') || type.includes('capital') || type.includes('atlas')) return pirate ? pirateBattleshipSprite : terranSupercapitalSprite;
   if (type.includes('carrier')) return pirate ? pirateBattleshipSprite : terranCarrierSprite;
@@ -449,7 +479,10 @@ function cockpitMarkup(devMode) {
               <button class="tech-button" type="button" data-order="engage">ATAK</button>
               <button class="tech-button" type="button" data-order="return" title="Skrzydło skacze tunelem warpa na Ziemię">POWRÓT</button>
             </footer>
-            <div class="panel-hint no-pointer"><kbd>Alt</kbd> rozkazy skrzydła</div>
+            <footer class="panel-formations pointer-only" id="wingFormations" aria-label="Formacja skrzydła">
+              ${WING_FORMATIONS.map(f => `<button class="tech-button formation-button${f.id === 'groups' ? ' active' : ''}" type="button" data-formation="${f.id}" title="${f.title}">${wingFormationIcon(f)}<span>${f.label}</span></button>`).join('')}
+            </footer>
+            <div class="panel-hint no-pointer"><kbd>Alt</kbd> rozkazy i formacja skrzydła</div>
           </section>
           <section class="hud-panel pointer-only reserve-panel" id="reservePanel">
             <header class="panel-head"><div class="panel-title"><strong>Rezerwa</strong><small id="reserveFaction">TERRA NOVA</small></div><span class="panel-count" id="reserveCount">${devMode ? 'DEV' : 'GOTOWOŚĆ'}</span></header>${devControls}
@@ -625,7 +658,7 @@ export class CockpitUI {
   cacheElements() {
     const ids = [
       'app', 'feed', 'feedZone', 'feedLines', 'leftCol', 'rightCol', 'commPanel', 'commNet', 'commBody', 'commClose',
-      'wingPanel', 'activeCount', 'wingOrder', 'unitList', 'supportOrders', 'reservePanel', 'reserveFaction', 'reserveCount',
+      'wingPanel', 'activeCount', 'wingOrder', 'unitList', 'supportOrders', 'wingFormations', 'reservePanel', 'reserveFaction', 'reserveCount',
       'supportFactions', 'lineModeBtn', 'lineBar', 'lineWidth', 'lineWidthValue', 'lineHint', 'reserveGrid',
       'targetPanel', 'targetBody', 'lockChips', 'scanPanel', 'scanCount', 'scanTimer', 'scanRows', 'overviewPanel',
       'contactCount', 'scannerFilters', 'contactRows', 'hudBottom', 'weaponBar', 'abilityBar', 'cluster', 'alertLine',
@@ -678,6 +711,11 @@ export class CockpitUI {
       const button = event.target.closest('[data-order]');
       if (!button) return;
       this.setSupportOrder(button.dataset.order);
+    });
+    this.els.wingFormations?.addEventListener('click', event => {
+      const button = event.target.closest('[data-formation]');
+      if (!button) return;
+      this.setWingFormation(button.dataset.formation);
     });
     this.els.lineModeBtn?.addEventListener('click', () => this.toggleLineMode());
     this.els.lineWidth?.addEventListener('input', () => {
@@ -861,12 +899,13 @@ export class CockpitUI {
       button.title = definition.title || `${definition.label} [${definition.key}]`;
       button.innerHTML = '<span class="slot-key"></span><span class="slot-auto">AUTO</span><span class="slot-icon"></span><span class="slot-name"></span><span class="slot-charge"></span>';
       button.querySelector('.slot-key').textContent = definition.key;
-      button.querySelector('.slot-icon').textContent = definition.icon;
+      const icon = button.querySelector('.slot-icon');
+      icon.textContent = definition.icon;
       const name = button.querySelector('.slot-name');
       name.textContent = definition.label;
       button.addEventListener('click', () => this.useSlot(definition));
       root.appendChild(button);
-      this.slots.push({ definition, kind, button, name, state: Object.create(null) });
+      this.slots.push({ definition, kind, button, name, icon, state: Object.create(null) });
     };
     for (const definition of WEAPON_SLOTS) make(definition, this.els.weaponBar, 'weapon');
     for (const definition of ABILITY_SLOTS) make(definition, this.els.abilityBar, 'ability');
@@ -894,6 +933,7 @@ export class CockpitUI {
       let on = false;
       let label = definition.label;
       let title = definition.title || `${definition.label} [${definition.key}]`;
+      let icon = definition.icon;
       if (slot.kind === 'weapon' && definition.type) {
         const state = weaponHud?.[definition.type];
         const weapon = state?.weapon || null;
@@ -910,12 +950,32 @@ export class CockpitUI {
           title = `${definition.label} [${definition.key}] — ${weapon.name}${ammo !== null ? ` · ${ammo} ${plural(ammo, 'salwa', 'salwy', 'salw')}` : ''}${auto ? ' · auto-fire' : ''}`;
         }
       } else if (definition.id === 'repair') {
+        // Rój dronów naprawczych (index.html: playerRepairRig.stats): drony sprawne / wszystkie, w pracy — postęp naprawy
+        // na szynie, bez sprawnych dronów — slot wygaszony; w tytule materiał w ładowni (komórki kadłuba).
         on = !!environment.repairActive;
+        const rep = environment.repair;
+        if (rep && rep.total > 0) {
+          label = `DRONY ${rep.alive}/${rep.total}`;
+          empty = rep.alive <= 0;
+          if (on) charge = clamp(rep.progress, 0, 1);
+          title = `Drony naprawcze [R] — ${on ? 'odwołaj' : 'wypuść'} · sprawne ${rep.alive}/${rep.total} · materiał: ${rep.materialCells} komórek${on ? ` · naprawa ${Math.round(rep.progress * 100)}%` : ''}`;
+        }
       } else if (definition.id === 'hangar') {
         empty = !!hangar && !(Number(hangar.mounted) > 0);
         on = Number(hangar?.out) > 0;
       } else if (definition.id === 'scan') {
         on = now < this.scanUntil;
+      } else if (definition.id === 'salvo') {
+        // F: system okrętu kadłuba (index.html — getHudShipSystemState: szarża, manewr z ładunkami, zryw, szybki
+        // ogień); kadłub bez systemu — salwa rakiet jak dawniej. W toku — świeci, ładowanie — żar na szynie.
+        const sys = environment.shipSystem;
+        if (sys && sys.id) {
+          label = sys.max > 0 ? `${sys.short} ×${sys.charges}` : sys.short;
+          title = sys.title;
+          icon = sys.icon;
+          on = !!sys.active;
+          charge = sys.active || sys.ready ? 1 : clamp(sys.gauge, 0, 1);
+        }
       }
       const cooling = !empty && charge < 0.995;
       this.setSlotState(slot, 'empty', empty, value => slot.button.classList.toggle('empty', value));
@@ -925,6 +985,7 @@ export class CockpitUI {
       this.setSlotState(slot, 'charge', cooling ? Math.round(charge * 100) : 100, value => { slot.button.style.setProperty('--charge', String(value / 100)); });
       this.setSlotState(slot, 'label', label, value => { slot.name.textContent = value; });
       this.setSlotState(slot, 'title', title, value => { slot.button.title = value; });
+      this.setSlotState(slot, 'icon', icon, value => { if (slot.icon) slot.icon.textContent = value; });
       if (slot.state.wasCooling && !cooling && !empty) slot.button.animate?.(READY_FLASH, READY_FLASH_TIMING);
       slot.state.wasCooling = cooling;
     }
@@ -1788,11 +1849,28 @@ export class CockpitUI {
     this.log(`Rozkaz skrzydła: POWRÓT — ${count} jedn. w tunelu na Ziemię`, 'orbit');
   }
 
+  // Formacja skrzydła: dowódca floty ustawia ją przy najbliższej przebudowie szyku (~0,5 s).
+  setWingFormation(id) {
+    const applied = window.CockpitSupport?.setFormation?.(id);
+    if (!applied) return;
+    this.syncWingFormation(applied);
+    this.log(`Formacja skrzydła: ${WING_FORMATION_LABELS[applied] || applied}`, 'orbit');
+  }
+
+  syncWingFormation(formation) {
+    if (this.cache.wingFormation === formation) return;
+    this.cache.wingFormation = formation;
+    for (const button of this.els.wingFormations?.querySelectorAll('[data-formation]') || []) button.classList.toggle('active', button.dataset.formation === formation);
+    this.cache.supportOrder = null;
+    this.syncSupportOrderButtons(window.SupportWing?.order || 'guard');
+  }
+
   syncSupportOrderButtons(order) {
     if (this.cache.supportOrder === order) return;
     this.cache.supportOrder = order;
     for (const button of this.els.supportOrders?.querySelectorAll('[data-order]') || []) button.classList.toggle('active', button.dataset.order === order);
-    if (this.els.wingOrder) this.els.wingOrder.textContent = SUPPORT_ORDER_LABELS[order] || 'ESKORTA';
+    const formation = WING_FORMATION_LABELS[this.cache.wingFormation] || WING_FORMATION_LABELS.groups;
+    if (this.els.wingOrder) this.els.wingOrder.textContent = `${SUPPORT_ORDER_LABELS[order] || 'ESKORTA'} · ${formation}`;
   }
 
   toggleLineMode() {
@@ -2071,6 +2149,7 @@ export class CockpitUI {
     const support = Array.isArray(window.SupportWing?.units) ? window.SupportWing.units : [];
     const units = support.map(entry => entry?.npc).filter(unit => unit && !unit.dead);
     const order = window.SupportWing?.order || 'guard';
+    this.syncWingFormation(window.CockpitSupport?.getFormation?.() || 'groups');
     this.syncSupportOrderButtons(order);
     const shipPos = window.ship?.pos || null;
     const key = units.map(unit => {
@@ -2328,7 +2407,7 @@ export class CockpitUI {
     const credits = window.DevEconomy?.getCredits?.() ?? 0;
     this.els.tabletCredits.textContent = `${Math.round(credits).toLocaleString('pl-PL')} CR`;
     this.els.tabletCargo.textContent = window.CockpitBridge?.getCargoLabel?.() || '—';
-    this.els.tabletFootCenter.textContent = `MODUŁ ${activeTab.toUpperCase()}`;
+    this.els.tabletFootCenter.textContent = `MODUŁ ${STATION_TABS.find(tab => tab.id === activeTab)?.label || activeTab.toUpperCase()}`;
   }
 
   // Otwarty tablet (stacja albo dziennik misji) chowa HUD lotu pod spodem.

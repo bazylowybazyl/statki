@@ -96,6 +96,13 @@ export const TRAFFIC_HULLS = Object.freeze({
     png: [1774, 887],
     main: [[-727, -132, 77], [-728, -18, 71], [-727, 97, 77]]
   }),
+  // Holownik serwisowy (src/game/serviceTug.js): sprite zastępczy = przebarwiony heavy_freighter_empty.png (ten sam
+  // obrys, 4 bębny dysz na rufie); docelowy wg assets/ships/service_tug.prompt.md. Poza klasami ruchu v2.
+  service_tug: Object.freeze({
+    sprite: new URL('../../assets/ships/service_tug.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-822, -181, 85], [-822, -71, 85], [-822, 40, 85], [-822, 148, 85]]
+  }),
   // TODO AGENT: rejder to okręt bojowy — przed awansem proxy do pełnego NPC (Z13)
   // mostek wg docs/BRIEF-mostek-nowego-kadluba.md (strefa, model, paleta).
   pirate_raider: Object.freeze({

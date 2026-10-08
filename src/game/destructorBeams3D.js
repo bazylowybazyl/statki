@@ -228,6 +228,7 @@ function gatherNodeFields(src, dst, order, count) {
   gatherI32(src.platingCount, dst.platingCount, order, count); gatherI32(src.quiet, dst.quiet, order, count);
   gatherU8(src.active, dst.active, order, count); gatherU8(src.surface, dst.surface, order, count);
   gatherU8(src.act, dst.act, order, count); gatherU8(src.skinDirty, dst.skinDirty, order, count);
+  gatherU8(src.patch, dst.patch, order, count);
 }
 
 // Belki sekcji (list = indeksy w magazynie źródłowym, rosnąco); końce przez map. Zwraca liczbę żywych.

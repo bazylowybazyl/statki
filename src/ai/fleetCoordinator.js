@@ -50,13 +50,17 @@ import {
 } from './fleetAwareness.js';
 import { flightSpeedLimit, resolveShipFlightSpec } from '../game/flight/shipFlightModel.js';
 import {
+  DEFAULT_FLEET_FORMATION,
   FORMATION_CONFIG,
   createFormationState,
+  createShapeLayout,
   describeFormation,
   keepEscortSlotsClear,
   layoutBattle,
   layoutCruise,
+  layoutShape,
   measureGroups,
+  normalizeFleetFormation,
   organizeTaskGroups,
   resetFormationState
 } from './fleetFormation.js';
@@ -87,6 +91,20 @@ const AXIS_DEADBAND = Math.PI / 12;
 // Poniżej tej prędkości korzeń „stoi" — kurs szyku się nie zmienia (gracz
 // obracający się w miejscu nie kręci całą flotą).
 const HEADING_MIN_SPEED = 120;
+// Formacja gracza przy stojącym (wolnym) graczu idzie za jego DZIOBEM: obraca
+// się dopiero, gdy dziób odjedzie o tyle, i wtedy dokręca do końca (LINIA czy
+// KLIN mają patrzeć tam, gdzie Atlas, ale drobne korekty kursu nie kręcą szykiem).
+const SHAPE_BOW_DEADBAND = Math.PI / 9;
+// Obrót sztywnej formacji (zakręt gracza, przejście z przelotu do walki, oś
+// natarcia): miejsce każdego okrętu jedzie po łuku najwyżej z tym ułamkiem jego
+// prędkości przelotowej. Obrót „od razu” kazał skrajnym okrętom ciąć przez
+// cudze rzędy (LINIA: 13 zetknięć w zakręcie 90°).
+const SHAPE_TURN_SPEED_FRAC = 0.5;
+const SHAPE_TURN_MIN = 0.015;
+const SHAPE_TURN_MAX = 0.6;
+// Sufit prędkości kontaktu w środku zagrożenia (j/s): gracz w warpie (260 tys. j/s)
+// przesuwałby front i ekstrapolowane miejsca w szyku o setki kilometrów.
+const THREAT_SPEED_CAP = 3000;
 
 // Smycze postaw (j.): jak daleko od swojego miejsca w szyku okręt może odejść,
 // walcząc. Przy ESKORCIE eskorta pilnuje swojego okrętu flagowego; przy ATAKU
@@ -117,9 +135,16 @@ function makeSideState() {
     battle: false,
     lingerT: 0,
     heading: NaN,
+    bowTurn: false,
+    shapeDir: NaN,
+    shapeOmega: 0,
     axisAng: NaN,
     flagship: null,
-    form: createFormationState()
+    // Formacja strony (fleetFormation.js FLEET_FORMATIONS): skrzydło gracza —
+    // rozkaz z panelu Skrzydło (SupportWing.formation), piraci — grupy bojowe.
+    shape: DEFAULT_FLEET_FORMATION,
+    form: createFormationState(),
+    shapeLayout: createShapeLayout()
   };
 }
 const sideState = {
@@ -136,6 +161,9 @@ const flankGroups = new Map(); // victim -> attackers[]
 const _threat = { x: 0, y: 0, vx: 0, vy: 0, repr: null, searching: false };
 const _root = { x: 0, y: 0, vx: 0, vy: 0, radius: 0, entity: null, angle: NaN };
 const _frame = { x: 0, y: 0, dirX: 1, dirY: 0, reserve: 0 };
+const _shapeFrame = { x: 0, y: 0, dirX: 1, dirY: 0, reserve: 0, alignFront: false };
+// Krok przebudowy dla battleShape (battleFormation dostaje dt jako argument).
+let _shapeDt = 0;
 
 function unitX(u) { return u.pos ? u.pos.x : (u.x || 0); }
 function unitY(u) { return u.pos ? u.pos.y : (u.y || 0); }
@@ -253,6 +281,8 @@ function writeFlankSlot(npc, st, victim, bearing, dist) {
 }
 
 function resetSide(st) {
+  st.shapeDir = NaN;
+  st.shapeOmega = 0;
   st.frontDist = NaN;
   st.frontSpeed = 0;
   st.phase = 'idle';
@@ -289,6 +319,82 @@ function sideStance(side) {
   }
   return 'engage';
 }
+
+// Formacja strony: skrzydło gracza wybiera ją rozkazem (przyciski pod listą
+// jednostek na Alt — SupportWing.formation); sztywne kształty potrzebują gracza
+// jako punktu odniesienia przelotu i ESKORTY. Piraci — grupy bojowe.
+function sideFormation(side, player) {
+  if (side !== SIDE_FRIENDLY || !isAlive(player)) return DEFAULT_FLEET_FORMATION;
+  const id = (typeof window !== 'undefined' && window.SupportWing?.formation) || DEFAULT_FLEET_FORMATION;
+  return normalizeFleetFormation(id);
+}
+
+// Miejsca formacji (layoutShape) → sloty. Rola z grup bojowych: okręt flagowy
+// trzyma miejsce, eskorta walczy na smyczy i bije w cel swojego okrętu
+// flagowego (capitalAI: pickGroupFocus). Okręt we flance z tej przebudowy
+// zostaje we flance.
+function writeShapeSlots(st, kind, frame, vx, vy, facing, standoffOf) {
+  const out = st.shapeLayout;
+  const fs = st.form;
+  const dirX = frame.dirX;
+  const dirY = frame.dirY;
+  const latX = -dirY;
+  const latY = dirX;
+  const tether = FORMATION_TETHER[st.stance] || FORMATION_TETHER.guard;
+  for (let i = 0; i < out.count; i++) {
+    const npc = out.members[i];
+    const cur = npc.__battleSlot;
+    if (cur && cur.kind === 'flank' && cur.t === clock) continue;
+    const fwd = out.fwd[i];
+    const lat = out.lat[i];
+    const ox = dirX * fwd + latX * lat;
+    const oy = dirY * fwd + latY * lat;
+    const sx = frame.x + ox;
+    const sy = frame.y + oy;
+    // Miejsce jedzie z punktem odniesienia i z obrotem szyku (ω × r).
+    const w = st.shapeOmega;
+    const isLeader = fs.groups.has(npc);
+    const standoff = standoffOf(npc);
+    const leash = isLeader ? tether.leader : tether.escort;
+    writeFormationSlot(npc, st, kind, isLeader ? 'leader' : 'escort', sx, sy, vx - w * oy, vy + w * ox, facing, standoff,
+      leash, slotEngageRadius(st.stance, standoff, leash), isLeader ? null : (npc.__formLeader || null));
+  }
+}
+
+// Kierunek sztywnej formacji: goni zadany (kurs przelotu, oś natarcia) z
+// prędkością kątową, przy której najdalsze miejsce jedzie najwyżej
+// SHAPE_TURN_SPEED_FRAC × prędkość przelotowa najwolniejszego okrętu.
+function turnShapeDir(st, want, dt) {
+  st.shapeOmega = 0;
+  if (!Number.isFinite(want)) return st.shapeDir;
+  if (!Number.isFinite(st.shapeDir)) {
+    st.shapeDir = want;
+    return want;
+  }
+  // Pierścień jest symetryczny — nie obraca się (obrót tylko przesuwał okręty po
+  // obwodzie i zderzał je z sąsiadami).
+  if (st.shape === 'ring') return st.shapeDir;
+  // Ograniczenie z ostatniego rozstawienia: okręt na promieniu r z prędkością v
+  // nadąża przy ω ≤ ułamek × v / r (pancerniki stoją blisko środka, na skrajach
+  // szybkie fregaty — liczone od najwolniejszego na najdalszym miejscu szyk
+  // obracał się o 60° przez minutę).
+  const out = st.shapeLayout;
+  let w = SHAPE_TURN_MAX;
+  for (let i = 0; i < out.count; i++) {
+    const r = Math.max(1000, Math.hypot(out.lat[i], out.fwd[i]));
+    w = Math.min(w, (SHAPE_TURN_SPEED_FRAC * memberSpeed(out.members[i], 'cruise')) / r);
+  }
+  w = Math.max(SHAPE_TURN_MIN, w);
+  const err = wrapAngle(want - st.shapeDir);
+  const step = w * Math.max(0, dt);
+  const turn = Math.max(-step, Math.min(step, err));
+  st.shapeDir = wrapAngle(st.shapeDir + turn);
+  st.shapeOmega = dt > 0 ? turn / dt : 0;
+  return st.shapeDir;
+}
+
+function cruiseStandoff(npc) { return resolveStandoff(npc, null); }
+function battleStandoff(npc) { return Number(npc.__coordStandoff) || resolveStandoff(npc, _threat.repr); }
 
 function collectThreats(side, stance, player, out) {
   out.length = 0;
@@ -432,8 +538,16 @@ function resolveThreat(side, stance, threats) {
       const w = threatWeight(c);
       ex += c.x * w;
       ey += c.y * w;
-      evx += c.vx * w;
-      evy += c.vy * w;
+      let cvx = c.vx;
+      let cvy = c.vy;
+      const sp2 = cvx * cvx + cvy * cvy;
+      if (sp2 > THREAT_SPEED_CAP * THREAT_SPEED_CAP) {
+        const k = THREAT_SPEED_CAP / Math.sqrt(sp2);
+        cvx *= k;
+        cvy *= k;
+      }
+      evx += cvx * w;
+      evy += cvy * w;
       ew += w;
       const r = Number(c.entity?.radius) || 0;
       if (r > reprR && isBigShip(c.entity)) {
@@ -522,10 +636,20 @@ function battleFormation(side, st, player, members, threats, dt) {
   const axisY = Math.sin(st.axisAng);
   const latX = -axisY;
   const latY = axisX;
+  // Namiar PRAWDZIWY: środek linii okrętów flagowych → zagrożenie. Oś (wygładzona,
+  // z martwą strefą) ustawia tylko OBRÓT linii; front stoi na namiarze. Dawniej
+  // linia stała w punkcie zagrożenie − oś × dystans, więc oś skrzywiona o α
+  // (martwa strefa do 15°; pierwsza przebudowa w trakcie przylotu wroga) odsuwała
+  // ją w bok o dystans × sin α — 4–9 km przy 33 km. Wróg kotwiczy swoją linię na
+  // NASZYM środku, więc szedł za nami: obie floty goniły się bokiem, zamiast iść
+  // na siebie.
+  const tLen = Math.sqrt(tx * tx + ty * ty);
+  const bX = tLen > 1 ? tx / tLen : axisX;
+  const bY = tLen > 1 ? ty / tLen : axisY;
 
   let anchorX = refX;
   let anchorY = refY;
-  const dNow = Math.max(0, tx * axisX + ty * axisY);
+  const dNow = tLen;
   if (mode === 'front') {
     // Front: startuje przy linii, idzie ku wrogowi tempem `pace` WZGLĘDEM
     // PRZESTRZENI, nigdy nie wyprzedza linii o więcej niż MAX_FRONT_LEAD i nie
@@ -533,7 +657,7 @@ function battleFormation(side, st, player, members, threats, dt) {
     // cofa się do floty. (Dawniej front schodził o `pace` względem WROGA — gdy
     // wróg nacierał z tą samą prędkością, linia ATAKU stała w miejscu.)
     const prev = Number.isFinite(st.frontDist) ? st.frontDist : dNow;
-    const approach = -(E.vx * axisX + E.vy * axisY);
+    const approach = -(E.vx * bX + E.vy * bY);
     let front = prev - (pace + approach) * dt;
     front = Math.max(front, dNow - MAX_FRONT_LEAD);
     front = Math.min(front, dNow);
@@ -541,8 +665,8 @@ function battleFormation(side, st, player, members, threats, dt) {
     st.frontSpeed = Math.max(0, (prev - front) / Math.max(1e-3, dt));
     st.frontDist = front;
     st.phase = searching ? 'search' : (front > maxStandoff * ENGAGE_PHASE_MUL ? 'advance' : 'engage');
-    anchorX = E.x - axisX * front;
-    anchorY = E.y - axisY * front;
+    anchorX = E.x - bX * front;
+    anchorY = E.y - bY * front;
   } else {
     st.frontDist = NaN;
     st.frontSpeed = 0;
@@ -552,6 +676,12 @@ function battleFormation(side, st, player, members, threats, dt) {
   st.ey = E.y;
 
   if (stance === 'engage' && st.phase === 'engage') assignFlanks(st, members, threats);
+
+  if (st.shape !== DEFAULT_FLEET_FORMATION) {
+    _shapeDt = dt;
+    battleShape(st, members, mode, refX, refY, fvx, fvy, reserve, axisX, axisY, bX, bY, dNow, minStandoff);
+    return;
+  }
 
   _frame.x = anchorX;
   _frame.y = anchorY;
@@ -599,8 +729,14 @@ function battleFormation(side, st, player, members, threats, dt) {
     let svy = fvy;
     if (mode === 'front') {
       let dist = Math.max(st.frontDist, standoff);
-      svx = E.vx;
-      svy = E.vy;
+      // Miejsce jedzie z wrogiem tylko wzdłuż namiaru (zbliżanie / odejście).
+      // Pełna prędkość wroga w slocie podtrzymywała wspólny ruch w bok: każda
+      // flota dopasowywała się do drugiej, więc raz złapany dryf (przylot tunelem,
+      // obrót okrętów ze spawnu) nie gasł. Ruch wroga w bok slot dogania
+      // położeniem (przebudowa co 0,45 s).
+      const closing = E.vx * bX + E.vy * bY;
+      svx = bX * closing;
+      svy = bY * closing;
       if (st.phase === 'engage') {
         // Dłuższa broń (lotniskowiec, superkapitał) stoi proporcjonalnie dalej;
         // pod presją (słaba tarcza) okręt odchodzi na dystans odwrotu.
@@ -613,13 +749,13 @@ function battleFormation(side, st, player, members, threats, dt) {
           svy = 0;
         }
       } else if (dist <= st.frontDist + 1) {
-        svx += axisX * st.frontSpeed;
-        svy += axisY * st.frontSpeed;
+        svx += bX * st.frontSpeed;
+        svy += bY * st.frontSpeed;
       }
-      // Tylny rząd (fwd < 0) stoi dalej od wroga.
-      const back = dist - g.fwd;
-      sx = E.x - axisX * back + latX * g.lat;
-      sy = E.y - axisY * back + latY * g.lat;
+      // Środek grupy na namiarze w odległości `dist` od wroga; rozstawienie
+      // (bok, tylny rząd: fwd < 0 — dalej od wroga) wzdłuż osi linii.
+      sx = E.x - bX * dist + axisX * g.fwd + latX * g.lat;
+      sy = E.y - bY * dist + axisY * g.fwd + latY * g.lat;
     } else {
       sx = anchorX + axisX * g.fwd + latX * g.lat;
       sy = anchorY + axisY * g.fwd + latY * g.lat;
@@ -642,7 +778,59 @@ function battleFormation(side, st, player, members, threats, dt) {
   }
 }
 
-function cruiseFormation(side, st, player, dt) {
+// Szyk bojowy w formacji gracza: ESKORTA — kształt wokół gracza, twarzą do
+// zagrożenia; ATAK — najdalej wysunięte miejsce kształtu na froncie (w walce na
+// dystansie bojowym linii okrętów flagowych), reszta za nim. Prędkość miejsc jak
+// w grupach: z graczem (ESKORTA) albo z wrogiem wzdłuż namiaru i z frontem.
+function battleShape(st, members, mode, refX, refY, fvx, fvy, reserve, axisX, axisY, bX, bY, dNow, minStandoff) {
+  const E = _threat;
+  const fs = st.form;
+  const frame = _shapeFrame;
+  const dir = turnShapeDir(st, st.axisAng, _shapeDt);
+  frame.dirX = Math.cos(dir);
+  frame.dirY = Math.sin(dir);
+  let vx = fvx;
+  let vy = fvy;
+  if (mode === 'guard') {
+    frame.x = refX;
+    frame.y = refY;
+    frame.reserve = reserve;
+    frame.alignFront = false;
+  } else {
+    let dist = Math.max(st.frontDist, minStandoff);
+    const closing = E.vx * bX + E.vy * bY;
+    vx = bX * closing;
+    vy = bY * closing;
+    if (st.phase === 'engage') {
+      // Dystans czoła = pasmo trzymania linii okrętów flagowych (jak w grupach).
+      let ideal = 0;
+      let rMax = 0;
+      for (let i = 0; i < fs.leaders.length; i++) {
+        ideal += Number(fs.leaders[i].__coordStandoff) || 0;
+        rMax = Math.max(rMax, Number(fs.leaders[i].radius) || 60);
+      }
+      ideal = fs.leaders.length > 0 && ideal > 0 ? ideal / fs.leaders.length : Math.max(minStandoff, 1);
+      const lead = fs.leaders[0] || members[0];
+      const band = resolveHoldRange(dNow, Math.max(st.frontDist, ideal), resolveAiPersonality(lead), 1, rMax + 600);
+      dist = band.range;
+      if (band.holding) {
+        vx = 0;
+        vy = 0;
+      }
+    } else if (dist <= st.frontDist + 1) {
+      vx += bX * st.frontSpeed;
+      vy += bY * st.frontSpeed;
+    }
+    frame.x = E.x - bX * dist;
+    frame.y = E.y - bY * dist;
+    frame.reserve = 0;
+    frame.alignFront = true;
+  }
+  layoutShape(st.shapeLayout, members, st.shape, frame);
+  writeShapeSlots(st, 'line', frame, vx, vy, st.axisAng, battleStandoff);
+}
+
+function cruiseFormation(side, st, player, members, dt) {
   const fs = st.form;
   const stance = st.stance;
   const root = _root;
@@ -675,12 +863,35 @@ function cruiseFormation(side, st, player, dt) {
   if (sp > HEADING_MIN_SPEED) {
     const want = Math.atan2(root.vy, root.vx);
     st.heading += wrapAngle(want - st.heading) * Math.min(1, dt / HEADING_TAU);
+    st.bowTurn = false;
+  } else if (st.shape !== DEFAULT_FLEET_FORMATION && !root.entity && Number.isFinite(root.angle)) {
+    const err = wrapAngle(root.angle - st.heading);
+    if (Math.abs(err) > SHAPE_BOW_DEADBAND) st.bowTurn = true;
+    if (st.bowTurn) {
+      st.heading += err * Math.min(1, dt / HEADING_TAU);
+      if (Math.abs(err) < 0.03) st.bowTurn = false;
+    }
   }
   st.heading = wrapAngle(st.heading);
   st.phase = 'cruise';
   st.frontDist = NaN;
   st.frontSpeed = 0;
   st.axisAng = NaN;
+
+  if (st.shape !== DEFAULT_FLEET_FORMATION && !root.entity) {
+    // Formacja gracza: kształt wokół gracza, w kierunku jego marszu.
+    const frame = _shapeFrame;
+    const dir = turnShapeDir(st, st.heading, dt);
+    frame.x = root.x;
+    frame.y = root.y;
+    frame.dirX = Math.cos(dir);
+    frame.dirY = Math.sin(dir);
+    frame.reserve = root.radius + FORMATION_CONFIG.rootReservePad;
+    frame.alignFront = false;
+    layoutShape(st.shapeLayout, members, st.shape, frame);
+    writeShapeSlots(st, 'cruise', frame, root.vx, root.vy, st.heading, cruiseStandoff);
+    return true;
+  }
 
   layoutCruise(fs, root, st.heading);
   if (!root.entity) keepEscortSlotsClear(fs, root.x, root.y, root.radius);
@@ -713,6 +924,9 @@ function cruiseFormation(side, st, player, dt) {
 function coordinateSide(side, members, player, dt) {
   const st = sideState[side];
   const stance = sideStance(side);
+  st.shape = sideFormation(side, player);
+  // Grupy bojowe nie mają kierunku formacji — po przełączeniu kształt zaczyna od zadanego.
+  if (st.shape === DEFAULT_FLEET_FORMATION) st.shapeDir = NaN;
   if (stance !== st.stance) {
     st.stance = stance;
     // Nowa postawa: front liczony od nowa.
@@ -768,7 +982,7 @@ function coordinateSide(side, members, player, dt) {
   }
   st.battle = false;
   st.lingerT = 0;
-  if (!cruiseFormation(side, st, player, dt)) {
+  if (!cruiseFormation(side, st, player, activeMembers, dt)) {
     for (let i = 0; i < activeMembers.length; i++) clearSlot(activeMembers[i]);
     resetSide(st);
   }
@@ -836,6 +1050,8 @@ export function resetFleetCoordinator() {
     resetSide(st);
     st.stance = '';
     st.heading = NaN;
+    st.bowTurn = false;
+    st.shapeDir = NaN;
     st.flagship = null;
     resetFormationState(st.form);
   }

@@ -110,6 +110,8 @@ const game = {
   shouldRemoveProjectileAfterImpact, haloRings: null,
   applyDamageToPlatform() {}, triggerMercAggro() {}, applyDamageToStation() {},
   asteroidBelt: null,
+  // rój dronów naprawczych (src/game/repairSwarm.js): bez dronów w powietrzu — pocisk ich nie sprawdza
+  RepairSwarm: { out: 0 },
   window: { asteroidField: null, AudioSys: null }
 };
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };

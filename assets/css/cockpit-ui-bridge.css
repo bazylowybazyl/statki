@@ -134,8 +134,43 @@
   max-height: 100%;
   min-height: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   align-items: stretch;
+}
+
+/* Nagłówek zakładki MECHANIK: usługi doku (uzupełnienie amunicji) nad obiema kartami. */
+#cockpit-ui-host .cockpit-station-slot #tab-mechanic-html .mechanic-services {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid #1a1a1a;
+  border-radius: 7px;
+  background: #000;
+  box-shadow: inset 0 0 14px rgba(255, 102, 0, 0.08);
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-services-status {
+  min-width: 0;
+  overflow: hidden;
+  color: #999;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-service-btn:not(:disabled) {
+  border-bottom-color: #ff6600 !important;
+  color: #ff8a3d !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-service-btn:disabled {
+  color: #444 !important;
+  cursor: default;
 }
 
 #cockpit-ui-host .cockpit-station-slot #tab-mechanic-html .mechanic-list-panel {

@@ -8,8 +8,9 @@
 //    MALOWANY, gdy wiązka przejdzie przez jego namiar w tym kroku (przedział kątów świata — obrót okrętu
 //    nie gubi ani nie maluje drugi raz), albo gdy dotrze do niego IMPULS skanera X (pierścień z prędkością
 //    fali). Malowanie zapisuje pozycję i prędkość — surowe echo stoi tam i gaśnie (luminofor).
-//  - ŚLAD (track): po `trackMature` malowaniach dostaje numer (T01…), wektor i kurs; między malowaniami
-//    symbol jedzie z ostatnią prędkością (dead reckoning), korekta przy następnym malowaniu.
+//  - ŚLAD (track): po `trackMature` malowaniach dostaje numer (T01…); między malowaniami symbol jedzie
+//    z ostatnią prędkością (dead reckoning), korekta przy następnym malowaniu. Kierunku lotu tarcza nie
+//    rysuje (bez wektorów i śladu ostatnich pozycji — 2026-10-08: w dużej bitwie gąszcz kresek).
 //  - CIĄGŁE śledzenie: sojusznicy (łącze danych) i cele namierzone / wybrane (radar kierowania ogniem)
 //    — symbol w żywej pozycji, echo dalej z anteny.
 //  - KLASYFIKACJA (kod klasy, nazwa): sojusznik od razu, reszta z bliska, po impulsie X, przy namiarze.
@@ -94,7 +95,7 @@ function isGone(key) {
     || (Number.isFinite(key.hp) && key.hp <= 0 && key.isWreck !== true && key.active !== true);
 }
 
-function createTrack(key, histLen, time) {
+function createTrack(key, time) {
   return {
     key,
     no: 0,
@@ -112,12 +113,6 @@ function createTrack(key, histLen, time) {
     paints: 0,
     paintT: -1e9,
     px: 0, py: 0, pvx: 0, pvy: 0, pAngle: 0,
-    // ślad ostatnich pozycji z malowań (pierścień)
-    hx: new Float64Array(histLen),
-    hy: new Float64Array(histLen),
-    hT: new Float64Array(histLen),
-    hN: 0,
-    hHead: 0,
     // żywa pozycja i prędkość (z wejścia w tym kroku)
     lx: 0, ly: 0, lvx: 0, lvy: 0,
     // pozycja symbolu i prędkość wektora (ciągłe albo dead reckoning)
@@ -135,8 +130,9 @@ function createTrack(key, histLen, time) {
     stamp: 0,
     gen: undefined,
     rec: null,
-    // pozycja etykiety (tarcza, ostatni rysunek)
-    _tagX: 0, _tagY: 0, _tagS: 0
+    // pozycja etykiety (tarcza, ostatni rysunek); sylwetka echa z ostatniego rysunku (radarDisplay)
+    _tagX: 0, _tagY: 0, _tagS: 0,
+    _silSrc: null, _silW: 0, _silH: 0, _sil: null
   };
 }
 
@@ -145,8 +141,6 @@ function restartTrack(t, time) {
   t.no = 0;
   t.paints = 0;
   t.paintT = -1e9;
-  t.hN = 0;
-  t.hHead = 0;
   t.classified = false;
   t.pingT = -1e9;
   t.newT = -1e9;
@@ -214,14 +208,6 @@ function readLive(rec, out) {
 
 const _live = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
 
-function pushHistory(t, x, y, time, len) {
-  t.hx[t.hHead] = x;
-  t.hy[t.hHead] = y;
-  t.hT[t.hHead] = time;
-  t.hHead = (t.hHead + 1) % len;
-  if (t.hN < len) t.hN++;
-}
-
 function paintTrack(tr, t, time, tune) {
   if (t.paints === 0 && t.aff === 'hostile') t.newT = time;
   t.paints++;
@@ -231,7 +217,6 @@ function paintTrack(tr, t, time, tune) {
   t.pvx = t.lvx;
   t.pvy = t.lvy;
   t.pAngle = t.angle;
-  pushHistory(t, t.lx, t.ly, time, tune.historyLen);
   if (!t.no && (t.paints >= tune.trackMature || t.continuous)) {
     t.no = tr.nextNo++;
     if (tr.nextNo > 999) tr.nextNo = 1;
@@ -302,7 +287,6 @@ export function stepRadarTracker(tr, feed, dt, tune = tr.tune || RADAR_TUNE) {
   const paintRange = Math.max(1, Number(feed?.paintRange) || 60000);
   const paintRangeSq = paintRange * paintRange;
   const classifyRangeSq = tune.classifyRange * tune.classifyRange;
-  const histLen = tune.historyLen;
   const targets = feed?.targets || [];
   const count = Math.min(targets.length, Number.isFinite(feed?.count) ? feed.count : targets.length);
   const list = tr.list;
@@ -318,7 +302,7 @@ export function stepRadarTracker(tr, feed, dt, tune = tr.tune || RADAR_TUNE) {
     let t = tr.tracks.get(rec.key);
     if (!t) {
       if (tr.tracks.size >= tune.maxTracks) continue;
-      t = createTrack(rec.key, histLen, time);
+      t = createTrack(rec.key, time);
       tr.tracks.set(rec.key, t);
     }
     if (t.gen !== rec.gen) {

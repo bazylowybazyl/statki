@@ -41,14 +41,18 @@ test('dane: Mjolnir bez limitu materiału i hamowania, Valkyrie 260 j. i 0,35; l
   // Reszta arsenału nie przebija kadłubów (dzisiejsze `penetration` Tempesta, Heliosa, Yamato
   // działało tylko na cele bez kadłuba — projectileTrajectory.js).
   // Warianty rozmiarowe Valkyrie (broń special mniejszych klas): płytszy budżet materiału, to samo hamowanie.
-  for (const [id, depth, limit] of [['special_valkyrie_s', 60, 2], ['special_valkyrie_m', 140, 3]]) {
+  // Lanca M / L (działa main klasy snajperskiej, 2026-10-08): płytkie przebicie jak Valkyrie — cienkie części
+  // na wylot, w grubszym kadłubie zakleszczenie; drugi kadłub zatrzymuje.
+  for (const [id, depth, limit] of [
+    ['special_valkyrie_s', 60, 2], ['special_valkyrie_m', 140, 3], ['lance_rail_m', 40, 2], ['lance_rail_l', 60, 2]
+  ]) {
     const def = MASTER_WEAPONS[id];
     assert.equal(M.penetrationDepthOf(def), depth, id);
     assert.equal(def.penSpeedLoss, VALKYRIE.penSpeedLoss, id);
     assert.equal(M.penetrationLimitOf(def), limit, id);
     assert.equal(M.hasHullMechanics(def), true, id);
   }
-  const piercing = new Set(['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_s', 'special_valkyrie_m']);
+  const piercing = new Set(['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_s', 'special_valkyrie_m', 'lance_rail_m', 'lance_rail_l']);
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     if (piercing.has(id)) continue;
     assert.equal(M.penetrationDepthOf(def), 0, `${id} nie przebija`);

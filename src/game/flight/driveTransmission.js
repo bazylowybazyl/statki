@@ -384,11 +384,11 @@ export function calibrateDriveToShip(state, ship, speed = 0) {
   const key = calibrationKey(state, ship);
   if (state.calib && state.calib.key === key) return false;
   const probeDrive = { sideForceScale: 1, mainForceScale: 1, shiftBoostMultiplier: 1, turnAccelerationScale: 1, maxTurnSpeedScale: 1 };
-  const raw = resolveShipTurnCapability(ship, probeDrive, { mainAssist: 'auto' }, {});
+  const raw = resolveShipTurnCapability(ship, probeDrive, { mainAssist: 'auto', intact: true }, {});
   const side = raw.strafeAccel > 1 ? clamp(spec.strafeAccel / raw.strafeAccel, 0.02, 12) : 1;
   probeDrive.sideForceScale = side;
   probeDrive.mainForceScale = spec.accel / Math.max(1, SHIP_PHYSICS.SPEED);
-  const cap = resolveShipTurnCapability(ship, probeDrive, { mainAssist: 'auto' }, {});
+  const cap = resolveShipTurnCapability(ship, probeDrive, { mainAssist: 'auto', intact: true }, {});
   const turn = cap.accel > 1e-6 ? clamp((spec.turnAccel * DEG) / cap.accel, 0.01, 80) : 1;
   state.calib = { key, sideForceScale: side, turnAccelerationScale: turn };
   syncDerivedState(state, speed);

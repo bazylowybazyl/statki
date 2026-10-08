@@ -188,7 +188,8 @@ export function applyPlayerThrusterVisualState(ship, target) {
   for (let i = 0; i < mainThrusters.length; i++) {
     const t = mainThrusters[i];
     applyThrusterNozzle(t, (Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 90) + mainGimbalAssistDeg, false);
-    t.__throttleTarget = mainThrottle;
+    // Dysza zniszczona (src/game/engineDamage.js — zatrzask do remontu w doku) nie pracuje.
+    t.__throttleTarget = t.__destroyed === true ? 0 : mainThrottle;
     t.__turnWeightTarget = 0;
   }
 
@@ -498,6 +499,7 @@ export function estimateShipTurnAcceleration(ship, torqueInput = 1, options = {}
 
   for (let i = 0; i < mains.length; i++) {
     const t = mains[i];
+    if (t?.__destroyed === true) continue;
     const base = Number.isFinite(Number(t?.baseDeg)) ? Number(t.baseDeg) : 90;
     const nozzle = clampNozzleDegToGimbal(
       base + mainGimbalAssistDeg,
@@ -549,9 +551,12 @@ export function computeShipThrusterForces(ship, options = {}, outResult = _defau
   const mains = ship?.visual?.mainThrusters || [];
   const mainForceTotal = mass * SHIP_PHYSICS.SPEED * mainForceMul;
   const mainForcePerThruster = mainForceTotal / Math.max(1, mains.length);
+  // Dysze zniszczone (engineDamage.js) nie dają siły: ciąg główny × żywe / wszystkie.
+  let mainLive = mains.length;
 
   for (let i = 0; i < mains.length; i++) {
     const t = mains[i];
+    if (t.__destroyed === true) { mainLive--; continue; }
     const throttle = clamp01(t.__throttle);
     if (throttle <= 1e-4) continue;
     const nozzle = Number.isFinite(Number(t.nozzleDeg)) ? Number(t.nozzleDeg) : (Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 90);
@@ -592,7 +597,9 @@ export function computeShipThrusterForces(ship, options = {}, outResult = _defau
   if (reverseInput > 1e-4) {
     const retroAssist = clamp01(retroCoverage / Math.max(1, sides.length * 0.35));
     const syntheticReverseScale = 0.14 + ((1 - retroAssist) * 0.46);
-    localFx -= (mainForceTotal * SHIP_PHYSICS.REVERSE_MULT * syntheticReverseScale) * reverseInput;
+    // Obwiednia wstecznego liczona od ciągu głównego — gaśnie z nim (zostaje retro dysz manewrowych).
+    const mainShare = mains.length > 0 ? mainLive / mains.length : 1;
+    localFx -= (mainForceTotal * SHIP_PHYSICS.REVERSE_MULT * syntheticReverseScale * mainShare) * reverseInput;
   }
 
   outResult.localFx = localFx;

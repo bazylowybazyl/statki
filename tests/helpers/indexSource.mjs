@@ -15,8 +15,12 @@ export function readIndexHtml() {
 export function sliceFunction(source, header) {
   const start = source.indexOf(header);
   if (start < 0) throw new Error(`brak: ${header}`);
+  // Nagłówek kończący się „{” wskazuje klamrę ciała wprost — parametry z domyślnym `{}`
+  // (`opts = {}`) nie zamykają wtedy wycinka przed ciałem funkcji.
+  const head = header.trimEnd();
+  const body = head.endsWith('{') ? start + head.length - 1 : source.indexOf('{', start);
   let depth = 0;
-  for (let i = source.indexOf('{', start); i < source.length; i++) {
+  for (let i = body; i < source.length; i++) {
     if (source[i] === '{') depth++;
     else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
   }

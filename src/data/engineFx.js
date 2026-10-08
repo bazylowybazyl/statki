@@ -238,7 +238,9 @@ export const ENGINE_FX_DEFAULTS = Object.freeze({
   pirate_supercapital: Object.freeze({ mainNozzle: 100, ...PLUME, ...PIRATE }),
   pirate_battleship: Object.freeze({ mainNozzle: 105, ...PLUME, ...PIRATE }),
   pirate_destroyer: Object.freeze({ mainNozzle: 115, ...PLUME, ...PIRATE }),
-  pirate_frigate: Object.freeze({ mainNozzle: 120, ...PLUME, ...PIRATE })
+  pirate_frigate: Object.freeze({ mainNozzle: 120, ...PLUME, ...PIRATE }),
+  // Holownik serwisowy: bębny rufowe ~85 px płótna (sprite zastępczy — heavy_freighter_empty.png), napęd Terra Nova.
+  service_tug: Object.freeze({ mainNozzle: 85, ...PLUME, ...TERRAN })
 });
 
 // Kadłub bez wpisu (frachtowce, legacy): dysza liczona od długości renderu.

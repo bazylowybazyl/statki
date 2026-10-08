@@ -7,6 +7,7 @@
 // kadłuba Atlasa), lot bokiem (kadłub 45–135° od kierunku lotu przy > 0,3 maxSpeed) i postój
 // burtą do celu (wolniej niż 0,3 maxSpeed, kadłub 60–120° od namiaru celu).
 //   node scripts/szyk-floty.mjs [--seed 7] [--seeds 1-6] [--root <drzewo gry>] [--json plik] [--why]
+//        [--formacja groups|line|wedge|column|crescent|ring]
 // --seeds a-b: każde ziarno w osobnym procesie (moduły trzymają stan), na końcu średnie;
 // --root: inne drzewo gry (A/B — np. eksport main obok zmian), --why: rozbicie lotu bokiem
 // i postoju burtą na przyczyny (klasa, miejsce w szyku, opóźnienie obrotu, kurs zadany).
@@ -25,6 +26,8 @@ const ROOT_ARG = arg('root', null);
 const ROOT = ROOT_ARG ? pathToFileURL(resolve(ROOT_ARG) + '/').href : new URL('../', import.meta.url).href;
 const JSON_OUT = arg('json', null);
 const WHY = process.argv.includes('--why');
+// Formacja skrzydła (SupportWing.formation, src/ai/fleetFormation.js); domyślnie grupy bojowe.
+const FORMACJA = arg('formacja', null);
 const PHASES = ['zbiórka (gracz stoi)', 'przelot 500 j/s', 'zakręt 90°', 'ESKORTA + piraci', 'ATAK'];
 
 // --- wiele ziaren: osobne procesy, średnie ---
@@ -38,6 +41,7 @@ if (SEEDS) {
       const out = join(dir, `${s}.json`);
       const args = [fileURLToPath(import.meta.url), '--seed', String(s), '--json', out];
       if (ROOT_ARG) args.push('--root', ROOT_ARG);
+      if (FORMACJA) args.push('--formacja', FORMACJA);
       const r = spawnSync(process.execPath, args, { stdio: ['ignore', 'ignore', 'inherit'] });
       if (r.status !== 0) throw new Error(`ziarno ${s}: kod ${r.status}`);
       for (const row of JSON.parse(readFileSync(out, 'utf8'))) {
@@ -52,7 +56,7 @@ if (SEEDS) {
     rmSync(dir, { recursive: true, force: true });
   }
   const mean = (x) => +(x.reduce((p, q) => p + q, 0) / x.length).toFixed(1);
-  console.log(`== ${ROOT_ARG || 'repo'} ziarna ${SEEDS}`);
+  console.log(`== ${ROOT_ARG || 'repo'} ziarna ${SEEDS}${FORMACJA ? ' formacja ' + FORMACJA : ''}`);
   console.table(PHASES.map(p => {
     const acc = perPhase.get(p);
     return {
@@ -101,7 +105,7 @@ Object.assign(globalThis.window, {
   spawnBulletAdapter: () => {},
   isLineOfFireBlocked: () => false,
   getLeadAim: (o, t, s, out) => { out.x = t.x; out.y = t.y; return out; },
-  SupportWing: { order: 'guard', units: [] }
+  SupportWing: { order: 'guard', units: [], ...(FORMACJA ? { formation: FORMACJA } : {}) }
 });
 
 const Grid = await import(ROOT + 'src/ai/aiSpatialGrid.js');

@@ -1198,7 +1198,7 @@ function nextLightStamp(cells) {
 }
 
 // Najbliższe grupy lamp (koło zasięgu) z komórek pudła celu — wynik jak pętla po całej liście w buildCombined….
-function nearestOmniIndexed(index, omni, entity, lineage, tx, ty, R, limit) {
+function nearestOmniIndexed(index, omni, entity, lineage, tx, ty, R, limit, mate = null) {
   const cells = index.o;
   const stamp = nextLightStamp(cells);
   const seen = cells.seen;
@@ -1222,7 +1222,8 @@ function nearestOmniIndexed(index, omni, entity, lineage, tx, ty, R, limit) {
         if (seen[i] === stamp) continue;
         seen[i] = stamp;
         const light = omni[i];
-        if (!light || light.owner === entity || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
+        if (!light || light.owner === entity || (mate !== null && light.owner === mate)
+          || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
         const distSq = omniLightReachDistSq(light, tx, ty, R);
         if (distSq >= 0) near = insertNearestIdx(near, limit, distSq, i, light);
       }
@@ -1233,7 +1234,7 @@ function nearestOmniIndexed(index, omni, entity, lineage, tx, ty, R, limit) {
 
 // Reflektory (stożek) z komórek pudła celu; _emitterAny — czy któryś sięgnął celu (jak anyCandidate).
 let _emitterAny = false;
-function nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, R, keep) {
+function nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, R, keep, mate = null) {
   const cells = index.e;
   const Q = R * (2 + index.tanMax) + LIGHT_INDEX_PAD;
   const stamp = nextLightStamp(cells);
@@ -1259,7 +1260,8 @@ function nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, R, kee
         if (seen[i] === stamp) continue;
         seen[i] = stamp;
         const emitter = emitters[i];
-        if (!emitter || emitter.owner === entity || (lineage !== 0 && emitter.lineage === lineage)) continue;
+        if (!emitter || emitter.owner === entity || (mate !== null && emitter.owner === mate)
+          || (lineage !== 0 && emitter.lineage === lineage)) continue;
         const distSq = roadEmitterReachDistSq(emitter, tx, ty, R);
         if (distSq < 0) continue;
         any = true;
@@ -1332,6 +1334,9 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
   // Światła rodu celu (rodzic odłamu / wraku) to nie światła innego statku — patrz lightLineageOf.
   const lineage = lightLineageOf(entity);
+  // Statek na pokładzie holownika i holownik (src/game/serviceTugGame.js) nie oświetlają się nawzajem: lampy leżą
+  // tuż nad blachą drugiego kadłuba — czerwień lamp obrysu zalewała pokład i statek.
+  const mate = entity?.__lightMate || null;
   // Indeks przestrzenny klatki (buildExternalLightIndex) — tylko dla tych samych list; bez niego cała lista.
   const index = externalIndexFor(options, emitters, omni);
 
@@ -1342,11 +1347,12 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
     const limit = Math.min(MAX_EXTERNAL_OMNI_SHADER_LIGHTS, maxLights - payload.count);
     let near = 0;
     if (index !== null) {
-      near = nearestOmniIndexed(index, omni, entity, lineage, tx, ty, targetRadius, limit);
+      near = nearestOmniIndexed(index, omni, entity, lineage, tx, ty, targetRadius, limit, mate);
     } else {
       for (let i = 0; i < omni.length; i++) {
         const light = omni[i];
-        if (!light || light.owner === entity || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
+        if (!light || light.owner === entity || (mate !== null && light.owner === mate)
+          || (lineage !== 0 && light.lineage === lineage) || !(light.power > 0)) continue;
         const distSq = omniLightReachDistSq(light, tx, ty, targetRadius);
         if (distSq >= 0) near = insertNearest(near, limit, distSq, light);
       }
@@ -1379,12 +1385,13 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   let near = 0;
   let anyCandidate = false;
   if (index !== null) {
-    near = nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, targetRadius, keep);
+    near = nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, targetRadius, keep, mate);
     anyCandidate = _emitterAny;
   } else {
     for (let i = 0; i < emitters.length; i++) {
       const emitter = emitters[i];
-      if (!emitter || emitter.owner === entity || (lineage !== 0 && emitter.lineage === lineage)) continue;
+      if (!emitter || emitter.owner === entity || (mate !== null && emitter.owner === mate)
+        || (lineage !== 0 && emitter.lineage === lineage)) continue;
       const distSq = roadEmitterReachDistSq(emitter, tx, ty, targetRadius);
       if (distSq < 0) continue;
       anyCandidate = true;

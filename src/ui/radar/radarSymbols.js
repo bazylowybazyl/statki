@@ -6,7 +6,8 @@
 //   okręt kapitałowy — kropka w środku, superkapitał — podwójny obrys
 //   stacja    — kształt strony z krzyżem w środku       myśliwiec — klin wzdłuż kursu
 //   rakieta   — grot wzdłuż lotu                         wrak — ✕       dron / sonda — mały pusty trójkąt
-// Bez alokacji na wywołanie: barwy z pamięci podręcznej `radarColor`.
+//   ślad bez ustalenia (jedno malowanie) — przerywany kwadrat pozyskiwania (kształt 'acq')
+// Bez alokacji na wywołanie: barwy z pamięci podręcznej `radarColor`; seria symboli — stemple (stampRadarSymbol).
 
 import { RADAR_RGB } from './radarConfig.js';
 
@@ -128,6 +129,16 @@ export function drawRadarSymbol(ctx, x, y, o) {
   const rot = (shape === 'wedge' || shape === 'dart') ? (o.rotation || 0) : 0;
   ctx.save();
   ctx.translate(x, y);
+  if (shape === 'acq') {
+    // kwadrat pozyskiwania: sam przerywany obrys, kreska ~2,2 grubości linii
+    ctx.setLineDash([lw * 2.22, lw * 2.22]);
+    ctx.strokeStyle = radarColor(rgb, alpha);
+    ctx.lineWidth = lw;
+    ctx.strokeRect(-s, -s, s * 2, s * 2);
+    ctx.setLineDash([]);
+    ctx.restore();
+    return;
+  }
   if (rot) ctx.rotate(rot);
   // Poświata: szersza, przezroczysta linia (bez shadowBlur — dziesiątki symboli w klatce).
   if (o.halo > 0) {
@@ -177,6 +188,145 @@ export function drawRadarSymbol(ctx, x, y, o) {
     }
   }
   ctx.restore();
+}
+
+// ---------------------------------------------------------------- stemple symboli
+// Symbol rysowany RAZ do małego płótna i stawiany jednym drawImage z globalAlpha (2026-10-08). W dużej bitwie
+// tarcza stawia ~240 symboli 30 razy na sekundę, a znaczniki krawędzi do 24 w każdej klatce; ścieżki symbolu
+// (poświata, wypełnienie, podkład, obrys, kropka) z save / restore kosztowały wielokrotnie więcej niż drawImage.
+// Klucz liczbowy z wyglądu (kształt, barwa, wariant, rozmiar co 1/4 px, grubość, poświata, wypełnienie, kreski);
+// alfa, obrót i położenie — przy stawianiu.
+const STAMP_CAP = 400;
+const SHAPE_IDS = Object.freeze({ square: 0, diamond: 1, circle: 2, wedge: 3, dart: 4, triangle: 5, cross: 6, acq: 7 });
+const _stamps = new Map();
+const _rgbIds = new Map();
+const _stampOpts = { kind: 'ship', aff: 'unknown', cls: '', capital: false, s: 4, alpha: 1, rotation: 0, lw: 1.2, fill: null, dashed: false, rgb: null, halo: 0, shape: null };
+
+function makeStampCanvas() {
+  if (typeof document !== 'undefined') return document.createElement('canvas');
+  return null;
+}
+
+/** Stempel symbolu { canvas, half } (środek płótna = punkt symbolu, kształt skierowany wzdłuż +x) albo null. */
+export function radarSymbolStamp(o) {
+  const kind = o.kind || 'ship';
+  const aff = o.aff || 'unknown';
+  const rgb = o.rgb || radarAffRgb(aff, kind);
+  const shape = o.shape || radarShapeOf(kind, aff);
+  const s = Math.max(1, o.s || 4);
+  const lw = Math.max(0.75, o.lw || 1.2);
+  const fill = o.fill == null ? (shape === 'cross' ? 0 : 0.22) : o.fill;
+  const halo = o.halo > 0 ? o.halo : 0;
+  const variant = kind === 'station' ? 3 : kind === 'ship'
+    ? (o.cls === 'SC' ? 2 : (o.capital || o.cls === 'BB' || o.cls === 'CV') ? 1 : 0) : 0;
+  let rgbId = _rgbIds.get(rgb);
+  if (rgbId === undefined) { rgbId = _rgbIds.size; _rgbIds.set(rgb, rgbId); }
+  const sQ = Math.round(s * 4);
+  const lwQ = Math.round(lw * 4);
+  const key = ((((((rgbId * 8 + (SHAPE_IDS[shape] ?? 0)) * 4 + variant) * 512 + sQ) * 64 + lwQ) * 16
+    + Math.round(halo * 10)) * 32 + Math.round(fill * 20)) * 2 + (o.dashed ? 1 : 0);
+  let st = _stamps.get(key);
+  if (st !== undefined) return st;
+  const qs = sQ / 4;
+  const qlw = lwQ / 4;
+  // zasięg kształtu: grot rakiety 1,6 s, superkapitał — drugi obrys, poświata 3,2 lw
+  const ext = (qs + Math.max(1.6, qlw * 1.6)) * 1.6 + qlw * 1.7 + 1;
+  const half = Math.ceil(ext) + 1;
+  const canvas = makeStampCanvas();
+  const g = canvas ? canvas.getContext('2d') : null;
+  if (!g) return null;
+  if (_stamps.size >= STAMP_CAP) _stamps.clear();
+  canvas.width = half * 2;
+  canvas.height = half * 2;
+  const so = _stampOpts;
+  so.kind = kind; so.aff = aff; so.cls = o.cls || ''; so.capital = !!o.capital; so.s = qs; so.alpha = 1; so.rotation = 0;
+  so.lw = qlw; so.fill = fill; so.dashed = !!o.dashed; so.rgb = rgb; so.halo = halo; so.shape = shape;
+  drawRadarSymbol(g, half, half, so);
+  st = { canvas, half, rotates: shape === 'wedge' || shape === 'dart' };
+  _stamps.set(key, st);
+  return st;
+}
+
+/**
+ * Symbol ze stempla w (x, y) — te same opcje co drawRadarSymbol (alpha i rotation przy stawianiu). Bez płótna
+ * (Node) rysuje ścieżkami. Kształty bez obrotu stoją na całym pikselu (ostry stempel).
+ */
+export function stampRadarSymbol(ctx, x, y, o) {
+  const alpha = o.alpha == null ? 1 : o.alpha;
+  if (alpha <= 0.01) return;
+  const st = radarSymbolStamp(o);
+  if (!st || typeof ctx.drawImage !== 'function') { drawRadarSymbol(ctx, x, y, o); return; }
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = prevAlpha * Math.min(1, alpha);
+  const rot = st.rotates ? (o.rotation || 0) : 0;
+  if (rot) {
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.drawImage(st.canvas, -st.half, -st.half);
+    ctx.rotate(-rot);
+    ctx.translate(-x, -y);
+  } else {
+    ctx.drawImage(st.canvas, Math.round(x) - st.half, Math.round(y) - st.half);
+  }
+  ctx.globalAlpha = prevAlpha;
+}
+
+// ---------------------------------------------------------------- stemple napisów
+// Napis z obrysem (drawRadarText) wypieczony do małego płótna; stempel `st` należy do wołającego (np. jeden na
+// kontakt i rodzaj odczytu) i jest pieczony od nowa tylko po zmianie napisu albo wyglądu. strokeText z obrysem
+// to najdroższa operacja znaczników krawędzi — rysowanych w każdej klatce, z napisami, które prawie stoją.
+function bakeTextStamp(st, text, font, rgb, aQ, align, baseline, outline) {
+  let canvas = st ? st.canvas : makeStampCanvas();
+  const g = canvas ? canvas.getContext('2d') : null;
+  if (!g) return null;
+  g.font = font;
+  g.textAlign = align;
+  g.textBaseline = baseline;
+  const m = g.measureText(text);
+  const pad = Math.ceil(outline / 2) + 2;
+  const left = Math.ceil(m.actualBoundingBoxLeft || 0) + pad;
+  const right = Math.ceil(m.actualBoundingBoxRight || m.width) + pad;
+  const up = Math.ceil(m.actualBoundingBoxAscent || 0) + pad;
+  const down = Math.ceil(m.actualBoundingBoxDescent || 0) + pad;
+  const w = Math.max(1, left + right);
+  const h = Math.max(1, up + down);
+  // płótno rośnie, nie maleje (zmiana rozmiaru = nowy bufor); rysujemy wycinek w×h
+  if (canvas.width < w || canvas.height < h) {
+    canvas.width = Math.max(canvas.width, w + 8);
+    canvas.height = Math.max(canvas.height, h + 4);
+  } else {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  g.font = font;
+  drawRadarText(g, text, left, up, rgb, aQ / 64, align, baseline, outline);
+  if (!st) st = { canvas, text: '', font: '', rgb: '', aQ: 0, align: '', baseline: '', outline: 0, w: 0, h: 0, ax: 0, ay: 0 };
+  st.text = text; st.font = font; st.rgb = rgb; st.aQ = aQ; st.align = align; st.baseline = baseline; st.outline = outline;
+  st.w = w; st.h = h; st.ax = left; st.ay = up;
+  return st;
+}
+
+/**
+ * Napis jak drawRadarText (font podany wprost), ze stempla `st` (null — nowy). Zwraca stempel do zachowania
+ * u wołającego. Bez płótna (Node) albo przy kontekście bez drawImage — zwykły drawRadarText.
+ */
+export function stampRadarText(ctx, st, text, font, x, y, rgb, alpha = 1, align = 'left', baseline = 'middle', outline = 3) {
+  if (!text || alpha <= 0.01) return st;
+  if (typeof ctx.drawImage !== 'function' || typeof document === 'undefined') {
+    ctx.font = font;
+    drawRadarText(ctx, text, x, y, rgb, alpha, align, baseline, outline);
+    return st;
+  }
+  const aQ = alpha >= 1 ? 64 : Math.round(alpha * 64);
+  if (!st || st.text !== text || st.font !== font || st.rgb !== rgb || st.aQ !== aQ || st.align !== align
+    || st.baseline !== baseline || st.outline !== outline) {
+    st = bakeTextStamp(st, text, font, rgb, aQ, align, baseline, outline);
+    if (!st) { ctx.font = font; drawRadarText(ctx, text, x, y, rgb, alpha, align, baseline, outline); return null; }
+  }
+  const dx = Math.round(x) - st.ax;
+  const dy = Math.round(y) - st.ay;
+  ctx.drawImage(st.canvas, 0, 0, st.w, st.h, dx, dy, st.w, st.h);
+  return st;
 }
 
 /** Narożniki namiaru (kwadrat 2r, ramię arm) wokół (x, y), opcjonalny obrót. */

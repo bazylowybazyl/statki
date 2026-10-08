@@ -3,23 +3,23 @@
 // Radar taktyczny kokpitu (przebudowa 2026-10-07 — „radar do kichy, ma pokazywać to, co PRZED statkiem”).
 // Wskaźnik PPI jak na okręcie: antena się obraca (przemiatanie), echo zapala się, gdy wiązka przez nie
 // przejdzie, i gaśnie jak luminofor; na surowym echu siedzi nakładka śledzenia (ARPA): symbol strony,
-// wektor prędkości, ślad ostatnich pozycji, numer śladu i klasa. Domyślnie DZIOBEM DO GÓRY (H-UP):
+// numer śladu i klasa. Kierunku lotu kontaktów tarcza nie pokazuje — bez wektorów prędkości i śladu
+// ostatnich pozycji (2026-10-08, użytkownik: w dużej bitwie za dużo kresek). Domyślnie DZIOBEM DO GÓRY (H-UP):
 // kopuła kokpitu pokazuje górną połowę tarczy, więc widać to, co jest przed okrętem; Alt — pełne 360°.
 // Strojenie na żywo: window.RadarTune (ten obiekt).
 
 export const RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
 
 export const RADAR_TUNE = {
-  // Antena: s na obrót. Echo gaśnie wykładniczo (luminofor), ślad = ostatnie pozycje z malowań.
+  // Antena: s na obrót. Echo gaśnie wykładniczo (luminofor).
   sweepPeriod: 2.4,
   echoTau: 1.05,
   echoFlash: 0.16,          // s jaśniejszego błysku tuż po malowaniu
-  historyLen: 6,
-  // Ślad (track) ustala się po tylu malowaniach: od tego chwili numer, wektor i kurs.
+  // Ślad (track) ustala się po tylu malowaniach: od tej chwili numer.
   trackMature: 2,
   // Identyfikacja klasy: z bliska (sygnatura / wzrok), po impulsie skanera X, przy namiarze.
   classifyRange: 7000,
-  // Wektor prędkości: czas wyprzedzenia = zasięg / vectorBase (20 km → 10 s), sufit długości.
+  // Wektor prędkości WŁASNEGO okrętu: czas wyprzedzenia = zasięg / vectorBase (20 km → 10 s), sufit długości.
   vectorBase: 2000,
   vectorMaxFrac: 0.42,
   vectorMinSpeed: 12,
@@ -40,7 +40,7 @@ export const RADAR_TUNE = {
   // (i od razu po zmianie budowli — odpadły kawałek doku, zniszczona stacja, gotowy olbrzym).
   terrainRefreshSec: 2.5,
   terrainMoveFrac: 0.09,
-  // Rysowanie tarczy [Hz] (przemiatanie płynnie, koszt ~1 ms przy 1080p).
+  // Rysowanie tarczy [Hz] (przemiatanie płynnie; kokpit: RADAR_FRAME_MS w cockpitUI.js).
   fps: 30,
   // Szerokość wiązki [rad] — echo daleko jest szersze w azymucie (jak w prawdziwym radarze).
   beamWidth: 0.026,
@@ -176,15 +176,30 @@ export function stepRadarRange(range, direction, wrap = false) {
   return RADAR_RANGES[Math.max(0, Math.min(n - 1, next))];
 }
 
+// Napisy odległości z pamięci: klucz = wyświetlana wartość (metry < 1 km, potem 10 / 100 / 1000 m w pasmach
+// 2 / 1 / 0 miejsc po przecinku). Znaczniki krawędzi i etykiety formatują je w każdej klatce, a wartość
+// zmienia się rzadko.
+const _distText = new Map();
+
 /** „20 km”, „7,5 km”, „850 m” — jak reszta kokpitu (1 j. = 1 m), przecinek dziesiętny. */
 export function formatRadarDistance(metres) {
   const m = Math.abs(Number(metres) || 0);
-  if (m < 1000) return `${Math.round(m)} m`;
-  const km = m / 1000;
-  const digits = km >= 100 ? 0 : km >= 10 ? 1 : 2;
-  let text = km.toFixed(digits);
-  if (text.includes('.')) text = text.replace(/\.?0+$/, '');
-  return `${text.replace('.', ',')} km`;
+  // wyświetlana wartość jako liczba całkowita q (napis liczony z q — ten sam dla całego klucza)
+  const digits = m < 1000 ? -1 : m < 10000 ? 2 : m < 100000 ? 1 : 0;
+  const q = digits < 0 ? Math.round(m) : Math.round(m / (digits === 2 ? 10 : digits === 1 ? 100 : 1000));
+  const key = digits < 0 ? q : digits === 2 ? 2000 + q : digits === 1 ? 4000 + q : 6000 + q;
+  let out = _distText.get(key);
+  if (out !== undefined) return out;
+  if (digits < 0) {
+    out = `${q} m`;
+  } else {
+    let text = (digits === 2 ? q / 100 : digits === 1 ? q / 10 : q).toFixed(digits);
+    if (text.includes('.')) text = text.replace(/\.?0+$/, '');
+    out = `${text.replace('.', ',')} km`;
+  }
+  if (_distText.size >= 4096) _distText.clear();
+  _distText.set(key, out);
+  return out;
 }
 
 /** Podpis pierścienia: „5k”, „2,5k”. */

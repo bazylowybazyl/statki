@@ -70,6 +70,14 @@ function isGone(e) {
   return !e || e.dead === true || e.destroyed === true || e.removed === true;
 }
 
+// Okręt w tunelu warpa — przylot prowadzony przez efekt (WarpNurt.arrive: wpada z 12–30 tys. j/s),
+// warp-in piratów, odlot POWRÓT — jest duchem (isCollidable = false): jeszcze go nie ma albo już
+// go nie ma. Czujniki go nie widzą: kontakt z prędkością przylotu wpychał do szyku wroga prędkość
+// 10 tys. j/s (slot ekstrapolowany o kilometry), a oś natarcia ustawiała się na pół drogi przylotu.
+function inWarpTransit(e) {
+  return e.isCollidable === false;
+}
+
 // Strona bytu: gracz i sojusznicy → 'friendly', piraci → 'pirate', reszta
 // (ruch cywilny, neutralni) nie uczestniczy w obrazie sytuacji.
 export function sideOfEntity(e, player = playerRef()) {
@@ -204,7 +212,7 @@ function refreshSide(side, npcs, player) {
     const list = Array.isArray(npcs) ? npcs : EMPTY;
     for (let i = 0; i < list.length; i++) {
       const e = list[i];
-      if (isGone(e) || sideOfEntity(e, player) !== enemySide) continue;
+      if (isGone(e) || inWarpTransit(e) || sideOfEntity(e, player) !== enemySide) continue;
       if (detectedBy(side, e)) upsertContact(side, e, player);
     }
     // Zamaskowany gracz (src/game/cloak.js) nie jest kontaktem — ani świeżym, ani duchem (niżej).

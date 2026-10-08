@@ -1323,6 +1323,18 @@ class RocketSystem3D {
         }
     }
 
+    /**
+     * Drony naprawcze strony przeciwnej w zasięgu wybuchu (src/game/repairSwarm.js — window.RepairSwarm): obrażenia
+     * głowicy (pełne w środku, połowa na brzegu). Strona rakiety = strona strzelca.
+     */
+    _blastRepairDrones(r, ex, ez) {
+        const S = typeof window !== "undefined" ? window.RepairSwarm : null;
+        if (!S || !(S.out > 0)) return;
+        const sh = r.shooter;
+        const friendly = !!sh && (sh === window.ship || sh.isPlayer === true || sh.friendly === true);
+        S.blast(ex, ez, Math.max(24, Number(r.blastRadius) || 0), Math.max(0, Number(r.damage) || 0), friendly);
+    }
+
     /* ─────────────────── EXPLOSION ─────────────────── */
 
     _explode(r) {
@@ -1333,6 +1345,7 @@ class RocketSystem3D {
         const ez = r.position.z;
         this._applyBlastDamage(r, ex, ez);
         this._blastWorldBodies(r, ex, ez);
+        this._blastRepairDrones(r, ex, ez);
 
         // Wygląd wybuchu (src/3d/rockets/effects.js): głowica na polu tarczy — receptura
         // tarczy (pole ma też własne wstęgi i bańkę), na kadłubie — kula ognia z nośnikiem

@@ -64,6 +64,8 @@ export function buildHullSilhouette(img, boxW, boxH, color = '#afcde1') {
  *   heading     — kurs kadłuba [rad] (kąty wież są w świecie)
  *   groups      — [{ list, count, hand, big }] (fc.turrets[grupa] + turretCount)
  *   cursorRel   — kierunek kursora w układzie kadłuba [rad] albo NaN
+ *   engines, engineCount — dysze MAIN [{ x, y, dead }] w jednostkach gniazd (src/game/engineDamage.js:
+ *                 zniszczona — czerwony krzyżyk do remontu w doku); engineCount 0 — bez dysz
  *   title, titleColor, sub, subColor — napisy nad sylwetką
  */
 export function drawTurretPanel(ctx, p) {
@@ -92,6 +94,26 @@ export function drawTurretPanel(ctx, p) {
     ctx.lineTo(cx + Math.sin(p.cursorRel) * L, cy - Math.cos(p.cursorRel) * L);
     ctx.stroke();
     ctx.restore();
+  }
+
+  // Dysze MAIN (pod wieżami): sprawna — wylot w barwie strugi, zniszczona — czerwony krzyżyk.
+  const engineCount = p.engineCount | 0;
+  for (let i = 0; i < engineCount; i++) {
+    const en = p.engines[i];
+    const px = cx + en.y * sx;
+    const py = cy - en.x * sy;
+    if (en.dead) {
+      drawCross(ctx, px, py, 3.2, '#ff4d5e');
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(px - 2.6, py - 1.6);
+      ctx.lineTo(px + 2.6, py - 1.6);
+      ctx.lineTo(px + 1.6, py + 2.4);
+      ctx.lineTo(px - 1.6, py + 2.4);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(127, 216, 255, 0.75)';
+      ctx.fill();
+    }
   }
 
   ctx.lineCap = 'butt';

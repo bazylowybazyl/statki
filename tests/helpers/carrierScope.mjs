@@ -13,6 +13,7 @@ import {
   writePointVelocity,
   isInterpolatedEntity
 } from '../../src/game/carrierVelocity.js';
+import { weaponRangeFor, weaponSpeedMul } from '../../src/game/shipModifiers.js';
 
 export const CARRIER_SCOPE = Object.freeze({
   SimClock,
@@ -25,5 +26,10 @@ export const CARRIER_SCOPE = Object.freeze({
   writeCarrier,
   writeCarrierVelocity,
   writePointVelocity,
-  isInterpolatedEntity
+  isInterpolatedEntity,
+  // Modyfikatory okrętu (src/game/shipModifiers.js): zasięg i prędkość pocisku ze źródeł i klas broni (fitowanie).
+  weaponRangeFor,
+  weaponSpeedMul,
+  // Rój dronów naprawczych (src/game/repairSwarm.js) bez dronów w powietrzu — wiązka ich nie sprawdza.
+  RepairSwarm: Object.freeze({ out: 0 })
 });

@@ -11,6 +11,9 @@ import { createRadarDisplay } from './radarDisplay.js';
 
 const LS_RANGE = 'sc_radar_range';
 const LS_ORIENT = 'sc_radar_orient';
+// Po powrocie z Alt do kopuły tarcza zjeżdża pod cięciwę przejściem CSS (0,38 s, cockpit-ui.css .cluster) —
+// do jego końca rysujemy całą tarczę, potem bez części schowanej pod cięciwą.
+const DOME_SETTLE_MS = 500;
 
 function loadNumber(key, fallback) {
   try {
@@ -39,9 +42,10 @@ export class CockpitRadar {
     this.orientBlend = this.orient === 'head' ? 1 : 0;
     this.lastNow = 0;
     this.hover = null;
+    this.fullAt = -1e9;   // ostatnia klatka po Alt (pełna tarcza)
     this.frame = {
       tracker: this.tracker, own: null, theta: 0, orient: this.orient, range: this.range, settled: true,
-      mode: 'dome', fontPx: 10, symbolScale: 1, time: 0, hover: null, world: null, overlay: null
+      mode: 'dome', domeCut: false, fontPx: 10, symbolScale: 1, time: 0, hover: null, world: null, overlay: null
     };
     this.stats = { drawMs: 0, stepMs: 0 };
   }
@@ -110,6 +114,8 @@ export class CockpitRadar {
     f.range = this.rangeShown;
     f.settled = settled;
     f.mode = opts.mode === 'full' ? 'full' : 'dome';
+    if (f.mode === 'full') this.fullAt = now;
+    f.domeCut = f.mode === 'dome' && opts.domeCut !== false && now - this.fullAt > DOME_SETTLE_MS;
     const dpr = Math.max(1, Number(opts.dpr) || 1);
     const shrink = Math.max(0.4, Math.min(1, Number(opts.shrink) || 1));
     // czcionka ≥ 10 px CSS po pomniejszeniu kopuły (zasada kokpitu), na dużych ekranach z projektem

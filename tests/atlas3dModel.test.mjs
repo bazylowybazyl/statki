@@ -86,7 +86,9 @@ const GAME_MUZZLES = {
   armata: [55, [0]], beamC: [48, [0]], beamP: [38, [-6, 6]], ciws1: [22, [0]], ciws2: [22, [0]], heliosPd: [18, [0]],
   flakL: [29, [-3.5, 3.5]], flakH: [29, [-3.5, 3.5]], cruise: [16, [-5, 0, 5]], fast: [16, [-5, 0, 5]], osa: [10, [0]],
   supernova: [30, [7, -7]], torpedo: [26, [7, -7]], goliath: [58, [-7, 7]], plasmaGatling: [42, [0]], valkyrie: [34, [-5, 5]],
-  mjolnir: [80, [0]], yamato: [58, [-6.75, 0, 6.75]], yamato2: [56, [-6.75, 6.75]]
+  mjolnir: [80, [0]], yamato: [58, [-6.75, 0, 6.75]], yamato2: [56, [-6.75, 6.75]],
+  // Lanca (klasa snajperska): wylot SPECS.lance w turret2D.js i wariantu LANCE w tempestSprite2D.js
+  lance: [48, [0]]
 };
 
 test('broń: każda broń gry ma model 3D (albo świadomie brak: hangar, Hexlance w kadłubie)', () => {

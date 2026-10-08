@@ -256,6 +256,15 @@ export class GasGrid {
     return texture3D(tex, uvw).level(0);
   }
 
+  /**
+   * Cel dywergencji komórki z pola den (x dym, w tempo spalania): rozprężanie spalania (źródło objętości —
+   * kula ognia puchnie) i zimnego dymu w próżni. Wspólny dla kernela dywergencji i sondy (niedobieżność rzutu).
+   */
+  _rhsTarget(D) {
+    const U = this.U;
+    return D.w.mul(U.expansion).add(min(D.x, 3.0).mul(U.disperse));
+  }
+
   _buildKernels() {
     const U = this.U;
     const N = this.N;
@@ -444,7 +453,7 @@ export class GasGrid {
       const V = (dx, dy, dz) => at(this.velB, c.p.add(vec3(dx, dy, dz)), c.sF).xyz;
       const div = V(1, 0, 0).x.sub(V(-1, 0, 0).x).add(V(0, 1, 0).y.sub(V(0, -1, 0).y)).add(V(0, 0, 1).z.sub(V(0, 0, -1).z)).mul(0.5);
       const D = at(this.denC, c.p, c.sF);
-      const rhs = div.sub(D.w.mul(U.expansion)).sub(min(D.x, 3.0).mul(U.disperse));
+      const rhs = div.sub(this._rhsTarget(D));
       const q0 = at(this.prsB, c.p, c.sF).x.mul(U.warm);
       textureStore(this.prsA, c.store, vec4(q0, rhs, 0.0, 0.0));
     })().compute(cells).setName('gasDivergence');
@@ -822,6 +831,30 @@ export class GasGrid {
       });
       this._probeMax.element(i).assign(m);
     })().compute(N * NZ).setName('gasProbeMax');
+    // Sumy kontrolne (strojenie fizyki: energia, wiry, niedobieżność rzutu) — kolumna (y, z), wnętrze domeny.
+    this._probeSum = instancedArray(N * NZ * 2, 'vec4').setName('gasProbeSum');
+    this._probeSumNode = Fn(() => {
+      const i = instanceIndex;
+      const yi = int(i.mod(uint(N)));
+      const zi = int(i.div(uint(N)));
+      const sA = vec4(0.0).toVar();
+      const sB = vec4(0.0).toVar();
+      const inner = yi.greaterThan(int(0)).and(yi.lessThan(int(N - 1))).and(zi.greaterThan(int(0))).and(zi.lessThan(int(NZ - 1)));
+      Loop({ start: int(1), end: int(N - 1), type: 'int', condition: '<', name: 'px' }, ({ px }) => {
+        const p = vec3(float(px), float(yi), float(zi)).add(0.5).toVar();
+        const v = at(this.velA, p, sF).xyz.toVar();
+        const d = at(this.denA, p, sF).toVar();
+        const w = at(this.curlT, p, sF).w.toVar();
+        const V = (dx, dy, dz) => at(this.velA, p.add(vec3(dx, dy, dz)), sF).xyz;
+        const div = V(1, 0, 0).x.sub(V(-1, 0, 0).x).add(V(0, 1, 0).y.sub(V(0, -1, 0).y)).add(V(0, 0, 1).z.sub(V(0, 0, -1).z)).mul(0.5);
+        const res = select(inner, abs(div.sub(this._rhsTarget(d))), float(0.0)).toVar();
+        const v2 = dot(v, v).toVar();
+        sA.addAssign(vec4(v2, d.x, res, d.x.mul(v2)));
+        sB.assign(vec4(max(sB.x, w), max(sB.y, res), sB.z.add(d.x.mul(w)), sB.w.add(d.y)));
+      });
+      this._probeSum.element(i.mul(uint(2))).assign(sA);
+      this._probeSum.element(i.mul(uint(2)).add(uint(1))).assign(sB);
+    })().compute(N * NZ).setName('gasProbeSum');
   }
 
   /**
@@ -831,9 +864,10 @@ export class GasGrid {
   async probe(renderer, slot) {
     if (!this._probeLineNode) this._buildProbe();
     this._probeSlot.value = slot;
-    renderer.compute([this._probeLineNode, this._probeMaxNode]);
+    renderer.compute([this._probeLineNode, this._probeMaxNode, this._probeSumNode]);
     const line = new Float32Array(await renderer.getArrayBufferAsync(this._probeBuf.value));
     const mx = new Float32Array(await renderer.getArrayBufferAsync(this._probeMax.value));
+    const sm = new Float32Array(await renderer.getArrayBufferAsync(this._probeSum.value));
     const N = this.N;
     const axes = {};
     ['x', 'y', 'z'].forEach((name, a) => {
@@ -856,7 +890,19 @@ export class GasGrid {
         else if (v > max4[k]) max4[k] = v;
       }
     }
-    return { axes, max: { smoke: max4[0], T: max4[1], speed: max4[2], q: max4[3] }, nan };
+    // Sumy: energia Σ|v|² [kom.²/s²], masa dymu Σs, energia w dymie Σs|v|², wiry max |ω| i średnie w dymie
+    // Σs|ω| / Σs, niedobieżność rzutu |div v − cel| (średnia i maks. we wnętrzu), Σ T.
+    let ke = 0, mass = 0, res = 0, keS = 0, wMax = 0, resMax = 0, wS = 0, heat = 0;
+    for (let i = 0; i < sm.length; i += 8) {
+      for (let k = 0; k < 8; k++) if (!Number.isFinite(sm[i + k])) nan++;
+      ke += sm[i]; mass += sm[i + 1]; res += sm[i + 2]; keS += sm[i + 3];
+      if (sm[i + 4] > wMax) wMax = sm[i + 4];
+      if (sm[i + 5] > resMax) resMax = sm[i + 5];
+      wS += sm[i + 6]; heat += sm[i + 7];
+    }
+    const inner = (N - 2) * (N - 2) * Math.max(1, this.NZ - 2);
+    const sum = { ke, keS, mass, heat, wMax, wSmoke: mass > 1e-6 ? wS / mass : 0, divRes: res / inner, divResMax: resMax };
+    return { axes, max: { smoke: max4[0], T: max4[1], speed: max4[2], q: max4[3] }, sum, nan };
   }
 
   /** Rozgrzewka: puste dispatche (licznik aktywnych 0) — pipeline'y compute bez przestoju w klatce. */

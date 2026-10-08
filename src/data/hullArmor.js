@@ -31,6 +31,8 @@ export const HULL_COLLISION_ARMOR = Object.freeze({
   smuggler: 0.8,
   repair_drone: 0.35,
   distress_beacon_ship: 0.5,
+  // Holownik serwisowy: ciężka rama pokładu-kołyski (nosi supercapital) — jak megafrachtowiec.
+  service_tug: 2,
   fighter: 0.35,
   interceptor: 0.35
 });

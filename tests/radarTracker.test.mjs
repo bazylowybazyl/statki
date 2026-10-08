@@ -4,7 +4,7 @@ import {
   RADAR_SRC, angleInSweep, createRadarTracker, normAngle, radarEchoLevel, radarProject, radarTheta, radarUnproject,
   relativeBearing, stepRadarTracker
 } from '../src/ui/radar/radarTracker.js';
-import { RADAR_TUNE, radarClassCode, radarStationLabel, scanPulseRadius, scanPulseTime, stepRadarRange } from '../src/ui/radar/radarConfig.js';
+import { RADAR_TUNE, formatRadarDistance, radarClassCode, radarStationLabel, scanPulseRadius, scanPulseTime, stepRadarRange } from '../src/ui/radar/radarConfig.js';
 import { createRadarFeed } from '../src/ui/radar/radarFeed.js';
 
 // Radar taktyczny kokpitu (2026-10-07): tarcza dziobem do góry, antena maluje kontakty, ślady ARPA.
@@ -222,4 +222,51 @@ test('zbieracz: mgła i maskowanie ukrywają wroga, sojusznik ciągły, liczniki
   assert.equal(feed.counts.hostile, 2, 'wróg w zasięgu tarczy: niszczyciel i cel misji');
   assert.equal(feed.counts.missiles, 1);
   assert.ok(feed.contacts.some((c) => c.entity === station && c.isStation));
+});
+
+test('odległość z pamięci = dawne formatowanie (napis z wyświetlanej wartości)', () => {
+  const ref = (metres) => {
+    const m = Math.abs(Number(metres) || 0);
+    if (m < 1000) return `${Math.round(m)} m`;
+    const km = m / 1000;
+    let text = km.toFixed(km >= 100 ? 0 : km >= 10 ? 1 : 2);
+    if (text.includes('.')) text = text.replace(/\.?0+$/, '');
+    return `${text.replace('.', ',')} km`;
+  };
+  let s = 12345;
+  const rnd = () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+  for (let i = 0; i < 20000; i++) {
+    const v = rnd() < 0.5 ? rnd() * 200000 : rnd() * 1e7;
+    assert.equal(formatRadarDistance(v), ref(v), `${v}`);
+    assert.equal(formatRadarDistance(v), ref(v), `${v} drugi raz (z pamięci)`);
+  }
+  for (const v of [0, 999.4, 1000, 9994.9, 9999, 10000, 99949, 100000, 123456789, -5000, NaN]) assert.equal(formatRadarDistance(v), ref(v), `${v}`);
+});
+
+test('zbieracz: dane bytu z pamięci, odświeżone po zmianie typu i co kilkanaście zebrań', () => {
+  const fb = createRadarFeed(tune);
+  const ship = { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, angle: 0 };
+  const e = { x: 3000, y: 0, type: 'pirate_frigate', friendly: false };
+  let names = 0;
+  let hulls = 0;
+  const env = {
+    ship, range: 20000, npcs: [e], isHostile: () => true,
+    nameOf: (x) => { names++; return `N-${x.type}`; },
+    hullMetrics: (x) => { if (x === e) hulls++; return { worldW: 400, worldH: 160 }; }
+  };
+  const recOf = () => fb.feed.targets.slice(0, fb.feed.count).find((r) => r.key === e);
+  fb.collect(env);
+  assert.equal(recOf().cls, 'FF');
+  assert.equal(recOf().name, 'N-pirate_frigate');
+  assert.equal(recOf().length, 400);
+  for (let i = 0; i < 5; i++) fb.collect(env);
+  assert.equal(names, 1, 'nazwa liczona raz, nie co zebranie');
+  assert.equal(hulls, 1);
+  e.type = 'pirate_battleship';
+  fb.collect(env);
+  assert.equal(recOf().cls, 'BB', 'zmiana typu — od razu');
+  assert.equal(recOf().name, 'N-pirate_battleship');
+  const before = names;
+  for (let i = 0; i < 20; i++) fb.collect(env);
+  assert.ok(names > before, 'odświeżenie okresowe (nazwa / wymiary po budowie kadłuba)');
 });

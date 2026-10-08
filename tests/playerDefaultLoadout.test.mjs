@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { loadIndexFunction } from './helpers/indexSource.mjs';
 
 const indexSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -103,15 +104,26 @@ test('loadLoadout zwraca automountowany fit do ładowni, zanim podmieni hardpoin
 });
 
 // Broń, która zmieniła rodzaj gniazda (hexlance: special → builtin), musi trafić
-// tam, gdzie pasuje DZIŚ — inaczej zapis z localStorage cicho ją gubi.
+// tam, gdzie pasuje DZIŚ — inaczej zapis z localStorage cicho ją gubi. Od 2026-10-08
+// rodzaj wpisu liczy savedHardpointBucket (loadLoadout i tryPreserveMounts, para po id —
+// src/game/loadoutSave.js; całą ścieżkę zapisu sprawdza tests/playerFitSave.test.mjs).
 test('zapisany fit trafia do kubełka po aktualnym mountType, nie po typie z zapisu', () => {
-  const body = indexSource.match(/function loadLoadout\(\) \{([\s\S]*?)\n    \}\n/);
+  const body = indexSource.replace(/\r\n/g, '\n').match(/function loadLoadout\(\) \{([\s\S]*?)\n    \}\n/);
   assert.ok(body);
   assert.match(
     body[1],
-    /const bucket = WEAPONS\[saved\.mount\]\?\.mountType \|\| saved\.type;/,
-    'loadLoadout kubełkuje zapisane wpisy po `saved.type` zamiast po aktualnym mountType'
+    /assignHardpointEntries\(fresh, savedEntries, \{ bucketOf: savedHardpointBucket \}\)/,
+    'loadLoadout musi dobierać gniazda przez savedHardpointBucket (aktualny mountType)'
   );
+  const HP = parseHpEnum();
+  const bucketOf = loadIndexFunction(indexSource.replace(/\r\n/g, '\n'), 'function savedHardpointBucket(saved) {', 'savedHardpointBucket', {
+    HP, WEAPONS: MASTER_WEAPONS
+  });
+  assert.equal(bucketOf({ type: 'special', mount: 'hexlance_siege' }), 'builtin', 'hexlance z zapisu sprzed 2026-04-11');
+  assert.equal(bucketOf({ type: 'main', mount: 'railgun_mk2' }), 'main');
+  assert.equal(bucketOf({ type: 'hangar', mount: null, hangarSquadrons: ['fighter_squad_multirole'] }), 'hangar');
+  assert.equal(bucketOf({ type: 'main', mount: 'nie_ma_takiej_broni' }), null, 'broń spoza katalogu — wpis pusty');
+  assert.equal(bucketOf({ type: 'main', mount: null }), null);
 });
 
 test('hexlance siedzi na gnieździe builtin, a Atlas takie gniazdo ma', () => {

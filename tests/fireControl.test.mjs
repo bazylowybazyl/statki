@@ -19,7 +19,7 @@ const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
 const {
   createRamBurn, canStartRamBurn, startRamBurn, stopRamBurn, stepRamBurn, RAM_BURN_END, RAM_BURN_READY
 } = await import('../src/game/flight/ramBurn.js');
-const { SHIP_SYSTEMS, shipSystemFor } = await import('../src/data/shipSystems.js');
+const { SHIP_SYSTEMS, HULL_SHIP_SYSTEMS, shipSystemFor } = await import('../src/data/shipSystems.js');
 
 const DT = 1 / 120;
 
@@ -574,8 +574,14 @@ test('szarża: rusza tylko z pełnego ładunku, zużywa go przez czas zrywu, pot
   const def = shipSystemFor('atlas');
   assert.equal(def.id, 'ram_burn');
   assert.equal(def.speed, 3000, 'decyzja użytkownika: zryw 3000 j/s');
-  assert.equal(shipSystemFor('frigate'), null, 'system mają tylko niektóre kadłuby');
-  assert.ok(Object.values(SHIP_SYSTEMS).every((d) => d.speed > 1500 && d.duration > 0 && d.recharge > d.duration));
+  // Od 2026-10-08 każdy kadłub bojowy ma system F (tests/shipSystems.test.mjs); szarżę — Atlas domyślnie,
+  // Iron Skull i Colossus do wyboru.
+  assert.equal(shipSystemFor('frigate').id, 'engine_burst');
+  assert.equal(shipSystemFor('corvus'), null, 'kadłub bez systemu — F to rakieta');
+  const rams = Object.values(HULL_SHIP_SYSTEMS).flat().filter((d) => d.id === 'ram_burn');
+  assert.equal(rams.length, 3);
+  assert.ok(rams.every((d) => d.speed > 1500 && d.duration > 0 && d.recharge > d.duration));
+  assert.equal(SHIP_SYSTEMS.atlas, def);
   const st = createRamBurn();
   assert.equal(canStartRamBurn(st, def), true);
   assert.equal(canStartRamBurn(st, null), false);
@@ -598,6 +604,35 @@ test('szarża: rusza tylko z pełnego ładunku, zużywa go przez czas zrywu, pot
   assert.equal(stopRamBurn(st), false);
   assert.ok(st.charge < 0.85 && st.charge > 0.7);
   assert.equal(canStartRamBurn(st, def), false);
+});
+
+test('szybki ogień przez ship.modifiers.fireRate: wieże w ręku i na auto biorą przeładowanie z fireMain', () => {
+  // W grze fireMain = fireWeaponCore, który zwraca cooldown × modifiers.fireRate (src/game/shipModifiers.js:
+  // szybki ogień ×1,8 = fireRate 1 / 1,8) — kierowanie ogniem musi go użyć jako przeładowania wieży (hp.fcCd).
+  const shotsFor = (rateMul, inHand) => {
+    // Na auto: w ręku bateria (special, spust puszczony), działa main same biją wroga w zasięgu (4,5 km).
+    const s = makeScene({ main: 2, special: inHand ? 0 : 1 });
+    const enemy = { x: 3000, y: 0, kind: 'destroyer', hp: 9e9, radius: 200, threat: 1 };
+    s.setCandidates([enemy]);
+    s.env.cursor.x = 3000;
+    if (inHand) {
+      fcSetInHand(s.fc, 'main', s.weapons);
+      s.env.snapTarget = enemy;
+      s.env.trigger = true;
+    }
+    const fireMain = s.env.fireMain;
+    s.env.fireMain = (...a) => fireMain(...a) / rateMul;
+    s.run(2);
+    s.shots.length = 0;
+    s.run(8);
+    return s.shots.filter((x) => x.group === 'main').length;
+  };
+  for (const inHand of [true, false]) {
+    const base = shotsFor(1, inHand);
+    const rapid = shotsFor(1.8, inHand);
+    assert.ok(base > 0, `${inHand ? 'w ręku' : 'auto'}: bez strzałów`);
+    assert.ok(Math.abs(rapid / base - 1.8) < 0.25, `${inHand ? 'w ręku' : 'auto'}: ${base} → ${rapid}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

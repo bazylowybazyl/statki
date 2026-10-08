@@ -178,6 +178,18 @@ const SPECS = {
     m: [[34, -5], [34, 5]]
   },
 
+  // Lanca (lance_rail_m / lance_rail_l, klasa snajperska): korpus Tempesta, długa smukła lufa. Wylot (48, 0)
+  // — w tym samym punkcie kończą lufę sprite (TempestSprite2D, wariant LANCE) i model 3D (rodzina `lance`).
+  lance: {
+    r: 50,
+    g: [
+      { c: C.armor, b: 0, p: [['r', 2, 0, 18, 16, 3]] },
+      { c: C.barrel, b: 1, p: [['r', 26.5, 0, 43, 7, 2.5]] },
+      { c: C.detailCyan, b: 1, p: [['ring', 24, 0, 5.5, 3.5], ['r', 41, 0, 12, 2.2, 1]] }
+    ],
+    m: [[48, 0]]
+  },
+
   goliath: {
     r: 58,
     g: [
@@ -339,6 +351,7 @@ function resolveSpec(weaponId, category) {
   if (key === 'special_valkyrie_railgun' || key === 'special_valkyrie_s' || key === 'special_valkyrie_m') return SPECS.tempest2;
   if (key === 'special_yamato_cannon') return SPECS.yamato;
   if (key === 'special_yamato_l') return SPECS.yamatoTwin;
+  if (key === 'lance_rail_m' || key === 'lance_rail_l') return SPECS.lance;
   if (key === 'railgun_mk1' || key === 'tempest_ion_mk1') return SPECS.tempest1;
   if (key === 'railgun_mk2' || key === 'tempest_ion_mk2') return SPECS.tempest2;
   if (key === 'heavy_autocannon') return SPECS.heavyAutocannon;
@@ -389,6 +402,8 @@ const FX_PROFILE = {
   special_yamato_l: { key: 'yamato' },
   tempest_ion_mk1: { key: 'tempest' },
   tempest_ion_mk2: { key: 'tempest' },
+  lance_rail_m: { key: 'lance' },
+  lance_rail_l: { key: 'lance' },
   heavy_autocannon: { key: 'autocannon' },
   ciws_mk1: { key: 'ciws' },
   laser_pd_mk1: { key: 'laserPD' },
@@ -410,7 +425,7 @@ const MUZZLE_COLOR = {
   vulcan: '#ffaa00', helios: '#ff003c', tempest: '#00ccff', armata: '#ff5500',
   beam: '#00ffcc', goliath: '#ff6600', plasmaGatling: '#00ffff', yamato: '#00ffff',
   autocannon: '#ffcc8a', ciws: '#8cffd0', flak: '#ffc258', laserPD: '#6ec8ff',
-  rocket: '#ffbb77', torpedo: '#ff4444', hexlance: '#d0eaff', siegeRail: '#aaffff'
+  rocket: '#ffbb77', torpedo: '#ff4444', hexlance: '#d0eaff', siegeRail: '#aaffff', lance: '#ff00ff'
 };
 
 export function normalizeWeaponFxKey(weaponId) {
@@ -418,6 +433,8 @@ export function normalizeWeaponFxKey(weaponId) {
   if (!id) return '';
   if (id.includes('vulcan')) return 'vulcan';
   if (id.includes('helios')) return 'helios';
+  // Po helios: 'helios_lance_l' (Helios Lance) to nie Lanca klasy snajperskiej.
+  if (id.includes('lance_rail')) return 'lance';
   if (id.includes('tempest') || id === 'railgun_mk1' || id === 'railgun_mk2') return 'tempest';
   if (id.includes('armata') || id.includes('heavy_cannon')) return 'armata';
   if (id.includes('beam_continuous') || id.includes('beam_pulse')) return 'beam';
@@ -1244,7 +1261,7 @@ export const Turret2D = {
         continue;
       }
 
-      if ((spec === SPECS.tempest1 || spec === SPECS.tempest2)
+      if ((spec === SPECS.tempest1 || spec === SPECS.tempest2 || spec === SPECS.lance)
         && TempestSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;

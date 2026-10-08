@@ -139,7 +139,24 @@ export const HULL_BODY_CONFIG = {
   regrowStrain: 0.5,
   // Początek układu ciała wraca do środka masy (przesunięcie magazynu = skóra całego kadłuba od nowa), gdy odrost
   // odsunął środek masy dalej niż tyle komórek; drobny odrost poprawia tylko masę i bezwładność.
-  regrowRecenterCells: 0.25
+  regrowRecenterCells: 0.25,
+
+  // --- naprawa lokalna (straightenAt / repairNeeds — rój dronów naprawczych, src/game/repairRig.js) ---
+  // Węzły kwadratu ±r komórek wracają ku spoczynkowi (przesuniętemu o średnie przemieszczenie NIETKNIĘTYCH węzłów
+  // kadłuba — po wyrównaniu środka masy kadłub nie stoi dokładnie w spoczynku; jedno odniesienie na ciało i krok, więc
+  // sąsiednie obszary dronów ciągną węzły do tego samego celu), krok 1 − e^(−rate·dt); długości
+  // spoczynkowe belek kwadratu ku bazowym, zerwane belki zrastają się, gdy końce są w zakresie sprężystym
+  // (straightenWeldStrain · deform · spoczynkowa — jak odrost), belki do węzłów spoza kwadratu dostają długość
+  // spoczynkową = bieżącą (brzeg obszaru bez naprężeń). HP węzłów rośnie o straightenHpRate · maks. HP na sekundę do
+  // sufitu (maks. HP; łata polowa — × patchHpMul wołającego).
+  straightenRate: 2.5,       // 1/s — kształt i długości belek (jak dawna naprawa całego kadłuba R)
+  straightenHpRate: 0.8,     // maks. HP węzła na sekundę
+  straightenSnap: 0.05,      // [j.] węzeł bliżej celu — na miejscu
+  straightenWeldStrain: 0.5,
+  // repairNeeds: wgniecenie = belka do żywego węzła z trwałym odkształceniem > dentStrain · bazowa albo zerwana; HP —
+  // poniżej sufitu o więcej niż hpSlack · maks. HP.
+  dentStrain: 0.004,
+  hpSlack: 0.01
 };
 
 const C = HULL_BODY_CONFIG;
@@ -258,6 +275,22 @@ export const hullTraceResult = { solidLen: 0, entryT: -1, exitT: -1, node: -1 };
 
 /** Wynik spriteUvAt() — uv sprite'a w konwencji skóry (v = 0 to górny wiersz obrazu). */
 export const hullUvResult = { u: 0, v: 0, ok: false, node: -1 };
+
+/**
+ * Wynik straightenAt() — współdzielony, ważny do następnego wywołania. changed — w obszarze coś się jeszcze zmieniło
+ * (false = obszar naprawiony); hp — HP węzłów przywrócone w tym wywołaniu; nodes — żywe węzły obszaru; moved — węzły
+ * przesunięte; welded — zrośnięte belki; waiting — zerwane belki, których końce są jeszcze za daleko (czekają na kształt).
+ */
+export const hullStraightenResult = { changed: false, hp: 0, hpUnits: 0, nodes: 0, moved: 0, welded: 0, waiting: 0 };
+
+/**
+ * Wynik repairNeeds() (obok listy komórek) — współdzielony: dead — martwe komórki szablonu, hpUnits — brak HP żywych
+ * węzłów do sufitu w jednostkach „węzłów” (Σ brak / maks. HP), patched — żywe łaty, dents — komórki z wgnieceniem.
+ */
+export const hullRepairNeedsResult = { dead: 0, hpUnits: 0, patched: 0, dents: 0 };
+
+/** Flagi komórek z repairNeeds(). */
+export const REPAIR_NEED = Object.freeze({ DENT: 1, HP: 2, BLOCKING: 4 });
 
 // ============================ SYSTEM ============================
 
@@ -1180,12 +1213,39 @@ export const HullBodies = {
     return out.length >> 1;
   },
 
+  /** Czy komórka (ix, iy) jest TERAZ na froncie odrostu (martwa komórka szablonu, regrowCell ją przyjmie). Tylko odczyt. */
+  canRegrow(entity, ix, iy) {
+    const hull = regrowableHull(entity);
+    const tpl = hull ? hullTemplate(hull) : null;
+    if (!tpl || !Number.isInteger(ix) || !Number.isInteger(iy)) return false;
+    const body = hull.body, d = body.dims;
+    if (ix < 0 || iy < 0 || ix >= d.x || iy >= d.y || d.z !== 1) return false;
+    const cell = ix + iy * d.x;
+    const t = tpl.cells[cell];
+    if (t < 0) return false;
+    const i = D._latticeIndex(body).cells[cell];
+    if (i >= 0 && body.nodeStore.active[i]) return false;
+    return regrowPlacement(hull, tpl, t, true, _regrowPos);
+  },
+
+  /** Czy komórka (ix, iy) ciała encji jest żywym węzłem. */
+  cellAlive(entity, ix, iy) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !hull.body || hull.body.dead) return false;
+    const body = hull.body, d = body.dims;
+    if (!Number.isInteger(ix) || !Number.isInteger(iy) || ix < 0 || iy < 0 || ix >= d.x || iy >= d.y) return false;
+    const i = D._latticeIndex(body).cells[ix + iy * d.x];
+    return i >= 0 && body.nodeStore.active[i] === 1;
+  },
+
   /**
    * Odrost jednej komórki frontu (regrowCandidates): węzeł w spoczynku komórki przeniesionym do bieżącego układu
    * ciała (+ średnie przemieszczenie żywych sąsiadów), belki szablonu do żywych węzłów zrośnięte w długości
    * spoczynkowej, masa i bezwładność ciała, skóra, siatka węzłów i kolizje od nowa. opts.hpMul — HP nowego węzła
-   * jako ułamek jego maks. HP (łaty polowe mogą być słabsze; naprawa R doleczy resztę). Hak onRegrow (punkty
-   * kadłuba). Zwraca, czy węzeł odrósł (false: komórka żywa, poza szablonem, poza frontem albo przy wgnieceniu).
+   * jako ułamek jego maks. HP (łaty polowe są słabsze); opts.patch — węzeł jest ŁATĄ polową (pole magazynu `patch`:
+   * podkład ze spawami w skórze, sufit HP w straightenAt; zeruje je remont — restoreHull). Hak onRegrow (punkty
+   * kadłuba; węzeł wart hpMul — łata daje tyle punktów, ile jej węzeł). Zwraca, czy węzeł odrósł (false: komórka
+   * żywa, poza szablonem, poza frontem albo przy wgnieceniu).
    */
   regrowCell(entity, ix, iy, opts = null) {
     const hull = regrowableHull(entity);
@@ -1208,7 +1268,9 @@ export const HullBodies = {
     }
     const hpMul = Number.isFinite(opts?.hpMul) ? Math.max(0, Math.min(1, opts.hpMul)) : 1;
     reviveNode(body, i, _regrowPos.x, _regrowPos.y, _regrowPos.z, hpMul);
-    finishRegrow(hull, before, false);
+    // Łata polowa (rój dronów): podkład ze spawami w skórze i sufit HP do remontu w doku (restoreHull).
+    body.nodeStore.patch[i] = opts?.patch ? 1 : 0;
+    finishRegrow(hull, before, false, hpMul);
     return true;
   },
 
@@ -1244,6 +1306,114 @@ export const HullBodies = {
     out.x = pose.x + pose.c * lx - pose.s * ly;
     out.y = pose.y - (pose.s * lx + pose.c * ly);
     return out;
+  },
+
+  // --------------------------- NAPRAWA LOKALNA ---------------------------
+  // Rój dronów naprawczych (src/game/repairRig.js): dron prostuje kadłub wokół komórki, przy której pracuje — zamiast
+  // dawnej naprawy całego kadłuba naraz (repair(), zostaje dla testów i dem). Komórka (ix, iy) jak w odroście.
+
+  /**
+   * Lokalne prostowanie w kwadracie ±opts.radius komórek (domyślnie 2) wokół (ix, iy) przez czas opts.dt [s]: węzły ku
+   * spoczynkowi (przesuniętemu o średnie przemieszczenie pierścienia za kwadratem), belki kwadratu — długość
+   * spoczynkowa ku bazowej, zerwane zrastają się w zakresie sprężystym, zmęczenie gaśnie; belki przez brzeg kwadratu —
+   * długość spoczynkowa = bieżąca (bez naprężeń, solver nie szarpie); HP węzłów ku sufitowi (maks. HP, łata — ×
+   * opts.patchHpMul) w tempie opts.hpRate (domyślnie straightenHpRate) maks. HP na sekundę; opts.rate — tempo kształtu.
+   * Bez solvera (jak repair()): kształt zbiega wprost, skóra i siatka węzłów od nowa tylko dla zmienionych węzłów.
+   * Wynik we współdzielonym hullStraightenResult (changed = false — obszar naprawiony).
+   */
+  straightenAt(entity, ix, iy, opts = null) {
+    const r = hullStraightenResult;
+    r.changed = false; r.hp = 0; r.hpUnits = 0; r.nodes = 0; r.moved = 0; r.welded = 0; r.waiting = 0;
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !hull.body || hull.body.dead || hull.body.activeNodes <= 0) return r;
+    if (!Number.isInteger(ix) || !Number.isInteger(iy)) return r;
+    straightenRegion(hull.body, ix, iy, opts, r);
+    return r;
+  },
+
+  /**
+   * Komórki żywego kadłuba do naprawy (tylko odczyt): `out` = [ix, iy, flagi, …] (czyszczona), flagi REPAIR_NEED:
+   * DENT — belka do żywego węzła z trwałym odkształceniem albo zerwana (szew otwarty), HP — HP poniżej sufitu (łata:
+   * opts.patchHpMul), BLOCKING — wgniecenie przy martwej komórce szablonu (blokuje front odrostu). Zwraca liczbę komórek.
+   * Koszt: przegląd węzłów i ich belek (Atlas ~3 tys. węzłów).
+   */
+  repairNeeds(entity, out = [], opts = null) {
+    out.length = 0;
+    const R = hullRepairNeedsResult;
+    R.dead = 0; R.hpUnits = 0; R.patched = 0; R.dents = 0;
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !hull.body || hull.body.dead || hull.body.activeNodes <= 0) return 0;
+    R.dead = Math.max(0, hull.baseNodes - hull.body.activeNodes);
+    const body = hull.body, s = body.nodeStore, e = body.beamStore, d = body.dims;
+    if (d.z !== 1) return 0;
+    const tpl = hull.anchorMode === 'sprite' ? hullTemplate(hull) : null;
+    const lattice = D._latticeIndex(body).cells;
+    const active = s.active, adj = s.adj, ea = e.a, eb = e.b, broken = e.broken, rest = e.rest, restBase = e.restBase;
+    const dentK = C.dentStrain, slack = C.hpSlack;
+    const patchMul = Number.isFinite(opts?.patchHpMul) ? Math.max(0, Math.min(1, opts.patchHpMul)) : 1;
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i]) continue;
+      let flags = 0;
+      for (let q = s.adjStart[i]; q < s.adjStart[i + 1]; q++) {
+        const bi = adj[q];
+        const o = ea[bi] ^ eb[bi] ^ i;
+        if (!active[o]) continue;
+        if (broken[bi] || Math.abs(rest[bi] - restBase[bi]) > dentK * restBase[bi]) { flags |= REPAIR_NEED.DENT; break; }
+      }
+      const cap = s.maxHp[i] * (s.patch[i] ? patchMul : 1);
+      if (s.patch[i]) R.patched++;
+      if (s.hp[i] < cap) R.hpUnits += (cap - s.hp[i]) / Math.max(1e-9, s.maxHp[i]);
+      if (s.hp[i] < cap - slack * s.maxHp[i]) flags |= REPAIR_NEED.HP;
+      if (flags & REPAIR_NEED.DENT) R.dents++;
+      if ((flags & REPAIR_NEED.DENT) && tpl) {
+        const cx = s.ix[i], cy = s.iy[i];
+        for (let dy = -1; dy <= 1 && !(flags & REPAIR_NEED.BLOCKING); dy++) {
+          const y = cy + dy;
+          if (y < 0 || y >= d.y) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const x = cx + dx;
+            if ((dx === 0 && dy === 0) || x < 0 || x >= d.x) continue;
+            const c = x + y * d.x;
+            if (tpl.cells[c] < 0) continue;
+            const j = lattice[c];
+            if (j < 0 || !active[j]) { flags |= REPAIR_NEED.BLOCKING; break; }
+          }
+        }
+      }
+      if (flags) out.push(s.ix[i], s.iy[i], flags);
+    }
+    return (out.length / 3) | 0;
+  },
+
+  /**
+   * Po serii straightenAt (koniec pracy drona): dokładne maksimum przemieszczenia węzłów (okno trafień) i obrys ciała.
+   * straightenAt ich nie liczy co krok (przegląd całego kadłuba) — prostowanie tylko je zmniejsza, więc stare są
+   * zachowawcze.
+   */
+  settleRepair(entity) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !hull.body || hull.body.dead) return false;
+    const body = hull.body, s = body.nodeStore;
+    let maxDisp = 0;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const disp = Math.max(Math.abs(s.x[i] - s.ox[i]), Math.abs(s.y[i] - s.oy[i]), Math.abs(s.z[i] - s.oz[i]));
+      if (disp > maxDisp) maxDisp = disp;
+    }
+    body._maxDisp = maxDisp;
+    D._updateRadius(body);
+    hull.radius = anchorRadius(hull);
+    return true;
+  },
+
+  /** Żywe węzły-łaty kadłuba (pole `patch`; 0 po remoncie w doku). */
+  patchedCount(entity) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !hull.body || hull.body.dead) return 0;
+    const s = hull.body.nodeStore;
+    let n = 0;
+    for (let i = 0; i < s.count; i++) if (s.active[i] && s.patch[i]) n++;
+    return n;
   },
 
   anchorLocalX,
@@ -1492,6 +1662,174 @@ function repairBody(body, dt) {
   return changed;
 }
 
+// ============================ NAPRAWA LOKALNA ============================
+//
+// straightenAt (HullBodies): kwadrat ±R komórek wokół (cx, cy). Węzły kwadratu zbiegają ku spoczynkowi przesuniętemu
+// o średnie przemieszczenie NIETKNIĘTYCH węzłów kadłuba (żadnej belki z trwałym odkształceniem ani zerwanej) — po
+// wyrównaniu środka masy (solver: _recentre) nietknięty kadłub stoi w spoczynku przesuniętym o średnie wgniecenie, a łata
+// musi zgadzać się z nim, nie z siatką. Odniesienie raz na ciało i krok fizyki (repairOffset), wspólne dla wszystkich
+// dronów — obszary sąsiednich dronów nie ciągną węzłów do różnych celów. Belki z oboma końcami w kwadracie: długość
+// spoczynkowa ku bazowej, zerwane zrastają się, gdy końce są w zakresie sprężystym; belki przez brzeg kwadratu: długość
+// spoczynkowa = bieżąca (w granicach maxRestDrift silnika) — brzeg obszaru bez naprężeń. Próg oparcia i mocowania wręgów
+// zrośniętych węzłów od nowa (jak odrost).
+
+const _straightenTouched = [];
+const _repairOff = { x: 0, y: 0, z: 0 };
+
+// Średnie przemieszczenie nietkniętych żywych węzłów ciała (bez nich — wszystkich żywych); pamięć na ciele do zmiany
+// czasu symulacji (HullBodies.simTime), magazynu albo liczby żywych węzłów.
+function repairOffset(body, out) {
+  const t = HullBodies.simTime;
+  const c = body._repairOff;
+  if (c && c.t === t && c.store === body.nodeStore && c.nodes === body.activeNodes) {
+    out.x = c.x; out.y = c.y; out.z = c.z;
+    return out;
+  }
+  const s = body.nodeStore, e = body.beamStore, active = s.active, adj = s.adj, ea = e.a, eb = e.b;
+  const broken = e.broken, rest = e.rest, restBase = e.restBase, dentK = C.dentStrain;
+  let sx = 0, sy = 0, sz = 0, n = 0, ax = 0, ay = 0, az = 0, na = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!active[i]) continue;
+    const dx = s.x[i] - s.ox[i], dy = s.y[i] - s.oy[i], dz = s.z[i] - s.oz[i];
+    ax += dx; ay += dy; az += dz; na++;
+    let clean = true;
+    for (let q = s.adjStart[i]; q < s.adjStart[i + 1]; q++) {
+      const bi = adj[q];
+      if (!active[ea[bi] ^ eb[bi] ^ i]) continue;
+      if (broken[bi] || Math.abs(rest[bi] - restBase[bi]) > dentK * restBase[bi]) { clean = false; break; }
+    }
+    if (!clean) continue;
+    sx += dx; sy += dy; sz += dz; n++;
+  }
+  if (n > 0) { out.x = sx / n; out.y = sy / n; out.z = sz / n; }
+  else if (na > 0) { out.x = ax / na; out.y = ay / na; out.z = az / na; }
+  else { out.x = 0; out.y = 0; out.z = 0; }
+  if (!c) body._repairOff = { t, store: body.nodeStore, nodes: body.activeNodes, x: out.x, y: out.y, z: out.z };
+  else { c.t = t; c.store = body.nodeStore; c.nodes = body.activeNodes; c.x = out.x; c.y = out.y; c.z = out.z; }
+  return out;
+}
+
+function straightenRegion(body, cx, cy, opts, res) {
+  const s = body.nodeStore, e = body.beamStore, d = body.dims;
+  if (d.z !== 1) return;
+  const R = Math.max(0, Math.min(8, Math.round(Number.isFinite(opts?.radius) ? opts.radius : 2)));
+  const dt = Math.max(0, Number(opts?.dt) || 0);
+  const rate = Number.isFinite(opts?.rate) ? Math.max(0, opts.rate) : C.straightenRate;
+  const k = 1 - Math.exp(-dt * rate);
+  const hpStep = dt * (Number.isFinite(opts?.hpRate) ? Math.max(0, opts.hpRate) : C.straightenHpRate);
+  const patchMul = Number.isFinite(opts?.patchHpMul) ? Math.max(0, Math.min(1, opts.patchHpMul)) : 1;
+  const snap = C.straightenSnap;
+  const lattice = D._latticeIndex(body).cells;
+  const active = s.active, x = s.x, y = s.y, z = s.z, ox = s.ox, oy = s.oy, oz = s.oz;
+  const sx0 = Math.max(0, cx - R), sx1 = Math.min(d.x - 1, cx + R);
+  const sy0 = Math.max(0, cy - R), sy1 = Math.min(d.y - 1, cy + R);
+  if (sx1 < sx0 || sy1 < sy0) return;
+  // Odniesienie: spoczynek przesunięty o średnie przemieszczenie nietkniętego kadłuba (wspólne dla wszystkich dronów).
+  const off = repairOffset(body, _repairOff);
+  const offX = off.x, offY = off.y, offZ = off.z;
+  const region = activeRegion(body);
+  const bulk = Math.max(64, s.count >> 3);
+  let marked = 0, moved = 0, changed = false;
+  const mark = (i) => {
+    if (region.dirtyAll) return;
+    if (++marked > bulk) { region.dirtyAll = true; return; }
+    markSkinDirty(body, i);
+  };
+  // Węzły: kształt i HP.
+  for (let yy = sy0; yy <= sy1; yy++) {
+    for (let xx = sx0; xx <= sx1; xx++) {
+      const i = lattice[xx + yy * d.x];
+      if (i < 0 || !active[i]) continue;
+      res.nodes++;
+      const tx = ox[i] + offX, ty = oy[i] + offY, tz = oz[i] + offZ;
+      const dx = tx - x[i], dy = ty - y[i], dz = tz - z[i];
+      const m = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+      if (m > 0) {
+        if (m < snap) { x[i] = tx; y[i] = ty; z[i] = tz; }
+        else { x[i] += dx * k; y[i] += dy * k; z[i] += dz * k; }
+        s.px[i] = x[i]; s.py[i] = y[i]; s.pz[i] = z[i];
+        s.vx[i] = 0; s.vy[i] = 0; s.vz[i] = 0;
+        moved++;
+        mark(i);
+      }
+      const cap = s.maxHp[i] * (s.patch[i] ? patchMul : 1);
+      if (s.hp[i] < cap && hpStep > 0) {
+        const gain = Math.min(cap - s.hp[i], s.maxHp[i] * hpStep);
+        s.hp[i] += gain;
+        res.hp += gain;
+        res.hpUnits += gain / Math.max(1e-9, s.maxHp[i]);
+        changed = true;
+      }
+    }
+  }
+  // Belki węzłów kwadratu (każda raz: wewnętrzna z niższego końca, brzegowa z wewnętrznego).
+  const adj = s.adj, ea = e.a, eb = e.b, broken = e.broken, rest = e.rest, restBase = e.restBase, fatigue = e.fatigue;
+  const drift = D.config?.maxRestDrift ?? 0.75, weldK = C.straightenWeldStrain;
+  const touched = _straightenTouched;
+  touched.length = 0;
+  for (let yy = sy0; yy <= sy1; yy++) {
+    for (let xx = sx0; xx <= sx1; xx++) {
+      const i = lattice[xx + yy * d.x];
+      if (i < 0 || !active[i]) continue;
+      for (let q = s.adjStart[i]; q < s.adjStart[i + 1]; q++) {
+        const bi = adj[q];
+        const o = ea[bi] ^ eb[bi] ^ i;
+        if (!active[o]) continue;
+        const inside = Math.abs(s.ix[o] - cx) <= R && Math.abs(s.iy[o] - cy) <= R && s.iz[o] === 0;
+        if (inside && o < i) continue;
+        if (fatigue[bi] > 0) { fatigue[bi] = Math.max(0, fatigue[bi] - dt * 2); changed = true; }
+        const base = restBase[bi];
+        if (inside) {
+          const r0 = rest[bi];
+          if (r0 !== base) {
+            const next = r0 + (base - r0) * k;
+            rest[bi] = Math.abs(next - base) < base * 0.002 ? base : next;
+            changed = true;
+            mark(i); mark(o);
+          }
+          if (broken[bi]) {
+            const lx = x[o] - x[i], ly = y[o] - y[i], lz = z[o] - z[i];
+            const len = Math.sqrt(lx * lx + ly * ly + lz * lz);
+            if (Math.abs(len - base) <= weldK * e.deform[bi] * base) {
+              broken[bi] = 0;
+              body.liveBeams++;
+              e.strain[bi] = 0;
+              res.welded++;
+              touched.push(i, o);
+              mark(i); mark(o);
+            } else {
+              res.waiting++;
+            }
+            changed = true;
+          }
+        } else if (!broken[bi]) {
+          const lx = x[o] - x[i], ly = y[o] - y[i], lz = z[o] - z[i];
+          const len = Math.sqrt(lx * lx + ly * ly + lz * lz);
+          const next = Math.max(base * (1 - drift), Math.min(base * (1 + drift), len));
+          if (Math.abs(next - rest[bi]) > base * 1e-6) {
+            rest[bi] = next;
+            mark(i); mark(o);
+          }
+        }
+      }
+    }
+  }
+  if (touched.length) {
+    for (let t = 0; t < touched.length; t++) raiseBeamCount(s, e, touched[t]);
+    D._refreshMountsLocal(body, beamSolverScratch(body), touched, touched.length);
+  }
+  if (moved > 0) {
+    res.moved = moved;
+    changed = true;
+    body.meshDirty = true;
+    body._hashTick = -1;
+    D._touchGeometry(body);
+  } else if (changed) {
+    body.meshDirty = true;
+  }
+  res.changed = changed;
+}
+
 // ============================ ODROST ============================
 //
 // Żywy kadłub statku trzyma magazyn w układzie konstrukcji (body.keepLayout — rozpad bez zagęszczania), więc wpis
@@ -1649,6 +1987,7 @@ function restoreBodyToRest(body) {
     s.hp[i] = s.maxHp[i];
     s.heat[i] = 0; s.heatStamp[i] = 0; s.temp[i] = 0; s.crushDepth[i] = 0;
     s.act[i] = 0; s.quiet[i] = 0;
+    s.patch[i] = 0;       // remont: łaty polowe wymienione na blachę z farbą
     s.beamCount[i] = s.adjStart[i + 1] - s.adjStart[i];
   }
   for (let b = 0; b < e.count; b++) {
@@ -1669,7 +2008,8 @@ function restoreBodyToRest(body) {
 
 // Po odroście: masa, bezwładność, obrys, rewizja kadłuba (model 3D, przekroje) i hak punktów (onRegrow).
 // `recenter` — początek układu zawsze do środka masy (remont); inaczej dopiero, gdy odjechał o regrowRecenterCells.
-function finishRegrow(hull, activeBefore, recenter) {
+// `worth` — ile wart jest odrośnięty węzeł (HP węzła / maks.: łata polowa < 1) — hak punktów skaluje nim przyrost.
+function finishRegrow(hull, activeBefore, recenter, worth = 1) {
   const body = hull.body;
   const info = computeStoreInertia(body.nodeStore, body.cellSize);
   if (info) {
@@ -1686,7 +2026,7 @@ function finishRegrow(hull, activeBefore, recenter) {
   const hook = HullBodies.onRegrow;
   if (typeof hook === 'function' && hull.entity) {
     const base = Math.max(1, hull.baseNodes);
-    hook(hull.entity, Math.min(1, activeBefore / base), Math.min(1, body.activeNodes / base));
+    hook(hull.entity, Math.min(1, activeBefore / base), Math.min(1, body.activeNodes / base), worth);
   }
 }
 

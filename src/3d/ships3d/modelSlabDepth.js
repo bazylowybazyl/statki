@@ -20,6 +20,10 @@ import * as THREE from 'three/webgpu';
 import { Fn, uniform, positionWorld, positionView, cameraProjectionMatrix, vec4, clamp, mix, max, select } from 'three/tsl';
 
 export const SLAB_HULL = Object.freeze({ lo: -10.4, hi: -5.3 });
+// Holownik serwisowy ze statkiem na pokładzie (src/game/serviceTugGame.js): holownik w dolnej części pasma kadłubów,
+// statek w górnej — bryły leżą na sobie zamiast przenikać się w tym samym paśmie.
+export const SLAB_HULL_UNDER = Object.freeze({ lo: -10.4, hi: -8.1 });
+export const SLAB_HULL_OVER = Object.freeze({ lo: -7.9, hi: -5.3 });
 export const SLAB_TURRET_ON_MODEL = Object.freeze({ lo: -4.6, hi: -0.4 });
 export const SLAB_TURRET_ON_SPRITE = Object.freeze({ lo: 0.05, hi: 1.8 });
 export const SLAB_NOZZLE_ON_MODEL = Object.freeze({ lo: -4.9, hi: -0.6 });

@@ -6,11 +6,15 @@
 //  - maskowany byt (`env.cloaked`) nie istnieje dla czujników;
 //  - pozycje w rekordach to tylko zapas — tracker czyta ŻYWE pozycje z encji wg `src` co klatkę tarczy.
 // Wynik `feed.contacts` (zgodny ze starym radarModel.contacts) karmi listy kokpitu (overview, wyniki skanu).
+// Stałe dane bytu (typ, klasa, nazwa, wymiary i obraz kadłuba) — z pamięci per byt (`metaOf`), odświeżane co
+// META_REFRESH zebrań, rozłożone w czasie; w dużej bitwie dawniej liczone dla każdego okrętu co 100 ms.
 
 import { RADAR_TUNE, radarClassCode } from './radarConfig.js';
 import { RADAR_SRC } from './radarTracker.js';
 
 const FIGHTER_RE = /fighter|interceptor|bomber/;
+// Co tyle zebrań (~1,6 s przy 10 Hz) dane bytu liczone od nowa (nazwa, wymiary kadłuba po budowie ciała).
+const META_REFRESH = 16;
 
 function finite(v, d = 0) {
   const n = Number(v);
@@ -39,6 +43,8 @@ export function createRadarFeed(tune = RADAR_TUNE) {
   const weapons = [];
   const lockSet = new Set();
   const storySet = new Set();
+  const metas = new WeakMap();
+  let metaSeq = 0;
   const feed = {
     own: { x: 0, y: 0, vx: 0, vy: 0, heading: 0, angle: 0, length: 0, width: 0, sprite: null, spriteRot: 0 },
     targets: pool,
@@ -67,6 +73,47 @@ export function createRadarFeed(tune = RADAR_TUNE) {
     r.name = '';
     r.cls = '';
     return r;
+  }
+
+  // Dane bytu, które nie zmieniają się co klatkę. Przeliczane po zmianie typu, strony, wraku, kadłuba albo co
+  // META_REFRESH zebrań (pierwszy termin rozłożony numerem bytu — bez skoku przy flocie z jednego wezwania).
+  function metaOf(e, env, withHull) {
+    let m = metas.get(e);
+    const typeRaw = e.type || e.shipFrame || '';
+    const wreck = !!e.isWreck;
+    const friendly = !!e.friendly;
+    const hull = e.beamHull || e.hexGrid || null;
+    if (m && m.typeRaw === typeRaw && m.wreck === wreck && m.friendly === friendly && m.hull === hull
+      && feed.stamp - m.stamp < META_REFRESH) return m;
+    if (!m) {
+      m = { stamp: 0, typeRaw: '', type: '', wreck: false, friendly: false, hull: null, fighter: false, cls: '', name: '',
+        length: 0, width: 0, sprite: null, spriteRot: 0 };
+      metas.set(e, m);
+      m.stamp = feed.stamp - (metaSeq++ % META_REFRESH);
+    } else {
+      m.stamp = feed.stamp;
+    }
+    m.typeRaw = typeRaw;
+    m.wreck = wreck;
+    m.friendly = friendly;
+    m.hull = hull;
+    const type = String(typeRaw).toLowerCase();
+    m.type = type;
+    m.fighter = !e.isCapitalShip && (e.fighter === true || FIGHTER_RE.test(type));
+    m.cls = radarClassCode(e.callInTemplateKey || type, e);
+    m.name = env.nameOf ? env.nameOf(e) : '';
+    if (withHull && env.hullMetrics && (!m.fighter || wreck)) {
+      const hm = env.hullMetrics(e);
+      m.length = finite(hm?.worldW);
+      m.width = finite(hm?.worldH);
+      m.sprite = env.spriteOf ? env.spriteOf(e) : null;
+      m.spriteRot = env.spriteRotOf ? finite(env.spriteRotOf(e)) : 0;
+    } else {
+      m.length = m.width = Math.max(20, finite(e.radius, 20) * 2);
+      m.sprite = null;
+      m.spriteRot = 0;
+    }
+    return m;
   }
 
   function contact(entity, type, friendly, hostile, dx, dy, dist, locked, isStation) {
@@ -149,33 +196,28 @@ export function createRadarFeed(tune = RADAR_TUNE) {
           const isObj = storySet.has(e);
           if (d2 > prSq && !isLocked && !isSel && !isObj) continue;
           if (!e.friendly && (hides(e) || cloaked(e))) continue;
-          const type = String(e.type || e.shipFrame || '').toLowerCase();
+          const meta = metaOf(e, env, true);
+          const type = meta.type;
           const r = rec(n++);
           r.key = e;
           r.src = RADAR_SRC.XY;
           r.x = ex; r.y = ey; r.vx = finite(e.vx); r.vy = finite(e.vy); r.angle = finite(e.angle);
-          const fighter = !e.isCapitalShip && (e.fighter === true || FIGHTER_RE.test(type));
-          r.kind = e.isWreck ? 'wreck' : fighter ? 'fighter' : (type.includes('drone') ? 'drone' : 'ship');
+          r.kind = e.isWreck ? 'wreck' : meta.fighter ? 'fighter' : (type.includes('drone') ? 'drone' : 'ship');
           const friendly = !!e.friendly;
           const hostile = !friendly && isHostile(e);
           r.aff = friendly ? 'friendly' : hostile ? 'hostile' : 'neutral';
           r.capital = !!e.isCapitalShip;
-          r.cls = radarClassCode(e.callInTemplateKey || type, e);
-          r.name = env.nameOf ? env.nameOf(e) : '';
+          r.cls = meta.cls;
+          r.name = meta.name;
           r.idKnown = friendly;
           r.continuous = friendly;
           r.locked = isLocked;
           r.selected = isSel;
           r.objective = isObj;
-          if (env.hullMetrics && r.kind !== 'fighter') {
-            const m = env.hullMetrics(e);
-            r.length = finite(m?.worldW);
-            r.width = finite(m?.worldH);
-            r.sprite = env.spriteOf ? env.spriteOf(e) : null;
-            r.spriteRot = env.spriteRotOf ? finite(env.spriteRotOf(e)) : 0;
-          } else {
-            r.length = r.width = Math.max(20, finite(e.radius, 20) * 2);
-          }
+          r.length = meta.length;
+          r.width = meta.width;
+          r.sprite = meta.sprite;
+          r.spriteRot = meta.spriteRot;
           if (d2 <= rangeSq && r.kind !== 'wreck') {
             counts.total++;
             if (hostile) counts.hostile++;
@@ -263,10 +305,9 @@ export function createRadarFeed(tune = RADAR_TUNE) {
           r.x = ex; r.y = ey; r.vx = finite(e.vx ?? e.vel?.x); r.vy = finite(e.vy ?? e.vel?.y); r.angle = finite(e.angle);
           r.cls = 'WR'; r.name = 'WRAK'; r.idKnown = true;
           if (env.hullMetrics) {
-            const m = env.hullMetrics(e);
-            r.length = finite(m?.worldW); r.width = finite(m?.worldH);
-            r.sprite = env.spriteOf ? env.spriteOf(e) : null;
-            r.spriteRot = env.spriteRotOf ? finite(env.spriteRotOf(e)) : 0;
+            const meta = metaOf(e, env, true);
+            r.length = meta.length; r.width = meta.width;
+            r.sprite = meta.sprite; r.spriteRot = meta.spriteRot;
           }
         }
       }

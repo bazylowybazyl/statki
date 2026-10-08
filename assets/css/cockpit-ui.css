@@ -206,6 +206,17 @@ button:focus-visible,
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px;
   padding: 8px 10px; border-top: 1px solid var(--line-soft); background: rgba(0, 0, 0, 0.18);
 }
+/* Formacja skrzydła (Alt): piktogram z góry — czoło szyku u góry, romb = Atlas. */
+.panel-formations {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px;
+  padding: 0 10px 8px; background: rgba(0, 0, 0, 0.18);
+}
+.formation-button { display: grid; justify-items: center; align-content: center; gap: 2px; min-height: calc(46 * var(--u)); padding: 4px 3px 3px; }
+.formation-button > span { font-size: var(--fs-xs); letter-spacing: 0.04em; white-space: nowrap; }
+.formation-icon { width: calc(32 * var(--u)); height: calc(25 * var(--u)); opacity: 0.7; }
+.formation-icon .formation-player { fill: #66bbff; }
+.formation-button:hover .formation-icon,
+.formation-button.active .formation-icon { opacity: 1; }
 
 /* Rezerwa (Alt): przyzwanie jednostek przeciągnięciem na mapę. */
 .faction-tabs,

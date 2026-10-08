@@ -13,6 +13,9 @@ import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseT
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
 import { mountFireArc } from '../game/weaponAim.js';
 import { AI_SNAP_FIGHTER, trafficAvoidanceObjects, trafficAvoidanceRange, trafficAvoidanceSnapshot } from './aiNeighborKernels.js';
+import { getWreckIndex, wreckLowerBound } from './aiWreckIndex.js';
+import { npcHasEngineBurst, stepNpcShipSystem } from './npcShipSystem.js';
+import { modifierFireRate } from '../game/shipModifiers.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -66,12 +69,13 @@ export function computeTrafficAvoidance(npc, out = _avoid) {
 }
 
 // Zatwierdza intencję ustawioną przez mózg: dokłada separację (liczoną raz na
-// tick AI), unik zderzeń i stan dopalacza.
+// tick AI), unik zderzeń i stan dopalacza (także zrywu silników — system F,
+// npcShipSystem.js; jego mnożniki niesie intencja).
 function commitCapitalFlight(npc, boostT = 0, dt = 1 / 20) {
   const sep = window.applySeparationForces ? window.applySeparationForces(npc, 0, 0) : null;
   const avoid = computeTrafficAvoidance(npc);
   setFlightSeparation(npc, (sep?.ax || 0) + avoid.ax, (sep?.ay || 0) + avoid.ay);
-  setFlightBoost(npc, boostT > 0);
+  setFlightBoost(npc, boostT > 0 || npc.__fSysBoost === true);
   if (!usesShipFlightModel(npc)) legacyFollowIntent(npc, boostT, dt);
 }
 
@@ -135,6 +139,16 @@ const OBSTACLE_LOOK_MIN = 1500;
 const OBSTACLE_LOOK_MAX = 20000;
 const _obsScratch = { on: false, x: 0, y: 0, vx: 0, vy: 0, c: 0, along: Infinity };
 let _obsCap = Infinity;
+// Ogranicznik od samych wraków (ostatnie zapytanie) — pilot stosuje go do CAŁEJ prędkości
+// (approachCap ogranicza tylko podejście do punktu; prędkość punktu, np. okrętu flagowego,
+// za którym leci eskorta, dochodziła bez limitu — fregaty wbijały się we wraki z jego
+// prędkością).
+let _wreckCap = Infinity;
+// Czy najbliższa przeszkoda na kursie do celu (blk) z ostatniego zapytania to wrak.
+let _blkWreck = false;
+// Byt pomijany jako przeszkoda (cel rozkazu RTS: orbitowany, taranowany, podchodzony — capitalCommandSteer);
+// mózgi zostawiają null.
+let _obsIgnore = null;
 // nx, ny, myR — pozycja i promień (npc.radius || 100) pytającego, liczone raz na zapytanie.
 function considerObstacle(o, nx, ny, myR, ox, oy, oR, d1x, d1y, d2x, d2y, has2, look, brake, blk) {
   const rx = ox - nx;
@@ -168,9 +182,154 @@ function considerObstacle(o, nx, ny, myR, ox, oy, oR, d1x, d1y, d2x, d2y, has2, 
     }
   }
 }
+// Wrak jako przeszkoda (aiWreckIndex.js): KAPSUŁA wzdłuż osi wraku. Blokada i hamowanie —
+// korytarz okrętu (pół-szerokość + zapas) przecina kapsułę na kursie: hamujemy przed
+// wejściem w nią. Objazd (blk) — po stycznej do koła CAŁEGO wraku (pół-długość + korytarz),
+// żeby obejść go w całości. Kierunek od wraku nigdy nie jest blokowany (okręt wciśnięty we
+// wrak może się z niego wycofać). Koło jak dla okrętów (promień = pół-długości + 150)
+// zasłaniało w polu wraków prawie cały przelot, a okręt w środku koła stał przyklejony.
+// Strojenie na żywo: window.WreckAvoidTune (enabled: false — A/B bez omijania wraków).
+export const WRECK_AVOID_TUNE = { enabled: true, shipWidthK: 0.4, shipWidthMin: 60, pad: 90, stopPad: 60 };
+// Kurs (dx, dy — jednostkowy) od (nx, ny): odległość do wejścia w kapsułę (albo Infinity).
+function wreckEntryAlong(nx, ny, dx, dy, i, W, R, look) {
+  const ux = W.ux[i];
+  const uy = W.uy[i];
+  const h = W.h[i];
+  const w0x = nx - W.x[i];
+  const w0y = ny - W.y[i];
+  const b = dx * ux + dy * uy;
+  const dd = dx * w0x + dy * w0y;
+  const e = ux * w0x + uy * w0y;
+  // Okręt już zachodzi na kapsułę: blokujemy tylko ruch W GŁĄB (ku osi wraku); w bok i na
+  // zewnątrz wolno — inaczej okręt przy wraku nie mógł się od niego odsunąć ani objechać.
+  const s0 = e < -h ? -h : (e > h ? h : e);
+  const q0x = w0x - ux * s0;
+  const q0y = w0y - uy * s0;
+  const q0 = q0x * q0x + q0y * q0y;
+  if (q0 < R * R) {
+    // „W głąb” = kurs prawie prosto na oś (cos > 0,6): między dwoma wrakami zostaje
+    // wolny kierunek styczny.
+    return (dx * q0x + dy * q0y) < -0.6 * Math.sqrt(q0) ? 0 : Infinity;
+  }
+  // Najbliższe zbliżenie promienia (t ≥ 0) do odcinka osi (s ∈ [−h, h]).
+  const den = 1 - b * b;
+  let sv = den > 1e-6 ? (e - b * dd) / den : e;
+  if (sv < -h) sv = -h; else if (sv > h) sv = h;
+  let t = sv * b - dd;
+  if (t < 0) t = 0;
+  sv = e + t * b;
+  if (sv < -h) sv = -h; else if (sv > h) sv = h;
+  t = sv * b - dd;
+  if (t <= 0 || t > look + R) return Infinity;
+  const px = w0x + dx * t - ux * sv;
+  const py = w0y + dy * t - uy * sv;
+  const d2 = px * px + py * py;
+  if (d2 >= R * R) return Infinity;
+  return t - Math.sqrt(R * R - d2);
+}
+function considerWreck(o, i, W, nx, ny, myR, d1x, d1y, d2x, d2y, has2, look, brake, blk) {
+  const T = WRECK_AVOID_TUNE;
+  const myW = Math.max(T.shipWidthMin, myR * T.shipWidthK);
+  const R = myW + W.w[i] + T.pad;
+  let along = wreckEntryAlong(nx, ny, d1x, d1y, i, W, R, look);
+  if (along <= look) {
+    const v = Math.sqrt(2 * brake * Math.max(0, along - T.stopPad));
+    if (v < _obsCap) _obsCap = v;
+    if (v < _wreckCap) _wreckCap = v;
+    if (along < blk.along) {
+      blk.on = true;
+      blk.vx = Number(o.vx) || 0;
+      blk.vy = Number(o.vy) || 0;
+      blk.along = along;
+      if (along > 0) {
+        blk.x = W.x[i];
+        blk.y = W.y[i];
+        blk.c = W.r[i] + myW + T.pad;
+      } else {
+        // Wciśnięty we wrak: objazd od najbliższego punktu osi (ucieczka prostopadle do
+        // burty), nie od środka — przy długim wraku kierunek „od środka” szedł wzdłuż osi.
+        const ex = nx - W.x[i];
+        const ey = ny - W.y[i];
+        const h = W.h[i];
+        let sv = ex * W.ux[i] + ey * W.uy[i];
+        if (sv < -h) sv = -h; else if (sv > h) sv = h;
+        blk.x = W.x[i] + W.ux[i] * sv;
+        blk.y = W.y[i] + W.uy[i] * sv;
+        blk.c = R;
+      }
+    }
+  }
+  if (has2) {
+    along = wreckEntryAlong(nx, ny, d2x, d2y, i, W, R, look);
+    if (along <= look) {
+      const v = Math.sqrt(2 * brake * Math.max(0, along - T.stopPad));
+      if (v < _obsCap) _obsCap = v;
+      if (v < _wreckCap) _wreckCap = v;
+    }
+  }
+}
+
+// Wraki z indeksu (aiWreckIndex.js) jako przeszkody — osobna, mała funkcja: pętla po wrakach
+// w środku capitalObstacleSpeedCap (dużej, z dwiema drogami sąsiadów) psuła jej optymalizację
+// V8 (zapytanie bez wraków 14 → 35 µs/klatkę po pierwszym polu wraków).
+function considerWrecks(W, nx, ny, myR, d1x, d1y, d2x, d2y, has2, look, brake, blk) {
+  const alongShips = blk.along;
+  // Obrys korytarzy przed okrętem (kurs do celu i kurs pędu) zamiast kwadratu ±zasięg:
+  // pas x okrętu lecącego w poprzek osi x jest kilka razy węższy.
+  const extMax = W.rMax + myR + 150;
+  const reach = look + extMax;
+  let x0 = nx;
+  let x1 = nx;
+  let y0 = ny;
+  let y1 = ny;
+  const e1x = nx + d1x * reach;
+  const e1y = ny + d1y * reach;
+  if (e1x < x0) x0 = e1x; else if (e1x > x1) x1 = e1x;
+  if (e1y < y0) y0 = e1y; else if (e1y > y1) y1 = e1y;
+  if (has2) {
+    const e2x = nx + d2x * reach;
+    const e2y = ny + d2y * reach;
+    if (e2x < x0) x0 = e2x; else if (e2x > x1) x1 = e2x;
+    if (e2y < y0) y0 = e2y; else if (e2y > y1) y1 = e2y;
+  }
+  x0 -= extMax;
+  x1 += extMax;
+  y0 -= extMax;
+  y1 += extMax;
+  const WX = W.x;
+  const WY = W.y;
+  const WR = W.r;
+  for (let i = wreckLowerBound(x0); i < W.count && WX[i] <= x1; i++) {
+    const wy = WY[i];
+    if (wy < y0 || wy > y1) continue;
+    const ry = wy - ny;
+    // Tani test korytarza (koło całego wraku) przed kapsułą: wrak przed okrętem i w pasie
+    // kursu do celu albo kursu pędu — reszta pasa x (za okrętem, z boku) odpada od razu.
+    const rx = WX[i] - nx;
+    const ext = WR[i] + myR + 150;
+    const a1 = rx * d1x + ry * d1y;
+    const p1 = ry * d1x - rx * d1y;
+    let hit = a1 > -ext && a1 < look + ext && p1 < ext && p1 > -ext;
+    if (!hit && has2) {
+      const a2 = rx * d2x + ry * d2y;
+      const p2 = ry * d2x - rx * d2y;
+      hit = a2 > -ext && a2 < look + ext && p2 < ext && p2 > -ext;
+    }
+    if (!hit || W.refs[i] === _obsIgnore) continue;
+    considerWreck(W.refs[i], i, W, nx, ny, myR, d1x, d1y, d2x, d2y, has2, look, brake, blk);
+  }
+  _blkWreck = blk.along < alongShips;
+}
+
 export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = false) {
   const fid = window.__frameId;
-  if (!fresh && fid && npc.__obsCapFid === fid && npc.__obsCapVal !== undefined) return npc.__obsCapVal;
+  if (!fresh && fid && npc.__obsCapFid === fid && npc.__obsCapVal !== undefined) {
+    _wreckCap = npc.__wreckCapVal ?? Infinity;
+    _blkWreck = npc.__obsBlkWreck === true;
+    return npc.__obsCapVal;
+  }
+  _wreckCap = Infinity;
+  _blkWreck = false;
 
   const brake = spec ? spec.decel * 0.85 : 420;
   const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
@@ -184,7 +343,7 @@ export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = f
   const ny = npc.y;
   const myR = npc.radius || 100;
   const ship = window.ship;
-  if (ship && !ship.destroyed && ship.pos) {
+  if (ship && !ship.destroyed && ship.pos && ship !== _obsIgnore) {
     considerObstacle(ship, nx, ny, myR, ship.pos.x, ship.pos.y, ship.radius || 220, d1x, d1y, d2x, d2y, has2, look, brake, blk);
   }
   const query = window.queryAIGrid;
@@ -205,7 +364,7 @@ export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = f
         for (let s = ranges[2 * r]; s < end; s++) {
           if (dedup && snap.seen(s)) continue;
           const o = refs[s];
-          if (o === npc || D[s] !== 0 || o === ship || (F[s] & AI_SNAP_FIGHTER) !== 0) continue;
+          if (o === npc || D[s] !== 0 || o === ship || o === _obsIgnore || (F[s] & AI_SNAP_FIGHTER) !== 0) continue;
           considerObstacle(o, nx, ny, myR, X[s], Y[s], R[s] || 100, d1x, d1y, d2x, d2y, has2, look, brake, blk);
         }
       }
@@ -215,13 +374,18 @@ export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = f
       const n = q.count;
       for (let i = 0; i < n; i++) {
         const o = buf[i];
-        if (!o || o === npc || o.dead || o === ship || o.fighter) continue;
+        if (!o || o === npc || o.dead || o === ship || o === _obsIgnore || o.fighter) continue;
         considerObstacle(o, nx, ny, myR, o.x, o.y, o.radius || 100, d1x, d1y, d2x, d2y, has2, look, brake, blk);
       }
     }
   }
+  // Wraki (aiWreckIndex.js — duże, posortowane po x, przebudowa co takt AI): ogranicznik
+  // i objazd jak dla okrętów, węższa geometria (considerWreck). Pas x ± zasięg
+  // wyszukiwaniem binarnym.
+  const W = getWreckIndex();
+  if (W.count > 0 && WRECK_AVOID_TUNE.enabled) considerWrecks(W, nx, ny, myR, d1x, d1y, d2x, d2y, has2, look, brake, blk);
   const cap = _obsCap;
-  if (!fresh && fid) { npc.__obsCapFid = fid; npc.__obsCapVal = cap; }
+  if (!fresh && fid) { npc.__obsCapFid = fid; npc.__obsCapVal = cap; npc.__wreckCapVal = _wreckCap; npc.__obsBlkWreck = _blkWreck; }
   return cap;
 }
 
@@ -231,8 +395,11 @@ export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = f
 // hamować do zera — okręt, którego miejsce w szyku leżało po drugiej stronie
 // gracza, stawał przy nim na zawsze (prędkość 0, cel „za" graczem).
 const DETOUR_MARGIN = 1.15;
+// Objazd, na którym przeszkody pozwalają na mniej niż tyle (j/s), uznajemy za zablokowany.
+const DETOUR_BLOCKED_SPEED = 40;
 const _detour = { x: 0, y: 0, dx: 0, dy: 0 };
-function computeObstacleDetour(npc, tx, ty, blk, out) {
+// `flip` = -1 — objazd z drugiej strony (gdy strona celu zablokowana wrakiem).
+function computeObstacleDetour(npc, tx, ty, blk, out, flip = 1) {
   const rx = blk.x - npc.x;
   const ry = blk.y - npc.y;
   const d = Math.hypot(rx, ry);
@@ -241,6 +408,7 @@ function computeObstacleDetour(npc, tx, ty, blk, out) {
   const uy = ry / d;
   let side = Math.sign(ux * (ty - npc.y) - uy * (tx - npc.x));
   if (side === 0) side = ((Number(npc.__formUid) || 1) & 1) ? 1 : -1;
+  side *= flip;
   const c = blk.c * DETOUR_MARGIN;
   let a;
   let len;
@@ -287,6 +455,7 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
   if (Number(opts.speedMul) > 0) speedLimit *= Number(opts.speedMul);
 
   let approachCap = Infinity;
+  let totalCap = Infinity;
   let aimX = tx;
   let aimY = ty;
   let aimArrival = arrival;
@@ -300,19 +469,33 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
     const vdx = useVel ? (npc.vx || 0) / vlen : 0;
     const vdy = useVel ? (npc.vy || 0) / vlen : 0;
     approachCap = capitalObstacleSpeedCap(npc, dx * invD, dy * invD, vdx, vdy, spec);
+    totalCap = _wreckCap;
     // Przeszkoda przed celem — objazd po stycznej (punkt pośredni jedzie z nią).
     // Tylko gdy cel leży wyraźnie ZA strefą bezpieczeństwa przeszkody: przy
     // przepychaniu się w szyku (sąsiad tuż obok miejsca) objazd kręciłby
     // okrętem w kółko — tam wystarcza separacja i unik CPA.
+    // Objazd WRAKU albo objazd zablokowany wrakiem, na którym nie da się jechać (okręt
+    // wciśnięty we wrak i objazd prosto w niego; na objeździe wraku stoi własna eskorta,
+    // która czeka przy okręcie flagowym), a prosto jest luźniej: druga strona, a gdy i tam
+    // blokada — kurs prosto z jego ogranicznikiem (bez tego okręt stał przy wraku na zawsze).
+    // Objazd samych okrętów bez wraków — jak dawniej (pierwsza strona; szyk-floty).
     const blk = npc.__obsBlk;
-    if (blk && blk.on && blk.along < dist - arrival && dist - arrival > blk.along + blk.c
-      && computeObstacleDetour(npc, tx, ty, blk, _detour)) {
-      aimX = _detour.x;
-      aimY = _detour.y;
-      aimArrival = 0;
-      refVx = blk.vx;
-      refVy = blk.vy;
-      approachCap = capitalObstacleSpeedCap(npc, _detour.dx, _detour.dy, vdx, vdy, spec, true);
+    if (blk && blk.on && blk.along < dist - arrival && dist - arrival > blk.along + blk.c) {
+      const directCap = approachCap;
+      const blkWreck = _blkWreck;
+      for (let flip = 1; flip >= -1; flip -= 2) {
+        if (!computeObstacleDetour(npc, tx, ty, blk, _detour, flip)) break;
+        const capD = capitalObstacleSpeedCap(npc, _detour.dx, _detour.dy, vdx, vdy, spec, true);
+        if (capD < DETOUR_BLOCKED_SPEED && capD < directCap && (blkWreck || _wreckCap <= capD)) continue;
+        aimX = _detour.x;
+        aimY = _detour.y;
+        aimArrival = 0;
+        refVx = blk.vx;
+        refVy = blk.vy;
+        approachCap = capD;
+        totalCap = _wreckCap;
+        break;
+      }
     }
   }
 
@@ -321,6 +504,7 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
     arrival: aimArrival,
     speedLimit,
     approachCap,
+    totalCap,
     noBrake: opts.noBrake === true,
     refVx,
     refVy,
@@ -341,6 +525,155 @@ function capitalArriveTo(npc, tx, ty, opts = {}) {
   const ctl = capitalArriveControls(npc, tx, ty, opts);
   commitCapitalFlight(npc, 0, Number(opts.dt) || (1 / 20));
   return ctl;
+}
+
+// ---------------------------------------------------------------------------
+// 1b. ROZKAZY RTS (npcCommandPilot.js) — omijanie przeszkód tą samą drogą co mózgi
+// ---------------------------------------------------------------------------
+// Ogranicznik przed przeszkodą (gracz, okręty, wraki-kapsuły), objazd po stycznej z drugą stroną,
+// gdy ta zablokowana wrakiem (reguła z capitalArriveControls), i sufit całej prędkości od wraków.
+// Różnice wobec mózgów: `ignore` — cel rozkazu nie jest przeszkodą (orbitowany, taranowany,
+// podchodzony byt); `loose` — objazd także wtedy, gdy punkt leży w strefie przeszkody (orbita:
+// marchewka biegnie po okręgu tuż przed okrętem — z regułą mózgów okręt stawał na okręgu przed
+// wrakiem na zawsze); zapytanie bez pamięci klatki (fresh) — pilot rozkazów woła je raz na swój takt.
+// out.blocked — okręt stoi przed przeszkodą: 1 — ogranicznik (prosto i objazdem) < 40 j/s, a punkt leży
+// w strefie przeszkody (przy stojącej: w 3 × strefie — tłum przy punkcie); 2 — przeszkoda stoi, ogranicznik
+// < COMMAND_STUCK_CAP (ściśnięty między stojącymi okrętami — tu lokalny objazd nie znajdzie drogi); 0 — nic.
+// Pola `out` (stan pilota rozkazów) tworzy npcCommandPilot.js.
+const _cmdBlk = { on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, c: 0.5, along: Infinity };
+const COMMAND_STUCK_CAP = 160;
+export function capitalCommandSteer(npc, tx, ty, arrival, ignore, loose, out) {
+  const spec = resolveShipFlightSpec(npc);
+  const dx = tx - npc.x;
+  const dy = ty - npc.y;
+  const dist = Math.hypot(dx, dy);
+  const invD = dist > 1e-4 ? 1 / dist : 0;
+  const vlen = Math.hypot(npc.vx || 0, npc.vy || 0);
+  const useVel = vlen > 40;
+  const vdx = useVel ? (npc.vx || 0) / vlen : 0;
+  const vdy = useVel ? (npc.vy || 0) / vlen : 0;
+  out.detour = false;
+  out.blocked = 0;
+  out.aimX = tx;
+  out.aimY = ty;
+  out.aimVx = 0;
+  out.aimVy = 0;
+  _obsIgnore = ignore || null;
+  let approachCap = capitalObstacleSpeedCap(npc, dx * invD, dy * invD, vdx, vdy, spec, true);
+  let totalCap = _wreckCap;
+  const blkWreck = _blkWreck;
+  // Zapytanie fresh pisze przeszkodę do _obsScratch, a sprawdzanie objazdu (też fresh) ją nadpisze.
+  const blk = _cmdBlk;
+  blk.on = _obsScratch.on;
+  blk.x = _obsScratch.x;
+  blk.y = _obsScratch.y;
+  blk.vx = _obsScratch.vx;
+  blk.vy = _obsScratch.vy;
+  blk.c = _obsScratch.c;
+  blk.along = _obsScratch.along;
+  const reach = dist - arrival;
+  if (blk.on && blk.along < reach) {
+    if (loose || reach > blk.along + blk.c) {
+      const directCap = approachCap;
+      for (let flip = 1; flip >= -1; flip -= 2) {
+        if (!computeObstacleDetour(npc, tx, ty, blk, _detour, flip)) break;
+        const capD = capitalObstacleSpeedCap(npc, _detour.dx, _detour.dy, vdx, vdy, spec, true);
+        if (capD < DETOUR_BLOCKED_SPEED && capD < directCap && (blkWreck || _wreckCap <= capD)) continue;
+        out.detour = true;
+        out.aimX = _detour.x;
+        out.aimY = _detour.y;
+        out.aimVx = blk.vx;
+        out.aimVy = blk.vy;
+        approachCap = capD;
+        totalCap = _wreckCap;
+        break;
+      }
+    }
+  }
+  // Zatrzymany (prosto i objazdem) przez przeszkodę, której strefa zachodzi na koło przybycia (także
+  // przeszkoda tuż za punktem — ogranicznik patrzy wzdłuż kursu dalej niż punkt), albo przez STOJĄCĄ
+  // przeszkodę niedaleko punktu: tłum okrętów, które już stanęły na swoich miejscach rozkazu grupy
+  // (punkty szyku RTS leżą w strefach bezpieczeństwa sąsiadów — fregaty co 150 j. przy strefie 372 j.).
+  // Poziom 2 z wyższym progiem ogranicznika: okręt na granicy strefy stojącej przeszkody (ogranicznik
+  // ~100 j/s to kilkanaście–kilkadziesiąt j. drogi do strefy) stoi, bo separacja od stojących go odpycha.
+  if (blk.on && approachCap < COMMAND_STUCK_CAP) {
+    const ox = tx - blk.x;
+    const oy = ty - blk.y;
+    const still = blk.vx * blk.vx + blk.vy * blk.vy < DETOUR_BLOCKED_SPEED * DETOUR_BLOCKED_SPEED;
+    const lim = (still ? 3 * blk.c : blk.c) + arrival;
+    if (approachCap < DETOUR_BLOCKED_SPEED && ox * ox + oy * oy < lim * lim) out.blocked = 1;
+    else if (still) out.blocked = 2;
+  }
+  _obsIgnore = null;
+  out.approachCap = approachCap;
+  out.totalCap = totalCap;
+  return out;
+}
+
+// Punkt rozkazu ruchu w kapsule wraku (okręt nie stanie tam bez taranu) → najbliższy wolny punkt
+// przy wraku (pół-szerokość korytarza + zapas, jak w considerWreck), a gdy prosta od okrętu do
+// niego przecina wrak — punkt przy burcie wraku od strony okrętu (bez objazdu wraku dookoła).
+// Do 3 przebiegów (wrak przy wraku). out: { x, y, moved }.
+export function capitalCommandFreePoint(npc, tx, ty, ignore, out) {
+  out.x = tx;
+  out.y = ty;
+  out.moved = false;
+  const W = getWreckIndex();
+  if (W.count === 0 || !WRECK_AVOID_TUNE.enabled) return out;
+  const T = WRECK_AVOID_TUNE;
+  const nx = npc.x;
+  const ny = npc.y;
+  const myW = Math.max(T.shipWidthMin, (npc.radius || 100) * T.shipWidthK);
+  const margin = T.stopPad + 20;
+  const reach = W.rMax + myW + T.pad + margin;
+  for (let pass = 0; pass < 3; pass++) {
+    let moved = false;
+    const px = out.x;
+    for (let i = wreckLowerBound(px - reach); i < W.count && W.x[i] <= px + reach; i++) {
+      if (W.refs[i] === ignore) continue;
+      const ux = W.ux[i];
+      const uy = W.uy[i];
+      const h = W.h[i];
+      const R = myW + W.w[i] + T.pad;
+      let s = (out.x - W.x[i]) * ux + (out.y - W.y[i]) * uy;
+      if (s < -h) s = -h; else if (s > h) s = h;
+      const ax = W.x[i] + ux * s;
+      const ay = W.y[i] + uy * s;
+      const qx = out.x - ax;
+      const qy = out.y - ay;
+      const q = Math.sqrt(qx * qx + qy * qy);
+      if (q >= R) continue;
+      const k = R + margin;
+      const side = (ny - W.y[i]) * ux - (nx - W.x[i]) * uy >= 0 ? 1 : -1;
+      let fx = ax - uy * side * k;
+      let fy = ay + ux * side * k;
+      if (q > 1e-3) {
+        const rx = ax + (qx / q) * k;
+        const ry = ay + (qy / q) * k;
+        const ddx = rx - nx;
+        const ddy = ry - ny;
+        const dd = Math.sqrt(ddx * ddx + ddy * ddy);
+        if (dd < 1e-3 || wreckEntryAlong(nx, ny, ddx / dd, ddy / dd, i, W, R, dd) >= dd) {
+          fx = rx;
+          fy = ry;
+        }
+      }
+      out.x = fx;
+      out.y = fy;
+      moved = true;
+    }
+    if (!moved) break;
+    out.moved = true;
+  }
+  return out;
+}
+
+// Separacja i unik CPA dla okrętu na rozkazie (mózg, który robi to w commitCapitalFlight, wtedy
+// nie biega) — bez dopalacza i ścieżki bez modelu lotu.
+export function capitalCommandSeparate(npc) {
+  const sep = window.applySeparationForces ? window.applySeparationForces(npc, 0, 0) : null;
+  const avoid = computeTrafficAvoidance(npc);
+  setFlightSeparation(npc, (sep?.ax || 0) + avoid.ax, (sep?.ay || 0) + avoid.ay);
 }
 
 // Kąt celu względem dziobu, przy którym NAJWIĘCEJ dział głównych ma go w łuku
@@ -1140,7 +1473,13 @@ export function processAutonomousWeapons(npc, dt) {
   // Carrier: wypuszczanie eskadr z hangarów (early-return wewnątrz dla nie-carrierów).
   if (window.updateNpcHangars) window.updateNpcHangars(npc, dt);
   initAutonomousWeapons(npc);
+  // System F (npcShipSystem.js): ładunek i decyzja raz na takt mózgu — zryw silników przez intencję lotu,
+  // szybki ogień przez modyfikatory okrętu (źródło 'system').
+  stepNpcShipSystem(npc, dt);
   if (!npc.autoWeapons || npc.autoWeapons.length === 0) return;
+  // Mnożnik przeładowania z modyfikatorów okrętu (src/game/shipModifiers.js: szybki ogień, fitowanie) — jak
+  // fireWeaponCore u gracza: cooldown × fireRate.
+  const cdMul = modifierFireRate(npc);
 
   const tWeap0 = (typeof performance !== 'undefined') ? performance.now() : 0;
   let fastScanCache = null;
@@ -1318,7 +1657,7 @@ export function processAutonomousWeapons(npc, dt) {
             opts.hp = null;
             opts.pdTarget = null;
           }
-          weapon.cd = weapon.def.cooldown || 2.0;
+          weapon.cd = (weapon.def.cooldown || 2.0) * cdMul;
           if (weapon.ammo !== null && weapon.ammo > 0) weapon.ammo -= 1;
         }
       }
@@ -1445,11 +1784,14 @@ export function aiDestroyer(sim, npc, dt) {
   const slot = getBattleSlot(npc);
   const moveTarget = pickGroupFocus(npc, slot, target);
   const mode = steerWithFormation(npc, slot, moveTarget, dt, 40, 55);
+  // Kadłub ze zrywem silników (system F Terra Nova, npcShipSystem.js) — dolot i flankę przyspiesza zryw;
+  // dawny dopalacz zostaje kadłubom bez niego (piracki niszczyciel ma szybki ogień).
+  const ownBoost = !npcHasEngineBurst(npc);
 
   if (mode === 'flank') {
     // Dopalacz na dojście do flanki (jak burn drive w Starsectorze).
     const tk = readTargetKinematics(slot.target);
-    if (Math.hypot(tk.x - npc.x, tk.y - npc.y) > slot.dist * 2.2 && npc.boostCd <= 0) {
+    if (ownBoost && Math.hypot(tk.x - npc.x, tk.y - npc.y) > slot.dist * 2.2 && npc.boostCd <= 0) {
       npc.boostT = npc.boostDur || 2.2;
       npc.boostCd = 12.0;
     }
@@ -1457,7 +1799,7 @@ export function aiDestroyer(sim, npc, dt) {
     // Dopalacz na dolot do dalekiego celu (bez smyczy; na smyczy nie ma dokąd pędzić).
     const tk = readTargetKinematics(moveTarget);
     const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
-    if (!(slot && Number.isFinite(slot.leash))
+    if (ownBoost && !(slot && Number.isFinite(slot.leash))
       && dist > Math.max(2800, resolveCapitalIdealRange(npc, moveTarget) * 1.8) && npc.boostCd <= 0) {
       npc.boostT = npc.boostDur || 2.5;
       npc.boostCd = 12.0;
@@ -1497,3 +1839,4 @@ window.aiFrigate = aiFrigate;
 window.aiDestroyer = aiDestroyer;
 window.aiBattleship = aiBattleship;
 window.capitalArriveTo = capitalArriveTo;
+window.WreckAvoidTune = WRECK_AVOID_TUNE;

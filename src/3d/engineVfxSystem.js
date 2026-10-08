@@ -539,12 +539,14 @@ function resolveWarpMode(entity) {
   return 'off';
 }
 
-/** Dopalacz silników MAIN (Shift w strefie planety, szarża pod F; w edytorze — Shift testu). */
+/**
+ * Dopalacz silników MAIN: Shift gracza, system F w toku — szarża albo zryw silników, gracz i NPC
+ * (`entity.__fSysBoost`: index.html, src/ai/npcShipSystem.js); w edytorze — Shift testu.
+ */
 function resolveMainBoost(entity) {
-  if (entity.__editorBoost === true) return true;
+  if (entity.__editorBoost === true || entity.__fSysBoost === true) return true;
   const player = GameState.ship;
-  return !!(player && entity === player
-    && (GameState.boost?.state === 'active' || GameState.ramBurn?.active === true));
+  return !!(player && entity === player && GameState.boost?.state === 'active');
 }
 
 /**
@@ -657,7 +659,9 @@ function updateEffects(entity, fxData, dt) {
   const exhausts = fxData.exhausts;
   for (let n = 0; n < exhausts.length; n++) {
     const item = exhausts[n];
-    if (nozzleAlive !== null && nozzleAlive[n] === 0) {
+    // …albo dysza MAIN zniszczona (src/game/engineDamage.js — zatrzask do remontu w doku, także gdy rój dronów
+    // odbuduje komórkę pod nią).
+    if ((nozzleAlive !== null && nozzleAlive[n] === 0) || item.slot?.source?.__destroyed === true) {
       cutNozzle(item);
       continue;
     }

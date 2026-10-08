@@ -21,10 +21,20 @@ import {
  *   bliski 1,8–4,5 km — działka, wiązki, armata, Goliath, Plasma Gatling
  *   linia 3–4,5 km — Tempest S / M, Helios S / M
  *   daleki 6–7 km — Tempest L, Helios Lance, Yamato L / Capital
- *   snajper — Valkyrie 5 / 7 / 9 km (S / M / Capital), Mjolnir 20 km (postój i ładowanie)
+ *   snajper (klasa `weaponClass: 'sniper'`, niżej) — Lanca 8 / 10 km (main M / L), Valkyrie 6,5 / 7 / 9 km
+ *     (special S / M / Capital), Mjolnir 20 km (postój i ładowanie)
  *   Hexlance 15 km, rakiety 4,5–15 km, torpedy 7–9 km
  * Wzrok Atlasa (18 km, fogOfWar.js) sięga dalej niż jego działa. Nowa broń — w pasmo swojej roli;
  * w tym samym rozmiarze dłuższy zasięg = mniej DPS (wiązka trafia natychmiast — krótsza).
+ *
+ * KLASA DZIAŁ SNAJPERSKICH (2026-10-08, decyzja D3, docs/PLAN-fitowanie.md § 4.3.1): pole
+ * `weaponClass: 'sniper'` — broń, której jedyną zaletą jest zasięg: mało DPS, duża pojedyncza
+ * salwa, szybki pocisk, czasem ładowanie (Lanca M / L, Valkyrie S / M / Capital, Mjolnir). To NIE
+ * jest `category` — kategoria steruje efektami, kraterami i ekonomią (Lanca zostaje `rail`). Klasę
+ * czytają strażnik (tests/weaponSniperClass.test.mjs), a w dalszych etapach planu komputer
+ * balistyczny (zasięg ×1,5 tylko tej klasie, sufit 18 km), pasmo „SNAJPER” w UI i automat kart.
+ * Reguły klasy: zasięg ≥ 6,5 km, pocisk do końca zasięgu ≤ 1,4 s, DPS niższy niż u najdalej
+ * sięgającej broni zwykłej tego samego gniazda i rozmiaru (dłuższy zasięg = mniej DPS).
  *
  * Mechanika z dema bronie-webgpu (zadanie 18, docs/webgpu/PROJEKT-BRONI.md §2.3–2.6, §5) —
  * pola dopisane w 18-A, czytane od 18-B / 18-D (src/game/projectileMechanics.js,
@@ -162,6 +172,27 @@ export const MASTER_WEAPONS = {
     penetration: 2, energyCost: 9, vfxColor: '#ffb066',
     recoil: 8, shake: 4,
     model3D: 'heavy_autocannon', render3dOnly: true
+  },
+  // --- Lanca (rail, klasa snajperska — § KLASA DZIAŁ SNAJPERSKICH; 2026-10-08, D10 planu fitowania) ---
+  // Działo main dalekiego zasięgu: mniej DPS niż Tempest tego rozmiaru za ~2× dłuższy zasięg, szybki pocisk,
+  // płytkie przebicie jak u Valkyrie (cienkie części na wylot, w grubszym kadłubie zakleszczenie). Obraz:
+  // receptura Valkyrie (WEAPON_FX), wieża Tempesta z długą lufą (Turret2D SPECS.lance, rodzina 3D `lance`),
+  // rana i krater — wpisy lanceM / lanceL (src/3d/hullDamageStamps.js).
+  lance_rail_m: {
+    id: 'lance_rail_m', name: 'Lanca', mountType: 'main', category: 'rail', size: 'M', weaponClass: 'sniper',
+    baseDamage: 48, baseRange: 8000, baseSpeed: 14000, cooldown: 2.4, spread: 0.002,
+    penetration: 2, energyCost: 10, vfxColor: '#ff00ff',
+    penDepth: 40, penSpeedLoss: 0.35,
+    recoil: 12, shake: 7, impactScale: 1.0,
+    model3D: 'lance_rail', render3dOnly: true
+  },
+  lance_rail_l: {
+    id: 'lance_rail_l', name: 'Lanca Ciężka', mountType: 'main', category: 'rail', size: 'L', weaponClass: 'sniper',
+    baseDamage: 100, baseRange: 10000, baseSpeed: 15000, cooldown: 4.0, spread: 0.0015,
+    penetration: 2, energyCost: 18, vfxColor: '#ff00ff',
+    penDepth: 60, penSpeedLoss: 0.35,
+    recoil: 16, shake: 9, impactScale: 1.2,
+    model3D: 'lance_rail', render3dOnly: true
   },
 
   // ==========================================================================
@@ -416,13 +447,18 @@ export const MASTER_WEAPONS = {
   },
   special_plasma_gatling: {
     id: 'special_plasma_gatling', name: 'Ion Plasma Gatling (Special)', mountType: 'special', category: 'plasma', size: 'Capital',
-    baseDamage: 60, baseRange: 3200, baseSpeed: 2000, cooldown: 0.25, spread: 0.05,
+    // 2026-10-08 (D4 planu fitowania): obrażenia 60 → 160 (240 → 640 DPS) — bliski tank przegrywał z
+    // Yamato (510 DPS na 7 km) nawet z bliska. Obrażenia, nie szybkostrzelność: rodzina bez krateru na
+    // miarę rany (budżet HP 0,9 × 160 = 144 < 320 HP węzła — jeden strzał nie wybija dziury), a dziury
+    // z serii rosną tak samo jak przy szybszym ogniu o tym samym DPS; obraz i koszt efektów bez zmian.
+    baseDamage: 160, baseRange: 3200, baseSpeed: 2000, cooldown: 0.25, spread: 0.05,
     penetration: 1, energyCost: 22, vfxColor: '#00ffff',
     recoil: 15, shake: 8, impactScale: 1.5,
     model3D: 'special_plasma_gatling', render3dOnly: true
   },
   special_valkyrie_railgun: {
     id: 'special_valkyrie_railgun', name: 'Valkyrie Railgun (Special)', mountType: 'special', category: 'rail', size: 'Capital',
+    weaponClass: 'sniper',
     baseDamage: 500, baseRange: 9000, baseSpeed: 15000, cooldown: 3.0, spread: 0.001,
     penetration: 3, energyCost: 40, vfxColor: '#ff00ff',
     // Ładowanie 0,28 s jak w demie (§5 p. 4); 260 j. materiału — fregaty i niszczyciele
@@ -459,7 +495,9 @@ export const MASTER_WEAPONS = {
   // --- Valkyrie (rail, ładowanie + przebicie) ---  (Capital = special_valkyrie_railgun)
   special_valkyrie_s: {
     id: 'special_valkyrie_s', name: 'Kolec — Lekki Railgun Osiowy (Special)', mountType: 'special', category: 'rail', size: 'S',
-    baseDamage: 180, baseRange: 5000, baseSpeed: 12000, cooldown: 2.5, spread: 0.002,
+    weaponClass: 'sniper',
+    // Zasięg 5 → 6,5 km (2026-10-08, D10): snajper był krótszy niż Yamato L (6 km) z gniazda special.
+    baseDamage: 180, baseRange: 6500, baseSpeed: 12000, cooldown: 2.5, spread: 0.002,
     penetration: 2, energyCost: 12, vfxColor: '#ff00ff',
     // 60 j. materiału: płytkie przebicie (cienkie burty na wylot), głębiej zakleszczenie.
     chargeTime: 0.2, penDepth: 60, penSpeedLoss: 0.35,
@@ -468,6 +506,7 @@ export const MASTER_WEAPONS = {
   },
   special_valkyrie_m: {
     id: 'special_valkyrie_m', name: 'Oszczep — Railgun Średni (Special)', mountType: 'special', category: 'rail', size: 'M',
+    weaponClass: 'sniper',
     baseDamage: 380, baseRange: 7000, baseSpeed: 13500, cooldown: 3.0, spread: 0.0015,
     penetration: 3, energyCost: 22, vfxColor: '#ff00ff',
     // 140 j. materiału: ma przebijać fregatę w burtę (BRIEF § 6), w większych zakleszczenie.
@@ -518,6 +557,7 @@ export const MASTER_WEAPONS = {
   },
   siege_railgun: {
     id: 'siege_railgun', name: 'Mjolnir Siege Railgun', mountType: 'special', category: 'rail', size: 'Capital',
+    weaponClass: 'sniper',
     // Zasięg 20 km (2026-10-07, było 100): o 2 km dalej niż wzrok Atlasa — skraj zasięgu odsłania zwiad.
     baseDamage: 2500, baseRange: 20000, baseSpeed: 25000, cooldown: 8.0, chargeTime: 3.0,
     spread: 0.0005, penetration: 10, energyCost: 120, vfxColor: '#aaffff',
@@ -568,6 +608,8 @@ export const WEAPON_ICON_PATHS = {
   helios_lance_l: 'assets/weapons/railgun.svg',
   gatling_s: 'assets/weapons/heavy_autocannon.svg',
   heavy_autocannon_l: 'assets/weapons/heavy_autocannon.svg',
+  lance_rail_m: 'assets/weapons/railgun.svg',
+  lance_rail_l: 'assets/weapons/railgun.svg',
   // Warianty rozmiarowe broni specjalnej — ikony rodziców
   special_valkyrie_s: 'assets/weapons/railgun.svg',
   special_valkyrie_m: 'assets/weapons/railgun.svg',
