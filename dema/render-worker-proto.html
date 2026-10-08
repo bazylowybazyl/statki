@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Render w workerze — prototyp RW-02</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #d6e2e8; font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  /* Warstwy jak w grze: 3D pod spodem (#webgl-layer), kanwa 2D nad nim (#c). Widoczność przełącza wariant. */
+  canvas { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: block; visibility: hidden; }
+  #c0 { z-index: 0; }
+  #cA { z-index: 0; }
+  #cB { z-index: 1; }
+  #ov { z-index: 2; }
+  #ovB { z-index: 2; }
+  #panel { position: fixed; right: 10px; bottom: 10px; z-index: 10; padding: 8px 10px; background: #070d13e6; border: 1px solid #9fc6d626; border-radius: 6px; }
+  #panel .row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
+  #panel .row span { flex: 0 0 64px; color: #7d919b; }
+  #panel button { background: #0e1a24; color: #d6e2e8; border: 1px solid #2a4252; border-radius: 4px; padding: 3px 8px; font: inherit; cursor: pointer; }
+  #panel button.on { border-color: #7cc9ff; background: #10283a; color: #fff; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 20; max-width: 70vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 20; padding: 10px 16px; background: #070d13e6; border: 1px solid #9fc6d626; border-radius: 6px; }
+  body.shot #panel { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c0"></canvas>
+<canvas id="cA"></canvas>
+<canvas id="cB"></canvas>
+<canvas id="ov"></canvas>
+<canvas id="ovB"></canvas>
+<div id="panel"></div>
+<div id="loading">Start WebGPU w workerze…</div>
+<div id="errors"></div>
+<script type="module" src="./render-worker-proto.js"></script>
+</body>
+</html>
