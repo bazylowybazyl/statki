@@ -64,6 +64,9 @@ const hash12 = Fn(([p]) => {
  * Materiał okrętu. deckMap — tekstura sprite'a (pokład), deckNormalMap — normalne z
  * luminancji (createDeckNormalTexture); bez deckMap materiał broni (bez gałęzi pokładu).
  * materialClass — podklasa MeshStandardNodeMaterial (partie wież: turretBatch3D.js).
+ * Partie z farbą per instancja (dysze SIDE: thrusterBatch3D.js): palettes — lista nadpisań palety (jak `palette`),
+ * paletteIndex — węzeł TSL z numerem palety (płaski varying z rekordu instancji); engineNode — węzeł mnożnika
+ * wnętrz dysz (zamiast uniformu `engine`), emissiveAdd — węzeł vec3 dodany do emisji. Bez nich graf jak dawniej.
  * @returns {THREE.MeshStandardNodeMaterial} z `userData.uniforms` (engine, seams, bump, emissive)
  */
 export function createShipMaterial(o = {}) {
@@ -81,15 +84,22 @@ export function createShipMaterial(o = {}) {
   };
 
   // Paleta okrętu: domyślna + nadpisania (o.palette: { [SHIP3D_MAT]: { color, rough, metal, … } }) —
-  // farba Terra Nova / piratów; te same węzły, inne wartości w tablicach uniformów.
-  const pal = PAL.map((p, i) => ({ ...p, ...(o.palette?.[i] || {}) }));
+  // farba Terra Nova / piratów; te same węzły, inne wartości w tablicach uniformów. Kilka palet (o.palettes):
+  // paleta k pod indeksami k · SHIP3D_MAT_COUNT + materiał, wybór węzłem o.paletteIndex.
+  const palSets = o.palettes && o.paletteIndex ? o.palettes : [o.palette || null];
+  const pal = [];
+  for (const ov of palSets) for (let i = 0; i < PAL.length; i++) pal.push({ ...PAL[i], ...(ov?.[i] || {}) });
   const colors = uniformArray(pal.map((p) => new THREE.Color(p.color)), 'color');
   const pbr = uniformArray(pal.map((p) => new THREE.Vector4(p.rough, p.metal, p.power, p.seams)), 'vec4');
   const emis = uniformArray(pal.map((p) => new THREE.Color(p.emissive)), 'color');
 
   const aMat = attribute('aMat', 'float');
   const id = clamp(aMat.add(0.5), 0, SHIP3D_MAT_COUNT - 1).toInt();
-  const P = pbr.element(id);
+  const palBase = palSets.length > 1
+    ? clamp(o.paletteIndex.add(0.5), 0, palSets.length - 1).toInt().mul(int(SHIP3D_MAT_COUNT))
+    : null;
+  const pid = palBase ? id.add(palBase) : id; // wpis palety: materiał w palecie instancji
+  const P = pbr.element(pid);
 
   // --- szwy paneli (uv w px; cegiełkowo, co drugi rząd przesunięty o pół płyty) ---
   // Same wyrażenia (bez przypisań) — graf poza Fn(); pochodne bez gałęzi.
@@ -106,20 +116,21 @@ export function createShipMaterial(o = {}) {
   const far = smoothstep(1.4, 4.0, aa).oneMinus(); // daleko szwy gasną (bez mory)
   const tint = hash12(cellId.add(vec2(float(id).mul(7.0), 311.0))).sub(0.5).mul(0.16).add(1.0);
   const seamK = seam.mul(far).mul(P.w).mul(u.seams);
-  const palColor = colors.element(id).mul(tint).mul(seamK.mul(0.42).oneMinus());
+  const palColor = colors.element(pid).mul(tint).mul(seamK.mul(0.42).oneMinus());
 
   // --- emisja ---
   const isEngine = step(float(M.E_ENGINE - 0.5), aMat).mul(step(aMat, float(M.E_ENGINE + 0.5)));
-  const power = P.z.mul(mix(float(1), u.engine, isEngine)).mul(u.emissive);
+  const power = P.z.mul(mix(float(1), o.engineNode ?? u.engine, isEngine)).mul(u.emissive);
   // Krawędź sylwetki: (1 − |n·v|)⁴ w chłodnym odcieniu — okręt nie znika w cieniu na czarnym tle.
   const rim = pow(float(1).sub(abs(dot(normalView, positionViewDirection))).max(0.0), 4.0);
-  mat.emissiveNode = emis.element(id).mul(power).add(vec3(0.030, 0.042, 0.062).mul(rim).mul(u.rim));
+  const emission = emis.element(pid).mul(power).add(vec3(0.030, 0.042, 0.062).mul(rim).mul(u.rim));
+  mat.emissiveNode = o.emissiveAdd ? emission.add(o.emissiveAdd) : emission;
 
   if (o.deckMap) {
     const deckMask = step(aMat, float(0.5));
     const tex = texture(o.deckMap, uv());
     const lum = dot(tex.rgb, vec3(0.2126, 0.7152, 0.0722));
-    const deckColor = mix(colors.element(int(M.PAINT)).mul(1.15), tex.rgb, u.deck);
+    const deckColor = mix(colors.element(palBase ? palBase.add(int(M.PAINT)) : int(M.PAINT)).mul(1.15), tex.rgb, u.deck);
     mat.colorNode = mix(palColor, deckColor, deckMask);
     // Jaśniejsze płyty gładsze (lakier), ciemne szczeliny matowe.
     mat.roughnessNode = mix(P.x, float(0.72).sub(lum.mul(0.35)), deckMask);

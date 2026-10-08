@@ -195,7 +195,7 @@ test('geometria przeładunku: gniazda i place dla grzebieni zatok, pasów MEGA, 
   for (const n of mega.nests) assert.ok(Math.abs(Math.abs(n.v) - 725) < 1e-6 && n.z === CARGO_PORT.spineZ);
   // Okno: klamra 4,6 s, suwnica 9,3 s, postój minus dojście.
   assert.deepEqual(cargoTransferWindow({ seconds: 90, moveSeconds: 20 }), { start: 4.6, end: 70 });
-  assert.equal(cargoTransferWindow({ seconds: 120, moveSeconds: 0, crane: true }).start, 9.3);
+  assert.ok(Math.abs(cargoTransferWindow({ seconds: 120, moveSeconds: 0, fuel: true }).start - 7.0) < 1e-9, 'capital K-7: ustawienie 1,1 s + obsługa paliwowa 5,9 s');
 });
 
 // ---------------------------------------------------------------------------

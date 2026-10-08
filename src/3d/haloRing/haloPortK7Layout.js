@@ -26,7 +26,7 @@ const approach = (v, target, rate, dt) => mix(v, target, 1 - Math.exp(-rate * dt
 export const K7_HEIGHTS = Object.freeze({ hullBottom: 48, hullTop: 116, flightY: 76 });
 // Nad płaszczyzną lotu wysokości ściśnięte: kamera gry przy zoomie 3,2 wisi
 // 535 j. nad z = 0 (near 100), a K-7 ma sufit na 711–793 j. — bez ścisku
-// dach i suwnice wchodziłyby w kamerę. Pod płaszczyzną skala 1:1.
+// dach i ramiona paliwowe wchodziłyby w kamerę. Pod płaszczyzną skala 1:1.
 export const K7_ABOVE_SCALE = 0.42;
 export function k7HeightToZ(y) {
   const d = y - K7_HEIGHTS.hullTop;
@@ -47,15 +47,134 @@ export const K7_ATLAS_COLLISION = Object.freeze([
   [0.141602, 0.318777], [-0.15625, 0.367904], [-0.306152, 0.366812], [-0.404785, 0.278384],
   [-0.436523, 0.20524], [-0.467773, 0.034934]
 ].map((p) => Object.freeze(p)));
-// Wlewy paliwa na rufie (tankowanie od rufy — pomysł K-7).
+// Wlewy paliwa na rufie (tankowanie od rufy — pomysł K-7). 2026-10-07: bliżej osi i śródokręcia (0,36 długości od
+// środka, 0,13 szerokości od osi) — w obrysie Atlasa przy obu kierunkach postoju (kampania: dziobem ku bramie, wtedy
+// wlewy stanowiska wypadają przy zwężającym się dziobie; dawne 0,395 / 0,185 leżały tam poza kadłubem).
 export const K7_ATLAS_FUEL_PORTS = Object.freeze([-1, 1].map((side) => Object.freeze({
-  side, x: -K7_ATLAS.w * 0.395, z: side * K7_ATLAS.h * 0.185, couplerY: K7_HEIGHTS.hullTop + 44
+  side, x: -K7_ATLAS.w * 0.36, z: side * K7_ATLAS.h * 0.13, couplerY: K7_HEIGHTS.hullTop + 44
 })));
 
 export function k7FuelPortInBerth(berth, port) {
   const c = Math.cos(berth.angle);
   const s = Math.sin(berth.angle);
   return { x: berth.x + port.x * c - port.z * s, y: port.couplerY, z: berth.z + port.x * s + port.z * c };
+}
+
+// Stanowisko paliwowe stanowiska capital (2026-10-07, prośby użytkownika: suwnice „nie mają żadnej roli — cargo
+// będą ładowały drony”, przewody paliwowe „chodzą twardo i nierealistycznie”): słupek z bębnem przewodu i ramieniem
+// SCARA (dwa człony obracane w poziomie + pionowy wysięgnik), które niesie złączkę nad wlew; przewód wisi swobodnie
+// między bębnem a złączką (fizyka liny — haloPortK7Fuel.js). Wymiary w hubie (od osi słupka: `out` — ku stanowisku,
+// `along` — wzdłuż z huba), wysokości K-7. JEDNO źródło dla brył (haloPortK7Build.js), kolizji (buildK7Collision)
+// i fizyki przewodu.
+export const K7_FUEL_STATION = Object.freeze({
+  plinth: Object.freeze({ w: 150, d: 164, h: 60 }),
+  column: Object.freeze({ w: 84, d: 90, top: 262 }),
+  shoulder: Object.freeze({ r: 46, y0: 262, y1: 352 }),
+  link1: Object.freeze({ len: 300, y: 330, h: 26, w: 42 }),
+  link2: Object.freeze({ len: 280, y: 300, h: 24, w: 34 }),
+  elbow: Object.freeze({ r: 34, y0: 286, y1: 346 }),
+  reel: Object.freeze({ out: 76, y: 180, r: 44, w: 64 }),   // bęben: oś wzdłuż z huba, na wewnętrznym licu kolumny
+  exit: Object.freeze({ out: 116, y: 160 }),                // wylot przewodu z bębna
+  stowTip: Object.freeze({ out: 98, along: 74 }),           // końcówka złożonego ramienia
+  elbowSide: 1,                                             // łokieć ramienia po stronie +z huba (ku bramie)
+  couplerUp: 244,                                           // środek złączki przy wsuniętym wysięgniku
+  wrist: 28,                                                // przegub wysięgnika nad środkiem złączki
+  rod: 152,                                                 // trzon wysięgnika (nad przegubem)
+  coupler: Object.freeze({ r: 22, half: 23 }),
+  hoseR: 11.5
+});
+
+// Pozy obsługi stanowiska capital (stan gry: rejestr hali, fabuła, automaty): zamki magnetyczne pola (`clamp`),
+// ramię paliwowe nad wlewem (`extension`), wysięgnik ze złączką na wlewie (`seat`), rygle złączy (`lock`), przepływ
+// (`flow`), kontrolowany upust (`vent`). Dawne klucze suwnicy (bridge / trolley / lower) usunięte razem z suwnicami.
+export const K7_SERVICE_KEYS = Object.freeze(['clamp', 'extension', 'seat', 'lock', 'flow', 'vent']);
+
+// Podpięcie obsługi [s od zatrzymania statku na polu]: zamki pola → ramię rozkłada się nad wlew (bęben wydaje
+// przewód) → wysięgnik opuszcza złączkę → rygle (buch pary dookoła złączki) → przepływ.
+export const K7_SERVICE_DOCK = Object.freeze({
+  clamp: Object.freeze([0, 0.6]),
+  extension: Object.freeze([0.45, 3.3]),
+  seat: Object.freeze([3.35, 4.5]),
+  lock: Object.freeze([4.6, 5.05]),
+  flow: Object.freeze([5.45, 5.9]),
+  end: 5.9,
+  steps: Object.freeze([
+    Object.freeze([0.6, 'ZAMKI MAGNETYCZNE POLA']), Object.freeze([3.3, 'ROZKŁADANIE RAMION PALIWOWYCH']),
+    Object.freeze([4.5, 'OPUSZCZANIE ZŁĄCZEK']), Object.freeze([5.05, 'RYGLOWANIE ZŁĄCZY']),
+    Object.freeze([Infinity, 'OTWARCIE PRZEPŁYWU'])
+  ])
+});
+// Odłączenie na rozkaz (ODDOKUJ, automat portu): przepływ odcięty → kontrolowany upust → odryglowanie (buch pary)
+// → złączki w górę → ramiona się składają (bęben zwija przewód) → zamki pola. Napęd wraca przy zwolnieniu zamków
+// (`driveAt`) — ramiona dokładają się nad płaszczyzną lotu, statek już wylatuje.
+export const K7_SERVICE_UNDOCK = Object.freeze({
+  flow: Object.freeze([0, 0.35]),
+  vent: Object.freeze([0.45, 1.35]),
+  lock: Object.freeze([1.25, 1.6]),
+  seat: Object.freeze([1.65, 2.45]),
+  extension: Object.freeze([2.35, 5.0]),
+  clamp: Object.freeze([2.95, 3.4]),
+  driveAt: 3.45,
+  end: 5.0,
+  steps: Object.freeze([
+    Object.freeze([0.45, 'ODCIĘCIE PRZEPŁYWU']), Object.freeze([1.25, 'KONTROLOWANY UPUST']),
+    Object.freeze([1.65, 'ODRYGLOWANIE ZŁĄCZY']), Object.freeze([2.45, 'PODNOSZENIE ZŁĄCZEK']),
+    Object.freeze([2.95, 'SKŁADANIE RAMION']), Object.freeze([3.45, 'ZWALNIANIE MOCOWAŃ']),
+    Object.freeze([Infinity, 'NAPĘD ODBLOKOWANY'])
+  ])
+});
+// Awaryjne odpięcie (statek rusza ze stanowiska): przepływ, krótki upust (tylko z zaryglowanych), rygle szybko,
+// złączki w górę, składanie; zamki od razu.
+export const K7_SERVICE_RELEASE = Object.freeze({
+  flow: Object.freeze([0, 0.15]),
+  vent: Object.freeze([0.05, 0.4]),
+  lock: Object.freeze([0.25, 0.45]),
+  seat: Object.freeze([0.4, 1.0]),
+  extension: Object.freeze([0.9, 3.0]),
+  clamp: Object.freeze([0, 0.3]),
+  end: 3.0
+});
+
+/**
+ * Poza PODPINANIA w chwili t sekwencji `seq` (K7_SERVICE_DOCK) od pozy `from` (null = schowana): każdy klucz
+ * z okna sekwencji idzie od `from` do 1, upust 0. Bez alokacji.
+ */
+export function k7ServiceConnectPose(seq, t, from, out) {
+  for (let k = 0; k < K7_SERVICE_KEYS.length; k++) {
+    const key = K7_SERVICE_KEYS[k];
+    if (key === 'vent') { out.vent = 0; continue; }
+    const f = from ? Math.min(1, Math.max(0, Number(from[key]) || 0)) : 0;
+    const w = seq[key];
+    out[key] = w ? f + (1 - f) * k7Phase(t, w[0], w[1]) : f;
+  }
+  return out;
+}
+
+/**
+ * Poza ODPINANIA w chwili t sekwencji `seq` (K7_SERVICE_UNDOCK / K7_SERVICE_RELEASE) od pozy `from` (null =
+ * podpięta): każdy klucz od `from` do 0; upust — impuls sin w oknie, tylko gdy złącza były zaryglowane. Bez alokacji.
+ */
+export function k7ServiceDisconnectPose(seq, t, from, out) {
+  for (let k = 0; k < K7_SERVICE_KEYS.length; k++) {
+    const key = K7_SERVICE_KEYS[k];
+    const w = seq[key];
+    if (key === 'vent') {
+      const locked = (from ? Number(from.lock) || 0 : 1) > 0.9;
+      out.vent = locked && w && t > w[0] && t < w[1] ? Math.sin((t - w[0]) / (w[1] - w[0]) * Math.PI) : 0;
+      continue;
+    }
+    const f = from ? Math.min(1, Math.max(0, Number(from[key]) || 0)) : 1;
+    out[key] = w ? f * (1 - k7Phase(t, w[0], w[1])) : f;
+  }
+  return out;
+}
+
+/** Napis kroku sekwencji obsługi (`steps`: [do, tekst]) w chwili t. */
+export function k7ServiceStep(seq, t) {
+  const steps = seq.steps;
+  if (!steps) return '';
+  for (let i = 0; i < steps.length; i++) if (t < steps[i][0]) return steps[i][1];
+  return steps[steps.length - 1][1];
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +259,7 @@ export function createK7Layout() {
     b.reserved = b.occupied === 'player' ? 'player' : null;
     b.stopPoint = { x: b.x, z: b.z };
     b.serviceAnchors = b.size === 'CAPITAL' ? K7_ATLAS_FUEL_PORTS.map((port) => ({
-      x: b.x + port.side * 615, z: b.z + 860, y: 224, side: port.side, port, target: k7FuelPortInBerth(b, port)
+      x: b.x + port.side * 615, z: b.z + 760, y: 224, side: port.side, port, target: k7FuelPortInBerth(b, port)
     })) : [];
   }
   l.lanes = l.berths.filter((b) => b.size === 'CAPITAL').map((b) => ({
@@ -349,7 +468,7 @@ export function k7MakeHullBuffer(n = K7_ATLAS_COLLISION.length) {
 }
 
 // Świat kolizji K-7 (w układzie huba). Zakres wysokości przedmiotu y0..y1
-// (wysokości K-7) — mosty suwnic i dach nie należą do warstwy kolizji kadłuba.
+// (wysokości K-7) — ramiona paliwowe i dach nie należą do warstwy kolizji kadłuba.
 export class K7CollisionWorld {
   constructor() {
     this.items = [];
@@ -388,11 +507,33 @@ export class K7CollisionWorld {
   }
 }
 
+// Magazyn paliwa przy ścianie tylnej (2026-10-07, prośba użytkownika: „dopracuj modelowanie doku — brak jest
+// rur”): za każdym stanowiskiem capital dwa zbiorniki-cygara na siodłach (pod płaszczyzną lotu — przeszkoda dla
+// kadłubów i gazu hali), kolektory paliwa i powrotu wzdłuż ściany tylnej, stąd rurociągi na legarach wzdłuż boków
+// stanowisk (dawne bieżnie suwnic) do słupków paliwowych. Bryły rur: haloPortK7Build.js (buildFuelPiping).
+export const K7_FUEL_FARM = Object.freeze({
+  tank: Object.freeze({ off: 290, z: 548, r: 52, len: 470, y: 60 }),
+  header: Object.freeze({ fuelZ: 342, retZ: 380, fuelR: 22, retR: 15, y: 44, x: 3660 }),
+  rack: Object.freeze({ z0: 352, fuelR: 12, gasR: 7, retR: 8, y: 22, gap: 30 })
+});
+
+/** Zbiorniki magazynu paliwa hali `l`: { id, berthId, x, z, y, r, len } (oś zbiornika wzdłuż x huba). */
+export function k7FuelTanks(l) {
+  const T = K7_FUEL_FARM.tank;
+  const out = [];
+  for (const b of l.berths) {
+    if (b.size !== 'CAPITAL') continue;
+    for (const side of [-1, 1]) out.push({ id: `FUEL TANK ${b.id}/${side < 0 ? 'W' : 'E'}`, berthId: b.id, x: b.x + side * T.off, z: T.z, y: T.y, r: T.r, len: T.len });
+  }
+  return out;
+}
+
 // Kolizje hali — te same bryły, które rysuje haloPortK7.js (addSolid w K-7).
 // Wspólne źródło: k7SolidList() wylicza listę; render i kolizje biorą z niej.
+// Bryła z polem `shape` (zbiorniki paliwa) ma w renderze własny kształt — w liście jest jej obrys (kolizje, gaz).
 export function k7SolidList(l) {
   const out = [];
-  const add = (id, x, y, z, w, h, d, mat, angle = 0) => out.push({ id, x, y, z, w, h, d, mat, angle });
+  const add = (id, x, y, z, w, h, d, mat, angle = 0, shape = null) => out.push(shape ? { id, x, y, z, w, h, d, mat, angle, shape } : { id, x, y, z, w, h, d, mat, angle });
   // ściany z otworami bram + przypory
   for (const e of l.edges) {
     const gate = l.gates.find((g) => g.edge === e.i);
@@ -421,6 +562,8 @@ export function k7SolidList(l) {
     }
   }
   for (const side of [-1, 1]) add('APPROACH BEACON ' + side, side * (l.frontHalfWidth + 160), 132, l.frontZ - 90, 87, 264, 96, 'dark');
+  // zbiorniki magazynu paliwa przy ścianie tylnej (obrys: pudło na siodłach)
+  for (const t of k7FuelTanks(l)) add(t.id, t.x, (t.y + t.r) * 0.5, t.z, t.len + 24, t.y + t.r, 2 * t.r, 'pale', 0, 'tank');
   // (dawne słupy kołnierza na podłodze — hala stoi od 2026-10-05 na pylonach
   // pod płaszczyzną lotu, bez przeszkód poza halą)
   return out;
@@ -429,12 +572,11 @@ export function k7SolidList(l) {
 export function buildK7Collision(l) {
   const col = new K7CollisionWorld();
   for (const s of k7SolidList(l)) col.addBox(s.id, s.x, s.z, s.w, s.d, s.angle, s.y - s.h / 2, s.y + s.h / 2);
+  const P = K7_FUEL_STATION.plinth;
   for (const b of l.berths) {
-    if (b.size === 'CAPITAL') {
-      // nogi suwnic i piedestały paliwowe
-      for (const side of [-1, 1]) for (const z of [b.z - 1110, b.z + 1110]) col.addBox('CRANE LEG ' + b.id, b.x + side * 615, z, 92, 98, 0, 0, 468);
-      for (const a of b.serviceAnchors) col.addBox('FUEL PEDESTAL ' + b.id + '/' + a.side, a.x, a.z, 120, 140, 0, 0, 278);
-    }
+    if (b.size !== 'CAPITAL') continue;
+    // słupki paliwowe (cokół z kolumną i bębnem; ramię SCARA wisi nad płaszczyzną lotu — nie koliduje z kadłubem)
+    for (const a of b.serviceAnchors) col.addBox('FUEL PEDESTAL ' + b.id + '/' + a.side, a.x, a.z, P.w, P.d, 0, 0, K7_FUEL_STATION.shoulder.y1);
   }
   return col;
 }
@@ -537,10 +679,13 @@ export class K7RoofFade {
 }
 
 // ---------------------------------------------------------------------------
-// Automat dokowania (K-7): FREE → DOCKING (9,3 s) → DOCKED → UNDOCKING (9,5 s) → FREE.
-// Kolejność mechaniki wynika z faz czasu, nie z dociągania (hangar-dock-demo).
-export const K7_CONNECTED_POSE = Object.freeze({ bridge: 1, trolley: 1, lower: 1, clamp: 1, extension: 1, lock: 1, flow: 1, vent: 0 });
-export const K7_STOWED_POSE = Object.freeze({ bridge: 0, trolley: 0, lower: 0, clamp: 0, extension: 0, lock: 0, flow: 0, vent: 0 });
+// Automat dokowania (K-7): FREE → DOCKING (ustawienie 1,1 s + K7_SERVICE_DOCK) → DOCKED → UNDOCKING
+// (K7_SERVICE_UNDOCK; napęd wraca przy zwolnieniu zamków) → FREE. Kolejność mechaniki wynika z faz czasu,
+// nie z dociągania (hangar-dock-demo).
+export const K7_CONNECTED_POSE = Object.freeze({ clamp: 1, extension: 1, seat: 1, lock: 1, flow: 1, vent: 0 });
+export const K7_STOWED_POSE = Object.freeze({ clamp: 0, extension: 0, seat: 0, lock: 0, flow: 0, vent: 0 });
+/** Precyzyjne ustawienie statku na stanowisku przed podpięciem obsługi [s]. */
+export const K7_DOCK_ALIGN = 1.1;
 
 export class K7Docking {
   constructor(layout, player) {
@@ -637,17 +782,16 @@ export class K7Docking {
       this._setPose(this.berth.id, K7_CONNECTED_POSE);
       this.poses.get(this.berth.id).flow = p.fuel < 100 ? 1 : 0;
     } else if (this.state === 'DOCKING') {
-      this.progress = clamp(t / 9.3, 0, 1);
-      const f = P(t, 0, 1.1);
+      const S = K7_SERVICE_DOCK;
+      const total = K7_DOCK_ALIGN + S.end;
+      this.progress = clamp(t / total, 0, 1);
+      const f = P(t, 0, K7_DOCK_ALIGN);
       p.x = mix(this.startPose.x, this.berth.x, f);
       p.z = mix(this.startPose.z, this.berth.z, f);
       p.angle = this.startPose.angle + k7AngleDelta(this.berth.angle, this.startPose.angle) * f;
-      const pose = this.poses.get(this.berth.id);
-      pose.bridge = P(t, 1.1, 3.4); pose.trolley = P(t, 3.4, 4.4); pose.lower = P(t, 4.4, 6.4); pose.clamp = P(t, 6.4, 7);
-      pose.extension = P(t, 7, 8.7); pose.lock = P(t, 8.7, 9.3); pose.flow = 0; pose.vent = 0;
-      this.detail = t < 1.1 ? 'PRECYZYJNE USTAWIENIE' : t < 3.4 ? 'PODJAZD MOSTU SUWNICY' : t < 4.4 ? 'POZYCJONOWANIE WOZKA'
-        : t < 6.4 ? 'OPUSZCZANIE CHWYTAKOW' : t < 7 ? 'MOCOWANIE KADLUBA' : t < 8.7 ? 'ROZWIJANIE PRZEWODOW' : 'RYGLOWANIE ZLACZY';
-      if (t >= 9.3) {
+      k7ServiceConnectPose(S, t - K7_DOCK_ALIGN, null, this.poses.get(this.berth.id));
+      this.detail = t < K7_DOCK_ALIGN ? 'PRECYZYJNE USTAWIENIE' : k7ServiceStep(S, t - K7_DOCK_ALIGN);
+      if (t >= total) {
         this.sequence++;
         this.setState('DOCKED');
         this._setPose(this.berth.id, K7_CONNECTED_POSE);
@@ -655,14 +799,13 @@ export class K7Docking {
         this.notice('ZADOKOWANO / ' + this.berth.id + ' / OBSLUGA AKTYWNA');
       }
     } else if (this.state === 'UNDOCKING') {
-      this.progress = clamp(t / 9.5, 0, 1);
-      const pose = this.poses.get(this.berth.id);
-      pose.bridge = 1 - P(t, 8.2, 9.5); pose.trolley = 1 - P(t, 6.7, 8.2); pose.lower = 1 - P(t, 5, 6.7); pose.clamp = 1 - P(t, 4.4, 5);
-      pose.extension = 1 - P(t, 2.2, 4.4); pose.lock = 1 - P(t, 1.4, 2.2); pose.flow = 0;
-      pose.vent = t > 0.6 && t < 1.4 ? Math.sin((t - 0.6) / 0.8 * Math.PI) : 0;
-      this.detail = t < 0.6 ? 'ODCIECIE PRZEPLYWU' : t < 1.4 ? 'KONTROLOWANY UPUST' : t < 2.2 ? 'ODRYGLOWANIE ZLACZY' : t < 4.4 ? 'ZWIJANIE PRZEWODOW'
-        : t < 5 ? 'ZWALNIANIE MOCOWAN' : t < 6.7 ? 'PODNOSZENIE CHWYTAKOW' : t < 8.2 ? 'PARKOWANIE WOZKA' : 'ODSUNIECIE SUWNICY';
-      if (t >= 9.5) {
+      const S = K7_SERVICE_UNDOCK;
+      this.progress = clamp(t / S.end, 0, 1);
+      k7ServiceDisconnectPose(S, t, null, this.poses.get(this.berth.id));
+      this.detail = k7ServiceStep(S, t);
+      // napęd wraca przy zwolnieniu zamków pola — ramiona składają się nad płaszczyzną lotu
+      if (t >= S.driveAt) p.locked = false;
+      if (t >= S.end) {
         this._setPose(this.berth.id, K7_STOWED_POSE);
         this.berth.occupied = null;
         this.releasedBerth = this.berth;

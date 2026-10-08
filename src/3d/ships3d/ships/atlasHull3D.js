@@ -198,6 +198,7 @@ const MOUNT_RADIUS = { main: 34, special: 46, aux: 20, missile: 30, special_miss
  * @param {object} [o]
  * @param {boolean} [o.bridges=true] mostki z gry (bridge3DShapes: atlas_main, atlas_backup)
  * @param {number} [o.bridgeZScale=2.6] podbicie wysokości mostków (w grze są płaskie — kamera z góry)
+ * @param {boolean} [o.rcs=true] skrzynki dysz RCS w bryle (gra: false — modele dysz SIDE z partii)
  */
 export function buildAtlasHull3D(o = {}) {
   const S = ATLAS3D_SCALE;
@@ -357,6 +358,8 @@ export function buildAtlasHull3D(o = {}) {
     nozzles.push({ x: x - len, y, z, r, dir: [-1, 0, 0] }, { x: x - len, y: -y, z, r, dir: [-1, 0, 0] });
   }
 
+  // Skrzynki RCS w bryle — tylko poza grą (demo); gra rysuje modele dysz SIDE partią (o.rcs === false,
+  // thrusterBatch3D.js) w miejscach markerów, z dzwonem za kierunkiem wydechu.
   const side = ATLAS_EDITOR_DEFAULTS.engines?.side || [];
   const rcs = [];
   for (const e of side) {
@@ -365,8 +368,10 @@ export function buildAtlasHull3D(o = {}) {
     const sgn = yImg < 0 ? 1 : -1; // górna połowa obrazka = +Y
     const yEdge = atlasEdgeHalfWidth(x);
     const z = x > X_CUT ? prongBelt(x) + 18 : 12;
-    B.box(x, sgn * (yEdge + 3), z, 34, 8, 16, { mat: M.PANEL, bevel: [2, 2] });
-    B.face([[x - 12, sgn * (yEdge + 7.2), z - 5], [x + 12, sgn * (yEdge + 7.2), z - 5], [x + 12, sgn * (yEdge + 7.2), z + 5], [x - 12, sgn * (yEdge + 7.2), z + 5]], M.DARK, [0, sgn, 0]);
+    if (o.rcs !== false) {
+      B.box(x, sgn * (yEdge + 3), z, 34, 8, 16, { mat: M.PANEL, bevel: [2, 2] });
+      B.face([[x - 12, sgn * (yEdge + 7.2), z - 5], [x + 12, sgn * (yEdge + 7.2), z - 5], [x + 12, sgn * (yEdge + 7.2), z + 5], [x - 12, sgn * (yEdge + 7.2), z + 5]], M.DARK, [0, sgn, 0]);
+    }
     rcs.push({ id: e.id, x, y: sgn * (yEdge + 8), z, dir: [0, sgn, 0] });
   }
 

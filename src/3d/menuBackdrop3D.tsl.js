@@ -20,9 +20,15 @@ import {
   Fn, If, Discard, Loop,
   float, vec2, vec3, vec4, uniform, texture, varying, uv,
   positionGeometry, modelViewMatrix, cameraProjectionMatrix,
-  abs, atan, clamp, dFdx, dFdy, dot, exp, floor, fract, length, max, min, mix, normalize, pow, smoothstep, sqrt, step
+  abs, atan, clamp, dFdx, dFdy, dot, exp, floor, fract, length, max, min, mix, normalize, pow, smoothstep, sqrt, step, uint
 } from 'three/tsl';
 import { haloRingTSL } from './haloRing/haloRingTSL.js';
+import { acesGry } from './tsl/kolorGry.js';
+import { acesGryInv } from './skybake/skyGameColor.js';
+import { skyStarField } from './skyStars.tsl.js';
+
+// Siatka tekseli tła dla gwiazd ekranowych (jak materiał mgławicy gry — te same gwiazdy w tych samych miejscach).
+const SKY_STAR_TEX = vec2(5120, 3200);
 
 const LUMA = vec3(0.299, 0.587, 0.114);
 
@@ -291,8 +297,17 @@ export function createMenuSkyMaterial({ nebulaMap = null, sunCore = 10 } = {}) {
     col.addAssign(vec3(0.013, 0.011, 0.010).mul(core).mul(smoothstep(0.45, 0.8, cloud)).mul(float(1.0).sub(dust)));
     // mgławica gry: płat nieba za planetą (kąty wokół uNebC), miękki brzeg
     const nc = dot(d, u.uNebC).toVar();
+    // Gwiazdy tła w rozdzielczości ekranu (skyStars.tsl.js): tekstura gry niesie same gładkie warstwy. Teksele
+    // na piksel z pochodnych PRZED gałęziami (pułapki 15, 29) — jawne przypisanie zmiennych.
+    const nuvAll = nebulaUv(d, nc).toVar();
+    const pT = nuvAll.mul(0.5).add(0.5).mul(SKY_STAR_TEX).toVar();
+    const gxT = vec2(0).toVar();
+    const gyT = vec2(0).toVar();
+    gxT.assign(dFdx(pT));
+    gyT.assign(dFdy(pT));
+    const pxT = max(length(gxT), length(gyT)).toVar();
     If(u.uNebulaGain.greaterThan(0.0).and(nc.greaterThan(0.05)), () => {
-      const nuv = nebulaUv(d, nc).toVar();
+      const nuv = nuvAll;
       // smoothstep(1, 0,45, |nuv|) wzorem (odwrócone stałe krawędzie)
       const t = clamp(abs(nuv).sub(1.0).div(0.45 - 1.0), 0.0, 1.0).toVar();
       const edge = t.mul(t).mul(vec2(3.0).sub(t.mul(2.0))).toVar();
@@ -300,7 +315,11 @@ export function createMenuSkyMaterial({ nebulaMap = null, sunCore = 10 } = {}) {
         // Poziom 0 jawnie: mgławica gry ma minFilter LinearFilter (WebGL: sam poziom 0, dwuliniowo), a three r183
         // na WebGPU i tak generuje mipmapy i daje samplerowi mipmapFilter 'linear' — próbka z pochodnymi była
         // trójliniowa (rozmyte włókna, 0,2% pikseli kadru > 8/255). Bez pochodnych: poprawne też w gałęzi.
-        col.addAssign(nebulaTex.sample(nuv.mul(0.5).add(0.5)).level(0).rgb.mul(u.uNebulaGain).mul(edge.x).mul(edge.y));
+        const tex = nebulaTex.sample(nuv.mul(0.5).add(0.5)).level(0).rgb;
+        // Gwiazdy po stronie obrazu wyświetlanego (tekstura zapisana po odwróceniu ACES gry) i powrót do tekstury.
+        const smooth = acesGry(tex).toVar();
+        const withStars = acesGryInv(smooth.add(skyStarField(pT, pxT, smooth, uint(1))));
+        col.addAssign(withStars.mul(u.uNebulaGain).mul(edge.x).mul(edge.y));
       });
     });
     const s1 = starLayer(d, 110.0, 0.985);

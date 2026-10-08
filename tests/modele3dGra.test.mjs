@@ -99,3 +99,45 @@ test('kamery 3D: sam widok, domyślnie kamera klasyczna, bez 6DoF', async () => 
   const src = readFileSync(new URL('../src/game/game3D.js', import.meta.url), 'utf8');
   assert.match(src, /const STORE_CAM = 'sc_camera3d';/, 'nowy klucz — zapis z wycofanej gry 3D nie startuje w pościgu');
 });
+
+// Kamera 3D (free3d) pisze w Core3D.cameraPersp swoje FOV, near i far. Gałąź płaska syncCamera ich nie
+// przywracała: po pełnym obiegu K (ostatnia — kinowa, 50°) kamera z góry zostawała przy 50°, więc warstwy
+// poza z = 0 (mgławica z = −150 000, planety tła z = −50 000) rysowały się ~1,5× mniejsze.
+test('kamera klasyczna po kamerze 3D: kamera perspektywy z góry jak przed K (FOV, near, far, wysokość)', async () => {
+  const THREE = await import('three/webgpu');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { Game3D } = await import('../src/game/game3D.js');
+  const saved = { isInitialized: Core3D.isInitialized, cameraOrtho: Core3D.cameraOrtho, cameraPersp: Core3D.cameraPersp };
+  const W = 1600, H = 900;
+  const flat = { x: 5995825, y: 6645262, zoom: 0.2 };
+  const frame = () => Game3D.frame({ dt: 1 / 60, W, H, zoom: flat.zoom, focusX: flat.x, focusY: flat.y, ship: { x: flat.x, y: flat.y }, heading: 0 });
+  const pose = () => {
+    const p = Core3D.cameraPersp;
+    return { fov: p.fov, near: p.near, far: p.far, z: p.position.z, proj: [...p.projectionMatrix.elements] };
+  };
+  try {
+    Core3D.isInitialized = true;
+    Core3D.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
+    Core3D.cameraPersp = new THREE.PerspectiveCamera(35, W / H, 100, 500000);
+    Core3D.syncCamera(flat, W, H);
+    const before = pose();
+    assert.equal(before.fov, 35);
+    assert.ok(Math.abs(before.z - (H / 2) / Math.tan(17.5 * Math.PI / 180) / flat.zoom) < 1e-6, 'z = 0 jak w kamerze ortho');
+
+    Game3D.setCamera('cinema');
+    const cam3d = frame();
+    assert.ok(Core3D.isFreePerspectiveCamera(cam3d));
+    assert.notEqual(cam3d.fov, 35);
+    Core3D.syncCamera(cam3d, W, H);
+    assert.equal(Core3D.cameraPersp.fov, cam3d.fov, 'kamera 3D liczy się własnym FOV');
+    assert.equal(Core3D.cameraPersp.far, cam3d.far);
+
+    Game3D.setCamera('classic');
+    assert.equal(frame(), null);
+    Core3D.syncCamera(flat, W, H);
+    assert.deepEqual(pose(), before, 'po kamerze 3D kamera z góry jak przed nią');
+  } finally {
+    Object.assign(Core3D, saved);
+    Game3D.setCamera('classic');
+  }
+});

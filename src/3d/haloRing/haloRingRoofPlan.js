@@ -16,7 +16,7 @@
 // (segment, przesunięcie wzdłuż w skali floorMid, dr = r − floorMid, z) —
 // shader liczy ją względem kamery (RTE), więc nie drży przy żadnym zoomie.
 import { HALO_PORT, HALO_ROOF, HALO_STATION_ANGLE, HALO_TAU, HALO_TRANSIT, haloTransitAngles } from './haloRingConfig.js';
-import { HALO_BAY, bayArms, haloBayLayouts } from './haloPortBays.js';
+import { bayArms, haloBayLayouts } from './haloPortBays.js';
 import { k7ArmWidthAt } from './haloPortK7Layout.js';
 import { haloLandmarkParts, haloLandmarkSegment } from './haloRingLandmarks.js';
 import { haloDomeParts } from './haloRingDomes.js';
@@ -329,7 +329,7 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
   // Stanowiska w standardzie K-7 (haloPortBays.js) rysuje render kompleksu
   // K-7; tu bryła zatoki. frameR — promień ściany tylnej zatoki, floorY —
   // płyta portu w układzie zatoki (< 0), lanes / spines — pasy MEGA i grzbiety
-  // (światła, suwnice), arms — pylony w układzie zatoki.
+  // (światła), arms — pylony w układzie zatoki.
   const docks = [];
   const portOn = sigma > 0 && layout.flightLevel !== 'roof';
   if (portOn) {
@@ -516,28 +516,11 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
       // listwy: górą ściany od strony zatoki i przy wylocie (błękit)
       box(sd * (len * 0.5 - P.sideWall - 3), P.backWall, D, zW - 30, zW - 22, 6, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
       box(sd * (len * 0.5 - P.sideWall - 6), D - 60, D, zW - 8, zW, 12, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
-      // bieżnia suwnic na ścianie
-      box(sd * (len - P.sideWall) * 0.5, 700, D - 40, zW, zW + 12, 40, HALO_MAT.truss);
     }
     box(0, P.backWall + 3, P.backWall + 9, zW - 30, zW - 22, len - 2 * P.sideWall, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
     // próg wylotu pod poziomem pokładu (bez stropu — okręt wchodzi płaszczyzną gry)
     box(0, D - 40, D, zB - 70, zB, len, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
-    // suwnice pasów MEGA (jak suwnice stanowisk capital K-7): most nad pasem
-    // od bieżni na ścianie bocznej do nogi na grzbiecie serwisowym, nad
-    // płaszczyzną gry, profil ≤ 1/20 rozpiętości; wózek zaparkowany przy
-    // ścianie. Grzebień pośrodku bez mostów (czytelny w kamerze gry).
-    dock.lanes.forEach((lx, k) => {
-      const sdl = Math.sign(lx) || 1;
-      const xWall = sdl * (len * 0.5 - P.sideWall * 0.5);
-      const xSpine = dock.spines[k];
-      const span = Math.abs(xWall - xSpine);
-      for (const yb of HALO_BAY.gantryAt) {
-        const y = D * yb;
-        box((xWall + xSpine) * 0.5, y - P.gantryProfile * 0.5, y + P.gantryProfile * 0.5, zW + 12, zW + 12 + P.gantryProfile, span, HALO_MAT.hazard);
-        box(xSpine, y - 40, y + 40, zD, zW + 12 + P.gantryProfile, 60, HALO_MAT.dark);
-        box(xWall - sdl * 70, y - 60, y + 60, zW - 20, zW + 12, 90, HALO_MAT.dark);
-      }
-    });
+    // (suwnic pasów MEGA nie ma od 2026-10-07 — ładunek obsługują drony, decyzja użytkownika)
     // sterownia na ścianie tylnej (przeszklenie ku zatoce)
     box(0, P.backWall - 20, P.backWall + 60, zW - 10, zW + 90, 520, HALO_MAT.glass + 32 * HALO_EMIT.windowsCool);
     // ---- pylony: wystają wprost ze ściany tylnej zatoki, na jej wysokości

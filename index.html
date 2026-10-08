@@ -21,7 +21,7 @@
           'devConfig', 'devFlags', 'devBloomPanel', 'devRingColors',
           'devDestructorConfig', 'devDestructorMassConfig', 'devCameraRig',
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
-          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_audio', 'sc_camera_look'
+          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_hull_light', 'sc_audio', 'sc_camera_look'
         ]
       };
       const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.dev];
@@ -406,6 +406,14 @@
                 <p class="mm-note">Połysk kadłubów: odblask słońca i odbicie mgławicy. Koszt tylko po stronie karty graficznej.</p>
               </div>
               <div class="mm-field">
+                <div class="mm-field-label">Oświetlenie kadłubów</div>
+                <div class="menu-chip-group" role="group" aria-label="Oświetlenie kadłubów">
+                  <button class="menu-chip" data-hull-light="pbr">Realistyczne</button>
+                  <button class="menu-chip" data-hull-light="classic">Klasyczne</button>
+                </div>
+                <p class="mm-note">Realistyczne: bryła kadłuba odtworzona ze sprite'a (panele, krawędzie, wnęki, cienie), słońce z boku, lampy i błyski broni oświetlają blachę wokół siebie. Klasyczne: dawne płaskie światło.</p>
+              </div>
+              <div class="mm-field">
                 <div class="mm-field-label">Pył kosmiczny</div>
                 <div class="menu-chip-group" role="group" aria-label="Pył kosmiczny">
                   <button class="menu-chip" data-space-dust="on">Wł.</button>
@@ -491,7 +499,7 @@
             <div class="mm-credit"><span>Autor</span><b>Szymon Bogdanowicz</b></div>
             <div class="mm-credit"><span>Render</span><b>Three.js · WebGPU</b></div>
             <div class="mm-credit"><span>Fizyka</span><b>JavaScript + WebGPU</b></div>
-            <div class="mm-credit"><span>Wersja</span><b>0.0.1 alpha</b></div>
+            <div class="mm-credit"><span>Wersja</span><b>__HULLFALL_VERSION__ alpha</b></div>
           </div>
           <button id="btn-credits-back" class="menu-btn-styled mm-back"><span class="mm-back-arrow">&#9666;</span>Zamknij<kbd>Esc</kbd></button>
         </section>
@@ -857,6 +865,10 @@
     // Szarża — system okrętu pod F (src/data/shipSystems.js): stan zrywu i ładunek reaktora.
     import { createRamBurn, canStartRamBurn, startRamBurn, stopRamBurn, stepRamBurn, RAM_BURN_END, RAM_BURN_READY } from "./src/game/flight/ramBurn.js";
     import { shipSystemFor } from "./src/data/shipSystems.js";
+    // Warstwa wejścia (docs/PLAN-pad.md, etap 1): pady, akcje, konteksty — klej w bloku „WEJŚCIE / PAD”.
+    import { createInput } from "./src/input/input.js";
+    import { buildKeydownMap } from "./src/input/inputActions.js";
+    import { PAD_FAMILY_IDS } from "./src/input/padDevice.js";
     import {
       applyNpcFlightVector,
       executeNpcFlightCommand,
@@ -918,6 +930,8 @@
     // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js).
     // Stary destruktor heksowy zostaje tylko dla asteroid (heksowe ciała skał).
     import { HullBodies } from "./src/game/hullBodies.js";
+    // Sufit punktów kadłuba z konstrukcji (enforceNpcHexIntegrityBalance) i punkty rosnące z odrostem węzłów.
+    import { HULL_INTEGRITY, raiseHullHpForRegrowth } from "./src/game/hullIntegrity.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
@@ -926,6 +940,7 @@
     HullBodies.onImpact = HullDamageMap.onHullImpact;
     HullBodies.onRepair = HullDamageMap.onHullRepair;
     HullBodies.onNodeLost = HullDamageMap.onHullNodeLost;
+    HullBodies.onRegrow = raiseHullHpForRegrowth;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
@@ -1057,6 +1072,19 @@
     import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
+    import { HallDust, HALL_DUST_TUNE } from "./src/3d/gasField/hallDust.js";
+    import { packHallDustFrame } from "./src/game/hallDustInput.js";
+    // Diagnostyka i strojenie z konsoli: HallDust.stats, HallDustTune.jetSpeed = 3000 itd.
+    window.HallDust = HallDust;
+    window.HallDustTune = HALL_DUST_TUNE;
+    // Obsługa stanowisk capital K-7 w grze swobodnej (zamki pola, ramiona SCARA i przewody paliwowe przy postoju gracza —
+    // obraz i gaz; automat w HaloRingGame._portVisuals): strojenie K7ServiceTune (dwell, settleSpeed, releaseSpeed …),
+    // fizyka ramion i przewodów K7FuelTune (haloPortK7Fuel.js: grawitacja, sztywność, bęben, napęd przegubów).
+    import { K7_SERVICE_TUNE } from "./src/game/k7BerthService.js";
+    import { K7_FUEL_TUNE } from "./src/3d/haloRing/haloPortK7Fuel.js";
+    window.K7ServiceTune = K7_SERVICE_TUNE;
+    window.K7FuelTune = K7_FUEL_TUNE;
     // Wydobycie (zadanie 21b): ładunki górnicze gracza (magazynek platformy, ceny tymczasowe).
     import { MINING_CHARGES, createMiningChargeStock } from "./src/data/miningCharges.js";
     import { chargeForDepth } from "./src/game/asteroidMaterials.js";
@@ -1074,6 +1102,8 @@
       setBeamSkinSuppressor,
       setEntityHiddenTest
     } from "./src/3d/hexShips3D.js";
+    // Oświetlenie kadłubów v2 (2026-10-06): mapy powierzchni sprite'ów (normalne, AO, relief) — wypiek w workerze.
+    import { HullSurface } from "./src/3d/hullSurface.js";
     // Modele 3D statków i broni — opcje nowej gry „Statki 2D / 3D”, „Bronie 2D / 3D” (sam wygląd, rozgrywka 2D).
     import { VisualMode } from "./src/game/visualMode.js";
     // Kamery 3D (pościg, orbita, kino, taktyczna, z góry) — SAM WIDOK nad rozgrywką 2D (src/game/game3D.js).
@@ -1081,6 +1111,7 @@
     import { View3D } from "./src/game/view3D.js";
     // Fabuła (2026-09-30): reżyser misji, kino, dok K-7, samouczek (src/game/story/), maskowanie (src/game/cloak.js).
     import { StoryGame } from "./src/game/story/storyGame.js";
+    import { createStoryNpcControl } from "./src/game/story/storyNpcControl.js";
     import { StoryOptions } from "./src/game/story/storyOptions.js";
     import { createStoryOverlay } from "./src/ui/storyOverlay.js";
     import { breakCloak, cloakBlockReason, isCloakEngaged, isCloakHidden, stepCloak, toggleCloak } from "./src/game/cloak.js";
@@ -1096,9 +1127,10 @@
     } from "./src/3d/ships3d/shipModels3DGame.js";
     import { SHIP3D_MODELS } from "./src/3d/ships3d/ships/ships3D.js";
     import { WEAPON3D_FAMILY } from "./src/3d/ships3d/weapons/weapons3D.js";
-    // Wybuch reaktora w scenie Core3D (port WebGPU, zadanie 20 — dawny overlay efektów z własnym
-    // WebGLRenderer usunięty; trafienia broni to receptury WeaponFx, rakiety src/3d/rockets/).
-    import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
+    // Wybuchy WebGPU (src/3d/explosions/ — 2026-10-07, zamiast starego reactorblow.js): kula ognia i dym z gazu na
+    // siatce 3D (compute), żar, iskry i odłamki gry, światła w siatce, fala jako sama refrakcja; trafienia broni to
+    // receptury WeaponFx, rakiety src/3d/rockets/.
+    import { createExplosionFactory } from "./src/3d/explosions/explosionFx.js";
     import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
     // Rdzeń reaktora na belkach (src/game/reactorCore.js, klej reactorCoreGame.js) i jego wybuch
@@ -1149,8 +1181,14 @@
       drawCicShipSilhouette,
       getCicEntityHullMetrics,
       getCicEntityScreenHalfExtents,
+      getCicEntitySpriteRotation,
+      getCicEntitySpriteSource,
       getCicPlacementGhostPalette
     } from "./src/ui/cicDisplay.js";
+    // Radar taktyczny kokpitu (2026-10-07): zbieracz wejścia i skan X w świecie — src/ui/radar/.
+    import { createRadarFeed } from "./src/ui/radar/radarFeed.js";
+    import { createScanOverlay } from "./src/ui/radar/scanOverlay.js";
+    import { radarStationLabel, scanPulseRadius, scanPulseTime } from "./src/ui/radar/radarConfig.js";
     import {
       COMMAND_MENU_FOOT_H,
       COMMAND_MENU_HEAD_H,
@@ -1297,7 +1335,7 @@
       normalizeCallInSpawnMode
     } from "./src/game/callInSpawnPolicy.js";
     import { createSupportWarpCallIns, createSupportReturn, supportWarpCourse } from "./src/game/supportWarp.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT } from "./src/game/warpDrive.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
@@ -1327,6 +1365,7 @@
     import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
     import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
     import { computeHaloPortStation, haloRingKey } from "./src/game/haloRingPlanets.js";
+    import { HALO_COLLISION } from "./src/game/haloRingCollision.js";
     // Tło menu głównego: Ziemia z ringiem w kamerze kinowej (przed startem gry).
     import { MenuBackdrop3D } from "./src/3d/menuBackdrop3D.js";
     // Statki Terran (Wsparcie)
@@ -1444,13 +1483,17 @@
         SparkSystem3D.init(Core3D.scene);
         const rocketFx = createRocketFx(Core3D);
         initRocketSystem3D(Core3D.scene, { effects: rocketFx });
+        // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
+        HallDust.setVaporSmoke(rocketFx.smoke);
         // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
         // zgięcie mgławicy, fale — sam wygląd, słucha automatu warpa i przylotów NPC.
         WarpNurt.init();
-        // Wybuch reaktora (śmierć okrętu, rozpad stacji): pule cząstek w passie ortho Core3D, krok
-        // klatki efektów (zadanie 20). Rozpad stacji (Destruction3D) sypie te same wybuchy; bez
-        // menedżera fali — fala z refrakcją (shockwave3D) usunięta w zadaniu 19.
-        window.makeReactorBlow = createReactorBlowFactory(Core3D);
+        // Wybuchy WebGPU (src/3d/explosions/explosionFx.js, 2026-10-07 — zastąpiły stary reactorblow.js, port overlaya
+        // WebGL, „tragiczne, do usunięcia”): krok klatki efektów „wybuchy” — kula ognia i dym z gazu na siatce 3D,
+        // strumienie gazu z miejsca wybuchu, żar, iskry i odłamki gry, światła w siatce, fala jako sama refrakcja.
+        // Wołają `window.makeReactorBlow({ x, y, size, profile })`: rozpad stacji (Destruction3D), progi i łańcuch
+        // rozpadu suchego doku, śmierć gracza bez rdzenia (triggerReactorBlow3D), skrypty misji.
+        window.makeReactorBlow = createExplosionFactory(Core3D, { rocketFx, weaponFx: WeaponFx });
         window.Destruction3D.init({
           scene:            Core3D.scene,
           reactorFactory:   window.makeReactorBlow,
@@ -2171,6 +2214,18 @@
       source.start(0);
     }
 
+    // Trafienie pocisku w tarczę: tylko w kadrze (ta sama bramka co efekt trafienia) albo blisko
+    // kamery, przez limit głosów strzałów. Dawniej każde trafienie na mapie tworzyło BufferSource
+    // + Gain bez limitu — w bitwie flot setki na sekundę (audyt 2026-10-07 § 5.4).
+    function playShieldHitSound(x, y) {
+      if (!(impactFxScreenPx(x, y, 1) > 0)) {
+        const dx = x - camera.x, dy = y - camera.y;
+        const near = shotVoiceLimiter.limits.fullVolumeDist;
+        if (!(dx * dx + dy * dy <= near * near)) return;
+      }
+      playDynamicSound('shieldHit', x, y, 0, 1.0);
+    }
+
     const mainMenuEl = document.getElementById('main-menu');
     const newGameButton = document.getElementById('btn-new-game');
     const loadGameButton = document.getElementById('btn-load-game');
@@ -2187,7 +2242,6 @@
     const optionsBackButton = document.getElementById('btn-options-back');
     const creditsBackButton = document.getElementById('btn-credits-back');
     const keybindsBackButton = document.getElementById('btn-keybinds-back');
-    const qualityButtons = Array.from(document.querySelectorAll('[data-quality]'));
     const loadingEl = document.getElementById('loading');
     const loadingFillEl = document.getElementById('loading-fill');
     const loadingProgressEl = document.getElementById('loading-progress');
@@ -2243,18 +2297,15 @@
       if (menuKeybindsView) menuKeybindsView.classList.toggle('active', menuView === 'keybinds');
       if (menuGamemodeView) menuGamemodeView.classList.toggle('active', menuView === 'gamemode');
       if (mainMenuEl) mainMenuEl.dataset.view = menuView;
-      if (menuView === 'options') applyQualitySelection();
       menuBackdrop?.setFocus(MENU_WIDE_VIEWS.has(menuView) ? 1 : 0);
       menuGamepad.selectedIndex = 0;
       menuGamepad.updateHighlight();
     }
 
-    // =============== Menu Gamepad Navigation ===============
+    // =============== Menu: wybór pozycji (klawiatura ↑ ↓ / Enter / Esc, pad — pumpInput) ===============
+    // Pad nawiguje przez warstwę wejścia (src/input/, blok „WEJŚCIE / PAD”): kontekst 'menu' → padMenuStep.
     const menuGamepad = {
       selectedIndex: 0,
-      prevButtons: {},
-      prevAxes: {},
-      active: true,
 
       getVisibleButtons() {
         const activeView = document.querySelector('.menu-sub-view.active');
@@ -2295,46 +2346,16 @@
       }
     };
 
-    function menuGamepadLoop() {
-      if (!isMainMenuVisible()) {
-        requestAnimationFrame(menuGamepadLoop);
-        return;
-      }
-
-      const pads = navigator.getGamepads?.() || [];
-      for (let i = 0; i < 4; i++) {
-        const pad = pads[i];
-        if (!pad) continue;
-
-        const prevBtns = menuGamepad.prevButtons[i] || {};
-        const prevAx = menuGamepad.prevAxes[i] || 0;
-        const btnNow = {};
-        for (let b = 0; b < pad.buttons.length; b++) btnNow[b] = pad.buttons[b].pressed;
-        const justPressed = (b) => btnNow[b] && !prevBtns[b];
-
-        // D-pad up (12) or left (14) — previous button
-        if (justPressed(12) || justPressed(14)) menuGamepad.navigate(-1);
-        // D-pad down (13) or right (15) — next button
-        if (justPressed(13) || justPressed(15)) menuGamepad.navigate(1);
-        // A (0) — confirm
-        if (justPressed(0)) menuGamepad.confirm();
-        // B (1) — back
-        if (justPressed(1)) menuGamepad.back();
-
-        // Left stick vertical
-        const ay = pad.axes[1] || 0;
-        if (ay < -0.5 && prevAx >= -0.5) menuGamepad.navigate(-1);
-        if (ay > 0.5 && prevAx <= 0.5) menuGamepad.navigate(1);
-
-        menuGamepad.prevButtons[i] = btnNow;
-        menuGamepad.prevAxes[i] = ay;
-      }
-
-      requestAnimationFrame(menuGamepadLoop);
+    // Warstwa wejścia (docs/PLAN-pad.md, etap 1): JEDEN odczyt urządzeń na klatkę rAF — pumpInput woła ta pętla
+    // (menu, podzielony ekran, przed startem gry) i loop() przed krokami fizyki; strażnik znacznika rAF sprawia,
+    // że pracuje tylko pierwsze wywołanie w klatce.
+    const Input = createInput({ read: () => (navigator.getGamepads ? navigator.getGamepads() : null) });
+    window.Input = Input;
+    function inputFrameLoop(now) {
+      pumpInput(now);
+      requestAnimationFrame(inputFrameLoop);
     }
-
-    // Start menu gamepad polling
-    requestAnimationFrame(menuGamepadLoop);
+    requestAnimationFrame(inputFrameLoop);
 
     // Keyboard navigation for menu (arrows + enter/escape)
     window.addEventListener('keydown', (e) => {
@@ -2541,26 +2562,6 @@
     function toggleMainMenu() {
       if (isMainMenuVisible()) hideMainMenu();
       else showMainMenu('home');
-    }
-
-    function getBackgroundQuality() {
-      if (window.Nebula?.getConfig) return window.Nebula.getConfig().quality;
-      return null;
-    }
-
-    function applyQualitySelection() {
-      const current = getBackgroundQuality();
-      if (!qualityButtons || !qualityButtons.length) return;
-      qualityButtons.forEach(btn => {
-        const isActive = btn.dataset.quality === current;
-        btn.classList.toggle('active', isActive);
-        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-      });
-    }
-
-    function setBackgroundQuality(quality) {
-      if (window.Nebula?.setQuality) window.Nebula.setQuality(quality);
-      applyQualitySelection();
     }
 
     if (skillSlotsEl && skillSlotsEl.childElementCount === 0) {
@@ -3196,10 +3197,20 @@
       // Spatial grid query — typical 5-15 candidates vs 200 in old O(N) scan.
       // Fighters: 450 covers worst-case safeDistance (myRadius + otherRadius~250 + margin 140).
       // Capitals: 900, bo strefa + look-ahead sięga ~880u.
+      // Na prawdziwej siatce liczby sąsiadów (pozycja, prędkość, promień, flagi, odstęp tarczy)
+      // idą z jej migawki w tablicach typowanych (src/ai/aiSpatialGrid.js — ci sami kandydaci
+      // w tej samej kolejności; pozycja i prędkość z bieżącego kroku fizyki, promień i tarcza
+      // z taktu AI): pola ~150 NPC o ~65 klasach ukrytych czytane w pętli par były
+      // megamorficzne, a promienie tarcz par liczyły się łańcuchem funkcji przy każdej parze.
+      // Przy atrapie siatki (testy) i bez siatki — z obiektów. Arytmetyka par ta sama.
       const QUERY_RADIUS = myCapital ? 900 : 450;
+      const ship = window.ship;
+      const snap = window.queryAIGrid ? window.queryAIGrid.aiSnapshot : null;
       let __sepCandidates = null;
       let __sepCandCount = 0;
-      if (window.queryAIGrid) {
+      if (snap && snap.syncTick()) {
+        __sepCandCount = snap.selectSlots(npc.x, npc.y, QUERY_RADIUS);
+      } else if (window.queryAIGrid) {
         const __q = window.queryAIGrid(npc.x, npc.y, QUERY_RADIUS);
         __sepCandidates = __q.buffer;
         __sepCandCount = __q.count;
@@ -3207,12 +3218,69 @@
         __sepCandidates = npcs;
         __sepCandCount = npcs.length;
       }
+      // Odstęp tarczy: shieldPairStandoff(a, b) = odstęp(a) + odstęp(b) — na migawce oba
+      // z taktu AI (raz na byt), bez niej z obiektów; własny dopiero przy pierwszej parze.
+      let myShield = 0;
+      let myShieldRead = false;
 
       for (let __si = 0; __si < __sepCandCount; __si++) {
-        const other = __sepCandidates[__si];
-        if (!other || other === npc || other.dead) continue;
-        // Grid may include window.ship — skip here, handled by player block below.
-        if (other === window.ship) continue;
+        let other;
+        let ox;
+        let oy;
+        let ovx;
+        let ovy;
+        let oRadius;
+        let otherFighter;
+        let otherCapFlag;
+        let oShield;
+        if (__sepCandidates) {
+          other = __sepCandidates[__si];
+          if (!other || other === npc || other.dead) continue;
+          // Grid may include window.ship — skip here, handled by player block below.
+          if (other === ship) continue;
+          ox = other.x;
+          oy = other.y;
+          ovx = other.vx;
+          ovy = other.vy;
+          oRadius = other.radius;
+          otherFighter = !!other.fighter;
+          otherCapFlag = !!other.isCapitalShip;
+          oShield = shieldPairStandoff(other, null);
+        } else {
+          const slot = snap.cand[__si];
+          other = snap.refs[slot];
+          if (other === npc || snap.dead[slot] !== 0 || other === ship) continue;
+          ox = snap.x[slot];
+          oy = snap.y[slot];
+          ovx = snap.vx[slot];
+          ovy = snap.vy[slot];
+          oRadius = snap.r[slot];
+          const flags = snap.flags[slot];
+          otherFighter = (flags & snap.FIGHTER) !== 0;
+          otherCapFlag = (flags & snap.CAPITAL) !== 0;
+          oShield = snap.shieldOf(slot, shieldPairStandoff);
+        }
+        const otherCapital = otherCapFlag || !otherFighter;
+
+        const dx = npc.x - ox;
+        const dy = npc.y - oy;
+        const distSq = dx * dx + dy * dy;
+        const otherRadius = oRadius || 20;
+        const pairRadius = myRadius + otherRadius;
+        const bigPair = myCapital || otherCapital;
+        // Luz dla par z udziałem dużego okrętu — skalowany od sumy promieni,
+        // żeby dwa battleshipy (radius 140) miały realny odstęp, a nie 36-70u.
+        const bigPairMargin = Math.max(70, pairRadius * 0.6);
+        if (!myShieldRead) {
+          myShield = __sepCandidates ? shieldPairStandoff(npc, null) : snap.shieldOfEntity(npc, shieldPairStandoff);
+          myShieldRead = true;
+        }
+        const standoff = myShield + oShield;
+        // Najdalej sięgająca siła pary (każda gałąź niżej ma margines ≤ max(46, bigPairMargin),
+        // para wrogich myśliwców — 10). Dalej para nic nie wnosi: bez styku i wrogości.
+        const reachMax = Math.max(pairRadius, standoff) + Math.max(46, bigPairMargin) + (bigPair ? LOOKAHEAD_MAX : 0);
+        if (!(distSq < reachMax * reachMax)) continue;
+
         // Once metal touches, the destructor owns the response. AI avoidance
         // inside the crushed hull would add an independent repulsive force.
         if (HullBodies.hasContact(npc, other)) continue;
@@ -3221,18 +3289,10 @@
           ? window.isEnemyUnit(npc, other)
           : (!!npc.friendly !== !!other.friendly);
 
-        const otherFighter = !!other.fighter;
-        const otherCapital = !!other.isCapitalShip || !otherFighter;
-
-        const dx = npc.x - other.x;
-        const dy = npc.y - other.y;
-        const distSq = dx * dx + dy * dy;
-        const otherRadius = other.radius || 20;
-
         // 1) Wróg-vs-wróg fighter NIE może robić force-fielda.
         // Dajemy tylko minimalny anti-overlap, żeby sprite'y się nie nakładały 1:1.
         if (enemy && myFighter && otherFighter) {
-          const safeDistance = myRadius + otherRadius + 10;
+          const safeDistance = pairRadius + 10;
           if (distSq < safeDistance * safeDistance) {
             const dist = Math.sqrt(distSq) || 1;
             const overlap = safeDistance - dist;
@@ -3245,9 +3305,6 @@
 
         let strength = 0;
         let sepMargin = 0;
-        // Luz dla par z udziałem dużego okrętu — skalowany od sumy promieni,
-        // żeby dwa battleshipy (radius 140) miały realny odstęp, a nie 36-70u.
-        const bigPairMargin = Math.max(70, (myRadius + otherRadius) * 0.6);
 
         // 2) Sojusznicy trzymają odstęp, ale dużo mniejszy niż teraz.
         if (!enemy && myFighter && otherFighter) {
@@ -3273,20 +3330,16 @@
         // Margines liczymy PONAD większy z dwóch obrysów: kadłub albo tarcza.
         // Tarcza nie jest ścianą (patrz shieldPairStandoff) — to bufor, żeby
         // sojusznicze kadłuby nie ocierały się o siebie.
-        const safeDistance = Math.max(
-          myRadius + otherRadius,
-          shieldPairStandoff(npc, other)
-        ) + sepMargin;
+        const safeDistance = Math.max(pairRadius, standoff) + sepMargin;
 
-        const bigPair = myCapital || otherCapital;
         const reach = bigPair ? (safeDistance + LOOKAHEAD_MAX) : safeDistance;
         if (distSq < reach * reach) {
           const dist = Math.sqrt(distSq) || 1;
           let overlap = safeDistance - dist;
           if (bigPair) {
             // Prędkość zbliżania (na kursie kolizyjnym).
-            const relVx = (npc.vx || 0) - (other.vx || 0);
-            const relVy = (npc.vy || 0) - (other.vy || 0);
+            const relVx = (npc.vx || 0) - (ovx || 0);
+            const relVy = (npc.vy || 0) - (ovy || 0);
             const closing = -(relVx * dx + relVy * dy) / dist;
             if (overlap <= 0 && closing > 40) {
               const predicted = dist - Math.min(closing * LOOKAHEAD_T, LOOKAHEAD_MAX);
@@ -3340,10 +3393,14 @@
 
         // Ta sama zasada co przy parach NPC: odstęp od większego z obrysów
         // (kadłub / tarcza). Tarcza gracza nie odbija już niczego — bufor
-        // trzyma cudze kadłuby z dala od jego pancerza.
+        // trzyma cudze kadłuby z dala od jego pancerza. Na migawce oba odstępy
+        // tarcz z taktu AI, jak u sąsiadów.
+        const playerStandoff = __sepCandidates
+          ? shieldPairStandoff(npc, player)
+          : (myShieldRead ? myShield : snap.shieldOfEntity(npc, shieldPairStandoff)) + snap.shieldOfEntity(player, shieldPairStandoff);
         const safeDistance = Math.max(
           myRadius + (player.radius || 220),
-          shieldPairStandoff(npc, player)
+          playerStandoff
         ) + sepMargin;
 
         const reach = safeDistance + LOOKAHEAD_MAX;
@@ -4543,6 +4600,11 @@
       if (weapon.ammo != null) {
         const desiredAmmo = opts.hasOwnProperty('ammo') ? opts.ammo : weapon.ammo;
         hp.ammo = Math.max(0, desiredAmmo);
+        // Rakieta specjalna: magazynek zawsze z karty broni (Supernova Barrage — 2 salwy; stare zapisy miały 8).
+        if (hp.type === HP.SPECIAL_MISSILE) {
+          hp.maxAmmo = weapon.ammo;
+          hp.ammo = Math.min(hp.ammo, weapon.ammo);
+        }
       } else {
         hp.ammo = null;
       }
@@ -4871,6 +4933,15 @@
       return true;
     }
 
+    // Sondy gniazd tylko po zmianie struktury kadłuba (audyt 2026-10-07 § 5.4: 56 gniazd supercapitala
+    // × do 5 sond co 0,08 s, także w nietkniętym kadłubie). Sonda patrzy na żywe węzły ciała w ich
+    // bieżących miejscach — bez zabitego węzła, zerwanej belki, nowego wgniecenia (_maxDisp), innego
+    // ciała i innej listy gniazd wynik byłby ten sam. Gniazda z chybioną sondą sondujemy dalej co takt
+    // (nad wyrwą giną po lostChecksToDestroy chybieniach jak dawniej), a co HARDPOINT_FULL_CHECK_SEC
+    // wszystkie (zapas na zmiany spoza klucza).
+    const HARDPOINT_FULL_CHECK_SEC = 1.0;
+    const _hardpointProbeState = new WeakMap();
+
     function updateEntityHardpointIntegrity(entity, dt) {
       if (!entity || entity.dead || !HullBodies.hasHull(entity)) return false;
       const hardpoints = getEntityHardpoints(entity);
@@ -4878,13 +4949,38 @@
 
       entity.__hardpointProbeTimer = (Number(entity.__hardpointProbeTimer) || 0) - dt;
       if (entity.__hardpointProbeTimer > 0) return false;
+      const elapsed = HARDPOINT_INTEGRITY_CONFIG.probeEverySec - entity.__hardpointProbeTimer;
       entity.__hardpointProbeTimer = HARDPOINT_INTEGRITY_CONFIG.probeEverySec;
 
+      const body = entity.beamHull.body;
+      let st = _hardpointProbeState.get(entity);
+      if (!st) {
+        st = { body: null, nodes: 0, beams: 0, disp: 0, list: null, count: 0, sinceFull: 0, pending: 0 };
+        _hardpointProbeState.set(entity, st);
+      }
+      st.sinceFull += elapsed;
+      const full = st.body !== body || st.nodes !== body.activeNodes || st.beams !== body.liveBeams
+        || st.disp !== body._maxDisp || st.list !== hardpoints || st.count !== hardpoints.length
+        || !(st.sinceFull < HARDPOINT_FULL_CHECK_SEC);
+      if (!full && st.pending === 0) return false;
+      if (full) {
+        st.body = body;
+        st.nodes = body.activeNodes;
+        st.beams = body.liveBeams;
+        st.disp = body._maxDisp;
+        st.list = hardpoints;
+        st.count = hardpoints.length;
+        st.sinceFull = 0;
+      }
+
       let changed = false;
+      let pending = 0;
       const total = hardpoints.length;
       for (let i = 0; i < hardpoints.length; i++) {
         const hp = hardpoints[i];
         if (!hp || hp.destroyed) continue;
+        // Bez zmiany struktury podparte gniazdo zostaje podparte — sondujemy tylko chybione.
+        if (!full && !(hp.__supportMisses > 0)) continue;
         const supported = isHardpointHexSupported(entity, hp);
         if (supported) {
           hp.__supportMisses = 0;
@@ -4893,8 +4989,11 @@
         hp.__supportMisses = (hp.__supportMisses | 0) + 1;
         if (hp.__supportMisses >= HARDPOINT_INTEGRITY_CONFIG.lostChecksToDestroy) {
           if (markHardpointDestroyed(entity, hp, total)) changed = true;
+        } else {
+          pending++;
         }
       }
+      st.pending = pending;
       return changed;
     }
 
@@ -5247,9 +5346,18 @@
 
 
     function hudPingNpcStations() {
-      // Niebieskie strzałki do stacji nie-misyjnych; gasną po 4s
-      const targets = stations.filter(s => !s.mission).slice(0, 8);
-      HUD.navArrows = targets.map(s => ({ x: s.x, y: s.y, age: 0, life: 4.0 }));
+      // Namiary stacji przy impulsie X (nakładka skanu, src/ui/radar/scanOverlay.js): najbliższe stacje
+      // nie-misyjne (4) poza kadrem — grot na pierścieniu wokół okrętu z nazwą i odległością, gasną po 6 s.
+      // (Dawne niebieskie strzałki HUD.navArrows zastąpione.)
+      if (!ship?.pos) return;
+      const list = [];
+      for (const s of stations) {
+        if (!s || s.mission || s._destroyed3D || SensorSystem.hides(s)) continue;
+        list.push({ entity: s, label: radarStationLabel(s, true), d: Math.hypot(s.x - ship.pos.x, s.y - ship.pos.y) });
+      }
+      list.sort((a, b) => a.d - b.d);
+      if (list.length > 4) list.length = 4;
+      scanOverlay.navBearings(list, scanOverlayClock);
     }
     function hudUpdateNav(dt) {
       for (const p of HUD.navArrows) p.age += dt;
@@ -5384,18 +5492,105 @@
     // =============== Game time (1 min real = 1 h game) ===============
     let gameTime = 0; // seconds
 
-    const HUD_RADAR_REFRESH_MS = 80;
-    const HUD_RADAR_FAR_REFRESH_MS = 120;
+    const HUD_RADAR_REFRESH_MS = 100;
     const HUD_RADAR_RANGE = 20000;
     let hudRadarSnapshot = null;
     let hudRadarLastRefreshMs = 0;
     let hudRadarWorldFeatures = [];
 
-    function getHudRadarRefreshMs(range) {
-      const safeRange = Math.max(1, Number(range) || HUD_RADAR_RANGE);
-      if (safeRange >= 60000) return HUD_RADAR_FAR_REFRESH_MS;
-      if (safeRange >= 40000) return 90;
-      return HUD_RADAR_REFRESH_MS;
+    // === RADAR TAKTYCZNY KOKPITU (src/ui/radar/, 2026-10-07) ===
+    // Zbieracz (~10 Hz): co radar może widzieć — okręty, myśliwce, stacje i budowle, wraki, rakiety w locie,
+    // drony; podkład terenu (planety, ring, pas asteroid z olbrzymami); nakładki (cel podróży, cele misji,
+    // zasięg broni w ręku, sygnatury masy, duchy, zasięg wzroku). Antena, śledzenie i tarcza biegną w kokpicie
+    // co klatkę i czytają żywe pozycje encji. Mgła wojny i maskowanie — te same testy co reszta HUD-u.
+    const radarFeed = createRadarFeed();
+    let radarPingSerial = 0;          // każdy impuls skanera X (fala) — radar rysuje go i maluje kontakty
+    const _radarTravel = { x: 0, y: 0, label: '' };
+    const _radarWeaponRanges = [];
+    const _radarWeaponPool = [{ r: 0, label: '', rgb: null }, { r: 0, label: '', rgb: '255, 186, 90' }];
+    const RADAR_GROUP_LABEL = Object.freeze({ main: 'DZIAŁA', special: 'BATERIA', missile: 'RAKIETY' });
+    const radarFeedEnv = {
+      ship: null, npcs: null, stations: null, wrecks: null, rockets: null, drones: null, player2: null,
+      lockedTargets: null, selectedTarget: null, storyTargets: null, travelTarget: null,
+      features: null, rings: null, belt: null, weaponRanges: _radarWeaponRanges, massSignatures: null, ghosts: null,
+      vision: 0, range: HUD_RADAR_RANGE, pingSerial: 0, pingSpeed: 60000, pingRange: 90000, paused: false,
+      hides: (e) => SensorSystem.hides(e),
+      cloaked: (e) => isCloakHidden(e),
+      isHostile: (e) => isEntityHostileToPlayer(e),
+      hullMetrics: (e) => getCicEntityHullMetrics(e, 1),
+      spriteOf: (e) => getCicEntitySpriteSource(e),
+      spriteRotOf: (e) => getCicEntitySpriteRotation(e),
+      nameOf: (e) => describeUnitTitle(e),
+      stationName: (st) => radarStationLabel(st)
+    };
+
+    function radarGroupRange(group) {
+      const entries = Game.player?.weapons?.[group === 'main' ? HP.MAIN : group === 'special' ? HP.SPECIAL : HP.MISSILE] || [];
+      let r = 0;
+      for (let i = 0; i < entries.length; i++) {
+        const hp = entries[i]?.hp;
+        if (hp?.destroyed) continue;
+        const range = Number(entries[i]?.weapon?.baseRange ?? entries[i]?.weapon?.range) || 0;
+        if (range > r) r = range;
+      }
+      const mod = Number(ship?.modifiers?.range);
+      return Number.isFinite(mod) && mod > 0 ? r * mod : r;
+    }
+
+    // Zasięg grupy w ręku (jak okrąg zasięgu w świecie) + rakiet, gdy w ręku działa.
+    function getRadarWeaponRanges() {
+      _radarWeaponRanges.length = 0;
+      const hand = fcResolveInHand(fireControl, {
+        main: Game.player?.weapons?.[HP.MAIN], special: Game.player?.weapons?.[HP.SPECIAL], missile: Game.player?.weapons?.[HP.MISSILE]
+      });
+      if (hand) {
+        const a = _radarWeaponPool[0];
+        a.r = radarGroupRange(hand);
+        a.label = `${RADAR_GROUP_LABEL[hand] || 'BROŃ'} ${(a.r / 1000).toFixed(a.r >= 10000 ? 0 : 1).replace('.', ',')}k`;
+        if (a.r > 0) _radarWeaponRanges.push(a);
+      }
+      if (hand !== 'missile') {
+        const b = _radarWeaponPool[1];
+        b.r = radarGroupRange('missile');
+        b.label = `RAKIETY ${(b.r / 1000).toFixed(b.r >= 10000 ? 0 : 1).replace('.', ',')}k`;
+        if (b.r > 0) _radarWeaponRanges.push(b);
+      }
+      return _radarWeaponRanges;
+    }
+
+    function refreshRadarFeed(range) {
+      const env = radarFeedEnv;
+      env.ship = ship;
+      env.npcs = npcs;
+      env.stations = stations;
+      env.wrecks = wrecks;
+      env.rockets = window.rocketSystem3D?.rockets || null;
+      env.drones = SpotterDroneSystem.getDrones?.() || null;
+      env.player2 = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
+      env.lockedTargets = lockedTargets;
+      env.selectedTarget = scannerSelectedTarget || lockedTarget || null;
+      env.storyTargets = StoryGame.active && StoryGame.ui?.targets?.size ? StoryGame.ui.targets : null;
+      if (travelNav.target) {
+        _radarTravel.x = travelNav.target.x;
+        _radarTravel.y = travelNav.target.y;
+        _radarTravel.label = travelNav.label || 'Kurs';
+        env.travelTarget = _radarTravel;
+      } else {
+        env.travelTarget = null;
+      }
+      env.features = hudRadarWorldFeatures;
+      env.rings = haloRings ? haloRings.entries : null;
+      env.belt = asteroidBelt || null;
+      getRadarWeaponRanges();
+      env.massSignatures = SensorSystem.getMassSignatures();
+      env.ghosts = SensorSystem.getGhosts();
+      env.vision = SensorSystem.fogEnabled && ship ? SensorSystem.visionRangeOf(ship) : 0;
+      env.range = range;
+      env.pingSerial = radarPingSerial;
+      env.pingSpeed = getScannerWaveSpeed();
+      env.pingRange = getScannerActiveRange();
+      env.paused = !!(PAUSED || StoryGame.worldFrozen);
+      return radarFeed.collect(env);
     }
 
     function updatePlayerStatusUI() {
@@ -5427,22 +5622,13 @@
       };
       const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const hudRadarRange = window.hudSystem?.getRadarRange?.() || HUD_RADAR_RANGE;
-      const hudRadarRefreshMs = getHudRadarRefreshMs(hudRadarRange);
+      // Wejście radaru ~10 Hz (nowy zasięg i impuls skanera — od razu); tarcza i antena biegną w kokpicie.
       if (!hudRadarSnapshot
         || Number(hudRadarSnapshot?.range) !== hudRadarRange
-        || (nowMs - hudRadarLastRefreshMs) >= hudRadarRefreshMs) {
-        hudRadarSnapshot = CICDisplay.getHudRadarSnapshot({
-          ship,
-          npcs,
-          SensorSystem,
-          asteroidRange: typeof getScannerAsteroidRange === 'function' ? getScannerAsteroidRange() : 60000,
-          lockedTargets,
-          selectedTarget: scannerSelectedTarget || lockedTarget,
-          worldFeatures: hudRadarWorldFeatures,
-          range: hudRadarRange,
-          maxContacts: 48,
-          maxAsteroidContacts: 24
-        });
+        || hudRadarSnapshot.pingSerial !== radarPingSerial
+        || (nowMs - hudRadarLastRefreshMs) >= HUD_RADAR_REFRESH_MS) {
+        hudRadarSnapshot = refreshRadarFeed(hudRadarRange);
+        hudRadarSnapshot.collectMs = performance.now() - nowMs;
         hudRadarLastRefreshMs = nowMs;
       }
       const envData = {
@@ -5560,7 +5746,16 @@
       return _specialHudFromEntries(Game.player?.weapons?.[HP.SPECIAL] || []);
     }
     function getSpecialMissileHudState() {
-      return _specialHudFromEntries(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || []);
+      const entries = Game.player?.weapons?.[HP.SPECIAL_MISSILE] || [];
+      const state = _specialHudFromEntries(entries);
+      // Magazynek (salwy) — slot pokazuje stan i gaśnie przy pustym.
+      let ammo = null;
+      for (let i = 0; i < entries.length; i++) {
+        const a = entries[i]?.hp?.ammo;
+        if (typeof a === 'number' && !entries[i].hp.destroyed) ammo = (ammo || 0) + a;
+      }
+      state.ammo = ammo;
+      return state;
     }
 
     function getMissileWeaponHudState() {
@@ -5625,7 +5820,8 @@
         special_missile: {
           weapon: spMissHud.weapon,
           enabled: !!specialMissileAutoFire,
-          charge: spMissHud.charge
+          charge: spMissHud.charge,
+          ammo: spMissHud.ammo
         }
       };
     }
@@ -5947,11 +6143,18 @@
       return { x, y, zoom, screenX, screenY };
     }
 
+    // Wejście przesuwu kamery floty dla computeRtsCameraPanDelta (bufor — bez obiektu na klatkę).
+    const _rtsPanKeys = { w: false, a: false, s: false, d: false, arrowup: false, arrowdown: false, arrowleft: false, arrowright: false };
     function updateCameraTarget(dt) {
       // Ship camera is resolved later in render() using interpolated position
       // to avoid jitter. Only non-ship modes are updated here.
       if (camera.mode === 'rts') {
-        const pan = computeRtsCameraPanDelta(keys, {
+        // Przesuw kamery floty: W / A / S / D i strzałki (akcje cam.pan* — warstwa wejścia).
+        _rtsPanKeys.w = Input.keyHeld('cam.panUp');
+        _rtsPanKeys.s = Input.keyHeld('cam.panDown');
+        _rtsPanKeys.a = Input.keyHeld('cam.panLeft');
+        _rtsPanKeys.d = Input.keyHeld('cam.panRight');
+        const pan = computeRtsCameraPanDelta(_rtsPanKeys, {
           speed: camera.freeKeyPanSpeed,
           zoom: camera.zoom,
           dt
@@ -6124,8 +6327,8 @@
       }
     });
 
-    // Wybuch reaktora (świat gry) — pule cząstek w scenie Core3D (src/effects3d/reactorblow.js,
-    // zadanie 20; fabryka tworzona przy starcie Core3D, rozgrzewa ją krok klatki efektów).
+    // Wybuch w punkcie świata gry przez fabrykę `window.makeReactorBlow` (wybuchy WebGPU, src/3d/explosions/;
+    // options: profile — klucz EXPLOSION_PROFILES, vx / vy — nośnik).
     function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
       window.makeReactorBlow?.({ x, y, size, ...options });
     }
@@ -10082,6 +10285,11 @@
     // z kolejki w updateSpecialWeaponCooldowns; przeładowanie z fireWeaponCore.
     function fireSpecialLoadout(loadout, hp, slot) {
       const weapon = loadout.weapon;
+      // Magazynek (rakieta specjalna — Supernova Barrage): jedna sztuka = jedna salwa.
+      if (typeof hp.ammo === 'number') {
+        if (hp.ammo <= 0) return;
+        hp.ammo = Math.max(0, hp.ammo - 1);
+      }
       const aim = getMountedWeaponAim(ship, loadout);
       const barrels = barrelsPerShotOf(weapon);
       const start = Number(aim.nextBarrel) || 0;
@@ -10113,6 +10321,7 @@
     function _fireSpecialGroup(loadouts, manual = false) {
       if (!loadouts.length) return false;
       let fired = false;
+      let emptyMag = null;
       if (!p1WeaponCtrl) return false;
 
       for (let i = 0; i < loadouts.length; i++) {
@@ -10126,6 +10335,7 @@
 
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
+        if (typeof hp.ammo === 'number' && hp.ammo <= 0) { emptyMag = weapon; continue; }
 
         // Broń z ładowaniem (Mjolnir, Valkyrie — 18-B): tylko zgłoszenie strzału, ładowanie
         // i strzał w kroku fizyki (stepSpecialCharge).
@@ -10139,6 +10349,9 @@
         // od razu, reszta z kolejki w `updateSpecialWeaponCooldowns`.
         fireSpecialLoadout(loadout, hp, i);
         fired = true;
+      }
+      if (!fired && emptyMag && manual) {
+        pushZoneMessage(`${String(emptyMag.name || 'RAKIETA').toUpperCase()}: MAGAZYNEK PUSTY`, 1.6);
       }
       return fired;
     }
@@ -14337,6 +14550,9 @@
       }
       if (PLAYER.credits >= repairCost) {
         PLAYER.credits -= repairCost;
+        // Pełny remont: zniszczone węzły odrastają, kadłub wraca do szablonu. Bez tego sufit punktów z konstrukcji
+        // (enforceNpcHexIntegrityBalance) cofał naprawę zaraz po zapłacie, gdy brakowało węzłów.
+        HullBodies.restoreHull(ship);
         ship.hull.val = ship.hull.max;
         toast('Naprawiono kadłub.');
       } else {
@@ -14609,9 +14825,6 @@
       hudBeginPanel();
       uiTitle('Opcje');
 
-      // --- NOWE: Wybór jakości tła ---
-      uiQualitySelector();
-      // ------------------------------
       slider('VFX: temperatura (K)', 1000, 20000, 500, OPTIONS.vfx, 'colorTempK');
       slider('VFX: bloom', 0.2, 2.5, 0.05, OPTIONS.vfx, 'bloomGain');
       slider('VFX: silnik (głośność)', 0, 1.5, 0.05, OPTIONS.vfx, 'engineGain');
@@ -14674,8 +14887,8 @@
         return;
       }
       if (ramBurn.active) {
-        // Hamulec, skok albo zniszczenie przerywają zryw — zużyty ładunek nie wraca.
-        const braking = !isRtsModeActive() && keys['s'];
+        // Hamulec (S albo lewa gałka w dół), skok albo zniszczenie przerywają zryw — zużyty ładunek nie wraca.
+        const braking = !isRtsModeActive() && ((keyboardOwnsP1() && Input.keyHeld('fly.back')) || Input.padAxis('fly.thrust', 0) < -0.15);
         if (ship.destroyed || warp.state !== 'idle' || braking) {
           stopRamBurn(ramBurn);
           if (braking) pushZoneMessage(`${def.label}: PRZERWANA`, 1.1, { tone: 'warn' });
@@ -14703,7 +14916,6 @@
       }
     }
     const enginePower = { target: 0, current: 0 };
-    const keys = {};
     let lastDriveShiftSerial = driveState.shiftSerial;
     // Mapa sektora (M) usunięta — jej rolę przejął CIC (TAB / M).
     // TRAVEL TO (src/game/travelNav.js, blok „TRAVEL TO” niżej): jeden rozkaz podróży do punktu —
@@ -14997,6 +15209,112 @@
       return Number(ship?.w) > 0 ? ship.w * sc : 1800;
     }
 
+    // === SKOK GRACZA: CIAŁA, CEL, PRĘDKOŚĆ (demo „Nurt”, user 2026-10-07: planety w skoku i tempo jak w demie) ===
+    // Ciała zwolnienia (warpDrive.js: warpFlybySlowdown — statek zwalnia przy mijanej planecie, soczewka świata
+    // src/3d/warp/worldLens.js ją pokazuje) i promień rysowanej kuli jak w planet3d.assets.js (ring „Halo” —
+    // promień świata planety, reszta r × 4,5). Planeta startu i cel skoku bez zwolnienia (demo: trip.flyby).
+    const WARP_BODY_RADIUS_MUL = 4.5;   // = PLANET_SIZE_MULTIPLIER (planet3d.assets.js)
+    const WARP_ORIGIN_REACH = 100000;   // [j.] planeta startu: skok zaczyna się bliżej jej studni niż to
+    const WARP_TARGET_REACH = 25000;    // [j.] cel soczewki: koniec odcinka warpem przy studni planety
+    const _warpFlybyBodies = [];        // { planet, x, y, r } — lista skoku (bez startu i celu)
+    let _warpFlybyCount = 0;
+
+    function warpBodyRadius(planet) {
+      return haloRingKey(planet) ? resolveRingPlanetWorldRadius(planet) : (Number(planet?.r) || 100) * WARP_BODY_RADIUS_MUL;
+    }
+
+    function warpWellEdgeDist(planet, x, y) {
+      const radii = planetOrbitRadii(planet);
+      const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+      return Math.hypot(x - planet.x, y - planet.y) - r;
+    }
+
+    // Planeta, przy której studni leży punkt (najbliższa w zasięgu `reach` od brzegu studni) albo null.
+    function warpPlanetNear(x, y, reach) {
+      let best = null;
+      let bestD = reach;
+      for (const planet of planets) {
+        if (!planet) continue;
+        const d = warpWellEdgeDist(planet, x, y);
+        if (d < bestD) { bestD = d; best = planet; }
+      }
+      return best;
+    }
+
+    // Koniec odcinka skoku z wyjściem przy punkcie (TRAVEL TO albo ręczny kurs w tolerancji) albo null.
+    function playerWarpLegEnd() {
+      if (travelNav.active && travelNav.leg && travelNav.leg.kind === 'warp') return travelNav.leg;
+      if (warpCourse.autoExit && warpCourse.aim) return warpCourse.aim;
+      return null;
+    }
+
+    // Plan skoku przy kopnięciu: planeta startu, cel (planeta przy końcu odcinka — soczewka trzyma ją przy
+    // krawędzi kadru, przy wyjściu „wlatuje”), ciała zwolnienia i prędkość przelotowa. Skok z celem trwa jak
+    // podróż w demie (warpDrive.js: warpTripTime — Ziemia → Jowisz ~10 s); swobodny — WARP_SPEED.
+    function planPlayerWarp(dirX, dirY) {
+      const tPlan = performance.now();
+      const px = ship.pos.x;
+      const py = ship.pos.y;
+      const end = playerWarpLegEnd();
+      const origin = warpPlanetNear(px, py, WARP_ORIGIN_REACH);
+      const target = end ? warpPlanetNear(end.x, end.y, WARP_TARGET_REACH) : null;
+      warp.originBody = origin;
+      warp.targetBody = target && target !== origin ? target : null;
+      _warpFlybyCount = 0;
+      for (const planet of planets) {
+        if (!planet || planet === origin || planet === warp.targetBody) continue;
+        let b = _warpFlybyBodies[_warpFlybyCount];
+        if (!b) { b = { planet: null, x: 0, y: 0, r: 1 }; _warpFlybyBodies[_warpFlybyCount] = b; }
+        b.planet = planet;
+        b.x = planet.x;
+        b.y = planet.y;
+        b.r = warpBodyRadius(planet);
+        _warpFlybyCount++;
+      }
+      warp.cruise = warp.speed;
+      warp.tripPlan = null;
+      if (!end) return;
+      const dist = (end.x - px) * dirX + (end.y - py) * dirY;
+      if (!(dist > 0)) return;
+      const bodies = [];
+      for (let i = 0; i < _warpFlybyCount; i++) {
+        const b = _warpFlybyBodies[i];
+        const ox = b.x - px;
+        const oy = b.y - py;
+        bodies.push({ along: ox * dirX + oy * dirY, lateral: oy * dirX - ox * dirY, r: b.r });
+      }
+      // Strefy wzdłuż kursu (pas asteroid × 0,8, okolice planet × 0,3) — plan liczy z tym samym mnożnikiem co fizyka.
+      const step = Math.max(4000, dist / 120);
+      const n = Math.ceil(dist / step) + 1;
+      const zones = new Float32Array(n);
+      const probe = { x: 0, y: 0 };
+      for (let i = 0; i < n; i++) {
+        probe.x = px + dirX * i * step;
+        probe.y = py + dirY * i * step;
+        zones[i] = detectZones(probe).current?.warpMultiplier ?? 1;
+      }
+      const zone = (s) => zones[Math.max(0, Math.min(n - 1, Math.round(s / step)))];
+      const plan = planWarpCruise({
+        dist, v0: getPlayerSpeed(), hullLength: playerWarpHullLength(), bodies, zone,
+        entry: warp.entryDuration, lag: 6, dt: 1 / 30
+      });
+      warp.cruise = plan.speed;
+      warp.tripPlan = {
+        dist: Math.round(dist), speed: Math.round(plan.speed), time: +plan.time.toFixed(2), target: +plan.target.toFixed(2),
+        to: warp.targetBody?.id || null, ms: +(performance.now() - tPlan).toFixed(2)
+      };
+    }
+
+    // Zwolnienie skoku przy ciałach w bieżącym punkcie (planety się poruszają — pozycje z obiektów).
+    function playerWarpFlybyFactor() {
+      for (let i = 0; i < _warpFlybyCount; i++) {
+        const b = _warpFlybyBodies[i];
+        b.x = b.planet.x;
+        b.y = b.planet.y;
+      }
+      return warpFlybyFactor(ship.pos.x, ship.pos.y, warp.dir.x, warp.dir.y, _warpFlybyBodies, _warpFlybyCount);
+    }
+
     function getTravelWells() {
       const out = [];
       for (const planet of planets) {
@@ -15288,19 +15606,10 @@
     window.__setGamePaused = setPaused;
     window.__isGamePaused = () => PAUSED;
 
+    // Esc — akcja 'ui.menu' (ta sama co przycisk Menu pada; bramka i treść w GameActions niżej).
     window.addEventListener('keydown', e => {
       if (e.code !== 'Escape') return;
-      if (stationUI.open) return;
-      if (worldCommandMenu.open) {
-        closeWorldCommandMenu();
-        e.preventDefault();
-        return;
-      }
-      if (!gameStarted) {
-        showMainMenu('home');
-        return;
-      }
-      toggleMainMenu();
+      runGameAction('ui.menu', e);
     });
 
     // Shift = dopalacz wszędzie, warp ma własny klawisz (CapsLock / 9) — decyzja użytkownika 2026-10-05
@@ -15321,14 +15630,30 @@
       }
     }
 
+    // Dopalacz z dwóch źródeł: klawiatura (Shift) i pad (X trzymany — pumpInput). Każde gasi tylko to, co samo
+    // włączyło, i dopiero gdy drugie go nie trzyma (B2: dawniej pad co klatkę gasił dopalacz z Shift).
+    const boostHold = { key: false, pad: false };
     function handleShiftDown() {
       if (ship.destroyed) return;
+      boostHold.key = true;
       activateBoostIfAllowed();
     }
 
     function handleShiftUp() {
       if (ship.destroyed) return;
-      stopBoost();
+      boostHold.key = false;
+      if (!boostHold.pad) stopBoost();
+    }
+
+    function padBoostStep(held) {
+      if (held) {
+        boostHold.pad = true;
+        // trzymany X: dopalacz, gdy wolno (jak dawniej — także po odnowieniu paliwa w trakcie trzymania)
+        if (!ship.destroyed) activateBoostIfAllowed();
+      } else if (boostHold.pad) {
+        boostHold.pad = false;
+        if (!boostHold.key && !ship.destroyed) stopBoost();
+      }
     }
 
     function triggerForwardImpulse(entity, power = 0, opts = {}) {
@@ -15382,9 +15707,11 @@
       return ok;
     }
 
+    // Gracz przejmuje stery od autopilota (rozkazy PPM, TRAVEL TO, kurs warpa): klawisze lotu albo lewa gałka
+    // poza martwą strefą przez ≥ 0,1 s (B4 — dawniej tylko klawisze; dryf gałki nie zdejmuje rozkazu).
     function playerHasManualInput() {
       if (camera.mode === 'rts') return false;
-      return keys['w'] || keys['s'] || keys['a'] || keys['d'] || keys['q'] || keys['e'];
+      return Input.manualFlight(keyboardOwnsP1());
     }
 
     function computePlayerHoldControl(ship) {
@@ -15483,6 +15810,296 @@
       getState: () => driveState
     };
 
+    // ============== AKCJE GRY (docs/PLAN-pad.md § 4, etap 1) ==============
+    // Rejestr id → { gate, run } — bramki i treści przeniesione 1:1 z dawnego głównego keydown. Klawiatura woła je
+    // przez mapę e.code → akcje w kolejności KEYDOWN_ORDER (src/input/inputActions.js: tryby wydobycia i torped
+    // przed resztą, CIC W/A/S/D przed szarżą …), pad i Esc — przez runGameAction. `ev` = zdarzenie klawisza albo
+    // PAD_EVENT (bez modyfikatorów, preventDefault nic nie robi). run zwraca GA_STOP (koniec łańcucha klawisza,
+    // potem wejście lotu) albo GA_HALT (koniec bez niego). Nowa akcja: wpis w katalogu (inputActions.js) + tutaj.
+    const GA_STOP = 1;
+    const GA_HALT = 2;
+    const PAD_EVENT = Object.freeze({ code: '', key: '', shiftKey: false, ctrlKey: false, altKey: false, repeat: false, preventDefault() { } });
+    const gaNoPanels = () => !stationUI.open && !CICDisplay.active;
+    const gaFireControl = () => !stationUI.open && !CICDisplay.active && camera.mode !== 'rts';
+    const gaNotRts = () => camera.mode !== 'rts';
+    const gaMiningRig = () => miningInput.active && !!getMiningRig();
+    function fireRocketTowardCursor() {
+      const mw = screenToWorld(mouse.x, mouse.y);
+      const local = rotateInv({ x: mw.x - ship.pos.x, y: mw.y - ship.pos.y }, ship.angle);
+      const side = (local.y >= 0) ? 'right' : 'left';
+      if (rocketCooldown <= 0 && fireRocket(side)) rocketCooldown = ROCKET_FIRE_INTERVAL;
+    }
+    const GameActions = new Map(Object.entries({
+      // Maskowanie (src/game/cloak.js): I — włącz / wyłącz; pęka przy strzale, taranie i trafieniu.
+      // Tryb okrętu (src/game/shipModes.js) — ten sam co z koła ŚPM.
+      'ship.cloak': {
+        gate: () => !stationUI.open && !CICDisplay.active && !isRtsModeActive(),
+        run() {
+          if (isPlayerCloakOn()) {
+            toggleCloak(ship.cloak);
+            pushZoneMessage('MASKOWANIE WYŁĄCZONE', 1.4);
+            syncShipMode();
+          } else {
+            setShipMode('cloak');
+          }
+          return GA_STOP;
+        }
+      },
+      // Wydobycie (zadanie 21b): N — tryb (WYDOBYCIE, src/game/shipModes.js — wejście zamyka pozostałe tryby);
+      // w trybie T / L / F należą do platformy.
+      'mode.mining': {
+        gate: () => !stationUI.open && camera.mode !== 'rts',
+        run() {
+          if (miningInput.active) leaveShipMode('mining');
+          else setShipMode('mining');
+          return GA_STOP;
+        }
+      },
+      'mining.tractor': {
+        gate: gaMiningRig,
+        run() {
+          const on = getMiningRig().toggleTractor();
+          pushZoneMessage(on ? 'WIĄZKA ŚCIĄGAJĄCA: ON' : 'WIĄZKA ŚCIĄGAJĄCA: OFF', 1.2, { label: 'KOPALNIA' });
+          return GA_STOP;
+        }
+      },
+      'mining.charge': {
+        gate: gaMiningRig,
+        run() {
+          const ch = getMiningRig().cycleCharge(1);
+          pushZoneMessage(`ŁADUNEK: ${ch.id} (${ch.label}, energia ${String(ch.energy).replace('.', ',')}) · w magazynku ${PLAYER.miningCharges[ch.id] | 0}`, 1.6, { label: 'KOPALNIA' });
+          return GA_STOP;
+        }
+      },
+      'mining.detonate': {
+        gate: gaMiningRig,
+        run() {
+          const n = getMiningRig().detonate();
+          if (n) pushZoneMessage(`DETONACJA: ${n} ${n === 1 ? 'ładunek' : 'ładunków'}`, 1.2, { label: 'KOPALNIA' });
+          return GA_STOP;
+        }
+      },
+      // Torpedy (jak w World of Warships): 8 — tryb celowania, w trybie 8 — wąski / szeroki wachlarz.
+      'mode.torpedo': {
+        gate: () => !stationUI.open && !CICDisplay.active,
+        run() {
+          if (!torpedoAim.active) { setShipMode('torpedo'); return GA_STOP; }
+          torpedoAim.wide = !torpedoAim.wide;
+          pushZoneMessage(`TORPEDY: ${torpedoAim.wide ? 'SZEROKI' : 'WĄSKI'} WACHLARZ`, 1.3);
+          return GA_STOP;
+        }
+      },
+      'fly.boost': { gate: gaNotRts, run() { handleShiftDown(); } },
+      'fly.gearDown': { gate: gaNotRts, run() { requestPlayerShiftDown(); } },
+      // Kamery 3D (src/game/game3D.js): K / Shift+K — następna / poprzednia, Home — ustawienia domyślne.
+      'cam.next': {
+        gate: gaNoPanels,
+        run(ev) {
+          Game3D.cycleCamera(ev.shiftKey ? -1 : 1);
+          pushZoneMessage(`KAMERA: ${Game3D.label}`, 1.4);
+          return GA_STOP;
+        }
+      },
+      'cam.reset': { gate: () => !stationUI.open, run() { Game3D.resetCamera(); return GA_STOP; } },
+      // Warp: CapsLock (przełącznik — przeglądarka nie daje wiarygodnego „trzymania” CapsLocka) albo 9.
+      'nav.warp': { gate: gaNotRts, run() { attemptWarp(); } },
+      'fly.driveAuto': { gate: gaNotRts, run() { togglePlayerDriveAuto(); } },
+      'ui.perf': { run() { PerfHUD.toggle(); } },
+      // Kierowanie ogniem: 1 / 2 / 3 — grupa w rękę (z Ctrl albo Alt: auto grupy wł. / wył.),
+      // T — cel priorytetowy przy kursorze (ten sam ponownie albo pustka: zdejmij), U — dołóż / zdejmij
+      // cel z kolejki (T trzymane + kursor po wrogach — malowanie kilku celów), Y — postawa ognia,
+      // 4 — broń wbudowana (Hexlance), 5 — pocisk specjalny.
+      // (Dawne „klasyczne” sterowanie — auto-fire 1 / 2 / 3 z namiarów — usunięte 2026-10-03.)
+      'wpn.group1': { gate: gaFireControl, run(ev) { ev.preventDefault(); fcGroupKey('main', ev.ctrlKey || ev.altKey); } },
+      'wpn.group2': { gate: gaFireControl, run(ev) { ev.preventDefault(); fcGroupKey('special', ev.ctrlKey || ev.altKey); } },
+      'wpn.group3': { gate: gaFireControl, run(ev) { ev.preventDefault(); fcGroupKey('missile', ev.ctrlKey || ev.altKey); } },
+      // Stuknięcie — jeden cel; trzymanie i kursor po wrogach — malowanie kilku (fcPaintStep).
+      'tgt.priority': { gate: gaFireControl, run() { fcPaintBegin(fcDesignatePriority(false)); } },
+      'tgt.queue': { gate: gaFireControl, run() { fcDesignatePriority(true); } },
+      'wpn.posture': { gate: gaFireControl, run() { fcPostureKey(); } },
+      'wpn.special': { gate: gaFireControl, run() { tryFireSpecialMissiles(true); } },
+      'wpn.lance': { gate: gaNoPanels, run() { tryFireMountedBuiltInWeapons(); } },
+      'wpn.energy': { gate: gaNoPanels, run() { triggerEnergyShot(); } },
+      // M to stary skrót mapy sektora — mapa została usunięta, więc otwiera CIC.
+      'ui.cicMap': {
+        gate: () => !stationUI.open,
+        run() {
+          closeWorldCommandMenu();
+          const state = CICDisplay.toggle();
+          pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
+        }
+      },
+      'ui.journal': { run(ev) { ev.preventDefault(); window.hudSystem?.toggleMissionJournal?.(); } },
+      'mode.fleet': {
+        gate: () => !stationUI.open,
+        run() {
+          closeWorldCommandMenu();
+          // Tryb okrętu FLOTA (src/game/shipModes.js).
+          if (camera.mode === 'rts') leaveShipMode('fleet');
+          else setShipMode('fleet');
+        }
+      },
+      'fly.damper': {
+        run() {
+          flightAssist.damper = !flightAssist.damper;
+          pushZoneMessage(flightAssist.damper ? 'Gravity Damper: ON' : 'Gravity Damper: OFF', 1.2);
+        }
+      },
+      // Reflektory (drogowe i otoczenia) gracza — lampy pozycyjne zostają. W trybie wydobycia L należy do platformy.
+      'ship.lights': {
+        gate: () => !!ship,
+        run() {
+          ship.roadLightsOff = !ship.roadLightsOff;
+          pushZoneMessage(ship.roadLightsOff ? 'Reflektory: OFF' : 'Reflektory: ON', 1.2);
+        }
+      },
+      'fly.stabilizer': {
+        run() {
+          setFlightStabilizerEnabled(!flightAssist.stabilizer);
+          pushZoneMessage(flightAssist.stabilizer ? 'Stabilizer: ON' : 'Stabilizer: OFF', 1.2);
+        }
+      },
+      'ui.pause': { run() { togglePause(); return GA_STOP; } },
+      'tgt.scan': {
+        run(ev) {
+          if (camera.mode === 'rts') {
+            ev.preventDefault();
+            setScannerActive(true);
+            hudPingNpcStations();
+            pushZoneMessage('RTS: POJEDYNCZY IMPULS SKANERA', 1.1);
+            return GA_HALT;
+          }
+          setScannerActive(true);
+          hudPingNpcStations();
+        }
+      },
+      'ui.cic': {
+        gate: () => !stationUI.open,
+        run(ev) {
+          ev.preventDefault();
+          const state = CICDisplay.toggle();
+          pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
+        }
+      },
+      // CIC otwarty: W / A / S / D przesuwają mapę (cicDisplay.js), nie lecą.
+      'cic.pan': {
+        gate: () => CICDisplay.active,
+        run(ev) {
+          if (!CICDisplay.onKeyDown(ev.code)) return;
+          ev.preventDefault();
+          return GA_HALT;
+        }
+      },
+      // System okrętu (szarża): krótki zryw do prędkości taranu kosztem ładunku reaktora.
+      'ship.ram': { gate: () => !stationUI.open && !!playerShipSystem(), run() { tryStartPlayerRamBurn(); } },
+      // Kadłub bez systemu okrętu: F — rakieta, burta z położenia kursora.
+      'wpn.rocketKey': { gate: () => !stationUI.open && !warp.isBusy() && !playerShipSystem(), run() { fireRocketTowardCursor(); } },
+      'tgt.drone': {
+        gate: () => !stationUI.open,
+        run() {
+          // Cycle PiP drone view
+          SpotterDroneSystem.cyclePip();
+          const pip = SpotterDroneSystem.getActivePip();
+          if (pip) pushZoneMessage(`Drone PiP: ${pip.id}`, 1);
+          else pushZoneMessage('No active drones', 1);
+        }
+      },
+      'cic.systemView': {
+        gate: () => CICDisplay.active,
+        run() {
+          CICDisplay.toggleSystemView();
+          pushZoneMessage(CICDisplay.isSystemView ? 'CIC: SYSTEM VIEW' : 'CIC: TACTICAL VIEW', 1.5);
+          return GA_HALT;   // V nie zmienia wtedy trybu napędu
+        }
+      },
+      'wpn.fighters': {
+        run() {
+          if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return GA_HALT; }
+          // Start jest teraz rozłożony w czasie — dopóki kolejka nie pusta, SQUAD.list
+          // jeszcze się zapełnia i kolejne Z nie może odpalić drugiej salwy.
+          if (window.isFighterLaunchInProgress?.()) return GA_HALT;
+          if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
+            const launched = launchMountedFighterSquadrons();
+            if (!launched.length) return GA_HALT;
+            const tubes = getPlayerHangarTubes().length;
+            toast(`START: ${launched.length} myśliwców z ${tubes} ${tubes === 1 ? 'hangaru' : 'hangarów'}`);
+          } else if (SQUAD.order === 'escort') {
+            SQUAD.targets = pickSquadTargets();
+            SQUAD.order = 'attack';
+            toast(SQUAD.targets.length ? 'Myśliwce: ATAK' : 'Myśliwce: ATAK (brak oznaczeń — wybiorą najbliższych)');
+          } else if (SQUAD.order === 'attack') {
+            SQUAD.order = 'return';
+            toast('Myśliwce: POWRÓT');
+          } else if (SQUAD.order === 'return') {
+            SQUAD.order = 'escort';
+            SQUAD.targets = [];
+            toast('Myśliwce: ESKORTA');
+          }
+        }
+      },
+      'ship.repair': {
+        run(ev) {
+          ev.preventDefault();
+          playerRepairActive = !playerRepairActive;
+          pushZoneMessage(playerRepairActive ? 'REPAIR: ON' : 'REPAIR: OFF', 0.8);
+        }
+      },
+      'fly.driveMode': { gate: () => !CICDisplay.active, run() { cyclePlayerDriveMode(1); } },
+      // --- spoza głównego keydown: Esc (osobny słuchacz wyżej) i pad ---
+      'ui.menu': {
+        gate: () => !stationUI.open,
+        run(ev) {
+          if (worldCommandMenu.open) {
+            closeWorldCommandMenu();
+            ev.preventDefault();
+            return;
+          }
+          if (!gameStarted) {
+            showMainMenu('home');
+            return;
+          }
+          toggleMainMenu();
+        }
+      },
+      // Fabuła na padzie (B7) — jak nakładka (src/ui/storyOverlay.js) z klawiatury: podsumowanie, scena, panel akcji.
+      'story.confirm': {
+        gate: () => StoryGame.active,
+        run() {
+          if (StoryGame.ui.summary) { StoryGame.closeSummary(); return; }
+          const d = StoryGame.dialogue;
+          if (d?.active && d.mode === 'scene') { d.advance(); return; }
+          runGameAction('story.action');
+        }
+      },
+      // Przycisk panelu akcji (ODDOKUJ) — raz na panel (StoryGame.triggerAction).
+      'story.action': {
+        gate: () => StoryGame.active,
+        run() {
+          const a = StoryGame.ui.action;
+          if (a && !a.pressed && !StoryGame.letterbox) StoryGame.triggerAction(a.id);
+        }
+      },
+      'story.skip': {
+        gate: () => StoryGame.active,
+        run() {
+          const d = StoryGame.dialogue;
+          if (d?.active && d.mode === 'scene') d.skip();
+        }
+      },
+      'station.close': { gate: () => stationUI.open, run() { closeStationUI(); } }
+    }));
+    window.GameActions = GameActions;
+
+    function runGameAction(id, ev = PAD_EVENT) {
+      const a = GameActions.get(id);
+      if (!a || (a.gate && !a.gate(ev))) return 0;
+      return a.run(ev) || 0;
+    }
+    window.runGameAction = runGameAction;
+
+    // Główny keydown gry: bramki menu i fabuły, potem akcje klawisza (e.code) w kolejności KEYDOWN_ORDER,
+    // na końcu wejście lotu (updateInput). Trzymane klawisze zna warstwa wejścia (Input.keyHeld — po e.code).
+    const KEYDOWN_ACTIONS = buildKeydownMap();
     window.addEventListener('keydown', e => {
       if (e.repeat) return;
       if (e.code === 'Space') { e.preventDefault(); }
@@ -15491,291 +16108,102 @@
       if (isMainMenuVisible()) return;
       // Fabuła: kino, sceny i dok K-7 — sterowanie i broń wyłączone (Esc zostaje — menu).
       if (StoryGame.blocksInput) return;
-      const k = e.key.toLowerCase();
-      keys[k] = true;
-      // Maskowanie (src/game/cloak.js): I — włącz / wyłącz; pęka przy strzale, taranie i trafieniu.
-      // Tryb okrętu (src/game/shipModes.js) — ten sam co z koła ŚPM.
-      if (k === 'i' && !stationUI.open && !CICDisplay.active && !isRtsModeActive()) {
-        if (isPlayerCloakOn()) {
-          toggleCloak(ship.cloak);
-          pushZoneMessage('MASKOWANIE WYŁĄCZONE', 1.4);
-          syncShipMode();
-        } else {
-          setShipMode('cloak');
+      Input.keyDown(e.code);
+      const ids = KEYDOWN_ACTIONS.get(e.code);
+      if (ids) {
+        for (let i = 0; i < ids.length; i++) {
+          const r = runGameAction(ids[i], e);
+          if (r === GA_STOP) { updateInput(); return; }
+          if (r === GA_HALT) return;
         }
-        updateInput();
-        return;
-      }
-      // Wydobycie (zadanie 21b): N — tryb; w trybie T / L / F należą do platformy.
-      if (miningKeyDown(k)) { updateInput(); return; }
-      // Torpedy (jak w World of Warships): 8 — tryb celowania, w trybie 8 — wąski / szeroki wachlarz.
-      if (torpedoKeyDown(e)) { updateInput(); return; }
-      const inRtsMode = camera.mode === 'rts';
-      if (!inRtsMode && k === 'shift') {
-        handleShiftDown();
-      }
-      if (!inRtsMode && (e.code === 'ControlLeft' || e.code === 'ControlRight')) {
-        requestPlayerShiftDown();
-      }
-      // Kamery 3D (src/game/game3D.js): K / Shift+K — następna / poprzednia, Home — ustawienia domyślne.
-      if (k === 'k' && !stationUI.open && !CICDisplay.active) {
-        Game3D.cycleCamera(e.shiftKey ? -1 : 1);
-        pushZoneMessage(`KAMERA: ${Game3D.label}`, 1.4);
-        updateInput();
-        return;
-      }
-      if (e.code === 'Home' && !stationUI.open) {
-        Game3D.resetCamera();
-        updateInput();
-        return;
-      }
-      // Warp: CapsLock (przełącznik — przeglądarka nie daje wiarygodnego „trzymania” CapsLocka) albo 9.
-      if (!inRtsMode && (e.code === 'Digit9' || e.code === 'Numpad9' || e.code === 'CapsLock')) {
-        attemptWarp();
-      }
-      if (!inRtsMode && (e.code === 'Digit7' || e.code === 'Numpad7')) {
-        togglePlayerDriveAuto();
-      }
-      if (k === 'p') {
-        PerfHUD.toggle();
-      }
-      // Kierowanie ogniem: 1 / 2 / 3 — grupa w rękę (z Ctrl albo Alt: auto grupy wł. / wył.),
-      // T — cel priorytetowy przy kursorze (ten sam ponownie albo pustka: zdejmij), U — dołóż / zdejmij
-      // cel z kolejki (T trzymane + kursor po wrogach — malowanie kilku celów), Y — postawa ognia,
-      // 4 — broń wbudowana (Hexlance), 5 — pocisk specjalny.
-      // (Dawne „klasyczne” sterowanie — auto-fire 1 / 2 / 3 z namiarów — usunięte 2026-10-03.)
-      const fcCommand = !stationUI.open && !CICDisplay.active && !inRtsMode;
-      if (fcCommand && !e.repeat) {
-        const fcGroup = e.code === 'Digit1' ? 'main' : e.code === 'Digit2' ? 'special' : e.code === 'Digit3' ? 'missile' : null;
-        if (fcGroup) {
-          e.preventDefault();
-          fcGroupKey(fcGroup, e.ctrlKey || e.altKey);
-        } else if (k === 't') {
-          // Stuknięcie — jeden cel; trzymanie i kursor po wrogach — malowanie kilku (fcPaintStep).
-          fcPaintBegin(fcDesignatePriority(false));
-        } else if (k === 'u') {
-          fcDesignatePriority(true);
-        } else if (k === 'y') {
-          fcPostureKey();
-        } else if (e.code === 'Digit5') {
-          tryFireSpecialMissiles(true);
-        }
-      }
-      if (e.code === 'Digit4' && !stationUI.open && !CICDisplay.active && !e.repeat) {
-        tryFireMountedBuiltInWeapons();
-      }
-      if ((e.code === 'Digit6' || e.code === 'Numpad6') && !stationUI.open && !CICDisplay.active) {
-        triggerEnergyShot();
-      }
-      // M to stary skrót mapy sektora — mapa została usunięta, więc otwiera CIC.
-      if (k === 'm' && !stationUI.open) {
-        closeWorldCommandMenu();
-        const state = CICDisplay.toggle();
-        pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
-      }
-      if (k === 'j') {
-        e.preventDefault();
-        window.hudSystem?.toggleMissionJournal?.();
-      }
-      if (k === 'g' && !stationUI.open) {
-        closeWorldCommandMenu();
-        // Tryb okrętu FLOTA (src/game/shipModes.js).
-        if (camera.mode === 'rts') leaveShipMode('fleet');
-        else setShipMode('fleet');
-      }
-      if (k === 'c') {
-        flightAssist.damper = !flightAssist.damper;
-        pushZoneMessage(flightAssist.damper ? 'Gravity Damper: ON' : 'Gravity Damper: OFF', 1.2);
-      }
-      // Reflektory (drogowe i otoczenia) gracza — lampy pozycyjne zostają. W trybie
-      // wydobycia L należy do platformy (miningKeyDown wyżej).
-      if (k === 'l' && !e.repeat && ship) {
-        ship.roadLightsOff = !ship.roadLightsOff;
-        pushZoneMessage(ship.roadLightsOff ? 'Reflektory: OFF' : 'Reflektory: ON', 1.2);
-      }
-      if (k === 'b') {
-        setFlightStabilizerEnabled(!flightAssist.stabilizer);
-        pushZoneMessage(flightAssist.stabilizer ? 'Stabilizer: ON' : 'Stabilizer: OFF', 1.2);
-      }
-      if (k === ' ') {
-        togglePause();
-        updateInput();
-        return;
-      }
-      if (k === 'x') {
-        if (e.repeat) return;
-        if (inRtsMode) {
-          e.preventDefault();
-          setScannerActive(true);
-          hudPingNpcStations();
-          pushZoneMessage('RTS: POJEDYNCZY IMPULS SKANERA', 1.1);
-          return;
-        } else {
-          setScannerActive(true);
-          hudPingNpcStations();
-        }
-      }
-      if (e.code === 'Tab' && !stationUI.open) {
-        e.preventDefault();
-        const state = CICDisplay.toggle();
-        pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
-      }
-      if (CICDisplay.active && CICDisplay.onKeyDown(e.code)) {
-        e.preventDefault();
-        return;
-      }
-      if (k === 'f' && !e.repeat && !stationUI.open && playerShipSystem()) {
-        // System okrętu (szarża): krótki zryw do prędkości taranu kosztem ładunku reaktora.
-        tryStartPlayerRamBurn();
-      } else if (k === 'f' && !stationUI.open && !warp.isBusy() && !playerShipSystem()) {
-        // Fire rockets from F key — determine side from mouse position
-        const mw = screenToWorld(mouse.x, mouse.y);
-        const local = rotateInv({ x: mw.x - ship.pos.x, y: mw.y - ship.pos.y }, ship.angle);
-        const side = (local.y >= 0) ? 'right' : 'left';
-        if (rocketCooldown <= 0 && fireRocket(side)) rocketCooldown = ROCKET_FIRE_INTERVAL;
-      }
-      if (k === 'h' && !stationUI.open) {
-        // Cycle PiP drone view
-        SpotterDroneSystem.cyclePip();
-        const pip = SpotterDroneSystem.getActivePip();
-        if (pip) pushZoneMessage(`Drone PiP: ${pip.id}`, 1);
-        else pushZoneMessage('No active drones', 1);
-      }
-      if (CICDisplay.active && (k === 'v' || k === '`' || k === '~')) {
-        CICDisplay.toggleSystemView();
-        pushZoneMessage(CICDisplay.isSystemView ? 'CIC: SYSTEM VIEW' : 'CIC: TACTICAL VIEW', 1.5);
-        return; // don't trigger normal V action
-      }
-      // Sensor probe deployment disabled (fog of war removed)
-      if (k === 'z') {
-        if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
-        // Start jest teraz rozłożony w czasie — dopóki kolejka nie pusta, SQUAD.list
-        // jeszcze się zapełnia i kolejne Z nie może odpalić drugiej salwy.
-        if (window.isFighterLaunchInProgress?.()) return;
-        if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
-          const launched = launchMountedFighterSquadrons();
-          if (!launched.length) return;
-          const tubes = getPlayerHangarTubes().length;
-          toast(`START: ${launched.length} myśliwców z ${tubes} ${tubes === 1 ? 'hangaru' : 'hangarów'}`);
-        } else if (SQUAD.order === 'escort') {
-          SQUAD.targets = pickSquadTargets();
-          SQUAD.order = 'attack';
-          toast(SQUAD.targets.length ? 'Myśliwce: ATAK' : 'Myśliwce: ATAK (brak oznaczeń — wybiorą najbliższych)');
-        } else if (SQUAD.order === 'attack') {
-          SQUAD.order = 'return';
-          toast('Myśliwce: POWRÓT');
-        } else if (SQUAD.order === 'return') {
-          SQUAD.order = 'escort';
-          SQUAD.targets = [];
-          toast('Myśliwce: ESKORTA');
-        }
-      }
-      if (k === 'r') {
-        e.preventDefault();
-        playerRepairActive = !playerRepairActive;
-        pushZoneMessage(playerRepairActive ? 'REPAIR: ON' : 'REPAIR: OFF', 0.8);
-      }
-      if (k === 'v' && !CICDisplay.active) {
-        cyclePlayerDriveMode(1);
       }
       updateInput();
     });
-    window.addEventListener('keyup', e => {
-      const k = e.key.toLowerCase();
-      keys[k] = false;
-      CICDisplay.onKeyUp(e.code);
-      if (k === 'shift' && camera.mode !== 'rts') {
+    function releaseGameKey(code) {
+      Input.keyUp(code);
+      CICDisplay.onKeyUp(code);
+      if ((code === 'ShiftLeft' || code === 'ShiftRight') && camera.mode !== 'rts') {
         handleShiftUp();
       }
+    }
+    window.addEventListener('keyup', e => {
+      releaseGameKey(e.code);
       updateInput();
     });
-
-    function isGamepadActiveForP1() {
-      // In single player: allow keyboard always — gamepad supplements, never blocks keyboard
-      if (!splitScreenMode) return false;
-      // In split screen: only block keyboard if P1 is explicitly assigned to a pad
-      const p1Assign = controllerAssignment.p1;
-      if (p1Assign && p1Assign !== 'keyboard') return !!getAssignedPad(p1Assign);
-      return false;
+    // Utrata fokusu okna albo ukryta karta (B12): keyup nie przyjdzie — trzymane klawisze puszczamy jak keyup
+    // (wejście lotu, dopalacz, przesuw CIC), spust myszy gaśnie, pady od zera (trzymane przyciski zjedzone).
+    function releaseAllInput() {
+      for (const code of Input.heldKeys()) releaseGameKey(code);
+      Input.clear();
+      fcTrigger.mouse = false;
+      updateInput();
     }
+    window.addEventListener('blur', releaseAllInput);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllInput(); });
 
-    function getP1GamepadForwardInput() {
-      const deadZone = 0.15;
-      let pad = null;
-      const p1Assign = controllerAssignment?.p1;
-      if (p1Assign && p1Assign !== 'keyboard') {
-        pad = getAssignedPad(p1Assign);
-      } else if (!splitScreenMode) {
-        const pads = navigator.getGamepads?.() || [];
-        pad = pads[0] || null;
+    // ============== WEJŚCIE LOTU ==============
+    // Klawiatura (zdarzenia klawiszy) i lewa gałka pada (co klatkę, gdy daje wejście — padFlightStep) scalone
+    // w JEDNYM miejscu: oś = większy moduł z klawiatury (−1 / 0 / 1) i pada. Bez pada — dokładnie dawne wejście
+    // klawiatury (te same wartości w tych samych chwilach); z padem S dalej cofa (B5), Shift dalej dopala (B2).
+    function keyboardOwnsP1() {
+      const a = controllerAssignment.p1;
+      return !splitScreenMode || !a || a === 'keyboard';
+    }
+    function keyboardOwnsP2() {
+      return splitScreenMode && controllerAssignment.p2 === 'keyboard';
+    }
+    const _flightCtl = { controller: 'player', thrustX: 0, thrustY: 0, main: 0, retro: 0, leftSide: 0, rightSide: 0, torque: 0 };
+    function flightControl(controller, useKeys, player) {
+      const c = _flightCtl;
+      const kThrust = useKeys ? Input.keyAxis('fly.thrust') : 0;
+      const kTurn = useKeys ? Input.keyAxis('fly.turn') : 0;
+      const pThrust = Input.padAxis('fly.thrust', player);
+      const pTurn = Input.padAxis('fly.turn', player);
+      const thrustY = Math.abs(pThrust) > Math.abs(kThrust) ? pThrust : kThrust;
+      const torque = Math.abs(pTurn) > Math.abs(kTurn) ? pTurn : kTurn;
+      c.controller = controller;
+      c.thrustX = torque;
+      c.thrustY = thrustY;
+      c.main = Math.max(0, thrustY);
+      c.retro = Math.max(0, -thrustY);
+      c.leftSide = useKeys && Input.keyHeld('fly.strafeRight') ? 1 : 0;
+      c.rightSide = useKeys && Input.keyHeld('fly.strafeLeft') ? 1 : 0;
+      c.torque = torque;
+      return c;
+    }
+    function zeroFlightControl(controller) {
+      const c = _flightCtl;
+      c.controller = controller;
+      c.thrustX = 0; c.thrustY = 0; c.main = 0; c.retro = 0; c.leftSide = 0; c.rightSide = 0; c.torque = 0;
+      return c;
+    }
+    // keyEvent — wołane ze zdarzenia klawisza (F trzymane strzela tylko wtedy, jak dawniej).
+    function applyP1Flight(keyEvent) {
+      const useKeys = keyboardOwnsP1();
+      if (!useKeys && Input.pad(0) < 0) return;   // podzielony ekran: gracz 1 na padzie, którego nie ma
+      if (ship.destroyed || camera.mode === 'rts' || (ship.agility && ship.agility.active)) {
+        applyPlayerInput(ship, zeroFlightControl('player'), input);
+        return;
       }
-      if (!pad?.connected || !Array.isArray(pad.axes) || pad.axes.length < 2) return 0;
-      const ly = Number(pad.axes[1]) || 0;
-      const forward = Math.abs(ly) < deadZone ? 0 : (-ly);
-      return clamp(forward, 0, 1);
+      applyPlayerInput(ship, flightControl('player', useKeys, 0), input);
+      // F trzymane = rakiety, ale tylko na kadłubie bez systemu okrętu (tam F to szarża).
+      if (keyEvent && useKeys && Input.keyHeld('ship.ram') && !playerShipSystem() && !warp.isBusy() && rocketCooldown <= 0) {
+        const mwF = screenToWorld(mouse.x, mouse.y);
+        const localF = rotateInv({ x: mwF.x - ship.pos.x, y: mwF.y - ship.pos.y }, ship.angle);
+        const sideF = (localF.y >= 0) ? 'right' : 'left';
+        if (fireRocket(sideF)) rocketCooldown = ROCKET_FIRE_INTERVAL;
+      }
     }
-
+    function applyP2Flight() {
+      if (!splitScreenMode || !player2Ship || player2Ship.destroyed) return;
+      const useKeys = keyboardOwnsP2();
+      if (!useKeys && Input.pad(1) < 0) return;
+      applyPlayerInput(player2Ship, flightControl('player2', useKeys, 1), input2);
+    }
     function updateInput() {
-      // Determine which ship keyboard controls
-      const kbControlsP2 = splitScreenMode && controllerAssignment.p2 === 'keyboard';
-      const p1IsKeyboardOrNull = !controllerAssignment.p1 || controllerAssignment.p1 === 'keyboard';
-      const kbControlsP1 = (!splitScreenMode || p1IsKeyboardOrNull) && !isGamepadActiveForP1();
-
-      // P1 keyboard input
-      if (kbControlsP1) {
-        const p1Zero = { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 };
-        if (ship.destroyed || camera.mode === 'rts') {
-          applyPlayerInput(ship, p1Zero, input);
-        } else if (ship.agility && ship.agility.active) {
-          applyPlayerInput(ship, p1Zero, input);
-        } else {
-          let thrustY = 0;
-          if (keys['w'] && !keys['s']) thrustY = 1;
-          else if (keys['s'] && !keys['w']) thrustY = -1;
-          const leftSide = keys['e'] ? 1 : 0;
-          const rightSide = keys['q'] ? 1 : 0;
-          let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
-          applyPlayerInput(ship, {
-            controller: 'player',
-            thrustX: torque,
-            thrustY,
-            main: Math.max(0, thrustY),
-            retro: Math.max(0, -thrustY),
-            leftSide,
-            rightSide,
-            torque
-          }, input);
-          // F trzymane = rakiety, ale tylko na kadłubie bez systemu okrętu (tam F to szarża).
-          if (keys['f'] && !playerShipSystem() && !warp.isBusy() && rocketCooldown <= 0) {
-            const mwF = screenToWorld(mouse.x, mouse.y);
-            const localF = rotateInv({ x: mwF.x - ship.pos.x, y: mwF.y - ship.pos.y }, ship.angle);
-            const sideF = (localF.y >= 0) ? 'right' : 'left';
-            if (fireRocket(sideF)) rocketCooldown = ROCKET_FIRE_INTERVAL;
-          }
-        }
-      }
-
-      // P2 keyboard input (same WASD keys, applied to P2)
-      if (kbControlsP2 && player2Ship && !player2Ship.destroyed) {
-        let thrustY = 0;
-        if (keys['w'] && !keys['s']) thrustY = 1;
-        else if (keys['s'] && !keys['w']) thrustY = -1;
-        const leftSide = keys['e'] ? 1 : 0;
-        const rightSide = keys['q'] ? 1 : 0;
-        let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
-        applyPlayerInput(player2Ship, {
-          controller: 'player2',
-          thrustX: torque,
-          thrustY,
-          main: Math.max(0, thrustY),
-          retro: Math.max(0, -thrustY),
-          leftSide,
-          rightSide,
-          torque
-        }, input2);
-      }
+      applyP1Flight(true);
+      applyP2Flight();
     }
-
     function approachValue(current, target, delta) {
       if (current < target) return Math.min(target, current + delta);
       if (current > target) return Math.max(target, current - delta);
@@ -15812,18 +16240,19 @@
       // Reaktywny pasek mocy:
       // W = 100% mocy, brak ciągu = 0%.
       // S / reverse to hamulec, więc nie podbijają mocy głównych silników.
-      // Gamepad: left stick Y (forward) also drives engine power.
+      // Pad: lewa gałka naprzód (analogowo) też ustawia moc.
       const reverseInput = Math.max(
         clamp(Number(ship?.thrusterInput?.retro) || 0, 0, 1),
         clamp(Number(input?.retro) || 0, 0, 1)
       );
-      const brakeHeld = !!keys['s'] || reverseInput > 0.05;
+      const keysP1 = keyboardOwnsP1();
+      const brakeHeld = (keysP1 && Input.keyHeld('fly.back')) || reverseInput > 0.05;
       let target = 0;
-      if (keys['w'] && !brakeHeld) target = 1.0;
+      if (keysP1 && Input.keyHeld('fly.forward') && !brakeHeld) target = 1.0;
 
-      // Gamepad forward thrust should come from the real pad state, not from ship.thrusterInput,
+      // Ciąg z pada — prosto z gałki (warstwa wejścia), nie z ship.thrusterInput,
       // bo to tworzy pętlę sprzężenia zwrotnego po puszczeniu W.
-      const gamepadMain = getP1GamepadForwardInput();
+      const gamepadMain = Math.max(0, Input.padAxis('fly.thrust', 0));
       if (!brakeHeld) target = Math.max(target, gamepadMain);
 
       enginePower.target = target;
@@ -15911,8 +16340,8 @@
       }
 
       // 3. Ladowanie umiejetnosci luku (A / D)
-      if ((keys['a'] || keys['d']) && ag.cooldowns.arc <= 0 && currentPivot) {
-        ag.arcDir = keys['d'] ? 1 : -1;
+      if ((Input.keyHeld('fly.left') || Input.keyHeld('fly.right')) && ag.cooldowns.arc <= 0 && currentPivot) {
+        ag.arcDir = Input.keyHeld('fly.right') ? 1 : -1;
 
         // ZWOLNIONE LADOWANIE: zajmie ok. 1.25s, zeby zaladowac maksa
         const chargeRate = Math.PI * 0.8;
@@ -15970,6 +16399,79 @@
     const radarPings = [];
     const scanWaves = [];
     const scannerRevealFx = [];
+    // Skan X w świecie (src/ui/radar/scanOverlay.js): fala, ramki zaciskające się na kontaktach, podpisy,
+    // namiary stacji. Zegar = czas logiki gry (pauza go zatrzymuje, jak dawną falę).
+    // Cele misji (StoryGame.ui.targets) mają własne ramki i podpisy (missionTargetMarkers) — znaczniki
+    // krawędzi i podpisy skanu ich pomijają. Zbiór odświeżany raz na klatkę rysowania HUD-u.
+    const _storyTargetEntities = new Set();
+    function refreshStoryTargetEntities() {
+      _storyTargetEntities.clear();
+      const targets = StoryGame.active ? StoryGame.ui?.targets : null;
+      if (targets && targets.size) for (const m of targets.values()) if (m?.entity) _storyTargetEntities.add(m.entity);
+    }
+    const _contactMarkersLayout = { bottom: 0, skip: (e) => _storyTargetEntities.has(e) };
+    // Panele kokpitu jako przeszkody podpisów skanu (jak cele misji): odczyt układu najwyżej 10 Hz.
+    const _scanHudPanels = ['#cluster', '#turretPanel', '#weaponBar', '#abilityBar', '.key-hints', '#scanPanel', '#targetPanel', '#lockChips']
+      .map(selector => ({ selector, node: null, rect: { x0: 0, y0: 0, x1: 0, y1: 0 } }));
+    let _scanHudPanelsAt = -Infinity;
+    function refreshScanBlockedRects(nowMs) {
+      if (nowMs - _scanHudPanelsAt < 100) return;
+      _scanHudPanelsAt = nowMs;
+      const rects = scanOverlayView.blockedRects || (scanOverlayView.blockedRects = []);
+      rects.length = 0;
+      const host = document.getElementById('cockpit-ui-host');
+      if (!host || host.hidden) return;
+      for (const panel of _scanHudPanels) {
+        if (!panel.node?.isConnected) panel.node = host.shadowRoot?.querySelector(panel.selector) || null;
+        if (!panel.node || panel.node.hidden) continue;
+        const r = panel.node.getBoundingClientRect();
+        if (!(r.width > 0 && r.height > 0)) continue;
+        panel.rect.x0 = r.left - 8; panel.rect.y0 = r.top - 8;
+        panel.rect.x1 = r.right + 8; panel.rect.y1 = r.bottom + 8;
+        rects.push(panel.rect);
+      }
+    }
+    const scanOverlay = createScanOverlay();
+    window.__scanOverlay = scanOverlay;
+    let scanOverlayClock = 0;
+    const _scanCircle = { x: 0, y: 0, r: 0 };
+    const _scanDesc = { title: '', sub: '' };
+    const scanOverlayView = {
+      W: 0, H: 0, time: 0, ship: null, cam: null, blockedRects: null,
+      hidden: (e) => SensorSystem.hides(e),   // mgła wojny: wynik skanu znika razem z kontaktem
+      project(x, y, out) {
+        if (isView3DCamera(this.cam)) return View3D.project(x, y, 0, out);
+        worldToScreenInto(x, y, this.cam, out);
+        out.depth = 1;
+        return out;
+      },
+      // Kamera z góry: fala jako prawdziwy okrąg (kamery 3D — łamana z rzutów w nakładce).
+      circle(x, y, r) {
+        if (isView3DCamera(this.cam)) return null;
+        worldToScreenInto(x, y, this.cam, _scanCircle);
+        _scanCircle.r = r * this.cam.zoom;
+        return _scanCircle;
+      },
+      halfExtents(e, out) {
+        getCicEntityScreenHalfExtents(e, 1, out);
+        if (!(out.hx > 0 && out.hy > 0)) out.hx = out.hy = Math.max(40, getTargetRadius(e));
+      },
+      describe(e) {
+        if (isScannerStationContact(e, null)) {
+          _scanDesc.title = radarStationLabel(e);
+          _scanDesc.sub = e.isPirate ? 'PIRACI' : 'STACJA';
+          return _scanDesc;
+        }
+        _scanDesc.title = describeUnitTitle(e);
+        const hpMax = Number(e.maxHp ?? e.hull?.max) || 0;
+        const hp = Number(e.hp ?? e.hull?.val);
+        _scanDesc.sub = hpMax > 0 && Number.isFinite(hp) ? `KADŁUB ${Math.max(0, Math.round(100 * hp / hpMax))}%` : '';
+        return _scanDesc;
+      },
+      // Numer śladu z radaru kokpitu (T07) — ten sam kontakt na tarczy i w świecie.
+      trackNo(e) { return window.cockpitUI?.radar?.tracker?.tracks?.get(e)?.no || 0; },
+      ownLabel: (e) => _storyTargetEntities.has(e)
+    };
     const scannerContacts = [];
     const scannerPassiveContacts = [];
     const SCANNER_PASSIVE_REFRESH_MS = 350;
@@ -16257,7 +16759,8 @@
     function scannerContactRevealTime(contact, wave) {
       const distance = Math.max(0, Number(contact?.distance) || 0);
       const speed = Math.max(1, Number(wave?.speed) || getScannerWaveSpeed());
-      return Math.max(SCANNER_CONTACT_REVEAL_DELAY, distance / speed);
+      // fala rusza powoli i rozpędza się (radarConfig.scanPulseTime — ten sam profil co obraz fali)
+      return Math.max(SCANNER_CONTACT_REVEAL_DELAY, scanPulseTime(distance, speed));
     }
     function scannerToneRgb(tone) {
       const t = String(tone || '').toLowerCase();
@@ -16297,8 +16800,12 @@
         scannerContacts.push(...sorted);
       }
       wave?.hit?.add?.(target);
-      spawnRadarPing(getTargetX(target), getTargetY(target));
-      scannerRevealFx.push({ contact, target, age: 0, life: SCANNER_REVEAL_FX_LIFE });
+      // Fala dotarła do kontaktu: ramka zaciska się na kadłubie, podpis (src/ui/radar/scanOverlay.js).
+      const station = contact?.type === 'station' || contact?.type === 'platform';
+      const tone = String(contact?.tone || '');
+      const aff = tone === 'hostile' || (station && (target?.isPirate || contact?.type === 'platform'))
+        ? 'hostile' : tone === 'friendly' || station ? 'friendly' : 'neutral';
+      scanOverlay.reveal(target, { aff, kind: station ? 'station' : 'ship' }, scanOverlayClock);
       if (scannerState.autoInspectFirst && !scannerSelectedTarget) {
         setScannerInspectedTarget(target);
         scannerState.autoInspectFirst = false;
@@ -16336,6 +16843,9 @@
         nextContact: 0
       };
       scanWaves.push(wave);
+      // Ta sama fala na tarczy radaru (maluje kontakty, które mija) i w świecie.
+      radarPingSerial++;
+      scanOverlay.ping(wave.x, wave.y, waveSpeed, activeRange, scanOverlayClock);
     }
     function setScannerActive(nextActive) {
       scannerState.active = !!nextActive;
@@ -16347,7 +16857,7 @@
         scanWaves.length = 0;
         triggerScanWave({ reset: true });
         CICDisplay.triggerHudRadarBurst?.();
-        pushZoneMessage('Active Scanner: SINGLE BURST', 1.3);
+        pushZoneMessage('SKANER: IMPULS AKTYWNY', 1.3);
       } else {
         scannerContacts.length = 0;
         scanWaves.length = 0;
@@ -16357,7 +16867,8 @@
         scannerSelectedTarget = null;
         scannerState.sweepTargets = new Set();
         scannerState.autoInspectFirst = false;
-        pushZoneMessage('Active Scanner: OFFLINE', 1.1);
+        scanOverlay.clear();
+        pushZoneMessage('SKANER: WYŁĄCZONY', 1.1);
       }
     }
 
@@ -16624,7 +17135,7 @@
       isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
     });
 
-    const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, fireMain: false, overCanvas: false, dx: 0, dy: 0 };
+    const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
     publishGameState({ mouse });
     const mouse2 = { x: W / 2, y: H / 2, left: false, right: false, click: false, fireMain: false, overCanvas: false, dx: 0, dy: 0 };
     window.mouse2 = mouse2;
@@ -17032,7 +17543,7 @@
       if (canPlayerLockTarget(targetEntity)) {
         setLockedTargetsExact([targetEntity]);
       }
-      pushZoneMessage('RTS: DIRECT SCAN', 1.2);
+      pushZoneMessage('RTS: SKAN CELU', 1.2);
     }
 
     function commandEntityPoint(entity, fallback = null) {
@@ -17346,7 +17857,7 @@
         triggerScanWave();
         CICDisplay.triggerHudRadarBurst?.();
       }
-      pushZoneMessage('SCAN: ACTIVE PING', 1.2);
+      pushZoneMessage('SKANER: IMPULS AKTYWNY', 1.2);
     }
 
     function clearPlayerAttackState(target = null) {
@@ -18304,6 +18815,7 @@
       const { m } = _getMouseForScreen(e.clientX);
       m.x = e.clientX; m.y = e.clientY;
       m.overCanvas = true;
+      Input.noteMouse();   // ostatnio użyte urządzenie (podpowiedzi — etap 5 planu padów)
       // CIC panning
       if (CICDisplay.active) {
         CICDisplay.onMouseMove(e.clientX, e.clientY, e.movementX || 0, e.movementY || 0);
@@ -18623,188 +19135,212 @@
       zoomIndicator.show(camera.targetZoom);
     }, { passive: false });
 
-    const GAMEPAD = { enabled: true, dead: 0.15, last: {} };
-    const _padPrevStart = {};
-    const _padPrevSelect = {};
+    // ============== WEJŚCIE / PAD (docs/PLAN-pad.md, etap 1) ==============
+    // Warstwa wejścia (src/input/): urządzenia czytane RAZ na klatkę rAF (pumpInput — pętla wejścia i loop()),
+    // kontekst z flag gry (menu → podzielony ekran → fabuła blokująca → pauza → stacja → CIC → gra; pad nie działa
+    // pod menu, pauzą ani scenami — B6), zjadanie wciśnięć przy zmianie kontekstu (B zamykające menu nie odpali
+    // rakiety). Pad ma DZISIEJSZY zakres akcji: lot lewą gałką (scalony z klawiaturą w updateInput), RT — ogień grupy
+    // w ręku, X — dopalacz, Y — warp (zbocze — B1), LB / RB — zoom (w czasie — B9), RS — kursor (px/s — B9),
+    // View — CIC, Menu — menu, B — rakiety, LT — broń specjalna albo rakiety (dawne ścieżki); fabuła: A — dalej /
+    // ODDOKUJ / podsumowanie, B trzymane — pomiń scenę (B7). Układ „Dowódca” (§ 3.2) — etapy 2–4.
+    // Nowy odczyt wejścia w logice gry: Input.keyHeld / padHeld / padAxis / axis / manualFlight — nie navigator.getGamepads.
+    const PAD_CURSOR_SPEED = 720;      // px/s przy pełnym wychyleniu RS (dawne 12 px na klatkę przy 60 Hz)
+    const PAD_ZOOM_STEP = 1.025;       // × na 1/60 s (dawne 2,5% na klatkę przy 60 Hz)
+    const PAD_CIC_ZOOM_STEP = 0.21;    // CIC: dawne ±140 „ząbków” kółka na klatkę przy 60 Hz (× 1 ± 0,21)
+    const PAD_FAMILY_LABEL = Object.freeze({ xbox: 'Xbox', playstation: 'PlayStation', nintendo: 'Nintendo', generic: 'pad' });
+    const _inputFlags = { menu: false, split: false, started: false, story: false, paused: false, station: false, cic: false };
+    const _padVec = new Float32Array(2);
+    const _padFlightWas = new Uint8Array(2);
+    let _padChangesSeen = 0;
 
-    function applyGamepad() {
-      // Helper to apply gamepad to a ship entity
-      function applyPadToShip(pad, targetShip, targetInput, isP1) {
-        if (!pad || !pad.connected || !targetShip) return;
-        // Verify pad has actual axis data (some disconnected pads linger)
-        if (!pad.axes || pad.axes.length < 2) return;
-        const ax = (v) => (Math.abs(v) < GAMEPAD.dead ? 0 : v);
-        const lx = ax(pad.axes[0] || 0), ly = ax(pad.axes[1] || 0);
-        const rx = ax(pad.axes[2] || 0), ry = ax(pad.axes[3] || 0);
-        const forward = ly * -1;
+    function assignedPadSlot(id) {
+      if (!id || id === 'keyboard') return -1;
+      const n = parseInt(String(id).slice(3), 10);
+      return n >= 0 && n < 4 ? n : -1;
+    }
+    // Fabuła zabiera padowi grę: kino, dok, scena z dialogiem, podsumowanie (panel akcji bez blokady — nakładka w grze).
+    function storyBlocksPad() {
+      if (!StoryGame.active) return false;
+      if (StoryGame.blocksInput || StoryGame.ui.summary) return true;
+      const d = StoryGame.dialogue;
+      return !!(d && d.active && d.mode === 'scene');
+    }
 
-        // In single player: merge gamepad with keyboard (take strongest input)
-        if (!(isP1 && camera.mode === 'rts')) {
-          const p1IsKeyboardOrNull = !controllerAssignment.p1 || controllerAssignment.p1 === 'keyboard';
-          const keyboardOwnsThisShip = isP1
-            ? ((!splitScreenMode || p1IsKeyboardOrNull) && !isGamepadActiveForP1())
-            : (splitScreenMode && controllerAssignment.p2 === 'keyboard');
-          const kbThrustY = keyboardOwnsThisShip && keys['w'] ? 1 : 0;
-          const kbTorque = keyboardOwnsThisShip ? ((keys['a'] ? -1 : 0) + (keys['d'] ? 1 : 0)) : 0;
-          const kbLeftSide = keyboardOwnsThisShip && keys['e'] ? 1 : 0;
-          const kbRightSide = keyboardOwnsThisShip && keys['q'] ? 1 : 0;
-          const mergeSign = (padVal, kbVal) => {
-            if (Math.abs(padVal) > 0.01) return padVal;
-            return kbVal;
-          };
-          const mergedThrustY = mergeSign(forward, kbThrustY);
-          const mergedTorque = mergeSign(lx, kbTorque);
-
-          applyPlayerInput(targetShip, {
-            controller: isP1 ? 'player' : 'player2',
-            thrustX: mergedTorque,
-            thrustY: mergedThrustY,
-            aimX: rx,
-            aimY: ry * -1,
-            main: Math.max(0, mergedThrustY),
-            torque: mergedTorque,
-            leftSide: kbLeftSide,
-            rightSide: kbRightSide
-          }, targetInput);
-        } else {
-          applyPlayerInput(targetShip, {
-            controller: isP1 ? 'player' : 'player2',
-            main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0
-          }, targetInput);
-        }
-        const btn = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
-        if (isP1) {
-          if (btn(0)) triggerRailVolley();
-          if (btn(1) && rocketCooldown <= 0) {
-            if (fireRocket()) rocketCooldown = ROCKET_FIRE_INTERVAL;
-          }
-          if (btn(2)) { activateBoostIfAllowed(); } else if (boost.state === 'active' && !btn(2)) { stopBoost(); }
-          if (btn(3)) attemptWarp();
-
-          // --- R2 (7) = main weapon, L2 (6) = special weapon ---
-          // Spust pada ma osobny stan, żeby nigdy nie podszywał się pod LPM celownika.
-          mouse.fireMain = btn(7);
-          if (btn(6)) {
-            const firedSpecial = (typeof tryFireMountedSpecialWeapons === 'function') ? tryFireMountedSpecialWeapons() : false;
-            if (!firedSpecial && !warp.isBusy()) {
-              const mouseWorld = screenToWorld(mouse.x, mouse.y);
-              const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
-              const side = (local.y >= 0) ? 'right' : 'left';
-              if (rocketCooldown <= 0 && fireRocket(side)) rocketCooldown = ROCKET_FIRE_INTERVAL;
-            }
-          }
-
-          // --- L1 (4) = zoom out, R1 (5) = zoom in ---
-          const zoomSpeed = 0.025;
-          if (btn(4)) {
-            if (CICDisplay.active) {
-              CICDisplay.onWheel(140);
-            } else {
-              camera.targetZoom = clamp(camera.targetZoom * (1 - zoomSpeed), camera.minZoom, camera.maxZoom);
-              camera.manualZoom = true;
-            }
-          }
-          if (btn(5)) {
-            if (CICDisplay.active) {
-              CICDisplay.onWheel(-140);
-            } else {
-              camera.targetZoom = clamp(camera.targetZoom * (1 + zoomSpeed), camera.minZoom, camera.maxZoom);
-              camera.manualZoom = true;
-            }
-          }
-
-          // --- Right stick → move crosshair (virtual mouse) ---
-          if (Math.abs(rx) > 0 || Math.abs(ry) > 0) {
-            const cursorSpeed = 12;
-            const maxX = splitScreenMode ? Math.floor(W / 2) : W;
-            mouse.x = clamp((mouse.x || W / 2) + rx * cursorSpeed, 0, maxX);
-            mouse.y = clamp((mouse.y || H / 2) + ry * cursorSpeed, 0, H);
-            mouse.overCanvas = true;
-          }
-
-          // --- Select (8) — rising edge → toggle CIC ---
-          const padId = pad.index ?? 'p1';
-          const selectNow = btn(8);
-          const selectPrev = !!_padPrevSelect[padId];
-          if (selectNow && !selectPrev) {
-            if (!stationUI.open) {
-              const state = CICDisplay.toggle();
-              pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
-            }
-          }
-          _padPrevSelect[padId] = selectNow;
-        } else {
-          // --- P2 gamepad controls (mirrors P1 layout) ---
-          const halfW = Math.floor(W / 2);
-
-          // A (0) / R2 (7) = główna broń P2, niezależnie od LPM.
-          mouse2.fireMain = btn(0) || btn(7);
-
-          // B (1) = rockets
-          if (btn(1)) { mouse2.right = true; mouse2._fromGamepadR = true; }
-          else if (mouse2._fromGamepadR) { mouse2.right = false; mouse2._fromGamepadR = false; }
-
-          // L2 (6) = special weapons, fallback to rockets
-          if (btn(6)) {
-            const firedSpecial = p2WeaponCtrl ? p2WeaponCtrl.tryFireSpecialWeapons() : false;
-            if (!firedSpecial) { mouse2.right = true; mouse2._fromGamepadL2 = true; }
-          } else if (mouse2._fromGamepadL2) { mouse2.right = false; mouse2._fromGamepadL2 = false; }
-
-          // L1 (4) = zoom out, R1 (5) = zoom in — P2 viewport only
-          if (camera2) {
-            const zoomSpeed = 0.025;
-            if (btn(4)) {
-              camera2.targetZoom = clamp(camera2.targetZoom * (1 - zoomSpeed), camera2.minZoom, camera2.maxZoom);
-            }
-            if (btn(5)) {
-              camera2.targetZoom = clamp(camera2.targetZoom * (1 + zoomSpeed), camera2.minZoom, camera2.maxZoom);
-            }
-          }
-
-          // Right stick → move P2 crosshair (clamped to right half)
-          if (Math.abs(rx) > 0 || Math.abs(ry) > 0) {
-            const cursorSpeed = 12;
-            mouse2.x = clamp((mouse2.x || (halfW + halfW / 2)) + rx * cursorSpeed, halfW, W);
-            mouse2.y = clamp((mouse2.y || H / 2) + ry * cursorSpeed, 0, H);
-            mouse2.overCanvas = true;
-          }
-
-          // Select (8) — reserved for future P2 command UI
-          const p2PadId = pad.index ?? 'p2';
-          const p2SelNow = btn(8);
-          const p2SelPrev = !!_padPrevSelect[p2PadId];
-          _padPrevSelect[p2PadId] = p2SelNow;
-        }
-        // Start button (9) — rising edge only → toggle menu
-        const padId = pad.index ?? (isP1 ? 'p1' : 'p2');
-        const startNow = btn(9);
-        const startPrev = !!_padPrevStart[padId];
-        if (startNow && !startPrev) {
-          if (stationUI.open) { /* skip if station UI open */ }
-          else toggleMainMenu();
-        }
-        _padPrevStart[padId] = startNow;
+    /** Raz na klatkę rAF: odczyt urządzeń, kontekst, akcje pada. Drugie wywołanie w tej samej klatce — nic. */
+    function pumpInput(now) {
+      const f = _inputFlags;
+      f.menu = isMainMenuVisible();
+      f.split = !!(controllerAssignment.active || shipSelectState.active);
+      f.started = gameStarted;
+      f.story = gameStarted && storyBlocksPad();
+      f.paused = PAUSED;
+      f.station = !!stationUI.open;
+      f.cic = !!CICDisplay.active;
+      if (!Input.update(now, f)) return false;
+      const dev = Input.device;
+      // pady graczy: gra jednoosobowa — AKTYWNY pad (ostatnia aktywność, nie pads[0] — B10); podzielony ekran — przypisane
+      Input.setPlayerPads(
+        splitScreenMode ? assignedPadSlot(controllerAssignment.p1) : dev.active,
+        splitScreenMode ? assignedPadSlot(controllerAssignment.p2) : -1
+      );
+      if (dev.changes !== _padChangesSeen) notePadChanges(dev);
+      const dt = Input.dtMs / 1000;
+      switch (Input.ctx) {
+        case 'menu': padMenuStep(); break;
+        case 'split': padSplitStep(); break;
+        case 'story': padStoryStep(); break;
+        case 'pause': if (Input.padPressed('ui.menu')) runGameAction('ui.menu'); break;
+        case 'station': if (Input.padPressed('station.close')) runGameAction('station.close'); break;
+        case 'cic':
+        case 'game': padGameStep(dt); break;
+        default: break;
       }
+      // Spust i dopalacz pada: poza kontekstem gry akcje dają fałsz — puszczają się same.
+      fcTrigger.pad = Input.padHeld('wpn.fire');
+      padBoostStep(Input.padHeld('fly.boost'));
+      padP2Step(dt);
+      padFlightStep();
+      return true;
+    }
 
-      // P1 controller
-      const p1Assign = controllerAssignment.p1;
-      if (p1Assign && p1Assign !== 'keyboard') {
-        const p1Pad = getAssignedPad(p1Assign);
-        applyPadToShip(p1Pad, ship, input, true);
-      } else if (!p1Assign) {
-        // Fallback: no assignment (single player) — use pad[0]
-        const pads = navigator.getGamepads?.() || [];
-        applyPadToShip(pads[0], ship, input, true);
-      }
-
-      // P2 controller (split screen only)
-      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
-        const p2Assign = controllerAssignment.p2;
-        if (p2Assign && p2Assign !== 'keyboard') {
-          const p2Pad = getAssignedPad(p2Assign);
-          applyPadToShip(p2Pad, player2Ship, input2, false);
+    // Podłączenie / odłączenie (z odpytywania urządzeń — jedno źródło prawdy z resztą stanu pada).
+    function notePadChanges(dev) {
+      _padChangesSeen = dev.changes;
+      for (let s = 0; s < dev.connected.length; s++) {
+        if (dev.connectedNow[s]) {
+          const fam = PAD_FAMILY_LABEL[PAD_FAMILY_IDS[dev.family[s]]] || 'pad';
+          console.info(`[Pad] podłączony (slot ${s}, ${fam}, mapowanie: ${dev.standard[s] ? 'standard' : 'brak'}): ${dev.ids[s]}`);
+          if (gameStarted) pushZoneMessage(`PAD PODŁĄCZONY: ${fam}`, 1.6);
+          if (!dev.standard[s] && gameStarted) pushZoneMessage('PAD BEZ MAPOWANIA STANDARD — PRZYCISKI MOGĄ DZIAŁAĆ INACZEJ', 2.6, { tone: 'warn' });
+        }
+        if (dev.disconnectedNow[s]) {
+          console.info(`[Pad] odłączony (slot ${s})`);
+          if (gameStarted) pushZoneMessage('PAD ODŁĄCZONY', 1.6, { tone: 'warn' });
         }
       }
+    }
+
+    // Menu główne (DOM): D-pad / LS ↕ — pozycja, A — wybierz, B — wstecz (w pauzie na stronie głównej — Kontynuuj),
+    // Menu — jak Esc. Lista jednowymiarowa jak dawniej (nawigacja przestrzenna — etap 6).
+    function padMenuStep() {
+      if (Input.padPressed('ui.up')) menuGamepad.navigate(-1);
+      if (Input.padPressed('ui.down')) menuGamepad.navigate(1);
+      if (Input.padPressed('ui.confirm')) menuGamepad.confirm();
+      if (Input.padPressed('ui.back')) {
+        if (gameStarted && menuView === 'home') hideMainMenu();
+        else menuGamepad.back();
+      }
+      if (Input.padPressed('ui.menu')) runGameAction('ui.menu');
+    }
+
+    // Podzielony ekran: przypisanie urządzeń (każdy pad zgłasza się sam) i wybór statku (pad przypisany graczowi).
+    function padSplitStep() {
+      if (controllerAssignment.active) {
+        for (let s = 0; s < 4; s++) {
+          if (Input.device.connected[s] && Input.padPressedSlot('split.assign', s)) tryAssignController('pad' + s);
+        }
+        return;
+      }
+      if (!shipSelectState.active) return;
+      const n = SPLIT_SHIP_KEYS.length;
+      for (let pi = 0; pi < 2; pi++) {
+        const slot = Input.pad(pi);
+        if (slot < 0) continue;
+        const st = pi === 0 ? shipSelectState.p1 : shipSelectState.p2;
+        if (!st.ready) {
+          if (Input.padPressedSlot('split.prev', slot)) { st.index = (st.index - 1 + n) % n; updateShipSelectUI(pi, st.index); }
+          if (Input.padPressedSlot('split.next', slot)) { st.index = (st.index + 1) % n; updateShipSelectUI(pi, st.index); }
+          if (Input.padPressedSlot('split.ready', slot)) setPlayerReady(pi, true);
+        } else if (Input.padPressedSlot('split.unready', slot)) {
+          setPlayerReady(pi, false);
+        }
+      }
+    }
+
+    // Fabuła blokująca (scena, podsumowanie, dok): A — dalej / przycisk panelu, B trzymane 0,6 s — pomiń scenę.
+    function padStoryStep() {
+      if (Input.padPressed('story.confirm')) runGameAction('story.confirm');
+      if (Input.padHoldCrossed('story.skip')) runGameAction('story.skip');
+      if (Input.padPressed('ui.menu')) runGameAction('ui.menu');
+    }
+
+    // Gra i CIC (gracz 1): akcje z kontekstem 'cic' działają też nad mapą (zoom, kursor, CIC, menu, warp, dopalacz).
+    function padGameStep(dt) {
+      if (Input.pad(0) < 0) return;
+      // A: przycisk panelu akcji fabuły (ODDOKUJ), gdy fabuła nie blokuje gry
+      if (Input.padPressed('story.action')) runGameAction('story.action');
+      // Y: warp na zboczu (B1 — dawniej co klatkę przy trzymaniu: ładowanie zaczynało się i anulowało na zmianę)
+      if (Input.padPressed('nav.warp')) runGameAction('nav.warp');
+      if (Input.padPressed('ui.cic')) runGameAction('ui.cic');
+      if (Input.padPressed('ui.menu')) runGameAction('ui.menu');
+      // B: rakiety (dawna ścieżka — szarża w układzie „Dowódca”, etap 4)
+      if (Input.padHeld('wpn.rocket') && rocketCooldown <= 0) {
+        if (fireRocket()) rocketCooldown = ROCKET_FIRE_INTERVAL;
+      }
+      // LT: broń specjalna, bez niej rakiety w burtę kursora (dawna ścieżka)
+      if (Input.padHeld('wpn.specialFire')) {
+        const firedSpecial = (typeof tryFireMountedSpecialWeapons === 'function') ? tryFireMountedSpecialWeapons() : false;
+        if (!firedSpecial && !warp.isBusy()) fireRocketTowardCursor();
+      }
+      padZoomStep(dt, camera, Input.padHeld('cam.zoomIn'), Input.padHeld('cam.zoomOut'), true);
+      // RS: kursor (wirtualna mysz; celownik w świecie — etap 3)
+      if (Input.padVector('aim.cursor', _padVec, 0) > 0) {
+        const maxX = splitScreenMode ? Math.floor(W / 2) : W;
+        mouse.x = clamp((mouse.x || W / 2) + _padVec[0] * PAD_CURSOR_SPEED * dt, 0, maxX);
+        mouse.y = clamp((mouse.y || H / 2) + _padVec[1] * PAD_CURSOR_SPEED * dt, 0, H);
+        mouse.overCanvas = true;
+      }
+    }
+
+    // LB / RB: zoom w czasie (B9); w CIC — zoom mapy.
+    function padZoomStep(dt, cam, zIn, zOut, allowCic) {
+      if (zIn === zOut || !(dt > 0)) return;
+      if (allowCic && CICDisplay.active) {
+        const f = Math.pow(zIn ? 1 + PAD_CIC_ZOOM_STEP : 1 - PAD_CIC_ZOOM_STEP, 60 * dt);
+        CICDisplay.onWheel((1 - f) / 0.0015);
+        return;
+      }
+      cam.targetZoom = clamp(cam.targetZoom * Math.pow(zIn ? PAD_ZOOM_STEP : 2 - PAD_ZOOM_STEP, 60 * dt), cam.minZoom, cam.maxZoom);
+      if (cam === camera) {
+        camera.manualZoom = true;
+        zoomIndicator.show(camera.targetZoom);
+      }
+    }
+
+    // Gracz 2 (podzielony ekran) jak dziś: A / RT — główna broń (WeaponController czyta mouse2.fireMain), B — rakiety,
+    // LT — broń specjalna albo rakiety, LB / RB — zoom jego widoku, RS — jego kursor (prawa połowa), Menu — menu.
+    // AGENT: etap 8 — gracz 2 na kierowaniu ogniem i pełnym układzie pada.
+    function padP2Step(dt) {
+      if (!splitScreenMode) return;
+      const live = !!(player2Ship && !player2Ship.destroyed) && Input.pad(1) >= 0;
+      mouse2.fireMain = live && Input.padHeld('wpn.fire', 1);
+      const rocketHeld = live && Input.padHeld('wpn.rocket', 1);
+      if (rocketHeld) { mouse2.right = true; mouse2._fromGamepadR = true; }
+      else if (mouse2._fromGamepadR) { mouse2.right = false; mouse2._fromGamepadR = false; }
+      if (live && Input.padHeld('wpn.specialFire', 1)) {
+        const firedSpecial = p2WeaponCtrl ? p2WeaponCtrl.tryFireSpecialWeapons() : false;
+        if (!firedSpecial) { mouse2.right = true; mouse2._fromGamepadL2 = true; }
+      } else if (mouse2._fromGamepadL2) { mouse2.right = false; mouse2._fromGamepadL2 = false; }
+      if (!live) return;
+      if (camera2) padZoomStep(dt, camera2, Input.padHeld('cam.zoomIn', 1), Input.padHeld('cam.zoomOut', 1), false);
+      if (Input.padVector('aim.cursor', _padVec, 1) > 0) {
+        const halfW = Math.floor(W / 2);
+        mouse2.x = clamp((mouse2.x || (halfW + halfW / 2)) + _padVec[0] * PAD_CURSOR_SPEED * dt, halfW, W);
+        mouse2.y = clamp((mouse2.y || H / 2) + _padVec[1] * PAD_CURSOR_SPEED * dt, 0, H);
+        mouse2.overCanvas = true;
+      }
+      if (Input.padPressed('ui.menu', 1)) runGameAction('ui.menu');
+    }
+
+    // Lewa gałka → wejście lotu (updateInput scala z klawiaturą) co klatkę, gdy daje wejście, i raz po puszczeniu
+    // (wraca stan klawiatury). Bez wychylenia gałki pad nie nadpisuje niczego — klawiatura i autopilot jak bez pada.
+    function padFlightStep() {
+      const a0 = Input.padFlightActive(0);
+      if (a0 || _padFlightWas[0]) applyP1Flight(false);
+      _padFlightWas[0] = a0 ? 1 : 0;
+      const a1 = splitScreenMode && Input.padFlightActive(1);
+      if (a1 || _padFlightWas[1]) applyP2Flight();
+      _padFlightWas[1] = a1 ? 1 : 0;
     }
 
     // =============== Side rockets ===============
@@ -19253,30 +19789,6 @@
     rebuildHardpointsForFrame();
     loadLoadout();
 
-    function triggerRailVolley() {
-      const mainWeapons = Game.player.weapons?.[HP.MAIN];
-      if (!mainWeapons || !mainWeapons.length) return;
-      if (rail.queue.length) return;
-      const start = rail.nextStart;
-      rail.nextStart ^= 1;
-      const barrels = Math.max(1, rail.barrelsPerShot || 2);
-      const orderPair = barrels === 1 ? [start] : [start, 1 - start];
-      for (let b = 0; b < rail.burstsPerClick; b++) {
-        const baseDelay = b * (orderPair.length * rail.shotGap + rail.burstGap);
-        for (let idx = 0; idx < orderPair.length; idx++) {
-          const barrelBaseTime = baseDelay + idx * rail.shotGap;
-          for (let w = 0; w < mainWeapons.length; w++) {
-            const jitter = Math.random() * 0.12;
-            rail.queue.push({
-              timer: barrelBaseTime + jitter,
-              barrel: orderPair[idx],
-              weaponIndex: w,
-              ignoreCD: true
-            });
-          }
-        }
-      }
-    }
     function fireRailBarrel(barIndex, specificWeaponIdx = -1) {
       const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
       if (!mainWeapons.length) return;
@@ -19704,7 +20216,7 @@
 
     function fcPaintStep() {
       if (!fcPaint.active) return;
-      if (!keys['t'] || stationUI.open || StoryGame.blocksInput || isRtsModeActive() || CICDisplay.active || miningInput.active) {
+      if (!Input.held('tgt.paint') || stationUI.open || StoryGame.blocksInput || isRtsModeActive() || CICDisplay.active || miningInput.active) {
         fcPaint.active = false;
         fcPaint.skip = null;
         return;
@@ -19776,6 +20288,11 @@
     // osobno dla każdego statku i każdej baterii point-defence.
     window.__npcRocketThreats = _pdEnemyRocketBuffer;
     window.__playerRocketThreats = _pdPlayerRocketBuffer;
+    // Wrogie myśliwce i (z PD CHIP-em) wrogie kadłuby na bieżący krok — ciwsStep buduje je raz,
+    // zamiast pętli po całej flocie z wrogością frakcji na każde działko PD (audyt 2026-10-07 § 5.4).
+    // Kolejność jak w `npcs`: przy remisie odległości wygrywa ten sam cel co dawniej.
+    const _pdEnemyFighterBuffer = [];
+    const _pdEnemyHullBuffer = [];
 
     function ciwsStep(dt) {
       _pdEnemyRocketBuffer.length = 0;
@@ -19793,6 +20310,9 @@
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
       // Bez PD CHIP-a obrona punktowa gracza strzela tylko do rakiet i myśliwców.
       const pdHullsAllowed = hasShipChip(ship, PD_CHIP_ID);
+      // Listy wrogów liczy pierwsze działko, które ich potrzebuje (bez rakiety w zasięgu). Laser PD
+      // rani od razu (cel może zginąć, może się zmienić reputacja) — po jego strzale liczą się od nowa.
+      let npcTargetsReady = false;
       for (let i = 0; i < ship.ciws.length; i++) {
         if (i >= auxWeapons.length) break;
         const loadout = auxWeapons[i];
@@ -19832,18 +20352,31 @@
         // zawsze ważniejszy niż najbliższy kadłub.
         // Wróg = każda jednostka wroga graczowi (frakcje), nie tylko piraci.
         if (!target) {
-          for (const npc of npcs) {
-            if (!isHostileNpc(npc)) continue;
-            if (!isFighterNPC(npc)) continue;
+          if (!npcTargetsReady) {
+            _pdEnemyFighterBuffer.length = 0;
+            _pdEnemyHullBuffer.length = 0;
+            for (let ni = 0; ni < npcs.length; ni++) {
+              const npc = npcs[ni];
+              // Wrogość frakcji (napisy, progi reputacji) tylko dla kandydatów: bez chipa — myśliwców.
+              const fighter = isFighterNPC(npc);
+              if (!fighter && !pdHullsAllowed) continue;
+              if (!isHostileNpc(npc)) continue;
+              if (fighter) _pdEnemyFighterBuffer.push(npc);
+              if (pdHullsAllowed) _pdEnemyHullBuffer.push(npc);
+            }
+            npcTargetsReady = true;
+          }
+          for (let ni = 0; ni < _pdEnemyFighterBuffer.length; ni++) {
+            const npc = _pdEnemyFighterBuffer[ni];
             const ddx = npc.x - base.x, ddy = npc.y - base.y;
             const d2 = ddx * ddx + ddy * ddy;
             if (d2 < bestDistSq) { bestDistSq = d2; target = npc; }
           }
         }
-        // Priorytet 3: dowolny piracki kadłub — tylko z PD CHIP-em.
+        // Priorytet 3: dowolny piracki kadłub — tylko z PD CHIP-em (lista z priorytetu 2).
         if (!target && pdHullsAllowed) {
-          for (const npc of npcs) {
-            if (!isHostileNpc(npc)) continue;
+          for (let ni = 0; ni < _pdEnemyHullBuffer.length; ni++) {
+            const npc = _pdEnemyHullBuffer[ni];
             const ddx = npc.x - base.x, ddy = npc.y - base.y;
             const d2 = ddx * ddx + ddy * ddy;
             if (d2 < bestDistSq) { bestDistSq = d2; target = npc; }
@@ -19908,6 +20441,7 @@
             gun.cd = fireInterval;
           } else {
             firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval, weaponId);
+            npcTargetsReady = false;
           }
         } else {
           fireCIWSGun(gun, base, baseVel, wDef, fireInterval);
@@ -20146,12 +20680,22 @@
     window.flyingHexDebris = [];
     let _critChainDepth = 0;
 
+    // Typ → myśliwiec, zapamiętane po napisie typu: toLowerCase() robił nowy napis przy każdym
+    // wywołaniu (pętla PD gracza po flocie co krok). Typów NPC jest kilkadziesiąt.
+    const FIGHTER_NPC_TYPES = new Set(['fighter', 'interceptor', 'drone', 'ally_fighter', 'carrier_fighter']);
+    const _fighterTypeMemo = new Map();
     function isFighterNPC(npc) {
       if (!npc) return false;
       if (npc.fighter) return true;
-      const t = String(npc.type || '').toLowerCase();
-      return t === 'fighter' || t === 'interceptor' || t === 'drone' ||
-             t === 'ally_fighter' || t === 'carrier_fighter';
+      const type = npc.type;
+      if (typeof type !== 'string') return FIGHTER_NPC_TYPES.has(String(type || '').toLowerCase());
+      let fighter = _fighterTypeMemo.get(type);
+      if (fighter === undefined) {
+        fighter = FIGHTER_NPC_TYPES.has(type.toLowerCase());
+        if (_fighterTypeMemo.size >= 256) _fighterTypeMemo.clear();
+        _fighterTypeMemo.set(type, fighter);
+      }
+      return fighter;
     }
 
     function applyAoeExplosionDamage(pos, radius, baseDamage, sourceEntity) {
@@ -20530,8 +21074,8 @@
     }
 
     function enforceNpcHexIntegrityBalance() {
-      const playerHexLossExponent = 2.35;
-      const npcHexLossExponent = 2.2;
+      const playerHexLossExponent = HULL_INTEGRITY.playerExponent;
+      const npcHexLossExponent = HULL_INTEGRITY.npcExponent;
 
       if (ship && !ship.destroyed && (ship.hexGrid || ship.beamHull) && ship.hull && Number.isFinite(ship.hull.max) && ship.hull.max > 0) {
         const shipState = getHullStructuralState(ship);
@@ -20569,7 +21113,7 @@
         }
       }
     }
-    const NPC_CRUSH_DEATH_RATIO = 0.2;
+    const NPC_CRUSH_DEATH_RATIO = HULL_INTEGRITY.npcCrushDeathRatio;
 
     function applyDamageToStation(station, amount) {
       let dmg = amount || 0;
@@ -21036,7 +21580,8 @@
 
         for (let k = 0; k < targetsCount; k++) {
           const npc = targetsBuffer[k];
-          if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
+          // wrak bez kolizji (odłam dachu budowli nad płaszczyzną gry — worldBodies.js) też nie łapie pocisków
+          if (npc.isCollidable === false || (!npc.isWreck && npc.dead)) continue;
 
           const realNpc = npc._realEntity || npc;
           if (b.source && b.source === realNpc) continue;
@@ -21178,7 +21723,7 @@
             // Jeśli tarcza działa ORAZ (trafiono w elipsę LUB trafiono w kadłub) -> TARCZA BLOKUJE
 
             registerShieldImpact(hitNPC, hitX, hitY, npcDamage, shieldFxClassForBullet(b));
-            if (window.AudioSys) AudioSys.playSound('shieldHit');
+            if (window.AudioSys) playShieldHitSound(hitX, hitY);
 
             // Odejmij HP tarczy
             const absorbed = Math.min(hitNPC.shield.val, npcDamage);
@@ -21963,6 +22508,14 @@
       // JEDNA prędkość warpa (QOL 2026-10-03: biegi przeniesione do PRZELOTU) — jak w demie „Nurt”
       // (podróż Ziemia → Jowisz ~260 tys. j/s); strefy: pas asteroid × 0,8, przy planetach × 0,3.
       speed: WARP_SPEED,
+      // Skok z celem (TRAVEL TO, ręczny kurs w tolerancji): prędkość przelotowa z planu (planPlayerWarp —
+      // czas podróży jak w demie „Nurt”); swobodny skok — speed. Zwolnienie przy ciałach: flybyFactor
+      // (ostatni krok fizyki). originBody / targetBody — planeta startu i celu (soczewka świata).
+      cruise: WARP_SPEED,
+      flybyFactor: 1,
+      originBody: null,
+      targetBody: null,
+      tripPlan: null,
       gear: 1,
       fuelMax: 60, fuel: 60, consumeRate: 1.0, regenRate: 5,
       dir: { x: 0, y: 0 },
@@ -22184,8 +22737,9 @@
 
       warp.dir.x = dirX;
       warp.dir.y = dirY;
-
-
+      // Prędkość przelotowa, ciała zwolnienia, planeta startu i cel soczewki świata.
+      planPlayerWarp(dirX, dirY);
+      warp.flybyFactor = 1;
 
       ship.angVel = 0; // Tylko stabilizujemy obrót
 
@@ -22647,7 +23201,7 @@
       // Dawna kolejka salw `rail` i przełączniki auto-fire nie biorą udziału (sterowanie klasyczne usunięte).
       rail.queue.length = 0;
       mainAutoFire = specialAutoFire = rocketAutoFire = false;
-      fcTrigger.pad = !!mouse.fireMain;
+      // fcTrigger.pad (RT pada) ustawia pumpInput raz na klatkę — warstwa wejścia, kontekst gry.
       stepPlayerFireControl(dt);
       if (specialMissileAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
         tryFireSpecialMissiles();
@@ -22827,6 +23381,8 @@
         onDeepScanComplete: () => pushZoneMessage('SKAN ZAKONCZONY', 1.2)
       });
 
+      // zegar nakładki skanu X (czas logiki — pauza stoi, jak fala skanera)
+      scanOverlayClock += frameLogicDt;
       // update radar pings
       for (let i = radarPings.length - 1; i >= 0; i--) {
         const p = radarPings[i];
@@ -22841,7 +23397,7 @@
       for (let i = scanWaves.length - 1; i >= 0; i--) {
         const w = scanWaves[i];
         w.age += frameLogicDt;
-        w.r += w.speed * frameLogicDt;
+        w.r = scanPulseRadius(w.age, w.speed);
         while (w.nextContact < w.contacts.length) {
           const contact = w.contacts[w.nextContact];
           if (!contact || !isTargetAlive(contact.target)) {
@@ -22852,28 +23408,8 @@
           revealScannerContact(contact, w);
           w.nextContact++;
         }
-        for (const npc of npcs) {
-          if (npc.dead) continue;
-          // Myśliwce całkowicie pomijamy — brak hypot, brak alokacji w hit-set
-          const _t = String(npc.type || '').toLowerCase();
-          if (!npc.isCapitalShip && (_t === 'fighter' || _t === 'interceptor' || _t === 'drone')) continue;
-          if (!scannerState.sweepTargets.has(npc) && !w.hit.has(npc) && Math.hypot(npc.x - w.x, npc.y - w.y) <= w.r) {
-            w.hit.add(npc);
-            spawnRadarPing(npc.x, npc.y);
-          }
-        }
-        for (const st of stations) {
-          if (!scannerState.sweepTargets.has(st) && !w.hit.has(st) && Math.hypot(st.x - w.x, st.y - w.y) <= w.r) { w.hit.add(st); spawnRadarPing(st.x, st.y); }
-        }
-        if (mercMission && mercMission.weaponPlatforms) {
-          for (const platform of mercMission.weaponPlatforms) {
-            if (!platform || platform.destroyed || platform.removed) continue;
-            if (!scannerState.sweepTargets.has(platform) && !w.hit.has(platform) && Math.hypot(platform.x - w.x, platform.y - w.y) <= w.r) {
-              w.hit.add(platform);
-              spawnRadarPing(platform.x, platform.y);
-            }
-          }
-        }
+        // (Dawne „pingi” — okręgi przy bytach spoza listy kontaktów, także ukrytych mgłą — usunięte razem ze
+        // starymi znacznikami skanu; wyniki fali rysuje nakładka skanu, src/ui/radar/scanOverlay.js.)
         if (w.r > w.max) scanWaves.splice(i, 1);
       }
 
@@ -22922,7 +23458,10 @@
       let stabilizerMainTurning = false;
       const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive;
       if (stabilizerActive) {
-        const manualHeadingInput = (keys['a'] || keys['d']) ? manualTorqueInput : 0;
+        // Ręczny skręt przesuwa strzałkę kursu: A / D albo lewa gałka (B3 — dawniej tylko klawisze, a ręczny
+        // moment był tłumiony, więc z włączonym stabilizatorem gałka nie skręcała).
+        const manualHeadingInput = ((keyboardOwnsP1() && (Input.keyHeld('fly.left') || Input.keyHeld('fly.right')))
+          || Input.padAxis('fly.turn', 0) !== 0) ? manualTorqueInput : 0;
         // Prawdziwa zdolność obrotu w tej klatce: dysze boczne, a przy ciągu
         // naprzód (albo bez dysz bocznych) także odchylenie silników głównych.
         const stabilizerMainThrottle = clamp(Number(ship?.thrusterInput?.main) || 0, 0, 1);
@@ -23034,7 +23573,10 @@
         warp.entryProgress = Math.min(1, warp.entryProgress + dt / Math.max(0.001, warp.entryDuration));
         const entryEase = smoothstep01(warp.entryProgress);
         const zoneWarpMul = zoneState.current?.warpMultiplier ?? 1;
-        const maxWarpSpeed = warp.speed * zoneWarpMul;
+        // Przy mijanej planecie statek zwalnia (demo „Nurt”: „grawitacja” — soczewka świata pokazuje
+        // przelot); skok z celem leci prędkością z planu (czas podróży jak w demie).
+        warp.flybyFactor = playerWarpFlybyFactor();
+        const maxWarpSpeed = (warp.cruise || warp.speed) * zoneWarpMul * warp.flybyFactor;
         const entryStartSpeed = Math.min(warp.entryBaseSpeed, maxWarpSpeed);
         const targetSpeed = entryStartSpeed + (maxWarpSpeed - entryStartSpeed) * entryEase;
         const targetV = { x: warp.dir.x * targetSpeed, y: warp.dir.y * targetSpeed };
@@ -23098,8 +23640,9 @@
         const right = { x: -sin, y: cos };
         const reverseInput = Math.max(0, -(clamp(ship.input?.thrustY ?? 0, -1, 1)));
         const retroState = ship.__retroState;
+        // Wsteczny z wejścia lotu (lewa gałka w dół, autopilot) — próg jak dawniej.
         const gamepadReverse = (ship.input?.thrustY ?? 0) < -0.15;
-        const manualBrakeHeld = !!((!isRtsModeActive() && keys['s']) || gamepadReverse);
+        const manualBrakeHeld = !!((!isRtsModeActive() && keyboardOwnsP1() && Input.keyHeld('fly.back')) || gamepadReverse);
         const reverseEngaged = !!(reverseInput > 0.05 && retroState?.reverseEngaged);
         const manualReverseHeld = manualBrakeHeld && reverseEngaged;
         const damperActive = !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));
@@ -23828,16 +24371,7 @@
     }
     window.setTorpedoMode = setTorpedoMode;
 
-    // Klawisz trybu: 8 — wejście; w trybie 8 przełącza wąski / szeroki wachlarz.
-    function torpedoKeyDown(e) {
-      if (e.code !== 'Digit8' && e.code !== 'Numpad8') return false;
-      if (stationUI.open || CICDisplay.active || e.repeat) return false;
-      if (!torpedoAim.active) { setShipMode('torpedo'); return true; }
-      torpedoAim.wide = !torpedoAim.wide;
-      pushZoneMessage(`TORPEDY: ${torpedoAim.wide ? 'SZEROKI' : 'WĄSKI'} WACHLARZ`, 1.3);
-      return true;
-    }
-
+    // Klawisz trybu (8 — wejście; w trybie wąski / szeroki wachlarz): akcja 'mode.torpedo' (GameActions).
     // Mysz w trybie torped (zwraca true = zdarzenie obsłużone): LPM — salwa, PPM — wyjście.
     function torpedoMouseDown(e) {
       if (!torpedoAim.active || !gameStarted || stationUI.open || CICDisplay.active || camera.mode === 'rts') return false;
@@ -24196,35 +24730,8 @@
       return false;
     }
 
-    // Klawisze trybu wydobycia (N przełącza zawsze; T / L / F tylko w trybie).
-    function miningKeyDown(k) {
-      if (k === 'n') {
-        if (stationUI.open || camera.mode === 'rts') return false;
-        // Tryb okrętu WYDOBYCIE (src/game/shipModes.js) — wejście zamyka pozostałe tryby.
-        if (miningInput.active) leaveShipMode('mining');
-        else setShipMode('mining');
-        return true;
-      }
-      if (!miningInput.active) return false;
-      const rig = getMiningRig();
-      if (!rig) return false;
-      if (k === 't') {
-        const on = rig.toggleTractor();
-        pushZoneMessage(on ? 'WIĄZKA ŚCIĄGAJĄCA: ON' : 'WIĄZKA ŚCIĄGAJĄCA: OFF', 1.2, { label: 'KOPALNIA' });
-        return true;
-      }
-      if (k === 'l') {
-        const ch = rig.cycleCharge(1);
-        pushZoneMessage(`ŁADUNEK: ${ch.id} (${ch.label}, energia ${String(ch.energy).replace('.', ',')}) · w magazynku ${PLAYER.miningCharges[ch.id] | 0}`, 1.6, { label: 'KOPALNIA' });
-        return true;
-      }
-      if (k === 'f') {
-        const n = rig.detonate();
-        if (n) pushZoneMessage(`DETONACJA: ${n} ${n === 1 ? 'ładunek' : 'ładunków'}`, 1.2, { label: 'KOPALNIA' });
-        return true;
-      }
-      return false;
-    }
+    // Klawisze trybu wydobycia (N przełącza zawsze; T / L / F tylko w trybie): akcje 'mode.mining' i 'mining.*'
+    // (GameActions).
 
     // HUD trybu wydobycia (kanwa 2D): skaner (rdzenie ciał, skład pod kursorem, ładunki)
     // i panel stanu (narzędzia, ładunki, ładownia, komunikaty platformy).
@@ -24349,6 +24856,11 @@
     // Statki daleko od ringów odpadają na teście odległości od planety.
     // NPC przez widok kinematyki, jak przy asteroidach (npcCollidesWithWorld).
     let _haloRingNoticeAtMs = 0;
+    // Bramka odległości NPC od ringów (audyt 2026-10-07 § 5.4): [x, y, promień] na ring — środek
+    // planety i zewnętrzny brzeg testu płyty w koliderze (podłoga + teren). Bitwa daleko od planet
+    // nie kopiuje co krok każdego NPC do bryły i nie pyta o niego trzech koliderów.
+    let _ringGate = new Float64Array(12);
+    const RING_GATE_SLACK = 64;   // zapas na zaokrąglenia obrotu do układu ringu (j. świata)
     function stepShipRingCollisions(dt) {
       if (!haloRings) return;
       if (ship && !ship.dead) {
@@ -24360,9 +24872,40 @@
         }
       }
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloRings.constrainShip(player2Ship, true);
+      // NPC (bez ścian portu) kolider odrzuca, gdy środek kadłuba jest dalej od planety niż
+      // floorMid + terrainReach + zasięg kadłuba (HaloRingCollider.constrainShip, nearFloor) — ten
+      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingGame) — bez bramki.
+      let gateN = -1;
+      const entries = haloRings.entries;
+      if (Array.isArray(entries)) {
+        if (_ringGate.length < entries.length * 3) _ringGate = new Float64Array(entries.length * 3);
+        gateN = 0;
+        for (let k = 0; k < entries.length; k++) {
+          const e = entries[k];
+          const floorMid = Number(e?.collider?.floorMid);
+          if (!(floorMid > 0)) { gateN = -1; break; }
+          _ringGate[gateN * 3] = Number(e.planet?.x) || 0;
+          _ringGate[gateN * 3 + 1] = Number(e.planet?.y) || 0;
+          _ringGate[gateN * 3 + 2] = floorMid + HALO_COLLISION.terrainReach + RING_GATE_SLACK;
+          gateN++;
+        }
+      }
       const body = _npcCollisionBody;
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
+        // Bramka przed npcCollidesWithWorld (oba testy czyste): daleki NPC to 5 odczytów pól, nie 10.
+        if (gateN >= 0) {
+          if (!npc) continue;
+          // Pola jak w widoku kinematyki (loadNpcCollisionBody); (|w| + |h|) / 2 ≥ pół przekątnej.
+          const x = Number(npc.x) || 0, y = Number(npc.y) || 0;
+          const reach = Math.max(Number(npc.radius) || 0, 0.5 * (Math.abs(Number(npc.w) || 0) + Math.abs(Number(npc.h) || 0)), 60);
+          let near = false;
+          for (let k = 0; k < gateN; k++) {
+            const dx = x - _ringGate[k * 3], dy = y - _ringGate[k * 3 + 1], r = _ringGate[k * 3 + 2] + reach;
+            if (dx * dx + dy * dy < r * r) { near = true; break; }
+          }
+          if (!near) continue;
+        }
         if (!npcCollidesWithWorld(npc)) continue;
         if (haloRings.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
       }
@@ -24504,7 +25047,8 @@
       const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
-      applyGamepad();
+      // Wejście: pady i kontekst raz na klatkę (strażnik znacznika rAF — pętla wejścia mogła to już zrobić).
+      pumpInput(now);
       // Fabuła: sceny, lot kamery i podsumowanie zamrażają świat jak pauza (kamera i UI biegną dalej).
       if (PAUSED || StoryGame.worldFrozen) {
         saveState();
@@ -25359,6 +25903,9 @@
       o.ship = ship;
       o.warp = warp;
       o.npcs = npcs;
+      // Soczewka świata (planety w skoku — src/3d/warp/worldLens.js) tylko w kamerze z góry jednego gracza:
+      // planety są wspólne dla obu widoków podzielonego ekranu, a kamery 3D i kino fabuły patrzą inaczej.
+      o.lensAllowed = !splitScreenMode && !View3D.active;
       return o;
     }
     // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
@@ -25517,8 +26064,8 @@
       // --- KAMERY 3D (src/game/game3D.js, camera3DRig.js) — sam widok, rozgrywka w płaszczyźnie ---
       Game3D.load();
       if (Game3D.isFree(splitScreenMode) && !isRtsModeActive() && !stationUI.open && !CICDisplay.active && !isMainMenuVisible()) {
-        const camAx = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0);
-        const camAy = (keys['arrowup'] ? 1 : 0) - (keys['arrowdown'] ? 1 : 0);
+        const camAx = (Input.keyHeld('cam.orbitRight') ? 1 : 0) - (Input.keyHeld('cam.orbitLeft') ? 1 : 0);
+        const camAy = (Input.keyHeld('cam.orbitUp') ? 1 : 0) - (Input.keyHeld('cam.orbitDown') ? 1 : 0);
         if (camAx || camAy) Game3D.steerCamera(camAx, camAy, frameDt || 0);
       }
       const cam3d = Game3D.frame({
@@ -25569,6 +26116,8 @@
       // Warp „Nurt” (src/3d/warp/warpNurt.js): przed planetami — ustawia na tę klatkę limit
       // kamery gwiazd, smugi gwiazd, zgięcie mgławicy, ośrodek i efekty przylotów NPC.
       WarpNurt.update(_warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam));
+      // Jasność tła wg strefy gracza (src/game/skyRegion.js): pas asteroid ciemniej, pusta przestrzeń jaśniej.
+      if (window.setSkyZone) window.setSkyZone(zoneState.current?.id || null);
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
       // Pył kosmiczny: prędkość kamery BEZ wstrząsu (smugi), gracz 2 podzielonego ekranu, opcja z menu. W pauzie
       // dt = 0 — smugi stoją jak zatrzymana klatka.
@@ -25585,6 +26134,8 @@
         haloRings.update(frameDt, cam, {
           sun: SUN,
           ship,
+          // czas gry (automat obsługi stanowisk K-7: postój, podpinanie, odpięcie stoją w pauzie i scenach fabuły)
+          gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
           quality: window.OPTIONS?.planetQuality,
           splitScreen: splitScreenMode
         });
@@ -25621,6 +26172,20 @@
         // mgła wojny: reflektory ukrytych okrętów nie oświetlają skał (zdradzałyby pozycję)
         asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList), PAUSED);
       }
+      // Pył w halach K-7 (src/3d/gasField/): gra pakuje wejście klatki (hala przy kamerze, przekształcenie
+      // hala → świat w double, okręty w domenie, dt gry — 0 w pauzie i scenach fabuły); symulacja i obraz
+      // w kroku Core3D.fx czytają tylko tę tablicę i dysze MAIN z EngineFrame.
+      packHallDustFrame(HallDust.input, {
+        dt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
+        camX: cam.x, camY: cam.y,
+        viewHalf: Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1),
+        rings: haloRings ? haloRings.entries : null,
+        ship, ship2: splitScreenMode ? player2Ship : null,
+        npcs: fogSeenInto(npcs, _npcSeenList), sun: SUN,
+        // zegar migania świateł hal K-7 (ten sam dostaje shader hali) — światła hali w siatce oświetlają pył i parę
+        clock: haloRings ? haloRings.clock : 0
+      });
+      HallDust.submit(HallDust.input);
       const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);
@@ -26226,152 +26791,16 @@
         const hudLineW = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
         const hudGlowOn = cam.zoom >= HUD_GLOW_MIN_ZOOM;
 
-        if (scannerState.active && scanWaves.length) {
-          for (const w of scanWaves) {
-            const center = worldToScreenInto(w.x, w.y, cam, _hudCircleScreen);
-            const cx = center.x;
-            const cy = center.y;
-            const radius = Math.max(1, w.r * cam.zoom);
-            const fade = clamp(1 - (w.r / Math.max(1, w.max)), 0, 1);
-            ctx.save();
-            ctx.strokeStyle = 'rgba(110,217,255,0.9)';
-            // Fala dochodzi do ~90k j. — przez większość życia jej obwód w ogóle
-            // nie przecina kadru, a pełny okrąg był kreskowany i rozmywany co klatkę.
-            const waveArc = circleArcInRect(cx, cy, radius, hudVpX, hudVpY, hudVpW, hudVpH);
-            if (waveArc) {
-              if (hudGlowOn) {
-                ctx.lineWidth = hudLineW * 3;
-                strokeHudDashedArc(ctx, cx, cy, radius, waveArc, 18 * cam.zoom, 12 * cam.zoom, (0.18 + 0.42 * fade) * 0.3);
-              }
-              ctx.lineWidth = hudLineW;
-              strokeHudDashedArc(ctx, cx, cy, radius, waveArc, 18 * cam.zoom, 12 * cam.zoom, 0.18 + 0.42 * fade);
-            }
-            const innerR = Math.max(6, radius * 0.14);
-            const innerArc = circleArcInRect(cx, cy, innerR, hudVpX, hudVpY, hudVpW, hudVpH);
-            if (innerArc) {
-              ctx.setLineDash([]);
-              if (hudGlowOn) {
-                ctx.globalAlpha = (0.22 + 0.35 * fade) * 0.3;
-                ctx.lineWidth = hudLineW * 3;
-                ctx.beginPath();
-                ctx.arc(cx, cy, innerR, innerArc.start, innerArc.end);
-                ctx.stroke();
-              }
-              ctx.globalAlpha = 0.22 + 0.35 * fade;
-              ctx.lineWidth = hudLineW;
-              ctx.beginPath();
-              ctx.arc(cx, cy, innerR, innerArc.start, innerArc.end);
-              ctx.stroke();
-            }
-            ctx.restore();
-
-            for (let j = w.nextContact; j < w.contacts.length; j++) {
-              const contact = w.contacts[j];
-              if (!contact || !isTargetAlive(contact.target)) continue;
-              const revealIn = scannerContactRevealTime(contact, w) - w.age;
-              if (revealIn > SCANNER_ACQUIRE_LEAD_TIME) break;
-              const acquire = clamp(1 - (revealIn / SCANNER_ACQUIRE_LEAD_TIME), 0, 1);
-              if (acquire <= 0) continue;
-              const obj = contact.target;
-              const s = worldToScreenInto(getTargetX(obj), getTargetY(obj), cam, _hudMarkerScreen);
-              const baseRad = (getScanObjectRadius(obj) + 16) * cam.zoom;
-              const rad = baseRad * (1.25 - 0.22 * acquire);
-              const tick = Math.max(8, rad * 0.3);
-              const gap = Math.max(6, rad * 0.5);
-              if (hudMarkerOffscreen(s.x, s.y, Math.max(rad, gap + tick) + hudLineW * 3, hudVpX, hudVpY, hudVpW, hudVpH)) continue;
-              const tone = scannerToneRgb(contact.tone);
-              const arcStart = -Math.PI / 2;
-              const arcEnd = -Math.PI / 2 + Math.PI * 2 * acquire;
-              ctx.save();
-              ctx.strokeStyle = hudRgba(tone, 0.95);
-              if (hudGlowOn) {
-                ctx.globalAlpha = (0.25 + 0.55 * acquire) * 0.3 * acquire;
-                ctx.lineWidth = hudLineW * 3;
-                ctx.beginPath();
-                ctx.arc(s.x, s.y, rad, arcStart, arcEnd);
-                ctx.stroke();
-              }
-              ctx.globalAlpha = 0.25 + 0.55 * acquire;
-              ctx.lineWidth = hudLineW;
-              ctx.beginPath();
-              ctx.arc(s.x, s.y, rad, arcStart, arcEnd);
-              ctx.stroke();
-              ctx.globalAlpha *= 0.9;
-              ctx.beginPath();
-              ctx.moveTo(s.x - gap - tick, s.y - gap); ctx.lineTo(s.x - gap, s.y - gap);
-              ctx.moveTo(s.x - gap, s.y - gap - tick); ctx.lineTo(s.x - gap, s.y - gap);
-              ctx.moveTo(s.x + gap, s.y - gap - tick); ctx.lineTo(s.x + gap, s.y - gap);
-              ctx.lineTo(s.x + gap + tick, s.y - gap);
-              ctx.moveTo(s.x - gap - tick, s.y + gap); ctx.lineTo(s.x - gap, s.y + gap);
-              ctx.lineTo(s.x - gap, s.y + gap + tick);
-              ctx.moveTo(s.x + gap, s.y + gap + tick); ctx.lineTo(s.x + gap, s.y + gap);
-              ctx.lineTo(s.x + gap + tick, s.y + gap);
-              ctx.stroke();
-              ctx.restore();
-            }
-          }
-        }
-
-        if (radarPings.length || scannerRevealFx.length) {
-          const pingLineW = Math.max(1, 2 * Math.sqrt(cam.zoom));
-          for (const p of radarPings) {
-            const s = worldToScreenInto(p.x, p.y, cam, _hudMarkerScreen);
-            const t = clamp(p.age / Math.max(0.001, p.life), 0, 1);
-            const rad = (24 + 44 * t) * cam.zoom;
-            if (hudMarkerOffscreen(s.x, s.y, rad + pingLineW * 3, hudVpX, hudVpY, hudVpW, hudVpH)) continue;
-            ctx.save();
-            ctx.strokeStyle = 'rgba(110,217,255,0.9)';
-            if (hudGlowOn) {
-              ctx.globalAlpha = 0.55 * (1 - t) * 0.3;
-              ctx.lineWidth = pingLineW * 3;
-              ctx.beginPath();
-              ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
-              ctx.stroke();
-            }
-            ctx.globalAlpha = 0.55 * (1 - t);
-            ctx.lineWidth = pingLineW;
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-          }
-          const revealLineW = Math.max(1.5, 2.4 * Math.sqrt(cam.zoom));
-          const revealFont = `${Math.max(10, 11 * Math.sqrt(cam.zoom)).toFixed(0)}px Consolas, monospace`;
-          for (const fx of scannerRevealFx) {
-            const obj = fx.target;
-            if (!isTargetAlive(obj)) continue;
-            const s = worldToScreenInto(getTargetX(obj), getTargetY(obj), cam, _hudMarkerScreen);
-            const t = clamp(fx.age / Math.max(0.001, fx.life), 0, 1);
-            const baseRad = (getScanObjectRadius(obj) + 18) * cam.zoom;
-            const rad = baseRad + (22 * t * cam.zoom);
-            // Etykieta stoi na prawo od okręgu — zapas ~280 px w tę stronę.
-            if (s.x + rad + 280 < hudVpX || s.x - rad - 8 > hudVpX + hudVpW
-              || s.y + rad + 24 < hudVpY || s.y - rad - 24 > hudVpY + hudVpH) continue;
-            const tone = scannerToneRgb(fx.contact?.tone);
-            ctx.save();
-            ctx.strokeStyle = hudRgba(tone, 0.95);
-            ctx.fillStyle = hudRgba(tone, 0.95);
-            if (hudGlowOn) {
-              ctx.globalAlpha = 0.85 * (1 - t) * 0.3;
-              ctx.lineWidth = revealLineW * 3;
-              ctx.beginPath();
-              ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
-              ctx.stroke();
-            }
-            ctx.globalAlpha = 0.85 * (1 - t);
-            ctx.lineWidth = revealLineW;
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
-            ctx.stroke();
-            if (t < 0.78) {
-              ctx.font = revealFont;
-              ctx.textBaseline = 'middle';
-              // Podsumowanie (etykieta + masa) liczone raz na efekt, nie co klatkę.
-              if (fx._summary === undefined) fx._summary = scannerRevealSummary(fx.contact);
-              ctx.fillText(fx._summary, s.x + rad + 10, s.y - Math.max(12, rad * 0.25));
-            }
-            ctx.restore();
-          }
+        // Skan X w świecie: fala impulsu, ramki i podpisy wyników, namiary stacji (src/ui/radar/scanOverlay.js).
+        // (Dawne przerywane okręgi fali, „pingi”, okręgi z podpisami i klamry do końca gry — usunięte.)
+        if (!isMainMenuVisible() && !StoryGame.hudHidden) {
+          refreshStoryTargetEntities();
+          if (scanOverlay.count > 0) refreshScanBlockedRects(performance.now());
+          scanOverlayView.W = W; scanOverlayView.H = H;
+          scanOverlayView.time = scanOverlayClock;
+          scanOverlayView.ship = ship;
+          scanOverlayView.cam = cam;
+          scanOverlay.draw(ctx, scanOverlayView);
         }
 
         // Stary hover-ring został usunięty; cele pokazują ramki celów priorytetowych i wroga przy kursorze
@@ -26392,50 +26821,6 @@
               .map(c => c.target),
             isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
           });
-        }
-        if (!radarUiActive && scannerState.active && scannerContacts.length) {
-          // Kontakty zostają na liście po impulsie (do śmierci celu), więc ta pętla
-          // chodzi co klatkę przez resztę sesji — poza kadrem nic nie rysujemy,
-          // a poświata idzie szerszą linią zamiast shadowBlur na każdy kontakt.
-          for (const contact of scannerContacts) {
-            const obj = contact.target;
-            if (!isTargetAlive(obj)) continue;
-            const s = worldToScreenInto(getTargetX(obj), getTargetY(obj), cam, _hudMarkerScreen);
-            const baseRad = (getScanObjectRadius(obj) + (contact.type === 'station' ? 20 : 12)) * cam.zoom;
-            const tick = Math.max(8, baseRad * 0.38);
-            const gap = Math.max(6, baseRad * 0.45);
-            if (hudMarkerOffscreen(s.x, s.y, Math.max(baseRad, gap + tick) + hudLineW * 3, hudVpX, hudVpY, hudVpW, hudVpH)) continue;
-            const tone =
-              contact.tone === 'hostile' ? '110,255,190' :
-                (contact.tone === 'resource' ? '238,183,99' : (contact.tone === 'friendly' ? '80,190,255' : '150,255,220'));
-            ctx.save();
-            ctx.strokeStyle = hudRgba(tone, 0.88);
-            // Okrąg dużego okrętu przy zbliżeniu potrafi objąć cały kadr — wtedy
-            // circleArcInRect zwraca null i rysujemy same narożniki.
-            const ringArc = circleArcInRect(s.x, s.y, baseRad, hudVpX, hudVpY, hudVpW, hudVpH);
-            if (ringArc) {
-              if (hudGlowOn) {
-                ctx.lineWidth = hudLineW * 3;
-                strokeHudDashedArc(ctx, s.x, s.y, baseRad, ringArc, 10 * cam.zoom, 8 * cam.zoom, 0.3);
-              }
-              ctx.lineWidth = hudLineW;
-              strokeHudDashedArc(ctx, s.x, s.y, baseRad, ringArc, 10 * cam.zoom, 8 * cam.zoom, 1);
-            }
-            ctx.setLineDash([]);
-            ctx.lineWidth = hudLineW;
-            ctx.globalAlpha = 0.85;
-            ctx.beginPath();
-            ctx.moveTo(s.x - gap - tick, s.y - gap); ctx.lineTo(s.x - gap, s.y - gap);
-            ctx.moveTo(s.x - gap, s.y - gap - tick); ctx.lineTo(s.x - gap, s.y - gap);
-            ctx.moveTo(s.x + gap, s.y - gap - tick); ctx.lineTo(s.x + gap, s.y - gap);
-            ctx.lineTo(s.x + gap + tick, s.y - gap);
-            ctx.moveTo(s.x - gap - tick, s.y + gap); ctx.lineTo(s.x - gap, s.y + gap);
-            ctx.lineTo(s.x - gap, s.y + gap + tick);
-            ctx.moveTo(s.x + gap, s.y + gap + tick); ctx.lineTo(s.x + gap, s.y + gap);
-            ctx.lineTo(s.x + gap + tick, s.y + gap);
-            ctx.stroke();
-            ctx.restore();
-          }
         }
         PerfHUD.addTiming('renderHudTime', performance.now() - tRender2dSection);
         // ==========================================
@@ -27159,7 +27544,9 @@
 
       // === CONTACT MARKERS (taktyczne znaczniki w przestrzeni 3D) ===
       if (!CICDisplay.active && gameStarted) {
-        ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission, false);
+        // Dolny margines znaczników nad paskiem broni i kopułą kokpitu (skala kokpitu, 1080p = 1).
+        _contactMarkersLayout.bottom = Math.round(118 * (window.cockpitUI?.scale || 1));
+        ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission, false, _contactMarkersLayout);
       }
       if (!CICDisplay.active && gameStarted && !stationUI.open && !ship.destroyed && !StoryGame.hudHidden && !StoryGame.letterbox) {
         drawStoryTargets(cam);
@@ -27314,53 +27701,6 @@
     }
     function hudEndPanel() { ctx.restore(); }
     function uiTitle(t) { ctx.font = '20px monospace'; ctx.fillText(t, 0, 0); ctx.translate(0, 28); ctx.font = '16px monospace'; }
-    // --- NOWA FUNKCJA UI DO WYBORU JAKOŚCI ---
-    function uiQualitySelector() {
-      if (!window.Nebula) return;
-      const cfg = window.Nebula.getConfig();
-      const current = cfg.quality;
-      const opts = ['2k', '4k', '8k'];
-
-      ctx.fillText('Jakość tła:', 0, 0);
-
-      let x = 180;
-      const y = -14;
-      const w = 40;
-      const h = 20;
-
-      for (const opt of opts) {
-        const isActive = (current === opt);
-
-        // Rysowanie przycisku
-        ctx.strokeStyle = isActive ? '#fff' : 'rgba(100,150,255,0.4)';
-        ctx.fillStyle = isActive ? '#3b82f6' : 'rgba(10,20,40,0.5)';
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-
-        // Tekst
-        ctx.fillStyle = isActive ? '#fff' : '#8fb5ff';
-        ctx.fillText(opt.toUpperCase(), x + 8, 0);
-
-        // Obsługa myszy (Canvas Immediate Mode GUI)
-        const t = ctx.getTransform();
-        const L = t.e + x;
-        const T = t.f + y;
-        const R = L + w;
-        const B = T + h;
-
-        const over = mouse.x > L && mouse.x < R && mouse.y > T && mouse.y < B;
-        if (over) {
-          _cursorRequest = 'pointer';
-          if (mouse.click) {
-            window.Nebula.setQuality(opt);
-            mouse.click = false; // "zjedz" kliknięcie
-          }
-        }
-
-        x += w + 8; // odstęp
-      }
-      ctx.translate(0, 24); // nowa linia w panelu
-    }
 
     function slider(label, min, max, step, obj, key) {
       ctx.fillText(`${label}: ${obj[key].toFixed(2)}`, 0, 0); ctx.translate(0, 18);
@@ -27781,32 +28121,39 @@
       if (!id) return;
       const c = dock.layout.chunkById.get(id);
       const p = dock.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
-      // Kawałek jest CIAŁEM (bańka gracza, src/game/worldBodies.js): odpada fizycznie — kotwice puszczają, front
-      // ciśnienia w miejscu trafienia rwie belki, reszta dryfuje od doku jako wrak. Statyczny — po staremu.
+      // Kawałek odpada i PĘKA jako ciało silnika belek (src/game/worldBodies.js — breakPiece: statyczny staje się
+      // ciałem na miejscu): rdzeń przy trafieniu w odłamki, pęknięcia na kilka odłamów z gruzem, odłamy dryfują od
+      // doku. Bez ciała (kawałka nie da się zbudować) — animacja bryły po staremu.
       const wPiece = st._worldSite ? worldBodies.piece(st._worldSite, id) : null;
-      if (wPiece && worldBodies.isLive(wPiece)) {
-        worldBodies.breakPiece(wPiece, hx, hy, { power: c.kind === 'spine' ? 2.2 : 1.4, speed: 70, outX: p.x - st.x, outY: p.y - st.y });
-      } else if (!breakPirateDryDockChunk(id, { speed: 70, spin: 0.08, life: 45 })) return;
+      if (!(wPiece && worldBodies.breakPiece(wPiece, hx, hy, { power: c.kind === 'spine' ? 2.2 : 1.4, speed: 70, outX: p.x - st.x, outY: p.y - st.y })) &&
+        !breakPirateDryDockChunk(id, { speed: 70, spin: 0.08, life: 45 })) return;
+      // Dok blisko końca (≤ 3/8 punktów): wszystkie kawałki (także dach-duch) stają się ciałami, a ich skóry pieką
+      // się w tle — łańcuch rozpadu przy śmierci nie buduje ciał ani nie piecze skór w swoich klatkach.
+      if (st._worldSite && st.hp <= st.maxHp * 0.375) worldBodies.setAllLive(st._worldSite, true);
       window.makeReactorBlow?.({ x: p.x, y: p.y, size: c.kind === 'spine' ? 520 : 380 });
       camera.addShake(12, 0.5);
       if (c.kind === 'spine') {
-        // okręty stanowisk przy rozerwanym odcinku trzonu (rękawy, cumy) idą z nim
+        // okręty stanowisk przy rozerwanym odcinku trzonu (rękawy, cumy) idą z nim — te, które jeszcze stoją
+        // (wystartowane z zegara wodowania walczą gdzie indziej)
         for (const n of StoryGame.site?.parkedList || []) {
-          if (n && !n.dead && dock.layout.berths[n.__dockBerth]?.segment === id) storyKillNpc(n);
+          if (n && !n.dead && !n.__storyLaunched && dock.layout.berths[n.__dockBerth]?.segment === id) storyKillNpc(n);
         }
       }
     }
 
-    // Łańcuch rozpadu doku (misja: śmierć stacji, planDryDockChain): kawałek-ciało (bańka gracza) odpada fizycznie
-    // od środka kawałka, statyczny — animacją bryły jak dawniej.
+    // Łańcuch rozpadu doku (misja: śmierć stacji, planDryDockChain): każdy kawałek — także statyczny i dach-duch —
+    // pęka jako ciało od środka kawałka (worldBodies.breakPiece); bez ciała — animacją bryły jak dawniej.
     function storyDryDockBreak(id) {
       const st = StoryGame.site?.station;
       const dock = st?.dryDock;
+      if (st?._worldSite) worldBodies.setAllLive(st._worldSite, true);
       const wPiece = st?._worldSite ? worldBodies.piece(st._worldSite, id) : null;
-      if (dock && wPiece && worldBodies.isLive(wPiece)) {
+      if (dock && wPiece) {
         const c = dock.layout.chunkById.get(id);
         const p = dock.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
-        return worldBodies.breakPiece(wPiece, p.x, p.y, { power: 1.6, speed: 95, outX: p.x - st.x, outY: p.y - st.y });
+        const power = c.kind === 'spine' || c.kind === 'collar' ? 2 : c.kind === 'roof' ? 1.8 : 1.6;
+        const speed = c.kind === 'roof' ? 140 : 95;
+        if (worldBodies.breakPiece(wPiece, p.x, p.y, { power, speed, outX: p.x - st.x, outY: p.y - st.y })) return true;
       }
       return breakPirateDryDockChunk(id, { speed: 95, spin: 0.14, life: 40 });
     }
@@ -27890,7 +28237,7 @@
     }
 
     // Stan klatki bryły doku z misji (render → updatePirateDryDock3D). Bez alokacji na klatkę.
-    const _dockFrameState = { alarm: false, alarmAge: 0, playerInHall: false, berths: new Array(16).fill(0), sun: null, daylight: 0.3 };
+    const _dockFrameState = { alarm: false, alarmAge: 0, playerInHall: false, berths: new Array(16).fill(0), slipsHidden: [false, false], sun: null, daylight: 0.3 };
     function storyDryDockFrameState() {
       const s = _dockFrameState;
       const site = StoryGame.site;
@@ -27900,37 +28247,36 @@
       s.playerInHall = !!(dock && ship?.pos && dock.inHall(ship.pos.x, ship.pos.y));
       s.berths.fill(0);
       for (const n of site?.parkedList || []) {
-        if (n && !n.dead && Number.isInteger(n.__dockBerth) && n.__dockBerth < s.berths.length) s.berths[n.__dockBerth] = 1;
+        if (n && !n.dead && !n.__storyLaunched && Number.isInteger(n.__dockBerth) && n.__dockBerth < s.berths.length) s.berths[n.__dockBerth] = 1;
       }
+      // Pochylnie: bryła pancernika w budowie znika, gdy na pochylni stoi okręt misji (zegar wodowania) — zostaje
+      // pusta pochylnia po wodowaniu albo wrak na niej.
+      s.slipsHidden[0] = s.slipsHidden[1] = false;
+      for (const n of site?.slipList || []) if (n && Number.isInteger(n.__slip) && n.__slip < s.slipsHidden.length) s.slipsHidden[n.__slip] = true;
       s.sun = SUN;
       return s;
     }
 
-    // Wylot eskorty z hali doku: trasa przez bramę (punkty planu misji), od drugiego punktu (za bramą) walka,
-    // na końcu trasy mózg bojowy. Opóźnienie — okręty startują kolejno.
-    function storyLaunchNpc(npc, path, delay = 0) {
-      if (!npc || npc.dead) return;
-      if (!Array.isArray(path) || !path.length || !usesShipFlightModel(npc)) { storyWakeNpc(npc); return; }
-      const start = gameTime + Math.max(0, Number(delay) || 0);
-      let k = 0;
-      npc.combatDisabled = true;
-      npc.__dockLaunching = true;
-      npc.ai = () => {
-        if (npc.dead || gameTime < start) return;
-        const px = npc.pos ? npc.pos.x : npc.x;
-        const py = npc.pos ? npc.pos.y : npc.y;
-        if (Math.hypot(path[k].x - px, path[k].y - py) < 280) {
-          k++;
-          if (k >= 2) npc.combatDisabled = false;
-          if (k >= path.length) {
-            npc.__dockLaunching = false;
-            storyWakeNpc(npc);
-            return;
-          }
-        }
-        const last = k >= path.length - 1;
-        setFlightArrive(npc, path[k].x, path[k].y, { arrival: last ? 0 : 220, speedMode: 'combat', noBrake: !last, faceNear: 0, faceFar: 0 });
-      };
+    // Rozkazy dla okrętów misji (src/game/story/storyNpcControl.js): wylot z doku trasą (eskorta z hali, zegar
+    // wodowania — wyjazd rufą ze stanowiska parkingu, wodowanie z pochylni), załoga przy działach w stanowisku,
+    // ucieczka herszta przed skokiem.
+    const storyNpcs = createStoryNpcControl({ gameTime: () => gameTime, wake: (npc) => storyWakeNpc(npc) });
+
+    // Brama stanowiska parkingu przy starcie okrętu (zegar wodowania): wypchnięta na zewnątrz — ciało silnika
+    // zniszczeń w bańce gracza pęka słabo i odłamy lecą od doku, poza nią lekki kawałek statyki wylatuje
+    // (jak przy taranie, tylko powoli). Brama już wyrwana — nic.
+    function storyDryDockOpenGate(id, dirX, dirY) {
+      const st = StoryGame.site?.station;
+      const dock = st?.dryDock;
+      if (!dock || st._destroyed3D || pirateDryDockBrokenChunks().includes(id)) return false;
+      const c = dock.layout.chunkById.get(id);
+      if (!c) return false;
+      const wPiece = st._worldSite ? worldBodies.piece(st._worldSite, id) : null;
+      if (wPiece && wPiece.state === 'live') {
+        const p = dock.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
+        return !!worldBodies.breakPiece(wPiece, p.x, p.y, { power: 1.05, speed: 45, outX: dirX, outY: dirY });
+      }
+      return ramPirateDryDockChunk(id, dirX, dirY, 90);
     }
 
     // Wieżyczka obronna stoczni: nieruchoma uzbrojona platforma (trzyma punkt, strzela tylko z wież).
@@ -27976,6 +28322,26 @@
       if (!st || st._destroyed3D) return;
       if (st.shield) st.shield.val = 0;
       applyDamageToStation(st, Math.max(1e5, (Number(st.maxHp) || Number(st.hp) || 1000) * 2));
+    }
+
+    // Zasadzka w pasie (misja 2): piraci wyrywają Atlasa z warpa — wyjście bez rampy i hamowanie jak przy studni
+    // grawitacji (triggerGravityWarpBrake); ładowanie skoku przerwane (zakłócacz). true — warp był w toku.
+    // Automat TRAVEL TO staje (cel zostaje) — inaczej pod zakłócaczem ładowałby skok w kółko.
+    function storyInterdictWarp() {
+      if (!ship || ship.destroyed) return false;
+      if (warp.state !== 'idle' && travelNav.active) cancelTravel(null, true);
+      if (warp.state === 'active') {
+        triggerGravityWarpBrake('story_interdict');
+        return true;
+      }
+      if (warp.state !== 'charging') return false;
+      warp.state = 'idle';
+      warp.charge = 0;
+      warp.chargeAngle = NaN;
+      warpCourse.aim = null;
+      warpCourse.autoExit = false;
+      pushZoneMessage('WARP: ZAKŁÓCANY', 1.6, { tone: 'warn' });
+      return true;
     }
 
     // Lot intro w tle menu: ekran ładowania znika, kamera tła leci z ujęcia menu nad K-7 (plan: StoryGame.planMenuIntro),
@@ -28078,6 +28444,9 @@
       fadeScreen: (on, ms) => fadeScreen(on, ms),
       shake: (mag, dur) => camera.addShake(mag, dur),
       k7Hall: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.ring?.k7Halls?.[i] || null,
+      // pozy obsługi stanowisk hali (suwnice, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
+      // i biorą się źródła gazu z przewodów (pył hal, src/3d/gasField/)
+      k7HallPoses: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.collider?.registry?.halls?.[i]?.poses || null,
       hasContact: (a, b) => !!(a?.beamHull && b?.beamHull && HullBodies.hasContact(a, b)),
       // Ile konstrukcji kadłuba zostało (0..1) — taran liczy zmiażdżone kadłuby.
       hullRatio: (e) => (e?.beamHull ? (HullBodies.structuralState(e)?.ratio ?? 1) : 1),
@@ -28086,12 +28455,32 @@
       setCourse: (x, y, label) => setTravelTarget(x, y, label),
       clearCourse: () => cancelTravel(null),
       warpState: () => warp.state,
+      // Zasadzka w pasie asteroid (misja 2, src/game/story/beltAmbush.js): wyrwanie z warpa, gęstość skał na
+      // kursie (pole pasa) i olbrzymy (miejsce zasadzki przy bryle, gdy kurs ją mija).
+      interdictWarp: () => storyInterdictWarp(),
+      beltDensity: (x, y) => (asteroidBelt?.field ? asteroidBelt.field.sampleMacro(x, y).density : 0),
+      beltGiants: () => (asteroidBelt?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
       spawnShip: (key, opts) => spawnCallInShip(key, opts),
       spawnPirateStation: spawnStoryPirateStation,
       // Suchy dok piratów (budynek stoczni misji 1): byt z bryłami trafień + bryła 3D; eskorta wylatuje bramą,
       // łańcuch rozpadu odrywa kawałki doku.
       spawnPirateDryDock: spawnStoryPirateDryDock,
-      launchNpc: storyLaunchNpc,
+      launchNpc: storyNpcs.launch,
+      // Zegar wodowania i herszt (misja 1, 2026-10-07): załoga przy działach w stanowisku, brama stanowiska
+      // przy starcie, ucieczka herszta, mostek jako słaby punkt, okręt bez dowodzenia (hulk).
+      armNpc: storyNpcs.arm,
+      fleeNpc: storyNpcs.flee,
+      openDockGate: (id, dirX, dirY) => storyDryDockOpenGate(id, dirX, dirY),
+      isHulk: (e) => isBridgeHulk(e),
+      bridgeAimPoint: (e, out) => getBridgeAimPoint(e, out, { mode: 'center' }),
+      // Naprawa Atlasa przed odwetem (misja 2): dziś naprawa własna (R). AGENT: okręt wsparcia z rojem dronów
+      // naprawczych — podmienić te dwie zależności.
+      repairPlayer: () => {
+        if (!HullBodies.hasHull(ship) || ship.destroyed) return false;
+        playerRepairActive = true;
+        return true;
+      },
+      repairActive: () => playerRepairActive,
       dockBreak: (id) => storyDryDockBreak(id),
       dockBrokenChunks: () => pirateDryDockBrokenChunks(),
       // Mgła wojny (src/game/fogOfWar.js przez SensorSystem): sygnatury masy i rozpoznanie.
@@ -28304,6 +28693,16 @@
       Core3D.warmup.run('tarcze (shield3D)', () => prewarmShields3D());
       await nextFrame();
 
+      // Oświetlenie kadłubów v2 (src/3d/hullSurface.js): mapa powierzchni kadłuba gracza z góry (worker, ~0,3 s) —
+      // bez tego pierwsze chwile gry Atlas świeci płasko; kadłuby floty pieką się w tle przy spawnie.
+      setLoadingProgress(71, 'Powierzchnie kadłubów');
+      try {
+        const playerVisual = shipSprite.complete ? getPlayerHullVisualImage(shipSprite) : null;
+        if (playerVisual) await HullSurface.prebake([playerVisual], 4000);
+      } catch (err) {
+        console.warn('[HullSurface] wypiek kadłuba gracza:', err);
+      }
+
       // Stacje (zadanie 25a, stations3D.js): szablony GLB — wypiek i rozgrzewka rozpadu, pass FG i cień, bryły. Przed
       // pasem: kompilacje stacji idą w wolnych chwilach rejestru, gdy strona czeka na pipeline'y pasa (flush niżej — reszta).
       setLoadingProgress(71, 'Stacje');
@@ -28398,8 +28797,7 @@
     const shipSelectState = {
       active: false,
       p1: { index: 0, ready: false },
-      p2: { index: 0, ready: false },
-      prevButtons: [new Array(20).fill(false), new Array(20).fill(false)]
+      p2: { index: 0, ready: false }
     };
 
     function getShipSelectData(hullKey) {
@@ -28465,7 +28863,6 @@
       shipSelectState.active = true;
       shipSelectState.p1 = { index: 0, ready: false };
       shipSelectState.p2 = { index: 1, ready: false };
-      shipSelectState.prevButtons = [new Array(20).fill(false), new Array(20).fill(false)];
       const overlay = document.getElementById('ship-select-overlay');
       if (overlay) { overlay.classList.remove('hidden'); overlay.style.display = 'flex'; }
       // Update player labels with controller info
@@ -28477,7 +28874,6 @@
       updateReadyButton(1, false);
       updateShipSelectUI(0, shipSelectState.p1.index);
       updateShipSelectUI(1, shipSelectState.p2.index);
-      requestAnimationFrame(shipSelectGamepadLoop);
     }
 
     function hideShipSelectOverlay() {
@@ -28486,66 +28882,7 @@
       if (overlay) { overlay.classList.add('hidden'); overlay.style.display = 'none'; }
     }
 
-    // Helper: get pad object for a controller assignment id
-    function getAssignedPad(assignmentId) {
-      if (!assignmentId || assignmentId === 'keyboard') return null;
-      const idx = parseInt(assignmentId.replace('pad', ''));
-      const pads = navigator.getGamepads?.() || [];
-      return pads[idx] || null;
-    }
-
-    function shipSelectGamepadLoop() {
-      if (!shipSelectState.active) return;
-
-      // Process each player's assigned controller
-      for (let pi = 0; pi < 2; pi++) {
-        const assignId = pi === 0 ? controllerAssignment.p1 : controllerAssignment.p2;
-        const st = pi === 0 ? shipSelectState.p1 : shipSelectState.p2;
-        const prev = shipSelectState.prevButtons[pi];
-
-        if (assignId && assignId !== 'keyboard') {
-          // Gamepad input
-          const pad = getAssignedPad(assignId);
-          if (!pad) continue;
-
-          const btnNow = pad.buttons.map(b => b.pressed);
-          const justPressed = (i) => btnNow[i] && !prev[i];
-
-          if (!st.ready) {
-            if (justPressed(14) || justPressed(4)) {
-              st.index = (st.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
-              updateShipSelectUI(pi, st.index);
-            }
-            if (justPressed(15) || justPressed(5)) {
-              st.index = (st.index + 1) % SPLIT_SHIP_KEYS.length;
-              updateShipSelectUI(pi, st.index);
-            }
-            if (justPressed(0)) setPlayerReady(pi, true);
-          } else {
-            if (justPressed(1)) setPlayerReady(pi, false);
-          }
-
-          const ax = pad.axes[0] || 0;
-          const prevAx = prev._axH || 0;
-          if (!st.ready) {
-            if (ax < -0.5 && prevAx >= -0.5) {
-              st.index = (st.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
-              updateShipSelectUI(pi, st.index);
-            }
-            if (ax > 0.5 && prevAx <= 0.5) {
-              st.index = (st.index + 1) % SPLIT_SHIP_KEYS.length;
-              updateShipSelectUI(pi, st.index);
-            }
-          }
-
-          shipSelectState.prevButtons[pi] = btnNow;
-          shipSelectState.prevButtons[pi]._axH = ax;
-        }
-        // Keyboard input for ship select is handled via keydown listener below
-      }
-
-      if (shipSelectState.active) requestAnimationFrame(shipSelectGamepadLoop);
-    }
+    // Pad w wyborze statku: warstwa wejścia (pumpInput — kontekst 'split' → padSplitStep).
 
     // Keyboard input for ship selection (for whichever player is assigned 'keyboard')
     window.addEventListener('keydown', (e) => {
@@ -28618,8 +28955,6 @@
       active: false,
       p1: null, // null | 'keyboard' | 'pad0' | 'pad1' | 'pad2' | 'pad3'
       p2: null,
-      prevPadButtons: [{}, {}, {}, {}],
-      prevPadAxes: [0, 0, 0, 0],
       prevKeys: {}
     };
     window.controllerAssignment = controllerAssignment;
@@ -28627,10 +28962,8 @@
     function getControllerLabel(id) {
       if (!id) return 'Oczekiwanie...';
       if (id === 'keyboard') return 'Klawiatura';
-      const pads = navigator.getGamepads?.() || [];
       const idx = parseInt(id.replace('pad', ''));
-      const pad = pads[idx];
-      const name = pad?.id || ('Pad ' + (idx + 1));
+      const name = Input.device.ids[idx] || ('Pad ' + (idx + 1));
       // Shorten long gamepad names
       const short = name.length > 30 ? name.substring(0, 28) + '...' : name;
       return short;
@@ -28693,15 +29026,12 @@
       controllerAssignment.active = true;
       controllerAssignment.p1 = null;
       controllerAssignment.p2 = null;
-      controllerAssignment.prevPadButtons = [{}, {}, {}, {}];
-      controllerAssignment.prevPadAxes = [0, 0, 0, 0];
       controllerAssignment.prevKeys = {};
       const overlay = document.getElementById('controller-select-overlay');
       if (overlay) { overlay.classList.remove('hidden'); overlay.style.display = 'flex'; }
       updateControllerSlotUI(0, null);
       updateControllerSlotUI(1, null);
       updateControllerConfirmBtn();
-      requestAnimationFrame(controllerSelectLoop);
     }
 
     function hideControllerSelectOverlay() {
@@ -28710,39 +29040,7 @@
       if (overlay) { overlay.classList.add('hidden'); overlay.style.display = 'none'; }
     }
 
-    function controllerSelectLoop() {
-      if (!controllerAssignment.active) return;
-
-      // Poll gamepads for left/right input
-      const pads = navigator.getGamepads?.() || [];
-      for (let i = 0; i < 4; i++) {
-        const pad = pads[i];
-        if (!pad) continue;
-        const deviceId = 'pad' + i;
-        const prevBtns = controllerAssignment.prevPadButtons[i] || {};
-        const prevAx = controllerAssignment.prevPadAxes[i] || 0;
-
-        const btnNow = {};
-        for (let b = 0; b < pad.buttons.length; b++) btnNow[b] = pad.buttons[b].pressed;
-        const justPressed = (b) => btnNow[b] && !prevBtns[b];
-
-        // D-pad left (14), right (15), or A (0)
-        if (justPressed(14) || justPressed(15) || justPressed(0)) {
-          tryAssignController(deviceId);
-        }
-
-        // Left stick horizontal
-        const ax = pad.axes[0] || 0;
-        if ((ax < -0.5 && prevAx >= -0.5) || (ax > 0.5 && prevAx <= 0.5)) {
-          tryAssignController(deviceId);
-        }
-
-        controllerAssignment.prevPadButtons[i] = btnNow;
-        controllerAssignment.prevPadAxes[i] = ax;
-      }
-
-      requestAnimationFrame(controllerSelectLoop);
-    }
+    // Pady w przypisaniu kontrolerów: warstwa wejścia (pumpInput — kontekst 'split' → padSplitStep).
 
     // Keyboard listener for controller selection
     window.addEventListener('keydown', (e) => {
@@ -29128,12 +29426,6 @@
     if (keybindsBackButton) {
       keybindsBackButton.addEventListener('click', () => setMenuView('home'));
     }
-    if (qualityButtons && qualityButtons.length) {
-      qualityButtons.forEach(btn => {
-        btn.addEventListener('click', () => setBackgroundQuality(btn.dataset.quality));
-      });
-      applyQualitySelection();
-    }
     if (supportGuardBtn) {
       supportGuardBtn.addEventListener('click', () => setSupportOrder('guard', { force: true, regroup: true }));
     }
@@ -29340,6 +29632,33 @@
       const saved = localStorage.getItem('sc_hull_lacquer');
       if (saved) applyLacquer(saved);
       updateLacquerUI();
+    });
+
+    // --- OŚWIETLENIE KADŁUBÓW (src/3d/hullLighting.js — v2 „realistyczne” / klasyczne) ---
+
+    function updateHullLightUI() {
+      const current = window.HullLighting && !window.HullLighting.isPbr() ? 'classic' : 'pbr';
+      document.querySelectorAll('[data-hull-light]').forEach(btn => {
+        const isActive = (btn.dataset.hullLight === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-hull-light]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = e.target.dataset.hullLight === 'classic' ? 'classic' : 'pbr';
+        if (window.HullLighting) window.HullLighting.setModel(mode);
+        localStorage.setItem('sc_hull_light', mode);
+        updateHullLightUI();
+        console.log(`Oświetlenie kadłubów: ${mode}`);
+      });
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = localStorage.getItem('sc_hull_light');
+      if (saved && window.HullLighting) window.HullLighting.setModel(saved);
+      updateHullLightUI();
     });
 
     // --- KAMERA ZA KURSOREM (src/game/cameraRig.js) ---

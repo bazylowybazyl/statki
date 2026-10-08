@@ -1,7 +1,7 @@
 // ============================================================
 // Niebo kamer 3D gry (tryb free3d Core3D): sfera wokół kamery na warstwie tła (1), kolor z KIERUNKU
 // patrzenia — gwiazdy z komórek 3D (jak niebo dema Atlasa 3D, dema/atlas3d-webgpu/niebo.js) i mgławica
-// gry (assets/nebula.png) w rzucie stereograficznym z nadiru (z góry wygląda jak dawna płaszczyzna
+// gry (assets/nebula.webp) w rzucie stereograficznym z nadiru (z góry wygląda jak dawna płaszczyzna
 // mgławicy pod światem), dookoła horyzontu i w górze słaba mgławica z szumu. Bez paralaksy — tło w
 // nieskończoności. W kamerze klasycznej (ortho + perspektywa z góry) sfera jest schowana, a rysują się
 // dawne płaszczyzny mgławicy i gwiazd (planet3d.assets.js).

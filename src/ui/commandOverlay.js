@@ -345,10 +345,14 @@ function quadInView(q, viewW, viewH) {
  * w ekranie i nie przecina ułożonych już podpisów ani cudzych ramek. Bez wolnego miejsca: poprzednie
  * albo domyślne (w górę-prawo). Ramki wpisów bez podpisu też są przeszkodą; opcjonalne blockedRects
  * [{ x0, y0, x1, y1 }] rezerwują miejsca zajęte przez panele HUD.
+ * opts: { maxGap — najdłuższa kreska wyprowadzenia (px; dłuższe miejsca, także poprzednie, odpadają),
+ * drop — bez wolnego miejsca podpis nie dostaje `place` (zostaje sama ramka); true albo funkcja (wpis) → bool }.
  */
-export function layoutSelectionLabels(entries, viewW = Infinity, viewH = Infinity, blockedRects = []) {
+export function layoutSelectionLabels(entries, viewW = Infinity, viewH = Infinity, blockedRects = [], opts = null) {
+  const maxGap = Number(opts?.maxGap) > 0 ? Number(opts.maxGap) : Infinity;
+  const drop = opts?.drop || false;
   const frames = entries.map((e) => rectQuad(e.x0 - 3, e.y0 - 3, e.x1 + 3, e.y1 + 3));
-  for (const r of blockedRects) frames.push(rectQuad(r.x0, r.y0, r.x1, r.y1));
+  for (const r of blockedRects || []) frames.push(rectQuad(r.x0, r.y0, r.x1, r.y1));
   const placed = [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -365,13 +369,14 @@ export function layoutSelectionLabels(entries, viewW = Infinity, viewH = Infinit
       chosenQuad = quad;
       return true;
     };
-    const prev = entry.prev;
+    const prev = entry.prev && entry.prev.gap <= maxGap ? entry.prev : null;
     let found = !!prev && tryPlace(prev.sx, prev.sy, prev.gap);
-    for (let g = 0; !found && g < SELECTION_LABEL_GAPS.length; g++) {
+    for (let g = 0; !found && g < SELECTION_LABEL_GAPS.length && SELECTION_LABEL_GAPS[g] <= maxGap; g++) {
       for (let d = 0; !found && d < SELECTION_LABEL_DIRS.length; d++) {
         found = tryPlace(SELECTION_LABEL_DIRS[d][0], SELECTION_LABEL_DIRS[d][1], SELECTION_LABEL_GAPS[g]);
       }
     }
+    if (!found && (typeof drop === 'function' ? drop(entry) : drop)) continue;
     if (!found) {
       chosen = prev ? { sx: prev.sx, sy: prev.sy, gap: prev.gap } : { sx: 1, sy: -1, gap: SELECTION_LABEL_GAPS[0] };
       chosenQuad = selectionLabelQuad(entry, chosen.sx, chosen.sy, chosen.gap, entry.len);

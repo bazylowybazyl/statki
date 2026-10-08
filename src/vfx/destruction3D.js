@@ -170,7 +170,7 @@ class DismantleSection {
 // ── Module state ──────────────────────────────────────────────────────────────
 let   _scene           = null;
 let   _worldTime       = 0;
-let   _reactorFactory  = null;       // createReactorBlowFactory result
+let   _reactorFactory  = null;       // createExplosionFactory(Core3D) — wybuchy WebGPU (src/3d/explosions/)
 let   _shockwaveMgr    = null;       // Shockwave3DManager instance
 let   _stationEffects  = null;       // station-only staged explosion effect manager
 
@@ -1312,7 +1312,7 @@ export const Destruction3D = {
      * Must be called once before using any other method.
      * @param {object} cfg
      * @param {THREE.Scene}  cfg.scene
-     * @param {Function}     [cfg.reactorFactory]   createReactorBlowFactory(Core3D) — spawn({ x, y, size, profile }) uruchamia wybuch
+     * @param {Function}     [cfg.reactorFactory]   createExplosionFactory(Core3D) — spawn({ x, y, size, profile }) uruchamia wybuch
      * @param {object}       [cfg.shockwaveManager] Shockwave3DManager instance
      * @param {object}       [cfg.stationEffects] station destruction effects manager
      */

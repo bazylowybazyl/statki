@@ -12,6 +12,11 @@ import { k7BerthPose, k7HallCenter, k7IsOutsideHall, k7GameToHub, k7HubToGame, k
 import { MISSION01_DIALOGUE } from '../src/data/story/mission01.dialogue.js';
 import { STORY_CAST } from '../src/data/story/cast.js';
 import { MISSION01, MISSION01_PHASES, MISSION01_HINTS } from '../src/game/story/missions/mission01.js';
+import { MISSION02, MISSION02_PHASES, MISSION02_HINTS } from '../src/game/story/missions/mission02.js';
+import { MISSION02_DIALOGUE } from '../src/data/story/mission02.dialogue.js';
+import { CAMPAIGN_PHASES } from '../src/game/story/campaign.js';
+import { BELT_AMBUSH_TUNE, beltAmbushReached, beltCrossing, planBeltAmbush } from '../src/game/story/beltAmbush.js';
+import { MASTER_WEAPONS } from '../src/data/weapons.js';
 
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
@@ -127,8 +132,8 @@ test('dialogi: radio przechodzi samo po czasie czytania; skip kończy sekwencję
   assert.equal(r2, 'skipped');
 });
 
-test('dialogi misji 1: każda kwestia ma mówiącego z obsady i tekst', () => {
-  for (const [scene, lines] of Object.entries(MISSION01_DIALOGUE)) {
+test('dialogi misji 1 i 2: każda kwestia ma mówiącego z obsady i tekst', () => {
+  for (const [scene, lines] of [...Object.entries(MISSION01_DIALOGUE), ...Object.entries(MISSION02_DIALOGUE)]) {
     assert.ok(Array.isArray(lines) && lines.length > 0, scene);
     for (const l of lines) {
       assert.ok(STORY_CAST[l.who], `${scene}: nieznany mówiący ${l.who}`);
@@ -265,7 +270,12 @@ test('stocznia: rząd burta w burtę na osi, punkt zbiórki przed nim, poza czuj
   // ale nie dalej, niż Atlas przeleci w pół minuty (limit bojowy 500 j/s).
   const d = Math.hypot(s.rally.x - s.rowStart.x, s.rally.y - s.rowStart.y);
   assert.ok(d >= 12000 && d <= 16000, `zbiórka ${d} j. od rzędu`);
-  assert.ok(SHIPYARD_TUNE.counterDistance >= 15000, 'front odwetu daje czas na salwy w nadlatujących');
+  // Front odwetu (2026-10-07: 11 km po skróceniu zasięgów broni): piraci formują szyk do ~5 km bliżej
+  // niż środek frontu — poza zasięgiem swoich armat, a front w zasięgu rakiet manewrujących Atlasa
+  // (salwy w nadlatujących zamiast pół minuty ciszy, pomiar scripts/webgpu/zasiegi-gra.mjs).
+  const FORM_UP_AHEAD = 5000;
+  assert.ok(SHIPYARD_TUNE.counterDistance - FORM_UP_AHEAD > MASTER_WEAPONS.armata_mk1.baseRange, 'szyk piratów poza zasięgiem ich armat');
+  assert.ok(SHIPYARD_TUNE.counterDistance <= MASTER_WEAPONS.missile_rack.baseRange, 'front odwetu w zasięgu rakiet Atlasa');
   assert.ok(s.rally.x < s.rowStart.x, 'zbiórka od strony gracza');
   const wave = planFleetWave({ x: 0, y: 0 }, 0, { battleship: 7, destroyer: 8, frigate: 15 });
   assert.equal(wave.length, 30);
@@ -291,11 +301,97 @@ test('K-7: stanowisko C-01 w hali, poza bramą = poza halą, kurs dziobem do tyl
   assert.ok(Math.hypot(hc.x - pose.x, hc.y - pose.y) < 6000);
 });
 
-test('misja 1: skład odwetu i wsparcia z decyzji, fazy i podpowiedzi kompletne', () => {
-  assert.deepEqual({ ...MISSION01.counterAttack }, { battleship: 7, destroyer: 8, frigate: 15 });
-  assert.deepEqual({ ...MISSION01.support }, { battleship: 10, destroyer: 5, frigate: 5 });
-  assert.ok(MISSION01.rewards.exp > 0 && MISSION01.rewards.credits > 0);
-  assert.ok(MISSION01.rewards.rep.terra_nova > 0 && MISSION01.rewards.rep.pirates < 0);
-  assert.equal(MISSION01_PHASES[0], 'intro');
-  for (const h of Object.values(MISSION01_HINTS)) assert.ok(h.title && h.text);
+test('kampania: odwet w falach = skład z decyzji (7 / 8 / 15) + herszt, wsparcie słabsze, fazy i podpowiedzi kompletne', () => {
+  // misja 2: trzy fale razem = dawny odwet misji 1 (decyzja użytkownika 2026-09-30), w trzeciej okręt herszta
+  const sum = { battleship: 0, destroyer: 0, frigate: 0 };
+  for (const wv of MISSION02.waves) for (const k of Object.keys(sum)) sum[k] += wv.counts[k];
+  assert.deepEqual(sum, { battleship: 7, destroyer: 8, frigate: 15 });
+  assert.deepEqual(MISSION02.waves.filter((wv) => wv.boss).map((wv) => wv.boss), ['pirate_supercapital']);
+  assert.equal(new Set(MISSION02.waves.map((wv) => wv.bearing)).size, MISSION02.waves.length, 'każda fala z innej strony');
+  assert.ok(MISSION02.support.battleship < sum.battleship, 'wsparcie słabsze od odwetu (gracz nie jest widzem)');
+  for (const M of [MISSION01, MISSION02]) {
+    assert.ok(M.rewards.exp > 0 && M.rewards.credits > 0);
+    assert.ok(M.rewards.rep.terra_nova > 0 && M.rewards.rep.pirates < 0);
+  }
+  // zegar wodowania: pierwszy start po chwili na bitwę, pochylnie później niż parking, herszt przyspiesza i ucieka
+  const L = MISSION01.launch;
+  assert.ok(L.first >= 30 && L.slips.every((t) => t > L.first + L.step * 9));
+  assert.ok(MISSION01.boss.rushAt > MISSION01.boss.fleeAt && MISSION01.boss.escapeSec > 0);
+  // fazy kampanii: misja 1, potem misja 2; nazwy faz harnessu zachowane
+  assert.deepEqual(CAMPAIGN_PHASES, [...MISSION01_PHASES, ...MISSION02_PHASES]);
+  assert.equal(new Set(CAMPAIGN_PHASES).size, CAMPAIGN_PHASES.length);
+  for (const p of ['intro', 'ram', 'defences', 'shipyard', 'counter', 'ambush', 'return', 'done']) assert.ok(CAMPAIGN_PHASES.includes(p), p);
+  // zasadzka w pasie: po zwycięstwie, przed powrotem do K-7; front z zakłócaczem, skrzydło później
+  assert.ok(MISSION02_PHASES.indexOf('victory') < MISSION02_PHASES.indexOf('ambush') && MISSION02_PHASES.indexOf('ambush') < MISSION02_PHASES.indexOf('return'));
+  const A = MISSION02.ambush;
+  assert.ok(A.jammer && A.flankDelay > 0 && A.devBack > A.distance && A.leaveDist > A.flankDistance);
+  for (const h of [...Object.values(MISSION01_HINTS), ...Object.values(MISSION02_HINTS)]) assert.ok(h.title && h.text);
+});
+
+test('stocznia: wyjazd z parkingu rufą przez bramę stanowiska, pochylnie z wylotem bramą G-01', () => {
+  const s = planShipyard({ x: 2_000_000, y: 1_000_000 }, { x: 1_000_000, y: 1_000_000 });
+  assert.equal(s.slips.length, SHIPYARD_TUNE.slips.length);
+  for (const p of s.parked) {
+    const [p0, p1] = p.launch.path;
+    assert.ok(/^B-\d\d$/.test(p.launch.gate), p.launch.gate);
+    // cofanie: dziób zostaje w kursie stanowiska, wolno (poniżej pasma obrotu dziobu w kierunek lotu)
+    assert.equal(p0.face, p.angle);
+    assert.ok(p0.speed > 0 && p0.speed < 180);
+    // ruch od trzonu (przeciwnie do dziobu) i dalej w tę samą stronę
+    const back = (q) => -((q.x - p.x) * Math.cos(p.angle) + (q.y - p.y) * Math.sin(p.angle));
+    assert.ok(back(p0) > 0 && back(p1) > back(p0));
+  }
+  for (const q of s.slips) {
+    assert.equal(q.launch.gate, 'G-01');
+    assert.ok(q.launch.path.length >= 3);
+    const end = q.launch.path.at(-1);
+    assert.ok(s.dock.distance(end.x, end.y) > 0, 'koniec trasy poza dokiem');
+  }
+});
+
+test('zasadzka w pasie: cięciwa kursu przez pierścień, miejsce przy olbrzymie (przed bryłą) albo w najgęstszym polu, wyzwalacz z zapasem na hamowanie', () => {
+  const AU = 42253.52;
+  const sun = { x: 6e6, y: 6e6 };
+  const belt = { inner: 36 * AU, outer: 47 * AU };
+  // kurs radialny: stocznia 57 AU → Ziemia 25 AU (oś x)
+  const from = { x: sun.x + 57 * AU, y: sun.y };
+  const to = { x: sun.x + 25 * AU, y: sun.y };
+  const cr = beltCrossing(from, to, sun, belt.inner, belt.outer);
+  const len = 32 * AU;
+  assert.ok(Math.abs(cr.t0 * len - 10 * AU) < 1 && Math.abs(cr.t1 * len - 21 * AU) < 1, 'od zewnętrznej do wewnętrznej krawędzi');
+  assert.equal(beltCrossing({ x: sun.x + 60 * AU, y: sun.y }, { x: sun.x + 60 * AU, y: sun.y + 10 * AU }, sun, belt.inner, belt.outer), null, 'kurs obok pasa');
+  // cięciwa przez dziurę pasa: pierwszy odcinek w kolejności lotu
+  const chord = beltCrossing({ x: sun.x + 50 * AU, y: sun.y + 10 * AU }, { x: sun.x - 50 * AU, y: sun.y + 10 * AU }, sun, belt.inner, belt.outer);
+  assert.ok(chord.t1 < 0.5);
+  // bez mapy gęstości: środek cięciwy
+  const mid = planBeltAmbush({ from, to, sun, belt });
+  assert.equal(mid.kind, 'belt');
+  assert.ok(Math.abs(mid.r - 41.5 * AU) < 1);
+  // najgęstsze pole: garb gęstości przy 44 AU (szum obok)
+  const density = (x, y) => Math.exp(-(((Math.hypot(x - sun.x, y - sun.y) / AU) - 44) ** 2)) + 0.05 * Math.sin(x * 0.001);
+  const field = planBeltAmbush({ from, to, sun, belt, density });
+  assert.equal(field.kind, 'field');
+  assert.ok(Math.abs(field.r / AU - 44) < 0.2, field.r / AU);
+  assert.ok(field.density > 0.9);
+  // olbrzym na kursie: miejsce PRZED bryłą (promień + standoff od środka), wygrywa z gęstością
+  const giant = { id: 'warren', x: sun.x + 40 * AU, y: sun.y + 3000, radius: 19600 };
+  const g = planBeltAmbush({ from, to, sun, belt, density, giants: [giant, { id: 'far', x: sun.x, y: sun.y + 40 * AU, radius: 30000 }] });
+  assert.equal(g.kind, 'giant');
+  assert.equal(g.giant, 'warren');
+  assert.ok(Math.abs(Math.hypot(g.x - giant.x, g.y - giant.y) - (giant.radius + BELT_AMBUSH_TUNE.giantStandoff)) < 1);
+  assert.ok(g.x > giant.x, 'po stronie, z której leci Atlas');
+  // olbrzym daleko od kursu — gęstość
+  const off = planBeltAmbush({ from, to, sun, belt, density, giants: [{ id: 'side', x: sun.x + 40 * AU, y: sun.y + 200000, radius: 19600 }] });
+  assert.equal(off.kind, 'field');
+  // wyzwalacz: zapas = prędkość × brakeLead + leadPad
+  const at = (back, lat = 0) => ({ x: g.x + back, y: g.y + lat });
+  const v = { x: -200000, y: 0 };
+  const lead = 200000 * BELT_AMBUSH_TUNE.brakeLead + BELT_AMBUSH_TUNE.leadPad;
+  assert.equal(beltAmbushReached(g, at(lead + 4000), v, sun, belt), false, 'za wcześnie');
+  assert.equal(beltAmbushReached(g, at(lead - 1000), v, sun, belt), true, 'w zasięgu hamowania');
+  assert.equal(beltAmbushReached(g, at(BELT_AMBUSH_TUNE.leadPad + 3000), { x: 0, y: 0 }, sun, belt), false, 'napędem — tuż przy miejscu');
+  // zboczył z kursu: ten sam promień 80 tys. j. w bok — też (każda droga do Ziemi przecina ten promień)
+  const sideP = { x: sun.x + Math.sqrt(g.r ** 2 - 80000 ** 2), y: sun.y + 80000 };
+  assert.equal(beltAmbushReached(g, sideP, v, sun, belt), true);
+  assert.equal(beltAmbushReached(g, { x: sun.x + 30 * AU, y: sun.y + 80000 }, v, sun, belt), false, 'poza pasem');
 });

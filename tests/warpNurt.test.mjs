@@ -122,14 +122,26 @@ test('wyjście gracza: rampa — zwolnienie do prędkości wlotu, wlot, hamowani
   assert.ok(near(slow.vArr, 8000));
 });
 
-test('rulon: ładowanie zwija (0 → 1), skok szarpie ponad 1, wyjście rozwija w zwolnieniu; poza skokiem 0', () => {
+test('rulon: ładowanie zwija (0 → 1), skok nabrzmiewa miękko ponad 1, wyjście rozwija płynnie przez zwolnienie i wlot; poza skokiem 0', () => {
   assert.equal(warpRulonBend('charging', 0, 0, 0), 0);
   assert.ok(near(warpRulonBend('charging', 1, 0, 0), 1));
   let prev = -1;
   for (let c = 0; c <= 1; c += 0.05) { const b = warpRulonBend('charging', c, 0, 0); assert.ok(b >= prev - 1e-12); prev = b; }
-  assert.ok(warpRulonBend('active', 1, 0.08, 0) > 1.05, 'szarpnięcie przy skoku');
+  // Płynność (user 2026-10-08): bez szarpnięć — nachylenie na krańcach ładowania ~0, szczyt ≤ 1,5 / ładowanie.
+  const h = 1e-3;
+  assert.ok((warpRulonBend('charging', h, 0, 0) - 0) / h < 0.01, 'zwijanie rusza od zera');
+  assert.ok((1 - warpRulonBend('charging', 1 - h, 0, 0)) / h < 0.01, 'zwijanie dochodzi do skoku bez szarpnięcia');
+  for (let c = 0; c < 1; c += 0.01) assert.ok(warpRulonBend('charging', c + 0.01, 0, 0) - warpRulonBend('charging', c, 0, 0) <= 0.0151);
+  // Skok: nabrzmienie zaczyna się od nachylenia ~0 (dawniej +16% w 0,03 s), szczyt ~+7%, potem gaśnie.
+  assert.ok(warpRulonBend('active', 1, 0.01, 0) - 1 < 0.002, 'skok bez szarpnięcia');
+  assert.ok(warpRulonBend('active', 1, 0.15, 0) > 1.05, 'nabrzmienie przy skoku');
+  for (let k = 0; k < 3; k += 0.01) assert.ok(warpRulonBend('active', 1, k, 0) < 1.1);
   assert.ok(near(warpRulonBend('active', 1, 30, 0), 1, 1e-9));
-  assert.ok(near(warpRulonBend('exit', 1, 30, WARP_EXIT.slow), 0, 1e-9));
+  // Wyjście: rozwijanie rusza od zera i trwa zwolnienie + wlot rampy (domyślny czas).
+  const dur = WARP_EXIT.slow + WARP_EXIT.coast;
+  assert.ok(warpRulonBend('exit', 1, 30, 0.02) > 0.995, 'rozwijanie rusza płynnie');
+  assert.ok(warpRulonBend('exit', 1, 30, WARP_EXIT.slow) > 0.2, 'po zwolnieniu część rulonu jeszcze zwinięta');
+  assert.ok(near(warpRulonBend('exit', 1, 30, dur), 0, 1e-9));
   assert.equal(warpRulonBend('idle', 1, 0, 0), 0);
 });
 
@@ -227,6 +239,50 @@ test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna);
   assert.equal(fx.mode, 'idle');
   assert.equal(fx.rulonBend, 0);
   assert.ok(med.camMX !== 0, 'kamera ośrodka jechała w skoku');
+});
+
+test('soczewka świata (2026-10-07): β 0 → 1 w 0,5 s po skoku, do końca zwolnienia 1, przy zatrzymaniu 0; przepływ zwalnia przy mijanym ciele', () => {
+  const { fx, game, step } = playerRig();
+  const dt = 1 / 60;
+  let t = 1;
+  game.state = 'charging'; game.charge = 0.6;
+  step(t, dt);
+  assert.equal(fx.lensBeta(t), 0, 'w ładowaniu planety na swoich miejscach');
+  game.state = 'active'; game.charge = 1;
+  t += dt; step(t, dt);
+  assert.equal(fx.lensBeta(fx.kickT), 0);
+  assert.ok(fx.lensBeta(fx.kickT + 0.25) > 0.3 && fx.lensBeta(fx.kickT + 0.25) < 0.7);
+  assert.ok(near(fx.lensBeta(fx.kickT + 0.5), 1));
+  // Przy mijanym ciele (zwolnienie fizyki gry: flyby) przepływ widoczny zwalnia jak w demie: max(2500, bieg · f^0,6).
+  game.flyby = 0.2;
+  for (let i = 0; i < 40; i++) { t += dt; step(t, dt); }
+  assert.ok(near(fx.visibleFlow(t), Math.max(WARP_FLOW.slowMin, WARP_FLOW.travel * Math.pow(0.2, 0.6)), 1e-6));
+  game.flyby = 0.001;
+  t += dt; step(t, dt);
+  assert.ok(near(fx.visibleFlow(t), WARP_FLOW.slowMin, 1e-6), 'dolna granica przepływu');
+  game.flyby = 1;
+  t += dt; step(t, dt);
+  // Wyjście: β trzyma się przez zwolnienie, spada do zera w locie hamującym (cel „wlatuje”).
+  const ramp = createWarpExitRamp({ v0: 200000, hullLength: 1800, dirX: Math.cos(0.3), dirY: Math.sin(0.3) });
+  game.exitRamp = ramp;
+  game.state = 'idle';
+  t += dt; step(t, dt);
+  assert.equal(fx.mode, 'exit');
+  assert.ok(near(fx.lensBeta(fx.exitT + ramp.slow * 0.9), 1));
+  const mid = fx.lensBeta(fx.exitT + (ramp.slow + ramp.tHalt) * 0.5);
+  assert.ok(mid > 0.2 && mid < 0.8);
+  assert.equal(fx.lensBeta(fx.exitT + ramp.tHalt), 0);
+  // Krótki skok (wyjście przed końcem narastania): β z chwili wyjścia, bez skoku w górę.
+  const r2 = playerRig();
+  let t2 = 1;
+  r2.game.state = 'active'; r2.game.charge = 1;
+  r2.step(t2, dt);
+  for (let i = 0; i < 12; i++) { t2 += dt; r2.step(t2, dt); }
+  const beforeExit = r2.fx.lensBeta(t2);
+  r2.game.exitRamp = createWarpExitRamp({ v0: 30000, hullLength: 1800 });
+  r2.game.state = 'idle';
+  t2 += dt; r2.step(t2, dt);
+  assert.ok(beforeExit < 0.9 && r2.fx.lensBeta(t2) <= beforeExit + 0.05);
 });
 
 // ── przyloty i odloty NPC ────────────────────────────────────────────────────────────────────

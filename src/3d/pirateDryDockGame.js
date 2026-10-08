@@ -69,11 +69,14 @@ function skinWarmHolders() {
   if (!d) return null;
   if (_skinHolders && _skinHolders.dock === d) return _skinHolders.root;
   const root = new THREE.Group();
+  // bez indeksu — kawałek; z indeksem — odłam (podzbiór trójkątów kawałka, worldBodies3D.js)
   for (const [set, layer] of [['bg', LAYER_BG], ['fg', LAYER_FG]]) {
-    const m = new THREE.Mesh(buildingSkinWarmGeometry(), d.skinMaterial(set));
-    m.frustumCulled = false;
-    m.layers.set(layer);
-    root.add(m);
+    for (const indexed of [false, true]) {
+      const m = new THREE.Mesh(buildingSkinWarmGeometry(indexed), d.skinMaterial(set));
+      m.frustumCulled = false;
+      m.layers.set(layer);
+      root.add(m);
+    }
   }
   _skinHolders = { dock: d, root };
   return root;
@@ -186,7 +189,7 @@ export function pirateDryDock3D() { return dock; }
 
 /**
  * Klatka (render(), po stacjach): stan z misji i gry.
- * state: { alarm, alarmAge, playerInHall, berths: [0/1], sun: { x, y }, daylight }
+ * state: { alarm, alarmAge, berths: [0/1], sun: { x, y }, daylight } (playerInHall — bez znaczenia: dach nie zanika)
  */
 export function updatePirateDryDock3D(dt, state = {}) {
   if (!dock || !dock.root.parent) return;
@@ -203,13 +206,16 @@ export function updatePirateDryDock3D(dt, state = {}) {
   }
   const alarm = !!state.alarm;
   const age = Number(state.alarmAge) || 0;
-  // wylot eskorty po alarmie (~10 s): pasy świateł bram, dach hali otwarty (widać start z góry)
+  // wylot eskorty po alarmie (~10 s): pasy świateł bram
   const launching = alarm && age < 12;
   _state.alarm = alarm;
-  _state.roofFade = state.playerInHall || launching ? 1 : 0;
+  // Dach zostaje (decyzja użytkownika 2026-10-07: „w pirackim nie powinien znikać — widzieć go normalnie”); dawniej
+  // zanikał jak dach K-7 — gracz w hali albo wylot eskorty po alarmie.
+  _state.roofFade = 0;
   _state.launch = launching ? _on : _off;
   _state.gates = alarm ? _on : _off;
   _state.berths = state.berths || null;
+  _state.slipsHidden = state.slipsHidden || null;
   _state.daylight = state.daylight ?? 0.3;
   // zniszczony dok: bez zasilania — lampy budowli prawie zgasłe, reflektory i światła hali w siatce zgaszone
   const dead = !!(station && (station._destroyed3D || !(station.hp > 0)));
@@ -219,7 +225,7 @@ export function updatePirateDryDock3D(dt, state = {}) {
   // reflektory i światła hali w siatce świateł gry (kadłuby okrętów na parkingu i w hali)
   if (place && !dead) dock.pushGridLights(Core3D.fx?.lights, place.toGame);
 }
-const _state = { alarm: false, roofFade: 0, launch: null, gates: null, berths: null, daylight: 0.3, lampPower: undefined };
+const _state = { alarm: false, roofFade: 0, launch: null, gates: null, berths: null, slipsHidden: null, daylight: 0.3, lampPower: undefined };
 const _sunOpts = { sun: null, at: null };
 const _at = { x: 0, y: 0 };
 const _on = Object.freeze([1, 1, 1]);

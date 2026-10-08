@@ -194,19 +194,76 @@ test('Hexlance: przechodzi przez cienką bramę, grzęźnie w trzonie', () => {
   }
 });
 
-test('próg punktów: kawałek odpada fizycznie (kotwice puszczają, dryf od doku), wrak z bryłą kawałka', () => {
+// Odłamy kawałka (wraki `worldDebris` z bryłą kawałka) z węzłami.
+const fragmentsOf = (p) => window.wrecks.filter((w) => w.worldDebris && w.beamHull?.world === p && w.beamHull.body.activeNodes > 0);
+
+test('próg punktów: kawałek PĘKA (ocena 2026-10-07: „duże kawałki, brak debris”) — kilka odłamów, odłamki jak u statków, dryf od doku', () => {
   const site = freshSite();
   const p = pieceOf(site, 'H-W1');
+  const base = p.baseNodes;
   const c = p.chunk.box;
   const at = place.toGame((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2, {});
-  assert.ok(worldBodies.breakPiece(p, at.x, at.y, { power: 1.4, speed: 70, outX: at.x - CENTER.x, outY: at.y - CENTER.y }));
-  run(60);
-  assert.equal(p.state, 'lost', 'z kawałka nic nie zostało na miejscu');
-  const debris = window.wrecks.filter((w) => w.worldDebris && w.beamHull?.world === p);
-  assert.ok(debris.length >= 1, 'odłam(y) jako wraki');
+  let particles = 0;
+  window.spawnHullDebris = () => { particles++; };
+  const res = worldBodies.breakPiece(p, at.x, at.y, { power: 1.4, speed: 70, outX: at.x - CENTER.x, outY: at.y - CENTER.y });
+  window.spawnHullDebris = undefined;
+  assert.ok(res && res.fragments >= 2, `odłamy: ${res?.fragments}`);
+  assert.equal(p.state, 'lost', 'z kawałka nic nie zostało na miejscu (od razu — statyka schowana w tej klatce)');
+  const frags = fragmentsOf(p);
+  assert.ok(frags.length >= 2 && frags.length <= T.shatterCellsMax * 3, `odłamy-wraki: ${frags.length}`);
+  for (const w of frags) assert.ok(w.beamHull.body.activeNodes >= T.shatterMinFragment, `drobnica w odłamki: ${w.beamHull.body.activeNodes}`);
+  const left = frags.reduce((n, w) => n + w.beamHull.body.activeNodes, 0);
+  assert.ok(res.debris >= base * 0.1 && particles >= res.debris, `odłamki: ${res.debris} węzłów, ${particles} cząstek z ${base}`);
+  assert.ok(left + res.debris <= base, 'węzły odłamów + odłamki ≤ kawałek');
+  assert.ok(Math.max(...frags.map((w) => w.beamHull.body.activeNodes)) < base * 0.7, 'żaden odłam nie jest prawie całym kawałkiem');
   const out = { x: at.x - CENTER.x, y: at.y - CENTER.y };
-  const big = debris.sort((a, b) => b.beamHull.body.activeNodes - a.beamHull.body.activeNodes)[0];
-  assert.ok((big.vx * out.x + big.vy * out.y) > 0, 'dryf od doku');
+  const mass = frags.reduce((m, w) => m + w.beamHull.body.activeNodes, 0);
+  const drift = frags.reduce((m, w) => m + (w.vx * out.x + w.vy * out.y) * w.beamHull.body.activeNodes, 0) / mass;
+  assert.ok(drift > 0, 'odłamy dryfują od doku');
+  run(60);
+  assert.ok(fragmentsOf(p).length >= 2, 'odłamy żyją po krokach');
+});
+
+test('rozpad kawałka STATYCZNEGO (poza bańką): ciało powstaje na miejscu i pęka', () => {
+  worldBodies.reset();
+  window.wrecks.length = 0;
+  const site = createPirateDryDockSite({ id: 'S', x: CENTER.x, y: CENTER.y }, { layout, scene, style }, place, {});
+  worldBodies.addSite(site);
+  worldBodies.step(DT, [{ x: CENTER.x + 1e6, y: CENTER.y }]);   // gracz daleko — wszystko statyką
+  const p = pieceOf(site, 'S-3');
+  assert.equal(p.state, 'static');
+  const c = p.chunk.box;
+  const at = place.toGame((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2, {});
+  const res = worldBodies.breakPiece(p, at.x, at.y, { power: 2, speed: 95, outX: at.x - CENTER.x, outY: at.y - CENTER.y });
+  assert.ok(res && res.fragments >= 3, `odcinek trzonu pęka na kilka odłamów: ${res?.fragments}`);
+  assert.equal(p.state, 'lost');
+  assert.ok(fragmentsOf(p).length >= 3);
+});
+
+test('dach = DUCH: ciałem dopiero w rozpadzie (setAllLive / breakPiece), bez kolizji, pęka na odłamy nad grą', () => {
+  const site = freshSite();
+  const roof = pieceOf(site, 'R-2');
+  assert.ok(roof.ghost, 'dach to duch');
+  assert.equal(roof.state, 'static', 'bańka nie buduje ducha');
+  // budowla przed rozpadem: wszystkie kawałki ciałami, duch poza krokiem silnika
+  worldBodies.setAllLive(site.id, true);
+  const saved = T.buildBudgetMs;
+  T.buildBudgetMs = 1e6;
+  worldBodies.step(DT, [{ x: CENTER.x + 1e6, y: CENTER.y }]);
+  T.buildBudgetMs = saved;
+  for (const p of site.pieces) assert.equal(p.state, 'live', `${p.id} — ciało (setAllLive, gracz daleko)`);
+  assert.ok(!worldBodies.entities().includes(roof.entity), 'duch nie wchodzi do kolizji i broni');
+  assert.ok(roof.entity.beamHull.body.cellSize > T.cellSize, 'rzadsza kratownica dachu');
+  run(30);
+  assert.ok(!roof.touched, 'stoi nietknięty');
+  const c = roof.chunk.box;
+  const at = place.toGame((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2, {});
+  const res = worldBodies.breakPiece(roof, at.x, at.y, { power: 1.8, speed: 140, outX: at.x - CENTER.x, outY: at.y - CENTER.y });
+  assert.ok(res && res.fragments >= 4, `dach pęka: ${res?.fragments} odłamów`);
+  const frags = fragmentsOf(roof);
+  assert.ok(frags.length >= 4);
+  for (const w of frags) assert.equal(w.isCollidable, false, 'odłam dachu nie zderza się z niczym');
+  assert.equal(roof.state, 'lost');
 });
 
 test('wybuch: front ciśnienia rusza ciała w zasięgu, zwraca właściciela budowli', () => {

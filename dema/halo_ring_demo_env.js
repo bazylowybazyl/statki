@@ -664,7 +664,7 @@ export function createSky() {
 // (Sprite + PointsNodeMaterial, rozmiar w pikselach jak gl_PointSize).
 export function createGameBackground(renderer, { starsZ }) {
   const group = new THREE.Group();
-  const neb = loadTex('/assets/nebula.png', renderer, true);
+  const neb = loadTex('/assets/nebula.webp', renderer, true);
   const nebMat = new THREE.MeshBasicNodeMaterial({ map: neb, depthWrite: false, depthTest: false });
   nebMat.name = 'DemoNebula';
   const nebula = new THREE.Mesh(new THREE.PlaneGeometry(800000, 800000 / 1.6), nebMat);

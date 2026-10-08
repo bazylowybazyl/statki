@@ -76,6 +76,26 @@ export function createStoryOverlay(story) {
   const cloakBar = el('div', 'st-cloak-bar', cloakEl);
   const cloakFill = el('i', null, cloakBar);
 
+  // --- panel akcji (stanowisko w doku: ODDOKUJ) ---
+  const act = el('div', 'st-cmd', root);
+  act.setAttribute('role', 'group');
+  const actHead = el('div', 'st-cmd-head', act);
+  const actTitle = el('div', 'st-cmd-title', actHead);
+  const actSub = el('div', 'st-cmd-sub', actHead);
+  const actRows = el('div', 'st-cmd-rows', act);
+  const actBtn = el('button', 'st-cmd-btn', act);
+  actBtn.type = 'button';
+  const actBtnLabel = el('span', null, actBtn);
+  const actBtnKey = el('span', 'st-cmd-key', actBtn);
+  actBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const a = story.ui.action;
+    if (a) story.triggerAction(a.id);
+  });
+  // klik w panel nie strzela w grze
+  act.addEventListener('mousedown', (e) => e.stopPropagation());
+  act.addEventListener('pointerdown', (e) => e.stopPropagation());
+
   // --- podsumowanie ---
   const sumWrap = el('div', 'st-summary-wrap', root);
   const sum = el('div', 'st-summary', sumWrap);
@@ -110,12 +130,24 @@ export function createStoryOverlay(story) {
         e.stopImmediatePropagation();
         d.skip();
       }
+      return;
+    }
+    // panel akcji: klawisz przycisku (Enter → też NumpadEnter)
+    const a = story.ui.action;
+    if (a && !a.pressed && a.key && !story.letterbox) {
+      const want = a.key === 'Enter' ? (k === 'Enter' || k === 'NumpadEnter') : (e.key === a.key || k === a.key);
+      if (want) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (!e.repeat) story.triggerAction(a.id);
+      }
     }
   }, true);
 
   const last = {
     cinematic: null, dlgKey: '', dlgText: null, dlgOn: false, objKey: '', objProg: null, objOn: false,
-    hintSpec: null, hintDone: null, bannerText: null, summary: null, cloakKey: '', active: null
+    hintSpec: null, hintDone: null, bannerText: null, summary: null, cloakKey: '', active: null,
+    action: null, actPressed: null, actRows: ''
   };
   const _s = { x: 0, y: 0, visible: false, depth: 1 };
 
@@ -266,6 +298,8 @@ export function createStoryOverlay(story) {
       const b = el('b', cls, e, value);
       return b;
     };
+    // wyniki misji (np. zatrzymane przed startem, los herszta): [etykieta, wartość, 'pos' | 'neg' | '']
+    for (const st of s.stats || []) if (st && st[0]) row(String(st[0]), String(st[1] ?? ''), st[2] || '');
     row('Doświadczenie', `+${fmtInt(r.exp)} EXP`);
     row('Kredyty', `+${fmtInt(r.credits)} CR`);
     for (const rep of r.rep || []) row(`Reputacja: ${rep.label}`, signed(rep.delta), rep.delta >= 0 ? 'pos' : 'neg');
@@ -279,6 +313,39 @@ export function createStoryOverlay(story) {
     sumWrap.classList.add('on');
     requestAnimationFrame(() => { fill.style.width = `${Math.round((r.rankFrac || 0) * 100)}%`; });
     setTimeout(() => { try { sumBtn.focus({ preventScroll: true }); } catch { /* bez fokusu */ } }, 60);
+  }
+
+  function setAction(a) {
+    if (a !== last.action) {
+      last.action = a;
+      last.actPressed = null;
+      last.actRows = '';
+      if (!a) { act.classList.remove('on', 'busy'); return; }
+      actTitle.textContent = a.title || '';
+      actSub.textContent = a.subtitle || '';
+      actBtnKey.textContent = a.key ? (a.key === 'Enter' ? '↵ ENTER' : a.key) : '';
+      act.classList.add('on');
+    }
+    if (!a) return;
+    const pressed = !!a.pressed;
+    if (pressed !== last.actPressed) {
+      last.actPressed = pressed;
+      actBtnLabel.textContent = pressed ? (a.busyLabel || a.label || '') : (a.label || '');
+      actBtn.disabled = pressed;
+      act.classList.toggle('busy', pressed);
+      if (!pressed) setTimeout(() => { try { if (story.ui.action === a && !a.pressed) actBtn.focus({ preventScroll: true }); } catch { /* bez fokusu */ } }, 60);
+    }
+    let rows = null;
+    if (a.rows) { try { rows = a.rows(); } catch { rows = null; } }
+    const key = rows ? rows.map((r) => r.join('|')).join(';') : '';
+    if (key === last.actRows) return;
+    last.actRows = key;
+    actRows.textContent = '';
+    for (const [label, value, cls] of rows || []) {
+      const r = el('div', 'st-cmd-row', actRows);
+      el('span', null, r, label);
+      el('b', cls || '', r, value);
+    }
   }
 
   function setCloak(ship) {
@@ -332,6 +399,7 @@ export function createStoryOverlay(story) {
         banner.classList.toggle('on', !!bt);
       }
       setSummary(story.ui.summary);
+      setAction(cin ? null : story.ui.action);
       setCloak(env.shipEntity);
     }
   };

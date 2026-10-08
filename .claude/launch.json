@@ -16,6 +16,13 @@
       "autoPort": false
     },
     {
+      "name": "Vite Dev Server 3",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5196", "--strictPort"],
+      "port": 5196,
+      "autoPort": false
+    },
+    {
       "name": "Dema statycznie",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["http-server", "dema", "-p", "5197", "-c-1", "--silent"],

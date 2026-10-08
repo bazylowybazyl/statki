@@ -1,5 +1,5 @@
 // Skóra CIAŁA ŚWIATA z brył budowli Z7 (PortBuilding3D — suchy dok piratów; docs/PLAN-zniszczenia-swiata-3d.md § 6):
-// instancje grupy kawałka (zestawy bg / fg, wszystkie rodzaje brył, także lampy) wypieczone do układu CIAŁA —
+// instancje grupy kawałka (zestawy bg / fg — dach w fg, wszystkie rodzaje brył, także lampy) wypieczone do układu CIAŁA —
 // środek rastra ciała = 0, x — oś budowli, y — −z układu (obraz ciała w górę), z — wysokość świata — z atrybutami
 // wariantu „skin” grafu budowli (portBuildings3D.tsl.js): aPbA (położenie w bryle — płyty, materiał), aPbN (normalna
 // bryły — oś płyt), aPbFx (efekt), aLat / aOwn (kratownica ciała: położenie w komórkach i najbliższa komórka
@@ -96,36 +96,39 @@ export function* bakeBuildingChunkSkinSteps(building, group, { cx, cz, lattice, 
   const near = nearestOccupied(lattice);
   const maxEdge2 = (maxEdgeCells * cs) ** 2;
   const lp = [0, 0, 0], r = [0, 0, 0], nl = [0, 0, 0];
+  // dach (zestaw roof — w budowli zanika jak K-7; w grze dach suchego doku zostaje) jedzie skórą FG
   for (const set of ['bg', 'fg']) {
     const verts = [];      // [x, y, z (model), nx, ny, nz (model), lx, ly, lz, mat, bnx, bny, bnz, fx0..3] na wierzchołek
-    const S = sets[set];
-    if (!S) continue;
-    for (const kind of KINDS) {
-      const a = S[kind];
-      if (!a || !a.length) continue;
-      const g = B[kind];
-      const P = g.attributes.position, N = g.attributes.normal;
-      let seen = 0;
-      for (let i = 0; i < a.length; i += PB_STRIDE) {
-        if (a[i + 12] !== group) continue;
-        if ((++seen & 63) === 0) yield;
-        const c0 = a[i], c1 = a[i + 1], c2 = a[i + 2], vs = a[i + 3];
-        const sx = a[i + 4], sy = a[i + 5], sz = a[i + 6], mat = a[i + 7];
-        const qx = a[i + 8], qy = a[i + 9], qz = a[i + 10], qw = a[i + 11];
-        const f0 = a[i + 16], f1 = a[i + 17], f2 = a[i + 18], f3 = a[i + 19];
-        for (let v = 0; v < P.count; v++) {
-          const px = P.getX(v), py = P.getY(v), pz = P.getZ(v);
-          const bnx = N.getX(v), bny = N.getY(v), bnz = N.getZ(v);
-          lp[0] = px * sx; lp[1] = py * sy; lp[2] = pz * sz;
-          qrot(qx, qy, qz, qw, lp[0], lp[1], lp[2], r);
-          const hx = c0 + r[0], hy = c1 + r[1] * vs, hz = c2 + r[2];
-          let nnx = bnx / Math.max(1e-3, sx), nny = bny / Math.max(1e-3, sy), nnz = bnz / Math.max(1e-3, sz);
-          let nlen = Math.hypot(nnx, nny, nnz) || 1;
-          qrot(qx, qy, qz, qw, nnx / nlen, nny / nlen, nnz / nlen, nl);
-          nnx = nl[0]; nny = nl[1] / Math.max(1e-3, vs); nnz = nl[2];
-          nlen = Math.hypot(nnx, nny, nnz) || 1;
-          // układ budowli (x, wysokość, z) → model ciała (x − cx, cz − z, wysokość)
-          verts.push(hx - cx, cz - hz, hy, nnx / nlen, -nnz / nlen, nny / nlen, lp[0], lp[1], lp[2], mat, bnx, bny, bnz, f0, f1, f2, f3);
+    for (const src of set === 'fg' ? ['fg', 'roof'] : ['bg']) {
+      const S = sets[src];
+      if (!S) continue;
+      for (const kind of KINDS) {
+        const a = S[kind];
+        if (!a || !a.length) continue;
+        const g = B[kind];
+        const P = g.attributes.position, N = g.attributes.normal;
+        let seen = 0;
+        for (let i = 0; i < a.length; i += PB_STRIDE) {
+          if (a[i + 12] !== group) continue;
+          if ((++seen & 63) === 0) yield;
+          const c0 = a[i], c1 = a[i + 1], c2 = a[i + 2], vs = a[i + 3];
+          const sx = a[i + 4], sy = a[i + 5], sz = a[i + 6], mat = a[i + 7];
+          const qx = a[i + 8], qy = a[i + 9], qz = a[i + 10], qw = a[i + 11];
+          const f0 = a[i + 16], f1 = a[i + 17], f2 = a[i + 18], f3 = a[i + 19];
+          for (let v = 0; v < P.count; v++) {
+            const px = P.getX(v), py = P.getY(v), pz = P.getZ(v);
+            const bnx = N.getX(v), bny = N.getY(v), bnz = N.getZ(v);
+            lp[0] = px * sx; lp[1] = py * sy; lp[2] = pz * sz;
+            qrot(qx, qy, qz, qw, lp[0], lp[1], lp[2], r);
+            const hx = c0 + r[0], hy = c1 + r[1] * vs, hz = c2 + r[2];
+            let nnx = bnx / Math.max(1e-3, sx), nny = bny / Math.max(1e-3, sy), nnz = bnz / Math.max(1e-3, sz);
+            let nlen = Math.hypot(nnx, nny, nnz) || 1;
+            qrot(qx, qy, qz, qw, nnx / nlen, nny / nlen, nnz / nlen, nl);
+            nnx = nl[0]; nny = nl[1] / Math.max(1e-3, vs); nnz = nl[2];
+            nlen = Math.hypot(nnx, nny, nnz) || 1;
+            // układ budowli (x, wysokość, z) → model ciała (x − cx, cz − z, wysokość)
+            verts.push(hx - cx, cz - hz, hy, nnx / nlen, -nnz / nlen, nny / nlen, lp[0], lp[1], lp[2], mat, bnx, bny, bnz, f0, f1, f2, f3);
+          }
         }
       }
     }
@@ -211,11 +214,16 @@ export function* bakeBuildingChunkSkinSteps(building, group, { cx, cz, lattice, 
   return out;
 }
 
-let _warmGeo = null;
-/** Geometria rozgrzewki: jeden trójkąt z układem atrybutów skóry (klucz pipeline'u). */
-export function buildingSkinWarmGeometry() {
-  if (_warmGeo) return _warmGeo;
+const _warmGeo = [null, null];
+/**
+ * Geometria rozgrzewki: jeden trójkąt z układem atrybutów skóry (klucz pipeline'u). indexed — wariant z indeksem
+ * (odłamy rysują podzbiór trójkątów kawałka — worldBodies3D.js; three r183 ma `index` w kluczu geometrii).
+ */
+export function buildingSkinWarmGeometry(indexed = false) {
+  const k = indexed ? 1 : 0;
+  if (_warmGeo[k]) return _warmGeo[k];
   const g = new THREE.BufferGeometry();
+  if (indexed) g.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2]), 1));
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3));
   g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3));
   const ib = new THREE.InterleavedBuffer(new Float32Array(3 * 18), 18);
@@ -225,6 +233,6 @@ export function buildingSkinWarmGeometry() {
   g.setAttribute('aLat', new THREE.InterleavedBufferAttribute(ib, 3, 12));
   g.setAttribute('aOwn', new THREE.InterleavedBufferAttribute(ib, 3, 15));
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
-  _warmGeo = g;
+  _warmGeo[k] = g;
   return g;
 }

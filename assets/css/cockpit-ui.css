@@ -525,13 +525,21 @@ button:focus-visible,
   display: flex; gap: 10px; padding: 1px 6px; translate: -50% 0;
   border: 0; border-radius: 3px; color: #8a8a8a; background: rgba(0, 0, 0, 0.35);
   font-size: var(--fs-xs); letter-spacing: 0.1em; white-space: nowrap;
-  cursor: pointer; pointer-events: auto;
+  pointer-events: auto;
   transition: translate var(--cluster-ease);
 }
-/* Po Alt tarcza sięga wyżej (górna krawędź 30u zamiast 52u) — odczyt jedzie za nią. */
-.app.pointer .radar-top { translate: -50% calc(-22 * var(--u)); }
+/* Po Alt tarcza sięga wyżej (górna krawędź 30u zamiast 52u) — odczyt jedzie nad nią, pod kontrolki
+   (10u–26u), żeby nie zasłaniał przodu pełnej tarczy. */
+.app.pointer .radar-top { translate: -50% calc(-56 * var(--u)); }
 .radar-top .hostile { color: var(--hostile); font-weight: 700; }
 .radar-top .hostile.clear { color: #5f9a72; font-weight: 400; }
+/* Zasięg (klik / kółko nad tarczą) i orientacja H-UP / N-UP — pola bez obudowy, jak odczyty kopuły. */
+.radar-top .rd-btn {
+  padding: 0 1px; border: 0; background: transparent; color: inherit;
+  font: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.radar-top .rd-btn:hover { color: #e6e6e6; }
+.radar-top #rdOrient { color: #e0915a; }
 /* Prędkość i obroty pod kadłubem / tarczą (.flank), jak ich łuki na wewnętrznym pierścieniu.
    Kolor liczby obrotów podpowiada zmianę biegu (zielony = okno, czerwony = za późno). */
 .drive-readout {

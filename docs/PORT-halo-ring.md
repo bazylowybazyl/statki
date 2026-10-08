@@ -301,6 +301,13 @@ w dwóch innych demach, dodaj różne typy drzew”.
 
 ## Port K-7 (dok gameplayowy, decyzja użytkownika 2026-09-23)
 
+> **2026-10-07 — bez suwnic.** Decyzja użytkownika: suwnice „nie mają żadnej roli — cargo będą ładowały drony”;
+> usunięte z hal K-7 i z pasów MEGA zatok (bryły, kolizje nóg, pozy `bridge` / `trolley` / `lower`). Przewody
+> paliwowe stanowisk capital niosą ramiona SCARA na słupkach paliwowych, przewód to lina z fizyką, przy ryglowaniu
+> i odryglowaniu para bucha dookoła złączki; w hali rurociągi i zbiorniki paliwa przy ścianie tylnej. Opis i zasady:
+> AGENTS.md § „Obsługa paliwowa stanowisk K-7”, demo `dema/dok-k7-webgpu.html`. Wzmianki o suwnicach niżej są
+> historyczne.
+
 Hala K-7 z dema ECUMENE (`dema/orbital_ring_gameplay_hub_v3.html`) przeniesiona (3 bramy, suwnice,
 węże od rufy, sekwencje dokowania 9,3/9,5 s, zanik dachu); od 2026-09-23 **28 stanowisk, 4 capital**
 (hala 10 440 j. szerokości, brama główna 6 180 j. — każde capital ma własny pas). Na ringu 4 hale:

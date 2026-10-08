@@ -26,7 +26,7 @@ export const SHIP3D_MODELS = Object.freeze({
 
 export const SHIP3D_IDS = Object.freeze(Object.keys(SHIP3D_MODELS));
 
-/** Model 3D kadłuba (patrz nagłówek). o — opcje budowy (bridges, bridgeZScale). */
+/** Model 3D kadłuba (patrz nagłówek). o — opcje budowy (bridges, bridgeZScale, rcs — skrzynki RCS w bryle; gra: false). */
 export function buildShip3D(id, o = {}) {
   if (id === 'atlas') return buildAtlasHull3D(o);
   if (FLEET3D_SPECS[id]) return buildFleetHull3D(id, o);

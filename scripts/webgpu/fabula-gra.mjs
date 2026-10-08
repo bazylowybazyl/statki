@@ -1,10 +1,10 @@
 // Fabuła w PRAWDZIWEJ grze (2026-09-30, src/game/story/): Vite + headless Chrome z WebGPU (CDP).
 //
-//   node scripts/webgpu/fabula-gra.mjs [--intro] [--faza scout|approach|ram|defences|shipyard|counter|return]
+//   node scripts/webgpu/fabula-gra.mjs [--intro] [--faza scout|approach|ram|defences|shipyard|aftermath|repair|counter|counter2|counter3|return]
 //        [--kadry 0,2,4,6,8,10,12,14] [--rozmiar 1600x900] [--out .tmp/fabula] [--czas 20]
 //
 // --intro (domyślnie): nowa gra w trybie kampanii — kadry lotu kamery w stałych chwilach toru (StoryGame.cine.devTime),
-//   odprawa w doku (dialog), wysunięcie ze stanowiska, kamera gry z celem i samouczkiem.
+//   odprawa w doku (dialog), panel stanowiska i klik ODDOKUJ, odcumowanie, kamera gry z celem i samouczkiem.
 // --faza X: skok dev (?story=X) — stan świata i kadry fazy co --krok s przez --czas s (raport: cele, liczniki grupy).
 // Wynik: <out>/*.png, <out>/raport.json (fazy, cele, błędy konsoli).
 import { mkdirSync } from 'node:fs';
@@ -109,12 +109,17 @@ try {
       await sleep(250);
       if (k === 3) await shot('21-odprawa-2');
     }
-    await shot('30-wysuniecie-a');
-    await sleep(4000);
-    await shot('31-wysuniecie-b');
+    // Odcumowanie na rozkaz gracza (2026-10-07): panel stanowiska z przyciskiem ODDOKUJ, sekwencja obsługi
+    // (upust z przewodów paliwowych, rygle, przewody, mocowania), potem stery u gracza — bez wysuwania.
+    await waitFor(cdp, "window.StoryGame.phase === 'undock' && !!window.StoryGame.ui.action", 30000, 200);
+    await sleep(1500);
+    await shot('30-panel-oddokuj');
+    await ev(`(() => { document.querySelector('#story-root .st-cmd-btn')?.click(); return true; })()`);
+    await sleep(900);
+    await shot('31-odcumowanie-upust');
     await waitFor(cdp, "window.StoryGame.phase === 'undock' && !window.StoryGame.lock", 40000, 300);
     await sleep(1200);
-    await shot('32-oddanie-kamery');
+    await shot('32-stery-u-gracza');
     await waitFor(cdp, '!window.StoryGame.cinematic', 20000, 300);
     await sleep(800);
     await shot('40-gra-cel');

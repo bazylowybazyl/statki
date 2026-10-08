@@ -21,7 +21,7 @@ const { aiBattleship, aiFrigate, computeTrafficAvoidance } = await import('../sr
 const { setFlightArrive, setFlightSeparation, stepShipFlight, usesShipFlightModel } = await import('../src/game/flight/shipFlightModel.js');
 const { resolveCapitalIdealRange } = await import('../src/ai/capitalAiTuning.js');
 
-const armata = { id: 'armata_mk1', baseRange: 7000, baseSpeed: 2500 };
+const armata = { id: 'armata_mk1', baseRange: 3500, baseSpeed: 2500 };
 const DT = 1 / 120;
 const BRAIN_DT = 1 / 20;
 

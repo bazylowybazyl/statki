@@ -19,7 +19,7 @@ import {
   npcCollidesWithWorld,
   storeNpcCollisionBody
 } from '../src/game/npcCollisionBody.js';
-import { HaloRingCollider, haloShipOutline } from '../src/game/haloRingCollision.js';
+import { HALO_COLLISION, HaloRingCollider, haloShipOutline } from '../src/game/haloRingCollision.js';
 import { haloGameToLocal, haloLocalToGame } from '../src/game/haloRingPlanets.js';
 import { setFlightArrive, stepShipFlight } from '../src/game/flight/shipFlightModel.js';
 import { syncNpcFlightState } from '../src/game/flight/npcFlight.js';
@@ -211,6 +211,119 @@ test('ring: gracz bez zmian — pos/vel, ściany portu i komunikat przy uderzeni
   assert.ok(Math.abs(player.vel.x * out.x + player.vel.y * out.y) < 1e-6);
   assert.equal(player.x, undefined, 'graczowi nie dopisujemy x/y');
   assert.deepEqual(messages, ['RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM']);
+});
+
+// ---------------------------------------------------------------------------
+// Bramka odległości od ringów (audyt 2026-10-07 § 5.4): NPC dalej od każdego ringu niż zewnętrzny
+// brzeg testu płyty nie idzie do bryły ani do koliderów — kolider i tak by go odrzucił.
+// ---------------------------------------------------------------------------
+
+const RING_GATE_SLACK = Number(html.match(/const RING_GATE_SLACK = (\d+(?:\.\d+)?);/)?.[1]);
+
+// HaloRingGame dla pętli z index.html: `entries` (planeta, kolider — z nich bramka) i constrainShip
+// jak w grze (wszystkie ringi, wynik ostatniego trafienia). `calls` — NPC, które doszły do koliderów.
+// gate = false — obiekt bez `entries`: pętla bez bramki, jak dawniej.
+function ringGameWithEntries(rings, { gate = true } = {}) {
+  const entries = rings.map(({ col, planet }) => ({ key: col.key, planet, collider: col }));
+  const game = {
+    calls: 0,
+    constrainShip(s, walls = false) {
+      this.calls++;
+      let hit = null;
+      for (const e of entries) {
+        e.collider.setPlanet(e.planet);
+        const res = e.collider.constrainShip(s, walls);
+        if (res.hit) hit = res;
+      }
+      return hit;
+    }
+  };
+  if (gate) game.entries = entries;
+  return game;
+}
+
+function loadGatedRingStep(haloRings, npcs) {
+  return loadRingStep(haloRings, npcs, { _ringGate: new Float64Array(12), RING_GATE_SLACK, HALO_COLLISION });
+}
+
+// Losowe NPC wokół ringu: od wnętrza (strona planety) przez płytę do daleko za bramką.
+function npcsAroundRing(col, planet, count, seed) {
+  let s = seed;
+  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  const gateR = col.floorMid + HALO_COLLISION.terrainReach + RING_GATE_SLACK;
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    const rect = rnd() < 0.6;
+    // do kadłuba supercapitala: pół długości większe niż zapas terenu w bramce
+    const hull = rect ? { w: 300 + rnd() * 7000, h: 120 + rnd() * 1800, radius: 100 + rnd() * 400 } : { radius: 60 + rnd() * 2500 };
+    const reach = Math.max(hull.radius, rect ? Math.hypot(hull.w, hull.h) / 2 : 0, 60);
+    const band = rnd();
+    const r = band < 0.15 ? 900000 + rnd() * 50000
+      : band < 0.5 ? gateR + reach + (rnd() - 0.5) * 400            // przy brzegu bramki
+        : col.back - 2500 + rnd() * (gateR + 3000 - col.back);    // przez płytę
+    const th = rnd() * Math.PI * 2;
+    out.push(makeDestroyer(planet.x + Math.cos(th) * r, planet.y + Math.sin(th) * r, {
+      ...hull, angle: rnd() * Math.PI * 2, vx: (rnd() - 0.5) * 600, vy: (rnd() - 0.5) * 600
+    }));
+  }
+  return out;
+}
+
+const kinematics = (list) => list.map((n) => [n.x, n.y, n.vx, n.vy]);
+
+test('ring: bramka odległości — ten sam wynik co bez bramki, dalecy NPC nie idą do koliderów', () => {
+  assert.ok(RING_GATE_SLACK >= 0, 'stała zapasu bramki w index.html');
+  const col = new HaloRingCollider(EARTH);
+  for (let seed = 1; seed <= 6; seed++) {
+    // co drugie ziarno góry 1200 j. nad podłogą (teren sięga do terrainReach)
+    col.setTerrain(seed % 2 === 0 ? () => 1200 : null);
+    const npcs = npcsAroundRing(col, EARTH, 160, seed * 7919);
+    const copy = structuredClone(npcs);
+    const gated = ringGameWithEntries([{ col, planet: EARTH }]);
+    const plain = ringGameFor(col);      // bez `entries` — pętla bez bramki, jak dawniej
+    let plainCalls = 0;
+    const counting = { constrainShip: (s, walls) => { plainCalls++; return plain.constrainShip(s, walls); } };
+    for (let i = 0; i < 3; i++) {
+      loadGatedRingStep(gated, npcs)(DT);
+      loadRingStep(counting, copy)(DT);
+    }
+    assert.deepEqual(kinematics(npcs), kinematics(copy), `ziarno ${seed}: wypchnięcia jak bez bramki`);
+    assert.ok(plain.hits > 0, `ziarno ${seed}: część NPC w płycie`);
+    assert.equal(plainCalls, 3 * npcs.length);
+    assert.ok(gated.calls < plainCalls * 0.9, `ziarno ${seed}: bramka odcina dalekich (${gated.calls} / ${plainCalls})`);
+  }
+});
+
+test('ring: bramka liczy każdy ring osobno (planeta ruchoma, więcej ringów niż bufor)', () => {
+  // Pięć ringów (bufor bramki rośnie z 4): ten sam kolider Ziemi pod pięcioma planetami w szeregu.
+  const planets = Array.from({ length: 5 }, (_, k) => ({ ...EARTH, x: EARTH.x + k * 400000 }));
+  const rings = planets.map((planet) => ({ col: new HaloRingCollider(EARTH), planet }));
+  const npcs = rings.flatMap(({ col, planet }, k) => npcsAroundRing(col, planet, 40, 101 + k));
+  const copy = structuredClone(npcs);
+  const gated = ringGameWithEntries(rings);
+  const plain = ringGameWithEntries(rings, { gate: false });
+  const step = loadGatedRingStep(gated, npcs);
+  const stepPlain = loadRingStep(plain, copy);
+  for (let i = 0; i < 3; i++) {
+    for (const p of planets) p.y += 900;       // planety jadą po orbicie — bramka z pozycji tej klatki
+    step(DT);
+    stepPlain(DT);
+  }
+  assert.deepEqual(kinematics(npcs), kinematics(copy));
+  assert.ok(gated.calls < plain.calls, `${gated.calls} / ${plain.calls}`);
+});
+
+test('ring: NPC 900 tys. j. od planet — zero kopii do bryły i zero zapytań koliderów', () => {
+  const col = new HaloRingCollider(EARTH);
+  const far = Array.from({ length: 50 }, (_, k) => makeDestroyer(EARTH.x - 900000 + k * 1000, EARTH.y + 4000, { vx: 10, vy: 0 }));
+  const gated = ringGameWithEntries([{ col, planet: EARTH }]);
+  let loads = 0;
+  loadRingStep(gated, far, {
+    _ringGate: new Float64Array(12), RING_GATE_SLACK, HALO_COLLISION,
+    loadNpcCollisionBody: (body, npc) => { loads++; return loadNpcCollisionBody(body, npc); }
+  })(DT);
+  assert.equal(gated.calls, 0);
+  assert.equal(loads, 0);
 });
 
 // ---------------------------------------------------------------------------

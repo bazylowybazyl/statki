@@ -11,6 +11,7 @@ const base = { radius: 6000, spacing: 1500, getX, getY };
 test('Supernova Barrage: salwa 4 głowic z polem barrage', () => {
   const w = MASTER_WEAPONS.supernova_missile;
   assert.equal(rocketSalvoSize(w), 4);
+  assert.equal(w.ammo, 2, 'magazynek: 2 salwy po 4');
   assert.ok(w.barrage && w.barrage.radius > w.explosionRadius && w.barrage.spacing >= w.explosionRadius);
 });
 

@@ -425,15 +425,29 @@ export function ensureHullSkinSlot(hull, occ) {
   let st = hull.__skin3D;
   if (st && st.body === body) return st;
   if (st) releaseHullSkinSlot(hull);
-  // Pudło żywych węzłów ciała (wrak — tylko jego kawałek pierwotnej kratownicy).
+  // Pudło komórek: statek — cała pierwotna konstrukcja (`occ`; zniszczone węzły odrastają — HullBodies.regrowCell /
+  // restoreHull — w każdej jej komórce, także poza pudłem żywych węzłów z chwili przydziału), wrak — tylko jego
+  // kawałek pierwotnej kratownicy (żywe węzły ciała).
   const s = body.nodeStore;
   let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
-  for (let i = 0; i < s.count; i++) {
-    if (!s.active[i]) continue;
-    const ix = s.ix[i], iy = s.iy[i], iz = s.iz[i];
-    if (ix < x0) x0 = ix; if (ix > x1) x1 = ix;
-    if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
-    if (iz < z0) z0 = iz; if (iz > z1) z1 = iz;
+  if (!hull.isFragment && occ && occ.length === body.dims.x * body.dims.y) {
+    const W = body.dims.x;
+    for (let c = 0; c < occ.length; c++) {
+      if (!occ[c]) continue;
+      const ix = c % W, iy = (c - ix) / W;
+      if (ix < x0) x0 = ix; if (ix > x1) x1 = ix;
+      if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+    }
+    if (x1 >= x0) { z0 = 0; z1 = 0; }
+  }
+  if (!(x1 >= x0)) {
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const ix = s.ix[i], iy = s.iy[i], iz = s.iz[i];
+      if (ix < x0) x0 = ix; if (ix > x1) x1 = ix;
+      if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+      if (iz < z0) z0 = iz; if (iz > z1) z1 = iz;
+    }
   }
   if (!(x1 >= x0)) return null;
   // margines 1 komórki (rogi FFD przy brzegu kawałka)

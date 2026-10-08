@@ -143,8 +143,11 @@ function normalizeEditorEngine(marker, idx, kind = 'main') {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const rawDeg = normalizeEditorEngineDeg(marker?.deg, 0);
   const mount = normalizeEditorEngineMount(kind, marker?.mount, x, y);
-  const baseDeg = (kind === 'side')
-    ? (mount.endsWith('_right') ? 90 : -90)
+  // SIDE: kąt z edytora (deg 0 — prawa burta, 180 — lewa: wydech na zewnątrz), jak dysze gracza (index.html,
+  // normalizeEditorEngineMarker). Do 2026-10-07 baza ±90° (wydech wzdłuż kadłuba, w zakresie gimbala także pod
+  // kadłub) — przy modelach 3D dysz dzwon celował w pokład. Marker bez kąta — na zewnątrz swojej burty.
+  const baseDeg = (kind === 'side' && !Number.isFinite(Number(marker?.deg)))
+    ? (inferEditorEngineSide(mount, y) === 'left' ? 180 : 0)
     : rawDeg;
   const gimbal = normalizeEditorEngineGimbal(kind, marker?.gimbalMinDeg, marker?.gimbalMaxDeg);
   const nozzleRaw = normalizeEditorEngineDeg(marker?.nozzleDeg, baseDeg);

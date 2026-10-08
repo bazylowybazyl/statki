@@ -29,8 +29,8 @@ window.aiPickTarget = (npc) => {
   return Aw.pickContactTarget(npc, { player: window.ship ?? null, priority: null });
 };
 
-const railgun = { baseRange: 14000, baseSpeed: 8000 };
-const armata = { baseRange: 7000, baseSpeed: 2500 };
+const railgun = { baseRange: 4500, baseSpeed: 8000 };
+const armata = { baseRange: 3500, baseSpeed: 2500 };
 const DT = 1 / 120;
 const BRAIN_DT = 1 / 20;
 

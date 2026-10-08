@@ -103,12 +103,16 @@ test('WGSL kadłuba: tekstury per obiekt w liście aktualizacji, lampy w jednym 
     // maskowanie (src/3d/cloak/cloakTSL.js, 2026-10-04) — trzeci klon sprite'a (poświata brzegu) i mapa
     // normalnych z jawnym poziomem (szkło ukrytego kadłuba: węzeł i klon) — te same wiązania.
     const keys = r.updateNodes.filter((n) => n.hullKey).map((n) => n.hullKey).sort();
+    // Oświetlenie v2 (2026-10-06): mapa powierzchni ze sprite'a — próbka główna (normalne, AO) i 7 próbek
+    // reliefu samocienia (hullSelfShadow) — klony tego samego węzła, jedno wiązanie tekstury.
+    const surface = Array(8).fill('uSurfaceMap');
     const expected = v === 'beam'
-      ? ['uNormalMap', 'uNormalMap', 'uNormalMap', 'uShapeMap', 'uSprite', 'uSprite', 'uSprite']
-      : ['uNormalMap', 'uShapeMap', 'uSprite', 'uSprite'];
+      ? ['uNormalMap', 'uNormalMap', 'uNormalMap', 'uShapeMap', 'uSprite', 'uSprite', 'uSprite', ...surface]
+      : ['uNormalMap', 'uShapeMap', 'uSprite', 'uSprite', ...surface];
     assert.deepEqual(keys, expected, v);
-    // Skóra belek: +1 wspólna tekstura — kafel szumu fxNoise poszarpanego brzegu rany (mapa ran, 18-C).
-    const texLimit = v === 'beam' ? 7 : 6;
+    // Skóra belek: +1 wspólna tekstura — kafel szumu fxNoise poszarpanego brzegu rany (mapa ran, 18-C);
+    // wszystkie warianty: +1 — mapa powierzchni (oświetlenie v2).
+    const texLimit = v === 'beam' ? 8 : 7;
     assert.ok((r.fragment.match(/: texture_2d<f32>/g) || []).length <= texLimit, `${v}: bez nowego wiązania tekstury`);
     for (const stage of [r.vertex, r.fragment]) {
       assert.ok((stage.match(/var<uniform>/g) || []).length <= 12, `${v}: limit 12 buforów uniformów na etap`);

@@ -9,7 +9,9 @@
 //     rufie), skórami sprite'ów (z = 0), poświatą na poszyciu (z = 2), pociskami i efektami (z = 14–15);
 //     nad skałami pasa (szczyt skały PLAY ≤ −0,45 r, r ≥ 40 → z ≤ ~−11) i płatami mgły (z ≤ −200);
 //   • wieże na modelu [−4,6; −0,4] — zawsze nad pokładem swojego kadłuba;
-//   • wieże na sprite'ach [0,05; 1,8] — nad skórą sprite'a, pod efektami.
+//   • wieże na sprite'ach [0,05; 1,8] — nad skórą sprite'a, pod efektami;
+//   • dysze SIDE (thrusterBatch3D.js, 2026-10-07) na modelu [−4,9; −0,6], na sprite'ach [0,04; 1,4] — nad kadłubem,
+//     nad płomieniem SIDE (z = −5: płomień wychodzi spod dzwonu), pod efektami.
 // Warstwa per obiekt: userData.slab = Vector4(zb, zt, lo, hi) (z świata; uniform().onObjectUpdate); partie wież
 // (turretBatch3D.js) — per instancja, węzeł vec4 z rekordu wieży.
 // Precyzja: depth24plus przy near 1 / far 400 000 = ~0,024 j. na stopień — ~210 stopni na kadłub.
@@ -20,6 +22,8 @@ import { Fn, uniform, positionWorld, positionView, cameraProjectionMatrix, vec4,
 export const SLAB_HULL = Object.freeze({ lo: -10.4, hi: -5.3 });
 export const SLAB_TURRET_ON_MODEL = Object.freeze({ lo: -4.6, hi: -0.4 });
 export const SLAB_TURRET_ON_SPRITE = Object.freeze({ lo: 0.05, hi: 1.8 });
+export const SLAB_NOZZLE_ON_MODEL = Object.freeze({ lo: -4.9, hi: -0.6 });
+export const SLAB_NOZZLE_ON_SPRITE = Object.freeze({ lo: 0.04, hi: 1.4 });
 
 const _default = new THREE.Vector4(-1, 1, SLAB_HULL.lo, SLAB_HULL.hi);
 

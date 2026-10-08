@@ -21,9 +21,13 @@
     • mapa gazu (co klatkę, w rozdzielczości „jakość gazu”): gęstość i barwa
       rozpraszania każdego gazu z szumu 2D (zawinięty przepływ, włókna, strugi);
     • mapa światła: marsz ku Słońcu po mapie gazu (samocień: gaz od strony Słońca
-      jasny, w głębi ciemny) i cienie skał/okrętów w gazie (smugi cienia);
-    • złożenie z głębią sceny: 4 plasterki warstwy gazu, każdy przycięty głębią
-      piksela — okręt w mgle jest za częścią gazu, nie pod nią ani na niej;
+      jasny, w głębi ciemny) i cienie skał/okrętów w gazie (smugi cienia); każdy
+      krok marszu uśrednia mapę na całym swoim odcinku (bez schodków cienia);
+    • złożenie z głębią sceny: 8 plasterków warstwy gazu, każdy przycięty głębią
+      piksela — okręt w mgle jest za częścią gazu, nie pod nią ani na niej.
+      Promień przechodzi przez warstwę ukośnie, więc plasterek uśrednia mapę
+      wzdłuż odcinka, który przecina (filtr anizotropowy po mipmapach mapy) —
+      jedna próbka na plasterek dawała przesunięte kopie brzegów gazu;
     • światło dynamiczne (strzały, wybuchy, dysze, pochodnie) rozświetla gaz;
     • ruch gazu (tylko WebGPU, compute): siatka 256×256 komórek po 64 j. wokół
       kamery — dysze dmuchają, kadłub rozpycha, fala wybuchu wydmuchuje dziurę
@@ -90,7 +94,8 @@
   </div>
   <div id="sceneinfo"></div>
   <button id="ab" class="on">T · Gazy w płaszczyźnie gry: WŁĄCZONE</button>
-  <div class="keys">WASD — lot · mysz — celowanie · LPM — strzał · Spacja — salwa ·
+  <div class="keys">W / S — ciąg naprzód / wstecz · A / D — obrót · W + S — ciąg w miejscu ·
+    mysz — celowanie · LPM — strzał · Spacja — salwa ·
     PPM / X — wybuch pod kursorem · kółko — zoom · H — panel</div>
   <div id="stats"></div>
   <details><summary>ustawienia</summary>
@@ -548,6 +553,10 @@ function mulberry32(a) {
 }
 
 const uBlink = uniform(0);
+// Okręt (układ lokalny, przed skalą): dziób ku +x, dysze główne na rufie (x = −612), dysze wsteczne
+// na przedniej ścianie nadbudówki (x = RETRO_X, po bokach dzioba).
+const RETRO_X = 728;
+const RETRO_Y = [-59, 59];
 function buildShip(o) {
   const g = new THREE.Group();
   const hull = hullMaterial({ base: o.base, line: o.line, metal: 0.3, rough: 0.5, panel: 46, seed: o.seed });
@@ -581,6 +590,13 @@ function buildShip(o) {
     c.position.set(-612, y, 4);
     g.add(c);
   }
+  // Dysze wsteczne (S): na przedniej ścianie nadbudówki, po bokach dzioba, wylotem ku przodowi.
+  for (const y of RETRO_Y) {
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(19, 14, 22, 16), nozMat);
+    c.rotation.z = -Math.PI / 2;
+    c.position.set(RETRO_X, y, 4);
+    g.add(c);
+  }
   const navR = new THREE.MeshBasicNodeMaterial();
   navR.colorNode = vec3(6.0, 0.25, 0.15).mul(select(fract(uBlink).lessThan(0.12), float(1.0), float(0.08)));
   const navG = new THREE.MeshBasicNodeMaterial();
@@ -601,7 +617,7 @@ function buildShip(o) {
   g.scale.setScalar(o.scale);
   scene.add(g);
   return {
-    group: g, turret, x: 0, y: 0, vx: 0, vy: 0, angle: 0, scale: o.scale, engine: o.engine, thrust: 0,
+    group: g, turret, x: 0, y: 0, vx: 0, vy: 0, angle: 0, spin: 0, scale: o.scale, engine: o.engine, thrust: 0, retro: 0,
     box: { x0: -610 * o.scale, x1: 880 * o.scale, y0: -182 * o.scale, y1: 182 * o.scale },
     hardpoints: [-260, -110, 40, 190].flatMap((x) => [[x, 152, 36], [x, -152, 36]])
   };
@@ -742,6 +758,7 @@ const uAmb = uniform(new THREE.Vector3(0.02, 0.02, 0.025));
 const uGasLight = uniform(1);
 const uMapMin = uniform(new THREE.Vector2());
 const uMapSize = uniform(new THREE.Vector2(1, 1));
+const uMapRes = uniform(new THREE.Vector2(16, 16));        // mapa gazu / światła [teksele]
 const uCam = uniform(new THREE.Vector3());
 const uTan = uniform(new THREE.Vector2(0.5, 0.3));
 const jetAArr = Array.from({ length: MAX_JETS }, () => new THREE.Vector4());  // początek xy, kierunek xy
@@ -1029,25 +1046,47 @@ const gasMap = Fn(() => {
 });
 
 // Mapa światła: przepuszczalność ku Słońcu (marsz po mapie gazu) i cienie brył.
-// Kroki marszu ku Słońcu [j.]. Poza mapą sampler bierze gaz z jej krawędzi (clamp),
+// Odcinki marszu ku Słońcu [j.]. Poza mapą sampler bierze gaz z jej krawędzi (clamp),
 // czyli zakłada, że gaz ciągnie się dalej — pusty świat za krawędzią dawał jasne pasy.
 const SHADOW_STEPS = [60, 140, 250, 400, 600, 860, 1200, 1650, 2200];
 const rtA = new THREE.RenderTarget(16, 16, { type: THREE.HalfFloatType, depthBuffer: false });
 const rtB = new THREE.RenderTarget(16, 16, { type: THREE.HalfFloatType, depthBuffer: false });
-for (const rt of [rtA, rtB]) { rt.texture.minFilter = THREE.LinearFilter; rt.texture.magFilter = THREE.LinearFilter; }
+for (const rt of [rtA, rtB]) {
+  // Mipmapy (three generuje je po każdym renderze do celu) + filtr anizotropowy: próbka z gradientem
+  // = odcinek uśrednia mapę na całym odcinku (marsz ku Słońcu, promień kamery w plasterku gazu).
+  rt.texture.minFilter = THREE.LinearMipmapLinearFilter;
+  rt.texture.magFilter = THREE.LinearFilter;
+  rt.texture.generateMipmaps = true;
+  rt.texture.anisotropy = 16;
+}
 
 // Tekstury celów renderowania w three r183 mają v = 0 u GÓRY obrazu (w obu backendach),
 // więc v liczymy od górnej krawędzi mapy.
 const mapUV = (xy) => { const t = xy.sub(uMapMin).div(uMapSize); return vec2(t.x, t.y.oneMinus()); };
+// Wektor świata w uv mapy (oś v odwrócona jak w mapUV).
+const mapVecUV = (v) => vec2(v.x, v.y.negate()).div(uMapSize);
+// Gradient poprzeczny do wektora uv: 1 teksel (próbka z gradientami = odcinek × 1 teksel).
+const mapPerpUV = (vUV) => {
+  const t = vUV.mul(uMapRes);
+  const l = length(t);
+  const n = select(l.greaterThan(1e-6), t.div(max(l, 1e-6)), vec2(1.0, 0.0));
+  return vec2(n.y.negate(), n.x).div(uMapRes);
+};
 
 const lightMap = Fn(() => {
   const p = positionWorld.xy.toVar();
   const tau = float(0).toVar();
+  // Każdy krok marszu uśrednia gęstość na CAŁYM swoim odcinku [poprzedni, s] (próbka w środku z gradientem
+  // = odcinek). Dawna próbka w końcu odcinka dodawała schodek przy każdym kroku, w którym brzeg gazu
+  // przechodził przez punkt próbki — cień miał pasy równoległe do brzegów, co krok marszu.
+  const sunUV = mapVecUV(uSunDir).toVar();
+  const gy = mapPerpUV(sunUV).toVar();
   let prev = 0;
   for (const s of SHADOW_STEPS) {
     const ds = s - prev;
+    const mid = (s + prev) * 0.5;
     prev = s;
-    tau.addAssign(texture(rtA.texture, mapUV(p.add(uSunDir.mul(s)))).a.mul(ds / (2 * SLAB)));
+    tau.addAssign(texture(rtA.texture, mapUV(p.add(uSunDir.mul(mid)))).grad(sunUV.mul(ds), gy).a.mul(ds / (2 * SLAB)));
   }
   const occ = float(0).toVar();
   Loop({ start: 0, end: uOccCount, type: 'int', condition: '<', name: 'oc' }, ({ oc }) => {
@@ -1210,7 +1249,7 @@ const quads = (() => {
 })();
 
 // ---------------------------------------------------------------------------
-// Złożenie: tło → scena → gaz (4 plasterki przycięte głębią) → „fx” → bloom → tone mapping → FXAA
+// Złożenie: tło → scena → gaz (8 plasterków przyciętych głębią) → „fx” → bloom → tone mapping → FXAA
 
 const nebPass = pass(bgScene, camera);
 nebPass.setResolutionScale(0.5);
@@ -1228,7 +1267,18 @@ const sceneTex = scenePass.getTextureNode('output');
 const fxTex = scenePass.getTextureNode('fx');
 const viewZ = scenePass.getViewZNode();
 
-const PROF = [0.7, 1.3, 1.3, 0.7];   // profil pionowy warstwy gazu (gęściej przy z = 0)
+// Warstwa gazu: GAS_SLICES plasterków z ∈ [−SLAB, SLAB], każdy przycięty głębią piksela. Mapa gazu jest 2D
+// (kolumna), a promień kamery przechodzi przez warstwę ukośnie: w plasterku [z1, z0] przecina mapę na ODCINKU
+// P(z0)…P(z1) (paralaksa dir.xy × grubość — na brzegu kadru ~0,56 grubości plasterka). Plasterek UŚREDNIA mapę
+// wzdłuż tego odcinka (próbka z gradientami: odcinek × 1 teksel, filtr anizotropowy po mipmapach). Dawniej
+// 4 plasterki brały po jednej próbce w środku odcinka, więc ostry brzeg gazu wychodził w 4 przesuniętych
+// kopiach (zgłoszenie użytkownika 2026-10-06: „rozwarstwienie” w każdej scenie). Profil pionowy gładki,
+// 1 + C·cos(π z / SLAB) (1,3 przy z = 0, 0,7 na brzegach warstwy, średnia 1), z całką dokładną — także
+// w plasterku przyciętym głębią; schodkowy profil łamałby rampy brzegów na granicach plasterków.
+const GAS_SLICES = 8;
+const PROF_C = 0.3;
+const profCumJs = (z) => z + PROF_C * SLAB / Math.PI * Math.sin(Math.PI * z / SLAB);
+const profCum = (z) => z.add(sin(z.mul(Math.PI / SLAB)).mul(PROF_C * SLAB / Math.PI));
 const hdrNode = Fn(() => {
   const sc = sceneTex.toVar();
   const base = sc.rgb.add(bgColor.mul(sc.a.oneMinus())).toVar();
@@ -1240,25 +1290,30 @@ const hdrNode = Fn(() => {
   const zSurf = uCam.z.add(viewZ).toVar();
   const pc = uCam.xy.add(dir.xy.mul(uCam.z)).toVar();
   const lights = mediumLight(vec3(pc, 40.0)).mul(uGasLight).toVar();
+  // Przesunięcie punktu promienia w uv mapy na jednostkę wysokości i gradient poprzeczny (1 teksel).
+  const rayUV = mapVecUV(dir.xy).toVar();
+  const gy = mapPerpUV(rayUV).toVar();
   const col = vec3(0).toVar();
   const T = float(1).toVar();
   const Ttop = float(1).toVar();
-  const dz = (2 * SLAB) / PROF.length;
-  for (let k = 0; k < PROF.length; k++) {
+  const dz = (2 * SLAB) / GAS_SLICES;
+  for (let k = 0; k < GAS_SLICES; k++) {
     const z0 = SLAB - k * dz;
-    const z1c = max(float(z0 - dz), zSurf);
-    const seg = max(float(z0).sub(z1c), 0.0);
-    const zm = float(z0).add(z1c).mul(0.5);
+    // Dół plasterka: przycięty powierzchnią sceny (okręt w gazie), nie wyżej niż jego góra.
+    const z1 = min(max(float(z0 - dz), zSurf), float(z0)).toVar();
+    const zm = float(z0).add(z1).mul(0.5);
     const uvm = mapUV(uCam.xy.add(dir.xy.mul(uCam.z.sub(zm)))).toVar();
-    const A = texture(rtA.texture, uvm).toVar();
-    const B = texture(rtB.texture, uvm);
-    const tau = A.a.mul(seg.mul(dlen).mul(PROF[k] / (2 * SLAB))).mul(uGasOn).toVar();
+    const gx = rayUV.mul(float(z0).sub(z1)).toVar();
+    const A = texture(rtA.texture, uvm).grad(gx, gy).toVar();
+    const B = texture(rtB.texture, uvm).grad(gx, gy);
+    const w = float(profCumJs(z0)).sub(profCum(z1)).mul(1 / (2 * SLAB));
+    const tau = A.a.mul(w).mul(dlen).mul(uGasOn).toVar();
     const alb = A.rgb.div(max(A.a, 0.0001));
     const Lin = uSunCol.mul(B.r).add(uAmb).add(lights);
     const ext = exp(tau.negate()).toVar();
     col.addAssign(alb.mul(Lin).mul(ext.oneMinus()).mul(T));
     T.mulAssign(ext);
-    if (k === 1) Ttop.assign(T);
+    if (k === GAS_SLICES / 2 - 1) Ttop.assign(T);   // „fx” leży przy z ≈ 0: przygasza je górna połowa gazu
   }
   return vec4(base.mul(T).add(col).add(fx.mul(Ttop)), 1.0);
 })();
@@ -1408,7 +1463,7 @@ function setScene(id) {
   const jets = sceneJets[id];
   jets.forEach((j, i) => { jetAArr[i].set(...j.A); jetBArr[i].set(...j.B); jetCArr[i].set(...j.C); });
   uJetCount.value = jets.length;
-  player.x = sc.start[0]; player.y = sc.start[1]; player.angle = sc.start[2]; player.vx = player.vy = 0;
+  player.x = sc.start[0]; player.y = sc.start[1]; player.angle = sc.start[2]; player.vx = player.vy = player.spin = 0;
   cam.x = player.x; cam.y = player.y;
   bolts.length = flashes.length = waves.length = blasts.length = emitters.length = 0;
   S.simReset = true;
@@ -1629,6 +1684,7 @@ function updateMap() {
   for (const q of [mapQuadA, mapQuadB]) { q.position.set(mx, my, 0); q.scale.set(hw * 2, hh * 2, 1); }
   uMapMin.value.set(mx - hw, my - hh);
   uMapSize.value.set(hw * 2, hh * 2);
+  uMapRes.value.set(W, H);
   uCam.value.set(cam.x, cam.y, cam.z);
   uTan.value.set(tanH * camera.aspect, tanH);
   uBoxC.value.set(cam.x, cam.y, -40);
@@ -1636,28 +1692,34 @@ function updateMap() {
 }
 
 function moveShips(dt) {
-  // Gracz: WASD w kierunkach ekranu, bezwładność, dziób obraca się ku kierunkowi lotu.
-  let ix = 0, iy = 0;
-  if (S.keys.has('w') || S.keys.has('arrowup')) iy += 1;
-  if (S.keys.has('s') || S.keys.has('arrowdown')) iy -= 1;
-  if (S.keys.has('a') || S.keys.has('arrowleft')) ix -= 1;
-  if (S.keys.has('d') || S.keys.has('arrowright')) ix += 1;
-  if (S.autoMove) { ix = S.autoMove[0]; iy = S.autoMove[1]; }
-  const il = Math.hypot(ix, iy);
-  const vmax = 1500;
-  const tvx = il ? ix / il * vmax : 0, tvy = il ? iy / il * vmax : 0;
-  const k = 1 - Math.exp(-dt * 1.3);
-  player.vx += (tvx - player.vx) * k;
-  player.vy += (tvy - player.vy) * k;
-  player.thrust += ((il ? 1 : 0.12) - player.thrust) * (1 - Math.exp(-dt * 4));
+  // Gracz: W / S — ciąg wzdłuż dzioba (dysze główne / dysze wsteczne), A / D — obrót kadłuba.
+  // W + S — oba ciągi naraz, statek wyhamowuje i stoi: widać, jak silnik wypycha gaz.
+  let fwd = S.keys.has('w') || S.keys.has('arrowup');
+  let back = S.keys.has('s') || S.keys.has('arrowdown');
+  let turn = 0;
+  if (S.keys.has('a') || S.keys.has('arrowleft')) turn += 1;    // w lewo = przeciwnie do zegara (kamera z góry)
+  if (S.keys.has('d') || S.keys.has('arrowright')) turn -= 1;
+  if (S.autoMove) {
+    // Autopilot konsoli (__demo.move(dx, dy)): obrót ku kierunkowi świata i ciąg, gdy dziób już tam patrzy.
+    let d = Math.atan2(S.autoMove[1], S.autoMove[0]) - player.angle;
+    d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2;
+    turn = Math.max(-1, Math.min(1, d * 2.5));
+    fwd = Math.abs(d) < 0.6;
+    back = false;
+  }
+  const hold = fwd && back;
+  const target = hold ? 0 : fwd ? 1500 : back ? -600 : 0;   // prędkość wzdłuż dzioba [j./s]
+  const hx = Math.cos(player.angle), hy = Math.sin(player.angle);
+  const k = 1 - Math.exp(-dt * (hold ? 2.5 : 1.3));
+  player.vx += (hx * target - player.vx) * k;
+  player.vy += (hy * target - player.vy) * k;
+  const ke = 1 - Math.exp(-dt * 4);
+  player.thrust += ((fwd ? 1 : 0.12) - player.thrust) * ke;
+  player.retro += ((back ? 1 : 0) - player.retro) * ke;
+  player.spin += (turn * 1.1 - player.spin) * (1 - Math.exp(-dt * 3));   // [rad/s]
+  player.angle += player.spin * dt;
   player.x += player.vx * dt;
   player.y += player.vy * dt;
-  if (Math.hypot(player.vx, player.vy) > 60) {
-    const ta = Math.atan2(player.vy, player.vx);
-    let d = ta - player.angle;
-    d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2;
-    player.angle += Math.sign(d) * Math.min(Math.abs(d), dt * 1.1);
-  }
   placeShip(player);
   const sc = SCENES[S.scene];
   npcs.forEach((n, i) => {
@@ -1754,6 +1816,17 @@ function frame(now) {
       const q = worldOf(s.group, -640 - 180 * th, y, 6);
       pushQuad(q.x, q.y, q.z, s.angle, 360 * th * s.scale + 40, 70 * s.scale, e[0] * 0.8 * th, e[1] * 0.8 * th, e[2] * 0.8 * th, 2);
     }
+    // Dysze wsteczne: płomień ku przodowi (kwad obrócony o π — nasada przy dyszy, koniec przed dziobem).
+    const rt = s.retro;
+    if (rt > 0.02) {
+      const pr = worldOf(s.group, RETRO_X + 60, 0, 8);
+      pushLight(pr.x, pr.y, pr.z + 20, 700 * s.scale, 150 * s.scale, e[0] * 0.15 * rt, e[1] * 0.15 * rt, e[2] * 0.15 * rt);
+      const len = 170 * rt + 30;
+      for (const y of RETRO_Y) {
+        const q = worldOf(s.group, RETRO_X + len * 0.5, y, 6);
+        pushQuad(q.x, q.y, q.z, s.angle + Math.PI, len * s.scale, 36 * s.scale, e[0] * 0.8 * rt, e[1] * 0.8 * rt, e[2] * 0.8 * rt, 2);
+      }
+    }
   }
   if (S.scene === 'ring') {
     for (const c of ringChimneys) {
@@ -1820,6 +1893,14 @@ function frame(now) {
       wakeA[nw].set(a.x, a.y, b.x, b.y);
       wakeB[nw].set(2600 * s.thrust, 300 * s.scale, (b.x - a.x) / l, (b.y - a.y) / l);
       nw++;
+      if (s.retro > 0.02) {
+        // Dysze wsteczne dmuchają gaz przed dziób.
+        const ra = worldOf(s.group, RETRO_X, 0, 0), rb = worldOf(s.group, RETRO_X + 900 * s.retro, 0, 0);
+        const rl = Math.hypot(rb.x - ra.x, rb.y - ra.y) || 1;
+        wakeA[nw].set(ra.x, ra.y, rb.x, rb.y);
+        wakeB[nw].set(1500 * s.retro, 170 * s.scale, (rb.x - ra.x) / rl, (rb.y - ra.y) / rl);
+        nw++;
+      }
       for (const lx of [-420, 60, 540]) {
         const p = worldOf(s.group, lx, 0, 0);
         bodyA[nb].set(p.x, p.y, 250 * s.scale, 0);
@@ -1887,7 +1968,7 @@ renderer.compute(dustInit);
 renderer.setAnimationLoop(frame);
 
 window.__demo = {
-  S, setGas, boom, fireSalvo, frame,
+  S, setGas, boom, fireSalvo, frame, ship: player,
   rocks: () => sceneRocks[S.scene],
   scene: (id) => setScene(id),
   aim: (x, y) => { S.aimLock = true; S.aim.set(x, y, BOLT_Z); },

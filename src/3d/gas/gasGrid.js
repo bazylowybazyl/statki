@@ -43,6 +43,7 @@ import {
   texture3D, textureStore, select, mix, clamp, smoothstep, exp, max, min, abs, length, cross, dot
 } from 'three/tsl';
 import { gasBlackbody, gasFirePower } from './gasCommon.js';
+import { fxRandom } from '../fx/fxRandom.js';
 
 export const GAS_GRID_DEFAULTS = Object.freeze({
   N: 64,             // komórek na bok domeny (x, y)
@@ -75,6 +76,8 @@ export function createGasTuning() {
     restRelax: 0.05,    // powrót pola pozycji spoczynkowych do tożsamości [1/s] (detal nie rozciąga się bez końca)
     fuelDecay: 0.25,    // ulatnianie się niespalonego paliwa [1/s]
     drag: 0.9,          // opór prędkości [1/s] (front kuli ognia hamuje w ~0,5 s)
+    dragQuad: 0,        // opór zależny od prędkości [1/komórka] (opór = drag + dragQuad·|v|): szybki front hamuje,
+                        // wolny dym dalej odpływa (w próżni stały opór zatrzymywał dym — „wisiał w miejscu”)
     vorticity: 2.0,     // wzmacnianie wirów (ε)
     turbulence: 35,     // siła turbulencji z szumu [komórki/s²]
     turbScale: 0.055,   // częstotliwość szumu turbulencji [1/komórka]
@@ -152,7 +155,7 @@ export class GasGrid {
    * @param {THREE.Data3DTexture} o.noise3D szum 3D kafelkowy (fxNoise.noise3D — R, G fbm)
    * @param {number} [o.N] @param {number} [o.slots] @param {number} [o.jacobi]
    * @param {number} [o.maxSources] @param {number} [o.maxObstacles]
-   * @param {{ next(): number }} [o.rng] generator efektów (fxRandom) — ziarna domen
+   * @param {{ next(): number }} [o.rng] generator efektów (domyślnie fxRandom — wizualia nie ruszają Math.random gry) — ziarna domen
    */
   constructor(o = {}) {
     const cfg = { ...GAS_GRID_DEFAULTS, ...o };
@@ -165,7 +168,7 @@ export class GasGrid {
     this.substep = cfg.substep;
     this.maxSubsteps = cfg.maxSubsteps;
     this.noise3D = o.noise3D;
-    this.rng = o.rng || { next: Math.random };
+    this.rng = o.rng || fxRandom;
     this.tune = createGasTuning();
     this.time = 0;
     this._acc = 0;
@@ -210,7 +213,7 @@ export class GasGrid {
       obsB: v4Array(this.maxObstacles, 'gasObsB'), // prędkość [kom./s], siła
       ignition: uniform(0), burnRate: uniform(0), heat: uniform(0), soot: uniform(0),
       expansion: uniform(0), cooling: uniform(0), radiative: uniform(0), smokeDecay: uniform(0),
-      fuelDecay: uniform(0), edgeCooling: uniform(0), restRelax: uniform(0.05), disperse: uniform(0), drag: uniform(0), vorticity: uniform(0), turbulence: uniform(0),
+      fuelDecay: uniform(0), edgeCooling: uniform(0), restRelax: uniform(0.05), disperse: uniform(0), drag: uniform(0), dragQuad: uniform(0), vorticity: uniform(0), turbulence: uniform(0),
       turbScale: uniform(0), buoyancy: uniform(0), sootWeight: uniform(0), radialLift: uniform(0),
       maxSpeed: uniform(100), borderFade: uniform(4), warm: uniform(0.9),
       buoyDir: uniform(new THREE.Vector3(0, 1, 0)),
@@ -365,7 +368,7 @@ export class GasGrid {
       const turbW = clamp(temp.mul(1.6).add(smoke.mul(0.35)), 0.0, 1.0);
       const ft = vec3(n1.x, n1.y, n2).sub(0.5).mul(2.0).add(vec3(n3.x, n3.y, n4).sub(0.5).mul(1.1)).mul(U.turbulence).mul(turbW);
       vel.addAssign(fvc.add(fb).add(fr).add(ft).mul(dt));
-      vel.mulAssign(exp(U.drag.negate().mul(dt)));
+      vel.mulAssign(exp(U.drag.add(U.dragQuad.mul(length(vel))).negate().mul(dt)));
       textureStore(this.velB, c.store, vec4(vel, 0.0));
     })().compute(cells).setName('gasAdvect');
 
@@ -523,7 +526,7 @@ export class GasGrid {
     const T = this.tune;
     const U = this.U;
     for (const key of ['ignition', 'burnRate', 'heat', 'soot', 'expansion', 'cooling', 'radiative', 'smokeDecay',
-      'fuelDecay', 'edgeCooling', 'restRelax', 'disperse', 'drag', 'vorticity', 'turbulence', 'turbScale', 'buoyancy', 'sootWeight', 'radialLift',
+      'fuelDecay', 'edgeCooling', 'restRelax', 'disperse', 'drag', 'dragQuad', 'vorticity', 'turbulence', 'turbScale', 'buoyancy', 'sootWeight', 'radialLift',
       'maxSpeed', 'borderFade', 'warm', 'shadow', 'lightStep', 'fireGain', 'fireBurn', 'glow']) {
       U[key].value = T[key];
     }

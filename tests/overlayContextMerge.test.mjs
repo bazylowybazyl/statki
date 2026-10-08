@@ -61,20 +61,23 @@ test('overlay efektów usunięty: moduł, wpięcie w index.html, bloom overlaya'
 });
 
 // Port WebGPU, zadanie 19: rakiety (lot: rocketSystem3D, wygląd: src/3d/rockets/) i iskry
-// (SparkSystem3D) w scenie Core3D; zadanie 20: wybuch reaktora też (krok klatki efektów).
-test('rakiety, iskry i wybuch reaktora w scenie Core3D (kroki klatki efektów)', () => {
+// (SparkSystem3D) w scenie Core3D; wybuchy (2026-10-07: src/3d/explosions/ — gaz 3D, pule gry; zastąpiły
+// reactorblow.js, „tragiczne, do usunięcia”) też jako krok klatki efektów.
+test('rakiety, iskry i wybuchy WebGPU w scenie Core3D (kroki klatki efektów)', () => {
   assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);\s*const rocketFx = createRocketFx\(Core3D\);\s*initRocketSystem3D\(Core3D\.scene, \{ effects: rocketFx \}\);/);
-  assert.match(indexHtml, /window\.makeReactorBlow = createReactorBlowFactory\(Core3D\);/);
+  assert.doesNotMatch(indexHtml, /createReactorBlowFactory|effects3d\/reactorblow/);
+  assert.equal(existsSync(new URL('../src/effects3d/reactorblow.js', import.meta.url)), false, 'stary wybuch usunięty');
+  assert.match(indexHtml, /window\.makeReactorBlow = createExplosionFactory\(Core3D, \{ rocketFx, weaponFx: WeaponFx \}\);/);
   assert.match(indexHtml, /Destruction3D\.init\(\{\s*scene:\s*Core3D\.scene,\s*reactorFactory:\s*window\.makeReactorBlow,/);
   const trigger = indexHtml.match(/function triggerReactorBlow3D\([^)]*\) \{[\s\S]*?\n    \}/)?.[0] || '';
   assert.match(trigger, /window\.makeReactorBlow\?\.\(\{ x, y, size, \.\.\.options \}\);/);
-  const blow = code(read('src/effects3d/reactorblow.js'));
+  const blow = code(read('src/3d/explosions/explosionFx.js'));
   assert.match(blow, /core\.addFxStep\(this\.step\)/);
-  assert.doesNotMatch(blow, /overlay3D|\.spawn\(fx\)/);
+  assert.doesNotMatch(blow, /overlay3D|WebGLRenderer|WebGPURenderer|new THREE\.RenderPipeline/);
   // Rozpad stacji uruchamia wybuchy fabryką (bez oddawania efektu tickowi overlaya).
   assert.doesNotMatch(code(read('src/vfx/destruction3D.js')), /overlay3D/);
   // Demo rdzenia (warsztat reaktorów) na tej samej ścieżce.
   const demo = code(read('dema/rdzen-demo.js'));
   assert.doesNotMatch(demo, /initOverlay|overlay3D/);
-  assert.match(demo, /createReactorBlowFactory\(Core3D\)/);
+  assert.match(demo, /createExplosionFactory\(Core3D\)/);
 });

@@ -42,18 +42,19 @@ test('kolizje statek-olbrzym pasa w physicsStep z prawdziwym dt, nie w render()'
 // Fala z refrakcją (dawne window.trigger3DShockwave) była od 2026-09-24 tylko dla rakiet
 // supernova; od zadania 19 (port WebGPU) nie ma jej wcale — Yamato, wybuchy reaktorów
 // i rozpad stacji jej nie odpalają, a rakiety zgłaszają źródła zniekształceń Core3D.
-// Zapas heatHaze w reactorblow zostaje w kodzie (profile go wyłączają) — od zadania 20 jako
-// gorące powietrze zniekształceń Core3D w ŚWIECIE gry (dawniej pushHeatHazeWorld w osi sceny).
+// Wybuchy WebGPU (2026-10-07, src/3d/explosions/ — zastąpiły reactorblow.js): fala to SAMA refrakcja i gorące
+// powietrze — źródła zniekształceń Core3D w ŚWIECIE gry (bez świecącego okręgu, bez dawnej fali overlaya).
 const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
 // Port WebGPU, zadanie 19: fale, implozja i gorące powietrze rakiet (także Supernowej) to źródła
 // zniekształceń Core3D (src/3d/fx/distortion.js) zgłaszane w ŚWIECIE gry — oś y odwraca commit
 // źródeł (behawioralnie: tests/rocketFx.test.mjs); rakiety nie wołają już pushHeatHazeWorld ani
 // dawnej fali trigger3DShockwave (fala Supernowej = sama refrakcja, bez świecącego obrysu).
-test('haze reaktora w świecie gry (zniekształcenia Core3D); rakiety i Supernowa przez zniekształcenia Core3D', () => {
-  const blow = code('src/effects3d/reactorblow.js');
-  assert.match(blow, /field\.heat\(b\.x, b\.y, radius,/, 'haze reaktora: źródło zniekształceń w świecie gry (x, y)');
-  assert.doesNotMatch(blow, /pushHeatHazeWorld|trigger3DShockwave|useShockwave3D/, 'reaktor bez starego haze i fali');
+test('fala i haze wybuchów w świecie gry (zniekształcenia Core3D); rakiety i Supernowa przez zniekształcenia Core3D', () => {
+  const blow = code('src/3d/explosions/explosionFx.js');
+  assert.match(blow, /field\.shock\(x, y, fr,/, 'fala wybuchu: źródło zniekształceń w świecie gry (x, y), sama refrakcja');
+  assert.match(blow, /field\.heat\(x, y, R \*/, 'haze wybuchu: źródło zniekształceń w świecie gry (x, y)');
+  assert.doesNotMatch(blow, /pushHeatHazeWorld|trigger3DShockwave|useShockwave3D/, 'wybuchy bez starego haze i fali');
   const rockets = code('src/effects3d/rocketSystem3D.js');
   assert.doesNotMatch(rockets, /pushHeatHazeWorld|trigger3DShockwave|makeSupernovaMissileBlow/, 'rakiety bez starego haze i fali');
   const fx = code('src/3d/rockets/effects.js');
@@ -65,10 +66,6 @@ test('haze reaktora w świecie gry (zniekształcenia Core3D); rakiety i Supernow
   // nigdy dawna fala overlaya trigger3DShockwave.
   for (const f of ['recipes.js', 'weaponFx.js', 'gpuFx.js']) {
     assert.doesNotMatch(code(`src/3d/weapons/${f}`), /trigger3DShockwave|sw3d\(/, `${f}: broń bez fali overlaya`);
-  }
-  assert.doesNotMatch(code('src/effects3d/reactorblow.js'), /shockwave3D: \{|heatHaze: \{/, 'wybuchy reaktorów bez fali i haze');
-  for (const f of ['stationChainProfile', 'stationCutProfile', 'stationFinalProfile']) {
-    assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
   }
   assert.match(indexHtml, /Destruction3D\.init\(\{[\s\S]{0,400}?shockwaveManager: null,/, 'rozpad stacji bez fali');
   assert.doesNotMatch(code('src/3d/core3d.js'), /Shockwave3DManager|trigger3DShockwave|refractionTarget/, 'Core3D bez fali z refrakcją');
@@ -100,7 +97,7 @@ test('dysza SIDE świeci w bloomie tylko przy manewrze (audyt 2026-09-26)', () =
 // przywróć” psuły bloom do końca sesji). Od zadania 20 overlaya nie ma; efekty ruszają post
 // Core3D tylko przez Core3D.fx.post (kasowany co klatkę), a konfiguracji bloomu nie zapisuje nikt.
 test('bloom tylko Core3D: efekty przez Core3D.fx.post, bez zapisu/przywracania bazy', () => {
-  assert.doesNotMatch(code('src/effects3d/reactorblow.js') + code('src/effects3d/reactorblow.tsl.js'), /setBloomConfig|setBloomModifier|DevVFX/);
+  assert.doesNotMatch(code('src/3d/explosions/explosionFx.js') + code('src/3d/gas/gasVolume.js') + code('src/3d/gas/gasEmbers.js'), /setBloomConfig|setBloomModifier|DevVFX/);
   // Yamato nie jest już w overlayu (zadanie 17 — receptura WeaponFx w Core3D): bez modyfikatora
   // i bez zapisu konfiguracji bloomu.
   const weaponFx = code('src/3d/weapons/weaponFx.js') + code('src/3d/weapons/recipes.js');

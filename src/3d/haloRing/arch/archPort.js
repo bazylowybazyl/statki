@@ -1,5 +1,5 @@
 // Ringi-archetypy — bryły portu poza halą K-7: otwarte zatoki (pokład,
-// ściany, pylony z terminalem na płycie portu, suwnice pasów MEGA) i tranzyty przez
+// ściany, pylony z terminalem na płycie portu) i tranzyty przez
 // płytę (wyściółka, portale). Wymiary 1:1 z planu dachu Halo
 // (haloRingRoofPlan.js: docks / transits) — stanowiska standardu K-7 rysuje
 // hala kompleksu (HaloPortK7), kolizje liczy haloPortDocking.js z tych samych
@@ -8,7 +8,7 @@
 // i zimne pasy; Fable: radiatory z żarem, anteny, bursztynowe bramy).
 // Czysta matematyka — Three buduje siatki w archRing.js.
 import { HALO_PORT, HALO_TRANSIT, haloTransitAngles } from '../haloRingConfig.js';
-import { HALO_BAY, bayArms, haloBayLayouts } from '../haloPortBays.js';
+import { bayArms, haloBayLayouts } from '../haloPortBays.js';
 import { k7ArmWidthAt } from '../haloPortK7Layout.js';
 import { PORT_PAD_H } from '../haloRingRoofPlan.js';
 import { ArchBatch, archBeamMatrix, archDockBox, archHex } from './archFrame.js';
@@ -118,23 +118,10 @@ export function buildArchPortBodies(layout, style, dress = 'ecumene') {
       box(th, rF, sd * (len - HALO_PORT.sideWall) * 0.5, 0, D, zB, zW, HALO_PORT.sideWall, pal[P.steel]);
       glow(th, rF, sd * (len * 0.5 - HALO_PORT.sideWall - 3), HALO_PORT.backWall, D, zW - 30, zW - 22, 6, emit[E.cyan], 0.9);
       glow(th, rF, sd * (len * 0.5 - HALO_PORT.sideWall - 6), D - 60, D, zW - 8, zW, 12, emit[E.cyan], 0.9);
-      box(th, rF, sd * (len - HALO_PORT.sideWall) * 0.5, 700, D - 40, zW, zW + 12, 40, pal[P.rails], 0, 0.4);
     }
     glow(th, rF, 0, HALO_PORT.backWall + 3, HALO_PORT.backWall + 9, zW - 30, zW - 22, len - 2 * HALO_PORT.sideWall, emit[E.cyan], 0.9);
     glow(th, rF, 0, D - 40, D, zB - 70, zB, len, emit[E.cyan], 0.7);
-    // suwnice pasów MEGA (most od bieżni na ścianie do nogi na grzbiecie)
-    lanes.forEach((lx, k) => {
-      const sdl = Math.sign(lx) || 1;
-      const xWall = sdl * (len * 0.5 - HALO_PORT.sideWall * 0.5);
-      const xSpine = spines[k];
-      const span = Math.abs(xWall - xSpine);
-      for (const yb of HALO_BAY.gantryAt) {
-        const y = D * yb;
-        box(th, rF, (xWall + xSpine) * 0.5, y - HALO_PORT.gantryProfile * 0.5, y + HALO_PORT.gantryProfile * 0.5, zW + 12, zW + 12 + HALO_PORT.gantryProfile, span, pal[P.yellow], 0, 0.3);
-        box(th, rF, xSpine, y - 40, y + 40, zD, zW + 12 + HALO_PORT.gantryProfile, 60, pal[P.dark], 0, 0.2);
-        box(th, rF, xWall - sdl * 70, y - 60, y + 60, zW - 20, zW + 12, 90, pal[P.dark], 0, 0.2);
-      }
-    });
+    // (suwnic pasów MEGA nie ma od 2026-10-07 — ładunek obsługują drony, decyzja użytkownika)
     // sterownia (przeszklenie ku zatoce)
     box(th, rF, 0, HALO_PORT.backWall - 20, HALO_PORT.backWall + 60, zW - 10, zW + 90, 520, pal[P.dark]);
     glow(th, rF, 0, HALO_PORT.backWall + 60, HALO_PORT.backWall + 64, zW + 10, zW + 70, 480, emit[E.cyan], 0.5);

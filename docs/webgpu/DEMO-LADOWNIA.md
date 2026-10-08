@@ -59,10 +59,14 @@ Pliki Z5 (`src/3d/cargoContainers3D.js`, `src/3d/cargoDrones3D.js`, `src/game/ca
 - **Przestrzeń PNG** jak mostki: środek płótna = (0, 0), +x dziób, +y w dół obrazka; ładownia = prostokąt w osi statku
   (`x, y, w, h`). Świat: `s = renderLength / dłuższy bok płótna`; układ statku 3D (x, −y); układ ładowni (a, b, z):
   a wzdłuż statku, dno w z = −głębokość, krawędź otworu w z = 0.
-- **Kontener standardowy 16 × 8 × 8 j.** (jak slot kontenerowca Z5). **Moduł** (jednostka przeładunku) = nx × ny × nz
-  kontenerów: dron niesie cały moduł — małe okręty 1 × 1 × 1, średnie 1 × 1 × 2, duże ładownie 2 × 2 × 2, wagon
-  4 × 4 × 2. Siatka slotów: moduł + 1 j. odstępu, 1 j. od ściany; głębokość = wysokość modułu + 1,5 j. (wrota zamykają
-  się nad ładunkiem). Kolejność załadunku: kolumnami od rufy, w kolumnie od osi na zewnątrz (środek masy w osi);
+- **Kontener standardowy 16 × 8 × 8 j.** (jak slot kontenerowca Z5) — **jeden wymiar** (decyzja użytkownika
+  2026-10-06; megakontenerów nie ma). **Moduł** = zawartość slotu: obrys nx × ny kontenerów × nz warstw. Drony roju
+  (`docs/webgpu/DEMO-ROJ.md`) niosą jedną warstwę płasko — chwyt S 1 × 1, M 1 × 2, L 2 × 2, Capital 4 × 2 — więc obrys
+  modułu to wielokrotność chwytu klasy, która go obsługuje: małe okręty 1 × 1 × 1 (S), średnie 1 × 2 × 2 (M — dwa
+  kontenery burta w burtę, dwie warstwy), duże ładownie 2 × 2 × 2 (L), wagon 4 × 4 × 2 (Capital — dwa chwyty na
+  warstwę); mniejsze klasy biorą część warstwy. Demo ładowni (drony Z5, `cargoBayOps.js`) niesie jeszcze cały moduł.
+  Siatka slotów: moduł + 1 j. odstępu, 1 j. od ściany; głębokość = wysokość modułu + 1,5 j. (wrota zamykają się nad
+  ładunkiem). Kolejność załadunku: kolumnami od rufy, w kolumnie od osi na zewnątrz (środek masy w osi);
   rozładunek od końca. Kontenery to **widok liczby** (jak Z5): `cargoContainersForMass`, moduł zapełnia się piętrami.
 - **Wrota „à la Venator”:** otwór dzielony wzdłuż osi statku, połowy jadą na boki.
   - `over` (Venator): skrzydło odrywa się w górę, jedzie PO poszyciu i osiada na szynach obok otworu — potrzebny wolny
@@ -98,15 +102,15 @@ więc pojemność rośnie z objętością ładowni — duże kadłuby mieszczą 
 | Atlas | 1800 | 312 × 131 × 17,5, over ×1, 9×7 × 2×2×2 | 504 | 20 | 252 | 504 | **1008** | 2520 | 7,3 |
 | Custos | 192 | 54 × 21 × 9,5, over ×2, 3×2 × 1×1×1 | 6 | 16 | 3 | 6 | **12** | 30 | 0,1 |
 | Hasta | 288 | 55 × 35 × 9,5, over ×2, 3×3 × 1×1×1 | 9 | 30 | 4,5 | 9 | **18** | 45 | 0,1 |
-| Bellator | 624 | 302 × 39 × 19,9, pocket, 17×4 × 1×1×2 | 136 | 40 | 68 | 136 | **272** | 680 | 2 |
+| Bellator | 624 | 302 × 39 × 19,9, pocket, 17×2 × 1×2×2 | 136 | 40 | 68 | 136 | **272** | 680 | 2 |
 | Citadella | 1080 | 2 × (382 × 69 × 21,4), pocket, 11×3 × 2×2×2 | 528 | 80 | 264 | 528 | **1056** | 2640 | 7,7 |
 | Colossus | 1560 | 470 × 105 × 17,5, over ×2, 14×5 × 2×2×2 | 560 | 120 | 280 | 560 | **1120** | 2800 | 8,1 |
 | Marauder | 192 | 31 × 10 × 11,4, pocket, 1×1 × 1×1×1 | 1 | 12 | 0,5 | 1 | **2** | 5 | 0 |
 | Reaver | 360 | 70 × 26 × 11,4, pocket, 4×2 × 1×1×1 | 8 | 22 | 4 | 8 | **16** | 40 | 0,1 |
-| Iron Skull | 720 | 133 × 58 × 20,9, pocket, 7×6 × 1×1×2 | 84 | 32 | 42 | 84 | **168** | 420 | 1,2 |
+| Iron Skull | 720 | 133 × 58 × 20,9, pocket, 7×3 × 1×2×2 | 84 | 32 | 42 | 84 | **168** | 420 | 1,2 |
 | Prom międzystacyjny | 120 | 19 × 19 × 11,4, pocket, 1×2 × 1×1×1 | 2 | 60 | 1 | 2 | **4** | 10 | 0 |
-| Kontenerowiec | 312 | 121 × 45 × 20,2, pocket, 7×4 × 1×1×2 | 56 | 160 | 28 | 56 | **112** | 280 | 0,8 |
-| Frachtowiec dalekiego zasięgu | 540 | 154 × 58 × 20,9, pocket, 9×6 × 1×1×2 | 108 | 380 | 54 | 108 | **216** | 540 | 1,6 |
+| Kontenerowiec | 312 | 121 × 45 × 20,2, pocket, 7×2 × 1×2×2 | 56 | 160 | 28 | 56 | **112** | 280 | 0,8 |
+| Frachtowiec dalekiego zasięgu | 540 | 154 × 58 × 20,9, pocket, 9×3 × 1×2×2 | 108 | 380 | 54 | 108 | **216** | 540 | 1,6 |
 | Ciężki frachtowiec | 1800 | 658 × 349 × 26,9, pocket, 19×20 × 2×2×2 | 3040 | 900 | 1520 | 3040 | **6080** | 15 200 | 44 |
 | Wagon megafrachtowca | 2760 | 2 × (1499 × 238 × 26,9), pocket, 22×7 × 4×4×2 | 9856 | 100¹ | 4928 | 9856 | **19 712** | 49 280 | 143 |
 
@@ -126,10 +130,10 @@ pojemności z geometrii nie pasują do klas ekonomii (`VAN_CLASSES`: prom 60 t p
 | Atlas | Hangar grzbietowy | 66, 0, 649 × 272 | over ×1 | 2×2×2 | środek grzbietu między wieżą specjalną (x −320) a wyrzutnią (x 457); skrzydła parkują na płytach „V” — grzbietowy hangar Venatora |
 | Custos | Luk grzbietowy | 82, 0, 680 × 264 | over ×2 | 1×1×1 | grzbiet z kratką między blokiem dowodzenia a widłami dziobu |
 | Hasta | Luk grzbietowy | −4, 0, 146 × 92 | over ×2 | 1×1×1 | j.w. (narzędzie: kieszeń 184 × 100 dałaby 16 kontenerów zamiast 9) |
-| Bellator | Rynna grzbietowa | 140, 0, 560 × 72 | pocket | 1×1×2 | rynna z mechanizmem przed mostkiem — pancerz skrzydeł kadłuba stoi tuż obok |
+| Bellator | Rynna grzbietowa | 140, 0, 560 × 72 | pocket | 1×2×2 | rynna z mechanizmem przed mostkiem — pancerz skrzydeł kadłuba stoi tuż obok |
 | Citadella | Pokład lewy / prawy | 38, ∓158, 592 × 107 | pocket | 2×2×2 | dwa pokłady windowe lotniskowca (ciemne płyty z okręgami); punkty `hangar` myśliwców leżą w nich — hangar i ładownia to ten sam pokład |
 | Colossus | Hangar rufowy | −528, 0, 504 × 112 | over ×2 | 2×2×2 | rufowy grzbiet za nadbudówką TERRA NOVA |
-| Marauder / Reaver / Iron Skull | Luk IRON SKULL | płyta z napisem | pocket | 1×1×1 / 1×1×1 / 1×1×2 | napis dzieli się i chowa pod pancerz |
+| Marauder / Reaver / Iron Skull | Luk IRON SKULL | płyta z napisem | pocket | 1×1×1 / 1×1×1 / 1×2×2 | napis dzieli się i chowa pod pancerz |
 | Frachtowce Z11, wagon | luki | obszar namalowanych zatok | pocket | wg rozmiaru | namalowane zatoki (bursztynowe obrysy) to pokrywy luków |
 
 Zasady (test `tests/cargoBays.test.mjs`, narzędzie `scripts/webgpu/ladownia-strefy.mjs`): otwór i pasy parkowania
@@ -215,6 +219,8 @@ wnętrze ładowni i skrzydła (2–6) na statek, po jednym dla wszystkich konten
 
 ## Decyzje podjęte w demie
 
+- (2026-10-06) Moduły ładowni M 1 × 1 × 2 → 1 × 2 × 2 (obrys = chwyt drona M: dwa kontenery burta w burtę) — pojemność
+  i głębokość bez zmian (Bellator 136, Iron Skull 84, kontenerowiec 56, frachtowiec dalekiego zasięgu 108).
 - Kontener standardowy **16 × 8 × 8 j.** i moduł przeładunku zależny od wielkości ładowni (dron niesie moduł) —
   żeby duże ładownie ładowały się w oknie postoju, a kontener wyglądał tak samo na każdym statku.
 - **Wrota `over` (Venator) tam, gdzie obok otworu jest wolny pas** (Atlas, Custos, Hasta, Colossus), **kieszeń**
@@ -238,7 +244,9 @@ wnętrze ładowni i skrzydła (2–6) na statek, po jednym dla wszystkich konten
 6. **Wrota w walce:** otwarte = odsłonięty ładunek (trafienia niszczą kontenery), zamknięte = pancerz; blokada skoku
    przy otwartych wrotach?
 7. **Drony:** portowe (Z5/Z14) czy własne statku (Atlas ma punkty `hangar`) — przy wydobyciu i handlu poza portem?
-8. **Skala megafrachtowca:** 9856 kontenerów na wagon (moduł 4 × 4 × 2) — zostaje, czy osobny „megakontener”?
+8. ~~**Skala megafrachtowca:** 9856 kontenerów na wagon (moduł 4 × 4 × 2) — zostaje, czy osobny „megakontener”?~~
+   Rozstrzygnięte 2026-10-06: jeden kontener standardowy, bez megakontenera; dron Capital bierze płasko 8 (4 × 2) —
+   dwa chwyty na warstwę slotu wagonu.
 9. **Wydobycie:** urobek ma trafiać do ładowni widocznie (wiązka w otwór, kontener zsypu co T ton)?
 
 ## Weryfikacja

@@ -37,6 +37,23 @@ test('the flak family covers every hardpoint class exactly once', () => {
   assert.deepEqual(sizes, ['S', 'M', 'L', 'Capital']);
 });
 
+// isFlakWeapon pada co krok na każdym działku PD gracza — zapamiętana kategoria zamiast nowego
+// napisu z toLowerCase(); wynik jak dawne String(category || '').toLowerCase() === 'flak'.
+test('isFlakWeapon: the same answer as the old lower-case comparison, also on repeated calls', () => {
+  const old = (def) => String(def?.category || '').toLowerCase() === 'flak';
+  const cases = [
+    undefined, null, {}, { category: '' }, { category: 'flak' }, { category: 'FLAK' }, { category: 'Flak' },
+    { category: 'flak ' }, { category: 'ciws' }, { category: 'beam' }, { category: 0 }, { category: 7 },
+    { category: null }, { category: new String('Flak') }, { category: 'FLAK' }, ...Object.values(MASTER_WEAPONS)
+  ];
+  for (let pass = 0; pass < 3; pass++) {
+    for (const def of cases) assert.equal(isFlakWeapon(def), old(def), JSON.stringify(def?.category));
+  }
+  // dużo różnych kategorii (pamięć ma sufit) — wynik dalej poprawny
+  for (let i = 0; i < 300; i++) assert.equal(isFlakWeapon({ category: `cat${i}` }), false);
+  assert.equal(isFlakWeapon({ category: 'Flak' }), true);
+});
+
 test('burst radius, damage and salvo size grow monotonically with hardpoint class', () => {
   const profiles = FLAK_IDS.map(id => resolveFlakProfile(MASTER_WEAPONS[id]));
   for (let i = 1; i < profiles.length; i++) {

@@ -18,7 +18,12 @@ import { trafficHullRenderSize } from '../src/data/trafficHulls.js';
 import { portHeadingToGame, portHubToGame, portModuleFrame } from '../src/3d/portBuildings/portModuleTraffic.js';
 import { PirateDryDock3D } from '../src/3d/portBuildings/pirateDryDock3D.js';
 import { createPirateDryDockLayout, dryDockShipPose, planDryDockChain } from '../src/3d/portBuildings/pirateDryDockLayout.js';
-import { createReactorBlowFactory } from '../src/effects3d/reactorblow.js';
+import { createExplosionFactory } from '../src/3d/explosions/explosionFx.js';
+import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
+import { createRocketFx } from '../src/3d/rockets/rocketFx.js';
+import { initRocketSystem3D } from '../src/effects3d/rocketSystem3D.js';
+import { WeaponFx } from '../src/3d/weapons/weaponFx.js';
+import { SimClock } from '../src/game/simClock.js';
 import { k7HeightToZ } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { SHIPYARD_TUNE, dryDockRamOverlap } from '../src/game/story/shipyardLayout.js';
 
@@ -195,7 +200,7 @@ function applyLayers() {
   dock.setLayers(LAYER_BG, cine ? LAYER_BG : LAYER_FG);
 }
 
-// Wybuchy przy odpadaniu kawałków (ten sam wybuch reaktora co w grze — krok klatki efektów Core3D).
+// Wybuchy przy odpadaniu kawałków (te same wybuchy WebGPU co w grze — src/3d/explosions/, krok klatki efektów Core3D).
 let reactorBlow = null;
 // Ten sam łańcuch rozpadu co misja (planDryDockChain: kawałki po kotwicach od trafienia, wybuchy przy dużych).
 const destroyQueue = [];
@@ -435,6 +440,8 @@ let lastInfo = { calls: 0, triangles: 0 };
 function simulate(dt) {
   if (dt <= 0) return;
   state.T += dt;
+  SimClock.advance(dt);
+  window.rocketSystem3D?.update(dt);
   stepEscorts(dt);
   stepRam(dt);
   stepDestruction();
@@ -554,7 +561,12 @@ if (!(await Core3D.ready)) {
   reportError(`WebGPU: ${Core3D.gpuError || 'brak urządzenia — demo wymaga przeglądarki z WebGPU'}`);
   throw new Error('WebGPU niedostępne');
 }
-try { reactorBlow = createReactorBlowFactory(Core3D); } catch (err) { reportError(`wybuchy: ${err.message}`); }
+// Pule gry (iskry, dym rakiet, odłamki broni) — wybuchy z nich korzystają jak w grze.
+SparkSystem3D.init(Core3D.scene);
+const rocketFx = createRocketFx(Core3D);
+initRocketSystem3D(Core3D.scene, { effects: rocketFx });
+WeaponFx.ensure();
+try { reactorBlow = createExplosionFactory(Core3D, { rocketFx, weaponFx: WeaponFx, clock: () => state.T }); } catch (err) { reportError(`wybuchy: ${err.message}`); }
 applyLayers();
 setSpeed(1);
 syncActions();

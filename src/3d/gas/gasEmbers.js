@@ -51,7 +51,7 @@ export class GasEmbers {
     this.V = instancedArray(EMBER_CAP, 'vec4').setName('gasEmberV'); // prędkość, życie
     this.D = instancedArray(EMBER_CAP, 'vec4').setName('gasEmberD'); // temperatura0, rozmiar, ziarno, domena
     this._bursts = [];
-    for (let i = 0; i < BURST_CAP; i++) this._bursts.push({ x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0, spread: 1, count: 0, s0: 0, s1: 0, l0: 0, l1: 0, size: 0, temp: 0, slot: -1, seed: 0 });
+    for (let i = 0; i < BURST_CAP; i++) this._bursts.push({ x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0, spread: 1, count: 0, s0: 0, s1: 0, l0: 0, l1: 0, size: 0, temp: 0, slot: -1, seed: 0, flat: 1, r0: 0 });
     this._nBursts = 0;
     const S = grid.S;
     this.U = {
@@ -65,6 +65,8 @@ export class GasEmbers {
       bB: v4Array(BURST_CAP, 'gasEmberBB'), // kierunek, rozrzut
       bC: v4Array(BURST_CAP, 'gasEmberBC'), // prędkość min, max, życie min, max
       bD: v4Array(BURST_CAP, 'gasEmberBD'), // rozmiar, temperatura, domena, ziarno
+      bE: v4Array(BURST_CAP, 'gasEmberBE'), // spłaszczenie kierunku w osi z (1 = kula; gra z góry < 1 — wyrzut w płaszczyźnie),
+                                            // promień rozrzutu startu [j.] (żar w całej kuli ognia, nie w punkcie), —
       slotBox: v4Array(S, 'gasEmberSlot'),  // minimum pudła domeny (lokalnie), h (0 = nieaktywna)
       drag: uniform(1.1),
       coupling: uniform(4.5),
@@ -72,7 +74,8 @@ export class GasEmbers {
       camPos: uniform(new THREE.Vector3()),
       shutter: uniform(1 / 45),
       gain: uniform(1),
-      cooling: uniform(1)
+      cooling: uniform(1),
+      fadeIn: uniform(0)    // narastanie jasności [s] (gra: setki iskier startujących razem robiły w bloomie tarczę)
     };
     this._buildCompute();
     this._buildRender(scene, renderOrder);
@@ -109,12 +112,18 @@ export class GasEmbers {
       const rnd = vec3(rr.mul(cos(ph)), rr.mul(sin(ph)), zz).toVar();
       const dn = dot(rnd, B.xyz);
       rnd.assign(select(dn.lessThan(0.0), rnd.sub(B.xyz.mul(dn.mul(2.0))), rnd));
-      const dir = normalize(mix(B.xyz, rnd, B.w));
+      const d0 = normalize(mix(B.xyz, rnd, B.w)).toVar();
+      // Spłaszczenie w osi z (gra z góry: żar leci w płaszczyźnie gry, nie ku kamerze).
+      const flat = U.bE.element(b).x;
+      const dir = normalize(vec3(d0.x, d0.y, d0.z.mul(flat)).add(vec3(0.0, 0.0, 1e-4)));
       // Prędkość: rozkład z przewagą wolnych, kilka bardzo szybkich (r³).
       const sp = mix(C.x, C.y, r3.mul(r3).mul(r3));
       const life = mix(C.z, C.w, r4);
       const slot = (instanceIndex.add(U.head)).mod(U.cap);
-      P.element(slot).assign(vec4(A.xyz.add(dir.mul(E.x.mul(r4).mul(2.0))), 0.0));
+      // Start: przy środku paczki (rozmiar · r4 · 2) albo rozrzucony w kuli o promieniu bE.y (√ — równo w kole).
+      const r5 = hash01(id.mul(uint(7)).add(uint(5)));
+      const spread0 = U.bE.element(b).y;
+      P.element(slot).assign(vec4(A.xyz.add(dir.mul(E.x.mul(r4).mul(2.0).add(spread0.mul(sqrt(r5))))), 0.0));
       V.element(slot).assign(vec4(dir.mul(sp), life));
       D.element(slot).assign(vec4(E.y.mul(mix(0.75, 1.15, r2)), E.x.mul(mix(0.5, 1.3, r1)), r3.add(r1.mul(13.0)), E.z));
     })().compute(4096).setName('gasEmberEmit');
@@ -193,7 +202,7 @@ export class GasEmbers {
       const off = vdir.mul(q.x.sub(1.0).mul(0.5).mul(len)).add(across.mul(q.y.mul(0.5).mul(size)));
       // Temperatura: stygnie z wiekiem; jasność ∝ T² (iskry gasną szybko, żar dłużej się tli).
       const T = Dd.x.mul(exp(u.mul(-2.6).mul(U.cooling))).toVar();
-      const fade = float(1.0).sub(smoothstep(0.75, 1.0, u));
+      const fade = float(1.0).sub(smoothstep(0.75, 1.0, u)).mul(clamp(age.div(max(U.fadeIn, 1e-3)), 0.0, 1.0));
       const hdr = gasBlackbody(T).mul(T.mul(T).mul(1.6).add(0.05)).mul(fade).mul(U.gain);
       // Smuga dłuższa niż kwadrat — jasność rozłożona na długości (stała energia na piksel).
       vA.assign(vec4(q, u, 0.0));
@@ -221,13 +230,16 @@ export class GasEmbers {
   /**
    * Paczka iskier (scena, double — przeliczana względem grid.origin przy wysyłce): kierunek n,
    * rozrzut 0..1 (1 = półkula), liczba, prędkości [j./s], życie [s], rozmiar [j.], temperatura
-   * gazu (gasCommon — 2,5 = biało-żółte), domena gazu (−1 = bez porwania).
+   * gazu (gasCommon — 2,5 = biało-żółte), domena gazu (−1 = bez porwania), spłaszczenie kierunku
+   * w osi z (1 = bez; gra z góry ~0,2 — wyrzut w płaszczyźnie gry), promień rozrzutu startu [j.] (0 = w punkcie).
    */
-  burst(x, y, z, nx, ny, nz, spread, count, s0, s1, l0, l1, size, temp, slot = -1) {
+  burst(x, y, z, nx, ny, nz, spread, count, s0, s1, l0, l1, size, temp, slot = -1, flat = 1, r0 = 0) {
     if (this._nBursts >= BURST_CAP || count <= 0) return;
     const b = this._bursts[this._nBursts++];
     b.x = x; b.y = y; b.z = z; b.nx = nx; b.ny = ny; b.nz = nz; b.spread = spread;
     b.count = Math.min(count | 0, 4096); b.s0 = s0; b.s1 = s1; b.l0 = l0; b.l1 = l1; b.size = size; b.temp = temp; b.slot = slot;
+    b.flat = flat > 0.02 ? flat : 0.02;
+    b.r0 = r0 > 0 ? r0 : 0;
     b.seed = this.rng.next() * 1000;
     if (l1 > this.maxLife) this.maxLife = l1;
   }
@@ -262,6 +274,7 @@ export class GasEmbers {
       U.bB.array[k].set(b.nx / nl, b.ny / nl, b.nz / nl, b.spread);
       U.bC.array[k].set(b.s0, b.s1, b.l0, b.l1);
       U.bD.array[k].set(b.size, b.temp, b.slot, b.seed);
+      U.bE.array[k].set(b.flat, b.r0, 0, 0);
       total += b.count;
       if (total >= 4096) { this._nBursts = k + 1; break; }
     }
@@ -311,17 +324,26 @@ export class GasEmbers {
 
 // ---------------------------------------------------------------------------------------------
 
-const FLASH_CAP = 32;
+const FLASH_CAP = 64;
 
 /**
- * Błyski wybuchów: rdzeń (mały, bardzo jasny, gaśnie w ~0,1 s) + poświata (szeroka, dłuższa).
- * Kwady zwrócone do kamery (oś prawa / góra kamery w uniformach), instancje co klatkę.
+ * Błyski wybuchów: rdzeń (mały, bardzo jasny, gaśnie w ~0,03 s) + poświata (szeroka, dłuższa).
+ * Kwady zwrócone do kamery (oś prawa / góra kamery w uniformach), instancje co klatkę. Pula SoA
+ * (pozycje sceny w double) — bez alokacji przy błysku i w klatce; pełna pula nadpisuje najstarszy.
  */
 export class GasFlashes {
   constructor({ scene, grid, renderOrder = 70 }) {
     this.grid = grid;
-    this.items = [];
     this.time = 0;
+    this.n = 0;
+    this.fX = new Float64Array(FLASH_CAP);
+    this.fY = new Float64Array(FLASH_CAP);
+    this.fZ = new Float64Array(FLASH_CAP);
+    this.fT = new Float64Array(FLASH_CAP);
+    this.fD = new Float32Array(FLASH_CAP * 3);   // rozmiar, moc, życie
+    // Wygląd: rdzeń (biel HDR, gaśnie z τ coreTau) i poświata (pod progiem bloomu), rozmiar kwadu × (size0 + sizeGrow ·
+    // narastanie w 0,04 s). Dema: rdzeń 26 HDR; gra (explosionFx) — mniejszy i ciemniejszy (bloom gry zalewał kadr).
+    this.look = { core: [26, 23, 18], glow: [2.2, 1.0, 0.3], coreTau: 0.03, glowLife: 0.3, size0: 0.3, sizeGrow: 0.3 };
     this.U = {
       right: uniform(new THREE.Vector3(1, 0, 0)),
       up: uniform(new THREE.Vector3(0, 1, 0)),
@@ -336,6 +358,7 @@ export class GasFlashes {
     geo.setAttribute('flA', this.aA);
     geo.setAttribute('flB', this.aB);
     geo.instanceCount = 0;
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e12);
     this.geo = geo;
     const U = this.U;
     const vA = varyingProperty('vec4', 'vGasFlA');
@@ -373,48 +396,77 @@ export class GasFlashes {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;
     this.mesh.visible = false;
+    this.mesh.matrixAutoUpdate = false;
     this.mesh.name = 'GasFlashes';
     scene.add(this.mesh);
   }
 
+  /** Liczba żywych błysków. */
+  get count() { return this.n; }
+
   /** Błysk (scena): rozmiar [j.], moc (1 = wybuch budowli), czas [s]. */
   add(x, y, z, size, power = 1, life = 0.35) {
-    if (this.items.length >= FLASH_CAP) this.items.shift();
-    this.items.push({ x, y, z, size, power, life, t0: this.time });
+    let i = this.n;
+    if (i >= FLASH_CAP) {
+      let oldest = 0;
+      for (let k = 1; k < this.n; k++) if (this.fT[k] < this.fT[oldest]) oldest = k;
+      i = oldest;
+    } else this.n++;
+    this.fX[i] = x; this.fY[i] = y; this.fZ[i] = z; this.fT[i] = this.time;
+    const o = i * 3;
+    this.fD[o] = size; this.fD[o + 1] = power; this.fD[o + 2] = life;
   }
 
   update(dt, camera) {
-    this.time += dt;
-    const o = this.grid.origin;
+    this.time += dt > 0 ? dt : 0;
+    const o0 = this.grid.origin;
     const e = camera.matrixWorld.elements;
     this.U.right.value.set(e[0], e[1], e[2]).normalize();
     this.U.up.value.set(e[4], e[5], e[6]).normalize();
     const A = this.aA.array;
     const B = this.aB.array;
+    const D = this.fD;
     let n = 0;
-    for (let i = this.items.length - 1; i >= 0; i--) {
-      const f = this.items[i];
-      const age = this.time - f.t0;
-      if (age > f.life) { this.items.splice(i, 1); continue; }
-      const u = age / f.life;
-      // Rdzeń: biel ~25 HDR gasnąca w ~0,03 s; krótka poświata pomarańczowa (kula ognia gazu przejmuje obraz).
-      const core = Math.exp(-age / 0.03);
-      const glow = Math.exp(-age / (f.life * 0.3)) * (1 - u);
+    for (let i = this.n - 1; i >= 0; i--) {
+      const age = this.time - this.fT[i];
+      const life = D[i * 3 + 2];
+      if (age > life) {
+        const last = --this.n;
+        if (i !== last) {
+          this.fX[i] = this.fX[last]; this.fY[i] = this.fY[last]; this.fZ[i] = this.fZ[last]; this.fT[i] = this.fT[last];
+          D[i * 3] = D[last * 3]; D[i * 3 + 1] = D[last * 3 + 1]; D[i * 3 + 2] = D[last * 3 + 2];
+        }
+        continue;
+      }
+    }
+    for (let i = 0; i < this.n; i++) {
+      const age = Math.max(0, this.time - this.fT[i]);
+      const size0 = D[i * 3], power = D[i * 3 + 1], life = D[i * 3 + 2];
+      const u = age / life;
+      const L = this.look;
+      // Rdzeń: biel HDR gasnąca w ~0,03 s; krótka poświata pomarańczowa (kula ognia gazu przejmuje obraz).
+      const core = Math.exp(-age / L.coreTau);
+      const glow = Math.exp(-age / (life * L.glowLife)) * (1 - u);
       // Kamera w zasięgu błysku: gaśnie (inaczej kwad zalewa cały kadr jednolitą barwą).
-      const dx = f.x - e[12], dy = f.y - e[13], dz = f.z - e[14];
+      const dx = this.fX[i] - e[12], dy = this.fY[i] - e[13], dz = this.fZ[i] - e[14];
       const dc = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const near = Math.min(1, Math.max(0, (dc - f.size * 0.6) / (f.size * 1.2)));
-      const k = f.power * near * near;
-      const size = f.size * (0.3 + 0.3 * (1 - Math.exp(-age / 0.04)));
-      A[n * 4] = f.x - o.x; A[n * 4 + 1] = f.y - o.y; A[n * 4 + 2] = f.z - o.z; A[n * 4 + 3] = size;
-      B[n * 4] = (26 * core + 2.2 * glow) * k; B[n * 4 + 1] = (23 * core + 1.0 * glow) * k; B[n * 4 + 2] = (18 * core + 0.3 * glow) * k;
-      B[n * 4 + 3] = Math.min(1, core * 1.4);
+      const near = Math.min(1, Math.max(0, (dc - size0 * 0.6) / (size0 * 1.2)));
+      const k = power * near * near;
+      const size = size0 * (L.size0 + L.sizeGrow * (1 - Math.exp(-age / 0.04)));
+      const o = n * 4;
+      A[o] = this.fX[i] - o0.x; A[o + 1] = this.fY[i] - o0.y; A[o + 2] = this.fZ[i] - o0.z; A[o + 3] = size;
+      const C = L.core, G = L.glow;
+      B[o] = (C[0] * core + G[0] * glow) * k; B[o + 1] = (C[1] * core + G[1] * glow) * k; B[o + 2] = (C[2] * core + G[2] * glow) * k;
+      B[o + 3] = Math.min(1, core * 1.4);
       n++;
     }
     this.geo.instanceCount = n;
     this.mesh.visible = n > 0;
-    if (n) { this.aA.needsUpdate = true; this.aB.needsUpdate = true; }
+    if (n) {
+      this.aA.clearUpdateRanges(); this.aA.addUpdateRange(0, n * 4); this.aA.needsUpdate = true;
+      this.aB.clearUpdateRanges(); this.aB.addUpdateRange(0, n * 4); this.aB.needsUpdate = true;
+    }
   }
 
-  clear() { this.items.length = 0; this.geo.instanceCount = 0; this.mesh.visible = false; }
+  clear() { this.n = 0; this.geo.instanceCount = 0; this.mesh.visible = false; }
 }

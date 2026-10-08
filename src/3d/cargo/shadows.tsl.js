@@ -27,9 +27,17 @@ function sdBox(p, b) {
   return length(max(d, vec2(0.0))).add(min(max(d.x, d.y), 0.0));
 }
 
-function buildHullShadowMaterial() {
+/**
+ * Materiały cieni z zewnętrznym źródłem danych instancji (np. rój z bufora symulacji GPU —
+ * src/3d/swarm/swarmUnits.tsl.js): source = { name, attrs: () => ({ a: vec4, b: vec4 }) } — te same
+ * pola co iA / iB (kadłub: x, y, kurs, siła / L, W, z0, z1; kontakt: x, y, kurs, siła / L, W, z, pad).
+ */
+export function buildCargoHullShadowMaterial(source = null) { return buildHullShadowMaterial(source); }
+export function buildCargoContactShadowMaterial(source = null) { return buildContactMaterial(source); }
+
+function buildHullShadowMaterial(source = null) {
   const m = new THREE.NodeMaterial();
-  m.name = 'Cargo:cienKadluba';
+  m.name = source?.name || 'Cargo:cienKadluba';
   m.lights = false;
   m.fog = false;
   m.transparent = true;
@@ -42,8 +50,9 @@ function buildHullShadowMaterial() {
   const vO = varyingProperty('vec4', 'vShO');
   const vB = varyingProperty('vec4', 'vShB');
   m.positionNode = Fn(() => {
-    const iA = attribute('iA', 'vec4');
-    const iB = attribute('iB', 'vec4');
+    const ext = source ? source.attrs() : null;
+    const iA = ext ? ext.a : attribute('iA', 'vec4');
+    const iB = ext ? ext.b : attribute('iB', 'vec4');
     const c = cos(iA.z);
     const s = sin(iA.z);
     const S = CARGO_LIGHT.shadowDir;
@@ -76,9 +85,9 @@ function buildHullShadowMaterial() {
   return m;
 }
 
-function buildContactMaterial() {
+function buildContactMaterial(source = null) {
   const m = new THREE.NodeMaterial();
-  m.name = 'Cargo:cienKontaktu';
+  m.name = source?.name || 'Cargo:cienKontaktu';
   m.lights = false;
   m.fog = false;
   m.transparent = true;
@@ -89,8 +98,9 @@ function buildContactMaterial() {
   const vP = varyingProperty('vec2', 'vCtP');
   const vB = varyingProperty('vec4', 'vCtB');
   m.positionNode = Fn(() => {
-    const iA = attribute('iA', 'vec4');
-    const iB = attribute('iB', 'vec4');
+    const ext = source ? source.attrs() : null;
+    const iA = ext ? ext.a : attribute('iA', 'vec4');
+    const iB = ext ? ext.b : attribute('iB', 'vec4');
     const c = cos(iA.z);
     const s = sin(iA.z);
     const hs = iB.xy.mul(0.5);

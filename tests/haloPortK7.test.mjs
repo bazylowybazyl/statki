@@ -7,8 +7,13 @@ import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
 import { buildHaloRoofPlan } from '../src/3d/haloRing/haloRingRoofPlan.js';
 import { HALO_PORT, HALO_STATION_ANGLE, HALO_TRANSIT, haloPortSites, haloTransitAngles } from '../src/3d/haloRing/haloRingConfig.js';
 import {
+  K7_ABOVE_SCALE,
   K7_ATLAS,
+  K7_FUEL_STATION,
   K7_PLACEMENT,
+  K7_SERVICE_DOCK,
+  K7_SERVICE_UNDOCK,
+  K7_DOCK_ALIGN,
   K7Docking,
   K7FlightModel,
   K7RoofFade,
@@ -65,7 +70,7 @@ test('start zadokowany bez kolizji; wycofanie po pasie przez bramę G-01 bez kol
   assert.notEqual(col.test(ship.polygon(l.spawnPoint.x, l.backZ, l.spawnPoint.angle)), null);
 });
 
-test('automat dokowania: oddokowanie 9,5 s → lot, dokowanie 9,3 s → obsługa', () => {
+test('automat dokowania: oddokowanie (K7_SERVICE_UNDOCK) → lot, dokowanie (ustawienie + K7_SERVICE_DOCK) → obsługa', () => {
   const l = createK7Layout();
   const col = buildK7Collision(l);
   const ship = new K7FlightModel(col, l.spawnPoint);
@@ -74,11 +79,17 @@ test('automat dokowania: oddokowanie 9,5 s → lot, dokowanie 9,3 s → obsługa
   assert.equal(ship.locked, true);
   assert.equal(dock.poses.get('C-01').lock, 1);
   assert.ok(dock.requestUndock());
+  // napęd wraca przy zwolnieniu zamków pola — ramiona paliwowe składają się dalej
+  for (let i = 0; i < Math.ceil((K7_SERVICE_UNDOCK.driveAt + 0.05) * 120); i++) dock.update(1 / 120);
+  assert.equal(ship.locked, false, 'napęd odblokowany przy zwolnieniu zamków');
+  assert.equal(dock.state, 'UNDOCKING', 'ramiona jeszcze się składają');
+  const pose = dock.poses.get('C-01');
+  assert.ok(pose.lock === 0 && pose.seat === 0 && pose.clamp === 0, 'złączki odryglowane i podniesione, zamki puściły');
   for (let i = 0; i < 1200; i++) dock.update(1 / 120);
   assert.equal(dock.state, 'FREE');
   assert.equal(ship.locked, false);
-  const pose = dock.poses.get('C-01');
-  assert.equal(pose.bridge + pose.lower + pose.extension, 0, 'obsługa schowana');
+  assert.equal(pose.extension + pose.seat + pose.lock + pose.clamp + pose.flow + pose.vent, 0, 'obsługa złożona');
+  assert.ok(K7_DOCK_ALIGN + K7_SERVICE_DOCK.end < 10, 'dokowanie mieści się w 10 s');
   // wycofanie tyłem ~600 j. (S), potem powrót na pole STOP i dokowanie
   ship.input.retro = 1;
   for (let i = 0; i < 480; i++) { ship.step(1 / 120, 1); dock.update(1 / 120); }
@@ -230,7 +241,7 @@ test('scena K-7: nic nad kamerą gry przy zoomie 3,2, pokład pod płaszczyzną 
     for (const [kind, data] of Object.entries(set)) {
       const ext = kind === 'box' ? 0.5 : 1;
       for (let i = 0; i < data.length; i += 16) {
-        // grupy ruchome: pozycja zależy od pozy (suwnica nad statkiem ≤ wysokość mostu)
+        // grupy ruchome: pozycja zależy od pozy (człony ramienia obracają się w poziomie na swojej wysokości)
         const q = [data[i + 8], data[i + 9], data[i + 10], data[i + 11]];
         for (const cx of [-ext, ext]) for (const cy of [kind === 'box' ? -0.5 : -0.5, 0.5]) for (const cz of [-ext, ext]) {
           const v = rot(q, [cx * data[i + 4], cy * data[i + 5], cz * data[i + 6]]);
@@ -240,11 +251,13 @@ test('scena K-7: nic nad kamerą gry przy zoomie 3,2, pokład pod płaszczyzną 
       }
     }
   }
-  // grupa chwytaka: środek lokalny 0 + przesunięcie maks. przy pozie 0 (y = 550)
-  top = Math.max(top, k7HeightToZ(550) + 30);
+  // trzon wysięgnika: grupa w przegubie złączki — najwyżej przy wsuniętym wysięgniku (wysokości lokalne liniowo)
+  const F = K7_FUEL_STATION;
+  top = Math.max(top, k7HeightToZ(F.couplerUp + F.wrist) + (F.rod + 7) * K7_ABOVE_SCALE);
   // kamera persp gry przy zoomie 3,2 wisi ~535 j. nad z = 0 (near 100)
   assert.ok(top < 435, `najwyższy punkt K-7 z = ${top.toFixed(0)} (${where})`);
   assert.ok(k7HeightToZ(0) < -100, 'pokład hali pod płaszczyzną lotu');
-  assert.ok(s.labels.length > 50 && s.hoses.length === 8 && s.cranes.length === 4);
+  assert.ok(s.labels.length > 50 && s.fuel.length === 8 && s.clamps.length === 4, 'słupki paliwowe z ramionami i zamki pola');
+  assert.ok(!s.groups.some((g) => /bridge|trolley|spreader|jaw|cables/.test(g.kind)), 'bez suwnic');
   assert.ok(s.groups.length + 1 <= 40, `grupy ruchome ${s.groups.length} (MAX_GROUPS 40)`);
 });

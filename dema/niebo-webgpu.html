@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Wypiek nieba — WebGPU</title>
+<!--
+  Wypiekacz tła gry (three.js r183 przez Vite: `npm run dev`, /dema/niebo-webgpu.html).
+  Tło liczone RAZ (src/3d/skybake/): styl „galaktyka” — pas Drogi Mlecznej (poświata, pył, gwiazdy,
+  obłoki H II) albo „mgławica” — mgławica objętościowa (marsz promienia, samocień od gwiazd, emisja
+  Hα / O III, ciemny pył z przodu). Eksport = PNG 5120 × 3200 w miejsce public/assets/nebula.png
+  (bez zmian w silniku).
+  Podgląd idzie postem gry (bloom gry, ACES gry, sRGB), a tekstura jest zapisana PO odwróceniu ACES —
+  w grze wygląda jak tutaj (src/3d/skybake/skyGameColor.js).
+
+  Widoki: GRA — kadr gry (środek tekstury, powiększenie jak w grze przy danym zoomie i 1080p),
+  MENU — płat mgławicy w tle menu (środek ~0,44 tekstury, wzmocnienie 1,15), CAŁOŚĆ, POLA (debug),
+  A/B 1:1 — kadr gry z tekstury (powiększonej jak w grze) albo z KAFLA wypieczonego w gęstości ekranu
+  (bez i z dodatkowymi oktawami detalu); klawisze 1–4, przeciąganie — kadr, kółko — lupa, dwuklik — środek.
+  Parametry adresu: ?styl=galaktyka|mglawica, ?preset=gra|…, ?seed=7, ?res=0.5 (domyślnie 1 — pełna),
+  ?dpr=1 (domyślnie piksele ekranu), ?widok=ab, ?lupa=2, ?panX=…&panY=… (teksele), ?test=1 (bez panelu).
+  Konsola / harness: __demo (scripts/webgpu/niebo-arkusz.mjs).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, "Segoe UI", sans-serif; color: #d9e3ef; }
+  canvas { display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 312px; box-sizing: border-box; max-height: calc(100% - 24px);
+    overflow-y: auto; background: rgba(6, 10, 18, .86); border: 1px solid rgba(140, 170, 255, .22);
+    border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.4; }
+  #panel.hidden { display: none; }
+  h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; color: #cfdcff; }
+  #status { font: 11px ui-monospace, Consolas, monospace; color: #9fe0a8; margin: 4px 0 6px; white-space: pre-wrap; }
+  .views, .row2 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 4px 0; }
+  .ab4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0; }
+  .row2 { grid-template-columns: 1fr 1fr; }
+  button { background: rgba(110, 140, 230, .12); color: #d8e4ff; border: 1px solid rgba(130, 160, 240, .3);
+    border-radius: 5px; padding: 5px 4px; font: 600 11.5px system-ui, sans-serif; cursor: pointer; }
+  button.on { border-color: #9fc0ff; background: rgba(120, 160, 255, .28); color: #fff; }
+  details summary { cursor: pointer; color: #a9b8cd; margin: 7px 0 3px; }
+  .row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 42px; gap: 5px; align-items: center; margin: 2px 0; }
+  .row output { text-align: right; font: 10.5px ui-monospace, Consolas, monospace; color: #b8c8dc; }
+  .crow { display: grid; grid-template-columns: 1fr 44px; gap: 6px; align-items: center; margin: 2px 0; }
+  select, input[type=number] { background: #0a1224; color: #cfe0ff; border: 1px solid #2b4266; border-radius: 4px; padding: 2px 4px; }
+  input[type=number] { width: 70px; }
+  input[type=color] { width: 40px; height: 20px; border: 0; padding: 0; background: none; }
+  .keys { color: #8b9bb3; font-size: 11px; margin-top: 6px; }
+  #ab-label { position: fixed; top: 10px; left: 0; right: 0; height: 0; pointer-events: none; }
+  #ab-label .lbl { position: absolute; transform: translateX(-50%); white-space: nowrap; background: rgba(0, 0, 0, .62);
+    color: #e8eefc; font: 600 12px ui-monospace, Consolas, monospace; padding: 3px 8px; border-radius: 4px; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .9);
+    padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1 id="title">WYPIEK NIEBA</h1>
+  <div id="status">uruchamianie…</div>
+  <div class="views" id="views">
+    <button data-v="gra">gra</button><button data-v="menu">menu</button><button data-v="calosc">całość</button><button data-v="pola">pola</button><button data-v="ab">a/b 1:1</button>
+  </div>
+  <div id="ab-panel" style="display:none">
+    <div class="ab4" id="ab-modes">
+      <button data-m="1">tekstura</button><button data-m="2">1:1</button><button data-m="3">1:1 + detal</button><button data-m="4">podział</button>
+    </div>
+    <div class="row"><span>dodatkowe oktawy</span><select id="okt" style="grid-column: span 2"></select></div>
+  </div>
+  <div class="row"><span>lupa (kadr gry)</span><select id="lupa" style="grid-column: span 2"></select></div>
+  <div class="row"><span>zoom kadru gry</span><input type="range" id="zoom" min="0.03" max="1.6" step="0.01" value="0.45"><output id="o-zoom"></output></div>
+  <div class="row"><span>styl</span><select id="styl" style="grid-column: span 2"></select></div>
+  <div class="row"><span>nastawa</span><select id="preset" style="grid-column: span 2"></select></div>
+  <div class="row"><span>ziarno</span><input type="number" id="seed" min="1" max="999999" value="1"><button id="rnd">losuj</button></div>
+  <div class="row"><span>rozdzielczość</span><select id="res" style="grid-column: span 2">
+    <option value="1">pełna (5120 × 3200) — jak w grze</option>
+    <option value="0.5">½ (2560 × 1600) — szybko</option>
+  </select></div>
+  <div class="row2"><button id="export">eksport PNG (pełna)</button><button id="copy">kopiuj nastawy</button></div>
+  <div id="params"></div>
+  <div class="keys">H — panel · 1–4 — a/b (tekstura, 1:1, 1:1 + detal, podział) · przeciągnij — kadr, kółko — lupa,
+    dwuklik — środek · nastawy w konsoli: __demo.params()</div>
+</div>
+<div id="ab-label"></div>
+<div id="err"></div>
+<script type="module" src="./niebo-webgpu.js"></script>
+</body>
+</html>

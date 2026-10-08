@@ -6,6 +6,7 @@
 // portret obsady (np. inna mina), `hold` — ile sekund kwestia radia wisi po wypisaniu (domyślnie z długości).
 // Sceny 'scene' czekają na gracza (Spacja / Enter / klik, Esc — pomiń), 'radio' lecą same w trakcie gry.
 // Liczba kwestii w scenie jest dowolna — skrypt misji odtwarza całą tablicę.
+// Misja 2 „Odwet” (odwet piratów, wsparcie, powrót do K-7): mission02.dialogue.js.
 // ============================================================
 
 export const MISSION01_TITLE = 'Cicha stocznia';
@@ -58,38 +59,54 @@ export const MISSION01_DIALOGUE = Object.freeze({
   spotted: [
     { who: 'pirate', text: '[Herszt: mamy gościa! Otworzyć ogień!]' }
   ],
-  // Obrona rozbita — czas na budynek.
+  // Zegar wodowania (2026-10-07): załogi biegną do okrętów na parkingu.
+  crews: [
+    { who: 'xo', text: '[Załogi biegną do okrętów na parkingu — rozgrzewają reaktory. Mamy niecałą minutę, zanim pierwszy wystartuje.]' },
+    { who: 'xo', text: '[Co zniszczymy w stanowiskach, nie będzie z nami walczyć.]' }
+  ],
+  // Pierwszy okręt z parkingu wychodzi przez bramę stanowiska.
+  firstLaunch: [
+    { who: 'xo', text: '[Pierwszy okręt wychodzi z parkingu — rufą przez bramę stanowiska!]' }
+  ],
+  // Pochylnie w hali: pancerniki w budowie kończą wodowanie.
+  slipWarn: [
+    { who: 'intel', text: '[Wywiad: na pochylniach w hali stoją dwa pancerniki — kończą wodowanie. Hexlance przebije dach.]' }
+  ],
+  slipLaunch: [
+    { who: 'xo', text: '[Wodowanie! Pancernik z pochylni wychodzi bramą G-01.]' }
+  ],
+  // Supercapital poniżej 2/3 punktów: herszt każe startować wszystkim od razu.
+  bossRush: [
+    { who: 'pirate', text: '[Herszt: wszystko, co ma silniki — w górę! Natychmiast!]' },
+    { who: 'xo', text: '[Przyspieszają starty na parkingu!]' }
+  ],
+  // Supercapital poniżej 1/3: ucieka i ładuje skok.
+  bossFlee: [
+    { who: 'xo', text: '[Supercapital zawraca — ładuje skok! Jeśli ucieknie, wróci z resztą floty.]' }
+  ],
+  bossKilled: [
+    { who: 'xo', text: '[Supercapital zniszczony! Herszt nie wyszedł z tego żywy.]' }
+  ],
+  // Mostek zniszczony — okręt bez dowodzenia.
+  bossHulk: [
+    { who: 'xo', text: '[Mostek supercapitala trafiony — okręt bez dowodzenia, dryfuje.]' }
+  ],
+  bossEscaped: [
+    { who: 'pirate', text: '[Herszt: to jeszcze nie koniec…]' },
+    { who: 'xo', text: '[Uciekł. Wróci — i nie sam.]' }
+  ],
+  // Okręty stoczni rozbite — czas na budynek.
   defencesDown: [
-    { who: 'xo', text: '[Obrona rozbita. Budynek stoczni — bronią wbudowaną.]' }
+    { who: 'xo', text: '[Okręty piratów rozbite. Teraz suchy dok — bronią wbudowaną.]' }
   ],
   // Stocznia wylatuje w powietrze.
   shipyardDown: [
     { who: 'xo', text: '[Trafienie! Reaktory stoczni idą w łańcuchu!]' },
     { who: 'pirate', text: '[Herszt: zapłacisz za to…]' }
   ],
-  // Odwet piratów — floty wychodzą z warpa.
-  counterAttack: [
-    { who: 'xo', text: '[Liczne sygnatury warpa! Idzie cała flota piratów!]' },
-    { who: 'pirate', text: '[Herszt: nikt stąd nie wyleci.]' },
-    { who: 'player', text: '[Dowódca: wzywa wsparcie z Ziemi.]' }
-  ],
-  // Wsparcie z Ziemi.
-  support: [
-    { who: 'fleet', text: '[Dowódca grupy wsparcia: wychodzimy z warpa, bierzemy flankę.]' }
-  ],
-  // Piraci się łamią.
-  pirateRout: [
-    { who: 'pirate', text: '[Herszt: odwrót! Wszyscy odwrót!]' }
-  ],
-  // Zwycięstwo.
-  victory: [
-    { who: 'admiral', text: '[Admirał: gratulacje, stocznia zniszczona, flota odparta.]' },
-    { who: 'fleet', text: '[Grupa wsparcia wraca na Ziemię.]' }
-  ],
-  // Powrót do doku — zamknięcie rozdziału.
-  homecoming: [
-    { who: 'k7', text: '[Kontrola K-7: witamy w domu, Atlas. Stanowisko C-01 wolne.]' },
-    { who: 'admiral', text: '[Admirał: zasłużony odpoczynek — ale to dopiero początek.]' }
+  // Koniec misji 1 — w polu, nad gruzami (dalej misja 2: naprawa, odwet).
+  yardVictory: [
+    { who: 'admiral', text: '[Admirał: stocznia zniszczona. Dobra robota — ale zostańcie w rejonie, piraci tego nie zostawią.]' }
   ],
   // Porażka (Atlas zniszczony).
   defeat: [

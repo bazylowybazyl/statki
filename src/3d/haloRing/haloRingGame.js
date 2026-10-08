@@ -6,8 +6,8 @@
 //    i Jowisz to inne ringi (src/3d/haloRing/arch/, decyzja użytkownika
 //    2026-09-27) z tym samym API; grupa w środku planety, obrócona tak, żeby
 //    port leżał pod kątem dawnej stacji; tworzony leniwie, gdy kadr się zbliży;
-//  - BG (warstwa 1, pod statkami), górna ściana z dachem i suwnice K-7 w FG
-//    (warstwa 2) — kolejność passów Core3D;
+//  - BG (warstwa 1, pod statkami), górna ściana z dachem i ramiona paliwowe K-7
+//    w FG (warstwa 2) — kolejność passów Core3D;
 //  - kamera: replika kamery perspektywicznej passów Core3D (syncCamera) na TĘ
 //    klatkę i z tym samym rozmiarem bufora — ring liczy pozycje względem kamery
 //    (RTE), więc kamera z poprzedniej klatki przesuwałaby go względem sceny;
@@ -25,10 +25,12 @@ import { createArchRing } from './arch/archRing.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
 import { resolveHaloQuality } from './haloRingConfig.js';
 import { K7RoofFade, k7HubToWorld } from './haloPortK7Layout.js';
+import { k7BeaconClock } from './haloPortK7Lights.js';
 import { haloXfPoint } from './haloPortBays.js';
 import { resolveRingPlanetWorldRadius } from '../ringScale.js';
 import { HALO_RING_PLANETS, haloGameToLocal, haloRingKey } from '../../game/haloRingPlanets.js';
 import { HaloRingCollider } from '../../game/haloRingCollision.js';
+import { createK7BerthService, stepK7BerthService, syncK7BerthLamps } from '../../game/k7BerthService.js';
 
 export const HALO_GAME = Object.freeze({
   layers: Object.freeze({ default: 1, fg: 2 }),
@@ -66,7 +68,13 @@ export class HaloRingGame {
     this._hubC = { x: 0, y: 0 };
     this._cut0 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
     this._cut1 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
-    this._hallOpts = { poses: null, roofFade: 0, daylight: 1 };
+    this._hallOpts = { poses: null, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
+    // obrys kadłuba gracza w hubie rysowanej hali (przewody paliwowe kładą się na kadłubie) — bufor bez alokacji
+    this._hallHull = [];
+    this._serviceShips = [null];
+    // Zegar migania świateł hal K-7 (haloPortK7Lights.js): raz na klatkę — ten sam dostaje wejście pyłu hal
+    // (src/game/hallDustInput.js), więc soczewka i jej światło w gazie migają razem.
+    this.clock = 0;
     // Fabuła: { key: 'earth', hall: 0, roofFade: 0..1 (1 = dachu nie ma), cut: 0..1 } albo null (dach z kadłuba gracza).
     this.hallRoofOverride = null;
     this.stats = { rings: 0, visible: 0, updateMs: 0 };
@@ -88,6 +96,8 @@ export class HaloRingGame {
         ring: null,
         visible: false,
         sunAz: NaN,
+        // automat obsługi stanowisk capital (gra swobodna: zamki pola, ramiona i przewody paliwowe przy postoju gracza)
+        service: createK7BerthService(reg),
         hallFades: reg.halls.map((o) => new K7RoofFade(footprintHub(o))),
         bayFades: reg.bays.map((o) => new K7RoofFade(footprintHub(o))),
         hallFade: 0,
@@ -265,9 +275,12 @@ export class HaloRingGame {
 
   // Raz na klatkę renderu, przed Core3D.render. cam — kamera gry tej klatki
   // (x, y, zoom, z wstrząsem — ta sama, którą dostają passy), opts: sun
-  // (Słońce gry), ship (gracz: wycięcia, dachy hal), quality, splitScreen.
+  // (Słońce gry), ship (gracz: wycięcia, dachy hal, automat obsługi stanowisk), gameDt (czas gry klatki — 0 w pauzie
+  // i scenach fabuły; automat obsługi stanowisk), quality, splitScreen.
   update(dt, cam, opts = {}) {
     const t0 = performance.now();
+    this.clock = k7BeaconClock(t0);
+    const gameDt = Number.isFinite(opts.gameDt) ? Math.max(0, opts.gameDt) : dt;
     if (opts.quality) this.setQuality(opts.quality);
     const target = Core3D.composerTarget;
     const vw = target?.width || this.renderer?.domElement?.width || 1920;
@@ -312,7 +325,7 @@ export class HaloRingGame {
       ring.group.position.set(e.place.x, -e.place.y, 0);
       ring.update(dt, { camera: this.camera, viewportHeight: vh, gameView: !free3d });
       this._applySun(e, opts.sun);
-      this._portVisuals(e, dt, opts.ship || null);
+      this._portVisuals(e, dt, opts.ship || null, gameDt);
     }
     this.stats.visible = visible;
     this.stats.updateMs = performance.now() - t0;
@@ -342,11 +355,16 @@ export class HaloRingGame {
     return k * k * (3 - 2 * k);
   }
 
-  // Zanik dachów hal K-7 (statek w hali), wycięcia górnej ściany, lampy hal.
-  _portVisuals(e, dt, ship) {
+  // Zanik dachów hal K-7 (statek w hali), wycięcia górnej ściany, lampy hal, automat obsługi stanowisk.
+  _portVisuals(e, dt, ship, gameDt = dt) {
     const ring = e.ring;
     const reg = e.collider.registry;
     const alive = ship && !ship.dead && ship.pos;
+    // Obsługa stanowisk capital w grze swobodnej (src/game/k7BerthService.js): gracz stoi na polu stanowiska —
+    // zamki pola, ramiona i przewody paliwowe podpinają się, rusza — awaryjne odpięcie (buch pary). Pozy fabuły
+    // (owner = 'story') nietknięte. Przed halami: rysują pozy z tej klatki.
+    this._serviceShips[0] = alive ? ship : null;
+    stepK7BerthService(e.service, gameDt, e.place, this._serviceShips, 1);
     const hull = alive ? e.collider.hubOutline(ship) : null;
     let hx = 0;
     let hz = 0;
@@ -386,7 +404,19 @@ export class HaloRingGame {
       const opts = this._hallOpts;
       opts.roofFade = (ovOn && i === (ov.hall | 0)) ? clamp01(Number(ov.roofFade) || 0) : (e.hallFades[i]?.fade || 0);
       opts.daylight = this._daylight(e, o.x, o.y);
+      opts.clock = this.clock;
+      // pozy obsługi stanowisk (zamki pola, ramiona i przewody paliwowe) — stan gry w rejestrze kolidera (fabuła,
+      // automat obsługi stanowisk); ta sama mapa idzie do wejścia pyłu hal (źródła gazu z przewodów); lampki
+      // stanowisk obsługiwanych przez automat — z niego
+      const owner = reg.halls[i];
+      opts.poses = owner?.poses || null;
+      // ramiona i przewody w czasie gry (pauza i sceny fabuły — stoją), obrys kadłuba gracza w hubie TEJ hali
+      opts.gameDt = gameDt;
+      opts.hull = hull && owner?.inv ? this._hullInHall(hull, owner.inv) : null;
+      if (syncK7BerthLamps(e.service, i, hall.layout?.berths)) hall.setBerthLamps?.();
       hall.update(dt, opts);
+      // poziom lamp hali (dzień / noc) dla świateł hali w siatce gry (pył, para, kadłuby)
+      if (owner) owner.lampLevel = hall.k7Uniforms.uHallLights.value.x;
     }
     if (!alive) {
       ring.setCutaway(0, null);
@@ -415,6 +445,15 @@ export class HaloRingGame {
     cut.b = rad;
     cut.strength = under;
     ring.setCutaway(1, cut);
+  }
+
+  // Obrys kadłuba z huba hali gracza (rejestr kolidera) do huba hali `inv` (przejście ramek) — bufor wielokrotnego użytku.
+  _hullInHall(hull, inv) {
+    const out = this._hallHull;
+    while (out.length < hull.length) out.push({ x: 0, z: 0 });
+    out.length = hull.length;
+    for (let i = 0; i < hull.length; i++) haloXfPoint(inv, hull[i].x, hull[i].z, out[i]);
+    return out;
   }
 
   // Kolizje statku ze wszystkimi ringami (płyta; walls = ściany portu dla graczy).

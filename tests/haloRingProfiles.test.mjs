@@ -144,7 +144,7 @@ test('hala K-7: styl zmienia wygląd, nie stanowiska ani kolizje; nic nad kamer�
     assert.equal(s.lamps.length, 28 + 2 * 14, `${key}: lampki stanowisk`);
     assert.ok(s.labels.some((l) => l.vertical && l.text === L.planetProfile.port.name), `${key}: nazwa terminalu`);
     assert.equal(JSON.stringify(k7SolidList(createK7Layout())), refSolids, 'kolizje hali wspólne');
-    for (const b of bays) assert.ok(baySolidList(b.layout).length > 20);
+    for (const b of bays) assert.ok(baySolidList(b.layout).length > 15, 'zatoka: ściany, słupki serwisowe i paliwowe (bez nóg suwnic — 2026-10-07)');
   }
   // porty trzech planet: 4 kompleksy, ten sam rejestr stanowisk i świat ścian
   const walls = ['earth', 'mars', 'jupiter'].map((k) => new HaloRingCollider({ id: k, x: 0, y: 0 }));

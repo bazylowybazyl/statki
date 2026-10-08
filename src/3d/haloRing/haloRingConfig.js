@@ -269,7 +269,6 @@ export const HALO_PORT = Object.freeze({
   collarDepth: 240,       // wysunięcie terminalu u stóp pylonów z podłogi
   plugZMin: -1250,        // spód płyty portu i terminalu u stóp pylonów — z świata
   plugZMax: 420,          // wierzch płyty portu (zakres z płaskiej płyty w terenie)
-  gantryProfile: 60,      // ≤ 1/20 rozpiętości mostu (hangar-dock-demo)
   // Odsunięcie doków od ringu (poprawki użytkownika 2026-10-05, szkic: „doki
   // za mocno wciśnięte w ring — znacznie dalej od ringu”; „pylony za słabe,
   // jakby nie miały utrzymać tych budowli”; „doki leżą NA pylonach, a pylony

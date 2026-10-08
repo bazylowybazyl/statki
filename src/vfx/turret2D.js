@@ -721,8 +721,67 @@ function emitPlayerTurretList(list, prefix, aimAlpha) {
 
 let lastFxTimeSec = 0;
 
+// ── Cień na wieżyczkach (oświetlenie kadłubów v2, 2026-10-06) ─────────────────
+// Kanwa 2D nie czyta maski słońca GPU, a kadłub w cieniu planety ciemnieje — jasna wieżyczka na
+// czarnym kadłubie świeciła jak naklejka. Po narysowaniu wieżyczki kładziemy na nią jej CZARNĄ
+// sylwetkę z alfą (1 − jasność): ścieżki — drugie wypełnienie tej samej ścieżki, sprite'y — kopia
+// atlasu w połowie rozdzielczości z samą alfą (raz na atlas). `ctx.filter = 'brightness()'` odpada:
+// zmierzone ~4,6 ms na drawImage (Chrome, kanwa GPU) zamiast ~0,03.
+const _silhouettes = new WeakMap();
+function silhouetteOf(image) {
+  let e = _silhouettes.get(image);
+  if (e !== undefined) return e;
+  e = null;
+  try {
+    const iw = Number(image.naturalWidth || image.width) || 0;
+    const ih = Number(image.naturalHeight || image.height) || 0;
+    if (iw > 0 && ih > 0) {
+      const w = Math.max(1, Math.round(iw / 2));
+      const h = Math.max(1, Math.round(ih / 2));
+      const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const g = canvas.getContext('2d');
+      g.drawImage(image, 0, 0, w, h);
+      g.globalCompositeOperation = 'source-in';
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, w, h);
+      e = { canvas, kx: w / iw, ky: h / ih };
+    }
+  } catch {
+    e = null;
+  }
+  _silhouettes.set(image, e);
+  return e;
+}
+
+// Kontekst-podkładka dla rysowników sprite'ów (używają tylko setTransform i 9-argumentowego drawImage):
+// każdy obraz dostaje zaraz po sobie swoją sylwetkę z alfą `dark` (× alfa maskowania).
+const shadedCtx = {
+  ctx: null,
+  dark: 0,
+  alpha: 1,
+  setTransform(a, b, c, d, e, f) { this.ctx.setTransform(a, b, c, d, e, f); },
+  drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh) {
+    const ctx = this.ctx;
+    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    const s = silhouetteOf(img);
+    if (!s) return;
+    ctx.globalAlpha = this.alpha * this.dark;
+    ctx.drawImage(s.canvas, sx * s.kx, sy * s.ky, sw * s.kx, sh * s.ky, dx, dy, dw, dh);
+    ctx.globalAlpha = this.alpha;
+  }
+};
+const SHADE_DARK = 'rgb(0,0,0)';
+
 export const Turret2D = {
   enabled: true,
+
+  /**
+   * Jasność wieżyczki w punkcie świata gry (oświetlenie kadłubów v2): (x, y) → 0..1, 1 = bez zmian.
+   * Ustawia hexShips3D (cień planet z Core3D.sunVisibilityAtWorld); null — wieżyczki jak dotąd.
+   */
+  lightAt: null,
 
   /** Sylwetka dla danej broni — wystawione dla testów i podglądu w konsoli. */
   resolveSpec,
@@ -1092,7 +1151,12 @@ export const Turret2D = {
 
     let drawn = 0;
     const skipDraw = typeof this.skipDraw === 'function' ? this.skipDraw : null;
+    const lightAt = typeof this.lightAt === 'function' ? this.lightAt : null;
     let alpha = 1;
+    // Jasność liczona raz na encję (cień planety jest dużo większy niż okręt).
+    let lightEntity = null;
+    let light = 1;
+    shadedCtx.ctx = ctx;
     ctx.save();
     for (let i = 0; i < frameCount; i++) {
       const rec = frameRecords[i];
@@ -1110,6 +1174,16 @@ export const Turret2D = {
       const vis = rec.entity && rec.entity.__cloakLook ? entityCloakVisAt(rec.entity, rec.wx, rec.wy) : 1;
       if (vis <= 0.01) continue;
       if (vis !== alpha) { alpha = vis; ctx.globalAlpha = vis; }
+      if (lightAt !== null && (rec.entity !== lightEntity || rec.entity == null)) {
+        lightEntity = rec.entity;
+        const l = lightAt(rec.wx, rec.wy);
+        light = l >= 0 && l <= 1 ? l : 1;
+      }
+      // Ciemnienie: rysownicy sprite'ów przez podkładkę, ścieżki — drugie wypełnienie (niżej).
+      const dark = 1 - light;
+      const shade = dark > 0.02;
+      const dctx = shade ? shadedCtx : ctx;
+      if (shade) { shadedCtx.dark = dark; shadedCtx.alpha = alpha; }
 
       const st = rec.state;
       const k = worldScale * zoom;
@@ -1121,6 +1195,12 @@ export const Turret2D = {
         ctx.setTransform(a, b, c, d, sx, sy);
         ctx.fillStyle = C.armor;
         ctx.fill(spec.__blob);
+        if (shade) {
+          ctx.globalAlpha = alpha * dark;
+          ctx.fillStyle = SHADE_DARK;
+          ctx.fill(spec.__blob);
+          ctx.globalAlpha = alpha;
+        }
         drawn++;
         continue;
       }
@@ -1130,42 +1210,42 @@ export const Turret2D = {
 
       if ((spec === SPECS.vulcan || spec === SPECS.helios || spec === SPECS.heavyAutocannon
         || spec === SPECS.armata || spec === SPECS.beamEmitter || spec === SPECS.beamPulse)
-        && MainWeaponSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        && MainWeaponSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
 
       if ((spec === SPECS.goliath || spec === SPECS.plasmaGatling || spec === SPECS.tempest2 || spec === SPECS.siegeRail)
-        && SpecialWeaponSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        && SpecialWeaponSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
 
       if ((spec === SPECS.missileRack || spec === SPECS.siegeTorpedo || spec === SPECS.fbDefault)
-        && LauncherSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        && LauncherSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
 
       if ((spec === SPECS.flak || spec === SPECS.laserPD)
-        && PdWeaponSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        && PdWeaponSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
 
-      if (spec === SPECS.ciws && CiwsSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+      if (spec === SPECS.ciws && CiwsSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
 
       if ((spec === SPECS.yamato || spec === SPECS.yamatoTwin)
-        && YamatoSprite2D.draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack, spec === SPECS.yamatoTwin)) {
+        && YamatoSprite2D.draw(dctx, a, b, c, d, sx, sy, housingBack, barrelBack, spec === SPECS.yamatoTwin)) {
         drawn++;
         continue;
       }
 
       if ((spec === SPECS.tempest1 || spec === SPECS.tempest2)
-        && TempestSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        && TempestSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
@@ -1179,11 +1259,18 @@ export const Turret2D = {
         ctx.setTransform(a, b, c, d, e, f);
         ctx.fillStyle = layer.color;
         ctx.fill(layer.path);
+        if (shade) {
+          ctx.globalAlpha = alpha * dark;
+          ctx.fillStyle = SHADE_DARK;
+          ctx.fill(layer.path);
+          ctx.globalAlpha = alpha;
+        }
       }
       drawn++;
     }
     // restore() cofa też macierz — kanwa wraca dokładnie w stan sprzed passa.
     ctx.restore();
+    shadedCtx.ctx = null;
     return drawn;
   },
 

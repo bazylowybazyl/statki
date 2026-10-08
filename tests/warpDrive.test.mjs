@@ -7,7 +7,12 @@ import {
   sampleWarpArrival,
   planWarpFleetArrival,
   warpFlybySlowdown,
-  WARP_FLYBY_DEFAULTS
+  WARP_FLYBY_DEFAULTS,
+  WARP_TRIP,
+  warpTripTime,
+  planWarpCruise,
+  simulateWarpLeg,
+  warpFlybyFactor
 } from '../src/game/warpDrive.js';
 
 test('przylot: fazy po kolei, większy kadłub zapowiada się dłużej', () => {
@@ -116,4 +121,50 @@ test('zwolnienie przy mijanym ciele: daleko pełna prędkość, przy mijaniu z b
   assert.ok(warpFlybySlowdown(0, 60000, 1200) > 0.999);
   // Nad ciałem (kurs przez tarczę) — pełne zwolnienie.
   assert.ok(Math.abs(warpFlybySlowdown(0, 5000, 9000) - (1 - WARP_FLYBY_DEFAULTS.depth)) < 1e-9);
+});
+
+// ── podróż skokiem: czas jak w demie „Nurt” (2026-10-07), zwolnienie przy ciałach ─────────────
+
+test('czas podróży: prawo dema (4 + d / 260 tys., 8–17 s), krótkie skoki krócej (√d), rośnie z odległością', () => {
+  assert.ok(Math.abs(warpTripTime(1650000) - (4 + 1650000 / 260000)) < 1e-9, 'Ziemia → Jowisz dema ~10,3 s');
+  assert.equal(warpTripTime(3400000), WARP_TRIP.max);
+  assert.equal(warpTripTime(9e6), WARP_TRIP.max);
+  assert.equal(warpTripTime(520000), WARP_TRIP.min);
+  assert.equal(warpTripTime(1000000), WARP_TRIP.min, 'dolna granica dema do ~1 mln j.');
+  assert.ok(warpTripTime(40000) < 4.5 && warpTripTime(40000) >= WARP_TRIP.shortMin, 'skok 40 tys. j. nie trwa 8 s');
+  let prev = 0;
+  for (let d = 0; d <= 6e6; d += 20000) {
+    const t = warpTripTime(d);
+    assert.ok(t >= prev - 1e-9, 'czas nie maleje z odległością: ' + d);
+    prev = t;
+  }
+});
+
+test('plan prędkości: od skoku do wyjścia mija czas podróży; ciało przy kursie — szybszy przelot poza nim', () => {
+  const base = { dist: 1650000, v0: 0, hullLength: 1800, bodies: [] };
+  const free = planWarpCruise(base);
+  assert.ok(Math.abs(free.time - free.target) < 0.05, 'czas planu ' + free.time + ' vs ' + free.target);
+  assert.ok(Math.abs(free.target - (warpTripTime(1650000) - WARP_TRIP.decel)) < 1e-9);
+  const mars = planWarpCruise({ ...base, bodies: [{ along: 800000, lateral: 70000, r: 30000 }] });
+  assert.ok(Math.abs(mars.time - mars.target) < 0.05);
+  assert.ok(mars.speed > free.speed * 1.2, 'zwolnienie przy Marsie nadrobione prędkością przelotową (demo ~290 tys. j/s)');
+  // Strefa (pas asteroid × 0,8 w połowie drogi) — plan liczy z nią.
+  const belt = planWarpCruise({ ...base, zone: (s) => (s > 600000 && s < 1000000 ? 0.8 : 1) });
+  assert.ok(Math.abs(belt.time - belt.target) < 0.05 && belt.speed > free.speed);
+  // Granice: bardzo daleko — sufit prędkości; czas symulacji maleje z prędkością.
+  assert.equal(planWarpCruise({ ...base, dist: 4e7 }).speed, WARP_TRIP.vMax);
+  assert.ok(simulateWarpLeg(100000, base) > simulateWarpLeg(200000, base));
+});
+
+test('zwolnienie skoku od kilku ciał: iloczyn warpFlybySlowdown w układzie kursu', () => {
+  assert.equal(warpFlybyFactor(0, 0, 1, 0, []), 1);
+  const bodies = [{ x: 0, y: 70000, r: 30000 }, { x: 900000, y: -40000, r: 9000 }];
+  const f = warpFlybyFactor(0, 0, 1, 0, bodies);
+  assert.ok(Math.abs(f - warpFlybySlowdown(0, 70000, 30000) * warpFlybySlowdown(900000, -40000, 9000)) < 1e-12);
+  // Kurs po skosie: ta sama geometria względem kursu = to samo zwolnienie.
+  const c = Math.cos(2.1);
+  const s = Math.sin(2.1);
+  const rot = bodies.map((b) => ({ x: b.x * c - b.y * s, y: b.x * s + b.y * c, r: b.r }));
+  assert.ok(Math.abs(warpFlybyFactor(0, 0, c, s, rot) - f) < 1e-9);
+  assert.ok(warpFlybyFactor(0, 0, 1, 0, bodies, 1) < 0.2, 'n — tylko pierwsze ciała (Mars z bliska: 15%)');
 });

@@ -24,9 +24,10 @@ test('torpedy z danych: kategoria, rury, wąski < szeroki, grywalny czas dolotu'
     const tubes = torpedoTubesOf(def);
     assert.ok(tubes >= 2 && tubes <= TORPEDO_TUBES_MAX, `${id}: rury ${tubes}`);
     assert.ok(torpedoSpreadRad(def, false) < torpedoSpreadRad(def, true), `${id}: wąski < szeroki`);
-    // Pełny zasięg w 10–25 s (dawniej 45–80 tys. j. przy 500–800 j/s — do 100 s dolotu).
+    // Pełny zasięg w 5–12 s: wolniej niż pocisk działa (≤ 1,4 s), ale bez minuty dolotu. Dawniej
+    // 45–80 tys. j. przy 500–800 j/s (do 100 s), potem 14–22 km (10–25 s); od 2026-10-07 torpedy 7–9 km.
     const t = def.baseRange / def.baseSpeed;
-    assert.ok(t >= 10 && t <= 25, `${id}: dolot na pełny zasięg ${t.toFixed(1)} s`);
+    assert.ok(t >= 5 && t <= 12, `${id}: dolot na pełny zasięg ${t.toFixed(1)} s`);
   }
   assert.equal(torpedoTubesOf(MASTER_WEAPONS.torpedo_salvo), 6);
   close(torpedoSpreadRad({}, false), TORPEDO_SPREAD_DEFAULT[0] * Math.PI / 180, 1e-12, 'domyślny wąski');
@@ -80,8 +81,9 @@ test('gotowość wyrzutni: przeładowanie / brak amunicji, obrót wieżyczki, go
 
 test('wpięcie: klawisz 8, LPM / PPM trybu, nakładka, krok klatki; PPM rakiet pomija torpedy', () => {
   const html = read('index.html');
-  assert.match(html, /if \(torpedoKeyDown\(e\)\) \{ updateInput\(\); return; \}/, 'klawisz trybu w keydown');
-  assert.match(html, /e\.code !== 'Digit8' && e\.code !== 'Numpad8'/, 'klawisz 8');
+  // klawisz trybu — akcja 'mode.torpedo' (GameActions w index.html, warstwa wejścia — docs/PLAN-pad.md, etap 1)
+  assert.match(html, /'mode\.torpedo': \{\n\s+gate: \(\) => !stationUI\.open && !CICDisplay\.active,/, 'klawisz trybu w keydown');
+  assert.match(read('src/input/inputActions.js'), /'mode\.torpedo': \['Digit8', 'Numpad8'\]/, 'klawisz 8');
   assert.match(html, /if \(torpedoMouseDown\(e\)\) \{/, 'mysz trybu');
   assert.match(html, /drawTorpedoOverlay\(ctx, cam\);/, 'nakładka w rysunku 2D');
   assert.match(html, /stepTorpedoMode\(\);/, 'tryb gaśnie w klatce');

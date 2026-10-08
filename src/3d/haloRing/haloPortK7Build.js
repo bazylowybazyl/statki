@@ -1,13 +1,17 @@
-// Budowa hali K-7 jako DANE (bez Three): port funkcji CentralHub.build,
-// CraneSystem, FuelHoseSystem i proceduralDockShip z dema K-7 na rejestrator
-// instancji. Liczby i układ jak w K-7; wysokości przeliczane na z świata
-// (k7HeightToZ: 1:1 pod płaszczyzną lotu, ×0,42 nad nią).
+// Budowa hali K-7 jako DANE (bez Three): port funkcji CentralHub.build
+// i proceduralDockShip z dema K-7 na rejestrator instancji. Liczby i układ jak
+// w K-7; wysokości przeliczane na z świata (k7HeightToZ: 1:1 pod płaszczyzną
+// lotu, ×0,42 nad nią).
 //
 // Wynik: listy instancji (prostopadłościan / walec / torus) w trzech zestawach
-// — `bg` (pod statkami), `fg` (nad statkami: suwnice, węże, dach) — z kodem
-// materiału i indeksem grupy ruchomej; płaskie wielokąty (pokład, fartuchy,
-// dach); napisy na pokładzie; definicje węży i grup. Statków NPC scena nie ma
-// (2026-09-24: statki i ruch z osobnego systemu).
+// — `bg` (pod statkami), `fg` (nad statkami: ramiona paliwowe, złączki, dach) —
+// z kodem materiału i indeksem grupy ruchomej; płaskie wielokąty (pokład,
+// fartuchy, dach); napisy na pokładzie; stanowiska paliwowe (`fuel`: grupy
+// członów ramienia SCARA, wysięgnika i złączki — ruch liczy haloPortK7Fuel.js)
+// i zamki pola (`clamps`). Statków NPC scena nie ma (2026-09-24: statki i ruch
+// z osobnego systemu). Suwnice usunięte 2026-10-07 (decyzja użytkownika: „nie
+// mają żadnej roli — cargo będą ładowały drony”); w ich miejscu — rurociągi
+// paliwa od magazynu przy ścianie tylnej do słupków (buildFuelPiping).
 //
 // Kompleks = hala K-7 + jej otwarte zatoki (haloPortBays.js): stanowiska zatok
 // w tym samym standardzie (pola, pasy, napisy, lampki stanu) nagrywane w
@@ -15,7 +19,10 @@
 import { HALO_PORT } from './haloRingConfig.js';
 import {
   K7_ABOVE_SCALE,
+  K7_FUEL_FARM,
+  K7_FUEL_STATION,
   k7ArmWidthAt,
+  k7FuelTanks,
   k7HallArms,
   k7HeightToZ,
   k7SolidList,
@@ -23,13 +30,15 @@ import {
 } from './haloPortK7Layout.js';
 import { baySolidList, haloXfPoint } from './haloPortBays.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
+import { k7LightRig } from './haloPortK7Lights.js';
 
 export const K7_MAT = Object.freeze({
   steel: 0, dark: 1, pale: 2, yellow: 3, orange: 4, teal: 5, floor: 6, rail: 7, black: 8, hose: 9,
   copper: 10, glass: 11, paint: 12, paintCold: 13, cyan: 14, warm: 15, white: 16, red: 17, green: 18, status: 19,
   deckPad: 20
 });
-export const K7_INSTANCE_STRIDE = 16; // cx cy cz vScale | sx sy sz mat | qx qy qz qw | group 0 0 0
+// cx cy cz vScale | sx sy sz mat | qx qy qz qw | group, miganie (K7_BEACON), faza [s], okres [s]
+export const K7_INSTANCE_STRIDE = 16;
 
 const TAU = Math.PI * 2;
 const mix = (a, b, t) => a + (b - a) * t;
@@ -70,6 +79,10 @@ class Recorder {
     this.sets = { bg: { box: [], cyl: [], torus: [] }, fg: { box: [], cyl: [], torus: [] }, roof: { box: [], cyl: [], torus: [] } };
     this.set = 'bg';
     this.group = 0;
+    // soczewka migająca (haloPortK7Lights.js): kod, faza, okres — shader K-7 nadpisuje nimi emisję
+    this.blink = 0;
+    this.blinkPhase = 0;
+    this.blinkPeriod = 0;
     // 'abs' — wysokości K-7 bezwzględne (k7HeightToZ); 'lin' — lokalne względem
     // ruchomej grupy nad płaszczyzną lotu (tylko skala ×K7_ABOVE_SCALE)
     this.mode = 'abs';
@@ -93,7 +106,7 @@ class Recorder {
       x = X;
       q = quatMul(this._qxf, q);
     }
-    this.sets[this.set][kind].push(x, cy, z, vs, sx, sy, sz, mat, q[0], q[1], q[2], q[3], this.group, 0, 0, 0);
+    this.sets[this.set][kind].push(x, cy, z, vs, sx, sy, sz, mat, q[0], q[1], q[2], q[3], this.group, this.blink, this.blinkPhase, this.blinkPeriod);
   }
   _range(y, h) {
     if (this.mode === 'lin') return [y * K7_ABOVE_SCALE, h * K7_ABOVE_SCALE];
@@ -158,7 +171,6 @@ export function buildK7Scene(layout, ringInfo = {}) {
   const plates = [];
   const labels = [];
   const groups = [];            // opisy grup ruchomych (indeks = pozycja + 1)
-  const hoses = [];
   const lamps = [];             // lampki stanu stanowisk (indeks instancji w bg.box)
   const addGroup = (desc) => { groups.push(desc); return groups.length; };
 
@@ -168,7 +180,8 @@ export function buildK7Scene(layout, ringInfo = {}) {
 
   // ---- ściany (K-7 buildWalls): bryły + detale od środka, bramy z ramami
   const solids = k7SolidList(l);
-  for (const s of solids) f.box(s.x, s.y, s.z, s.w, s.h, s.d, M[s.mat], -s.angle);
+  // bryły z własnym kształtem (zbiorniki paliwa) rysuje buildFuelPiping — w liście są ich obrysy
+  for (const s of solids) if (!s.shape) f.box(s.x, s.y, s.z, s.w, s.h, s.d, M[s.mat], -s.angle);
   for (const e of l.edges) {
     const gate = l.gates.find((g) => g.edge === e.i);
     const segments = gate ? [[0, gate.jamb], [e.length - gate.jamb, e.length]] : [[0, e.length]];
@@ -308,13 +321,20 @@ export function buildK7Scene(layout, ringInfo = {}) {
   if (style.walls === 'ecumene') buildEcumeneWalls(f, l);
   else if (style.walls === 'fable') buildFableWalls(f, l);
 
-  // ---- suwnice i węże paliwowe (K-7 CraneSystem + FuelHoseSystem)
-  const cranes = [];
+  // ---- obsługa stanowisk capital: słupki paliwowe z ramionami SCARA i bębnami przewodów, zamki pola;
+  // rurociągi paliwa od magazynu przy ścianie tylnej (suwnic nie ma — 2026-10-07)
+  const fuel = [];
+  const clamps = [];
   for (const b of l.berths) {
     if (b.size !== 'CAPITAL') continue;
-    cranes.push(buildCrane(f, b, addGroup));
-    for (const a of b.serviceAnchors) hoses.push(buildHose(f, b, a, addGroup));
+    clamps.push(buildClampPads(f, b, addGroup));
+    for (const a of b.serviceAnchors) fuel.push(buildFuelStation(f, b, a, addGroup));
   }
+
+  // ---- oświetlenie hali (haloPortK7Lights.js): soczewki migające i oprawy reflektorów
+  const rig = k7LightRig(l);
+  const beaconSlots = recordLightRig(f, rig);
+  buildFuelPiping(f, l, rig);
 
 
   // ---- dach (K-7 buildRoof) — osobny zestaw, zanika przy statku w hali;
@@ -334,7 +354,39 @@ export function buildK7Scene(layout, ringInfo = {}) {
   // ---- otwarte zatoki kompleksu (stanowiska w standardzie K-7)
   for (const bay of ringInfo.bays || []) buildBay(f, plates, labels, lamps, bay.layout, bay.xf, LC);
 
-  return { sets: f.sets, plates, labels, groups, hoses, lamps, cranes };
+  return { sets: f.sets, plates, labels, groups, fuel, clamps, lamps, rig, beaconSlots };
+}
+
+// Soczewki świateł (walec: obudowa + szkło z kodem migania) i oprawy reflektorów (skrzynka + jasne czoło).
+// Zwraca miejsca soczewek stanowisk ({ berthId, set, index } w zestawie walców) — lampka stanowiska przełącza
+// w nich kod migania (wolne: zielone, zajęte: czerwone ciągłe).
+function recordLightRig(f, rig) {
+  const M = K7_MAT;
+  const slots = [];
+  const lensMat = [M.black, M.red, M.green, M.cyan, M.cyan, M.white, M.warm, M.red];
+  for (const b of rig.beacons) {
+    f.set = b.set;
+    f.cyl(b.x, b.y - 7, b.z, b.r + 6, 10, M.dark);
+    f.blink = b.kind;
+    f.blinkPhase = b.phase;
+    f.blinkPeriod = b.period;
+    if (b.berthId) slots.push({ berthId: b.berthId, set: b.set, index: f.sets[b.set].cyl.length / K7_INSTANCE_STRIDE });
+    f.cyl(b.x, b.y, b.z, b.r, 8, lensMat[b.kind] ?? M.white);
+    f.blink = 0;
+    f.blinkPhase = 0;
+    f.blinkPeriod = 0;
+  }
+  f.set = 'fg';
+  for (const s of rig.spots) {
+    const yaw = s.housing.yaw;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    f.box(s.x - fx * 26, s.y + 6, s.z - fz * 26, 86, 46, 58, M.dark, yaw);
+    f.box(s.x + fx * 6, s.y, s.z + fz * 6, 70, 30, 10, M.white, yaw);
+    f.box(s.x - fx * 40, s.y - 40, s.z - fz * 40, 18, 60, 18, M.steel, yaw);
+  }
+  f.set = 'bg';
+  return slots;
 }
 
 // Dach hali z dema K-7 (Ziemia): belki poprzeczne, panele, moduły wentylacji.
@@ -559,7 +611,7 @@ function recordBerths(f, lab, lamps, berths, LC = resolveHaloProfile('earth').po
 // oznakowaniem wjazdu i słupkami paliwowymi, podwójny grzebień z aleją
 // pośrodku, grzbiety serwisowe (listwa, słupki obsługi, pachołki, rurociąg)
 // między grzebieniem a pasami, napisy zatoki. Bryła
-// zatoki (pokład, ściany, pylony z terminalem, suwnice) jest w megastrukturze
+// zatoki (pokład, ściany, pylony z terminalem) jest w megastrukturze
 // ringu (haloRingRoofPlan.js; archetypy — arch/archPort.js).
 function buildBay(f, plates, labels, lamps, bay, xf, LC = resolveHaloProfile('earth').port.labels) {
   const M = K7_MAT;
@@ -653,137 +705,238 @@ function directionArrow(f, x, z, angle, length, mat) {
   for (const side of [-1, 1]) f.beam([x + dx * length * 0.1 + nx * side * length * 0.22, 3, z + dz * length * 0.1 + nz * side * length * 0.22], tip, 6, mat, 2);
 }
 
-// Suwnica stanowiska kapitalnego: część stała (grupa 0) + most, wózek,
-// chwytak, szczęki i liny jako grupy ruchome (macierze liczy haloPortK7.js).
-function buildCrane(f, b, addGroup) {
+// Zamki magnetyczne pola stanowiska capital (poza `clamp`): płyty na pokładzie wzdłuż burt zadokowanego kadłuba
+// (stanowiska capital mają kurs −π/2 — kadłub wzdłuż z huba); listwy świecą (emisja grupy), gdy zamki trzymają
+// statek. Ciemne podstawy i żółte obrzeża — część stała.
+function buildClampPads(f, b, addGroup) {
   const M = K7_MAT;
-  const homeZ = b.z + 1130;
-  const workZ = b.z + 245;
-  const legZs = [b.z - 1110, b.z + 1110];
-  f.dx = b.x;
+  const g = addGroup({ kind: 'clamps', berthId: b.id });
+  const across = 470;
   for (const side of [-1, 1]) {
-    const x = side * 615;
-    f.box(x, 16, b.z, 102, 32, 2440, M.dark);
-    f.box(x, 39, b.z, 76, 8, 2390, M.yellow);
-    f.set = 'fg';
-    f.box(x, 452, b.z, 44, 64, 2410, M.dark);
-    f.box(x, 489, b.z, 26, 13, 2440, M.rail);
-    f.set = 'bg';
-    for (let k = 0; k < 17; k++) {
-      f.box(x, 40, b.z - 1120 + k * 140, 106, 8, 18, M.rail);
-      for (const off of [-39, 39]) f.cyl(x + off, 45, b.z - 1120 + k * 140, 5, 4, M.rail);
-    }
-    f.set = 'fg';
-    for (const z of legZs) {
-      f.box(x, 234, z, 62, 448, 75, M.pale);
-      f.box(x, 260, z - 40, 18, 352, 9, M.yellow);
-      f.box(x, 7, z, 158, 14, 180, M.dark);
-      f.beam([x, 365, z], [x - side * 40, 446, z + 175], 22, M.steel);
-    }
-    for (let i = 0; i < 11; i++) {
-      const z = b.z - 1000 + i * 205;
-      f.box(x, 415, z, 14, 21, 120, M.white);
-      f.box(x, 447, z, 38, 10, 70, M.black);
-    }
-    f.set = 'bg';
-  }
-  f.dx = 0;
-  // most (grupa): lokalnie x względem stanowiska, z względem położenia mostu
-  f.set = 'fg';
-  const gBridge = addGroup({ kind: 'bridge', berthId: b.id, x: b.x, homeZ, workZ });
-  f.group = gBridge;
-  for (const zz of [-73, 73]) {
-    f.box(0, 518, zz, 1370, 28, 25, M.yellow);
-    f.box(0, 617, zz, 1370, 22, 25, M.yellow);
-    for (let i = 0; i < 10; i++) {
-      const xx = -648 + i * 132;
-      f.beam([xx, 532, zz], [xx + 128, 604, zz], 13, M.steel);
-      f.beam([xx, 604, zz], [xx + 128, 532, zz], 10, M.dark);
-    }
-    f.box(0, 627, zz, 1350, 8, 17, M.rail);
-  }
-  for (const x of [-615, 615]) {
-    f.box(x, 510, 0, 160, 46, 240, M.dark);
-    f.box(x, 548, 0, 93, 42, 182, M.yellow);
-    for (const z of [-79, 79]) {
-      f.cyl(x, 497, z, 30, 45, M.rail, [Math.PI / 2, 0, 0]);
-      f.box(x, 583, z, 11, 12, 19, M.warm);
+    for (const dz of [-760, -260, 260, 760]) {
+      const x = b.x + side * across;
+      const z = b.z + dz;
+      f.box(x, 3, z, 64, 6, 210, M.dark);
+      f.box(x + side * 24, 4, z, 8, 3, 198, M.yellow);
+      for (const ez of [-1, 1]) f.box(x, 6.5, z + ez * 98, 50, 3, 6, M.rail);
+      f.group = g;
+      f.box(x - side * 6, 7, z, 20, 2, 176, M.status);
+      f.group = 0;
     }
   }
-  f.box(-465, 584, 0, 184, 66, 113, M.pale);
-  f.box(-465, 586, 60, 128, 29, 7, M.glass);
-  f.box(-467, 629, 0, 130, 14, 109, M.dark);
-  // wózek (grupa, dziecko mostu)
-  const gTrolley = addGroup({ kind: 'trolley', parent: gBridge, berthId: b.id });
-  f.group = gTrolley;
-  f.box(0, 647, 0, 185, 30, 214, M.dark);
-  f.box(0, 675, 0, 121, 41, 123, M.yellow);
-  f.cyl(0, 665, 0, 38, 110, M.rail, [0, 0, Math.PI / 2]);
-  for (const xx of [-72, 72]) for (const zz of [-72, 72]) f.cyl(xx, 635, zz, 18, 18, M.rail, [0, 0, Math.PI / 2]);
-  f.box(0, 678, 73, 54, 32, 40, M.black);
-  f.box(0, 680, 96, 25, 15, 3, M.green);
-  // chwytak (grupa; wysokości lokalne liniowo — przesunięcie w macierzy grupy)
-  const gSpreader = addGroup({ kind: 'spreader', parent: gTrolley, berthId: b.id });
-  f.group = gSpreader;
-  f.mode = 'lin';
-  f.box(0, 0, 0, 307, 28, 24, M.yellow);
-  f.box(0, 0, 0, 22, 24, 155, M.dark);
-  for (const xx of [-128, 128]) {
-    for (const zz of [-42, 42]) {
-      f.box(xx, -15, zz, 27, 24, 25, M.steel);
-      f.cyl(xx, -34, zz, 18, 17, M.black);
-      f.ring(xx, -43, zz, 18, 3, M.rail, [Math.PI / 2, 0, 0]);
-    }
-  }
-  f.box(0, 17, 0, 55, 19, 49, M.dark);
-  const jaws = [];
-  for (const side of [-1, 1]) {
-    const g = addGroup({ kind: 'jaw', parent: gSpreader, side, berthId: b.id });
-    f.group = g;
-    for (const z of [-42, 42]) f.box(side * 148, -42, z, 10, 22, 31, M.rail);
-    jaws.push(g);
-  }
-  // liny (grupa ze skalą pionową: długość liczona z położenia chwytaka)
-  const gCables = addGroup({ kind: 'cables', parent: gTrolley, berthId: b.id });
-  f.group = gCables;
-  for (const xx of [-102, 102]) for (const zz of [-42, 42]) f.box(xx, 0, zz, 3, 1, 3, M.black);
-  f.mode = 'abs';
-  f.group = 0;
-  f.set = 'bg';
-  return { berthId: b.id, bridge: gBridge, trolley: gTrolley, spreader: gSpreader, jaws, cables: gCables, homeZ, workZ };
+  return { berthId: b.id, group: g };
 }
 
-function buildHose(f, b, a, addGroup) {
+// Stanowisko paliwowe (słupek `a` stanowiska `b`, K7_FUEL_STATION): cokół i kolumna, bęben przewodu na licu ku
+// stanowisku, skrzynka sterowania, obrotnica barku i ramię SCARA — grupy ruchome: człon 1 (bark), człon 2 (łokieć),
+// trzon wysięgnika, złączka. Ruch (kąty, wysięgnik, złączka i przewód) liczy haloPortK7Fuel.js z poz obsługi,
+// macierze grup — haloPortK7.js. Układ lokalny członów: oś przegubu w zerze, człon wzdłuż +x, wysokości K-7.
+function buildFuelStation(f, b, a, addGroup) {
   const M = K7_MAT;
+  const F = K7_FUEL_STATION;
   const s = a.side;
-  f.box(a.x, 35, a.z, 117, 70, 135, M.dark);
-  f.box(a.x, 116, a.z, 75, 168, 78, M.yellow);
+  const ix = -s;
+  const x = a.x;
+  const z = a.z;
+  // cokół i kolumna
+  f.box(x, F.plinth.h * 0.5, z, F.plinth.w, F.plinth.h, F.plinth.d, M.dark);
+  f.box(x, F.plinth.h + 2, z, F.plinth.w - 18, 4, F.plinth.d - 18, M.steel);
+  for (const sz of [-1, 1]) f.box(x, F.plinth.h * 0.55, z + sz * (F.plinth.d * 0.5 + 1), F.plinth.w - 24, 12, 3, M.yellow);
+  f.box(x, (F.plinth.h + F.column.top) * 0.5, z, F.column.w, F.column.top - F.plinth.h, F.column.d, M.yellow);
+  f.box(x - ix * (F.column.w * 0.5 + 2), 160, z, 4, 170, F.column.d - 22, M.dark);
+  for (const yy of [92, 232]) f.box(x, yy, z, F.column.w + 4, 6, F.column.d + 4, M.dark);
+  // skrzynka sterowania na licu zewnętrznym
+  f.box(x - ix * (F.column.w * 0.5 + 9), 166, z, 12, 74, 54, M.pale);
+  f.box(x - ix * (F.column.w * 0.5 + 16), 182, z, 3, 22, 36, M.glass);
+  f.box(x - ix * (F.column.w * 0.5 + 16), 150, z + 17, 3, 9, 9, M.green);
+  // pion paliwa z rurociągu do bębna (wzdłuż lica kolumny)
+  f.cyl(x + ix * (F.column.w * 0.5 + 6), (F.plinth.h + F.reel.y) * 0.5, z - F.column.d * 0.5 + 12, 8, F.reel.y - F.plinth.h, M.copper);
+  // bęben przewodu (oś wzdłuż z) na wspornikach, piasta, prowadnica rolkowa w wylocie
+  const R = F.reel;
+  const rx = x + ix * R.out;
+  const ROT_Z = [Math.PI / 2, 0, 0];
   f.set = 'fg';
-  f.box(a.x, 204, a.z, 93, 20, 105, M.steel);
-  f.cyl(a.x, 224, a.z, 46, 62, M.black, [0, 0, Math.PI / 2]);
-  for (const o of [-33, 33]) f.cyl(a.x + o, 224, a.z, 54, 9, M.rail, [0, 0, Math.PI / 2]);
-  f.set = 'bg';
-  f.box(a.x - s * 44, 150, a.z, 6, 68, 50, M.black);
-  f.box(a.x - s * 49, 173, a.z, 5, 14, 18, M.green);
-  f.cyl(a.x, 78, a.z - 74, 8, 126, M.copper);
-  f.beam([a.x, 26, a.z - 74], [a.x, 26, a.z - 335], 15, M.copper);
-  f.box(a.x, 17, a.z - 340, 82, 34, 81, M.dark);
-  // złączka na końcu węża (grupa: położenie i obrót z krzywej węża)
-  f.set = 'fg';
-  const g = addGroup({ kind: 'coupler', berthId: b.id, side: s });
-  f.group = g;
+  f.cyl(rx, R.y, z, R.r, R.w, M.black, ROT_Z);
+  for (const sz of [-1, 1]) {
+    f.cyl(rx, R.y, z + sz * (R.w * 0.5 + 4), R.r + 10, 7, M.rail, ROT_Z);
+    f.box(x + ix * (F.column.w * 0.5 + 16), R.y, z + sz * (R.w * 0.5 + 11), 32, 34, 8, M.dark);
+  }
+  f.cyl(rx, R.y, z, 13, R.w + 30, M.yellow, ROT_Z);
+  const ex = x + ix * F.exit.out;
+  f.box(ex, F.exit.y - 9, z, 24, 8, 50, M.dark);
+  for (const sz of [-1, 1]) f.cyl(ex, F.exit.y - 3, z + sz * 17, 6, 28, M.rail, [0, 0, Math.PI / 2]);
+  // obrotnica barku na szczycie kolumny
+  const S = F.shoulder;
+  f.cyl(x, F.column.top + 22, z, S.r, 44, M.dark);
+  f.ring(x, F.column.top + 6, z, S.r + 3, 0, M.rail, [Math.PI / 2, 0, 0]);
+  f.cyl(x, F.column.top + 46, z, S.r - 8, 6, M.yellow);
+  // ---- człon 1 (bark)
+  const L1 = F.link1;
+  const gLink1 = addGroup({ kind: 'fuel-link1', berthId: b.id, side: s });
+  f.group = gLink1;
+  f.cyl(0, L1.y, 0, S.r - 6, L1.h + 20, M.steel);
+  f.box(L1.len * 0.5, L1.y, 0, L1.len, L1.h, L1.w, M.yellow);
+  f.box(L1.len * 0.5 - 6, L1.y + L1.h * 0.5 + 1.5, 0, L1.len - 80, 3, L1.w * 0.34, M.dark);
+  f.box(L1.len - 40, L1.y + L1.h * 0.5 + 1.5, 0, 16, 3, L1.w - 6, M.black);
+  f.box(L1.len * 0.46, L1.y - 3, L1.w * 0.5 + 5, L1.len * 0.66, 12, 8, M.dark);
+  // ---- człon 2 (łokieć) z tuleją wysięgnika
+  const L2 = F.link2;
+  const gLink2 = addGroup({ kind: 'fuel-link2', berthId: b.id, side: s, parent: gLink1 });
+  f.group = gLink2;
+  f.cyl(0, (F.elbow.y0 + F.elbow.y1) * 0.5, 0, F.elbow.r, F.elbow.y1 - F.elbow.y0, M.dark);
+  f.cyl(0, F.elbow.y1 + 2, 0, F.elbow.r - 10, 5, M.yellow);
+  f.box(L2.len * 0.5, L2.y, 0, L2.len, L2.h, L2.w, M.yellow);
+  f.box(L2.len * 0.5, L2.y + L2.h * 0.5 + 1.5, 0, L2.len - 70, 3, L2.w * 0.34, M.dark);
+  f.box(L2.len - 34, L2.y + L2.h * 0.5 + 1.5, 0, 14, 3, L2.w - 6, M.black);
+  f.cyl(L2.len, L2.y + 8, 0, 22, L2.h + 34, M.steel);
+  f.ring(L2.len, L2.y - L2.h * 0.5 - 6, 0, 20, 0, M.rail, [Math.PI / 2, 0, 0]);
+  // ---- trzon wysięgnika (grupa w przegubie złączki; wysokości lokalne liniowo w górę)
+  const gRod = addGroup({ kind: 'fuel-rod', berthId: b.id, side: s });
+  f.group = gRod;
   f.mode = 'lin';
+  f.cyl(0, F.rod * 0.5, 0, 9, F.rod, M.rail);
+  f.cyl(0, F.rod + 3, 0, 13, 7, M.dark);
+  f.cyl(0, 2, 0, 15, 10, M.dark);
+  // ---- złączka (grupa: położenie i oś z fizyki; przewód wchodzi z boku)
+  const gCoupler = addGroup({ kind: 'coupler', berthId: b.id, side: s });
+  f.group = gCoupler;
   f.cyl(0, 0, 0, 17, 46, M.steel);
   f.cyl(0, 18, 0, 22, 10, M.yellow);
   f.cyl(0, -19, 0, 23, 10, M.rail);
   f.cyl(0, -26, 0, 14, 9, M.black);
-  for (const x of [-20, 20]) f.box(x, 0, 0, 7, 32, 8, M.dark);
+  for (const xx of [-20, 20]) f.box(xx, 0, 0, 7, 32, 8, M.dark);
   f.ring(0, 11, 0, 18, 2, M.status, [Math.PI / 2, 0, 0]);
+  f.cyl(0, F.wrist * 0.55, 0, 6, F.wrist * 0.9, M.dark);
   f.mode = 'abs';
   f.group = 0;
   f.set = 'bg';
-  return { berthId: b.id, anchor: a, group: g };
+  return { berthId: b.id, side: s, anchor: a, link1: gLink1, link2: gLink2, rod: gRod, coupler: gCoupler };
 }
+
+// Rurociągi paliwa (2026-10-07, prośba użytkownika: „dopracuj modelowanie doku — brak jest rur”): magazyn przy ścianie
+// tylnej — zbiorniki-cygara na siodłach (k7FuelTanks: te same obrysy w kolizjach i gazie hali), pompy, kolektory paliwa
+// i powrotu wzdłuż ściany; z kolektorów rurociągi na legarach wzdłuż boków stanowisk capital (dawne bieżnie suwnic)
+// do zaworów przy słupkach paliwowych; piony do zaworów upustowych na ścianie tylnej (`rig.vents` — kogut nad zaworem,
+// gaz hali) i rury instalacji na licu ściany (nad płaszczyzną lotu). Barwy: paliwo — miedź, powrót — turkus, azot
+// (przedmuch) — jasne, opaski — żółte.
+function buildFuelPiping(f, l, rig) {
+  const M = K7_MAT;
+  const FF = K7_FUEL_FARM;
+  const H = FF.header;
+  const RK = FF.rack;
+  const ROT_X = [0, 0, Math.PI / 2];
+  const ROT_Z = [Math.PI / 2, 0, 0];
+  const RING_X = [0, Math.PI / 2, 0];
+  const RING_Y = [Math.PI / 2, 0, 0];
+  const pipeX = (x0, x1, y, z, r, mat) => f.cyl((x0 + x1) * 0.5, y, z, r, Math.abs(x1 - x0), mat, ROT_X);
+  const pipeZ = (x, y, z0, z1, r, mat) => f.cyl(x, y, (z0 + z1) * 0.5, r, Math.abs(z1 - z0), mat, ROT_Z);
+  const pipeY = (x, z, y0, y1, r, mat) => f.cyl(x, (y0 + y1) * 0.5, z, r, y1 - y0, mat);
+  // zawór: korpus, pokrętło (pierścień) i trzpień
+  const valve = (x, y, z, r) => {
+    f.box(x, y, z, r * 3.2, r * 2.6, r * 2.2, M.dark);
+    f.ring(x, y + r * 2.4, z, r * 1.5, 0, M.red, RING_Y);
+    f.cyl(x, y + r * 1.7, z, r * 0.35, r * 1.4, M.steel);
+  };
+  const capital = l.berths.filter((b) => b.size === 'CAPITAL');
+  f.set = 'bg';
+  // ---- zbiorniki
+  for (const t of k7FuelTanks(l)) {
+    const half = t.len * 0.5;
+    f.cyl(t.x, t.y, t.z, t.r, t.len, M.pale, ROT_X);
+    for (const sx of [-1, 1]) {
+      f.cyl(t.x + sx * (half + 8), t.y, t.z, t.r * 0.86, 16, M.pale, ROT_X);
+      f.cyl(t.x + sx * (half + 20), t.y, t.z, t.r * 0.56, 10, M.pale, ROT_X);
+      // siodło
+      f.box(t.x + sx * half * 0.62, (t.y - t.r * 0.35) * 0.5, t.z, 36, t.y - t.r * 0.35, t.r * 1.9, M.dark);
+      f.box(t.x + sx * half * 0.62, 3, t.z, 60, 6, t.r * 2.2, M.steel);
+    }
+    for (const k of [-0.36, 0, 0.36]) f.ring(t.x + k * t.len, t.y, t.z, t.r + 1, 0, M.yellow, RING_X);
+    // właz i zawór oddechowy na grzbiecie
+    f.cyl(t.x + half * 0.2, t.y + t.r + 5, t.z, 15, 12, M.steel);
+    f.ring(t.x + half * 0.2, t.y + t.r + 11, t.z, 13, 0, M.rail, RING_Y);
+    f.cyl(t.x - half * 0.55, t.y + t.r + 8, t.z, 7, 18, M.copper);
+    // odejście do kolektora paliwa (od spodu zbiornika ku ścianie tylnej) z zaworem
+    const ox = t.x + half * 0.42;
+    pipeZ(ox, H.y, H.fuelZ + H.fuelR, t.z - t.r * 0.6, 9, M.copper);
+    f.ring(ox, H.y, (H.fuelZ + t.z) * 0.5, 11, 0, M.rail, [0, 0, 0]);
+    valve(ox, H.y, H.retZ + 30, 9);
+  }
+  // ---- pompy (między zbiornikami stanowiska) z odejściem do kolektora
+  for (const b of capital) {
+    const pz = FF.tank.z - 30;
+    f.box(b.x, 7, pz, 92, 14, 150, M.dark);
+    f.cyl(b.x, 38, pz - 26, 22, 46, M.teal);
+    f.cyl(b.x, 40, pz + 34, 17, 64, M.yellow, ROT_Z);
+    f.box(b.x, 66, pz + 34, 26, 8, 40, M.dark);
+    pipeZ(b.x, 30, H.fuelZ + H.fuelR, pz - 48, 9, M.copper);
+  }
+  // ---- kolektory wzdłuż ściany tylnej (paliwo i powrót) na podporach, kołnierze
+  pipeX(-H.x, H.x, H.y, H.fuelZ, H.fuelR, M.copper);
+  pipeX(-H.x, H.x, H.y - 8, H.retZ, H.retR, M.teal);
+  for (const sx of [-1, 1]) {
+    f.cyl(sx * (H.x + 9), H.y, H.fuelZ, H.fuelR * 0.75, 18, M.dark, ROT_X);
+    f.cyl(sx * (H.x + 7), H.y - 8, H.retZ, H.retR * 0.75, 14, M.dark, ROT_X);
+  }
+  for (let x = -H.x + 120; x < H.x; x += 260) {
+    if (Math.abs(x) < 200) continue;
+    f.box(x, (H.y - H.fuelR) * 0.5, (H.fuelZ + H.retZ) * 0.5, 26, H.y - H.fuelR + 4, 96, M.dark);
+  }
+  for (let x = -H.x + 250; x < H.x - 100; x += 520) {
+    f.ring(x, H.y, H.fuelZ, H.fuelR + 3, 0, M.rail, RING_X);
+    f.ring(x + 130, H.y - 8, H.retZ, H.retR + 2.5, 0, M.rail, RING_X);
+  }
+  // ---- rurociągi wzdłuż stanowisk do słupków paliwowych (paliwo, azot od zewnątrz, powrót od stanowiska)
+  for (const b of capital) {
+    for (const a of b.serviceAnchors) {
+      const s = a.side;
+      const x0 = a.x;
+      const z0 = RK.z0;
+      const z1 = a.z - K7_FUEL_STATION.plinth.d * 0.5 - 30;
+      pipeZ(x0, RK.y + 4, z0, z1, RK.fuelR, M.copper);
+      pipeZ(x0 + s * RK.gap, RK.y, z0 + 40, z1, RK.gasR, M.pale);
+      pipeZ(x0 - s * RK.gap, RK.y + 1, z0 + 40, z1, RK.retR, M.teal);
+      for (let z = z0 + 120; z < z1 - 40; z += 230) {
+        f.box(x0, 5, z, 2 * RK.gap + 46, 10, 18, M.dark);
+        f.box(x0, 1, z, 2 * RK.gap + 70, 2, 30, M.steel);
+      }
+      for (let z = z0 + 240; z < z1 - 60; z += 460) {
+        f.ring(x0, RK.y + 4, z, RK.fuelR + 3, 0, M.rail, [0, 0, 0]);
+        f.ring(x0, RK.y + 4, z + 18, RK.fuelR + 1.5, 0, M.yellow, [0, 0, 0]);
+      }
+      // zawór odcinający przy kolektorze, stacja zaworów przed słupkiem
+      valve(x0, RK.y + 6, z0 + 70, 10);
+      f.box(x0, 20, z1 + 14, 2 * RK.gap + 40, 40, 34, M.dark);
+      f.cyl(x0, 52, z1 + 14, 11, 28, M.yellow);
+      f.box(x0 - s * (RK.gap + 22), 30, z1 + 14, 6, 10, 10, M.green);
+      f.box(x0 + s * (RK.gap + 22), 30, z1 + 14, 6, 10, 10, M.red);
+    }
+  }
+  // ---- piony do zaworów upustowych na ścianie tylnej (gaz hali: zawory 'wall' z haloPortK7Lights.js)
+  const faceZ = l.backZ + l.wallThickness * 0.5 + 24;
+  for (const v of rig?.vents || []) {
+    if (v.kind !== 'wall') continue;
+    const px = v.x + 40;
+    pipeY(px, faceZ, H.y, 412, 11, M.pale);
+    f.ring(px, H.y + 40, faceZ, 13, 0, M.rail, RING_Y);
+    f.box(px, 236, faceZ + 4, 36, 54, 30, M.dark);
+    f.ring(px, 266, faceZ + 22, 15, 0, M.red, [0, 0, 0]);
+    pipeZ(px, 412, faceZ - 10, faceZ + 36, 11, M.pale);
+    f.cyl(px, 412, faceZ + 42, 17, 12, M.dark, ROT_Z);
+    for (const yy of [150, 330]) f.box(px, yy, faceZ - 12, 30, 12, 26, M.dark);
+  }
+  // ---- rury instalacji na licu ściany tylnej (nad płaszczyzną lotu — przy ścianie, nie nad stanowiskami)
+  f.set = 'fg';
+  const X = l.halfWidth - 300;
+  pipeX(-X, X, 252, faceZ + 4, 10, M.teal);
+  pipeX(-X, X, 284, faceZ + 14, 8, M.pale);
+  for (let x = -X + 100; x < X; x += 400) f.box(x, 268, faceZ - 6, 16, 64, 26, M.dark);
+  for (let x = -X + 300; x < X - 100; x += 800) {
+    f.ring(x, 252, faceZ + 4, 12.5, 0, M.rail, RING_X);
+    f.ring(x + 200, 284, faceZ + 14, 10, 0, M.rail, RING_X);
+  }
+  f.set = 'bg';
+}
+
 
 // Pylony hali (poprawki użytkownika 2026-10-05: doki „za mocno wciśnięte
 // w ring” — szkic: dok daleko za krawędzią ringu na dwóch ramionach; pylony

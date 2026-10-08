@@ -127,9 +127,18 @@ function vnoise(p) {
 // Materiał
 // ---------------------------------------------------------------------------
 
-function buildMaterial() {
+/**
+ * Materiał kontenerów. source (opcjonalnie) — poza z zewnątrz zamiast atrybutów iPos / iSize:
+ * { name, pose: () => { pos: vec4 (podstawa x, y, z, kurs), size: vec4 (L, W, H, ładownia), visible: float } }
+ * — np. kontenery roju z bufora symulacji GPU (src/3d/swarm/swarmUnits.tsl.js). Wzór i światło bez zmian.
+ */
+export function buildCargoContainerMaterial(source = null) {
+  return buildMaterial(source);
+}
+
+function buildMaterial(source = null) {
   const m = new THREE.NodeMaterial();
-  m.name = 'Cargo:kontenery';
+  m.name = source?.name || 'Cargo:kontenery';
   m.lights = false;
   m.fog = false;
   m.transparent = true;
@@ -148,13 +157,16 @@ function buildMaterial() {
   const vRot = varyingProperty('vec2', 'vCgRot');
 
   m.positionNode = Fn(() => {
-    const iPos = attribute('iPos', 'vec4');
-    const iSize = attribute('iSize', 'vec4');
+    const ext = source ? source.pose() : null;
+    const iPos = ext ? ext.pos : attribute('iPos', 'vec4');
+    const iSize = ext ? ext.size : attribute('iSize', 'vec4');
     const bev = min(min(iSize.x, iSize.y).mul(0.07), iSize.z.mul(0.3));
     const lp = positionGeometry.mul(iSize.xyz).add(attribute('aBevel', 'vec3').mul(bev)).toVar();
     const c = cos(iPos.w);
     const s = sin(iPos.w);
-    const wp = vec3(iPos.x.add(lp.x.mul(c)).sub(lp.y.mul(s)), iPos.y.add(lp.x.mul(s)).add(lp.y.mul(c)), iPos.z.add(lp.z));
+    const wp = vec3(iPos.x.add(lp.x.mul(c)).sub(lp.y.mul(s)), iPos.y.add(lp.x.mul(s)).add(lp.y.mul(c)), iPos.z.add(lp.z)).toVar();
+    // Niewidoczny (źródło zewnętrzne): trójkąty zwinięte w punkt.
+    if (ext && ext.visible) wp.assign(select(ext.visible.greaterThan(0.5), wp, iPos.xyz));
     vLocal.assign(lp);
     vN.assign(attribute('normal', 'vec3'));
     vW.assign(wp);

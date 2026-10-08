@@ -12,8 +12,8 @@
 // odległość ze znakiem od sylwetki (alfa sprite'a ∩ aktywne heksy), ujemna
 // w środku. Pass maski (hullSdfShadow — TSL) przenosi piksel do układu
 // statku (to samo przekształcenie co mesh kadłuba), przycina promień do
-// prostokąta warstwy, pomija piksele NA własnym kadłubie i idzie po SDF
-// w stronę słońca (sphere tracing). Półcień = najmniejszy stosunek
+// prostokąta warstwy, w kanale powierzchni pomija piksele NA własnym kadłubie
+// (tło idzie dalej — przez dziury) i idzie po SDF w stronę słońca (sphere tracing). Półcień = najmniejszy stosunek
 // odległości do szerokości półcienia, która rośnie z dystansem od statku.
 //
 // Warstwy:
@@ -105,12 +105,19 @@ export function createHullSdfPlaceholderTexture() {
 //   u.uHullSdf  = węzeł bazowy tablicy warstw (z uv-atrapą), u.uHullCount / uHullSteps (int),
 //   u.uHullLenMul (float). Węzły, nie wpisy adaptera (dla uniformArray — `.node`).
 // worldP (vec2, three-space), d = jednostkowy kierunek DO słońca, sunDist — węzły float.
-// Wynik: najciemniejszy cień kadłubów, 0 = brak, 1 = pełny (przed siłą cienia kadłuba).
+// Wynik: vec2 najciemniejszego cienia kadłubów, 0 = brak, 1 = pełny (przed siłą cienia kadłuba):
+//   x — POWIERZCHNIA (kanał R maski): piksel na własnym kadłubie bez samocienia,
+//   y — TŁO (kanał G): bez tego pominięcia. Sylwetka SDF jest szersza od rysowanej skóry przy
+//       dziurach (koła opisane na komórkach, poszarpany brzeg hullTearFray wycina do ~¾ komórki),
+//       więc z pominięciem tło w pasie przy brzegu każdej wyrwy wychodziło oświetlone, a głębiej
+//       w cieniu — jasna, ziarnista obwódka wyglądała jak przezroczysty kadłub (2026-10-07).
+//       Pod blachą tło i tak jest zasłonięte; marsz od SDF < 0 kończy się na pierwszej próbce.
 // Próbki warstw z jawnym poziomem 0 (textureSampleLevel) — w pętli zależnej od piksela
 // WGSL nie pozwala na próbkowanie z pochodnymi.
 // Zmieniając logikę, zmień też traceHullShadowCpu (lustro dla testów).
 export function hullSdfShadow(u, worldP, d, sunDist) {
   const shadow = float(0.0).toVar('hullShadow');
+  const backdrop = float(0.0).toVar('hullBackdrop');
   Loop({ start: int(0), end: u.uHullCount, type: 'int', condition: '<', name: 'hullIdx' }, ({ hullIdx }) => {
     const hA = u.uHullA.element(hullIdx).toVar();
     const hM = u.uHullM.element(hullIdx).toVar();
@@ -141,11 +148,12 @@ export function hullSdfShadow(u, worldP, d, sunDist) {
     const wMin = distScale.mul(SELF_RATIO).toVar();
     const stepFloor = distScale.mul(STEP_RATIO).toVar();
     const hullSdfDist = (uvNode) => texture(u.uHullSdf, uvNode, float(0)).depth(layer).r.sub(0.5).mul(distScale);
-    // Piksel na własnym kadłubie: bez samocienia — dzień i noc kadłuba
-    // liczy jego własne oświetlenie w materiale kadłuba. (Próbka tylko przy t <= 0,
-    // jak skrócone && w GLSL — TSL wyciąga odczyt przed warunek złożony.)
+    // Piksel na własnym kadłubie: powierzchnia bez samocienia — dzień i noc kadłuba
+    // liczy jego własne oświetlenie w materiale kadłuba; tło idzie marszem dalej (opis funkcji).
+    // (Próbka tylko przy t <= 0, jak skrócone && w GLSL — TSL wyciąga odczyt przed warunek złożony.)
+    const onHull = float(0.0).toVar();
     If(t.lessThanEqual(0.0), () => {
-      If(hullSdfDist(q).lessThan(wMin), () => { Continue(); });
+      If(hullSdfDist(q).lessThan(wMin), () => { onHull.assign(1.0); });
     });
 
     const res = float(1.0).toVar();
@@ -164,9 +172,11 @@ export function hullSdfShadow(u, worldP, d, sunDist) {
       t.addAssign(max(h, max(stepFloor, w.mul(PENUMBRA_STEP))));
     });
     const fall = float(1.0).sub(smoothstep(0.2, 1.0, tRes.div(max(reach, 1.0))));
-    shadow.assign(max(shadow, float(1.0).sub(smoothstep(0.0, 1.0, res)).mul(fall).mul(hC.w)));
+    const hullShade = float(1.0).sub(smoothstep(0.0, 1.0, res)).mul(fall).mul(hC.w).toVar();
+    shadow.assign(max(shadow, hullShade.mul(float(1.0).sub(onHull))));
+    backdrop.assign(max(backdrop, hullShade));
   });
-  return shadow;
+  return vec2(shadow, backdrop);
 }
 
 // ── Pola odległości (czyste funkcje, bez DOM) ──────────────────────────────
@@ -575,6 +585,8 @@ export function sampleSdfLayer(layerData, layerOffset, u, v) {
 
 // Lustro CPU hullSdfShadow (TSL) dla JEDNEGO kadłuba — do testów i podglądu
 // offline (scripts/podglad-cieni.mjs). worldX/Y i kierunek d w three-space.
+// Domyślnie kanał powierzchni (x), options.backdrop = true — kanał tła (y, bez pominięcia
+// własnego kadłuba).
 export function traceHullShadowCpu(worldX, worldY, dx, dy, sunDist, packed, offset, layerData, options = {}) {
   const steps = Math.min(HULL_SDF_MAX_STEPS, Math.max(1, options.steps ?? 24));
   const lenMul = options.lenMul ?? 3;
@@ -601,7 +613,7 @@ export function traceHullShadowCpu(worldX, worldY, dx, dy, sunDist, packed, offs
   const softMax = distScale * SOFT_RATIO;
   const wMin = distScale * SELF_RATIO;
   const stepFloor = distScale * STEP_RATIO;
-  if (t <= 0 && dist(qx, qy) < wMin) return 0;
+  if (t <= 0 && dist(qx, qy) < wMin && options.backdrop !== true) return 0;
   let res = 1;
   let tRes = t;
   for (let k = 0; k < HULL_SDF_MAX_STEPS; k++) {

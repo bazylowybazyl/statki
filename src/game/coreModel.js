@@ -66,7 +66,7 @@ export const CORE_CLASS_BY_RADIUS = Object.freeze([
 //   criticalFrac — osłona, poniżej której rdzeń jest KRYTYCZNY;
 //   killFrac     — osłona, poniżej której zaczyna się STOPIENIE (tryb containment);
 //   meltdownSec  — odliczanie stopienia (okno taktyczne);
-//   blastProfile — profil fabryki reactorblow.js (escort/cruiser/capital);
+//   blastProfile — profil wybuchu (escort/cruiser/capital — klucz EXPLOSION_PROFILES, src/3d/explosions/);
 //   aoe*         — obszarowe HP jak dziś w tryTriggerCriticalReactorBlow
 //                  (promień max(min, promień kadłuba × mul), obrażenia max(min, maxHp × frac));
 //   hex*         — NOWE: krater w kadłubie sąsiada od strony wybuchu (applyImpact),

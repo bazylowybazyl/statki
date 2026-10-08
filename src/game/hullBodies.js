@@ -18,11 +18,14 @@
  * Encja z kadłubem ma `beamHull` (rekord niżej); `hexGrid` jej nie dotyczy.
  */
 
-import { DestructorBeams3D as D, createBeamConfig, pinBeamNodes } from './destructorBeams3D.js';
+import { DestructorBeams3D as D, createBeamConfig, pinBeamNodes, BEAM_TYPE } from './destructorBeams3D.js';
 import { getHullCollisionArmor } from '../data/hullArmor.js';
 import { buildSpriteBeamStructure } from './beamSprite2D.js';
-import { defineLazyViews } from './beamStore3D.js';
-import { activeRegion, markSkinDirty } from './beamActiveRegion3D.js';
+import { computeStoreInertia } from './beamBody3D.js';
+import { defineLazyViews, BeamNodeStore, BeamLinkStore, BeamNodeView, buildAdjacency, cachedNodeViews,
+  NODE_STORE_FIELDS, BEAM_STORE_FIELDS } from './beamStore3D.js';
+import { activeRegion, markSkinDirty, resetActiveRegion } from './beamActiveRegion3D.js';
+import { beamSolverScratch } from './beamConstraintSolver3D.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { CollisionFX, impactEvent, grindEvent } from '../vfx/collisionFx.js';
@@ -118,7 +121,25 @@ export const HULL_BODY_CONFIG = {
   wreckFriction: 0.9986,
   wreckFullCollisionTime: 2.5,
   wreckWakeRelSpeed: 70,
-  wreckColdAngVel: 0.06
+  wreckColdAngVel: 0.06,
+  // Para wrak × wrak RZADZIEJ (flaga, 1 = wył.; audyt 2026-10-07 § 5.5): oba wraki starsze niż
+  // wreckFullCollisionTime i wolne względem siebie (prędkość środków + |ω|·promień obu < wreckPairSpeed)
+  // zderzają się co wreckPairEvery kroków z krokiem × wreckPairEvery (silnik: pairFilter → liczba).
+  // Zmienia fizykę wraków (przenikanie między krokami ≈ prędkość · (k − 1) · dt). Pomiar 2026-10-07
+  // (faza wraków, 48 okrętów → ~70 wraków, 3 ziarna): po tańszym skanie par zysk k = 2 / 4 to setne
+  // części ms na krok, a mediana penetracji styków wraków rośnie 0,2 → 0,3 j. — dlatego wyłączona.
+  wreckPairEvery: 1,
+  wreckPairSpeed: 120,
+
+  // --- odrost (regrowCandidates / regrowCell / restoreHull) ---
+  // Nowy węzeł staje w spoczynku swojej komórki przesuniętym o średnie przemieszczenie żywych sąsiadów, belki szablonu
+  // do żywych węzłów w długości spoczynkowej. Każda musi wejść w zakres sprężysty: |długość − spoczynkowa| ≤
+  // regrowStrain · deform · spoczynkowa — przy wgnieceniu solver szarpnąłby nowym węzłem, zerwał belki i węzeł znów
+  // by zginął (odłamki, front odrostu w kółko). Wgniecione otoczenie najpierw prostuje naprawa (R).
+  regrowStrain: 0.5,
+  // Początek układu ciała wraca do środka masy (przesunięcie magazynu = skóra całego kadłuba od nowa), gdy odrost
+  // odsunął środek masy dalej niż tyle komórek; drobny odrost poprawia tylko masę i bezwładność.
+  regrowRecenterCells: 0.25
 };
 
 const C = HULL_BODY_CONFIG;
@@ -201,6 +222,9 @@ const _nodeWorld = { x: 0, y: 0 };
 const _qPose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
 const _qLocal = { x: 0, y: 0 };
 const _qEnd = { x: 0, y: 0 };
+// Odrost: pozycja nowego węzła (układ ciała) i lista węzłów do odświeżenia mocowań.
+const _regrowPos = { x: 0, y: 0, z: 0 };
+const _regrowTouched = [];
 
 // Klucz mapy ran (18-C): kolejny numer kadłuba, dziedziczony przez wraki i odłamy.
 let _nextDmgKey = 0;
@@ -253,8 +277,12 @@ export const HullBodies = {
   // wybuchy rakiet). Domyślnie brak: gra zachowuje się jak dawniej.
   onImpact: null,
   // (entity, dt, changed) — po naprawie kadłuba w repair() (mapa ran: wygaszanie osmalenia
-  // i przestrzelin; changed = false — naprawa zakończona). Domyślnie brak.
+  // i przestrzelin; changed = false — naprawa zakończona; też po pełnym remoncie restoreHull). Domyślnie brak.
   onRepair: null,
+  // (entity, ratioBefore, ratioAfter) — po odroście węzłów (regrowCell, restoreHull): udział żywych węzłów kadłuba
+  // przed i po (jak structuralState). Gra: punkty kadłuba rosną z sufitem konstrukcji
+  // (hullIntegrity.raiseHullHpForRegrowth). Domyślnie brak.
+  onRegrow: null,
   // (entity, hull, u, v, x, y) — węzeł zniszczony POZA trafieniem broni (zderzenie i zgniot, oparcie po
   // zerwanych belkach, odpryski rozpadu, cięcie wraku, wybuch reaktora): uv jego komórki w konwencji
   // skóry i punkt świata gry. Trafienia (impact, cutSegment) mają własny hak onImpact. Mapa ran: rozdarcie
@@ -362,12 +390,17 @@ export const HullBodies = {
     const collisionMass = density * structure.area;
     const armor = Number(opts.collisionArmor) > 0 ? Number(opts.collisionArmor)
       : getHullCollisionArmor(opts.hullProfileId || entity.shipFrame || entity.activeHullId || entity.model3DProfileId || entity.type);
+    const massMul = collisionMass / structure.mass;
     const body = D.createBody(cloneStructure(structure), {
       name: String(entity.name || entity.type || 'kadłub'),
       collisionArmor: armor,
-      massMultiplier: collisionMass / structure.mass,
+      massMultiplier: massMul,
       anchored: !!opts.anchored
     });
+    // Żywy kadłub statku trzyma magazyn w układzie konstrukcji (bez zagęszczania po rozpadzie — fizyka ta sama):
+    // odrost (regrowCell, restoreHull) ożywia wpisy w miejscu, z ich masą i pancerzem (mostek, komora reaktora).
+    // Wrak (convertToWreck) i budowla zagęszczają się jak dawniej.
+    body.keepLayout = !opts.world && !opts.anchored;
     const entityMass = Number(entity.mass);
     const mass = Number.isFinite(entityMass) && entityMass > 0 ? entityMass : body.mass;
     const skin = structure.spriteSkin;
@@ -394,6 +427,7 @@ export const HullBodies = {
       // dawne heksy na węzeł (krater, łup, tempo cięcia); ciało świata — z opcji (raster ma inny piksel)
       hexPerNode: Number(opts.hexPerNode) > 0 ? Number(opts.hexPerNode) : structure.hexPerNode,
       massScale: mass / body.mass,       // masa gry na jednostkę masy zderzeń (przy budowie)
+      massMul,                           // masa zderzeń węzła / masa węzła konstrukcji (odrost z szablonu)
       isFragment: false,
       world: opts.world || null,         // ciało świata: rekord kawałka (worldBodies.js), dziedziczą go odłamy
       cellPx: Number(opts.cellPx) > 0 ? Number(opts.cellPx) : C.cellPx,  // bok komórki w pikselach obrazu (klucz konstrukcji)
@@ -404,6 +438,7 @@ export const HullBodies = {
       radius: 0,
       revision: 0,
       shieldCells: null,
+      _shieldCellsOf: null,              // magazyn, z którego policzono shieldCells
       _massRef: body.mass,               // masa ciała przy ostatniej synchronizacji masy encji
       _inPx: 0, _inPy: 0, _inVx: 0, _inVy: 0, _inW: 0, _inNodes: 0
     };
@@ -883,11 +918,18 @@ export const HullBodies = {
   /**
    * Krytyczny wybuch reaktora: kadłub przechodzi we wrak, rdzeń wokół punktu wybuchu idzie
    * w odłamki (lecą promieniście), reszta pęka wzdłuż promieni na kilka ciężkich odłamów,
-   * które dostają pchnięcie od wybuchu. Zwraca { fragments, debris } jak dawny rozpad heksów.
+   * które dostają pchnięcie od wybuchu. Zwraca { fragments, debris, wreck } jak dawny rozpad heksów.
+   * opts (opcjonalnie; bez nich zachowanie jak dawniej) — rozpad budowli (worldBodies.breakPiece): debrisFrac
+   * (udział węzłów rdzenia w odłamki), debrisMax (sufit liczby odłamków rdzenia), debrisSpeed [min, max] j/s,
+   * cuts (rzazy promieniste), chords (dodatkowe rzazy przez ciało w losowych miejscach), cutWidth (półszerokość
+   * rzazu w komórkach), cells (pęknięcia Voronoi: tyle komórek z ziaren w żywych węzłach — belki między komórkami
+   * pękają, odłamy podobnej wielkości z poszarpanym brzegiem), crackDebris (udział węzłów na szwach Voronoi, które
+   * sypią się w odłamki), minFragmentNodes (odłam mniejszy — cały w odłamki), kick(wrak, x, y) — pchnięcie odłamów
+   * zamiast pchnięcia od wybuchu.
    */
-  shatter(entity, worldX, worldY, severity = 0) {
+  shatter(entity, worldX, worldY, severity = 0, opts = null) {
     const wreck = this.convertToWreck(entity);
-    if (!wreck) return { fragments: 0, debris: 0 };
+    if (!wreck) return { fragments: 0, debris: 0, wreck: null };
     const hull = wreck.beamHull, body = hull.body, s = body.nodeStore, cs = body.cellSize;
     const sev = Math.max(0, Math.min(1.4, Number(severity) || 0));
     const nodes = body.activeNodes;
@@ -897,23 +939,29 @@ export const HullBodies = {
     const lx = _local.x, ly = _local.y;
 
     // 1) Rdzeń: ~22–50% węzłów najbliżej wybuchu w odłamki (promień z pola powierzchni).
-    const debrisFrac = Math.min(0.5, 0.22 + Math.min(0.28, sev * 0.2));
+    let debrisFrac = opts && Number.isFinite(opts.debrisFrac)
+      ? Math.max(0, Math.min(0.9, opts.debrisFrac))
+      : Math.min(0.5, 0.22 + Math.min(0.28, sev * 0.2));
+    if (opts && Number.isFinite(opts.debrisMax) && nodes > 0) debrisFrac = Math.min(debrisFrac, Math.max(0, opts.debrisMax) / nodes);
     const coreR = Math.sqrt(nodes * debrisFrac * cs * cs / Math.PI);
     const coreR2 = coreR * coreR;
     const speedMul = 1 + Math.min(0.8, sev * 0.55);
+    const dsMin = opts?.debrisSpeed ? opts.debrisSpeed[0] : 420;
+    const dsSpan = opts?.debrisSpeed ? opts.debrisSpeed[1] - opts.debrisSpeed[0] : 560;
+    const dsJitter = opts?.debrisSpeed ? dsMin * 0.4 : 180;
     let debris = 0;
     for (let i = 0; i < s.count && !body.dead; i++) {
       if (!s.active[i]) continue;
       const dx = s.x[i] - lx, dy = s.y[i] - ly, d2 = dx * dx + dy * dy;
       if (d2 > coreR2) continue;
       const d = Math.sqrt(d2) || 1;
-      const speed = (420 + Math.random() * 560) * speedMul;
-      s.vx[i] = dx / d * speed + (Math.random() - 0.5) * 180;
-      s.vy[i] = dy / d * speed + (Math.random() - 0.5) * 180;
+      const speed = (dsMin + Math.random() * dsSpan) * speedMul;
+      s.vx[i] = dx / d * speed + (Math.random() - 0.5) * dsJitter;
+      s.vy[i] = dy / d * speed + (Math.random() - 0.5) * dsJitter;
       D.destroyNode(body, i);
       debris++;
     }
-    if (body.dead) return { fragments: 0, debris };
+    if (body.dead) return { fragments: 0, debris, wreck };
 
     // 2) Promieniste rzazy od wybuchu: 2–5 odłamów zależnie od wielkości i siły.
     const remaining = body.activeNodes;
@@ -921,12 +969,33 @@ export const HullBodies = {
     if (remaining >= 400) frags++;
     if (remaining >= 1600) frags++;
     if (remaining >= 3200 && sev > 0.95) frags++;
+    if (opts && Number.isFinite(opts.cuts)) frags = Math.max(0, opts.cuts | 0);
+    const cutW = opts && Number.isFinite(opts.cutWidth) ? cs * opts.cutWidth : cs * 0.75;
     const span = body.radius * 2 + cs * 4;
     const phase = Math.random() * Math.PI * 2;
     for (let k = 0; k < frags && !body.dead; k++) {
       const a = phase + (k / frags) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-      cutLocalBand(body, lx, ly, lx + Math.cos(a) * span, ly + Math.sin(a) * span, cs * 0.75);
+      cutLocalBand(body, lx, ly, lx + Math.cos(a) * span, ly + Math.sin(a) * span, cutW);
     }
+    // 2b) Rzazy przez ciało w losowych miejscach (budowle: płyty i ściany pękają na drobne odłamy, nie tylko od
+    // punktu trafienia). Punkt przecięcia losowany z żywych węzłów — linia zawsze idzie przez konstrukcję.
+    const chords = opts && Number.isFinite(opts.chords) ? Math.max(0, opts.chords | 0) : 0;
+    for (let k = 0; k < chords && !body.dead; k++) {
+      let pick = -1;
+      for (let tries = 0; tries < 8 && pick < 0; tries++) {
+        const i = Math.floor(Math.random() * s.count);
+        if (s.active[i]) pick = i;
+      }
+      if (pick < 0) break;
+      const a = Math.random() * Math.PI;
+      const ux = Math.cos(a) * span, uy = Math.sin(a) * span;
+      cutLocalBand(body, s.x[pick] - ux, s.y[pick] - uy, s.x[pick] + ux, s.y[pick] + uy, cutW);
+    }
+    // 2c) Pęknięcia Voronoi (budowle): ziarna w żywych węzłach, belka między komórkami pęka — odłamy podobnej
+    // wielkości z poszarpanym brzegiem zamiast długich linii rzazu; część węzłów na szwach sypie się w odłamki
+    // (lecą od punktu rozpadu). Alokacje raz na rozpad.
+    const cells = opts && Number.isFinite(opts.cells) ? Math.max(0, opts.cells | 0) : 0;
+    if (cells > 1 && !body.dead) debris += voronoiFracture(body, cells, opts.crackDebris, lx, ly, dsMin * 0.6);
 
     // 3) Rozpad od razu (nie czekamy na krok): powstają encje wraków.
     const wrecks = typeof window !== 'undefined' && Array.isArray(window.wrecks) ? window.wrecks : null;
@@ -941,7 +1010,7 @@ export const HullBodies = {
     }
 
     // 4) Pchnięcie od wybuchu: promieniście + stycznie + obrót (jak dawny rozpad heksów).
-    const kick = (w) => {
+    const kick = typeof opts?.kick === 'function' ? (w) => { if (w && !w.dead) opts.kick(w, worldX, worldY); } : (w) => {
       if (!w || w.dead) return;
       const dx = w.x - worldX, dy = w.y - worldY;
       const dist = Math.hypot(dx, dy) || 1;
@@ -957,7 +1026,20 @@ export const HullBodies = {
     if (wrecks) {
       for (let i = before; i < wrecks.length; i++) { kick(wrecks[i]); fragments++; }
     }
-    return { fragments, debris };
+    // 5) Drobne odłamy (budowle — opts.minFragmentNodes) całe w odłamki: kilkanaście węzłów nie robi bryły,
+    // a każdy odłam-wrak to osobny rysunek skóry.
+    const minFrag = opts && Number.isFinite(opts.minFragmentNodes) ? opts.minFragmentNodes | 0 : 0;
+    if (minFrag > 0) {
+      const crumble = (w) => {
+        const b = w?.beamHull?.entity === w ? w.beamHull.body : null;
+        if (!b || b.dead || b.activeNodes <= 0 || b.activeNodes >= minFrag) return;
+        debris += crumbleWreck(w, dsMin * 0.5);
+        fragments--;
+      };
+      crumble(wreck);
+      if (wrecks) for (let i = before; i < wrecks.length; i++) crumble(wrecks[i]);
+    }
+    return { fragments, debris, wreck };
   },
 
   /** Budzi solver kadłuba (np. śpiący wrak, w który coś wjeżdża). */
@@ -989,6 +1071,7 @@ export const HullBodies = {
     if (body.dead || body.activeNodes <= 0) return null;
     syncIn(hull);
     body.isWreck = true;
+    body.keepLayout = false;           // wrak nie odrasta — po rozpadzie może się zagęścić
     const wreck = makeWreckEntity(entity, body, hull);
     entity.beamHull = null;
     finishWreck(wreck, entity, body.activeNodes, null);
@@ -1042,8 +1125,11 @@ export const HullBodies = {
   shieldCells(entity) {
     const hull = entity?.beamHull;
     if (!hull) return null;
-    if (hull.shieldCells) return hull.shieldCells;
     const body = hull.body, s = body.nodeStore;
+    // Indeksy jak w BIEŻĄCYM magazynie (plan kadłuba czyta je razem z HP węzłów) — nowy magazyn (zagęszczenie,
+    // odrost z szablonu) = obrys od nowa.
+    if (hull.shieldCells && hull._shieldCellsOf === s) return hull.shieldCells;
+    hull._shieldCellsOf = s;
     const out = new Float32Array(s.count * 2);
     const cx = body.latticeMin.x + hull.anchorDX, cy = body.latticeMin.y + hull.anchorDY;
     for (let i = 0; i < s.count; i++) {
@@ -1060,6 +1146,101 @@ export const HullBodies = {
     const pose = entityPose(hull, _pose);
     const ax = anchorLocalX(hull), ay = anchorLocalY(hull);
     const lx = s.x[i] - ax, ly = s.y[i] - ay;
+    out.x = pose.x + pose.c * lx - pose.s * ly;
+    out.y = pose.y - (pose.s * lx + pose.c * ly);
+    return out;
+  },
+
+  // --------------------------- ODROST ---------------------------
+  // Podstawa każdej naprawy, która przywraca zniszczoną konstrukcję (dok, a dalej rój dronów, okręt inżynieryjny,
+  // stocznia). Wzorem jest KONSTRUKCJA SZABLONU kadłuba (structureFor — ta, z której powstało ciało); komórka (ix, iy)
+  // siatki to tożsamość węzła wspólna dla kadłuba i szablonu. Odrastać może żywy statek (kotwica sprite'a), nie wrak
+  // ani budowla. Szczegóły: sekcja ODROST niżej.
+
+  /**
+   * Front odrostu: komórki szablonu nieżywe w ciele encji, które mogą odrosnąć TERAZ — przy żywym kadłubie (dziura
+   * zarasta od brzegów, odcięta sekcja od kikuta: co najmniej dwóch żywych sąsiadów przez belki poszycia, przy węźle
+   * z ≥ 4 belkami poszycia tylu, ilu trzyma mocowanie wręgów), a nowe belki mieszczą się w zakresie sprężystym
+   * (regrowStrain — komórka przy wgnieceniu czeka, aż naprawa je wyprostuje). `out` — tablica par [ix, iy, ix, iy, …]
+   * (czyszczona). opts.any — także komórki przy wgnieceniach (bez testu belek; regrowCell ich nie przyjmie).
+   * Zwraca liczbę komórek. Tylko odczyt.
+   */
+  regrowCandidates(entity, out = [], opts = null) {
+    out.length = 0;
+    const hull = regrowableHull(entity);
+    const tpl = hull ? hullTemplate(hull) : null;
+    if (!tpl) return 0;
+    const body = hull.body, d = body.dims, lattice = D._latticeIndex(body).cells, active = body.nodeStore.active;
+    const ts = tpl.structure.nodeStore, strict = !opts?.any;
+    for (let t = 0; t < ts.count; t++) {
+      const j = lattice[ts.ix[t] + ts.iy[t] * d.x + ts.iz[t] * d.x * d.y];
+      if (j >= 0 && active[j]) continue;
+      if (regrowPlacement(hull, tpl, t, strict, _regrowPos)) out.push(ts.ix[t], ts.iy[t]);
+    }
+    return out.length >> 1;
+  },
+
+  /**
+   * Odrost jednej komórki frontu (regrowCandidates): węzeł w spoczynku komórki przeniesionym do bieżącego układu
+   * ciała (+ średnie przemieszczenie żywych sąsiadów), belki szablonu do żywych węzłów zrośnięte w długości
+   * spoczynkowej, masa i bezwładność ciała, skóra, siatka węzłów i kolizje od nowa. opts.hpMul — HP nowego węzła
+   * jako ułamek jego maks. HP (łaty polowe mogą być słabsze; naprawa R doleczy resztę). Hak onRegrow (punkty
+   * kadłuba). Zwraca, czy węzeł odrósł (false: komórka żywa, poza szablonem, poza frontem albo przy wgnieceniu).
+   */
+  regrowCell(entity, ix, iy, opts = null) {
+    const hull = regrowableHull(entity);
+    const tpl = hull ? hullTemplate(hull) : null;
+    if (!tpl || !Number.isInteger(ix) || !Number.isInteger(iy)) return false;
+    const body = hull.body, d = body.dims;
+    if (ix < 0 || iy < 0 || ix >= d.x || iy >= d.y || d.z !== 1) return false;
+    const cell = ix + iy * d.x;
+    const t = tpl.cells[cell];
+    if (t < 0) return false;
+    let i = D._latticeIndex(body).cells[cell];
+    if (i >= 0 && body.nodeStore.active[i]) return false;
+    if (!regrowPlacement(hull, tpl, t, true, _regrowPos)) return false;
+    const before = body.activeNodes;
+    if (i < 0) {
+      // Magazyn zagęszczony po rozpadzie (ciało bez keepLayout): raz wszystkie komórki szablonu jako martwe wpisy.
+      expandBodyToTemplate(hull, tpl);
+      i = D._latticeIndex(body).cells[cell];
+      if (i < 0) return false;
+    }
+    const hpMul = Number.isFinite(opts?.hpMul) ? Math.max(0, Math.min(1, opts.hpMul)) : 1;
+    reviveNode(body, i, _regrowPos.x, _regrowPos.y, _regrowPos.z, hpMul);
+    finishRegrow(hull, before, false);
+    return true;
+  },
+
+  /**
+   * Pełny remont (dok): kadłub wraca do SZABLONU — każda komórka szablonu żywa w spoczynku, wszystkie belki szablonu
+   * całe w długości spoczynkowej, bez zmęczenia, żaru i ruchu solvera, węzły z pełnym HP; masa, bezwładność, skóra,
+   * siatka węzłów, obrys od nowa. Tożsamość kadłuba zostaje (ciało, klucz mapy ran, mostki, rdzenie, mocowania). Haki:
+   * onRegrow (punkty kadłuba), onRepair(…, false) (mapa ran — naprawa zakończona). Zwraca liczbę odrośniętych węzłów
+   * (0 — kadłub był cały), −1 — encja bez kadłuba, który może odrastać.
+   */
+  restoreHull(entity) {
+    const hull = regrowableHull(entity);
+    const tpl = hull ? hullTemplate(hull) : null;
+    if (!tpl) return -1;
+    const body = hull.body, before = body.activeNodes;
+    expandBodyToTemplate(hull, tpl);
+    const revived = restoreBodyToRest(body);
+    finishRegrow(hull, before, true);
+    if (typeof this.onRepair === 'function') this.onRepair(entity, 0, false);
+    return revived;
+  },
+
+  /**
+   * Środek komórki (ix, iy) w spoczynku, w świecie gry (y w dół) przy bieżącej pozie encji — cel drona odrostu.
+   * Wynik w `out` (domyślnie współdzielony) albo null bez kadłuba.
+   */
+  cellWorld(entity, ix, iy, out = _nodeWorld) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity) return null;
+    const body = hull.body, cs = body.cellSize, lm = body.latticeMin;
+    const pose = entityPose(hull, _qPose);
+    const lx = lm.x + (ix + 0.5) * cs - anchorLocalX(hull), ly = lm.y + (iy + 0.5) * cs - anchorLocalY(hull);
     out.x = pose.x + pose.c * lx - pose.s * ly;
     out.y = pose.y - (pose.s * lx + pose.c * ly);
     return out;
@@ -1311,6 +1492,309 @@ function repairBody(body, dt) {
   return changed;
 }
 
+// ============================ ODROST ============================
+//
+// Żywy kadłub statku trzyma magazyn w układzie konstrukcji (body.keepLayout — rozpad bez zagęszczania), więc wpis
+// węzła każdej komórki istnieje: martwy ma swój spoczynek (latticeMin + (i + ½) · cs — przesuwa się z każdym
+// wyrównaniem środka masy), masę, maks. HP z pancerzem (mostek, komora reaktora) i kolor — odrost tylko go ożywia.
+// Magazyn zagęszczony (ciało bez flagi) dostaje raz wszystkie brakujące komórki szablonu (expandBodyToTemplate).
+
+const _templates = new WeakMap();
+const NODE_FIELD_NAMES = Object.keys(NODE_STORE_FIELDS);
+const BEAM_FIELD_NAMES = Object.keys(BEAM_STORE_FIELDS);
+
+// Kadłub encji, który może odrastać: żywy statek (kotwica sprite'a), nie wrak, nie budowla, nie zakotwiczony.
+function regrowableHull(entity) {
+  const hull = entity?.beamHull;
+  if (!hull || hull.entity !== entity || hull.world || hull.anchorMode !== 'sprite') return null;
+  if (entity.dead || entity.destroyed || entity.isWreck) return null;
+  const body = hull.body;
+  if (!body || body.dead || body.isWreck || body.anchored || body.static || body.activeNodes <= 0) return null;
+  return hull;
+}
+
+// Szablon kadłuba (konstrukcja z obrazu — ta sama, z której powstało ciało) z indeksem komórka → węzeł szablonu,
+// raz na konstrukcję; null — inna siatka niż ciało.
+function hullTemplate(hull) {
+  if (!hull.image) return null;
+  let structure = null;
+  try {
+    structure = HullBodies.structureFor(hull.image, hull.scale, hull.cellPx);
+  } catch {
+    return null;
+  }
+  const d = structure?.dims, bd = hull.body.dims;
+  if (!d || d.x !== bd.x || d.y !== bd.y || d.z !== bd.z) return null;
+  let tpl = _templates.get(structure);
+  if (!tpl) {
+    const s = structure.nodeStore;
+    const cells = new Int32Array(d.x * d.y * d.z).fill(-1);
+    for (let i = 0; i < s.count; i++) cells[s.ix[i] + s.iy[i] * d.x + s.iz[i] * d.x * d.y] = i;
+    tpl = { structure, cells };
+    _templates.set(structure, tpl);
+  }
+  return tpl;
+}
+
+/**
+ * Czy komórka szablonu `t` (martwa w ciele) może odrosnąć teraz; pozycja nowego węzła w `out` (układ ciała).
+ * Sąsiedzi = żywe węzły ciała na końcach belek POSZYCIA szablonu (8 sąsiadów siatki): co najmniej dwóch — nowe belki
+ * leżą wtedy na cyklu ciała, więc rozpad (połączenie bez drogi obejścia) ich nie rwie, a próg oparcia nie zabija
+ * węzła; przy ≥ 4 belkach poszycia tylu, ilu trzyma mocowanie wręgów (mountMinSupportRatio — inaczej solver zerwałby
+ * wręgi nowego węzła); komórka z 1–3 belkami poszycia (brzeg sylwetki) — tylu, ile ich ma, najwyżej dwóch.
+ * Pozycja: spoczynek komórki + średnie przemieszczenie tych sąsiadów. `strict` — każda belka szablonu do żywego
+ * węzła (też wręgi) w zakresie sprężystym (regrowStrain).
+ */
+function regrowPlacement(hull, tpl, t, strict, out) {
+  const body = hull.body, s = body.nodeStore, d = body.dims, cs = body.cellSize, lm = body.latticeMin;
+  const lattice = D._latticeIndex(body).cells, active = s.active;
+  const ts = tpl.structure.nodeStore, te = tpl.structure.beamStore;
+  const tAdj = ts.adj, ta = te.a, tb = te.b, q0 = ts.adjStart[t], q1 = ts.adjStart[t + 1];
+  const dx = d.x, dxy = d.x * d.y;
+  let n = 0, sx = 0, sy = 0, sz = 0;
+  for (let q = q0; q < q1; q++) {
+    const bi = tAdj[q];
+    if (te.type[bi] >= BEAM_TYPE.FRAME) continue;
+    const o = ta[bi] ^ tb[bi] ^ t;
+    const j = lattice[ts.ix[o] + ts.iy[o] * dx + ts.iz[o] * dxy];
+    if (j < 0 || !active[j]) continue;
+    n++;
+    sx += s.x[j] - s.ox[j]; sy += s.y[j] - s.oy[j]; sz += s.z[j] - s.oz[j];
+  }
+  const local = ts.localBeamCount[t];
+  const need = local >= 4 ? Math.max(2, Math.ceil(local * (D.config?.mountMinSupportRatio ?? 0.3) - 1e-9)) : Math.min(2, local);
+  if (n === 0 || n < need) return false;
+  const px = lm.x + (ts.ix[t] + 0.5) * cs + sx / n;
+  const py = lm.y + (ts.iy[t] + 0.5) * cs + sy / n;
+  const pz = lm.z + (ts.iz[t] + 0.5) * cs + sz / n;
+  if (strict) {
+    const k = C.regrowStrain, restBase = te.restBase, deform = te.deform;
+    for (let q = q0; q < q1; q++) {
+      const bi = tAdj[q];
+      const o = ta[bi] ^ tb[bi] ^ t;
+      const j = lattice[ts.ix[o] + ts.iy[o] * dx + ts.iz[o] * dxy];
+      if (j < 0 || !active[j]) continue;
+      const ex = s.x[j] - px, ey = s.y[j] - py, ez = s.z[j] - pz;
+      const base = restBase[bi];
+      if (Math.abs(Math.sqrt(ex * ex + ey * ey + ez * ez) - base) > k * deform[bi] * base) return false;
+    }
+  }
+  out.x = px; out.y = py; out.z = pz;
+  return true;
+}
+
+// Martwy wpis i ożywiony w pozycji (x, y, z) układu ciała: bez prędkości, żaru i ruchu solvera (kadłub się nie
+// budzi), HP = maks. HP · hpMul (najmniej 1), belki do żywych węzłów zrośnięte w długości spoczynkowej szablonu,
+// bez zmęczenia. Próg oparcia (beamCount) jak po rozpadzie — od żywych belek; rośnie, gdy odrastają kolejni sąsiedzi.
+function reviveNode(body, i, x, y, z, hpMul) {
+  const s = body.nodeStore, e = body.beamStore, adj = s.adj, active = s.active;
+  const ea = e.a, eb = e.b, broken = e.broken;
+  active[i] = 1;
+  s.x[i] = x; s.y[i] = y; s.z[i] = z;
+  s.px[i] = x; s.py[i] = y; s.pz[i] = z;
+  s.vx[i] = 0; s.vy[i] = 0; s.vz[i] = 0;
+  s.hp[i] = Math.max(1, s.maxHp[i] * hpMul);
+  s.heat[i] = 0; s.heatStamp[i] = 0; s.temp[i] = 0; s.crushDepth[i] = 0;
+  s.act[i] = 0; s.quiet[i] = 0;
+  const touched = _regrowTouched;
+  touched.length = 0;
+  touched.push(i);
+  let live = 0;
+  for (let q = s.adjStart[i]; q < s.adjStart[i + 1]; q++) {
+    const bi = adj[q];
+    const o = ea[bi] ^ eb[bi] ^ i;
+    if (!active[o]) continue;
+    if (broken[bi]) { broken[bi] = 0; body.liveBeams++; }
+    e.rest[bi] = e.restBase[bi];
+    e.fatigue[bi] = 0;
+    e.strain[bi] = 0;
+    live++;
+    touched.push(o);
+  }
+  s.beamCount[i] = live;
+  for (let k = 1; k < touched.length; k++) raiseBeamCount(s, e, touched[k]);
+  body.activeNodes++;
+  body.mass += s.mass[i];
+  if (!body.static && !body.anchored) body.invMass = 1 / body.mass;
+  // Mocowania wręgów węzła i sąsiadów od nowa (solver lokalny przelicza je tylko w swoim obszarze).
+  D._refreshMountsLocal(body, beamSolverScratch(body), touched, touched.length);
+  markSkinDirty(body, i);      // czworokąt węzła i 8 sąsiadów (wspólne narożniki)
+  D._noteDisplacement(body, i);
+  s.shapeVersion++;
+  body.meshDirty = true;
+  body.structureDirty = true;
+  body._hashTick = -1;
+  D._touchGeometry(body);
+}
+
+// Próg oparcia węzła j nie mniejszy niż jego żywe belki (zrośnięta belka podnosi go z powrotem ku szablonowi).
+function raiseBeamCount(s, e, j) {
+  let n = 0;
+  for (let q = s.adjStart[j]; q < s.adjStart[j + 1]; q++) if (!e.broken[s.adj[q]]) n++;
+  if (n > s.beamCount[j]) s.beamCount[j] = n;
+}
+
+// Wszystkie węzły i belki magazynu w spoczynku szablonu (pełny remont): żywe, w spoczynku, bez prędkości, żaru,
+// zmęczenia i ruchu solvera, belki całe w długości spoczynkowej, HP pełne, próg oparcia = wszystkie belki węzła.
+// Zwraca liczbę ożywionych węzłów (środek masy i bezwładność — finishRegrow).
+function restoreBodyToRest(body) {
+  const s = body.nodeStore, e = body.beamStore, n = s.count;
+  let revived = 0;
+  for (let i = 0; i < n; i++) {
+    if (!s.active[i]) { s.active[i] = 1; revived++; }
+    const ox = s.ox[i], oy = s.oy[i], oz = s.oz[i];
+    s.x[i] = ox; s.y[i] = oy; s.z[i] = oz;
+    s.px[i] = ox; s.py[i] = oy; s.pz[i] = oz;
+    s.vx[i] = 0; s.vy[i] = 0; s.vz[i] = 0;
+    s.hp[i] = s.maxHp[i];
+    s.heat[i] = 0; s.heatStamp[i] = 0; s.temp[i] = 0; s.crushDepth[i] = 0;
+    s.act[i] = 0; s.quiet[i] = 0;
+    s.beamCount[i] = s.adjStart[i + 1] - s.adjStart[i];
+  }
+  for (let b = 0; b < e.count; b++) {
+    e.broken[b] = 0; e.rest[b] = e.restBase[b]; e.fatigue[b] = 0; e.strain[b] = 0;
+  }
+  body.activeNodes = n;
+  body.liveBeams = e.count;
+  body._maxDisp = 0;
+  if (body._solverScratch) body._solverScratch.mountFailed.fill(0);
+  resetActiveRegion(body);     // pusty obszar solvera, skóra całego kadłuba do przepisania
+  s.shapeVersion++;
+  body.meshDirty = true;
+  body.structureDirty = true;
+  body._hashTick = -1;
+  D._touchGeometry(body);
+  return revived;
+}
+
+// Po odroście: masa, bezwładność, obrys, rewizja kadłuba (model 3D, przekroje) i hak punktów (onRegrow).
+// `recenter` — początek układu zawsze do środka masy (remont); inaczej dopiero, gdy odjechał o regrowRecenterCells.
+function finishRegrow(hull, activeBefore, recenter) {
+  const body = hull.body;
+  const info = computeStoreInertia(body.nodeStore, body.cellSize);
+  if (info) {
+    const c = info.com;
+    if (recenter || Math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z) > C.regrowRecenterCells * body.cellSize) {
+      shiftBodyOrigin(hull, c.x, c.y, c.z);
+    }
+    body.mass = Math.max(1, info.mass);
+    if (!body.static && !body.anchored) body.invMass = 1 / body.mass;
+    body.invInertiaLocal = info.invInertia;
+  }
+  D._updateRadius(body);
+  hull.revision++;
+  const hook = HullBodies.onRegrow;
+  if (typeof hook === 'function' && hull.entity) {
+    const base = Math.max(1, hull.baseNodes);
+    hook(hull.entity, Math.min(1, activeBefore / base), Math.min(1, body.activeNodes / base));
+  }
+}
+
+// Początek układu ciała przesunięty o (cx, cy, cz), jak przy przebudowie po rozpadzie: magazyn i latticeMin razem,
+// więc kotwica sprite'a (latticeMin + stała) zostaje na swoim miejscu kadłuba, a encja tam, gdzie była; ciało bierze
+// pozę od encji.
+function shiftBodyOrigin(hull, cx, cy, cz) {
+  const body = hull.body;
+  D._shiftStore(body.nodeStore, cx, cy, cz);
+  body.latticeMin.x -= cx; body.latticeMin.y -= cy; body.latticeMin.z -= cz;
+  if (body._region) body._region.dirtyAll = true;   // wszystkie czworokąty skóry w nowym układzie
+  body.nodeStore.shapeVersion++;
+  body._hashTick = -1;
+  D._touchGeometry(body);
+  syncBodyPose(hull);
+}
+
+/**
+ * Magazyn zagęszczony po rozpadzie (ciało bez keepLayout) → wszystkie komórki szablonu: istniejące węzły i belki
+ * zostają pod swoimi indeksami (kolejność belek węzła w CSR ta sama — solver i wyspy liczą jak dotąd), brakujące
+ * komórki dochodzą na końcu jako martwe wpisy (spoczynek w bieżącym układzie, masa, maks. HP i kolor z szablonu), ich
+ * belki szablonu — na końcu jako zerwane. Pancerz komórek zabitych przed zagęszczeniem przepadł razem z nimi (HP
+ * szablonu). Zwraca false, gdy magazyn ma już każdą komórkę.
+ */
+function expandBodyToTemplate(hull, tpl) {
+  const body = hull.body, s = body.nodeStore, e = body.beamStore, d = body.dims;
+  const T = tpl.structure, ts = T.nodeStore, te = T.beamStore;
+  const lattice = D._latticeIndex(body).cells, dxy = d.x * d.y;
+  const n0 = s.count;
+  const map = new Int32Array(ts.count);
+  let n = n0;
+  for (let t = 0; t < ts.count; t++) {
+    const i = lattice[ts.ix[t] + ts.iy[t] * d.x + ts.iz[t] * dxy];
+    map[t] = i >= 0 ? i : n++;
+  }
+  if (n === n0) return false;
+  const ns = new BeamNodeStore(n);
+  for (const f of NODE_FIELD_NAMES) ns[f].set(s[f]);
+  ns.shapeVersion = s.shapeVersion + 1;
+  const mul = hull.massMul > 0 ? hull.massMul : templateMassMul(s, ts, map, n0);
+  const lm = body.latticeMin, tlm = T.latticeMin;
+  const offX = lm.x - tlm.x, offY = lm.y - tlm.y, offZ = lm.z - tlm.z;
+  for (let t = 0; t < ts.count; t++) {
+    const i = map[t];
+    if (i < n0) continue;
+    const ox = ts.ox[t] + offX, oy = ts.oy[t] + offY, oz = ts.oz[t] + offZ;
+    ns.ox[i] = ox; ns.oy[i] = oy; ns.oz[i] = oz;
+    ns.x[i] = ox; ns.y[i] = oy; ns.z[i] = oz;
+    ns.px[i] = ox; ns.py[i] = oy; ns.pz[i] = oz;
+    const m = ts.mass[t] * mul;
+    ns.mass[i] = m;
+    ns.invMass[i] = m > 0 ? 1 / m : 0;
+    ns.maxHp[i] = ts.maxHp[t];
+    ns.coverage[i] = ts.coverage[t];
+    ns.r[i] = ts.r[t]; ns.g[i] = ts.g[t]; ns.b[i] = ts.b[t];
+    ns.ix[i] = ts.ix[t]; ns.iy[i] = ts.iy[t]; ns.iz[i] = ts.iz[t]; ns.depth[i] = ts.depth[t];
+    ns.beamCount[i] = ts.beamCount[t]; ns.localBeamCount[i] = ts.localBeamCount[t];
+    ns.platingCount[i] = ts.platingCount[t]; ns.surface[i] = ts.surface[t];
+  }
+  let extra = 0;
+  for (let b = 0; b < te.count; b++) if (map[te.a[b]] >= n0 || map[te.b[b]] >= n0) extra++;
+  const bs = new BeamLinkStore(e.count + extra);
+  for (const f of BEAM_FIELD_NAMES) bs[f].set(e[f]);
+  let k = e.count;
+  for (let b = 0; b < te.count; b++) {
+    const a = map[te.a[b]], c = map[te.b[b]];
+    if (a < n0 && c < n0) continue;
+    bs.a[k] = a; bs.b[k] = c;
+    bs.rest[k] = te.restBase[b]; bs.restBase[k] = te.restBase[b];
+    bs.stiffness[k] = te.stiffness[b]; bs.deform[k] = te.deform[b]; bs.brk[k] = te.brk[b];
+    bs.type[k] = te.type[b]; bs.restBridge[k] = te.restBridge[b];
+    bs.broken[k] = 1;
+    k++;
+  }
+  buildAdjacency(ns, bs);
+  const views = cachedNodeViews(body);
+  const failed = body._solverScratch ? body._solverScratch.mountFailed : null;
+  body.nodeStore = ns;
+  body.beamStore = bs;
+  if (views) {
+    // Widoki węzłów (kod spoza silnika) przechodzą na nowy magazyn pod tymi samymi indeksami — tożsamość zostaje.
+    const next = new Array(n);
+    for (let i = 0; i < n0; i++) { views[i]._s = ns; next[i] = views[i]; }
+    for (let i = n0; i < n; i++) next[i] = new BeamNodeView(ns, i);
+    body.nodes = next;
+  } else {
+    body.nodes = null;
+  }
+  body.beams = null;
+  body._integrity = new Int32Array(n);
+  body._solverScratch = null;
+  if (failed) beamSolverScratch(body).mountFailed.set(failed.subarray(0, Math.min(n0, failed.length)));
+  body._region = null;     // nowy obszar przy pierwszym użyciu: lista z flag act, cała skóra
+  body._lattice = null;
+  body._hashTick = -1;
+  D._touchGeometry(body);
+  return true;
+}
+
+// Masa węzła ciała / masa węzła szablonu z dowolnej wspólnej komórki (kadłub sprzed pola massMul).
+function templateMassMul(s, ts, map, n0) {
+  for (let t = 0; t < ts.count; t++) {
+    const i = map[t];
+    if (i < n0 && ts.mass[t] > 0 && s.mass[i] > 0) return s.mass[i] / ts.mass[t];
+  }
+  return 1;
+}
+
 // Wrak mniejszy niż najmniejszy odłam rozpadu (silnik robi z takich odłamki) to okruch:
 // rozpad łączników potrafi zostawić z odłamu kilka węzłów w linii jeden węzeł. Idzie
 // w odłamki GPU, ciało umiera, a pętla wraków gry go usuwa (brak żywych węzłów).
@@ -1373,6 +1857,87 @@ function cutLocalBand(body, x0, y0, x1, y1, halfWidth, push = false) {
     if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
   }
   return killed;
+}
+
+// Pęknięcia Voronoi (shatter → opts.cells): `cells` ziaren w losowych żywych węzłach (z drganiem pół komórki),
+// każdy żywy węzeł należy do najbliższego ziarna, belka między węzłami dwóch komórek pęka. Węzły na szwach
+// z prawdopodobieństwem `crackDebris` idą w odłamki — prędkość od punktu (lx, ly) układu ciała, `speed` j/s
+// (× 0,5–1,5, rozrzut). Zwraca liczbę odłamków; rozpad na wyspy robi processSplits (shatter, krok 3).
+function voronoiFracture(body, cells, crackDebris, lx, ly, speed) {
+  const s = body.nodeStore, n = s.count, cs = body.cellSize;
+  const sx = new Float64Array(cells), sy = new Float64Array(cells);
+  let k = 0;
+  for (let tries = 0; tries < cells * 16 && k < cells; tries++) {
+    const i = Math.floor(Math.random() * n);
+    if (!s.active[i]) continue;
+    sx[k] = s.x[i] + (Math.random() - 0.5) * cs;
+    sy[k] = s.y[i] + (Math.random() - 0.5) * cs;
+    k++;
+  }
+  if (k < 2) return 0;
+  const owner = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!s.active[i]) continue;
+    let best = 0, bd = Infinity;
+    for (let q = 0; q < k; q++) {
+      const dx = s.x[i] - sx[q], dy = s.y[i] - sy[q];
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = q; }
+    }
+    owner[i] = best;
+  }
+  const e = body.beamStore, ea = e.a, eb = e.b, broken = e.broken;
+  const seam = new Uint8Array(n);
+  let cut = 0;
+  for (let bi = 0; bi < e.count; bi++) {
+    if (broken[bi]) continue;
+    const a = ea[bi], b = eb[bi];
+    if (!s.active[a] || !s.active[b] || owner[a] === owner[b]) continue;
+    broken[bi] = 1;
+    seam[a] = 1; seam[b] = 1;
+    cut++;
+  }
+  if (!cut) return 0;
+  body.liveBeams = Math.max(0, body.liveBeams - cut);
+  D.perf.beamsBroken += cut;
+  body.structureDirty = true;
+  body.meshDirty = true;
+  let debris = 0;
+  const p = Math.max(0, Math.min(1, Number(crackDebris) || 0));
+  for (let i = 0; i < n && p > 0 && !body.dead; i++) {
+    if (!seam[i] || !s.active[i] || Math.random() >= p) continue;
+    const dx = s.x[i] - lx, dy = s.y[i] - ly;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const v = speed * (0.5 + Math.random());
+    s.vx[i] = dx / d * v + (Math.random() - 0.5) * speed * 0.6;
+    s.vy[i] = dy / d * v + (Math.random() - 0.5) * speed * 0.6;
+    D.destroyNode(body, i);
+    debris++;
+  }
+  D.wake(body, D.config.wakeHoldFrames);
+  if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
+  return debris;
+}
+
+// Drobny odłam (shatter → opts.minFragmentNodes) cały w odłamki: węzły lecą z prędkością ENCJI wraku (pchnięcie
+// z kroku 4, którego ciało jeszcze nie zna — syncIn dopiero w kroku) i rozrzutem do `speed` j/s.
+function crumbleWreck(w, speed) {
+  const hull = w.beamHull, body = hull.body, s = body.nodeStore;
+  const pose = entityPose(hull, _pose);
+  const c = pose.c, sn = pose.s;
+  // brakująca prędkość (świat silnika: y w górę) → układ ciała (Rᵀ)
+  const wx = (Number(w.vx) || 0) - body.vel.x, wy = -(Number(w.vy) || 0) - body.vel.y;
+  const lvx = c * wx + sn * wy, lvy = -sn * wx + c * wy;
+  let n = 0;
+  for (let i = 0; i < s.count && !body.dead; i++) {
+    if (!s.active[i]) continue;
+    const a = Math.random() * Math.PI * 2, v = speed * Math.random();
+    s.vx[i] = lvx + Math.cos(a) * v;
+    s.vy[i] = lvy + Math.sin(a) * v;
+    D.destroyNode(body, i);
+    n++;
+  }
+  return n;
 }
 
 // Impuls rzazu z pędem (po cutLocalBand z push): masa wyciętego metalu × cutPushSpeed wzdłuż toru,
@@ -1469,6 +2034,10 @@ function pairFilter(A, B) {
   const ea = A.entity, eb = B.entity;
   if (!ea || !eb) return true;
   if (ea.isCollidable === false || eb.isCollidable === false) return false;
+  // Odłamy JEDNEGO kawałka budowli (worldBodies.breakPiece — pęknięcia Voronoi) nie zderzają się między sobą:
+  // rodzą się na styk wzdłuż szwów i rozchodzą; ich styki to ~⅓ kroku po rozpadzie suchego doku (pomiar
+  // 2026-10-07). Z okrętami, budowlą i odłamami innych kawałków — zwykłe zderzenia.
+  if (ea.worldDebris && eb.worldDebris && ea.beamHull?.world === eb.beamHull?.world) return false;
   // Składy i moduły jednego właściciela (pociąg megafrachtowca) — jak dawny destruktor.
   // Wraki zderzają się z rodzicem i rodzeństwem: odłam z tarana leci po fizyce.
   if (!ea.isWreck && !eb.isWreck) {
@@ -1481,7 +2050,18 @@ function pairFilter(A, B) {
   if (areTowBodiesCollisionDisabled(ea, eb)) return false;
   // Dwa stare, wolne wraki nie mielą się bez końca w stosie złomu.
   if (ea.isWreck && eb.isWreck && isColdWreck(ea) && isColdWreck(eb)) return false;
+  // Flaga wreckPairEvery: wolna para wraków po czasie pełnych kolizji — co k-ty krok, krokiem k · dt.
+  if (C.wreckPairEvery > 1 && ea.isWreck && eb.isWreck && isSlowWreckPair(A, B, ea, eb)) return C.wreckPairEvery;
   return true;
+}
+
+// Para wraków bez szybkiego styku: oba po czasie pełnych kolizji (świeży odłam rozdziela się co krok),
+// prędkość względna środków + obrót obu (|ω| · promień) poniżej wreckPairSpeed. Ciała po syncIn tego kroku.
+function isSlowWreckPair(A, B, ea, eb) {
+  if ((Number(ea._wreckAge) || 0) <= C.wreckFullCollisionTime || (Number(eb._wreckAge) || 0) <= C.wreckFullCollisionTime) return false;
+  const dvx = A.vel.x - B.vel.x, dvy = A.vel.y - B.vel.y;
+  const surface = Math.sqrt(dvx * dvx + dvy * dvy) + Math.abs(A.angVel.z) * A.radius + Math.abs(B.angVel.z) * B.radius;
+  return surface < C.wreckPairSpeed;
 }
 
 function pairRecord(a, b) {
@@ -1689,6 +2269,7 @@ function makeWreckEntity(parent, body, parentHull) {
     baseNodes: body.activeNodes,
     hexPerNode: parentHull.hexPerNode,
     massScale,
+    massMul: parentHull.massMul,
     isFragment: true,
     dmgKey: parentHull.dmgKey,         // rany rodzica (wrak z całego kadłuba, odłamy, wybuch reaktora)
     world: parentHull.world || null,   // odłam ciała świata: render rysuje go bryłą 3D kawałka budowli
@@ -1697,6 +2278,7 @@ function makeWreckEntity(parent, body, parentHull) {
     radius: body.radius,
     revision: 0,
     shieldCells: null,
+    _shieldCellsOf: null,
     _massRef: body.mass,
     _inPx: 0, _inPy: 0, _inVx: 0, _inVy: 0, _inW: 0, _inNodes: body.activeNodes
   };
@@ -1705,6 +2287,12 @@ function makeWreckEntity(parent, body, parentHull) {
   body.hull = hull;
   body.isWreck = true;
   wreck.beamHull = hull;
+  // Odłam ciała świata (worldBodies.js): rysuje go skóra brył budowli (worldBodies3D.js — `worldDebris`); odłam
+  // kawałka-ducha (dach nad płaszczyzną gry) niczego nie dotyka — pociski i kadłuby przelatują pod nim.
+  if (parentHull.world) {
+    wreck.worldDebris = true;
+    if (parentHull.world.ghost) wreck.isCollidable = false;
+  }
   return wreck;
 }
 
@@ -1735,6 +2323,7 @@ function onWreck(parentBody, wreckBody) {
   if (parentHull.world && wreckBody.anchored) {
     const island = makeWreckEntity(parent || { visual: null }, wreckBody, parentHull);
     island.isWreck = false;
+    island.worldDebris = false;
     island.isWorldPiece = true;
     island.vx = 0; island.vy = 0; island.angVel = 0;
     island.friction = 1;
@@ -1746,7 +2335,6 @@ function onWreck(parentBody, wreckBody) {
   // Odłam z rzazu z pędem (Hexlance): pęd brzegu rzazu, zanim encja wraku weźmie prędkość ciała.
   applyCutEdgeImpulse(parentHull, wreckBody);
   const wreck = makeWreckEntity(parent || { visual: null }, wreckBody, parentHull);
-  if (parentHull.world) wreck.worldDebris = true;
   // Nowy wrak nie był w syncIn tego kroku — jego stan to od razu stan silnika.
   wreck.beamHull._inNodes = wreckBody.activeNodes;
   finishWreck(wreck, parent, wreckBody.activeNodes, parentBody);

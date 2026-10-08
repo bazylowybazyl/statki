@@ -53,6 +53,45 @@ modele (`src/3d/ships3d/`) i skóra FFD, przepięta na kadłuby 2D.
   różnice tylko pojedyncze piksele krawędzi świecących pasków. Bitwa 166 okrętów (`.tmp/bronie3d-ab.mjs`): zoom 0,1 —
   dawniej 873 rysunki i 27 fps, teraz +7 rysunków względem broni 2D i fps jak 2D.
 
+## Dysze SIDE 3D (2026-10-07) — w każdym wariancie wyglądu
+
+Prośba użytkownika: „dorobić modele dysz bocznych SIDE … Terra Nova = biel, Atlas, frachtowce = szary — dopasuj
+kolorystycznie”, a przy okazji „wykorzystaj WebGPU do nowych efektów dysz SIDE (obecne są mega stare po WebGL)”.
+
+- **Model** (`src/3d/ships3d/thrusters/sideThruster3D.js`): sponson przykręcony do kadłuba (płyta z fazą, pasek
+  frakcji, pokrywy, obrotnica — obraca się z kadłubem, wzdłuż wydechu w spoczynku) i obrotowa dysza (platforma, jarzmo
+  z czopem, komora z kopułką, kołnierz gardzieli, dzwon z obręczami i jasną wargą, ciemne wnętrze z żarem gardzieli,
+  siłowniki) za kierunkiem wydechu — dysza SIDE jest wektorowana (`nozzleDeg` w gimbalu ±90° wokół `baseDeg`).
+  Oś obrotu = marker dyszy z edytora, wylot dzwonu `SIDE_NOZZLE_MOUTH` (1,8) × promień wylotu przed nią — tam zaczyna
+  się struga. Promień wylotu `SIDE_NOZZLE_RADIUS` (15 j.) × skala klasy kadłuba (jak płomień) × skala sprite'a.
+- **Farba** frakcji kadłuba: Terra Nova kremowa biel, Atlas chłodny szary, frachtowce i megafrachtowiec szary cywilny
+  z bursztynowym paskiem, piraci rdza z czerwonym pasem (`sideThrusterPaletteFor` z profilu kadłuba; barwy zmierzone
+  na sprite'ach). Cztery palety w JEDNYM materiale — `createShipMaterial({ palettes, paletteIndex })`, indeks z
+  rekordu instancji (bez `palettes` graf i WGSL materiałów okrętów i wież bez zmian).
+- **Rysunek**: jedna partia (`src/3d/ships3d/thrusterBatch3D.js`, wzór partii wież), jeden rysunek na wszystkie dysze
+  w kadrze. Pozycje, kąty, ciąg i żar z listy klatki `SideNozzleFrame` (`src/3d/sideNozzleFrame.js`), którą pisze
+  `EngineVfxSystem` w pętli płomieni SIDE — maskowanie (próg 0,5), odpadanie z kadłubem (`hullMounts.js`) i zdublowane
+  markery (jedna bryła) rozstrzyga tam. `shipModels3DGame.js` (`syncSideNozzles`): kadr, LOD (pół szerokości
+  sponsonu ≥ 1,5 px), wysokość i warstwa głębi — na sprite'cie `SLAB_NOZZLE_ON_SPRITE`, na modelu 3D oś dzwonu w
+  połowie burty (`SLAB_NOZZLE_ON_MODEL`; skrzynki RCS bryły kadłuba wyłączone — `buildShip3D(id, { rcs: false })`).
+  Żar dzwonu (ciemna czerwień przy gardzieli) z żaru strugi.
+- **Struga i gaz na WebGPU** (`src/3d/sideJets3D.js`, zamiast `engineExhaustBatch.js`): praca impulsowa jak w
+  prawdziwych RCS (PWM ~6 Hz przy niepełnym ciągu, ciągła od 80%), analityczny pióropusz próżniowy w TSL (dysk
+  wylotu, rdzeń, stożek z włóknami z szumu płynącymi od wylotu), gaz w pulach GPU efektów broni (opar strugi, kłąb na
+  początku impulsu, błysk i iskry przy zimnym zapłonie, obłok po wyłączeniu — compute), światło na blasze w siatce
+  świateł; barwa z palety strugi MAIN okrętu. Płomyk dyżurny w wylocie (szybki lot — jaśniej).
+- **NPC**: baza kąta dysz SIDE = kąt markera edytora (wydech na zewnątrz burty), jak u gracza — do 2026-10-07 baza
+  ±90° kierowała płomienie wzdłuż kadłuba, a w zakresie gimbala także pod kadłub (`npcHardpointRuntime.js`).
+- **Frachtowce**: wahadłowiec, kontenerowiec, frachtowiec dalekiego zasięgu, ciężki frachtowiec i lokomotywa
+  megafrachtowca — po 4 dysze SIDE w narożnikach kadłuba (szary cywilny). Wpisy edytora `sideOnly`
+  (`hardpointEditorDefaults.js`): runtime NPC bierze z nich same dysze SIDE — bez MAIN (ścieżka lotu bez zmian), bez
+  gniazd, rdzeni i świateł — dopiero z kadłubem (skala markerów z obrazu kadłuba). Oś dyszy ~0,5 promienia wylotu w głąb
+  od krawędzi alfy, sponson poza lukami ładowni i strefą mostka. Wagony i ogon składu oraz furgony ładunku (sprite
+  fregaty) — bez dysz. Zrzuty: sceny `fr_*` w `dysze-side-gra.mjs`, test `tests/freighterSideThrusters.test.mjs`.
+- **A/B** (konsola): `setSideNozzles3D(false)` — bez modeli (struga wraca na marker), `SideJets3D.enabled = false` —
+  dawny płomień SIDE; strojenie `SideJetTune`. Zrzuty: `node scripts/webgpu/dysze-side-gra.mjs [--warianty
+  2d,pol,spokoj,3d,ab,stary] [--lot 1]` (pomiar czasu klatki nowe ↔ stare w locie), testy `tests/sideThrusters3D.test.mjs`.
+
 ## Kamery 3D (`src/game/game3D.js`, `camera3DRig.js`, `view3D.js`) — sam widok
 
 `K` / `Shift+K` — następna / poprzednia kamera: klasyczna (gra z góry, domyślna), z góry w perspektywie, taktyczna,

@@ -12,6 +12,7 @@ import { isCloakHidden } from '../game/cloak.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
 import { mountFireArc } from '../game/weaponAim.js';
+import { AI_SNAP_FIGHTER, trafficAvoidanceObjects, trafficAvoidanceRange, trafficAvoidanceSnapshot } from './aiNeighborKernels.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -44,73 +45,24 @@ function wrapAng(a) {
   return window.wrapAngle ? window.wrapAngle(a) : Math.atan2(Math.sin(a), Math.cos(a));
 }
 
-// Unik zderzeń między okrętami (najbliższe zbliżenie, CPA): gdy tor sąsiada
-// względem nas przetnie się bliżej niż suma promieni + zapas w ciągu horyzontu,
-// schodzimy w bok już teraz — tym mocniej, im bliżej chwili zbliżenia i im
-// głębiej. Lżejszy ustępuje bardziej. Separacja z index.html odpycha dopiero
-// przy nakładaniu się stref (lekką fregatę słabo: siła × masa^−¼), a ogranicznik
-// przeszkód widzi tylko POZYCJE — dwie fregaty lecące na skos przecinały sobie
-// drogę i obijały się. Gracza pomijamy: unik przed nim liczy applySeparationForces.
-const AVOID_HORIZON = 2.5;
-const AVOID_PAD = 140;
-const AVOID_MAX_ACCEL = 900;
-const AVOID_RANGE_MAX = 6000;
+// Unik zderzeń między okrętami (najbliższe zbliżenie, CPA) — jądro i strojenie
+// w src/ai/aiNeighborKernels.js. Na prawdziwej siatce AI liczy na migawce
+// (tablice typowane, kinematyka z bieżącego kroku), przy atrapie queryAIGrid
+// (testy) — po obiektach z jej wyniku; arytmetyka i kolejność sąsiadów te same.
 const _avoid = { ax: 0, ay: 0 };
 export function computeTrafficAvoidance(npc, out = _avoid) {
   out.ax = 0;
   out.ay = 0;
   const query = window.queryAIGrid;
   if (typeof query !== 'function') return out;
+  const ship = window.ship;
+  const snap = query.aiSnapshot;
+  if (snap && snap.syncTick()) return trafficAvoidanceSnapshot(npc, ship, snap, out);
   const vx = Number(npc.vx) || 0;
   const vy = Number(npc.vy) || 0;
   const myR = Number(npc.radius) || 60;
-  const myMass = Math.max(1, Number(npc.mass) || 1);
-  const sp = Math.sqrt(vx * vx + vy * vy);
-  const range = Math.min(AVOID_RANGE_MAX, myR + 600 + (sp + 1500) * AVOID_HORIZON);
-  const ship = window.ship;
-  const q = query(npc.x, npc.y, range);
-  const buf = q.buffer;
-  const n = q.count;
-  for (let i = 0; i < n; i++) {
-    const o = buf[i];
-    if (!o || o === npc || o === ship || o.dead || o.fighter) continue;
-    const rx = (Number(o.x) || 0) - npc.x;
-    const ry = (Number(o.y) || 0) - npc.y;
-    const rvx = (Number(o.vx) || 0) - vx;
-    const rvy = (Number(o.vy) || 0) - vy;
-    const vv = rvx * rvx + rvy * rvy;
-    if (vv < 900) continue; // < 30 j/s względem siebie — to robota separacji
-    const t = -(rx * rvx + ry * rvy) / vv;
-    if (t <= 0 || t > AVOID_HORIZON) continue;
-    const cx = rx + rvx * t;
-    const cy = ry + rvy * t;
-    const d = Math.sqrt(cx * cx + cy * cy);
-    const safe = myR + (Number(o.radius) || 60) + AVOID_PAD;
-    if (d >= safe) continue;
-    // W bok od miejsca, w którym będzie sąsiad. Czołowo (d ≈ 0) — reguła prawej
-    // ręki względem prędkości względnej: obaj schodzą w przeciwne strony.
-    let ux;
-    let uy;
-    if (d > 1) {
-      ux = -cx / d;
-      uy = -cy / d;
-    } else {
-      const L = Math.sqrt(vv);
-      ux = -rvy / L;
-      uy = rvx / L;
-    }
-    const tt = Math.max(0.35, t);
-    const oMass = Math.max(1, Number(o.mass) || myMass);
-    const a = ((2 * (safe - d)) / (tt * tt)) * (2 * oMass / (oMass + myMass));
-    out.ax += ux * a;
-    out.ay += uy * a;
-  }
-  const mag = Math.sqrt(out.ax * out.ax + out.ay * out.ay);
-  if (mag > AVOID_MAX_ACCEL) {
-    out.ax *= AVOID_MAX_ACCEL / mag;
-    out.ay *= AVOID_MAX_ACCEL / mag;
-  }
-  return out;
+  const q = query(npc.x, npc.y, trafficAvoidanceRange(myR, Math.sqrt(vx * vx + vy * vy)));
+  return trafficAvoidanceObjects(npc, ship, q.buffer, q.count, out);
 }
 
 // Zatwierdza intencję ustawioną przez mózg: dokłada separację (liczoną raz na
@@ -177,14 +129,17 @@ const COMBAT_RADIUS = 2600;
 // wynik per klatkę (window.__frameId). Najbliższą przeszkodę na kursie do celu
 // zapisuje w npc.__obsBlk — z niej capitalArriveControls liczy objazd.
 // `fresh` — policz bez cache i bez nadpisywania przeszkody (kierunek objazdu).
+// Zasięg do 20 km to w bitwie cała flota: na prawdziwej siatce sąsiedzi idą
+// z migawki (tablice typowane, src/ai/aiSpatialGrid.js), przy atrapie — z obiektów.
 const OBSTACLE_LOOK_MIN = 1500;
 const OBSTACLE_LOOK_MAX = 20000;
 const _obsScratch = { on: false, x: 0, y: 0, vx: 0, vy: 0, c: 0, along: Infinity };
 let _obsCap = Infinity;
-function considerObstacle(npc, o, ox, oy, oR, d1x, d1y, d2x, d2y, has2, look, brake, blk) {
-  const rx = ox - npc.x;
-  const ry = oy - npc.y;
-  const clearance = (npc.radius || 100) + oR + 150;
+// nx, ny, myR — pozycja i promień (npc.radius || 100) pytającego, liczone raz na zapytanie.
+function considerObstacle(o, nx, ny, myR, ox, oy, oR, d1x, d1y, d2x, d2y, has2, look, brake, blk) {
+  const rx = ox - nx;
+  const ry = oy - ny;
+  const clearance = myR + oR + 150;
   let along = rx * d1x + ry * d1y;
   if (along > 0 && along <= look) {
     const perp = Math.abs(-rx * d1y + ry * d1x);
@@ -213,7 +168,7 @@ function considerObstacle(npc, o, ox, oy, oR, d1x, d1y, d2x, d2y, has2, look, br
     }
   }
 }
-function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = false) {
+export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = false) {
   const fid = window.__frameId;
   if (!fresh && fid && npc.__obsCapFid === fid && npc.__obsCapVal !== undefined) return npc.__obsCapVal;
 
@@ -225,18 +180,44 @@ function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = false) {
   blk.on = false;
   blk.along = Infinity;
   _obsCap = Infinity;
+  const nx = npc.x;
+  const ny = npc.y;
+  const myR = npc.radius || 100;
   const ship = window.ship;
   if (ship && !ship.destroyed && ship.pos) {
-    considerObstacle(npc, ship, ship.pos.x, ship.pos.y, ship.radius || 220, d1x, d1y, d2x, d2y, has2, look, brake, blk);
+    considerObstacle(ship, nx, ny, myR, ship.pos.x, ship.pos.y, ship.radius || 220, d1x, d1y, d2x, d2y, has2, look, brake, blk);
   }
-  if (window.queryAIGrid) {
-    const q = window.queryAIGrid(npc.x, npc.y, look);
-    const buf = q.buffer;
-    const n = q.count;
-    for (let i = 0; i < n; i++) {
-      const o = buf[i];
-      if (!o || o === npc || o.dead || o === ship || o.fighter) continue;
-      considerObstacle(npc, o, o.x, o.y, o.radius || 100, d1x, d1y, d2x, d2y, has2, look, brake, blk);
+  const query = window.queryAIGrid;
+  if (query) {
+    const snap = query.aiSnapshot;
+    if (snap && snap.syncTick()) {
+      const nRanges = snap.selectRanges(nx, ny, look);
+      const ranges = snap.ranges;
+      const refs = snap.refs;
+      const X = snap.x;
+      const Y = snap.y;
+      const R = snap.r;
+      const D = snap.dead;
+      const F = snap.flags;
+      const dedup = snap.hasAliases;
+      for (let r = 0; r < nRanges; r++) {
+        const end = ranges[2 * r + 1];
+        for (let s = ranges[2 * r]; s < end; s++) {
+          if (dedup && snap.seen(s)) continue;
+          const o = refs[s];
+          if (o === npc || D[s] !== 0 || o === ship || (F[s] & AI_SNAP_FIGHTER) !== 0) continue;
+          considerObstacle(o, nx, ny, myR, X[s], Y[s], R[s] || 100, d1x, d1y, d2x, d2y, has2, look, brake, blk);
+        }
+      }
+    } else {
+      const q = query(nx, ny, look);
+      const buf = q.buffer;
+      const n = q.count;
+      for (let i = 0; i < n; i++) {
+        const o = buf[i];
+        if (!o || o === npc || o.dead || o === ship || o.fighter) continue;
+        considerObstacle(o, nx, ny, myR, o.x, o.y, o.radius || 100, d1x, d1y, d2x, d2y, has2, look, brake, blk);
+      }
     }
   }
   const cap = _obsCap;

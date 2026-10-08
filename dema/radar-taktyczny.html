@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar taktyczny — HULLFALL</title>
+<style>
+  :root { --bg: #04070c; --text: #c9d4e2; --muted: #6f7d92; --orange: #ff6600; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 30%, #0b1422 0%, var(--bg) 70%); color: var(--text);
+    font: 13px/1.45 Consolas, "Courier New", monospace; letter-spacing: 0.03em; }
+  header { display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline; padding: 14px 20px 6px; }
+  header h1 { margin: 0; font-size: 15px; letter-spacing: 0.14em; color: #e8eef6; text-transform: uppercase; }
+  header span { color: var(--muted); }
+  #stan { color: #ffb070; }
+  .row { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; padding: 8px 20px 20px; }
+  .card { display: flex; flex-direction: column; gap: 8px; }
+  .card h2 { margin: 0; font-size: 11px; color: var(--muted); letter-spacing: 0.16em; text-transform: uppercase; font-weight: 400; }
+  /* Kopuła jak w kokpicie (cockpit-ui.css): płótno 280 px pomniejszone do 236 px, ścięte cięciwą 12 px pod środkiem. */
+  .dome { position: relative; width: 340px; height: 182px; overflow: hidden; }
+  .dome canvas { position: absolute; top: 30px; left: 30px; width: 280px; height: 280px; border-radius: 50%;
+    box-shadow: 0 0 0 1.8px rgba(255, 102, 0, 0.38); transform: scale(0.842857); }
+  .dome::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16) 3%, rgba(255,102,0,0.55) 14%, rgba(255,102,0,0.55) 86%, rgba(255,255,255,0.16) 97%, transparent); }
+  .full canvas { width: 280px; height: 280px; border-radius: 50%; box-shadow: 0 0 0 1.8px rgba(255, 102, 0, 0.38); }
+  .big canvas { width: 560px; height: 560px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255, 102, 0, 0.38); }
+  #info { color: var(--muted); padding: 0 20px 18px; }
+  kbd { padding: 0 4px; border: 1px solid #3a3a3a; border-bottom-width: 2px; border-radius: 3px; color: #c4c4c4; background: rgba(0,0,0,0.45); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Radar taktyczny</h1>
+  <span id="stan">—</span>
+  <span><kbd>X</kbd> impuls · <kbd>+</kbd>/<kbd>−</kbd> zasięg · <kbd>O</kbd> H-UP / N-UP · <kbd>1</kbd> pas <kbd>2</kbd> port <kbd>3</kbd> dok · <kbd>spacja</kbd> pauza</span>
+</header>
+<div class="row">
+  <div class="card"><h2>Kopuła kokpitu</h2><div class="dome"><canvas id="kopula"></canvas></div></div>
+  <div class="card"><h2>Alt — pełny radar</h2><div class="full"><canvas id="pelny"></canvas></div></div>
+  <div class="card"><h2>Alt — ×2 (4K)</h2><div class="big"><canvas id="duzy"></canvas></div></div>
+</div>
+<div id="info"></div>
+<script type="module" src="./radar-taktyczny.js"></script>
+</body>
+</html>

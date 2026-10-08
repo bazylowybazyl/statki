@@ -1,4 +1,13 @@
 import { defineConfig } from 'vite';
+import { readFileSync } from 'node:fs';
+
+// Wersja w menu (index.html: __HULLFALL_VERSION__) = "version" z package.json — tę samą dostaje exe
+// i instalator; podbija ją scripts/wydanie.mjs.
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+const gameVersion = {
+  name: 'hullfall-version',
+  transformIndexHtml: (html) => html.replaceAll('__HULLFALL_VERSION__', pkg.version),
+};
 
 // /dema bez ukośnika dostawał od Vite grę (fallback na /index.html) —
 // przekierowanie do spisu dem (dema/index.html).
@@ -19,7 +28,7 @@ const demaIndexRedirect = {
 
 export default defineConfig({
   base: './',
-  plugins: [demaIndexRedirect],
+  plugins: [demaIndexRedirect, gameVersion],
   define: {
     __HEX_SIM_BUILD__: JSON.stringify('hex-sim-v2'),
   },

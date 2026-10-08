@@ -18,7 +18,7 @@ import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import {
   HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHAFT_CAP, HullShadowSdf, createHullSdfPlaceholderTexture, hullSdfShadow
 } from './hullShadowSdf.js';
-import { SUN_SHADOW_MAP_PLACEHOLDER, sunShadowUniforms } from './sunShadowMask.js';
+import { SUN_SHADOW_MAP_PLACEHOLDER, discSunVisibilityCpu, sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
 import { MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
@@ -152,6 +152,14 @@ const SHIELD_RENDER_LAYER = 7;
 // Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
 // tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
 const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER]);
+// Kamera perspektywy z góry (gałąź płaska syncCamera): wysokość nad płaszczyzną gry liczona z FOV tak, żeby
+// z = 0 pokrywało się z kamerą ortho (ten sam kąt bierze tryb „z góry 3D” — topFov w camera3DRig.js).
+// Kamery 3D (free3d) piszą w cameraPersp własne FOV, near i far, więc gałąź płaska ustawia te przy każdym
+// wywołaniu — inaczej po powrocie do kamery klasycznej warstwy poza z = 0 (mgławica, planety tła, ring)
+// zostawały w skali ostatniej kamery 3D.
+const FLAT_PERSP_FOV = 35;
+const FLAT_PERSP_NEAR = 100;
+const FLAT_PERSP_FAR = 500000;
 // Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / pola odległości
 // kadłubów / pierścienie w world-space, liczone per piksel w shaderze passa).
 // Pass NIE mnoży już obrazu — pisze maskę widoczności słońca (sunShadowTarget,
@@ -285,11 +293,15 @@ function shadowShaftsMaskNode(u) {
         // ── Kadłuby statków: pole odległości sylwetki ───────────────────
         // hullSdfShadow (hullShadowSdf.js) idzie po SDF kadłuba promieniem
         // do słońca, więc smuga zaczyna się na burcie i obejmuje kolce oraz
-        // rozwidlenia. Piksele na WŁASNYM kadłubie są pomijane — łańcuch
-        // kapsuł pomijał tylko wnętrze tej samej kapsuły i każda rzucała cień
-        // na kadłub pod sąsiednią.
+        // rozwidlenia. Piksele na WŁASNYM kadłubie są w kanale powierzchni
+        // pomijane — łańcuch kapsuł pomijał tylko wnętrze tej samej kapsuły
+        // i każda rzucała cień na kadłub pod sąsiednią.
         // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
-        shadow.assign(max(shadow, hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH)));
+        // x = powierzchnia (bez samocienia), y = tło: przez dziury w kadłubie widać tło
+        // w cieniu aż do brzegu wyrwy (bez jasnej obwódki — opis w hullSdfShadow).
+        const hullShadow = hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH).toVar();
+        const backdropShadow = max(shadow, hullShadow.y).toVar('maskBackdrop');
+        shadow.assign(max(shadow, hullShadow.x));
 
         // ── Pole przesłaniające słońce (gęsty pas asteroid) ─────────────
         // Transmitancja wzdłuż promienia do słońca liczona na CPU; tu tylko
@@ -303,6 +315,7 @@ function shadowShaftsMaskNode(u) {
           If(fuv.x.greaterThanEqual(0.0).and(fuv.y.greaterThanEqual(0.0)).and(fuv.x.lessThanEqual(1.0)).and(fuv.y.lessThanEqual(1.0)), () => {
             const fieldT = texture(uFieldOcc, fuv, float(0)).r.toVar();
             shadow.assign(float(1.0).sub(float(1.0).sub(shadow).mul(fieldT)));
+            backdropShadow.assign(float(1.0).sub(float(1.0).sub(backdropShadow).mul(fieldT)));
             fieldDark.assign(float(1.0).sub(fieldT));
           });
         });
@@ -333,12 +346,12 @@ function shadowShaftsMaskNode(u) {
             const tHit = select(c2.lessThan(0.0), b.negate().add(sq), b.negate().sub(sq)).toVar();
             If(tHit.lessThanEqual(0.0).or(tHit.greaterThanEqual(sunDist)), () => { Continue(); });
             const ringShade = float(1.0).sub(smoothstep(0.0, max(ring.w, 1.0), tHit)).mul(0.85);
-            shadow.assign(max(shadow, ringShade));
+            backdropShadow.assign(max(backdropShadow, ringShade));
           });
         });
 
         const surfaceOut = clamp(surfaceShadow, 0.0, 1.0).mul(uShaftGain).toVar();
-        const backdropOut = clamp(shadow, 0.0, 1.0).mul(uShaftGain).toVar();
+        const backdropOut = clamp(backdropShadow, 0.0, 1.0).mul(uShaftGain).toVar();
         // Maska ma 8 bitów: długi gradient smugi na mgławicy robiłby schodki.
         // Statyczny szum ±0,5/255 (bez czasu — nie pełza), tylko pod smugą,
         // żeby pełne słońce zostało dokładnym zerem. Piksel jak gl_FragCoord
@@ -533,6 +546,9 @@ export const Core3D = {
   // dyski (planet3d.assets), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
+  // Transmitancja słońca pola przesłaniającego na CPU ((x, y) świata gry → 0..1; pas asteroid) —
+  // sunVisibilityAtWorld; null = bez pola.
+  sunFieldCpu: null,
   sunOcclusionField: null,
   shaftHulls: new Float32Array(SHAFT_HULL_CAP * HULL_SDF_OCCLUDER_FLOATS), shaftHullCount: 0,
   shaftHullTexture: null,
@@ -780,7 +796,7 @@ export const Core3D = {
     this.scene.add(coreLight);
 
     this.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
-    this.cameraPersp = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 100, 500000);
+    this.cameraPersp = new THREE.PerspectiveCamera(FLAT_PERSP_FOV, window.innerWidth / window.innerHeight, FLAT_PERSP_NEAR, FLAT_PERSP_FAR);
 
     const w0 = Math.max(1, window.innerWidth | 0);
     const h0 = Math.max(1, window.innerHeight | 0);
@@ -1428,6 +1444,10 @@ export const Core3D = {
     this.cameraOrtho.bottom = -halfH;
     this.cameraOrtho.updateProjectionMatrix();
 
+    // Po kamerze 3D (free3d) w cameraPersp zostają jej FOV, near i far — kamera z góry wraca do swoich.
+    this.cameraPersp.fov = FLAT_PERSP_FOV;
+    this.cameraPersp.near = FLAT_PERSP_NEAR;
+    this.cameraPersp.far = FLAT_PERSP_FAR;
     this.cameraPersp.aspect = w / h;
     const fovRad = THREE.MathUtils.degToRad(this.cameraPersp.fov * 0.5);
     const targetZ = (h / 2) / Math.tan(fovRad) / zoom;
@@ -2292,6 +2312,28 @@ export const Core3D = {
   },
 
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
+
+  // Widoczność słońca w punkcie świata gry z tarcz tej klatki (lustro CPU passa maski — bez kadłubów
+  // i ringów; sunShadowMask.js, discSunVisibilityCpu) — dla rzeczy rysowanych na kanwie 2D (wieżyczki).
+  // 1 = pełne słońce; bez słońca, przy wyłączonych smugach albo w wolnej kamerze 3D — 1.
+  sunVisibilityAtWorld(worldX, worldY) {
+    const sun = typeof window !== 'undefined' ? window.SUN : null;
+    if (!sun || !this.shaftDiscs || this.isFreePerspectiveCamera()) return 1;
+    if (this.perfToggles && this.perfToggles.shadowShafts === false) return 1;
+    const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
+    if (!cfg || cfg.enabled === false) return 1;
+    const count = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
+    let vis = count > 0
+      ? discSunVisibilityCpu(worldX, worldY, Number(sun.x) || 0, Number(sun.y) || 0, this.shaftDiscs, count,
+        Math.max(1, Number(cfg.discLenMul) || 5))
+      : 1;
+    // Pole przesłaniające (pas asteroid): maska liczy 1 − (1 − cień) · T, czyli widoczność × T.
+    if (this.sunOcclusionField && typeof this.sunFieldCpu === 'function') {
+      const T = this.sunFieldCpu(worldX, worldY);
+      if (T >= 0 && T < 1) vis *= T;
+    }
+    return vis;
+  },
   // Pole przesłaniające słońce (gęste pola asteroid): tekstura transmitancji
   // (R, 1 = pełne słońce) na prostokącie w układzie sceny (x, −y świata).
   // Maska cienia mnoży nią widoczność słońca — wszystko, co czyta

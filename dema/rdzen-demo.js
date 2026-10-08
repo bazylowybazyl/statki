@@ -5,13 +5,13 @@
 //
 // Stos renderu jak w grze: fizyka 2D (destruktor, 120 Hz) → updateHexShips3D →
 // drawHexShips3D (Core3D: bloom, ACES, pasma HDR 1:1; wybuch reaktora z prawdziwej
-// fabryki reactorblow.js w scenie Core3D, jak triggerReactorBlow3D w index.html) → HUD 2D.
+// fabryki wybuchów WebGPU src/3d/explosions/ w scenie Core3D, jak triggerReactorBlow3D w index.html) → HUD 2D.
 // Rdzenie: src/game/shipCore.js (logika), src/3d/coreFx3D.js (żar i wyrzuty).
 import { Core3D } from '../src/3d/core3d.js';
 import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D } from '../src/3d/hexShips3D.js';
 import { DestructorSystem, DESTRUCTOR_CONFIG, setHexShips3DActive, disposeHexBody } from '../src/game/destructor.js';
 import { DestructorGpuSoftBody } from '../src/game/destructorGpuSoftBody.js';
-import { createReactorBlowFactory, REACTOR_BLOW_PROFILES } from '../src/effects3d/reactorblow.js';
+import { createExplosionFactory } from '../src/3d/explosions/explosionFx.js';
 import { createCoreFx3D } from '../src/3d/coreFx3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
@@ -42,9 +42,10 @@ window.addEventListener('error', (e) => reportError(`JS: ${e.message} @ ${e.file
 window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.reason?.stack || e.reason}`));
 
 const PHYS_DT = 1 / 120;
-// chargeTime profili reactorblow.js: wizualny wybuch startujemy tyle przed końcem
-// odliczania, żeby błysk wypadł na detonację.
-const BLOW_CHARGE = Object.fromEntries(Object.entries(REACTOR_BLOW_PROFILES).map(([k, p]) => [k, p.chargeTime]));
+// Wyprzedzenie obrazu wybuchu przed końcem odliczania (dawniej chargeTime profili reactorblow.js — błysk miał wypaść
+// na detonację). Wybuchy WebGPU (src/3d/explosions/, 2026-10-07) nie mają fazy ładowania — obraz rusza w chwili
+// detonacji (wyprzedzenie ~2 klatki).
+const BLOW_CHARGE = Object.freeze({});
 
 const DEMO_WEAPONS = [
   'railgun_mk2', 'heavy_autocannon', 'vulcan_minigun', 'tempest_ion_l', 'helios_laser',
@@ -133,7 +134,7 @@ function log(text, cls = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Render: Core3D + hexShips3D (wybuch reaktora w scenie Core3D — reactorblow)
+// Render: Core3D + hexShips3D (wybuch reaktora w scenie Core3D — wybuchy WebGPU, src/3d/explosions/)
 const root = $('root');
 const canvas2d = $('c');
 const ctx2d = canvas2d.getContext('2d');
@@ -152,14 +153,13 @@ window.SUN = { x: -52000, y: -30000, r: 823 };
 
 // Wybuch reaktora jak w grze (port WebGPU, zadanie 20): pule cząstek w scenie Core3D, krok
 // klatki efektów (render Core3D) — bez overlaya z własnym WebGLRenderer.
-window.makeReactorBlow = createReactorBlowFactory(Core3D);
+window.makeReactorBlow = createExplosionFactory(Core3D);
 // Iskry trafień i tarcia jak w grze (index.html: SparkSystem3D.init(Core3D.scene)) — krok
 // klatki efektów Core3D; coreFx3D sypie z tej puli przy cięciu i topieniu.
 SparkSystem3D.init(Core3D.scene);
 window.SparkSystem3D = SparkSystem3D;
 
-// Wybuch reaktora jak triggerReactorBlow3D w grze. Fali z refrakcją już nie ma:
-// profile reactorblow.js mają shockwave3D/heatHaze = null.
+// Wybuch reaktora jak triggerReactorBlow3D w grze (wybuchy WebGPU: fala to sama refrakcja Core3D).
 function spawnReactorBlow(opts) {
   window.makeReactorBlow(opts);
 }
@@ -906,7 +906,7 @@ function render(realDt, simFrameDt) {
     // przepis obrazu z wariantu znanego od początku stopienia (pendingVariant)
     const blast = SC.applyVariantToBlast(SC.computeCoreBlast(core), core.pendingVariant || 'shatter');
     if (!blast.reactorProfile) { S.blowVisuals.add(core); continue; }
-    const lead = BLOW_CHARGE[blast.reactorProfile] || 0.8;
+    const lead = BLOW_CHARGE[blast.reactorProfile] ?? 0.03;
     if (core.meltdownRemaining / Math.max(0.05, S.timeScale) <= lead) spawnBlowVisual(core, blast);
   }
   Core3D.beginPlanetLayerFrame();

@@ -320,6 +320,8 @@ export function buildHullCore(id, spec, out, S, o = {}) {
     mounts.push({ id: hp.id, type, x, y, z: z + (r > 0 ? Z(0.35) * 1.55 : 0), radius: r, rot: hp.rot || 0 });
   }
 
+  // Skrzynki RCS w bryle — tylko poza grą (demo); gra rysuje modele dysz SIDE partią (o.rcs === false,
+  // thrusterBatch3D.js) w miejscach markerów, z dzwonem za kierunkiem wydechu.
   const rcs = [];
   for (const e of ed.engines?.side || []) {
     const hit = nearestEdge(plates, e.x, -e.y);
@@ -328,10 +330,12 @@ export function buildHullCore(id, spec, out, S, o = {}) {
     const [nx, ny] = hit.n;
     const zc = (zBelt + zDeck) / 2;
     const sz = Z(1.6);
-    B.push().translate(px + nx * sz * 0.2, py + ny * sz * 0.2, zc).rotateZ(Math.atan2(ny, nx));
-    B.box(0, 0, 0, sz * 0.6, sz * 1.8, sz, { mat: M.PANEL, bevel: [sz * 0.12, sz * 0.12] });
-    B.face([[sz * 0.31, -sz * 0.6, -sz * 0.3], [sz * 0.31, sz * 0.6, -sz * 0.3], [sz * 0.31, sz * 0.6, sz * 0.3], [sz * 0.31, -sz * 0.6, sz * 0.3]], M.DARK, [1, 0, 0]);
-    B.pop();
+    if (o.rcs !== false) {
+      B.push().translate(px + nx * sz * 0.2, py + ny * sz * 0.2, zc).rotateZ(Math.atan2(ny, nx));
+      B.box(0, 0, 0, sz * 0.6, sz * 1.8, sz, { mat: M.PANEL, bevel: [sz * 0.12, sz * 0.12] });
+      B.face([[sz * 0.31, -sz * 0.6, -sz * 0.3], [sz * 0.31, sz * 0.6, -sz * 0.3], [sz * 0.31, sz * 0.6, sz * 0.3], [sz * 0.31, -sz * 0.6, sz * 0.3]], M.DARK, [1, 0, 0]);
+      B.pop();
+    }
     rcs.push({ id: e.id, x: px + nx * sz * 0.5, y: py + ny * sz * 0.5, z: zc, dir: [nx, ny, 0] });
   }
 

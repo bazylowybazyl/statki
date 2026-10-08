@@ -1,4 +1,5 @@
 const { app, BrowserWindow, net, protocol } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -6,9 +7,31 @@ const APP_SCHEME = 'app';
 const APP_HOST = 'bundle';
 const DIST_ROOT = path.resolve(__dirname, '../dist');
 
-// Katalog danych (localStorage: zapisy, edytor gniazd) z czasów nazwy "Statki Demo" — zmiana productName
-// na HULLFALL przeniosłaby go do nowego folderu i zgubiła zapisy.
-app.setPath('userData', path.join(app.getPath('appData'), 'Statki Demo'));
+// Katalog danych (localStorage: zapisy, edytor gniazd, opcje + profil Chromium) — Dokumenty\HULLFALL.
+// Do 2026-10-07 był w %APPDATA%\Statki Demo: pierwsze uruchomienie kopiuje stamtąd Local Storage
+// (same zapisy — cache shaderów i reszta profilu odbudują się same). Stary folder zostaje nietknięty.
+const USER_DATA_DIR = path.join(app.getPath('documents'), 'HULLFALL');
+const LEGACY_USER_DATA_DIR = path.join(app.getPath('appData'), 'Statki Demo');
+
+function migrateLegacySaves() {
+  const from = path.join(LEGACY_USER_DATA_DIR, 'Local Storage');
+  const to = path.join(USER_DATA_DIR, 'Local Storage');
+  if (fs.existsSync(to) || !fs.existsSync(from)) return;
+  // Kopia do folderu roboczego i zmiana nazwy — przerwana kopia nie zostawi połowy bazy LevelDB.
+  const tmp = `${to}.migracja`;
+  try {
+    fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.cpSync(from, tmp, { recursive: true });
+    fs.renameSync(tmp, to);
+  } catch (err) {
+    console.warn(`[zapisy] nie udało się skopiować zapisów z ${from}:`, err);
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* zostaje do następnej próby */ }
+  }
+}
+
+migrateLegacySaves();
+app.setPath('userData', USER_DATA_DIR);
 
 protocol.registerSchemesAsPrivileged([
   {

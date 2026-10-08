@@ -450,22 +450,34 @@ export function sampleWarpExitRamp(r, age, out = {}) {
 
 /**
  * RULON (pomysł usera 2026-10-03, src/3d/warp/rulon.js): ładowanie ZWIJA rzeczywistość wokół
- * osi skoku i zawija ją do statku (lejek) — jedna faza; skok dociąga szarpnięciem (> 1), wyjście
+ * osi skoku i zawija ją do statku (lejek) — jedna faza; skok dociąga miękkim nabrzmieniem (> 1), wyjście
  * rozwija w `exitDur` s. state: 'charging' | 'active' | 'exit' | inne (0); kickAge — od skoku,
  * exitAge — od wyjścia. Lejek (field) = min(1, zwinięcie).
+ * PŁYNNOŚĆ (user 2026-10-08: „upłynnij wejście i wyjście z warpa — zawijanie i rozwijanie”): zwijanie =
+ * smoothstep po CAŁYM ładowaniu (dawniej smoothstep^1,4 między 5 a 95% — szczyt ~2,4/s przy końcu), nabrzmienie
+ * przy skoku narasta gaussowsko (bez skoku nachylenia; dawniej +16% w 0,03 s — szarpnięcie 5/s), rozwijanie =
+ * smoothstep (rusza od zera; dawniej easeOut³ — od razu 4,3/s) przez zwolnienie i wlot rampy (player.js).
  */
-export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EXIT.slow) {
+export const WARP_RULON = Object.freeze({
+  kickSwell: 0.1,   // nabrzmienie przy skoku (× zwinięcia)
+  kickRise: 0.1,    // [s] narastanie (1 − e^(−(t/τ)²))
+  kickFall: 0.5     // [s] gaśnięcie
+});
+
+export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EXIT.slow + WARP_EXIT.coast) {
   if (state === 'charging') {
-    const c = clamp01((clamp01(charge) - 0.05) / 0.9);
-    return Math.pow(c * c * (3 - 2 * c), 1.4);
+    const c = clamp01(charge);
+    return c * c * (3 - 2 * c);
   }
   if (state !== 'active' && state !== 'exit') return 0;
   const k = Number(kickAge);
-  const pulse = k > 0 ? (1 - Math.exp(-k / 0.03)) * Math.exp(-k / 0.3) : 0;
-  let b = 1 + 0.16 * pulse;
+  const R = WARP_RULON;
+  const q = k / R.kickRise;
+  const swell = k > 0 ? (1 - Math.exp(-q * q)) * Math.exp(-k / R.kickFall) : 0;
+  let b = 1 + R.kickSwell * swell;
   if (state === 'exit') {
     const u = clamp01((Number(exitAge) || 0) / Math.max(0.05, exitDur));
-    b *= 1 - (1 - (1 - u) * (1 - u) * (1 - u));
+    b *= 1 - u * u * (3 - 2 * u);
   }
   return b;
 }
@@ -523,9 +535,9 @@ export const WARP_FLYBY_DEFAULTS = Object.freeze({
  * z wielkością ciała widzianego z kursu (promień / (promień + odległość kursu od
  * powierzchni)) — mijana z bliska planeta zwalnia mocno, daleki mały księżyc
  * wcale; pas wzdłuż kursu (gauss) szerszy dla ciał dalej od kursu, więc statek
- * zwalnia z wyprzedzeniem i płynnie. W dawnym warpie widok skoku przybliżał się,
- * gdy statek zwalniał (soczewka świata — usunięta w zadaniu 22; gra jej nie woła,
- * zostaje dla dema i testów).
+ * zwalnia z wyprzedzeniem i płynnie. Gra: warpFlybyFactor w kroku fizyki skoku
+ * gracza (index.html) i w planie prędkości (planWarpCruise); widok — soczewka świata
+ * (src/3d/warp/worldLens.js, skala z NOMINALNEJ prędkości — nie przybliża się przy zwolnieniu).
  * along — ciało przed statkiem wzdłuż kursu (ujemne: za rufą), lateral —
  * odległość środka ciała od kursu, radius — promień ciała (jednostki świata).
  */
@@ -539,4 +551,112 @@ export function warpFlybySlowdown(along, lateral, radius, p = WARP_FLYBY_DEFAULT
   const w = Math.max(Number(p.minWidth) || 1, (Number(p.width) || 0) * (lat + r));
   const g = (Number(along) || 0) / w;
   return 1 - depth * Math.exp(-g * g);
+}
+
+/**
+ * Zwolnienie skoku od wszystkich ciał w punkcie (x, y) przy kursie (dirX, dirY) — iloczyn
+ * warpFlybySlowdown. bodies: [{ x, y, r }] (świat gry), n — ile pierwszych brać.
+ */
+export function warpFlybyFactor(x, y, dirX, dirY, bodies, n = bodies ? bodies.length : 0, p = WARP_FLYBY_DEFAULTS) {
+  let f = 1;
+  for (let i = 0; i < n; i++) {
+    const b = bodies[i];
+    if (!b) continue;
+    const ox = b.x - x;
+    const oy = b.y - y;
+    f *= warpFlybySlowdown(ox * dirX + oy * dirY, oy * dirX - ox * dirY, b.r, p);
+  }
+  return f;
+}
+
+/**
+ * CZAS PODRÓŻY skokiem (demo „Nurt”, dema/warp-webgpu/solar.js: buildTrip — user 2026-10-07: „warp
+ * jest znacznie szybszy w grze”): od skoku do zatrzymania clamp(base + d · perUnit, min, max) s
+ * (Ziemia → Jowisz ~10 s, Ziemia → Saturn 17 s), wyjście zaczyna się `decel` s przed końcem. Gra ma
+ * też krótkie skoki (odcinek warpem od 40 tys. j.) — 8 s na 40 tys. j. byłoby wolniej niż dopalacz,
+ * więc poniżej `shortDist` dolna granica maleje jak √d (do `shortMin`). Prędkość skoku z celem
+ * (planWarpCruise) dobiera się do tego czasu — bliski cel to wolniejszy skok (soczewka: ciaśniejszy
+ * kadr, ciała mijają go w tym samym tempie).
+ */
+export const WARP_TRIP = Object.freeze({
+  base: 4,               // [s]
+  perUnit: 1 / 260000,   // [s/j.]
+  min: 8,                // [s] najkrótsza podróż dema
+  max: 17,               // [s]
+  decel: 0.35,           // [s] wyjście tyle przed końcem (demo: TRAVEL.decel)
+  shortDist: 520000,     // [j.] krótszy odcinek — krótsza podróż (gra)
+  shortMin: 2.5,         // [s]
+  vMin: 4000,            // [j/s] granice prędkości przelotowej
+  vMax: 600000
+});
+
+/** Czas skoku z celem [s, od skoku do zatrzymania] dla odcinka `dist` [j.]. */
+export function warpTripTime(dist, tune = WARP_TRIP) {
+  const d = Math.max(0, Number(dist) || 0);
+  const floor = Math.max(tune.shortMin, tune.min * Math.sqrt(Math.min(1, d / Math.max(1, tune.shortDist))));
+  return Math.min(tune.max, Math.max(floor, tune.base + d * tune.perUnit));
+}
+
+/**
+ * Symulacja skoku po prostej z prędkością przelotową `vc` (ten sam przebieg co fizyka gry: wejście
+ * smoothstep przez `entry` s od prędkości startu, gonienie prędkości `lag`/s, mnożnik strefy
+ * i zwolnienie przy ciałach) do chwili, w której zaczyna się wyjście (do końca zostaje droga rampy
+ * wyjścia). Zwraca czas [s] (albo `limit`, gdy skok trwałby dłużej).
+ */
+export function simulateWarpLeg(vc, o, limit = 60) {
+  const dist = Math.max(0, Number(o.dist) || 0);
+  const L = Math.max(40, Number(o.hullLength) || WARP_REF_HULL_LENGTH);
+  const dt = Number(o.dt) > 0 ? o.dt : 1 / 60;
+  const entry = Math.max(1e-3, Number(o.entry) || 0.9);
+  const lag = Math.max(0.1, Number(o.lag) || 6);
+  const bodies = Array.isArray(o.bodies) ? o.bodies : [];
+  const zone = o.zone || null;
+  const flyP = o.flyby || WARP_FLYBY_DEFAULTS;
+  const v0 = Math.max(0, Number(o.v0) || 0);
+  let s = 0;
+  let v = v0;
+  let t = 0;
+  let prog = 0;
+  const k = Math.min(1, lag * dt);
+  while (t < limit) {
+    if (dist - s <= warpExitRampDistance(v, L)) return t;
+    prog = Math.min(1, prog + dt / entry);
+    const ease = prog * prog * (3 - 2 * prog);
+    let f = zone ? zone(s) : 1;
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      f *= warpFlybySlowdown(b.along - s, b.lateral, b.r, flyP);
+    }
+    const vmax = vc * f;
+    const vs = Math.min(v0, vmax);
+    const target = vs + (vmax - vs) * ease;
+    v += (target - v) * k;
+    s += v * dt;
+    t += dt;
+  }
+  return limit;
+}
+
+/**
+ * Prędkość przelotowa skoku z celem: od skoku do początku wyjścia mija warpTripTime(dist) − decel.
+ * o = { dist (wzdłuż kursu do końca odcinka), v0 (prędkość przy skoku), hullLength,
+ *   bodies: [{ along, lateral, r }] (ciała względem punktu skoku — zwolnienie), zone: (s) → mnożnik
+ *   strefy w odległości s od punktu skoku (opcjonalnie), entry, lag, dt }.
+ * Zwraca { speed, time (plan od skoku do wyjścia), target (czas docelowy) }.
+ */
+export function planWarpCruise(o, tune = WARP_TRIP) {
+  const dist = Math.max(0, Number(o.dist) || 0);
+  const target = Math.max(0.2, warpTripTime(dist, tune) - tune.decel);
+  let lo = Math.log(tune.vMin);
+  let hi = Math.log(tune.vMax);
+  const limit = target + 30;
+  // Czas maleje z prędkością — bisekcja w logarytmie prędkości.
+  if (simulateWarpLeg(tune.vMax, o, limit) >= target) return { speed: tune.vMax, time: simulateWarpLeg(tune.vMax, o, limit), target };
+  if (simulateWarpLeg(tune.vMin, o, limit) <= target) return { speed: tune.vMin, time: simulateWarpLeg(tune.vMin, o, limit), target };
+  for (let i = 0; i < 16; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (simulateWarpLeg(Math.exp(mid), o, limit) > target) lo = mid; else hi = mid;
+  }
+  const speed = Math.exp(0.5 * (lo + hi));
+  return { speed, time: simulateWarpLeg(speed, o, limit), target };
 }

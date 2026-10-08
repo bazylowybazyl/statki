@@ -409,10 +409,12 @@ export class LightGrid {
 
   /**
    * TSL: pętla po światłach komórki punktu P (vec3, układ LOKALNY siatki). Dla każdego
-   * światła w zasięgu woła cb({ toL, att, col, scatter, dist, flare, owner }):
+   * światła w zasięgu woła cb({ toL, att, col, scatter, dist, flare, owner, x, range }):
    *   toL — wektor jednostkowy od P do światła, att — tłumienie × stożek × cień,
    *   col — barwa × moc × gain, scatter — rozpraszanie w ośrodku (L1.w),
-   *   dist — odległość, flare — rozbłysk lampy (L3.y), owner — właściciel (L3.w).
+   *   dist — odległość, flare — rozbłysk lampy (L3.y), owner — właściciel (L3.w),
+   *   x — odległość / zasięg, range — zasięg (kadłuby skupiają zanik świateł efektów po swojemu —
+   *   hullLighting.tsl.js).
    * skipOwner (węzeł float) pomija światła tego właściciela; właściciele to liczby
    * ≥ 1, wartość < 0,5 (0 = „bez właściciela”) niczego nie pomija — inaczej materiał
    * bez statku gasiłby wszystkie światła efektów (mają właściciela 0). Zmienna pętli
@@ -454,7 +456,7 @@ export class LightGrid {
               att.mulAssign(this.shadows.visibility(L3.z, P));
             });
           }
-          cb({ toL, att, col: L1.xyz.mul(this.gain), scatter: L1.w, dist, flare: L3.y, owner: L3.w });
+          cb({ toL, att, col: L1.xyz.mul(this.gain), scatter: L1.w, dist, flare: L3.y, owner: L3.w, x, range: L0.w });
         });
       });
     });

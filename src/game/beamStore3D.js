@@ -64,6 +64,9 @@ export class BeamNodeStore {
     // Lista belek węzła i: adj[adjStart[i] .. adjStart[i + 1]) — indeksy belek.
     this.adjStart = new Int32Array(count + 1);
     this.adj = new Int32Array(0);
+    // Zapisy x / y / z / active przez widok węzła (kod spoza silnika): siatka węzłów ciała
+    // (DestructorBeams3D._refreshHash) przebudowuje się po zmianie. Silnik zgłasza swoje zmiany sam.
+    this.shapeVersion = 0;
   }
 
   clone() {
@@ -103,9 +106,18 @@ export class BeamView {
   constructor(store, index) { this._s = store; this._i = index; }
 }
 
-function defineAccessors(proto, fields, aliases, booleans) {
+// Pola kształtu węzła: zapis przez widok podbija shapeVersion magazynu (siatka węzłów ciała).
+const NODE_SHAPE = new Set(['x', 'y', 'z', 'active']);
+
+function defineAccessors(proto, fields, aliases, booleans, shape = null) {
   const define = (name, field) => {
-    if (booleans.has(field)) {
+    if (shape !== null && shape.has(field)) {
+      const bool = booleans.has(field);
+      Object.defineProperty(proto, name, {
+        get: bool ? function () { return this._s[field][this._i] === 1; } : function () { return this._s[field][this._i]; },
+        set(v) { const s = this._s; s[field][this._i] = bool ? (v ? 1 : 0) : v; s.shapeVersion++; }
+      });
+    } else if (booleans.has(field)) {
       Object.defineProperty(proto, name, {
         get() { return this._s[field][this._i] === 1; },
         set(v) { this._s[field][this._i] = v ? 1 : 0; }
@@ -120,7 +132,7 @@ function defineAccessors(proto, fields, aliases, booleans) {
   for (const f of fields) define(f, f);
   for (const [name, field] of Object.entries(aliases)) define(name, field);
 }
-defineAccessors(BeamNodeView.prototype, [...NODE_F64, ...NODE_I32, ...NODE_U8], NODE_ALIASES, NODE_BOOLEAN);
+defineAccessors(BeamNodeView.prototype, [...NODE_F64, ...NODE_I32, ...NODE_U8], NODE_ALIASES, NODE_BOOLEAN, NODE_SHAPE);
 defineAccessors(BeamView.prototype, [...BEAM_F64, ...BEAM_I32, ...BEAM_U8], BEAM_ALIASES, BEAM_BOOLEAN);
 
 export function nodeViews(store) {

@@ -73,15 +73,18 @@ test('circleArcInRect: środek poza kadrem = łuk obejmujący KAŻDY widoczny pu
   }
 });
 
-test('HUD: okrąg zasięgu i pierścienie skanera idą przez bramkę kadru, bez shadowBlur', () => {
+test('HUD: okrąg zasięgu idzie przez bramkę kadru; skan X bez pętli po kontaktach do końca gry i bez shadowBlur', () => {
   const rangeFn = indexHtml.match(/function _drawTargetingRange[\s\S]*?\n      }\n/)?.[0] || '';
   assert.match(rangeFn, /circleArcInRect\(/);
   assert.match(rangeFn, /if \(!arc\) return;/);
 
-  const contacts = indexHtml.match(/if \(!radarUiActive && scannerState\.active && scannerContacts\.length\) \{[\s\S]*?PerfHUD\.addTiming\('renderHudTime'/)?.[0] || '';
-  assert.ok(contacts.length > 0);
-  assert.match(contacts, /hudMarkerOffscreen\(/);
-  assert.doesNotMatch(contacts, /ctx\.shadowBlur\s*=/);
+  // 2026-10-07: dawne okręgi z klamrami wokół każdego zeskanowanego kontaktu (rysowane co klatkę do końca
+  // gry) zastąpiła nakładka skanu (src/ui/radar/scanOverlay.js) — wyniki gasną po SCAN_TAG_LIFE s.
+  assert.doesNotMatch(indexHtml, /if \(!radarUiActive && scannerState\.active && scannerContacts\.length\) \{/);
+  assert.match(indexHtml, /scanOverlay\.draw\(ctx, scanOverlayView\)/);
+  const overlay = readFileSync(new URL('../src/ui/radar/scanOverlay.js', import.meta.url), 'utf8');
+  assert.match(overlay, /export const SCAN_TAG_LIFE = \d+/);
+  assert.doesNotMatch(overlay, /shadowBlur/);
 });
 
 test('kropki hardpointów NPC są tylko za DevFlags.showNpcHardpoints (domyślnie off)', () => {
@@ -283,12 +286,14 @@ const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), '
 
 test('wybuchy bez PointLight (światło zmieniało klucz programu) — światło przez siatkę świateł efektów', () => {
   // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
-  // Wybuch reaktora (zadanie 20, scena Core3D): światło rdzenia i rozbłysku idzie do siatki
-  // świateł efektów (ctx.grid.addWorld w kroku `lights`), nie do świateł sceny three.
-  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/reactorblow.tsl.js']) {
-    assert.doesNotMatch(readSrc(path), /PointLight|SpotLight/, path);
+  // Wybuchy WebGPU (2026-10-07, src/3d/explosions/ + gaz src/3d/gas/): błysk, ogień i żar idą do siatki świateł
+  // efektów (ctx.grid.addWorld w kroku `lights`), nie do świateł sceny three (PointLight ma tylko klej dem gazu).
+  for (const path of ['src/3d/explosions/explosionFx.js', 'src/3d/explosions/explosionRecipes.js', 'src/3d/gas/gasGrid.js',
+    'src/3d/gas/gasVolume.js', 'src/3d/gas/gasEmbers.js', 'src/3d/gas/gasExplosions.js']) {
+    const src = readSrc(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    assert.doesNotMatch(src, /PointLight|SpotLight/, path);
   }
-  assert.match(readSrc('src/effects3d/reactorblow.js'), /grid\.addWorld\(b\.x, b\.y, L\.z, range,/);
+  assert.match(readSrc('src/3d/explosions/explosionFx.js'), /grid\.addWorld\(x, y, 70 \+ R \* 0\.25, range,/);
   // Rakiety i Supernowa (port WebGPU, zadanie 19): światła wybuchów, dysz i łuków idą do
   // siatki świateł efektów Core3D (grid.addWorld), nie do świateł sceny three.
   for (const f of ['effects', 'rocketFx', 'smoke', 'fireballs', 'missileBodies', 'nebula', 'arcs', 'glow', 'plumes', 'sparks']) {
@@ -347,16 +352,20 @@ test('pociski 3D: barwy HDR raz na rodzinę, upload tylko zajętego wycinka', ()
 });
 
 // Zadanie 20: overlay (i jego adaptacja jakości — skala, pomijanie klatek, zrzucanie efektów)
-// usunięty; wybuch reaktora rysuje Core3D. Pule 100 000 / 15 000 slotów: rysowany tylko zapisany
-// zakres [0, highWater), pusta pula niewidoczna, wysyłka tylko zapisanego wycinka
-// (zachowanie: tests/reactorBlow.test.mjs).
-test('pule wybuchu reaktora: puste niewidoczne, instancje do highWater, wysyłka wycinka', () => {
-  const pool = readSrc('src/effects3d/particlePool.js');
-  assert.match(pool, /if \(mesh && mesh\.visible\) mesh\.visible = false;/);
-  assert.match(pool, /if \(geo && geo\.instanceCount !== this\.highWater\) geo\.instanceCount = this\.highWater;/);
-  assert.match(pool, /attr\.clearUpdateRanges = confirm;/, 'zakresy wysyłki na stałe (bez alokacji na klatkę)');
-  assert.doesNotMatch(pool.replace(/\/\/[^\n]*/g, ' '), /addUpdateRange\(|DynamicDrawUsage/);
+// usunięty. Wybuchy (2026-10-07, src/3d/explosions/): w spoczynku zero pracy — bryły gazu, żar i błyski niewidoczne
+// bez instancji, symulacja gazu bez aktywnych domen nie zleca compute, wysyłka tylko zapisanego zakresu instancji.
+test('wybuchy w spoczynku: puste siatki niewidoczne, gaz bez domen bez compute, wysyłka zakresu', () => {
+  const vol = readSrc('src/3d/gas/gasVolume.js');
+  assert.match(vol, /mesh\.visible = n > 0;/);
+  assert.match(vol, /if \(n\) for \(const a of M\.attrs\) \{ a\.clearUpdateRanges\(\); a\.addUpdateRange\(0, n \* 4\); a\.needsUpdate = true; \}/);
+  const grid = readSrc('src/3d/gas/gasGrid.js');
+  assert.match(grid, /if \(!act\.length\) \{[\s\S]{0,160}return;\s*\}/, 'bez aktywnych domen — bez renderer.compute');
+  const emb = readSrc('src/3d/gas/gasEmbers.js');
+  assert.match(emb, /this\.mesh\.visible = this\.highWater > 0;/);
+  assert.match(emb, /this\.mesh\.visible = n > 0;/);
+  assert.doesNotMatch(emb.replace(/\/\/[^\n]*/g, ' '), /DynamicDrawUsage/);
   assert.equal(existsSync(new URL('../src/effects3d/overlay.js', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../src/effects3d/particlePool.js', import.meta.url)), false);
 });
 
 test('CIC: bez renderu świata 3D pod planszą', () => {

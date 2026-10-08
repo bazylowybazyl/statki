@@ -61,8 +61,8 @@ window.aiPickTarget = (npc) => {
 // Promienie kadłubów po zbudowaniu ciała belek (hullBodies: połowa długości + komórka).
 const RADIUS = { battleship: 327, destroyer: 159, frigate_pd: 111, carrier: 555 };
 const MASS = { battleship: 50000, destroyer: 25000, frigate_pd: 10000, carrier: 100000 };
-const railgun = { baseRange: 14000, baseSpeed: 8000 };
-const armata = { baseRange: 7000, baseSpeed: 2500 };
+const railgun = { baseRange: 4500, baseSpeed: 8000 };
+const armata = { baseRange: 3500, baseSpeed: 2500 };
 const DT = 1 / 120;
 const BRAIN_DT = 1 / 20;
 

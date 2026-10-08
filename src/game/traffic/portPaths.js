@@ -448,7 +448,7 @@ function buildEntry(index, berth, dock, stationId) {
     y: by,
     angle,
     cls,
-    crane: false,
+    fuel: false,
     sequence: PORT_SEQUENCE.clamp,
     capture: null,
     corridor: 0,
@@ -510,8 +510,8 @@ function buildEntry(index, berth, dock, stationId) {
       const lane = K7_LANES.get(tb.id);
       const gateZ = K7_TEMPLATE.frontZ;
       const approachZ = K7_TEMPLATE.frontZ + K7_TEMPLATE.apronDepth + 600;
-      entry.crane = true;
-      entry.sequence = PORT_SEQUENCE.crane;
+      entry.fuel = true;
+      entry.sequence = PORT_SEQUENCE.fuel;
       entry.lane = true;
       entry.mouthDepth = gateZ - tb.z;
       entry.laneEndDepth = (lane ? lane.z1 : gateZ + K7_TEMPLATE.apronDepth) - tb.z;

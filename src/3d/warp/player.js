@@ -33,7 +33,13 @@ export const WARP_BUBBLE = Object.freeze({ radiusK: 0.62, asp: 1.35 });
  * Widoczna prędkość przepływu ośrodka w podróży [j/s]. Warp ma JEDNĄ prędkość (QOL 2026-10-03 — biegi
  * przeniesione do PRZELOTU), więc przepływ to `travel` (bieg II dema); gear1 / gear2 — wartości dema.
  */
-export const WARP_FLOW = Object.freeze({ gear1: 16000, gear2: 21000, travel: 21000, exitRest: 160 });
+export const WARP_FLOW = Object.freeze({ gear1: 16000, gear2: 21000, travel: 21000, exitRest: 160, slowMin: 2500 });
+/**
+ * Soczewka świata (worldLens.js — planety w skoku): β rośnie przez `kick` s po skoku; przy wyjściu
+ * trzyma się do końca zwolnienia i spada do zera przy zatrzymaniu — cel „wlatuje” w locie hamującym
+ * (demo: scenes.js — w.beta).
+ */
+export const WARP_LENS_TIMING = Object.freeze({ kick: 0.5 });
 /** Kadłub referencyjny dema (Atlas) — fale skalują się długością kadłuba. */
 const REF_LENGTH = 1800;
 
@@ -68,7 +74,8 @@ const NEVER = -1e9;
  * Stan skoku gracza. advance(t, dt, game, map, medium) → ruch kamery ośrodka → fill(...):
  *   game = { state: 'idle'|'charging'|'active', charge (0..1), chargeTime, gear, speed (j/s),
  *            angle (kurs), x, y (poza renderu kadłuba, świat), length, width (kadłub, j.),
- *            palette (id), entity, vRelX/Y, exitRamp (warp.exitRamp gry albo null) }
+ *            palette (id), entity, vRelX/Y, exitRamp (warp.exitRamp gry albo null),
+ *            flyby (zwolnienie przy mijanych ciałach 0..1), cruise (nominalna prędkość skoku) }
  *   map   = { camX, camY } — kamera gry (pozycje względem niej).
  */
 export class WarpPlayerFx {
@@ -91,6 +98,7 @@ export class WarpPlayerFx {
     this.kickMX = 0;             // punkt skoku w przestrzeni ośrodka (widocznej)
     this.kickMY = 0;
     this.flowAtExit = 0;
+    this.lensAtExit = 0;          // β soczewki świata w chwili wyjścia
     this.flowGear = WARP_FLOW.travel;
     this.chargeBoost = 1;
     this.chargeK = 1;
@@ -113,6 +121,16 @@ export class WarpPlayerFx {
 
   visibleFlowAt(t) {
     return lerp(900, this.flowGear, easeOut3((t - this.kickT) / 0.45));
+  }
+
+  /** β soczewki świata (0 — prawdziwy widok planet, 1 — soczewka skoku) w chwili t. */
+  lensBeta(t) {
+    if (this.mode === 'warp') return smooth(0, WARP_LENS_TIMING.kick, t - this.kickT);
+    if (this.mode === 'exit') {
+      const tx = t - this.exitT;
+      return this.lensAtExit * (1 - smooth(this.ramp.slow, Math.max(this.ramp.slow + 0.05, this.ramp.tHalt), tx));
+    }
+    return 0;
   }
 
   /**
@@ -152,7 +170,10 @@ export class WarpPlayerFx {
         if (this.onShake) this.onShake(18, 0.3);   // ~9 px (cameraRig: mag × 0,5)
       }
       this.charge = 1;
-      this.flowGear = WARP_FLOW.travel;
+      // Przy mijanym ciele statek zwalnia (warpDrive.js: warpFlybySlowdown) — przepływ widoczny z nim
+      // (demo: U = max(2500, bieg · (v / vc)^0,6)); strefy (pas, okolice planet) przepływu nie ruszają.
+      const fly = Number.isFinite(game.flyby) ? clamp01(game.flyby) : 1;
+      this.flowGear = Math.max(WARP_FLOW.slowMin, WARP_FLOW.travel * Math.pow(fly, 0.6));
     } else {
       if (this.mode === 'warp') {
         this.mode = 'exit';
@@ -166,7 +187,8 @@ export class WarpPlayerFx {
     this.angle = Number(game.angle) || 0;
     // Rulon i lejek (jedna faza z ładowaniem; szarpnięcie przy skoku; rozwinięcie w zwolnieniu).
     const rs = this.mode === 'charging' || this.mode === 'idle' ? 'charging' : (this.mode === 'warp' ? 'active' : 'exit');
-    this.rulonBend = warpRulonBend(rs, this.charge, t - this.kickT, t - this.exitT, this.ramp.slow);
+    // Rozwijanie przy wyjściu przez zwolnienie i wlot rampy (płynnie — warpDrive.js: WARP_RULON).
+    this.rulonBend = warpRulonBend(rs, this.charge, t - this.kickT, t - this.exitT, this.ramp.slow + this.ramp.coast);
     if (this.mode === 'idle' && this.charge <= 0.001) this.rulonBend = 0;
     this.rulonField = Math.min(1, this.rulonBend);
   }
@@ -189,6 +211,7 @@ export class WarpPlayerFx {
       this.exitT = t;
     }
     this.flowAtExit = Math.max(WARP_FLOW.exitRest, this.visibleFlowAt(t - dt));
+    this.lensAtExit = smooth(0, WARP_LENS_TIMING.kick, t - this.kickT);
     this.brakeShaken = false;
     // Ładowanie zużyte (po wyjściu rulon nie wraca przez gałąź „przerwanego ładowania”).
     this.charge = 0;

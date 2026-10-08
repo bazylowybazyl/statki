@@ -64,6 +64,15 @@ export const STORY_CAST = Object.freeze({
     portrait: null,
     side: 'right'
   }),
+  // Misja 2: zasadzka w pasie asteroid w drodze powrotnej (herszt mógł już zginąć w trzeciej fali).
+  ambusher: Object.freeze({
+    name: 'Dowódca zasadzki',
+    role: 'Piraci Iron Skull',
+    initials: 'DZ',
+    color: '#ff9a6b',
+    portrait: null,
+    side: 'right'
+  }),
   unknown: Object.freeze({
     name: '???',
     role: '',

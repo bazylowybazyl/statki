@@ -68,7 +68,8 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
   // Maska: RGBA8 bez MSAA, rozmiar bufora sceny (teksel 1:1 z pikselem materiału).
   assert.match(coreSource, /this\.sunShadowTarget = new THREE\.RenderTarget\(/);
   assert.doesNotMatch(coreSource, /WebGLRenderTarget/);
-  assert.match(coreSource, /if \(this\.sunShadowTarget\) this\.sunShadowTarget\.setSize\(bufW, bufH\);/);
+  // Rozmiar przez resizeRenderTarget (wiązania tekstur po setSize — AGENTS.md „Resize celów”).
+  assert.match(coreSource, /resizeRenderTarget\(this\.sunShadowTarget, bufW, bufH, readyRenderer\);/);
   // Wyjście passa = maska (R powierzchnia, G tło, B mrok gęstego pola
   // asteroid), bez służby 1 = "nic".
   assert.match(coreSource, /out\.assign\(vec4\(surfaceOut, backdropOut, clamp\(fieldDark, 0\.0, 1\.0\)\.mul\(uShaftGain\), 1\.0\)\);/);
@@ -118,7 +119,11 @@ test('analytic occluders skip interiors so surfaces keep their own lighting', ()
   assert.match(coreSource, /If\(along\.lessThanEqual\(exitDist\), \(\) => \{ Continue\(\); \}\);/);
   // Pomijany CALY statek, nie jedna jego czesc — lancuch kapsul pomijal
   // tylko wnetrze tej samej kapsuly i kazda cienila kadlub pod sasiednia.
-  assert.match(hullSdfSource, /If\(t\.lessThanEqual\(0\.0\), \(\) => \{\s*If\(hullSdfDist\(q\)\.lessThan\(wMin\), \(\) => \{ Continue\(\); \}\);/);
+  // Tylko w kanale powierzchni: tlo (G) idzie marszem dalej, inaczej pas przy
+  // brzegu kazdej wyrwy (SDF szerszy od skory) wychodzil jasna obwodka.
+  assert.match(hullSdfSource, /If\(t\.lessThanEqual\(0\.0\), \(\) => \{\s*If\(hullSdfDist\(q\)\.lessThan\(wMin\), \(\) => \{ onHull\.assign\(1\.0\); \}\);/);
+  assert.ok(hullSdfSource.includes('shadow.assign(max(shadow, hullShade.mul(float(1.0).sub(onHull))));'));
+  assert.ok(hullSdfSource.includes('backdrop.assign(max(backdrop, hullShade));'));
   assert.match(coreSource, /If\(insideDisc\.lessThan\(0\.5\), \(\) => \{/);
 });
 
@@ -175,7 +180,10 @@ test('hull shaft starts at the hull edge and only dims the scene', () => {
   // Marsz po SDF od piksela do slonca: promien wchodzacy w kadlub tuz za
   // burta daje pelny cien, polcien rosnie z dystansem od statku.
   assert.ok(hullSdfSource.includes('const w = max(softMax.mul(clamp(t.div(span), 0.0, 1.0)), wMin).toVar();'));
-  assert.ok(coreSource.includes('shadow.assign(max(shadow, hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH)));'));
+  assert.ok(coreSource.includes('const hullShadow = hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH).toVar();'));
+  // x = powierzchnia (bez samocienia) do kanału R, y = tło (bez pominięcia własnego kadłuba) do kanału G.
+  assert.ok(coreSource.includes('const backdropShadow = max(shadow, hullShadow.y).toVar('));
+  assert.ok(coreSource.includes('shadow.assign(max(shadow, hullShadow.x));'));
   // Statek tylko przygasza; umbra do czerni zostaje planetom.
   assert.match(coreSource, /const HULL_SHADOW_STRENGTH = 0\.55;/);
   assert.match(coreSource, /shadow\.assign\(max\(shadow, edge\.mul\(fall\)\.mul\(max\(disc\.w, 0\.0\)\)\)\);/);
@@ -339,7 +347,7 @@ test('emitters and the Halo ring never read the sun shadow mask', () => {
     assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(read(`haloRing/${rel}`)), `haloRing/${rel} must keep its own sun model`);
   }
   // Okrag ringu tylko w kanale tla — powierzchnia (R) konczy sie na kadlubach.
-  assert.match(coreSource, /const surfaceShadow = float\(shadow\)\.toVar\(\);[\s\S]*If\(insideDisc\.lessThan\(0\.5\), \(\) => \{[\s\S]*const backdropOut = clamp\(shadow, 0\.0, 1\.0\)\.mul\(uShaftGain\)\.toVar\(\);/);
+  assert.match(coreSource, /const surfaceShadow = float\(shadow\)\.toVar\(\);[\s\S]*If\(insideDisc\.lessThan\(0\.5\), \(\) => \{[\s\S]*backdropShadow\.assign\(max\(backdropShadow, ringShade\)\);[\s\S]*const backdropOut = clamp\(backdropShadow, 0\.0, 1\.0\)\.mul\(uShaftGain\)\.toVar\(\);/);
 });
 
 test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
@@ -357,9 +365,11 @@ test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
   assert.match(planetTsl, /sunShaftBackdrop\(tint\)/);
   // Planety tla (perspektywa, z = -50 000) nie czytaja maski liczonej w plaszczyznie gry.
   assert.match(planetSource, /uSunShadowRecv: \{ value: this\.isRingAnchored \? 1\.0 : 0\.0 \}/);
-  // Planeta przy ringu: zaćmienie gasi dzień (terminator), chmury, poświatę; poświata limbu — do połowy.
-  assert.match(planetTsl, /const sunVisP = mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\)\.toVar\(\);\s*mixFactor\.mulAssign\(sunVisP\);/);
-  assert.match(planetTsl, /const lit = smoothstep\(-0\.02, 0\.22, dot\(normal, lightDir\)\)\.mul\(mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\)\)/);
+  // Planeta przy ringu: zaćmienie gasi dzień (światło słońca, mgiełkę i łunę zachodu — w cieniu zapalają
+  // się miasta), chmury, poświatę; poświata limbu — do połowy.
+  assert.match(planetTsl, /const sunVisP = mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\)\.toVar\(\);[\s\S]*?\.mul\(sunT\)\.mul\(sunVisP\);/);
+  assert.match(planetTsl, /const cityOn = float\(1\.0\)\.sub\(smoothstep\([^)]*\)\.mul\(sunVisP\)\);/);
+  assert.match(planetTsl, /const sunVisC = mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\)\.toVar\(\);\s*const lit = smoothstep\([^)]*\)\.mul\(sunVisC\)/);
   assert.match(planetTsl, /glow\.mulAssign\(mix\(1\.0, sunVisibility\(\), U\.uSunShadowRecv\.mul\(0\.5\)\)\);/);
   assert.match(planetSource, /if \(this\.isRingAnchored\) applySunShadowToBuiltinMaterial\(material, 'direct'\);/);
 });

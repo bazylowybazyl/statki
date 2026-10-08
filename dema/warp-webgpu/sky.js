@@ -1,6 +1,6 @@
 // dema/warp-webgpu/sky.js
 //
-// Tło jak w grze: mgławica `assets/nebula.png` (NebulaSystem z
+// Tło jak w grze: mgławica `assets/nebula.webp` (NebulaSystem z
 // src/3d/planet3d.assets.js — płaszczyzna 800 × 500 tys. j. na z = −150 000,
 // paralaksa 0,98, czyli przesuwa się o 2% ruchu kamery). Osobny pass — tylko
 // ją zgina soczewka bańki (gwiazd nie: gięte smugi wyglądały jak 3D).
@@ -18,7 +18,7 @@ const NEBULA_ASPECT = 1.6;
 
 export class WarpSky {
   constructor(scene) {
-    const tex = new THREE.TextureLoader().load('/assets/nebula.png');
+    const tex = new THREE.TextureLoader().load('/assets/nebula.webp');
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.minFilter = THREE.LinearMipmapLinearFilter;

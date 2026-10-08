@@ -592,7 +592,8 @@ for (const v of VARIANTS) {
     r.combos = describeFront(geo, frontWithField(res.pair, geo.halfA * 2, geo.halfB * 2, [FIELD_A, FIELD_B]));
     const cargo = geo.slots * geo.module.count * TONNES * mul;
     const door = `${r.door}${r.n > 1 ? ` ×${r.n}` : ''}`;
-    log(`- **${tag}**: ${v.mirror ? '2 × ' : ''}${fmt(2 * geo.halfA)} × ${fmt(2 * geo.halfB)} j. (PNG x ${fmt(r.x0)}…${fmt(r.x1)}, y ${fmt(r.yc - r.hh)}…${fmt(r.yc + r.hh)}, ${door}), pusta: ${fmt(cargo)} t`);
+    const name = tag === 'najwięcej niszczycieli' && !r.maxH ? 'najwięcej fregat' : tag;
+    log(`- **${name}**: ${v.mirror ? '2 × ' : ''}${fmt(2 * geo.halfA)} × ${fmt(2 * geo.halfB)} j. (PNG x ${fmt(r.x0)}…${fmt(r.x1)}, y ${fmt(r.yc - r.hh)}…${fmt(r.yc + r.hh)}, ${door}), pusta: ${fmt(cargo)} t`);
     for (const c of r.combos) {
       const parts = [];
       if (c.h) parts.push(`${c.h * mul} × Hasta`);

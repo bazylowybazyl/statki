@@ -220,7 +220,8 @@ test('cel priorytetowy bierze ogień wszystkich wież, które go sięgają; po j
   s.fc.inHand = 'missile';
   s.fc.auto.missile = false;
   const near = enemy(2000, 0, 'frigate');
-  const focus = enemy(-6000, 2000, 'battleship', { hp: 19000 });
+  // Dalej niż fregata, ale w zasięgu railguna Mk II (4,5 km od 2026-10-07).
+  const focus = enemy(-3500, 1500, 'battleship', { hp: 19000 });
   s.setCandidates([focus, near], [focus]);
   s.run(2.5);
   const targets = s.shots.map((x) => x.target);
@@ -425,7 +426,8 @@ test('plan salwy: dobór rakiety do klasy, cel prawie pokryty nie ściąga całe
 test('wybór celu: dopasowanie kalibru i chwyt kursora', () => {
   const s = makeScene({ main: 1 });
   const fighter = enemy(700, 0, 'fighter', { radius: 12, hp: 120 });
-  const ship = enemy(2400, 0, 'battleship', { hp: 19000 });
+  // W zasięgu lekkiego działka (Gatling S: 1,8 km od 2026-10-07).
+  const ship = enemy(1500, 700, 'battleship', { hp: 19000 });
   s.setCandidates([fighter, ship]);
   const heavy = MASTER_WEAPONS.special_yamato_cannon;
   const light = MASTER_WEAPONS.gatling_s;
@@ -437,10 +439,11 @@ test('wybór celu: dopasowanie kalibru i chwyt kursora', () => {
   s.env.trigger = true;
   assert.equal(fcPickTarget(s.fc, heavy, 0, 0, 0, null, s.env), fighter, '„bij tam, gdzie ja”');
   // Chwyt kursora liczy odległość do obrysu.
-  assert.equal(fcPickNearPoint(s.fc.candidates, 2, 2900, 0, 250, s.env), ship, 'duży kadłub łapie się obrysem');
+  assert.equal(fcPickNearPoint(s.fc.candidates, 2, 2000, 700, 250, s.env), ship, 'duży kadłub łapie się obrysem');
   assert.equal(fcPickNearPoint(s.fc.candidates, 2, 720, 60, 250, s.env), fighter);
-  // Lekkie działko nie strzela do myśliwca z daleka (zejdzie z toru), z bliska — tak.
-  fighter.x = 3000;
+  // Lekkie działko nie strzela do myśliwca z daleka (zejdzie z toru), z bliska — tak. 1,7 km: w zasięgu,
+  // ale pocisk 4200 j/s leci 0,4 s — szansa trafienia zwinnego myśliwca spada do zera.
+  fighter.x = 1700;
   assert.equal(fcPickTarget(s.fc, light, 0, 0, 0, null, s.env), ship);
   fighter.x = 700;
   assert.equal(fcPickNearPoint(s.fc.candidates, 2, 9000, 9000, 250, s.env), null);

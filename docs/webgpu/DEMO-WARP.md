@@ -173,8 +173,9 @@ opis w `agents.md`, Core3D „Warp „Nurt””). Co poszło gdzie i czym róż
 - *Kadłub*: `uWarpA/B/C` per obiekt w materiale kadłuba (`hullWarp`); żar brzegu z alfy mipmapy sprite'a
   (rozmyty brzeg sylwetki) zamiast SDF cienia — to samo miejsce, bez drugiej tekstury.
 - *Plazma WARP* z dysz: `warpPlume3D` gry (`entity.__warpNurtMode` dla NPC), nie duszki dema.
-- **Nie przeniesione:** soczewka świata (`worldLens.js` — ciała w widoku skoku; gra rysuje prawdziwy
-  świat, punkt wyjścia wyznacza rozgrywka), pokazowe planety / HUD dema.
+- **Nie przeniesione:** pokazowe planety / HUD dema. Soczewka świata długo nie była przeniesiona (gra
+  rysowała prawdziwy świat — w skoku żadna planeta nie trafiała do kadru); od 2026-10-07 jest w grze —
+  § „Soczewka świata i tempo podróży w grze” niżej.
 
 Integracja (plan sprzed zadania 22): sesja portu WebGPU (`docs/webgpu/PLAN.md`, zadanie 12 — wspólna
 infrastruktura efektów w Core3D).
@@ -231,7 +232,8 @@ słoneczny i trasy, sceny, HUD.
   ~2× rysunków (obiekty zza kadru). Ograniczenia: płaszczyzny z 4 wierzchołków (łapacze cienia — schowane
   w rulonie) i moduły z własnym cullingiem CPU (pas, LOD ringu) nie pokazują obiektów spoza zwykłego kadru.
 - *Oś czasu*: `warpRulonBend` (warpDrive.js — ta sama w efekcie i w rigu kamery). Ładowanie gry 0,8 s —
-  rulon zwija się w nim całym (demo 3 s).
+  rulon zwija się w nim całym (demo 3 s). Krzywe wygładzone 2026-10-08 (§ „Wejście w soczewkę i płynny
+  rulon”).
 - *Kurs przed skokiem* (rozgrywka): ładowanie nie obraca statku, w locie bez skrętu (`warp.chargeAngle`).
 - *Wyjście gracza = przylot NPC* — prawdziwa kinematyka: `warp.exitRamp` (`createWarpExitRamp`:
   zwolnienie 0,7 s, wlot 0,45 s, hamowanie 0,9 L) prowadzi statek w physicsStep; efekt (`player.js`) czyta
@@ -250,6 +252,54 @@ słoneczny i trasy, sceny, HUD.
   odcinka (`warpExitRampDistance`), cel w studni grawitacji — warp do jej brzegu, resztę napędem
   (`src/game/travelNav.js`). Hipercruise przejmie odcinki napędem. Sprawdzenie w grze:
   `node scripts/webgpu/travel-gra.mjs` (statek staje 20–80 j. od celu).
+
+### Soczewka świata i tempo podróży w grze (2026-10-07)
+
+User: „zauważ, jak w demie fajnie zachowują się planety — Mars jest rozlewany, rozciągany, finalna planeta
+pokazywana, a potem wlatuje; ten feel zniknął z gry; warp jest też znacznie szybszy”. Pomiar (zrzuty klatka po
+klatce, demo i gra): w demie Ziemia → Jowisz trwa od skoku do wyjścia 10,7 s, Mars jest w kadrze 3,5 s (statek
+zwalnia przy nim z 290 do 44 tys. j/s), Jowisz wisi przy krawędzi ~2,5 s; w grze ten sam lot trwał 6,3 s
+i przez cały skok żadna planeta nie była w kadrze (prawdziwe miejsca setki tysięcy j. od kadru, CPU culling
+planet), a po wyjściu kadr był pusty.
+
+- *Soczewka* (`src/3d/warp/worldLens.js` — czyste funkcje dema, teraz jedno źródło; demo je importuje):
+  `WarpNurt._commitWorldLens` (β z `WarpPlayerFx.lensBeta`, kamera bez wstrząsu, statek w pozie renderu),
+  rozstawienie w `planet3d.assets.js` (`applyWarpWorldLens` — planety przy ringu w passie ortho w płaszczyźnie
+  gry, reszta w passie perspektywy na z = −50 000; obrót przelotu na bryle, słońce obrócone z bryłą, kadr po
+  rulonie, `rulonBoostCpu`). Ring „Halo” zostaje prawdziwy — planeta z ringiem w kadrze nie wchodzi w soczewkę
+  (bramka `gate`). Cel = planeta przy końcu odcinka warpem (`planPlayerWarp` w index.html).
+- *Tempo*: skok z celem trwa jak podróż dema (`warpTripTime`, plan prędkości `planWarpCruise`), statek zwalnia
+  przy mijanych planetach (`warpFlybyFactor` w fizyce skoku), przepływ ośrodka zwalnia z nim. Swobodny skok —
+  260 tys. j/s (z tym samym zwolnieniem).
+- *Przybycie* (pytanie 3 niżej): w grze statek staje na brzegu studni grawitacji celu (~20 tys. j. od tarczy
+  planety z ringiem = ~2 wysokości kadru przy zoomie gracza), więc cel „wlatuje” na prawdziwe miejsce poza
+  kadrem — w demie stawał 260 px od tarczy. Do decyzji usera: ujęcie przybycia (chwilowe oddalenie kamery,
+  które pokaże planetę z ringiem) albo zostawić.
+
+### Wejście w soczewkę i płynny rulon (2026-10-08)
+
+User: „jak odpalam warp obok Ziemi, strona nocna nagle skacze na środek ekranu i mocno świeci; upłynnij
+wejście i wyjście z warpa — zawijanie i rozwijanie”.
+
+- *Przyczyna skoku*: β soczewki (0 → 1 w 0,5 s) przenosi KAŻDE ciało z prawdziwego miejsca na miejsce
+  w soczewce. Planeta startu z boku statku ma prawdziwy obraz daleko za kadrem (Ziemia 56–70 tys. j. od
+  środka = kilka wysokości kadru), a w soczewce — tuż przy statku; w ~0,3 s wjeżdżała z boku na środek,
+  rulon rozciągał ją w lejku, a jasny brzeg limbu i miasta strony nocnej rozlewały się po kadrze.
+- *Reguła wejścia* (`WarpWorldLens._entry`, `worldLens.js`): ciało, którego prawdziwy obraz jest poza
+  kadrem (koło ∩ prostokąt, `lensDiscInFrame`), a obraz w soczewce w kadrze (`lensDiscVisible` w
+  `planet3d.assets.js` — po rulonie), wchodzi w soczewkę tylko PRZED DZIOBEM (cos kąta do kursu >
+  `WORLD_LENS_ENTRY.aheadCos` 0,5 — wlatuje od strony lotu); inne czeka na prawdziwym miejscu, aż jego obraz
+  w soczewce wyjdzie z kadru — przejście jest wtedy niewidoczne. Prawdziwy obraz w kadrze (planeta bez ringu
+  tuż obok) — od razu, przejście ciągłe. Decyzja zapada raz na skok (`reset()` = nowa sesja), dopiero przy
+  otwartej bramce ringu (`gate > 0`).
+- *Rulon* (`warpRulonBend`, `WARP_RULON` w warpDrive.js): zawijanie = smoothstep przez CAŁE ładowanie
+  (początek i koniec bez szarpnięcia, szczyt 1,9/s zamiast ~2,4/s), kop skoku to łagodne wzbrzmienie
+  (+6,6% po 0,15 s, narastanie Gaussa — dawniej +16% w 0,03 s), rozwijanie = smoothstep przez zwolnienie
+  I wlot rampy (1,15 s; dawniej easeOut³ w 0,7 s ruszający z prędkością 4,3/s). Ładowanie gry nadal 0,8 s
+  (demo 3 s) — dłuższe to zmiana rozgrywki, do decyzji usera.
+- Sprawdzenie: test `wejście w soczewkę` (`tests/warpWorldLens.test.mjs`), oś rulonu
+  (`tests/warpNurt.test.mjs`); w grze skok przy porcie K-7 stroną nocną — Ziemia stoi, póki jej obraz w
+  soczewce nie wyjdzie z kadru; Księżyc przed dziobem przelatuje jak dawniej.
 
 ## Otwarte pytania do usera
 

@@ -6,7 +6,11 @@
 //   WARP  — warpPlume3D.js (port PlasmaEngineFX): leci z tych samych dysz co
 //           MAIN na czas ładowania i skoku; pula z limitem, nadmiar dysz
 //           dostaje strugę MAIN z dopalaczem.
-//   SIDE  — engineExhaustBatch.js bez zmian (globalny tuner sideW/sideL).
+//   SIDE  — od 2026-10-07 sideJets3D.js (WebGPU: praca impulsowa, struga TSL, gaz w pulach GPU,
+//           światło na blasze; barwa z palety MAIN okrętu), dawny engineExhaustBatch.js tylko jako A/B
+//           (SideJets3D.enabled = false). Dysza ma model 3D (sponson + obrotowy dzwon,
+//           ships3d/thrusters/sideThruster3D.js) — tu wpis na listę klatki (SideNozzleFrame), a struga
+//           zaczyna się w wylocie dzwonu.
 import { Core3D } from './core3d.js';
 import { EngineExhaustBatch, createExhaustState } from './engineExhaustBatch.js';
 import { getEngineVfxClassScale } from './engineVfxScale.js';
@@ -20,6 +24,10 @@ import { WarpPlume3D } from './warpPlume3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 // Dysze MAIN tej klatki per okręt — dla poświaty dysz na pyle kosmicznym (src/3d/dust/).
 import { EngineFrame } from './engineFrame.js';
+// Dysze SIDE tej klatki — modele 3D dysz bocznych (sideNozzleFrame.js → shipModels3DGame.js); płomień z wylotu dzwonu.
+import { SideNozzleFrame, SIDE_NOZZLE_RADIUS, SIDE_NOZZLE_MOUTH } from './sideNozzleFrame.js';
+// Dysze SIDE na WebGPU (2026-10-07): struga TSL, gaz w pulach GPU, światło na blasze — zamiast engineExhaustBatch.
+import { SideJets3D, createSideJetState } from './sideJets3D.js';
 import { GameState } from '../game/gameState.js';
 import { buildEntityEngineFx, fallbackNozzleRadius } from '../data/engineFx.js';
 import { cloakVisAtWorld } from '../game/cloakLook.js';
@@ -451,8 +459,8 @@ export const EngineNozzleInternals = Object.freeze({ buildSlots, syncNozzleMount
 function createEffects(slots) {
   const exhausts = [];
   for (const slot of slots) {
-    if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), slot, main: null, warp: null });
-    else exhausts.push({ state: null, slot, main: createMainExhaustState(), warp: null });
+    if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), jet: createSideJetState(), slot, main: null, warp: null });
+    else exhausts.push({ state: null, jet: null, slot, main: createMainExhaustState(), warp: null });
   }
   return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0, inputRefs: createSlotInputRefs(), mounts: null };
 }
@@ -588,6 +596,11 @@ const mainPush = {
   x: 0, y: 0, dirX: 0, dirY: -1, radius: 0, throttle: 0, boost: false,
   lengthMul: 1, widthMul: 1, palette: 0, jetGain: 1, sparkMul: 1, pixelRadius: 99, dt: 0
 };
+// Dysza SIDE dla SideJets3D.push (obiekt wielokrotnego użytku — gorąca pętla klatki).
+const sidePush = {
+  x: 0, y: 0, dirX: 0, dirY: -1, radius: 0, fire: 0, idle: 0, dead: false, palette: 0, gain: 1,
+  entity: null, fromRender: false, sparks: false
+};
 
 function updateEffects(entity, fxData, dt) {
   const interpPose = getInterpolatedPose(entity);
@@ -637,6 +650,9 @@ function updateEffects(entity, fxData, dt) {
   EngineFrame.beginShip(entity, Number(entity.vel?.x ?? entity.vx) || 0, -(Number(entity.vel?.y ?? entity.vy) || 0), isPlayerEntity);
   // Kadłub belkowy: dysze, których komórka nie jest już żywym węzłem ciała (odcięta z odłamem, zestrzelona).
   const nozzleAlive = syncNozzleMounts(entity, fxData);
+  // Modele dysz SIDE (sideNozzleFrame.js): pierwsza dysza tego okrętu na liście klatki (zdublowane markery — jedna bryła).
+  const sideModels = SideNozzleFrame.enabled;
+  const sideFrom = SideNozzleFrame.count;
 
   const exhausts = fxData.exhausts;
   for (let n = 0; n < exhausts.length; n++) {
@@ -658,15 +674,25 @@ function updateEffects(entity, fxData, dt) {
     const forcedThrottleRaw = Number(slot?.source?.__throttle);
     const hasForcedThrottle = Number.isFinite(forcedThrottleRaw);
     let slotThrottle = mainThrottle;
+    // SIDE: ciąg manewrowy (nowe dysze — sideJets3D.js) osobno od jałowego połysku szybkiego lotu (płomyk).
+    let sideFire = 0;
+    let sideIdle = 0;
     if (slot.kind === 'side') {
       const sideDrive = slot.side === 'left'
         ? strafeLeft
         : (slot.side === 'right' ? strafeRight : Math.max(strafeLeft, strafeRight));
       slotThrottle = Math.max(sideDrive, torque * 0.8, moveGlow * 0.55);
+      sideFire = Math.max(sideDrive, torque * 0.8);
+      sideIdle = moveGlow * 0.55;
     } else if (!isHulk) {
       slotThrottle = Math.max(slotThrottle, MAIN_IDLE_THROTTLE);
     }
-    if (hasForcedThrottle) slotThrottle = forcedThrottleRaw;
+    // __throttle: ciąg dyszy z modelu dysz (thrusterModel.js — gracz i NPC) albo wymuszony (narzędzia).
+    if (hasForcedThrottle) {
+      slotThrottle = forcedThrottleRaw;
+      sideFire = forcedThrottleRaw;
+      sideIdle = 0;
+    }
     slotThrottle = Math.max(0, Math.min(1, slotThrottle));
 
     // Pozycje dysz pozostają w przestrzeni kadłuba. vfxScale dyszy dławi ją
@@ -744,46 +770,94 @@ function updateEffects(entity, fxData, dt) {
 
     const tune = frameCtx.tune;
     const widthMul = frameCtx.sideWidthMul;
-    const lengthMul = Math.max(0.05, Number(tune?.sideL) || 1);
-    const curveVal = Number(tune?.sideCurve ?? tune?.curve);
-    const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
 
-    // Płomień boczny skaluje się z klasą statku, a globalny tuner jest końcowym
-    // mnożnikiem (dysze boczne zostają na starym batchu).
-    const effectScale = classScale * slotScale;
-
-    const state = item.state;
-    state.curve = curve;
-    state.throttleTarget = slotThrottle;
-    if (entity.isPlayer && typeof window !== 'undefined' && window.OPTIONS?.vfx) {
-      const driveColorTemp = Number(window.shipDriveState?.engineColorTempK);
-      state.colorTempK = Number.isFinite(driveColorTemp)
-        ? driveColorTemp
-        : window.OPTIONS.vfx.colorTempK;
-      state.bloomGain = window.OPTIONS.vfx.bloomGain;
+    // Model dyszy SIDE: oś obrotu w markerze (nozzleWorld), dzwon wzdłuż wydechu — struga, gaz, światło i gorące
+    // powietrze zaczynają się w WYLOCIE dzwonu (promień wylotu jak rdzeń strugi — sideNozzleFrame.js).
+    const sideNozzleR = SIDE_NOZZLE_RADIUS * scale * classScale * widthMul;
+    let flameX = nozzleWorldX;
+    let flameY = nozzleWorldY;
+    if (sideModels) {
+      flameX += dirX * SIDE_NOZZLE_MOUTH * sideNozzleR;
+      flameY += dirY * SIDE_NOZZLE_MOUTH * sideNozzleR;
     }
 
-    // Dalej łańcuch dyszy bocznej: . Rz(nozzleRot) . S(widthMul*effectScale,
-    // lengthMul*effectScale) — para skal na instancję. Maskowanie: jasność × widoczność komórki dyszy,
-    // ukryta dysza bez instancji.
+    let jetPower = 0;
+    let jetHeat = 0;
+    if (SideJets3D.enabled) {
+      // Dysze SIDE na WebGPU (sideJets3D.js): praca impulsowa, struga TSL, gaz w pulach GPU, światło na blasze.
+      // Utrata dowodzenia (vfxScale dyszy < 1) dławi ciąg, hulk bez płomyka dyżurnego.
+      const jp = sidePush;
+      jp.x = flameX;
+      jp.y = flameY;
+      jp.dirX = dirX;
+      jp.dirY = dirY;
+      jp.radius = sideNozzleR;
+      jp.fire = Math.max(0, Math.min(1, sideFire)) * (slotScale < 1 ? slotScale : 1);
+      jp.idle = sideIdle;
+      jp.dead = isHulk;
+      jp.palette = engineFx.mainPaletteIndex | 0;
+      jp.gain = cloakVis * jetGain;
+      jp.entity = entity;
+      jp.fromRender = interpPose !== null;
+      SideJets3D.push(item.jet, jp);
+      jp.entity = null;
+      jetPower = item.jet.power;
+      jetHeat = item.jet.heat;
+    } else {
+      // Dawny płomień SIDE (engineExhaustBatch.js — A/B: SideJets3D.enabled = false).
+      const lengthMul = Math.max(0.05, Number(tune?.sideL) || 1);
+      const curveVal = Number(tune?.sideCurve ?? tune?.curve);
+      const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
+      // Płomień boczny skaluje się z klasą statku, a globalny tuner jest końcowym mnożnikiem.
+      const effectScale = classScale * slotScale;
+      const state = item.state;
+      state.curve = curve;
+      state.throttleTarget = slotThrottle;
+      if (entity.isPlayer && typeof window !== 'undefined' && window.OPTIONS?.vfx) {
+        const driveColorTemp = Number(window.shipDriveState?.engineColorTempK);
+        state.colorTempK = Number.isFinite(driveColorTemp)
+          ? driveColorTemp
+          : window.OPTIONS.vfx.colorTempK;
+        state.bloomGain = window.OPTIONS.vfx.bloomGain;
+      }
+      // Dalej łańcuch dyszy bocznej: . Rz(nozzleRot) . S(widthMul*effectScale,
+      // lengthMul*effectScale) — para skal na instancję. Maskowanie: jasność × widoczność komórki dyszy,
+      // ukryta dysza bez instancji.
+      if (cloakVis > 0.01) {
+        const nozzleRot = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
+        EngineExhaustBatch.push(state, {
+          x: flameX,
+          y: flameY,
+          rot: sceneAngle + nozzleRot,
+          scaleX: scale * widthMul * effectScale,
+          scaleY: scale * lengthMul * effectScale,
+          dt,
+          gain: cloakVis
+        });
+      }
+      jetPower = Number(state.currentThrottle) || 0;
+      jetHeat = Number(state.heat) || 0;
+    }
     if (cloakVis <= 0.01) continue;
-    const nozzleRot = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
-    EngineExhaustBatch.push(state, {
-      x: nozzleWorldX,
-      y: nozzleWorldY,
-      rot: sceneAngle + nozzleRot,
-      scaleX: scale * widthMul * effectScale,
-      scaleY: scale * lengthMul * effectScale,
-      dt,
-      gain: cloakVis
-    });
+
+    // Model dyszy na listę klatki (rysuje shipModels3DGame.js). Maskowanie: znika z komórką kadłuba pod sobą
+    // (jak wieże 3D — próg 0,5). Kierunek podstawy = wydech w spoczynku (baseDeg — na zewnątrz burty) w scenie.
+    if (sideModels && cloakVis >= 0.5 && !SideNozzleFrame.near(sideFrom, nozzleWorldX, nozzleWorldY, sideNozzleR * 0.5)) {
+      const src = slot.source;
+      const baseDeg = Number.isFinite(Number(src?.baseDeg)) ? Number(src.baseDeg) : (Number(slot.baseDeg) || 0);
+      const bRad = baseDeg * Math.PI / 180;
+      const bLocalX = -Math.sin(bRad);
+      const bLocalY = -Math.cos(bRad);
+      SideNozzleFrame.push(entity, src || slot, nozzleWorldX, nozzleWorldY, offset.x || 0, offset.y || 0,
+        bLocalX * cA - bLocalY * sA, bLocalX * sA + bLocalY * cA, dirX, dirY, sideNozzleR, jetPower, jetHeat);
+    }
 
     // Ten sam model gorącego powietrza co MAIN (stożek od wylotu w uberPass),
     // słabszy: wylot bocznej dyszy ~1/5 dawnego promienia smugi.
-    const sideHaze = smoothstep(0.08, 0.45, Number(state.currentThrottle) || 0) * 0.6;
+    const sideHaze = smoothstep(0.08, 0.45, jetPower) * 0.6;
     if (sideHaze > 0.01 && Core3D.pushHeatHazeWorld) {
       const sideR = 78 * scale * classScale * slotScale * widthMul * 0.2;
-      Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, sideR, sideHaze, dirX, dirY);
+      Core3D.pushHeatHazeWorld(flameX, flameY, -4, sideR, sideHaze, dirX, dirY);
     }
   }
   EngineFrame.endShip();
@@ -844,6 +918,8 @@ export const EngineVfxSystem = {
     EngineExhaustBatch.begin();
     MainExhaust3D.begin(frameOrigin.x, frameOrigin.y, dt);
     EngineFrame.begin();
+    SideNozzleFrame.begin();
+    SideJets3D.begin(frameOrigin.x, frameOrigin.y, dt, frameCtx.zoom);
 
     const frame = ++this._frame;
     for (const entity of entities) {
@@ -881,11 +957,14 @@ export const EngineVfxSystem = {
 
     EngineExhaustBatch.flush();
     MainExhaust3D.flush(dt);
+    SideJets3D.flush();
     const batchStats = EngineExhaustBatch.getStats();
     const mainStats = MainExhaust3D.getStats();
+    const sideStats = SideJets3D.getStats();
     // Plazma warpa: ~5 obiektów renderowalnych na aktywną instancję.
     const warpDraws = WarpPlume3D.activeCount * 5;
-    DrawCallStats.addEngine(batchStats.nozzles + mainStats.nozzles, batchStats.draws + mainStats.draws + warpDraws);
+    DrawCallStats.addEngine(batchStats.nozzles + mainStats.nozzles + sideStats.nozzles,
+      batchStats.draws + mainStats.draws + sideStats.draws + warpDraws);
   },
 
   disposeAll() {
@@ -896,6 +975,7 @@ export const EngineVfxSystem = {
     this._lastUpdateSec = 0;
     EngineExhaustBatch.dispose();
     MainExhaust3D.dispose();
+    SideJets3D.dispose();
     WarpPlume3D.disposeAll();
   }
 };

@@ -175,10 +175,10 @@ function setupTrace(grid, { ex = 0, ey = 0, rot = 0, sx = 1, sy = 1 } = {}) {
   const packed = new Float32Array(HULL_SDF_OCCLUDER_FLOATS);
   packHullShaftOccluder(packed, 0, ex, ey, rot, sx, sy, layout, 0);
   // Słońce daleko w kierunku d (three-space).
-  return (lx, ly, d) => {
+  return (lx, ly, d, extra = null) => {
     const [wx, wy] = meshToWorld(lx, ly, ex, ey, rot, sx, sy);
     const len = Math.hypot(d[0], d[1]);
-    return traceHullShadowCpu(wx, wy, d[0] / len, d[1] / len, 1e9, packed, 0, data, { steps: 24, lenMul: 3 });
+    return traceHullShadowCpu(wx, wy, d[0] / len, d[1] / len, 1e9, packed, 0, data, { steps: 24, lenMul: 3, ...extra });
   };
 }
 
@@ -193,6 +193,28 @@ test('cień startuje przy burcie, kadłub nie rzuca cienia sam na siebie', () =>
   assert.equal(shade(230, 0, toSunPlusX), 0, 'przed dziobem (od strony słońca): światło');
   assert.equal(shade(-300, 160, toSunPlusX), 0, 'obok kadłuba, poza półcieniem: światło');
   assert.equal(shade(-3000, 0, toSunPlusX), 0, 'poza zasięgiem smugi: światło');
+});
+
+// Kanał tła (maska G — mgławica, gwiazdy) bez pominięcia własnego kadłuba: sylwetka SDF jest szersza
+// od rysowanej skóry przy dziurach, więc z pominięciem tło w pasie przy brzegu wyrwy wychodziło
+// oświetlone, a głębiej w cieniu — jasna obwódka wyglądała jak przezroczysty kadłub (2026-10-07).
+test('kanał tła: pod własnym kadłubem i w wyrwie cień, powierzchnia bez samocienia', () => {
+  const grid = makeGrid(420, 160, forkHull);
+  // Zamknięta wyrwa w korpusie: x ∈ (-100, -40), |y| < 25.
+  for (const s of grid.shards) {
+    const x = s.gridX - 210, y = s.gridY - 80;
+    if (x > -100 && x < -40 && Math.abs(y) < 25) { s.active = false; s.isDebris = true; grid.activeStructuralCount--; }
+  }
+  const shade = setupTrace(grid);
+  const toSun = [1, 0];
+  const back = { backdrop: true };
+  assert.equal(shade(-115, 0, toSun), 0, 'blacha przy brzegu wyrwy: powierzchnia bez samocienia');
+  assert.ok(shade(-115, 0, toSun, back) > 0.95, 'tło pod tą samą blachą: cień jak w głębi wyrwy');
+  assert.ok(shade(-70, 0, toSun, back) > 0.9, 'środek wyrwy: tło w cieniu kadłuba od strony słońca');
+  assert.ok(shade(-70, 0, toSun) > 0.9, 'środek wyrwy: powierzchnia (np. odłamek) też');
+  assert.ok(shade(20, 40, toSun, back) > 0.95, 'tło pod pełnym korpusem');
+  assert.equal(shade(230, 0, toSun, back), 0, 'przed dziobem (od strony słońca): światło');
+  assert.equal(shade(-300, 160, toSun, back), 0, 'obok kadłuba, poza półcieniem: światło');
 });
 
 test('przerwa w widelcu dziobu przepuszcza światło (kapsuła ją zalewała)', () => {
@@ -431,7 +453,7 @@ test('TSL: marsz po tablicy warstw ze stałymi lustra CPU, próbki jawnym LOD, p
     uHullC: uniformArray(v4(HULL_SDF_SHAFT_CAP), 'vec4')
   };
   const material = new THREE.NodeMaterial();
-  material.fragmentNode = Fn(() => vec4(hullSdfShadow(u, uv().mul(1000.0), vec2(1.0, 0.0), float(1.0e6)), 0.0, 0.0, 1.0))();
+  material.fragmentNode = Fn(() => vec4(hullSdfShadow(u, uv().mul(1000.0), vec2(1.0, 0.0), float(1.0e6)), 0.0, 1.0))();
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(), material);
   const b = renderer.backend.createNodeBuilder(mesh, renderer);
   b.material = material;

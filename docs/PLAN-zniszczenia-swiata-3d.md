@@ -370,6 +370,25 @@ Co wyszło przy wdrożeniu (pomiary w Node: `tests/worldBodies.test.mjs`, w grze
 Otwarte: ocena feelu w grze (strojenie `WORLD_BODY_TUNE`: masy pocisków, prędkości orki, ciepło wiązek), K-7 (F3), stacje,
 ring; rany na skórze z orki (osmalenie w miejscu trafienia — dziś tylko z kraterów `HullBodies.impact`).
 
+**Rozpad na odłamy (2026-10-07, ocena użytkownika po grze: „przy finalnym niszczeniu dach i podłoga odlatują w jednym
+kawałku”, „dużo elementów odpada jako duże kawałki, brakuje debris jak u statków”, „dach znika jak w K-7 — w pirackim
+nie powinien”, „stare wybuchy do usunięcia”):**
+- `worldBodies.breakPiece` = `HullBodies.shatter` z opcjami budowli: rdzeń w odłamki (`hullDebris3D`), **pęknięcia
+  Voronoi** (komórki z ziaren w żywych węzłach — odłamy podobnej wielkości z poszarpanym brzegiem; rzazy promieniste i
+  cięciwy przez całe ciało dawały długie paski), gruz ze szwów, drobnica < 40 węzłów cała w odłamki (każdy odłam to rysunek
+  skóry). Także kawałek statyczny (ciało powstaje na miejscu, ~1 ms) — dawniej odpadał animacją bryły w jednym kawałku.
+- **Dach = kawałek-duch**: raster wszystkich brył pasa z góry, komórka 45 j. (przy 15 j. pas dachu to ~22 tys. węzłów),
+  ciało tylko w rozpadzie, bez kolizji i broni. Dach nie zanika w grze (`roofFade = 0`); skóra bierze zestaw `roof`.
+- **Koszt w łańcuchu (Node, wszystkie 39 kawałków)**: rozpad ~2 ms na kawałek (dach ~2–9 ms), odłamki ~7 tys. (pula 8192,
+  życie 8 s); styki odłamów jednego kawałka wyłączone (rodzą się na styk wzdłuż szwów — ~⅓ kroku: 4,1 → 2,8 ms w pierwszej
+  sekundzie, potem 0,8 → 0,5 ms). Przed finałem (≤ 3/8 punktów, łańcuch) `setAllLive`: cały dok ciałami w budżecie kroku,
+  skóry wypieczone w tle (~8 s) — finał nie piecze w klatce.
+- **Render odłamów**: odłam rysował całą geometrię skóry kawałka (odrzut w shaderze) — po łańcuchu 3,35 mln trójkątów;
+  podzbiór trójkątów na odłam (indeks na wspólnych atrybutach, budżet 3 ms/klatkę) — 0,47 mln. W grze (`zniszczenia-gra.mjs
+  --final`, RTX 5080, 1600 × 900): łańcuch p50 3,1 ms / p95 5,8 ms / max 23 ms, 0 klatek > 33 ms, 0 pipeline'ów
+  synchronicznych; ~130 odłamów (23 z dachu).
+- Stare wybuchy (`reactorblow.js`) wyłączone — zaczep `window.makeReactorBlow` czeka na wybuchy WebGPU (§ 12, osobna sesja).
+
 ---
 
 ## 12. Wybuchy i dym — gaz na siatce 3D (2026-10-05; dema, klej gry wypięty)
@@ -476,9 +495,47 @@ czeka na dopracowane wybuchy — wtedy wraca razem z nimi. Opis kleju (stan z ch
   prawdziwa gra: `node scripts/webgpu/dym-gra.mjs [--przypadki wrak,reaktor,stacja,kurz] [--klatki …] [--ab] [--mgla]
   [--3d] [--diag]` (`--diag` — siatki bryły stacji i kadr przed zniszczeniem).
 
+### Wybuchy w grze (2026-10-07) — `src/3d/explosions/`
+Użytkownik o starych wybuchach (`src/effects3d/reactorblow.js`, port overlaya WebGL): „tragiczne, do usunięcia”; o gazie z dema:
+„wybuchy WebGPU z zaawansowanymi efektami — mamy zalążek w demie z dymem, ale niedopracowane”, a w trakcie prac: „gaz się
+nie rozchodzi, zawisa w miejscu, jest rozmyty, nie wychodzi bezpośrednio z miejsc wybuchu — rozwalamy rury, to z rur
+powinien lecieć gaz”. Stary moduł usunięty (z `reactorblow.tsl.js`, `particlePool.js`, `reactorProfiles/`), w jego miejsce
+reżyser `ExplosionFx` (krok `Core3D.addFxStep` „wybuchy”, fabryka `window.makeReactorBlow`) — opis w AGENTS.md § „Wybuchy WebGPU”.
+- **Co w module gazu:** `GasExplosions.jet` (strumień: kapsuła od otworu, narzucona prędkość wzdłuż kierunku, rozchylenie,
+  narastanie i wygaszanie), opór zależny od prędkości (`dragQuad`), emisja całkowana po odcinku marszu (`gasVolume.js`),
+  ciągły próg pomijania próbek, spłaszczony wyrzut żaru i rozrzut startu (`gasEmbers.burst(…, flat, r0)`, `fadeIn`), błyski
+  w tablicach typowanych z wyglądem do strojenia (`GasFlashes.look`), `fire(…, { keep })`, domyślny `rng` = fxRandom.
+- **Lekcje (A/B na zrzutach demo i gry):**
+  - Wielka tarcza w pierwszych 0,05–0,2 s to NIE błysk ani gaz, tylko ~1600 iskier żaru startujących w jednym punkcie
+    (bloom sumy) — żar startuje w całej kuli ognia i narasta 0,12 s, jest go ~3× mniej.
+  - „Słoje” i „ziarno” w ogniu: kamera z góry, wszystkie promienie próbkują te same płaszczyzny z, a front ognia jest
+    cieńszy niż krok — bez przesunięcia startu marszu poziomice, z nim piasek. Lek: średnia emisji na odcinku (temperatura
+    liniowo, 4 podpróbki, bez nowych odczytów tekstur). Drugie źródło słojów i marmuru: detal czytany z pola pozycji
+    spoczynkowych rozciągniętego rozprężaniem wybuchu (przy powrocie 0,05/s) — `restRelax` 1,5/s, mocniejsze wiry
+    (`vorticity` 3,5); bez warpu detal znika i gaz jest rozmyty (siatka ~15–20 px na komórkę przy bliskim zoomie).
+  - „Wisi w miejscu”: stały opór 0,9/s zatrzymywał wolny dym (wykładniczo). Opór = 0,2 + 0,03·|v| [1/s, v w komórkach/s]:
+    front i strumienie hamują, obłok dalej odpływa i rzednie; strumienie gazu z punktu wybuchu robią kierunek.
+  - Domena płaska 96 × 96 × 36 (bok 5,4 R kuli ognia): 64 × 64 × 32 było wyraźnie bardziej rozmyte, a koszt i tak mały.
+  - Znikanie obłoku: decyduje koniec życia DOMENY (`until`, potem wygaszanie 1,6 s z dodatkowym zanikiem), nie sam
+    `smokeDecay` — `fire(…, { keep: 2,5 })` dogasających ognisk trzymał domenę do ~5 s, a obłok do ~6,7 s. Dziś
+    `domainLife` 3 s + `keep` 1 s: gęsty dym do ~3 s, rzednie, do ~4,5 s znika (zrzuty `wybuchy-gra.mjs`, kadry 2,8 / 3,6 / 4,5 s).
+  - Dach i maszty doku są w passie FG (po ortho) — przednia część gazu, żar i błyski muszą iść do FG, inaczej dach chowa
+    wybuch nad nim.
+  - Harness gry: przełączenie zegara wirtualnego z `real` na `frozen` bez `clock.t = realNow()` cofało czas o kilka minut
+    — akumulator fizyki ujemny, łańcuch misji i zegar wybuchów stały (wyglądało jak „wybuch poza kadrem”).
+- **Koszt** (RTX 5080, 1600 × 900, łańcuch doku: 13 wybuchów w 3,4 s + wtórne, 6 domen): klatka śr. 2,64 → 3,5 ms (+0,85 ms,
+  p95 +0,9 ms; same cząstki +0,65 ms), CPU kroku śr. 0,07–0,09 ms, skoki do ~1,3 ms (pojedyncze wywołanie fabryki do ~3 ms —
+  pierwsze wywołanie / GC); pomiar przy innych sesjach na tej samej maszynie — powtarzać. 0 pipeline'ów synchronicznych
+  w klatkach wybuchów (próg, łańcuch, stacja, pustka). Pamięć atlasu: 11 tekstur × 96² · 36 · 6 × 8 B ≈ 175 MB.
+- **Narzędzia:** demo `dema/wybuchy-webgpu.html` (Core3D), `node scripts/webgpu/wybuchy-demo.mjs [--przypadki …]
+  [--look k=v] [--gaz k=v] [--ab warstwa] [--koszt]`, gra `node scripts/webgpu/wybuchy-gra.mjs [--sceny prog,lancuch,
+  stacja,pustka] [--ab warstwa] [--koszt]`, testy `tests/explosions.test.mjs`.
+
 ### Dalej
-- **Wybuchy** (decyzja użytkownika: do dopracowania przed grą): kula ognia budowli i okrętu, błyski, iskry gazu, fala —
-  w demach; do gry przez ten sam krok, `ctx.grid.addWorld` i `Core3D.fxDistortion().shock`.
-- Dym rakiet jako LOD dalekich wybuchów; objętość światła co drugą klatkę, gdy zabraknie GPU.
-- Zdarzenia: kratery broni (`HullBodies.onImpact` — dym z dziury), odłamy (`onWreck` — płonące kawałki), F2 (baza piratów).
-- Ocena użytkownika: czeka.
+- **Ocena wybuchów przez użytkownika** (zrzuty z gry i dema, 2026-10-07) — w tym fala z refrakcją: dawna decyzja
+  (2026-09-24) „falę ma tylko supernowa” vs rakiety gry, które falę mają przy każdym wybuchu; dziś wybuchy mają subtelną
+  falę (przełącznik `EXPLOSION_TUNE.shock`).
+- Dym z luf armat na gazie (prośba użytkownika, „temat poboczny”), pył od silników w halach K-7 (`src/3d/gasField/`, osobny etap).
+- Budowle (shader `portBuildings3D`) nie czytają siatki świateł — wybuch oświetla kadłuby obok, ale nie bryły doku.
+- Dym i ogniska wraków (`gasSmokeGame.js`) dalej wypięte — decyzja użytkownika.
+- Zdarzenia: kratery broni (`HullBodies.onImpact` — dym z dziury), odłamy (`onWreck` — płonące kawałki).

@@ -17,11 +17,14 @@
  * ładowni (a, b, z): środek ładowni, a wzdłuż statku (dziób), b = +y 3D (w lewo od dziobu
  * patrząc z góry, czyli −y obrazka), dno w z = −głębokość, krawędź otworu w z = 0.
  *
- * KONTENER STANDARDOWY (propozycja do decyzji użytkownika): 16 × 8 × 8 j. — jak slot
- * kontenerowca z Z5 (zatoka 17,2 × 10,7 j. mieści jeden). Jednostka przeładunku (moduł) to
- * nx × ny × nz kontenerów: dron niesie cały moduł (małe okręty 1 × 1 × 1, duże ładownie
- * stosy 2 × 2 × 2, wagon megafrachtowca 4 × 4 × 2) — inaczej duże ładownie ładowałyby się
- * setkami kursów. Pojemność = kontenery × tony na kontener (CARGO_TONNES_OPTIONS).
+ * KONTENER STANDARDOWY — JEDEN WYMIAR (decyzja użytkownika 2026-10-06): 16 × 8 × 8 j. — jak
+ * slot kontenerowca z Z5 (zatoka 17,2 × 10,7 j. mieści jeden); megakontenerów nie ma.
+ * MODUŁ = zawartość slotu ładowni: obrys nx × ny kontenerów × nz warstw. Drony roju
+ * (src/data/swarmDrones.js) niosą JEDNĄ warstwę płasko — chwyt klasy S 1 × 1, M 1 × 2, L 2 × 2,
+ * Capital 4 × 2 — więc obrys modułu jest wielokrotnością chwytu klasy, która go obsługuje
+ * (1 × 1 → S, 1 × 2 → M, 2 × 2 → L, 4 × 4 → Capital: dwa chwyty na warstwę); mniejsze klasy
+ * biorą część warstwy. (Demo ładowni z dronami Z5 — cargoBayOps.js — niesie jeszcze cały moduł.)
+ * Pojemność = kontenery × tony na kontener (CARGO_TONNES_OPTIONS).
  *
  * WROTA:
  *   over   — „Venator”: skrzydła podnoszą się, jadą na boki PO poszyciu i osiadają na nim
@@ -131,7 +134,7 @@ export const CARGO_BAY_HULLS = Object.freeze({
     renderLength: 624, profile: 'terran_battleship', editorKey: 'battleship', bridgeKey: 'battleship',
     cargoToday: 40, todayNote: 'cargoCap gracza',
     // Rynna grzbietowa przed mostkiem — skrzydła chowają się pod pancerz skrzydeł kadłuba.
-    bays: [bay({ id: 'rynna', label: 'Rynna grzbietowa', x: 140, y: 0, w: 560, h: 72, door: 'pocket', module: { nz: 2 } })]
+    bays: [bay({ id: 'rynna', label: 'Rynna grzbietowa', x: 140, y: 0, w: 560, h: 72, door: 'pocket', module: { ny: 2, nz: 2 } })]
   }),
   terran_carrier: hull({
     label: 'Citadella', family: 'terra', sprite: 'src/assets/ships/terrancarrier.png', png: { w: 1672, h: 941 },
@@ -167,7 +170,7 @@ export const CARGO_BAY_HULLS = Object.freeze({
     label: 'Iron Skull', family: 'piraci', sprite: 'src/assets/ships/piratebattleship.png', png: { w: 1727, h: 911 },
     renderLength: 720, profile: 'pirate_battleship', editorKey: 'pirate_battleship', bridgeKey: 'pirate_battleship',
     cargoToday: 32, todayNote: 'cargoCap gracza',
-    bays: [bay({ id: 'luk', label: 'Luk IRON SKULL', x: 168, y: -8, w: 318, h: 140, door: 'pocket', module: { nz: 2 } })]
+    bays: [bay({ id: 'luk', label: 'Luk IRON SKULL', x: 168, y: -8, w: 318, h: 140, door: 'pocket', module: { ny: 2, nz: 2 } })]
   }),
   // --- Frachtowce (Z11, puste pokłady): pokrywy luków to namalowane zatoki ---
   inter_station_shuttle: hull({
@@ -180,13 +183,13 @@ export const CARGO_BAY_HULLS = Object.freeze({
     label: 'Kontenerowiec', family: 'frachtowce', sprite: 'assets/ships/container_ship_empty.png', png: { w: 1774, h: 887 },
     renderLength: 312, profile: 'container_ship', editorKey: null, bridgeKey: null,
     cargoToday: 160, todayNote: 'klasa ruchu hauler',
-    bays: [bay({ id: 'luki', label: 'Luki 3 × 6', x: -55, y: -13, w: 690, h: 258, door: 'pocket', module: { nz: 2 } })]
+    bays: [bay({ id: 'luki', label: 'Luki 3 × 6', x: -55, y: -13, w: 690, h: 258, door: 'pocket', module: { ny: 2, nz: 2 } })]
   }),
   long_haul_freighter: hull({
     label: 'Frachtowiec dalekiego zasięgu', family: 'frachtowce', sprite: 'assets/ships/long_haul_freighter_empty.png', png: { w: 1774, h: 887 },
     renderLength: 540, profile: 'long_haul_freighter', editorKey: null, bridgeKey: null,
     cargoToday: 380, todayNote: 'klasa ruchu bulk',
-    bays: [bay({ id: 'luki', label: 'Luki 2 × 7', x: -150, y: -12, w: 506, h: 192, door: 'pocket', module: { nz: 2 } })]
+    bays: [bay({ id: 'luki', label: 'Luki 2 × 7', x: -150, y: -12, w: 506, h: 192, door: 'pocket', module: { ny: 2, nz: 2 } })]
   }),
   heavy_freighter: hull({
     label: 'Ciężki frachtowiec', family: 'frachtowce', sprite: 'assets/ships/heavy_freighter_empty.png', png: { w: 1774, h: 887 },

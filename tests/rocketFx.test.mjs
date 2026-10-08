@@ -665,10 +665,12 @@ test('wyrzut w pionie: słup dymu po zapłonie rozlewa się na boki (bez kierunk
   r.velocity.set(0, 400, 0);    // wznosi się
   director.onLaunch(r);
   director.onIgnite(r);
+  // 40 klatek (~65 porcji): w pionie dodatnie vx ma ~30% porcji — przy 12 klatkach (~20 porcji) wynik
+  // zależał od stanu fxRandom po wcześniejszych testach pliku (2026-10-07: 18 / 2 po zmianie zasięgów rakiet).
   const puffs = recordPuffs(() => {
-    for (let i = 0; i < 12; i++) { r.position.y += 400 / 60; director.onFly(r, 1 / 60); }
+    for (let i = 0; i < 40; i++) { r.position.y += 400 / 60; director.onFly(r, 1 / 60); }
   });
-  assert.ok(puffs.length >= 12, `porcje wzdłuż drogi dyszy w górę: ${puffs.length}`);
+  assert.ok(puffs.length >= 40, `porcje wzdłuż drogi dyszy w górę: ${puffs.length}`);
   // Prędkości w płaszczyźnie rozrzucone we wszystkich kierunkach (nie smuga do tyłu).
   let neg = 0; let pos = 0;
   for (const p of puffs) { if (p[3] < 0) neg++; else pos++; }

@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 // wróciłoby niezauważone.
 
 const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const reactorBlow = readFileSync(new URL('../src/effects3d/reactorblow.js', import.meta.url), 'utf8');
+const explosions = readFileSync(new URL('../src/3d/explosions/explosionFx.js', import.meta.url), 'utf8');
 const shield3d = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
 
 function functionBody(source, signature) {
@@ -24,23 +24,26 @@ function functionBody(source, signature) {
   throw new Error(`niedomknięte ${signature}`);
 }
 
-// Zadanie 20: overlay efektów (drugi WebGLRenderer z własną rozgrzewką kompozytora) usunięty —
-// wybuch reaktora ma pule w scenie Core3D i rozgrzewa je jego krok klatki efektów (warm: raz przy
-// gotowym urządzeniu): compileAsync pomija niewidoczne i obiekty bez instancji, więc obie siatki
-// odsłonięte na czas projekcji, cel composerTarget (prewarmPass warstwy 0), bez dispose.
-test('wybuch reaktora (Core3D): rozgrzewka kroku — obie pule odsłonięte, prewarmPass passa ortho, bez dispose', () => {
-  const warm = functionBody(reactorBlow, '  _warm(ctx) {');
-  assert.match(warm, /for \(const m of this\.meshes\)/);
-  assert.match(warm, /m\.visible = true;/, 'ukryte pule muszą przejść przez projekcję');
-  assert.match(warm, /m\.geometry\.instanceCount = 2;/, 'pula bez instancji nie ma czego rysować');
-  assert.match(warm, /core\.prewarmPass\(m, 0\)/, 'pass ortho (warstwa 0), cel composerTarget');
-  assert.match(warm, /finally \{ m\.visible = vis; m\.geometry\.instanceCount = ic; \}/, 'stan przywrócony');
+// Wybuchy WebGPU (2026-10-07, src/3d/explosions/explosionFx.js — zastąpiły reactorblow.js): krok klatki efektów
+// rozgrzewa się raz przy gotowym urządzeniu — puste dispatche kerneli gazu i żaru, potem siatki (bryły gazu, żar,
+// błyski, łby odłamków) odsłonięte z licznikiem instancji ≥ 2 (compileAsync pomija niewidoczne i puste) w passie
+// swojej warstwy, z kamerą z góry i kamerą 3D (typ kamery wchodzi do klucza pipeline'u); stan przywrócony, bez dispose.
+test('wybuchy (Core3D): rozgrzewka kroku — kernele gazu i żaru, siatki odsłonięte, obie kamery, bez dispose', () => {
+  const warm = functionBody(explosions, '  _warm(ctx) {');
+  assert.match(warm, /this\.grid\.warm\(ctx\.renderer\)/, 'kernele gazu (pipeline compute powstaje synchronicznie)');
+  assert.match(warm, /this\.embers\.warm\(ctx\.renderer\)/, 'kernele żaru');
+  assert.match(warm, /for \(const m of this\.warmMeshes\) m\.visible = true;/, 'ukryte siatki muszą przejść przez projekcję');
+  assert.match(warm, /M\.geometry\.instanceCount = Math\.max\(2, saved\[0\]\)/, 'pula bez instancji nie ma czego rysować');
+  assert.match(warm, /core\.prewarmPass\?\.\(m, layer\);\s*core\.prewarmPass\?\.\(m, layer, \{ ortho: false \}\);/, 'kamera z góry i kamery 3D');
+  assert.match(warm, /finally \{[\s\S]*M\.geometry\.instanceCount = saved\[0\];[\s\S]*m\.visible = vis\[i\];/, 'stan przywrócony');
   assert.doesNotMatch(warm, /\.dispose\(/);
-  assert.match(reactorBlow, /name: 'reaktor'[\s\S]{0,300}warm: \(ctx\) => self\._warm\(ctx\)/);
-  // Fabryka powstaje przy starcie Core3D (krok rejestruje się od razu; warm przy gotowym urządzeniu).
+  assert.match(explosions, /name: 'wybuchy'[\s\S]{0,300}warm: \(ctx\) => self\._warm\(ctx\)/);
+  // Kernel przesunięcia żaru zarejestrowany w początku pul PRZED krokiem (rozgrzewka kroku kompiluje i jego).
+  assert.ok(explosions.indexOf('origin.register({') > 0 && explosions.indexOf('origin.register({') < explosions.indexOf('core.addFxStep(this.step)'));
+  // W grze fabryka powstaje przy starcie efektów Core3D (przed ekranem ładowania — rozgrzewka kroku w rejestrze).
   const start = indexHtml.indexOf('SparkSystem3D.init(Core3D.scene);');
-  const factory = indexHtml.indexOf('window.makeReactorBlow = createReactorBlowFactory(Core3D);');
-  assert.ok(start > 0 && factory > start && factory - start < 1200, 'fabryka wybuchu przy starcie efektów Core3D');
+  const factory = indexHtml.indexOf('window.makeReactorBlow = createExplosionFactory(');
+  assert.ok(start > 0 && factory > start && factory - start < 1800, 'fabryka wybuchów przy starcie efektów Core3D');
 });
 
 // Zadanie 17: fabryk trafień broni w overlayu (rail, armata, działko, Yamato) już nie ma — trafienia

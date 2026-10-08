@@ -17,9 +17,10 @@
 // ============================================================
 
 export const FOG_TUNE = Object.freeze({
-  // Zasięg wzroku (j. świata). Atlas 18 km ~ zasięg dział burtowych: dalej (railgun, Yamato) strzela się
-  // z cudzego zwiadu (sojusznik, dron). Brzeg kręgu widać po oddaleniu kamery (domyślny kadr Atlasa ma
-  // ~15 km szerokości, najdalszy zoom 0,035 — ~46 km przy 1600 px). Okręt z profilem czujników
+  // Zasięg wzroku (j. świata). Atlas 18 km — ~2,5× dalej niż jego bateria (Yamato 7 km od 2026-10-07,
+  // src/data/weapons.js § ZASIĘGI): wroga widać przed walką; dalej strzela się z cudzego zwiadu (sojusznik,
+  // dron) — Mjolnir 20 km. Brzeg kręgu widać po oddaleniu kamery (domyślny kadr Atlasa ma ~9 km szerokości —
+  // kadłub 20% kadru, cameraRig.js; najdalszy zoom 0,035 — ~46 km przy 1600 px). Okręt z profilem czujników
   // `role: 'radar'` (Corvus) to zwiadowca.
   vision: Object.freeze({
     atlas: 18000,

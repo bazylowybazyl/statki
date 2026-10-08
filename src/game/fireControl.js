@@ -83,9 +83,12 @@ export const FC_TUNE = {
   missileMinUse: 0.3,       // salwa rusza, gdy co najmniej tyle jej obrażeń ma cel do pokrycia (bez dobijania jednym Gradem)
   missileMinMatch: 0.25,    // poniżej — rodzaj rakiety nie leci na auto w tę klasę (ciężkie w myśliwce)
   // Dopasowanie RODZAJU rakiety do klasy celu: lekkie (mikrorakiety, szybkie) na drobnicę, ciężkie na duże.
+  // Ciężkie we fregatę 0,5 (do 2026-10-07: 0,6): kara za odległość liczy się względem zasięgu wyrzutni, a
+  // zasięgi rakiet spadły o połowę — przy 0,6 fregata 3 km bliżej wygrywała z niszczycielem i manewrujące
+  // szły we fregaty Grada. 0,5 = niszczyciel do ~6 km dalej niż fregata (dawniej ~4,7 km).
   missileMatch: Object.freeze({
     light: Object.freeze({ fighter: 0.6, frigate: 1, destroyer: 0.75, battleship: 0.5, station: 0.4, other: 0.8 }),
-    heavy: Object.freeze({ fighter: 0.1, frigate: 0.6, destroyer: 1, battleship: 1, station: 1, other: 0.8 })
+    heavy: Object.freeze({ fighter: 0.1, frigate: 0.5, destroyer: 1, battleship: 1, station: 1, other: 0.8 })
   })
 };
 

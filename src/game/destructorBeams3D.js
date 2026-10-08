@@ -20,7 +20,8 @@
 import { BEAM_TYPE, buildBeamStructure, computeStoreInertia } from './beamBody3D.js';
 import { BeamNodeStore, BeamLinkStore, BeamNodeView, buildAdjacency, defineLazyViews, cachedNodeViews,
   cachedBeamViews, nodeViewAt } from './beamStore3D.js';
-import { beamSolverScratch, refreshBeamMounts, prepareBeamConstraints, projectBeamConstraints } from './beamConstraintSolver3D.js';
+import { beamSolverScratch, refreshBeamMounts, prepareBeamConstraints, projectBeamConstraints,
+  projectBeamConstraints2D } from './beamConstraintSolver3D.js';
 import { updateBeamBounds, extendBeamBounds, beamBoundsOverlap } from './beamBounds3D.js';
 import { beamConnectivityScratch, findBeamBridgesStore } from './beamConnectivity3D.js';
 import { activeRegion, activateNode, activateNeighbors, markSkinDirty, resetActiveRegion } from './beamActiveRegion3D.js';
@@ -103,6 +104,11 @@ export function createBeamConfig(cellSize = 1) {
     // |vx|+|vy|+|vz| węzła [j./s], poniżej = spokój. 0,2·cs to ~0,05 j. na klatkę —
     // niewidoczne; niższy próg łapie drgania, które fala sprężysta roznosi po całym
     // kadłubie po każdym trafieniu (flota pod ostrzałem: 0,02·cs 4,7 ms/krok, 0,2·cs 1,4).
+    // Pomiar 2026-10-07 (gra: siatka 15 j., trafienie w spoczywający kadłub; bitwa w Node, 4 ziarna): koszt
+    // solvera w bitwie to ogon trafień — trafienie rusza wprost 1–2 węzły, solver liczy potem ~350 węzło-kroków
+    // obszaru, w tym 20–45% to odliczanie ciszy. 0,4·cs: −43% węzło-kroków, cisza 4: −31%, razem −62% (czas
+    // solvera −51%); zerwania i zabite węzły bez zmian, kształt po uspokojeniu inny o p50 0,02–0,04 j., maks.
+    // ~0,6 j.; penetracja, energia i sen wraków w rozrzucie chaosu. Nastawy gry bez zmian (decyzja użytkownika).
     activeMotionThreshold: 0.2 * cs,
     activeSettleFrames: 8,              // kroki spokoju, po których węzeł wypada z obszaru
 
@@ -268,9 +274,12 @@ function lowerBound(sorted, count, value) {
 }
 
 // Siatka węzłów ciała (_refreshHash): kubełki nad AABB w komórkach cs; map = zapas dla
-// ciała o zbyt dużym AABB (wtedy nx = ny = nz = 0).
+// ciała o zbyt dużym AABB (wtedy nx = ny = nz = 0). min / max — dokładne AABB żywych węzłów
+// (układ ciała); store / version — magazyn i jego shapeVersion z chwili budowy.
 function createNodeGrid() {
-  return { heads: new Int32Array(0), i0: 0, j0: 0, k0: 0, nx: 0, ny: 0, nz: 0, map: null, fallback: null };
+  return { heads: new Int32Array(0), i0: 0, j0: 0, k0: 0, nx: 0, ny: 0, nz: 0, map: null, fallback: null,
+    minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity,
+    store: null, version: -1 };
 }
 
 // Węzeł jako indeks w magazynie ciała; API przyjmuje też widok (testy, callbacki).
@@ -285,7 +294,9 @@ export const DestructorBeams3D = {
   splitQueue: [],
   onDebris: null,
   // Haki gry (src/game/hullBodies.js); w demie puste.
-  pairFilter: null,       // (A, B) → false = para bez kolizji (właściciel, hol, wrak wyłączony)
+  // (A, B) → false = para bez kolizji (właściciel, hol, wrak wyłączony); true = co krok;
+  // liczba k > 1 = co k-ty krok z krokiem k · dt (wolne wraki — HULL_BODY_CONFIG.wreckPairEvery)
+  pairFilter: null,
   onContact: null,        // (A, B, info) — styk pary po impulsie i zgniocie (_contactInfo, tylko do odczytu)
   onWreck: null,          // (parent, wreck) — nowy wrak z rozpadu, już w liście ciał
   onNodeDebris: null,     // (body, i, wx, wy, wz, vx, vy, vz) — ginący węzeł jako indeks, bez widoku
@@ -309,7 +320,8 @@ export const DestructorBeams3D = {
     broadphasePairs: 0,
     aabbRejected: 0,
     narrowphasePairs: 0,
-    hashLookups: 0          // kubełki siatki węzłów odwiedzone przez kontakty (narastająco)
+    hashLookups: 0,         // kubełki siatki węzłów odwiedzone przez kontakty (narastająco)
+    narrowCandidates: 0     // węzły iterowanych ciał w obszarach nakładania par (narastająco)
   },
 
   _s1: { x: 0, y: 0, z: 0 }, _s2: { x: 0, y: 0, z: 0 }, _s3: { x: 0, y: 0, z: 0 },
@@ -431,6 +443,7 @@ export const DestructorBeams3D = {
       _rotTick: -1,
       _grid: createNodeGrid(),
       _hashTick: -1,
+      _geomVer: 0,
       _contactCursor: 0,
       _contacts: [],
       _contactDepths: [],
@@ -475,12 +488,18 @@ export const DestructorBeams3D = {
    * przebudowywana co krok dla każdego ciała w kontakcie — najdroższa funkcja taranu (18%
    * czasu). Ciało, którego AABB ma absurdalnie dużo kubełków (węzeł odrzucony daleko przed
    * najbliższym rozpadem), wraca na Map z kluczem hashKey. Kolejność w łańcuchu jak dawniej.
+   * Siatka żyje do ZMIANY KSZTAŁTU, nie do końca kroku: kadłub, którego węzły stoją (śpiący,
+   * wrak w dryfie — ruch sztywny siatki nie zmienia), nie przebudowuje jej w każdym kroku, w którym
+   * jest gospodarzem pary. Zmianę zgłasza `body._hashTick = -1`: solver (ruch węzłów), zgniot,
+   * trafienie, zniszczenie węzła, rozpad i przebudowa, naprawa; zapis x / y / z / active przez
+   * widok węzła podbija `shapeVersion` magazynu, a nowy magazyn (zagęszczenie) to nowa siatka.
    */
   _refreshHash(body) {
     const grid = body._grid;
-    if (body._hashTick === this._tick || (body.static && body._hashTick >= 0)) return grid;
+    const s = body.nodeStore;
+    if (body._hashTick >= 0 && grid.store === s && grid.version === s.shapeVersion) return grid;
     const cs = body.cellSize;
-    const s = body.nodeStore, x = s.x, y = s.y, z = s.z, active = s.active, next = s.hashNext;
+    const x = s.x, y = s.y, z = s.z, active = s.active, next = s.hashNext;
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     for (let i = 0; i < s.count; i++) {
@@ -490,9 +509,11 @@ export const DestructorBeams3D = {
       minY = Math.min(minY, ny); maxY = Math.max(maxY, ny);
       minZ = Math.min(minZ, nz); maxZ = Math.max(maxZ, nz);
     }
-    body._hashMinX = minX; body._hashMaxX = maxX;
-    body._hashMinY = minY; body._hashMaxY = maxY;
-    body._hashMinZ = minZ; body._hashMaxZ = maxZ;
+    grid.minX = minX; grid.maxX = maxX;
+    grid.minY = minY; grid.maxY = maxY;
+    grid.minZ = minZ; grid.maxZ = maxZ;
+    grid.store = s;
+    grid.version = s.shapeVersion;
     body._hashTick = this._tick;
     grid.nx = grid.ny = grid.nz = 0;
     grid.map = null;
@@ -715,26 +736,57 @@ export const DestructorBeams3D = {
     let stamp = (this._regionStamp + 1) | 0;
     if (stamp <= 0) stamp = 1;
     this._regionStamp = stamp;
+    const planar = !!cfg.planar;
 
-    // 1) A ∪ F: aktywne węzły i ich sąsiedzi przez całe belki.
+    // Kroki 1–3 w trzech przebiegach zamiast pięciu (te same zbiory, ta sama kolejność belek, wynik bit
+    // w bit): belki węzłów A wychodzą już przy szukaniu F (drugi koniec belki A zawsze jest w A ∪ F,
+    // więc nie trafia do pierścienia), predykcja węzła — przy dopisaniu go do obszaru. Drugi koniec
+    // belki: a ^ b ^ i (bez rozgałęzienia, które przy losowej kolejności końców chybiało co drugi raz).
+    // `flat`: wszystkie węzły kroku mają to samo z predykcji — w płaszczyźnie gry (z = 0) belki liczą się
+    // w 2D (dz ≡ 0, ta sama arytmetyka bez zer; z węzłów i tak wraca z oz).
     const solve = region.solve;
     let sCount = 0;
+    let flat = planar, z0 = NaN;
     for (let r = 0; r < list.length; r++) {
       const i = list[r];
       if (!active[i] || solveStamp[i] === stamp) continue;
       solveStamp[i] = stamp;
       solve[sCount++] = i;
+      const j = i * 3;
+      px[i] = x[i]; py[i] = y[i]; pz[i] = z[i];
+      P[j] = x[i] + vx[i] * dt;
+      P[j + 1] = y[i] + vy[i] * dt;
+      const pzj = P[j + 2] = z[i] + vz[i] * dt;
+      if (sCount === 1) z0 = pzj; else if (pzj !== z0) flat = false;
+      W[i] = invMass[i];
+      solverActive[i] = 1;
     }
     const aCount = sCount;
+
+    // 1) F (sąsiedzi A przez całe belki) i 2a) belki węzłów A.
+    const constraints = region.constraints;
+    let cCount = 0;
     for (let k = 0; k < aCount; k++) {
       const i = solve[k];
-      for (let q = adjStart[i]; q < adjStart[i + 1]; q++) {
+      for (let q = adjStart[i], q1 = adjStart[i + 1]; q < q1; q++) {
         const bi = adj[q];
         if (broken[bi]) continue;
-        const o = ea[bi] === i ? eb[bi] : ea[bi];
-        if (!active[o] || solveStamp[o] === stamp) continue;
+        const o = ea[bi] ^ eb[bi] ^ i;
+        const live = active[o];
+        if (beamStamp[bi] !== stamp) {
+          beamStamp[bi] = stamp;
+          if (live) constraints[cCount++] = bi;
+        }
+        if (!live || solveStamp[o] === stamp) continue;
         solveStamp[o] = stamp;
         solve[sCount++] = o;
+        const j = o * 3;
+        px[o] = x[o]; py[o] = y[o]; pz[o] = z[o];
+        P[j] = x[o] + vx[o] * dt;
+        P[j + 1] = y[o] + vy[o] * dt;
+        if ((P[j + 2] = z[o] + vz[o] * dt) !== z0) flat = false;
+        W[o] = invMass[o];
+        solverActive[o] = 1;
       }
     }
 
@@ -748,44 +800,30 @@ export const DestructorBeams3D = {
       this._bakeRest(body, i, stamp);
     }
 
-    // 2) Belki kroku i pierścień O (drugi koniec poza A ∪ F — nieruchomy).
-    const constraints = region.constraints;
-    let cCount = 0;
+    // 2b) Belki węzłów F i pierścień O (drugi koniec poza A ∪ F — nieruchomy, waga 0).
     const outer = region.outer;
     let oCount = 0;
-    for (let k = 0; k < sCount; k++) {
+    for (let k = aCount; k < sCount; k++) {
       const i = solve[k];
-      for (let q = adjStart[i]; q < adjStart[i + 1]; q++) {
+      for (let q = adjStart[i], q1 = adjStart[i + 1]; q < q1; q++) {
         const bi = adj[q];
         if (broken[bi] || beamStamp[bi] === stamp) continue;
         beamStamp[bi] = stamp;
-        const o = ea[bi] === i ? eb[bi] : ea[bi];
+        const o = ea[bi] ^ eb[bi] ^ i;
         if (!active[o]) continue;
         constraints[cCount++] = bi;
         if (solveStamp[o] !== stamp && outerStamp[o] !== stamp) {
           outerStamp[o] = stamp;
           outer[oCount++] = o;
+          const j = o * 3;
+          P[j] = x[o]; P[j + 1] = y[o];
+          if ((P[j + 2] = z[o]) !== z0) flat = false;
+          W[o] = 0;
+          solverActive[o] = 1;
         }
       }
     }
     region.constraintCount = cCount;
-
-    // 3) Predykcja A ∪ F z prędkości; pierścień w bieżącym miejscu, z wagą 0.
-    for (let k = 0; k < sCount; k++) {
-      const i = solve[k], j = i * 3;
-      px[i] = x[i]; py[i] = y[i]; pz[i] = z[i];
-      P[j] = x[i] + vx[i] * dt;
-      P[j + 1] = y[i] + vy[i] * dt;
-      P[j + 2] = z[i] + vz[i] * dt;
-      W[i] = invMass[i];
-      solverActive[i] = 1;
-    }
-    for (let k = 0; k < oCount; k++) {
-      const i = outer[k], j = i * 3;
-      P[j] = x[i]; P[j + 1] = y[i]; P[j + 2] = z[i];
-      W[i] = 0;
-      solverActive[i] = 1;
-    }
     // Mocowania wręgów i grodzi tylko dla węzłów kroku i tylko po zmianie struktury —
     // pełne refreshBeamMounts przeliczało wszystkie belki kadłuba po każdym zerwaniu.
     // Zerwanie i śmierć węzła aktywują dotknięte węzły, więc trafiają do tego obszaru.
@@ -797,7 +835,7 @@ export const DestructorBeams3D = {
     }
 
     // 4) Odkształcenie i zerwania mierzone na belkach kroku, potem rzutowanie.
-    const brokenNow = prepareBeamConstraints(scratch, e, constraints, cCount, cfg, dt, plasticRate, stepScaleSq);
+    const brokenNow = prepareBeamConstraints(scratch, e, constraints, cCount, cfg, dt, plasticRate, stepScaleSq, flat);
     if (scratch.deformed) {
       body.meshDirty = true;
       // Plastyczność zmienia cieniowanie także węzłów pierścienia (ich belki do obszaru).
@@ -823,49 +861,59 @@ export const DestructorBeams3D = {
         }
       }
     }
-    this._localSolved = projectBeamConstraints(scratch, scratch.count, iterations);
+    this._localSolved = flat ? projectBeamConstraints2D(scratch, scratch.count, iterations)
+      : projectBeamConstraints(scratch, scratch.count, iterations);
 
-    // 5) Zapis A ∪ F, impuls więzów J (reakcja pierścienia = −J), aktywność.
-    const planar = !!cfg.planar;
+    // 5) Zapis A ∪ F, impuls więzów J (reakcja pierścienia = −J), aktywność; od razu lista F
+    // na następny krok (stan `act` węzła jest już ostateczny po jego własnym zapisie).
     const invDt = 1 / dt;
     const threshold = cfg.activeMotionThreshold;
     const mm = body._boundsMinMax;
+    const keep = 1 - damp;
+    const dirty = region.dirty, frontier = region.frontier;
     let jx = 0, jy = 0, jz = 0;       // impuls więzów na A ∪ F
     let qx = 0, qy = 0, qz = 0;       // pęd uspokojonych węzłów oddawany ciału
-    let drift = 0;
+    let drift = 0, maxDisp = body._maxDisp, fCount = 0;
     for (let k = 0; k < sCount; k++) {
       const i = solve[k], j = i * 3;
-      const nx = P[j], ny = P[j + 1], nz = planar ? oz[i] : P[j + 2];
-      const wx = (nx - px[i]) * invDt, wy = (ny - py[i]) * invDt, wz = (nz - pz[i]) * invDt;
+      const ozi = oz[i];
+      const nx = P[j], ny = P[j + 1], nz = planar ? ozi : P[j + 2];
+      const pxi = px[i], pyi = py[i], pzi = pz[i];
+      const wx = (nx - pxi) * invDt, wy = (ny - pyi) * invDt, wz = (nz - pzi) * invDt;
       const m = mass[i];
       jx += m * (wx - vx[i]); jy += m * (wy - vy[i]); jz += m * (wz - vz[i]);
       // Tłumienie to tarcie wewnętrzne: pęd, który zabiera węzłom, przejmuje kadłub.
       // Pełny solver ma prędkości węzłów o zerowej średniej, więc tam tłumienie pędu nie
       // zmienia; tu bez tego samo wgniecenie (pchnięcie pozycji) rozpędzało statek.
-      const lost = m * (1 - damp);
+      const lost = m * keep;
       qx += lost * wx; qy += lost * wy; qz += lost * wz;
-      drift += m * (Math.abs(nx - px[i]) + Math.abs(ny - py[i]) + Math.abs(nz - pz[i]));
+      drift += m * (Math.abs(nx - pxi) + Math.abs(ny - pyi) + Math.abs(nz - pzi));
       x[i] = nx; y[i] = ny; z[i] = nz;
-      vx[i] = wx * damp; vy[i] = wy * damp; vz[i] = wz * damp;
-      if (!skinDirty[i]) { skinDirty[i] = 1; region.dirty[region.dirtyCount++] = i; }
-      const disp = Math.max(Math.abs(nx - ox[i]), Math.abs(ny - oy[i]), Math.abs(nz - oz[i]));
-      if (disp > body._maxDisp) body._maxDisp = disp;
+      const nvx = wx * damp, nvy = wy * damp, nvz = wz * damp;
+      if (!skinDirty[i]) { skinDirty[i] = 1; dirty[region.dirtyCount++] = i; }
+      // W płaszczyźnie nz = oz: składowa z to +0, Math.max bez niej daje to samo.
+      const disp = planar ? Math.max(Math.abs(nx - ox[i]), Math.abs(ny - oy[i]))
+        : Math.max(Math.abs(nx - ox[i]), Math.abs(ny - oy[i]), Math.abs(nz - ozi));
+      if (disp > maxDisp) maxDisp = disp;
       // Obrys tylko rośnie (extendBeamBounds); dokładny wraca przy wyrównaniu środka.
       if (nx < mm[0] || nx > mm[3] || ny < mm[1] || ny > mm[4] || nz < mm[2] || nz > mm[5] ||
           nx * nx + ny * ny + nz * nz > body._boundsR2) extendBeamBounds(body, nx, ny, nz);
-      if (Math.abs(vx[i]) + Math.abs(vy[i]) + Math.abs(vz[i]) > threshold) activateNode(body, i);
-      else if (act[i]) quiet[i]++;
-      else {
+      if (Math.abs(nvx) + Math.abs(nvy) + Math.abs(nvz) > threshold) {
+        // activateNode wprost (węzeł żywy, skóra już oznaczona, ciało nie śpi).
+        vx[i] = nvx; vy[i] = nvy; vz[i] = nvz;
+        quiet[i] = 0;
+        if (!act[i]) { act[i] = 1; list.push(i); }
+      } else if (act[i]) {
+        vx[i] = nvx; vy[i] = nvy; vz[i] = nvz;
+        quiet[i]++;
+      } else {
         // Sąsiad, który się nie rozpędził: węzły poza obszarem spoczywają w układzie ciała.
-        qx += m * vx[i]; qy += m * vy[i]; qz += m * vz[i];
+        qx += m * nvx; qy += m * nvy; qz += m * nvz;
         vx[i] = 0; vy[i] = 0; vz[i] = 0;
+        frontier[fCount++] = i;
       }
     }
-    let fCount = 0;
-    for (let k = 0; k < sCount; k++) {
-      const i = solve[k];
-      if (!act[i]) region.frontier[fCount++] = i;
-    }
+    body._maxDisp = maxDisp;
     region.frontierCount = fCount;
 
     // 6) Wyrzuć z obszaru węzły martwe i uspokojone (ich resztkowy pęd → ciało).
@@ -1004,15 +1052,35 @@ export const DestructorBeams3D = {
     const pairCount = this._broadphase(bodies, dt);
     const pairs = this._bpPairs, stride = this._bpStride;
     const iters = Math.max(1, cfg.collisionIterations | 0);
+    // Para bez kontaktu, której ciała od tamtej iteracji się nie ruszyły (_geomVer: rozdzielenie,
+    // zgniot, utrata węzła), w następnej znów nic nie znajdzie — skan pomijamy, wynik ten sam.
+    let quietA = this._bpQuietA, quietB = this._bpQuietB;
+    if (quietA.length < pairCount) {
+      quietA = this._bpQuietA = new Int32Array(Math.max(pairCount, quietA.length * 2));
+      quietB = this._bpQuietB = new Int32Array(quietA.length);
+    }
     for (let it = 0; it < iters; it++) {
       for (let p = 0; p < pairCount; p++) {
         const key = pairs[p];
         const A = bodies[Math.floor(key / stride)];
         const B = bodies[key % stride];
+        if (it === 0) quietA[p] = -1;
         if (!A || A.dead || A.activeNodes <= 0) continue;
         if (!B || B.dead || B.activeNodes <= 0) continue;
         if ((A.static || A.anchored) && (B.static || B.anchored)) continue;
-        if (this.pairFilter !== null && !this.pairFilter(A, B)) continue;
+        if (it > 0 && quietA[p] === A._geomVer && quietB[p] === B._geomVer) continue;
+        let pairDt = dt;
+        if (this.pairFilter !== null) {
+          const filter = this.pairFilter(A, B);
+          if (!filter) continue;
+          // Liczba k > 1 z haka: para liczona co k-ty krok (faza z id ciał rozkłada pary na kroki),
+          // z krokiem k · dt — zgniot, granica plastyczności i rozdzielenie za cały odstęp.
+          if (filter !== true && filter > 1) {
+            const every = filter | 0;
+            if ((this._tick + A.id + B.id) % every !== 0) continue;
+            pairDt = dt * every;
+          }
+        }
         this.perf.broadphasePairs++;
 
         const dx = A.pos.x - B.pos.x;
@@ -1022,14 +1090,15 @@ export const DestructorBeams3D = {
         const relVy = A.vel.y - B.vel.y;
         const relVz = A.vel.z - B.vel.z;
         const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy + relVz * relVz);
-        const margin = relSpeed * dt * 2 + cfg.cellSize * 2;
+        const margin = relSpeed * pairDt * 2 + cfg.cellSize * 2;
         const rs = A.radius + B.radius + margin;
         if (dx * dx + dy * dy + dz * dz > rs * rs) continue;
         const padding = (A.cellSize + B.cellSize) * (cfg.nodeRadius / cfg.cellSize);
         if (!beamBoundsOverlap(A, B, padding, this._tick)) { this.perf.aabbRejected++; continue; }
 
         this.perf.narrowphasePairs++;
-        this.collideBodies(A, B, dt, it === 0);
+        if (this.collideBodies(A, B, pairDt, it === 0) === 0) { quietA[p] = A._geomVer; quietB[p] = B._geomVer; }
+        else quietA[p] = -1;
       }
     }
     const tAfterCol = nowMs();
@@ -1056,6 +1125,9 @@ export const DestructorBeams3D = {
   _bpPairs: new Float64Array(256),
   _bpStride: 1,
   _bpCount: 0,
+  // Pary bez kontaktu w bieżącym kroku: _geomVer obu ciał z chwili skanu (−1 = liczyć).
+  _bpQuietA: new Int32Array(256),
+  _bpQuietB: new Int32Array(256),
 
   /**
    * Kandydaci na pary ciał z siatki przestrzennej (zamiast każdy z każdym). Ciało trafia
@@ -1157,6 +1229,14 @@ export const DestructorBeams3D = {
 
   // --------------------------- KOLIZJE ---------------------------
 
+  /**
+   * Styk pary: węzły ciała o mniejszej liczbie żywych węzłów (iterowanego) szukają najbliższego
+   * węzła drugiego (gospodarza) w jego siatce. Zwraca liczbę kontaktów (0 = para bez styku).
+   * Skan idzie tylko po KANDYDATACH (_contactCandidates) — węzłach, które mogą przejść testy sfery
+   * zasięgu i pudła gospodarza; reszta odpadłaby na nich, więc kontakty, ich kolejność i kursor
+   * skanu są te same co przy przeglądzie wszystkich węzłów (dawniej 76–97% par w bitwie przeglądało
+   * cały kadłub bez jednego styku — dwa supercapitale burta w burtę: 2,1 tys. węzłów na parę).
+   */
   collideBodies(A, B, dt, doDamage) {
     const cfg = this.config;
     const planar = !!cfg.planar;
@@ -1175,13 +1255,21 @@ export const DestructorBeams3D = {
     const contactDistSq = contactDist * contactDist;
     const reach = holder.radius + cs * 2;
     const reachSq = reach * reach;
+    // Pudło gospodarza w jego układzie: AABB żywych węzłów ± contactDist.
+    const bx0 = grid.minX - contactDist, bx1 = grid.maxX + contactDist;
+    const by0 = grid.minY - contactDist, by1 = grid.maxY + contactDist;
+    const bz0 = grid.minZ - contactDist, bz1 = grid.maxZ + contactDist;
 
-    const wI = this._s1, lH = this._s2, wH = this._s3;
     const swapped = iter !== A;
     const is = iter.nodeStore, hs = holder.nodeStore;
     const ix = is.x, iy = is.y, iz = is.z, iActive = is.active;
     const hx = hs.x, hy = hs.y, hz = hs.z, hNext = hs.hashNext;
     const sa = A.nodeStore, sb = B.nodeStore;
+    // Ruch sztywny obu ciał jest stały w całym skanie (to samo działanie co matVec / matVecT).
+    const i00 = mI[0], i01 = mI[1], i02 = mI[2], i10 = mI[3], i11 = mI[4], i12 = mI[5], i20 = mI[6], i21 = mI[7], i22 = mI[8];
+    const h00 = mH[0], h01 = mH[1], h02 = mH[2], h10 = mH[3], h11 = mH[4], h12 = mH[5], h20 = mH[6], h21 = mH[7], h22 = mH[8];
+    const pIx = iter.pos.x, pIy = iter.pos.y, pIz = iter.pos.z;
+    const pHx = holder.pos.x, pHy = holder.pos.y, pHz = holder.pos.z;
 
     let count = 0;
     let hitX = 0, hitY = 0, hitZ = 0;
@@ -1195,41 +1283,46 @@ export const DestructorBeams3D = {
     const maxContacts = Math.max(8, cfg.maxContacts | 0);
     const total = is.count;
     const start = iter._contactCursor % total;
+    const candidates = this._contactCandidates(iter, holder, mI, mH, grid, contactDist, reach, start, total);
+    const list = this._ncList;
+    this.perf.narrowCandidates += candidates;
 
-    for (let scan = 0; scan < total; scan++) {
-      const nodeIndex = (start + scan) % total;
+    for (let c = 0; c < candidates; c++) {
+      const nodeIndex = list[c];
       if (!iActive[nodeIndex]) continue;
 
-      matVec(mI, ix[nodeIndex], iy[nodeIndex], iz[nodeIndex], wI);
-      wI.x += iter.pos.x; wI.y += iter.pos.y; wI.z += iter.pos.z;
+      const lx = ix[nodeIndex], ly = iy[nodeIndex], lz = iz[nodeIndex];
+      const wIx = i00 * lx + i01 * ly + i02 * lz + pIx;
+      const wIy = i10 * lx + i11 * ly + i12 * lz + pIy;
+      const wIz = i20 * lx + i21 * ly + i22 * lz + pIz;
 
-      const hdx = wI.x - holder.pos.x, hdy = wI.y - holder.pos.y, hdz = wI.z - holder.pos.z;
+      const hdx = wIx - pHx, hdy = wIy - pHy, hdz = wIz - pHz;
       if (hdx * hdx + hdy * hdy + hdz * hdz > reachSq) continue;
-      matVecT(mH, hdx, hdy, hdz, lH);
-      if (lH.x < holder._hashMinX - contactDist || lH.x > holder._hashMaxX + contactDist ||
-          lH.y < holder._hashMinY - contactDist || lH.y > holder._hashMaxY + contactDist ||
-          lH.z < holder._hashMinZ - contactDist || lH.z > holder._hashMaxZ + contactDist) continue;
+      const lHx = h00 * hdx + h10 * hdy + h20 * hdz;
+      const lHy = h01 * hdx + h11 * hdy + h21 * hdz;
+      const lHz = h02 * hdx + h12 * hdy + h22 * hdz;
+      if (lHx < bx0 || lHx > bx1 || lHy < by0 || lHy > by1 || lHz < bz0 || lHz > bz1) continue;
 
-      const i0 = Math.floor((lH.x - contactDist) / cs), i1 = Math.floor((lH.x + contactDist) / cs);
-      const j0 = Math.floor((lH.y - contactDist) / cs), j1 = Math.floor((lH.y + contactDist) / cs);
+      const i0 = Math.floor((lHx - contactDist) / cs), i1 = Math.floor((lHx + contactDist) / cs);
+      const j0 = Math.floor((lHy - contactDist) / cs), j1 = Math.floor((lHy + contactDist) / cs);
       // Płaszczyzna: węzły obu ciał leżą na z = 0 — jeden plaster hasha zamiast czterech.
-      const k0 = planar ? Math.floor(lH.z / cs + 0.5) : Math.floor((lH.z - contactDist) / cs);
-      const k1 = planar ? k0 : Math.floor((lH.z + contactDist) / cs);
+      const k0 = planar ? Math.floor(lHz / cs + 0.5) : Math.floor((lHz - contactDist) / cs);
+      const k1 = planar ? k0 : Math.floor((lHz + contactDist) / cs);
       let found = -1;
       let bestD2 = contactDistSq;
 
       // Odwiedź tylko kubiki przecinające sferę kontaktu. Dawny stały zakres
       // ±2 dawał 125 lookupów na węzeł, także przez pustkę pomiędzy odłamami.
       for (let k = k0; k <= k1; k++) {
-        const ez = Math.max(0, k * cs - lH.z, lH.z - (k + 1) * cs);
+        const ez = Math.max(0, k * cs - lHz, lHz - (k + 1) * cs);
         const z2 = ez * ez;
         if (z2 >= bestD2) continue;
         for (let j = j0; j <= j1; j++) {
-          const ey = Math.max(0, j * cs - lH.y, lH.y - (j + 1) * cs);
+          const ey = Math.max(0, j * cs - lHy, lHy - (j + 1) * cs);
           const yz2 = z2 + ey * ey;
           if (yz2 >= bestD2) continue;
           for (let i = i0; i <= i1; i++) {
-            const ex = Math.max(0, i * cs - lH.x, lH.x - (i + 1) * cs);
+            const ex = Math.max(0, i * cs - lHx, lHx - (i + 1) * cs);
             if (yz2 + ex * ex >= bestD2) continue;
             lookups++;
             let bucket;
@@ -1243,7 +1336,7 @@ export const DestructorBeams3D = {
               bucket = gHeads[ci + gnx * (cj + gny * ck)];
             }
             for (let h = bucket; h >= 0; h = hNext[h]) {
-              const ddx = lH.x - hx[h], ddy = lH.y - hy[h], ddz = lH.z - hz[h];
+              const ddx = lHx - hx[h], ddy = lHy - hy[h], ddz = lHz - hz[h];
               const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
               if (d2 < bestD2) { bestD2 = d2; found = h; }
             }
@@ -1252,17 +1345,19 @@ export const DestructorBeams3D = {
       }
       if (found < 0) continue;
 
-      matVec(mH, hx[found], hy[found], hz[found], wH);
-      wH.x += holder.pos.x; wH.y += holder.pos.y; wH.z += holder.pos.z;
+      const fx = hx[found], fy = hy[found], fz = hz[found];
+      const wHx = h00 * fx + h01 * fy + h02 * fz + pHx;
+      const wHy = h10 * fx + h11 * fy + h12 * fz + pHy;
+      const wHz = h20 * fx + h21 * fy + h22 * fz + pHz;
 
-      const cnx = wI.x - wH.x, cny = wI.y - wH.y, cnz = wI.z - wH.z;
+      const cnx = wIx - wHx, cny = wIy - wHy, cnz = wIz - wHz;
       const dist = Math.sqrt(cnx * cnx + cny * cny + cnz * cnz);
       const pen = contactDist - dist;
       if (pen <= 0) continue;
 
-      hitX += (wI.x + wH.x) * 0.5;
-      hitY += (wI.y + wH.y) * 0.5;
-      hitZ += (wI.z + wH.z) * 0.5;
+      hitX += (wIx + wHx) * 0.5;
+      hitY += (wIy + wHy) * 0.5;
+      hitZ += (wIz + wHz) * 0.5;
       nX += swapped ? -cnx : cnx;
       nY += swapped ? -cny : cny;
       nZ += swapped ? -cnz : cnz;
@@ -1281,7 +1376,10 @@ export const DestructorBeams3D = {
     }
     this.perf.hashLookups += lookups;
 
-    if (count === 0) return;
+    if (count === 0) return 0;
+    // Styk: ciała zmieniają położenie i kształt (rozdzielenie, zgniot) — pary z nimi liczą się od nowa.
+    this._touchGeometry(A);
+    this._touchGeometry(B);
 
     hitX /= count; hitY /= count; hitZ /= count;
     let nLenSq = nX * nX + nY * nY + nZ * nZ;
@@ -1474,6 +1572,85 @@ export const DestructorBeams3D = {
       info.doDamage = doDamage;
       this.onContact(A, B, info);
     }
+    return count;
+  },
+
+  _ncList: new Int32Array(1024),
+
+  /**
+   * Kandydaci skanu kontaktów (collideBodies) w this._ncList, w kolejności skanu: od `start` rosnąco,
+   * z zawinięciem. Kandydat = żywy węzeł iterowanego ciała w obszarze, w którym może przejść testy
+   * sfery zasięgu i pudła gospodarza — obie bryły przeniesione z układu gospodarza do układu
+   * iterowanego ciała, AABB z zapasem na zaokrąglenia (skan liczy w układzie świata, 5–10 mln j.).
+   * Test w układzie lokalnym, bez obrotu do świata: ~1 ns na węzeł (dawniej obrót, przesunięcie,
+   * sfera i drugi obrót na każdy węzeł). Kubełki siatki węzłów iterowanego ciała + sortowanie do
+   * kolejności skanu zmierzone 2026-10-07 — bez zysku (tarany, wraki, burta w burtę). Zwraca liczbę.
+   */
+  _contactCandidates(iter, holder, mI, mH, grid, contactDist, reach, start, total) {
+    // Gospodarz bez żywych węzłów: każdy węzeł odpada na pudle (skan nic nie znajduje).
+    if (!(grid.minX <= grid.maxX)) return 0;
+    // Pudło gospodarza: środek i półosie w jego układzie.
+    const hcx = (grid.minX + grid.maxX) * 0.5, hcy = (grid.minY + grid.maxY) * 0.5, hcz = (grid.minZ + grid.maxZ) * 0.5;
+    const hex = (grid.maxX - grid.minX) * 0.5 + contactDist;
+    const hey = (grid.maxY - grid.minY) * 0.5 + contactDist;
+    const hez = (grid.maxZ - grid.minZ) * 0.5 + contactDist;
+    // Początek gospodarza w układzie iterowanego: Rᵢᵀ (p_H − p_I); obrót gospodarz → iterowany M = Rᵢᵀ R_H.
+    const pIx = iter.pos.x, pIy = iter.pos.y, pIz = iter.pos.z;
+    const pHx = holder.pos.x, pHy = holder.pos.y, pHz = holder.pos.z;
+    const dx = pHx - pIx, dy = pHy - pIy, dz = pHz - pIz;
+    const ox = mI[0] * dx + mI[3] * dy + mI[6] * dz;
+    const oy = mI[1] * dx + mI[4] * dy + mI[7] * dz;
+    const oz = mI[2] * dx + mI[5] * dy + mI[8] * dz;
+    const m00 = mI[0] * mH[0] + mI[3] * mH[3] + mI[6] * mH[6];
+    const m01 = mI[0] * mH[1] + mI[3] * mH[4] + mI[6] * mH[7];
+    const m02 = mI[0] * mH[2] + mI[3] * mH[5] + mI[6] * mH[8];
+    const m10 = mI[1] * mH[0] + mI[4] * mH[3] + mI[7] * mH[6];
+    const m11 = mI[1] * mH[1] + mI[4] * mH[4] + mI[7] * mH[7];
+    const m12 = mI[1] * mH[2] + mI[4] * mH[5] + mI[7] * mH[8];
+    const m20 = mI[2] * mH[0] + mI[5] * mH[3] + mI[8] * mH[6];
+    const m21 = mI[2] * mH[1] + mI[5] * mH[4] + mI[8] * mH[7];
+    const m22 = mI[2] * mH[2] + mI[5] * mH[5] + mI[8] * mH[8];
+    const cx = ox + m00 * hcx + m01 * hcy + m02 * hcz;
+    const cy = oy + m10 * hcx + m11 * hcy + m12 * hcz;
+    const cz = oz + m20 * hcx + m21 * hcy + m22 * hcz;
+    const ax = Math.abs(m00) * hex + Math.abs(m01) * hey + Math.abs(m02) * hez;
+    const ay = Math.abs(m10) * hex + Math.abs(m11) * hey + Math.abs(m12) * hez;
+    const az = Math.abs(m20) * hex + Math.abs(m21) * hey + Math.abs(m22) * hez;
+    // Zasięg NaN (stan uszkodzony) w skanie nie odrzuca niczego — tu też nie.
+    const sphere = reach >= 0 ? reach : Infinity;
+    // Zapas: skan liczy położenie węzła w świecie (błąd ~ulp największej współrzędnej, ~2e-9 przy
+    // 10 mln j.); 1e-12 × skala to wielokrotność, a w komórkach kadłuba — nic.
+    const eps = 1e-12 * (Math.abs(pIx) + Math.abs(pIy) + Math.abs(pIz) + Math.abs(pHx) + Math.abs(pHy) + Math.abs(pHz) +
+      Math.abs(hcx) + Math.abs(hcy) + Math.abs(hcz) + hex + hey + hez + (reach >= 0 ? reach : 0)) + 1e-9;
+    // Część wspólna pudła i sfery zasięgu (każde z osobna zawiera węzły, które przejdą test).
+    const rx0 = Math.max(cx - ax, ox - sphere) - eps, rx1 = Math.min(cx + ax, ox + sphere) + eps;
+    const ry0 = Math.max(cy - ay, oy - sphere) - eps, ry1 = Math.min(cy + ay, oy + sphere) + eps;
+    const rz0 = Math.max(cz - az, oz - sphere) - eps, rz1 = Math.min(cz + az, oz + sphere) + eps;
+    if (!(rx0 <= rx1 && ry0 <= ry1 && rz0 <= rz1)) return 0;
+
+    let list = this._ncList;
+    if (list.length < total) list = this._ncList = new Int32Array(Math.max(total, list.length * 2));
+    const s = iter.nodeStore, x = s.x, y = s.y, z = s.z, active = s.active;
+    let m = 0;
+    for (let n = start; n < total; n++) {
+      if (!active[n]) continue;
+      const px = x[n], py = y[n], pz = z[n];
+      if (px < rx0 || px > rx1 || py < ry0 || py > ry1 || pz < rz0 || pz > rz1) continue;
+      list[m++] = n;
+    }
+    for (let n = 0; n < start; n++) {
+      if (!active[n]) continue;
+      const px = x[n], py = y[n], pz = z[n];
+      if (px < rx0 || px > rx1 || py < ry0 || py > ry1 || pz < rz0 || pz > rz1) continue;
+      list[m++] = n;
+    }
+    return m;
+  },
+
+  // Zmiana położenia albo kształtu ciała w kroku kolizji: para bez kontaktu z tym ciałem nie może
+  // pominąć kolejnej iteracji (update). Licznik w zakresie małych liczb całkowitych V8.
+  _touchGeometry(body) {
+    body._geomVer = (body._geomVer + 1) & 0x3fffffff;
   },
 
   _contactInfo: {
@@ -1746,6 +1923,7 @@ export const DestructorBeams3D = {
     this.wake(body, cfg.wakeHoldFrames);
     body.meshDirty = true;
     body._hashTick = -1;
+    this._touchGeometry(body);
     if (local) {
       // Oparcie tracą tylko końce zerwanych belek i sąsiedzi zniszczonych węzłów.
       const adjStart = s.adjStart, adj = s.adj;
@@ -1908,6 +2086,7 @@ export const DestructorBeams3D = {
     body.meshDirty = true;
     body.structureDirty = true;
     body._hashTick = -1;
+    this._touchGeometry(body);
     body.mass = Math.max(1, body.mass - s.mass[i]);
     if (!body.static && !body.anchored) body.invMass = 1 / body.mass;
 
@@ -2307,10 +2486,12 @@ export const DestructorBeams3D = {
    * belek, 4–17 ms) i renderer budował od nowa skórę całego kadłuba. Gdy żywych węzłów
    * zostaje mniej niż `compactBelow` pojemności, magazyny się zagęszczają — w pierwotnej
    * kolejności, więc wynik fizyki jest ten sam (bit w bit) przy każdym progu.
+   * `body.keepLayout` (żywe kadłuby gry, hullBodies.js): bez zagęszczania — magazyn zostaje w układzie
+   * konstrukcji, więc odrost węzłów (HullBodies.regrowCell) ożywia wpisy w miejscu.
    */
   _rebuildBody(body, group) {
     const s = body.nodeStore;
-    const compactBelow = this.config.compactBelow ?? 0.5;
+    const compactBelow = body.keepLayout ? 0 : (this.config.compactBelow ?? 0.5);
     let part = null;
     if (group.length < compactBelow * s.count) {
       const cursor = body._contactCursor;
@@ -2327,6 +2508,8 @@ export const DestructorBeams3D = {
     } else {
       this._retireOutsideGroup(body, group);
     }
+    // Węzły odłamów zgasły (albo przyjdzie nowy magazyn): siatka węzłów do przebudowy.
+    body._hashTick = -1;
     const store = part ? part.nodeStore : s;
     const info = computeStoreInertia(store, body.cellSize);
     if (!info) return;
@@ -2463,6 +2646,7 @@ export const DestructorBeams3D = {
       _rotTick: -1,
       _grid: createNodeGrid(),
       _hashTick: -1,
+      _geomVer: 0,
       _contactCursor: 0,
       _contacts: [],
       _contactDepths: [],
@@ -2571,6 +2755,7 @@ export const DestructorBeams3D = {
         s.z[i] += (s.oz[i] - s.z[i]) * step * 2;
         if (s.hp[i] < s.maxHp[i]) { s.hp[i] = Math.min(s.maxHp[i], s.hp[i] + s.maxHp[i] * step); changed = true; }
       }
+      body._hashTick = -1;
       this._updateRadius(body);
       if (changed) {
         any = true;

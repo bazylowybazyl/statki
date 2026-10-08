@@ -40,14 +40,20 @@ import {
   positionLocal, positionGeometry, normalLocal, uv,
   modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
   transformNormalToView, screenCoordinate, screenSize, viewportSize,
-  abs, atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
-  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty
+  atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
+  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty, uint
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { WARP_STARS } from './warp/stars.js';
 import { WARP_SKY_BEND, warpSkyBendOffset } from './warp/skyBend.js';
 import { RULON, rulonInverse } from './warp/rulon.js';
+import { acesGry } from './tsl/kolorGry.js';
+import { acesGryInv } from './skybake/skyGameColor.js';
+import { skyStarField } from './skyStars.tsl.js';
+
+// Siatka tekseli tła dla gwiazd ekranowych (rozmiar tekstury wypiekacza: płaszczyzna NebulaSystem 1,6 : 1).
+const SKY_STAR_TEX = vec2(5120, 3200);
 // ── Maska słońca: JEDNO miejsce dla planet, chmur, poświat, mgławicy i gwiazd ──
 // Biblioteka TSL maski (zadanie 03, sunShadowMask.js): odczyt po screenUV, wspólne węzły uniformów
 // w grupie renderu. Planety tła (perspektywa, z = −50 000) maski nie czytają (uSunShadowRecv = 0 —
@@ -212,10 +218,53 @@ function applyRingShadow(color, worldPos, lit, U) {
   });
 }
 
+// ── Słońce przez atmosferę: pas zachodu (2026-10-06) ───────────────────────────
+// Noc planet jest czarna i nieprzezroczysta (zasłania tło), świecą na niej tylko miasta; dawne
+// światło otoczenia (uAmbient), szeroki terminator (uSunWrap) i nocna poświata dawały widoczną
+// szaroniebieską noc. Pas zachodu nie jest doklejonym kolorem: promienie słońca idą przez
+// atmosferę planety — masa powietrza rośnie ku horyzontowi (Rozenberg: ~40 przy słońcu na
+// horyzoncie), więc światło przy terminatorze traci najpierw błękit (Ziemia: złoto → pomarańcz →
+// czerwień, Mars z odwrotnym współczynnikiem — błękitny zachód). Współczynniki to uHazeBeta ×
+// uHazeStrength planety (te same co mgiełka), planety bez mgiełki mają zwykły terminator.
+// Dzień ponad ~30° nad horyzontem bez zmian (SUNSET.m0). Powietrze nad gruntem widzi słońce jeszcze
+// za terminatorem gruntu (horyzont z wysokości, SUNSET.airDip) — zmierzchowa łuna za linią cienia.
+// Łuna zachodu (glow*): powietrze w pasie wokół terminatora świeci barwą przepuszczonego światła
+// (sama barwa T / max(T): od dnia złoto → pomarańcz → czerwień), najjaśniej tuż za terminatorem
+// gruntu, gdzie grunt już ciemny; grubość optyczna z masy powietrza wzdłuż wzroku (glowDepth) —
+// mocniej ku brzegowi tarczy.
+export const SUNSET = Object.freeze({
+  tau: 2.15, m0: 1.8, airDip: 0.06, cloudDip: 0.015,
+  glow: 0.17, glowAt: 0.05, glowWidth: 0.09, glowDepth: 0.35
+});
+
+// Masa powietrza dla sinusa wysokości słońca (Rozenberg 1966); słońce pod horyzontem jak na nim.
+function airmassOf(mu) {
+  const m = max(mu, 0.0);
+  return float(1.0).div(m.add(exp(m.mul(-11.0)).mul(0.025)));
+}
+
+// Przepuszczalność atmosfery dla promieni słońca (rgb) przy sinusie wysokości `mu`.
+function sunTransmittance(mu, U) {
+  const k = U.uHazeBeta.mul(U.uHazeStrength.mul(SUNSET.tau));
+  return exp(k.mul(max(airmassOf(mu).sub(SUNSET.m0), 0.0)).negate());
+}
+
+// Łuna zachodu (rgb, addytywnie): `muAir` = sinus wysokości słońca nad powietrzem punktu,
+// `viewAirmass` = masa powietrza wzdłuż wzroku (z uHazeStrength), `lit` = maska cienia. Rzadka
+// atmosfera (Mars, uHazeStrength 0,32) świeci słabiej — jasność × uHazeStrength.
+function sunsetGlow(muAir, viewAirmass, lit, U) {
+  const t = sunTransmittance(muAir, U).toVar();
+  const hue = t.div(max(max(t.r, max(t.g, t.b)), 1e-4));
+  const d = muAir.sub(SUNSET.glowAt).div(SUNSET.glowWidth);
+  const band = exp(d.mul(d).negate()).mul(smoothstep(-0.07, 0.03, muAir));
+  const depth = float(1.0).sub(exp(viewAirmass.mul(-SUNSET.glowDepth)));
+  return hue.mul(band.mul(depth).mul(lit).mul(U.uHazeStrength).mul(SUNSET.glow));
+}
+
 // ── Graf: powierzchnia planety (dawny EARTH_FRAGMENT) ───────────────────────────
 const SURFACE_KEYS = {
-  uPlanetBloom: 'float', sunPosition: 'vec3', sunsetTint: 'vec3', hasNightTexture: 'float',
-  uBrightness: 'float', uAmbient: 'float', uSpecular: 'float', uSunWrap: 'float', uSunIntensity: 'float',
+  uPlanetBloom: 'float', sunPosition: 'vec3', hasNightTexture: 'float',
+  uBrightness: 'float', uSpecular: 'float', uSunIntensity: 'float',
   uHazeStrength: 'float', uHazeColor: 'vec3', uHazeBeta: 'vec3',
   uRingShadowStrength: 'float', uRingShadowRadius: 'float', uRingShadowReach: 'float', uRingShadowCenter: 'vec2',
   uSunShadowRecv: 'float'
@@ -250,13 +299,14 @@ function buildSurfaceGraph() {
     const st1 = dFdy(vUv).toVar();
     const S = normalize(q0.mul(st1.y).sub(q1.mul(st0.y)));
     const T = normalize(q0.negate().mul(st1.x).add(q1.mul(st0.x)));
-    const N = normalize(vNormal);
-    const mappedNormal = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(N.mul(mapN.z)));
-    const normal = select(hasNight, mappedNormal, normalize(vNormal)).toVar();
+    const geoN = normalize(vNormal).toVar();
+    const mappedNormal = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(geoN.mul(mapN.z)));
+    const normal = select(hasNight, mappedNormal, geoN).toVar();
 
     const NdotL = dot(normal, lightDir).toVar();
     const sunL = max(0.0, NdotL).toVar();
-    const dayLight = clamp(U.uAmbient.add(sunL.mul(U.uSunIntensity)), 0.0, 1.2).toVar();
+    // Wysokość słońca nad horyzontem w punkcie (normalna geometryczna — gładki pas zachodu).
+    const geoMu = dot(geoN, lightDir).toVar();
     // Próbki w jednolitym przepływie (toVar): select() niżej rozwija się w if/else, a próbka
     // z pochodnymi w gałęzi zależnej od piksela dawałaby nieokreślony poziom mipmapy.
     const dayColor = vec4(dayTex).toVar();
@@ -266,49 +316,41 @@ function buildSurfaceGraph() {
     const NdotH = max(0.0, dot(normal, halfVector));
     const shininess = mix(16.0, 42.0, waterMask);
     const specular = select(sunL.greaterThan(0.0), pow(NdotH, shininess).mul(waterMask).mul(U.uSpecular).mul(sunL), float(0.0)).toVar();
-    const terminatorCenter = float(-0.02).sub(U.uSunWrap.mul(0.45)).toVar();
-    const terminatorSoft = float(0.26).add(abs(U.uSunWrap).mul(0.35)).toVar();
-    const mixFactor = smoothstep(terminatorCenter.sub(terminatorSoft), terminatorCenter.add(terminatorSoft), NdotL).toVar();
     const sunVisP = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
-    mixFactor.mulAssign(sunVisP);
 
-    // Z mapą nocy (Ziemia): miasta nocą, połysk wody.
-    const daySide = dayColor.rgb.mul(U.uBrightness).mul(dayLight).add(vec3(0.55, 0.62, 0.78).mul(specular));
-    const nightMask = float(1.0).sub(mixFactor);
+    // Dzień: Lambert w świetle przefiltrowanym przez atmosferę, połysk wody tym samym światłem.
+    const sunT = sunTransmittance(geoMu, U).toVar();
+    const dayLit = dayColor.rgb.mul(U.uBrightness).mul(clamp(sunL.mul(U.uSunIntensity), 0.0, 1.2))
+      .add(vec3(0.55, 0.62, 0.78).mul(specular)).mul(sunT).mul(sunVisP);
+    // Noc (Ziemia): same miasta — ląd w świetle księżyca z mapy nocy (luminancja ~0,005) i ocean
+    // (~0,002) odcięte progiem. Zapalają się z zapadaniem zmroku i w cieniu ringu.
     const nightBase = nightColor.rgb;
     const cityBrightness = dot(nightBase, vec3(0.299, 0.587, 0.114));
     const cityGlow = nightBase.mul(cityBrightness.mul(cityBrightness)).mul(5.0);
-    const nightSide = nightBase.mul(0.55).add(cityGlow).mul(nightMask);
-    const withNight = mix(nightSide, daySide, mixFactor);
-    // Bez mapy nocy: miękki zmierzch i zimna nocna poświata.
-    const twilight = smoothstep(terminatorCenter.sub(terminatorSoft.add(0.06)), terminatorCenter.add(terminatorSoft), NdotL).mul(sunVisP);
-    const minNightLight = max(0.006, U.uAmbient.mul(0.35));
-    const lit = mix(minNightLight, dayLight, twilight);
-    const nightBand = float(1.0).sub(smoothstep(-0.35, 0.08, NdotL));
-    const nightTint = vec3(0.02, 0.03, 0.05).mul(nightBand);
-    const withoutNight = dayColor.rgb.mul(U.uBrightness).mul(lit).add(nightTint);
-    const finalColor = select(hasNight, withNight, withoutNight).toVar();
-
-    const sunsetBand = smoothstep(-0.30, -0.02, NdotL).mul(float(1.0).sub(smoothstep(-0.02, 0.20, NdotL))).toVar();
-    finalColor.assign(mix(finalColor, finalColor.mul(U.sunsetTint), sunsetBand.mul(0.45)));
+    const cityOn = float(1.0).sub(smoothstep(-0.10, 0.06, geoMu).mul(sunVisP));
+    const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn);
+    const finalColor = dayLit.add(cities).toVar();
 
     If(U.uHazeStrength.greaterThan(0.0005), () => {
-      const geoN = normalize(vNormal).toVar();
       const mu = clamp(dot(geoN, viewDir), 0.0, 1.0);
       const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();
-      const geoNdotL = dot(geoN, lightDir);
-      const dayHaze = smoothstep(-0.02, 0.30, geoNdotL).mul(sunVisP);
-      const hazeCol = U.uHazeColor.mul(dayHaze).add(U.sunsetTint.mul(0.9).mul(sunsetBand).mul(0.6));
+      // Mgiełka świeci światłem słońca, które do niej doszło: za dnia barwa mgiełki, przy terminatorze
+      // złoto i czerwień, za nim łuna powietrza, które jeszcze widzi słońce.
+      const muAir = geoMu.add(SUNSET.airDip).toVar();
+      const airLit = smoothstep(-0.02, 0.06, muAir).mul(smoothstep(-0.06, 0.30, muAir)).mul(sunVisP);
+      const hazeCol = U.uHazeColor.mul(sunTransmittance(muAir, U)).mul(airLit);
       finalColor.assign(finalColor.mul(extinction).add(hazeCol.mul(float(1.0).sub(extinction))));
+      finalColor.addAssign(sunsetGlow(muAir, airmass, sunVisP, U));
     });
 
+    // Dither pasa terminatora (bez pasm w ciemnych gradientach) i cień ringu po oświetlonej stronie.
+    const dayAmount = smoothstep(-0.08, 0.20, geoMu).mul(sunVisP).toVar();
     const dither = hash12(fragCoordGL()).sub(0.5).div(1024.0);
-    const ditherMask = mixFactor.mul(float(1.0).sub(mixFactor)).mul(4.0);
-    finalColor.addAssign(dither.mul(ditherMask));
+    finalColor.addAssign(dither.mul(dayAmount.mul(float(1.0).sub(dayAmount)).mul(4.0)));
     finalColor.assign(max(finalColor, vec3(0.0)));
 
-    applyRingShadow(finalColor, vWorldPosition, mixFactor, U);
+    applyRingShadow(finalColor, vWorldPosition, dayAmount, U);
 
     const luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
     const bloomPush = smoothstep(0.85, 1.0, luminance).mul(U.uPlanetBloom);
@@ -339,16 +381,27 @@ function buildCloudGraph() {
     const mask = dot(texel.rgb, vec3(0.299, 0.587, 0.114)).toVar();
     const normal = normalize(vNormal).toVar();
     const lightDir = normalize(U.sunPosition.sub(vWorldPosition)).toVar();
-    const lit = smoothstep(-0.02, 0.22, dot(normal, lightDir)).mul(mix(1.0, sunVisibility(), U.uSunShadowRecv)).toVar();
+    // Chmury leżą wyżej niż grunt: słońce świeci na nie chwilę dłużej (SUNSET.cloudDip), światłem
+    // przefiltrowanym przez atmosferę — przy terminatorze złote i różowe (pas zachodu).
+    // Chmury to bryły, nie płaszczyzna: przy niskim słońcu jasne zostają ich boki od słońca — oświetlenie
+    // gaśnie dopiero tuż przy terminatorze (dawniej rampa do 0,22 — chmury pasa zachodu były bure).
+    const geoMu = dot(normal, lightDir).toVar();
+    const muSun = geoMu.add(SUNSET.cloudDip).toVar();
+    const sunVisC = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
+    const lit = smoothstep(-0.02, 0.12, muSun).mul(sunVisC).toVar();
     const alpha = mask.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
-    const color = vec3(1.0).mul(float(0.08).add(lit.mul(0.92))).toVar();
+    const color = sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       const viewDirW = normalize(cameraPosition.sub(vWorldPosition));
       const mu = clamp(dot(normal, viewDirW), 0.0, 1.0);
       const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();
-      const hazeDay = smoothstep(-0.02, 0.30, dot(normal, lightDir));
-      color.assign(color.mul(extinction).add(U.uHazeColor.mul(hazeDay).mul(float(1.0).sub(extinction))));
+      const muAir = geoMu.add(SUNSET.airDip).toVar();
+      const airLit = smoothstep(-0.02, 0.06, muAir).mul(smoothstep(-0.06, 0.30, muAir));
+      const hazeCol = U.uHazeColor.mul(sunTransmittance(muAir, U)).mul(airLit);
+      color.assign(color.mul(extinction).add(hazeCol.mul(float(1.0).sub(extinction))));
+      // Ta sama łuna co na powierzchni — chmury w pasie zachodu jej nie zasłaniają.
+      color.addAssign(sunsetGlow(muAir, airmass, sunVisC, U));
     });
     applyRingShadow(color, vWorldPosition, lit, U);
     Discard(mask.lessThan(0.03).or(alpha.lessThan(0.01)));
@@ -599,7 +652,17 @@ export function createNebulaMaterial(u) {
       const off = r.xy.sub(q);
       uvS.addAssign(gx.mul(off.x).add(gy.mul(off.y)));
     });
-    const color = texture(nebulaTex, uvS).rgb;
+    const tex = texture(nebulaTex, uvS).rgb;
+    // Obraz WYŚWIETLANY (liniowo): tekstura jest zapisana po odwróceniu ACES gry (wypiekacz nieba,
+    // src/3d/skybake/skyGameColor.js) i niesie same gładkie warstwy. Gwiazdy w rozdzielczości ekranu
+    // (skyStars.tsl.js — komórki w tekselach, profil w pikselach; teksele na piksel z pochodnych uv
+    // policzonych przed gałęziami) dokładane po stronie ekranu, potem jasność wg strefy gry
+    // (src/game/skyRegion.js, NebulaSystem.update) i powrót do wartości tekstury (acesGryInv obcina do bieli).
+    const smooth = acesGry(tex).toVar();
+    const pxT = max(length(gx.mul(SKY_STAR_TEX)), length(gy.mul(SKY_STAR_TEX)));
+    const stars = skyStarField(uvS.mul(SKY_STAR_TEX), pxT, smooth, uint(1));
+    const k = u.brightness || float(1.0);
+    const color = acesGryInv(smooth.add(stars).mul(k));
     const boost = float(1.0).add(u.warpFactor.mul(0.8));
     // Tło dostaje długą smugę cienia z maski Core3D (sunShaftBackdrop).
     return vec4(sunShaftBackdrop(color.mul(boost)), 1.0);

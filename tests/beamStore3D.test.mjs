@@ -17,7 +17,8 @@ test('magazyny tworzą dokładnie pola z list (z nich korzystają widoki i clone
     assert.equal(l[f].length, 3, `belka.${f}`);
   }
   // Pole spoza list nie trafi do clone() ani do widoków — trzeba je dopisać do listy.
-  const extraNode = Object.keys(s).filter(k => !(k in NODE_STORE_FIELDS) && !['count', 'adjStart', 'adj'].includes(k));
+  // shapeVersion: licznik zapisów kształtu przez widoki (siatka węzłów ciała), nie pole węzła.
+  const extraNode = Object.keys(s).filter(k => !(k in NODE_STORE_FIELDS) && !['count', 'adjStart', 'adj', 'shapeVersion'].includes(k));
   const extraBeam = Object.keys(l).filter(k => !(k in BEAM_STORE_FIELDS) && k !== 'count');
   assert.deepEqual(extraNode, []);
   assert.deepEqual(extraBeam, []);

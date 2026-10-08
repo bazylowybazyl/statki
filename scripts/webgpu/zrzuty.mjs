@@ -80,8 +80,9 @@ const PERF_SIDE = Math.max(2, Number(args.bok || 24));
 const DEEP = { x: 6210000, y: 5330000 };
 // Galeria wybuchu reaktora (zadanie 20): pusta przestrzeń, statek gracza 40 tys. j. obok (poza kadrem).
 const REAKTOR = { x: DEEP.x + 150000, y: DEEP.y - 350000 };
-// Siatki wybuchu reaktora w scenie Core3D (src/effects3d/reactorblow.js, od zadania 20).
-const REAKTOR_SIATKI = ['ReactorBlow:ogien', 'ReactorBlow:dym'];
+// Siatki wybuchu w scenie Core3D (od 2026-10-07 wybuchy WebGPU src/3d/explosions/ — dawniej reactorblow.js, zadanie 20):
+// bryły gazu (za i przed płaszczyzną gry), żar, błyski, łby odłamków. Iskry, dym rakiet i odłamki broni to pule wspólne.
+const REAKTOR_SIATKI = ['WybuchBack', 'WybuchFront', 'WybuchŻar', 'WybuchBłysk', 'WybuchOdłamki'];
 
 // Kop kamery przy warpie (zadanie 22-B): zoom gracza = zoom startu dema „Nurt” (trip.zoom0 =
 // min(W, 1,6·H) / 11 000 przy 1920×1080), więc kadr gry i dema jest porównywalny (--kop-zoom z:

@@ -87,7 +87,8 @@ test('planet3d.assets.js bez GLSL — materiały z grafów TSL, kontrakty unifor
   // Tło menu pożycza teksturę mgławicy (scene.getObjectByName('Nebula').material.uniforms.map.value) i tekstury
   // Ziemi (window.EARTH.uniforms.*Texture.value, cloudUniforms.cloudTexture.value) — ten sam kształt.
   assert.match(src, /this\.mesh\.name = 'Nebula';/);
-  assert.match(src, /this\.uniforms = uniformsAdapter\(\{ map: texture\(tex, uv\(\)\), warpFactor: uniform\(0\.0\) \}\);/);
+  // brightness — jasność tła wg strefy gry (src/game/skyRegion.js, mnożnik obrazu wyświetlanego).
+  assert.match(src, /this\.uniforms = uniformsAdapter\(\{ map: texture\(tex, uv\(\)\), warpFactor: uniform\(0\.0\), brightness: uniform\(1\.0\) \}\);/);
   assert.match(src, /if \(name === 'earth'\) window\.EARTH = this;/);
   const nebula = uniformsAdapter({ map: texture(tex(THREE.SRGBColorSpace), uv()), warpFactor: uniform(0) });
   const material = createNebulaMaterial(nebula);

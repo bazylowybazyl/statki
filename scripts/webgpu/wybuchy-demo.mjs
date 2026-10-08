@@ -1,208 +1,182 @@
-// Zrzuty dema dema/wybuchy-webgpu.html (gaz 3D, wybuchy budowli — plan docs/PLAN-zniszczenia-swiata-3d.md § 12).
-// Własny Vite (bez HMR — odporny na równoległe sesje) + headless Chrome z WebGPU (pomocniki dema rdzenia).
-//   node scripts/webgpu/wybuchy-demo.mjs [--sceny building,blast,blaze,reactor,chain] [--klatki 0.05,0.2,0.5,1,2,4,8]
-//        [--rozmiar 14] [--out katalog] [--szer 1280] [--wys 720] [--n 64]
-// Na scenę: pauza pętli, wybuch w stałym punkcie stacji, kroki symulacji po 1/60 s, zrzut w chwilach
-// --klatki (s od wybuchu). Arkusz: wiersz = scena, kolumny = chwile. Błędy konsoli i statystyki w raport.json.
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { startVite, startChrome, navigateAndWait, evaluate, sleep } from '../../dema/rdzen-cdp.js';
+// Zrzuty dema dema/wybuchy-webgpu.html — wybuchy gry (src/3d/explosions/) na prawdziwym Core3D, widok z góry jak w
+// grze i kamera 3D. Czas wirtualny harnessu gry (scripts/webgpu/harness-strona.js): każda klatka = 1/60 s, zrzut na
+// zatrzymanej klatce — kadry powtarzalne.
+//   node scripts/webgpu/wybuchy-demo.mjs [--przypadki capital@0.3,final@0.3,escort@0.3,capital@0.14,chain,kino]
+//        [--klatki 0.05,0.15,0.35,0.7,1.2,2,3.5,6] [--out .tmp/wybuchy-demo] [--rozmiar 1600x900] [--port 5294]
+//        [--tune klucz=wartość,…] (EXPLOSION_TUNE) [--look k=v,…] (obraz gazu) [--gaz k=v,…] (fizyka gazu) [--ab klucz] (każdy kadr też z wyłączoną warstwą: *-bez-klucz.png)
+//        [--koszt] (koszt GPU: łańcuch doku w czasie rzeczywistym, z gazem i bez)
+// Przypadek: profil@zoom (wybuch w środku galerii, size z profilu demo), `chain` (łańcuch rozpadu doku), `threshold`
+// (progi punktów doku), `station` (rozpad stacji), `kino` (kamera 3D, okręt liniowy).
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo, writeJson } from './wspolne.mjs';
 
-const arg = (name, fallback) => {
-  const i = process.argv.indexOf('--' + name);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
-};
-const scenes = arg('sceny', 'building,blast,blaze,reactor').split(',');
-const times = arg('klatki', '0.05,0.2,0.5,1,2,4,8').split(',').map(Number);
-const size = Number(arg('rozmiar', 14));
-const outDir = arg('out', '.tmp/wybuchy');
-const Wd = Number(arg('szer', 1280));
-const Hd = Number(arg('wys', 720));
-const gridN = arg('n', '');
+const args = parseArgs();
+const cases = String(args.przypadki || 'capital@0.3,final@0.3,escort@0.3,capital@0.14,chain,kino').split(',');
+const times = String(args.klatki || '0.05,0.15,0.35,0.7,1.2,2,3.5,6').split(',').map(Number);
+const [W, H] = String(args.rozmiar || '1600x900').split('x').map(Number);
+const outDir = resolve(repo, args.out || '.tmp/wybuchy-demo');
+const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 mkdirSync(outDir, { recursive: true });
+const SIZES = { fighter: 40, escort: 160, cruiser: 220, capital: 300, chain: 200, cut: 260, final: 320 };
+const kv = (str) => Object.fromEntries(String(str || '').split(',').filter(Boolean).map((p) => {
+  const [k, v] = p.split('=');
+  return [k, v === 'true' ? true : v === 'false' ? false : Number(v)];
+}));
 
-const VIEWS = {
-  default: { eye: [150, 70, 175], target: [10, 10, 20] }
-};
-
-const { server, base } = await startVite(5294);
-const chrome = await startChrome({ width: Wd, height: Hd, webgpu: true });
-const { cdp, logs } = chrome;
-const ev = (expr) => evaluate(cdp, expr);
-const shot = async () => (await cdp.send('Page.captureScreenshot', { format: 'png' })).data;
-const errors = () => logs.filter((l) => /^\[(error|exception|warning)\]/.test(l));
-const report = { scenes: [], errors: [] };
+const { server, base } = await startVite(Number(args.port || 5294));
+const chrome = await startChrome({ width: W, height: H });
+const logs = await attachLogs(chrome);
+const { cdp } = chrome;
+const ev = (e, t = 600000) => evaluate(cdp, e, t);
+const shotB64 = async () => (await cdp.send('Page.captureScreenshot', { format: 'png' })).data;
+const report = { cases: [], errors: [] };
+const rows = [];
 
 try {
-  const url = `${base}/dema/wybuchy-webgpu.html${gridN ? `?n=${gridN}` : ''}`;
-  const ok = await navigateAndWait(cdp, url, '!!(window.__demo && window.__demo.ready)', 180000);
-  if (!ok) throw new Error('demo się nie wczytało: ' + JSON.stringify(errors().slice(0, 10)));
-  await sleep(1500);
-  await ev('(() => { window.__demo.setLoop(false); return true; })()');
-  const kv = (str) => Object.fromEntries((str || '').split(',').filter(Boolean).map((p) => { const [k, v] = p.split('='); return [k, Number(v)]; }));
-  const look = kv(arg('look', ''));
-  const tune = kv(arg('tune', ''));
-  await ev(`(() => { const d = window.__demo; Object.assign(d.volume.look, ${JSON.stringify(look)}); Object.assign(d.grid.tune, ${JSON.stringify(tune)}); return true; })()`);
-  const rows = [];
-  for (const scene of scenes) {
-    const v = VIEWS[scene] || VIEWS.default;
-    await ev(`(() => {
-      const d = window.__demo;
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
+  await cdp.send('Page.navigate', { url: `${base}/dema/wybuchy-webgpu.html?shot=1` });
+  if (!await waitFor(cdp, '!!(window.__demo && window.__demo.ready && window.__harness)', 240000, 400)) throw new Error('demo nie wstało');
+  // Ładowanie (tekstury proxy, rozgrzewka): prawdziwe klatki aż proxy gotowe, potem wstrzymanie.
+  await ev('(() => { window.__harness.clock.mode = "real"; return true; })()');
+  await waitFor(cdp, 'window.__demo.proxiesReady()', 120000, 300);
+  await sleep(2500);
+  await ev('(() => { const h = window.__harness; h.clock.t = h.realNow(); h.clock.mode = "frozen"; h.hold(true); return true; })()');
+  await ev(`(() => { Object.assign(window.__demo.tune, ${JSON.stringify(kv(args.tune))}); Object.assign(window.__demo.fx.volume.look, ${JSON.stringify(kv(args.look))}); Object.assign(window.__demo.fx.grid.tune, ${JSON.stringify(kv(args.gaz))}); return true; })()`);
+  for (const spec of cases) {
+    const [kind, zoomStr] = spec.split('@');
+    const zoom = Number(zoomStr) || 0.3;
+    const setup = await ev(`(async () => {
+      const d = window.__demo, h = window.__harness;
       d.clear();
-      d.view(${JSON.stringify(v.eye)}, ${JSON.stringify(v.target)}, true);
-      // Stały punkt: promień z oka w środek kadru (pierwsze trafienie w stację).
-      const W = innerWidth, H = innerHeight;
-      const p = d.pickStation(W * 0.5, H * 0.5) || { x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0 };
-      window.__p = p;
-      // Kamera bliżej miejsca wybuchu (wzdłuż tej samej osi patrzenia), kadr ~7 promieni kuli ognia.
-      const e = d.camera.position;
-      const dx = e.x - p.x, dy = e.y - p.y, dz = e.z - p.z;
-      const l = Math.hypot(dx, dy, dz) || 1;
-      const dist = ${size} * ${Number(arg('dystans', 7))} * (${JSON.stringify(scene)} === 'reactor' ? 2.4 : ${JSON.stringify(scene)} === 'blast' ? 0.7 : 1);
-      d.view([p.x + dx / l * dist, p.y + dy / l * dist + ${size} * 0.8, p.z + dz / l * dist], [p.x, p.y + ${size} * 0.6, p.z], true);
-      d.boom(${JSON.stringify(scene)}, p.x, p.y, p.z, ${size}, p.nx, p.ny, p.nz);
-      return p;
+      h.reseed(0x5eed1234);
+      await h.step(30);   // dym i iskry poprzednich przypadków znikają z pul rakiet i broni
+      const g = d.gallery;
+      if ('${kind}' === 'chain' || '${kind}' === 'threshold' || '${kind}' === 'station') d.scene('${kind}');
+      else if ('${kind}' === 'kino') { d.cine(4200, -0.7, 0.62); d.boomAt('capital', 0, 0, 300); }
+      else { d.cam(g.x, g.y, ${zoom}); d.boomAt('${kind}', 0, 0, ${SIZES[kind] || 300}); }
+      return d.stats();
     })()`);
     const frames = [];
     let tNow = 0;
     for (const at of times) {
-      const steps = Math.max(1, Math.round((at - tNow) * 60));
-      const stats = await ev(`(() => {
-        const d = window.__demo;
-        const t0 = performance.now();
-        let s = null;
-        for (let i = 0; i < ${steps}; i++) s = d.step(1 / 60, 1);
-        return { ...s, ms: +(performance.now() - t0).toFixed(1), embers: d.embers.stats.alive, emitters: d.director.stats.emitters };
-      })()`);
-      // Sonda gazu: maksima w domenie i profil wzdłuż osi x przez środek (co 4. komórka).
-      stats.probe = await ev(`(async () => {
-        const d = window.__demo;
-        const s = d.grid.active[0];
-        if (!s) return null;
-        const r = await d.grid.probe(d.renderer, s.index);
-        const f = (v) => +v.toFixed(2);
-        const prof = (a, key) => a.filter((_, i) => i % 4 === 2).map((c) => f(c[key]));
-        return { max: { smoke: f(r.max.smoke), T: f(r.max.T), speed: f(r.max.speed), q: f(r.max.q) }, nan: r.nan,
-          smokeX: prof(r.axes.x, 'smoke'), TX: prof(r.axes.x, 'T'), vxX: prof(r.axes.x, 'vx') };
-      })()`);
-      await sleep(80);
-      // Druga klatka renderu po kroku (obraz po pełnym przebiegu potoku).
-      await ev('(() => { window.__demo.step(0, 1); return true; })()');
+      const n = Math.max(1, Math.round((at - tNow) * 60));
+      const t0 = Date.now();
+      await ev(`window.__harness.step(${n})`);
+      const stats = await ev('window.__demo.stats()');
+      stats.realMs = Date.now() - t0;
+      await ev('window.__harness.frames(2)');
       await sleep(60);
-      const png = await shot();
-      writeFileSync(join(outDir, `${arg('tag', '')}${scene}-${String(at).replace('.', '_')}.png`), Buffer.from(png, 'base64'));
+      const png = await shotB64();
+      const name = `${kind}${zoomStr ? '-' + zoomStr : ''}-${String(at).replace('.', '_')}`;
+      writeFileSync(join(outDir, `${name}.png`), Buffer.from(png, 'base64'));
+      if (args.ab) {
+        await ev(`(async () => { window.__demo.tune['${args.ab}'] = false; await window.__harness.frames(2); return true; })()`);
+        await sleep(60);
+        writeFileSync(join(outDir, `${name}-bez-${args.ab}.png`), Buffer.from(await shotB64(), 'base64'));
+        await ev(`(async () => { window.__demo.tune['${args.ab}'] = true; await window.__harness.frames(1); return true; })()`);
+      }
       frames.push({ t: at, stats, png });
       tNow = at;
     }
-    rows.push({ scene, frames });
-    report.scenes.push({ scene, frames: frames.map((f) => ({ t: f.t, stats: f.stats })) });
-    console.log(scene, JSON.stringify(frames.map((f) => [f.t, f.stats.active, f.stats.sources, f.stats.ms])));
-    for (const f of frames) if (f.stats.probe) console.log(`  t=${f.t}`, JSON.stringify(f.stats.probe));
+    rows.push({ name: spec, frames });
+    report.cases.push({ spec, setup, frames: frames.map((f) => ({ t: f.t, stats: f.stats })) });
+    console.log(spec.padEnd(14), JSON.stringify(frames.map((f) => [f.t, f.stats.grid.active, f.stats.grid.sources, f.stats.embers, +f.stats.cpuMs.toFixed(2)])));
   }
-  // Test RUCHU dymu (--ruch): wybuch budowli, po 2 s seria klatek co 1/30 s — środek ciężkości krycia gazu na
-  // ekranie (odczyt celu RTT obrazu gazu) i krycie. Drgania „idzie–cofa” = zmiany znaku prędkości środka
-  // i energia drugich różnic. Druga seria: symulacja ZAMROŻONA, płynie tylko zegar obrazu — obraz nie może
-  // się sam ruszać (detal przesuwany fazami mapy przepływu ruszał).
-  if (process.argv.includes('--ruch')) {
-    const ruch = await ev(`(async () => {
-      const d = window.__demo;
-      d.clear();
-      d.view([150, 70, 175], [10, 10, 20], true);
-      const W = innerWidth, H = innerHeight;
-      const p = d.pickStation(W * 0.5, H * 0.5) || { x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0 };
-      d.boom('building', p.x, p.y, p.z, 14, p.nx, p.ny, p.nz);
-      for (let i = 0; i < 120; i++) d.step(1 / 60, 1);
-      const rt = d.fx.volumeRTT.renderTarget;
-      const half = (h) => { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, f = h & 0x3ff;
-        return e === 0 ? s * 5.960464477539063e-8 * f : e === 31 ? 0 : s * Math.pow(2, e - 15) * (1 + f / 1024); };
-      const measure = async () => {
-        const w = rt.width, h = rt.height;
-        const buf = await d.renderer.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
-        const isHalf = buf instanceof Uint16Array;
-        let sa = 0, sx = 0, sy = 0;
-        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-          const v = buf[(y * w + x) * 4 + 3];
-          const a = isHalf ? half(v) : v;
-          sa += a; sx += a * x; sy += a * y;
-        }
-        return { cov: sa / (w * h), cx: sx / Math.max(sa, 1e-6), cy: sy / Math.max(sa, 1e-6) };
-      };
-      const stats = (s) => {
-        let rev = 0, e2 = 0, path = 0;
-        for (let i = 1; i < s.length; i++) path += Math.hypot(s[i].cx - s[i - 1].cx, s[i].cy - s[i - 1].cy);
-        for (let i = 2; i < s.length; i++) {
-          const ax = s[i].cx - s[i - 1].cx, ay = s[i].cy - s[i - 1].cy, bx = s[i - 1].cx - s[i - 2].cx, by = s[i - 1].cy - s[i - 2].cy;
-          if (ax * bx + ay * by < 0) rev++;
-          e2 += (ax - bx) ** 2 + (ay - by) ** 2;
-        }
-        const net = Math.hypot(s.at(-1).cx - s[0].cx, s.at(-1).cy - s[0].cy);
-        return { zawrotki: rev, energia2: +e2.toFixed(3), droga: +path.toFixed(2), przesuniecie: +net.toFixed(2), kryciePocz: +s[0].cov.toFixed(4), krycieKon: +s.at(-1).cov.toFixed(4) };
-      };
-      const live = [];
-      for (let i = 0; i < 90; i++) { d.step(1 / 30, 1); live.push(await measure()); }
-      // Zamrożona symulacja: tylko zegar obrazu (grid.time) płynie.
-      const frozen = [];
-      for (let i = 0; i < 45; i++) { d.grid.time += 1 / 30; d.step(0, 1); frozen.push(await measure()); }
-      return { live: stats(live), frozen: stats(frozen), seria: live.filter((_, i) => i % 6 === 0).map((m) => [+m.cx.toFixed(1), +m.cy.toFixed(1)]) };
-    })()`);
-    report.ruch = ruch;
-    console.log('ruch', JSON.stringify(ruch));
-  }
-  // Pomiar w prawdziwej pętli (--perf): kilka wybuchów naraz, 4 s animacji, czasy GPU z HUD-u dema.
-  if (process.argv.includes('--perf')) {
-    const perf = await ev(`(async () => {
-      const d = window.__demo;
-      d.clear();
-      d.view([150, 70, 175], [10, 10, 20], true);
-      for (let i = 0; i < 4; i++) { const p = d.randomSurfacePoint(); d.boom(i === 3 ? 'reactor' : 'building', p.x, p.y, p.z, 14, p.nx, p.ny, p.nz); }
-      d.setLoop(true);
-      const samples = [];
-      for (let k = 0; k < 8; k++) {
-        await new Promise((r) => setTimeout(r, 500));
-        samples.push({ gpuCompute: d.S.gpuCompute, gpuRender: d.S.gpuRender, active: d.grid.stats.active, cells: d.grid.stats.cells });
+  if (args.ruch) {
+    // Test RUCHU dymu (dawny błąd „idzie i cofa się”): okręt liniowy w galerii, kadr sprzed wybuchu, od 1,6 s seria klatek
+    // co 1/30 s — środek ciężkości różnicy względem kadru tła (obłok) i jego pole. Zawrotki = zmiany zwrotu ruchu środka;
+    // druga seria: symulacja zamrożona (krok czasu 0 dla wybuchów) — obraz nie może ruszać się sam.
+    const { decodePng } = await import('./png.mjs');
+    const shotImg = async () => decodePng(Buffer.from(await shotB64(), 'base64'));
+    await ev(`(async () => { const d = window.__demo, h = window.__harness; d.clear(); h.reseed(0x5eed1234); await h.step(30); d.cam(d.gallery.x, d.gallery.y, 0.3); await h.frames(2); return true; })()`);
+    const bg = await shotImg();
+    await ev('(async () => { const d = window.__demo; d.boomAt("capital", 0, 0, 300); await window.__harness.step(96); return true; })()');
+    const measure = (img) => {
+      let sa = 0, sx = 0, sy = 0;
+      const { width: w, height: hgt, data } = img;
+      for (let y = 0; y < hgt; y += 2) for (let x = 0; x < w; x += 2) {
+        const o = (y * w + x) * 4;
+        const dd = Math.abs(data[o] - bg.data[o]) + Math.abs(data[o + 1] - bg.data[o + 1]) + Math.abs(data[o + 2] - bg.data[o + 2]);
+        if (dd > 24) { sa++; sx += x; sy += y; }
       }
-      d.setLoop(false);
-      // Czas uczciwy: n kroków symulacji / n renderów i oczekiwanie na kolejkę GPU (znaczniki czasu
-      // w headless Chrome są kwantowane).
-      const dev = d.renderer.backend.device;
-      await dev.queue.onSubmittedWorkDone();
-      let t0 = performance.now();
-      for (let i = 0; i < 30; i++) { d.director.update(1 / 60); d.grid.simulate(d.renderer, 1 / 60); }
-      await dev.queue.onSubmittedWorkDone();
-      const simMs = (performance.now() - t0) / 30;
-      t0 = performance.now();
-      for (let i = 0; i < 30; i++) d.step(0, 1);
-      await dev.queue.onSubmittedWorkDone();
-      const renderMs = (performance.now() - t0) / 30;
-      d.S.gas = false;
-      t0 = performance.now();
-      for (let i = 0; i < 30; i++) d.step(0, 1);
-      await dev.queue.onSubmittedWorkDone();
-      const renderNoGasMs = (performance.now() - t0) / 30;
-      d.S.gas = true;
-      samples.push({ simMs: +simMs.toFixed(3), renderMs: +renderMs.toFixed(3), renderNoGasMs: +renderNoGasMs.toFixed(3), active: d.grid.stats.active });
-      return samples;
-    })()`);
-    report.perf = perf;
-    console.log('perf', JSON.stringify(perf));
+      return { a: sa, cx: sx / Math.max(1, sa), cy: sy / Math.max(1, sa) };
+    };
+    const series = async (n, step) => {
+      const out = [];
+      for (let i = 0; i < n; i++) { await ev(`window.__harness.step(${step})`); out.push(measure(await shotImg())); }
+      return out;
+    };
+    const stats = (sr) => {
+      let rev = 0, path = 0;
+      for (let i = 1; i < sr.length; i++) path += Math.hypot(sr[i].cx - sr[i - 1].cx, sr[i].cy - sr[i - 1].cy);
+      for (let i = 2; i < sr.length; i++) {
+        const ax = sr[i].cx - sr[i - 1].cx, ay = sr[i].cy - sr[i - 1].cy, bx = sr[i - 1].cx - sr[i - 2].cx, by = sr[i - 1].cy - sr[i - 2].cy;
+        if (ax * bx + ay * by < 0) rev++;
+      }
+      const net = Math.hypot(sr.at(-1).cx - sr[0].cx, sr.at(-1).cy - sr[0].cy);
+      return { zawrotki: rev, droga: +path.toFixed(1), przesuniecie: +net.toFixed(1), polePocz: sr[0].a, poleKon: sr.at(-1).a };
+    };
+    const live = await series(36, 2);
+    // Zamrożony wybuch: zegar wybuchów stoi (clock demo = state.T; pauza dema zatrzymuje symulację i T).
+    await ev('(() => { window.__demo.setSpeed(0); return true; })()');
+    const frozen = await series(12, 2);
+    await ev('(() => { window.__demo.setSpeed(1); return true; })()');
+    report.ruch = { live: stats(live), frozen: stats(frozen), seria: live.filter((_, i) => i % 6 === 0).map((m) => [+m.cx.toFixed(1), +m.cy.toFixed(1), m.a]) };
+    console.log('ruch', JSON.stringify(report.ruch));
   }
-  // Arkusz.
-  const cell = (f) => `<td><img src="data:image/png;base64,${f.png}"><div>t=${f.t}s · dom ${f.stats.active} · źr ${f.stats.sources} · iskry ${f.stats.embers}</div></td>`;
+  if (args.koszt) {
+    // Koszt w czasie rzeczywistym: łańcuch rozpadu doku (kadr całego doku), próbki czasu GPU klatki (znaczniki
+    // Core3D co kilka klatek) i czasu klatki; ten sam przebieg z gazem i bez (wybuchy z cząstek) oraz bez wybuchów.
+    const run = (label, tune) => ev(`(async () => {
+      const d = window.__demo, h = window.__harness;
+      Object.assign(d.tune, ${JSON.stringify(tune)});
+      d.clear();
+      h.hold(false); h.clock.mode = 'real';
+      await new Promise((r) => setTimeout(r, 1500));
+      d.scene('chain');
+      const s = [];
+      const t0 = performance.now();
+      let last = t0, worst = 0, n = 0, maxDom = 0, cpu = 0;
+      while (performance.now() - t0 < 5200) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const now = performance.now();
+        worst = Math.max(worst, now - last); last = now; n++;
+        const g = window.Core3D.gpuFrameMs;
+        if (Number.isFinite(g)) s.push(g);
+        maxDom = Math.max(maxDom, d.fx.grid.stats.active);
+        cpu = Math.max(cpu, d.fx.stats.cpuMs);
+      }
+      h.clock.t = h.realNow(); h.clock.mode = 'frozen'; h.hold(true);
+      s.sort((a, b) => a - b);
+      const q = (p) => s.length ? +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(2) : null;
+      return { label: '${label}', klatki: n, fps: +(n / 5.2).toFixed(1), najgorszaMs: +worst.toFixed(1), gpuMed: q(0.5), gpuP90: q(0.9), gpuMax: q(0.999), maxDomen: maxDom, cpuKrokuMax: +cpu.toFixed(2) };
+    })()`);
+    report.koszt = [];
+    for (const [label, tune] of [['bez wybuchów', { enabled: false }], ['z gazem', { enabled: true, gas: true }], ['bez gazu', { enabled: true, gas: false }], ['z gazem 2', { enabled: true, gas: true }]]) {
+      const r = await run(label, tune);
+      report.koszt.push(r);
+      console.log('koszt', JSON.stringify(r));
+    }
+    await ev('(() => { Object.assign(window.__demo.tune, { enabled: true, gas: true }); return true; })()');
+  }
+  // Arkusz: wiersz = przypadek, kolumny = chwile.
+  const cell = (f) => `<td><img src="data:image/png;base64,${f.png}"><div>t=${f.t}s · dom ${f.stats.grid.active} · źr ${f.stats.grid.sources} · żar ${f.stats.embers}</div></td>`;
   const html = `<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#05060c;color:#cfe4ff;font:12px Consolas,monospace}
-    table{border-collapse:collapse} td{padding:3px;vertical-align:top} img{width:384px;height:216px;display:block} th{color:#ffd479;padding:4px 6px}
-    div{width:384px}</style><table>${rows.map((r) => `<tr><th>${r.scene}</th>${r.frames.map(cell).join('')}</tr>`).join('')}</table>`;
-  const SW = 110 + times.length * 390, SH = rows.length * 240 + 8;
+    table{border-collapse:collapse} td{padding:3px;vertical-align:top} img{width:400px;height:225px;display:block} th{color:#ffb070;padding:4px 6px}
+    div{width:400px}</style><table>${rows.map((r) => `<tr><th>${r.name}</th>${r.frames.map(cell).join('')}</tr>`).join('')}</table>`;
+  const SW = 120 + times.length * 406, SH = rows.length * 250 + 8;
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: SW, height: SH, deviceScaleFactor: 1, mobile: false });
   await cdp.send('Page.navigate', { url: 'about:blank' });
-  await sleep(400);
+  await sleep(500);
   await ev(`(() => { document.open(); document.write(${JSON.stringify(html)}); document.close(); return true; })()`);
-  await sleep(900);
-  writeFileSync(join(outDir, 'arkusz.png'), Buffer.from(await shot(), 'base64'));
+  await sleep(1200);
+  writeFileSync(join(outDir, 'arkusz.png'), Buffer.from(await shotB64(), 'base64'));
 } catch (e) {
-  console.log('BŁĄD', e.message);
+  console.log('BŁĄD', e.stack || e.message);
 } finally {
-  report.errors = errors().slice(0, 40);
-  writeFileSync(join(outDir, 'raport.json'), JSON.stringify(report, null, 1));
+  report.errors = logs.errors().filter((l) => !/favicon|\[vite\]|DevTools|powerPreference/.test(l)).slice(0, 40);
+  writeJson(join(outDir, 'raport.json'), report);
   console.log('błędy konsoli', JSON.stringify(report.errors.slice(0, 12), null, 1));
   console.log('wyniki', outDir);
   await chrome.close();

@@ -75,7 +75,9 @@ test('Earth moon shares the anchored scale and render pass', () => {
 test('moons rotate visibly and receive a correctly layered halo', () => {
   assert.match(planetSource, /spinPeriodSec:\s*72/);
   assert.match(planetSource, /this\.spinSpeed\s*=\s*\(Math\.PI\s*\*\s*2\)\s*\/\s*spinPeriodSec/);
-  assert.match(planetSource, /this\.mesh\.rotation\.y\s*=\s*\(this\.mesh\.rotation\.y\s*\+\s*this\.spinSpeed/);
+  // Kąt doby w polu (soczewka świata w skoku składa z nim obrót przelotu — worldLens.js).
+  assert.match(planetSource, /this\._spinAngle\s*=\s*\(this\._spinAngle\s*\+\s*this\.spinSpeed/);
+  assert.match(planetSource, /this\.mesh\.rotation\.set\(0,\s*this\._spinAngle,\s*0\)/);
   assert.match(planetSource, /this\.halo\s*=\s*new\s+THREE\.Mesh/);
   assert.match(planetSource, /enablePlanetHaloLayer\(this\.halo\)/);
   assert.match(planetSource, /this\.halo\.scale\.set\(scale,\s*scale,\s*scale\)/);

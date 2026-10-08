@@ -19,9 +19,13 @@ import { createProgress, grantExp, rankProgress } from './progression.js';
 import { buildDockIntroKeys, keysDuration, sampleKeys, topDownPose } from './introCamera.js';
 import { k7AxesGame, k7BerthPose, k7FrameFor, k7HallCenter, k7HubToGame, k7IsOutsideHall, k7LayoutTemplate } from './k7Dock.js';
 import { planFleetWave, planShipyard, SHIPYARD_TUNE } from './shipyardLayout.js';
+import { beltAmbushReached, planBeltAmbush } from './beltAmbush.js';
 import { dryDockChunkAt, dryDockNearestChunk, planDryDockChain } from '../../3d/portBuildings/pirateDryDockLayout.js';
 import { createCloak, isCloakHidden } from '../cloak.js';
-import { mission01, MISSION01 } from './missions/mission01.js';
+import { K7_POSE_OWNER } from '../k7BerthService.js';
+import { K7_SERVICE_UNDOCK, k7ServiceDisconnectPose, k7ServiceStep } from '../../3d/haloRing/haloPortK7Layout.js';
+import { MISSION01 } from './missions/mission01.js';
+import { CAMPAIGN_PHASES, runCampaign } from './campaign.js';
 
 const DEG = Math.PI / 180;
 const clamp01 = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x);
@@ -42,10 +46,25 @@ function newPose() {
   return { eye: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, fov: 40 };
 }
 
-export const STORY_PHASES = Object.freeze(['intro', 'briefing', 'undock', 'course', 'scout', 'approach', 'ram', 'defences', 'shipyard', 'counter', 'victory', 'return', 'done']);
+// Fazy kampanii (misja 1 „Cicha stocznia” + misja 2 „Odwet”, src/game/story/campaign.js) — skoki dev ?story=<faza>.
+export const STORY_PHASES = CAMPAIGN_PHASES;
 
-// Stany suwnic: płynne przejście między „podpięta” i „schowana”.
-const CRANE_KEYS = ['bridge', 'trolley', 'lower', 'clamp', 'extension', 'lock', 'flow'];
+// Obsługa stanowiska (zamki pola, ramiona paliwowe, złączki, rygle, przepływ): płynne przejście między „podpięta”
+// i „schowana” (`dock.service`) poza sekwencją odcumowania.
+const SERVICE_KEYS = ['clamp', 'extension', 'seat', 'lock', 'flow'];
+
+// Odcumowanie na rozkaz gracza (przycisk ODDOKUJ, 2026-10-07 — prośba użytkownika: „gracz musi zacząć w doku
+// i kliknąć oddokuj, żeby go oddokowało, i samodzielnie wylecieć”): wspólna sekwencja odłączenia stanowisk capital
+// K-7 (K7_SERVICE_UNDOCK, haloPortK7Layout.js — także K7Docking i automat portu): przepływ → kontrolowany upust
+// (para z przewodów — źródła gazu hali) → odryglowanie (buch pary dookoła złączek) → złączki w górę → ramiona
+// paliwowe się składają → zamki pola; napęd wraca do gracza przy zwolnieniu zamków, ramiona dokładają się nad
+// płaszczyzną lotu już w trakcie wylotu. Czas gry [s].
+export const STORY_UNDOCK = K7_SERVICE_UNDOCK;
+
+/** Poza obsługi stanowiska w chwili t sekwencji odcumowania (out — obiekt pozy K-7). */
+export function storyUndockPose(t, out = {}) {
+  return k7ServiceDisconnectPose(K7_SERVICE_UNDOCK, t, null, out);
+}
 
 export const StoryGame = {
   deps: null,
@@ -82,7 +101,8 @@ export const StoryGame = {
 
   // --- dok / blokada gracza ---
   lock: null,             // { x, y, angle, anim? }
-  dock: { berthId: null, cranes: 1, craneTarget: 1, planet: null, frame: null },
+  // seq: odcumowanie w toku ({ t, resolve, pose }) — pozy obsługi z STORY_UNDOCK zamiast jednej wartości `service`
+  dock: { berthId: null, service: 1, serviceTarget: 1, planet: null, frame: null, seq: null },
 
   // --- UI ---
   ui: {
@@ -91,6 +111,7 @@ export const StoryGame = {
     markers: new Map(),   // id → { x, y, label }
     targets: new Map(),   // id → { entity, label, radius } — wybrane cele do zniszczenia, śledzone na żywo
     summary: null,        // { title, subtitle, reward, resolve }
+    action: null,         // panel z przyciskiem (ODDOKUJ): { id, title, subtitle, label, busyLabel, key, rows(), resolve, pressed }
     banner: null,         // { text, until }
     course: null          // { x, y, label }
   },
@@ -169,7 +190,7 @@ export const StoryGame = {
     this.mission = MISSION01;
     const ship = this.deps.ship();
     if (ship && !ship.cloak) ship.cloak = createCloak();
-    this.runner.start(mission01, this._api()).then((result) => {
+    this.runner.start(runCampaign, this._api()).then((result) => {
       if (result === 'complete') this.deps.log?.('Rozdział 1 ukończony.', 'mission');
     });
     return true;
@@ -200,10 +221,14 @@ export const StoryGame = {
     this.reveal = null;
     this.letterbox = false;
     this.lock = null;
-    this.dock.berthId = null; this.dock.cranes = 0; this.dock.craneTarget = 0;
+    this.dock.berthId = null; this.dock.service = 0; this.dock.serviceTarget = 0; this.dock.seq = null;
+    this._releaseHallPose();
     this.site = null;
+    this.ambushPlan = null;
     this.journalEntry = null;
     this.phase = null;
+    // Stan kampanii między misjami (np. wynik pojedynku z supercapitalem herszta w misji 1 → misja 2).
+    this.campaign = { m1: null, bossEscaped: false };
     for (const id of this._fogMassIds) this.deps?.clearMassSignature?.(id);
     this._fogMassIds.clear();
   },
@@ -221,7 +246,7 @@ export const StoryGame = {
     this._stepReveal(dt);
     this.dialogue.tick(dt);
     this._pumpSay();
-    this._stepCrane(dt);
+    this._stepService(dt);
     this._stepHint();
     if (this.ui.banner && this.time > this.ui.banner.until) this.ui.banner = null;
     this._applyHallState();
@@ -231,6 +256,7 @@ export const StoryGame = {
     if (!this.active || !this.runner) return;
     const dt = Math.max(0, Number(gameDt) || 0);
     if (dt > 0) this._stepTimers(dt);
+    if (dt > 0) this._stepUndock(dt);
     this._stepArrivals();
     this.runner.tick(dt);
   },
@@ -397,10 +423,14 @@ export const StoryGame = {
     this.dock.berthId = berthId;
     this.dock.planet = earth;
     this.dock.frame = pose.frame;
-    this.dock.cranes = 1;
-    this.dock.craneTarget = 1;
-    this.deps.placePlayer(pose.x, pose.y, pose.angle);
-    this.lock = { x: pose.x, y: pose.y, angle: pose.angle, anim: null };
+    this.dock.service = 1;
+    this.dock.serviceTarget = 1;
+    // Dziobem ku bramie G-01 (poprawka użytkownika 2026-10-07: „ułóż go dziobem w stronę wyjścia z hali”) —
+    // stanowisko K-7 ma kurs dziobem do ściany tylnej; po ODDOKUJ gracz wylatuje naprzód (W), a silnik dmucha
+    // w ścianę tylną. Przewody paliwowe łapią kadłub przy dziobie (te same wlewy stanowiska).
+    const angle = pose.angle + Math.PI;
+    this.deps.placePlayer(pose.x, pose.y, angle);
+    this.lock = { x: pose.x, y: pose.y, angle, anim: null };
     this._block.add('dock');
     this._applyHallState(true);
     return true;
@@ -409,59 +439,123 @@ export const StoryGame = {
   _dockRelease() {
     this.lock = null;
     this._block.delete('dock');
-    this.dock.craneTarget = 0;
+    this.dock.seq = null;
+    this.dock.serviceTarget = 0;
     this.dock.berthId = null;
     this._applyHallState(true);
   },
 
-  // Suwnice i lampka stanowiska (hala 0 ringu Ziemi); stan w każdej klatce, bo ring po zbudowaniu zeruje stanowiska.
+  // Obsługa stanowiska (zamki pola, ramiona i przewody paliwowe) i lampka (hala 0 ringu Ziemi); stan w każdej klatce, bo ring po
+  // zbudowaniu zeruje stanowiska. Pozy obsługi idą do rejestru kolidera (deps.k7HallPoses — stan gry: z niego
+  // rysuje hala i biorą się źródła gazu z przewodów, src/3d/gasField/), bez niego — wprost do hali (dema, testy).
+  // Poza fabuły ma właściciela (owner = 'story'): automat obsługi stanowisk gry swobodnej (src/game/k7BerthService.js)
+  // jej nie dotyka, dopóki fabuła jej nie odda (koniec odcumowania, reset).
   _applyHallState(force = false) {
     const hall = this.deps.k7Hall?.(0);
-    if (!hall) return;
+    const poses = this.deps.k7HallPoses?.(0) || null;
+    if (!hall && !poses) return;
     const berthId = this.dock.berthId || this._lastBerth;
     if (!berthId) return;
     this._lastBerth = berthId;
-    const b = hall.layout?.berths?.find((x) => x.id === berthId);
+    const b = hall?.layout?.berths?.find((x) => x.id === berthId);
     if (b) {
       const occ = this.dock.berthId ? 'player' : null;
       if (b.occupied !== occ || force) { b.occupied = occ; b.reserved = occ; hall.setBerthLamps?.(); }
     }
-    const k = this.dock.cranes;
+    const pose = this._servicePose(this._poseScratch || (this._poseScratch = {}));
     if (!this._craneMap) this._craneMap = new Map();
-    const pose = this._craneMap.get(berthId) || {};
-    for (const key of CRANE_KEYS) pose[key] = k;
-    pose.vent = 0;
-    this._craneMap.set(berthId, pose);
-    hall.setServicePoses?.(this._craneMap);
-    if (k <= 0 && !this.dock.berthId) { this._craneMap.clear(); this._lastBerth = null; }
+    this._craneMap.set(berthId, Object.assign(this._craneMap.get(berthId) || {}, pose));
+    const target = poses?.get(berthId);
+    if (target) { Object.assign(target, pose); target.owner = K7_POSE_OWNER.story; }
+    else hall?.setServicePoses?.(this._craneMap);
+    if (this.dock.service <= 0 && !this.dock.berthId && !this.dock.seq) {
+      if (target) target.owner = null;
+      this._craneMap.clear();
+      this._lastBerth = null;
+    }
   },
 
-  _stepCrane(dt) {
+  /** Oddaje pozę stanowiska fabuły (reset gry, przerwana kampania) — dalej obsługuje ją automat stanowisk. */
+  _releaseHallPose() {
+    const id = this._lastBerth;
+    this._lastBerth = null;
+    this._craneMap?.clear();
+    const target = id ? this.deps?.k7HallPoses?.(0)?.get(id) : null;
+    if (target && target.owner === K7_POSE_OWNER.story) target.owner = null;
+  },
+
+  /** Poza obsługi stanowiska gracza teraz: sekwencja odcumowania albo wszystkie elementy razem (`service`). */
+  _servicePose(out) {
+    const seq = this.dock.seq;
+    if (seq) return Object.assign(out, seq.pose);
+    const k = this.dock.service;
+    for (const key of SERVICE_KEYS) out[key] = k;
+    out.vent = 0;
+    return out;
+  },
+
+  /** Wiersze panelu stanowiska: [etykieta, stan, klasa 'ok' | 'warn' | 'off']. */
+  _serviceRows() {
+    const p = this._servicePose(this._rowPose || (this._rowPose = {}));
+    const tri = (v, on, mid, off) => (v > 0.98 ? on : v < 0.02 ? off : mid);
+    return [
+      ['PALIWO', p.vent > 0.05 ? 'UPUST' : p.flow > 0.5 ? 'PRZEPŁYW' : 'ODCIĘTE', p.vent > 0.05 ? 'warn' : p.flow > 0.5 ? 'ok' : 'off'],
+      ['ZŁĄCZA', tri(p.lock, 'ZARYGLOWANE', 'ODRYGLOWANIE…', 'ODŁĄCZONE'), tri(p.lock, 'ok', 'warn', 'off')],
+      ['PRZEWODY', tri(p.extension, 'PODŁĄCZONE', 'ZWIJANIE…', 'ZWINIĘTE'), tri(p.extension, 'ok', 'warn', 'off')],
+      ['MOCOWANIA', tri(p.clamp, 'ZAMKNIĘTE', 'ZWALNIANIE…', 'ZWOLNIONE'), tri(p.clamp, 'ok', 'warn', 'off')],
+      ['NAPĘD', this.lock ? 'ZABLOKOWANY' : 'GOTOWY', this.lock ? 'warn' : 'ok']
+    ];
+  },
+
+  /** Krok sekwencji odcumowania (czas gry). */
+  _stepUndock(dt) {
+    const s = this.dock.seq;
+    if (!s) return;
+    s.t += dt;
+    storyUndockPose(s.t, s.pose);
+    if (!s.drive && s.t >= STORY_UNDOCK.driveAt) {
+      // zamki pola zwolnione — napęd wraca do gracza (ramiona paliwowe dokładają się już w trakcie wylotu)
+      s.drive = true;
+      this.lock = null;
+      this._block.delete('dock');
+      const done = s.resolve;
+      s.resolve = null;
+      done?.();
+    }
+    if (s.t >= STORY_UNDOCK.end) {
+      this.dock.seq = null;
+      this.dock.service = 0;
+      this.dock.serviceTarget = 0;
+      this.dock.berthId = null;
+      this._applyHallState(true);
+    }
+  },
+
+  /** Napis kroku odcumowania (cel misji w trakcie sekwencji). */
+  undockStep() {
+    const s = this.dock.seq;
+    if (!s) return this.lock ? '' : 'NAPĘD ODBLOKOWANY';
+    return k7ServiceStep(K7_SERVICE_UNDOCK, s.t);
+  },
+
+  _stepService(dt) {
     const d = this.dock;
-    if (d.cranes === d.craneTarget) return;
+    if (d.service === d.serviceTarget) return;
     const rate = dt / 2.6;
-    d.cranes = d.craneTarget > d.cranes ? Math.min(d.craneTarget, d.cranes + rate) : Math.max(d.craneTarget, d.cranes - rate);
+    d.service = d.serviceTarget > d.service ? Math.min(d.serviceTarget, d.service + rate) : Math.max(d.serviceTarget, d.service - rate);
   },
 
-  /** Wysunięcie ze stanowiska: suwnice puszczają, rufą w stronę bramy, obrót dziobem do bramy. */
+  /**
+   * Odcumowanie (gracz kliknął ODDOKUJ): obsługa stanowiska odłącza się po kolei (STORY_UNDOCK), a przy zwolnieniu
+   * mocowań napęd wraca do gracza — wylot z hali należy do niego (bez automatycznego wysuwania). Promise: napęd
+   * odblokowany.
+   */
   _undock() {
     return new Promise((resolve) => {
-      const earth = this.dock.planet || this._earth();
-      const frame = this.dock.frame || k7FrameFor(earth, 0);
-      const L = this.lock;
-      if (!earth || !frame || !L) { this._dockRelease(); resolve(); return; }
-      const layout = k7LayoutTemplate();
-      const berth = layout.berths.find((b) => b.id === (this.dock.berthId || 'C-01')) || layout.berths[0];
-      const { out } = k7AxesGame(frame);
-      const back = k7HubToGame(earth, frame, berth.x, 4700, {});
-      const gateHeading = Math.atan2(out.y, out.x);
-      this.dock.craneTarget = 0;
-      const segs = [
-        { dur: 2.8, x0: L.x, y0: L.y, a0: L.angle, x1: L.x, y1: L.y, a1: L.angle },                  // suwnice
-        { dur: 6.0, x0: L.x, y0: L.y, a0: L.angle, x1: back.x, y1: back.y, a1: L.angle },            // rufą ku bramie
-        { dur: 4.5, x0: back.x, y0: back.y, a0: L.angle, x1: back.x, y1: back.y, a1: gateHeading }   // obrót
-      ];
-      L.anim = { segs, i: 0, t: 0, resolve: () => { this._dockRelease(); resolve(); } };
+      if (!this.lock) { this._dockRelease(); resolve(); return; }
+      if (this.dock.seq) { const prev = this.dock.seq.resolve; this.dock.seq.resolve = () => { prev?.(); resolve(); }; return; }
+      this.dock.seq = { t: 0, resolve, pose: storyUndockPose(0, {}), drive: false };
+      this.lock.anim = null;
     });
   },
 
@@ -510,7 +604,18 @@ export const StoryGame = {
     this.ui.markers.clear();
     this.ui.targets.clear();
     this.ui.course = null;
+    this.ui.action = null;
     if (this.ui.summary) { const r = this.ui.summary.resolve; this.ui.summary = null; r?.(); }
+  },
+
+  /** Przycisk panelu akcji (ODDOKUJ) — UI woła po kliknięciu albo klawiszu. Raz na panel. */
+  triggerAction(id = null) {
+    const a = this.ui.action;
+    if (!a || a.pressed || (id && a.id !== id)) return false;
+    a.pressed = true;
+    a.pressedAt = this.time;
+    a.resolve?.();
+    return true;
   },
 
   /** Podsumowanie — gracz zamyka (UI woła). */
@@ -554,7 +659,11 @@ export const StoryGame = {
         mode: job.mode,
         spawnPos: { x: job.x, y: job.y },
         origin: job.origin,
-        onSpawned: (list) => job.group._onSpawned(list)
+        onSpawned: (list) => {
+          job.group._onSpawned(list);
+          // znacznik roli (np. __storyBoss — okręt herszta w fali)
+          if (job.mark) for (const e of list) if (e) e[job.mark] = true;
+        }
       });
       if (!res) job.group._failed++;
     }
@@ -575,9 +684,11 @@ export const StoryGame = {
       total() { return g._total; },
       arrived() { return g.members.length; },
       pending() { return Math.max(0, g._total - g.members.length - g._failed); },
-      alive() { return g.members.filter((e) => e && !e.dead && !e.warpedOut && !(e.hp <= 0)).length; },
-      killed() { return g.members.filter((e) => e && (e.dead || e.hp <= 0) && !e.warpedOut).length; }
+      // okręt bez dowodzenia (mostek zniszczony — hulk) dryfuje i nie walczy: liczy się jak zniszczony
+      alive() { return g.members.filter((e) => e && !e.dead && !e.warpedOut && !(e.hp <= 0) && !hulk(e)).length; },
+      killed() { return g.members.filter((e) => e && (e.dead || e.hp <= 0 || hulk(e)) && !e.warpedOut).length; }
     };
+    const hulk = (e) => (self.deps.isHulk ? !!self.deps.isHulk(e) : !!e.isBridgeHulk);
     this._groups.push(g);
     return g;
   },
@@ -640,7 +751,9 @@ export const StoryGame = {
     const self = this;
     const site = {
       ...plan,
-      station: null, parkedList: [], turretList: [], defenderList: [], alarmed: false, alarmAt: -1, origin: null,
+      station: null, parkedList: [], turretList: [], defenderList: [], slipList: [], alarmed: false, alarmAt: -1, origin: null,
+      // Okręt jeszcze w stanowisku / na pochylni (nie wystartował) — tylko taki ginie z dokiem (łańcuch rozpadu).
+      inBerth(n) { return !!n && !n.__storyLaunched; },
       parkedCount() { return site.parkedList.length; },
       // Zmiażdżony = zniszczony albo z kadłuba została mniej niż trzecia część konstrukcji (taran zostawia
       // resztkę z ułamkiem punktu — sufit punktów z konstrukcji nie schodzi do zera).
@@ -668,18 +781,38 @@ export const StoryGame = {
     return site;
   },
 
-  _spawnSite(site) {
+  /** opts: { dockHp, dockShield, slipHp (ułamek punktów niedokończonego kadłuba na pochylni) }. */
+  _spawnSite(site, opts = {}) {
     const d = this.deps;
     // Budynek: suchy dok piratów (bryła 3D + byt stacji z bryłami trafień); bez kleju doku (atrapy testów) —
     // zwykła stacja piracka w środku zakładu.
-    const spec = { id: 'PIR_YARD', x: site.building.x, y: site.building.y, r: 600, hp: 16000, shield: 4000, name: 'Suchy dok piratów', dock: site.dock };
+    const spec = {
+      id: 'PIR_YARD', x: site.building.x, y: site.building.y, r: 600,
+      hp: Number(opts.dockHp) > 0 ? opts.dockHp : 16000, shield: Number(opts.dockShield) >= 0 ? opts.dockShield : 4000,
+      name: 'Suchy dok piratów', dock: site.dock
+    };
     site.station = (d.spawnPirateDryDock || d.spawnPirateStation)(spec);
     site.parked.forEach((p, i) => {
       const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
       if (!e) return;
       e.__dockBerth = i;
+      e.__storyKey = p.key;
+      e.__storyLaunch = p.launch || null;
       this._park(e, 'parked');
       site.parkedList.push(e);
+    });
+    // Pochylnie w hali: pancerniki w budowie (pod dachem) — wodują się na zegar misji, bryła budowy znika
+    // (pirateDryDockGame: slipsHidden), gdy na pochylni stoi okręt.
+    (site.slips || []).forEach((p, i) => {
+      const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
+      if (!e) return;
+      e.__slip = i;
+      e.__storyKey = p.key;
+      e.__storyLaunch = p.launch || null;
+      const k = Number(opts.slipHp);
+      if (k > 0 && k < 1 && Number.isFinite(e.maxHp)) e.hp = Math.max(1, Math.round(e.maxHp * k));
+      this._park(e, 'slip');
+      site.slipList.push(e);
     });
     for (const t of site.turrets) {
       const e = d.spawnTurret?.({ x: t.x, y: t.y, angle: t.angle });
@@ -779,10 +912,10 @@ export const StoryGame = {
             if (ch.kind === 'spine' || ch.kind === 'collar') d.shake?.(Math.min(40, 8 + ch.size * 0.03), 0.6);
             if (ch.kind === 'spine') {
               // okręt stanowiska przy tym odcinku trzonu idzie z nim — chwilę po nim, kolejne okręty odcinka
-              // co 0,3 s (reaktory okrętów nie biją naraz)
+              // co 0,3 s (reaktory okrętów nie biją naraz); wystartowane (zegar wodowania) już tu nie stoją
               let k = 0;
               for (const e of site.parkedList) {
-                if (!e || e.dead || dock.layout.berths[e.__dockBerth]?.segment !== ch.id) continue;
+                if (!e || e.dead || !site.inBerth(e) || dock.layout.berths[e.__dockBerth]?.segment !== ch.id) continue;
                 this._after(0.45 + 0.3 * k++, () => { if (!e.dead) d.killNpc?.(e, 'shipyard-chain'); });
               }
             }
@@ -820,7 +953,15 @@ export const StoryGame = {
         const left = new Set(planDryDockChain(dock.layout, 'R-2', { skip: new Set(d.dockBrokenChunks?.() || []) }).map((c) => c.id));
         for (const e of site.parkedList) if (left.has(dock.layout.berths[e?.__dockBerth]?.segment)) withSpine.add(e);
       }
-      const victims = [...site.parkedList, ...site.turretList].filter((e) => e && !e.dead && !withSpine.has(e));
+      // W zakładzie giną tylko okręty, które jeszcze w nim są: w stanowiskach i na pochylniach (bez startu) oraz
+      // eskorta, która nie zdążyła wylecieć z hali.
+      const inHall = (e) => !!(dock && e && dock.inHall(e.pos ? e.pos.x : e.x, e.pos ? e.pos.y : e.y));
+      const victims = [
+        ...site.parkedList.filter((e) => site.inBerth(e)),
+        ...site.slipList.filter((e) => site.inBerth(e)),
+        ...site.turretList,
+        ...site.defenderList.filter(inHall)
+      ].filter((e) => e && !e.dead && !withSpine.has(e));
       const t0 = dock ? Math.max(1.2, tLast * 0.55) : 0.8;
       victims.forEach((e, i) => {
         const t = t0 + i * 0.22;
@@ -840,6 +981,12 @@ export const StoryGame = {
     const api = {
       tutorial: this.tutorial,
       startPhase: this.startPhase,
+      // Miejsce fazy w kampanii (skoki dev: fazy przed ?story=<faza> są pomijane).
+      phaseIndex: (p) => STORY_PHASES.indexOf(p),
+      // Czas gry skryptu [s] (zegar reżysera — stoi w pauzie).
+      time: () => self.runner.time,
+      // Stan kampanii między misjami (wynik misji 1 dla misji 2).
+      get campaign() { return self.campaign; },
       say: (lines, mode) => self._say(lines, mode),
 
       ui: {
@@ -855,16 +1002,22 @@ export const StoryGame = {
           if (!spec) { self.ui.hint = null; return; }
           self.ui.hint = { spec, until: typeof until === 'function' ? until : null, done: false, doneAt: 0, shownAt: self.time };
         },
-        // options.action: { mouse: 'rmb' | 'lmb', text } — podpowiedź akcji przy znaczniku (ikona myszy).
+        // options.action: { mouse: 'rmb' | 'lmb', text } — podpowiedź akcji przy znaczniku (ikona myszy);
+        // options.journal = false — znacznik pomocniczy (np. mostek celu), dziennik i CIC go nie śledzą.
         marker(id, point, label = '', options = {}) {
           if (!point) { self.ui.markers.delete(id); return; }
+          const m = self.ui.markers.get(id);
+          // znacznik ruchomy (co klatkę) — bez nowego obiektu, gdy etykieta ta sama
+          if (m && m.label === label && options.journal === false && !options.action) { m.x = point.x; m.y = point.y; return; }
           self.ui.markers.set(id, { x: point.x, y: point.y, label, action: options.action || null });
-          if (self.journalEntry) self.journalEntry.pos = { x: point.x, y: point.y };
+          if (self.journalEntry && options.journal !== false) self.journalEntry.pos = { x: point.x, y: point.y };
         },
         // Cel bojowy wskazany przez skrypt misji; pozycję i stan czyta HUD z encji, nie ze snapshotu.
+        // options.group — nazwa grupy: cele grupy blisko siebie na ekranie dostają jeden wspólny podpis.
         target(id, entity, label = '', options = {}) {
           if (!entity) { self.ui.targets.delete(id); return; }
-          self.ui.targets.set(id, { entity, label: String(label || ''), radius: Number(options.radius) || 0 });
+          self.ui.targets.set(id, { entity, label: String(label || ''), radius: Number(options.radius) || 0,
+            group: String(options.group || '') });
           if (options.primary && self.journalEntry) {
             const p = entity.pos || entity;
             self.journalEntry.pos = { x: p.x, y: p.y };
@@ -872,6 +1025,14 @@ export const StoryGame = {
         },
         clearTargets() { self.ui.targets.clear(); },
         banner(text, sec = 3) { self.ui.banner = { text, until: self.time + sec }; },
+        // Panel z przyciskiem (np. ODDOKUJ): spec { id, title, subtitle, label, busyLabel, key, rows: () => [[etykieta,
+        // stan, klasa]] }. Promise — gracz kliknął (albo klawisz `key`). action(null) chowa panel.
+        action(spec) {
+          if (!spec) { self.ui.action = null; return Promise.resolve(); }
+          return new Promise((resolve) => {
+            self.ui.action = { ...spec, resolve, pressed: false, shownAt: self.time };
+          });
+        },
         summary(data) {
           return new Promise((resolve) => {
             self._freeze.add('summary');
@@ -889,8 +1050,9 @@ export const StoryGame = {
             description: M.description, objective: steps[0] || '',
             objectives: steps.map((text) => ({ text, done: false })),
             rewardCredits: M.rewards?.credits || 0, rewardGranted: false, progress: 0,
-            startedAt: d.gameTime?.() || 0, status: 'active'
+            startedAt: d.gameTime?.() || 0, status: 'active', banner: M.banner || 'MISJA UKOŃCZONA'
           };
+          self.mission = M;
           self.journalEntry = entry;
           d.addMission?.(entry);
           d.onMissionUpdated?.(entry, 'started');
@@ -908,7 +1070,7 @@ export const StoryGame = {
           const e = self.journalEntry;
           if (!e) return;
           e.rewardGranted = true;   // nagrody wypłaca api.rewards
-          d.completeMission?.(e.id, { rewardCredits: e.rewardCredits, banner: 'ROZDZIAŁ 1 UKOŃCZONY' });
+          d.completeMission?.(e.id, { rewardCredits: e.rewardCredits, banner: e.banner || 'MISJA UKOŃCZONA' });
         },
         fail(reason) {
           const e = self.journalEntry;
@@ -923,6 +1085,11 @@ export const StoryGame = {
         place: (berthId) => self._dockPlace(berthId),
         undock: () => self._undock(),
         release: () => self._dockRelease(),
+        berthId: () => self.dock.berthId || 'C-01',
+        // panel stanowiska: wiersze obsługi i krok odcumowania
+        serviceRows: () => self._serviceRows(),
+        step: () => self.undockStep(),
+        locked: () => !!self.lock,
         isOutside() {
           const earth = self.dock.planet || self._earth();
           const frame = self.dock.frame || (earth && k7FrameFor(earth, 0));
@@ -1024,7 +1191,25 @@ export const StoryGame = {
 
       site: {
         plan: () => self._planSite(),
-        spawn: (site) => self._spawnSite(site),
+        spawn: (site, opts) => self._spawnSite(site, opts),
+        // Miejsce z misji 1 (misja 2 walczy nad jego gruzami).
+        current: () => self.site,
+        // Start okrętu ze stanowiska parkingu / pochylni (zegar wodowania): trasa z planu (rufą przez bramę
+        // stanowiska, potem odlot; pochylnia — bramą G-01), brama stanowiska wypchnięta na zewnątrz.
+        launch(site, e) {
+          if (!e || e.dead || e.__storyLaunched) return false;
+          e.__storyLaunched = true;
+          const L = e.__storyLaunch;
+          if (L && /^B-/.test(String(L.gate || '')) && site?.dock) d.openDockGate?.(L.gate, site.dock.n.x, site.dock.n.y);
+          if (L && Array.isArray(L.path) && L.path.length && d.launchNpc) d.launchNpc(e, L.path, 0, { fightFrom: L.fightFrom });
+          else d.wakeNpc(e);
+          return true;
+        },
+        // Załoga przy działach: okręt w stanowisku strzela z miejsca (bez lotu), zanim wystartuje.
+        arm(e) {
+          if (!e || e.dead || e.__storyLaunched) return;
+          if (d.armNpc) d.armNpc(e); else d.wakeNpc(e);
+        },
         detected: (site) => self._detected(site),
         // Rozpoznanie przez mgłę wojny: budynek albo okręt stoczni widziany przez stronę gracza (bez mgły — od razu).
         scouted: (site) => self._scouted(site),
@@ -1045,7 +1230,28 @@ export const StoryGame = {
           d.clearCourse?.();
         },
         inWarp: () => (d.warpState?.() || 'idle') !== 'idle',
-        distanceTo: (p) => dist(p)
+        distanceTo: (p) => dist(p),
+        // Zasadzka / zakłócacz (misja 2): wyrwanie z warpa — wyjście bez rampy i hamowanie jak przy studni
+        // grawitacji; ładowanie skoku przerwane. true — warp był w toku.
+        interdict: () => !!d.interdictWarp?.()
+      },
+
+      // Pas asteroid na kursie (misja 2 — zasadzka w drodze powrotnej, src/game/story/beltAmbush.js): miejsce na
+      // cięciwie kursu od Atlasa do `to` (przy olbrzymie albo w najgęstszym polu) i wyzwalacz.
+      belt: {
+        ambushPlan(to) {
+          const s = ship();
+          const plan = s && to ? planBeltAmbush({
+            from: s.pos, to, sun: d.sun?.(), belt: d.belt?.(),
+            density: d.beltDensity || null, giants: d.beltGiants?.() || null
+          }) : null;
+          self.ambushPlan = plan;
+          return plan;
+        },
+        reached(plan) {
+          const s = ship();
+          return !!s && beltAmbushReached(plan, s.pos, s.vel, d.sun?.(), d.belt?.());
+        }
       },
 
       // Mgła wojny (src/game/fogOfWar.js, SensorSystem): sygnatury masy (czujniki grawitacyjne — miejsce i masa
@@ -1076,26 +1282,54 @@ export const StoryGame = {
       },
 
       fleet: {
-        pirateCounterAttack(site, counts) {
+        /** Okręt wyłączony z walki: zniszczony, bez dowodzenia (mostek — hulk) albo odleciał warpem. */
+        gone: (e) => !e || !!e.dead || !(e.hp > 0) || !!e.warpedOut || api.fleet.isHulk(e),
+        isHulk: (e) => !!e && (d.isHulk ? !!d.isHulk(e) : !!e.isBridgeHulk),
+        hpFrac: (e) => (e && e.maxHp > 0 ? clamp01(e.hp / e.maxHp) : 1),
+        /** Ucieczka (np. herszt przed skokiem): lot w punkt, działa strzelają dalej. */
+        flee(e, point) {
+          if (!e || e.dead || !point) return;
+          if (d.fleeNpc) d.fleeNpc(e, point); else d.wakeNpc(e);
+        },
+        warpOut(list, origin) { return d.warpOut?.(list, origin) || 0; },
+        /** Punkt mostka (słaby punkt okrętu) w świecie gry albo null. */
+        bridgePoint: (e, out) => (d.bridgeAimPoint ? d.bridgeAimPoint(e, out) : null),
+        /**
+         * Fala piratów tunelem warpa: front `distance` od gracza w kierunku miejsca startu odwetu (site.origin)
+         * obróconym o `bearing` [rad]. extra: [{ key, mark }] — okręty spoza szyku (np. supercapital herszta) na
+         * końcu kolejki, w środku frontu; `mark` — pole-znacznik encji (np. '__storyBoss').
+         * opts.at { x, y } — środek frontu wprost (np. zasadzka w pasie), szyk twarzą do gracza (albo `facing`);
+         * opts.origin — skąd lecą tunele i dokąd ucieka fala (domyślnie site.origin).
+         */
+        pirateWave(site, counts, opts = {}) {
           const s = ship();
-          const origin = site.origin;
-          const toOrigin = Math.atan2(origin.y - s.pos.y, origin.x - s.pos.x);
-          // Front odwetu 18 km od gracza (dawniej 11 km): przy walce z ~1,6 km piraci potrzebują
-          // 20–30 s na dojście — to czas na salwy baterii głównej w nadlatujące okręty.
-          const R = SHIPYARD_TUNE.counterDistance;
-          const center = { x: s.pos.x + Math.cos(toOrigin) * R, y: s.pos.y + Math.sin(toOrigin) * R };
-          const facing = toOrigin + Math.PI;
+          const origin = opts.origin || site?.origin || null;
+          let center, facing;
+          if (opts.at && Number.isFinite(opts.at.x) && Number.isFinite(opts.at.y)) {
+            center = { x: opts.at.x, y: opts.at.y };
+            facing = Number.isFinite(opts.facing) ? opts.facing : Math.atan2(s.pos.y - center.y, s.pos.x - center.x);
+          } else {
+            const bearing = Number(opts.bearing) || 0;
+            const toOrigin = Math.atan2(origin.y - s.pos.y, origin.x - s.pos.x) + bearing;
+            // Front odwetu od gracza (SHIPYARD_TUNE.counterDistance): przy walce z ~1,6 km piraci potrzebują
+            // chwili na dojście — to czas na salwy baterii głównej w nadlatujące okręty.
+            const R = Number(opts.distance) > 0 ? opts.distance : SHIPYARD_TUNE.counterDistance;
+            center = { x: s.pos.x + Math.cos(toOrigin) * R, y: s.pos.y + Math.sin(toOrigin) * R };
+            facing = toOrigin + Math.PI;
+          }
           const wave = planFleetWave(center, facing, counts, { battleshipKey: 'battleship', destroyerKey: 'destroyer' });
-          const g = self._makeGroup('counter', wave.length);
+          for (const x of opts.extra || []) wave.push({ key: x.key, x: center.x, y: center.y, angle: facing, mark: x.mark || null });
+          const g = self._makeGroup(opts.tag || 'counter', wave.length);
           const now = self.runner.time;
           wave.forEach((w, i) => self._arrivalQueue.push({ ...w, mode: 'pirate', origin, group: g, notBefore: now + i * 0.3 }));
           g.retreat = () => {
             g.retreating = true;
-            const alive = g.members.filter((e) => e && !e.dead && !(e.hp <= 0));
+            const alive = g.members.filter((e) => e && !e.dead && !(e.hp <= 0) && !api.fleet.isHulk(e));
             d.warpOut?.(alive, origin);
           };
           return g;
         },
+        pirateCounterAttack(site, counts) { return api.fleet.pirateWave(site, counts); },
         earthSupport(site, counts) {
           const s = ship();
           const origin = site.origin;
@@ -1109,6 +1343,16 @@ export const StoryGame = {
           g.returnHome = () => d.returnWing?.();
           return g;
         }
+      },
+
+      // Atlas gracza: stan kadłuba i naprawa (misja 2 — przed odwetem). AGENT: naprawa w polu przez okręt
+      // wsparcia z rojem dronów naprawczych (osobna sesja) — podmienić `repair`, skrypt misji zostaje.
+      player: {
+        pos: () => ({ x: ship().pos.x, y: ship().pos.y }),
+        speed: () => { const v = ship().vel; return v ? Math.hypot(v.x, v.y) : 0; },
+        hullFrac: () => clamp01(d.hullRatio ? d.hullRatio(ship()) : 1),
+        repair: () => !!d.repairPlayer?.(),
+        repairing: () => !!d.repairActive?.()
       },
 
       rewards: {

@@ -165,7 +165,7 @@ test('dokowanie gracza w otwartej zatoce każdym kadłubem: pole STOP → E → 
   }
 });
 
-test('dokowanie: za mały i zajęty kadłub nie dostaje stanowiska; capital K-7 z suwnicą jak w K-7', () => {
+test('dokowanie: za mały i zajęty kadłub nie dostaje stanowiska; capital K-7 z obsługą paliwową jak w K-7', () => {
   const { registry, collision } = makePort();
   const mega = HALO_PLAYER_HULLS.megafreighter;
   const e = registry.entries.find((v) => v.label === 'C-02');
@@ -173,14 +173,14 @@ test('dokowanie: za mały i zajęty kadłub nie dostaje stanowiska; capital K-7 
   const d = new PortDocking(registry, p, mega);
   assert.equal(d.eligibility(e).reason, 'STANOWISKO ZA MAŁE');
   assert.notEqual(d.candidate().entry.kind, 'k7', 'megafrachtowiec nie mieści się w hali');
-  // Atlas na C-02: sekwencja suwnicy 9,3 s
+  // Atlas na C-02: ustawienie + obsługa paliwowa (PORT_SEQUENCE.fuel ≈ 7 s)
   const atlas = HALO_PLAYER_HULLS.atlas;
   const pa = new K7FlightModel(collision, { x: e.x, z: e.z, angle: e.angle }, { w: atlas.w, h: atlas.h }, atlas.outline, atlas.tune);
   pa.locked = false;
   const da = new PortDocking(registry, pa, atlas);
   assert.ok(da.requestDock());
   for (let t = 0; t < 5 * 120; t++) da.update(1 / 120);
-  assert.equal(da.state, 'DOCKING', 'suwnica po 5 s jeszcze pracuje');
+  assert.equal(da.state, 'DOCKING', 'obsługa po 5 s jeszcze pracuje');
   for (let t = 0; t < 5 * 120; t++) da.update(1 / 120);
   assert.equal(da.state, 'DOCKED');
   assert.equal(e.owner.poses.get('C-02').lock, 1);

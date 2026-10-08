@@ -17,7 +17,7 @@ const code = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').re
 // Moduły czysto wizualne ładowane przez grę.
 const WIZUALIA = [
   // przeniesione w zadaniu 23 (znalezione licznikiem losowań harnessu i przeglądem kodu)
-  'src/effects3d/reactorblow.js',
+  'src/3d/explosions/explosionFx.js',
   'src/3d/mainExhaust3D.js',
   'src/3d/warpPlume3D.js',
   'src/3d/hullDebris3D.js',
@@ -43,6 +43,12 @@ const WIZUALIA = [
   'src/3d/hullDamageMap.js',
   'src/3d/asteroids/storm.js',
   'src/3d/asteroids/miningView.js',
+  // wybuchy WebGPU (2026-10-07): gaz na siatce 3D — ziarna domen, reżyser, żar
+  'src/3d/gas/gasGrid.js',
+  'src/3d/gas/gasExplosions.js',
+  'src/3d/gas/gasEmbers.js',
+  'src/3d/gas/gasVolume.js',
+  'src/3d/explosions/explosionRecipes.js',
   // zadanie 25a: wygląd stacji pirackiej (panele, okna) — własny strumień FxRandom ze stałym ziarnem (bryła powstaje
   // na ekranie ładowania: nie zużywa ani Math.random gry, ani wspólnego fxRandom — tests/rozgrzewkaStacji.test.mjs)
   'src/space/pirateStation/pirateStationFactory.js'

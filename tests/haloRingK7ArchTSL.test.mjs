@@ -170,9 +170,9 @@ test('K-7: tablice hali pakowane per obiekt (grupy ruchome, emisja, lampy, palet
   groups.update({ material });
   surf.update({ material });
   const U = hall.k7Uniforms;
-  const cranes = hall.scene.cranes;
-  assert.ok(cranes.length > 0);
-  const g = cranes[0].bridge;
+  const fuel = hall.scene.fuel;
+  assert.ok(fuel.length > 0);
+  const g = fuel[0].link1;
   assert.deepEqual([...groups.value.subarray(g * 16, g * 16 + 16)], [...U.uGroup.value[g].elements].map((x) => Math.fround(x)));
   const at = (i) => [...surf.value.subarray(i * 4, i * 4 + 4)];
   const f3 = (v) => [v.x, v.y, v.z].map((x) => Math.fround(x));
@@ -180,7 +180,7 @@ test('K-7: tablice hali pakowane per obiekt (grupy ruchome, emisja, lampy, palet
   assert.deepEqual(at(K7_SURF_LAYOUT.pal + 3).slice(0, 3), f3(U.uK7Pal.value[3]));
   assert.deepEqual(at(K7_SURF_LAYOUT.k7Emit + 2).slice(0, 3), f3(U.uK7Emit.value[2]));
   assert.deepEqual(at(K7_SURF_LAYOUT.glow + 1).slice(0, 3), f3(U.uK7Glow.value[1]));
-  const hoseGroup = hall.scene.hoses[0].group;
+  const hoseGroup = hall.scene.fuel[0].coupler;
   assert.deepEqual(at(K7_SURF_LAYOUT.emit + hoseGroup).slice(0, 3), f3(U.uGroupEmit.value[hoseGroup]));
 });
 
@@ -219,9 +219,17 @@ test('K-7 WGSL: wierzchołek instancji = bliźniak JS (kwaternion, skala pionowa
     assert.ok(fw > 0 && fw < f.indexOf('haloSunVisibility('), `${name}: fwidth przed cieniowaniem`);
     assert.ok((f.slice(0, fw).match(/if \( /g) || []).length <= 2, `${name}: fwidth przed gałęziami materiału`);
     assert.doesNotMatch(f, /pow\(/, `${name}: bez pow`);
-    assert.match(f, /for \( var k7Lamp : i32 = 0; k7Lamp < 10; k7Lamp \+\+ \)/);
+    assert.match(f, /for \( var k7Lamp : i32 = 0; k7Lamp < 16; k7Lamp \+\+ \)/);
     assert.match(f, new RegExp(`k7Surf\\.value\\[ \\( ${K7_SURF_LAYOUT.lamps} \\+ k7Lamp \\) \\]`));
-    assert.match(f, /output\.color = vec4<f32>\( max\( nodeVar\d+, vec3<f32>\( 0\.0, 0\.0, 0\.0 \) \), object\.nodeUniform\d+ \)/, `${name}: alfa = nieprzezroczystość dachu`);
+    // reflektory hali (haloPortK7Lights.js): pętla po 10 reflektorach z bloku k7Surf
+    assert.match(f, /for \( var k7Spot : i32 = 0; k7Spot < 10; k7Spot \+\+ \)/, `${name}: reflektory hali`);
+    if (name === 'K7_plates') {
+      assert.match(f, /output\.color = vec4<f32>\( max\( nodeVar\d+, vec3<f32>\( 0\.0, 0\.0, 0\.0 \) \), object\.nodeUniform\d+ \)/, `${name}: alfa = nieprzezroczystość dachu`);
+    } else {
+      // instancje: barwa po gałęzi soczewek migających (vK7Blink — kod migania z instancji)
+      assert.match(f, /vK7Blink/, `${name}: soczewki migające`);
+      assert.match(f, /output\.color = vec4<f32>\( nodeVar\d+, object\.nodeUniform\d+ \)/, `${name}: alfa = nieprzezroczystość dachu`);
+    }
   }
   assert.match(mainBody(out.K7_bg_box.fragment), /k7Surf\.value\[ \( 0 \+ i32\( \( vK7Group \+ 0\.5 \) \) \) \]\.xyz/, 'emisja grupy (złączki węży)');
   // wąż: pow z nieujemną podstawą (max), bez tablic hali

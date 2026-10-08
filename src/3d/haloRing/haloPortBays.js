@@ -28,8 +28,6 @@ export const HALO_BAY = Object.freeze({
   innerHalf: (HALO_PORT.dockLength - 2 * HALO_PORT.sideWall) / 2,   // 2900: lica ścian bocznych
   aisleWidth: 900,          // aleja grzebienia (pośrodku zatoki)
   spine: 150,               // grzbiet serwisowy między grzebieniem a pasem MEGA
-  // suwnice pasów MEGA (most od ściany do grzbietu, noga na grzbiecie): ułamek głębokości zatoki
-  gantryAt: Object.freeze([0.42, 0.78]),
   mega: Object.freeze({ size: 'MEGA', padLength: 2900, padBeam: 1150, maxLength: 2900, maxBeam: 1100 }),
   // grzebień (po każdej stronie alei): od ściany tylnej ku wylotowi (jak w K-7: duże najgłębiej)
   comb: Object.freeze([
@@ -147,10 +145,7 @@ export function baySolidList(l) {
   for (const lane of l.lanes) {
     for (const side of [-1, 1]) add('FUEL ' + lane.berthId + '/' + side, lane.x + side * 400, 85, l.backZ + 70, 117, 170, 110, 'dark');
   }
-  // nogi suwnic pasów MEGA na grzbietach (most wisi nad płaszczyzną lotu)
-  for (const sp of l.spines) {
-    for (const g of HALO_BAY.gantryAt) add('GANTRY LEG ' + l.tag + '/' + sp.side, sp.x, 239, l.baseZ + depth * g, 60, 478, 80, 'dark');
-  }
+  // (suwnic pasów MEGA nie ma od 2026-10-07 — ładunek obsługują drony, decyzja użytkownika)
   return out;
 }
 

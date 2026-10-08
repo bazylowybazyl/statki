@@ -128,9 +128,9 @@ test('rakieta z pędzącej wyrzutni trafia nieruchomy cel przed nią (wyprzedzen
 });
 
 test('zasięg rakiety liczy się z drogi własnej, nie z przelotu razem z wyrzutnią', () => {
-  // Cel 20 000 j. przed wyrzutnią lecącą 8000 j/s, sam leci 8000 j/s: względem
-  // układu rakiety stoi 20 000 j. od niej — w zasięgu missile_rack (24 000).
-  const res = flyFromMovingLauncher('missile_rack', 8000, { x: 20000, y: 0, vx: 8000 }, { maxT: 40 });
+  // Cel 10 000 j. przed wyrzutnią lecącą 8000 j/s, sam leci 8000 j/s: względem
+  // układu rakiety stoi 10 000 j. od niej — w zasięgu missile_rack (12 000).
+  const res = flyFromMovingLauncher('missile_rack', 8000, { x: 10000, y: 0, vx: 8000 }, { maxT: 40 });
   assert.ok(res.damaged, 'rakieta wygasła przed celem w swoim zasięgu');
 });
 
@@ -178,7 +178,7 @@ test('wyrzut z komory: rakieta wyskakuje w górę i zawisa, zapala silnik, kład
 test('salwa: pierwsza od razu, reszta z kolejki komór co burstDelay; wachlarz rozchodzi się na boki', () => {
   clearSystem();
   const def = MASTER_WEAPONS.grad_launcher;
-  const target = { x: 7000, y: 0, radius: 200, dead: false, vx: 0, vy: 0 };
+  const target = { x: 5000, y: 0, radius: 200, dead: false, vx: 0, vy: 0 }; // zasięg Grada: 6 km
   let hits = 0;
   window.applyDamageToNPC = (npc) => { if (npc === target) hits++; };
   const shooter = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angVel: 0 };
@@ -263,7 +263,7 @@ test('myśliwiec: zrzut z belki (bez wyrzutu w górę), jedna rakieta trafia cel
 test('nowe typy trafiają: Rój w płynący cel, Hydra pęka na głowice i wszystkie trafiają', () => {
   clearSystem();
   const roj = MASTER_WEAPONS.roj_pod;
-  const t1 = { x: 4500, y: 0, radius: 80, dead: false, vx: 0, vy: 300 };
+  const t1 = { x: 3500, y: 0, radius: 80, dead: false, vx: 0, vy: 300 }; // zasięg Roju: 4,5 km
   let h1 = 0;
   window.applyDamageToNPC = (npc) => { if (npc === t1) h1++; };
   system.fireSalvo({ x: 0, y: 0, angle: 0 }, 0, 0, t1, 1, roj, 'blue', 0, 0, 8, 0.05, 0, LAUNCH_ELEVATED);
@@ -272,7 +272,7 @@ test('nowe typy trafiają: Rój w płynący cel, Hydra pęka na głowice i wszys
 
   clearSystem();
   const hydra = MASTER_WEAPONS.hydra_mirv;
-  const t2 = { x: 9000, y: 0, radius: 150, dead: false, vx: 0, vy: 200 };
+  const t2 = { x: 7000, y: 0, radius: 150, dead: false, vx: 0, vy: 200 }; // zasięg Hydry: 9 km
   let h2 = 0;
   const damages = [];
   window.applyDamageToNPC = (npc, dmg) => { if (npc === t2) { h2++; damages.push(dmg); } };

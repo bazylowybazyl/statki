@@ -153,6 +153,8 @@ export class GasVolume {
       const dtC = dtW.div(h).toVar();                    // krok [komórki]
       const t = tmin.add(dtW.mul(jitter)).toVar();
       const slotZ = slot.mul(NZ);
+      // Temperatura poprzedniej próbki (−1 = brak): emisja całkowana po odcinku (niżej).
+      const Tprev = float(-1.0).toVar();
       Loop({ start: int(0), end: nSteps, type: 'int', condition: '<', name: 'gstep' }, () => {
         const pw = ro.add(rd.mul(t));
         const pc = pw.sub(bmin).div(h).toVar();
@@ -183,7 +185,10 @@ export class GasVolume {
           const wall = smoothstep(0.6, 6.0, min(min(ew.x, ew.y), ew.z)).mul(float(1.0).sub(smoothstep(0.9, 1.05, rc)));
           // Wygaszenie tuż przed kamerą (kamera w dymie / kuli ognia: mgła zamiast nieprzezroczystej ściany).
           const nearK = smoothstep(U.nearFade.mul(0.15), U.nearFade, t.div(h));
-          const fw = fade.mul(wall).mul(nearK).toVar();
+          // Ciągły próg pominięcia: gęstość czytamy z PRZESUNIĘTEGO miejsca (warp), a próg — z nieprzesuniętego;
+          // skok wkładu z 0 na granicy progu rysował poziomice (bez przesunięcia startu marszu — słoje, z nim — ziarno).
+          const gate = smoothstep(0.003, 0.06, den0.x.add(den0.y));
+          const fw = fade.mul(wall).mul(nearK).mul(gate).toVar();
           // Gęstość: detal mnożny + erozja rzadkich brzegów (strzępy zamiast gładkiej mgły).
           const sm = den.x.mul(fw).toVar();
           const det = mix(float(1.0), nd.mul(2.0), U.detail);
@@ -193,9 +198,21 @@ export class GasVolume {
           // Ogień: temperatura z językami szumu. Sadza świeci jak ciało czarne (Kirchhoff: emisja =
           // σ_pochłaniania · B(T)); czysty płomień frontu spalania świeci bez sadzy (tempo spalania).
           const T = den.y.mul(float(1.0).add(nA.sub(0.5).mul(2.0).mul(U.flameNoise))).toVar();
-          const bb = gasBlackbody(T).toVar();
-          const radiance = bb.mul(gasFirePower(T, float(0.0), U.fireGain, float(0.0))).mul(U.emission).mul(fw);
-          const flame = bb.mul(max(den.w, 0.0).mul(U.fireBurn)).mul(U.emission).mul(fw);
+          // Emisja ŚREDNIA na odcinku (temperatura liniowo od poprzedniej próbki, 4 podpróbki — sama arytmetyka):
+          // front ognia cieńszy niż krok, próbkowany w tych samych płaszczyznach z (kamera z góry), rysował słoje
+          // poziomic (bez przesunięcia startu) albo ziarno (z nim). Całka po odcinku je wygładza.
+          const T0 = select(Tprev.lessThan(0.0), T, Tprev);
+          const gSum = vec3(0.0).toVar();
+          const bSum = vec3(0.0).toVar();
+          for (const k of [0.125, 0.375, 0.625, 0.875]) {
+            const Tk = mix(T0, T, k);
+            const bk = gasBlackbody(Tk);
+            gSum.addAssign(bk.mul(gasFirePower(Tk, float(0.0), U.fireGain, float(0.0))));
+            bSum.addAssign(bk);
+          }
+          Tprev.assign(T);
+          const radiance = gSum.mul(0.25).mul(U.emission).mul(fw);
+          const flame = bSum.mul(0.25).mul(max(den.w, 0.0).mul(U.fireBurn)).mul(U.emission).mul(fw);
           // Rozpraszanie: słońce (samocień, maska cienia słońca gry), wielokrotne (T^¼), otoczenie, blask ognia.
           const sunT = lgt.x;
           const sun = U.sunColor.mul(U.sunGain).mul(sunT.mul(phase).add(pow(max(sunT, 1e-4), 0.25).mul(U.multiScatter))).mul(sunVis);
@@ -207,6 +224,8 @@ export class GasVolume {
           const integ = select(sigma.greaterThan(1e-4), src.mul(float(1.0).sub(segT)).div(max(sigma, 1e-4)), src.mul(dtC));
           col.addAssign(integ.mul(trans));
           trans.mulAssign(segT);
+        }).Else(() => {
+          Tprev.assign(0.0);
         });
         t.addAssign(dtW);
         If(trans.lessThan(0.01), () => { Break(); });

@@ -25,7 +25,7 @@ const _inst = new Map();     // encja → egzemplarz
 const _list = [];
 let _frame = 0;
 const _inv = new THREE.Matrix4();
-export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0 };
+export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, subsets: 0 };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
 
 function providerOf(hull) {
@@ -127,10 +127,94 @@ const _baked = new Set();   // kawałki z wypieczoną skórą (zwolnienie geomet
 function disposeSkinAssets(p) {
   const s = p.__skin;
   if (!s) return;
+  // podzbiory odłamów dzielą atrybuty z geometrią kawałka (dispose w three kasuje bufory atrybutów — razem)
+  for (const g of s.subsets || []) g.dispose();
   s.bg?.dispose();
   s.fg?.dispose();
   p.__skin = null;
   _baked.delete(p);
+}
+
+// ODŁAM rysuje PODZBIÓR trójkątów skóry kawałka: geometria kawałka jest wspólna, a odłam (wyspa, wrak) widzi tylko
+// swoje komórki — bez podzbioru każdy odłam rysował całą geometrię kawałka i odrzucał resztę w shaderze (łańcuch
+// rozpadu doku: 137 odłamów → 3,35 mln trójkątów na klatkę, 2026-10-07). Trójkąt zostaje, gdy jego pudło w
+// kratownicy (aLat, + 1 komórka na rogi FFD) zawiera komórkę odłamu (tablica sum prefiksowych maski) albo komórka-
+// kotwica (aOwn) któregoś wierzchołka jest komórką odłamu. Odłam nie zyskuje komórek — podzbiór zostaje nadzbiorem.
+// Indeks na WSPÓLNYCH atrybutach (te same bufory GPU); geometria podzbioru żyje do zwolnienia skóry kawałka.
+// Liczone w budżecie klatki (SUBSET_MS) — do tego czasu odłam rysuje pełną geometrię.
+const SUBSET_MS = 3;
+const _subsetQueue = [];
+export function fragmentSkinSubset(geo, body, lat) {
+  const nx = lat.dims.x, ny = lat.dims.y, s = body.nodeStore;
+  const mask = new Uint8Array(nx * ny);
+  let any = false;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    const x = s.ix[i], y = s.iy[i];
+    if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
+    mask[x + y * nx] = 1;
+    any = true;
+  }
+  if (!any) return null;
+  const W = nx + 1;
+  const sat = new Int32Array(W * (ny + 1));
+  for (let y = 0; y < ny; y++) {
+    let row = 0;
+    for (let x = 0; x < nx; x++) {
+      row += mask[x + y * nx];
+      sat[(x + 1) + (y + 1) * W] = sat[(x + 1) + y * W] + row;
+    }
+  }
+  const lat3 = geo.attributes.aLat, own3 = geo.attributes.aOwn;
+  const A = lat3.data.array, stride = lat3.data.stride, oL = lat3.offset, oO = own3.offset;
+  const nV = geo.attributes.position.count;
+  const idx = new Uint32Array(nV);
+  let n = 0;
+  for (let v = 0; v + 2 < nV; v += 3) {
+    let keep = false;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let k = 0; k < 3; k++) {
+      const o = (v + k) * stride;
+      const fx = A[o + oL], fy = A[o + oL + 1];
+      if (fx < x0) x0 = fx; if (fx > x1) x1 = fx;
+      if (fy < y0) y0 = fy; if (fy > y1) y1 = fy;
+      const ox = A[o + oO] | 0, oy = A[o + oO + 1] | 0;
+      if (ox >= 0 && oy >= 0 && ox < nx && oy < ny && mask[ox + oy * nx]) keep = true;
+    }
+    if (!keep) {
+      const cx0 = Math.max(0, Math.floor(x0)), cy0 = Math.max(0, Math.floor(y0));
+      const cx1 = Math.min(nx - 1, Math.floor(x1) + 1), cy1 = Math.min(ny - 1, Math.floor(y1) + 1);
+      if (cx1 >= cx0 && cy1 >= cy0) {
+        keep = sat[(cx1 + 1) + (cy1 + 1) * W] - sat[cx0 + (cy1 + 1) * W] - sat[(cx1 + 1) + cy0 * W] + sat[cx0 + cy0 * W] > 0;
+      }
+    }
+    if (keep) { idx[n++] = v; idx[n++] = v + 1; idx[n++] = v + 2; }
+  }
+  const g = new THREE.BufferGeometry();
+  for (const name of Object.keys(geo.attributes)) g.setAttribute(name, geo.attributes[name]);
+  g.setIndex(new THREE.BufferAttribute(idx.slice(0, Math.max(3, n)), 1));
+  if (n === 0) g.setDrawRange(0, 0);
+  g.boundingSphere = geo.boundingSphere;
+  return g;
+}
+function runSubsets() {
+  const t0 = performance.now();
+  while (_subsetQueue.length && performance.now() - t0 < SUBSET_MS) {
+    const inst = _subsetQueue.shift();
+    inst.subsetQueued = false;
+    const hull = inst.entity?.beamHull;
+    const skin = inst.piece?.__skin;
+    if (!_inst.has(inst.entity) || !hull || !hull.body || hull.body.dead || !skin || skin !== inst.assetsKey) continue;
+    for (const mesh of inst.meshes) {
+      const geo = mesh.userData.fullGeometry;
+      if (!geo || mesh.geometry !== geo) continue;
+      const sub = fragmentSkinSubset(geo, hull.body, skin.lat);
+      if (!sub) continue;
+      (skin.subsets || (skin.subsets = [])).push(sub);
+      mesh.geometry = sub;
+      WORLD_SKIN_STATS.subsets++;
+    }
+  }
 }
 function queueBakes() {
   const focus = worldBodies.focus || [];
@@ -139,9 +223,12 @@ function queueBakes() {
     for (const p of site.pieces) {
       // kawałek wrócił do statyki (nietknięty, daleko) — geometria skóry zwolniona
       if (p.state === 'static') { if (p.__skin) disposeSkinAssets(p); p.__skinJob = null; continue; }
+      // kawałek stracony, a jego odłamy zniknęły (wraki zwolnione) — też
+      if (p.state === 'lost') { if (p.__skin && !p.__skinUsers) disposeSkinAssets(p); continue; }
       if (p.state !== 'live' || p.__skinQueued || !p.entity?.beamHull) continue;
       if (p.__skin && p.__skin.key === p.entity.beamHull.image) continue;
-      if (!nearFocus(p.bounds, focus)) continue;
+      // budowla przed rozpadem (setAllLive) — wszystkie kawałki, finał nie piecze w klatce
+      if (!site.allLive && !nearFocus(p.bounds, focus)) continue;
       p.__skinQueued = true;
       _bakeQueue.push(p);
     }
@@ -149,31 +236,40 @@ function queueBakes() {
   scheduleBake();
 }
 
-function createInstance(entity, assets, prov) {
+function createInstance(entity, assets, prov, piece) {
   const root = new THREE.Group();
   root.name = 'ciało świata';
   root.matrixAutoUpdate = true;
-  const inst = { entity, root, meshes: [], frame: 0, assetsKey: assets, dmgU: null };
+  const inst = { entity, root, meshes: [], frame: 0, assetsKey: assets, dmgU: null, piece, subsetQueued: false };
+  piece.__skinUsers = (piece.__skinUsers || 0) + 1;
   for (const set of ['bg', 'fg']) {
     const geo = assets[set];
     if (!geo) continue;
     const mesh = new THREE.Mesh(geo, prov.building.skinMaterial(set));
     mesh.name = `ciało świata (${set})`;
-    mesh.frustumCulled = false;
+    // Przycinanie do kadru sferą EGZEMPLARZA (three: Frustum.intersectsObject bierze object.boundingSphere przed
+    // sferą geometrii): geometria jest wspólna dla odłamów kawałka, a położenie spoczynkowe siatki przesuwa w
+    // shaderze uOff ciała (sOffV) — sfera = sfera geometrii + uOff, promień + odkształcenie (co klatkę).
+    mesh.boundingSphere = new THREE.Sphere();
+    mesh.frustumCulled = true;
     mesh.layers.set(prov.layers?.[set] ?? (set === 'bg' ? 1 : 2));
     mesh.userData.bodyToHub = new THREE.Matrix4();
+    mesh.userData.fullGeometry = geo;
     root.add(mesh);
     inst.meshes.push(mesh);
   }
   root.visible = false;
   Core3D.scene.add(root);
   _inst.set(entity, inst);
+  // odłam (wyspa albo wrak kawałka) — podzbiór trójkątów w budżecie klatki
+  if (piece.entity !== entity) { inst.subsetQueued = true; _subsetQueue.push(inst); }
   return inst;
 }
 
 function disposeInstance(inst) {
   if (inst.root.parent) inst.root.parent.remove(inst.root);
   _inst.delete(inst.entity);
+  if (inst.piece) inst.piece.__skinUsers = Math.max(0, (inst.piece.__skinUsers || 0) - 1);
 }
 
 function collect() {
@@ -215,7 +311,7 @@ export function syncWorldBodies3D() {
     const assets = skinAssets(piece, hull, prov);
     if (!assets || (!assets.bg && !assets.fg)) continue;
     let inst = _inst.get(e);
-    if (!inst) inst = createInstance(e, assets, prov);
+    if (!inst) inst = createInstance(e, assets, prov, piece);
     inst.frame = _frame;
     // poza: początek ciała i kąt jak skóra sprite'a (hexShips3D.updateBeamSkinMesh / modele 3D okrętów)
     const theta = -((Number(e.angle) || 0));
@@ -249,17 +345,28 @@ export function syncWorldBodies3D() {
     // ciało → układ budowli (lampy, normalne układu)
     prov.root.updateMatrixWorld();
     _inv.copy(prov.root.matrixWorld).invert();
+    const margin = (Number(body._maxDisp) || 0) + 2 * body.cellSize;
     for (const mesh of inst.meshes) {
       mesh.userData.skin3D = st;
       mesh.userData.dmgSlot = du.uDmgSlot.value;
       mesh.userData.dmgUv = du.uv;
       mesh.userData.dmgWorld = du.uDmgWorld.value;
       mesh.userData.bodyToHub.multiplyMatrices(_inv, mesh.matrixWorld);
+      const gs = mesh.geometry.boundingSphere;
+      if (gs) {
+        mesh.boundingSphere.center.set(gs.center.x + st.off.x, gs.center.y + st.off.y, gs.center.z + st.off.z);
+        mesh.boundingSphere.radius = gs.radius + margin;
+      } else {
+        mesh.frustumCulled = false;
+      }
     }
     inst.root.visible = true;
     piece.__skinShown = true;
     shown++;
-    triangles += assets.triangles;
+    for (const mesh of inst.meshes) {
+      const g = mesh.geometry;
+      triangles += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    }
   }
   // statyka kawałków: schowana, gdy kawałek ma skórę (ruszony) albo nie istnieje w miejscu
   for (const site of worldBodies.sites) {
@@ -288,6 +395,7 @@ export function syncWorldBodies3D() {
   WORLD_SKIN_STATS.instances = _inst.size;
   WORLD_SKIN_STATS.triangles = triangles;
   if ((_frame & 15) === 0) queueBakes();
+  if (_subsetQueue.length) runSubsets();
   return shown;
 }
 
@@ -301,4 +409,5 @@ export function resetWorldBodies3D() {
   for (const p of [..._baked]) disposeSkinAssets(p);
   for (const p of _bakeQueue) { p.__skinQueued = false; p.__skinJob = null; }
   _bakeQueue.length = 0;
+  _subsetQueue.length = 0;
 }

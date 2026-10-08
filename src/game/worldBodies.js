@@ -13,6 +13,9 @@
  *     pins(sx, sy) → bool — kotwica (układ obrazu od środka: x w prawo, y w GÓRĘ obrazu, j. świata),
  *     pinGridCells (opcjonalnie) — rzadka siatka fundamentów co tyle komórek kratownicy,
  *     available() (opcjonalnie) → false = kawałka nie ma na miejscu (nie budować ciała),
+ *     cellSize (opcjonalnie) — komórka ciała [j.] zamiast WORLD_BODY_TUNE.cellSize,
+ *     ghost (opcjonalnie) — DUCH: bryła poza płaszczyzną gry (dach), ciałem tylko w rozpadzie (breakPiece,
+ *       setAllLive), bez kolizji i broni — jego odłamy lecą nad grą,
  *     skinEdgeCells (render — podział skóry, worldBodies3D.js) }
  * Każda spójna składowa kratownicy dostaje kotwice (anchorComponents): w 3D trzyma się budowli poza płaszczyzną.
  * Kawałek w BAŃCE gracza staje się ciałem (budowa w budżecie czasu na krok), nietknięty i daleko — wraca do
@@ -59,7 +62,20 @@ export const WORLD_BODY_TUNE = {
   blastPowerPerDamage: 1 / 450,
   blastPowerMax: 6,
   // --- wiązki → kanał ciepła ---
-  heatPerDamage: 0.12          // temperatura/s w osi na obrażenie/s wiązki
+  heatPerDamage: 0.12,         // temperatura/s w osi na obrażenie/s wiązki
+  // --- rozpad kawałka (breakPiece → HullBodies.shatter; ocena 2026-10-07: „dużo elementów odpada jako duże kawałki,
+  // brakuje typowego debris jak u statków”) ---
+  shatterCellsPerSqrt: 6,      // komórek Voronoi ≈ √węzłów / to (odcinek trzonu 1900 węzłów → 7 odłamów)
+  shatterCellsMin: 2,
+  shatterCellsMax: 8,
+  shatterCoreDebris: 0.16,     // udział węzłów przy punkcie rozpadu w odłamki (× siła)
+  shatterCoreDebrisMax: 320,   // sufit odłamków rdzenia na ciało (pula odłamków gry: 8192, życie 8 s — łańcuch doku ~7 tys.)
+  shatterCrackDebris: 0.45,    // udział węzłów na szwach Voronoi w odłamki
+  shatterMinFragment: 40,      // odłam mniejszy — cały w odłamki (każdy odłam-wrak to rysunek skóry)
+  shatterDebrisSpeed: [70, 240],   // j/s — odłamki rdzenia
+  shatterRadial: 0.35,         // odłamy: prędkość od punktu rozpadu (× speed)
+  shatterSpread: 0.6,          // rad — rozrzut kierunku dryfu odłamów (±)
+  shatterSpin: 0.3             // rad/s — obrót odłamów (±½)
 };
 
 const T = WORLD_BODY_TUNE;
@@ -146,7 +162,8 @@ export class WorldBodies {
     this._order = [];
     this._orderD = [];
     this.focus = [];
-    this.stats = { live: 0, built: 0, released: 0, buildMs: 0, islands: 0, debris: 0, hits: 0, stops: 0, stepMs: 0, stepPeakMs: 0 };
+    this.stats = { live: 0, built: 0, released: 0, buildMs: 0, islands: 0, debris: 0, hits: 0, stops: 0, stepMs: 0, stepPeakMs: 0,
+      shattered: 0, shatterDebris: 0 };
     this._installed = false;
   }
 
@@ -212,13 +229,18 @@ export class WorldBodies {
     for (const site of this.sites) {
       if (site.disabled) continue;
       for (const p of site.pieces) {
-        if (p.lost) continue;
+        // duch (dach nad płaszczyzną gry): ciałem staje się tylko przed rozpadem budowli (setAllLive — wypiek skóry
+        // z wyprzedzeniem) albo w breakPiece; ciało ducha nie wchodzi do kroku silnika (_collectBodies)
+        if (p.lost || (p.ghost && !site.allLive)) continue;
         let d2 = Infinity;
-        for (let k = 0; k < focus.length; k++) {
-          const f = focus[k];
-          if (!f) continue;
-          const dd = boundsDist2(p.bounds, f.x, f.y);
-          if (dd < d2) d2 = dd;
+        if (site.allLive) d2 = 0;   // budowla tuż przed rozpadem: wszystkie kawałki ciałami (setAllLive)
+        else {
+          for (let k = 0; k < focus.length; k++) {
+            const f = focus[k];
+            if (!f) continue;
+            const dd = boundsDist2(p.bounds, f.x, f.y);
+            if (dd < d2) d2 = dd;
+          }
         }
         if (p.state === 'static') {
           if (d2 <= R2 && !p.queued && (typeof p.available !== 'function' || p.available())) { p.queued = true; this._queue.push(p); }
@@ -270,14 +292,14 @@ export class WorldBodies {
       isWorldPiece: true,
       worldPiece: p,
       static: true,
-      isCollidable: true,
+      isCollidable: !p.ghost,
       owner: p.site.owner || p.site,
       visual: { spriteScale: upp, spriteScaleX: upp, spriteScaleY: upp, spriteRotation: 0 },
       beamHull: null
     };
     const mat = p.material || {};
     const hull = HullBodies.createHull(entity, spec.image, {
-      cellPx: T.cellSize / upp,
+      cellPx: (p.cellSize > 0 ? p.cellSize : T.cellSize) / upp,
       anchored: true,
       pins: typeof p.pins === 'function' ? p.pins : null,
       massPerArea: mat.density || T.massPerArea,
@@ -371,7 +393,8 @@ export class WorldBodies {
     this._entities.length = 0;
     for (const site of this.sites) {
       for (const p of site.pieces) {
-        if (p.state !== 'live') continue;
+        // duch (dach nad płaszczyzną) nie bierze udziału w kolizjach i nie łapie broni
+        if (p.state !== 'live' || p.ghost) continue;
         if (p.entity) this._pushEntity(p.entity);
         for (const e of p.islands) this._pushEntity(e);
       }
@@ -585,36 +608,92 @@ export class WorldBodies {
   }
 
   /**
-   * Kawałek ODPADA (próg punktów budowli — rozpad z rozgrywki): kotwice puszczają, w miejscu trafienia (x, y gry)
-   * front ciśnienia rwie belki (power — 1 ≈ rakieta dema), a cała reszta dostaje dryf `speed` [j/s] w kierunku
-   * (outX, outY) gry (od budowli — inaczej kawałek wpada w resztę doku). Ciało staje się swobodne; wrakiem
-   * (lista wraków gry) robi je najbliższy krok (_checkPiece).
+   * Ciało kawałka TERAZ (poza bańką i budżetem — rozpad statycznego kawałka, duch dachu). true = kawałek jest
+   * ciałem. Kawałka, którego nie ma na miejscu (available() — odpadł po staremu, schowany), nie buduje.
    */
-  breakPiece(piece, x, y, { power = 1.2, radius = 0, speed = 70, outX = 0, outY = 0 } = {}) {
-    if (!piece || piece.state !== 'live' || !this.channels) return false;
-    const D = HullBodies.engine;
-    const R = radius > 0 ? radius : T.cellSize * 8;
+  buildPiece(piece) {
+    if (!piece || piece.lost) return false;
+    if (piece.state === 'live') return true;
+    if (piece.state !== 'static' || piece.site?.disabled) return false;
+    if (typeof piece.available === 'function' && !piece.available()) return false;
+    this._install();
+    this._buildPiece(piece);
+    return piece.state === 'live';
+  }
+
+  /**
+   * Budowla tuż przed rozpadem (niskie punkty, łańcuch śmierci): wszystkie kawałki — także daleko od gracza
+   * i duchy — stają się ciałami w budżecie kroku, skóry pieką się w tle (worldBodies3D), więc finał rozpadu
+   * nie buduje ciał ani nie piecze skór w klatce. Nietknięte kawałki nie wracają wtedy do statyki.
+   */
+  setAllLive(siteId, on = true) {
+    const site = this.site(siteId);
+    if (!site) return false;
+    site.allLive = !!on;
+    return true;
+  }
+
+  /**
+   * Kawałek ODPADA i PĘKA (próg punktów budowli, łańcuch rozpadu): kawałek statyczny staje się ciałem (buildPiece),
+   * kotwice puszczają, a ciało rozpada się jak kadłub przy wybuchu reaktora (HullBodies.shatter): przy punkcie
+   * (x, y gry) rdzeń w odłamki (hullDebris3D — jak u statków), pęknięcia Voronoi na kilka odłamów podobnej
+   * wielkości z gruzem na szwach, drobnica w odłamki. Odłamy (wraki `worldDebris`, skóra brył budowli) dryfują
+   * z prędkością `speed` [j/s] w kierunku (outX, outY) gry (od budowli — inaczej wpadają w resztę doku) ± rozrzut,
+   * od punktu rozpadu i z obrotem. power — siła (1 ≈ próg punktów, 2 ≈ trzon). Zwraca { fragments, debris } albo
+   * null (kawałka nie da się zbudować — gospodarz rozpada go po staremu).
+   */
+  breakPiece(piece, x, y, { power = 1.2, speed = 70, outX = 0, outY = 0 } = {}) {
+    if (!piece || piece.lost || !this.buildPiece(piece)) return null;
     this.releaseAnchors(piece, 1);
     const ol = Math.sqrt(outX * outX + outY * outY);
     const ux = ol > 1e-9 ? outX / ol : 0, uy = ol > 1e-9 ? outY / ol : 0;
-    for (const e of [piece.entity, ...piece.islands]) {
-      const body = e?.beamHull?.entity === e ? e.beamHull.body : null;
-      if (!body || body.dead || body.anchored) continue;
-      this.channels.kick(body, x, -y, R, power, ux, -uy);
-      if (speed > 0 && ol > 1e-9) {
-        // dryf całości (układ ciała; świat silnika: y odwrócone)
-        const m = D._refreshRot(body), s = body.nodeStore;
-        const wx = ux * speed, wy = -uy * speed;
-        const lvx = m[0] * wx + m[3] * wy, lvy = m[1] * wx + m[4] * wy;
-        for (let i = 0; i < s.count; i++) {
-          if (!s.active[i] || !(s.invMass[i] > 0)) continue;
-          s.vx[i] += lvx; s.vy[i] += lvy;
-        }
+    const sev = Math.max(0, Math.min(1.4, (Number(power) || 1) - 1));
+    const kick = (w, hx, hy) => {
+      const dx = w.x - hx, dy = w.y - hy;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const radial = speed * T.shatterRadial * (0.5 + Math.random());
+      let vx = dx / d * radial, vy = dy / d * radial;
+      if (ol > 1e-9) {
+        const a = (Math.random() - 0.5) * 2 * T.shatterSpread;
+        const c = Math.cos(a), s = Math.sin(a), v = speed * (0.5 + Math.random());
+        vx += (ux * c - uy * s) * v;
+        vy += (ux * s + uy * c) * v;
       }
-      D.wake(body, D.config.wakeHoldFrames);
+      w.vx = (Number(w.vx) || 0) + vx;
+      w.vy = (Number(w.vy) || 0) + vy;
+      w.angVel = (Number(w.angVel) || 0) + (Math.random() - 0.5) * T.shatterSpin;
+      if (w.vel) { w.vel.x = w.vx; w.vel.y = w.vy; }
+    };
+    const list = [];
+    if (piece.entity) list.push(piece.entity);
+    for (const e of piece.islands) list.push(e);
+    let fragments = 0, debris = 0;
+    for (const e of list) {
+      const body = e?.beamHull?.entity === e ? e.beamHull.body : null;
+      if (!body || body.dead || body.activeNodes <= 0) continue;
+      const n = body.activeNodes;
+      const cells = Math.max(T.shatterCellsMin, Math.min(T.shatterCellsMax, Math.round(Math.sqrt(n) / T.shatterCellsPerSqrt)));
+      const r = HullBodies.shatter(e, x, y, sev, {
+        debrisFrac: Math.min(0.5, T.shatterCoreDebris * (1 + sev)),
+        debrisMax: T.shatterCoreDebrisMax,
+        debrisSpeed: T.shatterDebrisSpeed,
+        cuts: 0,
+        chords: 0,
+        cells,
+        crackDebris: T.shatterCrackDebris,
+        minFragmentNodes: T.shatterMinFragment,
+        kick
+      });
+      fragments += r.fragments;
+      debris += r.debris;
     }
     piece.touched = true;
-    return true;
+    this.stats.debris += fragments;
+    this.stats.shattered++;
+    this.stats.shatterDebris += debris;
+    // encje kawałka przeszły we wraki: kawałek stracony od razu (gospodarz chowa statykę w tej klatce)
+    this._checkPiece(piece);
+    return { fragments, debris };
   }
 
   /** Zrywa kotwice kawałka (próg obrażeń, łańcuch rozpadu budowli): bez kotwic całość odpada jako wrak. */

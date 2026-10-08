@@ -145,6 +145,49 @@ export function sunShaftBackdrop(color) {
   return vec3(color).mul(mix(vec3(1.0), vec3(...SUN_SHAFT_BACKDROP_TINT), sunShadowSample().y));
 }
 
+/**
+ * Lustro CPU cienia TARCZ (planety, księżyce, duże skały) z passa maski (core3d.js,
+ * shadowShaftsMaskNode — te same wzory): widoczność słońca w punkcie świata gry, 1 = pełne słońce.
+ * Dla rzeczy rysowanych poza GPU (wieżyczki na kanwie 2D — oświetlenie kadłubów v2), bez kadłubów
+ * i ringów. discs — Float32Array [x, y SCENY (= −y gry), r, siła] × count; słońce w świecie gry.
+ */
+export function discSunVisibilityCpu(worldX, worldY, sunX, sunY, discs, count, discLenMul) {
+  const px = worldX;
+  const py = -worldY;
+  const sx = sunX;
+  const sy = -sunY;
+  const ss = (e0, e1, x) => {
+    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  };
+  let shadow = 0;
+  for (let i = 0; i < count; i++) {
+    const o = i * 4;
+    const r = discs[o + 2];
+    if (!(r > 0)) continue;
+    let ax = discs[o] - sx;
+    let ay = discs[o + 1] - sy;
+    const al = Math.sqrt(ax * ax + ay * ay);
+    if (al < 1) continue;
+    ax /= al;
+    ay /= al;
+    const rx = px - discs[o];
+    const ry = py - discs[o + 1];
+    const along = rx * ax + ry * ay;
+    if (along <= 0) continue;
+    const perp = Math.abs(rx * -ay + ry * ax);
+    const exitDist = Math.sqrt(Math.max(r * r - perp * perp, 0));
+    if (along <= exitDist) continue;
+    const fallT = Math.min(1, Math.max(0, (along - exitDist) / Math.max(r * discLenMul, 1)));
+    const fall = 1 - ss(0.55, 1, fallT);
+    const soft = r * (fallT * 0.14 + 0.04);
+    const edge = 1 - ss(r - soft, r + soft, perp);
+    const s = edge * fall * Math.max(discs[o + 3], 0);
+    if (s > shadow) shadow = s;
+  }
+  return 1 - shadow;
+}
+
 // ── Wbudowane materiały three ────────────────────────────────────────────────
 // WebGPURenderer zamienia MeshStandardMaterial / MeshBasicMaterial / PointsMaterial … na
 // materiał węzłowy tej samej klasy przy budowie (NodeLibrary.fromMaterial) i KOPIUJE mu

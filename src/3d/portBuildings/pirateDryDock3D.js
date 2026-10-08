@@ -7,7 +7,8 @@
 //   launch    [G-01, G-02, G-03] 0/1 — światła biegnące wylotu na pasie i fartuchu bramy hali
 //   gates     [G-01, G-02, G-03] 0..1 — sygnał bramy hali (czerwony → zielony)
 //   berths    [0/1 × stanowisko parkingu] — lampki na nabrzeżu: zielona = okręt stoi, czerwona = pusto
-//   roofFade  0..1 — dach hali zanika (statek w hali albo alarm: wylot eskorty widać z góry)
+//   roofFade  0..1 — dach hali zanika (demo: zajrzeć do hali; gra podaje 0 — dach zostaje, decyzja 2026-10-07)
+//   slipsHidden [bool × pochylnia] — na pochylni stoi okręt gry (misja 1: zegar wodowania), bryła budowy znika
 //   daylight  0..1 — lampy budowli (reflektory i światła hali na pokładzie i bryłach)
 // Zniszczenia (do czasu ciał silnika belek — docs/PLAN-zniszczenia-swiata-3d.md):
 //   breakChunk(id, opts) — kawałek odpada: dryfuje i obraca się (macierz grupy), po `life` s znika;
@@ -270,7 +271,10 @@ export class PirateDryDock3D extends PortBuilding3D {
     const fade = step > 0 ? this.roofFade + (target - this.roofFade) * (1 - Math.exp(-2.2 * step)) : target;
     if (Math.abs(fade - this.roofFade) > 1e-4 || (fade !== this.roofFade && (fade === 0 || fade === 1))) this._applyRoofFade(fade);
     if (Array.isArray(state.slips)) for (let i = 0; i < this.slipState.length; i++) this.slipState[i] = state.slips[i] || null;
-    for (let i = 0; i < this.hulls.length; i++) this.hulls[i].setState(this.slipState[i], this.time);
+    // slipsHidden [bool × pochylnia] — na pochylni stoi okręt gry (misja: zegar wodowania), bryła budowy znika;
+    // stan budowy (slipState) zostaje na następne pokazanie
+    const hide = Array.isArray(state.slipsHidden) ? state.slipsHidden : null;
+    for (let i = 0; i < this.hulls.length; i++) this.hulls[i].setState(hide && hide[i] ? null : this.slipState[i], this.time);
     this._groups(step);
   }
 }

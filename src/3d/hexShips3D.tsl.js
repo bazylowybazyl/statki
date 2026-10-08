@@ -66,6 +66,12 @@ import { fxNoise } from './fx/noise.js';
 import { zbierzZakres } from './zakresyWysylki.js';
 import { cloakDistOffset, hullCloakSurface } from './cloak/cloakTSL.js';
 import { CLOAK_LOOK_OFF } from '../game/cloakLook.js';
+// Oświetlenie v2 (2026-10-06): model PBR kadłubów, mapa powierzchni ze sprite'a (hullSurface.js).
+import { HullLighting } from './hullLighting.js';
+import {
+  hullEffectLightingPbr, hullGgx, hullGlowMask, hullLampFalloff, hullPbrSun, hullSelfShadow, surfaceNormal
+} from './hullLighting.tsl.js';
+import { HULL_SURFACE_DEFAULTS } from './hullSurfaceBake.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
 // Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
@@ -122,6 +128,8 @@ export const HULL_EMPTY_SPRITE_TEXTURE = placeholderTexture(0, 0, 0, 0, THREE.SR
 export const HULL_FLAT_NORMAL_TEXTURE = placeholderTexture(128, 128, 255, 255, THREE.LinearSRGBColorSpace);
 const PLACEHOLDER_NORMAL = placeholderTexture(128, 128, 255, 255, THREE.LinearSRGBColorSpace);
 const PLACEHOLDER_SHAPE = placeholderTexture(0, 0, 0, 255, THREE.NoColorSpace);
+// Mapa powierzchni (oświetlenie v2): normalna w górę, AO 1, relief 0 — kadłub jak płyta.
+const PLACEHOLDER_SURFACE = placeholderTexture(128, 128, 255, 128, THREE.NoColorSpace);
 const PLACEHOLDER_DEBRIS = placeholderTexture(0, 0, 0, 0, THREE.SRGBColorSpace);
 
 // Wartość per obiekt: węzeł wspólny dla wszystkich materiałów wariantu, wartość
@@ -569,7 +577,15 @@ function hullDamageLacquer(ctx, weight) {
 // punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
 function hullEffectLights(ctx) {
   if (!ctx.damage) return vec3(0.0);
-  return hullEffectLighting(ctx, effectLightGrid(), ctx.P.uGridOwner);
+  // Oświetlenie v2: ten sam BRDF co słońce i zanik skupiony do jądra (błysk lufy nie bieli całego
+  // kadłuba); klasyczny — model dema broni (Lambert z zawinięciem, Blinn–Phong). Jednolity warunek.
+  const out = vec3(0.0).toVar();
+  If(HullLighting.uniforms.uModel.greaterThan(0.5), () => {
+    out.assign(hullEffectLightingPbr(ctx, effectLightGrid(), ctx.P.uGridOwner));
+  }).Else(() => {
+    out.assign(hullEffectLighting(ctx, effectLightGrid(), ctx.P.uGridOwner));
+  });
+  return out;
 }
 
 // Zadanie 21 — ośrodek światła wolumetrycznego pasa asteroid (src/3d/asteroids/beltMedium.js,
@@ -658,11 +674,20 @@ function hullFragmentNode(opts) {
     If(P.uBillboardLighting.greaterThan(0.5), () => {
       out.assign(sunShadeUnlit(armorRgb));
     }).Else(() => {
-      // Normalna: mapa normalnych albo „poduszka” z uv (środek sprite'a do kamery).
+      // Oświetlenie v2 (hullLighting.js): jednolity przełącznik modelu (wspólny uniform) — klasyczny
+      // zostaje do porównań A/B.
+      const HL = HullLighting.uniforms;
+      const pbr = HL.uModel.greaterThan(0.5);
+      // Mapa powierzchni ze sprite'a (hullSurface.js): normalne paneli, AO, relief. Próbka w jednolitym
+      // przepływie (mipmapy z pochodnych).
+      const surf = perObjectTexture('uSurfaceMap', PLACEHOLDER_SURFACE, spriteUV).toVar();
+      // Normalna: mapa normalnych, mapa powierzchni (v2) albo „poduszka” z uv (klasyczny).
       const localNormal = vec3(0.0, 0.0, 1.0).toVar();
       If(P.uHasNormalMap.greaterThan(0.5), () => {
         const nTex = perObjectTexture('uNormalMap', PLACEHOLDER_NORMAL, spriteUV);
         localNormal.assign(normalize(nTex.rgb.mul(2.0).sub(1.0)));
+      }).ElseIf(pbr, () => {
+        localNormal.assign(normalize(surfaceNormal(surf)));
       }).Else(() => {
         const p = spriteUV.mul(2.0).sub(1.0);
         localNormal.assign(normalize(vec3(p.x.mul(0.45), p.y.mul(-0.45), 1.0)));
@@ -678,27 +703,65 @@ function hullFragmentNode(opts) {
       ctx.worldNormal = worldNormal;
 
       const lightDir = P.uLightDir;
-      const NdotL = dot(worldNormal, lightDir).toVar();
-      const dayDiffuse = max(0.0, NdotL).toVar();
       // Cień planety albo innego kadłuba (maska Core3D) gasi słońce: rozproszone,
       // połysk i odblask lakieru, a otoczenie przygasa (sunFill). Światła statku,
       // glow, stres i żar ran świecą w cieniu jak poza nim.
       const sunVis = sunVisibility().toVar();
-      const sunlitColor = armorRgb.mul(HULL_SHARED.uDayAmbient.add(dayDiffuse.mul(HULL_SHARED.uDayDiffuseMul))).toVar();
-      const lightMul = HULL_SHARED.uDayAmbient.mul(sunFill(sunVis)).add(dayDiffuse.mul(HULL_SHARED.uDayDiffuseMul).mul(sunVis));
-      const color = armorRgb.mul(lightMul).toVar();
-
-      const halfVector = normalize(lightDir.add(vec3(0.0, 0.0, 1.0)));
-      const spec = pow(max(dot(worldNormal, halfVector), 0.0), 32.0);
-      const litMask = smoothstep(-0.02, 0.08, NdotL);
-      color.addAssign(vec3(spec.mul(HULL_SHARED.uSpecularMul).mul(litMask).mul(sunVis)));
-      sunlitColor.addAssign(vec3(spec.mul(HULL_SHARED.uSpecularMul).mul(litMask)));
-
-      // Glow (niebieskie elementy sprite'a) z koloru w PEŁNYM słońcu; w mroku
-      // gęstego pola asteroid przygasa (zostaje ~30%).
-      const isGlowing = step(0.6, sunlitColor.z).mul(step(sunlitColor.x, 0.5));
       const fieldLit = float(1.0).sub(fieldDarkness()).toVar();
-      const finalColor = color.add(sunlitColor.mul(isGlowing).mul(1.5).mul(fieldLit.mul(0.7).add(0.3))).toVar();
+      const finalColor = vec3(0.0).toVar();
+      // v2: szorstkość farby; osmalona blacha (mapa ran) matowieje — słońce, lampy i błyski błyszczą słabiej.
+      const surfRough = (ctx.woundScorch ? min(HL.uMat.x.add(ctx.woundScorch.mul(0.45)), 1.0) : HL.uMat.x).toVar();
+
+      If(pbr, () => {
+        // Klucz z azymutu prawdziwego słońca, podniesiony (keyElevDeg); samocień reliefu paneli
+        // (marsz ku słońcu w układzie sprite'a — odwrotny obrót azymutu), gaśnie przy dalekim zoomie
+        // (relief poniżej piksela — sam szum).
+        const sunXY = lightDir.xy.div(max(length(lightDir.xy), 1e-4)).toVar();
+        const sunLocal = vec2(sunXY.x.mul(c).add(sunXY.y.mul(s)), sunXY.y.mul(c).sub(sunXY.x.mul(s)));
+        const pxPerScreen = length(fwidth(spriteUV.mul(P.uSpriteSize)));
+        const shadowK = HL.uMat.w.mul(float(1.0).sub(smoothstep(2.5, 6.0, pxPerScreen))).toVar();
+        const selfShadow = hullSelfShadow({
+          uv: spriteUV,
+          spriteSize: P.uSpriteSize,
+          sunLocal,
+          tanEl: HL.uKeyElev.y.div(max(HL.uKeyElev.x, 0.01)),
+          lengthK: HL.uEffect.z,
+          heightRange: HULL_SURFACE_DEFAULTS.heightRange,
+          sampleA: (uvq) => perObjectTexture('uSurfaceMap', PLACEHOLDER_SURFACE, uvq).w
+        });
+        const keyVis = sunVis.mul(mix(float(1.0), selfShadow, shadowK)).toVar();
+        const sun = hullPbrSun({ albedo: armorRgb, N: worldNormal, sunXY, keyVis, ao: surf.z, skyField: sunFill(float(1.0)), rough: surfRough });
+        // Emisja niebieskich paneli z albedo (w mroku gęstego pola przygasa, zostaje ~30%).
+        const glow = hullGlowMask(armorRgb).mul(HL.uMat.z).mul(fieldLit.mul(0.7).add(0.3));
+        finalColor.assign(sun.color.add(armorRgb.mul(glow)));
+        // Podgląd diagnostyczny (HullLighting: debug 1–5) — jednolity warunek.
+        If(HL.uDebug.greaterThan(0.5), () => {
+          const d = HL.uDebug;
+          const ndlK = max(dot(worldNormal, sun.keyL), 0.0);
+          const dbg = select(d.lessThan(1.5), worldNormal.mul(0.5).add(0.5),
+            select(d.lessThan(2.5), vec3(surf.z),
+              select(d.lessThan(3.5), vec3(mix(float(1.0), selfShadow, shadowK)),
+                select(d.lessThan(4.5), vec3(ndlK.mul(keyVis)), vec3(surf.w)))));
+          finalColor.assign(dbg.mul(0.8));
+        });
+      }).Else(() => {
+        const NdotL = dot(worldNormal, lightDir).toVar();
+        const dayDiffuse = max(0.0, NdotL).toVar();
+        const sunlitColor = armorRgb.mul(HULL_SHARED.uDayAmbient.add(dayDiffuse.mul(HULL_SHARED.uDayDiffuseMul))).toVar();
+        const lightMul = HULL_SHARED.uDayAmbient.mul(sunFill(sunVis)).add(dayDiffuse.mul(HULL_SHARED.uDayDiffuseMul).mul(sunVis));
+        const color = armorRgb.mul(lightMul).toVar();
+
+        const halfVector = normalize(lightDir.add(vec3(0.0, 0.0, 1.0)));
+        const spec = pow(max(dot(worldNormal, halfVector), 0.0), 32.0);
+        const litMask = smoothstep(-0.02, 0.08, NdotL);
+        color.addAssign(vec3(spec.mul(HULL_SHARED.uSpecularMul).mul(litMask).mul(sunVis)));
+        sunlitColor.addAssign(vec3(spec.mul(HULL_SHARED.uSpecularMul).mul(litMask)));
+
+        // Glow (niebieskie elementy sprite'a) z koloru w PEŁNYM słońcu; w mroku
+        // gęstego pola asteroid przygasa (zostaje ~30%).
+        const isGlowing = step(0.6, sunlitColor.z).mul(step(sunlitColor.x, 0.5));
+        finalColor.assign(color.add(sunlitColor.mul(isGlowing).mul(1.5).mul(fieldLit.mul(0.7).add(0.3))));
+      });
 
       const spriteSize = P.uSpriteSize;
       const fragPx = spriteUV.mul(spriteSize).toVar();
@@ -764,7 +827,9 @@ function hullFragmentNode(opts) {
         const lobe = pow(RdotL, glintExp).mul(L.uLacquerB.y).mul(glintExp.div(L.uLacquerB.z)).mul(P.uLacquerGlint)
           .add(pow(RdotL, sheenExp).mul(L.uLacquerB.w).mul(sheenExp.div(L.uLacquerC.x))).mul(sunVis);
         // Odbicie kosmosu i odblask gasną w mroku pola (pył zasłania niebo).
-        const coat = fresnel.mul(env.add(lobe)).mul(fieldLit).add(armorRgb.mul(envBlur).mul(L.uLacquerC.y).mul(fieldLit));
+        // Oświetlenie v2: rozmyte odbicie (metal pod lakierem) słabsze — model ma własne niebo (HullLighting.uCoat).
+        const sheenK = mix(float(1.0), HL.uCoat.x, HL.uModel);
+        const coat = fresnel.mul(env.add(lobe)).mul(fieldLit).add(armorRgb.mul(envBlur).mul(L.uLacquerC.y).mul(sheenK).mul(fieldLit));
         const coated = finalColor.mul(float(1.0).sub(fresnel.mul(lacquerW))).add(coat.mul(lacquerW));
         finalColor.assign(select(lacquerW.greaterThan(0.001), coated, finalColor));
       });
@@ -786,11 +851,19 @@ function hullFragmentNode(opts) {
         const lightType = lightColor.w.toVar();
 
         // Typ 2: grupa lamp pozycyjnych INNEGO statku — sama poświata na pancerzu
-        // (× albedo — błysk wydobywa detal kadłuba z mroku).
+        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad środkiem grupy (N·L, GGX).
         If(lightType.greaterThan(1.5).and(lightType.lessThan(2.5)), () => {
-          const xr = clamp(distPx.div(max(1.0, lightExtra.z)), 0.0, 1.0);
-          const spill = float(1.0).sub(xr.mul(xr));
-          finalColor.addAssign(lampColor.mul(power).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
+          If(pbr, () => {
+            const spread = max(1.0, lightExtra.z).toVar();
+            const fo = hullLampFalloff(toFrag, spread.mul(0.45), spread.mul(0.6), spread);
+            const E = lampColor.mul(power).mul(fo.att).mul(HL.uLamp.x).toVar();
+            finalColor.addAssign(armorRgb.mul(E).mul(max(dot(localNormal, fo.dir), 0.0))
+              .add(E.mul(hullGgx(localNormal, fo.dir, surfRough)).mul(HL.uMat.y)));
+          }).Else(() => {
+            const xr = clamp(distPx.div(max(1.0, lightExtra.z)), 0.0, 1.0);
+            const spill = float(1.0).sub(xr.mul(xr));
+            finalColor.addAssign(lampColor.mul(power).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
+          });
           Continue();
         });
 
@@ -805,29 +878,57 @@ function hullFragmentNode(opts) {
         const core = smoothRev(radiusPx, 0.0, distPx);
         // Lampa pozycyjna rozlewa się szerzej niż reflektor: 9 promieni zamiast 7.
         const isNav = step(lightType, 0.5).toVar();
-        const glow = smoothRev(radiusPx.mul(mix(7.0, 9.0, isNav)), 0.0, distPx);
-        finalColor.addAssign(lampColor.mul(power).mul(sequenceMul).mul(core.mul(1.15).add(glow.mul(mix(0.50, 0.62, isNav)))));
-
-        // Zasięg 0 = lampa bez stożka na tym kadłubie (własny reflektor otoczenia).
-        If(lightType.greaterThan(0.5).and(lightExtra.z.greaterThan(0.0)), () => {
-          const dir = normalize(lightExtra.xy).toVar();
-          const along = dot(toFrag, dir).toVar();
-          const coneCos = clamp(lightExtra.w, -0.98, 0.999).toVar();
+        If(pbr, () => {
+          // v2: lampa = światło nad blachą (N·L z normalnymi paneli, zanik ~1/d² w oknie zasięgu, GGX);
+          // reflektor ze stożkiem (własny dziobowy, cudzy — także otoczenia) świeci dalej i wyżej.
+          // Żarówka to mały rdzeń — blask i halo rysują billboardy shipLights3D (warstwa FG).
+          const spot = step(0.5, lightType).mul(step(1e-4, lightExtra.z)).toVar();
           const rangePx = max(radiusPx.mul(2.0), lightExtra.z).toVar();
-          const frontMask = step(0.0, along);
-          const rangeMask = float(1.0).sub(smoothstep(rangePx.mul(0.18), rangePx, along)).toVar();
-          // Reflektor otoczenia innego statku: zanik jak światło pola (okno do zera
-          // × 1/(1 + k x²)).
-          If(lightType.greaterThan(2.5), () => {
-            const xr = clamp(along.div(rangePx), 0.0, 1.0);
-            const win = float(1.0).sub(xr.mul(xr));
-            rangeMask.assign(win.mul(win).div(xr.mul(xr).mul(6.0).add(1.0)));
+          const lampZ = radiusPx.mul(HL.uLamp.y);
+          const fo = hullLampFalloff(toFrag,
+            mix(lampZ, max(lampZ, rangePx.mul(0.12)), spot),
+            mix(radiusPx.mul(HL.uEffect.w), rangePx.mul(0.2), spot),
+            mix(radiusPx.mul(HL.uLamp.z), rangePx, spot));
+          const cone = float(1.0).toVar();
+          If(spot.greaterThan(0.5), () => {
+            const dir = normalize(lightExtra.xy).toVar();
+            const coneCos = clamp(lightExtra.w, -0.98, 0.999).toVar();
+            const angleCos = dot(normalize(toFrag.add(dir.mul(0.001))), dir);
+            cone.assign(step(0.0, dot(toFrag, dir)).mul(smoothstep(coneCos, min(0.999, coneCos.add(0.16)), angleCos)));
           });
-          const angleCos = dot(normalize(toFrag.add(dir.mul(0.001))), dir);
-          const coneMask = smoothstep(coneCos, min(0.999, coneCos.add(0.16)), angleCos);
-          const nearMask = float(1.0).sub(smoothstep(radiusPx.mul(0.8), radiusPx.mul(2.2), distPx));
-          const beam = frontMask.mul(rangeMask).mul(coneMask).mul(float(1.0).sub(nearMask));
-          finalColor.addAssign(lampColor.mul(power).mul(beam).mul(select(lightType.greaterThan(2.5), float(0.3), float(0.16))));
+          // Kałuża na blasze: lampa pozycyjna świeci dookoła na kadłub (pełny mnożnik); własny reflektor
+          // bez stożka (dziobowy, otoczenia) świeci NA ZEWNĄTRZ — na blachę tylko odrobina przy obudowie;
+          // reflektor ze stożkiem (cudzy, własny dziobowy) — jak szperacz.
+          const kindGain = select(isNav.greaterThan(0.5), float(1.0), select(spot.greaterThan(0.5), float(0.45), float(0.3)));
+          const E = lampColor.mul(power).mul(sequenceMul).mul(fo.att).mul(cone).mul(HL.uLamp.x).mul(kindGain).toVar();
+          finalColor.addAssign(armorRgb.mul(E).mul(max(dot(localNormal, fo.dir), 0.0))
+            .add(E.mul(hullGgx(localNormal, fo.dir, surfRough)).mul(HL.uMat.y)));
+          finalColor.addAssign(lampColor.mul(power).mul(sequenceMul).mul(core).mul(HL.uLamp.w));
+        }).Else(() => {
+          const glow = smoothRev(radiusPx.mul(mix(7.0, 9.0, isNav)), 0.0, distPx);
+          finalColor.addAssign(lampColor.mul(power).mul(sequenceMul).mul(core.mul(1.15).add(glow.mul(mix(0.50, 0.62, isNav)))));
+
+          // Zasięg 0 = lampa bez stożka na tym kadłubie (własny reflektor otoczenia).
+          If(lightType.greaterThan(0.5).and(lightExtra.z.greaterThan(0.0)), () => {
+            const dir = normalize(lightExtra.xy).toVar();
+            const along = dot(toFrag, dir).toVar();
+            const coneCos = clamp(lightExtra.w, -0.98, 0.999).toVar();
+            const rangePx = max(radiusPx.mul(2.0), lightExtra.z).toVar();
+            const frontMask = step(0.0, along);
+            const rangeMask = float(1.0).sub(smoothstep(rangePx.mul(0.18), rangePx, along)).toVar();
+            // Reflektor otoczenia innego statku: zanik jak światło pola (okno do zera
+            // × 1/(1 + k x²)).
+            If(lightType.greaterThan(2.5), () => {
+              const xr = clamp(along.div(rangePx), 0.0, 1.0);
+              const win = float(1.0).sub(xr.mul(xr));
+              rangeMask.assign(win.mul(win).div(xr.mul(xr).mul(6.0).add(1.0)));
+            });
+            const angleCos = dot(normalize(toFrag.add(dir.mul(0.001))), dir);
+            const coneMask = smoothstep(coneCos, min(0.999, coneCos.add(0.16)), angleCos);
+            const nearMask = float(1.0).sub(smoothstep(radiusPx.mul(0.8), radiusPx.mul(2.2), distPx));
+            const beam = frontMask.mul(rangeMask).mul(coneMask).mul(float(1.0).sub(nearMask));
+            finalColor.addAssign(lampColor.mul(power).mul(beam).mul(select(lightType.greaterThan(2.5), float(0.3), float(0.16))));
+          });
         });
       });
 

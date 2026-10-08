@@ -8,12 +8,14 @@
  * Kawałek = raster z góry jego brył przecinających płaszczyznę gry (pirateDryDockChunks.dryDockPlanarSolids →
  * dryDockTopRaster, wiersze ODWRÓCONE: obraz w górę = −z układu — inaczej ciało wychodzi lustrem względem bryły
  * 3D), kotwice wg rodzaju kawałka (gdzie bryła trzyma się reszty budowli) i materiał (gęstość, pancerz zderzeń).
+ * Dach hali (R-1…R-3, nad płaszczyzną gry) to DUCH (worldBodies — ghost): raster WSZYSTKICH brył pasa dachu,
+ * rzadsza kratownica (GHOST_CELL), ciałem dopiero w rozpadzie (pęka na odłamy jak reszta, bez kolizji i broni).
  * Układ doku: x wzdłuż trzonu, z w poprzek; gra: toGame(x, z) = O + U·x + N·z (shipyardLayout.placeDryDock),
  * kurs ciała = place.axis.
  * Bez three i DOM.
  */
 
-import { dryDockPlanarSolids, dryDockTopRaster } from '../../3d/portBuildings/pirateDryDockChunks.js';
+import { dryDockChunkSolids, dryDockPlanarSolids, dryDockTopRaster } from '../../3d/portBuildings/pirateDryDockChunks.js';
 import { WORLD_BODY_TUNE } from '../worldBodies.js';
 import { HullBodies } from '../hullBodies.js';
 
@@ -26,16 +28,21 @@ export const DRYDOCK_BODY_MATERIAL = Object.freeze({
   tower: Object.freeze({ density: 2.4, armor: 6 }),
   frame: Object.freeze({ density: 2.2, armor: 3 }),
   fence: Object.freeze({ density: 1.6, armor: 1.2 }),
-  gate: Object.freeze({ density: 1.4, armor: 0.8 })
+  gate: Object.freeze({ density: 1.4, armor: 0.8 }),
+  roof: Object.freeze({ density: 1.2, armor: 1 })
 });
 
-// Kawałki bez brył w płaszczyźnie gry (dach) zostają statyką.
-const NO_BODY = new Set(['roof']);
+// Kawałki bez brył w płaszczyźnie gry — DUCHY (dach): ciało tylko w rozpadzie, raster wszystkich brył, komórka
+// GHOST_CELL (pas dachu 4,6 × 1,3 km: przy 15 j. ~22 tys. węzłów, przy 45 j. ~2,5 tys.), raster GHOST_UPP j./piksel
+// (3 piksele na komórkę jak reszta).
+const GHOST = new Set(['roof']);
+const GHOST_CELL = 45;
+const GHOST_UPP = 15;
 
 // Podział skóry (src/3d/worldBodies3D.js, portBuildingSkin3D.js): najdłuższa krawędź trójkąta w rzucie [komórki].
 // Bramy, ogrodzenie i pylony gną się przy taranie najbardziej widocznie — gęsto; trzon i ściany hali to setki brył
 // (co 2 komórki: ~0,5 mln wierzchołków i 100–160 ms wypieku na odcinek trzonu) — rzadko.
-const SKIN_EDGE_CELLS = Object.freeze({ spine: 6, collar: 4, wall: 4, hallgate: 4, tower: 3, frame: 2, fence: 2, gate: 2 });
+const SKIN_EDGE_CELLS = Object.freeze({ spine: 6, collar: 4, wall: 4, hallgate: 4, tower: 3, frame: 2, fence: 2, gate: 2, roof: 2 });
 
 // Ciało = bryły, które PRZECINAJĄ płaszczyznę gry (±4 j.). Domyślny pas dema (±25) brał rękawy trapów trzonu
 // (y −56…−8, pod płaszczyzną — sięgają w tor taranu do dziobów okrętów parkingu, z ≈ 950): Atlas na torze bramy
@@ -121,11 +128,12 @@ export function dryDockPinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) {
 
 /**
  * Raster kawałka do ciała: bryły w płaszczyźnie gry z góry, wiersze odwrócone (wiersz 0 = najmniejsze z — obraz
- * w górę = −z, zgodnie z kursem ciała place.axis). Wynik: { image: { width, height, data }, upp, cx, cz } (środek
- * obrazu w układzie doku) albo null (kawałek bez brył w płaszczyźnie).
+ * w górę = −z, zgodnie z kursem ciała place.axis). all — WSZYSTKIE bryły kawałka (duch: dach nad płaszczyzną).
+ * Wynik: { image: { width, height, data }, upp, cx, cz } (środek obrazu w układzie doku) albo null (kawałek bez
+ * brył w płaszczyźnie).
  */
-export function dryDockChunkRaster(layout, scene, chunkId, { upp = WORLD_BODY_TUNE.rasterUpp, palette = null, band = PLANE_BAND } = {}) {
-  const solids = dryDockPlanarSolids(layout, scene, [chunkId], { band });
+export function dryDockChunkRaster(layout, scene, chunkId, { upp = WORLD_BODY_TUNE.rasterUpp, palette = null, band = PLANE_BAND, all = false } = {}) {
+  const solids = all ? dryDockChunkSolids(layout, scene, [chunkId]) : dryDockPlanarSolids(layout, scene, [chunkId], { band });
   if (!solids.length) return null;
   const r = dryDockTopRaster(solids, { unitsPerPx: upp, palette });
   const W = r.width, H = r.height, src = r.data;
@@ -146,9 +154,13 @@ const _rasters = new WeakMap();
 function cachedRaster(layout, scene, chunkId, palette) {
   let m = _rasters.get(layout);
   if (!m) _rasters.set(layout, m = new Map());
-  if (!m.has(chunkId)) m.set(chunkId, dryDockChunkRaster(layout, scene, chunkId, { palette }) || false);
+  if (!m.has(chunkId)) {
+    const ghost = GHOST.has(layout.chunkById.get(chunkId)?.kind);
+    m.set(chunkId, dryDockChunkRaster(layout, scene, chunkId, ghost ? { palette, all: true, upp: GHOST_UPP } : { palette }) || false);
+  }
   return m.get(chunkId);
 }
+const cellOf = (c) => GHOST.has(c.kind) ? GHOST_CELL : WORLD_BODY_TUNE.cellSize;
 
 /**
  * Rastry wszystkich kawałków i szablony kratownic HullBodies (ta sama skala i komórka co budowa ciała w
@@ -157,10 +169,9 @@ function cachedRaster(layout, scene, chunkId, palette) {
 export function prebuildPirateDryDockBodies(layout, scene, palette = null) {
   let n = 0;
   for (const c of layout.chunks) {
-    if (NO_BODY.has(c.kind)) continue;
     const r = cachedRaster(layout, scene, c.id, palette);
     if (!r) continue;
-    HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
+    HullBodies.structureFor(r.image, r.upp, cellOf(c) / r.upp);
     n++;
   }
   return n;
@@ -177,7 +188,6 @@ export function createPirateDryDockSite(station, dock, place, hooks = {}) {
   const pieces = [];
   const corner = { x: 0, y: 0 };
   for (const c of layout.chunks) {
-    if (NO_BODY.has(c.kind)) continue;
     const b = c.box;
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const [hx, hz] of [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]) {
@@ -196,6 +206,8 @@ export function createPirateDryDockSite(station, dock, place, hooks = {}) {
       chunk: c,
       bounds: { x0, y0, x1, y1 },
       material: DRYDOCK_BODY_MATERIAL[c.kind] || null,
+      ghost: GHOST.has(c.kind),
+      cellSize: cellOf(c),
       skinEdgeCells: SKIN_EDGE_CELLS[c.kind] || 4,
       pinGridCells: PIN_GRID_CELLS[c.kind] || 0,
       build() {

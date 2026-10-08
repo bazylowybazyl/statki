@@ -1,7 +1,8 @@
 // Render portu K-7 (dok gameplayowy) na ringu „Halo”. Dane brył z
 // haloPortK7Build.js; tu: instancje (prostopadłościan / walec / torus) w
-// zestawach BG (pod statkami) i FG (nad statkami: suwnice, węże, dach),
-// płaskie wielokąty pokładu, napisy z atlasu i dynamiczne węże paliwowe.
+// zestawach BG (pod statkami) i FG (nad statkami: ramiona paliwowe, złączki,
+// dach), płaskie wielokąty pokładu, napisy z atlasu i przewody paliwowe —
+// rura z liny haloPortK7Fuel.js (ramiona SCARA, fizyka przewodów, 2026-10-07).
 //
 // Materiały K-7 (stal, ciemny metal, jasne płyty, żółte, pokład z płyt,
 // farba, cyjanowe listwy) oddane w modelu światła ringu: widoczność słońca
@@ -28,18 +29,26 @@ import {
   float, int, vec2, vec3, vec4, mat3, mat4,
   attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
   modelViewMatrix, cameraProjectionMatrix,
-  abs, clamp, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, sin, smoothstep, step
+  abs, clamp, cos, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, select, sin, smoothstep, step
 } from 'three/tsl';
 import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
 import { HALO_PI, haloHash12, haloRingTSL } from './haloRingTSL.js';
 import { haloNodeMaterial, haloQrot } from './haloRingMegastructure.js';
-import { K7_ABOVE_SCALE, K7_HEIGHTS, k7Frame, k7HeightToZ, k7Phase } from './haloPortK7Layout.js';
+import { K7_ABOVE_SCALE, K7_FUEL_STATION, K7_STOWED_POSE, k7Frame, k7HeightToZ, k7Phase } from './haloPortK7Layout.js';
 import { K7_INSTANCE_STRIDE, K7_MAT, buildK7Scene } from './haloPortK7Build.js';
 import { haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
+import { K7_BEACON, K7_BEACON_LOOK, K7_VENT_DUR, K7_VENT_WARN } from './haloPortK7Lights.js';
+import { K7_HOSE_NODES, createK7FuelRig, stepK7FuelRig } from './haloPortK7Fuel.js';
+import { zbierzZakres } from '../zakresyWysylki.js';
 
-const MAX_GROUPS = 40;   // 4 suwnice × 6 grup + 8 złączek + grupa 0
-const MAX_LAMPS = 10;    // lampy hali (4) + po trzy nad każdą z 2 zatok kompleksu (pasy MEGA, grzebień)
+const MAX_GROUPS = 40;   // 8 słupków paliwowych × 4 grupy (człony ramienia, wysięgnik, złączka) + 4 zamki pola + grupa 0
+const MAX_LAMPS = 16;    // lampy hali (8, haloPortK7Lights.js) + po trzy nad każdą z 2 zatok kompleksu (pasy MEGA, grzebień)
+const HOSE_RINGS = 72;   // przekrojów rury na przewód (próbkowanie liny po długości łuku)
+const HOSE_SIDES = 10;   // wierzchołków w przekroju
+const HOSE_RIB = 96;     // uv.y = metry przewodu od złączki / HOSE_RIB (żebro co 6 j. — shader: fract(uv.y · 16))
+const MAX_SPOTS = 10;    // reflektory hali (haloPortK7Lights.js) — 3 × vec4: pozycja + zasięg, oś + cos zewn., barwa + cos wewn.
+const K7_SPOT_DECK_GAIN = 0.9;    // reflektory na pokładzie (model światła ringu) względem mocy w siatce gry
 const r4 = (x) => +x.toFixed(4);   // stałe jak dawne literały GLSL (f3: 4 miejsca)
 const srgb = (hex) => {
   const c = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
@@ -64,7 +73,8 @@ export function k7StylePalette(style) {
 // ---------------------------------------------------------------------------
 // Tablice hali w grafie (uniformArray vec4, pakowane przy rysowaniu obiektu):
 //  - K7_GROUPS_BLOCK — macierze grup ruchomych (40 × 4 kolumny), tylko wierzchołki instancji;
-//  - K7_SURF_BLOCK — emisja grup (40), lampy (10), paleta (14), emisja K-7 (5), poświata szkła (2).
+//  - K7_SURF_BLOCK — emisja grup (40), lampy (16), paleta (14), emisja K-7 (5), poświata szkła (2),
+//    reflektory (10 × 3).
 // Stałe nazwy buforów: trzy ringi dzielą ten sam WGSL (jeden moduł i pipeline na rodzaj).
 export const K7_GROUPS_BLOCK = 'k7Groups';
 export const K7_SURF_BLOCK = 'k7Surf';
@@ -74,7 +84,8 @@ export const K7_SURF_LAYOUT = Object.freeze({
   pal: MAX_GROUPS + MAX_LAMPS,
   k7Emit: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE,
   glow: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE + 5,
-  length: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE + 5 + 2
+  spots: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE + 5 + 2,
+  length: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE + 5 + 2 + MAX_SPOTS * 3
 });
 const S = K7_SURF_LAYOUT;
 
@@ -106,7 +117,50 @@ function packK7Surf(frame, node) {
   for (let i = 0; i < 5; i++) putVec(out, k7e[i], S.k7Emit + i);
   const glow = U.uK7Glow.value;
   for (let i = 0; i < 2; i++) putVec(out, glow[i], S.glow + i);
+  const spots = U.uK7Spots?.value;
+  if (spots) for (let i = 0; i < MAX_SPOTS * 3; i++) putVec(out, spots[i], S.spots + i);
   return undefined;
+}
+
+// Miganie soczewki (haloPortK7Lights.js — lustro CPU `k7BeaconLevel`, te same wzory i stałe): kind ≥ 1,
+// t — zegar migania hali (uHallLights.w), phase / period z instancji [s].
+const TWO_PI = 6.2831853;
+function k7BeaconLevelTSL(kind, t, phase, period) {
+  const lvl = float(0.0).toVar();
+  If(kind.lessThan(K7_BEACON.OBSTRUCTION + 0.5), () => {
+    const f = fract(t.add(phase).div(1.5)).toVar();
+    lvl.assign(smoothstep(0.0, 0.05, f).mul(float(1.0).sub(smoothstep(0.28, 0.46, f))));
+  }).ElseIf(kind.lessThan(K7_BEACON.CLEAR + 0.5), () => {
+    const s = fract(t.add(phase).div(2.4)).mul(2.4).toVar();
+    const pulse = (a) => smoothstep(a, a + 0.03, s).mul(float(1.0).sub(smoothstep(a + 0.1, a + 0.15, s)));
+    lvl.assign(pulse(0.0).add(pulse(0.3)));
+  }).ElseIf(kind.lessThan(K7_BEACON.RABBIT + 0.5), () => {
+    const s = fract(t.sub(phase).div(1.8)).mul(1.8);
+    lvl.assign(exp(s.mul(-18.0)));
+  }).ElseIf(kind.lessThan(K7_BEACON.EDGE + 0.5), () => {
+    lvl.assign(float(0.6).add(float(0.4).mul(sin(t.add(phase).mul(TWO_PI / 3.2)))));
+  }).ElseIf(kind.lessThan(K7_BEACON.STROBE + 0.5), () => {
+    const s = fract(t.add(phase).div(1.4)).mul(1.4).toVar();
+    lvl.assign(exp(s.mul(-45.0)).add(step(0.18, s).mul(exp(s.sub(0.18).mul(-45.0)))));
+  }).ElseIf(kind.lessThan(K7_BEACON.VENT + 0.5), () => {
+    const p = max(period, 1.0).toVar();
+    const u = fract(t.add(phase).div(p)).mul(p).toVar();
+    const end = K7_VENT_WARN + K7_VENT_DUR;
+    const warn = smoothstep(0.0, 0.1, u).mul(float(1.0).sub(smoothstep(end - 0.2, end + 0.1, u)));
+    const c = float(0.5).add(float(0.5).mul(cos(u.mul(TWO_PI * 2.4)))).toVar();
+    lvl.assign(warn.mul(float(0.2).add(c.mul(c).mul(0.8))));
+  }).Else(() => {
+    lvl.assign(0.55);
+  });
+  return lvl;
+}
+
+// Barwa soczewki × szczyt HDR (K7_BEACON_LOOK) według rodzaju.
+function k7BeaconColorTSL(kind) {
+  const look = (k) => vec3(...K7_BEACON_LOOK[k].color.map((c) => r4(c * K7_BEACON_LOOK[k].hdr)));
+  let col = look(K7_BEACON.HOLD);
+  for (let k = K7_BEACON.VENT; k >= K7_BEACON.OBSTRUCTION; k--) col = select(kind.lessThan(k + 0.5), look(k), col);
+  return col;
 }
 
 // Wartość per obiekt z material.uniforms[klucz].value rysowanego obiektu.
@@ -198,6 +252,24 @@ export function k7Graphs(u) {
       // N w układzie huba: y = góra
       acc.addAssign(col.mul(fall).mul(win).mul(max(dot(N, dv.div(max(d, 1.0))), 0.0)));
     });
+    // Reflektory hali (haloPortK7Lights.js): zanik i stożek jak w siatce świateł gry (te same reflektory oświetlają
+    // tam pył, parę i kadłuby) — okno do zera na zasięgu × 1 / (1 + 4x²), stożek smoothstep².
+    Loop({ start: 0, end: MAX_SPOTS, type: 'int', condition: '<', name: 'k7Spot' }, ({ k7Spot }) => {
+      const o = int(S.spots).add(k7Spot.mul(3)).toVar();
+      const A = surf.element(o).toVar();
+      const C = surf.element(o.add(2)).toVar();
+      const dv = A.xyz.sub(hubP).toVar();
+      const d = length(dv).toVar();
+      const x = d.div(max(A.w, 1.0)).toVar();
+      If(x.lessThan(1.0).and(C.x.add(C.y).add(C.z).greaterThan(0.0)), () => {
+        const B = surf.element(o.add(1)).toVar();
+        const Ld = dv.div(max(d, 1.0)).toVar();
+        const win = float(1.0).sub(x.mul(x));
+        const att = win.mul(win).div(x.mul(x).mul(4.0).add(1.0));
+        const cone = smoothstep(B.w, C.w, dot(Ld.negate(), B.xyz)).toVar();
+        acc.addAssign(C.xyz.mul(att).mul(cone).mul(cone).mul(max(dot(N, Ld), 0.0)));
+      });
+    });
     return acc;
   };
 
@@ -258,7 +330,8 @@ export function k7Graphs(u) {
     local: varyingProperty('vec3', 'vK7Local'),
     localN: varyingProperty('vec3', 'vK7LocalN'),
     mat: varyingProperty('float', 'vK7Mat'),
-    group: varyingProperty('float', 'vK7Group')
+    group: varyingProperty('float', 'vK7Group'),
+    blink: varyingProperty('vec3', 'vK7Blink')
   });
 
   // ---- instancje (dawne K7_INSTANCE_VERTEX / _FRAGMENT)
@@ -289,6 +362,7 @@ export function k7Graphs(u) {
     vi.localN.assign(normalGeometry);
     vi.mat.assign(iB.w);
     vi.group.assign(iC.x);
+    vi.blink.assign(iC.yzw);
     return cameraProjectionMatrix.mul(modelViewMatrix.mul(gp));
   })();
   const instanceFragment = Fn(() => {
@@ -298,7 +372,13 @@ export function k7Graphs(u) {
     const kn = abs(localN).toVar();
     const fuv = kn.y.greaterThan(0.55).select(local.xz, kn.x.greaterThan(0.55).select(local.zy, local.xy)).toVar();
     const fw = fwidth(fuv.x).add(fwidth(fuv.y)).toVar();
-    const c = k7Shade(vi, k7Palette(m), m, normalize(vi.hubN), fuv, fw, vi.group);
+    const c = k7Shade(vi, k7Palette(m), m, normalize(vi.hubN), fuv, fw, vi.group).toVar();
+    // soczewka światła hali: emisja z kodu migania (haloPortK7Lights.js), zgaszona — ciemne szkło w barwie światła
+    const blink = vec3(vi.blink).toVar();
+    If(blink.x.greaterThan(0.5), () => {
+      const lvl = k7BeaconLevelTSL(blink.x, hallLights.w, blink.y, blink.z);
+      c.assign(k7BeaconColorTSL(blink.x).mul(float(0.012).add(lvl)));
+    });
     return vec4(c, roofOpacity);
   })();
 
@@ -613,12 +693,21 @@ export class HaloPortK7 {
     // obwiednia w układzie ringu (obcinanie całego kompleksu w index.js)
     const sc = this.sphere.center;
     this.bounds = { x: fr.origin.x + sc.x * fr.tx + sc.z * fr.rx, y: fr.origin.y + sc.x * fr.ty + sc.z * fr.ry, z: sc.y, r: this.sphere.radius };
-    // lampy: 4 nad stanowiskami capital hali + po trzy nad każdą zatoką
+    // lampy: hali (haloPortK7Lights.js — te same oświetlają w grze pył i kadłuby) + po trzy nad każdą zatoką
     const lamps = Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0));
     const ly = k7HeightToZ(390);
-    [-1120, 1120, -2740, 2740].forEach((x, i) => lamps[i].set(x, ly, 1930, i === 0 || i === 3 ? 1 : 2));
+    const rig = scene.rig;
+    let li = 0;
+    for (const L of rig.lamps) if (li < MAX_LAMPS) lamps[li++].set(L.x, k7HeightToZ(L.y), L.z, L.k7Type);
+    // reflektory: pozycja + zasięg, oś + cos zewn., barwa × moc + cos wewn. (moc na pokładzie jak w siatce gry)
+    const spots = Array.from({ length: MAX_SPOTS * 3 }, () => new THREE.Vector4(0, 0, 0, 0));
+    rig.spots.slice(0, MAX_SPOTS).forEach((sp, i) => {
+      spots[i * 3].set(sp.x, k7HeightToZ(sp.y), sp.z, sp.range);
+      spots[i * 3 + 1].set(sp.dir[0], sp.dir[1], sp.dir[2], sp.cosOuter);
+      spots[i * 3 + 2].set(sp.color[0] * sp.intensity * K7_SPOT_DECK_GAIN, sp.color[1] * sp.intensity * K7_SPOT_DECK_GAIN,
+        sp.color[2] * sp.intensity * K7_SPOT_DECK_GAIN, sp.cosInner);
+    });
     const q = {};
-    let li = 4;
     for (const { layout: bl, xf } of this.bays) {
       const zc = (bl.backZ + bl.openZ) * 0.5;
       for (const lane of bl.lanes) {
@@ -639,6 +728,7 @@ export class HaloPortK7 {
       uRoofOpacity: { value: 1 },
       uHallLights: { value: new THREE.Vector4(0.22, 1, 0, 0) },
       uLamps: { value: lamps },
+      uK7Spots: { value: spots },
       uK7Pal: { value: [] },
       uK7Emit: { value: [] },
       uK7Glow: { value: [] }
@@ -725,7 +815,10 @@ export class HaloPortK7 {
       this.root.add(this.labels);
       this.meshes.bg.push(this.labels);
     }
-    // węże paliwowe (dynamiczne, jedna geometria na wszystkie)
+    // obsługa paliwowa: ramiona SCARA i przewody z fizyką liny (haloPortK7Fuel.js); rura przewodów — jedna
+    // geometria na wszystkie, odświeżana tylko dla przewodów w ruchu
+    this.fuelRig = createK7FuelRig(layout);
+    this._fuelHose = this.scene.fuel.map((st) => this.fuelRig.hoses.find((h) => h.berthId === st.berthId && h.side === st.side) || null);
     this._buildHoses();
 
     // stan animacji
@@ -744,34 +837,35 @@ export class HaloPortK7 {
     this.setServicePoses(null);
   }
 
+  // Rura przewodów: na przewód HOSE_RINGS + 1 przekrojów po HOSE_SIDES + 1 wierzchołków (szew uv), indeksy stałe;
+  // pozycje, normalne i uv (żebra jadą z materiałem przewodu — wyjeżdżają z bębna) liczone z liny co klatkę ruchu.
   _buildHoses() {
-    const hoses = this.scene.hoses;
-    this.hoseN = 48;
-    this.hoseRings = 10;
-    const perHose = (this.hoseN + 1) * (this.hoseRings + 1);
-    const count = perHose * hoses.length;
+    const n = this.scene.fuel.length;
+    const R = HOSE_RINGS;
+    const S = HOSE_SIDES;
+    const perHose = (R + 1) * (S + 1);
+    this.hosePerHose = perHose;
+    const count = perHose * n;
     this.hosePos = new Float32Array(count * 3);
     this.hoseNor = new Float32Array(count * 3);
-    const uvs = new Float32Array(count * 2);
+    this.hoseUv = new Float32Array(count * 2);
     const idx = [];
-    for (let h = 0; h < hoses.length; h++) {
+    for (let h = 0; h < n; h++) {
       const base = h * perHose;
-      for (let i = 0; i <= this.hoseN; i++) {
-        for (let j = 0; j <= this.hoseRings; j++) {
-          const k = base + i * (this.hoseRings + 1) + j;
-          uvs[2 * k] = j / this.hoseRings;
-          uvs[2 * k + 1] = i / this.hoseN * 6;
-          if (i < this.hoseN && j < this.hoseRings) {
-            const l = k + this.hoseRings + 1;
+      for (let i = 0; i <= R; i++) {
+        for (let j = 0; j <= S; j++) {
+          const k = base + i * (S + 1) + j;
+          if (i < R && j < S) {
+            const l = k + S + 1;
             idx.push(k, k + 1, l, l, k + 1, l + 1);
           }
         }
       }
     }
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(this.hosePos, 3).setUsage(THREE.DynamicDrawUsage));
-    g.setAttribute('normal', new THREE.BufferAttribute(this.hoseNor, 3).setUsage(THREE.DynamicDrawUsage));
-    g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    g.setAttribute('position', new THREE.BufferAttribute(this.hosePos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(this.hoseNor, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(this.hoseUv, 2));
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 2000), 4000);
     const m = haloNodeMaterial('K7Hoses', this._graphs.hose, {}, this.matFg.uniforms);
@@ -781,12 +875,15 @@ export class HaloPortK7 {
     this.hoseMesh.frustumCulled = true;
     this.root.add(this.hoseMesh);
     this.meshes.fg.push(this.hoseMesh);
-    // bufory punktów środkowych (bez alokacji przy aktualizacji)
-    this._hosePts = hoses.map(() => Array.from({ length: this.hoseN + 1 }, () => new THREE.Vector3()));
-    this._hoseKey = new Float32Array(hoses.length * 3).fill(-1);
+    // bufory próbkowania (bez alokacji przy aktualizacji): punkty przekrojów w scenie, długości łuku węzłów
+    this._hs = new Float64Array((R + 1) * 3);
+    this._hl = new Float64Array(K7_HOSE_NODES);
+    this._hoseVer = new Float64Array(n).fill(-1);
     this._tA = new THREE.Vector3();
     this._tN = new THREE.Vector3();
     this._tB = new THREE.Vector3();
+    for (let h = 0; h < n; h++) this._writeHose(h);
+    this._uploadHoses(0, n);
   }
 
   setLayers(bgLayer, fgLayer) {
@@ -813,132 +910,177 @@ export class HaloPortK7 {
     };
   }
 
-  // pozy obsługi stanowisk: Map berthId → {bridge, trolley, lower, clamp, extension, lock, flow, vent}
+  // pozy obsługi stanowisk capital: Map berthId → { clamp, extension, seat, lock, flow, vent } (stan gry — rejestr
+  // hali, fabuła, automaty); brak pozy = obsługa złożona
   setServicePoses(poses) {
     const P = this._pose;
-    for (const c of this.scene.cranes) {
-      const pose = poses?.get(c.berthId) ?? null;
-      P.set(c.berthId, pose || { bridge: 0, trolley: 0, lower: 0, clamp: 0, extension: 0, lock: 0, flow: 0, vent: 0 });
+    for (const st of this.scene.fuel) {
+      const pose = poses?.get(st.berthId) ?? null;
+      P.set(st.berthId, pose || K7_STOWED_POSE);
     }
   }
 
-  // Grupy ruchome: most (z), wózek (x), chwytak (wysokość), szczęki, liny, złączki.
+  // Grupy ruchome z obsługi paliwowej: człony ramienia SCARA (bark, łokieć — obrót w poziomie), trzon wysięgnika
+  // (przegub złączki), złączka (położenie i oś z liny); zamki pola — emisja listew. Grupy w układzie (x, wysokość
+  // sceny, z) huba: obrót wokół pionu = makeRotationY(−kąt) (kąt od +x ku +z huba).
   _updateGroups() {
     const mats = this.k7Uniforms.uGroup.value;
+    const emit = this.k7Uniforms.uGroupEmit.value;
     mats[0].identity();
-    const hullTop = K7_HEIGHTS.hullTop;
-    for (const c of this.scene.cranes) {
-      const s = this._pose.get(c.berthId);
-      const berth = this.layout.berths.find((b) => b.id === c.berthId);
-      const bridgeZ = c.homeZ + (c.workZ - c.homeZ) * s.bridge;
-      mats[c.bridge].makeTranslation(berth.x, 0, bridgeZ);
-      const trolleyX = 420 + (0 - 420) * s.trolley;
-      mats[c.trolley].copy(mats[c.bridge]).multiply(this._m.makeTranslation(trolleyX, 0, 0));
-      const spreaderY = 550 + (hullTop + 46 - 550) * s.lower;
-      mats[c.spreader].copy(mats[c.trolley]).multiply(this._m.makeTranslation(0, k7HeightToZ(spreaderY), 0));
-      c.jaws.forEach((g, i) => {
-        const side = i === 0 ? -1 : 1;
-        mats[g].copy(mats[c.spreader]).multiply(this._m.makeTranslation(-side * 18 * s.clamp, 0, 0));
-      });
-      // liny: od szczytu chwytaka (y + 18) do wózka (638)
-      const z0 = k7HeightToZ(spreaderY + 18);
-      const z1 = k7HeightToZ(638);
-      const len = Math.max(1, z1 - z0);
-      this._m2.makeScale(1, len / K7_ABOVE_SCALE, 1);
-      mats[c.cables].copy(mats[c.trolley]).multiply(this._m.makeTranslation(0, (z0 + z1) / 2, 0)).multiply(this._m2);
+    const F = K7_FUEL_STATION;
+    const stations = this.scene.fuel;
+    for (let k = 0; k < stations.length; k++) {
+      const st = stations[k];
+      const h = this._fuelHose[k];
+      if (!h) continue;
+      const g = h.g;
+      mats[st.link1].makeRotationY(-h.q1).setPosition(g.sx, 0, g.sz);
+      mats[st.link2].copy(mats[st.link1]).multiply(this._m.makeTranslation(F.link1.len, 0, 0)).multiply(this._m2.makeRotationY(-h.q2));
+      mats[st.rod].makeTranslation(h.wrist.x, k7HeightToZ(h.wrist.y), h.wrist.z);
+      // złączka: oś Y = oś z fizyki w scenie (nad płaszczyzną lotu wysokość × K7_ABOVE_SCALE)
+      const c = (K7_HOSE_NODES - 1) * 3;
+      const P = h.pos;
+      this._v.set(P[c], k7HeightToZ(P[c + 1]), P[c + 2]);
+      this._v2.set(h.up.x, h.up.y * K7_ABOVE_SCALE, h.up.z).normalize();
+      this._q.setFromUnitVectors(this._yAxis, this._v2);
+      mats[st.coupler].compose(this._v, this._q, this._s);
+      // barwa złączki: ciepła = luźna, cyjan = zaryglowana, zielona = przepływ, pomarańcz pulsuje przy upuście
+      const pose = this._pose.get(st.berthId) || K7_STOWED_POSE;
+      const e = emit[st.coupler];
+      if (h.latched) {
+        if ((Number(pose.vent) || 0) > 0.05) {
+          const p = 0.55 + 0.45 * Math.sin(this.time * 18);
+          e.set(1.3 * p, 0.42 * p, 0.06 * p);
+        } else if ((Number(pose.flow) || 0) > 0.1) e.set(0.4, 1.15, 0.66);
+        else e.set(0.3, 1.12, 1.28);
+      } else e.set(1.28, 0.78, 0.3);
+    }
+    // zamki pola: listwy gasną (ciemny turkus) albo świecą, gdy zamki trzymają statek
+    for (const cl of this.scene.clamps) {
+      const pose = this._pose.get(cl.berthId) || K7_STOWED_POSE;
+      const c = Math.min(1, Math.max(0, Number(pose.clamp) || 0));
+      emit[cl.group].set(0.015 + 0.16 * c, 0.05 + 0.85 * c, 0.07 + 1.2 * c);
     }
   }
 
-  // Węże: krzywa Béziera z luzem (K-7 FuelHoseSystem.setPose), przeliczana
-  // tylko przy zmianie pozy; złączka na końcu jako grupa.
-  _updateHoses() {
-    const hoses = this.scene.hoses;
-    const emit = this.k7Uniforms.uGroupEmit.value;
-    let dirty = false;
+  // Rura przewodu `k` z liny (węzły k0 … złączka): długość łuku, próbki Catmull-Rom w równych odstępach, koniec
+  // przycięty do lica złączki, ramki transportem równoległym (bez skręcania), wysokości → scena (k7HeightToZ).
+  _writeHose(k) {
+    const h = this._fuelHose[k];
+    if (!h) return;
+    const M = K7_HOSE_NODES;
+    const P = h.pos;
+    const k0 = h.k0;
+    const n = M - k0;
+    const Lc = this._hl;
+    // długości łuku węzłów (fizyka: wysokości K-7)
+    Lc[0] = 0;
+    for (let i = 1; i < n; i++) {
+      const a = (k0 + i - 1) * 3;
+      const b = a + 3;
+      Lc[i] = Lc[i - 1] + Math.sqrt((P[b] - P[a]) ** 2 + (P[b + 1] - P[a + 1]) ** 2 + (P[b + 2] - P[a + 2]) ** 2);
+    }
+    const trim = K7_FUEL_STATION.coupler.r * 0.9;
+    const total = Math.max(1, Lc[n - 1] - trim);
+    const R = HOSE_RINGS;
+    const S = HOSE_SIDES;
+    const Sx = this._hs;
+    let seg = 0;
+    for (let i = 0; i <= R; i++) {
+      const s = total * i / R;
+      while (seg < n - 2 && Lc[seg + 1] < s) seg++;
+      const l0 = Lc[seg];
+      const l1 = Lc[seg + 1];
+      const t = l1 > l0 ? Math.min(1, Math.max(0, (s - l0) / (l1 - l0))) : 0;
+      const i0 = k0 + Math.max(0, seg - 1);
+      const i1 = k0 + seg;
+      const i2 = k0 + Math.min(n - 1, seg + 1);
+      const i3 = k0 + Math.min(n - 1, seg + 2);
+      const t2 = t * t;
+      const t3 = t2 * t;
+      // Catmull-Rom (jednorodny): ogniwa mają stałą długość
+      const w0 = -0.5 * t3 + t2 - 0.5 * t;
+      const w1 = 1.5 * t3 - 2.5 * t2 + 1;
+      const w2 = -1.5 * t3 + 2 * t2 + 0.5 * t;
+      const w3 = 0.5 * t3 - 0.5 * t2;
+      const o = i * 3;
+      for (let d = 0; d < 3; d++) {
+        Sx[o + d] = w0 * P[i0 * 3 + d] + w1 * P[i1 * 3 + d] + w2 * P[i2 * 3 + d] + w3 * P[i3 * 3 + d];
+      }
+      Sx[o + 1] = k7HeightToZ(Sx[o + 1]);
+    }
     const A = this._tA;
-    const Nn = this._tN;
+    const N = this._tN;
     const B = this._tB;
-    for (let h = 0; h < hoses.length; h++) {
-      const hose = hoses[h];
-      const s = this._pose.get(hose.berthId);
-      // barwa złączki: ciepła = luźna, cyjan = zablokowana, zielona = przepływ
-      if (s.lock > 0.98) {
-        if (s.flow > 0.1) emit[hose.group].set(0.4, 1.15, 0.66); else emit[hose.group].set(0.3, 1.12, 1.28);
-      } else emit[hose.group].set(1.28, 0.78, 0.3);
-      const kk = this._hoseKey;
-      if (Math.abs(kk[h * 3] - s.extension) < 1e-4 && Math.abs(kk[h * 3 + 1] - s.lock) < 1e-4 && kk[h * 3 + 2] === s.flow) continue;
-      kk[h * 3] = s.extension;
-      kk[h * 3 + 1] = s.lock;
-      kk[h * 3 + 2] = s.flow;
-      dirty = true;
-      const a = hose.anchor;
-      const side = a.side;
-      const ext = Math.min(1, Math.max(0, s.extension));
-      // punkty w wysokościach K-7 (y), potem odwzorowanie na z świata
-      const sx = a.x - side * 34;
-      const sy = 224;
-      const sz = a.z;
-      const hx = a.x - side * 75;
-      const hy = 171;
-      const hz = a.z + 26;
-      const ex = hx + (a.target.x - hx) * ext;
-      const ey = hy + (a.target.y - hy) * ext;
-      const ez = hz + (a.target.z - hz) * ext;
-      const p1x = sx - side * (40 + 120 * ext);
-      const p1y = sy - 35 * ext;
-      const p1z = sz + 145 * ext;
-      const p2x = ex + side * 20 * (1 - ext);
-      const p2y = ey + 86 * ext;
-      const p2z = ez + 30 * (1 - ext);
-      const pts = this._hosePts[h];
-      const n = this.hoseN;
-      for (let i = 0; i <= n; i++) {
-        const t = i / n;
-        const u = 1 - t;
-        const w0 = u * u * u;
-        const w1 = 3 * u * u * t;
-        const w2 = 3 * u * t * t;
-        const w3 = t * t * t;
-        const y = Math.max(54, w0 * sy + w1 * p1y + w2 * p2y + w3 * ey);
-        pts[i].set(w0 * sx + w1 * p1x + w2 * p2x + w3 * ex, k7HeightToZ(y), w0 * sz + w1 * p1z + w2 * p2z + w3 * ez);
+    const base = k * this.hosePerHose;
+    const pos = this.hosePos;
+    const nor = this.hoseNor;
+    const uv = this.hoseUv;
+    const rEnd = K7_FUEL_STATION.hoseR;
+    for (let i = 0; i <= R; i++) {
+      const a = Math.max(0, i - 1) * 3;
+      const b = Math.min(R, i + 1) * 3;
+      A.set(Sx[b] - Sx[a], Sx[b + 1] - Sx[a + 1], Sx[b + 2] - Sx[a + 2]);
+      if (A.lengthSq() < 1e-8) A.set(0, 0, 1);
+      A.normalize();
+      if (i === 0) {
+        // ramka początkowa: normalna możliwie pozioma
+        N.set(-A.z, 0, A.x);
+        if (N.lengthSq() < 1e-4) N.set(1, 0, 0);
+      } else {
+        N.addScaledVector(A, -N.dot(A));
+        if (N.lengthSq() < 1e-8) N.set(-A.z, 0, A.x);
       }
-      const rings = this.hoseRings;
-      const base = h * (n + 1) * (rings + 1);
-      for (let i = 0; i <= n; i++) {
-        const v = pts[i];
-        A.subVectors(pts[Math.min(i + 1, n)], pts[Math.max(0, i - 1)]).normalize();
-        Nn.set(A.z, 0, -A.x);
-        if (Nn.lengthSq() < 0.01) Nn.set(1, 0, 0);
-        Nn.normalize();
-        B.crossVectors(A, Nn).normalize();
-        const rad = 11.5 + (i < 4 || i > n - 5 ? 2.2 : 0) + ((i % 7) === 0 ? 1.4 : 0);
-        for (let j = 0; j <= rings; j++) {
-          const k = (base + i * (rings + 1) + j) * 3;
-          const an = j / rings * Math.PI * 2;
-          const cc = Math.cos(an);
-          const ss = Math.sin(an);
-          const nx = Nn.x * cc + B.x * ss;
-          const ny = Nn.y * cc + B.y * ss;
-          const nz = Nn.z * cc + B.z * ss;
-          this.hosePos[k] = v.x + nx * rad;
-          this.hosePos[k + 1] = v.y + ny * rad;
-          this.hosePos[k + 2] = v.z + nz * rad;
-          this.hoseNor[k] = nx;
-          this.hoseNor[k + 1] = ny;
-          this.hoseNor[k + 2] = nz;
-        }
+      N.normalize();
+      B.crossVectors(A, N).normalize();
+      const o = i * 3;
+      // okucia na końcach przewodu (wylot bębna, złączka)
+      const rad = rEnd + (i < 3 || i > R - 3 ? 2.4 : 0);
+      const v = (total - total * i / R) / HOSE_RIB;
+      for (let j = 0; j <= S; j++) {
+        const q = base + i * (S + 1) + j;
+        const an = j / S * Math.PI * 2;
+        const cc = Math.cos(an);
+        const ss = Math.sin(an);
+        const nx = N.x * cc + B.x * ss;
+        const ny = N.y * cc + B.y * ss;
+        const nz = N.z * cc + B.z * ss;
+        pos[q * 3] = Sx[o] + nx * rad;
+        pos[q * 3 + 1] = Sx[o + 1] + ny * rad;
+        pos[q * 3 + 2] = Sx[o + 2] + nz * rad;
+        nor[q * 3] = nx;
+        nor[q * 3 + 1] = ny;
+        nor[q * 3 + 2] = nz;
+        uv[q * 2] = j / S;
+        uv[q * 2 + 1] = v;
       }
-      // złączka: oś Y wzdłuż węża (ku gniazdu), przy ryglowaniu prostuje się do pionu
-      const end = pts[n];
-      A.subVectors(end, pts[n - 1]).normalize().negate();
-      this._q.setFromUnitVectors(this._yAxis, A);
-      if (s.lock > 0.001) this._q.slerp(this._q2.identity(), Math.min(1, s.lock));
-      this.k7Uniforms.uGroup.value[hose.group].compose(end, this._q, this._s);
     }
-    if (dirty) {
-      this.hoseMesh.geometry.attributes.position.needsUpdate = true;
-      this.hoseMesh.geometry.attributes.normal.needsUpdate = true;
+  }
+
+  // Wysyłka rury przewodów [h0, h1) (zakres zbierany — bez DynamicDrawUsage).
+  _uploadHoses(h0, h1) {
+    if (!(h1 > h0)) return;
+    const g = this.hoseMesh.geometry;
+    const v0 = h0 * this.hosePerHose;
+    const nv = (h1 - h0) * this.hosePerHose;
+    zbierzZakres(g.attributes.position, v0 * 3, nv * 3);
+    zbierzZakres(g.attributes.normal, v0 * 3, nv * 3);
+    zbierzZakres(g.attributes.uv, v0 * 2, nv * 2);
+  }
+
+  // Przewody w ruchu (wersja liny zmieniona) → rura i wysyłka zmienionego wycinka.
+  _updateHoses() {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let k = 0; k < this._fuelHose.length; k++) {
+      const h = this._fuelHose[k];
+      if (!h || h.version === this._hoseVer[k]) continue;
+      this._hoseVer[k] = h.version;
+      this._writeHose(k);
+      if (k < lo) lo = k;
+      if (k > hi) hi = k;
     }
+    if (hi >= lo) this._uploadHoses(lo, hi + 1);
   }
 
   // lampki stanowisk hali i zatok: stan z automatu dokowania (occupied /
@@ -955,14 +1097,26 @@ export class HaloPortK7 {
       this._lampState.set(lamp.berthId, state);
       inst.arr[lamp.index * K7_INSTANCE_STRIDE + 7] = state === 'o' ? K7_MAT.warm : state === 'r' ? K7_MAT.cyan : K7_MAT.green;
       changed = true;
+      // soczewki w narożnikach pola stanowiska: wolne — zielone mignięcia, zajęte / zarezerwowane — czerwone ciągłe
+      for (const slot of this.scene.beaconSlots) {
+        if (slot.berthId !== lamp.berthId) continue;
+        const si = this.instances[slot.set + '_cyl'];
+        if (!si) continue;
+        si.arr[slot.index * K7_INSTANCE_STRIDE + 13] = state === 'f' ? K7_BEACON.CLEAR : K7_BEACON.HOLD;
+        si.buf.needsUpdate = true;
+      }
     }
     if (changed) inst.buf.needsUpdate = true;
   }
 
   // roofFade: 0 = dach nieprzezroczysty, 1 = statek w hali (dach znika)
-  update(dt, { poses = null, roofFade = 0, daylight = 1 } = {}) {
+  // clock — zegar migania świateł hali (k7BeaconClock; ten sam dostaje siatka świateł pyłu hali)
+  // gameDt — czas gry klatki dla obsługi paliwowej (ramiona, przewody; pauza i sceny = 0; domyślnie dt),
+  // hull — obrys kadłuba statku w hubie TEJ hali (punkty { x, z }; przewody kładą się na nim) albo null
+  update(dt, { poses = null, roofFade = 0, daylight = 1, clock = null, gameDt = null, hull = null } = {}) {
     this.time += dt;
     if (poses) this.setServicePoses(poses);
+    stepK7FuelRig(this.fuelRig, Number.isFinite(gameDt) ? Math.max(0, gameDt) : dt, this._pose, hull);
     this._updateGroups();
     this._updateHoses();
     const opacity = 1 - roofFade;
@@ -978,6 +1132,7 @@ export class HaloPortK7 {
     hl.x = 0.22 + 0.5 * (1 - daylight);
     hl.y = daylight;
     hl.z = this.time;
+    hl.w = Number.isFinite(clock) ? clock : this.time % 3600;
   }
 
   get drawCalls() {

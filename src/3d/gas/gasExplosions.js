@@ -28,8 +28,12 @@ class GasEmitter {
     this.tau = 0;          // zanik tempa (0 = stałe)
     this.started = false;
     this.flicker = 0;      // migotanie tempa (pożar)
+    this.rampIn = 0;       // narastanie tempa [s] (0 = od razu)
+    this.rampOut = 0;      // wygaszanie tempa przed końcem [s] (0 = bez)
     this.seed = 0;
     this.trail = false;
+    this.jet = false;      // strumień: kapsuła od otworu (x, y, z) o wektor (jx, jy, jz)
+    this.jx = 0; this.jy = 0; this.jz = 0;
     return this;
   }
 }
@@ -150,8 +154,41 @@ export class GasExplosions {
     e.velBlend = opts.velBlend ?? 6;
     e.noise = 0.65;
     e.flicker = opts.flicker ?? 0.55;
+    e.rampIn = 0.6;
+    e.rampOut = 1.5;
     e.seed = this._r(0, 100);
-    if (this.grid) this.grid.keepAlive(slot, e.t1 + 8);
+    // Domena żyje dłużej niż ognisko (dym ma się rozejść): `keep` [s] po końcu ognia (domyślnie 8).
+    if (this.grid) this.grid.keepAlive(slot, e.t1 + (opts.keep ?? 8));
+    return e;
+  }
+
+  /**
+   * STRUMIEŃ GAZU z otworu (rozerwana rura, wyrwa w kadłubie, wylot wybuchu): gaz wyrzucany z prędkością `speed`
+   * [j./s] wzdłuż (dx, dy, dz) z kapsuły od otworu (x, y, z) o długości `len` i promieniu r — dalej leci własnym
+   * pędem, rozchyla się (`radial`) i kłębi; tempo gaśnie z τ = opts.tau przez `duration` s. Paliwo (opts.fuel) daje
+   * jęzor ognia, bez paliwa — strumień zimnego gazu i dymu.
+   */
+  jet(slot, x, y, z, dx, dy, dz, r, len, speed, duration, opts = {}) {
+    const e = this._emitter();
+    if (!e) return null;
+    const l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    dx /= l; dy /= l; dz /= l;
+    e.slot = slot;
+    e.t0 = this.time + (opts.delay ?? 0); e.t1 = e.t0 + duration;
+    e.x = e.px = x; e.y = e.py = y; e.z = e.pz = z;
+    e.jet = true;
+    e.jx = dx * len; e.jy = dy * len; e.jz = dz * len;
+    e.r0 = r; e.r1 = r * (opts.grow ?? 1);
+    e.fuel = opts.fuel ?? 0; e.temp = opts.temp ?? 0; e.smoke = opts.smoke ?? 6;
+    e.radial = opts.radial ?? speed * 0.12;
+    e.dvx = dx * speed; e.dvy = dy * speed; e.dvz = dz * speed;
+    e.velBlend = opts.velBlend ?? 30;
+    e.noise = opts.noise ?? 0.35;
+    e.tau = opts.tau ?? duration * 0.5;
+    e.flicker = opts.flicker ?? 0.25;
+    e.rampIn = opts.rampIn ?? 0.04;
+    e.rampOut = opts.rampOut ?? Math.min(0.3, duration * 0.4);
+    e.seed = this._r(0, 100);
     return e;
   }
 
@@ -314,12 +351,18 @@ export class GasExplosions {
       if (e.flicker > 0) {
         const s = e.seed + now;
         k *= 1 - e.flicker * 0.5 * (1 + Math.sin(s * 7.3) * 0.6 + Math.sin(s * 13.1 + 1.7) * 0.4) * 0.5;
-        // Rozgrzanie i wygaszenie ogniska.
-        k *= Math.min(1, age / 0.6) * Math.min(1, (e.t1 - now) / 1.5);
       }
+      // Rozgrzanie i wygaszenie (ognisko, strumień).
+      if (e.rampIn > 0) k *= Math.min(1, age / e.rampIn);
+      if (e.rampOut > 0) k *= Math.min(1, (e.t1 - now) / e.rampOut);
       const r = e.r0 + (e.r1 - e.r0) * u;
-      g.source(slot, e.px, e.py, e.pz, e.x, e.y, e.z, r, e.fuel * k, e.temp * k, e.smoke * k,
-        e.radial, e.dvx, e.dvy, e.dvz, e.velBlend, e.noise);
+      if (e.jet) {
+        g.source(slot, e.x, e.y, e.z, e.x + e.jx, e.y + e.jy, e.z + e.jz, r, e.fuel * k, e.temp * k, e.smoke * k,
+          e.radial, e.dvx, e.dvy, e.dvz, e.velBlend, e.noise);
+      } else {
+        g.source(slot, e.px, e.py, e.pz, e.x, e.y, e.z, r, e.fuel * k, e.temp * k, e.smoke * k,
+          e.radial, e.dvx, e.dvy, e.dvz, e.velBlend, e.noise);
+      }
       power += e.fuel * k * r * r;
       e.px = e.x; e.py = e.y; e.pz = e.z;
     }

@@ -38,7 +38,7 @@ const NOTES = {
   'src/3d/hexShips3D.js': 'kadłuby: skóra belek w partiach (hullSkinBatch.js), grafy TSL w hexShips3D.tsl.js; gałąź heksów (HEX/ARMOR/DEBRIS) rysuje w grze tylko to, co ma hexGrid — stoją na niej warsztaty mostki-demo, rdzen-demo i pomiar drżenia',
   'src/3d/sparkSystem3D.js': 'API iskier gry na puli z dema rakiet (src/3d/rockets/sparks.js) w scenie Core3D — zadanie 19',
   'src/effects3d/rocketSystem3D.js': 'lot i trafienia rakiet (rozgrywka); wygląd — reżyser efektów z dema rakiet w Core3D (src/3d/rockets/, zadanie 19)',
-  'src/effects3d/reactorblow.js': 'wybuch reaktora w scenie Core3D (zadanie 20): pule particlePool.js, materiały TSL w reactorblow.tsl.js, wygląd dawnego overlaya pod post gry (reactorLook)',
+  'src/3d/explosions/explosionFx.js': 'wybuchy WebGPU (2026-10-07, zamiast reactorblow.js): kula ognia i dym z gazu na siatce 3D (src/3d/gas/, compute), żar, błyski, pule gry (iskry, odłamki, dym rakiet), światła w siatce, fala jako sama refrakcja — krok Core3D.fx',
   'src/3d/fxParticles3D.js': 'Fx3D w TSL (zadanie 12): dysze MAIN, mostki, rdzenie',
   'Engineeffects.js': 'tylko tekstury poświaty dysz SIDE (make*Texture); getEngineVFX z własnym WebGLRenderer usunięte (zadanie 13)',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca w TSL (screenUV) + hak wbudowanych materiałów (setupLightingModel / outputNode) — zadanie 03; re-eksport SUN_SHADOW_GLSL tylko dla budowli Z7 (POZA_PORTEM)',

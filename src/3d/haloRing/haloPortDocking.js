@@ -7,13 +7,22 @@
 // Rejestr: stanowiska wszystkich hal i zatok w układzie huba hali gracza
 // (kompleks 0), przez przejście ramek. Sekwencje (fazy czasu, nie
 // dociąganie — hangar-dock-demo):
-//  - stanowiska capital K-7: suwnica i węże paliwowe (9,3 s / 9,5 s, jak K-7);
+//  - stanowiska capital K-7: obsługa paliwowa — zamki pola, ramiona SCARA
+//    i przewody paliwowe (ustawienie 1,1 s + K7_SERVICE_DOCK / K7_SERVICE_UNDOCK
+//    z haloPortK7Layout.js — te same co automat stanowisk gry i fabuła);
 //  - pozostałe (grzebienie K-7, zatoki, pas MEGA): mocowanie magnetyczne
 //    i rękaw serwisowy (4,6 s / 4,2 s), stan na lampce stanowiska.
+// Suwnic nie ma (2026-10-07, decyzja użytkownika: ładunek obsługują drony).
 import {
   K7CollisionWorld,
   K7_CONNECTED_POSE,
+  K7_DOCK_ALIGN,
+  K7_SERVICE_DOCK,
+  K7_SERVICE_UNDOCK,
   K7_STOWED_POSE,
+  k7ServiceConnectPose,
+  k7ServiceDisconnectPose,
+  k7ServiceStep,
   buildK7Collision,
   k7AngleDelta,
   k7BoxPoly,
@@ -31,7 +40,8 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const mix = (a, b, t) => a + (b - a) * t;
 
 export const PORT_SEQUENCE = Object.freeze({
-  crane: Object.freeze({ dock: 9.3, undock: 9.5 }),
+  // stanowisko capital K-7 z obsługą paliwową (ramiona SCARA, przewody)
+  fuel: Object.freeze({ dock: K7_DOCK_ALIGN + K7_SERVICE_DOCK.end, undock: K7_SERVICE_UNDOCK.end }),
   clamp: Object.freeze({ dock: 4.6, undock: 4.2 })
 });
 
@@ -48,7 +58,7 @@ export function createPortRegistry({ halls, bays, frame }) {
     const e = {
       berth: b, kind, owner, complex: owner.complex, label,
       x: p.x, z: p.z, angle: b.angle + owner.xf.phi,
-      crane: kind === 'k7' && b.size === 'CAPITAL'
+      fuel: kind === 'k7' && b.size === 'CAPITAL'
     };
     entries.push(e);
     return e;
@@ -77,8 +87,8 @@ export function createPortRegistry({ halls, bays, frame }) {
 
 /**
  * Świat kolizji portu w układzie huba `frame` (hala gracza): hale wszystkich
- * kompleksów (ściany, przypory, ładunki, nogi suwnic, piedestały paliwowe),
- * otwarte zatoki (ściany, słupki serwisowe i paliwowe, nogi suwnic), pylony
+ * kompleksów (ściany, przypory, ładunki, zbiorniki i słupki paliwowe),
+ * otwarte zatoki (ściany, słupki serwisowe i paliwowe), pylony
  * doków (wystają ze ścian tylnych na wysokości doku) i tunele tranzytów
  * (ściany, portale obu wylotów).
  * Statki NPC dołoży system ruchu jako przedmioty ruchome (refresh).
@@ -160,7 +170,7 @@ export class PortDocking {
 
   notice(text) { this.onNotice?.(text); }
   fits(e) { return haloHullFits(this.hull, e.berth); }
-  sequenceOf(e) { return e?.crane ? PORT_SEQUENCE.crane : PORT_SEQUENCE.clamp; }
+  sequenceOf(e) { return e?.fuel ? PORT_SEQUENCE.fuel : PORT_SEQUENCE.clamp; }
 
   // Start zadokowany na stanowisku (spawn, reset dema).
   dockAt(e) {
@@ -173,7 +183,7 @@ export class PortDocking {
     p.x = e.x; p.z = e.z; p.angle = e.angle;
     p.vx = p.vz = p.angVel = 0;
     p.locked = true;
-    if (e.crane) Object.assign(e.owner.poses.get(e.berth.id), K7_CONNECTED_POSE);
+    if (e.fuel) Object.assign(e.owner.poses.get(e.berth.id), K7_CONNECTED_POSE);
     this.state = 'DOCKED';
     this.time = 0;
     this.progress = 1;
@@ -259,7 +269,7 @@ export class PortDocking {
     this.onState?.(state, this.entry?.label ?? null);
   }
 
-  _pose(e) { return e?.crane ? e.owner.poses.get(e.berth.id) : null; }
+  _pose(e) { return e?.fuel ? e.owner.poses.get(e.berth.id) : null; }
 
   update(dt) {
     this.time += dt;
@@ -283,10 +293,8 @@ export class PortDocking {
       p.angle = this.startPose.angle + k7AngleDelta(e.angle, this.startPose.angle) * f;
       const pose = this._pose(e);
       if (pose) {
-        pose.bridge = P(t, 1.1, 3.4); pose.trolley = P(t, 3.4, 4.4); pose.lower = P(t, 4.4, 6.4); pose.clamp = P(t, 6.4, 7);
-        pose.extension = P(t, 7, 8.7); pose.lock = P(t, 8.7, 9.3); pose.flow = 0; pose.vent = 0;
-        this.detail = t < 1.1 ? 'PRECYZYJNE USTAWIENIE' : t < 3.4 ? 'PODJAZD MOSTU SUWNICY' : t < 4.4 ? 'POZYCJONOWANIE WÓZKA'
-          : t < 6.4 ? 'OPUSZCZANIE CHWYTAKÓW' : t < 7 ? 'MOCOWANIE KADŁUBA' : t < 8.7 ? 'ROZWIJANIE PRZEWODÓW' : 'RYGLOWANIE ZŁĄCZY';
+        k7ServiceConnectPose(K7_SERVICE_DOCK, t - K7_DOCK_ALIGN, null, pose);
+        this.detail = t < K7_DOCK_ALIGN ? 'PRECYZYJNE USTAWIENIE' : k7ServiceStep(K7_SERVICE_DOCK, t - K7_DOCK_ALIGN);
       } else {
         this.detail = t < 1.1 ? 'PRECYZYJNE USTAWIENIE' : t < 2.2 ? 'MOCOWANIE MAGNETYCZNE' : t < 3.6 ? 'RĘKAW SERWISOWY / ZASILANIE' : 'RYGLOWANIE ZŁĄCZY';
       }
@@ -302,11 +310,8 @@ export class PortDocking {
       this.progress = clamp(t / seq.undock, 0, 1);
       const pose = this._pose(e);
       if (pose) {
-        pose.bridge = 1 - P(t, 8.2, 9.5); pose.trolley = 1 - P(t, 6.7, 8.2); pose.lower = 1 - P(t, 5, 6.7); pose.clamp = 1 - P(t, 4.4, 5);
-        pose.extension = 1 - P(t, 2.2, 4.4); pose.lock = 1 - P(t, 1.4, 2.2); pose.flow = 0;
-        pose.vent = t > 0.6 && t < 1.4 ? Math.sin((t - 0.6) / 0.8 * Math.PI) : 0;
-        this.detail = t < 0.6 ? 'ODCIĘCIE PRZEPŁYWU' : t < 1.4 ? 'KONTROLOWANY UPUST' : t < 2.2 ? 'ODRYGLOWANIE ZŁĄCZY' : t < 4.4 ? 'ZWIJANIE PRZEWODÓW'
-          : t < 5 ? 'ZWALNIANIE MOCOWAŃ' : t < 6.7 ? 'PODNOSZENIE CHWYTAKÓW' : t < 8.2 ? 'PARKOWANIE WÓZKA' : 'ODSUNIĘCIE SUWNICY';
+        k7ServiceDisconnectPose(K7_SERVICE_UNDOCK, t, null, pose);
+        this.detail = k7ServiceStep(K7_SERVICE_UNDOCK, t);
       } else {
         this.detail = t < 0.8 ? 'ODCIĘCIE PRZEPŁYWU' : t < 2.2 ? 'ODŁĄCZANIE RĘKAWA' : t < 3.4 ? 'ZWALNIANIE MOCOWAŃ' : 'TEST NAPĘDU';
       }

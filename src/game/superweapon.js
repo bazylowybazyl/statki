@@ -53,7 +53,7 @@ function syncSuperweaponProfile() {
     superweaponState.cooldownMax = getHexlanceStat('cooldown', 6.0);
     superweaponState.chargeTime = getHexlanceStat('chargeTime', 1.2);
     superweaponState.projectileSpeed = getHexlanceStat('baseSpeed', 12000);
-    superweaponState.range = getHexlanceStat('baseRange', 60000);
+    superweaponState.range = getHexlanceStat('baseRange', 15000);
     superweaponState.damage = getHexlanceStat('baseDamage', 9999);
     superweaponState.shotDelay = getHexlanceStat('burstDelay', 0.12);
 }
@@ -69,7 +69,7 @@ export const superweaponState = {
     armedDuration: 5.0,
     projectileSpeed: getHexlanceStat('baseSpeed', 12000),
     beamWidth: 8,
-    range: getHexlanceStat('baseRange', 60000),
+    range: getHexlanceStat('baseRange', 15000),
     damage: getHexlanceStat('baseDamage', 9999), 
     queue: [],
     shotDelay: getHexlanceStat('burstDelay', 0.12),
@@ -381,7 +381,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
         if (window.DestructorSystem && window.npcs) {
             const targets = [...window.npcs, ...(window.wrecks || [])];
             for (const t of targets) {
-                if ((!t.hexGrid && !t.beamHull) || (t.dead && !t.isWreck)) continue;
+                if ((!t.hexGrid && !t.beamHull) || (t.dead && !t.isWreck) || t.isCollidable === false) continue;
 
                 // BROADPHASE: Znajdź najbliższy punkt na linii lotu pocisku do środka statku
                 const lenSq = moveX * moveX + moveY * moveY;

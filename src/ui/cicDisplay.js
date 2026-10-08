@@ -239,6 +239,15 @@ export function getCicEntityHullMetrics(entity, zoom) {
   return getEntityHullMetrics(entity, zoom);
 }
 
+// Obraz kadłuba i obrót sprite'a — echo „w kształcie kadłuba” na radarze kokpitu (src/ui/radar/).
+export function getCicEntitySpriteSource(entity) {
+  return getEntitySpriteSource(entity);
+}
+
+export function getCicEntitySpriteRotation(entity) {
+  return getEntitySpriteRotation(entity);
+}
+
 // Połowy boków prostokąta ekranu (osiowego) opisanego na obróconym kadłubie — ramka zaznaczenia
 // jednostek (src/ui/commandOverlay.js). 0 / 0, gdy kadłub nie ma wymiarów.
 export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0 }) {

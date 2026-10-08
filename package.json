@@ -1,7 +1,7 @@
 {
   "name": "statki",
-  "version": "1.0.0",
-  "description": "HULLFALL - gra w HTML/JS",
+  "version": "0.1.1",
+  "description": "HULLFALL: Battle For Solar System",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -13,15 +13,27 @@
     "package": "vite build && electron-builder"
   },
   "build": {
-    "appId": "com.statki.demo",
+    "appId": "com.hullfall.game",
     "productName": "HULLFALL",
     "directories": {
       "output": "dist-electron"
     },
     "asar": false,
+    "electronDist": "node_modules/electron/dist",
     "win": {
-      "target": "portable",
-      "signAndEditExecutable": false
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": true,
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HULLFALL",
+      "artifactName": "HULLFALL-Setup-${version}.${ext}"
     },
     "files": [
       "dist/**/*",
@@ -33,9 +45,7 @@
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "http-server": "^14.1.1",
+    "three": "^0.183.2",
     "vite": "^7.3.0"
-  },
-  "dependencies": {
-    "three": "^0.183.2"
   }
 }

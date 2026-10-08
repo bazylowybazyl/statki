@@ -1,4 +1,4 @@
-import { drawCicHudRadarSurface } from './cicDisplay.js';
+import { CockpitRadar } from './radar/cockpitRadar.js';
 import cockpitCssUrl from '../../assets/css/cockpit-ui.css?url';
 import terranFrigateSprite from '../assets/ships/terranfrigate.png';
 import terranDestroyerSprite from '../assets/ships/terrandestroyer.png';
@@ -28,7 +28,10 @@ import {
 // ` = łączność (CapsLock = warp), J = misje, Tab = CIC). Klaster normalnie pokazuje kopułę — radar
 // ścięty cięciwą na linii pasków (wszystkie łuki są w górnej połowie); Alt wysuwa pełny radar.
 
-const RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
+// Radar: src/ui/radar/ (tarcza PPI dziobem do góry, ślady ARPA, podkład terenu) — tu tylko wpięcie.
+// Kopuła pokazuje górną połowę tarczy = to, co PRZED okrętem; Alt — pełne 360°.
+const RADAR_DOME_SHRINK = 0.842857;   // #radarCanvas w kopule: scale(0.842857) (cockpit-ui.css)
+const RADAR_FRAME_MS = 33;
 const MODE_ORDER = Object.freeze(['combat', 'maneuver', 'travel']);
 const MODE_META = Object.freeze({
   combat: { label: 'BOJOWY', gear: 'B', angle: -48, uiMode: 'combat' },
@@ -172,6 +175,10 @@ const READY_FLASH = Object.freeze([
   { filter: 'brightness(1) drop-shadow(0 0 0 rgba(255, 102, 0, 0))' }
 ]);
 const READY_FLASH_TIMING = Object.freeze({ duration: 550, easing: 'ease-out' });
+const RADAR_THREAT_FLASH = Object.freeze([
+  { filter: 'brightness(2.2) drop-shadow(0 0 6px rgba(255, 69, 69, 0.95))' },
+  { filter: 'brightness(1) drop-shadow(0 0 0 rgba(255, 69, 69, 0))' }
+]);
 const SCAN_RESULTS_MS = 10000;
 const MODE_PANEL_MS = 2200;
 const FEED_LIVE = 4;
@@ -496,7 +503,7 @@ function cockpitMarkup(devMode) {
             <div class="vital-readout shield" id="roShield"><small>TARCZA</small><b id="vitalShieldValue">0</b></div>
             <div class="drive-readout rpm"><small>OBROTY</small><span class="drive-value"><b id="spRpm">0</b><span class="drive-unit">RPM</span></span><span class="gear-readout" id="spGearWrap" hidden>BIEG <b id="spGear">1/1</b></span></div>
           </div>
-          <button type="button" class="radar-top" id="radarTop" title="Zasięg radaru — kliknij lub kółko myszy nad radarem"><span class="hostile" id="rdHostile">CZYSTO</span><span id="rdRange">20K</span></button>
+          <div class="radar-top" id="radarTop"><span class="hostile" id="rdHostile">CZYSTO</span><button type="button" class="rd-btn" id="rdRange" title="Zasięg radaru — kliknij lub kółko myszy nad radarem">20K</button><button type="button" class="rd-btn" id="rdOrient" title="Orientacja radaru: H-UP — dziób do góry (przed okrętem), N-UP — jak ekran">H-UP</button></div>
         </div>
         <div class="cluster-base" aria-hidden="true"></div>
         <div class="slot-bar abilities" id="abilityBar"></div>
@@ -529,7 +536,10 @@ export class CockpitUI {
     this.shadow = null;
     this.els = {};
     this.startedAt = perfNow();
-    this.viewRange = 20000;
+    // Radar (src/ui/radar/cockpitRadar.js): zasięg i orientacja zapamiętane między grami.
+    this.radar = new CockpitRadar();
+    this.viewRange = this.radar.range;
+    // Wejście radaru z gry (radarFeed.feed: kontakty, liczniki, teren, nakładki) — envData.radar.
     this.radarModel = null;
     this.contactFilter = 'all';
     this.selectedContact = null;
@@ -620,7 +630,7 @@ export class CockpitUI {
       'targetPanel', 'targetBody', 'lockChips', 'scanPanel', 'scanCount', 'scanTimer', 'scanRows', 'overviewPanel',
       'contactCount', 'scannerFilters', 'contactRows', 'hudBottom', 'weaponBar', 'abilityBar', 'cluster', 'alertLine',
       'telltales', 'clusterCanvas', 'radarCanvas', 'roHp', 'roShield', 'vitalHpValue', 'vitalShieldValue', 'radarTop',
-      'rdHostile', 'rdRange', 'spMode', 'spValue', 'spSpeedUnit', 'spRpm', 'spGearWrap', 'spGear', 'modePanel', 'modeTrack',
+      'rdHostile', 'rdRange', 'rdOrient', 'spMode', 'spValue', 'spSpeedUnit', 'spRpm', 'spGearWrap', 'spGear', 'modePanel', 'modeTrack',
       'pbComm', 'pbMissions', 'pbShip', 'pbMap', 'scScan', 'scLock', 'scAuto', 'scStab', 'rotaryKnob',
       'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText', 'tabletClose', 'stationTabsBar',
       'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane', 'missionFilters', 'missionList',
@@ -719,12 +729,19 @@ export class CockpitUI {
     });
     this.bindKnob();
 
-    this.els.radarTop?.addEventListener('click', () => this.cycleRadarRange(1, true));
+    this.els.rdRange?.addEventListener('click', () => this.cycleRadarRange(1, true));
+    this.els.rdOrient?.addEventListener('click', () => this.toggleRadarOrient());
     this.els.radarCanvas?.addEventListener('click', event => this.selectRadarContact(event));
     this.els.radarCanvas?.addEventListener('wheel', event => {
       event.preventDefault();
       this.cycleRadarRange(event.deltaY > 0 ? 1 : -1, false);
     }, { passive: false });
+    // Kursor nad tarczą (Alt): linia namiaru, znacznik odległości, podświetlenie i pełna etykieta śladu.
+    this.els.radarCanvas?.addEventListener('pointermove', event => {
+      const p = this.radarCanvasPoint(event);
+      this.radar.setHover(p.x, p.y);
+    }, { passive: true });
+    this.els.radarCanvas?.addEventListener('pointerleave', () => this.radar.setHover(null, null), { passive: true });
 
     this.els.tabletClose?.addEventListener('click', () => this.closeTablet());
     this.els.tabletTabTrack?.addEventListener('click', event => {
@@ -880,14 +897,17 @@ export class CockpitUI {
       if (slot.kind === 'weapon' && definition.type) {
         const state = weaponHud?.[definition.type];
         const weapon = state?.weapon || null;
-        empty = !!weaponHud && !weapon;
+        // Magazynek (rakieta specjalna): liczba sztuk przy nazwie, pusty = slot wygaszony.
+        const ammo = typeof state?.ammo === 'number' ? state.ammo : null;
+        empty = !!weaponHud && (!weapon || ammo === 0);
         charge = clamp(state?.charge ?? 1, 0, 1);
         // Dla broni "enabled" = auto-fire (poza wbudowaną, gdzie to gotowość).
         // Wyłączony auto-fire to NIE jest "niedostępna" — slot zostaje klikalny.
         auto = !!weapon && definition.type !== 'builtin' && !!state?.enabled;
         if (weapon?.name) {
           label = shortWeaponName(weapon.name, definition.label);
-          title = `${definition.label} [${definition.key}] — ${weapon.name}${auto ? ' · auto-fire' : ''}`;
+          if (ammo !== null) label = `${label} ×${ammo}`;
+          title = `${definition.label} [${definition.key}] — ${weapon.name}${ammo !== null ? ` · ${ammo} ${plural(ammo, 'salwa', 'salwy', 'salw')}` : ''}${auto ? ' · auto-fire' : ''}`;
         }
       } else if (definition.id === 'repair') {
         on = !!environment.repairActive;
@@ -949,17 +969,30 @@ export class CockpitUI {
   }
 
   cycleRadarRange(direction, wrap) {
-    const index = Math.max(0, RADAR_RANGES.indexOf(this.viewRange));
-    let next = index + direction;
-    if (wrap) next = (next + RADAR_RANGES.length) % RADAR_RANGES.length;
-    this.setRadarRange(RADAR_RANGES[clamp(next, 0, RADAR_RANGES.length - 1)]);
+    this.setRadarRange(this.radar.cycleRange(direction, wrap));
   }
 
   setRadarRange(range) {
-    if (!RADAR_RANGES.includes(range)) return;
-    this.viewRange = range;
-    if (this.els.rdRange) this.els.rdRange.textContent = `${range / 1000}K`;
+    this.viewRange = this.radar.setRange(range);
+    if (this.els.rdRange) this.els.rdRange.textContent = `${this.viewRange / 1000}K`;
     this.lastRadarDraw = 0;
+  }
+
+  // H-UP (dziób do góry — kopuła pokazuje to, co przed okrętem) ↔ N-UP (jak ekran gry).
+  toggleRadarOrient() {
+    const orient = this.radar.toggleOrient();
+    if (this.els.rdOrient) this.els.rdOrient.textContent = orient === 'north' ? 'N-UP' : 'H-UP';
+    this.lastRadarDraw = 0;
+    return orient;
+  }
+
+  // Punkt zdarzenia w pikselach płótna radaru (CSS pomniejsza je w kopule — prostokąt z transformacją).
+  radarCanvasPoint(event, out = this._radarPoint || (this._radarPoint = { x: 0, y: 0 })) {
+    const canvas = this.els.radarCanvas;
+    const rect = canvas.getBoundingClientRect();
+    out.x = (event.clientX - rect.left) * canvas.width / Math.max(1, rect.width);
+    out.y = (event.clientY - rect.top) * canvas.height / Math.max(1, rect.height);
+    return out;
   }
 
   // Sylwetka okrętu z wieżami nad szyną broni (src/ui/turretPanel.js) — rysuje ją gra co klatkę.
@@ -1354,28 +1387,48 @@ export class CockpitUI {
   }
 
   updateRadar(now) {
-    const drawIntervalMs = this.viewRange >= 60000 ? 100 : this.viewRange >= 40000 ? 80 : 66;
-    if (!this.radarCtx || !this.els.radarCanvas || now - this.lastRadarDraw < drawIntervalMs) return;
+    // Przemiatanie płynne (~30 Hz); między klatkami tarczy stan stoi.
+    if (!this.radarCtx || !this.els.radarCanvas || now - this.lastRadarDraw < RADAR_FRAME_MS) return;
     this.lastRadarDraw = now;
     const canvas = this.els.radarCanvas;
-    // Rozmiar z tej samej skali co CSS (średnica radaru = 2 × 118 × --s) — bez
+    // Rozmiar z tej samej skali co CSS (średnica radaru = 2 × 140 × --s) — bez
     // getBoundingClientRect w pętli, który po zapisach DOM wymuszał layout.
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     const width = Math.max(1, Math.round(CLUSTER.radarAlt * 2 * this.scale * dpr));
     const height = width;
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-    drawCicHudRadarSurface(this.radarCtx, width, height, this.radarModel, { range: this.viewRange });
-    const hostile = Number(this.radarModel?.counts?.hostile) || 0;
-    const hostileText = hostile > 0 ? `WRÓG ${hostile}` : 'CZYSTO';
+    if (this.radarModel) {
+      this.radar.render(this.radarCtx, width, height, this.radarModel, {
+        mode: this.pointerMode ? 'full' : 'dome',
+        dpr,
+        shrink: this.pointerMode ? 1 : RADAR_DOME_SHRINK,
+        now
+      });
+    }
+    const counts = this.radarModel?.counts;
+    const hostile = Number(counts?.hostile) || 0;
+    const missiles = Number(counts?.missiles) || 0;
+    const hostileText = hostile > 0
+      ? `WRÓG ${hostile}${missiles > 0 ? ` · RAK ${missiles}` : ''}`
+      : missiles > 0 ? `RAK ${missiles}` : 'CZYSTO';
     if (this.cache.rdHostile !== hostileText && this.els.rdHostile) {
       this.cache.rdHostile = hostileText;
       this.els.rdHostile.textContent = hostileText;
-      this.els.rdHostile.classList.toggle('clear', hostile === 0);
+      this.els.rdHostile.classList.toggle('clear', hostile === 0 && missiles === 0);
+      // nowy wróg albo rakieta na radarze: odczyt błyska (jak gotowość broni)
+      const threat = hostile + missiles;
+      if (threat > (this.cache.rdThreat || 0)) this.els.rdHostile.animate?.(RADAR_THREAT_FLASH, READY_FLASH_TIMING);
+      this.cache.rdThreat = threat;
     }
     const rangeText = `${this.viewRange / 1000}K`;
     if (this.cache.rdRange !== rangeText && this.els.rdRange) {
       this.cache.rdRange = rangeText;
       this.els.rdRange.textContent = rangeText;
+    }
+    const orientText = this.radar.orient === 'north' ? 'N-UP' : 'H-UP';
+    if (this.cache.rdOrient !== orientText && this.els.rdOrient) {
+      this.cache.rdOrient = orientText;
+      this.els.rdOrient.textContent = orientText;
     }
   }
 
@@ -1397,7 +1450,7 @@ export class CockpitUI {
   getOverviewContacts() {
     const base = Array.isArray(this.radarModel?.contacts) ? this.radarModel.contacts.map(contact => ({
       entity: contact.entity || null,
-      type: contact.isAsteroid ? 'asteroid' : contact.friendly ? 'friendly' : 'hostile',
+      type: contact.isAsteroid ? 'asteroid' : contact.isStation ? 'station' : contact.friendly ? 'friendly' : 'hostile',
       label: getEntityLabel(contact.entity, contact.type || 'Kontakt'),
       distance: Math.hypot(Number(contact.dx) || 0, Number(contact.dy) || 0),
       locked: !!contact.locked,
@@ -1405,8 +1458,12 @@ export class CockpitUI {
     })) : [];
     const ship = window.ship;
     if (ship?.pos && Array.isArray(window.stations)) {
+      // stacje w zasięgu radaru są już kontaktami (radarFeed) — tu dalsze, do 3 × zasięgu
+      const listed = new Set();
+      for (const c of base) if (c.entity) listed.add(c.entity);
       for (const station of window.stations) {
-        if (!station || station._destroyed3D) continue;
+        if (!station || station._destroyed3D || listed.has(station)) continue;
+        if (window.SensorSystem?.hides?.(station)) continue;
         const pos = getEntityPosition(station);
         const distance = Math.hypot(pos.x - ship.pos.x, pos.y - ship.pos.y);
         if (distance > this.viewRange * 3) continue;
@@ -1494,23 +1551,15 @@ export class CockpitUI {
     else this.pushAlert('Brak wybranego celu', { tone: 'warn', duration: 1.4 });
   }
 
+  // Klik w tarczę: ślad pod kursorem z ostatniego rysunku (pozycje symboli po obrocie H-UP).
   selectRadarContact(event) {
-    const contacts = Array.isArray(this.radarModel?.contacts) ? this.radarModel.contacts : [];
-    if (!contacts.length) return;
-    const rect = this.els.radarCanvas.getBoundingClientRect();
-    const nx = (event.clientX - rect.left) / Math.max(1, rect.width) - 0.5;
-    const ny = (event.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
-    // drawCicHudRadarSurface: zasięg = 0.475 szerokości płótna.
-    const worldToUnit = 0.475 / this.viewRange;
-    let best = null;
-    let bestScore = 0.004;
-    for (const raw of contacts) {
-      const dx = (Number(raw.dx) || 0) * worldToUnit - nx;
-      const dy = (Number(raw.dy) || 0) * worldToUnit - ny;
-      const score = dx * dx + dy * dy;
-      if (score < bestScore) { bestScore = score; best = raw; }
-    }
-    if (best) this.selectContact({ entity: best.entity, type: best.isAsteroid ? 'asteroid' : best.friendly ? 'friendly' : 'hostile', label: getEntityLabel(best.entity, best.type), distance: Math.hypot(best.dx || 0, best.dy || 0), locked: !!best.locked, raw: best });
+    const p = this.radarCanvasPoint(event);
+    const scale = this.els.radarCanvas.width / 280;
+    const track = this.radar.pick(p.x, p.y, 7 * scale);
+    const entity = track?.key || null;
+    if (!entity || track.kind === 'missile') return;
+    const type = track.kind === 'station' ? 'station' : track.aff === 'friendly' ? 'friendly' : 'hostile';
+    this.selectContact({ entity, type, label: getEntityLabel(entity, track.name || 'Kontakt'), distance: track.dist, locked: !!track.locked, raw: null });
   }
 
   describeTarget(target) {
@@ -1962,7 +2011,16 @@ export class CockpitUI {
     const canvas = document.getElementById('c');
     const rect = canvas?.getBoundingClientRect();
     let spawnPos = null;
-    if (rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+    // Upuszczenie na tarczę radaru: punkt świata z rzutu tarczy (H-UP — obrócony z okrętem).
+    const radarRect = this.els.radarCanvas?.getBoundingClientRect();
+    if (radarRect && event.clientX >= radarRect.left && event.clientX <= radarRect.right && event.clientY >= radarRect.top && event.clientY <= radarRect.bottom) {
+      const p = this.radarCanvasPoint(event);
+      // w kopule dolna połowa tarczy jest schowana pod cięciwą (12u pod środkiem)
+      const hidden = !this.pointerMode && p.y > this.els.radarCanvas.height * 0.5 + 14 * this.els.radarCanvas.width / 280;
+      const w = hidden ? null : this.radar.worldAt(p.x, p.y);
+      if (w) spawnPos = { x: w.x, y: w.y };
+    }
+    if (!spawnPos && rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) {
       spawnPos = window.screenToWorld?.(event.clientX - rect.left, event.clientY - rect.top) || null;
     }
     this.cancelSupportDrag();

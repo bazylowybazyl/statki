@@ -301,7 +301,7 @@ export function createHaloRing(options = {}) {
     for (const m of parts.mega.bgMeshes) m.layers.set(pick('mega'));
     for (const m of parts.mega.fgMeshes) m.layers.set(fgOr('mega'));
     for (const m of parts.city.meshes) m.layers.set(pick('city'));
-    // K-7: pokład i ściany pod statkami (BG), suwnice, węże i dach nad nimi (FG)
+    // K-7: pokład i ściany pod statkami (BG), ramiona i przewody paliwowe i dach nad nimi (FG)
     for (const hall of parts.k7Halls || []) hall.setLayers(pick('k7'), Number.isFinite(map.fg) ? map.fg : pick('k7'));
   }
 

@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ContactMarkers } from '../src/ui/contactMarkers.js';
 
-// Strzałki kontaktów poza kadrem: w dużej bitwie każdy wróg dawał strzałkę
+// Znaczniki kontaktów poza kadrem: w dużej bitwie każdy wróg dawał strzałkę
 // z etykietą i shadowBlur, a stos przy krawędzi rósł w głąb ekranu.
+// Od 2026-10-07 znacznik = grot (jeden obrót) + symbol śladu + odczyt (src/ui/contactMarkers.js).
 
 const W = 1920;
 const H = 1080;
@@ -13,8 +14,8 @@ function makeCtx() {
   const noop = () => {};
   const ctx = {
     save: noop, restore: noop, resetTransform: noop, translate: noop,
-    beginPath: noop, moveTo: noop, lineTo: noop, closePath: noop,
-    fill: noop, stroke: noop, setLineDash: noop, fillRect: noop, strokeRect: noop,
+    beginPath: noop, moveTo: noop, lineTo: noop, closePath: noop, arc: noop, rect: noop,
+    fill: noop, stroke: noop, setLineDash: noop, fillRect: noop, strokeRect: noop, strokeText: noop,
     rotate() { calls.rotate++; },
     measureText: (text) => ({ width: String(text).length * 6 }),
     fillText(text) { calls.fillText.push(String(text)); }
@@ -74,8 +75,8 @@ test('przy limicie strzałki dostają najbliższe kontakty', () => {
   }
   const calls = drawWith(npcs);
   assert.equal(calls.rotate, 24);
-  // Etykieta dystansu najdalszej narysowanej strzałki: 24. kontakt = 430 000 u.
-  const dists = calls.fillText.filter(t => /k$/.test(t)).map(t => parseFloat(t) * 1000);
+  // Odczyt odległości najdalszego narysowanego znacznika: 24. kontakt = 430 000 j. („430 km”, 1 j. = 1 m).
+  const dists = calls.fillText.filter(t => /km$/.test(t)).map(t => parseFloat(t.replace(',', '.')) * 1000);
   assert.equal(dists.length, 24);
   assert.ok(Math.max(...dists) <= 430000 + 1, `najdalsza narysowana: ${Math.max(...dists)}`);
 });

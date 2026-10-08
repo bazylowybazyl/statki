@@ -100,3 +100,44 @@ test('wypiek: wszystkie bryły grupy kawałka (pudła, walce, stożki, lampy), k
   }
   assert.ok(lit > 0, 'wierzchołki lamp w skórze');
 });
+
+test('odłam rysuje PODZBIÓR trójkątów skóry kawałka (indeks na wspólnych atrybutach), bez dziur', async () => {
+  const { fragmentSkinSubset } = await import('../src/3d/worldBodies3D.js');
+  const r = dryDockChunkRaster(layout, dock.scene, 'H-W1');
+  const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } };
+  const hull = HullBodies.createHull(e, r.image, { cellPx: WORLD_BODY_TUNE.cellSize / r.upp });
+  const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
+  const lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
+  const skin = bakeBuildingChunkSkin(dock, layout.chunkById.get('H-W1').group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
+  const geo = (skin.fg?.attributes.position.count || 0) >= (skin.bg?.attributes.position.count || 0) ? skin.fg : skin.bg;
+  const full = geo.attributes.position.count / 3;
+  window.wrecks.length = 0;
+  const res = HullBodies.shatter(e, 0, 0, 0.5, { cells: 6, crackDebris: 0.3, debrisFrac: 0.05, debrisSpeed: [60, 120], cuts: 0, chords: 0, minFragmentNodes: 20 });
+  const frags = [res.wreck, ...window.wrecks.filter((w) => w !== res.wreck)].filter((w) => w?.beamHull?.body?.activeNodes > 0);
+  assert.ok(frags.length >= 3, `odłamy: ${frags.length}`);
+  const own = geo.attributes.aOwn, nx = lat.dims.x;
+  const covered = new Uint8Array(full);
+  let sum = 0;
+  for (const w of frags) {
+    const body = w.beamHull.body, s = body.nodeStore;
+    const sub = fragmentSkinSubset(geo, body, lat);
+    assert.ok(sub && sub.index, 'geometria z indeksem');
+    assert.equal(sub.attributes.aLat, geo.attributes.aLat, 'atrybuty wspólne (te same bufory GPU)');
+    const n = sub.index.count / 3;
+    assert.ok(n < full, `podzbiór ${n} < ${full}`);
+    sum += n;
+    // każdy trójkąt, którego kotwica (aOwn) jest żywą komórką odłamu, jest w podzbiorze
+    const alive = new Set();
+    for (let i = 0; i < s.count; i++) if (s.active[i]) alive.add(s.ix[i] + s.iy[i] * nx);
+    const inSub = new Uint8Array(full);
+    for (let k = 0; k < sub.index.count; k += 3) inSub[sub.index.array[k] / 3] = 1;
+    for (let t = 0; t < full; t++) {
+      for (let v = 0; v < 3; v++) {
+        const j = 3 * t + v;
+        if (alive.has(own.getX(j) + own.getY(j) * nx)) { assert.ok(inSub[t], `trójkąt ${t} odłamu poza podzbiorem`); covered[t] = 1; }
+      }
+    }
+  }
+  assert.ok(sum < full * 1.8, `suma podzbiorów ${sum} przy ${full} trójkątach kawałka (${frags.length} odłamów)`);
+  for (const w of frags) HullBodies.release(w);
+});

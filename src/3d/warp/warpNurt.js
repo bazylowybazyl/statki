@@ -31,6 +31,7 @@ import { WarpFrame, newWarpSlot, cullWarpFrameToView } from './frame.js';
 import { WarpPlayerFx, WARP_BUBBLE } from './player.js';
 import { planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, warpDepartureFxState, departFxPose, arrivalFxPose, setMovingBrake } from './arrivals.js';
 import { setRulon, resetRulon, RULON_STATE } from './rulon.js';
+import { WARP_WORLD_LENS, resetWarpWorldLens } from './worldLens.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
@@ -130,7 +131,7 @@ export const WarpNurt = {
   _lensPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, a: 1, b: 1, amp: 0, front: 3 })),
   _seamPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, halfLen: 1, band: 1, amp: 0 })),
   _col: [0, 0, 0],
-  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0 },
+  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0 },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
   _rulonArgs: { bend: 0, field: 0, hx: 1, hy: 0, shipX: 0, shipY: 0, bubbleW: 50, bubbleL: 70, W: 1, H: 1, F: 1, strength: 1 },
@@ -197,7 +198,7 @@ export const WarpNurt = {
    * statek + offset riga), ship, warp (GameState.warp), npcs, zoneWarpMul }.
    */
   update(o) {
-    if (!this.initialized || !this.enabled) return;
+    if (!this.initialized || !this.enabled) { resetWarpWorldLens(); return; }
     const dt = Math.max(0, Math.min(0.1, Number(o.dt) || 0));
     this.time += dt;
     const t = this.time;
@@ -236,6 +237,8 @@ export const WarpNurt = {
       g.palette = entityWarpPaletteId(ship);
       g.entity = ship;
       g.exitRamp = warp.exitRamp || null;
+      g.flyby = Number.isFinite(warp.flybyFactor) ? warp.flybyFactor : 1;
+      g.cruise = Number(warp.cruise) || Number(warp.speed) || 0;
       player.advance(t, dt, g, map, med);
     } else {
       player.reset();
@@ -322,6 +325,7 @@ export const WarpNurt = {
     // --- ośrodek: budzenie / sen, plan kroków ---
     // Tylko przegródki i szczeliny w zasięgu pudła ośrodka wokół kamery (daleki przylot go nie budzi).
     const view = this._viewParams(zoom);
+    this._commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer);
     cullWarpFrameToView(frame, view.bufW * 0.5, view.bufH * 0.5, view.focal, view.camZ);
     const busy = frame.bubbles.length > 0 || frame.seams.count > 0 || frame.warpVis > 0.001;
     if (busy) {
@@ -523,6 +527,37 @@ export const WarpNurt = {
 
   // Widok ośrodka: siatka w kamerze gry, przesunięcie kamery ośrodka, dosunięcie, pudła.
   // Cel renderu [px], ogniskowa kamery perspektywy [px] i jej odległość od płaszczyzny gry [j.].
+  // Soczewka świata (worldLens.js): planety i księżyce w skoku gracza — stan klatki, który
+  // planet3d.assets.js (updatePlanets3D, po tym kroku) rozstawia na scenie. Kamera bez wstrząsu (tę
+  // samą dostają planety), statek w pozie renderu; cel — planeta przy końcu odcinka (index.html:
+  // planPlayerWarp). Bez skoku albo poza kamerą z góry jednego gracza (`lensAllowed`) — wyłączona.
+  _commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer) {
+    const p = this.player;
+    const beta = hasPlayer && o.lensAllowed !== false ? p.lensBeta(t) : 0;
+    if (!(beta > 0.0005)) { resetWarpWorldLens(); return; }
+    const g = this._playerGame;
+    const L = WARP_WORLD_LENS;
+    L.active = true;
+    L.beta = beta;
+    L.speed = Math.max(1, Number(g.cruise) || 0);
+    L.velAngle = p.angle;
+    L.zoom = zoom;
+    L.W = view.bufW;
+    L.H = view.bufH;
+    L.focal = view.focal;
+    L.camZ = view.camZ;
+    L.camX = camX;
+    L.camY = camY;
+    L.shipX = g.x;
+    L.shipY = g.y;
+    L.shipSx = (g.x - camX) * zoom;
+    L.shipSy = (g.y - camY) * zoom;
+    L.hullHalfLen = Math.max(0, Number(g.length) || 0) * zoom * 0.5;
+    L.hullHalfWid = Math.max(0, Number(g.width) || 0) * zoom * 0.5;
+    L.dt = dt;
+    L.target = o.warp?.targetBody || null;
+  },
+
   _viewParams(zoom) {
     const v = this._view;
     const rt = Core3D.composerTarget;

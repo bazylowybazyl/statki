@@ -177,6 +177,9 @@ export class AsteroidBelt {
     this._miningFrame = { dt: 0, time: 0, originX: 0, originY: 0, zoom: 1, ship: null, sunT: null };
     this._miningShip = { x: 0, y: 0 };
     this.sunT = (x, y) => nightKnee(this.occlusion.transmittance(x, y));
+    // To samo pole na CPU dla Core3D.sunVisibilityAtWorld (wieżyczki kanwy 2D ciemnieją w głębi pola,
+    // jak kadłuby z maską słońca) — liczone tylko przy aktywnym polu maski (setSunOcclusionField).
+    Core3D.sunFieldCpu = this.sunT;
     this.stats = {
       active: false, cpuMs: 0, lights: 0, shipLights: 0, rockLights: 0, rocks: [0, 0, 0, 0], minerals: 0,
       shadowMaps: 0, shadowCasters: 0, volumeColumns: 0, storm: 0, strikes: 0, segments: 0, giantsReady: 0,

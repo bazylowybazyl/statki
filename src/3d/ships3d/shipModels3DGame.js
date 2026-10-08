@@ -10,6 +10,10 @@
 //    (kurs lufy, odrzut) — na modelu i na sprite'cie; wieżyczek kanwy z modelem 3D Turret2D nie rysuje
 //    (Turret2D.skipDraw, index.html). Rysunek w PARTIACH (turretBatch3D.js): jeden na rodzinę broni dla
 //    wszystkich wież w kadrze — tu tylko stan wieży (pochylenie, wirnik, wylot) i jej rekord instancji.
+//  • Dysze SIDE 3D (2026-10-07, każdy wariant wyglądu — sprite'y nie mają namalowanych dysz manewrowych): model
+//    thrusters/sideThruster3D.js w markerze dyszy, dzwon za kierunkiem wydechu, farba frakcji kadłuba; pozycje,
+//    kąty, ciąg i żar z listy SideNozzleFrame (pisze EngineVfxSystem w updateHexShips3D tej klatki), jedna partia
+//    (thrusterBatch3D.js). Na modelu 3D oś dzwonu w połowie burty (skrzynki RCS kadłuba — wyłączone: rcs: false).
 //
 // Poza jak skóra sprite'a (hexShips3D): korzeń = początek ciała (pozycja renderu encji − R·kotwica lokalna),
 // kąt θ = −(kąt + obrót sprite'a); grupa modelu w środku sprite'a (latticeMin + anchorD) ze skalą sprite'a.
@@ -27,7 +31,10 @@ import {
   hullSkinLattice, buildHullSkinGeometry, makeHullSkinMaterial, makeHullCutMaterial, ensureHullSkinSlot, releaseHullSkinSlot,
   writeHullSkinField
 } from './hullSkin3D.js';
-import { applyModelSlabDepth, setSlab, setModelSlabDepthOn, SLAB_HULL, SLAB_TURRET_ON_MODEL, SLAB_TURRET_ON_SPRITE } from './modelSlabDepth.js';
+import {
+  applyModelSlabDepth, setSlab, setModelSlabDepthOn, SLAB_HULL, SLAB_TURRET_ON_MODEL, SLAB_TURRET_ON_SPRITE,
+  SLAB_NOZZLE_ON_MODEL, SLAB_NOZZLE_ON_SPRITE
+} from './modelSlabDepth.js';
 import { applySunShadowToBuiltinMaterial } from '../sunShadowMask.js';
 import { HullBodies, hullSpriteRotation } from '../../game/hullBodies.js';
 import { HullDamageMap } from '../hullDamageMap.js';
@@ -38,6 +45,13 @@ import {
   TurretBatchSet, createTurretBatchMaterial, buildTurretFamilyArrays, turretInstanceScratch,
   turretBatchWarmHolder
 } from './turretBatch3D.js';
+// Dysze SIDE 3D (wszystkie tryby wyglądu): lista klatki od EngineVfxSystem, jedna partia, farba frakcji kadłuba.
+import { SideNozzleFrame } from '../sideNozzleFrame.js';
+import { ThrusterBatch, createThrusterBatchMaterial, sideThrusterInstanceScratch, thrusterBatchWarmHolder } from './thrusterBatch3D.js';
+import {
+  buildSideThrusterArrays, sideThrusterPaletteFor, SIDE_THRUSTER_AXIS_Z, SIDE_THRUSTER_HALF_WIDTH
+} from './thrusters/sideThruster3D.js';
+import { resolveEntityHullProfileId } from '../../data/ships.js';
 
 const DEG = Math.PI / 180;
 
@@ -124,7 +138,8 @@ function modelAssets(id) {
   m = { id, hull: null, geometry: null, material: null, skinMaterial: null, skinGeo: new Map(), minZ: 0, maxZ: 1, ready: false, error: null };
   _models.set(id, m);
   try {
-    m.hull = buildShip3D(id);
+    // rcs: false — dysze SIDE rysuje partia dysz (thrusterBatch3D.js), nie nieruchome skrzynki w bryle kadłuba
+    m.hull = buildShip3D(id, { rcs: false });
     m.geometry = m.hull.builder.toGeometry(THREE, m.hull.scale);
     m.geometry.computeBoundingSphere();
     m.geometry.computeBoundingBox();
@@ -216,6 +231,22 @@ let _batches = null;
 function turretBatches() {
   if (!_batches) _batches = new TurretBatchSet(Core3D.scene, turretMaterial());
   return _batches;
+}
+
+// Dysze SIDE (thrusterBatch3D.js): materiał jak wieże (mapa otoczenia, maska słońca), jedna partia na grę.
+let _nozzleMat = null;
+function nozzleMaterial() {
+  if (!_nozzleMat) {
+    _nozzleMat = createThrusterBatchMaterial();
+    applyShipEnv(_nozzleMat);
+    applySunShadowToBuiltinMaterial(_nozzleMat);
+  }
+  return _nozzleMat;
+}
+let _nozzles = null;
+function nozzleBatch() {
+  if (!_nozzles) _nozzles = new ThrusterBatch(Core3D.scene, nozzleMaterial());
+  return _nozzles;
 }
 
 // Mapa otoczenia modeli 3D (tylko materiały okrętów — reszta sceny bez zmian): w kosmosie bez niej
@@ -694,6 +725,8 @@ export function syncShipModels3D(p) {
     }
   }
   if (batches) batches.end();
+  // Dysze SIDE 3D — w każdym wariancie wyglądu (lista klatki od EngineVfxSystem).
+  syncSideNozzles(p);
   // Encje nieobecne w tej klatce (zniknęły, poza kadrem, opcje wyłączone) — chowamy; martwe po chwili zwalniamy.
   for (const inst of _instances.values()) {
     if (inst.frame === _frame) continue;
@@ -806,8 +839,111 @@ export function turretMuzzleZ(entity, x, y) {
 }
 
 // ---------------------------------------------------------------------------
+// Dysze SIDE 3D (model: thrusters/sideThruster3D.js, partia: thrusterBatch3D.js). Rekordy z SideNozzleFrame — oś
+// obrotu (marker), kierunek podstawy i wydechu, promień wylotu, ciąg i żar liczy EngineVfxSystem w tej samej pętli co
+// płomień SIDE (maskowanie i odpadanie z kadłubem już tam). Tu: kadr, LOD, wysokość i warstwa głębi (sprite / model),
+// farba z profilu kadłuba.
+// ---------------------------------------------------------------------------
+/** Pół szerokości sponsonu na ekranie [px], poniżej której dysza nie ma modelu (jak wieże: TURRET3D_HIDE_PX). */
+export const SIDE_NOZZLE3D_HIDE_PX = 2.0;
+const _nozzleRec = sideThrusterInstanceScratch();
+const _nozzleMount = new WeakMap(); // obiekt dyszy → { id, z } — oś dzwonu na modelu (j. modelu, skala 1)
+const _nozzlePal = new WeakMap();   // encja → { key, pal }
+let _nozzleSerial = -1;
+let _nozzleShown = 0;
+const _nozzleOrg = { x: 0, y: 0 };
+
+// Farba z profilu kadłuba (Terra Nova biel, Atlas szary, frachtowce szary cywilny, piraci rdza).
+function nozzlePalette(e) {
+  const key = `${e.model3DProfileId || ''}|${e.shipFrame || ''}|${e.activeHullId || ''}|${e.type || ''}|${e.isPirate ? 1 : 0}`;
+  let c = _nozzlePal.get(e);
+  if (!c || c.key !== key) {
+    c = { key, pal: sideThrusterPaletteFor(e.model3DProfileId || resolveEntityHullProfileId(e)) };
+    _nozzlePal.set(e, c);
+  }
+  return c.pal;
+}
+
+// Oś dzwonu na modelu 3D: połowa wysokości burty pod markerem (z = 0 — płaszczyzna gry); raz na dyszę i model.
+function nozzleAxisOnModel(id, src, ox, oy) {
+  const c = src ? _nozzleMount.get(src) : null;
+  if (c && c.id === id) return c.z;
+  const h = modelAssets(id)?.hull;
+  let z = 0;
+  if (h?.heightAt) {
+    const deck = Number(h.deckZ) || 0;
+    const top = h.heightAt(ox, -oy);
+    z = 0.5 * Math.max(0, Math.min(Number.isFinite(top) ? top : deck, deck));
+  }
+  if (src) _nozzleMount.set(src, { id, z });
+  return z;
+}
+
+function syncSideNozzles(p) {
+  const F = SideNozzleFrame;
+  const fresh = F.serial !== _nozzleSerial;
+  _nozzleSerial = F.serial;
+  _nozzleShown = 0;
+  if (!F.enabled || !fresh || F.count === 0 || !Core3D.scene) {
+    if (_nozzles) { _nozzles.begin(0, 0); _nozzles.end(); }
+    return;
+  }
+  const B = nozzleBatch();
+  sceneOriginNearCamera(_nozzleOrg);
+  B.begin(_nozzleOrg.x, _nozzleOrg.y);
+  const T = _nozzleRec;
+  const zoom = Number(p.zoom) || 1;
+  const zoomAt = p.zoomAt || null;
+  const height = buildSideThrusterArrays().height;
+  let lastE = null, ok = false, modelId = null, k = 1, pal = 0;
+  for (let i = 0; i < F.count; i++) {
+    const e = F.entity[i];
+    if (e !== lastE) {
+      lastE = e;
+      ok = !!e && !e.dead && (!p.inView || p.inView(e));
+      if (ok) {
+        modelId = shipModel3DIdFor(e);
+        const h = liveHull(e);
+        k = h ? h.scale : spriteScale(e);
+        pal = nozzlePalette(e);
+      }
+    }
+    if (!ok) continue;
+    const R = F.radius[i];
+    const zpx = zoomAt ? zoomAt(F.x[i], -F.y[i]) : zoom;
+    if (R * SIDE_THRUSTER_HALF_WIDTH * zpx < SIDE_NOZZLE3D_HIDE_PX) continue;
+    // Sprite: sponson na płaszczyźnie sprite'a. Model: oś dzwonu w połowie burty (sponson w kadłubie — z góry
+    // warstwa głębi i tak kładzie dyszę nad kadłubem, z boku w kamerach 3D dzwon wychodzi z burty).
+    let zb = 0;
+    let slab = SLAB_NOZZLE_ON_SPRITE;
+    if (modelId) {
+      zb = nozzleAxisOnModel(modelId, F.source[i], F.ox[i], F.oy[i]) * k - SIDE_THRUSTER_AXIS_Z * R;
+      slab = SLAB_NOZZLE_ON_MODEL;
+    }
+    T.x = F.x[i] - B.orgX;
+    T.y = F.y[i] - B.orgY;
+    T.z = zb;
+    T.scale = R;
+    T.baseCos = F.baseX[i];
+    T.baseSin = F.baseY[i];
+    T.dirCos = F.dirX[i];
+    T.dirSin = F.dirY[i];
+    T.throttle = F.throttle[i];
+    T.heat = F.heat[i];
+    T.palette = pal;
+    T.zb = zb;
+    T.zt = zb + height * R;
+    T.lo = slab.lo;
+    T.hi = slab.hi;
+    B.push(T);
+  }
+  B.end();
+  _nozzleShown = B.count;
+}
+
+// ---------------------------------------------------------------------------
 // Rozgrzewka (rejestr Core3D.warmup, ekran ładowania): modele obecne w świecie (lista od gry) — bryła
-// sztywna, skóra i partia wież (jeden program na wszystkie rodziny), pass ortho (warstwa 0).
+// sztywna, skóra, partia wież (jeden program na wszystkie rodziny) i partia dysz SIDE, pass ortho (warstwa 0).
 // ---------------------------------------------------------------------------
 export function warmupShipModels3D(ids = []) {
   // Modele rysują też kamery 3D (niezależnie od opcji) — rozgrzewka zawsze.
@@ -832,6 +968,8 @@ export function warmupShipModels3D(ids = []) {
     const fam = WEAPON3D_FAMILY.railgun_mk2 || Object.values(WEAPON3D_FAMILY).find(Boolean);
     if (fam) out.push(turretBatchWarmHolder(turretMaterial(), fam));
   }
+  // partia dysz SIDE (rysowana w każdym wariancie wyglądu — sprite'y i modele)
+  out.push(thrusterBatchWarmHolder(nozzleMaterial()));
   return out;
 }
 
@@ -855,6 +993,7 @@ export function shipModels3DStats() {
   const b = _batches;
   return {
     instances: _instances.size, visible, turrets, skins, models: [..._models.keys()],
-    turretDraws: b ? b.draws || 0 : 0, turretFamilies: b ? b.list.length : 0
+    turretDraws: b ? b.draws || 0 : 0, turretFamilies: b ? b.list.length : 0,
+    sideNozzles: _nozzleShown, sideNozzleDraws: _nozzles ? _nozzles.draws : 0
   };
 }

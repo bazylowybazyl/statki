@@ -9,6 +9,7 @@ import {
   SOLAR_PLANET_DEFINITIONS,
   orbitalAngularSpeedRadPerSecond
 } from '../src/data/solarSystem.js';
+import { SYSTEM_MAP_PLANET_BY_ID, buildSystemMap } from '../src/data/systemMap.js';
 
 test('planet definitions use real mean orbital distances and physical speeds', () => {
   assert.deepEqual(
@@ -44,11 +45,16 @@ test('gameplay asteroid belts keep the original stretched map ranges', () => {
 });
 
 test('physical AU metadata does not collapse the stretched gameplay map', () => {
+  // Tabela orbit i skala mapy mieszkają w src/data/systemMap.js — index.html bierze z niej planety.
   const source = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(source, /id: 'earth'[\s\S]*?orbitAU: 25\.0/);
-  assert.match(source, /id: 'mars'[\s\S]*?orbitAU: 33\.0/);
-  assert.match(source, /id: 'neptune'[\s\S]*?orbitAU: 120\.00/);
-  assert.match(source, /physicalOrbitAU: physicalOrbit\?\.semiMajorAxisAu/);
-  assert.match(source, /const baseOrbit = def\.orbitAU \* AU/);
-  assert.doesNotMatch(source, /const baseOrbit = def\.semiMajorAxisAu \* AU/);
+  assert.match(source, /buildSystemMap\(getOuterAsteroidEdgeAU\(\)/);
+  assert.equal(SYSTEM_MAP_PLANET_BY_ID.earth.orbitAU, 25);
+  assert.equal(SYSTEM_MAP_PLANET_BY_ID.mars.orbitAU, 33);
+  assert.equal(SYSTEM_MAP_PLANET_BY_ID.neptune.orbitAU, 120);
+  const { auInWorldUnits, planets } = buildSystemMap(getOutermostBeltEdgeAu(BELT_DEFINITIONS), { angleFor: () => 0 });
+  for (const planet of planets) {
+    // Prawdziwe AU to tylko metadane; promień orbity liczy się z AU mapy.
+    assert.equal(planet.physicalOrbitAU, SOLAR_PLANET_BY_ID[planet.id].semiMajorAxisAu);
+    assert.equal(planet.orbitRadius, planet.orbitAU * auInWorldUnits);
+  }
 });

@@ -2,7 +2,7 @@
 // są ciałami silnika belek (src/game/worldBodies.js), rysuje je skóra brył (src/3d/worldBodies3D.js). Bez dymu,
 // ognia i wybuchów gazu (decyzja użytkownika 2026-10-05). Vite + headless Chrome z WebGPU (CDP).
 //
-//   node scripts/webgpu/zniszczenia-gra.mjs [--out .tmp/zniszczenia-gra] [--rozmiar 1600x900] [--hexlance] [--czujka] [--dziennik]
+//   node scripts/webgpu/zniszczenia-gra.mjs [--out .tmp/zniszczenia-gra] [--rozmiar 1600x900] [--hexlance | --final] [--czujka] [--dziennik]
 //   --czujka: klatka, w której kawałek trzonu traci > 20 węzłów (lekki podgląd w rAF), --dziennik: fale ciśnienia
 //   i zniszczone węzły na kawałek między kadrami (opakowania zmieniają przebieg — tylko do szukania źródła).
 //
@@ -13,6 +13,7 @@
 //   05 ostrzał ściany hali (Yamato, autodziało oblężnicze, armata z promieniem rażenia), 06 wiązka pulsowa (ciepło),
 //   07 rakieta manewrująca w ścianę (front ciśnienia), 08 próg punktów doku — kawałek-ciało odpada fizycznie.
 // --hexlance: faza „shipyard”, Atlas przed parkingiem, Hexlance (4, ładowanie, 4) w trzon.
+// --final: faza „shipyard”, progi punktów do 3/8, wypiek skór, śmierć doku i łańcuch rozpadu (kadry 30–36).
 // Raport: <out>/raport.json — WorldBodies.stats, kanały broni, skóra, stan kawałków, pipeline'y synchroniczne, błędy.
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -193,6 +194,90 @@ const fireHub = (weaponId, x, z, tx, tz, n, every) => ev(`new Promise((res) => {
   tick();
 })`, 60000);
 
+// --final: faza „shipyard”, progi punktów do 3/8 (dok → wszystkie kawałki ciałami, skóry pieką się w tle), potem
+// śmierć doku i łańcuch rozpadu misji (planDryDockChain → worldBodies.breakPiece: każdy kawałek, także dach-duch,
+// pęka na odłamy z odłamkami). Kadry 30–36, czasy klatek w łańcuchu i po nim, rysunki, odłamy, skóry.
+const FRAME_REC = `(() => {
+  const R = window.__frames = { on: false, dt: [], draws: [], last: 0 };
+  const tick = (t) => {
+    requestAnimationFrame(tick);
+    if (R.on && R.last) {
+      R.dt.push(t - R.last);
+      const info = window.Core3D?.renderer?.info?.render;
+      if (info) R.draws.push(info.drawCalls | 0);
+    }
+    R.last = t;
+  };
+  requestAnimationFrame(tick);
+  return true;
+})()`;
+const frameStats = () => ev(`(() => {
+  const R = window.__frames, a = R.dt.slice().sort((x, y) => x - y), d = R.draws.slice().sort((x, y) => x - y);
+  const q = (arr, f) => arr.length ? +arr[Math.min(arr.length - 1, Math.floor(arr.length * f))].toFixed(1) : 0;
+  const out = { klatek: a.length, p50: q(a, 0.5), p95: q(a, 0.95), max: q(a, 1), ponad33ms: a.filter((x) => x > 33).length, rysunkiP50: q(d, 0.5), rysunkiMax: q(d, 1) };
+  R.dt.length = 0; R.draws.length = 0;
+  return out;
+})()`);
+async function finalRun() {
+  await startStory('shipyard');
+  await sleep(2000);
+  const L = await ev(`(() => { const l = window.StoryGame.site.dock.layout, h = l.hall; return { lane: l.parking.laneZ, px0: l.parking.x0, px1: l.parking.x1, hx: h.center.x, hz: h.center.z, cx: (l.bounds.x0 + l.bounds.x1) / 2, cz: (l.bounds.z0 + l.bounds.z1) / 2 }; })()`);
+  report.uklad = L;
+  await ev(`(() => { const S = window.StoryGame, d = S.site.dock; const p = d.toGame(575, 4000); S.deps.placePlayer(p.x, p.y, d.headingToGame(-Math.PI / 2)); return true; })()`);
+  await waitFor(cdp, '(window.WorldBodies?.stats?.live || 0) > 0', 30000, 200);
+  await ev(FRAME_REC);
+  await sleep(1500);
+  await camHub(L.cx, L.cz, 0.17);
+  await shot('30-dok-caly', 900);
+  // progi punktów do 3/8: kawałki przy trafieniach w trzon pękają, dok przechodzi w „wszystkie ciałami”
+  const tProg = await ev(`(() => {
+    const S = window.StoryGame, st = S.site.station, d = S.site.dock;
+    const p = d.toGame(${L.px0} + 900, 120);
+    st.lastHitX = p.x; st.lastHitY = p.y;
+    const t0 = performance.now();
+    window.applyDamageToStation(st, st.hp - st.maxHp * 0.36);
+    return { ms: +(performance.now() - t0).toFixed(1), hp: Math.round(st.hp), allLive: !!window.WorldBodies.sites[0].allLive };
+  })()`);
+  console.log('progi:', JSON.stringify(tProg));
+  report.progi = tProg;
+  await shot('31-progi', 1500);
+  // wypiek skór w tle (requestIdleCallback) — czekaj na komplet
+  const tBake = Date.now();
+  await waitFor(cdp, `(() => { const s = window.WorldBodies.sites[0]; return s.pieces.every((p) => p.state !== 'live' || (p.__skin && p.entity && p.__skin.key === p.entity.beamHull?.image)); })()`, 60000, 300);
+  report.wypiek = { s: (Date.now() - tBake) / 1000, ...(await ev('(() => ({ ...window.__worldSkinStats }))()')) };
+  console.log('wypiek:', JSON.stringify(report.wypiek));
+  await frameStats();
+  await ev('(() => { window.__frames.on = true; return true; })()');
+  await sleep(1500);
+  report.klatkiPrzed = await frameStats();
+  console.log('klatki przed:', JSON.stringify(report.klatkiPrzed));
+  // śmierć doku → misja: łańcuch rozpadu
+  await ev(`(() => { const st = window.StoryGame.site.station; window.applyDamageToStation(st, st.hp + 10); return true; })()`);
+  await sleep(4800);
+  report.klatkiLancuch = await frameStats();
+  console.log('klatki łańcuch:', JSON.stringify(report.klatkiLancuch));
+  await shot('32-lancuch', 10);
+  await sleep(3000);
+  await shot('33-po-lancuchu', 10);
+  await camHub(L.hx, L.hz, 0.32);
+  await shot('34-hala-zblizenie', 1200);
+  await camHub(L.px0 + 1500, L.lane - 600, 0.32);
+  await shot('35-parking-zblizenie', 1200);
+  await camHub(L.cx, L.cz, 0.17);
+  await frameStats();
+  await sleep(3000);
+  report.klatkiPo = await frameStats();
+  console.log('klatki po:', JSON.stringify(report.klatkiPo));
+  await shot('36-po-10s', 10);
+  report.odlamy = await ev(`(() => {
+    const w = (window.wrecks || []).filter((x) => x && !x.dead && x.worldDebris && x.beamHull?.body?.activeNodes > 0);
+    const duchy = w.filter((x) => x.isCollidable === false).length;
+    const s = window.WorldBodies.stats;
+    return { odlamy: w.length, duchy, rozpady: s.shattered, odlamki: s.shatterDebris, stracone: window.WorldBodies.sites[0].pieces.filter((p) => p.state === 'lost').length, z: window.WorldBodies.sites[0].pieces.length };
+  })()`);
+  console.log('odłamy:', JSON.stringify(report.odlamy));
+}
+
 async function hexlanceRun() {
   await startStory('shipyard');
   await sleep(2000);
@@ -212,7 +297,9 @@ async function hexlanceRun() {
 }
 
 try {
-  if (args.hexlance) {
+  if (args.final) {
+    await finalRun();
+  } else if (args.hexlance) {
     await hexlanceRun();
   } else {
     await startStory('ram');

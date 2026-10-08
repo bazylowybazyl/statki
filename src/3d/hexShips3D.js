@@ -28,6 +28,11 @@ import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostor
 import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
+// Oświetlenie kadłubów v2 (2026-10-06): model PBR (hullLighting.js) i mapy powierzchni ze sprite'ów.
+import { HullLighting } from './hullLighting.js';
+import { HullSurface } from './hullSurface.js';
+import { EngineFrame } from './engineFrame.js';
+import { MAIN_EXHAUST_PALETTES } from '../data/engineFx.js';
 import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
 import {
   DEBRIS_SHARED,
@@ -780,6 +785,7 @@ function disposeMeshData(data) {
   else data.texture?.dispose?.();
   data.normalTexture?.dispose?.();
   if (data.shapeImageRef) HullLacquer.releaseShapeUniform(data.shapeImageRef);
+  if (data.surfaceImageRef) HullSurface.releaseUniform(data.surfaceImageRef);
   if (data.lightSlot >= 0) {
     HullLightStore.release(data.lightSlot);
     data.lightSlot = -1;
@@ -1010,12 +1016,19 @@ function createEntityMesh(entity) {
     ? HullLacquer.acquireShapeUniform(shapeImageRef)
     : HullLacquer.flatShapeUniform;
 
+  // Mapa powierzchni (oświetlenie v2): wspólna dla kadłubów z tym samym obrazem.
+  const surfaceImageRef = armorSource && !usesBillboardLighting(entity) ? armorSource : null;
+  const surfaceUniform = surfaceImageRef ? HullSurface.acquireUniform(surfaceImageRef) : HullSurface.flatUniform;
+
   // Graf wariantu „hex” (hexShips3D.tsl.js): przezroczysty, z zapisem głębi, FrontSide.
   const material = new HullNodeMaterial('hex',
-    createHullUniforms(entity, texture, normalTexture, shapeUniform, grid.srcWidth, grid.srcHeight));
+    createHullUniforms(entity, texture, normalTexture, shapeUniform, grid.srcWidth, grid.srcHeight, surfaceUniform));
 
-  return finishEntityMesh(entity, grid, shards, count, geometry, material, texture, visualImage,
+  const data = finishEntityMesh(entity, grid, shards, count, geometry, material, texture, visualImage,
     shapeImageRef, normalTexture, baseRadius);
+  if (data) data.surfaceImageRef = surfaceImageRef;
+  else if (surfaceImageRef) HullSurface.releaseUniform(surfaceImageRef);
+  return data;
 }
 
 // Wartości per encja materiału kadłuba (siatka heksów, płyta pancerza, skóra belek):
@@ -1024,11 +1037,14 @@ function createEntityMesh(entity) {
 // wspólne dla wszystkich kadłubów (czas, strojenie światła, żar, lakier, maska
 // słońca) są w węzłach grafu — tu ich nie ma. Lampy i strefy dysz: slot w
 // HullLightStore (uLightBase), liczniki uShipLightCount / uEngineZoneCount.
-function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWidth, srcHeight) {
+function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWidth, srcHeight, surfaceUniform = null) {
   return {
       uSprite: { value: texture || HULL_EMPTY_SPRITE_TEXTURE },
       uNormalMap: { value: normalTexture || HULL_FLAT_NORMAL_TEXTURE },
       uHasNormalMap: { value: normalTexture ? 1 : 0 },
+      // Mapa powierzchni (oświetlenie v2, hullSurface.js): obiekt `{ value }` wspólny dla kadłubów
+      // z tym samym obrazem — wypiek w workerze podmienia teksturę wszystkim (do tego czasu płaska).
+      uSurfaceMap: surfaceUniform || HullSurface.flatUniform,
       uLightDir: { value: new THREE.Vector3(0, 0, 1) },
       uRotation: { value: 0.0 },
       uSpriteSize: { value: new THREE.Vector2(srcWidth || 1, srcHeight || 1) },
@@ -1086,10 +1102,14 @@ function acquireSkinBatch(data) {
   const texture = data.visualImageRef ? acquireSharedVisualTexture(data.visualImageRef) : createManagedTexture(data.armorImageRef);
   const normal = data.normalMapRef ? createManagedTexture(data.normalMapRef, true) : null;
   const shape = data.shapeImageRef ? HullLacquer.acquireShapeUniform(data.shapeImageRef) : HullLacquer.flatShapeUniform;
+  // Mapa powierzchni (oświetlenie v2) — z obrazu partii (jak sprite), referencja na życie partii.
+  const surfaceImg = data.visualImageRef || data.armorImageRef || null;
+  const surface = surfaceImg ? HullSurface.acquireUniform(surfaceImg) : HullSurface.flatUniform;
   const material = new HullNodeMaterial('beamBatch', {
     uSprite: { value: texture || HULL_EMPTY_SPRITE_TEXTURE },
     uNormalMap: { value: normal || HULL_FLAT_NORMAL_TEXTURE },
-    uShapeMap: shape
+    uShapeMap: shape,
+    uSurfaceMap: surface
   });
   batch = new HullSkinBatch(key, material);
   batch.owned = { visualImageRef: data.visualImageRef, texture, normal, shapeImageRef: data.shapeImageRef };
@@ -1614,11 +1634,14 @@ function createBeamSkinMesh(entity) {
   const normalTexture = hull.normalMapImage ? createManagedTexture(hull.normalMapImage, true) : null;
   const shapeImageRef = (visualImage && allowsHullLacquer(entity)) ? visualImage : null;
   const shapeUniform = shapeImageRef ? HullLacquer.acquireShapeUniform(shapeImageRef) : HullLacquer.flatShapeUniform;
+  // Mapa powierzchni (oświetlenie v2): z obrazu, który rysuje skóra (sprite albo obraz kadłuba).
+  const surfaceImageRef = visualImage || hull.image || null;
+  const surfaceUniform = surfaceImageRef ? HullSurface.acquireUniform(surfaceImageRef) : HullSurface.flatUniform;
   // Graf wariantu „beam” (hexShips3D.tsl.js): przezroczysty, z zapisem głębi,
   // DoubleSide w jednym przejściu (zgnieciony czworokąt potrafi się przewrócić —
   // z FrontSide zostałaby dziura).
   const material = new HullNodeMaterial('beam',
-    createHullUniforms(entity, texture, normalTexture, shapeUniform, hull.srcWidth, hull.srcHeight));
+    createHullUniforms(entity, texture, normalTexture, shapeUniform, hull.srcWidth, hull.srcHeight, surfaceUniform));
   const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
   ensureHullObjectHook();
   // Nośnik transformacji i danych slotu — rysuje go partia (hullSkinBatch.js), siatka poza sceną.
@@ -1638,6 +1661,7 @@ function createBeamSkinMesh(entity) {
     visualImageRef: visualImage,
     armorImageRef: visualImage ? null : hull.image,
     shapeImageRef,
+    surfaceImageRef,
     normalTexture,
     normalMapRef: hull.normalMapImage || null,
     hull,
@@ -1923,6 +1947,38 @@ export function setHexDamageTintEnabled(enabled) {
   return state.damageTintEnabled;
 }
 
+// Poświata dysz MAIN na blachę (oświetlenie v2): gromada dysz okrętu z tej klatki (EngineFrame — te same
+// dysze, moc i paleta co struga MAIN i poświata na pyle) = światło punktowe tuż za wylotem, barwą palety;
+// przy ciągu i dopalaczu rufa, dysze i krawędzie zwrócone do wydechu łapią światło (także sąsiednie kadłuby).
+// Rozproszenie w ośrodku 0 — pył ma własną poświatę dysz (writeDustPlumes).
+function pushEngineHullLights() {
+  const lights = Core3D.fx ? Core3D.fx.lights : null;
+  if (!lights || !HullLighting.isPbr()) return;
+  const gain = HullLighting.engineGain();
+  if (!(gain > 0)) return;
+  const F = EngineFrame;
+  for (let k = 0; k < F.count; k++) {
+    const p = Math.min(F.power[k], 1.5);
+    if (!(p > 0.06)) continue;
+    const pal = MAIN_EXHAUST_PALETTES[F.palette[k]] || MAIN_EXHAUST_PALETTES[0];
+    const c = pal.light || pal.spark || ENGINE_LIGHT_FALLBACK;
+    const R = F.radius[k];
+    const back = R * 0.8;
+    // EngineFrame w układzie SCENY (y w górę) → świat gry (y w dół)
+    const x = F.x[k] + F.dirX[k] * back;
+    const y = -(F.y[k] + F.dirY[k] * back);
+    lights.point(x, y, c[0], c[1], c[2], gain * p, (F.spread[k] + 4 * R) * 2.5, R * 1.5 + 15, 0);
+  }
+}
+const ENGINE_LIGHT_FALLBACK = Object.freeze([0.5, 0.7, 1.0]);
+
+// Jasność wieżyczek kanwy 2D (Turret2D.lightAt, oświetlenie v2): cień planet z tarcz tej klatki
+// (Core3D.sunVisibilityAtWorld — lustro CPU maski słońca), w pełnym cieniu `turretNight`.
+function turretLightAt(x, y) {
+  const night = HullLighting.turretNight();
+  return night + (1 - night) * Core3D.sunVisibilityAtWorld(x, y);
+}
+
 // Wartości wspólne kadłubów (węzły HULL_SHARED, hexShips3D.tsl.js): raz na klatkę
 // zamiast per mesh. Strojenie światła z panelu (window.__shipLightTune) tylko przy
 // zmianie epoki; żar pod przełącznikiem glow stresu, jasność z configu (suwaki
@@ -1983,6 +2039,11 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // kształtu (jeden sprite na klatkę). Nic z kamery — odbicia zależą tylko od
   // położenia i obrotu statku.
   HullLacquer.update();
+  // Oświetlenie v2: strojenie → wspólne węzły, kolejka wypieku map powierzchni (worker); wieżyczki
+  // na kanwie 2D ciemnieją w cieniu planet razem z kadłubem.
+  HullLighting.update();
+  HullSurface.pump();
+  Turret2D.lightAt = HullLighting.isPbr() ? turretLightAt : null;
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
@@ -2260,6 +2321,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
 
   vfxEntities.push(...visibleVfx);
   EngineVfxSystem.update(visibleVfx);
+  pushEngineHullLights();
 
   state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;
   if (typeof window !== 'undefined') window.__hexLodStats = lodFrameStats;
@@ -2357,6 +2419,8 @@ export function prewarmHexShipVisual(image) {
   prewarmedHullImages.add(image);
   Core3D.queueTextureUpload(acquireSharedVisualTexture(image));
   HullLacquer.acquireShapeUniform(image);
+  // Mapa powierzchni (oświetlenie v2): wypiek w workerze rusza przy spawnie, nie przy pierwszym widoku.
+  HullSurface.acquireUniform(image);
   return true;
 }
 

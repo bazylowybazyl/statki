@@ -59,8 +59,21 @@ function clamp(value, lo, hi) {
   return value < lo ? lo : (value > hi ? hi : value);
 }
 
+// Kategoria → flak, zapamiętane po napisie kategorii: isFlakWeapon pada co krok fizyki na każdym
+// działku PD gracza, a toLowerCase() robił przy tym nowy napis. Kategorii jest kilka (dane broni).
+const FLAK_CATEGORY_MEMO = new Map();
+const FLAK_CATEGORY_MEMO_MAX = 64;
+
 export function isFlakWeapon(def) {
-  return String(def?.category || '').toLowerCase() === 'flak';
+  const category = def?.category;
+  if (typeof category !== 'string') return String(category || '').toLowerCase() === 'flak';
+  let flak = FLAK_CATEGORY_MEMO.get(category);
+  if (flak === undefined) {
+    flak = category.toLowerCase() === 'flak';
+    if (FLAK_CATEGORY_MEMO.size >= FLAK_CATEGORY_MEMO_MAX) FLAK_CATEGORY_MEMO.clear();
+    FLAK_CATEGORY_MEMO.set(category, flak);
+  }
+  return flak;
 }
 
 /**

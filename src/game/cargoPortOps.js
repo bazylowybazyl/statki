@@ -23,7 +23,7 @@
  *
  * OKNO PRZEŁADUNKU: zegar stanowiska t = 0 w chwili, gdy kadłub stanął na polu
  * STOP (koniec przechwytu). Obsługa rusza po sekwencji dokowania (klamra 4,6 s,
- * suwnica K-7 9,3 s — PORT_SEQUENCE) i kończy się przed odłączeniem: postój
+ * obsługa paliwowa K-7 — PORT_SEQUENCE) i kończy się przed odłączeniem: postój
  * NPC = LOAD 90 s / UNLOAD 120 s (trafficDirector.js) minus dojście w porcie
  * (`moveSeconds`), patrz `cargoTransferWindow`. Gracz może odlecieć wcześniej
  * (`abortAt`): drony kończą albo odwołują bieżący kurs i wracają do gniazda.
@@ -129,10 +129,10 @@ const smooth = (t) => t * t * (3 - 2 * t);
 /**
  * Okno przeładunku na zegarze stanowiska (t = 0: kadłub na polu STOP).
  * seconds — postój z rekordu (LOAD 90 / UNLOAD 120), moveSeconds — jego część
- * zjedzona przez dojście w porcie, crane — stanowisko capital K-7 (suwnica).
+ * zjedzona przez dojście w porcie, fuel — stanowisko capital K-7 (obsługa paliwowa: ramiona i przewody).
  */
-export function cargoTransferWindow({ seconds = 90, moveSeconds = 0, crane = false } = {}) {
-  const seq = crane ? PORT_SEQUENCE.crane : PORT_SEQUENCE.clamp;
+export function cargoTransferWindow({ seconds = 90, moveSeconds = 0, fuel = false } = {}) {
+  const seq = fuel ? PORT_SEQUENCE.fuel : PORT_SEQUENCE.clamp;
   const atBerth = Math.max(0, Number(seconds) - Math.min(Number(moveSeconds) || 0, Number(seconds) || 0));
   const start = seq.dock;
   return { start, end: Math.max(start, atBerth) };
