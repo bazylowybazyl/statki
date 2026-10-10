@@ -22,6 +22,7 @@
 
 import { Core3D } from '../core3d.js';
 import { EngineFrame } from '../engineFrame.js';
+import { engineSmokeFlow } from '../../game/engineIgnition.js';
 import { fxNoise } from '../fx/noise.js';
 import { createK7Layout, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { K7_BEACON, K7_BEACON_GRID, K7_BEACON_LOOK, k7BeaconLevel, k7LightRig } from '../haloRing/haloPortK7Lights.js';
@@ -196,7 +197,11 @@ class HallDustSystem {
     let nj = 0;
     const maxEngine = Math.max(0, sim.maxJets - HALL_GAS_MAX);
     for (let k = 0; k < EngineFrame.count && nj < maxEngine; k++) {
-      const power = EngineFrame.power[k];
+      // Dym zapłonu / gaszenia silników (src/game/engineIgnition.js — etap E2): zimny gaz z dysz rusza kurz, zanim zapali
+      // się struga (sam przepływ, bez pary — dym pokazuje gaz 3D wybuchów, bez podwójnej mgły).
+      const eng = EngineFrame.entity[k];
+      let power = EngineFrame.power[k];
+      if (eng && eng.engineIgn) { const f = engineSmokeFlow(eng); if (f > power) power = f; }
       if (!(power >= T.minPower)) continue;
       const dx = EngineFrame.x[k] - aff.p0x;
       const dy = -EngineFrame.y[k] - aff.p0y;
@@ -390,6 +395,27 @@ class HallDustSystem {
         sm.push();
       }
     }
+  }
+
+  /**
+   * Poziom światła WNĘTRZA aktywnej hali w punkcie (x, y) świata gry: 0 poza halą, wewnątrz T.lampBase + poziom lamp
+   * dzień / noc (jak lampy w siatce świateł), znormalizowany do 1 przy pełnych lampach. Dym gazu 3D w hali (zapłon
+   * silnika — src/3d/explosions/explosionFx.js) dostaje go jako otoczenie domeny: pod dachem nie ma słońca, a lampy
+   * siatki przechodzą przez kolano i samocień. Czysta arytmetyka na wejściu klatki (bez window / DOM).
+   */
+  interiorLightAt(x, y) {
+    const IN = this.input;
+    const T = this.tune;
+    const dom = this.domain;
+    if (!T.enabled || !dom || !(IN[I.active] > 0.5)) return 0;
+    const ax = IN[I.ax], ay = IN[I.ay], bx = IN[I.bx], by = IN[I.by];
+    const det = ax * by - bx * ay;
+    if (!(Math.abs(det) > 1e-12)) return 0;
+    const dx = x - IN[I.p0x], dy = y - IN[I.p0y];
+    const hx = (by * dx - bx * dy) / det;
+    const hz = (ax * dy - ay * dx) / det;
+    if (hallDomainDistance(dom, hx, hz) > 0) return 0;
+    return (T.lampBase + (Number(IN[I.lamps]) || 0)) / (T.lampBase + 1);
   }
 
   /**

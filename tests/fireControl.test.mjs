@@ -673,3 +673,24 @@ test('stan wież dla HUD-u: przeładowanie, gotowość, łuk ostrzału i zniszcz
   run(DT);
   assert.equal(byId('s0').state, FC_TURRET.DOWN);
 });
+
+test('stan wież dla HUD-u: broń z postoju (Mjolnir) w ruchu — STILL zamiast READY, na postoju znów gotowa', async () => {
+  const { FC_TURRET } = await import('../src/game/fireControl.js');
+  const scene = makeScene({ special: 1 });
+  const { fc, env, weapons, run } = scene;
+  fcSetInHand(fc, 'special', weapons);
+  const lo = weapons.special[0];
+  lo.weapon = { ...lo.weapon, requiresStationary: true };
+  env.cursor.x = 6000; env.cursor.y = 0;
+  env.stationary = false;
+  run(6);
+  assert.equal(fc.turrets.special[0].state, FC_TURRET.STILL, 'w ruchu: wymaga postoju');
+  env.stationary = true;
+  run(DT);
+  assert.equal(fc.turrets.special[0].state, FC_TURRET.READY, 'na postoju: gotowa');
+  // Broń bez wymogu postoju w ruchu zostaje gotowa.
+  lo.weapon = { ...lo.weapon, requiresStationary: false };
+  env.stationary = false;
+  run(DT);
+  assert.equal(fc.turrets.special[0].state, FC_TURRET.READY);
+});

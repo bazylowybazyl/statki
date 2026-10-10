@@ -948,6 +948,9 @@
     // Uszkodzenie silników głównych (2026-10-08): dysza MAIN nad martwą komórką zniszczona do remontu w doku,
     // ciąg główny × żywe / wszystkie (thrusterModel.js, shipFlightModel.js czytają stan z encji).
     import { stepEngineDamage, repairEngines, isMainDriveDestroyed, mainEngineCounts, mainEngineFraction, destroyMainEngines, ENGINE_REPAIR } from "./src/game/engineDamage.js";
+    // Odpalanie i gaszenie silników MAIN (etap E2 2026-10-09): automat WYŁ. → ZAPŁON (dym, błysk) → PRACA → GASZENIE;
+    // klawisz 0 (akcja 'ship.engines'), autozapłon ciągiem, kampania: Atlas w doku z wyłączonymi silnikami.
+    import { engineIgnitionOf, engineThrustScale, engineBlocksDrive, engineHudLabel, engineStateOf, igniteEngine, shutdownEngine, toggleEngine, stepEngineIgnition, ENGINE_OFF, ENGINE_SHUTDOWN, ENGINE_IGNITION_TUNE } from "./src/game/engineIgnition.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
@@ -1118,6 +1121,8 @@
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
     import { HallDust, HALL_DUST_TUNE } from "./src/3d/gasField/hallDust.js";
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
+    // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
+    import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
     // Diagnostyka i strojenie z konsoli: HallDust.stats, HallDustTune.jetSpeed = 3000 itd.
     window.HallDust = HallDust;
     window.HallDustTune = HALL_DUST_TUNE;
@@ -1182,6 +1187,11 @@
     import { createReactorCoreGame } from "./src/game/reactorCoreGame.js";
     import { reactorCoreFrame, reactorHull as reactorCoreHull, CORE_STATE as REACTOR_CORE_STATE } from "./src/game/reactorCore.js";
     import { createReactorBlastFx } from "./src/3d/reactorBlast/reactorBlastFx.js";
+    // Zbiornik paliwa (F14 audytu wybuchów, decyzja użytkownika 2026-10-08): miejsce i skala wybuchu okrętu, który ginie
+    // bez detonacji rdzenia — wybuch z gazu (makeReactorBlow) z miejsca zbiornika, strumienie wzdłuż osi kadłuba.
+    import { attachFuelTank, fuelTankBlast } from "./src/game/fuelTank.js";
+    import { FUEL_TANK_TUNE, fuelTankBlastSize } from "./src/data/fuelTanks.js";
+    import { reactorColorFor } from "./src/data/reactorCores.js";
     import { createReactor3D } from "./src/3d/reactor3D.js";
     // Pył kosmiczny (2026-10-05): drobiny w warstwach paralaksy i smugi z ruchu kamery — w otwartej przestrzeni
     // jedyny punkt odniesienia, który zdradza lot (src/3d/dust/).
@@ -1294,7 +1304,7 @@
       HIT_PENETRATE, HIT_RICOCHET, PASS_EXIT, PASS_STUCK, PASS_INSIDE
     } from "./src/game/projectileMechanics.js";
     import {
-      chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
+      chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge, isStationary,
       CHARGE_FIRE, CHARGE_CHARGING
     } from "./src/game/weaponCharge.js";
     import { weaponImpactScale } from "./src/game/weaponFeel.js";
@@ -1506,6 +1516,8 @@
     hexShipsCanvas.height = H;
     // Obraz rdzeni reaktora (tworzony przy Core3D niżej; logika: ReactorGame).
     let reactorBlastFx = null;
+    // Wybuchy okrętów z gazu (createExplosionFactory bez withRepairDroneBlast) — śmierć ze zbiornika paliwa, gaz rdzenia.
+    let shipBlastFactory = null;
     let reactorModel3D = null;
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
@@ -1539,6 +1551,11 @@
         // Wołają `window.makeReactorBlow({ x, y, size, profile })`: rozpad stacji (Destruction3D), progi i łańcuch
         // rozpadu suchego doku, śmierć gracza bez rdzenia (triggerReactorBlow3D), skrypty misji.
         window.makeReactorBlow = createExplosionFactory(Core3D, { rocketFx, weaponFx: WeaponFx });
+        // Dym zapłonu silnika w hali K-7 (etap E2): otoczenie domeny = światło wnętrza aktywnej hali (pył hal).
+        if (window.__explosions) window.__explosions.interiorLight = (x, y) => HallDust.interiorLightAt(x, y);
+        // Wybuchy okrętów (zbiornik paliwa przy śmierci NPC, gaz detonacji rdzenia) — fabryka BEZ zmiatania dronów
+        // naprawczych: śmierć okrętu z puli HP dawniej dronów nie raniła (sam obraz, rozgrywka bez zmian).
+        shipBlastFactory = window.makeReactorBlow;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
         window.makeReactorBlow = withRepairDroneBlast(window.makeReactorBlow);
         window.Destruction3D.init({
@@ -8960,6 +8977,55 @@
       return isMainDriveDestroyed(ship) && !ship.__carriedBy;
     }
 
+    // SILNIKI MAIN gracza: WYŁ. / ZAPŁON / PRACA / GASZENIE (src/game/engineIgnition.js — etap E2). Ciąg główny × mnożnik
+    // stanu (computeShipThrusterForces: mainScale), skok i szarża wymagają PRACY (autozapłon i komunikat). Na pokładzie
+    // holownika napęd i tak prowadzi holownik — stan silników bez znaczenia.
+    function playerEnginesNotRunning() {
+      return !ship.__carriedBy && engineBlocksDrive(ship);
+    }
+    /** Autozapłon (ciąg, skok, szarża przy wyłączonych silnikach). Zwraca true, gdy zapłon ruszył. */
+    function autoIgnitePlayerEngines(reason = '') {
+      if (!ENGINE_IGNITION_TUNE.autoIgnite || ship.destroyed || ship.__carriedBy || playerDriveDown()) return false;
+      if (StoryGame.blocksInput) return false;
+      if (engineStateOf(ship) !== ENGINE_OFF) return false;
+      if (!igniteEngine(ship)) return false;
+      pushZoneMessage(reason ? `ZAPŁON SILNIKÓW — ${reason}` : 'ZAPŁON SILNIKÓW', 1.6, { label: 'SILNIKI' });
+      return true;
+    }
+    /** Skok / szarża przy silnikach nie w PRACY: autozapłon i komunikat (zwraca true = zablokowane). */
+    function playerEnginesBlockDrive(what) {
+      if (!playerEnginesNotRunning()) return false;
+      if (autoIgnitePlayerEngines(`${what} PO ROZRUCHU`)) return true;
+      if (engineStateOf(ship) === ENGINE_OFF) pushZoneMessage(`${what}: SILNIKI WYŁĄCZONE — ODPAL (0)`, 1.6, { label: 'SILNIKI', tone: 'warn' });
+      else pushZoneMessage(`${what}: SILNIKI W ROZRUCHU`, 1.2, { label: 'SILNIKI', tone: 'warn' });
+      return true;
+    }
+    /** Przełącznik silników (klawisz 0). */
+    function togglePlayerEngines() {
+      if (!ship || ship.destroyed) return;
+      if (ship.__carriedBy) { pushZoneMessage('SILNIKI: STATEK NA POKŁADZIE HOLOWNIKA', 1.4, { label: 'SILNIKI', tone: 'warn' }); return; }
+      if (warp.state !== 'idle' || warp.exitRamp?.active) { pushZoneMessage('SILNIKI: NIE W SKOKU', 1.4, { label: 'SILNIKI', tone: 'warn' }); return; }
+      const st = engineStateOf(ship);
+      if ((st === ENGINE_OFF) && playerDriveDown()) { pushZoneMessage('SILNIKI: NAPĘD GŁÓWNY ZNISZCZONY', 1.6, { label: 'SILNIKI', tone: 'warn' }); return; }
+      engineIgnitionOf(ship);
+      if (!toggleEngine(ship)) return;
+      const now = engineStateOf(ship);
+      pushZoneMessage(now === ENGINE_SHUTDOWN ? 'GASZENIE SILNIKÓW' : 'ZAPŁON SILNIKÓW', 1.4, { label: 'SILNIKI' });
+    }
+    /** Krok stanu silników gracza (physicsStep, czas gry) + autozapłon ciągiem (W / S, gałka, autopilot). */
+    function stepPlayerEngineIgnition(dt) {
+      if (!ship || ship.destroyed) return;
+      stepEngineIgnition(ship, dt);
+      if (warp.state === 'idle' && Math.max(Number(input.main) || 0, Number(input.retro) || 0) > 0.05) autoIgnitePlayerEngines();
+    }
+    window.PlayerEngines = {
+      toggle: () => togglePlayerEngines(),
+      ignite: () => igniteEngine(ship),
+      shutdown: () => shutdownEngine(ship),
+      state: () => ship?.engineIgn ? { ...ship.engineIgn } : null,
+      tune: ENGINE_IGNITION_TUNE
+    };
+
     // Skok gracza z ładunkiem (holownik pod nim): automat skoku gracza (rulon, soczewka, ośrodek „Nurtu”) z wyjściem
     // w końcu odcinka; paliwo skoku daje holownik (zapas gracza wraca po skoku).
     const _tugWarp = { active: false, fuel: 0, aim: null, npc: null };
@@ -9009,6 +9075,9 @@
         ship.command = null;
         clearPlayerAttackState();
         if (warp.state === 'charging') { warp.state = 'idle'; warp.charge = 0; }
+        // Statek na pokładzie: silniki gasną (resztkowy dym z dysz) — po wyładunku autozapłon ciągiem (engineIgnition.js).
+        engineIgnitionOf(ship);
+        shutdownEngine(ship);
       } else {
         StoryGame._block.delete('tug');
       }
@@ -10667,9 +10736,16 @@
     }
 
     // Komunikaty ładowania (po naciśnięciu klawisza i przy przerwaniu): krótka nazwa broni.
+    // Trzymany LPM zgłasza strzał co krok — ten sam komunikat najwyżej raz na ~1,2 s (stan na funkcji).
     function pushSpecialChargeMessage(weapon, event) {
       const name = String(weapon?.name || weapon?.id || 'BROŃ').split(/[\s(]/)[0].toUpperCase();
       const stationary = weapon?.requiresStationary === true;
+      const key = `${name}:${event}`;
+      const now = performance.now();
+      const last = pushSpecialChargeMessage;
+      if (key === last.key && now - last.at < 1200) return;
+      last.key = key;
+      last.at = now;
       if (event === 'start') {
         if (chargeTimeOf(weapon) >= 1) {
           pushZoneMessage(stationary ? `${name}: ŁADOWANIE — OKRĘT MUSI STAĆ` : `${name}: ŁADOWANIE`, 1.6);
@@ -15551,6 +15627,8 @@
         if (!silent) pushZoneMessage(`${def.label}: NAPĘD GŁÓWNY ZNISZCZONY`, 1.6, { tone: 'warn' });
         return false;
       }
+      // …ani przy silnikach wyłączonych / w rozruchu / gaszonych (engineIgnition.js): autozapłon, szarża po rozruchu.
+      if (def.id !== 'rapid_fire' && playerEnginesBlockDrive(def.label)) return false;
       if (!shipSystemReady(ramBurn, def)) {
         const wait = def.id === 'ram_burn' ? 'REAKTOR' : (def.id === 'rapid_fire' ? 'CHŁODZENIE' : 'ŁADOWANIE');
         if (!silent) pushZoneMessage(`${def.label}: ${wait} ${Math.round(ramBurn.charge * 100)}%`, 1.2, { tone: 'warn' });
@@ -16363,6 +16441,11 @@
           cancelTravel('TRAVEL: NAPĘD GŁÓWNY ZNISZCZONY — SKOK NIEMOŻLIWY');
           return;
         }
+        // Silniki wyłączone (engineIgnition.js): autozapłon, skok po rozruchu (obrót trwa dalej).
+        if (playerEnginesNotRunning()) {
+          autoIgnitePlayerEngines('SKOK PO ROZRUCHU');
+          return;
+        }
         if (err <= TRAVEL_TUNE.alignTolerance && Math.abs(ship.angVel) <= TRAVEL_TUNE.alignSpin
           && fuelOk && warp.state === 'idle' && !warp.exitRamp?.active) {
           ship.command = null;
@@ -16463,6 +16546,8 @@
         pushZoneMessage('WARP: NAPĘD GŁÓWNY ZNISZCZONY — WEZWIJ HOLOWNIK', 2.2, { label: 'SILNIKI', tone: 'warn' });
         return;
       }
+      // Silniki wyłączone / w rozruchu / gaszone (engineIgnition.js): autozapłon — skok po rozruchu.
+      if (playerEnginesBlockDrive('WARP')) return;
       ship.command = null;
       clearPlayerAttackState();
       const leg = travelNav.target ? nextTravelLeg() : null;
@@ -16852,6 +16937,11 @@
         }
       },
       // Reflektory (drogowe i otoczenia) gracza — lampy pozycyjne zostają. W trybie wydobycia L należy do platformy.
+      // Silniki główne: odpal / zgaś (etap E2 — src/game/engineIgnition.js; autozapłon także ciągiem W / S).
+      'ship.engines': {
+        gate: () => !!ship && gaNotRts(),
+        run() { togglePlayerEngines(); }
+      },
       'ship.lights': {
         gate: () => !!ship,
         run() {
@@ -20815,9 +20905,12 @@
       fireSpecialLoadout(lo, lo.hp, index);
     }
 
+    // Grupa w ręku (LPM) zgłasza jak naciśnięcie klawisza — gracz dostaje komunikaty ładowania
+    // (np. „MJOLNIR: WYMAGA POSTOJU OKRĘTU”); dawniej zgłoszenie z LPM było ciche i Mjolnir w ruchu
+    // milczał bez słowa. Wieże na auto — bez komunikatów.
     function fcChargeSpecial(index, lo, manual) {
       lo.hp.fcAutoShot = !manual;
-      requestMountCharge(mountChargeState(getMountedWeaponAim(ship, lo)), false);
+      requestMountCharge(mountChargeState(getMountedWeaponAim(ship, lo)), manual);
     }
 
     // Rakiety na auto (fcPlanMissileSalvo): wyrzutnia gotowa, rakiety w locie (budżet celu) i salwa
@@ -21024,6 +21117,8 @@
       if (fireControl.storyHold && !StoryGame.active) fireControl.storyHold = false;
       env.silent = (!!ship.cloak && isCloakEngaged(ship.cloak)) || fireControl.storyHold === true;
       env.silentHand = false;
+      // Postój dla broni z `requiresStationary` (Mjolnir) — ten sam próg co ładowanie (weaponCharge.js).
+      env.stationary = isStationary(Math.hypot(Number(ship.vel?.x) || 0, Number(ship.vel?.y) || 0), Number(ship.angVel) || 0);
       stepFireControl(fireControl, env);
     }
     const FC_CONTROLLER_AIM_GROUPS = ['missile', 'special_missile'];
@@ -21555,9 +21650,12 @@
       }
 
       // Śmierć gracza = detonacja rdzenia Atlasa (ReactorGame, kadłub pęka na encji gracza);
-      // kadłub bez rdzenia — dawny wybuch w punkcie (rozpad stacji używa go dalej).
+      // kadłub bez rdzenia — wybuch zbiornika paliwa (miejsce, skala, strumienie wzdłuż osi, nośnik), bez zbiornika —
+      // dawny wybuch w punkcie.
       if (!ReactorGame.hostKilled(ship, { force: true })) {
-        triggerReactorBlow3D(ship.pos.x, ship.pos.y + ship.h * 0.08, ship.h * 0.35);
+        const tb = fuelTankBlast(ship, _fuelBlast, { candidates: window.wrecks });
+        if (tb) triggerReactorBlow3D(tb.x, tb.y, tb.size, fuelBlastOpts(tb));
+        else triggerReactorBlow3D(ship.pos.x, ship.pos.y + ship.h * 0.08, ship.h * 0.35, { hostKey: Number(ship.beamHull?.dmgKey) || 0 });
       }
       StoryGame.emit('playerDestroyed', { ship });
     }
@@ -21887,6 +21985,13 @@
         // reaktora (tryTriggerCriticalReactorBlow + reactorblow.js) usunięty.
         if (npc.beamHull && ReactorGame.hostKilled(npc)) return;
 
+        // Wybuch okrętu z ZBIORNIKA PALIWA (src/game/fuelTank.js): miejsce liczone PRZED zamianą kadłuba we wrak
+        // (createWreckage przenosi ciało). Myśliwce i drony — dawny wybuch drona (WeaponFx.droneBlast).
+        const tankBlast = isFighterLike ? null : fuelTankBlast(npc, _fuelBlast, { candidates: window.wrecks });
+        // Ród kadłuba (hull.dmgKey) PRZED zamianą we wrak (createWreckage przenosi ciało — npc.beamHull znika): wrak-gospodarz
+        // nie jest przeszkodą gazu swojego wybuchu (etap C).
+        const blastHostKey = Number(npc.beamHull?.dmgKey) || 0;
+
         if (npc.beamHull) {
           if (HullBodies.structuralState(npc).active > 0 && window.createWreckage) window.createWreckage(npc);
         } else if (npc.hexGrid?.shards) {
@@ -21895,12 +22000,13 @@
             window.createWreckage(npc, survivingShards);
           }
         }
-        if (cause === 'plasma') {
-          CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.2 : 1.45);
-        } else if (cause === 'default') {
-          CanvasVFX.spawnDefaultHit(npc.x, npc.y, isFighterLike ? 1.2 : 1.35);
+        // Wybuch drona (WeaponFx.droneBlast) — myśliwce; A/B dawnej śmierci okrętu: ShipBlastTune.fuelTank = false.
+        if (isFighterLike || !SHIP_BLAST_TUNE.fuelTank) {
+          if (cause === 'plasma') CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.2 : 1.45);
+          else if (cause === 'default') CanvasVFX.spawnDefaultHit(npc.x, npc.y, isFighterLike ? 1.2 : 1.35);
+          else CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.05 : 1.35);
         } else {
-          CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.05 : 1.35);
+          spawnShipDeathBlast(npc, tankBlast, blastHostKey);
         }
 
         // Towar przechodzi carrier -> dokładnie jeden wrak w tej samej operacji
@@ -21944,6 +22050,7 @@
       },
       // budowle w bańce gracza (kawałki doku — src/game/worldBodies.js): fala reaktora jako front ciśnienia
       onDetonate: (ev) => {
+        spawnReactorDetonationGas(ev);
         if (ev?.blast && worldBodies.stats.live > 0) worldBodies.detonateDamage(ev.x, ev.y, Number(ev.blast.aoeRadius) || 0, Number(ev.blast.aoeDamage) || 0);
         // fala reaktora zmiata drony naprawcze w zasięgu (bez strony)
         if (ev?.blast && RepairSwarm.out > 0) RepairSwarm.blast(ev.x, ev.y, Number(ev.blast.aoeRadius) || 0, Number(ev.blast.aoeDamage) || 0, null);
@@ -21975,8 +22082,85 @@
         : getNpcHullRenderProfileId(entity);
       try { ReactorGame.attach(entity, hullId); }
       catch (err) { console.warn('[Reaktor] montaż rdzenia nieudany:', err); }
+      // Zbiornik paliwa po rdzeniu (automat omija komorę reaktora).
+      attachEntityFuelTank(entity, hullId);
     }
     window.ReactorGame = ReactorGame;
+
+    // ─── ZBIORNIK PALIWA (src/game/fuelTank.js, dane src/data/fuelTanks.js; F14 docs/AUDYT-wybuchy-gaz-2026-10-08.md) ───
+    // Okręt, który ginie bez detonacji rdzenia (śmierć z puli HP, gracz bez rdzenia), wybucha z gazu z MIEJSCA
+    // ZBIORNIKA: profil wg klasy kadłuba, rozmiar ∝ √pojemności, nośnik = prędkość wraku, strumienie gazu wzdłuż osi
+    // kadłuba (rozerwany zbiornik = gaz z rury). Sam obraz — bez obrażeń (rozgrywka jak dawniej).
+    // A/B w biegu (konsola, harness scripts/webgpu/zbiornik-gra.mjs): fuelTank — wybuch ze zbiornika (false = dawny wybuch
+    // drona przy śmierci okrętu), coreGas — domena gazu przy detonacji rdzenia.
+    // jetVelTau — zanik narzucenia prędkości strumieni zbiornika [s] (FUEL_TANK_TUNE; reżyser gazu ma 0,15 dla kłębów).
+    const SHIP_BLAST_TUNE = { fuelTank: true, coreGas: true, jetVelTau: FUEL_TANK_TUNE.jetVelTau };
+    window.ShipBlastTune = SHIP_BLAST_TUNE;
+    const _fuelBlast = { x: 0, y: 0, size: 0, profile: 'capital', vx: 0, vy: 0, axisX: 0, axisY: 0, onHost: true, entity: null };
+    // hostKey — klucz rodu kadłuba (hull.dmgKey): wrak wybuchającego okrętu nie jest przeszkodą swojego gazu (etap C).
+    const _fuelBlastOpts = { x: 0, y: 0, size: 0, profile: 'capital', vx: 0, vy: 0, axisX: 0, axisY: 0, jetVelTau: FUEL_TANK_TUNE.jetVelTau, hostKey: 0 };
+    let _fuelEditorShips = null, _fuelEditorAt = -1e9;
+    // Edytor gniazd (hpEditor.v1 → ships[alias].fuelTanks, markery w px PNG z `r`) bierze górę nad tabelą i automatem.
+    function editorFuelTanksFor(hullId) {
+      const now = performance.now();
+      if (now - _fuelEditorAt > 5000) { _fuelEditorShips = readShipsEditorConfigFromStorage(); _fuelEditorAt = now; }
+      const alias = toEditorHullAlias(hullId);
+      if (!alias) return null;
+      const own = _fuelEditorShips?.[alias]?.fuelTanks;
+      if (Array.isArray(own) && own.length) return own;
+      const def = SHIP_EDITOR_DEFAULTS?.ships?.[alias]?.fuelTanks;
+      return Array.isArray(def) && def.length ? def : null;
+    }
+    function attachEntityFuelTank(entity, hullId) {
+      if (!entity?.beamHull) return;
+      try { attachFuelTank(entity, hullId, { editorTanks: editorFuelTanksFor(hullId) }); }
+      catch (err) { console.warn('[Zbiornik] montaż zbiornika paliwa nieudany:', err); }
+    }
+    function fuelBlastOpts(tb) {
+      const o = _fuelBlastOpts;
+      o.x = tb.x; o.y = tb.y; o.size = tb.size; o.profile = tb.profile; o.vx = tb.vx; o.vy = tb.vy;
+      o.axisX = tb.axisX; o.axisY = tb.axisY;
+      o.jetVelTau = SHIP_BLAST_TUNE.jetVelTau;
+      o.hostKey = Number(tb.entity?.beamHull?.dmgKey) || 0;
+      return o;
+    }
+    // Śmierć NPC bez detonacji rdzenia: wybuch zbiornika (tb z fuelTankBlast, liczony przed zamianą we wrak); kadłub
+    // bez zbiornika — wybuch w środku okrętu z klasą z promienia.
+    function spawnShipDeathBlast(npc, tb, hostKey = 0) {
+      const spawn = shipBlastFactory;
+      if (!spawn) return false;
+      if (tb) { const o = fuelBlastOpts(tb); if (hostKey) o.hostKey = hostKey; return spawn(o); }
+      const o = _fuelBlastOpts;
+      const r = Math.max(40, Number(npc.radius) || 120);
+      o.x = npc.x; o.y = npc.y; o.vx = Number(npc.vx) || 0; o.vy = Number(npc.vy) || 0;
+      o.profile = r >= 210 ? 'capital' : (r >= 150 ? 'cruiser' : 'escort');
+      o.size = Math.max(70, Math.min(460, r * 0.9));
+      o.axisX = 0; o.axisY = 0;
+      o.hostKey = hostKey || Number(npc.beamHull?.dmgKey) || 0;
+      return spawn(o);
+    }
+    // Detonacja rdzenia: obraz reactorBlast (plazma, iskry, łuki, światła, fala) + ta sama domena gazu co wybuch
+    // zbiornika — dym w barwie plazmy frakcji (jedna rodzina wybuchów okrętów). Sam gaz (gasOnly).
+    const _coreGasOpts = { x: 0, y: 0, size: 0, profile: 'capital', vx: 0, vy: 0, tint: [1, 1, 1], gasOnly: true, hostKey: 0 };
+    function spawnReactorDetonationGas(ev) {
+      const spawn = shipBlastFactory;
+      const host = ev?.host;
+      if (!SHIP_BLAST_TUNE.coreGas || !spawn || !host || !Number.isFinite(ev.x) || !Number.isFinite(ev.y)) return false;
+      const o = _coreGasOpts;
+      const tank = host.fuelTank;
+      const cls = ev.core?.classId;
+      o.x = ev.x; o.y = ev.y;
+      // ród rdzenia (= hull.dmgKey gospodarza; kadłub jest już wrakiem — applyReactorDetonation przenosi ciało)
+      o.hostKey = Number(ev.core?.lineage) || Number(host.beamHull?.dmgKey) || 0;
+      o.vx = Number(host.vel?.x ?? host.vx) || 0; o.vy = Number(host.vel?.y ?? host.vy) || 0;
+      o.profile = cls === 'escort' || cls === 'cruiser' ? cls : 'capital';
+      o.size = tank ? tank.size : fuelTankBlastSize(cls === 'escort' ? 100 : (cls === 'cruiser' ? 220 : 560));
+      // Dym rozjaśniony barwą plazmy (albedo × tint): 0,55 + 0,45 · barwa / maks.
+      const col = ev.core?.color || reactorColorFor(host);
+      const m = Math.max(1e-3, col[0], col[1], col[2]);
+      o.tint[0] = 0.55 + 0.45 * col[0] / m; o.tint[1] = 0.55 + 0.45 * col[1] / m; o.tint[2] = 0.55 + 0.45 * col[2] / m;
+      return spawn(o);
+    }
 
     // Stan struktury kadłuba do sufitu HP: węzły kadłuba na belkach albo heksy (asteroidy).
     const _hullStructState = { active: 0, total: 0, ratio: 1 };
@@ -24380,6 +24564,8 @@
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
       updateEnginePower(dt);
+      // Silniki MAIN: zapłon / gaszenie (engineIgnition.js) i autozapłon ciągiem.
+      stepPlayerEngineIgnition(dt);
       // System okrętu (F): ładunek, przerwania, limit napędu na czas szarży / zrywu / skoku manewru.
       stepPlayerShipSystem(dt);
       // Postawa okrętu (TARCZE / PRZELOT): limit i ciąg napędu.
@@ -24553,6 +24739,12 @@
         warp.charge = 0;
         pushZoneMessage('WARP: PRZERWANY — NAPĘD GŁÓWNY ZNISZCZONY', 2.2, { label: 'SILNIKI', tone: 'warn' });
       }
+      else if (warp.state === 'charging' && playerEnginesNotRunning() && !_tugWarp.active) {
+        // Silniki zgaszone w trakcie ładowania (engineIgnition.js) — skok przerwany.
+        warp.state = 'idle';
+        warp.charge = 0;
+        pushZoneMessage('WARP: PRZERWANY — SILNIKI ZGASZONE', 2.0, { label: 'SILNIKI', tone: 'warn' });
+      }
       else if (warp.state === 'charging') {
         // Kurs stoi od ładowania (rulon zwija tło wokół osi skoku — decyzja usera 2026-10-03):
         // obrót gaśnie, kurs = ustalony przy starcie ładowania (dawniej dziób szedł za kursorem).
@@ -24632,7 +24824,9 @@
             // Zryw silników (system F): ciąg główny × thrustMul.
             * playerBurstThrustMul(),
           sideForceMul: driveState.sideForceScale,
-          reverseInput: reverseThrustInput
+          reverseInput: reverseThrustInput,
+          // Silniki wyłączone / w zapłonie — bez ciągu głównego, gaszenie — ciąg spada (engineIgnition.js).
+          mainScale: engineThrustScale(ship)
         }, _p1ForceScratch);
 
         const worldFx = (forward.x * thrusterForces.localFx) + (right.x * thrusterForces.localFy);
@@ -24647,7 +24841,7 @@
           const along = (ship.vel.x * forward.x) + (ship.vel.y * forward.y);
           if (along < burnDef.speed) {
             // Zryw ciągną silniki główne — ze zniszczonymi dyszami MAIN słabszy (engineDamage.js).
-            const dv = Math.min(burnDef.accel * mainEngineFraction(ship) * dt, burnDef.speed - along);
+            const dv = Math.min(burnDef.accel * mainEngineFraction(ship) * engineThrustScale(ship) * dt, burnDef.speed - along);
             ship.vel.x += forward.x * dv;
             ship.vel.y += forward.y * dv;
           }
@@ -26352,6 +26546,81 @@
       }
       return out;
     }
+
+    // PRZESZKODY GAZU WYBUCHÓW (etap C — F2 docs/AUDYT-wybuchy-gaz-2026-10-08.md; src/game/gasObstacleInput.js): wejście
+    // klatki reżysera wybuchów (window.__explosions) — bryły hal K-7 i suchego doku przy kamerze, kadłuby przy domenach
+    // gazu (okręty widoczne we mgle wojny i wraki; bez odłamów budowli — worldDebris rodzą się w kuli wybuchu kawałka).
+    // Kawałek doku: bryła trafień na miejscu (statyka i ciało nietknięte), obrys ciał (ruszony — taran bramy, wyrwy),
+    // nic (odpadł, schowany). Bez alokacji w klatce (listy i opcje trzymane).
+    const gasObstIn = createGasObstacleInput();
+    const gasObstState = createGasObstacleState();
+    const _gasDomRects = new Float64Array(4 * 16);
+    const _gasNpcSeen = [];
+    const _gasWreckSeen = [];
+    const _gasHullLists = [null, null, null, null];
+    const _gasObstOpts = { dt: 0, camX: 0, camY: 0, viewHalf: 0, rings: null, dock: null, extra: null, hulls: _gasHullLists, skip: null, domains: _gasDomRects, nDomains: 0 };
+    let _gasDock = null;
+    let _gasDockStation = null;
+    function gasDockObstacles() {
+      const st = StoryGame.site?.station;
+      const dock = st?.dryDock;
+      if (!dock || !Array.isArray(dock.hitShapes)) return null;
+      if (_gasDockStation !== st) {
+        _gasDockStation = st;
+        const pieceOf = (chunk) => (st._worldSite ? worldBodies.piece(st._worldSite, chunk) : null);
+        _gasDock = {
+          shapes: dock.hitShapes,
+          status(chunk) {
+            const gone = st._dockGone;
+            if (!gone || !gone.has(chunk)) return 1;
+            const p = pieceOf(chunk);
+            if (!p || p.state !== 'live' || p.lost) return 0;
+            return p.touched ? 2 : 1;
+          },
+          feet(chunk, cb) {
+            const p = pieceOf(chunk);
+            if (!p) return;
+            if (p.entity && !p.entity.dead) cb(p.entity);
+            const isl = p.islands;
+            for (let i = 0; i < isl.length; i++) if (isl[i] && !isl[i].dead) cb(isl[i]);
+          }
+        };
+      }
+      return _gasDock;
+    }
+    function gasObstacleSkip(e) {
+      return !!e.worldDebris;
+    }
+    // Koszt CPU pakowania (konsola, harness): ms — ostatnia klatka, hulls — kadłuby w tablicy, boxes / foots — statyka.
+    // deferred — kadłuby bez obrysu czekające na budżet, firstBuilds / rebuilds — pierwsze obrysy / przebudowy w klatce.
+    const _gasObstStats = { ms: 0, hulls: 0, boxes: 0, foots: 0, dropped: 0, deferred: 0, rebuildMs: 0, firstBuilds: 0, rebuilds: 0 };
+    window.__gasObstStats = _gasObstStats;
+    function packGasObstacles(cam, viewHalf, dt) {
+      const ex = window.__explosions;
+      if (!ex) return;
+      const t0 = performance.now();
+      const o = _gasObstOpts;
+      o.dt = dt; o.camX = cam.x; o.camY = cam.y; o.viewHalf = viewHalf;
+      o.rings = haloRings ? haloRings.entries : null;
+      o.dock = gasDockObstacles();
+      o.nDomains = ex.domainRects(_gasDomRects);
+      _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
+      _gasHullLists[1] = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
+      _gasHullLists[2] = o.nDomains ? fogSeenInto(npcs, _gasNpcSeen) : null;
+      _gasHullLists[3] = o.nDomains ? fogSeenInto(wrecks, _gasWreckSeen) : null;
+      o.skip = gasObstacleSkip;
+      packGasObstacleFrame(gasObstIn, gasObstState, o);
+      ex.setObstacleInput(gasObstIn);
+      _gasObstStats.ms = performance.now() - t0;
+      _gasObstStats.hulls = gasObstIn[GAS_OBST_IN.hulls];
+      _gasObstStats.boxes = gasObstIn[GAS_OBST_IN.boxes];
+      _gasObstStats.foots = gasObstIn[GAS_OBST_IN.foots];
+      _gasObstStats.dropped = gasObstIn[GAS_OBST_IN.dropped];
+      _gasObstStats.deferred = gasObstState.deferred;
+      _gasObstStats.rebuildMs = gasObstState.rebuildMs;
+      _gasObstStats.firstBuilds = gasObstState.firstBuilds;
+      _gasObstStats.rebuilds = gasObstState.rebuilds;
+    }
     // Krok czujników: gracz 2 i wraki dla mgły wojny (pola przepisywane w miejscu).
     const _sensorExtra = { player2: null, wrecks: null };
     // Ten sam krok poza fizyką (zamrożony świat fabuły, dt = 0).
@@ -27154,6 +27423,10 @@
         clock: haloRings ? haloRings.clock : 0
       });
       HallDust.submit(HallDust.input);
+      // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
+      // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
+      // efektów „wybuchy” czyta tylko tę tablicę.
+      packGasObstacles(cam, Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1), (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);
@@ -28385,6 +28658,12 @@
           _panelArgs.sub = all ? 'NAPĘD ZNISZCZONY' : `SILNIKI ${nEng - deadEng}/${nEng}`;
           _panelArgs.subColor = all ? '#ff4d5e' : '#ffb86b';
         }
+        // Silniki wyłączone / zapłon / gaszenie (src/game/engineIgnition.js — etap E2) — też zamiast trybu.
+        const engLabel = deadEng < nEng || nEng === 0 ? engineHudLabel(ship) : null;
+        if (engLabel) {
+          _panelArgs.sub = deadEng > 0 ? `SILNIKI ${nEng - deadEng}/${nEng} ${engLabel}` : `SILNIKI: ${engLabel}`;
+          _panelArgs.subColor = engLabel === 'ZAPŁON' ? '#ffd27a' : (engLabel === 'GASZENIE' ? '#ffb86b' : '#ff8a94');
+        }
         drawTurretPanel(tp.ctx, _panelArgs);
       }
 
@@ -29313,6 +29592,8 @@
     }
     function storyWakeNpc(npc) {
       if (!npc || npc.dead) return;
+      // Okręt zaparkowany z wyłączonymi silnikami (engineIgnition.js): obudzony bez trasy wylotu — zapłon od razu.
+      if (npc.engineIgn && engineStateOf(npc) === ENGINE_OFF) igniteEngine(npc);
       npc.combatDisabled = false;
       npc.ai = npc.__storyWakeAi || npc.__storyAiSaved || (dt => runCallInCombatAI(npc, npc.type, dt));
     }
@@ -29450,6 +29731,13 @@
       // pozy obsługi stanowisk hali (suwnice, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
       // i biorą się źródła gazu z przewodów (pył hal, src/3d/gasField/)
       k7HallPoses: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.collider?.registry?.halls?.[i]?.poses || null,
+      // WYPOSAŻENIE z panelu stanowiska (przed ODDOKUJ): terminal portu Ziemi (K-7) na zakładce kart.
+      openFitting: () => {
+        const port = stations.find(st => st?.ringPort === 'earth');
+        if (!port) return false;
+        openStationUI(port, 'mechanic');
+        return !!stationUI.open;
+      },
       hasContact: (a, b) => !!(a?.beamHull && b?.beamHull && HullBodies.hasContact(a, b)),
       // Ile konstrukcji kadłuba zostało (0..1) — taran liczy zmiażdżone kadłuby.
       hullRatio: (e) => (e?.beamHull ? (HullBodies.structuralState(e)?.ratio ?? 1) : 1),

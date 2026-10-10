@@ -21,6 +21,11 @@
 > warianty, które kosztują kasę, lub jeśli ma w hangarze to free, lub mniej kasy — tyle, ile części ma”; D3 — „klasa
 > dział snajperskich — potrzebne dla balansu”; D4 — „jeśli uważasz, że jest to potrzebne do balansu” (jest — § 4.2).
 > Etap 0 ruszył w osobnej sesji („Etap 0 fitowania: porządki mechanika i zapis magazynu”).
+>
+> **Wdrożone w grze 2026-10-08 (polecenie „wgrywamy do gry”, bez commita):** etapy 2–6 — karty, automat, ceny portu,
+> moduły, ekran WYPOSAŻENIE (karty + refit ręczny), Komory rakietowe, przycisk WYPOSAŻENIE w panelu stanowiska K-7;
+> D5–D9 wdrożone wg propozycji. Opis wdrożenia: AGENTS.md § „WYPOSAŻENIE”; próby w grze
+> `scripts/webgpu/wyposazenie-gra.mjs`, `wyposazenie-kampania-gra.mjs`. Otwarte: etapy 7–8.
 
 ## 0. W skrócie
 
@@ -515,11 +520,11 @@ bez znacznika dostaje brakujące sztuki kompletu przy pierwszym wczytaniu.
 |---|---|---|
 | 0 | Porządki mechanika bez nowych funkcji: seria 1/3/5/10 (off-by-one), błąd braku sztuki, naprawa zniszczonych gniazd w `handleRepair` / `dockRemontShip`, usługa „uzupełnij amunicję”, zapis magazynu broni + odtwarzanie gniazd po `id`, usunięcie martwych ulepszeń (po D7) — **w toku, osobna sesja** | testy niezmiennika magazynu i zapisu przechodzą; F5 nie gubi broni z wraków |
 | 1 | **Wdrożony 2026-10-08 (bez commita; notatka `etap1-klasa-snajperska.md`, próba w grze `scripts/webgpu/lanca-gra.mjs`).** Klasa dział snajperskich (D3, § 4.3.1): `weaponClass: 'sniper'`, Lanca M / L (dane, efekty, wieża 2D i 3D), Valkyrie S 6,5 km, Plasma Gatling 640 DPS (D4), strażnik klasy w testach | Lanca strzela w grze (`zasiegi-gra.mjs` z nadpisaniem broni gracza), testy kompletu broni przechodzą, 0 pipeline'ów w klatce |
-| 2 | Dane i automat: `fitPresets.js` (4 karty), `fitPlanner.js` (tryby `own` / `buy`), `fitStats.js`, `priceFit` (+ testy); start gry i kampanii przez UNIWERSALNĄ (zastępuje `autoMountDefaults` i `CAMPAIGN_LOADOUT`); komplety misji startowej + `kitsGranted` | profil UNIWERSALNEJ = § 4.2; tank ↔ snajper ↔ tank wraca bit w bit; konsola `applyFitPreset('tank')` działa w grze |
-| 3 | Moduły: `shipModules.js`, źródło `fit` w `shipModifiers.js` (gotowe z sesji F) + mnożniki per klasa broni i `weaponRangeMul` / `weaponSpeedMul` we wszystkich miejscach z § 3.3, wzmacniacz tarcz, komputer balistyczny, zapis `partStock` / `hullModules` / `hullSystems` (= `PLAYER.hullSystems`) | w grze: zasięg Lancy L 15 km w `rangeOf`, okręgu HUD i życiu pocisku; tarcza 25 200; wieże na auto strzelają z nowego zasięgu |
-| 4 | Ekran KONFIGURACJE (4 karty, profil ognia, mapa gniazd, ceny braków, „Z MAGAZYNU” / „KUP I ZASTOSUJ”, pasek zmian) w tablecie i przycisk WYPOSAŻENIE w panelu stanowiska K-7 | zrzuty 1920×1080 i 1280×720 bez przepełnień; zakup + zastosowanie ≤ 1 klatka przestoju; zakup bez kredytów nic nie zmienia |
-| 5 | REFIT RĘCZNY (sylwetka, zaznaczanie, lista broni z ceną, moduł / F / chipy, własne konfiguracje) — zastępuje dzisiejsze listy | wszystko, co dało się zrobić w starym mechaniku, da się zrobić klikiem |
-| 6 | RAKIETOWIEC: komory rakietowe (zamiana typów gniazd), amunicja ×1,5, automat rakiet przy 8 wyrzutniach | salwy z 8 wyrzutni w odwecie misji 1 bez spadku klatek (`rakiety-auto-gra.mjs`) |
+| 2 | **Wdrożony 2026-10-08.** Dane i automat: `fitPresets.js` (4 karty), `fitPlanner.js` (tryby `own` / `buy`), `fitStats.js`, `priceFit` (+ testy); start gry i kampanii przez UNIWERSALNĄ (zastępuje `autoMountDefaults` i `CAMPAIGN_LOADOUT`); komplety misji startowej + `kitsGranted` | profil UNIWERSALNEJ = § 4.2; tank ↔ snajper ↔ tank wraca bit w bit; konsola `applyFitPreset('tank')` działa w grze |
+| 3 | **Wdrożony 2026-10-08.** Moduły: `shipModules.js`, źródło `fit` w `shipModifiers.js` (gotowe z sesji F) + mnożniki per klasa broni i `weaponRangeMul` / `weaponSpeedMul` we wszystkich miejscach z § 3.3, wzmacniacz tarcz, komputer balistyczny, zapis `partStock` / `hullModules` / `hullSystems` (= `PLAYER.hullSystems`) | w grze: zasięg Lancy L 15 km w `rangeOf`, okręgu HUD i życiu pocisku; tarcza 25 200; wieże na auto strzelają z nowego zasięgu |
+| 4 | **Wdrożony 2026-10-08.** Ekran KONFIGURACJE (4 karty, profil ognia, mapa gniazd, ceny braków, „Z MAGAZYNU” / „KUP I ZASTOSUJ”, pasek zmian) w tablecie i przycisk WYPOSAŻENIE w panelu stanowiska K-7 | zrzuty 1920×1080 i 1280×720 bez przepełnień; zakup + zastosowanie ≤ 1 klatka przestoju; zakup bez kredytów nic nie zmienia |
+| 5 | **Wdrożony 2026-10-08.** REFIT RĘCZNY (sylwetka, zaznaczanie, lista broni z ceną, moduł / F / chipy, własne konfiguracje) — zastępuje dzisiejsze listy | wszystko, co dało się zrobić w starym mechaniku, da się zrobić klikiem |
+| 6 | **Wdrożony 2026-10-08** (salwy z 8 wyrzutni w misji — do pomiaru `rakiety-auto-gra.mjs`). RAKIETOWIEC: komory rakietowe (zamiana typów gniazd), amunicja ×1,5, automat rakiet przy 8 wyrzutniach | salwy z 8 wyrzutni w odwecie misji 1 bez spadku klatek (`rakiety-auto-gra.mjs`) |
 | 7 | Ekonomia dalej: sprzedaż nadmiaru, ceny modułów i systemu F z gospodarki, broń specjalna S / M / L krótkiego zasięgu dla mniejszych kadłubów, karty dla każdego kadłuba gracza | karta na fregacie bez zastępstw w BLISKIM TANKU; testy `scripts/tests/weaponEconomy` |
 | 8 | Porządki reszty stacji: HANGAR po polsku i bez martwego rzędu, statystyki gniazd z prawdziwych gniazd, HANDEL bez przepełnienia, jedna lista etykiet zakładek, martwy CSS i `#tab-upgrades` | zrzuty wszystkich zakładek bez angielskich napisów i ucięć |
 

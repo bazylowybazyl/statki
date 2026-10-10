@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki assetów gry (assets/…, src/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Planety — generator map</title>
+<link rel="icon" href="data:,">
+<!--
+  Demo generatora map planet (scripts/planety/, opis docs/PLANETY-GENERATOR.md). Mapy z generatora na kuli
+  z materiałami GRY (planet3d.assets.tsl.js: powierzchnia, chmury, poświata limbu; wielka kopalnia ringu jako
+  bryła — earthPit3D.js; żywa atmosfera Jowisza — jupiterAtmosphere.js; księżyce — moonSurface.tsl.js), post jak
+  w grze (bloom gry → ACES gry → sRGB). Widok MAPA — płaskie warstwy wypieku (dzień, noc, woda / połysk, normalne,
+  chmury). A/B z dawnymi mapami (STARE).
+  Serwowanie: `npm run dev` → /dema/planety-webgpu.html
+  Parametry: ?cialo=earth|mars|mercury|venus|jupiter|saturn|moon|io|europa|ganymede|callisto, ?widok=glob|mapa,
+  ?mapy=stare, ?warstwa=day|night|spec|normal|clouds, ?miejsce=N (indeks z listy), ?pora=-180…180 (słońce
+  względem kamery, 0 — pełnia), ?odl=1.05…8 (promienie), ?test=1 (bez paneli). Konsola / harness: window.__planety.
+-->
+<style>
+  :root { --ink: #dfe6ee; --muted: #8592a3; --line: #5fc8ff2e; --panel: #070b10e8; --accent: #ffc23a; --cool: #6fd3ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #gpu, #over { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #over { pointer-events: none; }
+  #gpu { cursor: grab; touch-action: none; }
+  #gpu.drag { cursor: grabbing; }
+  #hud { position: fixed; left: 10px; top: 10px; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace; pointer-events: none; white-space: pre; max-width: calc(100vw - 380px); }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; width: 350px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 6px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button { background: #0d141c; color: var(--ink); border: 1px solid #263445; border-radius: 4px; padding: 5px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--cool); }
+  button.on { background: #1d2a12; border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .35; cursor: default; }
+  .row { display: grid; grid-template-columns: 96px minmax(0, 1fr) 46px; gap: 6px; align-items: center; margin: 3px 0; }
+  .row output { text-align: right; font: 10.5px ui-monospace, Consolas, monospace; color: #b8c8dc; }
+  input[type=range] { width: 100%; }
+  #info { color: #c3cedb; line-height: 1.45; }
+  #info .src { color: var(--muted); margin-top: 5px; font-size: 11px; }
+  #sites button { text-align: left; }
+  .keys { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.6; }
+  .keys kbd { font: 10.5px ui-monospace, Consolas, monospace; border: 1px solid #344458; border-radius: 3px; padding: 0 4px; color: #cfd8e3; }
+  #load { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 6px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 12px ui-monospace, Consolas, monospace; color: var(--accent); display: none; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .92); padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  body.test #hud, body.test #panel, body.test #load { display: none !important; }
+  @media (max-width: 720px) { #panel { width: calc(100vw - 20px); top: auto; bottom: 10px; max-height: 45vh; } #hud { max-width: calc(100vw - 20px); } }
+</style>
+</head>
+<body>
+<canvas id="gpu"></canvas>
+<canvas id="over"></canvas>
+<div id="hud">uruchamianie…</div>
+<div id="panel">
+  <h1>PLANETY — GENERATOR MAP</h1>
+  <div class="sub">mapy z <code>scripts/planety/</code> na materiałach gry</div>
+  <h2>Ciało</h2>
+  <div class="btns" id="bodies"></div>
+  <h2>Widok</h2>
+  <div class="btns">
+    <button id="v-glob">GLOB</button><button id="v-mapa">MAPA</button>
+    <span style="width:10px"></span>
+    <button id="m-nowe">NOWE</button><button id="m-stare">STARE</button>
+  </div>
+  <div id="globe-opts">
+    <h2>Glob</h2>
+    <div class="btns" id="toggles"></div>
+    <div class="row"><span>Pora dnia</span><input id="s-pora" type="range" min="-180" max="180" step="1"><output id="o-pora"></output></div>
+    <div class="row"><span>Wys. słońca</span><input id="s-wys" type="range" min="-40" max="40" step="1"><output id="o-wys"></output></div>
+    <div class="row"><span>Odległość</span><input id="s-odl" type="range" min="0" max="1" step="0.001"><output id="o-odl"></output></div>
+    <div class="row" id="r-atm"><span>Tempo atmosfery</span><input id="s-atm" type="range" min="0" max="8" step="0.1"><output id="o-atm"></output></div>
+    <div class="btns" style="margin-top:4px"><button id="b-dzien">dzień</button><button id="b-term">terminator</button><button id="b-noc">noc</button></div>
+  </div>
+  <div id="map-opts">
+    <h2>Warstwa mapy</h2>
+    <div class="btns" id="layers"></div>
+    <div class="row"><span>Wzmocnienie</span><input id="s-gain" type="range" min="0" max="1" step="0.001"><output id="o-gain"></output></div>
+  </div>
+  <h2>Miejsca</h2>
+  <div class="btns" id="sites"></div>
+  <h2>Opis</h2>
+  <div id="info"></div>
+  <div class="keys">
+    <kbd>LPM</kbd> obrót / przesunięcie · <kbd>kółko</kbd> odległość / powiększenie · <kbd>M</kbd> glob ↔ mapa ·
+    <kbd>B</kbd> nowe ↔ stare · <kbd>D</kbd> doba · <kbd>C</kbd> chmury · <kbd>N</kbd> dzień / noc ·
+    <kbd>1</kbd>–<kbd>0</kbd> ciała · <kbd>H</kbd> panele
+  </div>
+</div>
+<div id="load"></div>
+<div id="err"></div>
+<script type="module" src="/dema/planety-webgpu.js"></script>
+</body>
+</html>

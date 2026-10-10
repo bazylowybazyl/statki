@@ -549,7 +549,10 @@ export function computeShipThrusterForces(ship, options = {}, outResult = _defau
   let localTorque = 0;
 
   const mains = ship?.visual?.mainThrusters || [];
-  const mainForceTotal = mass * SHIP_PHYSICS.SPEED * mainForceMul;
+  // Silniki MAIN wyłączone / w zapłonie / gaszone (src/game/engineIgnition.js — engineThrustScale): 0..1, także
+  // obwiednia wstecznego (osobna opcja: mainForceMul 0 znaczy „domyślnie 1”).
+  const mainScale = Number.isFinite(options.mainScale) ? clamp01(options.mainScale) : 1;
+  const mainForceTotal = mass * SHIP_PHYSICS.SPEED * mainForceMul * mainScale;
   const mainForcePerThruster = mainForceTotal / Math.max(1, mains.length);
   // Dysze zniszczone (engineDamage.js) nie dają siły: ciąg główny × żywe / wszystkie.
   let mainLive = mains.length;

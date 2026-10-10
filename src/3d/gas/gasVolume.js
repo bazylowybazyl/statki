@@ -19,7 +19,16 @@
 //     płomień frontu spalania, temperatura zaburzona szumem (języki ognia), HDR;
 //   • rozpraszanie: słońce × przepuszczalność z objętości światła (samocień kłębów) × faza
 //     Henyeya–Greensteina + przybliżenie wielokrotnego rozpraszania (T^¼) + otoczenie + blask ognia
-//     z objętości światła (dym przy płomieniu świeci od środka); w grze człon słońca × maska cienia słońca;
+//     z objętości światła (dym przy płomieniu świeci od środka); w grze człon słońca × maska cienia słońca,
+//     otoczenie × strefa nieba (skyRegion) × wypełnienie maski (sunFill — cień planety, mrok pola pasa);
+//   • ŚWIATŁA SIATKI Core3D.fx.grid (bryły gry, F3 audytu 2026-10-08): dysze, lufy, trafienia, reflektory
+//     doku / hal, światła INNYCH wybuchów — pętla `grid.loop` w punkcie próbki co `gridEvery` gęstych próbek
+//     (σ > `gridMinSigma`; między nimi ostatnia wartość), z kolanem L / (1 + kolano · ΣL) (dym przy dyszy nie
+//     bieleje) i SAMOCIENIEM z przepuszczalności dymu nad próbką wzdłuż promienia kamery (gra z góry, światła siatki
+//     nad płaszczyzną: droga do światła ≈ droga do kamery; bez dodatkowych próbek) — inaczej reflektor oświetlał obłok
+//     równo w całej objętości i dym tracił bryłę (A/B 2026-10-09: „kremowa wata” pod masztem doku). Światło WŁASNEJ domeny (właściciel GAS_LIGHT_OWNER_BASE + slot — explosionFx._lights) świeci
+//     tylko w dalekim polu (x = odległość / zasięg ≥ ownNear…ownFar): bliżej ognia dym oświetla już emisja
+//     i blask z objętości światła (bez podwójnej poświaty); dalej — blask ognia z większego zasięgu (F10);
 //   • całka zachowująca energię: (S − S·e^(−σΔ)) / σ, front-to-back.
 // Wyjście premultiplied: (barwa, 1 − przepuszczalność).
 
@@ -29,7 +38,35 @@ import {
   getViewPosition, select, mix, clamp, smoothstep, exp, max, min, abs, length, normalize, dot, pow,
   attribute, positionGeometry, positionView, varyingProperty, cameraProjectionMatrix, cameraWorldMatrix
 } from 'three/tsl';
-import { gasBlackbody, gasFirePower } from './gasCommon.js';
+import { gasFirePower, gasFireStops, gasFirePalette, gasFireGlow, gasLuma } from './gasCommon.js';
+
+/**
+ * Właściciel świateł siatki wybuchu w domenie gazu `slot`: GAS_LIGHT_OWNER_BASE + slot (L3.w siatki). Liczba
+ * poza zakresem właścicieli statków / dronów (DRONE_LIGHT_OWNER 9217); float32 dokładny.
+ */
+export const GAS_LIGHT_OWNER_BASE = 30000;
+
+/**
+ * Lustro CPU wkładu świateł siatki w dym (gałąź `grid` marszu `_march`) — testy. lights: [{ att, col: [r,g,b],
+ * scatter, owner, x }] (jak argumenty `grid.loop`), slot — domena próbki, trans — przepuszczalność nad próbką. Zwraca
+ * vec3 PO kolanie i samocieniu (cudze światła × mix(1, trans, gridShadow), własne bez). Zmiana w marszu = zmiana tutaj.
+ */
+export function gasGridLightCpu(lights, slot, L, trans = 1) {
+  const o = [0, 0, 0], m = [0, 0, 0];   // cudze, własne
+  const own = GAS_LIGHT_OWNER_BASE + slot;
+  for (const l of lights) {
+    const k = l.att * (l.scatter * L.gridScatter + 0.5);
+    if (Math.abs(l.owner - own) < 0.5) {
+      const t = Math.max(0, Math.min(1, (l.x - L.ownNear) / (L.ownFar - L.ownNear)));
+      const w = t * t * (3 - 2 * t);
+      for (let c = 0; c < 3; c++) m[c] += l.col[c] * k * w;
+    } else for (let c = 0; c < 3; c++) o[c] += l.col[c] * k;
+  }
+  const sum = (o[0] + o[1] + o[2] + m[0] + m[1] + m[2]) * L.gridGain;
+  const kn = L.gridGain / (1 + sum * L.gridKnee);
+  const sh = 1 + (trans - 1) * L.gridShadow;   // mix(1, trans, gridShadow) — tylko cudze światła
+  return [0, 1, 2].map((c) => o[c] * kn * sh + m[c] * kn);
+}
 
 /** Parametry obrazu gazu (uniformy). */
 export function createGasLook() {
@@ -53,7 +90,16 @@ export function createGasLook() {
     warpScale: 0.05,      // częstotliwość pola przesunięcia [kafle szumu / komórka]
     jitter: 1,            // przesunięcie startu marszu (0 = bez — A/B pasów)
     nearFade: 10,         // zasięg wygaszenia gazu przed kamerą [komórki]
-    frontDensity: 1.0     // bryły (gra): mnożnik gęstości części PRZED płaszczyzną gry — kadłub widać przez dym nad nim
+    frontDensity: 1.0,    // bryły (gra): mnożnik gęstości części PRZED płaszczyzną gry — kadłub widać przez dym nad nim
+    // Światła siatki (bryły z `lightGrid`; bez siatki — bez gałęzi w WGSL):
+    gridGain: 1.0,        // mnożnik świateł siatki w dymie
+    gridKnee: 0.45,       // kolano: L / (1 + kolano · ΣL) — dym przy dyszy / reflektorze nie bieleje
+    gridShadow: 0.85,     // samocień: × mix(1, przepuszczalność nad próbką, gridShadow) — obłok ma bryłę
+    gridScatter: 1.0,     // waga rozpraszania w ośrodku (L1.w siatki: snopy reflektorów mocniej w dymie)
+    gridMinSigma: 0.02,   // pętla świateł tylko w gęstszym dymie (σ na komórkę)
+    gridEvery: 3,         // pętla świateł co tyle gęstych próbek (koszt) — między nimi ostatnia wartość
+    ownNear: 0.35,        // światło własnej domeny: od x = odległość / zasięg…
+    ownFar: 0.75          // …do pełnej wagi (bliżej ognia świeci emisja i blask z objętości światła)
   };
 }
 
@@ -67,11 +113,17 @@ export class GasVolume {
    * @param {import('./gasGrid.js').GasGrid} o.grid
    * @param {THREE.Data3DTexture} o.noise3D szum 3D kafelkowy (fxNoise.noise3D)
    * @param {THREE.Data3DTexture} o.curl3D pole wirowe 3D kafelkowe (fxNoise.curl3D) — przesunięcie odczytu
+   * @param {object} [o.lightGrid] siatka świateł (Core3D.fx.grid: loop) — bryły (`createMeshes`) czytają ją w marszu;
+   *   null = bez świateł siatki (WGSL bez pętli). Lokalny układ siatki = układ brył (początek pul Core3D.fx.origin).
    */
-  constructor({ grid, noise3D, curl3D }) {
+  constructor({ grid, noise3D, curl3D, lightGrid = null, slotBase = 0 }) {
     this.grid = grid;
+    // Indeks globalny pierwszej domeny siatki (GasGridSet: atlas „fine” za podstawowym) — właściciel świateł siatki
+    // domeny = GAS_LIGHT_OWNER_BASE + indeks globalny (reżyser: explosionFx._lights).
+    this.slotBase = slotBase | 0;
     this.noise3D = noise3D;
     this.curl3D = curl3D;
+    this.lightGrid = lightGrid;
     this.look = createGasLook();
     const S = grid.S;
     this.U = {
@@ -81,7 +133,8 @@ export class GasVolume {
       count: uniform(0, 'int'),
       domA: v4Array(S, 'gasDomA'),   // minimum pudła (scena lokalnie), rozmiar komórki h
       domB: v4Array(S, 'gasDomB'),   // slot, mnożnik obrazu, ziarno, —
-      domC: v4Array(S, 'gasDomC'),   // barwa dymu rgb, —
+      domC: v4Array(S, 'gasDomC'),   // barwa dymu rgb, paleta ognia (0 — ciało czarne, 1 — plazma Yamato)
+      slotK: v4Array(S, 'gasVolSlotK'),   // skala komórki domeny (GasSlot.k) — indeks = slot siatki
       time: uniform(0),
       sunDir: uniform(new THREE.Vector3(0, 1, 0)),
       density: uniform(1), albedo: uniform(new THREE.Vector3(0.5, 0.5, 0.5)),
@@ -92,8 +145,15 @@ export class GasVolume {
       flameNoise: uniform(0.4), fireGain: uniform(1), fireBurn: uniform(1),
       warpAmp: uniform(1.4), warpScale: uniform(0.05), jitter: uniform(1), nearFade: uniform(10),
       frontDensity: uniform(1),
-      planeZ: uniform(0)               // płaszczyzna gry (scena lokalnie) — podział warstw brył
+      planeZ: uniform(0),              // płaszczyzna gry (scena lokalnie) — podział warstw brył
+      ambientK: uniform(1),            // mnożnik otoczenia (strefa nieba — właściciel, `ambientScale`)
+      gridOn: uniform(1), gridGain: uniform(1), gridKnee: uniform(0.45), gridShadow: uniform(0.85), gridScatter: uniform(1),
+      gridMinSigma: uniform(0.02), gridEvery: uniform(3, 'int'), ownNear: uniform(0.35), ownFar: uniform(0.75)
     };
+    // Właściciel (gra): mnożnik otoczenia ze strefy nieba i przełącznik świateł siatki (A/B tej samej klatki).
+    this.ambientScale = 1;
+    this.gridEnabled = true;
+    this.stepScale = 1;
     this._order = [];
     this.stats = { domains: 0 };
     this.meshes = null;
@@ -136,9 +196,10 @@ export class GasVolume {
   /**
    * Marsz jednej domeny na odcinku [tmin, tmax] promienia ro + rd·t (scena lokalnie); akumuluje do
    * col / trans (zmienne TSL). sunVis — mnożnik członu słońca (maska cienia słońca gry; dema 1); densK —
-   * mnożnik gęstości odcinka (przednia warstwa brył gry).
+   * mnożnik gęstości odcinka (przednia warstwa brył gry); ambVis — mnożnik otoczenia (gra: sunFill maski; null = 1);
+   * useGrid — światła siatki `lightGrid` (tylko bryły gry; przebieg pełnoekranowy dem bez zmian).
    */
-  _march({ ro, rd, tmin, tmax, bmin, h, slot, fade, seed, tint, jitter, phase, col, trans, sunVis, densK = null }) {
+  _march({ ro, rd, tmin, tmax, bmin, h, slot, fade, seed, tint, fire, jitter, phase, col, trans, sunVis, densK = null, ambVis = null, useGrid = false, domAmb = null }) {
     const U = this.U;
     const grid = this.grid;
     const N = grid.N;
@@ -153,10 +214,34 @@ export class GasVolume {
       const dtC = dtW.div(h).toVar();                    // krok [komórki]
       const t = tmin.add(dtW.mul(jitter)).toVar();
       const slotZ = slot.mul(NZ);
+      // Skala komórki domeny (GasSlot.k, etap D): gęstość optyczna i płomień na komórkę / k, detal i przesunięcie odczytu
+      // w tej samej skali względem kuli ognia — drobniejsza siatka zmienia rozdzielczość, nie obraz (k = 1 — jak dawniej).
+      const kS = U.slotK.element(int(slot.add(0.5))).x.toVar();
+      const nS = N / (grid.nRef || N);
       // Temperatura poprzedniej próbki (−1 = brak): emisja całkowana po odcinku (niżej).
       const Tprev = float(-1.0).toVar();
+      // Światła siatki: ostatnia wartość (po kolanie) i licznik gęstych próbek do następnej pętli.
+      const lg = useGrid ? this.lightGrid : null;
+      const gridL = lg ? vec3(0.0).toVar() : null;   // cudze światła (samocień z kamery)
+      const gridS = lg ? vec3(0.0).toVar() : null;   // światło własnej domeny (z wnętrza obłoku — bez samocienia)
+      const gridCnt = lg ? int(0).toVar() : null;
+      const ownBase = GAS_LIGHT_OWNER_BASE + this.slotBase;
+      const ownId = lg ? slot.add(ownBase).toVar() : null;
+      if (lg) {
+        // Jawne przypisanie przed pętlą (pułapka 29): zmienna TSL powstaje w miejscu pierwszego użycia — inaczej
+        // deklaracja w ciele pętli zerowałaby ostatnią wartość i licznik co krok.
+        gridL.assign(vec3(0.0));
+        gridS.assign(vec3(0.0));
+        gridCnt.assign(int(0));
+        ownId.assign(slot.add(ownBase));
+      }
+      const ambient = ambVis ? U.ambient.mul(U.ambientK.mul(ambVis)).toVar() : U.ambient;
+      // Paleta ognia domeny (fire 0 — ciało czarne, 1 — plazma Yamato, 2 — wodór; etapy E1 / E2): przystanki raz na marsz, przed pętlą.
+      const fireStops = gasFireStops(fire);
+      const fireK = float(0.0).toVar();
+      fireK.assign(fire);
       Loop({ start: int(0), end: nSteps, type: 'int', condition: '<', name: 'gstep' }, () => {
-        const pw = ro.add(rd.mul(t));
+        const pw = ro.add(rd.mul(t)).toVar();
         const pc = pw.sub(bmin).div(h).toVar();
         const qz = clamp(pc.z, 0.5, NZ - 0.5);
         const uvw = vec3(pc.x.mul(1 / N), pc.y.mul(1 / N), qz.add(slotZ).mul(1 / (NZ * S)));
@@ -166,15 +251,15 @@ export class GasVolume {
           const rest = texture3D(grid.restA, uvw).level(0).xyz.toVar();
           const seedV = vec3(seed, seed.mul(0.7), seed.mul(1.3));
           // Przesunięcie odczytu polem wirowym (detal poniżej rozdzielczości siatki — „kalafior”).
-          const qw = rest.mul(U.warpScale).add(seedV);
+          const qw = rest.mul(U.warpScale.div(kS)).add(seedV);
           const wa = texture3D(curl, qw).level(0).xy;
           const wb = texture3D(curl, qw.zxy.add(vec3(0.29, 0.61, 0.17))).level(0).x;
-          const warp = vec3(wa, wb).mul(U.warpAmp);
+          const warp = vec3(wa, wb).mul(U.warpAmp.mul(kS));
           const pq = pc.add(warp);
           const uvq = vec3(pq.x.mul(1 / N), pq.y.mul(1 / N), clamp(pq.z, 0.5, NZ - 0.5).add(slotZ).mul(1 / (NZ * S)));
           const den = texture3D(grid.denA, uvq).level(0).toVar();
           const lgt = texture3D(grid.lightT, uvq).level(0).toVar();
-          const n1 = texture3D(noise, rest.mul(U.detailScale).add(seedV)).level(0);
+          const n1 = texture3D(noise, rest.mul(U.detailScale.div(kS)).add(seedV)).level(0);
           const nA = n1.x.toVar();
           const nB = n1.y.toVar();
           const nd = nA.mul(0.65).add(nB.mul(0.35)).toVar();
@@ -182,9 +267,10 @@ export class GasVolume {
           const ew = min(pc, vec3(N, N, NZ).sub(pc));
           const halfD = vec3(N * 0.5, N * 0.5, NZ * 0.5);
           const rc = length(pc.sub(halfD).div(halfD));
-          const wall = smoothstep(0.6, 6.0, min(min(ew.x, ew.y), ew.z)).mul(float(1.0).sub(smoothstep(0.9, 1.05, rc)));
+          const wall = smoothstep(0.6 * nS, 6.0 * nS, min(min(ew.x, ew.y), ew.z)).mul(float(1.0).sub(smoothstep(0.9, 1.05, rc)));
           // Wygaszenie tuż przed kamerą (kamera w dymie / kuli ognia: mgła zamiast nieprzezroczystej ściany).
-          const nearK = smoothstep(U.nearFade.mul(0.15), U.nearFade, t.div(h));
+          const nearFade = U.nearFade.mul(kS);
+          const nearK = smoothstep(nearFade.mul(0.15), nearFade, t.div(h));
           // Ciągły próg pominięcia: gęstość czytamy z PRZESUNIĘTEGO miejsca (warp), a próg — z nieprzesuniętego;
           // skok wkładu z 0 na granicy progu rysował poziomice (bez przesunięcia startu marszu — słoje, z nim — ziarno).
           const gate = smoothstep(0.003, 0.06, den0.x.add(den0.y));
@@ -194,7 +280,8 @@ export class GasVolume {
           const det = mix(float(1.0), nd.mul(2.0), U.detail);
           const ero = U.erosion.mul(float(1.0).sub(nd)).mul(float(1.0).sub(smoothstep(0.0, 1.2, sm)));
           const rho = max(sm.mul(det).sub(ero.mul(0.35)), 0.0).toVar();
-          const sigma = (densK ? rho.mul(U.density).mul(densK) : rho.mul(U.density)).toVar();
+          const density = U.density.div(kS);
+          const sigma = (densK ? rho.mul(density).mul(densK) : rho.mul(density)).toVar();
           // Ogień: temperatura z językami szumu. Sadza świeci jak ciało czarne (Kirchhoff: emisja =
           // σ_pochłaniania · B(T)); czysty płomień frontu spalania świeci bez sadzy (tempo spalania).
           const T = den.y.mul(float(1.0).add(nA.sub(0.5).mul(2.0).mul(U.flameNoise))).toVar();
@@ -206,18 +293,52 @@ export class GasVolume {
           const bSum = vec3(0.0).toVar();
           for (const k of [0.125, 0.375, 0.625, 0.875]) {
             const Tk = mix(T0, T, k);
-            const bk = gasBlackbody(Tk);
+            const bk = gasFirePalette(Tk, fireStops);
             gSum.addAssign(bk.mul(gasFirePower(Tk, float(0.0), U.fireGain, float(0.0))));
             bSum.addAssign(bk);
           }
           Tprev.assign(T);
           const radiance = gSum.mul(0.25).mul(U.emission).mul(fw);
-          const flame = bSum.mul(0.25).mul(max(den.w, 0.0).mul(U.fireBurn)).mul(U.emission).mul(fw);
+          const flame = bSum.mul(0.25).mul(max(den.w, 0.0).mul(U.fireBurn.div(kS))).mul(U.emission).mul(fw);
           // Rozpraszanie: słońce (samocień, maska cienia słońca gry), wielokrotne (T^¼), otoczenie, blask ognia.
           const sunT = lgt.x;
           const sun = U.sunColor.mul(U.sunGain).mul(sunT.mul(phase).add(pow(max(sunT, 1e-4), 0.25).mul(U.multiScatter))).mul(sunVis);
           const alb = U.albedo.mul(tint).toVar();
-          const scat = alb.mul(sun.add(U.ambient).add(lgt.yzw.mul(U.glowGain)));
+          // Blask ognia z objętości światła (kernel liczy go w barwie ciała czarnego) w palecie domeny: luminancja zostaje.
+          const glowC = gasFireGlow(lgt.yzw, gasLuma(lgt.yzw), fireK);
+          let light = sun.add(ambient).add(glowC.mul(U.glowGain));
+          // Otoczenie DOMENY (GasSlot.ambient — kanał w instancji: światło wnętrza hali K-7 dla dymu zapłonu, etap E2;
+          // pod dachem nie ma słońca, a lampy siatki przechodzą przez kolano i samocień). 0 = jak dawniej.
+          // Z lekkim samocieniem od strony kamery (obłok ma bryłę, nie płaską watę): × mix(1, trans, 0,6).
+          if (domAmb) light = light.add(vec3(domAmb).mul(mix(float(1.0), trans, 0.6)));
+          if (lg) {
+            // Pętla świateł siatki tylko w gęstszym dymie i co `gridEvery` gęstych próbek (w ośrodku światło
+            // zmienia się wolno — próbka co ~2 komórki wystarcza); między nimi ostatnia wartość.
+            If(U.gridOn.greaterThan(0.5).and(gridCnt.lessThanEqual(0)).and(sigma.greaterThan(U.gridMinSigma.div(kS))), () => {
+              const acc = vec3(0.0).toVar();
+              const accS = vec3(0.0).toVar();
+              lg.loop(pw, ({ att, col, scatter, owner, x }) => {
+                const c = col.mul(att.mul(scatter.mul(U.gridScatter).add(0.5))).toVar();
+                // Własna domena: tylko dalekie pole (bliżej świeci emisja i blask z objętości światła).
+                If(abs(owner.sub(ownId)).lessThan(0.5), () => {
+                  accS.addAssign(c.mul(smoothstep(U.ownNear, U.ownFar, x)));
+                }).Else(() => {
+                  acc.addAssign(c);
+                });
+              });
+              // Wspólne kolano (suma wszystkich świateł), potem rozdział: cudze / własne.
+              const ga = acc.add(accS).mul(U.gridGain).toVar();
+              const kn = U.gridGain.div(ga.x.add(ga.y).add(ga.z).mul(U.gridKnee).add(1.0)).toVar();
+              gridL.assign(acc.mul(kn));
+              gridS.assign(accS.mul(kn));
+              gridCnt.assign(U.gridEvery);
+            });
+            gridCnt.subAssign(1);
+            // Samocień cudzych świateł z przepuszczalności nad próbką (światła nad płaszczyzną, kamera z góry); światło
+            // własnego wybuchu świeci z jego środka — bez tego samocienia.
+            light = light.add(gridL.mul(mix(float(1.0), trans, U.gridShadow)).add(gridS).mul(U.gridOn));
+          }
+          const scat = alb.mul(light);
           const segT = exp(sigma.mul(dtC).negate()).toVar();
           const absorb = float(1.0).sub(alb.x.add(alb.y).add(alb.z).div(3.0));
           const src = scat.add(radiance.mul(absorb)).mul(sigma).add(flame);
@@ -264,7 +385,7 @@ export class GasVolume {
         const C = U.domC.element(gdom).toVar();
         const { tmin, tmax } = this._boxSpan(ro, rd, A.xyz, A.w);
         this._march({
-          ro, rd, tmin, tmax: min(tmax, tScene), bmin: A.xyz, h: A.w, slot: B.x, fade: B.y, seed: B.z, tint: C.xyz,
+          ro, rd, tmin, tmax: min(tmax, tScene), bmin: A.xyz, h: A.w, slot: B.x, fade: B.y, seed: B.z, tint: C.xyz, fire: C.w,
           jitter, phase, col, trans, sunVis: float(1.0)
         });
       });
@@ -276,9 +397,11 @@ export class GasVolume {
    * BRYŁY DOMEN do passa sceny (gra): dwie siatki instancji (pudło na domenę) — `back` (część za płaszczyzną
    * gry od kamery; kolejka nieprzezroczysta, renderOrder przed kadłubami) i `front` (część przed płaszczyzną;
    * przezroczysta, po kadłubach). Bez testu i zapisu głębi (kolejność warstw robi zasłanianie).
-   * opts: layer (warstwa Core3D), renderOrderBack / Front, sunVisibility — () => węzeł mnożnika słońca.
+   * opts: layer (warstwa Core3D), renderOrderBack / Front, sunVisibility — () => węzeł mnożnika słońca,
+   * ambientVisibility — () => węzeł mnożnika otoczenia (gra: sunFill(sunVisibility()) — cień planety, mrok pola).
+   * Z `lightGrid` (konstruktor) marsz czyta światła siatki (bufory storage siatki w etapie fragmentów).
    */
-  createMeshes({ layer = 0, renderOrderBack = 1, renderOrderFront = 26, sunVisibility = null, name = 'GasVolume' } = {}) {
+  createMeshes({ layer = 0, renderOrderBack = 1, renderOrderFront = 26, sunVisibility = null, ambientVisibility = null, name = 'GasVolume' } = {}) {
     const U = this.U;
     const grid = this.grid;
     const N = grid.N;
@@ -294,7 +417,7 @@ export class GasVolume {
     };
     const aA = mk(4); // minimum pudła (lokalnie), h
     const aB = mk(4); // slot, mnożnik obrazu, ziarno, —
-    const aC = mk(4); // barwa dymu rgb, —
+    const aC = mk(4); // barwa dymu rgb, paleta ognia
     geo.setAttribute('gasA', aA);
     geo.setAttribute('gasB', aB);
     geo.setAttribute('gasC', aC);
@@ -351,10 +474,12 @@ export class GasVolume {
         const col = vec3(0.0).toVar();
         const trans = float(1.0).toVar();
         this._march({
-          ro, rd, tmin, tmax, bmin: vA.xyz, h, slot: vB.x, fade: vB.y, seed: vB.z, tint: vC.xyz,
+          ro, rd, tmin, tmax, bmin: vA.xyz, h, slot: vB.x, fade: vB.y, seed: vB.z, tint: vC.xyz, fire: vC.w, domAmb: vB.w,
           jitter: this._jitter(), phase: this._phase(rd), col, trans,
           sunVis: sunVisibility ? sunVisibility() : float(1.0),
-          densK: back ? null : U.frontDensity
+          densK: back ? null : U.frontDensity,
+          ambVis: ambientVisibility ? ambientVisibility() : null,
+          useGrid: !!this.lightGrid
         });
         return vec4(col, float(1.0).sub(trans));
       })();
@@ -388,8 +513,9 @@ export class GasVolume {
       if (!s.active || s.fade <= 0) continue;
       const o = n * 4;
       A[o] = s.cx - half * s.h - originX; A[o + 1] = s.cy - half * s.h - originY; A[o + 2] = s.cz - halfZ * s.h; A[o + 3] = s.h;
-      B[o] = s.index; B[o + 1] = s.fade; B[o + 2] = s.seed; B[o + 3] = 0;
-      C[o] = s.tint[0]; C[o + 1] = s.tint[1]; C[o + 2] = s.tint[2]; C[o + 3] = 0;
+      B[o] = s.index; B[o + 1] = s.fade; B[o + 2] = s.seed; B[o + 3] = s.ambient || 0;
+      this.U.slotK.array[s.index].x = s.k || 1;
+      C[o] = s.tint[0]; C[o + 1] = s.tint[1]; C[o + 2] = s.tint[2]; C[o + 3] = s.fire || 0;
       n++;
     }
     M.geometry.instanceCount = n;
@@ -423,7 +549,8 @@ export class GasVolume {
     U.detail.value = L.detail;
     U.detailScale.value = L.detailScale;
     U.erosion.value = L.erosion;
-    U.stepCells.value = L.stepCells;
+    // krok marszu × skala klatki (właściciel: budżet marszu F13 — explosionFx._marchStep; 1 = stały)
+    U.stepCells.value = L.stepCells * (this.stepScale > 0 ? this.stepScale : 1);
     U.maxSteps.value = L.maxSteps;
     U.flameNoise.value = L.flameNoise;
     U.warpAmp.value = L.warpAmp;
@@ -431,6 +558,16 @@ export class GasVolume {
     U.jitter.value = L.jitter;
     U.nearFade.value = L.nearFade;
     U.frontDensity.value = L.frontDensity ?? 1;
+    U.ambientK.value = Number.isFinite(this.ambientScale) ? this.ambientScale : 1;
+    U.gridOn.value = this.gridEnabled && this.lightGrid ? 1 : 0;
+    U.gridGain.value = L.gridGain ?? 1;
+    U.gridKnee.value = L.gridKnee ?? 0.45;
+    U.gridShadow.value = L.gridShadow ?? 0.85;
+    U.gridScatter.value = L.gridScatter ?? 1;
+    U.gridMinSigma.value = L.gridMinSigma ?? 0.02;
+    U.gridEvery.value = Math.max(1, Math.round(L.gridEvery ?? 3));
+    U.ownNear.value = L.ownNear ?? 0.35;
+    U.ownFar.value = Math.max((L.ownNear ?? 0.35) + 1e-3, L.ownFar ?? 0.75);
     U.fireGain.value = grid.tune.fireGain;
     U.fireBurn.value = grid.tune.fireBurn;
   }
@@ -469,7 +606,8 @@ export class GasVolume {
       const s = order[k];
       U.domA.array[k].set(s.cx - half * s.h - o.x, s.cy - half * s.h - o.y, s.cz - halfZ * s.h - o.z, s.h);
       U.domB.array[k].set(s.index, s.fade, s.seed, 0);
-      U.domC.array[k].set(s.tint[0], s.tint[1], s.tint[2], 0);
+      U.slotK.array[s.index].x = s.k || 1;
+      U.domC.array[k].set(s.tint[0], s.tint[1], s.tint[2], s.fire || 0);
     }
     U.count.value = order.length;
     this.stats.domains = order.length;

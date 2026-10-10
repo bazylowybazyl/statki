@@ -178,7 +178,7 @@ function createExternal() {
 
 // Obiekty robocze (bez alokacji na zdarzenie). _hit.ric… — rykoszet rozstrzygnięty przez grę
 // (18-B, projectileMechanics.ricochetBounce): kierunek, prędkość i życie smugowca odbitego.
-const _m = { x: 0, y: 0, angle: 0, scale: 1, density: 1 };
+const _m = { x: 0, y: 0, angle: 0, scale: 1, density: 1, smokeK: 1 };   // smokeK — dym cząstkowy wylotu (gaz z lufy)
 const _hit = { x: 0, y: 0, nx: 0, ny: -1, ric: false, ricDirX: 0, ricDirY: 0, ricSpeed: 0, ricLife: 0 };
 const _imp = { x: 0, y: 0, vx: 0, vy: 0, rvx: 0, rvy: 0, power: 1, flakR: 0, style: 0, r: 1, g: 1, b: 1, width: 6, len: 16, flyAcc: 0 };
 const _carrier = createCarrier();
@@ -225,7 +225,7 @@ export const WeaponFx = {
   _beamOriginY: 0,
   stats: {
     shots: 0, muzzles: 0, cheapMuzzles: 0, impacts: 0, cheapImpacts: 0, bullets: 0, beams: 0, pulses: 0, after: 0, droppedAfter: 0,
-    kerfs: 0, exits: 0, stuck: 0, ricochets: 0, charges: 0
+    kerfs: 0, exits: 0, stuck: 0, ricochets: 0, charges: 0, gasMuzzles: 0
   },
 
   /** Czy moduł działa (urządzenie i scena gotowe). */
@@ -470,6 +470,14 @@ export const WeaponFx = {
   muzzleZOf: null,
 
   /**
+   * GAZ Z LUFY (etap E1, reżyser wybuchów — ExplosionFx.muzzleShot podpina się sam): (rodzina receptury, wylot `m`, moc
+   * rozmiaru I, skala wylotu S, nośnik, strzelec) → null (bez gazu) albo { owner, smokeK } — błysk wylotu dostaje
+   * właściciela domeny gazu (w swoim dymie świeci tylko daleko), dym cząstkowy receptury × smokeK (bez podwójnego dymu).
+   * Tylko wylot bogaty (tani — mały na ekranie albo ponad budżet klatki — bez gazu).
+   */
+  muzzleGas: null,
+
+  /**
    * Wylot broni w punkcie (x, y): lufa i kąt z wieżyczki strzelca (Turret2D — odrzut), a bez
    * wieżyczki (myśliwiec) z kierunku strzału. Zwraca true, gdy powstał efekt.
    */
@@ -479,9 +487,11 @@ export const WeaponFx = {
     const key = normalizeWeaponFxKey(w.id);
     const shot = Turret2D.triggerShot(key, x, y, shooter);
     const m = _m;
+    let gunner = shooter;
     if (shot) {
       m.x = shot.x; m.y = shot.y; m.angle = shot.angle; m.scale = shot.scale;
-      writeCarrier(shot.entity || shooter, shot.x, shot.y, true, _carrier);
+      gunner = shot.entity || shooter;
+      writeCarrier(gunner, shot.x, shot.y, true, _carrier);
       // Kamery 3D: błysk na wysokości lufy wieży 3D (shipModels3DGame.turretMuzzleZ; w kamerze z góry 0).
       if (this.muzzleZOf !== null) _carrier.z += this.muzzleZOf(shot.entity || shooter, shot.x, shot.y) || 0;
       // Wstrząs strzałów z profilu wieżyczki (jak dawny weapon3DSystem) — 18-D przełączy na dane.
@@ -497,11 +507,11 @@ export const WeaponFx = {
       m.scale = Turret2D.turretScaleFor(w.def, shooter);
       writeCarrier(shooter, x, y, false, _carrier);
     }
-    return this._emitMuzzle(recipe, w, m, _carrier);
+    return this._emitMuzzle(recipe, w, m, _carrier, gunner);
   },
 
   /** Receptura wylotu z LOD i budżetem klatki (m, nośnik gotowe). */
-  _emitMuzzle(recipe, w, m, carrier) {
+  _emitMuzzle(recipe, w, m, carrier, shooter = null) {
     const screenPx = 45 * m.scale * this._zoom();
     if (screenPx < MUZZLE_MIN_PX) return false;
     ActiveCarrier.set(carrier);
@@ -515,11 +525,17 @@ export const WeaponFx = {
       this._muzzleBudget--;
       // Gęstość sypkiego materiału schodzi na małych wieżyczkach (rozbłysk zostaje w całości).
       m.density = Math.max(0.35, Math.min(1, 0.35 + 0.65 * Math.min(1, screenPx / 40)));
+      // Gaz z lufy (armata, Yamato): domena wystrzału reżysera wybuchów; dym cząstkowy receptury × smokeK, błysk z właścicielem.
+      m.smokeK = 1;
+      const gas = this.muzzleGas !== null ? this.muzzleGas(w.fx, m, SIZE_POWER[w.size] || 1, m.scale * (recipe.scale || 1), carrier, shooter) : null;
+      if (gas) { m.smokeK = gas.smokeK; this.ctx.lights.owner = gas.owner; this.stats.gasMuzzles++; }
       if (recipe.preFire) recipe.preFire(this.ctx, m, w);
       recipe.muzzle(this.ctx, m, w);
       this.stats.muzzles++;
     } finally {
       ActiveCarrier.clear();
+      this.ctx.lights.owner = 0;
+      m.smokeK = 1;
     }
     return true;
   },

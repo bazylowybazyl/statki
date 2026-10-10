@@ -9,6 +9,7 @@ import { ViewState3D } from '../src/game/view3D.js';
 import { engageCloak, stepCloak } from '../src/game/cloak.js';
 import { MISSION01 } from '../src/game/story/missions/mission01.js';
 import { MISSION02 } from '../src/game/story/missions/mission02.js';
+import { ENGINE_OFF, ENGINE_IGNITION, engineStateOf, ignitionPhase, stepEngineIgnition } from '../src/game/engineIgnition.js';
 
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
@@ -107,6 +108,7 @@ async function frames(S, w, n, view, act) {
     S.cameraFrame({ dt, W: 1600, H: 900, camX: w.ship.pos.x, camY: w.ship.pos.y, zoom: 0.3, gameCam3d: null, View3D: view });
     const gameDt = S.worldFrozen ? 0 : dt;
     if (gameDt > 0) S.applyPlayerLock(w.ship, gameDt);
+    stepEngineIgnition(w.ship, gameDt);   // jak physicsStep gry (stepPlayerEngineIgnition)
     S.tick(gameDt);
     await flush();
     if (act) act();
@@ -152,6 +154,7 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(S.ui.hint, 'samouczek: odcumowanie');
   await frames(S, w, 30 * 10, view);
   assert.ok(S.lock && S.blocksInput, 'bez kliknięcia Atlas stoi w doku (stery zablokowane)');
+  assert.equal(engineStateOf(w.ship), ENGINE_OFF, 'silniki Atlasa wyłączone w doku (etap E2)');
   assert.ok(Math.hypot(w.ship.pos.x - berth.x, w.ship.pos.y - berth.y) < 1, 'na stanowisku');
   const row = (label) => S.ui.action.rows().find((r) => r[0] === label)?.[1];
   assert.equal(row('PALIWO'), 'PRZEPŁYW');
@@ -164,12 +167,17 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   // sekwencja obsługi: przepływ → kontrolowany upust (gaz z przewodów) → rygle → złączki w górę → zamki → napęd
   let maxVent = 0;
   let lockWhenVent = 0;
+  let ignitedLocked = false;
   await frames(S, w, Math.ceil(STORY_UNDOCK.driveAt * 30) + 4, view, () => {
     if (pose.vent > maxVent) { maxVent = pose.vent; lockWhenVent = pose.lock; }
+    if (S.lock && engineStateOf(w.ship) === ENGINE_IGNITION) ignitedLocked = true;
   });
+  assert.ok(ignitedLocked, 'zapłon (dym) jeszcze przy zamkach — smokeTime przed zwolnieniem');
   assert.ok(maxVent > 0.95, `kontrolowany upust: ${maxVent}`);
   assert.ok(lockWhenVent > 0.9, 'upust przed odryglowaniem');
   assert.equal(S.lock, null, 'napęd odblokowany po zwolnieniu mocowań');
+  assert.equal(engineStateOf(w.ship), ENGINE_IGNITION, 'w chwili zwolnienia zamków zapłon w płomieniu');
+  assert.equal(ignitionPhase(w.ship), 1, 'błysk i struga w chwili zwolnienia zamków (dym był przy zamkach)');
   assert.ok(!S.blocksInput, 'stery u gracza');
   assert.ok(pose.lock < 0.01 && pose.seat < 0.01 && pose.clamp < 0.01, 'złączki odryglowane i podniesione, zamki pola zwolnione');
   assert.ok(Math.hypot(w.ship.pos.x - berth.x, w.ship.pos.y - berth.y) < 1, 'bez automatycznego wysuwania — wylot należy do gracza');
@@ -188,6 +196,8 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(S.site && S.site.station, 'stocznia postawiona');
   assert.equal(S.site.parkedList.length, 10, 'dziesięć okrętów na parkingu suchego doku');
   assert.ok(S.site.parkedList.every((n) => n.asleep), 'zaparkowane bez załogi');
+  assert.ok(S.site.parkedList.every((n) => engineStateOf(n) === ENGINE_OFF), 'parking z wyłączonymi silnikami');
+  assert.ok(S.site.defenderList.every((n) => engineStateOf(n) === ENGINE_OFF), 'eskorta w hali z wyłączonymi silnikami');
   assert.equal(S.site.turretList.length, 0, 'bez wieżyczek (2026-10-05)');
   assert.equal(w.courses.length >= 1, true, 'kurs wyznaczony');
   // skok „kawałek dalej”: kurs na punkt wyjścia z warpa, poza zasięgiem wzroku Atlasa (mgła wojny)
@@ -260,8 +270,11 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   const d09 = parked[8];
   await frames(S, w, 30 * 26, view);
   assert.ok(d09.armed && !d09.launch, 'załoga przy działach w połowie rozgrzewania');
+  assert.equal(engineStateOf(d09), ENGINE_OFF, 'silniki jeszcze wyłączone');
   await frames(S, w, 30 * 23, view);
   assert.ok(d09.launch, 'D-09 wystartował');
+  assert.equal(engineStateOf(d09), ENGINE_IGNITION, 'zapłon przed startem (zegar wodowania — atrapa nie kroczy lotu)');
+  assert.equal(d09.launch.delay, 0, 'start o czasie — bez czekania na zapłon');
   assert.equal(d09.launch.opts.fightFrom, 1);
   assert.ok(Number.isFinite(d09.launch.path[0].face) && d09.launch.path[0].speed > 0, 'rufą przez bramę stanowiska');
   assert.ok(w.gates.includes('B-09'), 'brama stanowiska otwarta');

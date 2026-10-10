@@ -63,7 +63,11 @@ export class FxLights {
     this.fgrow = new Float32Array(flashCap);
     this.fseed = new Float32Array(flashCap);
     this.fscatter = new Float32Array(flashCap);
+    this.fowner = new Float32Array(flashCap);  // właściciel w siatce (L3.w; 0 = bez) — `owner` w chwili błysku
     this.flashes = 0;
+    // Właściciel NOWYCH błysków (jak ActiveCarrier — ustawia fasada efektu na czas receptury, potem 0): błysk wylotu działa
+    // z domeną gazu wystrzału (etap E1) — w swoim dymie świeci tylko w dalekim polu (gasVolume: GAS_LIGHT_OWNER_BASE).
+    this.owner = 0;
     // Światła jednej klatki: x, y (świat, double), z, r, g, b (× moc), zasięg, rozpraszanie.
     this.pxy = new Float64Array(pointCap * 2);
     this.pdata = new Float32Array(pointCap * 6);
@@ -121,6 +125,7 @@ export class FxLights {
     this.fgrow[i] = grow;
     this.fseed[i] = this.random.next() * 100;
     this.fscatter[i] = scatter;
+    this.fowner[i] = this.owner;
     this.stats.flashes++;
     return i;
   }
@@ -171,6 +176,7 @@ export class FxLights {
     this.fgrow[i] = this.fgrow[last];
     this.fseed[i] = this.fseed[last];
     this.fscatter[i] = this.fscatter[last];
+    this.fowner[i] = this.fowner[last];
   }
 
   /** Pozycja błysku i w tej klatce (świat gry) z członem nośnika: x0 + v · (T − t0). */
@@ -209,7 +215,11 @@ export class FxLights {
       const x = this.flashX(i);
       const y = this.flashY(i);
       if (this._outside(x, y, range)) continue;
-      if (grid.addWorld(x, y, this.fz[i], range, this.fcol[i * 3] * p, this.fcol[i * 3 + 1] * p, this.fcol[i * 3 + 2] * p, this.fscatter[i]) >= 0) n++;
+      const ow = this.fowner[i];
+      // z właścicielem: kierunek / stożek domyślne siatki (−2 = OMNI w lightGrid.js), bez flary i cienia
+      if ((ow === 0
+        ? grid.addWorld(x, y, this.fz[i], range, this.fcol[i * 3] * p, this.fcol[i * 3 + 1] * p, this.fcol[i * 3 + 2] * p, this.fscatter[i])
+        : grid.addWorld(x, y, this.fz[i], range, this.fcol[i * 3] * p, this.fcol[i * 3 + 1] * p, this.fcol[i * 3 + 2] * p, this.fscatter[i], 0, 0, -1, -2, 0, 0, 0, ow)) >= 0) n++;
     }
     const d = this.pdata;
     for (let i = 0; i < this.points; i++) {

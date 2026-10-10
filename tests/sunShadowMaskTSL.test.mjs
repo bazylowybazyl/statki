@@ -86,8 +86,9 @@ test('pass maski: jeden quad, tablica warstw SDF, pętle z uniformów, ≤ 12 bu
   const u = pass.material.uniforms;
   // Adapter: tablice → Vector4 gry (Vector4.set w miejscu), tekstury zastępcze tego samego rodzaju.
   assert.equal(u.uDiscs.value.length, 48);
+  assert.equal(u.uDiscAxis.value.length, 48);
   assert.equal(u.uHullA.value.length, 32);
-  assert.equal(u.uRings.value.length, 2);
+  assert.equal(u.uRings.value.length, 3);
   assert.ok(u.uDiscs.value[0].isVector4);
   assert.equal(u.uHullSdf.value, pass.hullSdfPlaceholder);
   assert.equal(pass.hullSdfPlaceholder.isDataArrayTexture, true);
@@ -150,6 +151,11 @@ test('Core3D: maska do celu przed passami, placeholdery zamiast null, wyłączon
   assert.deepEqual([u.uViewWorldSize.value.x, u.uViewWorldSize.value.y], [1600, 1200], 'kadr w świecie = px / zoom');
   assert.equal(u.uDiscCount.value, 1);
   assert.deepEqual(u.uDiscs.value[0].toArray(), [10, -20, 300, 1]);
+  // Oś smugi: od słońca (1000, −2000 sceny) przez środek tarczy, jednostkowa.
+  const ax = u.uDiscAxis.value[0];
+  assert.ok(Math.abs(Math.hypot(ax.x, ax.y) - 1) < 1e-9);
+  assert.ok(Math.abs(ax.x * (-2000 + 20) - ax.y * (1000 - 10)) < 1e-6, 'oś równoległa do (tarcza − słońce)');
+  assert.ok(ax.x < 0 && ax.y > 0, 'od słońca');
   assert.equal(u.uHullCount.value, 0);
   assert.equal(u.uHullSdf.value, pass.hullSdfPlaceholder, 'węzeł tekstury nie dostaje null');
   assert.equal(u.uFieldOcc.value, pass.fieldOccPlaceholder);
@@ -169,6 +175,55 @@ test('Core3D: maska do celu przed passami, placeholdery zamiast null, wyłączon
   assert.equal(U.uSunShadowOn.value, 0);
   assert.equal(u.uSunActive.value, 0);
   U.uSunShadowMap.value = mask.SUN_SHADOW_MAP_PLACEHOLDER;
+});
+
+test('Core3D: tarcze ciał tła tam, gdzie je widać (perspektywa), oś z prawdziwego środka, kadr = cel sceny', () => {
+  // Zgłoszenie „cienie planet się rozjeżdżają” (2026-10-08): planety tła (z = −50 000) rysuje pass planet
+  // kamerą perspektywy, a maska stawiała ich tarczę w prawdziwym miejscu płaszczyzny gry — smuga była
+  // szersza od tarczy i jechała względem niej z ruchem i zoomem kamery. Przy devicePixelRatio > 1 kadr
+  // maski (px CSS / zoom) był mniejszy niż kadr obrazu 3D (bufor / zoom).
+  const pass = createShadowShaftsPass();
+  const target = { texture: { isTexture: true }, width: 1600, height: 1200 };   // bufor przy DPR 2
+  let current = null;
+  const fakeRenderer = {
+    getRenderTarget: () => current, setRenderTarget: (t) => { current = t; }, render: () => {},
+    info: { render: { drawCalls: 0, triangles: 0, points: 0, lines: 0 } }
+  };
+  const core = Object.assign(Object.create(Core3D), {
+    renderer: fakeRenderer, shadowShaftsPass: pass, sunShadowTarget: target, width: 800, height: 600,
+    activeCam1: { x: 100, y: 200, zoom: 0.5 }, sunOcclusionField: null, shaftHullTexture: null,
+    shaftDiscs: new Float32Array(48 * 4), shaftDiscCount: 0, shaftDiscSrc: new Float64Array(48 * 3),
+    shaftDiscView: new Float64Array(48 * 4), shaftDiscViewAxis: new Float64Array(48 * 2), shaftDiscViewCount: -1,
+    shaftHulls: new Float32Array(32 * 12), shaftHullCount: 0, shaftRings: new Map(), lastFrameRenderInfo: null,
+    _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 }
+  });
+  const cfg = { discLenMul: 5, capsuleLenMul: 3, capsuleBudget: 24, hullSteps: 24 };
+  const sun = { x: -500000, y: 200 };
+  core.pushShaftDiscWorld(1100, 200, 500, 1, -50000);           // planeta tła 1000 j. na prawo od kamery
+  core.pushShaftDiscWorld(100, 800, 300);                       // ciało w płaszczyźnie gry
+  core.pushShaftDiscWorld(5000, 900, 400, 0.5, 0, 1100, 200);   // soczewka: tarcza gdzie indziej, oś z (1100, 200)
+  assert.equal(core._renderSunShadowMask(true, sun, cfg), true);
+  const u = pass.material.uniforms;
+  assert.deepEqual([u.uViewWorldSize.value.x, u.uViewWorldSize.value.y], [3200, 2400], 'kadr maski = cel sceny / zoom');
+  // Kamera perspektywy passa planet (syncCamera z rozmiarem celu): Zc = (h / 2) / tg(17,5°) / zoom.
+  const camZ = 600 / Math.tan(17.5 * Math.PI / 180) / 0.5;
+  const k = camZ / (camZ + 50000);
+  const d0 = u.uDiscs.value[0];
+  assert.ok(Math.abs(d0.x - (100 + 1000 * k)) < 1e-6 && Math.abs(d0.y + 200) < 1e-6, `środek w kadrze: ${d0.x}`);
+  assert.ok(Math.abs(d0.z - 500 * k) < 1e-6, 'promień jak na ekranie');
+  assert.deepEqual(u.uDiscs.value[1].toArray(), [100, -800, 300, 1], 'płaszczyzna gry bez zmian');
+  // Oś z prawdziwego środka (słońce w tej samej głębokości — rzut nie zmienia kierunku): +x sceny.
+  assert.ok(Math.abs(u.uDiscAxis.value[0].x - 1) < 1e-9 && Math.abs(u.uDiscAxis.value[0].y) < 1e-9);
+  assert.ok(Math.abs(u.uDiscAxis.value[2].x - 1) < 1e-9 && Math.abs(u.uDiscAxis.value[2].y) < 1e-9, 'oś soczewki z (1100, 200)');
+  assert.equal(u.uDiscs.value[2].w, 0.5);
+  // Lustro CPU na tych samych tarczach: cień za tarczą WIDZIANĄ, nie za prawdziwym miejscem.
+  const vis = (x, y) => mask.discSunVisibilityCpu(x, y, sun.x, sun.y, core.shaftDiscView, core.shaftDiscViewCount, 5, core.shaftDiscViewAxis);
+  assert.ok(vis(100 + 1000 * k + 500 * k * 3, 200) < 0.05, 'za tarczą w kadrze — cień');
+  assert.ok(vis(1100 + 500 * 3, 200) > 0.99, 'za prawdziwym miejscem — słońce');
+  // Bez osi (dawne wywołanie) — oś ze środka tarczy i słońca jak dotąd.
+  assert.equal(mask.discSunVisibilityCpu(100, 800 + 900, 100, -1e6, new Float32Array([100, -800, 300, 1]), 1, 5) < 0.05, true);
+  mask.sunShadowUniforms.uSunShadowMap.value = mask.SUN_SHADOW_MAP_PLACEHOLDER;
+  mask.sunShadowUniforms.uSunShadowOn.value = 0;
 });
 
 test('Core3D.uploadTextureLayer: jedna warstwa tablicy przez queue.writeTexture, odmowa przed pełnym wgraniem', () => {

@@ -119,7 +119,8 @@ export const FC_TURRET = Object.freeze({
   NO_ARC: 3,    // naładowana, ale punkt celowania leży poza łukiem ostrzału wieży
   CHARGE: 4,    // ładowanie przed strzałem (Valkyrie, Mjolnir — progress 0..1)
   DOWN: 5,      // gniazdo zniszczone
-  IDLE: 6       // na auto, naładowana, bez celu
+  IDLE: 6,      // na auto, naładowana, bez celu
+  STILL: 7      // naładowana, ale broń strzela tylko z postoju (`requiresStationary` — Mjolnir), a okręt się rusza
 });
 
 function turretEntry(fc, group, n) {
@@ -468,6 +469,8 @@ export function stepFireControl(fc, env, tune = FC_TUNE) {
       const ready = group === 'main' ? hp.fcCd <= 0 : !(Number(hp.specialCd) > 0);
       const left = group === 'main' ? Math.max(0, Number(hp.fcCd) || 0) : Math.max(0, Number(hp.specialCd) || 0);
       const charging = aim.charge && aim.charge.charge >= 0;
+      // Broń z postoju (Mjolnir) w ruchu nie zacznie ładowania — wieża w osobnym stanie, żeby gracz wiedział czemu.
+      const still = weapon.requiresStationary === true && env.stationary === false;
       if (hand) {
         stats.handTotal++;
         const aligned = aim.aimErr <= tune.handTol;
@@ -482,6 +485,7 @@ export function stepFireControl(fc, env, tune = FC_TUNE) {
         const st = charging ? FC_TURRET.CHARGE
           : !ready ? FC_TURRET.RELOAD
           : outside ? FC_TURRET.NO_ARC
+          : still ? FC_TURRET.STILL
           : aligned ? FC_TURRET.READY : FC_TURRET.TRAVERSE;
         const t = writeTurret(fc, group, fc.turretCount[group]++, hp, st, left, Number(weapon.cooldown) || 0, aim.angle, true, arc);
         if (charging) t.progress = Math.max(0, Math.min(1, Number(aim.charge.u) || 0));
@@ -498,6 +502,7 @@ export function stepFireControl(fc, env, tune = FC_TUNE) {
         const st = charging ? FC_TURRET.CHARGE
           : !ready ? FC_TURRET.RELOAD
           : !target ? FC_TURRET.IDLE
+          : still ? FC_TURRET.STILL
           : engaged ? FC_TURRET.READY : FC_TURRET.TRAVERSE;
         const t = writeTurret(fc, group, fc.turretCount[group]++, hp, st, left, Number(weapon.cooldown) || 0, aim.angle, false, arc);
         if (charging) t.progress = Math.max(0, Math.min(1, Number(aim.charge.u) || 0));

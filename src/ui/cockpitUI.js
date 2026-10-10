@@ -2519,13 +2519,27 @@ export class CockpitUI {
     this.lastAlertAt = now;
     const tone = ALERT_TONES[rawTone] || 'info';
     const seconds = clamp(Number(options.duration) || 2.2, 1.2, 6) + 0.8;
+    // Ten sam komunikat jeszcze widać (np. trzymany spust powtarza „WYMAGA POSTOJU”) — przedłuż go,
+    // zamiast dokładać drugą identyczną linię. Animacja rusza od chwili pełnej widoczności (8%).
+    for (const old of root.children) {
+      if (old.textContent !== message) continue;
+      clearTimeout(old.__alertTimer);
+      old.className = `alert-item ${tone}`;
+      old.style.animation = 'none';
+      void old.offsetWidth;
+      old.style.animation = '';
+      old.style.setProperty('--dur', `${seconds.toFixed(2)}s`);
+      old.style.animationDelay = `${(-0.08 * seconds).toFixed(2)}s`;
+      old.__alertTimer = setTimeout(() => old.remove(), seconds * 0.92 * 1000 + 80);
+      return;
+    }
     const item = document.createElement('div');
     item.className = `alert-item ${tone}`;
     item.style.setProperty('--dur', `${seconds.toFixed(2)}s`);
     item.textContent = message;
     root.appendChild(item);
     while (root.children.length > 2) root.firstElementChild?.remove();
-    setTimeout(() => item.remove(), seconds * 1000 + 80);
+    item.__alertTimer = setTimeout(() => item.remove(), seconds * 1000 + 80);
   }
 
   createFeedLine(entry, live, now = perfNow()) {

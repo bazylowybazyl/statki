@@ -24,6 +24,7 @@ import { WarpPlume3D } from './warpPlume3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 // Dysze MAIN tej klatki per okręt — dla poświaty dysz na pyle kosmicznym (src/3d/dust/).
 import { EngineFrame } from './engineFrame.js';
+import { enginePlumeScale, engineIgnitionKick } from '../game/engineIgnition.js';
 // Dysze SIDE tej klatki — modele 3D dysz bocznych (sideNozzleFrame.js → shipModels3DGame.js); płomień z wylotu dzwonu.
 import { SideNozzleFrame, SIDE_NOZZLE_RADIUS, SIDE_NOZZLE_MOUTH } from './sideNozzleFrame.js';
 // Dysze SIDE na WebGPU (2026-10-07): struga TSL, gaz w pulach GPU, światło na blasze — zamiast engineExhaustBatch.
@@ -639,7 +640,11 @@ function updateEffects(entity, fxData, dt) {
   // MAIN: rozmiar i paleta per statek, tryb skoku, dopalacz — raz na encję.
   const engineFx = resolveEntityEngineFx(entity);
   const warpMode = resolveWarpMode(entity);
-  const mainBoost = resolveMainBoost(entity);
+  // Silniki MAIN wyłączone / zapłon / gaszenie (src/game/engineIgnition.js — etap E2): moc strugi MAIN (z płomykiem
+  // jałowym) × mnożnik stanu; rampa mocy strugi (mainExhaust3D) wygładza resztę. Encja bez stanu — 1.
+  const plumeK = entity.engineIgn ? enginePlumeScale(entity) : 1;
+  const plumeKick = entity.engineIgn ? engineIgnitionKick(entity) : 0;   // silnik „łapie” — rozbłysk strugi w zapłonie
+  const mainBoost = resolveMainBoost(entity) && plumeK >= 1;
   const isPlayerEntity = entity === GameState.ship || entity.isPlayer === true;
   const isHulk = entity.isBridgeHulk === true;
   const jetGainRaw = (isPlayerEntity && typeof window !== 'undefined') ? Number(window.OPTIONS?.vfx?.bloomGain) : NaN;
@@ -744,7 +749,7 @@ function updateEffects(entity, fxData, dt) {
       p.dirY = dirY;
       p.radius = nozzleR;
       // Plazma pali — struga MAIN gaśnie; skok bez wolnej instancji — dopalacz.
-      p.throttle = warpOn ? 0 : (warpFallback ? 1 : slotThrottle);
+      p.throttle = warpOn ? 0 : (warpFallback ? 1 : Math.max(slotThrottle, plumeKick) * plumeK);
       p.boost = !warpOn && (warpFallback || mainBoost);
       p.lengthMul = Number(engineFx.mainLength) > 0 ? Number(engineFx.mainLength) : 1;
       p.widthMul = Number(engineFx.mainWidth) > 0 ? Number(engineFx.mainWidth) : 1;

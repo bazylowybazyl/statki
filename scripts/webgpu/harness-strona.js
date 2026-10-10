@@ -236,6 +236,9 @@
   realRaf(tick);
 
   let s = SEED;
+  // Ziarna reseed użyte na tej stronie (ostrzeżenie o powtórzonym ciągu — reseed niżej).
+  const usedSeeds = new Set();
+  let warnedSeed = false;
   // Licznik wywołań Math.random gry wg miejsca wywołania (zadanie 23, `zrzuty.mjs --losowania`): kto zużywa
   // losowania gry w scenie — wizualia mają losować z fxRandom (warstwa efektów), inaczej przebieg bitwy
   // zależy od obrazu (kadru, zoomu, zajętości pul). Stos tylko przy włączonym liczniku; ciąg liczb bez zmian.
@@ -271,7 +274,11 @@
   // (osobneLosowanieUuid w wspolne.mjs), więc liczba obiektów three nie przesuwa losowań
   // gry — WebGL i WebGPU generują ten sam świat. Bez reseed: UUID mają być unikalne.
   let su = (SEED ^ 0x9e3779b9) >>> 0;
+  // Liczba UUID z tego strumienia: > 0 = tryb „--uuid osobne” (generateUUID podmieniony) — reseed niżej wie,
+  // czy uuid three idą jeszcze z Math.random gry.
+  let uuidCalls = 0;
   window.__harnessUuidRandom = () => {
+    uuidCalls++;
     su = (su + 0x6D2B79F5) | 0;
     let t = Math.imul(su ^ (su >>> 15), 1 | su);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -625,7 +632,18 @@
     // zależała od liczby klatek ładowania — innej w każdym przebiegu (do 0,06% pikseli > 8/255 w `bitwa__ortho`:
     // iskry przy dyszach i ich blask; stan gry i wszystkie bufory poza barwą iskier bit w bit te same). Wiek
     // cząstek liczą pule same — cofnięcie zegara zmienia tylko fazę migotania.
+    // Pułapka 38: reseed ziarnem startu strony albo ziarnem już użytym na tej stronie odtwarza ciąg Math.random,
+    // a w trybie wspólnych UUID (bez osobneLosowanieUuid) z niego idą uuid three — obiekty po reseed dostają uuid
+    // starszych. Węzły TSL i tekstury chroni łata Core3D (src/3d/tsl/uuidWezlow.js); światła (AnalyticLightNode: hasz =
+    // uuid światła) i InstancedMesh (uuid w kluczu obiektu renderu) — nie. Ostrzeżenie raz na stronę.
     reseed(v = SEED) {
+      const key = v >>> 0;
+      if (uuidCalls === 0 && (key === SEED || usedSeeds.has(key)) && !warnedSeed) {
+        warnedSeed = true;
+        console.warn(`[harness] reseed(0x${key.toString(16)}) powtarza ciąg Math.random tej strony, a uuid three idą z niego (tryb wspólny) — `
+          + 'obiekty three po reseed dostają uuid starszych (pułapka 38: światła i InstancedMesh bez ochrony); inne ziarno albo osobneLosowanieUuid');
+      }
+      usedSeeds.add(key);
       s = v >>> 0;
       try { if (window.fxRandom && typeof window.fxRandom.seed === 'function') window.fxRandom.seed((v ^ 0x5eed5eed) >>> 0); } catch { /* bez efektów */ }
       try { if (window.Fx3D && typeof window.Fx3D.time === 'number') window.Fx3D.time = 0; } catch { /* bez banku iskier */ }

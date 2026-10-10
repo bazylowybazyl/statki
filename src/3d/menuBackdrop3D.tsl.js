@@ -26,6 +26,7 @@ import { haloRingTSL } from './haloRing/haloRingTSL.js';
 import { acesGry } from './tsl/kolorGry.js';
 import { acesGryInv } from './skybake/skyGameColor.js';
 import { skyStarField } from './skyStars.tsl.js';
+import { earthPitProfile, earthPitShade, EARTH_PIT_TSL } from './earthPit.tsl.js';
 
 // Siatka tekseli tła dla gwiazd ekranowych (jak materiał mgławicy gry — te same gwiazdy w tych samych miejscach).
 const SKY_STAR_TEX = vec2(5120, 3200);
@@ -96,13 +97,20 @@ function localVaryings(uLocal) {
  * Ziemia tła menu (dawny EARTH_FRAGMENT): mapa normalnych z pochodnych, cień ringu (haloRingBlock), szum
  * z bliska, połysk oceanu (GGX), światła miast nocą, chmury z przesunięciem i cieniem, cienka atmosfera.
  * tex: { day, night, spec, normal, clouds } (tekstury planety gry — pożyczone). Zwraca { material, uniforms }.
+ * Wielka kopalnia ringu (earthPit.tsl.js): pitMode 1 = kula bez obszaru dziury, 2 = łata-bryła (wspólne
+ * z kulą `shared`: uLocal, uCloudShift, uSunObj — kierunek słońca w układzie siatki, liczony na CPU).
  */
-export function createMenuEarthMaterial(ring, tex) {
+export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null, air = null } = {}) {
+  // powietrze: ekstynkcja (rgb) i barwa rozpraszania w dzień — domyślnie czyste (błękit), mapy mogą dać zapylone
+  const airExt = air?.ext || [0.020, 0.048, 0.115];
+  const airDay = air?.day || [0.30, 0.52, 1.0];
   const H = haloRingTSL(ring.uniforms);
   const U = H.uniforms;
-  const uLocal = uniform(new THREE.Matrix4());
-  const uCloudShift = uniform(0);
+  const uLocal = shared?.uLocal || uniform(new THREE.Matrix4());
+  const uCloudShift = shared?.uCloudShift || uniform(0);
+  const uSunObj = shared?.uSunObj || uniform(new THREE.Vector3(1, 0, 0));
   const { vUv, vPosL } = localVaryings(uLocal);
+  const vObj = varying(positionGeometry, 'vMenuObj');
   const dayTex = texture(tex.day, vUv);
   const nightTex = texture(tex.night, vUv);
   const specTex = texture(tex.spec, vUv);
@@ -124,18 +132,39 @@ export function createMenuEarthMaterial(ring, tex) {
     const S = normalize(q0.mul(st1.y).sub(q1.mul(st0.y)).add(1e-6)).toVar();
     const T = normalize(q0.negate().mul(st1.x).add(q1.mul(st0.x)).add(1e-6)).toVar();
     const N = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(Ng.mul(mapN.z))).toVar();
+    // wielka kopalnia: profil, na łacie normalna, cień i żar ze wzoru (jak w grze)
+    const pitP = vec4(0.0, 9.0, 0.0, 0.0).toVar();
+    const pitShadow = float(1.0).toVar();
+    const pitGlow = float(0.0).toVar();
+    const pitDetail = float(1.0).toVar();
+    const inPit = float(0.0).toVar();
+    if (pitMode > 0) {
+      const pDir = normalize(vObj).toVar();
+      pitP.assign(earthPitProfile(pDir));
+      if (pitMode === 2) {
+        const sh = earthPitShade(pDir, uSunObj, pitP);
+        inPit.assign(float(1.0).sub(smoothstep(EARTH_PIT_TSL.rimS, EARTH_PIT_TSL.rimS + 0.012, pitP.y)));
+        N.assign(normalize(mix(N, normalize(uLocal.mul(vec4(sh.normal, 0.0)).xyz), inPit)));
+        pitShadow.assign(mix(1.0, sh.shadow, inPit));
+        pitGlow.assign(sh.glow);
+        pitDetail.assign(mix(1.0, sh.detail, inPit));
+      }
+    }
     const NgL = dot(Ng, L).toVar();
-    const NdL = dot(N, L).toVar();
+    const NdL = dot(N, L).mul(pitShadow).toVar();
     const ringVis = H.haloRingBlock(posL.add(Ng.mul(8.0)), L).toVar();
     // detal z bliska: szum 3D na sferze (tekstura 8k to ~29 j./teksel)
     const dn = mbNoise(Ng.mul(U.uPlanet.w.div(420.0))).mul(0.6).add(mbNoise(Ng.mul(U.uPlanet.w.div(95.0))).mul(0.4)).toVar();
     const closeK = float(1.0).sub(smoothstep(9000.0, 30000.0, length(U.uCamLocal.sub(posL)))).toVar();
-    const day = dayTex.rgb.mul(float(1.0).add(dn.sub(0.5).mul(0.22).mul(closeK))).toVar();
+    const day = dayTex.rgb.mul(float(1.0).add(dn.sub(0.5).mul(0.22).mul(closeK))).mul(pitDetail).toVar();
     const water = smoothstep(0.08, 0.8, specTex.r).toVar();
     // Chmury płyną względem lądu: przesunięcie zawinięte fract() z gradientami nieprzesuniętego UV
     // (tekstura chmur gry ma zawijanie clamp, a fract bez gradientów dawał szew mipmap na południku).
     const cuv = vec2(fract(vUv.x.add(uCloudShift)), vUv.y).toVar();
-    const cRaw = dot(cloudTex.sample(cuv).grad(st0, st1).rgb, LUMA).toVar();
+    const cTex = cloudTex.sample(cuv).grad(st0, st1).rgb.toVar();
+    const cRaw = dot(cTex, LUMA).toVar();
+    // barwa chmury z chromy (biel — chmury, brąz — pył i burze piaskowe)
+    const cTint = min(cTex.div(max(cRaw, 1e-3)), vec3(1.6)).toVar();
     const cloud = smoothstep(0.1, 0.78, cRaw.add(dn.sub(0.5).mul(0.12).mul(closeK))).toVar();
     // cień chmur: odczyt przesunięty ku słońcu (warstwa ~1% promienia nad ziemią)
     const Lt = L.sub(Ng.mul(NgL)).toVar();
@@ -145,6 +174,8 @@ export function createMenuEarthMaterial(ring, tex) {
     const term = smoothstep(-0.06, 0.16, NgL);
     const sun = U.uSunColor.mul(ringVis).mul(term).toVar();
     const surf = day.mul(0.95).mul(sun.mul(max(NdL, 0.0)).mul(float(1.0).sub(cShadow.mul(0.55))).add(vec3(0.004, 0.006, 0.01))).toVar();
+    // dziura: światło nieba w cieniu ścian
+    surf.addAssign(day.mul(sun).mul(EARTH_PIT_TSL.skyFill).mul(float(1.0).sub(pitShadow)).mul(inPit).mul(smoothstep(0.0, 0.25, NgL)));
     // połysk oceanu (GGX, lekko szorstki); Fresnel (1 − cos)^5 mnożeniem
     const Hh = normalize(L.add(V)).toVar();
     const a2 = float(0.028);
@@ -160,21 +191,24 @@ export function createMenuEarthMaterial(ring, tex) {
     const nightMask = float(1.0).sub(smoothstep(-0.14, 0.04, NgL.mul(ringVis)));
     surf.addAssign(night.mul(night).mul(vec3(1.0, 0.72, 0.42)).mul(0.55).mul(nightMask).mul(float(1.0).sub(cloud.mul(0.8))));
     // chmury (ta sama tekstura co w grze)
-    const cloudCol = vec3(0.74).mul(sun.mul(float(0.35).add(float(0.65).mul(max(NgL, 0.0)))).add(vec3(0.005, 0.007, 0.012)));
+    // żar szybu kopalni (skała ~900 °C) — w dzień słabiej, nocą pełną mocą
+    surf.addAssign(vec3(...EARTH_PIT_TSL.glow).mul(pitGlow).mul(mix(EARTH_PIT_TSL.glowDay, 1.0, nightMask)));
+    const cloudCol = vec3(0.74).mul(cTint).mul(sun.mul(float(0.35).add(float(0.65).mul(max(NgL, 0.0)))).add(vec3(0.005, 0.007, 0.012)));
     surf.assign(mix(surf, cloudCol, cloud.mul(0.94)));
     // cienka atmosfera wzdłuż promienia: błękit w dzień, zachód przy terminatorze
     const mu = max(dot(Ng, V), 0.0);
     const airmass = float(1.0).div(mu.add(0.045));
-    const ext = exp(vec3(0.020, 0.048, 0.115).negate().mul(airmass)).toVar();
+    const ext = exp(vec3(...airExt).negate().mul(airmass)).toVar();
     const dayF = smoothstep(-0.1, 0.3, NgL);
     const sunsetF = smoothstep(-0.2, 0.0, NgL).mul(float(1.0).sub(smoothstep(0.0, 0.28, NgL))).toVar();
-    const scat = mix(vec3(0.30, 0.52, 1.0), vec3(1.0, 0.42, 0.16), sunsetF).mul(dayF.mul(0.9).add(sunsetF.mul(0.35))).mul(ringVis);
+    const scat = mix(vec3(...airDay), vec3(1.0, 0.42, 0.16), sunsetF).mul(dayF.mul(0.9).add(sunsetF.mul(0.35))).mul(ringVis);
     surf.assign(surf.mul(ext).add(scat.mul(U.uSunColor).mul(vec3(1.0).sub(ext)).mul(0.62)));
+    if (pitMode === 1) Discard(pitP.y.lessThan(EARTH_PIT_TSL.cutS));
     return vec4(max(surf, vec3(0.0)), 1.0);
   })();
 
   const material = new NodeMaterial();
-  material.name = 'MenuEarth';
+  material.name = pitMode === 2 ? 'MenuEarthPit' : 'MenuEarth';
   material.fragmentNode = fragmentNode;
   material.fog = false;
   material.toneMapped = false;
@@ -182,6 +216,7 @@ export function createMenuEarthMaterial(ring, tex) {
     ...ring.uniforms,
     uLocal,
     uCloudShift,
+    uSunObj,
     dayTexture: dayTex,
     nightTexture: nightTex,
     specularTexture: specTex,

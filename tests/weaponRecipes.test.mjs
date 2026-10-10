@@ -157,3 +157,24 @@ test('wylot i trafienie bez alokacji obiektów na strzał (po rozgrzewce JIT)', 
   assert.ok(best < 2000 * 800, `alokacja ${best} B na 2000 serii strzałów (${(best / 2000).toFixed(0)} B na serię)`);
   resetPools();
 });
+
+test('E1: gaz z lufy — dym cząstkowy wylotu armaty i Yamato × m.smokeK (bez podwójnego dymu), błysk, ogień i iskry bez zmian', () => {
+  const count = (id, k) => {
+    resetPools();
+    const w = wOf(id);
+    const mm = { ...m, smokeK: k };
+    RECIPES[w.fx].muzzle(ctx, mm, w);
+    return { smoke: fx.smoke.total, add: fx.add.total, spark: fx.spark.total, lights: lights.count };
+  };
+  for (const id of ['armata_mk1', 'special_yamato_cannon', 'special_yamato_l']) {
+    const full = count(id, 1), gas = count(id, 0);
+    assert.ok(full.smoke > 10, `${id}: dym cząstkowy bez gazu`);
+    assert.equal(gas.smoke, 0, `${id}: przy gazie (smokeK 0) bez dymu cząstkowego`);
+    assert.equal(gas.spark, full.spark, `${id}: iskry bez zmian`);
+    assert.equal(gas.lights, full.lights, `${id}: błyski w siatce bez zmian`);
+    assert.ok(gas.add >= full.add - 14, `${id}: rozbłysk i ogień zostają (bez oparu Yamato)`);
+  }
+  // Domyślnie (bez pola smokeK) — jak dawniej.
+  const d0 = (() => { resetPools(); const w = wOf('armata_mk1'); RECIPES.armata.muzzle(ctx, { ...m }, w); return fx.smoke.total; })();
+  assert.equal(d0, count('armata_mk1', 1).smoke);
+});

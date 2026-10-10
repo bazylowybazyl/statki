@@ -14,6 +14,7 @@
 // Skoki dev: ?story=<faza> (fazy kampanii) — wcześniejsze fazy pominięte, świat ustawiony jak po nich.
 // ============================================================
 import { MISSION01_DIALOGUE as D, MISSION01_TITLE } from '../../../data/story/mission01.dialogue.js';
+import { engineIgnitionDuration } from '../../engineIgnition.js';
 
 export const MISSION01 = Object.freeze({
   id: 'm01_silent_shipyard',
@@ -104,7 +105,9 @@ export async function mission01(ctx) {
     hint('undock', () => !api.dock.locked());
     await api.ui.action({
       id: 'undock', title: `STANOWISKO ${berthId} · K-7`, subtitle: 'OBSŁUGA PODŁĄCZONA',
-      label: 'ODDOKUJ', busyLabel: 'ODCUMOWANIE…', key: 'Enter', rows: () => api.dock.serviceRows()
+      label: 'ODDOKUJ', busyLabel: 'ODCUMOWANIE…', key: 'Enter', rows: () => api.dock.serviceRows(),
+      // Komplety wszystkich kart leżą w hangarze — przed wylotem gracz może zmienić konfigurację (D8 fitowania).
+      alt: { label: 'WYPOSAŻENIE', run: () => api.dock.openFitting() }
     });
     await api.dock.undock();
     api.say(D.undock, 'radio');
@@ -331,6 +334,8 @@ export async function mission01(ctx) {
           api.ui.banner(`${how} ${r.label} · ${stoppedN} / ${yard.length}`, 2.4);
           continue;
         }
+        // Zapłon silników z dymem tyle przed startem, ile trwa (okręt rusza o czasie — wylot z doku, etap E2).
+        if (!r.ignited && now >= r.launchAt - engineIgnitionDuration()) { r.ignited = true; api.site.ignite?.(e); }
         if (now >= r.launchAt) {
           r.state = 'launched';
           launchedN++;

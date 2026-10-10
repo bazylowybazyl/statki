@@ -26,6 +26,7 @@ import { initRocketSystem3D } from '../src/effects3d/rocketSystem3D.js';
 import { WeaponFx } from '../src/3d/weapons/weaponFx.js';
 import { SimClock } from '../src/game/simClock.js';
 import { createExplosionFactory, EXPLOSION_TUNE } from '../src/3d/explosions/explosionFx.js';
+import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame } from '../src/game/gasObstacleInput.js';
 
 const params = new URLSearchParams(location.search);
 const shotMode = params.get('shot') === '1';
@@ -125,6 +126,27 @@ const galleryShips = [
   { id: 'g1', hullId: 'pirate_frigate', x: GAL.x + 1300, y: GAL.y + 900, angle: 2.2 },
   { id: 'g2', hullId: 'pirate_battleship', x: GAL.x + 300, y: GAL.y - 1800, angle: -0.4 }
 ];
+
+// Przeszkody gazu (etap C, src/game/gasObstacleInput.js): bryły trafień doku (bez odpadłych kawałków), ściany próbne
+// (sonda, harness: window.__demo.walls) i kadłuby: okręty demo (obrys z wymiarów sprite'a — bez silnika belek) i kadłuby
+// próbne (window.__demo.testHulls — encje { x, y, angle, w, h, vx, vy, angVel }).
+const obstIn = createGasObstacleInput();
+const obstState = createGasObstacleState();
+const domRects = new Float64Array(4 * 16);
+const _gp = { x: 0, y: 0 };
+const dockShapes = layout.hitSolids.map((h) => ({ chunk: h.chunk, pts: h.poly.map((p) => { const g = hubToGame(p.x, p.z, _gp); return { x: g.x, y: g.y }; }) }));
+const dockObst = {
+  shapes: dockShapes,
+  status: (id) => { const s = dock._chunkById?.get(id); return s && (s.broken || s.hidden) ? 0 : 1; },
+  feet: () => {}
+};
+const shipEntity = (s) => {
+  const size = trafficHullRenderSize(s.hullId);
+  return { x: s.x, y: s.y, angle: s.angle, w: size.w, h: size.h, vx: 0, vy: 0, angVel: 0, beamHull: null };
+};
+const shipEntities = [...parked.map(shipEntity), ...galleryShips.map(shipEntity)];
+const testWalls = { version: 0, boxes: [] };
+const testHulls = [];
 
 // ---------------------------------------------------------------------------
 const state = {
@@ -407,6 +429,17 @@ function render(simDt) {
   }
   dock.setSun({ sun: window.SUN, at: P0 });
   dock.update(simDt, { alarm: false, roofFade: 0, launch: [0, 0, 0], gates: [0, 0, 0], berths: parked.map((p) => (p.alive ? 1 : 0)), daylight: 0.25 });
+  if (ex) {
+    // kadłuby próbne ruszają się z czasem sceny (sonda: przelot kadłuba przez obłok)
+    for (const e of testHulls) { e.x += (e.vx || 0) * simDt; e.y += (e.vy || 0) * simDt; e.angle += (e.angVel || 0) * simDt; }
+    for (let i = 0; i < parked.length; i++) shipEntities[i].dead = !parked[i].alive;
+    const nDom = ex.domainRects(domRects);
+    packGasObstacleFrame(obstIn, obstState, {
+      dt: simDt, camX: state.cam.x, camY: state.cam.y, viewHalf: Math.hypot(W, H) * 0.5 / Math.max(1e-4, state.cam.zoom),
+      dock: dockObst, extra: testWalls, hulls: [testHulls, demoObst.ships ? shipEntities : null], domains: domRects, nDomains: nDom
+    });
+    ex.setObstacleInput(demoObst.on ? obstIn : null);
+  }
   dock.pushGridLights(Core3D.fx?.lights, hubToGame);
   ShipProxyBatch3D.begin(cam);
   for (const p of parked) if (p.alive) ShipProxyBatch3D.push(p.id, p.hullId, p.x, p.y, p.angle);
@@ -472,8 +505,15 @@ window.__demo = {
   clear: () => clearAll(),
   stats: () => ({ ...ex.stats, grid: { ...ex.grid.stats }, embers: ex.embers.stats.alive, flashes: ex.flashes.count, frags: ex.fN, errors: errors.slice() }),
   proxiesReady: () => ShipProxyBatch3D.stats.waitingImage === 0 && dock.hulls.every((h) => h.mesh.visible),
-  dock, layout, hubToGame
+  dock, layout, hubToGame,
+  // Przeszkody gazu: obst.on (wejście przeszkód), obst.ships (okręty demo jako kadłuby); ściany próbne (świat gry:
+  // { cx, cy, ux, uy, hw, hd }) — walls(lista) podmienia, kadłuby próbne — testHulls (tablica encji).
+  obst: null,
+  walls: (list) => { testWalls.boxes = Array.isArray(list) ? list : []; testWalls.version++; return testWalls.boxes.length; },
+  testHulls,
+  obstIn
 };
+const demoObst = window.__demo.obst = { on: true, ships: true };
 
 // ---------------------------------------------------------------------------
 // Start
@@ -487,7 +527,11 @@ const rocketFx = createRocketFx(Core3D);
 initRocketSystem3D(Core3D.scene, { effects: rocketFx });
 WeaponFx.ensure();
 try {
-  explode = createExplosionFactory(Core3D, { rocketFx, weaponFx: WeaponFx, clock: () => state.T });
+  // ?siatka=k=v,… — nadpisanie EXPLOSION_GRID (A/B sondy: alias=0 — dawne 12 atlasów, fineSlots=0 — bez atlasu „fine”).
+  const gridOpt = params.get('siatka') ? Object.fromEntries(params.get('siatka').split(',').map((p) => {
+    const [k, v] = p.split('='); return [k, v === 'true' ? true : v === 'false' ? false : Number(v)];
+  })) : null;
+  explode = createExplosionFactory(Core3D, { rocketFx, weaponFx: WeaponFx, clock: () => state.T, grid: gridOpt });
   ex = explode.system;
 } catch (err) { reportError(`wybuchy: ${err.stack || err.message}`); }
 setKind('capital');

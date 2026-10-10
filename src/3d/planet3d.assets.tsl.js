@@ -38,7 +38,7 @@ import {
   Fn, If, Loop, Discard,
   float, vec2, vec3, vec4, uniform, attribute, varying,
   positionLocal, positionGeometry, normalLocal, uv,
-  modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
+  modelWorldMatrix, modelWorldMatrixInverse, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
   transformNormalToView, screenCoordinate, screenSize, viewportSize,
   atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
   select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty, uint
@@ -60,18 +60,26 @@ const SKY_STAR_TEX = vec2(5120, 3200);
 // maska liczona w płaszczyźnie gry trafiałaby w nie obok), ciała przy ringu (pass ortho) — tak;
 // mgławica i gwiazdy dostają długą smugę tła.
 import { sunShaftBackdrop, sunVisibility } from './sunShadowMask.js';
+// Wielka kopalnia ringu na Ziemi: wycięcie kuli i łata-bryła (uPitMode 1 / 2, earthPit.tsl.js).
+import { earthPitProfile, earthPitShade, EARTH_PIT_TSL } from './earthPit.tsl.js';
+// Żywa atmosfera Jowisza (rodzaj 'jupiter' = graf powierzchni z barwą dnia z przepływu, jupiterAtmosphere.tsl.js).
+import { JUPITER_UNIFORM_KEYS, jupiterFlowDayColor } from './jupiterAtmosphere.tsl.js';
+// Żywa atmosfera Saturna (rodzaj 'saturn' — ten sam silnik gazowych olbrzymów z czapami polarnymi, saturnAtmosphere*.js).
+import { SATURN_UNIFORM_KEYS, saturnFlowDayColor } from './saturnAtmosphere.tsl.js';
 
 export const STAR_PLANET_MASK_CAP = 12;
 
 // Liczniki (testy, spis): `materials` — lekkie materiały per ciało, `builds` — budowy
 // NodeBuildera (ma ich być tyle co rodzajów × kontekstów renderu, nie tyle co ciał).
 export const PLANET_TSL_STATS = {
-  materials: { surface: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0 },
-  builds: { surface: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0 }
+  materials: { surface: 0, jupiter: 0, saturn: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0 },
+  builds: { surface: 0, jupiter: 0, saturn: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0 }
 };
 
 export const PLANET_MATERIAL_NAMES = Object.freeze({
   surface: 'PlanetSurface',
+  jupiter: 'PlanetSurfaceJupiter',
+  saturn: 'PlanetSurfaceSaturn',
   clouds: 'PlanetClouds',
   atmosphere: 'PlanetAtmosphere',
   ringAtmosphere: 'RingPlanetAtmosphere',
@@ -85,9 +93,10 @@ const fragCoordGL = () => vec2(screenCoordinate.x, screenSize.y.sub(screenCoordi
 
 // ── Wartości per obiekt ─────────────────────────────────────────────────────────
 // Węzeł wspólny dla wszystkich materiałów rodzaju, wartość z material.uniforms[klucz].value
-// rysowanego obiektu. Typ: 'float' | 'vec2' | 'vec3'.
+// rysowanego obiektu. Typ: 'float' | 'vec2' | 'vec3' | 'vec4'.
 function perObject(key, type) {
-  const init = type === 'vec3' ? new THREE.Vector3() : (type === 'vec2' ? new THREE.Vector2() : 0);
+  const init = type === 'vec4' ? new THREE.Vector4()
+    : (type === 'vec3' ? new THREE.Vector3() : (type === 'vec2' ? new THREE.Vector2() : 0));
   return uniform(init, type).onObjectUpdate(({ material }) => material.uniforms[key].value);
 }
 
@@ -267,17 +276,19 @@ const SURFACE_KEYS = {
   uBrightness: 'float', uSpecular: 'float', uSunIntensity: 'float',
   uHazeStrength: 'float', uHazeColor: 'vec3', uHazeBeta: 'vec3',
   uRingShadowStrength: 'float', uRingShadowRadius: 'float', uRingShadowReach: 'float', uRingShadowCenter: 'vec2',
-  uSunShadowRecv: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float'
 };
 
-function buildSurfaceGraph() {
-  const U = perObjectUniforms(SURFACE_KEYS);
+// `flow` (rodzaj 'jupiter'): barwa dnia z przepływu atmosfery zamiast próbki mapy — reszta grafu bez zmian.
+function buildSurfaceGraph(flow = null) {
+  const U = perObjectUniforms(flow ? { ...SURFACE_KEYS, ...flow.keys } : SURFACE_KEYS);
   // Pozycja z modelViewMatrix (highPrecision: składana w double na CPU, jak w WebGL) — Ziemia
   // i Mars leżą w passie ortho przy 5–10 mln j.; pozycja świata (float32) tylko do światła.
   const vNormal = varying(transformNormalToView(normalLocal), 'vPlanetNormal');
   const vWorldPosition = varying(modelWorldMatrix.mul(vec4(positionLocal, 1.0)).xyz, 'vPlanetWorld');
   const vViewPosition = varying(modelViewMatrix.mul(vec4(positionLocal, 1.0)).xyz.negate(), 'vPlanetView');
   const vUv = uv();
+  const vLocal = varying(positionLocal, 'vPlanetLocal');
   const dayTex = perObjectTexture('dayTexture', PLACEHOLDER.day, vUv);
   const nightTex = perObjectTexture('nightTexture', PLACEHOLDER.night, vUv);
   const specTex = perObjectTexture('specularTexture', PLACEHOLDER.specular, vUv);
@@ -303,13 +314,35 @@ function buildSurfaceGraph() {
     const mappedNormal = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(geoN.mul(mapN.z)));
     const normal = select(hasNight, mappedNormal, geoN).toVar();
 
+    // Dziura (tylko Ziemia): profil w kierunku fragmentu; na łacie normalna, cień i żar ze wzoru.
+    const pitP = vec4(0.0, 9.0, 0.0, 0.0).toVar();
+    const pitShadow = float(1.0).toVar();
+    const pitGlow = float(0.0).toVar();
+    const pitDetail = float(1.0).toVar();
+    const inPit = float(0.0).toVar();
+    If(U.uPitMode.greaterThan(0.5), () => {
+      const pDir = normalize(vLocal).toVar();
+      pitP.assign(earthPitProfile(pDir));
+      If(U.uPitMode.greaterThan(1.5), () => {
+        const sunW = normalize(U.sunPosition.sub(vWorldPosition));
+        const sunObj = normalize(modelWorldMatrixInverse.mul(vec4(sunW, 0.0)).xyz);
+        const sh = earthPitShade(pDir, sunObj, pitP);
+        inPit.assign(float(1.0).sub(smoothstep(EARTH_PIT_TSL.rimS, EARTH_PIT_TSL.rimS + 0.012, pitP.y)));
+        normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), inPit)));
+        pitShadow.assign(mix(1.0, sh.shadow, inPit));
+        pitGlow.assign(sh.glow);
+        pitDetail.assign(mix(1.0, sh.detail, inPit));
+      });
+    });
+
     const NdotL = dot(normal, lightDir).toVar();
-    const sunL = max(0.0, NdotL).toVar();
+    const sunL = max(0.0, NdotL).mul(pitShadow).toVar();
     // Wysokość słońca nad horyzontem w punkcie (normalna geometryczna — gładki pas zachodu).
     const geoMu = dot(geoN, lightDir).toVar();
     // Próbki w jednolitym przepływie (toVar): select() niżej rozwija się w if/else, a próbka
     // z pochodnymi w gałęzi zależnej od piksela dawałaby nieokreślony poziom mipmapy.
-    const dayColor = vec4(dayTex).toVar();
+    const dayRgb = flow ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb;
+    const dayColor = vec4(dayRgb.mul(pitDetail), 1.0).toVar();
     const nightColor = vec4(nightTex).toVar();
     const specularMask = vec4(specTex).toVar().r;
     const waterMask = smoothstep(0.08, 0.82, specularMask);
@@ -322,6 +355,9 @@ function buildSurfaceGraph() {
     const sunT = sunTransmittance(geoMu, U).toVar();
     const dayLit = dayColor.rgb.mul(U.uBrightness).mul(clamp(sunL.mul(U.uSunIntensity), 0.0, 1.2))
       .add(vec3(0.55, 0.62, 0.78).mul(specular)).mul(sunT).mul(sunVisP);
+    // Dziura: światło nieba w cieniu ścian (bez niego tarasy w cieniu byłyby czarne jak noc).
+    const pitSky = dayColor.rgb.mul(U.uBrightness).mul(EARTH_PIT_TSL.skyFill).mul(float(1.0).sub(pitShadow))
+      .mul(smoothstep(0.0, 0.25, geoMu)).mul(sunT).mul(sunVisP).mul(inPit);
     // Noc (Ziemia): same miasta — ląd w świetle księżyca z mapy nocy (luminancja ~0,005) i ocean
     // (~0,002) odcięte progiem. Zapalają się z zapadaniem zmroku i w cieniu ringu.
     const nightBase = nightColor.rgb;
@@ -329,7 +365,9 @@ function buildSurfaceGraph() {
     const cityGlow = nightBase.mul(cityBrightness.mul(cityBrightness)).mul(5.0);
     const cityOn = float(1.0).sub(smoothstep(-0.10, 0.06, geoMu).mul(sunVisP));
     const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn);
-    const finalColor = dayLit.add(cities).toVar();
+    const finalColor = dayLit.add(pitSky).add(cities).toVar();
+    // Żar szybu kopalni (skała ~900 °C): świeci także w dzień, nocą pełną mocą.
+    finalColor.addAssign(vec3(...EARTH_PIT_TSL.glow).mul(pitGlow).mul(mix(EARTH_PIT_TSL.glowDay, 1.0, cityOn)));
 
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       const mu = clamp(dot(geoN, viewDir), 0.0, 1.0);
@@ -355,6 +393,8 @@ function buildSurfaceGraph() {
     const luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
     const bloomPush = smoothstep(0.85, 1.0, luminance).mul(U.uPlanetBloom);
     finalColor.addAssign(finalColor.mul(bloomPush));
+    // Kula Ziemi bez obszaru dziury — tam leży łata (bryła).
+    Discard(U.uPitMode.greaterThan(0.5).and(U.uPitMode.lessThan(1.5)).and(pitP.y.lessThan(EARTH_PIT_TSL.cutS)));
     return vec4(finalColor, 1.0);
   })();
 
@@ -390,7 +430,10 @@ function buildCloudGraph() {
     const sunVisC = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
     const lit = smoothstep(-0.02, 0.12, muSun).mul(sunVisC).toVar();
     const alpha = mask.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
-    const color = sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).toVar();
+    // Barwa chmury z chromy tekstury (biel — chmury, brąz — pył i burze piaskowe Ziemi przyszłości);
+    // jasność niesie maska, więc dawna biała mapa daje barwę (1, 1, 1).
+    const tint = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
+    const color = sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       const viewDirW = normalize(cameraPosition.sub(vWorldPosition));
       const mu = clamp(dot(normal, viewDirW), 0.0, 1.0);
@@ -547,6 +590,8 @@ function buildSunGraph() {
 
 const BUILDERS = {
   surface: buildSurfaceGraph,
+  jupiter: () => buildSurfaceGraph({ keys: JUPITER_UNIFORM_KEYS, color: jupiterFlowDayColor }),
+  saturn: () => buildSurfaceGraph({ keys: SATURN_UNIFORM_KEYS, color: saturnFlowDayColor }),
   clouds: buildCloudGraph,
   atmosphere: buildAtmosphereGraph,
   ringAtmosphere: buildRingAtmosphereGraph,
@@ -554,7 +599,7 @@ const BUILDERS = {
 };
 const GRAPHS = {};
 
-/** Graf rodzaju ('surface' | 'clouds' | 'atmosphere' | 'ringAtmosphere' | 'sun') — budowany raz. */
+/** Graf rodzaju ('surface' | 'jupiter' | 'saturn' | 'clouds' | 'atmosphere' | 'ringAtmosphere' | 'sun') — budowany raz. */
 export function getPlanetGraph(kind) {
   if (!BUILDERS[kind]) throw new Error(`planet3d.assets.tsl: nieznany rodzaj „${kind}”`);
   if (!GRAPHS[kind]) GRAPHS[kind] = BUILDERS[kind]();
@@ -564,6 +609,8 @@ export function getPlanetGraph(kind) {
 /** Klucze `material.uniforms` czytane przez graf rodzaju (testy, kontrakt z planet3d.assets.js). */
 export const PLANET_GRAPH_KEYS = Object.freeze({
   surface: Object.freeze([...Object.keys(SURFACE_KEYS), 'dayTexture', 'nightTexture', 'specularTexture', 'normalTexture']),
+  jupiter: Object.freeze([...Object.keys(SURFACE_KEYS), ...Object.keys(JUPITER_UNIFORM_KEYS), 'dayTexture', 'nightTexture', 'specularTexture', 'normalTexture']),
+  saturn: Object.freeze([...Object.keys(SURFACE_KEYS), ...Object.keys(SATURN_UNIFORM_KEYS), 'dayTexture', 'nightTexture', 'specularTexture', 'normalTexture']),
   clouds: Object.freeze([...Object.keys(CLOUD_KEYS), 'cloudTexture']),
   atmosphere: Object.freeze(Object.keys(ATMOSPHERE_KEYS)),
   ringAtmosphere: Object.freeze(Object.keys(RING_ATMOSPHERE_KEYS)),
@@ -604,6 +651,10 @@ export class PlanetBodyNodeMaterial extends THREE.NodeMaterial {
 }
 
 export const createPlanetSurfaceMaterial = (uniforms) => new PlanetBodyNodeMaterial('surface', uniforms);
+/** Powierzchnia Jowisza z żywą atmosferą (uniformy planety + JUPITER_UNIFORM_KEYS — JupiterAtmosphere). */
+export const createJupiterSurfaceMaterial = (uniforms) => new PlanetBodyNodeMaterial('jupiter', uniforms);
+/** Powierzchnia Saturna z żywą atmosferą (uniformy planety + SATURN_UNIFORM_KEYS — SaturnAtmosphere). */
+export const createSaturnSurfaceMaterial = (uniforms) => new PlanetBodyNodeMaterial('saturn', uniforms);
 export const createPlanetCloudMaterial = (uniforms) => new PlanetBodyNodeMaterial('clouds', uniforms);
 export const createPlanetAtmosphereMaterial = (uniforms) => new PlanetBodyNodeMaterial('atmosphere', uniforms);
 export const createRingAtmosphereMaterial = (uniforms) => new PlanetBodyNodeMaterial('ringAtmosphere', uniforms);

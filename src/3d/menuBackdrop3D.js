@@ -18,6 +18,8 @@ import * as THREE from 'three';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
 import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
+import { PLANET_MAPS } from './planetMaps.js';
+import { earthPitGeometry } from './earthPit3D.js';
 
 const DEG = Math.PI / 180;
 
@@ -59,13 +61,8 @@ const smooth01 = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 const easeOutCubic = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
 
 
-const TEXTURE_PATHS = Object.freeze({
-  day: 'assets/planety/solar/earth/earth_color.jpg',
-  night: 'assets/planety/images/earth_nightmap.jpg',
-  spec: 'assets/planety/images/earth_specularmap.jpg',
-  normal: 'assets/planety/solar/earth/earth_normal.jpg',
-  clouds: 'assets/planety/solar/earth/earth_clouds.jpg'
-});
+// Mapy Ziemi jak w grze (planetMaps.js) — gdy planeta gry jeszcze nie istnieje, menu wczytuje je samo.
+const TEXTURE_PATHS = PLANET_MAPS.earth;
 
 function textureLoaded(tex) {
   const img = tex?.image;
@@ -283,7 +280,9 @@ export class MenuBackdrop3D {
     const geometries = [];
 
     // Ziemia i poświata limbu: materiały TSL w układzie ringu (menuBackdrop3D.tsl.js)
-    const earthM = createMenuEarthMaterial(ring, tex);
+    const pit = !!PLANET_MAPS.earth.pit;
+    const air = PLANET_MAPS.earth.menuAir || null;
+    const earthM = createMenuEarthMaterial(ring, tex, { pitMode: pit ? 1 : 0, air });
     const atmM = createMenuAtmosphereMaterial(ring, R + 1250);
     const sphere = new THREE.SphereGeometry(1, 192, 128);
     const atmSphere = new THREE.SphereGeometry((R + 1250) / R, 128, 96);
@@ -297,6 +296,15 @@ export class MenuBackdrop3D {
     earthGroup.rotation.x = Math.PI / 2;
     earthGroup.scale.setScalar(R);
     const earth = new THREE.Mesh(sphere, earthM.material);
+    let pitMesh = null;
+    if (pit) {
+      // wielka kopalnia ringu: łata-bryła na kuli (geometria wspólna z grą — nie zwalniana tutaj)
+      const pitM = createMenuEarthMaterial(ring, tex, { pitMode: 2, shared: earthM.uniforms, air });
+      materials.push(pitM.material);
+      pitMesh = new THREE.Mesh(earthPitGeometry(), pitM.material);
+      pitMesh.name = 'MenuEarthPit';
+      earth.add(pitMesh);
+    }
     const atmosphere = new THREE.Mesh(atmSphere, atmM.material);
     atmosphere.renderOrder = 6;
     earthGroup.add(earth, atmosphere);
@@ -316,7 +324,7 @@ export class MenuBackdrop3D {
     for (const obj of [earthGroup, sky]) obj.traverse((o) => o.layers.set(MENU_BACKDROP_LAYER));
     ring.group.add(earthGroup, sky);
     return {
-      earthGroup, earth, atmosphere, sky, earthUniforms: earthM.uniforms, atmUniforms: atmM.uniforms, skyUniforms: skyM.uniforms,
+      earthGroup, earth, pitMesh, atmosphere, sky, earthUniforms: earthM.uniforms, atmUniforms: atmM.uniforms, skyUniforms: skyM.uniforms,
       hasNebula: !!nebulaMap, materials, geometries, spin: 0, cloudSpin: 0
     };
   }
@@ -472,6 +480,9 @@ export class MenuBackdrop3D {
     o.earth.updateMatrix();
     o.atmosphere.updateMatrix();
     o.earthUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.earth.matrix);
+    // słońce w układzie siatki Ziemi (cień samorzucany w dziurze liczy łata)
+    this._inv.copy(o.earthUniforms.uLocal.value).invert();
+    o.earthUniforms.uSunObj.value.copy(ring.uniforms.uSunDir.value).transformDirection(this._inv);
     o.atmUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.atmosphere.matrix);
 
     // lot fabuły: w końcówce (kamera prawie z góry) ring liczy jak w kamerze gry — wycięcia nad halą i górna ściana

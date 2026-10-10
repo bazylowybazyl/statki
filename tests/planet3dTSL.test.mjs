@@ -47,7 +47,7 @@ function surfaceUniforms(overrides = {}) {
     uSunWrap: { value: 0.5 }, uSunIntensity: { value: 1.0 }, sunsetTint: { value: V3(1.4, 0.1, 0.1) },
     uHazeStrength: { value: 0.0 }, uHazeColor: { value: V3(0.55, 0.72, 1.0) }, uHazeBeta: { value: V3(0.05, 0.10, 0.22) },
     uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 },
-    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 0.0 },
+    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 0.0 }, uPitMode: { value: 0.0 },
     ...overrides
   };
 }

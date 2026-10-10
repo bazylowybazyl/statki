@@ -33,9 +33,10 @@ test('wybuchy (Core3D): rozgrzewka kroku — kernele gazu i żaru, siatki odsło
   assert.match(warm, /this\.grid\.warm\(ctx\.renderer\)/, 'kernele gazu (pipeline compute powstaje synchronicznie)');
   assert.match(warm, /this\.embers\.warm\(ctx\.renderer\)/, 'kernele żaru');
   assert.match(warm, /for \(const m of this\.warmMeshes\) m\.visible = true;/, 'ukryte siatki muszą przejść przez projekcję');
-  assert.match(warm, /M\.geometry\.instanceCount = Math\.max\(2, saved\[0\]\)/, 'pula bez instancji nie ma czego rysować');
+  // bryły wszystkich atlasów gazu (podstawowy, „fine”, „coarse” — etap D)
+  assert.match(warm, /MS\.forEach\(\(ms, i\) => \{ ms\.geometry\.instanceCount = Math\.max\(2, savedG\[i\]\); \}\)/, 'pula bez instancji nie ma czego rysować');
   assert.match(warm, /core\.prewarmPass\?\.\(m, layer\);\s*core\.prewarmPass\?\.\(m, layer, \{ ortho: false \}\);/, 'kamera z góry i kamery 3D');
-  assert.match(warm, /finally \{[\s\S]*M\.geometry\.instanceCount = saved\[0\];[\s\S]*m\.visible = vis\[i\];/, 'stan przywrócony');
+  assert.match(warm, /finally \{[\s\S]*ms\.geometry\.instanceCount = savedG\[i\];[\s\S]*m\.visible = vis\[i\];/, 'stan przywrócony');
   assert.doesNotMatch(warm, /\.dispose\(/);
   assert.match(explosions, /name: 'wybuchy'[\s\S]{0,300}warm: \(ctx\) => self\._warm\(ctx\)/);
   // Kernel przesunięcia żaru zarejestrowany w początku pul PRZED krokiem (rozgrzewka kroku kompiluje i jego).

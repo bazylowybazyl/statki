@@ -60,6 +60,8 @@ function manualWarpHarness() {
     pushZoneMessage() {}, travelRestoreStance() {}, clearPlayerAttackState() {},
     // Silniki sprawne (src/game/engineDamage.js — skok wymaga choć jednej dyszy MAIN).
     isMainDriveDestroyed: () => false, playerDriveDown: () => false,
+    // Silniki w pracy (src/game/engineIgnition.js — skok wymaga pracy silników; etap E2).
+    playerEnginesBlockDrive: () => false,
     getPlayerSpeed: () => 260000, playerWarpHullLength: () => 1800,
     nextTravelLeg: () => state.travelNav.leg,
     exitWarp: () => { state.exits++; state.warp.exitRamp = { active: true }; }

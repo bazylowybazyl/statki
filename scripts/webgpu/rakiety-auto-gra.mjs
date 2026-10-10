@@ -1,7 +1,10 @@
 // Rakiety na auto i malowanie celów w PRAWDZIWEJ grze (2026-10-04, src/game/fireControl.js —
 // fcPlanMissileSalvo; index.html — fcPaintStep): Vite + headless Chrome z WebGPU (CDP).
 //
-//   node scripts/webgpu/rakiety-auto-gra.mjs [--faza counter] [--czas 40] [--out .tmp/rakiety-auto]
+//   node scripts/webgpu/rakiety-auto-gra.mjs [--faza counter] [--czas 40] [--karta missile] [--out .tmp/rakiety-auto]
+//
+// --karta: konfiguracja WYPOSAŻENIA z kompletów kampanii przed pomiarem (missile = RAKIETOWIEC, 8 wyrzutni); raport
+// ma też czasy klatek w oknie salw — A/B: ten sam przebieg z --karta i bez.
 //
 // 1) Gracz nic nie robi: rakiety na auto same wybierają cele (dziennik salw: wyrzutnia, cele, rakiety
 //    na cel, potrzeba celu), co kilka sekund próbka (wrogowie, amunicja, obrażenia rakiet w locie).
@@ -57,6 +60,16 @@ try {
   await ev(`(() => { document.querySelector('[data-story-campaign="1"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && !!window.shipDriveState?.calib", 300000, 400)) throw new Error('gra nie ruszyła');
   if (!await waitFor(cdp, 'window.StoryGame.active && !!window.StoryGame.phase', 300000, 400)) throw new Error('fabuła nie ruszyła');
+  // --karta missile | sniper | tank — konfiguracja WYPOSAŻENIA z kompletów kampanii przed pomiarem (RAKIETOWIEC:
+  // 8 wyrzutni — Komory rakietowe zamieniają baterię na wyrzutnie).
+  if (args.karta) {
+    report.karta = await ev(`(() => {
+      const plan = window.PlayerFit.plan(${JSON.stringify(args.karta)}, 'own', null);
+      const ok = window.PlayerFit.apply(plan, { quiet: true });
+      return { ok, wyrzutnie: (window.Game.player.weapons?.missile || []).length, zastepstwa: plan.subs.length };
+    })()`);
+    console.log('karta:', JSON.stringify(report.karta));
+  }
   // Dziennik salw: opakowanie wyrzutu z kierowania ogniem (cele liczone PRZED strzałem — plan jest potem czyszczony).
   await ev(`(() => {
     const env = window.__fcEnv, orig = env.fireMissileSalvo;
@@ -80,11 +93,20 @@ try {
   })()`);
   await mouse(W / 2, H / 2 - 200);
   const czas = Number(args.czas || 40);
+  // Czasy klatek w oknie pomiaru salw (rAF) — A/B kart: ten sam przebieg z --karta i bez.
+  await ev(`(() => { window.__frameLog = []; let last = performance.now(); const tick = (t) => { window.__frameLog.push(t - last); last = t; if (!window.__frameStop) requestAnimationFrame(tick); }; requestAnimationFrame(tick); return true; })()`);
   await shot('auto-00', await sample());
   for (let t = 5; t <= czas; t += 5) {
     await sleep(5000);
     await shot(`auto-${String(t).padStart(2, '0')}`, await sample());
   }
+  report.klatki = await ev(`(() => {
+    window.__frameStop = true;
+    const d = window.__frameLog.slice(5).sort((a, b) => a - b);
+    const q = (p) => +d[Math.min(d.length - 1, Math.floor(d.length * p))].toFixed(2);
+    return { n: d.length, p50: q(0.5), p95: q(0.95), p99: q(0.99), max: +d[d.length - 1].toFixed(2), powyzej33: d.filter((x) => x > 33.4).length };
+  })()`);
+  console.log('klatki:', JSON.stringify(report.klatki));
   report.salwy = await ev('window.__salvoLog.slice()');
   for (const s of report.salwy) console.log('salwa', s.bron.padEnd(16), s.rakiet, JSON.stringify(s.cele));
 

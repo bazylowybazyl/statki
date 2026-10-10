@@ -10,6 +10,7 @@
 // ============================================================
 import { setFlightArrive, setFlightStop, usesShipFlightModel } from '../flight/shipFlightModel.js';
 import { processAutonomousWeapons } from '../../ai/capitalAI.js';
+import { ENGINE_OFF, engineRunning, engineStateOf, igniteEngine, engineIgnitionDuration } from '../engineIgnition.js';
 
 // Punkt trasy uznany za osiągnięty [j.] i domyślne cofanie [j/s] (poniżej pasma, w którym pilot obraca dziób
 // w kierunek lotu — resolveFlightFacing).
@@ -31,8 +32,16 @@ export function createStoryNpcControl({ gameTime, wake }) {
       let k = 0;
       npc.combatDisabled = true;
       npc.__dockLaunching = true;
+      // Silniki wyłączone w doku (src/game/engineIgnition.js): zapłon z dymem tyle przed startem, ile trwa — przy krótszym
+      // opóźnieniu start czeka na pełną pracę silników (najwyżej długość zapłonu). Stoi w miejscu do pracy silników.
+      const igniteAt = start - engineIgnitionDuration();
+      const holdFace = Number(npc.angle) || 0;
       npc.ai = () => {
-        if (npc.dead || now() < start) return;
+        if (npc.dead) return;
+        const t = now();
+        if (npc.engineIgn && engineStateOf(npc) === ENGINE_OFF && t >= igniteAt) igniteEngine(npc);
+        if (t < start) return;
+        if (!engineRunning(npc)) { setFlightStop(npc, holdFace); return; }
         const px = npc.pos ? npc.pos.x : npc.x;
         const py = npc.pos ? npc.pos.y : npc.y;
         if (Math.hypot(path[k].x - px, path[k].y - py) < REACH) {

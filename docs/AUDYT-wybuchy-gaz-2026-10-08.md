@@ -62,6 +62,164 @@ Wartość = ile zmienia w obrazie / fizyce; koszt = praca + ryzyko. Odnośniki d
 | **F17** | Pamięć: 11 atlasów × 96² × 36 × 6 × 8 B ≈ 175 MB od startu gry | na GPU zintegrowanych to połowa budżetu efektów; przez większość gry 0 domen | `gasGrid.js` konstruktor | alokacja atlasu przy pierwszym wybuchu (rozgrzewka kerneli zostaje — pusty dispatch nie potrzebuje pełnego atlasu, wystarczy 1 slot), `curl` liczony w locie w adwekcji (−1 tekstura), `S` z limitów adaptera | niska / niski |
 | **F18** | Odłamki i iskry gry nie czują gazu | `WeaponFx` DEBRIS i `SparkSystem3D` lecą przez kłąb bez porwania; tylko żar `gasEmbers` czyta `velA` | `explosionFx.js _chunks / _sparks` | niski priorytet; ewentualnie DEBRIS z próbką `velA` jak żar (jeden odczyt tekstury w kernelu puli) | niska / średni |
 
+### Status etapu A (2026-10-09, raport `.tmp/wybuchy-etapy/A.md`)
+
+- **F1 — zrobione z poprawkami przeglądu (2026-10-09, `.tmp/wybuchy-etapy/A-poprawki.md`).** Scalanie i dziedziczenie
+  wtórnych tylko, gdy KULA mieści się w kole życia gazu domeny (`odl. + R ≤ 0,68 · pół boku − 2h` — gasReact wygasza
+  skalary od 0,74 promienia elipsoidy, gąbka od 0,7) i ma ≥ 3 komórki promienia; domena w wygaszaniu bierze nowy wybuch
+  tylko bez wolnej (wtedy odżywa od razu: zanik dymu 0, obraz w ~0,1 s); presja liczy wiek od ostatniego zasilenia;
+  kula < 8 komórek dostaje własną domenę, gdy jest wolna; domena w końcówce wygaszania (obraz ≤ 0,2) ustępuje nowemu
+  wybuchowi; `slots` 6 → 10 (~318 MB z `velC`). Liczby łańcucha — w raporcie poprawek.
+- **F15 — zrobione.** Odżywiona domena wraca rampą 2/s, zanik dodatkowy gaśnie 8/s; wygaszanie nie wyżej niż obraz stał.
+- **F4 — zrobione (z poprawką kosztu sił).** MacCormack prędkości z obcięciem, v̂ zapisane w nowej teksturze `velC` (bez
+  nowego dispatchu — korekcja i siły w `gasReact`); „w locie” (bez zapisanego v̂) korekcja wychodzi ≈ 0. Wiry 3,5 → 1,
+  turbulencja 35 → 10 z sondy: przy dawnych siłach energia rosła po źródłach, a niedobieżność rzutu 0,04 → 0,9.
+- **F7 — zrobione, efekt mały.** Kurczenie 0,3 · tempo stygnięcia w komórkach bez spalania (kanał w = −tempo stygnięcia);
+  sonda i obraz prawie bez różnicy — do ponownej oceny po F6 (Jacobi).
+- **F8 — zrobione.** Narzucenie prędkości źródeł gaśnie po 0,06 s do 6/s (τ 0,15 s): szczyt prędkości frontu 110 → ~98.
+- **F9 — częściowo.** Gąbka przy brzegu domeny (3/s) jest; opór w środku (0,2 + 0,03·|v|) ZOSTAŁ — bez niego przy
+  MacCormacku energia finału nie gasła, a niedobieżność rzutu rosła z czasem (15 iteracji Jacobiego nie domyka — F6).
+
+### Status etapu A2 (2026-10-09, raport `.tmp/wybuchy-etapy/A2.md`)
+
+- **F14 — zrobione.** Zbiornik paliwa (`src/data/fuelTanks.js`, `src/game/fuelTank.js`): wpisy Atlas / Bellator / Iron
+  Skull, reszta z automatu (głęboko w części rufowej, poza komorą reaktora), edytor (`ships[alias].fuelTanks`) bierze
+  górę; montaż w `attachEntityReactorCores` po rdzeniu. Śmierć NPC bez detonacji rdzenia i gracza bez rdzenia →
+  wybuch z gazu z MIEJSCA ZBIORNIKA (profil escort / cruiser / capital z długości kadłuba, size ∝ √pojemności, nośnik =
+  prędkość wraku, strumienie wzdłuż osi kadłuba z zanikiem narzucenia 0,6 s); zbiornik odcięty z odłamem wybucha na
+  wraku rodu. Detonacja rdzenia dokłada domenę gazu (sam gaz) z dymem w barwie plazmy frakcji. `droneBlast` zostaje dla
+  myśliwców i platform. Źródła gazu i żar jadą z nośnikiem domeny (`GasExplosions.tune.followCarrier`, `slotVel` żaru) —
+  wcześniej wybuch wraku w ruchu zostawiał źródła w miejscu. Bitwa / 12 zgonów naraz: +1,0 ms średnio, p95 +1,6 ms,
+  `noSlot` 2–3 na serię (wtórne cząstkami), 0 pipeline'ów synchronicznych. Fabryka okrętów bez zmiatania dronów
+  naprawczych (rozgrywka bez zmian); A/B w biegu: `window.ShipBlastTune`.
+
+### Status etapu B (2026-10-09, raport `.tmp/wybuchy-etapy/B.md`)
+
+- **F3 — zrobione.** Bryły gazu (`GasVolume` z `lightGrid` = `Core3D.fx.grid`) czytają siatkę świateł w marszu wprost
+  (`grid.loop`, jak pył hal — bez `enableGridLights`, materiał `lights = false`): co 3 gęste próbki przy σ > 0,02, kolano
+  L / (1 + 0,45 · ΣL), samocień cudzych świateł z przepuszczalności dymu nad próbką (bez niego reflektor masztu robił
+  z obłoku jasną „watę”). Światło wybuchu ma właściciela = domenę gazu (`GAS_LIGHT_OWNER_BASE` + slot): w SWOIM dymie
+  świeci tylko w dalekim polu (x = odl. / zasięg 0,35…0,75) i bez samocienia z kamery — bliżej świeci emisja i blask
+  z objętości światła (bez podwójnej poświaty). Przełącznik A/B `EXPLOSION_TUNE.gridLight`. Koszt GPU zatrzymanej klatki:
+  +0,00…+0,12 ms (1–6 domen), bitwa 10 domen +0,046 ms (8 serii; powtórka w szumie maszyny), łańcuch w czasie
+  rzeczywistym +0,03 ms średnio. Pipeline'y synchroniczne w scenach — 0.
+- **F10 — zrobione.** Daleki pierścień blasku w objętości światła (6 osi × 9 komórek, `glowFar` — gra 4, dema 0; gałąź
+  po uniformie) i `glowGain` obrazu gry 0,55 → 2,5 (człon blasku był ~10× słabszy od słońca — stąd czarny dym tuż przy
+  ogniu); blask gaśnie z ogniem (bez świecącej mgły). Koszt dalekiego pierścienia w szumie (0,000 ms przy 10 domenach).
+- **Otoczenie ze strefy nieba — zrobione.** Otoczenie dymu × jasność strefy (`window.getSkyRegion`, ta sama wygładzona
+  wartość co tło; pas 0,56) × `sunFill` maski słońca (cień planety, mrok pola pasa). Efekt mały (otoczenie to ~5%
+  światła dymu); w pasie dym ciemny przez maskę słońca pola i brak świateł.
+- Przy okazji (uwaga A2): błysk wybuchu (`GasFlashes`) jedzie z nośnikiem wybuchu.
+
+### Status etapu C (2026-10-09, raport `.tmp/wybuchy-etapy/C.md`)
+
+- **F2, statyka — zrobione.** Bryły hal K-7 (te same pudła co kolider hali, hale w zasięgu kadru + 3 km) i suchego doku
+  (bryły trafień `hitShapes` bez odpadłych kawałków; kawałek RUSZONY — obrysy jego ciał z `hullFootprint` zamiast bryły,
+  co 0,25 s) idą z gry tablicą `GAS_OBST_IN` (`src/game/gasObstacleInput.js`, szew gra ↔ render jak pył hal) i są
+  rastrowane do okna R8 zakotwiczonego w ŚWIECIE (2N × 2N komórek domeny na slot, wyprzedzenie wzdłuż nośnika 4 s,
+  nowy raster przy brzegu okna albo zmianie budowli, nie częściej niż co 0,1 s; bryła rośnie zachowawczo o 0,75 komórki).
+  Komórka stała — flaga w wolnych kanałach (`velB.w` → `prs.z` → `velA.w`, bez nowych tekstur atlasu): skalary 0, Jacobi
+  i rzut z warunkiem Neumanna (p sąsiada stałego = p komórki), bez wnikania (składowa normalna do ściany obcięta; ściana
+  w domenie z nośnikiem ma prędkość −nośnik), źródła nie wstrzykują przez ścianę (marsz zasłaniania), emitery strumieni,
+  odłamki i wtórne po stronie środka wybuchu (odłamek gaśnie na ścianie — także przy przeskoku w klatce 10 Hz). Sonda
+  (ściana 20 / 60 / 160 j. przy komórce 27 j., domena stojąca i w ruchu wzdłuż / ku / od ściany, 60 i 10 Hz): przeciek
+  za ścianą 0 (bez ściany 3,9 tys. / 65 tys.), dym w komórkach stałych 0, maska GPU = lustro CPU (0 niezgodnych komórek),
+  energia ze ścianą −1,7%, dywergencja we wnętrzu bez zmian. Pamięć +369 KB (okno R8) + 64 KB (maski kadłubów).
+  CPU reżysera śr. 0,002–0,005 ms (przebudowa okna do ~0,7 ms, rzadko), klatka łańcucha doku w szumie.
+- **F2, kadłuby — zrobione, WŁĄCZONE (`EXPLOSION_TUNE.hullObstacles`).** Obrys z żywych węzłów belek z prędkością ciała
+  + ω × r w uniformach domeny (do 64 rekordów na siatkę, pasma masek R8 64 × 32 z LRU po uid i wersji obrysu), tylko
+  kadłuby przy prostokątach domen; przebudowa obrysu w budżecie 0,3 ms na klatkę (reszta czeka klatkę). Gospodarz domeny
+  (wrak wybuchającego okrętu, ród `dmgKey`) nie jest przeszkodą SWOJEGO gazu (A/B: wrak jako przeszkoda zjadał kulę
+  ognia; inne domeny go widzą). CPU pakowania (gra + reżyser + siatka) przy 16 żywych okrętach i masowych zgonach:
+  6 domen śr. 0,048–0,053 ms, p99 0,065–0,105 ms, ponad 0,15 ms ≤ 0,5% klatek; 10 domen śr. 0,063 ms, p99 0,09–0,25 ms
+  (pierwsza seria 0,48 — rozgrzewka JIT); przed budżetem przebudów skoki 5,5–7 ms. Klatka z kadłubami ↔ bez +0,03…0,08 ms
+  (w szumie), GPU compute bez różnicy. Przelot Atlasa 500 j/s przez obłok: maska GPU = obrys encji (0 niezgodnych
+  komórek), bez skoków energii przy przebudowie maski. Cienia przeszkód w świetle gazu nie ma (pryzmat przez całą
+  wysokość domeny dawałby zły cień).
+- **Poprawki po przeglądzie kodu (2026-10-09, raport `.tmp/wybuchy-etapy/C-poprawki.md`) — 12 punktów, wszystkie
+  zweryfikowane i poprawione.**
+  - Zasłanianie źródła maszeruje do POCZĄTKU kapsuły: strumień bity w ścianę przeciekał za nią — sonda 105,7 → 0.
+  - Domena zasilona nowym wybuchem dostaje raster świeżej statyki od razu.
+  - Obrysy kadłubów: najpierw kandydaci z wstępnym testem zasięgu, limit 32 przed obrysem, budżet przebudów najpierw dla
+    kadłubów bez obrysu (najbliższych domenie), reszta z rotacją. Wraki przy domenach dostają obrys w tej samej klatce;
+    przebudowa ≤ 0,1 ms (dawniej do 1,3 ms).
+  - 16 gospodarzy na domenę bez nadpisywania; pełna lista — bez scalenia.
+  - Okno rastra wyrównane do siatki świata — lico ściany nie skacze przy nowym oknie (dawniej do 0,9 komórki).
+  - EROZJA PRZY ŚCIANIE potwierdzona i usunięta: 1. rząd komórek przy licu miał ~1% dymu 2. rzędu. Przyczyną było
+    obcięcie składowej normalnej (rząd przy ścianie bez dopływu z wnętrza) i próbki zer z bryły. Poprawka: próbki skalarów
+    bez komórek stałych (`freeSample`) i dopływ 1. rzędu w tempie zabranej prędkości (`wallFill` 64, A/B 1 / 4 / 16 / 64 /
+    256 i wariant bez obcięcia). Wynik: 1. rząd ≈ 2. rząd (0,82 / 0,85), masa jak bez ściany, przeciek 0. Bez obcięcia
+    strumień w ścianę tracił w niej 33% gazu.
+  - Żar (łby odłamków, iskry porwane przez gaz) gaśnie w bryle statyki domeny.
+  - Sufit prędkości gazu przed warunkiem ściany i bez komórek stałych.
+  - Testy WGSL z konkretną regułą ściany (mutacje Dirichlet i min ↔ max wykrywane) oraz porównanie rzutu GPU z lustrem CPU
+    na odczytach atlasu: Jacobi i rzut, błąd ≤ 0,001 = precyzja fp16, 188 komórek przy ścianie.
+  - Środek wybuchu emitera jedzie z nośnikiem; wtórny jedzie z nośnikiem od wybuchu rodzica.
+  - Hale K-7 w statyce także przy żywej domenie poza kadrem.
+  - Koszt pakowania po poprawkach: 6 domen / 16 okrętów — śr. 0,051 ms, p99 0,07–0,10 ms; 10 domen — śr. 0,072 ms, p99
+    0,09–0,14 ms. Pipeline'y synchroniczne 0, `tslUuid.kolizje` 0.
+
+### Status etapu E1 (2026-10-09, raport `.tmp/wybuchy-etapy/E1.md`) — gaz przy wystrzale z lufy
+
+- **Armata i Yamato (niebieski ogień) — zrobione.** Hak `WeaponFx.muzzleGas` (wylot bogaty) → `ExplosionFx.muzzleShot`:
+  domena gazu WYSTRZAŁU (`MUZZLE_TAG`) na okręt strzelający (kolejne wystrzały jego wież w tej samej domenie, gdy obłok
+  mieści się w kole życia gazu i nośnik się zgadza), 10 komórek na promień wylotu (R = 20 · skala wylotu · moc rozmiaru),
+  życie 0,45 s po ostatnim strzale + wygaszanie 0,6 s + stały zanik dymu 1,6/s; sufit 3 domen, 2 wolne domeny zostają dla
+  wybuchów; wybuch nie scala się z domeną wystrzału, ale przy braku wolnej ją przejmuje. Strzelec = gospodarz swojej
+  domeny (A/B: w masce przeszkód własnego kadłuba gaz z lufy nad pokładem znika w całości). Paleta ognia per domena
+  (`GasSlot.fire`, wolny kanał instancji brył — bez tekstur i uniformów; przystanki `GAS_FIRE_STOPS`, lustro CPU),
+  blask w barwie palety; dym cząstkowy wylotu × 0,15 przy gazie; błysk wylotu z właścicielem domeny (`FxLights.owner`).
+  Koszt (strzelnica ABBA): GPU +0,05 ms, CPU kroku +0,03 ms; bitwa: wybuchy bez utraty domen; pipeline'y synchroniczne 0.
+
+### Status etapu E2 (2026-10-09, raporty `.tmp/wybuchy-etapy/E2.md`, `E2-poprawki.md`) — dym przy zapłonie silnika
+
+- **Zrobione.** Automat silników MAIN WYŁ. → ZAPŁON (zimny dym 1,1 s, błysk, struga 0,7 s) → PRACA → GASZENIE (1 s)
+  (`src/game/engineIgnition.js`), klawisz 0, autozapłon ciągiem / warpem / szarżą, kampania: Atlas w doku K-7 z WYŁ., zapłon
+  `smokeTime` przed zwolnieniem zamków; okręty doku piratów odpalają przed wylotem. Dym z gazu w domenie ZAPŁONU (`ENGINE_TAG`,
+  uogólnione domeny efektów z E1, sufit 2, pierwszeństwo wybuchów), paleta ognia z palety strugi (nowy wiersz wodoru),
+  otoczenie per domena (`GasSlot.ambient`) ze światła wnętrza hali K-7. Koszt (4 okręty naraz co 4 s): GPU +0,07 ms.
+
+### Status etapu D (2026-10-09, raport `.tmp/wybuchy-etapy/D.md`) — rozdzielczość, pamięć, koszt
+
+- **F13 — zmierzone i zrobione.** Przed zmianami marsz dużej kuli (capital, R ≈ 450 j.) kosztował GPU w czasie rzeczywistym
+  +0,9–1,0 ms przy zoomie 0,4 (p95 do 3,4 ms klatki GPU) i +1,6–1,8 ms przy 0,8 (p95 do 4,9). Budżet próbek marszu (krok rośnie
+  proporcjonalnie ponad 40 mln próbek klatki, do × 2,5): zoom 0,4 +0,5 ms (p95 1,3–1,4 ms klatki GPU), 0,8 +1,0 ms (p95
+  2,7–2,9), przy kroku × 1,3 obraz bez różnicy. Pół rozdzielczości — nie (wymagałoby przebudowy passów Core3D).
+- **F5a — odrzucone pomiarem.** `domainScale` 4,2: dym dochodzi do ścian domeny (w zewnętrznych 10% profilu 0,5–1,0 maksimum,
+  też w pionie), obłok przycięty o ~15%. Zostaje 5,4.
+- **F5b — zrobione, z dodatkiem.** Atlas „fine” 2 × 128² × 48 dla kuli ≥ 60 px; dodatkowo atlas „coarse” 12 × 64² × 24 dla kuli
+  < 40 px (łańcuch doku i bitwa z daleka — gaz zamiast cząstek). Jedna siatka dla reżysera (`GasGridSet`), skala komórki domeny
+  `GasSlot.k` — parametry w jednostkach komórek skalowane, strojenie A–E2 bez zmian. „Fine”: 41 iteracji Jacobiego (przy 15 masa
+  dymu +50%), zostaje ~15–35% gęstszy dym (masa na R³); koszt w bitwie klatka +~0,6 ms.
+- **F17 — zrobione.** 10 atlasów na 12 ról (wiry ≡ `prsA`, objętość światła ≡ `denB`; curl w locie niepotrzebny), alokacja
+  leniwa, „fine” zwalniany po 20 s. Pamięć: przed D 318 MB (10 domen), po D 326 MB z „fine” (18 domen wybuchów), 201 MB bez.
+- **noSlot:** łańcuch doku 1–5 z 61–72 wybuchów (siatka sprzed D w tym samym harnessie: 11), bitwa 12 zgonów: 0 (2 na serię).
+
+### Zestawienie F1–F18 i E1 / E2 (stan po etapie D)
+
+| # | Status | Jednym zdaniem | Raport |
+|---|---|---|---|
+| F1 | zrobione | Scalanie po kole życia gazu, wtórne dziedziczą domenę; z D — łagodniejsze scalanie bez wolnej domeny i 18 domen (noSlot 1–5 w łańcuchu). | A, A-poprawki, D |
+| F2 | zrobione | Statyka (hale K-7, suchy dok) i kadłuby jako komórki stałe; przeciek 0, maska GPU = lustro CPU. | C, C-poprawki |
+| F3 | zrobione | Siatka świateł w marszu z kolanem, samocieniem i właścicielem domeny. | B |
+| F4 | zrobione | MacCormack prędkości (`velC`), wiry i turbulencja zbite z sondy. | A |
+| F5 | częściowo | F5a odrzucone (dym przy ścianach); F5b atlas „fine” + „coarse”. | D |
+| F6 | poza zakresem | Jacobi 15 (podstawowy, „coarse”) / 41 („fine”); RBGS / multigrid otwarte. | — |
+| F7 | zrobione, efekt mały | Kurczenie 0,3 · tempo stygnięcia; ocenić po F6. | A |
+| F8 | zrobione | Narzucenie prędkości źródeł gaśnie po 0,06 s (τ 0,15 s), strumienie zbiornika 0,6 s. | A, A2 |
+| F9 | częściowo | Gąbka przy brzegu jest, opór w środku został (bez F6 rzut nie domyka). | A |
+| F10 | zrobione | Daleki pierścień blasku i `glowGain` 2,5. | B |
+| F11 | poza zakresem | Cień dymu na scenie. | — |
+| F12 | nie robione | Ziarno startu marszu bez zmian (nie było w planie etapów). | — |
+| F13 | zrobione | Zmierzone; budżet próbek marszu. | D |
+| F14 | zrobione | Wybuch z miejsca zbiornika paliwa, gaz detonacji rdzenia. | A2 |
+| F15 | zrobione | Odżycie domeny rampą / od razu po nowym wybuchu. | A |
+| F16 | poza zakresem | Dym wraków wypięty (decyzja użytkownika). | — |
+| F17 | zrobione | Aliasy atlasów, alokacja leniwa. | D |
+| F18 | poza zakresem | Odłamki i iskry gry nie czują gazu. | — |
+| E1 | zrobione | Gaz z lufy armaty i Yamato (niebieski ogień). | E1 |
+| E2 | zrobione | Dym przy zapłonie silników, mechanika odpalania / gaszenia, klawisz 0. | E2, E2-poprawki |
+
 ## 4. Fizyka: porównanie z Niagara Fluids „Grid 3D Gas”
 
 | Cecha Niagary | Tu | Ocena |

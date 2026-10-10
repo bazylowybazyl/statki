@@ -130,12 +130,15 @@ function num(v, d = 0) {
 
 /**
  * Obrys kadłuba encji w masce W × H (rekord z pamięci encji — nie zmieniać; przebudowa tylko przy zmianie
- * ciała). Zwraca null bez encji.
+ * ciała). Zwraca null bez encji. `allowRebuild` false — bez przebudowy (wołający z budżetem czasu na klatkę: przeszkody
+ * gazu wybuchów przy masowej śmierci okrętów): obrys nieaktualny zostaje (ciało straciło kilka węzłów), obrysu jeszcze nie
+ * było — null.
  */
-export function hullFootprint(entity, W = 64, H = 32) {
+export function hullFootprint(entity, W = 64, H = 32, allowRebuild = true) {
   if (!entity) return null;
   let fp = _cache.get(entity);
   if (!fp || fp.W !== W || fp.H !== H) {
+    if (!allowRebuild) return null;
     fp = newFootprint(W, H);
     _cache.set(entity, fp);
   }
@@ -146,6 +149,8 @@ export function hullFootprint(entity, W = 64, H = 32) {
     const ax = HullBodies.anchorLocalX(hull), ay = HullBodies.anchorLocalY(hull);
     if (fp.body !== body || fp.active !== body.activeNodes || fp.lmx !== body.latticeMin.x
       || fp.lmy !== body.latticeMin.y || fp.ax !== ax || fp.ay !== ay) {
+      // bez przebudowy: ten sam korpus z kilkoma węzłami mniej — stary obrys; inne ciało (kotwica mogła się zmienić) — brak
+      if (!allowRebuild) return fp.body === body && fp.cells ? fp : null;
       fp.body = body;
       fp.active = body.activeNodes;
       fp.lmx = body.latticeMin.x;
@@ -170,6 +175,15 @@ export function hullFootprint(entity, W = 64, H = 32) {
     fp.version++;
   }
   return fp;
+}
+
+/**
+ * Obrys z pamięci encji BEZ przebudowy i bez sprawdzania aktualności (np. zasięg `reach` do wstępnego testu odległości)
+ * albo null (brak obrysu w pamięci).
+ */
+export function hullFootprintPeek(entity, W = 64, H = 32) {
+  const fp = entity ? _cache.get(entity) : null;
+  return fp && fp.W === W && fp.H === H && fp.cells ? fp : null;
 }
 
 /** Bit maski (i — kolumna X, j — wiersz Y); poza maską 0. */

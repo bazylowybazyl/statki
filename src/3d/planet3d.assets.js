@@ -19,6 +19,9 @@ import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
 import { WARP_WORLD_LENS, WarpWorldLens, newLensBody } from './warp/worldLens.js';
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
+import { createEarthPitMesh, earthPitUniforms } from './earthPit3D.js';
+import { PLANET_MAPS, MOON_MAPS } from './planetMaps.js';
+import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import {
     STAR_PLANET_MASK_CAP,
     createStarGeometry,
@@ -28,8 +31,12 @@ import {
     createPlanetCloudMaterial,
     createPlanetAtmosphereMaterial,
     createRingAtmosphereMaterial,
-    createSunMaterial
+    createSunMaterial,
+    createJupiterSurfaceMaterial,
+    createSaturnSurfaceMaterial
 } from './planet3d.assets.tsl.js';
+import { JupiterAtmosphere } from './jupiterAtmosphere.js';
+import { SaturnAtmosphere } from './saturnAtmosphere.js';
 
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
@@ -73,10 +80,7 @@ const MOON_TUNE = Object.freeze({
     orbitPeriodSec: 220,
     spinPeriodSec: 72,
     sizeRatioToParent: 0.24,
-    z: -50020,
-    colorTex: 'assets/planety/images/moonmap.jpg',
-    bumpTex: 'assets/planety/images/moonbump.jpg',
-    bumpScale: 0.07
+    z: -50020
 });
 // Dekoracyjne księżyce Jowisza. Od Z6 (2026-09-26) Jowisz ma ring „Halo”
 // (promień 48 000, ring do ~54 750, port z redą do ~70 tys.): dawne orbity
@@ -84,11 +88,12 @@ const MOON_TUNE = Object.freeze({
 // (systemMap.js: Io 60 tys. — pod ringiem, więc 86 tys.; Europa 105,
 // Ganimedes 165, Kallisto 250 tys.), okresy wydłużone proporcjonalnie
 // (prędkość liniowa jak dawniej). Rozmiar: ułamek promienia planety przy ringu.
+// Mapy (dzień, noc, normalne) — MOON_MAPS w planetMaps.js po `id` (Luna: 'moon').
 const JUPITER_MOONS_TUNE = Object.freeze([
-    Object.freeze({ id: 'io', orbitRadius: 86000, orbitPeriodSec: 352, spinPeriodSec: 48, sizeRatioToParent: 0.05, phase: 0.0, colorTex: 'assets/planety/images/jupiterIo.jpg', haloColor: 0xffb16f }),
-    Object.freeze({ id: 'europa', orbitRadius: 105000, orbitPeriodSec: 412, spinPeriodSec: 58, sizeRatioToParent: 0.042, phase: 1.4, colorTex: 'assets/planety/images/jupiterEuropa.jpg', haloColor: 0x9fc8ff }),
-    Object.freeze({ id: 'ganymede', orbitRadius: 165000, orbitPeriodSec: 669, spinPeriodSec: 74, sizeRatioToParent: 0.06, phase: 2.2, colorTex: 'assets/planety/images/jupiterGanymede.jpg', haloColor: 0xb6c3d6 }),
-    Object.freeze({ id: 'callisto', orbitRadius: 250000, orbitPeriodSec: 1016, spinPeriodSec: 92, sizeRatioToParent: 0.055, phase: 3.1, colorTex: 'assets/planety/images/jupiterCallisto.jpg', haloColor: 0x91a7c4 })
+    Object.freeze({ id: 'io', orbitRadius: 86000, orbitPeriodSec: 352, spinPeriodSec: 48, sizeRatioToParent: 0.05, phase: 0.0, haloColor: 0xffb16f }),
+    Object.freeze({ id: 'europa', orbitRadius: 105000, orbitPeriodSec: 412, spinPeriodSec: 58, sizeRatioToParent: 0.042, phase: 1.4, haloColor: 0x9fc8ff }),
+    Object.freeze({ id: 'ganymede', orbitRadius: 165000, orbitPeriodSec: 669, spinPeriodSec: 74, sizeRatioToParent: 0.06, phase: 2.2, haloColor: 0xb6c3d6 }),
+    Object.freeze({ id: 'callisto', orbitRadius: 250000, orbitPeriodSec: 1016, spinPeriodSec: 92, sizeRatioToParent: 0.055, phase: 3.1, haloColor: 0x91a7c4 })
 ]);
 const SATURN_VISUAL_RING = Object.freeze({
     innerRadius: 1.22,
@@ -513,12 +518,14 @@ function prewarmLoadedTexture(texture) {
 }
 function loadTex(path) { const tex = textureLoader.load(path, prewarmLoadedTexture); tex.anisotropy = Core3D.getMaxAnisotropy(); return tex; }
 
+
 class DirectPlanet {
     constructor(data) {
         this.data = data; this.name = (data?.name || data?.id || 'earth').toLowerCase();
         this.isRingAnchored = RING_PLANET_NAMES.has(this.name);
         this._visibilityCulled = false;
         this.mesh = null; this.clouds = null; this.cloudUniforms = null; this.atmosphere = null; this.saturnRing = null;
+        this.pit = null; this.pitUniforms = null;
         this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0; this.visibleRadiusMul = 1.0;
         this.uniforms = {
             uPlanetBloom: { value: 0.0 }, dayTexture: { value: null }, nightTexture: { value: null }, specularTexture: { value: null },
@@ -530,7 +537,9 @@ class DirectPlanet {
             // płaszczyźnie gry (pass ortho), więc piksel = ich punkt świata.
             // Planety tła siedzą na z = −50 000 w perspektywie — maska liczona
             // w płaszczyźnie gry trafiałaby w nie obok (własna smuga na tarczy).
-            uSunShadowRecv: { value: this.isRingAnchored ? 1.0 : 0.0 }
+            uSunShadowRecv: { value: this.isRingAnchored ? 1.0 : 0.0 },
+            // Wielka kopalnia ringu (tylko Ziemia): 1 = kula z wycięciem, łata ma 2 (earthPit3D.js).
+            uPitMode: { value: 0.0 }
         };
         // Analityczny cień ringu na tarczy planety (dzienny łuk od nawietrznej,
         // czyli słonecznej, strony) — parametry ustawia init() dla ciał na ringu.
@@ -555,6 +564,15 @@ class DirectPlanet {
         if (Number.isFinite(Number(reach))) this._ringShadowReach = Math.max(1, Number(reach));
         if (Number.isFinite(Number(strength))) this._ringShadowStrength = Math.max(0, Math.min(1, Number(strength)));
     }
+    // Pas cienia ringu na tarczy tylko razem ze smugą ringu w masce: shafty włączone i ring już rzuca
+    // cień (haloRingGame.js zgłasza okrąg od podpięcia brył) — przed zbudowaniem ringu tarcza nie ma
+    // pasa od ringu, którego nie widać.
+    _ringCastsShadow() {
+        if (!(Core3D?.perfToggles && Core3D.perfToggles.shadowShafts !== false)) return false;
+        if (typeof Core3D.hasShaftRingOccluder !== 'function') return true;
+        if (!this._ringOccluderKey) this._ringOccluderKey = `halo:${this.name}`;
+        return Core3D.hasShaftRingOccluder(this._ringOccluderKey);
+    }
     init() {
         if (!Core3D.isInitialized) return;
         const geometry = new THREE.SphereGeometry(1, 128, 128); const name = this.name;
@@ -566,14 +584,16 @@ class DirectPlanet {
         else if (name === 'mars') { this.uniforms.uSunIntensity.value = 1.04; this.uniforms.uBrightness.value = 0.95; }
         else if (name === 'mercury') { this.uniforms.uSunIntensity.value = 1.04; this.uniforms.uBrightness.value = 0.95; }
         else if (name === 'venus') { this.uniforms.uSunIntensity.value = 0.98; this.uniforms.uBrightness.value = 0.93; }
+        if (PLANET_MAPS[name]?.specular !== undefined) this.uniforms.uSpecular.value = PLANET_MAPS[name].specular;
 
         if (name === 'earth') this.basePlanetBloom = 0.78; else if (name === 'mars') this.basePlanetBloom = 0.4; else if (name === 'jupiter') this.basePlanetBloom = 0.05; else this.basePlanetBloom = 0.2;
 
-        const dayTex = loadTex(`assets/planety/solar/${name}/${name}_color.jpg`); dayTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.dayTexture.value = dayTex;
-        if (name === 'earth') {
-            const nightTex = loadTex(`assets/planety/images/earth_nightmap.jpg`); nightTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.nightTexture.value = nightTex;
-            this.uniforms.specularTexture.value = loadTex(`assets/planety/images/earth_specularmap.jpg`);
-            this.uniforms.normalTexture.value = loadTex(`assets/planety/solar/earth/earth_normal.jpg`);
+        const maps = PLANET_MAPS[name] || null;
+        const dayTex = loadTex(maps?.day || `assets/planety/solar/${name}/${name}_color.jpg`); dayTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.dayTexture.value = dayTex;
+        if (maps?.night) {
+            const nightTex = loadTex(maps.night); nightTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.nightTexture.value = nightTex;
+            this.uniforms.specularTexture.value = loadTex(maps.spec);
+            this.uniforms.normalTexture.value = loadTex(maps.normal);
             this.uniforms.hasNightTexture.value = 1.0;
         } else {
             const empty = new THREE.Texture(); this.uniforms.specularTexture.value = empty; this.uniforms.normalTexture.value = empty; this.uniforms.hasNightTexture.value = 0.0;
@@ -581,8 +601,21 @@ class DirectPlanet {
 
         // Graf TSL wspólny dla wszystkich planet (planet3d.assets.tsl.js), wartości i tekstury
         // per planeta w this.uniforms — window.EARTH.uniforms (tło menu, devTools) bez zmian.
-        const material = createPlanetSurfaceMaterial(this.uniforms);
+        // Jowisz: żywa atmosfera (jupiterAtmosphere.js — pasy z wiatrem strefowym, turbulencja, wiry, GRS).
+        if (name === 'jupiter') this.jupiterAtm = new JupiterAtmosphere(this, dayTex);
+        // Saturn: żywa atmosfera (saturnAtmosphere.js — pasy, wiry, sześciokąt i wiry polarne) tylko na mapie z generatora
+        // (scripts/planety/saturn.py: obiekty w położeniach z src/data/saturnAtmosphere.js); `?planety=stare` — sama mapa.
+        if (name === 'saturn' && maps?.atmosphere) this.saturnAtm = new SaturnAtmosphere(this, dayTex);
+        const material = this.jupiterAtm ? createJupiterSurfaceMaterial(this.uniforms)
+            : (this.saturnAtm ? createSaturnSurfaceMaterial(this.uniforms) : createPlanetSurfaceMaterial(this.uniforms));
         this.mesh = new THREE.Mesh(geometry, material); this.group.add(this.mesh);
+        if (maps?.pit) {
+            // Wielka kopalnia ringu: kula bez obszaru dziury, w nim bryła łaty (ten sam graf i mapy).
+            this.uniforms.uPitMode.value = 1.0;
+            this.pitUniforms = earthPitUniforms(this.uniforms);
+            this.pit = createEarthPitMesh(createPlanetSurfaceMaterial(this.pitUniforms));
+            this.mesh.add(this.pit);
+        }
         if (name === 'saturn') {
             const tilt = THREE.MathUtils.degToRad(SATURN_VISUAL_RING.tiltDeg);
             const ringTex = loadTex(SATURN_VISUAL_RING.texture);
@@ -631,9 +664,9 @@ class DirectPlanet {
             this.group.add(this.saturnRing);
         }
 
-        if (name === 'earth') {
-            const cloudTex = loadTex(`assets/planety/solar/earth/earth_clouds.jpg`); cloudTex.colorSpace = THREE.SRGBColorSpace;
-            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv };
+        if (maps?.clouds) {
+            const cloudTex = loadTex(maps.clouds); cloudTex.colorSpace = THREE.SRGBColorSpace;
+            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: maps.cloudOpacity ?? 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv };
             // Przezroczyste DoubleSide w jednym rysunku (jak ShaderMaterial), blend normalny.
             const cloudMat = createPlanetCloudMaterial(this.cloudUniforms);
             this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, 128, 128), cloudMat); this.group.add(this.clouds);
@@ -653,6 +686,7 @@ class DirectPlanet {
         if (name === 'earth') hazeStrength = 1.0;
         if (name === 'venus') { hazeStrength = 0.85; hazeColor.set(1.0, 0.82, 0.5); hazeBeta.set(0.07, 0.11, 0.16); }
         if (name === 'mars') { hazeStrength = 0.32; hazeColor.set(0.9, 0.62, 0.42); hazeBeta.set(0.14, 0.10, 0.07); }
+        if (maps?.haze) { hazeStrength = maps.haze.strength; hazeColor.fromArray(maps.haze.color); hazeBeta.fromArray(maps.haze.beta); }
         this.uniforms.uHazeStrength.value = hazeStrength;
         this.uniforms.uHazeColor.value.copy(hazeColor);
         this.uniforms.uHazeBeta.value.copy(hazeBeta);
@@ -680,7 +714,11 @@ class DirectPlanet {
             // shaderze działa zawsze, także przy ringu poza kadrem.
             const ringLayout = computeHaloRingLayout(this.data);
             this._ringShadowRadius = (ringLayout.innerRadius + ringLayout.outerRadius) * 0.5;
-            this._ringShadowReach = this._ringShadowRadius * 1.15;
+            // Łuk przy słonecznym brzegu tarczy: przerwa ring → planeta + 18% promienia planety. Dawne
+            // 1,15 × promień ringu sięgało dalej niż cała tarcza — przyciemniało słoneczną połowę i planeta
+            // wyglądała na oświetloną od terminatora (2026-10-08, A/B z jednolitą teksturą).
+            const bodyR = resolveRingPlanetWorldRadius(this.data);
+            this._ringShadowReach = Math.max(0, this._ringShadowRadius - bodyR) + 0.18 * bodyR;
             this._ringOuter = Number(ringLayout.outerRadius) || 0;
         } else {
             enablePlanetLayer(this.group);
@@ -702,8 +740,10 @@ class DirectPlanet {
             : (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;
         this.group.scale.set(scale, scale, scale);
         // Zgłoszenie tarczy PRZED cullingiem — analityczny cień w shaderze
-        // shaftów musi działać także, gdy planeta jest poza kadrem.
-        if (typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(this.data.x, this.data.y, scale);
+        // shaftów musi działać także, gdy planeta jest poza kadrem. Z głębokością:
+        // tarcza planety tła (perspektywa) idzie w masce tam, gdzie planetę widać.
+        // W soczewce warpa tarczę zgłasza _lensPlace (ciało stoi gdzie indziej).
+        if (!lensOn && typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(this.data.x, this.data.y, scale, 1, visualZ);
         // Skok gracza: kadr i rozstawienie robi soczewka świata (applyWarpWorldLens) po wszystkich ciałach.
         if (lensOn) { this._lensPrepare(dt, scale, visualZ); return; }
         if (this._lensed) this._lensRestore();
@@ -799,9 +839,8 @@ class DirectPlanet {
             }
         }
         if (this.isRingAnchored && this._ringShadowRadius > 0) {
-            // Cień ringu gaśnie razem z wyłączeniem shadow shafts (opcja Off).
-            const shaftsOn = !!(Core3D?.perfToggles && Core3D.perfToggles.shadowShafts !== false);
-            this.uniforms.uRingShadowStrength.value = shaftsOn ? this._ringShadowStrength : 0.0;
+            // Cień ringu gaśnie razem z wyłączeniem shadow shafts (opcja Off) i do podpięcia brył ringu.
+            this.uniforms.uRingShadowStrength.value = this._ringCastsShadow() ? this._ringShadowStrength : 0.0;
             this.uniforms.uRingShadowRadius.value = this._ringShadowRadius;
             this.uniforms.uRingShadowReach.value = this._ringShadowReach;
             this.uniforms.uRingShadowCenter.value.set(Number(this.data.x) || 0, -(Number(this.data.y) || 0));
@@ -814,6 +853,9 @@ class DirectPlanet {
         this._spinY = (this._spinY + 0.02 * d) % TAU;
         this._cloudSpinY = (this._cloudSpinY + 0.027 * d) % TAU;
         this._ringSpinZ = (this._ringSpinZ + 0.00035 * d) % TAU;
+        // Atmosfera Jowisza w czasie GRY (SimClock — w pauzie stoi; dt tu to czas klatki).
+        if (this.jupiterAtm) this.jupiterAtm.step();
+        if (this.saturnAtm) this.saturnAtm.step();
     }
     // Obroty bryły (doba, chmury, pierścień); q — obrót przelotu soczewki nałożony na nie (albo null),
     // base — obrót tarczy celu „pod kadr” (między przelotem a dobą; albo null).
@@ -881,14 +923,22 @@ class DirectPlanet {
         const fit = lensFitView(o, Math.max(1, this.visibleRadiusMul || 1));
         this._lensed = true;
         this._visibilityCulled = fit.off;
+        // j. świata na px w głębokości ciała (płaszczyzna gry: 1 / zoom; tło: perspektywa kamery passa).
+        const k = anchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
+        // Maska słońca i cień ringu czytają płaszczyznę gry pod pikselem — w soczewce to nie punkt ciała.
+        const real = 1 - o.beta;
+        // Tarcza w smugach słońca idzie za ciałem w kadrze skoku i gaśnie z β jak maska i pas ringu
+        // (dawniej zostawała w prawdziwym miejscu — przy wejściu w soczewkę i wylocie z niej smuga stała
+        // obok planety); kierunek smugi z prawdziwego środka. Także poza kadrem — smuga sięga dalej.
+        if (real > 1e-3 && typeof Core3D.pushShaftDiscWorld === 'function') {
+            Core3D.pushShaftDiscWorld(L.camX + o.x * k, L.camY + o.y * k, Math.max(1e-3, fit.size * k), real, b.z, b.x, b.y);
+        }
         if (fit.off) {
             if (this.group.visible) this.group.visible = false;
             return;
         }
         if (!this.group.visible) this.group.visible = true;
         if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(anchored, true);
-        // j. świata na px w głębokości ciała (płaszczyzna gry: 1 / zoom; tło: perspektywa kamery passa).
-        const k = anchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
         this.group.position.set(L.camX + o.x * k, -(L.camY + o.y * k), b.z);
         const s = Math.max(1e-3, fit.size * k);
         this.group.scale.set(s, s, s);
@@ -914,13 +964,10 @@ class DirectPlanet {
         } else if (atmU?.sunPosition) {
             atmU.sunPosition.value.copy(this.uniforms.sunPosition.value);
         }
-        // Maska słońca i cień ringu czytają płaszczyznę gry pod pikselem — w soczewce to nie punkt ciała.
-        const real = 1 - o.beta;
         this.uniforms.uSunShadowRecv.value = anchored ? real : 0;
         if (anchored && atmU?.uSunShadowRecv) atmU.uSunShadowRecv.value = real;
         if (anchored && this._ringShadowRadius > 0) {
-            const shaftsOn = !!(Core3D?.perfToggles && Core3D.perfToggles.shadowShafts !== false);
-            this.uniforms.uRingShadowStrength.value = (shaftsOn ? this._ringShadowStrength : 0.0) * real;
+            this.uniforms.uRingShadowStrength.value = (this._ringCastsShadow() ? this._ringShadowStrength : 0.0) * real;
             this.uniforms.uRingShadowRadius.value = this._ringShadowRadius;
             this.uniforms.uRingShadowReach.value = this._ringShadowReach;
             this.uniforms.uRingShadowCenter.value.set(b.x, -b.y);
@@ -962,22 +1009,35 @@ class DirectMoon {
     init() {
         if (!Core3D.isInitialized) return;
         const geometry = new THREE.SphereGeometry(1, 96, 96);
-        const colorTexPath = this.tune?.colorTex || MOON_TUNE.colorTex;
-        const bumpTexPath = this.tune?.bumpTex || null;
-        const colorTex = colorTexPath ? loadTex(colorTexPath) : null;
-        const bumpTex = bumpTexPath ? loadTex(bumpTexPath) : null;
+        // Mapy z MOON_MAPS (planetMaps.js): z generatora — dzień, noc (światła wg roli księżyca w ekonomii)
+        // i normalne → materiał moonSurface.tsl.js; `?planety=stare` — dawny MeshStandardMaterial (mapa
+        // i wypukłości, bez nocy).
+        const maps = MOON_MAPS[String(this.tune?.id || 'moon')] || MOON_MAPS.moon;
+        const colorTex = maps.day ? loadTex(maps.day) : null;
         if (colorTex) colorTex.colorSpace = THREE.SRGBColorSpace;
-        const material = new THREE.MeshStandardMaterial({
-            map: colorTex || null,
-            bumpMap: bumpTex || null,
-            bumpScale: Number(this.tune?.bumpScale ?? MOON_TUNE.bumpScale) || MOON_TUNE.bumpScale,
-            roughness: 0.98,
-            metalness: 0.0,
-            color: 0xffffff
-        });
-        // Księżyc przy ringu wchodzi co orbitę w cień planety — maska Core3D
-        // gasi mu światło bezpośrednie (zaćmienie), otoczenie zostaje.
-        if (this.isRingAnchored) applySunShadowToBuiltinMaterial(material, 'direct');
+        let material;
+        if (maps.night) {
+            const nightTex = loadTex(maps.night);
+            nightTex.colorSpace = THREE.SRGBColorSpace;
+            const normalTex = maps.normal ? loadTex(maps.normal) : null;
+            // Księżyc przy ringu wchodzi co orbitę w cień planety — maska Core3D gasi mu światło
+            // bezpośrednie (zaćmienie), otoczenie zostaje, światła nocne się zapalają. Słońcu gry
+            // (DirectSun — powstaje przed księżycami) materiał podmienia kierunek na płaszczyznę gry.
+            setMoonSunLight(Core3D._sunShadowLight);
+            material = createMoonSurfaceMaterial({ map: colorTex, nightMap: nightTex, normalMap: normalTex,
+                normalScale: Number(maps.normalScale) || 1, sunMask: this.isRingAnchored });
+        } else {
+            const bumpTex = maps.bump ? loadTex(maps.bump) : null;
+            material = new THREE.MeshStandardMaterial({
+                map: colorTex || null,
+                bumpMap: bumpTex || null,
+                bumpScale: Number(maps.bumpScale) || 0.07,
+                roughness: 0.98,
+                metalness: 0.0,
+                color: 0xffffff
+            });
+            if (this.isRingAnchored) applySunShadowToBuiltinMaterial(material, 'direct');
+        }
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
@@ -1037,11 +1097,15 @@ class DirectMoon {
         this.group.position.set(mx, -my, z);
 
         if (this.mesh) {
+            // Słońce księżyca w płaszczyźnie gry, jak planet (moonSurface.tsl.js: dzień i zmrok świateł nocnych
+            // z kierunku Słońce − środek, z = 0) — ciemna połowa przechodzi prosto w smugę cienia za ciałem.
+            if (window.SUN) setMoonSunDirection(this.mesh.material, window.SUN.x - mx, -(window.SUN.y - my), 0);
             const sizeRatio = Math.max(0.01, Number(this.tune?.sizeRatioToParent) || MOON_TUNE.sizeRatioToParent);
             const moonR = parentR * sizeRatio;
             const scale = Math.max(900, moonR * (this.isRingAnchored ? 1 : PLANET_SIZE_MULTIPLIER));
             this.mesh.scale.set(scale, scale, scale);
-            if (typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(mx, my, scale);
+            // Z głębokością (księżyc tła — tam, gdzie go widać); w soczewce tarczę zgłasza _lensPlace.
+            if (!lensOn && typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(mx, my, scale, 1, z);
             this._spinAngle = (this._spinAngle + this.spinSpeed * Math.max(0, Number(dt) || 0)) % TAU;
             // Skok gracza: kadr i rozstawienie robi soczewka świata (applyWarpWorldLens).
             if (lensOn) { this._lensPrepare(mx, my, z, scale); return; }
@@ -1082,13 +1146,18 @@ class DirectMoon {
         this._lensed = true;
         // Księżyc w soczewce stoi przy statku w płaszczyźnie gry — nie rzuca cienia (mapa cienia słońca).
         if (this.mesh) this.mesh.castShadow = false;
+        const k = this.isRingAnchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
+        // Tarcza w smugach słońca za ciałem w kadrze skoku, gaśnie z β (jak planety — DirectPlanet._lensPlace).
+        const real = 1 - o.beta;
+        if (this.mesh && real > 1e-3 && typeof Core3D.pushShaftDiscWorld === 'function') {
+            Core3D.pushShaftDiscWorld(L.camX + o.x * k, L.camY + o.y * k, Math.max(1e-3, fit.size * k), real, b.z, b.x, b.y);
+        }
         if (fit.off || !this.mesh) {
             if (this.group.visible) this.group.visible = false;
             return;
         }
         if (!this.group.visible) this.group.visible = true;
         if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(this.isRingAnchored, true);
-        const k = this.isRingAnchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
         this.group.position.set(L.camX + o.x * k, -(L.camY + o.y * k), b.z);
         const s = Math.max(1e-3, fit.size * k);
         this.mesh.scale.set(s, s, s);
@@ -1102,11 +1171,13 @@ class DirectMoon {
         } else {
             this.mesh.rotation.set(0, this._spinAngle, 0);
         }
+        const sd = lensSunDir(b.x, b.y, turned ? _lensQ : null);
         if (this.halo?.material?.uniforms?.sunPosition) {
-            const sd = lensSunDir(b.x, b.y, turned ? _lensQ : null);
             const gp = this.group.position;
             this.halo.material.uniforms.sunPosition.value.set(gp.x + _lensSun.x * sd, gp.y + _lensSun.y * sd, gp.z + _lensSun.z * sd);
         }
+        // Słońce powierzchni obrócone z bryłą, jak poświata (moonSurface.tsl.js).
+        setMoonSunDirection(this.mesh.material, _lensSun.x, _lensSun.y, _lensSun.z);
     }
     _lensRestore() {
         this._lensed = false;
@@ -1243,6 +1314,8 @@ window.initPlanets3D = function (planetList, sunData) {
 
 /** Strefa gry gracza 1 (id z detectZones w index.html) → docelowa jasność tła (src/game/skyRegion.js). */
 window.setSkyZone = function (zoneId) { NebulaSystem.regionTarget = skyRegionBrightness(zoneId); };
+// Wygładzona jasność strefy (to samo, co mnoży tło) — otoczenie dymu wybuchów (src/3d/explosions/explosionFx.js).
+window.getSkyRegion = function () { return NebulaSystem.region; };
 
 window.updatePlanets3D = function (dt, cam) {
     if (!Core3D.isInitialized || !cam) return;

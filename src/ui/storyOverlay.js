@@ -92,6 +92,14 @@ export function createStoryOverlay(story) {
     const a = story.ui.action;
     if (a) story.triggerAction(a.id);
   });
+  // Drugi przycisk panelu (spec.alt: { label, run }) — np. WYPOSAŻENIE w doku przed ODDOKUJ.
+  const actAlt = el('button', 'st-cmd-alt', act);
+  actAlt.type = 'button';
+  actAlt.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const a = story.ui.action;
+    if (a && !a.pressed) a.alt?.run?.();
+  });
   // klik w panel nie strzela w grze
   act.addEventListener('mousedown', (e) => e.stopPropagation());
   act.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -132,9 +140,10 @@ export function createStoryOverlay(story) {
       }
       return;
     }
-    // panel akcji: klawisz przycisku (Enter → też NumpadEnter)
+    // panel akcji: klawisz przycisku (Enter → też NumpadEnter); przy otwartym terminalu stacji (WYPOSAŻENIE z panelu)
+    // klawisze należą do terminala — Enter zatwierdza tam kartę, nie odcumowuje
     const a = story.ui.action;
-    if (a && !a.pressed && a.key && !story.letterbox) {
+    if (a && !a.pressed && a.key && !story.letterbox && !window.isStationUIOpen?.()) {
       const want = a.key === 'Enter' ? (k === 'Enter' || k === 'NumpadEnter') : (e.key === a.key || k === a.key);
       if (want) {
         e.preventDefault();
@@ -324,6 +333,8 @@ export function createStoryOverlay(story) {
       actTitle.textContent = a.title || '';
       actSub.textContent = a.subtitle || '';
       actBtnKey.textContent = a.key ? (a.key === 'Enter' ? '↵ ENTER' : a.key) : '';
+      actAlt.textContent = a.alt?.label || '';
+      actAlt.hidden = !a.alt;
       act.classList.add('on');
     }
     if (!a) return;
@@ -332,6 +343,7 @@ export function createStoryOverlay(story) {
       last.actPressed = pressed;
       actBtnLabel.textContent = pressed ? (a.busyLabel || a.label || '') : (a.label || '');
       actBtn.disabled = pressed;
+      actAlt.disabled = pressed;
       act.classList.toggle('busy', pressed);
       if (!pressed) setTimeout(() => { try { if (story.ui.action === a && !a.pressed) actBtn.focus({ preventScroll: true }); } catch { /* bez fokusu */ } }, 60);
     }
@@ -386,9 +398,10 @@ export function createStoryOverlay(story) {
       if (cin !== last.cinematic) { root.classList.toggle('cinematic', cin); last.cinematic = cin; }
       const d = story.dialogue;
       setDialogue(d?.active ? d.current : null, d?.mode || 'scene');
-      // cel i samouczek chowają się na czas kina
-      setObjective(cin ? null : story.ui.objective);
-      setHint(cin ? null : story.ui.hint);
+      // cel i samouczek chowają się na czas kina i pod terminalem stacji (zasłaniałyby jego górę)
+      const terminal = !!window.isStationUIOpen?.();
+      setObjective(cin || terminal ? null : story.ui.objective);
+      setHint(cin || terminal ? null : story.ui.hint);
       if (cin) { for (const [, node] of markerEls) node.el.remove(); markerEls.clear(); }
       else setMarkers(env);
       const b = story.ui.banner;
@@ -399,7 +412,8 @@ export function createStoryOverlay(story) {
         banner.classList.toggle('on', !!bt);
       }
       setSummary(story.ui.summary);
-      setAction(cin ? null : story.ui.action);
+      // panel stanowiska chowa się pod terminalem stacji (WYPOSAŻENIE otwarte z panelu) i wraca po zamknięciu
+      setAction(cin || terminal ? null : story.ui.action);
       setCloak(env.shipEntity);
     }
   };

@@ -23,6 +23,7 @@ import { beltAmbushReached, planBeltAmbush } from './beltAmbush.js';
 import { dryDockChunkAt, dryDockNearestChunk, planDryDockChain } from '../../3d/portBuildings/pirateDryDockLayout.js';
 import { createCloak, isCloakHidden } from '../cloak.js';
 import { K7_POSE_OWNER } from '../k7BerthService.js';
+import { ENGINE_OFF, ENGINE_IGNITION_TUNE, igniteEngine, setEngineState } from '../engineIgnition.js';
 import { K7_SERVICE_UNDOCK, k7ServiceDisconnectPose, k7ServiceStep } from '../../3d/haloRing/haloPortK7Layout.js';
 import { MISSION01 } from './missions/mission01.js';
 import { CAMPAIGN_PHASES, runCampaign } from './campaign.js';
@@ -430,6 +431,8 @@ export const StoryGame = {
     // w ścianę tylną. Przewody paliwowe łapią kadłub przy dziobie (te same wlewy stanowiska).
     const angle = pose.angle + Math.PI;
     this.deps.placePlayer(pose.x, pose.y, angle);
+    // Silniki MAIN wyłączone w doku (src/game/engineIgnition.js — etap E2): zapłon przy zwolnieniu zamków (ODDOKUJ).
+    setEngineState(this.deps.ship?.(), ENGINE_OFF);
     this.lock = { x: pose.x, y: pose.y, angle, anim: null };
     this._block.add('dock');
     this._applyHallState(true);
@@ -513,6 +516,13 @@ export const StoryGame = {
     if (!s) return;
     s.t += dt;
     storyUndockPose(s.t, s.pose);
+    // Zapłon silników (etap E2, poprawka 2026-10-09): dym z dysz idzie jeszcze przy zamkach i składających się ramionach
+    // (smokeTime przed zwolnieniem zamków; za krótka sekwencja — od jej początku), błysk i struga w chwili zwolnienia —
+    // ciąg główny najpóźniej przy driveAt + flameTime.
+    if (!s.ignited && s.t >= Math.max(0, STORY_UNDOCK.driveAt - ENGINE_IGNITION_TUNE.smokeTime)) {
+      s.ignited = true;
+      igniteEngine(this.deps.ship?.());
+    }
     if (!s.drive && s.t >= STORY_UNDOCK.driveAt) {
       // zamki pola zwolnione — napęd wraca do gracza (ramiona paliwowe dokładają się już w trakcie wylotu)
       s.drive = true;
@@ -850,6 +860,9 @@ export const StoryGame = {
   _park(e, tag) {
     e.__storyTag = tag;
     e.mission = true;
+    // Okręt w stanowisku / na pochylni / w hali stoi z WYŁĄCZONYMI silnikami (etap E2): wylot z doku zaczyna się
+    // zapłonem z dymem (storyNpcControl.launch, zegar wodowania — site.ignite przed startem).
+    setEngineState(e, ENGINE_OFF);
     this.deps.sleepNpc(e);
   },
 
@@ -1088,6 +1101,8 @@ export const StoryGame = {
         berthId: () => self.dock.berthId || 'C-01',
         // panel stanowiska: wiersze obsługi i krok odcumowania
         serviceRows: () => self._serviceRows(),
+        // WYPOSAŻENIE w doku (D8 planu fitowania): terminal portu K-7 na zakładce kart — przed ODDOKUJ.
+        openFitting: () => !!d.openFitting?.(),
         step: () => self.undockStep(),
         locked: () => !!self.lock,
         isOutside() {
@@ -1204,6 +1219,11 @@ export const StoryGame = {
           if (L && Array.isArray(L.path) && L.path.length && d.launchNpc) d.launchNpc(e, L.path, 0, { fightFrom: L.fightFrom });
           else d.wakeNpc(e);
           return true;
+        },
+        // Zapłon silników okrętu w stanowisku przed startem (zegar wodowania: start bez czekania na rozruch).
+        ignite(e) {
+          if (!e || e.dead || e.__storyLaunched) return false;
+          return igniteEngine(e);
         },
         // Załoga przy działach: okręt w stanowisku strzela z miejsca (bez lotu), zanim wystartuje.
         arm(e) {

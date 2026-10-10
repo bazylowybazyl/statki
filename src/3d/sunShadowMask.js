@@ -150,8 +150,10 @@ export function sunShaftBackdrop(color) {
  * shadowShaftsMaskNode — te same wzory): widoczność słońca w punkcie świata gry, 1 = pełne słońce.
  * Dla rzeczy rysowanych poza GPU (wieżyczki na kanwie 2D — oświetlenie kadłubów v2), bez kadłubów
  * i ringów. discs — Float32Array [x, y SCENY (= −y gry), r, siła] × count; słońce w świecie gry.
+ * axes — opcjonalnie [ax, ay] × count: jednostkowa oś smugi tarczy (uDiscAxis passa: od słońca przez
+ * prawdziwy środek ciała — Core3D._resolveShaftDiscs); bez niej oś ze środka tarczy i słońca.
  */
-export function discSunVisibilityCpu(worldX, worldY, sunX, sunY, discs, count, discLenMul) {
+export function discSunVisibilityCpu(worldX, worldY, sunX, sunY, discs, count, discLenMul, axes = null) {
   const px = worldX;
   const py = -worldY;
   const sx = sunX;
@@ -165,12 +167,20 @@ export function discSunVisibilityCpu(worldX, worldY, sunX, sunY, discs, count, d
     const o = i * 4;
     const r = discs[o + 2];
     if (!(r > 0)) continue;
-    let ax = discs[o] - sx;
-    let ay = discs[o + 1] - sy;
-    const al = Math.sqrt(ax * ax + ay * ay);
-    if (al < 1) continue;
-    ax /= al;
-    ay /= al;
+    let ax;
+    let ay;
+    if (axes) {
+      ax = axes[i * 2];
+      ay = axes[i * 2 + 1];
+      if (ax * ax + ay * ay < 0.5) continue;
+    } else {
+      ax = discs[o] - sx;
+      ay = discs[o + 1] - sy;
+      const al = Math.sqrt(ax * ax + ay * ay);
+      if (al < 1) continue;
+      ax /= al;
+      ay /= al;
+    }
     const rx = px - discs[o];
     const ry = py - discs[o + 1];
     const along = rx * ax + ry * ay;

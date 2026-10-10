@@ -34,6 +34,8 @@ class GasEmitter {
     this.trail = false;
     this.jet = false;      // strumień: kapsuła od otworu (x, y, z) o wektor (jx, jy, jz)
     this.jx = 0; this.jy = 0; this.jz = 0;
+    this.velTau = -1;      // zanik narzucenia prędkości [s] tego emitera (−1 = tune.velTau reżysera)
+    this.ox = 0; this.oy = 0; this.hasO = false;   // środek wybuchu (scena) — źródło zostaje po jego stronie brył statyki
     return this;
   }
 }
@@ -60,15 +62,36 @@ export class GasExplosions {
     this.time = 0;
     this.emitters = Array.from({ length: emitterCap }, () => new GasEmitter());
     this.events = Array.from({ length: 64 }, () => new DelayedEvent());
-    this.stats = { emitters: 0, dropped: 0, explosions: 0 };
+    // blocked — odłamki zgaszone w bryle statyki, moved — źródła przesunięte z bryły statyki
+    this.stats = { emitters: 0, dropped: 0, explosions: 0, blocked: 0, moved: 0 };
+    this._free = { x: 0, y: 0 };
+    // Środek bieżącego wybuchu (setOrigin): nowe emitery go zapamiętują.
+    this._ox = 0; this._oy = 0; this._hasO = false;
+    // Narzucenie prędkości źródeł (F8 audytu 2026-10-08): po `velHold` s od startu (nie krócej niż rampIn) siła
+    // narzucenia `velBlend` maleje wykładniczo (τ = velTau) do `velFloor` [1/s] — strumień i front zaczynają żyć
+    // własną dynamiką (rwą się i kłębią) zamiast sztywnej rury. velTau 0 = narzucenie przez całe życie (dawniej).
+    // followCarrier: emitery jadą z nośnikiem swojej domeny (wybuch wraku w ruchu — reżyser wybuchów gry); bez tego
+    // wołający sam stawia emitery (dym wraków gasSmokeGame przypina ogniska do kadłuba) albo domeny stoją.
+    this.tune = { velHold: 0.06, velTau: 0, velFloor: 6, followCarrier: false };
     // Pomiar mocy ognia (CPU, do świateł punktowych): suma tempa paliwa × temperatury emiterów.
     this.firePower = 0;
   }
 
   _r(a = 0, b = 1) { return a + (b - a) * this.rng.next(); }
 
+  /**
+   * Środek wybuchu (scena) dla emiterów tworzonych do clearOrigin(): przy pierwszym wstrzyknięciu źródło za bryłą
+   * statyki (kłąb za cienką ścianą) wraca przed nią — gaz nie pojawia się po drugiej stronie ściany.
+   */
+  setOrigin(x, y) { this._ox = x; this._oy = y; this._hasO = true; }
+  clearOrigin() { this._hasO = false; }
+
   _emitter() {
-    for (const e of this.emitters) if (!e.alive) { e.reset(); e.alive = true; return e; }
+    for (const e of this.emitters) if (!e.alive) {
+      e.reset(); e.alive = true;
+      if (this._hasO) { e.ox = this._ox; e.oy = this._oy; e.hasO = true; }
+      return e;
+    }
     this.stats.dropped++;
     return null;
   }
@@ -188,6 +211,8 @@ export class GasExplosions {
     e.flicker = opts.flicker ?? 0.25;
     e.rampIn = opts.rampIn ?? 0.04;
     e.rampOut = opts.rampOut ?? Math.min(0.3, duration * 0.4);
+    // Własny zanik narzucenia prędkości (np. strumień rozerwanego zbiornika paliwa bije dłużej niż kłęby wybuchu).
+    e.velTau = Number(opts.velTau) >= 0 ? Number(opts.velTau) : -1;
     e.seed = this._r(0, 100);
     return e;
   }
@@ -320,6 +345,7 @@ export class GasExplosions {
     this.time += dt;
     const now = this.time;
     const g = this.grid;
+    const VT = this.tune;
     // Zdarzenia opóźnione (wybuchy wtórne).
     for (const ev of this.events) {
       if (!ev.alive || now < ev.t) continue;
@@ -336,15 +362,44 @@ export class GasExplosions {
       const slot = e.slot;
       if (slot < 0 || !g.slots[slot].active) { e.alive = false; continue; }
       alive++;
-      // Ruch emitera (odłamki): opór, grawitacja wzdłuż −wyporu.
+      // Emitery jadą z nośnikiem domeny (gaz w domenie jest w jej układzie; wybuch wraku w ruchu — źródła zostawałyby
+      // w miejscu wybuchu, a domena odjeżdżała). Domena stojąca (dok, stacje) — bez zmian.
+      const sd = g.slots[slot];
+      if (VT.followCarrier && dt > 0 && (sd.vx !== 0 || sd.vy !== 0 || sd.vz !== 0)) {
+        e.x += sd.vx * dt; e.y += sd.vy * dt; e.z += sd.vz * dt;
+        e.px += sd.vx * dt; e.py += sd.vy * dt; e.pz += sd.vz * dt;
+        // środek wybuchu jedzie z nim (odcinek środek → źródło przy pierwszym wstrzyknięciu — przegląd etapu C pkt 10)
+        e.ox += sd.vx * dt; e.oy += sd.vy * dt;
+      }
+      // Ruch emitera (odłamki): opór, grawitacja wzdłuż −wyporu. Odłamek, który wpadł w bryłę statyki domeny (ściana hali,
+      // kawałek doku — gasGrid.solidAt), gaśnie — inaczej ciągnąłby smugę ognia przez ścianę i za nią.
       if (e.trail && dt > 0) {
         const k = Math.exp(-e.drag * dt);
         e.vx *= k; e.vy *= k; e.vz *= k;
         if (e.gravity) { const b = g.tune.buoyDir; e.vx -= b[0] * e.gravity * dt; e.vy -= b[1] * e.gravity * dt; e.vz -= b[2] * e.gravity * dt; }
+        const x0 = e.x, y0 = e.y;
         e.x += e.vx * dt; e.y += e.vy * dt; e.z += e.vz * dt;
         e.dvx = e.vx * 0.35; e.dvy = e.vy * 0.35; e.dvz = e.vz * 0.35;
+        // odcinek ruchu w tej klatce (przy wolnej klatce odłamek przeskakuje cienką ścianę między punktami)
+        if (g.solidAt && (g.solidAt(slot, e.x, e.y) || g.clipSegment(slot, x0, y0, e.x, e.y, this._free))) {
+          e.alive = false; alive--; this.stats.blocked++; continue;
+        }
       }
       if (now < e.t0) { e.px = e.x; e.py = e.y; e.pz = e.z; continue; }
+      // Pierwsze wstrzyknięcie: środek źródła w bryle statyki domeny (wybuch przy ścianie hali, wrak wciśnięty w bryłę) —
+      // przesunięty do najbliższej wolnej komórki (do 1,5 promienia + 2 komórki); bez wolnej zostaje (zasłonięte w kernelu).
+      // Źródło po stronie środka wybuchu: odcinek środek → źródło przez bryłę = źródło cofnięte przed bryłę (kłąb za cienką
+      // ścianą); bez środka albo środek w bryle — najbliższa wolna komórka.
+      if (!e.started) {
+        e.started = true;
+        const sd0 = g.slots[slot];
+        if (g.freePoint && sd0 && ((e.hasO && g.clipSegment(slot, e.ox, e.oy, e.x, e.y, this._free))
+          || g.freePoint(slot, e.x, e.y, Math.ceil((e.r0 * 1.5) / sd0.h) + 2, this._free))) {
+          const dx = this._free.x - e.x, dy = this._free.y - e.y;
+          e.x += dx; e.y += dy; e.px += dx; e.py += dy;
+          this.stats.moved++;
+        }
+      }
       const age = now - e.t0;
       const u = Math.min(1, age / Math.max(1e-3, e.t1 - e.t0));
       let k = e.tau > 0 ? Math.exp(-age / e.tau) : 1;
@@ -356,18 +411,30 @@ export class GasExplosions {
       if (e.rampIn > 0) k *= Math.min(1, age / e.rampIn);
       if (e.rampOut > 0) k *= Math.min(1, (e.t1 - now) / e.rampOut);
       const r = e.r0 + (e.r1 - e.r0) * u;
+      let vb = e.velBlend;
+      const vTau = e.velTau >= 0 ? e.velTau : VT.velTau;
+      if (vTau > 0 && vb > VT.velFloor) {
+        const a = age - Math.max(e.rampIn, VT.velHold);
+        if (a > 0) vb = VT.velFloor + (vb - VT.velFloor) * Math.exp(-a / vTau);
+      }
       if (e.jet) {
         g.source(slot, e.x, e.y, e.z, e.x + e.jx, e.y + e.jy, e.z + e.jz, r, e.fuel * k, e.temp * k, e.smoke * k,
-          e.radial, e.dvx, e.dvy, e.dvz, e.velBlend, e.noise);
+          e.radial, e.dvx, e.dvy, e.dvz, vb, e.noise);
       } else {
         g.source(slot, e.px, e.py, e.pz, e.x, e.y, e.z, r, e.fuel * k, e.temp * k, e.smoke * k,
-          e.radial, e.dvx, e.dvy, e.dvz, e.velBlend, e.noise);
+          e.radial, e.dvx, e.dvy, e.dvz, vb, e.noise);
       }
       power += e.fuel * k * r * r;
       e.px = e.x; e.py = e.y; e.pz = e.z;
     }
     this.firePower = power;
     this.stats.emitters = alive;
+  }
+
+  /** Emitery i zdarzenia domeny `slot` gasną (domena przejęta przez nowy wybuch — stare źródła nie trafiają do niego). */
+  dropSlot(slot) {
+    for (const e of this.emitters) if (e.alive && e.slot === slot) e.alive = false;
+    for (const ev of this.events) if (ev.alive && ev.slot === slot) ev.slot = -1;
   }
 
   clear() {

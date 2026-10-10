@@ -104,7 +104,9 @@ export class HaloRingGame {
         hallIndex: -1,
         bayFade: 0,
         bayIndex: -1,
-        occluderKey: `halo:${key}`
+        occluderKey: `halo:${key}`,
+        // ring rzuca cień w smugach (i pas na tarczy planety) dopiero od podpięcia brył (ring.ready)
+        shadowReady: false
       });
     }
   }
@@ -159,6 +161,7 @@ export class HaloRingGame {
     // ringu), nigdy pustej mapy (wysokość 0 zamiast rzeźby).
     Promise.resolve(ring.ready).then((ok) => {
       if (!ok || e.ring !== ring) return;
+      e.shadowReady = true;
       // stanowiska wolne: statków ruchu jeszcze nie ma (ring nie udaje życia),
       // dokowanie gracza w hali K-7 przyjdzie z automatem portu
       for (const hall of ring.k7Halls) {
@@ -303,9 +306,12 @@ export class HaloRingGame {
       const L = e.collider.layout;
       const dx = e.place.x - cx;
       const dy = e.place.y - cy;
-      // cień ringu w smugach — analityczny okrąg, także gdy ring poza kadrem
+      // cień ringu w smugach — analityczny okrąg, także gdy ring poza kadrem, ale dopiero od podpięcia brył:
+      // ring-archetyp buduje się w tle (Mars ~2–3 s po przylocie) i do tego czasu kadr miał sam cień ringu —
+      // ciemny pierścień wokół planety i szerszą smugę bez ringu (pas na tarczy planety idzie za nim)
       const ringMid = (L.radii.min + L.radii.max) * 0.5;
-      Core3D.setShaftRingOccluder?.(e.occluderKey, e.place.x, e.place.y, ringMid, ringMid * HALO_GAME.occluderReachMul);
+      if (e.shadowReady) Core3D.setShaftRingOccluder?.(e.occluderKey, e.place.x, e.place.y, ringMid, ringMid * HALO_GAME.occluderReachMul);
+      else Core3D.removeShaftRingOccluder?.(e.occluderKey);
       if (!e.ring && Math.hypot(dx, dy) < HALO_GAME.activateDistance) this._ensureRing(e);
       const ring = e.ring;
       if (!ring) continue;
@@ -482,6 +488,7 @@ export class HaloRingGame {
   dispose() {
     for (const e of this.entries) {
       Core3D.removeShaftRingOccluder?.(e.occluderKey);
+      e.shadowReady = false;
       if (!e.ring) continue;
       this.scene.remove(e.ring.group);
       e.ring.dispose();

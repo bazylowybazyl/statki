@@ -10,6 +10,9 @@
 // bezpiecznik w biegu). Tylko WebGPU: bez adaptera renderer nie powstaje,
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
+// Niepowtarzalne uuid węzłów TSL + strażnik kolizji (pułapka 38) — PRZED resztą zależności: węzły tworzone
+// w modułach Core3D dostają już uuid z licznikiem (src/3d/tsl/uuidWezlow.js).
+import { tslUuidStan } from './tsl/uuidWezlow.js';
 import {
   Continue, Fn, If, Loop, abs, clamp, dot, float, fract, getShadowMaterial, int, length, max, screenCoordinate, screenSize, select,
   smoothstep, sqrt, texture, uniform, uniformArray, uv, vec2, vec4
@@ -170,7 +173,9 @@ const FLAT_PERSP_FAR = 500000;
 const SHAFT_DISC_CAP = 48;      // planety + księżyce + największe asteroidy
 // Kadłuby: pole odległości sylwetki (hullShadowSdf.js), jeden wpis na statek.
 const SHAFT_HULL_CAP = HULL_SDF_SHAFT_CAP;
-const SHAFT_RING_CAP = 2;       // ring city (Ziemia, Mars)
+// Ringi „Halo” (Ziemia, Mars, Jowisz): przy 2 trzeci zarejestrowany ring (zwykle Jowisz) nie rzucał
+// smugi, a pas cienia ringu na jego tarczy był.
+const SHAFT_RING_CAP = 3;
 // Siła cienia kadłuba: planeta gasi scenę do czerni (umbra), statek ma tylko
 // przygaszać — pełna siła robiła z każdego okrętu czarną kałużę na mgławicy.
 const HULL_SHADOW_STRENGTH = 0.55;
@@ -226,6 +231,7 @@ function shadowShaftsMaskNode(u) {
   const uDiscLenMul = uniformNode(u.uDiscLenMul);
   const uDiscCount = uniformNode(u.uDiscCount);
   const uDiscs = uniformNode(u.uDiscs);
+  const uDiscAxis = uniformNode(u.uDiscAxis);
   const uRingCount = uniformNode(u.uRingCount);
   const uRings = uniformNode(u.uRings);
   const uFieldOcc = uniformNode(u.uFieldOcc);
@@ -265,14 +271,14 @@ function shadowShaftsMaskNode(u) {
         // planety zostaje przy własnym oświetleniu z jej shadera.
         // disc.w = siła cienia: planeta 1,0 (umbra), asteroida ~0,5 (skala
         // skały nie uzasadnia czarnej dziury w mgławicy).
+        // Środek i promień tarczy = miejsce, gdzie ciało WIDAĆ w płaszczyźnie gry (ciała tła z perspektywy,
+        // soczewka warpa), oś smugi z prawdziwego środka ciała — liczone na CPU (_resolveShaftDiscs).
         Loop({ start: int(0), end: uDiscCount, type: 'int', condition: '<', name: 'discIdx' }, ({ discIdx }) => {
           const disc = uDiscs.element(discIdx).toVar();
           const discR = disc.z.toVar();
           If(discR.lessThanEqual(0.0), () => { Continue(); });
-          const axis = disc.xy.sub(uSunWorld).toVar();
-          const axisLen = length(axis).toVar();
-          If(axisLen.lessThan(1.0), () => { Continue(); });
-          axis.divAssign(axisLen);
+          const axis = uDiscAxis.element(discIdx).xy.toVar();
+          If(dot(axis, axis).lessThan(0.5), () => { Continue(); });
           const rel = worldP.sub(disc.xy).toVar();
           If(dot(rel, rel).lessThan(discR.mul(discR)), () => { insideDisc.assign(1.0); });
           const along = dot(rel, axis).toVar();
@@ -372,7 +378,7 @@ function shadowShaftsMaskNode(u) {
 // `material.uniforms` (adapter uniformy.js) — _renderSunShadowMask ustawia `.value` jak na
 // WebGL; tablice (dyski, kadłuby A/M/C, ringi) to uniformArray (`.value` → Vector4 gry,
 // Vector4.set w miejscu, pakowane raz na render — jeden quad na render). Bufory uniformów
-// etapu fragmentów: grupa obiektu + 5 tablic = 6 (limit 12).
+// etapu fragmentów: grupa obiektu + 6 tablic = 7 (limit 12).
 export function createShadowShaftsPass() {
   const v4 = (n) => Array.from({ length: n }, () => new THREE.Vector4(0, 0, 0, 0));
   const uniforms = uniformsAdapter({
@@ -384,6 +390,8 @@ export function createShadowShaftsPass() {
     uDiscLenMul: uniform(5.0),
     uDiscCount: uniform(0, 'int'),
     uDiscs: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
+    // uDiscAxis[i].xy: jednostkowa oś smugi tarczy i (od słońca), z prawdziwego środka ciała.
+    uDiscAxis: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
     uHullLenMul: uniform(3.0),
     uHullCount: uniform(0, 'int'),
     uHullSteps: uniform(24, 'int'),
@@ -539,6 +547,8 @@ export const Core3D = {
   _sunShadowLight: null,
   // Scalone wysyłki buforów uniformów (_coalesceUniformUploads): bufory z ≥ 2 zakresami, oszczędzone zapisy.
   uniformUploadStats: { merged: 0, savedWrites: 0, skippedFull: 0, skippedBytes: 0 },
+  // Kolizje uuid w budowie TSL (src/3d/tsl/uuidWezlow.js): w grze ma być 0 — inaczej WGSL skażony cudzym węzłem.
+  tslUuid: tslUuidStan,
   // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
   shadowPassStats: { updated: 0, skipped: 0 },
   _shadowMapEmpty: false,
@@ -546,6 +556,13 @@ export const Core3D = {
   // dyski (planet3d.assets), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
+  // Na dysk: głębokość ciała w scenie (z; 0 = płaszczyzna gry) i przesunięcie punktu, od którego liczy
+  // się kierunek smugi (prawdziwy środek ciała), względem środka tarczy — pushShaftDiscWorld.
+  shaftDiscSrc: new Float64Array(SHAFT_DISC_CAP * 3),
+  // Tarcze w kadrze OSTATNIEJ maski (_resolveShaftDiscs): środek i promień tam, gdzie ciało widać
+  // w płaszczyźnie gry, oś smugi (jednostkowa, od słońca); liczba −1 = jeszcze nie liczone.
+  shaftDiscView: new Float64Array(SHAFT_DISC_CAP * 4), shaftDiscViewAxis: new Float64Array(SHAFT_DISC_CAP * 2),
+  shaftDiscViewCount: -1,
   // Transmitancja słońca pola przesłaniającego na CPU ((x, y) świata gry → 0..1; pas asteroid) —
   // sunVisibilityAtWorld; null = bez pola.
   sunFieldCpu: null,
@@ -1681,21 +1698,33 @@ export const Core3D = {
     }
     const cam1 = this.activeCam1 || { x: 0, y: 0 };
     const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
+    const camX = Number(cam1.x) || 0;
+    const camY = -(Number(cam1.y) || 0);
+    // Kadr w świecie = kadr kamery ortho passów sceny: render() ustawia ją z rozmiaru celu sceny
+    // (bufor rysowania, × pixelRatio), a cel maski ma ten sam rozmiar. Dawne this.width / zoom (px CSS)
+    // przy devicePixelRatio > 1 dawało maskę w innej skali niż obraz 3D — cienie odjeżdżały od ciał
+    // tym dalej, im dalej od środka kadru.
+    const viewW = Number(target.width) || this.width;
+    const viewH = Number(target.height) || this.height;
     uShafts.uSunActive.value = 1;
     uShafts.uShaftGain.value = 1;
     uShafts.uSunWorld.value.set(sun.x, -sun.y);
-    uShafts.uCamCenter.value.set(Number(cam1.x) || 0, -(Number(cam1.y) || 0));
-    uShafts.uViewWorldSize.value.set(this.width / zoom1, this.height / zoom1);
+    uShafts.uCamCenter.value.set(camX, camY);
+    uShafts.uViewWorldSize.value.set(viewW / zoom1, viewH / zoom1);
     uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 5);
     uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
     uShafts.uHullSteps.value = Math.max(1, Math.min(HULL_SDF_MAX_STEPS, Number(shaftCfg.hullSteps) || 24));
 
-    const discCount = raysOn ? Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP) : 0;
+    const discCount = raysOn ? this._resolveShaftDiscs(sun, camX, camY, zoom1, viewH) : 0;
     uShafts.uDiscCount.value = discCount;
     const discVals = uShafts.uDiscs.value;
+    const axisVals = uShafts.uDiscAxis.value;
+    const view = this.shaftDiscView;
+    const viewAxis = this.shaftDiscViewAxis;
     for (let i = 0; i < discCount; i++) {
       const base = i * 4;
-      discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], this.shaftDiscs[base + 3]);
+      discVals[i].set(view[base], view[base + 1], view[base + 2], view[base + 3]);
+      axisVals[i].set(viewAxis[i * 2], viewAxis[i * 2 + 1], 0, 0);
     }
 
     // Kadłuby: hexShips3D zgłasza od największych i sam staje na budżecie
@@ -2322,10 +2351,13 @@ export const Core3D = {
     if (this.perfToggles && this.perfToggles.shadowShafts === false) return 1;
     const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
     if (!cfg || cfg.enabled === false) return 1;
-    const count = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
+    // Tarcze w kadrze ostatniej maski (ciała tła tam, gdzie je widać — jak na GPU); przed pierwszą maską
+    // tarcze świata.
+    const viewed = this.shaftDiscViewCount >= 0;
+    const count = viewed ? this.shaftDiscViewCount : Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
     let vis = count > 0
-      ? discSunVisibilityCpu(worldX, worldY, Number(sun.x) || 0, Number(sun.y) || 0, this.shaftDiscs, count,
-        Math.max(1, Number(cfg.discLenMul) || 5))
+      ? discSunVisibilityCpu(worldX, worldY, Number(sun.x) || 0, Number(sun.y) || 0, viewed ? this.shaftDiscView : this.shaftDiscs, count,
+        Math.max(1, Number(cfg.discLenMul) || 5), viewed ? this.shaftDiscViewAxis : null)
       : 1;
     // Pole przesłaniające (pas asteroid): maska liczy 1 − (1 − cień) · T, czyli widoczność × T.
     if (this.sunOcclusionField && typeof this.sunFieldCpu === 'function') {
@@ -2462,23 +2494,84 @@ export const Core3D = {
 
   removeShaftRingOccluder(key) { if (key) this.shaftRings.delete(key); },
 
+  // Czy ring o tym kluczu rzuca teraz cień w smugach (haloRingGame.js: od podpięcia brył ringu).
+  hasShaftRingOccluder(key) { return !!key && this.shaftRings.has(key); },
+
   // Tarcza planety/księżyca (współrzędne GRY, y w dół) jako analityczny
   // okluder shaftów — zgłaszana co klatkę, także gdy ciało jest poza ekranem
   // (cień musi istnieć niezależnie od kadru i zoomu). strength < 1 dla ciał,
   // które mają tylko przygaszać scenę zamiast robić umbrę (asteroidy).
-  pushShaftDiscWorld(worldX, worldY, radius, strength = 1) {
+  // depth = z ciała w scenie: 0 — płaszczyzna gry (pass ortho), ciała tła (z = −50 000) rysuje pass
+  // planet w perspektywie, więc maska rzutuje ich tarczę tam, gdzie je widać (_resolveShaftDiscs).
+  // (axisX, axisY) — punkt gry, od którego liczy się kierunek smugi (prawdziwy środek ciała; inny niż
+  // środek tarczy tylko w soczewce warpa, gdzie ciało stoi w kadrze skoku).
+  pushShaftDiscWorld(worldX, worldY, radius, strength = 1, depth = 0, axisX = worldX, axisY = worldY) {
     const r = Number(radius) || 0;
     if (!(r > 0) || !this.shaftDiscs) return false;
     const i = this.shaftDiscCount | 0;
     if (i >= SHAFT_DISC_CAP) return false;
     const base = i * 4;
-    this.shaftDiscs[base] = Number(worldX) || 0;
-    this.shaftDiscs[base + 1] = -(Number(worldY) || 0);
+    const x = Number(worldX) || 0;
+    const y = Number(worldY) || 0;
+    this.shaftDiscs[base] = x;
+    this.shaftDiscs[base + 1] = -y;
     this.shaftDiscs[base + 2] = r;
     const s = Number(strength);
     this.shaftDiscs[base + 3] = Number.isFinite(s) ? Math.max(0, Math.min(1, s)) : 1;
+    const src = this.shaftDiscSrc;
+    if (src) {
+      const ax = Number(axisX);
+      const ay = Number(axisY);
+      src[i * 3] = Number(depth) || 0;
+      src[i * 3 + 1] = Number.isFinite(ax) ? ax - x : 0;
+      src[i * 3 + 2] = Number.isFinite(ay) ? -(ay - y) : 0;
+    }
     this.shaftDiscCount = i + 1;
     return true;
+  },
+
+  // Tarcze tej klatki → kadr maski (shaftDiscView / shaftDiscViewAxis, wspólne z lustrem CPU
+  // sunVisibilityAtWorld); zwraca ich liczbę. Ciało tła (depth < 0) rysuje pass planet kamerą
+  // perspektywy z wysokości Zc = (h / 2) / tg(fov / 2) / zoom (syncCamera): widać je w płaszczyźnie
+  // gry w punkcie kamera + (środek − kamera) · k i z promieniem r · k, k = Zc / (Zc − z). Maska stawiała
+  // tarczę w PRAWDZIWYM miejscu — smuga Saturna czy Wenus była szersza od tarczy (k ≈ 0,7 przy całej
+  // planecie w kadrze, 0,03 przy zoomie 1) i jechała względem niej z każdym ruchem i zoomem kamery.
+  // Oś smugi: od słońca przez prawdziwy środek ciała (ciało i słońce w tej samej głębokości —
+  // rzut perspektywy nie zmienia kierunku, terminator ciała jest do niej prostopadły).
+  _resolveShaftDiscs(sun, camX, camY, zoom, viewH) {
+    const count = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
+    const discs = this.shaftDiscs;
+    const src = this.shaftDiscSrc;
+    const view = this.shaftDiscView;
+    const axis = this.shaftDiscViewAxis;
+    const camZ = (Math.max(1, Number(viewH) || 1) * 0.5) / Math.tan(THREE.MathUtils.degToRad(FLAT_PERSP_FOV * 0.5)) / Math.max(1e-6, zoom);
+    const sx = Number(sun.x) || 0;
+    const sy = -(Number(sun.y) || 0);
+    for (let i = 0; i < count; i++) {
+      const b = i * 4;
+      let x = discs[b];
+      let y = discs[b + 1];
+      let r = discs[b + 2];
+      const depth = src ? src[i * 3] : 0;
+      let ax = x + (src ? src[i * 3 + 1] : 0) - sx;
+      let ay = y + (src ? src[i * 3 + 2] : 0) - sy;
+      const al = Math.sqrt(ax * ax + ay * ay);
+      if (al >= 1) { ax /= al; ay /= al; } else { ax = 0; ay = 0; }
+      if (depth < 0) {
+        const k = camZ / (camZ - depth);
+        x = camX + (x - camX) * k;
+        y = camY + (y - camY) * k;
+        r *= k;
+      }
+      view[b] = x;
+      view[b + 1] = y;
+      view[b + 2] = r;
+      view[b + 3] = discs[b + 3];
+      axis[i * 2] = ax;
+      axis[i * 2 + 1] = ay;
+    }
+    this.shaftDiscViewCount = count;
+    return count;
   },
 
   // Wgrywanie tekstur w tle: po jednej w wolnej chwili (requestIdleCallback),

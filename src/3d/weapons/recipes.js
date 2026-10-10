@@ -116,6 +116,8 @@ export const AFTER = Object.freeze({ TEMPEST_COIL: 1, TEMPEST_TAIL: 2, HULL_ARCS
  */
 function cannonMuzzle(ctx, m, pal, S, I, dens, brake, casing, casingBack, casingSide, lightK) {
   const fx = ctx.fx;
+  // Dym cząstkowy × smokeK: przy gazie z lufy (reżyser wybuchów, etap E1) kłęby dymu daje gaz — bez podwójnego dymu.
+  const sk = m.smokeK ?? 1;
   const P = sp(m.x, m.y, _P);
   const D = sd(m.angle, _D);
   E(fx.add, K.GLOW, 1, P, D).speed(7 * S, 7 * S).life(0.085, 0.085).drag(7, 7).s0(4 * S, 4 * S).s1((11 + 7 * I) * S, (11 + 7 * I) * S).colors(pal.core0, pal.core1).mix(16).fade(0.004, 2.2).grow(0.4).emit();
@@ -130,7 +132,7 @@ function cannonMuzzle(ctx, m, pal, S, I, dens, brake, casing, casingBack, casing
       const Q = off(P, D, -3 * S, _Q);
       const R = rot(D, s * brake, _R);
       E(fx.add, K.PLUME, 1, Q, R).life(0.09, 0.09).s0(3 * S, 18 * S * I).s1(3 * S, 8 * S).colors(pal.plumeOuter).alpha(0.9, 0.9).emit();
-      E(fx.smoke, 0, 3 * dens, Q, R).cone(0.35, 0.18).speed(20 * S, 55 * S).life(1.0, 2.0).drag(1.6, 1.6).s0(3 * S, 5 * S).s1(12 * S, 22 * S).colors(pal.smokeHot, pal.soot).alpha(0.3, 0.5).fade(0.04, 1.4).grow(0.45).spin(1).x01(20 * S, 3.5).emit();
+      E(fx.smoke, 0, 3 * dens * sk, Q, R).cone(0.35, 0.18).speed(20 * S, 55 * S).life(1.0, 2.0).drag(1.6, 1.6).s0(3 * S, 5 * S).s1(12 * S, 22 * S).colors(pal.smokeHot, pal.soot).alpha(0.3, 0.5).fade(0.04, 1.4).grow(0.45).spin(1).x01(20 * S, 3.5).emit();
     }
   }
   // kula ognia prochowego (szum, stygnie z bieli w czerwień)
@@ -138,8 +140,8 @@ function cannonMuzzle(ctx, m, pal, S, I, dens, brake, casing, casingBack, casing
   const gk = 0.8 + 0.4 * I;
   E(fx.add, K.GLOW, 10 * dens, P, D).cone(0.55, 0.18).speed(14 * S, 48 * S).life(0.22, 0.52).drag(3.4, 3.4).s0(2 * S, 5 * S).s1(9 * S * gk, 19 * S * gk).colors(pal.gas0, pal.gas1).mix(4.5).alpha(0.45, 0.8).fade(0.02, 1.9).grow(0.5).spin(2.2).offset(0, 4 * S).emit();
   // dym: gorący na starcie, stygnie do sadzy; oświetla go błysk
-  E(fx.smoke, 0, 18 * dens, P, D).cone(0.62, 0.18).speed(5 * S, 26 * S).life(1.6, 3.2).drag(1.15, 1.15).s0(3 * S, 7 * S).s1(15 * S, 32 * S).colors(pal.smokeHot, pal.soot).alpha(0.4, 0.7).fade(0.05, 1.35).grow(0.45).spin(0.9).offset(0, 6 * S).jitter(2 * S, 0).x01(22 * S, 3.2).emit();
-  E(fx.smoke, 0, 5 * dens, P, D).cone(0.85, 0.18).speed(2 * S, 10 * S).life(2.6, 4.4).drag(0.85, 0.85).s0(8 * S, 14 * S).s1(32 * S, 52 * S).colors(pal.puffHot, pal.soot85).alpha(0.16, 0.30).fade(0.12, 1.6).grow(0.5).spin(0.4).offset(0, 9 * S).x01(16 * S, 2.0).emit();
+  E(fx.smoke, 0, 18 * dens * sk, P, D).cone(0.62, 0.18).speed(5 * S, 26 * S).life(1.6, 3.2).drag(1.15, 1.15).s0(3 * S, 7 * S).s1(15 * S, 32 * S).colors(pal.smokeHot, pal.soot).alpha(0.4, 0.7).fade(0.05, 1.35).grow(0.45).spin(0.9).offset(0, 6 * S).jitter(2 * S, 0).x01(22 * S, 3.2).emit();
+  E(fx.smoke, 0, 5 * dens * sk, P, D).cone(0.85, 0.18).speed(2 * S, 10 * S).life(2.6, 4.4).drag(0.85, 0.85).s0(8 * S, 14 * S).s1(32 * S, 52 * S).colors(pal.puffHot, pal.soot85).alpha(0.16, 0.30).fade(0.12, 1.6).grow(0.5).spin(0.4).offset(0, 9 * S).x01(16 * S, 2.0).emit();
   // iskry: 82% wąski snop, 18% wolne i szerokie
   const vk = 0.75 + 0.35 * I;
   E(fx.spark, K.SPARK, 57 * dens, P, D).cone(0.30, 0.18).speed(40 * S * vk, 175 * S * vk).life(0.3, 1.0).drag(0.5, 1.4).offset(0, 5 * S).colors(pal.spark).x01(9 * S, pal.sparkCool[0]).x23(pal.sparkCool[1], 1.5).emit();
@@ -483,7 +485,7 @@ RECIPES.yamato = {
     const D = sd(m.angle, _D);
     // energia działa: łuki i opar jak przy wyładowaniu (nie jonowa iglica)
     E(ctx.fx.arc, 0, 8, P, D).cone(1.4, 0.18).speed(8 * S, 26 * S).life(0.12, 0.3).color(1.3, 2.6, 3.9).x01(2.4 * S, 1.8).emit();
-    E(ctx.fx.add, K.VAPOR, 12, P, D).cone(0.8, 0.18).speed(6 * S, 24 * S).life(1.2, 2.4).drag(1.3, 1.3).s0(5 * S, 5 * S).s1(20 * S, 36 * S).color(0.4, 1.2, 2.2).color1(0.1, 0.1, 0.4).mix(1.5).alpha(0.2, 0.34).fade(0.06, 1.5).grow(0.45).spin(0.6).emit();
+    E(ctx.fx.add, K.VAPOR, 12 * (m.smokeK ?? 1), P, D).cone(0.8, 0.18).speed(6 * S, 24 * S).life(1.2, 2.4).drag(1.3, 1.3).s0(5 * S, 5 * S).s1(20 * S, 36 * S).color(0.4, 1.2, 2.2).color1(0.1, 0.1, 0.4).mix(1.5).alpha(0.2, 0.34).fade(0.06, 1.5).grow(0.45).spin(0.6).emit();
     ctx.shake(7.0, 0.30);
   },
   projectile() {

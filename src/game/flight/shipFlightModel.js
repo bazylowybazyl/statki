@@ -24,6 +24,7 @@
 import { SHIP_FLIGHT_CLASS_DEFAULTS, SHIP_FLIGHT_SPECS } from '../../data/shipFlightSpecs.js';
 import { resolveEntityHullProfileId } from '../../data/ships.js';
 import { composeShipThrusterCommand, updateShipThrusterState } from './thrusterModel.js';
+import { stepEngineIgnition, engineThrustScale } from '../engineIgnition.js';
 
 const DEG = Math.PI / 180;
 
@@ -541,7 +542,10 @@ export function stepShipFlight(entity, dt) {
   const tau = FLIGHT_PILOT.velocityTau;
   // Zniszczone dysze MAIN (src/game/engineDamage.js — stan na encji, bez importu): mniej ciągu do przodu.
   const engineDmg = entity.__engineDamage;
-  const engineMul = engineDmg && engineDmg.count > 0 ? engineDmg.frac : 1;
+  // Silniki MAIN wyłączone / w zapłonie / gaszone (src/game/engineIgnition.js — stan `entity.engineIgn`, tylko okręty
+  // misji startujące z doku): bez ciągu do przodu; automat stanu kroczy tu (czas gry, każdy tick lotu).
+  stepEngineIgnition(entity, h);
+  const engineMul = (engineDmg && engineDmg.count > 0 ? engineDmg.frac : 1) * (entity.engineIgn ? engineThrustScale(entity) : 1);
   limitFlightAccel(spec, ang, vx, vy, (desVx - vx) / tau, (desVy - vy) / tau, accelMul, _acc, engineMul);
   const ax = _acc.ax;
   const ay = _acc.ay;

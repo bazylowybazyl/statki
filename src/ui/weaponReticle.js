@@ -28,6 +28,7 @@ export const RETICLE_COLORS = Object.freeze({
   traverse: 'rgba(82, 255, 154, 0.38)',
   noArc: '#6f8b99',
   charge: '#7fd8ff',
+  still: '#ffb347',
   down: '#3b2a2e',
   idle: 'rgba(127, 216, 255, 0.55)',
   track: 'rgba(255, 255, 255, 0.13)',
@@ -43,6 +44,7 @@ export function turretStateColor(state) {
     case FC_TURRET.NO_ARC: return RETICLE_COLORS.noArc;
     case FC_TURRET.CHARGE: return RETICLE_COLORS.charge;
     case FC_TURRET.DOWN: return RETICLE_COLORS.down;
+    case FC_TURRET.STILL: return RETICLE_COLORS.still;
     default: return RETICLE_COLORS.idle;
   }
 }
@@ -82,8 +84,8 @@ export function strokeTurretState(ctx, x, y, r, a0, a1, t, width) {
   const s = t.state;
   if (s === FC_TURRET.RELOAD || s === FC_TURRET.CHARGE) {
     if (t.progress > 0.002) arc(ctx, x, y, r, a0, a0 + (a1 - a0) * t.progress, turretStateColor(s), width);
-  } else if (s === FC_TURRET.NO_ARC) {
-    arc(ctx, x, y, r, a0, a1, RETICLE_COLORS.noArc, Math.max(1, width * 0.32));
+  } else if (s === FC_TURRET.NO_ARC || s === FC_TURRET.STILL) {
+    arc(ctx, x, y, r, a0, a1, turretStateColor(s), Math.max(1, width * 0.32));
   } else if (s === FC_TURRET.DOWN) {
     arc(ctx, x, y, r, a0, a1, RETICLE_COLORS.down, width);
   } else {
@@ -123,6 +125,7 @@ export function drawWeaponReticle(ctx, x, y, ring, n, opts) {
   let ready = 0;
   let next = Infinity;
   let inArc = 0;
+  let still = 0;
   if (opts?.cold) {
     arc(ctx, x, y, R, 0, TAU, 'rgba(111, 139, 153, 0.55)', 1.2 * s);
   } else if (n > 0) {
@@ -134,6 +137,7 @@ export function drawWeaponReticle(ctx, x, y, ring, n, opts) {
       const a0 = -Math.PI / 2 + i * step + gap * 0.5;
       strokeTurretState(ctx, x, y, R, a0, a0 + step - gap, t, width);
       if (t.state === FC_TURRET.READY) ready++;
+      else if (t.state === FC_TURRET.STILL) still++;
       if (t.state !== FC_TURRET.NO_ARC && t.state !== FC_TURRET.DOWN) {
         inArc++;
         if (t.state === FC_TURRET.RELOAD && t.left < next) next = t.left;
@@ -170,6 +174,7 @@ export function drawWeaponReticle(ctx, x, y, ring, n, opts) {
     let sub;
     let color = RETICLE_COLORS.text;
     if (inArc === 0) { sub = 'POZA ŁUKIEM'; color = '#8fb0bf'; }
+    else if (ready === 0 && still > 0) { sub = 'WYMAGA POSTOJU'; color = RETICLE_COLORS.still; }
     else if (ready === 0 && next < Infinity) { sub = `za ${fmt1(next)} s`; color = '#ff8a94'; }
     else sub = Number.isFinite(opts?.distance) ? `${fmt1(opts.distance / 1000)} km` : '';
     if (sub) {

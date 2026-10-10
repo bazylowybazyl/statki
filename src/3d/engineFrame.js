@@ -9,6 +9,8 @@
 
 export const ENGINE_FRAME_CAP = 256;
 const NOZZLE_CAP = 32;
+/** Dysze wszystkich okrętów klatki (lista płaska — dym zapłonu z każdej dyszy: src/3d/explosions/explosionFx.js). */
+export const ENGINE_FRAME_NOZZLE_CAP = 2048;
 
 export const EngineFrame = {
   /** Okrętów w tej klatce. */
@@ -34,6 +36,16 @@ export const EngineFrame = {
   /** Indeks palety MAIN (MAIN_EXHAUST_PALETTES). */
   palette: new Uint8Array(ENGINE_FRAME_CAP),
   player: new Uint8Array(ENGINE_FRAME_CAP),
+  /** Pierwsza dysza okrętu na liście płaskiej (nz*) i ich liczba (nzCount — może być < nozzles przy pełnej liście). */
+  nzFrom: new Uint16Array(ENGINE_FRAME_CAP),
+  nzCount: new Uint8Array(ENGINE_FRAME_CAP),
+  /** Dysze na liście płaskiej: wylot (scena, double), kierunek wydechu, promień [j.]. */
+  nzX: new Float64Array(ENGINE_FRAME_NOZZLE_CAP),
+  nzY: new Float64Array(ENGINE_FRAME_NOZZLE_CAP),
+  nzDX: new Float32Array(ENGINE_FRAME_NOZZLE_CAP),
+  nzDY: new Float32Array(ENGINE_FRAME_NOZZLE_CAP),
+  nzR: new Float32Array(ENGINE_FRAME_NOZZLE_CAP),
+  nzN: 0,
 
   // bieżący okręt (beginShip … endShip)
   _e: null,
@@ -54,6 +66,7 @@ export const EngineFrame = {
     // bez trzymania martwych okrętów do następnej klatki
     for (let i = 0; i < this.count; i++) this.entity[i] = null;
     this.count = 0;
+    this.nzN = 0;
     this.serial++;
     this._e = null;
     this._n = 0;
@@ -136,6 +149,20 @@ export const EngineFrame = {
     this.nozzles[k] = Math.min(255, n);
     this.palette[k] = this._pal;
     this.player[k] = this._pl;
+    // dysze okrętu na listę płaską
+    const from = this.nzN;
+    const m = Math.min(n, ENGINE_FRAME_NOZZLE_CAP - from);
+    for (let i = 0; i < m; i++) {
+      const j = from + i;
+      this.nzX[j] = this._nx[i];
+      this.nzY[j] = this._ny[i];
+      this.nzDX[j] = this._ndx[i];
+      this.nzDY[j] = this._ndy[i];
+      this.nzR[j] = this._nr[i];
+    }
+    this.nzN = from + (m > 0 ? m : 0);
+    this.nzFrom[k] = from;
+    this.nzCount[k] = m > 0 ? m : 0;
     return k;
   },
 

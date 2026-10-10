@@ -359,7 +359,9 @@ test('wybuchy w spoczynku: puste siatki niewidoczne, gaz bez domen bez compute, 
   assert.match(vol, /mesh\.visible = n > 0;/);
   assert.match(vol, /if \(n\) for \(const a of M\.attrs\) \{ a\.clearUpdateRanges\(\); a\.addUpdateRange\(0, n \* 4\); a\.needsUpdate = true; \}/);
   const grid = readSrc('src/3d/gas/gasGrid.js');
-  assert.match(grid, /if \(!act\.length\) \{[\s\S]{0,160}return;\s*\}/, 'bez aktywnych domen — bez renderer.compute');
+  // (gałąź bez domen: zwolnienie atlasów leniwych po `releaseAfter` — etap D, potem wyjście bez renderer.compute)
+  assert.match(grid, /if \(!act\.length\) \{[\s\S]{0,700}return;\s*\}/, 'bez aktywnych domen — bez renderer.compute');
+  assert.doesNotMatch(grid.slice(grid.indexOf('if (!act.length) {'), grid.indexOf('if (!act.length) {') + 600), /renderer\.compute/);
   const emb = readSrc('src/3d/gas/gasEmbers.js');
   assert.match(emb, /this\.mesh\.visible = this\.highWater > 0;/);
   assert.match(emb, /this\.mesh\.visible = n > 0;/);

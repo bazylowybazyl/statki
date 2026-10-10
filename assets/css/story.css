@@ -384,6 +384,22 @@
 .st-cmd-btn:hover, .st-cmd-btn:focus-visible { background: #ff8a45; outline: none; }
 .st-cmd-key { font: 600 calc(10.5 * var(--st-u)) var(--st-mono); letter-spacing: 0.12em; opacity: 0.7; }
 .st-cmd.busy .st-cmd-btn { background: rgba(255, 255, 255, 0.08); color: var(--st-amber); cursor: default; animation: none; }
+/* drugi przycisk (WYPOSAŻENIE przed ODDOKUJ): obrys, nie wypełnienie — główną akcją zostaje ODDOKUJ */
+.st-cmd-alt {
+  display: block;
+  width: 100%;
+  margin-top: calc(8 * var(--st-u));
+  padding: calc(8 * var(--st-u)) calc(16 * var(--st-u));
+  font: 600 calc(12.5 * var(--st-u)) var(--st-display);
+  letter-spacing: 0.22em;
+  color: var(--st-text);
+  background: transparent;
+  border: 1px solid var(--st-line);
+  cursor: pointer;
+}
+.st-cmd-alt[hidden] { display: none; }
+.st-cmd-alt:hover, .st-cmd-alt:focus-visible { border-color: var(--st-accent); color: #fff; outline: none; }
+.st-cmd-alt:disabled { opacity: 0.4; cursor: default; border-color: var(--st-line); }
 .st-cmd.busy .st-cmd-key { display: none; }
 @keyframes st-cmd-glow { 0%, 100% { box-shadow: 0 0 0 0 var(--st-accent-soft); } 50% { box-shadow: 0 0 0 5px var(--st-accent-soft); } }
 

@@ -531,11 +531,39 @@ reżyser `ExplosionFx` (krok `Core3D.addFxStep` „wybuchy”, fabryka `window.m
   [--look k=v] [--gaz k=v] [--ab warstwa] [--koszt]`, gra `node scripts/webgpu/wybuchy-gra.mjs [--sceny prog,lancuch,
   stacja,pustka] [--ab warstwa] [--koszt]`, testy `tests/explosions.test.mjs`.
 
+### Po audycie (2026-10-08) — etapy A, A2, B, C, E1, E2, D (2026-10-09; stan obecny)
+Audyt `docs/AUDYT-wybuchy-gaz-2026-10-08.md` (statusy F1–F18), raporty etapów `.tmp/wybuchy-etapy/*.md`, opis zasad
+w AGENTS.md § „Wybuchy WebGPU”. Co jest w grze:
+- **Fizyka (A):** MacCormack prędkości (v̂ w `velC`), wiry 1 i turbulencja 10 zamiast 3,5 / 35, gąbka przy brzegu domeny,
+  kurczenie stygnącego gazu, narzucenie prędkości źródeł gaśnie po 0,06 s, odżycie domeny bez skoku obrazu; korekta dymu
+  (zanik 0,52/s, sadza 0,39). Opór w środku obłoku został — 15 iteracji Jacobiego nie domyka rzutu bez niego (F6 otwarte).
+- **Scalanie (A):** łańcuch doku to kilka ostrych kul (decyzja użytkownika) — wybuch dokłada się do żywej domeny, gdy KULA
+  mieści się w kole życia gazu, wtórne dziedziczą domenę rodzica; bez wolnej domeny — łagodniejsze scalanie, przejęcie domeny
+  efektu albo domeny w końcówce wygaszania, presja; dopiero potem cząstki. Dawne zdanie „wybuch blisko młodej domeny dokłada
+  się do niej” było nieprawdziwe (`merged 0` w łańcuchu przed etapem A).
+- **Zbiornik paliwa (A2):** śmierć okrętu bez detonacji rdzenia wybucha z gazu z miejsca zbiornika (`src/data/fuelTanks.js`,
+  `src/game/fuelTank.js`), strumienie wzdłuż osi kadłuba, nośnik wraku; detonacja rdzenia dokłada domenę gazu w barwie frakcji.
+- **Światło (B):** dym czyta siatkę świateł Core3D w marszu (kolano, samocień, własne światło wybuchu tylko w dalekim polu),
+  daleki blask ognia, otoczenie ze strefy nieba; otoczenie per domena (`GasSlot.ambient`) — dym zapłonu w hali K-7 (E2).
+- **Przeszkody (C):** statyka hal K-7 i suchego doku (raster w oknie zakotwiczonym w świecie) i kadłuby (obrys z belek
+  z prędkością ciała); gospodarz domeny poza maską; Neumann, bez wnikania, dopływ przy licu; przeciek za ścianą 0 w sondzie.
+- **Wystrzał (E1) i zapłon silników (E2):** domeny EFEKTÓW (gaz z lufy armaty i Yamato w palecie plazmy; dym przy zapłonie
+  silników MAIN — mechanika odpalania i gaszenia, klawisz 0, kampania: zapłon przy ODDOKUJ) z sufitami i pierwszeństwem
+  wybuchów; paleta ognia jako wiersz (`GAS_FIRE_ROWS`).
+- **Rozdzielczość, pamięć, koszt (D):** trzy atlasy (podstawowy 4 × 96² × 36, „fine” 2 × 128² × 48 dla kuli ≥ 60 px na ekranie,
+  „coarse” 12 × 64² × 24 dla kuli < 40 px) widziane jako jedna siatka (`GasGridSet`), skala komórki domeny `GasSlot.k` (parametry
+  w jednostkach komórek — strojenie niezależne od rozdzielczości), 10 atlasów na 12 ról, alokacja leniwa („fine” zwalniany po
+  20 s): 326 MB z „fine”, 201 MB bez (przed D: 318 MB na 10 domen). `domainScale` 5,4 → 4,2 (F5a) odrzucone pomiarem — dym
+  dochodził do ścian domeny. Budżet marszu (krok rośnie ponad 40 mln próbek klatki): marsz dużej kuli przy zoomie 0,8 GPU
+  +1,0 ms zamiast +1,6–1,8 (przed D; z atlasem „fine” bez budżetu +1,6). Bez domeny w łańcuchu doku 1–5 z 61–72 wybuchów
+  (siatka sprzed D: 11), w bitwie 0 (2 na serię).
+
 ### Dalej
-- **Ocena wybuchów przez użytkownika** (zrzuty z gry i dema, 2026-10-07) — w tym fala z refrakcją: dawna decyzja
-  (2026-09-24) „falę ma tylko supernowa” vs rakiety gry, które falę mają przy każdym wybuchu; dziś wybuchy mają subtelną
-  falę (przełącznik `EXPLOSION_TUNE.shock`).
-- Dym z luf armat na gazie (prośba użytkownika, „temat poboczny”), pył od silników w halach K-7 (`src/3d/gasField/`, osobny etap).
+- **Ocena wybuchów przez użytkownika** (zrzuty z gry i dema; etap D: `.tmp/wybuchy-etapy/D/`) — w tym gęstszy o ~15–35%
+  dym w domenach „fine” (sonda: masa dymu na R³; mniej dyfuzji numerycznej, rzut wciąż nie domknięty) i koszt „fine” w bitwie
+  (klatka +~0,6 ms; próg `fineMinPx` 60 px to decyzja użytkownika).
+- F6 (Gauss–Seidel czerwono-czarny / multigrid) — wtedy zdjąć opór w środku obłoku (F9) i ponownie ocenić kurczenie (F7).
+- F11 (cień dymu na kadłubach i pokładzie), F16 (wspólna siatka z dymem wraków, gdy wróci), F18 (odłamki porywane gazem).
 - Budowle (shader `portBuildings3D`) nie czytają siatki świateł — wybuch oświetla kadłuby obok, ale nie bryły doku.
 - Dym i ogniska wraków (`gasSmokeGame.js`) dalej wypięte — decyzja użytkownika.
 - Zdarzenia: kratery broni (`HullBodies.onImpact` — dym z dziury), odłamy (`onWreck` — płonące kawałki).

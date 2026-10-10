@@ -3,7 +3,7 @@
 // zatrzymanej klatce — kadry powtarzalne.
 //   node scripts/webgpu/wybuchy-demo.mjs [--przypadki capital@0.3,final@0.3,escort@0.3,capital@0.14,chain,kino]
 //        [--klatki 0.05,0.15,0.35,0.7,1.2,2,3.5,6] [--out .tmp/wybuchy-demo] [--rozmiar 1600x900] [--port 5294]
-//        [--tune klucz=wartość,…] (EXPLOSION_TUNE) [--look k=v,…] (obraz gazu) [--gaz k=v,…] (fizyka gazu) [--ab klucz] (każdy kadr też z wyłączoną warstwą: *-bez-klucz.png)
+//        [--tune klucz=wartość,…] (EXPLOSION_TUNE) [--look k=v,…] (obraz gazu) [--gaz k=v,…] (fizyka gazu) [--rez k=v,…] (reżyser gazu) [--ab klucz] (każdy kadr też z wyłączoną warstwą: *-bez-klucz.png)
 //        [--koszt] (koszt GPU: łańcuch doku w czasie rzeczywistym, z gazem i bez)
 // Przypadek: profil@zoom (wybuch w środku galerii, size z profilu demo), `chain` (łańcuch rozpadu doku), `threshold`
 // (progi punktów doku), `station` (rozpad stacji), `kino` (kamera 3D, okręt liniowy).
@@ -42,7 +42,7 @@ try {
   await waitFor(cdp, 'window.__demo.proxiesReady()', 120000, 300);
   await sleep(2500);
   await ev('(() => { const h = window.__harness; h.clock.t = h.realNow(); h.clock.mode = "frozen"; h.hold(true); return true; })()');
-  await ev(`(() => { Object.assign(window.__demo.tune, ${JSON.stringify(kv(args.tune))}); Object.assign(window.__demo.fx.volume.look, ${JSON.stringify(kv(args.look))}); Object.assign(window.__demo.fx.grid.tune, ${JSON.stringify(kv(args.gaz))}); return true; })()`);
+  await ev(`(() => { Object.assign(window.__demo.tune, ${JSON.stringify(kv(args.tune))}); Object.assign(window.__demo.fx.volume.look, ${JSON.stringify(kv(args.look))}); Object.assign(window.__demo.fx.grid.tune, ${JSON.stringify(kv(args.gaz))}); Object.assign(window.__demo.fx.director.tune, ${JSON.stringify(kv(args.rez))}); return true; })()`);
   for (const spec of cases) {
     const [kind, zoomStr] = spec.split('@');
     const zoom = Number(zoomStr) || 0.3;
