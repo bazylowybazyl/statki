@@ -3,7 +3,6 @@
 //
 // Panel czyta stan swiata (statek gracza, NPC, wraki, pociski, most fizyki) przez
 // wstrzykiwany provider, zeby nie zalezec od modulowych zmiennych glownego skryptu.
-import { getHexArenaStats } from '../game/destructor.js';
 
 const PERF_PANEL_HTML = `
 <div id="perfPanel" class="hidden">
@@ -11,7 +10,6 @@ const PERF_PANEL_HTML = `
   <div class="perf-fps good" id="perfFps">--</div>
   <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
   <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
-  <div class="perf-row"><span class="perf-label">HexArena</span><span class="perf-val" id="perfHexArena">--</span></div>
   <div class="perf-row"><span class="perf-label">Hex LOD full/hybrid/far</span><span class="perf-val" id="perfHexLod">--</span></div>
   <div class="perf-row"><span class="perf-label">Culling rys./odrzuc. (cienie)</span><span class="perf-val" id="perfCulling">--</span></div>
   <div class="perf-row"><span class="perf-label">Physics worker</span><span class="perf-val" id="perfPhysicsWorker">--</span></div>
@@ -21,8 +19,6 @@ const PERF_PANEL_HTML = `
     <div class="perf-bar" id="barFrameUntracked" style="width:0%;background:#64748b"></div>
   </div>
   <div class="perf-controls">
-    <button class="perf-btn" id="perfColStart" type="button">COL Start</button>
-    <button class="perf-btn stop" id="perfColStop" type="button">COL Stop</button>
     <button class="perf-btn" id="perfRenderStart" type="button">Render Start</button>
     <button class="perf-btn stop" id="perfRenderStop" type="button">Render Stop</button>
     <button class="perf-btn" id="perfAiStart" type="button">AI Start</button>
@@ -45,12 +41,6 @@ const PERF_PANEL_HTML = `
       id="perfCollisions">--</span></div>
   <div class="perf-bar-bg">
     <div class="perf-bar" id="barCollisions" style="width:0%;background:#f84"></div>
-  </div>
-
-  <div class="perf-row"><span class="perf-label"> |- Deformacja</span><span class="perf-val" id="perfDeform">--</span>
-  </div>
-  <div class="perf-bar-bg">
-    <div class="perf-bar" id="barDeform" style="width:0%;background:#8f4"></div>
   </div>
 
   <div class="perf-row perf-section-toggle" data-perf-toggle="ai" role="button" tabindex="0"><span class="perf-label"> |- <span class="perf-caret" data-perf-caret="ai">+</span>AI</span><span class="perf-val" id="perfAi">--</span></div>
@@ -449,7 +439,6 @@ export const PerfHUD = {
       physicsTime: 0,
       destructorTime: 0,
       collisionTime: 0,
-      deformTime: 0,
       aiTime: 0,
       aiSquadsTime: 0,
       aiSupportWingTime: 0,
@@ -530,7 +519,6 @@ export const PerfHUD = {
       physicsPerStep: 0,
       destructorTime: 0,
       collisionTime: 0,
-      deformTime: 0,
       aiTime: 0,
       aiPerStep: 0,
       aiSquadsTime: 0,
@@ -656,7 +644,7 @@ export const PerfHUD = {
   _sectionToggleBound: false,
   sectionRows: {
     physics: [
-      'perfDestructor', 'perfCollisions', 'perfDeform', 'perfAi',
+      'perfDestructor', 'perfCollisions', 'perfAi',
       'perfPreAi', 'perfWorldZone', 'perfPlayerSystems', 'perfScanUi',
       'perfPlayerFlight', 'perfWreckPrep', 'perfProjectiles', 'perfCiws',
       'perfBulletGrid', 'perfBulletMoveVfx', 'perfBulletIntercept',
@@ -698,7 +686,6 @@ export const PerfHUD = {
       fps: document.getElementById('perfFps'),
       frameMs: document.getElementById('perfFrameTime'),
       framePercentiles: document.getElementById('perfFramePercentiles'),
-      hexArena: document.getElementById('perfHexArena'),
       hexLod: document.getElementById('perfHexLod'),
       culling: document.getElementById('perfCulling'),
       physicsWorker: document.getElementById('perfPhysicsWorker'),
@@ -707,7 +694,6 @@ export const PerfHUD = {
       physics: document.getElementById('perfPhysics'),
       destructor: document.getElementById('perfDestructor'),
       collisions: document.getElementById('perfCollisions'),
-      deform: document.getElementById('perfDeform'),
       ai: document.getElementById('perfAi'),
       aiSquads: document.getElementById('perfAiSquads'),
       aiSupportWing: document.getElementById('perfAiSupportWing'),
@@ -792,7 +778,6 @@ export const PerfHUD = {
       barPhysics: document.getElementById('barPhysics'),
       barDestructor: document.getElementById('barDestructor'),
       barCollisions: document.getElementById('barCollisions'),
-      barDeform: document.getElementById('barDeform'),
       barAi: document.getElementById('barAi'),
       barAiSquads: document.getElementById('barAiSquads'),
       barAiSupportWing: document.getElementById('barAiSupportWing'),
@@ -852,8 +837,6 @@ export const PerfHUD = {
       barRenderUi: document.getElementById('barRenderUi'),
       barRockets: document.getElementById('barRockets'),
       barTrafficBridge: document.getElementById('barTrafficBridge'),
-      colStart: document.getElementById('perfColStart'),
-      colStop: document.getElementById('perfColStop'),
       renderStart: document.getElementById('perfRenderStart'),
       renderStop: document.getElementById('perfRenderStop'),
       aiStart: document.getElementById('perfAiStart'),
@@ -888,8 +871,6 @@ export const PerfHUD = {
           this.refreshDebugButtons();
         });
       };
-      bind(this.els.colStart, () => window.ColFuncDbgStart?.(1000));
-      bind(this.els.colStop, () => window.ColFuncDbgStop?.());
       bind(this.els.renderStart, () => window.RenderDbgStart?.(1000));
       bind(this.els.renderStop, () => window.RenderDbgStop?.());
       bind(this.els.aiStart, () => window.AIFuncDbgStart?.(1000));
@@ -1076,7 +1057,6 @@ export const PerfHUD = {
     this.display.physicsPerStep = this.accum.physicsTime / Math.max(1, this.accum.physicsSteps);
     this.display.destructorTime = this.accum.destructorTime / frames;
     this.display.collisionTime = this.accum.collisionTime / frames;
-    this.display.deformTime = this.accum.deformTime / frames;
     this.display.aiTime = this.accum.aiTime / frames;
     this.display.aiPerStep = this.accum.aiTime / Math.max(1, this.accum.physicsSteps);
     this.display.aiSquadsTime = this.accum.aiSquadsTime / frames;
@@ -1146,12 +1126,11 @@ export const PerfHUD = {
     this.display.drawTime = this.accum.drawTime / frames;
     this.display.trafficBridgeTime = this.accum.trafficBridgeTime / frames;
     // Untracked = klatka minus WSZYSTKIE mierzone buckety najwyższego poziomu
-    // (fizyka, rysowanie, deformacje destruktora, CanvasVFX update, lot rakiet,
+    // (fizyka, rysowanie, CanvasVFX update, lot rakiet,
     // most ruchu v2 — w trybie awaryjnym krok świata leci właśnie w klatce).
     this.display.frameUntrackedTime = Math.max(0, this.display.frameMs
       - this.display.physicsTime
       - this.display.drawTime
-      - this.display.deformTime
       - this.display.vfxUpdateTime
       - this.display.rocketsTime
       - this.display.trafficBridgeTime);
@@ -1343,19 +1322,6 @@ export const PerfHUD = {
     }
     if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
     if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;
-    if (e.hexArena) {
-      const arenaStats = getHexArenaStats();
-      const arenaFill = arenaStats.capacity > 0 ? (arenaStats.allocated / arenaStats.capacity) : 0;
-      const arenaOver = arenaStats.overflowBodies | 0;
-      // Zapelnienie areny to ukryty klif wydajnosci, nie ciekawostka: po
-      // przepelnieniu narrowphase cicho przechodzi na iteracje po wszystkich
-      // heksach zamiast po brzegowych. Musi krzyczec ZANIM to nastapi.
-      e.hexArena.textContent =
-        `${arenaStats.allocated}/${arenaStats.capacity} (${(arenaFill * 100).toFixed(0)}%) | ${(arenaStats.bytes / 1048576).toFixed(1)} MB${arenaStats.shared ? ' SAB' : ''}` +
-        (arenaOver > 0 ? ` | PRZEPELNIENIE x${arenaOver}` : '');
-      e.hexArena.style.color = (arenaOver > 0 || arenaFill >= 0.95) ? '#f44'
-        : (arenaFill >= 0.8 ? '#fd4' : '');
-    }
     if (e.hexLod) {
       const lod = window.__hexLodStats;
       e.hexLod.textContent = lod
@@ -1393,7 +1359,6 @@ export const PerfHUD = {
     if (e.physics && this.physicsHz !== 120) e.physics.textContent += ` @${this.physicsHz}Hz`;
     setMs(e.destructor, d.destructorTime);
     setMs(e.collisions, d.collisionTime);
-    setMs(e.deform, d.deformTime);
     setMsWithStep(e.ai, d.aiTime, d.aiPerStep);
     setMsWithStep(e.aiSquads, d.aiSquadsTime, d.aiSquadsPerStep);
     setMsWithStep(e.aiSupportWing, d.aiSupportWingTime, d.aiSupportWingPerStep);
@@ -1457,7 +1422,6 @@ export const PerfHUD = {
     setBar(e.barPhysics, d.physicsTime);
     setBar(e.barDestructor, d.destructorTime);
     setBar(e.barCollisions, d.collisionTime);
-    setBar(e.barDeform, d.deformTime);
     setBar(e.barAi, d.aiTime);
     setBar(e.barAiSquads, d.aiSquadsTime);
     setBar(e.barAiSupportWing, d.aiSupportWingTime);
@@ -1639,7 +1603,6 @@ export const PerfHUD = {
     this.accum.physicsTime = 0;
     this.accum.destructorTime = 0;
     this.accum.collisionTime = 0;
-    this.accum.deformTime = 0;
     this.accum.aiTime = 0;
     this.accum.aiSquadsTime = 0;
     this.accum.aiSupportWingTime = 0;
@@ -1715,11 +1678,8 @@ export const PerfHUD = {
       if (!el) return;
       el.classList.toggle('active', !!active);
     };
-    const colOn = !!DestructorSystem?._liveCollisionDebug?.enabled;
     const renderOn = !!window.RenderLiveDebug?.enabled;
     const aiOn = !!window.AILiveDebug?.enabled;
-    setActive(this.els.colStart, colOn);
-    setActive(this.els.colStop, !colOn);
     setActive(this.els.renderStart, renderOn);
     setActive(this.els.renderStop, !renderOn);
     setActive(this.els.aiStart, aiOn);

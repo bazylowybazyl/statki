@@ -73,7 +73,7 @@ export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
   if (shieldT >= 0) return finishHit(out, entity, shieldT, true, null, playerShip);
 
   // 2. Kadłub. Okrąg kadłuba przycina wiązkę do odcinka nad siatką — sweep po
-  //    heksach dostaje małe pudło komórek zamiast całej wiązki.
+  //    węzłach dostaje małe pudło komórek zamiast całej wiązki.
   const hullR = deps.hullRadius(entity);
   if (!(hullR > 0) || perpSq > hullR * hullR) return out;
   const half = Math.sqrt(hullR * hullR - perpSq);
@@ -81,8 +81,8 @@ export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
   const tExit = Math.min(range, along + half);
   if (tEnter > tExit) return out;
 
-  // Kadłub heksowy albo na belkach (hullBodies.js) — sweep daje pierwszą komórkę na drodze.
-  if ((entity.hexGrid || entity.beamHull) && deps.sweepImpact) {
+  // Kadłub na belkach (hullBodies.js) — sweep daje pierwszy węzeł na drodze.
+  if (entity.beamHull && deps.sweepImpact) {
     const sx0 = x0 + dirX * tEnter;
     const sy0 = y0 + dirY * tEnter;
     const sx1 = x0 + dirX * tExit;
@@ -93,6 +93,6 @@ export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
     return finishHit(out, entity, dist, false, sweep.hitShard || null, playerShip);
   }
 
-  // 3. Bez siatki heksów (myśliwce): okrąg kadłuba.
+  // 3. Bez kadłuba na belkach (myśliwce): okrąg kadłuba.
   return finishHit(out, entity, tEnter, false, null, playerShip);
 }

@@ -76,7 +76,7 @@ import {
   sampleWindowLight
 } from '../game/shipBridge.js';
 import { resolveBridgeHullKey } from '../game/shipBridgeRuntime.js';
-import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructor.js';
+import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
 import { HULL_BODY_CONFIG } from '../game/hullBodies.js';
 import {
   beamImageToLattice,

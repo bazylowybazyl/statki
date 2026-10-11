@@ -82,7 +82,7 @@ export function createRadarFeed(tune = RADAR_TUNE) {
     const typeRaw = e.type || e.shipFrame || '';
     const wreck = !!e.isWreck;
     const friendly = !!e.friendly;
-    const hull = e.beamHull || e.hexGrid || null;
+    const hull = e.beamHull || null;
     if (m && m.typeRaw === typeRaw && m.wreck === wreck && m.friendly === friendly && m.hull === hull
       && feed.stamp - m.stamp < META_REFRESH) return m;
     if (!m) {

@@ -20,13 +20,15 @@
  * createColdWreckSystem, więc da się go sprawdzić w node (tests/coldWrecks.test.mjs).
  */
 
-import {
-  DESTRUCTOR_CONFIG,
-  DestructorSystem,
-  captureHexBodySnapshot,
-  disposeHexBody,
-  initHexBodyFromSnapshot
-} from './destructor.js';
+// Zrzut i odtworzenie siatki heksów dostaje moduł w opcjach (options.hexBody) — gra nie ładuje
+// heksowego destructor.js (etap 8, docs/PORT-silnik-belek.md), a bez niego nie ma kadłubów
+// z hexGrid, więc żaden wrak nie jest kandydatem do zamrożenia. Testy podają funkcje destruktora.
+const NO_HEX_BODY = Object.freeze({
+  capture: () => null,
+  dispose: () => {},
+  restore: () => false,
+  wake: () => {}
+});
 
 export const COLD_WRECK_CONFIG = Object.freeze({
   // Sen bez przerwy i cisza po ostatnim trafieniu/kontakcie [s czasu gry].
@@ -123,7 +125,10 @@ export function buildColdWreckSummary(wreck, snapshot) {
  *        siatki: odpięcie lin, zapis smugi (kolor), unieważnienie meshy 3D
  * @param {(w: object, reason: string) => void} [options.onThawed]
  * @param {(w: object) => void} [options.onEvicted]
- * @param {(w: object) => unknown} [options.recycle]  domyślnie DestructorSystem.recycleWreck
+ * @param {(w: object) => unknown} [options.recycle]  zwolnienie wypartego zimnego wraku (domyślnie nic)
+ * @param {{capture(w), dispose(w), restore(w, snapshot), wake(w)}} [options.hexBody]  zrzut / zwolnienie /
+ *        odtworzenie / obudzenie siatki heksów (destructor.js: captureHexBodySnapshot, disposeHexBody,
+ *        initHexBodyFromSnapshot, wakeWreck + wakeHexEntity); domyślnie brak — nic się nie zamraża
  * @param {() => number} [options.getFrameId]  id klatki rAF: budżety liczone na klatkę
  *        także dla thaw() wołanego z UI między klatkami; bez niego — na wywołanie step()
  * @param {object} [options.config]  nadpisania COLD_WRECK_CONFIG
@@ -140,15 +145,12 @@ export function createColdWreckSystem(options = {}) {
   const isReferenced = typeof options.isReferenced === 'function' ? options.isReferenced : null;
   const isVisuallySafe = typeof options.isVisuallySafe === 'function' ? options.isVisuallySafe : () => true;
   const getPlayerPos = typeof options.getPlayerPos === 'function' ? options.getPlayerPos : () => null;
-  const getSimTimeMs = typeof options.getSimTimeMs === 'function'
-    ? options.getSimTimeMs
-    : () => (Number(DestructorSystem._simulationTime) || 0) * 1000;
+  const getSimTimeMs = typeof options.getSimTimeMs === 'function' ? options.getSimTimeMs : () => 0;
   const onBeforeFreeze = typeof options.onBeforeFreeze === 'function' ? options.onBeforeFreeze : null;
   const onThawed = typeof options.onThawed === 'function' ? options.onThawed : null;
   const onEvicted = typeof options.onEvicted === 'function' ? options.onEvicted : null;
-  const recycle = typeof options.recycle === 'function'
-    ? options.recycle
-    : (w) => DestructorSystem.recycleWreck(w);
+  const recycle = typeof options.recycle === 'function' ? options.recycle : () => null;
+  const hexBody = { ...NO_HEX_BODY, ...(options.hexBody || {}) };
   const getFrameId = typeof options.getFrameId === 'function' ? options.getFrameId : null;
 
   const freezeQueue = [];
@@ -246,7 +248,7 @@ export function createColdWreckSystem(options = {}) {
     if (!w || w.isCold) return false;
     const index = wrecks.indexOf(w);
     if (index < 0) return false;
-    const snapshot = captureHexBodySnapshot(w);
+    const snapshot = hexBody.capture(w);
     if (!snapshot) {
       // Siatka nie leży na komórkach szablonu (awaryjny wrak) — nie próbujemy znowu.
       w._coldUnsupported = true;
@@ -257,7 +259,7 @@ export function createColdWreckSystem(options = {}) {
     // Lina, smuga (kolor liczony z meshu, póki istnieje), meshe 3D — przed
     // zwolnieniem siatki, bo renderer czyta jeszcze jej zasięg.
     if (onBeforeFreeze) onBeforeFreeze(w, snapshot);
-    disposeHexBody(w);
+    hexBody.dispose(w);
     w.hexGrid = null;
     w.isCollidable = false;
     w.isCold = true;
@@ -303,7 +305,7 @@ export function createColdWreckSystem(options = {}) {
     w._coldThawQueued = false;
     const snapshot = w._coldSnapshot;
     const index = coldWrecks.indexOf(w);
-    if (!w.isCold || !snapshot || index < 0 || !initHexBodyFromSnapshot(w, null, snapshot)) {
+    if (!w.isCold || !snapshot || index < 0 || !hexBody.restore(w, snapshot)) {
       w._coldThawCallback = null;
       stats.thawFailed++;
       return false;
@@ -314,8 +316,7 @@ export function createColdWreckSystem(options = {}) {
     w._coldSnapshot = null;
     w.isCollidable = true;
     w._wreckSleptSec = 0;
-    DestructorSystem.wakeWreck(w);
-    DestructorSystem.wakeHexEntity(w, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+    hexBody.wake(w);
     if (!wrecks.includes(w)) wrecks.push(w);
     stats.thawed++;
     version++;

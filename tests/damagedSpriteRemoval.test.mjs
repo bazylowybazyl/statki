@@ -6,7 +6,6 @@ const runtimeFiles = [
   'index.html',
   'src/3d/hexShips3D.js',
   'src/game/destructor.js',
-  'src/ui/destructorConfigPanel.js',
   'src/ui/devTools.js'
 ];
 

@@ -6,7 +6,9 @@ import {
   DESTRUCTOR_CONFIG,
   initHexBody,
   getHexArenaStats,
-  captureHexBodySnapshot
+  captureHexBodySnapshot,
+  disposeHexBody,
+  initHexBodyFromSnapshot
 } from '../src/game/destructor.js';
 import { resetHexArenaForTests } from '../src/game/hexArenaBridge.js';
 import { TowConstraintSystem } from '../src/game/towSystem.js';
@@ -61,11 +63,21 @@ function makeSleepyWreck(image = SMALL_IMAGE, x = 0, y = 0) {
   return wreck;
 }
 
+// Siatka heksów przez opcje modułu — gra nie ładuje destruktora (etap 8 portu belek), testy tak.
+const HEX_BODY = {
+  capture: captureHexBodySnapshot,
+  dispose: disposeHexBody,
+  restore: (w, snapshot) => initHexBodyFromSnapshot(w, null, snapshot),
+  wake: (w) => { D.wakeWreck(w); D.wakeHexEntity(w, DESTRUCTOR_CONFIG.elasticWakeFrames | 0); }
+};
+
 function makeSystem(wrecks, coldWrecks, overrides = {}) {
   return createColdWreckSystem({
     wrecks,
     coldWrecks,
     getSimTimeMs: () => 1e7,
+    hexBody: HEX_BODY,
+    recycle: (w) => D.recycleWreck(w),
     ...overrides
   });
 }
@@ -525,10 +537,10 @@ test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawn
   assert.match(sliceFunction(src, 'function pickWreckTargetAtWorld(worldPoint)'), /pass === 0 \? window\.wrecks : coldWrecks/);
   assert.match(src, /const wreckList = pass === 0 \? window\.wrecks : coldWrecks;/, 'hover widzi zimne');
   assert.match(sliceFunction(src, 'function removeWreckFromWorld(wreck)'), /coldWreckSystem\.forget\(wreck\);\s*recycleWreckEntity\(wreck\);/);
-  // Wrak na belkach zwalnia kadłub (HullBodies), heksowy wraca do puli destruktora.
+  // Wrak na belkach zwalnia kadłub (HullBodies); heksowego destruktora gra nie ładuje (etap 8 portu belek).
   const recycle = sliceFunction(src, 'function recycleWreckEntity(wreck)');
   assert.match(recycle, /if \(wreck\?\.beamHull\) return HullBodies\.recycleWreck\(wreck\);/);
-  assert.match(recycle, /return DestructorSystem\?\.recycleWreck\?\.\(wreck\);/);
+  assert.doesNotMatch(recycle, /DestructorSystem/);
 
   const freezeHook = src.slice(src.indexOf('onBeforeFreeze(w) {'), src.indexOf('onThawed(w, reason) {'));
   assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('invalidateHexShipEntity3D(w)'),

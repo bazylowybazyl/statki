@@ -1,5 +1,8 @@
 ﻿import * as THREE from 'three';
-import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary, DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructor.js';
+// Heksy (dema mostków, rdzenia, asteroid): strojenie i żar bez silnika, reszta przez haki, które
+// wpisuje destructor.js — gra go nie ładuje (etap 8, docs/PORT-silnik-belek.md), więc bytów z hexGrid nie ma.
+import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
+import { HexBodyHooks } from '../game/hexBodyHooks.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { WeaponFx } from './weapons/weaponFx.js';
@@ -438,7 +441,7 @@ function isLegacyBoundaryShard(shard) {
 
 function shouldRenderHybridShard(shard, nowSec = 0) {
   if (!shard?.active || shard.isDebris || shard.hp <= 0) return false;
-  if (isPackedShardBoundary(shard) || isLegacyBoundaryShard(shard)) return true;
+  if (HexBodyHooks.isPackedShardBoundary?.(shard) || isLegacyBoundaryShard(shard)) return true;
   if (Number(shard.hp) < (Number(shard.maxHp) || Number(shard.hp)) * 0.995) return true;
   const deform = shard.deformation;
   const target = shard.targetDeformation;
@@ -985,7 +988,7 @@ function updateDebrisRendering() { }
 function createEntityMesh(entity) {
   if (!entity?.hexGrid || !Array.isArray(entity.hexGrid.shards)) return null;
 
-  refreshHexBodyCache(entity);
+  HexBodyHooks.refreshHexBodyCache?.(entity);
 
   const grid = entity.hexGrid;
   const shards = grid.shards;
@@ -1385,7 +1388,7 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   if (!!grid.cacheDirty || !!grid.textureDirty || !!grid.gpuTextureNeedsUpdate) {
     const lastUpload = Number(data._lastTexUploadMs) || 0;
     if (lastUpload === 0 || (state.lastTime - lastUpload) >= TEX_UPLOAD_MIN_MS) {
-      if (grid.cacheDirty) refreshHexBodyCache(entity);
+      if (grid.cacheDirty) HexBodyHooks.refreshHexBodyCache?.(entity);
       data.texture.needsUpdate = true;
       grid.textureDirty = false;
       grid.cacheDirty = false;

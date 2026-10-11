@@ -1,9 +1,10 @@
 # Port: kadłuby na silniku belek (zamiast heksowego destruktora)
 
 Stan: 2026-09-25, etap 1 wdrożony — **statki gracza, P2, NPC i ich wraki są na silniku belek**
-(`src/game/destructorBeams3D.js`, tryb płaski, solver lokalny). Heksowy destruktor
-(`src/game/destructor.js`) został wyłącznie dla asteroid (heksowe ciała skał) do etapu 7.
-Nie ma flagi ani dwóch ścieżek dla statków: encja z kadłubem ma `beamHull`, nie `hexGrid`.
+(`src/game/destructorBeams3D.js`, tryb płaski, solver lokalny). Encja z kadłubem ma `beamHull`,
+nie `hexGrid`. Od 2026-10-11 (etap 8, § „Etap 8” niżej) **gra w ogóle nie ładuje heksowego destruktora**
+(`src/game/destructor.js`, solver sprężyn GPU, arena heksów, siatka kontaktów) — zostaje w repo dla dem
+heksowych (`dema/mostki-demo.html`, `dema/rdzen-demo.html`) i ich testów.
 
 ## Pliki
 
@@ -42,8 +43,8 @@ Nie ma flagi ani dwóch ścieżek dla statków: encja z kadłubem ma `beamHull`,
 
 Gra całkuje ruch encji jak dotąd → `HullBodies.step(dt, allDestructibles)`:
 `syncIn` (poza i prędkość encji → ciało), `DestructorBeams3D.update` (solver, kontakty, zgniot,
-rozpady), `syncOut` (poprawka ruchu → encja; tylko gdy silnik coś zmienił). Potem heksowy
-destruktor dostaje same ciała heksowe (`_hexDestructibles`, asteroidy).
+rozpady), `syncOut` (poprawka ruchu → encja; tylko gdy silnik coś zmienił). Heksowego kroku
+(`DestructorSystem.update` / `updateVisuals`) od etapu 8 nie ma.
 
 ## Trafienia i zapytania (świat gry, y w dół)
 
@@ -137,10 +138,12 @@ Atlasa; także taran Atlas–Atlas, dziedziczenie pancerza oraz niezmieniony bud
 5. Rdzenie — wersja na belkach GOTOWA w demie (2026-09-30): logika `src/game/reactorCore.js`, wybuch
    WebGPU `src/3d/reactorBlast/`, `dema/rdzen-webgpu.html`; kroki wpięcia: `docs/webgpu/DEMO-RDZEN.md` § 7.
    Stare `shipCore` / `coreFx3D` (heksy) zostają dla dema heksowego.
-6. Reszta: panel destruktora / devTools (dotyczą asteroid), radar (plan z węzłów już jest), perf HUD.
+6. ~~Reszta~~ — panel destruktora usunięty (etap 8), radar i CIC czytają tylko `beamHull`, PerfHUD bez areny
+   heksów i bez „Deformacji”.
 7. Asteroidy na belkach (materiał kruchy). Do tego czasu statek bez `hexGrid` ma z heksową
    asteroidą kolizję KOŁOWĄ (`asteroidField3D`), bez zgniotu.
-8. Usunięcie starego silnika (`destructor.js`, GPU soft body, arena, `hexContactGrid`, testy).
+8. ~~Usunięcie starego silnika z gry~~ — **zrobione 2026-10-11**, § „Etap 8” niżej. Pliki silnika i jego testy
+   zostają, dopóki używają ich dema heksowe.
 
 Wydajność (zmierzone 2026-09-25, headless, bez profilera — sam start profilera CDP pauzuje
 stronę na ~0,5 s i fałszuje pomiar klatek; skrypty były w scratchpadzie sesji):
@@ -164,6 +167,42 @@ Skoki klatek wokół kolizji, których silnik belek NIE powodował (były przed 
   w wolnej chwili — w headless 160–435 ms na teksturę (osobne zadanie, poza pętlą gry).
 - Rozpady dużych kadłubów (`findBeamBridgesStore` + `findIslands` po całym grafie) → spójność przyrostowa.
 - Biała plama na dziobie niszczyciela to REFLEKTOR (światło drogowe z edytora), nie lakier ani żar.
+
+## Etap 8: gra bez heksowego destruktora (2026-10-11)
+
+Graf importów gry (`scripts/webgpu/grafGry.mjs` od `index.html`) nie zawiera już `destructor.js` (242 KB),
+`destructorGpuSoftBody.js`, `hexArenaBridge.js`, `hexContactGrid.js`, `shipCore.js` (rdzeń heksowy) ani panelu
+`destructorConfigPanel.js` (usunięty — nie miał innego konsumenta). Co z nich gra naprawdę potrzebowała, leży
+w małych modułach bez silnika:
+
+| Moduł | Co | Kto czyta w grze |
+|---|---|---|
+| `src/game/destructorConfig.js` | `DESTRUCTOR_CONFIG` (dane), `shardHeatNow`, `addShardHeat`, `getHexProbeDrift` | `bridge3D.js` (zanik żaru i szczyt rany modelu mostka), `hexShips3D.js` (uniformy żaru heksów) |
+| `src/game/hexBodyHooks.js` | haki `refreshHexBodyCache`, `isPackedShardBoundary`, `getHexArenaStats` — wpisuje je destructor.js przy imporcie | `hexShips3D.js` (ścieżka heksowa renderu dem; w grze null — bytów z `hexGrid` nie ma) |
+| `src/game/hexGridSpace.js` | przestrzeń siatki heksowej: `gridToLocal`, `localToWorld`, `worldToLocal`, kąt i skala encji | `reactor3D.js` (stany z `coreModel.js`) |
+
+destructor.js re-eksportuje te same nazwy (dema i testy importują po staremu), shipCore.js — przestrzeń siatki;
+coldWrecks.js dostaje zrzut / odtworzenie siatki heksów w opcjach (`options.hexBody`; gra go nie podaje — nic nie
+zamarza po heksowemu, `recycle` podaje gra: `recycleWreckEntity`). Z gry usunięte: oba importy destruktora
+w `index.html`, `window.DestructorSystem` / `initHexBody` / `DESTRUCTOR_CONFIG`, `DestructorSystem.update`
+w `physicsStep` i `updateVisuals` co klatkę, gałęzie heksowe trafień (sweep pocisku, sonda pod tarczą, raymarch
+wiązki z `findBeamHexShard`, szybka ścieżka PD `pdBeamFastPath.js`), wrak z listy heksów w `createWreckage`,
+cięcie i recykling wraków heksowych, budżet areny heksów dla wraków (zostaje sufit węzłów belek
+`enforceWreckBeamBudget`), diagnostyka bramek kolizji heksów (`ColBoundsDbg`), wiersze PerfHUD „HexArena”
+i „Deformacja” z przyciskami COL. Hexlance (`superweapon.js`) tnie dalej — dawniej cała pętla cięcia stała
+za `window.DestructorSystem` (bez tej poprawki superbroń przestałaby ciąć). Budżet budowy kadłubów NPC na
+klatkę: `HULL_INIT_FRAME_BUDGET_MS` (dawniej `HEX_INIT_*`). Testy wiązek (`tests/helpers/beamShotHarness.mjs`,
+`pdBeamFastPath`, `weaponFeelParity`) strzelają w kadłuby na belkach (`makeHullTarget`).
+
+Zmierzone przed usunięciem (prawdziwa gra w headless Chrome, ta sama praca co stara klatka: `updateVisuals`
+z pustą listą): **~2 µs CPU na klatkę**; `update` nie szedł wcale (lista heksów zawsze pusta). Prawdziwy koszt
+był gdzie indziej: pierwsze `updateVisuals` budziło solver sprężyn (`DestructorGpuSoftBody._ensureInit`), który
+w KAŻDEJ grze tworzył **drugie `GPUDevice`** (osobne od Core3D) z pipeline'em compute — do niczego. Do tego
+~360 KB źródeł mniej do wczytania i sparsowania przy starcie.
+
+Zostaje do sprzątnięcia (martwe, ale już bez silnika): `spawnFlyingHexDebris` / `drawFlyingHexDebris`
+i drobne testy `hexGrid` w `index.html`; ścieżka heksowa `hexShips3D.js` (potrzebna demom); gałęzie `hexGrid`
+w `towSystem.js`, `salvage.js`, `shipBridgeRuntime.js` (korzystają z nich destructor.js i dema heksowe).
 
 ## Testy i narzędzia
 

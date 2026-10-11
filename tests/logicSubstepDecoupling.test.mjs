@@ -99,13 +99,13 @@ test('separation is cached on the AI decision tick and reuses its result object'
 test('projectiles and the destructor stay on the physics substep', () => {
   const physicsSlice = sliceBetween(indexHtml, 'function physicsStep(dt, runFrameLogic', "addTiming('physicsTime'");
 
-  // Pociski MUSZĄ chodzić co podkrok — inaczej tunelują. Kadłuby: silnik belek (HullBodies),
-  // heksowy destruktor tylko dla ciał heksowych (asteroidy) — oba w każdym podkroku.
+  // Pociski MUSZĄ chodzić co podkrok — inaczej tunelują. Kadłuby: silnik belek (HullBodies)
+  // w każdym podkroku; heksowego destruktora gra nie ładuje (etap 8, docs/PORT-silnik-belek.md).
   // (z encjami budowli — ciała świata, src/game/worldBodies.js — w tym samym kroku)
   assert.match(physicsSlice, /worldBodies\.step\(dt, _worldFocus\);/);
   assert.match(physicsSlice, /HullBodies\.step\(dt, worldBodies\.withEntities\(allDestructibles\)\)/);
-  assert.match(physicsSlice, /DestructorSystem\.update\(dt, _hexDestructibles\)/);
-  assert.doesNotMatch(physicsSlice, /if \(runAiLogic\)[\s\S]{0,200}(DestructorSystem\.update|HullBodies\.step)/);
+  assert.doesNotMatch(physicsSlice, /DestructorSystem/);
+  assert.doesNotMatch(physicsSlice, /if \(runAiLogic\)[\s\S]{0,200}HullBodies\.step/);
   assert.match(physicsSlice, /TowSystem\.update\(dt\)/);
   assert.match(physicsSlice, /updateMegafreighterTrains\(dt\)/);
 });

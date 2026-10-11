@@ -378,10 +378,10 @@ export function updateSuperweapon(dt, ship, aimPos) {
         // krok bez rzazu w tym kadłubie — efekt w punkcie ostatniego rzazu).
         let cutInside = false;
 
-        if (window.DestructorSystem && window.npcs) {
+        if (window.npcs) {
             const targets = [...window.npcs, ...(window.wrecks || [])];
             for (const t of targets) {
-                if ((!t.hexGrid && !t.beamHull) || (t.dead && !t.isWreck) || t.isCollidable === false) continue;
+                if (!t.beamHull || (t.dead && !t.isWreck) || t.isCollidable === false) continue;
 
                 // BROADPHASE: Znajdź najbliższy punkt na linii lotu pocisku do środka statku
                 const lenSq = moveX * moveX + moveY * moveY;
@@ -398,11 +398,8 @@ export function updateSuperweapon(dt, ship, aimPos) {
 
                 if (distSq < hitR * hitR) {
                     // RAYCAST HIT! Pocisk przeciął statek.
-                    // Krokujemy co 25 pikseli wzdłuż linii cięcia, żeby nie pominąć żadnego heksa
-                    const steps = Math.max(1, Math.ceil(stepDist / 25));
-
                     let biteX = 0, biteY = 0, bitFrac = -1;
-                    if (t.beamHull && window.HullBodies) {
+                    if (window.HullBodies) {
                         // Kadłub na belkach: rzaz o półszerokości 35 j. wzdłuż całego odcinka
                         // lotu — węzły w pasie giną, rozpad robi resztę. Rzaz z pędem: odłamki
                         // lecą wzdłuż toru, kadłub (i odcięte części) dostaje impuls (HullBodies).
@@ -413,17 +410,6 @@ export function updateSuperweapon(dt, ship, aimPos) {
                             biteX = r.worldX;
                             biteY = r.worldY;
                         }
-                    }
-                    for (let s = 0; s <= steps && !t.beamHull; s++) {
-                        const frac = s / steps;
-                        const testX = prevX + moveX * frac;
-                        const testY = prevY + moveY * frac;
-
-                        // Uderzamy z siłą 1500 DMG (przetnie heksy na wylot jak masło)
-                        const bit = window.DestructorSystem.applyImpact(t, testX, testY, 15, { x: proj.vx * 50, y: proj.vy * 50 }, { radius: 35 });
-                        // Pierwszy krok, który trafił w heks, a nie w powietrze
-                        // wokół kadłuba — tam sypią iskry, nie na obwiedni.
-                        if (bit && bitFrac < 0) { bitFrac = frac; biteX = testX; biteY = testY; }
                     }
                     // Hexlance nie wybucha, tylko TNIE. Pełny rozbłysk (krzyż +
                     // lanca) należy się WEJŚCIU w dany kadłub, raz na cel; dalej

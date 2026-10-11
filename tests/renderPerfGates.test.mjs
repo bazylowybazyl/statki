@@ -377,9 +377,9 @@ test('CIC: bez renderu świata 3D pod planszą', () => {
 
 test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakieru typu kadłuba', () => {
   // Reset raz na klatkę — przed pętlą split-screen, nie w passie NPC.
-  assert.match(indexHtml, /beginHexInitBudgetFrame\(\);\s*for \(let _sp = 0; _sp < _splitPassCount; _sp\+\+\)/);
-  assert.equal(indexHtml.match(/beginHexInitBudgetFrame\(\);/g)?.length, 1);
-  assert.match(indexHtml, /&& hexInitBudgetAllows\(\)\) \{/);
+  assert.match(indexHtml, /beginHullInitBudgetFrame\(\);\s*for \(let _sp = 0; _sp < _splitPassCount; _sp\+\+\)/);
+  assert.equal(indexHtml.match(/beginHullInitBudgetFrame\(\);/g)?.length, 1);
+  assert.match(indexHtml, /&& hullInitBudgetAllows\(\)\) \{/);
   // Tekstura skóry kadłuba na belkach = pełny sprite (visualImage), rozgrzany przy budowie kadłuba.
   assert.match(indexHtml, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image, hullProfileId: getNpcHullRenderProfileId\(npc\) \}\);/);
   assert.match(indexHtml, /if \(npc\.beamHull\) \{\s*prewarmHexShipVisual\(sprite\.image\);/);

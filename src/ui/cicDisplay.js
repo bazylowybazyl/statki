@@ -105,10 +105,6 @@ function getEntitySpriteSource(entity) {
   if (entity?.capitalSprite?.ready && entity.capitalSprite.image) return entity.capitalSprite.image;
   const beamImage = entity?.beamHull?.visualImage || entity?.beamHull?.image;
   if (beamImage && readPositiveNumber(beamImage.width || beamImage.naturalWidth, 0) > 0) return beamImage;
-  const armorImage = entity?.hexGrid?.armorImage;
-  if (armorImage && readPositiveNumber(armorImage.width || armorImage.naturalWidth, 0) > 0) return armorImage;
-  const cacheCanvas = entity?.hexGrid?.cacheCanvas;
-  if (cacheCanvas && readPositiveNumber(cacheCanvas.width, 0) > 0 && readPositiveNumber(cacheCanvas.height, 0) > 0) return cacheCanvas;
   return null;
 }
 
@@ -187,7 +183,7 @@ function getEntityHullMetrics(entity, zoom) {
   let worldW = 0;
   let worldH = 0;
 
-  const hullGrid = entity?.hexGrid || entity?.beamHull;
+  const hullGrid = entity?.beamHull;
   const gridW = readPositiveNumber(hullGrid?.srcWidth, 0);
   const gridH = readPositiveNumber(hullGrid?.srcHeight, 0);
   if (gridW > 0 && gridH > 0) {

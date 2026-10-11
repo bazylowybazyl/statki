@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPdBeamHit, resolvePdBeamHit } from '../src/game/pdBeamFastPath.js';
-import { createBeamHarness, makeHexTarget, makeCircleTarget, withSeededRandom } from './helpers/beamShotHarness.mjs';
+import { createBeamHarness, makeHullTarget, makeCircleTarget, withSeededRandom } from './helpers/beamShotHarness.mjs';
 import { readIndexHtml, sliceFunction } from './helpers/indexSource.mjs';
 
 const html = readIndexHtml();
@@ -30,9 +30,9 @@ test('tarcza celu: wiązka kończy się na wejściu w obrys tarczy', () => {
   assert.ok(Math.abs(out.dist - 400) < 1e-9, `dist ${out.dist}`);
 });
 
-test('kadłub heksowy: sweep dostaje odcinek przycięty do okręgu kadłuba', () => {
+test('kadłub na belkach: sweep dostaje odcinek przycięty do okręgu kadłuba', () => {
   const out = createPdBeamHit();
-  const target = { x: 600, y: 0, radius: 50, hp: 10, maxHp: 10, hexGrid: {} };
+  const target = { x: 600, y: 0, radius: 50, hp: 10, maxHp: 10, beamHull: {} };
   const shard = { c: 3, r: 4 };
   let seen = null;
   const sweepImpact = (e, x0, y0, x1, y1, r) => { seen = [x0, y0, x1, y1, r]; return { t: 0.25, hitShard: shard }; };
@@ -44,9 +44,9 @@ test('kadłub heksowy: sweep dostaje odcinek przycięty do okręgu kadłuba', ()
   assert.ok(Math.abs(out.dist - 575) < 1e-9);
 });
 
-test('kadłub heksowy bez trafionego heksa = pudło do pełnego zasięgu', () => {
+test('kadłub na belkach bez trafionego węzła = pudło do pełnego zasięgu', () => {
   const out = createPdBeamHit();
-  const target = { x: 600, y: 0, radius: 50, hexGrid: {} };
+  const target = { x: 600, y: 0, radius: 50, beamHull: {} };
   resolvePdBeamHit(out, 0, 0, 1, 0, 1000, target, deps({ sweepImpact: () => null }));
   assert.equal(out.entity, null);
   assert.equal(out.dist, 1000);
@@ -92,8 +92,8 @@ test('rakieta jako cel: wiązka NPC jej nie niszczy (jak dotąd) — pudło', ()
 function pdScene() {
   const h = createBeamHarness({ html });
   const shooter = { __name: 'pd', id: 'pd1', x: 0, y: 0, angle: 0, friendly: true, vx: 0, vy: 0 };
-  const shielded = makeHexTarget('shielded', { x: 600, y: 0, width: 160, height: 60, shield: 400 });
-  const bare = makeHexTarget('bare', { x: 0, y: 650, width: 160, height: 60, angle: 0.4 });
+  const shielded = makeHullTarget('shielded', { x: 600, y: 0, width: 160, height: 60, shield: 400 });
+  const bare = makeHullTarget('bare', { x: 0, y: 650, width: 160, height: 60, angle: 0.4 });
   const fighter = makeCircleTarget('fighter', { x: -500, y: 0, radius: 14, fighter: true, type: 'fighter' });
   const far = makeCircleTarget('far', { x: 0, y: -5000, radius: 14, fighter: true, type: 'fighter' });
   // Coś na linii strzału, czego szybka ścieżka nie ma prawa widzieć.
@@ -128,7 +128,7 @@ test('PD z celem: tarcza celu, zero dostępów do npcs/stations/wrecks, wizual 3
   });
 });
 
-test('PD z celem: kadłub bez tarczy dostaje heks z sweepu', () => {
+test('PD z celem: kadłub bez tarczy dostaje krater z sweepu', () => {
   withSeededRandom(2, () => {
     const { h, shooter, bare } = pdScene();
     const log = h.fire(shooter, bare, 'laser_pd_mk1', pdMuzzle(bare));
@@ -136,7 +136,6 @@ test('PD z celem: kadłub bez tarczy dostaje heks z sweepu', () => {
     const hex = kinds(log, 'hex');
     assert.equal(hex.length, 1);
     assert.equal(hex[0][1], 'bare');
-    assert.ok(hex[0][5], 'trafiony heks idzie do applyImpact');
     assert.deepEqual(kinds(log, 'dmgNpc').map((e) => e[1]), ['bare']);
   });
 });
@@ -218,7 +217,7 @@ test('laser ciągły: koniec wiązki na obrysie tarczy, bez tarczy — na kadłu
     const h = createBeamHarness({ html });
     const shooter = { __name: 'ls', id: 'ls1', x: 0, y: 0, angle: 0, friendly: true, vx: 0, vy: 0 };
     // Długi kadłub bokiem do strzelca (oś x), środek 1000 j. w dół.
-    const shielded = makeHexTarget('shielded', { x: 0, y: 1000, width: 600, height: 80, shield: 400 });
+    const shielded = makeHullTarget('shielded', { x: 0, y: 1000, width: 600, height: 80, shield: 400 });
     h.world.npcs.push(shielded);
     const muzzle = { pos: { x: 0, y: 0 }, dir: { x: 0, y: 1 }, baseVel: { x: 0, y: 0 }, emitterUid: 'p:ls' };
     let log = h.fire(shooter, shielded, 'beam_continuous', muzzle);

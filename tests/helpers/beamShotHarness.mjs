@@ -1,18 +1,17 @@
 // Harness strzału wiązką: fireWeaponCore wycięty z index.html, prawdziwe
-// kadłuby heksowe (destructor), prawdziwe tarcze (shieldSystem) i sztuczny świat.
-// Loguje wszystko, co strzał robi na zewnątrz (wiązka 2D, trafienia heksów,
+// kadłuby na belkach (HullBodies), prawdziwe tarcze (shieldSystem) i sztuczny świat.
+// Loguje wszystko, co strzał robi na zewnątrz (wiązka 2D, kratery w kadłubie — wpis 'hex',
 // obrażenia, efekty tarczy, zdarzenie 3D), żeby porównywać ścieżki strzału
 // scenariusz po scenariuszu. Gettery `window.npcs/stations/wrecks` liczą dostępy
 // (szybka ścieżka PD nie może skanować świata).
 
 import { MASTER_WEAPONS, shieldImpactClass } from '../../src/data/weapons.js';
 import { isTargetAlive, targetPoint as scannerTargetPoint, getTargetX, getTargetY } from '../../src/game/scannerTargeting.js';
-import { DestructorSystem, DESTRUCTOR_CONFIG, findBeamHexShard } from '../../src/game/destructor.js';
+import { HullBodies } from '../../src/game/hullBodies.js';
 import { isEntityShieldBlocking, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from '../../shieldSystem.js';
 import { spatialCellKey } from '../../src/game/spatialCellKey.js';
 import { createPdBeamHit, resolvePdBeamHit } from '../../src/game/pdBeamFastPath.js';
 import { isPointDefenseWeapon } from '../../src/ai/pointDefenseTargeting.js';
-import { makeDestructorHull } from './destructorHull.mjs';
 import { readIndexHtml, sliceFunction } from './indexSource.mjs';
 import { CARRIER_SCOPE } from './carrierScope.mjs';
 
@@ -83,9 +82,7 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     flakFuseTime: () => 0,
     FLAK_TUNING: {},
     mercMission: null,
-    DESTRUCTOR_CONFIG,
-    findBeamHexShard,
-    DestructorSystem,
+    HullBodies,
     spatialCellKey,
     getEntityShieldBlockingRadius,
     getEntityShieldRayEnter,
@@ -133,9 +130,18 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
   };
 }
 
-// Kadłub heksowy z tarczą (opcjonalnie) — prawdziwy initHexBody.
-export function makeHexTarget(name, { x, y, angle = 0, width = 160, height = 60, shield = 0, ...rest } = {}) {
-  const e = makeDestructorHull({ width, height, x, y, angle, ...rest });
+// Kadłub na belkach z tarczą (opcjonalnie) — prawdziwy HullBodies.createHull z pełnej płyty w×h.
+function hullPlate(w, h) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    data[i * 4] = 140; data[i * 4 + 1] = 150; data[i * 4 + 2] = 160; data[i * 4 + 3] = 255;
+  }
+  return { width: w, height: h, data };
+}
+
+export function makeHullTarget(name, { x, y, angle = 0, width = 160, height = 60, shield = 0, ...rest } = {}) {
+  const e = { x, y, vx: 0, vy: 0, angle, angVel: 0, mass: 50000, ...rest };
+  HullBodies.createHull(e, hullPlate(width, height));
   e.__name = name;
   e.hp = 1000;
   e.maxHp = 1000;

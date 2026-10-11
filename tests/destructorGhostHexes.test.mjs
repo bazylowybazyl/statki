@@ -289,7 +289,9 @@ test('game hit paths hand the found hex to applyImpact', () => {
   // (resolveBeamWorldHit), obrażenia nadal w samym fireWeaponCore.
   const beam = html.slice(html.indexOf('// --- Trafienia wiązek: pomocniki modułowe'), html.indexOf('// --- LOGIKA POCISKÓW I RAKIET ---'));
   assert.ok(beam.includes('window.fireWeaponCore = function'), 'pomocniki wiązki muszą stać przed fireWeaponCore');
-  assert.match(beam, /findBeamHexShard\(pt\.hexGrid, gridX, gridY, beamHitRadSq\)/);
+  // Raymarch heksów (findBeamHexShard) zniknął z gry razem z heksowym destruktorem (etap 8 portu belek) —
+  // funkcję i jej okna testuje wyżej sam destructor.js (dema heksowe).
+  assert.doesNotMatch(beam, /findBeamHexShard/);
   assert.doesNotMatch(beam, /for \(let dr = -1; dr <= 1; dr\+\+\)/, 'the fixed 3x3 window is back in the beam raymarch');
   // Ostatni argument po heksie: źródło stempla mapy ran (broń / pocisk, zadanie 18-C).
   assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, [^;]*beamHitShard(?:, weapon)?\)/);

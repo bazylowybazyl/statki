@@ -14,9 +14,9 @@ test('drawNPCPretty: rekurencja tylko gdy powstał kadłub, porażka = ponowna p
   const fn = indexHtml.match(/function drawNPCPretty\(ctx, npc, s\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   // Kadłub NPC na belkach (HullBodies.createHull); rekurencja rysuje nakładki gotowego kadłuba.
-  assert.match(fn, /HullBodies\.createHull\(npc, [^;]*\);\s*_hexInitSpentMs \+= performance\.now\(\) - nowMs;\s*if \(npc\.beamHull\) \{[\s\S]*?drawNPCPretty\(ctx, npc, s\);\s*return;\s*\}/);
-  assert.match(fn, /npc\.__hexInitRetryAtMs = nowMs \+ 2000;/);
-  assert.match(fn, /!\(npc\.__hexInitRetryAtMs > nowMs\)/);
+  assert.match(fn, /HullBodies\.createHull\(npc, [^;]*\);\s*_hullInitSpentMs \+= performance\.now\(\) - nowMs;\s*if \(npc\.beamHull\) \{[\s\S]*?drawNPCPretty\(ctx, npc, s\);\s*return;\s*\}/);
+  assert.match(fn, /npc\.__hullInitRetryAtMs = nowMs \+ 2000;/);
+  assert.match(fn, /!\(npc\.__hullInitRetryAtMs > nowMs\)/);
 });
 
 test('pauza: rakiety nie są aktualizowane (lot, trafienia, obrażenia)', () => {

@@ -117,7 +117,6 @@ const game = {
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };
 load('function removeBulletAt(index) {', 'removeBulletAt');
 load('function hullSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hullSweepImpact');
-load('function hexSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hexSweepImpact');
 load("function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {", 'applyHexImpact');
 load('function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {', 'writeImpactHit');
 load('function writeImpactRicochet(out, b, node) {', 'writeImpactRicochet');

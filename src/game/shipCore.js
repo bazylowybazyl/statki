@@ -23,6 +23,12 @@
 // uśpionego błędu podwójnego skalowania rdzeni gracza (PORT, poprawka 1).
 
 import { DestructorSystem, DESTRUCTOR_CONFIG, addShardHeat, getHexProbeDrift } from './destructor.js';
+// Przestrzeń siatki (bez silnika) — wspólna z modelem 3D reaktora; re-eksport bez zmian nazw.
+import {
+  entityPosX, entityPosY, entityScaleX, entityScaleY, billboardOrientation,
+  getEntityHexAngle, gridToLocal, localToWorld, worldToLocal
+} from './hexGridSpace.js';
+export { getEntityHexAngle, gridToLocal, localToWorld, worldToLocal } from './hexGridSpace.js';
 // Część niezależna od silnika (stany, profile klas, warianty, parametry wybuchu, losowanie,
 // eksport markerów) leży w coreModel.js — wspólna z rdzeniem na kadłubach belkowych
 // (reactorCore.js). Ten moduł re-eksportuje ją bez zmian nazw.
@@ -94,74 +100,6 @@ export function gridToCoreMarker(gridX, gridY, layout, grid) {
   return { x: (gridX - cx) / layout.x, y: (gridY - cy) / layout.y };
 }
 
-function entityPosX(e) { return (e?.pos && typeof e.pos.x === 'number') ? e.pos.x : finite(e?.x); }
-function entityPosY(e) { return (e?.pos && typeof e.pos.y === 'number') ? e.pos.y : finite(e?.y); }
-function entityScaleX(e) {
-  if (e?.visual && typeof e.visual.spriteScaleX === 'number') return e.visual.spriteScaleX;
-  if (e?.visual && typeof e.visual.spriteScale === 'number') return e.visual.spriteScale;
-  return 1;
-}
-function entityScaleY(e) {
-  if (e?.visual && typeof e.visual.spriteScaleY === 'number') return e.visual.spriteScaleY;
-  if (e?.visual && typeof e.visual.spriteScale === 'number') return e.visual.spriteScale;
-  return 1;
-}
-function entitySpriteRotation(e) {
-  if (e?.isPlayer) return 0;
-  const r = (e?.visual && typeof e.visual.spriteRotation === 'number') ? e.visual.spriteRotation
-    : (e?.capitalProfile && typeof e.capitalProfile.spriteRotation === 'number') ? e.capitalProfile.spriteRotation
-      : (e?.profile && typeof e.profile.spriteRotation === 'number') ? e.profile.spriteRotation
-        : 0;
-  return Number.isFinite(r) ? r : 0;
-}
-function billboardOrientation(e) {
-  return e?.isAsteroidHex === true || e?.visual?.preserveBillboardOrientation === true;
-}
-
-// Kąt i skala dokładnie jak w destruktorze (getEntityHexAngle, getFinalScaleX/Y,
-// localDeltaToWorldX/Y) — sonda, krater i efekty muszą trafiać w te same heksy.
-export function getEntityHexAngle(entity) {
-  return finite(entity?.angle) + entitySpriteRotation(entity) + finite(DESTRUCTOR_CONFIG.visualRotationOffset);
-}
-
-export function gridToLocal(entity, gridX, gridY, out = {}) {
-  const grid = entity?.hexGrid;
-  out.x = gridX - finite(grid?.srcWidth) * 0.5 - finite(grid?.pivot?.x);
-  out.y = gridY - finite(grid?.srcHeight) * 0.5 - finite(grid?.pivot?.y);
-  return out;
-}
-
-export function localToWorld(entity, localX, localY, out = {}) {
-  const ang = getEntityHexAngle(entity);
-  const c = Math.cos(ang);
-  const s = Math.sin(ang);
-  const lx = localX * entityScaleX(entity);
-  const ly = localY * entityScaleY(entity);
-  if (billboardOrientation(entity)) {
-    out.x = entityPosX(entity) + lx * c + ly * s;
-    out.y = entityPosY(entity) - lx * s + ly * c;
-  } else {
-    out.x = entityPosX(entity) + lx * c - ly * s;
-    out.y = entityPosY(entity) + lx * s + ly * c;
-  }
-  return out;
-}
-
-export function worldToLocal(entity, worldX, worldY, out = {}) {
-  const ang = getEntityHexAngle(entity);
-  const c = Math.cos(ang);
-  const s = Math.sin(ang);
-  const dx = worldX - entityPosX(entity);
-  const dy = worldY - entityPosY(entity);
-  if (billboardOrientation(entity)) {
-    out.x = (dx * c - dy * s) / entityScaleX(entity);
-    out.y = (dx * s + dy * c) / entityScaleY(entity);
-  } else {
-    out.x = (dx * c + dy * s) / entityScaleX(entity);
-    out.y = (-dx * s + dy * c) / entityScaleY(entity);
-  }
-  return out;
-}
 
 const _tmpLocal = { x: 0, y: 0 };
 

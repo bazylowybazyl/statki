@@ -784,7 +784,6 @@
     import { HullLacquer } from "./src/3d/hullLacquer.js";
     import { Destruction3D } from "./src/vfx/destruction3D.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
-    import { DestructorSystem, initHexBody } from "./src/game/destructor.js";
 
     // Uchwyt do konsoli przeglądarki; kod importuje three samodzielnie.
     window.THREE = THREE;
@@ -797,8 +796,6 @@
     window.Destruction3D = Destruction3D;
     window.drawInfrastructureIcon = drawInfrastructureIcon;
     window.updateInfrastructureAnimations = updateInfrastructureAnimations;
-    window.DestructorSystem = DestructorSystem;
-    window.initHexBody = initHexBody;
 
     // --- konsolowe API do strojenia rendera (devtools) ---
     window.Core3DPerfStatus = () => (window.Core3D?.getPerfStatus ? window.Core3D.getPerfStatus() : null);
@@ -939,9 +936,8 @@
     import { drawFighterSprite } from "./src/vfx/fighterSprite.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { compensateStrafeYaw, resolveShipTurnCapability, strafeUsableForCapability } from "./src/game/flight/headingControl.js";
-    import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo, findBeamHexShard } from "./src/game/destructor.js";
-    // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js).
-    // Stary destruktor heksowy zostaje tylko dla asteroid (heksowe ciała skał).
+    // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js). Heksowy destruktor
+    // (src/game/destructor.js) gra nie ładuje od etapu 8 portu (docs/PORT-silnik-belek.md) — zostaje dla dem.
     import { HullBodies } from "./src/game/hullBodies.js";
     // Sufit punktów kadłuba z konstrukcji (enforceNpcHexIntegrityBalance) i punkty rosnące z odrostem węzłów.
     import { HULL_INTEGRITY, raiseHullHpForRegrowth } from "./src/game/hullIntegrity.js";
@@ -1088,7 +1084,6 @@
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
     import { segmentCircleToi } from "./src/physics/physicsKernel.js";
-    import { DEFAULT_HEX_ARENA_CAPACITY } from "./src/physics/hexArena.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
       RenderLiveDebug,
@@ -1454,7 +1449,6 @@
     CAPITAL_SHIP_TEMPLATES_DATA.pirate_supercapital.profile.spriteSrc = pirateSupercapitalImg;
 
     window.bullets = [];
-    window.DESTRUCTOR_CONFIG = DESTRUCTOR_CONFIG;
     // Aby stary kod działał, zrobimy alias:
     const bullets = window.bullets;
     publishGameState({ bullets });
@@ -1521,7 +1515,6 @@
     let reactorModel3D = null;
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
-      setHexShips3DActive?.(!!hex3dReady);
       if (hex3dReady && Core3D.scene) {
         // Mostki (docs/PORT-mostki.md § 9 — kadłuby belkowe): wyrzut atmosfery, szczeliny okien
         // i łuki przepięć w agonii (pula ARC broni, WeaponFx).
@@ -2700,10 +2693,6 @@
       // Ruch v2 w Web Workerze (src/game/trafficBridge.js): gospodarka ×60,
       // stara ekonomia stacji i vany stoją. `?trafficV2=N` — inna skala.
       trafficV2: new URLSearchParams(location.search).has('trafficV2'),
-      // Diagnostyka bramek kolizji - patrz drawCollisionBoundsDebug().
-      showCollisionBounds: false,
-      showBroadphaseGrid: false,
-      collisionBoundsLabels: true,
       // Kolorowe kropki slotów z edytora hardpointów na każdym NPC (overlay z
       // czasów przed Turret2D). Domyślnie OFF: przy 150 okrętach to ~4000 kropek
       // w trybie 'screen' co klatkę, bez cullingu, a uzbrojone sloty i tak
@@ -2716,9 +2705,7 @@
     window.DEFAULT_STATION_3D_SCALE = DEFAULT_STATION_3D_SCALE;
 
     window.DevTuning = Object.assign({
-      pirateStationScale: DEFAULT_PIRATE_STATION_SCALE,
-      // Sufit encji rysowanych przez overlay kolizji (chroni fps w duzej bitwie).
-      collisionBoundsLimit: 300
+      pirateStationScale: DEFAULT_PIRATE_STATION_SCALE
     }, window.DevTuning || {});
 
     const DevFlags = window.DevFlags;
@@ -9279,117 +9266,12 @@
     // POPRAWKA 2: Przypisanie do window (teraz będzie widoczne globalnie)
     window.spawnPirateHeavyFleet = spawnPirateHeavyFleet;
     // Lista na martwe, dryfujące kawałki
-    window.createWreckage = function (parentEntity, shards) {
+    window.createWreckage = function (parentEntity) {
       // Kadłub na belkach: cały ocalały kadłub przechodzi na encję wraku (łup i ładunek z nim).
       if (parentEntity?.beamHull) return HullBodies.convertToWreck(parentEntity);
-      if (!shards || shards.length === 0) return;
-      if (DestructorSystem?.spawnWreckEntity && parentEntity?.hexGrid) {
-        try {
-          return DestructorSystem.spawnWreckEntity(parentEntity, shards, null);
-        } catch (err) {
-          console.warn('[createWreckage] DestructorSystem.spawnWreckEntity failed, using fallback:', err);
-        }
-      }
-
-      // 1. Oblicz środek masy nowej grupy
-      let sumLx = 0, sumLy = 0;
-      for (const s of shards) {
-        sumLx += s.lx;
-        sumLy += s.ly;
-      }
-      const avgLx = sumLx / shards.length;
-      const avgLy = sumLy / shards.length;
-
-      let sumC = 0, sumR = 0;
-      for (const s of shards) {
-        sumC += s.c;
-        sumR += s.r;
-      }
-      const avgC = Math.round(sumC / shards.length);
-      const avgR = Math.round(sumR / shards.length);
-
-      const scale = parentEntity.visual?.spriteScale || 1.0;
-      const c = Math.cos(parentEntity.angle);
-      const s = Math.sin(parentEntity.angle);
-
-      const worldX = parentEntity.x + (avgLx * scale * c - avgLy * scale * s);
-      const worldY = parentEntity.y + (avgLx * scale * s + avgLy * scale * c);
-
-      // --- PRZYGOTOWANIE CACHE DLA WRAKU (FIX) ---
-      // Używamy wymiarów oryginału, aby zachować spójność koordynatów
-      const srcW = parentEntity.hexGrid.srcWidth;
-      const srcH = parentEntity.hexGrid.srcHeight;
-      const inheritedArmorImage = parentEntity.hexGrid.armorImage || parentEntity.hexGrid.cacheCanvas || null;
-      const inheritedNormalMapImage = parentEntity.hexGrid.normalMapImage || null;
-      const wreck = {
-        x: worldX,
-        y: worldY,
-        pos: { x: worldX, y: worldY },
-        vx: (parentEntity.vx || parentEntity.vel?.x || 0),
-        vy: (parentEntity.vy || parentEntity.vel?.y || 0),
-        vel: { x: (parentEntity.vx || parentEntity.vel?.x || 0), y: (parentEntity.vy || parentEntity.vel?.y || 0) },
-        angle: parentEntity.angle,
-        angVel: parentEntity.angVel || 0,
-        mass: shards.length * 10,
-        friction: 0.998,
-        dead: false,
-        isWreck: true,
-        isCollidable: true,
-        visual: { spriteScale: scale },
-
-        hexGrid: {
-          shards: [],
-          map: {},
-          offsetX: 0,
-          offsetY: 0,
-          srcWidth: srcW,
-          srcHeight: srcH,
-          armorImage: inheritedArmorImage,
-          normalMapImage: inheritedNormalMapImage,
-          cacheCanvas: parentEntity.hexGrid.cacheCanvas || null,
-          cacheCtx: null,
-          cacheDirty: false,
-          textureDirty: false,
-          meshDirty: true,
-          gpuTextureNeedsUpdate: false
-        }
-      };
-
-      let maxR2 = 0;
-
-      for (const shard of shards) {
-        shard.lx -= avgLx;
-        shard.ly -= avgLy;
-        shard.origLx -= avgLx;
-        shard.origLy -= avgLy;
-        shard.c -= avgC;
-        shard.r -= avgR;
-
-        const d2 = shard.lx * shard.lx + shard.ly * shard.ly;
-        if (d2 > maxR2) maxR2 = d2;
-
-        wreck.hexGrid.shards.push(shard);
-        wreck.hexGrid.map[shard.c + "," + shard.r] = shard;
-      }
-
-      wreck.radius = (Math.sqrt(maxR2) + 20) * scale;
-
-      if (parentEntity.dead && parentEntity._cargoOrderId && !parentEntity._cargoWreck) {
-        wreck._cargoOrderId = parentEntity._cargoOrderId;
-        wreck._cargoWreckId = `cargo-wreck:${parentEntity._cargoOrderId}`;
-        parentEntity._cargoWreck = wreck;
-      }
-
-      if (window.wrecks) {
-        window.wrecks.push(wreck);
-      }
-
-      if (window.spawnParticle) {
-        for (let i = 0; i < 3; i++) {
-          window.spawnParticle({ x: worldX, y: worldY }, { x: wreck.vx, y: wreck.vy }, 1.0, '#aaaaaa', 5, false);
-        }
-      }
-      return wreck;
+      // Wrak z listy heksów (dawny destruktor heksowy) — w grze nie ma już kadłubów heksowych
+      // (etap 8, docs/PORT-silnik-belek.md).
+      return null;
     };
     // Ile myśliwców liczy pojedyncza eskadra roju i jak długo stacja przezbraja
     // się po wypuszczeniu CAŁEGO kompletu.
@@ -9899,17 +9781,9 @@
     }, true);
     window.addEventListener('blur', () => { shipModes.wheel.open = false; });
 
-    // applyImpact z heksem, który trafienie już znalazło (raymarch wiązki,
-    // sweepImpact pocisku) — bez ponownego szukania sondą o innym promieniu.
-    // Opcje są wspólne (zero alokacji na trafienie); applyImpact czyta je
-    // synchronicznie, a referencję zerujemy, żeby nie trzymać siatki kadłuba.
-    const _hexImpactOpts = { shard: null };
-    // Sweep pocisku: kadłub na belkach albo heksy (asteroidy) — ten sam kształt wyniku.
+    // Sweep pocisku po kadłubie na belkach.
     function hullSweepImpact(entity, x0, y0, x1, y1, radius) {
       return HullBodies.sweep(entity, x0, y0, x1, y1, radius);
-    }
-    function hexSweepImpact(entity, x0, y0, x1, y1, radius) {
-      return DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius);
     }
     function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
@@ -9927,13 +9801,9 @@
           HullDamageMap.clearSource();
         }
       }
-      if (!shard) return DestructorSystem.applyImpact(entity, x, y, damage, vel);
-      _hexImpactOpts.shard = shard;
-      try {
-        return DestructorSystem.applyImpact(entity, x, y, damage, vel, _hexImpactOpts);
-      } finally {
-        _hexImpactOpts.shard = null;
-      }
+      // Bez kadłuba na belkach nie ma czego kraterować (heksów w grze nie ma od etapu 8 portu belek;
+      // parametr shard zostaje w sygnaturze dla wołających).
+      return false;
     }
 
     // Wybuch rakiety na poszyciu (zadanie 25c): mały krater na miarę rany rodziny `rocket` (missile_rack:
@@ -9998,7 +9868,7 @@
       shieldRayEnter: getEntityShieldRayEnter,
       sweepImpact: (entity, x0, y0, x1, y1, radius) => (entity?.beamHull
         ? HullBodies.sweep(entity, x0, y0, x1, y1, radius)
-        : DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius)),
+        : null),
       hullRadius: getBeamTargetRadius,
       get playerShip() { return window.ship; }
     };
@@ -10082,10 +9952,6 @@
           pushBeamTarget(wreckList[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
         }
       }
-
-      const beamCfg = DESTRUCTOR_CONFIG;
-      const beamHexR = Math.max(2, Number(beamCfg?.gridDivisions) || 10);
-      const beamHitRadSq = Math.max(90, (beamHexR * 1.45) * (beamHexR * 1.45));
 
       let hitCount = 0;
       for (let k = 0; k < _beamTargets.length; k++) {
@@ -10196,60 +10062,6 @@
             hitShield = false;
             hitBreach = hit.breach;
             hitWorld = null;
-          }
-        } else if (
-          pt.hexGrid &&
-          pt.hexGrid.grid &&
-          Number.isFinite(pt.hexGrid.cols) &&
-          Number.isFinite(pt.hexGrid.rows) &&
-          pt.hexGrid.cols > 0 &&
-          pt.hexGrid.rows > 0
-        ) {
-          const step = Math.max(4, Math.min(12, beamHexR * 0.9));
-
-          // Zamiast niszczyć statek testem, robimy bezpieczną analizę pikselową (Safe Raymarch)
-          const scale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
-          let rRot = 0;
-          if (pt.visual && pt.visual.spriteRotation) rRot = pt.visual.spriteRotation;
-          else if (pt.capitalProfile && pt.capitalProfile.spriteRotation) rRot = pt.capitalProfile.spriteRotation;
-
-          const angle = (pt.angle || 0) + rRot;
-          const cosA = Math.cos(angle);
-          const sinA = Math.sin(angle);
-
-          const ptX = pt.pos ? pt.pos.x : pt.x;
-          const ptY = pt.pos ? pt.pos.y : pt.y;
-          const gridCx = pt.hexGrid.srcWidth * 0.5;
-          const gridCy = pt.hexGrid.srcHeight * 0.5;
-          const pX = pt.hexGrid.pivot ? pt.hexGrid.pivot.x : 0;
-          const pY = pt.hexGrid.pivot ? pt.hexGrid.pivot.y : 0;
-
-          for (let testT = hit.tEnter; testT <= hit.tExit; testT += step) {
-            if (testT > hitDist) break;
-            const testX = muzzleX + dirX * testT;
-            const testY = muzzleY + dirY * testT;
-
-            const dx = testX - ptX;
-            const dy = testY - ptY;
-            const localX = (dx * cosA + dy * sinA) / scale;
-            const localY = (-dx * sinA + dy * cosA) / scale;
-            const gridX = localX + gridCx + pX;
-            const gridY = localY + gridCy + pY;
-
-            // Okno 3×3 komórek + zmierzony dryf wgniecionych heksów — samo
-            // 3×3 nie widziało heksów wypchniętych z komórek i wiązka
-            // przelatywała przez wgniecenie („heksy-duchy”).
-            const beamShard = findBeamHexShard(pt.hexGrid, gridX, gridY, beamHitRadSq);
-            if (beamShard) {
-              hitDist = testT;
-              hitEntity = pt;
-              hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
-              beamHitShard = beamShard;
-              hitShield = false;
-              hitBreach = hit.breach;
-              hitWorld = null;
-              break;
-            }
           }
         } else {
           hitDist = hit.tEnter;
@@ -10517,8 +10329,7 @@
                 applyNpcDamage(hitEntity, damage, 'beam', beamDmgOpts);
               }
               else if (hitType === 'ring') {
-                // Ring segmenty używają wyłącznie HP heksów (DestructorSystem.applyImpact).
-                // Nie dotykamy entity.hp, bo to wycinałoby segment z kolizji globalnej.
+                // Ring nie ma puli HP — nie dotykamy entity.hp, bo to wycinałoby segment z kolizji globalnej.
               }
               else if (hitType === 'station') {
                 // ciało budowli (kawałek doku w bańce): wiązka grzeje węzły — miękną, potem odparowują (worldChannels.js)
@@ -14276,20 +14087,7 @@
       // Kadłub na belkach: wrak z ocalałych węzłów, a gdy nie zostało nic — z jednego
       // odtworzonego węzła (nośnik partii, jak odtworzony heks niżej).
       if (van?.beamHull) return HullBodies.ensureCargoCarrier(van) || van._cargoWreck || null;
-      const shards = van?.hexGrid?.shards;
-      if (!Array.isArray(shards) || shards.length === 0 || !window.createWreckage) return null;
-      let shard = shards.find(candidate => candidate?.active && !candidate.isDebris && candidate.hp > 0);
-      if (!shard) shard = shards.find(candidate => candidate && !candidate.isDebris) || shards[0];
-      if (!shard) return null;
-
-      // Nawet całkowite zniszczenie kratownicy zostawia jeden realny fragment
-      // kadłuba jako nośnik partii; nie tworzymy osobnego obiektu-kontenera.
-      if (!shard.active || shard.hp <= 0 || shard.isDebris) {
-        shard.active = true;
-        shard.isDebris = false;
-        shard.hp = Math.max(1, Number(shard.maxHp) || 1);
-      }
-      return window.createWreckage(van, [shard]) || van._cargoWreck || null;
+      return null;
     }
 
     function ensureCargoWreckInventory(wreck, order) {
@@ -14813,26 +14611,7 @@
      */
     function cutOuterShard(wreck) {
       if (wreck?.beamHull) return HullBodies.cutOuterNode(wreck);
-      const grid = wreck?.hexGrid;
-      const shards = grid?.shards;
-      if (!Array.isArray(shards) || !shards.length) return false;
-      const cx = (Number(grid.srcWidth) || 0) * 0.5 + (Number(grid.pivot?.x) || 0);
-      const cy = (Number(grid.srcHeight) || 0) * 0.5 + (Number(grid.pivot?.y) || 0);
-      let best = null;
-      let bestD2 = -1;
-      for (const shard of shards) {
-        if (!shard || !shard.active || shard.isDebris) continue;
-        const dx = (Number(shard.gridX) || 0) - cx;
-        const dy = (Number(shard.gridY) || 0) - cy;
-        const d2 = dx * dx + dy * dy;
-        if (d2 > bestD2) {
-          bestD2 = d2;
-          best = shard;
-        }
-      }
-      if (!best) return false;
-      DestructorSystem?.destroyShard?.(wreck, best, { x: 0, y: 0 });
-      return true;
+      return false;
     }
 
     function updateFieldSalvage(dt) {
@@ -14974,10 +14753,10 @@
       recycleWreckEntity(wreck);
     }
 
-    // Wrak kończy życie: kadłub na belkach zwalnia ciało, heksowy wraca do puli destruktora.
+    // Wrak kończy życie: kadłub na belkach zwalnia ciało.
     function recycleWreckEntity(wreck) {
       if (wreck?.beamHull) return HullBodies.recycleWreck(wreck);
-      return DestructorSystem?.recycleWreck?.(wreck);
+      return false;
     }
 
     function findDeliveryStation(wreck) {
@@ -21881,14 +21660,7 @@
           try { invalidateHexShipEntity3D(npc); } catch (_) {}
         }
         HullBodies.release(npc);
-        return;
       }
-      if (!npc?.hexGrid) return;
-      if (invalidateHexShipEntity3D) {
-        try { invalidateHexShipEntity3D(npc); } catch (_) {}
-      }
-      disposeHexBody(npc);
-      npc.hexGrid = null;
     }
 
     // Martwy NPC misji, po którym wrak już powstał (ciało heksowe zwolnione
@@ -21918,16 +21690,8 @@
       npc.hp = 0;
       npc.respawnTimer = 3 + Math.random() * 6;
       if (npc.fleetEntry?.status) npc.fleetEntry.status.hull = 0;
-      if (npc.beamHull) {
-        // Kadłub na belkach: cały ocalały kadłub zostaje wrakiem-łupem.
-        window.createWreckage?.(npc);
-      } else {
-        const shards = npc.hexGrid?.shards;
-        const survivingShards = Array.isArray(shards) ? shards.filter(s => s.active && !s.isDebris && s.hp > 0) : [];
-        if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
-          window.createWreckage(npc, survivingShards);
-        }
-      }
+      // Kadłub na belkach: cały ocalały kadłub zostaje wrakiem-łupem.
+      if (npc.beamHull) window.createWreckage?.(npc);
       if (npc.isCargoVan) handleCargoVanDestroyed(npc);
       releaseShipBridges(npc);
       releaseNpcHexBody(npc);
@@ -21992,14 +21756,7 @@
         // nie jest przeszkodą gazu swojego wybuchu (etap C).
         const blastHostKey = Number(npc.beamHull?.dmgKey) || 0;
 
-        if (npc.beamHull) {
-          if (HullBodies.structuralState(npc).active > 0 && window.createWreckage) window.createWreckage(npc);
-        } else if (npc.hexGrid?.shards) {
-          const survivingShards = npc.hexGrid.shards.filter(s => s.active && !s.isDebris && s.hp > 0);
-          if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
-            window.createWreckage(npc, survivingShards);
-          }
-        }
+        if (npc.beamHull && HullBodies.structuralState(npc).active > 0 && window.createWreckage) window.createWreckage(npc);
         // Wybuch drona (WeaponFx.droneBlast) — myśliwce; A/B dawnej śmierci okrętu: ShipBlastTune.fuelTank = false.
         if (isFighterLike || !SHIP_BLAST_TUNE.fuelTank) {
           if (cause === 'plasma') CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.2 : 1.45);
@@ -22162,11 +21919,10 @@
       return spawn(o);
     }
 
-    // Stan struktury kadłuba do sufitu HP: węzły kadłuba na belkach albo heksy (asteroidy).
+    // Stan struktury kadłuba do sufitu HP: węzły kadłuba na belkach.
     const _hullStructState = { active: 0, total: 0, ratio: 1 };
     function getHullStructuralState(entity) {
-      if (entity?.beamHull) return HullBodies.structuralState(entity, _hullStructState);
-      return entity?.hexGrid ? getHexStructuralState(entity) : null;
+      return entity?.beamHull ? HullBodies.structuralState(entity, _hullStructState) : null;
     }
 
     function enforceNpcHexIntegrityBalance() {
@@ -22303,7 +22059,6 @@
     let _integrityDtAcc = 0;
     let _integrityTick = 0;
     const _dynamicDestructibles = [];
-    const _hexDestructibles = [];
     const _worldFocus = [null, null];   // punkty bańki ciał świata (gracz, P2)
 
     function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
@@ -22751,7 +22506,7 @@
           let hullNode = -1;
           let hullImpactX = hullT >= 0 ? candX0 + (b.x - candX0) * hullT : b.x;
           let hullImpactY = hullT >= 0 ? candY0 + (b.y - candY0) * hullT : b.y;
-          const hullSweepable = !!(realNpc.beamHull || realNpc.hexGrid);
+          const hullSweepable = !!realNpc.beamHull;
           if (hullBroadT >= 0 && hullSweepable) {
             // Heks wygrywa tylko PRZED wejściem w tarczę (remis → tarcza) i przed
             // najlepszym trafieniem poprzednich kandydatów, więc sweep idzie tylko
@@ -22760,11 +22515,10 @@
             let sweepLimit = hitT < 1 ? hitT : 1;
             if (shieldT >= 0 && shieldT < sweepLimit) sweepLimit = shieldT;
             let hexSweep = null;
-            const sweepFn = realNpc.beamHull ? hullSweepImpact : hexSweepImpact;
             if (sweepLimit >= 1) {
-              hexSweep = sweepFn(realNpc, candX0, candY0, b.x, b.y, bulletR);
+              hexSweep = hullSweepImpact(realNpc, candX0, candY0, b.x, b.y, bulletR);
             } else if (sweepLimit > 0) {
-              hexSweep = sweepFn(realNpc, candX0, candY0,
+              hexSweep = hullSweepImpact(realNpc, candX0, candY0,
                 candX0 + (b.x - candX0) * sweepLimit, candY0 + (b.y - candY0) * sweepLimit, bulletR);
             }
             hullT = hexSweep ? (sweepLimit >= 1 ? hexSweep.t : hexSweep.t * sweepLimit) : -1;
@@ -22835,12 +22589,6 @@
           } else if (hitNPC.beamHull) {
             // Kadłub na belkach: sonda w punkcie trafienia, bez obrażeń (tarcza rozstrzyga niżej).
             hexHit = HullBodies.probe(hitNPC._realEntity || hitNPC, hitX, hitY);
-          } else if (hitNPC.hexGrid) {
-            // Sprawdzamy kolizję z heksem, ale na razie bez zadawania obrażeń (damage=0),
-            // żeby nie zranić statku pod tarczą.
-            hexHit = (typeof DestructorSystem.probeImpact === 'function')
-              ? DestructorSystem.probeImpact(hitNPC, hitX, hitY)
-              : DestructorSystem.applyImpact(hitNPC, hitX, hitY, 0, { x: 0, y: 0 });
           } else {
             // Dla małych statków bez heksów, uznajemy że trafienie w ogóle (isHit) to trafienie w kadłub
             hexHit = true;
@@ -23894,35 +23642,11 @@
     // runAiLogic    — grid, eskadry i misje na początku cyklu AI 20 Hz.
     // aiLogicDt     — stałe 1/20 s, niezależne od odświeżania monitora.
     // aiBrainPhase  — jedna z faz rozkładających mózgi NPC na kroki fizyki.
-    // Budżet heksów dla wraków.
-    //
-    // Arena heksów jest TWARDYM zasobem o stałej pojemności, a jej przepełnienie
-    // to nie degradacja liniowa tylko KLIF: narrowphase przestaje iterować po
-    // heksach brzegowych i przechodzi na wszystkie (patrz komentarz przy
-    // liczniku HexArena w perfHud.js). W dużej bitwie zmierzono 504 wraki
-    // × ~260 heksów = 130 320 z 131 072 slotów, arena 100%, przepełnienie x17,
-    // a `Kolizje` skoczyły z 3,66 do 7,39 ms.
-    //
-    // Wraki nie miały ŻADNEGO limitu — despawn wyzwalał się dopiero przy 50 km
-    // albo gdy wrak stracił wszystkie heksy. W bitwie wszystko leży w promieniu
-    // kilku kilometrów, więc debris rósł aż do wyczerpania areny.
-    //
-    // Zwalniamy od najdalszych od gracza: tych i tak nie widzi. Wraki holowane,
-    // cięte i wiożące ładunek są nietykalne — to zawartość gameplayowa, nie śmieć.
-    //
-    // UWAGA NA ROLĘ: to jest BARIERKA, nie regulator. Docelowo debris sprząta się
-    // sam — większość wraków ma wybuchać i znikać, a część statków ma rozpadać się
-    // całkowicie, nie zostawiając niczego. Ten limit ma NIGDY się nie odpalić przy
-    // normalnej grze; siedzi tu tylko dlatego, że przepełnienie areny to twardy
-    // klif (narrowphase przechodzi z heksów brzegowych na wszystkie), a nie
-    // stopniowy spadek. Bez niego awaria kolejki wybuchów objawia się jako
-    // niewytłumaczalne pół klatki na sekundę.
-    //
-    // Próg 0.80, a nie 0.55: przy 0.55 barierka zaczynała kasować wraki, które
-    // gracz jeszcze widzi, czyli robiła to, co ma teraz robić efekt wybuchu.
-    const WRECK_HEX_BUDGET_FRAC = 0.80;
-    const WRECK_HEX_RESERVE_FRAC = 0.08;
-    const WRECK_HEX_RESERVE_MIN = 8192;
+    // Budżet wraków — BARIERKA, nie regulator: przy normalnej grze wybuchy i despawn trzymają liczbę
+    // wraków dużo poniżej; to ochrona przed klifem wydajności, gdyby kolejka wybuchów zawiodła.
+    // Zwalniamy od najdalszych od gracza (tych i tak nie widzi); wraki holowane, cięte i wiożące
+    // ładunek są nietykalne — to zawartość gameplayowa, nie śmieć. (Dawny budżet areny heksów
+    // zniknął z heksowym destruktorem — etap 8, docs/PORT-silnik-belek.md.)
     const WRECK_BUDGET_CHECK_SEC = 0.5;
     let _wreckBudgetTimer = 0;
     const _wreckBudgetScratch = [];
@@ -23965,65 +23689,12 @@
       }
     }
 
-    function enforceWreckHexBudget() {
+    function enforceWreckBudget() {
       _wreckBudgetTimer -= PHYS_DT;
       if (_wreckBudgetTimer > 0) return;
       _wreckBudgetTimer = WRECK_BUDGET_CHECK_SEC;
       if (!Array.isArray(wrecks) || wrecks.length === 0) return;
       enforceWreckBeamBudget();
-
-      const arenaStats = getHexArenaStats?.();
-      const capacity = Math.max(1, Number(arenaStats?.capacity) || DEFAULT_HEX_ARENA_CAPACITY);
-
-      let total = 0;
-      for (let i = 0; i < wrecks.length; i++) {
-        total += Number(wrecks[i]?.hexGrid?.shards?.length) || 0;
-      }
-      // The old 55% cap ignored living ships. In a huge fleet they could
-      // already occupy most of the arena, leaving no room for the next hull.
-      // Estimate their packed footprint and keep an explicit spawn reserve.
-      const allocated = Math.max(0, Number(arenaStats?.allocated) || 0);
-      const packedWrecks = Math.min(total, allocated);
-      const livingHexes = Math.max(0, allocated - packedWrecks);
-      const reserve = Math.max(WRECK_HEX_RESERVE_MIN, Math.floor(capacity * WRECK_HEX_RESERVE_FRAC));
-      const availableAfterLiving = Math.max(0, capacity - livingHexes - reserve);
-      const budget = Math.min(Math.floor(capacity * WRECK_HEX_BUDGET_FRAC), availableAfterLiving);
-      if (total <= budget) return;
-
-      _wreckBudgetScratch.length = 0;
-      const px = ship?.pos?.x || 0;
-      const py = ship?.pos?.y || 0;
-      for (let i = 0; i < wrecks.length; i++) {
-        const w = wrecks[i];
-        if (!w) continue;
-        if (salvageState.towed === w || salvageState.cutting === w) continue;
-        if (!cargoBagIsEmpty(w._cargoManifest)) continue;
-        const hexes = Number(w.hexGrid?.shards?.length) || 0;
-        if (hexes <= 0) continue;
-        const dx = w.x - px;
-        const dy = w.y - py;
-        _wreckBudgetScratch.push({ w, hexes, distSq: dx * dx + dy * dy });
-      }
-      _wreckBudgetScratch.sort((a, b) => b.distSq - a.distSq);
-
-      const doomed = new Set();
-      for (let i = 0; i < _wreckBudgetScratch.length && total > budget; i++) {
-        const entry = _wreckBudgetScratch[i];
-        doomed.add(entry.w);
-        total -= entry.hexes;
-      }
-      if (doomed.size === 0) return;
-
-      for (let i = wrecks.length - 1; i >= 0; i--) {
-        const w = wrecks[i];
-        if (!doomed.has(w)) continue;
-        TowSystem.detachBody(w, 'wreck-budget');
-        if (DestructorSystem?.recycleWreck) DestructorSystem.recycleWreck(w);
-        wrecks.splice(i, 1);
-      }
-      if (window.DEBUG_WRECK_BUDGET) {
-        console.log('[WreckBudget] zwolniono ' + doomed.size + ' wrakow, heksy -> ' + total + '/' + budget);
-      }
     }
 
     // ============================================================
@@ -24097,6 +23768,7 @@
       isVisuallySafe: (w) => (isColdFreezeVisuallySafe ? isColdFreezeVisuallySafe(w) : true),
       getPlayerPos: () => ship?.pos || null,
       getFrameId: () => renderFrameId,
+      recycle: recycleWreckEntity,
       onBeforeFreeze(w) {
         // Asekuracyjnie: holowany/cięty nie przejdzie warunków, ale lina ani
         // cięcie nie mogą trzymać wraku bez siatki.
@@ -25085,7 +24757,6 @@
           }
         }
       }
-      // P1-P2 hex collision is handled by DestructorSystem (P2 is in dynamicDestructibles)
       // ====== END PLAYER 2 PHYSICS ======
 
       // obrót (STARY KOD USUNIĘTY - zastąpiony powyżej kinematycznym)
@@ -25191,7 +24862,7 @@
           _activeWrecksBuffer.push(w);
         }
       }
-      enforceWreckHexBudget();
+      enforceWreckBudget();
       PerfHUD.addTiming('wreckPrepTime', performance.now() - tPreSection0);
       PerfHUD.addTiming('preAiTime', performance.now() - tPreAiTotal0);
 
@@ -25314,10 +24985,8 @@
       stepAsteroidMining(dt);
 
       tPhysSection0 = performance.now();
-      // Listy destruktora budujemy RAZ na klatkę renderu — między substepami tej
-      // samej klatki zmieniają się pomijalnie. Nowe wraki ze splitów dopisują się
-      // do allDestructibles w DestructorSystem.spawnWreckEntity, a martwe encje
-      // odfiltrowuje sam destruktor.
+      // Listy ciał (HullBodies.step, ReactorGame) budujemy RAZ na klatkę renderu — między
+      // substepami tej samej klatki zmieniają się pomijalnie.
       let dynamicDestructibles;
       let allDestructibles;
       if (_destrPrepFrameId === renderFrameId && _cachedDynamicDestructibles) {
@@ -25355,23 +25024,14 @@
       _worldFocus[0] = ship && !ship.destroyed ? ship.pos : null;
       _worldFocus[1] = (splitScreenMode && player2Ship && !player2Ship.destroyed) ? player2Ship.pos : null;
       worldBodies.step(dt, _worldFocus);
-      // Kadłuby statków, NPC i wraków: silnik belek. Heksowy destruktor dostaje tylko
-      // ciała heksowe (asteroidy) — kadłuby z listy i tak pomija (brak hexGrid).
+      // Kadłuby statków, NPC i wraków: silnik belek.
       HullBodies.step(dt, worldBodies.withEntities(allDestructibles));
       // Rdzenie reaktorów: stopienie, detonacje (rozpad, fala), strumienie i kule plazmy.
       ReactorGame.step(dt, allDestructibles);
-      _hexDestructibles.length = 0;
-      for (let i = 0; i < allDestructibles.length; i++) {
-        const e = allDestructibles[i];
-        if (e?.hexGrid) _hexDestructibles.push(e);
-      }
-      if (_hexDestructibles.length > 0) DestructorSystem.update(dt, _hexDestructibles);
       const destructorMs = performance.now() - tDestructor0;
       PerfHUD.addTiming('destructorTime', destructorMs);
-      PerfHUD.addTiming('collisionTime', (HullBodies.engine.perf.lastCollisionMs || 0)
-        + (_hexDestructibles.length > 0 ? (DestructorSystem.perf?.lastCollisionMs || 0) : 0));
-      PerfHUD.addContacts((HullBodies.perf.lastContacts || 0)
-        + (_hexDestructibles.length > 0 ? (DestructorSystem.perf?.lastContacts || 0) : 0));
+      PerfHUD.addTiming('collisionTime', HullBodies.engine.perf.lastCollisionMs || 0);
+      PerfHUD.addContacts(HullBodies.perf.lastContacts || 0);
 
       tPhysSection0 = performance.now();
       // Stany integralności zmieniają się wolno — nie muszą chodzić w 120 Hz.
@@ -26290,12 +25950,6 @@
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
 
-      // Deformacje wizualne destruktora (lerp, GPU soft body, elastyczność, erase cache)
-      // raz na klatkę renderu zamiast w każdym kroku fizyki 120 Hz.
-      const tDestrVis0 = performance.now();
-      DestructorSystem.updateVisuals(frame);
-      PerfHUD.addTiming('deformTime', performance.now() - tDestrVis0);
-
       const mWorld = screenToWorld(mouse.x, mouse.y);
       // Okno „armed" trwa 5 s i gaśnie samo. Bez komunikatu przepalony ładunek
       // wygląda dokładnie jak zepsuty klawisz — gracz czeka na strzał, którego
@@ -26631,20 +26285,20 @@
     }
     const _npcScreenScratch = { x: 0, y: 0 };
 
-    // Budżet leniwego initHexBody na klatkę. NPC bez siatki przechodzą przez
+    // Budżet leniwej budowy kadłuba (HullBodies.createHull) na klatkę. NPC bez kadłuba przechodzą przez
     // drawNPCPretty co klatkę, także poza ekranem (kolizje i obrażenia kadłuba
-    // potrzebują ciała), więc spawn floty inicjował wszystkie statki w jednej
+    // potrzebują ciała), więc spawn floty budował wszystkie kadłuby w jednej
     // klatce. Pierwszy init w klatce idzie zawsze, kolejne w ramach budżetu,
     // reszta w następnych klatkach.
-    const HEX_INIT_FRAME_BUDGET_MS = 6;
-    let _hexInitSpentMs = 0;
-    let _hexInitCountThisFrame = 0;
-    function beginHexInitBudgetFrame() {
-      _hexInitSpentMs = 0;
-      _hexInitCountThisFrame = 0;
+    const HULL_INIT_FRAME_BUDGET_MS = 6;
+    let _hullInitSpentMs = 0;
+    let _hullInitCountThisFrame = 0;
+    function beginHullInitBudgetFrame() {
+      _hullInitSpentMs = 0;
+      _hullInitCountThisFrame = 0;
     }
-    function hexInitBudgetAllows() {
-      return _hexInitCountThisFrame === 0 || _hexInitSpentMs < HEX_INIT_FRAME_BUDGET_MS;
+    function hullInitBudgetAllows() {
+      return _hullInitCountThisFrame === 0 || _hullInitSpentMs < HULL_INIT_FRAME_BUDGET_MS;
     }
 
     // Czy nakładkę 2D NPC (sprite myśliwca, kropki hardpointów, paski HP) w ogóle
@@ -26724,160 +26378,6 @@
       });
       ctx.restore();
     }
-
-    // ========================================================================
-    // DIAGNOSTYKA BRAMEK KOLIZJI - DevFlags.showCollisionBounds
-    // ========================================================================
-    // Pytanie, na ktore ma odpowiadac: czy pudlo broadphase nie jest za duze
-    // albo za male. Dlatego rysujemy OBOK SIEBIE bramke i prawde:
-    //   CZERWONY  = OBB Z PADEM. To testuje entityObbsOverlap - to odrzuca pary.
-    //   ZIELONY   = obrys kadluba bez padu. Roznica = caly zapas na deformacje.
-    //   NIEBIESKI = okrag broadphase (_bpRadius) - sito PRZED testem OBB.
-    // Dane ida przez getCollisionBoundsDebug -> refreshEntityObb, czyli te sama
-    // sciezke co produkcyjny test pary. Drugie, "podobne" liczenie ekstentow w
-    // warstwie rysowania pokazywaloby ladny prostokat i ukrywalo szukany blad.
-    const _colDbgInfo = {};
-    const _colDbgC = { x: 0, y: 0 };
-    const _colDbgQuad = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
-
-    function strokeObbPath(ctx, cam, cx, cy, ux, uy, vx, vy, eu, ev) {
-      const ax = ux * eu, ay = uy * eu;
-      const bx = vx * ev, by = vy * ev;
-      worldToScreenInto(cx - ax - bx, cy - ay - by, cam, _colDbgQuad[0]);
-      worldToScreenInto(cx + ax - bx, cy + ay - by, cam, _colDbgQuad[1]);
-      worldToScreenInto(cx + ax + bx, cy + ay + by, cam, _colDbgQuad[2]);
-      worldToScreenInto(cx - ax + bx, cy - ay + by, cam, _colDbgQuad[3]);
-      ctx.beginPath();
-      ctx.moveTo(_colDbgQuad[0].x, _colDbgQuad[0].y);
-      ctx.lineTo(_colDbgQuad[1].x, _colDbgQuad[1].y);
-      ctx.lineTo(_colDbgQuad[2].x, _colDbgQuad[2].y);
-      ctx.lineTo(_colDbgQuad[3].x, _colDbgQuad[3].y);
-      ctx.closePath();
-      ctx.stroke();
-    }
-
-    function drawCollisionBoundsDebug(ctx, cam) {
-      if (!DevFlags.showCollisionBounds) return;
-      const list = DestructorSystem?._visualEntities;
-      if (!Array.isArray(list) || list.length === 0) return;
-
-      const bp = getBroadphaseDebugInfo();
-      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
-      const vp = getViewportForCamera(cam);
-      const vpX = vp.x, vpY = vp.y, vpW = vp.w, vpH = vp.h;
-      const limit = Math.max(1, Number(DevTuning.collisionBoundsLimit) || 300);
-      const showLabels = DevFlags.collisionBoundsLabels !== false;
-
-      ctx.save();
-      ctx.lineWidth = 1;
-      ctx.font = '10px monospace';
-      ctx.textBaseline = 'top';
-
-      // Siatka hasha broadphase - pokazuje, ile komorek zajmuje jedna encja.
-      if (DevFlags.showBroadphaseGrid) {
-        const cs = bp.cellSize;
-        const camX = Number(cam?.x) || 0;
-        const camY = Number(cam?.y) || 0;
-        const wx0 = camX - (vpW * 0.5) / zoom;
-        const wx1 = camX + (vpW * 0.5) / zoom;
-        const wy0 = camY - (vpH * 0.5) / zoom;
-        const wy1 = camY + (vpH * 0.5) / zoom;
-        // Powyzej ~200 linii siatka zamienia sie w szara plame - nie rysuj.
-        if (((wx1 - wx0) / cs) < 200 && ((wy1 - wy0) / cs) < 200) {
-          ctx.strokeStyle = 'rgba(90,110,160,0.28)';
-          ctx.beginPath();
-          for (let gx = Math.floor(wx0 / cs) * cs; gx <= wx1; gx += cs) {
-            worldToScreenInto(gx, wy0, cam, _colDbgC);
-            const gsx = _colDbgC.x;
-            ctx.moveTo(gsx, vpY);
-            ctx.lineTo(gsx, vpY + vpH);
-          }
-          for (let gy = Math.floor(wy0 / cs) * cs; gy <= wy1; gy += cs) {
-            worldToScreenInto(wx0, gy, cam, _colDbgC);
-            const gsy = _colDbgC.y;
-            ctx.moveTo(vpX, gsy);
-            ctx.lineTo(vpX + vpW, gsy);
-          }
-          ctx.stroke();
-        }
-      }
-
-      let shown = 0;
-      let ratioSum = 0;
-      let noHexCount = 0;
-
-      for (let i = 0; i < list.length && shown < limit; i++) {
-        const ent = list[i];
-        if (!ent || ent.dead) continue;
-        const info = getCollisionBoundsDebug(ent, _colDbgInfo);
-        if (!info.valid) continue;
-
-        // Kadrujemy po okregu opisanym na pudle Z PADEM - inaczej wypadlby
-        // z ekranu wlasnie ten margines, ktory chcemy zobaczyc.
-        worldToScreenInto(info.cx, info.cy, cam, _colDbgC);
-        const sx = _colDbgC.x, sy = _colDbgC.y;
-        const rPx = Math.max(Math.hypot(info.eu, info.ev), info.bpRadius) * zoom;
-        if (sx + rPx < vpX || sx - rPx > vpX + vpW) continue;
-        if (sy + rPx < vpY || sy - rPx > vpY + vpH) continue;
-
-        shown++;
-        ratioSum += info.areaRatio;
-        if (!info.hasActiveHex) noHexCount++;
-
-        // Okrag broadphase - pierwsze sito. Promien 0 = encja wypadla z
-        // broadphase w tej klatce (brak aktywnych heksow albo isCollidable).
-        if (info.bpRadius > 0) {
-          ctx.strokeStyle = 'rgba(90,160,255,0.55)';
-          ctx.beginPath();
-          ctx.arc(sx, sy, info.bpRadius * zoom, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        // Obrys kadluba BEZ padu - prawda o rozmiarze ciala.
-        ctx.strokeStyle = 'rgba(80,230,140,0.95)';
-        strokeObbPath(ctx, cam, info.cx, info.cy, info.ux, info.uy, info.vx, info.vy, info.euRaw, info.evRaw);
-
-        // OBB Z padem - bramka. Im wiekszy przerost, tym bardziej czerwony.
-        const over = Math.min(1, Math.max(0, (info.areaRatio - 1) / 5));
-        ctx.strokeStyle = 'rgba(255,' + Math.round(120 - 90 * over) + ',70,0.95)';
-        strokeObbPath(ctx, cam, info.cx, info.cy, info.ux, info.uy, info.vx, info.vy, info.eu, info.ev);
-
-        if (showLabels && rPx > 26) {
-          ctx.fillStyle = 'rgba(255,220,190,0.95)';
-          ctx.fillText('x' + info.areaRatio.toFixed(1) + ' pad' + Math.round(info.pad), sx + 4, sy + 4);
-        }
-      }
-
-      // Podsumowanie: liczba, ktorej nie da sie odczytac z samego obrazka.
-      // Ramka stoi z odsunieciem od lewej, bo panel AKTYWNE SKRZYDLO / WSPARCIE
-      // zajmuje lewy gorny rog kanwy i przy vpX+8 podsumowanie bylo niewidoczne.
-      const boxX = vpX + 360;
-      const avg = shown > 0 ? (ratioSum / shown) : 0;
-      ctx.fillStyle = 'rgba(10,14,24,0.82)';
-      ctx.fillRect(boxX, vpY + 8, 300, 84);
-      ctx.strokeStyle = 'rgba(120,150,210,0.6)';
-      ctx.strokeRect(boxX, vpY + 8, 300, 84);
-      ctx.fillStyle = '#dfe7ff';
-      ctx.fillText('czerwony=OBB z padem  zielony=kadlub  niebieski=bp', boxX + 8, vpY + 14);
-      ctx.fillText('pad ' + bp.pad.toFixed(1) + ' j. = maxDeform ' + bp.maxDeform + ' x ' + bp.deformScale + ' + ' + bp.hexSpacing + ' x 4', boxX + 8, vpY + 28);
-      ctx.fillStyle = avg > 2.5 ? '#ff8a5c' : '#9ff5b8';
-      ctx.fillText('pole pudla / pole kadluba: srednio x' + avg.toFixed(2) + '  (' + shown + ' encji)', boxX + 8, vpY + 42);
-      ctx.fillStyle = '#dfe7ff';
-      ctx.fillText('komorka hasha ' + bp.cellSize + ' j.   kontakty/klatka ' + bp.contacts, boxX + 8, vpY + 56);
-      ctx.fillText('encji w destruktorze ' + bp.entities + '   bez akt. heksow ' + noHexCount, boxX + 8, vpY + 70);
-      ctx.restore();
-    }
-
-    // Przelacznik z konsoli: ColBoundsDbg() wlacza, ColBoundsDbg(false) gasi,
-    // ColBoundsDbg(true, true) dokłada siatke hasha broadphase.
-    window.ColBoundsDbg = (on = true, grid = false) => {
-      DevFlags.showCollisionBounds = !!on;
-      DevFlags.showBroadphaseGrid = !!grid;
-      return {
-        showCollisionBounds: DevFlags.showCollisionBounds,
-        showBroadphaseGrid: DevFlags.showBroadphaseGrid
-      };
-    };
 
     function stationPortWorld(st, idx) {
       const off = st.ports[idx % st.ports.length];
@@ -27087,15 +26587,15 @@
       if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
-        if (sprite && sprite.ready && !sprite.error && !(npc.__hexInitRetryAtMs > nowMs) && hexInitBudgetAllows()) {
-          _hexInitCountThisFrame++;
+        if (sprite && sprite.ready && !sprite.error && !(npc.__hullInitRetryAtMs > nowMs) && hullInitBudgetAllows()) {
+          _hullInitCountThisFrame++;
           const hexInit = getNpcHexInitSource(npc, sprite);
           npc.__hardpointScaleX = (hexInit?.hardpointScaleX && hexInit.hardpointScaleX > 0) ? hexInit.hardpointScaleX : 1.0;
           npc.__hardpointScaleY = (hexInit?.hardpointScaleY && hexInit.hardpointScaleY > 0) ? hexInit.hardpointScaleY : 1.0;
           npc.__hardpointScale = (hexInit?.hardpointScale && hexInit.hardpointScale > 0) ? hexInit.hardpointScale : 1.0;
           applyEditorLayoutToNpc(npc);
           HullBodies.createHull(npc, (hexInit?.image || sprite.image), { visualImage: sprite.image, hullProfileId: getNpcHullRenderProfileId(npc) });
-          _hexInitSpentMs += performance.now() - nowMs;
+          _hullInitSpentMs += performance.now() - nowMs;
           if (npc.beamHull) {
             prewarmHexShipVisual(sprite.image);
             attachEntityBridges(npc);
@@ -27103,12 +26603,12 @@
             drawNPCPretty(ctx, npc, s);
             return;
           }
-          // initHexBody potrafi wrócić bez siatki (sprite pusty pod progiem alfy,
+          // Budowa kadłuba potrafi wrócić bez ciała (sprite pusty pod progiem alfy,
           // wyjątek getImageData, typ niekwalifikowany). Dawniej rekurencja szła
           // wtedy bez końca: wyjątek przerywał loop() przed requestAnimationFrame
           // i gra stawała. Ponowna próba za 2 s — inicjalizacja to canvas +
           // getImageData całego sprite'a, nie wolno jej powtarzać co klatkę.
-          npc.__hexInitRetryAtMs = nowMs + 2000;
+          npc.__hullInitRetryAtMs = nowMs + 2000;
         }
       }
 
@@ -27590,9 +27090,9 @@
       const _splitPassCount = (splitScreenMode && camera2) ? 2 : 1;
       const _origCam = cam;
       const _fullW = W;
-      // Budżet initHexBody liczy się na klatkę, nie na pass — w podzielonym
+      // Budżet budowy kadłubów liczy się na klatkę, nie na pass — w podzielonym
       // ekranie pętla niżej rysuje NPC dwa razy.
-      beginHexInitBudgetFrame();
+      beginHullInitBudgetFrame();
 
       for (let _sp = 0; _sp < _splitPassCount; _sp++) {
         if (_splitPassCount > 1) {
@@ -27682,7 +27182,6 @@
         CanvasVFX.drawShockwaves(ctx, cam);
         drawFlyingHexDebris(ctx, cam);
         drawTowRopes(ctx, cam);
-        drawCollisionBoundsDebug(ctx, cam);
 
         if (!window.USE_STATION_3D) {
           for (const st of stations) {
@@ -27756,8 +27255,8 @@
           const s = worldToScreenInto(npc.x, npc.y, cam, _npcScreenScratch);
           npc.shadowFactor = 0;
           // Kadr: pętla szła po WSZYSTKICH NPC świata. Myśliwce i nakładki
-          // kadłubów heksowych poza ekranem odpadają; NPC bez ciała heksowego
-          // przechodzą zawsze, bo drawNPCPretty robi im leniwie initHexBody,
+          // kadłubów poza ekranem odpadają; NPC bez kadłuba na belkach
+          // przechodzą zawsze, bo drawNPCPretty buduje go leniwie,
           // od którego zależą kolizje i obrażenia kadłuba także poza ekranem.
           if ((npc.hexGrid || npc.beamHull || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
           _npcFogQuiet = SensorSystem.hides(npc);
@@ -31044,14 +30543,12 @@
   <script type="module">
     import { initDevTools } from './src/ui/devTools.js';
     import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
-    import { initDestructorConfigPanel } from './src/ui/destructorConfigPanel.js';
     import { initCameraTunerPanel } from './src/ui/cameraTunerPanel.js';
 
     window.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => {
         initDevTools();
         initBloomTunerPanel({ enableHotkey: false });
-        initDestructorConfigPanel();
         initCameraTunerPanel();
       }, 100);
     });

@@ -51,7 +51,10 @@
 // buforów wierzchołków na pipeline), atrybuty instancji jak dawniej — osobne
 // tablice (upload tylko zmienionego zakresu po needsUpdate).
 import * as THREE from 'three/webgpu';
-import { CORE_STATE, coreStateRank, gridToLocal, localToWorld } from '../game/shipCore.js';
+// Stany z coreModel.js, przestrzeń siatki z hexGridSpace.js — bez shipCore.js, który ciągnie heksowy
+// destructor.js (gra go nie ładuje; etap 8, docs/PORT-silnik-belek.md).
+import { CORE_STATE, coreStateRank } from '../game/coreModel.js';
+import { gridToLocal, localToWorld } from '../game/hexGridSpace.js';
 import { CORE_FX_BANDS, CORE_FX_LAYER, coreStateBand } from './coreBands.js';
 import { REACTOR3D_KINDS, buildReactorModel } from './reactor3DShapes.js';
 import { createReactorPlasmaMaterial, createReactorStructMaterial } from './reactor3D.tsl.js';
