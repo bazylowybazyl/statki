@@ -702,6 +702,8 @@ function extendReachWithOmniLights(reach, lights) {
 function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, bodyRadiusPx = Infinity) {
   const uniforms = data?.mesh?.material?.uniforms;
   if (!uniforms?.uShipLightCount) return;
+  // Zimny wrak bez świateł sąsiadów (COLD_WRECK_CONFIG.nearLights = false): ścieżka „bez lamp” niżej.
+  if (entity.isCold === true && coldRenderHooks.config?.nearLights === false) bodyRadiusPx = 0;
 
   // Emitery drogowe liczą się tylko, gdy któryś może sięgnąć pudła encji —
   // dawniej jeden emiter gdziekolwiek w pudle rozgrzania (np. reflektory gracza)
@@ -2188,6 +2190,13 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     hasRenderable = true;
   }
 
+  // Zimne wraki na belkach (src/game/coldWrecks.js): w kadrze i większe od smugi — skóra z ciała do rysowania
+  // (poza fizyką, ta sama skóra, mapa ran i cień co u wraku śpiącego); pozostałe — smuga z migawki (niżej).
+  if (Array.isArray(coldWrecks) && coldWrecks.length > 0 &&
+      updateColdBeamWrecks(coldWrecks, cullInfo, camX, camY, cameraZoom, frameId, valid, validSet)) {
+    hasRenderable = true;
+  }
+
   // Lampy i strefy dysz zapisane w tej klatce: jedna wersja bufora storage
   // (zakresy zmienionych slotów idą na GPU przy pierwszym rysowaniu kadłuba).
   HullLightStore.commit();
@@ -2316,11 +2325,12 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     state.entityMeshes.delete(entity);
   }
 
-  // Zimne wraki: sama smuga, po gorących (te mają pierwszeństwo w batchu).
-  // Nie są okluderami cieni, źródłami świateł, rekordami Turret2D ani encjami
-  // VFX — dlatego nie idą przez listę `entities`.
+  // Zimne wraki: smuga, po gorących (te mają pierwszeństwo w batchu). Nie są
+  // źródłami świateł, rekordami Turret2D ani encjami VFX — dlatego nie idą przez
+  // listę `entities`. Wraki na belkach rysowane w tej klatce skórą (albo jej smugą
+  // z updateBeamSkinMesh) mają znacznik `_coldSkinFrame` i tu ich nie ma.
   if (Array.isArray(coldWrecks) && coldWrecks.length > 0) {
-    const pushed = pushColdWreckImpostors(HexBodyImpostorBatch, coldWrecks, cullInfo, COLD_WRECK_CONFIG.impostorOpacity);
+    const pushed = pushColdWreckImpostors(HexBodyImpostorBatch, coldWrecks, cullInfo, COLD_WRECK_CONFIG.impostorOpacity, frameId);
     if (pushed > 0) DrawCallStats.addImpostor(pushed);
     lodFrameStats.coldImpostors = pushed;
   }
@@ -2458,16 +2468,48 @@ function getWreckImpostorEnterPx() {
   return Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
 }
 
+// Haki gry (index.html): ciało do rysowania zimnego wraku na belkach (coldWreckSystem.ensureRenderBody — budżet
+// węzłów na klatkę) i konfiguracja systemu zimnych (COLD_WRECK_CONFIG z nadpisaniami, strojenie na żywo).
+const coldRenderHooks = { ensureBody: null, config: null, listedForExtras: null };
+export function setColdWreckRenderHooks(hooks = {}) {
+  coldRenderHooks.ensureBody = typeof hooks.ensureBody === 'function' ? hooks.ensureBody : null;
+  coldRenderHooks.config = hooks.config || null;
+  coldRenderHooks.listedForExtras = typeof hooks.listedForExtras === 'function' ? hooks.listedForExtras : null;
+}
+
+// Promień zasięgu żywych węzłów kadłuba na belkach na ekranie [px] — miara smugi z updateBeamSkinMesh.
+function beamBodyRadiusPx(entity, zoom) {
+  const body = entity.beamHull.body;
+  const mm = body._boundsMinMax;
+  if (!mm) return Infinity;
+  const half = Math.max(mm[3] - mm[0], mm[4] - mm[1]) * 0.5 + body.cellSize * 0.5;
+  return half * Math.max(0.0001, zoom) * (Core3D.pixelRatio || 1);
+}
+
 /**
  * Czy zamrożenie wraku przejdzie niezauważone: wrak jest poza pudłem
  * rysowania ostatniej klatki albo już leży w batchu smug (to samo kryterium
  * co updateEntityMesh), więc zamiana heksów na smugę nie przeskoczy obrazem.
+ * Wrak na belkach: przy pełnym wyglądzie zimnego (staticSkin + nearExtras — ta sama skóra, mostek, rdzeń
+ * i cień co u śpiącego) w kadrze do `inViewFreezeMaxPx`; bez niego — tylko na poziomie smugi.
+ * Ukryty mgłą wojny w kadrze — nie (zimny rysuje się jak teren, bez mgły).
  */
-export function isColdFreezeVisuallySafe(entity) {
+export function isColdFreezeVisuallySafe(entity, config = null) {
   const cull = state.lastCull;
   if (!entity || !cull) return true;
   if (!isEntityInDrawBox(entity, cull, state.lastCameraZoom)) return true;
   const data = state.entityMeshes.get(entity);
+  if (isBeamHullEntity(entity)) {
+    if (entity.__hiddenFromView === true) return false;
+    const cfg = config || coldRenderHooks.config || COLD_WRECK_CONFIG;
+    const rPx = beamBodyRadiusPx(entity, state.lastCameraZoom);
+    if (cfg.staticSkin !== false && cfg.nearExtras !== false) {
+      const limit = Number(cfg.inViewFreezeMaxPx);
+      return !(limit < Infinity) || rPx < limit;
+    }
+    if (data) return data.batchedImpostor === true;
+    return rPx < getWreckImpostorEnterPx();
+  }
   if (data) return data.batchedImpostor === true;
   // W kadrze, ale bez meshu (dopiero wszedł): policz jak updateEntityMesh.
   const grid = entity.hexGrid;
@@ -2482,12 +2524,65 @@ export function isColdFreezeVisuallySafe(entity) {
 // gorącego wraku (computeAverageBodyColor na visualImage/armorImage).
 const coldImpostorColorBySource = new WeakMap();
 
+function coldImpostorColor(entity, source) {
+  let color = state.entityMeshes.get(entity)?.impostorColor || null;
+  if (!color && source) {
+    color = coldImpostorColorBySource.get(source);
+    if (color === undefined) {
+      color = computeAverageBodyColor(source) || null;
+      coldImpostorColorBySource.set(source, color);
+    }
+  }
+  return color;
+}
+
+/**
+ * Smuga zimnego wraku na belkach — ta sama co smuga gorącego w updateBeamSkinMesh (zasięg żywych węzłów, środek
+ * pudła w układzie ciała, kąt skóry, kolor sprite'a): zamrożenie i zwolnienie ciała nie zmieniają obrazu.
+ */
+function captureBeamColdImpostor(entity, snapshot) {
+  const hull = entity.beamHull;
+  if (!hull || hull.entity !== entity || !hull.body || hull.body.dead) return false;
+  const body = hull.body;
+  const mm = body._boundsMinMax;
+  if (!mm) return false;
+  const theta = -((Number(entity.angle) || 0) + hullSpriteRotation(entity));
+  const c = Math.cos(theta), s = Math.sin(theta);
+  const ax = HullBodies.anchorLocalX(hull), ay = HullBodies.anchorLocalY(hull);
+  const originX = getEntityPosX(entity) - (c * ax - s * ay);
+  const originY = -getEntityPosY(entity) - (s * ax + c * ay);
+  const halfW = (mm[3] - mm[0]) * 0.5 + body.cellSize * 0.5;
+  const halfH = (mm[4] - mm[1]) * 0.5 + body.cellSize * 0.5;
+  const cxL = (mm[0] + mm[3]) * 0.5, cyL = (mm[1] + mm[4]) * 0.5;
+  const x = originX + c * cxL - s * cyL;
+  const y = originY + s * cxL + c * cyL;
+  const color = coldImpostorColor(entity, hull.visualImage || hull.image) || snapshot.color || { r: 0.35, g: 0.37, b: 0.4 };
+  snapshot.color = { r: color.r, g: color.g, b: color.b };
+  const cfg = coldRenderHooks.config || COLD_WRECK_CONFIG;
+  const out = snapshot.impostor || (snapshot.impostor = {});
+  out.x = x;
+  out.y = y;
+  out.rot = theta;
+  out.halfW = halfW;
+  out.halfH = halfH;
+  out.r = color.r;
+  out.g = color.g;
+  out.b = color.b;
+  out.wx = x;
+  out.wy = -y;
+  out.reach = Math.hypot(halfW, halfH);
+  out.opacity = Number.isFinite(Number(cfg.beamImpostorOpacity)) ? Number(cfg.beamImpostorOpacity) : 1;
+  return true;
+}
+
 /**
  * Przy zamrażaniu, PRZED invalidateHexShipEntity3D: kolor (z meshu, póki
  * istnieje) i gotowa smuga na zrzucie (`snapshot.color`, `snapshot.impostor`).
  */
 export function captureColdWreckImpostor(entity, snapshot) {
-  if (!entity || !snapshot?.extent) return false;
+  if (!entity || !snapshot) return false;
+  if (snapshot.kind === 'beam') return captureBeamColdImpostor(entity, snapshot);
+  if (!snapshot.extent) return false;
   let color = state.entityMeshes.get(entity)?.impostorColor || null;
   if (!color) {
     const source = snapshot.visualImage || snapshot.armorImage || entity.hexGrid?.cacheCanvas || null;
@@ -2510,6 +2605,72 @@ export function captureColdWreckImpostor(entity, snapshot) {
     getEntityScaleX(entity),
     getEntityScaleY(entity)
   );
+}
+
+/**
+ * Zimne wraki na belkach w tej klatce (z updateHexShips3D, po kadłubach z listy encji). Wrak w pudle rysowania
+ * i większy od smugi (0,8 progu — ciało gotowe, zanim skóra jest potrzebna) prosi grę o ciało do rysowania
+ * (coldRenderHooks.ensureBody — budżet węzłów na klatkę; odmowa = smuga z migawki w pushColdWreckImpostors).
+ * Wrak z ciałem: ta sama ścieżka skóry co wrak śpiący (updateBeamSkinMesh: skóra albo jej smuga, mapa ran,
+ * lakier); w pudle rozgrzania poza kadrem — siatka czeka ukryta. Z nearExtras trafia do `valid` (cień SDF).
+ * Model 3D okrętu („Statki 3D”) rysuje syncShipModels3D z listy encji zimnych z ciałem (index.html).
+ * Zwraca, czy narysowano jakąś skórę.
+ */
+function updateColdBeamWrecks(coldWrecks, cull, camX, camY, cameraZoom, frameId, valid, validSet) {
+  const ensureBody = coldRenderHooks.ensureBody;
+  if (!ensureBody) return false;
+  const cfg = coldRenderHooks.config || COLD_WRECK_CONFIG;
+  const zoomPx = Math.max(0.0001, cameraZoom) * (Core3D.pixelRatio || 1);
+  const enterPx = getWreckImpostorEnterPx();
+  const boxed = !!cull && Number.isFinite(cull.x) && Number.isFinite(cull.y);
+  const drawBoxed = boxed && Number.isFinite(cull.drawHalfW) && Number.isFinite(cull.drawHalfH);
+  const margin = DRAW_BOX_MARGIN_PX / Math.max(0.0001, cameraZoom);
+  const extras = cfg.nearExtras !== false;
+  let drew = false;
+  for (let i = 0; i < coldWrecks.length; i++) {
+    const w = coldWrecks[i];
+    const snap = w?._coldSnapshot;
+    if (!snap || snap.kind !== 'beam' || w.dead) continue;
+    const imp = snap.impostor;
+    if (!imp) continue;
+    if (boxed && (Math.abs(imp.wx - cull.x) > cull.halfW + imp.reach || Math.abs(imp.wy - cull.y) > cull.halfH + imp.reach)) continue;
+    const inDraw = !drawBoxed || (Math.abs(imp.wx - cull.x) <= cull.drawHalfW + imp.reach + margin &&
+      Math.abs(imp.wy - cull.y) <= cull.drawHalfH + imp.reach + margin);
+    const rPx = Math.max(imp.halfW, imp.halfH) * zoomPx;
+    const has = isBeamHullEntity(w);
+    // Ciało: skóra potrzebna albo już jest (poza kadrem w pudle rozgrzania — czeka; w kadrze — do połowy progu smugi).
+    // Bez staticSkin zimny jest zawsze smugą: ciało z chwili zamrożenia wraca do migawki (renderClaimMs).
+    const skins = cfg.staticSkin !== false;
+    const want = skins && inDraw && rPx >= enterPx * 0.8;
+    const keep = skins && has && (!inDraw || rPx >= enterPx * 0.5);
+    if (!(want || keep) || !ensureBody(w) || !isBeamHullEntity(w)) continue;
+    // Zimny rysuje się jak teren — bez mgły wojny (flaga z czasu, gdy był na liście encji, nie gasi cienia).
+    w.__hiddenFromView = false;
+    validSet.add(w);
+    if (extras) valid.push(w);
+    let data = state.entityMeshes.get(w);
+    // Model 3D okrętu („Statki 3D”) rysuje syncShipModels3D tylko z nearExtras — bez nich skóra jak u „Statków 2D”.
+    const modelDrawn = extras && beamSkinSuppressor !== null && beamSkinSuppressor(w) &&
+      (coldRenderHooks.listedForExtras === null || coldRenderHooks.listedForExtras(w));
+    if (!inDraw || modelDrawn) {
+      if (data?.mesh?.visible) data.mesh.visible = false;
+      if (modelDrawn) w._coldSkinFrame = frameId;
+      continue;
+    }
+    if (data && data.kind !== 'beam') {
+      state.entityMeshes.delete(w);
+      disposeMeshData(data);
+      data = null;
+    }
+    if (!data) data = createBeamSkinMesh(w);
+    if (!data) continue;
+    if (data.lastDrawFrame !== frameId - 1) data.needsInstanceRefresh = true;
+    updateBeamSkinMesh(w, data, camX, camY, cameraZoom);
+    (state.entityMeshes.get(w) || data).lastDrawFrame = frameId;
+    w._coldSkinFrame = frameId;
+    drew = true;
+  }
+  return drew;
 }
 
 export function disposeHexShips3D() {

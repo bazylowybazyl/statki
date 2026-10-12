@@ -286,10 +286,11 @@ export function createRadarFeed(tune = RADAR_TUNE) {
         }
       }
 
-      // ---- wraki (bez symbolu strony: szary ✕ i echo) ----
-      const wrecks = env.wrecks;
-      if (Array.isArray(wrecks)) {
-        let w = 0;
+      // ---- wraki (bez symbolu strony: szary ✕ i echo); po gorących i śpiących — zimne (tło, env.coldWrecks) ----
+      let w = 0;
+      for (let pass = 0; pass < 2; pass++) {
+        const wrecks = pass === 0 ? env.wrecks : env.coldWrecks;
+        if (!Array.isArray(wrecks)) continue;
         for (let i = 0; i < wrecks.length && n < tune.maxTracks && w < 48; i++) {
           const e = wrecks[i];
           if (!e || e.dead || e.removed) continue;

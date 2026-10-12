@@ -212,9 +212,11 @@ test('SensorSystem: z mgłą świadomość = wzrok strony gracza, hides(); bez m
 test('wpięcie w grę: render, celowanie, HUD i post respektują mgłę (źródła)', () => {
   const html = read('index.html');
   assert.match(html, /const renderSeen = fogSeenInto\(renderEntities, _renderSeenList\);/);
-  assert.match(html, /Bridge3D\.update\(renderSeen,/);
+  // Mostki i modele 3D: lista po mgle + zimne wraki z ciałem do rysowania (teren, src/game/coldWrecks.js).
+  assert.match(html, /const renderSeenCold = withColdNearWrecks\(renderSeen\);/);
+  assert.match(html, /Bridge3D\.update\(renderSeenCold,/);
   assert.match(html, /updateShields3D\(PAUSED \? 0 : frameDt, renderSeen,/);
-  assert.match(html, /syncShipModels3D\(\{ entities: renderSeen,/);
+  assert.match(html, /syncShipModels3D\(\{ entities: renderSeenCold,/);
   assert.match(html, /setEntityHiddenTest\(\(e\) => SensorSystem\.hides\(e\)\);/);
   assert.match(html, /setWorld3DHiddenTest\(\(st\) => SensorSystem\.hides\(st\)\);/);
   assert.match(html, /isPlayerLockTargetInRange\(target\) && !SensorSystem\.hides\(target\);/, 'namiar tylko na widziane');

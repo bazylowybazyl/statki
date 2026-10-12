@@ -236,3 +236,61 @@ Wypisz: (a) pliki i funkcje zmienione, (b) które pułapki z p. 7 są obsłużon
 a które tylko opisane, (c) co zostało poza zakresem, (d) jak użytkownik ma to sprawdzić w grze
 (kroki, co obserwować w PerfHUD), (e) dopisz sekcję „Zimne wraki” w
 `docs/AUDYT-wydajnosc-bitwa-2026-09-24.md` (2–5 zdań, stan wdrożenia).
+
+## 11. Belki — kadłuby gry (2026-10-11, etap 3 portu silnika belek)
+
+Od 2026-09-25 kadłuby gry są na silniku belek (`beamHull`, `src/game/hullBodies.js`), a punkty 3–5 i 9 tego briefu
+dotyczyły heksów — wraki na belkach nie marzły (`isFreezeCandidate` wymagał `hexGrid`; audyt 2026-10-11: ~10 µs na
+wrak na klatkę, wraki 77 gorących / 71 śpiących / 0 zimnych). Wdrożenie:
+
+- **Migawka** (`src/game/hullColdSnapshot.js`, API `HullBodies.captureColdSnapshot / restoreColdBody /
+  releaseColdBody`): węzły jako indeksy węzłów SZABLONU kadłuba (konstrukcja z obrazu rodu) — żywe i martwe wpisy
+  sąsiadujące z żywymi (skóra rysuje przy nich rozdarty brzeg dziury), przesunięcia od spoczynku (F32), HP i maks.
+  HP (F64 — pancerz mostka i komory reaktora), próg oparcia, łaty dronów; belki szablonu między węzłami migawki:
+  długość plastyczna, zerwanie, zmęczenie; ciało: latticeMin, masa, tensor, pancerz zderzeń. ~65 B na wpis zamiast
+  ~650 B ciała. Zapis sprawdza zgodność ze szablonem (stałe, komplet belek) — inaczej wrak nie marznie
+  (`stats.unsupported`). Rekord kadłuba (`hull`: obraz, kotwica, pivot, ród `dmgKey` — mapa ran, mostki, rdzenie)
+  zostaje ten sam.
+- **Zamrożenie** jak dla heksów (sen ≥ `afterSec`, cisza po trafieniu, odwołania, kadr), plus: zegar ciszy po trafieniu
+  = `HullBodies.simTime` (wraki belkowe stemplują nim `_lastImpactMs`; zegar heksowego destruktora w grze stoi), bez
+  czekającego rozpadu (`HullBodies.pendingStructure`), bez rdzenia w stopieniu, nie budowla (`hull.world`,
+  `worldDebris`). Budżet zapisu w węzłach na klatkę (`freezeNodesPerFrame`).
+- **Blokuje tylko ruch**: w `clearRadius` blokuje gracz i ciało szybsze niż `clearMoveSpeed` (40 j/s); stojący okręt
+  (flota w szyku po bitwie) — tylko bliżej niż promienie + `clearContactPad` (1 km). Dawniej zaparkowana przy polu
+  flota nie pozwalała mu zamarznąć. Zimne wraki są przeszkodami lotu AI (`rebuildWreckIndex(wrecks, coldWrecks)`) —
+  okręty je omijają, choć dla fizyki są duchem.
+- **Diagnostyka**: `ColdWreckSystem.explain(wrak)` (konsola) — pierwszy niespełniony warunek: `nie-spi`, `spi-krotko`,
+  `trafiony-niedawno`, `rozpad-w-kolejce`, `odwolanie`, `kadr`, `gracz-w-poblizu`, `ruch-w-poblizu`, `okret-tuz-obok`,
+  … (null = kandydat). Bitwa 83 na 83 okręty (`profil-bitwy-flot` / harness sesji, 2026-10-11): ~80 s po bitwie 58
+  wraków zimnych, 36 śpiących — 21 przy graczu (stał w środku pola wraków), 6–8 tuż przy stojącym okręcie, 2–4 przy
+  ruchomym, reszta świeżo uśpiona.
+- **Rysowanie** (`hexShips3D.js` § ZIMNE WRAKI, `updateColdBeamWrecks`): mały na ekranie — smuga z migawki (ta sama
+  co smuga gorącego, krycie 1); w kadrze i większy — CIAŁO DO RYSOWANIA odtworzone z migawki (`ensureRenderBody`,
+  budżet `renderRestoreNodesPerFrame`, do tego czasu smuga), poza fizyką, rysowane tą samą skórą (mapa ran, lakier,
+  światła sąsiadów, cień SDF), a mostek 3D, okna mostka, model 3D okrętu i rdzeń dostają je przez `withColdNearWrecks`
+  (index.html). Ciało, o które render nie prosi przez `renderIdleSec` (4 s czasu rzeczywistego), wraca do samej migawki (pamięć).
+  Przy zamrożeniu w kadrze ciało i siatka skóry zostają — obraz się nie zmienia (sprawdzone zrzutami w grze).
+  Wrak nie ma własnego stanu mostków (model mostka przechodzi na niego z okrętu jako rekord Bridge3D), więc rekord
+  zimnego gospodarza bez ciała CZEKA bez limitu czasu (`beamHostParkedCold` w `bridge3D.js`) — dawniej Bridge3D
+  uznawał go za osierocony i model mostka znikał na zawsze po pierwszym zwolnieniu ciała do rysowania.
+- **Odmrożenie** wyłącznie jawne (`thawWreck`): ciało do rysowania od razu, inaczej odtworzenie z migawki (1 na klatkę).
+- **Limity**: `maxCold` 1500 i `maxColdNodes` (3 mln wpisów migawek ≈ 200 MB); nadmiar — najdalszy od gracza, nigdy
+  z ładunkiem; recykling `recycleWreckEntity` → `HullBodies.recycleWreck` (także zimny bez ciała).
+- Radar kokpitu widzi zimne wraki (`env.coldWrecks`).
+
+**Decyzje dla użytkownika** (domyślne wybrane tak, żeby nic nie zmieniło się w obrazie ani w rozgrywce poza
+duchem; przełączniki `window.ColdWreckConfig`):
+1. Wygląd w kadrze: `staticSkin` (skóra z ciała do rysowania, domyślnie) albo zawsze smuga (`false` — mniej pracy
+   renderu i pamięci w kadrze).
+2. Pociski i taran: zimny wrak to duch (jak dla heksów). Alternatywa na później: zbliżenie statku gracza budzi.
+3. Pełny wygląd zimnego w kadrze (`nearExtras`: mostek, rdzeń, model 3D, cień; `nearLights`: światła sąsiadów) —
+   domyślnie tak, dlatego zamrażanie w kadrze bez limitu rozmiaru (`inViewFreezeMaxPx` = ∞). Wyłączenie = taniej,
+   ale wtedy w kadrze zamarza tylko smuga.
+4. Mapa ran zostaje, dopóki slot puli żyje (LRU — jak dla wraków poza kadrem); geometria (dziury, wgniecenia, rozdarte
+   brzegi) dokładna zawsze.
+5. Żar świeżych ran nie przechodzi przez migawkę (po ~20 s snu i tak zgasł).
+
+Testy: `tests/coldWrecksBeam.test.mjs` (migawka → odtworzenie: węzły, belki, masy, skóra po komórkach; warunki;
+ciała do rysowania; limity; AI i radar; wpięcie; rekord mostka 3D przez zwolnienie i odtworzenie ciała). W grze:
+harness z sesji (bitwa → zamrożenie → zrzuty gorący / zimny z ciałem / zimny z migawki / odmrożony — piksel w piksel
+w prostokącie wraku, także z mostkiem 3D; 0 błędów konsoli, 0 pipeline'ów w klatce).

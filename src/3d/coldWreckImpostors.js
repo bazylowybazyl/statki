@@ -81,13 +81,16 @@ function selectKth(a, n, k) {
 /**
  * Wrzuca smugi zimnych wraków z kadru do batcha. Przy braku miejsca bierze
  * najbliższe środkowi kadru (culling po odległości, nie wyjątek).
+ * Smuga z własnym kryciem (`imp.opacity` — wraki na belkach, jak smuga gorącego) bierze je zamiast `opacity`.
+ * `skipFrame` ≥ 0: wraki ze znacznikiem `_coldSkinFrame === skipFrame` rysuje w tej klatce skóra (hexShips3D).
  * @param {{MAX_IMPOSTORS:number, getCount():number, pushRaw:Function}} batch
  * @param {object[]} coldWrecks
  * @param {{x:number,y:number,drawHalfW?:number,drawHalfH?:number,halfW?:number,halfH?:number}|null} cull
  * @param {number} opacity
+ * @param {number} [skipFrame]
  * @returns {number} ile smug trafiło do batcha
  */
-export function pushColdWreckImpostors(batch, coldWrecks, cull, opacity) {
+export function pushColdWreckImpostors(batch, coldWrecks, cull, opacity, skipFrame = -1) {
   if (!batch || !Array.isArray(coldWrecks) || coldWrecks.length === 0) return 0;
   const free = (Number(batch.MAX_IMPOSTORS) || 0) - (Number(batch.getCount()) || 0);
   if (free <= 0) return 0;
@@ -102,8 +105,9 @@ export function pushColdWreckImpostors(batch, coldWrecks, cull, opacity) {
 
   let visible = 0;
   for (let i = 0; i < coldWrecks.length; i++) {
-    const imp = coldWrecks[i]?._coldSnapshot?.impostor;
-    if (!imp) continue;
+    const w = coldWrecks[i];
+    const imp = w?._coldSnapshot?.impostor;
+    if (!imp || (skipFrame >= 0 && w._coldSkinFrame === skipFrame)) continue;
     if (boxed && !inBox(imp, cull, halfW, halfH)) continue;
     visible++;
   }
@@ -118,8 +122,9 @@ export function pushColdWreckImpostors(batch, coldWrecks, cull, opacity) {
     }
     let n = 0;
     for (let i = 0; i < coldWrecks.length; i++) {
-      const imp = coldWrecks[i]?._coldSnapshot?.impostor;
-      if (!imp) continue;
+      const w = coldWrecks[i];
+      const imp = w?._coldSnapshot?.impostor;
+      if (!imp || (skipFrame >= 0 && w._coldSkinFrame === skipFrame)) continue;
       if (boxed && !inBox(imp, cull, halfW, halfH)) continue;
       const dx = imp.wx - cx;
       const dy = imp.wy - cy;
@@ -130,15 +135,17 @@ export function pushColdWreckImpostors(batch, coldWrecks, cull, opacity) {
 
   let pushed = 0;
   for (let i = 0; i < coldWrecks.length; i++) {
-    const imp = coldWrecks[i]?._coldSnapshot?.impostor;
-    if (!imp) continue;
+    const w = coldWrecks[i];
+    const imp = w?._coldSnapshot?.impostor;
+    if (!imp || (skipFrame >= 0 && w._coldSkinFrame === skipFrame)) continue;
     if (boxed && !inBox(imp, cull, halfW, halfH)) continue;
     if (maxDistSq !== Infinity) {
       const dx = imp.wx - cx;
       const dy = imp.wy - cy;
       if (dx * dx + dy * dy > maxDistSq) continue;
     }
-    if (!batch.pushRaw(imp.x, imp.y, imp.rot, imp.halfW, imp.halfH, imp.r, imp.g, imp.b, opacity)) break;
+    const alpha = Number.isFinite(imp.opacity) ? imp.opacity : opacity;
+    if (!batch.pushRaw(imp.x, imp.y, imp.rot, imp.halfW, imp.halfH, imp.r, imp.g, imp.b, alpha)) break;
     pushed++;
   }
   return pushed;

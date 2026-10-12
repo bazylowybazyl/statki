@@ -74,8 +74,9 @@ test('index.html: wybór w „Nowej grze”, skóra sprite\'a i wieżyczki kanwy
   assert.match(html, /setShipModels3DView\(View3D\.active\);/);
   assert.match(html, /if \(!View3D\.active\) Turret2D\.draw\(ctx, cam\);/);
   assert.match(html, /Turret2D\.skipDraw = \(rec\) => VisualMode\.weapons3D && !!WEAPON3D_FAMILY\[rec\.weaponId\];/);
-  // modele bez bytów ukrytych w mgle wojny (renderSeen — lista po fogSeenInto, src/game/fogOfWar.js)
-  assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);\s*\/\/[^\n]*\n\s*syncShipModels3D\(\{ entities: renderSeen,/);
+  // modele bez bytów ukrytych w mgle wojny (renderSeen — lista po fogSeenInto, src/game/fogOfWar.js) i zimne wraki
+  // z ciałem do rysowania (renderSeenCold = withColdNearWrecks(renderSeen) — model wraku zostaje po zamrożeniu)
+  assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);\s*\/\/[^\n]*\n\s*syncShipModels3D\(\{ entities: renderSeenCold,/);
   // Rozgrywka bez zmian: kadłuby dalej ze sprite'a (HullBodies.createHull), bez gałęzi 3D.
   assert.match(html, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image, hullProfileId: getNpcHullRenderProfileId\(npc\) \}\);/);
   // Kamery 3D to sam widok: bez kadłubów 3D, lotu w pionie i 6DoF (wycofana gra 3D).

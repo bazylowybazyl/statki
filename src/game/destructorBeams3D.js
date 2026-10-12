@@ -2680,6 +2680,71 @@ export const DestructorBeams3D = {
     return wreck;
   },
 
+  /**
+   * Ciało wraku z gotowych magazynów — zimny wrak gry wraca z migawki (src/game/hullColdSnapshot.js). Pola w tej
+   * samej kolejności co wrak z rozpadu (_spawnWreck): jedna klasa ukryta V8 dla obu. Stoi i śpi (prędkości zero);
+   * masa, tensor, latticeMin i pancerz z migawki, mocowania wręgów liczone od nowa z bieżącego stanu belek.
+   */
+  createRestoredBody(nodeStore, beamStore, props) {
+    const cfg = this.config;
+    const mass = Math.max(1, Number(props.mass) || 1);
+    const body = {
+      id: NEXT_BODY_ID++,
+      name: props.name || `wrak${NEXT_BODY_ID}`,
+      pos: { x: 0, y: 0, z: 0 },
+      vel: { x: 0, y: 0, z: 0 },
+      quat: { x: 0, y: 0, z: 0, w: 1 },
+      angVel: { x: 0, y: 0, z: 0 },
+      mass,
+      invMass: 1 / mass,
+      static: false,
+      anchored: false,
+      invInertiaLocal: props.invInertiaLocal.slice(),
+      radius: 0,
+      config: cfg,
+      nodeStore,
+      beamStore,
+      cellSize: props.cellSize,
+      dims: props.dims,
+      latticeMin: { x: props.latticeMin.x, y: props.latticeMin.y, z: props.latticeMin.z },
+      skinLatticeMin: { x: props.skinLatticeMin.x, y: props.skinLatticeMin.y, z: props.skinLatticeMin.z },
+      skin: props.skin || null,
+      spriteSkin: props.spriteSkin || null,
+      // Martwe wpisy (sąsiedzi żywych — brzeg rozdarcia skóry) liczą się w magazynie, nie w ciele.
+      activeNodes: Number.isFinite(props.activeNodes) ? props.activeNodes : nodeStore.count,
+      liveBeams: props.liveBeams,
+      dead: false,
+      isWreck: true,
+      noSplit: false,
+      rammingMassMult: 1,
+      collisionArmor: Number(props.collisionArmor) > 0 ? props.collisionArmor : 1,
+      meshDirty: true,
+      structureDirty: false,
+      isSleeping: true,
+      sleepFrames: 0,
+      wakeHold: 0,
+      _rot: new Float64Array(9),
+      _rotTick: -1,
+      _grid: createNodeGrid(),
+      _hashTick: -1,
+      _geomVer: 0,
+      _contactCursor: 0,
+      _contacts: [],
+      _contactDepths: [],
+      _integrity: new Int32Array(nodeStore.count),
+      _connectivity: null,
+      _splitDefer: 0,
+      _region: null,
+      _lattice: null,
+      _maxDisp: Number(props.maxDisp) || 0
+    };
+    defineLazyViews(body, null, null);
+    quatToMat3(body.quat, body._rot);
+    this._updateRadius(body);
+    if (cfg) refreshBeamMounts(body, beamSolverScratch(body), cfg);
+    return body;
+  },
+
   _transferFragmentMotion(body) {
     // Oderwana sekcja dziedziczy także ruch od zgniotu, nie tylko prędkość
     // środka rodzica. Średnią i moment pola prędkości zamieniamy na 6DoF.

@@ -127,11 +127,14 @@ Atlasa; także taran Atlas–Atlas, dziedziczenie pancerza oraz niezmieniony bud
 - Śmierć NPC → `createWreckage(npc)` → `HullBodies.convertToWreck` (cały kadłub przechodzi na wrak).
   Krytyczny wybuch → `HullBodies.shatter`: rdzeń w odłamki, promieniste rzazy, pchnięcie odłamów.
 - Okruch (< `splitMinNodes` węzłów) idzie w odłamki i znika. Budżet: 600 tys. węzłów wraków.
-- Sen wraku: `HullBodies.sleep` / `wake`. **Zimne wraki na belkach jeszcze nie zamarzają** (etap 3).
+- Sen wraku: `HullBodies.sleep` / `wake`. Zimne wraki (etap 3, 2026-10-11): migawka ciała względem szablonu
+  kadłuba (`src/game/hullColdSnapshot.js`), ciało zwalniane, w kadrze ciało do rysowania z migawki —
+  `docs/BRIEF-zimne-wraki.md` § 11.
 
 ## Czego jeszcze nie ma (kolejne etapy)
 
-3. Zimne wraki na belkach (zrzut magazynów), budżet i LOD wraków pod bitwę.
+3. ~~Zimne wraki na belkach~~ — **zrobione 2026-10-11** (`docs/BRIEF-zimne-wraki.md` § 11). Zostaje: LOD wraków
+   gorących i śpiących w renderze (dziś pełna ścieżka skóry), dym / ogniska wraków (decyzja usera — wypięte).
 4. ~~Mostki~~ — **zrobione 2026-10-05**: logika na komórkach siatki belek (`src/game/shipBridgeBeams.js`, backend
    stanu dla funkcji `shipBridge.js`), model 3D z wyrwami po komórkach, efekty agonii na pulach WebGPU, demo
    `dema/mostki-webgpu.html` — `docs/PORT-mostki.md` § 9.

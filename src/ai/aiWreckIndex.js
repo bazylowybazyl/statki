@@ -48,24 +48,31 @@ function grow(arr, need) {
 
 function byX(a, b) { return _candX[a] - _candX[b]; }
 
-// Wrak jest przeszkodą: żywy, zderza się (duch odłamu budowli nie), dość duży.
+// Wrak jest przeszkodą: żywy, zderza się (duch odłamu budowli nie), dość duży. Zimny wrak (src/game/coldWrecks.js)
+// nie ma kolizji (duch dla okrętów i pocisków), ale stoi w kadrze jak inne — okręty go omijają.
 function isObstacleWreck(w) {
-  if (!w || w.dead || w.removed || w.isCollidable === false) return false;
+  if (!w || w.dead || w.removed || (w.isCollidable === false && w.isCold !== true)) return false;
   const r = Number(w.radius) || 0;
   return r >= WRECK_OBSTACLE_MIN_RADIUS && Number.isFinite(w.x) && Number.isFinite(w.y);
 }
 
-export function rebuildWreckIndex(wrecks) {
-  _cand.length = 0;
-  _order.length = 0;
-  const n0 = Array.isArray(wrecks) ? wrecks.length : 0;
+function addCandidates(list) {
+  const n0 = Array.isArray(list) ? list.length : 0;
   for (let i = 0; i < n0; i++) {
-    const w = wrecks[i];
+    const w = list[i];
     if (!isObstacleWreck(w)) continue;
     _candX[_cand.length] = w.x;
     _order.push(_cand.length);
     _cand.push(w);
   }
+}
+
+/** `coldWrecks` — zimne wraki (tło); przeszkody lotu jak wraki z `wrecks`. */
+export function rebuildWreckIndex(wrecks, coldWrecks = null) {
+  _cand.length = 0;
+  _order.length = 0;
+  addCandidates(wrecks);
+  addCandidates(coldWrecks);
   const n = _cand.length;
   index.count = n;
   index.rMax = 0;

@@ -4,25 +4,39 @@
  * Po bitwie 174 okrętów zostaje ~426 wraków. Uśpiony wrak (`_wreckSleeping`)
  * nadal siedzi w sześciu listach: pętla wraków w physicsStep, siatka pocisków,
  * pętla budzenia destruktora, lista encji 3D, budżet areny heksów i graf sceny.
- * Zimny wrak nie jest w ŻADNEJ z nich: nie ma hexGrid (heksy wróciły do areny,
- * stan siatki żyje w zrzucie — captureHexBodySnapshot), nie ma meshy, stoi
- * w miejscu i jest duchem dla okrętów i pocisków. Rysuje go tylko batch smug.
+ * Zimny wrak nie jest w ŻADNEJ z nich: stan kadłuba żyje w zrzucie, stoi
+ * w miejscu i jest duchem dla okrętów i pocisków.
+ *
+ * Dwa rodzaje kadłubów:
+ *  - HEKSY (dema): hexGrid wraca do areny, stan siatki w zrzucie (options.hexBody —
+ *    captureHexBodySnapshot z destructor.js; gra go nie ładuje), rysuje go tylko batch smug;
+ *  - BELKI (kadłuby gry, hullBodies.js — etap 3 portu silnika belek): migawka ciała
+ *    względem szablonu kadłuba (src/game/hullColdSnapshot.js), ciało silnika zwolnione.
+ *    W kadrze (większy od smugi) render prosi o CIAŁO DO RYSOWANIA (`ensureRenderBody`):
+ *    odtworzone z migawki w budżecie węzłów na klatkę, poza fizyką, zwalniane, gdy
+ *    render przestanie o nie prosić (`renderIdleSec`). Rysunek: hexShips3D.js
+ *    (§ ZIMNE WRAKI) — ta sama skóra, mapa ran, mostek i rdzeń co u wraku śpiącego.
  *
  * To TEN SAM obiekt JS co przed zamrożeniem — łup (`_salvage`), ładunek
- * (`_cargoManifest`), `_wreckAge`, sprawca i historia zostają. Wymieniamy tylko
- * hexGrid i listy. Zimny nie znaczy „do recyklingu”: ładunek i złom zostają.
+ * (`_cargoManifest`), `_wreckAge`, sprawca, ród mapy ran i historia zostają.
+ * Zimny nie znaczy „do recyklingu”: ładunek i złom zostają.
  *
  * Zamrażanie jest automatyczne i konserwatywne (isFreezeCandidate), budzenie
  * WYŁĄCZNIE jawne (thaw): holowanie, cięcie, rozkaz, konsola. Budzenie na
- * zbliżenie odtworzyłoby dzisiejszą pętlę budzenia O(śpiące × aktywne).
+ * zbliżenie odtworzyłoby pętlę budzenia O(śpiące × aktywne).
  *
  * Moduł nie zna index.html: listy i zapytania o stan gry dostaje w opcjach
- * createColdWreckSystem, więc da się go sprawdzić w node (tests/coldWrecks.test.mjs).
+ * createColdWreckSystem, więc da się go sprawdzić w node (tests/coldWrecks.test.mjs,
+ * tests/coldWrecksBeam.test.mjs).
  */
+
+import { DESTRUCTOR_CONFIG } from './destructorConfig.js';
+import { HullBodies } from './hullBodies.js';
+import { COLD_BEAM_KIND, beamColdSnapshotBytes } from './hullColdSnapshot.js';
 
 // Zrzut i odtworzenie siatki heksów dostaje moduł w opcjach (options.hexBody) — gra nie ładuje
 // heksowego destructor.js (etap 8, docs/PORT-silnik-belek.md), a bez niego nie ma kadłubów
-// z hexGrid, więc żaden wrak nie jest kandydatem do zamrożenia. Testy podają funkcje destruktora.
+// z hexGrid; marzną wraki na belkach (HullBodies). Testy heksów podają funkcje destruktora.
 const NO_HEX_BODY = Object.freeze({
   capture: () => null,
   dispose: () => {},
@@ -33,8 +47,12 @@ const NO_HEX_BODY = Object.freeze({
 export const COLD_WRECK_CONFIG = Object.freeze({
   // Sen bez przerwy i cisza po ostatnim trafieniu/kontakcie [s czasu gry].
   afterSec: 20,
-  // Żadnego obudzonego ciała (żywe okręty, gorące wraki, gracz) bliżej [j.].
+  // Żadnego obudzonego ciała (żywe okręty, gorące wraki, gracz) bliżej [j.] — gracz i ciało ruchome
+  // (≥ clearMoveSpeed); ciało stojące (flota w szyku po bitwie) blokuje tylko bliżej niż promienie + clearContactPad.
+  // Bez tego zaparkowana przy polu flota nie pozwalała mu zamarznąć (zimny wrak jest omijany przez AI jak każdy).
   clearRadius: 2500,
+  clearMoveSpeed: 40,
+  clearContactPad: 1000,
   // Skan kandydatów [s], jak enforceWreckHexBudget.
   scanIntervalSec: 0.5,
   // Zamrożeń na klatkę — setki wraków po bitwie rozkładają się na klatki.
@@ -47,8 +65,33 @@ export const COLD_WRECK_CONFIG = Object.freeze({
   maxCold: 1500,
   // Kolejka z jednego skanu (reszta wejdzie w następnym).
   queueMax: 256,
-  // Krycie smugi zimnego wraku — sygnał „tło”.
-  impostorOpacity: 0.7
+  // Krycie smugi zimnego wraku heksowego — sygnał „tło”.
+  impostorOpacity: 0.7,
+
+  // --- wraki na belkach (kadłuby gry) ---
+  // Węzłów migawek na klatkę przy zamrażaniu (zapis ~1–3 µs na węzeł); pierwszy wrak klatki idzie zawsze.
+  freezeNodesPerFrame: 12000,
+  // Suma węzłów migawek zimnych na belkach (~40–80 B na węzeł); nadmiar: jak maxCold.
+  maxColdNodes: 3000000,
+  // Ciało do rysowania (skóra zimnego wraku w kadrze): węzłów odtwarzanych na klatkę (do tego czasu smuga).
+  renderRestoreNodesPerFrame: 8000,
+  // Ciało do rysowania, o które render nie prosił przez tyle sekund (czasu rzeczywistego — przy 500 fps klatki
+  // mijają za szybko: przesunięcie kamery tam i z powrotem odtwarzałoby ciała w kółko), wraca do samej migawki.
+  renderIdleSec: 4,
+  // Ciało wraku zamrożonego poza kadrem (render po nie nie sięgnie) — wraca do migawki po tylu ms.
+  renderClaimMs: 150,
+  // WYGLĄD w kadrze (docs/BRIEF-zimne-wraki.md § „Belki”): wrak większy od smugi rysuje skóra z ciała odtworzonego
+  // z migawki (false — zawsze smuga, bez ciał do rysowania).
+  staticSkin: true,
+  // Światła innych okrętów (reflektory, lampy pozycyjne, błyski świata) na skórze zimnego — jak u śpiącego.
+  nearLights: true,
+  // Mostek 3D, okna mostka, rdzeń reaktora, model 3D okrętu („Statki 3D”) i cień SDF — jak u śpiącego.
+  nearExtras: true,
+  // Zamrażanie w kadrze do tylu px promienia na ekranie. Przy staticSkin + nearExtras wygląd zimnego jest wyglądem
+  // śpiącego, więc bez limitu; bez nich — tylko poziom smugi (hexShips3D.js: isColdFreezeVisuallySafe).
+  inViewFreezeMaxPx: Infinity,
+  // Krycie smugi zimnego wraku na belkach: 1 = jak smuga gorącego (bez przeskoku przy zamrożeniu).
+  beamImpostorOpacity: 1
 });
 
 export const THAW_RESULT = Object.freeze({
@@ -68,11 +111,16 @@ export function wreckHasCargo(wreck) {
   return false;
 }
 
-// Promień w jednostkach świata. Wrak z destruktora trzyma `radius` w jednostkach
-// siatki (piksele sprite'a), okręty — już przeskalowany.
+/** Czy zimny wrak jest wrakiem na belkach (migawka ciała silnika belek). */
+export function isBeamColdWreck(wreck) {
+  return wreck?._coldSnapshot?.kind === COLD_BEAM_KIND;
+}
+
+// Promień w jednostkach świata. Wrak z heksowego destruktora trzyma `radius` w jednostkach
+// siatki (piksele sprite'a); okręty i kadłuby na belkach — już w świecie.
 function entityWorldRadius(entity) {
   const r = Number(entity?.radius) || 0;
-  if (!entity?.isWreck) return r;
+  if (!entity?.isWreck || entity.beamHull || isBeamColdWreck(entity)) return r;
   const v = entity.visual;
   const sx = Math.abs(Number(v?.spriteScaleX ?? v?.spriteScale) || 1);
   const sy = Math.abs(Number(v?.spriteScaleY ?? v?.spriteScale) || 1);
@@ -90,8 +138,12 @@ function entityY(entity) {
 // Streszczenie dla UI (pole wraków, skaner). Liczone raz, przy zamrażaniu.
 export function buildColdWreckSummary(wreck, snapshot) {
   const salvage = wreck?._salvage || null;
-  const liveHexes = snapshot?.cells?.length || 0;
-  const sourceShards = Number(salvage?.sourceShards) || Number(snapshot?.baseStructuralCount) || liveHexes || 1;
+  const beam = snapshot?.kind === COLD_BEAM_KIND;
+  // Belki: węzły (salvage liczy udziały w węzłach — sourceShards to węzły rodu), heksy: komórki zrzutu.
+  const liveHexes = beam ? (snapshot.liveNodes || 0) : (snapshot?.cells?.length || 0);
+  const sourceShards = Number(salvage?.sourceShards)
+    || (beam ? Number(snapshot.hull?.baseNodes) : Number(snapshot?.baseStructuralCount))
+    || liveHexes || 1;
   let hasScrap = false;
   for (const id in salvage?.materials || {}) {
     if ((Number(salvage.materials[id]) || 0) >= 1) {
@@ -110,6 +162,17 @@ export function buildColdWreckSummary(wreck, snapshot) {
   };
 }
 
+// Rdzeń reaktora w STOPIENIU (detonacja w toku) — wrak z bombą nie idzie w tło.
+function hasMeltingCore(w) {
+  const cores = w?.reactorCores;
+  if (!Array.isArray(cores)) return false;
+  for (let i = 0; i < cores.length; i++) {
+    const c = cores[i];
+    if (c && c.host === w && c.state === 'meltdown') return true;
+  }
+  return false;
+}
+
 /**
  * @param {object} options
  * @param {object[]} options.wrecks      gorące i śpiące (index.html: `wrecks`)
@@ -118,19 +181,23 @@ export function buildColdWreckSummary(wreck, snapshot) {
  * @param {(stamp: number) => void} [options.markReferences]  stempluje `w._coldRefStamp = stamp`
  *        na wrakach, do których coś się odwołuje (holowanie, cięcie, lock, hover, rozkaz, ładunek)
  * @param {(w: object) => boolean} [options.isReferenced]  tanie odwołania sprawdzane wprost
- * @param {(w: object) => boolean} [options.isVisuallySafe]  poza kadrem albo już smuga
+ * @param {(w: object) => boolean} [options.isVisuallySafe]  poza kadrem albo zamiana obrazu niewidoczna
  * @param {() => ({x:number,y:number}|null)} [options.getPlayerPos]
- * @param {() => number} [options.getSimTimeMs]  zegar symulacji (jak `_lastImpactMs`)
+ * @param {() => number} [options.getSimTimeMs]  zegar symulacji (jak `_lastImpactMs`); domyślnie po rodzaju
+ *        wraku: belki — HullBodies.simTime, heksy — 0 (zegar destruktora podaje wołający)
  * @param {(w: object, snapshot: object) => void} [options.onBeforeFreeze]  przed zwolnieniem
- *        siatki: odpięcie lin, zapis smugi (kolor), unieważnienie meshy 3D
+ *        siatki: odpięcie lin, zapis smugi (kolor), unieważnienie meshy 3D (heksy)
  * @param {(w: object, reason: string) => void} [options.onThawed]
  * @param {(w: object) => void} [options.onEvicted]
- * @param {(w: object) => unknown} [options.recycle]  zwolnienie wypartego zimnego wraku (domyślnie nic)
+ * @param {(w: object) => unknown} [options.recycle]  zwolnienie wypartego zimnego wraku; domyślnie wrak na belkach
+ *        — HullBodies.recycleWreck, heksowy — nic
  * @param {{capture(w), dispose(w), restore(w, snapshot), wake(w)}} [options.hexBody]  zrzut / zwolnienie /
  *        odtworzenie / obudzenie siatki heksów (destructor.js: captureHexBodySnapshot, disposeHexBody,
- *        initHexBodyFromSnapshot, wakeWreck + wakeHexEntity); domyślnie brak — nic się nie zamraża
+ *        initHexBodyFromSnapshot, wakeWreck + wakeHexEntity); domyślnie brak — wrak heksowy nie marznie
  * @param {() => number} [options.getFrameId]  id klatki rAF: budżety liczone na klatkę
  *        także dla thaw() wołanego z UI między klatkami; bez niego — na wywołanie step()
+ * @param {() => number} [options.getTimeMs]  zegar rzeczywisty [ms] (zwalnianie ciał do rysowania); domyślnie
+ *        performance.now
  * @param {object} [options.config]  nadpisania COLD_WRECK_CONFIG
  */
 export function createColdWreckSystem(options = {}) {
@@ -145,23 +212,37 @@ export function createColdWreckSystem(options = {}) {
   const isReferenced = typeof options.isReferenced === 'function' ? options.isReferenced : null;
   const isVisuallySafe = typeof options.isVisuallySafe === 'function' ? options.isVisuallySafe : () => true;
   const getPlayerPos = typeof options.getPlayerPos === 'function' ? options.getPlayerPos : () => null;
-  const getSimTimeMs = typeof options.getSimTimeMs === 'function' ? options.getSimTimeMs : () => 0;
+  const fixedClock = typeof options.getSimTimeMs === 'function' ? options.getSimTimeMs : null;
   const onBeforeFreeze = typeof options.onBeforeFreeze === 'function' ? options.onBeforeFreeze : null;
   const onThawed = typeof options.onThawed === 'function' ? options.onThawed : null;
   const onEvicted = typeof options.onEvicted === 'function' ? options.onEvicted : null;
-  const recycle = typeof options.recycle === 'function' ? options.recycle : () => null;
+  const recycle = typeof options.recycle === 'function'
+    ? options.recycle
+    : (w) => ((w.beamHull || isBeamColdWreck(w)) ? HullBodies.recycleWreck(w) : null);
   const hexBody = { ...NO_HEX_BODY, ...(options.hexBody || {}) };
   const getFrameId = typeof options.getFrameId === 'function' ? options.getFrameId : null;
+  const getTimeMs = typeof options.getTimeMs === 'function' ? options.getTimeMs
+    : () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
   const freezeQueue = [];
   const thawQueue = [];
+  // Zimne wraki na belkach z ciałem do rysowania (kolejność bez znaczenia, swap-pop).
+  const renderBodies = [];
   let scanTimer = 0;
   let refStamp = 0;
   let freezesThisFrame = 0;
+  let freezeNodesThisFrame = 0;
   let thawsThisFrame = 0;
+  let renderNodesThisFrame = 0;
   let budgetFrameId = null;
   // Rośnie przy każdej zmianie zbioru zimnych — UI (pola wraków) przebudowuje się po nim.
   let version = 0;
+
+  // Zegar warunku „cisza po trafieniu” — ten sam, którym stemplowano `_lastImpactMs`.
+  function simMsOf(w) {
+    if (fixedClock) return fixedClock();
+    return w?.beamHull ? (Number(HullBodies.simTime) || 0) * 1000 : 0;
+  }
 
   // Nowa klatka = nowe budżety. Bez getFrameId zeruje je każde step().
   function syncFrameBudget(force) {
@@ -173,7 +254,9 @@ export function createColdWreckSystem(options = {}) {
       return;
     }
     freezesThisFrame = 0;
+    freezeNodesThisFrame = 0;
     thawsThisFrame = 0;
+    renderNodesThisFrame = 0;
   }
   const stats = {
     frozen: 0,
@@ -181,7 +264,15 @@ export function createColdWreckSystem(options = {}) {
     evicted: 0,
     thawFailed: 0,
     lastScanCandidates: 0,
-    queued: 0
+    queued: 0,
+    // belki: węzły i bajty migawek zimnych, odmowy zapisu (wrak spoza szablonu), ciała do rysowania
+    coldNodes: 0,
+    snapshotBytes: 0,
+    unsupported: 0,
+    renderBodies: 0,
+    renderRestores: 0,
+    renderReleases: 0,
+    renderDeferred: 0
   };
 
   function refreshReferences() {
@@ -190,36 +281,91 @@ export function createColdWreckSystem(options = {}) {
     if (markReferences) markReferences(refStamp);
   }
 
-  function hasAwakeBodyNear(w) {
+  // 0 — nic; 1 — gracz w clearRadius; 2 — ciało ruchome w clearRadius; 3 — stojące tuż przy wraku (clearContactPad).
+  function awakeBodyNear(w) {
     const bodies = getAwakeBodies() || EMPTY;
     const wx = entityX(w);
     const wy = entityY(w);
     const wr = entityWorldRadius(w);
+    const moveSq = config.clearMoveSpeed * config.clearMoveSpeed;
     for (let i = 0; i < bodies.length; i++) {
       const b = bodies[i];
       if (!b || b === w || b.dead || b.destroyed) continue;
       // Śpiący (i zimny) wrak nie jest obudzonym ciałem — pole zamarza razem.
       if (b.isWreck && (b._wreckSleeping || b.isCold)) continue;
-      const reach = config.clearRadius + wr + entityWorldRadius(b);
+      const br = entityWorldRadius(b);
+      const reach = config.clearRadius + wr + br;
       const dx = entityX(b) - wx;
       const dy = entityY(b) - wy;
-      if (dx * dx + dy * dy < reach * reach) return true;
+      const distSq = dx * dx + dy * dy;
+      if (distSq >= reach * reach) continue;
+      if (b.isPlayer === true) return 1;
+      const vx = Number(b.vel?.x ?? b.vx ?? 0), vy = Number(b.vel?.y ?? b.vy ?? 0);
+      if (vx * vx + vy * vy >= moveSq) return 2;
+      const near = wr + br + config.clearContactPad;
+      if (distSq < near * near) return 3;
     }
-    return false;
+    return 0;
+  }
+
+  function hasAwakeBodyNear(w) {
+    return awakeBodyNear(w) !== 0;
+  }
+
+  // Kadłub na belkach do zamrożenia: wrak gry (kotwica środka masy), nie budowla, bez czekającego rozpadu.
+  function beamFreezable(w) {
+    const hull = w.beamHull;
+    if (hull.entity !== w || !hull.body || hull.body.dead || hull.body.activeNodes <= 0) return false;
+    if (hull.world || w.worldDebris || w.isWorldPiece || hull.body.anchored || hull.anchorMode !== 'com') return false;
+    if (HullBodies.pendingStructure(w)) return false;
+    return !hasMeltingCore(w);
+  }
+
+  // Pierwszy niespełniony warunek zamrożenia (diagnostyka — ColdWreckSystem.explain w konsoli); null = kandydat.
+  function explain(w) {
+    if (!w || !w.isWreck || w.dead || w._inPool) return 'nie-wrak';
+    if (w.isCold) return 'zimny';
+    if (w._coldUnsupported === true) return 'spoza-szablonu';
+    if (w.beamHull) {
+      const hull = w.beamHull;
+      if (hull.entity !== w || !hull.body || hull.body.dead || hull.body.activeNodes <= 0) return 'bez-ciala';
+      if (hull.world || w.worldDebris || w.isWorldPiece || hull.body.anchored || hull.anchorMode !== 'com') return 'budowla';
+      if (HullBodies.pendingStructure(w)) return 'rozpad-w-kolejce';
+      if (hasMeltingCore(w)) return 'rdzen-stopienie';
+    } else if (!w.hexGrid || !w.hexGrid.hexTemplate) {
+      return 'bez-siatki';
+    }
+    if (w.noWreckSleep || w.isAsteroidHex) return 'bez-snu';
+    if (!w._wreckSleeping) return 'nie-spi';
+    if (!((Number(w._wreckSleptSec) || 0) >= config.afterSec)) return 'spi-krotko';
+    const lastHit = Number(w._lastImpactMs);
+    if (Number.isFinite(lastHit) && simMsOf(w) - lastHit < config.afterSec * 1000) return 'trafiony-niedawno';
+    refreshReferences();
+    if (w._coldRefStamp === refStamp) return 'odwolanie';
+    if (isReferenced && isReferenced(w)) return 'odwolanie-wprost';
+    if (!isVisuallySafe(w)) return 'kadr';
+    const near = awakeBodyNear(w);
+    if (near !== 0) return near === 1 ? 'gracz-w-poblizu' : near === 2 ? 'ruch-w-poblizu' : 'okret-tuz-obok';
+    return null;
   }
 
   // Wszystkie warunki z briefu, od najtańszych. Wołane przy skanie i ponownie
   // tuż przed zamrożeniem (między skanem a klatką stan mógł się zmienić).
-  function isFreezeCandidate(w, simMs = getSimTimeMs()) {
+  function isFreezeCandidate(w) {
     if (!w || !w.isWreck || w.dead || w._inPool || w.isCold) return false;
-    const grid = w.hexGrid;
-    if (!grid || !grid.hexTemplate || w._coldUnsupported === true) return false;
+    if (w._coldUnsupported === true) return false;
+    if (w.beamHull) {
+      if (!beamFreezable(w)) return false;
+    } else {
+      const grid = w.hexGrid;
+      if (!grid || !grid.hexTemplate) return false;
+    }
     // Holowany wrak ma noWreckSleep (startWreckTow); asteroidy nie zasypiają.
     if (w.noWreckSleep || w.isAsteroidHex) return false;
     if (!w._wreckSleeping) return false;
     if (!((Number(w._wreckSleptSec) || 0) >= config.afterSec)) return false;
     const lastHit = Number(w._lastImpactMs);
-    if (Number.isFinite(lastHit) && simMs - lastHit < config.afterSec * 1000) return false;
+    if (Number.isFinite(lastHit) && simMsOf(w) - lastHit < config.afterSec * 1000) return false;
     if (w._coldRefStamp === refStamp) return false;
     if (isReferenced && isReferenced(w)) return false;
     if (!isVisuallySafe(w)) return false;
@@ -227,13 +373,13 @@ export function createColdWreckSystem(options = {}) {
     return true;
   }
 
-  function scan(simMs) {
+  function scan() {
     for (let i = 0; i < freezeQueue.length; i++) freezeQueue[i]._coldQueued = false;
     freezeQueue.length = 0;
     let candidates = 0;
     for (let i = 0; i < wrecks.length; i++) {
       const w = wrecks[i];
-      if (!isFreezeCandidate(w, simMs)) continue;
+      if (!isFreezeCandidate(w)) continue;
       candidates++;
       if (freezeQueue.length < config.queueMax && w._coldQueued !== true) {
         w._coldQueued = true;
@@ -244,23 +390,41 @@ export function createColdWreckSystem(options = {}) {
     stats.queued = freezeQueue.length;
   }
 
+  function noteBeamSnapshot(snapshot, sign) {
+    stats.coldNodes += sign * (snapshot.nodeCount || 0);
+    stats.snapshotBytes += sign * beamColdSnapshotBytes(snapshot);
+  }
+
   function freeze(w) {
     if (!w || w.isCold) return false;
     const index = wrecks.indexOf(w);
     if (index < 0) return false;
-    const snapshot = hexBody.capture(w);
+    const beam = !!w.beamHull;
+    const snapshot = beam ? HullBodies.captureColdSnapshot(w) : hexBody.capture(w);
     if (!snapshot) {
-      // Siatka nie leży na komórkach szablonu (awaryjny wrak) — nie próbujemy znowu.
+      // Siatka nie leży na komórkach szablonu (awaryjny wrak, belka spoza szablonu) — nie próbujemy znowu.
       w._coldUnsupported = true;
+      stats.unsupported++;
       return false;
     }
     snapshot.summary = buildColdWreckSummary(w, snapshot);
     w._coldSnapshot = snapshot;
-    // Lina, smuga (kolor liczony z meshu, póki istnieje), meshe 3D — przed
+    // Lina, smuga (kolor liczony z meshu, póki istnieje), meshe 3D (heksy) — przed
     // zwolnieniem siatki, bo renderer czyta jeszcze jej zasięg.
     if (onBeforeFreeze) onBeforeFreeze(w, snapshot);
-    hexBody.dispose(w);
-    w.hexGrid = null;
+    if (beam) {
+      // Ciało zostaje jako ciało do rysowania: render przejmie je w tej klatce, jeśli wrak jest w kadrze
+      // (bez przebudowy skóry); inaczej po renderClaimMs wraca do samej migawki.
+      HullBodies.sleep(w);
+      w._coldRenderMs = getTimeMs() - Math.max(0, config.renderIdleSec * 1000 - config.renderClaimMs);
+      listRenderBody(w);
+      stats.renderBodies = renderBodies.length;
+      noteBeamSnapshot(snapshot, 1);
+      freezeNodesThisFrame += snapshot.nodeCount;
+    } else {
+      hexBody.dispose(w);
+      w.hexGrid = null;
+    }
     w.isCollidable = false;
     w.isCold = true;
     w._coldQueued = false;
@@ -281,13 +445,17 @@ export function createColdWreckSystem(options = {}) {
     return true;
   }
 
-  function processFreezeQueue(simMs) {
+  function processFreezeQueue() {
     let attempts = config.freezeAttemptsPerFrame;
     while (freezesThisFrame < config.freezePerFrame && attempts > 0 && freezeQueue.length > 0) {
       attempts--;
-      const w = freezeQueue.pop();
+      const w = freezeQueue[freezeQueue.length - 1];
+      // Budżet węzłów migawek: duży wrak poczeka na następną klatkę (pierwszy w klatce idzie zawsze).
+      const nodes = w.beamHull?.body ? w.beamHull.body.activeNodes : 0;
+      if (nodes > 0 && freezeNodesThisFrame > 0 && freezeNodesThisFrame + nodes > config.freezeNodesPerFrame) break;
+      freezeQueue.pop();
       w._coldQueued = false;
-      if (!isFreezeCandidate(w, simMs)) continue;
+      if (!isFreezeCandidate(w)) continue;
       freeze(w);
     }
     stats.queued = freezeQueue.length;
@@ -301,11 +469,27 @@ export function createColdWreckSystem(options = {}) {
     return true;
   }
 
+  // Lista ciał do rysowania bez powtórzeń (ciało zwolnione spoza systemu wypada z niej dopiero w step()).
+  function listRenderBody(w) {
+    if (renderBodies.indexOf(w) < 0) renderBodies.push(w);
+  }
+
+  function hasRenderBody(w) {
+    const hull = w.beamHull;
+    return !!hull && hull.entity === w && !!hull.body && !hull.body.dead;
+  }
+
   function performThaw(w, reason) {
     w._coldThawQueued = false;
     const snapshot = w._coldSnapshot;
     const index = coldWrecks.indexOf(w);
-    if (!w.isCold || !snapshot || index < 0 || !hexBody.restore(w, snapshot)) {
+    const beam = snapshot?.kind === COLD_BEAM_KIND;
+    let ok = !!w.isCold && !!snapshot && index >= 0;
+    if (ok) {
+      if (beam) ok = hasRenderBody(w) || !!HullBodies.restoreColdBody(w, snapshot);
+      else ok = !!hexBody.restore(w, snapshot);
+    }
+    if (!ok) {
       w._coldThawCallback = null;
       stats.thawFailed++;
       return false;
@@ -316,7 +500,14 @@ export function createColdWreckSystem(options = {}) {
     w._coldSnapshot = null;
     w.isCollidable = true;
     w._wreckSleptSec = 0;
-    hexBody.wake(w);
+    if (beam) {
+      noteBeamSnapshot(snapshot, -1);
+      w._wreckSleeping = false;
+      w._wreckSleepTimer = 0;
+      HullBodies.wake(w, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+    } else {
+      hexBody.wake(w);
+    }
     if (!wrecks.includes(w)) wrecks.push(w);
     stats.thawed++;
     version++;
@@ -328,7 +519,7 @@ export function createColdWreckSystem(options = {}) {
   }
 
   /**
-   * Jawne wybudzenie. Wrak wraca do `wrecks` z odtworzoną siatką; meshe
+   * Jawne wybudzenie. Wrak wraca do `wrecks` z odtworzoną siatką / ciałem; meshe
    * powstają leniwie w updateHexShips3D. Najwyżej `thawPerFrame` na klatkę —
    * reszta czeka w kolejce, a `onThawed(w)` zadziała, gdy przyjdzie jej kolej.
    * @returns {'thawed'|'queued'|'failed'}
@@ -352,21 +543,87 @@ export function createColdWreckSystem(options = {}) {
     return performThaw(w, reason) ? THAW_RESULT.THAWED : THAW_RESULT.FAILED;
   }
 
-  // Nadmiar ponad maxCold: najdalszy od gracza, nigdy z ładunkiem ani czekający
-  // na odmrożenie. Zwykle 1–4 na klatkę (tyle, ile przybyło), O(zimne) każdy.
+  /**
+   * Render (hexShips3D, raz na klatkę): zimny wrak na belkach w kadrze i większy od smugi potrzebuje ciała do
+   * rysowania. true = ciało jest (wrak oznaczony jako rysowany w tej klatce); false = smuga (staticSkin wyłączone,
+   * budżet węzłów klatki wyczerpany — spróbuje w następnej, migawka nie pasuje do szablonu).
+   */
+  function ensureRenderBody(w) {
+    if (!w || !w.isCold || w.dead) return false;
+    const snapshot = w._coldSnapshot;
+    if (!snapshot || snapshot.kind !== COLD_BEAM_KIND) return false;
+    if (hasRenderBody(w)) {
+      w._coldRenderMs = getTimeMs();
+      return true;
+    }
+    if (!config.staticSkin || snapshot.renderFailed) return false;
+    syncFrameBudget(false);
+    const nodes = snapshot.nodeCount || 0;
+    if (renderNodesThisFrame > 0 && renderNodesThisFrame + nodes > config.renderRestoreNodesPerFrame) {
+      stats.renderDeferred++;
+      return false;
+    }
+    if (!HullBodies.restoreColdBody(w, snapshot)) {
+      snapshot.renderFailed = true;
+      return false;
+    }
+    renderNodesThisFrame += nodes;
+    w._coldRenderMs = getTimeMs();
+    listRenderBody(w);
+    stats.renderBodies = renderBodies.length;
+    stats.renderRestores++;
+    return true;
+  }
+
+  // Ciała do rysowania, o które render przestał prosić, wracają do migawki (pamięć); odmrożone i wyrzucone
+  // wypadają z listy. O(ciała do rysowania), raz na klatkę.
+  function releaseIdleRenderBodies() {
+    const now = getTimeMs();
+    const idleMs = config.renderIdleSec * 1000;
+    for (let i = renderBodies.length - 1; i >= 0; i--) {
+      const w = renderBodies[i];
+      let drop = !w || !w.isCold || w.dead || !hasRenderBody(w);
+      if (!drop && now - (Number(w._coldRenderMs) || 0) > idleMs) {
+        HullBodies.releaseColdBody(w);
+        stats.renderReleases++;
+        drop = true;
+      }
+      if (!drop) continue;
+      const last = renderBodies.length - 1;
+      if (i !== last) renderBodies[i] = renderBodies[last];
+      renderBodies.pop();
+    }
+    stats.renderBodies = renderBodies.length;
+  }
+
+  function evict(w, index) {
+    removeCold(w, index);
+    if (isBeamColdWreck(w)) noteBeamSnapshot(w._coldSnapshot, -1);
+    w.isCold = false;
+    recycle(w);
+    stats.evicted++;
+    version++;
+    if (onEvicted) onEvicted(w);
+  }
+
+  // Nadmiar ponad maxCold (i ponad maxColdNodes węzłów migawek): najdalszy od gracza, nigdy z ładunkiem ani
+  // czekający na odmrożenie. Zwykle 1–4 na klatkę (tyle, ile przybyło), O(zimne) każdy.
   function enforceColdLimit() {
     let excess = coldWrecks.length - config.maxCold;
-    if (excess <= 0) return 0;
+    let nodeExcess = stats.coldNodes - config.maxColdNodes;
+    if (excess <= 0 && nodeExcess <= 0) return 0;
     const player = getPlayerPos();
     const px = Number(player?.x) || 0;
     const py = Number(player?.y) || 0;
     let evicted = 0;
-    while (excess > 0) {
+    while (excess > 0 || nodeExcess > 0) {
       let worst = -1;
       let worstDistSq = -1;
       for (let i = 0; i < coldWrecks.length; i++) {
         const w = coldWrecks[i];
         if (w._coldThawQueued || wreckHasCargo(w)) continue;
+        // Nadmiar samych węzłów: tylko wraki na belkach coś zwalniają.
+        if (excess <= 0 && !isBeamColdWreck(w)) continue;
         const dx = entityX(w) - px;
         const dy = entityY(w) - py;
         const distSq = dx * dx + dy * dy;
@@ -377,14 +634,11 @@ export function createColdWreckSystem(options = {}) {
       }
       if (worst < 0) break;
       const w = coldWrecks[worst];
-      removeCold(w, worst);
-      w.isCold = false;
-      recycle(w);
-      stats.evicted++;
-      version++;
+      const nodes = isBeamColdWreck(w) ? (w._coldSnapshot.nodeCount || 0) : 0;
+      evict(w, worst);
       evicted++;
       excess--;
-      if (onEvicted) onEvicted(w);
+      nodeExcess -= nodes;
     }
     return evicted;
   }
@@ -395,7 +649,6 @@ export function createColdWreckSystem(options = {}) {
    */
   function step(frameDt) {
     syncFrameBudget(true);
-    const simMs = getSimTimeMs();
 
     // Najpierw odmrożenia z kolejki — rozkaz gracza przed porządkami.
     while (thawsThisFrame < config.thawPerFrame && thawQueue.length > 0) {
@@ -410,10 +663,11 @@ export function createColdWreckSystem(options = {}) {
     if (scanDue || freezeQueue.length > 0) refreshReferences();
     if (scanDue) {
       scanTimer = config.scanIntervalSec;
-      scan(simMs);
+      scan();
     }
-    if (freezeQueue.length > 0) processFreezeQueue(simMs);
-    if (coldWrecks.length > config.maxCold) enforceColdLimit();
+    if (freezeQueue.length > 0) processFreezeQueue();
+    if (renderBodies.length > 0) releaseIdleRenderBodies();
+    if (coldWrecks.length > config.maxCold || stats.coldNodes > config.maxColdNodes) enforceColdLimit();
   }
 
   /** Zdejmuje wrak z listy zimnych bez recyklingu (np. removeWreckFromWorld). */
@@ -423,6 +677,7 @@ export function createColdWreckSystem(options = {}) {
     w._coldThawCallback = null;
     const removed = removeCold(w);
     if (removed) {
+      if (isBeamColdWreck(w)) noteBeamSnapshot(w._coldSnapshot, -1);
       w.isCold = false;
       version++;
     }
@@ -436,6 +691,8 @@ export function createColdWreckSystem(options = {}) {
     freeze,
     thaw,
     forget,
+    ensureRenderBody,
+    explain,
     isFreezeCandidate(w) {
       refreshReferences();
       return isFreezeCandidate(w);
@@ -443,6 +700,9 @@ export function createColdWreckSystem(options = {}) {
     enforceColdLimit,
     get freezeQueueLength() { return freezeQueue.length; },
     get thawQueueLength() { return thawQueue.length; },
+    get renderBodyCount() { return renderBodies.length; },
+    // Zimne wraki na belkach z ciałem do rysowania (może zawierać odmrożone / zwolnione do najbliższego step()).
+    get renderList() { return renderBodies; },
     get version() { return version; }
   };
 }

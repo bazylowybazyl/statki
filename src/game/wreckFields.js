@@ -29,6 +29,8 @@ function wreckKey(w) {
 
 function worldRadius(w) {
   const r = Number(w?.radius) || 0;
+  // Wrak na belkach (także zimny — sama migawka) ma promień już w świecie; heksowy — w pikselach siatki.
+  if (w?.beamHull || w?._coldSnapshot?.kind === 'beam') return r;
   const v = w?.visual;
   const sx = Math.abs(Number(v?.spriteScaleX ?? v?.spriteScale) || 1);
   const sy = Math.abs(Number(v?.spriteScaleY ?? v?.spriteScale) || 1);

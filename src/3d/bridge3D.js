@@ -572,6 +572,12 @@ function beamEntityOwnsAny(rec, e, notAtHull = null) {
   return false;
 }
 
+// Zimny wrak na belkach (src/game/coldWrecks.js) z rekordem tego rodu: kadłub żyje w migawce i wraca z nią (ten sam
+// rekord kadłuba) — w kadrze jako ciało do rysowania, po odmrożeniu na stałe.
+function beamHostParkedCold(rec, host) {
+  return !!host && !host.dead && host.isCold === true && host._coldSnapshot?.hull?.dmgKey === rec.lineage;
+}
+
 const _lat = { x: 0, y: 0 };
 const _bo = { x: 0, y: 0 };
 const _bpx = { x: 0, y: 0 };
@@ -1503,6 +1509,14 @@ export const Bridge3D = {
     for (let i = this.records.length - 1; i >= 0; i--) {
       const rec = this.records[i];
       if (!rec || rec.seenFrame === frame) continue;
+      // Gospodarz to zimny wrak (bez ciała albo poza listą): rekord czeka bez limitu czasu — wrak nie ma własnego
+      // stanu mostków (rekord przeszedł na niego z okrętu), więc oddanego nie przyjąłby ponownie. Wiersz obrażeń
+      // oddaje jak gospodarz spoza listy; usunięty wrak (dead) — rekord odchodzi niżej.
+      if (rec.beam && beamHostParkedCold(rec, rec.host)) {
+        rec.orphanSince = -1;
+        if (rec.row >= 0 && ctx.heatNow - rec.lastSeenAt > ROW_RELEASE_SEC) this._freeRows(rec);
+        continue;
+      }
       // Gospodarz żyje i ma heksy mostka, tylko nie ma go na tej liście (lot
       // nad Ring City rysuje sam statek gracza, NPC zdjęty z listy) — rekord
       // czeka; po ROW_RELEASE_SEC oddaje wiersz, po RECORD_TTL_SEC odchodzi.

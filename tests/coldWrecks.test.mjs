@@ -537,9 +537,10 @@ test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawn
   assert.match(sliceFunction(src, 'function pickWreckTargetAtWorld(worldPoint)'), /pass === 0 \? window\.wrecks : coldWrecks/);
   assert.match(src, /const wreckList = pass === 0 \? window\.wrecks : coldWrecks;/, 'hover widzi zimne');
   assert.match(sliceFunction(src, 'function removeWreckFromWorld(wreck)'), /coldWreckSystem\.forget\(wreck\);\s*recycleWreckEntity\(wreck\);/);
-  // Wrak na belkach zwalnia kadłub (HullBodies); heksowego destruktora gra nie ładuje (etap 8 portu belek).
+  // Wrak na belkach zwalnia kadłub (HullBodies) — także zimny z samą migawką; heksowego destruktora gra nie ładuje
+  // (etap 8 portu belek).
   const recycle = sliceFunction(src, 'function recycleWreckEntity(wreck)');
-  assert.match(recycle, /if \(wreck\?\.beamHull\) return HullBodies\.recycleWreck\(wreck\);/);
+  assert.match(recycle, /if \(wreck\?\.beamHull \|\| wreck\?\._coldSnapshot\?\.kind === 'beam'\) return HullBodies\.recycleWreck\(wreck\);/);
   assert.doesNotMatch(recycle, /DestructorSystem/);
 
   const freezeHook = src.slice(src.indexOf('onBeforeFreeze(w) {'), src.indexOf('onThawed(w, reason) {'));

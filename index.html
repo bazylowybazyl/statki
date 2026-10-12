@@ -1142,6 +1142,7 @@
       prewarmHexShipVisual,
       isColdFreezeVisuallySafe,
       captureColdWreckImpostor,
+      setColdWreckRenderHooks,
       setBeamSkinSuppressor,
       setEntityHiddenTest
     } from "./src/3d/hexShips3D.js";
@@ -5680,6 +5681,7 @@
       env.npcs = npcs;
       env.stations = stations;
       env.wrecks = wrecks;
+      env.coldWrecks = coldWrecks;
       env.rockets = window.rocketSystem3D?.rockets || null;
       env.drones = SpotterDroneSystem.getDrones?.() || null;
       env.player2 = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
@@ -14753,9 +14755,10 @@
       recycleWreckEntity(wreck);
     }
 
-    // Wrak kończy życie: kadłub na belkach zwalnia ciało.
+    // Wrak kończy życie: kadłub na belkach zwalnia ciało. Zimny wrak na belkach bez ciała do rysowania ma tylko
+    // migawkę (src/game/hullColdSnapshot.js) — też HullBodies.
     function recycleWreckEntity(wreck) {
-      if (wreck?.beamHull) return HullBodies.recycleWreck(wreck);
+      if (wreck?.beamHull || wreck?._coldSnapshot?.kind === 'beam') return HullBodies.recycleWreck(wreck);
       return false;
     }
 
@@ -21826,7 +21829,7 @@
     });
     const _reactorImpactVel = { x: 0, y: 0 };
     // Render rdzeni: listy encji (gracze, NPC, wraki), zegar symulacji, początek modelu przy kamerze.
-    const _reactorCoreLists = [[null, null], null, null];
+    const _reactorCoreLists = [[null, null], null, null, null];
     const _reactorModelOrigin = { x: 0, y: 0 };
     const _reactorModelOpts = { origin: _reactorModelOrigin };
     let _reactorFxSim = 0;
@@ -22888,7 +22891,8 @@
         const tAiGrid0 = performance.now();
         if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
         // Duże wraki jako przeszkody lotu NPC (src/ai/aiWreckIndex.js) — osobny indeks, nie siatka AI.
-        if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks);
+        // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze.
+        if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks);
         window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
         // Koordynator bitewny: sloty linii walki + flankowania dla capitali
         // (throttling wewnątrz — pełny rebuild co ~0.45s).
@@ -23765,9 +23769,10 @@
       getAwakeBodies: () => _cachedDynamicDestructibles || wrecks,
       markReferences: markColdWreckReferences,
       isReferenced: isColdWreckReferencedDirect,
-      isVisuallySafe: (w) => (isColdFreezeVisuallySafe ? isColdFreezeVisuallySafe(w) : true),
+      isVisuallySafe: (w) => (isColdFreezeVisuallySafe ? isColdFreezeVisuallySafe(w, coldWreckSystem.config) : true),
       getPlayerPos: () => ship?.pos || null,
       getFrameId: () => renderFrameId,
+      // Wrak na belkach (także zimny — sama migawka) zwalnia HullBodies.
       recycle: recycleWreckEntity,
       onBeforeFreeze(w) {
         // Asekuracyjnie: holowany/cięty nie przejdzie warunków, ale lina ani
@@ -23777,7 +23782,9 @@
         TowSystem.detachBody(w, 'wreck-cold');
         // Smuga (kolor z meshu, póki jest) PRZED zwolnieniem meshy.
         if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
-        if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(w);
+        // Wrak na belkach zostaje z ciałem do rysowania i swoją siatką skóry (render przejmuje je bez przebudowy,
+        // poza kadrem ciało i siatka znikają same) — meshe kasujemy tylko heksom.
+        if (!w.beamHull && invalidateHexShipEntity3D) invalidateHexShipEntity3D(w);
       },
       onThawed(w, reason) {
         if (window.DEBUG_COLD_WRECKS) console.log('[ColdWrecks] odmrożony (' + reason + ')', w);
@@ -23793,11 +23800,24 @@
       return coldWreckSystem.thaw(wreck, reason, onReady);
     }
     window.thawWreck = thawWreck;
+    // Render zimnych wraków na belkach (hexShips3D.js § ZIMNE WRAKI): ciało do rysowania z migawki w budżecie klatki
+    // i konfiguracja (staticSkin / nearLights / nearExtras — wygląd zimnego w kadrze).
+    if (setColdWreckRenderHooks) {
+      setColdWreckRenderHooks({
+        ensureBody: (w) => coldWreckSystem.ensureRenderBody(w),
+        config: coldWreckSystem.config,
+        // W liście mostków / modeli 3D tej klatki (withColdNearWrecks) — ciało odtworzone dopiero w tej klatce
+        // rysuje skóra, model 3D przejmie je w następnej (bez klatki bez obrazu).
+        listedForExtras: (w) => w._coldExtrasFrame === renderFrameId
+      });
+    }
     // Konsola dev: wymuszone zamrożenie (z pominięciem warunków), liczniki
     // i strojenie na żywo (np. ColdWreckConfig.clearRadius = 1200).
     window.freezeWreck = (wreck) => coldWreckSystem.freeze(wreck);
     window.ColdWreckStats = coldWreckSystem.stats;
     window.ColdWreckConfig = coldWreckSystem.config;
+    // Diagnostyka: ColdWreckSystem.explain(wrak) — pierwszy warunek, który nie pozwala zamrozić.
+    window.ColdWreckSystem = coldWreckSystem;
 
     // Pola zimnych wraków (src/game/wreckFields.js) dla CIC: przebudowa tylko po
     // zmianie zbioru zimnych (coldWreckSystem.version), najwyżej co 0,5 s.
@@ -23811,6 +23831,29 @@
       _coldFieldsTimer = 0.5;
       _coldFieldsVersion = coldWreckSystem.version;
       buildWreckFields(coldWrecks, coldWreckFields);
+    }
+
+    // Zimne wraki na belkach z ciałem do rysowania (coldWreckSystem.renderList) — dla mostków 3D, okien mostka,
+    // modeli 3D okrętów i rdzeni reaktora: render widzi je jak wrak śpiący (bez fizyki i list gry). Raz na klatkę,
+    // listy trzymane (bez alokacji); bez nearExtras albo bez takich wraków — lista wejściowa bez zmian.
+    const _coldNearList = [];
+    const _renderSeenCold = [];
+    function withColdNearWrecks(seen) {
+      _coldNearList.length = 0;
+      if (coldWreckSystem.config.nearExtras !== false) {
+        const list = coldWreckSystem.renderList;
+        for (let i = 0; i < list.length; i++) {
+          const w = list[i];
+          if (!w || !w.isCold || w.dead || !w.beamHull) continue;
+          w._coldExtrasFrame = renderFrameId;
+          _coldNearList.push(w);
+        }
+      }
+      if (_coldNearList.length === 0) return seen;
+      _renderSeenCold.length = 0;
+      for (let i = 0; i < seen.length; i++) _renderSeenCold.push(seen[i]);
+      for (let i = 0; i < _coldNearList.length; i++) _renderSeenCold.push(_coldNearList[i]);
+      return _renderSeenCold;
     }
 
     // Rozkaz na zimny wrak go budzi. Wyjątek: wrak dalej niż WRECK_DESPAWN_DIST
@@ -26948,6 +26991,9 @@
       // Mgła wojny: ukryte NPC i wraki zostają w liście kadłubów (siatka żyje, hexShips3D ich nie rysuje —
       // setEntityHiddenTest), a mostki, tarcze i modele 3D dostają listę bez nich.
       const renderSeen = fogSeenInto(renderEntities, _renderSeenList);
+      // Zimne wraki z ciałem do rysowania (skórę rysuje updateHexShips3D z coldWrecks): mostek 3D, okna mostka,
+      // model 3D okrętu i rdzeń reaktora jak u wraku śpiącego (ColdWreckConfig.nearExtras).
+      const renderSeenCold = withColdNearWrecks(renderSeen);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -27003,13 +27049,13 @@
         applyBridgeHulkVisuals(renderSeen, bridgeSimTime);
         // Model 3D mostka PRZED BridgeFx3D: ustawia bridgeState.model3D, więc
         // szczeliny okien się nie dublują (wyrzut atmosfery zostaje w BridgeFx3D).
-        Bridge3D.update(renderSeen, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
-        BridgeFx3D.update(renderSeen, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
-        // Zimne wraki nie są w renderEntities (brak meshy, świateł, cieni) —
-        // tylko smugi z batcha.
+        Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
+        BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+        // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
+        // (wraki na belkach w kadrze) albo smuga z migawki.
         updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.
-        syncShipModels3D({ entities: renderSeen, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
+        syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
         // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.
         _repairDronesSync.dt = PAUSED ? 0 : frameDt;
         _repairDronesSync.zoom = cam.zoom;
@@ -27039,6 +27085,7 @@
         _reactorCoreLists[0][1] = player2Ship || null;
         _reactorCoreLists[1] = fogSeenInto(npcs, _npcSeenList);
         _reactorCoreLists[2] = fogSeenInto(window.wrecks, _wreckSeenList);
+        _reactorCoreLists[3] = _coldNearList.length > 0 ? _coldNearList : null;
         const reactorCores = ReactorGame.cores(_reactorCoreLists);
         reactorBlastFx.advance(reactorSimDt);
         reactorBlastFx.syncCores(reactorCores, reactorSimDt);

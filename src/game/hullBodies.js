@@ -28,6 +28,7 @@ import { activeRegion, markSkinDirty, resetActiveRegion } from './beamActiveRegi
 import { beamSolverScratch } from './beamConstraintSolver3D.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
+import { COLD_BEAM_KIND, captureBeamColdSnapshot, restoreBeamColdBody } from './hullColdSnapshot.js';
 import { CollisionFX, impactEvent, grindEvent } from '../vfx/collisionFx.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from '../3d/fx/fxRandom.js';
@@ -1416,6 +1417,86 @@ export const HullBodies = {
     return n;
   },
 
+  // ----------------------- ZIMNY WRAK (src/game/coldWrecks.js) -----------------------
+  // Zimny wrak nie trzyma ciała silnika: zostaje migawka względem szablonu kadłuba (src/game/hullColdSnapshot.js)
+  // i TEN SAM rekord kadłuba (`hull`: obraz, kotwica, pivot, ród `dmgKey` — mapa ran, mostki, rdzenie). Ciało wraca
+  // z migawki przy rozmrożeniu albo na czas rysowania w kadrze (bez fizyki — wrak poza listami gry).
+
+  /** Migawka ciała wraku (stoi, kotwica = środek masy) albo null — wrak spoza szablonu nie marznie. */
+  captureColdSnapshot(entity) {
+    const hull = entity?.beamHull;
+    if (!entity?.isWreck || !hull || hull.entity !== entity || !hull.body || hull.body.dead) return null;
+    if (hull.world || hull.anchorMode !== 'com' || hull.body.anchored || hull.body.static) return null;
+    const tpl = coldTemplate(hull);
+    if (!tpl) return null;
+    const snap = captureBeamColdSnapshot(hull, tpl);
+    if (snap) snap.hull = hull;
+    return snap;
+  },
+
+  /**
+   * Ciało wraku z migawki (stoi i śpi, poza krokiem fizyki, póki gra nie dopisze wraku do list) — wraca na ten sam
+   * rekord kadłuba. Zwraca `hull` albo null (migawka nie pasuje do szablonu).
+   */
+  restoreColdBody(entity, snap) {
+    const hull = snap?.hull;
+    if (!entity || !hull || snap.kind !== COLD_BEAM_KIND) return null;
+    if (entity.beamHull === hull && hull.entity === entity && hull.body && !hull.body.dead) return hull;
+    this.init();
+    const tpl = coldTemplate(hull);
+    if (!tpl) return null;
+    const body = restoreBeamColdBody(snap, tpl, D);
+    if (!body) return null;
+    body.entity = entity;
+    body.hull = hull;
+    hull.body = body;
+    hull.entity = entity;
+    hull.shieldCells = null;
+    hull._shieldCellsOf = null;
+    hull._shadowGrid = null;
+    hull._massRef = body.mass;
+    hull._inNodes = body.activeNodes;
+    hull.radius = body.radius;
+    hull.revision++;
+    updateComPivot(hull);
+    entity.beamHull = hull;
+    entity.radius = body.radius;
+    entity._bpRadius = body.radius;
+    syncBodyPose(hull);
+    return hull;
+  },
+
+  /** Zwalnia ciało zimnego wraku (migawka zostaje u wołającego); rekord kadłuba czeka na restoreColdBody. */
+  releaseColdBody(entity) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity) return false;
+    const body = hull.body;
+    if (body) {
+      const queued = D.splitQueue.indexOf(body);
+      if (queued >= 0) D.splitQueue.splice(queued, 1);
+      body.dead = true;
+      body.entity = null;
+      body.hull = null;
+    }
+    hull.body = null;
+    hull.entity = null;
+    hull.shieldCells = null;
+    hull._shieldCellsOf = null;
+    hull._shadowGrid = null;
+    entity.beamHull = null;
+    return true;
+  },
+
+  /**
+   * Czy ciało wraku czeka na rozpad w kolejce silnika — takiego nie zamrażamy. Sama flaga `structureDirty` nic nie
+   * mówi: processSplits zeruje ją na początku, a niszczenie okruchów (destroyNode) ustawia z powrotem bez kolejki —
+   * większość wraków po bitwie ma ją na stałe.
+   */
+  pendingStructure(entity) {
+    const body = entity?.beamHull?.body;
+    return !!body && D.splitQueue.indexOf(body) >= 0;
+  },
+
   anchorLocalX,
   anchorLocalY,
   entityPose
@@ -1854,15 +1935,24 @@ function regrowableHull(entity) {
 // Szablon kadłuba (konstrukcja z obrazu — ta sama, z której powstało ciało) z indeksem komórka → węzeł szablonu,
 // raz na konstrukcję; null — inna siatka niż ciało.
 function hullTemplate(hull) {
-  if (!hull.image) return null;
+  const tpl = coldTemplate(hull);
+  if (!tpl) return null;
+  const d = tpl.structure.dims, bd = hull.body.dims;
+  if (d.x !== bd.x || d.y !== bd.y || d.z !== bd.z) return null;
+  return tpl;
+}
+
+// Szablon z samego rekordu kadłuba (obraz, skala, komórka) — też bez ciała (zimny wrak: hullColdSnapshot.js).
+function coldTemplate(hull) {
+  if (!hull?.image) return null;
   let structure = null;
   try {
     structure = HullBodies.structureFor(hull.image, hull.scale, hull.cellPx);
   } catch {
     return null;
   }
-  const d = structure?.dims, bd = hull.body.dims;
-  if (!d || d.x !== bd.x || d.y !== bd.y || d.z !== bd.z) return null;
+  const d = structure?.dims;
+  if (!d) return null;
   let tpl = _templates.get(structure);
   if (!tpl) {
     const s = structure.nodeStore;
