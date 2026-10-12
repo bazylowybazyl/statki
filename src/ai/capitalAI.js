@@ -593,7 +593,8 @@ export function capitalCommandSteer(npc, tx, ty, arrival, ignore, loose, out) {
   // Zatrzymany (prosto i objazdem) przez przeszkodę, której strefa zachodzi na koło przybycia (także
   // przeszkoda tuż za punktem — ogranicznik patrzy wzdłuż kursu dalej niż punkt), albo przez STOJĄCĄ
   // przeszkodę niedaleko punktu: tłum okrętów, które już stanęły na swoich miejscach rozkazu grupy
-  // (punkty szyku RTS leżą w strefach bezpieczeństwa sąsiadów — fregaty co 150 j. przy strefie 372 j.).
+  // (dawny szyk RTS PPM kładł punkty w strefach bezpieczeństwa sąsiadów — fregaty co 150 j. przy strefie
+  // 328 j.; od 2026-10-08 odstępy z promieni — worldCommandMenu.js computeRtsClassRowTargets).
   // Poziom 2 z wyższym progiem ogranicznika: okręt na granicy strefy stojącej przeszkody (ogranicznik
   // ~100 j/s to kilkanaście–kilkadziesiąt j. drogi do strefy) stoi, bo separacja od stojących go odpycha.
   if (blk.on && approachCap < COMMAND_STUCK_CAP) {

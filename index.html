@@ -915,6 +915,7 @@
       buildOrbitRangeMenuItems,
       resolveOrbitRadiusForUnit,
       computeFormationTargets as computeCommandFormationTargets,
+      computeRtsClassRowTargets,
       computeRtsCameraPanDelta,
       computeCommandMenuOpenAnimation,
       computeAttackAutopilotState,
@@ -18628,61 +18629,16 @@
       Selection.additive = false;
     }
 
-    function categorizeUnit(unit) {
-      if (unit === ship) return 'player';
-      if (unit.fighter || unit.type === 'fighter') return 'fighter';
-      if (unit.type && String(unit.type).includes('frigate')) return 'frigate';
-      if (unit.type === 'destroyer') return 'destroyer';
-      if (unit.type === 'battleship' || unit.isCapitalShip) return 'battleship';
-      return 'other';
-    }
-
+    // Szyk PPM bez przeciągania: rzędy wg klasy w poprzek kierunku do wroga (albo kursu gracza),
+    // odstępy z promieni kadłubów, rzędy od strony nadlotu od najwolniejszych
+    // (computeRtsClassRowTargets, src/game/worldCommandMenu.js).
     function formationTargets(units, anchor) {
-      const fighters = [];
-      const frigates = [];
-      const destroyers = [];
-      const battleships = [];
-      const others = [];
-      for (const u of units) {
-        const cat = categorizeUnit(u);
-        if (cat === 'fighter') fighters.push(u);
-        else if (cat === 'frigate') frigates.push(u);
-        else if (cat === 'destroyer' || cat === 'player') destroyers.push(u);
-        else if (cat === 'battleship') battleships.push(u);
-        else others.push(u);
-      }
       const enemy = npcs.find(n => n && !n.dead && !n.friendly) || null;
       const ang = enemy ? Math.atan2(enemy.y - anchor.y, enemy.x - anchor.x) : ship.angle;
-      const forward = { x: Math.cos(ang), y: Math.sin(ang) };
-      const right = { x: -forward.y, y: forward.x };
-
-      const result = new Map();
-      let depth = 0;
-      const placeLine = (list, spacing) => {
-        if (!list.length) return;
-        const sorted = [...list].sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
-        const totalW = (sorted.length - 1) * spacing;
-        const cx = anchor.x + forward.x * depth;
-        const cy = anchor.y + forward.y * depth;
-        const startX = cx - right.x * totalW / 2;
-        const startY = cy - right.y * totalW / 2;
-        sorted.forEach((u, i) => {
-          result.set(u, {
-            x: startX + right.x * (i * spacing),
-            y: startY + right.y * (i * spacing)
-          });
-        });
-        depth += spacing * 0.9;
-      };
-
-      placeLine(fighters, 200);
-      depth += fighters.length ? 60 : 0;
-      placeLine(frigates, 150);
-      placeLine(destroyers, 200);
-      placeLine(battleships, 230);
-      placeLine(others, 170);
-      return result;
+      return computeRtsClassRowTargets(units, anchor, ang, { player: ship });
     }
+    // Ten sam szyk w skryptach gry (scripts/webgpu/rozkazy-omijanie-gra.mjs --szyk ciasny).
+    window.rtsFormationTargets = formationTargets;
 
     function issueUnitCommand(unit, command) {
       if (!unit || unit.dead || !command) return;

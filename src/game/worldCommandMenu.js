@@ -195,14 +195,18 @@ export function createMoveCommand({ point, arrival = 90, faceAngle = null } = {}
   return command;
 }
 
-export function computeFormationTargets(units, anchor, faceAngle = 0) {
+// Szyk rozkazu ruchu z przeciągnięciem kursu (worldCommandMenu.placement w index.html — podgląd ducha
+// drawRtsPlacementGhosts i rozkaz issueMoveOrder liczą go tą funkcją): krata ⌈√n⌉ kolumn w poprzek zwrotu
+// faceAngle (ostatni rząd, niepełny, od strony zwrotu), środek w punkcie. Odstęp kraty —
+// rtsFormationGridSpacing (niżej, te same progi co szyk PPM). Miejsca wg pozycji okrętów (2026-10-08;
+// dawniej wg id — tory dojazdu krzyżowały się w kracie, a okręt przecinający ją w poprzek między
+// stojącymi utykał i kończył rozkaz przed punktem): krata dzieli się na linie w poprzek nadlotu
+// (rzędy albo kolumny — wg osi bliższej kierunkowi od środka grupy do punktu); najdalsze linie dostają
+// okręty najbardziej wysunięte w stronę punktu, w linii miejsca wg rzutu pozycji wzdłuż linii.
+export function computeFormationTargets(units, anchor, faceAngle = 0, { tune = RTS_FORMATION_TUNE } = {}) {
   const list = Array.from(units || []);
   const targets = new Map();
   if (!list.length) return targets;
-
-  const sorted = list
-    .map((unit, index) => ({ unit, index, key: unitSortKey(unit, index) }))
-    .sort((a, b) => a.key.localeCompare(b.key) || a.index - b.index);
 
   const center = pointFrom(anchor);
   const angle = Number.isFinite(faceAngle) ? faceAngle : 0;
@@ -210,24 +214,243 @@ export function computeFormationTargets(units, anchor, faceAngle = 0) {
   const forwardY = Math.sin(angle);
   const sideX = -forwardY;
   const sideY = forwardX;
-  const maxRadius = sorted.reduce((max, item) => Math.max(max, unitRadius(item.unit)), 20);
-  const spacing = Math.max(80, maxRadius * 3);
-  const cols = sorted.length <= 3 ? sorted.length : Math.ceil(Math.sqrt(sorted.length));
-  const rows = Math.ceil(sorted.length / cols);
+  const n = list.length;
+  const maxRadius = list.reduce((max, unit) => Math.max(max, unitRadius(unit)), 0);
+  const spacing = rtsFormationGridSpacing(maxRadius, n, tune);
+  const cols = n <= 3 ? n : Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
 
-  for (let i = 0; i < sorted.length; i++) {
+  // Miejsca kraty: przesunięcie w bok i wzdłuż zwrotu względem punktu (w krokach pół odstępu — całkowite
+  // klucze linii).
+  const slots = [];
+  for (let i = 0; i < n; i++) {
     const col = i % cols;
     const row = Math.floor(i / cols);
-    const itemsInRow = row === rows - 1 ? sorted.length - row * cols : cols;
-    const sideOffset = (col - (itemsInRow - 1) / 2) * spacing;
-    const forwardOffset = (row - (rows - 1) / 2) * spacing;
-    targets.set(sorted[i].unit, {
-      x: center.x + sideX * sideOffset + forwardX * forwardOffset,
-      y: center.y + sideY * sideOffset + forwardY * forwardOffset,
-      faceAngle: angle
-    });
+    const itemsInRow = row === rows - 1 ? n - row * cols : cols;
+    const side2 = 2 * col - (itemsInRow - 1);
+    const fwd2 = 2 * row - (rows - 1);
+    slots.push({ side: side2 * spacing / 2, fwd: fwd2 * spacing / 2, side2, fwd2 });
   }
 
+  let meanSide = 0;
+  let meanFwd = 0;
+  const items = list.map((unit, index) => {
+    const p = unitPos(unit);
+    const dx = p.x - center.x;
+    const dy = p.y - center.y;
+    const side = dx * sideX + dy * sideY;
+    const fwd = dx * forwardX + dy * forwardY;
+    meanSide += side;
+    meanFwd += fwd;
+    return { unit, index, key: unitSortKey(unit, index), side, fwd };
+  });
+  // Grupa przed punktem (wzdłuż osi) leci w jej ujemną stronę; bez wyraźnego kierunku — jak od tyłu.
+  const crossRows = Math.abs(meanFwd) >= Math.abs(meanSide);
+  const lineAxis = crossRows ? 'fwd' : 'side';
+  const alongAxis = crossRows ? 'side' : 'fwd';
+  const lineKey = crossRows ? 'fwd2' : 'side2';
+  const travel = (crossRows ? meanFwd : meanSide) > 0 ? -1 : 1;
+
+  const lines = new Map();
+  for (const slot of slots) {
+    const k = slot[lineKey];
+    if (!lines.has(k)) lines.set(k, []);
+    lines.get(k).push(slot);
+  }
+  const order = [...lines.keys()].sort((a, b) => travel * (b - a));
+  const byAlong = (a, b) => (a[alongAxis] - b[alongAxis]) || ((a.key ?? '').localeCompare(b.key ?? '')) || ((a.index ?? 0) - (b.index ?? 0));
+  items.sort((a, b) => travel * (b[lineAxis] - a[lineAxis]) || a.key.localeCompare(b.key) || a.index - b.index);
+
+  let next = 0;
+  for (const k of order) {
+    const line = lines.get(k).sort(byAlong);
+    const group = items.slice(next, next + line.length).sort(byAlong);
+    next += line.length;
+    for (let j = 0; j < line.length; j++) {
+      const slot = line[j];
+      targets.set(group[j].unit, {
+        x: center.x + sideX * slot.side + forwardX * slot.fwd,
+        y: center.y + sideY * slot.side + forwardY * slot.fwd,
+        faceAngle: angle
+      });
+    }
+  }
+
+  return targets;
+}
+
+// ---------------------------------------------------------------------------
+// Szyk domyślnego rozkazu ruchu RTS (PPM bez przeciągania — formationTargets w index.html):
+// rząd na klasę w poprzek kierunku „do wroga” albo kursu gracza (2026-10-08).
+// Dawne odstępy (150 / 200 / 230 j.) kładły punkty w strefach bezpieczeństwa sąsiadów, a rozkazy
+// omijają przeszkody (npcCommandPilot.js) — grupa stawała rozlana przed punktami. Teraz:
+//  - odstęp pary z promieni (rtsFormationGap): większy z dwóch progów — strefa przeszkody
+//    ogranicznika (capitalAI.js considerObstacle: suma promieni + 150 j.) i odstęp separacji
+//    sojuszników (index.html applySeparationForces: max(suma promieni, tarcze ≈ 1,06 × suma)
+//    + 0,6 × suma ≈ 1,66 × suma promieni) — plus zapas;
+//  - rzędy od strony NADLOTU grupy od najwolniejszych: fregaty stają najdalej wzdłuż przelotu,
+//    pancerniki najbliżej. Leci ku wrogowi — lekkie z przodu, wycofuje się — ciężkie od strony wroga.
+//    Odwrotnie (pancerniki przed fregatami) pancerniki dojeżdżały ostatnie do stojącego rzędu fregat —
+//    ściany stref przeszkody — i kończyły rozkaz 1,5–2 km przed punktem;
+//  - rzędy, przez które przejeżdżają dalsze, są PRZEJEZDNE (rtsFormationPassGap, rtsFormationRowDepth):
+//    klasy nie przyjeżdżają w kolejności prędkości (fregata zatrzymana w tłoku dojeżdża po niszczycielach);
+//  - do każdego punktu da się dojechać objazdem stojącego sąsiada (rtsFormationDetourGap) — także
+//    wzdłuż własnego rzędu, gdy okręt zepchnięty w drodze w bok dojeżdża 1–2 miejsca obok;
+//  - w rzędzie miejsca wg rzutu pozycji na oś rzędu — tory dojazdu się nie krzyżują;
+//  - środek głębokości szyku w punkcie rozkazu.
+// Klasa nie dzieli się na kilka rzędów: bliższy musiałby być przejezdny dla dalszego (~2 × szerszy
+// odstęp), więc szyk wyszedłby szerszy i głębszy niż jeden rząd.
+// ---------------------------------------------------------------------------
+export const RTS_FORMATION_TUNE = {
+  obstaclePad: 150,
+  sepK: 1.7,
+  detourK: 1.15,
+  pad: 60
+};
+
+// Klasy rzędów od strony nadlotu (najwolniejsze pierwsze). Gracz — w rzędzie niszczycieli (jak dawniej).
+const RTS_ROW_ORDER = ['battleship', 'other', 'destroyer', 'frigate', 'fighter'];
+
+export function rtsFormationClass(unit, player = null) {
+  if (player && unit === player) return 'destroyer';
+  if (unit?.fighter || unit?.type === 'fighter') return 'fighter';
+  if (unit?.type && String(unit.type).includes('frigate')) return 'frigate';
+  if (unit?.type === 'destroyer') return 'destroyer';
+  if (unit?.type === 'battleship' || unit?.isCapitalShip) return 'battleship';
+  return 'other';
+}
+
+// Odległość środków dwóch sąsiednich miejsc szyku: poza strefą przeszkody i odstępem separacji.
+export function rtsFormationGap(ra, rb, tune = RTS_FORMATION_TUNE) {
+  const sum = Math.max(0, Number(ra) || 0) + Math.max(0, Number(rb) || 0);
+  return Math.max(sum + tune.obstaclePad, tune.sepK * sum) + tune.pad;
+}
+
+// Odstęp w rzędzie, przez który przejedzie okręt o promieniu `rPass` z dalszego rzędu: pomiędzy dwoma
+// stojącymi mieści się jego objazd (styczna do strefy przeszkody × detourK — capitalAI.js
+// computeObstacleDetour) i odstęp separacji od obu. Rząd okrętów w strefach przeszkody to ściana:
+// kto dojeżdża później (fregaty zatrzymane w tłoku, wolniejsze klasy), stawał przed nią.
+export function rtsFormationPassGap(rRow, rPass, tune = RTS_FORMATION_TUNE) {
+  const sum = Math.max(0, Number(rRow) || 0) + Math.max(0, Number(rPass) || 0);
+  return 2 * Math.max(tune.detourK * (sum + tune.obstaclePad), tune.sepK * sum) + tune.pad;
+}
+
+// Odstęp od stojącego okrętu (promień rObstacle), przy którym okręt (rShip) dojedzie do swojego punktu
+// obok niego z DOWOLNEGO kierunku. Ogranicznik pilota (capitalAI.js considerObstacle) zatrzymuje okręt
+// na granicy strefy c (suma promieni + 150 j.) przeszkody, która leży przed nim na kursie w odległości
+// ≤ c od toru; objazd rusza (capitalCommandSteer), gdy punkt leży za strefą o więcej niż promień
+// przybycia a (r + 25 j., jak issueMoveOrder, z luzem pilota). Najgorzej jest skosem: przeszkoda w
+// odległości c od toru — punkt musi być dalej niż √(c² + (c + a)²). Dotyczy rzędu za rzędem i
+// sąsiadów w rzędzie: okręt zepchnięty w drodze w bok (objazd, pole wraków, gracz) dojeżdża skosem albo
+// wzdłuż rzędu obok sąsiada, który już stoi w swoim punkcie.
+export function rtsFormationDetourGap(rObstacle, rShip, tune = RTS_FORMATION_TUNE) {
+  const a = Math.max(0, Number(rObstacle) || 0);
+  const b = Math.max(0, Number(rShip) || 0);
+  const zone = a + b + tune.obstaclePad;
+  const arrival = b + 25 + Math.min(24, 0.1 * (b + 25));
+  return Math.sqrt(zone * zone + (zone + arrival) * (zone + arrival)) + tune.pad;
+}
+
+// Głębokość między rzędami: odstęp pary i objazd stojącego okrętu sąsiedniego rzędu w obie strony
+// (dalszy dojeżdża przez bliższy, a okręt bliższego zepchnięty za swój rząd wraca obok dalszego).
+export function rtsFormationRowDepth(rNear, rFar, tune = RTS_FORMATION_TUNE) {
+  return Math.max(
+    rtsFormationGap(rNear, rFar, tune),
+    rtsFormationDetourGap(rNear, rFar, tune),
+    rtsFormationDetourGap(rFar, rNear, tune)
+  );
+}
+
+// Odstęp sąsiadów w rzędzie: para, objazd sąsiada i — gdy przez rząd przejeżdżają dalsze
+// (rPass > 0) — przejazd.
+export function rtsFormationRowSpacing(rRow, rPass = 0, tune = RTS_FORMATION_TUNE) {
+  const spacing = Math.max(rtsFormationGap(rRow, rRow, tune), rtsFormationDetourGap(rRow, rRow, tune));
+  return rPass > 0 ? Math.max(spacing, rtsFormationPassGap(rRow, rPass, tune)) : spacing;
+}
+
+// Odstęp kraty szyku z przeciągnięciem (computeFormationTargets) dla `count` okrętów o największym
+// promieniu `r` — jeden w obu osiach, jak dawne max(80, 3 × r), które kładło punkty w strefach
+// sąsiadów (same fregaty 267 j. przy strefie przeszkody 328 j., pancerniki 990 j. przy separacji
+// 1094 j.): z omijaniem przeszkód w rozkazach grupa jednej klasy stawała rozlana przed punktami.
+// Para poza strefą i separacją, dojazd objazdem stojącego sąsiada; od 4 okrętów (krata ≥ 2 × 2)
+// dojeżdżający przejeżdżają między stojącymi w obu osiach — kierunek nadlotu względem zwrotu kraty
+// wybiera gracz, a róg kraty 2 × 2 osiąga się też przejazdem między dwoma sąsiadami.
+// Terra Nova: fregaty co ~810 j. (do 3 w rzędzie ~620), niszczyciele ~1090, pancerniki ~2300.
+export function rtsFormationGridSpacing(r, count, tune = RTS_FORMATION_TUNE) {
+  return rtsFormationRowSpacing(r, count > 3 ? r : 0, tune);
+}
+
+function unitPos(unit) {
+  return {
+    x: Number(unit?.x ?? unit?.pos?.x) || 0,
+    y: Number(unit?.y ?? unit?.pos?.y) || 0
+  };
+}
+
+// units — okręty grupy (pozycja: x / y albo pos), anchor — punkt rozkazu, faceAngle — kierunek „do
+// wroga” / kurs gracza (rzędy w poprzek niego), player — encja gracza (jeśli w grupie). Zwraca Map
+// okręt → { x, y }.
+export function computeRtsClassRowTargets(units, anchor, faceAngle = 0, { player = null, tune = RTS_FORMATION_TUNE } = {}) {
+  const list = Array.from(units || []).filter(Boolean);
+  const targets = new Map();
+  if (!list.length) return targets;
+  const center = pointFrom(anchor);
+  const angle = Number.isFinite(faceAngle) ? faceAngle : 0;
+  const fx = Math.cos(angle);
+  const fy = Math.sin(angle);
+  const rx = -fy;
+  const ry = fx;
+
+  const items = list.map((unit, index) => {
+    const p = unitPos(unit);
+    return {
+      unit,
+      index,
+      key: unitSortKey(unit, index),
+      cls: rtsFormationClass(unit, player),
+      r: unitRadius(unit),
+      side: (p.x - center.x) * rx + (p.y - center.y) * ry
+    };
+  });
+  // Strona nadlotu: grupa przed punktem (wzdłuż fwd) leci w −fwd, więc rzędy układamy od +fwd.
+  let meanFwd = 0;
+  for (const unit of list) {
+    const p = unitPos(unit);
+    meanFwd += (p.x - center.x) * fx + (p.y - center.y) * fy;
+  }
+  const dir = meanFwd > 0 ? -1 : 1;
+
+  const rows = [];
+  for (const cls of RTS_ROW_ORDER) {
+    const row = items.filter((it) => it.cls === cls);
+    if (!row.length) continue;
+    row.sort((a, b) => (a.side - b.side) || a.key.localeCompare(b.key) || a.index - b.index);
+    rows.push({ r: row.reduce((max, it) => Math.max(max, it.r), 0), row });
+  }
+
+  // Największy promień w rzędach dalej od strony nadlotu (kto może przejeżdżać przez rząd i).
+  const laterR = new Array(rows.length).fill(0);
+  for (let i = rows.length - 2; i >= 0; i--) laterR[i] = Math.max(laterR[i + 1], rows[i + 1].r);
+  const depths = new Array(rows.length);
+  let depth = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if (i > 0) depth += rtsFormationRowDepth(rows[i - 1].r, rows[i].r, tune);
+    depths[i] = depth;
+  }
+  const mid = depth / 2;
+  for (let i = 0; i < rows.length; i++) {
+    const { r, row } = rows[i];
+    const spacing = rtsFormationRowSpacing(r, laterR[i], tune);
+    const d = dir * (depths[i] - mid);
+    const half = (row.length - 1) / 2;
+    for (let j = 0; j < row.length; j++) {
+      const s = (j - half) * spacing;
+      targets.set(row[j].unit, {
+        x: center.x + fx * d + rx * s,
+        y: center.y + fy * d + ry * s
+      });
+    }
+  }
   return targets;
 }
 

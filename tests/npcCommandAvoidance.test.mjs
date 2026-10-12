@@ -22,6 +22,7 @@ const { capitalCommandSteer, capitalCommandFreePoint, capitalCommandSeparate } =
 const Idx = await import('../src/ai/aiWreckIndex.js');
 const { applyNpcCommandIntent } = await import('../src/ai/npcCommandPilot.js');
 const { stepShipFlight } = await import('../src/game/flight/shipFlightModel.js');
+const { computeRtsClassRowTargets, computeFormationTargets } = await import('../src/game/worldCommandMenu.js');
 const Grid = await import('../src/ai/aiSpatialGrid.js');
 // Siatka AI tylko w testach okręt × okręt (moduł przy imporcie wpina się do window — tu jawnie).
 window.queryAIGrid = null;
@@ -297,7 +298,7 @@ test('move order goes around the player ship standing on its way', () => {
   }
 });
 
-test('group move into the tight default RTS formation: everyone ends the order, nobody rams (real AI grid)', () => withGrid(() => {
+test('group move into a tight formation (old default RTS layout): everyone ends the order, nobody rams (real AI grid)', () => withGrid(() => {
   const K = { f: ['frigate_pd', 'terran_frigate', 111], d: ['destroyer', 'terran_destroyer', 180], b: ['battleship', 'terran_battleship', 400] };
   const fly = (d) => {
     const L = [];
@@ -306,8 +307,9 @@ test('group move into the tight default RTS formation: everyone ends the order, 
       const [type, shipFrame, radius] = K[comp[i]];
       L.push(frigate(-6000 - (i % 4) * 1100, (Math.floor(i / 4) - 1) * 1300, { id: 'u' + i, cat: comp[i], type, shipFrame, radius }));
     }
-    // formationTargets z index.html (PPM bez przeciągania): rzędy co 150 / 200 / 230 j. — punkty leżą
-    // w strefach bezpieczeństwa sąsiadów, więc część okrętów kończy rozkaz przed swoim punktem.
+    // Dawny formationTargets (PPM bez przeciągania, do 2026-10-08): rzędy co 150 / 200 / 230 j. — punkty
+    // leżą w strefach bezpieczeństwa sąsiadów, więc część okrętów kończy rozkaz przed swoim punktem.
+    // Zostaje jako próba pilota w ciasnym tłumie; dzisiejszy szyk — test niżej.
     let depth = 0;
     for (const [k, sp] of [['f', 150], ['d', 200], ['b', 230]]) {
       const R = L.filter((u) => u.cat === k);
@@ -334,8 +336,41 @@ test('group move into the tight default RTS formation: everyone ends the order, 
   assert.ok(off.minK < 0.3, `bez omijania test nic nie sprawdza: ${off.minK.toFixed(2)}`);
 }));
 
+test('group move into the default RTS formation: every order ends AT its point, nobody rams (real AI grid)', () => withGrid(() => {
+  // Szyk PPM z odstępami z promieni (worldCommandMenu.js computeRtsClassRowTargets, 2026-10-08); promienie
+  // jak w grze (Terra Nova): fregata 89, niszczyciel 148, pancernik 330.
+  const K = { f: ['frigate_pd', 'terran_frigate', 89], d: ['destroyer', 'terran_destroyer', 148], b: ['battleship', 'terran_battleship', 330] };
+  const L = [];
+  const comp = 'ffffffffdddb';
+  for (let i = 0; i < comp.length; i++) {
+    const [type, shipFrame, radius] = K[comp[i]];
+    L.push(frigate(-6000 - (i % 4) * 1100, (Math.floor(i / 4) - 1) * 1300, { id: 'u' + i, type, shipFrame, radius, isCapitalShip: comp[i] !== 'f' }));
+  }
+  const targets = computeRtsClassRowTargets(L, { x: 0, y: 0 }, 0);
+  for (const s of L) {
+    const t = targets.get(s);
+    s.command = { type: 'move', target: { x: t.x, y: t.y }, arrival: s.radius + 25 };
+  }
+  let minK = Infinity;
+  run(L, 30, deps(), (t) => {
+    if (t < 1) return;
+    for (let a = 0; a < L.length; a++) {
+      for (let b = a + 1; b < L.length; b++) {
+        minK = Math.min(minK, Math.hypot(L[a].x - L[b].x, L[a].y - L[b].y) / (L[a].radius + L[b].radius));
+      }
+    }
+  });
+  for (const s of L) {
+    const t = targets.get(s);
+    const d = Math.hypot(s.x - t.x, s.y - t.y);
+    assert.equal(s.command?.type, 'hold', `${s.id}: rozkaz nie skończył się`);
+    assert.ok(d < s.radius + 25 + 24 + 30, `${s.id} (${s.type}) stanął ${d.toFixed(0)} j. od punktu`);
+  }
+  assert.ok(minK > 1, `okręty wjechały w siebie: odległość / suma promieni ${minK.toFixed(2)}`);
+}));
+
 test('a ship that cannot get through a block of holding ships ends the order instead of hanging (real AI grid)', () => withGrid(() => {
-  // Krata stojących pancerników co 1200 j. (szyk RTS z przeciągnięciem: 3 × największy promień): strefy
+  // Krata stojących pancerników co 1200 j. (dawny szyk RTS z przeciągnięciem: 3 × największy promień): strefy
   // bezpieczeństwa (suma promieni + 150 j.) nie zostawiają przejścia — niszczyciel staje przed kratą.
   const keepers = [];
   for (let i = 0; i < 9; i++) {
@@ -368,4 +403,63 @@ test('a group starting from a tight parked block flies off and arrives (nobody g
     assert.equal(s.command?.type, 'hold', `${s.id}: rozkaz nie skończył się`);
     assert.ok(s.x > 6000, `${s.id}: stanął w ${s.x.toFixed(0)},${s.y.toFixed(0)} zamiast dolecieć`);
   }
+}));
+
+test('group of one class moved with a dragged course (grid formation): every order ends AT its point, nobody rams (real AI grid)', () => withGrid(() => {
+  // Krata z przeciągnięcia (worldCommandMenu.js computeFormationTargets): odstęp z progów szyku PPM
+  // (rtsFormationGridSpacing, 2026-10-08). Dawna krata co 3 × promień (fregaty 267 j., pancerniki 990 j.)
+  // kładła punkty w strefach sąsiadów — grupa jednej klasy kończyła rozkaz rozlana przed punktami.
+  const K = { f: ['frigate_pd', 'terran_frigate', 89], b: ['battleship', 'terran_battleship', 330] };
+  const fly = (comp, angle, old) => {
+    const L = [];
+    for (let i = 0; i < comp.length; i++) {
+      const [type, shipFrame, radius] = K[comp[i]];
+      L.push(frigate(-6000 - (i % 4) * 1100, (Math.floor(i / 4) - 1.5) * 1300, { id: 'u' + i, type, shipFrame, radius, isCapitalShip: comp[i] !== 'f' }));
+    }
+    const targets = computeFormationTargets(L, { x: 0, y: 0 }, angle);
+    if (old) {
+      // Dawna krata: ten sam układ i przydział miejsc, odstęp max(80, 3 × największy promień) — punkty
+      // przeskalowane wokół punktu rozkazu.
+      const r = Math.max(...L.map((s) => s.radius));
+      const fx = Math.cos(angle);
+      const fy = Math.sin(angle);
+      const xs = [...targets.values()].map((t) => Math.abs(t.x * -fy + t.y * fx)).filter((v) => v > 1e-6);
+      const k = Math.max(80, 3 * r) / (2 * Math.min(...xs));
+      for (const s of L) {
+        const t = targets.get(s);
+        targets.set(s, { x: t.x * k, y: t.y * k, faceAngle: angle });
+      }
+    }
+    for (const s of L) {
+      const t = targets.get(s);
+      s.command = { type: 'move', target: { x: t.x, y: t.y }, arrival: s.radius + 25, faceAngle: t.faceAngle };
+    }
+    let minK = Infinity;
+    run(L, old ? 30 : 40, deps(), (t) => {
+      if (t < 1) return;
+      for (let a = 0; a < L.length; a++) {
+        for (let b = a + 1; b < L.length; b++) {
+          minK = Math.min(minK, Math.hypot(L[a].x - L[b].x, L[a].y - L[b].y) / (L[a].radius + L[b].radius));
+        }
+      }
+    });
+    const atPoint = L.filter((s) => {
+      const t = targets.get(s);
+      return s.command?.type === 'hold' && Math.hypot(s.x - t.x, s.y - t.y) < s.radius + 25 + 24 + 30;
+    });
+    return { L, targets, minK, atPoint };
+  };
+  for (const [comp, angle] of [['f'.repeat(15), 0], ['f'.repeat(15), 0.8], ['bbbb', 0], ['bbbb', -0.6]]) {
+    const on = fly(comp, angle, false);
+    for (const s of on.L) {
+      const t = on.targets.get(s);
+      const d = Math.hypot(s.x - t.x, s.y - t.y);
+      assert.equal(s.command?.type, 'hold', `${comp.length}× ${s.type}, zwrot ${angle}: ${s.id} — rozkaz nie skończył się`);
+      assert.ok(d < s.radius + 25 + 24 + 30, `${comp.length}× ${s.type}, zwrot ${angle}: ${s.id} stanął ${d.toFixed(0)} j. od punktu`);
+    }
+    assert.ok(on.minK > 1, `${comp.length}× ${on.L[0].type}: okręty wjechały w siebie (odległość / suma promieni ${on.minK.toFixed(2)})`);
+  }
+  // Dawna krata: część grupy kończy rozkaz przed punktem (test coś sprawdza).
+  const old = fly('f'.repeat(15), 0, true);
+  assert.ok(old.atPoint.length < old.L.length, `dawna krata: ${old.atPoint.length}/${old.L.length} w punktach`);
 }));

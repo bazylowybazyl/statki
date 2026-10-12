@@ -2,12 +2,14 @@
 // scripts/webgpu/wraki-omijanie-gra.mjs, ale z ROZKAZEM RUCHU zamiast szyku: skrzydło Terra Novy zbiera
 // się za graczem, przed nim w pasie 9–14 km powstaje pole wraków (okręty piratów zniszczone na miejscu),
 // skrzydło dostaje rozkaz ruchu 26 km naprzód (ustawienie jak w grze: --szyk ciasny = PPM bez
-// przeciągania, formationTargets; luzny = z przeciągnięciem kursu, computeFormationTargets) — leci obok
+// przeciągania, formationTargets z gry — window.rtsFormationTargets; stary = dawne rzędy co 150 / 200 / 230 j.
+// (do 2026-10-08); luzny = z przeciągnięciem kursu, computeFormationTargets) — leci obok
 // gracza i przez pole. Co 0,25 s: zetknięcia okręt × wrak (środki bliżej niż --styk × suma promieni),
 // styki kadłubów (HullBodies.hasContact) okręt × wrak, okręt × okręt i okręt × gracz, utracony kadłub,
-// zgony, przepchnięcie wraków, ile rozkazów dobiegło końca, czas AI. A/B: --omijanie 0 = dawny pilot
-// rozkazów (window.CommandAvoidTune.enabled = false).
-//   node scripts/webgpu/rozkazy-omijanie-gra.mjs [--sklad 4,6,15] [--wraki 4,4,8] [--szyk ciasny|luzny]
+// zgony, przepchnięcie wraków, ile rozkazów dobiegło końca i ile W SWOIM PUNKCIE (wPunkcie; przedPunktem —
+// gdzie stanęły pozostałe i jak skończyły rozkaz), czas AI. A/B: --omijanie 0 = dawny pilot rozkazów
+// (window.CommandAvoidTune.enabled = false).
+//   node scripts/webgpu/rozkazy-omijanie-gra.mjs [--sklad 4,6,15] [--wraki 4,4,8] [--szyk ciasny|stary|luzny]
 //        [--czas 70] [--styk 0.75] [--omijanie 1] [--zrzut 1] [--out katalog] [--port 5295] [--seed 7]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -112,8 +114,19 @@ try {
     if ('${SZYK}' === 'luzny') {
       const m = await import('/src/game/worldCommandMenu.js');
       for (const [u, t] of m.computeFormationTargets(units, P, a)) targets.set(u, t);
-    } else {
-      // formationTargets z index.html (PPM bez przeciągania): rzędy wg klasy, odstępy 150 / 200 / 230 j.
+    } else if ('${SZYK}' === 'luzny-stary') {
+      // Dawny computeFormationTargets (do 2026-10-08): krata co max(80, 3 × największy promień) — A/B.
+      const L = [...units].sort((p, q) => String(p.id ?? '').localeCompare(String(q.id ?? '')));
+      const sp = Math.max(80, 3 * Math.max(20, ...L.map((u) => Math.max(8, u.radius || 20))));
+      const cols = L.length <= 3 ? L.length : Math.ceil(Math.sqrt(L.length)), rows = Math.ceil(L.length / cols);
+      const fwd = { x: Math.cos(a), y: Math.sin(a) }, side = { x: -Math.sin(a), y: Math.cos(a) };
+      L.forEach((u, i) => {
+        const col = i % cols, row = Math.floor(i / cols), inRow = row === rows - 1 ? L.length - row * cols : cols;
+        const s = (col - (inRow - 1) / 2) * sp, f = (row - (rows - 1) / 2) * sp;
+        targets.set(u, { x: P.x + side.x * s + fwd.x * f, y: P.y + side.y * s + fwd.y * f, faceAngle: a });
+      });
+    } else if ('${SZYK}' === 'stary') {
+      // Dawny formationTargets (do 2026-10-08): rzędy wg klasy co 150 / 200 / 230 j. — A/B.
       const right = { x: -Math.sin(a), y: Math.cos(a) }, fwd = { x: Math.cos(a), y: Math.sin(a) };
       const cat = (u) => /battleship|carrier/.test(u.type) ? 'b' : (/destroyer/.test(u.type) ? 'd' : 'f');
       let depth = 0;
@@ -124,8 +137,12 @@ try {
         L.forEach((u, i) => targets.set(u, { x: P.x + fwd.x * depth - right.x * w / 2 + right.x * i * sp, y: P.y + fwd.y * depth - right.y * w / 2 + right.y * i * sp }));
         depth += sp * 0.9;
       }
+    } else {
+      // formationTargets z index.html (PPM bez przeciągania) — ta sama funkcja co w grze.
+      for (const [u, t] of window.rtsFormationTargets(units, P)) targets.set(u, t);
     }
     window.__rozkazy = new Map();
+    window.__rozkazKat = a;
     for (const u of units) {
       const t = targets.get(u) || P;
       const cmd = { type: 'move', target: { x: t.x, y: t.y }, arrival: (u.radius || u.w || 30) + 25 };
@@ -134,7 +151,7 @@ try {
       u.forceTarget = null;
       window.__rozkazy.set(u, cmd.target);
     }
-    window.__rStyk = { pary: new Set(), nowe: 0, czas: 0, hp0: 0, kontaktWrak: new Set(), kontaktOkret: new Set(), kontaktGracz: new Set(), czasKadlub: 0, smierci: [] };
+    window.__rStyk = { pary: new Set(), nowe: 0, czas: 0, hp0: 0, kontaktWrak: new Set(), kontaktOkret: new Set(), kontaktGracz: new Set(), czasKadlub: 0, smierci: [], t0: performance.now() };
     for (const e of units) window.__rStyk.hp0 += (e.hp || 0);
     return { okrety: units.length, cel: { x: Math.round(P.x), y: Math.round(P.y) } };
   })()`);
@@ -164,6 +181,20 @@ try {
     for (const [e, st] of S.zywe) if (e.dead || !window.npcs.includes(e)) { S.smierci.push(st); S.zywe.delete(e); }
     let hold = 0;
     for (const e of L) if (e.command && e.command.type === 'hold') hold++;
+    // Koniec rozkazu: stan omijania z ostatniej próbki ruchu (hold nadpisuje __cmdSteer), najbliższy okręt.
+    S.koniec = S.koniec || new Map();
+    S.ruch = S.ruch || new Map();
+    for (const e of L) {
+      const st = e.__cmdSteer;
+      if (e.command?.type !== 'hold') {
+        if (st) S.ruch.set(e, { blok: st.blocked, blokT: +(st.blockedT || 0).toFixed(2), objazd: st.detour, cap: Number.isFinite(st.approachCap) ? Math.round(st.approachCap) : 'inf', v: Math.round(Math.hypot(e.vx, e.vy)) });
+      } else if (!S.koniec.has(e) && window.__rozkazy.has(e)) {
+        const t = window.__rozkazy.get(e);
+        let ok = null;
+        for (const o of window.npcs) { if (o === e || o.dead || o.fighter) continue; const d = Math.hypot(o.x - e.x, o.y - e.y); if (!ok || d < ok.d) ok = { d: Math.round(d), typ: o.type, cmd: o.command?.type || null, doPunktu: window.__rozkazy.has(o) ? Math.round(Math.hypot(o.x - window.__rozkazy.get(o).x, o.y - window.__rozkazy.get(o).y)) : null }; }
+        S.koniec.set(e, { t: +((performance.now() - S.t0) / 1000).toFixed(1), d: Math.round(Math.hypot(e.x - t.x, e.y - t.y)), ruch: S.ruch.get(e) || null, okret: ok });
+      }
+    }
     const d = window.__PH?.display || {};
     return { teraz, nowe: S.nowe, hold, ai: d.aiTime, kl: d.frameMs };
   })()`;
@@ -188,6 +219,25 @@ try {
     // Okręty, które nie dobiegły: odległość od punktu rozkazu, rodzaj rozkazu.
     const dal = [];
     let hold = 0;
+    // Rozkaz zakończony W PUNKCIE: hold nie dalej od punktu niż promień przybycia (r + 25) z luzem pilota
+    // (npcCommandPilot.js: min(24, 0,1 × promień przybycia)) i zapasem 30 j. na dryf przy trzymaniu.
+    let wPunkcie = 0;
+    const odl = [];
+    const przedPunktem = [];
+    for (const e of L) {
+      const t = window.__rozkazy.get(e);
+      if (!t) continue;
+      const arr = (e.radius || e.w || 30) + 25;
+      const d = Math.hypot(e.x - t.x, e.y - t.y);
+      odl.push(d);
+      if (e.command?.type === 'hold' && d <= arr + Math.min(24, Math.max(6, arr * 0.1)) + 30) wPunkcie++;
+      else {
+        // Gdzie stanął względem punktu: wzdłuż (+ za punktem w kierunku rozkazu) i w bok; jak skończył rozkaz.
+        const ca = Math.cos(window.__rozkazKat), sa = Math.sin(window.__rozkazKat), dx = e.x - t.x, dy = e.y - t.y;
+        przedPunktem.push({ typ: e.type, cmd: e.command?.type || null, d: Math.round(d), wzdluz: Math.round(dx * ca + dy * sa), bok: Math.round(-dx * sa + dy * ca), koniec: S.koniec?.get(e) || null });
+      }
+    }
+    odl.sort((p, q) => p - q);
     for (const e of L) {
       const t = window.__rozkazy.get(e);
       if (e.command?.type === 'hold') hold++;
@@ -204,6 +254,7 @@ try {
     }
     return { zetknieciaWrak_srodki: S.nowe, czasWStyku_s: Math.round(S.czas), stykiKadlubow: { wrak: S.kontaktWrak.size, okret: S.kontaktOkret.size, gracz: S.kontaktGracz.size, czas_s: Math.round(S.czasKadlub) },
       utraconyKadlub: Math.round(S.hp0 - hp), zyweSkrzydlo: zywe, smierci: S.smierci, rozkazWykonany: hold + '/' + zywe,
+      wPunkcie: wPunkcie + '/' + zywe, odlegloscOdPunktu: { med: Math.round(odl[odl.length >> 1] || 0), max: Math.round(odl[odl.length - 1] || 0) }, przedPunktem,
       przesuniecieWrakow_sr: Math.round(n ? ruch / n : 0), przesuniecieWrakow_max: Math.round(ruchMax), wDrodze: dal.slice(0, 8) };
   })()`);
   const sr = (a) => a.length ? +(a.reduce((p, q) => p + q, 0) / a.length).toFixed(3) : null;
