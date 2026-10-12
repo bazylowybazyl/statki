@@ -4,6 +4,9 @@
 // moduł src/3d/hallGas3d/). Gospodarz: demo samego doku K-7 (dema/dok-k7-webgpu.js — kopia, ten sam układ: hala na
 // Core3D, Atlas, lot W / S / A / D, automat stanowisk, ODDOKUJ, widoki z góry i 3D). Etap E0: pomiar szkieletu kroku
 // (hallGas3dBench.js) przy komórce 48 / 56 / 64 j. — `window.__gaz.bench(…)`, harness scripts/webgpu/3d-gaz-demo.mjs.
+// Etap E1: solver 3D (src/3d/hallGas3d/hallGas3d.js — HallGas3D: siatka 56 j., dysze MAIN per dysza i SIDE, para ze
+// źródeł hali, kurz pokładu z zachowaniem masy, dach fizyczny) i najprostszy obraz; `?gazHali=2d|3d` (domyślnie 3d) —
+// A/B z dawnym polem 2D (src/3d/gasField/hallDust.js). Pokaz w pętli w trybie 3D dokłada zapłon MAIN na stanowisku.
 //
 // Gospodarz (z dema doku K-7, 2026-10-07): te same moduły co gra:
 //  • hala K-7 (src/3d/haloRing/haloPortK7.js — bryły, rurociągi i zbiorniki paliwa, ramiona SCARA, złączki, rura
@@ -17,12 +20,13 @@
 // podpięcie (zamki, ramiona nad wlewy, złączki na wlewy, rygle) → … Ruszenie statku przerywa pokaz.
 //
 // Serwowanie: `npm run dev` → /dema/3d-gaz.html (?shot=1 — bez paneli, ?noc=1, ?widok=3d-ramie, ?pokaz=0, ?recznie=1 —
-// bez pętli rAF: klatki tylko z `__gaz.step(dt)` — harness, deterministycznie).
+// bez pętli rAF: klatki tylko z `__gaz.step(dt)`; ?zegar=gra — zegar świateł i źródeł hali z czasu symulacji (harness:
+// deterministycznie); ?gazHali=2d — dawne pole 2D; ?dach=c01|caly — fizyczny otwór dachu).
 // Konsola: window.__gaz (stan, sekwencje, widoki, pomiar szkieletu), window.K7FuelTune (fizyka), window.HallDustTune.
 
 import * as THREE from 'three';
 import { Core3D } from '../src/3d/core3d.js';
-import { drawHexShips3D, initHexShips3D, prewarmHexShipVisual, resizeHexShips3D, updateHexShips3D } from '../src/3d/hexShips3D.js';
+import { drawHexShips3D, initHexShips3D, prewarmHexShips3D, prewarmHexShipVisual, resizeHexShips3D, updateHexShips3D } from '../src/3d/hexShips3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { createRocketFx } from '../src/3d/rockets/rocketFx.js';
@@ -46,6 +50,9 @@ import { HallDust, HALL_DUST_TUNE } from '../src/3d/gasField/hallDust.js';
 import { hallToGameAffine, packHallDustFrame } from '../src/game/hallDustInput.js';
 import { K7_SERVICE_TUNE, createK7BerthService, k7BerthServiceState, stepK7BerthService, syncK7BerthLamps } from '../src/game/k7BerthService.js';
 import { HallGas3dBench } from '../src/3d/hallGas3d/hallGas3dBench.js';
+import { HallGas3D, HALL_GAS3D_FRAME_TUNE } from '../src/3d/hallGas3d/hallGas3d.js';
+import { packHallGas3dFrame } from '../src/game/hallGas3dInput.js';
+import { SideNozzleFrame } from '../src/3d/sideNozzleFrame.js';
 import atlasUrl from '../assets/capital_ship_rect_v1.png';
 
 const params = new URLSearchParams(location.search);
@@ -78,6 +85,12 @@ window.Core3D = Core3D;
 window.K7FuelTune = K7_FUEL_TUNE;
 window.HallDustTune = HALL_DUST_TUNE;
 window.K7ServiceTune = K7_SERVICE_TUNE;
+window.HallGas3D = HallGas3D;
+const GAS3D = params.get('gazHali') !== '2d';
+HALL_DUST_TUNE.enabled = !GAS3D;
+HallGas3D.tune.enabled = GAS3D;
+// dysze SIDE na liście klatki niezależnie od rozmiaru na ekranie (gaz potrzebuje impulsów przy każdym zoomie)
+SideNozzleFrame.sourceLod = false;
 if (!Array.isArray(window.wrecks)) window.wrecks = [];
 addEventListener('resize', () => {
   W = canvas2d.width = innerWidth;
@@ -187,8 +200,9 @@ function syncAtlas(dt) {
   atlas.vel.x = _v.x; atlas.vel.y = _v.y;
   atlas.angVel = flight.angVel;
   atlas.dead = !state.showShip;
-  const thrust = Math.min(1, Math.max(0, flight.thrust));
+  const thrust = state.forceMain !== null ? state.forceMain : Math.min(1, Math.max(0, flight.thrust));
   for (const t of atlas.visual?.mainThrusters || []) t.__throttle = thrust;
+  for (const t of atlas.visual?.torqueThrusters || []) t.__throttle = state.forceSide !== null ? state.forceSide : undefined;
   if (dt > 0) HullBodies.step(dt, [atlas]);
 }
 
@@ -210,18 +224,25 @@ const state = {
   // pokaz / sekwencje obsługi stanowiska C-01 (właściciel pozy 'demo' — automat stanowisk jej nie dotyka)
   loop: params.get('pokaz') !== '0',
   seq: { kind: 'connected', t: 0, hold: 2.5 },
-  lastInfo: { calls: 0 }
+  lastInfo: { calls: 0 },
+  // gaz 3D: fizyczny dach ('zamkniety' | 'c01' | 'caly'), wymuszony ciąg MAIN / SIDE (null — z modelu lotu), ruch
+  // kinematyczny statku (harness: start z postoju, lot ku bramie), zegar świateł i źródeł z czasu symulacji
+  roofPhys: ['c01', 'caly'].includes(params.get('dach')) ? params.get('dach') : 'zamkniety',
+  forceMain: null,
+  forceSide: null,
+  kin: null,
+  simClock: params.get('zegar') === 'gra'
 };
 
 const DEMO_OWNER = 'demo';
-const SEQ_LABEL = { connected: 'PODŁĄCZONY', undock: 'ODDOKUJ', stowed: 'ZŁOŻONY', dock: 'PODŁĄCZANIE', release: 'AWARYJNE ODPIĘCIE', auto: 'AUTOMAT STANOWISK' };
+const SEQ_LABEL = { connected: 'PODŁĄCZONY', undock: 'ODDOKUJ', stowed: 'ZŁOŻONY', dock: 'PODŁĄCZANIE', release: 'AWARYJNE ODPIĘCIE', auto: 'AUTOMAT STANOWISK', fire: 'ZAPŁON MAIN' };
 
 function c01Pose() { return poses.get('C-01'); }
 
 function startSeq(kind) {
   const pose = c01Pose();
   // sekwencja odpinania startuje od bieżącej pozy (przerwane podpinanie bez skoku)
-  state.seq = { kind, t: 0, hold: kind === 'connected' ? 3 : kind === 'stowed' ? 2.5 : 0, from: { ...pose } };
+  state.seq = { kind, t: 0, hold: kind === 'connected' ? 3 : kind === 'stowed' ? 2.5 : kind === 'fire' ? 4.5 : 0, from: { ...pose }, fired: false };
   pose.owner = DEMO_OWNER;
   flight.locked = kind !== 'auto';
   flight.vx = flight.vz = flight.angVel = 0;
@@ -248,7 +269,19 @@ function stepSeq(dt) {
     if (state.loop && s.t >= s.hold) startSeq('undock');
   } else if (s.kind === 'stowed') {
     Object.assign(pose, K7_STOWED_POSE);
-    if (state.loop && s.t >= s.hold) startSeq('dock');
+    // pokaz 3D: zapłon MAIN na stanowisku (rufa do ściany tylnej) między odpięciem a podpięciem
+    if (state.loop && s.t >= s.hold) {
+      if (GAS3D && !s.fired) startSeq('fire');
+      else startSeq('dock');
+    }
+  } else if (s.kind === 'fire') {
+    Object.assign(pose, K7_STOWED_POSE);
+    state.forceMain = s.t > 0.3 && s.t < s.hold - 0.6 ? Math.min(1, (s.t - 0.3) / 0.4) : null;
+    if (s.t >= s.hold) {
+      state.forceMain = null;
+      startSeq('stowed');
+      state.seq.fired = true;
+    }
   } else if (s.kind === 'undock') {
     k7ServiceDisconnectPose(K7_SERVICE_UNDOCK, s.t, s.from, pose);
     if (s.t >= K7_SERVICE_UNDOCK.end) startSeq('stowed');
@@ -267,6 +300,7 @@ function seqStepText() {
   if (s.kind === 'dock') return k7ServiceStep(K7_SERVICE_DOCK, s.t);
   if (s.kind === 'release') return s.t < 0.45 ? 'ODCIĘCIE I ODRYGLOWANIE' : 'SKŁADANIE RAMION';
   if (s.kind === 'connected') return 'PRZEPŁYW PALIWA';
+  if (s.kind === 'fire') return 'PEŁNY CIĄG — RUFĄ DO ŚCIANY';
   if (s.kind === 'stowed') return 'RAMIONA ZŁOŻONE';
   const st = k7BerthServiceState(service, 0, 'C-01');
   return st ? `automat C-01: ${st.state}` : '';
@@ -411,13 +445,16 @@ function setSpeed(s) {
   speedButtons.forEach((b, i) => b.classList.toggle('on', SPEEDS[i][1] === s));
 }
 const TOGGLES = [
-  ['gas', 'Pył i para hali', () => HALL_DUST_TUNE.enabled, (v) => { HALL_DUST_TUNE.enabled = v; }],
-  ['puffs', 'Kłęby pary (buchy)', () => HALL_DUST_TUNE.puffs, (v) => { HALL_DUST_TUNE.puffs = v; }],
+  ['gas', GAS3D ? 'Gaz 3D (siatka hali)' : 'Pył i para hali (2D)', () => (GAS3D ? HallGas3D.tune.enabled : HALL_DUST_TUNE.enabled),
+    (v) => { if (GAS3D) HallGas3D.tune.enabled = v; else HALL_DUST_TUNE.enabled = v; }],
+  ['roofOpen', 'Dach otwarty nad C-01 (gaz)', () => state.roofPhys !== 'zamkniety', (v) => { state.roofPhys = v ? 'c01' : 'zamkniety'; }],
+  ['puffs', 'Kłęby pary (buchy, 2D)', () => HALL_DUST_TUNE.puffs, (v) => { HALL_DUST_TUNE.puffs = v; }],
   ['night', 'Noc (lampy hali)', () => state.night, (v) => { state.night = v; applySun(); }],
   ['roof', 'Dach zamknięty', () => state.roofClosed, (v) => { state.roofClosed = v; }],
   ['ship', 'Atlas', () => state.showShip, (v) => { state.showShip = v; }],
   ['nodes', 'Węzły liny (debug)', () => state.nodes, (v) => { state.nodes = v; }],
-  ['lights', 'Światła hali w siatce', () => HALL_DUST_TUNE.hallLights, (v) => { HALL_DUST_TUNE.hallLights = v; }],
+  ['lights', 'Światła hali w siatce', () => (GAS3D ? HALL_GAS3D_FRAME_TUNE.hallLights : HALL_DUST_TUNE.hallLights),
+    (v) => { HALL_GAS3D_FRAME_TUNE.hallLights = v; HALL_DUST_TUNE.hallLights = v; }],
   ['bloom', 'Bloom', () => true, (v) => Core3D.setPerfToggles?.({ bloom: v })]
 ];
 for (const [key, label, get, set] of TOGGLES) {
@@ -510,7 +547,18 @@ function simulate(dt) {
   while (acc >= STEP && n < 12) {
     acc -= STEP;
     n++;
-    flight.step(STEP, roof.fade > 0.5 ? 1 : 0);
+    if (state.kin) {
+      // ruch kinematyczny (harness): przyspieszenie wzdłuż dziobu do vmax, bez modelu lotu i kolizji
+      const k = state.kin;
+      k.v = Math.min(k.vmax, k.v + k.acc * STEP);
+      flight.vx = Math.cos(flight.angle) * k.v;
+      flight.vz = Math.sin(flight.angle) * k.v;
+      flight.x += flight.vx * STEP;
+      flight.z += flight.vz * STEP;
+      flight.angVel = 0;
+    } else {
+      flight.step(STEP, roof.fade > 0.5 ? 1 : 0);
+    }
   }
   if (n >= 12) acc = 0;
   roof.update(flight.polygon(), dt);
@@ -530,8 +578,9 @@ function render(simDt) {
   syncRingCamera(cam);
   ringUniforms.uTime.value += simDt;
   // hala: pozy obsługi, ramiona i przewody (czas gry), dach, lampy, zegar migania świateł
-  const clock = k7BeaconClock(performance.now());
-  hallOpts.roofFade = state.roofClosed ? 0 : 1;
+  const clock = k7BeaconClock(state.simClock ? state.T * 1000 : performance.now());
+  // fizycznie otwarty dach (gaz 3D) jest otwarty też w obrazie
+  hallOpts.roofFade = state.roofClosed && state.roofPhys === 'zamkniety' ? 0 : 1;
   hallOpts.daylight = state.night ? 0 : 1;
   hallOpts.clock = clock;
   hallOpts.gameDt = simDt;
@@ -540,12 +589,19 @@ function render(simDt) {
   owner.lampLevel = hall.k7Uniforms.uHallLights.value.x;
   // pył i para hali: wejście klatki jak w grze (hala przy kamerze, okręty, pozy obsługi)
   const camGame = state.mode === 'cine' ? { x: cine.target.x, y: -cine.target.y, zoom: 0.3 } : cam;
-  packHallDustFrame(HallDust.input, {
+  const frameIn = {
     dt: simDt, camX: camGame.x, camY: camGame.y,
     viewHalf: state.mode === 'cine' ? 6000 : Math.hypot(W, H) * 0.5 / Math.max(1e-4, camGame.zoom),
-    rings: [{ collider }], ship: state.showShip ? atlas : null, npcs: null, sun: window.SUN, clock
-  });
-  HallDust.submit(HallDust.input);
+    rings: [{ collider }], ship: state.showShip ? atlas : null, npcs: null, sun: window.SUN, clock, roof: null
+  };
+  if (GAS3D) {
+    frameIn.roof = roofInput();
+    packHallGas3dFrame(HallGas3D.input, frameIn);
+    HallGas3D.submit(HallGas3D.input);
+  } else {
+    packHallDustFrame(HallDust.input, frameIn);
+    HallDust.submit(HallDust.input);
+  }
   // statek i render Core3D (hexShips3D woła Core3D.render)
   renderList.length = 0;
   if (atlas && state.showShip) renderList.push(atlas);
@@ -562,6 +618,23 @@ function render(simDt) {
   if (state.nodes && state.mode === 'game') drawRopeNodes(cam);
   const r = Core3D.lastFrameRenderInfo?.total || Core3D.renderer?.info?.render || {};
   state.lastInfo = { calls: r.calls || r.drawCalls || 0 };
+}
+
+// Dach fizyczny gazu 3D: otwór nad stanowiskiem C-01 albo cały dach (prostokąt w układzie hali), krycie dachu w obrazie.
+const ROOF_RECTS = {
+  c01: { x0: C01.x - 1050, z0: C01.z - 1350, x1: C01.x + 1050, z1: C01.z + 1350 },
+  caly: { x0: -layout.halfWidth, z0: layout.backZ, x1: layout.halfWidth, z1: layout.frontZ }
+};
+const _roofIn = { open: 0, x0: 0, z0: 0, x1: 0, z1: 0, view: 0 };
+function roofInput() {
+  const r = ROOF_RECTS[state.roofPhys];
+  _roofIn.open = r ? 1 : 0;
+  _roofIn.x0 = r ? r.x0 : 0;
+  _roofIn.z0 = r ? r.z0 : 0;
+  _roofIn.x1 = r ? r.x1 : 0;
+  _roofIn.z1 = r ? r.z1 : 0;
+  _roofIn.view = 1 - hallOpts.roofFade;
+  return _roofIn;
 }
 
 // Debug: węzły liny przewodów (rzut z góry, wysokość pominięta) i przeguby ramion.
@@ -638,6 +711,7 @@ function updateHud() {
   const rs = rig.stats;
   const hs = rig.hoses.filter((h) => h.berthId === 'C-01');
   const gs = HallDust.stats;
+  const g3 = HallGas3D.stats;
   const gpu = Number.isFinite(Core3D.gpuFrameMs) ? Core3D.gpuFrameMs.toFixed(2) : '—';
   const speed = Math.hypot(flight.vx, flight.vz);
   const auto = k7BerthServiceState(service, 0, 'C-01');
@@ -647,7 +721,9 @@ function updateHud() {
     `<b>poza</b>  zamki ${f2(pose.clamp)}  ramię ${f2(pose.extension)}  złączka ${f2(pose.seat)}  rygle ${f2(pose.lock)}  przepływ ${f2(pose.flow)}  upust ${f2(pose.vent)}`,
     `<b>przewody</b>  ${hs.map((h) => `${h.side < 0 ? 'W' : 'E'}: ${h.length.toFixed(0)} j. ${h.latched ? 'zaryglowany' : h.asleep ? 'spoczynek' : 'w ruchu'}`).join('  ')}`,
     `<b>fizyka</b>  aktywne ${rs.awake}/${rig.hoses.length}  węzły ${rs.nodes}  podkroki ${rs.substeps}  CPU ${f2(rs.cpuMs)} ms`,
-    `<b>gaz</b>  ${gs.active ? 'aktywny' : 'stoi'}  źródła ${gs.sources}  buchy ${gs.bursts}  upust ${gs.venting}  światła ${gs.lights}  CPU ${f2(gs.cpuMs)} ms`,
+    GAS3D
+      ? `<b>gaz 3D</b>  ${g3.active ? (g3.sleeping ? 'śpi' : 'aktywny') : 'stoi'}  dysze ${g3.main}+${g3.side}  źródła ${g3.sources}  kadłuby ${g3.bodies}  dispatche ${g3.dispatches}  światła ${g3.lights}  ${g3.memMB} MB  CPU ${f2(g3.cpuMs)} ms  dach ${state.roofPhys}`
+      : `<b>gaz 2D</b>  ${gs.active ? 'aktywny' : 'stoi'}  źródła ${gs.sources}  buchy ${gs.bursts}  upust ${gs.venting}  światła ${gs.lights}  CPU ${f2(gs.cpuMs)} ms`,
     `<b>Atlas</b>  ${speed.toFixed(0)} j/s  ${roof.fade > 0.5 ? 'w hali' : 'poza halą'}  napęd ${flight.locked ? 'ZABLOKOWANY' : 'ręczny'}  automat ${auto ? auto.state : '—'}`,
     `<b>czas</b>  ${state.T.toFixed(1)} s ${state.paused ? '(pauza)' : state.speed !== 1 ? `(×${state.speed})` : ''}  <b>widok</b> ${state.mode === 'cine' ? '3D' : `z góry ${state.cam.zoom.toFixed(2)}`}`
   ].join('\n');
@@ -685,7 +761,31 @@ window.__gaz = {
     return true;
   },
   wake: () => wakeK7FuelRig(hall.fuelRig),
-  stats: () => ({ rig: { ...hall.fuelRig.stats }, gas: { ...HallDust.stats }, seq: state.seq.kind, t: state.T, errors: errors.slice() })
+  stats: () => ({ rig: { ...hall.fuelRig.stats }, gas: { ...HallDust.stats }, gas3d: { ...HallGas3D.stats }, seq: state.seq.kind, t: state.T, errors: errors.slice() }),
+  // gaz 3D (E1): moduł, tryb, dach, wymuszony ciąg, ruch kinematyczny, reset stanu (sonda determinizmu)
+  gas3d: HallGas3D,
+  gas3dOn: GAS3D,
+  roof: (mode) => { state.roofPhys = ROOF_RECTS[mode] ? mode : 'zamkniety'; return state.roofPhys; },
+  main: (v) => { state.forceMain = v === null || v === undefined ? null : Math.min(1.5, Math.max(0, Number(v) || 0)); },
+  side: (v) => { state.forceSide = v === null || v === undefined ? null : Math.min(1, Math.max(0, Number(v) || 0)); },
+  kin: (o) => {
+    state.kin = o ? { v: Number(o.v) || 0, acc: Number(o.acc) || 150, vmax: Number(o.vmax) || 300 } : null;
+    if (!o) { flight.vx = 0; flight.vz = 0; }
+  },
+  simClock: (on) => { state.simClock = !!on; },
+  // stan od nowa: statek na C-01, sekwencja, czas, gaz (zerowanie siatki i źródeł) — ten sam ciąg wejścia = te same pola
+  reset: (seq = 'stowed') => {
+    state.loop = false;
+    state.kin = null;
+    state.forceMain = null;
+    state.forceSide = null;
+    state.T = 0;
+    acc = 0;
+    resetShip();
+    startSeq(seq);
+    HallGas3D.requestClear();
+    syncAtlas(0);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -709,6 +809,19 @@ try {
 } catch (err) { console.warn('[3d-gaz] rozgrzewka hali', err); }
 ringGroup.add(hall.root);
 Core3D.scene.add(ringGroup);
+// kadłuby, struga MAIN, iskry (jak startGame w grze) — pierwszy zapłon bez kompilacji w klatce
+try {
+  Core3D.warmup.run('demo: kadłuby i Fx3D', () => prewarmHexShips3D());
+  await Core3D.warmup.flush();
+} catch (err) { console.warn('[3d-gaz] rozgrzewka kadłubów', err); }
+// gaz 3D: bryły obrazu (pass ortho i FG) i kernele compute rozgrzane przed pierwszą klatką
+if (GAS3D) {
+  try {
+    const meshes = HallGas3D.warmupMeshes();
+    if (meshes.length) await Core3D.warmup.now(meshes, { name: 'demo: gaz hali 3D' });
+    HallGas3D.grid?.warm(Core3D.renderer);
+  } catch (err) { console.warn('[3d-gaz] rozgrzewka gazu 3D', err); }
+}
 try { atlas = await createAtlas(); } catch (err) { reportError(`Atlas: ${err.stack || err.message}`); }
 resetShip();
 syncAtlas(0);
