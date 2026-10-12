@@ -45,6 +45,8 @@ import { K7_SERVICE_TUNE, createK7BerthService, k7BerthServiceState, stepK7Berth
 import atlasUrl from '../assets/capital_ship_rect_v1.png';
 
 const params = new URLSearchParams(location.search);
+// AGENT: gospodarz warsztatu GAZ-GPT; bez rozszerzenia demo paliwa działa jak dotąd.
+const extension = window.__dokExtension || null;
 const shotMode = params.get('shot') === '1';
 if (shotMode) document.body.classList.add('shot');
 const $ = (id) => document.getElementById(id);
@@ -542,6 +544,7 @@ function render(simDt) {
     rings: [{ collider }], ship: state.showShip ? atlas : null, npcs: null, sun: window.SUN, clock
   });
   HallDust.submit(HallDust.input);
+  extension?.submit?.(HallDust.input, state, hallOpts);
   // statek i render Core3D (hexShips3D woła Core3D.render)
   renderList.length = 0;
   if (atlas && state.showShip) renderList.push(atlas);
@@ -629,6 +632,8 @@ window.__dok = {
   ready: false,
   get errors() { return errors.slice(); },
   state, hall, layout, poses, service, flight, place, frame,
+  step: (dt = 1 / 60) => { if (dt > 0) simulate(dt); else syncAtlas(0); render(dt); },
+  resetShip,
   get rig() { return hall.fuelRig; },
   get atlas() { return atlas; },
   hubToGame, gameToHub,
@@ -680,5 +685,6 @@ if (!state.loop) updateSeqButtons();
 setSpeed(1);
 setView(VIEWS[state.view] ? state.view : 'stanowisko');
 updateSeqButtons();
+if (extension?.init) await extension.init(window.__dok);
 window.__dok.ready = true;
-requestAnimationFrame(loop);
+if (params.get('recznie') !== '1') requestAnimationFrame(loop);
