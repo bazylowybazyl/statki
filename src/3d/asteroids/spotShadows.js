@@ -260,7 +260,11 @@ export class ShadowAtlas {
       if (maps[i].active) act[n++] = maps[i];
     }
     this._activeCount = n;
-    if (n) layer.forEachLoaded(this._gatherCb);
+    if (n) {
+      layer.forEachLoaded(this._gatherCb);
+      // Księżyce par (D2 planu pasa): osobne koszyki warstwy, ten sam rekord instancji.
+      layer.forEachMoon?.(this._gatherCb);
+    }
     let casters = 0;
     let active = 0;
     for (let i = 0; i < maps.length; i++) {

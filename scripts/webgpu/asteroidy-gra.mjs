@@ -49,6 +49,57 @@ export const STORM_STAGE = `
     x: sx - Math.cos(sa) * 1200 - bx * 2600, y: sy - Math.sin(sa) * 1200 - by * 2600, z: -5200, range: 8200 });
   return ok;`;
 
+// Populacje (strumień E): na okręgu window.__popScene.r [AU mapy] (opcjonalnie tylko w regionie beltId) punkt
+// o największej gęstości × oświetlenie², Atlas i kamera tam; liczba skał PLAY w kadrze → log [pop].
+const POP_PICK = `
+  const P0 = window.__popScene; let best = null;
+  for (let i = 0; i < 3600; i++) { const a = (i / 3600) * Math.PI * 2;
+    const x = F.sunX + Math.cos(a) * P0.r * au, y = F.sunY + Math.sin(a) * P0.r * au;
+    const m = F.sampleMacro(x, y); if (P0.beltId && m.region?.beltId !== P0.beltId) continue;
+    const s = m.density * B.sunT(x, y) ** 2; if (!best || s > best.s) best = { s, x, y, a, reg: m.region?.beltId, d: m.density }; }
+  DevScene.teleport(best.x, best.y, best.a + Math.PI / 2); S.cam(best.x, best.y, P0.zoom);
+  let n = 0; const hw = 1920 / P0.zoom * 0.5, hh = 1080 / P0.zoom * 0.5;
+  F.forEachRockInRect(0, best.x - hw, best.y - hh, best.x + hw, best.y + hh, 0, () => { n++; });
+  console.log('[pop] ' + JSON.stringify({ r: P0.r, region: best.reg, gestosc: best.d, skalyPlayWKadrze: n }));`;
+
+// Sceny typów (A1): GŁĄB pola (cluster ≥ 0,6 — tam są rudy; obrzeże to sam wypełniacz) na okręgu
+// window.__popScene.r w regionie beltId, możliwie oświetlona (gęstość × (0,2 + słońce)); Atlas i kamera tam.
+const TYPES_PICK = `
+  const P0 = window.__popScene; let best = null;
+  for (let i = 0; i < 3600; i++) { const a = (i / 3600) * Math.PI * 2;
+    const x = F.sunX + Math.cos(a) * P0.r * au, y = F.sunY + Math.sin(a) * P0.r * au;
+    const m = F.sampleMacro(x, y); if (P0.beltId && m.region?.beltId !== P0.beltId) continue;
+    const s = (m.cluster >= 0.6 ? 1 : 0.001) * m.density * (0.2 + B.sunT(x, y)); if (!best || s > best.s) best = { s, x, y, a, reg: m.region?.beltId, d: m.density }; }
+  DevScene.teleport(best.x, best.y, best.a + Math.PI / 2); S.cam(best.x, best.y, P0.zoom);
+  const hw = 1920 / P0.zoom * 0.5, hh = 1080 / P0.zoom * 0.5;`;
+
+// Rodziny kolizyjne (A2): pole rodziny `id` (szczyty z field.familyPeaks — w grze z kotwicami Westy i Hygiei
+// tego świata), w nim najjaśniejszy głęboki punkt tej rodziny; Atlas i kamera tam, zoom 0,35; log [typy]
+// z nazwą rodziny (familyAt).
+const FAMILY_PICK = (id) => `
+  const F = B.field, au = F.auToWorld; const fi = F.families.findIndex((f) => f.id === '${id}');
+  let best = null;
+  for (const p of F.familyPeaks()) { if (p.fam !== fi) continue;
+    for (let gx = -60000; gx <= 60000; gx += 6000) for (let gy = -60000; gy <= 60000; gy += 6000) {
+      const x = p.x + gx, y = p.y + gy; const m = F.sampleMacro(x, y);
+      if (m.region?.beltId !== 'main' || m.cluster < 0.6) continue;
+      if (F.familyAt(x, y)?.id !== '${id}') continue;
+      const s = F.sampleMacro(x, y).density * (0.2 + B.sunT(x, y)); if (!best || s > best.s) best = { s, x, y, reg: 'main' }; } }
+  if (!best) throw new Error('brak pola rodziny ${id}');
+  DevScene.teleport(best.x, best.y, Math.atan2(best.y - F.sunY, best.x - F.sunX)); S.cam(best.x, best.y, 0.35);
+  const hw = 1920 / 0.35 * 0.5, hh = 1080 / 0.35 * 0.5;
+  window.__popScene = { r: Math.hypot(best.x - F.sunX, best.y - F.sunY) / au };
+  const P0 = window.__popScene;
+  console.log('[typy] rodzina ' + JSON.stringify({ id: '${id}', nazwa: F.familyAt(best.x, best.y)?.label || null, rAu: +P0.r.toFixed(2) }));`;
+
+// Skład kadru (po TYPES_PICK: best, hw, hh): udziały typów skał PLAY → log [typy].
+const TYPES_LOG = `
+  const { ROCK_TYPES } = await import('/src/game/asteroidRockKinds.js');
+  const cnt = {}; let tot = 0;
+  F.forEachRockInRect(0, best.x - hw, best.y - hh, best.x + hw, best.y + hh, 0, (r) => { const t = ROCK_TYPES[r.type]; cnt[t] = (cnt[t] || 0) + 1; tot++; });
+  const typy = Object.entries(cnt).sort((p, q) => q[1] - p[1]).map(([t, c]) => t + ' ' + Math.round(100 * c / tot) + '%');
+  console.log('[typy] ' + JSON.stringify({ r: P0.r, region: best.reg, skaly: tot, typy }));`;
+
 // Sceny: js — ciało funkcji async w stronie (W = world.js dema, S = pomocniki harnessu,
 // H = harness, B = pas gry). Wzory miejsc i zoom jak `setScene` dema.
 export const BELT_SCENES = {
@@ -94,6 +145,108 @@ export const BELT_SCENES = {
          console.log('[luka-bez] ' + JSON.stringify({ luka: L.luka, skalyWPasie: L.count() }));`,
     po: `const F = window.__asteroidBelt.field; F._hasGaps = Array.isArray(F.config.kirkwoodGaps) && F.config.kirkwoodGaps.length > 0;
          F.clearCache(); for (const layer of window.__asteroidBelt.layers) layer.clear(); window.__asteroidBelt.fog?._macroCache?.clear();`
+  },
+  // Populacje małych ciał (strumień E, 2026-10-12): przy halach K-7 Ziemi i Marsa pas ma SPAĆ (stats.active false —
+  // wycięcia `holes`); w NEA, Hungariach, rojach Trojańczyków i Kuiperze — najgęstszy punkt pasma w oświetleniu.
+  k7: {
+    opis: 'Hala K-7 Ziemi (kompleks 0), zoom 0,45 — pas śpi (wycięcie NEA wokół Ziemi)',
+    js: `const { k7HallCenter } = await import('/src/game/story/k7Dock.js'); const pl = window.planets.find((p) => p.id === 'earth');
+         const h = k7HallCenter(pl, 0); DevScene.teleport(h.x, h.y, 0); S.cam(h.x, h.y, 0.45);`
+  },
+  mars: {
+    opis: 'Hala K-7 Marsa (kompleks 1), zoom 0,45 — pas śpi (wycięcia NEA i Hungarii wokół Marsa)',
+    js: `const { k7HallCenter } = await import('/src/game/story/k7Dock.js'); const pl = window.planets.find((p) => p.id === 'mars');
+         const h = k7HallCenter(pl, 1); DevScene.teleport(h.x, h.y, 0); S.cam(h.x, h.y, 0.45);`
+  },
+  nea: {
+    opis: 'NEA (26,5 AU mapy): rzadkie pojedyncze skały, zoom 0,12',
+    js: `const F = B.field, au = F.auToWorld; window.__popScene = { r: 26.5, zoom: 0.12 };` + POP_PICK
+  },
+  // A/B: ta sama klatka co `nea` bez pasa (B.enabled = false) — co w kadrze należy do pasa.
+  'nea-bez': {
+    opis: 'NEA — A/B: to samo miejsce, pas wyłączony',
+    js: `B.enabled = false; const c = window.camera; S.cam(c.x, c.y, c.zoom);`,
+    po: `window.__asteroidBelt.enabled = true;`
+  },
+  hungarie: {
+    opis: 'Hungarie (34,65 AU mapy), zoom 0,12',
+    js: `const F = B.field, au = F.auToWorld; window.__popScene = { r: 34.65, zoom: 0.12 };` + POP_PICK
+  },
+  trojanie: {
+    opis: 'Rój L4 (Grecy) — rdzeń przy punkcie L4, zoom 0,12',
+    js: `const F = B.field, au = F.auToWorld; window.__popScene = { r: 50.2, zoom: 0.12, beltId: 'greeks' };` + POP_PICK
+  },
+  kuiper: {
+    opis: 'Zimny rdzeń pasa Kuipera (133,5 AU mapy), zoom 0,12',
+    js: `const F = B.field, au = F.auToWorld; window.__popScene = { r: 133.5, zoom: 0.12 };` + POP_PICK
+  },
+  // Skład pasa z odległością (A1, docs/PLAN-pas-realizm.md § Typy): głąb pola na okręgu (TYPES_PICK),
+  // zoom 0,3, skład skał PLAY w kadrze → log [typy].
+  ...Object.fromEntries([
+    ['typy-wewn', 36.0, 'main', 'wewnętrzny pas (36,0 AU): S'],
+    ['typy-westa', 36.9, 'main', 'rodzina Westy (36,9 AU): S + V'],
+    ['typy-srodek', 38.6, 'main', 'środek pasa (38,6 AU): S + C, szczyt M'],
+    ['typy-zewn', 40.6, 'main', 'zewnętrzny pas (40,6 AU): C, lód Themis'],
+    ['typy-hildy', 44.4, 'hildas', 'Hildy (44,4 AU): D'],
+    ['typy-trojanie', 50.2, 'greeks', 'Trojańczycy L4: D']
+  ].map(([id, r, beltId, opis]) => [id, {
+    opis: `Typy skał — ${opis}, zoom 0,3`,
+    js: `const F = B.field, au = F.auToWorld; window.__popScene = { r: ${r}, zoom: 0.3, beltId: '${beltId}' };` + TYPES_PICK + TYPES_LOG
+  }])),
+  ...Object.fromEntries([['westa', 'vesta'], ['themis', 'themis'], ['koronis', 'koronis']].map(([name, id]) => [`rodzina-${name}`, {
+    opis: `Rodzina ${name} (A2): pole rodziny, zoom 0,35 — skład kadru i nazwa`,
+    js: FAMILY_PICK(id) + TYPES_LOG
+  }])),
+  // A/B: ta sama klatka co poprzednia scena bez minerałów warstwy PLAY (co w kadrze to kryształy na skałach).
+  'mineraly-bez': {
+    opis: 'A/B: to samo miejsce, minerały warstwy PLAY schowane',
+    js: `B.playMinerals.group.visible = false; const c = window.camera; S.cam(c.x, c.y, c.zoom);`,
+    po: `window.__asteroidBelt.playMinerals.group.visible = true;`
+  },
+  // A/B: ta sama klatka z wyzerowanymi iskrami ziaren skał (sparkle palety — rockMaterial.js TYPE_ROW.p.z).
+  'iskry-bez': {
+    opis: 'A/B: to samo miejsce, iskry ziaren skał wyłączone (sparkle = 0 we wszystkich typach)',
+    js: `const T = B.shared.typeData.array; window.__sparkSave = [];
+         for (let i = 6; i < T.length; i += 8) { window.__sparkSave.push(T[i].z); T[i].z = 0; }
+         const c = window.camera; S.cam(c.x, c.y, c.zoom);`,
+    po: `const T = window.__asteroidBelt.shared.typeData.array; let k = 0;
+         for (let i = 6; i < T.length; i += 8) T[i].z = window.__sparkSave[k++];`
+  },
+  // A/B: ta sama klatka, barwa „d” palety (pył w zagłębieniach programu węglowej i inne) = barwa regolitu.
+  'zaglebienia-bez': {
+    opis: 'A/B: to samo miejsce, barwa d palety skał = barwa base (bez przyciemnienia zagłębień)',
+    js: `const T = B.shared.typeData.array; window.__dSave = [];
+         for (let o = 0; o < T.length; o += 8) { window.__dSave.push(T[o + 5].clone()); T[o + 5].copy(T[o]); }
+         const c = window.camera; S.cam(c.x, c.y, c.zoom);`,
+    po: `const T = window.__asteroidBelt.shared.typeData.array; let k = 0;
+         for (let o = 0; o < T.length; o += 8) T[o + 5].copy(window.__dSave[k++]);`
+  },
+  // Kontrola narzędzi A/B palety: barwy base / base2 wszystkich typów na czerwono (skały mają być czerwone).
+  'paleta-czerwona': {
+    opis: 'Kontrola: base i base2 palety skał = czerwień (sprawdza, że zmiany typeData docierają do GPU)',
+    js: `const T = B.shared.typeData.array; window.__redSave = [];
+         for (let o = 0; o < T.length; o += 8) { window.__redSave.push(T[o].clone(), T[o + 1].clone()); T[o].set(1, 0, 0, 1); T[o + 1].set(1, 0, 0, 1); }
+         const c = window.camera; S.cam(c.x, c.y, c.zoom);`,
+    po: `const T = window.__asteroidBelt.shared.typeData.array; let k = 0;
+         for (let o = 0; o < T.length; o += 8) { T[o].copy(window.__redSave[k++]); T[o + 1].copy(window.__redSave[k++]); }`
+  },
+  // Skaner wydobycia w polu Themis: panel platformy z wierszem „pole: Rodzina Themis · węglowe, lód”, komunikat
+  // strefy przy wlocie w pole (linia alertów kokpitu gaśnie po ~4 s czasu RZECZYWISTEGO — harness kroczy wolniej,
+  // więc wywołania pushAlert zapisuje hak) i wpis dziennika „NAWIGACJA — wejście: …”.
+  'rodzina-skaner': {
+    opis: 'Tryb wydobycia (N) w polu Themis: panel skanera z nazwą rodziny pola, komunikat strefy i dziennik',
+    js: `const Z = window.__beltFamilyZone; if (Z) { Z.current = null; Z.pending = null; Z.lastId = null; }
+      const hud = window.hudSystem; const alerty = [];
+      if (hud && !hud.__alertHook) { const org = hud.pushAlert.bind(hud); hud.__alertHook = alerty;
+        hud.pushAlert = (t, o) => { hud.__alertHook.push({ t: String(t), label: o?.label || null, tone: o?.tone || null }); return org(t, o); }; }
+      else if (hud) hud.__alertHook.length = 0;` + FAMILY_PICK('themis') + TYPES_LOG + `
+      window.setMiningMode(true, true); await H.step(150);
+      console.log('[typy] alert ' + JSON.stringify({
+        alerty: (hud?.__alertHook || []).filter((a) => a.label === 'POLE PLANETOID'),
+        dziennik: (hud?.cockpit?.logs || []).filter((e) => e.text.includes('Rodzina')).map((e) => e.text),
+        stan: Z ? { obecna: Z.current, zegar: +Z.clock.toFixed(2) } : null,
+        tu: window.beltFamilyAt?.(window.ship.pos.x, window.ship.pos.y)?.id || null }));`,
+    po: `window.setMiningMode(false, true);`
   },
   olbrzym: {
     opis: 'Olbrzym w polu (scena 4 dema): Labirynt na obrzeżu gęstego pola, statek u wlotu trasy, zoom 0,3',
@@ -311,6 +464,8 @@ async function main() {
       logs.clear();
       const t0 = Date.now();
       let error = null;
+      // Pipeline'y utworzone w klatkach sceny (sync = nikt nie rozgrzał — ma być 0).
+      const begLog = await ev('window.__harness.frameLog.n');
       try {
         await ev(`(async () => { const W = window.__W, S = window.__harness.scene, H = window.__harness, B = window.__asteroidBelt; S.hideHud(true); H.reseed(0x21a5); ${sc.js} await H.step(2); S.cam(window.ship.pos.x, window.ship.pos.y, window.camera.zoom); return true; })()`);
         if (sc.olbrzym) {
@@ -351,6 +506,9 @@ async function main() {
       if (sc.po) await ev(`(() => { ${sc.po} return true; })()`);
       const stats = await ev(`(() => { const B = window.__asteroidBelt; const s = B.stats; return { ...s, rocks: [...s.rocks], czas: +B.time.toFixed(3), kamera: [Math.round(window.camera.x), Math.round(window.camera.y), window.camera.zoom], olbrzymyGotowe: B.giants.readyCount, fx: window.Core3D.fxStats ? { ...window.Core3D.fxStats } : null }; })()`);
       const perf = await ev('window.__harness.scene.perf(20)');
+      const pipe = (await ev(`window.__harness.frameStats(${begLog})`)).pipeline;
+      perf.pipelineSync = pipe?.sync ?? null;
+      perf.pipelineSyncLista = pipe?.syncRenderLista ?? pipe?.syncLista ?? null;
       const errors = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l)));
       if (args.diag) {
         const diag = await ev(`(() => { const s = window.ship; const C = window.Core3D; const out = { hull: !!s.beamHull, pos: [Math.round(s.pos.x), Math.round(s.pos.y)], meshes: [] };
@@ -360,9 +518,9 @@ async function main() {
         console.log('     logi:\n     ' + logs.all().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 40).join('\n     '));
       }
       report.sceny.push({ scena: id, opis: sc.opis, blad: error, sekundy: (Date.now() - t0) / 1000, stats, perf, bledy: errors.slice(0, 30) });
-      console.log(`  ${id.padEnd(8)} ${error ? 'BŁĄD ' + error : 'ok'} | skały ${stats.rocks.join('/')} min. ${stats.minerals} | światła ${stats.lights} (statki ${stats.shipLights}, skały ${stats.rockLights}) | mapy cienia ${stats.shadowMaps} | kolumny ${stats.volumeColumns} | CPU pasa ${stats.cpuMs?.toFixed?.(2)} ms | ${perf.drawCalls} dc, GPU ${perf.gpuMs} ms | błędy ${errors.length}`);
+      console.log(`  ${id.padEnd(8)} ${error ? 'BŁĄD ' + error : 'ok'} | skały ${stats.rocks.join('/')} min. ${stats.minerals} | światła ${stats.lights} (statki ${stats.shipLights}, skały ${stats.rockLights}) | mapy cienia ${stats.shadowMaps} | kolumny ${stats.volumeColumns} | pas ${stats.active ? 'aktywny' : 'śpi'} | CPU pasa ${stats.cpuMs?.toFixed?.(2)} ms | ${perf.drawCalls} dc, GPU ${perf.gpuMs} ms | pipeline sync ${perf.pipelineSync} | błędy ${errors.length}`);
       if (errors.length) console.log('     ' + errors.slice(0, 6).join('\n     '));
-      const sceneLog = logs.all().filter((l) => /\[luka/.test(l));
+      const sceneLog = logs.all().filter((l) => /\[(luka|pop|typy)/.test(l));
       if (sceneLog.length) console.log('     ' + sceneLog.join('\n     '));
     }
     if (args.kolizja) report.kolizja = await kolizja(ev, cdp);

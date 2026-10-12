@@ -25,7 +25,8 @@ import { Fn, float, vec3, vec4, attribute, exp, max, normalize, cross, length, s
 import { createYield, isCorePiece } from '../../src/game/asteroidMining.js';
 import { chargeForDepth, chargeReach, rockMaterial, CORE_KIND_LABELS_PL, CORE_MATERIAL, MINING_CONFIG } from '../../src/game/asteroidMaterials.js';
 import { RESOURCES, ASTEROID_YIELD } from '../../src/data/resources.js';
-import { ROCK_TYPE_LABELS_PL, ROCK_TYPE_INDEX, pickShape } from '../../src/game/asteroidRockKinds.js';
+import { ROCK_TYPE_LABELS_PL, ROCK_TYPE_INDEX, pickShape, isNeutralTypeId } from '../../src/game/asteroidRockKinds.js';
+import { moonStateAt, moonRockRecord } from '../../src/game/asteroidRotation.js';
 import { BallLightningView, ballInstability } from './ballLightning.js';
 
 export const CHARGES = Object.freeze([
@@ -48,6 +49,8 @@ const TRAP_CAP = 3;
 const GALLERY_TYPES = Object.freeze(['copper', 'iron', 'titan', 'silicon', 'crystal', 'ice', 'uran']);
 
 function fmt1(v) { return v.toFixed(1).replace('.', ','); }
+// Masa rudy w podpisie: od 0,1 t w tonach, mniej — w kilogramach (głazy małych kup pokazywały „0,0 t”).
+function fmtMass(v) { return v >= 0.095 ? `${fmt1(v)} t` : `${Math.max(1, Math.round(v * 1000))} kg`; }
 
 /** Opis rdzenia do HUD-u: „bryła metalu”, „zbite kryształy”, „piorun kulisty”… */
 function coreLabel(kind, oreTypeId) {
@@ -330,34 +333,69 @@ export class MiningRig {
    * ciało albo null.
    */
   activateAt(wx, wy, time) {
-    let best = null, bestTop = -Infinity, bestD = null, bestB = 0;
+    let best = null, bestTop = -Infinity, bestD = null, bestB = 0, bestMoon = false;
+    const st = this._moonSt || (this._moonSt = { x: 0, y: 0, ox: 0, oy: 0, oz: 0, theta: 0 });
+    const hidden = this.playLayer.hidden;
     this.playLayer.forEachLoaded((rock, d, b) => {
       const s = Math.max(rock.sx, rock.sy, rock.sz);
       const R = rock.r * s * 1.05;
       const dx = rock.x - wx, dy = rock.y - wy;
-      if (dx * dx + dy * dy > R * R) return;
-      const top = d[b + 2] + rock.r * s;
-      if (top > bestTop) { bestTop = top; best = rock; bestD = d; bestB = b; }
+      if (dx * dx + dy * dy <= R * R) {
+        const top = d[b + 2] + rock.r * s;
+        if (top > bestTop) { bestTop = top; best = rock; bestD = d; bestB = b; bestMoon = false; }
+      }
+      // Księżyc pary (asteroidRotation.js): pozycja z orbity w czasie pasa, jak w warstwie.
+      const m = rock.moon;
+      if (!m || hidden.has(m.id)) return;
+      moonStateAt(rock, time, st);
+      const sm = Math.max(m.sx, m.sy, m.sz);
+      const Rm = m.r * sm * 1.05;
+      const mx = st.x - wx, my = st.y - wy;
+      if (mx * mx + my * my > Rm * Rm) return;
+      const topM = d[b + 2] + st.oz + m.r * sm;
+      if (topM > bestTop) { bestTop = topM; best = rock; bestD = d; bestB = b; bestMoon = true; }
     });
     if (!best) return null;
-    const body = this.mining.activate(best, { z: bestD[bestB + 2], time, sunT: bestD[bestB + 19], anchored: true });
-    body.userData = { fieldId: best.id };
-    this.playLayer.hide(best.id);
+    // Para: skała i księżyc przejmowane razem (demo — bez limitu ciężkich operacji na klatkę).
+    const rockBody = !bestMoon || !hidden.has(best.id) ? this._activateRecord(best, bestD[bestB + 2], time, bestD[bestB + 19]) : null;
+    let moonBody = null;
+    if (best.moon && !hidden.has(best.moon.id)) {
+      const rec = moonRockRecord(best, time);
+      moonBody = this._activateRecord(rec, bestD[bestB + 2] + rec.oz, time, bestD[bestB + 19]);
+    }
+    const body = bestMoon ? moonBody : rockBody;
     const label = ROCK_TYPE_LABELS_PL[body.typeId] || body.typeId;
-    this._say(`Przejęta skała: ${label}, r ${Math.round(best.r)} j., ${fmt1(body.mass)} t${body.oreTypeId && body.typeId === 'rock' ? ' (ukryty rdzeń!)' : ''}${this._coreNote(body)}`);
+    const pair = moonBody && rockBody ? ` · PARA z księżycem r ${Math.round(best.moon.r)} j. (${fmt1(moonBody.mass)} t)` : '';
+    this._say(`Przejęta skała: ${label}, r ${Math.round(best.r)} j., ${fmt1((rockBody || body).mass)} t${body.oreTypeId && isNeutralTypeId(body.typeId) ? (body.rubble ? ' (ukryta ruda!)' : ' (ukryty rdzeń!)') : ''}${this._coreNote(rockBody || body)}${pair}`);
+    return body;
+  }
+
+  _activateRecord(rec, z, time, sunT) {
+    const body = this.mining.activate(rec, { z, time, sunT, anchored: true });
+    body.userData = { fieldId: rec.id };
+    this.playLayer.hide(rec.id);
     return body;
   }
 
   // „ · rdzeń: bryła metalu r 190 j., 57 t” (piorun kulisty — ostrzeżenie).
   _coreNote(body) {
     const c = body.core;
+    if (body.rubble) {
+      const R = body.rubble;
+      return ` · RUMOWISKO: ${R.count} głazów w regolicie, porowatość ${Math.round(body.porosity * 100)}%`
+        + (R.coreBoulders ? `, ${R.coreBoulders} głazy rdzeniowe (${fmt1(body.coreMass)} t litej rudy) — rozrzuć ładunkiem, zbierz wiązką (T)` : '');
+    }
     if (!c) return '';
     if (c.kind === 'plasma') return ` · w geodzie PIORUN KULISTY — złapiesz go tylko z pułapką magnetyczną (M)`;
     return ` · rdzeń: ${coreLabel(c.kind, c.oreTypeId)} r ${Math.round(c.r)} j., ${fmt1(body.coreMass)} t czystej rudy`;
   }
 
   /** Skała testowa danego typu obok statku (scena Kopalnia). */
+  // typeId z przedrostkiem „rubble:” (np. 'rubble:carbon') — RUMOWISKO na siłę (głazy w regolicie,
+  // asteroidMining._buildRubble); bez przedrostka — monolit (jak dotąd w scenie Kopalnia).
   spawnTestRock(typeId, ship, time, r = 650) {
+    let rubble = false;
+    if (typeof typeId === 'string' && typeId.startsWith('rubble:')) { rubble = true; typeId = typeId.slice(7); r = Math.max(r, 760); }
     const type = ROCK_TYPE_INDEX[typeId] ?? ROCK_TYPE_INDEX.copper;
     const c = Math.cos(ship.angle), s = Math.sin(ship.angle);
     const x = ship.x + c * 1700, y = ship.y + s * 1700;
@@ -369,14 +407,36 @@ export class MiningRig {
     };
     const l = Math.hypot(rock.qx, rock.qy, rock.qz, rock.qw);
     rock.qx /= l; rock.qy /= l; rock.qz /= l; rock.qw /= l;
-    // Skały pola w obrysie testowej znikają (nie przenikają się).
+    // Skały pola w obrysie testowej znikają (nie przenikają się); księżyc pary — gdy znika jego skała
+    // albo orbita wchodzi na testową (warstwa chowa księżyc tylko po jego id).
     this.playLayer.forEachLoaded((f) => {
-      if (Math.hypot(f.x - x, f.y - y) < r * 1.35 + f.r) this.playLayer.hide(f.id);
+      const d = Math.hypot(f.x - x, f.y - y);
+      if (d < r * 1.35 + f.r) this.playLayer.hide(f.id);
+      if (f.moon && (this.playLayer.hidden.has(f.id) || d < r * 1.35 + f.moon.dist + f.moon.r)) this.playLayer.hide(f.moon.id);
     });
-    const body = this.mining.activate(rock, { z: this.playZ(rock), time, sunT: this.sunT(x, y), anchored: true });
+    const body = this.mining.activate(rock, { z: this.playZ(rock), time, sunT: this.sunT(x, y), anchored: true, rubble });
     body.userData = { test: true };
     this._say(`Skała testowa: ${ROCK_TYPE_LABELS_PL[typeId] || typeId}, r ${r} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t${this._coreNote(body)}`);
     return body;
+  }
+
+  /**
+   * R w RUMOWISKU (rdzenia nie ma — ruda w głazach rdzeniowych): ładunek w najwyżej leżącym
+   * głazie rdzeniowym i detonacja — rozrzut odsłania go i wyrzuca razem z sąsiadami.
+   */
+  _blastCoreBoulder() {
+    let best = null, body = null;
+    for (const b of this.mining.bodies) {
+      if (!b.alive || !b.rubble) continue;
+      for (const o of this.mining.oreBoulders(b)) if (o.grade === 2 && (!best || o.z + o.r > best.z + best.r)) { best = o; body = b; }
+    }
+    if (!best) { this._say('Wysadź rdzeń: brak skały z rdzeniem ani rumowiska z głazem rdzeniowym (postaw skałę testową)'); return false; }
+    const local = body.worldToLocal(best.x, best.y, best.z + best.r * 0.6, [0, 0, 0]);
+    const ch = CHARGES[this.chargeIndex];
+    this.charges.push({ body, local, energy: ch.energy, id: ch.id, t0: this.time });
+    this._say(`Ładunek ${ch.id} w głazie rdzeniowym rumowiska (${fmt1(best.ore)} t rudy) — detonacja`);
+    this.detonate();
+    return true;
   }
 
   /** Największe ciało z nienaruszonym rdzeniem (skała testowa / przejęta) albo null. */
@@ -398,7 +458,7 @@ export class MiningRig {
    */
   blastCore(time) {
     const b = this._coreBody();
-    if (!b) { this._say('Wysadź rdzeń: brak skały z rdzeniem (postaw skałę testową)'); return false; }
+    if (!b) return this._blastCoreBoulder();
     const c = b.core;
     // „Góra” skały w jej układzie = kierunek do kamery (+Z sceny).
     const up = [0, 0, 0];
@@ -460,10 +520,13 @@ export class MiningRig {
     const off = ((n - 1) - (n - 1) / 2) * step;
     const ball = m.addDisplayBall(cx + off, -cy, -60, 6);
     this.gallery.push({ p: ball.p, r: ball.r * 1.6, text: 'energetyczna — rdzeń', sub: 'piorun kulisty' });
-    // Skały pola w obrysie galerii znikają (resetMining je przywraca).
+    // Skały pola w obrysie galerii znikają (resetMining je przywraca); księżyc pary — z nimi albo gdy
+    // orbita wchodzi w obrys.
     const hx = (n / 2) * step + 250, hy = 600;
     this.playLayer.forEachLoaded((f) => {
       if (Math.abs(f.x - cx) < hx + f.r && Math.abs(f.y - cy) < hy + f.r) this.playLayer.hide(f.id);
+      const o = f.moon ? f.moon.dist + f.moon.r : 0;
+      if (f.moon && (this.playLayer.hidden.has(f.id) || (Math.abs(f.x - cx) < hx + o && Math.abs(f.y - cy) < hy + o))) this.playLayer.hide(f.moon.id);
     });
     this._say('Galeria rdzeni: górny rząd — kawałki rdzeni (czysta ruda), dolny — odłamki skorupy; na końcu piorun kulisty');
     return { x: cx, y: cy };
@@ -520,11 +583,14 @@ export class MiningRig {
         pieces += res.bodies.length + res.pebbles.length + res.gravel.length;
         for (const list2 of all) for (const p of list2) if (isCorePiece(p)) corePieces++;
         if (res.coreChunks && body.core) { coreKind = body.core.kind; coreType = body.core.oreTypeId; }
+        // Rumowisko: kawałki głazów rdzeniowych (materiał rdzenia ciała).
+        else if (res.rubble && body.coreMaterial) { coreKind = body.coreMaterial.kind; coreType = body.oreTypeId; }
       } else contained++;
       this.lastBlast = res;
     }
     const coreTxt = corePieces ? ` · rdzeń (${coreLabel(coreKind, coreType)}): ${corePieces} ${corePieces === 1 ? 'kawałek' : 'kawałków'} czystej rudy` : '';
-    if (breach) this._say(`Wybuch: ${pieces} odłamów${coreTxt}${contained ? `, ${contained} ładunków za słabych` : ''}`);
+    const rubTxt = this.lastBlast?.rubble && this.lastBlast.outcome === 'breach' ? ` · rumowisko: odpadło ${this.lastBlast.boulders | 0} całych głazów` : '';
+    if (breach) this._say(`Wybuch: ${pieces} odłamów${rubTxt}${coreTxt}${contained ? `, ${contained} ładunków za słabych` : ''}`);
     else this._say('Za słaby ładunek — skała pękła w środku, skorupa trzyma (następny sięgnie dalej)');
   }
 
@@ -638,7 +704,7 @@ export class MiningRig {
       }
       for (const b of mining.bodies) {
         const dd = Math.hypot(b.p[0] - tx, b.p[1] - ty, b.p[2] - tz);
-        if (dd < TRACTOR.radius && b.mass <= TRACTOR.capacity) near.push([dd, b.p]);
+        if (dd < TRACTOR.radius && b.mass <= TRACTOR.capacity && !(b.anchored && b.boulder)) near.push([dd, b.p]);
       }
       near.sort((a, b) => a[0] - b[0]);
       for (let i = 0; i < Math.min(12, near.length); i++) this._tractorTargets.push(near[i][1]);
@@ -736,6 +802,11 @@ export class MiningRig {
     const ev = this.mining.drainEvents();
     for (let i = 0; i < ev.length; i++) {
       const e = ev[i];
+      if (e.kind === 'pluck') {
+        // Rumowisko: wiązka wyrwała odsłonięty głaz z kupy.
+        this._say(e.grade === 2 ? 'Wiązka wyrwała GŁAZ RDZENIOWY (lita ruda)' : e.grade === 1 ? 'Wiązka wyrwała głaz wzbogacony' : 'Wiązka wyrwała głaz z rumowiska');
+        continue;
+      }
       if (e.kind !== 'ball') continue;
       if (e.outcome === 'release') {
         const how = e.how === 'dig' ? 'laser otworzył geodę' : e.how === 'saw' ? 'piła przecięła geodę' : 'wybuch rozbił geodę';
@@ -908,6 +979,62 @@ export class MiningRig {
         ctx.fillText(`RDZEŃ · ${what}`, sx, sy - rr - 18);
         ctx.fillStyle = 'rgba(210,225,235,0.85)';
         ctx.fillText(`głęb. ${Math.round(depth)} j. · ładunek z rdzenia ≥ ${fmt1(need)} · R: wysadź rdzeń`, sx, sy - rr - 4);
+      }
+    }
+    // Rumowiska: głazy rdzeniowe (lita ruda) i wzbogacone — skaner przelicza je przy zmianie ciała.
+    if (this.scan) {
+      const cache = this._rubbleScan || (this._rubbleScan = new WeakMap());
+      // Podpisy głazów rdzeniowych bliskie na ekranie (ta sama ruda) — jeden „GŁAZY RDZENIOWE ×n” z sumą
+      // rudy (jak skaner gry; na małej kupie kilka podpisów leżało jeden na drugim).
+      const labels = [];
+      let marks = 0;
+      for (const b of this.mining.bodies) {
+        if (!b.rubble || !b.oreTypeId || marks >= 16) continue;
+        // Przegląd siatki kupy: przy zmianie ciała, najwyżej 4 razy na sekundę (laser zmienia ciało co krok).
+        let e = cache.get(b);
+        if (!e || (e.version !== b.version && (this.time - e.t >= 0.25 || this.time < e.t))) {
+          e = e || { version: -1, t: 0, list: [] };
+          this.mining.oreBoulders(b, e.list);
+          e.version = b.version;
+          e.t = this.time;
+          cache.set(b, e);
+        }
+        const res = RESOURCES[b.oreRes];
+        // Najpierw głazy rdzeniowe (limit znaczników nie może ich zabrać), potem wzbogacone.
+        const order = e.list.filter((o) => o.grade === 2).concat(e.list.filter((o) => o.grade !== 2));
+        for (const o of order) {
+          if (marks >= 16 || (o.grade < 2 && o.mass < 1)) continue;
+          const [sx, sy] = toScr(o.x, o.y);
+          const rr = Math.max(7, o.r * cam.zoom);
+          if (sx < -rr || sy < -rr || sx > W + rr || sy > H + rr) continue;
+          marks++;
+          ctx.setLineDash([6, 5]);
+          ctx.strokeStyle = o.grade === 2 ? 'rgba(255,200,120,0.85)' : 'rgba(200,215,140,0.6)';
+          ctx.lineWidth = o.grade === 2 ? 1.5 : 1;
+          ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          // Podpis tylko przy głazie rdzeniowym (lita ruda); wzbogacone — sam okrąg.
+          if (o.grade === 2) labels.push({ x: sx, y: sy - rr - 5, ore: o.ore, n: 1, res });
+        }
+      }
+      // Scalanie: para bliskich podpisów (ta sama ruda) → jeden (środek ważony liczbą głazów, nad
+      // najwyższym); po scaleniu od nowa — przesunięty podpis mógł zbliżyć się do innego.
+      for (let i = 0; i < labels.length; i++) {
+        for (let j = i + 1; j < labels.length; j++) {
+          const la = labels[i], lb = labels[j];
+          if (lb.res !== la.res || Math.abs(lb.x - la.x) >= 200 || Math.abs(lb.y - la.y) >= 28) continue;
+          la.x = (la.x * la.n + lb.x * lb.n) / (la.n + lb.n);
+          la.y = Math.min(la.y, lb.y);
+          la.ore += lb.ore;
+          la.n += lb.n;
+          labels.splice(j, 1);
+          i = -1;
+          break;
+        }
+      }
+      ctx.fillStyle = 'rgba(255,215,150,0.95)';
+      for (const l of labels) {
+        ctx.fillText(`${l.n > 1 ? `GŁAZY RDZENIOWE ×${l.n}` : 'GŁAZ RDZENIOWY'} · ${l.res ? l.res.short : ''} ${fmtMass(l.ore)}`, l.x, l.y);
       }
     }
     // Pioruny kuliste na wolności: bezpiecznik i stan chwytu.

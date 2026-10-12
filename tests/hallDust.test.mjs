@@ -18,7 +18,8 @@ const { hallToGameAffine, gameToHall, gameVecToHall, packHallDustFrame, createHa
   await import('../src/game/hallDustInput.js');
 const { HaloRingCollider } = await import('../src/game/haloRingCollision.js');
 const { haloLocalToGame } = await import('../src/game/haloRingPlanets.js');
-const { GasField2D } = await import('../src/3d/gasField/gasField2D.js');
+const { GasField2D, jetProfileCpu, jetSourceAlongCpu, jetSourceIntegralCpu, jetVisibleCpu, sroundCpu } =
+  await import('../src/3d/gasField/gasField2D.js');
 const { GasFieldLayer } = await import('../src/3d/gasField/gasFieldLayer.js');
 const { fxNoise } = await import('../src/3d/fx/noise.js');
 const { LightGrid } = await import('../src/3d/fx/lightGrid.js');
@@ -248,6 +249,116 @@ test('obrys kadłuba: komórki stałe pola gazu = sylwetka Atlasa z siatki belek
   assert.ok(wn > 100 && wSolid / wn < 0.05, `węzły odciętej rufy w obrysie okrętu: ${wSolid} / ${wn}`);
 });
 
+// ── Model strumienia MAIN i bilans pyłu (audyt 2026-10-12, docs/AUDYT-pyl-hali-2026-10-12.md § 6) ─────────
+// Atlas: 5 dysz MAIN r = 34 j., w poprzek osi gromady 0, ±106, ±193 j.; EngineFrame.spread = 227 j. (oś → brzeg skrajnej
+// dyszy), √Σr² = 76 j. Strojenie jak HALL_DUST_TUNE (hallDust.js — moduł renderu, tu bez Core3D): jetWidth 1,35,
+// jetWiden 0,16, jetSourceLen 600 j., jetFlow 260, jetFlat 0,69.
+const ATLAS = { spread: 227, rEq: Math.sqrt(5 * 34 * 34), across: [0, 106, 193], jetWidth: 1.35, widen: 0.16, srcLen: 600, flow: 260, k: 0.69 };
+
+test('strumień MAIN: profil PŁASKI na szerokość gromady — skrajne dysze dmuchają prawie jak środkowa (dawny Gauss: ~połowa)', () => {
+  const h = DOM.h;
+  const w0 = ATLAS.spread * ATLAS.jetWidth / h;
+  const len = 2800 / h;
+  for (const along of [2, 6, 12]) {
+    const mid = jetProfileCpu(along, 0, len, w0, ATLAS.widen, 1, ATLAS.k);
+    const edge = jetProfileCpu(along, ATLAS.across[2] / h, len, w0, ATLAS.widen, 1, ATLAS.k);
+    assert.ok(edge / mid > 0.85, `d=${along}: skrajna ${edge.toFixed(3)} / środek ${mid.toFixed(3)}`);
+  }
+  // dawny jeden stożek Gaussa (szerokość (spread + √Σr²)·1,15, exp(−2,2·x²)) — skrajna dysza dostawała ~połowę
+  const wOld = (ATLAS.spread + ATLAS.rEq) * 1.15 / h;
+  const old = jetProfileCpu(2, ATLAS.across[2] / h, len, wOld, ATLAS.widen, 0) / jetProfileCpu(2, 0, len, wOld, ATLAS.widen, 0);
+  assert.ok(old < 0.6, `Gauss: ${old.toFixed(3)}`);
+  // źródła gazu hali (D.z = 0) dalej Gauss
+  assert.ok(Math.abs(jetProfileCpu(3, 2, 40, 4, 0.1, 0) - Math.exp(-2.2 * (2 / 4.3) ** 2) * jetProfileCpu(3, 0, 40, 4, 0.1, 0)) < 1e-12);
+});
+
+test('źródło objętości: cel dywergencji zsumowany po komórkach siatki = wydatek strumienia (Atlas: 5 dysz = 5 × jedna)', () => {
+  const h = DOM.h;
+  const w0 = ATLAS.spread * ATLAS.jetWidth / h;
+  const len = 2800 / h;
+  const ls = ATLAS.srcLen / h;
+  const area = jetSourceIntegralCpu(len, w0, ATLAS.widen, ls, ATLAS.k);
+  const Q = ATLAS.flow * (ATLAS.rEq / h) ** 2;   // [komórki²/s] — wydatek ∝ Σ r² dysz
+  const q = Q / area;                            // jetD.x — wydatek na komórkę [1/s]
+  // nasada i kierunek dowolne (ukośnie) — suma po środkach komórek jak w kernelu adwekcji
+  const ax = 203.37, ay = 141.81, dx = 0.6, dy = 0.8;
+  let sum = 0;
+  for (let j = 0; j < DOM.ny; j++) {
+    for (let i = 0; i < DOM.nx; i++) {
+      const rx = i + 0.5 - ax, ry = j + 0.5 - ay;
+      const along = rx * dx + ry * dy;
+      const across = -rx * dy + ry * dx;
+      sum += q * jetProfileCpu(along, across, len, w0, ATLAS.widen, 1, ATLAS.k) * jetSourceAlongCpu(along, ls);
+    }
+  }
+  assert.ok(Math.abs(sum / Q - 1) < 0.02, `Σ celu ${sum.toFixed(1)} vs wydatek ${Q.toFixed(1)} komórek²/s`);
+  // jedna dysza: 5 × mniej
+  const Q1 = ATLAS.flow * (34 / h) ** 2;
+  assert.ok(Math.abs(Q / Q1 - 5) < 1e-9);
+});
+
+test('zasłanianie stożka: za ścianą tylną hali i za zbiornikami paliwa poza strumieniem, przed nimi — w strumieniu', () => {
+  const h = DOM.h;
+  const cx = (-810 - DOM.x0) / h;          // oś stanowiska C-01
+  const noz = (L.backZ + 650 - DOM.z0) / h; // wylot ~650 j. przed ścianą, strumień w ścianę (−z)
+  const solid = (x, y) => RASTER.data[(Math.floor(y) * DOM.nx + Math.floor(x)) * 4] > 127;
+  // pierwsza przeszkoda na osi (zbiorniki przy ścianie tylnej) i ściana tylna (ostatni pas stałych przed brzegiem domeny)
+  const firstAt = (x) => { let y = noz; while (y > 0 && !solid(x, y)) y--; return y; };
+  const first = Math.max(firstAt(cx - 6), firstAt(cx), firstAt(cx + 5));   // (oś stanowiska trafia w przerwę między zbiornikami)
+  const wallRow = Math.floor((L.backZ - DOM.z0) / h);
+  assert.ok(solid(cx, wallRow) && first > wallRow, `przeszkoda ${first} przed ścianą ${wallRow}`);
+  let behindWall = wallRow;
+  while (behindWall > 0 && solid(cx, behindWall)) behindWall--;
+  const vis = (x, y) => jetVisibleCpu(RASTER.data, DOM.nx, DOM.ny, x, y, cx, noz);
+  for (const dxc of [-6, 0, 5]) {
+    assert.equal(vis(cx + dxc, first + 2.5), 1, `przed przeszkodą (Δx ${dxc})`);
+    assert.equal(vis(cx + dxc, behindWall + 0.5), 0, `tuż za ścianą tylną (Δx ${dxc})`);
+    assert.equal(vis(cx + dxc, 2.5), 0, `daleko za ścianą (Δx ${dxc})`);
+  }
+  // cień zbiorników: komórka między zbiornikiem a ścianą, gdzie oś przecina zbiornik
+  let shadowed = 0, n = 0;
+  for (let dxc = -12; dxc <= 12; dxc++) {
+    if (!solid(cx + dxc, first - 0.5)) continue;   // kolumna za zbiornikiem
+    let y = first - 0.5;
+    while (y > wallRow && solid(cx + dxc, y)) y--;
+    if (y <= wallRow + 1) continue;
+    n++;
+    if (!vis(cx + dxc + 0.5, y - 0.5)) shadowed++;
+  }
+  assert.ok(n > 5 && shadowed / n > 0.8, `cień zbiorników ${shadowed} / ${n}`);
+  // otwarta hala — wszystko widoczne
+  assert.equal(vis(cx + 3, noz + 60), 1);
+});
+
+test('zaokrąglanie stochastyczne zapisu RGBA16F: drobne przyrosty pyłu nie giną przy obcięciu ku zeru (RTX) ani przy do najbliższej', () => {
+  // zapis f32 → f16 do tekstury storage: obcięcie (pomiar na RTX / D3D12, 2026-10-12) albo do najbliższej
+  const ulp = (x) => 2 ** (Math.max(Math.floor(Math.log2(Math.max(Math.abs(x), 1e-30))), -14) - 10);
+  const trunc = (x) => Math.sign(x) * Math.floor(Math.abs(x) / ulp(x)) * ulp(x);
+  const nearest = (x) => Math.sign(x) * Math.round(Math.abs(x) / ulp(x)) * ulp(x);
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+  // pokład 0,7 dostaje z opadania 4·10⁻⁵ na podkrok (pół odstępu liczb połówkowych to 2,4·10⁻⁴): 2000 podkroków
+  // (z szumem odchylenie losowe ~0,006 — próg 3σ; bez szumu ginie całe 0,08)
+  const v0 = trunc(0.7);   // wartość połówkowa
+  const dv = 4e-5, n = 2000, want = v0 + dv * n;
+  let naiveT = v0, naiveN = v0, sT = v0, sN = v0;
+  for (let i = 0; i < n; i++) {
+    naiveT = trunc(naiveT + dv);
+    naiveN = nearest(naiveN + dv);
+    sT = trunc(sroundCpu(sT + dv, rnd(), 0));
+    sN = nearest(sroundCpu(sN + dv, rnd(), 0.5));
+  }
+  assert.equal(naiveT, v0, 'zwykłe obcięcie zjada przyrost');
+  assert.equal(naiveN, v0, 'zwykłe zaokrąglenie też');
+  assert.ok(Math.abs(sT - want) < 0.02, `obcięcie + szum: ${sT} vs ${want}`);
+  assert.ok(Math.abs(sN - want) < 0.02, `do najbliższej + szum: ${sN} vs ${want}`);
+  // ubytek (pył w powietrzu 0,3 traci 2·10⁻⁵ na podkrok): obcięcie bez szumu zaokrągla w dół o cały odstęp
+  const a0 = trunc(0.3);
+  let a = a0, b = a0;
+  for (let i = 0; i < n; i++) { a = trunc(a - 2e-5); b = trunc(sroundCpu(b - 2e-5, rnd(), 0)); }
+  assert.ok(Math.abs(b - (a0 - 0.04)) < 0.015 && a < a0 - 0.1, `z szumem ${b}, bez ${a}`);
+});
+
 // ── WGSL (Node, bez GPU) ──────────────────────────────────────────────────────
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
 const renderer = new THREE.WebGPURenderer({ canvas });
@@ -265,6 +376,17 @@ test('kernele pola gazu: WGSL buduje się, ≤ 4 tekstury storage i ≤ 12 bufor
     assert.doesNotMatch(w, /textureSample\(/, `${k.name}: próbki z poziomu 0 (compute)`);
   }
   assert.equal(sim.jacobi % 2, 1, 'nieparzyste iteracje — wynik w prsB');
+  const wgsl = Object.fromEntries(sim.kernels().map((k) => {
+    const b = renderer.backend.createNodeBuilder(k, renderer);
+    b.build();
+    return [k.name, b.computeShader];
+  }));
+  // miękki rzut: Jacobi dzieli przez (soft + 4) — (∇² − soft)·p = div − cel
+  assert.match(wgsl.gasFieldJacobiAB, /\/ \( object\.nodeUniform\d+ \+ 4\.0 \)/, 'Jacobi z miękkim rzutem');
+  // zaokrąglanie stochastyczne zapisu (pył, pokład, para, prędkość)
+  for (const n of ['gasFieldAdvect', 'gasFieldDust', 'gasFieldProject']) assert.match(wgsl[n], /exp2\(/, `${n}: zaokrąglanie stochastyczne`);
+  // zasłanianie stożka: marsz z przerwaniem
+  assert.match(wgsl.gasFieldAdvect, /break;/, 'marsz zasłaniania');
 });
 
 test('warstwy pyłu: WGSL buduje się, macierz hala → scena ma wyznacznik +1 (klucz pipeline\'u = rozgrzewka)', () => {

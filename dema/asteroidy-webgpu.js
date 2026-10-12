@@ -31,13 +31,14 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { BLOOM_DEFAULTS } from '../src/3d/bloomConfig.js';
-import { ROCK_TYPE_INDEX, ROCK_TYPE_LABELS_PL, ROCK_FAMILIES, SHAPE_VARIANTS } from '../src/game/asteroidRockKinds.js';
+import { ROCK_TYPES, ROCK_TYPE_INDEX, ROCK_TYPE_LABELS_PL, ROCK_FAMILIES, SHAPE_VARIANTS } from '../src/game/asteroidRockKinds.js';
+import { familyTitle } from '../src/data/asteroidFamilies.js';
 import { GiantBuilder } from '../src/game/asteroidGiantBuilder.js';
 import atlasUrl from '../assets/capital_ship_rect_v1.png';
 import carrierUrl from '../src/assets/ships/terrancarrier.png';
 import {
-  SUN, AU, field, BELT_BAND, sunTransmittance, SPOTS, FLIGHT, GIANTS, FIELD_GIANTS, ALL_GIANTS,
-  precomputeOcclusion, findDeepSpot, findSparseSpot, findStormSpot
+  SUN, AU, PLANETS, field, BELT_BAND, sunTransmittance, SPOTS, FLIGHT, GIANTS, FIELD_GIANTS, ALL_GIANTS,
+  precomputeOcclusion, findDeepSpot, findSparseSpot, findStormSpot, freeSpotNear
 } from './asteroidy-webgpu/world.js';
 import { RockShapeBankGPU } from './asteroidy-webgpu/rockBank.js';
 import { createRockNoiseVolume } from './asteroidy-webgpu/rockNoise.js';
@@ -82,19 +83,46 @@ const REBASE_DIST = 20000;
 // Szyk eskorty: przy lewej burcie Atlasa, lekko z tyłu (jak w demie WebGL).
 const ESCORT_OFFSET = Object.freeze({ along: -300, side: -1250 });
 
-const SCENES = ['gallery', 'shapes', 'giants', 'giantField', 'field', 'flight', 'deep', 'sparse', 'kuiper', 'storm', 'mining'];
+const SCENES = ['gallery', 'shapes', 'giants', 'giantField', 'field', 'flight', 'deep', 'sparse', 'kuiper', 'storm', 'mining', 'gradient', 'families'];
 const SCENE_LABELS = {
   gallery: '1 · Galeria typów', shapes: '2 · Galeria kształtów', giants: '3 · Olbrzymy', giantField: '4 · Olbrzym w polu',
   field: '5 · Gęste pole', flight: '6 · Przelot', deep: '7 · Głąb pola', sparse: '8 · Rzadki pas', kuiper: '9 · Pas Kuipera', storm: '0 · Burza',
-  mining: 'G · Kopalnia'
+  mining: 'G · Kopalnia', gradient: 'Skład pasa wg odległości od Słońca', families: 'Rodziny kolizyjne pasa'
 };
 const GALLERY_SCENES = new Set(['gallery', 'shapes']);
 // Eskorta nie leci pod stropy olbrzymów (tunele są na jeden okręt).
 const ESCORT_OFF_SCENES = new Set(['gallery', 'shapes', 'giants', 'giantField']);
 // Flary (dopełnienie liczby świateł) tylko w polu — w galeriach i przy olbrzymach nic nie wnoszą.
-const FLARE_SCENES = new Set(['field', 'flight', 'deep', 'sparse', 'kuiper', 'storm', 'mining']);
-const GALLERY_TYPES = ['rock', 'iron', 'silicon', 'copper', 'titan', 'ice', 'crystal', 'uran', 'energy'];
-const TYPE_SHOWCASE_FAMILY = { rock: 'cratered', iron: 'oval', silicon: 'rubble', copper: 'angular', titan: 'shard', ice: 'binary', crystal: 'angular', uran: 'potato', energy: 'ridged' };
+const FLARE_SCENES = new Set(['field', 'flight', 'deep', 'sparse', 'kuiper', 'storm', 'mining', 'gradient', 'families']);
+// Galeria: rząd 1–2 — rudy gry, energetyczna i oba wypełniacze; rząd 3 — typy z widm planetoid
+// (C, M, V, D, platynowce — docs/PLAN-pas-realizm.md); rząd 4 — C z lodem w rdzeniach (A2, Themis;
+// kraterowana — szron leży w dnach kraterów).
+const GALLERY_TYPES = [
+  'iron', 'copper', 'silicon', 'titan', 'crystal',
+  'ice', 'uran', 'energy', 'rock', 'rock_c',
+  'carbon', 'metal', 'basalt', 'primitive', 'platinum',
+  'carbon_ice'
+];
+const TYPE_SHOWCASE_FAMILY = {
+  rock: 'cratered', iron: 'oval', silicon: 'rubble', copper: 'angular', titan: 'shard', ice: 'binary', crystal: 'angular', uran: 'potato', energy: 'ridged',
+  rock_c: 'cratered', carbon: 'rubble', metal: 'oval', basalt: 'angular', primitive: 'binary', platinum: 'potato',
+  carbon_ice: 'cratered'
+};
+// Scena „gradient”: przystanki od wewnętrznego pasa do Trojańczyków (AU mapy, kąt względem
+// Jowisza dla łuków; null = najgęstsze pole na całym okręgu). ← → — następny przystanek.
+// Pas główny (A2): każde gęste pole należy do rodziny kolizyjnej, a pola są duże (sięgają ~1 AU mapy od
+// szczytu) — przystanek pasa głównego to pole RODZINY swojego promienia (`fam`), najbliżej `au`.
+const GRADIENT_STOPS = Object.freeze([
+  { au: 36.2, jup: null, fam: 'flora', label: '36,2 AU — wewnętrzny pas: S (krzem) · Flora' },
+  { au: 36.9, jup: null, fam: 'vesta', label: '36,9 AU — rodzina Westy: S + V (bazalt)' },
+  { au: 38.2, jup: null, fam: 'eunomia', label: '38,2 AU — środek pasa: S · Eunomia' },
+  { au: 40.0, jup: null, fam: 'eos', label: '40,0 AU — S + M (metaliczne) · Eos' },
+  { au: 40.5, jup: null, fam: 'themis', label: '40,5 AU — Themis: C z lodem' },
+  { au: 40.7, jup: null, fam: 'veritas', label: '40,7 AU — zewnętrzny pas: C · Veritas (młoda)' },
+  { au: 44.4, jup: 180, label: '44,4 AU — Hildy (L3): D' },
+  { au: 50.2, jup: 60, label: 'Trojańczycy (L4): D' },
+  { au: 132, jup: null, label: '132 AU — Kuiper: lód, D, kryształ, uran' }
+]);
 
 // ---------------------------------------------------------------------------
 // Stan
@@ -385,12 +413,13 @@ function buildTypeGallery() {
   const COLS = 5;
   const cellW = 2100;
   const cellH = 2200;
+  const rows = Math.ceil(GALLERY_TYPES.length / COLS);
   GALLERY_TYPES.forEach((typeId, i) => {
     const col = i % COLS;
     const row = Math.floor(i / COLS);
     const inRow = Math.min(COLS, GALLERY_TYPES.length - row * COLS);
     const cx = g.x + (col - (inRow - 1) / 2) * cellW;
-    const cy = g.y + (row - 0.5) * cellH;
+    const cy = g.y + (row - (rows - 1) / 2) * cellH;
     const type = ROCK_TYPE_INDEX[typeId];
     const fam = Math.max(0, ROCK_FAMILIES.findIndex((f) => f.id === TYPE_SHOWCASE_FAMILY[typeId]));
     const sizes = [
@@ -419,7 +448,8 @@ function buildShapeGallery() {
   shapeRocks.length = 0;
   shapeCells.length = 0;
   const g = SPOTS.shapes;
-  const COLS = 5;
+  // Dwa rzędy na wszystkie rodziny (od 2026-10-12 jest ich 11 — bączek); kadr: galleryOverviewZoom.
+  const COLS = SHAPE_GALLERY_COLS;
   const cellW = 2000;
   const cellH = 1900;
   ROCK_FAMILIES.forEach((fam, i) => {
@@ -427,7 +457,8 @@ function buildShapeGallery() {
     const row = Math.floor(i / COLS);
     const cx = g.x + (col - (COLS - 1) / 2) * cellW;
     const cy = g.y + (row - 0.5) * cellH;
-    const mode = fam.id === 'bowl' ? 'crater' : (fam.id === 'disc' ? 'disc' : 'long');
+    // Bączek z ukosa jak dysk — widać grzbiet równikowy.
+    const mode = fam.id === 'bowl' ? 'crater' : (fam.id === 'disc' || fam.id === 'top' ? 'disc' : 'long');
     shapeRocks.push(galleryRock({
       x: cx - 250, y: cy, d: 1100, shape: i * SHAPE_VARIANTS, type: ROCK_TYPE_INDEX.rock, mode,
       angle: 0.35, spin: 0.16, phase: i, seed: (i * 0.137) % 1, label: fam.label
@@ -443,8 +474,145 @@ function buildShapeGallery() {
   shapeSet.set(shapeRocks);
 }
 
+const SHAPE_GALLERY_COLS = Math.ceil(ROCK_FAMILIES.length / 2);
 function galleryOverviewZoom(name) {
-  return name === 'shapes' ? Math.min(W / 10400, H / 4300) : Math.min(W / 10900, H / 4700);
+  return name === 'shapes' ? Math.min(W / (SHAPE_GALLERY_COLS * 2000 + 400), H / 4300) : Math.min(W / 10900, H / (Math.ceil(GALLERY_TYPES.length / 5) * 2200 + 300));
+}
+
+// ---------------------------------------------------------------------------
+// Skład pasa wg odległości od Słońca (scena „gradient”)
+
+const _gradientSpots = new Map();
+const JUPITER = PLANETS.find((p) => p.id === 'jupiter');
+
+/**
+ * Głąb pola (pole ≥ 0,6 — tam są rudy; obrzeże to wypełniacz) przy promieniu przystanku,
+ * możliwie oświetlona (gęstość × (0,2 + słońce)); łuki: w oknie kąta przy wierzchołku.
+ */
+function gradientSpot(i) {
+  if (_gradientSpots.has(i)) return _gradientSpots.get(i);
+  const stop = GRADIENT_STOPS[i];
+  if (stop.fam) {
+    // Pole rodziny: głąb (≥ 0,6, płytkie pole — od 0,3), oświetlone, najbliżej promienia przystanku.
+    const fi = field.families.findIndex((f) => f.id === stop.fam);
+    let best = null;
+    for (const minCluster of [0.6, 0.3]) {
+      for (const p of field.familyPeaks()) {
+        if (p.fam !== fi) continue;
+        for (let gx = -60000; gx <= 60000; gx += 6000) {
+          for (let gy = -60000; gy <= 60000; gy += 6000) {
+            const x = p.x + gx;
+            const y = p.y + gy;
+            const m = field.sampleMacro(x, y);
+            if (m.region?.beltId !== 'main' || m.cluster < minCluster) continue;
+            const dens = m.density;
+            if (field.familyAt(x, y)?.id !== stop.fam) continue;
+            const rAu = Math.hypot(x - SUN.x, y - SUN.y) / AU;
+            const d = dens * (0.2 + sunTransmittance(x, y)) * Math.exp(-(((rAu - stop.au) / 0.4) ** 2));
+            if (!best || d > best.d) best = { x, y, d };
+          }
+        }
+      }
+      if (best) break;
+    }
+    if (best) {
+      const spot = freeSpotNear(best);
+      _gradientSpots.set(i, spot);
+      return spot;
+    }
+  }
+  const ja = Math.atan2(JUPITER.y - SUN.y, JUPITER.x - SUN.x);
+  const a0 = stop.jup === null ? 0 : ja + stop.jup * Math.PI / 180 - 0.12;
+  const span = stop.jup === null ? Math.PI * 2 : 0.24;
+  let best = null;
+  for (let k = 0; k < 4000; k++) {
+    const a = a0 + span * (k / 4000);
+    for (const dr of [-0.15, 0, 0.15]) {
+      const r = (stop.au + dr) * AU;
+      const x = SUN.x + Math.cos(a) * r;
+      const y = SUN.y + Math.sin(a) * r;
+      const m = field.sampleMacro(x, y);
+      const d = (m.cluster >= 0.6 ? 1 : 0.001) * m.density * (0.2 + sunTransmittance(x, y));
+      if (!best || d > best.d) best = { x, y, d };
+    }
+  }
+  const spot = freeSpotNear(best);
+  _gradientSpots.set(i, spot);
+  return spot;
+}
+
+function goGradient(i) {
+  const n = GRADIENT_STOPS.length;
+  S.gradient = ((i % n) + n) % n;
+  const spot = gradientSpot(S.gradient);
+  const ship = S.ship;
+  ship.x = spot.x; ship.y = spot.y;
+  ship.vx = 0; ship.vy = 0; ship.angVel = 0; ship.thrust = 0;
+  ship.angle = Math.atan2(spot.y - SUN.y, spot.x - SUN.x);
+  S.cam.x = ship.x; S.cam.y = ship.y;
+  S.cam.zoom = S.targetZoom = 0.5;
+  updateSceneInfo();
+}
+
+// Scena „families” (A2): pole każdej rodziny kolizyjnej (AsteroidBeltField.familyPeaks — szczyty pól
+// z przypisaną rodziną), w nim najjaśniejszy głęboki punkt tej rodziny. ← → — następna rodzina.
+let _familyStops = null;
+function familyStops() {
+  if (_familyStops) return _familyStops;
+  const peaks = field.familyPeaks();
+  _familyStops = [];
+  field.families.forEach((fam, fi) => {
+    let best = null;
+    // Głąb pola (≥ 0,6); rodzina z płytkim polem (np. Eunomia) — od 0,3.
+    for (const minCluster of [0.6, 0.3]) {
+      for (const p of peaks) {
+        if (p.fam !== fi) continue;
+        for (let gx = -60000; gx <= 60000; gx += 6000) {
+          for (let gy = -60000; gy <= 60000; gy += 6000) {
+            const x = p.x + gx;
+            const y = p.y + gy;
+            const m = field.sampleMacro(x, y);
+            if (m.region?.beltId !== 'main' || m.cluster < minCluster) continue;
+            if (field.familyAt(x, y) !== fam) continue;
+            const d = field.sampleMacro(x, y).density * (0.2 + sunTransmittance(x, y));
+            if (!best || d > best.d) best = { x, y, d };
+          }
+        }
+      }
+      if (best) break;
+    }
+    if (best) _familyStops.push({ fam, ...freeSpotNear(best) });
+  });
+  return _familyStops;
+}
+
+function goFamily(i) {
+  const stops = familyStops();
+  if (!stops.length) return;
+  const n = stops.length;
+  S.familyStop = ((i % n) + n) % n;
+  const spot = stops[S.familyStop];
+  const ship = S.ship;
+  ship.x = spot.x; ship.y = spot.y;
+  ship.vx = 0; ship.vy = 0; ship.angVel = 0; ship.thrust = 0;
+  ship.angle = Math.atan2(spot.y - SUN.y, spot.x - SUN.x);
+  S.cam.x = ship.x; S.cam.y = ship.y;
+  S.cam.zoom = S.targetZoom = 0.45;
+  updateSceneInfo();
+}
+
+/** Udział typów skał gry w kadrze (do HUD-u i zrzutów sceny „gradient”). */
+function viewComposition() {
+  const hw = W * 0.5 / S.cam.zoom;
+  const hh = H * 0.5 / S.cam.zoom;
+  const cnt = new Map();
+  let n = 0;
+  field.forEachRockInRect(BELT_BAND.PLAY, S.cam.x - hw, S.cam.y - hh, S.cam.x + hw, S.cam.y + hh, 0, (r) => {
+    cnt.set(r.type, (cnt.get(r.type) || 0) + 1);
+    n++;
+  });
+  const out = [...cnt.entries()].sort((a, b) => b[1] - a[1]).map(([t, c]) => ({ type: ROCK_TYPES[t], share: c / Math.max(1, n) }));
+  return { n, types: out };
 }
 
 function focusGallery(i) {
@@ -596,6 +764,10 @@ function setScene(name) {
     S.cam.x = g.x; S.cam.y = g.y;
     S.cam.zoom = S.targetZoom = giantFitZoom(g);
     S.camGoal = { x: g.x, y: g.y };
+  } else if (name === 'gradient') {
+    goGradient(S.gradient ?? Number(params.get('stop') || 0));
+  } else if (name === 'families') {
+    goFamily(S.familyStop ?? Number(params.get('stop') || 0));
   } else if (name === 'flight') {
     ship.angle = FLIGHT.angle;
     ship.x = FLIGHT.x;
@@ -664,7 +836,11 @@ function updateMiningButtons() {
 
 function updateSceneInfo() {
   const el = $('sceneinfo');
-  if (el) el.textContent = SCENE_LABELS[S.scene] || S.scene;
+  if (el) {
+    const fam = S.scene === 'families' ? familyStops()[S.familyStop ?? 0]?.fam : null;
+    el.textContent = (SCENE_LABELS[S.scene] || S.scene) + (S.scene === 'gradient' ? ` · ${GRADIENT_STOPS[S.gradient ?? 0].label}` : '')
+      + (fam ? ` · ${familyTitle(fam)}` : '');
+  }
 }
 
 function updateFocusButtons() {
@@ -1239,6 +1415,18 @@ function updateHud() {
     lines.push(`olbrzymy: ${st.giants}/${ALL_GIANTS.length} gotowe · ${g.preset.label}: ${g.preset.desc}`);
     if (gs.giant) lines.push(`siatka ${gs.giant.dims.nx}×${gs.giant.dims.ny}×${gs.giant.dims.nz} · przekrój ${gs.view ? Math.round(gs.view.cut.open * 100) : 0}%${S.autopilot ? ' · AUTOPILOT' : ''}`);
   }
+  // Rodzina kolizyjna pola w środku kadru (A2 — jak komunikat strefy i skaner wydobycia w grze).
+  const famHere = field.familyAt(S.cam.x, S.cam.y);
+  if (famHere) lines.push(`pole: ${familyTitle(famHere)}`);
+  if (S.scene === 'families') {
+    const comp = viewComposition();
+    lines.push(`w kadrze ${fmt(comp.n)} skał: ` + comp.types.slice(0, 7).map((t) => `${ROCK_TYPE_LABELS_PL[t.type] || t.type} ${Math.round(t.share * 100)}%`).join(', ') + ' · ← → rodzina');
+  }
+  if (S.scene === 'gradient') {
+    const comp = viewComposition();
+    lines.push(`${GRADIENT_STOPS[S.gradient ?? 0].label} · ← → przystanek`);
+    lines.push(`w kadrze ${fmt(comp.n)} skał: ` + comp.types.slice(0, 7).map((t) => `${ROCK_TYPE_LABELS_PL[t.type] || t.type} ${Math.round(t.share * 100)}%`).join(', '));
+  }
   if (shipsOn()) lines.push(`Atlas: ${fmt(Math.hypot(S.ship.vx, S.ship.vy))} j/s · ciąg ${(S.ship.thrust * 100).toFixed(0)}% · W/S/A/D/Q/E, Shift`);
   if (rig) lines.push(...rig.hudLines());
   $('hud').innerHTML = lines.join('\n');
@@ -1261,6 +1449,14 @@ addEventListener('keydown', (e) => {
   if (S.scene === 'giants' && (k === 'arrowright' || k === 'arrowleft')) {
     e.preventDefault();
     focusGiant(S.focus + (k === 'arrowright' ? 1 : -1));
+  }
+  if (S.scene === 'gradient' && (k === 'arrowright' || k === 'arrowleft')) {
+    e.preventDefault();
+    goGradient((S.gradient ?? 0) + (k === 'arrowright' ? 1 : -1));
+  }
+  if (S.scene === 'families' && (k === 'arrowright' || k === 'arrowleft')) {
+    e.preventDefault();
+    goFamily((S.familyStop ?? 0) + (k === 'arrowright' ? 1 : -1));
   }
   if (S.scene === 'giants' && k === 'enter') flyGiant(Math.max(0, S.focus));
   if (S.scene === 'giantField' && k === 'enter') {
@@ -1547,6 +1743,9 @@ async function start() {
     stopLoop: () => renderer.setAnimationLoop(null),
     setScene,
     focusGallery, focusGiant, flyGiant,
+    gradient: { stops: GRADIENT_STOPS, go: goGradient, composition: viewComposition },
+    families: { stops: familyStops, go: goFamily, title: familyTitle },
+    galleryCells,
     lookAt: (x, y, zoom) => { S.camHold = Number.isFinite(x) ? { x, y } : null; if (zoom) S.cam.zoom = S.targetZoom = zoom; },
     setZoom: (z) => { S.cam.zoom = S.targetZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN_GIANTS, Number(z) || 1)); },
     step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) frame(performance.now(), dt); },

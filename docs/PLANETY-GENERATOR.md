@@ -256,6 +256,76 @@ słońca i w cieniu planety (maska). Test `tests/moonSurface.test.mjs`. Zrzuty: 
 --tylko luna-cala,luna-noc-blisko,luna-stocznia,io-cale,io-noc-blisko,europa-ciecia,europa-noc-blisko,…` (widoki
 `moon:` — słońce w poziomie po stronie dalej od planety macierzystej, `km` — kadr wokół celu, `eclipse` — za planetą).
 
+## Małe ciała: Ceres (stolica Unii Pasa), Westa, Pallas, Hygiea, Psyche, Pluton, Charon (2026-10-12)
+
+Strumień C planu `docs/PLAN-pas-realizm.md` (decyzja użytkownika: duże ciała pasa jako ciała w grze, na Ceres
+STOLICA UNII PASA). Dane gry — jedno źródło `src/data/smallBodies.js` (AU mapy, kąt preferowany, promień w grze,
+osie, typ, rola, stacje Unii); generator `scripts/planety/male_ciala.py` (`--cialo ceres|westa|pallas|hygiea|psyche|
+pluton|charon|wszystkie`, `--do-gry`; podgląd 2048 w `.tmp/planety/podglad-male-2048/` z `<ciało>-miejsca.json`).
+Wyjście `public/assets/planety/solar/small/<ceres|vesta|pallas|hygiea|psyche|pluto|charon>_hf_{color,night,normal}.jpg`
+(Ceres, Pluton 4096 × 2048 — ~7 / 12 j. świata na teksel; reszta 2048) i `<id>_hf_shape.png` (kształt bryły, niżej).
+
+| Plik (`.tmp/planety-dane/`) | Źródło | Rozmiar | Licencja |
+|---|---|---|---|
+| `ceres/Ceres_Dawn_FC_DLR_global_20ppd_Oct2015.tif` (+ `.lbl`) | USGS Astrogeology (planetarymaps.usgs.gov/mosaic/ → asc-pds-services.s3), Dawn FC, DLR, 400 m/px | 27 MB | domena publiczna (NASA/DLR) |
+| `ceres/Ceres_Dawn_FC_HAMO_DTM_DLR_Global_60ppd_Oct2016.tif` (+ `.lbl`) | jw., Dawn HAMO DTM 60 px/° (int16 m nad kulą 470 km) | 467 MB | jw. |
+| `westa/Vesta_Dawn_FC_HAMO_Mosaic_Global_74ppd.tif` (+ `.lbl`) | jw., Dawn FC HAMO 60 m/px | 357 MB | jw. |
+| `westa/Vesta_Dawn_HAMO_DTM_DLR_Global_48ppd.tif` (+ `.lbl`) | jw., Dawn HAMO DTM 48 px/° (promień bryły, float32) | 597 MB | jw. |
+| `pluton/Pluto_NewHorizons_Global_Mosaic_300m_Jul2017_8bit.tif` (+ `.lbl`) | jw., New Horizons LORRI / MVIC 300 m | 310 MB | domena publiczna (NASA/JHUAPL/SwRI) |
+| `charon/Charon_NewHorizons_Global_Mosaic_300m_Jul2017_8bit.tif` (+ `.lbl`) | jw. | 81 MB | jw. |
+
+Konwencje źródeł: Ceres i Pluton 0–360° E (generator przesuwa o pół mapy — gra ma 180° W na lewej krawędzi),
+Westa i Charon −180–180°. Brak danych: mozaiki 0 (Pluton i Charon — półkula płd. w nocy polarnej podczas przelotu:
+~32% mapy; wypełnienie gładkie z łagodnymi plamami — `wypelnij_gladko`), Westa — biegun płn. w nocy polarnej podczas
+HAMO (piksele < 16 powyżej 40° N). Pallas, Hygiea, Psyche — map globalnych nie ma: proceduralnie wg typu i znanych
+cech (położenia cech umowne — publikacje VLT nie dają współrzędnych):
+- tło albedo (`baza_proceduralna`): prowincje fbm LINIOWO z małym kontrastem (próg dawał plamy o miękkim brzegu jak
+  chmury — ciało jest bez powietrza) + drobne cętki regolitu; rzeźbę niesie mapa normalnych, nie barwa;
+- kratery z rozkładu potęgowego N(> r) ∝ r^−k: misa, wał, wyrzut, albedo (ciemne dno, jasny wał tylko w młodych);
+  świeże — koc wyrzutu o poszarpanym brzegu, a od ~5 px mapy promienie (szum NA OKRĘGU — bez szwu przy ±180°, łańcuchy
+  plam, długość 1,6–5 r). Krater ZŁOŻONY (płaskie dno, górka, tarasy) dopiero od promienia ∝ 1 / g (`R_ZLOZONY`:
+  Księżyc ~9 km przy 1,62 m/s² → Pallas ~70 km, Hygiea ~120, Psyche ~115) — mniejsze to proste misy (płaskie dna
+  z górką wyglądały na Psyche jak talerze). Okna kraterów i basenów po kole wielkim (`okno_kuli`, rzut azymutalny
+  równoodległościowy) — przy biegunach okrągłe, bez łuków przez pół mapy;
+- mapa normalnych ciał proceduralnych BEZ filtra górnoprzepustowego (`Cialo.gorne`): duże formy (elipsoida, garby,
+  baseny) są tylko w bryle, kratery tylko w mapie normalnych — filtr zjadał misę (zostawało płaskie dno z ostrym
+  wałem), a siatka 256 × 128 nie oddaje misy kilku oczek. Ceres i Westa (DTM Dawn) — z filtrem jak dotąd.
+
+Pallas (B; Marsset i in. 2020): szaroniebieskawa „piłka golfowa” — 1 700 kraterów (~37 o średnicy > 30 km, jak z VLT),
+basen ~400 km wzdłuż równika (z wypiętrzeniem centralnym) i drugi ~170 km, garby bryły, JASNA PLAMA na półkuli płd.:
+krater 44 km z jasnymi osadami na dnie (jak faculae Occatora) i słabą rwaną aureolą. Hygiea (C; Vernazza i in. 2019):
+prawie kulista, bez basenu (złożyła się na nowo po rozbiciu), ciemna i gładka, kratery zatarte, Romulus (21 km) i Remus
+(11 km). Psyche (M; Shepard i in. 2021, Ferrais i in. 2020): bliska elipsoidzie Jacobiego (278 × 238 × 171 km), dwa
+zagłębienia ~90 km — Meroe (ciemniejsza, krzemian) i Panthia (~10 km głębi, jaśniejsza, metal), łagodne prowincje
+metalu i krzemianu; materiał metalness 0,45.
+
+- **Kształt bryły**: `<id>_hf_shape.png` = promień względem średniego d = r / R − 1, 512 × 256, 16 bitów w R (starszy
+  bajt) i G (młodszy) w zakresie z bloku `/*SMALL_BODY_SHAPE*/` w `src/3d/planetMaps.js` (ten sam blok czyta generator —
+  zmiana zakresu = ponowny wypiek; poza zakresem generator ostrzega). Westa i Ceres z modeli Dawn (Westa trójosiowa
+  z basenem Rheasilvia, Ceres spłaszczona), Pallas / Hygiea / Psyche z osi pomiarowych (+ nieregularność fbm, garby,
+  baseny). Gra przesuwa siatkę kuli 256 × 128 na CPU raz po wczytaniu (`src/3d/smallBodyShape.js`); u Ceres i Westy
+  mapa normalnych niesie tylko drobną rzeźbę (górnoprzepustowo, ~1,2 oczka siatki — inaczej duże formy z DTM
+  cieniowałyby się podwójnie), u ciał proceduralnych — całe kratery (wyżej). Pluton i Charon — kule.
+- **Ceres — stolica Unii Pasa** wokół krateru Occator (20° N, 239° E): dzielnice-płaty z własnymi siatkami ulic,
+  centrum na zachodnim wale, autostrady promieniście z osiedlami, obwodnica łukami, kopuły; dno krateru z plamami soli
+  (Cerealia, Vinalia — jasne z mozaiki) nietknięte. Port, stocznia (suche doki z kadłubami), huta, zakłady elektroniki,
+  kopalnie lodu przy biegunach, ~26 placówek, drogi. Nocą ciepłe okna, chłodna biel ulic, cyjan Unii (autostrady, kopuły
+  — paleta Unii jak na Europie), bursztynowe znaki (barwa frakcji).
+- **Westa — huta Unii**: piece z żarem i żużlem przy równikowych rowach Divalia Fossae, 4 odkrywki (Fe / Ti), port,
+  tor wyrzutni masy 70 km; nocą sód i żar hut, cyjan Unii w znakach. **Pallas, Hygiea, Psyche** — placówki górnicze,
+  posterunki lodowe, odkrywki metalu Unii. **Pluton, Charon** — niczyje, noc czarna.
+- Jasność średnia (liniowa, ważona polem) wg albedo ściśniętego pierwiastkiem jak księżyce: Ceres 0,15, Hygiea 0,13
+  (ciemne), Pallas 0,21, Psyche 0,23, Westa 0,36, Charon 0,31, Pluton 0,33 (z kolanem — serce nie przepala się).
+- **Gra** (`DirectSmallBody`, `src/3d/planet3d.assets.js`): ciało w PŁASZCZYŹNIE GRY (pass ring-planet, warstwa 6,
+  ortho — bez paralaksy; stacja Unii obok tarczy w prawdziwym miejscu), środek pod płaszczyzną (szczyt bryły na
+  z = −400 — w kamerach 3D okręty lecą nad bryłą). Materiał księżyców (`moonSurface.tsl.js`, wariant z maską słońca jak
+  Luna — ten sam program), nachylenie osi i doba (pierwiastek z prawdziwej: Ceres ~81 s, Pluton ~330 s wstecz), smuga
+  cienia w masce słońca (`pushShaftDiscWorld`), soczewka świata w skoku (ciało celu i mijane), Pluton z niebieską
+  mgiełką. Rozgrzewka: wpis `małe ciała (…)` (warstwa 6, ekran ładowania).
+- Zrzuty w grze: `node scripts/webgpu/male-ciala-gra.mjs [--tylko ceres-cala,pluton-charon] [--query trafficV2]`
+  (`.tmp/ciala/`: każde ciało z bliska i z dystansu gry, stolica dniem i nocą, stacja, dok z rynkiem, położenia,
+  pipeline'y synchroniczne). Demo: `dema/planety-webgpu.html?cialo=ceres|westa|pallas|hygiea|psyche|pluton|charon`.
+
 ## Demo (2026-10-09)
 
 `dema/planety-webgpu.html` (`npm run dev` → /dema/planety-webgpu.html): wypieczone mapy wszystkich ciał na materiałach
@@ -279,6 +349,13 @@ konsola `window.__planety`.
 - Z bliska (domyślny zoom przy ringu) teksel mapy 8K ma ~6 px — poza dziurą Ziemia nie ma detalu z shadera
   (tło menu ma szum `dn`). AGENT: detal powierzchni planety z bliska (szum wg klasy powierzchni).
 - Dema (`dema/halo_ring_demo_env.js`, `dema/warp-webgpu/planets.js`) czytają stare mapy.
+- Małe ciała: w gęstym polu skał tarcza ciemnieje razem z okrętami (maska słońca z mrokiem pola) — Ceres w polu
+  wygląda mrocznie; rozstrzyganie kątów nie omija pól (A2 kotwiczy rodziny do Westy i Hygiei celowo). Olbrzymie skały
+  pasa (asteroidGiants.js, połowy 9–31 tys. j.) są większe od Ceres (4 717 j.) — skala ciał trzyma się Luny.
+  Pallas, Hygiea, Psyche — mapy proceduralne (map globalnych nie ma; położenia basenów, plamy Pallas, Meroe i Panthii
+  umowne); kratery bez rzucanych cieni (materiał księżyców nie liczy samocienia — przy niskim słońcu misa jest
+  cieniowana, ale nie zaczerniona). Pluton i Charon — półkula płd. wypełniona (noc polarna podczas przelotu New
+  Horizons). Stacja stolicy (model Marsa) rysuje się dużo szerzej niż `hitR`.
 - Merkury / Wenus: kotwice wyciągów orbitalnych to tylko ślad na mapie — sam wyciąg (lina na orbitę) w 3D nie
   istnieje. Strona nocna wychodzi tylko przy położeniu słońca, w którym planeta ma noc w kadrze (planety tła).
 - Strona nocna dziury zależy od położenia Ziemi względem Słońca (doba obraca kulę wokół osi pionowej ekranu,

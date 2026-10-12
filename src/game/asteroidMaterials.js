@@ -52,14 +52,34 @@ export const ROCK_FRACTURE = Object.freeze({
   ice: Object.freeze({ toughness: 0.16, brittleness: 0.88, cleavage: 0.3, fines: 0.35, blast: 1.15 }),
   uran: Object.freeze({ toughness: 0.55, brittleness: 0.40, cleavage: 0.1, fines: 0.12, blast: 0.8 }),
   rock: Object.freeze({ toughness: 0.45, brittleness: 0.55, cleavage: 0.15, fines: 0.18, blast: 1.0 }),
-  energy: Object.freeze({ toughness: 0.34, brittleness: 0.85, cleavage: 0.4, fines: 0.25, blast: 1.2, volatile: 1.6 })
+  energy: Object.freeze({ toughness: 0.34, brittleness: 0.85, cleavage: 0.4, fines: 0.25, blast: 1.2, volatile: 1.6 }),
+  // Typy z widm: węglowa — porowata, krucha, sypie się drobnym regolitem; metaliczna
+  // i platynowce — ciągliwe jak żelazo; bazalt — skała magmowa, kanciaste bloki;
+  // prymitywna — najsłabsza (lód i organika), dużo drobnicy.
+  carbon: Object.freeze({ toughness: 0.2, brittleness: 0.8, cleavage: 0.08, fines: 0.38, blast: 1.12 }),
+  metal: Object.freeze({ toughness: 0.85, brittleness: 0.18, cleavage: 0.0, fines: 0.08, blast: 0.75 }),
+  basalt: Object.freeze({ toughness: 0.55, brittleness: 0.45, cleavage: 0.22, fines: 0.14, blast: 0.92 }),
+  primitive: Object.freeze({ toughness: 0.14, brittleness: 0.86, cleavage: 0.15, fines: 0.4, blast: 1.18 }),
+  platinum: Object.freeze({ toughness: 0.9, brittleness: 0.15, cleavage: 0.0, fines: 0.06, blast: 0.72 }),
+  rock_c: Object.freeze({ toughness: 0.26, brittleness: 0.74, cleavage: 0.1, fines: 0.3, blast: 1.06 }),
+  // C z lodem w rdzeniach (Themis): krucha skorupa jak węglowa, lód w środku.
+  carbon_ice: Object.freeze({ toughness: 0.18, brittleness: 0.82, cleavage: 0.1, fines: 0.36, blast: 1.14 })
 });
 
 // Gęstość [g/cm³] i twardość typów spoza ASTEROID_MATERIAL (rudy gry mają tam swoje).
 const EXTRA_BULK = Object.freeze({
   rock: Object.freeze({ mass: 2.7, hardness: 0.45 }),
-  energy: Object.freeze({ mass: 3.0, hardness: 0.5 })
+  energy: Object.freeze({ mass: 3.0, hardness: 0.5 }),
+  // Wypełniacz węglowy: porowaty jak skały typu C.
+  rock_c: Object.freeze({ mass: 1.6, hardness: 0.3 })
 });
+
+/**
+ * Typy, które dla wydobycia SĄ skałą neutralną (bez rudy, ewentualny ukryty rdzeń):
+ * rockMaterial(...).id = 'rock' — asteroidMining.js rozpoznaje wypełniacz po id materiału.
+ * Wygląd i nazwę daje body.typeId (ROCK_TYPES).
+ */
+const NEUTRAL_MATERIAL_OF = Object.freeze({ rock_c: 'rock' });
 
 /**
  * Skład: udział rudy (0 … 1) w skorupie, płaszczu (wzbogacenie wokół rdzenia)
@@ -82,7 +102,19 @@ export const ROCK_COMPOSITION = Object.freeze({
   uran: Object.freeze({ ...ORE_PROFILE, crust: 0.06, mantle: 0.2, coreRadius: [0.12, 0.28], coreLump: 0.2 }),
   rock: Object.freeze({ crust: 0, mantle: 0, core: 0, veins: 0, coreRadius: [0.14, 0.3], coreLump: 0.2, hiddenCore: 0.22 }),
   // Naładowana skała: żyły i geoda z surowego kryształu, w środku piorun kulisty.
-  energy: Object.freeze({ ...ORE_PROFILE, crust: 0.03, mantle: 0.55, veins: 0.4, coreType: 'crystal', coreRadius: [0.18, 0.34], coreLump: 0.05, plasma: true })
+  energy: Object.freeze({ ...ORE_PROFILE, crust: 0.03, mantle: 0.55, veins: 0.4, coreType: 'crystal', coreRadius: [0.18, 0.34], coreLump: 0.05, plasma: true }),
+  // Węglowa: materia węglista rozproszona w całej skale (skorupa bogatsza niż w rudach metali),
+  // rdzeń — zbita bryła węglista, żyły węglanów.
+  carbon: Object.freeze({ ...ORE_PROFILE, crust: 0.14, mantle: 0.32, veins: 0.35, coreRadius: [0.14, 0.34], coreLump: 0.3 }),
+  // Metaliczna (Psyche ~82% metalu): metal już w skorupie, rdzeń lity.
+  metal: Object.freeze({ ...ORE_PROFILE, crust: 0.3, mantle: 0.55, veins: 0.2, coreRadius: [0.22, 0.44], coreLump: 0.18 }),
+  basalt: Object.freeze({ ...ORE_PROFILE, crust: 0.08, mantle: 0.24, veins: 0.25, coreRadius: [0.14, 0.32], coreLump: 0.22 }),
+  // Prymitywna: ciemna skorupa tolinów, pod nią lód — czysty w środku.
+  primitive: Object.freeze({ crust: 0.22, mantle: 0.62, core: 1, veins: 0.12, coreRadius: [0.26, 0.5], coreLump: 0.14 }),
+  // Platynowce: skorupa uboga, mały, cenny rdzeń.
+  platinum: Object.freeze({ ...ORE_PROFILE, crust: 0.04, mantle: 0.16, veins: 0.15, coreRadius: [0.1, 0.24], coreLump: 0.16 }),
+  // C z lodem (Themis): w skorupie mało lodu (minerały uwodnione), duży lodowy rdzeń, szron w szczelinach.
+  carbon_ice: Object.freeze({ ...ORE_PROFILE, crust: 0.1, mantle: 0.42, veins: 0.2, coreRadius: [0.24, 0.46], coreLump: 0.16 })
 });
 
 /** Rudy pospolite, które może kryć rdzeń skały neutralnej. */
@@ -110,12 +142,20 @@ export const CORE_MATERIAL = Object.freeze({
   crystal: Object.freeze({ kind: 'crystal', hardness: 0.45, toughness: 0.28, brittleness: 0.95, cleavage: 0.9, fines: 0.2, blast: 1.1 }),
   ice: Object.freeze({ kind: 'ice', hardness: 0.08, toughness: 0.18, brittleness: 0.9, cleavage: 0.2, fines: 0.3, blast: 1.15 }),
   uran: Object.freeze({ kind: 'mineral', hardness: 0.7, toughness: 0.5, brittleness: 0.45, cleavage: 0.1, fines: 0.1, blast: 0.8 }),
+  // Typy z widm: zbita bryła węglista (krucha), lity żelazo-nikiel, ilmenit w bazalcie,
+  // czysty lód pod skorupą prymitywnej, bryłka platynowców (najtwardszy metal).
+  carbon: Object.freeze({ kind: 'mineral', hardness: 0.3, toughness: 0.3, brittleness: 0.7, cleavage: 0.05, fines: 0.25, blast: 1.05 }),
+  metal: Object.freeze({ kind: 'metal', hardness: 1.0, toughness: 2.6, brittleness: 0.03, cleavage: 0, fines: 0.02, blast: 0.6 }),
+  basalt: Object.freeze({ kind: 'mineral', hardness: 0.8, toughness: 0.6, brittleness: 0.4, cleavage: 0.15, fines: 0.1, blast: 0.8 }),
+  primitive: Object.freeze({ kind: 'ice', hardness: 0.08, toughness: 0.18, brittleness: 0.9, cleavage: 0.2, fines: 0.3, blast: 1.15 }),
+  platinum: Object.freeze({ kind: 'metal', hardness: 1.2, toughness: 3.2, brittleness: 0.02, cleavage: 0, fines: 0.02, blast: 0.55 }),
+  carbon_ice: Object.freeze({ kind: 'ice', hardness: 0.08, toughness: 0.18, brittleness: 0.9, cleavage: 0.2, fines: 0.3, blast: 1.15 }),
   plasma: Object.freeze({ kind: 'plasma', hardness: 0, toughness: 0, brittleness: 1, cleavage: 0, fines: 1, blast: 1 })
 });
 
 /** Nazwy rodzajów rdzenia do HUD-u. */
 export const CORE_KIND_LABELS_PL = Object.freeze({
-  metal: 'bryła metalu', crystal: 'zbite kryształy', ice: 'czysty lód', mineral: 'bryła smółki', plasma: 'piorun kulisty'
+  metal: 'bryła metalu', crystal: 'zbite kryształy', ice: 'czysty lód', mineral: 'zbita bryła minerału', plasma: 'piorun kulisty'
 });
 
 /**
@@ -262,6 +302,109 @@ export const MINING_CONFIG = Object.freeze({
   maxBalls: 8
 });
 
+// ---------------------------------------------------------------------------
+// RUMOWISKA (strumień D planu docs/PLAN-pas-realizm.md, 2026-10-12; decyzja
+// użytkownika: „rumowiska w wydobyciu — inna taktyka niż przy monolicie”).
+//
+// Prawda: ciała ≳ 200 m to zwykle luźne kupy gruzu — porowatość 20–60%, bariera
+// obrotu ~2,2 h, głazy do ~1/5 średnicy (Ryugu: Otohime 160 m na 900 m; Bennu:
+// próbnik OSIRIS-REx zapadł się na 0,5 m jak w basenie z piłkami); mniejsze to
+// monolity. W grze: skała powyżej progu (zależnego od materiału — mocna
+// i gęsta, np. metaliczna, częściej monolit, krucha i lekka, np. lód, częściej
+// rumowisko) jest zbiorem GŁAZÓW (lita skała typu, mocne wiązania w głazie)
+// w REGOLICIE (luźny żwir i pył między nimi — laser kopie go szybko); wiązania
+// między głazami i w regolicie są SŁABE. Ruda nie siedzi w jednym rdzeniu:
+// ciało macierzyste rozbito i posklejało z kawałków, więc jego rdzeń leży
+// w kilku GŁAZACH RDZENIOWYCH (lita ruda, materiał rdzenia), płaszcz w głazach
+// wzbogaconych, reszta to skorupa. Ładunek ROZRZUCA głazy (zrywa słabe
+// wiązania w strefie rozrzutu; łupie tylko głazy tuż przy sobie), wiązka
+// ściągająca wyrywa odsłonięte głazy z kupy. Logika: asteroidMining.js.
+//
+// Ten blok jest wspólny dla wszystkich typów — próg liczy się z odporności
+// i gęstości materiału. Typ może go przesunąć polem `rubble` w ROCK_FRACTURE
+// (mnożnik progu średnicy; 0 = nigdy rumowisko) — dopisuje je właściciel tabel
+// typów (strumień A), kod czyta je opcjonalnie.
+
+export const RUBBLE_CONFIG = Object.freeze({
+  enabled: true,
+  // Próg średnicy [j.] dla skały o odporności 0,45 i gęstości 2,7 (skała
+  // neutralna); materiał przesuwa go × (0,55 + toughness) · (0,75 + 0,1 · min(gęstość, 8)).
+  // Skały PLAY mają 80–2600 j. (rozkład potęgowy) — rumowiskiem jest ~co dziesiąta.
+  minDiameter: 360,
+  // Pasmo przejścia: szansa rośnie od band[0] do band[1] × próg (wspólny hash id skały).
+  band: Object.freeze([0.8, 1.3]),
+  // Mnożnik progu per typ skały (id ROCK_TYPES, nie id materiału — 'rock_c' liczy się jako
+  // wypełniacz węglowy): typy C / D (Bennu, Ryugu) to zwykle rumowiska, M i platynowce
+  // (lite żelazo-nikiel, Psyche) — monolity. Pole `rubble` w ROCK_FRACTURE bierze górę.
+  // carbon_ice — C z lodem w rdzeniach (rodzina Themis, A2 planu pasa): jak carbon.
+  typeBias: Object.freeze({ carbon: 0.8, carbon_ice: 0.8, primitive: 0.8, rock_c: 0.85, metal: 1.5, platinum: 1.5 }),
+  // Porowatość makro (pustki między głazami) — gęstość ciała × (1 − porowatość).
+  porosity: Object.freeze([0.25, 0.5]),
+  // Głazy: promień ≤ boulderMax średniego promienia skały, ≥ max(boulderMinCells
+  // komórek, boulderMinFrac promienia); rozkład potęgowy N(> r) ∝ r^−sizeSlope;
+  // upakowanie do packing objętości, nachodzenie ≤ (1 − overlap) sumy promieni.
+  boulderMax: 0.26,
+  boulderMinCells: 2.2,
+  boulderMinFrac: 0.08,
+  sizeSlope: 2.3,
+  packing: 0.62,
+  overlap: 0.82,
+  maxBoulders: 200,
+  placeTries: 24,
+  boulderLump: 0.3,
+  // Ruda: objętość głazów rdzeniowych = objętość rdzenia monolitu tego typu (ta
+  // sama ekonomia), w coreBoulders[0..1] głazach; głazy płaszcza = mantleShare ×
+  // tyle; regolit ma regolithOre rudy skorupy (zwietrzały, przesiany).
+  coreBoulders: Object.freeze([2, 8]),
+  mantleShare: 2.5,
+  regolithOre: 0.6,
+  // Laser: regolit (luźny) schodzi regolithDig razy szybciej niż głaz.
+  regolithDig: 3.5,
+  // Ładunek: strefa rozrzutu = reach × strefa spękań monolitu (porowata kupa
+  // tłumi falę, ale prawie nic jej nie trzyma); głazy pękają tylko w
+  // boulderFracture × strefa spękań; regolit w regolithBlow × strefa rozrzutu
+  // wylatuje (regolithFines przepada jako pył, reszta żwirem); głaz odpada, gdy
+  // ≥ detachShare jego komórek (albo środek) leży w strefie rozrzutu. Prędkość
+  // odłamów × blast (energia idzie w zgniatanie porów — kupa rozsypuje się wolno).
+  reach: 1.2,
+  boulderFracture: 0.35,
+  regolithBlow: 0.9,
+  regolithFines: 0.55,
+  detachShare: 0.5,
+  blast: 0.7,
+  // Kierunek wyrzutu spłaszczony do płaszczyzny gry (0 = jak monolit, 1 = poziomo od ładunku):
+  // skały leżą pod stropem warstwy — ruch ku kamerze zjada odbicie od stropu.
+  blastFlatten: 0.7,
+  // Wiązka ściągająca wyrywa z rumowiska najwyżej jeden ODSŁONIĘTY głaz (≥
+  // pluckExposure jego komórek na powierzchni, ≥ pluckMinCells komórek, lżejszy
+  // niż udźwig) co pluckInterval s — głaz rdzeniowy ma pierwszeństwo.
+  pluckInterval: 1.2,
+  pluckExposure: 0.3,
+  pluckMinCells: 8,
+  pluckSpeed: 25
+});
+
+/**
+ * Próg średnicy rumowiska [j.] dla materiału m (Infinity — nigdy; skała energetyczna z geodą).
+ * typeId — id typu z ROCK_TYPES (domyślnie id materiału; wypełniacz 'rock_c' ma materiał 'rock').
+ */
+export function rubbleThreshold(m, cfg = RUBBLE_CONFIG, typeId = m?.id) {
+  if (!m || m.composition?.plasma) return Infinity;
+  const k = ROCK_FRACTURE[typeId]?.rubble;
+  if (k === 0) return Infinity;
+  const base = cfg.minDiameter * (0.55 + m.toughness) * (0.75 + 0.1 * Math.min(m.density, 8));
+  return base * (k > 0 ? k : (cfg.typeBias?.[typeId] ?? 1));
+}
+
+/** Szansa (0 … 1), że skała materiału m (typu typeId) o średnicy `diameter` jest rumowiskiem. */
+export function rubbleChance(m, diameter, cfg = RUBBLE_CONFIG, typeId = m?.id) {
+  const d0 = rubbleThreshold(m, cfg, typeId);
+  if (!Number.isFinite(d0)) return 0;
+  const a = cfg.band[0] * d0, b = cfg.band[1] * d0;
+  const t = Math.min(1, Math.max(0, (diameter - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
 /** Materiał typu (indeks ROCK_TYPES albo nazwa): gęstość, twardość, pękanie, skład. */
 export function rockMaterial(type) {
   const id = typeof type === 'number' ? (ROCK_TYPES[type] || 'rock') : (type || 'rock');
@@ -269,7 +412,7 @@ export function rockMaterial(type) {
   const fr = ROCK_FRACTURE[id] || ROCK_FRACTURE.rock;
   const comp = ROCK_COMPOSITION[id] || ROCK_COMPOSITION.rock;
   return {
-    id,
+    id: NEUTRAL_MATERIAL_OF[id] || id,
     density: bulk.mass,
     hardness: bulk.hardness,
     toughness: fr.toughness,
@@ -292,7 +435,7 @@ export function ballEnergyForVolume(volume, cfg = MINING_CONFIG) {
 
 /** Surowiec gry (resources.js) z typu rudy; null = skała bez wartości. */
 export function oreResourceOf(typeId) {
-  if (!typeId || typeId === 'rock') return null;
+  if (!typeId || typeId === 'rock' || typeId === 'rock_c') return null;
   if (typeId === 'energy') return ASTEROID_YIELD.crystal;
   return ASTEROID_YIELD[typeId] || null;
 }

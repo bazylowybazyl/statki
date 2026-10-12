@@ -30,7 +30,7 @@ import {
   HALL_DUST_IN, HALL_DUST_MASK, HALL_DUST_SERVICE, HALL_DUST_SHIP, hallBodyUniforms, hallDustDomain, hallDomainDistance,
   rasterizeHallCells
 } from './hallDustLayout.js';
-import { GasField2D } from './gasField2D.js';
+import { GasField2D, jetSourceIntegralCpu } from './gasField2D.js';
 import { GasFieldLayer } from './gasFieldLayer.js';
 import {
   HALL_GAS_EVENT, HALL_GAS_EVENT_STRIDE, HALL_GAS_MAX, HALL_GAS_TUNE, createHallGasSources, resetHallGasSources, writeHallGasSources
@@ -43,9 +43,15 @@ export const HALL_DUST_TUNE = {
   enabled: true,
   jetSpeed: 2600,       // prędkość gazu u nasady strumienia MAIN przy pełnym ciągu [j/s]
   jetLength: 2800,      // zasięg strumienia [j.] (× 0,6 + 0,4 · moc)
-  jetWidth: 1.15,       // szerokość u nasady × (rozstaw dysz + promień dyszy)
+  jetWidth: 1.35,       // półszerokość u nasady × półszerokość gromady dysz (EngineFrame.spread — oś → brzeg skrajnej dyszy);
+                        //   profil PŁASKI w poprzek (gasField2D jetFlat): wszystkie dysze gromady dmuchają tak samo
   jetWiden: 0.16,       // rozszerzanie stożka [na jednostkę długości]
   jetRate: 7,           // tempo narzucania prędkości w stożku [1/s]
+  // ŹRÓDŁO OBJĘTOŚCI (2026-10-12, audyt pyłu): gaz z dysz to nowa objętość — wydatek strumienia [komórki²/s] =
+  // jetFlow × moc × Σ r² dysz / h² (Atlas: 5 dysz = 5× jedna), rozłożony w stożku od wylotu do jetSourceLen; rzut
+  // ciśnienia rozpycha nim zapylone powietrze (bez tego strumień zasysał pył z boków — wąski tunel z jasnymi obwódkami)
+  jetFlow: 260,         // [1/s]
+  jetSourceLen: 600,    // zasięg źródła od wylotu [j.]
   minPower: 0.2,        // moc dysz, od której dmuchają (jałowe płomyki nie)
   zBack: -26,           // wysokość warstwy pod kadłubami (scena; kadłuby −10,4…−5,3, struga MAIN −5)
   zFront: 9,            // warstwa nad kadłubami (pod efektami z = 14–15)
@@ -194,6 +200,7 @@ class HallDustSystem {
     // Strumienie dysz MAIN tej klatki (EngineFrame: scena x, y w górę = −y gry) → komórki domeny. Ostatnie
     // HALL_GAS_MAX miejsc tablicy należy do źródeł gazu hali.
     const J = sim.jets;
+    const JD = sim.jetsD;
     let nj = 0;
     const maxEngine = Math.max(0, sim.maxJets - HALL_GAS_MAX);
     for (let k = 0; k < EngineFrame.count && nj < maxEngine; k++) {
@@ -221,12 +228,22 @@ class HallDustSystem {
       J[o + 1] = (hz - dom.z0) / h;
       J[o + 2] = ux;
       J[o + 3] = uz;
+      const w0 = Math.max(2, EngineFrame.spread[k] * T.jetWidth / h);
       J[o + 4] = len / h;
-      J[o + 5] = Math.max(2, (EngineFrame.spread[k] + EngineFrame.radius[k]) * T.jetWidth / h);
+      J[o + 5] = w0;
       J[o + 6] = T.jetWiden;
       J[o + 7] = T.jetSpeed * p / h;
       J[o + 8] = T.jetRate;
       J[o + 9] = 0; J[o + 10] = 0; J[o + 11] = 0;
+      // źródło objętości: wydatek strumienia / całka profilu źródła = wydatek na komórkę (suma po komórkach = wydatek)
+      const ls = T.jetSourceLen / h;
+      const area = jetSourceIntegralCpu(len / h, w0, T.jetWiden, ls, sim.tune.jetFlat);
+      const r = EngineFrame.radius[k] / h;   // √(Σ r²) dysz okrętu
+      const d = nj * 4;
+      JD[d] = area > 0 ? T.jetFlow * p * r * r / area : 0;
+      JD[d + 1] = ls;
+      JD[d + 2] = 1;
+      JD[d + 3] = 1;   // zasłanianie stożka przeszkodami (ściana tylna — strumień nie pompuje gazu za nią)
       nj++;
     }
     const engines = nj;
@@ -234,6 +251,7 @@ class HallDustSystem {
     const dt = fresh ? IN[I.dt] : 0;
     // Źródła gazu hali (przewody paliwowe, szpule, zawory, wentylacja) — po dyszach.
     nj += writeHallGasSources(this.gasSrc, J, nj, sim.maxJets - nj, IN, dom, dt, T.gas);
+    JD.fill(0, engines * 4, nj * 4);   // źródła hali: bez wydatku, profil Gaussa
     sim.jetCount = nj;
     st.sources = nj - engines;
     st.bursts = this.gasSrc.stats.bursts;

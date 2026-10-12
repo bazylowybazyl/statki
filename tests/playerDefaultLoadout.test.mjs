@@ -6,7 +6,8 @@ import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { loadIndexFunction } from './helpers/indexSource.mjs';
 
-const indexSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+// Z LF: przy core.autocrlf=true drzewo robocze ma CRLF, a regexy niżej szukają \n.
+const indexSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 // Hexlance zniknął z Atlasa na pół roku, bo `autoMountDefaults()` i układ
 // hardpointów rozjechały się po cichu: broń przeszła z gniazda `special` na

@@ -2,15 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 
+// Źródła czytane z LF: przy core.autocrlf=true drzewo robocze ma CRLF, a regexy niżej szukają \n.
+const readSource = (url) => readFileSync(url, 'utf8').replace(/\r\n/g, '\n');
+
 // Strażnicy poprawek z audytu rysowania (2026-09-23): każda z tych bramek
 // zdejmuje pracę, której nie widać na ekranie (daleki zoom, poza kadrem,
 // puste passy). Cofnięcie którejkolwiek nie psuje obrazu — tylko klatkę —
 // więc bez testu wróciłaby niezauważona.
 
-const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const core3d = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
-const hexShips = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
-const shield3d = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
+const indexHtml = readSource(new URL('../index.html', import.meta.url));
+const core3d = readSource(new URL('../src/3d/core3d.js', import.meta.url));
+const hexShips = readSource(new URL('../src/3d/hexShips3D.js', import.meta.url));
+const shield3d = readSource(new URL('../src/3d/shield3D.js', import.meta.url));
 
 function loadCircleArcInRect() {
   const start = indexHtml.indexOf('const _circleArcScratch');
@@ -82,7 +85,7 @@ test('HUD: okrąg zasięgu idzie przez bramkę kadru; skan X bez pętli po konta
   // gry) zastąpiła nakładka skanu (src/ui/radar/scanOverlay.js) — wyniki gasną po SCAN_TAG_LIFE s.
   assert.doesNotMatch(indexHtml, /if \(!radarUiActive && scannerState\.active && scannerContacts\.length\) \{/);
   assert.match(indexHtml, /scanOverlay\.draw\(ctx, scanOverlayView\)/);
-  const overlay = readFileSync(new URL('../src/ui/radar/scanOverlay.js', import.meta.url), 'utf8');
+  const overlay = readSource(new URL('../src/ui/radar/scanOverlay.js', import.meta.url));
   assert.match(overlay, /export const SCAN_TAG_LIFE = \d+/);
   assert.doesNotMatch(overlay, /shadowBlur/);
 });
@@ -120,7 +123,7 @@ test('Core3D: mapa cienia słońca per pass (warstwy passa jak WebGLShadowMap) �
   const fgAt = core3d.indexOf('else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);', chainAt);
   assert.ok(renderAt > 0 && orthoAt > chainAt && fgAt > orthoAt && runAt > fgAt, 'odświeżenie mapy w pętli passów, przed passem ortho i FG');
   assert.equal(core3d.slice(renderAt, chainAt).includes('_requestSunShadowUpdate('), false, 'bez dawnego odświeżenia raz na klatkę na starcie render()');
-  const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  const planets = readSource(new URL('../src/3d/planet3d.assets.js', import.meta.url));
   assert.match(planets, /Core3D\.setSunShadowLight\?\.\(this\.sunLight\);/);
   // Zachowanie: własny węzeł cienia, needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
   globalThis.window = globalThis.window || {};
@@ -232,7 +235,7 @@ test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
   assert.match(core3d, /if \(!this\._scenePassHasContent\(pass, layerActivity\)\) continue;/);
   assert.match(core3d, /layerActivity\.halo !== false && this\.planetHaloTarget/);
   // Właściciele flag: planety (culling) i tarcze.
-  const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  const planets = readSource(new URL('../src/3d/planet3d.assets.js', import.meta.url));
   assert.match(planets, /Core3D\.beginPlanetLayerFrame\(\)/);
   assert.match(planets, /markPlanetLayersActive\(anchoredToRing, true\)/);
   // Tarcze (pula slotów z dema WebGPU): pass tylko, gdy któryś slot ma tarczę z płytkami.
@@ -282,7 +285,7 @@ test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / 
 
 // ── Druga tura audytu (2026-09-23): przycięcia i stałe koszty w spoczynku ──
 
-const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const readSrc = (path) => readSource(new URL(`../${path}`, import.meta.url));
 
 test('wybuchy bez PointLight (światło zmieniało klucz programu) — światło przez siatkę świateł efektów', () => {
   // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)

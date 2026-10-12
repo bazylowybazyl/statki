@@ -65,3 +65,30 @@ export const MOON_MAPS = Object.freeze(PLANET_MAPS_OLD ? {
     ganymede: { day: `${MOON_DIR}/ganymede_hf_color.jpg`, night: `${MOON_DIR}/ganymede_hf_night.jpg`, normal: `${MOON_DIR}/ganymede_hf_normal.jpg`, normalScale: 1.0 },
     callisto: { day: `${MOON_DIR}/callisto_hf_color.jpg`, night: `${MOON_DIR}/callisto_hf_night.jpg`, normal: `${MOON_DIR}/callisto_hf_normal.jpg`, normalScale: 1.0 }
 });
+
+// Mapy MAŁYCH CIAŁ (DirectSmallBody w planet3d.assets.js; klucz = id z src/data/smallBodies.js). Z generatora
+// scripts/planety/male_ciala.py: dzień i normalne (Ceres, Westa — mozaiki i modele Dawn; Pluton, Charon — New Horizons;
+// Pallas, Hygiea, Psyche — proceduralnie wg typu i osi), noc (Unia Pasa: stolica na Ceres przy kraterze Occator, huta
+// Westy, placówki), kształt bryły `shape` — promień względem średniego d = r / R − 1 w 16 bitach (R starszy bajt,
+// G młodszy) w zakresie z bloku SMALL_BODY_SHAPE (czyta go też generator — zmiana zakresu = ponowny wypiek).
+// Bez `shape` — kula ze skalą osi `axes` (smallBodies.js). `metalness` / `roughness` — materiał (Psyche metaliczna).
+const SMALL_DIR = 'assets/planety/solar/small';
+export const SMALL_BODY_SHAPE_RANGE = Object.freeze(
+    /*SMALL_BODY_SHAPE*/{"ceres": [-0.08, 0.06], "vesta": [-0.24, 0.16], "pallas": [-0.16, 0.18], "hygiea": [-0.07, 0.07], "psyche": [-0.36, 0.36]}/*SMALL_BODY_SHAPE-KONIEC*/
+);
+const smallMaps = (id, extra = {}) => Object.freeze({
+    day: `${SMALL_DIR}/${id}_hf_color.jpg`, night: `${SMALL_DIR}/${id}_hf_night.jpg`, normal: `${SMALL_DIR}/${id}_hf_normal.jpg`,
+    normalScale: 1.0,
+    shape: SMALL_BODY_SHAPE_RANGE[id] ? `${SMALL_DIR}/${id}_hf_shape.png` : null,
+    shapeRange: SMALL_BODY_SHAPE_RANGE[id] || null,
+    ...extra
+});
+export const SMALL_BODY_MAPS = Object.freeze({
+    ceres: smallMaps('ceres'),
+    vesta: smallMaps('vesta'),
+    pallas: smallMaps('pallas'),
+    hygiea: smallMaps('hygiea'),
+    psyche: smallMaps('psyche', { metalness: 0.45, roughness: 0.62 }),
+    pluto: smallMaps('pluto'),
+    charon: smallMaps('charon')
+});

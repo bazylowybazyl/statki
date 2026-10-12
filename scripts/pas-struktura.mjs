@@ -141,8 +141,49 @@ const zasSum = {
   sredniaGestosc: zasadzki.reduce((s, z) => s + z.gestosc, 0) / Math.max(1, zasadzki.length)
 };
 
+// ── Populacje małych ciał (strumień E, 2026-10-12): NEA, Hungarie, Trojańczycy, Kuiper ─────────────────────
+// Profil promieniowy 20–36 AU i 118–142 AU (średnia gęstość po kątach), roje L4 / L5 (obwiednia — pola to szum),
+// gęstość przy Ziemi i Marsie (wycięcia wokół portów), plutonki przy Neptunie i daleko.
+const NP = 360;
+const ringMean = (rAu, a0 = 0, a1 = Math.PI * 2, key = 'density', n = NP) => {
+  let s = 0;
+  for (let i = 0; i < n; i++) s += sample(rAu, a0 + (a1 - a0) * (i + 0.5) / n)[key];
+  return s / n;
+};
+const profilPop = [];
+for (let rAu = 20; rAu <= 36.0001; rAu += 0.1) profilPop.push({ rAu: r3(rAu), gestosc: ringMean(rAu) });
+for (let rAu = 118; rAu <= 142.0001; rAu += 0.1) profilPop.push({ rAu: r3(rAu), gestosc: ringMean(rAu) });
+const swarm = (d0, d1) => {
+  let s = 0; let n = 0;
+  for (let rAu = 47.5; rAu <= 53; rAu += 0.25) { s += ringMean(rAu, jupA + d0 * Math.PI / 180, jupA + d1 * Math.PI / 180, 'weight', 90); n++; }
+  return s / n;
+};
+const nearBody = (id, dists) => {
+  const pl = map.planets.find((p) => p.id === id);
+  let max = 0;
+  for (const d of dists) for (let i = 0; i < 72; i++) {
+    const a = i / 72 * Math.PI * 2;
+    max = Math.max(max, field.sampleMacro(pl.x + Math.cos(a) * d, pl.y + Math.sin(a) * d).density);
+  }
+  return max;
+};
+const nep = map.planets.find((p) => p.id === 'neptune');
+const nepA = Math.atan2(nep.y - SUN.y, nep.x - SUN.x);
+const meanPop = (a, b) => { const v = profilPop.filter((p) => p.rAu >= a - 1e-9 && p.rAu <= b + 1e-9); return v.reduce((s, p) => s + p.gestosc, 0) / Math.max(1, v.length); };
+const populacje = {
+  pasGlowny38: ringMean(38.2),
+  nea: { szczyt26: meanPop(25, 28), wewnatrz22: meanPop(21.5, 23), amory30: meanPop(29.5, 30.5), poza: [meanPop(20, 20.5), meanPop(31.5, 32.5)] },
+  hungarie: { srodek: meanPop(34.4, 34.9), przesmyk: meanPop(35.2, 35.3) },
+  trojanie: { L4: swarm(20, 110), L5: swarm(-110, -20), stosunek: r3(swarm(20, 110) / Math.max(1e-12, swarm(-110, -20))) },
+  kuiper: {
+    plutonkiDaleko: ringMean(127, nepA + 1.5, nepA + Math.PI * 2 - 1.5), plutonkiNeptun: ringMean(127, nepA - 0.4, nepA + 0.4),
+    przerwaNu8: meanPop(129, 129.6), klasyczny: meanPop(130.8, 131.8), zimnyRdzen: meanPop(132.5, 134.5), rozproszony: meanPop(138.2, 139.8)
+  },
+  maxGestoscPrzy: { ziemia50_150tys: nearBody('earth', [20000, 50000, 100000, 150000]), mars20_60tys: nearBody('mars', [20000, 40000, 60000]) }
+};
+
 const result = {
-  tag, root, config, jowiszDeg: jupiterDeg, auWorld: AU,
+  tag, root, config, jowiszDeg: jupiterDeg, auWorld: AU, populacje, profilPopulacje: profilPop,
   fieldConfig: { kirkwoodGaps: field.config.kirkwoodGaps ?? null, kirkwoodDensity: field.config.kirkwoodDensity ?? null, kirkwoodSoftAu: field.config.kirkwoodSoftAu ?? null, mainOuterAu: field.config.mainOuterAu ?? null },
   regiony, udzialPol, luki, olbrzymy, zasadzki: zasSum, zasadzkiLista: zasadzki, profil
 };
@@ -155,7 +196,71 @@ console.log(`  udział pól (cluster > 0,2): pas główny ${udzialPol.pasGlowny}
 console.log('  luki (gęstość środek / ramiona):', luki.map((l) => `${l.id} ${l.stosunek}`).join(', '));
 for (const o of olbrzymy) console.log(`  olbrzym ${o.id.padEnd(9)} r ${o.rAu} AU, ${o.katDeg}°, gap ${r3(o.gap)} | rdzeń r ${o.rdzen.rAu} AU ${o.rdzen.katDeg}° gęstość ${o.rdzen.gestosc.toExponential(3)} gap ${r3(o.rdzen.gap)}`);
 console.log(`  zasadzka: ${zasSum.kursy} kursów — olbrzym ${zasSum.olbrzym}, pole ${zasSum.pole}, pas ${zasSum.pas}; miejsce w polu (cluster > 0,2) ${zasSum.wPolu}, w luce ${zasSum.wLuce}, średnia gęstość ${zasSum.sredniaGestosc.toExponential(3)}`);
+{
+  const P = populacje;
+  const e = (v) => v.toExponential(2);
+  console.log(`  NEA: 25–28 AU ${e(P.nea.szczyt26)} (pas 38,2: ${e(P.pasGlowny38)}), 21,5–23 ${e(P.nea.wewnatrz22)}, 29,5–30,5 ${e(P.nea.amory30)}, poza ${P.nea.poza.map(e).join(' / ')}`);
+  console.log(`  Hungarie: ${e(P.hungarie.srodek)}, przesmyk 35,2–35,3 ${e(P.hungarie.przesmyk)}`);
+  console.log(`  Trojańczycy (obwiednia): L4 ${r3(P.trojanie.L4)}, L5 ${r3(P.trojanie.L5)}, L4/L5 ${P.trojanie.stosunek}`);
+  const K = P.kuiper;
+  console.log(`  Kuiper: plutonki ${e(K.plutonkiDaleko)} (przy Neptunie ${e(K.plutonkiNeptun)}), ν8 ${e(K.przerwaNu8)}, klasyczny ${e(K.klasyczny)}, zimny rdzeń ${e(K.zimnyRdzen)}, rozproszony ${e(K.rozproszony)}`);
+  console.log(`  max gęstość: Ziemia ≤ 150 tys. j. ${e(P.maxGestoscPrzy.ziemia50_150tys)}, Mars ≤ 60 tys. j. ${e(P.maxGestoscPrzy.mars20_60tys)}`);
+}
 console.log(`  → ${jsonFile}`);
+
+// Mapy populacji (bez Chrome — sama gęstość, log; kolor wg regionu składu): cały układ z góry i pasma rozwinięte.
+{
+  // kolor wg regionu składu, jasność z log gęstości (2e-9 … 5e-6 skał/j.²)
+  const POP_COLORS = {
+    main: [150, 200, 255], hildas: [255, 170, 60], greeks: [120, 230, 120], trojans: [120, 230, 120],
+    kuiper: [170, 220, 255], nea: [255, 150, 80], hungarias: [230, 230, 255], plutinos: [80, 200, 255], kuiper_cold: [255, 90, 70]
+  };
+  const PL0 = Math.log10(2e-9);
+  const PL1 = Math.log10(5e-6);
+  const popColor = (m, out, o) => {
+    const t = m.density > 0 ? Math.min(1, Math.max(0, (Math.log10(m.density) - PL0) / (PL1 - PL0))) : 0;
+    const col = POP_COLORS[m.region?.beltId] || [255, 255, 255];
+    const k = Math.pow(t, 1.2);
+    out[o] = col[0] * k; out[o + 1] = col[1] * k; out[o + 2] = col[2] * k; out[o + 3] = 255;
+  };
+  const PXS = Number(args.pxUklad || 1800);
+  const HS = 143;
+  const sys = new Uint8Array(PXS * PXS * 4);
+  for (let j = 0; j < PXS; j++) for (let i = 0; i < PXS; i++) {
+    const x = SUN.x + ((i + 0.5) / PXS * 2 - 1) * HS * AU;
+    const y = SUN.y + ((j + 0.5) / PXS * 2 - 1) * HS * AU;
+    popColor(field.sampleMacro(x, y), sys, (j * PXS + i) * 4);
+  }
+  // planety: białe kropki
+  for (const p of map.planets) {
+    const ci = Math.round(((p.x - SUN.x) / (HS * AU) + 1) * 0.5 * PXS);
+    const cj = Math.round(((p.y - SUN.y) / (HS * AU) + 1) * 0.5 * PXS);
+    for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+      const i = ci + di, j = cj + dj;
+      if (i < 0 || j < 0 || i >= PXS || j >= PXS) continue;
+      const o = (j * PXS + i) * 4; sys[o] = 255; sys[o + 1] = 255; sys[o + 2] = 255; sys[o + 3] = 255;
+    }
+  }
+  writeFileSync(join(outDir, `${tag}-uklad.png`), encodePng({ width: PXS, height: PXS, data: sys }));
+  // pasma rozwinięte: kąt od Jowisza (0–360°, w prawo) × r (w górę)
+  const band = (name, r0, r1, w, h) => {
+    const img = new Uint8Array(w * h * 4);
+    for (let j = 0; j < h; j++) {
+      const rAu = r1 - (j + 0.5) / h * (r1 - r0);
+      for (let i = 0; i < w; i++) {
+        const p = at(rAu, jupA + (i + 0.5) / w * Math.PI * 2);
+        popColor(field.sampleMacro(p.x, p.y), img, (j * w + i) * 4);
+      }
+    }
+    const file = join(outDir, `${tag}-${name}.png`);
+    writeFileSync(file, encodePng({ width: w, height: h, data: img }));
+    console.log(`  → ${file}`);
+  };
+  band('nea-hungarie', 20, 36.5, 1440, 660);
+  band('trojanie', 46, 54.5, 1440, 340);
+  band('kuiper', 122, 141.5, 1440, 780);
+  console.log(`  → ${join(outDir, `${tag}-uklad.png`)} (±${HS} AU)`);
+}
 
 if (args['bez-png']) process.exit(0);
 

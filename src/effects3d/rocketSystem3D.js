@@ -282,6 +282,24 @@ function resolveRocketProfile(weaponDef) {
     };
 }
 
+/**
+ * OBRONA PUNKTOWA kontra rakiety 3D — strojenie (window.RocketPdTune; decyzja użytkownika 2026-10-12: wariant V3,
+ * model jak w Starsectorze — bez rzutu kością). Rakieta ma PUNKTY ŻYCIA obrony punktowej (`hpById[id]` → pole karty
+ * `pdHp` → `hpDefault`; głowica potomna Hydry — id nosiciela + '__sub'), każde trafienie PD zadaje obrażenia broni
+ * PD × `dmgMul[przyczyna]` (mocniejsze działo zabija szybciej; premie broni wchodzą w obrażenia). Mikrorakiety
+ * (Grad, Rój, głowice Hydry) kruche — zalewają obronę liczbą; manewrujące, Hydra przed podziałem i Supernowa
+ * pancerne. Flak przeciw rakietom: niskie obrażenia odłamków (`dmgMul.flak`, ze spadkiem w kuli) i cel-rakieta tylko
+ * do `flakRocketRange` × zasięgu działka (pasmo obrony punktowej, nie zasięg baterii); przeciw myśliwcom bez zmian.
+ * Dobór (pomiar `scripts/webgpu/pd-rakiety-gra.mjs`): trafień do zestrzelenia ≈ V3 z szansami (CIWS Mk I: mikro 2,
+ * szybka 4, manewrująca 5, Supernowa 7; laser PD: 3 / 5 / 8 / 10).
+ */
+export const ROCKET_PD_TUNE = {
+    dmgMul: { ciws: 1, laser: 0.5, flak: 0.025, other: 1 },
+    hpDefault: 20,
+    hpById: { fast_missile_rack: 40, missile_rack: 60, hydra_mirv: 60, supernova_missile: 80 },
+    flakRocketRange: 0.6
+};
+
 /* ── Singleton ── */
 let instance = null;
 
@@ -340,6 +358,7 @@ class RocketSystem3D {
                 terminalLeadHorizon: 0,
                 bodyScale: 1,
                 pdRadius: 4,
+                pdHp: 1,
                 // Rakieta jako cel obrony punktowej (syncThreats): obiekt w kształcie pocisku z `bullets`
                 // (x, y, vx, vy, r, life, owner, type 'rocket') — tworzony raz na rakietę, gaśnie z nią.
                 threat: null,
@@ -421,7 +440,7 @@ class RocketSystem3D {
         this.retarget = null;
 
         // OBRONA PUNKTOWA (2026-10-12): rakiety zestrzelone przez PD według przyczyny (intercept).
-        this.stats = { intercepted: { ciws: 0, laser: 0, flak: 0, other: 0 } };
+        this.stats = { intercepted: { ciws: 0, laser: 0, flak: 0, other: 0 }, pdHits: 0, pdDamage: 0 };
         // false — rakiety 3D nie są celami obrony punktowej (stan sprzed 2026-10-12; A/B balansu).
         this.pdTargets = true;
         // Czas (SimClock.render) pozycji rakiet po ostatnim update — syncThreats dosuwa je do czasu kroku fizyki.
@@ -480,8 +499,31 @@ class RocketSystem3D {
     }
 
     /**
+     * Trafienie rakiety przez OBRONĘ PUNKTOWĄ (strojenie ROCKET_PD_TUNE): `damage` (obrażenia broni PD, flak — ze
+     * spadkiem w kuli) × `dmgMul[przyczyna]` zdejmuje punkty życia rakiety; przy zerze — zestrzelenie (intercept).
+     * @returns {number} 0 — rakiety już nie ma, 1 — trafiona, leci dalej, 2 — zestrzelona
+     */
+    pdHit(r, cause = 'other', damage = 0) {
+        if (r && r.rocket3d === true) {
+            if (r.dead) return 0;
+            r = r.slot;
+        }
+        if (!r || !r.active) return 0;
+        const m = ROCKET_PD_TUNE.dmgMul;
+        const mul = cause === 'ciws' ? m.ciws : (cause === 'laser' ? m.laser : (cause === 'flak' ? m.flak : m.other));
+        const dmg = (Number(damage) || 0) * (Number(mul) || 0);
+        this.stats.pdHits++;
+        this.stats.pdDamage += dmg;
+        r.pdHp -= dmg;
+        if (r.pdHp > 1e-9) return 1;
+        this.intercept(r, cause);
+        return 2;
+    }
+
+    /**
      * Rakieta ZESTRZELONA przez obronę punktową: znika bez detonacji głowicy i bez obrażeń (Hydra przed
      * podziałem — razem z głowicami potomnymi, Supernowa — bez wybuchu). Obraz: reżyser `onIntercept`.
+     * Gra woła `pdHit` (obrażenia przeciw punktom życia rakiety); intercept — zestrzelenie bez warunków.
      * @param {object} r slot rakiety (albo zastępnik celu z syncThreats)
      * @param {string} cause 'ciws' | 'laser' | 'flak' | inne
      * @returns {boolean} czy rakieta była w locie
@@ -631,6 +673,8 @@ class RocketSystem3D {
         r.terminalLeadHorizon = profile.terminalLeadHorizon;
         r.bodyScale = profile.bodyScale;
         r.pdRadius = profile.pdRadius;
+        r.pdHp = Math.max(0.001, Number(ROCKET_PD_TUNE.hpById[weaponDef?.id || ''])
+            || Number(weaponDef?.pdHp) || Number(ROCKET_PD_TUNE.hpDefault) || 1);
         r.threat = null;
         r.launchTurnRateRad = profile.launchTurnRateRad;
         r.dispersalTime = profile.dispersalTime;
@@ -1500,7 +1544,7 @@ export function initRocketSystem3D(scene, opts = {}) {
     instance = new RocketSystem3D(scene, { effects: director });
     // Klatka efektów czyta pulę slotów rakiet (kadłubki, płomienie, światła dysz, ślady w dymie).
     if (fx && typeof fx.attachRockets === "function") fx.attachRockets(instance.rockets);
-    if (typeof window !== "undefined") window.rocketSystem3D = instance;
+    if (typeof window !== "undefined") { window.rocketSystem3D = instance; window.RocketPdTune = ROCKET_PD_TUNE; }
     return instance;
 }
 

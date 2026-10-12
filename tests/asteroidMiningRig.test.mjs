@@ -7,7 +7,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import v8 from 'node:v8';
 
-import { AsteroidMining, createYield } from '../src/game/asteroidMining.js';
+import { AsteroidMining as MiningBase, createYield } from '../src/game/asteroidMining.js';
+
+// Te testy sprawdzają MONOLITY (skały pola duże i słabe bywają rumowiskami — tests/asteroidRubble.test.mjs).
+class AsteroidMining extends MiningBase {
+  constructor(o = {}) { super({ ...o, config: { rubble: false, ...(o.config || {}) } }); }
+}
 import { MiningRig, MINING_FX, MINING_ORE_KEYS, createRigYield } from '../src/game/asteroidMiningRig.js';
 import { ROCK_TYPE_INDEX } from '../src/game/asteroidRockKinds.js';
 import { MINING_CHARGES, createMiningChargeStock, miningChargeById } from '../src/data/miningCharges.js';

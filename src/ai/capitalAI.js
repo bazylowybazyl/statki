@@ -1522,6 +1522,8 @@ export function processAutonomousWeapons(npc, dt) {
       weapon.scanCd <= 0 ||
       !bestTarget ||
       bestTarget.dead ||
+      // Rakieta zestrzelona (albo wybuchła) — zastępnik rakiety 3D / pocisk kanwy ma life ≤ 0.
+      (isProjectileTarget(bestTarget) && !(bestTarget.life > 0)) ||
       (bestTarget.x == null && bestTarget.pos?.x == null) ||
       // Cel sprzed zmiany reguł (albo sprzed zdjęcia chipa) może być kadłubem —
       // PD bez chipa nie trzyma go ani jednej decyzji dłużej.
@@ -1536,10 +1538,14 @@ export function processAutonomousWeapons(npc, dt) {
       prepareShipScanGeometry(cache, npc, geometryId);
 
       if (weapon.prefers.includes('rocket')) {
+        // Flak bierze rakietę dopiero w paśmie obrony punktowej (ROCKET_PD_TUNE.flakRocketRange — jak ciwsStep gracza).
+        const rocketRangeSq = weapon.def?.category === 'flak'
+          ? rangeSq * (Number(window.RocketPdTune?.flakRocketRange) || 1) ** 2 : rangeSq;
         for (let i = 0; i < cache.rockets.length; i++) {
           const b = cache.rockets[i];
+          if (!(b.life > 0)) continue;   // zestrzelona od zbudowania listy
           const distSq = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
-          if (distSq <= rangeSq) {
+          if (distSq <= rocketRangeSq) {
             const score = getTargetScoreForWeapon(weapon, b, true) - distSq * 0.001;
             if (score > bestScore) {
               bestScore = score;
@@ -1634,7 +1640,12 @@ export function processAutonomousWeapons(npc, dt) {
             losCount++;
           }
         }
-        if (lineBlocked) {
+        if (targetIsRocket && !(bestTarget.life > 0)) {
+          // Rakietę zestrzeliło w tym kroku inne działo (kilka luf PD wybiera tę samą) — bez strzału w próżnię
+          // i bez przeładowania; nowy cel przy następnym skanie (od razu).
+          weapon.cachedTarget = null;
+          weapon.scanCd = 0;
+        } else if (lineBlocked) {
           // Nie miel LOS co 20 Hz: odrzuć zasłonięty cel na kilka decyzji i
           // pozostaw działo gotowe, by mogło natychmiast wybrać czystą linię.
           weapon._blockedTarget = bestTarget;

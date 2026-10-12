@@ -18,7 +18,8 @@
 import { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor } from '../../data/resources.js';
 import { FACTION, getDefaultStationFaction } from '../../data/factions.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../../data/asteroidTypes.js';
-import { SYSTEM_MAP_PLANET_BY_ID } from '../../data/systemMap.js';
+import { SYSTEM_MAP_PLANET_BY_ID, computeWorldUnitsPerAu } from '../../data/systemMap.js';
+import { SMALL_BODY_STATIONS, smallBodyStationPosition } from '../../data/smallBodies.js';
 import {
   seedStationStock, systemHaulTonnage, resourcePrice, stationHaulTonnage,
   getStationIndustry, militaryScale
@@ -62,19 +63,47 @@ export function baseCapacityOf(resourceId) {
 }
 
 /**
- * Placówki spoza tabeli planet. LIGA PASA w pasie głównym (36–47 AU mapy):
- * kąty rozstawione tak, żeby nie leżały na jednej prostej z rdzeniem — inaczej
- * cały ruch do nich szedłby jedną trasą i piractwo miałoby jedno wąskie gardło.
+ * Placówki spoza tabeli planet.
+ *
+ * UNIA PASA (2026-10-12, strumień C planu docs/PLAN-pas-realizm.md): stacje na orbicie prawdziwych ciał —
+ * Ceres (stolica, 38,81 AU mapy) i Westa (huta, 36,92) z `src/data/smallBodies.js`. Węzeł stoi w punkcie stacji
+ * gry (ciało + orbita stacji), kąt ciała przychodzi z gry w `planetAngles` (gra rozstrzyga go z położeń świata —
+ * tor kampanii, planety, olbrzymy pasa); bez niego — kąt preferowany ciała (skrypty, demo ruchu).
+ * Dawniej Westa stała na 44 AU — dalej od Słońca niż Ceres (prawdziwa jest bliżej).
+ *
  * KRYJÓWKI PIRACKIE leżą przy trasach, nie przy złożach: Hildy tuż za pasem
  * głównym, złomowisko na długim odcinku do olbrzymów gazowych. Mało stanowisk —
  * to nie porty, tylko miejsca, gdzie się upłynnia łup.
  */
-export const TRAFFIC_OUTPOSTS = Object.freeze([
-  Object.freeze({ id: 'ceres', label: 'Ceres', orbitAU: 39.5, angle: 2.6, berths: 6 }),
-  Object.freeze({ id: 'vesta', label: 'Westa', orbitAU: 44.0, angle: 5.1, berths: 4 }),
+const PIRATE_OUTPOSTS = Object.freeze([
   Object.freeze({ id: 'gniazdo-hildy', label: 'Gniazdo Hildy', orbitAU: 52.0, angle: 0.9, berths: 3 }),
   Object.freeze({ id: 'zlomowisko', label: 'Zlomowisko', orbitAU: 68.0, angle: 3.8, berths: 3 })
 ]);
+
+/**
+ * Stacje Unii Pasa jako placówki ruchu: biegunowe AU mapy punktu stacji wokół Słońca (travelNetwork liczy z nich
+ * pozycję z własnym `origin`). `planetAngles` — kąty z gry (ciała po id), `planetScale` — ta sama skala co sieć.
+ */
+export function smallBodyOutposts(options = {}) {
+  const au = computeWorldUnitsPerAu(getOutermostBeltEdgeAu(BELT_DEFINITIONS), { planetScale: options.planetScale });
+  const p = { x: 0, y: 0 };
+  return SMALL_BODY_STATIONS.map((body) => {
+    smallBodyStationPosition(body, { x: 0, y: 0 }, au, p, options.planetAngles || null);
+    return Object.freeze({
+      id: body.station.id, label: body.label,
+      orbitAU: Math.hypot(p.x, p.y) / au, angle: Math.atan2(p.y, p.x),
+      berths: body.station.berths
+    });
+  });
+}
+
+/** Placówki przy kątach preferowanych ciał (bez gry). */
+export const TRAFFIC_OUTPOSTS = Object.freeze([...smallBodyOutposts(), ...PIRATE_OUTPOSTS]);
+
+/** Placówki świata z kątami ciał z gry (`planetAngles`). */
+export function trafficOutposts(options = {}) {
+  return [...smallBodyOutposts(options), ...PIRATE_OUTPOSTS];
+}
 
 /** Pola wydobywcze z definicji pasów. Kuiper to jedyne źródło rudy uranu w układzie. */
 export function trafficFields(belts = BELT_DEFINITIONS) {
@@ -168,7 +197,7 @@ export function buildTrafficWorld(options = {}) {
     origin: options.origin,
     planetScale: options.planetScale,
     sunRadius: options.sunRadius,
-    outposts: options.outposts || TRAFFIC_OUTPOSTS,
+    outposts: options.outposts || trafficOutposts(options),
     fields: options.fields || trafficFields()
   });
 

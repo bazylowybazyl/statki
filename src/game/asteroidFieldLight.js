@@ -72,6 +72,9 @@ export class FieldSunOcclusion {
     const tail = this.config.recovery * 4;
     const spans = [];
     for (const reg of this.field.regions) {
+      // Populacja bez gęstych pól (NEA: fieldMul 0) prawie nie przesłania słońca (samo σ tła),
+      // a jej okno 21–31 AU kosztowało +0,36 s ekranu ładowania i +2,8 MB — poza oknami T = 1.
+      if (reg.fieldMul === 0) continue;
       if (reg.kind === 'ring') spans.push([reg.rInner - edge, reg.rOuter + edge + tail]);
       else spans.push([reg.rMid - reg.rHalf - edge, reg.rMid + reg.rHalf + edge + tail]);
     }

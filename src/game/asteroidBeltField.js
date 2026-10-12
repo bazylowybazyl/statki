@@ -24,9 +24,15 @@
 //
 // Moduł bez three i bez DOM-u — testy w node (tests/asteroidBeltField.test.mjs).
 
-import { BELT_DEFINITIONS, ASTEROID_TYPES } from '../data/asteroidTypes.js';
-import { NEUTRAL_TYPE, ENERGY_TYPE, SHAPE_COUNT, pickShape, oreShareAtDepth, oreTierFactor } from './asteroidRockKinds.js';
+import { BELT_DEFINITIONS } from '../data/asteroidTypes.js';
+import { ASTEROID_FAMILIES, REGION_FAMILIES, BELT_FAMILY_CONFIG } from '../data/asteroidFamilies.js';
+import { SMALL_BODY_BY_ID, smallBodyPosition } from '../data/smallBodies.js';
+import {
+  ROCK_TYPES, ROCK_TYPE_INDEX, ORE_ROCK_TYPES, NEUTRAL_TYPE, NEUTRAL_CARBON_TYPE, ENERGY_TYPE, SHAPE_COUNT,
+  pickShape, oreShareAtDepth, oreTierFactor
+} from './asteroidRockKinds.js';
 import { STORM_CONFIG, stormIntensity, stormHash01 } from './asteroidStorms.js';
+import { rockSpinRate, rockTumble, rockMoonFor, rockSystemReach, MOON_CONFIG } from './asteroidRotation.js';
 
 export const BELT_BAND = Object.freeze({ PLAY: 0, RUBBLE: 1, MID: 2, DEEP: 3 });
 
@@ -91,6 +97,9 @@ export const BELT_FIELD_CONFIG = Object.freeze({
   // Prowincje rud: szum przesuwający skład w stronę jednego typu.
   provinceScale: 150000,
   provinceStrength: 0.9,
+  // Najmniejsza waga typu w składzie, przy której prowincja może go faworyzować (premia 0,9 robiła
+  // z domieszki gradientu — np. węglowej 6% przy rodzinie Westy — rudę dominującą okolicy).
+  provinceMinWeight: 0.08,
   // Cel: tyle skał na komórkę w rdzeniu pola (dobór rozmiaru komórki oktawy).
   cellTargetCount: 12,
   cellMin: 1024,
@@ -102,7 +111,8 @@ export const BELT_FIELD_CONFIG = Object.freeze({
   shapeCount: SHAPE_COUNT
 });
 
-export const TYPE_INDEX = Object.freeze(Object.fromEntries(ASTEROID_TYPES.map((t, i) => [t, i])));
+// Rudy pola → indeks ROCK_TYPES (rudy gry 0–6 jak dawniej, typy z widm 9–13).
+export const TYPE_INDEX = Object.freeze(Object.fromEntries(ORE_ROCK_TYPES.map((t) => [t, ROCK_TYPE_INDEX[t]])));
 
 // ---------------------------------------------------------------------------
 // Losowość i szum (deterministyczne, bez stanu globalnego)
@@ -211,6 +221,245 @@ function resolvePlanetXY(planet, sunX, sunY, au) {
   return { x: sunX + Math.cos(ang) * r, y: sunY + Math.sin(ang) * r };
 }
 
+/** Wagi rud { typ: waga } → tablica po indeksach ROCK_TYPES (zera poza rudami pola). */
+function oreWeights(map) {
+  const out = new Float64Array(ROCK_TYPES.length);
+  for (const t of ORE_ROCK_TYPES) out[ROCK_TYPE_INDEX[t]] = Math.max(0, Number(map?.[t]) || 0);
+  return out;
+}
+
+/**
+ * Pole `types` definicji pasa → skład regionu. Postać obiektu = stały skład (wypełniacz
+ * kamienny); lista przystanków [{ au, dark, ore }] = skład po odległości od Słońca
+ * (`compStops`: r w j. świata rosnąco). `composition` = skład pierwszego przystanku (zgodność).
+ */
+export function buildRegionComposition(types, au) {
+  if (Array.isArray(types) && types.length > 0) {
+    const compStops = types
+      .map((s) => ({ r: (Number(s.au) || 0) * au, dark: Math.min(1, Math.max(0, Number(s.dark) || 0)), comp: oreWeights(s.ore) }))
+      .sort((a, b) => a.r - b.r);
+    return { composition: compStops[0].comp, compStops };
+  }
+  const comp = oreWeights(types || {});
+  return { composition: comp, compStops: [{ r: 0, dark: 0, comp }] };
+}
+
+/**
+ * Skład regionu w odległości r od Słońca → out (wagi po indeksach ROCK_TYPES); zwraca udział
+ * wypełniacza węglowego (dark). Liniowo między przystankami, poza skrajnymi — skrajny.
+ */
+export function regionCompositionAt(region, r, out) {
+  const stops = region.compStops;
+  const n = stops.length;
+  let a = stops[0], b = a, t = 0;
+  if (n > 1 && r > a.r) {
+    if (r >= stops[n - 1].r) { a = b = stops[n - 1]; }
+    else {
+      let i = 1;
+      while (stops[i].r < r) i++;
+      a = stops[i - 1]; b = stops[i];
+      t = (r - a.r) / Math.max(1e-9, b.r - a.r);
+    }
+  }
+  const ca = a.comp, cb = b.comp;
+  for (let i = 0; i < out.length; i++) out[i] = ca[i] + (cb[i] - ca[i]) * t;
+  return a.dark + (b.dark - a.dark) * t;
+}
+
+// ---------------------------------------------------------------------------
+// Rodziny kolizyjne (A2, docs/PLAN-pas-realizm.md § A2; dane src/data/asteroidFamilies.js): gęste pole pasa
+// głównego należy do rodziny — szczyt pola (wejście pod górę gładkiego szumu pól) → najbliższe ziarno rodziny
+// (odległość promieniowa w rozrzucie `sigmaAu`, łukowa w `sigmaArcAu` / `anchorArcAu`). Rodzina daje skład
+// rud pola i nazwę (`familyAt`). Westa i Hygiea mają jedno ziarno w miejscu ciała (kotwica: pozycje ciał
+// z opcji `smallBodies` / `setSmallBodyAnchors`, inaczej kąty preferowane ze smallBodies.js).
+
+/**
+ * Ziarna rodzin: { fam (indeks), au, ang [rad], sigR [AU], sigS [AU łuku], anchor (id ciała | null) }.
+ * `anchors` — { id: { x, y } } pozycje ciał w świecie (brak = kąt preferowany ciała).
+ */
+export function buildFamilySeeds(families, anchors, sunX, sunY, auToWorld, cfg = BELT_FAMILY_CONFIG) {
+  const seeds = [];
+  const p = { x: 0, y: 0 };
+  families.forEach((f, fam) => {
+    const sigR = Number(f.sigmaAu) > 0 ? Number(f.sigmaAu) : 0.3;
+    if (f.anchor) {
+      let pos = anchors?.[f.anchor];
+      if (!pos) {
+        const body = SMALL_BODY_BY_ID[f.anchor];
+        if (!body) return;
+        pos = smallBodyPosition(body, { x: sunX, y: sunY }, auToWorld, p);
+      }
+      const dx = pos.x - sunX;
+      const dy = pos.y - sunY;
+      seeds.push({ fam, au: Math.hypot(dx, dy) / auToWorld, ang: Math.atan2(dy, dx), sigR, sigS: cfg.anchorArcAu, anchor: f.anchor });
+      return;
+    }
+    const n = Math.max(1, Math.round(Number(f.seeds) || 3));
+    const ph = (Number(f.phaseDeg) || 0) * Math.PI / 180;
+    for (let k = 0; k < n; k++) {
+      seeds.push({ fam, au: f.au, ang: wrapAngle(ph + (k * 2 * Math.PI) / n), sigR, sigS: cfg.sigmaArcAu, anchor: null });
+    }
+  });
+  return seeds;
+}
+
+/**
+ * Przypisanie rodzin do szczytów pól (lista `peaks`: { rAu, ang } — pola pasa głównego): (1) rodzina z kotwicą
+ * bierze szczyt najbliższy swojemu ciału (|Δr| ≤ cfg.anchorClaim.maxDr; ważony Δr / dr, łuk / arc) i szczyty
+ * w jego bliskim zasięgu (wynik < 1); (2) reszta — najbliższe ziarno (familyOfPeak); (3) rodzina bez kotwicy
+ * bez żadnego szczytu przejmuje najlepiej pasujący szczyt od rodziny, która ma ich ≥ 2 (nie kotwicowy).
+ * Zapisuje `fam` w każdym szczycie; deterministyczne.
+ */
+export function assignFamiliesToPeaks(peaks, families, seeds, cfg = BELT_FAMILY_CONFIG) {
+  const claim = cfg.anchorClaim || { dr: 1, arc: 20, maxDr: 2, maxArcDeg: 75 };
+  const maxArc = (Number(claim.maxArcDeg) || 180) * Math.PI / 180;
+  for (const p of peaks) { p.fam = -1; p.anchored = false; }
+  // (1) kotwice
+  for (const s of seeds) {
+    if (!s.anchor) continue;
+    let best = null;
+    let bestS = Infinity;
+    for (const p of peaks) {
+      const dr = p.rAu - s.au;
+      const da = Math.abs(wrapAngle(p.ang - s.ang));
+      if (Math.abs(dr) > claim.maxDr || da > maxArc) continue;
+      const ds = da * s.au;
+      const score = (dr / claim.dr) ** 2 + (ds / claim.arc) ** 2;
+      if (score < 1 && !p.anchored) { p.fam = s.fam; p.anchored = true; }
+      if (score < bestS && !p.anchored) { bestS = score; best = p; }
+    }
+    if (best && !peaks.some((p) => p.anchored && p.fam === s.fam)) { best.fam = s.fam; best.anchored = true; }
+  }
+  // (2) najbliższe ziarno (bez ziaren z kotwicą — te już wybrały)
+  const free = seeds.filter((s) => !s.anchor);
+  for (const p of peaks) {
+    if (p.anchored) continue;
+    p.fam = familyOfPeak(free, p.rAu, p.ang, null, null, null);
+  }
+  // (3) każda rodzina bez kotwicy ma co najmniej jedno pole (gdy jest od kogo wziąć)
+  const count = new Map();
+  for (const p of peaks) count.set(p.fam, (count.get(p.fam) || 0) + 1);
+  families.forEach((f, fam) => {
+    if (f.anchor || (count.get(fam) || 0) > 0) return;
+    let best = null;
+    let bestS = Infinity;
+    for (const s of free) {
+      if (s.fam !== fam) continue;
+      for (const p of peaks) {
+        if (p.anchored || (count.get(p.fam) || 0) < 2) continue;
+        const dr = (p.rAu - s.au) / s.sigR;
+        const ds = Math.abs(wrapAngle(p.ang - s.ang)) * p.rAu / s.sigS;
+        const score = dr * dr + ds * ds;
+        if (score < bestS) { bestS = score; best = p; }
+      }
+    }
+    if (best) {
+      count.set(best.fam, count.get(best.fam) - 1);
+      best.fam = fam;
+      count.set(fam, 1);
+    }
+  });
+  return peaks;
+}
+
+/**
+ * Rodzina (indeks) szczytu pola: ziarno o najmniejszej odległości ważonej. Szczyt jako (px, py) w świecie
+ * z (sunX, sunY, auToWorld) — albo od razu (rAu, ang), gdy sunX === null.
+ */
+export function familyOfPeak(seeds, px, py, sunX, sunY, auToWorld) {
+  if (sunX === null) {
+    let best = -1;
+    let bestS = Infinity;
+    for (let i = 0; i < seeds.length; i++) {
+      const s = seeds[i];
+      const dr = (px - s.au) / s.sigR;
+      const ds = Math.abs(wrapAngle(py - s.ang)) * px / s.sigS;
+      const score = dr * dr + ds * ds;
+      if (score < bestS) { bestS = score; best = s.fam; }
+    }
+    return best;
+  }
+  const dx = px - sunX;
+  const dy = py - sunY;
+  const rAu = Math.sqrt(dx * dx + dy * dy) / auToWorld;
+  const ang = Math.atan2(dy, dx);
+  let best = -1;
+  let bestS = Infinity;
+  for (let i = 0; i < seeds.length; i++) {
+    const s = seeds[i];
+    const dr = (rAu - s.au) / s.sigR;
+    const ds = Math.abs(wrapAngle(ang - s.ang)) * rAu / s.sigS;
+    const score = dr * dr + ds * ds;
+    if (score < bestS) { bestS = score; best = s.fam; }
+  }
+  return best;
+}
+
+/**
+ * Pola populacji (strumień E, 2026-10-12 — docs/PLAN-pas-realizm.md § „E: projekt”), wszystkie opcjonalne;
+ * bez nich region liczy się bit w bit jak dawniej:
+ *   densityMul — mnożnik gęstości (NEA 0,25; L5 0,61 = L4 / 1,64), fieldMul — mnożnik gęstych pól i obrzeża
+ *   (0 = pojedyncze skały), edgeAU / edgeInAU — miękka krawędź (domyślnie BELT_FIELD_CONFIG.edgeAu; edgeInAU —
+ *   tylko wewnętrzna krawędź ringu), profile [[au, mnożnik], …] — radialny profil gęstości (liniowo), holes
+ *   [{ planet, r }] — wycięcie koła r [j.] wokół planety (pas nie budzi się przy K-7 i porcie Marsa — wycięcie
+ *   wchodzi też do rectTouchesBelt), avoid { planet, halfDeg, softDeg, depth } — przerzedzenie (× depth) wokół
+ *   długości planety (plutonki unikają Neptuna), overlay — region tylko składu i mnożnika gęstości (bez własnej
+ *   obwiedni, wewnątrz innego regionu), bananaK — zwężenie promieniowe łuku ku końcom, angCoreDeg / angEnd —
+ *   gęstość wzdłuż łuku (rdzeń 1, końce angEnd).
+ */
+function regionShapeFields(belt, au, find, sunX, sunY) {
+  const num = (v, d) => (Number.isFinite(v) ? Number(v) : d);
+  let profile = null;
+  if (Array.isArray(belt.profile) && belt.profile.length > 1) {
+    const pts = belt.profile.map(([a, v]) => [Number(a) * au, Math.max(0, Number(v) || 0)]).sort((p, q) => p[0] - q[0]);
+    profile = { r: Float64Array.from(pts, (p) => p[0]), v: Float64Array.from(pts, (p) => p[1]) };
+  }
+  let holes = null;
+  if (Array.isArray(belt.holes)) {
+    for (const h of belt.holes) {
+      const p = resolvePlanetXY(find(h.planet), sunX, sunY, au);
+      if (!p || !(Number(h.r) > 0)) continue;
+      (holes || (holes = [])).push({ planet: h.planet, x: p.x, y: p.y, r: Number(h.r) });
+    }
+  }
+  let avoid = null;
+  if (belt.avoid) {
+    const p = resolvePlanetXY(find(belt.avoid.planet), sunX, sunY, au);
+    if (p) {
+      avoid = {
+        ang: Math.atan2(p.y - sunY, p.x - sunX),
+        half: num(belt.avoid.halfDeg, 60) * Math.PI / 180,
+        soft: num(belt.avoid.softDeg, 15) * Math.PI / 180,
+        depth: Math.min(1, Math.max(0, num(belt.avoid.depth, 0.2)))
+      };
+    }
+  }
+  const angCore = Number.isFinite(belt.angCoreDeg) ? belt.angCoreDeg * Math.PI / 180 : 0;
+  return {
+    densityMul: Math.max(0, num(belt.densityMul, 1)),
+    fieldMul: Math.max(0, num(belt.fieldMul, 1)),
+    overlay: !!belt.overlay,
+    // 0 = domyślna krawędź pola (konstruktor AsteroidBeltField)
+    edge: num(belt.edgeAU, 0) * au,
+    edgeIn: num(belt.edgeInAU, 0) * au,
+    profile, holes, avoid,
+    bananaK: Math.min(0.95, Math.max(0, num(belt.bananaK, 0))),
+    angCore, angEnd: angCore > 0 ? Math.min(1, Math.max(0, num(belt.angEnd, 1))) : 1
+  };
+}
+
+/** Profil radialny regionu ({ r, v } w j.) w odległości r — liniowo, poza skrajnymi węzłami skrajny. */
+function profileAt(p, r) {
+  const rs = p.r;
+  const n = rs.length;
+  if (r <= rs[0]) return p.v[0];
+  if (r >= rs[n - 1]) return p.v[n - 1];
+  let i = 1;
+  while (rs[i] < r) i++;
+  const t = (r - rs[i - 1]) / (rs[i] - rs[i - 1]);
+  return p.v[i - 1] + (p.v[i] - p.v[i - 1]) * t;
+}
+
 /**
  * BELT_DEFINITIONS → regiony w świecie gry. Ring: pierścień wokół słońca.
  * Arc (Grecy, Trojańczycy, 3 skupiska Hildas w wierzchołkach L3 / L4 / L5): wycinek pierścienia.
@@ -222,9 +471,13 @@ export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], su
   const regions = [];
   const find = (id) => planets.find((p) => p && (p.id === id || p.name === id)) || null;
   for (const belt of beltDefs || []) {
-    const types = belt.types || {};
-    const composition = ASTEROID_TYPES.map((t) => Math.max(0, Number(types[t]) || 0));
-    const common = { beltId: belt.id, composition, ice: belt.id === 'kuiper' ? 1 : 0, priority: Number(belt.priority) || 0 };
+    const { composition, compStops } = buildRegionComposition(belt.types, au);
+    const common = {
+      beltId: belt.id, composition, compStops,
+      ice: Number.isFinite(belt.ice) ? Number(belt.ice) : (belt.id === 'kuiper' ? 1 : 0),
+      priority: Number(belt.priority) || 0,
+      ...regionShapeFields(belt, au, find, sunX, sunY)
+    };
     if (belt.shape === 'ring') {
       regions.push({ ...common, kind: 'ring', cx: sunX, cy: sunY, rInner: belt.innerAU * au, rOuter: belt.outerAU * au });
       continue;
@@ -234,12 +487,20 @@ export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], su
       if (!p) continue;
       const rMid = Math.hypot(p.x - sunX, p.y - sunY);
       if (rMid < 1) continue;
-      const offset = belt.lagrange === 'L4' ? Math.PI / 3 : -Math.PI / 3;
+      const l4 = belt.lagrange === 'L4';
+      const offset = l4 ? Math.PI / 3 : -Math.PI / 3;
+      const angHalf = (belt.arcSpread || 0.3) * 0.5 + 0.02;
+      // Kijanka asymetryczna: `angLeadDeg` — w stronę Jowisza, `angTrailDeg` — od Jowisza (L4 leży na +60°,
+      // więc „ku Jowiszowi” to ujemne Δ; L5 — lustro). Bez pól — łuk symetryczny jak dawniej.
+      const lead = Number.isFinite(belt.angLeadDeg) ? belt.angLeadDeg * Math.PI / 180 : angHalf;
+      const trail = Number.isFinite(belt.angTrailDeg) ? belt.angTrailDeg * Math.PI / 180 : angHalf;
       regions.push({
         ...common, kind: 'arc', cx: sunX, cy: sunY, rMid,
         rHalf: (belt.spreadAU || 4) * au * 0.5,
         angMid: Math.atan2(p.y - sunY, p.x - sunX) + offset,
-        angHalf: (belt.arcSpread || 0.3) * 0.5 + 0.02
+        angHalf,
+        angLo: l4 ? -lead : -trail,
+        angHi: l4 ? trail : lead
       });
       continue;
     }
@@ -249,12 +510,13 @@ export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], su
       const base = p ? Math.atan2(p.y - sunY, p.x - sunX) : 0;
       const angles = Array.isArray(belt.anglesDeg) ? belt.anglesDeg : [180, 60, -60];
       for (const deg of angles) {
+        const angHalf = (Number(belt.arcSpread) || 0.34) * 0.5;
         regions.push({
           ...common, kind: 'arc', cx: sunX, cy: sunY,
           rMid: (belt.radiusAU || 44.4) * au,
           rHalf: (belt.spreadAU || 3) * au * 0.5,
           angMid: base + deg * Math.PI / 180,
-          angHalf: (Number(belt.arcSpread) || 0.34) * 0.5
+          angHalf, angLo: -angHalf, angHi: angHalf
         });
       }
     }
@@ -266,11 +528,80 @@ export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], su
 export function regionPenetration(region, x, y) {
   const dx = x - region.cx;
   const dy = y - region.cy;
+  let pen;
   const r = Math.hypot(dx, dy);
-  if (region.kind === 'ring') return Math.min(r - region.rInner, region.rOuter - r);
-  const radial = region.rHalf - Math.abs(r - region.rMid);
-  const tangential = (region.angHalf - Math.abs(wrapAngle(Math.atan2(dy, dx) - region.angMid))) * region.rMid;
-  return Math.min(radial, tangential);
+  if (region.kind === 'ring') pen = Math.min(r - region.rInner, region.rOuter - r);
+  else {
+    const d = wrapAngle(Math.atan2(dy, dx) - region.angMid);
+    const lo = Number.isFinite(region.angLo) ? region.angLo : -region.angHalf;
+    const hi = Number.isFinite(region.angHi) ? region.angHi : region.angHalf;
+    const side = d < 0 ? -lo : hi;
+    const ad = d < 0 ? -d : d;
+    let rHalf = region.rHalf;
+    if (region.bananaK > 0) { const u = Math.min(1, ad / side); rHalf *= 1 - region.bananaK * u * u; }
+    pen = Math.min(rHalf - Math.abs(r - region.rMid), (side - ad) * region.rMid);
+  }
+  const holes = region.holes;
+  if (holes) {
+    for (let i = 0; i < holes.length; i++) {
+      const h = holes[i];
+      const hd = Math.hypot(x - h.x, y - h.y) - h.r;
+      if (hd < pen) pen = hd;
+    }
+  }
+  return pen;
+}
+
+// Obwiednia regionu (0..1) w punkcie (dx, dy — od środka regionu, r = |d|); wniknięcie → _rsPen.
+// Krawędzie: reg.edge (zewnętrzna, łuki, wycięcia), reg.edgeIn (wewnętrzna ringu). smoothstep jest monotoniczny,
+// więc min po składowych = smoothstep(min wniknięć) — przy jednej krawędzi bit w bit z dawnym smoothstep(pen).
+let _rsPen = 0;
+function regionEnvelope(reg, x, y, dx, dy, r) {
+  const e = reg.edge;
+  let pen;
+  let w;
+  if (reg.kind === 'ring') {
+    const pi = r - reg.rInner;
+    const po = reg.rOuter - r;
+    pen = pi < po ? pi : po;
+    if (reg.edgeIn === e) w = smoothstep(-e * 0.35, e, pen);
+    else {
+      const ei = reg.edgeIn;
+      const a = smoothstep(-ei * 0.35, ei, pi);
+      const b = smoothstep(-e * 0.35, e, po);
+      w = a < b ? a : b;
+    }
+  } else {
+    const d = wrapAngle(Math.atan2(dy, dx) - reg.angMid);
+    const side = d < 0 ? -reg.angLo : reg.angHi;
+    const ad = d < 0 ? -d : d;
+    let rHalf = reg.rHalf;
+    if (reg.bananaK > 0) { const u = Math.min(1, ad / side); rHalf *= 1 - reg.bananaK * u * u; }
+    const radial = rHalf - Math.abs(r - reg.rMid);
+    const tangential = (side - ad) * reg.rMid;
+    pen = Math.min(radial, tangential);
+    w = smoothstep(-e * 0.35, e, pen);
+    // Gęstość wzdłuż łuku: rdzeń ±angCore = 1, ku końcom do angEnd.
+    if (reg.angCore > 0 && w > 0 && ad > reg.angCore) w *= reg.angEnd + (1 - reg.angEnd) * (1 - smoothstep(reg.angCore, side, ad));
+  }
+  const holes = reg.holes;
+  if (holes) {
+    for (let i = 0; i < holes.length; i++) {
+      const h = holes[i];
+      const hd = Math.hypot(x - h.x, y - h.y) - h.r;
+      if (hd < pen) pen = hd;
+      const hw = smoothstep(-e * 0.35, e, hd);
+      if (hw < w) w = hw;
+    }
+  }
+  _rsPen = pen;
+  return w;
+}
+
+// Przerzedzenie wokół długości planety (plutonki unikają Neptuna): depth w środku, 1 poza half + soft.
+function avoidFactor(av, dx, dy) {
+  const d = Math.abs(wrapAngle(Math.atan2(dy, dx) - av.ang));
+  return av.depth + (1 - av.depth) * smoothstep(av.half - av.soft, av.half + av.soft, d);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +633,20 @@ export class AsteroidBeltField {
       if (main) main.rOuter = Math.max(main.rInner, this.config.mainOuterAu * this.auToWorld);
     }
     this.edgeWorld = this.config.edgeAu * this.auToWorld;
+    // Krawędzie regionów (0 = domyślna) i pasmo promieni [rLo, rHi], poza którym region nie daje obwiedni ani
+    // wniknięcia > −0,35 krawędzi — sampleMacro pomija go wtedy przed atan2 / wycięciami.
+    for (const reg of this.regions) {
+      if (!(reg.edge > 0)) reg.edge = this.edgeWorld;
+      if (!(reg.edgeIn > 0)) reg.edgeIn = reg.edge;
+      if (reg.kind === 'ring') {
+        reg.rLo = Math.max(0, reg.rInner - reg.edgeIn * 0.35);
+        reg.rHi = reg.rOuter + reg.edge * 0.35;
+      } else {
+        reg.rLo = Math.max(0, reg.rMid - reg.rHalf - reg.edge * 0.35);
+        reg.rHi = reg.rMid + reg.rHalf + reg.edge * 0.35;
+      }
+      reg.solarCentered = reg.cx === this.sunX && reg.cy === this.sunY;
+    }
     // Luki Kirkwooda: pasmo [r0, r1] obejmujące wszystkie luki (r² w j.², bez pierwiastka poza nim).
     this._hasGaps = false;
     this._gapR0sq = 0;
@@ -326,10 +671,263 @@ export class AsteroidBeltField {
     this.densityScale = 1;
     // Obszary bez skał gry (olbrzymy: asteroidGiants.js) — elipsy w świecie.
     this.exclusions = [];
+    // Koła budzenia pasa [{ x, y, r, active }] poza regionami — skała rysowana materiałem pasa poza polem
+    // (przelot NEA przy Ziemi: src/game/neaFlyby.js); rectTouchesBelt widzi je jak region.
+    this.wakeSpots = [];
     this.bands = BELT_BANDS.map((band, index) => this._buildBandPlan(band, index));
     this._cache = new Map();
     this._frame = 0;
     this.stats = { cellsGenerated: 0, rocksGenerated: 0, cacheHits: 0 };
+    // Rodziny kolizyjne (A2): skład i nazwa gęstych pól pasa głównego.
+    this._initFamilies(opts.families || ASTEROID_FAMILIES, opts.smallBodies || null, opts.familyConfig);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rodziny kolizyjne (A2)
+
+  _initFamilies(families, anchors, cfg) {
+    this.families = families;
+    this.familyConfig = { ...BELT_FAMILY_CONFIG, ...(cfg || {}) };
+    this._famComp = families.map((f) => oreWeights(f.ore));
+    this._famDark = families.map((f) => Math.min(1, Math.max(0, Number(f.dark) || 0)));
+    this._famCell = new Map();
+    this._famIdx = new Int32Array(8);
+    this._famWt = new Float64Array(8);
+    // Prowincje rud fbm zostają tylko w regionach bez rodzin (Kuiper, populacje E); pas główny i roje
+    // przy Jowiszu mają skład rodzin.
+    for (const reg of this.regions) {
+      reg.familyRegion = reg.beltId === 'main' ? 'main' : (REGION_FAMILIES[reg.beltId] ? 'region' : null);
+    }
+    this.setSmallBodyAnchors(anchors, false);
+  }
+
+  /**
+   * Pozycje ciał-kotwic rodzin (Westa, Hygiea): [{ id, x, y }] albo { id: { x, y } } w świecie gry —
+   * gra podaje je po rozstrzygnięciu kątów (resolveSmallBodyAngles, index.html); brak = kąty preferowane.
+   * Czyści pamięć przypisań i cache komórek (skład skał zależy od rodziny).
+   */
+  setSmallBodyAnchors(list, clear = true) {
+    let anchors = null;
+    if (Array.isArray(list)) {
+      anchors = {};
+      for (const b of list) if (b && b.id != null && Number.isFinite(b.x) && Number.isFinite(b.y)) anchors[b.id] = { x: b.x, y: b.y };
+    } else if (list && typeof list === 'object') {
+      anchors = list;
+    }
+    this._famSeeds = buildFamilySeeds(this.families, anchors, this.sunX, this.sunY, this.auToWorld, this.familyConfig);
+    this._famAnchors = this._famSeeds.filter((s) => s.anchor);
+    if (this._famPeaks) assignFamiliesToPeaks(this._famPeaks, this.families, this._famSeeds, this.familyConfig);
+    this._famCell.clear();
+    if (clear) this.clearCache();
+  }
+
+  /**
+   * Szczyty pól pasa głównego (raz, leniwie, ~20–40 ms): wejścia pod górę z rzadkiej siatki w pierścieniu pasa
+   * (z zapasem — pole ze szczytem tuż za krawędzią sięga w pas), szczyt z polem (szum pól ≥ próg), bez
+   * powtórzeń; przypisanie rodzin — assignFamiliesToPeaks.
+   */
+  familyPeaks() {
+    if (this._famPeaks) return this._famPeaks;
+    const peaks = [];
+    const main = this.regions.find((r) => r.familyRegion === 'main' && r.kind === 'ring');
+    if (main && this.families.length) {
+      const c = this.config;
+      const cfg = this.familyConfig;
+      const s = c.clusterScale;
+      const seed = this.seed ^ 0xC1A57E;
+      const edge0 = c.clusterThreshold - c.clusterSoftness;
+      const pad = cfg.peakScanPadAu * this.auToWorld;
+      const r0 = Math.max(0, main.rInner - pad);
+      const r1 = main.rOuter + pad;
+      const step = cfg.peakScanStep;
+      const dd = cfg.peakDedupe * cfg.peakDedupe;
+      for (let gx = this.sunX - r1; gx <= this.sunX + r1; gx += step) {
+        for (let gy = this.sunY - r1; gy <= this.sunY + r1; gy += step) {
+          const r = Math.hypot(gx - this.sunX, gy - this.sunY);
+          if (r < r0 || r > r1) continue;
+          this._climbPeak(gx, gy);
+          const px = this._peakX;
+          const py = this._peakY;
+          let dup = false;
+          for (let i = 0; i < peaks.length && !dup; i++) {
+            const ex = peaks[i].x - px;
+            const ey = peaks[i].y - py;
+            dup = ex * ex + ey * ey < dd;
+          }
+          if (dup) continue;
+          const n4 = fbm2(px / s, py / s, seed, 4);
+          const n2 = fbm2(px / s, py / s, seed, cfg.climbOctaves);
+          if (Math.max(n4, n2) < edge0) continue;
+          const dx = px - this.sunX;
+          const dy = py - this.sunY;
+          const pr = Math.hypot(dx, dy);
+          if (pr < r0 || pr > r1) continue;
+          peaks.push({ x: px, y: py, rAu: pr / this.auToWorld, ang: Math.atan2(dy, dx), fam: -1, anchored: false });
+        }
+      }
+    }
+    this._famPeaks = peaks;
+    assignFamiliesToPeaks(peaks, this.families, this._famSeeds, this.familyConfig);
+    return peaks;
+  }
+
+  /** Wejście pod górę gładkiego szumu pól od (x, y) → this._peakX / this._peakY (szczyt pola). */
+  _climbPeak(x, y) {
+    const s = this.config.clusterScale;
+    const seed = this.seed ^ 0xC1A57E;
+    const oct = this.familyConfig.climbOctaves;
+    let u = x / s;
+    let v = y / s;
+    let val = fbm2(u, v, seed, oct);
+    let step = 0.02;
+    const e = 0.003;
+    for (let i = 0; i < 96 && step > 1e-4; i++) {
+      const gx = fbm2(u + e, v, seed, oct) - fbm2(u - e, v, seed, oct);
+      const gy = fbm2(u, v + e, seed, oct) - fbm2(u, v - e, seed, oct);
+      const g = Math.sqrt(gx * gx + gy * gy);
+      if (g < 1e-12) break;
+      const nu = u + (gx / g) * step;
+      const nv = v + (gy / g) * step;
+      const nval = fbm2(nu, nv, seed, oct);
+      if (nval > val) { u = nu; v = nv; val = nval; step = Math.min(0.04, step * 1.25); } else step *= 0.5;
+    }
+    this._peakX = u * s;
+    this._peakY = v * s;
+  }
+
+  /**
+   * Rodzina komórki pamięci (ix, iy): szczyt pola od środka komórki → szczyt z listy (familyPeaks; ten sam
+   * szczyt w promieniu peakMatch) → jego rodzina; szczyt spoza listy — najbliższe ziarno.
+   */
+  _familyCell(ix, iy) {
+    const key = (ix + 32768) * 65536 + (iy + 32768);
+    let f = this._famCell.get(key);
+    if (f === undefined) {
+      const cfg = this.familyConfig;
+      const G = cfg.cellSize;
+      this._climbPeak((ix + 0.5) * G, (iy + 0.5) * G);
+      const px = this._peakX;
+      const py = this._peakY;
+      const peaks = this.familyPeaks();
+      const m2 = cfg.peakMatch * cfg.peakMatch;
+      let best = null;
+      let bd = m2;
+      for (let i = 0; i < peaks.length; i++) {
+        const ex = peaks[i].x - px;
+        const ey = peaks[i].y - py;
+        const d2 = ex * ex + ey * ey;
+        if (d2 < bd) { bd = d2; best = peaks[i]; }
+      }
+      f = best ? best.fam : familyOfPeak(this._famSeeds, px, py, this.sunX, this.sunY, this.auToWorld);
+      this._famCell.set(key, f);
+    }
+    return f;
+  }
+
+  /**
+   * Udziały rodzin w punkcie pasa głównego → this._famIdx / this._famWt (zwraca liczbę): rodzina pola
+   * (cztery komórki dookoła, dwuliniowo) × smoothstep(depth) i strefy rodzin przy ciałach poza polem.
+   */
+  _familyWeights(x, y, depth) {
+    const cfg = this.familyConfig;
+    const idx = this._famIdx;
+    const wt = this._famWt;
+    let n = 0;
+    const wf = depth > cfg.depth[0] ? smoothstep(cfg.depth[0], cfg.depth[1], depth) : 0;
+    if (wf > 0) {
+      const G = cfg.cellSize;
+      const fx = x / G - 0.5;
+      const fy = y / G - 0.5;
+      const ix = Math.floor(fx);
+      const iy = Math.floor(fy);
+      const tx = fx - ix;
+      const ty = fy - iy;
+      const f00 = this._familyCell(ix, iy);
+      const f10 = this._familyCell(ix + 1, iy);
+      const f01 = this._familyCell(ix, iy + 1);
+      const f11 = this._familyCell(ix + 1, iy + 1);
+      if (f00 === f10 && f00 === f01 && f00 === f11) {
+        if (f00 >= 0) { idx[n] = f00; wt[n] = wf; n++; }
+      } else {
+        const ws = this._famCornerW || (this._famCornerW = new Float64Array(4));
+        const fs = this._famCornerF || (this._famCornerF = new Int32Array(4));
+        ws[0] = (1 - tx) * (1 - ty); ws[1] = tx * (1 - ty); ws[2] = (1 - tx) * ty; ws[3] = tx * ty;
+        fs[0] = f00; fs[1] = f10; fs[2] = f01; fs[3] = f11;
+        for (let k = 0; k < 4; k++) {
+          if (fs[k] < 0 || ws[k] <= 0) continue;
+          let j = 0;
+          while (j < n && idx[j] !== fs[k]) j++;
+          if (j === n) { idx[n] = fs[k]; wt[n] = 0; n++; }
+          wt[j] += ws[k] * wf;
+        }
+      }
+    }
+    // Strefy rodzin przy ciałach (rzadki pas przy Weście i Hygiei — rodzina siedzi przy ciele).
+    const anchors = this._famAnchors;
+    if (anchors.length && wf < 1) {
+      const z = cfg.anchorZone;
+      const dx = x - this.sunX;
+      const dy = y - this.sunY;
+      const rAu = Math.sqrt(dx * dx + dy * dy) / this.auToWorld;
+      const ang = Math.atan2(dy, dx);
+      for (let i = 0; i < anchors.length && n < idx.length; i++) {
+        const s = anchors[i];
+        const dr = (rAu - s.au) / z.radiusAu;
+        const ds = Math.abs(wrapAngle(ang - s.ang)) * rAu / z.arcAu;
+        const d2 = dr * dr + ds * ds;
+        if (d2 > 16) continue;
+        const wa = z.share * Math.exp(-0.5 * d2) * (1 - wf);
+        if (wa < 0.01) continue;
+        idx[n] = s.fam; wt[n] = wa; n++;
+      }
+    }
+    // Suma udziałów ≤ 1 (reszta — skład tła regionu).
+    let sum = 0;
+    for (let k = 0; k < n; k++) sum += wt[k];
+    if (sum > 1) for (let k = 0; k < n; k++) wt[k] /= sum;
+    return n;
+  }
+
+  /**
+   * Skład w punkcie → this._comp (wagi po indeksach ROCK_TYPES); zwraca udział wypełniacza węglowego.
+   * Tło: przystanki `types` regionu; w pasie głównym na to rodziny (pole, strefy przy ciałach).
+   */
+  _composeAt(region, x, y, depth) {
+    let dark = this._regionComp(region, x, y);
+    if (region.familyRegion !== 'main') return dark;
+    const n = this._familyWeights(x, y, depth);
+    if (n === 0) return dark;
+    const comp = this._comp;
+    let W = 0;
+    for (let k = 0; k < n; k++) W += this._famWt[k];
+    const keep = 1 - W;
+    for (let i = 0; i < comp.length; i++) comp[i] *= keep;
+    dark *= keep;
+    for (let k = 0; k < n; k++) {
+      const fc = this._famComp[this._famIdx[k]];
+      const w = this._famWt[k];
+      for (let i = 0; i < comp.length; i++) comp[i] += fc[i] * w;
+      dark += this._famDark[this._famIdx[k]] * w;
+    }
+    return dark;
+  }
+
+  /**
+   * Rodzina w punkcie świata (HUD: skaner wydobycia, komunikat strefy) albo null: pasmo pasa głównego —
+   * rodzina pola (głąb ≥ depth[1] / 2) albo strefy przy ciele; roje przy Jowiszu (Hildy, Trojańczycy) — region.
+   * Zwraca obiekt rodziny (src/data/asteroidFamilies.js: label, title?, desc, spectral …).
+   */
+  familyAt(x, y) {
+    const m = this.sampleMacro(x, y);
+    const region = m.region;
+    if (!region || !(m.weight > 0)) return null;
+    if (region.familyRegion === 'region') return REGION_FAMILIES[region.beltId];
+    if (region.familyRegion !== 'main') return null;
+    const n = this._familyWeights(x, y, m.depth);
+    let best = -1;
+    let bw = 0.5;
+    for (let k = 0; k < n; k++) if (this._famWt[k] > bw) { bw = this._famWt[k]; best = this._famIdx[k]; }
+    return best >= 0 ? this.families[best] : null;
   }
 
   /**
@@ -339,22 +937,70 @@ export class AsteroidBeltField {
    * region — region składu (pierwszeństwo `priority`, potem najgłębsze wniknięcie).
    */
   sampleMacro(x, y, out = _macro) {
+    // Obwiednia = max po regionach (bez nakładek) obwiedni × profil × densityMul; przy mnożnikach 1 — bit w bit
+    // dawne smoothstep(max wniknięcia). Region składu: `priority`, potem najgłębsze wniknięcie (też nakładki).
     let best = -Infinity;
     let region = null;
     let pick = null;
     let pickPri = -Infinity;
     let pickPen = 0;
+    let wBest = 0;
+    let wReg = null;
+    let ovMul = 1;
+    const sdx = x - this.sunX;
+    const sdy = y - this.sunY;
+    const sr = Math.hypot(sdx, sdy);
     for (let i = 0; i < this.regions.length; i++) {
       const reg = this.regions[i];
-      const pen = regionPenetration(reg, x, y);
-      if (pen > best) { best = pen; region = reg; }
+      let dx = sdx;
+      let dy = sdy;
+      let r = sr;
+      if (!reg.solarCentered) { dx = x - reg.cx; dy = y - reg.cy; r = Math.hypot(dx, dy); }
+      if (r < reg.rLo || r > reg.rHi) continue;
+      const w0 = regionEnvelope(reg, x, y, dx, dy, r);
+      const pen = _rsPen;
+      if (reg.overlay) {
+        if (w0 > 0) {
+          let t = reg.densityMul;
+          if (reg.avoid) t *= avoidFactor(reg.avoid, dx, dy);
+          ovMul *= 1 + (t - 1) * w0;
+        }
+      } else {
+        if (pen > best) { best = pen; region = reg; }
+        let w = w0;
+        if (w > 0) {
+          if (reg.profile) w *= profileAt(reg.profile, r);
+          if (reg.avoid) w *= avoidFactor(reg.avoid, dx, dy);
+          w *= reg.densityMul;
+          if (w > wBest) { wBest = w; wReg = reg; }
+        }
+      }
       // Region o wyższym priorytecie wygrywa skład wszędzie, gdzie leży (Hildy w pasie głównym).
       if (pen > 0 && (reg.priority > pickPri || (reg.priority === pickPri && pen > pickPen))) {
         pick = reg; pickPri = reg.priority; pickPen = pen;
       }
     }
-    const weight = region ? smoothstep(-this.edgeWorld * 0.35, this.edgeWorld, best) : 0;
+    // Poza każdym regionem: region = najgłębsze wniknięcie po WSZYSTKICH regionach (jak dawniej — barwa lodu,
+    // skład obrzeża); tylko w punktach z zerową obwiednią, więc koszt pełnej pętli płacą próbki poza pasem.
+    if (!pick && wBest === 0) {
+      best = -Infinity;
+      for (let i = 0; i < this.regions.length; i++) {
+        const reg = this.regions[i];
+        if (reg.overlay) continue;
+        // Wniknięcie ≤ wniknięcie promieniowe (ring: dokładnie bez wycięć; łuk: tylko pasmo promieni) — region,
+        // który i tak nie przebije `best`, pomijamy przed atan2 / wycięciami (wynik ten sam).
+        if (reg.solarCentered) {
+          const radial = reg.kind === 'ring' ? Math.min(sr - reg.rInner, reg.rOuter - sr) : reg.rHalf - Math.abs(sr - reg.rMid);
+          if (radial <= best) continue;
+        }
+        const pen = regionPenetration(reg, x, y);
+        if (pen > best) { best = pen; region = reg; }
+      }
+    }
+    const wDens = wBest * ovMul;
+    const weight = wDens < 1 ? wDens : 1;
     if (pick) region = pick;
+    const fieldMul = wReg ? wReg.fieldMul : 1;
     const c = this.config;
     let cluster = 0;
     let rim = 0;
@@ -366,10 +1012,10 @@ export class AsteroidBeltField {
       // Obrzeże z wypełniacza zaczyna się rimWidth przed polem i przechodzi
       // w pole (w rdzeniu gęstość to już tylko pole).
       rim = smoothstep(edge0 - c.rimWidth, edge0 + c.clusterSoftness * 0.4, n) * (1 - cluster);
+      // Populacja bez gęstych pól (NEA) albo z rzadszymi (Hungarie): pola i obrzeże × fieldMul.
+      if (fieldMul !== 1) { cluster *= fieldMul; rim *= fieldMul; }
       if (this._hasGaps) {
-        const dx = x - this.sunX;
-        const dy = y - this.sunY;
-        const r2 = dx * dx + dy * dy;
+        const r2 = sdx * sdx + sdy * sdy;
         if (r2 > this._gapR0sq && r2 < this._gapR1sq) {
           gap = kirkwoodGapFactor(Math.sqrt(r2) / this.auToWorld, c.kirkwoodGaps, c.kirkwoodSoftAu, c.kirkwoodDensity);
         }
@@ -383,7 +1029,7 @@ export class AsteroidBeltField {
     out.rim = rim * gap;
     // Głębokość w polu dla składu (0 = rzadki pas i obrzeże, 1 = rdzeń).
     out.depth = out.cluster;
-    out.density = weight * gap * (c.baseDensity + (c.fieldDensity - c.baseDensity) * cluster + c.fieldDensity * c.rimDensity * rim) * this.densityScale;
+    out.density = wDens * gap * (c.baseDensity + (c.fieldDensity - c.baseDensity) * cluster + c.fieldDensity * c.rimDensity * rim) * this.densityScale;
     out.ice = region ? region.ice : 0;
     out.region = region;
     return out;
@@ -444,6 +1090,13 @@ export class AsteroidBeltField {
 
   _cellKey(bandIndex, k, cx, cy) {
     return `${bandIndex}:${k}:${cx}:${cy}`;
+  }
+
+  /** Sześć haszy 0 … 1 skały (id) do pary z księżycem — tablica wielokrotnego użytku. */
+  _moonHashes(idLo, idHi) {
+    const h = this._mh || (this._mh = new Float64Array(6));
+    for (let j = 0; j < 6; j++) h[j] = hash32(this.seed ^ 0x300A, idLo, idHi, j) / 4294967296;
+    return h;
   }
 
   /**
@@ -531,11 +1184,16 @@ export class AsteroidBeltField {
         const rs = Math.sqrt(Math.max(0, 1 - zc * zc));
         ax = rs * Math.cos(phi); ay = rs * Math.sin(phi); az = zc;
       }
-      // Małe skały kręcą się szybciej; w kosmosie powoli (rad/s).
-      const spin = (uSpin - 0.5) * 2 * Math.min(0.35, 9 / Math.sqrt(d + 40));
+      // Obrót (asteroidRotation.js, D2 2026-10-12): okresy jak bariera obrotu rumowisk, w czasie
+      // gry ściśnięte (małe monolity od ~30 s, duże od ~150 s, rozrzut × 8, wolne rotatory) — znak
+      // i wielkość z uSpin, wolny rotator z haszu id (stała liczba losowań na kandydata).
+      const id = hash32(this.seed ^ 0x1D, bandIndex, k, cx, cy) * 1024 + i;
+      const idLo = id >>> 0;
+      const idHi = Math.floor(id / 4294967296) >>> 0;
+      const spin = rockSpinRate(d, uSpin, hash32(this.seed ^ 0x5B1, idLo, idHi) / 4294967296, hash32(this.seed ^ 0x5B2, idLo, idHi) / 4294967296);
       const z = isPlay ? 0 : band.zNear + uZ * (band.zFar - band.zNear);
-      rocks.push({
-        id: hash32(this.seed ^ 0x1D, bandIndex, k, cx, cy) * 1024 + i,
+      const rock = {
+        id,
         band: bandIndex, oct: k,
         x, y, z, d, r,
         shape: Math.min(c.shapeCount - 1, pickShape(type, d, uShape, uVariant)),
@@ -545,8 +1203,18 @@ export class AsteroidBeltField {
         phase: uPhase * Math.PI * 2,
         sx: 0.8 + s0 * 0.4, sy: 0.8 + s1 * 0.4, sz: 0.72 + s2 * 0.4,
         seed: uSeed,
-        cluster
-      });
+        cluster,
+        // Koziołkowanie (tempo precesji, rad/s; tylko tło — lustro shadera rockSpin.tsl.js) i
+        // księżyc (rockMoonFor — para; null bez księżyca).
+        tumble: isPlay ? 0 : rockTumble(uSeed, spin),
+        moon: null
+      };
+      // Para z księżycem (hasze id): w paśmie gry orbita nie wchodzi na większe skały ani w strefy
+      // wyłączone (ciała pasa) — inaczej skała zostaje bez księżyca.
+      const moon = rockMoonFor(rock, isPlay, this._moonHashes(idLo, idHi));
+      if (moon && (!isPlay || (!(this.exclusions.length && this._excluded(x, y, moon.dist + moon.r))
+        && !this._overlapsLarger(bandIndex, k, x, y, moon.dist + moon.r, rocks)))) rock.moon = moon;
+      rocks.push(rock);
     }
     this.stats.rocksGenerated += rocks.length;
     return rocks;
@@ -555,17 +1223,21 @@ export class AsteroidBeltField {
   /** Skała PLAY wchodzi na większą (starsze oktawy) albo na przyjętą w tej komórce? */
   _overlapsLarger(bandIndex, k, x, y, r, sameCell) {
     const allow = this.config.playOverlap;
+    // Skała z księżycem zajmuje cały układ (orbita — rockSystemReach): mniejsze skały nie wchodzą
+    // na tor księżyca.
     for (let i = 0; i < sameCell.length; i++) {
       const o = sameCell[i];
-      const rr = (o.r + r) * allow;
+      const rr = (rockSystemReach(o) + r) * allow;
       const dx = o.x - x;
       const dy = o.y - y;
       if (dx * dx + dy * dy < rr * rr) return true;
     }
     const band = this.bands[bandIndex];
+    const moonK = MOON_CONFIG.distRatio[1] + MOON_CONFIG.sizeRatio[1];
     for (let j = k + 1; j < band.octaves.length; j++) {
       const oct = band.octaves[j];
-      const reach = oct.d1 * 0.5 + r;
+      // Okno komórek obejmuje też układy z księżycem (orbita do moonK promieni skały).
+      const reach = oct.d1 * 0.5 * (oct.d1 >= MOON_CONFIG.playD[0] ? moonK : 1) + r;
       const cx0 = Math.floor((x - reach) / oct.cell);
       const cx1 = Math.floor((x + reach) / oct.cell);
       const cy0 = Math.floor((y - reach) / oct.cell);
@@ -575,7 +1247,7 @@ export class AsteroidBeltField {
           const list = this.cellRocks(bandIndex, j, cx, cy);
           for (let i = 0; i < list.length; i++) {
             const o = list[i];
-            const rr = (o.r + r) * allow;
+            const rr = (rockSystemReach(o) + r) * allow;
             const dx = o.x - x;
             const dy = o.y - y;
             if (dx * dx + dy * dy < rr * rr) return true;
@@ -602,28 +1274,76 @@ export class AsteroidBeltField {
       if (storm > 0 && stormHash01(x, y, this.seed) < storm * share) return ENERGY_TYPE;
     }
     const share = oreShareAtDepth(depth);
-    if (u >= share) return NEUTRAL_TYPE;
-    return this._pickType(region, x, y, u / share, depth);
+    // Skład (tło regionu + rodziny pasa głównego) i udział wypełniacza węglowego — raz na kandydata.
+    const dark = this._composeAt(region, x, y, depth);
+    if (u >= share) {
+      // Wypełniacz: odmiana kamienna albo węglowa wg gradientu pasa i rodziny pola (tylko wygląd) —
+      // z tego samego losowania (reszta u ponad udziałem rud jest jednostajna).
+      if (dark <= 0) return NEUTRAL_TYPE;
+      return (u - share) < dark * (1 - share) ? NEUTRAL_CARBON_TYPE : NEUTRAL_TYPE;
+    }
+    return this._pickFromComp(region, x, y, u / share, depth);
   }
 
+  /**
+   * Skład regionu w punkcie → this._comp; zwraca dark. Przystanki `types` są w AU od SŁOŃCA
+   * (nie od środka regionu — regiony bez środka w Słońcu, np. przy planecie, też liczą od Słońca).
+   */
+  _regionComp(region, x, y) {
+    const comp = this._comp || (this._comp = new Float64Array(ROCK_TYPES.length));
+    if (region.compStops.length === 1) {
+      comp.set(region.compStops[0].comp);
+      return region.compStops[0].dark;
+    }
+    const dx = x - this.sunX, dy = y - this.sunY;
+    return regionCompositionAt(region, Math.sqrt(dx * dx + dy * dy), comp);
+  }
+
+  _regionDark(region, x, y) {
+    const stops = region.compStops;
+    if (stops.length === 1) return stops[0].dark;
+    const dx = x - this.sunX, dy = y - this.sunY;
+    const r = Math.sqrt(dx * dx + dy * dy);
+    if (r <= stops[0].r) return stops[0].dark;
+    const n = stops.length;
+    if (r >= stops[n - 1].r) return stops[n - 1].dark;
+    let i = 1;
+    while (stops[i].r < r) i++;
+    const a = stops[i - 1], b = stops[i];
+    return a.dark + (b.dark - a.dark) * (r - a.r) / Math.max(1e-9, b.r - a.r);
+  }
+
+  /** Ruda ze składu w punkcie (tło regionu + rodziny); u ∈ [0, 1). */
   _pickType(region, x, y, u, depth = 1) {
     if (!region) return 0;
-    const comp = region.composition;
+    this._composeAt(region, x, y, depth);
+    return this._pickFromComp(region, x, y, u, depth);
+  }
+
+  /** Ruda z this._comp (po _composeAt) — szczeble rud z głębokością; prowincje tylko poza rodzinami. */
+  _pickFromComp(region, x, y, u, depth) {
+    const comp = this._comp;
     const c = this.config;
-    // Prowincja rud: jeden typ z listy pasa dostaje premię w tej okolicy.
-    const pn = fbm2(x / c.provinceScale, y / c.provinceScale, this.seed ^ 0x0E5, 3);
-    let nonzero = 0;
-    for (let i = 0; i < comp.length; i++) if (comp[i] > 0) nonzero++;
     let favored = -1;
-    if (nonzero > 1) {
-      let slot = Math.min(nonzero - 1, Math.floor(pn * nonzero * 0.999));
-      for (let i = 0; i < comp.length; i++) {
-        if (comp[i] <= 0) continue;
-        if (slot === 0) { favored = i; break; }
-        slot--;
+    let boost = 0;
+    if (!region.familyRegion) {
+      // Prowincja rud: jeden typ z listy pasa dostaje premię w tej okolicy (regiony bez rodzin).
+      const pn = fbm2(x / c.provinceScale, y / c.provinceScale, this.seed ^ 0x0E5, 3);
+      // Premię dostaje tylko typ z wagą ≥ provinceMinWeight — śladowa domieszka gradientu (np. lód
+      // 1% w środku pasa) nie staje się przez prowincję rudą dominującą.
+      const minW = c.provinceMinWeight ?? 0;
+      let nonzero = 0;
+      for (let i = 0; i < comp.length; i++) if (comp[i] >= minW && comp[i] > 0) nonzero++;
+      if (nonzero > 1) {
+        let slot = Math.min(nonzero - 1, Math.floor(pn * nonzero * 0.999));
+        for (let i = 0; i < comp.length; i++) {
+          if (comp[i] < minW || comp[i] <= 0) continue;
+          if (slot === 0) { favored = i; break; }
+          slot--;
+        }
       }
+      boost = c.provinceStrength * smoothstep(0.35, 0.65, fbm2(x / c.provinceScale + 31.7, y / c.provinceScale - 12.2, this.seed ^ 0x7A1, 2));
     }
-    const boost = c.provinceStrength * smoothstep(0.35, 0.65, fbm2(x / c.provinceScale + 31.7, y / c.provinceScale - 12.2, this.seed ^ 0x7A1, 2));
     // Rudy rzadkie (kryształ, uran) i średnie (miedź, tytan) głównie w głębi pola.
     let total = 0;
     for (let i = 0; i < comp.length; i++) {
@@ -677,12 +1397,37 @@ export class AsteroidBeltField {
   }
 
   /** Czy region świata w ogóle dotyka pasa (szybkie odrzucenie całych kadrów). */
+  /**
+   * Największe wniknięcie [j.] w regiony o podanych `beltId` (> 0 wewnątrz) albo -Infinity, gdy żadnego nie ma —
+   * strefy HUD w kształcie regionów (roje Trojańczyków: index.html, detectZones).
+   */
+  penetrationOf(beltIds, x, y) {
+    let best = -Infinity;
+    for (let i = 0; i < this.regions.length; i++) {
+      const reg = this.regions[i];
+      if (!beltIds.includes(reg.beltId)) continue;
+      const pen = regionPenetration(reg, x, y);
+      if (pen > best) best = pen;
+    }
+    return best;
+  }
+
   rectTouchesBelt(x0, y0, x1, y1) {
     const cx = (x0 + x1) * 0.5;
     const cy = (y0 + y1) * 0.5;
     const half = Math.hypot(x1 - x0, y1 - y0) * 0.5;
     for (let i = 0; i < this.regions.length; i++) {
-      if (regionPenetration(this.regions[i], cx, cy) > -(half + this.edgeWorld)) return true;
+      // Krawędź regionu (domyślnie edgeWorld; od strony Słońca ringu — edgeIn); wycięcia wokół planet (K-7,
+      // port Marsa) są w wniknięciu.
+      const reg = this.regions[i];
+      let e = reg.edge;
+      if (reg.kind === 'ring' && reg.edgeIn !== e && Math.hypot(cx - reg.cx, cy - reg.cy) < (reg.rInner + reg.rOuter) * 0.5) e = reg.edgeIn;
+      if (regionPenetration(reg, cx, cy) > -(half + e)) return true;
+    }
+    const spots = this.wakeSpots;
+    for (let i = 0; i < spots.length; i++) {
+      const s = spots[i];
+      if (s.active && Math.hypot(cx - s.x, cy - s.y) < half + s.r) return true;
     }
     return false;
   }

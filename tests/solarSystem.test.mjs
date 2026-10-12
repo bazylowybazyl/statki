@@ -36,7 +36,8 @@ test('orbital angular speed completes one revolution in the configured period', 
 test('gameplay asteroid belts keep the original stretched map ranges', () => {
   const main = BELT_DEFINITIONS.find(belt => belt.id === 'main');
   const kuiper = BELT_DEFINITIONS.find(belt => belt.id === 'kuiper');
-  assert.deepEqual([main.innerAU, main.outerAU], [36, 47]);
+  // wewnętrzna krawędź 35,5 = 4:1 / ν6 (prawdziwe 2,06 AU; strumień E, 2026-10-12)
+  assert.deepEqual([main.innerAU, main.outerAU], [35.5, 47]);
   assert.deepEqual([kuiper.innerAU, kuiper.outerAU], [125, 140]);
   assert.equal(getOutermostBeltEdgeAu(BELT_DEFINITIONS, { jupiter: 50.2 }), 140);
   assert.equal(getOutermostBeltEdgeAu([

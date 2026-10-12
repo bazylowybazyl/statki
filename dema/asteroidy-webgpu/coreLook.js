@@ -31,7 +31,17 @@ export const CORE_LOOK = Object.freeze({
   ice: Object.freeze({ kind: 'ice', color: '#86aecd', color2: '#7cc4ff', metal: 0, gloss: 150, emit: 0.05, patina: 0 }),
   uran: Object.freeze({ kind: 'mineral', color: '#25271e', color2: '#6ef04e', metal: 0.25, gloss: 45, emit: 1.3, patina: 0 }),
   rock: Object.freeze({ kind: 'mineral', color: '#77716a', color2: '#77716a', metal: 0, gloss: 20, emit: 0, patina: 0 }),
-  energy: Object.freeze({ kind: 'crystal', color: '#b7a2ff', color2: '#8a3cff', metal: 0, gloss: 120, emit: 1.0, patina: 0 })
+  energy: Object.freeze({ kind: 'crystal', color: '#b7a2ff', color2: '#8a3cff', metal: 0, gloss: 120, emit: 1.0, patina: 0 }),
+  // Typy z widm (CORE_MATERIAL w asteroidMaterials.js): zbita bryła węglista (żyłki węglanów),
+  // lity żelazo-nikiel, ilmenit w bazalcie, czysty lód prymitywnej, bryłka platynowców.
+  carbon: Object.freeze({ kind: 'mineral', color: '#2a2826', color2: '#cfc8b8', metal: 0, gloss: 18, emit: 0, patina: 0 }),
+  metal: Object.freeze({ kind: 'metal', color: '#b2b0aa', color2: '#5a4434', metal: 1, gloss: 90, emit: 0, patina: 0.12 }),
+  basalt: Object.freeze({ kind: 'mineral', color: '#3c3d40', color2: '#8a8f96', metal: 0.4, gloss: 60, emit: 0, patina: 0 }),
+  primitive: Object.freeze({ kind: 'ice', color: '#93b1c9', color2: '#86c6ff', metal: 0, gloss: 150, emit: 0.04, patina: 0 }),
+  platinum: Object.freeze({ kind: 'metal', color: '#dcdde0', color2: '#7a7468', metal: 1, gloss: 130, emit: 0, patina: 0.06 }),
+  rock_c: Object.freeze({ kind: 'mineral', color: '#4c4843', color2: '#4c4843', metal: 0, gloss: 18, emit: 0, patina: 0 }),
+  // C z lodem w rdzeniach (Themis): lodowy rdzeń jak w prymitywnej.
+  carbon_ice: Object.freeze({ kind: 'ice', color: '#8fb0c8', color2: '#84c2f6', metal: 0, gloss: 150, emit: 0.04, patina: 0 })
 });
 
 /** Tablica uniformów wyglądu rdzeni: typ t → wiersze t·3 + (0: barwa, metal; 1: gloss, emit, rodzaj, nalot; 2: barwa 2). */

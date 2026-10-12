@@ -75,12 +75,16 @@ test('rakiety i iskry (Core3D): rozgrzewka kroków efektów — compute, mapa g�
 test('tarcze: pula płytek i iskier rozgrzana na ekranie ładowania (pass tarcz, warstwa DIST, kernele)', () => {
   const body = functionBody(shield3d, 'export function prewarmShields3D(');
   assert.match(body, /ensurePool\(\)/, 'pula w scenie przed kompilacją');
-  // compileAsync pomija niewidoczne — siatki odsłonięte na czas projekcji (Core3D.prewarmPass).
-  assert.match(body, /p\.tileMesh\.visible = p\.sparkSprite\.visible = p\.distMesh\.visible = p\.glowMesh\.visible = true;/);
+  // compileAsync pomija niewidoczne — siatki odsłonięte na czas projekcji (Core3D.prewarmPass); czasza
+  // pokazanej tarczy (tryb TARCZE) i jej soczewka też — inaczej pierwsze TARCZE kompilowałyby je w klatce.
+  assert.match(body, /const meshes = \[p\.tileMesh, p\.sparkSprite, p\.distMesh, p\.glowMesh, p\.fieldMesh, p\.fieldDistMesh\];/);
+  assert.match(body, /for \(const m of meshes\) m\.visible = true;/);
   assert.match(body, /Core3D\.prewarmPass\(p\.glowMesh, 7\)/);
+  assert.match(body, /Core3D\.prewarmPass\(p\.fieldMesh, 7\)/);
   assert.match(body, /Core3D\.prewarmPass\(p\.tileMesh, 7\)/);
   assert.match(body, /Core3D\.prewarmPass\(p\.sparkSprite, 7\)/);
   assert.match(body, /Core3D\.prewarmPass\(p\.distMesh, FX_DISTORT_LAYER\)/);
+  assert.match(body, /Core3D\.prewarmPass\(p\.fieldDistMesh, FX_DISTORT_LAYER\)/);
   assert.doesNotMatch(body, /\.dispose\(/);
   // Kernele compute (pipeline synchronicznie) — krok efektów „tarcze” z warm.
   assert.match(shield3d, /name: 'tarcze',[\s\S]{0,600}warm\(ctx\)/);

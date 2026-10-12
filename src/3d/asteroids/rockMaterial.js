@@ -8,7 +8,9 @@
 //     (Core3D.fx.origin; grupa pola stoi na nim — modelViewMatrix w double);
 //   • fragmenty: KAŻDY typ ma własny program powierzchni (metal żelaza, skorupy
 //     malachitu, chondry krzemu, warstwy tytanu, szczeliny kryształu, szkliwo
-//     lodu, smolinek uranu, pęknięcia skał energetycznych, skała neutralna),
+//     lodu, smolinek uranu, pęknięcia skał energetycznych, skała neutralna;
+//     typy z widm: regolit, głazy i węglany C, toliny i lód D, ziarna bazaltu V,
+//     M / platynowce na programie żelaza, wypełniacz węglowy na programie neutralnej),
 //     relief z pochodnych (gradient powierzchni), żyły o stałej szerokości
 //     w świecie z antyaliasingiem w pikselach, emisja HDR na liniach;
 //   • światło: SurfaceLightingModel (surfaceLighting.js) — słońce pola i WSZYSTKIE
@@ -31,8 +33,9 @@ import {
   If, select, mix, smoothstep, clamp, fract, floor, abs, sign, sqrt, pow, sin, cos, log2, exp,
   min, max, dot, cross, normalize, reflect, step, dFdx, dFdy, fwidth, diffuseColor, Discard, length
 } from 'three/tsl';
-import { ROCK_TYPES, SHAPE_COUNT } from '../../game/asteroidRockKinds.js';
+import { ROCK_TYPES, ROCK_TYPE_INDEX as TI, SHAPE_COUNT } from '../../game/asteroidRockKinds.js';
 import { octTexUv, quatRotate, quatMul } from './tslCommon.js';
+import { rockSpinQuat } from './rockSpin.tsl.js';
 import { SurfaceLightingModel } from './surfaceLighting.js';
 import { enableGridLights } from '../fx/lightGrid.js';
 
@@ -48,8 +51,27 @@ export const ROCK_TYPE_LOOKS = Object.freeze([
   Object.freeze({ id: 'ice', base: '#8699aa', base2: '#62768a', a: '#123f78', aSpec: 0.55, b: '#3d3630', bParam: 0.4, c: '#5aa9ff', d: '#9fb1c1', emit: 0, cover: 0.4, line: 12, sparkle: 0.6, ice: 1, gloss: 80, metal: 0, relief: 0.03 }),
   Object.freeze({ id: 'uran', base: '#1e1f19', base2: '#0d0e0a', a: '#7a8f2a', aSpec: 0.45, b: '#25733f', bParam: 0.5, c: '#58d843', d: '#a8973a', emit: 0.7, cover: 0.3, line: 6, sparkle: 0.03, ice: 0, gloss: 32, metal: 0, relief: 0.045 }),
   Object.freeze({ id: 'rock', base: '#5c554d', base2: '#3b3631', a: '#595b5e', aSpec: 0.04, b: '#37383a', bParam: 0.5, c: '#77716a', d: '#2c2926', emit: 0, cover: 0.3, line: 0, sparkle: 0.05, ice: 0, gloss: 12, metal: 0, relief: 0.025 }),
-  Object.freeze({ id: 'energy', base: '#26213a', base2: '#110e1a', a: '#a8ecff', aSpec: 0.6, b: '#8a3cff', bParam: 0.5, c: '#b8f0ff', d: '#0c0a12', emit: 1.6, cover: 0.75, line: 6, sparkle: 0.5, ice: 0, gloss: 55, metal: 0, relief: 0.04 })
+  Object.freeze({ id: 'energy', base: '#26213a', base2: '#110e1a', a: '#a8ecff', aSpec: 0.6, b: '#8a3cff', bParam: 0.5, c: '#b8f0ff', d: '#0c0a12', emit: 1.6, cover: 0.75, line: 6, sparkle: 0.5, ice: 0, gloss: 55, metal: 0, relief: 0.04 }),
+  // Typy z widm planetoid (2026-10-12; programy: carbon, primitive i basalt — własne, metal
+  // i platinum — program żelaza; rock_c — program skały neutralnej). Nie świecą.
+  //   carbon: asfaltowy regolit (albedo ~0,04), głazy jaśniejsze i ciemniejsze, jasne żyłki węglanów;
+  //   metal: jaśniejszy metal (albedo 0,1–0,3), mało rdzy, łaty krzemianów; platinum — jaśniej, srebrzyście;
+  //   basalt: szary bazalt z ziarnami piroksenu (b, zielonkawe) i plagioklazu (a, jasne), ciemne żyłki stopu (c);
+  //   primitive: czerwonobrązowe toliny, matowa, świeże kratery odsłaniają lód (b, bParam = siła).
+  //   carbon i carbon_ice (program węglowej): bParam = siła szronu w zimnych pułapkach (węglowa 0),
+  //   c = głazy obce i żyłki (carbon_ice: szron i żyłki lodu).
+  Object.freeze({ id: 'carbon', base: '#3a3835', base2: '#242321', a: '#44413d', aSpec: 0.03, b: '#2a2826', bParam: 0, c: '#a8a296', d: '#2e2c2a', emit: 0, cover: 0.35, line: 5, sparkle: 0.03, ice: 0, gloss: 10, metal: 0, relief: 0.04 }),
+  Object.freeze({ id: 'metal', base: '#5f5a54', base2: '#3d3934', a: '#8d9095', aSpec: 0.8, b: '#4c3a2b', bParam: 0.15, c: '#b6babf', d: '#57534d', emit: 0, cover: 0.45, line: 0, sparkle: 0.6, ice: 0, gloss: 70, metal: 1, relief: 0.05 }),
+  Object.freeze({ id: 'basalt', base: '#8f8b84', base2: '#6c6963', a: '#c4c1b8', aSpec: 0.2, b: '#59614d', bParam: 0.5, c: '#4b4945', d: '#aaa79e', emit: 0, cover: 0.25, line: 3, sparkle: 0.15, ice: 0, gloss: 30, metal: 0, relief: 0.025 }),
+  Object.freeze({ id: 'primitive', base: '#4d3d33', base2: '#2e241e', a: '#5b3b2d', aSpec: 0.03, b: '#a9b7c2', bParam: 0.5, c: '#d6e4f0', d: '#211914', emit: 0, cover: 0.3, line: 0, sparkle: 0.05, ice: 0, gloss: 10, metal: 0, relief: 0.035 }),
+  Object.freeze({ id: 'platinum', base: '#6c6965', base2: '#494642', a: '#c0c3c9', aSpec: 1.0, b: '#5a5046', bParam: 0.06, c: '#e4e6ea', d: '#625e58', emit: 0, cover: 0.5, line: 0, sparkle: 0.9, ice: 0, gloss: 80, metal: 1, relief: 0.05 }),
+  Object.freeze({ id: 'rock_c', base: '#393633', base2: '#232120', a: '#3b3835', aSpec: 0.03, b: '#1e1d1b', bParam: 0.5, c: '#4c4843', d: '#1a1917', emit: 0, cover: 0.3, line: 0, sparkle: 0.04, ice: 0, gloss: 10, metal: 0, relief: 0.028 }),
+  // Węglowa z lodem (Themis: albedo ~0,07, widmo neutralne do lekko niebieskiego — C / B; szron lodu
+  // wodnego na ziarnach regolitu — Rivkin i Emery 2010): chłodniejszy asfalt, szron w zimnych pułapkach.
+  Object.freeze({ id: 'carbon_ice', base: '#3b3c3e', base2: '#242527', a: '#46474a', aSpec: 0.03, b: '#2a2b2d', bParam: 0.75, c: '#a9c1d8', d: '#2e2f31', emit: 0, cover: 0.35, line: 5, sparkle: 0.04, ice: 0, gloss: 12, metal: 0, relief: 0.04 })
 ]);
+// Wiersz i = ROCK_TYPES[i] (tablica uniformów czyta wygląd po indeksie typu) — pilnuje
+// tests/asteroidSpectralTypes.test.mjs (obie kopie: gra i demo).
 
 export const ROCK_LIGHT_DEFAULTS = Object.freeze({
   sunColor: [1.0, 0.95, 0.88],
@@ -232,8 +254,9 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       const radiusPx = iPos.w.mul(pxPerUnit).toVar();
       // Poniżej progu skała maleje do zera (bez wyskakiwania przy zoomie).
       const fadeScale = smoothstep(L.minPx, L.minPx.mul(2.0), radiusPx);
-      const ang = iShape.w.add(iSpin.w.mul(S.time)).mul(0.5).toVar();
-      const q = quatMul(vec4(iSpin.xyz.mul(sin(ang)), cos(ang)), iRot).toVar();
+      // Obrót wokół osi instancji; skały tła częściowo KOZIOŁKUJĄ (precesja osi — rockSpin.tsl.js,
+      // strumień D planu pasa, 2026-10-12). Pasmo gry: dokładnie dawne wyrażenie (ten sam WGSL).
+      const q = rockSpinQuat(iRot, iSpin, iShape, S.time, this.backdrop);
       const pObj = dir.mul(r).mul(iStretch.xyz).toVar();
       const local = quatRotate(q, pObj).mul(iPos.w.mul(fadeScale));
       if (shadowCarve) {
@@ -405,8 +428,9 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     const veinZone = smoothstep(float(0.58).sub(tP.x.mul(0.3)), float(0.66).sub(tP.x.mul(0.3)), zoneN).toVar();
     const veinField = n1.g.sub(n1.a).add(n2.r.sub(0.5).mul(0.05)).add(nd.r.sub(0.5).mul(0.018)).toVar();
 
-    If(type.equal(0), () => {
+    If(type.equal(0).or(type.equal(TI.metal)).or(type.equal(TI.platinum)), () => {
       // ŻELAZO: metal na wypukłościach, rdza w zagłębieniach, regmaglipty, lamele.
+      // Ten sam program: METALICZNA (M) i PLATYNOWCE — paleta jaśniejsza, rdzy mało (tB.w).
       const metalM = smoothstep(0.6, 0.72, convex.mul(0.45).add(nq.r.mul(0.75)).add(float(1).sub(crater).mul(0.06))).toVar();
       const rustM = float(1).sub(metalM).mul(smoothstep(0.3, 0.7, float(1).sub(ao).mul(0.9).add(n2.a.mul(0.5)).add(crater.mul(0.25)))).toVar();
       const thumb = smoothstep(0.3, 0.95, nq.b);
@@ -542,6 +566,103 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       lcol.assign(tC.rgb);
       lspec.assign(0.4);
       lemit.assign(tC.w);
+    }).ElseIf(type.equal(TI.carbon).or(type.equal(TI.carbon_ice)), () => {
+      // WĘGLOWA (C, Bennu / Ryugu): asfaltowy, matowy regolit gęsto usiany głazami (dwie skale,
+      // nieregularne); głazy niewiele ciemniejsze albo jaśniejsze od regolitu (Bennu: ciemne
+      // chropowate i ~15% jaśniejsze gładkie), rzadkie jasne głazy obce (piroksen z Westy), drobny
+      // pył w zagłębieniach; jasne żyłki węglanów w części dużych głazów. Albedo od nowa —
+      // rozjaśnienie kraterów skały macierzystej (+0,015) podnosiło ciemną skałę do szarości.
+      // Ten sam program: WĘGLOWA Z LODEM (Themis) — szron w zimnych pułapkach (siła tB.w, węglowa 0).
+      albedo.assign(mix(tBase2, tBase, smoothstep(0.25, 0.75, macro.mul(0.7).add(n1.r.mul(0.3)))).mul(mix(0.85, 1.08, convex)).mul(nd.a.mul(0.2).add(0.88)));
+      // Głazy: komórki Worleya (kanał b szumu) na dziedzinie zawiniętej GŁADKIMI polami w skali
+      // komórki (g / a — 2 oktawy; wielooktawowy fbm dawał pikselowy szum) — nieregularne obrysy
+      // zamiast kół (sam Worley F1 dawał „krople”), dwie skale (~40 i ~19 j.); płaskie wierzchy,
+      // strome boki, ciemny styk z regolitem. Próbki z poziomu 0 (textureSampleLevel — wolno w gałęzi,
+      // objętość szumu nie ma mipmap); koszt mają tylko skały węglowe.
+      const warp = vec3(nd.g, nd.a, nc.g).sub(0.5).mul(0.12).toVar();
+      const wb1 = texture3D(noise, P.div(330.0).add(warp).add(so.zyx)).level(0).b.toVar();
+      const wb2 = texture3D(noise, P.div(150.0).add(warp.mul(0.9)).add(so.yzx).add(vec3(0.37, 0.71, 0.19))).level(0).b.toVar();
+      // Antyaliasing bez pochodnych (gałąź typu): szerokość brzegu z rozmiaru komórki na ekranie
+      // (komórka ≈ 41 / 19 j.; F1 zmienia się ~1,1 na komórkę → ≥ 1,5 px brzegu), a gdy głaz (~0,55
+      // komórki) ma mniej niż ~7 px (komórka < 12 px; pełne od 24 px), głazy gasną (zostaje regolit):
+      // drobniejsze dawały „pieprz” — gęsty wzór 1–2 px ciemnych styków i jasnych wierzchów na
+      // dużych skałach w zoomie gry (A2, 2026-10-12).
+      const cellPx1 = pxPerUnit.mul(41.0).toVar();
+      const cellPx2 = pxPerUnit.mul(19.0).toVar();
+      const aa1 = max(float(0.06), float(1.65).div(max(cellPx1, 1e-3))).mul(0.5).toVar();
+      const aa2 = max(float(0.06), float(1.65).div(max(cellPx2, 1e-3))).mul(0.5).toVar();
+      const fade1 = smoothstep(12.0, 24.0, cellPx1).toVar();
+      const fade2 = smoothstep(12.0, 24.0, cellPx2).toVar();
+      const bigB = smoothstep(float(0.63).sub(aa1), float(0.63).add(aa1), wb1).mul(fade1).toVar();
+      const smallB = smoothstep(float(0.69).sub(aa2), float(0.69).add(aa2), wb2).mul(fade2).mul(float(1).sub(bigB)).toVar();
+      const boulder = max(bigB, smallB).toVar();
+      const moat = smoothstep(0.5, 0.6, wb1).mul(fade1).mul(float(1).sub(bigB)).add(smoothstep(0.58, 0.66, wb2).mul(float(1).sub(smallB)).mul(fade2).mul(0.6)).toVar();
+      const bTone = mix(tB.rgb, tA.rgb, smoothstep(0.3, 0.7, n2.a.mul(0.6).add(nd.g.mul(0.4))));
+      albedo.assign(mix(albedo, bTone, boulder.mul(0.75)));
+      albedo.mulAssign(float(1).sub(clamp(moat, 0.0, 1.0).mul(0.3)));
+      // Wysokość głazów z ROZMIARU GŁAZU (komórka 41 / 19 j.), nie tylko z promienia skały: sam relief ∝ R
+      // stawiał na skale ~1300 j. głazy 22 j. szerokie i do ~70 j. wysokie (ścianki prawie pionowe).
+      const hB1 = min(relief.mul(2.2), float(18.0));
+      const hB2 = min(relief.mul(0.8), float(7.5));
+      H.addAssign(bigB.mul(wb1.sub(0.45).mul(2.0)).mul(hB1).add(smallB.mul(hB2)));
+      const pond = smoothstep(0.55, 0.9, crater.mul(0.6).add(float(1).sub(ao).mul(0.5))).mul(float(1).sub(boulder)).toVar();
+      albedo.assign(mix(albedo, tD.rgb, pond.mul(0.55)));
+      // Głazy obce (Bennu: piroksen z Westy, albedo ~4–5× regolitu): rzadkie i dopiero na głazie ≥ ~10 px.
+      const exo = smoothstep(0.955, 0.975, n2.b).mul(bigB).mul(smoothstep(18.0, 30.0, cellPx1)).toVar();
+      albedo.assign(mix(albedo, tC.rgb.mul(0.6), exo));
+      // Szron (carbon_ice): lód wodny w zimnych pułapkach — dna kraterów, zacienione zagłębienia; węglowa
+      // tB.w = 0. Skała zostaje CIEMNA (Themis: albedo ~0,07 — lód wykryto w widmie, nie okiem): rzadkie płaty
+      // tylko w głębszych pułapkach, domieszka ≤ ~0,4. Płaty z GŁADKIEGO szumu w świecie (n1.g, nc.a — skala
+      // ~400–500 j., miękkie brzegi); mapy kształtu banku tylko szerokim progiem: na dużej skale w zoomie gry
+      // teksel banku ma ~7 px, a wąski próg na nim dawał kanciaste łatki.
+      const cold = clamp(float(1).sub(ao).mul(0.8).add(crater.mul(0.6)).add(float(1).sub(convex).mul(0.2)), 0.0, 1.0);
+      const frost = smoothstep(0.5, 0.66, n1.g.mul(0.6).add(nc.a.mul(0.4))).mul(smoothstep(0.45, 0.9, cold)).mul(tB.w).toVar();
+      albedo.assign(mix(albedo, tC.rgb.mul(nd.r.mul(0.2).add(0.8)), frost.mul(0.55)));
+      lf.assign(veinField);
+      // Żyłki tylko we wnętrzu WIDOCZNEGO głazu: przy wygaszonych głazach bigB jest maleńkie, ale > 0,001 —
+      // próg hasLine (step) włączał wtedy lineTint (16% barwy żyłki) na całych obrysach głazów: ostre,
+      // płaskie jasne łatki na dużych skałach w zoomie gry (A2, kontrola A/B palety na czerwono).
+      lw.assign(tP.y.mul(veinZone).mul(smoothstep(0.35, 0.65, bigB)).mul(step(0.45, nc.g)));
+      lcol.assign(tC.rgb);
+      lspec.assign(0.05);
+      specK.assign(mix(0.02, 0.25, frost));
+      gloss.assign(mix(tS.y, 60.0, frost));
+      sparkK.assign(tP.z.add(frost.mul(0.06)));
+      sparkCol.assign(mix(vec3(0.95, 0.92, 0.85), vec3(0.85, 0.93, 1.0), step(0.001, tB.w)));
+    }).ElseIf(type.equal(TI.primitive), () => {
+      // PRYMITYWNA (D / P): ciemne, czerwonobrązowe toliny, matowa; ciemne łaty organiki
+      // w zagłębieniach; świeże kratery odsłaniają lód spod skorupy (tB, siła tB.w) — chłodny,
+      // przyprószony pyłem. Albedo od nowa (jak węglowa — bez rozjaśnienia kraterów).
+      albedo.assign(mix(tBase2, tBase, smoothstep(0.25, 0.75, macro.mul(0.7).add(n1.r.mul(0.3)))).mul(mix(0.85, 1.08, convex)));
+      const red = smoothstep(0.35, 0.75, nq.r.mul(0.7).add(n2.r.mul(0.3))).toVar();
+      albedo.assign(mix(albedo, tA.rgb.mul(nd.a.mul(0.25).add(0.85)), red.mul(0.5)));
+      albedo.assign(mix(albedo, tD.rgb, smoothstep(0.6, 0.9, float(1).sub(ao).mul(0.7).add(nm.b.mul(0.4))).mul(0.5)));
+      const iceM = smoothstep(0.62, 0.9, crater.mul(0.75).add(nm.a.mul(0.35))).mul(smoothstep(0.62, 0.84, nq.g)).mul(smoothstep(0.35, 0.65, nd.g)).mul(tB.w).toVar();
+      albedo.assign(mix(albedo, tB.rgb.mul(nd.r.mul(0.25).add(0.75)), iceM.mul(nd.g.mul(0.4).add(0.6))));
+      H.subAssign(iceM.mul(relief));
+      specK.assign(mix(0.02, 0.2, iceM));
+      gloss.assign(mix(tS.y, 50.0, iceM));
+      sparkK.assign(tP.z.add(iceM.mul(0.6)));
+      sparkCol.assign(vec3(0.85, 0.93, 1.0));
+    }).ElseIf(type.equal(TI.basalt), () => {
+      // BAZALT (V, Westa / HED): drobnoziarnisty szary bazalt — nakrapiane ziarna piroksenu
+      // (zielonkawoczarne, tB) i plagioklazu (jasne, tA); jasne świeże ściany na wypukłościach
+      // i ciemniejszy regolit (Westa: jasne i ciemne materiały); ciemne żyłki stopu uderzeniowego.
+      const grainP = smoothstep(0.58, 0.8, n2.g).mul(featureFade(219.0)).toVar();
+      const grainF = smoothstep(0.62, 0.9, n2.b).mul(featureFade(219.0)).mul(float(1).sub(grainP)).toVar();
+      albedo.assign(mix(albedo, tB.rgb, grainP.mul(0.35)));
+      albedo.assign(mix(albedo, tA.rgb, grainF.mul(0.22)));
+      albedo.assign(mix(albedo, tD.rgb, smoothstep(0.55, 0.85, convex.mul(0.6).add(nq.r.mul(0.5))).mul(0.35)));
+      albedo.assign(mix(albedo, albedo.mul(0.7), smoothstep(0.6, 0.85, nm.a).mul(0.5)));
+      H.addAssign(grainP.mul(relief).mul(0.3));
+      lf.assign(veinField);
+      lw.assign(tP.y.mul(veinZone));
+      lcol.assign(tC.rgb);
+      lspec.assign(0.05);
+      specK.assign(0.05);
+      gloss.assign(tS.y);
+      sparkK.assign(tP.z.mul(grainF.mul(0.5).add(0.2)));
+      sparkCol.assign(vec3(0.95, 0.97, 1.0));
     }).ElseIf(type.equal(8), () => {
       // ENERGETYCZNA: szklisty bazalt z siecią pęknięć, ładunek pulsuje i trzaska.
       // Uderzenie pioruna obok (storm.js → S.strikes): pęknięcia rozbłyskują.

@@ -10,7 +10,9 @@
 //   uran     — tabliczki autunitu/torbernitu w rozetach (słabo fluoryzują);
 //   krzem    — drobna druza kwarcu w zagłębieniach;
 //   energia  — iglice kryształów ładunku (burze): pulsują i rozbłyskują przy
-//              uderzeniu pioruna obok (uderzenia z storm.js, S.strikes).
+//              uderzeniu pioruna obok (uderzenia z storm.js, S.strikes);
+//   węglowa  — mleczne węglany w zagłębieniach; bazalt — słupki piroksenu;
+//   metaliczna, platynowce — łuski metalu (typy z widm, nie świecą).
 //
 // Szablony (położenia minerałów na skale) liczone RAZ na parę (kształt, typ)
 // z map promienia banku (rockBank.js). Rysowane tylko dla skał, które mają na
@@ -170,7 +172,14 @@ const MINERAL_RECIPES = Object.freeze({
   ice: { kind: MINERAL_KIND.SHARD, clusters: [2, 4], per: [3, 6], length: [0.18, 0.45], width: [0.05, 0.1], spread: 0.6, glow: 0.12, concave: false },
   uran: { kind: MINERAL_KIND.PLATE, clusters: [4, 7], per: [3, 6], length: [0.07, 0.15], width: [0.06, 0.13], spread: 0.9, glow: 0.5, concave: false },
   silicon: { kind: MINERAL_KIND.PRISM, clusters: [4, 8], per: [5, 10], length: [0.05, 0.12], width: [0.012, 0.024], spread: 0.7, glow: 0, concave: true },
-  energy: { kind: MINERAL_KIND.PRISM, clusters: [2, 3], per: [3, 5], length: [0.32, 0.78], width: [0.045, 0.09], spread: 0.45, glow: 1, concave: false, antipodal: true }
+  energy: { kind: MINERAL_KIND.PRISM, clusters: [2, 3], per: [3, 5], length: [0.32, 0.78], width: [0.045, 0.09], spread: 0.45, glow: 1, concave: false, antipodal: true },
+  // Typy z widm (nie świecą) — kopia z src/3d/asteroids/minerals.js.
+  carbon: { kind: MINERAL_KIND.PRISM, clusters: [2, 4], per: [3, 6], length: [0.04, 0.09], width: [0.016, 0.03], spread: 0.6, glow: 0, concave: true },
+  basalt: { kind: MINERAL_KIND.PRISM, clusters: [3, 6], per: [4, 8], length: [0.05, 0.11], width: [0.02, 0.035], spread: 0.8, glow: 0, concave: false },
+  metal: { kind: MINERAL_KIND.PLATE, clusters: [3, 5], per: [3, 6], length: [0.03, 0.06], width: [0.03, 0.055], spread: 0.9, glow: 0, concave: false },
+  platinum: { kind: MINERAL_KIND.PLATE, clusters: [3, 5], per: [3, 6], length: [0.03, 0.06], width: [0.03, 0.05], spread: 0.9, glow: 0, concave: false },
+  // Węglowa z lodem (Themis): drobne kryształki lodu w zimnych pułapkach (zagłębieniach).
+  carbon_ice: { kind: MINERAL_KIND.SHARD, clusters: [1, 3], per: [2, 5], length: [0.06, 0.14], width: [0.02, 0.045], spread: 0.6, glow: 0.03, concave: true }
 });
 
 export const MINERAL_TYPES = Object.freeze(Object.keys(MINERAL_RECIPES).map((id) => ROCK_TYPE_INDEX[id]));
@@ -189,7 +198,7 @@ export class MineralTemplates {
   get(shape, type) {
     const recipe = this.byType.get(type);
     if (!recipe) return null;
-    const key = shape * 16 + type;
+    const key = shape * 256 + type;
     let t = this.cache.get(key);
     if (!t) {
       t = this._build(shape, type, recipe);
@@ -577,7 +586,7 @@ export class MineralMaterial extends THREE.NodeMaterial {
         scatter.assign(mix(vec3(0.01, 0.18, 0.6), vec3(0.2, 0.03, 0.55), hue));
         glow.assign(mix(vec3(0.04, 0.45, 1.0), vec3(0.42, 0.08, 1.0), hue));
         dens.assign(0.4); milk.assign(0.35); inclLo.assign(0.56); coreK.assign(0.4);
-      }).ElseIf(type.equal(TI.ice), () => {
+      }).ElseIf(type.equal(TI.ice).or(type.equal(TI.carbon_ice)), () => {
         scatter.assign(vec3(0.4, 0.58, 0.8));
         glow.assign(vec3(0.2, 0.45, 1.0));
         dens.assign(0.45); milk.assign(0.55); gloss.assign(200.0); coreK.assign(0.25);
@@ -593,6 +602,15 @@ export class MineralMaterial extends THREE.NodeMaterial {
         glow.assign(mix(vec3(0.5, 0.85, 0.08), vec3(0.3, 0.9, 0.12), hue));
         dens.assign(2.2); milk.assign(0.5); gloss.assign(50.0); coreK.assign(0.35);
         glowBase.assign(0.1); tipFrom.assign(2.0);
+      }).ElseIf(type.equal(TI.carbon), () => {
+        scatter.assign(vec3(0.78, 0.75, 0.68));
+        dens.assign(2.0); milk.assign(0.9); gloss.assign(90.0);
+      }).ElseIf(type.equal(TI.basalt), () => {
+        scatter.assign(vec3(0.1, 0.13, 0.07));
+        dens.assign(2.6); milk.assign(0.35); gloss.assign(70.0);
+      }).ElseIf(type.equal(TI.metal).or(type.equal(TI.platinum)), () => {
+        scatter.assign(select(type.equal(TI.platinum), vec3(0.26, 0.265, 0.27), vec3(0.17, 0.175, 0.18)));
+        dens.assign(3.5); milk.assign(0.95); gloss.assign(300.0);
       });
 
       // Wtrącenia: trzy próbki wzdłuż drogi w bryle.

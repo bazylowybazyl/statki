@@ -119,6 +119,26 @@ export const RESOURCES = Object.freeze({
     label: 'Ruda uranu', short: 'U', unit: 't', form: 'solid',
     mass: 1.2, value: 22, color: '#6ee06e'
   },
+  // Typy z widm planetoid (pas realistyczny, 2026-10-12 — src/data/asteroidTypes.js
+  // SPECTRAL_ORE_TYPES). Bez receptur i popytu stacji — ekonomię dostroi użytkownik.
+  // Chondryt węglisty (C): węgiel, organika i woda związana w minerałach (4,5–10%).
+  carbon_ore: {
+    tier: TIER.RAW, category: CATEGORY.ORE,
+    label: 'Ruda węglista', short: 'C', unit: 't', form: 'solid',
+    mass: 0.8, value: 7, color: '#5b5650' // AGENT: cena tymczasowa
+  },
+  // Żelazo-nikiel z kobaltem (M).
+  nickel_ore: {
+    tier: TIER.RAW, category: CATEGORY.ORE,
+    label: 'Ruda niklu', short: 'Ni', unit: 't', form: 'solid',
+    mass: 1.0, value: 15, color: '#b8b4a6' // AGENT: cena tymczasowa
+  },
+  // Platynowce (platyna, iryd, osm, pallad) — najwyższy szczebel rud, rdzenie pól metalicznych.
+  platinum_ore: {
+    tier: TIER.RAW, category: CATEGORY.ORE,
+    label: 'Platynowce', short: 'Pt', unit: 't', form: 'solid',
+    mass: 1.2, value: 40, color: '#e4e6ea' // AGENT: cena tymczasowa
+  },
 
   // ---------- T0: GAZY Z OLBRZYMÓW GAZOWYCH ----------
   helium3: {
@@ -332,7 +352,16 @@ export const ASTEROID_YIELD = Object.freeze({
   titan:   'titanium_ore',
   crystal: 'raw_crystal',
   ice:     'ice',
-  uran:    'uranium_ore'
+  uran:    'uranium_ore',
+  // Typy z widm (SPECTRAL_ORE_TYPES). Bazalt Westy (V) — ilmenit: tytan; prymitywna (D) —
+  // lód spod skorupy z tolinów (organika w skorupie: AGENT — osobny surowiec przy ekonomii).
+  carbon:    'carbon_ore',
+  metal:     'nickel_ore',
+  basalt:    'titanium_ore',
+  primitive: 'ice',
+  platinum:  'platinum_ore',
+  // C z lodem w rdzeniach (rodzina Themis, A2) — urobek to lód z rdzenia.
+  carbon_ice: 'ice'
 });
 
 /**
@@ -362,13 +391,13 @@ export const PLANET_YIELD = Object.freeze({
   uranus:  { rate: 1.35, yields: { methane: 0.40, ammonia: 0.26, helium3: 0.12, ice: 0.22 } },
   neptune: { rate: 1.30, yields: { methane: 0.40, ammonia: 0.24, helium3: 0.16, ice: 0.20 } },
 
-  // LIGA PASA mieszka WEWNĄTRZ dużych planetoid, więc wydobywa u siebie —
+  // UNIA PASA mieszka WEWNĄTRZ dużych planetoid, więc wydobywa u siebie —
   // to nie są przyczółki żyjące z dowozu, tylko pełnoprawne ośrodki. Bez
   // własnego złoża frakcja nie miałaby z czego utrzymać stoczni, a o to
   // w dołożeniu jej właśnie chodzi.
   //
   // Ceres jest lodowa i wodna, Westa zróżnicowana i bogata w metal — stąd
-  // różne udziały. Razem dają Lidze stal i tytan bez oglądania się na rdzeń.
+  // różne udziały. Razem dają Unii stal i tytan bez oglądania się na rdzeń.
   ceres: { rate: 1.25, yields: { iron_ore: 0.30, silicon_ore: 0.22, ice: 0.28, raw_crystal: 0.20 } },
   vesta: { rate: 1.05, yields: { iron_ore: 0.42, titanium_ore: 0.33, silicon_ore: 0.25 } },
 

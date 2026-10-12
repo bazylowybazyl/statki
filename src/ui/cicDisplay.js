@@ -2270,8 +2270,123 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
     }
   }
 
+  // === MAŁE CIAŁA (Ceres, Westa, Pallas, Hygiea, Psyche, Pluton, Charon — window.smallBodies, src/data/smallBodies.js) ===
+  // Kropka (prawdziwa tarcza, gdy większa), podpis; w widoku układu bez orbit (ciała stoją, orbity planet wystarczą).
+  const bodies = window.smallBodies;
+  if (Array.isArray(bodies)) {
+    for (const body of bodies) {
+      if (!body || !Number.isFinite(body.x)) continue;
+      const scr = toScreen(body.x, body.y);
+      if (scr.x < -60 || scr.x > W + 60 || scr.y < -60 || scr.y > H + 60) continue;
+      const color = body.color || '#9aa3ad';
+      const dotR = Math.max(2 + blend * 2, Math.min(Math.max(2, body.r * zoom), 12));
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, dotR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.6 + blend * 0.2;
+      ctx.font = `${Math.round(8 + blend * 3)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(body.label || body.id).toUpperCase(), scr.x, scr.y + dotR + 10 + blend * 3);
+      ctx.restore();
+    }
+  }
+
+  // === KOMETY (window.cometLandmarks — src/game/cometField.js: landmarks) ===
+  drawCicComets(ctx, W, H, toScreen, zoom, blend);
+
   // === STATIONS ===
   drawStationMarkers(ctx, W, H, toScreen, zoom);
+}
+
+// Komety na mapie: orbita (przerywana — wydłużona elipsa przecinająca orbity planet), warkocz jonowy (kreska od
+// Słońca), wachlarz pyłu (za ruchem), jądro i podpis; uśpiona kometa — samo jądro. Punkt orientacyjny z daleka.
+function drawCicComets(ctx, W, H, toScreen, zoom, blend) {
+  const list = window.cometLandmarks;
+  if (!Array.isArray(list) || list.length === 0) return;
+  for (const c of list) {
+    if (!c || !Number.isFinite(c.x)) continue;
+    const scr = toScreen(c.x, c.y);
+    const tail = Math.max(c.ionLen || 0, c.dustLen || 0) * zoom;
+    // orbita: tylko w widoku układu (w taktycznym przecina kadr przypadkowymi łukami)
+    if (blend > 0.3 && c.orbit && c.orbit.length >= 4) {
+      ctx.save();
+      ctx.globalAlpha = 0.18 + 0.12 * blend;
+      ctx.strokeStyle = '#7fb8d8';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([3, 5]);
+      ctx.beginPath();
+      for (let i = 0; i < c.orbit.length; i += 2) {
+        const p = toScreen(c.orbit[i], c.orbit[i + 1]);
+        if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    if (scr.x < -tail - 80 || scr.x > W + tail + 80 || scr.y < -tail - 80 || scr.y > H + tail + 80) continue;
+    ctx.save();
+    if (c.active) {
+      // w widoku układu warkocze minimum ~28 px, żeby było widać kierunek
+      const minLen = 10 + 18 * blend;
+      const il = Math.max((c.ionLen || 0) * zoom, minLen);
+      const dl = Math.max((c.dustLen || 0) * zoom, minLen * 0.7);
+      // pył: klin za ruchem
+      const a0 = Math.atan2(c.axisY, c.axisX);
+      const side = Math.sign(Math.sin(Math.atan2(c.lagY, c.lagX) - a0)) || 1;
+      const a1 = a0 + side * (c.dustAngle || 0.4);
+      const gd = ctx.createRadialGradient(scr.x, scr.y, 0, scr.x, scr.y, dl);
+      gd.addColorStop(0, 'rgba(255, 220, 160, 0.55)');
+      gd.addColorStop(1, 'rgba(255, 220, 160, 0)');
+      ctx.fillStyle = gd;
+      ctx.beginPath();
+      ctx.moveTo(scr.x, scr.y);
+      for (let i = 0; i <= 10; i++) {
+        const a = a0 + (a1 - a0) * i / 10;
+        ctx.lineTo(scr.x + Math.cos(a) * dl, scr.y + Math.sin(a) * dl);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // jony: prosta kreska od Słońca
+      const gi = ctx.createLinearGradient(scr.x, scr.y, scr.x + c.ionX * il, scr.y + c.ionY * il);
+      gi.addColorStop(0, 'rgba(120, 180, 255, 0.9)');
+      gi.addColorStop(1, 'rgba(120, 180, 255, 0)');
+      ctx.strokeStyle = gi;
+      ctx.lineWidth = 1.2 + blend * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(scr.x, scr.y);
+      ctx.lineTo(scr.x + c.ionX * il, scr.y + c.ionY * il);
+      ctx.stroke();
+      // koma
+      const cr = Math.max(2.5, (c.comaR || 0) * zoom);
+      const gc = ctx.createRadialGradient(scr.x, scr.y, 0, scr.x, scr.y, cr * 1.6);
+      gc.addColorStop(0, 'rgba(200, 255, 225, 0.7)');
+      gc.addColorStop(1, 'rgba(200, 255, 225, 0)');
+      ctx.fillStyle = gc;
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, cr * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const dotR = Math.max(1.6 + blend, Math.min((c.radius || 0) * zoom, 10));
+    ctx.fillStyle = '#c9d4dc';
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.arc(scr.x, scr.y, dotR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.75 + blend * 0.15;
+    ctx.fillStyle = '#9fd0ef';
+    ctx.font = `${Math.round(8 + blend * 3)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(String(c.label || c.id).toUpperCase(), scr.x, scr.y + dotR + 10 + blend * 3);
+    if (blend > 0.5) {
+      ctx.globalAlpha = 0.45;
+      ctx.font = `${Math.round(7 + blend * 2)}px monospace`;
+      ctx.fillText(`${c.designation || ''} · ${(c.rAu || 0).toFixed(2).replace('.', ',')} AU${c.active ? '' : ' · uśpiona'}`, scr.x, scr.y + dotR + 21 + blend * 3);
+    }
+    ctx.restore();
+  }
 }
 
 // =============================================================================

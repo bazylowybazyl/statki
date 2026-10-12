@@ -60,9 +60,27 @@ export const SHIELD_TUNING = {
   // Twardość (encja.shield.hardness, domyślnie 1): próg przebicia × twardość, tempo przebicia
   // ÷ √twardość — twardsze pole potrzebuje więcej ognia w jedno miejsce, a dziura rośnie wolniej.
   breachRate: 1 / 0.7, // 1/s — narastanie przebicia przy twardości 1
-  // Pokazana tarcza (encja.shield.show — tryb TARCZE gracza): stałe szwy siatki.
-  showSeam: 0.3,       // jasność szwów pokazanej tarczy
-  showFade: 0.35,      // s — wejście / zejście pokazania
+  // Pokazana tarcza (encja.shield.show — tryb TARCZE gracza): czasza pola (gładki świecący brzeg, pas przy
+  // krawędzi, prądy energii, soczewka) i siatka płytek jako faktura pola (shieldPool.js).
+  showFade: 0.45,      // s — wejście / zejście pokazania (komórki zapalają się i gasną w losowej kolejności)
+  field: {
+    limb: 1,           // jasność brzegu pola
+    limbWidth: 4,      // j. — grubość brzegu (nie cieńsza niż limbPx)
+    limbPx: 1.3,       // px — najmniejsza grubość brzegu na ekranie
+    rim: 1,            // pas przy krawędzi (poświata ku środkowi)
+    lattice: 1,        // siatka heksów (szwy i węzły komórek)
+    flow: 1,           // prądy energii (plamy płynące po polu: komórki, brzeg, pancerz)
+    flowSpeed: 1,      // tempo prądów
+    twinkle: 1,        // migotanie pojedynczych komórek
+    sheen: 1,          // poświata wnętrza
+    lens: 1,           // załamanie tła przy krawędzi (× refraction)
+    hullTint: 1,       // poświata pola na pancerzu (× hullGlow)
+    // Zmarszczki: słabe impulsy samej fali (bez krateru i energii) w losowych miejscach pola — przechylone
+    // płytki rozjaśniają się (przebiegi światła po siatce), tło pod polem lekko drży (shimmer).
+    ripple: 1,         // siła impulsu (× ~25–60 j./s; trafienie PD to ~320)
+    rippleRate: 1,     // tempo (× ~7 impulsów/s)
+    shimmer: 0.12      // drżenie tła pod pokazanym polem (maska załamania płytek)
+  },
   shatter: SHIELD_SHATTER // pęknięcie (czoło, rysy, odłamki — opis w shieldPool.js)
 };
 
@@ -141,7 +159,7 @@ function newRec(entity) {
     entity, profile: null, lattice: null, slot: -1, seen: 0, lastImpactId: -1, prevState: null,
     px: 0, py: 0, angle: 0, c: 1, s: 0, sizeK: 1, meanR: 1, rPx: 0, onScreen: false,
     lastHitX: 0, lastHitY: 0, wakeUntil: -1, shatterStart: -1, shatterOn: false, shatterEnd: -1, frontSpeed: 1,
-    resetMode: 0, score: 0, latticeQueued: false, hard: 1, show: 0,
+    resetMode: 0, score: 0, latticeQueued: false, hard: 1, show: 0, rippleT: 0,
     hot: Array.from({ length: MAX_HOT }, () => ({ on: false, x: 0, y: 0, z: 0, e: 0 })),
     crackles: Array.from({ length: CRACKLE.count }, () => ({ on: false, t: 0, x: 0, y: 0, z: 0 }))
   };
@@ -154,8 +172,10 @@ function ensurePool() {
   Core3D.enableShield3D(pool.tileMesh);
   Core3D.enableShield3D(pool.sparkSprite);
   Core3D.enableShield3D(pool.glowMesh);
+  Core3D.enableShield3D(pool.fieldMesh);
   pool.distMesh.layers.set(FX_DISTORT_LAYER);
-  group.add(pool.glowMesh, pool.tileMesh, pool.sparkSprite, pool.distMesh);
+  pool.fieldDistMesh.layers.set(FX_DISTORT_LAYER);
+  group.add(pool.glowMesh, pool.fieldMesh, pool.tileMesh, pool.sparkSprite, pool.distMesh, pool.fieldDistMesh);
   Core3D.scene.add(group);
   if (Core3D.fx && typeof Core3D.addFxStep === 'function') {
     fxStep = Core3D.addFxStep({
@@ -299,11 +319,32 @@ function writeSlotFrame(rec) {
 }
 
 // ── Zdarzenia, iskry, światła ───────────────────────────────────────────────────────────────
-function pushEvent(slot, lx, ly, radius, impulse, energy) {
+function pushEvent(slot, lx, ly, radius, impulse, energy, waveOnly = 0) {
   if (evCount >= SHIELD_MAX_EVENTS) return;
   pool.evA[evCount].set(lx, ly, radius, impulse);
-  pool.evB[evCount].set(energy, slot, 0, 0);
+  pool.evB[evCount].set(energy, slot, waveOnly, 0);
   evCount++;
+}
+
+// Zmarszczki pokazanej tarczy: słabe impulsy samej fali w losowych płytkach (pole „żyje”, fala z fizyki
+// pola — te same odbicia od brzegu i dziur co po trafieniu). Czas gry (pauza stoi), losowanie z fxRandom;
+// najwyżej 3 na klatkę, zostawiają miejsce na zdarzenia trafień.
+function emitRipples(rec) {
+  const F = SHIELD_TUNING.field;
+  const L = rec.lattice;
+  if (!L || !(F.ripple > 0) || !(F.rippleRate > 0) || rec.show < 0.5 || !rec.onScreen) return;
+  rec.rippleT -= simDt;
+  // Słabe pole (< 35% HP) faluje mocniej.
+  const k0 = F.ripple * rec.show * (1 + 1.5 * pool.slotVec(rec.slot, SLOT.MISC).w);
+  let n = 0;
+  while (rec.rippleT <= 0 && n < 3 && evCount < SHIELD_MAX_EVENTS - 16) {
+    rec.rippleT += (0.06 + 0.16 * fxRandom.next()) / F.rippleRate;
+    const k = fxRandom.int(L.n);
+    const r = L.cell * (2.2 + 2.0 * fxRandom.next());
+    pushEvent(rec.slot, L.rest[k * 4], L.rest[k * 4 + 1], r, -(25 + 35 * fxRandom.next()) * k0, 0, 1);
+    n++;
+  }
+  if (rec.rippleT < -0.5) rec.rippleT = 0;
 }
 
 function lightColor(rec) {
@@ -563,12 +604,14 @@ function updateShieldsFrame(dt, entities, interpPoseOverride) {
   if (!p) return;
 
   anyAlive = false;
+  let anyShown = false;
   for (let s = 0; s < SHIELD_SLOTS; s++) {
     const rec = slotRec[s];
     if (!rec) continue;
     writeSlotStatic(rec);
     writeSlotFrame(rec);
     anyAlive = true;
+    if (rec.show > 0) { anyShown = true; emitRipples(rec); }
   }
   const sparksLive = clock < sparksUntil;
   const U = p.U;
@@ -579,7 +622,10 @@ function updateShieldsFrame(dt, entities, interpPoseOverride) {
   p.glowMesh.visible = anyAlive && SHIELD_TUNING.hullGlow > 0;
   p.distMesh.visible = anyAlive && SHIELD_TUNING.refraction > 0;
   p.sparkSprite.visible = sparksLive && anyAlive;
-  for (const o of [p.tileMesh, p.distMesh, p.sparkSprite, p.glowMesh]) o.position.set(_origin.x, _origin.y, 0);
+  // Czasza pokazanej tarczy (tryb TARCZE) — tylko, gdy któryś slot ją pokazuje.
+  p.fieldMesh.visible = anyShown;
+  p.fieldDistMesh.visible = anyShown && SHIELD_TUNING.refraction > 0 && SHIELD_TUNING.field.lens > 0;
+  for (const o of [p.tileMesh, p.distMesh, p.sparkSprite, p.glowMesh, p.fieldMesh, p.fieldDistMesh]) o.position.set(_origin.x, _origin.y, 0);
   if (typeof Core3D.setShieldLayerActive === 'function') Core3D.setShieldLayerActive(anyAlive);
 }
 
@@ -603,7 +649,10 @@ function dispatchFrame(renderer) {
   U.kick.value = T.kick;
   U.heatPeak.value = 3.2 * T.heat;
   U.stressGain.value = 1.2 * T.stress;
-  U.showSeam.value = T.showSeam;
+  const F = T.field;
+  U.fieldA.value.set(F.limb, F.limbWidth, F.limbPx, F.rim);
+  U.fieldB.value.set(F.lattice, F.flow, F.twinkle, F.sheen);
+  U.fieldC.value.set(F.lens, F.hullTint, F.flowSpeed, F.shimmer);
   U.refr.value = T.refraction;
   U.breachOn.value = T.breach ? 1 : 0;
   U.hullGlow.value = T.hullGlow;
@@ -707,15 +756,18 @@ export function isShieldBreachedAt(entity, x, y) {
 export function prewarmShields3D() {
   const p = ensurePool();
   if (!p || !Core3D.renderer || !Core3D.cameraOrtho) return false;
-  const vis = [p.tileMesh.visible, p.sparkSprite.visible, p.distMesh.visible, p.glowMesh.visible];
-  p.tileMesh.visible = p.sparkSprite.visible = p.distMesh.visible = p.glowMesh.visible = true;
+  const meshes = [p.tileMesh, p.sparkSprite, p.distMesh, p.glowMesh, p.fieldMesh, p.fieldDistMesh];
+  const vis = meshes.map((m) => m.visible);
+  for (const m of meshes) m.visible = true;
   try {
     Core3D.prewarmPass(p.glowMesh, 7);
+    Core3D.prewarmPass(p.fieldMesh, 7);
     Core3D.prewarmPass(p.tileMesh, 7);
     Core3D.prewarmPass(p.sparkSprite, 7);
     Core3D.prewarmPass(p.distMesh, FX_DISTORT_LAYER);
+    Core3D.prewarmPass(p.fieldDistMesh, FX_DISTORT_LAYER);
   } finally {
-    [p.tileMesh.visible, p.sparkSprite.visible, p.distMesh.visible, p.glowMesh.visible] = vis;
+    meshes.forEach((m, i) => { m.visible = vis[i]; });
   }
   return true;
 }

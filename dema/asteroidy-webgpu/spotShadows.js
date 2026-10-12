@@ -195,7 +195,7 @@ export class ShadowAtlas {
     }
     const active = this.maps.filter((m) => m.active);
     if (!active.length) return;
-    layer.forEachLoaded((rock, d, b) => {
+    const visit = (rock, d, b) => {
       const rx = d[b];
       const ry = d[b + 1];
       const rz = d[b + 2];
@@ -217,7 +217,10 @@ export class ShadowAtlas {
         const o = m.count++ * FLOATS;
         for (let k = 0; k < FLOATS; k++) m.data[o + k] = d[b + k];
       }
-    });
+    };
+    layer.forEachLoaded(visit);
+    // Księżyce par (D2 planu pasa): osobne koszyki warstwy, ten sam rekord instancji.
+    layer.forEachMoon?.(visit);
     for (let i = 0; i < this.maps.length; i++) {
       const m = this.maps[i];
       this._rows[i * 6 + 5].w = m.active ? 1 : 0;

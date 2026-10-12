@@ -1,7 +1,7 @@
 // Obrona punktowa kontra rakiety 3D w PRAWDZIWEJ grze (2026-10-12): Vite + headless Chrome z WebGPU (CDP).
 //
 //   node scripts/webgpu/pd-rakiety-gra.mjs [--tryb strzelnica,ttk,fala] [--powtorz 3] [--bron grad_launcher,roj_pod]
-//        [--ttkCzas 90] [--falaCzas 40] [--port 5376] [--out .tmp/pd-rakiety]
+//        [--ab 1] [--tune '{"flakRocketRange":0.5}'] [--ttkCzas 90] [--falaCzas 40] [--falaPd 0] [--port 5376] [--out .tmp/pd-rakiety]
 //
 // STRZELNICA (gra swobodna, pusta przestrzeń, gracz nieśmiertelny): salwy rakiet 3D każdego rodzaju
 // (rocketSystem3D.fireSalvo, wyrzut z punktu w świecie 5 km od celu) w trzy cele, każdy z dala od reszty:
@@ -26,6 +26,12 @@ const TRYBY = String(args.tryb || 'strzelnica,ttk').split(',');
 const POWTORZ = Number(args.powtorz || 3);
 // --ab 1: każda broń z rakietami 3D jako celami PD i bez (rocketSystem3D.pdTargets = false — stan sprzed 2026-10-12).
 const WARIANTY = args.ab === '1' ? [false, true] : [true];
+// --tune '{"dmgMul":{"flak":0.04},"hpById":{"missile_rack":80},"flakRocketRange":0.5}' — strojenie ROCKET_PD_TUNE
+// (window.RocketPdTune: obiekty scalane, liczby podmieniane) przed pomiarem; warianty balansu bez zmiany plików.
+const TUNE = args.tune ? JSON.parse(args.tune) : null;
+const APPLY_TUNE = `(() => { const T = window.RocketPdTune, o = ${JSON.stringify(TUNE)};
+  for (const k in o) { if (o[k] && typeof o[k] === 'object') Object.assign(T[k], o[k]); else T[k] = o[k]; }
+  return JSON.parse(JSON.stringify(T)); })()`;
 const BRONIE = String(args.bron || 'grad_launcher,roj_pod,missile_rack,fast_missile_rack,hydra_mirv,supernova_missile').split(',');
 
 const { server, base } = await startVite(Number(args.port || 5376));
@@ -85,6 +91,15 @@ async function spawnTarget(key, mode, dx, dy) {
     const r = window.spawnCallInShip(${JSON.stringify(key)}, { mode: ${JSON.stringify(mode)}, spawnPos: pos, pos, spawnAngle: 0 });
     const e = Array.isArray(r) ? r[0] : r;
     window.__pdTarget = e || null;
+    // Cel przypięty w miejscu (eskorta Terra Nova leci do gracza w przelocie, pirat — na gracza): pozycja i prędkość
+    // co 100 ms — salwy i obrona punktowa w tej samej geometrii przy każdym wariancie.
+    // Dopiero po przylocie tunelem „Nurtu” (duch, AI broni stoi) — w miejscu, gdzie okręt stanął.
+    clearInterval(window.__pdPin);
+    let pin = null;
+    if (e) window.__pdPin = setInterval(() => { if (e.dead) return;
+      if (!pin) { if (e.isCollidable === false || e.__warpNurtMode || e.state === 'warping_in') return; pin = { x: e.x, y: e.y }; }
+      e.x = pin.x; e.y = pin.y; e.vx = 0; e.vy = 0;
+      if (e.pos) { e.pos.x = pin.x; e.pos.y = pin.y; } if (e.vel) { e.vel.x = 0; e.vel.y = 0; } }, 100);
     return e ? { typ: e.type, aux: (e.weapons?.aux || []).map((lo) => lo.weapon?.id), friendly: !!e.friendly } : null;
   })()`);
 }
@@ -125,8 +140,14 @@ async function strzelnica() {
       info = await spawnTarget(...cel.spawn);
       // Cel strzelnicy nieśmiertelny (kadłub i tarcza dolewane) — salwy liczą trafienia, nie zabijają.
       await ev(`(() => { clearInterval(window.__pdImmortal); window.__pdImmortal = setInterval(() => { const e = window.__pdTarget;
-        if (!e || e.dead) return; e.hp = e.maxHp; if (e.shield) e.shield.val = e.shield.max; }, 100); return true; })()`);
-      await sleep(2500);
+        if (!e || e.dead) return; e.hp = e.maxHp; if (e.shield) e.shield.val = e.shield.max; }, 100);
+        // Obrażenia celu strzelnicy połykane (Supernowa: 4 × 10 000 w jednej klatce) — trafienia liczy _onHit.
+        if (!window.__pdDmgWrap) { const f = window.applyDamageToNPC; window.__pdDmgWrap = true;
+          window.applyDamageToNPC = function (e, ...a) { if (e === window.__pdTarget && window.__pdImmortalOn) return; return f.call(this, e, ...a); }; }
+        window.__pdImmortalOn = true; return true; })()`);
+      await sleep(1000);
+      await waitFor(cdp, '(() => { const e = window.__pdTarget; return !e || e.dead || !(e.isCollidable === false || e.__warpNurtMode || e.state === "warping_in"); })()', 30000, 200);
+      await sleep(1000);
     }
     console.log(`\n== cel ${cel.id}:`, JSON.stringify(info));
     for (const w of BRONIE) for (const pd of WARIANTY) {
@@ -147,7 +168,7 @@ async function strzelnica() {
       console.log(`  ${(w + (pd ? ' PD' : ' bez')).padEnd(22)} salw ${sum.salw}  rakiet ${glowic}${sum.potomne ? ' (+' + sum.potomne + ' potomnych)' : ''}  trafień ${sum.trafienia} (${sum.naSalwe}/salwę)  przechwycone ${sum.przechwycone} ${JSON.stringify(sum.przez)}`);
       report.strzelnica.push(sum);
     }
-    if (cel.spawn) await ev(`(() => { clearInterval(window.__pdImmortal); const e = window.__pdTarget; if (e && !e.dead) { e.hp = 0; window.applyDamageToNPC?.(e, 1e9, 'test'); } return true; })()`);
+    if (cel.spawn) await ev(`(() => { clearInterval(window.__pdImmortal); window.__pdImmortalOn = false; const e = window.__pdTarget; if (e && !e.dead) { e.hp = 0; window.applyDamageToNPC?.(e, 1e9, 'test'); } return true; })()`);
     await sleep(1500);
   }
 }
@@ -157,7 +178,9 @@ async function ttk() {
   for (const [key, mode, color, dx] of [['destroyer', 'pirate', 'blue', -30000], ['destroyer', 'friendly', 'red', 30000]]) for (const pd of WARIANTY) {
     await ev(`(() => { window.rocketSystem3D.pdTargets = ${pd}; return true; })()`);
     const info = await spawnTarget(key, mode, dx, 20000);
-    await sleep(2500);
+    await sleep(1000);
+    await waitFor(cdp, '(() => { const e = window.__pdTarget; return !e || e.dead || !(e.isCollidable === false || e.__warpNurtMode || e.state === "warping_in"); })()', 30000, 200);
+    await sleep(1000);
     const w = 'grad_launcher';
     const t0 = await ev('window.SimClock?.sim ?? performance.now() / 1000');
     const hp0 = await ev(`(() => { const e = window.__pdTarget; return { hp: Math.round(e.hp), maxHp: Math.round(e.maxHp), tarcza: Math.round(e.shield?.val || 0) }; })()`);
@@ -206,6 +229,7 @@ async function fala() {
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && !!window.shipDriveState?.calib", 300000, 400)) throw new Error('gra nie ruszyła (fala)');
   if (!await waitFor(cdp, 'window.StoryGame.active && !!window.StoryGame.phase', 300000, 400)) throw new Error('fabuła nie ruszyła');
   await ev(TRACK);
+  if (TUNE) console.log('strojenie', JSON.stringify(await ev(APPLY_TUNE)));
   // --falaPd 0 — rakiety 3D bez obrony punktowej (stan sprzed 2026-10-12).
   await ev(`(() => { window.rocketSystem3D.pdTargets = ${args.falaPd !== '0'}; return true; })()`);
   await ev(`(() => { window.__godTimer = setInterval(() => { const s = window.ship; if (!s || s.destroyed) return;
@@ -225,6 +249,7 @@ try {
     report.miejsce = await startFree();
     console.log('miejsce', JSON.stringify(report.miejsce));
     await ev(TRACK);
+    console.log('strojenie', JSON.stringify(await ev(TUNE ? APPLY_TUNE : 'window.RocketPdTune')));
     if (TRYBY.includes('strzelnica')) await strzelnica();
     if (TRYBY.includes('ttk')) await ttk();
   }

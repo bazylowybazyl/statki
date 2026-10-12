@@ -6,7 +6,8 @@
 //   • ATLAS 3D (Storage3DTexture RGBA8 256 × 256 × 128): każde ciało ma blok
 //     64³ / 32³ / 16³ (przydział bliźniaczy), R = zapełnienie, G = ruda,
 //     B = zapełnienie pierwotne (z chwili przejęcia), A = udział RDZENIA
-//     (lita bryła materiału rdzenia — coreLook.js). Zmiany siatki idą przez
+//     (lita bryła materiału rdzenia — coreLook.js); w RUMOWISKU poza rdzeniem
+//     A = kod komórki (0,25 — regolit i szwy głazów, rubbleCellCode). Zmiany siatki idą przez
 //     bufor storage i compute (three r183 wgrywa teksturę 3D tylko w całości):
 //     blok w całości przy przydziale, potem tylko pudełko zmian.
 //   • ZEWNĘTRZE: ten sam materiał co pole (RockNodeMaterial, programy
@@ -39,6 +40,7 @@ import { quatRotate } from './tslCommon.js';
 import { FragmentSet } from './fragments.js';
 import { createCoreLookArray, coreSurface } from './coreLook.js';
 import { ROCK_TYPES } from '../../src/game/asteroidRockKinds.js';
+import { rubbleCellCode } from '../../src/game/asteroidMining.js';
 
 export const MINED_ATLAS = Object.freeze([256, 256, 128]);
 const TOP = 64;
@@ -61,7 +63,16 @@ const ORE_LOOK = Object.freeze({
   ice: { color: '#cfe6ff', metal: 0.0, emit: 0.05, gloss: 140 },
   uran: { color: '#6ef04e', metal: 0.0, emit: 0.7, gloss: 40 },
   rock: { color: '#6a645c', metal: 0.0, emit: 0.0, gloss: 20 },
-  energy: { color: '#a070ff', metal: 0.0, emit: 1.2, gloss: 60 }
+  energy: { color: '#a070ff', metal: 0.0, emit: 1.2, gloss: 60 },
+  // Typy z widm planetoid (A1 / A2 planu pasa, propozycja sesji A): C — ciemne związki węgla,
+  // M — żelazo-nikiel, V — ilmenit bazaltu, D — lód pod skorupą, platynowce, wypełniacz C, C z lodem.
+  carbon: { color: '#3a3733', metal: 0.0, emit: 0.0, gloss: 18 },
+  metal: { color: '#a9a8a3', metal: 0.75, emit: 0.0, gloss: 80 },
+  basalt: { color: '#5d6168', metal: 0.5, emit: 0.0, gloss: 70 },
+  primitive: { color: '#cfe6ff', metal: 0.0, emit: 0.05, gloss: 140 },
+  platinum: { color: '#dcdde0', metal: 0.85, emit: 0.0, gloss: 110 },
+  rock_c: { color: '#3a3733', metal: 0.0, emit: 0.0, gloss: 20 },
+  carbon_ice: { color: '#cfe6ff', metal: 0.0, emit: 0.05, gloss: 140 }
 });
 
 // ---------------------------------------------------------------------------
@@ -263,6 +274,8 @@ export class MinedRocks {
       if (sx <= 0 || sy <= 0 || sz <= 0) return;
     }
     const { nx, ny, nz, fill, ore, orig, coreFill } = body;
+    // A: monolit — udział rdzenia; rumowisko — rdzeń (≥ 128) albo kod komórki (rubbleCellCode).
+    const rubble = body.boulder !== null && body.boulder !== undefined;
     let o = 0;
     for (let k = 0; k < sz; k++) {
       const kk = k + k0;
@@ -273,7 +286,9 @@ export class MinedRocks {
           if (ii >= nx || jj >= ny || kk >= nz) { st[o] = 0; continue; }
           const idx = ii + nx * (jj + ny * kk);
           const f = Math.round(Math.min(1, Math.max(0, fill[idx])) * 255);
-          st[o] = (f | (ore[idx] << 8) | (orig[idx] << 16) | (coreFill[idx] << 24)) >>> 0;
+          const cf = coreFill[idx];
+          const a = rubble && cf < 128 ? rubbleCellCode(body, idx, ii, jj, kk) : cf;
+          st[o] = (f | (ore[idx] << 8) | (orig[idx] << 16) | (a << 24)) >>> 0;
         }
       }
     }
@@ -415,6 +430,11 @@ export class MinedRocks {
       const bgy = texture3D(S.noise, bp.add(vec3(0, 1 / 64, 0))).level(0).r.sub(b0).add(texture3D(S.noise, bq.add(vec3(0, 1 / 64, 0))).level(0).g.sub(q0).mul(0.5));
       const bgz = texture3D(S.noise, bp.add(vec3(0, 0, 1 / 64))).level(0).r.sub(b0).add(texture3D(S.noise, bq.add(vec3(0, 0, 1 / 64))).level(0).g.sub(q0).mul(0.5));
       nL.assign(normalize(nL.sub(vec3(bgx, bgy, bgz).mul(2.6))));
+      // RUMOWISKO (kanał A ≈ 0,25 — regolit i szwy między głazami, rubbleCellCode): luźny żwir —
+      // grube ziarno w normalnej, ciemniej, pory w AO, bez połysku i blasku rudy. Monolit: A = rdzeń.
+      const regW = smoothstep(0.12, 0.22, smp.a).mul(float(1.0).sub(smoothstep(0.32, 0.45, smp.a))).toVar();
+      const gv = texture3D(S.noise, pl.div(24.0).add(vec3(0.71, V.misc.y.mul(1.9), 0.27))).level(0).toVar();
+      nL.assign(normalize(nL.sub(gv.rgb.sub(0.5).mul(regW.mul(1.8)))));
       const N = normalize(quatRotate(V.rot, nL)).toVar();
       const P = worldOf(pl).toVar();
       // Skała: barwy typu + ziarno z objętości szumu skał (drobniej niż na wierzchu).
@@ -448,6 +468,12 @@ export class MinedRocks {
         .add(cell(pl.add(nL.mul(cs.mul(3.0)))).r.mul(0.3))
         .add(cell(pl.add(nL.mul(cs.mul(6.0)))).r.mul(0.2));
       const ao = clamp(float(1.0).sub(occ.mul(0.7)), 0.25, 1.0).toVar();
+      // Regolit: ziarna o różnej jasności, pory, ruda tylko przygaszonymi plamkami.
+      albedo.mulAssign(mix(float(1.0), gv.a.mul(0.45).add(0.5), regW));
+      ao.mulAssign(mix(float(1.0), smoothstep(0.2, 0.7, gv.b).mul(0.35).add(0.65), regW));
+      oreCov.mulAssign(float(1.0).sub(regW.mul(0.55)));
+      metal.mulAssign(float(1.0).sub(regW));
+      gloss.assign(mix(gloss, float(8.0), regW));
       // RDZEŃ (kanał A atlasu = udział rdzenia): lita bryła materiału rdzenia (coreLook.js) —
       // metal z połyskiem i patyną w zagłębieniach, kryształy świecące od środka, lód, smółka.
       const coreW = smoothstep(0.4, 0.6, smp.a).toVar();

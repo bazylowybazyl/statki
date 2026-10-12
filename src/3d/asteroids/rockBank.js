@@ -6,7 +6,8 @@
 // się RAZ na sesję jednym zestawem materiałów (błąd r183, PLAN §3).
 //
 // Bank kształtów skał pod WebGPU: te same proceduralne bryły gwiaździste co dawny
-// src/3d/rocks/rockShapes3D.js (40 kształtów: 10 rodzin × 4 warianty),
+// src/3d/rocks/rockShapes3D.js (dawniej 40 kształtów: 10 rodzin × 4 warianty; od D2 planu pasa
+// 44 — 11. rodzina „bączek” `top` na końcu ROCK_FAMILIES),
 // pieczone raz na GPU do tablic tekstur w mapowaniu oktaedrycznym:
 //   A (RGBA16F): x = promień (średnia 1), yzw = normalna obiektu
 //   B (RGBA8):   r = AO, g = krater, b = zmienność albedo, a = wypukłość
@@ -22,7 +23,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, int, vec2, vec3, vec4, uniform, uniformArray, texture, screenCoordinate,
-  Loop, If, Break, select, mix, smoothstep, clamp, fract, floor, abs, sqrt, exp, acos,
+  Loop, If, Break, select, mix, smoothstep, clamp, fract, floor, abs, sqrt, exp, acos, cos,
   dot, cross, normalize, length, max
 } from 'three/tsl';
 import { SHAPE_COUNT, SHAPE_VARIANTS, FAMILY } from '../../game/asteroidRockKinds.js';
@@ -34,6 +35,8 @@ export const ROCK_SHAPE_DEFAULTS = Object.freeze({
   // 64: wiersz odczytu = 256 B (wyrównanie kopiowania WebGPU).
   readbackSize: 64,
   craters: 40,
+  // Głazy na powierzchni (bączki, gruzowiska, część brył) — osobna tablica uniformów.
+  boulders: 32,
   facets: 10,
   lobes: 10,
   seed: 0x0A57E7
@@ -140,6 +143,12 @@ function baseShapeRadiusCpu(p, d) {
   } else {
     r = 1 / Math.hypot(d[0] / p.elong[0], d[1] / p.elong[1], d[2] / p.elong[2]);
   }
+  // Bączek: podwójny stożek (grzbiet równikowy) przenikany z bryłą — top[0] = udział.
+  if (p.top[0] > 0) {
+    const rho = Math.sqrt(d[0] * d[0] + d[1] * d[1]);
+    const cone = 1 / (Math.abs(d[2]) / p.top[1] + rho / p.top[2]);
+    r += (cone - r) * p.top[0];
+  }
   r += p.eqRidge[0] * Math.exp(-((d[2] / p.eqRidge[1]) ** 2));
   for (const f of p.facets) {
     const c = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
@@ -153,10 +162,16 @@ export function makeRockShapeParams(index, seed = ROCK_SHAPE_DEFAULTS.seed, opts
   const facetCap = opts.facets ?? ROCK_SHAPE_DEFAULTS.facets;
   const lobeCap = opts.lobes ?? ROCK_SHAPE_DEFAULTS.lobes;
   const rng = mulberry32((seed ^ Math.imul(index + 1, 0x9E3779B1)) >>> 0);
-  const family = Math.floor(index / SHAPE_VARIANTS);
+  const boulderCap = opts.boulders ?? ROCK_SHAPE_DEFAULTS.boulders;
+  // opts.family — rodzina na siłę (id albo indeks; testy i podgląd rodziny przed wpisem w ROCK_FAMILIES).
   const F = FAMILY;
+  const family = typeof opts.family === 'string' ? (F[opts.family] ?? -1) : (opts.family ?? Math.floor(index / SHAPE_VARIANTS));
+  // BĄCZEK (2026-10-12, strumień D planu pasa): grzbiet równikowy jak Ryugu, Bennu, Didymos —
+  // rodzina 'top' w ROCK_FAMILIES (dopisuje ją etap D2 razem z kolumną wag); do tego czasu
+  // tylko przez opts.family = 'top'.
+  const isTop = opts.family === 'top' || (F.top !== undefined && family === F.top);
   const pick = (table) => table[family] ?? table[0];
-  const lumpAmp = pick([0.30, 0.22, 0.24, 0.30, 0.13, 0.12, 0.12, 0.12, 0.10, 0.14]) + rng() * pick([0.14, 0.12, 0.12, 0.1, 0.07, 0.06, 0.06, 0.06, 0.06, 0.06]);
+  let lumpAmp = pick([0.30, 0.22, 0.24, 0.30, 0.13, 0.12, 0.12, 0.12, 0.10, 0.14]) + rng() * pick([0.14, 0.12, 0.12, 0.1, 0.07, 0.06, 0.06, 0.06, 0.06, 0.06]);
   const lumpFreq = 0.85 + rng() * 0.6;
   const ridgeAmp = pick([0.05, 0.08, 0.04, 0.11, 0.03, 0.03, 0.03, 0.05, 0.03, 0.04]) + rng() * 0.05;
   const ridgeFreq = 1.6 + rng() * 1.4;
@@ -169,11 +184,18 @@ export function makeRockShapeParams(index, seed = ROCK_SHAPE_DEFAULTS.seed, opts
   } else if (family === F.disc) {
     elong[0] = elong[1] = 1.15 + rng() * 0.12;
     elong[2] = 0.5 + rng() * 0.12;
+  } else if (isTop) {
+    // Spłaszczony wzdłuż osi obrotu (z), garby małe — kształt robi podwójny stożek.
+    elong[2] = 0.84 + rng() * 0.08;
+    lumpAmp = 0.05 + rng() * 0.05;
   } else {
     const e = family === F.ridged ? 0.25 + rng() * 0.25 : (family === F.shard ? 0.1 + rng() * 0.35 : rng() * 0.18);
     elong[axis] += e;
   }
-  const eqRidge = family === F.disc ? [0.08 + rng() * 0.07, 0.1 + rng() * 0.06] : [0, 0.1];
+  const eqRidge = family === F.disc ? [0.08 + rng() * 0.07, 0.1 + rng() * 0.06]
+    : isTop ? [0.04 + rng() * 0.04, 0.07 + rng() * 0.03] : [0, 0.1];
+  // Bączek: [udział podwójnego stożka, wysokość bieguna, promień równika].
+  const top = isTop ? [0.45 + rng() * 0.25, 0.9 + rng() * 0.1, 1.0] : [0, 1, 1];
   const lobes = [];
   let lobeK = 0.1;
   if (family === F.binary) {
@@ -225,7 +247,20 @@ export function makeRockShapeParams(index, seed = ROCK_SHAPE_DEFAULTS.seed, opts
     const fresh = rng();
     craters.push([c[0], c[1], c[2], angle, depth, rim, fresh]);
   }
-  const p = { index, family, lumpAmp, lumpFreq, ridgeAmp, ridgeFreq, offset, elong, facets, facetK, lobes, lobeK, eqRidge, craters, scale: 1 };
+  // Głazy na powierzchni (Bennu, Ryugu, Itokawa): kopuły o promieniu kątowym 0,02–0,12 rad
+  // z rozkładem potęgowym — bączki i gruzowiska gęsto, bryły / kraterowane / wielki krater
+  // w połowie wariantów kilka. Na końcu ciągu losowań (inne parametry bez zmian).
+  const variant = index % SHAPE_VARIANTS;
+  const boulderCount = isTop ? 16 + Math.floor(rng() * 14)
+    : family === F.rubble ? 10 + Math.floor(rng() * 12)
+      : (family === F.potato || family === F.cratered || family === F.bowl) && variant >= 2 ? 3 + Math.floor(rng() * 6) : 0;
+  const boulders = [];
+  for (let i = 0; i < Math.min(boulderCap, boulderCount); i++) {
+    const c = randomUnit(rng);
+    const ang = Math.min(0.12, 0.022 * Math.pow(1 - rng() * 0.97, -0.6));
+    boulders.push([c[0], c[1], c[2], ang]);
+  }
+  const p = { index, family, lumpAmp, lumpFreq, ridgeAmp, ridgeFreq, offset, elong, facets, facetK, lobes, lobeK, eqRidge, top, craters, boulders, scale: 1 };
   let sum = 0;
   let mx = 0;
   const N = 400;
@@ -376,8 +411,11 @@ const smax = Fn(([a, b, k]) => smin(a.negate(), b.negate(), k).negate())
  * (ustawiane przed każdą warstwą), cel pośredni podawany jako tekstura.
  */
 function createBakeMaterials(bank, procTexture) {
-  const { craterCap, facetCap, lobeCap } = bank;
+  const { craterCap, facetCap, lobeCap, boulderCap } = bank;
   const U = {
+    top: uniform(new THREE.Vector3(0, 1, 1)),
+    boulderCount: uniform(0, 'int'),
+    boulders: uniformArray(Array.from({ length: boulderCap }, () => new THREE.Vector4()), 'vec4'),
     size: uniform(bank.size),
     offset: uniform(new THREE.Vector3()),
     lumpAmp: uniform(0),
@@ -418,6 +456,11 @@ function createBakeMaterials(bank, procTexture) {
     }).Else(() => {
       r.assign(float(1.0).div(length(d.div(U.elong))));
     });
+    // Bączek: podwójny stożek (grzbiet równikowy) przenikany z bryłą (top.x = udział).
+    If(U.top.x.greaterThan(0.0), () => {
+      const cone = float(1.0).div(abs(d.z).div(U.top.y).add(length(d.xy).div(U.top.z)));
+      r.assign(mix(r, cone, U.top.x));
+    });
     r.addAssign(U.eqRidge.x.mul(exp(d.z.mul(d.z).div(U.eqRidge.y.mul(U.eqRidge.y)).negate())));
     const lump = fbm4(d.mul(U.lumpFreq).add(U.offset));
     r.mulAssign(float(1.0).add(lump.sub(0.5).mul(2.0).mul(U.lumpAmp)));
@@ -456,6 +499,18 @@ function createBakeMaterials(bank, procTexture) {
           cm.assign(m);
           fr.assign(cb.z);
         });
+      });
+    });
+    // Głazy na powierzchni: kopuły o stromym brzegu (w = promień kątowy); nie są kraterem.
+    Loop(boulderCap, ({ i }) => {
+      If(i.greaterThanEqual(U.boulderCount), () => { Break(); });
+      const bo = U.boulders.element(i).toVar();
+      const cosd = dot(d, bo.xyz).toVar();
+      If(cosd.greaterThan(cos(bo.w)), () => {
+        const t = acos(clamp(cosd, -1.0, 1.0)).div(bo.w).toVar();
+        const h = sqrt(max(float(1.0).sub(t.mul(t)), 0.0)).toVar();
+        r.addAssign(h.mul(bo.w).mul(0.55).mul(U.scale));
+        cm.mulAssign(float(1.0).sub(h));
       });
     });
     r.addAssign(fbm3(d.mul(11.0).add(U.offset.zxy)).sub(0.5).mul(0.028).mul(U.scale));
@@ -562,10 +617,11 @@ export class RockShapeBankGPU {
     this.craterCap = opts.craters ?? d.craters;
     this.facetCap = opts.facets ?? d.facets;
     this.lobeCap = opts.lobes ?? d.lobes;
+    this.boulderCap = opts.boulders ?? d.boulders;
     this.seed = opts.seed ?? d.seed;
     this.params = [];
     for (let i = 0; i < this.count; i++) {
-      this.params.push(makeRockShapeParams(i, this.seed, { craters: this.craterCap, facets: this.facetCap, lobes: this.lobeCap }));
+      this.params.push(makeRockShapeParams(i, this.seed, { craters: this.craterCap, facets: this.facetCap, lobes: this.lobeCap, boulders: this.boulderCap }));
     }
     this.targetA = null;
     this.targetB = null;
@@ -628,6 +684,12 @@ export class RockShapeBankGPU {
     for (let i = 0; i < this.facetCap; i++) {
       const f = p.facets[i];
       U.facets.array[i].set(f ? f[0] : 0, f ? f[1] : 0, f ? f[2] : 1, f ? f[3] : 9);
+    }
+    U.top.value.set(p.top[0], p.top[1], p.top[2]);
+    U.boulderCount.value = p.boulders.length;
+    for (let i = 0; i < this.boulderCap; i++) {
+      const b = p.boulders[i];
+      U.boulders.array[i].set(b ? b[0] : 0, b ? b[1] : 0, b ? b[2] : 1, b ? b[3] : 0.001);
     }
     U.craterCount.value = p.craters.length;
     for (let i = 0; i < this.craterCap; i++) {

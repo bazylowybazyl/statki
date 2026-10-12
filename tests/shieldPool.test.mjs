@@ -98,14 +98,19 @@ test('pula: kernele i materiały budują się do WGSL w limitach wiązań', () =
     assert.ok(uniformBuffers(cs) <= 12, `kernel: ${uniformBuffers(cs)} buforów uniformów`);
     assert.doesNotMatch(cs, /\bpow\(\s*-/, 'pow ze stałą ujemną podstawą');
   }
-  for (const mesh of [pool.tileMesh, pool.distMesh, pool.glowMesh]) {
+  for (const mesh of [pool.tileMesh, pool.distMesh, pool.glowMesh, pool.fieldMesh, pool.fieldDistMesh]) {
     const { vertex, fragment } = buildRender(mesh);
     const v = vertex.indexOf('@vertex');
     const sig = vertex.slice(v, vertex.indexOf('->', v));
     const attrs = count(sig, /@location\(\s*\d+\s*\)/g);
-    assert.ok(attrs >= 4 && attrs <= 8, `${mesh.name}: ${attrs} atrybutów wierzchołków (limit 8)`);
+    const field = mesh === pool.fieldMesh || mesh === pool.fieldDistMesh;
+    // Czasza pokazanej tarczy: sama pozycja (kąt, t) — r(θ) z binów slotu (bufor storage w wierzchołkach).
+    assert.ok(field ? attrs === 1 : (attrs >= 4 && attrs <= 8), `${mesh.name}: ${attrs} atrybutów wierzchołków (limit 8)`);
     assert.ok(uniformBuffers(vertex) <= 12 && uniformBuffers(fragment) <= 12);
+    assert.ok(storageBuffers(vertex) <= 8 && storageBuffers(fragment) <= 8, `${mesh.name}: bufory storage`);
+    if (field) assert.equal(storageBuffers(vertex), 1, `${mesh.name}: biny obrysu w wierzchołkach`);
     if (mesh === pool.tileMesh) assert.ok(fragment.includes('shieldHash12'), 'rysy w fragmencie płytek');
+    assert.doesNotMatch(vertex + fragment, /\bpow\(\s*-/, `${mesh.name}: pow ze stałą ujemną podstawą`);
   }
   const sp = buildRender(pool.sparkSprite);
   assert.ok(sp.vertex.length > 200);

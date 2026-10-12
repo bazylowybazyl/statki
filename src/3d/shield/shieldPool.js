@@ -13,7 +13,11 @@
 //    CPU co ~0,1 s — pociski przelatują przez dziurę do pancerza (index.html, isShieldBreachedAt);
 //  • jeden rysunek płytek dla wszystkich tarcz (warstwa tarcz), drugi w warstwie DIST (załamanie
 //    tła — zamiast viewportTexture dema), trzeci — poświata pola na pancerzu pod płytkami (mnożenie
-//    obrazu kadłuba: energia i fala barwią pancerz), jedna pula iskier ślizgających się po czaszach.
+//    obrazu kadłuba: energia i fala barwią pancerz), jedna pula iskier ślizgających się po czaszach;
+//  • tarcza POKAZANA (tryb TARCZE gracza, SLOT.HARD.z): czasza pola nad obrysem slotu (instancja =
+//    slot) — gładki świecący brzeg pola, poświata pasa przy krawędzi, prądy energii, załamanie tła
+//    przy krawędzi (warstwa DIST); siatka płytek jest wtedy fakturą pola (cienkie szwy jaśniejsze ku
+//    krawędzi, plamy prądów, migające komórki, zapalanie w losowej kolejności).
 // Dane per slot (poza, barwa, parametry ciała miękkiego, pęknięcie) — jeden blok uniformów vec4.
 // Pozycje płytek i iskier w klatce lokalnej tarczy (x wzdłuż kadłuba, y = −y gry, z w górę);
 // na scenę obraca je poza slotu względem początku przy kamerze (siatki na mesh.position = początek).
@@ -24,9 +28,10 @@ import {
   Fn, uniform, uniformArray, float, int, uint, vec2, vec3, vec4, instancedArray, instanceIndex, attribute,
   varying, positionGeometry, positionView, normalize, cross, cos, sin, atan, dot, length, exp, max, min,
   abs, mix, floor, fract, smoothstep, saturate, select, sqrt, pow, step, If, Loop, clamp, hash, uv,
-  cameraViewMatrix, transformNormalToView
+  cameraViewMatrix, transformNormalToView, texture, fwidth, varyingProperty
 } from 'three/tsl';
 import { SHIELD_NEIGHBOR_DIRS } from './shieldLattice.js';
+import { fxNoise } from '../fx/noise.js';
 
 export const SHIELD_SLOTS = 12;
 export const SHIELD_SLOT_CAP = 4096;
@@ -111,7 +116,7 @@ export class ShieldPool {
       heatPeak: uniform(3.2), stressGain: uniform(1.2), gap: uniform(0.1), spec: uniform(1.0),
       dispScale: uniform(1.0), normalGain: uniform(1.0),
       lightDir: uniform(new THREE.Vector3(-0.45, 0.55, 0.7).normalize()),
-      frontGlow: uniform(0), showAll: uniform(0), showSeam: uniform(0.3),
+      frontGlow: uniform(0), showAll: uniform(0),
       refr: uniform(1.0), zoomPx: uniform(1.0),
       breachOn: uniform(1), breachDown: uniform(1 / 2.5),
       hullGlow: uniform(1),
@@ -121,7 +126,11 @@ export class ShieldPool {
       shatC: uniform(new THREE.Vector4()),   // szansa rysy, dodatek promienisty, część odłamków, siła
       evCount: uniform(0, 'int'),
       sparkMinW: uniform(1), sparkGain: uniform(1),
-      spCount: uniform(0, 'int'), spSeed: uniform(0)
+      spCount: uniform(0, 'int'), spSeed: uniform(0),
+      // Pokazana tarcza (strojenie SHIELD_TUNING.field w shield3D.js):
+      fieldA: uniform(new THREE.Vector4(1, 4, 1.3, 1)),     // brzeg pola: jasność, grubość [j.], grubość min. [px], pas przy krawędzi
+      fieldB: uniform(new THREE.Vector4(1, 1, 1, 1)),       // siatka (szwy), prądy energii, migotanie komórek, poświata wnętrza
+      fieldC: uniform(new THREE.Vector4(1, 1, 1, 0.12))     // załamanie przy krawędzi, poświata na pancerzu, tempo prądów, drżenie tła
     };
 
     // Blok slotów (jeden bufor uniformów).
@@ -161,6 +170,21 @@ export class ShieldPool {
     nbrB.value.array.fill(-1);
 
     const slotOf = (id) => int(id).div(int(CAP));
+
+    // Pokazana tarcza: PRĄDY ENERGII płynące po polu — dwie warstwy szumu tile2D (fbm, kafelkowy) w różnych
+    // kierunkach, skala w odstępach siatki (plamy ~6–10 komórek), tempo × fieldC.z; 0..1. Ta sama funkcja
+    // w płytkach (per płytka — świecą całe komórki), w czaszy (brzeg pola jaśnieje, gdzie prąd dochodzi
+    // do krawędzi) i w poświacie na pancerzu — plamy wszystkich warstw jadą razem. Wklejana (uniformy).
+    const noiseTex = this.noiseTex = fxNoise.tile2D();
+    const fieldFlow = (p, cell) => {
+      const q = p.div(max(cell, 1.0).mul(34.0));
+      const tt = U.time.mul(U.fieldC.z);
+      const a = texture(noiseTex, q.add(vec2(tt.mul(0.055), tt.mul(0.02))), float(0.0)).r;
+      const b = texture(noiseTex, q.mul(1.9).add(vec2(tt.mul(-0.036), tt.mul(0.06)).add(0.37)), float(0.0)).g;
+      return smoothstep(0.42, 0.86, a.mul(0.6).add(b.mul(0.4)));
+    };
+    this._fieldFlow = fieldFlow;
+    const profileR = profileRFrom(this.binsB);
 
     // ── Zerowanie slotów z flagą (przydział, zgaszenie) ───────────────────────────
     this.kReset = Fn(() => {
@@ -210,7 +234,8 @@ export class ShieldPool {
             If(d2.lessThan(r2.mul(9.0)), () => {
               const g = exp(d2.div(r2).negate());
               const dd = sqrt(d2);
-              dv.addAssign(off.div(max(dd, 1e-3)).mul(abs(a.w).mul(dd.div(rr)).mul(g).mul(2.33)));
+              // b.z = 1: sama fala (zmarszczki pokazanej tarczy) — bez krateru ciała miękkiego.
+              dv.addAssign(off.div(max(dd, 1e-3)).mul(abs(a.w).mul(dd.div(rr)).mul(g).mul(2.33)).mul(b.z.oneMinus()));
               const q2 = d2.div(a.z.mul(a.z));
               dh.addAssign(b.x.mul(exp(q2.negate())));
               fl.addAssign(b.x.mul(exp(q2.div(0.16).negate())));
@@ -550,8 +575,19 @@ export class ShieldPool {
     const sweepBand = select(flagsV.y.greaterThanEqual(0.0),
       sstepDown(0.07, 0.0, abs(nrmA.w.sub(flagsV.y))), float(0.0)).mul(U.frontGlow);
     const stressVis = max(lookA.y.sub(0.3), 0.0).div(0.7);
+    // Pokazana tarcza (SLOT.HARD.z narasta 0 → 1): komórki zapalają się i gasną w LOSOWEJ kolejności (jak
+    // maskowanie — bez fali po siatce), każda w swoim progu narastania pokazania.
+    const showV = prm(slotV, SLOT.HARD).z;
+    const hAppear = shieldHash12(vec2(restA.w.mul(149.0), 7.7));
+    const appearV = smoothstep(hAppear.mul(0.72), hAppear.mul(0.72).add(0.28), showV);
     const visAtt = max(lookA.x.sub(0.035), 0.0).add(stressVis).add(lookA.z).add(forming).add(sweepBand).add(U.showAll)
-      .add(prm(slotV, SLOT.HARD).z);
+      .add(appearV);
+    // Szczelina między płytkami: na pokazanej tarczy spokojne płytki stykają się (jeden szew na krawędzi
+    // zamiast dwóch linii ze szczeliną), rozgrzane / naprężone odsuwają się do zwykłej szczeliny.
+    const actV = max(max(lookA.x.mul(4.0), stressVis.mul(2.0)), lookA.z.mul(3.0));
+    const gapEff = U.gap.mul(mix(mix(float(1.0), saturate(actV), showV), float(1.0), isFly));
+    const vShowA = varyingProperty('vec4', 'vShieldShowA');   // prądy, migotanie, zapalenie, zanik (słabe pole)
+    const vShowB = varyingProperty('vec2', 'vShieldShowB');   // t wierzchołka, odległość od brzegu siatki [promienie płytki]
     // Odłamek: pył (siatka rys) gaśnie prawie w miejscu, odłamek pęknięcia (70%) maleje do ~25%.
     const flyLife = max(lookA.y, 0.05);
     const flyK = saturate(poseA.w.div(flyLife));
@@ -563,8 +599,31 @@ export class ShieldPool {
     const tilePosition = Fn(() => {
       const flying = isFly.toVar();
       const N = normalize(mix(nTilt, n0, flying)).toVar();
-      const scale = mix(grow, flyScale, flying).mul(U.gap.oneMinus()).mul(shown).mul(circR)
+      const scale = mix(grow, flyScale, flying).mul(gapEff.oneMinus()).mul(shown).mul(circR)
         .mul(step(0.5, geomV.w)).mul(step(0.0, restA.w)).toVar();
+      // Pokazana tarcza: wartości stałe na komórce (prądy energii, migotanie, zanik przy słabym polu) i t
+      // wierzchołka — r / r(θ) z t środka płytki (r(θ) ≈ |środek| / t, bez odczytu binów).
+      const sA = vec4(0.0).toVar();
+      const sB = vec2(0.0, 100.0).toVar();
+      If(showV.greaterThan(0.0).and(isFly.lessThan(0.5)), () => {
+        const flow = fieldFlow(restA.xy, geomV.x);
+        // Migotanie: ~7% komórek błyska co 5–18 s (sin^48 — krótki błysk), faza i tempo z ziarna płytki.
+        const h1 = shieldHash12(vec2(restA.w.mul(67.0), 4.4));
+        const h2 = shieldHash12(vec2(restA.w.mul(23.0), 9.1));
+        const sn = max(sin(U.time.mul(h1.mul(0.9).add(0.35)).add(h2.mul(6.2832))), 0.0).toVar();
+        const s2 = sn.mul(sn), s4 = s2.mul(s2), s8 = s4.mul(s4), s16 = s8.mul(s8);
+        const tw = s16.mul(s16).mul(s16).mul(step(shieldHash12(vec2(restA.w.mul(41.0), 2.2)), 0.07)).mul(U.fieldB.z);
+        // Słabe pole (< 35% HP, SLOT.MISC.w): komórki losowo gasną na ułamek sekundy.
+        const lp = prm(slotV, SLOT.MISC).w;
+        const drop = step(shieldHash12(vec2(restA.w.mul(31.0), floor(U.time.mul(9.0)).mul(0.37))), lp.mul(0.5));
+        sA.assign(vec4(flow.mul(U.fieldB.y), tw, appearV, drop));
+        const tC = nrmA.w;
+        const rC = length(restA.xy).div(max(tC, 1e-3)).toVar();
+        const tV = length(restA.xy.add(positionGeometry.xy.mul(circR))).div(max(rC, 1.0)).toVar();
+        sB.assign(select(tC.greaterThan(0.02), vec2(tV, float(0.975).sub(tV).mul(rC).div(max(circR, 1e-3))), vec2(tC, 100.0)));
+      });
+      vShowA.assign(sA);
+      vShowB.assign(sB);
       const o2 = positionGeometry.xy.mul(scale).toVar();
       // Płaszczyzna styczna nad punktem siatki: rzut z góry pokrywa się z komórką.
       const lift = o2.x.mul(N.x).add(o2.y.mul(N.y)).negate().div(max(N.z, 0.3));
@@ -634,6 +693,9 @@ export class ShieldPool {
     mat.positionNode = tilePosition;
     mat.fragmentNode = Fn(() => {
       const { lk, rim, edge, base, heat, I, st, crack, mixB } = tileShade();
+      // Pochodna metryki heksa na początku (przed użyciem — pułapka 29).
+      const fwRim = float(0.0).toVar();
+      fwRim.assign(fwidth(rim));
       const flyAge = poseA.w.toVar();
       const fly = isFly.toVar();
       // Żar: rampa w barwach tarczy (głęboki błękit → barwa tarczy → błękitna biel → biel).
@@ -653,19 +715,49 @@ export class ShieldPool {
       const flashE = vec3(1.0, 0.97, 0.94).mul(lk.z).mul(edge.mul(0.8).add(0.6)).mul(2.6);
       // Odrastanie, fronty rozruchu, „pokaż heksy” — same szwy.
       const g = saturate(lk.w);
-      // Tarcza pokazana (SLOT.HARD.z — tryb TARCZE gracza): stałe szwy siatki w barwie tarczy.
-      const showK = prm(int(vSlot.add(0.5)), SLOT.HARD).z;
-      const formE = sCol.mul(g.mul(g.oneMinus()).mul(4.0).mul(U.frontGlow).add(sweepBand.mul(1.2)).add(U.showAll.mul(0.22))
-        .add(showK.mul(U.showSeam))).mul(edge);
+      const formE = sCol.mul(g.mul(g.oneMinus()).mul(4.0).mul(U.frontGlow).add(sweepBand.mul(1.2)).add(U.showAll.mul(0.22))).mul(edge);
+      // Tarcza POKAZANA (SLOT.HARD.z — tryb TARCZE gracza): siatka jako faktura pola. Szwy cienkie (~1,8 px przy
+      // każdym przybliżeniu, wygładzone po fwidth — nie migoczą), słabe w środku, jaśniejsze ku krawędzi pola
+      // i w plamach prądów energii, z jaśniejszymi węzłami w rogach komórek; komórki w prądach lekko świecą,
+      // pojedyncze migoczą, czoła zmarszczek fali przebiegają światłem po siatce. Drobne komórki (oddalenie) —
+      // szwy gasną, zostaje mozaika plam. Przed postrzępionym brzegiem siatki gaśnie (brzeg pola rysuje czasza),
+      // przy zapaleniu komórki — błysk.
+      const sA = vShowA.toVar();
+      const sB = vShowB.toVar();
+      const slotS = int(vSlot.add(0.5));
+      const cellPx = prm(slotS, SLOT.GEOM).x.mul(0.5).mul(U.zoomPx);
+      const lod = smoothstep(1.6, 4.5, cellPx);
+      // Szew ~0,9 px z każdej strony krawędzi (razem ~1,8 px przy każdym przybliżeniu).
+      const sw = max(float(0.02), fwRim.mul(0.9)).toVar();
+      const seam = smoothstep(float(1.0).sub(sw), float(1.0), rim);
+      const pgS = positionGeometry.xy.add(vec2(1.3e-4, 0.7e-4));
+      const cq = cos(atan(pgS.y, pgS.x).sub(Math.PI / 6).mul(3.0));
+      const c2 = cq.mul(cq), c4 = c2.mul(c2), c8 = c4.mul(c4);
+      const nodeK = c8.mul(c8).mul(smoothstep(float(1.0).sub(sw.mul(2.2)), 1.0, rim));
+      const rad0 = smoothstep(0.55, 0.97, sB.x);
+      const radial = rad0.mul(rad0);
+      const flowK = sA.x;
+      const f2 = flowK.mul(flowK);
+      // Nad kadłubem (środek pola) szwy prawie znikają — widać je w plamach prądów; ku krawędzi pola rosną.
+      const latK = seam.mul(float(0.01).add(radial.mul(0.28)).mul(float(0.2).add(flowK.mul(1.5))).add(f2.mul(0.2)))
+        .add(nodeK.mul(float(0.02).add(radial.mul(0.12)).add(f2.mul(0.1)))).mul(lod).mul(U.fieldB.x);
+      const r2 = rim.mul(rim);
+      const cellK = f2.mul(flowK).mul(0.08).mul(float(0.45).add(r2.mul(0.55)))
+        .add(sA.y.mul(0.45).mul(float(0.25).add(r2.mul(0.75))));
+      const popK = sA.z.mul(sA.z.oneMinus()).mul(4.0);
       // Połysk: płytka przechylona falą łapie światło (w spoczynku nic).
       const Nv = normalize(vN).toVar();
       const V = normalize(positionView.negate());
       const Lv = normalize(cameraViewMatrix.mul(vec4(U.lightDir, 0.0)).xyz);
       const Hv = normalize(Lv.add(V));
       const dN = Nv.sub(normalize(vN0));
-      const tiltK = saturate(length(dN).mul(9.0));
+      const tiltK = saturate(length(dN).mul(9.0)).toVar();
+      const rippleK = smoothstep(0.3, 1.0, tiltK).mul(float(0.25).add(r2.mul(0.75))).mul(0.12).mul(lod.mul(0.6).add(0.4));
+      const fieldCol = mix(base, vec3(0.75, 0.9, 1.0), 0.2);
+      const showE = fieldCol.mul(latK.add(cellK).add(rippleK)).mul(smoothstep(0.2, 1.7, sB.y)).mul(sA.z).mul(sA.w.oneMinus())
+        .add(mix(fieldCol, vec3(0.85, 0.95, 1.0), 0.55).mul(popK.mul(seam.mul(0.55).add(0.05))));
       const spec = sCol.mul(pow(max(dot(Nv, Hv), 0.0), 70.0).mul(tiltK).mul(0.8).mul(U.spec)).mul(body.add(edge));
-      const attE = heatE.add(stressE).add(flashE).add(formE).add(spec);
+      const attE = heatE.add(stressE).add(flashE).add(formE).add(spec).add(showE);
       // Odłamki pęknięcia: szkło pola — jasny brzeg, prawie przezroczyste wnętrze, stygną do
       // ciemnej czerwieni; pył = same linie rys gasnące w ułamku sekundy.
       const k = saturate(flyAge.div(max(lk.y, 0.05))).toVar();
@@ -716,8 +808,11 @@ export class ShieldPool {
     dmat.fragmentNode = Fn(() => {
       const { lk, I, st, mixB } = tileShade();
       // Jak demo: tło za płytką przesunięte o jej przechył tylko tam, gdzie świeci; szwy
-      // pęknięcia prawie nie załamują (dawniej łososiowa płyta na całej czaszy).
-      const mask = saturate(I.mul(0.12).add(st.mul(mix(float(0.25), float(0.04), mixB))).add(lk.z.mul(0.4)))
+      // pęknięcia prawie nie załamują (dawniej łososiowa płyta na całej czaszy). Pokazana tarcza:
+      // całe pole lekko załamuje (zmarszczki fali — drżenie tła pod polem, fieldC.w).
+      const showD = prm(int(vSlot.add(0.5)), SLOT.HARD).z;
+      const mask = saturate(I.mul(0.12).add(st.mul(mix(float(0.25), float(0.04), mixB))).add(lk.z.mul(0.4))
+        .add(showD.mul(U.fieldC.w)))
         .mul(isFly.oneMinus());
       const dN = normalize(vN).sub(normalize(vN0));
       // Demo: próbka w screenUV + przechył·(90 j. ośrodka · 2,5) → warstwa DIST: próbka w p − o.
@@ -752,8 +847,18 @@ export class ShieldPool {
     gmat.blendDstAlpha = THREE.OneFactor;
     const att = isFly.oneMinus();
     const eN = max(tiltA.w, 0.0);
+    // Pokazana tarcza: pancerz pod polem lekko błękitnieje, mocniej pod plamami prądów energii (te same co
+    // na płytkach i w czaszy — plamy jadą razem).
+    const showGlow = Fn(() => {
+      const k = float(0.0).toVar();
+      If(showV.greaterThan(0.0).and(isFly.lessThan(0.5)), () => {
+        const f = fieldFlow(restA.xy, geomV.x).mul(U.fieldB.y);
+        k.assign(appearV.mul(U.fieldC.y).mul(float(0.01).add(f.mul(sqrt(f)).mul(0.11))));
+      });
+      return k;
+    })();
     const glowK = eN.mul(0.8).add(max(lookA.y.sub(0.3), 0.0).div(0.7).mul(0.35).mul(att))
-      .add(abs(tiltA.z).mul(0.012).mul(att)).mul(U.hullGlow);
+      .add(abs(tiltA.z).mul(0.012).mul(att)).add(showGlow).mul(U.hullGlow);
     const vGlow = varying(glowK);
     const vEN = varying(eN);
     gmat.positionNode = Fn(() => {
@@ -777,6 +882,133 @@ export class ShieldPool {
     gmesh.renderOrder = 9;
     gmesh.visible = false;
 
+    // ── Czasza POKAZANEJ tarczy (tryb TARCZE gracza): pole nad obrysem slotu — instancja = slot, siatka
+    //    polarna (kąt, t = r / r(θ)), r(θ) z binów slotu (Catmull-Rom jak obrys gry). Gładki brzeg pola
+    //    (cienka świecąca linia na t = 1, miękki spadek na zewnątrz, poświata do wnętrza), pas przy
+    //    krawędzi (jak fresnel czaszy oglądanej z góry), prądy energii (te same plamy co na płytkach) i
+    //    drobne przebiegi wzdłuż brzegu; w warstwie DIST — soczewka przy krawędzi (pole jak gruba szyba).
+    //    Slot bez pokazania: wszystkie wierzchołki w jednym punkcie (brak fragmentów).
+    const slotI = int(instanceIndex);
+    const showI = prm(slotI, SLOT.HARD).z;
+    const poseI = prm(slotI, SLOT.POSE);
+    const geomI = prm(slotI, SLOT.GEOM);
+    const vFieldR = varyingProperty('float', 'vShieldFieldR');
+    const vFieldXY = varyingProperty('vec2', 'vShieldFieldXY');
+    const vFieldT = varying(positionGeometry.z);
+    const vFieldSlot = varying(slotI.toFloat());
+    const fieldPosition = Fn(() => {
+      const c = positionGeometry.x, s = positionGeometry.y, t = positionGeometry.z;
+      const on = step(0.0005, showI).mul(step(0.5, geomI.w));
+      // Kąt lokalny φ (y = −y gry) → kąt profilu w klatce gry: −φ.
+      const R = profileR(slotI, atan(s.negate(), c)).toVar();
+      const xy = vec2(c, s).mul(R.mul(t)).toVar();
+      const z = geomI.z.mul(pow(max(float(1.0).sub(t.mul(t)), 1e-6), 0.62)).mul(step(t, 1.0));
+      vFieldR.assign(R);
+      vFieldXY.assign(xy);
+      const L = vec3(xy, z).mul(on).toVar();
+      return vec3(poseI.x.add(poseI.z.mul(L.x)).sub(poseI.w.mul(L.y)), poseI.y.add(poseI.w.mul(L.x)).add(poseI.z.mul(L.y)),
+        L.z.add(SHIELD_Z + 0.5));
+    })();
+    const fieldGeo = fieldGeometry();
+
+    const fmat = this.fieldMaterial = new THREE.NodeMaterial();
+    fmat.name = 'ShieldField';
+    fmat.transparent = true;
+    fmat.depthWrite = false;
+    fmat.depthTest = true;
+    fmat.side = THREE.DoubleSide;
+    fmat.forceSinglePass = true;
+    fmat.lights = false;
+    fmat.fog = false;
+    fmat.blending = THREE.CustomBlending;
+    fmat.blendEquation = THREE.AddEquation;
+    fmat.blendSrc = THREE.OneFactor;
+    fmat.blendDst = THREE.OneFactor;
+    fmat.blendEquationAlpha = THREE.AddEquation;
+    fmat.blendSrcAlpha = THREE.ZeroFactor;
+    fmat.blendDstAlpha = THREE.OneFactor;
+    fmat.positionNode = fieldPosition;
+    fmat.fragmentNode = Fn(() => {
+      const slotF = int(vFieldSlot.add(0.5));
+      const look = prm(slotF, SLOT.LOOK).toVar();
+      const cell = prm(slotF, SLOT.GEOM).x.toVar();
+      const show = prm(slotF, SLOT.HARD).z.toVar();
+      const lp = prm(slotF, SLOT.MISC).w.toVar();
+      const FA = U.fieldA, FB = U.fieldB;
+      const base = mix(vec3(1.0, 0.08, 0.04), look.xyz, look.w).toVar();
+      const t = vFieldT.toVar();
+      const R = max(vFieldR, 1.0).toVar();
+      // Brzeg pola: gauss odległości od obrysu (j.), grubość ≥ FA.z px, po zewnętrznej stronie ostrzej.
+      const d = float(1.0).sub(t).mul(R).toVar();
+      const sig = min(max(FA.y, FA.z.div(max(U.zoomPx, 1e-4))), R.mul(0.025)).toVar();
+      const q = d.div(select(d.greaterThan(0.0), sig, sig.mul(0.6)));
+      const limb = exp(q.mul(q).negate()).toVar();
+      const inside = step(0.0, d);
+      const tail = exp(max(d, 0.0).div(sig.mul(7.0)).negate()).mul(inside);
+      // Pas przy krawędzi (fresnel czaszy z góry) i poświata wnętrza.
+      const band = smoothstep(0.5, 1.0, min(t, 1.0));
+      const band3 = band.mul(band).mul(band);
+      const flow = fieldFlow(vFieldXY, cell).mul(FB.y).toVar();
+      // Drobne przebiegi wzdłuż brzegu: szum po kącie (6 okresów tekstury na obwód — bez szwu na ±π).
+      const u = atan(vFieldXY.y, vFieldXY.x).mul(6.0 / (2 * Math.PI));
+      const crawl = texture(noiseTex, vec2(u.sub(U.time.mul(U.fieldC.z).mul(0.045)), 0.61), float(0.0)).b;
+      const limbK = limb.mul(1.55).mul(float(0.7).add(flow.mul(0.85)).add(crawl.mul(0.35)))
+        .add(tail.mul(0.3).mul(float(0.6).add(flow.mul(0.8))));
+      const E = base.mul(limbK.mul(FA.x).add(band3.mul(band).mul(FA.w).mul(0.085).mul(float(0.25).add(flow.mul(1.6))).mul(inside))
+        .add(FB.w.mul(0.012).mul(inside)))
+        .add(vec3(0.85, 0.95, 1.0).mul(limb.mul(limb).mul(0.42).mul(FA.x)));
+      // Pokazanie: brzeg wchodzi w pierwszej połowie narastania, z rozbłyskiem (też przy chowaniu).
+      const on = smoothstep(0.0, 0.55, show);
+      const pop = show.mul(show.oneMinus()).mul(4.0);
+      // Słabe pole (< 35% HP): brzeg przygasa i drga.
+      const fl = texture(noiseTex, vec2(U.time.mul(0.83), 0.17), float(0.0)).a;
+      const flick = mix(float(1.0), smoothstep(0.25, 0.75, fl).mul(0.85).add(0.15), lp);
+      return vec4(max(E.mul(on.add(pop.mul(0.4))).mul(flick), vec3(0.0)), 0.0);
+    })();
+    const fmesh = this.fieldMesh = new THREE.Mesh(fieldGeo, fmat);
+    fmesh.name = 'ShieldField';
+    fmesh.count = SHIELD_SLOTS;
+    fmesh.frustumCulled = false;
+    fmesh.renderOrder = 9.5;          // po poświacie na pancerzu (mnożenie), z płytkami addytywnie
+    fmesh.visible = false;
+
+    // Soczewka (warstwa DIST): tło przy krawędzi przesunięte ku środkowi — próbka w p − o, o od środka
+    // pola; przesunięcie w j. świata (rośnie z przybliżeniem, sufit 14 px), lekko oddycha z prądami.
+    const fdmat = this.fieldDistMaterial = new THREE.NodeMaterial();
+    fdmat.name = 'ShieldFieldDist';
+    fdmat.transparent = true;
+    fdmat.depthWrite = false;
+    fdmat.depthTest = false;
+    fdmat.side = THREE.DoubleSide;
+    fdmat.forceSinglePass = true;
+    fdmat.lights = false;
+    fdmat.fog = false;
+    fdmat.blending = THREE.CustomBlending;
+    fdmat.blendEquation = THREE.AddEquation;
+    fdmat.blendSrc = THREE.OneFactor;
+    fdmat.blendDst = THREE.OneFactor;
+    fdmat.blendEquationAlpha = THREE.AddEquation;
+    fdmat.blendSrcAlpha = THREE.OneFactor;
+    fdmat.blendDstAlpha = THREE.OneFactor;
+    fdmat.positionNode = fieldPosition;
+    fdmat.fragmentNode = Fn(() => {
+      const slotF = int(vFieldSlot.add(0.5));
+      const pose = prm(slotF, SLOT.POSE).toVar();
+      const show = prm(slotF, SLOT.HARD).z;
+      const t = vFieldT;
+      const lensP = smoothstep(0.8, 0.988, t).mul(float(1.0).sub(smoothstep(0.988, 1.035, t)));
+      const dirL = normalize(vFieldXY.add(vec2(1e-3, 0.0)));
+      const dirS = vec2(pose.z.mul(dirL.x).sub(pose.w.mul(dirL.y)), pose.w.mul(dirL.x).add(pose.z.mul(dirL.y)));
+      const flow = fieldFlow(vFieldXY, prm(slotF, SLOT.GEOM).x);
+      const amp = min(max(vFieldR, 1.0).mul(0.011).mul(U.zoomPx), 14.0).mul(U.fieldC.x).mul(U.refr);
+      return vec4(dirS.mul(amp.mul(lensP).mul(smoothstep(0.0, 0.6, show)).mul(float(0.8).add(flow.mul(0.4)))), 0.0, 0.0);
+    })();
+    const fdmesh = this.fieldDistMesh = new THREE.Mesh(fieldGeo, fdmat);
+    fdmesh.name = 'ShieldFieldDist';
+    fdmesh.count = SHIELD_SLOTS;
+    fdmesh.frustumCulled = false;
+    fdmesh.visible = false;
+
     this._buildSparks(prm);
   }
 
@@ -785,7 +1017,6 @@ export class ShieldPool {
   _buildSparks(prm) {
     const N = SHIELD_SPARK_CAP;
     const U = this.U;
-    const NB = SHIELD_BINS;
     const TWO_PI = Math.PI * 2;
     const pos = this.spPos = instancedArray(N, 'vec4');    // xyz, wiek
     const vel = this.spVel = instancedArray(N, 'vec4');    // prędkość, życie (> 0 ślizg, < 0 lot)
@@ -802,23 +1033,7 @@ export class ShieldPool {
     const SD = uniformArray(this.spD, 'vec4').setName('shieldSpD');
     const SE = uniformArray(this.spE, 'vec4').setName('shieldSpE');
     this._gpuOnly.push(pos, vel, info);
-
-    // r(θ) slotu — Catmull-Rom po binach (jak sampleShieldProfileRadius); wklejana (czyta bufor).
-    const profileR = (slot, th) => {
-      const f = fract(th.div(TWO_PI)).mul(NB).toVar();
-      const fi = floor(f);
-      const u = f.sub(fi).toVar();
-      const i1 = int(fi).mod(int(NB)).toVar();
-      const b0 = slot.mul(NB).toVar();
-      const p0 = bins.element(b0.add(i1.add(int(NB - 1)).mod(int(NB))));
-      const p1 = bins.element(b0.add(i1));
-      const p2 = bins.element(b0.add(i1.add(int(1)).mod(int(NB))));
-      const p3 = bins.element(b0.add(i1.add(int(2)).mod(int(NB))));
-      const u2 = u.mul(u), u3 = u2.mul(u);
-      return p1.mul(2.0).add(p2.sub(p0).mul(u))
-        .add(p0.mul(2.0).sub(p1.mul(5.0)).add(p2.mul(4.0)).sub(p3).mul(u2))
-        .add(p0.negate().add(p1.mul(3.0)).sub(p2.mul(3.0)).add(p3).mul(u3)).mul(0.5);
-    };
+    const profileR = profileRFrom(bins);
 
     this.kSparks = Fn(() => {
       const idx = instanceIndex;
@@ -1015,6 +1230,59 @@ function hexGeometry() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('aRim', new THREE.Float32BufferAttribute(rim, 1));
+  g.setIndex(idx);
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+  return g;
+}
+
+// r(θ) slotu — Catmull-Rom po binach (jak sampleShieldProfileRadius w shieldSystem.js); kąt w klatce
+// profilu (gra, y w dół). Wklejana (czyta bufor binów) — iskry i czasza pokazanej tarczy.
+function profileRFrom(bins) {
+  const NB = SHIELD_BINS;
+  const TWO_PI = Math.PI * 2;
+  return (slot, th) => {
+    const f = fract(th.div(TWO_PI)).mul(NB).toVar();
+    const fi = floor(f);
+    const u = f.sub(fi).toVar();
+    const i1 = int(fi).mod(int(NB)).toVar();
+    const b0 = slot.mul(NB).toVar();
+    const p0 = bins.element(b0.add(i1.add(int(NB - 1)).mod(int(NB))));
+    const p1 = bins.element(b0.add(i1));
+    const p2 = bins.element(b0.add(i1.add(int(1)).mod(int(NB))));
+    const p3 = bins.element(b0.add(i1.add(int(2)).mod(int(NB))));
+    const u2 = u.mul(u), u3 = u2.mul(u);
+    return p1.mul(2.0).add(p2.sub(p0).mul(u))
+      .add(p0.mul(2.0).sub(p1.mul(5.0)).add(p2.mul(4.0)).sub(p3).mul(u2))
+      .add(p0.negate().add(p1.mul(3.0)).sub(p2.mul(3.0)).add(p3).mul(u3)).mul(0.5);
+  };
+}
+
+/** Pierścienie t czaszy pokazanej tarczy: gęstnieją ku brzegowi (t = 1) i wychodzą za niego (spadek brzegu). */
+export const SHIELD_FIELD_RINGS = [0, 0.3, 0.52, 0.68, 0.79, 0.86, 0.91, 0.945, 0.965, 0.978, 0.987, 0.993, 0.997,
+  1.0, 1.003, 1.008, 1.015, 1.025, 1.04, 1.06];
+
+// Czasza pokazanej tarczy: siatka polarna, position = (cos φ, sin φ, t) w klatce lokalnej tarczy;
+// promień r(θ) i wysokość liczy shader (biny slotu). Ostatnia kolumna powtarza pierwszą (φ = 2π).
+function fieldGeometry(angular = 144) {
+  const T = SHIELD_FIELD_RINGS;
+  const N = angular, W = N + 1;
+  const pos = new Float32Array(W * T.length * 3);
+  let v = 0;
+  for (let j = 0; j < T.length; j++) {
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      pos[v++] = Math.cos(a); pos[v++] = Math.sin(a); pos[v++] = T[j];
+    }
+  }
+  const idx = [];
+  for (let j = 0; j < T.length - 1; j++) {
+    for (let i = 0; i < N; i++) {
+      const a = j * W + i, b = a + 1, c = a + W, d = c + 1;
+      idx.push(a, b, d, a, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
   return g;

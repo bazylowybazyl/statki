@@ -337,6 +337,27 @@ export function createRadarFeed(tune = RADAR_TUNE) {
           if (rk.hostile && dx * dx + dy * dy <= rangeSq) counts.missiles++;
         }
       }
+
+      // ---- ciała naturalne w ruchu (przelot NEA — src/game/neaFlyby.js; komety): `env.bodies` = obiekty z ŻYWYMI
+      // x, y, vx, vy, `radius`, `radarName`, `radarCls`; neutralne, bez liczników stron ----
+      const bodies = env.bodies;
+      if (Array.isArray(bodies)) {
+        for (let i = 0; i < bodies.length && n < tune.maxTracks; i++) {
+          const b = bodies[i];
+          if (!b || b.dead) continue;
+          const bx = finite(b.x, NaN);
+          const by = finite(b.y, NaN);
+          if (!Number.isFinite(bx) || !Number.isFinite(by)) continue;
+          const dx = bx - ox;
+          const dy = by - oy;
+          if (dx * dx + dy * dy > prSq) continue;
+          const r = rec(n++);
+          r.key = b; r.src = RADAR_SRC.XY; r.kind = 'body'; r.aff = 'neutral';
+          r.x = bx; r.y = by; r.vx = finite(b.vx); r.vy = finite(b.vy); r.angle = 0;
+          r.cls = String(b.radarCls || 'AST'); r.name = String(b.radarName || 'PLANETOIDA'); r.idKnown = true; r.continuous = true;
+          r.length = r.width = Math.max(40, finite(b.radius, 200) * 2);
+        }
+      }
       feed.count = n;
       // nadmiar starych rekordów: bez kluczy (tracker czyta tylko [0, count))
       for (let i = n; i < pool.length; i++) { if (pool[i]) pool[i].key = null; }

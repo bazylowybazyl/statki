@@ -765,8 +765,9 @@ function updateEffects(entity, fxData, dt) {
   //   sideQuiet — dysze SIDE nie dadzą w kadrze nic: wylot mniejszy niż próg strugi (SIDE_JET_TUNE.minJetPx —
   //     najmniejszy z progów strugi, gazu, świateł i modelu) albo okręt poza pudłem rysowania (`__inDrawBox`,
   //     hexShips3D.js) dalej, niż sięga struga (SIDE_JET_REACH_R promieni wylotu), z wylotem poniżej progu świateł
-  //     (dysza nie dawała ani światła, ani gazu — wspólne limity, np. 48 świateł SIDE na klatkę, liczą się jak
-  //     dawniej) — wtedy sam automat dyszy (stan ciągły), bez strugi, gazu, świateł, modelu i gorącego powietrza
+  //     (dysza nie dawała ani światła, ani gazu; od 2026-10-12 limit świateł SIDE liczy tylko światła przyjęte
+  //     przez siatkę, więc próg świateł zostaje tylko z ostrożności) — wtedy sam automat dyszy (stan ciągły), bez
+  //     strugi, gazu, świateł, modelu i gorącego powietrza
   //     (takich źródeł Core3D i tak nie bierze: dysza < 3 px albo spoza kadru). A/B: SideJets3D.lod.
   const sideR = SIDE_NOZZLE_RADIUS * scale * classScale * frameCtx.sideWidthMul;
   const sidePx = sideR * frameCtx.zoom;

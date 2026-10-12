@@ -31,6 +31,16 @@ const MODEL_URLS = {
   neptune: [
     new URL('../stations/neptune-station.glb', import.meta.url).href,
     new URL('../stations/Neptune-station.glb', import.meta.url).href
+  ],
+  // Stolica Unii Pasa na Ceres (src/data/smallBodies.js, 2026-10-12): bryła stacji Marsa — w grze wolna, bo port
+  // ringu „Halo” zastąpił stację tej planety. Porównanie z góry (scripts/webgpu/male-ciala-gra.mjs): model Jowisza
+  // czytał się jak ciemne „H” z bloków, model Marsa to wielka konstrukcja z kratownicami i oświetlonymi oknami —
+  // stolica nie wygląda jak stacje Wenus czy Saturna (model Ziemi). Bryła Marsa jest ~7× większa od `r` stacji
+  // (normalizacja obwiedni GLB), stąd małe `r` stolicy w smallBodies.js. Westa (huta) bierze model domyślny — kolejny
+  // szablon GLB to ~20 MB więcej na ekranie ładowania (prepareStations3D).
+  ceres: [
+    new URL('../stations/mars-station.glb', import.meta.url).href,
+    new URL('../stations/Mars-station.glb', import.meta.url).href
   ]
 };
 

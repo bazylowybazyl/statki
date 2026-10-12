@@ -5,7 +5,9 @@
 // wiązka ściągająca (urobek do ładowni). Zrzuty, stan platformy, błędy konsoli / walidacji.
 //
 //   node scripts/webgpu/wydobycie-gra.mjs [--out katalog] [--port 5362] [--rozmiar 1920x1080]
-//        [--demo] [--koszt] [--hud] [--etapy skala,laser,pila,ladunek,urobek]
+//        [--demo] [--koszt] [--hud] [--etapy skala,laser,pila,ladunek,urobek] [--rumowisko]
+// --rumowisko: etapy RUMOWISKA (rskala, rlaser, rladunek, rwiazka) w grze albo w demie (--demo).
+// --pary: etapy PARY z księżycem w grze (pskala, porbita, pprzejecie).
 // --hud:   z HUD-em DOM kokpitu (układ panelu wydobycia względem kokpitu).
 //
 // --demo:  te same etapy w demie (window.__demo: rig, mining, step) → <out>/demo/*.png.
@@ -24,16 +26,21 @@ const port = Number(args.port || 5362);
 const outDir = resolve(repo, args.out || '.tmp/webgpu/zadania/21b');
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 const SEED = 0x5eed1234;
-const IGNORE = [/favicon\.ico/, /AudioSys/, /Unable to decode audio data/, /powerPreference option is currently ignored/, /\[vite\]/, /DevTools/, /GPU stall due to ReadPixels/];
+// WebGPUTimestampQueryPool: demo krokowane ręcznie (pętla zatrzymana) nie odbiera znaczników czasu GPU —
+// ostrzeżenie three po ~kilkuset klatkach etapu, bez związku z wydobyciem.
+const IGNORE = [/favicon\.ico/, /AudioSys/, /Unable to decode audio data/, /powerPreference option is currently ignored/, /\[vite\]/, /DevTools/, /GPU stall due to ReadPixels/, /WebGPUTimestampQueryPool/];
 
 // Wspólne miejsce: scena „pole” dema (W.SPOTS.field), kąt −0,4, skała testowa 1700 j. przed
 // dziobem, kadr 0,62 drogi statek → skała (camHold dema), zoom 0,34.
+// --typ <id ROCK_TYPES> (domyślnie copper): typ skały testowej etapów monolitu (A1 pasa: carbon,
+// metal, basalt, primitive, platinum — urobek nowych typów do ładowni; rumowisko zostaje miedzią).
+const MINING_TEST_TYPE = String(args.typ || 'copper').replace(/[^a-z_]/g, '');
 export const MINING_SETUP = `const W = await import('/dema/asteroidy-webgpu/world.js');
   const s = W.SPOTS.field; DevScene.teleport(s.x, s.y, -0.4);
   const B = window.__asteroidBelt; const R = B.rig;
   R.reset(); window.setMiningMode(true, true); window.__miningAim = { x: NaN, y: NaN, down: false };
   await H.step(3);
-  const rock = R.spawnTestRock('copper', { x: ship.pos.x, y: ship.pos.y, angle: ship.angle }, 650);
+  const rock = R.spawnTestRock('${MINING_TEST_TYPE}', { x: ship.pos.x, y: ship.pos.y, angle: ship.angle }, 650);
   const rx = rock.p[0], ry = -rock.p[1];
   window.__minTest = { rx, ry, sx: ship.pos.x, sy: ship.pos.y };
   S.cam(ship.pos.x + (rx - ship.pos.x) * 0.62, ship.pos.y + (ry - ship.pos.y) * 0.62, 0.34);`;
@@ -72,6 +79,90 @@ export const MINING_STAGES = {
   }
 };
 
+// RUMOWISKO (--rumowisko, 2026-10-12, strumień D planu pasa): skała testowa miedzi r 760 jako kupa
+// głazów w regolicie — przejęcie (skaner: głazy rdzeniowe), laser w regolicie (szybko), ładunek M
+// (rozrzut całych głazów), wiązka (wyrywa odsłonięte głazy, zbiera urobek).
+const RUBBLE_SETUP = MINING_SETUP.replace(
+  /R\.spawnTestRock\('[a-z_]+', (\{ x: ship\.pos\.x, y: ship\.pos\.y, angle: ship\.angle \}), 650\)/,
+  "R.spawnTestRock('copper', $1, 760, 1900, true)");
+export const RUBBLE_STAGES = {
+  rskala: {
+    opis: 'Rumowisko miedzi (r 760): głazy w regolicie, skaner — głazy rdzeniowe i wzbogacone',
+    js: `${RUBBLE_SETUP}
+      await H.step(30);`
+  },
+  rlaser: {
+    opis: 'Lasery w regolicie (3 s): luźny żwir schodzi szybko, w otworze widać głazy i regolit',
+    js: `const T = window.__minTest; window.__miningAim = { x: T.rx, y: T.ry, down: true }; await H.step(180);`
+  },
+  rladunek: {
+    opis: 'Ładunek M obok otworu + detonacja: krater rumowiska, całe głazy i żwir rozsypują się wolno (zbliżenie po 2,5 s)',
+    js: `const T = window.__minTest; const R = window.__asteroidBelt.rig; window.__miningAim = { x: T.rx, y: T.ry, down: false };
+      R.chargeIndex = 1; R.stock.M = Math.max(R.stock.M, 2);
+      const cx = T.rx - 250, cy = T.ry + 150;
+      R.plantCharge(cx, cy); await H.step(2);
+      R.detonate(); await H.step(150);
+      S.cam(cx, cy, 0.8);`
+  },
+  rwiazka: {
+    opis: 'Wiązka ściągająca (8 s): wyrywa odsłonięte głazy z kupy, zbiera odłamy z rudą',
+    js: `const R = window.__asteroidBelt.rig; const T = window.__minTest;
+      S.cam(T.sx + (T.rx - T.sx) * 0.62, T.sy + (T.ry - T.sy) * 0.62, 0.34);
+      if (!R.tractorOn) R.toggleTractor(); await H.step(480);`
+  }
+};
+
+// PARY Z KSIĘŻYCEM (--pary, 2026-10-12, strumień D planu pasa, etap D2): najbliższa skała gry z księżycem
+// w polu dema — kadr pary (orbita, obrót synchroniczny), przejęcie KSIĘŻYCA laserem dronów (skała
+// pierwotna klatkę później — jedna ciężka operacja na klatkę), ciała w fazie z zegara pasa.
+const PAIR_SETUP = `const W = await import('/dema/asteroidy-webgpu/world.js');
+  const s = W.SPOTS.field; DevScene.teleport(s.x, s.y, -0.4);
+  const B = window.__asteroidBelt; const R = B.rig;
+  R.reset(); window.setMiningMode(true, true); window.__miningAim = { x: NaN, y: NaN, down: false };
+  await H.step(3);
+  const Rot = await import('/src/game/asteroidRotation.js');
+  let best = null, bd = Infinity;
+  B.field.forEachRockInRect(0, ship.pos.x - 40000, ship.pos.y - 40000, ship.pos.x + 40000, ship.pos.y + 40000, 300, (r) => {
+    if (!r.moon) return; const d = Math.hypot(r.x - ship.pos.x, r.y - ship.pos.y); if (d < bd) { bd = d; best = r; } });
+  if (!best) throw new Error('brak pary w polu');
+  const off = best.moon.dist + best.moon.r + 2500;
+  DevScene.teleport(best.x - off, best.y, 0);
+  await H.step(3);
+  window.__pairTest = { id: best.id, moonId: best.moon.id, x: best.x, y: best.y, dist: best.moon.dist, r: best.r, mr: best.moon.r, Rot, rock: best };
+  S.cam(best.x, best.y, Math.min(0.3, 420 / (best.moon.dist + best.moon.r)));`;
+export const PAIR_STAGES = {
+  pskala: {
+    opis: 'Para z księżycem w polu: księżyc na orbicie (poziomej, pod płaszczyzną gry), obrót synchroniczny',
+    js: `${PAIR_SETUP}
+      await H.step(30);`
+  },
+  porbita: {
+    opis: 'Ta sama para ~1/6 okresu orbity później — księżyc przesunięty po orbicie',
+    js: `const P = window.__pairTest; await H.step(Math.round(Math.abs(2 * Math.PI / P.rock.moon.w) / 6 * 60));`
+  },
+  pcien: {
+    opis: 'Cień księżyca: Atlas dziobem na księżyc, rzucający cień w atlasie reflektorów z księżycami i bez (forEachMoon)',
+    js: `const P = window.__pairTest; const B = window.__asteroidBelt;
+      const st = P.Rot.moonStateAt(P.rock, B.time);
+      DevScene.teleport(ship.pos.x, ship.pos.y, Math.atan2(st.y - ship.pos.y, st.x - ship.pos.x));
+      S.cam(P.x, P.y, Math.min(0.3, 420 / (P.dist + P.mr))); await H.step(3);
+      const L = B.playLayer, A = B.atlas;
+      A.gather(L); const z = A.stats.casters;
+      L.forEachMoon = null; A.gather(L); const bez = A.stats.casters;
+      delete L.forEachMoon; A.gather(L);
+      window.__pairResult = { rzucajace: { zKsiezycami: z, bez }, ksiezyceWKadrze: L.stats.moons };`
+  },
+  pprzejecie: {
+    opis: 'Laser dronów na księżycu: przejęcie pary (księżyc teraz, skała klatkę później), ciała w fazie orbity',
+    js: `const P = window.__pairTest; const B = window.__asteroidBelt;
+      const t = B.time; const st = P.Rot.moonStateAt(P.rock, t);
+      window.__miningAim = { x: st.x, y: st.y, down: true }; await H.step(20);
+      window.__miningAim.down = false; await H.step(20);
+      S.cam(P.x, P.y, Math.min(0.3, 420 / (P.dist + P.mr)));
+      window.__pairResult = { taken: [B.rig.taken.has(P.id), B.rig.taken.has(P.moonId)], bodies: B.mining.bodies.length };`
+  }
+};
+
 // Te same etapy w demie (window.__demo: rig dema, mining, step(n, dt)).
 const DEMO_STAGES = {
   skala: `const d = window.__demo; d.setScene('mining'); d.S.mouse.valid = false; d.S.showEscort = false; d.step(40, 1 / 60);
@@ -87,18 +178,35 @@ const DEMO_STAGES = {
     d.rig.chargeIndex = 2; d.rig.plantCharge(T.rx, T.ry, d.S.time); d.step(2, 1 / 60); d.rig.detonate(); d.step(5, 1 / 60);`,
   urobek: `const d = window.__demo; if (!d.rig.tractor) d.rig.toggleTractor(); d.step(150, 1 / 60);`
 };
+const DEMO_RUBBLE_STAGES = {
+  rskala: `const d = window.__demo; d.S.testType = 'rubble:copper'; d.setScene('mining'); d.S.mouse.valid = false; d.S.showEscort = false; d.step(40, 1 / 60);
+    d.rig.scan = true;
+    const b = d.mining.bodies[0]; window.__minTest = { rx: b.p[0], ry: -b.p[1], sx: d.S.ship.x, sy: d.S.ship.y };`,
+  rlaser: `const d = window.__demo; const T = window.__minTest; for (let i = 0; i < 180; i++) { d.rig.pointer(T.rx, T.ry, true); d.step(1, 1 / 60); }`,
+  rladunek: `const d = window.__demo; const T = window.__minTest; d.rig.pointer(T.rx, T.ry, false);
+    const cx = T.rx - 250, cy = T.ry + 150;
+    d.rig.chargeIndex = 1; d.rig.plantCharge(cx, cy, d.S.time); d.step(2, 1 / 60); d.rig.detonate(); d.step(150, 1 / 60);
+    d.S.camHold = { x: cx, y: cy }; d.S.cam.x = cx; d.S.cam.y = cy; d.S.cam.zoom = d.S.targetZoom = 0.8; d.step(2, 1 / 60);`,
+  rwiazka: `const d = window.__demo; const T = window.__minTest;
+    d.S.camHold = { x: T.sx + (T.rx - T.sx) * 0.62, y: T.sy + (T.ry - T.sy) * 0.62 }; d.S.cam.zoom = d.S.targetZoom = 0.34;
+    if (!d.rig.tractor) d.rig.toggleTractor(); d.step(480, 1 / 60);`
+};
 
 const STATE_JS = `(() => { const B = window.__asteroidBelt; const R = B.rig; const M = B.mining;
   const ore = {}; for (const k of Object.keys(R.totals.ore)) if (R.totals.ore[k] > 0) ore[k] = R.totals.ore[k];
   return { ciala: M.bodies.length, okruchy: M.pebbles.length, drony: R.drones.map((d) => [Math.round(d.p[0]), Math.round(-d.p[1]), Math.round(d.p[2]), d.laserOn ? 1 : 0]),
     laser: R.drones.filter((d) => d.laserOn).length, pila: R.saw.active ? +(R.saw.t / R.saw.len).toFixed(2) : null, ladunki: R.charges.length, wybuchy: R.totals.blasts,
-    zebrane: R.totals.collected, ruda: ore, plonna: +R.totals.waste.toFixed(1), stracone: +R.totals.lost.toFixed(1), ladownia: window.CockpitBridge?.getCargoLabel?.() ?? null, wiazka: R.tractorOn ? R.tractorCount : null,
+    zebrane: R.totals.collected, wyrwane: R.totals.plucks || 0, rumowiska: M.bodies.filter((b) => b.rubble).length, para: window.__pairResult || null,
+    ksiezyce: B.layers.reduce((a, L) => a + (L.stats.moons || 0), 0), ruda: ore, plonna: +R.totals.waste.toFixed(1), stracone: +R.totals.lost.toFixed(1), ladownia: window.CockpitBridge?.getCargoLabel?.() ?? null, wiazka: R.tractorOn ? R.tractorCount : null,
     atlas: { ...B.mined.stats }, widok: { ...B.miningView.stats }, ciezkieMs: +R.stats.heavyMs.toFixed(2), budowaMs: +M.stats.lastBuildMs.toFixed(2), wybuchMs: +M.stats.lastBlastMs.toFixed(2),
     komunikaty: R.recentMessages(4) }; })()`;
 
 async function openGame(cdp, ev, base) {
   await osobneLosowanieUuid(cdp);
-  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
+  // Kampania jest domyślna (StoryOptions czyta localStorage raz przy starcie strony) — bez tego klik
+  // „single” startuje intro w doku K-7 i gra nie rusza (jak GRA_SWOBODNA w asteroidy-gra.mjs).
+  const free = `try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); } catch (e) {}\n`;
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${free}window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
   await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
@@ -112,19 +220,23 @@ async function gameStages(base) {
   const { cdp } = chrome;
   const ev = (e, t = 300000) => evaluate(cdp, e, t);
   const report = { when: new Date().toISOString(), etapy: [] };
-  const dir = join(outDir, 'gra');
+  const dir = join(outDir, args.rumowisko ? 'gra-rumowisko' : args.pary ? 'gra-pary' : 'gra');
+  const STAGES = args.rumowisko ? RUBBLE_STAGES : args.pary ? PAIR_STAGES : MINING_STAGES;
   mkdirSync(dir, { recursive: true });
   try {
     await openGame(cdp, ev, base);
     await ev('window.__harness.hold(true)');
     const only = args.etapy ? new Set(args.etapy.split(',')) : null;
-    for (const [id, st] of Object.entries(MINING_STAGES)) {
-      if (only && !only.has(id) && id !== 'skala') continue;
+    for (const [id, st] of Object.entries(STAGES)) {
+      if (only && !only.has(id) && id !== 'skala' && id !== 'rskala' && id !== 'pskala') continue;
       logs.clear();
       const t0 = Date.now();
       let error = null;
+      // Klatka dziennika harnessu na starcie etapu — pipeline'y renderu utworzone synchronicznie w klatkach
+      // etapu (nierozgrzany materiał: przestój) mają być 0.
+      const k0 = await ev('window.__harness.frameLog.n');
       try {
-        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(${args.hud ? 'false' : 'true'}); H.reseed(0x21b0 + ${Object.keys(MINING_STAGES).indexOf(id)}); ${st.js} return true; })()`);
+        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(${args.hud ? 'false' : 'true'}); H.reseed(0x21b0 + ${Object.keys(STAGES).indexOf(id)}); ${st.js} return true; })()`);
         await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);
         await ev('window.__harness.frames(4)');
       } catch (err) {
@@ -134,8 +246,10 @@ async function gameStages(base) {
       const state = await ev(STATE_JS);
       const perf = await ev('window.__harness.scene.perf(10)');
       const errors = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l)));
-      report.etapy.push({ etap: id, opis: st.opis, blad: error, sekundy: (Date.now() - t0) / 1000, stan: state, perf, bledy: errors.slice(0, 20) });
-      console.log(`  gra ${id.padEnd(8)} ${error ? 'BŁĄD ' + error : 'ok'} | ciała ${state.ciala} okruchy ${state.okruchy} | laser ${state.laser} | piła ${state.pila} | wybuchy ${state.wybuchy} | zebrane ${state.zebrane} ruda ${JSON.stringify(state.ruda)} ładownia ${state.ladownia} wiązka ${state.wiazka} wiązki ${state.widok.beams} | ${perf.drawCalls} dc, GPU ${perf.gpuMs} ms | błędy ${errors.length}`);
+      const pipe = await ev(`(() => { const p = window.__harness.pipes.list.filter((e) => e.k >= ${k0} && !e.budowa && e.sync && !e.compute);
+        return { sync: p.length, lista: [...new Set(p.map((e) => e.nazwa))].slice(0, 8) }; })()`);
+      report.etapy.push({ etap: id, opis: st.opis, blad: error, sekundy: (Date.now() - t0) / 1000, stan: state, perf, pipelineSync: pipe, bledy: errors.slice(0, 20) });
+      console.log(`  gra ${id.padEnd(8)} ${error ? 'BŁĄD ' + error : 'ok'} | ciała ${state.ciala} okruchy ${state.okruchy} | laser ${state.laser} | piła ${state.pila} | wybuchy ${state.wybuchy} | zebrane ${state.zebrane} ruda ${JSON.stringify(state.ruda)} ładownia ${state.ladownia} wiązka ${state.wiazka} wiązki ${state.widok.beams} | księżyce ${state.ksiezyce}${state.para ? ' para ' + JSON.stringify(state.para) : ''} | ${perf.drawCalls} dc, GPU ${perf.gpuMs} ms | pipeline sync ${pipe.sync}${pipe.sync ? ' ' + JSON.stringify(pipe.lista) : ''} | błędy ${errors.length}`);
       if (errors.length) console.log('     ' + errors.slice(0, 6).join('\n     '));
       if (state.komunikaty?.length) console.log('     › ' + state.komunikaty.join(' | '));
     }
@@ -151,14 +265,14 @@ async function demoStages(base) {
   const logs = await attachLogs(chrome);
   const { cdp } = chrome;
   const ev = (e, t = 300000) => evaluate(cdp, e, t);
-  const dir = join(outDir, 'demo');
+  const dir = join(outDir, args.rumowisko ? 'demo-rumowisko' : 'demo');
   mkdirSync(dir, { recursive: true });
   const report = { when: new Date().toISOString(), etapy: [] };
   try {
     await cdp.send('Page.navigate', { url: `${base}/dema/asteroidy-webgpu.html?scene=field&shot=1&lights=0` });
     if (!await waitFor(cdp, '!!(window.__demo && window.__demo.S.ready)', 240000, 400)) throw new Error('demo nie wstało');
     await ev(`(() => { const d = window.__demo; d.stopLoop(); d.S.showEscort = false; d.S.dynLights = true; d.setLights(0); d.S.hideUi = true; document.body.classList.add('shot'); return true; })()`);
-    for (const [id, js] of Object.entries(DEMO_STAGES)) {
+    for (const [id, js] of Object.entries(args.rumowisko ? DEMO_RUBBLE_STAGES : DEMO_STAGES)) {
       logs.clear();
       await ev(`(async () => { ${js} return true; })()`);
       await ev(`(() => { window.__demo.step(2, 1 / 60); return true; })()`);

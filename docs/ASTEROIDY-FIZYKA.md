@@ -88,6 +88,64 @@ kryształu (płaszcz 55%), a w niej plazmę (komórki rdzenia bez rudy).
   bezpieczniki innych piorunów obok. Zdarzenia: `release` (z `how`), `discharge`, `capture`.
 - Co daje złapany piorun w ekonomii — **do decyzji** (nie ma surowca w `resources.js`; demo liczy je w pułapce).
 
+### Rumowiska (2026-10-12, strumień D planu `docs/PLAN-pas-realizm.md`)
+
+Decyzja użytkownika: „rumowiska w wydobyciu — robimy (inna taktyka niż przy monolicie)”. Prawda: ciała ≳ 200 m to
+zwykle luźne kupy gruzu (porowatość 20–60%, bariera obrotu ~2,2 h; Bennu — próbnik zapadł się 0,5 m jak w basenie
+z piłkami; Ryugu — głazy do 160 m na 900 m), mniejsze to monolity.
+
+- **Które skały:** szansa rośnie od 0,8 do 1,3 × progu średnicy (`RUBBLE_CONFIG.minDiameter` 360 j. × (0,55 +
+  odporność) × (0,75 + 0,1 · min(gęstość, 8)) × mnożnik typu `typeBias`, wspólny hash id skały — `rubbleChance`);
+  progi: prymitywna (D) 169, węglowa (C) 190, lód 215, wypełniacz węglowy 226, kryształ 312, krzem 328, skała 367,
+  bazalt (V) 424, uran 614, miedź 653, tytan 670, żelazo 744, metaliczna (M) 945, platynowce 1214 j.; skała
+  energetyczna (geoda z piorunem) nigdy. `typeBias` (C / D / wypełniacz węglowy × 0,8–0,85 — jak Bennu i Ryugu, M i
+  platynowce × 1,5 — lite żelazo-nikiel) liczy się po id typu z `ROCK_TYPES` ('rock_c' ma materiał 'rock'); pole
+  `rubble` w `ROCK_FRACTURE` (mnożnik, 0 = nigdy) bierze górę — opcjonalne, dopisuje właściciel tabel typów. Wśród skał PLAY
+  (80–2600 j., N ∝ D^−1,45) rumowiskiem jest ~co dziesiąta skała neutralna. `activate(rock, { rubble })` — na siłę;
+  `new AsteroidMining({ config: { rubble: false } })` — same monolity (testy monolitów).
+- **Budowa** (`_buildRubble`, ta sama bryła z banku): GŁAZY — elipsoidy o losowej orientacji (osie 1 : 0,75–1 :
+  0,55–0,9), promienie z rozkładu potęgowego N(> r) ∝ r^−2,3 w [max(2,2 komórki, 0,08 R); 0,26 R], upakowane do 62%
+  objętości z nachodzeniem ≤ 18% sumy promieni (≤ 200 głazów); komórka należy do głazu o najmniejszej „odległości
+  elipsoidalnej” < 1 (chropowaty brzeg z hasha), reszta to REGOLIT (~45–50%). Pole `boulder` (id głazu, 0 = regolit;
+  pamięć budowy jak `orig`), SŁABE wiązania = bity 3–5 `bonds` (między różnymi głazami i w regolicie — trzymają kupę
+  razem: `_label` ich nie rozcina), porowatość 25–50% (gęstość ciała × (1 − porowatość) — rumowisko jest lżejsze).
+- **Ruda — w głazach, nie w jednym rdzeniu** (ciało macierzyste rozbito i posklejało, więc jego rdzeń leży w kawałkach):
+  GŁAZY RDZENIOWE (2–8, objętość = rdzeń monolitu tego typu, komórki rdzenia = lita ruda materiału rdzenia — kawałki
+  to `isCorePiece`), GŁAZY WZBOGACONE (2,5 × tyle, ruda płaszcza), reszta głazów — skorupa z rozrzutem (0,5–1,5 ×,
+  co siódmy z żyłą × 2,5), regolit — 0,6 skorupy. Głębiej — częściej bogate. `body.core` = null; skaner:
+  `oreBoulders(ciało)` (głazy rdzeniowe i wzbogacone obecne w ciele: pozycja, promień, masa, ruda), `probe` — strefy
+  regolit / głaz / głaz wzbogacony / głaz rdzeniowy, `summary().rubble`. HUD (gra i demo): okrąg przy każdym głazie,
+  podpis tylko przy rdzeniowych — bliskie na ekranie scalone w „GŁAZY RDZENIOWE ×n” z sumą rudy, masa < 0,1 t w kg.
+- **Laser:** regolit schodzi `regolithDig` (3,5) razy szybciej niż lita skała (ta sama praca drona); w praktyce otwór
+  w rumowisku rośnie ~1,3–1,9 × szybciej niż w monolicie; wykopany regolit odsłania głazy (odpadają, gdy nic ich nie
+  trzyma — zwykły rozpad po cięciu).
+- **Ładunek** (`_detonateRubble`): strefa ROZRZUTU rs = 1,2 × strefa spękań monolitu (porowata kupa tłumi falę, ale
+  prawie nic jej nie trzyma); za słaby (rs < głębokość) — kupa się zagęszcza (uszkodzenie). Przebicie: zmiażdżenie jak
+  w monolicie, REGOLIT w 0,65 · rs wylatuje (55% pyłem, reszta żwirem), głazy w 0,35 × strefa spękań pękają (bryły
+  Voronoi), każdy głaz z ≥ 50% komórek (albo środkiem) w rs ODPADA CAŁY (słabe wiązania z resztą pękają), odłamy lecą
+  × 0,4 prędkości monolitu. Pomiar (skała r 650, ładunek M przy wierzchu): rumowisko — kilkadziesiąt całych głazów,
+  prędkość odłamów ~0,5 monolitu.
+- **Wiązka ściągająca wyrywa głazy** (`_pluck`, w `tractor(…, pluck)`): zakotwiczonej kupy wiązka nie ciągnie
+  w całości (luźna kupa rozpadłaby się w wiązce; monolit — jak dotąd). Co 1,2 s z najbliższego rumowiska w zasięgu,
+  którego wiązka nie weźmie w całości (zakotwiczone albo cięższe niż udźwig — wyrwany wcześniej głaz też ma pole
+  `boulder`), jeden ODSŁONIĘTY głaz (≥ 30% komórek na powierzchni, ≥ 8 komórek, lżejszy niż udźwig, nie cała kupa;
+  głaz rdzeniowy × 0,4 odległości, wzbogacony × 0,7 — pierwszeństwo) — słabe wiązania pękają, głaz odpada z 25 j./s ku
+  wiązce, wiązka go zbiera; próba bez kandydata — następna za pół odstępu (przegląd siatki ~1 ms nie idzie co krok).
+  Wyrwanie to ciężka operacja (rozpad ciała ~1–3 ms) — gra podaje budżet klatki (`pluck = this._heavy > 0`).
+- **Taktyka** (inna niż przy monolicie): skaner pokazuje głazy rdzeniowe → laser w regolicie odsłania je szybko →
+  mały ładunek blisko rozrzuca kupę (całe głazy, wolno) albo wiązka wyrywa odsłonięte głazy jeden po drugim; przy
+  monolicie — wiercenie do jednego rdzenia i ładunek w otworze.
+- **Render:** kanał A atlasu wydobycia = `rubbleCellCode` (64 — regolit i szwy między głazami; demo: rdzeń ≥ 128 bierze
+  górę) → wnętrze (obie kopie `minedRocks.js`): regolit ciemniejszy, grube ziarno w normalnej, pory w AO, bez połysku
+  i blasku rudy; ściana odsłoniętego głazu wychodzi jako zakurzona powierzchnia. Okruch-głaz (`pebble.boulder`):
+  gra — kształt rodziny „bryła” banku, demo — rodzina okruchów BOULDER (`fragments.js`: obła bryła z zaokrąglonymi
+  ścianami starych pęknięć, zwietrzały wierzch). Monolit — kanał A jak dawniej (gra 0, demo udział rdzenia).
+- **Koszt** (Node, miedź r 650, mediana 16 skał): budowa rumowiska ~8 ms (monolit ~11 ms — rumowisko nie liczy rdzenia
+  i żył w pętli komórek), wybuch 10–50 ms (jak monolit, jednorazowo).
+- Strojenie: `RUBBLE_CONFIG` (`asteroidMaterials.js`, blok rumowisk), testy `tests/asteroidRubble.test.mjs`, zrzuty
+  `node scripts/webgpu/wydobycie-gra.mjs --rumowisko [--demo]` (demo: przyciski „rumowisko (C)”, „rumowisko miedzi”
+  w scenie Kopalnia — typ `rubble:<typ>` w `spawnTestRock`).
+
 **Materiały** (`ROCK_FRACTURE` + gęstość/twardość z `src/data/asteroidPhysics.js`):
 
 | Typ | gęstość | twardość | odporność | kruchość | uwagi |
@@ -148,12 +206,13 @@ otworze przy rdzeniu sięga wylotu otworu — wystarczy mniejszy (dlatego najpie
 
 ```js
 const mining = new AsteroidMining({ radiusAt: (shape, x, y, z) => bank.radiusAt(shape, x, y, z) });
-const body = mining.activate(rockRecord, { z, time, sunT, anchored: true }); // skała pola → ciało
+const body = mining.activate(rockRecord, { z, time, sunT, anchored: true, rubble? }); // skała pola → ciało (rumowisko wg progu)
 const hit = mining.raycast(ox, oy, oz, dx, dy, dz, maxD?, tylko?, out?); // przestrzeń skał; { body, x, y, z, nx.., ore }
 mining.laser(hit.body, hit.x, hit.y, hit.z, dx, dy, dz, moc, dt, urobek);
 mining.slice(body, px, py, pz, nx, ny, nz, szczelina, przesuw?, urobek);
 const res = mining.detonate(body, x, y, z, E, straty);     // { outcome, rc, rf, bodies, pebbles, gravel, … }
-mining.tractor(tx, ty, tz, zasięg, udźwig, chwyt, dt, urobek, siła?, maxRudy?); // → złapane (tablica do następnego wywołania)
+mining.tractor(tx, ty, tz, zasięg, udźwig, chwyt, dt, urobek, siła?, maxRudy?, wyrywaj?); // → złapane (tablica do następnego wywołania); rumowisko: wyrywa głazy
+mining.oreBoulders(body, out?);                             // rumowisko: głazy rdzeniowe i wzbogacone (skaner)
 mining.pullBalls(tx, ty, tz, zasięg, chwyt, dt, pułapka, miejsce); // pioruny kuliste → złapane (z pułapką)
 mining.step(dt);                                            // masa, rozpady po cięciu, ruch, zderzenia, uśpienie, pioruny
 mining.wake(obiekt);                                        // obudź ciało / okruch ruszane z zewnątrz
@@ -226,6 +285,15 @@ typów stawiają skałę testową (lód … tytan, energetyczna). Zrzuty z harne
   `belt.sunT`), zakotwiczona (platforma gasi obrót i dryf). Id przejętych skał = `rig.taken` = `playLayer.hidden`
   (znikają z warstwy, cieni, piorunów i świateł). Ciała i okruchy dalej niż 60 tys. j. od statku są zwalniane —
   nietknięta skała wraca do pola, naruszona zostaje „rozebrana”.
+- **Pary z księżycem** (2026-10-12, etap D2 planu pasa, `src/game/asteroidRotation.js`): ~5% skał gry 300–2000 j.
+  ma księżyc (`rock.moon`: 0,15–0,35 promienia, orbita 2,6–4,5 promienia, pozioma na głębokości środka skały, okres
+  z Keplera 28 s × (a / r)^1,5, obrót synchroniczny). Trafienie lasera / ładunku w KSIĘŻYC (pozycja z `moonStateAt`
+  w czasie pasa — tam, gdzie go rysuje warstwa) albo w skałę przejmuje PARĘ: trafione ciało od razu, partnera klatkę
+  później (`_pendingPartner` — najwyżej jedna ciężka operacja na klatkę; do tego czasu warstwa rysuje go dalej na
+  orbicie). Rekord księżyca do `activate` — `moonRockRecord(skała, t)` (oś obrotu = normalna orbity, tempo = tempo
+  orbity, faza = faza orbity): orientacja ciała = orientacja shadera (test `asteroidRotation.test.mjs`). Id księżyca =
+  2^52 + id skały (`rig.taken` chowa oba). Wolniejszy obrót skał nie zmienia przejęcia: `activate` i shader liczą tę
+  samą fazę `phase + spin · t` z rekordu pola.
 - **Drony:** trzy (`MINING_RIG_CONFIG`): dok na grzbiecie statku, przy pracy krąg 300 j. nad celem na z = 170 (wiązki
   pod kątem), moc 1,5 × `digVolumeRate`, zasięg pracy 9 tys. j. od statku; przy pile dwa drony trzymają drut nad linią
   cięcia (cięcie co 0,1 s czasu symulacji — tempo 380 / (0,2 + twardość) j./s), trzeci może ciąć laserem.

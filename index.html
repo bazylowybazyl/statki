@@ -929,10 +929,15 @@
     } from "./src/game/targetingModes.js";
     // Tryby okrętu pod ŚPM (koło jak w Crysis): BOJOWY / TARCZE / PRZELOT / MASKOWANIE / TORPEDY / WYDOBYCIE / FLOTA.
     import {
-      SHIP_MODE_IDS, SHIP_MODE_DEFS, createShipModes, isShipMode, stanceTune, resolveShipMode,
+      SHIP_MODE_IDS, SHIP_MODE_DEFS, SHIP_MODE_DEADZONE, createShipModes, isShipMode, stanceTune, resolveShipMode,
       shipModeFromWheelVector, openShipModeWheel, releaseShipModeWheel,
       CRUISE_GEARS, cruiseGearMul, stepCruiseGear, shiftCruiseGearDown
     } from "./src/game/shipModes.js";
+    // Koło trybów: rysunek i animacje (ikony, wachlarz, podświetlenie, błysk wyboru, echo).
+    import {
+      createModeWheelFx, stepModeWheelFx, noteModeWheelClose, modeWheelVisible, drawModeWheel,
+      buildShipModeWheelItems, modeWheelExtent, modeWheelScale
+    } from "./src/ui/shipModeWheel.js";
     // Jeden celownik (pierścień wież) i sylwetka okrętu z wieżami nad szyną broni.
     import { drawWeaponReticle, drawArcCompass, orderRingTurrets } from "./src/ui/weaponReticle.js";
     import { buildHullSilhouette, drawTurretPanel } from "./src/ui/turretPanel.js";
@@ -1132,6 +1137,8 @@
     import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    import { NeaFlyby, neaFlybyMessage } from "./src/game/neaFlyby.js";
+    import { createNeaFlyby3D } from "./src/3d/neaFlyby3D.js";
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
     import { HallDust, HALL_DUST_TUNE } from "./src/3d/gasField/hallDust.js";
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
@@ -1151,6 +1158,8 @@
     import { MINING_CHARGES, createMiningChargeStock } from "./src/data/miningCharges.js";
     import { chargeForDepth } from "./src/game/asteroidMaterials.js";
     import { ROCK_TYPE_LABELS_PL } from "./src/game/asteroidRockKinds.js";
+    // Rodziny kolizyjne pasa (A2, docs/PLAN-pas-realizm.md): nazwa pola dla gracza (komunikat strefy, skaner wydobycia).
+    import { familyTitle } from "./src/data/asteroidFamilies.js";
     import {
       initHexShips3D,
       prewarmHexShips3D,
@@ -1517,6 +1526,11 @@
           if (!closest || dist < closest.dist) {
             closest = { x: planet.x, y: planet.y, dist };
           }
+        }
+        // małe ciała (blok „MAŁE CIAŁA”) — studnia Ceres, Westy… liczy się jak planety
+        for (const body of ((typeof window !== 'undefined' && window.smallBodies) || [])) {
+          const dist = playerPos ? Math.hypot(body.x - playerPos.x, body.y - playerPos.y) : Infinity;
+          if (!closest || dist < closest.dist) closest = { x: body.x, y: body.y, dist };
         }
         if (closest) return { x: closest.x, y: closest.y };
       }
@@ -4055,11 +4069,23 @@
       return key;
     }
 
+    // Kadłuby gracza, których id nie jest kluczem edytora (playerHullCatalog.js): Citadella ('carrier', rama
+    // 'terran_carrier') i Colossus ('supercapital') mają w edytorze klucze Z przedrostkiem terran_, Corvus stoi
+    // na sprite'cie fregaty Terra Novy (NPC Corvus bierze układ 'frigate' — getEditorShipIdForNpc).
+    const EDITOR_HULL_KEY_BY_PLAYER_ID = { carrier: 'terran_carrier', supercapital: 'terran_supercapital', corvus: 'frigate' };
+
     function getEditorHullConfigKeys(keyRaw) {
       const alias = toEditorHullAlias(keyRaw);
       if (!alias) return [];
       if (alias === 'atlas') return ['atlas', 'player'];
-      return [alias];
+      const keys = [alias];
+      // Klucz z przedrostkiem (terran_carrier, terran_supercapital) — alias bez przedrostka tylko dla okrętów,
+      // które mają go w edytorze (terran_battleship → battleship).
+      const raw = String(keyRaw || '').toLowerCase();
+      if (raw !== alias) keys.push(raw);
+      const mapped = EDITOR_HULL_KEY_BY_PLAYER_ID[alias];
+      if (mapped && !keys.includes(mapped)) keys.push(mapped);
+      return keys;
     }
 
     function hasEditorHullConfigContent(cfg) {
@@ -4096,7 +4122,9 @@
       for (const candidate of candidates) {
         const keys = getEditorHullConfigKeys(candidate);
         for (const key of keys) {
-          if (hasKey(key)) return toEditorHullAlias(candidate) || key;
+          // Klucz, który JEST w edytorze (dawniej alias kandydata: terran_carrier → 'carrier', którego edytor
+          // nie ma — Citadella i Colossus gracza dostawały układ Atlasa).
+          if (hasKey(key)) return key === 'player' ? 'atlas' : key;
         }
       }
       return 'atlas';
@@ -5725,6 +5753,9 @@
       env.features = hudRadarWorldFeatures;
       env.rings = haloRings ? haloRings.entries : null;
       env.belt = asteroidBelt || null;
+      _neaRadarBodies.length = 0;
+      env.bodies = neaFlybyRadarBodies(_neaRadarBodies);
+      cometRadarBodies(env.bodies);   // jądra komet — kontakty z podpisem (blok „KOMETY”)
       getRadarWeaponRanges();
       env.massSignatures = SensorSystem.getMassSignatures();
       env.ghosts = SensorSystem.getGhosts();
@@ -7369,7 +7400,9 @@
       pirate_outer: 3,
       pirate_gravity: 2.5,
       sun: 2,
-      asteroid_belt: 1
+      asteroid_belt: 1,
+      kuiper_belt: 1,
+      jupiter_trojans: 1
     };
 
     function zonePropsForId(id) {
@@ -7386,6 +7419,9 @@
       }
       // Pas asteroid tylko delikatnie zwalnia warp (QOL 2026-10-03; dawniej × 0,3 jak przy planetach).
       if (id === 'asteroid_belt') return { warpMultiplier: 0.8, wormholeVfx: false };
+      // Pas Kuipera jak pas główny (gęste pola); roje Trojańczyków bez kary warpa (strumień E, 2026-10-12).
+      if (id === 'kuiper_belt') return { warpMultiplier: 0.8, wormholeVfx: false };
+      if (id === 'jupiter_trojans') return { warpMultiplier: 1, wormholeVfx: false };
       if (id === 'interplanetary') {
         return { warpMultiplier: 1, wormholeVfx: true };
       }
@@ -7505,6 +7541,31 @@
         }
       }
 
+      // Małe ciała (blok „MAŁE CIAŁA”, src/data/smallBodies.js): te same strefy co planety (orbitZone ciała).
+      const bodies = typeof window !== 'undefined' ? window.smallBodies : null;
+      if (bodies) {
+        for (let i = 0; i < bodies.length; i++) {
+          const body = bodies[i];
+          const orbitRadii = planetOrbitRadii(body);
+          const dist = Math.hypot(pos.x - body.x, pos.y - body.y);
+          zones.push({
+            key: `body-${body.id}-inner`, id: 'planet_inner',
+            label: `${body.label} - Inner Orbit`, enteringLabel: `${body.label} - Inner Orbit`,
+            edgeDist: dist - orbitRadii.inner, approachRange: ZONE_APPROACH_DISTANCE, priority: zonePriority.planet_inner
+          });
+          zones.push({
+            key: `body-${body.id}-outer`, id: 'planet_outer',
+            label: `${body.label} - Outer Orbit`, enteringLabel: `${body.label} - Outer Orbit`,
+            edgeDist: dist - orbitRadii.outer, approachRange: ZONE_APPROACH_DISTANCE, priority: zonePriority.planet_outer
+          });
+          zones.push({
+            key: `body-${body.id}-gravity-well`, id: 'planet_gravity',
+            label: `${body.label} - Gravity Well`, enteringLabel: `${body.label} - Gravity Well`,
+            edgeDist: dist - orbitRadii.gravityWell, approachRange: ZONE_APPROACH_DISTANCE, priority: zonePriority.planet_gravity
+          });
+        }
+      }
+
       const pirateStation = mercMission?.station;
       if (pirateStation) {
         const orbitRadii = pirateOrbitRadii();
@@ -7562,7 +7623,7 @@
 
       if (ASTEROID_BELT) {
         // AGENT: luki Kirkwooda (asteroidBeltField.js — kirkwoodGaps) to dziś tylko gęstość pola; strefa HUD /
-        // warpa pasa zostaje twarda (BELT_DEFINITIONS, 36–47 AU mapy). Luka jako osobna strefa bez kary warpa
+        // warpa pasa zostaje twarda (BELT_DEFINITIONS, 35,5–47 AU mapy). Luka jako osobna strefa bez kary warpa
         // ×0,8 zmieniłaby też jasność nieba (skyRegion.js) i komunikat wejścia do pasa przy każdym przelocie
         // przez lukę (4 luki na drodze promieniowej) — do decyzji użytkownika (mnożnik: kirkwoodGapFactor).
         const radial = sunDist;
@@ -7581,6 +7642,39 @@
           approachRange: ZONE_APPROACH_DISTANCE,
           priority: zonePriority.asteroid_belt
         });
+      }
+
+      // Pas Kuipera (definicja `kuiper`, 125–140 AU mapy) i roje Trojańczyków (łuki L4 / L5 z regionów pola —
+      // ten sam kształt co skały). NEA i Hungarie bez strefy: każdy wylot z Ziemi przecina NEA (strumień E, 2026-10-12).
+      if (KUIPER_BELT_ZONE) {
+        const inner = KUIPER_BELT_ZONE.inner;
+        const outer = KUIPER_BELT_ZONE.outer;
+        const inside = sunDist >= inner && sunDist <= outer;
+        zones.push({
+          key: 'kuiper-belt',
+          id: 'kuiper_belt',
+          label: 'Kuiper Belt',
+          enteringLabel: 'Entering Kuiper Belt',
+          edgeDist: inside ? -Math.min(sunDist - inner, outer - sunDist) : Math.min(Math.abs(sunDist - inner), Math.abs(sunDist - outer)),
+          approachRange: ZONE_APPROACH_DISTANCE,
+          priority: zonePriority.kuiper_belt
+        });
+      }
+      // window.__asteroidBelt — pas powstaje na ekranie ładowania (createAsteroidBelt), później niż ta funkcja.
+      const beltField = window.__asteroidBelt?.field;
+      if (beltField?.penetrationOf) {
+        const trojanPen = beltField.penetrationOf(TROJAN_ZONE_BELTS, pos.x, pos.y);
+        if (trojanPen > -Infinity) {
+          zones.push({
+            key: 'jupiter-trojans',
+            id: 'jupiter_trojans',
+            label: 'Jupiter Trojans',
+            enteringLabel: 'Entering Jupiter Trojans',
+            edgeDist: -trojanPen,
+            approachRange: ZONE_APPROACH_DISTANCE,
+            priority: zonePriority.jupiter_trojans
+          });
+        }
       }
 
       const insideZones = zones.filter(z => z.edgeDist <= 0);
@@ -7666,6 +7760,38 @@
       updateZoneMessages(dt);
     }
 
+    // RODZINY PLANETOID (A2, docs/PLAN-pas-realizm.md § A2): gęste pole pasa = rodzina kolizyjna
+    // (AsteroidBeltField.familyAt). Wejście w pole rodziny → komunikat strefy „Rodzina Themis · węglowe, lód”.
+    // Co 0,5 s czasu gry; zmiana dopiero po dwóch zgodnych odczytach (granica pól), ta sama rodzina nie
+    // wraca przez 20 s. Bez pasa / poza polem — nic.
+    const _beltFamilyZone = { t: 0, current: null, pending: null, lastId: null, lastAt: -1e9, clock: 0 };
+    function updateBeltFamilyZone(dt) {
+      const z = _beltFamilyZone;
+      z.clock += dt;
+      z.t -= dt;
+      if (z.t > 0) return;
+      z.t = 0.5;
+      const field = asteroidBelt?.field;
+      if (!field || typeof field.familyAt !== 'function' || !ship?.pos || ship.dead) return;
+      const fam = field.familyAt(ship.pos.x, ship.pos.y);
+      const id = fam ? fam.id : null;
+      if (id === z.current) { z.pending = null; return; }
+      if (id !== z.pending) { z.pending = id; return; }
+      z.current = id;
+      z.pending = null;
+      if (!fam) return;
+      if (id === z.lastId && z.clock - z.lastAt < 20) return;
+      z.lastId = id;
+      z.lastAt = z.clock;
+      // Ton „info”: kokpit pomija w linii alertów ton „sector” (wejście w strefę idzie do dziennika) —
+      // nazwa rodziny ma być widoczna; do dziennika trafia osobno (logZone).
+      const title = familyTitle(fam);
+      pushZoneMessage(title, 3.2, { label: 'POLE PLANETOID', tone: 'info' });
+      window.hudSystem?.logZone?.(title, `family_${id}`);
+    }
+    window.beltFamilyAt = (x, y) => asteroidBelt?.field?.familyAt?.(x, y) || null;
+    window.__beltFamilyZone = _beltFamilyZone;
+
     function handleZoneTransition(prevZoneId, currentZoneId) {
       if (isGravityWellZoneId(currentZoneId) && currentZoneId !== prevZoneId) {
         triggerGravityWarpBrake(currentZoneId);
@@ -7704,6 +7830,149 @@
     })();
 
     window.ASTEROID_BELT = ASTEROID_BELT;
+    // Strefy HUD / warpa populacji małych ciał (strumień E, 2026-10-12): pas Kuipera — pierścień z definicji
+    // (warp × 0,8, ciemne niebo jak pas), roje Trojańczyków — kształt regionów pola (bez kary warpa).
+    const KUIPER_BELT_ZONE = (() => {
+      const def = getRingBeltDefinition('kuiper');
+      if (!def) return null;
+      const au = getAuToWorldUnits();
+      return { inner: def.innerAU * au, outer: def.outerAU * au };
+    })();
+    const TROJAN_ZONE_BELTS = Object.freeze(['greeks', 'trojans']);
+
+    // =============== MAŁE CIAŁA: Ceres (stolica Unii Pasa), Westa, Pallas, Hygiea, Psyche, Pluton z Charonem ===============
+    // src/data/smallBodies.js (2026-10-12, docs/PLAN-pas-realizm.md — strumień C). Ciała stoją w płaszczyźnie gry (render:
+    // DirectSmallBody w planet3d.assets.js), kąty rozstrzyga resolveSmallBodyAngles z położeń TEGO świata (planety mają
+    // losowe kąty): ciało pasa nie leży na torze kampanii (K-7 → baza piratów na 57 AU — tor liczy fabuła,
+    // StoryGame._shipyardCenter na tych samych danych), przy planecie z księżycami ani przy olbrzymie pasa; Pluton stoi
+    // 90–180° od Neptuna (pas plutonków). Stacje Unii (Ceres — stolica, Westa — huta) to zwykłe stacje gry (rynek, dok,
+    // frakcja z factions.js), ruch v2 dostaje te same kąty w `planetAngles`. Strefy i studnie jak planety (planetOrbitRadii
+    // czyta orbitZone): detectZones, objazdy TRAVEL TO, hamowanie i zwolnienie warpa, soczewka świata, podpisy, radar
+    // (hudRadarWorldFeatures), mapa CIC (window.smallBodies). Skały pola omijają ciała i stacje (field.exclusions).
+    import {
+      SMALL_BODIES, resolveSmallBodyAngles, smallBodyPosition, smallBodyStationOrbit, smallBodyStationAngle,
+      smallBodyZones, smallBodyExclusions
+    } from './src/data/smallBodies.js';
+    import { moonsOf } from './src/data/systemMap.js';
+    import { AsteroidBeltField } from './src/game/asteroidBeltField.js';
+    import { planBeltGiantSites, BELT_GIANTS_CONFIG } from './src/game/asteroidBeltGiants.js';
+
+    // Barwy ciał na radarze i mapie CIC (podkład terenu: tarcza ciała jak planety).
+    const SMALL_BODY_COLORS = Object.freeze({
+      ceres: '#9aa3ad', vesta: '#cbbfa9', pallas: '#90a4b8', hygiea: '#77726a', psyche: '#bdb19d', pluto: '#dcb48a', charon: '#a9a49d'
+    });
+
+    // Tor kampanii = prosta Ziemia → baza piratów, którą wybierze fabuła (ta sama funkcja i te same dane świata).
+    function smallBodyCampaignPath() {
+      try {
+        const deps = { planets: () => planets, sun: () => SUN, belt: () => ASTEROID_BELT, worldUnitsPerAu: () => AU_IN_WORLD_UNITS, ship: () => ship };
+        const base = StoryGame._shipyardCenter.call({ deps, _earth: StoryGame._earth });
+        const earth = planets.find(p => String(p?.id || '').toLowerCase() === 'earth');
+        if (!base || !earth) return null;
+        return { ax: earth.x, ay: earth.y, bx: base.x, by: base.y };
+      } catch (err) {
+        console.warn('[małe ciała] tor kampanii niepoliczony', err);
+        return null;
+      }
+    }
+
+    // Miejsca zajęte: planety ze studniami i księżycami (gry — systemMap; dekoracyjne — Luna na 3 × promienia Ziemi z ringiem)
+    // i olbrzymy pasa (stałe miejsca przy rdzeniach pola — plan jak w createAsteroidBelt, ~50 ms raz na start).
+    function smallBodyKeepOut() {
+      const out = [];
+      for (const planet of planets) {
+        if (!planet) continue;
+        const radii = planetOrbitRadii(planet);
+        let reach = Number(radii.gravityWell) || 0;
+        for (const moon of moonsOf(planet.id)) reach = Math.max(reach, (Number(moon.orbitRadius) || 0) + 12000);
+        if (planet.ringWorldRadius) reach = Math.max(reach, planet.ringWorldRadius * 3 + 12000);
+        out.push({ x: planet.x, y: planet.y, r: reach + 40000 });
+      }
+      try {
+        const field = new AsteroidBeltField({ planets, sunX: SUN.x, sunY: SUN.y, auToWorld: AU_IN_WORLD_UNITS });
+        for (const g of planBeltGiantSites(field, { sunX: SUN.x, sunY: SUN.y, au: AU_IN_WORLD_UNITS, cfg: BELT_GIANTS_CONFIG })) {
+          out.push({ x: g.x, y: g.y, r: 70000 });
+        }
+      } catch (err) {
+        console.warn('[małe ciała] olbrzymy pasa niepoliczone', err);
+      }
+      return out;
+    }
+
+    const _smallBodyReport = {};
+    const _smallBodyPath = smallBodyCampaignPath();
+    const SMALL_BODY_ANGLES = resolveSmallBodyAngles({
+      origin: SUN,
+      au: AU_IN_WORLD_UNITS,
+      planetAngles: Object.fromEntries(planets.map(planet => [String(planet.id), planet.angle])),
+      avoidSegments: _smallBodyPath ? [_smallBodyPath] : [],
+      keepOut: smallBodyKeepOut(),
+      report: _smallBodyReport
+    });
+    if (_smallBodyReport.failed?.length) console.warn('[małe ciała] bez wolnego miejsca (kąt preferowany):', _smallBodyReport.failed.join(', '));
+
+    // Obiekty ciał w grze (pola jak planety: x, y, r, orbitZone, label — czytają je strefy, warp, radar, CIC, render).
+    const smallBodies = SMALL_BODIES.map(def => {
+      const p = smallBodyPosition(def, SUN, AU_IN_WORLD_UNITS, { x: 0, y: 0 }, SMALL_BODY_ANGLES);
+      const zones = smallBodyZones(def);
+      return {
+        id: def.id, name: def.id, label: def.label, def, smallBody: true, type: 'smallBody',
+        x: p.x, y: p.y, r: def.radius, baseR: def.radius,
+        angle: Math.atan2(p.y - SUN.y, p.x - SUN.x),
+        orbitRadius: Math.hypot(p.x - SUN.x, p.y - SUN.y),
+        orbitZone: { inner: zones.inner, outer: zones.outer, gravity: zones.gravityWell },
+        factionId: def.factionId, role: def.role, spectral: def.spectral, parentId: def.parentId || null,
+        color: SMALL_BODY_COLORS[def.id] || '#9aa3ad'
+      };
+    });
+    window.smallBodies = smallBodies;
+    window.SMALL_BODY_ANGLES = SMALL_BODY_ANGLES;
+
+    for (const body of smallBodies) {
+      const ax = body.def.axes || [1, 1, 1];
+      const radius = body.r * Math.max(ax[0], ax[2]);
+      hudRadarWorldFeatures.push({
+        id: body.id, type: 'planet', label: body.label, entity: body, radius, outerRadius: radius,
+        color: body.color, smallBody: true
+      });
+    }
+
+    // Stacje Unii Pasa na orbicie ciał (Ceres — stolica, Westa — huta): jak stacje planet (rynek, dok, frakcja,
+    // trafienia), z bryłą 3D z MODEL_URLS (stations3D.js). Położenie z smallBodies.js (ten sam punkt ma węzeł ruchu v2).
+    function createSmallBodyStations() {
+      const list = [];
+      for (const body of smallBodies) {
+        const spec = body.def.station;
+        if (!spec) continue;
+        const orbitRadius = smallBodyStationOrbit(body.def);
+        const angle = smallBodyStationAngle(body.def, SMALL_BODY_ANGLES);
+        const x = body.x + Math.cos(angle) * orbitRadius;
+        const y = body.y + Math.sin(angle) * orbitRadius;
+        const r = spec.r;
+        const portOffset = r + 40;
+        const factionId = getDefaultStationFaction(spec.id);
+        const hp = body.def.role === 'capital' ? 6000 : 3000;
+        list.push({
+          id: spec.id, name: spec.name, planet: body, smallBody: body.id, factionId, abandoned: !factionId,
+          orbitRadius, angle, speed: 0, r, baseR: r, x, y,
+          ports: [{ x: portOffset, y: 0 }, { x: 0, y: portOffset }, { x: -portOffset, y: 0 }, { x: 0, y: -portOffset }],
+          style: body.def.role === 'capital' ? 'shipyard' : 'hexHub',
+          warpGate: { x: x + 220, y, offset: { x: 220, y: 0 } },
+          hp, maxHp: hp, hitFlash: 0, hitR: Math.round(r * 2.2),
+          berths: spec.berths
+        });
+      }
+      return list;
+    }
+
+    // Skały pola nie leżą w ciele ani w stacji (pass ortho rysuje się nad ciałem): wyłączenia pola obok olbrzymów.
+    function applySmallBodyExclusions(belt) {
+      const field = belt?.field;
+      if (!field || typeof field.setExclusions !== 'function') return;
+      const giants = typeof belt.giants?.exclusions === 'function' ? belt.giants.exclusions() : [];
+      field.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
+    }
+
     const STATION_STYLES = ['ringGate', 'hexHub', 'triRing', 'solarPetals', 'shipyard', 'tradeSpindle'];
 
     let stations = planets.map(pl => {
@@ -7760,6 +8029,7 @@
         ...(ringPort ? { ringPort: ringPort.key, isCollidable: false, terminalRange: ringPort.terminalRange } : {})
       };
     });
+    stations.push(...createSmallBodyStations());   // stacje Unii Pasa (blok „MAŁE CIAŁA”)
     window.stations = stations;
     publishGameState({ stations });
     window.USE_STATION_3D = true;
@@ -10249,12 +10519,19 @@
 
     // Koło trybów (ŚPM): otwarcie, kierunek, puszczenie.
     // Koło rysuje się na środku ekranu, nad polem bitwy (jak w Crysis; przy kursorze wchodziło pod kopułę
-    // HUD-u), a sektor wybiera RUCH myszy od miejsca wciśnięcia ŚPM. Rysunek: _drawShipModeWheel w render().
-    const SHIP_MODE_WHEEL_R = 112;
+    // HUD-u), a sektor wybiera RUCH myszy od miejsca wciśnięcia ŚPM. Rysunek i animacje:
+    // src/ui/shipModeWheel.js (_drawShipModeWheel w render()); puszczenie zgłasza animacji wynik.
+    const shipModeWheelFx = createModeWheelFx(SHIP_MODE_IDS.length);
+    const shipModeWheelItems = buildShipModeWheelItems();
+    const _shipModeWheelView = {
+      x: 0, y: 0, scale: 1, W: 0, H: 0, items: shipModeWheelItems, current: -1, px: 0, py: 0, deadzone: SHIP_MODE_DEADZONE
+    };
     function openShipModeWheelAt(x, y) {
       if (!gameStarted || stationUI.open || StoryGame.blocksInput) return false;
-      const m = SHIP_MODE_WHEEL_R + 14;
-      openShipModeWheel(shipModes, W * 0.5, clamp(H * 0.42, m, Math.max(m, H - m)), performance.now() / 1000, x, y);
+      // Środek: koło z podziałką nad nim i opisem trybu pod nim mieści się na ekranie.
+      const ext = modeWheelExtent(modeWheelScale(W, H));
+      const top = ext.up + 8, bottom = Math.max(top, H - ext.down - 8);
+      openShipModeWheel(shipModes, W * 0.5, clamp(H * 0.42, top, bottom), performance.now() / 1000, x, y);
       return true;
     }
     function updateShipModeWheelHover() {
@@ -10263,8 +10540,17 @@
       w.hover = shipModeFromWheelVector(mouse.x - w.ox, mouse.y - w.oy);
     }
     function closeShipModeWheel() {
-      const id = releaseShipModeWheel(shipModes, performance.now() / 1000);
-      if (id) setShipMode(id);
+      const pointed = shipModes.wheel.hover;
+      const now = performance.now() / 1000;
+      const id = releaseShipModeWheel(shipModes, now);
+      if (id) {
+        // Sektor albo stuknięcie (poprzedni tryb); tryb niedostępny — odmowa (koło drży, sektor czerwienieje).
+        const kind = !setShipMode(id) ? 'deny' : pointed >= 0 ? 'select' : 'tap';
+        noteModeWheelClose(shipModeWheelFx, kind, SHIP_MODE_IDS.indexOf(id), now);
+      } else {
+        // Wskazany sektor bieżącego trybu — potwierdzenie; bez sektora — koło się zwija.
+        noteModeWheelClose(shipModeWheelFx, pointed >= 0 ? 'select' : 'cancel', pointed, now);
+      }
     }
     // Ruch i puszczenie ŚPM na całym oknie: kursor nad panelem HUD-u (samouczek, kokpit) nie daje zdarzeń
     // kanwie, a koło musi się zamknąć zawsze (inaczej wisiałoby otwarte do następnego ŚPM).
@@ -10747,7 +11033,7 @@
           // Laser PD NPC na rakiecie (resolvePdBeamHit → kind 'rocket'): wiązka kończy się na niej, rakieta
           // zestrzelona (kanwa i 3D), bez obrażeń kadłubów.
           if (beamHit.kind === 'rocket') {
-            killRocketThreat(beamHit.entity, 'laser', 1.2);
+            killRocketThreat(beamHit.entity, 'laser', 1.2, damage);
             beamHit.entity = null;
             beamHit.kind = null;
           }
@@ -11720,7 +12006,7 @@
     }
     // Ensure Three.js modules are loaded before initializing 3D objects
     window.addEventListener('DOMContentLoaded', () => {
-      const planetInitResult = initPlanets3D(planets, SUN);
+      const planetInitResult = initPlanets3D(planets, SUN, { smallBodies });   // + małe ciała (blok „MAŁE CIAŁA”)
       initHaloRings();
       applyHaloRingDevSpawn();
       startMenuBackdrop();
@@ -11765,12 +12051,96 @@
       if (!asteroidBelt) {
         try {
           asteroidBelt = createAsteroidBelt({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
+          applySmallBodyExclusions(asteroidBelt);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
+          // Rodziny Westy i Hygiei przy ciałach tego świata (kąty z resolveSmallBodyAngles — A2, asteroidFamilies.js);
+          // lista szczytów pól (~20 ms) teraz, nie w klatce pierwszego wlotu w pas.
+          asteroidBelt.field?.setSmallBodyAnchors?.(smallBodies);
+          asteroidBelt.field?.familyPeaks?.();
           window.__asteroidBelt = asteroidBelt;
         } catch (err) {
           console.error('[AsteroidBelt] start nie wyszedł', err);
         }
       }
     });
+
+    // ── PRZELOT NEA (APOPHIS) — strumień E2, 2026-10-12 (docs/PLAN-pas-realizm.md § „E: projekt”) ──────────
+    // Logika (bramki, tor omijający księżyc Ziemi, obrót skały): src/game/neaFlyby.js; obraz — skała z banku pasa
+    // materiałem pasa (src/3d/neaFlyby3D.js; pas budzi koło `wake` — AsteroidBeltField.wakeSpots); radar — lista
+    // `bodies` zbieracza; komunikaty z etykietą NEA. Tylko gra swobodna (sesja, w której ruszyła kampania, nigdy),
+    // raz na sesję po ≥ 20 min czasu gry, gdy gracz jest przy Ziemi; `?apophis` — start po kilku s. Bez kolizji.
+    const NEA_FLYBY_DEV = (() => { try { return new URLSearchParams(location.search).has('apophis'); } catch { return false; } })();
+    const neaFlyby = new NeaFlyby({ dev: NEA_FLYBY_DEV, rand: () => fxRandom.next() });
+    let neaFlyby3D = null;
+    let neaCampaignSession = false;   // kampania ruszyła w tej sesji — przelotu nie będzie
+    const _neaRadarBodies = [];
+    const _neaCtx = { simTime: 0, renderTime: 0, campaign: false, blocksInput: false, playerX: 0, playerY: 0,
+      earth: null, moon: null, planets: null };
+    window.NeaFlyby = neaFlyby;
+
+    function setupNeaFlyby3D() {
+      if (neaFlyby3D || !asteroidBelt) return;
+      neaFlyby3D = createNeaFlyby3D({ core: Core3D, getBelt: () => asteroidBelt, getFlyby: () => neaFlyby });
+      if (asteroidBelt.field && !asteroidBelt.field.wakeSpots.includes(neaFlyby.wake)) asteroidBelt.field.wakeSpots.push(neaFlyby.wake);
+      window.NeaFlyby3D = neaFlyby3D;
+    }
+
+    // Księżyc Ziemi z renderu (planet3d.assets.js: DirectMoon przy ringu — krąży ~113 tys. j., okres 220 s): położenie
+    // w chwili startu przelotu, promień poświaty. Tylko odczyt sceny (raz na start).
+    function neaEarthMoonState() {
+      let halo = null;
+      Core3D.scene?.traverse?.((o) => { if (!halo && o.name === 'MoonHalo:moon') halo = o; });
+      const g = halo?.parent;
+      if (!g) return null;
+      return { x: g.position.x, y: -g.position.y, r: Math.max(Number(halo.scale?.x) || 0, 1) * 1.075 };
+    }
+
+    // Inne planety: zasięg (studnia, księżyce, ring × 3) jak w planie miejsc małych ciał + zapas planisty.
+    function neaOtherPlanets(earth) {
+      const out = [];
+      for (const p of planets) {
+        if (!p || p === earth || !Number.isFinite(p.x)) continue;
+        let reach = Number(planetOrbitRadii(p).gravityWell) || 0;
+        for (const moon of moonsOf(p.id)) reach = Math.max(reach, (Number(moon.orbitRadius) || 0) + 12000);
+        if (p.ringWorldRadius) reach = Math.max(reach, p.ringWorldRadius * 3 + 12000);
+        out.push({ x: p.x, y: p.y, r: reach + neaFlyby.tune.planetClear });
+      }
+      return out;
+    }
+
+    function stepNeaFlyby() {
+      if (!gameStarted || neaFlyby.state === 'done') return;
+      if (StoryGame.active) neaCampaignSession = true;
+      const earth = planets.find(p => p?.id === 'earth');
+      const c = _neaCtx;
+      c.simTime = SimClock.sim;
+      c.renderTime = SimClock.render;
+      c.campaign = neaCampaignSession || StoryGame.active;
+      c.blocksInput = !!StoryGame.blocksInput;
+      c.playerX = ship?.pos?.x;
+      c.playerY = ship?.pos?.y;
+      c.earth = earth || null;
+      if (neaFlyby.state === 'waiting') {
+        // Bramka przed planem (plan czyta scenę i planety — tylko w chwili startu).
+        neaFlyby.reason = neaFlyby.blockReason(c);
+        if (neaFlyby.reason) return;
+        setupNeaFlyby3D();
+        c.moon = neaEarthMoonState();
+        c.planets = earth ? neaOtherPlanets(earth) : [];
+      }
+      const ev = neaFlyby.update(c);
+      if (ev === 'start') {
+        pushZoneMessage(neaFlybyMessage('start', neaFlyby), 8, { label: 'NEA', tone: 'status' });
+        if (!neaFlyby.plan.ok) console.warn('[NEA] tor bez pełnego odstępu od księżyca / planet', neaFlyby.plan);
+      } else if (ev === 'closest') {
+        pushZoneMessage(neaFlybyMessage('closest', neaFlyby), 5, { label: 'NEA', tone: 'status' });
+      }
+    }
+
+    // Radar (zbieracz ~10 Hz): ciała naturalne w ruchu — dziś przelot NEA.
+    function neaFlybyRadarBodies(out) {
+      if (neaFlyby.active && neaFlyby.rock.alive) out.push(neaFlyby.rock);
+      return out;
+    }
 
     function waitForPlanetsReady() {
       if (planetScene3D || planetStationsReady) return Promise.resolve();
@@ -11782,6 +12152,142 @@
     // 'screen' szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
     // radialnego gradientu robiła koncentryczne prążki na ekranie.
 
+
+    // =============== KOMETY (strumień B, docs/PLAN-pas-realizm.md) ===============
+    // Dane: src/data/comets.js (Halley, Hale–Bopp, 67P, Tempel 1 — prawdziwe orbity, AU → AU mapy), logika:
+    // src/game/comets.js (orbita, aktywność, warkocze), src/game/cometField.js (miejsca, jądra z workerów, obrót,
+    // kolizje), obraz: src/3d/comets/ (arkusz gazu i jądro w passie ortho Core3D). Komety STOJĄ na orbitach jak planety;
+    // miejsce = peryhelium obrócone tak, żeby jądro z komą nie wypadło przy planecie z księżycami, olbrzymie pasa,
+    // małym ciele (blok „MAŁE CIAŁA” — ten sam zbiór stref), punktach L4 / L5 Jowisza ani na torze kampanii K-7 → baza
+    // piratów. Jądro = przeszkoda jak olbrzymy pasa (odbicie, bez obrażeń), pociski gasną w obrysie; mgła wojny —
+    // teren (rysowane zawsze); radar — podkład (cecha `comet` w hudRadarWorldFeatures), mapa CIC — window.cometLandmarks.
+    // Soczewka świata warpa komet nie przenosi (stoją w płaszczyźnie gry jak pas), rulon gnie arkusz (siatka 96 × 48).
+    import { CometField } from './src/game/cometField.js';
+    import { trojanKeepOut } from './src/game/comets.js';
+    import { CometsView, COMET_VIEW_TUNE } from './src/3d/comets/comets3D.js';
+
+    function cometKeepOut() {
+      const au = AU_IN_WORLD_UNITS;
+      const out = typeof smallBodyKeepOut === 'function' ? smallBodyKeepOut() : [];
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
+      for (const body of bodies) out.push({ x: body.x, y: body.y, r: (Number(body.r) || 0) * 3 + 2 * au });
+      const jupiter = planets.find(p => String(p?.id || '').toLowerCase() === 'jupiter');
+      if (jupiter) out.push(...trojanKeepOut(jupiter, SUN.x, SUN.y, 9 * au));
+      const path = typeof smallBodyCampaignPath === 'function' ? smallBodyCampaignPath() : null;
+      if (path) {
+        const n = Math.max(2, Math.ceil(Math.hypot(path.bx - path.ax, path.by - path.ay) / (1.5 * au)));
+        for (let i = 0; i <= n; i++) out.push({ x: path.ax + (path.bx - path.ax) * i / n, y: path.ay + (path.by - path.ay) * i / n, r: 2.5 * au });
+      }
+      return out;
+    }
+
+    // Gęste pola pasa w ich PRAWDZIWYM kształcie (pas główny, Hildy, roje Trojańczyków 25°–105° od Jowisza, Kuiper,
+    // Hungarie — `penetrationOf`, ten sam kształt co strefa HUD „Jupiter Trojans”); NEA nie — komety i NEA dzielą
+    // wewnętrzny układ. Koła L4 / L5 w cometKeepOut zostają jako zapas.
+    const COMET_AVOID_BELTS = Object.freeze(['main', 'hildas', 'greeks', 'trojans', 'kuiper', 'plutinos', 'kuiper_cold', 'hungarias']);
+    function cometAvoidBelts() {
+      try {
+        const field = new AsteroidBeltField({ planets, sunX: SUN.x, sunY: SUN.y, auToWorld: AU_IN_WORLD_UNITS });
+        const pad = 1.5 * AU_IN_WORLD_UNITS;
+        return (x, y, need) => field.penetrationOf(COMET_AVOID_BELTS, x, y) > -(need + pad);
+      } catch (err) {
+        console.warn('[Komety] pola pasa niepoliczone — rozstawienie bez nich', err);
+        return null;
+      }
+    }
+
+    let cometField = null;
+    try {
+      cometField = new CometField({ sun: SUN, au: AU_IN_WORLD_UNITS, keepOut: cometKeepOut(), avoid: cometAvoidBelts() });
+      if (cometField.stats.blocked.length) console.warn('[Komety] bez wolnego miejsca (ostatni kąt):', cometField.stats.blocked.join(', '));
+      cometField.build();
+    } catch (err) {
+      console.error('[Komety] start nie wyszedł', err);
+      cometField = null;
+    }
+    if (typeof window !== 'undefined') {
+      window.CometField = cometField;
+      window.CometTune = COMET_VIEW_TUNE;
+      window.cometLandmarks = cometField ? cometField.landmarks() : [];
+    }
+    for (const c of ((typeof window !== 'undefined' && window.cometLandmarks) || [])) {
+      hudRadarWorldFeatures.push({ id: `comet-${c.id}`, type: 'comet', label: c.label, entity: c, radius: c.radius, outerRadius: c.radius, color: '#9fd0ef', comet: c });
+    }
+    // Radar: jądro komety jako kontakt (kanał env.bodies — ciała naturalne, neutralne; podpis i klasa KOM), obok
+    // podkładu terenu (koma, warkocze). Obiekty stałe (komety stoją) — bez alokacji na zebranie.
+    // (var — funkcja jest wołana z bloku radaru wyżej w pliku; lista powstaje przy pierwszym zebraniu)
+    var _cometRadar = null;
+    function cometRadarBodies(out) {
+      if (!_cometRadar) {
+        const list = typeof window !== 'undefined' ? window.cometLandmarks : null;
+        if (!Array.isArray(list)) return out;
+        // podpis śladu radaru = „NAZWA KLASA” (radarDisplay.js) → „HALLEY KOM”
+        _cometRadar = list.map(c => ({
+          x: c.x, y: c.y, vx: 0, vy: 0, radius: c.radius, dead: false,
+          radarName: String(c.radarName || c.id).toUpperCase(), radarCls: 'KOM', landmark: c
+        }));
+      }
+      for (let i = 0; i < _cometRadar.length; i++) {
+        const b = _cometRadar[i];
+        b.radius = b.landmark.radius;
+        out.push(b);
+      }
+      return out;
+    }
+
+    // obrys jądra znany po budowie (worker) — promień punktu orientacyjnego z obrysu
+    if (cometField) {
+      cometField.build().then(() => {
+        for (const c of ((typeof window !== 'undefined' && window.cometLandmarks) || [])) c.radius = c.site.reach;
+        for (const f of hudRadarWorldFeatures) if (f && f.type === 'comet') f.radius = f.outerRadius = f.comet.radius;
+      });
+    }
+
+    let cometsView = null;
+    // Ekran ładowania (startGame): obraz komet, wpis rozgrzewki (arkusz i jądro — jądro na siatce zastępczej o tym
+    // samym układzie atrybutów, jeśli worker jeszcze liczy), jądra z workerów z limitem czasu.
+    async function prepareComets3D() {
+      if (!cometField || cometsView || !Core3D.isInitialized) return;
+      try {
+        cometsView = new CometsView(Core3D, cometField);
+        window.__cometsView = cometsView;
+        Core3D.warmup.add({ name: 'komety (arkusz gazu, jądra)', objects: () => (cometsView ? cometsView.warmupMeshes() : []) });
+        await Promise.race([cometField.build(), new Promise(resolve => setTimeout(resolve, 4000))]);
+      } catch (err) {
+        console.error('[Komety] obraz', err);
+      }
+    }
+
+    // render(): obrót jąder w czasie renderu (w pauzie stoi), fazy gazu, odcinanie poza kadrem.
+    function updateComets3D(cam) {
+      if (!cometField || !cometsView) return;
+      cometField.update(SimClock.render);
+      cometsView.update(SimClock.render, cam, (splitScreenMode && camera2) ? camera2 : null);
+    }
+
+    // physicsStep: jądra jako przeszkody (gracz, P2, NPC — jak olbrzymy pasa); NPC daleko od komet pomijane tanio.
+    function stepShipCometCollisions() {
+      if (!cometField || cometField.readyCount === 0) return;
+      cometField.update(SimClock.sim);
+      if (ship && !ship.dead && !ship.noHullCollisions) cometField.collideShip(ship);
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) cometField.collideShip(player2Ship);
+      const sites = cometField.sites;
+      const body = _npcCollisionBody;
+      for (let i = 0; i < npcs.length; i++) {
+        const npc = npcs[i];
+        if (!npcCollidesWithWorld(npc)) continue;
+        const nx = Number.isFinite(npc.x) ? npc.x : (npc.pos?.x ?? 0);
+        const ny = Number.isFinite(npc.y) ? npc.y : (npc.pos?.y ?? 0);
+        let close = false;
+        for (let k = 0; k < sites.length; k++) {
+          const s = sites[k];
+          const lim = s.reach + 6000;
+          if ((nx - s.x) * (nx - s.x) + (ny - s.y) * (ny - s.y) < lim * lim) { close = true; break; }
+        }
+        if (!close) continue;
+        if (cometField.collideShip(loadNpcCollisionBody(body, npc)) > 0) storeNpcCollisionBody(body, npc);
+      }
+    }
 
     // =============== Bullets & effects ===============
     window.CANVAS_WEAPON_VFX_ENABLED = true;
@@ -15569,7 +16075,8 @@
         capacityMultiplier: TRAFFIC_V2_CAPACITY_MULTIPLIER,
         piracyPressure: 1,
         origin: { x: SUN.x, y: SUN.y },
-        planetAngles: Object.fromEntries(planets.map(planet => [String(planet.id), planet.angle])),
+        // + kąty małych ciał tego świata (Ceres, Westa — węzły ruchu przy stacjach Unii; blok „MAŁE CIAŁA”)
+        planetAngles: { ...Object.fromEntries(planets.map(planet => [String(planet.id), planet.angle])), ...SMALL_BODY_ANGLES },
         planetScale: PLANET_SCALE,
         sunRadius: SUN.r,
         stations: stationSpecs,
@@ -16272,7 +16779,10 @@
 
     function getCruiseGravityObstacles(target, start = null) {
       const out = [];
-      for (const planet of planets) {
+      // planety i małe ciała (blok „MAŁE CIAŁA” — studnie Ceres, Westy… jak planet)
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
+      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
+        const planet = i < planets.length ? planets[i] : bodies[i - planets.length];
         if (!planet) continue;
         const radii = planetOrbitRadii(planet);
         let radius = Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer;
@@ -16484,6 +16994,7 @@
     let _warpFlybyCount = 0;
 
     function warpBodyRadius(planet) {
+      if (planet?.smallBody) return Number(planet.r) || 100;   // małe ciało: promień w płaszczyźnie gry (bez ×4,5 planet tła)
       return haloRingKey(planet) ? resolveRingPlanetWorldRadius(planet) : (Number(planet?.r) || 100) * WARP_BODY_RADIUS_MUL;
     }
 
@@ -16501,6 +17012,11 @@
         if (!planet) continue;
         const d = warpWellEdgeDist(planet, x, y);
         if (d < bestD) { bestD = d; best = planet; }
+      }
+      // małe ciała (blok „MAŁE CIAŁA”): cel / start skoku przy Ceres, Westie… (soczewka świata trzyma cel przy krawędzi kadru)
+      for (const body of ((typeof window !== 'undefined' && window.smallBodies) || [])) {
+        const d = warpWellEdgeDist(body, x, y);
+        if (d < bestD) { bestD = d; best = body; }
       }
       return best;
     }
@@ -16525,7 +17041,9 @@
       warp.originBody = origin;
       warp.targetBody = target && target !== origin ? target : null;
       _warpFlybyCount = 0;
-      for (const planet of planets) {
+      const flyBodies = (typeof window !== 'undefined' && window.smallBodies) || [];   // planety i małe ciała (blok „MAŁE CIAŁA”) — zwolnienie przy mijanym ciele
+      for (let i = 0, n = planets.length + flyBodies.length; i < n; i++) {
+        const planet = i < planets.length ? planets[i] : flyBodies[i - planets.length];
         if (!planet || planet === origin || planet === warp.targetBody) continue;
         let b = _warpFlybyBodies[_warpFlybyCount];
         if (!b) { b = { planet: null, x: 0, y: 0, r: 1 }; _warpFlybyBodies[_warpFlybyCount] = b; }
@@ -16581,7 +17099,9 @@
 
     function getTravelWells() {
       const out = [];
-      for (const planet of planets) {
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];   // planety i małe ciała (blok „MAŁE CIAŁA”)
+      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
+        const planet = i < planets.length ? planets[i] : bodies[i - planets.length];
         if (!planet) continue;
         const radii = planetOrbitRadii(planet);
         const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
@@ -21581,11 +22101,13 @@
     // Mgła wojny dla wrogich rakiet 3D (ciwsStep → rocketSystem3D.syncThreats): punkt w zasięgu wzroku strony gracza.
     const _pdHostileRocketVisible = (x, y) => SensorSystem.pointVisible(x, y);
 
-    // Rakieta ZESTRZELONA przez obronę punktową (CIWS, laser, flak — gracza i NPC). Rakieta 3D (zastępnik
-    // z syncThreats) — rocketSystem3D.intercept (bez detonacji głowicy, obraz z reżysera rakiet); rakieta /
-    // torpeda kanwy — efekt trafienia w układzie wyrzutni i life = -1 (zdejmuje ją jej iteracja pętli pocisków).
-    function killRocketThreat(rb, cause, fxScale) {
-      if (rb.rocket3d === true) return window.rocketSystem3D?.intercept(rb, cause) === true;
+    // Rakieta TRAFIONA przez obronę punktową (CIWS, laser, flak — gracza i NPC); true = trafienie (pocisk CIWS
+    // zużyty). Rakieta 3D (zastępnik z syncThreats) — rocketSystem3D.pdHit: `damage` (obrażenia broni PD, flak ze
+    // spadkiem w kuli) × mnożnik przyczyny z ROCKET_PD_TUNE zdejmuje punkty życia rakiety, przy zerze zestrzelenie bez
+    // detonacji głowicy (obraz z reżysera rakiet); rakieta / torpeda kanwy — każde trafienie zabija: efekt trafienia
+    // w układzie wyrzutni i life = -1 (zdejmuje ją jej iteracja pętli pocisków).
+    function killRocketThreat(rb, cause, fxScale, damage) {
+      if (rb.rocket3d === true) return (window.rocketSystem3D?.pdHit(rb, cause, damage) || 0) > 0;
       if (!(rb.life > 0)) return false;
       ActiveCarrier.set(writeCarrierVelocity(rb.ivx, rb.ivy, rb.clock, SimClock.sim, _impactCarrier));
       spawnBulletImpactEffect(rb, rb.x, rb.y, fxScale);
@@ -21641,14 +22163,18 @@
         let bestDistSq = range * range;
 
         // Priorytet 1: rakiety/torpedy wroga w zasięgu (intercept) — z bufora,
-        // porównania na kwadratach dystansu (bez Math.hypot per pocisk).
+        // porównania na kwadratach dystansu (bez Math.hypot per pocisk). Flak bierze rakietę dopiero w paśmie
+        // obrony punktowej (ułamek zasięgu działka — ROCKET_PD_TUNE.flakRocketRange), myśliwce — w pełnym zasięgu.
+        const rocketRange = isFlak ? range * (Number(window.RocketPdTune?.flakRocketRange) || 1) : range;
+        let rocketDistSq = rocketRange * rocketRange;
         for (let bi = 0; bi < _pdEnemyRocketBuffer.length; bi++) {
           const rb = _pdEnemyRocketBuffer[bi];
           if (rb.life <= 0) continue;
           const ddx = rb.x - base.x, ddy = rb.y - base.y;
           const d2 = ddx * ddx + ddy * ddy;
-          if (d2 < bestDistSq) { bestDistSq = d2; target = rb; }
+          if (d2 < rocketDistSq) { rocketDistSq = d2; target = rb; }
         }
+        if (target) bestDistSq = rocketDistSq;
 
         // Priorytet 2: myśliwce. Każde PD szuka najpierw SAMYCH myśliwców —
         // flakowi pancerz okrętu zjada ~85% odłamków, a CIWS/laser robi
@@ -21735,7 +22261,7 @@
               const lcx = Math.cos(gun.angle);
               const lcy = Math.sin(gun.angle);
               WeaponFx.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
-              killRocketThreat(target, 'laser', 1.2);
+              killRocketThreat(target, 'laser', 1.2, (stats?.dmg ?? wDef.baseDamage) || LASER_PD_DAMAGE);
             }
             gun.cd = fireInterval;
           } else {
@@ -21916,8 +22442,12 @@
         const rbFriendly = (rb.owner === 'player' || rb.owner === 'player2');
         if (rbFriendly === shooterFriendly) continue;        // własnej salwy nie zestrzeliwujemy
         const ddx = rb.x - b.x, ddy = rb.y - b.y;
-        if (ddx * ddx + ddy * ddy > radiusSq) continue;
-        killRocketThreat(rb, 'flak', 0.9);   // kanwa: sprząta go własna iteracja pętli pocisków
+        const d2 = ddx * ddx + ddy * ddy;
+        if (d2 > radiusSq) continue;
+        // Odłamki ze spadkiem jak w collectFlakBurstHits (pełne w środku, `flakFalloff` na brzegu kuli).
+        const fall = Number.isFinite(b.flakFalloff) ? b.flakFalloff : 0.35;
+        const flakDmg = (Number(b.damage) || 0) * (1 - (1 - fall) * Math.sqrt(d2) / radius);
+        killRocketThreat(rb, 'flak', 0.9, flakDmg);   // kanwa: sprząta go własna iteracja pętli pocisków
       }
 
       // 3. Efekt: pęknięcie z dema bronie-webgpu (WeaponFx, zadanie 17 — kula odłamków, czarny
@@ -22379,12 +22909,17 @@
     function editorFuelTanksFor(hullId) {
       const now = performance.now();
       if (now - _fuelEditorAt > 5000) { _fuelEditorShips = readShipsEditorConfigFromStorage(); _fuelEditorAt = now; }
-      const alias = toEditorHullAlias(hullId);
-      if (!alias) return null;
-      const own = _fuelEditorShips?.[alias]?.fuelTanks;
-      if (Array.isArray(own) && own.length) return own;
-      const def = SHIP_EDITOR_DEFAULTS?.ships?.[alias]?.fuelTanks;
-      return Array.isArray(def) && def.length ? def : null;
+      const keys = getEditorHullConfigKeys(hullId);
+      if (!keys.length) return null;
+      for (const key of keys) {
+        const own = _fuelEditorShips?.[key]?.fuelTanks;
+        if (Array.isArray(own) && own.length) return own;
+      }
+      for (const key of keys) {
+        const def = SHIP_EDITOR_DEFAULTS?.ships?.[key]?.fuelTanks;
+        if (Array.isArray(def) && def.length) return def;
+      }
+      return null;
     }
     function attachEntityFuelTank(entity, hullId) {
       if (!entity?.beamHull) return;
@@ -22917,7 +23452,7 @@
             if (!ciwsShotHitsRocket(b, bx0, by0, rb, span, reach)) continue;
             // Trafiono rakietę! Kanwa: zniknie w swojej iteracji pętli na checku life<=0, jej odłamki lecą
             // w układzie wyrzutni (ivx/ivy); 3D: rocketSystem3D.intercept.
-            if (!killRocketThreat(rb, 'ciws', 1.3)) continue;
+            if (!killRocketThreat(rb, 'ciws', 1.3, b.damage)) continue;
             removeBulletAt(i); // usuń pocisk CIWS
             intercepted = true;
             break;
@@ -23256,6 +23791,13 @@
           continue;
         }
         if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
+        // --- JĄDRA KOMET (blok „KOMETY”): pocisk gaśnie w obrysie jądra jak w skale olbrzyma.
+        if (!hitNPC && cometField && cometField.readyCount > 0 && cometField.pointBlocked(b.x, b.y)) {
+          writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'asteroid');
+          spawnBulletImpactEffect(b, b.x, b.y, 0.9, _impactHit);
+          removeBulletAt(i);
+          continue;
+        }
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
@@ -24642,6 +25184,7 @@
         st.r = (st.baseR || st.r) * scale;
       }
       updateZoneState(dt);
+      updateBeltFamilyZone(dt);
       ship.shadowFactor = 0;
       ship.sunExposure = 1;
       const solarExposureFactor = 1;
@@ -25671,6 +26214,8 @@
       // Kolizje statków z asteroidami — przed destruktorem, żeby wypchnięcie ze
       // skały zadziałało przed kolizjami heksów w tym samym podkroku.
       stepShipAsteroidCollisions(dt);
+      // Jądra komet (blok „KOMETY”) — przeszkody jak olbrzymy pasa.
+      stepShipCometCollisions();
       // Ring „Halo” (Ziemia, Mars): płyta podłogi przecina płaszczyznę gry,
       // przez ring prowadzą tranzyty; ściany hal K-7 i zatok portu dla graczy.
       stepShipRingCollisions(dt);
@@ -26489,11 +27034,22 @@
     const _miningOverlayC = [0, 0, 0];
     const _miningOverlayS = { x: 0, y: 0 };
     const _miningOverlayHit = {};
+    // Skaner rumowisk: głazy z rudą per ciało (WeakMap — ciało zebrane / zwolnione znika samo).
+    const _miningRubbleCache = new WeakMap();
+    // Podpisy głazów rdzeniowych: bliskie na ekranie (ta sama ruda) scalane w jeden „GŁAZY RDZENIOWE ×n”
+    // z sumą rudy — na małej kupie kilka podpisów leżało jeden na drugim. Najwyżej 14 (limit znaczników).
+    const _miningBoulderLabelX = new Float64Array(14);
+    const _miningBoulderLabelY = new Float64Array(14);
+    const _miningBoulderLabelOre = new Float64Array(14);
+    const _miningBoulderLabelN = new Int32Array(14);
+    const _miningBoulderLabelRes = new Array(14).fill(null);
     const _miningOverlayDash = [6, 5];
     const _miningOverlayNoDash = [];
     // Liczba z przecinkiem (jedno miejsce po przecinku); wymaganie ładunku — najmniej 0,1 („≥ 0,0” myliło).
     function fmtMining1(v) { return (Math.round(v * 10) / 10).toFixed(1).replace('.', ','); }
     function fmtMiningNeed(v) { return fmtMining1(Math.max(0.1, v)); }
+    // Masa rudy w podpisie: od 0,1 t w tonach, mniej — w kilogramach (głazy małych kup pokazywały „0,0 t”).
+    function fmtMiningMass(v) { return v >= 0.095 ? `${fmtMining1(v)} t` : `${Math.max(1, Math.round(v * 1000))} kg`; }
     // Rdzeń rysuje ciało, które go zawiera; gdy nie ma go żadne (wykopany) — ciało
     // pierwotne (pokolenie 0) tej skały, żeby znacznik nie znikał przy dnie otworu.
     function miningBodyHoldsCore(b) { return b.sample(b.core.x, b.core.y, b.core.z) >= 0.3; }
@@ -26540,6 +27096,78 @@
         renderCtx.fillStyle = 'rgba(210,225,235,0.85)';
         renderCtx.fillText(`głęb. ${Math.round(depth)} j. · ładunek z rdzenia ≥ ${fmtMiningNeed(need)}`, s.x, s.y - rr - 4);
       }
+      // Rumowiska: głazy rdzeniowe (lita ruda) i wzbogacone — przeliczane przy zmianie ciała.
+      let rubbleMarks = 0;
+      let boulderLabels = 0;
+      for (let bi = 0; bi < bodies.length && rubbleMarks < 14; bi++) {
+        const b = bodies[bi];
+        if (!b.rubble || !b.oreTypeId) continue;
+        // Przegląd siatki kupy (~0,3 ms): przy zmianie ciała, ale najwyżej 4 razy na sekundę czasu
+        // platformy (laser zmienia ciało w każdym kroku).
+        let cache = _miningRubbleCache.get(b);
+        if (!cache || (cache.version !== b.version && (rig.time - cache.t >= 0.25 || rig.time < cache.t))) {
+          cache = cache || { version: -1, t: 0, list: [] };
+          m.oreBoulders(b, cache.list);
+          cache.version = b.version;
+          cache.t = rig.time;
+          _miningRubbleCache.set(b, cache);
+        }
+        const res = RESOURCES[b.oreRes];
+        // Dwa przejścia: najpierw głazy rdzeniowe (limit znaczników nie może ich zabrać), potem wzbogacone.
+        for (let k = 0, n = cache.list.length; k < 2 * n && rubbleMarks < 14; k++) {
+          const o = cache.list[k % n];
+          if (o.grade !== (k < n ? 2 : 1) || (o.grade < 2 && o.mass < 1)) continue;
+          worldToScreenInto(o.x, -o.y, cam, s);
+          const rr = Math.max(6, o.r * zoomNow);
+          if (s.x < -rr || s.y < -rr || s.x > W + rr || s.y > H + rr) continue;
+          rubbleMarks++;
+          renderCtx.setLineDash(_miningOverlayDash);
+          renderCtx.strokeStyle = o.grade === 2 ? 'rgba(255,200,120,0.85)' : 'rgba(200,215,140,0.6)';
+          renderCtx.lineWidth = o.grade === 2 ? 1.5 : 1;
+          renderCtx.beginPath(); renderCtx.arc(s.x, s.y, rr, 0, Math.PI * 2); renderCtx.stroke();
+          renderCtx.setLineDash(_miningOverlayNoDash);
+          // Podpis tylko przy głazie rdzeniowym (lita ruda); wzbogacone — sam okrąg (kilkanaście
+          // podpisów nakładało się na kupie). Bliskie podpisy scala przejście niżej.
+          if (o.grade !== 2) continue;
+          _miningBoulderLabelX[boulderLabels] = s.x;
+          _miningBoulderLabelY[boulderLabels] = s.y - rr - 5;
+          _miningBoulderLabelOre[boulderLabels] = o.ore;
+          _miningBoulderLabelN[boulderLabels] = 1;
+          _miningBoulderLabelRes[boulderLabels] = res;
+          boulderLabels++;
+        }
+      }
+      // Scalanie: para podpisów bliskich na ekranie (ta sama ruda) → jeden (środek ważony liczbą głazów,
+      // nad najwyższym); po scaleniu od nowa — przesunięty podpis mógł zbliżyć się do innego.
+      for (let i = 0; i < boulderLabels; i++) {
+        for (let j = i + 1; j < boulderLabels; j++) {
+          if (_miningBoulderLabelRes[j] !== _miningBoulderLabelRes[i]
+            || Math.abs(_miningBoulderLabelX[j] - _miningBoulderLabelX[i]) >= 200
+            || Math.abs(_miningBoulderLabelY[j] - _miningBoulderLabelY[i]) >= 28) continue;
+          const ni = _miningBoulderLabelN[i], nj = _miningBoulderLabelN[j];
+          _miningBoulderLabelX[i] = (_miningBoulderLabelX[i] * ni + _miningBoulderLabelX[j] * nj) / (ni + nj);
+          _miningBoulderLabelY[i] = Math.min(_miningBoulderLabelY[i], _miningBoulderLabelY[j]);
+          _miningBoulderLabelOre[i] += _miningBoulderLabelOre[j];
+          _miningBoulderLabelN[i] = ni + nj;
+          const last = --boulderLabels;
+          _miningBoulderLabelX[j] = _miningBoulderLabelX[last];
+          _miningBoulderLabelY[j] = _miningBoulderLabelY[last];
+          _miningBoulderLabelOre[j] = _miningBoulderLabelOre[last];
+          _miningBoulderLabelN[j] = _miningBoulderLabelN[last];
+          _miningBoulderLabelRes[j] = _miningBoulderLabelRes[last];
+          _miningBoulderLabelRes[last] = null;
+          i = -1;
+          break;
+        }
+      }
+      renderCtx.fillStyle = 'rgba(255,215,150,0.95)';
+      for (let j = 0; j < boulderLabels; j++) {
+        const res = _miningBoulderLabelRes[j];
+        const n = _miningBoulderLabelN[j];
+        renderCtx.fillText(`${n > 1 ? `GŁAZY RDZENIOWE ×${n}` : 'GŁAZ RDZENIOWY'} · ${res ? res.short : ''} ${fmtMiningMass(_miningBoulderLabelOre[j])}`,
+          _miningBoulderLabelX[j], _miningBoulderLabelY[j]);
+        _miningBoulderLabelRes[j] = null;
+      }
       const charges = rig.charges;
       for (let i = 0; i < charges.length; i++) {
         const ch = charges[i];
@@ -26574,6 +27202,9 @@
         lines.push(`KOPALNIA (N) · LPM laser dronów · PPM ładunek ${ch.id} (L) · PPM↔ piła · F detonacja · T wiązka ${rig.tractorOn ? 'WŁ.' : 'wył.'}`);
         lines.push(`ładunki: S ${st.S | 0} · M ${st.M | 0} · L ${st.L | 0} · XL ${st.XL | 0} · osadzone ${rig.charges.length}`);
         lines.push(`ładownia ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cap)} · urobek: ${ores.length ? ores.join(' · ') : '—'} · skała płonna ${fmtMining1(rig.totals.waste)} t${rig.totals.lostOre > 0 ? ` · przepadło ${Math.round(rig.totals.lostOre)} t rudy` : ''}`);
+        // Rodzina pola pod statkiem (A2 — AsteroidBeltField.familyAt): skład rud tego pola.
+        const fam = ship?.pos ? asteroidBelt?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
+        if (fam) lines.push(`pole: ${familyTitle(fam)}`);
         for (const msg of rig.recentMessages(3, _miningMsgScratch)) lines.push(`› ${msg}`);
         _miningHudLines = lines;
         // Szerokość panelu razem z tekstem (measureText to obiekt — nie co klatkę).
@@ -27329,13 +27960,15 @@
       const fontSize = Math.round(clamp(18 * _camZoom, 12, 30));
       ctx.font = `600 ${fontSize}px Inter,system-ui,monospace`;
       ctx.lineJoin = 'round';
-      for (const pl of planets) {
+      const labelBodies = (typeof window !== 'undefined' && window.smallBodies) || [];   // planety i małe ciała (blok „MAŁE CIAŁA”)
+      for (let i = 0, n = planets.length + labelBodies.length; i < n; i++) {
+        const pl = i < planets.length ? planets[i] : labelBodies[i - planets.length];
         if (!pl || !pl.label) continue;
         const screen = worldToScreen(pl.x, pl.y, cam);
         if (screen.x < -160 || screen.x > W + 160 || screen.y < -160 || screen.y > H + 160) continue;
         const labelRadius = haloRingKey(pl)
           ? resolveRingPlanetWorldRadius(pl)
-          : (pl.r || 0);
+          : (pl.r || 0) * (pl.smallBody ? Math.max(pl.def?.axes?.[0] || 1, pl.def?.axes?.[2] || 1) : 1);
         const offset = (labelRadius + 40) * _camZoom;
         const y = screen.y - offset;
         ctx.save();
@@ -27870,10 +28503,13 @@
       // Pas asteroid (zadanie 21): wejście klatki — dt gry (0 w pauzie) i statki do świateł
       // pola. Liczenie (skały, ośrodek, burza, światła) idzie w kroku Core3D.fx przed passami;
       // kolizje z olbrzymami w physicsStep (stepShipAsteroidCollisions).
+      stepNeaFlyby();   // przelot NEA: pozycja skały i koło budzenia pasa przed krokiem pasa
       if (asteroidBelt) {
         // mgła wojny: reflektory ukrytych okrętów nie oświetlają skał (zdradzałyby pozycję)
         asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList), PAUSED);
       }
+      // Komety (blok „KOMETY”): obrót jąder, fazy gazu, odcinanie poza kadrem.
+      updateComets3D(cam);
       // Pył w halach K-7 (src/3d/gasField/): gra pakuje wejście klatki (hala przy kamerze, przekształcenie
       // hala → świat w double, okręty w domenie, dt gry — 0 w pauzie i scenach fabuły); symulacja i obraz
       // w kroku Core3D.fx czytają tylko tę tablicę i dysze MAIN z EngineFrame.
@@ -29139,67 +29775,32 @@
         drawTurretPanel(tp.ctx, _panelArgs);
       }
 
-      // Koło trybów okrętu (ŚPM trzymany). Sektor 0 u góry, zgodnie z zegarem (SHIP_MODE_IDS).
-      function _shipModeAvailable(id) {
-        return !shipModeBlockReason(id);
-      }
+      // Koło trybów okrętu (ŚPM trzymany): rysunek i animacje — src/ui/shipModeWheel.js. Sektor 0 u góry,
+      // zgodnie z zegarem (SHIP_MODE_IDS). Animacja biegnie w czasie rzeczywistym (koło nie zwalnia gry)
+      // i trwa jeszcze chwilę po puszczeniu ŚPM (błysk wyboru, odmowa, echo wybranego trybu).
       function _drawShipModeWheel() {
         const w = shipModes.wheel;
-        if (!w.open) return;
-        const n = SHIP_MODE_IDS.length;
-        const step = (Math.PI * 2) / n;
-        const R = SHIP_MODE_WHEEL_R, r0 = 34;
-        const x = w.x, y = w.y;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x, y, R + 8, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(6, 10, 18, 0.86)';
-        ctx.fill();
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        for (let i = 0; i < n; i++) {
-          const id = SHIP_MODE_IDS[i];
-          const def = SHIP_MODE_DEFS[id];
-          const hover = w.hover === i;
-          const current = shipModes.current === id;
-          const avail = _shipModeAvailable(id);
-          const a0 = -Math.PI / 2 + (i - 0.5) * step + 0.02;
-          const a1 = a0 + step - 0.04;
-          ctx.beginPath();
-          ctx.arc(x, y, R, a0, a1);
-          ctx.arc(x, y, r0, a1, a0, true);
-          ctx.closePath();
-          ctx.fillStyle = hover ? 'rgba(255, 210, 122, 0.22)' : (current ? 'rgba(82, 255, 154, 0.13)' : 'rgba(30, 45, 70, 0.45)');
-          ctx.fill();
-          ctx.strokeStyle = hover ? '#ffd27a' : 'rgba(140, 170, 200, 0.3)';
-          ctx.lineWidth = hover ? 1.6 : 1;
-          ctx.stroke();
-          const am = -Math.PI / 2 + i * step;
-          const lx = x + Math.cos(am) * 74, ly = y + Math.sin(am) * 74;
-          ctx.font = `${hover ? 600 : 400} 11px Consolas, monospace`;
-          ctx.fillStyle = !avail ? '#5c6f7c' : hover ? '#ffffff' : (current ? '#52ff9a' : '#a9bccb');
-          ctx.fillText(def.label, lx, ly - 5);
-          if (def.key) {
-            ctx.font = '11px Consolas, monospace';
-            ctx.fillStyle = '#6f8b99';
-            ctx.fillText(`[${def.key}]`, lx, ly + 9);
-          }
+        const now = performance.now() / 1000;
+        const current = SHIP_MODE_IDS.indexOf(shipModes.current);
+        stepModeWheelFx(shipModeWheelFx, w.open, w.hover, current, now);
+        if (!modeWheelVisible(shipModeWheelFx, now)) return;
+        // Dostępność trybów co klatkę — tryb niedostępny ma kłódkę, a pod kołem powód.
+        for (let i = 0; i < shipModeWheelItems.length; i++) {
+          const it = shipModeWheelItems[i];
+          const why = shipModeBlockReason(it.id);
+          it.avail = !why;
+          it.reason = why;
         }
-        // Wskaźnik: ruch myszy od wciśnięcia ŚPM, przycięty do pierścienia.
-        let dx = mouse.x - w.ox, dy = mouse.y - w.oy;
-        const d = Math.hypot(dx, dy);
-        const lim = R - 14;
-        if (d > lim) { dx *= lim / d; dy *= lim / d; }
-        ctx.beginPath();
-        ctx.arc(x + dx, y + dy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = w.hover >= 0 ? '#ffd27a' : '#8fa3b0';
-        ctx.fill();
-        if (w.hover < 0) {
-          ctx.font = '11px Consolas, monospace';
-          ctx.fillStyle = '#8fa3b0';
-          ctx.fillText('ŚPM', x, y - 12);
-        }
-        ctx.restore();
+        const v = _shipModeWheelView;
+        v.x = w.x;
+        v.y = w.y;
+        v.scale = modeWheelScale(W, H);
+        v.W = W;
+        v.H = H;
+        v.current = current;
+        v.px = w.open ? mouse.x - w.ox : 0;
+        v.py = w.open ? mouse.y - w.oy : 0;
+        drawModeWheel(ctx, shipModeWheelFx, v, now);
       }
 
       syncShipMode();
@@ -30430,8 +31031,12 @@
         await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
         // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.
         wireAsteroidMining();
+        setupNeaFlyby3D();   // przelot NEA: skała z banku pasa (wpis rozgrzewki przed flush)
         await nextFrame();
       }
+
+      // Komety (blok „KOMETY”): arkusze gazu i jądra z workerów — wpis rozgrzewki przed flush() niżej.
+      await prepareComets3D();
 
       // Wstępna symulacja fizyki
       for (let i = 0; i < 60; i++) npcStep(PHYS_DT);

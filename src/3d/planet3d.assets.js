@@ -20,8 +20,9 @@ import { WARP_WORLD_LENS, WarpWorldLens, newLensBody } from './warp/worldLens.js
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
 import { createEarthPitMesh, earthPitUniforms } from './earthPit3D.js';
-import { PLANET_MAPS, MOON_MAPS } from './planetMaps.js';
+import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
+import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
 import {
     STAR_PLANET_MASK_CAP,
     createStarGeometry,
@@ -1189,6 +1190,202 @@ class DirectMoon {
     }
 }
 
+// MAŁE CIAŁA (src/data/smallBodies.js: Ceres, Westa, Pallas, Hygiea, Psyche, Pluton, Charon — 2026-10-12, plan
+// docs/PLAN-pas-realizm.md, strumień C). Ciało stoi w PŁASZCZYŹNIE GRY (pass ring-planet, warstwa 6, kamera ortho —
+// bez paralaksy: stacja Unii Pasa obok tarczy jest w prawdziwym miejscu), środek POD płaszczyzną (szczyt bryły
+// `SMALL_BODY_TOP_Z`): w kamerach 3D okręty przelatują nad bryłą, nie przez nią. Materiał księżyców (moonSurface.tsl.js:
+// słońce w płaszczyźnie gry, maska słońca, noc czarna ze światłami mapy nocy) — wariant z maską jak księżyce przy
+// ringach, więc ten sam program co Luna; Psyche tylko inne wartości metalness / roughness (uniformy materiału).
+// Kształt: siatka kuli przesunięta na CPU wg mapy promienia (SMALL_BODY_MAPS[id].shape: d = r / R − 1, 16 bitów RG)
+// raz po wczytaniu — układ atrybutów jak kula, pipeline wspólny. Bez mapy kształtu — kula ze skalą osi (`axes`).
+const SMALL_BODY_TOP_Z = -400;      // [j.] szczyt bryły pod płaszczyzną gry (kadłuby gry: z ≈ −10…15)
+// Doba w grze: pierwiastek z prawdziwej (Ceres 9 h → ~81 s, Psyche 4,2 h → ~55 s, Pluton 6,4 doby → ~330 s)
+function smallBodySpinPeriodSec(hours) {
+    const h = Math.max(0.5, Number(hours) || 9);
+    return Math.max(45, Math.min(600, 60 * Math.sqrt(h / 5)));
+}
+// Pluton: cienka niebieska mgiełka (warstwy zamglenia z New Horizons) — poświata jak księżyce, słabsza.
+const SMALL_BODY_HALO = Object.freeze({ pluto: Object.freeze({ color: 0x7aa6ff, size: 1.035, coef: 0.42, power: 11.0, sunMul: 0.55 }) });
+const _smallEuler = new THREE.Euler();
+const _smallQ = new THREE.Quaternion();
+
+class DirectSmallBody {
+    /**
+     * data — obiekt ciała w grze (x, y, r = promień średni w j. świata, angle, def = wpis smallBodies.js);
+     * w soczewce warpa `data` porównuje się z celem skoku (WARP_WORLD_LENS.target).
+     */
+    constructor(data) {
+        this.data = data;
+        this.def = data?.def || {};
+        this.id = String(this.def.id || data?.id || 'ceres');
+        this.group = new THREE.Group();
+        this.mesh = null;
+        this.halo = null;
+        this.spinSpeed = TAU / smallBodySpinPeriodSec(this.def.rotationHours);
+        // Pluton: obrót wsteczny (nachylenie 120° = 60° z odwróconą dobą)
+        if (this.id === 'pluto' || this.id === 'charon') this.spinSpeed = -this.spinSpeed;
+        this.tilt = THREE.MathUtils.degToRad(Number(this.def.obliquityDeg) || 0);
+        this._spinAngle = (Number(this.def.angle) || 0) * 3.1;
+        this._extent = 1;          // promień obwiedni / promień średni (po kształcie)
+        this._inner = 1;           // najmniejszy promień bryły / promień średni (tarcza w masce słońca)
+        this.lensBody = newLensBody(this.id);
+        this._lensed = false;
+        this.init();
+    }
+    init() {
+        if (!Core3D.isInitialized) return;
+        const maps = SMALL_BODY_MAPS[this.id] || SMALL_BODY_MAPS.ceres;
+        const colorTex = loadTex(maps.day);
+        colorTex.colorSpace = THREE.SRGBColorSpace;
+        const nightTex = loadTex(maps.night);
+        nightTex.colorSpace = THREE.SRGBColorSpace;
+        const normalTex = maps.normal ? loadTex(maps.normal) : null;
+        setMoonSunLight(Core3D._sunShadowLight);
+        const material = createMoonSurfaceMaterial({ map: colorTex, nightMap: nightTex, normalMap: normalTex,
+            normalScale: Number(maps.normalScale) || 1, sunMask: true, roughness: Number(maps.roughness) || 0.98 });
+        if (Number.isFinite(maps.metalness)) material.metalness = maps.metalness;
+        material.name = `${material.name}:${this.id}`;
+        const geometry = new THREE.SphereGeometry(1, SMALL_BODY_SEGMENTS.w, SMALL_BODY_SEGMENTS.h);
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.name = `SmallBody:${this.id}`;
+        // Cień bryły na okrętach daje maska słońca (smuga z pushShaftDiscWorld) — do mapy cienia ciało nie wchodzi
+        // (warstwa 6). Cienia okrętów i stacji NA ciele nie ma (receiveShadow false): bryła leży głęboko pod
+        // płaszczyzną gry, więc ukośne światło mapy cienia kładło czarną plamę stacji kilka kilometrów obok niej.
+        this.mesh.castShadow = false;
+        this.mesh.receiveShadow = false;
+        this.group.add(this.mesh);
+        const axes = Array.isArray(this.def.axes) ? this.def.axes : [1, 1, 1];
+        if (maps.shape && maps.shapeRange) {
+            this._axes = [1, 1, 1];
+            this._extent = Math.max(1, 1 + maps.shapeRange[1]);
+            this._inner = Math.max(0.5, 1 + maps.shapeRange[0]);
+            loadSmallBodyShape(maps.shape, maps.shapeRange).then((shape) => {
+                if (!this.mesh) return;
+                this._extent = displaceSmallBodyGeometry(this.mesh.geometry, shape);
+                let lo = Infinity;
+                for (let i = 0; i < shape.d.length; i++) if (shape.d[i] < lo) lo = shape.d[i];
+                this._inner = Math.max(0.5, 1 + lo);
+            }).catch((err) => console.warn(`[małe ciała] ${this.id}: mapa kształtu`, err));
+        } else {
+            this._axes = axes;
+            this._extent = Math.max(axes[0], axes[1], axes[2]);
+            this._inner = Math.min(axes[0], axes[1], axes[2]);
+        }
+        const halo = SMALL_BODY_HALO[this.id];
+        if (halo) {
+            const c = new THREE.Color(halo.color);
+            const glow = new THREE.Vector3(c.r, c.g, c.b);
+            this.halo = new THREE.Mesh(new THREE.SphereGeometry(halo.size, 48, 48),
+                createAtmosphereMaterial(glow, glow.clone().multiplyScalar(0.72), halo.coef, halo.power, halo.sunMul, true));
+            this.halo.name = `SmallBodyHalo:${this.id}`;
+            this.group.add(this.halo);
+        }
+        Core3D.scene.add(this.group);
+        enableRingPlanetLayer(this.group);
+    }
+    _place(x, y, scale) {
+        const r = scale;
+        this.group.position.set(x, -y, SMALL_BODY_TOP_Z - r * this._extent);
+        this.mesh.scale.set(r * this._axes[0], r * this._axes[1], r * this._axes[2]);
+        if (this.halo) this.halo.scale.set(r, r, r);
+    }
+    _orient(extraQ = null) {
+        _smallEuler.set(this.tilt, this._spinAngle, 0, 'XYZ');
+        _smallQ.setFromEuler(_smallEuler);
+        if (extraQ) this.mesh.quaternion.copy(extraQ).multiply(_smallQ);
+        else this.mesh.quaternion.copy(_smallQ);
+    }
+    update(dt, cam, lensOn = false) {
+        if (!this.group || !this.mesh || !this.data) return;
+        const x = Number(this.data.x);
+        const y = Number(this.data.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        const scale = Math.max(100, Number(this.data.r) || 1000);
+        // Słońce powierzchni w płaszczyźnie gry (moonSurface.tsl.js) — kierunek Słońce − środek, z = 0.
+        if (window.SUN) setMoonSunDirection(this.mesh.material, window.SUN.x - x, -(window.SUN.y - y), 0);
+        // Tarcza w masce słońca (smuga cienia za ciałem, cień na okrętach) — płaszczyzna gry (ortho, z = 0). Promień =
+        // NAJMNIEJSZY promień bryły: tarcza większa od sylwetki (spłaszczenie, wcięcia Westy) zostawiała jasny sierp
+        // tła między nocnym brzegiem a smugą.
+        if (!lensOn && typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(x, y, scale * this._inner, 1, 0);
+        this._spinAngle = (this._spinAngle + this.spinSpeed * Math.max(0, Number(dt) || 0)) % TAU;
+        if (lensOn) { this._lensPrepare(x, y, scale); return; }
+        if (this._lensed) this._lensRestore();
+        this._place(x, y, scale);
+        this._orient();
+        if (this.halo && window.SUN) this.halo.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, this.group.position.z);
+        if (typeof Core3D.markPlanetLayersActive === 'function'
+            && isBodyLikelyOnScreen(x, y, 0, scale * this._extent * 1.1, true, cam)) {
+            Core3D.markPlanetLayersActive(true, true);
+        }
+    }
+    _lensPrepare(x, y, scale) {
+        const L = WARP_WORLD_LENS;
+        const b = this.lensBody;
+        b.x = x;
+        b.y = y;
+        b.r = scale * this._extent;
+        b.z = 0;
+        b.flat = L.zoom;
+        b.gate = 1;
+        b.ready = true;
+    }
+    _lensPlace() {
+        const L = WARP_WORLD_LENS;
+        const b = this.lensBody;
+        const o = b.out;
+        const fit = lensFitView(o, 1.1);
+        this._lensed = true;
+        const k = 1 / L.zoom;
+        const real = 1 - o.beta;
+        if (real > 1e-3 && typeof Core3D.pushShaftDiscWorld === 'function') {
+            Core3D.pushShaftDiscWorld(L.camX + o.x * k, L.camY + o.y * k, Math.max(1e-3, fit.size * k * this._inner / this._extent), real, 0, b.x, b.y);
+        }
+        if (fit.off) {
+            if (this.group.visible) this.group.visible = false;
+            return;
+        }
+        if (!this.group.visible) this.group.visible = true;
+        if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(true, true);
+        const s = Math.max(1e-3, fit.size * k) / Math.max(1e-3, this._extent);
+        this._place(L.camX + o.x * k, L.camY + o.y * k, s);
+        const turned = o.angle > 1e-5;
+        if (turned) {
+            _lensAxis.set(o.ax, o.ay, 0);
+            _lensQ.setFromAxisAngle(_lensAxis, o.angle);
+            this._orient(_lensQ);
+        } else {
+            this._orient();
+        }
+        const sd = lensSunDir(b.x, b.y, turned ? _lensQ : null);
+        if (this.halo?.material?.uniforms?.sunPosition) {
+            const gp = this.group.position;
+            this.halo.material.uniforms.sunPosition.value.set(gp.x + _lensSun.x * sd, gp.y + _lensSun.y * sd, gp.z + _lensSun.z * sd);
+        }
+        setMoonSunDirection(this.mesh.material, _lensSun.x, _lensSun.y, _lensSun.z);
+    }
+    _lensRestore() {
+        this._lensed = false;
+        if (!this.group.visible) this.group.visible = true;
+    }
+    dispose() {
+        if (this.group && this.group.parent) this.group.parent.remove(this.group);
+    }
+}
+
+// Rozgrzewka (ekran ładowania): bryły i poświata Plutona w passie ring-planet (warstwa 6) — pierwsza klatka przy
+// ciele nie kompiluje nic (rejestr Core3D.warmup, src/3d/rozgrzewka.js).
+let _smallBodiesWarmRegistered = false;
+function registerSmallBodiesWarmup() {
+    if (_smallBodiesWarmRegistered || !Core3D.warmup) return;
+    _smallBodiesWarmRegistered = true;
+    Core3D.warmup.add({
+        name: 'małe ciała (Ceres, Westa, Pallas, Hygiea, Psyche, Pluton, Charon)',
+        objects: () => (window._entities || []).filter((e) => e instanceof DirectSmallBody && e.group).map((e) => e.group),
+        layer: 6,
+        phase: 'loading'
+    });
+}
+
 class DirectSun {
     constructor(data) {
         this.data = data; this.group = new THREE.Group(); this.group.position.z = -60000;
@@ -1270,7 +1467,7 @@ class DirectSun {
 
 const _entities = [];
 
-window.initPlanets3D = function (planetList, sunData) {
+window.initPlanets3D = function (planetList, sunData, options = null) {
     if (!Core3D.isInitialized) Core3D.init();
     for (const ent of _entities) if (ent && typeof ent.dispose === 'function') ent.dispose();
     _entities.length = 0;
@@ -1306,6 +1503,22 @@ window.initPlanets3D = function (planetList, sunData) {
             moon.lensBody.parent = jupiterEnt?.lensBody || null;
             _entities.push(moon);
         }
+    }
+    // Małe ciała (src/data/smallBodies.js — obiekty gry z index.html, blok „MAŁE CIAŁA”): Charon krąży w soczewce
+    // wokół obrazu Plutona.
+    const smallList = Array.isArray(options?.smallBodies) ? options.smallBodies : [];
+    if (smallList.length) {
+        const byId = new Map();
+        for (const data of smallList) {
+            const ent = new DirectSmallBody(data);
+            byId.set(ent.id, ent);
+            _entities.push(ent);
+        }
+        for (const ent of byId.values()) {
+            const parentId = ent.def?.parentId;
+            if (parentId && byId.has(parentId)) ent.lensBody.parent = byId.get(parentId).lensBody;
+        }
+        registerSmallBodiesWarmup();
     }
     _warpLens.reset();
     window._entities = _entities;

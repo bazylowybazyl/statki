@@ -87,10 +87,12 @@ export const FACTIONS = Object.freeze({
     name: 'Unia Pasa',
     short: 'UP',
     // Górnicy z Main Beltu. Żyją z rud, kupują wszystko przetworzone.
+    // STOLICA na Ceres (stacja „Ceres — Stolica Unii” na orbicie, miasto przy kraterze Occator), huta na Westie —
+    // ciała i stacje z src/data/smallBodies.js (2026-10-12). Pallas, Hygiea i Psyche mają placówki Unii, bez portu.
     color: '#fbbf24',
     accent: '#f59e0b',
     homeStations: ['ceres', 'vesta'],
-    // Przyczółki Ligi przy dwóch olbrzymach: Europa u Jowisza, Ariel u Urana.
+    // Przyczółki Unii przy dwóch olbrzymach: Europa u Jowisza, Ariel u Urana.
     claims: ['europa', 'ariel'],
     demands: ['polymer', 'coolant', 'oxygen', 'hull_plate', 'life_support'],
     supplies: ['iron_ore', 'copper_ore', 'silicon_ore', 'titanium_ore', 'raw_crystal', 'ice'],

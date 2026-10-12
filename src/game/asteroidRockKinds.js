@@ -1,14 +1,14 @@
 // src/game/asteroidRockKinds.js
 //
-// Rodzaje skał nowego pola asteroid: typy (7 rud + skała NEUTRALNA, czyli
-// wypełniacz bez surowca), rodziny kształtów banku (src/3d/asteroids/rockBank.js) i reguły,
+// Rodzaje skał nowego pola asteroid: typy (13 rud + skała NEUTRALNA w dwóch
+// odmianach, czyli wypełniacz bez surowca, + energetyczna), rodziny kształtów banku (src/3d/asteroids/rockBank.js) i reguły,
 // które je łączą — kształt zależy od typu i rozmiaru, skład od głębokości
 // w polu (obrzeża prawie same skały neutralne, rudy głębiej, rzadkie w rdzeniu).
 //
 // Moduł bez three i DOM-u: czyta go generator pola (asteroidBeltField.js),
 // bank kształtów i materiał skał. Testy: tests/asteroidBeltField.test.mjs.
 
-import { ASTEROID_TYPES } from '../data/asteroidTypes.js';
+import { ASTEROID_TYPES, SPECTRAL_ORE_TYPES } from '../data/asteroidTypes.js';
 
 /**
  * Typy skał pola: indeksy 0–6 = ASTEROID_TYPES (rudy gry), 7 = skała neutralna.
@@ -16,24 +16,58 @@ import { ASTEROID_TYPES } from '../data/asteroidTypes.js';
  */
 // 8 = skała ENERGETYCZNA: naładowana, wywołuje burze (asteroidStorms.js) —
 // powstaje tylko w komórkach burz gęstych pól, nie ze składu pasa.
-export const ROCK_TYPES = Object.freeze([...ASTEROID_TYPES, 'rock', 'energy']);
+// 9–13 = typy z widm prawdziwych planetoid (2026-10-12, docs/PLAN-pas-realizm.md):
+// 9 carbon (C, węglowa), 10 metal (M, metaliczna), 11 basalt (V, bazalt Westy),
+// 12 primitive (D / P, prymitywna), 13 platinum (platynowce — M bogata w platynowce,
+// tylko w rdzeniach pól); 14 = rock_c — wypełniacz bez rudy w odmianie WĘGLOWEJ
+// (ciemny; zewnętrzny pas, Hildy, Trojańczycy, Kuiper) — dla wydobycia to skała
+// neutralna (rockMaterial → id 'rock'), różni ją tylko wygląd i gęstość.
+// 15 = carbon_ice (A2 planu pasa): C z lodem w rdzeniach — rodzina Themis i zewnętrzny pas
+// za linią śniegu; ciemna skorupa węglista z szronem, rdzeń z lodu (urobek: lód).
+/** Rudy dopisane po wypełniaczu węglowym (indeksy od 15, w kolejności). */
+export const LATE_ORE_TYPES = Object.freeze(['carbon_ice']);
+export const ROCK_TYPES = Object.freeze([...ASTEROID_TYPES, 'rock', 'energy', ...SPECTRAL_ORE_TYPES, 'rock_c', ...LATE_ORE_TYPES]);
 export const ROCK_TYPE_INDEX = Object.freeze(Object.fromEntries(ROCK_TYPES.map((t, i) => [t, i])));
-// Jawnie po nazwie: nowe typy dopisuje się NA KOŃCU ROCK_TYPES (indeksy
-// istniejących, w tym wypełniacza = 7, się nie zmieniają).
+// Jawnie po nazwie: nowe typy dopisuje się NA KOŃCU ROCK_TYPES — nową rudę na końcu
+// LATE_ORE_TYPES (indeksy istniejących, w tym wypełniacza = 7 i 'rock_c' = 14, się nie
+// zmieniają; nie dopisuj do SPECTRAL_ORE_TYPES — przesunęłoby 'rock_c'); LATE_ORE_TYPES
+// trafia też do ORE_ROCK_TYPES. Klucz szablonów minerałów (minerals.js) mieści < 256 typów.
 export const NEUTRAL_TYPE = ROCK_TYPE_INDEX.rock;
+export const NEUTRAL_CARBON_TYPE = ROCK_TYPE_INDEX.rock_c;
 export const ENERGY_TYPE = ROCK_TYPE_INDEX.energy;
+/** Rudy pola (to, co może wybrać skład pasa): rudy gry + typy z widm + rudy dopisane później. */
+export const ORE_ROCK_TYPES = Object.freeze([...ASTEROID_TYPES, ...SPECTRAL_ORE_TYPES, ...LATE_ORE_TYPES]);
+
+/** Wypełniacz bez rudy (obie odmiany: kamienna i węglowa). */
+export function isNeutralType(typeIndex) {
+  return typeIndex === NEUTRAL_TYPE || typeIndex === NEUTRAL_CARBON_TYPE;
+}
+
+/** To samo po nazwie typu (body.typeId wydobycia). */
+export function isNeutralTypeId(typeId) {
+  return typeId === 'rock' || typeId === 'rock_c';
+}
 
 export const ROCK_TYPE_LABELS_PL = Object.freeze({
   iron: 'żelazo', copper: 'miedź', silicon: 'krzem', titan: 'tytan',
   crystal: 'kryształ', ice: 'lód', uran: 'uran', rock: 'skała neutralna',
-  energy: 'energetyczna'
+  energy: 'energetyczna',
+  carbon: 'węglowa', metal: 'metaliczna', basalt: 'bazaltowa', primitive: 'prymitywna',
+  platinum: 'platynowce', rock_c: 'skała neutralna (węglowa)',
+  carbon_ice: 'węglowa z lodem'
 });
 
 /**
  * Wartość rudy (0 pospolita … 2 rzadka): rzadkie typy pojawiają się dopiero
  * w głębi pola. Lód jest pospolity (Kuiper to lód), uran i kryształ rzadkie.
+ * Węglowa i prymitywna — pospolite (to większość pasa), metaliczna i bazalt —
+ * średnie, platynowce — najwyższy szczebel (rdzenie pól metalicznych). Węglowa z lodem —
+ * pospolita (w polach Themis to połowa rud).
  */
-export const ORE_TIER = Object.freeze({ iron: 0, silicon: 0, ice: 0, copper: 1, titan: 1, crystal: 2, uran: 2, energy: 2 });
+export const ORE_TIER = Object.freeze({
+  iron: 0, silicon: 0, ice: 0, copper: 1, titan: 1, crystal: 2, uran: 2, energy: 2,
+  carbon: 0, primitive: 0, metal: 1, basalt: 1, platinum: 2, carbon_ice: 0
+});
 
 /**
  * Rodziny kształtów banku. Bank ma SHAPE_VARIANTS wariantów na rodzinę,
@@ -49,7 +83,10 @@ export const ROCK_FAMILIES = Object.freeze([
   Object.freeze({ id: 'disc', label: 'dysk' }),
   Object.freeze({ id: 'shard', label: 'odłam' }),
   Object.freeze({ id: 'rubble', label: 'gruzowisko' }),
-  Object.freeze({ id: 'bowl', label: 'wielki krater' })
+  Object.freeze({ id: 'bowl', label: 'wielki krater' }),
+  // Bączek (strumień D planu pasa, 2026-10-12): podwójny stożek z grzbietem równikowym jak Ryugu,
+  // Bennu, Didymos — średnie rumowiska rozkręcone efektem YORP (bank: rockBank.js, family 'top').
+  Object.freeze({ id: 'top', label: 'bączek' })
 ]);
 export const FAMILY = Object.freeze(Object.fromEntries(ROCK_FAMILIES.map((f, i) => [f.id, i])));
 export const SHAPE_VARIANTS = 4;
@@ -58,25 +95,42 @@ export const SHAPE_COUNT = ROCK_FAMILIES.length * SHAPE_VARIANTS;
 // Wagi rodzin per typ (kolejność = ROCK_FAMILIES). Żelazo: gładkie, „stopione”
 // bryły i owale; tytan i kryształ: bloki i odłamy (warstwy, łupliwość); lód:
 // komety — podwójne i owalne; krzem: kraterowane gruzowiska (typ S).
-const W = (potato, angular, cratered, ridged, oval, binary, disc, shard, rubble, bowl) =>
-  Object.freeze([potato, angular, cratered, ridged, oval, binary, disc, shard, rubble, bowl]);
+// top (bączek) — 11. kolumna, domyślnie 0: typ bez wpisu nie ma bączków.
+const W = (potato, angular, cratered, ridged, oval, binary, disc, shard, rubble, bowl, top = 0) =>
+  Object.freeze([potato, angular, cratered, ridged, oval, binary, disc, shard, rubble, bowl, top]);
 export const FAMILY_WEIGHTS_BY_TYPE = Object.freeze({
   iron: W(3, 0.5, 0.6, 1, 2.5, 1.2, 0.3, 0.8, 0.2, 0.4),
   copper: W(1.5, 2.5, 1, 1, 1, 0.6, 0.3, 2, 0.6, 0.6),
-  silicon: W(2, 1, 3, 1, 1, 1, 0.5, 1, 2.5, 1.5),
+  silicon: W(2, 1, 3, 1, 1, 1, 0.5, 1, 2.5, 1.5, 1.3),
   titan: W(1, 3, 0.8, 1.5, 1, 0.5, 0.8, 3, 0.5, 0.5),
   crystal: W(1, 2.5, 0.5, 1, 0.7, 0.5, 0.3, 3, 0.3, 0.8),
-  ice: W(2.5, 0.8, 1, 1, 2, 2.5, 1.2, 0.6, 0.8, 0.8),
+  ice: W(2.5, 0.8, 1, 1, 2, 2.5, 1.2, 0.6, 0.8, 0.8, 0.4),
   uran: W(2.5, 1, 1, 0.5, 1, 1, 0.3, 1, 2, 0.8),
-  rock: W(3, 2, 3, 1, 1.5, 1, 0.6, 2, 1.5, 1),
+  rock: W(3, 2, 3, 1, 1.5, 1, 0.6, 2, 1.5, 1, 0.9),
   // Energetyczna: popękane bloki i odłamy z grzbietami (sieć pęknięć ładunku).
-  energy: W(1, 2.5, 0.5, 2, 0.7, 0.6, 0.4, 2.5, 0.6, 0.5)
+  energy: W(1, 2.5, 0.5, 2, 0.7, 0.6, 0.4, 2.5, 0.6, 0.5),
+  // Węglowa (Bennu, Ryugu): porowate gruzowiska, grzbiet równikowy, kratery, mało odłamów.
+  carbon: W(2, 0.6, 2, 2, 1, 0.8, 0.4, 0.5, 3, 1.2, 2.2),
+  // Metaliczna (Psyche, Kleopatra): gładkie, stopione bryły i owale, wydłużone „kości”.
+  metal: W(3, 0.6, 0.8, 1, 2.5, 1.4, 0.3, 0.7, 0.3, 0.5),
+  // Bazalt Westy: odłamy skorupy po zderzeniu — kanciaste bloki i odłamki (bączki rzadko —
+  // kształt rumowisk rozkręconych przez YORP, a odłamy Westy to głównie monolity).
+  basalt: W(1.2, 3, 1.2, 1, 0.8, 0.4, 0.6, 2.8, 0.5, 0.6, 0.2),
+  // Prymitywna (Trojańczycy, Hildy, Kuiper): bryły i owale, dużo układów podwójnych.
+  primitive: W(2.5, 0.6, 1.5, 1, 2, 2.5, 0.8, 0.4, 1.2, 1, 1.6),
+  platinum: W(3, 0.5, 0.7, 1, 2.5, 1.2, 0.3, 0.7, 0.2, 0.4),
+  // Wypełniacz węglowy: jak skała neutralna, więcej gruzowisk.
+  rock_c: W(3, 1.4, 3, 1.4, 1.4, 1, 0.5, 1.4, 2.4, 1, 1.8),
+  // Węglowa z lodem (Themis, aktywne planetoidy 133P, 176P): kształty jak C.
+  carbon_ice: W(2, 0.6, 2, 2, 1, 0.8, 0.4, 0.5, 3, 1.2, 2.2)
 });
 
 // Rozmiar: drobnica to głównie odłamy i kanciaste okruchy, duże skały częściej
 // są gruzowiskami, podwójne i mają wielkie kratery.
-const SMALL_BIAS = W(1, 1.5, 0.8, 1, 1, 0.5, 0.8, 2.2, 0.2, 0.3);
-const LARGE_BIAS = W(1, 0.8, 1.2, 1, 1, 1.5, 1, 0.4, 2.2, 1.6);
+// Bączki to skały ŚREDNIE (rozkręca je YORP, zanim urosną; małe to monolity): mało wśród drobnicy
+// i olbrzymów.
+const SMALL_BIAS = W(1, 1.5, 0.8, 1, 1, 0.5, 0.8, 2.2, 0.2, 0.3, 0.15);
+const LARGE_BIAS = W(1, 0.8, 1.2, 1, 1, 1.5, 1, 0.4, 2.2, 1.6, 0.45);
 
 function smooth01(e0, e1, x) {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -99,7 +153,9 @@ export function pickFamily(typeIndex, diameter, u) {
     t -= weights[i] * (1 + (SMALL_BIAS[i] - 1) * small) * (1 + (LARGE_BIAS[i] - 1) * large);
     if (t <= 0) return i;
   }
-  return weights.length - 1;
+  // Zaokrąglenie przy u → 1: ostatnia rodzina z niezerową wagą (kolumna bączka bywa zerowa).
+  for (let i = weights.length - 1; i > 0; i--) if (weights[i] > 0) return i;
+  return 0;
 }
 
 /** Indeks kształtu w banku: rodzina · warianty + wariant z u ∈ [0, 1). */

@@ -34,12 +34,14 @@ import { CORE_MATERIAL } from '../../src/game/asteroidMaterials.js';
 import { quatRotate } from './tslCommon.js';
 import { createCoreLookArray, coreSurface } from './coreLook.js';
 
-export const FRAGMENT_FAMILY = Object.freeze({ SHARD: 0, NUGGET: 1, CRYSTAL: 2, BLOCK: 3 });
-const VARIANTS = Object.freeze([6, 4, 4, 3]);
+// BOULDER (2026-10-12): głaz z rumowiska (asteroidMining: pebble.boulder) — obły, zwietrzały,
+// nie świeży przełom.
+export const FRAGMENT_FAMILY = Object.freeze({ SHARD: 0, NUGGET: 1, CRYSTAL: 2, BLOCK: 3, BOULDER: 4 });
+const VARIANTS = Object.freeze([6, 4, 4, 3, 4]);
 // Rdzenie, które żarzą się po wybuchu (metal, smółka); lodowy żwir też nie.
 const HOT_CORE = new Set(['metal', 'mineral']);
 const ICE_TYPE = ROCK_TYPE_INDEX.ice;
-// fA = (x, y, z, r) scena, fB = kwaternion, fC = (typ, rdzeń 0/1, ziarno, sunT), fD = (żar, —, —, —)
+// fA = (x, y, z, r) scena, fB = kwaternion, fC = (typ, rdzeń 0/1, ziarno, sunT), fD = (żar, głaz rumowiska 0/1, —, —)
 const FLOATS = 16;
 
 // ---------------------------------------------------------------------------
@@ -182,6 +184,39 @@ function blockGeometry(seed) {
   return toUnitVolume(new ConvexGeometry(pts));
 }
 
+// Głaz z rumowiska: obła bryła (elipsoida z łagodnymi garbami) z dwiema starymi, zaokrąglonymi
+// ścianami pęknięć — kamień, który leżał w kupie gruzu, nie świeży odłamek.
+function boulderGeometry(seed) {
+  const rng = mulberry32(seed);
+  const g0 = new THREE.IcosahedronGeometry(1, 5);
+  g0.deleteAttribute('normal');
+  g0.deleteAttribute('uv');
+  const g = mergeVertices(g0);
+  const pos = g.getAttribute('position');
+  const k = [1, 0.8 + rng() * 0.15, 0.62 + rng() * 0.18];
+  const o = [rng() * 17, rng() * 17, rng() * 17];
+  const ns = hash32(seed, 0xB0D, 3, 4);
+  const planes = [];
+  for (let p = 0; p < 2; p++) {
+    const u = rng() * 2 - 1, a = rng() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+    planes.push([Math.cos(a) * s, Math.sin(a) * s, u, 0.62 + rng() * 0.2]);
+  }
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const lobes = vnoise(x * 1.3 + o[0], y * 1.3 + o[1], z * 1.3 + o[2], ns) - 0.5;
+    const grit = vnoise(x * 6 + o[2], y * 6 + o[0], z * 6 + o[1], ns ^ 0xAA) - 0.5;
+    const d = 1 + 0.32 * lobes + 0.04 * grit;
+    x *= d; y *= d; z *= d;
+    for (const [px, py, pz, w] of planes) {
+      const t = x * px + y * py + z * pz - w;
+      if (t > 0) { const s = t * 0.85; x -= px * s; y -= py * s; z -= pz * s; }
+    }
+    pos.setXYZ(i, x * k[0], y * k[1], z * k[2]);
+  }
+  g.computeVertexNormals();
+  return toUnitVolume(g);
+}
+
 // ---------------------------------------------------------------------------
 
 export class FragmentSet {
@@ -201,7 +236,8 @@ export class FragmentSet {
       (s) => shardGeometry(s),
       (s) => nuggetGeometry(s),
       (s) => crystalGeometry(s),
-      (s) => blockGeometry(s)
+      (s) => blockGeometry(s),
+      (s) => boulderGeometry(s)
     ];
     this.families = VARIANTS.map((n, f) => Array.from({ length: n }, (_, v) => {
       const base = builders[f](hash32(0xF4A6, f, v, 7));
@@ -223,7 +259,7 @@ export class FragmentSet {
       scene.add(mesh);
       return { data, buffer, geo, mesh, count: 0 };
     }));
-    this.stats = { drawn: 0, core: 0, families: [0, 0, 0, 0] };
+    this.stats = { drawn: 0, core: 0, families: [0, 0, 0, 0, 0] };
   }
 
   _buildMaterial() {
@@ -287,7 +323,9 @@ export class FragmentSet {
       const gloss = mix(float(16.0), float(60.0), speck).toVar();
       const emit = mineral.mul(S.typeRow(type, 4).w).mul(speck).mul(0.35).toVar();
       const specK = float(0.05).toVar();
-      const N = normalize(N0.sub(grad.mul(3.2))).toVar();
+      // Głaz z rumowiska (fD.y): zwietrzały wierzch — ciemniej, łagodniejszy relief niż przełom.
+      albedo.mulAssign(mix(float(1.0), float(0.68), vD.y));
+      const N = normalize(N0.sub(grad.mul(mix(float(3.2), float(1.5), vD.y)))).toVar();
       // Rdzeń: materiałem rdzenia (coreLook.js) — relief słabszy (metal gładszy niż przełom skały).
       const cs = coreSurface(look, type, n1, n2, normalize(N0.sub(grad.mul(0.9))), n1.a);
       albedo.assign(select(isCore, cs.albedo, albedo));
@@ -336,7 +374,7 @@ export class FragmentSet {
 
   /** Rodzina kształtu okrucha: skorupa — odłamek; rdzeń — wg materiału rdzenia. */
   static familyOf(p) {
-    if (!p.core) return FRAGMENT_FAMILY.SHARD;
+    if (!p.core) return p.boulder ? FRAGMENT_FAMILY.BOULDER : FRAGMENT_FAMILY.SHARD;
     const cm = CORE_MATERIAL[p.coreType];
     const kind = cm ? cm.kind : 'mineral';
     if (kind === 'metal' || kind === 'mineral') return FRAGMENT_FAMILY.NUGGET;
@@ -354,7 +392,7 @@ export class FragmentSet {
     for (const fam of this.families) for (const v of fam) v.count = 0;
     const st = this.stats;
     st.drawn = 0; st.core = 0;
-    st.families[0] = st.families[1] = st.families[2] = st.families[3] = 0;
+    st.families[0] = st.families[1] = st.families[2] = st.families[3] = st.families[4] = 0;
     for (let i = 0; i < pebbles.length; i++) {
       const p = pebbles[i];
       if (!p.alive || p.r < minR) continue;
@@ -374,7 +412,8 @@ export class FragmentSet {
       const age = p.age || 0;
       const hot = p.core ? HOT_CORE.has(CORE_MATERIAL[p.coreType]?.kind) : p.type !== ICE_TYPE;
       d[b + 12] = p.display || !hot ? 0 : p.gravel ? Math.max(0, 1 - age / 2.2) : p.core ? 0.8 * Math.max(0, 1 - age / 3) : 0;
-      d[b + 13] = 0; d[b + 14] = 0; d[b + 15] = 0;
+      // fD.y = głaz z rumowiska (zwietrzały wierzch zamiast świeżego przełomu).
+      d[b + 13] = p.boulder && !p.core ? 1 : 0; d[b + 14] = 0; d[b + 15] = 0;
       st.drawn++;
       if (p.core) st.core++;
       st.families[fam]++;

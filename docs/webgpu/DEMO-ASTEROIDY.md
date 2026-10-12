@@ -10,7 +10,7 @@ Start: `npm run dev` → `/dema/asteroidy-webgpu.html` (parametry: `?scene=storm
 
 | Klawisz | Scena | Co pokazuje |
 |---|---|---|
-| 1 | Galeria typów | skała neutralna, 7 rud, skała energetyczna — z minerałami (kryształy, lód, uran, kwarc) |
+| 1 | Galeria typów | 7 rud, skała energetyczna, wypełniacz kamienny i węglowy; rząd 3 — typy z widm planetoid (C węglowa, M metaliczna, V bazalt Westy, D prymitywna, platynowce); rząd 4 — C z lodem w rdzeniach (Themis, A2) — z minerałami (kryształy, lód, uran, kwarc, węglany, piroksen, łuski metalu, kryształki lodu) |
 | 2 | Galeria kształtów | 10 rodzin × 4 warianty |
 | 3 | Olbrzymy | 5 brył z tunelami / szczelinami / jaskinią; ▶ przelot = autopilot trasą, przekrój pod stropem |
 | 4 | Olbrzym w polu | Labirynt na obrzeżu gęstego pola (Enter = przelot) |
@@ -21,6 +21,26 @@ Start: `npm run dev` → `/dema/asteroidy-webgpu.html` (parametry: `?scene=storm
 | 9 | Pas Kuipera | lodowe pole |
 | 0 | Burza | skały energetyczne w mroku, pioruny (P = piorun na żądanie, działa też w innych scenach) |
 | G | Kopalnia | skała testowa (typ z panelu), drony z laserami, ładunki, wiązka ściągająca, skaner — fizyka wydobycia (`docs/ASTEROIDY-FIZYKA.md`); tryb G działa też w scenach pola |
+| — | Skład pasa wg odległości | przystanki (← →): pas główny w polach rodzin swojego promienia (A2 — każde gęste pole to rodzina): Flora 36,2 AU (S), Westa 36,9 (S + V), Eunomia 38,2 (S), Eos 40,0 (S + M), Themis 40,5 (C, C z lodem), Veritas 40,7 (C); Hildy L3 (D), Trojańczycy L4 (D), Kuiper 132 AU; najgęstszy oświetlony punkt pola, HUD — skład skał w kadrze i `pole:` (nazwa rodziny). Zrzuty: `node scripts/webgpu/asteroidy-demo.mjs --tryb typy` |
+| — | Rodziny kolizyjne pasa | pole każdej z 9 rodzin (← →): głąb pola, nazwa i skład w HUD (A2, `src/data/asteroidFamilies.js`) |
+
+**Typy z widm planetoid (2026-10-12, `docs/PLAN-pas-realizm.md` § Typy).** `ROCK_TYPES` 9–14: `carbon`
+(C, chondryt węglisty — asfaltowy regolit, głazy różnej jasności, rzadkie jasne głazy obce, jasne żyłki
+węglanów w części głazów; głazy = komórki Worleya na dziedzinie zawiniętej gładkimi polami — dwie skale,
+płaskie wierzchy, ciemny styk z regolitem; próbki szumu w gałęzi typu tylko `.level(0)`, antyaliasing
+brzegu i wygaszanie głazów liczone z `pxPerUnit`, nie z pochodnych, w gałęzi niedozwolonych),
+`metal` (M — program żelaza z jaśniejszą paletą i małą rdzą, łuski metalu), `basalt` (V — ziarna
+piroksenu i plagioklazu, ciemne żyłki stopu uderzeniowego, słupki piroksenu), `primitive` (D / P —
+ciemne czerwonobrązowe toliny, lód w świeżych kraterach), `platinum` (srebrzysty metal) i `rock_c`
+(wypełniacz węglowy, program skały neutralnej). Realistyczne typy nie świecą. Wygląd w DWÓCH kopiach
+(`dema/asteroidy-webgpu/rockMaterial.js` = `src/3d/asteroids/rockMaterial.js`, minerały tak samo) —
+pilnuje `tests/asteroidSpectralTypes.test.mjs`. Skład z odległością: przystanki `types` w
+`BELT_DEFINITIONS` (`src/data/asteroidTypes.js`), wybór w `AsteroidBeltField._pickType` /
+`_pickRockType` (wypełniacz rock / rock_c z udziału `dark` przystanku). A2: 15 = `carbon_ice` (C z lodem
+w rdzeniach — program węglowej z szronem w zimnych pułapkach, siła `bParam`; skała zostaje ciemna),
+gęste pola mają skład rodzin kolizyjnych; głazy C gasną poniżej komórki 12 px (pełne od 24 px), ich
+wysokość ma sufit z rozmiaru głazu, a żyłki węglanów są tylko we wnętrzu widocznego głazu — bez „pieprzu”
+i jasnych łatek na dużych skałach przy zoomie gry.
 
 Miejsca scen liczone jak w demie WebGL (`world.js`: `findSpot`, `freeSpotNear`, `findDeepSpot`,
 `findSparseSpot`, `findStormSpot`, rząd olbrzymów i olbrzym pola z wykluczeniem skał). Cień pól

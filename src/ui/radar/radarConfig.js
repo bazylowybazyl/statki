@@ -154,7 +154,9 @@ export function scanPulseTime(r, v, ramp = SCAN_PULSE_RAMP) {
 // Nazwy planet w podpisach stacji (stacje planet nie mają własnych nazw — dawniej „STATION-EARTH”).
 export const RADAR_PLANET_NAMES = Object.freeze({
   mercury: 'Merkury', venus: 'Wenus', earth: 'Ziemia', mars: 'Mars', jupiter: 'Jowisz', saturn: 'Saturn',
-  uranus: 'Uran', neptune: 'Neptun', pluto: 'Pluton', ceres: 'Ceres'
+  uranus: 'Uran', neptune: 'Neptun', pluto: 'Pluton', ceres: 'Ceres',
+  // małe ciała (src/data/smallBodies.js) — stacje Unii Pasa i podpisy ciał
+  vesta: 'Westa', pallas: 'Pallas', hygiea: 'Hygiea', psyche: 'Psyche', charon: 'Charon'
 });
 
 /** Podpis stacji: własna nazwa, inaczej planeta + rodzaj („ZIEMIA · PORT K-7”; short — „ZIEMIA K-7”). */

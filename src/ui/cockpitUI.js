@@ -515,7 +515,7 @@ function cockpitMarkup(devMode) {
 
         <div class="key-hints">
           <span><kbd>Tab</kbd>CIC / flota</span>
-          <span><kbd>Caps</kbd>Łączność</span>
+          <span><kbd>&#96;</kbd>Łączność</span>
           <span><kbd>J</kbd>Misje</span>
           <span><kbd>Alt</kbd>Radar / panele</span>
         </div>
@@ -1768,7 +1768,7 @@ export class CockpitUI {
     if (actions.children.length) root.appendChild(actions);
     const hint = document.createElement('div');
     hint.className = 'panel-hint no-pointer';
-    hint.innerHTML = kind === 'station' ? '<kbd>Alt</kbd> uplink · <kbd>Caps</kbd> łączność' : '<kbd>Alt</kbd> akcje celu';
+    hint.innerHTML = kind === 'station' ? '<kbd>Alt</kbd> uplink · <kbd>&#96;</kbd> łączność' : '<kbd>Alt</kbd> akcje celu';
     root.appendChild(hint);
     this.targetRefs = refs;
   }

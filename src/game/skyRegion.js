@@ -9,6 +9,8 @@ export const SKY_REGION_TUNE = Object.freeze({
   brightness: Object.freeze({
     interplanetary: 1.3,   // pusta przestrzeń — jaśniej
     asteroid_belt: 0.55,   // pas asteroid — ciemniej (skały i zasłona pola na ciemnym niebie)
+    kuiper_belt: 0.55,     // pas Kuipera — jak pas główny (2026-10-12)
+    jupiter_trojans: 0.75, // roje Trojańczyków — rzadsze, lżej (2026-10-12)
     sun: 0.9
   }),
   other: 1.0,              // orbity i studnie planet, stacja piratów

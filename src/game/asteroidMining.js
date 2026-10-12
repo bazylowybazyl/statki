@@ -44,6 +44,15 @@
 //    (wiercenie — długi, wybuch — krótki), błądzi z uskokami i wybucha (zdarzenie
 //    'ball' / 'discharge', rozsadza najbliższą skałę). Łapie go tylko wiązka
 //    z pułapką magnetyczną (pullBalls(…, trap = true)); zwykła wiązka go detonuje.
+//  • RUMOWISKO (2026-10-12, asteroidMaterials: RUBBLE_CONFIG): duża skała słabego
+//    materiału to GŁAZY w REGOLICIE — `boulder` (id głazu komórki, 0 = regolit),
+//    słabe wiązania (bity 3–5 `bonds`: między głazami i w regolicie — trzymają
+//    kupę razem, ale ładunek i wiązka je zrywają), porowatość (lżejsze ciało).
+//    Ruda w kilku GŁAZACH RDZENIOWYCH (komórki rdzenia, lita ruda) i głazach
+//    płaszcza, nie w jednym rdzeniu. Laser: regolit schodzi szybko. Ładunek:
+//    strefa ROZRZUTU — głazy odpadają całe (pękają tylko tuż przy ładunku),
+//    regolit wylatuje pyłem i żwirem, odłamy lecą wolno. Wiązka ściągająca
+//    wyrywa odsłonięte głazy z kupy (`_pluck`). Monolit — bez zmian.
 //
 // UKŁAD: przestrzeń skał = układ sceny BEZ przesunięcia początku: X = x świata
 // gry, Y = −y, Z = z (w górę, do kamery). Kwaterniony skał pola (qx..qw, oś
@@ -56,9 +65,10 @@
 // tests/asteroidMining.test.mjs.
 
 import { hash32, mulberry32 } from './asteroidBeltField.js';
-import { ROCK_TYPES, ROCK_TYPE_INDEX } from './asteroidRockKinds.js';
+import { ROCK_TYPES, ROCK_TYPE_INDEX, FAMILY, SHAPE_VARIANTS } from './asteroidRockKinds.js';
 import {
-  MINING_CONFIG, rockMaterial, coreMaterial, oreResourceOf, HIDDEN_CORE_TYPES, chargeForDepth, ballEnergyForVolume
+  MINING_CONFIG, rockMaterial, coreMaterial, oreResourceOf, HIDDEN_CORE_TYPES, chargeForDepth, ballEnergyForVolume,
+  RUBBLE_CONFIG, rubbleChance
 } from './asteroidMaterials.js';
 
 // ---------------------------------------------------------------------------
@@ -233,7 +243,13 @@ export class RockBody {
     this.inertia = new Float64Array(9);
     this.boundR = 0;
     this.solidCells = 0;
-    this.cellMass = this.cs * this.cs * this.cs * this.material.density * (o.tonnesPerVolume ?? MINING_CONFIG.tonnesPerVolume);
+    // Rumowisko: id głazu komórki (0 = regolit; pamięć budowy — jak orig, kopanie jej
+    // nie zmienia), opis głazów (wspólny dla odłamów: układ skały ten sam) i porowatość
+    // makro (gęstość ciała × (1 − porowatość)). Monolit: null / 0.
+    this.boulder = o.boulder || null;
+    this.rubble = o.rubble || null;
+    this.porosity = o.porosity ?? 0;
+    this.cellMass = this.cs * this.cs * this.cs * this.material.density * (o.tonnesPerVolume ?? MINING_CONFIG.tonnesPerVolume) * (1 - this.porosity);
     // Stan.
     this.version = 1;
     this.massDirty = true;
@@ -482,6 +498,11 @@ export class AsteroidMining {
   constructor({ radiusAt, config = null, seed = 1 } = {}) {
     this.radiusAt = radiusAt || (() => 1);
     this.cfg = { ...MINING_CONFIG, ...(config || {}) };
+    // Rumowiska: config.rubble = false wyłącza (każda skała to monolit), obiekt nadpisuje RUBBLE_CONFIG.
+    const rub = config ? config.rubble : undefined;
+    this.rubbleCfg = rub === false ? { ...RUBBLE_CONFIG, enabled: false } : { ...RUBBLE_CONFIG, ...(rub || {}) };
+    this._pluckClock = 0;
+    this._plucked = false;
     this.seed = seed >>> 0;
     this.bodies = [];
     this.pebbles = [];
@@ -503,7 +524,7 @@ export class AsteroidMining {
     this._queue = null;
     this.stats = {
       blasts: 0, splits: 0, collected: 0, bodies: 0, pebbles: 0, lastLabelMs: 0, lastBlastMs: 0, lastBuildMs: 0,
-      balls: 0, ballsReleased: 0, ballsDischarged: 0, ballsCaptured: 0
+      balls: 0, ballsReleased: 0, ballsDischarged: 0, ballsCaptured: 0, rubble: 0, plucks: 0
     };
   }
 
@@ -515,7 +536,7 @@ export class AsteroidMining {
    * seed, sx..sz, qx..qw, ax..az, spin, phase, id). z = z sceny środka skały
    * (warstwa gry: zOf), time = czas obrotu skały (ta sama faza co w shaderze).
    */
-  activate(rock, { z = 0, time = 0, sunT = 1, anchored = false } = {}) {
+  activate(rock, { z = 0, time = 0, sunT = 1, anchored = false, rubble: forceRubble = undefined } = {}) {
     const t0 = nowMs();
     const cfg = this.cfg;
     const mat = rockMaterial(rock.type);
@@ -590,6 +611,14 @@ export class AsteroidMining {
     const veinSeed = hash32(rock.id >>> 0, 0x7E1, this.seed);
     const veinScale = 1 / (0.33 * meanR);
     const invS = [1 / (r * s[0]), 1 / (r * s[1]), 1 / (r * s[2])];
+    // Rumowisko (RUBBLE_CONFIG): ta sama bryła, ale wnętrze to głazy w regolicie, a ruda
+    // rdzenia (ta sama objętość co rdzeń monolitu) leży w kilku głazach rdzeniowych.
+    // Los z hasha id skały — osobny od ciągu rng monolitu (monolity budują się bez zmian);
+    // rumowisko nie liczy w pętli niżej rdzenia ani żył (składa je _buildRubble).
+    const rc = this.rubbleCfg;
+    const isRubble = forceRubble !== undefined
+      ? !!forceRubble && !plasma
+      : rc.enabled && !plasma && hash01(rock.id >>> 0, Math.floor(rock.id / 4294967296) >>> 0, this.seed, 0x2B81) < rubbleChance(mat, 2 * meanR, rc, ROCK_TYPES[rock.type] || mat.id);
     for (let k = 0, idx = 0; k < nz; k++) {
       const pz = gz + k * cs;
       for (let j = 0; j < ny; j++) {
@@ -609,7 +638,7 @@ export class AsteroidMining {
           const f = Math.min(1, Math.max(0, 0.5 + sd / cs));
           fill[idx] = f;
           orig[idx] = Math.round(f * 255);
-          if (f <= 0) continue;
+          if (f <= 0 || isRubble) continue;
           const ddx = px - cx0, ddy = py - cy0, ddz = pz - cz0;
           const dc = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
           // Rdzeń: bryła z garbami (szum na kierunku od środka rdzenia), gładki brzeg jak fill.
@@ -635,6 +664,16 @@ export class AsteroidMining {
         }
       }
     }
+    let rub = null;
+    if (isRubble) {
+      rub = this._buildRubble({
+        nx, ny, nz, cs, gx, gy, gz, fill, ore, coreFill, meanR, crust, mantle,
+        coreVol: hasCore ? 4.18879 * coreR * coreR * coreR : 0, hasCore,
+        rng: mulberry32(hash32(this.seed, rock.id >>> 0, Math.floor(rock.id / 4294967296) >>> 0, 0x2B82))
+      });
+      // Za mało miejsca na głazy (nie zdarza się przy progach RUBBLE_CONFIG) — monolit.
+      if (!rub) return this.activate(rock, { z, time, sunT, anchored, rubble: false });
+    }
     const spinAng = (rock.phase ?? 0) + (rock.spin ?? 0) * time;
     const sa = Math.sin(spinAng * 0.5), ca = Math.cos(spinAng * 0.5);
     const ax = rock.ax ?? 0, ay = rock.ay ?? 0, az = rock.az ?? 1;
@@ -644,9 +683,14 @@ export class AsteroidMining {
     const body = new RockBody({
       id: this._nextId++, sourceId: rock.id ?? 0, type: rock.type, material: mat, oreTypeId, shape, seed: rock.seed ?? 0,
       r, sx: s[0], sy: s[1], sz: s[2], sunT,
-      cs, nx, ny, nz, gx, gy, gz, fill, ore, orig, coreFill, coreMaterial: coreMat, core, q, w: [ax * spin, ay * spin, az * spin],
+      cs, nx, ny, nz, gx, gy, gz, fill, ore, orig, coreFill, coreMaterial: coreMat,
+      // Rumowisko nie ma jednego rdzenia (skaner pokazuje głazy rdzeniowe — rubble.list).
+      core: rub ? null : core, q, w: [ax * spin, ay * spin, az * spin],
+      bonds: rub ? rub.bonds : undefined, boulder: rub ? rub.boulder : null, rubble: rub ? rub.info : null,
+      porosity: rub ? rub.info.porosity : 0,
       tonnesPerVolume: cfg.tonnesPerVolume, anchored
     });
+    if (rub) this.stats.rubble++;
     // Układ skały zaczepiony w środku skały pola: p = początek + R · com po przeliczeniu masy.
     body.p[0] = rock.x; body.p[1] = -rock.y; body.p[2] = z;
     body.com[0] = 0; body.com[1] = 0; body.com[2] = 0;
@@ -655,6 +699,206 @@ export class AsteroidMining {
     this.stats.lastBuildMs = nowMs() - t0;
     this.stats.bodies = this.bodies.length;
     return body;
+  }
+
+  /**
+   * Wnętrze rumowiska na siatce skały (fill gotowe): głazy (elipsoidy o rozkładzie
+   * potęgowym rozmiarów, upakowane z lekkim nachodzeniem), regolit między nimi, ruda
+   * per głaz (rdzeniowe — lita ruda w komórkach rdzenia, płaszcza, skorupy), słabe
+   * wiązania między różnymi głazami i w regolicie. Nadpisuje ore / coreFill.
+   * Zwraca { boulder, bonds, info } albo null (skała za mała na głazy — zostaje monolitem).
+   */
+  _buildRubble(o) {
+    const rc = this.rubbleCfg;
+    const { nx, ny, nz, cs, gx, gy, gz, fill, ore, coreFill, meanR, crust, mantle, coreVol, hasCore, rng } = o;
+    const n = nx * ny * nz;
+    const sxy = nx * ny;
+    const cell3 = cs * cs * cs;
+    let solidN = 0;
+    for (let idx = 0; idx < n; idx++) if (fill[idx] >= 0.5) solidN++;
+    const rMax = rc.boulderMax * meanR;
+    const rMin = Math.max(rc.boulderMinCells * cs, rc.boulderMinFrac * meanR);
+    if (solidN < 64 || rMax < rMin * 1.5) return null;
+    const solid = new Int32Array(solidN);
+    for (let idx = 0, s = 0; idx < n; idx++) if (fill[idx] >= 0.5) solid[s++] = idx;
+    // Promienie (równoważne kuli): N(> r) ∝ r^−a w [rMin, rMax], od największego, do upakowania.
+    const a = rc.sizeSlope;
+    const span = 1 - Math.pow(rMin / rMax, a);
+    const radii = [];
+    const want = rc.packing * solidN * cell3;
+    let vol = 0;
+    while (vol < want && radii.length < rc.maxBoulders * 3) {
+      const r = rMin * Math.pow(1 - rng() * span, -1 / a);
+      radii.push(r);
+      vol += 4.18879 * r * r * r;
+    }
+    radii.sort((p, q) => q - p);
+    // Rozmieszczenie: rzutki w pełne komórki; środki w kubełkach o boku 2 · rMax (sąsiad
+    // nachodzący leży najwyżej kubełek dalej) — płaska siatka kubełków nad pudłem siatki.
+    const H = 2 * rMax;
+    const hx = Math.ceil((nx * cs) / H) + 1, hy = Math.ceil((ny * cs) / H) + 1, hz = Math.ceil((nz * cs) / H) + 1;
+    const buckets = new Array(hx * hy * hz);
+    const B = [];   // [x, y, z, r, e1(3), e2(3), e3(3), a1, a2, a3, egg]
+    let failRun = 0;
+    for (let t = 0; t < radii.length && B.length < rc.maxBoulders && failRun < 40; t++) {
+      const r = radii[t];
+      let placed = false;
+      for (let tr = 0; tr < rc.placeTries; tr++) {
+        const idx = solid[Math.floor(rng() * solidN)];
+        const px = gx + (idx % nx + rng() - 0.5) * cs;
+        const py = gy + (((idx / nx) | 0) % ny + rng() - 0.5) * cs;
+        const pz = gz + ((idx / sxy) | 0) * cs + (rng() - 0.5) * cs;
+        const ci = Math.floor((px - gx) / H), cj = Math.floor((py - gy) / H), ck = Math.floor((pz - gz) / H);
+        let ok = true;
+        for (let di = -1; di <= 1 && ok; di++) {
+          const ii = ci + di;
+          if (ii < 0 || ii >= hx) continue;
+          for (let dj = -1; dj <= 1 && ok; dj++) {
+            const jj = cj + dj;
+            if (jj < 0 || jj >= hy) continue;
+            for (let dk = -1; dk <= 1 && ok; dk++) {
+              const kk = ck + dk;
+              if (kk < 0 || kk >= hz) continue;
+              const list = buckets[ii + hx * (jj + hy * kk)];
+              if (!list) continue;
+              for (let q = 0; q < list.length; q++) {
+                const b = B[list[q]];
+                const ex = b[0] - px, ey = b[1] - py, ez = b[2] - pz;
+                const lim = rc.overlap * (r + b[3]);
+                if (ex * ex + ey * ey + ez * ez < lim * lim) { ok = false; break; }
+              }
+            }
+          }
+        }
+        if (!ok) continue;
+        // Elipsoida o losowej orientacji (osie 1 : 0,75–1 : 0,55–0,9, objętość kuli r).
+        const u1 = rng(), u2 = rng(), u3 = rng();
+        const s1 = Math.sqrt(1 - u1), s2 = Math.sqrt(u1);
+        const qr = [s1 * Math.sin(6.2831853 * u2), s1 * Math.cos(6.2831853 * u2), s2 * Math.sin(6.2831853 * u3), s2 * Math.cos(6.2831853 * u3)];
+        const e1 = quatRotate(qr, 1, 0, 0, [0, 0, 0]), e2 = quatRotate(qr, 0, 1, 0, [0, 0, 0]), e3 = quatRotate(qr, 0, 0, 1, [0, 0, 0]);
+        let a1 = 1, a2 = 0.75 + 0.25 * rng(), a3 = 0.55 + 0.35 * rng();
+        const norm = 1 / Math.cbrt(a1 * a2 * a3);
+        a1 *= norm; a2 *= norm; a3 *= norm;
+        const bk = ci + hx * (cj + hy * ck);
+        if (buckets[bk]) buckets[bk].push(B.length); else buckets[bk] = [B.length];
+        B.push([px, py, pz, r, e1[0], e1[1], e1[2], e2[0], e2[1], e2[2], e3[0], e3[1], e3[2], a1, a2, a3, (rng() - 0.5) * 2 * rc.boulderLump]);
+        placed = true;
+        break;
+      }
+      // Kupa pełna (kolejne głazy się nie mieszczą) — dalej już tylko regolit.
+      failRun = placed ? 0 : failRun + 1;
+    }
+    const N = B.length;
+    if (N < 2) return null;
+    // Komórki: głaz o najmniejszej „odległości elipsoidalnej” q² < 1 (każdy głaz maluje
+    // swoje pudełko — bez szukania sąsiadów per komórka); ziarno brzegu z hasha komórki.
+    const boulder = new Uint8Array(n);
+    const bestQ = new Float32Array(n).fill(1);
+    const cells = new Int32Array(N + 1);
+    for (let b = 0; b < N; b++) {
+      const P = B[b];
+      // Pudło z zapasem na długą oś (≤ 1,34), jajowatość i chropowatość brzegu (razem ~1,5 r).
+      const ext = P[3] * 1.55;
+      const i0 = Math.max(0, Math.floor((P[0] - ext - gx) / cs)), i1 = Math.min(nx - 1, Math.ceil((P[0] + ext - gx) / cs));
+      const j0 = Math.max(0, Math.floor((P[1] - ext - gy) / cs)), j1 = Math.min(ny - 1, Math.ceil((P[1] + ext - gy) / cs));
+      const k0 = Math.max(0, Math.floor((P[2] - ext - gz) / cs)), k1 = Math.min(nz - 1, Math.ceil((P[2] + ext - gz) / cs));
+      const ir = 1 / P[3];
+      const r1 = ir / P[13], r2 = ir / P[14], r3 = ir / P[15], egg = P[16];
+      for (let k = k0; k <= k1; k++) {
+        const dz = gz + k * cs - P[2];
+        for (let j = j0; j <= j1; j++) {
+          const dy = gy + j * cs - P[1];
+          let idx = i0 + nx * (j + ny * k);
+          for (let i = i0; i <= i1; i++, idx++) {
+            if (fill[idx] <= 0) continue;
+            const dx = gx + i * cs - P[0];
+            const p1 = (dx * P[4] + dy * P[5] + dz * P[6]) * r1;
+            const p2 = (dx * P[7] + dy * P[8] + dz * P[9]) * r2;
+            const p3 = (dx * P[10] + dy * P[11] + dz * P[12]) * r3;
+            let q2 = p1 * p1 + p2 * p2 + p3 * p3;
+            // Jajowatość wzdłuż długiej osi i chropowatość brzegu (bez pierwiastka).
+            q2 *= 1 - egg * p1 * 0.5;
+            q2 *= 0.93 + 0.14 * (((Math.imul(idx, 0x9E3779B1) ^ Math.imul(b + 1, 0x85EBCA6B)) >>> 0) / 4294967296);
+            if (q2 < bestQ[idx]) { bestQ[idx] = q2; boulder[idx] = b + 1; }
+          }
+        }
+      }
+    }
+    for (let idx = 0; idx < n; idx++) if (fill[idx] >= 0.5) cells[boulder[idx]]++;
+    // Ruda per głaz: rdzeniowe (lita ruda — objętość rdzenia monolitu), płaszcza
+    // (mantleShare × tyle), reszta skorupa z rozrzutem; głębiej — częściej bogate.
+    const grade = new Uint8Array(N + 1);
+    const oreOf = new Float32Array(N + 1);
+    const order = [];
+    for (let b = 1; b <= N; b++) {
+      if (!cells[b]) continue;
+      const P = B[b - 1];
+      const depth = Math.max(0, 1 - Math.sqrt(P[0] * P[0] + P[1] * P[1] + P[2] * P[2]) / meanR);
+      order.push([b, rng() * (0.45 + depth)]);
+      // Skorupa: 0,5–1,5 × udział skorupy, co siódmy głaz z żyłą (× 2,5).
+      oreOf[b] = crust * (0.5 + rng()) * (rng() < 0.15 ? 2.5 : 1);
+    }
+    order.sort((p, q) => q[1] - p[1]);
+    const pick = (target, gradeId, maxCount) => {
+      let take = 0, count = 0;
+      for (let t = 0; t < order.length && take < target && count < maxCount; t++) {
+        const b = order[t][0];
+        if (grade[b]) continue;
+        const c = cells[b];
+        if (count > 0 && take + c > target * 1.4) continue;
+        grade[b] = gradeId; take += c; count++;
+      }
+      return count;
+    };
+    let coreCount = 0;
+    if (hasCore && coreVol > 0) {
+      const target = coreVol / cell3;
+      coreCount = pick(target, 2, rc.coreBoulders[1]);
+      // Rdzeń wielkości jednego głazu, a każdy głaz większy: najmniejszy z nich.
+      if (!coreCount) {
+        let best = 0;
+        for (let t = 0; t < order.length; t++) { const b = order[t][0]; if (!best || cells[b] < cells[best]) best = b; }
+        if (best) { grade[best] = 2; coreCount = 1; }
+      }
+      pick(target * rc.mantleShare, 1, 16);
+    }
+    const regOre = crust * rc.regolithOre;
+    for (let idx = 0; idx < n; idx++) {
+      if (fill[idx] <= 0) { ore[idx] = 0; coreFill[idx] = 0; continue; }
+      const b = boulder[idx];
+      const g = b ? grade[b] : 0;
+      if (g === 2) { coreFill[idx] = 255; ore[idx] = 255; continue; }
+      coreFill[idx] = 0;
+      const o2 = !b ? regOre : g === 1 ? mantle : oreOf[b];
+      ore[idx] = Math.round(Math.min(1, Math.max(0, o2)) * 255);
+    }
+    // Słabe wiązania (bity 3–5): między różnymi głazami i w regolicie.
+    const bonds = new Uint8Array(n);
+    for (let k = 0, idx = 0; k < nz; k++) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++, idx++) {
+          const b = boulder[idx];
+          if (i + 1 < nx) { const c = boulder[idx + 1]; if (b === 0 || c !== b) bonds[idx] |= 8; }
+          if (j + 1 < ny) { const c = boulder[idx + nx]; if (b === 0 || c !== b) bonds[idx] |= 16; }
+          if (k + 1 < nz) { const c = boulder[idx + sxy]; if (b === 0 || c !== b) bonds[idx] |= 32; }
+        }
+      }
+    }
+    // Opis głazów (układ skały): x, y, z, promień równoważny, ranga (0 skorupa, 1 płaszcz, 2 rdzeń).
+    const list = new Float32Array((N + 1) * 5);
+    for (let b = 1; b <= N; b++) {
+      const P = B[b - 1];
+      list[b * 5] = P[0]; list[b * 5 + 1] = P[1]; list[b * 5 + 2] = P[2];
+      list[b * 5 + 3] = Math.cbrt(cells[b] * cell3 / 4.18879);
+      list[b * 5 + 4] = grade[b];
+    }
+    let regolith = 0;
+    for (let idx = 0; idx < n; idx++) if (fill[idx] >= 0.5 && boulder[idx] === 0) regolith++;
+    const porosity = rc.porosity[0] + rng() * (rc.porosity[1] - rc.porosity[0]);
+    return {
+      boulder, bonds,
+      info: { porosity, count: N, list, coreBoulders: coreCount, regolithShare: regolith / solidN }
+    };
   }
 
   /** Usuwa ciało bez urobku (np. skała wraca do pola). */
@@ -743,9 +987,15 @@ export class AsteroidMining {
     const c = body.core;
     const dc = c ? Math.hypot(l[0] - c.x, l[1] - c.y, l[2] - c.z) : Infinity;
     const inCore = body.sampleCore(l[0], l[1], l[2]) >= 0.5;
+    let zone = inCore ? 'rdzeń' : !c ? 'skorupa' : dc < c.mantle ? 'płaszcz' : 'skorupa';
+    if (body.boulder) {
+      const b = this._boulderAt(body, l[0], l[1], l[2]);
+      const g = b ? body.rubble.list[b * 5 + 4] : -1;
+      zone = !b ? 'regolit' : g === 2 ? 'głaz rdzeniowy' : g === 1 ? 'głaz wzbogacony' : 'głaz';
+    }
     return {
       ore: body.sampleOre(l[0], l[1], l[2]),
-      zone: inCore ? 'rdzeń' : !c ? 'skorupa' : dc < c.mantle ? 'płaszcz' : 'skorupa',
+      zone,
       coreDistance: c ? Math.max(0, dc - c.r) : Infinity,
       depth: this._depthAt(body, l[0], l[1], l[2]).depth
     };
@@ -768,8 +1018,63 @@ export class AsteroidMining {
         // Rdzeń w tym ciele (odłam bez rdzenia albo pusta geoda — false).
         present: body.coreMass > 1e-9 || (!!cm && cm.kind === 'plasma' && !body.coreReleased)
       } : null,
-      damage: body.damage
+      damage: body.damage,
+      rubble: body.rubble ? { porosity: body.porosity, boulders: body.rubble.count, coreBoulders: body.rubble.coreBoulders } : null
     };
+  }
+
+  /** Id głazu najbliższej komórki (układ skały); 0 = regolit albo monolit. */
+  _boulderAt(body, lx, ly, lz) {
+    if (!body.boulder) return 0;
+    const i = Math.round((lx - body.gx) / body.cs);
+    const j = Math.round((ly - body.gy) / body.cs);
+    const k = Math.round((lz - body.gz) / body.cs);
+    if (i < 0 || j < 0 || k < 0 || i >= body.nx || j >= body.ny || k >= body.nz) return 0;
+    return body.boulder[body.index(i, j, k)];
+  }
+
+  /**
+   * Głazy rdzeniowe i wzbogacone obecne w ciele (skaner): wypełnia `out` rekordami
+   * { x, y, z (przestrzeń skał), r, grade, cells, mass, ore } — tylko te, których
+   * ≥ 40% komórek zostało w tym ciele. Zwraca out.
+   */
+  oreBoulders(body, out = []) {
+    out.length = 0;
+    const R = body.rubble;
+    if (!R || !body.boulder) return out;
+    const N = R.count;
+    if (!this._bcCount || this._bcCount.length < N + 1) {
+      this._bcCount = new Int32Array(256);
+      this._bcOre = new Float64Array(256);
+      this._bcX = new Float64Array(256); this._bcY = new Float64Array(256); this._bcZ = new Float64Array(256);
+    }
+    const cnt = this._bcCount, oreS = this._bcOre, sx = this._bcX, sy = this._bcY, sz = this._bcZ;
+    cnt.fill(0); oreS.fill(0); sx.fill(0); sy.fill(0); sz.fill(0);
+    const { nx, ny, nz, cs, fill, ore, boulder } = body;
+    for (let k = 0, idx = 0; k < nz; k++) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++, idx++) {
+          const b = boulder[idx];
+          if (!b || fill[idx] < 0.5 || R.list[b * 5 + 4] < 1) continue;
+          cnt[b]++; oreS[b] += fill[idx] * ore[idx];
+          sx[b] += i; sy[b] += j; sz[b] += k;
+        }
+      }
+    }
+    const full = 4.18879 / (cs * cs * cs);
+    for (let b = 1; b <= N; b++) {
+      const c = cnt[b];
+      if (!c) continue;
+      const r0 = R.list[b * 5 + 3];
+      if (c < 0.4 * r0 * r0 * r0 * full) continue;
+      const lx = body.gx + (sx[b] / c) * cs, ly = body.gy + (sy[b] / c) * cs, lz = body.gz + (sz[b] / c) * cs;
+      const w = body.localToWorld(lx, ly, lz, [0, 0, 0]);
+      out.push({
+        x: w[0], y: w[1], z: w[2], r: Math.cbrt(c / full), grade: R.list[b * 5 + 4], cells: c,
+        mass: c * body.cellMass, ore: (oreS[b] / 255) * body.cellMass, id: b
+      });
+    }
+    return out;
   }
 
   // Najmniejsza odległość do pustego miejsca (fill < 0,5) — kierunki Fibonacciego.
@@ -806,6 +1111,9 @@ export class AsteroidMining {
     const coreMat = body.coreMaterial;
     const plasma = coreMat !== null && coreMat.kind === 'plasma' && !body.coreReleased;
     const coreK = coreMat !== null ? (0.2 + body.material.hardness) / (0.2 + coreMat.hardness) - 1 : 0;
+    // Rumowisko: luźny regolit schodzi regolithDig razy szybciej niż głaz.
+    const bl = body.boulder;
+    const regK = bl !== null ? this.rubbleCfg.regolithDig : 1;
     let touchedPlasma = false;
     const i0 = Math.max(0, Math.floor((lx - radius - body.gx) / cs));
     const i1 = Math.min(nx - 1, Math.ceil((lx + radius - body.gx) / cs));
@@ -849,6 +1157,7 @@ export class AsteroidMining {
           // Nierówne wybieranie (ziarno skały): ściany otworu chropowate, nie gładki lej.
           const u = 1 - d2 / R2;
           let want = perW * u * u * (0.55 + 0.9 * hash01(idx, body.id, 0xD16));
+          if (bl !== null && bl[idx] === 0) want *= regK;
           const c = coreFill[idx];
           if (c !== 0) {
             if (plasma) { if (c >= 128) touchedPlasma = true; continue; }
@@ -1026,6 +1335,7 @@ export class AsteroidMining {
       coreChunks: 0, ball: null
     };
     this.stats.blasts++;
+    if (body.boulder) return this._detonateRubble(body, l, dep, x, y, z, E, rcRock, rcCore, rf, rng, res, out, t0);
     // Piorun kulisty: geoda pęka, gdy strefa spękań sięga rdzenia (także przy ładunku za
     // słabym na skorupę) — plazma ucieka z krótkim bezpiecznikiem, ze zmiażdżenia prawie od razu.
     if (cm !== null && cm.kind === 'plasma' && !body.coreReleased && body.core) {
@@ -1086,6 +1396,146 @@ export class AsteroidMining {
     this.events.push({
       kind: 'blast', outcome: 'breach', x, y, z, energy: E, rc, rf, body,
       pieces: split.bodies.length + split.pebbles.length, coreChunks: res.coreChunks
+    });
+    this.stats.lastBlastMs = nowMs() - t0;
+    return res;
+  }
+
+  /**
+   * Ładunek w RUMOWISKU: strefa rozrzutu rs = reach × strefa spękań monolitu. Za słaby
+   * (rs < głębokość) — kupa się zagęszcza (uszkodzenie jak w monolicie). Przebicie:
+   * zmiażdżenie jak w monolicie; regolit w regolithBlow · rs wylatuje (pył + żwir);
+   * głazy w boulderFracture × strefa spękań pękają (bryły Voronoi); każdy głaz, którego
+   * ≥ detachShare komórek (albo środek) leży w rs, odpada CAŁY (słabe wiązania z resztą
+   * pękają); odłamy lecą wolno (× blast). res.rf = rs, res.rubble = true.
+   */
+  _detonateRubble(body, l, dep, x, y, z, E, rcRock, rcCore, rf, rng, res, out, t0) {
+    const cfg = this.cfg;
+    const rc = this.rubbleCfg;
+    const mm = body.material;
+    const cm = body.coreMaterial;
+    const cs = body.cs;
+    const rs = rf * rc.reach;
+    res.rf = rs;
+    res.rubble = true;
+    if (rs < dep.depth) {
+      body.damage += cfg.containedDamage * (rs / Math.max(1, dep.depth));
+      body.version++;
+      this.events.push({ kind: 'blast', outcome: 'contained', x, y, z, energy: E, rc: res.rc, rf: rs, body, rubble: true });
+      this.stats.lastBlastMs = nowMs() - t0;
+      return res;
+    }
+    // 1) Zmiażdżenie i żwir — jak w monolicie (głazy rdzeniowe kruszą się materiałem rdzenia).
+    const crush = this._crush(body, l[0], l[1], l[2], rcRock, out, rcCore);
+    res.crushed = crush.mass;
+    const rockMass = Math.max(0, crush.mass - crush.coreMass);
+    const rockOre = Math.max(0, crush.ore - crush.coreOre);
+    const rockFines = rockMass * mm.fines;
+    const coreFines = cm !== null ? crush.coreMass * cm.fines : 0;
+    let fines = rockFines + coreFines;
+    const gravel = this._gravel(body, l, rcRock, rockMass - rockFines, rockOre * (1 - mm.fines), E, mm, rng, false);
+    if (cm !== null && crush.coreMass > 1e-9) {
+      const shot = this._gravel(body, l, Math.max(rcCore, cs), crush.coreMass - coreFines, crush.coreOre * (1 - cm.fines), E, cm, rng, true);
+      for (const g of shot) gravel.push(g);
+    }
+    // 2) Regolit w strefie wydmuchu: luźny — wylatuje (pył przepada, reszta żwirem).
+    const { nx, ny, nz, fill, ore, bonds, boulder } = body;
+    const rb = rs * rc.regolithBlow;
+    const rb2 = rb * rb, rs2 = rs * rs;
+    const cmass = body.cellMass;
+    let regMass = 0, regOre = 0;
+    const N = body.rubble.count;
+    const tot = this._rbTot || (this._rbTot = new Int32Array(256));
+    const inz = this._rbIn || (this._rbIn = new Int32Array(256));
+    tot.fill(0); inz.fill(0);
+    let bi0 = nx, bj0 = ny, bk0 = nz, bi1 = -1, bj1 = -1, bk1 = -1;
+    for (let k = 0, idx = 0; k < nz; k++) {
+      const dz = body.gz + k * cs - l[2];
+      for (let j = 0; j < ny; j++) {
+        const dy = body.gy + j * cs - l[1];
+        for (let i = 0; i < nx; i++, idx++) {
+          const f = fill[idx];
+          if (f <= 0) continue;
+          const b = boulder[idx];
+          const dx = body.gx + i * cs - l[0];
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (b === 0) {
+            if (d2 < rb2) {
+              const m = f * cmass;
+              regMass += m; regOre += m * (ore[idx] / 255);
+              fill[idx] = 0;
+              if (i < bi0) bi0 = i; if (i > bi1) bi1 = i; if (j < bj0) bj0 = j; if (j > bj1) bj1 = j; if (k < bk0) bk0 = k; if (k > bk1) bk1 = k;
+            }
+            continue;
+          }
+          if (f < 0.5) continue;
+          tot[b]++;
+          if (d2 < rs2) inz[b]++;
+        }
+      }
+    }
+    if (bi1 >= 0) body._touch(bi0, bj0, bk0, bi1, bj1, bk1);
+    const regFines = regMass * rc.regolithFines;
+    fines += regFines;
+    if (regMass - regFines > 1e-9) {
+      const g2 = this._gravel(body, l, rb * 0.6, regMass - regFines, regOre * (1 - rc.regolithFines), E, mm, rng, false);
+      for (const g of g2) gravel.push(g);
+    }
+    addYield(out, null, 0, 0, fines);
+    res.fines = fines;
+    for (const g of gravel) this.pebbles.push(g);
+    res.gravel = gravel;
+    let gravelMass = 0;
+    for (const g of gravel) gravelMass += g.mass;
+    const overflow = Math.max(0, crush.mass + regMass - fines - gravelMass);
+    if (overflow > 1e-9) addYield(out, null, 0, 0, overflow);
+    res.lostCrush = fines + overflow;
+    res.outcome = 'breach';
+    // 3) Głazy tuż przy ładunku pękają (bryły Voronoi jak w monolicie, mniejsza strefa).
+    const rfB = rf * rc.boulderFracture;
+    const seeds = this._fractureSeeds(body, l, rfB, mm, rng);
+    const region = this._assignRegions(body, l, rfB, seeds, mm, rng);
+    this._breakBonds(body, region, mm, rng, 0, 0);
+    // 4) Rozrzut: głaz z większością komórek (albo środkiem) w strefie odpada cały.
+    const detach = this._rbDetach || (this._rbDetach = new Uint8Array(256));
+    detach.fill(0);
+    const L = body.rubble.list;
+    let detached = 0;
+    for (let b = 1; b <= N; b++) {
+      if (!tot[b]) continue;
+      const ex = L[b * 5] - l[0], ey = L[b * 5 + 1] - l[1], ez = L[b * 5 + 2] - l[2];
+      if (inz[b] >= rc.detachShare * tot[b] || (inz[b] > 0 && ex * ex + ey * ey + ez * ez < rs2)) { detach[b] = 1; detached++; }
+    }
+    const base = seeds.length + 1;
+    const sxy = nx * ny;
+    for (let k = 0, idx = 0; k < nz; k++) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++, idx++) {
+          if (fill[idx] < 0.5) continue;
+          const b = boulder[idx];
+          if (b && detach[b] && region[idx] === 0) region[idx] = base + b;
+          const w = bonds[idx] >> 3;
+          if (!w) continue;
+          // Słabe wiązanie pęka, gdy któraś strona należy do odpadającego głazu.
+          const da = b !== 0 && detach[b] === 1;
+          if ((w & 1) && i + 1 < nx) { const c = boulder[idx + 1]; if (da || (c !== 0 && detach[c] === 1)) bonds[idx] |= 1; }
+          if ((w & 2) && j + 1 < ny) { const c = boulder[idx + nx]; if (da || (c !== 0 && detach[c] === 1)) bonds[idx] |= 2; }
+          if ((w & 4) && k + 1 < nz) { const c = boulder[idx + sxy]; if (da || (c !== 0 && detach[c] === 1)) bonds[idx] |= 4; }
+        }
+      }
+    }
+    // 5) Rozpad z odrzutem (wolniej niż monolit — energia idzie w zgniatanie porów).
+    const vent = quatRotate(body.q, dep.vx, dep.vy, dep.vz, [0, 0, 0]);
+    const kick = (piece, isRemainder) => this._blastKick(piece, isRemainder, x, y, z, E, res.rc, rs, mm, vent, body, region, rng, rc.blast, rc.blastFlatten);
+    const split = this._splitNow(body, kick, region);
+    res.bodies = split.bodies;
+    res.pebbles = split.pebbles;
+    res.dust = split.dust;
+    res.boulders = detached;
+    if (split.dust > 0) addYield(out, body.oreRes, 0, 0, split.dust);
+    this.events.push({
+      kind: 'blast', outcome: 'breach', x, y, z, energy: E, rc: res.rc, rf: rs, body, rubble: true,
+      pieces: split.bodies.length + split.pebbles.length, coreChunks: 0, boulders: detached
     });
     this.stats.lastBlastMs = nowMs() - t0;
     return res;
@@ -1156,7 +1606,7 @@ export class AsteroidMining {
       const lw = quatRotate(body.q, l[0] + dx * rr, l[1] + dy * rr, l[2] + dz * rr, [0, 0, 0]);
       const dw = quatRotate(body.q, dx, dy, dz, [0, 0, 0]);
       const mass = (massT * weights[i]) / wsum;
-      const vol = mass / (body.material.density * cfg.tonnesPerVolume);
+      const vol = mass / (body.material.density * cfg.tonnesPerVolume * (core ? 1 : 1 - body.porosity));
       const speed = Math.min(cfg.blastSpeedMax, cfg.blastSpeed * Math.pow(E, 0.45) * m.blast * (1.2 + 0.6 * rng()));
       const u1 = rng(), u2 = rng(), u3 = rng();
       const s1 = Math.sqrt(1 - u1), s2 = Math.sqrt(u1);
@@ -1454,7 +1904,7 @@ export class AsteroidMining {
     }
   }
 
-  _blastKick(piece, isRemainder, x, y, z, E, rc, rf, m, vent, parent, region, rng) {
+  _blastKick(piece, isRemainder, x, y, z, E, rc, rf, m, vent, parent, region, rng, scale = 1, flatten = 0) {
     const cfg = this.cfg;
     piece.asleep = false;
     piece.sleep = 0;
@@ -1474,13 +1924,25 @@ export class AsteroidMining {
     dx += (rng() - 0.5) * 0.4; dy += (rng() - 0.5) * 0.4; dz += (rng() - 0.5) * 0.4;
     const ll = Math.hypot(dx, dy, dz) || 1;
     dx /= ll; dy /= ll; dz /= ll;
+    if (flatten > 0) {
+      // Rumowisko: wyrzut z krateru stożkiem na boki — w płaszczyźnie gry, od ładunku (pionowy
+      // ruch zjadał strop warstwy skał i kupa wyglądała na nietkniętą).
+      let hx = piece.p[0] - x, hy = piece.p[1] - y;
+      let hl = Math.sqrt(hx * hx + hy * hy);
+      if (hl < 1e-6) { const a = rng() * 6.2831853; hx = Math.cos(a); hy = Math.sin(a); hl = 1; }
+      dx = dx * (1 - flatten) + (hx / hl) * flatten;
+      dy = dy * (1 - flatten) + (hy / hl) * flatten;
+      dz *= 1 - flatten;
+      const l2 = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      dx /= l2; dy /= l2; dz /= l2;
+    }
     const near = Math.min(1.6, Math.max(0.3, rf / (d + rc)));
     const massK = Math.pow(Math.max(1, piece.mass) / 200, -0.12);
     // Kawałek rdzenia leci z rozrzutem materiału rdzenia (bryła metalu wolniej, odłamki kryształu szybciej).
     const blastK = parent.coreMaterial !== null && isCorePiece(piece) ? parent.coreMaterial.blast : m.blast;
     let speed = cfg.blastSpeed * Math.pow(E, 0.45) * blastK * near * massK;
     if (isRemainder) speed *= 0.12;
-    speed = Math.min(cfg.blastSpeedMax, speed);
+    speed = Math.min(cfg.blastSpeedMax, speed * scale);
     piece.v[0] += dx * speed; piece.v[1] += dy * speed; piece.v[2] += dz * speed;
     // Obrót wokół osi prostopadłej do kierunku lotu.
     let ax = rng() - 0.5, ay = rng() - 0.5, az = rng() - 0.5;
@@ -1686,6 +2148,9 @@ export class AsteroidMining {
     const bonds = new Uint8Array(n);
     const orig = new Uint8Array(n);
     const coreFill = new Uint8Array(n);
+    // Rumowisko: id głazów całego wycinka (pamięć budowy — render widzi, że ściana
+    // odłamu to dawna granica głazu, nie świeży przełom).
+    const boulder = parent.boulder ? new Uint8Array(n) : null;
     for (let k = 0; k < nz; k++) {
       for (let j = 0; j < ny; j++) {
         for (let i = 0; i < nx; i++) {
@@ -1694,6 +2159,7 @@ export class AsteroidMining {
           // Pierwotne zapełnienie całego wycinka (też komórek innych odłamów):
           // powierzchnia pęknięcia to ściana „wycięta” (orig > fill), nie brzeg skały.
           orig[dst] = parent.orig[src];
+          if (boulder) boulder[dst] = parent.boulder[src];
           if (labels[src] !== comp.label) continue;
           fill[dst] = parent.fill[src];
           ore[dst] = parent.ore[src];
@@ -1711,6 +2177,7 @@ export class AsteroidMining {
       gx: parent.gx + i0 * parent.cs, gy: parent.gy + j0 * parent.cs, gz: parent.gz + k0 * parent.cs,
       fill, ore, bonds, orig, coreFill, coreMaterial: parent.coreMaterial, coreReleased: parent.coreReleased,
       core: parent.core, q: parent.q, w: parentW, damage: parent.damage,
+      boulder, rubble: parent.rubble, porosity: parent.porosity,
       tonnesPerVolume: this.cfg.tonnesPerVolume
     });
     // Ten sam układ skały co rodzic: p = początek rodzica + R · com (po przeliczeniu).
@@ -1732,9 +2199,10 @@ export class AsteroidMining {
   }
 
   _extractPebble(parent, labels, comp, parentV, parentW, parentCom) {
-    let m = 0, mo = 0, mc = 0, cx = 0, cy = 0, cz = 0;
+    let m = 0, mo = 0, mc = 0, cx = 0, cy = 0, cz = 0, mb = 0;
     const cs = parent.cs;
     const { nx, ny } = parent;
+    const bl = parent.boulder;
     for (let k = comp.k0 - 1; k <= comp.k1 + 1; k++) {
       if (k < 0 || k >= parent.nz) continue;
       for (let j = comp.j0 - 1; j <= comp.j1 + 1; j++) {
@@ -1745,6 +2213,7 @@ export class AsteroidMining {
           if (labels[idx] !== comp.label) continue;
           const f = parent.fill[idx];
           m += f; mo += f * parent.ore[idx] / 255; mc += f * parent.coreFill[idx] / 255;
+          if (bl !== null && bl[idx] !== 0) mb += f;
           cx += f * (parent.gx + i * cs); cy += f * (parent.gy + j * cs); cz += f * (parent.gz + k * cs);
           parent.fill[idx] = 0; parent.ore[idx] = 0; parent.bonds[idx] = 0; parent.coreFill[idx] = 0;
         }
@@ -1775,8 +2244,13 @@ export class AsteroidMining {
       r: Math.cbrt((3 * vol) / (4 * Math.PI)),
       mass: m * parent.cellMass,
       oreMass: mo * parent.cellMass,
-      shape: Math.floor(rng() * 40),
+      // Głaz z rumowiska (w przewadze komórki głazu, nie regolit): obły, zwietrzały — render
+      // rysuje go bryłą (gra: rodzina „bryła” banku; demo: rodzina okruchów BOULDER).
+      shape: bl !== null && mb >= 0.6 * m
+        ? FAMILY.potato * SHAPE_VARIANTS + Math.floor(rng() * SHAPE_VARIANTS)
+        : Math.floor(rng() * 40),
       seed: rng(),
+      boulder: bl !== null && mb >= 0.6 * m,
       grace: 0,
       age: 0,
       alive: true,
@@ -2028,11 +2502,19 @@ export class AsteroidMining {
    * skał), nie cięższe niż `capacity` [t], lecą do punktu; bliżej niż `capture`
    * trafiają do ładowni. Zwraca listę złapanych { kind, ore, oreRes, waste }, urobek do `out`.
    */
-  tractor(tx, ty, tz, radius, capacity, capture, dt, out = null, pull = 1, maxOre = Infinity) {
+  tractor(tx, ty, tz, radius, capacity, capture, dt, out = null, pull = 1, maxOre = Infinity, pluck = true) {
     // Tablica złapanych wielokrotnego użytku (ważna do następnego wywołania) — gra
     // woła wiązkę co krok fizyki; zdarzenie zbiórki dostaje kopię (rzadko).
     const got = this._got;
     got.length = 0;
+    // Rumowisko w zasięgu: co pluckInterval wyrwij jeden odsłonięty głaz (pluck = false —
+    // wołający nie ma budżetu ciężkiej operacji w tej klatce; spróbuje w następnej).
+    this._plucked = false;
+    const ri = this.rubbleCfg.pluckInterval;
+    this._pluckClock = Math.min(ri, this._pluckClock + dt);
+    // Nieudana próba (brak odsłoniętego głazu w udźwigu) — następna za pół odstępu: przegląd
+    // siatki kupy (~1 ms) nie może iść co krok fizyki.
+    if (pluck && this._pluckClock >= ri) this._pluckClock = this._pluck(tx, ty, tz, radius, capacity) ? 0 : ri * 0.5;
     const T = this._tr || (this._tr = { tx: 0, ty: 0, tz: 0, radius: 0, capacity: 0, capture: 0, want: 0, k: 0, pull: 1 });
     T.tx = tx; T.ty = ty; T.tz = tz; T.radius = radius; T.capacity = capacity; T.capture = capture;
     T.k = 1 - Math.exp(-2.2 * dt * pull);
@@ -2054,6 +2536,9 @@ export class AsteroidMining {
     }
     for (let i = this.bodies.length - 1; i >= 0; i--) {
       const b = this.bodies[i];
+      // Zakotwiczone rumowisko nie leci w całości (luźna kupa rozpadłaby się w wiązce) —
+      // wiązka wyrywa z niego głazy (_pluck). Monolit — jak dotąd.
+      if (b.anchored && b.boulder !== null) continue;
       if (b.massDirty) b.recomputeMass();
       if (this._pullOne(b, b.mass, b.boundR) && b.oreMass <= allowance + 1e-9) {
         allowance -= b.oreMass;
@@ -2071,6 +2556,92 @@ export class AsteroidMining {
       this.events.push({ kind: 'collect', items: got.slice() });
     }
     return got;
+  }
+
+  /**
+   * Wiązka wyrywa z najbliższego rumowiska w zasięgu jeden ODSŁONIĘTY głaz (≥ pluckExposure
+   * komórek na powierzchni, ≥ pluckMinCells, lżejszy niż udźwig, nie cała kupa) — najbliższy
+   * punktu wiązki, głaz rdzeniowy i wzbogacony z pierwszeństwem. Słabe wiązania głazu pękają,
+   * głaz odpada (odłam albo okruch) z prędkością ku wiązce. Zwraca true, gdy wyrwał.
+   */
+  _pluck(tx, ty, tz, radius, capacity) {
+    const rc = this.rubbleCfg;
+    let body = null, bestD = Infinity;
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      if (!b.alive || !b.boulder) continue;
+      if (b.massDirty) b.recomputeMass();
+      // Tylko kupa, której wiązka nie weźmie w całości (zakotwiczona albo za ciężka) — wyrwany
+      // wcześniej głaz też ma pole `boulder`, a leży zwykle najbliżej wiązki.
+      if (!b.anchored && b.mass <= capacity) continue;
+      const dx = b.p[0] - tx, dy = b.p[1] - ty, dz = b.p[2] - tz;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) - b.boundR;
+      if (d > radius || d >= bestD) continue;
+      bestD = d; body = b;
+    }
+    if (!body) return false;
+    const { nx, ny, nz, fill, boulder, bonds } = body;
+    const sxy = nx * ny;
+    const N = body.rubble.count;
+    const tot = this._rbTot || (this._rbTot = new Int32Array(256));
+    const exp = this._rbIn || (this._rbIn = new Int32Array(256));
+    tot.fill(0); exp.fill(0);
+    let solid = 0;
+    for (let k = 0, idx = 0; k < nz; k++) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++, idx++) {
+          if (fill[idx] < 0.5) continue;
+          solid++;
+          const b = boulder[idx];
+          if (!b) continue;
+          tot[b]++;
+          if (i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1
+            || fill[idx - 1] < 0.5 || fill[idx + 1] < 0.5 || fill[idx - nx] < 0.5 || fill[idx + nx] < 0.5
+            || fill[idx - sxy] < 0.5 || fill[idx + sxy] < 0.5) exp[b]++;
+        }
+      }
+    }
+    const L = body.rubble.list;
+    let pick = 0, pickScore = Infinity;
+    const w = _t1;
+    for (let b = 1; b <= N; b++) {
+      const c = tot[b];
+      if (c < rc.pluckMinCells || exp[b] < rc.pluckExposure * c || c > 0.8 * solid) continue;
+      if (c * body.cellMass > capacity) continue;
+      body.localToWorld(L[b * 5], L[b * 5 + 1], L[b * 5 + 2], w);
+      const dx = w[0] - tx, dy = w[1] - ty, dz = w[2] - tz;
+      const g = L[b * 5 + 4];
+      const score = Math.sqrt(dx * dx + dy * dy + dz * dz) * (g === 2 ? 0.4 : g === 1 ? 0.7 : 1);
+      if (score < pickScore) { pickScore = score; pick = b; }
+    }
+    if (!pick) return false;
+    // Słabe wiązania głazu z otoczeniem pękają (bit na komórce o mniejszym indeksie).
+    for (let k = 0, idx = 0; k < nz; k++) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++, idx++) {
+          if (boulder[idx] !== pick) continue;
+          if (i + 1 < nx && boulder[idx + 1] !== pick) bonds[idx] |= 1;
+          if (i > 0 && boulder[idx - 1] !== pick) bonds[idx - 1] |= 1;
+          if (j + 1 < ny && boulder[idx + nx] !== pick) bonds[idx] |= 2;
+          if (j > 0 && boulder[idx - nx] !== pick) bonds[idx - nx] |= 2;
+          if (k + 1 < nz && boulder[idx + sxy] !== pick) bonds[idx] |= 4;
+          if (k > 0 && boulder[idx - sxy] !== pick) bonds[idx - sxy] |= 4;
+        }
+      }
+    }
+    const sp = rc.pluckSpeed;
+    const split = this._splitNow(body, (piece, isRemainder) => {
+      if (isRemainder) return;
+      const dx = tx - piece.p[0], dy = ty - piece.p[1], dz = tz - piece.p[2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      piece.v[0] += (dx / d) * sp; piece.v[1] += (dy / d) * sp; piece.v[2] += (dz / d) * sp;
+    });
+    if (!split.bodies.length && !split.pebbles.length) return false;
+    this.stats.plucks++;
+    this._plucked = true;
+    const g = L[pick * 5 + 4];
+    this.events.push({ kind: 'pluck', body, boulder: pick, grade: g, pieces: split.bodies.length + split.pebbles.length });
+    return true;
   }
 
   // Wiązka na jednym obiekcie (parametry wywołania w this._tr): true = w zasięgu chwytu.
@@ -2366,6 +2937,28 @@ function nowMs() {
 /** Ruda rdzenia ciała (ukryty rdzeń skały neutralnej ma inną niż typ skały). */
 function coreTypeOf(body) {
   return body.core?.oreTypeId ?? body.oreTypeId ?? null;
+}
+
+/**
+ * Kod komórki rumowiska do renderu (kanał A atlasu wydobycia, 0 … 255): 64 = regolit
+ * albo szew między dwoma głazami (luźny żwir), 0 = wnętrze głazu i monolit. Komórki
+ * (i, j, k) siatki ciała; czyta pamięć budowy `boulder`, więc ściana odsłoniętego głazu
+ * (sąsiad — wykopany regolit) wychodzi w renderze jako zakurzona powierzchnia głazu.
+ */
+export function rubbleCellCode(body, idx, i, j, k) {
+  const bl = body.boulder;
+  if (bl === null) return 0;
+  const b = bl[idx];
+  if (b === 0) return 64;
+  const nx = body.nx, sxy = nx * body.ny;
+  let c;
+  if (i > 0 && (c = bl[idx - 1]) !== 0 && c !== b) return 64;
+  if (i < nx - 1 && (c = bl[idx + 1]) !== 0 && c !== b) return 64;
+  if (j > 0 && (c = bl[idx - nx]) !== 0 && c !== b) return 64;
+  if (j < body.ny - 1 && (c = bl[idx + nx]) !== 0 && c !== b) return 64;
+  if (k > 0 && (c = bl[idx - sxy]) !== 0 && c !== b) return 64;
+  if (k < body.nz - 1 && (c = bl[idx + sxy]) !== 0 && c !== b) return 64;
+  return 0;
 }
 
 /** Kawałek rdzenia: okruch z flagą `core` albo ciało, którego masa to w przewadze rdzeń. */

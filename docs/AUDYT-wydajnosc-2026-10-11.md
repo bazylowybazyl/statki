@@ -269,6 +269,8 @@ przechodziło 0 z ~330 dysz) — płaciło się za listę i odrzucanie po pracy 
    widocznych dysz nie oświetla kadłuba. Poprawka: liczyć tylko przyjęte (`if (lights.point(...)) lightsThisFrame++`)
    — zmienia wygląd (więcej świateł na widocznych kadłubach i więcej pracy oświetlenia), więc do decyzji. Z tego
    powodu LOD dysz za kadrem obejmuje tylko dysze poniżej `minLightPx`.
+   **Wdrożone 2026-10-12** (decyzja użytkownika): `SideJets3D.push` liczy do `maxLights` tylko światła przyjęte
+   przez `FxLights.point`.
 2. **Strugi MAIN okrętów za kadrem** idą do puli 4096 strug i do `MainExhaust3D.flush` (0,21–0,25 ms/kl w
    profilu), a przy zoomie 0,1 ~55–60% okrętów jest poza pudłem rysowania. Pominięcie wypuszczania strug dyszy,
    której struga i iskry nie sięgną kadru (~25 R × długość strugi, iskry ~32 R; moc dalej liczona — pył i światła

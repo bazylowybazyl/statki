@@ -470,6 +470,7 @@ export function createRadarTerrain(tune = RADAR_TUNE) {
     const features = Array.isArray(world.features) ? world.features : [];
     for (const f of features) {
       if (!f) continue;
+      if (f.type === 'comet') { if (cometTerrain(g, f, k, T, margin)) back.drawn++; continue; }
       const ent = f.entity || f;
       const r = Math.max(0, Number(f.radius) || 0) * k;
       if (r < 0.6) continue;
@@ -606,6 +607,74 @@ export function createRadarTerrain(tune = RADAR_TUNE) {
       g.strokeStyle = radarColor(RADAR_RGB.structure, 0.92);
       g.stroke();
     }
+  }
+
+  // Kometa (src/game/cometField.js → landmarks; cecha `comet` w world.features): gaz komy i warkoczy to słabe
+  // echo rozproszone (clutter) — wachlarz pyłu za ruchem i wąski jonowy od Słońca; jądro — ląd jak skała.
+  function cometTerrain(g, f, k, T, margin) {
+    const c = f.comet;
+    if (!c) return false;
+    const L = Math.max(c.ionLen || 0, c.dustLen || 0);
+    toPx(c.x, c.y, _pt);
+    const cx = _pt.x, cy = _pt.y;
+    const reach = (L + (c.comaR || 0)) * k;
+    if (cx + reach < -margin || cx - reach > T + margin || cy + reach < -margin || cy - reach > T + margin) return false;
+    if (c.active) {
+      // wachlarz pyłu: od osi antysłonecznej do najstarszej synchrony (strona „za ruchem”)
+      const dl = (c.dustLen || 0) * k;
+      if (dl > 2) {
+        const a0 = Math.atan2(c.axisY, c.axisX);
+        const lag = Math.atan2(c.lagY, c.lagX);
+        const side = Math.sign(Math.sin(lag - a0)) || 1;
+        const span = c.dustAngle || 0.4;
+        g.beginPath();
+        g.moveTo(cx, cy);
+        for (let i = 0; i <= 12; i++) {
+          const a = a0 + side * span * (0.05 + 0.95 * i / 12);
+          const rr = dl * (1 - 0.25 * i / 12);
+          g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+        }
+        g.closePath();
+        const grad = g.createRadialGradient(cx, cy, 0, cx, cy, dl);
+        grad.addColorStop(0, radarColor(RADAR_RGB.clutter, 0.32));
+        grad.addColorStop(1, radarColor(RADAR_RGB.clutter, 0));
+        g.fillStyle = grad;
+        g.fill();
+      }
+      // warkocz jonowy: cienka linia od Słońca
+      const il = (c.ionLen || 0) * k;
+      if (il > 2) {
+        const grad = g.createLinearGradient(cx, cy, cx + c.ionX * il, cy + c.ionY * il);
+        grad.addColorStop(0, radarColor(RADAR_RGB.nav, 0.55));
+        grad.addColorStop(1, radarColor(RADAR_RGB.nav, 0));
+        g.strokeStyle = grad;
+        g.lineWidth = Math.max(1, 1.2 * (job.view.u || 1));
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(cx + c.ionX * il, cy + c.ionY * il);
+        g.stroke();
+      }
+      // koma: miękkie koło
+      const cr = (c.comaR || 0) * k;
+      if (cr > 1.5) {
+        const grad = g.createRadialGradient(cx, cy, 0, cx, cy, cr);
+        grad.addColorStop(0, radarColor(RADAR_RGB.clutter, 0.3));
+        grad.addColorStop(1, radarColor(RADAR_RGB.clutter, 0));
+        g.fillStyle = grad;
+        g.beginPath();
+        g.arc(cx, cy, cr, 0, TAU);
+        g.fill();
+      }
+    }
+    // jądro (obrys kolizji — przeszkoda)
+    const r = Math.max(1.2, (c.radius || 0) * k);
+    g.beginPath();
+    g.arc(cx, cy, r, 0, TAU);
+    landFill(g, 0.3);
+    g.beginPath();
+    g.arc(cx, cy, r, 0, TAU);
+    limbStroke(g, cx, cy, r, Math.max(1, Math.min(2.4, r * 0.15)));
+    return true;
   }
 
   function normA(a) {

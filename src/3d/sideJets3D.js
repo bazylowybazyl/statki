@@ -427,9 +427,10 @@ export const SideJets3D = {
           const c = pal.light;
           if (state.power > 0.06 && lightsThisFrame < T.maxLights) {
             const len = R * (T.len0 + T.len1 * state.power);
-            lights.point(wx + p.dirX * len * 0.3, wy - p.dirY * len * 0.3, c[0], c[1], c[2],
-              lg * T.lightGain * state.power * gain, R * 7, R * 1.2, 0);
-            lightsThisFrame++;
+            // Limit liczy tylko światła przyjęte przez siatkę: światło poza kadrem (FxLights je odrzuca) nie
+            // zabiera miejsca dyszom w kadrze (audyt FPS 2026-10-11 § 6.2 pkt 1, decyzja użytkownika 2026-10-12).
+            if (lights.point(wx + p.dirX * len * 0.3, wy - p.dirY * len * 0.3, c[0], c[1], c[2],
+              lg * T.lightGain * state.power * gain, R * 7, R * 1.2, 0)) lightsThisFrame++;
           }
           if (events & 2) {
             ActiveCarrier.set(writeCarrier(p.entity, wx, wy, !!p.fromRender, _carrier));

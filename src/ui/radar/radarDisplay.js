@@ -644,7 +644,8 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
         pushPick(t, _p.x, _p.y, Math.max(s, 4 * f.u));
         drawn++;
         // etykieta: kolejka (namierzone / wybrane zawsze, reszta wg trybu)
-        if (t.kind !== 'wreck' && (top || (f.mode === 'full' && t.aff === 'hostile' && mature && t.kind !== 'missile') || t === hovered)) {
+        // ciało naturalne (przelot NEA, kometa — rzadkie, pojedyncze) w pełnym radarze zawsze z podpisem
+        if (t.kind !== 'wreck' && (top || (f.mode === 'full' && ((t.aff === 'hostile' && mature && t.kind !== 'missile') || t.kind === 'body')) || t === hovered)) {
           t._tagX = _p.x; t._tagY = _p.y; t._tagS = s;
           _tagQueue.push(t);
         }
@@ -673,6 +674,7 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
     const cls = t.classified ? t.cls : '??';
     let l1;
     if (t.kind === 'station') l1 = t.name || 'STACJA';
+    else if (t.kind === 'body') l1 = `${t.name || 'PLANETOIDA'} ${cls}`;   // ciało naturalne (przelot NEA, kometa)
     else if (t.no) l1 = `T${pad2(t.no)} ${cls}`;
     else l1 = t.classified ? cls : 'KONTAKT';
     if (t.locked) l1 += ' ◆';

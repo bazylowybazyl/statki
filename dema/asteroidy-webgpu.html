@@ -52,8 +52,8 @@
   <h1>ASTEROIDY WebGPU — DEMO</h1>
   <div class="sub">Nowe pole asteroid na WebGPURenderer + TSL: te same sceny co demo WebGL, do tego światło wolumetryczne (smugi reflektorów głównych i bocznych w pyle, z cieniami skał), setki świateł dynamicznych, nowe pioruny i iskry liczone na GPU.</div>
   <div class="scenes">
-    <button data-scene="gallery">1 · Galeria typów<small>skała neutralna, 7 rud i skała energetyczna, minerały · ← → zbliżenie</small></button>
-    <button data-scene="shapes">2 · Galeria kształtów<small>10 rodzin: owalne, podwójne, dyski, odłamy, gruzowiska… · ← →</small></button>
+    <button data-scene="gallery">1 · Galeria typów<small>7 rud, energetyczna, wypełniacz kamienny i węglowy, typy z widm C / M / V / D i platynowce, minerały · ← → zbliżenie</small></button>
+    <button data-scene="shapes">2 · Galeria kształtów<small>11 rodzin: owalne, podwójne, dyski, odłamy, gruzowiska, bączki… · ← →</small></button>
     <button data-scene="giants">3 · Olbrzymy: tunele, szczeliny, jaskinie<small>5 brył 18–62 tys. j. · ▶ przelot = autopilot, W/S/A/D przejmuje · ← → Enter</small></button>
     <button data-scene="giantField">4 · Olbrzym w polu<small>Labirynt na obrzeżu gęstego pola — Enter = przelot tunelem</small></button>
     <button data-scene="field">5 · Gęste pole (Main Belt)<small>Atlas w rdzeniu pola · W/S/A/D lot, kółko zoom</small></button>
@@ -63,6 +63,8 @@
     <button data-scene="kuiper">9 · Pas Kuipera (lód)<small>rdzeń lodowego pola</small></button>
     <button data-scene="storm">0 · Burza energetyczna<small>pioruny między skałami i w pył, błyski w chmurach · P = piorun</small></button>
     <button data-scene="mining">Kopalnia (G)<small>skała testowa, drony z laserami, ładunki, wiązka ściągająca — fizyka wydobycia</small></button>
+    <button data-scene="families">Rodziny kolizyjne pasa<small>gęste pole = młoda rodzina: Flora, Westa (przy ciele), Nysa-Polana, Eunomia, Koronis (Karin), Eos, Themis, Hygiea (przy ciele), Veritas — skład i nazwa · ← → rodzina</small></button>
+    <button data-scene="gradient">Skład pasa wg odległości<small>od wewnętrznego pasa (S, V) przez środek (C, M) po Hildy, Trojańczyków i Kuipera (D) · ← → przystanek</small></button>
   </div>
   <h2>Kopalnia — fizyka skał</h2>
   <div class="buttons">
@@ -92,6 +94,13 @@
     <button data-mine-type="titan">tytan</button>
     <button data-mine-type="uran">uran</button>
     <button data-mine-type="energy">energetyczna</button>
+    <button data-mine-type="carbon">węglowa (C)</button>
+    <button data-mine-type="metal">metaliczna (M)</button>
+    <button data-mine-type="basalt">bazalt (V)</button>
+    <button data-mine-type="primitive">prymitywna (D)</button>
+    <button data-mine-type="platinum">platynowce</button>
+    <button data-mine-type="rubble:carbon" title="Rumowisko: głazy w regolicie (porowata kupa gruzu) — laser kopie regolit szybko, ładunek rozrzuca całe głazy, wiązka (T) wyrywa odsłonięte głazy; ruda w głazach rdzeniowych (skaner K)">rumowisko (C)</button>
+    <button data-mine-type="rubble:copper" title="Rumowisko miedzi: głazy rdzeniowe z litej miedzi rozsiane w kupie gruzu">rumowisko miedzi</button>
   </div>
   <div class="hint">Tryb kopalni: LPM (trzymaj, przeciągaj) — trzy drony tną laserami (skała pola pod kursorem przechodzi do fizyki), Shift + przeciągnięcie LPM — piła wzdłuż linii (przecina skałę na wylot), PPM — ładunek w dnie otworu (C zmienia wielkość), F — detonacja, T — wiązka ściągająca do Atlasa, K — skaner (rdzeń, ruda pod kursorem, ładunek potrzebny do przebicia). Każda skała rudy ma RDZEŃ (mniejszy albo większy): skorupa to skała pospolita z ~10% rudy, rdzeń — lita bryła czystej rudy (100%). R — ładunek tuż nad rdzeniem i detonacja: miedź, żelazo i tytan wypadają bryłą metalu (duży ładunek łamie ją na kilka), kryształ, lód i krzem sypią się na odłamki; wiązka zbiera kawałki rdzenia. Skała energetyczna ma w geodzie PIORUN KULISTY: odsłonięty ucieka i błądzi, po kilkunastu sekundach wybucha (wysadzony — po chwili); złapie go tylko wiązka z pułapką magnetyczną (M), bez niej wiązka go detonuje. Lód i kryształ pękają od małego ładunku na drobnicę, tytan i żelazo potrzebują dużego; za słaby ładunek pęka tylko w środku.</div>
   <div id="focus" class="focus"></div>

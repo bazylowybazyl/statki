@@ -27,7 +27,12 @@
 import { createYield } from './asteroidMining.js';
 import { chargeForDepth } from './asteroidMaterials.js';
 import { BELT_BAND } from './asteroidBeltField.js';
-import { ROCK_TYPE_INDEX, ROCK_TYPE_LABELS_PL, pickShape } from './asteroidRockKinds.js';
+import { ROCK_TYPE_INDEX, ROCK_TYPE_LABELS_PL, pickShape, isNeutralTypeId } from './asteroidRockKinds.js';
+import { MOON_CONFIG, moonStateAt, moonRockRecord } from './asteroidRotation.js';
+
+// Zasięg szukania skały pierwotnej przy trafieniu w księżyc: najdalsza orbita (w promieniach skały)
+// × największy promień skały z księżycem.
+const MOON_PICK_REACH = (MOON_CONFIG.distRatio[1] + MOON_CONFIG.sizeRatio[1]) * MOON_CONFIG.playD[1] * 0.5 * 1.25;
 import { ASTEROID_YIELD, RESOURCES } from '../data/resources.js';
 import { MINING_CHARGES, createMiningChargeStock } from '../data/miningCharges.js';
 
@@ -157,6 +162,11 @@ export class MiningRig {
     this.charges = [];
     this._detQueue = [];
     this._pendingPlant = null;
+    // Para z księżycem: partner przejmowany klatkę po skale (jedna ciężka operacja na klatkę).
+    this._pendingPartner = null;
+    this._moonSt = { x: 0, y: 0, ox: 0, oy: 0, oz: 0, theta: 0 };
+    // _releaseFar: nietknięte księżyce par oddawane polu po pętli ciał (wracają tylko ze skałą).
+    this._moonsBack = [];
     // Wiązka: cele do rysowania (referencje do p obiektów) i ich liczba.
     this.tractorTargets = new Array(this.cfg.tractorTargets).fill(null);
     this._tractorDist = new Float64Array(this.cfg.tractorTargets);
@@ -291,7 +301,8 @@ export class MiningRig {
   }
 
   /** Skała testowa danego typu przed dziobem statku (dev / harness — jak scena Kopalnia dema). */
-  spawnTestRock(typeId, ship, r = 650, ahead = 1700) {
+  // rubble: true / false — rumowisko / monolit na siłę; undefined — reguła progu (RUBBLE_CONFIG).
+  spawnTestRock(typeId, ship, r = 650, ahead = 1700, rubble = false) {
     const type = ROCK_TYPE_INDEX[typeId] ?? ROCK_TYPE_INDEX.copper;
     const c = Math.cos(ship.angle), s = Math.sin(ship.angle);
     const x = ship.x + c * ahead, y = ship.y + s * ahead;
@@ -303,16 +314,20 @@ export class MiningRig {
     };
     const l = Math.sqrt(rock.qx * rock.qx + rock.qy * rock.qy + rock.qz * rock.qz + rock.qw * rock.qw);
     rock.qx /= l; rock.qy /= l; rock.qz /= l; rock.qw /= l;
-    // Skały pola w obrysie testowej znikają (nie przenikają się).
-    const reach = r * 1.35 + this.cfg.pickReach;
+    // Skały pola w obrysie testowej znikają (nie przenikają się); księżyc pary — gdy znika jego skała
+    // albo orbita wchodzi na testową (warstwa chowa księżyc tylko po jego id).
+    const reach = r * 1.35 + this.cfg.pickReach + MOON_PICK_REACH;
     this.field?.forEachRockInRect(BELT_BAND.PLAY, x - reach, y - reach, x + reach, y + reach, 0, (f) => {
       const dx = f.x - x, dy = f.y - y;
-      if (Math.sqrt(dx * dx + dy * dy) < r * 1.35 + f.r) this._hideRock(f.id);
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < r * 1.35 + f.r) this._hideRock(f.id);
+      if (f.moon && (this.taken.has(f.id) || d < r * 1.35 + f.moon.dist + f.moon.r)) this._hideRock(f.moon.id);
     });
-    const body = this.mining.activate(rock, { z: this.playZ(rock), time: this._rockTime(), sunT: this._sunT(x, y), anchored: true });
+    const body = this.mining.activate(rock, { z: this.playZ(rock), time: this._rockTime(), sunT: this._sunT(x, y), anchored: true, rubble });
     body.userData = { test: true, fieldId: 0 };
     this._fx(MINING_FX.ACTIVATE, body.p[0], body.p[1], body.p[2], 0, body.boundR, 0, body.oreRes);
-    this._say(`Skała testowa: ${ROCK_TYPE_LABELS_PL[typeId] || typeId}, r ${r} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t`);
+    const rub = body.rubble ? ` · RUMOWISKO: ${body.rubble.count} głazów, głazy rdzeniowe ${body.rubble.coreBoulders}` : '';
+    this._say(`Skała testowa: ${ROCK_TYPE_LABELS_PL[typeId] || typeId}, r ${r} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t${rub}`);
     return body;
   }
 
@@ -324,6 +339,7 @@ export class MiningRig {
     m.pebbles.length = 0;
     this.charges.length = 0;
     this._detQueue.length = 0;
+    this._pendingPartner = null;
     this.taken.clear();
     this.takenVersion++;
     this.saw.active = false;
@@ -354,6 +370,16 @@ export class MiningRig {
       const p = this._pendingPlant;
       this._pendingPlant = null;
       this.plantCharge(p.x, p.y);
+    }
+    // Para: partner przejętej skały (księżyc albo skała pierwotna) — klatkę po niej.
+    if (this._pendingPartner && this._heavy > 0) {
+      const p = this._pendingPartner;
+      this._pendingPartner = null;
+      const id = p.moon ? p.rock.moon.id : p.rock.id;
+      if (!this.taken.has(id) && this._takeHeavy()) {
+        if (p.moon) this._activateMoon(p.rock, this._rockTime());
+        else this._activateRock(p.rock, this.playZ(p.rock), this._rockTime());
+      }
     }
     if (this._detQueue.length && this._heavy > 0) this._detonateNext();
     // Ładunki na zebranych / zniszczonych ciałach przepadają.
@@ -541,7 +567,9 @@ export class MiningRig {
       for (let i = 0; i < MINING_ORE_KEYS.length; i++) pending += this.yield.ore[MINING_ORE_KEYS[i]];
       free = Math.max(0, Number(this.cargoFree()) - pending);
     }
-    const got = this.mining.tractor(tx, ty, tz, cfg.tractorRadius, cfg.tractorCapacity, cfg.tractorCapture, dt, this.yield, 1, free);
+    // Wyrwanie głazu z rumowiska to ciężka operacja (rozpad ciała) — tylko z budżetem klatki.
+    const got = this.mining.tractor(tx, ty, tz, cfg.tractorRadius, cfg.tractorCapacity, cfg.tractorCapture, dt, this.yield, 1, free, this._heavy > 0);
+    if (this.mining._plucked) this._heavy--;
     for (let i = 0; i < got.length; i++) {
       const g = got[i];
       this.totals.collected++;
@@ -564,6 +592,8 @@ export class MiningRig {
   _considerTractor(o, mass, tx, ty, tz) {
     const cfg = this.cfg;
     if (mass > cfg.tractorCapacity) return;
+    // Zakotwiczone rumowisko nie leci w całości (wiązka wyrywa z niego głazy — asteroidMining._pluck).
+    if (o.anchored && o.boulder) return;
     const dx = o.p[0] - tx, dy = o.p[1] - ty, dz = o.p[2] - tz;
     const d2 = dx * dx + dy * dy + dz * dz;
     if (d2 > cfg.tractorRadius * cfg.tractorRadius) return;
@@ -609,7 +639,9 @@ export class MiningRig {
     this.stats.heavyMs = nowMs() - t0;
     this.totals.blasts++;
     const pieces = res.bodies.length + res.pebbles.length + res.gravel.length;
-    if (res.outcome === 'breach') this._say(`Wybuch ${ch.id}: ${pieces} odłamów`);
+    if (res.outcome === 'breach' && res.rubble) this._say(`Wybuch ${ch.id}: rumowisko — odpadło ${res.boulders | 0} głazów, ${pieces} odłamów`);
+    else if (res.outcome === 'breach') this._say(`Wybuch ${ch.id}: ${pieces} odłamów`);
+    else if (res.rubble) this._say(`Ładunek ${ch.id} za słaby — kupa gruzu tylko się zagęściła (płycej albo większy)`);
     else this._say(`Ładunek ${ch.id} za słaby — skała pękła w środku, skorupa trzyma (następny sięgnie dalej)`);
     if (this.onBlast) this.onBlast(w[0], -w[1], res.energy, res.outcome);
   }
@@ -623,6 +655,10 @@ export class MiningRig {
       } else if (e.kind === 'split') {
         const b = e.body;
         if (b) this._fx(MINING_FX.SPLIT, b.p[0], b.p[1], b.p[2], 0, b.boundR, e.pieces || 0, b.oreRes);
+      } else if (e.kind === 'pluck') {
+        // Rumowisko: wiązka wyrwała odsłonięty głaz (rdzeniowy / wzbogacony — z rudą).
+        this.totals.plucks = (this.totals.plucks || 0) + 1;
+        this._say(e.grade === 2 ? 'Wiązka wyrwała głaz rdzeniowy (lita ruda)' : e.grade === 1 ? 'Wiązka wyrwała głaz wzbogacony' : 'Wiązka wyrwała głaz z rumowiska');
       }
       // 'collect' — zdarzenia efektów pisze już _stepTractor (pozycje złapanych).
     }
@@ -674,9 +710,18 @@ export class MiningRig {
       if (dx * dx + dy * dy <= R2) continue;
       // Nietknięta skała wraca do pola; naruszona zostaje schowana (rozebrana).
       const fieldId = b.userData?.fieldId;
-      if (fieldId && b.generation === 0 && b.version <= 1 && !b.damage) this._unhideRock(fieldId);
+      if (fieldId && b.generation === 0 && b.version <= 1 && !b.damage) {
+        // Księżyc pary wraca na orbitę tylko razem ze skałą pierwotną (niżej — po pętli).
+        if (b.userData.moonOf != null) this._moonsBack.push(b.userData);
+        else this._unhideRock(fieldId);
+      }
       m.release(b);
     }
+    for (let i = 0; i < this._moonsBack.length; i++) {
+      const u = this._moonsBack[i];
+      if (!this.taken.has(u.moonOf)) this._unhideRock(u.fieldId);
+    }
+    this._moonsBack.length = 0;
     for (let i = m.pebbles.length - 1; i >= 0; i--) {
       const p = m.pebbles[i];
       const dx = p.p[0] - sx, dy = p.p[1] - sy;
@@ -697,7 +742,8 @@ export class MiningRig {
     if (!this.field) return null;
     const wx = x, wy = -y;
     const reach = this.cfg.pickReach;
-    let best = null, bestTop = -Infinity, bestZ = 0;
+    const t = this._rockTime();
+    let best = null, bestTop = -Infinity, bestZ = 0, bestMoon = false;
     this.field.forEachRockInRect(BELT_BAND.PLAY, wx - reach, wy - reach, wx + reach, wy + reach, 0, (rock) => {
       if (this.taken.has(rock.id)) return;
       const s = Math.max(rock.sx ?? 1, rock.sy ?? 1, rock.sz ?? 1);
@@ -706,19 +752,59 @@ export class MiningRig {
       if (dx * dx + dy * dy > R * R) return;
       const z = this.playZ(rock);
       const top = z + rock.r * s;
-      if (top > bestTop) { bestTop = top; best = rock; bestZ = z; }
+      if (top > bestTop) { bestTop = top; best = rock; bestZ = z; bestMoon = false; }
+    });
+    // Księżyce par (asteroidRotation.js): pozycja z orbity w czasie pasa — tam, gdzie go rysuje
+    // warstwa; szukane wśród skał, które mogą mieć księżyc, w zasięgu orbity.
+    const mr = MOON_PICK_REACH;
+    this.field.forEachRockInRect(BELT_BAND.PLAY, wx - mr, wy - mr, wx + mr, wy + mr, MOON_CONFIG.playD[0], (rock) => {
+      const m = rock.moon;
+      if (!m || this.taken.has(m.id) || this.taken.has(rock.id)) return;
+      const st = moonStateAt(rock, t, this._moonSt);
+      const s = Math.max(m.sx, m.sy, m.sz);
+      const R = m.r * s * 1.05;
+      const dx = st.x - wx, dy = st.y - wy;
+      if (dx * dx + dy * dy > R * R) return;
+      const z = this.playZ(rock) + st.oz;
+      const top = z + m.r * s;
+      if (top > bestTop) { bestTop = top; best = rock; bestZ = z; bestMoon = true; }
     });
     if (!best) return null;
+    const body = bestMoon ? this._activateMoon(best, t) : this._activateRock(best, bestZ, t);
+    // Para: partner (księżyc albo skała) w następnej klatce — najwyżej jedna ciężka operacja na klatkę;
+    // do tego czasu warstwa rysuje go dalej na orbicie.
+    if (best.moon && !this.taken.has(bestMoon ? best.id : best.moon.id)) this._pendingPartner = { rock: best, moon: !bestMoon };
+    return body;
+  }
+
+  _activateRock(rock, z, t) {
     const t0 = nowMs();
-    const body = this.mining.activate(best, { z: bestZ, time: this._rockTime(), sunT: this._sunT(best.x, best.y), anchored: true });
+    const body = this.mining.activate(rock, { z, time: t, sunT: this._sunT(rock.x, rock.y), anchored: true });
     this.stats.heavyMs = nowMs() - t0;
     this.stats.activations++;
-    body.userData = { fieldId: best.id };
-    this._hideRock(best.id);
+    body.userData = { fieldId: rock.id };
+    this._hideRock(rock.id);
     this._fx(MINING_FX.ACTIVATE, body.p[0], body.p[1], body.p[2], 0, body.boundR, 0, body.oreRes);
     const label = ROCK_TYPE_LABELS_PL[body.typeId] || body.typeId;
-    const hidden = body.oreTypeId && body.typeId === 'rock' ? ' (ukryty rdzeń!)' : '';
-    this._say(`Przejęta skała: ${label}, r ${Math.round(best.r)} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t${hidden}`);
+    const hidden = body.oreTypeId && isNeutralTypeId(body.typeId) ? (body.rubble ? ' (ukryta ruda!)' : ' (ukryty rdzeń!)') : '';
+    const rub = body.rubble ? ` · RUMOWISKO: ${body.rubble.count} głazów, porowatość ${Math.round(body.porosity * 100)}%${body.rubble.coreBoulders ? `, głazy rdzeniowe ${body.rubble.coreBoulders}` : ''}` : '';
+    const pair = rock.moon ? ' · PARA: z księżycem' : '';
+    this._say(`Przejęta skała: ${label}, r ${Math.round(rock.r)} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t${hidden}${rub}${pair}`);
+    return body;
+  }
+
+  // Księżyc pary: rekord skały w fazie orbity (orientacja jak shader — obrót synchroniczny).
+  _activateMoon(rock, t) {
+    const rec = moonRockRecord(rock, t);
+    const t0 = nowMs();
+    const body = this.mining.activate(rec, { z: this.playZ(rock) + rec.oz, time: t, sunT: this._sunT(rec.x, rec.y), anchored: true });
+    this.stats.heavyMs = nowMs() - t0;
+    this.stats.activations++;
+    body.userData = { fieldId: rec.id, moonOf: rock.id };
+    this._hideRock(rec.id);
+    this._fx(MINING_FX.ACTIVATE, body.p[0], body.p[1], body.p[2], 0, body.boundR, 0, body.oreRes);
+    const label = ROCK_TYPE_LABELS_PL[body.typeId] || body.typeId;
+    this._say(`Przejęty księżyc skały: ${label}, r ${Math.round(rec.r)} j., ${fmt1(body.mass)} t, rudy ${fmt1(body.oreMass)} t`);
     return body;
   }
 

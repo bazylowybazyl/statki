@@ -2,7 +2,7 @@
 //
 // Burze energetyczne w gęstych polach asteroid (logika; bez three i DOM-u).
 //
-// Komórki burz to wolny szum wewnątrz GĘSTYCH pól: w pełnej burzy ~30% skał
+// Komórki burz to wolny szum wewnątrz GĘSTYCH pól: w pełnej burzy ~20% skał
 // to skały energetyczne (typ `energy`, asteroidRockKinds). Naładowane skały
 // rozładowują się piorunami:
 //   • łuk skała ↔ skała (zasięg rośnie z rozmiarem skał),

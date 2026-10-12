@@ -16,6 +16,7 @@
 import * as THREE from 'three/webgpu';
 import { ROCK_LODS, pickRockLod } from './rockBank.js';
 import { permanentUpdateRange, markLiveRange } from './tslCommon.js';
+import { moonStateAt } from '../../game/asteroidRotation.js';
 
 const FLOATS = 20;               // iPos 4, iRot 4, iSpin 4, iShape 4, iStretch 4
 const LOD_CAPACITY = [24576, 12288, 4096, 2048, 512, 128];
@@ -134,7 +135,7 @@ export class RockLayer {
     this.hidden = new Set();
     this.enabled = true;
     this.origin = { x: 0, y: 0 };
-    this.stats = { instances: 0, drawn: 0, tris: 0, cells: 0, pending: 0, lods: [] };
+    this.stats = { instances: 0, drawn: 0, tris: 0, cells: 0, pending: 0, lods: [], moons: 0 };
     this._missing = [];
     this._order = [];
     // Porównanie kolejki komórek raz na warstwę (bez domknięcia przy każdej zmianie kadru).
@@ -146,6 +147,17 @@ export class RockLayer {
       renderOrder: o.renderOrder ?? 0, name: `AsteroidBelt:rocks_${this.band.id}`, maxLod: this.maxLod, layer: o.layer ?? 0
     });
     this.group = this.buckets.group;
+    // KSIĘŻYCE par (asteroidRotation.js, D2 2026-10-12): skały z `moon` wczytanych komórek; księżyc
+    // to zwykła instancja skały (ten sam materiał i siatki), ale krąży — osobne koszyki LOD
+    // przepisywane co klatkę z orbity (moonStateAt, czas pasa = zegar shadera skał). Obrót
+    // synchroniczny: oś = normalna orbity, tempo = tempo orbity, faza = faza orbity.
+    this._moonRocks = new Set();
+    this._moonState = { x: 0, y: 0, ox: 0, oy: 0, oz: 0, theta: 0 };
+    this.moonBuckets = new LodBuckets({
+      bank: this.bank, material: this.material, renderOrder: o.renderOrder ?? 0, name: `AsteroidBelt:moons_${this.band.id}`,
+      capacities: [1024, 512, 256, 128, 64, 32], maxLod: this.maxLod, layer: o.layer ?? 0
+    });
+    this.group.add(this.moonBuckets.group);
     this.octaves = this.band.octaves.map((oct) => this._createOctave(oct, o.capacity ?? 4096));
     this.scene.add(this.group);
   }
@@ -292,6 +304,7 @@ export class RockLayer {
       cells += o.cells.size;
     }
     this._compact(f, zoom, camZ, minPx);
+    this._updateMoons(f, zoom, camZ, minPx);
     this.stats.instances = instances;
     this.stats.cells = cells;
     this.stats.pending = pending;
@@ -355,6 +368,61 @@ export class RockLayer {
     for (let i = 0; i < lods.length; i++) lodStats[i] = lods[i].count;
   }
 
+  // Księżyce w kadrze co klatkę (krążą): pozycja z orbity w czasie pasa, z = głębokość środka skały
+  // + składowa orbity (pasmo gry — orbita pozioma: księżyc mniejszy, nie wystaje nad z = 0).
+  _updateMoons(f, zoom, camZ, minPx) {
+    const B = this.moonBuckets;
+    if (!this._moonRocks.size) {
+      if (this.stats.moons) B.clear();
+      this.stats.moons = 0;
+      return;
+    }
+    B.begin();
+    const t = f.time || 0;
+    const st = this._moonState;
+    const hidden = this.hidden.size ? this.hidden : null;
+    const cx = f.cam.x - this.origin.x;
+    const cy = -(f.cam.y - this.origin.y);
+    const baseHalfW = (f.viewW * 0.5 / zoom) * (1 + CULL_MARGIN);
+    const baseHalfH = (f.viewH * 0.5 / zoom) * (1 + CULL_MARGIN);
+    const persp = this.perspective;
+    const focal = f.focalPx;
+    const lods = B.lods;
+    for (const rock of this._moonRocks) {
+      const m = rock.moon;
+      // Księżyc znika po SWOIM id: przejęcie pary to dwie operacje (gra: partner klatkę później) —
+      // do przejęcia księżyc krąży dalej; kto chowa skały pola, chowa też ich księżyce.
+      if (hidden && hidden.has(m.id)) continue;
+      moonStateAt(rock, t, st);
+      const x = st.x - this.origin.x;
+      const y = -(st.y - this.origin.y);
+      const z = this.zOf(rock) + st.oz;
+      let pxPerUnit = zoom;
+      let halfW = baseHalfW;
+      let halfH = baseHalfH;
+      if (persp) {
+        const k = (camZ - z) / camZ;
+        pxPerUnit = focal / (camZ - z);
+        halfW *= k;
+        halfH *= k;
+      }
+      const rr = m.r * 1.5;
+      if (Math.abs(x - cx) > halfW + rr || Math.abs(y - cy) > halfH + rr) continue;
+      const rPx = m.r * pxPerUnit;
+      if (rPx < minPx) continue;
+      const lod = pickRockLod(rPx, this.maxLod);
+      const b = B.slot(lod);
+      if (b < 0) continue;
+      const d = lods[lod].data;
+      d[b] = x; d[b + 1] = y; d[b + 2] = z; d[b + 3] = m.r;
+      d[b + 4] = m.qx; d[b + 5] = m.qy; d[b + 6] = m.qz; d[b + 7] = m.qw;
+      d[b + 8] = m.nx; d[b + 9] = m.ny; d[b + 10] = m.nz; d[b + 11] = m.w;
+      d[b + 12] = m.shape; d[b + 13] = m.type; d[b + 14] = m.seed; d[b + 15] = m.phase;
+      d[b + 16] = m.sx; d[b + 17] = m.sy; d[b + 18] = m.sz; d[b + 19] = this.sunT(st.x, st.y);
+    }
+    this.stats.moons = B.commit().drawn;
+  }
+
   _writeSlot(o, s, rock) {
     const d = o.data;
     const b = s * FLOATS;
@@ -382,6 +450,7 @@ export class RockLayer {
       o.slotPos[s] = cell.slots.length;
       cell.slots.push(s);
       this._writeSlot(o, s, rocks[i]);
+      if (rocks[i].moon) this._moonRocks.add(rocks[i]);
     }
     this._version++;
   }
@@ -390,6 +459,7 @@ export class RockLayer {
     const slots = cell.slots.sort((a, b) => b - a);
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i];
+      if (o.slotRock[s].moon) this._moonRocks.delete(o.slotRock[s]);
       const last = o.count - 1;
       if (s !== last) {
         o.data.copyWithin(s * FLOATS, last * FLOATS, last * FLOATS + FLOATS);
@@ -412,7 +482,10 @@ export class RockLayer {
   _unloadAll(o) {
     o.cells.clear();
     o.cellsById.clear();
-    for (let s = 0; s < o.count; s++) o.slotRock[s] = undefined;
+    for (let s = 0; s < o.count; s++) {
+      if (o.slotRock[s].moon) this._moonRocks.delete(o.slotRock[s]);
+      o.slotRock[s] = undefined;
+    }
     o.count = 0;
     o.range = null;
     o.pending = 0;
@@ -431,6 +504,17 @@ export class RockLayer {
     }
   }
 
+  /**
+   * Księżyce par w kadrze tej klatki (rekordy instancji wpisane przez _updateMoons — pozycja z orbity):
+   * cb(null, dane, przesunięcie), jak forEachLoaded bez rekordu pola. Atlas cieni reflektorów dokłada
+   * je do rzucających cień (spotShadows.gather).
+   */
+  forEachMoon(cb) {
+    for (const L of this.moonBuckets.lods) {
+      for (let s = 0; s < L.count; s++) cb(null, L.data, s * FLOATS);
+    }
+  }
+
   /** Czy są wczytane skały (pole trzyma początek pul, dopóki coś jest w pamięci). */
   get hasLoaded() {
     for (const o of this.octaves) if (o.count > 0) return true;
@@ -444,6 +528,8 @@ export class RockLayer {
       o.active = false;
     }
     this.buckets.clear();
+    this.moonBuckets.clear();
+    this._moonRocks.clear();
     this.minerals?.clear();
     this._built.version = -1;
     this.stats.instances = 0;
@@ -451,6 +537,7 @@ export class RockLayer {
     this.stats.tris = 0;
     this.stats.cells = 0;
     this.stats.pending = 0;
+    this.stats.moons = 0;
   }
 }
 

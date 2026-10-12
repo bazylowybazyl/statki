@@ -63,7 +63,7 @@ Dwa surowce nie powstają na żadnej stacji. Ich niedobór to **treść, nie ust
 | Frakcja | Teren | Rola |
 |---|---|---|
 | **Terra Nova** | Merkury, Wenus, Ziemia, Mars | rdzeń przemysłowy |
-| **Unia Pasa** | brak stacji *(patrz otwarte decyzje)* | górnicy |
+| **Unia Pasa** | Ceres (stolica: stacja na orbicie, miasto przy kraterze Occator), Westa (huta); placówki na Pallas, Hygiei i Psyche (`src/data/smallBodies.js`) | górnicy |
 | **Konsorcjum Zewnętrzne** | Jowisz, Saturn, Uran | gazy, paliwo, uran |
 | **Piraci** | stacja misyjna | wrodzy wszystkim |
 
@@ -318,8 +318,9 @@ złomu. Test `stationEconomy` sekcja 12 pilnuje tego wprost.
 
 ## 12. Otwarte decyzje
 
-1. **Unia Pasa nie ma bazy** (`homeStations: []`). Potrzebuje stacji w pasie,
-   nosiciela albo korzystania z cudzej infrastruktury.
+1. ~~**Unia Pasa nie ma bazy**~~ — rozstrzygnięte 2026-10-12 (decyzja użytkownika): stolica Unii na Ceres
+   (stacja „Ceres — Stolica Unii” na orbicie ciała: rynek, dok, frakcja), huta na Westie (`homeStations:
+   ['ceres', 'vesta']`, ciała i stacje w `src/data/smallBodies.js`, węzły ruchu v2 w punktach stacji).
 2. **Topologia połączeń** inner ↔ outer ↔ Kuiper — gdzie stoją bramy, którędy
    biegną autostrady.
 3. **Gęstość tłumu** i gdzie: wokół stacji, na autostradach, w całym układzie.

@@ -494,11 +494,12 @@ export const SYSTEM_INDUSTRY_SPEC = Object.freeze({
   // Opuszczony — brak załogi, brak produkcji.
   neptune: { capacity: 0, roles: [], size: 0 },
 
-  // LIGA PASA. Nie przyczółki — ośrodki wykute w planetoidach, z własnym
-  // złożem (patrz PLANET_YIELD). Ceres składa okręty, Westa jest jej hutą.
+  // UNIA PASA. Nie przyczółki — ośrodki wykute w planetoidach, z własnym
+  // złożem (patrz PLANET_YIELD). Ceres (stolica Unii, src/data/smallBodies.js)
+  // składa okręty, Westa jest jej hutą.
   // Jako jedyna frakcja ma metal i stocznię w tym samym miejscu, więc jest
   // najodporniejsza na blokadę, ale brakuje jej lotnych i paliwa.
-  // Liga Pasa robi myśliwce: ma własny metal i krzem, a jej ośrodki są małe
+  // Unia Pasa robi myśliwce: ma własny metal i krzem, a jej ośrodki są małe
   // i rozproszone — płatowce pasują jej lepiej niż wielkie kadłuby.
   ceres: { capacity: 7.6, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'aerospace'], size: 1.0 },
   vesta: { capacity: 2.0, roles: ['foundry'], size: 0.4 },
@@ -547,7 +548,7 @@ export const STATION_INDUSTRY = buildIndustryMap(SYSTEM_INDUSTRY_SPEC);
  * widziana z drugiej strony.
  *
  * Istnieje po to, żeby wielkość floty transportowej BRAŁA SIĘ z gospodarki,
- * a nie ze stałej. Zmierzone: dołożenie stoczni Jowisza i Ligi Pasa podniosło
+ * a nie ze stałej. Zmierzone: dołożenie stoczni Jowisza i Unii Pasa podniosło
  * wymagany tonaż o 39%, flota została ta sama i skuteczność dostaw spadła
  * z 58% do 42% przy 1476 odmowach z braku jednostki.
  */

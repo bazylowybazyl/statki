@@ -33,7 +33,9 @@ import { JUPITER_ATM_TUNE, JUPITER_VORTICES, JupiterAtmosphere } from '../src/3d
 import { SATURN_ATM_TUNE, SaturnAtmosphere } from '../src/3d/saturnAtmosphere.js';
 import { SATURN_ATMOSPHERE } from '../src/data/saturnAtmosphere.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from '../src/3d/moonSurface.tsl.js';
-import { MOON_MAPS, PLANET_MAPS } from '../src/3d/planetMaps.js';
+import { MOON_MAPS, PLANET_MAPS, SMALL_BODY_MAPS } from '../src/3d/planetMaps.js';
+import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from '../src/3d/smallBodyShape.js';
+import { SMALL_BODY_BY_ID } from '../src/data/smallBodies.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
 import { compileAsyncNaCelu } from '../src/3d/rozgrzewka.js';
 
@@ -152,7 +154,47 @@ const BODIES = [
   { id: 'callisto', name: 'Kallisto', kind: 'moon', script: 'ksiezyce.py --cialo kallisto', halo: 0x91a7c4,
     src: 'USGS Voyager / Galileo SSI 1 km',
     info: 'Węzeł Konsorcjum: depot w Valhalli, 2 pola lądowisk, trakt. Ciemna szarość, jasne kratery.',
-    sites: moonSites([[-56.0, 15.0, 'depot'], [-140.0, 31.0, 'ladowisko'], [40.0, -18.0, 'ladowisko']], MOON_KINDS) }
+    sites: moonSites([[-56.0, 15.0, 'depot'], [-140.0, 31.0, 'ladowisko'], [40.0, -18.0, 'ladowisko']], MOON_KINDS) },
+  // MAŁE CIAŁA (src/data/smallBodies.js, scripts/planety/male_ciala.py — 2026-10-12): materiał księżyców, bryła z mapy
+  // promienia (smallBodyShape.js — Westa, Ceres z modeli Dawn, Pallas / Hygiea / Psyche z osi i basenów). `map` = id map.
+  { id: 'ceres', map: 'ceres', name: 'Ceres', kind: 'small', script: 'male_ciala.py --cialo ceres',
+    src: 'USGS / DLR Dawn FC mozaika 400 m + HAMO DTM 60 px/°',
+    info: 'STOLICA UNII PASA: miasto wokół krateru Occator (plamy soli Cerealia i Vinalia nietknięte), port, stocznia ' +
+      '(suche doki z kadłubami), huta i elektronika, kopalnie lodu przy biegunach, placówki, drogi. Nocą chłodna biel ' +
+      'i cyjan Unii, ciepłe okna miasta, bursztynowe znaki. Bryła spłaszczona z modelu Dawn (Ahuna Mons, Kerwan).',
+    sites: moonSites([[-120.7, 19.8, 'stolica'], [-43.8, -10.5, 'Ahuna Mons'], [-158.0, 4.0, 'stocznia'],
+      [-93.0, 33.0, 'huta'], [-139.0, -14.0, 'elektronika'], [62.0, 69.0, 'lód'], [123.9, -10.8, 'Kerwan']], MOON_KINDS) },
+  { id: 'westa', map: 'vesta', name: 'Westa', kind: 'small', script: 'male_ciala.py --cialo westa',
+    src: 'USGS / DLR Dawn FC HAMO mozaika 60 m + DTM 48 px/°',
+    info: 'HUTA UNII PASA: odkrywki żelaza i tytanu, piece i żużel przy rowach Divalia Fossae, port, krótki tor wyrzutni ' +
+      'masy. Bryła trójosiowa z modelu Dawn: basen Rheasilvia na biegunie płd. z górą centralną. Nocą sód i żar hut.',
+    sites: moonSites([[22.0, -6.0, 'huta'], [66.0, 14.0, 'kopalnia'], [-38.0, -22.0, 'kopalnia'], [-60.0, -75.0, 'Rheasilvia'],
+      [0.0, -10.0, 'Divalia Fossae']], MOON_KINDS) },
+  { id: 'pallas', map: 'pallas', name: 'Pallas', kind: 'small', script: 'male_ciala.py --cialo pallas',
+    src: 'proceduralnie (typ B, osie i baseny wg VLT SPHERE — Marsset i in. 2020; położenia umowne)',
+    info: '„Piłka golfowa”: szaroniebieskawa, ~36 kraterów > 30 km, basen ~400 km wzdłuż równika i drugi na półkuli płd., ' +
+      'jasna plama (sól?) w kraterze na półkuli płd.; rozproszone placówki górnicze Unii.',
+    sites: moonSites([[-62.0, 4.0, 'basen równikowy'], [18.0, -46.0, 'jasna plama'], [112.0, -32.0, 'basen'],
+      [24.0, 18.0, 'kopalnia'], [-128.0, -9.0, 'kopalnia'], [118.0, 31.0, 'kopalnia']], MOON_KINDS) },
+  { id: 'hygiea', map: 'hygiea', name: 'Hygiea', kind: 'small', script: 'male_ciala.py --cialo hygiea',
+    src: 'proceduralnie (typ C, prawie kulista — VLT SPHERE, Vernazza i in. 2019; położenia kraterów umowne)',
+    info: 'Ciemna, gładka, prawie kulista (bez basenu mimo rodziny — złożyła się na nowo); kratery Romulus (21 km) i Remus ' +
+      '(11 km). Posterunki lodowe Unii.',
+    sites: moonSites([[-14.0, 27.0, 'Romulus'], [38.0, -9.0, 'Remus'], [102.0, 38.0, 'posterunek'], [-71.0, -24.0, 'posterunek']], MOON_KINDS) },
+  { id: 'psyche', map: 'psyche', name: 'Psyche', kind: 'small', script: 'male_ciala.py --cialo psyche',
+    src: 'proceduralnie (typ M, 278 × 238 × 171 km — Shepard i in. 2021; położenia zagłębień umowne)',
+    info: 'Metaliczna (żelazo-nikiel z krzemianem), bliska elipsoidzie Jacobiego, dwa zagłębienia ~90 km z VLT: Meroe ' +
+      '(ciemniejsza) i Panthia (~10 km głębi, jaśniejsza); odkrywki metalu Unii, port.',
+    sites: moonSites([[-38.0, 12.0, 'Meroe'], [128.0, -22.0, 'Panthia'], [-60.0, 34.0, 'kopalnia'], [60.0, -8.0, 'kopalnia']], MOON_KINDS) },
+  { id: 'pluton', map: 'pluto', name: 'Pluton', kind: 'small', script: 'male_ciala.py --cialo pluton', halo: 0x7aa6ff,
+    src: 'USGS New Horizons LORRI / MVIC 300 m (płd. — wypełnienie)',
+    info: 'Pas plutonków, niczyj: „serce” — Sputnik Planitia (lód azotowy) i Tombaugh Regio, ciemna Cthulhu, Lowell Regio. ' +
+      'Półkula płd. nieoglądana przez New Horizons (noc polarna) — wypełniona. Cienka niebieska mgiełka.',
+    sites: moonSites([[177.0, 22.0, 'Sputnik Planitia'], [-140.0, -5.0, 'Cthulhu'], [-150.0, 80.0, 'Lowell Regio']], MOON_KINDS) },
+  { id: 'charon', map: 'charon', name: 'Charon', kind: 'small', script: 'male_ciala.py --cialo charon',
+    src: 'USGS New Horizons 300 m (płd. — wypełnienie)',
+    info: 'Księżyc Plutona: szary lód, czerwona czapa Mordor Macula na biegunie płn., równiny Vulcan.',
+    sites: moonSites([[0.0, 80.0, 'Mordor Macula'], [0.0, -5.0, 'Vulcan Planitia']], MOON_KINDS) }
 ];
 const BODY = Object.fromEntries(BODIES.map((b) => [b.id, b]));
 
@@ -371,6 +413,36 @@ async function buildBody(id, old) {
       body.atmKind = 'shell';
     }
     group.add(body.atm);
+  } else if (b.kind === 'small') {
+    // Małe ciało (jak DirectSmallBody w grze): materiał księżyców, siatka kuli przesunięta wg mapy promienia albo
+    // skalowana osiami; dawnych map nie ma (STARE = te same).
+    const maps = SMALL_BODY_MAPS[b.map];
+    const [day, night, normal] = await Promise.all([loadTex(maps.day, true), loadTex(maps.night, true), loadTex(maps.normal, false)]);
+    Object.assign(layers, { day, night, normal });
+    const material = createMoonSurfaceMaterial({ map: day, nightMap: night, normalMap: normal, normalScale: Number(maps.normalScale) || 1,
+      sunMask: false, roughness: Number(maps.roughness) || 0.98 });
+    if (Number.isFinite(maps.metalness)) material.metalness = maps.metalness;
+    const geo = new THREE.SphereGeometry(1, SMALL_BODY_SEGMENTS.w, SMALL_BODY_SEGMENTS.h);
+    body.mesh = new THREE.Mesh(geo, material);
+    if (maps.shape) {
+      const shape = await loadSmallBodyShape(`/${maps.shape}`, maps.shapeRange);
+      const ext = displaceSmallBodyGeometry(geo, shape);
+      body.mesh.scale.setScalar(1 / ext);       // bryła mieści się w kuli 1 (kamera demo)
+    } else {
+      const ax = SMALL_BODY_BY_ID[b.map]?.axes || [1, 1, 1];
+      body.mesh.scale.set(ax[0], ax[1], ax[2]).multiplyScalar(1 / Math.max(...ax));
+    }
+    group.add(body.mesh);
+    if (b.halo) {
+      const hc = new THREE.Color(b.halo);
+      const glow = new THREE.Vector3(hc.r, hc.g, hc.b);
+      body.atmUniforms = { coef: { value: 0.42 }, power: { value: 11.0 }, glowColor: { value: glow },
+        sunsetTint: { value: glow.clone().multiplyScalar(0.72) }, uSunIntensity: { value: 1.1 * 0.55 },
+        sunPosition: { value: new THREE.Vector3(1e4, 0, 0) }, uSunShadowRecv: { value: 0 } };
+      body.atm = new THREE.Mesh(new THREE.SphereGeometry(1.035, 96, 96), createPlanetAtmosphereMaterial(body.atmUniforms));
+      body.atmKind = 'shell';
+      group.add(body.atm);
+    }
   } else {
     const maps = old ? OLD_MOON_MAPS[id] : MOON_MAPS[id];
     const [day, night, normal, bump] = await Promise.all([

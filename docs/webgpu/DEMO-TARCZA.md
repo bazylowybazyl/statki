@@ -105,6 +105,14 @@ Tarcza z dema zastąpiła w grze dawną kopułę z łatami trafień i wstęgi is
   poza slotu względem początku przy kamerze.
 - **Rozruch i gaszenie WIDOCZNE** (decyzja użytkownika 2026-10-05; `ShieldTuning.fronts`): tarcza na
   ekranie bierze slot na czas czoła, siatka odrasta za czołem (szwy), czoło pcha falę (+1300 / −1700 j./s²).
+- **Tarcza POKAZANA (tryb TARCZE gracza, 2026-10-12)** — dawniej równa siatka podwójnych linii o stałej jasności
+  („zwykłe heksy, w idle brakuje feelu”). Teraz: czasza pola (`fieldMesh`, instancja = slot, r(θ) z binów slotu) z gładkim
+  świecącym brzegiem na obrysie, poświatą do wnętrza i pasem przy krawędzi, soczewką tła przy krawędzi (`fieldDistMesh`,
+  warstwa DIST); siatka płytek jako faktura — płytki się stykają (jeden szew), szwy ~1,8 px wygładzone po `fwidth` i
+  gasnące przy drobnych komórkach, nad kadłubem prawie niewidoczne, ku krawędzi jaśniejsze; prądy energii (szum tile2D
+  wspólny dla płytek, czaszy i poświaty na pancerzu), migające komórki, zmarszczki (słabe zdarzenia samej fali —
+  `evB.z = 1`); komórki zapalają się w losowej kolejności; słabe pole czerwienieje i drga. Niepokazana tarcza bez zmian.
+  Strojenie `ShieldTuning.field`, opis i koszt: AGENTS.md § Tarcze, zrzuty `node scripts/webgpu/tarcza-pokazana-gra.mjs`.
 - **Światła**: błyski trafień i pęknięcia → `Core3D.fx.lights.flash` (z nośnikiem — jadą z okrętem),
   rozgrzane miejsca → `point` co klatkę; kadłuby czytają je z siatki świateł.
 - **Strojenie** z konsoli gry: `ShieldTuning` (fala, żar, iskry, światła, załamanie, `breach`, `hullGlow`,

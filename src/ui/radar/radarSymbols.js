@@ -48,6 +48,7 @@ export function radarSymbolSize(kind, cls, capital) {
   if (kind === 'fighter') return 2.6;
   if (kind === 'drone') return 2.4;
   if (kind === 'wreck') return 2.6;
+  if (kind === 'body') return 3.6;
   if (kind === 'station') return 5.4;
   switch (cls) {
     case 'SC': return 6;
@@ -96,6 +97,16 @@ export function pathRadarShape(ctx, shape, s) {
       ctx.moveTo(-s, -s); ctx.lineTo(s, s);
       ctx.moveTo(s, -s); ctx.lineTo(-s, s);
       break;
+    case 'rock':    // ciało naturalne (planetoida, kometa): nieregularny siedmiokąt
+      ctx.moveTo(s * 1.05, -s * 0.2);
+      ctx.lineTo(s * 0.55, s * 0.85);
+      ctx.lineTo(-s * 0.3, s * 1.0);
+      ctx.lineTo(-s * 1.05, s * 0.4);
+      ctx.lineTo(-s * 0.9, -s * 0.55);
+      ctx.lineTo(-s * 0.15, -s * 1.05);
+      ctx.lineTo(s * 0.7, -s * 0.85);
+      ctx.closePath();
+      break;
     default:        // square
       ctx.rect(-s, -s, s * 2, s * 2);
       break;
@@ -108,6 +119,7 @@ export function radarShapeOf(kind, aff) {
   if (kind === 'fighter') return 'wedge';
   if (kind === 'drone') return 'triangle';
   if (kind === 'wreck') return 'cross';
+  if (kind === 'body') return 'rock';
   if (aff === 'hostile') return 'diamond';
   if (aff === 'friendly') return 'circle';
   return 'square';
@@ -197,7 +209,7 @@ export function drawRadarSymbol(ctx, x, y, o) {
 // Klucz liczbowy z wyglądu (kształt, barwa, wariant, rozmiar co 1/4 px, grubość, poświata, wypełnienie, kreski);
 // alfa, obrót i położenie — przy stawianiu.
 const STAMP_CAP = 400;
-const SHAPE_IDS = Object.freeze({ square: 0, diamond: 1, circle: 2, wedge: 3, dart: 4, triangle: 5, cross: 6, acq: 7 });
+const SHAPE_IDS = Object.freeze({ square: 0, diamond: 1, circle: 2, wedge: 3, dart: 4, triangle: 5, cross: 6, acq: 7, rock: 8 });
 const _stamps = new Map();
 const _rgbIds = new Map();
 const _stampOpts = { kind: 'ship', aff: 'unknown', cls: '', capital: false, s: 4, alpha: 1, rotation: 0, lw: 1.2, fill: null, dashed: false, rgb: null, halo: 0, shape: null };
@@ -223,7 +235,7 @@ export function radarSymbolStamp(o) {
   if (rgbId === undefined) { rgbId = _rgbIds.size; _rgbIds.set(rgb, rgbId); }
   const sQ = Math.round(s * 4);
   const lwQ = Math.round(lw * 4);
-  const key = ((((((rgbId * 8 + (SHAPE_IDS[shape] ?? 0)) * 4 + variant) * 512 + sQ) * 64 + lwQ) * 16
+  const key = ((((((rgbId * 16 + (SHAPE_IDS[shape] ?? 0)) * 4 + variant) * 512 + sQ) * 64 + lwQ) * 16
     + Math.round(halo * 10)) * 32 + Math.round(fill * 20)) * 2 + (o.dashed ? 1 : 0);
   let st = _stamps.get(key);
   if (st !== undefined) return st;
