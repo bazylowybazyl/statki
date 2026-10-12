@@ -698,7 +698,7 @@ function getSlotKeys(slot, entity, prefix, index, def) {
 
 // Parametry bieżącej encji dla emitTurret — moduł zamiast domknięcia tworzonego
 // w każdym sync().
-const _emit = { entity: null, localX: 1, localY: 1, tierScale: 1, cosA: 1, sinA: 0, shipEx: 0, shipEy: 0, shipScale: 1 };
+const _emit = { entity: null, localX: 1, localY: 1, tierScale: 1, cosA: 1, sinA: 0, shipEx: 0, shipEy: 0, shipScale: 1, renderScale: 1 };
 
 function writeEntityLocalScale(entity, out) {
   const sxRaw = Number(entity?.__hardpointScaleX);
@@ -714,11 +714,11 @@ function emitTurret(slot, prefix, index, def, info, localX, localY, angle, useHa
   const entity = f.entity;
   const psx = useHardpointScale ? f.localX : (entity.isPlayer ? 1 : f.shipScale);
   const psy = useHardpointScale ? f.localY : (entity.isPlayer ? 1 : f.shipScale);
-  const lx = (Number(localX) || 0) * psx;
-  const ly = (Number(localY) || 0) * psy;
+  const lx = (Number(localX) || 0) * psx * f.renderScale;
+  const ly = (Number(localY) || 0) * psy * f.renderScale;
   const wx = f.shipEx + lx * f.cosA - ly * f.sinA;
   const wy = f.shipEy + lx * f.sinA + ly * f.cosA;
-  pushRecord(entity, getSlotKeys(slot, entity, prefix, index, def), info, wx, wy, angle, info.scale * f.tierScale);
+  pushRecord(entity, getSlotKeys(slot, entity, prefix, index, def), info, wx, wy, angle, info.scale * f.tierScale * f.renderScale);
 }
 
 function emitPlayerTurretList(list, prefix, aimAlpha) {
@@ -808,6 +808,10 @@ export const Turret2D = {
    * (rysuje ją model 3D z rekordu tej klatki). null — kanwa rysuje wszystkie.
    */
   skipDraw: null,
+  /**
+   * (rec) → true = wieżyczka zasłonięta (np. fregata zwiadu przelatuje nad Atlasem — kanwa nie zna głębi). null — brak.
+   */
+  occlude: null,
 
   /** Rekordy wieżyczek encji z tej klatki (tablica z puli — tylko do odczytu w tej klatce) albo null. */
   recordsFor(entity) {
@@ -849,8 +853,13 @@ export const Turret2D = {
     // moduł ma zostać czysty (test node importuje go bez przeglądarki).
     if (typeof window !== 'undefined' && window.CICDisplay?.active) return;
 
+    // Fregata zwiadu w luku Atlasa (src/3d/cargo/scoutBay3D.js): wieże ukryte przy zamkniętych wrotach,
+    // w luku mniejsze (`__renderScale` — skala obrazu okrętu wokół jego środka).
+    if (entity.__turretsHidden === true) return;
     const f = _emit;
     f.entity = entity;
+    const rs = Number(entity.__renderScale);
+    f.renderScale = rs > 0 ? rs : 1;
     writeEntityLocalScale(entity, f);
     const tier = getEntityWeaponTier(entity);
     f.tierScale = (WEAPON_TIER_SCALE[tier] || WEAPON_TIER_SCALE.Capital).turret;
@@ -1168,6 +1177,7 @@ export const Turret2D = {
 
     let drawn = 0;
     const skipDraw = typeof this.skipDraw === 'function' ? this.skipDraw : null;
+    const occlude = typeof this.occlude === 'function' ? this.occlude : null;
     const lightAt = typeof this.lightAt === 'function' ? this.lightAt : null;
     let alpha = 1;
     // Jasność liczona raz na encję (cień planety jest dużo większy niż okręt).
@@ -1178,6 +1188,7 @@ export const Turret2D = {
     for (let i = 0; i < frameCount; i++) {
       const rec = frameRecords[i];
       if (skipDraw !== null && skipDraw(rec)) continue;
+      if (occlude !== null && occlude(rec)) continue;
       const spec = rec.spec;
       const worldScale = rec.scale;
       const screenR = spec.r * worldScale * zoom;

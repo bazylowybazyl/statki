@@ -212,7 +212,8 @@ function refreshSide(side, npcs, player) {
     const list = Array.isArray(npcs) ? npcs : EMPTY;
     for (let i = 0; i < list.length; i++) {
       const e = list[i];
-      if (isGone(e) || inWarpTransit(e) || sideOfEntity(e, player) !== enemySide) continue;
+      // Zamaskowany NPC (fregata zwiadu gracza — src/game/scoutBay.js) nie jest kontaktem, jak zamaskowany gracz.
+      if (isGone(e) || inWarpTransit(e) || isCloakHidden(e) || sideOfEntity(e, player) !== enemySide) continue;
       if (detectedBy(side, e)) upsertContact(side, e, player);
     }
     // Zamaskowany gracz (src/game/cloak.js) nie jest kontaktem — ani świeżym, ani duchem (niżej).

@@ -7,7 +7,8 @@
 // potrzebuje (render w kadrze, fizyka przy statku), i wyrzuca z pamięci, gdy
 // przestaje być potrzebna. Ten sam argument zawsze daje te same skały.
 //
-// Gęstość = profil pasa (krawędzie z BELT_DEFINITIONS, miękkie) × pola:
+// Gęstość = profil pasa (krawędzie z BELT_DEFINITIONS, miękkie) × luki Kirkwooda
+// (rzadsze pierścienie na rezonansach z Jowiszem) × pola:
 // szum niskiej częstotliwości wyznacza GĘSTE POLA (manewrowanie, zasadzki,
 // kopanie) na tle rzadkiego pasa. Dawny pas miał 225 tys. skał na 5,1·10¹² j.²
 // Main Belt, czyli 0,09 skały na ekran przy zoomie 1 — poza polami zostaje
@@ -64,6 +65,29 @@ export const BELT_FIELD_CONFIG = Object.freeze({
   rimDensity: 0.3,
   // Miękka krawędź pasa (w AU mapy) — skały rzedną, zamiast urwać się na linii.
   edgeAu: 1.2,
+  // LUKI KIRKWOODA: rezonanse średniego ruchu z Jowiszem wymiatają pas na stałych odległościach od
+  // Słońca. Prawdziwe 2,50 / 2,82 / 2,95 / 3,27 AU przeliczone liniowo jak BELT_DEFINITIONS
+  // (AU mapy = 33 + (a − 1,524) · 17,2 / 3,680). `width` [AU mapy] — szerokość w połowie głębokości,
+  // brzegi miękkie na `kirkwoodSoftAu` (albo `soft` luki); w środku luki gęstość × `kirkwoodDensity`
+  // (albo `density` luki) — rzadki przesmyk, nie pustka; przecina też gęste pola. Luka kończy się
+  // dokładnie na width / 2 + soft / 2 — dalej mnożnik 1. Pusta lista = pas bez luk (A/B).
+  // Pierścienie skanu rdzeni olbrzymów (asteroidBeltGiants.js: 38,17 / 39,5 / 40,83 … AU) leżą POZA
+  // lukami: rdzenie mają remisy maksymalnej gęstości, więc nawet ogon luki ×0,997 przestawiał olbrzymy
+  // (test w tests/asteroidBeltField.test.mjs). 7:3 — najwęższa z prawdziwych luk, 0,2 AU od pierścienia 39,5.
+  kirkwoodGaps: Object.freeze([
+    Object.freeze({ id: '3:1', au: 37.57, width: 0.45 }),
+    Object.freeze({ id: '5:2', au: 39.08, width: 0.4 }),
+    Object.freeze({ id: '7:3', au: 39.70, width: 0.24, soft: 0.12 }),
+    Object.freeze({ id: '2:1', au: 41.20, width: 0.5 })
+  ]),
+  kirkwoodSoftAu: 0.2,
+  kirkwoodDensity: 0.1,
+  // Zewnętrzna krawędź pasa głównego [AU mapy] — null: BELT_DEFINITIONS (47). 41,5 ≈ prawdziwa krawędź
+  // (luka 2:1, 3,27 AU) — łuki Hild stoją osobno za pasem (decyzja użytkownika 2026-10-11). Strefa HUD /
+  // warpa pasa (ASTEROID_BELT w index.html, 36–47 — obejmuje Hildy), skan olbrzymów (37,5–45,5 AU) i zasadzka
+  // misji 2 czytają krawędź z BELT_DEFINITIONS; olbrzymy szukają rdzeni w gęstości pola, więc przy 41,5
+  // cztery z pięciu stoją bliżej (38,6–39,9 AU), Labirynt bez zmian.
+  mainOuterAu: 41.5,
   // Prowincje rud: szum przesuwający skład w stronę jednego typu.
   provinceScale: 150000,
   provinceStrength: 0.9,
@@ -154,6 +178,28 @@ function wrapAngle(a) {
   return a;
 }
 
+/**
+ * Mnożnik gęstości luk Kirkwooda w odległości `rAu` od Słońca [AU mapy]: 1 poza lukami,
+ * `density` (albo `gap.density`) w środku luki, miękko na brzegach (`softAu` albo `gap.soft`;
+ * połowa głębokości na width / 2). Luki się nie sumują (minimum).
+ */
+export function kirkwoodGapFactor(rAu, gaps, softAu = 0.2, density = 0.1) {
+  let f = 1;
+  if (!gaps) return f;
+  for (let i = 0; i < gaps.length; i++) {
+    const g = gaps[i];
+    const t = Math.abs(rAu - g.au);
+    const soft = Number.isFinite(g.soft) ? g.soft : softAu;
+    const e1 = g.width * 0.5 + soft * 0.5;
+    if (t >= e1) continue;
+    const e0 = Math.max(0, g.width * 0.5 - soft * 0.5);
+    const d = Number.isFinite(g.density) ? g.density : density;
+    const v = d + (1 - d) * (e1 > e0 ? smoothstep(e0, e1, t) : 1);
+    if (v < f) f = v;
+  }
+  return f;
+}
+
 // ---------------------------------------------------------------------------
 // Geometria pasów
 
@@ -167,8 +213,9 @@ function resolvePlanetXY(planet, sunX, sunY, au) {
 
 /**
  * BELT_DEFINITIONS → regiony w świecie gry. Ring: pierścień wokół słońca.
- * Arc (Grecy, Trojańczycy, 3 skupiska Hildas): wycinek pierścienia.
+ * Arc (Grecy, Trojańczycy, 3 skupiska Hildas w wierzchołkach L3 / L4 / L5): wycinek pierścienia.
  * Pozycje planet-kotwic zamrażane w chwili wywołania, jak robiło to dawne pole.
+ * `priority` regionu — pierwszeństwo w wyborze regionu (skład) tam, gdzie region leży (sampleMacro).
  */
 export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], sunX = 0, sunY = 0, auToWorld = 42253.52 } = {}) {
   const au = auToWorld;
@@ -177,7 +224,7 @@ export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], su
   for (const belt of beltDefs || []) {
     const types = belt.types || {};
     const composition = ASTEROID_TYPES.map((t) => Math.max(0, Number(types[t]) || 0));
-    const common = { beltId: belt.id, composition, ice: belt.id === 'kuiper' ? 1 : 0 };
+    const common = { beltId: belt.id, composition, ice: belt.id === 'kuiper' ? 1 : 0, priority: Number(belt.priority) || 0 };
     if (belt.shape === 'ring') {
       regions.push({ ...common, kind: 'ring', cx: sunX, cy: sunY, rInner: belt.innerAU * au, rOuter: belt.outerAU * au });
       continue;
@@ -197,15 +244,17 @@ export function buildBeltRegions(beltDefs = BELT_DEFINITIONS, { planets = [], su
       continue;
     }
     if (belt.shape === 'triangle') {
+      // Skupiska w wierzchołkach trójkąta (kąty względem kotwicy; domyślnie L3 / L4 / L5).
       const p = resolvePlanetXY(find(belt.anchorPlanet), sunX, sunY, au);
       const base = p ? Math.atan2(p.y - sunY, p.x - sunX) : 0;
-      for (let k = 0; k < 3; k++) {
+      const angles = Array.isArray(belt.anglesDeg) ? belt.anglesDeg : [180, 60, -60];
+      for (const deg of angles) {
         regions.push({
           ...common, kind: 'arc', cx: sunX, cy: sunY,
-          rMid: (belt.radiusAU || 42) * au,
+          rMid: (belt.radiusAU || 44.4) * au,
           rHalf: (belt.spreadAU || 3) * au * 0.5,
-          angMid: base + k * (Math.PI * 2 / 3),
-          angHalf: 0.17
+          angMid: base + deg * Math.PI / 180,
+          angHalf: (Number(belt.arcSpread) || 0.34) * 0.5
         });
       }
     }
@@ -227,7 +276,7 @@ export function regionPenetration(region, x, y) {
 // ---------------------------------------------------------------------------
 // Pole
 
-const _macro = { weight: 0, cluster: 0, rim: 0, depth: 0, density: 0, ice: 0, region: null };
+const _macro = { weight: 0, gap: 1, cluster: 0, rim: 0, depth: 0, density: 0, ice: 0, region: null };
 
 export class AsteroidBeltField {
   /**
@@ -248,7 +297,30 @@ export class AsteroidBeltField {
     this.regions = buildBeltRegions(opts.beltDefs || BELT_DEFINITIONS, {
       planets: opts.planets || [], sunX: this.sunX, sunY: this.sunY, auToWorld: this.auToWorld
     });
+    if (Number.isFinite(this.config.mainOuterAu)) {
+      const main = this.regions.find((r) => r.beltId === 'main' && r.kind === 'ring');
+      if (main) main.rOuter = Math.max(main.rInner, this.config.mainOuterAu * this.auToWorld);
+    }
     this.edgeWorld = this.config.edgeAu * this.auToWorld;
+    // Luki Kirkwooda: pasmo [r0, r1] obejmujące wszystkie luki (r² w j.², bez pierwiastka poza nim).
+    this._hasGaps = false;
+    this._gapR0sq = 0;
+    this._gapR1sq = 0;
+    const gaps = this.config.kirkwoodGaps;
+    if (Array.isArray(gaps) && gaps.length > 0) {
+      let r0 = Infinity;
+      let r1 = 0;
+      for (const g of gaps) {
+        const e1 = g.width * 0.5 + (Number.isFinite(g.soft) ? g.soft : this.config.kirkwoodSoftAu) * 0.5;
+        r0 = Math.min(r0, g.au - e1);
+        r1 = Math.max(r1, g.au + e1);
+      }
+      r0 = Math.max(0, r0) * this.auToWorld;
+      r1 *= this.auToWorld;
+      this._hasGaps = r1 > r0;
+      this._gapR0sq = r0 * r0;
+      this._gapR1sq = r1 * r1;
+    }
     // Mnożnik gęstości ustawiany na żywo (demo, strojenie) — nie zmienia
     // rozmieszczenia istniejących skał w komórkach poza przerzedzeniem.
     this.densityScale = 1;
@@ -260,18 +332,33 @@ export class AsteroidBeltField {
     this.stats = { cellsGenerated: 0, rocksGenerated: 0, cacheHits: 0 };
   }
 
-  /** Makro-próbka w punkcie (bez alokacji; wynik ważny do następnego wywołania). */
+  /**
+   * Makro-próbka w punkcie (bez alokacji; wynik ważny do następnego wywołania).
+   * weight — obwiednia pasa (najgłębsze wniknięcie w region), gap — mnożnik luk Kirkwooda,
+   * cluster / rim — pole i obrzeże już przerzedzone luką, density — gęstość skał PLAY,
+   * region — region składu (pierwszeństwo `priority`, potem najgłębsze wniknięcie).
+   */
   sampleMacro(x, y, out = _macro) {
     let best = -Infinity;
     let region = null;
+    let pick = null;
+    let pickPri = -Infinity;
+    let pickPen = 0;
     for (let i = 0; i < this.regions.length; i++) {
-      const pen = regionPenetration(this.regions[i], x, y);
-      if (pen > best) { best = pen; region = this.regions[i]; }
+      const reg = this.regions[i];
+      const pen = regionPenetration(reg, x, y);
+      if (pen > best) { best = pen; region = reg; }
+      // Region o wyższym priorytecie wygrywa skład wszędzie, gdzie leży (Hildy w pasie głównym).
+      if (pen > 0 && (reg.priority > pickPri || (reg.priority === pickPri && pen > pickPen))) {
+        pick = reg; pickPri = reg.priority; pickPen = pen;
+      }
     }
     const weight = region ? smoothstep(-this.edgeWorld * 0.35, this.edgeWorld, best) : 0;
+    if (pick) region = pick;
     const c = this.config;
     let cluster = 0;
     let rim = 0;
+    let gap = 1;
     if (weight > 0) {
       const n = fbm2(x / c.clusterScale, y / c.clusterScale, this.seed ^ 0xC1A57E, 4);
       const edge0 = c.clusterThreshold - c.clusterSoftness;
@@ -279,13 +366,24 @@ export class AsteroidBeltField {
       // Obrzeże z wypełniacza zaczyna się rimWidth przed polem i przechodzi
       // w pole (w rdzeniu gęstość to już tylko pole).
       rim = smoothstep(edge0 - c.rimWidth, edge0 + c.clusterSoftness * 0.4, n) * (1 - cluster);
+      if (this._hasGaps) {
+        const dx = x - this.sunX;
+        const dy = y - this.sunY;
+        const r2 = dx * dx + dy * dy;
+        if (r2 > this._gapR0sq && r2 < this._gapR1sq) {
+          gap = kirkwoodGapFactor(Math.sqrt(r2) / this.auToWorld, c.kirkwoodGaps, c.kirkwoodSoftAu, c.kirkwoodDensity);
+        }
+      }
     }
     out.weight = weight;
-    out.cluster = cluster;
-    out.rim = rim;
+    out.gap = gap;
+    // Luka przerzedza pas razem z polem: w luce mniej skał, płytsze pole (mniej rud, bez burz),
+    // słabsza zasłona i cień pola.
+    out.cluster = cluster * gap;
+    out.rim = rim * gap;
     // Głębokość w polu dla składu (0 = rzadki pas i obrzeże, 1 = rdzeń).
-    out.depth = cluster;
-    out.density = weight * (c.baseDensity + (c.fieldDensity - c.baseDensity) * cluster + c.fieldDensity * c.rimDensity * rim) * this.densityScale;
+    out.depth = out.cluster;
+    out.density = weight * gap * (c.baseDensity + (c.fieldDensity - c.baseDensity) * cluster + c.fieldDensity * c.rimDensity * rim) * this.densityScale;
     out.ice = region ? region.ice : 0;
     out.region = region;
     return out;

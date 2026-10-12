@@ -22,6 +22,7 @@
 
 import { spatialCellKey } from '../game/spatialCellKey.js';
 import { AI_SNAP_FIGHTER, AI_SNAP_CAPITAL } from './aiNeighborKernels.js';
+import { isCloakHidden } from '../game/cloak.js';
 
 const CELL_SIZE = 600;
 const INV_CELL = 1 / CELL_SIZE;
@@ -329,7 +330,9 @@ export function rebuildAIGrid(entityList, includePlayer) {
       const e = entityList[i];
       if (!e || e.dead) continue;
       activeEntities.push(e);
-      if (e.friendly === true) friendlyEntities.push(e);
+      // Zamaskowany sojusznik (fregata zwiadu, src/game/cloak.js) nie jest kandydatem na cel wroga — zostaje w siatce
+      // (separacja, unik), ale nie w puli strony.
+      if (e.friendly === true) { if (!isCloakHidden(e)) friendlyEntities.push(e); }
       else nonFriendlyEntities.push(e);
       if (e.isPirate === true) pirateEntities.push(e);
       registerEntity(e, e.x, e.y);

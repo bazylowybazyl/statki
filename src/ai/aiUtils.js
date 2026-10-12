@@ -159,7 +159,7 @@ export function aiPickBestTarget(self, rangeLimit) {
   const candidates = Array.isArray(pooledCandidates) ? pooledCandidates : (window.npcs || []);
   for (let i = 0; i < candidates.length; i++) {
     const u = candidates[i];
-    if (!isEnemyUnit(self, u)) continue;
+    if (!isEnemyUnit(self, u) || isCloakHidden(u)) continue;
 
     const ux = u.pos ? u.pos.x : u.x;
     const uy = u.pos ? u.pos.y : u.y;

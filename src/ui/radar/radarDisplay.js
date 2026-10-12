@@ -18,7 +18,7 @@ import { RADAR_TUNE, RADAR_RGB, formatRadarDistance, formatRadarRing, scanPulseR
 import { radarEchoLevel, relativeBearing, normAngle } from './radarTracker.js';
 import { createRadarTerrain } from './radarTerrain.js';
 import {
-  drawRadarText, radarAffRgb, radarColor, radarSymbolSize, stampRadarSymbol, strokeRadarBrackets
+  drawRadarText, radarAffRgb, radarColor, radarSymbolSize, stampRadarSymbol, stampRadarText, strokeRadarBrackets
 } from './radarSymbols.js';
 
 const TAU = Math.PI * 2;
@@ -489,10 +489,17 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
     ctx.restore();
   }
 
+  // Napis „?” duchów ze stempli (audyt FPS 2026-10-11 — strokeText z obrysem na ducha w każdym rysunku tarczy):
+  // jeden stempel na poziom alfy (stampRadarText kwantuje ją do 1/64), wspólny dla wszystkich duchów — napis i wygląd
+  // te same, w biegu sam drawImage; po zmianie fontu / rozmiaru tarczy stempel piecze się od nowa.
+  const _ghostMarkStamps = new Array(65).fill(null);
   function drawGhosts(ctx, f) {
     const ghosts = f.overlay?.ghosts;
     if (!ghosts) return;
     const iter = typeof ghosts.values === 'function' ? ghosts.values() : ghosts;
+    // Font, który kontekst ma w tej chwili — napis szedł bez ustawiania fontu (wygląd bez zmian).
+    const font = ctx.font;
+    const stamps = tune.stampGhosts !== false;
     for (const g of iter) {
       if (!g) continue;
       const life = Number(g.maxAge) || 8;
@@ -505,7 +512,14 @@ export function createRadarDisplay(tune = RADAR_TUNE) {
       o.kind = 'ship'; o.aff = 'hostile'; o.rgb = RADAR_RGB.ghost; o.shape = null; o.s = s; o.alpha = a; o.fill = 0;
       o.dashed = true; o.lw = 1 * f.u; o.cls = ''; o.capital = false; o.rotation = 0; o.halo = 0;
       stampRadarSymbol(ctx, _p.x, _p.y, o);
-      drawRadarText(ctx, '?', _p.x + 6.5 * f.su, _p.y - 5.5 * f.su, RADAR_RGB.ghost, a, 'left', 'middle', 2.5 * f.u);
+      const tx = _p.x + 6.5 * f.su;
+      const ty = _p.y - 5.5 * f.su;
+      if (stamps) {
+        const aQ = a >= 1 ? 64 : Math.round(a * 64);
+        _ghostMarkStamps[aQ] = stampRadarText(ctx, _ghostMarkStamps[aQ], '?', font, tx, ty, RADAR_RGB.ghost, a, 'left', 'middle', 2.5 * f.u);
+      } else {
+        drawRadarText(ctx, '?', tx, ty, RADAR_RGB.ghost, a, 'left', 'middle', 2.5 * f.u);
+      }
     }
   }
 

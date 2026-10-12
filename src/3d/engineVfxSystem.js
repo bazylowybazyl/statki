@@ -18,6 +18,7 @@ import {
   MainExhaust3D,
   MAIN_EXHAUST_Z,
   createMainExhaustState,
+  mainExhaustReach,
   releaseMainExhaustState
 } from './mainExhaust3D.js';
 import { WarpPlume3D } from './warpPlume3D.js';
@@ -28,7 +29,7 @@ import { enginePlumeScale, engineIgnitionKick } from '../game/engineIgnition.js'
 // Dysze SIDE tej klatki — modele 3D dysz bocznych (sideNozzleFrame.js → shipModels3DGame.js); płomień z wylotu dzwonu.
 import { SideNozzleFrame, SIDE_NOZZLE_RADIUS, SIDE_NOZZLE_MOUTH } from './sideNozzleFrame.js';
 // Dysze SIDE na WebGPU (2026-10-07): struga TSL, gaz w pulach GPU, światło na blasze — zamiast engineExhaustBatch.
-import { SideJets3D, createSideJetState } from './sideJets3D.js';
+import { SideJets3D, createSideJetState, SIDE_JET_TUNE, SIDE_JET_REACH_R } from './sideJets3D.js';
 import { GameState } from '../game/gameState.js';
 import { buildEntityEngineFx, fallbackNozzleRadius } from '../data/engineFx.js';
 import { cloakVisAtWorld } from '../game/cloakLook.js';
@@ -451,7 +452,15 @@ export const EngineSlotKeyInternals = Object.freeze({
   SLOT_INPUT_SETTLE, SLOT_INPUT_RECHECK, resolveSlotForward, computeSlotForward
 });
 // Dla testów: dysze gasną z komórką kadłuba belkowego (syncNozzleMounts — niżej).
-export const EngineNozzleInternals = Object.freeze({ buildSlots, syncNozzleMounts: (e, fx) => syncNozzleMounts(e, fx) });
+export const EngineNozzleInternals = Object.freeze({
+  buildSlots,
+  syncNozzleMounts: (e, fx) => syncNozzleMounts(e, fx),
+  // LOD dysz MAIN za kadrem (testy): kadr klatki z kamery gry i cullInfo, decyzja dla wylotu, kontekst klatki
+  // (getter — frameCtx jest zadeklarowany niżej)
+  prepareMainLod,
+  mainJetsOffView,
+  get frameCtx() { return frameCtx; }
+});
 
 // Dysza nie ma juz wlasnych obiektow w scenie — zostaje sam stan wygladzania,
 // ktory batch przepisuje na atrybuty instancji. Cala flota rysuje sie stala
@@ -593,8 +602,96 @@ const frameCtx = {
   playerShip: null,
   playerPose: null,
   tune: null,
-  sideWidthMul: 1
+  sideWidthMul: 1,
+  // LOD dysz SIDE (audyt FPS 2026-10-11, updateEffects): kamera z góry (piksele z zoomu — w kamerach 3D skala zależy
+  // od punktu, decyduje rysownik), margines pudła rysowania [j. świata], próg modelu dyszy [px promienia wylotu]
+  lod: false,
+  drawMargin: Infinity,
+  modelMinPx: 0,
+  // LOD dysz MAIN za kadrem (MainExhaust3D.offscreenLod): kadr tej klatki w scenie (środek, połowy boków [j.]),
+  // prędkość kadru (scena, j/s) i prędkość jego brzegu przy oddalaniu, zapas na wstrząs i przyspieszenie kadru [j.]
+  mainLod: false,
+  viewX: 0, viewY: 0, viewHW: 0, viewHH: 0,
+  viewVX: 0, viewVY: 0, viewGrow: 0,
+  viewPad: 0
 };
+// Statystyki LOD dysz MAIN ostatniej klatki: dysze MAIN, w tym okrętów poza pudłem rysowania, i dysze bez strug
+// (`cut` liczone także przy MainExhaust3D.offscreenLod = false — ile by odpadło).
+export const MainLodStats = { nozzles: 0, offBox: 0, cut: 0 };
+// Kadr poprzedniej klatki (kamera gry BEZ wstrząsu — window.camera): prędkość kadru i oddalania, z pamięcią szczytu
+// (MAIN_LOD_HOLD s) — ruszający kadr podnosi zapas od razu, hamujący oddaje go powoli.
+const viewTrack = { ok: false, x: 0, y: 0, zoom: 1, vx: 0, vy: 0, hold: 0, grow: 0 };
+const MAIN_LOD_HOLD = 0.4;
+// Skok kadru szybszy niż to (teleport, cięcie kamery) nie jest ruchem — to, co jest w nowym kadrze, i tak rodzi się
+// od nowa (przedtem leżało poza pudłem rozgrzania).
+const VIEW_CUT_SPEED = 200000;
+
+// Kadr tej klatki dla LOD dysz MAIN (raz na klatkę, przed okrętami). Tylko kamera z góry jednego gracza: kamera
+// drugiego gracza (podzielony ekran) jedzie osobno, a jej ruchu tu nie śledzimy.
+function prepareMainLod(view, dt, win) {
+  const t = viewTrack;
+  const cam = win ? win.camera : null;
+  const cx = Number(cam?.x);
+  const cy = Number(cam?.y);
+  const cz = Number(cam?.zoom);
+  // ruch kadru znany dopiero od drugiej klatki z kamerą — w pierwszej bez LOD
+  let known = false;
+  if (Number.isFinite(cx) && Number.isFinite(cy) && cz > 0) {
+    if (t.ok && dt > 1e-4) {
+      known = true;
+      const vx = (cx - t.x) / dt;
+      const vy = -(cy - t.y) / dt;                     // scena: y w górę
+      const sp = Math.sqrt(vx * vx + vy * vy);
+      const decay = Math.exp(-dt / MAIN_LOD_HOLD);
+      if (sp > VIEW_CUT_SPEED) {
+        t.vx = 0; t.vy = 0; t.hold = 0; t.grow = 0;
+      } else {
+        t.vx = vx; t.vy = vy;
+        t.hold = Math.max(sp, t.hold * decay);
+        // względne tempo oddalania [1/s] — połowa boku kadru rośnie jak 1 / zoom
+        const grow = cz < t.zoom ? (t.zoom / cz - 1) / dt : 0;
+        t.grow = Math.max(grow, t.grow * decay);
+      }
+    }
+    t.x = cx; t.y = cy; t.zoom = cz; t.ok = true;
+  } else {
+    t.ok = false;
+  }
+  const hw = Number(view?.drawHalfW);
+  const hh = Number(view?.drawHalfH);
+  frameCtx.mainLod = frameCtx.lod && known && !(win && win.splitScreenMode)
+    && Number.isFinite(hw) && Number.isFinite(hh) && Number.isFinite(frameCtx.drawMargin);
+  if (!frameCtx.mainLod) return;
+  frameCtx.viewX = Number(view.x) || 0;
+  frameCtx.viewY = -(Number(view.y) || 0);
+  frameCtx.viewHW = hw;
+  frameCtx.viewHH = hh;
+  frameCtx.viewVX = t.vx;
+  frameCtx.viewVY = t.vy;
+  // + nadwyżka szczytu prędkości kadru nad bieżącą i brzeg kadru przy oddalaniu
+  frameCtx.viewGrow = (t.hold - Math.sqrt(t.vx * t.vx + t.vy * t.vy)) + t.grow * (hw > hh ? hw : hh);
+  // Zapas: kadr tej klatki jest ze wstrząsem (do shakeMaxPx w każdą stronę — za chwilę może być po drugiej), a
+  // przyspieszenia kadru (szarpnięcie kursora w postawie walki, start przejścia) prędkość nie przewiduje — margines
+  // pudła rysowania (96 px).
+  const shakeRaw = Number(win?.CameraRig?.tune?.shakeMaxPx);
+  const shakePx = Number.isFinite(shakeRaw) ? Math.max(0, shakeRaw) : 80;
+  frameCtx.viewPad = frameCtx.drawMargin + (2 * shakePx) / frameCtx.zoom;
+}
+
+// Czy strugi i iskry wypuszczone w tej klatce z wylotu (x, y — scena) nie sięgną kadru (prepareMainLod) w swoim
+// życiu. Prędkość dyszy: okręt (vx, vy — scena) + obrót (`spin` = |ω| × ramię dyszy, j/s).
+function mainJetsOffView(x, y, radius, lengthMul, widthMul, sparks, vx, vy, spin) {
+  // odległość wylotu za kadrem po osi (nie większa niż prawdziwa odległość od prostokąta kadru) minus zapas
+  const ox = Math.abs(x - frameCtx.viewX) - frameCtx.viewHW;
+  const oy = Math.abs(y - frameCtx.viewY) - frameCtx.viewHH;
+  const out = (ox > oy ? ox : oy) - frameCtx.viewPad;
+  if (!(out > 0)) return false;
+  const rvx = vx - frameCtx.viewVX;
+  const rvy = vy - frameCtx.viewVY;
+  const rel = Math.sqrt(rvx * rvx + rvy * rvy) + spin + frameCtx.viewGrow;
+  const speed = Math.sqrt(vx * vx + vy * vy) + spin;
+  return out > mainExhaustReach(radius, lengthMul, widthMul, rel, speed, sparks);
+}
 const mainPush = {
   x: 0, y: 0, dirX: 0, dirY: -1, radius: 0, throttle: 0, boost: false,
   lengthMul: 1, widthMul: 1, palette: 0, jetGain: 1, sparkMul: 1, pixelRadius: 99, dt: 0
@@ -660,6 +757,38 @@ function updateEffects(entity, fxData, dt) {
   // Modele dysz SIDE (sideNozzleFrame.js): pierwsza dysza tego okrętu na liście klatki (zdublowane markery — jedna bryła).
   const sideModels = SideNozzleFrame.enabled;
   const sideFrom = SideNozzleFrame.count;
+  // LOD dysz SIDE tego okrętu (audyt FPS 2026-10-11; promień wylotu ten sam dla wszystkich jego dysz SIDE, piksele
+  // z zoomu kamery z góry — frameCtx.lod):
+  //   sideModelsHere — model dyszy przejdzie próg rysownika (shipModels3DGame.js publikuje go w
+  //     SideNozzleFrame.modelMinPx); dawniej lista klatki dostawała każdą dyszę w kadrze, a rysownik odrzucał ją
+  //     dopiero po pracy na okręt (przy zoomie 0,1 — wszystkie). A/B: SideNozzleFrame.sourceLod;
+  //   sideQuiet — dysze SIDE nie dadzą w kadrze nic: wylot mniejszy niż próg strugi (SIDE_JET_TUNE.minJetPx —
+  //     najmniejszy z progów strugi, gazu, świateł i modelu) albo okręt poza pudłem rysowania (`__inDrawBox`,
+  //     hexShips3D.js) dalej, niż sięga struga (SIDE_JET_REACH_R promieni wylotu), z wylotem poniżej progu świateł
+  //     (dysza nie dawała ani światła, ani gazu — wspólne limity, np. 48 świateł SIDE na klatkę, liczą się jak
+  //     dawniej) — wtedy sam automat dyszy (stan ciągły), bez strugi, gazu, świateł, modelu i gorącego powietrza
+  //     (takich źródeł Core3D i tak nie bierze: dysza < 3 px albo spoza kadru). A/B: SideJets3D.lod.
+  const sideR = SIDE_NOZZLE_RADIUS * scale * classScale * frameCtx.sideWidthMul;
+  const sidePx = sideR * frameCtx.zoom;
+  const lod = frameCtx.lod;
+  const sideModelsHere = sideModels && (!lod || !SideNozzleFrame.sourceLod || sidePx >= frameCtx.modelMinPx);
+  const sideQuiet = lod && SideJets3D.enabled && SideJets3D.lod && (sidePx < SIDE_JET_TUNE.minJetPx
+    || (entity.__inDrawBox === false && sidePx < SIDE_JET_TUNE.minLightPx && sideR * SIDE_JET_REACH_R <= frameCtx.drawMargin));
+  // LOD dysz MAIN za kadrem (audyt FPS 2026-10-11 § 6.2 pkt 2): okręt poza pudłem rysowania — dysza, której strugi
+  // i iskry wypuszczone w tej klatce nie sięgną kadru w swoim życiu (mainExhaustReach: struga ≈ 25 R × długość,
+  // iskry ≈ 38 R, plus ruch dyszy względem kadru), nie wypuszcza ich (pixelRadius = 0). Moc i żar dyszy liczą się
+  // dalej — poświata dysz na pyle, światła dysz na kadłubach, gorące powietrze i zapłon (EngineFrame) bez zmian.
+  // Prędkość dyszy względem kadru: ruch okrętu − ruch kadru + obrót okrętu (ω × ramię dyszy). A/B:
+  // MainExhaust3D.offscreenLod (MainLodStats.cut liczy dysze bez strug także przy wyłączonym).
+  const mainLod = frameCtx.mainLod && entity.__inDrawBox === false;
+  let shipVX = 0;
+  let shipVY = 0;
+  let shipSpin = 0;
+  if (mainLod) {
+    shipVX = Number(entity.vel?.x ?? entity.vx) || 0;
+    shipVY = -(Number(entity.vel?.y ?? entity.vy) || 0);
+    shipSpin = Math.abs(Number(entity.angVel) || 0) * scale;
+  }
 
   const exhausts = fxData.exhausts;
   for (let n = 0; n < exhausts.length; n++) {
@@ -671,14 +800,6 @@ function updateEffects(entity, fxData, dt) {
       continue;
     }
     const slot = item.slot || {};
-    const slotForward = resolveSlotForward(slot);
-    const offset = slot.offset || { x: 0, y: 0 };
-    const lx = slot.mode === 'normalized'
-      ? (offset.x || 0) * halfL
-      : (offset.x || 0);
-    const ly = slot.mode === 'normalized'
-      ? -(offset.y || 0) * halfW
-      : -(offset.y || 0);
 
     const forcedThrottleRaw = Number(slot?.source?.__throttle);
     const hasForcedThrottle = Number.isFinite(forcedThrottleRaw);
@@ -708,6 +829,22 @@ function updateEffects(entity, fxData, dt) {
     // przy utracie dowodzenia (shipBridge) — dla MAIN i SIDE tak samo.
     const slotScaleRaw = Number(slot?.source?.vfxScale);
     const slotScale = Number.isFinite(slotScaleRaw) && slotScaleRaw > 0 ? slotScaleRaw : 1;
+
+    // Dysza SIDE bez obrazu w tej klatce (sideQuiet wyżej): sam automat — gdy okręt urośnie na ekranie albo wjedzie
+    // w kadr, struga rusza z właściwej fazy impulsu, mocy i żaru.
+    if (sideQuiet && slot.kind === 'side') {
+      SideJets3D.idle(item.jet, Math.max(0, Math.min(1, sideFire)) * (slotScale < 1 ? slotScale : 1));
+      continue;
+    }
+
+    const slotForward = resolveSlotForward(slot);
+    const offset = slot.offset || { x: 0, y: 0 };
+    const lx = slot.mode === 'normalized'
+      ? (offset.x || 0) * halfL
+      : (offset.x || 0);
+    const ly = slot.mode === 'normalized'
+      ? -(offset.y || 0) * halfW
+      : -(offset.y || 0);
 
     // Rozwiniety lancuch transformacji, ktory wczesniej robila hierarchia
     // Object3D: T(ex,-ey) . Rz(-angle) . S(scale) . T(lx,ly). Skala encji jest
@@ -758,6 +895,17 @@ function updateEffects(entity, fxData, dt) {
       p.sparkMul = sparkMul * cloakVis;
       p.pixelRadius = nozzleR * frameCtx.zoom;
       p.dt = dt;
+      MainLodStats.nozzles++;
+      if (mainLod) {
+        MainLodStats.offBox++;
+        // iskry jak w push: wylot ≥ 1,2 px i mnożnik iskier > 0; uderzenie dopalacza (kick) sypie nimi bez progu
+        const sparks = p.sparkMul > 0 && (p.pixelRadius >= 1.2 || (p.boost && !item.main.boosting));
+        if (mainJetsOffView(nozzleWorldX, nozzleWorldY, nozzleR, p.lengthMul, p.widthMul, sparks,
+          shipVX, shipVY, shipSpin * Math.sqrt(lx * lx + ly * ly))) {
+          MainLodStats.cut++;
+          if (MainExhaust3D.offscreenLod) p.pixelRadius = 0;
+        }
+      }
       MainExhaust3D.push(item.main, p);
       // moc strugi po rampie (dopalacz do 1,5); plazma warpa i hulk — bez poświaty
       EngineFrame.nozzle(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR,
@@ -851,7 +999,7 @@ function updateEffects(entity, fxData, dt) {
 
     // Model dyszy na listę klatki (rysuje shipModels3DGame.js). Maskowanie: znika z komórką kadłuba pod sobą
     // (jak wieże 3D — próg 0,5). Kierunek podstawy = wydech w spoczynku (baseDeg — na zewnątrz burty) w scenie.
-    if (sideModels && cloakVis >= 0.5 && !SideNozzleFrame.near(sideFrom, nozzleWorldX, nozzleWorldY, sideNozzleR * 0.5)) {
+    if (sideModelsHere && cloakVis >= 0.5 && !SideNozzleFrame.near(sideFrom, nozzleWorldX, nozzleWorldY, sideNozzleR * 0.5)) {
       const src = slot.source;
       const baseDeg = Number.isFinite(Number(src?.baseDeg)) ? Number(src.baseDeg) : (Number(slot.baseDeg) || 0);
       const bRad = baseDeg * Math.PI / 180;
@@ -891,7 +1039,14 @@ export const EngineVfxSystem = {
   _lastUpdateSec: 0,
   _frame: 0,
 
-  update(entities = []) {
+  /**
+   * @param {object[]} entities  encje w pudle rozgrzania (hexShips3D.js)
+   * @param {number} drawMargin  margines pudła rysowania [j. świata]: kadłub encji z `__inDrawBox === false` leży co
+   *                             najmniej tyle za kadrem (LOD dysz SIDE); Infinity — nieznany (bez tego LOD)
+   * @param {object} [view]      kadr tej klatki (hexShips3D.js — cullInfo: środek x, y w świecie gry, drawHalfW / H) —
+   *                             LOD dysz MAIN za kadrem; bez niego dysze MAIN jak dawniej
+   */
+  update(entities = [], drawMargin = Infinity, view = null) {
     if (!Core3D.isInitialized || !Core3D.scene) return;
 
     // Licznik zrodel kasuje pass w Core3D.render(); tutaj tylko dorzucamy.
@@ -922,6 +1077,13 @@ export const EngineVfxSystem = {
     frameCtx.playerPose = frameCtx.playerShip ? (window.__interpShipPose || null) : null;
     frameCtx.tune = (hasWindow && window.VFX_TUNE) ? window.VFX_TUNE : null;
     frameCtx.sideWidthMul = Math.max(0.05, Number(frameCtx.tune?.sideW) || 1);
+    frameCtx.lod = frameCtx.isOrtho;
+    frameCtx.drawMargin = Number.isFinite(drawMargin) && drawMargin > 0 ? drawMargin : 0;
+    frameCtx.modelMinPx = Number(SideNozzleFrame.modelMinPx) || 0;
+    prepareMainLod(view, dt, hasWindow ? window : null);
+    MainLodStats.nozzles = 0;
+    MainLodStats.offBox = 0;
+    MainLodStats.cut = 0;
     sceneOriginNearCamera(frameOrigin, cam);
 
     EngineExhaustBatch.begin();
@@ -953,6 +1115,8 @@ export const EngineVfxSystem = {
         rememberSlotInputRefs(entity, fxData.inputRefs);
       }
       activeEntities.add(entity);
+      // Dysze chwilowo bez obrazu (fregata zwiadu w luku / wylot nad Atlasem — src/3d/cargo/scoutBay3D.js).
+      if (entity.__enginesHidden === true) continue;
 
       updateEffects(entity, fxData, dt);
     }

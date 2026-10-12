@@ -286,3 +286,39 @@ test('separation pushes an idle ship without spinning its hull', () => {
   assert.ok(Math.abs(ship.angle - 0.3) < 1e-3, `kadłub obrócił się o ${(ship.angle - 0.3).toFixed(3)} rad`);
   assert.ok(ship.y > 50, 'separacja nie przesunęła okrętu');
 });
+
+// Stan dysz (czysty obraz) poza pudłem rysowania rzadziej (FLIGHT_VFX_LOD, audyt FPS 2026-10-11): render ustawia
+// entity.__inDrawBox, model dysz liczy się wtedy co vfxIntervalFar z czasem zebranym od ostatniego razu — lot ten sam.
+test('thruster visuals refresh less often outside the draw box; flight is bit-identical', () => {
+  const visual = () => ({
+    mainThrusters: [{ offset: { x: -120, y: 0 }, forward: { x: 0, y: 1 }, baseDeg: 90, mount: 'rear_main' }],
+    torqueThrusters: [
+      { offset: { x: 80, y: -40 }, forward: { x: 0, y: 1 }, baseDeg: 180, mount: 'front_left', side: 'left' },
+      { offset: { x: 80, y: 40 }, forward: { x: 0, y: -1 }, baseDeg: 0, mount: 'front_right', side: 'right' }
+    ]
+  });
+  const run = (inDraw) => {
+    const ship = makeShip('terran_destroyer', 'destroyer', { visual: visual() });
+    if (inDraw !== undefined) ship.__inDrawBox = inDraw;
+    const syncs = [];
+    let last = 0;
+    for (let i = 0; i < 120 * 4; i++) {
+      if (i % 6 === 0) setFlightArrive(ship, 4000 * Math.cos(i * 0.01), 2500 * Math.sin(i * 0.013), { arrival: 60, speedMode: 'combat' });
+      stepShipFlight(ship, DT);
+      if (ship.__flightVfxT < last) syncs.push(i);
+      last = ship.__flightVfxT;
+    }
+    return { ship, syncs };
+  };
+  const near = run(true);
+  const far = run(false);
+  const unknown = run(undefined);
+  const nearGap = (near.syncs.at(-1) - near.syncs[0]) / (near.syncs.length - 1) * DT;
+  const farGap = (far.syncs.at(-1) - far.syncs[0]) / (far.syncs.length - 1) * DT;
+  assert.ok(Math.abs(nearGap - 1 / 30) < 0.01, `w pudle co ${nearGap.toFixed(3)} s`);
+  assert.ok(Math.abs(farGap - 0.25) < 0.01, `poza pudłem co ${farGap.toFixed(3)} s`);
+  assert.deepEqual(unknown.syncs, near.syncs, 'encja bez flagi (dema, testy) — jak dawniej');
+  for (const k of ['x', 'y', 'vx', 'vy', 'angle', 'angVel']) assert.equal(far.ship[k], near.ship[k], `lot: ${k}`);
+  // model dysz policzony także poza pudłem (stan ciągły — ciąg dysz ustawiony)
+  assert.ok(far.ship.visual.mainThrusters[0].__throttle > 0, 'dysza MAIN pracuje');
+});

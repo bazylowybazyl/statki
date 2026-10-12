@@ -159,9 +159,38 @@ test('filtr par: wyłączona kolizja (isCollidable, właściciel) nie daje styku
     HullBodies.step(1 / 120, [a, b]);
     assert.equal(HullBodies.hasContact(a, b), false, 'moduł tego samego właściciela');
     b.owner = null;
+    a.noHullCollisions = true;
+    HullBodies.step(1 / 120, [a, b]);
+    assert.equal(HullBodies.hasContact(a, b), false, 'kadłub bez kolizji kadłubów (gracz w warpie)');
+    a.noHullCollisions = false;
     HullBodies.step(1 / 120, [a, b]);
     assert.equal(HullBodies.hasContact(a, b), true, 'nakładające się kadłuby');
   } finally { HullBodies.release(a); HullBodies.release(b); }
+});
+
+test('overlaps: zgodny ze stykiem silnika w kroku (położenia wokół brzegu, obroty, wycięcie); ciał nie rusza', () => {
+  // Pozy B względem A (płyta z wycięciem prawej górnej ćwiartki obrazu): wzdłuż dziobu, w wycięciu, obrócony.
+  const poses = [];
+  for (let x = 250; x <= 320; x += 2.5) poses.push([x, 0, 0]);
+  for (let x = 250; x <= 320; x += 5) poses.push([x, 0, Math.PI / 2]);
+  for (let y = -40; y >= -130; y -= 5) poses.push([140, y, 0.3]);
+  poses.push([0, 0, 0]);                                   // jeden w drugim
+  let both = 0, none = 0;
+  for (const [x, y, ang] of poses) {
+    const a = npcAt(0, 0), b = npcAt(x, y, { angle: ang });
+    HullBodies.createHull(a, NOTCHED);
+    HullBodies.createHull(b, SMALL);
+    try {
+      const posA = a.beamHull.body.pos.x;
+      const ov = HullBodies.overlaps(a, b);
+      assert.equal(HullBodies.overlaps(b, a), ov, 'kolejność argumentów bez znaczenia');
+      assert.equal(a.beamHull.body.pos.x, posA, 'zapytanie nie rusza ciał');
+      HullBodies.step(1 / 120, [a, b]);
+      assert.equal(ov, HullBodies.hasContact(a, b), `B w (${x}, ${y}) kąt ${ang.toFixed(2)}: overlaps ${ov}, styk silnika ${!ov}`);
+      if (ov) both++; else none++;
+    } finally { HullBodies.release(a); HullBodies.release(b); }
+  }
+  assert.ok(both >= 5 && none >= 5, `obie strony progu: zakładka ${both}, bez ${none}`);
 });
 
 test('śmierć: cały kadłub przechodzi na encję wraku; okruch wraku znika', () => {

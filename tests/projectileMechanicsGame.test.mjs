@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { projectilePassesAlly } from '../src/game/friendlyFire.js';
 
 // Wpięcie mechaniki broni z dema w pętlę pocisków gry (zadanie 18-B): PRAWDZIWE
 // bulletsAndCollisionsStep z index.html (razem z writeImpactHit, writeImpactRicochet,
@@ -12,7 +13,7 @@ window.wrecks = [];
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
 const M = await import('../src/game/projectileMechanics.js');
-const { stepProjectileKinematics, shouldRemoveProjectileAfterImpact } = await import('../src/game/projectileTrajectory.js');
+const { stepProjectileKinematics, projectileStepSpan, shouldRemoveProjectileAfterImpact } = await import('../src/game/projectileTrajectory.js');
 const { segmentCircleToi } = await import('../src/physics/physicsKernel.js');
 const Carrier = await import('../src/game/carrierVelocity.js');
 const { SimClock } = await import('../src/game/simClock.js');
@@ -79,14 +80,14 @@ const game = {
   computeBulletStepBounds() {}, _bulletStepBounds: {}, filterCirclesTouchingBounds: () => 0,
   stations: [], stationCollisionRadius: () => 0, platformCollisionRadius: () => 0,
   _bulletStepStations: [], _bulletStepPlatforms: [], mercMission: null,
-  stepProjectileKinematics, SimClock,
+  stepProjectileKinematics, projectileStepSpan, SimClock,
   isTargetAlive: () => false, lockedTarget: null, lockedTarget2: null, getTargetX: (t) => t.x, getTargetY: (t) => t.y,
   wrapAngle: (a) => Math.atan2(Math.sin(a), Math.cos(a)), SIDE_ROCKET_TURN_RATE: 1,
   flakDetonationReason: () => false, detonateFlakShell() {},
   _pdEnemyRocketBuffer: [],
   ActiveCarrier: Carrier.ActiveCarrier, writeCarrier: Carrier.writeCarrier, writeCarrierVelocity: Carrier.writeCarrierVelocity,
-  createCarrier: Carrier.createCarrier,
-  _impactCarrier: Carrier.createCarrier(), _impactRelVel: { x: 0, y: 0 },
+  createCarrier: Carrier.createCarrier, writeEntityVelocity: Carrier.writeEntityVelocity,
+  _impactCarrier: Carrier.createCarrier(), _impactRelVel: { x: 0, y: 0 }, _bulletTargetVel: { x: 0, y: 0 },
   _impactHit: { x: 0, y: 0, nx: 0, ny: -1, entity: null, relVx: 0, relVy: 0, kind: 'none', through: false, ric: false, ricDirX: 0, ricDirY: 0, ricSpeed: 0, ricLife: 0 },
   _ricRelVel: { x: 0, y: 0 }, _passCarrier: Carrier.createCarrier(), _passRelVel: { x: 0, y: 0 },
   _hexImpactOpts: { shard: null },
@@ -102,7 +103,7 @@ const game = {
   stepInsideHull: M.stepInsideHull, skipsHull: M.skipsHull, resolveHullHit: M.resolveHullHit, entryDamage: M.entryDamage,
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
-  segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false,
+  segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false, projectilePassesAlly,
   HullBodies, HullDamageMap, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
@@ -313,6 +314,45 @@ test('mapa ran (18-C): krater ze źródłem = pocisk i wariantem (wejście, wylo
     assert.deepEqual(sources().map((s) => `${s.family}:${s.variant}`), ['armata:impact']);
     assert.equal(stamps.filter((s) => s.type === 'kerf').length, 0);
   } finally { releaseAll(two); }
+});
+
+// Ruch względny (2026-10-11): cel przesuwa się w kroku PRZED pociskami (physicsStep: gracz, wraki, NPC), a pętla
+// pocisków sprawdza go w pozie z końca kroku. Odcinek pocisku w świecie (b.px → b.x) dawał na pasie v_celu·dt przy
+// dziobie i rufie odwrotny wynik niż prawdziwy tor pocisku względem celu (scripts/tunelowanie-sym.mjs --tryb pociski).
+test('pocisk w poprzek kursu szybkiego celu: trafienie / pudło jak tor względem celu, także przy dziobie i rufie', () => {
+  const dt = 1 / 60, vt = 1400;
+  const def = MASTER_WEAPONS.railgun_mk2;                 // bez mechaniki kadłuba: pierwszy kadłub zatrzymuje
+  const vb = def.baseSpeed, y0 = -600;
+  const tc = -y0 / vb;                                     // chwila przejścia przez oś kadłuba (y = 0)
+  let checked = 0, nearEdge = 0;
+  // Przesunięcia słupa pocisku wokół rufy i dziobu celu w chwili tc (płyta THIN: ±80 j. wzdłuż kursu).
+  for (const edge of [-80, 80]) {
+    for (let k = -10; k <= 10; k++) {
+      const u = vt * tc + edge + k * 2.5;
+      const [e] = hullsAt(THIN, [[0, 0]]);
+      try {
+        e.vx = vt;
+        // Wzorzec: tor pocisku w układzie celu jest prosty (cel tylko się przesuwa) — jeden odcinek przez cały lot,
+        // cel w pozie z chwili 0.
+        // Gra: krok — cel się przesuwa, potem pętla pocisków.
+        const b = gameShot(def, u, y0, 0, 1, 1000 + checked);
+        const T = 2 * tc;
+        const truth = !!HullBodies.sweep(e, u, y0, u - vt * T, y0 + vb * T, Number(b.r) || 0);
+        events.length = 0;
+        game.npcs.length = 0; game.npcs.push(e);
+        game.bullets.length = 0; game.bullets.push(b);
+        for (let s = 0; s < 400 && game.bullets.includes(b) && b.y < 600; s++) {
+          e.x += e.vx * dt;
+          game.bulletsAndCollisionsStep(dt, false, dt);
+        }
+        const hit = e.hpLost > 0;
+        assert.equal(hit, truth, `rufa/dziób ${edge}, przesunięcie ${(k * 2.5).toFixed(1)} j.: gra ${hit}, tor względny ${truth}`);
+        checked++;
+        if (Math.abs(k * 2.5) <= vt * dt) nearEdge++;
+      } finally { releaseAll([e]); }
+    }
+  }
+  assert.ok(nearEdge >= 10, `próbki na pasie v_celu·dt: ${nearEdge}`);
 });
 
 test('źródło: fireWeaponCore nadaje numer i dane mechaniki; pętla pocisków bierze decyzję z resolveHullHit', () => {

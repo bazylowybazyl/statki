@@ -108,7 +108,8 @@ export function createBeamConfig(cellSize = 1) {
     // solvera w bitwie to ogon trafień — trafienie rusza wprost 1–2 węzły, solver liczy potem ~350 węzło-kroków
     // obszaru, w tym 20–45% to odliczanie ciszy. 0,4·cs: −43% węzło-kroków, cisza 4: −31%, razem −62% (czas
     // solvera −51%); zerwania i zabite węzły bez zmian, kształt po uspokojeniu inny o p50 0,02–0,04 j., maks.
-    // ~0,6 j.; penetracja, energia i sen wraków w rozrzucie chaosu. Nastawy gry bez zmian (decyzja użytkownika).
+    // ~0,6 j.; penetracja, energia i sen wraków w rozrzucie chaosu. Gra (HullBodies.init) bierze 0,4·cs i 4 kroki
+    // od 2026-10-11 (decyzja użytkownika); tu domyślne dla dem i testów silnika.
     activeMotionThreshold: 0.2 * cs,
     activeSettleFrames: 8,              // kroki spokoju, po których węzeł wypada z obszaru
 

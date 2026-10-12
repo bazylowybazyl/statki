@@ -8,5 +8,5 @@ test('player turning no longer emits legacy square canvas engine flashes', async
 
   assert.doesNotMatch(html, /function\s+emitShipSideThrusterParticles\s*\(/);
   assert.doesNotMatch(html, /emitShipSideThrusterParticles\s*\(/);
-  assert.match(engine3d, /EngineVfxSystem\.update\(visibleVfx\)/);
+  assert.match(engine3d, /EngineVfxSystem\.update\(visibleVfx[,)]/);
 });

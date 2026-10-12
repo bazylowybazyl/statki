@@ -1,12 +1,16 @@
 // ============================================================
-// Misja 1 „Cicha stocznia” (prolog kampanii, zarazem samouczek) — 2026-09-30, przebudowa 2026-10-07.
+// Misja 1 „Cicha baza” (prolog kampanii, zarazem samouczek) — 2026-09-30, przebudowa 2026-10-07, BAZA PIRATÓW
+// zamiast suchego doku 2026-10-11 (szkic użytkownika: habitat, pomosty z okrętami, zbiorniki paliwa, magazyn).
 //
 // Dok K-7 (intro, odprawa) → odcumowanie → skok na obrzeża → ROZPOZNANIE przez mgłę wojny (czujniki
-// grawitacyjne widzą tylko dużą masę — dron zwiadu albo ostrożne podejście) → maskowanie i podejście → taran
-// parkingu suchego doku → ZEGAR WODOWANIA (2026-10-07: po alarmie załogi biegną do okrętów — okręty z parkingu
-// startują po kolei bramami stanowisk, pancerniki z pochylni w hali bramą G-01; co nie wystartuje, nie walczy)
-// razem z eskortą i SUPERCAPITALEM HERSZTA (66% — herszt przyspiesza starty, 33% — ucieka i ładuje skok; mostek
-// = słaby punkt) → suchy dok bronią wbudowaną (4) → łańcuch wybuchów → podsumowanie w polu, nad gruzami.
+// grawitacyjne widzą tylko dużą masę) FREGATĄ ZWIADU z ładowni Atlasa: oblot bazy, skan, oznaczanie celów (bez
+// fregaty — dron zwiadu albo ostrożne podejście) → maskowanie i podejście lejkiem
+// ramion Y → TARAN rzędu okrętów przy ramieniu A → alarm: DRONY z hangarów habitatu (gracz odpala swoje — Z),
+// ZEGAR STARTÓW (kilkanaście okrętów z załogą odchodzi od pomostów po kolei, w połowie rozgrzewania strzela ze
+// stanowiska; reszta stoi w remoncie, bez załogi) i SUPERCAPITAL HERSZTA z zatoki przy zbiornikach (66% — przyspiesza
+// starty, 33% — ucieka i ładuje skok; mostek = słaby punkt) → HABITAT (finał: bęben pęka, dysk mieszkalny i część
+// techniczna implodują, ogień idzie rurami) → podsumowanie w polu. Bez podpowiedzi: ZBIORNIKI PALIWA (P) wysadzone
+// w dowolnej chwili zapalają rurociąg — reakcja łańcuchowa niszczy okręty w stanowiskach (decyzja użytkownika).
 // Dalej misja 2 „Odwet” (mission02.js) — kampania: src/game/story/campaign.js.
 //
 // Dialogi: src/data/story/mission01.dialogue.js (miejsce na fabułę). Podpowiedzi samouczka pokazują się tylko
@@ -20,35 +24,43 @@ export const MISSION01 = Object.freeze({
   id: 'm01_silent_shipyard',
   title: MISSION01_TITLE,
   banner: 'MISJA 1 UKOŃCZONA',
-  description: 'Wejść po cichu do ukrytej stoczni piratów na obrzeżach układu, nie dopuścić do wodowania ich floty i zniszczyć zakład.',
+  description: 'Wejść po cichu do ukrytej bazy piratów na obrzeżach układu, nie dopuścić do startu ich floty i zniszczyć habitat.',
   ramTarget: 3,            // taran „zaliczony” (baner) — ile kadłubów zmiażdżyć przy wejściu
-  // Zegar wodowania (2026-10-07) [s od alarmu]: okręty z parkingu startują od końca parkingu (G-E) ku wjazdowi
-  // (G-W, skąd taranuje Atlas) co `step`, pancerniki o `battleshipExtra` później; w połowie rozgrzewania
-  // (`armAt`) załoga siada przy działach — okręt strzela ze stanowiska. Pochylnie w hali: `slips`. Pancernik na
-  // pochylni jest niedokończony (`slipHp` punktów). Odliczanie w podpisie celu od `countdownFrom` s.
-  launch: Object.freeze({ first: 40, step: 8, battleshipExtra: 20, armAt: 0.5, slips: Object.freeze([150, 200]), slipHp: 0.7, countdownFrom: 30, slipWarnAt: 35 }),
+  // Zegar startów (2026-10-07, baza 2026-10-11) [s od alarmu]: okręty z załogą startują od najdalszych (zbiorniki,
+  // magazyn) ku wylotowi lejka (skąd wchodzi Atlas) co `step`; w połowie rozgrzewania (`armAt`) załoga siada przy
+  // działach — okręt strzela ze stanowiska. Odliczanie w podpisie celu od `countdownFrom` s.
+  launch: Object.freeze({ first: 40, step: 9, armAt: 0.5, countdownFrom: 30 }),
   // Supercapital herszta: przy `rushAt` punktów przyspiesza starty (pozostały czas × `rushScale`, nie mniej niż
   // `rushMin` s), przy `fleeAt` ucieka w stronę głębi obrzeży i ładuje skok `escapeSec` s (potem odlot warpem).
   boss: Object.freeze({ rushAt: 0.66, rushScale: 0.5, rushMin: 6, fleeAt: 0.33, escapeSec: 40, escapeDistance: 30000 }),
-  // Suchy dok (2026-10-07: 16 000 + 4 000 → 36 000 + 4 000 — ~7 trafień Hexlance'a; finał misji, nie jeden klawisz).
+  // Habitat (finał misji; pole `dock` — zgodność z api.site.spawn): ~7 trafień Hexlance'a.
   dock: Object.freeze({ hp: 36000, shield: 4000 }),
   rewards: Object.freeze({ exp: 900, credits: 40000, rep: Object.freeze({ terra_nova: 10, pirates: -12 }) }),
-  // Premie: każdy okręt zatrzymany przed startem, herszt zniszczony albo bez dowodzenia (mostek).
-  bonus: Object.freeze({ perStopped: Object.freeze({ exp: 40, credits: 1500 }), boss: Object.freeze({ exp: 300, credits: 10000 }) })
+  // Premie: okręt zatrzymany przed startem, herszt zniszczony albo bez dowodzenia (mostek), okręt zniszczony reakcją
+  // łańcuchową, magazyn.
+  bonus: Object.freeze({
+    perStopped: Object.freeze({ exp: 40, credits: 1500 }),
+    boss: Object.freeze({ exp: 300, credits: 10000 }),
+    perChain: Object.freeze({ exp: 15, credits: 600 }),
+    warehouse: Object.freeze({ exp: 120, credits: 8000 })
+  })
 });
 
 export const MISSION01_HINTS = Object.freeze({
   undock: { keys: ['LPM', 'Enter'], title: 'Odcumowanie', text: 'Atlas jest przypięty do stanowiska — paliwo, zasilanie, mocowania. Kliknij ODDOKUJ (albo Enter): obsługa odłączy przewody i zwolni mocowania, potem stery są twoje.' },
   flight: { keys: ['W', 'S', 'A', 'D', 'Q', 'E'], title: 'Sterowanie', text: 'Atlas stoi dziobem do bramy. W / S — ciąg przód i wstecz, A / D — obrót, Q / E — ruch na boki. Wyprowadź Atlasa naprzód przez bramę G-01.' },
+  scoutBay: { keys: ['H'], title: 'Fregata zwiadu', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła; czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. W ładowni Atlasa czeka fregata zwiadu: H — wrota się otwierają, fregata wylatuje, a ty przejmujesz jej stery i kamerę (Atlas stoi w miejscu). Jej wzrok sięga 10 km. Niezamaskowanego Atlasa obrona zobaczy z ~9 km — podleć nim najwyżej do skraju mgły.' },
+  scoutFly: { keys: ['W', 'S', 'A', 'D', 'I', 'X', '3', '4', 'T', 'H'], title: 'Zwiad', text: 'W / S — prędkość, A / D — skręt, Q / E — w bok. I — maskowanie fregaty (obrona jej nie widzi; pęka przy trafieniu i taranie). 3 — OKO: sonda odsłania mgłę w kole pod kursorem (do 22 km od fregaty, z baterii). 4 — DALEKI SKAN w stronę kursora: klin do 70 km zostawia echa — przybliżone położenie, klasę masy i liczbę obiektów. X — skan: fala oznacza wrogie kontakty w 10 km od fregaty. T nad kontaktem — oznacz go (trzymaj T i przeciągnij kursor — kilka naraz). Obleć bazę dookoła — to, co leży za habitatem, widać dopiero z drugiej strony. Bez maskowania obrona wykryje fregatę bliżej niż ~3 km od bazy. H — fregata sama wraca do ładowni.' },
   scout: { keys: ['PPM', 'M'], title: 'Mgła wojny', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła. Czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. Rozpoznaj ją: PPM w pustej przestrzeni → DRON ZWIADU (leci w punkt i odsłania mgłę wokół siebie; także mapa CIC, M) albo podejdź ostrożnie — niezamaskowanego Atlasa obrona wykryje z ~9 km.' },
   warp: { keys: ['CapsLock', '9', 'A', 'D', 'Shift'], title: 'Skok warp', text: 'Kurs jest wyznaczony; TRAVEL TO może wykonać podróż sam. Jeśli przejmiesz stery, A / D obróć dziób według wskaźnika WARP. Zielony kurs (±5°): naciśnij CapsLock (albo 9) — komputer doprecyzuje kierunek i sam wyjdzie przy punkcie kursu. Poza zielonym pasmem wyjście jest ręczne (CapsLock / 9 jeszcze raz). Shift to dopalacz.' },
   cloak: { keys: ['I'], title: 'Maskowanie', text: 'I — maskowanie. Czujniki i działa piratów cię nie widzą. Pęka przy strzale, taranie i trafieniu; energia wystarcza na minutę.' },
-  sneak: { keys: [], title: 'Podejście', text: 'Nie strzelaj. Leć prosto w początek rzędu zaparkowanych okrętów — znacznik na ekranie.' },
-  ram: { keys: ['F', '4'], title: 'Szarża albo broń wbudowana', text: 'Okręty stoją w jednym rzędzie — ustaw dziób wzdłuż niego. F — szarża: kilka sekund pełnej mocy kosztem całego ładunku reaktora; rozpędzony Atlas miażdży kadłuby po kolei. Albo 4 — Hexlance (BUILT-IN): naładuj i odpal wzdłuż dziobu — pręt przebija rząd na wylot i tnie wszystkie okręty na swojej drodze. Jedno i drugie zdejmuje maskowanie.' },
-  launch: { keys: ['F', '4', 'LPM'], title: 'Zegar wodowania', text: 'Załogi biegną do okrętów. Każdy okręt z parkingu wystartuje, gdy rozgrzeje reaktor (odliczanie przy znaczniku i w celu misji) — w połowie siada przy działach i strzela ze stanowiska. Co zniszczysz przed startem, nie będzie z tobą walczyć. Szarża F ładuje się ~30 s — zawróć i taranuj jeszcze raz. Pancerniki na pochylniach stoją w hali pod dachem: Hexlance (4) przebija dach.' },
-  weapons: { keys: ['LPM', 'T', '1', '2', '3'], title: 'Broń', text: 'Działa burtowe strzelają same do wszystkiego w zasięgu. LPM — salwa baterii głównej w kursor (komputer wyprzedza cel przy kursorze), T — cel priorytetowy dla całego okrętu (trzymaj T i przeciągnij kursor po wrogach — kilka naraz; rakiety same biorą to, co strzela do ciebie), 1–3 — która grupa jest w ręku. Zniszcz okręty, które wylatują z hali — eskortę i supercapital.' },
+  sneak: { keys: [], title: 'Podejście', text: 'Nie strzelaj. Wleć w lejek między ramionami bazy i ustaw się na początku rzędu okrętów przy lewym ramieniu — znacznik na ekranie.' },
+  ram: { keys: ['F', '4'], title: 'Szarża albo broń wbudowana', text: 'Okręty stoją w rzędzie prostopadle do pomostu — leć wzdłuż ramienia, w połowie ich długości. F — szarża: kilka sekund pełnej mocy kosztem całego ładunku reaktora; rozpędzony Atlas miażdży kadłuby po kolei. Albo 4 — Hexlance (BUILT-IN): naładuj i odpal wzdłuż dziobu — pręt przebija rząd na wylot. Jedno i drugie zdejmuje maskowanie.' },
+  launch: { keys: ['F', '4', 'LPM'], title: 'Zegar startów', text: 'Załogi biegną do okrętów. Okręt z załogą odejdzie od pomostu, gdy rozgrzeje reaktor (odliczanie przy znaczniku i w celu misji) — w połowie siada przy działach i strzela ze stanowiska. Co zniszczysz przed startem, nie będzie z tobą walczyć. Okręty bez znacznika stoją w remoncie — bez załogi. Szarża F ładuje się ~30 s.' },
+  drones: { keys: ['Z'], title: 'Drony piratów', text: 'Z habitatu wystartowały drony. Z — wypuść myśliwce z hangarów Atlasa: same wybierają drony i okręty wroga; drugie Z — atak, trzecie — powrót. Obrona punktowa (CIWS) też je zestrzeliwuje.' },
+  weapons: { keys: ['LPM', 'T', '1', '2', '3'], title: 'Broń', text: 'Działa burtowe strzelają same do wszystkiego w zasięgu. LPM — salwa baterii głównej w kursor (komputer wyprzedza cel przy kursorze), T — cel priorytetowy dla całego okrętu (trzymaj T i przeciągnij kursor po wrogach — kilka naraz; rakiety same biorą to, co strzela do ciebie), 1–3 — która grupa jest w ręku.' },
   bridge: { keys: ['LPM', '2'], title: 'Słaby punkt', text: 'MOSTEK supercapitala jest oznaczony. Zniszczony mostek = okręt bez dowodzenia: dryfuje i nie walczy. Bateria główna w ręku (2) i salwy LPM prosto w mostek — gdy pole tarczy zgaśnie albo pęknie.' },
-  builtin: { keys: ['4'], title: 'Broń wbudowana', text: '4 — Hexlance. Naciśnij, by naładować, i jeszcze raz, by odpalić wzdłuż dziobu. Wyceluj Atlasa w suchy dok — pręt przebija trzon i halę na wylot.' }
+  builtin: { keys: ['4', 'F'], title: 'Habitat', text: 'Habitat to otwarty bęben — ściana, grodzie i szyb. 4 — Hexlance przebija go na wylot; szarża F wgniata ścianę. Zniszczony bęben pociągnie za sobą dysk mieszkalny pod spodem.' }
 });
 
 // Fazy misji 1 w kolejności (część kampanii — src/game/story/campaign.js).
@@ -70,11 +82,11 @@ export async function mission01(ctx) {
   api.journal.begin(M, [
     'Odcumuj z hali K-7.',
     'Skocz na obrzeża układu.',
-    'Rozpoznaj sygnaturę masy.',
-    'Podejdź niewykryty i uderz w parking.',
-    'Nie dopuść do wodowania floty piratów.',
+    'Rozpoznaj bazę — fregata zwiadu z ładowni.',
+    'Podejdź niewykryty i uderz w rząd okrętów.',
+    'Nie dopuść do startu załóg piratów.',
     'Zatrzymaj supercapital herszta.',
-    'Zniszcz suchy dok.'
+    'Zniszcz habitat bazy.'
   ]);
 
   // Porażka: Atlas zniszczony — przerwij misję (gra pokazuje własny ekran śmierci).
@@ -123,10 +135,10 @@ export async function mission01(ctx) {
   api.journal.step(0);
 
   // ---------------------------------------------------------------- 3. KURS I SKOK
-  // Skok „kawałek dalej” (site.warpIn, ~60 km przed rzędem) — za zasięgiem wzroku Atlasa: bez pewniaka.
+  // Skok „kawałek dalej” (site.warpIn, ~60 km przed wylotem lejka) — za zasięgiem wzroku Atlasa: bez pewniaka.
   ctx.phase('course');
   const site = api.site.plan();
-  api.site.spawn(site, { dockHp: M.dock.hp, dockShield: M.dock.shield, slipHp: M.launch.slipHp });
+  api.site.spawn(site, { dockHp: M.dock.hp, dockShield: M.dock.shield });
   if (run('course')) {
     api.nav.setCourse(site.warpIn.x, site.warpIn.y, 'Obrzeża układu');
     api.say(D.course, 'radio');
@@ -141,7 +153,7 @@ export async function mission01(ctx) {
   }
   api.journal.step(1);
 
-  // Wykrycie przez obronę stoczni (niezamaskowany Atlas za blisko) — od rozpoznania do taranu.
+  // Wykrycie przez obronę bazy (niezamaskowany Atlas za blisko) — od rozpoznania do taranu.
   let spotted = false;
   let alarmWatch = null;
   const watchAlarm = () => {
@@ -152,12 +164,15 @@ export async function mission01(ctx) {
     });
   };
 
-  // ---------------------------------------------------------------- 4. ROZPOZNANIE (mgła wojny)
-  // Czujniki grawitacyjne widzą DUŻĄ MASĘ — miejsce niepewne (odchyłka), bez tożsamości. Rozpoznanie = budynek
-  // albo okręt stoczni w zasięgu wzroku strony gracza (dron zwiadu, Atlas, sojusznik). Sygnatura gaśnie sama.
+  // ---------------------------------------------------------------- 4. ROZPOZNANIE (mgła wojny, fregata zwiadu)
+  // Fregata zwiadu w ładowni Atlasa (2026-10-11, src/game/scoutBay.js — prośba użytkownika: „w ładowni fregata
+  // zwiadowcza, którą obleci sobie dookoła bazę, przeprowadzi zwiad, oznaczy sobie cele”): H — start (stery i kamera
+  // fregaty, Atlas stoi), X — skan, T — oznaczenia (zostają po powrocie), H — powrót. Obrona wykrywa fregatę bliżej
+  // niż PIRATE_BASE_TUNE.scoutDetect od bazy (StoryGame._detected). Gra bez fregaty: dron zwiadu albo podejście.
   ctx.phase('scout');
-  // Podejście po cichu: wieże na auto milczą do alarmu (grupa w ręku strzela tylko na rozkaz gracza).
   api.fire.hold(true);
+  const frigate = api.scout.grant();
+  if (frigate) api.scout.avoidBase(site);
   const massId = 'm01-yard-mass';
   if (run('scout')) {
     const off = 4200;
@@ -171,24 +186,51 @@ export async function mission01(ctx) {
       label: 'Nieznana masa',
       entity: site.station
     });
-    api.say(D.massContact, 'radio');
+    api.say(frigate ? D.massContactScout : D.massContact, 'radio');
     watchAlarm();
-    // Prowadzenie gracza (demo, prośba użytkownika 2026-10-05): kamera odjeżdża nad „nieznane” i czeka tam ze
-    // znacznikiem z ikoną PPM — PPM na nim → DRON ZWIADU; po starcie drona (albo po 30 s) wraca do Atlasa.
     let droneSent = false;
     ctx.spawn(async (sub) => { await sub.event('droneLaunched'); droneSent = true; });
-    api.ui.marker('mass', massAt, 'Nieznana masa', { action: { mouse: 'rmb', text: 'PPM → dron zwiadu' } });
-    api.ui.objective('scout', 'Rozpoznaj sygnaturę masy — dron zwiadu (PPM) albo ostrożne podejście');
-    hint('scout', () => spotted || api.site.scouted(site));
+    const scoutGoing = () => droneSent || api.scout.launched();
+    api.ui.marker('mass', massAt, 'Nieznana masa', {
+      action: frigate ? { text: 'H → fregata zwiadu' } : { mouse: 'rmb', text: 'PPM → dron zwiadu' }
+    });
+    // budowle bazy rozpoznane przez stronę gracza (zbiorniki i magazyn leżą za habitatem — trzeba oblecieć)
+    const total = api.site.structureCount(site);
+    const reconDone = () => api.site.structuresSeen(site) >= total;
+    api.ui.objective('scout', frigate
+      ? 'Rozpoznaj sygnaturę masy — fregata zwiadu z ładowni (H)'
+      : 'Rozpoznaj sygnaturę masy — dron zwiadu (PPM) albo ostrożne podejście',
+    // licznik budowli od startu fregaty (do 2026-10-11 dopiero od pierwszej rozpoznanej budowli)
+    frigate && total > 0 ? () => (api.scout.launched() ? `budowle ${api.site.structuresSeen(site)} / ${total}` : '') : undefined);
+    hint(frigate ? 'scoutBay' : 'scout', () => spotted || api.site.scouted(site) || api.scout.controlling());
+    if (frigate) {
+      ctx.spawn(async (sub) => {
+        await sub.until(() => api.scout.controlling() || spotted);
+        if (!spotted) hint('scoutFly', () => spotted || reconDone() || !api.scout.controlling());
+      });
+    }
     await api.cinema.lookAt(massAt, {
       viewHeight: 30000, inSec: 1.8, holdSec: 30, outSec: 1.4,
-      holdUntil: () => droneSent || spotted || api.site.scouted(site)
+      holdUntil: () => scoutGoing() || spotted || api.site.scouted(site)
     });
     await ctx.until(() => spotted || api.site.scouted(site));
     api.ui.marker('mass', null);
     if (!spotted) api.say(D.identified, 'radio');
+    // OBLOT BAZY fregatą (wzrok 10 km): ostrzeżenie w celu misji, gdy fregata podchodzi pod zasięg wykrycia.
+    if (frigate && !spotted && total > 0 && !reconDone() && !api.scout.lost()) {
+      api.ui.objective('recon', 'Obleć bazę fregatą zwiadu — rozpoznaj budowle (T — oznacz cele, 3 — oko, 4 — daleki skan)', () => {
+        const near = !api.scout.hidden() && api.scout.distanceTo(site) < api.site.scoutWarn();
+        return `budowle ${api.site.structuresSeen(site)} / ${total}${near ? ' · ZA BLISKO — WYKRYJĄ' : ''}`;
+      });
+      await ctx.until(() => spotted || reconDone() || api.scout.lost());
+      if (!spotted && reconDone()) api.say(D.reconDone, 'radio');
+    }
+    // stery wracają na Atlasa — fregata sama leci do ładowni (podejście w maskowaniu nie czeka na lądowanie)
+    if (frigate && !spotted && api.scout.controlling()) {
+      api.ui.objective('recall', 'Odwołaj fregatę zwiadu (H) — sama wróci do ładowni');
+      await ctx.until(() => spotted || !api.scout.controlling() || api.scout.lost());
+    }
   }
-  // sygnatura gaśnie sama po rozpoznaniu; skok dev / wykrycie — zdejmowana tu
   if (!api.fog.massResolved(massId)) api.fog.clearMass(massId);
   api.journal.step(2);
 
@@ -204,26 +246,61 @@ export async function mission01(ctx) {
     await ctx.until(() => api.cloak.hidden() || spotted);
     if (!spotted) api.say(D.cloaked, 'radio');
     api.ui.marker('row', site.rowStart, 'Rząd okrętów');
-    api.ui.objective('sneak', 'Podkradnij się do rzędu zaparkowanych okrętów');
+    api.ui.objective('sneak', 'Podkradnij się do rzędu okrętów przy ramieniu bazy');
     hint('sneak', () => spotted || api.nav.distanceTo(site.rowStart) < 5000);
     await ctx.until(() => spotted || api.nav.distanceTo(site.rowStart) < 5000);
   } else {
     const back = 5000;
-    api.dev.teleport(site.rowStart.x - Math.cos(site.axis) * back, site.rowStart.y - Math.sin(site.axis) * back, site.axis);
+    const a = site.ramAngle;
+    api.dev.teleport(site.rowStart.x - Math.cos(a) * back, site.rowStart.y - Math.sin(a) * back, a);
   }
+
+  // Wątki niezależne od faz (od wejścia do bazy): zbiorniki paliwa → reakcja łańcuchowa (bez podpowiedzi — gracz sam
+  // musi się domyślić), magazyn → premia; habitat → finał (rozpad i ogień w rurach od środka).
+  let chainKills = 0;
+  ctx.spawn(async (sub) => {
+    await sub.until(() => site.structureDestroyed('fuel') || site.chain.fuel || site.chain.burnt.has('P'));
+    if (site.chain.fuel || site.chain.burnt.has('P')) return;
+    api.ui.banner('REAKCJA ŁAŃCUCHOWA', 3);
+    api.say(D.chainReaction, 'radio');
+    chainKills = await api.site.fuelChain(site, 'P');
+    if (chainKills > 0) api.ui.banner(`REAKCJA ŁAŃCUCHOWA · ${chainKills} OKRĘTÓW`, 3);
+  });
+  let warehouseDown = false;
+  ctx.spawn(async (sub) => {
+    await sub.until(() => site.structureDestroyed('warehouse'));
+    warehouseDown = true;
+    api.site.collapse?.(site, 'warehouse');
+    api.ui.banner('MAGAZYN ZNISZCZONY', 2.4);
+    api.say(D.warehouseDown, 'radio');
+  });
+  ctx.spawn(async (sub) => {
+    await sub.until(() => site.structureDestroyed('piers'));
+    api.site.collapse?.(site, 'piers');
+  });
+  let chainDone = false;
+  ctx.spawn(async (sub) => {
+    await sub.until(() => site.buildingDestroyed());
+    api.ui.target('yard', null);
+    // podsumowanie po ogniu w rurach (okręty w stanowiskach liczą się do reakcji); misja pominięta — bez czekania
+    await api.site.chainExplosion(site, { waitFuel: run('aftermath') });
+    api.say(D.shipyardDown, 'radio');
+    api.journal.step(6);
+    chainDone = true;
+  });
 
   // ---------------------------------------------------------------- 6. TARAN (do alarmu)
   ctx.phase('ram');
-  const ramGoal = Math.min(M.ramTarget, site.parkedCount());
-  const berthLabel = (e) => `D-${String((e.__dockBerth ?? 0) + 1).padStart(2, '0')}`;
+  const ramRow = site.ramList();
+  const ramGoal = Math.min(M.ramTarget, ramRow.length);
+  const berthLabel = (e) => e.__berthId || `D-${String((e.__dockBerth ?? 0) + 1).padStart(2, '0')}`;
   if (run('ram')) {
     if (!spotted) api.say(D.ramOrder, 'radio');
     api.ui.marker('row', site.rowStart, 'Rząd okrętów');
-    api.ui.objective('ram', 'Uderz w parking — taran (F) albo Hexlance wzdłuż rzędu (4)');
+    api.ui.objective('ram', 'Uderz w rząd okrętów — taran (F) albo Hexlance wzdłuż ramienia (4)');
     hint('ram', () => site.parkedKilled() >= 1);
-    // QOL (2026-10-05): każdy okręt z parkingu ma znacznik; zniszczony go traci (zegar wodowania niżej).
-    site.parkedList.forEach((e, i) => api.ui.target(`ram-${i}`, e, berthLabel(e), { group: 'Parking' }));
-    // Alarm: pierwsze zderzenie z rzędem, zniszczony kadłub albo wykrycie.
+    ramRow.forEach((e, i) => api.ui.target(`ram-${i}`, e, berthLabel(e), { group: 'Rząd' }));
+    // Alarm: pierwsze zderzenie z bazą lub rzędem, zniszczony kadłub albo wykrycie.
     await ctx.until(() => spotted || site.rammed() || site.parkedKilled() > 0);
     alarmWatch?.cancel();
     api.site.alarm(site);
@@ -231,89 +308,85 @@ export async function mission01(ctx) {
     api.say(spotted && !site.rammed() ? D.spotted : D.alarm, 'radio');
   } else {
     alarmWatch?.cancel();
-    if (run('defences')) api.dev.kill(site.parkedList.slice(0, ramGoal));
+    if (run('defences')) api.dev.kill(ramRow.slice(0, ramGoal));
     api.site.alarm(site);
     api.fire.hold(false);
   }
   api.ui.marker('row', null);
+  for (let i = 0; i < ramRow.length; i++) api.ui.target(`ram-${i}`, null);
   api.journal.step(3);
 
-  // Łańcuch rozpadu doku — kiedykolwiek dok padnie (także w środku bitwy, gdy gracz uderzy w niego wcześniej):
-  // ginie wszystko, co jeszcze stoi w stanowiskach, na pochylniach i w hali.
-  let chainDone = false;
-  ctx.spawn(async (sub) => {
-    await sub.until(() => site.buildingDestroyed());
-    api.ui.target('yard', null);
-    await api.site.chainExplosion(site);
-    api.say(D.shipyardDown, 'radio');
-    api.journal.step(6);
-    chainDone = true;
-  });
-
-  // ---------------------------------------------------------------- 7. BITWA W STOCZNI: ZEGAR WODOWANIA + HERSZT
+  // ---------------------------------------------------------------- 7. BITWA W BAZIE: ZEGAR STARTÓW, DRONY, HERSZT
   ctx.phase('defences');
   const L = M.launch;
   const B = M.boss;
   const gone = (e) => api.fleet.gone(e);
   const boss = site.flagship || null;
-  const escorts = site.defenderList.filter((e) => e !== boss);
-  // Zegar wodowania: rekord na okręt w stanowisku i na pochylni.
-  //   state: 'parked' → 'armed' (strzela ze stanowiska) → 'launched' (wystartował — wróg w polu) → 'done'
+  // Zegar startów: rekord na okręt z załogą. state: 'parked' → 'armed' (strzela ze stanowiska) → 'launched' → 'done'
   const yard = [];
   let stoppedN = 0;
   let launchedN = 0;
   let bossResult = boss ? null : 'none';   // 'killed' | 'hulk' | 'escaped' | 'none'
   let fleeing = false;
   let fleeT0 = 0;
+  const dronesLeft = () => site.droneList.filter((e) => !gone(e)).length;
+  // wszystkie fale dronów wystartowały (albo habitat padł — więcej nie będzie) i żaden nie lata
+  const dronesDone = () => (site.droneWave >= site.droneWaves || site.buildingDestroyed()) && dronesLeft() === 0;
   if (run('defences')) {
     const T0 = ctx.time;
-    // Parking od końca (G-E) ku wjazdowi (G-W — tam wchodzi Atlas). Okręty zmiażdżone przed alarmem też są
-    // w zegarze — pierwszy krok liczy je jako zatrzymane (baner, premia).
-    const order = site.parkedList.slice().sort((a, b) => (b.__dockBerth ?? 0) - (a.__dockBerth ?? 0));
+    // od najdalszych od wylotu lejka (zbiorniki, magazyn) ku wejściu Atlasa
+    const m = site.mouth;
+    const far = (e) => Math.hypot((e.pos ? e.pos.x : e.x) - m.x, (e.pos ? e.pos.y : e.y) - m.y);
+    const order = site.crewList.slice().sort((a, b) => far(b) - far(a));
     let rank = 0;
     for (const e of order) {
       const down = gone(e) || site.parkedCrushed(e);
-      const bs = /battleship/.test(String(e.__storyKey || e.type || ''));
-      const launchAt = T0 + L.first + L.step * rank + (bs ? L.battleshipExtra : 0);
+      const launchAt = T0 + L.first + L.step * rank;
       if (!down) rank++;
-      yard.push({ e, kind: 'parked', id: `ram-${site.parkedList.indexOf(e)}`, label: berthLabel(e), group: 'Parking',
+      yard.push({ e, id: `crew-${e.__dockBerth}`, label: berthLabel(e), group: 'Z załogą',
         launchAt, armAt: T0 + (launchAt - T0) * L.armAt, state: 'parked', shown: '' });
     }
-    site.slipList.forEach((e, i) => {
-      const launchAt = T0 + (L.slips[i] ?? L.slips[L.slips.length - 1]);
-      yard.push({ e, kind: 'slip', id: `slip-${i}`, label: `Pochylnia H-P${(e.__slip ?? i) + 1}`, group: 'Pochylnie',
-        launchAt, armAt: Infinity, state: 'parked', shown: '' });
-    });
     for (const r of yard) { r.shown = r.label; api.ui.target(r.id, r.e, r.label, { group: r.group }); }
-    let escortNo = 0;
-    site.defenderList.forEach((e, i) => {
-      // Eskorta w szyku — jeden podpis grupy; supercapital zawsze z własnym.
-      const label = e === boss ? 'Supercapital Iron Skull' : `Eskorta ${String(++escortNo).padStart(2, '0')}`;
-      api.ui.target(`yard-def-${i}`, e, label, e === boss ? {} : { group: 'Eskorta' });
-    });
+    if (boss) api.ui.target('boss', boss, 'Supercapital Iron Skull');
     ctx.spawn(async (sub) => { await sub.wait(3); api.say(D.crews, 'radio'); });
+
+    // --- drony: znaczniki (grupa) i podpowiedź — gracz odpala swoje myśliwce (Z)
+    const dronesSeen = new Set();
+    let dronesWarned = false;
+    const stepDrones = () => {
+      for (const e of site.droneList) {
+        if (dronesSeen.has(e)) { if (gone(e)) api.ui.target(`drone-${e.id ?? dronesSeen.size}`, null); continue; }
+        dronesSeen.add(e);
+        e.__droneTag = `drone-${e.id ?? dronesSeen.size}`;
+        api.ui.target(e.__droneTag, e, 'Dron', { group: 'Drony' });
+      }
+      for (const e of dronesSeen) if (gone(e) && e.__droneTag) api.ui.target(e.__droneTag, null);
+      if (!dronesWarned && site.droneList.length) {
+        dronesWarned = true;
+        api.say(D.slipWarn, 'radio');
+      }
+    };
 
     // --- krok zegara (co tick gry)
     let firstParked = true;
-    let firstSlip = true;
-    let slipWarned = false;
     let lastLabels = -1;
     let objectiveId = null;
+    let lastWave = 0;
     const inBerth = () => yard.filter((r) => r.state === 'parked' || r.state === 'armed');
     const nextLaunch = () => { let t = Infinity; for (const r of yard) if (r.state === 'parked' || r.state === 'armed') t = Math.min(t, r.launchAt); return t; };
-    const enemiesLeft = () => yard.filter((r) => r.state === 'launched').length + escorts.filter((e) => !gone(e)).length + (boss && !gone(boss) ? 1 : 0);
+    const enemiesLeft = () => yard.filter((r) => r.state === 'launched').length + dronesLeft() + (boss && !gone(boss) ? 1 : 0);
     const setObjective = (id) => {
       if (id === objectiveId) return;
       objectiveId = id;
       if (id === 'boss-flee') {
         api.ui.objective(id, 'Zatrzymaj supercapital herszta — ładuje skok', () => `skok ${Math.min(100, Math.round(((ctx.time - fleeT0) / B.escapeSec) * 100))}%`);
       } else if (id === 'launch') {
-        api.ui.objective(id, 'Nie dopuść do startu — zniszcz okręty na parkingu i pochylniach', () => {
+        api.ui.objective(id, 'Nie dopuść do startu — zniszcz okręty z załogą przy pomostach', () => {
           const t = nextLaunch() - ctx.time;
           return `${stoppedN} / ${yard.length}` + (Number.isFinite(t) ? ` · start za ${clockText(t)}` : '');
         });
       } else {
-        api.ui.objective(id, 'Zniszcz okręty piratów w stoczni', () => `zostało ${enemiesLeft()}`);
+        api.ui.objective(id, 'Zniszcz okręty i drony piratów', () => `zostało ${enemiesLeft()}`);
       }
     };
     const stepYard = () => {
@@ -325,16 +398,15 @@ export async function mission01(ctx) {
           if (gone(e)) { r.state = 'done'; api.ui.target(r.id, null); }
           continue;
         }
-        // zatrzymany przed startem: zniszczony albo zmiażdżony (taran zostawia resztkę punktów)
-        if (gone(e) || (r.kind === 'parked' && site.parkedCrushed(e))) {
+        if (gone(e) || site.parkedCrushed(e)) {
           r.state = 'done';
           stoppedN++;
           api.ui.target(r.id, null);
-          const how = r.kind === 'parked' && site.parkedTouching(e) ? 'STARANOWANY' : 'ZNISZCZONY';
+          const how = site.parkedTouching(e) ? 'STARANOWANY' : 'ZNISZCZONY';
           api.ui.banner(`${how} ${r.label} · ${stoppedN} / ${yard.length}`, 2.4);
           continue;
         }
-        // Zapłon silników z dymem tyle przed startem, ile trwa (okręt rusza o czasie — wylot z doku, etap E2).
+        // Zapłon silników z dymem tyle przed startem, ile trwa (okręt rusza o czasie).
         if (!r.ignited && now >= r.launchAt - engineIgnitionDuration()) { r.ignited = true; api.site.ignite?.(e); }
         if (now >= r.launchAt) {
           r.state = 'launched';
@@ -342,15 +414,12 @@ export async function mission01(ctx) {
           api.site.launch(site, e);
           r.shown = r.label;
           api.ui.target(r.id, e, r.label, { group: 'Wystartowały' });
-          api.ui.banner(r.kind === 'slip' ? `WODOWANIE · ${r.label}` : `${r.label} STARTUJE`, 2.4);
-          if (r.kind === 'slip' && firstSlip) { firstSlip = false; api.say(D.slipLaunch, 'radio'); }
-          if (r.kind === 'parked' && firstParked) { firstParked = false; api.say(D.firstLaunch, 'radio'); }
+          api.ui.banner(`${r.label} STARTUJE`, 2.4);
+          if (firstParked) { firstParked = false; api.say(D.firstLaunch, 'radio'); }
           continue;
         }
         if (r.state === 'parked' && now >= r.armAt) { r.state = 'armed'; api.site.arm(e); }
-        if (r.kind === 'slip' && !slipWarned && r.launchAt - now <= L.slipWarnAt) { slipWarned = true; api.say(D.slipWarn, 'radio'); }
       }
-      // podpisy z odliczaniem (co 0,5 s)
       if (now - lastLabels >= 0.5 || lastLabels < 0) {
         lastLabels = now;
         for (const r of yard) {
@@ -360,7 +429,12 @@ export async function mission01(ctx) {
           if (label !== r.shown) { r.shown = label; api.ui.target(r.id, r.e, label, { group: r.group }); }
         }
       }
-      site.defenderList.forEach((e, i) => { if (gone(e)) api.ui.target(`yard-def-${i}`, null); });
+      stepDrones();
+      if ((site.droneWave || 0) > lastWave) {
+        if (lastWave > 0) api.say(D.slipLaunch, 'radio');
+        lastWave = site.droneWave || 0;
+      }
+      if (boss && gone(boss)) api.ui.target('boss', null);
       setObjective(fleeing ? 'boss-flee' : inBerth().length ? 'launch' : 'fight');
       return false;
     };
@@ -377,7 +451,7 @@ export async function mission01(ctx) {
         const p = api.fleet.bridgePoint(boss, bp);
         if (p && Number.isFinite(p.x)) api.ui.marker('bridge', p, 'MOSTEK', { journal: false });
       };
-      const mark = sub.spawn(async (m) => { await m.until(() => { markBridge(); return gone(boss); }); });
+      const mark = sub.spawn(async (mk) => { await mk.until(() => { markBridge(); return gone(boss); }); });
       await sub.until(() => gone(boss) || api.fleet.hpFrac(boss) <= B.rushAt);
       if (!gone(boss)) {
         api.say(D.bossRush, 'radio');
@@ -399,7 +473,6 @@ export async function mission01(ctx) {
         api.say(D.bossFlee, 'radio');
         api.ui.banner('SUPERCAPITAL ŁADUJE SKOK', 2.4);
         await sub.until(() => gone(boss) || ctx.time - fleeT0 >= B.escapeSec);
-        // skok: obrót, ładowanie tunelu, zniknięcie (do zanurzenia w szczelinę dalej da się go zatrzymać)
         if (!gone(boss)) {
           api.fleet.warpOut([boss], site.origin);
           await sub.until(() => gone(boss));
@@ -417,11 +490,16 @@ export async function mission01(ctx) {
     // --- podpowiedzi samouczka po kolei
     ctx.spawn(async (sub) => {
       if (!tutorial) return;
-      // karta zegara wisi do pierwszego startu (taran zwykle zalicza kilka kadłubów już przy alarmie)
-      const c1 = () => launchedN >= 1 || stoppedN >= 6 || !inBerth().length;
+      // najpierw drony (lecą od razu — gracz odpala swoje myśliwce, Z), potem zegar startów
+      if (site.droneList.length) {
+        const cd = () => dronesLeft() < site.droneList.length * 0.5;
+        hint('drones', cd);
+        await sub.until(cd, { timeout: 25 });
+      }
+      const c1 = () => launchedN >= 1 || stoppedN >= 4 || !inBerth().length;
       hint('launch', c1);
       await sub.until(c1, { timeout: 45 });
-      const c2 = () => escorts.filter(gone).length >= 2 || !escorts.some((e) => !gone(e));
+      const c2 = () => yard.filter((r) => r.state === 'launched' && gone(r.e)).length >= 2 || !yard.some((r) => r.state === 'launched' && !gone(r.e));
       hint('weapons', c2);
       await sub.until(c2, { timeout: 30 });
       if (boss && !gone(boss)) {
@@ -431,28 +509,28 @@ export async function mission01(ctx) {
       }
     });
 
-    await ctx.until(() => yard.every((r) => r.state === 'done') && escorts.every(gone) && bossResult !== null);
+    await ctx.until(() => yard.every((r) => r.state === 'done') && dronesDone() && bossResult !== null);
     yardThread.cancel();
     await bossThread.done;
     for (const r of yard) api.ui.target(r.id, null);
-    for (let i = 0; i < site.defenderList.length; i++) api.ui.target(`yard-def-${i}`, null);
+    for (const e of site.droneList) if (e.__droneTag) api.ui.target(e.__droneTag, null);
+    api.ui.target('boss', null);
     api.ui.objective(null);
     if (!site.buildingDestroyed()) api.say(D.defencesDown, 'radio');
   } else {
-    // skok dev za bitwę: parking, pochylnie, eskorta i herszt pokonani
-    api.dev.kill([...site.parkedList, ...site.slipList, ...site.turretList, ...site.defenderList]);
+    // skok dev za bitwę: okręty z załogą, drony i herszt pokonani
+    api.dev.kill([...site.crewList, ...site.droneList, ...(boss ? [boss] : [])]);
     if (boss) bossResult = 'killed';
   }
-  for (let i = 0; i < site.parkedList.length; i++) api.ui.target(`ram-${i}`, null);
   api.journal.step(4);
   api.journal.step(5);
 
-  // ---------------------------------------------------------------- 8. SUCHY DOK
+  // ---------------------------------------------------------------- 8. HABITAT
   ctx.phase('shipyard');
   if (run('shipyard')) {
     if (!site.buildingDestroyed()) {
-      api.ui.target('yard', site.station, 'Suchy dok piratów', { radius: site.buildingRadius, primary: true });
-      api.ui.objective('yard', 'Zniszcz suchy dok bronią wbudowaną (4)', () => `${Math.round(site.buildingHpFrac() * 100)}%`);
+      api.ui.target('yard', site.station, 'Habitat piratów', { radius: site.buildingRadius, primary: true });
+      api.ui.objective('yard', 'Zniszcz habitat bazy — broń wbudowana (4) albo taran', () => `${Math.round(site.buildingHpFrac() * 100)}%`);
       hint('builtin', () => site.buildingHpFrac() < 0.9 || site.buildingDestroyed());
     }
   } else {
@@ -466,25 +544,27 @@ export async function mission01(ctx) {
   ctx.phase('aftermath');
   const bossDown = bossResult === 'killed' || bossResult === 'hulk';
   const P = M.bonus;
+  chainKills = Math.max(chainKills, site.chain.killed || 0);
   const reward = api.rewards.grant({
-    exp: M.rewards.exp + stoppedN * P.perStopped.exp + (bossDown ? P.boss.exp : 0),
-    credits: M.rewards.credits + stoppedN * P.perStopped.credits + (bossDown ? P.boss.credits : 0),
+    exp: M.rewards.exp + stoppedN * P.perStopped.exp + (bossDown ? P.boss.exp : 0) + chainKills * P.perChain.exp + (warehouseDown ? P.warehouse.exp : 0),
+    credits: M.rewards.credits + stoppedN * P.perStopped.credits + (bossDown ? P.boss.credits : 0) + chainKills * P.perChain.credits + (warehouseDown ? P.warehouse.credits : 0),
     rep: M.rewards.rep
   });
+  api.scout.clearAvoid();
   const campaign = api.campaign;
-  campaign.m1 = { stopped: stoppedN, launched: launchedN, total: yard.length, boss: bossResult };
+  campaign.m1 = { stopped: stoppedN, launched: launchedN, total: yard.length, boss: bossResult, chain: chainKills, warehouse: warehouseDown, fuelChain: !!site.chain.fuel };
   campaign.bossEscaped = bossResult === 'escaped';
   if (run('aftermath')) {
     api.say(D.yardVictory, 'radio');
     await ctx.wait(3);
     const bossText = { killed: 'zniszczony', hulk: 'bez dowodzenia', escaped: 'uciekł', none: '—' }[bossResult] || '—';
-    await api.ui.summary({
-      title: 'MISJA WYKONANA', subtitle: M.title, reward,
-      stats: [
-        ['Zatrzymane przed startem', `${stoppedN} / ${yard.length}`],
-        ['Supercapital herszta', bossText, bossResult === 'escaped' ? 'neg' : bossDown ? 'pos' : '']
-      ]
-    });
+    const stats = [
+      ['Zatrzymane przed startem', `${stoppedN} / ${yard.length}`],
+      ['Supercapital herszta', bossText, bossResult === 'escaped' ? 'neg' : bossDown ? 'pos' : '']
+    ];
+    if (site.chain.fuel || chainKills > 0) stats.push(['Reakcja łańcuchowa', `${chainKills} okrętów`, 'pos']);
+    stats.push(['Magazyn piratów', warehouseDown ? 'zniszczony' : 'cały', warehouseDown ? 'pos' : '']);
+    await api.ui.summary({ title: 'MISJA WYKONANA', subtitle: M.title, reward, stats });
   }
   api.journal.complete();
   defeatWatch.cancel('complete');

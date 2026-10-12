@@ -1,12 +1,15 @@
 // Widoczność w walce (2026-10-05): ile obrazu zasłaniają efekty, tarcze, światła i bloom, gdy Atlas jest pod
-// ostrzałem pirackiego superkapitału w misji 1 (faza obrony stoczni). PRAWDZIWA gra: Vite + headless Chrome z
-// WebGPU (CDP), gracz nic nie robi (wieże na auto strzelają same).
+// ostrzałem pirackiego superkapitału w misji 1 (faza obrony BAZY PIRATÓW — herszt startuje z zatoki przy zbiornikach;
+// od 2026-10-11, dawniej suchy dok). PRAWDZIWA gra: Vite + headless Chrome z WebGPU (CDP), gracz nic nie robi (wieże
+// na auto strzelają same).
 //
 //   node scripts/webgpu/widocznosc-gra.mjs [--rozmiar 1920x1080] [--out .tmp/widocznosc] [--czas 120]
 //        [--zoom 0.18] [--blisko 6000] [--kadry 3]
 //
 // 1) Faza obrony (?story=defences): co 2 s stan (odległość superkapitału, pociski Goliatha przy graczu, tarcza,
-//    kadłub, zoom) i zrzut „jak widzi gracz”.
+//    kadłub, zoom, MGŁA WOJNY BAZY — bryła bazy schowana / widoczna: setPirateBaseHiddenTest — baza znika, gdy strona
+//    gracza nie widzi żadnej z czterech budowli) i zrzut „jak widzi gracz”. Na starcie kontrola mgły: gracz odsunięty
+//    poza wzrok (30 km od obwiedni) — bryła ma się NIE schować (budowle raz zobaczone są znane jak teren).
 // 2) Gdy Goliath bije w Atlasa (≥ --pociski pocisków w promieniu 3 km), --kadry razy: pauza gry + zamrożony zegar
 //    strony (performance.now — efekty GPU stoją, render biegnie) i ta sama klatka w wariantach: wszystko, bez
 //    bloomu, bez dymu / błysków / iskier / pocisków / zniekształceń / tarcz / świateł efektów, czysto (bez
@@ -37,8 +40,6 @@ mkdirSync(out, { recursive: true });
 // Podmiany źródeł w serwerze Vite (pliki na dysku bez zmian): [plik, [[było, jest], …], wymagane].
 // --poprawka-klasy N: pomiar „po” — src/data/weapons.js z klasą trafienia tarczy „special” tylko dla broni
 // o obrażeniach ≥ N (szybkostrzelne bronie specjalne → „main”).
-// --lataj-dok: obejście błędu z cudzej pracy w toku (2026-10-05, src/3d/pirateDryDockGame.js —
-// detachPirateDryDockBodies czyta site.id przy site = null i misja nie startuje).
 const PATCHES = [];
 if (args['poprawka-klasy']) {
   const heavy = `(Number(def?.baseDamage) || 0) >= ${Number(args['poprawka-klasy'])}`;
@@ -47,12 +48,6 @@ if (args['poprawka-klasy']) {
       `if ((mount === 'special' || mount === 'special_missile' || mount === 'builtin') && ${heavy}) return 'special';`],
     ["if (def?.size === 'Capital') return 'special';", `if (def?.size === 'Capital' && ${heavy}) return 'special';`]
   ], true]);
-}
-if (args['lataj-dok']) {
-  PATCHES.push(['src/3d/pirateDryDockGame.js', [
-    ['if (site?.owner?._worldSite === site.id) site.owner._worldSite = null;',
-      'if (site && site.owner?._worldSite === site.id) site.owner._worldSite = null;']
-  ], false]);
 }
 
 async function startPatchedVite(port) {
@@ -109,6 +104,8 @@ const state = () => ev(`(() => {
     pociski: all, goliath: gol, goliathPrzyGraczu: golNear,
     tarcza: Math.round(s.shield.val), tarczaMax: Math.round(s.shield.max), kadlub: Math.round(s.hull.val), kadlubMax: Math.round(s.hull.max),
     zoom: +cam.zoom.toFixed(4),
+    baza: { widoczna: !!(site && site.station && site.station._base3d && site.station._base3d.root.visible),
+      budowleWidoczne: Object.values((site && site.structures) || {}).filter((b) => b && window.SensorSystem && !window.SensorSystem.hides(b)).length },
     atlasPx: Math.round((s.w || 0) * cam.zoom),
     wfx: st ? { strzaly: st.shots, wyloty: st.muzzles, tanieWyloty: st.cheapMuzzles, trafienia: st.impacts, tanieTrafienia: st.cheapImpacts } : null,
     swiatla: window.Core3D.fx ? window.Core3D.fx.stats.lights : null,
@@ -464,6 +461,20 @@ async function runMission() {
   console.log('grupy materiałów:', JSON.stringify(report.setup));
   report.klasaGoliatha = await ev(`window.shieldFxClassForBullet({ vfxKey: 'special_goliath_autocannon' })`);
   console.log('klasa trafienia tarczy Goliatha:', report.klasaGoliatha);
+  // mgła wojny bazy: gracz 30 km od obwiedni (poza wzrokiem) — budowle już widziane zostają znane (bryła widoczna)
+  report.mgla = await ev(`new Promise((res) => {
+    const S = window.StoryGame, d = S.site.dock, s = window.ship, x0 = s.pos.x, y0 = s.pos.y, a0 = s.angle;
+    const vis = () => ({ bryla: !!S.site.station._base3d?.root?.visible, budowle: Object.values(S.site.structures).filter((b) => !window.SensorSystem.hides(b)).length });
+    const przed = vis();
+    const p = d.toGame(d.layout.bounds.x0 - 30000, d.layout.center.z);
+    S.deps.placePlayer(p.x, p.y, d.axis);
+    setTimeout(() => {
+      const daleko = vis();
+      S.deps.placePlayer(x0, y0, a0);
+      setTimeout(() => res({ przed, daleko, powrot: vis() }), 600);
+    }, 1200);
+  })`);
+  console.log('mgła bazy:', JSON.stringify(report.mgla));
   if (args.zoom) await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${Number(args.zoom)}; return true; })()`);
   // Przebicie tarczy Atlasa (co 20 ms): udział czasu z dziurą w polu i pociski, które przez nią przeszły
   // (b.shieldPassed — pętla pocisków w index.html). --kadry 0: bez pauz na pomiary, ciągły przebieg.

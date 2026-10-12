@@ -313,9 +313,10 @@ test('kampania: odwet w falach = skład z decyzji (7 / 8 / 15) + herszt, wsparci
     assert.ok(M.rewards.exp > 0 && M.rewards.credits > 0);
     assert.ok(M.rewards.rep.terra_nova > 0 && M.rewards.rep.pirates < 0);
   }
-  // zegar wodowania: pierwszy start po chwili na bitwę, pochylnie później niż parking, herszt przyspiesza i ucieka
+  // zegar startów (baza piratów 2026-10-11): pierwszy start po chwili na bitwę, kolejne co `step`, załoga przy działach
+  // w połowie rozgrzewania; herszt przyspiesza i ucieka
   const L = MISSION01.launch;
-  assert.ok(L.first >= 30 && L.slips.every((t) => t > L.first + L.step * 9));
+  assert.ok(L.first >= 30 && L.step > 0 && L.armAt > 0 && L.armAt < 1 && L.countdownFrom > 0);
   assert.ok(MISSION01.boss.rushAt > MISSION01.boss.fleeAt && MISSION01.boss.escapeSec > 0);
   // fazy kampanii: misja 1, potem misja 2; nazwy faz harnessu zachowane
   assert.deepEqual(CAMPAIGN_PHASES, [...MISSION01_PHASES, ...MISSION02_PHASES]);

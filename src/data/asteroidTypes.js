@@ -123,11 +123,18 @@ export const MAX_VARIANTS_PER_SIZE = 1;
  *   - Main Belt (Mars↔Jupiter)
  *   - Greeks   (L4, 60° przed Jowiszem)
  *   - Trojans  (L5, 60° za Jowiszem)
- *   - Hildas   (rezonans 3:2 z Jowiszem - 3 klastry trójkątne)
+ *   - Hildas   (rezonans 3:2 z Jowiszem - skupiska w wierzchołkach trójkąta L3 / L4 / L5)
  *   - Kuiper   (za Neptunem)
  *
  * Współrzędne poniżej opisują rozciągnięty układ mapy, nie fizyczne AU.
  * Zachowują duże odstępy gameplayowe: Mars=33, Jupiter=50.2, Neptune=120.
+ * Prawdziwe odległości przeliczone liniowo między Marsem i Jowiszem:
+ *   AU mapy = 33 + (a − 1,524) · 17,2 / 3,680  (Hildy: a = 3,97 AU → 44,4 AU mapy).
+ *
+ * `priority` (domyślnie 0): region o wyższym priorytecie wygrywa wybór regionu
+ * (skład) wszędzie, gdzie leży — Hildy leżą wewnątrz pasa głównego, a zwykłe
+ * pierwszeństwo (najgłębsze wniknięcie) zawsze oddawało ten punkt pierścieniowi.
+ * Gęstość i obwiednia pasa liczą się po staremu (najgłębsze wniknięcie).
  *
  * `count` to docelowa liczba asteroid w pasie. `types` i `sizes` to
  * rozkłady prawdopodobieństwa (powinny sumować się do ~1.0).
@@ -170,8 +177,13 @@ export const BELT_DEFINITIONS = [
     id: 'hildas',
     shape: 'triangle',
     anchorPlanet: 'jupiter',
-    radiusAU: 42,
+    // Rezonans 3:2: w układzie obracającym się z Jowiszem Hildy krążą po trójkącie i zwalniają
+    // w wierzchołkach — L3 (naprzeciw Jowisza), L4 (+60°) i L5 (−60°); przy samym Jowiszu ich nie ma.
+    radiusAU: 44.4,
     spreadAU: 3,
+    anglesDeg: [180, 60, -60],
+    arcSpread: 0.34,
+    priority: 1,
     count: 45000,
     types: { silicon: 0.42, iron: 0.30, copper: 0.20, crystal: 0.08 },
     sizes: { S: 0.70, M: 0.22, L: 0.07, BIG: 0.01 },

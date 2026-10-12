@@ -8,7 +8,7 @@
 export const MISSION02_TITLE = 'Odwet';
 
 export const MISSION02_DIALOGUE = Object.freeze({
-  // Zaraz po misji 1, nad gruzami stoczni: naprawa przed odwetem.
+  // Zaraz po misji 1, nad gruzami bazy: naprawa przed odwetem.
   // AGENT: naprawa w polu przez okręt wsparcia z rojem dronów naprawczych — kwestie okrętu naprawczego tutaj.
   repair: [
     { who: 'xo', text: '[Raport uszkodzeń: kadłub naruszony w kilku sekcjach. Naprawiamy, póki jest cicho.]' },
@@ -54,13 +54,13 @@ export const MISSION02_DIALOGUE = Object.freeze({
   ],
   // Zwycięstwo.
   victory: [
-    { who: 'admiral', text: '[Admirał: gratulacje, stocznia zniszczona, odwet odparty.]' },
+    { who: 'admiral', text: '[Admirał: gratulacje, baza zniszczona, odwet odparty.]' },
     { who: 'fleet', text: '[Grupa wsparcia wraca na Ziemię.]' }
   ],
   // Zasadzka w pasie asteroid w drodze powrotnej: piraci wyrywają Atlasa z warpa (zakłócacz).
   ambush: [
     { who: 'xo', text: '[Wypadamy z warpa! Coś nas wyrwało — zakłócacz pola skoku gdzieś w skałach.]' },
-    { who: 'ambusher', text: '[Dowódca zasadzki: stocznia była nasza. Z pasa nie wylecicie.]' },
+    { who: 'ambusher', text: '[Dowódca zasadzki: baza była nasza. Z pasa nie wylecicie.]' },
     { who: 'xo', text: '[Dopóki zakłócacz nadaje, nie skoczymy. Trzeba go znaleźć i zdjąć.]' }
   ],
   // Skrzydło zasadzki wychodzi z boku kursu.

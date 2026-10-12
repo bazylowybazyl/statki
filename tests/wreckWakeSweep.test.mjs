@@ -23,12 +23,14 @@ const LOOKAHEAD_MAX = indexConst('WRECK_WAKE_LOOKAHEAD_MAX');
 const WAKE_HEADER = 'function wakeSleepingWrecksNearBodies(';
 const wake = loadIndexFunction(html, WAKE_HEADER, 'wakeSleepingWrecksNearBodies', {
   WRECK_WAKE_LOOKAHEAD_SEC: LOOKAHEAD_SEC,
-  WRECK_WAKE_LOOKAHEAD_MAX: LOOKAHEAD_MAX
+  WRECK_WAKE_LOOKAHEAD_MAX: LOOKAHEAD_MAX,
+  _wakeMovers: indexConst('_wakeMovers')
 });
 // Ta sama funkcja z dawnym horyzontem: 3 s lotu bez sufitu.
 const wakeLegacy = loadIndexFunction(html, WAKE_HEADER, 'wakeSleepingWrecksNearBodies', {
   WRECK_WAKE_LOOKAHEAD_SEC: 3,
-  WRECK_WAKE_LOOKAHEAD_MAX: Infinity
+  WRECK_WAKE_LOOKAHEAD_MAX: Infinity,
+  _wakeMovers: indexConst('_wakeMovers')
 });
 
 // Wrak tuż po uśpieniu w pętli wraków physicsStep.
@@ -137,6 +139,82 @@ test('sufit look-ahead: nawet nieskończona prędkość budzi tylko pas przy kur
     assert.equal(outside._wreckSleeping, true, `${speed}: za sufitem`);
     assert.equal(far._wreckSleeping, true, `${speed}: 50 km dalej`);
   }
+});
+
+// Lista ruchomych ciał (audyt FPS 2026-10-11) kontra dawna pętla „śpiący × każde ciało”
+// (wakeSleepingWrecksNearBodiesScan): te same obudzone wraki, ta sama kolejność w obu listach i te same pola —
+// także z ciałem na obu listach, ignorowanym graczem, martwymi, bez kolizji, NaN i wrakiem, który po obudzeniu
+// sam budzi następne (śpiący z niewyzerowaną prędkością).
+test('lista ruchomych ciał = dawna pętla śpiący × ciała (losowe sceny, bit w bit)', () => {
+  const woke = [];
+  const fakeHullBodies = { wake(e, hold) { woke.push(e.id); e.__wakeHold = hold; } };
+  const consts = { WRECK_WAKE_LOOKAHEAD_SEC: LOOKAHEAD_SEC, WRECK_WAKE_LOOKAHEAD_MAX: LOOKAHEAD_MAX, HullBodies: fakeHullBodies };
+  const scan = loadIndexFunction(html, 'function wakeSleepingWrecksNearBodiesScan(', 'wakeSleepingWrecksNearBodiesScan', consts);
+  const movers = indexConst('_wakeMovers');
+  const fast = loadIndexFunction(html, WAKE_HEADER, 'wakeSleepingWrecksNearBodies', { ...consts, _wakeMovers: movers });
+  const legacyScope = { ...consts, _wakeMovers: { ...indexConst('_wakeMovers'), enabled: false }, wakeSleepingWrecksNearBodiesScan: scan };
+  const viaSwitch = loadIndexFunction(html, WAKE_HEADER, 'wakeSleepingWrecksNearBodies', legacyScope);
+
+  // scena z ziarna — dwa razy te same obiekty (tożsamość ciał na obu listach i ignorowanego zachowana)
+  const scene = (seed) => {
+    let s = seed >>> 0;
+    const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const field = 4000 + rnd() * 30000;
+    const sleeping = [];
+    const nSleep = Math.floor(rnd() * 60);
+    for (let i = 0; i < nSleep; i++) {
+      const w = sleepingWreck((rnd() - 0.5) * field, (rnd() - 0.5) * field, 80 + rnd() * 900);
+      w.id = `w${i}`;
+      if (rnd() < 0.2) w._bpRadius = undefined;
+      if (rnd() < 0.3) { w.beamHull = {}; w.hexGrid = null; }
+      if (rnd() < 0.15) { w.vx = (rnd() - 0.5) * 400; w.vy = (rnd() - 0.5) * 400; }
+      if (rnd() < 0.1) w.vel = { x: (rnd() - 0.5) * 60, y: (rnd() - 0.5) * 60 };
+      sleeping.push(w);
+    }
+    const bodies = [];
+    const nBody = Math.floor(rnd() * 80);
+    for (let i = 0; i < nBody; i++) {
+      const speed = rnd() < 0.15 ? rnd() * 20 : rnd() * 9000;
+      const a = rnd() * Math.PI * 2;
+      const b = body((rnd() - 0.5) * field, (rnd() - 0.5) * field, Math.cos(a) * speed, Math.sin(a) * speed, 60 + rnd() * 1500);
+      b.id = `b${i}`;
+      const r = rnd();
+      if (r < 0.06) b.dead = true;
+      else if (r < 0.12) b.isCollidable = false;
+      else if (r < 0.15) b.vel.x = NaN;
+      else if (r < 0.18) b.vel.x = Infinity;
+      else if (r < 0.24) { b.x = b.pos.x; b.y = b.pos.y; b.vx = b.vel.x; b.vy = b.vel.y; delete b.pos; delete b.vel; }
+      else if (r < 0.28) b._bpRadius = 0;
+      bodies.push(b);
+    }
+    if (sleeping.length && rnd() < 0.3) bodies.push(sleeping[Math.floor(rnd() * sleeping.length)]);
+    if (bodies.length && rnd() < 0.3) bodies.splice(Math.floor(rnd() * bodies.length), 0, null);
+    const ignore = bodies.length && rnd() < 0.3 ? bodies[Math.floor(rnd() * bodies.length)] : null;
+    return { sleeping, bodies, ignore };
+  };
+  const snap = ({ sleeping, bodies }, all) => JSON.stringify({
+    sleeping: sleeping.map((w) => w.id),
+    bodies: bodies.map((b) => (b ? b.id : null)),
+    wrecks: all.map((w) => [w.id, w._wreckSleeping, w._wreckSleepTimer, w.__wakeHold ?? null,
+      w.hexGrid ? [w.hexGrid.isSleeping, w.hexGrid.sleepFrames, w.hexGrid.wakeHoldFrames] : null])
+  });
+
+  let wokeTotal = 0;
+  for (let seed = 1; seed <= 400; seed++) {
+    const runs = [fast, scan, viaSwitch].map((fn) => {
+      const sc = scene(seed);
+      const all = sc.sleeping.slice();
+      woke.length = 0;
+      fn(sc.sleeping, sc.bodies, sc.ignore);
+      return { s: snap(sc, all), woke: woke.join(','), n: all.length - sc.sleeping.length };
+    });
+    assert.equal(runs[0].s, runs[1].s, `ziarno ${seed}: lista ruchomych ≠ dawna pętla`);
+    assert.equal(runs[0].woke, runs[1].woke, `ziarno ${seed}: kolejność HullBodies.wake`);
+    assert.equal(runs[2].s, runs[1].s, `ziarno ${seed}: przełącznik enabled = false`);
+    wokeTotal += runs[0].n;
+  }
+  assert.ok(wokeTotal > 200, `sceny budzą wraki (${wokeTotal})`);
+  assert.ok(movers.ent.every((e) => e === null), 'bez trzymania encji po wywołaniu');
 });
 
 // Pętla gry w miniaturze: loop() przycina klatkę do 0,033 s i robi kroki PHYS_DT;
@@ -252,7 +330,8 @@ test('zimne wraki: pole mijane w szybkim przelocie śpi dalej i może zamarzną�
 
 test('physicsStep: wake sweep przy budowie listy, gracz w warpie wyłączony', () => {
   const physics = sliceFunction(html, 'function physicsStep(');
-  const call = physics.indexOf("wakeSleepingWrecksNearBodies(_sleepingWrecksBuffer, dynamicDestructibles, warp.state === 'active' ? ship : null);");
+  // Gracz w skoku, na rampie wyjścia i po niej w kadłubie (duch — tests/warpGhostCollisions.test.mjs) nie budzi wraków.
+  const call = physics.indexOf('wakeSleepingWrecksNearBodies(_sleepingWrecksBuffer, dynamicDestructibles, isPlayerWarpGhost() ? ship : null);');
   assert.ok(call > 0, 'wywołanie z graczem w warpie jako ignoreBody');
   const build = physics.indexOf('dynamicDestructibles = buildDynamicDestructibles(');
   const cache = physics.indexOf('_cachedDynamicDestructibles = dynamicDestructibles;');

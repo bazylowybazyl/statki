@@ -1,20 +1,26 @@
 // Profil GPU na kernel (każdy dispatch we własnym przebiegu ze znacznikami czasu).
-//   node scripts/belki-gpu-profil.mjs [--q "gs=0"]
+//   node scripts/belki-gpu-profil.mjs [--q "gs=0"] [--siatki 1200,1800] [--strona dema/destruktor2d-webgpu-ref.html]
+//   --siatki: tylko taran Atlas–Atlas 800 j./s w podanych siatkach (okno styku); bez — zestaw domyślny
 import { startVite, startChrome, attachLogs, waitFor, evaluate, parseArgs } from './webgpu/wspolne.mjs';
 
 const args = parseArgs();
+const page = args.strona || 'dema/destruktor2d-webgpu.html';
 const { server, base } = await startVite(5396);
 const chrome = await startChrome({ width: 1280, height: 720, extraArgs: ['--enable-webgpu-developer-features'] });
 const logs = await attachLogs(chrome);
 const { cdp } = chrome;
-const CASES = [
-  { name: 'taran-120 (styk)', reset: `{ scene: 'ram', ramSpeed: 800, res: 120, wall: 0 }`, skip: 60, steps: 120 },
-  { name: 'taran-480 (styk)', reset: `{ scene: 'ram', ramSpeed: 800, res: 480, wall: 0 }`, skip: 60, steps: 60 },
-  { name: 'flota+tarany-120', reset: `{ scene: 'fleet-ram', res: 120, pairs: 6 }`, skip: 30, steps: 120 },
-  { name: 'flota+tarany-240', reset: `{ scene: 'fleet-ram', res: 240, pairs: 6 }`, skip: 30, steps: 60 }
-];
+const CASES = args.siatki
+  ? args.siatki.split(',').map(Number).map((res) => ({ name: `taran-${res} (styk)`,
+    reset: `{ scene: 'ram', ramSpeed: 800, res: ${res}, pose: 90, dummy: 'atlas', wall: 0 }`,
+    skip: Number(args.pomin || 60), steps: Number(args.kroki || (res >= 960 ? 24 : 60)) }))
+  : [
+    { name: 'taran-120 (styk)', reset: `{ scene: 'ram', ramSpeed: 800, res: 120, wall: 0 }`, skip: 60, steps: 120 },
+    { name: 'taran-480 (styk)', reset: `{ scene: 'ram', ramSpeed: 800, res: 480, wall: 0 }`, skip: 60, steps: 60 },
+    { name: 'flota+tarany-120', reset: `{ scene: 'fleet-ram', res: 120, pairs: 6 }`, skip: 30, steps: 120 },
+    { name: 'flota+tarany-240', reset: `{ scene: 'fleet-ram', res: 240, pairs: 6 }`, skip: 30, steps: 60 }
+  ];
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/destruktor2d-webgpu.html${args.q ? '?' + args.q : ''}` });
+  await cdp.send('Page.navigate', { url: `${base}/${page}${args.q ? '?' + args.q : ''}` });
   await waitFor(cdp, '!!(window.__gpu2d && window.__gpu2d.started)', 120000, 300);
   for (const c of CASES) {
     const r = await evaluate(cdp, `(async () => {
@@ -33,7 +39,7 @@ try {
         await w.collectProfile();
       }
       w.profile = false;
-      return { acc: w.profileAcc, substeps, nodes: w.nodeCount, beams: w.beamCount };
+      return { acc: w.profileAcc, substeps, nodes: w.nodeCount, beams: w.beamCount, local: w.localStats ? w.localStats() : null };
     })()`, 900000);
     const rows = Object.entries(r.acc).map(([name, a]) => ({ name, perStep: a.ms / c.steps, perCall: a.ms / a.calls, calls: a.calls / c.steps }));
     rows.sort((a, b) => b.perStep - a.perStep);
@@ -42,6 +48,7 @@ try {
     for (const x of rows) {
       console.log(`  ${x.name.padEnd(14)} ${x.perStep.toFixed(4).padStart(8)} ms/krok  ${(x.perStep / total * 100).toFixed(1).padStart(5)}%  ${x.perCall.toFixed(4)} ms × ${x.calls.toFixed(1)}`);
     }
+    if (r.local) console.log('  obszar:', JSON.stringify(r.local));
   }
   const errs = logs.errors().filter((l) => !/favicon/.test(l));
   if (errs.length) console.log('BŁĘDY:\n' + errs.slice(0, 20).join('\n'));

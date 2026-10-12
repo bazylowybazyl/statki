@@ -1290,7 +1290,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
     for (let i = 0; i < count; i++) {
       const enemy = buffer[i];
       if (!enemy || enemy.dead || enemy === npc) continue;
-      if (enemy === window.ship) continue;
+      if (enemy === window.ship || isCloakHidden(enemy)) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;

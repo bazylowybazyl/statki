@@ -76,6 +76,7 @@ export const INPUT_ACTIONS = Object.freeze([
   { id: 'tgt.queue', name: 'Dołóż / zdejmij cel', cat: 'cele', kind: 'edge', ctx: G },
   { id: 'tgt.scan', name: 'Aktywny skan', cat: 'cele', kind: 'edge', ctx: ['game', 'rts'] },
   { id: 'tgt.drone', name: 'Obraz drona', cat: 'cele', kind: 'edge', ctx: G },
+  { id: 'ship.scout', name: 'Fregata zwiadu: start i stery / powrót do ładowni', cat: 'okret', kind: 'edge', ctx: G, shares: 'tgt.drone' },
   { id: 'aim.cursor', name: 'Celownik', cat: 'cele', kind: 'axis', ctx: G },
   // --- kamera ---
   { id: 'cam.zoomIn', name: 'Przybliż', cat: 'kamera', kind: 'hold', ctx: GC },
@@ -165,6 +166,7 @@ export const KEYBOARD_LAYOUT = Object.freeze({
   'tgt.queue': ['KeyU'],
   'tgt.scan': ['KeyX'],
   'tgt.drone': ['KeyH'],
+  'ship.scout': ['KeyH'],
   'aim.cursor': null,
   'cam.zoomIn': null,
   'cam.zoomOut': null,
@@ -232,6 +234,7 @@ export const PAD_LAYOUT = Object.freeze({
   'ship.cloak': null,
   'ship.lights': null,
   'ship.repair': null,
+  'ship.scout': null,
   'ship.engines': null,
   'mode.mining': null,
   'mode.torpedo': null,
@@ -309,7 +312,7 @@ export const KEYDOWN_ORDER = Object.freeze([
   'fly.boost', 'fly.gearDown', 'cam.next', 'cam.reset', 'nav.warp', 'fly.driveAuto', 'ui.perf',
   'wpn.group1', 'wpn.group2', 'wpn.group3', 'tgt.priority', 'tgt.queue', 'wpn.posture', 'wpn.special',
   'wpn.lance', 'wpn.energy', 'ui.cicMap', 'ui.journal', 'mode.fleet', 'fly.damper', 'ship.lights',
-  'fly.stabilizer', 'ui.pause', 'tgt.scan', 'ui.cic', 'cic.pan', 'ship.ram', 'wpn.rocketKey', 'tgt.drone',
+  'fly.stabilizer', 'ui.pause', 'tgt.scan', 'ui.cic', 'cic.pan', 'ship.ram', 'wpn.rocketKey', 'ship.scout', 'tgt.drone',
   'cic.systemView', 'wpn.fighters', 'ship.repair', 'fly.driveMode', 'ship.engines'
 ]);
 

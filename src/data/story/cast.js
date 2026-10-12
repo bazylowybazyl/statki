@@ -58,7 +58,7 @@ export const STORY_CAST = Object.freeze({
   }),
   pirate: Object.freeze({
     name: 'Herszt piratów',
-    role: 'Stocznia piracka',
+    role: 'Baza piratów',
     initials: 'HP',
     color: '#ff7a6b',
     portrait: null,

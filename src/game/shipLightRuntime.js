@@ -194,6 +194,8 @@ const EMPTY_LIGHTS_BLOCK = Object.freeze({
 });
 
 export function getEntityLights(entity) {
+  // Lampy chwilowo zgaszone przez obraz (fregata zwiadu w luku Atlasa — src/3d/cargo/scoutBay3D.js).
+  if (entity && entity.__lightsHidden === true) return EMPTY_LIGHTS_BLOCK;
   const source = getEntityLightSource(entity);
   if (!source || typeof source !== 'object') return EMPTY_LIGHTS_BLOCK;
   let block = normalizedLightsCache.get(source);
@@ -913,6 +915,8 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
       // Maskowanie: lampa gaśnie razem z komórką kadłuba pod sobą (lustro wzoru z shadera).
       const cloakVis = entity.__cloakLook ? entityCloakVisAt(entity, wx, wy) : 1;
       if (cloakVis <= 0.01) continue;
+      // Lampa zasłonięta obrazem nad okrętem (fregata zwiadu nad Atlasem — `__lightOcclude(x, y)` z gry; lampy są na FG).
+      if (entity.__lightOcclude && entity.__lightOcclude(wx, wy)) continue;
 
       out.push({
         x: round2(wx),

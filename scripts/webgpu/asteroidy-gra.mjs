@@ -2,7 +2,7 @@
 // dema/asteroidy-webgpu (te same wzory miejsc: world.js dema liczy je z tego samego pola),
 // zrzuty, statystyki pasa, błędy konsoli / walidacji WebGPU, kolizja z olbrzymem.
 //
-//   node scripts/webgpu/asteroidy-gra.mjs [--out katalog] [--port 5355] [--sceny pole,noc,burza,olbrzym]
+//   node scripts/webgpu/asteroidy-gra.mjs [--out katalog] [--port 5355] [--sceny pole,noc,burza,luka,luka-bez,olbrzym]
 //        [--rozmiar 1920x1080] [--klatki 30] [--kolizja] [--wydajnosc]
 //
 // Strona dostaje harness (scripts/webgpu/harness-strona.js: zegar wirtualny, Math.random
@@ -28,6 +28,9 @@ const outDir = resolve(repo, args.out || '.tmp/webgpu/zadania/21/gra');
 const warmFrames = Number(args.klatki || 30);
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 const SEED = 0x5eed1234;
+// Kampania jest domyślna (StoryOptions czyta localStorage raz przy starcie strony): bez tego klik
+// „single” startuje intro w doku K-7 i gra nie rusza — gra swobodna bez samouczka, ustawiona przed nawigacją.
+const GRA_SWOBODNA = `try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); } catch (e) {}\n`;
 const IGNORE = [/favicon\.ico/, /AudioSys/, /Unable to decode audio data/, /powerPreference option is currently ignored/, /\[vite\]/, /DevTools/, /GPU stall due to ReadPixels/];
 
 // Burza powtarzalna dla porównania z demem (gra i demo — ten sam kod, ten sam symulator
@@ -61,6 +64,36 @@ export const BELT_SCENES = {
     opis: 'Burza (scena 0 dema): skały energetyczne w mroku, piorun wymuszony przed dziobem, zoom 0,4',
     js: `await W.precomputeOcclusion(); const s = W.findStormSpot() || W.SPOTS.field; DevScene.teleport(s.x, s.y, s.angle || 0); S.cam(s.x, s.y, 0.4);`,
     burza: true
+  },
+  // Luka Kirkwooda w oświetlonym polu (asteroidBeltField.js: kirkwoodGaps): luka i kąt, przy których skał
+  // jest dużo po obu stronach luki, a słońce dochodzi do środka (rdzeń pola jest czarny — luki tam nie widać);
+  // Atlas i kamera w środku luki. Liczba skał PLAY w pasie ±0,1 AU wokół luki → window.__lukaCam.n.
+  luka: {
+    opis: 'Luka Kirkwooda przez oświetlone pole: pas rzadkich skał w poprzek kadru, Atlas w środku luki, zoom 0,05',
+    js: `const F = B.field, au = F.auToWorld;
+         const gaps = F.config.kirkwoodGaps || [{ id: '5:2', au: 39.08, width: 0.4 }];
+         let best = null;
+         for (const g of gaps) for (let i = 0; i < 1800; i++) { const a = (i / 1800) * Math.PI * 2;
+           const P = (rAu) => [F.sunX + Math.cos(a) * rAu * au, F.sunY + Math.sin(a) * rAu * au];
+           const d = (rAu) => F.sampleMacro(...P(rAu)).density;
+           const s = Math.min(d(g.au - g.width / 2 - 0.25), d(g.au + g.width / 2 + 0.25)) * B.sunT(...P(g.au)) ** 2;
+           if (!best || s > best.s) best = { s, a, g }; }
+         const c = { x: F.sunX + Math.cos(best.a) * best.g.au * au, y: F.sunY + Math.sin(best.a) * best.g.au * au };
+         DevScene.teleport(c.x, c.y, best.a + Math.PI / 2); S.cam(c.x, c.y, 0.05);
+         const count = () => { let n = 0; F.forEachRockInRect(0, c.x - 20000, c.y - 20000, c.x + 20000, c.y + 20000, 0, (r) => {
+           if (Math.abs(Math.hypot(r.x - F.sunX, r.y - F.sunY) / au - best.g.au) < 0.1) n++; }); return n; };
+         window.__lukaCam = { x: c.x, y: c.y, luka: best.g.id, rAu: best.g.au, kat: best.a, T: B.sunT(c.x, c.y), count, n: count() };
+         console.log('[luka] ' + JSON.stringify({ luka: best.g.id, rAu: best.g.au, T: +window.__lukaCam.T.toFixed(3), skalyWPasie: window.__lukaCam.n }));`
+  },
+  // A/B: ta sama klatka bez luk (warstwy skał wczytane od nowa; cień pól policzony na starcie zostaje z lukami).
+  'luka-bez': {
+    opis: 'Luka 5:2 — A/B: to samo miejsce z wyłączonymi lukami (pole bez luk, warstwy skał od nowa)',
+    js: `const F = B.field; const L = window.__lukaCam; if (!L) throw new Error('najpierw scena luka');
+         F._hasGaps = false; F.clearCache(); for (const layer of B.layers) layer.clear(); B.fog?._macroCache?.clear();
+         S.cam(L.x, L.y, 0.05);
+         console.log('[luka-bez] ' + JSON.stringify({ luka: L.luka, skalyWPasie: L.count() }));`,
+    po: `const F = window.__asteroidBelt.field; F._hasGaps = Array.isArray(F.config.kirkwoodGaps) && F.config.kirkwoodGaps.length > 0;
+         F.clearCache(); for (const layer of window.__asteroidBelt.layers) layer.clear(); window.__asteroidBelt.fog?._macroCache?.clear();`
   },
   olbrzym: {
     opis: 'Olbrzym w polu (scena 4 dema): Labirynt na obrzeżu gęstego pola, statek u wlotu trasy, zoom 0,3',
@@ -147,7 +180,7 @@ async function abPole(base) {
 // z konfiguracji, czas rzeczywisty.
 async function openPerfPage(cdp, ev, base, cfg) {
   await osobneLosowanieUuid(cdp);
-  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${GRA_SWOBODNA}window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
   await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
@@ -262,7 +295,7 @@ async function main() {
   const report = { when: new Date().toISOString(), sceny: [] };
   try {
     const uuid = await osobneLosowanieUuid(cdp);
-    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${GRA_SWOBODNA}window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
     await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
     if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
     await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
@@ -315,6 +348,7 @@ async function main() {
       }
       const png = join(outDir, `${id}.png`);
       await screenshotPng(cdp, png);
+      if (sc.po) await ev(`(() => { ${sc.po} return true; })()`);
       const stats = await ev(`(() => { const B = window.__asteroidBelt; const s = B.stats; return { ...s, rocks: [...s.rocks], czas: +B.time.toFixed(3), kamera: [Math.round(window.camera.x), Math.round(window.camera.y), window.camera.zoom], olbrzymyGotowe: B.giants.readyCount, fx: window.Core3D.fxStats ? { ...window.Core3D.fxStats } : null }; })()`);
       const perf = await ev('window.__harness.scene.perf(20)');
       const errors = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l)));
@@ -328,6 +362,8 @@ async function main() {
       report.sceny.push({ scena: id, opis: sc.opis, blad: error, sekundy: (Date.now() - t0) / 1000, stats, perf, bledy: errors.slice(0, 30) });
       console.log(`  ${id.padEnd(8)} ${error ? 'BŁĄD ' + error : 'ok'} | skały ${stats.rocks.join('/')} min. ${stats.minerals} | światła ${stats.lights} (statki ${stats.shipLights}, skały ${stats.rockLights}) | mapy cienia ${stats.shadowMaps} | kolumny ${stats.volumeColumns} | CPU pasa ${stats.cpuMs?.toFixed?.(2)} ms | ${perf.drawCalls} dc, GPU ${perf.gpuMs} ms | błędy ${errors.length}`);
       if (errors.length) console.log('     ' + errors.slice(0, 6).join('\n     '));
+      const sceneLog = logs.all().filter((l) => /\[luka/.test(l));
+      if (sceneLog.length) console.log('     ' + sceneLog.join('\n     '));
     }
     if (args.kolizja) report.kolizja = await kolizja(ev, cdp);
   } finally {

@@ -97,6 +97,8 @@ export function shipModel3DIdFor(e) {
   // Maskowanie (src/game/cloakLook.js): na czas efektu okręt rysuje skóra sprite'a z shaderem maskowania
   // (mozaika heksów, refrakcja w warstwie DIST). AGENT: rozpuszczanie samej bryły 3D tym samym wzorem.
   if (e.__cloakLook && e.__cloakLook.active) return null;
+  // Fregata zwiadu w luku / nad Atlasem (src/3d/cargo/scoutBay3D.js: skala i wysokość obrazu) — skóra sprite'a.
+  if (e.__renderScale !== undefined || e.__skinZ > 0) return null;
   const hull = liveHull(e);
   if (!hull) return null;
   let id = _cfg.modelIdOf ? _cfg.modelIdOf(e) : null;
@@ -522,6 +524,8 @@ function syncSkin(inst, hull) {
   inst.skinMesh.userData.dmgSlot = du.uDmgSlot.value;
   inst.skinMesh.userData.dmgUv = du.uv;
   inst.skinMesh.userData.dmgWorld = du.uDmgWorld.value;
+  // Otwarty luk ładowni (fregata zwiadu, src/3d/cargo/scoutBay3D.js): ten sam prostokąt uv co skóra sprite'a.
+  inst.skinMesh.userData.bayCut = inst.entity?.__bayCut || null;
   inst.skinMesh.visible = true;
   return true;
 }
@@ -771,8 +775,10 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
   // pierścień obraca się z kadłubem (θ), obudowa i lufy z kursem lufy
   T.hullCos = c;
   T.hullSin = s;
-  T.lo = slab.lo;
-  T.hi = slab.hi;
+  // Wysokość obrazu okrętu (__skinZ: holownik pod statkiem, fregata zwiadu w luku / nad Atlasem) — wieże z nim.
+  const dz = Number(e.__skinZ) || 0;
+  T.lo = slab.lo + dz;
+  T.hi = slab.hi + dz;
   for (let i = 0; i < recs.length; i++) {
     const rec = recs[i];
     const fam = WEAPON3D_FAMILY[rec.weaponId];
@@ -854,19 +860,24 @@ export function turretMuzzleZ(entity, x, y) {
 // ---------------------------------------------------------------------------
 /** Pół szerokości sponsonu na ekranie [px], poniżej której dysza nie ma modelu (jak wieże: TURRET3D_HIDE_PX). */
 export const SIDE_NOZZLE3D_HIDE_PX = 2.0;
+// Ten sam próg w promieniu wylotu — dla LOD przy źródle (EngineVfxSystem nie wpisuje na listę klatki dysz okrętu,
+// które i tak odpadłyby niżej). Zapas 0,1% w dół: dysza z granicy trafia na listę i rozstrzyga ją test w
+// syncSideNozzles (promień na liście jest we float32).
+SideNozzleFrame.modelMinPx = 0.999 * SIDE_NOZZLE3D_HIDE_PX / SIDE_THRUSTER_HALF_WIDTH;
 const _nozzleRec = sideThrusterInstanceScratch();
 const _nozzleMount = new WeakMap(); // obiekt dyszy → { id, z } — oś dzwonu na modelu (j. modelu, skala 1)
-const _nozzlePal = new WeakMap();   // encja → { key, pal }
+const _nozzlePal = new WeakMap();   // encja → { pola profilu, pal }
 let _nozzleSerial = -1;
 let _nozzleShown = 0;
 const _nozzleOrg = { x: 0, y: 0 };
 
-// Farba z profilu kadłuba (Terra Nova biel, Atlas szary, frachtowce szary cywilny, piraci rdza).
+// Farba z profilu kadłuba (Terra Nova biel, Atlas szary, frachtowce szary cywilny, piraci rdza). Pamięć per encja
+// po polach profilu (dawniej klucz-napis składany dla każdego okrętu w każdej klatce).
 function nozzlePalette(e) {
-  const key = `${e.model3DProfileId || ''}|${e.shipFrame || ''}|${e.activeHullId || ''}|${e.type || ''}|${e.isPirate ? 1 : 0}`;
+  const m = e.model3DProfileId, f = e.shipFrame, h = e.activeHullId, t = e.type, pir = !!e.isPirate;
   let c = _nozzlePal.get(e);
-  if (!c || c.key !== key) {
-    c = { key, pal: sideThrusterPaletteFor(e.model3DProfileId || resolveEntityHullProfileId(e)) };
+  if (!c || c.m !== m || c.f !== f || c.h !== h || c.t !== t || c.pir !== pir) {
+    c = { m, f, h, t, pir, pal: sideThrusterPaletteFor(m || resolveEntityHullProfileId(e)) };
     _nozzlePal.set(e, c);
   }
   return c.pal;

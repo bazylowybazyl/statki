@@ -4,13 +4,16 @@ import {
   AsteroidBeltField,
   BELT_BAND,
   BELT_BANDS,
+  BELT_FIELD_CONFIG,
   REF_DIAMETER,
   buildBeltRegions,
   regionPenetration,
+  kirkwoodGapFactor,
   fbm2,
   hash32
 } from '../src/game/asteroidBeltField.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
+import { BELT_GIANTS_CONFIG } from '../src/game/asteroidBeltGiants.js';
 import {
   ROCK_TYPES, NEUTRAL_TYPE, ROCK_FAMILIES, FAMILY, SHAPE_COUNT, SHAPE_VARIANTS,
   pickFamily, familyOfShape, oreShareAtDepth, oreTierFactor
@@ -55,6 +58,146 @@ test('belt regions match BELT_DEFINITIONS (ring + 2 arcs + 3 Hildas + Kuiper)', 
   ]);
   const kuiper = field.regions.find((r) => r.beltId === 'kuiper');
   assert.equal(kuiper.ice, 1);
+});
+
+// Kąt Jowisza w polu testów (makeField: 250°).
+function jupiterAngle(field) {
+  const jup = field.regions.find((r) => r.beltId === 'greeks');
+  return jup.angMid - Math.PI / 3;
+}
+
+test('Hildas sit in the L3 / L4 / L5 vertices and win the region there, not next to Jupiter', () => {
+  const { field, au } = makeField();
+  const ja = jupiterAngle(field);
+  const hildas = field.regions.filter((r) => r.beltId === 'hildas');
+  assert.equal(hildas.length, 3);
+  // wierzchołki trójkąta: L3 (+180°), L4 (+60°), L5 (−60°)
+  const offsets = hildas.map((r) => Math.round(((((r.angMid - ja) * 180 / Math.PI) % 360) + 360) % 360)).sort((a, b) => a - b);
+  assert.deepEqual(offsets, [60, 180, 300]);
+  for (const r of hildas) assert.ok(Math.abs(r.rMid / au - 44.4) < 0.05, `promień łuku Hild ${(r.rMid / au).toFixed(2)} AU`);
+  // łuk leży w pasie głównym — mimo płytszego wniknięcia wygrywa skład (priorytet)
+  for (const deg of [60, 180, -60]) {
+    for (const dA of [-0.12, 0, 0.12]) {
+      for (const rAu of [43.3, 44.4, 45.5]) {
+        const a = ja + deg * Math.PI / 180 + dA;
+        const m = field.sampleMacro(SUN.x + Math.cos(a) * rAu * au, SUN.y + Math.sin(a) * rAu * au);
+        assert.equal(m.region?.beltId, 'hildas', `${deg}° ${dA} rad, ${rAu} AU`);
+      }
+    }
+  }
+  // przy Jowiszu i między wierzchołkami — pas główny
+  for (const deg of [0, 15, -15, 120, 240]) {
+    const a = ja + deg * Math.PI / 180;
+    const m = field.sampleMacro(SUN.x + Math.cos(a) * 44.4 * au, SUN.y + Math.sin(a) * 44.4 * au);
+    assert.equal(m.region?.beltId, 'main', `${deg}° od Jowisza`);
+  }
+});
+
+test('Hilda priority changes composition only — density and belt weight are untouched', () => {
+  // pełny pas (bez przycięcia) — łuki Hild leżą w pasie głównym
+  const { field, au } = makeField({ config: { mainOuterAu: null } });
+  const { field: noHildas } = makeField({ config: { mainOuterAu: null }, beltDefs: BELT_DEFINITIONS.filter((b) => b.id !== 'hildas') });
+  const ja = jupiterAngle(field);
+  for (let i = 0; i < 400; i++) {
+    const a = ja + (i / 400) * Math.PI * 2;
+    const rAu = 42 + (i % 9) * 0.5;
+    const x = SUN.x + Math.cos(a) * rAu * au;
+    const y = SUN.y + Math.sin(a) * rAu * au;
+    const m = { ...field.sampleMacro(x, y) };
+    const n = noHildas.sampleMacro(x, y);
+    assert.equal(m.density, n.density);
+    assert.equal(m.weight, n.weight);
+    assert.equal(m.cluster, n.cluster);
+  }
+});
+
+test('Kirkwood gaps thin the belt (and its fields) at the resonances, softly', () => {
+  const gaps = BELT_FIELD_CONFIG.kirkwoodGaps;
+  assert.deepEqual(gaps.map((g) => g.id), ['3:1', '5:2', '7:3', '2:1']);
+  const soft = BELT_FIELD_CONFIG.kirkwoodSoftAu;
+  const dens = BELT_FIELD_CONFIG.kirkwoodDensity;
+  for (const g of gaps) {
+    assert.ok(g.width >= 0.2 && g.width <= 0.6, `${g.id}: szerokość ${g.width}`);
+    assert.ok(Math.abs(kirkwoodGapFactor(g.au, gaps, soft, dens) - dens) < 1e-12, `${g.id}: środek luki`);
+    // połowa głębokości na brzegu nominalnym, miękko i monotonicznie na zewnątrz
+    const half = kirkwoodGapFactor(g.au + g.width / 2, gaps, soft, dens);
+    assert.ok(Math.abs(half - (dens + 1) / 2) < 0.02, `${g.id}: brzeg ${half}`);
+    let prev = 0;
+    for (let t = 0; t <= g.width; t += 0.01) {
+      const v = kirkwoodGapFactor(g.au + t, [g], soft, dens);
+      assert.ok(v >= prev - 1e-12, `${g.id}: monotonicznie`);
+      prev = v;
+    }
+    assert.equal(kirkwoodGapFactor(g.au + g.width / 2 + (g.soft ?? soft) / 2 + 1e-6, [g], soft, dens), 1, `${g.id}: za luką bez zmian`);
+  }
+  assert.equal(kirkwoodGapFactor(36.5, gaps, soft, dens), 1);
+  assert.equal(kirkwoodGapFactor(44.4, gaps, soft, dens), 1, 'Hildy poza lukami');
+
+  // W polu: średnia gęstość po kątach w luce ≪ ramiona luki, pola w luce przerzedzone
+  const { field, au } = makeField();
+  const ring = (rAu) => {
+    let d = 0; let c = 0;
+    for (let i = 0; i < 720; i++) {
+      const a = (i / 720) * Math.PI * 2;
+      const m = field.sampleMacro(SUN.x + Math.cos(a) * rAu * au, SUN.y + Math.sin(a) * rAu * au);
+      d += m.density; c += m.cluster;
+    }
+    return { d: d / 720, c: c / 720 };
+  };
+  for (const g of gaps) {
+    const mid = ring(g.au);
+    const sh = (ring(g.au - 0.7).d + ring(g.au + 0.7).d) / 2;
+    assert.ok(mid.d < sh * 0.25, `${g.id}: w luce ${mid.d.toExponential(2)} vs ramiona ${sh.toExponential(2)}`);
+    assert.ok(mid.d > 0, `${g.id}: rzadki przesmyk, nie pustka`);
+  }
+  // Bez luk (A/B) — ta sama gęstość poza lukami, wyższa w nich
+  const { field: none } = makeField({ config: { kirkwoodGaps: [] } });
+  const x = SUN.x + 37.57 * au;
+  assert.ok(Math.abs(field.densityAt(x, SUN.y) / none.densityAt(x, SUN.y) - BELT_FIELD_CONFIG.kirkwoodDensity) < 1e-9);
+  assert.equal(none.densityAt(SUN.x + 38.5 * au, SUN.y), field.densityAt(SUN.x + 38.5 * au, SUN.y));
+});
+
+test('Kirkwood gaps leave the giant core scan rings and the main belt field share intact', () => {
+  // Pierścienie skanu rdzeni olbrzymów poza lukami: rdzenie mają remisy maksymalnej gęstości, więc
+  // ogon luki na pierścieniu skanu przestawia olbrzymy (findBeltCores — pierwszy maksymalny wygrywa).
+  const [r0, r1] = BELT_GIANTS_CONFIG.scanRAu;
+  const n = BELT_GIANTS_CONFIG.scanRadii;
+  for (let k = 0; k < n; k++) {
+    const rAu = r0 + (r1 - r0) * (k + 0.5) / n;
+    assert.equal(kirkwoodGapFactor(rAu, BELT_FIELD_CONFIG.kirkwoodGaps, BELT_FIELD_CONFIG.kirkwoodSoftAu, BELT_FIELD_CONFIG.kirkwoodDensity), 1,
+      `pierścień skanu ${rAu.toFixed(2)} AU w luce`);
+  }
+  // Udział pól na powierzchni pasa głównego (36–47 AU) nadal 4–30%
+  const { field, au } = makeField();
+  let inField = 0;
+  let total = 0;
+  for (let j = 0; j < 40; j++) {
+    const rAu = Math.sqrt(36 * 36 + (47 * 47 - 36 * 36) * (j + 0.5) / 40);
+    for (let i = 0; i < 600; i++) {
+      const a = (i / 600) * Math.PI * 2;
+      if (field.sampleMacro(SUN.x + Math.cos(a) * rAu * au, SUN.y + Math.sin(a) * rAu * au).cluster > 0.2) inField++;
+      total++;
+    }
+  }
+  const share = inField / total;
+  assert.ok(share > 0.04 && share < 0.3, `udział pól w pasie głównym ${share.toFixed(3)} poza 4–30%`);
+});
+
+test('mainOuterAu trims the main belt and leaves the Hildas standing on their own', () => {
+  const { field, au } = makeField({ config: { mainOuterAu: 41.5 } });
+  const ja = jupiterAngle(field);
+  const main = field.regions.find((r) => r.beltId === 'main');
+  assert.ok(Math.abs(main.rOuter / au - 41.5) < 1e-9);
+  const at = (deg, rAu) => {
+    const a = ja + deg * Math.PI / 180;
+    return field.sampleMacro(SUN.x + Math.cos(a) * rAu * au, SUN.y + Math.sin(a) * rAu * au);
+  };
+  assert.equal(at(0, 44.4).density, 0, 'za przyciętym pasem przy Jowiszu pusto');
+  const m = at(180, 44.4);
+  assert.equal(m.region?.beltId, 'hildas');
+  assert.equal(m.weight, 1, 'łuk Hild — własna obwiednia');
+  // domyślnie przycięty do 41,5 (decyzja użytkownika 2026-10-11)
+  assert.equal(BELT_FIELD_CONFIG.mainOuterAu, 41.5);
 });
 
 test('density is zero far from belts and positive inside the main belt', () => {

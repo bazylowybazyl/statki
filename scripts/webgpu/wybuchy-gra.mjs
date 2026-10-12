@@ -4,14 +4,16 @@
 //   node scripts/webgpu/wybuchy-gra.mjs [--sceny prog,lancuch,stacja,pustka] [--out .tmp/wybuchy-gra] [--rozmiar 1600x900]
 //        [--port 5376] [--koszt [--kosztSwiatla | --kosztPrzeszkody]] [--ab klucz] [--gpu [regex kadrów]] [--przeszkody 0]
 //
-// Sceny (misja 1, skok dev ?story=ram — suchy dok postawiony):
-//   prog    — próg punktów doku: trafienie w odcinek trzonu (lastHit + applyDamageToStation 1/8 punktów) → kawałek
-//             odpada jako ciało i wybucha (onDryDockDamageStep → window.makeReactorBlow),
-//   lancuch — śmierć doku i łańcuch rozpadu misji (StoryGame._chainExplosion: ~15 wybuchów w ~4 s + finał w hali),
+// Sceny (misja 1, skok dev ?story=ram — baza piratów postawiona, od 2026-10-11; dawniej suchy dok):
+//   prog    — próg punktów habitatu: trafienie w ćwiartkę bębna H-W (lastHit + applyDamageToStation 1/8 punktów) →
+//             kawałek odpada jako ciało i wybucha (onBaseDamageStep → storyBaseBreak + window.makeReactorBlow 520),
+//   lancuch — rozpad habitatu misji bez zabijania budowli (StoryGame._chainExplosion: ćwiartki bębna, szyb, część
+//             techniczna i 8 sektorów dysku w ~4 s) i REAKCJA ŁAŃCUCHOWA w rurach od habitatu (_fuelChain 'H': front
+//             ognia przez pomosty, okręty przy zaworach, zbiorniki, magazyn — do ~12 s); na końcu zbliżenie na habitat,
 //   stacja  — rozpad stacji planety (Wenus: applyDamageToStation do zera → Destruction3D → reactorFactory),
 //   pustka  — śmierć gracza bez rdzenia (triggerReactorBlow3D, size 282) w pustej przestrzeni,
 //   dysze   — wybuch za rufą Atlasa na pełnym ciągu (dopalacz): światła dysz w dymie (etap B — siatka świateł w gazie),
-//   maszt   — wybuch przy maszcie reflektorów parkingu doku (światło masztu w dymie),
+//   maszt   — wybuch przy maszcie reflektora L-F na rozwidleniu Y (światło masztu w dymie — PirateBase3D.pushGridLights),
 //   pas     — wybuch w gęstym polu pasa asteroid (strefa nieba: ciemniejsze otoczenie, mrok pola).
 // --ab gridLight — A/B tej samej klatki bez świateł siatki w dymie. --gpu [regex]: na zatrzymanej klatce (wybuch stoi)
 // mediana czasu GPU klatki ze światłami siatki w dymie i bez, naprzemiennie (koszt marszu z pętlą świateł).
@@ -153,16 +155,37 @@ try {
   })()`);
   await ev('(() => { const h = window.__harness; h.clock.t = h.realNow(); h.clock.mode = "frozen"; h.hold(true); return true; })()');
   await ev('window.__harness.step(30)');
-  const L = await ev('(() => { const l = window.StoryGame.site.dock.layout; return { cz: (l.bounds.z0 + l.bounds.z1) / 2, hallZ: l.hall.center.z }; })()');
+  const L = await ev('(() => { const l = window.StoryGame.site.dock.layout; return { cx: l.center.x, cz: l.center.z }; })()');
+
+  if (sceny.includes('maszt')) {
+    // Wybuch przy maszcie reflektora (światło masztu w siatce — PirateBase3D.pushGridLights; pierwszy maszt: L-F).
+    // PRZED progiem i łańcuchem: po śmierci habitatu baza nie dokłada świateł do siatki (updatePirateBase3D).
+    const k0 = await frameK();
+    const m = await ev(`(() => { const d = window.StoryGame.site.dock, L = d.layout.lights.find((q) => q.kind === 'flood') || d.layout.lights[0];
+      const p = d.toGame(L.x, L.z), a = d.toGame(L.aim.x, L.aim.z); return { x: p.x, y: p.y, ax: a.x, ay: a.y }; })()`);
+    const bx = m.x + (m.ax - m.x) * 0.55, by = m.y + (m.ay - m.y) * 0.55;
+    await camAt((m.x + bx) / 2, (m.y + by) / 2, 0.3);
+    await shot('maszt-0-przed', 2);
+    await ev(`(() => { window.makeReactorBlow({ x: ${bx}, y: ${by}, size: 220 }); return true; })()`);
+    const rows = [];
+    let tNow = 0;
+    for (const at of [0.3, 0.9, 1.6, 2.8, 4.0]) {
+      rows.push({ t: at, ...(await shot(`maszt-${String(at).replace('.', '_')}`, Math.round((at - tNow) * 60))) });
+      tNow = at;
+    }
+    report.sceny.maszt = { rows, pipeline: await pipesSince(k0) };
+    console.log('maszt pipeline', JSON.stringify(report.sceny.maszt.pipeline));
+    await ev('window.__harness.step(300)');
+  }
 
   if (sceny.includes('prog')) {
     const k0 = await frameK();
-    const c = await ev(`(() => { const S = window.StoryGame, d = S.site.dock, l = d.layout, c = l.chunkById.get('S-3');
-      return { x: (c.box.x0 + c.box.x1) / 2, z: (c.box.z0 + c.box.z1) / 2 }; })()`);
+    // ćwiartka zachodnia bębna (ku rozwidleniu Y): środek ściany na promieniu bębna
+    const c = await ev(`(() => { const H = window.StoryGame.site.dock.layout.habitat; return { x: -H.drumR * 0.85, z: 0 }; })()`);
     const g = await hubToGame(c.x, c.z);
     await camAt(g.x, g.y, 0.2);
     await shot('prog-0-przed', 2);
-    await ev(`(() => { const st = window.StoryGame.site.station; st.lastHitX = ${g.x}; st.lastHitY = ${g.y}; window.applyDamageToStation(st, st.maxHp / 8 + 5); return true; })()`);
+    await ev(`(() => { const st = window.StoryGame.site.structures.habitat; st.lastHitX = ${g.x}; st.lastHitY = ${g.y}; window.applyDamageToStation(st, st.maxHp / (st.damageSteps || 8) + 5); return true; })()`);
     const rows = [];
     let tNow = 0;
     for (const at of [0.1, 0.4, 0.9, 1.6, 2.8, 3.6, 4.5]) {
@@ -176,20 +199,23 @@ try {
 
   if (sceny.includes('lancuch')) {
     const k0 = await frameK();
-    const g = await hubToGame(0, L.cz + 200);
+    const g = await hubToGame(L.cx, L.cz);
     await camAt(g.x, g.y, 0.085);
-    // Łańcuch rozpadu misji bez zabijania doku (śmierć stacji uruchamia sceny fabuły — świat stoi na czas dialogu).
-    await ev(`(() => { const S = window.StoryGame; const st = S.site.station; const p = S.site.dock.toGame(0, -2500); st.lastHitX = p.x; st.lastHitY = p.y; S._chainExplosion(S.site); return { frozen: !!S.worldFrozen }; })()`);
+    // Rozpad habitatu misji bez zabijania budowli (śmierć habitatu uruchamia sceny fabuły — świat stoi na czas dialogu);
+    // waitFuel false — obietnica nie czeka na ogień w rurach (harmonogram biegnie dalej zegarem gry).
+    await ev(`(() => { const S = window.StoryGame; S._chainExplosion(S.site, { waitFuel: false }); return { frozen: !!S.worldFrozen }; })()`);
     const rows = [];
     let tNow = 0;
-    for (const at of [0.5, 1.4, 2.2, 3.0, 4.2, 5.5, 8]) {
+    for (const at of [0.5, 1.4, 2.2, 3.0, 4.2, 5.5, 8, 12]) {
       rows.push({ t: at, ...(await shot(`lancuch-${String(at).replace('.', '_')}`, Math.round((at - tNow) * 60))) });
       tNow = at;
     }
-    // zbliżenie na halę (finał)
-    const gh = await hubToGame(0, L.hallZ + 300);
+    report.sceny.lancuchReakcja = await ev(`(() => { const c = window.StoryGame.site.chain; return { habitat: !!c.habitat, wypalone: c.burnt.size, okretyZabite: c.killed }; })()`);
+    console.log('reakcja', JSON.stringify(report.sceny.lancuchReakcja));
+    // zbliżenie na habitat (bęben, szyb, dysk pod spodem)
+    const gh = await hubToGame(0, 0);
     await camAt(gh.x, gh.y, 0.16);
-    rows.push({ t: 'hala', ...(await shot('lancuch-hala', 0)) });
+    rows.push({ t: 'habitat', ...(await shot('lancuch-habitat', 0)) });
     report.sceny.lancuch = { rows, pipeline: await pipesSince(k0) };
     console.log('lancuch pipeline', JSON.stringify(report.sceny.lancuch.pipeline));
     await ev('window.__harness.step(300)');
@@ -270,26 +296,6 @@ try {
     await ev('window.__harness.step(240)');
   }
 
-  if (sceny.includes('maszt')) {
-    // Wybuch przy maszcie reflektorów parkingu (światło masztu w siatce — PirateDryDock3D.pushGridLights).
-    const k0 = await frameK();
-    const m = await ev(`(() => { const d = window.StoryGame.site.dock, L = d.layout.lights.find((q) => q.kind === 'flood') || d.layout.lights[0];
-      const p = d.toGame(L.x, L.z), a = d.toGame(L.aim.x, L.aim.z); return { x: p.x, y: p.y, ax: a.x, ay: a.y }; })()`);
-    const bx = m.x + (m.ax - m.x) * 0.55, by = m.y + (m.ay - m.y) * 0.55;
-    await camAt((m.x + bx) / 2, (m.y + by) / 2, 0.3);
-    await shot('maszt-0-przed', 2);
-    await ev(`(() => { window.makeReactorBlow({ x: ${bx}, y: ${by}, size: 220 }); return true; })()`);
-    const rows = [];
-    let tNow = 0;
-    for (const at of [0.3, 0.9, 1.6, 2.8, 4.0]) {
-      rows.push({ t: at, ...(await shot(`maszt-${String(at).replace('.', '_')}`, Math.round((at - tNow) * 60))) });
-      tNow = at;
-    }
-    report.sceny.maszt = { rows, pipeline: await pipesSince(k0) };
-    console.log('maszt pipeline', JSON.stringify(report.sceny.maszt.pipeline));
-    await ev('window.__harness.step(300)');
-  }
-
   if (sceny.includes('pas')) {
     // Gęste pole pasa (miejsce z dema asteroid — to samo pole co gra): gracz i kamera w polu, strefa nieba „pas”.
     const k0 = await frameK();
@@ -323,15 +329,17 @@ try {
       const h = window.__harness; h.hold(false); h.clock.mode = 'real';
       await new Promise((r) => setTimeout(r, 1200));
       const S = window.StoryGame;
-      const g = S.site.dock.toGame(0, -1500);
+      const g = S.site.dock.toGame(S.site.dock.layout.center.x, S.site.dock.layout.center.z);
       const c = window.camera;
       if (c.mode !== 'rts' && typeof c.enterRtsMode === 'function') c.enterRtsMode();
       c.x = c.targetX = g.x; c.y = c.targetY = g.y; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = 0.085; c.transition = null;
       await new Promise((r) => setTimeout(r, 400));
-      // 15 wybuchów doku w ~4 s jak łańcuch misji (dok już zniszczony — te same miejsca i rozmiary)
+      // 21 wybuchów bazy w ~5,5 s (kawałki w płaszczyźnie gry: bęben, szyb, pomosty, zbiorniki, kolektor, magazyn — rozmiary
+      // jak progi punktów i łańcuch misji)
       const l = S.site.dock.layout;
       const pts = [];
-      for (const ch of l.chunks) { if (!['spine', 'collar', 'hallgate', 'tower'].includes(ch.kind)) continue; const p = S.site.dock.toGame((ch.box.x0 + ch.box.x1) / 2, (ch.box.z0 + ch.box.z1) / 2); pts.push({ x: p.x, y: p.y, size: ch.kind === 'spine' ? 250 : ch.kind === 'tower' ? 150 : 220 }); }
+      const SIZE = { drum: 380, core: 640, pier: 260, tank: 900, manifold: 420, warehouse: 520, annex: 360 };
+      for (const ch of l.chunks) { if (ch.ghost || !SIZE[ch.kind]) continue; const p = S.site.dock.toGame((ch.box.x0 + ch.box.x1) / 2, (ch.box.z0 + ch.box.z1) / 2); pts.push({ x: p.x, y: p.y, size: SIZE[ch.kind] }); }
       const t0 = performance.now();
       let i = 0, last = t0, worst = 0, n = 0, maxDom = 0, cpu = 0;
       const dts = [];

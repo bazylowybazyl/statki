@@ -231,6 +231,7 @@ function cloneStructure(src) {
 // ============================ SCRATCH ============================
 
 const _pose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
+const _poseB = { x: 0, y: 0, theta: 0, c: 1, s: 0 };     // druga poza (overlaps)
 const _local = { x: 0, y: 0 };
 const _sweepOut = { t: Infinity, node: -1 };
 const _impactVel = { x: 0, y: 0, z: 0 };
@@ -334,6 +335,11 @@ export const HullBodies = {
     Object.assign(cfg, {
       planar: true,
       localSolver: true,
+      // Ogon trafień solvera lokalnego (decyzja użytkownika 2026-10-11, pomiar 2026-10-07): próg spokoju 0,4·cs
+      // i 4 kroki ciszy zamiast 0,2·cs / 8 — czas solvera w bitwie −51%, zerwania i zabite węzły bez zmian,
+      // kształt po uspokojeniu inny o p50 0,02–0,04 j. Dema i testy silnika zostają na domyślnych.
+      activeMotionThreshold: 0.4 * C.cellPx,
+      activeSettleFrames: 4,
       crushStrength: C.crushStrength,
       globalBreakMul: C.globalBreakMul,
       maxContacts: C.maxContacts,
@@ -624,6 +630,31 @@ export const HullBodies = {
     toLocal(hull, pose, x, y, _local);
     const r = reach > 0 ? reach : C.probeReachCells * hull.body.cellSize;
     return D.probeLocal2D(hull.body, _local.x, _local.y, r) >= 0;
+  },
+
+  /**
+   * Czy kadłuby zachodzą na siebie: żywy węzeł ciała z mniejszą liczbą węzłów w zasięgu styku (jak
+   * narrowphase silnika) od węzła drugiego — pozy encji, bez ruszania ciał. Gra: gracz zostaje duchem
+   * po rampie wyjścia z warpa, dopóki nie wyjdzie z kadłuba, w którym stanął (index.html, isPlayerWarpGhost).
+   */
+  overlaps(a, b) {
+    const ha = a?.beamHull, hb = b?.beamHull;
+    if (!ha || !hb || ha.entity !== a || hb.entity !== b || ha.body.dead || hb.body.dead) return false;
+    const it = ha.body.activeNodes <= hb.body.activeNodes ? ha : hb;
+    const ho = it === ha ? hb : ha;
+    const reach = (it.body.cellSize + ho.body.cellSize) * (D.config.nodeRadius / D.config.cellSize);
+    const pi = entityPose(it, _poseB), po = entityPose(ho, _pose);
+    const ax = anchorLocalX(it), ay = anchorLocalY(it);
+    const s = it.body.nodeStore;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const dx = s.x[i] - ax, dy = s.y[i] - ay;
+      const wx = pi.x + pi.c * dx - pi.s * dy;
+      const wy = pi.y - (pi.s * dx + pi.c * dy);
+      toLocal(ho, po, wx, wy, _local);
+      if (D.probeLocal2D(ho.body, _local.x, _local.y, reach) >= 0) return true;
+    }
+    return false;
   },
 
   /**
@@ -2464,6 +2495,10 @@ function pairFilter(A, B) {
   const ea = A.entity, eb = B.entity;
   if (!ea || !eb) return true;
   if (ea.isCollidable === false || eb.isCollidable === false) return false;
+  // Kadłub bez kolizji z innymi kadłubami, ale nadal kontakt dla AI, cel pocisków itd. (isCollidable wyłącza
+  // też to) — gracz w warpie i na rampie wyjścia (decyzja użytkownika 2026-10-11: warp niewrażliwy, kolizje
+  // dopiero w zwykłym locie); flagę pisze gra co krok przed kolizjami.
+  if (ea.noHullCollisions === true || eb.noHullCollisions === true) return false;
   // Odłamy JEDNEGO kawałka budowli (worldBodies.breakPiece — pęknięcia Voronoi) nie zderzają się między sobą:
   // rodzą się na styk wzdłuż szwów i rozchodzą; ich styki to ~⅓ kroku po rozpadzie suchego doku (pomiar
   // 2026-10-07). Z okrętami, budowlą i odłamami innych kawałków — zwykłe zderzenia.

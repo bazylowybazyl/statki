@@ -7,7 +7,8 @@
 import {
   KERNELS, kernelSource, CONFIG_FIELDS, STEP_FIELDS, STEP_STRIDE, COLOR_STRIDE, uniformLayout,
   MAX_BODIES, MAX_PAIRS, MAX_IMPACTS, PROJECTILES, BLASTS, EFFECTS, DEBRIS_CAPACITY, COUNTERS,
-  BODY_FLOATS, BODY, NODE, STEP, COUNTER, GS_GROUP_COLORS, REDUCE_CHUNK
+  BODY_FLOATS, BODY, NODE, STEP, COUNTER, GS_GROUP_COLORS, REDUCE_CHUNK,
+  LOC, LOC_WORDS, ARG, ARG_WORDS, LOCAL_MAX_DEGREE, BODY_ACC, ACC, ordF32
 } from './gpuShaders.js';
 import { colorBeams } from './build.js';
 
@@ -129,6 +130,10 @@ export class GpuBeamWorld {
     this.stamp = 1;
     this.tick = 0;
     this.scene = scene;
+    // Solver lokalny (domyślnie wł.): scene.local = { threshold, settle, scale, scan } albo null — pełny solver.
+    this.local = scene.local || null;
+    this.localAcc = null;
+    this._gsAll = undefined;
 
     // --- rozmiary i przesunięcia instancji ---
     let N = 0, B = 0, A = 0, dynamicNodes = 0, staticNodes = 0;
@@ -201,7 +206,7 @@ export class GpuBeamWorld {
           beamEnds[g * 2] = n0 + h.beamA[e]; beamEnds[g * 2 + 1] = n0 + h.beamB[e];
           beamLen[g * 4] = h.rest[e]; beamLen[g * 4 + 1] = h.rest[e];
           beamMat[g * 4] = h.stiffness[e]; beamMat[g * 4 + 1] = h.deform[e]; beamMat[g * 4 + 2] = h.brk[e];
-          beamFlags[g] = (h.restBridge[e] ? 2 : 0) | (h.type[e] << 8);
+          beamFlags[g] = (h.restBridge[e] ? 2 : 0) | (h.type[e] << 8) | (color[e] << 16);   // kolor: kubełek solvera lokalnego
           beamColor[g] = color[e];
         }
       }
@@ -209,7 +214,7 @@ export class GpuBeamWorld {
     // Belki pogrupowane kolorami. Małe kadłuby (≤ gsGroupLimit belek): każdy osobno, kolory po kolei —
     // rozwiązuje je jedna grupa robocza na kadłub (kernel gsGroup). Duże: wszystkie razem, jeden
     // dispatch na kolor (gsColor) — wtedy liczenie, nie narzut dispatchy, decyduje o czasie.
-    const groupLimit = scene.gsGroupLimit ?? 40000;
+    const groupLimit = this.local ? 0 : (scene.gsGroupLimit ?? 40000);   // lokalny: kubełki kolorów wszystkich kadłubów
     const colorBeamsArr = new Uint32Array(Math.max(1, B));
     let cursor = 0;
     const large = instances.filter((inst) => !inst.isStatic && inst.beamCount > 0 &&
@@ -227,6 +232,7 @@ export class GpuBeamWorld {
       this.colorRanges.push({ start, count: cursor - start });
       colorData[c * COLOR_STRIDE / 4] = start;
       colorData[c * COLOR_STRIDE / 4 + 1] = cursor - start;
+      colorData[c * COLOR_STRIDE / 4 + 2] = c;
     }
     const stride = 1 + GS_GROUP_COLORS * 2;
     const gsTable = new Uint32Array(Math.max(1, small.length) * stride);
@@ -244,6 +250,11 @@ export class GpuBeamWorld {
       for (let e = inst.beamStart; e < inst.beamStart + inst.beamCount; e++) colorBeamsArr[starts[beamColor[e]]++] = e;
     });
     this.colors = colors;
+    // solver lokalny: pierwszy z rzadkich kolorów na końcu (< 5% największego) — liczone razem (gsTail)
+    let maxColor = 0;
+    for (const r of this.colorRanges) maxColor = Math.max(maxColor, r.count);
+    this.tailColor = this.colorRanges.length;
+    while (this.tailColor > 1 && this.colorRanges[this.tailColor - 1].count < 0.05 * maxColor) this.tailColor--;
     this.gsGroups = small.length;
     this.gsLarge = large.length;
     d.queue.writeBuffer(this.colorBuffer, 0, colorData);
@@ -325,27 +336,44 @@ export class GpuBeamWorld {
     mk('nodeAux', nodeAux);
     mk('links', links);
     mk('adj', adj);
-    mk('worldPos', N * 8);
-    mk('gridNext', N * 4);
-    mk('gridHead', this.hashSize * 4);
+    mk('worldPos', N * 16);
+    mk('gridHead', new Int32Array(this.hashSize).fill(-1));   // lista kandydatów czyści tylko zajęte komórki
     mk('staticHead', new Int32Array(this.staticHashSize).fill(-1));
     mk('crush', N * 8);
+    mk('crushKey', new Uint32Array(N).fill(0xffffffff));
     mk('massStamp', N * 4);
     mk('nodeLists', nodeLists);
     mk('beamEnds', beamEnds);
     mk('beamLen', beamLen);
     mk('beamMat', beamMat);
     mk('beamFlags', beamFlags);
-    mk('colorBeams', colorBeamsArr);
+    // GS czyta belki w kolejności kolorów z gsPack (pisze go prepare); start: końce, rest, waga 0
+    const beamSlot = new Uint32Array(Math.max(1, B));
+    const gsPack = new Uint32Array(Math.max(1, B) * 4);
+    const beamLenU = new Uint32Array(beamLen.buffer);
+    if (cursor !== B) console.warn(`gsPack: ${cursor} z ${B} belek ma miejsce w kolejności kolorów`);
+    for (let k = 0; k < cursor; k++) {
+      const e = colorBeamsArr[k];
+      beamSlot[e] = k;
+      gsPack[k * 4] = beamEnds[e * 2]; gsPack[k * 4 + 1] = beamEnds[e * 2 + 1]; gsPack[k * 4 + 2] = beamLenU[e * 4];
+    }
+    mk('beamSlot', beamSlot);
+    mk('gsPack', gsPack);
     mk('gsTable', gsTable);
     let maxDynamic = 1;
     for (const inst of instances) if (!inst.isStatic) maxDynamic = Math.max(maxDynamic, inst.nodeCount);
     this.reduceStride = Math.ceil(maxDynamic / REDUCE_CHUNK);
     mk('partials', MAX_BODIES * this.reduceStride * 64);
     mk('bodyNear', MAX_BODIES * 4);
+    mk('bodyBox', MAX_BODIES * 16);
     mk('pairFlags', MAX_BODIES * MAX_BODIES * 4);
     mk('collide', (2 + MAX_PAIRS) * 4);
     mk('contacts', this.contactCapacity * 36);
+    mk('contactKeys', this.contactCapacity * 16);
+    mk('keyCount', MAX_BODIES * MAX_BODIES * 4);
+    mk('pairRange', MAX_PAIRS * 8);
+    mk('pairBins', this.contactCapacity * 4);
+    mk('pairHist', MAX_PAIRS * 4096 * 4);
     mk('pairData', MAX_PAIRS * 104);
     mk('dispatchArgs', 16 * 4, U.INDIRECT);
     mk('counters', COUNTERS * 4);
@@ -357,10 +385,49 @@ export class GpuBeamWorld {
     mk('weaponState', 16 * 4);
     mk('debris', DEBRIS_CAPACITY * 64);
     mk('topoOps', TOPO_OPS * 16);
+    mk('reseatTmp', TOPO_OPS * 32);
     mk('topoList', (N + this.beamCount + 8) * 4);
     this.topoWords = Math.ceil(this.beamCount / 32) + Math.ceil(N / 32);
     mk('topoBits', this.topoWords * 4);
     mk('camState', 64);
+    // --- solver lokalny (w trybie pełnym bufory symboliczne: wiązania istnieją, kernele ich nie czytają) ---
+    const L = !!this.local;
+    let maxDegree = 0;
+    for (const inst of instances) {
+      if (inst.isStatic) continue;
+      const h = inst.hull;
+      for (let i = 0; i < h.nodeCount; i++) maxDegree = Math.max(maxDegree, h.adjStart[i + 1] - h.adjStart[i]);
+    }
+    if (L && maxDegree > LOCAL_MAX_DEGREE) throw new Error(`solver lokalny: ${maxDegree} belek na węzeł (> ${LOCAL_MAX_DEGREE})`);
+    this.listCap = N + 64;
+    const nodeWords = L ? N : 4, capWords = L ? this.listCap : 4, beamWords = L ? Math.max(1, B) : 4;
+    const locInit = new Uint32Array(LOC_WORDS);
+    this.colorRanges.forEach((r, c) => { locInit[LOC.cbase + c] = r.start; });
+    mk('loc', locInit);
+    mk('locArgs', ARG_WORDS * 4, U.INDIRECT);
+    mk('actState', nodeWords * 4);
+    mk('listMark', nodeWords * 4);
+    mk('regionMark', nodeWords * 4);
+    mk('solveW', nodeWords * 4);
+    mk('regionList', capWords * 2 * 4);
+    mk('frontList', capWords * 2 * 4);
+    mk('settleList', capWords * 4);
+    mk('slotBeam', beamWords * 4);
+    mk('candList', capWords * 4);
+    this.occSize = L ? nextPow2(Math.max(4096, Math.ceil(N / 8))) : 1;
+    mk('occ', this.occSize * 8);
+    this.fineSize = L ? nextPow2(Math.max(4096, Math.ceil(N / 2))) : 1;
+    // pusta komórka = (0xffffffff, 0); dalej czyści ją clearReset po liście kandydatów
+    const fine = new Uint32Array(this.fineSize * 2);
+    for (let k = 0; k < this.fineSize; k++) fine[k * 2] = 0xffffffff;
+    mk('occFine', fine);
+    mk('stepBox', MAX_BODIES * 16);
+    const acc = new Int32Array(MAX_BODIES * BODY_ACC);
+    for (let b = 0; b < MAX_BODIES; b++) {
+      acc[b * BODY_ACC + ACC.minX] = acc[b * BODY_ACC + ACC.minY] = ordF32(3e38);
+      acc[b * BODY_ACC + ACC.maxX] = acc[b * BODY_ACC + ACC.maxY] = ordF32(-3e38);
+    }
+    mk('bodyAcc', acc);
     this.topoStaging = d.createBuffer({ size: this.topoWords * 4, usage: U.MAP_READ | U.COPY_DST, label: 'topoStaging' });
 
     // efekty z czasem startu daleko w przeszłości (niewidoczne)
@@ -435,6 +502,22 @@ export class GpuBeamWorld {
     set('heatGain', c.heatGain || 0); set('heatSpeed', c.heatSpeed); set('heatContact', c.heatContact);
     set('heatSpread', c.heatSpread); set('heatWoundWindow', c.heatWoundWindow); set('listCount', this.listUsed);
     set('reduceStride', this.reduceStride);
+    const L = this.local;
+    set('localMode', L ? 1 : 0);
+    set('listCap', this.listCap || 0);
+    set('localColors', L ? this.colorRanges.length : 0);
+    // próg ruchu węzła (j./s) i kroki ciszy jak w createBeamConfig (activeMotionThreshold, activeSettleFrames);
+    // scale: próg × liczba podkroków kroku (ten sam ruch na podkrok co przy 1 podkroku)
+    set('actThreshold', L ? (L.threshold ?? c.activeMotionThreshold ?? 0.2 * c.cellSize) : 0);
+    set('actSettle', L ? Math.max(1, (L.settle ?? c.activeSettleFrames ?? 8) | 0) : 8);
+    set('actScale', L?.scale ? 1 : 0);
+    set('stepPad', L ? (L.pad ?? 0) : 0);
+    set('occMask', Math.max(0, (this.occSize || 1) - 1));
+    // komórka siatki zajętości: zasięg styku i odkształcenie węzłów w kroku (droga węzła — osobno, w occMark)
+    let csMax = 0;
+    for (const sb of this.scene.bodies) csMax = Math.max(csMax, sb.hull.cellSize);
+    set('occCell', 12 * csMax);
+    set('fineMask', Math.max(0, (this.fineSize || 1) - 1));
     this.device.queue.writeBuffer(this.configBuffer, 0, b.buffer);
   }
 
@@ -492,12 +575,17 @@ export class GpuBeamWorld {
     this._staticDirty = false;
 
     const stepEntries = [];
+    const local = this.local;
     for (const st of plan.steps) {
       const n = Math.max(1, st.substeps | 0);
       const h = plan.dt / n;
+      // solver lokalny: utrzymanie raz na krok (wyrównanie środka, kandydaci do kontaktów)
+      const eStep = local ? newEntry(h, STEP.RECENTRE) : -1;
       for (let s = 0; s < n; s++) {
         const first = s === 0;
-        let flags = STEP.DAMAGE | STEP.TRANSFER;
+        // lokalny: bez przeniesienia wspólnego ruchu na ciało w insert (pęd idzie przez bodyLocal)
+        let flags = STEP.DAMAGE | (local ? 0 : STEP.TRANSFER);
+        if (s === n - 1) flags |= STEP.STRAIN;
         if (first && st.input) flags |= STEP.CONTROLS;
         if (first && st.fire?.length) flags |= STEP.FIRE;
         const e0 = newEntry(h, flags, (base) => {
@@ -522,7 +610,7 @@ export class GpuBeamWorld {
           }
         });
         const e1 = newEntry(h, 0);
-        stepEntries.push({ e0, e1, fire: first && st.fire?.length > 0 });
+        stepEntries.push({ e0, e1, fire: first && st.fire?.length > 0, eStep: first ? eStep : -1 });
         this.simTime += h;
       }
       this.tick++;
@@ -535,6 +623,7 @@ export class GpuBeamWorld {
     d.queue.writeBuffer(this.buffers.counters, COUNTER.crushNodes * 4, new Uint32Array([0]));
     const snapshot = this._topo.request && !this._topo.pending;
     if (snapshot) d.queue.writeBuffer(this.buffers.bodyEvents, 0, new Uint32Array(MAX_BODIES));
+    if (local) d.queue.writeBuffer(this.buffers.loc, LOC.maxA * 4, new Uint32Array(5));   // maksima obszaru w klatce
     if (plan.camera) this._writeCamera(plan.camera);
 
     const enc = d.createCommandEncoder({ label: 'klatka' });
@@ -553,7 +642,8 @@ export class GpuBeamWorld {
       return pass;
     };
     const N = this.nodeCount, B = this.beamCount;
-    const nodesWG = Math.ceil(N / WG), beamsWG = Math.ceil(B / WG);
+    // kernele po belkach mają grupę 256 (przy siatce 1 j. ~5,5 mln belek / 64 > 65 535 grup na wymiar)
+    const nodesWG = Math.ceil(N / WG), beamsWG = Math.ceil(B / 256);
     const bodiesWG = Math.ceil(this.bodyCount / WG);
     const hashWG = Math.ceil(this.hashSize / 256);
     const run = (name, x, e, y = 1) => {
@@ -565,15 +655,16 @@ export class GpuBeamWorld {
       if (k.extra === 'camera') pass.setBindGroup(2, this.cameraBG);
       if (x > 0 && y > 0) { pass.dispatchWorkgroups(x, y); dispatches++; }
     };
-    const runIndirect = (name, argsOffset, e) => {
+    const runIndirect = (name, argsOffset, e, args = this.buffers.dispatchArgs) => {
       const k = this.kernels[name];
       use(name);
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, k.bindGroup);
       pass.setBindGroup(1, this.paramsBG, [e * STEP_STRIDE]);
-      pass.dispatchWorkgroupsIndirect(this.buffers.dispatchArgs, argsOffset);
+      pass.dispatchWorkgroupsIndirect(args, argsOffset);
       dispatches++;
     };
+    const runLoc = (name, slot, e) => runIndirect(name, slot * 4, e, this.buffers.locArgs);
 
     if (topoApply) this._encodeTopology(topoApply, run, nodesWG);
     if (repairEntry >= 0) {
@@ -587,8 +678,35 @@ export class GpuBeamWorld {
 
     const iters = Math.max(1, cfg.solverIterations | 0);
     const gs = this.kernels.gsColor;
-    for (const { e0, e1, fire } of stepEntries) {
-      run('integrate', bodiesWG, e0);
+    const gsL = this.kernels.gsLocal;
+    const scanContacts = !local || local.scan;
+    // GS małego obszaru w jednej grupie roboczej (1 dispatch zamiast iteracje × kolory); próg z odczytu
+    // liczby belek w obszarze (opóźnionego o 1–3 klatki) z histerezą — oba tryby dają ten sam wynik
+    if (local) {
+      const beams = this.state?.local?.maxBeams ?? 0, limit = local.gsAll ?? 20000;
+      if (beams > limit) this._gsAll = false;
+      else if (beams < limit * 0.5 || this._gsAll === undefined) this._gsAll = limit > 0;
+    }
+    const gsAll = !!(local && this._gsAll);
+    for (const { e0, e1, fire, eStep } of stepEntries) {
+      if (eStep >= 0) {
+        // raz na krok: wyrównanie środka ciał z dryfem (reducePartial tylko dla nich), potem lista
+        // kandydatów do kontaktów — węzły w strefie styku całego kroku (z zapasem na ruch w kroku)
+        run('reducePartial', this.reduceStride, eStep, this.bodyCount);
+        run('recentreFinal', this.bodyCount, eStep);
+        run('shiftNodes', this.reduceStride, eStep, this.bodyCount);
+        if (!scanContacts) {
+          runLoc('clearReset', ARG.cand, eStep);
+          run('candReset', 1, eStep);
+          run('stepBoxes', bodiesWG, eStep);
+          run('occClear', Math.ceil(this.occSize / 256), eStep);
+          run('occMark', nodesWG, eStep);
+          run('candBuild', nodesWG, eStep);
+          run('candArgs', 1, eStep);
+        }
+      }
+      if (local && !plan.weaponsActive) run('integrateEvents', bodiesWG, e0);
+      else run('integrate', bodiesWG, e0);
       if (plan.weaponsActive) {
         if (fire) run('fire', 1, e0);
         run('weaponReset', 1, e0);
@@ -601,40 +719,92 @@ export class GpuBeamWorld {
         runIndirect('integrity', 6 * 4, e0);
         runIndirect('deaths', 6 * 4, e0);
       }
-      run('bodyEvents', bodiesWG, e0);
-      run('predict', nodesWG, e0);
-      run('prepare', beamsWG, e0);
-      if (this.gsGroups > 0) run('gsGroup', this.gsGroups, e0);
-      if (this.colorRanges.length) {
-        let gsBound = false;
-        for (let it = 0; it < iters; it++) {
-          for (let c = 0; c < this.colorRanges.length; c++) {
-            const range = this.colorRanges[c];
-            if (range.count === 0) continue;
-            if (prof || !gsBound) {
-              use('gsColor');
-              pass.setPipeline(gs.pipeline);
-              pass.setBindGroup(0, gs.bindGroup);
-              pass.setBindGroup(1, this.paramsBG, [e0 * STEP_STRIDE]);
-              gsBound = true;
+      if (!local || plan.weaponsActive) run('bodyEvents', bodiesWG, e0);
+      if (local) {
+        // obszar podkroku: A (lista) → F (sąsiedzi) → O (pierścień), belki w kubełkach kolorów
+        run('regionBegin', 1, e0);
+        runLoc('growF', ARG.a, e0);
+        run('regionArgs1', 1, e0);
+        runLoc('growO', ARG.f, e0);
+        run('regionArgs2', 1, e0);
+        runLoc('ringFront', ARG.o, e0);
+        runLoc('prepareLocal', ARG.prep, e0);
+        if (gsAll) run('gsAll', 1, e0);
+        else {
+          // kolory od tailColor (rzadkie: długie belki) — jedna grupa robocza na iterację (gsTail)
+          const tail = this.tailColor;
+          for (let it = 0; it < iters; it++) {
+            let bound = false;
+            for (let c = 0; c < tail; c++) {
+              if (this.colorRanges[c].count === 0) continue;
+              if (prof || !bound) {
+                use('gsLocal');
+                pass.setPipeline(gsL.pipeline);
+                pass.setBindGroup(0, gsL.bindGroup);
+                pass.setBindGroup(1, this.paramsBG, [e0 * STEP_STRIDE]);
+                bound = true;
+              }
+              pass.setBindGroup(2, this.colorBG, [c * COLOR_STRIDE]);
+              pass.dispatchWorkgroupsIndirect(this.buffers.locArgs, (ARG.gs + 3 * c) * 4);
+              dispatches++;
             }
-            pass.setBindGroup(2, this.colorBG, [c * COLOR_STRIDE]);
-            pass.dispatchWorkgroups(Math.ceil(range.count / WG));
-            dispatches++;
+            if (tail < this.colorRanges.length) {
+              const k = this.kernels.gsTail;
+              use('gsTail');
+              pass.setPipeline(k.pipeline);
+              pass.setBindGroup(0, k.bindGroup);
+              pass.setBindGroup(1, this.paramsBG, [e0 * STEP_STRIDE]);
+              pass.setBindGroup(2, this.colorBG, [tail * COLOR_STRIDE]);
+              pass.dispatchWorkgroups(1);
+              dispatches++;
+            }
           }
         }
+        runLoc('velocityRing', ARG.s, e0);
+        runLoc('settleBake', ARG.s, e0);
+        run('bodyStage', 1, e0);
+      } else {
+        run('predict', nodesWG, e0);
+        run('prepare', beamsWG, e0);
+        if (this.gsGroups > 0) run('gsGroup', this.gsGroups, e0);
+        if (this.colorRanges.length) {
+          let gsBound = false;
+          for (let it = 0; it < iters; it++) {
+            for (let c = 0; c < this.colorRanges.length; c++) {
+              const range = this.colorRanges[c];
+              if (range.count === 0) continue;
+              if (prof || !gsBound) {
+                use('gsColor');
+                pass.setPipeline(gs.pipeline);
+                pass.setBindGroup(0, gs.bindGroup);
+                pass.setBindGroup(1, this.paramsBG, [e0 * STEP_STRIDE]);
+                gsBound = true;
+              }
+              pass.setBindGroup(2, this.colorBG, [c * COLOR_STRIDE]);
+              pass.dispatchWorkgroups(Math.ceil(range.count / WG));
+              dispatches++;
+            }
+          }
+        }
+        run('velocity', nodesWG, e0);
+        run('reducePartial', this.reduceStride, e0, this.bodyCount);
+        run('reduceFinal', this.bodyCount, e0);
       }
-      run('velocity', nodesWG, e0);
-      run('reducePartial', this.reduceStride, e0, this.bodyCount);
-      run('reduceFinal', this.bodyCount, e0);
-      run('nearFlags', bodiesWG, e0);
+      if (!local) run('nearFlags', bodiesWG, e0);   // lokalny: w bodyStage
       for (let pass2 = 0; pass2 < 2; pass2++) {
         const e = pass2 === 0 ? e0 : e1;
-        run('collideReset', 1, e);
-        run('clearGrid', hashWG, e);
-        run('insert', nodesWG, e);
-        run('narrow', nodesWG, e);
+        if (scanContacts) {
+          run('collideReset', 1, e);
+          run('clearGrid', hashWG, e);
+          run('insert', nodesWG, e);
+          run('narrow', nodesWG, e);
+        } else {
+          runLoc('clearReset', ARG.cand, e);
+          runLoc('insertList', ARG.cand, e);
+          runLoc('narrowList', ARG.cand, e);
+        }
         run('pairArgs', 1, e);
+        runIndirect('contactBin', 3 * 4, e);
         runIndirect('pairAggregate', 0, e);
         run('response', 1, e);
         if (pass2 === 0) {
@@ -715,7 +885,7 @@ export class GpuBeamWorld {
   encodeReadback(enc) {
     let slot = this._ring.find((r) => !r.busy && !r.dead);
     if (!slot && this._ring.length < READBACK_RING) {
-      const size = MAX_BODIES * BODY_FLOATS * 4 + COUNTERS * 4 + MAX_BODIES * 4 + 64 + 32;
+      const size = MAX_BODIES * BODY_FLOATS * 4 + COUNTERS * 4 + MAX_BODIES * 4 + 64 + 32 + 64;
       slot = { buffer: this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, label: 'odczyt' }),
         busy: false, dead: false, size };
       this._ring.push(slot);
@@ -730,6 +900,7 @@ export class GpuBeamWorld {
       enc.resolveQuerySet(this.querySet, 0, 4, this.queryResolve, 0);
       enc.copyBufferToBuffer(this.queryResolve, 0, slot.buffer, bodyBytes + COUNTERS * 4 + MAX_BODIES * 4 + 64, 32);
     }
+    if (this.local) enc.copyBufferToBuffer(this.buffers.loc, 0, slot.buffer, bodyBytes + COUNTERS * 4 + MAX_BODIES * 4 + 96, 64);
     slot.busy = true;
     slot.pendingMap = true;
     slot.bodyCount = this.bodyCount;
@@ -757,7 +928,7 @@ export class GpuBeamWorld {
     if (this._topo.pending && this._topo.job && !this._topo.job.mapping) {
       const job = this._topo.job;
       job.mapping = true;
-      this.topoStaging.mapAsync(GPUMapMode.READ).then(() => {
+      this.topoMap = this.topoStaging.mapAsync(GPUMapMode.READ).then(() => {
         const bits = new Uint32Array(this.topoStaging.getMappedRange().slice(0));
         this.topoStaging.unmap();
         if (this._topo.job !== job) return;
@@ -797,6 +968,17 @@ export class GpuBeamWorld {
       state.gpuPhysicsMs = phys >= 0 && phys < 1e4 ? phys : NaN;
       state.gpuRenderMs = rend >= 0 && rend < 1e4 ? rend : NaN;
     }
+    if (this.local) {
+      const l = new Uint32Array(raw, bodyBytes + COUNTERS * 4 + MAX_BODIES * 4 + 96, 16);
+      // maksima z klatki: A, A ∪ F, A ∪ F ∪ O, belki w kubełkach, kandydaci do kontaktów
+      state.local = { maxA: l[LOC.maxA], maxS: l[LOC.maxS], maxAll: l[LOC.maxAll], maxBeams: l[LOC.maxBeams], maxCand: l[LOC.maxCand] };
+      if (slot.steps > 0) {
+        const acc = this.localAcc ||= { frames: 0, maxA: 0, maxS: 0, maxAll: 0, maxBeams: 0, maxCand: 0, sumS: 0, sumBeams: 0, sumCand: 0 };
+        acc.frames++;
+        for (const k of ['maxA', 'maxS', 'maxAll', 'maxBeams', 'maxCand']) acc[k] = Math.max(acc[k], state.local[k]);
+        acc.sumS += state.local.maxS; acc.sumBeams += state.local.maxBeams; acc.sumCand += state.local.maxCand;
+      }
+    }
     this.state = state;
     // rozpady: ciała z nowymi zerwaniami → migawka flag co splitCheckInterval kroków
     if (!this._topo.pending && !this._topo.request && this.tick - this._topo.lastTick >= (this.scene.cfg.splitCheckInterval || 10)) {
@@ -811,6 +993,15 @@ export class GpuBeamWorld {
         this._topo.lastTick = this.tick;
       }
     }
+  }
+
+  /** Solver lokalny: maksima obszaru od ostatniego wywołania (i średnie z klatek). */
+  localStats(reset = true) {
+    const a = this.localAcc;
+    if (reset) this.localAcc = null;
+    if (!a) return null;
+    return { frames: a.frames, maxA: a.maxA, maxS: a.maxS, maxAll: a.maxAll, maxBeams: a.maxBeams, maxCand: a.maxCand,
+      meanS: Math.round(a.sumS / a.frames), meanBeams: Math.round(a.sumBeams / a.frames), meanCand: Math.round(a.sumCand / a.frames) };
   }
 
   // ------------------------------------------------------------------ rozpady (CPU)
@@ -1008,7 +1199,7 @@ export class GpuBeamWorld {
   _encodeTopology(t, run, nodesWG) {
     const e = t.entries.base;
     const nBreak = t.breakBeams.length, nDoom = t.doomNodes.length;
-    if (nBreak) run('topoBreak', Math.ceil(nBreak / WG), e);
+    if (nBreak) run('topoBreak', Math.ceil(nBreak / 256), e);
     if (nDoom) {
       run('topoDoom', Math.ceil(nDoom / WG), e);
       run('deaths', nodesWG, e);
@@ -1018,8 +1209,15 @@ export class GpuBeamWorld {
       const chunks = Math.ceil(Math.max(1, t.maxList) / WG);
       run('topoAssign', chunks, e, ops);
       run('topoCut', chunks, e, ops);
-      if (t.wreckCount) run('reseat', t.wreckCount, t.entries.wrecks);
-      if (t.parentCount) run('reseat', t.parentCount, t.entries.parents);
+      // reseat po kawałkach listy: sumy → złożenie → drugi przebieg → ciała (wraki, potem rodzice) → węzły
+      run('reseatSum1', this.reduceStride, e, ops);
+      run('reseatFinal1', ops, e);
+      run('reseatSum2', this.reduceStride, e, ops);
+      if (t.wreckCount) run('reseatFinal2', t.wreckCount, t.entries.wrecks);
+      if (t.parentCount) run('reseatFinal2', t.parentCount, t.entries.parents);
+      run('reseatApply', this.reduceStride, e, ops);
+      // solver lokalny: węzły w ruchu względem nowego układu → A, drobny ruch → pęd na ciało
+      if (this.local) run('topoActivate', chunks, e, ops);
     }
   }
 

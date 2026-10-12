@@ -24,7 +24,9 @@ import {
 // Scena jak w demie: Atlas w (0, 0) kursem 0, plac stacji 700 j. „w dół ekranu gry” (+y gry
 // = −y sceny), gniazda dronów przy placu.
 function scene(mode, count = 24, drones = 6) {
-  const geo = cargoBayGeometry('atlas', 'grzbiet');
+  // Długa, wąska ładownia (Colossus — kształt dawnego luku Atlasa 312 × 131; Atlas od 2026-10-11 ma luk
+  // 346 × 275 z 15 rzędami — plan przeładunku dema pociąłby kolumny w poprzek).
+  const geo = cargoBayGeometry('terran_supercapital', 'rufa');
   const pose = { x: 0, y: 0, angle: 0 };
   const slots = bayWorldSlots(geo, pose, 0);
   const unit = { L: geo.module.L, W: geo.module.W, H: geo.module.H };

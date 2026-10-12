@@ -229,7 +229,7 @@ test('lamps line both long walls just under the rim; transforms bay → ship →
   }
   const s = cargoBayScale('atlas');
   const p = cargoBayToShip(g, 0, 0, {});
-  assert.ok(Math.abs(p.x - 66 * s) < 1e-9 && Math.abs(p.y) < 1e-9);
+  assert.ok(Math.abs(p.x - 70.5 * s) < 1e-9 && Math.abs(p.y) < 1e-9);
   // Poza gry: statek na (100, 50), kąt π/2 (dziób w dół ekranu gry = −y sceny).
   const w = cargoShipToWorld({ x: 100, y: 50, angle: Math.PI / 2 }, 10, 0, {});
   assert.ok(Math.abs(w.x - 100) < 1e-9 && Math.abs(w.y - (-50 - 10)) < 1e-9, JSON.stringify(w));

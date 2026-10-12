@@ -52,7 +52,9 @@ export const RADAR_TUNE = {
   rockMaxDraw: 2600,
   // Etykiety: w kopule tylko namierzone / wybrane, po Alt — także najbliższe wrogie.
   tagsDome: 2,
-  tagsFull: 5
+  tagsFull: 5,
+  // Napis „?” duchów ze stempli (radarDisplay.js drawGhosts); false — strokeText z obrysem na ducha (A/B pomiaru).
+  stampGhosts: true
 };
 
 // Strojenie na żywo z konsoli (zmiany działają od następnej klatki tarczy; podkład — po przeliczeniu).

@@ -46,6 +46,7 @@ import { isEntityShieldBlocking } from "../../shieldSystem.js";
 import { shieldImpactClass, submunitionDef } from "../data/weapons.js";
 import { SimClock } from "../game/simClock.js";
 import { writePointVelocity } from "../game/carrierVelocity.js";
+import { fighterSideOf, fighterSideSparesAlly } from "../game/friendlyFire.js";
 
 /*
  * UKŁAD RAKIETY (src/game/carrierVelocity.js). Rakieta startuje z prędkością
@@ -378,6 +379,8 @@ class RocketSystem3D {
                 splitRange:     0,
                 // Strzelec (tylko na czas onLaunch — efekt wyrzutni, odrzut kasety).
                 shooter:        null,
+                // Strona myśliwca-strzelca (friendlyFire.js: −1 nie myśliwiec) — shooter zerowany po wyrzucie.
+                fighterSide:    -1,
                 hostile:        false
             });
         }
@@ -497,6 +500,7 @@ class RocketSystem3D {
         r.salvoCount = count;
         r.seed = seed;
         r.shooter = launch ? (launch.shooter || null) : null;
+        r.fighterSide = fighterSideOf(r.shooter, typeof window !== "undefined" ? window.ship : null);
         r.hostile = colorTheme === "red";
 
         r.target          = target;
@@ -1209,6 +1213,8 @@ class RocketSystem3D {
         const target = r.target;
         if (!target || target.dead) return;
         if (target._isPositionTarget) return;
+        // Rakieta myśliwca nie rani własnej strony (src/game/friendlyFire.js) — jak pociski myśliwców.
+        if (fighterSideSparesAlly(r.fighterSide, target, window.ship)) return;
 
         const dmg = r.damage || 60;
 
@@ -1268,7 +1274,10 @@ class RocketSystem3D {
             (Number(entity?.h) || 0) * 0.5
         );
 
-        if (player && !player.destroyed && (!r.didImpactDamage || r.target !== player)) {
+        // Wybuch rakiety myśliwca nie rani własnej strony (src/game/friendlyFire.js).
+        const side = r.fighterSide;
+        if (player && !player.destroyed && (!r.didImpactDamage || r.target !== player)
+            && !fighterSideSparesAlly(side, player, player)) {
             const dx = (player.pos?.x ?? player.x ?? 0) - ex;
             const dz = (player.pos?.y ?? player.y ?? 0) - ez;
             // OPTIMIZATION: distSq early-reject, sqrt only if inside radius
@@ -1288,6 +1297,7 @@ class RocketSystem3D {
             const npc = npcs[i];
             if (!npc || npc.dead) continue;
             if (r.didImpactDamage && npc === r.target) continue;
+            if (fighterSideSparesAlly(side, npc, player)) continue;
             const dx = (npc.x ?? npc.pos?.x ?? 0) - ex;
             const dz = (npc.y ?? npc.pos?.y ?? 0) - ez;
             // OPTIMIZATION: distSq early-reject avoids sqrt for far NPCs (blast radius is small

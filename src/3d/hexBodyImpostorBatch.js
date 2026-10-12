@@ -107,15 +107,26 @@ function ensureBuilt() {
 // w tej klatce (pipeline synchronicznie — harness: galeria-przebicie). Na ekranie ładowania: batch od razu, pass ortho.
 Core3D.warmup?.add({ name: 'smugi dalekich kadłubów (hexBodyImpostorBatch)', objects: () => (ensureBuilt() ? mesh : null), layer: 0, phase: 'loading' });
 
+// Kolor per obraz źródłowy (audyt FPS 2026-10-11): wraki dziedziczą obraz rodu (hullBodies.js), a każdy nowy wrak
+// liczył średnią od nowa — płótno, drawImage całego sprite'a i getImageData (szczyty 0,8–1,1 ms/kl w końcówce
+// bitwy). Wynik tylko do odczytu (wołający czytają r, g, b). `averageBodyColorCache.enabled = false` — A/B.
+const _avgColorBySource = new WeakMap();
+export const averageBodyColorCache = { enabled: true };
+
 /**
- * Średni kolor sprite'a ciała — liczony RAZ, z rzadkiego próbkowania canvasa.
+ * Średni kolor sprite'a ciała — liczony RAZ na obraz, z rzadkiego próbkowania canvasa.
  * Bierzemy tylko piksele o sensownej alfie, inaczej przezroczyste tło zjadałoby
  * barwę do czerni.
  */
 export function computeAverageBodyColor(source) {
-  if (!source) return null;
+  if (!source || typeof source !== 'object') return null;
+  if (averageBodyColorCache.enabled) {
+    const cached = _avgColorBySource.get(source);
+    if (cached !== undefined) return cached;
+  }
   const width = source.naturalWidth || source.width || 0;
   const height = source.naturalHeight || source.height || 0;
+  // obraz jeszcze bez rozmiaru (wczytuje się) — bez zapamiętania, następne wołanie spróbuje znowu
   if (!width || !height) return null;
 
   // NIGDY nie wołamy getContext/getImageData na źródle. `grid.cacheCanvas` to
@@ -146,7 +157,10 @@ export function computeAverageBodyColor(source) {
     n++;
   }
   if (n === 0) return null;
-  return new THREE.Color((r / n) / 255, (g / n) / 255, (b / n) / 255);
+  const color = new THREE.Color((r / n) / 255, (g / n) / 255, (b / n) / 255);
+  // zapamiętany tylko udany wynik (płótno źródłowe bez treści albo błąd odczytu — następne wołanie spróbuje znowu)
+  if (averageBodyColorCache.enabled) _avgColorBySource.set(source, color);
+  return color;
 }
 
 export const HexBodyImpostorBatch = {

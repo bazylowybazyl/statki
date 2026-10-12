@@ -330,12 +330,12 @@ export const HullLightStore = {
 // uLodOpacity, uBillboardLighting), 9 (uSpriteSize.xy, uDmgWorld.xy), 10 (uLightDir.xyz, uLacquerWeight),
 // 11 (uShipLightCount, uEngineZoneCount, uLightBase, uLacquerGlint), 12 uDmgSlot, 13 (uGridOwner, widoczność),
 // 14–16 uWarpA / uWarpB / uWarpC, 17–21 uCloakA..E (maskowanie, src/game/cloakLook.js — 2026-10-04;
-// E — heksy-ekrany, 2026-10-05).
+// E — heksy-ekrany, 2026-10-05), 22 uBayCut (otwarty luk ładowni w uv sprite'a — 2026-10-11).
 // Slot 0 = zera (trzymacze grafu, rozgrzewka, pula pełna).
 // Partie kadłubów (hullSkinBatch.js): numer slotu w atrybucie wierzchołka, siatka kadłuba (nośnik
 // macierzy i material.uniforms) poza sceną — zapis co render niezależnie od rodzica, z flagą widoczności
 // (niewidoczny kadłub zwija się w wierzchołku — bez przepisywania indeksów partii).
-export const HULL_OBJECT_SLOT_VEC4 = 22;
+export const HULL_OBJECT_SLOT_VEC4 = 23;
 export const HULL_OBJECT_SLOTS = 1024;
 const _hullMV = new THREE.Matrix4();
 
@@ -445,6 +445,8 @@ export const HullObjectStore = {
       A[o + 76] = kc.x; A[o + 77] = kc.y; A[o + 78] = kc.z; A[o + 79] = kc.w;
       A[o + 80] = kd.x; A[o + 81] = kd.y; A[o + 82] = kd.z; A[o + 83] = kd.w;
       A[o + 84] = ke.x; A[o + 85] = ke.y; A[o + 86] = ke.z; A[o + 87] = ke.w;
+      const bc = u.uBayCut ? u.uBayCut.value : null;
+      A[o + 88] = bc ? bc.x : 0; A[o + 89] = bc ? bc.y : 0; A[o + 90] = bc ? bc.z : 0; A[o + 91] = bc ? bc.w : 0;
       if (slot < lo) lo = slot;
       if (slot > hi) hi = slot;
       n++;
@@ -511,6 +513,8 @@ function objectStoreNodesFor(slot) {
     uCloakC: v(19),
     uCloakD: v(20),
     uCloakE: v(21),
+    // Otwarty luk ładowni: (u0, v0, u1, v1) w uv sprite'a; u1 ≤ u0 — wyłączone.
+    uBayCut: v(22),
     hullVisible: v(13).y,
     // Siatka komórek kadłuba w uv sprite'a (płyty łat polowych; 0 — nieznana).
     uCellGrid: v(13).zw
@@ -700,6 +704,15 @@ function hullFragmentNode(opts) {
       Discard();
     });
 
+    // Otwarty luk ładowni (fregata zwiadu Atlasa, src/3d/cargo/scoutBay3D.js): w prostokącie otworu skóra znika —
+    // wnętrze luku stoi pod nią, wrota (wierzch z wycinka sprite'a) rysuje osobna bryła.
+    if (P.uBayCut) {
+      const bc = P.uBayCut.toVar();
+      If(bc.z.greaterThan(bc.x).and(spriteUV.x.greaterThan(bc.x)).and(spriteUV.x.lessThan(bc.z))
+        .and(spriteUV.y.greaterThan(bc.y)).and(spriteUV.y.lessThan(bc.w)), () => {
+        Discard();
+      });
+    }
     const sprite = perObjectTexture('uSprite', PLACEHOLDER_SPRITE, spriteUV);
     const armorRgb = sprite.rgb.toVar();
     const patchInfo = opts.shade && opts.patchCode ? decodeHullPatchShade(opts.shade) : null;

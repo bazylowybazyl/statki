@@ -1,11 +1,13 @@
-// Misja 1 w PRAWDZIWEJ grze (2026-10-07): zegar wodowania i herszt — Vite + headless Chrome z WebGPU (CDP).
+// Misja 1 w PRAWDZIWEJ grze: zegar startów i herszt w BAZIE PIRATÓW (2026-10-11; dawniej parking suchego doku) —
+// Vite + headless Chrome z WebGPU (CDP).
 //
-//   node scripts/webgpu/wodowanie-gra.mjs [--czas 150] [--zoom 0.055] [--out .tmp/wodowanie] [--rozmiar 1600x900]
+//   node scripts/webgpu/wodowanie-gra.mjs [--czas 150] [--zoom 0.045] [--out .tmp/wodowanie] [--rozmiar 1600x900]
 //
-// Skok dev ?story=defences (alarm po taranie, trzy okręty parkingu zmiażdżone), kamera RTS nad parkingiem.
-// Co sekundę: stan każdego okrętu parkingu i pochylni (w stanowisku / przy działach / wystartował — odległość od
-// stanowiska, strona ogrodzenia), bramy stanowisk wyrwane, cel misji, baner, podpowiedź, mostek herszta.
-// Po pierwszym starcie z parkingu: herszt do 60% punktów (przyspiesza starty), potem do 30% (ucieczka i skok).
+// Skok dev ?story=defences (alarm po taranie rzędu przy ramieniu A), kamera RTS nad środkiem bazy (cała baza w kadrze).
+// Co sekundę: stan każdego okrętu z załogą (w stanowisku / przy działach / wystartował — odległość od stanowiska przy
+// pomoście), okręty w remoncie zniszczone, drony, kawałki bazy odpadłe, cel misji, baner, podpowiedź, mostek herszta
+// (supercapital w zatoce przy zbiornikach).
+// Po pierwszym starcie od pomostu: herszt do 60% punktów (przyspiesza starty), potem do 30% (ucieczka i skok).
 // Atlas trzymany przy życiu (tarcza i kadłub doładowywane) — sprawdzamy misję, nie przeżycie.
 // Wynik: <out>/*.png, <out>/raport.json (próbki, zdarzenia, błędy konsoli).
 import { mkdirSync } from 'node:fs';
@@ -28,12 +30,14 @@ const report = { probki: [], zdarzenia: [], bledy: [] };
 const SAMPLE = `(() => {
   const S = window.StoryGame, site = S.site, dock = site?.dock;
   const hub = (e) => { const p = e.pos || e; return dock ? dock.toHub(p.x, p.y) : { x: 0, z: 0 }; };
-  const fenceZ = dock ? dock.layout.parking.z1 : 0;
+  const berths = dock ? dock.layout.berths : [];
   const one = (e) => {
     if (!e) return null;
     const h = hub(e);
+    const b = Number.isInteger(e.__dockBerth) ? berths[e.__dockBerth] : null;
     const st = e.dead || !(e.hp > 0) ? 'zniszczony' : e.__storyLaunched ? 'wystartował' : (e.ai && !e.combatDisabled ? 'przy działach' : 'w stanowisku');
-    return { st, za_ogrodzeniem: Math.round(h.z - fenceZ), v: Math.round(Math.hypot(e.vx || e.vel?.x || 0, e.vy || e.vel?.y || 0)), hp: +(e.hp / (e.maxHp || 1)).toFixed(2) };
+    return { id: e.__berthId || null, st, od_stanowiska: b ? Math.round(Math.hypot(h.x - b.x, h.z - b.z)) : null,
+      v: Math.round(Math.hypot(e.vx || e.vel?.x || 0, e.vy || e.vel?.y || 0)), hp: +(e.hp / (e.maxHp || 1)).toFixed(2) };
   };
   const boss = site?.flagship;
   const bridge = S.ui.markers.get('bridge');
@@ -42,14 +46,24 @@ const SAMPLE = `(() => {
     t: +S.runner.time.toFixed(1), faza: S.phase,
     cel: S.ui.objective ? S.ui.objective.text + (S.ui.objective.progress ? ' [' + S.ui.objective.progress() + ']' : '') : null,
     baner: S.ui.banner?.text || null, podpowiedz: S.ui.hint?.spec?.title || null,
-    parking: (site?.parkedList || []).map(one), pochylnie: (site?.slipList || []).map(one),
+    zaloga: (site?.crewList || []).map(one),
+    remontZniszczone: (site?.repairList || []).filter((e) => e && (e.dead || !(e.hp > 0))).length,
+    drony: (site?.droneList || []).filter((e) => e && !e.dead).length,
     eskorta: (site?.defenderList || []).filter((e) => e !== boss && !e.dead).length,
     herszt: boss ? { ...one(boss), uciekl: !!boss.warpedOut, skok: !!boss.__warpReturn, mostek: bridge ? Math.round(Math.hypot(bridge.x - bp.x, bridge.y - bp.y)) : null } : null,
-    bramy: (window.__dockBroken?.() || []).filter((id) => /^B-/.test(id)),
+    odpadle: window.__baseBroken?.() || [],
     cele: S.ui.targets.size,
     atlas: { tarcza: Math.round(window.ship.shield?.val || 0), kadlub: +(window.HullBodies?.structuralState?.(window.ship)?.ratio ?? 1).toFixed(2) }
   };
 })()`;
+const camCenter = (zoom) => ev(`(() => {
+  const site = window.StoryGame.site, c = window.camera, d = site.dock;
+  const p = d.toGame(d.layout.center.x, d.layout.center.z);
+  if (c.mode !== 'rts' && typeof c.enterRtsMode === 'function') c.enterRtsMode();
+  c.x = c.targetX = p.x; c.y = c.targetY = p.y; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${zoom};
+  document.getElementById('cockpit-ui-host')?.classList.add('hidden');
+  return true;
+})()`);
 
 try {
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1&story=defences` });
@@ -60,21 +74,14 @@ try {
   await sleep(900);
   await ev(`(() => { document.querySelector('[data-story-campaign="1"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && window.StoryGame.active && window.StoryGame.phase === 'defences'", 300000, 400)) throw new Error('brak fazy defences');
-  // Atlas przy życiu; kawałki doku odpadłe — z modułu doku (bramy stanowisk przy starcie)
+  // Atlas przy życiu; kawałki bazy odpadłe (rozbite albo schowane bryły — nie ciała w bańce gracza)
   await ev(`(() => {
-    window.__dockBroken = () => (window.StoryGame.site?.station?._dockGone ? [...window.StoryGame.site.station._dockGone] : []);
+    window.__baseBroken = () => { const b = window.StoryGame.site?.station?._base3d; return b ? b.chunkState.filter((s) => s.broken || s.hidden).map((s) => s.id) : []; };
     setInterval(() => { const s = window.ship; if (s?.shield) s.shield.val = s.shield.max; if (s && s.maxHp) s.hp = s.maxHp; }, 250);
     return true;
   })()`);
-  // kamera RTS nad parkingiem (tor taranu), bez HUD-u kokpitu
-  const zoom = Number(args.zoom || 0.055);
-  await ev(`(() => {
-    const site = window.StoryGame.site, c = window.camera, d = site.dock;
-    const p = d.toGame(0, d.layout.parking.z1 - 600);
-    if (c.mode !== 'rts' && typeof window.enterRtsMode === 'function') window.enterRtsMode();
-    c.x = c.targetX = p.x; c.y = c.targetY = p.y; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${zoom};
-    return true;
-  })()`);
+  const zoom = Number(args.zoom || 0.045);
+  await camCenter(zoom);
   const t0 = Date.now();
   let n = 0;
   let rushed = false;
@@ -84,13 +91,16 @@ try {
     await sleep(1000);
     const p = await ev(SAMPLE);
     report.probki.push(p);
-    const launched = p.parking.filter((x) => x?.st === 'wystartował').length + p.pochylnie.filter((x) => x?.st === 'wystartował').length;
+    const launched = p.zaloga.filter((x) => x?.st === 'wystartował').length;
     if (launched > lastLaunched) {
-      report.zdarzenia.push({ t: p.t, co: `start #${launched}`, baner: p.baner });
+      report.zdarzenia.push({ t: p.t, co: `start #${launched}`, baner: p.baner, okret: p.zaloga.filter((x) => x?.st === 'wystartował').map((x) => x.id) });
       await screenshotPng(cdp, join(out, `start-${launched}-t${Math.round(p.t)}.png`));
       lastLaunched = launched;
     }
-    if (n % 10 === 0) { console.log(JSON.stringify({ t: p.t, cel: p.cel, baner: p.baner, bramy: p.bramy, herszt: p.herszt })); await screenshotPng(cdp, join(out, `t${String(Math.round(p.t)).padStart(3, '0')}.png`)); }
+    if (n % 10 === 0) {
+      console.log(JSON.stringify({ t: p.t, cel: p.cel, baner: p.baner, starty: launched, drony: p.drony, odpadle: p.odpadle.length, herszt: p.herszt }));
+      await screenshotPng(cdp, join(out, `t${String(Math.round(p.t)).padStart(3, '0')}.png`));
+    }
     // herszt: po pierwszym starcie — 60% (przyspieszenie), 6 s później 30% (ucieczka)
     if (!rushed && launched >= 1 && p.herszt) {
       rushed = true;
@@ -101,12 +111,12 @@ try {
       await ev(`(() => { const b = window.StoryGame.site.flagship; b.hp = b.maxHp * 0.3; return true; })()`);
       report.zdarzenia.push({ t: p.t, co: 'herszt 30%' });
       await sleep(1500);
-      // kadr na hersztu z mostkiem
+      // kadr na herszta z mostkiem
       await ev(`(() => { const b = window.StoryGame.site.flagship, c = window.camera, q = b.pos || b; c.x = c.targetX = q.x; c.y = c.targetY = q.y; c.zoom = c.targetZoom = c.zoomBase = 0.18; return true; })()`);
       await sleep(800);
       await screenshotPng(cdp, join(out, 'herszt-ucieka-mostek.png'));
       report.zdarzenia.push({ co: 'herszt — stan', ...(await ev(SAMPLE)).herszt });
-      await ev(`(() => { const site = window.StoryGame.site, c = window.camera, d = site.dock; const q = d.toGame(0, d.layout.parking.z1 - 600); c.x = c.targetX = q.x; c.y = c.targetY = q.y; c.zoom = c.targetZoom = c.zoomBase = ${zoom}; return true; })()`);
+      await camCenter(zoom);
     }
     if (p.herszt?.uciekl && !report.zdarzenia.some((z) => z.co === 'herszt uciekł')) report.zdarzenia.push({ t: p.t, co: 'herszt uciekł', baner: p.baner });
     n++;
