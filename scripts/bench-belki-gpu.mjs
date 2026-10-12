@@ -8,6 +8,7 @@
 //   node scripts/bench-belki-gpu.mjs --siatki 120,240     ograniczenie siatek
 //   node scripts/bench-belki-gpu.mjs --bez-cpu            tylko GPU
 //   node scripts/bench-belki-gpu.mjs --q "gs=0"           parametry strony (gs=0: dispatch na kolor, gsSize=256)
+//   node scripts/bench-belki-gpu.mjs --strona dema/destruktor2d-webgpu-ref.html   inna kopia dema (A/B)
 //
 // Wynik: tabela na stdout i JSON w .tmp/belki-gpu/bench.json.
 import { join } from 'node:path';
@@ -59,6 +60,7 @@ const pageScript = (c) => `(async () => {
   out.encode = stats(r.encode);
   out.substeps = stats(ticks.map((t) => t.substeps));
   out.dispatches = stats(ticks.map((t) => t.dispatches));
+  out.local = G.world.localStats ? G.world.localStats() : null;
   const summary = await G.readSummary();
   out.gpuEnd = { broken: summary.counters[1], killed: summary.counters[3], bodies: summary.bodies.filter((b) => !b.dead).length,
     wrecks: summary.bodies.filter((b) => b.wreck && !b.dead).length, nan: summary.nan };
@@ -97,7 +99,7 @@ const { cdp } = chrome;
 const results = [];
 const f = (s, k = 'mean') => (s ? s[k].toFixed(3) : '—').padStart(8);
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/destruktor2d-webgpu.html${args.q ? '?' + args.q : ''}` });
+  await cdp.send('Page.navigate', { url: `${base}/${args.strona || 'dema/destruktor2d-webgpu.html'}${args.q ? '?' + args.q : ''}` });
   const ok = await waitFor(cdp, '!!(window.__gpu2d && (window.__gpu2d.started || window.__gpu2d.error))', 180000, 300);
   const adapter = await evaluate(cdp, 'window.__gpu2d.error || window.__gpu2d.adapter');
   console.log(`adapter: ${adapter}${ok ? '' : ' (strona nie wystartowała)'}`);
@@ -114,6 +116,8 @@ try {
       console.log(`   ${key === 'cpuLocal' ? 'CPU lokalny' : 'CPU pełny  '} ms/krok: średnio ${f(r[key])}  mediana ${f(r[key], 'median')}  p95 ${f(r[key], 'p95')}` +
         `  maks ${f(r[key], 'max')}  | lot ${f(r[key + 'Flight'])} styk ${f(r[key + 'Contact'])}  (${r[key + 'Steps']} kroków)`);
     }
+    if (r.local) console.log(`   obszar lokalny (maks. / średnio na klatkę): A ${r.local.maxA}, A∪F ${r.local.maxS} / ${r.local.meanS}, ` +
+      `z pierścieniem ${r.local.maxAll}, belki ${r.local.maxBeams} / ${r.local.meanBeams}, kandydaci ${r.local.maxCand} / ${r.local.meanCand}`);
     console.log(`   koniec GPU: zerwania ${r.gpuEnd.broken}, ciała ${r.gpuEnd.bodies}, wraki ${r.gpuEnd.wrecks}${r.gpuEnd.nan ? `, NaN ${r.gpuEnd.nan}` : ''}` +
       (r.cpuFullEnd ? ` | CPU pełny: ${JSON.stringify(r.cpuFullEnd)}` : ''));
   }

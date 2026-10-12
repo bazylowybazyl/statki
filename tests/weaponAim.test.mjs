@@ -12,6 +12,7 @@ import { spatialCellKey } from '../src/game/spatialCellKey.js';
 import { nextProjectileSerial, hasHullMechanics } from '../src/game/projectileMechanics.js';
 import { chargeTimeOf, mountChargeState, requestMountCharge } from '../src/game/weaponCharge.js';
 import { CARRIER_SCOPE } from './helpers/carrierScope.mjs';
+import { beamPassesAlly } from '../src/game/friendlyFire.js';
 
 globalThis.window = {};
 const { getLeadAim } = await import('../src/ai/aiUtils.js');
@@ -221,7 +222,7 @@ function firingCore(ship, owner = 'player') {
     createPdBeamHit, resolvePdBeamHit, isPointDefenseWeapon, spatialCellKey,
     // Zadanie 18-B: numer pocisku (hash rykoszetu) i dane mechaniki kadłuba na pocisku.
     nextProjectileSerial, hasHullMechanics,
-    getEntityShieldRayEnter: () => -1, getEntityShieldBlockingRadius: () => 0, isEntityShieldBlocking: () => false, findBeamHexShard: () => null, DestructorSystem: {},
+    getEntityShieldRayEnter: () => -1, getEntityShieldBlockingRadius: () => 0, isEntityShieldBlocking: () => false, beamPassesAlly, findBeamHexShard: () => null, DestructorSystem: {},
     CustomEvent: class { constructor(type, data) { Object.assign(this, data); } },
     // Rdzeń nadaje szyną strzałów; detail.beam to obiekt wspólny — kopiujemy.
     WeaponShotBus: {

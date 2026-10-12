@@ -2,16 +2,19 @@
 // z WebGPU (CDP), czas wirtualny harnessu (klatka = 1/60 s), zrzuty na zatrzymanej klatce. Każda scena dwa razy z tym
 // samym ziarnem efektów i zegarem gazu: z przeszkodami i bez (EXPLOSION_TUNE.obstacles / hullObstacles) — A/B obrazu.
 //
-//   node scripts/webgpu/przeszkody-gra.mjs [--sceny brama,wyrwa,przelot,hala] [--out .tmp/przeszkody-gra] [--rozmiar 1600x900]
+//   node scripts/webgpu/przeszkody-gra.mjs [--sceny pomost,wyrwa,przelot,hala] [--out .tmp/przeszkody-gra] [--rozmiar 1600x900]
 //        [--port 5381]
 //
-// Sceny (misja 1, skok dev ?story=ram — suchy dok postawiony; gracz z dala od doku — kawałki to statyka):
-//   brama   — wybuch na parkingu 350 j. od bramy taranowej G-W: brama, rama i ogrodzenie trzymają gaz,
-//   wyrwa   — to samo z wyrwaną bramą (kawałek odpadł): gaz wylewa się otworem,
+// Sceny (misja 1, skok dev ?story=ram — baza piratów postawiona; gracz z dala od bazy — kawałki to statyka):
+//   pomost  — wybuch 350 j. od pokładu pomostu magazynu MP (wolna strona, x > pomostu): pokład trzyma gaz, okręty
+//             w stanowiskach po drugiej stronie (F-L1…F-L4) zostają w czystym,
+//   wyrwa   — to samo z pomostem schowanym (kawałek odpadł): gaz przelewa się na okręty,
 //   przelot — Atlas leci 500 j/s obok wybuchu (kadłub rozcina dym); maska kadłuba z GPU (przekrój velA.w) porównana
 //             z obrysem encji liczonym na CPU z pozy (hullFootprint) — „rozjazd maski z kadłubem”,
-//   ruszony — gracz w bańce (kawałki doku to ciała), brama G-W z wyrwą 260 j. (HullBodies.impact): gaz widzi obrys
-//             ciała, nie bryłę trafień — wylewa się wyrwą,
+//   ruszony — gracz w bańce (kawałki bazy to ciała), pomost MP z wyrwą 260 j. (HullBodies.impact): gaz widzi obrys
+//             ciała, nie bryłę trafień — przelewa się wyrwą,
+//   beben   — wybuch 350 j. od lica ściany bębna habitatu od zewnątrz (ćwiartka H-S): wycinek pierścienia jako kilka pudeł
+//             (putGasObstaclePoly, 2026-10-11 — dawniej pudło z pierwszych 4 rogów wielokąta i gaz przenikał ścianę),
 //   gospodarz — pancernik w ruchu ginie, wybuch ze zbiornika WEWNĄTRZ kadłuba: wrak-gospodarz wyłączony z maski (gra) ↔
 //             wrak jako przeszkoda (hostExclude false) ↔ bez przeszkód,
 //   hala    — hala K-7 Ziemi: wybuch przy ścianie bocznej wewnątrz hali (ściana i przypory trzymają gaz).
@@ -21,7 +24,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 
 const args = parseArgs();
-const sceny = String(args.sceny || 'brama,wyrwa,przelot,gospodarz,hala').split(',');
+const sceny = String(args.sceny || 'pomost,wyrwa,beben,przelot,gospodarz,hala').split(',');
 const [W, H] = String(args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/przeszkody-gra');
 mkdirSync(out, { recursive: true });
@@ -149,16 +152,18 @@ try {
   await ev('(() => { const h = window.__harness; h.clock.t = h.realNow(); h.clock.mode = "frozen"; h.hold(true); return true; })()');
   await ev('window.__harness.step(30)');
 
-  // Brama taranowa G-W (koniec parkingu, światło 880 j.): wybuch w parkingu 350 j. od bramy (kula R 480 sięga bramy).
-  const gate = await ev(`(() => { const d = window.StoryGame.site.dock, l = d.layout, P = l.parking;
-    const g = P.gates.find((q) => q.id === 'G-W');
-    const p = d.toGame(g.x + 350, g.z), c = d.toGame(g.x + 60, g.z);
-    return { id: g.id, x: p.x, y: p.y, cx: c.x, cy: c.y }; })()`);
-  if (sceny.includes('brama') || sceny.includes('wyrwa')) {
-    for (const nm of ['brama', 'wyrwa'].filter((q) => sceny.includes(q))) {
+  // Pomost magazynu MP (oś x = 5100, z −1450…−3550; okręty tylko po stronie −x): wybuch 350 j. od osi po wolnej
+  // stronie (+x) w połowie długości (kula R 480 sięga pokładu, pół szerokości 85 + 8).
+  const gate = await ev(`(() => { const d = window.StoryGame.site.dock, l = d.layout;
+    const p = l.piers.find((q) => q.id === 'M-P'), s = p.len * 0.5;
+    const mx = p.ax + p.ux * s, mz = p.az + p.uz * s;
+    const b = d.toGame(mx + p.nx * 350, mz + p.nz * 350), c = d.toGame(mx + p.nx * 60, mz + p.nz * 60);
+    return { id: p.chunks[0], x: b.x, y: b.y, cx: c.x, cy: c.y, hub: { x: mx, z: mz }, n: { x: p.nx, z: p.nz } }; })()`);
+  if (sceny.includes('pomost') || sceny.includes('wyrwa')) {
+    for (const nm of ['pomost', 'wyrwa'].filter((q) => sceny.includes(q))) {
       const k0 = await frameK();
       await camAt(gate.cx, gate.cy, 0.22);
-      if (nm === 'wyrwa') await ev(`(() => { window.StoryGame.site.station._dock3d.hideChunk('${gate.id}'); return true; })()`);
+      if (nm === 'wyrwa') await ev(`(() => { window.StoryGame.site.station._base3d.hideChunk('${gate.id}'); return true; })()`);
       await ev('window.__harness.step(3)');
       const rows = await abScene(nm, {
         boom: `window.makeReactorBlow({ x: ${gate.x}, y: ${gate.y}, size: 300, profile: 'capital' })`,
@@ -169,16 +174,33 @@ try {
     }
   }
 
+  if (sceny.includes('beben')) {
+    // Ściana bębna habitatu od południa (ćwiartka H-S, lico na promieniu drumR): wybuch 350 j. na zewnątrz
+    const k0 = await frameK();
+    const B = await ev(`(() => { const d = window.StoryGame.site.dock, H = d.layout.habitat;
+      const b = d.toGame(0, H.drumR + 350), c = d.toGame(0, H.drumR + 60); return { x: b.x, y: b.y, cx: c.x, cy: c.y }; })()`);
+    await camAt(B.cx, B.cy, 0.22);
+    await ev('window.__harness.step(3)');
+    const rows = await abScene('beben', {
+      boom: `window.makeReactorBlow({ x: ${B.x}, y: ${B.y}, size: 300, profile: 'capital' })`,
+      times: [0.4, 1.0, 2.0, 3.2]
+    });
+    report.sceny.beben = { B, rows, pipeline: await pipesSince(k0) };
+    console.log('beben pipeline', JSON.stringify(report.sceny.beben.pipeline));
+  }
+
   if (sceny.includes('ruszony')) {
-    // Kawałek RUSZONY (ciało silnika belek z wyrwą): gracz w bańce (kawałki doku to ciała), brama G-W z dziurą 260 j.
-    // na środku — gaz widzi obrys ciała (maska z żywych węzłów), nie bryłę trafień: wylewa się wyrwą.
+    // Kawałek RUSZONY (ciało silnika belek z wyrwą): gracz w bańce (kawałki bazy to ciała), pomost MP z dziurą 260 j.
+    // na środku — gaz widzi obrys ciała (maska z żywych węzłów), nie bryłę trafień: przelewa się wyrwą.
     const k0 = await frameK();
     const info = await ev(`(async () => {
-      const S = window.StoryGame, d = S.site.dock, st = S.site.station, l = d.layout, g = l.parking.gates.find((q) => q.id === 'G-W');
-      const pl = d.toGame(g.x - 3200, g.z); S.deps.placePlayer(pl.x, pl.y, d.axis); window.ship.vel.x = 0; window.ship.vel.y = 0;
+      const S = window.StoryGame, d = S.site.dock, st = S.site.structures.piers, G = ${JSON.stringify(gate)};
+      const g = { x: G.hub.x, z: G.hub.z };
+      // gracz 5 km w bok od bazy (poza obwiednią, w bańce 7 km pomostu)
+      const pl = d.toGame(g.x, d.layout.bounds.z0 - 2600); S.deps.placePlayer(pl.x, pl.y, d.axis); window.ship.vel.x = 0; window.ship.vel.y = 0;
       const h = window.__harness;
       let p = null;
-      for (let i = 0; i < 400; i++) { await h.step(1); p = window.WorldBodies.piece(st._worldSite, 'G-W'); if (p && p.state === 'live' && p.entity) break; }
+      for (let i = 0; i < 400; i++) { await h.step(1); p = window.WorldBodies.piece(st._worldSite, G.id); if (p && p.state === 'live' && p.entity) break; }
       if (!p?.entity) return { ok: false, state: p?.state };
       const c = d.toGame(g.x, g.z);
       const hit = window.HullBodies.impact(p.entity, c.x, c.y, 5000, null, { craterRadius: 130 });
@@ -187,7 +209,7 @@ try {
       const forced = !p.touched;
       if (forced) p.touched = true;
       await h.step(20);
-      const b = d.toGame(g.x + 350, g.z), cam = d.toGame(g.x + 60, g.z);
+      const b = d.toGame(g.x + G.n.x * 350, g.z + G.n.z * 350), cam = d.toGame(g.x + G.n.x * 60, g.z + G.n.z * 60);
       return { ok: true, hit: !!hit, forced, nodes: p.entity?.beamHull?.body?.activeNodes ?? null, base: p.baseNodes, touched: !!p.touched, state: p.state, islands: p.islands.length, x: b.x, y: b.y, cx: cam.x, cy: cam.y };
     })()`);
     console.log('ruszony', JSON.stringify(info));

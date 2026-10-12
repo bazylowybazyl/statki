@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stepDecay120, ticksAt120, REF_STEP_DT } from '../src/game/stepDecay.js';
 
-// Krok fizyki przełączany ?physHz (domyślnie 120 Hz). Stałe strojone „na krok
+// Krok fizyki przełączany ?physHz (domyślnie 60 Hz od 2026-10-11). Stałe strojone „na krok
 // 1/120 s” muszą dawać ten sam przebieg w czasie rzeczywistym przy 60/240 Hz,
 // a przy 120 Hz — dokładnie te same wartości co przed przełącznikiem.
 
@@ -33,12 +33,13 @@ test('ticksAt120: ten sam czas w krokach innej długości, przy 1/120 s wartoś�
   assert.equal(ticksAt120(1, 1 / 60), 1, 'co najmniej jeden krok');
 });
 
-test('index.html: ?physHz z białej listy, domyślnie 120, worker v2 zostaje przy 120', () => {
+test('index.html: ?physHz z białej listy, domyślnie 60, worker v2 zawsze 120', () => {
   const html = read('index.html');
-  assert.match(html, /const PHYS_HZ_DEFAULT = 120;/);
+  assert.match(html, /const PHYS_HZ_DEFAULT = 60;/);
+  assert.match(html, /const PHYS_HZ_WORKER_V2 = 120;/);
   assert.match(html, /const PHYS_HZ_ALLOWED = \[60, 90, 120, 240\];/);
   assert.match(html, /const PHYS_HZ = resolvePhysicsHz\(\);/);
-  assert.match(html, /requested !== PHYS_HZ_DEFAULT && DevFlags\.workerPhysicsV2/);
+  assert.match(html, /if \(DevFlags\.workerPhysicsV2\) \{[\s\S]{0,200}return PHYS_HZ_WORKER_V2;/);
   assert.match(html, /PerfHUD\.setPhysicsHz\(PHYS_HZ\);/);
   assert.match(html, /new FixedStepCadence\(PHYS_HZ, AI_DECISION_TARGET_HZ\)/, 'mózg AI zostaje przy 20 Hz');
 });

@@ -45,6 +45,9 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   // Wyprzedzenie = pełne × (1 − e^(−v / (to × v_max))): 63% przy ¼ v_max, 98% przy v_max.
   // Liniowe v / v_max było niewidoczne — Atlas (v_max 10 000) po 6 s ciągu leci ~1400 j/s.
   leadSpeedRef: 0.25,
+  // Stery fregaty zwiadu (2026-10-11, prośba użytkownika: „fregata jest na środku ekranu — trudniej zbadać bazę;
+  // kamera wraz z przyspieszeniem powinna przejść do przodu”): pełne wyprzedzenie z prędkości fregaty, bez kursora.
+  scoutLead: 0.55,
   // Walka
   combatLook: 0.75,
   combatLead: 0.12,
@@ -58,6 +61,10 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   combatEnterTime: 0.5, // s przejścia nawigacja → walka
   combatExitTime: 1.5,  // s przejścia walka → nawigacja
   hostileRangeScale: 1.2, // wróg bliżej niż zasięg broni głównej × to = walka
+  // Kursor poza kanwą (nad panelem HUD, poza oknem): punkt patrzenia trzymany tyle s, potem wraca do środka
+  // (2026-10-11: dawniej trzymany bez końca — kadr zostawał przesunięty tam, gdzie kursor zszedł z kanwy).
+  lookAwayHold: 2.5,
+  lookAwayTau: 1.2,     // s — stała zaniku punktu patrzenia po lookAwayHold
   // Wstrząs (px ekranu)
   shakeScale: 0.5,      // camera.addShake(mag) → mag × to px
   weaponShakeScale: 0.12, // wstrząs strzałów (WeaponFx, window.__weapon3dCameraShake) → mag × to px
@@ -80,6 +87,7 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   navLead: [0, 0.8],
   navOmega: [0.5, 20],
   leadSpeedRef: [0.02, 2],
+  scoutLead: [0, 0.8],
   combatLook: [0, 1.2],
   combatLead: [0, 0.8],
   combatOmega: [0.5, 30],
@@ -90,6 +98,8 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   combatEnterTime: [0.05, 5],
   combatExitTime: [0.05, 8],
   hostileRangeScale: [0, 3],
+  lookAwayHold: [0, 30],
+  lookAwayTau: [0.05, 10],
   shakeScale: [0, 3],
   weaponShakeScale: [0, 2],
   shakeMaxPx: [0, 80],
@@ -116,6 +126,8 @@ const WARP_PULSE_END = 4;
 const WARP_ZOOM_OUT_RATE = 1.5;
 // Kop w px przy kadrze tej wysokości (demo 1920×1080) — wyżej / niżej proporcjonalnie, jak wyprzedzenie.
 const WARP_KICK_REF_H = 1080;
+// Odstęp środka statku od pasa HUD (ułamek wysokości kadru) — input.insetTop / insetBottom.
+const HUD_PAD = 0.04;
 
 export const CAMERA_LOOK_MODES = Object.freeze(['auto', 'always', 'never']);
 
@@ -171,6 +183,8 @@ export function createCameraRig() {
     // Ostatni punkt patrzenia kursora, znormalizowany do pół ekranu (−1…1 na krawędzi).
     lookNX: 0,
     lookNY: 0,
+    // Ile s kursor jest poza kanwą (input.lookAway).
+    lookAwayT: 0,
     // Waga walki 0…1 (liniowa) i jej wygładzona postać używana do mieszania.
     combatRaw: 0,
     combat: 0,
@@ -257,9 +271,15 @@ function springAxis(rig, posKey, velKey, target, omega, h) {
 // input:
 //   viewW, viewH       — rozmiar kadru w px
 //   mouseX, mouseY     — kursor w px kadru
-//   lookFrozen         — true: trzymaj ostatni punkt patrzenia
+//   lookFrozen         — true: trzymaj ostatni punkt patrzenia (kursor zajęty UI)
+//   lookAway           — true: kursor poza kanwą — trzymaj lookAwayHold s, potem wróć do środka
 //   lookEnabled        — false: kursor nie rusza kamerą (split-screen)
-//   velX, velY         — prędkość statku (j/s), maxSpeed — v_max trybu napędu
+//   lookScale          — mnożnik zaglądania za kursorem (reżyser kadru: cameraDirector.lookScale), domyślnie 1
+//   biasX, biasY       — przesunięcie środka kadru od reżysera kadru [px, po sprężynie, w kadrze]
+//   insetTop, insetBottom — pasy kadru zasłonięte przez HUD [px]: środek statku zostaje poza nimi (+ HUD_PAD)
+//   velX, velY         — prędkość prowadzonego okrętu (j/s), maxSpeed — jego v_max (Atlas: tryb napędu)
+//   leadGain           — pełne wyprzedzenie (ułamek pół ekranu) zamiast mieszanki postaw (stery fregaty zwiadu:
+//                        tune.scoutLead); brak / NaN — navLead ↔ combatLead wg wagi walki
 //   mode               — 'auto' | 'always' | 'never' (opcja „Kamera za kursorem”)
 //   holdDt             — czas gry tej klatki (0 w pauzie) — tyle schodzi z trzymania walki
 // Zwraca rig (offsetX/offsetY w px: kamera = statek + offset / zoom).
@@ -285,11 +305,23 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   if (input.lookEnabled === false) {
     rig.lookNX = 0;
     rig.lookNY = 0;
-  } else if (!input.lookFrozen) {
+    rig.lookAwayT = 0;
+  } else if (input.lookFrozen) {
+    rig.lookAwayT = 0;
+  } else if (input.lookAway) {
+    rig.lookAwayT += h;
+    if (rig.lookAwayT > finite(tune.lookAwayHold, 2.5)) {
+      const k = Math.exp(-h / Math.max(0.05, finite(tune.lookAwayTau, 1.2)));
+      rig.lookNX *= k;
+      rig.lookNY *= k;
+    }
+  } else {
+    rig.lookAwayT = 0;
     rig.lookNX = clamp((finite(input.mouseX, halfW) - halfW) / halfW, -1.5, 1.5);
     rig.lookNY = clamp((finite(input.mouseY, halfH) - halfH) / halfH, -1.5, 1.5);
   }
-  const lookGain = tune.navLook + (tune.combatLook - tune.navLook) * w;
+  const lookScale = clamp(finite(input.lookScale, 1), 0, 1);
+  const lookGain = (tune.navLook + (tune.combatLook - tune.navLook) * w) * lookScale;
   let lookX = 0;
   let lookY = 0;
   // Math.sqrt, nie Math.hypot — ten alokuje w V8 (pułapka z zadania 17), a krok idzie co klatkę.
@@ -305,7 +337,10 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const vy = finite(input.velY, 0);
   const speed = Math.sqrt(vx * vx + vy * vy);
   const maxSpeed = Math.max(1, finite(input.maxSpeed, 1));
-  const leadGain = tune.navLead + (tune.combatLead - tune.navLead) * w;
+  const leadOverride = Number(input.leadGain);
+  const leadGain = Number.isFinite(leadOverride)
+    ? Math.max(0, leadOverride)
+    : tune.navLead + (tune.combatLead - tune.navLead) * w;
   let leadX = 0;
   let leadY = 0;
   if (speed > 1e-3 && leadGain > 0) {
@@ -319,11 +354,16 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // --- Cel w kadrze ---
   const margin = clamp(finite(tune.frameMargin, 0), 0, 0.49);
   const maxX = halfW * 2 * (0.5 - margin);
-  const maxY = halfH * 2 * (0.5 - margin);
+  // Pionowo asymetrycznie: środek statku nie wchodzi pod panel celu misji u góry ani pod kopułę radaru u dołu
+  // (offsetY > 0 — statek nad środkiem kadru). Bez pasów HUD — symetrycznie jak dawniej.
+  const marginPx = halfH * 2 * margin;
+  const padPx = halfH * 2 * HUD_PAD;
+  const maxYUp = Math.max(0, halfH - Math.max(marginPx, finite(input.insetTop, 0) + padPx));
+  const maxYDown = Math.max(0, halfH - Math.max(marginPx, finite(input.insetBottom, 0) + padPx));
   // Rulon warpa: statek na środku lejka (stepCameraRigWarp: warpLeadScale).
   const leadScale = clamp(finite(rig.warpLeadScale, 1), 0, 1);
   const targetX = clamp((lookX + leadX) * leadScale, -maxX, maxX);
-  const targetY = clamp((lookY + leadY) * leadScale, -maxY, maxY);
+  const targetY = clamp((lookY + leadY) * leadScale, -maxYDown, maxYUp);
   rig.targetX = targetX;
   rig.targetY = targetY;
 
@@ -336,8 +376,8 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // Gwarancja kadru także w trakcie ruchu (przestrzał z rozpędu, zmiana okna).
   if (rig.springX > maxX) { rig.springX = maxX; if (rig.velX > 0) rig.velX = 0; }
   else if (rig.springX < -maxX) { rig.springX = -maxX; if (rig.velX < 0) rig.velX = 0; }
-  if (rig.springY > maxY) { rig.springY = maxY; if (rig.velY > 0) rig.velY = 0; }
-  else if (rig.springY < -maxY) { rig.springY = -maxY; if (rig.velY < 0) rig.velY = 0; }
+  if (rig.springY > maxYUp) { rig.springY = maxYUp; if (rig.velY > 0) rig.velY = 0; }
+  else if (rig.springY < -maxYDown) { rig.springY = -maxYDown; if (rig.velY < 0) rig.velY = 0; }
 
   // --- Kop warpa: kamera cofa się wzdłuż kursu (statek wyrywa się do przodu), PO sprężynie —
   // impuls ma kształt z dema (sprężyna ω 3–8/s zjadłaby szczyt po 0,11 s). Kadr pilnuje sumy.
@@ -354,8 +394,12 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     ahead = ahK * Math.min(ax > 1e-3 ? halfW / ax : Infinity, ay > 1e-3 ? halfH / ay : Infinity);
   }
   const lag = finite(rig.warpLagPx, 0) * (halfH * 2 / WARP_KICK_REF_H) + ahead;
-  rig.offsetX = clamp(rig.springX - wdx * lag, -maxX, maxX);
-  rig.offsetY = clamp(rig.springY - wdy * lag, -maxY, maxY);
+  // Reżyser kadru (cameraDirector.js): przesunięcie ku bitwie — już wygładzone, dokładane po sprężynie; kadr
+  // statku pilnuje suma.
+  const bx = finite(input.biasX, 0);
+  const by = finite(input.biasY, 0);
+  rig.offsetX = clamp(rig.springX - wdx * lag + bx, -maxX, maxX);
+  rig.offsetY = clamp(rig.springY - wdy * lag + by, -maxYDown, maxYUp);
   return rig;
 }
 

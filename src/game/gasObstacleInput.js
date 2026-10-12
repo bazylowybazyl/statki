@@ -6,7 +6,8 @@
 // (GAS_OBST_IN), reżyser wybuchów (src/3d/explosions/explosionFx.js → src/3d/gas/gasGrid.js) czyta tylko tę tablicę.
 //
 //   STATYKA (budowle w płaszczyźnie gry): pudła — ściany i bryły hal K-7 przy kamerze (k7SolidList: te same co kolizje
-//     i pył hal) i bryły trafień suchego doku piratów (shipyardLayout.placeDryDock().hitShapes) bez kawałków, których
+//     i pył hal) i bryły trafień budowli misji (suchy dok, baza piratów — `hitShapes`; wielokąty inne niż czworokąty:
+//     wycinki pierścienia bębna, koła szybu i zbiorników — kilka pudeł, putGasObstaclePoly) bez kawałków, których
 //     nie ma na miejscu; kawałek RUSZONY (ciało silnika belek z ranami, wyrwami — taran bramy) — obrys jego ciał
 //     (maska z żywych węzłów, src/game/hullFootprint.js). Blok statyki przepisywany tylko przy zmianie (wersja rośnie
 //     — reżyser rastruje domeny od nowa); obrysy ruszonych kawałków co STATIC_FOOT_EVERY s.
@@ -86,6 +87,85 @@ export function putGasObstacleQuad(out, n, pts) {
   if (!(la > 1e-6) || !(lb > 1e-6)) return n;
   const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) * 0.25, cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) * 0.25;
   return putGasObstacleBox(out, n, cx, cy, ax / la, ay / la, la * 0.5, lb * 0.5);
+}
+
+/** Najwięcej pod-pasów na czworobok łańcuchów (nadmiar pudła przy zwężeniu wielokąta ≤ GAS_POLY_OVERSHOOT średnicy). */
+const POLY_SLAB_MAX = 6;
+/** Dopuszczalny nadmiar pudła ponad wielokąt [ułamek większego wymiaru bryły]. */
+export const GAS_POLY_OVERSHOOT = 0.05;
+
+// Pudło obejmujące czworobok (ax, ay)…(dx, dy) w układzie osi (ux, uy): min / max rzutów rogów na u i v.
+function putQuadInFrame(out, n, ux, uy, ax, ay, bx, by, cx, cy, dx, dy) {
+  const vx = -uy, vy = ux;
+  const pu0 = ax * ux + ay * uy, pu1 = bx * ux + by * uy, pu2 = cx * ux + cy * uy, pu3 = dx * ux + dy * uy;
+  const pv0 = ax * vx + ay * vy, pv1 = bx * vx + by * vy, pv2 = cx * vx + cy * vy, pv3 = dx * vx + dy * vy;
+  const u0 = Math.min(pu0, pu1, pu2, pu3), u1 = Math.max(pu0, pu1, pu2, pu3);
+  const v0 = Math.min(pv0, pv1, pv2, pv3), v1 = Math.max(pv0, pv1, pv2, pv3);
+  const um = (u0 + u1) * 0.5, vm = (v0 + v1) * 0.5;
+  return putGasObstacleBox(out, n, um * ux + vm * vx, um * uy + vm * vy, ux, uy, (u1 - u0) * 0.5, (v1 - v0) * 0.5);
+}
+
+/**
+ * Bryła trafień (świat gry) jako pudła statyki. Czworokąt (boxPoly: hale, pomosty, magazyny suchego doku i bazy) — jedno
+ * pudło jak dotąd. Wielokąt o parzystej liczbie rogów (≥ 6) z DWÓCH ŁAŃCUCHÓW — wycinek pierścienia (annulusPoly: łuk
+ * zewnętrzny, powrót łukiem wewnętrznym — ćwiartki bębna habitatu bazy piratów) albo wielokąt wypukły (circlePoly: szyb,
+ * zbiorniki) — łańcuch A = pierwsza połowa rogów, B = druga połowa odwrócona; czworoboki (A_k, A_k+1, B_k+1, B_k) dzielone
+ * na pod-pasy (zwężenie — nadmiar ≤ GAS_POLY_OVERSHOOT), każdy pod-pas w pudle obejmującym (oś = kierunek między
+ * środkami cięciw). Pudła pokrywają cały wielokąt (sąsiednie wycinki łuku bez szpar). Inne — pudło obejmujące wzdłuż
+ * pierwszej krawędzi. Bez alokacji.
+ */
+export function putGasObstaclePoly(out, n, pts) {
+  if (!pts || pts.length < 3) return n;
+  const N = pts.length;
+  if (N === 4) return putGasObstacleQuad(out, n, pts);
+  if (N < 6 || (N & 1)) {
+    const ex = pts[1].x - pts[0].x, ey = pts[1].y - pts[0].y, l = Math.sqrt(ex * ex + ey * ey);
+    if (!(l > 1e-6)) return n;
+    const ux = ex / l, uy = ey / l, vx = -uy, vy = ux;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const pu = pts[i].x * ux + pts[i].y * uy, pv = pts[i].x * vx + pts[i].y * vy;
+      if (pu < u0) u0 = pu; if (pu > u1) u1 = pu; if (pv < v0) v0 = pv; if (pv > v1) v1 = pv;
+    }
+    const um = (u0 + u1) * 0.5, vm = (v0 + v1) * 0.5;
+    return putGasObstacleBox(out, n, um * ux + vm * vx, um * uy + vm * vy, ux, uy, (u1 - u0) * 0.5, (v1 - v0) * 0.5);
+  }
+  // rozmiar bryły (do progu nadmiaru): przekątna obwiedni
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < N; i++) {
+    const p = pts[i];
+    if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+  }
+  const tol = GAS_POLY_OVERSHOOT * Math.max(x1 - x0, y1 - y0);
+  const m = N >> 1;
+  for (let k = 0; k + 1 < m; k++) {
+    const a0 = pts[k], a1 = pts[k + 1], b0 = pts[N - 1 - k], b1 = pts[N - 2 - k];
+    // oś: środek cięciwy k → środek cięciwy k + 1
+    const mx0 = (a0.x + b0.x) * 0.5, my0 = (a0.y + b0.y) * 0.5, mx1 = (a1.x + b1.x) * 0.5, my1 = (a1.y + b1.y) * 0.5;
+    let ux = mx1 - mx0, uy = my1 - my0;
+    let l = Math.sqrt(ux * ux + uy * uy);
+    if (!(l > 1e-6)) {
+      // cięciwy o wspólnym środku (wachlarz): oś prostopadła do cięciwy k
+      ux = -(b0.y - a0.y); uy = b0.x - a0.x;
+      l = Math.sqrt(ux * ux + uy * uy);
+      if (!(l > 1e-6)) continue;
+    }
+    ux /= l; uy /= l;
+    // zwężenie: różnica długości cięciw → liczba pod-pasów
+    const c0 = Math.sqrt((b0.x - a0.x) * (b0.x - a0.x) + (b0.y - a0.y) * (b0.y - a0.y));
+    const c1 = Math.sqrt((b1.x - a1.x) * (b1.x - a1.x) + (b1.y - a1.y) * (b1.y - a1.y));
+    const s = Math.max(1, Math.min(POLY_SLAB_MAX, Math.ceil(Math.abs(c1 - c0) * 0.5 / Math.max(1e-6, tol))));
+    for (let j = 0; j < s; j++) {
+      const t0 = j / s, t1 = (j + 1) / s;
+      n = putQuadInFrame(out, n, ux, uy,
+        a0.x + (a1.x - a0.x) * t0, a0.y + (a1.y - a0.y) * t0,
+        a0.x + (a1.x - a0.x) * t1, a0.y + (a1.y - a0.y) * t1,
+        b0.x + (b1.x - b0.x) * t1, b0.y + (b1.y - b0.y) * t1,
+        b0.x + (b1.x - b0.x) * t0, b0.y + (b1.y - b0.y) * t0);
+      if (n >= MAX_BOXES) return n;
+    }
+  }
+  return n;
 }
 
 const _uid = new WeakMap();
@@ -246,7 +326,7 @@ export function packGasObstacleFrame(out, state, o = {}) {
       for (let i = 0; i < shapes.length; i++) {
         const sh = shapes[i];
         const st = dock.status(sh.chunk);
-        if (st === 1) nb = putGasObstacleQuad(out, nb, sh.pts);
+        if (st === 1) nb = putGasObstaclePoly(out, nb, sh.pts);
         else if (st === 2 && !_seen.has(sh.chunk)) {
           // ruszony kawałek: obrysy jego ciał (główne i wyspy) zamiast brył (raz na kawałek)
           _seen.add(sh.chunk);

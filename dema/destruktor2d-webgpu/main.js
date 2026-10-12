@@ -36,10 +36,32 @@ const URL_OPTS = new URLSearchParams(location.search);
 const SUBSTEP_TRAVEL_15 = Number(URL_OPTS.get('substep')) || 8;   // j. na podkrok przy siatce 15 j. (demo CPU: 8)
 const MAX_SUBSTEPS = Number(URL_OPTS.get('maxsub')) || 50;
 const SUBSTEP_BUDGET = Number(URL_OPTS.get('budget')) || 240;      // podkroków na klatkę, potem symulacja zwalnia
+// Budżet GPU klatki: tyle kroków fizyki, ile zmieści się w ~90% okresu odświeżania (koszt podkroku
+// z pomiaru karty). Bez niego spóźniona klatka nadrabiała do 6 kroków naraz (przy 1,5 j. 6 × 8 ms) —
+// kolejna klatka jeszcze dłuższa: 12 kl./s zamiast płynnego zwolnienia symulacji. ?gpuBudget=0 — wył.
+const GPU_FRAME_SHARE = URL_OPTS.has('gpuBudget') ? Number(URL_OPTS.get('gpuBudget')) : 0.9;
 const LASER_RATE = 18, MISSILE_RATE = 1.5;
 // Kadłuby do tylu belek rozwiązuje jedna grupa robocza (kernel gsGroup); ?gs=0 wymusza dispatch na kolor.
 // Pomiar A/B: remis ±15% zależnie od sceny (narzut dispatchy nie jest wąskim gardłem) — domyślnie dispatch na kolor.
 const GS_GROUP_LIMIT = URL_OPTS.has('gs') ? Number(URL_OPTS.get('gs')) : 0;
+// Solver lokalny: PBD tylko w obszarze w ruchu (A ∪ F + pierścień), reszta kadłuba sztywna — jak _solveLocal
+// na CPU. Domyślnie od LOCAL_SOLVER_MIN_BEAMS belek sceny (mniejsze liczy szybciej pełny solver: narzut list
+// i dispatchy, obszar i tak obejmuje większość małego kadłuba). ?solver=lokalny / ?solver=pelny — wymuszenie.
+// ?aktywnosc=k — próg ruchu węzła k × bok komórki j./s (domyślnie createBeamConfig: 0,2), ?cisza=n — podkroki
+// ciszy przed wyjściem z obszaru (8). Próg rośnie z liczbą podkroków kroku (ten sam ruch na podkrok co na CPU
+// przy 1 podkroku na krok 120 Hz; przy 1 j. i 13 podkrokach stały próg 0,2 j./s to szum f32 pozycji —
+// cała kratownica zostawała „w ruchu”); ?prog=staly — próg bez skalowania. ?kontakty=skan — kontakty
+// z przeglądu całej kratownicy zamiast listy kandydatów kroku (A/B).
+const SOLVER_MODE = URL_OPTS.get('solver') || 'auto';
+const LOCAL_SOLVER_MIN_BEAMS = 1000000;
+function localSolverOptions(cs, beams) {
+  if (SOLVER_MODE === 'pelny' || (SOLVER_MODE !== 'lokalny' && beams < LOCAL_SOLVER_MIN_BEAMS)) return null;
+  const o = { scan: URL_OPTS.get('kontakty') === 'skan', scale: URL_OPTS.get('prog') !== 'staly' };
+  if (URL_OPTS.has('aktywnosc')) o.threshold = Number(URL_OPTS.get('aktywnosc')) * cs;
+  if (URL_OPTS.has('cisza')) o.settle = Number(URL_OPTS.get('cisza'));
+  if (URL_OPTS.has('gsAll')) o.gsAll = Number(URL_OPTS.get('gsAll'));   // belek obszaru dla GS w jednej grupie (0 — wył.)
+  return o;
+}
 
 const el = (id) => document.getElementById(id);
 const val = (id) => Number(el(id).value);
@@ -276,7 +298,8 @@ async function resetScene(opts = {}) {
   const buildMs = performance.now() - t0;
   const cfg = makeConfig();
   const origin = { x: bodies[0].x, y: bodies[0].y };
-  world.setScene({ cfg, bodies, origin, gsGroupLimit: opts.gsGroupLimit ?? GS_GROUP_LIMIT });
+  const beams = bodies.reduce((n, b) => n + (b.static ? 0 : b.hull.beamCount), 0);
+  world.setScene({ cfg, bodies, origin, gsGroupLimit: opts.gsGroupLimit ?? GS_GROUP_LIMIT, local: localSolverOptions(cellSize, beams) });
   await renderer.setScene(world, looks);
   sceneInfo = info;
   simTime = 0;
@@ -522,17 +545,46 @@ function fail(err) {
 
 // ============================== PĘTLA ==============================
 let lastFrame = performance.now();
+let msPerSubstep = 0;          // średni czas karty na podkrok (z odczytów stanu)
+let displayMs = 1000 / 60;     // okres odświeżania: najkrótszy ostatni odstęp klatek, powoli w górę
+let renderMsAvg = 0.5;
 let fpsFrames = 0, fpsLast = performance.now(), fpsValue = 0;
 let frameSimMs = 0, frameWallMs = 0;
 const gpuAvg = { phys: 0, physStepped: 0, render: 0, encode: 0, steps: 0, substeps: 0, dispatches: 0, n: 0, contacts: 0, pairs: 0, crush: 0 };
 let lastSeq = -1;
 
-function maxSpeedLagged() {
+// Podkroki pilnują drogi węzła WZGLĘDEM węzłów innego ciała (styk = najbliższy węzeł w promieniu).
+// Ruch własny kadłuba niesie ciało sztywne, a węzły leżą w jego układzie — sama prędkość lotu
+// podkroków nie wymaga. Liczy się prędkość par, które mogą się zetknąć w oknie odczytu (stan sprzed
+// 1–3 klatek): dawniej maksimum prędkości bezwzględnej, więc samotny Atlas przy 1,5 j. i 800 j./s
+// liczył 9 podkroków całej kratownicy, choć nic nie było w pobliżu.
+// Górna granica = dawna reguła (maks. prędkość bezwzględna): przy styku podkroków nie przybywa —
+// zgodność z CPU (scripts/belki-gpu-zgodnosc.mjs) mierzona była na niej. Para liczy się z prędkością
+// względną i obrotem (węzły na brzegu kadłuba), więc wirujące wraki przekraczałyby ją bez granicy.
+const CONTACT_LAG = 0.25;   // s zapasu na opóźnienie odczytu i przyspieszenie
+const SUBSTEP_ABS = URL_OPTS.get('podkroki') === 'abs';   // A/B: dawna reguła (prędkość bezwzględna)
+function contactSpeedLagged(extraControl = 0) {
   const st = world.state;
   if (!st) return 0;
-  let m = 0;
-  for (const b of st.bodies) if (b.used && !b.dead && !b.isStatic) m = Math.max(m, Math.hypot(b.vx, b.vy));
-  return m;
+  const bs = st.bodies;
+  const ctl = sceneInfo?.atlas ?? 0;
+  let m = 0, cap = 0;
+  for (let i = 0; i < bs.length; i++) {
+    const a = bs[i];
+    if (!a.used || a.dead) continue;
+    if (!a.isStatic) cap = Math.max(cap, Math.hypot(a.vx, a.vy) + (i === ctl ? extraControl : 0));
+    for (let j = i + 1; j < bs.length; j++) {
+      const b = bs[j];
+      if (!b.used || b.dead || (a.isStatic && b.isStatic)) continue;
+      const v = Math.hypot(a.vx - b.vx, a.vy - b.vy) + Math.abs(a.w) * a.radius + Math.abs(b.w) * b.radius +
+        (i === ctl || j === ctl ? extraControl : 0);
+      if (v <= m) continue;
+      const reach = a.radius + b.radius + v * CONTACT_LAG + 8 * cellSize;
+      const dx = a.x - b.x, dy = a.y - b.y;
+      if (dx * dx + dy * dy <= reach * reach) m = v;
+    }
+  }
+  return SUBSTEP_ABS ? cap : Math.min(m, cap);
 }
 
 function buildSteps(dt) {
@@ -542,9 +594,13 @@ function buildSteps(dt) {
   const travel = SUBSTEP_TRAVEL_15 * cellSize / 15;
   // prędkość z odczytu sprzed 1–3 klatek + zapas na przyspieszenie dopalacza
   const boosting = keys.ShiftLeft || keys.ShiftRight;
-  const speed = maxSpeedLagged() + (boosting ? DEMO_FLIGHT.boostAccel * 0.05 : 0);
+  const speed = contactSpeedLagged(boosting ? DEMO_FLIGHT.boostAccel * 0.05 : 0);
   const substeps = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(speed * FIXED_DT / travel)));
   let budget = SUBSTEP_BUDGET;
+  if (GPU_FRAME_SHARE > 0 && msPerSubstep > 0) {
+    const frameMs = Math.max(4, displayMs * GPU_FRAME_SHARE - renderMsAvg);
+    budget = Math.min(budget, Math.max(substeps, Math.floor(frameMs / msPerSubstep)));
+  }
   while (accumulator >= FIXED_DT && steps.length < 6 && budget >= substeps) {
     readPlanarFlightInput(keys, flightInput);
     if (flightInput.boost && flightInput.throttle === 0) flightInput.throttle = 1;
@@ -565,6 +621,7 @@ function frame() {
   let dt = (now - lastFrame) / 1000;
   lastFrame = now;
   if (dt > 0.1) dt = 0.1;
+  displayMs = Math.min(displayMs * 1.002, Math.max(2, dt * 1000));
   if (!ready || !loopRunning) return;
   const steps = buildSteps(dt);
   frameSimMs += steps.length * FIXED_DT * 1000;
@@ -586,6 +643,8 @@ function frame() {
     lastSeq = st.seq;
     if (Number.isFinite(st.gpuPhysicsMs)) {
       gpuAvg.phys += st.gpuPhysicsMs; gpuAvg.render += st.gpuRenderMs || 0; gpuAvg.n++;
+      if (st.substeps > 0) msPerSubstep = msPerSubstep > 0 ? msPerSubstep * 0.8 + 0.2 * st.gpuPhysicsMs / st.substeps : st.gpuPhysicsMs / st.substeps;
+      if (Number.isFinite(st.gpuRenderMs)) renderMsAvg = renderMsAvg * 0.9 + 0.1 * st.gpuRenderMs;
       if (st.steps > 0) { gpuAvg.physStepped += st.gpuPhysicsMs; gpuAvg.steps += st.steps; gpuAvg.substeps += st.substeps; gpuAvg.dispatches = Math.max(gpuAvg.dispatches, st.dispatches); }
     }
     gpuAvg.contacts = Math.max(gpuAvg.contacts, st.counters[COUNTER.contacts]);
@@ -667,7 +726,7 @@ function updateStats(frames) {
     set('st-hits', `${st.counters[COUNTER.laserHits]} / ${st.counters[COUNTER.missileHits]}`);
   }
   set('st-contact-time', `${contactTime.toFixed(2)} s`);
-  set('st-colors', `${world.colors} × ${val('sl-iters')} iter.`);
+  set('st-colors', `${world.colors} × ${val('sl-iters')} iter. · ${world.local ? 'lokalny' : 'pełny'}`);
   if (lastSceneStats) set('st-build', `${lastBuildMs.toFixed(0)} ms (${lastSceneStats.nodes} węzłów)`);
 }
 
@@ -681,7 +740,7 @@ async function benchSteps(count, { substeps = null, input = null, fireEvery = 0,
   for (let k = 0; k < count; k += batch) {
     const steps = [];
     const travel = SUBSTEP_TRAVEL_15 * cellSize / 15;
-    const n = substeps || Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(maxSpeedLagged() * FIXED_DT / travel)));
+    const n = substeps || Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(contactSpeedLagged() * FIXED_DT / travel)));
     for (let b = 0; b < batch && k + b < count; b++) {
       const kk = k + b;
       const fire = fireEvery > 0 && kk % fireEvery === 0
@@ -698,9 +757,13 @@ async function benchSteps(count, { substeps = null, input = null, fireEvery = 0,
     world.afterSubmit();
     await device.queue.onSubmittedWorkDone();
     await world.lastMap;
+    // rozpady z odczytu flag zerwań wchodzą w następnej klatce (bez tego moment rozpadu zależy od
+    // czasu mapowania i przebiegi rozjeżdżają się po pierwszym rozpadzie — A/B i zgodność nieporównywalne)
+    if (world.topoMap) { await world.topoMap; world.topoMap = null; }
     encode.push(world.stats.encodeMs / steps.length);
     if (world.state && Number.isFinite(world.state.gpuPhysicsMs)) {
-      times.push({ ms: world.state.gpuPhysicsMs / steps.length, substeps: n, tick: world.state.tick, dispatches: world.stats.dispatches });
+      times.push({ ms: world.state.gpuPhysicsMs / steps.length, substeps: n, tick: world.state.tick, dispatches: world.stats.dispatches,
+        local: world.state.local || null, broken: world.state.counters[COUNTER.beamsBroken], contacts: world.state.counters[COUNTER.contacts] });
     }
   }
   await new Promise((r) => setTimeout(r, 30));

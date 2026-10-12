@@ -222,6 +222,8 @@ export function createStoryOverlay(story) {
       for (const k of h.spec.keys || []) el('span', 'st-key', hintKeys, k);
       hintKeys.hidden = !(h.spec.keys && h.spec.keys.length);
       hint.classList.remove('done');
+      // podpowiedź podmieniona zaraz po wykonaniu poprzedniej — etykieta nie może zostać „WYKONANE”
+      hintLabel.textContent = 'SAMOUCZEK';
       last.hintDone = false;
       requestAnimationFrame(() => hint.classList.add('on'));
     }

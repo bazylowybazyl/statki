@@ -988,6 +988,9 @@ const _camU = new THREE.Vector3();
 const _camP = new THREE.Vector3();
 
 export const Bridge3D = {
+  // (gospodarz, x, y świata gry) → 0…1: okno / lampa zasłonięta przez obraz nad okrętem (gra: fregata zwiadu nad
+  // Atlasem). null — bez zasłaniania.
+  emitterOcclusion: null,
   scene: null,
   ready: false,
   kinds: [],
@@ -1639,8 +1642,18 @@ export const Bridge3D = {
     if (fade <= 0.002) return;
     const lod = zonePx < T.lodPx ? 1 : 0;
 
-    const ax = B.ax; const ay = B.ay; const bx = B.bx; const by = B.by;
-    const sz = B.sz; const ox = B.ox; const oy = B.oy;
+    let ax = B.ax; let ay = B.ay; let bx = B.bx; let by = B.by;
+    let sz = B.sz; let ox = B.ox; let oy = B.oy;
+    // Obraz okrętu mniejszy wokół środka (`__renderScale`) i podniesiony / opuszczony (`__skinZ`) — fregata zwiadu
+    // w luku Atlasa i nad nim (src/3d/cargo/scoutBay3D.js); mostek jedzie z kadłubem.
+    const rsH = Number(host.__renderScale);
+    if (rsH > 0 && rsH !== 1) {
+      const hx = pose ? pose.x : (host.pos ? host.pos.x : host.x);
+      const hy = -(pose ? pose.y : (host.pos ? host.pos.y : host.y));
+      ax *= rsH; ay *= rsH; bx *= rsH; by *= rsH; sz *= rsH;
+      ox = hx + (ox - hx) * rsH; oy = hy + (oy - hy) * rsH;
+    }
+    const liftH = Number(host.__skinZ) || 0;
     // Instancja względem początku przy kamerze (_setOrigin).
     const rx = ox - ctx.orgX; const ry = oy - ctx.orgY;
     const heatMul = Math.exp(-Math.max(0, ctx.heatNow - rec.rowTime) * ctx.heatDecay);
@@ -1651,7 +1664,7 @@ export const Bridge3D = {
       const L = B3_MODEL_LAYOUT;
       const A = K.inst.array;
       const o = n * L.stride;
-      writeInstance(A, o, ax, ay, bx, by, sz, rx, ry);
+      writeInstance(A, o, ax, ay, bx, by, sz, rx, ry, liftH);
       writeInstanceData(A, o, L, rec, fade, heatMul);
       A[o + L.aB3Mask] = rec.maskLo;
       A[o + L.aB3Mask + 1] = rec.maskHi;
@@ -1664,12 +1677,13 @@ export const Bridge3D = {
       const L = B3_RECEIVER_LAYOUT;
       const A = Rv.inst.array;
       const o = n * L.stride;
-      writeInstance(A, o, ax, ay, bx, by, sz, rx, ry);
+      writeInstance(A, o, ax, ay, bx, by, sz, rx, ry, liftH);
       writeInstanceData(A, o, L, rec, fade, heatMul);
     }
 
     // Emitery: okna (gasną z heksem pod sobą i wg osi czasu), lampy, listwy.
-    const winFade = smooth01(T.winMinPx, T.winFullPx, 2.0 * sgx * zoomAt) * fade;
+    // Okna i lampy (warstwa FG — nad passem ortho, bez głębi): mostek pod płaszczyzną kadłubów (fregata w luku) ich nie ma.
+    const winFade = liftH < 0 ? 0 : smooth01(T.winMinPx, T.winFullPx, 2.0 * sgx * zoomAt) * fade;
     this._emit(rec, host, grid, ctx, winFade, ax, ay, bx, by, sz, ox, oy);
   },
 
@@ -1733,6 +1747,11 @@ export const Bridge3D = {
         : (s.maxHp > 0 ? s.hp / s.maxHp : 1);
       let I = bridgeEmitterLight(rec, i, ctx.now, hpFrac) * winFade;
       if (I <= 0.003) continue;
+      // Zasłonięte przez obraz nad okrętem (fregata zwiadu nad Atlasem — emitterOcclusion z gry).
+      if (this.emitterOcclusion !== null) {
+        I *= this.emitterOcclusion(host, ox + ax * E.cx[i] + bx * E.cy[i], -(oy + ay * E.cx[i] + by * E.cy[i]));
+        if (I <= 0.003) continue;
+      }
       const type = E.type[i];
       let col;
       let halo;
@@ -1860,9 +1879,9 @@ export const Bridge3D = {
 // 0), (0, 0, sz), przesunięcie (ox, oy, MODEL_LIFT)) w buforze przeplecionym:
 // iBasis = (ax, ay, bx, by), iOrg = (ox, oy, sz, MODEL_LIFT). o — początek
 // instancji w tablicy (n · stride); układ: bridge3D.tsl.js.
-function writeInstance(A, o, ax, ay, bx, by, sz, ox, oy) {
+function writeInstance(A, o, ax, ay, bx, by, sz, ox, oy, lift = 0) {
   A[o] = ax; A[o + 1] = ay; A[o + 2] = bx; A[o + 3] = by;
-  A[o + 4] = ox; A[o + 5] = oy; A[o + 6] = sz; A[o + 7] = MODEL_LIFT;
+  A[o + 4] = ox; A[o + 5] = oy; A[o + 6] = sz; A[o + 7] = MODEL_LIFT + lift;
 }
 
 function writeInstanceData(A, o, L, rec, fade, heatMul) {

@@ -107,13 +107,17 @@ const hull = (o) => Object.freeze({
  * w sylwetce; przy „over” także pas parkowania skrzydeł (tests/cargoBays.test.mjs).
  */
 export const CARGO_BAY_HULLS = Object.freeze({
-  // Atlas: środek grzbietu między wieżą specjalną (x −320) a wyrzutnią (x 457); skrzydła
-  // parkują na płytach „V” po obu stronach kręgosłupa — jak grzbietowy hangar Venatora.
+  // Atlas (decyzja użytkownika 2026-10-11): luk 346 × 275 j. (PNG x −290…431, y −286…286 — scripts/hangary-pomiar.mjs,
+  // największy wolny prostokąt grzbietu bez przesuwania gniazd), wrota kieszeniowe ×3 (teleskop pod poszyciem).
+  // Mieści 6 Custosów / 2 Hasty / Hastę + 2 Custosy + pole myśliwców 60 × 60 j.; w misji 1 — fregata zwiadu
+  // (src/game/scoutBay.js). Głębokość pod bryłę fregaty (~36 j. wysokości modelu + kołyska).
+  // AGENT: fregata w luku NIE zmniejsza dziś ładowności (decyzja 2026-10-11) — przy wpięciu ładowni do ekonomii
+  // (tony na kontener, cargoCap z geometrii) odejmij stanowisko fregaty i pole myśliwców od slotów (scripts/hangary-pomiar.mjs).
   atlas: hull({
     label: 'Atlas', family: 'gracz', sprite: 'assets/capital_ship_rect_v1.png', png: { w: 3747, h: 1677 },
     renderLength: 1800, profile: 'atlas', editorKey: 'atlas', bridgeKey: 'atlas',
     cargoToday: 20, todayNote: 'cargoCap gracza',
-    bays: [bay({ id: 'grzbiet', label: 'Hangar grzbietowy', x: 66, y: 0, w: 649, h: 272, door: 'over', leaves: 1, module: { nx: 2, ny: 2, nz: 2 } })]
+    bays: [bay({ id: 'grzbiet', label: 'Hangar grzbietowy', x: 70.5, y: 0, w: 721, h: 572, door: 'pocket', leaves: 3, minDepth: 40, fighterField: { a: 60, b: 60 }, module: { nx: 2, ny: 2, nz: 2 } })]
   }),
   // --- Terra Nova ---
   terran_frigate: hull({
@@ -262,7 +266,8 @@ export function cargoBayGeometry(h, bayDef) {
   // Kieszeń: skrzydła opadają pod poszycie do z = −pocketDrop (najgłębsze skrzydło, lustro
   // cargoBayDoorPose) — stos musi stać pod nimi, inaczej skrzydło jedzie przez kontenery.
   const pocketDrop = B.door === 'pocket' ? n * (leafT + P.liftGap) + leafT : 0;
-  const depth = mod.H + P.depthClear + pocketDrop;
+  // minDepth — ładownia na jednostki (fregata w luku Atlasa): dno pod bryłą okrętu, nie tylko pod stosem.
+  const depth = Math.max(mod.H + P.depthClear, Number(B.minDepth) || 0) + pocketDrop;
   const leafW = halfB / n;
   const leaves = [];
   for (const side of [1, -1]) {

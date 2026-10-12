@@ -18,9 +18,10 @@ import { createDialogueQueue } from './dialogue.js';
 import { createProgress, grantExp, rankProgress } from './progression.js';
 import { buildDockIntroKeys, keysDuration, sampleKeys, topDownPose } from './introCamera.js';
 import { k7AxesGame, k7BerthPose, k7FrameFor, k7HallCenter, k7HubToGame, k7IsOutsideHall, k7LayoutTemplate } from './k7Dock.js';
-import { planFleetWave, planShipyard, SHIPYARD_TUNE } from './shipyardLayout.js';
+import { planFleetWave, SHIPYARD_TUNE } from './shipyardLayout.js';
+import { PIRATE_BASE_STRUCTURES, PIRATE_BASE_TUNE, planPirateBase } from './pirateBaseSite.js';
+import { planFuelChain } from './pirateBaseFuel.js';
 import { beltAmbushReached, planBeltAmbush } from './beltAmbush.js';
-import { dryDockChunkAt, dryDockNearestChunk, planDryDockChain } from '../../3d/portBuildings/pirateDryDockLayout.js';
 import { createCloak, isCloakHidden } from '../cloak.js';
 import { K7_POSE_OWNER } from '../k7BerthService.js';
 import { ENGINE_OFF, ENGINE_IGNITION_TUNE, igniteEngine, setEngineState } from '../engineIgnition.js';
@@ -47,7 +48,7 @@ function newPose() {
   return { eye: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, fov: 40 };
 }
 
-// Fazy kampanii (misja 1 „Cicha stocznia” + misja 2 „Odwet”, src/game/story/campaign.js) — skoki dev ?story=<faza>.
+// Fazy kampanii (misja 1 „Cicha baza” + misja 2 „Odwet”, src/game/story/campaign.js) — skoki dev ?story=<faza>.
 export const STORY_PHASES = CAMPAIGN_PHASES;
 
 // Obsługa stanowiska (zamki pola, ramiona paliwowe, złączki, rygle, przepływ): płynne przejście między „podpięta”
@@ -232,6 +233,11 @@ export const StoryGame = {
     this.campaign = { m1: null, bossEscaped: false };
     for (const id of this._fogMassIds) this.deps?.clearMassSignature?.(id);
     this._fogMassIds.clear();
+    // Fregata zwiadu dana przez kampanię (api.scout.grant) — poza kampanią ładownia pusta (dev ?zwiad zostaje).
+    if (this._scoutGranted) this.deps?.scoutBay?.()?.revoke?.();
+    this._scoutGranted = false;
+    if (this._scoutAvoid) this.deps?.scoutBay?.()?.setAvoid?.(null);
+    this._scoutAvoid = false;
   },
 
   emit(name, data = {}) {
@@ -258,6 +264,7 @@ export const StoryGame = {
     const dt = Math.max(0, Number(gameDt) || 0);
     if (dt > 0) this._stepTimers(dt);
     if (dt > 0) this._stepUndock(dt);
+    if (dt > 0) this._stepSitePower(dt);
     this._stepArrivals();
     this.runner.tick(dt);
   },
@@ -755,35 +762,47 @@ export const StoryGame = {
   _planSite() {
     const center = this._shipyardCenter();
     const earth = this._earth() || this.deps.ship().pos;
-    // budynek = suchy dok piratów (src/3d/portBuildings/pirateDryDockLayout.js): okręty w stanowiskach,
-    // eskorta w hali, wieżyczki w punktach obrony; obrys (ramka celu) = połowa przekątnej obwiedni doku
-    const plan = planShipyard(center, earth);
+    // Budynek = BAZA PIRATÓW (szkic użytkownika 2026-10-11, src/3d/portBuildings/pirateBaseLayout.js): habitat, pomosty
+    // z okrętami (większość w remoncie, kilkanaście z załogą), zbiorniki paliwa, magazyn. `dock` = miejsce bazy w grze
+    // (placePirateBase), `station` = habitat (finał misji), `structures` = wszystkie budowle (byty stacji).
+    const plan = planPirateBase(center, earth);
     const self = this;
     const site = {
       ...plan,
-      station: null, parkedList: [], turretList: [], defenderList: [], slipList: [], alarmed: false, alarmAt: -1, origin: null,
-      // Okręt jeszcze w stanowisku / na pochylni (nie wystartował) — tylko taki ginie z dokiem (łańcuch rozpadu).
+      station: null, structures: null,
+      parkedList: [], crewList: [], repairList: [], droneList: [], turretList: [], defenderList: [], slipList: [],
+      flagship: null, alarmed: false, alarmAt: -1, origin: null,
+      // fale dronów z habitatu: ile wystartowało / ile ma być
+      droneWave: 0, droneWaves: PIRATE_BASE_TUNE.droneWaves,
+      // zasilanie (okna, lampy): cel i wartość płynna (gaśnie stopniowo — okna dysku od środka)
+      power: { habitat: 1, disc: 1, fuel: 1, warehouse: 1 },
+      powerLive: { habitat: 1, disc: 1, fuel: 1, warehouse: 1 },
+      // reakcja łańcuchowa w sieci paliwowej: start z zbiorników / z habitatu, wypalone węzły, okręty zniszczone
+      chain: { fuel: false, habitat: false, killed: 0, burnt: new Set() },
+      // Okręt jeszcze w stanowisku (nie wystartował) — tylko taki ginie od frontu ognia w rurach.
       inBerth(n) { return !!n && !n.__storyLaunched; },
       parkedCount() { return site.parkedList.length; },
-      // Zmiażdżony = zniszczony albo z kadłuba została mniej niż trzecia część konstrukcji (taran zostawia
-      // resztkę z ułamkiem punktu — sufit punktów z konstrukcji nie schodzi do zera).
+      // Zmiażdżony = zniszczony albo z kadłuba została mniej niż trzecia część konstrukcji.
       parkedCrushed(n) { return !!n && (n.dead || n.hp <= 0 || (self.deps.hullRatio?.(n) ?? 1) < 0.3); },
       parkedKilled() { return site.parkedList.filter((n) => site.parkedCrushed(n)).length; },
-      // okręt z parkingu w styku z Atlasem (taran) — inaczej zniszczony z dystansu (Hexlance)
       parkedTouching(n) { return !!n && !!self.deps.hasContact?.(self.deps.ship(), n); },
-      // taran: staranowana brama parkingu (gra ustawia gateRammed) albo dotknięty okręt z rzędu
+      // rząd do taranu (samouczek): okręty wewnętrznej strony ramienia A
+      ramList() { return site.parkedList.filter((n) => site.ramBerths.includes(n.__berthId)); },
+      // taran: uderzenie w ciało bazy (gra ustawia gateRammed) albo dotknięty okręt w stanowisku
       gateRammed: false,
-      rammed() { return site.gateRammed || site.parkedList.some((n) => n.dead || n.hp < (n.maxHp || n.hp) * 0.995 || self.deps.hasContact?.(self.deps.ship(), n)); },
-      turretCount() { return site.turretList.length; },
-      turretsAlive() { return site.turretList.filter((n) => !n.dead && n.hp > 0).length; },
-      turretsKilled() { return site.turretCount() - site.turretsAlive(); },
+      // (okręt w remoncie stoi z niepełnymi punktami — porównanie z punktami ze spawnu)
+      rammed() { return site.gateRammed || site.parkedList.some((n) => n.dead || n.hp < (n.__hp0 ?? n.maxHp ?? n.hp) * 0.995 || self.deps.hasContact?.(self.deps.ship(), n)); },
+      turretCount() { return 0; },
+      turretsAlive() { return 0; },
+      turretsKilled() { return 0; },
       defenderCount() { return site.defenderList.length; },
       defendersAlive() { return site.defenderList.filter((n) => !n.dead && n.hp > 0).length; },
       defendersKilled() { return site.defenderCount() - site.defendersAlive(); },
       buildingHpFrac() { const s = site.station; return s ? clamp01((s.hp || 0) / Math.max(1, s.maxHp || 1)) : 0; },
-      buildingDestroyed() { const s = site.station; return !s || !!s._destroyed3D || s.hp <= 0; }
+      buildingDestroyed() { const s = site.station; return !s || !!s._destroyed3D || s.hp <= 0; },
+      structureDestroyed(k) { const s = site.structures?.[k]; return !s || !!s._destroyed3D || !(s.hp > 0); }
     };
-    // Skąd przychodzi odwet: dalej od Słońca, za stocznią.
+    // Skąd przychodzi odwet: dalej od Słońca, za bazą.
     const sun = this.deps.sun?.() || { x: 0, y: 0 };
     const out = Math.atan2(center.y - sun.y, center.x - sun.x);
     site.origin = { x: center.x + Math.cos(out + 0.4) * 900000, y: center.y + Math.sin(out + 0.4) * 900000 };
@@ -791,58 +810,64 @@ export const StoryGame = {
     return site;
   },
 
-  /** opts: { dockHp, dockShield, slipHp (ułamek punktów niedokończonego kadłuba na pochylni) }. */
+  /** opts: { dockHp, dockShield (habitat), repairHp (ułamek punktów okrętu w remoncie) }. */
   _spawnSite(site, opts = {}) {
     const d = this.deps;
-    // Budynek: suchy dok piratów (bryła 3D + byt stacji z bryłami trafień); bez kleju doku (atrapy testów) —
-    // zwykła stacja piracka w środku zakładu.
-    const spec = {
-      id: 'PIR_YARD', x: site.building.x, y: site.building.y, r: 600,
-      hp: Number(opts.dockHp) > 0 ? opts.dockHp : 16000, shield: Number(opts.dockShield) >= 0 ? opts.dockShield : 4000,
-      name: 'Suchy dok piratów', dock: site.dock
-    };
-    site.station = (d.spawnPirateDryDock || d.spawnPirateStation)(spec);
-    site.parked.forEach((p, i) => {
+    const T = PIRATE_BASE_TUNE;
+    const place = site.dock;
+    const l = place.layout;
+    const hp = { ...T.hp };
+    if (Number(opts.dockHp) > 0) hp.habitat = { ...hp.habitat, hp: opts.dockHp, shield: Number(opts.dockShield) >= 0 ? opts.dockShield : hp.habitat.shield };
+    const names = { habitat: 'Habitat piratów', fuel: 'Zbiorniki paliwa', warehouse: 'Magazyn piratów', piers: 'Pomosty bazy' };
+    const specs = {};
+    for (const k of PIRATE_BASE_STRUCTURES) {
+      // środek budowli: średnia środków pudeł jej kawałków (bez duchów)
+      let sx = 0, sz = 0, n = 0;
+      for (const id of l.structures[k]) {
+        const c = l.chunkById.get(id);
+        if (c.ghost) continue;
+        sx += (c.box.x0 + c.box.x1) / 2; sz += (c.box.z0 + c.box.z1) / 2; n++;
+      }
+      const g = k === 'habitat' ? place.habitat : place.toGame(sx / Math.max(1, n), sz / Math.max(1, n));
+      specs[k] = { id: `PIR_BASE_${k.toUpperCase()}`, structure: k, name: names[k], x: g.x, y: g.y, r: 600,
+        hp: hp[k].hp, shield: hp[k].shield, steps: hp[k].steps, base: place };
+    }
+    let st = d.spawnPirateBase ? d.spawnPirateBase(specs, place) : null;
+    if (!st) {
+      // bez kleju bazy (atrapy testów): zwykłe stacje pirackie w środkach budowli
+      st = {};
+      for (const k of PIRATE_BASE_STRUCTURES) st[k] = d.spawnPirateStation?.({ ...specs[k], hp: specs[k].hp + specs[k].shield }) || null;
+    }
+    site.structures = st;
+    site.station = st.habitat;
+    const repairHp = Number(opts.repairHp ?? T.repairHp);
+    site.parked.forEach((p) => {
       const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
       if (!e) return;
-      e.__dockBerth = i;
+      e.__dockBerth = p.index;
+      e.__berthId = p.berth;
       e.__storyKey = p.key;
       e.__storyLaunch = p.launch || null;
-      this._park(e, 'parked');
+      if (p.boss) {
+        // herszt: supercapital w zatoce przy zbiornikach — na alarm startuje pierwszy (trasa z planu)
+        e.__storyFlagship = true;
+        site.flagship = e;
+        this._park(e, 'defender');
+        site.defenderList.unshift(e);
+        return;
+      }
+      if (p.repair) {
+        if (repairHp > 0 && repairHp < 1 && Number.isFinite(e.maxHp)) e.hp = Math.max(1, Math.round(e.maxHp * repairHp));
+        e.__repair = true;
+        e.__hp0 = e.hp;
+        this._park(e, 'repair');
+        site.repairList.push(e);
+      } else {
+        this._park(e, 'parked');
+        site.crewList.push(e);
+      }
       site.parkedList.push(e);
     });
-    // Pochylnie w hali: pancerniki w budowie (pod dachem) — wodują się na zegar misji, bryła budowy znika
-    // (pirateDryDockGame: slipsHidden), gdy na pochylni stoi okręt.
-    (site.slips || []).forEach((p, i) => {
-      const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
-      if (!e) return;
-      e.__slip = i;
-      e.__storyKey = p.key;
-      e.__storyLaunch = p.launch || null;
-      const k = Number(opts.slipHp);
-      if (k > 0 && k < 1 && Number.isFinite(e.maxHp)) e.hp = Math.max(1, Math.round(e.maxHp * k));
-      this._park(e, 'slip');
-      site.slipList.push(e);
-    });
-    for (const t of site.turrets) {
-      const e = d.spawnTurret?.({ x: t.x, y: t.y, angle: t.angle });
-      if (!e) continue;
-      e.__storyTag = 'turret';
-      e.mission = true;
-      d.sleepNpc(e);
-      site.turretList.push(e);
-    }
-    for (const p of site.defenders) {
-      const e = this._spawnOne(p.key, 'pirate', p.x, p.y, p.angle);
-      if (!e) continue;
-      // eskorta czeka na polu hali; na alarm wylatuje bramą (trasa z układu doku)
-      e.__storyLaunch = p.launch || null;
-      e.__storyLaunchDelay = Number.isFinite(p.delay) ? p.delay : null;
-      e.__dockGate = p.gate || null;
-      if (p.flagship) { e.__storyFlagship = true; site.flagship = e; }
-      this._park(e, 'defender');
-      site.defenderList.push(e);
-    }
   },
 
   _spawnOne(key, mode, x, y, angle) {
@@ -870,119 +895,230 @@ export const StoryGame = {
     if (site.alarmed) return;
     site.alarmed = true;
     site.alarmAt = this.time;
-    for (const e of site.turretList) if (!e.dead) this.deps.wakeNpc(e);
-    // eskorta wylatuje z hali kolejno bramami (gra prowadzi trasę i oddaje okręt mózgowi bojowemu za bramą)
-    site.defenderList.forEach((e, i) => {
-      if (e.dead) return;
-      if (e.__storyLaunch && this.deps.launchNpc) this.deps.launchNpc(e, e.__storyLaunch, e.__storyLaunchDelay ?? 0.8 + i * 1.3);
-      else this.deps.wakeNpc(e);
-    });
-    this.deps.shake?.(10, 0.4);
+    const d = this.deps;
+    // herszt startuje pierwszy (rufą z zatoki, potem wzdłuż zatoki — trasa z planu bazy)
+    const boss = site.flagship;
+    if (boss && !boss.dead) {
+      const L = boss.__storyLaunch;
+      boss.__storyLaunched = true;
+      if (L && Array.isArray(L.path) && L.path.length && d.launchNpc) d.launchNpc(boss, L.path, PIRATE_BASE_TUNE.bossLaunchDelay, { fightFrom: L.fightFrom });
+      else d.wakeNpc(boss);
+    }
+    // drony z hangarów bębna (decyzja użytkownika 2026-10-11: „gracz wykryty — lecą drony”)
+    this._launchDrones(site, 0);
+    d.shake?.(10, 0.4);
+  },
+
+  // Fala dronów: eskadra z każdego hangaru bębna habitatu (zniszczony habitat — nic), kolejna po droneWaveGap s.
+  _launchDrones(site, wave) {
+    const T = PIRATE_BASE_TUNE;
+    if (wave >= T.droneWaves || site.buildingDestroyed()) return;
+    site.droneWave = wave + 1;
+    const d = this.deps;
+    const n = Math.min(site.bays?.length || 0, T.droneBays);
+    for (let i = 0; i < n; i++) {
+      const b = site.bays[i];
+      const roles = T.droneRoles || ['multirole'];
+      const role = roles[(i + wave) % roles.length];
+      const list = d.launchDrones?.({ x: b.x, y: b.y, angle: b.angle, count: T.droneSquad, owner: site.station, role }) || [];
+      for (const e of list) {
+        if (!e) continue;
+        e.__storyTag = 'drone';
+        e.mission = true;
+        site.droneList.push(e);
+        site.defenderList.push(e);
+      }
+    }
+    if (wave + 1 < T.droneWaves) this._after(T.droneWaveGap, () => this._launchDrones(site, wave + 1));
   },
 
   _scouted(site) {
     const seen = this.deps.fogSeen;
     if (!seen) return true;
     const ok = (e) => !!e && !e.dead && !!seen(e);
-    return ok(site.station) || site.parkedList.some(ok) || site.turretList.some(ok) || site.defenderList.some(ok);
+    return Object.values(site.structures || {}).some(ok) || site.parkedList.some(ok) || site.defenderList.some(ok);
   },
 
   _detected(site) {
+    // Fregata zwiadu (bez maskowania): obrona wykrywa ją bliżej niż `scoutDetect` od obwiedni bazy albo od okrętu
+    // z załogą / obrońcy — misja ma własną regułę (piraci w stanowiskach śpią do alarmu).
+    // Zamaskowana fregata (I przy jej sterach) — niewidoczna dla obrony.
+    const fr = this.deps.scoutBay?.()?.npc;
+    if (fr && !fr.dead && !isCloakHidden(fr) && site.dock) {
+      const fx = fr.pos ? fr.pos.x : fr.x;
+      const fy = fr.pos ? fr.pos.y : fr.y;
+      const Rf = PIRATE_BASE_TUNE.scoutDetect;
+      if (site.dock.distance(fx, fy) < Rf) return true;
+      const nearF = (e) => e && !e.dead && !e.__repair && Math.hypot((e.pos ? e.pos.x : e.x) - fx, (e.pos ? e.pos.y : e.y) - fy) < Rf;
+      if (site.crewList?.some(nearF) || site.defenderList.some(nearF)) return true;
+    }
     const ship = this.deps.ship();
     if (!ship || isCloakHidden(ship)) return false;
     const R = 9000;
     const near = (e) => e && !e.dead && Math.hypot((e.pos ? e.pos.x : e.x) - ship.pos.x, (e.pos ? e.pos.y : e.y) - ship.pos.y) < R;
-    // dok: odległość od obwiedni bryły (8 × 6,5 km), nie od środka
+    // baza: odległość od obwiedni (15 × 8,5 km), nie od środka
     if (site.dock ? site.dock.distance(ship.pos.x, ship.pos.y) < R
       : (site.station && Math.hypot(site.station.x - ship.pos.x, site.station.y - ship.pos.y) < R + 2000)) return true;
-    return site.parkedList.some(near) || site.turretList.some(near) || site.defenderList.some(near);
+    return site.parkedList.some(near) || site.defenderList.some(near);
   },
 
-  _chainExplosion(site) {
+  // Zniszczony habitat (finał misji): bęben pęka ćwiartkami, szyb, część techniczna i dysk mieszkalny „implodują”
+  // (kawałki-duchy pękają ku środkowi), okna gasną od środka; sieć paliwowa zapala się od habitatu (_fuelChain 'H' —
+  // bez śluz pełna reakcja). Promise — koniec rozpadu habitatu (reakcja w rurach biegnie dalej).
+  _chainExplosion(site, opts = {}) {
     return new Promise((resolve) => {
       const d = this.deps;
-      const c = site.building;
+      const place = site.dock;
+      const l = place?.layout;
       let tLast = 0;
-      const dock = site.dock;
-      if (dock) {
-        // Suchy dok: kawałki (przyszłe ciała silnika zniszczeń) odpadają po kotwicach od miejsca ostatniego
-        // trafienia (Hexlance), każdy z wybuchem; okręty na parkingu idą z odcinkami trzonu (rękawy, cumy).
-        const st = site.station;
-        let start = 'R-2';
-        if (st && Number.isFinite(st.lastHitX) && Number.isFinite(st.lastHitY)) {
-          const h = dock.toHub(st.lastHitX, st.lastHitY);
-          start = dryDockChunkAt(dock.layout, h.x, h.z) || dryDockNearestChunk(dock.layout, h.x, h.z)?.id || start;
-        }
-        const broken = new Set(d.dockBrokenChunks?.() || []);
-        const chain = planDryDockChain(dock.layout, start, { skip: broken });
-        for (const ch of chain) {
-          tLast = Math.max(tLast, ch.t);
-          this._after(ch.t, () => {
-            d.dockBreak?.(ch.id);
-            const box = dock.layout.chunkById.get(ch.id).box;
-            const p = dock.toGame((box.x0 + box.x1) / 2, (box.z0 + box.z1) / 2);
-            if (ch.size > 0) d.reactorBlow?.({ x: p.x, y: p.y, size: ch.size });
-            if (ch.kind === 'spine' || ch.kind === 'collar') d.shake?.(Math.min(40, 8 + ch.size * 0.03), 0.6);
-            if (ch.kind === 'spine') {
-              // okręt stanowiska przy tym odcinku trzonu idzie z nim — chwilę po nim, kolejne okręty odcinka
-              // co 0,3 s (reaktory okrętów nie biją naraz); wystartowane (zegar wodowania) już tu nie stoją
-              let k = 0;
-              for (const e of site.parkedList) {
-                if (!e || e.dead || !site.inBerth(e) || dock.layout.berths[e.__dockBerth]?.segment !== ch.id) continue;
-                this._after(0.45 + 0.3 * k++, () => { if (!e.dead) d.killNpc?.(e, 'shipyard-chain'); });
-              }
-            }
-          });
-        }
-        // finał: wybuch w środku hali (magazyny paliwa przy ścianie tylnej)
-        tLast += 0.8;
-        const hc = dock.layout.hall.center;
-        const pc = dock.toGame(hc.x, hc.z + 600);
-        this._after(tLast, () => {
-          d.reactorBlow?.({ x: pc.x, y: pc.y, size: 520 });
-          d.shake?.(30, 0.9);
-        });
-      } else {
-        // rozmiar wybuchu reaktora w j. świata (Atlas ≈ 280); zakład = seria po obwodzie, potem główny
-        const pts = [{ x: c.x, y: c.y, size: 420, t: 0 }];
-        for (let i = 0; i < 6; i++) {
-          const a = site.axis + i * (Math.PI * 2 / 6) + 0.3;
-          const r = 900 + (i % 2) * 700;
-          pts.push({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r, size: 240 + (i % 3) * 90, t: 0.35 + i * 0.32 });
-        }
-        pts.push({ x: c.x, y: c.y, size: 900, t: 2.5 });
-        for (const p of pts) {
-          tLast = Math.max(tLast, p.t);
-          this._after(p.t, () => {
-            d.reactorBlow?.({ x: p.x, y: p.y, size: p.size });
-            d.shake?.(Math.min(40, 8 + p.size * 0.03), 0.6);
-          });
-        }
+      const at = (t, fn) => { tLast = Math.max(tLast, t); this._after(t, fn); };
+      if (!l?.habitat) {
+        const c = site.building;
+        at(0, () => d.reactorBlow?.({ x: c.x, y: c.y, size: 900 }));
+        this._after(tLast + 1.2, resolve);
+        return;
       }
-      // reszta rzędu (niezabrana z trzonem — odcinek trzonu już wcześniej odpadł) i wieżyczki — wybuchy reaktorów
-      // po kolei
-      const withSpine = new Set();
-      if (dock) {
-        const left = new Set(planDryDockChain(dock.layout, 'R-2', { skip: new Set(d.dockBrokenChunks?.() || []) }).map((c) => c.id));
-        for (const e of site.parkedList) if (left.has(dock.layout.berths[e?.__dockBerth]?.segment)) withSpine.add(e);
-      }
-      // W zakładzie giną tylko okręty, które jeszcze w nim są: w stanowiskach i na pochylniach (bez startu) oraz
-      // eskorta, która nie zdążyła wylecieć z hali.
-      const inHall = (e) => !!(dock && e && dock.inHall(e.pos ? e.pos.x : e.x, e.pos ? e.pos.y : e.y));
-      const victims = [
-        ...site.parkedList.filter((e) => site.inBerth(e)),
-        ...site.slipList.filter((e) => site.inBerth(e)),
-        ...site.turretList,
-        ...site.defenderList.filter(inHall)
-      ].filter((e) => e && !e.dead && !withSpine.has(e));
-      const t0 = dock ? Math.max(1.2, tLast * 0.55) : 0.8;
-      victims.forEach((e, i) => {
-        const t = t0 + i * 0.22;
-        tLast = Math.max(tLast, t);
-        this._after(t, () => { if (!e.dead) d.killNpc?.(e, 'shipyard-chain'); });
+      site.chain.habitat = true;
+      const H = l.habitat;
+      const hc = place.habitat;
+      site.power.habitat = 0;
+      site.power.disc = 0;
+      at(0, () => { d.reactorBlow?.({ x: hc.x, y: hc.y, size: 640 }); d.shake?.(34, 0.9); });
+      H.quadrants.forEach((q, i) => {
+        const a = (q.a0 + q.a1) / 2;
+        const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
+        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
       });
-      this._after(tLast + 1.2, resolve);
+      at(1.1, () => d.baseBreak?.('H-T', { power: 1.8, speed: 70, dir: 'in' }));
+      at(1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: 60, dir: 'out' }));
+      for (let k = 0; k < H.discSectors; k++) {
+        const a = (k / H.discSectors) * Math.PI * 2;
+        const p = place.toGame(Math.cos(a) * H.discR * 0.55, Math.sin(a) * H.discR * 0.55);
+        at(1.9 + k * 0.28, () => {
+          d.baseBreak?.(`D-${k + 1}`, { power: 1.6, speed: 90, dir: 'in' });
+          d.reactorBlow?.({ x: p.x, y: p.y, size: 420 });
+          d.shake?.(16, 0.5);
+        });
+      }
+      // koniec: rozpad habitatu i ogień w rurach (od środka i — gdy biegnie — od zbiorników) wygasły
+      let fuelDone = Promise.resolve();
+      at(0.6, () => { fuelDone = this._fuelChain(site, 'H'); });
+      // opts.waitFuel = false (misja pominięta skokiem dev) — bez czekania na ogień w rurach
+      this._after(tLast + 1.5, () => { if (opts.waitFuel === false) resolve(); else Promise.all([fuelDone, site.chain.pending || null]).then(resolve); });
     });
+  },
+
+  // Reakcja łańcuchowa w rurach (src/game/story/pirateBaseFuel.js): harmonogram z węzła `start` ('P' — zbiorniki,
+  // 'H' — habitat) wykonany zegarem gry; okręty w stanowiskach przy zaworach giną (wybuch z ich zbiorników — śmierć
+  // okrętu w grze), rury pękają lokalnie, punkty pomostów / magazynu / habitatu spadają. Węzły już wypalone (inny start)
+  // pomijane. Promise → liczba okrętów zniszczonych przez reakcję.
+  _fuelChain(site, start = 'P') {
+    const d = this.deps;
+    const place = site.dock;
+    const l = place?.layout;
+    const ch = site.chain;
+    if (!l?.fuel || (start === 'P' && (ch.fuel || ch.burnt.has('P')))) return Promise.resolve(ch.killed);
+    if (start === 'P') ch.fuel = true;
+    const plan = planFuelChain(l, start, { done: ch.burnt });
+    const st = site.structures || {};
+    const berthShip = new Map();
+    for (const e of site.parkedList) if (e?.__berthId) berthShip.set(e.__berthId, e);
+    const hit = (s, x, y, dmg) => {
+      if (!s || !(s.hp > 0)) return;
+      s.lastHitX = x;
+      s.lastHitY = y;
+      if (d.damageStation) d.damageStation(s, dmg);
+      else s.hp = Math.max(0, s.hp - dmg);
+    };
+    let tLast = 0;
+    for (const ev of plan.events) {
+      if (ev.node) ch.burnt.add(ev.node);
+      tLast = Math.max(tLast, ev.t);
+      this._after(ev.t, () => {
+        const p = place.toGame(ev.x, ev.z);
+        switch (ev.kind) {
+          case 'tank':
+            site.power.fuel = 0;
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 900 });
+            d.shake?.(40, 1.0);
+            hit(st.fuel, p.x, p.y, 1e9);
+            for (const id of l.structures.fuel) d.baseBreak?.(id, { power: 2.6, speed: 160, dir: 'out', from: p });
+            this._blastShips(site, p, 2600);
+            break;
+          case 'warehouse':
+            site.power.warehouse = 0;
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 520 });
+            hit(st.warehouse, p.x, p.y, 1e9);
+            this._structureCollapse(site, 'warehouse');
+            break;
+          case 'habitat':
+            hit(st.habitat, p.x, p.y, 1e9);
+            break;
+          case 'junction':
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 260 });
+            hit(st.piers, p.x, p.y, 2500);
+            break;
+          case 'sluice':
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 220 });
+            break;
+          case 'tap': {
+            const e = berthShip.get(ev.berth);
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 150 });
+            if (e && !e.dead && e.hp > 0 && site.inBerth(e)) { d.killNpc?.(e, 'fuel-chain'); ch.killed++; }
+            break;
+          }
+          default:
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 130 });
+            hit(st.piers, p.x, p.y, 1600);
+        }
+      });
+    }
+    const done = new Promise((resolve) => this._after(tLast + 1, () => resolve(ch.killed)));
+    if (start === 'P') ch.pending = done;
+    return done;
+  },
+
+  // Budowla bazy padła (punkty do zera: magazyn, pomosty): kawałki, które jeszcze stoją, pękają po kolei od budowli.
+  _structureCollapse(site, key) {
+    const d = this.deps;
+    const place = site.dock;
+    const l = place?.layout;
+    const ids = l?.structures?.[key];
+    if (!ids || site.collapsed?.[key]) return;
+    (site.collapsed ||= {})[key] = true;
+    if (key === 'warehouse') site.power.warehouse = 0;
+    const gone = new Set(d.baseBrokenChunks?.() || []);
+    let k = 0;
+    for (const id of ids) {
+      if (gone.has(id)) continue;
+      const c = l.chunkById.get(id);
+      const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
+      this._after(0.15 + 0.35 * k++, () => {
+        d.baseBreak?.(id, { power: 1.9, speed: 90, dir: 'out' });
+        if (c.kind !== 'pier') d.reactorBlow?.({ x: p.x, y: p.y, size: 420 });
+      });
+    }
+  },
+
+  // Fala wybuchu zbiorników: okręty w stanowiskach w promieniu `r` (zatoka supercapitali, pomost paliwowy) giną.
+  _blastShips(site, p, r) {
+    for (const e of [...site.parkedList, ...(site.flagship ? [site.flagship] : [])]) {
+      if (!e || e.dead || !(e.hp > 0) || !site.inBerth(e)) continue;
+      const x = e.pos ? e.pos.x : e.x;
+      const y = e.pos ? e.pos.y : e.y;
+      if (Math.hypot(x - p.x, y - p.y) < r) { this.deps.killNpc?.(e, 'fuel-chain'); site.chain.killed++; }
+    }
+  },
+
+  // Zasilanie bazy (okna, lampy): wartość płynna goni cel — gaśnie ~3 s (okna dysku od środka: faza z promienia).
+  _stepSitePower(dt) {
+    const s = this.site;
+    if (!s?.power || !s.powerLive) return;
+    for (const k in s.power) {
+      const a = s.powerLive[k];
+      const b = s.power[k];
+      if (a !== b) s.powerLive[k] = b < a ? Math.max(b, a - dt * 0.3) : Math.min(b, a + dt * 0.6);
+    }
   },
 
   // ================================================================ API SKRYPTU
@@ -1215,7 +1351,6 @@ export const StoryGame = {
           if (!e || e.dead || e.__storyLaunched) return false;
           e.__storyLaunched = true;
           const L = e.__storyLaunch;
-          if (L && /^B-/.test(String(L.gate || '')) && site?.dock) d.openDockGate?.(L.gate, site.dock.n.x, site.dock.n.y);
           if (L && Array.isArray(L.path) && L.path.length && d.launchNpc) d.launchNpc(e, L.path, 0, { fightFrom: L.fightFrom });
           else d.wakeNpc(e);
           return true;
@@ -1231,10 +1366,58 @@ export const StoryGame = {
           if (d.armNpc) d.armNpc(e); else d.wakeNpc(e);
         },
         detected: (site) => self._detected(site),
+        // Budowle bazy (habitat, zbiorniki, magazyn, pomosty) rozpoznane przez stronę gracza (mgła wojny; bez mgły — od razu).
+        structureCount: (site) => Object.keys(site?.structures || {}).length,
+        structuresSeen(site) {
+          const seen = d.fogSeen;
+          const list = Object.values(site?.structures || {});
+          if (!seen) return list.length;
+          let n = 0;
+          for (const st of list) if (st && seen(st)) n++;
+          return n;
+        },
+        // odległość od obwiedni bazy, od której cel misji ostrzega fregatę zwiadu
+        scoutWarn: () => PIRATE_BASE_TUNE.scoutWarn,
         // Rozpoznanie przez mgłę wojny: budynek albo okręt stoczni widziany przez stronę gracza (bez mgły — od razu).
         scouted: (site) => self._scouted(site),
         alarm: (site) => self._alarm(site),
-        chainExplosion: (site) => self._chainExplosion(site)
+        chainExplosion: (site, opts) => self._chainExplosion(site, opts),
+        // Reakcja łańcuchowa w rurach bazy (start: 'P' — zbiorniki, 'H' — habitat); Promise → okręty zniszczone.
+        fuelChain: (site, start = 'P') => self._fuelChain(site, start),
+        // Budowla bazy padła (magazyn, pomosty) — kawałki, które jeszcze stoją, pękają.
+        collapse: (site, key) => self._structureCollapse(site, key)
+      },
+
+      // Fregata zwiadu w ładowni Atlasa (src/game/scoutBay.js — window.ScoutBay w grze; bez niej wszystko „nie ma”).
+      scout: {
+        grant() { const b = d.scoutBay?.(); if (!b?.grant) return false; if (!b.available()) self._scoutGranted = true; b.grant(); return b.available(); },
+        available: () => !!d.scoutBay?.()?.available?.(),
+        // fregata w świecie (start, lot, powrót), stery i kamera gracza na fregacie
+        deployed: () => !!d.scoutBay?.()?.deployed?.(),
+        controlling: () => !!d.scoutBay?.()?.controlling,
+        // fregata zamaskowana (I przy jej sterach) — obrona jej nie wykrywa
+        hidden: () => !!d.scoutBay?.()?.cloakHidden?.(),
+        // w ładowni (także bez fregaty — nic nie leci)
+        stowed: () => { const b = d.scoutBay?.(); return !b || !b.busy?.(); },
+        launched: () => (d.scoutBay?.()?.stats?.launches || 0) > 0,
+        lost: () => d.scoutBay?.()?.phase === 'lost',
+        entity: () => d.scoutBay?.()?.npc || null,
+        // odległość fregaty od obwiedni bazy (Infinity — fregaty nie ma w świecie)
+        distanceTo(site) {
+          const n = d.scoutBay?.()?.npc;
+          if (!n || n.dead || !site?.dock) return Infinity;
+          return site.dock.distance(n.pos ? n.pos.x : n.x, n.pos ? n.pos.y : n.y);
+        },
+        marks: () => (d.scoutBay?.()?.marks || []).filter((m) => !m.destroyed).length,
+        recall: () => !!d.scoutBay?.()?.recall?.(),
+        // Powrót fregaty do ładowni omija bazę: koło wokół obwiedni + zasięg wykrycia + zapas (ScoutBay.setAvoid).
+        avoidBase(site) {
+          const b = d.scoutBay?.();
+          if (!b?.setAvoid || !site?.dock) return;
+          b.setAvoid([{ x: site.building.x, y: site.building.y, r: site.dock.radius + PIRATE_BASE_TUNE.scoutDetect + PIRATE_BASE_TUNE.scoutAvoidMargin }]);
+          self._scoutAvoid = true;
+        },
+        clearAvoid() { d.scoutBay?.()?.setAvoid?.(null); self._scoutAvoid = false; }
       },
 
       nav: {

@@ -170,9 +170,10 @@ kreskami przez pół ekranu.
   (olbrzym / pole, gęstość), skok TRAVEL TO, chwila wyrwania i hamowanie, przylot piratów, klawisz 9 pod zakłócaczem
   (skok ma się zerwać), walka wśród skał, zakłócacz, skrzydło, kurs przywrócony i dalszy lot warpem; pipeline'y
   synchroniczne po starcie fazy.
-- `node scripts/webgpu/wodowanie-gra.mjs [--czas 150]` — prawdziwa gra, `?story=defences`: kamera nad parkingiem,
-  co sekundę stan okrętów parkingu i pochylni (w stanowisku / przy działach / wystartował, odległość od ogrodzenia),
-  bramy stanowisk, cel, baner; herszt do 60% (przyspieszenie) i 30% (ucieczka, mostek); kadry startów.
+- `node scripts/webgpu/wodowanie-gra.mjs [--czas 150]` — prawdziwa gra, `?story=defences` (baza piratów): kamera nad
+  środkiem bazy, co sekundę stan okrętów z załogą (w stanowisku / przy działach / wystartował, odległość od stanowiska
+  przy pomoście), drony, kawałki bazy odpadłe, cel, baner; herszt (zatoka przy zbiornikach) do 60% (przyspieszenie)
+  i 30% (ucieczka, mostek); kadry startów.
 - `node scripts/webgpu/fabula-gra.mjs` — prawdziwa gra w headless Chrome (WebGPU): kadry lotu kamery, cięcie i dach,
   odprawa, panel ODDOKUJ i odcumowanie, kamera gry. `--faza counter` (itd.) — skok dev i kadry fazy.
 - `node scripts/webgpu/hala-swiatla-gra.mjs --kampania` — start kampanii do panelu ODDOKUJ, klik myszą, kadry upustu

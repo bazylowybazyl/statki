@@ -201,7 +201,7 @@ test('skóra belek: ramka ekranu (linia siatki) w gałęzi maskowania, za siłą
 });
 
 test('slot kadłuba: 22 vec4, maskowanie w 17–21 (zapis w commit z wyglądu encji)', () => {
-  assert.equal(HULL_OBJECT_SLOT_VEC4, 22);
+  assert.equal(HULL_OBJECT_SLOT_VEC4, 23);
   const look = createCloakLook(null, 11);
   stepCloakLook(look, { state: 'engaging', level: 0.5, energy: 60, lastBreak: null }, 0.016, 3, { x: 0, y: 0, angle: 0, scale: 1, spriteW: 200, spriteH: 80 });
   const holder = (k) => ({ get value() { return look[k]; } });

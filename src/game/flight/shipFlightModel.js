@@ -64,8 +64,19 @@ export const FLIGHT_PILOT = Object.freeze({
   // Governor ścina nadmiar prędkości tym ułamkiem `decel` (reszta to pilot).
   governorDecelFrac: 0.5,
   // Odświeżanie stanu dysz dla VFX — wizualia, nie fizyka.
-  vfxInterval: 1 / 30
+  vfxInterval: 1 / 30,
+  // …okręt poza pudłem rysowania (FLIGHT_VFX_LOD) — rzadziej, z czasem zebranym od ostatniego odświeżenia.
+  vfxIntervalFar: 0.25
 });
+
+// Stan dysz okrętu poza pudłem rysowania (audyt FPS 2026-10-11): `entity.__inDrawBox` ustawia render
+// (hexShips3D.js — klasyfikacja encji klatki: pudło rysowania = kadr + rozmiar sprite'a + margines). Poza nim
+// nic z dysz nie widać — model dysz (composeShipThrusterCommand + updateShipThrusterState, ~4 µs na okręt)
+// liczył się 30 razy na sekundę dla każdego okrętu w bitwie (0,17–0,2 ms/kl przy 166 okrętach). Encja bez flagi
+// (dema, testy) — jak dawniej.
+// `enabled = false` (window.FlightVfxLod) — A/B pomiaru.
+export const FLIGHT_VFX_LOD = { enabled: true };
+if (typeof window !== 'undefined') window.FlightVfxLod = FLIGHT_VFX_LOD;
 
 const clamp = (v, lo, hi) => (v < lo ? lo : (v > hi ? hi : v));
 
@@ -591,7 +602,8 @@ export function stepShipFlight(entity, dt) {
   entity.desiredAngle = Number.isFinite(face) ? face : ang;
 
   entity.__flightVfxT = (Number(entity.__flightVfxT) || 0) + h;
-  if (entity.__flightVfxT >= FLIGHT_PILOT.vfxInterval) {
+  const vfxEvery = entity.__inDrawBox === false && FLIGHT_VFX_LOD.enabled ? FLIGHT_PILOT.vfxIntervalFar : FLIGHT_PILOT.vfxInterval;
+  if (entity.__flightVfxT >= vfxEvery) {
     syncFlightThrusterVisuals(entity, spec, ax, ay, alpha, ang, entity.__flightVfxT);
     entity.__flightVfxT = 0;
   }

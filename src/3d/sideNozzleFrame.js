@@ -23,6 +23,11 @@ export const SIDE_NOZZLE_CAP = 4096;
 export const SideNozzleFrame = {
   /** Modele dysz SIDE (i płomień z wylotu dzwonu). Konsola: setSideNozzles3D(false) — A/B bez modeli. */
   enabled: true,
+  /** Próg modelu dyszy [px promienia wylotu na ekranie] — publikuje go rysownik (shipModels3DGame.js); 0 = brak. */
+  modelMinPx: 0,
+  /** LOD przy źródle (engineVfxSystem.js, kamera z góry): dysze okrętu poniżej `modelMinPx` nie trafiają na listę —
+   *  rysownik i tak by je odrzucił, ale dopiero po pracy na okręt (audyt FPS 2026-10-11). false — A/B pomiaru. */
+  sourceLod: true,
   /** Dysz w tej klatce. */
   count: 0,
   /** Numer klatki (rośnie przy begin) — czytający poznaje, czy lista jest świeża. */

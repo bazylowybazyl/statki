@@ -1228,7 +1228,7 @@ Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, 
 `src/game/story/pirateDryDockBodies.js` (ciała z danych `buildPirateDryDockScene`, nie z obiektu 3D; prebuild bez
 `Core3D.scene`), `index.html` (`spawnStoryPirateDryDock`, `onDryDockDamageStep`, `stepDryDockRam`,
 `storyDryDockOpenGate`). Kryterium: `tests/pirateDryDock.test.mjs`, `tests/storyMission.test.mjs`,
-`tests/worldBodies*.test.mjs`; `scripts/webgpu/suchy-dok-gra.mjs`, `zniszczenia-gra.mjs --final` bez zmiany
+`tests/worldBodies*.test.mjs`; `scripts/webgpu/suchy-dok-gra.mjs` (usunięty 2026-10-11 — dok poza grą; bazę mierzy `baza-gra.mjs`), `zniszczenia-gra.mjs --final` bez zmiany
 zachowania; pipeline'y synchroniczne 0. Zależności: RW-22. Kolizje: misja 2 (`storyGame.js`, blok FABUŁA).
 
 **RW-25 Pas asteroid: świat pasa po stronie gry.**

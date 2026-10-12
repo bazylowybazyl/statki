@@ -161,7 +161,7 @@ test('przebicie: pocisk przez dziurę omija tarczę do końca lotu i trafia panc
   const html = read('index.html');
   // Pocisk wewnątrz pola (po przebiciu) — test okręgu dawałby t = 0 i tarcza łapałaby go od środka.
   assert.match(html, /if \(b\.shieldPassed === realNpc\) candidateBreach = true;/);
-  assert.match(html, /isShieldBreachedAt\(realNpc, candX0 \+ \(b\.x - candX0\) \* shieldT, candY0 \+ \(b\.y - candY0\) \* shieldT\)/);
+  assert.match(html, /isShieldBreachedAt\(realNpc, segX0 \+ \(b\.x - segX0\) \* shieldT, segY0 \+ \(b\.y - segY0\) \* shieldT\)/);
   // Ani blokada tarczy (failsafe kadłuba pod tarczą), ani brak gałęzi kadłuba.
   assert.match(html, /if \(shieldActive && \(didHitShield \|\| \(hexHit && !hitBreach\)\)\) \{/);
   assert.match(html, /\} else if \(\(!shieldActive \|\| hitBreach\) && hexHit\) \{/);

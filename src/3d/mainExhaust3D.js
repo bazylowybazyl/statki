@@ -68,6 +68,56 @@ const FLOW_PHASE_WRAP = 1024;
 // Wspólny bank iskier dzielą bronie — silniki biorą najwyżej tyle jego pojemności.
 const SPARK_BUDGET_SHARE = 0.55;
 
+// ZASIĘG STRUGI I ISKIER od wylotu (LOD dysz za kadrem — engineVfxSystem.js, audyt FPS 2026-10-11 § 6.2 pkt 2) —
+// sufity z tych samych liczb co push / kick niżej, w jednostkach dema (× S = promień / DEMO_NOZZLE_RADIUS):
+// moc strugi najwyżej T.boost (dopalacz), migotanie rdzenia g ≤ 1 / 0,55, kwad strugi [0, długość] × [±szerokość / 2].
+const PW_MAX = T.boost * T.power;
+const GL_MAX = 1 + 0.15 * (1 / 0.55 - 1) * T.rough;
+const PS_MAX = 0.6 + 0.4 * Math.min(T.boost, 1.5);
+//   [długość × L, pół szerokości × W, życie s]: rdzeń, ogon, uderzenie dopalacza (kick)
+const JET_REACH = Object.freeze([
+  (18 + 55 * PW_MAX) * GL_MAX * 1.15, (9 + 14 * PW_MAX) * 0.5, 0.09,
+  (40 + 75 * PW_MAX) * 1.1, (9 + 10 * PW_MAX) * 0.5, 0.32,
+  112, 18, 0.55
+]);
+// Iskry: prędkość własna ≤ 220 (kick, ps = 1) / 200 · PS_MAX, życie ≤ 1,1 / 0,85 s, odsunięcie od wylotu ≤ 3; smuga
+// iskry ciągnie się ZA nią (fxParticles3D.js), więc nie sięga dalej niż głowa.
+const SPARK_SELF = Math.max(220 * 1.1, 200 * PS_MAX * 0.85) + 3;
+const SPARK_LIFE = 1.1;
+// Iskra dziedziczy prędkość dyszy (T.inherit), a opór (drag ≤ 1,5/s) ją wytraca — iskra zostaje w tyle za lecącą
+// kamerą najwyżej o |v dyszy| × (t − (1 − e^(−1,5 t)) / 1,5) przy t = SPARK_LIFE.
+const SPARK_LAG = SPARK_LIFE - (1 - Math.exp(-1.5 * SPARK_LIFE)) / 1.5;
+
+/**
+ * Jak daleko od wylotu dyszy MAIN może sięgnąć obraz strug i iskier wypuszczonych W TEJ klatce, w ich życiu —
+ * względem kadru, który jedzie z prędkością `relSpeed` względem dyszy [j. świata].
+ * @param {number} radius    promień wylotu [j. świata]
+ * @param {number} lengthMul mnożnik długości strugi statku (engineFx.mainLength)
+ * @param {number} widthMul  mnożnik szerokości (engineFx.mainWidth)
+ * @param {number} relSpeed  |v dyszy − v kadru| (+ prędkość brzegu kadru przy oddalaniu) [j/s]
+ * @param {number} speed     |v dyszy| w świecie [j/s] — iskry z oporem zostają w tyle za lecącym kadrem
+ * @param {boolean} sparks   czy dysza w tej klatce sypie iskrami
+ */
+export function mainExhaustReach(radius, lengthMul, widthMul, relSpeed, speed, sparks) {
+  const S = Math.max(0, Number(radius) || 0) / DEMO_NOZZLE_RADIUS;
+  const L = Math.max(0, Number(lengthMul) || 0);
+  const W = Math.max(0, Number(widthMul) || 0);
+  const v = Math.max(0, Number(relSpeed) || 0);
+  let r = 0;
+  for (let k = 0; k < 9; k += 3) {
+    const d = (JET_REACH[k] * L + JET_REACH[k + 1] * W) * S + v * JET_REACH[k + 2];
+    if (d > r) r = d;
+  }
+  if (sparks) {
+    const d = SPARK_SELF * S + v * SPARK_LIFE + Math.max(0, Number(speed) || 0) * SPARK_LAG;
+    if (d > r) r = d;
+  }
+  return r;
+}
+
+// Dla testów i strojenia: sufity zasięgu w jednostkach dema.
+export const MAIN_EXHAUST_REACH = Object.freeze({ JET_REACH, SPARK_SELF, SPARK_LIFE, SPARK_LAG, PW_MAX, PS_MAX, GL_MAX });
+
 /* ============================================================================
    MATERIAŁ (TSL) — kwady strug na instancjach
    Atrybuty instancji:
@@ -201,8 +251,12 @@ function killJet(i) {
   }
 }
 
+// Strugi i iskry odrzucone przy pełnej puli / wyczerpanym udziale w banku iskier (liczniki narastające — pomiar).
+let jetsDropped = 0;
+let sparksDropped = 0;
+
 function spawnJet(x, y, dx, dy, life, l0, l1, w0, w1, pal, grad, alpha, seed, age, owner) {
-  if (jets.count >= MAX_JETS) return;
+  if (jets.count >= MAX_JETS) { jetsDropped++; return; }
   const i = jets.count++;
   jets.px[i] = x; jets.py[i] = y;
   jets.dx[i] = dx; jets.dy[i] = dy;
@@ -381,7 +435,9 @@ function kick(state, p, S, palIdx, grad, str) {
   spawnJet(p.x, p.y, p.dirX, p.dirY, 0.55, 12 * S, (72 + 40 * str) * S * L, 9 * S * W, 20 * S * W, palIdx, grad, 1.0 * str * J, fxRandom.next(), 0, state.owner);
   spawnJet(p.x, p.y, p.dirX, p.dirY, 0.40, 8 * S, (46 + 26 * str) * S * L, 16 * S * W, 36 * S * W, palIdx, grad, 0.55 * str * J, fxRandom.next(), 0, state.owner);
   if (!(p.sparkMul > 0) || !Fx3D.spark) return;
-  const n = Math.min(sparkBudgetLeft(), Math.round(40 * str * p.sparkMul));
+  const want = Math.round(40 * str * p.sparkMul);
+  const n = Math.min(sparkBudgetLeft(), want);
+  sparksDropped += want - n;
   for (let i = 0; i < n; i++) spawnSpark(state, p.x, p.y, p.dirX, p.dirY, S, 1, palIdx, 0, 0, 50, 220, rand(0.3, 1.1));
 }
 
@@ -395,6 +451,13 @@ export const MainExhaust3D = {
   MAX_JETS,
 
   get jetCount() { return jets.count; },
+  // narastające liczniki odrzuconych strug (pełna pula) i iskier (udział silników w banku Fx3D.spark wyczerpany)
+  get jetsDropped() { return jetsDropped; },
+  get sparksDropped() { return sparksDropped; },
+
+  // LOD dysz MAIN za kadrem (engineVfxSystem.js: dysza, której strugi i iskry nie sięgną kadru, dostaje
+  // pixelRadius = 0 — sama moc i żar). A/B: false = dawna ścieżka (strugi i iskry każdej dyszy w pudle rozgrzania).
+  offscreenLod: true,
 
   /**
    * Początek klatki: początek układu przy kamerze (współrzędne sceny) i zegar.
@@ -420,7 +483,8 @@ export const MainExhaust3D = {
    *   palette       indeks palety MAIN
    *   jetGain       jasność strug (suwak „VFX: bloom” gracza)
    *   sparkMul      mnożnik iskier (0 = bez iskier)
-   *   pixelRadius   promień dyszy w pikselach ekranu (LOD)
+   *   pixelRadius   promień dyszy w pikselach ekranu (LOD; 0 — bez strug i iskier, sama moc i żar: dysza za
+   *                 kadrem, engineVfxSystem.js)
    *   dt            krok czasu [s]
    */
   push(state, p) {
@@ -517,7 +581,7 @@ export const MainExhaust3D = {
         let budget = sparkBudgetLeft();
         while (a >= 1) {
           a -= 1;
-          if (budget-- <= 0) continue;
+          if (budget-- <= 0) { sparksDropped++; continue; }
           spawnSpark(state, x, y, dirX, dirY, S, ps, palIdx, a / rate, dt, 50, 200, rand(0.3, 0.85));
         }
         state.accSpark = a;
@@ -606,3 +670,6 @@ export const MainExhaust3D = {
     owners.used = 0;
   }
 };
+
+// A/B i pomiary z konsoli (MainExhaust3D.offscreenLod, jetCount, jetsDropped, sparksDropped).
+if (typeof window !== 'undefined') window.MainExhaust3D = MainExhaust3D;

@@ -1,5 +1,5 @@
 // Fabuła (2026-09-30, kampania z dwóch misji 2026-10-07): misje 1 i 2 na atrapie gry — StoryGame (klej) + skrypty
-// od doku przez stocznię (zegar wodowania, herszt) i odwet w falach do powrotu. Sprawdza kolejność faz, zamrożenie
+// od doku przez bazę piratów (zegar startów, drony, herszt, reakcja łańcuchowa) i odwet w falach do powrotu. Sprawdza kolejność faz, zamrożenie
 // świata w scenach, blokadę w doku, starty z parkingu i pochylni, ucieczkę herszta, fale warpa, nagrody i dziennik.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +9,7 @@ import { ViewState3D } from '../src/game/view3D.js';
 import { engageCloak, stepCloak } from '../src/game/cloak.js';
 import { MISSION01 } from '../src/game/story/missions/mission01.js';
 import { MISSION02 } from '../src/game/story/missions/mission02.js';
+import { PIRATE_BASE_TUNE } from '../src/game/story/pirateBaseSite.js';
 import { ENGINE_OFF, ENGINE_IGNITION, engineStateOf, ignitionPhase, stepEngineIgnition } from '../src/game/engineIgnition.js';
 
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
@@ -71,6 +72,7 @@ function makeWorld() {
     armNpc: (n) => { n.armed = true; },
     fleeNpc: (n, p) => { n.flee = p; },
     openDockGate: (id) => (w.gates ||= []).push(id),
+    launchDrones: (o) => Array.from({ length: o.count }, () => mkNpc('fighter', { spawnPos: { x: o.x, y: o.y } }, 'pirate')),
     isHulk: (n) => !!n.isBridgeHulk,
     bridgeAimPoint: (n, out) => { out.x = (n.pos?.x ?? n.x) + 100; out.y = (n.pos?.y ?? n.y); return out; },
     hullRatio: (e) => (e === ship ? (w.hull ?? 1) : (e?.hullRatio ?? 1)),
@@ -188,21 +190,27 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(pose.extension < 0.01 && pose.seat < 0.01, 'ramiona paliwowe złożone');
   assert.equal(pose.owner, null, 'koniec odcumowania: poza oddana automatowi stanowisk');
 
-  // wylot z hali → kurs na stocznię
+  // wylot z hali → kurs na bazę piratów (szkic użytkownika 2026-10-11)
   const p = S._api().dock.approachPoint();
   w.ship.pos.x = p.x; w.ship.pos.y = p.y;
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'course');
-  assert.ok(S.site && S.site.station, 'stocznia postawiona');
-  assert.equal(S.site.parkedList.length, 10, 'dziesięć okrętów na parkingu suchego doku');
-  assert.ok(S.site.parkedList.every((n) => n.asleep), 'zaparkowane bez załogi');
-  assert.ok(S.site.parkedList.every((n) => engineStateOf(n) === ENGINE_OFF), 'parking z wyłączonymi silnikami');
-  assert.ok(S.site.defenderList.every((n) => engineStateOf(n) === ENGINE_OFF), 'eskorta w hali z wyłączonymi silnikami');
+  assert.ok(S.site && S.site.station, 'baza postawiona');
+  assert.deepEqual(Object.keys(S.site.structures).sort(), ['fuel', 'habitat', 'piers', 'warehouse'], 'budowle bazy');
+  assert.equal(S.site.station, S.site.structures.habitat, 'cel misji = habitat');
+  assert.equal(S.site.parkedList.length, 47, 'okręty w stanowiskach (bez herszta)');
+  assert.equal(S.site.crewList.length, 12, 'kilkanaście z załogą');
+  assert.equal(S.site.repairList.length, 35, 'reszta w remoncie');
+  assert.ok(S.site.repairList.every((n) => n.hp < n.maxHp), 'okręty w remoncie bez części punktów');
+  assert.ok(S.site.parkedList.every((n) => n.asleep), 'w stanowiskach bez załogi przy sterach');
+  assert.ok(S.site.parkedList.every((n) => engineStateOf(n) === ENGINE_OFF), 'silniki wyłączone');
+  assert.equal(S.site.flagship?.type, 'pirate_supercapital', 'herszt w zatoce przy zbiornikach');
+  assert.equal(engineStateOf(S.site.flagship), ENGINE_OFF);
   assert.equal(S.site.turretList.length, 0, 'bez wieżyczek (2026-10-05)');
   assert.equal(w.courses.length >= 1, true, 'kurs wyznaczony');
   // skok „kawałek dalej”: kurs na punkt wyjścia z warpa, poza zasięgiem wzroku Atlasa (mgła wojny)
   assert.deepEqual(w.course, { x: S.site.warpIn.x, y: S.site.warpIn.y }, 'kurs na wyjście z warpa, nie na zbiórkę');
-  assert.ok(Math.hypot(S.site.warpIn.x - S.site.building.x, S.site.warpIn.y - S.site.building.y) > 50000, 'stocznia za mgłą');
+  assert.ok(Math.hypot(S.site.warpIn.x - S.site.building.x, S.site.warpIn.y - S.site.building.y) > 50000, 'baza za mgłą');
   w.ship.pos.x = S.site.warpIn.x; w.ship.pos.y = S.site.warpIn.y;
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'scout');
@@ -214,82 +222,77 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(S.ui.hint, 'samouczek: mgła wojny i dron zwiadu');
   await frames(S, w, 30, view);
   assert.equal(S.phase, 'scout', 'bez rozpoznania misja czeka');
-  assert.ok(!S.site.alarmed, 'zwiad z daleka nie budzi stoczni');
+  assert.ok(!S.site.alarmed, 'zwiad z daleka nie budzi bazy');
   // dron zwiadu / podejście: budynek w zasięgu wzroku strony gracza
   w.fogSeen.add(S.site.station);
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'approach');
   assert.equal(w.masses.size, 0, 'sygnatura zdjęta po rozpoznaniu');
-  // podejście: na punkt zbiórki
   w.ship.pos.x = S.site.rally.x; w.ship.pos.y = S.site.rally.y;
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'approach');
   assert.equal(S.ui.targets.size, 0, 'podejście ma punkt nawigacji, bez etykiet wszystkich statków');
-  // maskowanie
   engageCloak(w.ship.cloak);
   stepCloak(w.ship.cloak, 3);
   await frames(S, w, 3, view);
   assert.ok(/rzędu/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
-  // podejście pod rząd (niewykryty — ukryty)
-  w.ship.pos.x = S.site.rowStart.x - 3000 * Math.cos(S.site.axis); w.ship.pos.y = S.site.rowStart.y - 3000 * Math.sin(S.site.axis);
+  // podejście pod rząd przy ramieniu A (niewykryty — ukryty)
+  w.ship.pos.x = S.site.rowStart.x - 3000 * Math.cos(S.site.ramAngle); w.ship.pos.y = S.site.rowStart.y - 3000 * Math.sin(S.site.ramAngle);
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'ram');
   assert.ok(!S.site.alarmed);
-  // taran: znaczniki na okrętach parkingu; pierwszy zniszczony kadłub budzi stocznię
-  assert.equal(S.ui.targets.size, 10, 'znacznik na każdym okręcie parkingu');
+  const ramRow = S.site.ramList();
+  assert.equal(ramRow.length, 4, 'rząd do taranu: wewnętrzna strona ramienia A');
+  assert.equal(S.ui.targets.size, 4, 'znacznik na każdym okręcie rzędu');
   assert.ok(/\(F\).*\(4\)/.test(S.ui.objective?.text || ''), 'cel podaje obie drogi: ' + S.ui.objective?.text);
   const kill = (n) => { n.dead = true; n.hp = 0; };
-  const parked = S.site.parkedList;
-  kill(parked[0]);
+  const crew = S.site.crewList;
+  kill(ramRow.find((n) => n.__repair));
   await frames(S, w, 2, view);
   assert.ok(S.site.alarmed, 'alarm po taranie');
-  // eskorta i supercapital wylatują z hali suchego doku bramami (trasa z planu): supercapital pierwszy
-  assert.ok(S.site.defenderList.length === 6 && S.site.defenderList.every((n) => n.launch && n.launch.path.length >= 3), 'wylot eskorty trasą');
-  assert.equal(S.site.defenderList[0].type, 'pirate_supercapital');
+  // herszt startuje z zatoki pierwszy (trasa z planu bazy), drony z hangarów bębna habitatu
   const boss = S.site.flagship;
-  assert.equal(boss, S.site.defenderList[0]);
-  const delays = S.site.defenderList.map((n) => n.launch.delay);
-  assert.ok(delays.slice(1).every((d) => d > delays[0]), 'supercapital wylatuje pierwszy');
-  assert.equal(new Set(delays).size, delays.length, 'kolejno, bez dwóch naraz');
+  assert.ok(boss.launch && boss.launch.path.length >= 3 && boss.launch.delay < 1, 'herszt wylatuje trasą z zatoki');
+  assert.equal(S.site.droneWave, 1, 'pierwsza fala dronów');
+  assert.equal(S.site.droneList.length, PIRATE_BASE_TUNE.droneBays * PIRATE_BASE_TUNE.droneSquad, 'drony z czterech hangarów');
 
-  // ZEGAR WODOWANIA (2026-10-07): parking i pochylnie startują po kolei; cele: 9 na parkingu, 2 pochylnie, obrona
+  // ZEGAR STARTÓW: okręty z załogą odchodzą od pomostów po kolei; cele: załogi, herszt, drony
   assert.equal(S.phase, 'defences');
-  const slips = S.site.slipList;
-  assert.equal(slips.length, 2, 'dwa pancerniki na pochylniach hali');
-  assert.ok(slips.every((n) => n.asleep && n.hp < n.maxHp), 'niedokończone kadłuby, bez załogi');
-  assert.equal(S.ui.targets.size, 9 + 2 + 6);
-  assert.ok(/ZNISZCZONY D-01 · 1 \/ 12/.test(S.ui.banner?.text || ''), S.ui.banner?.text);
-  assert.ok(/Nie dopuść/.test(S.ui.objective?.text || '') && /start za 0:4\d/.test(S.ui.objective.progress()), S.ui.objective?.progress?.());
-  // taran: zmiażdżony kadłub w styku z Atlasem
-  parked[1].hullRatio = 0.2;
-  w.contact = new Set([parked[1]]);
+  assert.equal(S.ui.targets.size, 12 + 1 + S.site.droneList.length, 'załogi, herszt, drony');
+  assert.ok(/Nie dopuść/.test(S.ui.objective?.text || '') && /start za 0:\d\d/.test(S.ui.objective.progress()), S.ui.objective?.progress?.());
+  assert.equal(S.ui.hint?.spec?.title, 'Drony piratów', 'pierwsza karta samouczka w bitwie: drony (myśliwce gracza — Z)');
+  // taran: zmiażdżony okręt z załogą w rzędzie, w styku z Atlasem
+  const rowCrew = ramRow.filter((n) => !n.__repair);
+  assert.equal(rowCrew.length, 2, 'dwa okręty rzędu mają załogę');
+  rowCrew[0].hullRatio = 0.2;
+  w.contact = new Set([rowCrew[0]]);
   await frames(S, w, 2, view);
-  assert.ok(/STARANOWANY D-02 · 2 \/ 12/.test(S.ui.banner?.text || ''), S.ui.banner?.text);
+  assert.ok(/STARANOWANY A-L\d · 1 \/ 12/.test(S.ui.banner?.text || ''), S.ui.banner?.text);
   w.contact = null;
-  // pierwszy start: z końca parkingu (G-E) — D-09 (niszczyciel) po 48 s, w połowie rozgrzewania strzela ze stanowiska
-  const d09 = parked[8];
+  // pierwszy start: najdalszy od wylotu lejka; w połowie rozgrzewania strzela ze stanowiska
+  const m = S.site.mouth;
+  const far = (n) => Math.hypot(n.pos.x - m.x, n.pos.y - m.y);
+  const first = crew.slice().sort((a, b) => far(b) - far(a))[0];
   await frames(S, w, 30 * 26, view);
-  assert.ok(d09.armed && !d09.launch, 'załoga przy działach w połowie rozgrzewania');
-  assert.equal(engineStateOf(d09), ENGINE_OFF, 'silniki jeszcze wyłączone');
-  await frames(S, w, 30 * 23, view);
-  assert.ok(d09.launch, 'D-09 wystartował');
-  assert.equal(engineStateOf(d09), ENGINE_IGNITION, 'zapłon przed startem (zegar wodowania — atrapa nie kroczy lotu)');
-  assert.equal(d09.launch.delay, 0, 'start o czasie — bez czekania na zapłon');
-  assert.equal(d09.launch.opts.fightFrom, 1);
-  assert.ok(Number.isFinite(d09.launch.path[0].face) && d09.launch.path[0].speed > 0, 'rufą przez bramę stanowiska');
-  assert.ok(w.gates.includes('B-09'), 'brama stanowiska otwarta');
-  assert.equal(S.ui.targets.get('ram-8')?.group, 'Wystartowały');
-  assert.ok(!parked[2].launch, 'reszta parkingu jeszcze stoi');
-  kill(d09);
+  assert.ok(first.armed && !first.launch, 'załoga przy działach w połowie rozgrzewania');
+  assert.equal(engineStateOf(first), ENGINE_OFF, 'silniki jeszcze wyłączone');
+  await frames(S, w, 30 * 16, view);
+  assert.ok(first.launch, 'pierwszy start');
+  assert.equal(engineStateOf(first), ENGINE_IGNITION, 'zapłon przed startem (atrapa nie kroczy lotu)');
+  assert.equal(first.launch.delay, 0, 'start o czasie — bez czekania na zapłon');
+  assert.equal(first.launch.opts.fightFrom, 1);
+  assert.ok(Number.isFinite(first.launch.path[0].face) && first.launch.path[0].speed > 0, 'rufą od pomostu');
+  assert.equal(S.ui.targets.get(`crew-${first.__dockBerth}`)?.group, 'Wystartowały');
+  kill(first);
   await frames(S, w, 2, view);
-  assert.equal(S.ui.targets.has('ram-8'), false, 'zniszczony po starcie traci znacznik');
+  assert.equal(S.ui.targets.has(`crew-${first.__dockBerth}`), false, 'zniszczony po starcie traci znacznik');
 
   // HERSZT: przy 2/3 punktów przyspiesza starty, przy 1/3 ucieka i ładuje skok
   assert.ok(S.ui.markers.has('bridge'), 'mostek supercapitala jako słaby punkt');
   assert.notDeepEqual(S.journalEntry.pos, S.ui.markers.get('bridge'), 'mostek nie przejmuje dziennika');
   boss.hp = boss.maxHp * 0.6;
   await frames(S, w, 30 * 10, view);
-  assert.ok(parked[9].launch, 'D-10 (pancernik, 60 s) wystartował wcześniej — herszt przyspieszył starty');
+  assert.ok(crew.filter((n) => n.launch).length >= 3, 'herszt przyspieszył starty');
   boss.hp = boss.maxHp * 0.3;
   await frames(S, w, 3, view);
   assert.ok(boss.flee, 'herszt ucieka');
@@ -297,32 +300,39 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   await frames(S, w, 30 * (MISSION01.boss.escapeSec + 1), view);
   assert.ok(boss.warpedOut, 'nie zatrzymany — odleciał warpem');
   assert.equal(S.ui.markers.has('bridge'), false);
-  // reszta stoczni: wystartowane, w stanowiskach i na pochylniach (te jeszcze nie zwodowane), eskorta
-  assert.ok(slips[0].launch && !slips[1].launch, 'pierwsza pochylnia zwodowana (przyspieszona przez herszta), druga jeszcze w budowie');
-  for (const n of [...parked, ...slips, ...S.site.defenderList]) if (!n.dead) kill(n);
+  assert.ok(S.site.droneWave >= 2, 'kolejne fale dronów');
+  for (const n of [...crew, ...S.site.droneList]) if (!n.dead) kill(n);
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'shipyard');
   assert.deepEqual([...S.ui.targets.keys()], ['yard'], 'poprzednie cele zdjęte po bitwie');
   assert.equal(S.ui.targets.get('yard').entity, S.site.station, 'budynek śledzi żywą stację');
-  assert.equal(S.ui.targets.get('yard').radius, S.site.buildingRadius, 'ramka otacza bryłę, nie małą kolizję stacji');
+  assert.equal(S.ui.targets.get('yard').radius, S.site.buildingRadius, 'ramka otacza bęben habitatu');
   assert.equal(S.ui.markers.has('yard'), false, 'budynek nie ma drugiej etykiety nawigacji');
-  assert.deepEqual(S.journalEntry.pos, S.site.building, 'CIC i dziennik dalej wskazują budynek');
-  assert.ok(/wbudowaną/.test(S.ui.objective?.text || ''));
-  assert.equal(S.site.station.maxHp, MISSION01.dock.hp, 'dok z punktami misji');
-  // budynek: Hexlance → łańcuch rozpadu → podsumowanie misji 1 w polu
+  assert.deepEqual(S.journalEntry.pos, S.site.building, 'CIC i dziennik dalej wskazują habitat');
+  assert.ok(/habitat/i.test(S.ui.objective?.text || ''), S.ui.objective?.text);
+  assert.equal(S.site.station.maxHp, MISSION01.dock.hp + MISSION01.dock.shield, 'habitat z punktami misji');
+  // habitat: rozpad (bęben, dysk), ogień w rurach od środka → podsumowanie misji 1 w polu
   S.site.station.hp = 0; S.site.station._destroyed3D = true;
-  await frames(S, w, 30 * 9, view);
+  await frames(S, w, 30 * 12, view);
   assert.equal(S.ui.targets.size, 0, 'po zniszczeniu budynku nie zostaje marker na wraku');
-  assert.ok(w.blows >= 7, `łańcuch wybuchów (${w.blows})`);
+  assert.ok(w.blows >= 12, `rozpad habitatu i ogień w rurach (${w.blows})`);
+  assert.ok(S.site.repairList.every((n) => n.dead), 'reakcja od habitatu: okręty w remoncie wybuchły w stanowiskach');
   for (let i = 0; i < 30 && !S.ui.summary; i++) await frames(S, w, 30, view);
   assert.equal(S.phase, 'aftermath');
   assert.ok(S.ui.summary, 'podsumowanie misji 1');
+  const P = MISSION01.bonus;
   const stopRow = S.ui.summary.stats.find((r) => /Zatrzymane/.test(r[0]));
   const stopped = Number(/^(\d+) \/ 12$/.exec(stopRow[1])?.[1]);
-  assert.ok(stopped >= 3, `zatrzymane przed startem: ${stopRow[1]}`);
+  assert.ok(stopped >= 1, `zatrzymane przed startem: ${stopRow[1]}`);
   assert.equal(S.ui.summary.stats.find((r) => /herszta/.test(r[0]))[1], 'uciekł');
-  assert.equal(w.credits, MISSION01.rewards.credits + stopped * MISSION01.bonus.perStopped.credits, 'premia za zatrzymane, bez premii za herszta');
-  assert.equal(S.progress.exp, MISSION01.rewards.exp + stopped * MISSION01.bonus.perStopped.exp);
+  const chainRow = S.ui.summary.stats.find((r) => /łańcuchowa/.test(r[0]));
+  const chainN = chainRow ? Number(/^(\d+)/.exec(chainRow[1])?.[1]) : 0;
+  assert.ok(chainN >= 30, `reakcja łańcuchowa w podsumowaniu: ${chainRow?.[1]}`);
+  const wh = S.ui.summary.stats.find((r) => /Magazyn/.test(r[0]))[1] === 'zniszczony';
+  assert.ok(wh, 'ogień w rurach doszedł do magazynu');
+  assert.equal(w.credits, MISSION01.rewards.credits + stopped * P.perStopped.credits + chainN * P.perChain.credits + P.warehouse.credits,
+    'premie: zatrzymane, reakcja łańcuchowa, magazyn — bez premii za herszta');
+  assert.equal(S.progress.exp, MISSION01.rewards.exp + stopped * P.perStopped.exp + chainN * P.perChain.exp + P.warehouse.exp);
   assert.deepEqual(w.rep, [['terra_nova', 10], ['pirates', -12]]);
   assert.equal(S.campaign.bossEscaped, true);
   S.closeSummary();
@@ -436,7 +446,7 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.equal(S.ui.targets.size, 0);
 });
 
-test('misja 1: herszt zatrzymany przed skokiem, dok zburzony w środku bitwy — w stanowiskach giną, wystartowane nie', async () => {
+test('misja 1: herszt bez dowodzenia, habitat zburzony w środku bitwy — w stanowiskach giną od ognia w rurach, wystartowane nie', async () => {
   const w = makeWorld();
   const S = StoryGame;
   S.init(w.deps);
@@ -445,33 +455,57 @@ test('misja 1: herszt zatrzymany przed skokiem, dok zburzony w środku bitwy —
   await flush();
   await frames(S, w, 2, view);
   assert.equal(S.phase, 'defences');
-  const parked = S.site.parkedList;
+  const crew = S.site.crewList;
   await frames(S, w, 30 * 49, view);
-  const launched = parked.filter((n) => n.launch);
-  assert.ok(launched.length >= 1, 'pierwszy start z parkingu');
-  // eskorta i herszt już poza halą (atrapa nie lata — stawiamy je na końcu trasy wylotu)
-  for (const n of S.site.defenderList) { const q = n.launch.path.at(-1); n.pos.x = n.x = q.x; n.pos.y = n.y = q.y; }
-  // dok pada w środku bitwy: łańcuch zabiera to, co stoi w stanowiskach i na pochylniach
-  S.site.station.hp = 0; S.site.station._destroyed3D = true;
-  await frames(S, w, 30 * 9, view);
-  assert.ok(parked.filter((n) => !n.launch).every((n) => n.dead), 'w stanowiskach — z dokiem');
-  assert.ok(S.site.slipList.every((n) => n.dead), 'pochylnie — z dokiem');
-  assert.ok(launched.every((n) => !n.dead), 'wystartowane walczą dalej');
-  assert.equal(S.phase, 'defences', 'bitwa trwa, póki są wrogowie');
-  // herszt: bez dowodzenia (mostek) w trakcie ładowania skoku
+  const launched = crew.filter((n) => n.launch);
+  assert.ok(launched.length >= 1, 'pierwszy start od pomostu');
+  // herszt już poza zatoką (atrapa nie lata — stawiamy go na końcu trasy)
   const boss = S.site.flagship;
+  const q = boss.launch.path.at(-1);
+  boss.pos.x = boss.x = q.x; boss.pos.y = boss.y = q.y;
+  // habitat pada w środku bitwy: ogień w rurach zabiera to, co stoi w stanowiskach
+  S.site.station.hp = 0; S.site.station._destroyed3D = true;
+  await frames(S, w, 30 * 12, view);
+  assert.ok(S.site.parkedList.filter((n) => !n.launch).every((n) => n.dead), 'w stanowiskach — od ognia w rurach');
+  assert.ok(launched.every((n) => !n.dead), 'wystartowane walczą dalej');
+  assert.ok(!boss.dead, 'herszt poza zatoką przeżył wybuch zbiorników');
+  assert.equal(S.phase, 'defences', 'bitwa trwa, póki są wrogowie');
   boss.hp = boss.maxHp * 0.3;
   await frames(S, w, 3, view);
   assert.ok(boss.flee);
   boss.isBridgeHulk = true;
   await frames(S, w, 3, view);
-  for (const n of [...launched, ...S.site.defenderList]) { n.dead = true; n.hp = 0; }
+  for (const n of [...launched, ...S.site.droneList]) { n.dead = true; n.hp = 0; }
   await frames(S, w, 3, view);
-  assert.equal(S.phase, 'aftermath', 'dok już zburzony — od razu podsumowanie');
+  assert.equal(S.phase, 'aftermath', 'habitat już zburzony — od razu podsumowanie');
   await frames(S, w, 30 * 4, view);
   assert.equal(S.ui.summary.stats.find((r) => /herszta/.test(r[0]))[1], 'bez dowodzenia');
   assert.equal(S.campaign.bossEscaped, false);
-  assert.ok(w.credits > MISSION01.rewards.credits + MISSION01.bonus.boss.credits, 'premia za herszta i zatrzymane');
+  assert.ok(w.credits > MISSION01.rewards.credits + MISSION01.bonus.boss.credits, 'premia za herszta i reakcję');
+  S.abort('test');
+});
+
+test('misja 1: zbiorniki paliwa wysadzone przed habitatem — reakcja łańcuchowa w rurach, bez podwójnego zapłonu', async () => {
+  const w = makeWorld();
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  S.beginNewGame({ tutorial: false, startPhase: 'defences' });
+  await flush();
+  await frames(S, w, 2, view);
+  const fuel = S.site.structures.fuel;
+  const blows0 = w.blows;
+  fuel.hp = 0;
+  await frames(S, w, 3, view);
+  assert.ok(S.site.chain.fuel, 'reakcja z zbiorników ruszyła');
+  await frames(S, w, 30 * 16, view);
+  assert.ok(S.site.repairList.every((n) => n.dead), 'okręty w remoncie wybuchły w stanowiskach');
+  assert.ok(S.site.structures.habitat.hp <= 0, 'bez śluz ogień przeszedł przez habitat');
+  const blows1 = w.blows;
+  assert.ok(blows1 - blows0 >= 40, `wybuchy w rurach (${blows1 - blows0})`);
+  // habitat padł od reakcji: rozpad, a ogień od środka nie zapala sieci drugi raz
+  await frames(S, w, 30 * 8, view);
+  assert.ok(w.blows - blows1 < 25, `rozpad habitatu bez drugiej reakcji (${w.blows - blows1})`);
   S.abort('test');
 });
 
@@ -489,7 +523,7 @@ test('skok dev ?story=counter: misja 1 pominięta (stocznia zburzona), misja 2 o
   assert.equal(S.ui.hint, null, 'bez samouczka');
   assert.equal(S.ui.summary, null, 'pominięta misja bez podsumowania');
   assert.equal(S.journalEntry.id, MISSION02.id);
-  assert.ok([...S.site.parkedList, ...S.site.slipList, ...S.site.defenderList].every((n) => n.dead), 'stocznia pokonana');
+  assert.ok([...S.site.crewList, ...S.site.droneList, S.site.flagship].every((n) => n.dead), 'baza pokonana: załogi, drony, herszt');
   await frames(S, w, 30 * 8, view);
   assert.equal(w.npcs.filter((n) => n.__storyTag === 'counter').length, 13, 'fala 1');
   S.abort('test');
@@ -591,6 +625,91 @@ test('zasadzka: Atlas odlatuje po upadku zakłócacza — reszta zostaje w pasie
   S.abort('test');
 });
 
+// Atrapa ładowni z fregatą zwiadu (src/game/scoutBay.js — tylko to, czego używa fabuła).
+function makeScoutBay() {
+  return {
+    phase: 'none', npc: null, controlling: false, stats: { launches: 0 }, marks: [],
+    grant() { if (this.phase === 'none' || this.phase === 'lost') this.phase = 'stowed'; return this; },
+    revoke() { this.phase = 'none'; this.npc = null; this.controlling = false; },
+    available() { return this.phase !== 'none' && this.phase !== 'lost'; },
+    deployed() { return !!this.npc && !this.npc.dead; },
+    busy() { return this.phase !== 'none' && this.phase !== 'stowed' && this.phase !== 'lost'; },
+    launch(x, y) { this.phase = 'flight'; this.controlling = true; this.stats.launches++; this.npc = { pos: { x, y }, x, y, dead: false }; },
+    moveTo(p) { this.npc.pos.x = this.npc.x = p.x; this.npc.pos.y = this.npc.y = p.y; },
+    recall() { this.controlling = false; this.phase = 'returning'; return true; }
+  };
+}
+// punkt w odległości `d` od obwiedni bazy (na promieniu od środka pod kątem `a`)
+function pointOffBase(site, d, a = 1.1) {
+  const c = site.building;
+  for (let r = 0; r < 60000; r += 50) {
+    const p = { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r };
+    if (site.dock.distance(p.x, p.y) >= d) return p;
+  }
+  return null;
+}
+
+test('zwiad fregatą z ładowni: oblot bazy (budowle n / 4), ostrzeżenie, powrót sterów; przerwanie opróżnia ładownię', async () => {
+  const w = makeWorld();
+  const bay = makeScoutBay();
+  w.deps.scoutBay = () => bay;
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  S.beginNewGame({ tutorial: true, startPhase: 'scout' });
+  await flush();
+  await frames(S, w, 3, view);
+  assert.equal(S.phase, 'scout');
+  assert.ok(bay.available(), 'kampania daje fregatę do ładowni');
+  assert.ok(/fregata zwiadu/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
+  assert.equal(S.ui.hint?.spec?.title, 'Fregata zwiadu');
+  // start fregaty daleko od bazy (poza mgłą — nic nie widać)
+  const far = pointOffBase(S.site, 15000);
+  bay.launch(far.x, far.y);
+  await frames(S, w, 120, view);
+  assert.equal(S.ui.hint?.spec?.title, 'Zwiad', 'po przejęciu sterów — podpowiedź lotu, skanu i oznaczeń');
+  assert.equal(S.phase, 'scout');
+  // habitat w zasięgu wzroku fregaty: sygnatura rozpoznana, cel — oblot (1 / 4)
+  w.fogSeen.add(S.site.structures.habitat);
+  await frames(S, w, 3, view);
+  assert.equal(S.ui.objective?.id, 'recon');
+  assert.equal(S.ui.objective.progress(), 'budowle 1 / 4');
+  bay.moveTo(pointOffBase(S.site, 4000));
+  assert.ok(/ZA BLISKO/.test(S.ui.objective.progress()), 'ostrzeżenie przed zasięgiem wykrycia');
+  await frames(S, w, 10, view);
+  assert.ok(!S.site.alarmed, '4 km od bazy — jeszcze nie wykryta');
+  for (const k of ['fuel', 'warehouse', 'piers']) w.fogSeen.add(S.site.structures[k]);
+  await frames(S, w, 3, view);
+  assert.equal(S.ui.objective?.id, 'recall', 'po oblocie — stery z powrotem na Atlasa');
+  bay.recall();
+  await frames(S, w, 3, view);
+  assert.equal(S.phase, 'approach');
+  assert.ok(!S.site.alarmed);
+  S.abort('test');
+  assert.equal(bay.phase, 'none', 'przerwanie kampanii zabiera fregatę dawaną przez fabułę');
+});
+
+test('zwiad fregatą: za blisko bazy — obrona ją wykrywa (alarm, drony)', async () => {
+  const w = makeWorld();
+  const bay = makeScoutBay();
+  w.deps.scoutBay = () => bay;
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  S.beginNewGame({ tutorial: false, startPhase: 'scout' });
+  await flush();
+  await frames(S, w, 3, view);
+  const p = pointOffBase(S.site, 15000);
+  bay.launch(p.x, p.y);
+  await frames(S, w, 10, view);
+  assert.ok(!S.site.alarmed);
+  bay.moveTo(pointOffBase(S.site, 2000));
+  await frames(S, w, 30, view);
+  assert.ok(S.site.alarmed, 'fregata 2 km od bazy — alarm');
+  assert.equal(S.phase, 'defences');
+  S.abort('test');
+});
+
 test('skok dev ?story=scout: Atlas w punkcie wyjścia z warpa, sygnatura masy; przerwanie ją zdejmuje', async () => {
   const w = makeWorld();
   const S = StoryGame;
@@ -611,7 +730,7 @@ test('przerwanie i nowa misja usuwają poprzednie cele bojowe', async () => {
   S.init(w.deps);
   S.beginNewGame({ tutorial: false, startPhase: 'defences' });
   await flush();
-  assert.equal(S.ui.targets.size, 7 + 2 + 6, 'parking (bez trzech staranowanych), pochylnie, obrona stoczni');
+  assert.equal(S.ui.targets.size, S.site.crewList.filter((n) => !n.dead).length + 1 + S.site.droneList.length, 'załogi (bez staranowanych), herszt, drony');
   S.abort('test');
   assert.equal(S.ui.targets.size, 0, 'przerwanie nie zostawia podpisów');
   S.beginNewGame({ tutorial: false, startPhase: 'shipyard' });

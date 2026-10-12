@@ -1,9 +1,9 @@
 // ============================================================
 // Kampania (2026-10-07): rozdział 1 = dwie misje jedna po drugiej, w tym samym świecie.
 //
-//   misja 1 „Cicha stocznia” (src/game/story/missions/mission01.js) — dok K-7 → rozpoznanie → taran →
-//     zegar wodowania (okręty na parkingu i pochylniach startują po kolei) → supercapital herszta → suchy dok;
-//     kończy się w polu, nad gruzami stoczni (podsumowanie misji 1);
+//   misja 1 „Cicha baza” (src/game/story/missions/mission01.js) — dok K-7 → rozpoznanie → taran rzędu →
+//     drony, zegar startów (okręty z załogą odchodzą od pomostów po kolei) → supercapital herszta → habitat bazy
+//     piratów (rozpad, ogień w rurach); kończy się w polu, nad gruzami bazy (podsumowanie misji 1);
 //   misja 2 „Odwet” (src/game/story/missions/mission02.js) — naprawa w polu → trzy fale piratów (w trzeciej
 //     okręt herszta), posiłki z Ziemi w drugiej → powrót do K-7.
 //

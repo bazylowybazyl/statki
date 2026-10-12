@@ -27,7 +27,7 @@ const { cdp } = chrome;
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
 const report = { zdjecia: [], bledy: [] };
 
-// Pipeline'y utworzone SYNCHRONICZNIE (materiał bez rozgrzewki = przestój w klatce) — jak suchy-dok-gra.mjs.
+// Pipeline'y utworzone SYNCHRONICZNIE (materiał bez rozgrzewki = przestój w klatce) — jak baza-gra.mjs.
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   const R = { pipes: [] };
   const name = (m, o) => ((m && m.name) || (m && m.type) || '?') + ' @ ' + ((o && o.name) || (o && o.type) || '?');

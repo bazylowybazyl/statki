@@ -716,17 +716,30 @@ function profileOf(weaponOrId) {
  * special/builtin to superciężkie. Jedyny dodatek: kaliber Capital na zaczepie
  * głównym/rakietowym (torpeda oblężnicza) liczy się jak special, bo trafienie
  * ma tę samą wagę co bateria klasy Yamato. Aux zostaje przy `pd` niezależnie od
- * rozmiaru — zapora flak „Perun" to nadal ogień defensywny.
+ * rozmiaru — zapora flak „Perun" to nadal ogień defensywny. Szybkostrzelne i lekkie
+ * pociski ciężkich gniazd (< SHIELD_SPECIAL_MIN_DAMAGE albo przeładowanie
+ * < SHIELD_SPECIAL_MIN_COOLDOWN) liczą się jak `main`.
  * Broń spoza katalogu (pociski spawnowane poza fireWeaponCore) → `main`.
  */
 export function shieldImpactClass(weaponOrId) {
   const def = weaponDef(weaponOrId);
   const mount = def?.mountType;
   if (mount === 'aux') return 'pd';
-  if (mount === 'special' || mount === 'special_missile' || mount === 'builtin') return 'special';
-  if (def?.size === 'Capital') return 'special';
-  return 'main';
+  const heavy = mount === 'special' || mount === 'special_missile' || mount === 'builtin' || def?.size === 'Capital';
+  if (!heavy) return 'main';
+  // Szybkostrzelne specjale (Goliath 45 obr. co 0,32 s, Plasma Gatling 160 co 0,25 s) — efekt i przebicie
+  // „main”: klasa „special” na KAŻDE trafienie zasłaniała okręt (41–67% obrysu Atlasa pod ostrzałem
+  // supercapitala) i przebijała tarczę w ~1,3 s. Decyzja użytkownika 2026-10-11 (pomiar widocznosc-gra.mjs).
+  const dmg = Number(def?.baseDamage ?? def?.damage);
+  const cd = Number(def?.cooldown);
+  if (Number.isFinite(dmg) && dmg < SHIELD_SPECIAL_MIN_DAMAGE) return 'main';
+  if (Number.isFinite(cd) && cd < SHIELD_SPECIAL_MIN_COOLDOWN) return 'main';
+  return 'special';
 }
+
+/** Próg klasy „special” tarczy: obrażenia pojedynczego pocisku i przeładowanie [s]. */
+export const SHIELD_SPECIAL_MIN_DAMAGE = 150;
+export const SHIELD_SPECIAL_MIN_COOLDOWN = 1;
 
 /** `ballistic` | `energy` | `carrier`. Nieznana broń liczy się jak balistyczna. */
 export function weaponDamageType(weaponOrId) {

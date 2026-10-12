@@ -13,7 +13,9 @@
 //              swojej domeny (muzzleHostExclude false — wylot nad pokładem na pryzmacie własnego kadłuba),
 //   ruch     — Atlas w ruchu (W + dopalacz) i salwa Yamato: nośnik domeny = prędkość lufy | 0 (dym zostaje w świecie),
 //   bronie3d — opcja „Bronie 3D” (wieże 3D, błysk na wysokości lufy): salwa Yamato.
-// dok (misja 1, ?story=ram): Atlas przy bramie taranowej suchego doku, armata w stronę doku — gaz z lufy przy statyce.
+// dok (misja 1, ?story=ram): Atlas 1,6 km przed ścianą magazynu M-1 bazy piratów (od strony otwartej przestrzeni),
+//   armata w cel ćwiczebny za magazynem (korytarz między pomostem MP a zatoką supercapitali) — gaz z lufy przy statyce
+//   (ściana magazynu jest pudłem przeszkód gazu); wariant bez przeszkód.
 // bitwa (czas rzeczywisty, gra swobodna): floty z --sklad (piraci z armatą w gniazdach main), Atlas z Yamato w bitwie
 //   (salwa co ~5,5 s), --zgony okrętów w kadrze na sekundę ginie (wybuchy z gazu biorą domeny); odcinki po 6 s z gazem
 //   wylotu i bez NAPRZEMIENNIE (ABBA): czasy klatek (średnia, p95, najgorsza), GPU klatki, domeny wystrzałów (najwięcej
@@ -302,7 +304,7 @@ try {
   }
 
   if (tryby.includes('dok')) {
-    // Misja 1 (faza ram): suchy dok piratów, Atlas przy bramie taranowej G-W, armata w stronę doku.
+    // Misja 1 (faza ram): baza piratów, Atlas przed południową ścianą magazynu M-1, armata w stronę bazy.
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
     await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1&story=ram` });
     await waitFor(cdp, '!!window.__harness', 60000, 100);
@@ -321,24 +323,29 @@ try {
     const g = await ev(`(() => {
       window.setFogOfWar?.(false);
       const S = window.StoryGame, d = S.site.dock, l = d.layout;
-      const gate = l.chunkById.get('G-W') || l.chunks.find((c) => c.kind === 'gate');
-      const gx = (gate.box.x0 + gate.box.x1) / 2, gz = (gate.box.z0 + gate.box.z1) / 2;
-      const g0 = d.toGame(gx, gz), p = d.toGame(gx - 1600, gz);
+      // ściana magazynu od strony −z (krawędź obwiedni bazy — za nią pustka); cel za magazynem w korytarzu x ≈ 5470
+      // (pomost MP x 5100 + pół pokładu, zatoka supercapitali od x ≈ 5755), poza stanowiskami F-L*
+      const w = l.warehouse, wall = { x: w.x, z: w.z - w.d / 2 };
+      const g0 = d.toGame(wall.x, wall.z), p = d.toGame(wall.x, wall.z - 1600), t = d.toGame(5470, -2900);
       S.deps.placePlayer(p.x, p.y, Math.atan2(g0.y - p.y, g0.x - p.x)); window.ship.vel.x = 0; window.ship.vel.y = 0;
       window.DevScene.mountMissile(null); window.DevScene.mountMain('armata_mk1');
       if (window.fireControl) window.fireControl.posture = 'hold';
-      return { gx: g0.x, gy: g0.y, px: p.x, py: p.y };
+      return { gx: g0.x, gy: g0.y, px: p.x, py: p.y, tx: t.x, ty: t.y };
     })()`);
     await ev('(() => { const h = window.__harness; h.clock.t = h.realNow(); h.clock.mode = "frozen"; h.hold(true); return true; })()');
     await ev('window.__harness.step(30)');
-    // Cel ćwiczebny za bramą (wieże na auto celują przez bramę w dok).
-    report.dokCel = await target(g.gx + (g.gx - g.px) * 0.6, g.gy + (g.gy - g.py) * 0.6, 'destroyer');
+    // Cel ćwiczebny za magazynem (wieże na auto celują przez magazyn).
+    report.dokCel = await target(g.tx, g.ty, 'destroyer');
+    // kamera nad Atlasem PRZED strzałem: wylot bogaty (z gazem) tylko w kadrze i przy wieżyczce ≥ MUZZLE_RICH_PX na
+    // ekranie (WeaponFx._emitMuzzle) — przy zoomie startu misji armata dawała sam tani błysk
+    await camAt((g.px + g.gx) / 2, (g.py + g.gy) / 2, 0.3);
     await ev(`window.DevScene.pointerAt(${g.gx}, ${g.gy})`);
     await ev(`(() => { if (window.fireControl) window.fireControl.posture = 'free'; return true; })()`);
     const k1 = await frameK();
     const rows = [];
-    rows.push(await variant('dok', 'armata', 'gaz', {}, false, 0.45));
-    rows.push(await variant('dok', 'armata', 'bezPrzeszkod', { obstacles: false }, false, 0.45));
+    rows.push(await variant('dok', 'armata', 'gaz', {}, false, 0.3));
+    await camAt((g.px + g.gx) / 2, (g.py + g.gy) / 2, 0.3);
+    rows.push(await variant('dok', 'armata', 'bezPrzeszkod', { obstacles: false }, false, 0.3));
     report.dok = { g, rows, pipeline: await pipesSince(k1) };
     console.log('dok pipeline', JSON.stringify(report.dok.pipeline));
     await ev('(() => { const h = window.__harness; h.hold(false); h.clock.mode = "real"; return true; })()');

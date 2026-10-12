@@ -5,6 +5,10 @@
 // gracz nieśmiertelny (kadłub i tarcza dolewane co 100 ms — inaczej koniec gry w połowie pomiaru).
 //   node scripts/profil-bitwy-flot.mjs --sklad 50,20,10,3 [--trwanie 100] [--profile 1:3,8:6,45:6] [--prof 6]
 //        [--co 3] [--zoom 0.1] [--seed 7] [--diag 1] [--query physHz=60] [--out katalog] [--port 5294]
+//        [--ls 'sc_camera_frame=off;k=v'] [--tryb spokoj] [--zdarzenia 't@wyrażenie|…']
+// (2026-10-11, audyt FPS — docs/AUDYT-wydajnosc-2026-10-11.md: --ls wpisy localStorage przed startem strony, --tryb spokoj
+// = obie grupy Terra Nova bez walki — porównanie wersji kodu bez chaosu bitwy, --zdarzenia wyrażenia w stronie w zadanych
+// chwilach; w próbkach zoom kamery i percentyle czasu klatki z rAF: p50 / p95 / p99, udział klatek > 16,7 i > 25 ms.)
 // Wynik: próbki PerfHUD co --co sekund (fps, klatka, fizyka / krok, podkroki, AI, pociski, kolizje, U hex,
 // Core3D, passy, GPU), spokój przed bitwą, profile CPU (Profiler CDP) w chwilach --profile (s od pojawienia się
 // flot, `:długość`) rozbite na loop / physicsStep (też ms na krok) / render / updateHexShips3D / renderSingle +
@@ -40,6 +44,12 @@ const PORT = Number(arg('port', 5294));
 const SEED = arg('seed', null);
 // --query 'physHz=60' — dodatkowe parametry adresu gry (np. A/B kroku fizyki).
 const QUERY = arg('query', '');
+// --ls 'k=v;k=v' — wpisy localStorage przed skryptami strony (np. sc_camera_frame=off).
+const LS = String(arg('ls', '')).split(';').filter(Boolean).map((kv) => { const i = kv.indexOf('='); return [kv.slice(0, i), kv.slice(i + 1)]; });
+// --tryb spokoj: obie grupy to Terra Nova (bez walki) — koszt na byt bez chaosu bitwy (porównanie wersji).
+const TRYB = arg('tryb', 'bitwa');
+// --zdarzenia '60@window.setFogOfWar(false)|90@…' — wyrażenia w stronie w chwilach od pojawienia się flot.
+const EVENTS = String(arg('zdarzenia', '')).split('|').filter(Boolean).map((v) => { const i = v.indexOf('@'); return { at: Number(v.slice(0, i)), expr: v.slice(i + 1) }; }).sort((a, b) => a.at - b.at);
 // Kroki fizyki na takt AI (20 Hz): liczymy kroki z licznika taktów AI gry (window.__aiDecisionTickId).
 const STEPS_PER_AI = (Number((QUERY.match(/physHz=(\d+)/) || [])[1]) || 120) / 20;
 const OUT = arg('out', join(tmpdir(), `profil-bitwy-flot-${SKLAD.join('-')}`));
@@ -52,7 +62,8 @@ const chrome = await startChrome({ width: 1920, height: 1080, webgpu: false,
 const { cdp, logs } = chrome;
 // Swobodna gra bez samouczka; --seed: Math.random z ziarnem (mulberry32) przed skryptami strony.
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
-  try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); } catch {}
+  try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0');
+    ${LS.map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join(' ')} } catch {}
   ${SEED !== null ? `let s = ${Number(SEED) >>> 0};
   Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };` : ''}
 })();` });
@@ -71,7 +82,11 @@ const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.
   const lod = window.__hexLodStats || {};
   const guns = {}; for (const n of live) for (const g in (n.weapons || {})) guns[g] = (guns[g] || 0) + ((n.weapons[g] || []).length || 0);
   const sh = typeof window.getShieldPoolStats === 'function' ? window.getShieldPoolStats() : null;
-  return { hud, stan: {
+  const ftd = (window.__ft && window.__ft.d.splice(0)) || []; ftd.sort((a, b) => a - b);
+  const q = (x) => ftd.length ? Math.round(ftd[Math.min(ftd.length - 1, Math.floor(x * ftd.length))] * 100) / 100 : 0;
+  const ft = { n: ftd.length, p50: q(0.5), p95: q(0.95), p99: q(0.99), over17: ftd.length ? +(ftd.filter((v) => v > 16.7).length / ftd.length).toFixed(3) : 0,
+    over25: ftd.length ? +(ftd.filter((v) => v > 25).length / ftd.length).toFixed(3) : 0 };
+  return { hud, ft, stan: {
     npc: live.length, piraci: live.filter((n) => !n.friendly).length, tn: live.filter((n) => n.friendly).length,
     mysliwce: npcs.filter((n) => !n.dead && n.fighter).length,
     wraki: (window.wrecks || []).length, zimne: (window.coldWrecks || []).length,
@@ -80,7 +95,8 @@ const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.
     pelne: lod.fullBodies, smugi: lod.impostorBodies, tarcze: sh ? sh.alive : null, dziala: guns,
     silnik: (() => { const p = HB?.engine?.perf || {}; return { bp: p.broadphasePairs, aabbOdrz: p.aabbRejected, np: p.narrowphasePairs,
       kontakty: p.contacts, lookups: p.hashLookups, kolMs: r(p.lastCollisionMs || 0), krokMs: r(p.lastUpdateMs || 0) }; })(),
-    graczZyje: !window.ship?.destroyed },
+    graczZyje: !window.ship?.destroyed,
+    zoom: r(Number(window.camera?.zoom) || 0), zoomImp: r(Number(window.camera?.zoomImpulseLog) || 0) },
   diag: window.__diag ? window.__diag.take() : null,
   gpu: { gpuMs: r(Number(C?.gpuFrameMs) || 0), computeMs: r(Number(C?.gpuComputeMs) || 0),
     composer: r(C?.lastFramePerf?.composerMs || 0), renderTotal: r(C?.lastFramePerf?.renderTotalMs || 0),
@@ -93,7 +109,7 @@ const short = (s) => {
   const h = s.hud, steps = h.physicsPerStep > 0 ? h.physicsTime / h.physicsPerStep : 0;
   return `fps ${h.fps} kl ${h.frameMs?.toFixed(1)} p95 ${h.frameP95?.toFixed(1)} | fiz ${h.physicsTime?.toFixed(2)} (${h.physicsPerStep?.toFixed(2)}/krok × ${steps.toFixed(2)}) ` +
     `AI ${h.aiTime?.toFixed(2)} poc ${h.projectileTime?.toFixed(2)} kol ${h.collisionTime?.toFixed(2)} | rys ${h.drawTime?.toFixed(2)} Uhex ${h.render3dHexUpdateTime?.toFixed(2)} ` +
-    `core ${h.render3dCoreRenderTime?.toFixed(2)} | gpu ${s.gpu.gpuMs} dc ${s.gpu.dc} | npc ${s.stan.npc} (${s.stan.piraci}/${s.stan.tn}) wr ${s.stan.wraki} poc ${s.stan.pociski} węzły ${s.stan.wezly}`;
+    `core ${h.render3dCoreRenderTime?.toFixed(2)} | gpu ${s.gpu.gpuMs} dc ${s.gpu.dc} | npc ${s.stan.npc} (${s.stan.piraci}/${s.stan.tn}) wr ${s.stan.wraki} poc ${s.stan.pociski} węzły ${s.stan.wezly} | zoom ${s.stan.zoom}`;
 };
 
 // --diag: opakowanie narrowphase silnika belek (HullBodies.engine.collideBodies) i wywołań WebGPU. Okno = od
@@ -198,7 +214,9 @@ try {
     try { started = await ev('(window.__frameId || 0) > 30 && !!window.camera'); } catch { /* ładuje się */ }
   }
   report('gra', { ready, started, gpu: await ev('!!window.Core3D?.ready') });
-  await ev(`(async () => { const m = await import('/src/ui/perfHud.js'); window.__PH = m.PerfHUD; if (!m.PerfHUD.visible) m.PerfHUD.toggle(); return true; })()`);
+  await ev(`(async () => { const m = await import('/src/ui/perfHud.js'); window.__PH = m.PerfHUD; if (!m.PerfHUD.visible) m.PerfHUD.toggle();
+    window.__ft = { d: [], last: 0 }; (function tick(t) { const f = window.__ft; if (f.last) f.d.push(t - f.last); f.last = t; requestAnimationFrame(tick); })(performance.now());
+    return true; })()`);
 
   // Pusta przestrzeń: orbita w połowie między Wenus a Ziemią (poza pasem asteroid i studniami), kąt najdalej
   // od planet, księżyców i stacji.
@@ -240,10 +258,11 @@ try {
       for (let i = 0; i < k; i++) { const row = Math.floor(i / perRow), inRow = Math.min(perRow, k - row * perRow), j = i - row * perRow;
         put(key, mode, at(fwd0 + dir * row * rowGap, (j - (inRow - 1) / 2) * spacing), ang); } };
     // Piraci przed dziobem (zwróceni ku graczowi), Terra Nova za graczem.
-    block('frigate_pd', 'pirate', ${NF}, 7000, 700, 650, 25, 1, a + Math.PI);
-    block('destroyer', 'pirate', ${ND}, 8600, 900, 900, 20, 1, a + Math.PI);
-    block('pirate_battleship', 'pirate', ${NB}, 10600, 1500, 1500, 10, 1, a + Math.PI);
-    block('pirate_supercapital', 'pirate', ${NS}, 13500, 3500, 4000, 5, 1, a + Math.PI);
+    const SP_ = ${JSON.stringify(TRYB)} === 'spokoj';
+    block(SP_ ? 'frigate_laser' : 'frigate_pd', SP_ ? 'friendly' : 'pirate', ${NF}, 7000, 700, 650, 25, 1, SP_ ? a : a + Math.PI);
+    block('destroyer', SP_ ? 'friendly' : 'pirate', ${ND}, 8600, 900, 900, 20, 1, SP_ ? a : a + Math.PI);
+    block(SP_ ? 'battleship' : 'pirate_battleship', SP_ ? 'friendly' : 'pirate', ${NB}, 10600, 1500, 1500, 10, 1, SP_ ? a : a + Math.PI);
+    block(SP_ ? 'supercapital' : 'pirate_supercapital', SP_ ? 'friendly' : 'pirate', ${NS}, 13500, 3500, 4000, 5, 1, SP_ ? a : a + Math.PI);
     block('frigate_laser', 'friendly', ${NF}, -1500, 700, 650, 25, -1, a);
     block('destroyer', 'friendly', ${ND}, -3100, 900, 900, 20, -1, a);
     block('battleship', 'friendly', ${NB}, -5100, 1500, 1500, 10, -1, a);
@@ -260,6 +279,7 @@ try {
   await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
   const STEPS_EXPR = `(window.__aiDecisionTickId || 0) * ${STEPS_PER_AI}`;
   while (sec() < TRWANIE) {
+    if (EVENTS.length && sec() >= EVENTS[0].at) { const e = EVENTS.shift(); report('zdarzenie', { at: e.at, expr: e.expr, wynik: await ev(e.expr) }); continue; }
     if (todo.length && sec() >= todo[0].at) {
       const { at, dur } = todo.shift();
       const f0 = await ev('window.__frameId'), k0 = await ev(STEPS_EXPR);
@@ -292,6 +312,8 @@ try {
     for (const k of KEY) o[k] = +avg(list, (s) => s.hud[k]).toFixed(2);
     o.krokow = +avg(list, (s) => (s.hud.physicsPerStep > 0 ? s.hud.physicsTime / s.hud.physicsPerStep : NaN)).toFixed(2);
     o.gpuMs = +avg(list, (s) => s.gpu.gpuMs).toFixed(2); o.dc = Math.round(avg(list, (s) => s.gpu.dc));
+    o.ftP50 = +avg(list, (s) => s.ft?.p50).toFixed(2); o.ftP95 = +avg(list, (s) => s.ft?.p95).toFixed(2); o.ftP99 = +avg(list, (s) => s.ft?.p99).toFixed(2);
+    o.over17 = +avg(list, (s) => s.ft?.over17).toFixed(3); o.over25 = +avg(list, (s) => s.ft?.over25).toFixed(3);
     o.npc = Math.round(avg(list, (s) => s.stan.npc)); o.wraki = Math.round(avg(list, (s) => s.stan.wraki));
     o.pociski = Math.round(avg(list, (s) => s.stan.pociski)); o.wezly = Math.round(avg(list, (s) => s.stan.wezly));
     return o;

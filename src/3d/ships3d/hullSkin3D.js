@@ -270,10 +270,15 @@ export function makeHullSkinMaterial(mat) {
   };
   dmg.edgeState = edgeState;
   dmg.uOn = uOn;
+  // Otwarty luk ładowni (fregata zwiadu Atlasa): pryzmat w uv skóry (= uv sprite'a) wycięty na całej wysokości.
+  const uBay = uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.bayCut || _bayOff);
   mat.maskNode = Fn(() => {
     const { any, edge } = edgeState();
     const vis = select(any, edge.greaterThanEqual(0.0), vVis.greaterThan(0.5));
-    return uOn.lessThan(0.5).or(vis);
+    const uvB = dmg.woundUv();
+    const inBay = uBay.z.greaterThan(uBay.x).and(uvB.x.greaterThan(uBay.x)).and(uvB.x.lessThan(uBay.z))
+      .and(uvB.y.greaterThan(uBay.y)).and(uvB.y.lessThan(uBay.w));
+    return uOn.lessThan(0.5).or(vis).and(inBay.not());
   })();
   applyHullSkinDamage(mat, vLat, dmg);
   mat.userData.hullSkin3D = true;
@@ -292,6 +297,7 @@ export function makeHullSkinMaterial(mat) {
 // srcHeight, ny, 0).
 // ---------------------------------------------------------------------------
 const _slotOff = new THREE.Vector4(0, 1, 1, 0);
+const _bayOff = new THREE.Vector4(0, 0, 0, 0);
 const _uvOne = new THREE.Vector4(1, 1, 0, 0);
 const _worldOne = new THREE.Vector2(1, 1);
 

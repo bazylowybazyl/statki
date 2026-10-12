@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
+import { isAbsolute, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Wersja w menu (index.html: __HULLFALL_VERSION__) = "version" z package.json — tę samą dostaje exe
 // i instalator; podbija ją scripts/wydanie.mjs.
@@ -26,6 +28,17 @@ const demaIndexRedirect = {
   },
 };
 
+// Katalogi robocze wewnątrz repo (pierwszy człon ścieżki względem korzenia) — bez obserwatora plików.
+const WATCH_IGNORED_TOP = new Set(['.tmp', 'tmp', 'output', 'statki', 'dist', 'dist-electron', 'node_modules']);
+const repoRoot = fileURLToPath(new URL('.', import.meta.url));
+function watchIgnored(file) {
+  const rel = relative(repoRoot, String(file || ''));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
+  const parts = rel.split(/[\\/]/);
+  if (WATCH_IGNORED_TOP.has(parts[0])) return true;
+  return parts[0] === '.claude' && parts[1] === 'worktrees';
+}
+
 export default defineConfig({
   base: './',
   plugins: [demaIndexRedirect, gameVersion],
@@ -37,8 +50,17 @@ export default defineConfig({
   // w dev nie przeładowuje strony.
   optimizeDeps: {
     include: ['three', 'three/webgpu', 'three/tsl'],
+    // Bez `entries` Vite skanuje KAŻDY *.html w katalogu (dema, dist-electron, kopie repo w statki/ —
+    // 241 plików): skan trwał > 60 s, a żądania gry czekały na jego koniec. Gra + dema wystarczą.
+    entries: ['index.html', 'destruktor*.html', 'ruch-v2.html', 'dema/**/*.html'],
   },
   server: {
+    // Robocze śmieci (zrzuty .tmp ~64 tys. plików, kopie repo, buildy) — bez obserwatora plików. Ścieżki WZGLĘDEM
+    // korzenia repo: obserwator dostaje ścieżki bezwzględne, a repo samo leży w katalogu `statki` — dawny wzorzec
+    // '**/statki/**' wyłączał KAŻDY plik gry (serwer podawał moduły sprzed edycji, np. brak nowego eksportu).
+    watch: {
+      ignored: (file) => watchIgnored(file),
+    },
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",

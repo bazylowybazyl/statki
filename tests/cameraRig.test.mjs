@@ -20,6 +20,7 @@ import {
   normalizeCameraWarpKickMode
 } from '../src/game/cameraRig.js';
 import { stepCameraZoom, cameraZoomBase } from '../src/game/cameraZoom.js';
+import { createCameraDirector, resetCameraDirector } from '../src/game/cameraDirector.js';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 const W = 1920;
@@ -504,14 +505,17 @@ test('kop warpa w grze: zdarzenia z automatu (skok, wyjście), krok przed zoomem
   assert.match(loop, /updateCameraWarpKick\(frame\);\s*updateCameraZoom\(frame\);[\s\S]*?render\(alpha, frame\);/);
   const kick = sliceFunction(html, 'function updateCameraWarpKick(gameDt) {');
   assert.match(kick, /stepCameraRigWarp\(cameraRig, w, cameraRigTune\);/);
-  assert.match(kick, /camera\.zoomImpulseLog = cameraRig\.warpZoomLog;/);
+  // drugi człon log(zoom): oddalenie reżysera kadru (cameraDirector.js), zerowane poza kamerą statku i w przejściu
+  assert.match(kick, /camera\.zoomImpulseLog = cameraRig\.warpZoomLog \+ cameraDirector\.zoomLog;/);
+  assert.match(kick, /if \(camera\.mode !== 'ship' \|\| w\.suspend\) resetCameraDirector\(cameraDirector\);/);
   assert.match(kick, /normalizeCameraWarpKickMode\(OPTIONS\.cameraWarpKick\) === 'on'\s*&& camera\.mode === 'ship'/);
   // Nie pisze zoomu ani celu gracza wprost (zoom goni sprężyna, cel ustawia gracz).
   assert.doesNotMatch(kick, /camera\.zoom =|targetZoom =/);
   // Drżenie ładowania pod sufitem wstrząsu; RTS bierze zoom gracza bez kopu.
   const render = sliceFunction(html, 'function render(alpha, frameDt) {');
   assert.match(render, /cameraShakeAmplitudePx\(addShakeMag, weaponShakeMag, cameraRigTune, cameraRig\.warpShakePx\)/);
-  assert.match(html, /enterRtsMode\(\) \{[\s\S]{0,400}?this\.targetZoom = cameraZoomBase\(this\);/);
+  // (kadr bitwy reżysera przechodzi przy tym na zoom gracza — foldCameraDirectorZoom)
+  assert.match(html, /enterRtsMode\(\) \{[\s\S]{0,500}?const base = cameraZoomBase\(this\);\s*const dirLog = foldCameraDirectorZoom\(cameraDirector\);[\s\S]{0,300}?this\.targetZoom = kept;/);
   // Opcja w menu (Sterowanie) i zapis.
   assert.match(html, /data-camera-warp-kick="on"/);
   assert.match(html, /data-camera-warp-kick="off"/);
@@ -530,7 +534,9 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     cameraRig: rig,
     cameraRigTune: tune,
     stepCameraRigWarp,
-    normalizeCameraWarpKickMode
+    normalizeCameraWarpKickMode,
+    cameraDirector: createCameraDirector(),
+    resetCameraDirector
   };
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
   for (let i = 0; i < 60; i++) update(1 / 60);
@@ -578,11 +584,46 @@ test('render: kamera statku z riga, bez dawnego ×2,0 za kursorem', () => {
   assert.doesNotMatch(cameraTarget, /tr\.elapsed/, 'przejścia nie idą w krokach fizyki');
 });
 
-test('kursor zamrożony przy menu PPM, kole ŚPM, Alt, tablecie, CIC i poza kanwą', () => {
+test('kursor zamrożony przy menu PPM, kole ŚPM, Alt, tablecie i CIC; poza kanwą — trzymany chwilę, potem wraca', () => {
   const frozen = sliceFunction(html, 'function isCameraLookFrozen() {');
-  for (const cond of ['isHudPointerMode()', '!mouse.overCanvas', 'worldCommandMenu.open', 'shipModes.wheel.open', 'stationUI.open', 'CICDisplay.active']) {
+  for (const cond of ['isHudPointerMode()', 'worldCommandMenu.open', 'shipModes.wheel.open', 'stationUI.open', 'CICDisplay.active']) {
     assert.ok(frozen.includes(cond), cond);
   }
+  // 2026-10-11: kursor poza kanwą (panel HUD, poza oknem) nie zamraża kadru na zawsze — rig: lookAway
+  assert.ok(!frozen.includes('!mouse.overCanvas'));
+  const render = sliceFunction(html, 'function render(alpha, frameDt) {');
+  assert.match(render, /rigIn\.lookAway = !mouse\.overCanvas;/);
+  // reżyser kadru przed rigiem: przesunięcie w px tej klatki i tłumienie kursora
+  assert.match(render, /stepCameraDirectorFrame\(frameDt \|\| 0, interpPos\.x, interpPos\.y\);\s*rigIn\.biasX = cameraDirector\.biasX \* zoomSafe;\s*rigIn\.biasY = cameraDirector\.biasY \* zoomSafe;\s*rigIn\.lookScale = cameraDirector\.lookScale;[\s\S]{0,160}?stepCameraRig\(/);
+});
+
+test('stery fregaty zwiadu: kamera prowadzi fregatę — wyprzedzenie z jej prędkości, bez zaglądania za kursorem', () => {
+  const render = sliceFunction(html, 'function render(alpha, frameDt) {');
+  assert.match(render, /rigIn\.velX = scouting \? \(Number\(scoutSn\.vx\) \|\| 0\) : ship\.vel\.x;/);
+  assert.match(render, /rigIn\.maxSpeed = scouting \? Math\.max\(100, Number\(scoutSn\.maxSpeed\) \|\| 400\) : hullVmax;/);
+  assert.match(render, /rigIn\.mode = scouting \? 'never' : OPTIONS\.cameraLook;/);
+  assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : NaN;/);
+  // kadr = prowadzony okręt + offset riga (dawniej offset zerowany — fregata zawsze na środku)
+  assert.match(render, /let rigX = followX \+ cameraRig\.offsetX \/ zoomSafe;/);
+  assert.doesNotMatch(render, /rigX \+= \(scoutCamLast\.x - rigX\) \* scoutCamW;/);
+  // uśpione okręty misji nie włączają postawy walki (skradanie z wyprzedzeniem lotu)
+  const sig = sliceFunction(html, 'function sampleCameraCombatSignals(nowMs) {');
+  assert.match(sig, /n\.combatDisabled === true\) continue;/);
+});
+
+test('rig: leadGain zastępuje mieszankę postaw (stery fregaty), wyprzedzenie rośnie z prędkością', () => {
+  const base = { dt: 1 / 60, holdDt: 1 / 60, viewW: 1600, viewH: 900, mouseX: 1500, mouseY: 450, maxSpeed: 1400, mode: 'never' };
+  const lead = (v, gain) => {
+    const r = createCameraRig();
+    for (let i = 0; i < 600; i++) stepCameraRig(r, { ...base, velX: v, velY: 0, leadGain: gain }, tune);
+    return r.offsetX;
+  };
+  const slow = lead(200, tune.scoutLead);
+  const fast = lead(1400, tune.scoutLead);
+  assert.ok(fast > slow && slow > 0, `${slow} → ${fast}`);
+  assert.ok(Math.abs(fast - tune.scoutLead * 800 * (1 - Math.exp(-1400 / (tune.leadSpeedRef * 1400)))) < 1, `${fast}`);
+  // bez nadpisania — postawa nawigacji (navLead), kursor w 'never' nie rusza kadru
+  assert.ok(Math.abs(lead(1400, NaN) - tune.navLead * 800 * (1 - Math.exp(-4))) < 1);
 });
 
 test('trafienie przełącza postawę, obrażenia spoza walki nie', () => {

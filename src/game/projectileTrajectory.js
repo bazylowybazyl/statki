@@ -4,6 +4,18 @@ function finite(value, fallback = 0) {
 }
 
 /**
+ * Czas lotu pocisku w bieżącym kroku [s]: dt, a dla pocisku wystrzelonego w tym kroku — od pozy lufy
+ * (`bornSim`) do `nowSim`. Odcinek b.px → b.x kroku trwa tyle; kolizje liczą z tego ruch względny celu.
+ */
+export function projectileStepSpan(projectile, dt, nowSim = null) {
+  let step = Math.max(0, finite(dt, 0));
+  if (nowSim !== null && Number.isFinite(projectile?.bornSim)) {
+    step = Math.min(step, Math.max(0, finite(nowSim, 0) - projectile.bornSim));
+  }
+  return step;
+}
+
+/**
  * Advances the authoritative 2D projectile pose by one fixed physics step.
  * The previous pose is retained for render interpolation and swept collision.
  *
@@ -15,10 +27,7 @@ function finite(value, fallback = 0) {
  */
 export function stepProjectileKinematics(projectile, dt, nowSim = null) {
   if (!projectile) return null;
-  let step = Math.max(0, finite(dt, 0));
-  if (nowSim !== null && Number.isFinite(projectile.bornSim)) {
-    step = Math.min(step, Math.max(0, finite(nowSim, 0) - projectile.bornSim));
-  }
+  const step = projectileStepSpan(projectile, dt, nowSim);
   const x = finite(projectile.x, 0);
   const y = finite(projectile.y, 0);
 

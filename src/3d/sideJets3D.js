@@ -78,6 +78,12 @@ export const SIDE_JET_TUNE = {
 if (typeof window !== 'undefined') window.SideJetTune = SIDE_JET_TUNE;
 const T = SIDE_JET_TUNE;
 
+/** Zasięg strugi dyszy od osi obrotu [promienie wylotu R]: wylot dzwonu 1,8 + struga do 12,4 długości (3,3 pół
+ *  szerokości) przy pełnej mocy i zapłonie — razem 14,6 (światło na blasze sięgałoby ≤ 12). Okręt dalej za kadrem,
+ *  z wylotem poniżej progu świateł (minLightPx < minGasPx — dysza bez światła i gazu), nie pokaże nic z dysz SIDE
+ *  (LOD: engineVfxSystem.js, sideQuiet). */
+export const SIDE_JET_REACH_R = 16;
+
 export const SIDE_JET_CAP = 4096;
 const STRIDE = 24; // 6 × vec4
 const ATTRS = Object.freeze([
@@ -347,6 +353,8 @@ export const SideJets3D = {
   gas: true,
   /** Światła na blasze (siatka świateł Core3D.fx). */
   lights: true,
+  /** LOD (engineVfxSystem.js): dysza bez obrazu w kadrze — sam automat (idle); false — pełna praca (A/B pomiaru). */
+  lod: true,
 
   /** Początek klatki: początek układu przy kamerze (scena), krok czasu, zoom (LOD). */
   begin(orgX, orgY, dt, zoom) {
@@ -431,6 +439,17 @@ export const SideJets3D = {
         }
       }
     }
+    return state;
+  },
+
+  /**
+   * Dysza bez obrazu w tej klatce (wylot poniżej progu strugi albo okręt daleko za kadrem — LOD w
+   * engineVfxSystem.js): sam krok automatu (impulsy, moc, rozbłysk, żar, zegar przepływu), bez strugi, gazu i
+   * świateł — stan zostaje ciągły na chwilę, gdy dysza znów będzie widać.
+   */
+  idle(state, fire) {
+    nozzles++;
+    stepSideJet(state, fire, frameDt);
     return state;
   },
 

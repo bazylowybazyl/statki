@@ -1081,6 +1081,9 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       uCloakC: cloakHullHolder(entity, 'c'),
       uCloakD: cloakHullHolder(entity, 'd'),
       uCloakE: cloakHullHolder(entity, 'e'),   // heksy-ekrany (2026-10-05)
+      // Otwarty luk ładowni (2026-10-11, fregata zwiadu Atlasa — src/3d/cargo/scoutBay3D.js): prostokąt w uv sprite'a
+      // (u0, v0, u1, v1), w którym skóra znika, póki wrota nie są zamknięte; entity.__bayCut — bez niego wyłączone.
+      uBayCut: { get value() { return (entity && entity.__bayCut) || HULL_BAY_CUT_OFF; } },
       // Skóra belek (zadanie 23): slot w HullObjectStore — wartości wyżej i macierze kadłuba trafiają
       // do bufora storage przed passem ortho; w grupie „object” materiału zostaje tylko ten numer.
       uHullSlot: { value: 0 }
@@ -1143,6 +1146,8 @@ function ensureHullObjectHook() {
   Core3D.addPassHook('ortho', (camera) => { HullObjectStore.commit(camera); });
   _hullObjectHook = true;
 }
+
+const HULL_BAY_CUT_OFF = new THREE.Vector4(0, 0, 0, 0);
 
 function warpHullHolder(entity, key) {
   return {
@@ -1835,9 +1840,17 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   uniforms.uRotation.value = theta;
 
   // __skinZ: kadłub pod innym w passie ortho (holownik serwisowy pod statkiem na pokładzie — serviceTugGame.js).
-  mesh.position.set(originX, originY, Number(entity.__skinZ) || 0);
-  mesh.rotation.set(0, 0, theta);
-  mesh.scale.set(1, 1, 1);
+  // __renderScale: obraz okrętu mniejszy wokół jego środka (fregata zwiadu na dnie luku Atlasa — scoutBay3D.js).
+  const rs = Number(entity.__renderScale);
+  if (rs > 0 && rs !== 1) {
+    mesh.position.set(ex + (originX - ex) * rs, -ey + (originY + ey) * rs, Number(entity.__skinZ) || 0);
+    mesh.rotation.set(0, 0, theta);
+    mesh.scale.set(rs, rs, rs);
+  } else {
+    mesh.position.set(originX, originY, Number(entity.__skinZ) || 0);
+    mesh.rotation.set(0, 0, theta);
+    mesh.scale.set(1, 1, 1);
+  }
   mesh.visible = data.visibleQuads > 0;
   // nośnik poza sceną (partia) — macierz świata jak z scene.updateMatrixWorld (dziecko sceny)
   mesh.updateMatrixWorld();
@@ -2096,6 +2109,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     valid.push(entity);
     const hideHexVisual = entity.hideHexVisual === true || entity.visual?.hideHexMesh === true;
     if (hideHexVisual) {
+      entity.__inDrawBox = false;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
       if (data?.armorMesh) data.armorMesh.visible = false;
@@ -2105,6 +2119,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     if (hasBody) validSet.add(entity);
     if (entityHiddenTest && entityHiddenTest(entity)) {
       entity.__hiddenFromView = true;
+      entity.__inDrawBox = false;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
       if (data?.armorMesh) data.armorMesh.visible = false;
@@ -2114,6 +2129,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
 
     const visible = isEntityInCull(entity, cullInfo);
     if (!visible) {
+      entity.__inDrawBox = false;
       lodFrameStats.culled++;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
@@ -2123,6 +2139,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
 
     visibleVfx.push(entity);
     const inDrawBox = isEntityInDrawBox(entity, cullInfo, cameraZoom);
+    // Encja w pudle rysowania tej klatki — LOD dysz (engineVfxSystem.js: dysze SIDE poza pudłem bez obrazu)
+    // i stanu dysz w modelu lotu (shipFlightModel.js: FLIGHT_VFX_LOD). false też dla ukrytych i poza pudłem
+    // rozgrzania (wyżej).
+    entity.__inDrawBox = inDrawBox;
     if (inDrawBox) drawVfx.push(entity);
     else lodFrameStats.warmOnly++;
     if (!hasBody) continue;
@@ -2132,8 +2152,11 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
 
   // Maskowanie (src/3d/cloak/hullCloak.js): wygląd encji z `cloak` PRZED światłami, wieżyczkami i dyszami
   // tej klatki (gaszą się z komórką pod sobą — cloakVisAtWorld), cząstki frontu i zerwania.
-  updateCloakLooks(valid, now, getInterpolatedRenderPose, cameraZoom * (Core3D.pixelRatio || 1),
-    typeof window !== 'undefined' ? window.ship : null);
+  // Wizjer maskowania: okręt, którym gracz steruje (przy sterach fregaty zwiadu — fregata, src/game/scoutBay.js).
+  const scoutBay = typeof window !== 'undefined' ? window.ScoutBay : null;
+  const viewer = scoutBay?.controlling && scoutBay.npc && !scoutBay.npc.dead ? scoutBay.npc
+    : (typeof window !== 'undefined' ? window.ship : null);
+  updateCloakLooks(valid, now, getInterpolatedRenderPose, cameraZoom * (Core3D.pixelRatio || 1), viewer);
 
   // Emitery świateł drogowych z CAŁEGO pudła rozgrzania: statek tuż poza
   // kadrem może oświetlać kadłub, który w kadrze jest.
@@ -2266,8 +2289,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       const rawAng = interpPose ? interpPose.angle : (c.entity.angle || 0);
       // rotation.z mesha kadłuba (updateEntityMesh): -kąt, billboard +kąt.
       const rot = usesBillboardOrientation(c.entity) ? rawAng : -rawAng;
+      const rsc = Number(c.entity.__renderScale) > 0 ? Number(c.entity.__renderScale) : 1;
       packHullShaftOccluder(shaftOccluderScratch, 0, px, py, rot,
-        getEntityScaleX(c.entity), getEntityScaleY(c.entity), occ.layout, occ.layer);
+        getEntityScaleX(c.entity) * rsc, getEntityScaleY(c.entity) * rsc, occ.layout, occ.layer);
       // pushShaftHullSdf zwraca false po zapełnieniu rejestru — koniec.
       if (!Core3D.pushShaftHullSdf(shaftOccluderScratch, 0)) break;
       pushed++;
@@ -2328,7 +2352,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   HexBodyImpostorBatch.flush();
 
   vfxEntities.push(...visibleVfx);
-  EngineVfxSystem.update(visibleVfx);
+  // margines pudła rysowania [j. świata] — okręt spoza pudła ma kadłub co najmniej tyle za kadrem (LOD dysz SIDE);
+  // kadr (środek i połowy boków) — LOD dysz MAIN za kadrem
+  EngineVfxSystem.update(visibleVfx, cullInfo ? DRAW_BOX_MARGIN_PX / cameraZoom : Infinity, cullInfo);
   pushEngineHullLights();
 
   state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;

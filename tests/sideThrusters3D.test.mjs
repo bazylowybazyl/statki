@@ -317,3 +317,44 @@ test('wpięcie: EngineVfxSystem pisze listę dysz i nowe strugi z wylotu dzwonu;
   assert.match(read('src/3d/sideJets3D.js'), /Core3D\.warmup\?\.add\(\{ name: 'dysze SIDE \(WebGPU\)'/);
   assert.doesNotMatch(read('src/3d/sideJets3D.js') + read('src/3d/ships3d/thrusters/sideThruster3D.js'), /Math\.random/, 'wizualia z fxRandom');
 });
+
+// LOD dysz SIDE (audyt FPS 2026-10-11, engineVfxSystem.js): dysza bez obrazu idzie samym automatem (SideJets3D.idle),
+// model — tylko powyżej progu rysownika (SideNozzleFrame.modelMinPx). Warunki LOD stoją na kolejności progów i zasięgu
+// strugi / świateł — po zmianie strojenia ten test mówi, że LOD trzeba przeliczyć.
+test('LOD dysz SIDE: automat bez obrazu = automat pełnej ścieżki, kolejność progów, zasięg strugi i świateł', async () => {
+  const { SideJets3D, SIDE_JET_REACH_R } = await import('../src/3d/sideJets3D.js');
+  const { SIDE_NOZZLE3D_HIDE_PX } = await import('../src/3d/ships3d/shipModels3DGame.js');
+  const { SIDE_THRUSTER_HALF_WIDTH } = await import('../src/3d/ships3d/thrusters/sideThruster3D.js');
+  // 1. ten sam ciąg rozkazów: idle i push zostawiają identyczny stan (push bez obrazu — promień 0, bez Core3D)
+  const a = createSideJetState();
+  const b = { ...a };
+  const p = { x: 0, y: 0, dirX: 1, dirY: 0, radius: 0, fire: 0, idle: 0, dead: false, palette: 0, gain: 1, entity: null, fromRender: false, sparks: false };
+  for (let i = 0; i < 400; i++) {
+    const fire = i % 97 < 30 ? 1 : (i % 53 < 20 ? 0.35 : 0);
+    SideJets3D.begin(0, 0, (i % 7 === 0) ? 1 / 30 : 1 / 144, 0.1);
+    SideJets3D.idle(a, fire);
+    p.fire = fire;
+    SideJets3D.push(b, p);
+    assert.deepEqual(a, b, `krok ${i}`);
+  }
+  // 2. próg strugi najmniejszy — poniżej niego dysza nie daje strugi, gazu, świateł ani modelu
+  const T = SIDE_JET_TUNE;
+  const modelPx = SIDE_NOZZLE3D_HIDE_PX / SIDE_THRUSTER_HALF_WIDTH;
+  assert.ok(T.minJetPx <= T.minLightPx && T.minLightPx <= T.minGasPx && T.minGasPx <= T.minSparkPx, 'struga ≤ światło ≤ gaz ≤ iskry');
+  assert.ok(T.minJetPx < modelPx, 'próg strugi poniżej progu modelu');
+  assert.ok(Math.abs(SideNozzleFrame.modelMinPx - 0.999 * modelPx) < 1e-12, 'rysownik publikuje próg modelu (z zapasem w dół)');
+  // 3. zasięg obrazu od osi dyszy [R]: wylot dzwonu + struga (długość, pół szerokości), światło punktowe i błysk
+  const jet = SIDE_NOZZLE_MOUTH + Math.hypot(T.len0 + T.len1 + T.lenIgn, T.w0 + T.w1 + T.wIgn);
+  const light = SIDE_NOZZLE_MOUTH + 0.3 * (T.len0 + T.len1) + 7;
+  const flash = SIDE_NOZZLE_MOUTH + 9;
+  assert.ok(SIDE_JET_REACH_R >= Math.max(jet, light, flash), `zasięg ${SIDE_JET_REACH_R} R ≥ ${Math.max(jet, light, flash).toFixed(2)} R`);
+  const lights = read('src/3d/sideJets3D.js');
+  assert.match(lights, /lg \* T\.lightGain \* state\.power \* gain, R \* 7, R \* 1\.2, 0\)/, 'światło punktowe R · 7 (zasięg wyżej)');
+  assert.match(lights, /T\.flashGain \* 4 \* gain, R \* 9,/, 'błysk zapłonu R · 9 (zasięg wyżej)');
+  // 4. wpięcie: sam automat dla dysz bez obrazu, model tylko po progu; flaga pudła rysowania z klasyfikacji encji
+  const src = read('src/3d/engineVfxSystem.js');
+  assert.match(src, /if \(sideQuiet && slot\.kind === 'side'\) \{\n\s+SideJets3D\.idle\(item\.jet, /);
+  assert.match(src, /if \(sideModelsHere && cloakVis >= 0\.5 && !SideNozzleFrame\.near\(/);
+  assert.match(read('src/3d/hexShips3D.js'), /entity\.__inDrawBox = inDrawBox;/);
+  assert.match(read('src/3d/hexShips3D.js'), /EngineVfxSystem\.update\(visibleVfx, cullInfo \? DRAW_BOX_MARGIN_PX \/ cameraZoom : Infinity, cullInfo\);/);
+});
