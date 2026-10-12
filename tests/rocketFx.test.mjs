@@ -694,6 +694,30 @@ test('Hydra: pęknięcie nosiciela — błysk ze światłem, iskry, obłok, fala
   assert.ok(puffs.length >= 8, 'obłok gazu');
 });
 
+test('zestrzelenie przez obronę punktową (onIntercept): błysk, iskry, sadza — bez kuli ognia, fali i supernowej', () => {
+  resetAll();
+  for (const id of ['grad_launcher', 'supernova_missile']) {
+    const r = fakeRocket(24, id, 300, -100, 0.4, 2400);
+    director.onLaunch(r, 'red');
+    const sparks0 = SparkSystem3D.pool.stats.emitted;
+    const f0 = director.fN;
+    const s0 = director.sN;
+    const b0 = director.bN;
+    const n0 = director.nN;
+    const fb0 = rfx.fireballs.count ?? null;
+    const i0 = director.stats.intercepts;
+    const puffs = recordPuffs(() => director.onIntercept(r, r.position.x, r.position.z));
+    assert.equal(director.stats.intercepts, i0 + 1, id);
+    assert.ok(director.fN > f0, `${id}: błysk`);
+    assert.ok(SparkSystem3D.pool.stats.emitted - sparks0 >= 8, `${id}: iskry`);
+    assert.ok(puffs.length >= 3, `${id}: sadza`);
+    assert.equal(director.sN, s0, `${id}: bez fali`);
+    assert.equal(director.bN, b0, `${id}: bez pchnięcia dymu`);
+    assert.equal(director.nN, n0, `${id}: głowica nie wybucha (Supernowa)`);
+    if (fb0 !== null) assert.equal(rfx.fireballs.count, fb0, `${id}: bez kuli ognia`);
+  }
+});
+
 test('torpeda: kilwater w dymie wzdłuż drogi w klatce, w układzie wyrzutni, bez alokacji na porcję', () => {
   resetAll();
   const b = { x: 1000, y: 500, vx: 1400 + 300, vy: 0 - 100, ivx: 300, ivy: -100 };

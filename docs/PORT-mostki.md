@@ -555,8 +555,13 @@ zgaszone (oś czasu minęła), wyrwy dalej idą za heksami wraku.
 komórki, na odłamku powstaje rekord-siostra (te same komórki, osobny wiersz,
 utrata zasilania) — model pęka razem z kadłubem. Rekord bez żywych heksów
 odchodzi od razu; gospodarz niewidziany 2 s oddaje wiersz bufora obrażeń (dostaje nowy,
-gdy wróci), po 60 s rekord odchodzi. Gospodarz, który żyje i ma heksy, ale nie
-ma go na liście (lot nad Ring City rysuje sam statek gracza), zatrzymuje rekord.
+gdy wróci), po 60 s rekord odchodzi — tylko u gospodarza z własnym stanem mostków
+(okręt dostaje model od nowa, `_adopt`). Wrak i odłam nie mają `bridgeState` (rekord
+przeszedł na nie z okrętu) i nie przyjęłyby go ponownie, więc ich rekord czeka bez
+limitu i oddaje tylko wiersz (2026-10-12: wrak urodzony we mgle wojny, odkryty po
+minucie, tracił model mostka na zawsze; zimny wrak bez ciała — `beamHostParkedCold`).
+Gospodarz, który żyje i ma heksy, ale nie ma go na liście (lot nad Ring City rysuje
+sam statek gracza), zatrzymuje rekord.
 
 ### 8.7 Wydajność
 

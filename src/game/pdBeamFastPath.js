@@ -12,6 +12,9 @@
 // Pudło = wiązka do pełnego zasięgu bez trafienia. Wynik ląduje w `out`
 // (obiekt wielokrotnego użytku), bez alokacji.
 
+// Tolerancja kierunku wiązki lasera PD do rakiety [rad, ~tan] — jak `aimTolerance` lasera gracza w ciwsStep.
+export const PD_LASER_ROCKET_AIM_TOL = 0.1;
+
 export function createPdBeamHit() {
   return { dist: 0, entity: null, kind: null, shard: null, shield: false };
 }
@@ -51,9 +54,22 @@ function finishHit(out, entity, dist, shield, shard, playerShip) {
 export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
   clearHit(out, range);
   if (!target || !(range > 0)) return out;
-  // Rakieta/torpeda to pocisk, nie okręt: wiązka NPC nigdy ich nie niszczyła
-  // (robi to CIWS i laser gracza w ciwsStep) — zostaje pudło, jak dotąd.
-  if (target.type === 'rocket' || target.type === 'torpedo') return out;
+  // Rakieta/torpeda (pocisk z `bullets` albo zastępnik rakiety 3D — rocketSystem3D.syncThreats): wiązka
+  // przechodzi przez nią, gdy kierunek lufy mija ją o najwyżej PD_LASER_ROCKET_AIM_TOL (jak laser PD gracza
+  // w ciwsStep) — trafienie `kind: 'rocket'`, zestrzelenie robi wołający (fireWeaponCore → killRocketThreat).
+  if (target.type === 'rocket' || target.type === 'torpedo') {
+    if (!(target.life > 0) || target.dead) return out;
+    const rx = target.x - x0;
+    const ry = target.y - y0;
+    const along = rx * dirX + ry * dirY;
+    if (!(along > 0) || along > range) return out;
+    const perp = Math.abs(rx * dirY - ry * dirX);
+    if (perp > along * PD_LASER_ROCKET_AIM_TOL + (Number(target.r) || 0)) return out;
+    out.dist = Math.sqrt(rx * rx + ry * ry);
+    out.entity = target;
+    out.kind = 'rocket';
+    return out;
+  }
   const entity = target._realEntity || target;
   if (entity.dead || entity.destroyed || entity.removed) return out;
   const tx = entity.pos ? entity.pos.x : entity.x;

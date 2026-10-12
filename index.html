@@ -1083,6 +1083,7 @@
     } from "./src/game/megafreighterTrain.js";
     import { BulletSpatialGrid } from "./src/game/bulletSpatialGrid.js";
     import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics, projectileStepSpan } from "./src/game/projectileTrajectory.js";
+    import { ciwsShotHitsRocket, ciwsRocketReach } from "./src/game/rocketIntercept.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
     import { stepCameraZoom, cameraZoomBase, wheelDeltaPx } from "./src/game/cameraZoom.js";
@@ -10742,6 +10743,13 @@
             : resolveBeamWorldHit(shooter, weapon, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, range, _beamWorldHit);
           // Dron naprawczy wroga na linii wiązki przed celem — wiązka kończy się na dronie (src/game/repairSwarm.js).
           if (RepairSwarm.out > 0) clipBeamAtRepairDrone(beamHit, shooter, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, damage);
+          // Laser PD NPC na rakiecie (resolvePdBeamHit → kind 'rocket'): wiązka kończy się na niej, rakieta
+          // zestrzelona (kanwa i 3D), bez obrażeń kadłubów.
+          if (beamHit.kind === 'rocket') {
+            killRocketThreat(beamHit.entity, 'laser', 1.2);
+            beamHit.entity = null;
+            beamHit.kind = null;
+          }
           const hitDist = beamHit.dist;
           const hitEntity = beamHit.entity;
           const hitType = beamHit.kind;
@@ -21614,6 +21622,22 @@
     // Kolejność jak w `npcs`: przy remisie odległości wygrywa ten sam cel co dawniej.
     const _pdEnemyFighterBuffer = [];
     const _pdEnemyHullBuffer = [];
+    // Mgła wojny dla wrogich rakiet 3D (ciwsStep → rocketSystem3D.syncThreats): punkt w zasięgu wzroku strony gracza.
+    const _pdHostileRocketVisible = (x, y) => SensorSystem.pointVisible(x, y);
+
+    // Rakieta ZESTRZELONA przez obronę punktową (CIWS, laser, flak — gracza i NPC). Rakieta 3D (zastępnik
+    // z syncThreats) — rocketSystem3D.intercept (bez detonacji głowicy, obraz z reżysera rakiet); rakieta /
+    // torpeda kanwy — efekt trafienia w układzie wyrzutni i life = -1 (zdejmuje ją jej iteracja pętli pocisków).
+    function killRocketThreat(rb, cause, fxScale) {
+      if (rb.rocket3d === true) return window.rocketSystem3D?.intercept(rb, cause) === true;
+      if (!(rb.life > 0)) return false;
+      ActiveCarrier.set(writeCarrierVelocity(rb.ivx, rb.ivy, rb.clock, SimClock.sim, _impactCarrier));
+      spawnBulletImpactEffect(rb, rb.x, rb.y, fxScale);
+      ActiveCarrier.clear();
+      rb.life = -1;
+      return true;
+    }
+    window.killRocketThreat = killRocketThreat;
 
     function ciwsStep(dt) {
       _pdEnemyRocketBuffer.length = 0;
@@ -21628,6 +21652,9 @@
           _pdEnemyRocketBuffer.push(rb);
         }
       }
+      // Rakiety 3D (salwy gracza i NPC, src/effects3d/rocketSystem3D.js) — zastępniki w kształcie pocisku,
+      // pozycja w czasie tego kroku; wroga rakieta we mgle wojny nie jest celem strony gracza.
+      window.rocketSystem3D?.syncThreats(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock.sim, _pdHostileRocketVisible);
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
       // Bez PD CHIP-a obrona punktowa gracza strzela tylko do rakiet i myśliwców.
       const pdHullsAllowed = hasShipChip(ship, PD_CHIP_ID);
@@ -21744,20 +21771,15 @@
           fireFlakSalvo(gun, base, baseVel, target, wDef, fireInterval);
         } else if (isLaser) {
           if (isRocketTarget) {
-            // Laser niszczy rakietę natychmiast
-            const rIdx = bullets.indexOf(target);
-            if (rIdx !== -1) {
-              // Zestrzelona rakieta: jej odłamki lecą w układzie wyrzutni (ivx).
-              ActiveCarrier.set(writeCarrierVelocity(target.ivx, target.ivy, target.clock, SimClock.sim, _hitCarrier));
-              spawnBulletImpactEffect(target, target.x, target.y, 1.2);
-              ActiveCarrier.clear();
+            // Laser niszczy rakietę natychmiast (kanwa i 3D — killRocketThreat; life = -1 zdejmuje ją
+            // z buforów zagrożeń i z pętli pocisków).
+            if (target.life > 0) {
               // Laser PD w 3D (WeaponFx, zadanie 17 — dawniej smuga na kanwie): wylot z wieżyczki,
               // impuls do rakiety, trafienie.
               const lcx = Math.cos(gun.angle);
               const lcy = Math.sin(gun.angle);
               WeaponFx.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
-              target.life = -1; // znika też z _pdEnemyRocketBuffer (checki life<=0)
-              removeBulletAt(rIdx);
+              killRocketThreat(target, 'laser', 1.2);
             }
             gun.cd = fireInterval;
           } else {
@@ -21939,8 +21961,7 @@
         if (rbFriendly === shooterFriendly) continue;        // własnej salwy nie zestrzeliwujemy
         const ddx = rb.x - b.x, ddy = rb.y - b.y;
         if (ddx * ddx + ddy * ddy > radiusSq) continue;
-        spawnBulletImpactEffect(rb, rb.x, rb.y, 0.9);
-        rb.life = -1;   // sprząta go własna iteracja pętli pocisków
+        killRocketThreat(rb, 'flak', 0.9);   // kanwa: sprząta go własna iteracja pętli pocisków
       }
 
       // 3. Efekt: pęknięcie z dema bronie-webgpu (WeaponFx, zadanie 17 — kula odłamków, czarny
@@ -22924,24 +22945,23 @@
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- CIWS INTERCEPT RAKIET ---
-        // Pocisk CIWS gracza vs rakiety/torpedy wroga — tylko z bufora rakiet
-        // zbudowanego w ciwsStep (wcześniej O(pociski²): pełny skan bullets per CIWS).
-        if (b.type === 'ciws' && b.owner === 'player') {
+        // Pocisk CIWS (gracza, sojuszników i piratów) vs rakiety/torpedy strony przeciwnej — tylko z buforów
+        // rakiet zbudowanych w ciwsStep (kanwa + rakiety 3D; wcześniej O(pociski²): pełny skan bullets per CIWS).
+        // Test na odcinku kroku w RUCHU WZGLĘDNYM (src/game/rocketIntercept.js — sam punkt końcowy trafiał przypadkiem).
+        if (b.type === 'ciws') {
+          const threats = b.owner === 'npc' ? _pdPlayerRocketBuffer : _pdEnemyRocketBuffer;
+          const span = projectileStepSpan(b, dt, SimClock.sim);
+          const bx0 = Number.isFinite(b.px) ? b.px : b.x;
+          const by0 = Number.isFinite(b.py) ? b.py : b.y;
+          const reach = ciwsRocketReach(b, span);
           let intercepted = false;
-          for (let j = 0; j < _pdEnemyRocketBuffer.length; j++) {
-            const rb = _pdEnemyRocketBuffer[j];
+          for (let j = 0; j < threats.length; j++) {
+            const rb = threats[j];
             if (!rb || rb === b || rb.life <= 0) continue;
-            if (rb.owner !== 'npc') continue;
-            const dx = b.x - rb.x, dy = b.y - rb.y;
-            const hitR = (b.r || 2) + (rb.r || 5);
-            if (dx * dx + dy * dy > hitR * hitR) continue;
-            // Trafiono rakietę! Oznaczamy do usunięcia — zniknie w swojej iteracji
-            // pętli na checku life<=0 (bez żonglowania indeksami przy splice).
-            // Jej odłamki lecą w układzie wyrzutni (pęd rakiety, ivx/ivy).
-            ActiveCarrier.set(writeCarrierVelocity(rb.ivx, rb.ivy, rb.clock, SimClock.sim, _impactCarrier));
-            spawnBulletImpactEffect(rb, rb.x, rb.y, 1.3);
-            ActiveCarrier.clear();
-            rb.life = -1;
+            if (!ciwsShotHitsRocket(b, bx0, by0, rb, span, reach)) continue;
+            // Trafiono rakietę! Kanwa: zniknie w swojej iteracji pętli na checku life<=0, jej odłamki lecą
+            // w układzie wyrzutni (ivx/ivy); 3D: rocketSystem3D.intercept.
+            if (!killRocketThreat(rb, 'ciws', 1.3)) continue;
             removeBulletAt(i); // usuń pocisk CIWS
             intercepted = true;
             break;

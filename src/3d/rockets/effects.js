@@ -185,7 +185,7 @@ export class RocketEffects {
     this.hasView = false;
     this.vx0 = 0; this.vy0 = 0; this.vx1 = 0; this.vy1 = 0;
     this.opts = { trails: true, fragments: true, wakes: true, arcs: true, scorch: true, shieldRecipe: true, trailDensity: 1, blastGain: 1, novaShake: true, launcherKick: true };
-    this.stats = { flashes: 0, fragments: 0, novas: 0, lights: 0, puffs: 0, culledPuffs: 0, splits: 0 };
+    this.stats = { flashes: 0, fragments: 0, novas: 0, lights: 0, puffs: 0, culledPuffs: 0, splits: 0, intercepts: 0 };
     // Tłok salw (beginUpdate): mnożnik odstępu porcji smugi przy setkach rakiet w locie.
     this.crowd = 1;
 
@@ -763,6 +763,48 @@ export class RocketEffects {
         rng.next() * 0.02, 16 + hgt);
     }
     this._shock(px, py, 0.35, 1900, 0, 0, 40, 4, fx, fy, false);
+  }
+
+  /**
+   * Rakieta ZESTRZELONA przez obronę punktową (rocketSystem3D.intercept — 2026-10-12): kadłubek
+   * pęka w locie bez detonacji głowicy — krótki błysk, iskry i odłamki wzdłuż kursu (pęd rakiety),
+   * garść sadzy; bez kuli ognia, fali i gorącego powietrza. Supernowa nie wybucha (głowica nie
+   * zdążyła się uzbroić) — tylko większy błysk w barwie plazmy. Nośnik = układ rakiety.
+   */
+  onIntercept(r, x, y) {
+    const rng = this.rng;
+    const hgt = Math.max(0, r.position.y);
+    this.stats.intercepts++;
+    if (this._outside(x, y, EMIT_MARGIN)) return;
+    const nova = this.kind[r.index] === VFX_NOVA;
+    const k = clamp(Number(r.bodyScale) || 1, 0.3, 2);
+    const fx = r.frameVel.x;
+    const fy = r.frameVel.z;
+    if (nova) {
+      this._flash(x, y, 0.5, fx, fy, NOVA_HALO, 6, 30 * k, 0.05, NOVA_LIGHT, 0.9, 150 * k, 0.1,
+        NOVA_LIGHT, 2.2, 0.06, 0.3, 0.3, 900, 40 + hgt);
+    } else {
+      this._flash(x, y, 0.35, fx, fy, SPLIT_CORE, 0.6, 16 * k, 0.04, SPLIT_HALO, 0.7, 70 * k, 0.07,
+        SPLIT_LIGHT, 1.0 * k, 0.05, 0.15, 0.2, 380 * Math.sqrt(k), 40 + hgt);
+    }
+    const vx0 = r.velocity.x;
+    const vy0 = r.velocity.z;
+    const nSp = Math.round((nova ? 26 : 12) * Math.sqrt(k));
+    for (let s = 0; s < nSp; s++) {
+      const a = rng.next() * TAU;
+      const v = 250 + rng.next() * 900;
+      const col = rng.next() < 0.5 ? SPARK_COLORS.gold : SPARK_COLORS.warm;
+      this._spark(x, y, vx0 * 0.55 + Math.cos(a) * v, vy0 * 0.55 + Math.sin(a) * v, 0.2 + rng.next() * 0.35,
+        0.2 + rng.next() * 0.3, 2.4, col, 0.8, fx, fy, CLOCK_SIM);
+    }
+    const nSm = nova ? 6 : 3;
+    for (let s = 0; s < nSm; s++) {
+      const a = rng.next() * TAU;
+      const v = 80 + rng.next() * 220;
+      this._puff(x, y, vx0 * 0.3 + Math.cos(a) * v, vy0 * 0.3 + Math.sin(a) * v, fx, fy,
+        (3 + rng.next() * 3) * k, (16 + rng.next() * 12) * k, 0.9 + rng.next() * 1.1, 0.5, SMOKE_KIND.SOOT, 0.2 + rng.next() * 0.08,
+        rng.next() * 0.02, 14 + hgt);
+    }
   }
 
   /**

@@ -1521,12 +1521,15 @@ export const Bridge3D = {
         continue;
       }
       // Gospodarz żyje i ma heksy mostka, tylko nie ma go na tej liście (lot
-      // nad Ring City rysuje sam statek gracza, NPC zdjęty z listy) — rekord
-      // czeka; po ROW_RELEASE_SEC oddaje wiersz, po RECORD_TTL_SEC odchodzi.
+      // nad Ring City rysuje sam statek gracza, NPC zdjęty z listy, wrak we
+      // mgle wojny) — rekord czeka; po ROW_RELEASE_SEC oddaje wiersz, po
+      // RECORD_TTL_SEC odchodzi — ale tylko u gospodarza z tym stanem mostków
+      // (_adopt da mu model od nowa). Wrak i odłam (rekord przeszedł z okrętu)
+      // nie przyjęłyby go ponownie: czekają bez limitu, jak zimny wrak wyżej.
       if (this._hostOwns(rec, rec.host)) {
         rec.orphanSince = -1;
         const away = ctx.heatNow - rec.lastSeenAt;
-        if (away > RECORD_TTL_SEC) this._retire(rec);
+        if (away > RECORD_TTL_SEC && rec.host.bridgeState === rec.st) this._retire(rec);
         else if (away > ROW_RELEASE_SEC && rec.row >= 0) this._freeRows(rec);
         continue;
       }

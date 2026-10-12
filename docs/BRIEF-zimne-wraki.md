@@ -272,7 +272,9 @@ wrak na klatkę, wraki 77 gorących / 71 śpiących / 0 zimnych). Wdrożenie:
   Przy zamrożeniu w kadrze ciało i siatka skóry zostają — obraz się nie zmienia (sprawdzone zrzutami w grze).
   Wrak nie ma własnego stanu mostków (model mostka przechodzi na niego z okrętu jako rekord Bridge3D), więc rekord
   zimnego gospodarza bez ciała CZEKA bez limitu czasu (`beamHostParkedCold` w `bridge3D.js`) — dawniej Bridge3D
-  uznawał go za osierocony i model mostka znikał na zawsze po pierwszym zwolnieniu ciała do rysowania.
+  uznawał go za osierocony i model mostka znikał na zawsze po pierwszym zwolnieniu ciała do rysowania. To samo
+  dla gorącego / śpiącego wraku poza listą (mgła wojny): rekord bez własnego stanu mostków gospodarza nie odchodzi
+  po `RECORD_TTL_SEC`, oddaje tylko wiersz obrażeń (2026-10-12, `docs/PORT-mostki.md` § 8.6).
 - **Odmrożenie** wyłącznie jawne (`thawWreck`): ciało do rysowania od razu, inaczej odtworzenie z migawki (1 na klatkę).
 - **Limity**: `maxCold` 1500 i `maxColdNodes` (3 mln wpisów migawek ≈ 200 MB); nadmiar — najdalszy od gracza, nigdy
   z ładunkiem; recykling `recycleWreckEntity` → `HullBodies.recycleWreck` (także zimny bez ciała).

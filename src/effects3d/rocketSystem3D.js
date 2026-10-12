@@ -269,6 +269,11 @@ function resolveRocketProfile(weaponDef) {
         // Wygląd rakiety (płomień, dym, kule ognia, Supernowa) czyta reżyser efektów z dema
         // (src/3d/rockets/) wprost z weaponDef; w profilu lotu zostaje tylko skala kadłubka.
         bodyScale: THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.25, 3.0),
+        // Obrona punktowa: promień kadłubka jako celu PD [j.] (pociski CIWS, wiązka lasera) — mikrorakieta ~3,5,
+        // manewrująca 6, Supernowa ~10 (rakiety kanwy: S 2, M 4, L 6, torpeda 10).
+        pdRadius: Number(weaponDef?.pdRadius) > 0
+            ? Number(weaponDef.pdRadius)
+            : 2 + 4 * THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.25, 3.0),
         hitRadius: proximityRadius,
         // Głowica kasetowa (Hydra): liczba rakiet potomnych i odległość podziału od celu.
         subDef: sub,
@@ -334,6 +339,10 @@ class RocketSystem3D {
                 leadHorizon: 0,
                 terminalLeadHorizon: 0,
                 bodyScale: 1,
+                pdRadius: 4,
+                // Rakieta jako cel obrony punktowej (syncThreats): obiekt w kształcie pocisku z `bullets`
+                // (x, y, vx, vy, r, life, owner, type 'rocket') — tworzony raz na rakietę, gaśnie z nią.
+                threat: null,
                 didImpactDamage:false,
                 hitShield: false,
                 weaponDef:      null,
@@ -410,6 +419,96 @@ class RocketSystem3D {
         // POLE WIDZENIA głowicy: `(rakieta) => encja | null` — nowy cel dla rakiety, której cel
         // zginął w locie (pyta co RETARGET_EVERY s). null — rakieta leci dalej prosto (jak dawniej).
         this.retarget = null;
+
+        // OBRONA PUNKTOWA (2026-10-12): rakiety zestrzelone przez PD według przyczyny (intercept).
+        this.stats = { intercepted: { ciws: 0, laser: 0, flak: 0, other: 0 } };
+        // false — rakiety 3D nie są celami obrony punktowej (stan sprzed 2026-10-12; A/B balansu).
+        this.pdTargets = true;
+        // Czas (SimClock.render) pozycji rakiet po ostatnim update — syncThreats dosuwa je do czasu kroku fizyki.
+        this._poseTime = 0;
+    }
+
+    /**
+     * Rakiety w locie jako CELE OBRONY PUNKTOWEJ (CIWS, laser, flak — gracza i NPC). Dopisuje do `playerOut`
+     * rakiety strony gracza (niebieskie), do `enemyOut` wrogie (czerwone) — obiekty-zastępniki w kształcie
+     * pocisku z `bullets` (x, y, vx, vy, ivx, ivy, r, life, dead, owner, type 'rocket', rocket3d, slot),
+     * z pozycją dosuniętą do czasu kroku fizyki `simTime`. Zastępnik powstaje raz na rakietę; zestrzelenie
+     * idzie przez `intercept(threat.slot, …)`, a rakieta, która zniknęła (wybuch, podział, przechwyt), ma
+     * zastępnik z `life = -1`, `dead = true` (cele AI i bufory gry sprawdzają jedno albo drugie).
+     * @param {Function|null} hostileVisible `(x, y) => bool` — mgła wojny: wroga rakieta poza wzrokiem strony
+     *   gracza nie trafia do `enemyOut` (null — wszystkie)
+     * @returns {number} liczba rakiet dopisanych do obu list
+     */
+    syncThreats(playerOut, enemyOut, simTime, hostileVisible = null) {
+        if (this.activeRockets <= 0 || !this.pdTargets) return 0;
+        let dt = Number(simTime) - this._poseTime;
+        dt = dt > 0.1 ? 0.1 : (dt > -0.1 ? dt : -0.1);
+        if (!Number.isFinite(dt)) dt = 0;
+        let seen = 0;
+        let added = 0;
+        for (let i = 0; seen < this.activeRockets && i < ROCKET.maxRockets; i++) {
+            const r = this.rockets[i];
+            if (!r.active) continue;
+            seen++;
+            let p = r.threat;
+            if (p === null) {
+                p = r.threat = {
+                    x: 0, y: 0, vx: 0, vy: 0, ivx: 0, ivy: 0, r: r.pdRadius, life: 1, dead: false,
+                    owner: r.hostile ? 'npc' : 'player', type: 'rocket', rocket3d: true, slot: r,
+                    damage: r.damage, weaponDef: r.weaponDef
+                };
+            }
+            const vx = r.velocity.x + r.frameVel.x;
+            const vy = r.velocity.z + r.frameVel.z;
+            // Rakieta wyrzucona w krokach fizyki tej klatki stoi jeszcze w pozie wyrzutni (bornSim).
+            const dtr = r.frameSynced ? dt : Number(simTime) - r.bornSim;
+            p.x = r.position.x + vx * dtr;
+            p.y = r.position.z + vy * dtr;
+            p.vx = vx;
+            p.vy = vy;
+            p.ivx = r.frameVel.x;
+            p.ivy = r.frameVel.z;
+            if (r.hostile) {
+                if (hostileVisible !== null && !hostileVisible(p.x, p.y)) continue;
+                enemyOut.push(p);
+            } else {
+                playerOut.push(p);
+            }
+            added++;
+        }
+        return added;
+    }
+
+    /**
+     * Rakieta ZESTRZELONA przez obronę punktową: znika bez detonacji głowicy i bez obrażeń (Hydra przed
+     * podziałem — razem z głowicami potomnymi, Supernowa — bez wybuchu). Obraz: reżyser `onIntercept`.
+     * @param {object} r slot rakiety (albo zastępnik celu z syncThreats)
+     * @param {string} cause 'ciws' | 'laser' | 'flak' | inne
+     * @returns {boolean} czy rakieta była w locie
+     */
+    intercept(r, cause = 'other') {
+        if (r && r.rocket3d === true) {
+            if (r.dead) return false;
+            r = r.slot;
+        }
+        if (!r || !r.active) return false;
+        const st = this.stats.intercepted;
+        if (cause === 'ciws') st.ciws++;
+        else if (cause === 'laser') st.laser++;
+        else if (cause === 'flak') st.flak++;
+        else st.other++;
+        if (this.effects && typeof this.effects.onIntercept === 'function') this.effects.onIntercept(r, r.position.x, r.position.z);
+        this._deactivate(r);
+        return true;
+    }
+
+    _releaseThreat(r) {
+        const p = r.threat;
+        if (p !== null) {
+            p.life = -1;
+            p.dead = true;
+            r.threat = null;
+        }
     }
 
     /** Rakiety czekające w kolejkach salw (HUD, testy). */
@@ -531,6 +630,8 @@ class RocketSystem3D {
         r.leadHorizon = profile.leadHorizon;
         r.terminalLeadHorizon = profile.terminalLeadHorizon;
         r.bodyScale = profile.bodyScale;
+        r.pdRadius = profile.pdRadius;
+        r.threat = null;
         r.launchTurnRateRad = profile.launchTurnRateRad;
         r.dispersalTime = profile.dispersalTime;
         r.weaveRad = profile.weaveRad;
@@ -1159,6 +1260,9 @@ class RocketSystem3D {
             }
         }
 
+        // Pozycje rakiet są teraz w czasie tej klatki (syncThreats dosuwa je do kroku fizyki).
+        this._poseTime = SimClock.render;
+
         // Wygląd: zegar reżysera efektów (dym jedzie z rakietą co do kroku), sekwencje
         // Supernowej, płonące odłamki, przypalenia.
         if (fx) fx.update(dt);
@@ -1203,6 +1307,7 @@ class RocketSystem3D {
     _deactivate(r) {
         if (r.active) this.activeRockets = Math.max(0, this.activeRockets - 1);
         r.active = false;
+        this._releaseThreat(r);
         r.target = null;
         r.shooter = null;
     }
@@ -1350,6 +1455,7 @@ class RocketSystem3D {
     _explode(r) {
         if (r.active) this.activeRockets = Math.max(0, this.activeRockets - 1);
         r.active = false;
+        this._releaseThreat(r);
 
         const ex = r.position.x;
         const ez = r.position.z;

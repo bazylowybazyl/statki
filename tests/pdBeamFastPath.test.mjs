@@ -80,10 +80,32 @@ test('cel poza zasięgiem, za lufą, obok wiązki albo martwy = pudło', () => {
   }
 });
 
-test('rakieta jako cel: wiązka NPC jej nie niszczy (jak dotąd) — pudło', () => {
+test('rakieta jako cel (2026-10-12): wiązka w tolerancji kierunku trafia rakietę — kind rocket, bez skanu kadłubów', () => {
   const out = createPdBeamHit();
-  resolvePdBeamHit(out, 0, 0, 1, 0, 1000, { type: 'rocket', x: 300, y: 0, r: 2 }, deps());
-  assert.equal(out.entity, null);
+  const rocket = { type: 'rocket', x: 300, y: 0, r: 2, life: 1 };
+  resolvePdBeamHit(out, 0, 0, 1, 0, 1000, rocket, deps());
+  assert.equal(out.entity, rocket);
+  assert.equal(out.kind, 'rocket');
+  assert.ok(Math.abs(out.dist - 300) < 1e-9);
+  // Zastępnik rakiety 3D (rocketSystem3D.syncThreats) — ta sama ścieżka; 0,08 rad obok osi wiązki = w tolerancji.
+  const r3d = { type: 'rocket', rocket3d: true, x: 500, y: 40, r: 4, life: 1, dead: false };
+  resolvePdBeamHit(out, 0, 0, 1, 0, 1000, r3d, deps());
+  assert.equal(out.entity, r3d);
+});
+
+test('rakieta jako cel: poza tolerancją kierunku, za lufą, poza zasięgiem albo już zestrzelona — pudło', () => {
+  const out = createPdBeamHit();
+  for (const target of [
+    { type: 'rocket', x: 300, y: 60, r: 2, life: 1 },     // 0,2 rad obok
+    { type: 'rocket', x: -300, y: 0, r: 2, life: 1 },     // za lufą
+    { type: 'rocket', x: 1300, y: 0, r: 2, life: 1 },     // dalej niż zasięg
+    { type: 'rocket', x: 300, y: 0, r: 2, life: -1 },     // zestrzelona
+    { type: 'rocket', rocket3d: true, x: 300, y: 0, r: 2, life: 1, dead: true }
+  ]) {
+    resolvePdBeamHit(out, 0, 0, 1, 0, 1000, target, deps());
+    assert.equal(out.entity, null, JSON.stringify(target));
+    assert.equal(out.dist, 1000);
+  }
 });
 
 // ---------------------------------------------------------------------------

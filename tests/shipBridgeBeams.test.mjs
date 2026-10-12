@@ -196,6 +196,62 @@ test('3D model record on beam cells: damage bytes mirror the hull (alive, HP, 8-
   window.wrecks.length = 0;
 });
 
+test('mostek 3D: wrak poza listą dłużej niż RECORD_TTL (mgła wojny) zachowuje rekord i rysuje model po powrocie', async () => {
+  const THREE = await import('three');
+  const { Bridge3D } = B3;
+  window.wrecks.length = 0;
+  HullBodies.engine.splitQueue.length = 0;
+  const e = ship('battleship', 0, 0, 0.3);
+  assert.ok(Bridge3D.attach(new THREE.Scene()));
+  const drawn = () => Bridge3D.kinds.reduce((s, K) => s + K.count, 0);
+  const opts = { nowSec: 1, dt: 0, zoom: 0.4 };
+  // Zegar rekordów (performance.now): skok o minuty bez czekania.
+  const realNow = performance.now;
+  let skew = 0;
+  performance.now = () => realNow.call(performance) + skew;
+  try {
+    Bridge3D.update([e], opts);
+    const recs = (e.__bridge3D || []).slice();
+    assert.ok(recs.length > 0 && drawn() > 0, 'okręt ma model mostka');
+    // Okręt ginie we mgle: wraku nie ma na liście (fogSeenInto) — rekord idzie za ciałem (trop ciała).
+    const w = HullBodies.convertToWreck(e);
+    e.dead = true;
+    Bridge3D.update([], opts);
+    assert.ok(recs.every((r) => r.host === w && !r.dead) && !w.bridgeState, 'rekord na wraku spoza listy');
+    assert.equal(drawn(), 0);
+    // Po kilku sekundach poza listą wiersz obrażeń wraca do puli, rekord zostaje.
+    skew += 5000;
+    Bridge3D.update([], opts);
+    assert.ok(recs.every((r) => !r.dead && r.row < 0), 'wiersz oddany');
+    // Ponad minutę poza listą: wrak bez własnego stanu mostków nie przyjąłby rekordu ponownie — rekord czeka.
+    skew += 120000;
+    for (let k = 0; k < 3; k++) Bridge3D.update([], opts);
+    assert.ok(recs.every((r) => !r.dead && Bridge3D.records.includes(r) && w.__bridge3D.includes(r)),
+      'rekord wraku nie emerytuje się po RECORD_TTL');
+    // Gracz odkrywa wrak: ten sam rekord, nowy wiersz, model rysuje się.
+    Bridge3D.update([w], opts);
+    assert.ok(recs.every((r) => !r.dead && r.host === w && r.row >= 0) && drawn() > 0, 'model po powrocie na listę');
+    // Okręt z własnym stanem mostków dalej oddaje rekord po RECORD_TTL i przyjmuje model od nowa.
+    const s = ship('destroyer', 30000, 0, 0);
+    Bridge3D.update([w, s], opts);
+    const sRecs = (s.__bridge3D || []).slice();
+    assert.ok(sRecs.length > 0);
+    skew += 120000;
+    Bridge3D.update([w], opts);
+    assert.ok(sRecs.every((r) => r.dead) && !s.__bridge3D.length, 'okręt poza listą: rekord odchodzi');
+    Bridge3D.update([w, s], opts);
+    assert.ok(s.__bridge3D.length > 0 && s.__bridge3D.every((r) => !r.dead), 'okręt przyjmuje model ponownie');
+    // Wrak usunięty (recykling) poza listą — rekord odchodzi (bez wycieku).
+    HullBodies.recycleWreck(w);
+    Bridge3D.update([s], opts);
+    assert.ok(recs.every((r) => r.dead), 'usunięty wrak oddaje rekord');
+  } finally {
+    delete performance.now; // metoda z prototypu wraca
+    Bridge3D.dispose();
+    window.wrecks.length = 0;
+  }
+});
+
 test('hulk drifts with the vent and the agony ends after BRIDGE_HULK_SEC', () => {
   const e = ship('battleship', 0, 0, 0);
   const st = e.bridgeState;
