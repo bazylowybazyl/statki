@@ -3,6 +3,10 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { startVite, startChrome, attachLogs, evaluate, waitFor, sleep, screenshotPng, parseArgs, repo, writeJson } from './wspolne.mjs';
 const args = parseArgs();
+if(args.etap === 'E1') {
+  await import('./hala-gaz-e1.mjs');
+  process.exit(process.exitCode || 0);
+}
 const out = resolve(repo, args.out || '.tmp/hala-gaz/E0');
 mkdirSync(out, { recursive: true });
 const [width, height] = String(args.rozmiar || '1600x900').split('x').map(Number);
@@ -15,7 +19,7 @@ const report = { name: 'GAZ-GPT', stage: 'E0', width, height, rows: [] };
 try {
   for (const cell of [48, 56, 64]) {
     await cdp.send('Page.navigate', { url: `${base}/dema/hala-gaz-webgpu.html?shot=1&pokaz=0&komorka=${cell}&etap=E0` });
-    if (!await waitFor(cdp, 'window.__dok?.ready && window.__gaz?.benchmark', 180000)) throw new Error('demo nie wystartowało');
+    if (!await waitFor(cdp, '!!(window.__dok?.ready && window.__gaz?.benchmark)', 180000)) throw new Error('demo nie wystartowało');
     await ev('window.HallDustTune.enabled = false; window.__dok.setSpeed(0); window.Core3D.gpuTimerSampleEvery = 1;');
     await sleep(1000);
     const data = await ev(`(async () => {

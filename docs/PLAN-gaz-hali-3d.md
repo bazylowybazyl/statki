@@ -21,24 +21,25 @@ Mediany ABAB w jednym przebiegu na GPU użytkownika, 1600×900; koszt = compute 
 
 **Wybór: 64 j.** 48 j. zostawia tylko 0,118 ms na rzeczywiste równania. 64 j. zostawia 0,371 ms do limitu symulacji 0,6 ms.
 E0 jest dolną granicą kosztu, nie deklaracją kosztu E1. Zrzuty i surowe dane: `.tmp/hala-gaz/E0/` (3 PNG, raport.json,
-raport.md); błędy konsoli/GP U = 0. Powtórzenie: `node scripts/webgpu/hala-gaz-demo.mjs --etap E0`.
+raport.md); błędy konsoli/GPU = 0. Powtórzenie: `node scripts/webgpu/hala-gaz-demo.mjs --etap E0`.
 
 ## Tekstury, role i kolejność E1
 
-Prędkość A/B/C (C = predykcja MacCormacka), skład A/B/C (pył, para, spaliny, temperatura), ciśnienie A/B (A dzieli rolę
-wirów przed dywergencją), zajętość/prędkość przeszkody, statyczny raster 3D RGBA8, maski obrysu R8. Kurz pokładu:
-dwa pola RG16F przy 24 j. + pole wymiany z dolną warstwą; wymiana masy przez rzeczywiste powierzchnie/objętości.
-Żaden dispatch nie czyta i nie pisze tej samej tekstury. E2 dostanie dwie fazy pozycji spoczynkowych, światło 3D
-o połowie rozdzielczości i 256 tys. drobin; rezerwa pamięci przy 64 j. pozostawia całość poniżej 80 MB.
+E1: 14 atlasów RGBA16F: vel A/B/C (C: predykcja, potem źródło/rotacja), den A/B/C (pył/para/spaliny/temperatura),
+prs A/B, curl (potem limiter strumieni), flag, face (zajętość ścian), source, trace A/B (poderwany pył / wypływ).
+Dwa statyczne rastry RGBA8, maski R8. Pokład 24 j.: A/B + diagnostyka RGBA16F i raster startowy RGBA8. Razem 43,46624 MB.
+RGBA16F zamiast RG16F: format storage obsługiwany przez WebGPU; dodatkowe kanały mierzą podrywanie i powrót.
 
-Kolejność: zajętość → wiry → RK2 wstecz → korekta MacCormacka z obcięciem + źródła objętości/pędu/ciepła → dywergencja
-z celem źródeł → 30 iteracji Jacobiego z Neumannem i rozgrzaniem → rzut → wymiana pyłu z pokładem. Opór 0,2/s,
-mała konfinacja/dyfuzja; gorące spaliny wyporne, para ciężka; każda dysza MAIN osobno, SIDE z listy klatki.
-Pola aktualizowane małymi przyrostami przez `sroundF16`, ciśnienie bez. Harmonogram pary z `hallGasSources` pozostaje.
+Kolejność: zajętość objętości i ścian → wiry → RK2 wstecz → monotoniczna korekta prędkości i rekonstrukcji dawcy +
+źródła / siły → zgodna dywergencja MAC → 30 ważonych Jacobi (2/3) → rzut → limit wspólnych strumieni → zachowawczy
+transport skalarów → wymiana pokładu powierzchniami nakładania 24/64 → dokładne kopie. 43 dispatchy. Stałe listy
+1–3 podkroków, jeden compute na klatkę. Opór 0,2/s i kwadratowy; dyfuzja zależna od rotacji, wyporność temperatury,
+opadanie pary 75 j/s i pyłu 48 j/s. Każda dysza MAIN osobno, SIDE z listy klatki. Harmonogram źródeł zachowany.
 
 Obraz E1: marsz przez rzeczywiste pole 3D, dwa rysunki: back <116 i front ≥116, otoczenie i słońce × `sunVisibility`,
 bez własnego renderera/celów/postu. Od razu kamery ortho i 3D. Pełna rozgrzewka na ekranie ładowania.
 
-Odbiór E1: tabela wszystkich miar fizyki §10 z odczytu GPU (w tym 60 s bilansu i dwie identyczne sondy), koszt GPU
-≤0,6 ms symulacji, CPU ≤0,25 ms, pamięć ≤80 MB, pipeline'y po rozgrzaniu = 0. Pomiary 1600×900 i 2560×1440, ABAB;
-zero edycji w trakcie pomiaru. Report nie ukrywa nieosiągniętych bramek.
+Odbiór E1: wszystkie miary fizyki §10 spełnione; tunel 640 j., flanka 1,102×, zawinięcie 56,14%, powrót 81,57%,
+bilans +0,0156%, deterministyczne sondy. GPU 900p: moduł 0,979472 ms, symulacja 0,855072 ms; 1440p: moduł 1,290880 ms.
+CPU 0,14 ms, 0 pipeline’ów sync, 0 błędów. **Budżet symulacji 0,6 ms NIE spełniony; użytkownik odłożył optymalizację.**
+Pełny raport §14: `docs/RAPORT-gaz-hali-3d-E1-GAZ-GPT.md` i `.tmp/hala-gaz/E1/`; zrzuty, przekroje i dwa arkusze sekwencji.

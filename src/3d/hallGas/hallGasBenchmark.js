@@ -23,8 +23,8 @@ export class HallGasBenchmark {
     const at = (t, p) => texture3D(t, clamp(p, vec3(0.5), vec3(d.nx - 0.5, d.ny - 0.5, d.nz - 0.5))
       .div(vec3(d.nx, d.ny, d.nz))).level(0);
     const cell = () => {
-      If(this.active.lessThan(0.5), () => Return());
-      If(instanceIndex.greaterThanEqual(uint(d.cells)), () => Return());
+      If(this.active.lessThan(0.5), () => { Return(); });
+      If(instanceIndex.greaterThanEqual(uint(d.cells)), () => { Return(); });
       const q = uvec3(instanceIndex.mod(uint(d.nx)), instanceIndex.div(uint(d.nx)).mod(uint(d.ny)),
         instanceIndex.div(uint(d.nx * d.ny))).toVar();
       return { q, p: vec3(q).add(0.5).toVar() };

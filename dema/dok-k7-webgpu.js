@@ -409,13 +409,13 @@ function setSpeed(s) {
   speedButtons.forEach((b, i) => b.classList.toggle('on', SPEEDS[i][1] === s));
 }
 const TOGGLES = [
-  ['gas', 'Pył i para hali', () => HALL_DUST_TUNE.enabled, (v) => { HALL_DUST_TUNE.enabled = v; }],
-  ['puffs', 'Kłęby pary (buchy)', () => HALL_DUST_TUNE.puffs, (v) => { HALL_DUST_TUNE.puffs = v; }],
+  ['gas', 'Pył i para hali', () => extension?.getTune?.('enabled') ?? HALL_DUST_TUNE.enabled, (v) => { if(!extension?.setTune?.('enabled',v))HALL_DUST_TUNE.enabled = v; }],
+  ['puffs', 'Kłęby pary (buchy)', () => extension?.getTune?.('puffs') ?? HALL_DUST_TUNE.puffs, (v) => { if(!extension?.setTune?.('puffs',v))HALL_DUST_TUNE.puffs = v; }],
   ['night', 'Noc (lampy hali)', () => state.night, (v) => { state.night = v; applySun(); }],
   ['roof', 'Dach zamknięty', () => state.roofClosed, (v) => { state.roofClosed = v; }],
   ['ship', 'Atlas', () => state.showShip, (v) => { state.showShip = v; }],
   ['nodes', 'Węzły liny (debug)', () => state.nodes, (v) => { state.nodes = v; }],
-  ['lights', 'Światła hali w siatce', () => HALL_DUST_TUNE.hallLights, (v) => { HALL_DUST_TUNE.hallLights = v; }],
+  ['lights', 'Światła hali w siatce', () => extension?.getTune?.('hallLights') ?? HALL_DUST_TUNE.hallLights, (v) => { if(!extension?.setTune?.('hallLights',v))HALL_DUST_TUNE.hallLights = v; }],
   ['bloom', 'Bloom', () => true, (v) => Core3D.setPerfToggles?.({ bloom: v })]
 ];
 for (const [key, label, get, set] of TOGGLES) {
@@ -522,14 +522,15 @@ function simulate(dt) {
 }
 
 function render(simDt) {
+  if (extension?.beforeRender?.(state, flight)) syncAtlas(0);
   SimClock.beginRender(1, STEP, simDt <= 0);
   if (state.follow) { state.cam.x = atlas?.x ?? state.cam.x; state.cam.y = atlas?.y ?? state.cam.y; }
   const cam = state.mode === 'cine' ? cineCamera() : state.cam;
   syncRingCamera(cam);
   ringUniforms.uTime.value += simDt;
   // hala: pozy obsługi, ramiona i przewody (czas gry), dach, lampy, zegar migania świateł
-  const clock = k7BeaconClock(performance.now());
-  hallOpts.roofFade = state.roofClosed ? 0 : 1;
+  const clock = extension?.clock?.() ?? k7BeaconClock(performance.now());
+  hallOpts.roofFade = extension?.roofFade?.(state,flight) ?? (state.roofClosed ? 0 : 1);
   hallOpts.daylight = state.night ? 0 : 1;
   hallOpts.clock = clock;
   hallOpts.gameDt = simDt;
@@ -557,6 +558,7 @@ function render(simDt) {
   cullInfo.halfH = cullInfo.drawHalfH * 3;
   Fx3D.update(simDt);
   updateHexShips3D(cam, renderList, cullInfo);
+  extension?.afterShips?.();
   drawHexShips3D(ctx2d, W, H);
   if (state.nodes && state.mode === 'game') drawRopeNodes(cam);
   const r = Core3D.lastFrameRenderInfo?.total || Core3D.renderer?.info?.render || {};
@@ -607,12 +609,12 @@ function updateHud() {
   const rig = hall.fuelRig;
   const rs = rig.stats;
   const hs = rig.hoses.filter((h) => h.berthId === 'C-01');
-  const gs = HallDust.stats;
+  const gs = extension?.stats?.() ?? HallDust.stats;
   const gpu = Number.isFinite(Core3D.gpuFrameMs) ? Core3D.gpuFrameMs.toFixed(2) : '—';
   const speed = Math.hypot(flight.vx, flight.vz);
   const auto = k7BerthServiceState(service, 0, 'C-01');
   $('hud').innerHTML = [
-    `<b>Dok K-7 · WebGPU</b>  ${state.fps.toFixed(0)} FPS  draw ${state.lastInfo.calls}  GPU klatki ${gpu} ms`,
+    `<b>${extension?.title || 'Dok K-7 · WebGPU'}</b>  ${state.fps.toFixed(0)} FPS  draw ${state.lastInfo.calls}  GPU klatki ${gpu} ms`,
     `<b>C-01</b>  ${SEQ_LABEL[state.seq.kind] || state.seq.kind}${state.loop ? ' (pętla)' : ''} · <i>${seqStepText()}</i>`,
     `<b>poza</b>  zamki ${f2(pose.clamp)}  ramię ${f2(pose.extension)}  złączka ${f2(pose.seat)}  rygle ${f2(pose.lock)}  przepływ ${f2(pose.flow)}  upust ${f2(pose.vent)}`,
     `<b>przewody</b>  ${hs.map((h) => `${h.side < 0 ? 'W' : 'E'}: ${h.length.toFixed(0)} j. ${h.latched ? 'zaryglowany' : h.asleep ? 'spoczynek' : 'w ruchu'}`).join('  ')}`,

@@ -85,7 +85,7 @@ export function createHallGasSources(layout, rig = k7LightRig(layout)) {
   const walls = rig.vents.filter((v) => v.kind === 'wall');
   const fans = [-1620, 1620].map((x) => ({ x, z: layout.backZ + 120, dirX: 0, dirZ: 1 }));
   return {
-    hoses, walls, fans,
+    hoses, walls, fans, writer:makeWriter(),
     // na przewód: poprzedni rygiel, wiek buchu po odryglowaniu / ryglowaniu (−1 = brak), poprzednie wysunięcie
     prevLock: new Float64Array(hoses.length),
     burstAge: new Float64Array(hoses.length).fill(-1),
@@ -121,24 +121,12 @@ function pushEvent(src, kind, H, strength, index) {
   src.eventCount++;
 }
 
-const _c = { x: 0, y: 0, z: 0 };
-
-/**
- * Dopisuje źródła klatki do tablicy strumieni `J` (Float32Array, 12 liczb na rekord, układ jak gasField2D.jets)
- * od rekordu `first`, najwyżej `max` rekordów. `IN` — wejście klatki (HALL_DUST_IN), `dom` — domena (komórki),
- * dt — czas gry [s], T — strojenie. Zwraca liczbę rekordów. Zdarzenia buchów tej klatki: src.events / eventCount.
- */
-export function writeHallGasSources(src, J, first, max, IN, dom, dt, T = HALL_GAS_TUNE) {
-  src.eventCount = 0;
-  if (!T.enabled) { src.stats.records = 0; return 0; }
-  const h = dom.h;
-  const clock = Number(IN[HALL_DUST_IN.clock]) || 0;
-  let n = 0;
-  // stożek (radial = 0) albo buch promieniowy (radial = 1: dx, dz — przesunięcie szumu płatów, len — zasięg,
-  // widthJ — promień obwodu)
-  const put = (x, z, dx, dz, lenJ, widthJ, widen, speed, rate, vapor, dust, radial = 0) => {
-    if (n >= max) return;
-    const o = (first + n) * 12;
+function makeWriter(){
+  const W={J:null,first:0,max:0,dom:null,n:0,put:null};
+  W.put = (x, z, dx, dz, lenJ, widthJ, widen, speed, rate, vapor, dust, radial = 0) => {
+    const {J,first,max,dom}=W,h=dom.h;
+    if (W.n >= max) return;
+    const o = (first + W.n) * 12;
     J[o] = (x - dom.x0) / h;
     J[o + 1] = (z - dom.z0) / h;
     if (radial) {
@@ -157,8 +145,26 @@ export function writeHallGasSources(src, J, first, max, IN, dom, dt, T = HALL_GA
     J[o + 9] = vapor;
     J[o + 10] = dust;
     J[o + 11] = radial;
-    n++;
+    W.n++;
   };
+  return W;
+}
+
+const _c = { x: 0, y: 0, z: 0 };
+
+/**
+ * Dopisuje źródła klatki do tablicy strumieni `J` (Float32Array, 12 liczb na rekord, układ jak gasField2D.jets)
+ * od rekordu `first`, najwyżej `max` rekordów. `IN` — wejście klatki (HALL_DUST_IN), `dom` — domena (komórki),
+ * dt — czas gry [s], T — strojenie. Zwraca liczbę rekordów. Zdarzenia buchów tej klatki: src.events / eventCount.
+ */
+export function writeHallGasSources(src, J, first, max, IN, dom, dt, T = HALL_GAS_TUNE) {
+  src.eventCount = 0;
+  if (!T.enabled) { src.stats.records = 0; return 0; }
+  const h = dom.h;
+  const clock = Number(IN[HALL_DUST_IN.clock]) || 0;
+  // stożek (radial = 0) albo buch promieniowy (radial = 1: dx, dz — przesunięcie szumu płatów, len — zasięg,
+  // widthJ — promień obwodu)
+  const W=src.writer;W.J=J;W.first=first;W.max=max;W.dom=dom;W.n=0;const put=W.put;
   const S = HALL_DUST_SERVICE;
   let bursts = 0;
   let latches = 0;
@@ -267,11 +273,11 @@ export function writeHallGasSources(src, J, first, max, IN, dom, dt, T = HALL_GA
   }
   // wentylacja: wolny nawiew od ściany tylnej ku bramie (bez gazu)
   for (const f of src.fans) put(f.x, f.z, f.dirX, f.dirZ, 2400, 200, 0.03, T.fanSpeed, T.fanRate, 0, 0);
-  src.stats.records = n;
+  src.stats.records = W.n;
   src.stats.bursts = bursts;
   src.stats.latches = latches;
   src.stats.venting = venting;
-  return n;
+  return W.n;
 }
 
 /** Okno upustu zaworu w cyklu harmonogramu [s] (koguty migają od 0, gaz od start do end). */
