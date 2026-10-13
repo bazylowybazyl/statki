@@ -7,7 +7,6 @@ import { ensureHalfRoundingProbe, F16_ROUNDING } from '../src/3d/tsl/zapisF16.js
 import { engineSmokeFlow } from '../src/game/engineIgnition.js';
 import { SideNozzleFrame } from '../src/3d/sideNozzleFrame.js';
 import { EngineFrame } from '../src/3d/engineFrame.js';
-import { varyingProperty,Fn,If,Discard } from 'three/tsl';
 const params = new URLSearchParams(location.search);
 let gas=null;
 let demo=null;
@@ -18,7 +17,7 @@ window.__dokExtension = {
   stats(){return gas?.stats;},
   getTune(k){return gas?.tune[k];},
   setTune(k,v){if(!gas)return false;gas.tune[k]=v;return true;},
-  roofFade() { return gas?0:undefined; },
+  roofFade() { return 1; },
   // Sonda wymusza zadany profil wejścia; nie dziedziczy rampy strugi z poprzedniej próby.
   afterShips() {
     if(!control.on)return;
@@ -35,30 +34,24 @@ window.__dokExtension = {
   submit(input, state) {
     if(!gas)return;
     const I=HALL_GAS_IN,a=gas.input;a.set(input);a[I.version]=I.schema;
-    a[I.roof]=state.roofClosed?0:1;a[I.daylight]=state.night?0:1;
-    // Otwór nad okrętem; tylny sufit zatrzymuje i zawija obłok. Ten sam prostokąt tnie bryłę dachu i pole 3D.
-    a[I.roofX0]=demo.flight.x-700;a[I.roofZ0]=demo.flight.z-1000;
-    a[I.roofX1]=demo.flight.x+700;a[I.roofZ1]=demo.flight.z+1200;
+    a[I.roof]=1;a[I.daylight]=state.night?0:1;
+    // AGENT: na polecenie użytkownika GAZ-GPT ma całą halę bez dachu, także w solverze.
+    a[I.roofX0]=gas.domain.x0;a[I.roofZ0]=gas.domain.z0;
+    a[I.roofX1]=gas.domain.x1;a[I.roofZ1]=gas.domain.z1;
     a[I.header+14]=control.on?control.cold:engineSmokeFlow(demo.atlas);
     gas.submit(a);
   },
   async init(dok) {
     demo=dok;
+    dok.state.roofClosed=false;
+    for(const mesh of dok.hall.meshes.fg){
+      if(mesh.material===dok.hall.matRoof||mesh===dok.hall.platesRoof){mesh.visible=false;mesh.removeFromParent();}
+    }
     window.HallDustTune.enabled=false;
     if(params.get('etap')!=='E0'){
       gas=createHallGas(Number(params.get('komorka')||64));
       ensureHalfRoundingProbe(Core3D.renderer);await F16_ROUNDING.probing;
       await gas.warm();
-      const P=varyingProperty('vec3','vK7Hub'),R=gas.sim.U.roofRect;
-      const hole=P.x.greaterThan(R.x).and(P.z.greaterThan(R.y)).and(P.x.lessThan(R.z)).and(P.z.lessThan(R.w)).and(gas.sim.U.roof.greaterThan(0.5));
-      for(const material of dok.hall.roofMaterials){
-        // Materiał hali ma własny fragmentNode: NodeMaterial pomija wtedy maskNode.
-        const shade=material.fragmentNode;
-        material.fragmentNode=Fn(()=>{If(hole,()=>{Discard();});return shade;})();
-        material.maskNode=null;material.transparent=false;material.depthWrite=true;material.needsUpdate=true;
-      }
-      await Core3D.warmup.now(dok.hall.meshes.fg.filter(m=>m.name.startsWith('K7_roof')),{name:'GAZ-GPT otwór dachu',layer:'all'});
-      await Core3D.warmup.flush();
       // AGENT: gospodarz miał pierwsze pipeline'y Atlasa/postu dopiero w rysunku. Wykonać pod kurtyną ładowania.
       const savedSeq=dok.state.seq.kind;
       control.on=true;control.main=1;control.side=1;
@@ -73,7 +66,11 @@ window.__dokExtension = {
       window.HallGas=gas;
       window.__gaz={name:'GAZ-GPT',stage:'E1',gas,dok,control};
       dok.state.loop=false;dok.setSpeed(params.get('recznie')==='1'?0:1);
-      document.querySelectorAll('#toggles input').forEach(cb=>{if(cb.parentElement.textContent.includes('Światła hali w siatce'))cb.parentElement.hidden=true;if(cb.parentElement.textContent.includes('Pył')||cb.parentElement.textContent.includes('Kłęby'))cb.checked=true;});
+      document.querySelectorAll('#toggles input').forEach(cb=>{
+        const label=cb.parentElement;
+        if(label.textContent.includes('Światła hali w siatce')||label.textContent.includes('Dach zamknięty')){label.remove();return;}
+        if(label.textContent.includes('Pył')||label.textContent.includes('Kłęby'))cb.checked=true;
+      });
       return;
     }
     const benchmark = new HallGasBenchmark(Number(params.get('komorka') || 48));

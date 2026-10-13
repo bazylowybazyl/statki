@@ -5,12 +5,13 @@ import { Fn, If, Loop, int, float, vec3, vec4, uniform, positionGeometry, varyin
 import { k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { sunVisibility } from '../sunShadowMask.js';
 
+export const HALL_GAS_LOOK={enabled:true,back:true,front:true,density:1.2,vapor:0.6,exhaust:0.3,ambient:0.22,sun:0.35};
 const LOOK_KEYS=['density','vapor','exhaust','ambient','sun'];
 export class HallGasVolume {
   constructor(sim) {
-    this.sim=sim;this.look={enabled:true,back:true,front:true,density:0.9,vapor:0.18,exhaust:0.05,ambient:0.22,sun:0.35};
+    this.sim=sim;this.look={...HALL_GAS_LOOK};
     const d=sim.domain;
-    this.uniforms={density:uniform(0.9),vapor:uniform(0.18),exhaust:uniform(0.05),ambient:uniform(0.22),sun:uniform(0.35)};
+    this.uniforms={density:uniform(HALL_GAS_LOOK.density),vapor:uniform(HALL_GAS_LOOK.vapor),exhaust:uniform(HALL_GAS_LOOK.exhaust),ambient:uniform(HALL_GAS_LOOK.ambient),sun:uniform(HALL_GAS_LOOK.sun)};
     this.group=new THREE.Group();this.group.name='GAZ-GPT';this.meshes=[];
     for(const back of [true,false]){
       const z0=back?k7HeightToZ(0):0,z1=back?0:k7HeightToZ(d.height);

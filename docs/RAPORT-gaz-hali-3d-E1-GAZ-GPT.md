@@ -1,5 +1,7 @@
 # GAZ-GPT — raport E1 (2026-10-13)
 
+**Zmiana po odbiorze — polecenie użytkownika:** GAZ-GPT ma teraz całą halę bez dachu, także w solverze. Wzmocniono gęstość optyczną spalin 6×, pary 3,33× i pyłu 1,33×. Przepuszczalność nad Atlasem: 0,74675 po 2 s MAIN i 0,77714 w locie. Nowe zrzuty i kontrola: `.tmp/hala-gaz/bez-dachu-final/`. Poniższe liczby E1 są historycznym odbiorem wariantu z dachem.
+
 E0 zaliczone (commit `36ecc44`). E1: implementacja i wszystkie miary fizyki zaliczone. **Formalna bramka kosztu symulacji pozostaje niespełniona: 0,855 ms zamiast ≤0,6 ms.** Użytkownik polecił odłożyć optymalizację (RTX 5080); ten raport nie oznacza budżetu jako zaliczonego. Commit E1 to commit zawierający ten raport.
 
 ## Miary §10
