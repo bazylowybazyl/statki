@@ -70,6 +70,7 @@ import {
   texture, texture3D, textureStore, select, mix, clamp, smoothstep, step, exp, max, min, abs, length, cross, dot, ceil
 } from 'three/tsl';
 import { gasBlackbody, gasFirePower, GAS_FIRE_MAX } from './gasCommon.js';
+import { sroundF16, rndF16, rndF16Next, ensureHalfRoundingProbe } from '../tsl/zapisF16.js';
 import { GAS_HULL_MASK, GAS_HULL_REC } from './gasObstacleLayout.js';
 import { fxRandom } from '../fx/fxRandom.js';
 
@@ -147,6 +148,9 @@ export function createGasTuning() {
                         // 64 — 1. rząd ≈ 2. rząd (0,82 / 0,85), masa jak bez ściany, przeciek 0; samo wallBlock 0 dawało to
                         // samo, ale strumień w ścianę tracił w niej 33% gazu (gaz wnikał i ginął)
     borderFade: 5,      // pas zaniku przy brzegu domeny [komórki]
+    f16Round: 1,        // ZAOKRĄGLANIE STOCHASTYCZNE zapisu stanu do atlasów RGBA16F (src/3d/tsl/zapisF16.js): zapis f32 → f16 na
+                        // RTX / D3D12 OBCINA ku zeru — każdy zapis skalarów, prędkości i pozycji spoczynkowej tracił średnio pół
+                        // odstępu liczby (dodatkowy zanik i opór, pozycje spoczynkowe dryfowały ku 0); 0 — dawny zapis (A/B)
     warm: 0.92,         // rozgrzanie ciśnienia wynikiem poprzedniego kroku
     buoyDir: [0, 1, 0], // kierunek wyporu (scena; w grze z góry — 0 albo ku kamerze)
     // Światło (objętość raz na klatkę)
@@ -512,6 +516,7 @@ export class GasGrid {
     this._bandUsed = new Float64Array(this.hullBands);   // ostatnia klatka użycia (LRU)
     this._hullMaskDirty = false;
     this._frame = 0;
+    this._seed = 0;
 
     const U = this.U = {
       dt: uniform(cfg.substep),
@@ -536,6 +541,7 @@ export class GasGrid {
       fuelDecay: uniform(0), edgeCooling: uniform(0), restRelax: uniform(0.05), disperse: uniform(0), drag: uniform(0), dragQuad: uniform(0), vorticity: uniform(0), turbulence: uniform(0),
       dragFrontLo: uniform(0), dragFrontHi: uniform(0), sponge: uniform(0), spongeStart: uniform(0.7), velMacCormack: uniform(0), contraction: uniform(0),
       turbScale: uniform(0), buoyancy: uniform(0), sootWeight: uniform(0), radialLift: uniform(0),
+      seed: uniform(0, 'uint'), f16Round: uniform(1),
       maxSpeed: uniform(100), wallBlock: uniform(1), wallFill: uniform(0), borderFade: uniform(4), warm: uniform(0.9),
       buoyDir: uniform(new THREE.Vector3(0, 1, 0)),
       sunDir: uniform(new THREE.Vector3(0, 1, 0)),
@@ -637,6 +643,17 @@ export class GasGrid {
     return div.sub(max(D.w, 0.0).mul(U.expansion)).sub(min(D.x, 3.0).mul(U.disperse)).add(max(D.w.negate(), 0.0).mul(U.contraction));
   }
 
+  /**
+   * Zapis stanu do atlasu RGBA16F: x (wektor f32) z zaokrągleniem stochastycznym (tsl/zapisF16.js; tune.f16Round — A/B).
+   * salt — sól kernela (osobny ciąg liczb losowych na zapis).
+   */
+  _w16(x, salt, n) {
+    const r0 = rndF16(instanceIndex, this.U.seed, salt).toVar();
+    const r = n === 4 ? vec4(r0, rndF16Next(r0, 1), rndF16Next(r0, 2), rndF16Next(r0, 3)) : vec3(r0, rndF16Next(r0, 1), rndF16Next(r0, 2));
+    const v = x.toVar();   // raz (select wkleja węzeł w obie gałęzie)
+    return select(this.U.f16Round.greaterThan(0.5), sroundF16(v, r), v);
+  }
+
   _buildKernels() {
     const U = this.U;
     const N = this.N;
@@ -724,12 +741,12 @@ export class GasGrid {
       const dt = U.dt;
       const { pb } = backtrace(p, sF, dt);
       const vPb = at(this.velA, pb, sF).toVar();
-      textureStore(this.denB, c.store, freeSample(at(this.denA, pb, sF), vPb.w));
+      textureStore(this.denB, c.store, this._w16(freeSample(at(this.denA, pb, sF), vPb.w), 0, 4));
       // Pozycja spoczynkowa: niesiona z gazem, powoli wraca do własnej komórki.
       const rest = at(this.restA, pb, sF).xyz;
-      textureStore(this.restB, c.store, vec4(mix(rest, p, float(1.0).sub(exp(U.restRelax.negate().mul(dt)))), 0.0));
+      textureStore(this.restB, c.store, vec4(this._w16(mix(rest, p, float(1.0).sub(exp(U.restRelax.negate().mul(dt)))), 1, 3), 0.0));
       If(U.velMacCormack.greaterThan(0.5), () => {
-        textureStore(this.velC, c.store, vec4(vPb.xyz, 0.0));
+        textureStore(this.velC, c.store, vec4(this._w16(vPb.xyz, 2, 3), 0.0));
       });
     })().compute(cells).setName('gasAdvect');
 
@@ -846,7 +863,7 @@ export class GasGrid {
       const S0 = this._solidAt(c, p, a1, a2, a3);
       const isSolid = S0.solid.greaterThan(0.5).toVar();
       vel.assign(select(isSolid, S0.sv, vel));
-      textureStore(this.velB, c.store, vec4(vel, S0.solid));
+      textureStore(this.velB, c.store, vec4(select(isSolid, vel, this._w16(vel, 3, 3)), S0.solid));
 
       // Spalanie paliwa: zapłon od temperatury, ciepło, sadza, rozprężanie (tempo w den.w).
       const ign = smoothstep(U.ignition, U.ignition.mul(1.8), temp);
@@ -877,7 +894,8 @@ export class GasGrid {
       smoke.mulAssign(edgeK);
       temp.mulAssign(edgeK);
       fuel.mulAssign(edgeK);
-      textureStore(this.denC, c.store, select(isSolid, vec4(0.0), vec4(max(smoke, 0.0), temp, max(fuel, 0.0), wOut)));
+      const denW = this._w16(vec3(max(smoke, 0.0), temp, max(fuel, 0.0)), 4, 3);
+      textureStore(this.denC, c.store, select(isSolid, vec4(0.0), vec4(max(denW, vec3(0.0)), wOut)));
     })().compute(cells).setName('gasReact');
 
     // 3. Dywergencja (prawa strona równania ciśnienia) z celem rozprężania. Sąsiad stały oddaje prędkość przeszkody
@@ -962,8 +980,8 @@ export class GasGrid {
         wall(wYm, 'y', [0, -1], false);
       });
       v.assign(select(vb.w.greaterThan(0.5), vb.xyz, v));
-      textureStore(this.velA, c.store, vec4(v, vb.w));
-      textureStore(this.denA, c.store, den);
+      textureStore(this.velA, c.store, vec4(select(vb.w.greaterThan(0.5), v, this._w16(v, 5, 3)), vb.w));
+      textureStore(this.denA, c.store, vec4(this._w16(den.xyz, 6, 3), den.w));
       textureStore(this.restA, c.store, at(this.restB, c.p, c.sF));
     })().compute(cells).setName('gasProject');
 
@@ -1023,7 +1041,7 @@ export class GasGrid {
     for (const key of ['ignition', 'burnRate', 'heat', 'soot', 'expansion', 'cooling', 'radiative', 'smokeDecay',
       'fuelDecay', 'edgeCooling', 'restRelax', 'disperse', 'drag', 'dragQuad', 'vorticity', 'turbulence', 'turbScale', 'buoyancy', 'sootWeight', 'radialLift',
       'dragFrontLo', 'dragFrontHi', 'sponge', 'spongeStart', 'velMacCormack', 'contraction',
-      'maxSpeed', 'wallBlock', 'wallFill', 'borderFade', 'warm', 'shadow', 'lightStep', 'fireGain', 'fireBurn', 'glow', 'glowFar']) {
+      'maxSpeed', 'wallBlock', 'wallFill', 'borderFade', 'f16Round', 'warm', 'shadow', 'lightStep', 'fireGain', 'fireBurn', 'glow', 'glowFar']) {
       U[key].value = T[key];
     }
     const b = T.buoyDir;
@@ -1521,6 +1539,9 @@ export class GasGrid {
     this.lightNode.count = count;
     L.push(this.lightNode);
     this.U.time.value = (now * this.tune.turbSpeed) % 64;
+    this._seed = (this._seed + 1) >>> 0;
+    this.U.seed.value = this._seed;
+    ensureHalfRoundingProbe(renderer);
     renderer.compute(L);
     // Flagi zerowania zjedzone: następna klatka bez czyszczenia.
     const A = this.U.act.array;

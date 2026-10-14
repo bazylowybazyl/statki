@@ -2,24 +2,31 @@
 // wraca do zera), dziura po wybuchu, strumień dyszy przez skałę (brak przeszkód w symulacji), korelacja pyłu z gazem,
 // FPS. Demo serwowane statycznie z kopią w .tmp (wstrzyknięte window.__dbg z wnętrznościami modułu).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative, sep } from 'node:path';
 import { parseArgs, startStaticServer, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo, writeJson }
   from './wspolne.mjs';
 
 const args = parseArgs();
 const [W, H] = (args.rozmiar || '1600x900').split('x').map(Number);
-const out = resolve(repo, args.out || '.tmp/audyt-gazy');
+// --demo transport — dema/gazy-transport-webgpu.html (pole gazu z transportem gęstości; te same miary, odczyt
+// z jego buforów: simTex = gęstości gazów + wyrzut, restTex = przesunięcie faktury, velA [komórki/s]).
+const TRANSPORT = args.demo === 'transport';
+const out = resolve(repo, args.out || (TRANSPORT ? '.tmp/gazy-transport/audyt-nowe' : '.tmp/audyt-gazy'));
 mkdirSync(out, { recursive: true });
 
 // Kopia dema z odsłoniętymi wnętrznościami (moduł nie eksportuje nic poza __demo).
-const src = readFileSync(resolve(repo, 'dema/gazy-webgpu.html'), 'utf8');
-const inject = `
+const src = readFileSync(resolve(repo, TRANSPORT ? 'dema/gazy-transport-webgpu.html' : 'dema/gazy-webgpu.html'), 'utf8');
+const inject = TRANSPORT ? `
+window.__dbg = { renderer, simTex, restTex, rtA, rtB, dustPos, dustVel, simVel: () => simVel, simBuf, SIMT, uSimOrigin, SIM_N, SIM_CELL, SIM_W,
+  uMapMin, uMapSize, uMapRes, sceneRocks, sceneJets, ringChimneys, player, npcs, cam, S, SLAB, uWind, uSrcCount, DUST, transport: true };
+` : `
 window.__dbg = { renderer, simTex, rtA, rtB, dustPos, dustVel, simVel: () => simVel, uSimOrigin, SIM_N, SIM_CELL, SIM_W, uBoxH, uBoxC,
   uMapMin, uMapSize, uMapRes, sceneRocks, sceneJets, ringChimneys, player, npcs, cam, S, SLAB, uWind, uJetCount, DUST };
 `;
 const html = src.replace('window.__demo = {', inject + 'window.__demo = {');
 if (html === src) throw new Error('nie wstrzyknięto __dbg');
 writeFileSync(join(out, 'gazy-audyt.html'), html);
+const pageUrl = '/' + relative(repo, join(out, 'gazy-audyt.html')).split(sep).join('/');
 
 const { server, base } = await startStaticServer(Number(args.port || 5331), repo);
 const chrome = await startChrome({ width: W, height: H });
@@ -59,27 +66,49 @@ const PAGE_HELPERS = `(() => {
       const xi = Math.floor(u * m.w), yi = Math.floor(v * m.h); return m.data[(yi * m.w + xi) * 4 + 3]; };
     return m;
   };
-  // pole symulacji (simTex: xy = przemieszczenie [j.], z = gęstość względna, w = wyrzut)
+  // pole symulacji. Stare demo (simTex: xy = przemieszczenie [j.], z = gęstość względna, w = wyrzut). Nowe (transport):
+  // dx, dy = przesunięcie faktury [j.] (restTex), m = gęstość gazu w komórce (suma kanałów simTex), e = wyrzut.
   window.__simField = async () => {
     const N = D.SIM_N; const m = await window.__readTex(D.simTex, N, N);
+    const r = D.transport ? await window.__readTex(D.restTex, N, N) : null;
     const o = D.uSimOrigin.value;
     m.at = (x, y) => { const cx = Math.floor((x - o.x) / D.SIM_CELL), cy = Math.floor((y - o.y) / D.SIM_CELL);
-      if (cx < 0 || cy < 0 || cx >= N || cy >= N) return null; const i = (cy * N + cx) * 4; return { dx: m.data[i], dy: m.data[i + 1], m: m.data[i + 2], e: m.data[i + 3] }; };
+      if (cx < 0 || cy < 0 || cx >= N || cy >= N) return null; const i = (cy * N + cx) * 4;
+      if (r) return { dx: r.data[i] * D.SIM_CELL, dy: r.data[i + 1] * D.SIM_CELL, m: m.data[i] + m.data[i + 1] + m.data[i + 2] + m.data[i + 3], e: m.data[i + 3], solid: r.data[i + 2] };
+      return { dx: m.data[i], dy: m.data[i + 1], m: m.data[i + 2], e: m.data[i + 3] }; };
     return m;
   };
   window.__simVel = async () => {
     const N = D.SIM_N; const ab = await D.renderer.getArrayBufferAsync(D.simVel().value);
     const f = new Float32Array(ab); const o = D.uSimOrigin.value;
+    const K = D.transport ? D.SIM_CELL : 1;   // nowe demo: prędkość w komórkach/s
+    if (K !== 1) for (let i = 0; i < f.length; i++) f[i] *= K;
     const at = (x, y) => { const cx = Math.floor((x - o.x) / D.SIM_CELL), cy = Math.floor((y - o.y) / D.SIM_CELL);
       if (cx < 0 || cy < 0 || cx >= N || cy >= N) return null; const i = (cy * N + cx) * 2; return { vx: f[i], vy: f[i + 1] }; };
-    // dywergencja / rms prędkości na komórkach z |v| > 30
-    let s2 = 0, d2 = 0, n = 0;
+    // nowe demo: cel dywergencji (velB.z) i ciśnienie (prsB.x) — resztkowa dywergencja = div − (cel − soft·q), stałe pomijane
+    let tgt = null, prs = null, flg = null;
+    if (D.transport) {
+      tgt = new Float32Array(await D.renderer.getArrayBufferAsync(D.simBuf.velB.value));
+      prs = new Float32Array(await D.renderer.getArrayBufferAsync(D.simBuf.prsB.value));
+      flg = new Float32Array(await D.renderer.getArrayBufferAsync(D.simBuf.flagB.value));
+    }
+    // dywergencja / rms prędkości na komórkach z |v| > 30. Nowe demo dodatkowo: tylko pole NIEŚCIŚLIWE (poza strefami
+    // ściśliwymi — stożki dysz, front wybuchu, pas wokół kadłuba: velB.w > 0,05) — surowa i resztkowa (div − (cel − soft·q))
+    let s2 = 0, d2 = 0, n = 0, s2i = 0, d2i = 0, r2i = 0, ni = 0;
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       const i = (y * N + x) * 2; const vx = f[i], vy = f[i + 1]; const sp = Math.hypot(vx, vy); if (sp < 30) continue;
+      if (flg && flg[(y * N + x) * 4] > 0.5) continue;
       const dvx = (f[(y * N + x + 1) * 2] - f[(y * N + x - 1) * 2]) * 0.5, dvy = (f[((y + 1) * N + x) * 2 + 1] - f[((y - 1) * N + x) * 2 + 1]) * 0.5;
       s2 += sp * sp; d2 += (dvx + dvy) * (dvx + dvy); n++;
+      if (tgt && tgt[(y * N + x) * 4 + 3] < 0.05) {
+        const want = (tgt[(y * N + x) * 4 + 2] - D.SIMT.soft * prs[(y * N + x) * 4]) * K; const res = dvx + dvy - want;
+        s2i += sp * sp; d2i += (dvx + dvy) * (dvx + dvy); r2i += res * res; ni++;
+      }
     }
-    return { at, cells: n, velRms: Math.sqrt(s2 / Math.max(1, n)), divRms: Math.sqrt(d2 / Math.max(1, n)) };
+    return { at, cells: n, velRms: Math.sqrt(s2 / Math.max(1, n)), divRms: Math.sqrt(d2 / Math.max(1, n)),
+      resRms: tgt ? Math.sqrt(r2i / Math.max(1, ni)) : null,
+      inc: tgt ? { cells: ni, velRms: Math.sqrt(s2i / Math.max(1, ni)), divRatio: Math.sqrt(d2i / Math.max(1, ni)) / Math.max(1e-6, Math.sqrt(s2i / Math.max(1, ni))),
+        resRatio: Math.sqrt(r2i / Math.max(1, ni)) / Math.max(1e-6, Math.sqrt(s2i / Math.max(1, ni))) } : null };
   };
   window.__dustCorr = async () => {
     const g = await window.__gasMap();
@@ -89,7 +118,8 @@ const PAGE_HELPERS = `(() => {
     let asum = 0, aempty = 0; const tot = g.w * g.h;
     for (let i = 0; i < tot; i++) { const a = g.data[i * 4 + 3]; asum += a; if (a < 0.08) aempty++; }
     return { particles: cnt, meanAlphaAtParticles: +(sum / Math.max(1, cnt)).toFixed(4), meanAlphaMap: +(asum / tot).toFixed(4),
-      particlesInEmpty: +(empty / Math.max(1, cnt)).toFixed(3), areaEmpty: +(aempty / tot).toFixed(3), dust: D.DUST, box: [D.uBoxH.value.x, D.uBoxH.value.y, D.uBoxH.value.z] };
+      particlesInEmpty: +(empty / Math.max(1, cnt)).toFixed(3), areaEmpty: +(aempty / tot).toFixed(3), dust: D.DUST,
+      ratio: +((sum / Math.max(1, cnt)) / Math.max(1e-6, asum / tot)).toFixed(2), box: D.uBoxH ? [D.uBoxH.value.x, D.uBoxH.value.y, D.uBoxH.value.z] : null };
   };
   return true;
 })()`;
@@ -99,9 +129,15 @@ const fps = () => ev('window.__dbg.S.fps');
 const step = (name, data) => { report.kroki.push({ name, ...data }); console.log(('[' + name + ']').padEnd(28), JSON.stringify(data)); };
 
 try {
-  await cdp.send('Page.navigate', { url: `${base}/.tmp/audyt-gazy/gazy-audyt.html?scena=belt` });
+  await cdp.send('Page.navigate', { url: `${base}${pageUrl}?scena=belt` });
   if (!await waitFor(cdp, '!!(window.__demo && window.__dbg && window.__dbg.S.time > 1)', 180000, 400)) throw new Error('demo nie wstało');
   await ev(PAGE_HELPERS);
+  // --tune k=v,k=v — strojenie pola nowego dema (window.__demo.simTune) przed pomiarem
+  if (args.tune && TRANSPORT) {
+    const t = Object.fromEntries(String(args.tune).split(',').map((kv) => kv.split('=')).map(([k, v]) => [k, Number(v)]));
+    await ev(`(() => { Object.assign(window.__demo.simTune, ${JSON.stringify(t)}); window.__demo.syncSimTune(); return true; })()`);
+    report.tune = t;
+  }
   await ev(`(() => { document.getElementById('panel').classList.add('hidden'); return true; })()`);
   await sleep(1500);
 
@@ -111,21 +147,23 @@ try {
     await sleep(3500);
     await shot(`10-${sc}`);
     const f1 = await fps();
+    const dc = await ev('window.__dustCorr()', 60000);
     await ev('window.__demo.zoom(9000)');
     await sleep(1500);
     await shot(`11-${sc}-daleko`);
     await ev('window.__demo.zoom(4800)');
     await sleep(800);
-    step(`10-${sc}`, { fps: +f1.toFixed(0) });
+    step(`10-${sc}`, { fps: +f1.toFixed(0), pyl: { pod: dc.meanAlphaAtParticles, mapa: dc.meanAlphaMap, ratio: dc.ratio, wPustych: dc.particlesInEmpty, pustePole: dc.areaEmpty } });
   }
 
-  // --- 2. ring: kominy po 6 s (te same pozycje, inne kłęby?)
+  // --- 2. ring: kominy po 6 s z wiatrem wzdłuż orbity (oba dema: ten sam wiatr −40, 6 j/s)
   await ev(`window.__demo.scene('ring')`);
+  await ev(`window.__dbg.uWind.value.set(-40, 6)`);
   await sleep(2500);
   await shot('20-ring-t0');
   await sleep(6000);
   await shot('21-ring-t6');
-  const jets = await ev(`(() => { const d = window.__dbg; return { count: d.uJetCount.value, wind: [d.uWind.value.x, d.uWind.value.y], chimneys: d.ringChimneys.map((c) => c.kind) }; })()`);
+  const jets = await ev(`(() => { const d = window.__dbg; return { count: d.transport ? d.uSrcCount.value : d.uJetCount.value, wind: [d.uWind.value.x, d.uWind.value.y], chimneys: d.ringChimneys.map((c) => c.kind) }; })()`);
   step('20-ring-kominy', jets);
 
   // --- 3. pas: strumień dyszy w skałę (ciąg w miejscu W+S, rufa ku skale)
@@ -170,7 +208,8 @@ try {
         pts.push({ s: Math.round(s), gdzie: s < dTot - r.r ? 'przed' : s <= dTot + r.r ? 'SKAŁA' : 'za', vAlong: v ? Math.round(v.vx * ux + v.vy * uy) : null,
           disp: f ? Math.round(Math.hypot(f.dx, f.dy)) : null, m: f ? +f.m.toFixed(2) : null, alpha: +G.at(x, y).toFixed(3) });
       }
-      return { pts, divRms: +V.divRms.toFixed(2), velRms: +V.velRms.toFixed(1), ratio: +(V.divRms / Math.max(1e-6, V.velRms)).toFixed(3), cells: V.cells };
+      return { pts, divRms: +V.divRms.toFixed(2), velRms: +V.velRms.toFixed(1), ratio: +(V.divRms / Math.max(1e-6, V.velRms)).toFixed(3),
+        inc: V.inc ? { cells: V.inc.cells, divRatio: +V.inc.divRatio.toFixed(3), resRatio: +V.inc.resRatio.toFixed(3) } : null, cells: V.cells };
     })()`, 60000);
     step('31-skala-sonda', probe);
     await up('w'); await up('s');

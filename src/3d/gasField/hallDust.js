@@ -24,11 +24,11 @@ import { Core3D } from '../core3d.js';
 import { EngineFrame } from '../engineFrame.js';
 import { engineSmokeFlow } from '../../game/engineIgnition.js';
 import { fxNoise } from '../fx/noise.js';
-import { createK7Layout, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
+import { createK7Layout, k7ForceFieldList, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { K7_BEACON, K7_BEACON_GRID, K7_BEACON_LOOK, k7BeaconLevel, k7LightRig } from '../haloRing/haloPortK7Lights.js';
 import {
-  HALL_DUST_IN, HALL_DUST_MASK, HALL_DUST_SERVICE, HALL_DUST_SHIP, hallBodyUniforms, hallDustDomain, hallDomainDistance,
-  rasterizeHallCells
+  HALL_DUST_IN, HALL_DUST_MASK, HALL_DUST_SERVICE, HALL_DUST_SHIP, hallBodyFieldSpan, hallBodyUniforms, hallDustDomain,
+  hallDomainDistance, rasterizeHallCells
 } from './hallDustLayout.js';
 import { GasField2D, jetSourceIntegralCpu } from './gasField2D.js';
 import { GasFieldLayer } from './gasFieldLayer.js';
@@ -68,6 +68,15 @@ export const HALL_DUST_TUNE = {
   lampScatter: 0.12,    // lampy dookólne prawie bez snopów (mgiełka szarzałaby całą halę) — snopy dają reflektory
   spotGain: 1.0,
   beaconGain: 1.0,
+  // POLA SIŁOWE bram (prośba użytkownika 2026-10-13): pył i para rozbijają się o zasłonę w otworze bramy jak o ścianę
+  // (statki przelatują); false — bramy otwarte na próżnię (A/B, rastr przebudowuje się sam). Obraz: gasFieldLayer.look
+  // (field*); kadłub w bramie — światła pola w siatce, rozłożone wzdłuż przecięcia kadłuba z zasłoną.
+  forceFields: true,
+  fieldLights: true,
+  fieldLightGain: 0.7,  // 1,6 bielało do bloomu na blasze (zrzut 2026-10-13)
+  fieldLightRange: 380, // zasięg światła [j.] (dłuższe przecięcie — szerzej, do 1,6×)
+  fieldLightMax: 6,     // świateł pól na klatkę
+  fieldLightZ: 40,      // wysokość nad płaszczyzną lotu (kadłub sięga z = 0) [j. sceny]
   // kłęby pary przy złączkach przewodów paliwowych (pula dymu rakiet — setVaporSmoke): buch dookoła złączki
   // przy odryglowaniu (duży) i ryglowaniu (mały), strumień z zaworu przedmuchu przy upuście
   puffs: true,
@@ -105,6 +114,10 @@ class HallDustSystem {
     this.rig = null;
     this.gasSrc = null;
     this._beaconBerth = null;
+    this.layout = null;
+    this.fields = [];          // pola siłowe bram (k7ForceFieldList — układ hali)
+    this._fieldsOn = false;    // stan rastru (pola w przeszkodach) — HallDustTune.forceFields przebudowuje go w biegu
+    this._span = new Float64Array(2);
     // pula dymu rakiet (SmokeSystem: s + push) — kłęby pary przy złączkach; host podaje ją setVaporSmoke
     this.smoke = null;
     this._ventAcc = new Float64Array(16);
@@ -120,7 +133,10 @@ class HallDustSystem {
     if (!Core3D.isInitialized || !Core3D.scene || !Core3D.fx) return false;
     const layout = createK7Layout();
     const dom = hallDustDomain(layout);
-    const cells = rasterizeHallCells(layout, dom);
+    this._fieldsOn = !!this.tune.forceFields;
+    const cells = rasterizeHallCells(layout, dom, { forceFields: this._fieldsOn });
+    this.layout = layout;
+    this.fields = k7ForceFieldList(layout);
     this.domain = dom;
     this.rig = k7LightRig(layout);
     this.gasSrc = createHallGasSources(layout, this.rig);
@@ -133,8 +149,9 @@ class HallDustSystem {
     this._maskWords = new Float64Array(this.sim.maxBodies * HALL_DUST_MASK.words).fill(NaN);
     this.layer = new GasFieldLayer(this.sim, {
       domain: dom, detailTex: fxNoise.cloud2D(), grid: Core3D.fx.grid, layer: 0,
-      renderOrderBack: 1, renderOrderFront: 26, name: 'HallDust'
+      renderOrderBack: 1, renderOrderFront: 26, name: 'HallDust', fields: this.fields
     });
+    this.layer.L.fieldOn.value = this._fieldsOn ? 1 : 0;
     Core3D.scene.add(this.layer.group);
     this.step = Core3D.addFxStep({
       name: 'pył hal K-7',
@@ -186,6 +203,7 @@ class HallDustSystem {
       resetHallGasSources(this.gasSrc);
       this._hall = IN[I.hall];
     }
+    if (!!this.tune.forceFields !== this._fieldsOn) this._syncForceFields();
     this._idle = 0;
     st.hall = this._hall;
     const aff = this._aff;
@@ -293,8 +311,20 @@ class HallDustSystem {
     layer.place(aff, T.zBack, T.zFront);
     const fade = 1 - smooth(T.fadeView[0], T.fadeView[1], IN[I.viewHalf]);
     layer.L.fade.value = fade;
+    layer.L.fieldTime.value = ctx.time;   // falowanie pól siłowych — zegar efektów
     layer.setVisible(fade > 0.004);
     st.cpuMs = performance.now() - t0;
+  }
+
+  /** Pola siłowe wł. / wył. w biegu (HallDustTune.forceFields — A/B): przebudowa rastru komórek (raz) i wysyłka. */
+  _syncForceFields() {
+    this._fieldsOn = !!this.tune.forceFields;
+    const cells = rasterizeHallCells(this.layout, this.domain, { forceFields: this._fieldsOn });
+    const tex = this.sim.cellTex;
+    tex.image.data.set(cells.data);
+    tex.needsUpdate = true;
+    this.layer.L.fieldOn.value = this._fieldsOn ? 1 : 0;
+    this._quiet = 0;
   }
 
   /**
@@ -486,7 +516,49 @@ class HallDustSystem {
       grid.addWorld(p0x + b.x * ax + b.z * bx, p0y + b.x * ay + b.z * by, k7HeightToZ(b.y) + 6, G.range,
         c[0] * lvl, c[1] * lvl, c[2] * lvl, G.scatter);
     }
+    if (T.forceFields && T.fieldLights && this.fields.length) this._fieldLights(grid, IN, t);
     st.lights = grid.count - n0;
+  }
+
+  /**
+   * Okręt w bramie: światła POLA SIŁOWEGO w siatce tam, gdzie kadłub przebija zasłonę (przecięcie obrysu z maski
+   * wejścia z osią bramy — hallBodyFieldSpan), rozłożone wzdłuż przecięcia; oświetlają kadłub i gaz. Migotanie
+   * z zegara hali, mocniej przy szybkim przelocie. Najwyżej T.fieldLightMax świateł na klatkę.
+   */
+  _fieldLights(grid, IN, clock) {
+    const T = this.tune;
+    const dom = this.domain;
+    const span = this._span;
+    const col = this.layer.look.fieldColor;
+    const ns = Math.min(IN[I.ships] | 0, this.sim.maxBodies);
+    const p0x = IN[I.p0x], p0y = IN[I.p0y], ax = IN[I.ax], ay = IN[I.ay], bx = IN[I.bx], by = IN[I.by];
+    let left = T.fieldLightMax;
+    for (let s = 0; s < ns && left > 0; s++) {
+      const o = I.header + s * I.stride;
+      const reach = IN[o + SH.reach];
+      for (let fi = 0; fi < this.fields.length && left > 0; fi++) {
+        const f = this.fields[fi];
+        // wstępne odrzucenie: kotwica dalej od zasłony niż najdalszy róg obrysu
+        const rx = IN[o + SH.cx] - f.ax, rz = IN[o + SH.cz] - f.az;
+        const along = rx * f.ux + rz * f.uz;
+        const across = rx * f.nx + rz * f.nz;
+        if (Math.abs(across) > reach + f.half || along < -reach || along > f.length + reach) continue;
+        if (!hallBodyFieldSpan(IN, s, dom, f, 60, span)) continue;
+        const len = span[1] - span[0] + 60;
+        const n = Math.min(left, Math.max(1, Math.min(3, Math.round(len / 600))));
+        const v = Math.sqrt(IN[o + SH.vx] * IN[o + SH.vx] + IN[o + SH.vz] * IN[o + SH.vz]);
+        const range = T.fieldLightRange * Math.min(1.6, Math.max(1, len / n / 600));
+        for (let k = 0; k < n; k++) {
+          const tt = span[0] + (span[1] - span[0]) * (k + 0.5) / n;
+          const hx = f.ax + f.ux * tt, hz = f.az + f.uz * tt;
+          const flick = 0.8 + 0.2 * Math.sin(clock * 23 + tt * 0.013 + s * 1.7);
+          const g = T.fieldLightGain * flick * (0.65 + 0.35 * Math.min(1, v / 300));
+          grid.addWorld(p0x + hx * ax + hz * bx, p0y + hx * ay + hz * by, T.fieldLightZ, range,
+            col[0] * g, col[1] * g, col[2] * g, 0.45);
+          left--;
+        }
+      }
+    }
   }
 }
 

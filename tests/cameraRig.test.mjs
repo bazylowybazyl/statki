@@ -696,3 +696,41 @@ test('powrót z edytora stacji wraca do zoomu gracza, nie do stałego defaultZoo
   assert.match(clearFocus, /this\.returnZoom/);
   assert.match(html, /focusOnInfrastructure\(station, layout\) \{\s*if \(!station\) return;\s*this\.rememberShipZoom\(\);/);
 });
+
+// Kopnięcie kadru od strzałów gracza (2026-10-13, „feel strzelania”).
+import { createCameraKick, addCameraKick, stepCameraKick } from '../src/game/cameraRig.js';
+
+function kickPeak(shots, shake, cooldown = 5, fps = 60, dir = [1, 0]) {
+  const k = createCameraKick();
+  for (let i = 0; i < shots; i++) addCameraKick(k, dir[0], dir[1], shake, CAMERA_RIG_DEFAULTS, cooldown);
+  let peak = 0; let min = 0; let along = 0;
+  for (let t = 0; t < 1.5; t += 1 / fps) {
+    stepCameraKick(k, 1 / fps, CAMERA_RIG_DEFAULTS);
+    const r = Math.hypot(k.x, k.y);
+    if (r > peak) { peak = r; along = (k.x * dir[0] + k.y * dir[1]) / Math.hypot(dir[0], dir[1]); }
+    min = Math.min(min, k.x * dir[0] + k.y * dir[1]);
+  }
+  return { peak, min, along, end: Math.hypot(k.x, k.y) };
+}
+
+test('kopnięcie kadru: szczyt ≈ kopnięcie strzału, wzdłuż strzału, wraca do zera z małym przerzutem', () => {
+  const T = CAMERA_RIG_DEFAULTS;
+  const want = Math.min(T.weaponKickShotMaxPx, (20 - T.weaponKickMin) * T.weaponKickPerShake);   // Yamato (shake 20)
+  const r = kickPeak(1, 20, 5, 240);
+  assert.ok(Math.abs(r.peak - want) < want * 0.12, `szczyt ${r.peak.toFixed(2)} ≈ ${want}`);
+  assert.ok(r.along > 0, 'znak 1: kadr w stronę strzału');
+  assert.ok(r.min > -want * 0.2, `przerzut ${r.min.toFixed(2)} mały`);
+  assert.equal(r.end, 0, 'spoczynek po 1,5 s');
+  const d = kickPeak(1, 20, 5, 240, [0, -1]);
+  assert.ok(Math.abs(d.peak - r.peak) < 0.01, 'kierunek nie zmienia siły');
+});
+
+test('kopnięcie kadru: lekka broń i wieże na auto nie kopią, salwa nie przekracza sufitu, FPS bez znaczenia', () => {
+  const T = CAMERA_RIG_DEFAULTS;
+  assert.equal(kickPeak(1, 4).peak, 0, 'shake 4 (autodziałko) — poniżej progu');
+  assert.equal(kickPeak(1, 20 * 0.1).peak, 0, 'wieża na auto (wstrząs × 0,1)');
+  assert.ok(kickPeak(18, 20).peak <= T.weaponKickMaxPx + 1e-6, 'salwa 6 wież × 3 lufy');
+  const a = kickPeak(1, 12, 5, 60).peak; const b = kickPeak(1, 12, 5, 165).peak;
+  assert.ok(Math.abs(a - b) < a * 0.12, `60 / 165 kl/s: ${a.toFixed(2)} / ${b.toFixed(2)}`);
+  assert.ok(kickPeak(1, 10, 0.2).peak < kickPeak(1, 10, 2).peak * 0.3, 'szybkostrzelne kopią słabiej');
+});

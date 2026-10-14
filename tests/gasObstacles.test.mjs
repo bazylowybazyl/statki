@@ -12,7 +12,9 @@ const THREE = await import('three/webgpu');
 const { GasGrid, GAS_HULL_REC, GAS_HULL_MASK, GAS_STATIC_GROW, gasProjectCpu } = await import('../src/3d/gas/gasGrid.js');
 const { GAS_OBST_IN } = await import('../src/3d/gas/gasObstacleLayout.js');
 const OI = await import('../src/game/gasObstacleInput.js');
-const { createK7Layout, k7SolidList } = await import('../src/3d/haloRing/haloPortK7Layout.js');
+const { createK7Layout, k7ForceFieldList, k7SolidList } = await import('../src/3d/haloRing/haloPortK7Layout.js');
+// bryły hali dla gazu: kolizje + pola siłowe w otworach bram (gaz jak o mur; statki przelatują)
+const hallGasSolids = (L) => [...k7SolidList(L), ...k7ForceFieldList(L)];
 const { hallToGameAffine } = await import('../src/game/hallDustInput.js');
 const { placeDryDock } = await import('../src/game/story/shipyardLayout.js');
 const { pointInPoly } = await import('../src/3d/portBuildings/pirateDryDockLayout.js');
@@ -356,7 +358,7 @@ test('WGSL: maska w reakcji (raster statyki, pętla kadłubów, marsz zasłanian
 
 // --- strona gry ----------------------------------------------------------------------------------------------------
 
-test('wejście gry: bryły hali K-7 w świecie = bryły kolizji hali (te same pudła po przekształceniu hala → gra)', () => {
+test('wejście gry: bryły hali K-7 w świecie = bryły kolizji hali + pola siłowe bram (te same pudła po przekształceniu hala → gra)', () => {
   const place = { x: 7.3e6, y: -2.9e6, cos: Math.cos(0.7), sin: Math.sin(0.7) };
   const frame = { origin: { x: 1500, y: -800 }, tx: Math.cos(0.2), ty: Math.sin(0.2), rx: -Math.sin(0.2), ry: Math.cos(0.2) };
   const rings = [{ collider: { place, registry: { halls: [{ index: 0, frame }] } } }];
@@ -366,7 +368,7 @@ test('wejście gry: bryły hali K-7 w świecie = bryły kolizji hali (te same pu
   const camX = aff.p0x + 3700 * aff.bx, camY = aff.p0y + 3700 * aff.by;
   OI.packGasObstacleFrame(out, st, { camX, camY, viewHalf: 5000, rings });
   const L = createK7Layout();
-  const solids = k7SolidList(L);
+  const solids = hallGasSolids(L);
   assert.equal(out[GAS_OBST_IN.boxes], solids.length);
   assert.ok(out[GAS_OBST_IN.statVer] > 0);
   const inHall = (x, z) => solids.some((s) => {
@@ -762,7 +764,13 @@ test('pkt 6 przeglądu: adwekcja próbkuje skalary bez komórek stałych (próbk
   };
   assert.ok(sampledFrom(m[1], velA), 'flaga z velA.w w punkcie wstecz');
   assert.ok(sampledFrom(m[3], denA), 'skalary z denA');
-  assert.match(adv, new RegExp(String.raw`textureStore\( ${denB}, \w+, ${m[2]} \)`), 'φ̂ do denB');
+  // zapis przez zaokrąglanie stochastyczne f16 (tsl/zapisF16.js): ta sama zmienna (gałąź wył.) albo ona + szum (wł.)
+  const st = adv.match(new RegExp(String.raw`textureStore\( ${denB}, \w+, (nodeVar\d+) \)`));
+  assert.ok(st, 'zapis do denB');
+  const al = adv.match(new RegExp(String.raw`(nodeVar\d+) = ${m[2]};`));   // zmienna przed gałęzią (toVar)
+  const v = al ? al[1] : m[2];
+  assert.match(adv, new RegExp(String.raw`${st[1]} = ${v};`), 'φ̂ do denB (bez zaokrąglania)');
+  assert.match(adv, new RegExp(String.raw`${st[1]} = \( ${v} \+ \( \( sign\( ${v} \)`), 'φ̂ do denB (zaokrąglanie stochastyczne)');
 });
 
 test('pkt 7 przeglądu: żar (łby odłamków, iskry w gazie) gaśnie w bryle statyki swojej domeny — raster w kroku żaru', async () => {
@@ -859,7 +867,7 @@ test('pkt 12 przeglądu: hala K-7 przy żywej domenie gazu jest w statyce także
   assert.equal(out[GAS_OBST_IN.boxes], 0, 'kamera daleko, bez domen — bez hali');
   const D = new Float64Array([hx - 1000, hy - 1000, hx + 1000, hy + 1000]);
   OI.packGasObstacleFrame(out, st, { ...camFar, domains: D, nDomains: 1 });
-  assert.equal(out[GAS_OBST_IN.boxes], k7SolidList(createK7Layout()).length, 'domena gazu w hali — hala w statyce');
+  assert.equal(out[GAS_OBST_IN.boxes], hallGasSolids(createK7Layout()).length, 'domena gazu w hali — hala w statyce');
 });
 
 test('pkt 6 przeglądu: dopływ skalarów 1. rzędu przy ścianie w tempie prędkości zabranej przez warunek ściany (wallFill)', async () => {
@@ -896,5 +904,10 @@ test('pkt 6 przeglądu: dopływ skalarów 1. rzędu przy ścianie w tempie pręd
   for (const [m, off] of fills.map((m, i) => [m, ['1\\.0, 0\\.0, 0\\.0', '-1\\.0, 0\\.0, 0\\.0', '0\\.0, 1\\.0, 0\\.0', '0\\.0, -1\\.0, 0\\.0'][i]])) {
     assert.match(proj, new RegExp(String.raw`- vec3<f32>\( ${off} \)[\s\S]{0,400}?${m[2]} = textureSampleLevel\( ${denC},`), `sąsiad od wnętrza z denC (${off})`);
   }
-  assert.match(proj, new RegExp(String.raw`textureStore\( ${denA}, \w+, ${denVar} \)`), 'skalary z dopływem do denA');
+  const st = proj.match(new RegExp(String.raw`textureStore\( ${denA}, \w+, vec4<f32>\( (nodeVar\d+), ${denVar}\.w \) \)`));
+  assert.ok(st, 'skalary z dopływem do denA');
+  const al = proj.match(new RegExp(String.raw`(nodeVar\d+) = ${denVar}\.xyz;`));   // zmienna przed gałęzią (toVar)
+  assert.ok(al, 'skalary dopływu w zmiennej przed zaokrągleniem');
+  assert.match(proj, new RegExp(String.raw`${st[1]} = ${al[1]};`), 'denA bez zaokrąglania');
+  assert.match(proj, new RegExp(String.raw`${st[1]} = \( ${al[1]} \+ \( \( sign\( ${al[1]} \)`), 'denA z zaokrągleniem stochastycznym');
 });

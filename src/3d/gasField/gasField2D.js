@@ -36,9 +36,14 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Return, Loop, Break, float, int, uint, vec2, vec3, vec4, uvec2, uniform, uniformArray, instanceIndex,
-  texture, texture3D, textureStore, select, mix, clamp, smoothstep, exp, exp2, log2, floor, max, min, abs, length, dot, sqrt,
-  sign, fract, hash
+  texture, texture3D, textureStore, select, mix, clamp, smoothstep, exp, floor, max, min, abs, length, dot, sqrt,
+  fract, hash
 } from 'three/tsl';
+import { F16_ROUND_BIAS, F16_ROUNDING, ensureHalfRoundingProbe, sroundF16, sroundF16Cpu, probeHalfRounding } from '../tsl/zapisF16.js';
+
+/** Lustro CPU zaokrąglania stochastycznego zapisu (wspólne: src/3d/tsl/zapisF16.js). */
+export const sroundCpu = sroundF16Cpu;
+export { probeHalfRounding };
 
 export const GAS_FIELD_2D_DEFAULTS = Object.freeze({
   jacobi: 31,       // iteracje ciśnienia (nieparzyste — wynik w prsB)
@@ -138,12 +143,6 @@ export function jetVisibleCpu(cells, nx, ny, px, py, ax, ay) {
   return 1;
 }
 
-/** LUSTRO CPU zaokrąglania stochastycznego zapisu (_sround): r ∈ [0, 1), bias — U.roundBias (0 obcięcie, 0,5 do najbliższej). */
-export function sroundCpu(x, r, bias = 0) {
-  const e = Math.max(Math.floor(Math.log2(Math.max(Math.abs(x), 1e-30))), -14);
-  return x + Math.sign(x) * (r - bias) * 2 ** (e - 10);
-}
-
 /** ∫ exp(−k·x⁴) dx po całej osi = 2·Γ(5/4)·k^(−1/4). */
 const FLAT_ACROSS = 2 * 0.9064024770554771;
 
@@ -166,34 +165,6 @@ export function jetSourceIntegralCpu(len, w0, widen, Ls, k = 0.69) {
     s += width * across * (1 - smoothCpu(0.5 * len, len, a)) * smoothCpu(-w0, 0, a) * jetSourceAlongCpu(a, Ls);
   }
   return s * da;
-}
-
-/**
- * TEST ZAOKRĄGLANIA zapisu f32 → f16 do tekstury storage na urządzeniu (raz; raw WebGPU — poza grafem three): zapis
- * 1 + 0,75·2⁻¹⁰ do rgba16float i odczyt. 'trunc' (obcięcie ku zeru — RTX / D3D12, pomiar 2026-10-12) albo 'nearest'.
- * Wynik ustawia GasField2D.U.roundBias (_sround). Bez urządzenia / przy błędzie — null (zostaje obcięcie).
- */
-export async function probeHalfRounding(device) {
-  if (!device || typeof device.createComputePipeline !== 'function' || typeof GPUBufferUsage === 'undefined') return null;
-  try {
-    const tex = device.createTexture({ size: [1, 1], format: 'rgba16float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
-    const code = '@group(0) @binding(0) var t: texture_storage_2d<rgba16float, write>;\n' +
-      '@compute @workgroup_size(1) fn main() { textureStore(t, vec2<u32>(0u, 0u), vec4<f32>(1.000732421875)); }';
-    const pipe = device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' } });
-    const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: tex.createView() }] });
-    const buf = device.createBuffer({ size: 256, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const enc = device.createCommandEncoder();
-    const pass = enc.beginComputePass();
-    pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(1); pass.end();
-    enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: 256 }, [1, 1]);
-    device.queue.submit([enc.finish()]);
-    await buf.mapAsync(GPUMapMode.READ);
-    const h = new Uint16Array(buf.getMappedRange().slice(0, 2))[0];
-    buf.unmap(); buf.destroy(); tex.destroy();
-    return h === 0x3c00 ? 'trunc' : 'nearest';   // 0x3c00 = 1,0 (obcięte); 0x3c01 = 1 + 2⁻¹⁰ (do najbliższej)
-  } catch (e) {
-    return null;
-  }
 }
 
 const v4Array = (n, name) => uniformArray(Array.from({ length: n }, () => new THREE.Vector4()), 'vec4').setName(name);
@@ -289,7 +260,7 @@ export class GasField2D {
     this.U = {
       active: uniform(0),
       seed: uniform(0, 'uint'),   // ziarno klatki (zaokrąglanie stochastyczne zapisu)
-      roundBias: uniform(0),      // 0 — zapis f16 obcina (RTX / D3D12), 0,5 — zaokrągla do najbliższej (probeHalfRounding)
+      roundBias: F16_ROUND_BIAS,  // 0 — zapis f16 obcina (RTX / D3D12), 0,5 — do najbliższej (wspólny: tsl/zapisF16.js)
       dt: uniform(cfg.substep),
       time: uniform(0),
       h: uniform(this.h),
@@ -321,18 +292,14 @@ export class GasField2D {
     this._list = [];
   }
 
-  /**
-   * Test zaokrąglania zapisu f16 na urządzeniu renderera (raz, w tle): ustawia U.roundBias. Do wyniku — obcięcie
-   * (roundBias 0, jak na RTX). `this.halfRounding` — wynik ('trunc' / 'nearest' / null).
-   */
+  /** Test zaokrąglania zapisu f16 na urządzeniu renderera (raz na grę, w tle — tsl/zapisF16.js). */
   probeRounding(renderer) {
-    if (this._probe) return;
-    const dev = renderer && renderer.backend && renderer.backend.device;
-    if (!dev) return;
-    this._probe = probeHalfRounding(dev).then((mode) => {
-      this.halfRounding = mode;
-      this.U.roundBias.value = mode === 'nearest' ? 0.5 : 0;
-    });
+    ensureHalfRoundingProbe(renderer);
+  }
+
+  /** Wynik testu zaokrąglania zapisu f16: 'trunc' / 'nearest' / null. */
+  get halfRounding() {
+    return F16_ROUNDING.mode;
   }
 
   /** Strojenie → uniformy (wołać po zmianie `tune`). */
@@ -460,12 +427,10 @@ export class GasField2D {
    * dokłada w podkroku ~10⁻⁵…10⁻⁴: obcięcie zjadało każdy przyrost, a każdy ubytek zaokrąglało w dół o cały odstęp —
    * pył znikał (audyt: „~20–25 % ginie numerycznie”; spoczynek: −1300 w 24 s), prędkość gasła szybciej niż z oporu.
    * Z szumem wartość oczekiwana zapisu = x przy obcięciu (roundBias 0) i przy zaokrągleniu do najbliższej (0,5 —
-   * ustawia probeHalfRounding po teście na urządzeniu).
+   * ustawia probeHalfRounding po teście na urządzeniu). Wspólne z gazem 3D wybuchów: src/3d/tsl/zapisF16.js.
    */
   _sround(x, r) {
-    const ax = abs(x);
-    const e = max(floor(log2(max(ax, 1e-30))), -14.0);
-    return x.add(sign(x).mul(r.sub(this.U.roundBias)).mul(exp2(e.sub(10.0))));
+    return sroundF16(x, r);
   }
 
   /** Liczba losowa komórki w tym kroku [0, 1) (hash PCG z numeru komórki, ziarna klatki i soli kernela). */

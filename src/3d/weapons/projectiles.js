@@ -46,7 +46,7 @@ export class ProjectileSystem {
     this.node = attributeArray(PROJECTILE_MAX * 3, 'vec4').setName('wfxProjectiles');
     this.data = this.node.value.array;
     liveRangeAttribute(this.node.value);
-    this.U = { zoom: uniform(1).setName('wfxPrjZoom') };
+    this.U = { zoom: uniform(1).setName('wfxPrjZoom'), pixelCore: uniform(1).setName('wfxPrjPixelCore') };
     this.count = 0;
     this.renderOrder = renderOrder;
     this.mesh = null;
@@ -133,8 +133,13 @@ export class ProjectileSystem {
         const core = exp(sq(r.div(0.2)).negate());
         const mid = exp(sq(r.div(0.42)).negate()).mul(n.mul(0.7).add(0.5));
         const corona = exp(sq(r.div(0.75)).negate()).mul(n.mul(n)).mul(0.5);
-        const tail = exp(sq(d.div(halo.mul(0.28))).negate()).mul(ta.mul(ta)).mul(0.7);
-        out.assign(vec3(1.3, 1.5, 1.6).mul(core.mul(3.0)).add(col.mul(mid.add(corona).add(tail))));
+        // ogon komety: zwęża się ku końcowi, plazma płynie od głowy (szum przesuwany w tył),
+        // cienka otoczka gaśnie szybciej niż rdzeń ogona
+        const tw = halo.mul(mix(0.1, 0.3, ta));
+        const fl = texture(noise, vec2(along.div(halo).mul(0.06).add(t.mul(2.4)), across.div(halo).mul(0.25).add(seed))).g;
+        const tail = exp(sq(d.div(tw)).negate()).mul(ta.mul(ta)).mul(fl.mul(0.7).add(0.55)).mul(0.75);
+        const sheath = exp(sq(d.div(halo.mul(0.6))).negate()).mul(ta.mul(ta).mul(ta)).mul(0.12);
+        out.assign(vec3(1.3, 1.5, 1.6).mul(core.mul(3.0)).add(col.mul(mid.add(corona).add(tail).add(sheath))));
       }).ElseIf(style.lessThan(4.5), () => {
         // NEEDLE — igła railguna + stożek Macha za głową
         const core = exp(sq(d.div(halo.mul(0.06))).negate()).mul(ta.mul(0.7).add(0.3));
@@ -166,6 +171,14 @@ export class ProjectileSystem {
         const twinkle = sin(t.mul(60.0).add(seed.mul(20.0))).mul(0.3).add(0.85);
         out.assign(col.mul(body.mul(0.9)).add(vec3(1.6, 1.4, 1.0).mul(tip.mul(2.4).mul(twinkle))));
       });
+      // Rdzeń pikselowy (2026-10-13): mały pocisk na ekranie (pół szerokości < ~6 px, domyślny kadr
+      // ~0,18) ma rdzenie stylów węższe niż piksel — gubił się w próbkowaniu i migał. Ostra linia
+      // ~1,5 px wzdłuż toru i kropka głowy w barwie pocisku; przy zbliżeniu gaśnie (styl bez zmian).
+      const zoomPx = U.zoom;
+      const small = float(1.0).sub(smoothstep(2.0, 6.0, halo.mul(zoomPx))).mul(U.pixelCore);
+      const line = exp(sq(d.mul(zoomPx).div(0.8)).negate()).mul(ta.mul(0.75).add(0.25));
+      const dot = exp(sq(dh.mul(zoomPx).div(1.3)).negate());
+      out.addAssign(col.mul(line.mul(0.9)).add(vec3(1.4, 1.5, 1.6).mul(dot.mul(1.6))).mul(small));
       const c = max(out.mul(e), vec3(0.0)).toVar();
       return vec4(c, max(c.x, max(c.y, c.z)));
     })();
@@ -200,9 +213,10 @@ export class ProjectileSystem {
   }
 
   /** Wysyłka na GPU (tylko zajęta część) i liczba instancji (≥ 2 — stały klucz programu). */
-  commit(zoom) {
+  commit(zoom, pixelCore = 1) {
     const n = this.count;
     this.U.zoom.value = Math.max(1e-4, zoom);
+    this.U.pixelCore.value = pixelCore;
     const mesh = this.mesh;
     if (!mesh) return;
     if (n === 1) {

@@ -9,10 +9,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 globalThis.window = globalThis.window || {};
 const THREE = await import('three/webgpu');
-const { createK7Layout, k7HubToWorld } = await import('../src/3d/haloRing/haloPortK7Layout.js');
+const { createK7Layout, k7ForceFieldList, k7HubToWorld } = await import('../src/3d/haloRing/haloPortK7Layout.js');
 const {
   HALL_DUST_IN, HALL_DUST_MASK, HALL_DUST_MAX_SHIPS, HALL_DUST_SERVICE, HALL_DUST_SERVICE_BERTHS, HALL_DUST_SHIP,
-  hallDustDomain, rasterizeHallCells, hallDomainDistance, hallMaskBit, hallBodySolidCpu
+  hallDustDomain, rasterizeHallCells, hallDomainDistance, hallMaskBit, hallBodySolidCpu, hallBodyFieldSpan
 } = await import('../src/3d/gasField/hallDustLayout.js');
 const { hallToGameAffine, gameToHall, gameVecToHall, packHallDustFrame, createHallDustInput } =
   await import('../src/game/hallDustInput.js');
@@ -27,12 +27,6 @@ const { LightGrid } = await import('../src/3d/fx/lightGrid.js');
 const L = createK7Layout();
 const DOM = hallDustDomain(L);
 const RASTER = rasterizeHallCells(L, DOM);
-const cellAt = (x, z) => {
-  const i = Math.floor((x - DOM.x0) / DOM.h);
-  const j = Math.floor((z - DOM.z0) / DOM.h);
-  const o = (j * DOM.nx + i) * 4;
-  return { solid: RASTER.data[o] > 127, dirt: RASTER.data[o + 1] / 255, inside: RASTER.data[o + 2] > 127 };
-};
 
 test('domena: hala z zapasem i próżnią za bramą, siatka podzielna przez 8 (komórki × 64 = grupy robocze)', () => {
   assert.equal(DOM.nx % 8, 0);
@@ -45,7 +39,68 @@ test('domena: hala z zapasem i próżnią za bramą, siatka podzielna przez 8 (k
   assert.ok(Math.abs(hallDomainDistance(DOM, DOM.x1 + 300, 3000) - 300) < 1e-9);
 });
 
-test('rastr: ściany ciągłe, bramy otwarte, wnętrze i próżnia, kurz tylko we wnętrzu (więcej przy ścianach)', () => {
+test('rastr: pola siłowe zamykają otwory bram dla gazu (G-01, G-02, G-03); bez pól — bramy otwarte, kurz ten sam', () => {
+  // prośba użytkownika 2026-10-13: dym hali rozbija się o pole siłowe w bramie (statki przelatują — to nie kolizja)
+  const OPEN = rasterizeHallCells(L, DOM, { forceFields: false });
+  const at = (R, x, z) => R.data[(Math.floor((z - DOM.z0) / DOM.h) * DOM.nx + Math.floor((x - DOM.x0) / DOM.h)) * 4];
+  for (const f of k7ForceFieldList(L)) {
+    let n = 0, open = 0;
+    for (let t = 40; t <= f.length - 40; t += 70) {
+      const x = f.ax + f.ux * t, z = f.az + f.uz * t;
+      assert.ok(at(RASTER, x, z) > 127, `${f.gateId}: pole t=${t}`);
+      n++;
+      if (at(OPEN, x, z) === 0) open++;
+    }
+    // bez pola otwór otwarty (przy G-02 / G-03 w narożniku otworu stoi boja podejścia — przeszkoda kolizji)
+    assert.ok(open / n > 0.9, `${f.gateId}: bez pola otwarte ${open} / ${n}`);
+    // od strony hali tuż przed polem — gaz (komórka nie jest przeszkodą)
+    const x = f.x - f.nx * (f.half + 2 * DOM.h), z = f.z - f.nz * (f.half + 2 * DOM.h);
+    assert.equal(at(RASTER, x, z), 0, `${f.gateId}: przed licem pola`);
+  }
+  assert.ok(RASTER.field > 0 && RASTER.field === RASTER.solid - OPEN.solid, `komórki pól ${RASTER.field}`);
+  assert.equal(OPEN.field, 0);
+  // kurz na pokładzie liczony od murów — pole w bramie go nie zmienia; odległość od przeszkody (A) zna pola
+  let diffG = 0, diffA = 0;
+  for (let k = 0; k < DOM.nx * DOM.ny; k++) {
+    if (RASTER.data[k * 4] !== OPEN.data[k * 4]) continue;
+    if (RASTER.data[k * 4 + 1] !== OPEN.data[k * 4 + 1]) diffG++;
+    if (RASTER.data[k * 4 + 3] !== OPEN.data[k * 4 + 3]) diffA++;
+  }
+  assert.equal(diffG, 0, 'kurz bez zmian');
+  assert.ok(diffA > 100, 'odległość od przeszkody z polami (zasłanianie strumieni dysz)');
+});
+
+test('kadłub w bramie: przecięcie obrysu z polem siłowym (światła pola na kadłubie — hallBodyFieldSpan)', () => {
+  const col = new HaloRingCollider({ id: 'earth', name: 'earth', x: 6123456.7, y: 4234567.8 });
+  const rings = [{ collider: col }];
+  const a = hallToGameAffine(col.place, col.registry.halls[0].frame, {});
+  const at = (x, z) => ({ x: a.p0x + x * a.ax + z * a.bx, y: a.p0y + x * a.ay + z * a.by });
+  const heading = Math.atan2(a.by, a.bx);   // dziób wzdłuż +z hali (ku bramie G-01)
+  const g1 = k7ForceFieldList(L).find((f) => f.gateId === 'G-01');
+  const out = createHallDustInput();
+  const span = new Float64Array(2);
+  const cam = at(0, 5000);
+  const pack = (x, z) => packHallDustFrame(out, {
+    dt: 1 / 60, camX: cam.x, camY: cam.y, viewHalf: 3000, rings,
+    ship: { pos: at(x, z), vel: { x: 0, y: 0 }, angle: heading, w: 1800, h: 806 }, npcs: []
+  });
+  pack(-810, L.frontZ);   // w bramie, w poprzek pola
+  assert.equal(out[HALL_DUST_IN.ships], 1);
+  assert.ok(hallBodyFieldSpan(out, 0, DOM, g1, 60, span) > 5);
+  const mid = (span[0] + span[1]) / 2;
+  assert.ok(Math.abs(g1.ax + g1.ux * mid + 810) < 70, `środek przecięcia ${g1.ax + g1.ux * mid}`);
+  const w = span[1] - span[0];
+  assert.ok(w > 806 * 0.6 && w < 806 + 130, `szerokość przecięcia ${w.toFixed(0)} (kadłub 806)`);
+  pack(-810, L.frontZ - 2500);   // w hali, z dala od bramy
+  assert.equal(hallBodyFieldSpan(out, 0, DOM, g1, 60, span), 0);
+});
+
+test('rastr: ściany ciągłe, bramy (bez pól siłowych) otwarte, wnętrze i próżnia, kurz tylko we wnętrzu (więcej przy ścianach)', () => {
+  const RASTER = rasterizeHallCells(L, DOM, { forceFields: false });
+  const cellAt = (x, z) => {
+    const o = (Math.floor((z - DOM.z0) / DOM.h) * DOM.nx + Math.floor((x - DOM.x0) / DOM.h)) * 4;
+    return { solid: RASTER.data[o] > 127, dirt: RASTER.data[o + 1] / 255, inside: RASTER.data[o + 2] > 127 };
+  };
   // ściana tylna (z = backZ) na całej szerokości
   for (let x = -L.halfWidth + 200; x <= L.halfWidth - 200; x += 140) assert.ok(cellAt(x, L.backZ).solid, `tylna ściana x=${x}`);
   // ściany boczne
@@ -390,7 +445,10 @@ test('kernele pola gazu: WGSL buduje się, ≤ 4 tekstury storage i ≤ 12 bufor
 });
 
 test('warstwy pyłu: WGSL buduje się, macierz hala → scena ma wyznacznik +1 (klucz pipeline\'u = rozgrzewka)', () => {
-  const layer = new GasFieldLayer(sim, { domain: DOM, detailTex: fxNoise.cloud2D(), grid: new LightGrid({ name: 'fxGrid' }) });
+  const layer = new GasFieldLayer(sim, {
+    domain: DOM, detailTex: fxNoise.cloud2D(), grid: new LightGrid({ name: 'fxGrid' }), fields: k7ForceFieldList(L)
+  });
+  assert.equal(layer.fields.length, 3, 'pola siłowe trzech bram w grafie warstw');
   for (const mesh of [layer.back, layer.front]) {
     const b = renderer.backend.createNodeBuilder(mesh, renderer);
     b.material = mesh.material;

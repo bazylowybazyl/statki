@@ -43,6 +43,7 @@ import { buildHaloDomePlan } from './haloRingDomes.js';
 import { HaloMegastructure } from './haloRingMegastructure.js';
 import { HaloCity } from './haloRingCity.js';
 import { HaloPortK7 } from './haloPortK7.js';
+import { k7GlbWhenReady } from './haloPortK7Glb.js';
 import { createK7Layout, k7Frame } from './haloPortK7Layout.js';
 import { haloBayLayouts } from './haloPortBays.js';
 
@@ -114,6 +115,9 @@ export function createHaloRing(options = {}) {
         if (gen !== buildGen) return false;
         if (!detail) detail = new HaloDetailTextures(renderer);
         await detail.init();
+        if (gen !== buildGen) return false;
+        // hala K-7 z Blendera (domyślna; ?k7=stara — stara): plik GLB przed budową hal (stara — od razu)
+        await k7GlbWhenReady();
         if (gen !== buildGen) return false;
         const next = assemble(buildLayout, quality, maps, landmarks, domes);
         // Pipeline'y brył w tle przed podpięciem (stare bryły przy setQuality rysują się dalej).
@@ -356,6 +360,8 @@ export function createHaloRing(options = {}) {
         vis = frustum.intersectsSphere(_hallS);
       }
       hall.root.visible = vis;
+      // hala z Blendera (haloPortK7Glb.js, domyślna): poziom szczegółów z rozmiaru piksela
+      if (vis && hall.glb) hall.updateGlbLod(camLocal, pixelAngle);
     }
   }
 

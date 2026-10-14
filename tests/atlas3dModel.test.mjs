@@ -167,7 +167,7 @@ test('materiały TSL: WGSL kadłuba (pokład + paleta) i broni buduje się bez G
 test('bez GLSL i API WebGL w modelach 3D i demie (WebGPU + TSL)', () => {
   const files = [
     ...['', 'ships/', 'weapons/'].flatMap((d) => readdirSync(new URL(`../src/3d/ships3d/${d}`, import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `src/3d/ships3d/${d}${f}`)),
-    ...readdirSync(new URL('../dema/atlas3d-webgpu/', import.meta.url)).map((f) => `dema/atlas3d-webgpu/${f}`),
+    ...readdirSync(new URL('../dema/atlas3d-webgpu/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `dema/atlas3d-webgpu/${f}`),
     'dema/atlas3d-webgpu.js'
   ];
   for (const f of files) {

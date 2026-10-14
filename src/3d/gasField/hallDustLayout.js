@@ -11,11 +11,12 @@
 //
 // RASTR komórek (RGBA8; wiersz = z, kolumna = x — jak tekstury symulacji):
 //   R — przeszkoda (ściany z bramami, przypory, rdzeń operacyjny, ładunki, słupki — k7SolidList, te same
-//       bryły co kolizje hali): gaz ich nie przenika (rzut ciśnienia), pyłu w nich nie ma;
-//   G — pył zalegający na pokładzie na starcie (szum wartości; więcej przy ścianach i w kątach);
+//       bryły co kolizje hali; POLA SIŁOWE w otworach bram — k7ForceFieldList: statki przelatują, gaz nie):
+//       gaz ich nie przenika (rzut ciśnienia), pyłu w nich nie ma;
+//   G — pył zalegający na pokładzie na starcie (szum wartości; więcej przy ścianach i w kątach — od murów, nie od pól);
 //   B — wnętrze hali (1) / próżnia za bramami (0);
-//   A — odległość od przeszkody [komórki × 4, do 255].
-import { createK7Layout, k7SolidList } from '../haloRing/haloPortK7Layout.js';
+//   A — odległość od przeszkody (z polami siłowymi — zasłanianie strumieni dysz) [komórki × 4, do 255].
+import { createK7Layout, k7ForceFieldList, k7SolidList } from '../haloRing/haloPortK7Layout.js';
 
 export const HALL_DUST_MAX_SHIPS = 16;
 /** Stanowiska capital hali w bloku obsługi (kolejność createK7Layout: C-01…C-04). */
@@ -122,8 +123,36 @@ const _bu = new Float64Array(12);
  * próg 0,5. Zmiana testu w kernelu = zmiana tutaj (tests/hallDust.test.mjs).
  */
 export function hallBodySolidCpu(IN, s, dom, px, py) {
-  const M = HALL_DUST_MASK;
+  return maskSolidAt(IN, s, hallBodyUniforms(IN, s, dom, _bu), px, py);
+}
+
+/**
+ * Gdzie kadłub okrętu `s` przecina pole siłowe `field` (haloPortK7Layout.k7ForceFieldList): próbki co `step` [j.]
+ * wzdłuż osi bramy a → b, test jak hallBodySolidCpu. Wynik: liczba próbek w kadłubie, out[0] / out[1] — pierwsza
+ * i ostatnia z nich (odległość od a [j.]). Obraz pola (światła na kadłubie przy przelocie — hallDust.js).
+ */
+export function hallBodyFieldSpan(IN, s, dom, field, step, out) {
   const U = hallBodyUniforms(IN, s, dom, _bu);
+  const h = dom.h;
+  const n = Math.max(1, Math.ceil(field.length / step));
+  const dt = field.length / n;
+  let hits = 0;
+  out[0] = 0;
+  out[1] = 0;
+  for (let k = 0; k <= n; k++) {
+    const t = k * dt;
+    const px = (field.ax + field.ux * t - dom.x0) / h;
+    const py = (field.az + field.uz * t - dom.z0) / h;
+    if (!maskSolidAt(IN, s, U, px, py)) continue;
+    if (hits === 0) out[0] = t;
+    out[1] = t;
+    hits++;
+  }
+  return hits;
+}
+
+function maskSolidAt(IN, s, U, px, py) {
+  const M = HALL_DUST_MASK;
   const rx = px - U[0], ry = py - U[1];
   const qx = U[2] * rx + U[3] * ry + U[6];
   const qy = U[4] * rx + U[5] * ry + U[7];
@@ -215,17 +244,11 @@ function fbm(x, y, seed) {
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/**
- * Rastr komórek domeny (RGBA8, nagłówek pliku). Deterministyczny (szum z haszu, bez Math.random).
- * @returns {{ data: Uint8Array, solid: number, inside: number, nx: number, ny: number }}
- */
-export function rasterizeHallCells(layout = createK7Layout(), dom = hallDustDomain(layout), { seed = 0x5eed7 } = {}) {
+// Pudła (środek (x, z), w wzdłuż kąta, d w poprzek — jak K7CollisionWorld.addBox) → komórki domeny (środek w pudle).
+function stampBoxes(solid, boxes, dom) {
   const { nx, ny, h, x0, z0 } = dom;
-  const n = nx * ny;
-  const solid = new Uint8Array(n);
   const clampI = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v);
-  for (const s of k7SolidList(layout)) {
-    // pudło: środek (x, z), w wzdłuż kąta, d w poprzek (jak K7CollisionWorld.addBox)
+  for (const s of boxes) {
     const ca = Math.cos(s.angle || 0);
     const sa = Math.sin(s.angle || 0);
     const hw = s.w * 0.5;
@@ -245,7 +268,11 @@ export function rasterizeHallCells(layout = createK7Layout(), dom = hallDustDoma
       }
     }
   }
-  // Odległość od przeszkody (fazowana 1 / √2, dwa przebiegi) [komórki].
+}
+
+// Odległość od przeszkody (fazowana 1 / √2, dwa przebiegi) [komórki].
+function distanceCells(solid, nx, ny) {
+  const n = nx * ny;
   const dist = new Float32Array(n);
   const BIG = 1e6;
   for (let k = 0; k < n; k++) dist[k] = solid[k] ? 0 : BIG;
@@ -277,6 +304,29 @@ export function rasterizeHallCells(layout = createK7Layout(), dom = hallDustDoma
       dist[k] = d;
     }
   }
+  return dist;
+}
+
+/**
+ * Rastr komórek domeny (RGBA8, nagłówek pliku). Deterministyczny (szum z haszu, bez Math.random). `forceFields` —
+ * pola siłowe w otworach bram (k7ForceFieldList) jako przeszkoda gazu; false — bramy otwarte na próżnię (A/B).
+ * @returns {{ data: Uint8Array, solid: number, inside: number, field: number, nx: number, ny: number }}
+ */
+export function rasterizeHallCells(layout = createK7Layout(), dom = hallDustDomain(layout), { seed = 0x5eed7, forceFields = true } = {}) {
+  const { nx, ny, h, x0, z0 } = dom;
+  const n = nx * ny;
+  const walls = new Uint8Array(n);
+  stampBoxes(walls, k7SolidList(layout), dom);
+  let solid = walls;
+  let fieldN = 0;
+  if (forceFields) {
+    solid = walls.slice();
+    stampBoxes(solid, k7ForceFieldList(layout), dom);
+    for (let k = 0; k < n; k++) fieldN += solid[k] - walls[k];
+  }
+  // kurz na pokładzie: odległość od MURÓW (pole siłowe w bramie nie zmienia dawnego wzoru kurzu)
+  const dist = distanceCells(walls, nx, ny);
+  const distObst = forceFields ? distanceCells(solid, nx, ny) : dist;
   const data = new Uint8Array(n * 4);
   const poly = layout.footprint;
   let solidN = 0;
@@ -303,8 +353,8 @@ export function rasterizeHallCells(layout = createK7Layout(), dom = hallDustDoma
       data[o] = isSolid ? 255 : 0;
       data[o + 1] = Math.round(dirt * 255);
       data[o + 2] = inside ? 255 : 0;
-      data[o + 3] = Math.min(255, Math.round(dist[k] * 4));
+      data[o + 3] = Math.min(255, Math.round(distObst[k] * 4));
     }
   }
-  return { data, solid: solidN, inside: insideN, nx, ny };
+  return { data, solid: solidN, inside: insideN, field: fieldN, nx, ny };
 }

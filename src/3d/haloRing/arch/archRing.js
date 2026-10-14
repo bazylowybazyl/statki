@@ -22,6 +22,7 @@ import { HALO_DEFAULT_LAYER, HALO_FG, HALO_QUALITY, haloPortComplexAngles, haloQ
 import { createHaloRingLayout } from '../haloRingLayout.js';
 import { createHaloUniforms } from '../haloRingUniforms.js';
 import { HaloPortK7 } from '../haloPortK7.js';
+import { k7GlbSettled } from '../haloPortK7Glb.js';
 import { createK7Layout, k7Frame } from '../haloPortK7Layout.js';
 import { haloBayLayouts } from '../haloPortBays.js';
 import { ArchMaterials, archBatchMesh, archUnitGeometries } from './archMaterials.js';
@@ -128,6 +129,8 @@ export function createArchRing(options = {}) {
 
     const k7Halls = [];
     if (state.options.k7 !== false) {
+      // hala K-7 z Blendera (domyślna; ?k7=stara — stara): kroki czekają na plik GLB (stara — od razu)
+      while (!k7GlbSettled()) yield;
       if (!state.bayLayouts) state.bayLayouts = haloBayLayouts(layout);
       else for (const bay of state.bayLayouts) bay.frame = k7Frame(layout, bay.theta);
       if (!state.hallLayouts) {
@@ -259,6 +262,8 @@ export function createArchRing(options = {}) {
         vis = frustum.intersectsSphere(_hallS);
       }
       hall.root.visible = vis;
+      // hala z Blendera (haloPortK7Glb.js, domyślna): poziom szczegółów z rozmiaru piksela
+      if (vis && hall.glb) hall.updateGlbLod(camLocal, pixelAngle);
     }
   }
 

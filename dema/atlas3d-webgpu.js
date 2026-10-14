@@ -137,11 +137,26 @@ async function main() {
   $('loading').textContent = 'budowa modeli 3D…';
   const weaponMat = createShipMaterial({ panelW: 7, panelH: 3.5, name: 'okręty 3D — broń' });
   const weaponMatPirate = createShipMaterial({ panelW: 7, panelH: 3.5, palette: FLEET3D_WEAPON_PALETTES.pirate, name: 'okręty 3D — broń piratów' });
+  // Pilot: modele broni z Blendera (?bronie=blender, scripts/blender/*.py → assets/weapons3d/*.glb) w miejsce
+  // modeli z weapons3D.js; ?ao=0..1 — siła AO z wierzchołków (0 — bez AO, porównanie samej bryły); ?lod=1 — wersja
+  // uproszczona (yamato_lod1.glb).
+  let weaponOverrides = null;
+  let blenderWeaponMat = null;
+  // ?bronie=blender — wszystkie rodziny z plikiem (BLENDER_WEAPON_FAMILIES), ?bronie=tempest1,tempest2@1 — wybrane.
+  if (params.get('bronie')) {
+    $('loading').textContent = 'wczytywanie modeli broni z Blendera…';
+    const { loadBlenderWeapons, createBlenderWeaponMaterial } = await import('./atlas3d-webgpu/blenderBronie.js');
+    const pick = params.get('bronie') === 'blender' ? undefined : params.get('bronie').split(',');
+    const loaded = await loadBlenderWeapons(pick, { lod: Number(params.get('lod')) || 0 });
+    blenderWeaponMat = createBlenderWeaponMaterial({ aoStrength: params.has('ao') ? Number(params.get('ao')) : 1 });
+    weaponOverrides = {};
+    for (const [fam, e] of Object.entries(loaded)) weaponOverrides[fam] = { geo: e.geo, material: blenderWeaponMat };
+  }
   const ships = {};
   let uiReady = false;
   function createShip(id) {
     const wm = SHIP3D_MODELS[id].faction === 'pirate' ? weaponMatPirate : weaponMat;
-    const s = new Ship3D({ id, image: images[id], scene, anisotropy: 8, weaponMat: wm });
+    const s = new Ship3D({ id, image: images[id], scene, anisotropy: 8, weaponMat: wm, weaponOverrides });
     s.root.visible = false;
     ships[id] = s;
     if (uiReady) {
@@ -364,7 +379,19 @@ async function main() {
   }
   bind('c-deck', (on) => { hullU((U) => { U.deck.value = on ? 1 : 0; }); });
   bind('c-bump', (on) => { hullU((U) => { U.bump.value = on ? 0.55 : 0; }); });
-  bind('c-seams', (on) => { hullU((U) => { U.seams.value = on ? 1 : 0; }); W.seams.value = on ? 1 : 0; weaponMatPirate.userData.uniforms.seams.value = on ? 1 : 0; });
+  bind('c-seams', (on) => {
+    hullU((U) => { U.seams.value = on ? 1 : 0; });
+    W.seams.value = on ? 1 : 0;
+    weaponMatPirate.userData.uniforms.seams.value = on ? 1 : 0;
+    if (blenderWeaponMat) blenderWeaponMat.userData.uniforms.seams.value = on ? 1 : 0;
+  });
+  // Przełącznik pilota „bronie z Blendera” — przeładowanie strony z parametrem (modele wczytywane przy starcie).
+  $('c-blender').checked = !!blenderWeaponMat;
+  $('c-blender').addEventListener('change', () => {
+    const q = new URLSearchParams(location.search);
+    if ($('c-blender').checked) q.set('bronie', 'blender'); else q.delete('bronie');
+    location.search = q.toString();
+  });
   bind('c-turrets', (on) => { allShips((s) => s.setTurretsVisible(on)); });
   bind('c-markers', (on) => { allShips((s) => { s.markers.visible = on; }); });
   bind('c-shadows', (on) => { sun.castShadow = on; });

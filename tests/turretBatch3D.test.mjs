@@ -35,7 +35,8 @@ test('geometria partii: ≤ 8 buforów wierzchołków, jeden bufor instancji, ws
     const buffers = new Set();
     for (const a of Object.values(geometry.attributes)) buffers.add(a.isInterleavedBufferAttribute ? a.data : a);
     assert.ok(buffers.size <= 8, `${fam}: ${buffers.size} buforów wierzchołków (limit 8)`);
-    assert.equal(buffers.size, 6, `${fam}: position, normal, uv, aMat, aTurPart + bufor instancji`);
+    assert.equal(buffers.size, 7, `${fam}: position, normal, uv, aMat, aAO, aTurPart + bufor instancji`);
+    assert.equal(geometry.getAttribute('aAO').count, fa.vertexCount, `${fam}: AO na każdy wierzchołek`);
     for (const { name, offset } of TURRET_INST_ATTRS) {
       const a = geometry.getAttribute(name);
       assert.ok(a?.isInterleavedBufferAttribute && a.data === buffer && a.offset === offset && a.itemSize === 4, `${fam}: ${name}`);
@@ -221,6 +222,10 @@ function buildWGSL(mesh) {
   b.material = mesh.material;
   b.scene = new THREE.Scene();
   b.camera = new THREE.OrthographicCamera();
+  // aoNode (AO z wierzchołków) dokłada węzeł do świateł passa — builder potrzebuje węzła świateł sceny
+  const lightsNode = renderer.lighting.getNode(b.scene, b.camera);
+  lightsNode.setLights([new THREE.AmbientLight(0xffffff, 0.2)]);
+  b.lightsNode = lightsNode;
   b.context.material = mesh.material;
   b.build();
   return { vertex: b.vertexShader, fragment: b.fragmentShader };
@@ -233,7 +238,8 @@ test('materiał partii: WGSL z rekordem instancji, normalna przed widokiem, wars
   const holder = turretBatchWarmHolder(mat, 'vulcan');
   assert.equal(holder.receiveShadow, true, 'rozgrzewka w stanie siatek partii (receiveShadow w kluczu three)');
   const w = buildWGSL(holder);
-  for (const name of ['iTurPos', 'iTurRot', 'iTurBarrel', 'iTurSlab', 'aTurPart', 'aMat']) assert.ok(w.vertex.includes(name), `atrybut ${name}`);
+  for (const name of ['iTurPos', 'iTurRot', 'iTurBarrel', 'iTurSlab', 'aTurPart', 'aMat', 'aAO']) assert.ok(w.vertex.includes(name), `atrybut ${name}`);
+  assert.equal(mat.aoNode != null, true, 'AO z wierzchołków na świetle pośrednim (aoNode)');
   const main = w.vertex.slice(w.vertex.indexOf('fn main'));
   const assignN = main.search(/normalLocal\s*=/);
   const useN = main.search(/v_normalViewGeometry\s*=/);
@@ -250,7 +256,8 @@ test('materiał partii: WGSL z rekordem instancji, normalna przed widokiem, wars
 
 test('shipModels3DGame: wieże tylko w partiach — bez drzewa siatek na wieżę', () => {
   const src = read('src/3d/ships3d/shipModels3DGame.js');
-  assert.match(src, /B\.family\(fam\)\.push\(T\);/);
+  assert.match(src, /B\.family\(fam, lod\)\.push\(T\);/, 'partia rodziny × LOD (rodziny z Blendera w trybie AUTO — weaponGlb.js)');
+  assert.match(src, /weaponGlbLodFor\(t\.lod, rpx\)/, 'LOD wg promienia wieży na ekranie z histerezą');
   assert.match(src, /turretBatchWarmHolder\(turretMaterial\(\), fam\)/, 'rozgrzewka partii w rejestrze modeli 3D');
   assert.match(src, /sceneOriginNearCamera\(_org\);/, 'rekordy względem początku przy kamerze');
 });

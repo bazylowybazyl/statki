@@ -16,7 +16,8 @@
 
   Parametry adresu: ?tryb=flota|ogledziny|lot|galeria, ?statek=<id z SHIP3D_MODELS> (np. terran_carrier),
   ?kamera=gra|taktyczna|poscig|orbita|kinowa, ?fit=gra|pelny, ?test=1 (klatki tylko przez
-  __demo.step), ?dpr=1, ?cienie=2048.
+  __demo.step), ?dpr=1, ?cienie=2048, ?bronie=blender (bronie z Blendera — scripts/blender/<rodzina>.py,
+  assets/weapons3d/<rodzina>.glb; ?bronie=tempest1,tempest2@1 — wybrane rodziny, @1 = LOD1; ?lod=1; ?ao=0..1 — siła AO).
   Konsola: __demo.mode(tryb), ship3d(id, tryb), fleet(), camera(kamera), loadout('gra'|'pelny'),
   step(n), stats(), fire('main'|'missile'|'special'|'hexlance'), exportGLB().
 -->
@@ -128,6 +129,7 @@
     <label><input type="checkbox" id="c-pd" checked> auto-obrona punktowa (aux → drony)</label>
     <label><input type="checkbox" id="c-drones" checked> drony wroga</label>
     <label><input type="checkbox" id="c-gscale"> galeria: skala gry (inaczej dopasowana ~80 j.)</label>
+    <label><input type="checkbox" id="c-blender"> Bronie z Blendera (GLB; przeładowuje stronę)</label>
     <div class="row"><span>skala wież (1 = gra)</span><input type="range" id="s-tscale" min="1" max="2.2" step="0.05" value="1"><output id="o-tscale"></output></div>
     <div class="row"><span>pochylenie 3/4 [°]</span><input type="range" id="s-tilt" min="0" max="80" step="1" value="52"><output id="o-tilt"></output></div>
     <div class="row"><span>azymut słońca [°]</span><input type="range" id="s-sun" min="0" max="360" step="1" value="131"><output id="o-sun"></output></div>

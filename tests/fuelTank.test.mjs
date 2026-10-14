@@ -162,7 +162,7 @@ test('dane: rozmiar ∝ √pojemności z granicami, klasa z długości, pojemno�
 
 test('index.html: śmierć bez rdzenia → wybuch z gazu z miejsca zbiornika; droneBlast tylko myśliwce / drony / platformy', () => {
   const src = readIndexHtml();
-  const dmg = sliceFunction(src, "function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}) {");
+  const dmg = sliceFunction(src, "function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}, byPlayer = false) {");
   const iHost = dmg.indexOf('ReactorGame.hostKilled(npc)');
   const iTank = dmg.indexOf('fuelTankBlast(npc');
   const iWreck = dmg.indexOf('window.createWreckage(npc)');

@@ -21,6 +21,7 @@ import {
   K7_ABOVE_SCALE,
   K7_FUEL_FARM,
   K7_FUEL_STATION,
+  K7_GATE_LINTEL,
   k7ArmWidthAt,
   k7FuelTanks,
   k7HallArms,
@@ -39,6 +40,15 @@ export const K7_MAT = Object.freeze({
 });
 // cx cy cz vScale | sx sy sz mat | qx qy qz qw | group, miganie (K7_BEACON), faza [s], okres [s]
 export const K7_INSTANCE_STRIDE = 16;
+// Sekcje hali (Recorder.tag): inwentarz brył i pomijanie sekcji, które rysuje hala z Blendera (ringInfo.skipTags,
+// haloPortK7Glb.js — domyślna, stara: ?k7=stara). Bryły bez sekcji z listy nagrywają się zawsze.
+export const K7_TAGS = Object.freeze([
+  'walls', 'gate-lintel', 'gate-jamb', 'deck', 'equipment', 'aprons', 'approach-beacons', 'outer-walls',
+  'clamps', 'fuel-base', 'fuel-link1', 'fuel-link2', 'fuel-rod', 'fuel-coupler',
+  'beacon-housing', 'beacon-lens', 'spots',
+  'fuel-tanks', 'fuel-pumps', 'fuel-headers', 'fuel-rack', 'fuel-vents', 'wall-pipes',
+  'roof', 'pylons', 'bays'
+]);
 
 const TAU = Math.PI * 2;
 const mix = (a, b, t) => a + (b - a) * t;
@@ -91,12 +101,40 @@ class Recorder {
     // przejście ramki (zatoka → hub hali): X = ox + x·c − z·s, Z = oz + x·s + z·c
     this.xf = null;
     this._qxf = [0, 0, 0, 1];
+    // sekcja hali (K7_TAGS): bryły sekcji z `skip` nie są nagrywane — rysuje je hala z Blendera
+    // (haloPortK7Glb.js); `stats` — inwentarz (instancje na sekcję i rodzaj, scripts/blender/k7/k7-inwentarz.mjs)
+    this._tag = '';
+    this.skip = null;
+    this.stats = null;
+    // MIEJSCA elementów hali z Blendera (place): element, położenie (x, z huba; y — wysokość K-7 kotwicy), kurs
+    // (obrót wokół pionu jak rotY brył), grupa ruchoma i tryb wysokości; `capture` — surowe wywołania brył
+    // elementu (wymiary K-7, przed odwzorowaniem wysokości) do eksportu wymiarów (scripts/blender/k7/k7-dane.mjs)
+    this.places = [];
+    this.cur = null;
+    this.capture = false;
+  }
+  get tag() { return this._tag; }
+  // nowa sekcja kończy bieżący element
+  set tag(v) { this._tag = v; this.cur = null; }
+  place(element, x, y, z, yaw = 0, group = this.group) {
+    const p = { element, tag: this._tag, x, y, z, yaw, group, mode: this.mode, prims: this.capture ? [] : null };
+    this.places.push(p);
+    this.cur = p;
+    return p;
+  }
+  _cap(kind, args) {
+    if (this.cur !== null && this.cur.prims !== null) this.cur.prims.push({ kind, set: this.set, group: this.group, mode: this.mode, args });
   }
   setFrame(xf) {
     this.xf = xf;
     if (xf) this._qxf = qAxis(0, 1, 0, -xf.phi);
   }
   _push(kind, cx, cy, cz, vs, sx, sy, sz, mat, q) {
+    if (this.skip !== null && this.skip.has(this.tag)) return;
+    if (this.stats !== null) {
+      const key = this.tag + '|' + this.set + '|' + kind;
+      this.stats[key] = (this.stats[key] || 0) + 1;
+    }
     let x = cx + this.dx;
     let z = cz + this.dz;
     if (this.xf) {
@@ -117,12 +155,14 @@ class Recorder {
   _y(y) { return this.mode === 'lin' ? y * K7_ABOVE_SCALE : k7HeightToZ(y); }
   _vs(y, extent) { return this.mode === 'lin' ? K7_ABOVE_SCALE : mapScale(y, extent); }
   box(x, y, z, w, h, d, mat, rotY = 0) {
+    if (this.capture) this._cap('box', [x, y, z, w, h, d, mat, rotY]);
     const [cy, hh] = this._range(y, h);
     this._push('box', x, cy, z, 1, w, hh, d, mat, qAxis(0, 1, 0, rotY));
     return this;
   }
   // belka od a do b (oś Y bryły wzdłuż belki), przekrój w × d
   beam(a, b, w, mat, d = w) {
+    if (this.capture) this._cap('beam', [a, b, w, mat, d]);
     const ay = this._y(a[1]);
     const by = this._y(b[1]);
     const dx = b[0] - a[0];
@@ -135,6 +175,7 @@ class Recorder {
   }
   // walec K-7: promień r, wysokość h (oś Y), obrót Euler [rx, ry, rz]
   cyl(x, y, z, r, h, mat, rot = null) {
+    if (this.capture) this._cap('cyl', [x, y, z, r, h, mat, rot]);
     if (!rot) {
       const [cy, hh] = this._range(y, h);
       this._push('cyl', x, cy, z, 1, r, hh, r, mat, [0, 0, 0, 1]);
@@ -145,6 +186,7 @@ class Recorder {
     return this;
   }
   ring(x, y, z, r, t, mat, rot = null) {
+    if (this.capture) this._cap('ring', [x, y, z, r, t, mat, rot]);
     const q = rot ? quatEuler(rot[0], rot[1], rot[2]) : [0, 0, 0, 1];
     this._push('torus', x, this._y(y), z, this._vs(y, r), r, r, r, mat, q);
     return this;
@@ -173,6 +215,9 @@ export function buildK7Scene(layout, ringInfo = {}) {
   const groups = [];            // opisy grup ruchomych (indeks = pozycja + 1)
   const lamps = [];             // lampki stanu stanowisk (indeks instancji w bg.box)
   const addGroup = (desc) => { groups.push(desc); return groups.length; };
+  if (ringInfo.skipTags) f.skip = new Set(ringInfo.skipTags);
+  if (ringInfo.stats) f.stats = ringInfo.stats;
+  if (ringInfo.capture) f.capture = true;
 
   // ---- pokład hali
   plate(plates, l.footprint, -116, 116, M.floor);
@@ -180,6 +225,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
 
   // ---- ściany (K-7 buildWalls): bryły + detale od środka, bramy z ramami
   const solids = k7SolidList(l);
+  f.tag = 'walls';
   // bryły z własnym kształtem (zbiorniki paliwa) rysuje buildFuelPiping — w liście są ich obrysy
   for (const s of solids) if (!s.shape) f.box(s.x, s.y, s.z, s.w, s.h, s.d, M[s.mat], -s.angle);
   for (const e of l.edges) {
@@ -204,22 +250,35 @@ export function buildK7Scene(layout, ringInfo = {}) {
       }
     }
     if (gate) {
-      f.box(e.x, 673, e.z, gate.clearWidth + 155, 145, 174, M.dark, -e.angle);
+      // NADPROŻE nad otworem (600–745 K-7, nad płaszczyzną lotu) w zestawie FG: okręt przelatujący przez bramę jest
+      // POD nim (zgłoszenie użytkownika 2026-10-13 — w `bg` belka rysowała się pod kadłubem)
+      f.set = 'fg';
+      f.tag = 'gate-lintel';
+      f.place(gate.id === 'G-01' ? 'gate-lintel-main' : 'gate-lintel-side', e.x, 0, e.z, -e.angle);
+      f.box(e.x, 673, e.z, gate.clearWidth + K7_GATE_LINTEL.extra, 145, 174, M.dark, -e.angle);
       f.box(e.x, 635, e.z, gate.clearWidth, 22, 183, M.pale, -e.angle);
       f.box(e.x - e.nx * 91, 623, e.z - e.nz * 91, gate.clearWidth - 60, 12, 12, M.cyan, -e.angle);
+      for (let k = -1; k <= 1; k++) {
+        const u = k * gate.clearWidth * 0.3;
+        f.box(e.x + e.ux * u + e.nx * 92, 681, e.z + e.uz * u + e.nz * 92, 125, 31, 8, M.green, -e.angle);
+      }
+      f.set = 'bg';
+      f.tag = 'gate-jamb';
       for (const end of [gate.jamb, e.length - gate.jamb]) {
         const x = e.a[0] + e.ux * end;
         const z = e.a[1] + e.uz * end;
+        f.place('gate-jamb', x, 0, z, -e.angle);
         f.box(x, 304, z, 33, 598, 135, M.yellow, -e.angle);
         f.box(x - e.nx * 73, 315, z - e.nz * 73, 17, 434, 16, M.cyan, -e.angle);
         for (let y = 110; y < 580; y += 95) f.box(x + e.nx * 72, y, z + e.nz * 72, 27, 35, 9, M.black, -e.angle);
       }
-      for (let k = -1; k <= 1; k++) f.box(e.x + e.ux * k * gate.clearWidth * 0.3, 681, e.z + e.nz * 92, 125, 31, 8, M.green, -e.angle);
       label(labels, gate.id, e.x - e.nx * 140, e.z - e.nz * 140, 360, 88, LC.gate, gate.name, -e.angle);
+      f.tag = 'walls';
     }
   }
 
   // ---- pokład: stanowiska, pasy, strzałki (K-7 buildDeck)
+  f.tag = 'deck';
   const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
   const hubLabel = (text, x, z, width, depth, color, small, rotation) => label(labels, text, x, z, width, depth, color, small, rotation);
   recordBerths(f, hubLabel, lamps, l.berths, LC);
@@ -258,6 +317,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   }
 
   // ---- wyposażenie (K-7 buildEquipment)
+  f.tag = 'equipment';
   f.box(0, 331, 583, 340, 28, 400, M.pale);
   f.box(0, 227, 780, 267, 80, 16, M.glass);
   f.box(0, 124, 778, 260, 31, 11, M.yellow);
@@ -298,6 +358,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   }
 
   // ---- fartuchy przed bramami i boje podejścia (K-7 buildAprons)
+  f.tag = 'aprons';
   for (const gate of l.gates) {
     const half = gate.clearWidth / 2;
     const depth = gate.id === 'G-01' ? l.apronDepth : 710;
@@ -309,6 +370,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
     }
     if (gate.id !== 'G-01') label(labels, 'LOGISTICS', gate.x + gate.nx * 470, gate.z + gate.nz * 470, 750, 77, LC.logistics, '', -gate.angle);
   }
+  f.tag = 'approach-beacons';
   for (const side of [-1, 1]) {
     const x = side * (l.frontHalfWidth + 160);
     const z = l.frontZ - 90;
@@ -318,6 +380,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   }
   label(labels, 'K-7 / CAPITAL GATE', 0, l.frontZ + 510, 1420, 120, LC.capital);
   // ściany z zewnątrz (styl planety): pod płaszczyzną lotu, poza halą
+  f.tag = 'outer-walls';
   if (style.walls === 'ecumene') buildEcumeneWalls(f, l);
   else if (style.walls === 'fable') buildFableWalls(f, l);
 
@@ -342,6 +405,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   // KEPLER z dema ECUMENE), 'fable' (Jowisz: płyty, radiatory i hangary
   // z dema ringu Fable)
   f.set = 'roof';
+  f.tag = 'roof';
   plate(plates, l.footprint, 711, 82, M.dark, 'roof');
   if (style.roof === 'ecumene') buildEcumeneRoof(f, l);
   else if (style.roof === 'fable') buildFableRoof(f, l);
@@ -349,12 +413,14 @@ export function buildK7Scene(layout, ringInfo = {}) {
   f.set = 'bg';
 
   // ---- pylony od płyty portu na podłodze habitatu do ściany tylnej hali
+  f.tag = 'pylons';
   buildDockPylons(f, plates, labels, l, ringInfo, style);
 
   // ---- otwarte zatoki kompleksu (stanowiska w standardzie K-7)
+  f.tag = 'bays';
   for (const bay of ringInfo.bays || []) buildBay(f, plates, labels, lamps, bay.layout, bay.xf, LC);
 
-  return { sets: f.sets, plates, labels, groups, fuel, clamps, lamps, rig, beaconSlots };
+  return { sets: f.sets, plates, labels, groups, fuel, clamps, lamps, rig, beaconSlots, places: f.places };
 }
 
 // Soczewki świateł (walec: obudowa + szkło z kodem migania) i oprawy reflektorów (skrzynka + jasne czoło).
@@ -366,19 +432,23 @@ function recordLightRig(f, rig) {
   const lensMat = [M.black, M.red, M.green, M.cyan, M.cyan, M.white, M.warm, M.red];
   for (const b of rig.beacons) {
     f.set = b.set;
+    f.tag = 'beacon-housing';
     f.cyl(b.x, b.y - 7, b.z, b.r + 6, 10, M.dark);
+    f.tag = 'beacon-lens';
     f.blink = b.kind;
     f.blinkPhase = b.phase;
     f.blinkPeriod = b.period;
-    if (b.berthId) slots.push({ berthId: b.berthId, set: b.set, index: f.sets[b.set].cyl.length / K7_INSTANCE_STRIDE });
+    if (b.berthId && !f.skip?.has(f.tag)) slots.push({ berthId: b.berthId, set: b.set, index: f.sets[b.set].cyl.length / K7_INSTANCE_STRIDE });
     f.cyl(b.x, b.y, b.z, b.r, 8, lensMat[b.kind] ?? M.white);
     f.blink = 0;
     f.blinkPhase = 0;
     f.blinkPeriod = 0;
   }
   f.set = 'fg';
+  f.tag = 'spots';
   for (const s of rig.spots) {
     const yaw = s.housing.yaw;
+    f.place('spot', s.x, s.y, s.z, yaw);
     const fx = Math.sin(yaw);
     const fz = Math.cos(yaw);
     f.box(s.x - fx * 26, s.y + 6, s.z - fz * 26, 86, 46, 58, M.dark, yaw);
@@ -590,7 +660,7 @@ function recordBerths(f, lab, lamps, berths, LC = resolveHaloProfile('earth').po
     lab('STOP', stop.x, stop.z, Math.min(250, b.padBeam * 0.63), big ? 58 : 33, LC.stop, '', -(b.angle + Math.PI / 2));
     // lampka stanu stanowiska (kolor zmienia automat dokowania)
     const statusPoint = place(-b.padLength / 2 + 18, 0);
-    lamps.push({ berthId: b.id, index: f.sets.bg.box.length / 16 });
+    if (!f.skip?.has(f.tag)) lamps.push({ berthId: b.id, index: f.sets.bg.box.length / 16 });
     f.box(statusPoint.x, 4, statusPoint.z, 7, 3, b.padBeam * 0.69, b.occupied ? M.warm : M.green, -b.angle);
     // podejście z alei (stanowiska grzebieni: kurs wzdłuż x)
     if (b.approach && Math.abs(dx) > 0.5) {
@@ -711,11 +781,13 @@ function directionArrow(f, x, z, angle, length, mat) {
 function buildClampPads(f, b, addGroup) {
   const M = K7_MAT;
   const g = addGroup({ kind: 'clamps', berthId: b.id });
+  f.tag = 'clamps';
   const across = 470;
   for (const side of [-1, 1]) {
     for (const dz of [-760, -260, 260, 760]) {
       const x = b.x + side * across;
       const z = b.z + dz;
+      f.place('clamp-pad', x, 0, z, side < 0 ? Math.PI : 0, g);
       f.box(x, 3, z, 64, 6, 210, M.dark);
       f.box(x + side * 24, 4, z, 8, 3, 198, M.yellow);
       for (const ez of [-1, 1]) f.box(x, 6.5, z + ez * 98, 50, 3, 6, M.rail);
@@ -738,6 +810,8 @@ function buildFuelStation(f, b, a, addGroup) {
   const ix = -s;
   const x = a.x;
   const z = a.z;
+  f.tag = 'fuel-base';
+  f.place(s < 0 ? 'fuel-base-W' : 'fuel-base-E', x, 0, z, 0, 0);
   // cokół i kolumna
   f.box(x, F.plinth.h * 0.5, z, F.plinth.w, F.plinth.h, F.plinth.d, M.dark);
   f.box(x, F.plinth.h + 2, z, F.plinth.w - 18, 4, F.plinth.d - 18, M.steel);
@@ -774,6 +848,8 @@ function buildFuelStation(f, b, a, addGroup) {
   const L1 = F.link1;
   const gLink1 = addGroup({ kind: 'fuel-link1', berthId: b.id, side: s });
   f.group = gLink1;
+  f.tag = 'fuel-link1';
+  f.place('fuel-link1', 0, 0, 0, 0);
   f.cyl(0, L1.y, 0, S.r - 6, L1.h + 20, M.steel);
   f.box(L1.len * 0.5, L1.y, 0, L1.len, L1.h, L1.w, M.yellow);
   f.box(L1.len * 0.5 - 6, L1.y + L1.h * 0.5 + 1.5, 0, L1.len - 80, 3, L1.w * 0.34, M.dark);
@@ -783,6 +859,8 @@ function buildFuelStation(f, b, a, addGroup) {
   const L2 = F.link2;
   const gLink2 = addGroup({ kind: 'fuel-link2', berthId: b.id, side: s, parent: gLink1 });
   f.group = gLink2;
+  f.tag = 'fuel-link2';
+  f.place('fuel-link2', 0, 0, 0, 0);
   f.cyl(0, (F.elbow.y0 + F.elbow.y1) * 0.5, 0, F.elbow.r, F.elbow.y1 - F.elbow.y0, M.dark);
   f.cyl(0, F.elbow.y1 + 2, 0, F.elbow.r - 10, 5, M.yellow);
   f.box(L2.len * 0.5, L2.y, 0, L2.len, L2.h, L2.w, M.yellow);
@@ -793,13 +871,17 @@ function buildFuelStation(f, b, a, addGroup) {
   // ---- trzon wysięgnika (grupa w przegubie złączki; wysokości lokalne liniowo w górę)
   const gRod = addGroup({ kind: 'fuel-rod', berthId: b.id, side: s });
   f.group = gRod;
+  f.tag = 'fuel-rod';
   f.mode = 'lin';
+  f.place('fuel-rod', 0, 0, 0, 0);
   f.cyl(0, F.rod * 0.5, 0, 9, F.rod, M.rail);
   f.cyl(0, F.rod + 3, 0, 13, 7, M.dark);
   f.cyl(0, 2, 0, 15, 10, M.dark);
   // ---- złączka (grupa: położenie i oś z fizyki; przewód wchodzi z boku)
   const gCoupler = addGroup({ kind: 'coupler', berthId: b.id, side: s });
   f.group = gCoupler;
+  f.tag = 'fuel-coupler';
+  f.place('fuel-coupler', 0, 0, 0, 0);
   f.cyl(0, 0, 0, 17, 46, M.steel);
   f.cyl(0, 18, 0, 22, 10, M.yellow);
   f.cyl(0, -19, 0, 23, 10, M.rail);
@@ -840,8 +922,10 @@ function buildFuelPiping(f, l, rig) {
   const capital = l.berths.filter((b) => b.size === 'CAPITAL');
   f.set = 'bg';
   // ---- zbiorniki
+  f.tag = 'fuel-tanks';
   for (const t of k7FuelTanks(l)) {
     const half = t.len * 0.5;
+    f.place('fuel-tank', t.x, 0, t.z, 0);
     f.cyl(t.x, t.y, t.z, t.r, t.len, M.pale, ROT_X);
     for (const sx of [-1, 1]) {
       f.cyl(t.x + sx * (half + 8), t.y, t.z, t.r * 0.86, 16, M.pale, ROT_X);
@@ -862,8 +946,10 @@ function buildFuelPiping(f, l, rig) {
     valve(ox, H.y, H.retZ + 30, 9);
   }
   // ---- pompy (między zbiornikami stanowiska) z odejściem do kolektora
+  f.tag = 'fuel-pumps';
   for (const b of capital) {
     const pz = FF.tank.z - 30;
+    f.place('fuel-pump', b.x, 0, pz, 0);
     f.box(b.x, 7, pz, 92, 14, 150, M.dark);
     f.cyl(b.x, 38, pz - 26, 22, 46, M.teal);
     f.cyl(b.x, 40, pz + 34, 17, 64, M.yellow, ROT_Z);
@@ -871,6 +957,8 @@ function buildFuelPiping(f, l, rig) {
     pipeZ(b.x, 30, H.fuelZ + H.fuelR, pz - 48, 9, M.copper);
   }
   // ---- kolektory wzdłuż ściany tylnej (paliwo i powrót) na podporach, kołnierze
+  f.tag = 'fuel-headers';
+  f.place('fuel-headers', 0, 0, 0, 0);
   pipeX(-H.x, H.x, H.y, H.fuelZ, H.fuelR, M.copper);
   pipeX(-H.x, H.x, H.y - 8, H.retZ, H.retR, M.teal);
   for (const sx of [-1, 1]) {
@@ -886,12 +974,14 @@ function buildFuelPiping(f, l, rig) {
     f.ring(x + 130, H.y - 8, H.retZ, H.retR + 2.5, 0, M.rail, RING_X);
   }
   // ---- rurociągi wzdłuż stanowisk do słupków paliwowych (paliwo, azot od zewnątrz, powrót od stanowiska)
+  f.tag = 'fuel-rack';
   for (const b of capital) {
     for (const a of b.serviceAnchors) {
       const s = a.side;
       const x0 = a.x;
       const z0 = RK.z0;
       const z1 = a.z - K7_FUEL_STATION.plinth.d * 0.5 - 30;
+      f.place(s < 0 ? 'fuel-rack-W' : 'fuel-rack-E', x0, 0, 0, 0);
       pipeZ(x0, RK.y + 4, z0, z1, RK.fuelR, M.copper);
       pipeZ(x0 + s * RK.gap, RK.y, z0 + 40, z1, RK.gasR, M.pale);
       pipeZ(x0 - s * RK.gap, RK.y + 1, z0 + 40, z1, RK.retR, M.teal);
@@ -913,9 +1003,11 @@ function buildFuelPiping(f, l, rig) {
   }
   // ---- piony do zaworów upustowych na ścianie tylnej (gaz hali: zawory 'wall' z haloPortK7Lights.js)
   const faceZ = l.backZ + l.wallThickness * 0.5 + 24;
+  f.tag = 'fuel-vents';
   for (const v of rig?.vents || []) {
     if (v.kind !== 'wall') continue;
     const px = v.x + 40;
+    f.place('fuel-vent', px, 0, 0, 0);
     pipeY(px, faceZ, H.y, 412, 11, M.pale);
     f.ring(px, H.y + 40, faceZ, 13, 0, M.rail, RING_Y);
     f.box(px, 236, faceZ + 4, 36, 54, 30, M.dark);
@@ -926,6 +1018,8 @@ function buildFuelPiping(f, l, rig) {
   }
   // ---- rury instalacji na licu ściany tylnej (nad płaszczyzną lotu — przy ścianie, nie nad stanowiskami)
   f.set = 'fg';
+  f.tag = 'wall-pipes';
+  f.place('wall-pipes', 0, 0, 0, 0);
   const X = l.halfWidth - 300;
   pipeX(-X, X, 252, faceZ + 4, 10, M.teal);
   pipeX(-X, X, 284, faceZ + 14, 8, M.pale);

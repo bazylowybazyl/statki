@@ -52,6 +52,9 @@ import {
   buildSideThrusterArrays, sideThrusterPaletteFor, SIDE_THRUSTER_AXIS_Z, SIDE_THRUSTER_HALF_WIDTH
 } from './thrusters/sideThruster3D.js';
 import { resolveEntityHullProfileId } from '../../data/ships.js';
+// Modele broni z Blendera (GLB, weapons/weaponGlb.js): pliki idą w tle od importu (menu), gra czeka na nie
+// przed ekranem ładowania (prepareShipModels3D) — buildWeapon3D pyta rejestr synchronicznie przy pierwszym użyciu.
+import { loadWeaponGlbs, weaponGlbAutoLod, weaponGlbLodFor, weaponGlbFamilies } from './weapons/weaponGlb.js';
 
 const DEG = Math.PI / 180;
 
@@ -392,6 +395,9 @@ class TurretState {
     this.spin = 0;
     this.hasSpin = !!m.parts.spin;
     this.muzzleK = (m.trunnion?.[1] || 0) + (m.barrels?.[0]?.[1] || 0);
+    // LOD wg rozmiaru na ekranie (rodzina z GLB w trybie AUTO — weaponGlb.js): -1 — jeszcze nie wybrany
+    this.autoLod = weaponGlbAutoLod(family);
+    this.lod = -1;
     this.key = '';
     this.seen = 0;
     this.shown = 0; // klatka, w której wieża trafiła do partii (widoczna)
@@ -784,7 +790,9 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     const fam = WEAPON3D_FAMILY[rec.weaponId];
     if (!fam) continue;
     const z = zoomAt ? zoomAt(rec.wx, rec.wy) : zoom;
-    if ((Number(rec.spec?.r) || 10) * (Number(rec.scale) || 1) * z < TURRET3D_HIDE_PX) continue;
+    // promień sylwetki wieży na ekranie [px] (Turret2D spec.r × skala × zoom; kamery 3D — z perspektywy w miejscu wieży)
+    const rpx = (Number(rec.spec?.r) || 10) * (Number(rec.scale) || 1) * z;
+    if (rpx < TURRET3D_HIDE_PX) continue;
     let t = inst.turrets.get(rec.key);
     if (!t || t.weaponId !== rec.weaponId) {
       t = new TurretState(fam, rec.weaponId, tier);
@@ -824,7 +832,10 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     t.wy = rec.wy;
     t.muzzleZ = zb + t.muzzleK * K;
     t.shown = _frame;
-    B.family(fam).push(T);
+    // Rodzina z Blendera w trybie AUTO: z bliska LOD0, przy oddalaniu LOD1 (histereza — weaponGlbLodFor).
+    let lod = 0;
+    if (t.autoLod) { lod = weaponGlbLodFor(t.lod, rpx); t.lod = lod; }
+    B.family(fam, lod).push(T);
   }
   // Stan wież niewidzianych od 300 klatek (zdjęta broń, odcięta część) — przegląd co 64 klatki.
   if ((_frame & 63) === 0) {
@@ -986,6 +997,12 @@ export function warmupShipModels3D(ids = []) {
     // partia wież: układ atrybutów i stan jak siatki partii (receiveShadow — w kluczu programu three)
     const fam = WEAPON3D_FAMILY.railgun_mk2 || Object.values(WEAPON3D_FAMILY).find(Boolean);
     if (fam) out.push(turretBatchWarmHolder(turretMaterial(), fam));
+    // rodziny z Blendera w trybie AUTO: obie partie (LOD0 z bliska, LOD1 z daleka) — ten sam pipeline, ale geometria
+    // rodziny (do ~47 tys. wierzchołków LOD0 Yamato) liczona i wysłana tu, nie w klatce pierwszego zbliżenia
+    for (const f of weaponGlbFamilies().keys()) {
+      if (!weaponGlbAutoLod(f)) continue;
+      out.push(turretBatchWarmHolder(turretMaterial(), f, 0), turretBatchWarmHolder(turretMaterial(), f, 1));
+    }
   }
   // partia dysz SIDE (rysowana w każdym wariancie wyglądu — sprite'y i modele)
   out.push(thrusterBatchWarmHolder(nozzleMaterial()));
@@ -993,6 +1010,15 @@ export function warmupShipModels3D(ids = []) {
 }
 
 let _warmIds = () => [];
+const _glbLoad = loadWeaponGlbs();
+
+/**
+ * Zasoby modeli przed startem gry (startGame, przed pierwszą klatką i rozgrzewką ekranu ładowania): pliki GLB broni.
+ * Nie odrzuca; po `timeoutMs` gra rusza bez czekania (rodziny bez pliku — budowniczy weapons3D.js).
+ */
+export function prepareShipModels3D({ timeoutMs = 5000 } = {}) {
+  return Promise.race([_glbLoad, new Promise((r) => setTimeout(() => r({ timeout: true }), timeoutMs))]);
+}
 export function setShipModels3DWarmIds(fn) { if (typeof fn === 'function') _warmIds = fn; }
 Core3D.warmup?.add({ name: 'modele 3D statków i broni', objects: () => warmupShipModels3D(_warmIds()), layer: 0, phase: 'loading' });
 Core3D.warmup?.add({ name: 'modele 3D statków i broni (kamery 3D)', objects: () => warmupShipModels3D(_warmIds()), layer: 0, ortho: false, phase: 'loading' });

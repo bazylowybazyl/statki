@@ -409,6 +409,8 @@ class RocketSystem3D {
                 shooter:        null,
                 // Strona myśliwca-strzelca (friendlyFire.js: −1 nie myśliwiec) — shooter zerowany po wyrzucie.
                 fighterSide:    -1,
+                // Rakieta gracza 1 (znacznik trafienia na celowniku — src/ui/hitMarker.js).
+                byPlayer:       false,
                 hostile:        false
             });
         }
@@ -642,6 +644,7 @@ class RocketSystem3D {
         r.seed = seed;
         r.shooter = launch ? (launch.shooter || null) : null;
         r.fighterSide = fighterSideOf(r.shooter, typeof window !== "undefined" ? window.ship : null);
+        r.byPlayer = !!r.shooter && typeof window !== "undefined" && r.shooter === window.ship;
         r.hostile = colorTheme === "red";
 
         r.target          = target;
@@ -1339,12 +1342,13 @@ class RocketSystem3D {
         const theme = r.hostile ? "red" : "blue";
         const fvx = r.frameVel.x;
         const fvz = r.frameVel.z;
+        const byPlayer = r.byPlayer;
         // Nosiciel znika przed potomnymi (zwalnia slot, liczniki bez obrażeń).
         this._deactivate(r);
         for (let k = 0; k < n; k++) {
             L.index = k;
             const c = this.fire(x, z, target, damage, sub, theme, fvx, fvz, L);
-            if (c) c.bornFrame = frameNo;
+            if (c) { c.bornFrame = frameNo; c.byPlayer = byPlayer; }
         }
     }
 
@@ -1403,7 +1407,7 @@ class RocketSystem3D {
         if (isPlayer) {
             if (applyPlayer) applyPlayer(dmg, dmgOpts);
         } else {
-            if (applyNpc) applyNpc(target, dmg, "rocket", dmgOpts);
+            if (applyNpc) applyNpc(target, dmg, "rocket", dmgOpts, r.byPlayer);
         }
         r.didImpactDamage = true;
     }
@@ -1458,7 +1462,7 @@ class RocketSystem3D {
             const dist = Math.sqrt(distSq);
             const falloff = THREE.MathUtils.clamp(1 - (dist / Math.max(1, effectiveRadius)), 0, 1);
             const dmg = damageBase * (0.35 + falloff * 0.65);
-            if (dmg > 1 && applyNpc) applyNpc(npc, dmg, "rocket");
+            if (dmg > 1 && applyNpc) applyNpc(npc, dmg, "rocket", undefined, r.byPlayer);
         }
     }
 

@@ -569,6 +569,43 @@ export function k7SolidList(l) {
   return out;
 }
 
+// POLA SIŁOWE BRAM (prośba użytkownika 2026-10-13: „pola siłowe, o które rozbije się dym z hali”): zasłona w otworze
+// każdej bramy (G-01, G-02, G-03) od pokładu do nadproża. To NIE bryła kolizji — statki przez nią przelatują; gaz nie:
+// pył i para hali rozbijają się o nią i wirują jak przy ścianie, gaz z zewnątrz nie wchodzi. Jedno źródło dla rastru
+// pyłu hali (hallDustLayout.rasterizeHallCells), przeszkód gazu wybuchów (src/game/gasObstacleInput.js) i obrazu pola
+// (gasFieldLayer.js). Pudło jak w k7SolidList (środek, w wzdłuż kąta, d w poprzek — grubość muru) + oś bramy a → b
+// i normalna na ZEWNĄTRZ hali (n krawędzi).
+export const K7_FORCE_FIELD = Object.freeze({
+  overlap: 30,   // zakład w ościeżnice [j.] — rastr bez szczeliny przy murze
+  y0: 0,         // wysokości K-7: pokład …
+  y1: 600        // … spód nadproża bramy (K7_GATE_LINTEL)
+});
+
+// NADPROŻE bramy — belka nad otworem (haloPortK7Build: zestaw FG, nad płaszczyzną lotu; belka 174 j. × otwór + extra,
+// listwa 183 j.). Obrys z góry (k7GateLintelList) — kanwa 2D i światła FG nie znają głębi: wieże kanwy, lampy
+// pozycyjne i okna mostków okrętu w bramie pod nadprożem się nie rysują (src/game/k7GateLintels.js).
+export const K7_GATE_LINTEL = Object.freeze({ extra: 155, depth: 183, y0: 600, y1: 746 });
+export function k7GateLintelList(l) {
+  const G = K7_GATE_LINTEL;
+  return l.gates.map((g) => Object.freeze({
+    gateId: g.id, x: g.x, z: g.z, ux: g.ux, uz: g.uz, nx: g.nx, nz: g.nz,
+    hl: (g.clearWidth + G.extra) / 2, hd: G.depth / 2
+  }));
+}
+export function k7ForceFieldList(l) {
+  const F = K7_FORCE_FIELD;
+  return l.gates.map((g) => {
+    const half = g.clearWidth / 2;
+    return Object.freeze({
+      id: 'FORCE FIELD ' + g.id, gateId: g.id,
+      x: g.x, z: g.z, w: g.clearWidth + 2 * F.overlap, d: l.wallThickness, angle: g.angle,
+      y: (F.y0 + F.y1) / 2, h: F.y1 - F.y0,
+      ax: g.x - g.ux * half, az: g.z - g.uz * half, bx: g.x + g.ux * half, bz: g.z + g.uz * half,
+      ux: g.ux, uz: g.uz, nx: g.nx, nz: g.nz, length: g.clearWidth, half: l.wallThickness / 2
+    });
+  });
+}
+
 export function buildK7Collision(l) {
   const col = new K7CollisionWorld();
   for (const s of k7SolidList(l)) col.addBox(s.id, s.x, s.z, s.w, s.d, s.angle, s.y - s.h / 2, s.y + s.h / 2);

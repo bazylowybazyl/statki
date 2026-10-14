@@ -3,7 +3,7 @@
 // (scripts/webgpu/harness-strona.js): każda klatka = 1/60 s, zrzut na zatrzymanej klatce — kadry powtarzalne.
 //   node scripts/webgpu/dok-k7-demo.mjs [--przypadki odlacz@stanowisko,odlacz@3d-ramie,podlacz@zblizenie,hala,zbiorniki]
 //        [--klatki 0,0.9,1.45,1.6,2.1,2.8,3.6,4.6,6.5] [--out .tmp/dok-k7-demo] [--rozmiar 1600x900] [--port 5296]
-//        [--tune klucz=wartość,…] (K7FuelTune) [--noc] [--koszt]
+//        [--tune klucz=wartość,…] (K7FuelTune) [--noc] [--koszt] [--query k7=stara] (dodatkowe parametry adresu)
 // Przypadek: sekwencja@widok (sekwencja: odlacz | podlacz | awaryjnie; widok z VIEWS dema), lot@widok (z podpiętymi
 // przewodami gracz trzyma W — automat stanowiska awaryjnie odpina, odlatujący kadłub ciągnie przewody) albo sam
 // widok (hala, zbiorniki, stanowisko, …) — jeden kadr.
@@ -35,7 +35,7 @@ const rows = [];
 
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  await cdp.send('Page.navigate', { url: `${base}/dema/dok-k7-webgpu.html?shot=1&pokaz=0${args.noc ? '&noc=1' : ''}` });
+  await cdp.send('Page.navigate', { url: `${base}/dema/dok-k7-webgpu.html?shot=1&pokaz=0${args.noc ? '&noc=1' : ''}${args.query ? `&${args.query}` : ''}` });
   if (!await waitFor(cdp, '!!(window.__dok && window.__dok.ready && window.__harness)', 240000, 400)) throw new Error('demo nie wstało');
   // ładowanie (tekstury, rozgrzewka): prawdziwe klatki chwilę, potem zegar zatrzymany
   await ev('(() => { window.__harness.clock.mode = "real"; return true; })()');

@@ -21,6 +21,7 @@
 // Oś lufy w geometrii `barrel` / `spin`: X od czopu, y = z = 0.
 
 import { MeshBuilder3D, SHIP3D_MAT as M, octPoly, rectPoly, ngonPoly } from '../meshBuilder3D.js';
+import { weaponGlbParts, WeaponGlbPart } from './weaponGlb.js';
 
 // Skale z turret2D.js (SCALE_BY_SIZE, CATEGORY_TRIM) i ships.js (WEAPON_TIER_SCALE) —
 // te same liczby, żeby wieże 3D miały rozmiar wież gry.
@@ -567,22 +568,38 @@ const CACHE = new Map();
 
 /**
  * Model broni (geometria części + układ). Wynik jest współdzielony (cache po rodzinie):
- * { family, label, parts: { ring, housing, barrel, spin } (MeshBuilder3D), trunnion, barrels,
- *   barrelShift, muzzleX, recoil, spin, pitch: [min, max] (°), launcher, kind, light }.
+ * { family, label, parts: { ring, housing, barrel, spin } (MeshBuilder3D albo WeaponGlbPart — ten sam interfejs:
+ *   build / toGeometry / vcount), source: 'builder' | 'glb', trunnion, barrels, barrelShift, muzzleX, recoil, spin,
+ *   pitch: [min, max] (°), launcher, kind, light }.
+ * Części z GLB (weaponGlb.js — model z Blendera, gdy rodzina jest aktywna (WEAPON_GLB_GAME / ?bronieGlb=) i plik doszedł przed
+ * pierwszym użyciem rodziny), UKŁAD zawsze z FAMILIES niżej. o.builder = true — zawsze budowniczy (A/B, testy).
+ * o.lod — poziom szczegółów części z GLB (0 / 1; rodzina w trybie AUTO — partia LOD0 i LOD1 wg rozmiaru wieży na
+ * ekranie, shipModels3DGame.syncTurrets); budowniczy ma jeden poziom.
  * Jednostki LOKALNE wieży — mnożyć przez weapon3DScale(def).
  */
 export function buildWeapon3D(family, o = {}) {
-  const key = `${family}|${o.uvScale ?? 1}`;
-  if (CACHE.has(key)) return CACHE.get(key);
   const fn = FAMILIES[family];
   if (!fn) throw new Error(`nieznana rodzina broni 3D: ${family}`);
-  const mk = () => new MeshBuilder3D({ uvScale: o.uvScale ?? 1 });
+  const uvScale = o.uvScale ?? 1;
+  const lod = o.lod > 0 ? 1 : 0;
+  const glb = o.builder ? null : weaponGlbParts(family, lod);
+  const key = `${family}|${uvScale}|${glb ? `glb@${lod}` : 'b'}`;
+  // trafienie tylko dla tych samych części GLB (rejestr może dostać inny plik / LOD — testy, A/B w jednej stronie)
+  const hit = CACHE.get(key);
+  if (hit && hit.glb === glb) return hit.model;
+  const mk = () => new MeshBuilder3D({ uvScale });
   const P = { R: mk(), H: mk(), L: mk(), S: mk() };
-  const lay = fn(P);
+  const lay = fn(P); // układ (i części budowniczego — przy GLB tylko układ)
+  const gp = (d) => (d ? new WeaponGlbPart(d, uvScale) : null);
+  const parts = glb
+    ? { ring: gp(glb.ring), housing: gp(glb.housing), barrel: gp(glb.barrel), spin: gp(glb.spin) }
+    : { ring: P.R, housing: P.H, barrel: P.L, spin: P.S.vcount() > 0 ? P.S : null };
   const model = Object.freeze({
     family,
     label: WEAPON3D_FAMILY_LABEL[family] || family,
-    parts: { ring: P.R, housing: P.H, barrel: P.L, spin: P.S.vcount() > 0 ? P.S : null },
+    parts,
+    source: glb ? 'glb' : 'builder',
+    lod: glb ? lod : 0,
     trunnion: lay.trunnion,
     barrels: lay.barrels,
     barrelShift: lay.barrelShift || null,
@@ -595,7 +612,7 @@ export function buildWeapon3D(family, o = {}) {
     kind: lay.kind || 'ballistic',
     light: lay.light || 'cyan'
   });
-  CACHE.set(key, model);
+  CACHE.set(key, { model, glb });
   return model;
 }
 

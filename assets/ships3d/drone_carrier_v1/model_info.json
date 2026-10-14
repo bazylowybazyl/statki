@@ -1,0 +1,19 @@
+{
+  "source": "scripts/blender/drone_carrier.py",
+  "triangles": 64452,
+  "mesh_objects": 59,
+  "attachments": {
+    "drone_exit": 2,
+    "engine_main": 5,
+    "bridge": 1,
+    "engine_side": 4,
+    "cargo": 1,
+    "hardpoint_main": 16,
+    "reactor": 1,
+    "hardpoint_special": 4
+  },
+  "axes_blender": "+X bow, +Z up",
+  "axes_gltf": "+X bow, +Y up",
+  "game_integration": false,
+  "notes": "Separate hull parts and empty weapon attachment nodes; no weapons. Scale is provisional."
+}

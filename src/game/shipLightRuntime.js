@@ -25,6 +25,13 @@ export const MAX_EXTERNAL_ROAD_SHADER_LIGHTS = 8;
 export const MAX_EXTERNAL_OMNI_SHADER_LIGHTS = 4;
 export const MAX_NAV_LIGHT_SPRITES = 512;
 
+// Zasłanianie lamp pozycyjnych (billboardy FG) obrazem NAD okrętem, który nie zna głębi — dla wszystkich okrętów
+// (nadproże bramy hali K-7 nad okrętem w bramie — src/game/k7GateLintels.js): (x, y) świata gry → true = zasłonięta.
+let _positionLightOcclusion = null;
+export function setPositionLightOcclusion(fn) {
+  _positionLightOcclusion = typeof fn === 'function' ? fn : null;
+}
+
 // Reflektory otoczenia generowane z obrysu lamp, gdy kadłub nie ma własnych
 // (brak lamp `flood` i reflektorów `road` skierowanych w bok lub do tyłu).
 // Progi w j. świata długości kadłuba: rufa od małych okrętów, jedna para burt
@@ -917,6 +924,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
       if (cloakVis <= 0.01) continue;
       // Lampa zasłonięta obrazem nad okrętem (fregata zwiadu nad Atlasem — `__lightOcclude(x, y)` z gry; lampy są na FG).
       if (entity.__lightOcclude && entity.__lightOcclude(wx, wy)) continue;
+      if (_positionLightOcclusion !== null && _positionLightOcclusion(wx, wy)) continue;
 
       out.push({
         x: round2(wx),

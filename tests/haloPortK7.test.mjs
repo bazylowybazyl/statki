@@ -24,6 +24,7 @@ import {
   k7Frame,
   k7HeightToZ,
   k7HubToWorld,
+  k7SolidList,
   k7WorldToHub
 } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { buildK7Scene } from '../src/3d/haloRing/haloPortK7Build.js';
@@ -260,4 +261,57 @@ test('scena K-7: nic nad kamerą gry przy zoomie 3,2, pokład pod płaszczyzną 
   assert.ok(s.labels.length > 50 && s.fuel.length === 8 && s.clamps.length === 4, 'słupki paliwowe z ramionami i zamki pola');
   assert.ok(!s.groups.some((g) => /bridge|trolley|spreader|jaw|cables/.test(g.kind)), 'bez suwnic');
   assert.ok(s.groups.length + 1 <= 40, `grupy ruchome ${s.groups.length} (MAX_GROUPS 40)`);
+});
+
+test('scena K-7: nad otworami bram (nad płaszczyzną lotu) tylko zestaw FG — okręt w bramie jest POD nadprożem', () => {
+  // zgłoszenie użytkownika 2026-10-13: nadproże bramy w `bg` rysowało się pod kadłubem przelatującego okrętu
+  const l = createK7Layout();
+  const f = k7Frame(createHaloRingLayout({}));
+  const s = buildK7Scene(l, { floorZ: f.floorZ, rimZ: f.rimZ });
+  const rot = (q, v) => {
+    const [x, y, z, w] = q;
+    const tx = 2 * (y * v[2] - z * v[1]);
+    const ty = 2 * (z * v[0] - x * v[2]);
+    const tz = 2 * (x * v[1] - y * v[0]);
+    return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
+  };
+  // bryła nad płaszczyzną lotu (cała) i jej narożniki w poziomie
+  const above = (data, i, kind) => {
+    const ext = kind === 'box' ? 0.5 : 1;
+    const q = [data[i + 8], data[i + 9], data[i + 10], data[i + 11]];
+    let zMin = Infinity;
+    const pts = [];
+    for (const cx of [-ext, ext]) for (const cy of [-0.5, 0.5]) for (const cz of [-ext, ext]) {
+      const v = rot(q, [cx * data[i + 4], cy * data[i + 5], cz * data[i + 6]]);
+      zMin = Math.min(zMin, data[i + 1] + v[1] * data[i + 3]);
+      pts.push([data[i] + v[0], data[i + 2] + v[2]]);
+    }
+    return zMin > 0 ? pts : null;
+  };
+  // bryła na przeszkodzie (np. czapa boi podejścia przy narożniku bramy G-02 / G-03) — okręt i tak tam nie wleci
+  const solids = k7SolidList(l);
+  const onSolid = (x, z) => solids.some((o) => {
+    const ca = Math.cos(o.angle || 0), sa = Math.sin(o.angle || 0);
+    const dx = x - o.x, dz = z - o.z;
+    return Math.abs(dx * ca + dz * sa) <= o.w / 2 && Math.abs(-dx * sa + dz * ca) <= o.d / 2;
+  });
+  for (const g of l.gates) {
+    // korytarz przelotu: otwór bramy bez ościeżnic, pas ±150 j. wokół osi muru
+    const inGate = (x, z) => Math.abs((x - g.x) * g.ux + (z - g.z) * g.uz) < g.clearWidth / 2 - 60 &&
+      Math.abs((x - g.x) * g.nx + (z - g.z) * g.nz) < 150;
+    const hits = { bg: [], fg: 0 };
+    for (const setName of ['bg', 'fg']) {
+      for (const [kind, data] of Object.entries(s.sets[setName])) {
+        for (let i = 0; i < data.length; i += 16) {
+          if (data[i + 12] !== 0) continue;   // grupy ruchome (ramiona paliwowe) — z dala od bram
+          const pts = above(data, i, kind);
+          if (!pts || !pts.some(([x, z]) => inGate(x, z)) || onSolid(data[i], data[i + 2])) continue;
+          if (setName === 'bg') hits.bg.push(`${kind}#${i / 16}`);
+          else hits.fg++;
+        }
+      }
+    }
+    assert.deepEqual(hits.bg, [], `${g.id}: bryły nad płaszczyzną lotu nad otworem w zestawie bg`);
+    assert.ok(hits.fg >= 3, `${g.id}: nadproże w FG (${hits.fg} brył)`);
+  }
 });

@@ -170,7 +170,7 @@ test('przebicie: pocisk przez dziurę omija tarczę do końca lotu i trafia panc
   // Ani blokada tarczy (failsafe kadłuba pod tarczą), ani brak gałęzi kadłuba.
   assert.match(html, /if \(shieldActive && \(didHitShield \|\| \(hexHit && !hitBreach\)\)\) \{/);
   assert.match(html, /\} else if \(\(!shieldActive \|\| hitBreach\) && hexHit\) \{/);
-  assert.match(html, /applyDamageToNPC\(hitNPC, npcDamage \* entryK\.hp, b\.type, hitBreach \? SHIELD_BREACH_DAMAGE_OPTS : undefined\)/);
+  assert.match(html, /applyDamageToNPC\(hitNPC, npcDamage \* entryK\.hp, b\.type, hitBreach \? SHIELD_BREACH_DAMAGE_OPTS : undefined[,)]/);
   // Wiązki i rakiety: ta sama dziura.
   assert.match(html, /out\.breach = hitBreach;/);
   const rockets = read('src/effects3d/rocketSystem3D.js');

@@ -6,7 +6,7 @@
 // (GAS_OBST_IN), reżyser wybuchów (src/3d/explosions/explosionFx.js → src/3d/gas/gasGrid.js) czyta tylko tę tablicę.
 //
 //   STATYKA (budowle w płaszczyźnie gry): pudła — ściany i bryły hal K-7 przy kamerze (k7SolidList: te same co kolizje
-//     i pył hal) i bryły trafień budowli misji (suchy dok, baza piratów — `hitShapes`; wielokąty inne niż czworokąty:
+//     i pył hal; POLA SIŁOWE w otworach bram — k7ForceFieldList: gaz hali nie wylatuje, z zewnątrz nie wchodzi) i bryły trafień budowli misji (suchy dok, baza piratów — `hitShapes`; wielokąty inne niż czworokąty:
 //     wycinki pierścienia bębna, koła szybu i zbiorników — kilka pudeł, putGasObstaclePoly) bez kawałków, których
 //     nie ma na miejscu; kawałek RUSZONY (ciało silnika belek z ranami, wyrwami — taran bramy) — obrys jego ciał
 //     (maska z żywych węzłów, src/game/hullFootprint.js). Blok statyki przepisywany tylko przy zmianie (wersja rośnie
@@ -19,7 +19,7 @@
 import { hullFootprint, hullFootprintPeek } from './hullFootprint.js';
 import { hallToGameAffine, gameToHall } from './hallDustInput.js';
 import { hallDustDomain, hallDomainDistance } from '../3d/gasField/hallDustLayout.js';
-import { createK7Layout, k7SolidList } from '../3d/haloRing/haloPortK7Layout.js';
+import { createK7Layout, k7ForceFieldList, k7SolidList } from '../3d/haloRing/haloPortK7Layout.js';
 import { GAS_HULL_MASK, GAS_HULL_REC, GAS_OBST_IN } from '../3d/gas/gasObstacleLayout.js';
 
 // Układ tablicy mieszka we wspólnym, czystym module (czyta go reżyser wybuchów).
@@ -54,7 +54,8 @@ export function createGasObstacleInput() {
 }
 
 const LAYOUT = createK7Layout();
-const K7_SOLIDS = k7SolidList(LAYOUT);
+// bryły hali i pola siłowe bram (dla gazu jak mur; statki przez pola przelatują)
+const K7_SOLIDS = [...k7SolidList(LAYOUT), ...k7ForceFieldList(LAYOUT)];
 const HALL_DOMAIN = hallDustDomain(LAYOUT);
 
 function num(v, d = 0) {

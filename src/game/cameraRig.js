@@ -70,6 +70,17 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   weaponShakeScale: 0.12, // wstrząs strzałów (WeaponFx, window.__weapon3dCameraShake) → mag × to px
   shakeMaxPx: 16,
   shakeHz: 12,
+  // Kopnięcie kadru od ciężkich strzałów gracza (2026-10-13, „feel strzelania”): sprężyna w px ekranu, impuls
+  // WZDŁUŻ strzału — okręt na ekranie odskakuje w tył jak od odrzutu, kadr wraca z lekkim przerzutem. Tylko
+  // grupa w ręku (wieże na auto mają wstrząs × 0,1 — poniżej progu) i broń ze `shake` ≥ weaponKickMin
+  // (src/data/weapons.js: armata 6,5, Lanca L 9, Valkyrie 12, Yamato 20, Hexlance 14). 0 w weaponKickPerShake wyłącza.
+  weaponKickMin: 5,         // wstrząs broni (pole shake), od którego strzał kopie kadrem
+  weaponKickPerShake: 0.9,  // px szczytu kopnięcia na jednostkę shake ponad próg (Yamato: ~13 px)
+  weaponKickShotMaxPx: 14,  // sufit jednego strzału
+  weaponKickMaxPx: 16,      // sufit wychylenia (salwa 6 wież Yamato sumuje się do niego)
+  weaponKickHz: 5,          // częstotliwość sprężyny
+  weaponKickDamping: 0.55,  // tłumienie ζ (< 1; im bliżej 1, tym mniejszy przerzut)
+  weaponKickSign: 1,        // 1 — kadr w stronę strzału (okręt na ekranie w tył); −1 — odwrotnie
   // Zoom startowy: kadłub zajmuje taki ułamek szerokości ekranu
   hullScreenFraction: 0.2,
   // Kop warpa (demo „Nurt”, createTripScene — liczby dema). 0 / 1 wyłącza człon.
@@ -104,6 +115,13 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   weaponShakeScale: [0, 2],
   shakeMaxPx: [0, 80],
   shakeHz: [1, 40],
+  weaponKickMin: [0, 40],
+  weaponKickPerShake: [0, 4],
+  weaponKickShotMaxPx: [0, 60],
+  weaponKickMaxPx: [0, 80],
+  weaponKickHz: [1, 20],
+  weaponKickDamping: [0.1, 0.95],
+  weaponKickSign: [-1, 1],
   hullScreenFraction: [0.03, 0.9],
   warpKickPx: [0, 400],
   warpZoomOut: [0.3, 1],
@@ -533,6 +551,62 @@ export function cameraShakeAmplitudePx(cameraMag, weaponMag, tune = CAMERA_RIG_D
     + Math.max(0, finite(weaponMag, 0)) * tune.weaponShakeScale
     + Math.max(0, finite(extraPx, 0));
   return Math.min(Math.max(0, tune.shakeMaxPx), a);
+}
+
+// Kopnięcie kadru od strzału (sprężyna tłumiona w px ekranu): stan { x, y, vx, vy }.
+const KICK_PEAK_INV = 1.92;
+export function createCameraKick() {
+  return { x: 0, y: 0, vx: 0, vy: 0 };
+}
+
+// Strzał gracza w kierunku (dirX, dirY) [świat = ekran, y w dół] bronią o wstrząsie `shake` (pole broni × ułamek
+// grupy — wieże na auto ściszone) i przeładowaniu `cooldown` [s]: impuls prędkości, którego szczyt wychylenia ≈
+// kopnięcie strzału. Szybkostrzelne (Goliath, Plasma Gatling) kopią słabiej — × clamp(cooldown / 1 s, ¼, 1), inaczej
+// seria trzymałaby kadr przesunięty. Zwraca px.
+export function addCameraKick(kick, dirX, dirY, shake, tune = CAMERA_RIG_DEFAULTS, cooldown = 1) {
+  const rate = Math.min(1, Math.max(0.25, finite(cooldown, 1)));
+  const px = Math.min(Math.max(0, finite(tune.weaponKickShotMaxPx, 14)),
+    (finite(shake, 0) - finite(tune.weaponKickMin, 5)) * Math.max(0, finite(tune.weaponKickPerShake, 0))) * rate;
+  if (!(px > 0)) return 0;
+  const l = Math.sqrt(dirX * dirX + dirY * dirY);
+  if (!(l > 1e-9)) return 0;
+  const w = 2 * Math.PI * Math.max(0.5, finite(tune.weaponKickHz, 5));
+  // Szczyt odpowiedzi sprężyny na impuls v0 to v0/ω · e^(−ζ·atan(√(1−ζ²)/ζ)/√(1−ζ²)) ≈ 0,52 · v0/ω przy ζ = 0,55.
+  const v = px * w * KICK_PEAK_INV * (finite(tune.weaponKickSign, 1) < 0 ? -1 : 1) / l;
+  kick.vx += dirX * v;
+  kick.vy += dirY * v;
+  // Salwa wielu wież: prędkość nie większa niż ta, która dociągnęłaby do sufitu wychylenia.
+  const vmax = Math.max(0, finite(tune.weaponKickMaxPx, 16)) * w * KICK_PEAK_INV;
+  const vl = Math.sqrt(kick.vx * kick.vx + kick.vy * kick.vy);
+  if (vl > vmax) { kick.vx *= vmax / vl; kick.vy *= vmax / vl; }
+  return px;
+}
+
+// Krok sprężyny — rozwiązanie dokładne oscylatora tłumionego (ζ < 1), więc ten sam ruch przy każdym FPS;
+// wychylenie z sufitem. Zwraca stan.
+export function stepCameraKick(kick, dt, tune = CAMERA_RIG_DEFAULTS) {
+  const h = Math.min(0.1, Math.max(0, finite(dt, 0)));
+  if (h <= 0 || (kick.x === 0 && kick.y === 0 && kick.vx === 0 && kick.vy === 0)) return kick;
+  const w = 2 * Math.PI * Math.max(0.5, finite(tune.weaponKickHz, 5));
+  const z = Math.min(0.95, Math.max(0.05, finite(tune.weaponKickDamping, 0.55)));
+  const a = z * w;
+  const wd = w * Math.sqrt(1 - z * z);
+  const e = Math.exp(-a * h);
+  const c = Math.cos(wd * h);
+  const s = Math.sin(wd * h);
+  const max = Math.max(0, finite(tune.weaponKickMaxPx, 16));
+  const bx = (kick.vx + a * kick.x) / wd;
+  const by = (kick.vy + a * kick.y) / wd;
+  const x = e * (kick.x * c + bx * s);
+  const y = e * (kick.y * c + by * s);
+  kick.vx = e * (kick.vx * c - (wd * kick.x + a * bx) * s);
+  kick.vy = e * (kick.vy * c - (wd * kick.y + a * by) * s);
+  kick.x = x;
+  kick.y = y;
+  const r = Math.sqrt(kick.x * kick.x + kick.y * kick.y);
+  if (r > max) { kick.x *= max / r; kick.y *= max / r; }
+  if (r < 0.02 && Math.abs(kick.vx) + Math.abs(kick.vy) < 0.5) { kick.x = 0; kick.y = 0; kick.vx = 0; kick.vy = 0; }
+  return kick;
 }
 
 // Gładki szum wstrząsu (dwie sinusoidy na oś o niewspółmiernych częstotliwościach):

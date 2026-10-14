@@ -218,6 +218,7 @@ function fireSingleMount(ship, cannonIndex) {
     // `recoil: 0` (lufa wtopiona w kil, bez wieżyczki) i `shake: 14` (dawniej 14 wpisane tutaj).
     superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + weaponRecoil(HEXLANCE_DEF));
     if (window.camera && window.camera.addShake) window.camera.addShake(weaponShake(HEXLANCE_DEF), fx3d ? 0.4 : 0.25);
+    if (ship === window.ship && WeaponFx.onPlayerShot) WeaponFx.onPlayerShot(m.dir.x, m.dir.y, weaponShake(HEXLANCE_DEF), HEXLANCE_DEF.cooldown || 1);
     window.dispatchEvent(new CustomEvent('game_weapon_fired', {
         detail: { weaponId: 'hexlance', x: m.x, y: m.y }
     }));

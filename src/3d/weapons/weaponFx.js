@@ -76,6 +76,24 @@ export const KERF_PER_CALL = 16;
 const KERF_DEMO_HZ = 240;
 /** Zapas kadru dla efektów pocisków (ułamek kadru siatki Core3D.fx.view). */
 const VIEW_PAD = 600;
+/**
+ * Wygląd pocisków w locie (2026-10-13, zgłoszenie „feel strzelania”; strojenie na żywo
+ * `window.ProjectileLook`, A/B: scripts/webgpu/lot-pocisku-gra.mjs --bron salwa):
+ *  - shutter — MIGAWKA: smuga nie krótsza niż droga pocisku względem strzelca w czasie klatki ×
+ *    shutter (0 — wył.). Szybki pocisk (7–15 tys. j/s → 120–250 j. na klatkę przy 60 kl/s) bywał
+ *    krótszy niż skok między klatkami i migał zamiast lecieć. Nie dłuższa niż droga od wylotu (bez
+ *    ogona za lufą); czas klatki wygładzony (_frameDt), sufit 1/30 s.
+ *  - minPx — najmniejsza szerokość pocisku na ekranie [px] wg rozmiaru broni (przy domyślnym kadrze
+ *    ~0,18 pociski miały 1–3 px), najwyżej × minGrow naturalnej szerokości — przy dalekim zoomie
+ *    pocisk nie puchnie w kulę (czytelność daje tam rdzeń pikselowy).
+ *  - pixelCore — siła rdzenia pikselowego w shaderze (projectiles.js; 0 — wył.).
+ */
+export const PROJECTILE_LOOK = {
+  shutter: 1.15,
+  minPx: { S: 2.5, M: 3.5, L: 4.5, Capital: 6 },
+  minGrow: 2.5,
+  pixelCore: 1
+};
 
 // Skala wieżyczki (turret2D.js) — dla strzału bez rekordu wieżyczki.
 const HDR_FALLBACK = [1, 1, 1];
@@ -142,7 +160,7 @@ function createBulletState() {
   return {
     bullet: null, active: false, frame: -1, family: null, recipe: null, conf: null, trail: null,
     flyAcc: 0, lastX: 0, lastY: 0, drawX: 0, drawY: 0, rvx: 0, rvy: 0, power: 1, seed: 0,
-    wScale: 1, endX: 0, endY: 0, endSet: false, clock: CLOCK_SIM, ivx: 0, ivy: 0, visible: false
+    wScale: 1, minW: 0, endX: 0, endY: 0, endSet: false, clock: CLOCK_SIM, ivx: 0, ivy: 0, visible: false
   };
 }
 function createAfter() {
@@ -200,6 +218,8 @@ export const WeaponFx = {
   _busBound: false,
   _frame: 0,
   _lastSyncMs: 0,
+  _frameDt: 1 / 60,   // czas klatki renderu, wygładzony (migawka pocisków)
+  _syncZoom: 1,       // zoom kadru tej klatki (najmniejsza szerokość pocisku na ekranie)
   _muzzleBudget: MUZZLE_PER_FRAME,
   _impactBudget: IMPACT_PER_FRAME,
   _weaponShake: 0,
@@ -470,6 +490,12 @@ export const WeaponFx = {
   muzzleZOf: null,
 
   /**
+   * Strzał gracza 1 z wieżyczki: (kierunek lufy x, y [świat], wstrząs broni × ułamek grupy, przeładowanie [s]) —
+   * index.html podpina kopnięcie kadru (cameraRig.addCameraKick). null — bez haka.
+   */
+  onPlayerShot: null,
+
+  /**
    * GAZ Z LUFY (etap E1, reżyser wybuchów — ExplosionFx.muzzleShot podpina się sam): (rodzina receptury, wylot `m`, moc
    * rozmiaru I, skala wylotu S, nośnik, strzelec) → null (bez gazu) albo { owner, smokeK } — błysk wylotu dostaje
    * właściciela domeny gazu (w swoim dymie świeci tylko daleko), dym cząstkowy receptury × smokeK (bez podwójnego dymu).
@@ -498,6 +524,10 @@ export const WeaponFx = {
       // `shotShakeScale` — ułamek wstrząsu tego strzału: kierowanie ogniem gracza (index.html) ścisza
       // wieże na auto, ekranem trzęsie tylko grupa w ręku.
       this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(shot.shake) || 0) * this.shotShakeScale);
+      // Kopnięcie kadru wzdłuż lufy (strzał gracza 1; index.html → cameraRig.addCameraKick).
+      if (this.onPlayerShot !== null && gunner && typeof window !== 'undefined' && gunner === window.ship) {
+        this.onPlayerShot(Math.cos(shot.angle), Math.sin(shot.angle), (Number(shot.shake) || 0) * this.shotShakeScale, Number(w.def?.cooldown) || 1);
+      }
       shot.entity = null;
     } else {
       if (!this._inView(x, y, 200)) return false;
@@ -1101,12 +1131,14 @@ export const WeaponFx = {
     const nowMs = typeof performance !== 'undefined' ? performance.now() : 0;
     const dt = this._lastSyncMs > 0 ? Math.max(0.001, Math.min(0.05, (nowMs - this._lastSyncMs) * 0.001)) : 1 / 60;
     this._lastSyncMs = nowMs;
+    this._frameDt += (Math.min(dt, 1 / 30) - this._frameDt) * 0.25;
     // Bank cząstek Fx3D (iskry dysz MAIN, mostki, rdzenie) — dokładnie raz na klatkę renderu
     // (dawniej Weapon3DSystem.syncProjectiles).
     Fx3D.update(dt);
     this._updateWeaponShake(dt);
     if (!this.ensure()) return;
     this._frame++;
+    this._syncZoom = this._zoom();
     this._muzzleBudget = MUZZLE_PER_FRAME;
     this._impactBudget = IMPACT_PER_FRAME;
     const frame = this._frame;
@@ -1205,6 +1237,7 @@ export const WeaponFx = {
     st.z = Number(b.z) || 0; st.rvz = (Number(b.vz) || 0) - st.ivz; st.lastZ = st.z; st.endZ = NaN;
     st.clock = b.clock === CLOCK_RENDER ? CLOCK_RENDER : CLOCK_SIM;
     st.power = SIZE_POWER[b.weaponSize] || 1;
+    st.minW = PROJECTILE_LOOK.minPx[b.weaponSize] || PROJECTILE_LOOK.minPx.M;
     st.endSet = false;
     // grubość pocisku wg klasy okrętu strzelca (dawny weapon3DSystem: WEAPON_TIER_SCALE.bullet)
     const tier = b.source ? getEntityWeaponTier(b.source) : 'Capital';
@@ -1231,9 +1264,17 @@ export const WeaponFx = {
     let dxs = 1; let dys = 0; let dzs = 0;
     if (spd > 1e-3) { dxs = rvx / spd; dys = -rvy / spd; dzs = rvz / spd; }
     const grow = Math.min(1, age * 40 + 0.15);
-    const len = (conf.len * wScale + spd * conf.streak) * grow;
+    let len = (conf.len * wScale + spd * conf.streak) * grow;
+    // migawka: nie krótsza niż skok między klatkami, nie dłuższa niż droga od wylotu
+    const shutter = spd * Math.min(this._frameDt * PROJECTILE_LOOK.shutter, age);
+    if (shutter > len) len = shutter;
+    let width = conf.width * wScale;
+    if (st && st.minW > 0) {
+      const minW = Math.min(st.minW / this._syncZoom, width * PROJECTILE_LOOK.minGrow);
+      if (minW > width) width = minW;
+    }
     const c = conf.color;
-    this.projectiles.add(x - ox, -y - oy, 14 + (st ? (st.z || 0) : 0), conf.style, dxs, dys, len, conf.width * wScale, c[0], c[1], c[2], seed, dzs);
+    this.projectiles.add(x - ox, -y - oy, 14 + (st ? (st.z || 0) : 0), conf.style, dxs, dys, len, width, c[0], c[1], c[2], seed, dzs);
   },
 
   _syncRicochets(ox, oy) {
@@ -1300,7 +1341,7 @@ export const WeaponFx = {
     this.gpu.update(c.renderer, c.dt, zoom);
     const o = c.origin;
     this.trails.place(o.x, o.y);
-    this.projectiles.commit(zoom);
+    this.projectiles.commit(zoom, PROJECTILE_LOOK.pixelCore);
     this.projectiles.place(this._prjOriginX, this._prjOriginY);
     this.beams.commit(zoom, this._beamOriginX, this._beamOriginY);
     Core3D.setDistortLayerActive(this.gpu.distLive);
@@ -1348,4 +1389,4 @@ export const WeaponFx = {
   }
 };
 
-if (typeof window !== 'undefined') window.WeaponFx = WeaponFx;
+if (typeof window !== 'undefined') { window.WeaponFx = WeaponFx; window.ProjectileLook = PROJECTILE_LOOK; }

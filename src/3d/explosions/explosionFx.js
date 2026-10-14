@@ -1844,12 +1844,17 @@ export function tuneGasForSpace(T) {
   // kuli okrętu w 1–3 s rosła o 13–57% (więcej mieszania paliwa) — korekta z sondy (`wybuchy-sonda.mjs`, wariant v10):
   // zanik 0,42 → 0,52/s (połowa po ~1,3 s), sadza 0,42 → 0,39, rozprężanie 0,16 → 0,14 — kula „capital” w 1–3 s:
   // masa −2…+7%, objętość −2…0%, promień obłoku −7…−14% względem fizyki sprzed etapu.
-  T.smokeDecay = 0.52;
+  // Zapis stanu do atlasów RGBA16F z zaokrągleniem stochastycznym (gasGrid tune.f16Round, 2026-10-12): zapis f16 na RTX
+  // obcinał ku zeru, co działało jak ukryty zanik i opór — po naprawie dym, ciepło i ruch trzymały się dłużej (sonda,
+  // kula „capital” po 3 s: masa +12%, ciepło +10%, energia w dymie +25%). Obraz sprzed naprawy: zanik 0,52 → 0,545,
+  // opór 0,2 → 0,23, stygnięcie 1 → 1,04 (masa, ciepło, objętość ±3% w całym życiu kul capital / final i łańcucha).
+  T.smokeDecay = 0.545;
   T.disperse = 0.14;       // zimny dym rozpręża się w próżni — obłok rośnie i rzednie
   // Opór zależny od prędkości (użytkownik 2026-10-07: dym „wisiał w miejscu”, nie wychodził z miejsca wybuchu):
   // szybki front kuli i strumieni hamuje (przy 50 kom./s ~1,7/s), wolny dym dalej odpływa (~0,35/s).
-  T.drag = 0.2;
+  T.drag = 0.23;
   T.dragQuad = 0.03;
+  T.cooling = 1.04;
   T.soot = 0.39;           // mniej sadzy na jednostkę paliwa (obłok nie chowa pola walki na długo; 0,42 przed etapem A)
   // Adwekcja prędkości 2. rzędu (MacCormack, F4 audytu 2026-10-08) — wiry nie gasną numerycznie, więc wzmacnianie
   // wirów i turbulencja z szumu (dawniej 3,5 i 35 — kompensowały pierwszy rząd) zbite z pomiaru sondą

@@ -282,20 +282,12 @@ RECIPES.tempest = {
     ctx.lights.flash(m.x, m.y, 0.3, 0.6, 1.0, 1.4 * I, 140 * S, 0.6, 1.5, 0.5, 30);
     ctx.shake(2.5 * m.scale, 0.14);
   },
+  // Bez efektu lotu (`fly`), jak Yamato: łuk i iskry raz na klatkę w miejscu pocisku (7–9 tys. j/s —
+  // co ~110–150 j.) robiły „łańcuszek” (2026-10-13). Łuki w locie niesie sama igła ION (helisa w shaderze).
   projectile(size) {
     const I = SIZE_POWER[size] || 1;
     return { style: PSTYLE.ION, color: [0.35, 1.3, 2.6], width: 15 * I, len: 30 * I, streak: 0.0035,
       trail: TRAIL.tempest, trailWidth: 7 * I, trailSpacing: 36, trailPathUnit: 170, light: [0.4, 0.8, 1.0, 1.1, 150] };
-  },
-  fly(ctx, p, x0, y0, x1, y1) {
-    const ddx = x1 - x0; const ddy = y1 - y0;
-    p.flyAcc += Math.sqrt(ddx * ddx + ddy * ddy);
-    if (p.flyAcc < 110) return;
-    p.flyAcc = 0;
-    const P = sp(x1, y1, _P);
-    const D = sv(p.rvx, p.rvy, _D);
-    E(ctx.fx.arc, 0, 1, P, perp(D, _T)).cone(2.4, 0.18).speed(8, 22).life(0.05, 0.1).colors(T_ARC).x01(3, 1.1).emit();
-    E(ctx.fx.spark, K.SPARK, 2, P, neg(D, _T)).cone(1.5, 0.18).speed(60, 200).life(0.15, 0.35).drag(1, 1).color(1.4, 2.4, 3.6).x01(14, 1.05).x23(1.2, 1.2).emit();
   },
   impact(ctx, p, hull, hit) {
     const fx = ctx.fx;
@@ -488,19 +480,13 @@ RECIPES.yamato = {
     E(ctx.fx.add, K.VAPOR, 12 * (m.smokeK ?? 1), P, D).cone(0.8, 0.18).speed(6 * S, 24 * S).life(1.2, 2.4).drag(1.3, 1.3).s0(5 * S, 5 * S).s1(20 * S, 36 * S).color(0.4, 1.2, 2.2).color1(0.1, 0.1, 0.4).mix(1.5).alpha(0.2, 0.34).fade(0.06, 1.5).grow(0.45).spin(0.6).emit();
     ctx.shake(7.0, 0.30);
   },
+  // Ogon pocisku = ogon ORB w shaderze (projectiles.js): streak 0,035 → ~315 j. przy 9000 j/s.
+  // Bez efektu lotu (`fly`): łuki i iskry emitowane raz na klatkę w miejscu pocisku leżały
+  // grudkami co ~150 j. — „łańcuszek z choinki” (zgłoszenie użytkownika 2026-10-13, A/B:
+  // scripts/webgpu/lot-pocisku-gra.mjs).
   projectile() {
-    return { style: PSTYLE.ORB, color: [0.35, 1.45, 1.9], width: 64, len: 150, streak: 0.004,
+    return { style: PSTYLE.ORB, color: [0.35, 1.45, 1.9], width: 64, len: 150, streak: 0.035,
       trail: TRAIL.yamato, trailWidth: 30, trailSpacing: 50, trailPathUnit: 220, light: [0.45, 0.85, 1.0, 3.5, 420] };
-  },
-  fly(ctx, p, x0, y0, x1, y1) {
-    const ddx = x1 - x0; const ddy = y1 - y0;
-    p.flyAcc += Math.sqrt(ddx * ddx + ddy * ddy);
-    if (p.flyAcc < 140) return;
-    p.flyAcc = 0;
-    const P = sp(x1, y1, _P);
-    const D = neg(sv(p.rvx, p.rvy, _D), _D);
-    E(ctx.fx.arc, 0, 2, P, D).cone(1.2, 0.18).speed(30, 80).life(0.06, 0.14).color(1.2, 2.6, 3.8).x01(8, 1.6).emit();
-    E(ctx.fx.spark, K.SPARK, 4, P, D).cone(0.9, 0.18).speed(100, 400).life(0.2, 0.5).drag(1, 1).color(1.6, 2.6, 3.8).x01(30, 1.0).x23(1.1, 1.4).emit();
   },
   // Trafienie: port createYamatoImpactFactory (dawny effects3d/yamato.js) w skali ekranu gry,
   // plus światło, fala refrakcji, rana i ogień w wyrwie.

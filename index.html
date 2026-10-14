@@ -940,6 +940,7 @@
     } from "./src/ui/shipModeWheel.js";
     // Jeden celownik (pierścień wież) i sylwetka okrętu z wieżami nad szyną broni.
     import { drawWeaponReticle, drawArcCompass, orderRingTurrets } from "./src/ui/weaponReticle.js";
+    import { HIT_MARK, createHitMarker, noteHitMarker, hitStrength, hitMarkerActive, drawHitMarker } from "./src/ui/hitMarker.js";
     import { buildHullSilhouette, drawTurretPanel } from "./src/ui/turretPanel.js";
     import {
       isFighterUnit,
@@ -1096,7 +1097,7 @@
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
       defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
-      normalizeCameraWarpKickMode
+      normalizeCameraWarpKickMode, createCameraKick, addCameraKick, stepCameraKick
     } from "./src/game/cameraRig.js";
     import {
       cameraDirectorTune, createCameraDirector, stepCameraDirector, beginCameraDirectorPoints, pushCameraDirectorPoint,
@@ -1144,6 +1145,9 @@
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
+    // Nadproża bram K-7 (zestaw FG hali) nad okrętem w bramie: wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną.
+    import { createLintelCover, refreshLintelCover, lintelCovers } from "./src/game/k7GateLintels.js";
+    import { setPositionLightOcclusion } from "./src/game/shipLightRuntime.js";
     // Diagnostyka i strojenie z konsoli: HallDust.stats, HallDustTune.jetSpeed = 3000 itd.
     window.HallDust = HallDust;
     window.HallDustTune = HALL_DUST_TUNE;
@@ -1195,7 +1199,8 @@
       shipModel3DIdFor,
       turretMuzzleZ,
       syncShipModels3D,
-      setShipModels3DWarmIds
+      setShipModels3DWarmIds,
+      prepareShipModels3D
     } from "./src/3d/ships3d/shipModels3DGame.js";
     import { SHIP3D_MODELS } from "./src/3d/ships3d/ships/ships3D.js";
     import { WEAPON3D_FAMILY } from "./src/3d/ships3d/weapons/weapons3D.js";
@@ -6229,7 +6234,11 @@
     // Offset kamery względem statku w px ekranu; krok raz na klatkę w render().
     // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
     const cameraRig = createCameraRig();
-    window.CameraRig = { rig: cameraRig, tune: cameraRigTune };
+    // Kopnięcie kadru od ciężkich strzałów gracza (sprężyna w px ekranu, weaponKick* w cameraRigTune):
+    // impuls z WeaponFx.onPlayerShot (wieżyczki) i superweapon.js (Hexlance), krok i przesunięcie w render() obok wstrząsu.
+    const cameraKick = createCameraKick();
+    WeaponFx.onPlayerShot = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    window.CameraRig = { rig: cameraRig, tune: cameraRigTune, kick: cameraKick };
     const _cameraShakePx = { x: 0, y: 0 };
     // Wejście riga pisane co klatkę w render() — jeden obiekt, bez alokacji.
     const _cameraRigInput = {
@@ -6856,9 +6865,14 @@
     setPirateBaseHiddenTest((st) => SensorSystem.hides(st));
     Turret2D.skipDraw = (rec) => VisualMode.weapons3D && !!WEAPON3D_FAMILY[rec.weaponId];
     // Fregata zwiadu nad Atlasem (wylot z luku): kanwa nie zna głębi — wieże Atlasa pod fregatą się nie rysują.
-    Turret2D.occlude = (rec) => rec.entity === ship && scoutCoversPoint(rec.wx, rec.wy, 4);
-    // Okna i lampy mostków (warstwa FG — nad passem ortho) pod fregatą nad Atlasem gasną.
-    Bridge3D.emitterOcclusion = (host, x, y) => (host === ship && scoutCoversPoint(x, y, 0) ? 0 : 1);
+    // Nadproże bramy hali K-7 (FG) nad okrętem w bramie — to samo dla wszystkich okrętów (obrysy nadproży hal przy
+    // kamerze odświeża render() — refreshLintelCover).
+    const k7Lintels = createLintelCover();
+    function k7LintelOver(x, y) { return k7Lintels.n > 0 && lintelCovers(k7Lintels, x, y, 0); }
+    Turret2D.occlude = (rec) => (rec.entity === ship && scoutCoversPoint(rec.wx, rec.wy, 4)) || k7LintelOver(rec.wx, rec.wy);
+    // Okna i lampy mostków (warstwa FG — nad passem ortho) pod fregatą nad Atlasem i pod nadprożem bramy gasną.
+    Bridge3D.emitterOcclusion = (host, x, y) => ((host === ship && scoutCoversPoint(x, y, 0)) || k7LintelOver(x, y) ? 0 : 1);
+    setPositionLightOcclusion(k7LintelOver);
     // Kamery 3D: błysk wylotu na wysokości lufy wieży 3D.
     WeaponFx.muzzleZOf = turretMuzzleZ;
     // Kamery 3D: pocisk startuje na wysokości lufy strzelca (b.visZ0, raz — przy pierwszym rysowaniu) i schodzi
@@ -10418,6 +10432,14 @@
     const _reticleHud = { compassAlpha: 0, lastHand: null, handChangedAt: -1e9 };
     const _missileReticle = { ready: 0, total: 0, progress: 1, left: 0 };
     const _reticleOpts = { scale: 1, distance: NaN, cold: false, dim: false, tag: '', tagColor: '', missiles: null };
+    // Znacznik trafienia na celowniku (src/ui/hitMarker.js): trafienia ognia GRACZA 1 — tarcza / kadłub /
+    // zniszczenie — notuje applyDamageToNPC (argument byPlayer: pociski, wiązki, rakiety; bez obrony punktowej).
+    const playerHitMarker = createHitMarker();
+    function notePlayerHitMarker(npc, kind, damage) {
+      if (!npc || npc.isWreck || npc._isPlayerShip || npc.friendly === true || npc.playerOwned) return;   // bez ognia we własnych
+      noteHitMarker(playerHitMarker, kind, performance.now() / 1000, kind === HIT_MARK.KILL ? 1 : hitStrength(damage));
+    }
+    window.__playerHitMarker = playerHitMarker;
     const COMPASS_SHOW_AFTER_SWITCH = 2.5;   // [s] kompas po zmianie grupy w ręku
     // cw / ch — rozmiar CSS płótna z ResizeObservera (−1: jeszcze nie znany); ro — obserwator.
     const _turretPanel = { canvas: null, ctx: null, sil: null, silKey: '', visible: null, cw: -1, ch: -1, ro: null, groups: [
@@ -11123,7 +11145,7 @@
               if (hitType === 'player') applyPlayerDamage(damage, beamDmgOpts);
               else if (hitType === 'npc' || hitType === 'wreck') {
                 if (isPlayerShip) markPlayerDamage(hitEntity);
-                applyNpcDamage(hitEntity, damage, 'beam', beamDmgOpts);
+                applyNpcDamage(hitEntity, damage, 'beam', beamDmgOpts, isP1Ship && hitType === 'npc');
               }
               else if (hitType === 'ring') {
                 // Ring nie ma puli HP — nie dotykamy entity.hp, bo to wycinałoby segment z kolizji globalnej.
@@ -22743,7 +22765,7 @@
       releaseNpcHexBody(npc);
     }
 
-    function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}) {
+    function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}, byPlayer = false) {
       if (npc.dead) return;
       // Hulk po utracie mostka już nie żyje — pula (i crit) nie gra roli.
       if (isBridgeHulk(npc)) return;
@@ -22771,6 +22793,7 @@
       }
 
       if (remaining <= 0) {
+        if (byPlayer) notePlayerHitMarker(npc, HIT_MARK.SHIELD, dmg);
         return;
       }
 
@@ -22778,6 +22801,7 @@
       if (npc.fleetEntry) {
         npc.fleetEntry.status.hull = npc.hp;
       }
+      if (byPlayer) notePlayerHitMarker(npc, npc.hp <= 0 ? HIT_MARK.KILL : HIT_MARK.HULL, remaining);
       if (npc.hp <= 0) {
         npc.dead = true;
         npc.respawnTimer = 3 + Math.random() * 6;
@@ -23739,7 +23763,8 @@
                 applyDamageToPlayer(npcDamage * entryK.hp, hitBreach ? SHIELD_BREACH_DAMAGE_OPTS : undefined);
               } else {
                 if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
-                applyDamageToNPC(hitNPC, npcDamage * entryK.hp, b.type, hitBreach ? SHIELD_BREACH_DAMAGE_OPTS : undefined);
+                applyDamageToNPC(hitNPC, npcDamage * entryK.hp, b.type, hitBreach ? SHIELD_BREACH_DAMAGE_OPTS : undefined,
+                  b.source === ship && b.type !== 'ciws');   // znacznik trafienia: ogień gracza 1 bez obrony punktowej
               }
             }
 
@@ -28395,6 +28420,14 @@
           camShakePxY = _cameraShakePx.y;
         }
       }
+      // Kopnięcie kadru od strzałów gracza (cameraRig.stepCameraKick) — w tym samym `cam` co wstrząs.
+      stepCameraKick(cameraKick, frameDt || 0, cameraRigTune);
+      if (!DevFlags.disableCameraShake && (cameraKick.x !== 0 || cameraKick.y !== 0)) {
+        cam.x += cameraKick.x / cam.zoom;
+        cam.y += cameraKick.y / cam.zoom;
+        camShakePxX += cameraKick.x;
+        camShakePxY += cameraKick.y;
+      }
 
       // --- KAMERY 3D (src/game/game3D.js, camera3DRig.js) — sam widok, rozgrywka w płaszczyźnie ---
       Game3D.load();
@@ -28610,6 +28643,9 @@
         // Luk Atlasa (fregata zwiadu): __bayCut i poza renderu fregaty przed mostkami, skórą modelu 3D i zapisem slotów
         // kadłubów (pass ortho).
         syncScoutBay3D(vfxTime);
+        // Nadproża bram K-7 przy kamerze (wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną).
+        refreshLintelCover(k7Lintels, haloRings ? haloRings.entries : null, cam.x, cam.y,
+          Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
         BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
@@ -29510,6 +29546,7 @@
           ctx.moveTo(cursor.x, cursor.y - g0); ctx.lineTo(cursor.x, cursor.y - g1);
           ctx.stroke();
           ctx.restore();
+          _drawPlayerHitMarker(cursor, scale);
           return;
         }
         const hand = fcResolveInHand(fireControl, _fcHudWeapons());
@@ -29535,6 +29572,13 @@
           if (total > 0) opts.missiles = _missileReticle;
         }
         drawWeaponReticle(ctx, cursor.x, cursor.y, _ringOrder, n, opts);
+        _drawPlayerHitMarker(cursor, scale);
+      }
+
+      // Znacznik trafienia (src/ui/hitMarker.js) wokół krzyża celownika — zegar czasu rzeczywistego.
+      function _drawPlayerHitMarker(cursor, scale) {
+        const now = performance.now() / 1000;
+        if (hitMarkerActive(playerHitMarker, now)) drawHitMarker(ctx, cursor.x, cursor.y, playerHitMarker, now, scale);
       }
 
       // Kompas łuków wokół okrętu: przy trzymanym spuście, przez chwilę po zmianie grupy w ręku i gdy
@@ -30941,7 +30985,9 @@
         AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav'),
         AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav'),
         AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav')
+        AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav'),
+        // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
+        prepareShipModels3D()
       ]);
 
       if (typeof ship !== 'undefined') {

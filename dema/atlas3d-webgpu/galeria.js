@@ -61,9 +61,9 @@ export class WeaponGallery {
       plinth.castShadow = true;
       this.group.add(plinth);
       const wid = PICK[fam];
-      const { model, geo } = ship.weaponGeometry(fam);
+      const { model, geo, material: own } = ship.weaponGeometry(fam);
       const mount = { id: `galeria_${fam}`, type: 'gallery', x, y, z: 3, radius: 0 };
-      const t = new Turret(mount, wid, geo, model, material);
+      const t = new Turret(mount, wid, geo, model, own || material);
       const def = MASTER_WEAPONS[wid];
       const sGame = weapon3DScale(def);
       const sFit = FIT_LENGTH / localLength(model, geo);

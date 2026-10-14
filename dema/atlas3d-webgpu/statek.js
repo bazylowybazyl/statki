@@ -220,6 +220,8 @@ export class Ship3D {
     this.root.add(this.hullMesh);
 
     this.weaponMat = o.weaponMat || createShipMaterial({ panelW: 7, panelH: 3.5, name: 'okręty 3D — broń' });
+    // Modele broni z Blendera (pilot, ?bronie=blender): rodzina → { geo, material } (blenderBronie.js).
+    this.weaponOverrides = o.weaponOverrides || null;
     this.turretGroup = new THREE.Group();
     this.turretGroup.name = 'wieże';
     this.root.add(this.turretGroup);
@@ -256,13 +258,15 @@ export class Ship3D {
   weaponGeometry(family) {
     if (this.geoCache.has(family)) return this.geoCache.get(family);
     const model = buildWeapon3D(family);
-    const g = {
+    const ov = this.weaponOverrides?.[family] || null;
+    const g = ov ? ov.geo : {
       ring: model.parts.ring.toGeometry(THREE),
       housing: model.parts.housing.toGeometry(THREE),
       barrel: model.parts.barrel.toGeometry(THREE),
       spin: model.parts.spin ? model.parts.spin.toGeometry(THREE) : null
     };
-    const entry = { model, geo: g };
+    // Układ (czop, kopie luf, wylot) zawsze z weapons3D.js — model z Blendera go zachowuje.
+    const entry = { model, geo: g, material: ov?.material || null };
     this.geoCache.set(family, entry);
     return entry;
   }
@@ -277,8 +281,8 @@ export class Ship3D {
       if (!wid) continue;
       const fam = WEAPON3D_FAMILY[wid];
       if (!fam) continue; // hangar, Hexlance (wbudowany w kadłub)
-      const { model, geo } = this.weaponGeometry(fam);
-      const t = new Turret(m, wid, geo, model, this.weaponMat, this.tier);
+      const { model, geo, material } = this.weaponGeometry(fam);
+      const t = new Turret(m, wid, geo, model, material || this.weaponMat, this.tier);
       t.root.scale.setScalar(t.scale * this.turretScale);
       this.turrets.push(t);
       this.turretGroup.add(t.root);

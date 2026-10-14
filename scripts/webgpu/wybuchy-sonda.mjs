@@ -5,6 +5,7 @@
 //        [--gaz k=v,…] (fizyka gazu: grid.tune) [--tune k=v,…] (EXPLOSION_TUNE) [--port 5297] [--przeszkody 0]
 //        [--warianty 'nazwa@k=v,k=v|nazwa2@…'] (każdy wariant: te same przypadki od nowa; klucze grid.tune, `rez.k` —
 //        strojenie reżysera gazu GasExplosions.tune; wariant startuje ze strojenia sprzed wariantów + --gaz)
+//        [--zegar 0] (bez zerowania zegara siatki gazu i ziarna zaokrąglania f16 przed każdym przypadkiem)
 //
 // Na każdą chwilę: suma po aktywnych domenach — energia Σ|v|² i w dymie Σs|v|² [kom.²/s²], masa dymu Σs, Σ T, maks.
 // prędkość, maks. |ω| i średnie |ω| w dymie, niedobieżność rzutu |div v − cel| (średnia we wnętrzu i maks.), NaN.
@@ -97,7 +98,12 @@ try {
   for (const kind of cases) {
     await ev(`(async () => {
       const d = window.__demo, h = window.__harness;
-      d.clear(); h.reseed(0x5eed1234); await h.step(30);
+      d.clear(); h.reseed(0x5eed1234);
+      // Zegar siatki gazu (faza szumu turbulencji i źródeł — U.time) i ziarno zaokrąglania zapisu f16 od zera: każdy
+      // wariant / przypadek liczy ten sam przebieg (dawniej zegar rósł przez cały przebieg — warianty różniły się
+      // turbulencją o kilkanaście %, 2026-10-12). --zegar 0 — dawne zachowanie.
+      if (${String(args.zegar) !== '0'}) for (const g of (d.fx.grid.grids || [d.fx.grid])) { g.time = 0; g._seed = 0; }
+      await h.step(30);
       if ('${kind}' === 'chain') d.scene('chain');
       else { d.cam(d.gallery.x, d.gallery.y, 0.3); d.boomAt('${kind}', 0, 0, ${SIZES[kind] || 300}); }
       return true;

@@ -32,7 +32,8 @@ import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { createNpcHardpointRuntime } from '../src/game/npcHardpointRuntime.js';
 import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
 import { createHaloUniforms } from '../src/3d/haloRing/haloRingUniforms.js';
-import { HaloPortK7 } from '../src/3d/haloRing/haloPortK7.js';
+import { HaloPortK7, K7_GLB_LOOK } from '../src/3d/haloRing/haloPortK7.js';
+import { K7_GLB_TUNE, k7GlbEnabled, k7GlbWhenReady } from '../src/3d/haloRing/haloPortK7Glb.js';
 import {
   K7_CONNECTED_POSE, K7_SERVICE_DOCK, K7_SERVICE_RELEASE, K7_SERVICE_UNDOCK, K7_STOWED_POSE, K7FlightModel, K7RoofFade,
   buildK7Collision, createK7Layout, k7Frame, k7HeightToZ, k7ServiceConnectPose, k7ServiceDisconnectPose, k7ServiceStep
@@ -117,6 +118,10 @@ const ringGroup = new THREE.Group();
 ringGroup.name = 'Demo: ring (tylko hala K-7)';
 ringGroup.rotation.z = place.rot;
 ringGroup.position.set(place.x, -place.y, 0);
+// hala z Blendera (domyślna, haloPortK7Glb.js; ?k7=stara — stara): plik GLB przed budową hali (stara — od razu)
+await k7GlbWhenReady();
+window.K7GlbTune = K7_GLB_TUNE;
+window.K7GlbLook = K7_GLB_LOOK;
 const hall = new HaloPortK7({ ringLayout, uniforms: ringUniforms, layout, angle: frame.angle, index: 0, bays: [], style: ringLayout.planetProfile.port });
 hall.setLayers(1, 2);
 for (const b of layout.berths) { b.occupied = null; b.reserved = null; }
@@ -416,7 +421,13 @@ const TOGGLES = [
   ['ship', 'Atlas', () => state.showShip, (v) => { state.showShip = v; }],
   ['nodes', 'Węzły liny (debug)', () => state.nodes, (v) => { state.nodes = v; }],
   ['lights', 'Światła hali w siatce', () => extension?.getTune?.('hallLights') ?? HALL_DUST_TUNE.hallLights, (v) => { if(!extension?.setTune?.('hallLights',v))HALL_DUST_TUNE.hallLights = v; }],
-  ['bloom', 'Bloom', () => true, (v) => Core3D.setPerfToggles?.({ bloom: v })]
+  ['bloom', 'Bloom', () => true, (v) => Core3D.setPerfToggles?.({ bloom: v })],
+  // A/B: hala z Blendera ↔ stara (?k7=stara) — przeładowanie strony z przełącznikiem
+  ['glb', 'Hala z Blendera (A/B)', () => k7GlbEnabled(), (v) => {
+    const q = new URLSearchParams(location.search);
+    if (v) q.delete('k7'); else q.set('k7', 'stara');
+    location.search = q.toString();
+  }]
 ];
 for (const [key, label, get, set] of TOGGLES) {
   const l = document.createElement('label');
@@ -528,6 +539,13 @@ function render(simDt) {
   const cam = state.mode === 'cine' ? cineCamera() : state.cam;
   syncRingCamera(cam);
   ringUniforms.uTime.value += simDt;
+  // hala z Blendera: poziom szczegółów z rozmiaru piksela (jak cullHalls ringu w grze)
+  if (hall.glb) {
+    const pc = state.mode === 'cine' ? cine.persp : Core3D.cameraPersp;
+    const pe = pc?.projectionMatrix?.elements?.[5] || 0;
+    const vh = Core3D.composerTarget?.height || H;
+    hall.updateGlbLod(ringUniforms.uCamLocal.value, pe > 0 ? 2 / (pe * vh) : 0);
+  }
   // hala: pozy obsługi, ramiona i przewody (czas gry), dach, lampy, zegar migania świateł
   const clock = extension?.clock?.() ?? k7BeaconClock(performance.now());
   hallOpts.roofFade = extension?.roofFade?.(state,flight) ?? (state.roofClosed ? 0 : 1);
@@ -621,7 +639,8 @@ function updateHud() {
     `<b>fizyka</b>  aktywne ${rs.awake}/${rig.hoses.length}  węzły ${rs.nodes}  podkroki ${rs.substeps}  CPU ${f2(rs.cpuMs)} ms`,
     `<b>gaz</b>  ${gs.active ? 'aktywny' : 'stoi'}  źródła ${gs.sources}  buchy ${gs.bursts}  upust ${gs.venting}  światła ${gs.lights}  CPU ${f2(gs.cpuMs)} ms`,
     `<b>Atlas</b>  ${speed.toFixed(0)} j/s  ${roof.fade > 0.5 ? 'w hali' : 'poza halą'}  napęd ${flight.locked ? 'ZABLOKOWANY' : 'ręczny'}  automat ${auto ? auto.state : '—'}`,
-    `<b>czas</b>  ${state.T.toFixed(1)} s ${state.paused ? '(pauza)' : state.speed !== 1 ? `(×${state.speed})` : ''}  <b>widok</b> ${state.mode === 'cine' ? '3D' : `z góry ${state.cam.zoom.toFixed(2)}`}`
+    `<b>czas</b>  ${state.T.toFixed(1)} s ${state.paused ? '(pauza)' : state.speed !== 1 ? `(×${state.speed})` : ''}  <b>widok</b> ${state.mode === 'cine' ? '3D' : `z góry ${state.cam.zoom.toFixed(2)}`}`,
+    `<b>hala</b>  ${hall.glb ? `z Blendera, LOD${hall.glb.lod} (${hall.glb.levels[hall.glb.lod]?.entry.tris ?? 0} tr.)` : 'stara (bryły)'}  draw hali ${hall.drawCalls}`
   ].join('\n');
   $('caption').textContent = state.seq.kind === 'auto'
     ? 'Lot ręczny: stań na polu stanowiska capital na 2 s — automat podepnie przewody; ruszenie — awaryjne odpięcie'
@@ -655,6 +674,7 @@ window.__dok = {
     return true;
   },
   wake: () => wakeK7FuelRig(hall.fuelRig),
+  glb: () => (hall.glb ? { lod: hall.glb.lod, tris: hall.glb.levels.map((l) => l?.entry.tris ?? 0), drawCalls: hall.drawCalls } : null),
   stats: () => ({ rig: { ...hall.fuelRig.stats }, gas: { ...HallDust.stats }, seq: state.seq.kind, t: state.T, errors: errors.slice() })
 };
 

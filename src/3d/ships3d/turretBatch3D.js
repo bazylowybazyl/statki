@@ -8,7 +8,10 @@
 //  • geometria rodziny = scalone części modelu (pierścień, obudowa, n kopii lufy, n kopii wirnika) z atrybutem
 //    wierzchołka aTurPart = (część, przesunięcie kopii lufy w układzie czopu x, y, z) — TURRET_PART;
 //  • Mesh + InstancedBufferGeometry (nie InstancedMesh — jego uuid wchodzi do klucza programu), JEDEN
-//    przepleciony bufor instancji (rekord wieży, TURRET_INST_STRIDE liczb) — 5 buforów geometrii + 1 ≤ 8;
+//    przepleciony bufor instancji (rekord wieży, TURRET_INST_STRIDE liczb) — 6 buforów geometrii + 1 ≤ 8;
+//  • AO z wierzchołków (aAO): modele z Blendera (GLB, weapons/weaponGlb.js) niosą AO wypieczone w Cycles, rodziny
+//    z budowniczego — 1; materiał czyta je w aoNode (światło pośrednie: mapa otoczenia PMREM i półkula — słońce
+//    i światła siatki bez zmian);
 //  • jeden materiał (graf TSL raz) dla wszystkich rodzin: pozę części liczy etap wierzchołków z rekordu wieży
 //    (TurretBatchNodeMaterial.setupPosition, wzór InstanceNode three — pozycja i normalna), czop rodziny
 //    z uniformu obiektu (userData.turretTrunnion), warstwa głębi (modelSlabDepth.js) z rekordu.
@@ -21,7 +24,7 @@
 // bez DynamicDrawUsage, bez alokacji na klatkę.
 // ============================================================
 import * as THREE from 'three/webgpu';
-import { Fn, If, attribute, uniform, varying, vec3, select, cos, sin, positionLocal, normalLocal } from 'three/tsl';
+import { Fn, If, attribute, uniform, varying, vec3, select, cos, sin, clamp, positionLocal, normalLocal } from 'three/tsl';
 import { buildWeapon3D } from './weapons/weapons3D.js';
 import { createShipMaterial } from './shipMaterials3D.tsl.js';
 import { applyModelSlabDepth } from './modelSlabDepth.js';
@@ -73,14 +76,17 @@ function maxZ(position) {
 }
 
 /**
- * Scalona geometria rodziny broni: { family, model, position, normal, uv, mat, part (vec4 na wierzchołek), index,
- * vertexCount, height, trunnion: [tx, tz], pieces: [{ part, off, first, count }] }.
+ * Scalona geometria rodziny broni: { family, model, position, normal, uv, mat, ao, part (vec4 na wierzchołek), index,
+ * vertexCount, height, trunnion: [tx, tz], pieces: [{ part, off, first, count }] }. ao — z części (GLB) albo 1.
+ * Cache po rodzinie i MODELU (buildWeapon3D: budowniczy albo GLB — weaponGlb.js decyduje raz na sesję).
  * Wysokość wieży (j. lokalne) jak dawne weaponGeometry: obudowa, pierścień albo lufa na czopie (≥ 1).
  */
-export function buildTurretFamilyArrays(family) {
-  let e = _familyArrays.get(family);
-  if (e) return e;
-  const model = buildWeapon3D(family);
+export function buildTurretFamilyArrays(family, lod = 0) {
+  const lv = lod > 0 ? 1 : 0;
+  const model = buildWeapon3D(family, { lod: lv });
+  const ckey = lv ? `${family}@1` : family;
+  let e = _familyArrays.get(ckey);
+  if (e && e.model === model) return e;
   const P = model.parts;
   const ring = P.ring.build(), housing = P.housing.build(), barrel = P.barrel.build();
   const spin = P.spin ? P.spin.build() : null;
@@ -94,7 +100,7 @@ export function buildTurretFamilyArrays(family) {
   let nv = 0, ni = 0;
   for (const p of pieces) { nv += p.src.vertexCount; ni += p.src.index.length; }
   const position = new Float32Array(nv * 3), normal = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
-  const mat = new Float32Array(nv), part = new Float32Array(nv * 4);
+  const mat = new Float32Array(nv), ao = new Float32Array(nv).fill(1), part = new Float32Array(nv * 4);
   const index = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
   let v = 0, k = 0;
   for (const p of pieces) {
@@ -103,6 +109,7 @@ export function buildTurretFamilyArrays(family) {
     normal.set(s.normal, v * 3);
     uv.set(s.uv, v * 2);
     mat.set(s.mat, v);
+    if (s.ao) ao.set(s.ao, v);
     for (let i = 0; i < s.vertexCount; i++) {
       const o = (v + i) * 4;
       part[o] = p.part; part[o + 1] = p.off[0]; part[o + 2] = p.off[1]; part[o + 3] = p.off[2];
@@ -116,10 +123,10 @@ export function buildTurretFamilyArrays(family) {
   const trunnion = [model.trunnion?.[0] || 0, model.trunnion?.[1] || 0];
   const height = Math.max(1, maxZ(ring.position), maxZ(housing.position), trunnion[1] + maxZ(barrel.position));
   e = Object.freeze({
-    family, model, position, normal, uv, mat, part, index, vertexCount: nv, height, trunnion,
+    family, lod: lv, model, position, normal, uv, mat, ao, part, index, vertexCount: nv, height, trunnion,
     pieces: Object.freeze(pieces.map(({ part: pp, off, first, count }) => Object.freeze({ part: pp, off, first, count })))
   });
-  _familyArrays.set(family, e);
+  _familyArrays.set(ckey, e);
   return e;
 }
 
@@ -188,7 +195,9 @@ function turretGraph() {
   })();
   // warstwa głębi z rekordu: stała na instancję (bez interpolacji)
   const slab = varying(attribute('iTurSlab', 'vec4'), 'vTurSlab').setInterpolation('flat');
-  _graph = { position, normal, slab };
+  // AO z wierzchołków (GLB z Blendera; budowniczy — 1)
+  const ao = clamp(attribute('aAO', 'float'), 0.0, 1.0);
+  _graph = { position, normal, slab, ao };
   return _graph;
 }
 
@@ -212,6 +221,7 @@ export class TurretBatchNodeMaterial extends THREE.MeshStandardNodeMaterial {
 export function createTurretBatchMaterial() {
   const mat = createShipMaterial({ panelW: 7, panelH: 3.5, name: 'broń 3D (partie)', materialClass: TurretBatchNodeMaterial });
   applyModelSlabDepth(mat, turretGraph().slab);
+  mat.aoNode = turretGraph().ao;
   return mat;
 }
 
@@ -228,6 +238,7 @@ function staticAttributes(fa) {
     normal: new THREE.BufferAttribute(fa.normal, 3),
     uv: new THREE.BufferAttribute(fa.uv, 2),
     aMat: new THREE.BufferAttribute(fa.mat, 1),
+    aAO: new THREE.BufferAttribute(fa.ao, 1),
     aTurPart: new THREE.BufferAttribute(fa.part, 4),
     index: new THREE.BufferAttribute(fa.index, 1)
   };
@@ -243,6 +254,7 @@ export function createTurretBatchGeometry(fa, capacity) {
   g.setAttribute('normal', a.normal);
   g.setAttribute('uv', a.uv);
   g.setAttribute('aMat', a.aMat);
+  g.setAttribute('aAO', a.aAO);
   g.setAttribute('aTurPart', a.aTurPart);
   g.setIndex(a.index);
   const data = new Float32Array(Math.max(1, capacity) * TURRET_INST_STRIDE);
@@ -256,15 +268,16 @@ export function createTurretBatchGeometry(fa, capacity) {
 const START_CAPACITY = 16;
 
 class TurretFamilyBatch {
-  constructor(family, material, scene) {
+  constructor(family, material, scene, lod = 0) {
     this.family = family;
-    this.arrays = buildTurretFamilyArrays(family);
+    this.lod = lod > 0 ? 1 : 0;
+    this.arrays = buildTurretFamilyArrays(family, this.lod);
     this.count = 0;
     this.capacity = 0;
     this.data = null;
     this.buffer = null;
     this.mesh = new THREE.Mesh(undefined, material);
-    this.mesh.name = `wieże 3D: ${family}`;
+    this.mesh.name = `wieże 3D: ${family}${this.lod ? '@1' : ''}`;
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     this.mesh.visible = false;
@@ -298,7 +311,7 @@ export class TurretBatchSet {
   constructor(scene, material) {
     this.scene = scene;
     this.material = material;
-    this.families = new Map(); // rodzina → TurretFamilyBatch
+    this.families = new Map(); // rodzina (LOD1: 'rodzina@1') → TurretFamilyBatch
     this.list = [];
     this.orgX = 0;
     this.orgY = 0;
@@ -312,11 +325,13 @@ export class TurretBatchSet {
     for (let i = 0; i < L.length; i++) L[i].count = 0;
   }
 
-  family(family) {
-    let b = this.families.get(family);
+  /** Partia rodziny; lod 1 — druga partia rodziny w trybie AUTO (weaponGlb.js: LOD wg rozmiaru wieży na ekranie). */
+  family(family, lod = 0) {
+    const key = lod > 0 ? `${family}@1` : family;
+    let b = this.families.get(key);
     if (!b) {
-      b = new TurretFamilyBatch(family, this.material, this.scene);
-      this.families.set(family, b);
+      b = new TurretFamilyBatch(family, this.material, this.scene, lod);
+      this.families.set(key, b);
       this.list.push(b);
     }
     return b;
@@ -343,9 +358,9 @@ export class TurretBatchSet {
   }
 }
 
-/** Siatka rozgrzewki: układ atrybutów partii (geometria rodziny, jedna instancja), materiał partii. */
-export function turretBatchWarmHolder(material, family) {
-  const fa = buildTurretFamilyArrays(family);
+/** Siatka rozgrzewki: układ atrybutów partii (geometria rodziny, jedna instancja), materiał partii; lod — partia LOD1. */
+export function turretBatchWarmHolder(material, family, lod = 0) {
+  const fa = buildTurretFamilyArrays(family, lod);
   const { geometry } = createTurretBatchGeometry(fa, 1);
   geometry.instanceCount = 1;
   const mesh = new THREE.Mesh(geometry, material);

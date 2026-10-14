@@ -160,3 +160,110 @@ okno symulacji wokół kamery.
 - D3. Kolejność scen: ring (fabryki) / pas / ławice mgły.
 - D4. Wiatr jako prawdziwy przepływ (ławice płyną, dym się pochyla) — tak / nie.
 - D5. Skala komórki i okna: 64 j. × 256 (16 km, jak demo) czy 48 j. × 384 (18 km, drobniejsze kłęby, ~2× koszt).
+
+## 7. Prototyp: gęstość TRANSPORTOWANA (2026-10-12, etap 1 z § 5) — `dema/gazy-transport-webgpu.html`
+
+Kopia dema (stare `dema/gazy-webgpu.html` zostaje jako A/B; wpis w `dema/index.html`). Bez zmian w grze. Pomiary: te same
+skrypty z `--demo transport` (stare — bez flagi; nowe miary w skryptach działają dla obu dem): `node scripts/webgpu/gazy-demo-audyt.mjs
+--demo transport` i `node scripts/webgpu/gazy-demo-audyt-mgla.mjs --demo transport` (w nim teraz także minimum przekroju kanału,
+dopływ do osi, wał pióropusza jako maksimum profilu poprzecznego i wybuch w ławicy przy wietrze 0 — faza D), strojenie w locie
+`--tune k=v,…`. Wyniki: `.tmp/gazy-transport/` (`audyt-stare|nowe/`, `mgla-stare|nowe/`, `zestawienie.md`, `fps.json`), zrzuty
+obok siebie (lewa — stare, prawa — nowe): `.tmp/gazy-transport/ab/*.png`.
+
+### 7.1 Co jest w prototypie
+
+- **Pole gazu 2D z transportem** (compute, bufory f32 — zapis f16 do tekstury storage na RTX obcina ku zeru): okno 256 × 256
+  komórek po 64 j. wokół kamery, przesuwane o całe komórki (osobny kernel przesunięcia; komórki wjeżdżające — pole dalekie).
+  Kernele w jednym `renderer.compute(lista)`, krok stały 1/60 s (≤ 2 na klatkę): wiry → adwekcja RK2 prędkości + siły → MacCormack
+  skalarów obcięty do sąsiadów + ciągłość + wstrzykiwanie → dywergencja − cel → Jacobi 31 (rozgrzanie 0,9, miękki rzut 0,004) →
+  rzut (komórki stałe — Neumann, brzeg okna otwarty). Skalary: gęstość każdego gazu sceny (pas: pył, siarka, lód; ring: smog,
+  dym, para; mgła: mgła) + wyrzut.
+- **Pole dalekie** = dawny `gasMap` bez drobnej faktury (obwiednia gęstości gazów, wzór płynie z wiatrem): start okna, komórki
+  wjeżdżające, dopływ przez brzeg (próbka wstecz poza oknem), gęstość odniesienia. **Faktura detalu** (włókna siarki i lodu,
+  wnętrze ławic, kłęby dymu, ziarno) — w obrazie, na pozycjach spoczynkowych niesionych polem (jak `gasFieldLayer.js`).
+  Mapa gazu (`rtA`) = gęstości z symulacji × albedo gazu × faktura; próbka gęstości dwusześcienna (dwuliniowa dawała schodki na
+  brzegach ławic); kolumna gazu nad bryłami (kadłub, skała) z otoczenia — warstwa ±420 j. jest grubsza niż bryły, więc okręt
+  dalej chowa się w mgle. Mapa światła, złożenie plasterków, MRT „fx” — bez zmian.
+- **Ciśnienie gazu**: cel dywergencji κ·(ρ − ρ_ref)/max(ρ_ref, 0,3), κ = 0,012/s — rozrzedzony kanał / dziura zbiega się
+  (gaz wpływa z boków), zagęszczony wał rozpływa się. To jedyny mechanizm „powrotu”: gaz płynie, nic nie wraca samo.
+- **Strefy ściśliwe** (stożek dyszy i pocisku, front wybuchu z wnętrzem, pas „pługa” 130 j. wokół kadłuba; pamięć 1 s): rzut nie
+  poprawia tam dywergencji — pchnięty gaz piętrzy się na brzegu strefy (wał), pas za strumieniem i ślad za rufą zostają puste.
+  Gęstość: Dρ/Dt = −ρ·∇·v z faktycznej dywergencji prędkości, sufit zagęszczenia 3 × ρ_ref + 0,6.
+- **Przeszkody** = komórki stałe: skały (koło r·0,9), wstęga ringu (R ± half, łuk sceny), kadłuby (5 kół na okręt, prędkość
+  okrętu + ω × r); strumienie zasłonięte skałami i ringiem (odcinek komórka → wylot). „Pług”: gaz przy burcie od strony ruchu
+  dostaje normalną prędkość burty (tylko pchanie).
+- **Wiatr** = prędkość tła (cel oporu, prędkość na brzegu okna); wzór pola dalekiego płynie z nim tak samo — nic nie przesuwa
+  się pod symulacją. Ring dostał wiatr wzdłuż orbity (−40, 6 j/s).
+- **Opór**: ku wiatrowi 0,2/s; w próżni (ρ < 0,25) +2/s; kwadratowy 0,3·|v − wiatr| [1/komórka] poza stożkami. Zanik w próżni
+  0,002/s (gaz zachowany), dym 0,02/s, para 0,12/s, wyrzut 0,04/s.
+- **Źródła** (do 64 na klatkę): dysze MAIN (ciąg ponad jałowy) i wsteczne — narzucona prędkość w stożku wzdłuż osi i na boki
+  (pióropusz się rozchyla); pociski — gaz wleczony za pociskiem; wybuch — front wypychający gaz (1400 j/s × (1 − wiek/życie)²) +
+  wyrzut z emiterów; kominy (dym) i chłodnie (para) — gęstość + wylot 420–520 j/s na zewnętrznej krawędzi wstęgi, każdy z własną
+  fazą i wydajnością; odgazowanie lodowych skał — struga od Słońca z wylotem nad powierzchnią skały. Po zmianie sceny 3 s pola
+  z 4× szybszym czasem (dym i dryf rozwinięte od razu).
+- **Pył**: 160 tys. drobin rodzi się w kadrze × 1,25 w komórce przyjętej z prawdopodobieństwem (ρ/ρ₀)³ (do 6 prób na klatkę),
+  leci z prędkością gazu, gaśnie po życiu 4–10 s (w rzednącym gazie do 6× szybciej), ginie poza oknem i w komórce stałej; światło
+  ze Słońca przez mapę światła (samocień gazu i cienie brył) + światła dynamiczne. Pudło `fract` usunięte.
+- Strojenie w konsoli: `__demo.simTune` (+ `__demo.syncSimTune()`); G — pole wyłączone = samo pole dalekie.
+
+### 7.2 Co wyszło inaczej niż w planie (§ 5 pkt 1) — i dlaczego (pomiary)
+
+1. **Źródło objętości dysz i wybuchów (cel dywergencji > 0) — odrzucone.** W polu 2D nieściśliwym objętość kumuluje się bez
+   końca: przy wydatku dopasowanym do śladu kadłuba 6 s ciągu w miejscu wypchnęło ~3 km² mgły (α boków 1,5 → 0,04), a cały
+   kadr płynął promieniście (faktura rozciągnięta w smugi). Przy małym wydatku strumień tylko przestawiał mgłę, a kanał po
+   przelocie zasklepiał się w ~5 s. Zamiast tego STREFA ŚCIŚLIWA w stożku / na froncie (wał na jej brzegu, rozmiar = rozmiar
+   strumienia). Parametr `jetVol` został (0).
+2. **Kanał po przelocie** zamykał się w kilka sekund z trzech powodów, każdy zmierzony osobno: nieściśliwość domykała ślad za
+   kadłubem (ślad ściśnięty w kreskę) → pas „pługa” jest ściśliwy; pas spalin po zgaszeniu silnika płynął dalej i zasysał mgłę
+   od strony okrętu → opór w próżni; brzegi kanału błądziły (turbulencja 0,02, dyfuzja 0,15) → 0,008 i 0,05, κ 0,035 → 0,012.
+   Jałowy płomień (0,12) nie dmucha w pole — stojący okręt wywiewał gaz za rufą.
+3. **Dywergencja ≤ 0,06** dotyczy pola nieściśliwego (poza strefami pchanymi): 0,015–0,016, reszta rzutu 0,012–0,014. Surowa
+   po całym oknie 0,11–0,14 (stare: 0,155) — strefy pchane są ściśliwe z założenia.
+4. **Kominy** stoją na wstędze ringu, a wstęga jest przeszkodą — wylot przeniesiony na zewnętrzną krawędź wstęgi (150–290 j.
+   od komina).
+
+### 7.3 Miary A/B
+
+| miara (cel) | stare | nowe |
+|---|---|---|
+| kanał po przelocie trwa > 30 s, zamyka się dopływem — minimum przekroju / boki (dopływ do osi [j/s]) | 0,03 (5 s) → 0,22 (9 s) → 0,66 (15 s) → 0,81 (30 s); dopływ 0 („guma”) | 0,02 (7 s) → 0,05 (11 s) → 0,12 (17 s) → 0,29 (34 s) → 0,37 (45 s); dopływ 2–12, raz −1 |
+| pas strumienia (ciąg w miejscu 6 s): α pasu; wał = max profilu poprzecznego przed → po (s ≤ 1200 j.) | pas → 0,07; boki ±600–800 bez zmian (1,62 → 1,59); jasne obrzeża rury 3,5–5,9 tuż przy pasie (|y| 325–375 j.) | pas → 0–0,07; wał 1,54–1,71 → 1,65–2,02 (×1,0–1,3, s ≤ 1200 j.); dalej (s ≥ 1500) pióropusz szerszy niż sonda ±600–800 — tam sonda trafia w pas (1,86 → 1,21, 1,72 → 0,4) |
+| gaz nie przechodzi przez skałę: v wzdłuż za skałą, przesunięcie w skale | 1603 / 1589 j/s; przesunięcie 898–1060 j. | −45 / −9 / 57 j/s; w skale v = 0, przesunięcie 0 |
+| dywergencja / prędkość ≤ 0,06 | 0,155 | pole nieściśliwe 0,015–0,016 (reszta 0,012–0,013); całe okno 0,10–0,14 |
+| pył: średnia α pod drobinami ≥ 2× średniej mapy | 1,02–1,03× (pas, ring, mgła); w pustych komórkach tyle, ile pustej powierzchni (15–60 %) | pas 5,2×, ring 2,1×, mgła 1,5×; w pustych 0–2 % przy 15–63 % pustej powierzchni |
+| wybuch w ławicy (wiatr 0): środek, wał / dalej, zamykanie | środek 0,83 → 1,65 (10 s) → 3,0–5,1 (16–36 s, ponad α₀ 2,8); wał cienki, wędruje na r 1,6–1,7 km i znika | dziura α 0,04–0,13 przez 40 s; wał 1,6–2,2 na r 0,8–1,0 km wobec 0,7 dalej (12 s), potem rozpływa się (1,2 na r 1,4 km); krawędź (r 500 j.) 0,39 → 0,14 (4 s) → 0,46 (19 s) → 0,83 (40 s), prędkość promieniowa −1…−3 j/s (do środka) |
+
+Pył w mgle (1,5×) nie spełnia progu 2×: ławice zajmują ~80 % kadru, więc górna granica to max α / średnia ≈ 2,3, a budżet drobin
+∝ gęstości daje z definicji 1 + CV² ≈ 1,3×; przyjęcie ∝ ρ³ daje 1,5×. Wyższy wykładnik zgniótłby pył do samych rdzeni ławic —
+do decyzji (D2).
+
+### 7.4 Koszt (1600 × 900, bez limitu klatek — headless bez vsync; 2 rundy na przemian, średnia)
+
+| scena | stare [kl/s] | nowe [kl/s] |
+|---|---|---|
+| pas | 240,6 | 291,3 |
+| ring | 240,7 | 290,4 |
+| mgła | 244,7 | 292,4 |
+| mgła, ciąg w miejscu (W + S) | 246,6 | 292,3 |
+
+Próg ≥ 150 kl/s bez limitu spełniony z zapasem (≥ 60 z vsync — tym bardziej). Nowe jest szybsze: mapa gazu nie liczy już pełnego fbm na piksel (pole dalekie tylko przy brzegu okna, faktura tańsza), a pole
+liczy się 60 razy na sekundę, nie co klatkę. Z vsync (60 Hz) oba mają duży zapas.
+
+### 7.5 Do oceny i dalej
+
+- Wygląd strumienia: pas za dyszą jest pusty (czarny), po bokach wał i para wirów (rozruch strugi) — inny charakter niż „rura”
+  starego dema; `ab/C1-ciag-6s.png`, `ab/C2-po-6s.png`. Szerokość pióropusza: `widen` 0,3, wypychanie na boki ×2,0 (`buildSimInputs`).
+- Faktura mgły w spoczynku jest gładsza niż w starym demie (obwiednia na siatce 64 j. + faktura detalu) — `ab/10-fog.png`.
+- Teleport okrętu w gaz (`__demo.place`) wycina dziurę w kształcie kadłuba — artefakt dema.
+- DRŻENIE GAZU PRZY LOCIE (zgłoszenie użytkownika 2026-10-13, naprawione): okno symulacji przesuwało się o komórkę w KAŻDEJ
+  klatce, w której kamera przekroczyła granicę komórki, a tekstury obrazu (`simTex`, `restTex`) zapisuje dopiero `kProject`
+  w kroku 1/60 s — w klatce z przesunięciem bez kroku obraz czytał stare tekstury z nowym początkiem i cały gaz skakał
+  o 64 j., po czym wracał w następnym kroku. Na 144 Hz ~2/3 przesunięć trafiało w klatkę bez kroku (przy 1500 j/s:
+  kilkanaście skoków na sekundę; różnica obrazu między klatkami 2,3–2,9 wobec 1,2). Teraz okno przesuwa się tylko
+  w klatce z krokiem (albo przy starcie sceny). Pomiar deterministyczny (rAF kroczony w zadanej częstotliwości, autopilot
+  `__demo.move`): `node scripts/webgpu/gazy-transport-drzenie.mjs [--hz 144] [--scena belt|ring|fog]` — po naprawie 0
+  przesunięć bez kroku, maks. różnica 1,36. Przy porcie okna wokół kamery do gry: początek okna i tekstury obrazu muszą
+  zmieniać się w tej samej klatce.
+- Dla portu (§ 5 pkt 2): nowa decyzja **D6** — w otwartej przestrzeni strefy ściśliwe (pchnięcie bez źródła objętości) zamiast
+  źródła objętości dysz z hal K-7 (`gasField2D.js`). Czy źródło objętości z silniejszym miękkim rzutem (hale: soft 0,01) by
+  wystarczyło w oknie 16 km — niesprawdzone.

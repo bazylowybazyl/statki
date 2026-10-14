@@ -40,6 +40,7 @@ import { haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
 import { K7_BEACON, K7_BEACON_LOOK, K7_VENT_DUR, K7_VENT_WARN } from './haloPortK7Lights.js';
 import { K7_HOSE_NODES, createK7FuelRig, stepK7FuelRig } from './haloPortK7Fuel.js';
+import { K7_GLB_TAGS, K7_GLB_TUNE, acquireK7GlbGeometry, k7GlbData, releaseK7GlbGeometry } from './haloPortK7Glb.js';
 import { zbierzZakres } from '../zakresyWysylki.js';
 
 const MAX_GROUPS = 40;   // 8 słupków paliwowych × 4 grupy (człony ramienia, wysięgnik, złączka) + 4 zamki pola + grupa 0
@@ -163,6 +164,11 @@ function k7BeaconColorTSL(kind) {
   return col;
 }
 
+// Hala z Blendera (haloPortK7Glb.js): wygląd wspólny dla wszystkich ringów i hal (na żywo: window.K7GlbLook —
+// .ao.value, .aoDirect.value, .plate.value). ao — siła AO z wypieku, aoDirect — udział AO w świetle słońca,
+// plate — waga płyt proceduralnych K-7 na modelu (model ma własne szwy i detal).
+export const K7_GLB_LOOK = Object.freeze({ ao: uniform(1.0), aoDirect: uniform(0.35), plate: uniform(0.55) });
+
 // Wartość per obiekt z material.uniforms[klucz].value rysowanego obiektu.
 const perObject = (init, key) => uniform(init).onObjectUpdate(({ material }) => material?.uniforms?.[key]?.value);
 
@@ -274,7 +280,9 @@ export function k7Graphs(u) {
   };
 
   // Cieniowanie (dawne k7Shade): v — varyingi materiału (ring, n, hub), group — indeks emisji grupy.
-  const k7Shade = (v, albedo0, m, hubN, fuv, fw, group) => {
+  // glb — hala z Blendera (haloPortK7Glb.js): { ao, plate, aoDirect } (AO z wypieku, waga płyt proceduralnych);
+  // bez niego graf jak dawniej (instancje, płyty starej hali — WGSL bez zmian)
+  const k7Shade = (v, albedo0, m, hubN, fuv, fw, group, glb = null) => {
     const N = normalize(v.n).toVar();
     const p = vec3(v.ring).toVar();
     const V = normalize(U.uCamLocal.sub(p)).toVar();
@@ -285,8 +293,14 @@ export function k7Graphs(u) {
     const hl = float(0.0).toVar();
     const albedo = vec3(albedo0).toVar();
     If(plated.or(deck), () => {
-      albedo.mulAssign(plates.value);
-      hl.assign(plates.hl);
+      if (glb) {
+        // płyty proceduralne słabiej (model ma własne szwy i detal): średnia jasność płyt + waga wzoru
+        albedo.mulAssign(mix(deck.select(float(0.14), float(0.49)), plates.value, glb.plate));
+        hl.assign(plates.hl.mul(glb.plate));
+      } else {
+        albedo.mulAssign(plates.value);
+        hl.assign(plates.hl);
+      }
     });
     If(m.greaterThan(19.5), () => { albedo.assign(vec3(0.012, 0.017, 0.021).mul(plates.value)); });   // pole stanowiska
     const rough = inRange(m, 6.5, 7.5).select(float(0.38), inRange(m, 9.5, 10.5).select(float(0.45),
@@ -307,7 +321,15 @@ export function k7Graphs(u) {
       .add(H.haloPlanetshine(p, N)).add(vec3(U.uNightAmbient)).toVar();
     amb.addAssign(k7HallLight(v.hub, hubN).mul(hallLights.x));
     const diffuse = albedo.mul(float(1.0).sub(metal.mul(0.7)));
-    const color = diffuse.mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).add(U.uSunColor.mul(sunVis).mul(spec).mul(0.8)).toVar();
+    let color;
+    if (glb) {
+      // AO z wypieku: pełne w świetle pośrednim (otoczenie, planeta, lampy hali), częściowe w słońcu (szczeliny)
+      amb.mulAssign(glb.ao);
+      color = diffuse.mul(U.uSunColor.mul(sunVis).mul(NdL).mul(mix(float(1.0), glb.ao, glb.aoDirect)).add(amb))
+        .add(U.uSunColor.mul(sunVis).mul(spec).mul(0.8)).toVar();
+    } else {
+      color = diffuse.mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).add(U.uSunColor.mul(sunVis).mul(spec).mul(0.8)).toVar();
+    }
     // krawędź płyt łapie światło (jasna faza z tekstury K-7)
     color.addAssign(albedo.mul(hl).mul(0.25).mul(H.haloLuma(sunVis).mul(NdL).add(0.2)));
     // odbicie otoczenia: kosmos czarny, planeta poniżej
@@ -460,7 +482,50 @@ export function k7Graphs(u) {
     return vec4(col, 1.0);
   })();
 
+  // ---- hala z Blendera (haloPortK7Glb.js): geometria scalona w hubie (wysokości już odwzorowane), aK7 = unorm8 ×4
+  // (kod materiału /255, AO, grupa ruchoma /255, waga płyt); grupy jak instancje (macierz k7Groups w wierzchołkach)
+  const vg = k7Varyings();
+  const vAo = varyingProperty('float', 'vK7Ao');
+  const vPlate = varyingProperty('float', 'vK7Plate');
+  const glbVertex = Fn(() => {
+    const aK = attribute('aK7', 'vec4');
+    const p = positionGeometry;
+    const n = normalGeometry;
+    const grp = floor(aK.z.mul(255.0).add(0.5)).toVar();
+    const g4 = int(grp).mul(4).toVar();
+    const c0 = groups.element(g4).toVar();
+    const c1 = groups.element(g4.add(1)).toVar();
+    const c2 = groups.element(g4.add(2)).toVar();
+    const c3 = groups.element(g4.add(3)).toVar();
+    const gp = mat4(c0, c1, c2, c3).mul(vec4(p, 1.0)).toVar();
+    const gn = normalize(mat3(c0.xyz, c1.xyz, c2.xyz).mul(n)).toVar();
+    vg.hub.assign(gp.xyz);
+    vg.hubN.assign(gn);
+    vg.ring.assign(hub.mul(gp).xyz);
+    vg.n.assign(normalize(hub3.mul(gn)));
+    vg.local.assign(p);
+    vg.localN.assign(n);
+    vg.mat.assign(aK.x.mul(255.0));
+    vg.group.assign(grp);
+    vAo.assign(aK.y);
+    vPlate.assign(aK.w);
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(gp));
+  })();
+  const glbFragment = Fn(() => {
+    const m = floor(vg.mat.add(0.5)).toVar();
+    const localN = vec3(vg.localN).toVar();
+    const local = vec3(vg.local).toVar();
+    const kn = abs(localN).toVar();
+    const fuv = kn.y.greaterThan(0.55).select(local.xz, kn.x.greaterThan(0.55).select(local.zy, local.xy)).toVar();
+    const fw = fwidth(fuv.x).add(fwidth(fuv.y)).toVar();
+    const ao = mix(float(1.0), clamp(vAo, 0.0, 1.0), K7_GLB_LOOK.ao).toVar();
+    const c = k7Shade(vg, k7Palette(m), m, normalize(vg.hubN), fuv, fw, vg.group,
+      { ao, plate: vPlate.mul(K7_GLB_LOOK.plate), aoDirect: K7_GLB_LOOK.aoDirect });
+    return vec4(c, roofOpacity);
+  })();
+
   G = {
+    glb: { vertexNode: glbVertex, fragmentNode: glbFragment },
     instance: { vertexNode: instanceVertex, fragmentNode: instanceFragment },
     plate: { vertexNode: plateVertex, fragmentNode: plateFragment },
     label: { vertexNode: labelVertex, fragmentNode: labelFragment },
@@ -686,7 +751,12 @@ export class HaloPortK7 {
     this.root.matrix.copy(hubM);
     this.hubMatrix = hubM;
 
-    const scene = buildK7Scene(layout, { floorZ: fr.floorZ, rimZ: fr.rimZ, floorR: fr.floorR, bays: this.bays, style: this.style });
+    // hala z Blendera (haloPortK7Glb.js, domyślna): sekcje z modelu nie są nagrywane bryłami
+    const glbData = k7GlbData();
+    const scene = buildK7Scene(layout, {
+      floorZ: fr.floorZ, rimZ: fr.rimZ, floorR: fr.floorR, bays: this.bays, style: this.style,
+      skipTags: glbData ? K7_GLB_TAGS : null
+    });
     this.scene = scene;
     this.groups = scene.groups;
     this.sphere = complexSphere(scene.sets);
@@ -776,6 +846,29 @@ export class HaloPortK7 {
         this.instances[setName + '_' + kind] = inst;
         if (setName === 'roof') mesh.renderOrder = 20;
       }
+    }
+    // hala z Blendera: geometria scalona (wspólna dla hal) na zestaw i poziom szczegółów, jeden materiał hali
+    this.glb = null;
+    if (glbData) {
+      const material = nodeMat('K7Glb', graphs.glb, common);
+      this.glb = { lod: -1, levels: [], material };
+      for (let lod = 0; lod < 2; lod++) {
+        const entry = acquireK7GlbGeometry(lod, scene.places, this.sphere);
+        if (!entry) continue;
+        const level = { entry, meshes: [] };
+        for (const set of ['bg', 'fg']) {
+          const g = entry.geo[set];
+          if (!g) continue;
+          const mesh = new THREE.Mesh(g, material);
+          mesh.name = `K7_glb${lod}_${set}`;
+          mesh.frustumCulled = true;
+          this.root.add(mesh);
+          this.meshes[set].push(mesh);
+          level.meshes.push(mesh);
+        }
+        this.glb.levels[lod] = level;
+      }
+      this._setGlbLod(0);
     }
     // pokład, fartuchy, most / dach
     const plateMat = (uni, opts = {}) => nodeMat('K7Plates', graphs.plate, uni, opts);
@@ -884,6 +977,40 @@ export class HaloPortK7 {
     this._tB = new THREE.Vector3();
     for (let h = 0; h < n; h++) this._writeHose(h);
     this._uploadHoses(0, n);
+  }
+
+  // Hala z Blendera: widoczny poziom szczegółów (0 / 1).
+  _setGlbLod(lod) {
+    const G = this.glb;
+    if (!G || G.lod === lod) return;
+    if (!G.levels[lod]) lod = G.levels[0] ? 0 : 1;
+    G.lod = lod;
+    G.levels.forEach((level, i) => { if (level) for (const m of level.meshes) m.visible = i === lod; });
+  }
+
+  // Poziom szczegółów z rozmiaru piksela (kamera ringu: camLocal — układ lokalny ringu, pixelAngle — kąt piksela;
+  // index.js / archRing.js cullHalls): odległość kamery od obwiedni hali, LOD0 od K7_GLB_TUNE.lod0Ppu px na
+  // jednostkę (histereza ±10%), K7_GLB_TUNE.forceLod — wymuszony (A/B).
+  updateGlbLod(camLocal, pixelAngle) {
+    const G = this.glb;
+    if (!G) return;
+    let lod = K7_GLB_TUNE.forceLod;
+    if (lod !== 0 && lod !== 1) {
+      const fr = this.frame;
+      const L = this.layout;
+      const dx = camLocal.x - fr.origin.x;
+      const dy = camLocal.y - fr.origin.y;
+      const hx = dx * fr.tx + dy * fr.ty;
+      const hz = dx * fr.rx + dy * fr.ry;
+      const ex = Math.max(0, Math.abs(hx) - L.halfWidth);
+      const ez = Math.max(0, L.backZ - 400 - hz, hz - (L.frontZ + 300));
+      const ey = Math.max(0, camLocal.z - 300, -400 - camLocal.z);
+      const d = Math.max(1, Math.hypot(ex, ey, ez));
+      const ppu = pixelAngle > 0 ? 1 / (d * pixelAngle) : Infinity;
+      const t = K7_GLB_TUNE.lod0Ppu;
+      lod = G.lod === 0 ? (ppu < t * 0.9 ? 1 : 0) : (ppu > t * 1.1 ? 0 : 1);
+    }
+    this._setGlbLod(lod);
   }
 
   setLayers(bgLayer, fgLayer) {
@@ -1136,11 +1263,22 @@ export class HaloPortK7 {
   }
 
   get drawCalls() {
-    return this.meshes.bg.length + this.meshes.fg.length;
+    let hidden = 0;
+    if (this.glb) for (const level of this.glb.levels) if (level) for (const m of level.meshes) if (!m.visible) hidden++;
+    return this.meshes.bg.length + this.meshes.fg.length - hidden;
   }
 
   dispose() {
-    for (const m of [...this.meshes.bg, ...this.meshes.fg]) m.geometry.dispose();
+    // geometria hali z Blendera jest wspólna dla hal — zwalnia ją licznik użyć (releaseK7GlbGeometry)
+    const shared = new Set();
+    if (this.glb) {
+      for (const level of this.glb.levels) {
+        if (!level) continue;
+        for (const m of level.meshes) shared.add(m.geometry);
+        releaseK7GlbGeometry(level.entry);
+      }
+    }
+    for (const m of [...this.meshes.bg, ...this.meshes.fg]) if (!shared.has(m.geometry)) m.geometry.dispose();
     for (const m of this.materials) m.dispose();
     this._box.dispose();
     this._cyl.dispose();
