@@ -1137,21 +1137,21 @@ Zależności: brak. Kolizje: brak.
 **RW-03 Sloty renderu.** Pliki: nowe `src/render/renderIds.js`, `tests/renderIds.test.mjs` — slot + generacja dla
 encji, ciał belek, pocisków i zasobów, zwalnianie po zniknięciu z list, wzrost. Bez wpięcia w grę.
 Kryterium: testy. Zależności: brak. Kolizje: brak.
+**Stan (2026-10-15, tor `rw-migawka`, commit „RW-03: sloty renderu…”):** zrobione, bez wpięcia w grę.
+`src/render/renderIds.js`: `RenderIdSpace` (slot = najmniejszy wolny — kopiec minimalny wolnych slotów, zakres
+`highWater` zwija się z końca; generacja Uint32 rośnie przy zwolnieniu, bez 0; tożsamość w `Map`, bez stempli na
+obiektach gry), mark & sweep na klatkę migawki: `begin()` → `slotOf(obj)` z każdej listy → `end()` zwalnia sloty
+bez odwołania od `retain` klatek (encje, ciała, pociski: 1, zasoby: 600); `stamp` — obiekt z puli użyty ponownie
+dostaje nową generację w tym samym slocie (pociski gry to dziś świeże literały — `stamp` na zapas); `release(obj)` —
+zwolnienie od razu; `isLive(slot, gen)`, `objectAt`. `createRenderIds()` — przestrzenie encji, ciał (wrak dziedziczy
+slot ciała rodzica), pocisków i zasobów z `begin` / `end` naraz. Testy `tests/renderIds.test.mjs` (6, w tym losowa
+symulacja 3000 klatek z dwiema listami: para slot + generacja nigdy dla dwóch obiektów, liczba zajętych = żywe).
 
 **RW-04 Bufory współdzielone.** Pliki: nowe `src/render/tripleBuffer.js`, `src/render/eventRing.js`,
 `tests/renderBuffers.test.mjs` — potrójny bufor na `Atomics.exchange` (§ 3.2), pierścień rekordów zmiennej długości
 z przejściem na większy (§ 3.3). Kryterium: testy w Node z `worker_threads` na SAB: pisarz 1000 Hz, czytelnik wolny
 i nieregularny — żadnej rozdartej strony (suma kontrolna), żadnego zgubionego ani przestawionego rekordu, poprawne
 przejście na większy pierścień. Zależności: brak. Kolizje: brak.
-
-### Etap 1 — migawka i lustra na jednym wątku (tryb `inline`)
-
-Korzyść bez workera: jawny kontrakt danych renderu (lustro bez pola = różnica w zrzucie), możliwy zysk CPU luster
-(RW-11a mierzy), render testowalny na danych z tablic. Koszt: pakowanie 0,3–0,7 ms — dlatego `inline` za flagą do
-czasu workera (decyzja D7).
-
-**RW-10 Układ migawki i pakowanie.**
-Pliki: nowe `src/render/snapshotLayout.js`, `src/render/snapshotPack.js` (czyste), testy; `index.html` — jedno
 **Stan (2026-10-15, tor `rw-migawka`, commit „RW-04: bufory współdzielone…”):** zrobione. `src/render/tripleBuffer.js`
 (`createTripleBuffer`, `TripleBufferWriter.publish`, `TripleBufferReader.acquire`; nagłówek 64 B: MID z bitem NOWA,
 liczniki publikacji / odbiorów / stron nadpisanych przed odbiorem, rozmiar strony, generacja układu; strony wyrównane
@@ -1170,6 +1170,15 @@ stron, suma kontrolna zgodna, numery rosną, strony pomijane; pierścień startu
 klatkę 1000 Hz (rekordy 0–3300 słów), czytelnik z opóźnieniem 0–3 klatek i przerwami: ~25 tys. rekordów, ≥ 3 wzrosty
 w locie (bufor nowego pierścienia przez `MessageChannel`), 0 zgubionych, 0 przestawionych, 0 o klatce > k; przebicia
 tarcz — pisarz bez przerw, czytelnik: 0 rozdartych rekordów.
+
+### Etap 1 — migawka i lustra na jednym wątku (tryb `inline`)
+
+Korzyść bez workera: jawny kontrakt danych renderu (lustro bez pola = różnica w zrzucie), możliwy zysk CPU luster
+(RW-11a mierzy), render testowalny na danych z tablic. Koszt: pakowanie 0,3–0,7 ms — dlatego `inline` za flagą do
+czasu workera (decyzja D7).
+
+**RW-10 Układ migawki i pakowanie.**
+Pliki: nowe `src/render/snapshotLayout.js`, `src/render/snapshotPack.js` (czyste), testy; `index.html` — jedno
 wywołanie w `render()` po kamerze, przed aktualizacjami 3D, za `?szew=inline`. Bloki HEAD, LISTS, ENT, BODY, NODES,
 NOZZLES, SHOTS, TURRETS (na razie z rekordów `Turret2D` po `updateHexShips3D`), WORLD, CORES, HALL; reguła „zmienione
 od ostatniej odebranej”; liczniki: węzły zmienione na klatkę (D — dziś niezmierzone), bajty na blok.
