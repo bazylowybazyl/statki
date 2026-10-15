@@ -111,7 +111,7 @@ export class HaloRingGame {
         hallIndex: -1,
         bayFade: 0,
         bayIndex: -1,
-        occluderKey: `halo:${key}`,
+        occluderKey: `halo:${w.key}`,
         // ring rzuca cień w smugach (i pas na tarczy planety) dopiero od podpięcia brył (ring.ready)
         shadowReady: false
       });
