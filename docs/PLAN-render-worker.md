@@ -1382,6 +1382,21 @@ Pliki: `src/3d/shield3D.js` (bity do bloku `RET`), nowy `src/game/shieldBreach.j
 z `acquireShieldLattice`), `index.html` (pociski, wiązki), rakiety. Kryterium: `node scripts/webgpu/tarcze-gra.mjs` —
 przebicia jak dziś (przy D3 = bez zmian); test geometrii płytek. Zależności: RW-04. Kolizje: mało.
 
+**Stan (2026-10-15, tor `rw-kadluby`, commit „RW-29: …”) — zrobione, CZEKA NA WERYFIKACJĘ** (`tarcze-gra.mjs`,
+`tarcza-pokazana-gra.mjs`, zrzuty — tryb lekki maszyny). Render (`shield3D.js`, `setShieldReturnChannel(views, keyOf)`)
+po odczycie GPU pisze rekord slotu puli do RET (`retWriteBreach`: slot + generacja encji, `shieldProfileHash` obrysu,
+epoka w `RET_I32.BREACH_EPOCH`, bity płytek), przy przydziale slotu — rekord bez przebić, przy zwolnieniu — slot −1;
+bez kanału (dema, testy) dawna droga. Gra: `index.html` tworzy `RenderSlots = createRenderIds()` i `RenderReturn`
+(RET), w `render()` znakuje sloty encji całego `renderEntities` (uzgodnione z `rw-migawka` — RW-10 przejmie instancję
+i zastąpi znakowanie pakowaniem list), czytelnik `src/game/shieldBreach.js` (`ShieldBreach.refresh()` raz na klatkę
+przed krokami fizyki) stawia `__shieldBreach` i testuje punkt (`isShieldBreachedAt` z gry — pociski, wiązki, bomby,
+drony, rakiety przez `window.isShieldBreachedAt`). Stałe puli (`SHIELD_SLOTS`, `SHIELD_SLOT_CAP`) przeszły do czystego
+`shieldLattice.js` (pula je reeksportuje). Semantyka D3 bez zmian (slot tylko dla tarcz na ekranie, twardość, pokazanie
+i klasa trafienia działają w polu GPU), opóźnienie +≤ 1 klatka. Odstępstwo: punkt trafienia przechodzi do klatki
+lokalnej tarczy z POZY GRY w chwili testu (dawniej poza ostatniej klatki renderu, gracz — interpolowana). Testy
+`tests/shieldBreach.test.mjs` (5: stałe, geometria płytek 64 kierunki, dziura / druga strona / obrót / obrys / zwolnienie,
+właściciel slotu i generacja, wpięcie); `tarcze-gra.mjs` czyta liczniki z `ShieldBreach.stats`.
+
 **RW-30 Kamera: wstrząsy po stronie gry.**
 Pliki: `src/3d/weapons/weaponFx.js` (bez `camera.addShake` i `__weapon3dCameraShake`), wstrząs z danych broni
 (`src/game/weaponFeel.js`) przy `SHOT` / `IMPACT`, supernowa, reaktor, warp (`src/3d/warp/player.js` → przejścia

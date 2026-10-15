@@ -1247,7 +1247,13 @@
       setLiveDebugPerfHud,
       installLiveDebugConsoleApi
     } from "./src/ui/liveDebug.js";
-    import { updateShields3D, prewarmShields3D, getShieldPoolStats, isShieldBreachedAt, probeShieldSlot, SHIELD_TUNING } from "./src/3d/shield3D.js";
+    import { updateShields3D, prewarmShields3D, getShieldPoolStats, probeShieldSlot, setShieldReturnChannel, SHIELD_TUNING } from "./src/3d/shield3D.js";
+    // Szew renderu (docs/PLAN-render-worker.md § 3.2, § 3.4): sloty renderu encji (slot + generacja — RW-03; RW-10 przejmie
+    // znakowanie list migawki) i kanał zwrotny RET (RW-04), który pisze render, a czyta gra.
+    import { createRenderIds } from "./src/render/renderIds.js";
+    import { createReturnBuffer, createReturnViews } from "./src/render/returnLayout.js";
+    // Przebicia tarcz po stronie gry (RW-29): rekordy RET → flaga `__shieldBreach` i test punktu na siatce płytek.
+    import { createShieldBreachReader } from "./src/game/shieldBreach.js";
     // Tarcza z dema WebGPU (dema/tarcza-webgpu): przezroczysta, widac ja tylko w miejscu
     // trafienia (plytki-heksy, fala, iskry na czaszy) i przy peknieciu. Strojenie z konsoli
     // dziala od razu: ShieldTuning.sparks = 0.5, ShieldTuning.shatter.crossTime = 0.8 itd.
@@ -1256,6 +1262,22 @@
     const SHIELD_BREACH_DAMAGE_OPTS = Object.freeze({ bypassShield: true });
     window.getShieldPoolStats = getShieldPoolStats;
     window.probeShieldSlot = probeShieldSlot;
+    const RenderSlots = createRenderIds();
+    const RenderReturn = createReturnViews(createReturnBuffer());
+    window.RenderSlots = RenderSlots;
+    const ShieldBreach = createShieldBreachReader({
+      ret: RenderReturn,
+      entityAt: (slot, gen) => (RenderSlots.entities.isLive(slot, gen) ? RenderSlots.entities.objectAt(slot) : null)
+    });
+    const isShieldBreachedAt = ShieldBreach.isShieldBreachedAt;
+    window.ShieldBreach = ShieldBreach;
+    setShieldReturnChannel(RenderReturn, (e, out) => {
+      const slot = RenderSlots.entities.peek(e);
+      if (slot < 0) return false;
+      out[0] = slot;
+      out[1] = RenderSlots.entities.gen(slot);
+      return true;
+    });
     window.isShieldBreachedAt = isShieldBreachedAt;   // rakiety (rocketSystem3D) — przebicie tarczy
     import { initWorld3D, attachPirateStation3D, updateWorld3D, setWorld3DHiddenTest } from "./src/3d/world3d.js";
     // Suchy dok piratów (misja 1): bryła 3D (budowle Z7), bryły trafień i kawałki zniszczeń.
@@ -27967,6 +27989,8 @@
       beginAsteroidMiningFrame();
       // Tryb torped gaśnie przy stacji / warpie / RTS / śmierci.
       stepTorpedoMode();
+      // Przebicia tarcz z kanału zwrotnego (RW-29): rekordy zapisane przez render od poprzedniej klatki → flagi encji.
+      ShieldBreach.refresh();
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
@@ -29092,6 +29116,11 @@
       // Zimne wraki z ciałem do rysowania (skórę rysuje updateHexShips3D z coldWrecks): mostek 3D, okna mostka,
       // model 3D okrętu i rdzeń reaktora jak u wraku śpiącego (ColdWreckConfig.nearExtras).
       const renderSeenCold = withColdNearWrecks(renderSeen);
+      // Sloty renderu encji tej klatki (rekordy przebić tarcz w RET niosą slot + generację; RW-29 — RW-10 zastąpi to
+      // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot.
+      RenderSlots.entities.begin();
+      for (let i = 0; i < renderEntities.length; i++) RenderSlots.entities.slotOf(renderEntities[i]);
+      RenderSlots.entities.end();
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
