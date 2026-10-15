@@ -216,7 +216,7 @@ const alignUp = (n) => Math.ceil(n / ALIGN) * ALIGN;
 /**
  * Układ strony dla pojemności `cap`: przesunięcia bajtów obszarów i rozmiar strony. Wynik stały dla `cap`.
  */
-export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen = 0) {
+export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen = 0, blocks = null) {
   const cap = { ...SNAPSHOT_DEFAULT_CAPACITY, ...capacity };
   const regions = {};
   let off = 0;
@@ -246,7 +246,20 @@ export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen =
   recRegions('tur', TURRET, cap.turrets);
   recRegions('sta', STATION, cap.stations);
   recRegions('core', CORE, cap.cores);
-  return Object.freeze({ version: SNAPSHOT_LAYOUT_VERSION, gen, cap: Object.freeze(cap), regions: Object.freeze(regions), pageBytes: alignUp(off) });
+  // bloki modułów (RW-11c: ring, pas, baza, warp, planety… — własne pliki układu, wzór pyłu hal): obszary `blk:<nazwa>:f64|i32|u8`
+  const blockList = [];
+  if (blocks) {
+    for (const b of blocks) {
+      if (b.f64) region(`blk:${b.name}:f64`, Float64Array, b.f64);
+      if (b.i32) region(`blk:${b.name}:i32`, Int32Array, b.i32);
+      if (b.u8) region(`blk:${b.name}:u8`, Uint8Array, b.u8);
+      blockList.push(Object.freeze({ name: b.name, f64: b.f64 | 0, i32: b.i32 | 0, u8: b.u8 | 0 }));
+    }
+  }
+  return Object.freeze({
+    version: SNAPSHOT_LAYOUT_VERSION, gen, cap: Object.freeze(cap), regions: Object.freeze(regions),
+    blocks: Object.freeze(blockList), pageBytes: alignUp(off)
+  });
 }
 
 const CTORS = { Float64Array, Float32Array, Int32Array, Uint8Array };
@@ -255,10 +268,15 @@ const CTORS = { Float64Array, Float32Array, Int32Array, Uint8Array };
  * Widoki strony (tworzone RAZ — `views` potrójnego bufora): `{ head, world, hall, listCount, listData, entF64, … }`.
  */
 export function createSnapshotViews(buffer, byteOffset, layout) {
-  const v = { layout, listStride: layout.cap.entities };
+  const v = { layout, listStride: layout.cap.entities, blocks: {} };
+  for (const b of layout.blocks || []) v.blocks[b.name] = { f64: null, i32: null, u8: null };
   for (const name in layout.regions) {
     const r = layout.regions[name];
-    v[name] = new CTORS[r.ctor](buffer, byteOffset + r.offset, r.length);
+    const view = new CTORS[r.ctor](buffer, byteOffset + r.offset, r.length);
+    if (name.startsWith('blk:')) {
+      const i = name.lastIndexOf(':');
+      v.blocks[name.slice(4, i)][name.slice(i + 1)] = view;
+    } else v[name] = view;
   }
   return v;
 }

@@ -137,12 +137,41 @@ export class SnapshotPacker {
     this._bodyRestK = new Int32Array(0);
     this._bodyStore = [];
     this._bodyBeams = [];
+    this._blocks = [];
+    this._blocksDirty = false;
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
     this._coreLists = [[null, null], null, null, null];
     // historia klatek (raport RW-10): czas pakowania [ms], węzły i ciała w NODES, bajty zajęte na stronie
     this.hist = { n: 0, ms: new Float64Array(4096), nodes: new Int32Array(4096), bodies: new Int32Array(4096), bytes: new Int32Array(4096) };
     this._setLayout(createSnapshotLayout(capacity, 0));
+  }
+
+  /**
+   * Blok modułu (RW-11c — wzór pyłu hal: układ w pliku modułu): `{ name, f64, i32, u8, phase: 'begin' | 'finish',
+   * pack(block, frame, packer) }` — `block` = { f64, i32, u8 } widoki tej strony (stałe rozmiary bloku). Rejestracja
+   * przed pierwszym `begin` albo w biegu (nowy układ stron). Większy blok: `resizeBlock(nazwa, { f64, i32, u8 })`.
+   */
+  addBlock(def) {
+    if (!def || !def.name || typeof def.pack !== 'function') throw new Error('snapshotPack: blok bez nazwy albo pack()');
+    if (this._blocks.some((b) => b.name === def.name)) throw new Error(`snapshotPack: blok ${def.name} dwa razy`);
+    this._blocks.push({ name: def.name, f64: def.f64 | 0, i32: def.i32 | 0, u8: def.u8 | 0, phase: def.phase || 'begin', pack: def.pack });
+    this._regrow(this.layout.cap);
+  }
+
+  resizeBlock(name, sizes) {
+    const b = this._blocks.find((x) => x.name === name);
+    if (!b) return;
+    b.f64 = sizes.f64 ?? b.f64; b.i32 = sizes.i32 ?? b.i32; b.u8 = sizes.u8 ?? b.u8;
+    this._blocksDirty = true;
+  }
+
+  _packBlocks(v, frame, phase) {
+    const list = this._blocks;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (b.phase === phase) b.pack(v.blocks[b.name], frame, this);
+    }
   }
 
   _setLayout(layout) {
@@ -182,6 +211,7 @@ export class SnapshotPacker {
       this._growNext = null;
       if (next !== this.layout.cap) this._regrow(next);
     }
+    if (this._blocksDirty) this._regrow(this.layout.cap);
     this.k++;
     const k = this.k;
     // kolejki opisów i topologii: nowe z tej strony (worker — wysyłka między finish a następnym begin)
@@ -208,6 +238,7 @@ export class SnapshotPacker {
     this._packStations(v, frame);
     this._packCores(v, frame);
     this._packWorld(v, frame);
+    if (this._blocks.length) this._packBlocks(v, frame, 'begin');
     this.stats.beginMs = this.now() - t0;
   }
 
@@ -219,6 +250,7 @@ export class SnapshotPacker {
     this._packTurrets(v, frame);
     if (frame.hall && frame.hall.length >= HALL_WORDS) v.hall.set(frame.hall.subarray(0, HALL_WORDS));
     else v.hall.fill(0);
+    if (this._blocks.length) this._packBlocks(v, frame, 'finish');
     v.world[WORLD.DICT_N] = this.dict.values.length;
     this.ids.end();
     this.writer.publish();
@@ -323,7 +355,8 @@ export class SnapshotPacker {
 
   _regrow(cap) {
     this.stats.layoutGrows++;
-    this._setLayout(createSnapshotLayout(cap, this.layout.gen + 1));
+    this._blocksDirty = false;
+    this._setLayout(createSnapshotLayout(cap, this.layout ? this.layout.gen + 1 : 0, this._blocks));
   }
 
   _packLists(v) {

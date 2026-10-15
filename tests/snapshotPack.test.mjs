@@ -282,3 +282,25 @@ test('lustra (consumeDirty): flagi brudu gry zerowane po spakowaniu; pozycje spo
   packer.finish(frame);
   assert.equal(body._region.dirtyAll, false);
 });
+
+test('bloki modułów (RW-11c): rejestracja, pakowanie w fazie, widoki strony u czytelnika, zmiana rozmiaru', () => {
+  let reader = null;
+  const packer = new SnapshotPacker({
+    shared: false,
+    onLayout: (buf, layout) => { reader = new TripleBufferReader(buf, { views: (b, off) => createSnapshotViews(b, off, layout) }); }
+  });
+  packer.addBlock({ name: 'ring', f64: 8, i32: 4, phase: 'begin', pack: (blk, f) => { blk.f64[0] = f.sim; blk.i32[1] = 7; } });
+  packer.addBlock({ name: 'pas', u8: 16, phase: 'finish', pack: (blk) => { blk.u8[15] = 9; } });
+  assert.throws(() => packer.addBlock({ name: 'ring', pack() {} }), /dwa razy/);
+  const frame = baseFrame([makeShip(1, 0, 0)], { sim: 12.5 });
+  packer.begin(frame); packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.blocks.ring.f64[0], 12.5);
+  assert.equal(reader.page.blocks.ring.i32[1], 7);
+  assert.equal(reader.page.blocks.pas.u8[15], 9);
+  packer.resizeBlock('ring', { f64: 64 });
+  packer.begin(frame); packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.blocks.ring.f64.length, 64);
+  assert.equal(reader.page.blocks.ring.f64[0], 12.5);
+});
