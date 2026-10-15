@@ -96,8 +96,12 @@ export function createSnapshotFrame() {
  * (wzrost pojemności): czytelnik tworzy nowy `TripleBufferReader` z `createSnapshotViews`.
  */
 export class SnapshotPacker {
-  constructor({ ids = null, capacity = SNAPSHOT_DEFAULT_CAPACITY, shared = true, onLayout = null, now = null, describe = false } = {}) {
+  constructor({ ids = null, ownsIds = null, capacity = SNAPSHOT_DEFAULT_CAPACITY, shared = true, onLayout = null, now = null, describe = false } = {}) {
     this.ids = ids || createRenderIds();
+    // Sloty wspólne z rozkazami i RET (RW-21, RW-29): jedna przestrzeń, JEDEN cykl begin / end na klatkę renderu —
+    // robi go właściciel instancji (index.html), nie pakujący. Dwa cykle w klatce zwolniłyby sloty widziane tylko
+    // w pierwszym. Własna instancja (testy, ids nie podane) — cykl robi pakujący.
+    this.ownsIds = ownsIds == null ? !ids : !!ownsIds;
     this.dict = new SnapshotDict();
     this.shared = shared;
     this.onLayout = onLayout;
@@ -217,7 +221,7 @@ export class SnapshotPacker {
     // kolejki opisów i topologii: nowe z tej strony (worker — wysyłka między finish a następnym begin)
     this.descQueue.length = 0;
     this.topoQueue.length = 0;
-    this.ids.begin();
+    if (this.ownsIds) this.ids.begin();
     this._buildLists(frame);
     if (frame.coresOf) {
       const cl = this._coreLists, L = this._lists;
@@ -252,7 +256,7 @@ export class SnapshotPacker {
     else v.hall.fill(0);
     if (this._blocks.length) this._packBlocks(v, frame, 'finish');
     v.world[WORLD.DICT_N] = this.dict.values.length;
-    this.ids.end();
+    if (this.ownsIds) this.ids.end();
     this.writer.publish();
     this.view = this.writer.page;
     this.stats.packs++;

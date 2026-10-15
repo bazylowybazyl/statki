@@ -1273,7 +1273,7 @@
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
-    import { createRenderIds } from "./src/render/renderIds.js";
+    import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
     // Nadproża bram K-7 (zestaw FG hali) nad okrętem w bramie: wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną.
@@ -27918,6 +27918,9 @@
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
       stepDynamicResolution(now);
+      // Sloty renderu (src/render/renderSlots.js): jeden cykl mark & sweep na klatkę — rozkazy z fizyki, migawka i RET
+      // w tej samej epoce; koniec po renderze.
+      beginRenderSlotsFrame();
       // Fabuła: sceny, lot kamery i podsumowanie zamrażają świat jak pauza (kamera i UI biegną dalej).
       if (PAUSED || StoryGame.worldFrozen) {
         saveState();
@@ -27934,6 +27937,7 @@
         // upływu czasu — inaczej świat mgły z 0 kół do pierwszego kroku fizyki i kadr przy statku jest szary.
         if (StoryGame.worldFrozen) stepSensors(0);
         render(0, frame);
+        endRenderSlotsFrame();
         updateStoryOverlay();
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
@@ -28067,6 +28071,7 @@
       StoryGame.frame(frame);
       stepSupportWarp(frame);
       render(alpha, frame);
+      endRenderSlotsFrame();
       updateStoryOverlay();
       PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
 
@@ -28165,12 +28170,11 @@
     // SZEW RENDERU (docs/PLAN-render-worker.md § 3.2, RW-10): `?szew=inline` pakuje w render() stronę migawki klatki
     // (src/render/snapshotPack.js) — faza 1 po kamerze, przed aktualizacjami 3D; faza 2 po kadłubach (rekordy wież,
     // wejście pyłu hal) i publikacja. Bez flagi (`off`) — nic. Pakowanie nie zmienia stanu gry (własne listy i pudło
-    // cullingu). Sloty encji, ciał, pocisków i zasobów: RenderSlots. Diagnostyka: window.RenderSnapshot
+    // cullingu). Sloty encji, ciał, pocisków i zasobów: RenderSlots (wspólne z rozkazami i RET; cykl w loop()). Diagnostyka: window.RenderSnapshot
     // (packer.stats, packer.hist, packer.pageReport()).
     const SZEW_MODE = (() => {
       try { return new URLSearchParams(location.search).get('szew') || 'off'; } catch (_) { return 'off'; }
     })();
-    const RenderSlots = createRenderIds();
     const renderSnapshot = SZEW_MODE === 'inline' ? new SnapshotPacker({ ids: RenderSlots }) : null;
     const _snapFrame = createSnapshotFrame();
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
