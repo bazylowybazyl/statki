@@ -693,6 +693,29 @@ tej samej klatki, musi dostać nowe miejsce. Rozgrywka siedzi w 5 z 8 modułów 
 | 17 | **flagi w obiektach gry** — `b.__renderedByThree` (pętla pocisków pomija smugi kanwy), `proj.slug` Hexlance, stan ładowania `st.fx`, `station._mesh3d` (warunek w `applyDamageToStation`), `WeaponFx.available`, `__warpNurtMode` / `__warpHullU` (render → render przez encję) | render | gałęzie gry | reguły po stronie gry (`!forceCanvas && fxReady`), id zamiast referencji, flaga gotowości w `RET` (RW-21, RW-22) |
 | 18 | **tło menu** — start gry czeka na getter `launchDone` i Promise `fly` rozwiązywany w klatce renderu; `onFinish(canvas)` rysuje kanwę WebGPU na 2D | `src/3d/menuBackdrop3D.js` | start gry, kadr sceny fabuły | zdarzenia `RET` (`launchDone{pose, sunLocal}`, `flightDone{ImageBitmap}`), plan lotu jako dane (RW-41) |
 
+**Uzupełnienie 2026-10-15** (tor `rw-kadluby`, przegląd kodu po § 7.2 — kadłuby, rany, wybuchy, reaktor, stacje, baza
+piratów, planetoida, drony naprawcze, holownik, zimne wraki; numery linii z `main` 4543167, szukać po nazwach):
+
+| # | co | gdzie dziś | kto zależy | docelowo (zadanie) |
+|---|---|---|---|---|
+| 19 | **baza piratów: stan kawałków** — `chunkState` (broken / hidden) i ZEGAR DRYFU odpadłego kawałka liczy render: `PirateBase3D._groups(dt)` przesuwa `s.t` dt renderu (0 w pauzie i `worldFrozen`, `hold` je zatrzymuje), przy `s.t ≥ life` ustawia `hidden` → `isChunkGone`; zbiór `_dockGone` przebudowuje `syncGone` w `updatePirateBase3D` (render, ≤ 1 klatka spóźnienia, w mgle stoi); wynik `breakPirateBaseChunk` (bool) steruje wybuchem i wstrząsem w `onBaseDamageStep`; fabuła `_structureCollapse` wybiera kawałki z `deps.baseBrokenChunks` (filtr `chunkState`) | `src/3d/pirateBaseGame.js`, `pirateBase3D.js` | `piece.available()` → `worldBodies.step` / `breakPiece`, `pirateBaseChunkDown`, integralność (`isGone`), wiązki, pociski, Hexlance (`dryDockSegmentHit` na `_dockGone`), radar, przeszkody gazu, fabuła | czysty stan kawałków po stronie gry (break / hide / dryf w czasie gry, `gone`, `live`) zaraz po `worldBodies.step`; 3D dostaje `PBASE_*` (RW-24 — baza zamiast doku) |
+| 20 | **baza: ciała świata z obiektu 3D** — `createPirateBaseSites(owners, base, place)` czyta `base.layout / scene / style.palette`, prebuild kratownic w `Core3D.warmup` (wymaga `Core3D.scene`); dane same są bez three (`buildPirateBaseScene`, `pirateBaseLayout.js`, `pirateDryDockChunks.js`) | `pirateBaseGame.js`, `src/game/story/pirateBaseBodies.js` | ciała świata (taran, broń, rozpad) | budowa z czystych danych po stronie gry, ekran ładowania bez `Core3D.scene` (RW-24) |
+| 21 | **planetoida: punkt orientacyjny z grafu sceny** — `pirateRockLandmark()` bramkuje `r.rock.root.parent` (skała podpięta do sceny) i kopiuje `at` z obiektu 3D | `index.html` (`pirateRockSite`), `pirateBaseGame.js` | radar (`radarFeaturesWithPirateRock`, `pirateRockRadarBodies`), CIC (`cicDisplay.js`) | `at` z czystego `createPirateRockLayout` + `basePlace.toGame`, warunek „baza stoi” z gry (RW-24); zawalenie (`collapsePirateRockSite`) to sam obraz — rekord `ROCK_COLLAPSE` |
+| 22 | **przeszkody gazu wybuchów** — `packGasObstacles` (w `render()`) czyta `ex.domainRects()` z renderera wybuchów, `_dockGone` (p. 19) i żywe listy (gracz, NPC po mgle, wraki, `hullFootprint`, wyspy kawałków) → `ex.setObstacleInput(GAS_OBST_IN)` | `index.html`, `src/game/gasObstacleInput.js` | obraz wybuchów | pakowanie zostaje grą (Float64Array o stałym układzie — wzór pyłu hal) jako blok migawki; prostokąty domen z `RET` (≤ 1 klatka spóźnienia; okno rastru i tak ma wyprzedzenie) (RW-22) |
+| 23 | **wybuch rani drony naprawcze** — `makeReactorBlow` to opakowanie `withRepairDroneBlast` → `RepairSwarm.blast` (obrażenia dronów); woła je też `Destruction3D.update` w `render()` (kawałki i wtórne wybuchy stacji, pozycje z `fxRandom` renderu) i śmierć gracza (`triggerReactorBlow3D`); `shipBlastFactory` (zgony NPC, zbiorniki, zgniot, gaz rdzenia) — bez opakowania | `index.html` (`withRepairDroneBlast`), `src/vfx/destruction3D.js` | obrażenia dronów (rozgrywka liczona w renderze) | obrażenia dronów przy rekordzie `EXPLOSION` po stronie gry (gra decyduje); wybuchy z `Destruction3D` jako harmonogram gry przy `STATION_FX` albo bez obrażeń dronów — decyzja w RW-22 (zapis w **Stan**) |
+| 24 | **reaktor: żywe obiekty logiki w efekcie** — `addJet` / `addOrb` oddają obiekty, które fizyka dalej zmienia (strumień: `originX/Y, dirWX/Y, endX/Y, env, done, hitX/Y, hostVx/Vy, width`; kula: `x, y, vx, vy, radius, detonated, core`), `detonation` dostaje encje odłamów (`res.fragments`, `edges`), `_crackRun` i `_hullArc` (render) pytają `HullBodies.probe`; `reactorModel3D.sync` z hakami gry `reactorCoreFrame` / `reactorCoreHull`; `ReactorGame._secondary` losuje `Math.random` gry | `src/game/reactorCoreGame.js` → `src/3d/reactorBlast/reactorBlastFx.js` | obraz | blok CORES (rdzenie, strumienie, kule po id) + rekordy `RX_*` z punktami pęknięć policzonymi w grze (RW-22) |
+| 25 | **mapa ran — decyzja i dane z renderu** — `HullDamageMap.onHullImpact / onHullNodeLost / onSolidNodeLost / stampKerf / patchCell` pytają kamerę renderu (`_offView` z `Core3D.fx.view` — stempel poza kadrem przepada), deduplikują na liczniku kroku efektów `HullDamageMap.frame` (`_hookedHere`, `_tornHere`), czytają globalne „bieżące źródło” (`setSource / clearSource` wokół `HullBodies.impact` w `applyHexImpact`), losują `fxRandom` i synchronicznie pytają silnik: `HullBodies.spriteUvAt` (jedyny użytkownik), `solidLatticeAt`, `cellWorld`, `entityPose` | `src/3d/hullDamageMap.js`, `solidWounds.js` | obraz (rozgrywka ran nie czyta) | uv / komórka / sieć bryły i źródło liczone w grze do rekordu `DMG_*`; bramka kadru — w workerze (kadr z HEAD), dedup po numerze klatki rekordu (RW-22) |
+| 26 | **haki silnika belek dzielone z rozgrywką** — `HullBodies.onNodeLost = noteHullNodeLost` woła i rozdarcia mapy ran (render), i `crushSmoke.lost` (rozgrywka — dym zgniotu); `CollisionFX` to szyna MIESZANA: iskry (`collisionSparks.js`) obok `_cloakRamBreak`, `_crushContact`, `_baseBodyRam` (rozgrywka); `spawnHullDebris` (global z `hullDebris3D.js`) — gra losuje 2 × `fxRandom` tylko, gdy funkcja istnieje, `spawn` 7 ×, zegar `performance.now()` | `index.html`, `src/game/hullBodies.js`, `src/vfx/collisionFx.js` | dym zgniotu, maskowanie, integralność bazy | haki zostają w grze, część obrazowa → `DMG_TEAR`, `SPARK_*`, `HULL_DEBRIS` (losowanie w workerze po RW-20) (RW-22) |
+| 27 | **holownik: render nadpisuje pozę żywej encji** — `ServiceTugGame.beginRender(__interpShipPose)` w `render()` pisze `x, y, pos, angle` holownika, `restorePose()` cofa je na początku `physicsStep`; flagi wyglądu `__skinZ`, `__lightMate` (gra) czytane przez `hexShips3D`, `shipModels3DGame`, `bridge3D`, `shipLightRuntime` | `src/game/serviceTugGame.js`, `index.html` | kadłub, model, mostek, lampy holownika | poza renderu holownika liczona przy pakowaniu i wpisana do ENT, bez zapisu w encji; flagi → ENT (RW-31) |
+| 28 | **drony naprawcze** — `syncRepairDrones3D` (render) czyta żywe `RepairSwarm.rigs` / `out` (drony: `state, frame, lx/ly/lz, yaw, arm, plate, weld, thrust, hitT, job`; `carrier`, `target.beamHull.cellSize`, `entityCloakVisAt`) i drenuje pierścień zdarzeń `rig.fx` kursorem w `WeakMap` renderu (nadmiar ginie) | `src/3d/repair/repairDrones3D.js` | obraz | blok REPAIR (drony w kadrze) + zdarzenia pierścienia jako rekordy `REPAIR_FX` (RW-22) |
+| 29 | **zimne wraki** (uzupełnienie p. 15, belki od 2026-10-12) — `isColdFreezeVisuallySafe` (render: `lastCull`, `lastCameraZoom`, `batchedImpostor`, `__hiddenFromView`) decyduje o zamrożeniu; `captureColdWreckImpostor` pisze `snapshot.impostor / color` do obiektu gry; render woła grę: `ensureRenderBody` → `HullBodies.restoreColdBody` (mutuje `beamHull`, `radius`, `hull.revision`, stempluje `_coldRenderMs`), `withColdNearWrecks` stempluje `_coldExtrasFrame`; budżety `coldWreckSystem` liczą się na `renderFrameId` | `src/3d/hexShips3D.js`, `index.html`, `src/game/coldWrecks.js` | zamrażanie, cykl życia ciał do rysowania | bramka widoczności i zapotrzebowanie na ciało do rysowania po stronie gry z kamery i progu LOD (HEAD), ciała do rysowania jako BODY, wypiek impostora rozkazem (RW-31) |
+| 30 | **`__inDrawBox`** — `updateHexShips3D` stempluje encje (pudło rysowania klatki), czyta go model lotu NPC (`shipFlightModel.js` — co ile liczyć stan dysz poza kadrem) | `src/3d/hexShips3D.js` | koszt kroku lotu (nie trajektoria) | pudło z kamery po stronie gry (to samo, co `_hexCullInfo` w HEAD) (RW-31) |
+| 31 | **zegary obrazu na `performance.now()`** — rany brył (`solidWounds.js`), odłamki kadłuba (`hullDebris3D.js`), stygnięcie stempli; `SimClock.render` w dronach | render | obraz | czas z HEAD (§ 3.5) |
+
+Zapisy renderu do obiektów gry, których gra NIE czyta (lustra wystarczą): `piece.__skin* / __static* / __hold*`,
+`hull.__skin3D`, `body.__skin3D`, `w._coldSkinFrame`, `__hiddenFromView` (poza p. 29). Odwrotnie (gra pisze, render
+czyta i czyści): `body.meshDirty`, `hull.revision`, `clearHullSkinDirty` — § 3.2.
+
 **Odczyty GPU → CPU w grafie gry** (skrypt `inwentarz.mjs`, sekcja GPU): rozgrywka — `shield3D.js:669`, `726`
 (przebicia, co 0,1 s), `haloRingWorldGen.js:18`, `52`, `744` (mapy ringu, przy budowie), `rockBank.js:671` (bank
 skał, raz); narzędzia — `gas/gasGrid.js:835–836` (`probe`), `hullDamageMap.js:155`; poza renderem —
@@ -799,6 +822,29 @@ Workery w workerze są dozwolone (wypiek mapy powierzchni kadłubów `hullSurfac
 `asteroidGiantWorker.js` — zagnieżdżone workery dedykowane działają w Chromium). three r183 przyjmuje
 `OffscreenCanvas` (`node_modules/three/src/renderers/common/Backend.js:668`, `webgpu/WebGPUBackend.js:278`), a
 rdzeń renderera WebGPU nie używa `document`.
+
+### 2.10 Szew 2026-10-15 vs 2026-10-07 (RW-01)
+
+Ten sam skrypt inwentarza (`.tmp/render-szew/inwentarz.mjs`) na `main` 45431670 — gra urosła (§ 7.2), szew razem z nią:
+
+| miara | 2026-10-07 | 2026-10-15 |
+|---|---|---|
+| pliki gry / moduły renderu / linie renderu | 481 / 244 / 106 625 | 569 / 282 / 121 190 |
+| `index.html` → render: odwołania / symbole (z uchwytami) / uchwyty | 350 / 93 / 6 | 453 / 111 / 9 (`scoutBay3D`, `neaFlyby3D`, `cometsView`) |
+| symulacja → render: importy / z modułów | 29 / 15 | 33 / 18 |
+| render → symulacja: importy / z modułów / do modułów | 105 / 52 / 39 | 122 / 59 / 48 (nowe: `engineIgnition`, `asteroidRotation`, `destructorConfig`, `comets`, `cometNucleus`, `hexBodyHooks`, `pirateBaseBodies` (D), `hexGridSpace`, `repairSwarm` (C), `repairRig`, `beamBand3D`, `friendlyFire`) |
+| `window.*` zmiennych gry w renderze: nazwy / odczyty | 43 / 164 | 48 / 186 |
+| `GameState.*` w renderze | 9 | 8 |
+| odczyty GPU → CPU w modułach gry | 14 | 16 |
+| DOM w renderze: `document` / `requestIdleCallback` / `TextureLoader` itp. / `devicePixelRatio` / `localStorage` | 20 / 15 / 8 / 2 / 1 | 21 / 15 / 18 / 5 / 3 |
+
+Strażnik (`scripts/webgpu/szewRenderu.mjs` + `tests/szewRenderu.test.mjs`) liczy dokładniej niż inwentarz (AST zamiast
+wyrażeń regularnych, bez komentarzy, osobno moduły przenoszone i kanwa 2D) — jego sufity z 2026-10-15: `index.html` →
+render 442 odwołania (aktualizacja 100, zdarzenie 66, konfiguracja 169, zapytanie 76, dane 31; grupy z grafu jednostek
+i reguł `grupy.mjs` bez numerów linii), importy render → symulacja 122 do 48 modułów (klasy A 32, B 4, C 4, D 7, E 1),
+zmienne gry w modułach przenoszonych 38 nazw / 156 odczytów (z wolnymi identyfikatorami; `SUN` 35, `ship` 18,
+`DevTuning` 11), w modułach kanwy 2D 13 / 30, `GameState` 6, DOM w modułach przenoszonych 81 w 24 plikach, odczyty
+GPU 11 w 5 plikach, `Math.random` 13 w 3 plikach.
 
 ## 3. Projekt
 
@@ -934,6 +980,32 @@ i `__interpShipPose.z`, `carrierVelocity.js:58–86`):
 | `STATION_FX` | stacja, rodzaj (kawałek / rozpad), opcje | `Destruction3D.detachChunk(station._mesh3d)`, `destroyStation3D` (dziś gra trzyma mesh three) |
 | `ENTITY_FX` | encja, rodzaj (inwalidacja kadłuba, wypiek zimnego wraku, zmiana profilu) | `invalidateHexShipEntity3D`, `captureColdWreckImpostor` |
 | `WARP_*`, `DOCK_*`, `SCENE_*`, `OPT_*`, `RES_*`, `RESET` | przyloty / odloty wg harmonogramu gry, stan kawałków doku, sceny (planety, stacje, pas, ringi, tło menu), opcje, zasoby (klucz), czyszczenie pul | § 2.3, § 2.6 |
+
+**Uzupełnienie 2026-10-15** (tor `rw-kadluby`; kadłuby, rany, wybuchy, reaktor, stacje, baza, drony, holownik,
+zimne wraki — nowe wywołania gra → render od 2026-10-07, § 2.6 p. 19–31). Rekordy powyżej zostają; tu nowe i rozszerzone:
+
+| rekord | pola | zastępuje / źródła |
+|---|---|---|
+| `DMG_HOOK` (rozszerzony) | jak wyżej + rodzaj (`impact` / `cut` / bryła), krater (zasięg zabitych węzłów), dla brył komórka sieci `latX, latY, latZ` i z, źródło (rodzina, wariant — dziś globalne `setSource`), uv z `spriteUvAt` LICZONE W GRZE | `HullBodies.onImpact` (`impact`, `cutSegment`, `solidImpact`, `solidCut`) → `HullDamageMap.onHullImpact`, `_solidImpact` → `SolidWounds.onImpact` |
+| `DMG_SOLID_TEAR` | encja, ród, `ix, iy, iz`, x, y, z | `HullBodies.onSolidNodeLost` → `SolidWounds.tear` |
+| `DMG_TEAR` (rozszerzony) | encja, ród, x, y, uv | część obrazowa `noteHullNodeLost` (rozgrywka `crushSmoke.lost` zostaje w grze) |
+| `DMG_PATCH` | encja, ród, `ix, iy`, rozmiar komórki | `onCellRegrown` rigów (gracz, holownik) → `HullDamageMap.patchCell` |
+| `EXPLOSION` (rozszerzony) | x, y, rozmiar, profil u8 (z `crush`), vx, vy, `axisX, axisY, jetVelTau`, barwa rgb, `gasOnly`, ród gospodarza (`hostKey` → slot ciała, nie napis) | `shipBlastFactory`: śmierć NPC i gracza ze zbiornika (`spawnShipDeathBlast`, `triggerReactorBlow3D`), pęknięcie zbiornika (`stepEntityFuelTankRupture`), dym zgniotu (`emitCrushSmoke`), gaz rdzenia (`spawnReactorDetonationGas`); `makeReactorBlow`: progi bazy (`onBaseDamageStep`), szyja (`_neckCtx.onSnap / onImpact`), fabuła (`_chainExplosion`, `_fuelChain`, `_structureCollapse` — tick fabuły w rAF). Obrażenia dronów naprawczych (`withRepairDroneBlast`) — w grze przy wysłaniu rekordu (§ 2.6 p. 23) |
+| `BOMB_BLAST`, `BOMB_DUD` | x, y, skala, trafiona encja, C | `FighterBombs.hitHull` / `miss` → `WeaponFx.bombBlast / bombDud` |
+| `DRONE_BLAST` (źródła) | jak wyżej; rozmiar z wysokości kadłuba gracza liczony w grze | `CanvasVFX._spawnDeathBlast3D` (myśliwce, platformy) — bramka kadru w workerze |
+| `RX_JET`, `RX_ORB` | id strumienia / kuli, rdzeń, gospodarz (slot), stan w bloku CORES co klatkę (strumień: początek, kierunek, koniec, obwiednia, trafienie, szerokość, prędkość gospodarza, koniec; kula: x, y, vx, vy, promień, detonacja) | `reactorBlastFx.addJet / addOrb` z żywymi obiektami (§ 2.6 p. 24) |
+| `RX_DETONATION` (rozszerzony) | jak wyżej + punkty pęknięć (`_crackRun` — dziś `HullBodies.probe` z renderu) policzone w grze, odłamy jako sloty encji | `reactorBlastFx.detonation` |
+| `RX_JETCUT`, `RX_MELT` | encja, punkt, kierunek, głębokość / kula | haki `jetCut` (→ `DMG_KERF`), `melt` |
+| `STATION_FX` (bez zmian) + `STATION_PREP` | lista modeli stacji na ekran ładowania | `prepareStations3D` (`Destruction3D.prebake`) |
+| `PBASE_ATTACH`, `PBASE_BREAK`, `PBASE_HIDE`, `ROCK_COLLAPSE` | budowle (sloty), ramka bazy; kawałek, prędkość, obrót, życie, kierunek; kawałek; — | `attachPirateBase3D`, `breakPirateBaseChunk` (decyzja i wynik w grze — § 2.6 p. 19), `base.hideChunk` (`onLost` ciał świata), `collapsePirateRockSite`; stan klatki (alarm, stanowiska, zatoki, zasilanie z `storyBaseFrameState`) — blok WORLD |
+| `REPAIR_FX` | rig (slot nosiciela), rodzaj zdarzenia, punkt, parametry z pierścienia `rig.fx` | drenowanie `rig.fx` w `syncRepairDrones3D`; drony klatki — nowy blok REPAIR (`state, frame, lx, ly, lz, yaw, arm, plate, weld, thrust, hitT`, układ nosiciela / celu) |
+| `COLD_IMPOSTOR` | encja (slot), migawka (klucz) | `captureColdWreckImpostor` (dziś pisze `snapshot.impostor` w obiekcie gry); ciała do rysowania zimnych wraków wybiera gra (RW-31) i pakuje jak BODY |
+| `WB_*` (ciała świata) | miejsca, kawałki (stan, `touched`, `lost`, granice, `skinEdgeCells`, bryła 3D), ciała kawałków i odłamów jako BODY (bryły: pozycja z, kwaternion, `__fallZ`) | `syncWorldBodies3D` czyta dziś żywe `worldBodies.sites`; wypiek skór, `setChunkHold` / `setChunkSkinned` — wewnątrz workera |
+| blok GAS_OBST | kopia `GAS_OBST_IN` (`gasObstacleInput.js`, stały układ) | `ex.setObstacleInput`; `domainRects` wraca w `RET` |
+
+Kanał zwrotny dostaje dodatkowo: bity przebić tarcz (RW-29), prostokąty domen gazu (p. 22). Gra przestaje czytać
+z renderu: `_dockGone`, `isChunkGone`, `chunkState`, `pirateRockSite().rock`, `isColdFreezeVisuallySafe`, `__inDrawBox`,
+`__shieldBreach`.
 
 **Przepełnienie.** Pojemność na szczyt bitwy × 4 klatki (§ 2.5: ~70–170 rekordów na klatkę, łańcuch doku ~1750
 odłamków/s). Brak miejsca → wątek główny zakłada większy pierścień i wysyła go `postMessage`; worker dopija stary do
@@ -1124,6 +1196,18 @@ A–E), `window.<zmienna gry>` w modułach renderu (43 nazwy), DOM w modułach r
 w modułach renderu. Liczba może spaść (sufit idzie w dół), nie może wzrosnąć bez wpisu z powodem.
 Kryterium: zielony na dzisiejszym drzewie; dopisek `window.ship` w module `src/3d` albo nowy import `src/game/*.js`
 z renderu — czerwony. Zależności: brak. Kolizje: brak.
+
+**Stan (2026-10-15, tor `rw-szew`):** zrobione. `scripts/webgpu/szewRenderu.mjs` (graf `grafImportow` + AST
+`rollup/parseAst` modułów renderu i głównego skryptu `index.html`) i `tests/szewRenderu.test.mjs` (sufity jako mapa
+klucz → liczba, klucz bez sufitu = 0; liczby w § 2.10). Odstępstwa: (1) lekser `grafGry.mjs` przepisany na kody
+znaków — graf gry liczył się ~5–12 s (strażnik i `graBezGlsl` czekały), teraz ~1,8 s; wynik `lex` bit w bit na 1533
+plikach `src/`, `scripts/`, `dema/`, `tests/`; (2) moduły kanwy 2D (`ZOSTAJE_NA_WATKU_GLOWNYM`) liczą się osobno
+(`okno-kanwa:`), DOM w nich się nie liczy; `getContext('2d')` się nie liczy (działa na `OffscreenCanvas`) — liczy się
+`document` / `createElement`; (3) grupa „dane” `index.html` = symbole z modułów renderu bez three (przechodnio), bez
+`window` i bez stanu najwyższego poziomu + `fxRandom`, `SHIP3D_MODELS`, `WEAPON3D_FAMILY`, `stampFamilyFor`; (4) zmienna
+gry liczy się także jako wolny identyfikator (bez `window.`); (5) test negatywny w samym strażniku: kopia
+`core3d.js` w pamięci z `window.ship` i importem `src/game/stepDecay.js` — oba przekroczenia złapane (sprawdzone też na
+prawdziwym pliku). Test ~5 s. Commit — `RW-01: …` w historii `main`.
 
 **RW-02 Prototyp kompozycji A / B.**
 Pliki: nowe `dema/render-worker-proto.html`, `.js`, `.worker.js`, `scripts/webgpu/render-worker-proto.mjs`. Worker
