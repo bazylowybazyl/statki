@@ -1241,9 +1241,8 @@
       installLiveDebugConsoleApi
     } from "./src/ui/liveDebug.js";
     import { updateShields3D, prewarmShields3D, getShieldPoolStats, probeShieldSlot, setShieldReturnChannel, SHIELD_TUNING } from "./src/3d/shield3D.js";
-    // Szew renderu (docs/PLAN-render-worker.md § 3.2, § 3.4): sloty renderu encji (slot + generacja — RW-03; RW-10 przejmie
-    // znakowanie list migawki) i kanał zwrotny RET (RW-04), który pisze render, a czyta gra.
-    import { createRenderIds } from "./src/render/renderIds.js";
+    // Szew renderu (docs/PLAN-render-worker.md § 3.2, § 3.4): kanał zwrotny RET (RW-04), który pisze render, a czyta gra;
+    // sloty encji — wspólna przestrzeń strumienia rozkazów (RenderCommands.writer.ids, RW-21; RW-10 — ta sama w migawce).
     import { createReturnBuffer, createReturnViews } from "./src/render/returnLayout.js";
     // Przebicia tarcz po stronie gry (RW-29): rekordy RET → flaga `__shieldBreach` i test punktu na siatce płytek.
     import { createShieldBreachReader } from "./src/game/shieldBreach.js";
@@ -1255,7 +1254,7 @@
     const SHIELD_BREACH_DAMAGE_OPTS = Object.freeze({ bypassShield: true });
     window.getShieldPoolStats = getShieldPoolStats;
     window.probeShieldSlot = probeShieldSlot;
-    const RenderSlots = createRenderIds();
+    const RenderSlots = RenderCommands.writer.ids;
     const RenderReturn = createReturnViews(createReturnBuffer());
     window.RenderSlots = RenderSlots;
     const ShieldBreach = createShieldBreachReader({
@@ -29136,10 +29135,9 @@
       // model 3D okrętu i rdzeń reaktora jak u wraku śpiącego (ColdWreckConfig.nearExtras).
       const renderSeenCold = withColdNearWrecks(renderSeen);
       // Sloty renderu encji tej klatki (rekordy przebić tarcz w RET niosą slot + generację; RW-29 — RW-10 zastąpi to
-      // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot.
-      RenderSlots.entities.begin();
+      // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot. Klatkę
+      // przestrzeni (begin / end) zamyka RenderCommands.endFrame() niżej — znakowanie musi iść PRZED nim.
       for (let i = 0; i < renderEntities.length; i++) RenderSlots.entities.slotOf(renderEntities[i]);
-      RenderSlots.entities.end();
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
