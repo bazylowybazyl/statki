@@ -19,6 +19,23 @@
 // i te same gęste pola co skały i mgła.
 //
 // Moduł bez three i DOM-u (testy: tests/asteroidFieldLight.test.mjs).
+//
+// Szew gra ↔ render (RW-25): siatkę liczy strona gry (src/game/beltWorld.js, ekran ładowania),
+// render dostaje gotowe sektory (`exportSectors` → `adoptSectors` — dane w SharedArrayBuffer, gdy
+// strona ma izolację COOP / COEP; w trybie `inline` te same tablice, w workerze bez kopii).
+
+import { sharedTypedArray } from './sharedTyped.js';
+
+// Głęboka noc (dema: nightKnee) — słońce przesiane przez pole gaśnie w rdzeniu szybciej
+// niż transmitancja: poniżej T = 0,12 jasność ∝ T · smoothstep(0, 0,12, T). Tę wartość
+// dostają materiały, mgła, zasłona, olbrzymy i maska słońca Core3D oraz platforma
+// wydobywcza (sunT); logika — surowe T.
+export const NIGHT_KNEE = 0.12;
+export function nightKnee(t) {
+  if (!(t < NIGHT_KNEE)) return t;
+  const u = Math.max(0, t) / NIGHT_KNEE;
+  return t * u * u * (3 - 2 * u);
+}
 
 export const FIELD_LIGHT_CONFIG = Object.freeze({
   // Ekstynkcja [1/j.] w rdzeniu pola (pole = 1) i w rzadkim pasie.
@@ -107,7 +124,7 @@ export class FieldSunOcclusion {
     }
     const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
     const cols = this.config.sectorColumns;
-    const data = new Float32Array(cols * this.rows).fill(1);
+    const data = sharedTypedArray(Float32Array, cols * this.rows).fill(1);
     const c = this.config;
     const decayPerStep = Math.exp(-c.dr / c.recovery);
     for (let k = 0; k < cols; k++) {
@@ -253,5 +270,29 @@ export class FieldSunOcclusion {
 
   clear() {
     this._sectors.clear();
+  }
+
+  /** Policzone sektory [{ index, data }] (dane w SharedArrayBuffer, gdy dostępny) — dla renderu. */
+  exportSectors() {
+    const out = [];
+    for (const [index, s] of this._sectors) out.push({ index, data: s.data });
+    return out;
+  }
+
+  /**
+   * Gotowe sektory innego egzemplarza tej samej siatki (to samo pole i konfiguracja) — render
+   * nie liczy cienia pól drugi raz. Po `precomputed` źródła bez limitu cache (jak precomputeAll).
+   */
+  adoptSectors(list, { precomputed = true } = {}) {
+    for (let i = 0; i < list.length; i++) {
+      const { index, data } = list[i];
+      if (!(data && data.length === this.config.sectorColumns * this.rows)) continue;
+      this._sectors.set(index, { data, tick: ++this._tick });
+    }
+    if (precomputed) {
+      this.config.maxSectors = Infinity;
+      this.precomputed = true;
+    }
+    return this;
   }
 }

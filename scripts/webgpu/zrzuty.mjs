@@ -148,7 +148,7 @@ const SCENES = {
     opis: `Pas asteroid — ${BELT_SCENES.olbrzym.opis} (siatka SDF z workerów — czekanie w czasie rzeczywistym)`,
     hud: false, warm: 30,
     js: BELT_JS('olbrzym', `
-         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && e.view); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
+         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && (B.giantView ? B.giantView(e) : e.view)); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
   },
   menu: {
     opis: 'Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach',

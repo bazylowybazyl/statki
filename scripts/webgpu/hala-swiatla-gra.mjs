@@ -250,7 +250,8 @@ try {
     await pausedShot('release', 0.5, 'a07-zerwanie-rygli');
     await pausedShot('release', 0.9, 'a08-wyrzut-pary');
     await pausedShot('release', 1.6, 'a09-zwijanie');
-    await pausedShot('release', 3.0, 'a10-ramiona-sie-skladaja');
+    // release kończy się w 3,0 s (K7_SERVICE_RELEASE.end) — automat wraca do idle w tym samym kroku, więc kadr tuż przed końcem
+    await pausedShot('release', 2.9, 'a10-ramiona-sie-skladaja');
     await up('s');
     await sleep(2500);
     await shot('a11-po-odlocie');

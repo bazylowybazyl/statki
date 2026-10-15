@@ -104,7 +104,7 @@ const state = () => ev(`(() => {
     pociski: all, goliath: gol, goliathPrzyGraczu: golNear,
     tarcza: Math.round(s.shield.val), tarczaMax: Math.round(s.shield.max), kadlub: Math.round(s.hull.val), kadlubMax: Math.round(s.hull.max),
     zoom: +cam.zoom.toFixed(4),
-    baza: { widoczna: !!(site && site.station && site.station._base3d && site.station._base3d.root.visible),
+    baza: { widoczna: !!(site && window.PirateBase?.view()?.root?.visible),
       budowleWidoczne: Object.values((site && site.structures) || {}).filter((b) => b && window.SensorSystem && !window.SensorSystem.hides(b)).length },
     atlasPx: Math.round((s.w || 0) * cam.zoom),
     wfx: st ? { strzaly: st.shots, wyloty: st.muzzles, tanieWyloty: st.cheapMuzzles, trafienia: st.impacts, tanieTrafienia: st.cheapImpacts } : null,
@@ -464,7 +464,7 @@ async function runMission() {
   // mgła wojny bazy: gracz 30 km od obwiedni (poza wzrokiem) — budowle już widziane zostają znane (bryła widoczna)
   report.mgla = await ev(`new Promise((res) => {
     const S = window.StoryGame, d = S.site.dock, s = window.ship, x0 = s.pos.x, y0 = s.pos.y, a0 = s.angle;
-    const vis = () => ({ bryla: !!S.site.station._base3d?.root?.visible, budowle: Object.values(S.site.structures).filter((b) => !window.SensorSystem.hides(b)).length });
+    const vis = () => ({ bryla: !!window.PirateBase?.view()?.root?.visible, budowle: Object.values(S.site.structures).filter((b) => !window.SensorSystem.hides(b)).length });
     const przed = vis();
     const p = d.toGame(d.layout.bounds.x0 - 30000, d.layout.center.z);
     S.deps.placePlayer(p.x, p.y, d.axis);

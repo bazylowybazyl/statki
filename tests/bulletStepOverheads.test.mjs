@@ -67,7 +67,7 @@ test('pętla pocisków czyta listy kroku zamiast wszystkich stacji i platform', 
 
 test('pocisk sprawdza skałę olbrzyma tylko przy gotowej siatce, bez starego pola', () => {
   const step = sliceFunction(html, 'function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {');
-  assert.match(step, /!hitNPC && asteroidBelt && asteroidBelt\.giants\.readyCount > 0 && asteroidBelt\.pointBlocked\(b\.x, b\.y\)/);
+  assert.match(step, /!hitNPC && beltWorld && beltWorld\.giants\.readyCount > 0 && beltWorld\.pointBlocked\(b\.x, b\.y\)/);
   assert.doesNotMatch(step, /asteroidField/);
 });
 

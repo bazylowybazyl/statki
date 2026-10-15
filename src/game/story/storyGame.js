@@ -462,16 +462,19 @@ export const StoryGame = {
   // Poza fabuły ma właściciela (owner = 'story'): automat obsługi stanowisk gry swobodnej (src/game/k7BerthService.js)
   // jej nie dotyka, dopóki fabuła jej nie odda (koniec odcumowania, reset).
   _applyHallState(force = false) {
-    const hall = this.deps.k7Hall?.(0);
+    const hall = this.deps.k7Hall?.(0) || null;
     const poses = this.deps.k7HallPoses?.(0) || null;
     if (!hall && !poses) return;
     const berthId = this.dock.berthId || this._lastBerth;
     if (!berthId) return;
     this._lastBerth = berthId;
-    const b = hall?.layout?.berths?.find((x) => x.id === berthId);
-    if (b) {
-      const occ = this.dock.berthId ? 'player' : null;
-      if (b.occupied !== occ || force) { b.occupied = occ; b.reserved = occ; hall.setBerthLamps?.(); }
+    const occ = this.dock.berthId ? 'player' : null;
+    // Zajętość (lampka) — stan gry w rejestrze świata ringów (deps.k7SetBerth; obraz przenosi ją na lampki hali,
+    // RW-27); bez świata (dema, testy) — wprost w hali.
+    if (this.deps.k7SetBerth) this.deps.k7SetBerth(0, berthId, occ, occ, force);
+    else {
+      const b = hall?.layout?.berths?.find((x) => x.id === berthId);
+      if (b && (b.occupied !== occ || force)) { b.occupied = occ; b.reserved = occ; hall.setBerthLamps?.(); }
     }
     const pose = this._servicePose(this._poseScratch || (this._poseScratch = {}));
     if (!this._craneMap) this._craneMap = new Map();

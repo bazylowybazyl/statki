@@ -243,8 +243,9 @@ test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
 });
 
 test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
-  // RW-26: testy pudeł wspólne dla kadłubów 3D i rekordów wież (src/render/renderCull.js).
-  assert.match(readSource(new URL('../src/render/renderCull.js', import.meta.url)), /export function isEntityInDrawBox\(entity, cull, cameraZoom\)/);
+  // RW-31 / RW-26: pudła wspólne z grą (src/render/drawBox.js) — kadłuby 3D, zimne wraki i rekordy wież.
+  assert.match(readSource(new URL('../src/render/drawBox.js', import.meta.url)), /export function isEntityInDrawBox\(entity, cull, cameraZoom\)/);
+  assert.match(hexShips, /isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX/);
   assert.match(hexShips, /isEntityInDrawBox\(entity, cullInfo, cameraZoom\)/);
   assert.match(hexShips, /for \(const entity of drawHex\) \{/);
   assert.match(indexHtml, /_hexCullInfo\.drawHalfW = viewHalfW;/);

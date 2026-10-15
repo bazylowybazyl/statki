@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectDrawBoxEntities, isEntityInDrawBox } from '../src/render/renderCull.js';
+import { collectDrawBoxEntities, isEntityInDrawBox } from '../src/render/drawBox.js';
 import { Turret2D } from '../src/vfx/turret2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { stepCloakLooks, CLOAK_LOOK_FRAME } from '../src/game/cloakLooks.js';

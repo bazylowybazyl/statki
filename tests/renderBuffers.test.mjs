@@ -193,7 +193,8 @@ test('RET: układ bez nakładania części, domyślna pula tarcz = shieldPool', 
   const f = Object.entries(RET_F64).filter(([k]) => k !== 'COUNT').map(([, v]) => v);
   assert.equal(new Set(f).size, f.length);
   assert.ok(Math.max(...f) < RET_F64.COUNT);
-  const pool = readFileSync(new URL('../src/3d/shield/shieldPool.js', import.meta.url), 'utf8');
+  // RW-29: stałe puli tarcz mieszkają w shieldLattice.js (gra liczy z nich siatkę płytek), shieldPool je reeksportuje.
+  const pool = readFileSync(new URL('../src/3d/shield/shieldLattice.js', import.meta.url), 'utf8');
   const slots = Number(/export const SHIELD_SLOTS = (\d+)/.exec(pool)[1]);
   const cap = Number(/export const SHIELD_SLOT_CAP = (\d+)/.exec(pool)?.[1] ?? /SHIELD_SLOT_CAP = (\d+)/.exec(pool)[1]);
   assert.equal(L.breachSlots, slots);
