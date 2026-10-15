@@ -21,7 +21,8 @@ export const HC = Object.freeze({
   EXPLOSION: 38,       // wybuch z gazu (fabryka wybuchów WebGPU: makeReactorBlow / shipBlastFactory)
   HULL_DEBRIS: 39,     // odłamek zniszczonego węzła (HullBodies.onDebris → window.spawnHullDebris; losowanie w renderze)
   SPARK_BURST: 40,     // snop iskier tarcia / uderzenia kadłubów (collisionSparks.js → SparkSystem3D.grindingBurst)
-  SPARK_SEAM: 41       // iskry wzdłuż szwu styku (→ SparkSystem3D.grindingSeam), punkty w rekordzie
+  SPARK_SEAM: 41,      // iskry wzdłuż szwu styku (→ SparkSystem3D.grindingSeam), punkty w rekordzie
+  STATION_FX: 42       // stacja: kawałek odpada (próg punktów) / rozpad (śmierć) — Destruction3D, destroyStation3D
 });
 
 /** Najwięcej znaków rzazu na odcinek (= DMG_KERF_MAX w hullDamageMap.js; pilnuje test). */
@@ -86,6 +87,10 @@ export const SPARK_BURST = Object.freeze({
 export const SPARK_SEAM = Object.freeze({
   TX: 0, TY: 1, APPROACH: 2, SLIDE: 3, BVX: 4, BVY: 5, COUNT: 6, GAIN: 7, N: 8, POINTS: 9, WORDS: 9
 });
+
+// Stacja: encja (slot, gen), rodzaj (0 — kawałek przy progu punktów, 1 — rozpad), fala uderzeniowa przy rozpadzie.
+export const STATION_FX = Object.freeze({ STATION: 0, KIND: 2, SHOCKWAVE: 3, WORDS: 4 });
+export const STATION_FX_KIND = Object.freeze({ CHUNK: 0, DESTROY: 1 });
 
 /**
  * Zapis opisu kadłuba do rekordu. `entSlot`, `entGen` — encja (przestrzeń slotów rozkazów); `theta` — kąt skóry z pozy

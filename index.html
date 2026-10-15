@@ -1295,7 +1295,7 @@
     import { BASE_INTEGRITY_TUNE, baseStepChunk, markBaseBroken, noteBaseRam, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
-    import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
+    import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
     import { NeaFlyby, neaFlybyMessage } from "./src/game/neaFlyby.js";
@@ -23554,12 +23554,13 @@
           const after = Math.floor((1 - station.hp / maxHp) * station.damageSteps);
           for (let s = before + 1; s <= after; s++) station.onDamageStep(station, s);
         }
-        // Progressive chunk detachment at 75 / 50 / 25 % HP thresholds
-        if (!wasDead && !station._destroyed3D && station._mesh3d) {
+        // Progressive chunk detachment at 75 / 50 / 25 % HP thresholds (rekord STATION_FX — RW-22: czy stacja ma bryłę 3D,
+        // sprawdza render).
+        if (!wasDead && !station._destroyed3D) {
           const maxHp = station.maxHp || 3000;
           for (const t of [0.75, 0.50, 0.25]) {
             if (hpBefore > maxHp * t && station.hp <= maxHp * t) {
-              window.Destruction3D?.detachChunk(station._mesh3d);
+              HullDamageEvents.station(station, 0);
               break; // at most one chunk per hit
             }
           }
@@ -23568,9 +23569,7 @@
         if (!wasDead && station.hp <= 0) {
           // First death — trigger 3D destruction effect
           station._destroyed3D = true;
-          if (typeof destroyStation3D === 'function') {
-            destroyStation3D(station, { shockwave: true });
-          }
+          HullDamageEvents.station(station, 1, true);
           if (mercMission?.station === station) {
             const completed = completeMission('merc_pirate_station', {
               rewardCredits: 50000,

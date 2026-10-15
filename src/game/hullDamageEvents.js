@@ -10,7 +10,7 @@
 
 import { HullBodies, hullSpriteRotation } from './hullBodies.js';
 import {
-  HC, HULL_DEBRIS, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, writeHullDesc
+  HC, HULL_DEBRIS, STATION_FX, STATION_FX_KIND, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, writeHullDesc
 } from '../render/hullCommands.js';
 import {
   stampFamilyFor, stampPowerFor, stampFlakRadiusFor
@@ -118,6 +118,22 @@ export function createHullDamageEvents(writer) {
       d[o + P.IX] = ix; d[o + P.IY] = iy;
       d[o + P.HAS_W] = w ? 1 : 0; d[o + P.WX] = w ? w.x : 0; d[o + P.WY] = w ? w.y : 0;
       d[o + P.SEAM] = seamHeat === undefined ? NaN : seamHeat;
+      writer._commit();
+    },
+
+    /**
+     * Stacja (RW-22 — dawniej gra czytała `station._mesh3d` renderu i wołała Destruction3D): kawałek przy progu
+     * punktów (render odrywa go, jeśli stacja ma bryłę) albo rozpad przy śmierci (`destroyStation3D`).
+     */
+    station(st, kind, shockwave = false) {
+      const S = STATION_FX;
+      const o = writer._begin(HC.STATION_FX, S.WORDS);
+      const d = writer.ring.data;
+      const ent = writer.ids.entities;
+      const slot = ent.slotOf(st);
+      d[o + S.STATION] = slot; d[o + S.STATION + 1] = ent.gen(slot);
+      d[o + S.KIND] = kind === STATION_FX_KIND.DESTROY ? STATION_FX_KIND.DESTROY : STATION_FX_KIND.CHUNK;
+      d[o + S.SHOCKWAVE] = shockwave ? 1 : 0;
       writer._commit();
     },
 

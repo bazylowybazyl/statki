@@ -283,3 +283,25 @@ test('iskry kadłubów: rekordy SPARK_BURST / SPARK_SEAM = dawne wywołania Spar
     SparkSystem3D.isInitialized = saved.init; window.SparkSystem3D = saved.win;
   }
 });
+
+test('stacja: STATION_FX — kawałek tylko dla stacji z bryłą 3D (stan renderu), rozpad przez destroyStation3D', async () => {
+  const { Destruction3D } = await import('../src/vfx/destruction3D.js');
+  const { ev } = setup();
+  const saved = { chunk: Destruction3D.detachChunk, shatter: Destruction3D.shatter };
+  const calls = [];
+  Destruction3D.detachChunk = (m) => calls.push(['chunk', m.name]);
+  Destruction3D.shatter = (m, o) => calls.push(['shatter', m.name, !!o.shockwave]);
+  const mesh = { name: 'bryła', getWorldScale(v) { v.x = 2; v.y = 2; v.z = 2; return v; } };
+  try {
+    const bare = { id: 'a' };
+    const st = { id: 'b', _mesh3d: mesh, type: 'pirate' };
+    ev.station(bare, 0);
+    ev.station(st, 0);
+    ev.station(st, 1, true);
+    ev.station(bare, 1, true);
+    assert.deepEqual(calls, [['chunk', 'bryła'], ['shatter', 'bryła', true]]);
+  } finally {
+    Destruction3D.detachChunk = saved.chunk;
+    Destruction3D.shatter = saved.shatter;
+  }
+});
