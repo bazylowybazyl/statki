@@ -109,8 +109,12 @@ test('odłam rysuje PODZBIÓR trójkątów skóry kawałka (indeks na wspólnych
   const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
   const lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
   const skin = bakeBuildingChunkSkin(dock, layout.chunkById.get('H-W1').group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
-  const geo = (skin.fg?.attributes.position.count || 0) >= (skin.bg?.attributes.position.count || 0) ? skin.fg : skin.bg;
-  const full = geo.attributes.position.count / 3;
+  const triCount = (g) => (g ? (g.index ? g.index.count : g.attributes.position.count) / 3 : 0);
+  const geo = triCount(skin.fg) >= triCount(skin.bg) ? skin.fg : skin.bg;
+  // skóra kawałka z indeksem (wypiek 2026-10-15: wierzchołki wspólne trójkątów podziału); trójkąt t = wierzchołki I[3t..3t+2]
+  const I = geo.index ? geo.index.array : null;
+  const vtx = (t, v) => (I ? I[3 * t + v] : 3 * t + v);
+  const full = triCount(geo);
   window.wrecks.length = 0;
   const res = HullBodies.shatter(e, 0, 0, 0.5, { cells: 6, crackDebris: 0.3, debrisFrac: 0.05, debrisSpeed: [60, 120], cuts: 0, chords: 0, minFragmentNodes: 20 });
   const frags = [res.wreck, ...window.wrecks.filter((w) => w !== res.wreck)].filter((w) => w?.beamHull?.body?.activeNodes > 0);
@@ -129,12 +133,16 @@ test('odłam rysuje PODZBIÓR trójkątów skóry kawałka (indeks na wspólnych
     // każdy trójkąt, którego kotwica (aOwn) jest żywą komórką odłamu, jest w podzbiorze
     const alive = new Set();
     for (let i = 0; i < s.count; i++) if (s.active[i]) alive.add(s.ix[i] + s.iy[i] * nx);
-    const inSub = new Uint8Array(full);
-    for (let k = 0; k < sub.index.count; k += 3) inSub[sub.index.array[k] / 3] = 1;
+    // trójkąty podzbioru po trzech wierzchołkach (podzbiór kopiuje trójki indeksu kawałka)
+    const subTris = new Set();
+    for (let k = 0; k < sub.index.count; k += 3) subTris.add(`${sub.index.array[k]},${sub.index.array[k + 1]},${sub.index.array[k + 2]}`);
     for (let t = 0; t < full; t++) {
       for (let v = 0; v < 3; v++) {
-        const j = 3 * t + v;
-        if (alive.has(own.getX(j) + own.getY(j) * nx)) { assert.ok(inSub[t], `trójkąt ${t} odłamu poza podzbiorem`); covered[t] = 1; }
+        const j = vtx(t, v);
+        if (alive.has(own.getX(j) + own.getY(j) * nx)) {
+          assert.ok(subTris.has(`${vtx(t, 0)},${vtx(t, 1)},${vtx(t, 2)}`), `trójkąt ${t} odłamu poza podzbiorem`);
+          covered[t] = 1;
+        }
       }
     }
   }

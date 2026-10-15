@@ -2294,6 +2294,35 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
     }
   }
 
+  // === PLANETOIDA POD BAZĄ PIRATÓW (misja 1; window.pirateRockLandmark — null bez bazy) ===
+  // Teren jak małe ciała, ale tarcza w prawdziwej skali, gdy większa (skała 16 km leży tuż przy bazie).
+  const rockMark = window.pirateRockLandmark;
+  if (rockMark && Number.isFinite(rockMark.x)) {
+    const scr = toScreen(rockMark.x, rockMark.y);
+    const rr = Math.max(2 + blend * 2, rockMark.radius * zoom);
+    if (scr.x > -rr - 60 && scr.x < W + rr + 60 && scr.y > -rr - 60 && scr.y < H + rr + 60) {
+      ctx.save();
+      ctx.fillStyle = '#8a7f74';
+      ctx.globalAlpha = rr > 12 ? 0.22 : 0.85;
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, rr, 0, Math.PI * 2);
+      ctx.fill();
+      if (rr > 12) {
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = '#b3a493';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 0.6 + blend * 0.2;
+      ctx.fillStyle = '#c9bba9';
+      ctx.font = `${Math.round(8 + blend * 3)}px monospace`;
+      ctx.textAlign = 'center';
+      const ly = rr > 12 ? scr.y : scr.y + rr + 10 + blend * 3;
+      ctx.fillText(String(rockMark.label).toUpperCase(), scr.x, ly);
+      ctx.restore();
+    }
+  }
+
   // === KOMETY (window.cometLandmarks — src/game/cometField.js: landmarks) ===
   drawCicComets(ctx, W, H, toScreen, zoom, blend);
 

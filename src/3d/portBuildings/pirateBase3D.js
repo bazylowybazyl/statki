@@ -43,7 +43,7 @@ export class PirateBase3D extends PortBuilding3D {
     this.lights = layout.lights;
     this.chunkState = layout.chunks.map((c, i) => ({
       id: c.id, group: c.group, kind: c.kind, box: c.box, index: i,
-      broken: false, hidden: false, skinned: false, t: 0, life: 0,
+      broken: false, hidden: false, skinned: false, hold: false, t: 0, life: 0,
       pivot: new THREE.Vector3(), vel: new THREE.Vector3(), axis: new THREE.Vector3(0, 0, 1), omega: 0,
       base: new THREE.Matrix4()
     }));
@@ -132,11 +132,23 @@ export class PirateBase3D extends PortBuilding3D {
 
   isChunkSkinned(id) { return !!this._chunkById.get(id)?.skinned; }
 
+  /**
+   * Statyka kawałka widoczna mimo straty (hidden / skinned), dopóki on = true — skóra odłamów ciała świata jeszcze się
+   * piecze (worldBodies3D, wypiek w workerze). Tylko obraz: isChunkGone, światła masztów i przeszkody bez zmian.
+   */
+  setChunkHold(id, on) {
+    const s = this._chunkById.get(id);
+    if (!s) return false;
+    s.hold = !!on;
+    return true;
+  }
+
   resetChunks() {
     for (const s of this.chunkState) {
       s.broken = false;
       s.hidden = false;
       s.skinned = false;
+      s.hold = false;
       s.t = 0;
     }
   }
@@ -146,12 +158,13 @@ export class PirateBase3D extends PortBuilding3D {
     G[0].identity();
     for (const s of this.chunkState) {
       const Mx = G[s.group];
-      if (s.hidden || (s.skinned && !s.broken)) {
+      // hold — kawałek stracony trzymany na miejscu, dopóki skóra jego odłamów się piecze (worldBodies3D; tylko obraz)
+      if (!s.hold && (s.hidden || (s.skinned && !s.broken))) {
         Mx.identity();
         Mx.elements[15] = 0;
         continue;
       }
-      if (!s.broken) {
+      if (!s.broken || s.hold) {
         Mx.identity();
         continue;
       }

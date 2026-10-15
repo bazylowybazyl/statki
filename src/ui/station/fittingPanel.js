@@ -39,7 +39,8 @@ const SHORT = {
   ciws_mk1: 'CIWS Mk I', ciws_mk2: 'CIWS Mk II', laser_pd_mk1: 'Laser PD', flak_s: 'Flak lekki', flak_m: 'Flak średni',
   flak_l: 'Grad Flak', flak_capital: 'Perun',
   fighter_squad_multirole: 'Eskadra wielozadaniowa', fighter_squad_interceptor: 'Eskadra przechwytująca',
-  fighter_squad_strike: 'Eskadra szturmowa', fighter_bay: 'Hangar (stary)',
+  fighter_squad_strike: 'Eskadra szturmowa', fighter_squad_bomber: 'Eskadra bombowców',
+  fighter_squad_torpedo: 'Eskadra torpedowców', fighter_squad_gunship: 'Eskadra kanonierek', fighter_bay: 'Hangar (stary)',
   supernova_missile: 'Supernova', hexlance_siege: 'Hexlance'
 };
 

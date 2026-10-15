@@ -201,3 +201,132 @@ test('index.html: śmierć bez rdzenia → wybuch z gazu z miejsca zbiornika; dr
   // Fabryka okrętów bez zmiatania dronów naprawczych (rozgrywka bez zmian).
   assert.match(src, /shipBlastFactory = window\.makeReactorBlow;\s*\n(\s*\/\/[^\n]*\n)*\s*window\.makeReactorBlow = withRepairDroneBlast/);
 });
+
+// ─── PĘKNIĘCIE zbiornika za życia okrętu (2026-10-15, prośba użytkownika: „wybuchy dymu przy taranowaniu, jeśli rozwalę
+// fuel tank”; stepFuelTankRupture, FUEL_TANK_TUNE.ruptureDeadFrac) ───
+const { reactorCellWorld } = await import('../src/game/reactorCore.js');
+
+function liveTankCells(e) {
+  const t = e.fuelTank;
+  let n = 0;
+  for (let k = 0; k < t.cellX.length; k++) if (reactorCellNode(e.beamHull, t.cellX[k], t.cellY[k]) >= 0) n++;
+  return n;
+}
+// Zabija komórkę k zbiornika kraterem na jej miejscu (krater na miarę rany zabija każdy węzeł w promieniu).
+function killTankCell(e, k) {
+  const p = reactorCellWorld(e.fuelTank, k, {});
+  HullBodies.impact(e, p.x, p.y, 1e7, { x: 0, y: 0 }, { craterRadius: e.beamHull.body.cellSize * 0.45 });
+}
+function extentX(e) {
+  const s = e.beamHull.body.nodeStore, q = {};
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    HullBodies.nodeWorld(e.beamHull, i, q);
+    if (q.x < lo) lo = q.x;
+    if (q.x > hi) hi = q.x;
+  }
+  return { lo, hi };
+}
+
+test('pęknięcie: od połowy martwych komórek zbiornik wybucha RAZ za życia; potem śmierć bez drugiego wybuchu zbiornika; remont — znów cały', () => {
+  const e = shipWithTank('battleship', 4000, -2500, 0.6);
+  e.vx = 140; e.vy = -35;
+  const t = e.fuelTank;
+  const n = t.cellX.length;
+  const need = Math.ceil(n * DATA.FUEL_TANK_TUNE.ruptureDeadFrac);
+  assert.ok(n >= 3, `zbiornik pancernika ma kilka komórek (${n})`);
+  assert.equal(t.ruptured, false);
+  assert.equal(FT.stepFuelTankRupture(e, {}, { time: 1 }), null, 'cały zbiornik');
+  const before = FT.fuelTankBlast(e, {});
+  // Poniżej progu — bez pęknięcia (krater po kraterze).
+  let k = 0;
+  while (n - liveTankCells(e) < need - 1 && k < n) killTankCell(e, k++);
+  assert.ok(n - liveTankCells(e) < need, 'poniżej progu');
+  assert.equal(FT.stepFuelTankRupture(e, {}, { time: 2 }), null, 'za mało martwych komórek');
+  assert.equal(t.ruptured, false);
+  while (n - liveTankCells(e) < need && k < n) killTankCell(e, k++);
+  assert.ok(n - liveTankCells(e) >= need, 'próg osiągnięty');
+  const r = FT.stepFuelTankRupture(e, {}, { candidates: window.wrecks, time: 3.5 });
+  assert.ok(r, 'zbiornik pęka');
+  assert.equal(t.ruptured, true);
+  assert.equal(t.rupturedAt, 3.5);
+  assert.ok(r.onHost && r.entity === e);
+  assert.equal(r.vx, 140); assert.equal(r.vy, -35);
+  assert.equal(r.size, t.size); assert.equal(r.profile, t.profile);
+  assert.ok(Math.hypot(r.x - before.x, r.y - before.y) < t.gridR * 2, 'miejsce zbiornika');
+  assert.ok(Math.abs(r.axisX - Math.cos(0.6)) < 1e-6 && Math.abs(r.axisY - Math.sin(0.6)) < 1e-6, 'oś kadłuba');
+  // Raz: dalsze kroki i dalsze straty — nic; śmierć gospodarza nie ma drugiego wybuchu zbiornika.
+  assert.equal(FT.stepFuelTankRupture(e, {}, { time: 4 }), null);
+  while (k < n) killTankCell(e, k++);
+  assert.equal(FT.stepFuelTankRupture(e, {}, { time: 5 }), null, 'pęka tylko raz');
+  assert.equal(FT.fuelTankBlast(e, {}, { candidates: window.wrecks }), null, 'śmierć po pęknięciu — bez wybuchu zbiornika');
+  // Remont (dok / odrost dronów): wszystkie komórki znów żyją → zbiornik znów cały.
+  HullBodies.restoreHull(e);
+  assert.equal(liveTankCells(e), n);
+  assert.equal(FT.stepFuelTankRupture(e, {}, { time: 9 }), null);
+  assert.equal(t.ruptured, false, 'naprawiony zbiornik jest znów cały');
+  assert.ok(FT.fuelTankBlast(e, {}), 'wybuch zbiornika przy śmierci wraca');
+  cleanup([e]);
+});
+
+test('pęknięcie: zbiornik odcięty z odłamem (komórki żywe na wraku rodu) nie pęka', () => {
+  const e = shipWithTank('battleship', 0, 0, 0);
+  const t = e.fuelTank;
+  const other = shipWithTank('battleship', 9000, 0, 0);
+  other.beamHull.dmgKey = e.beamHull.dmgKey;
+  const b0 = FT.fuelTankBlast(e, {});
+  HullBodies.impact(e, b0.x, b0.y, 1e7, { x: 0, y: 0 }, { craterRadius: t.gridR * 3 });
+  assert.equal(liveTankCells(e), 0, 'u gospodarza nie ma komórek zbiornika');
+  assert.equal(FT.stepFuelTankRupture(e, {}, { candidates: [other], time: 1 }), null, 'komórki na wraku rodu — zbiornik cały');
+  assert.equal(t.ruptured, false);
+  // Bez wraku z komórkami — rozbity (sprawdzenie po następnej zmianie kadłuba gospodarza: trafienie przy dziobie).
+  HullBodies.impact(e, extentX(e).hi - 40, 0, 1e7, { x: 0, y: 0 }, { craterRadius: e.beamHull.body.cellSize * 1.5 });
+  assert.ok(FT.stepFuelTankRupture(e, {}, { candidates: [], time: 2 }), 'bez wraku — pęka');
+  cleanup([e, other]);
+});
+
+test('pęknięcie w taranie (Node, prawdziwy silnik belek): Atlas szarżą w rufę pancernika rozbija zbiornik, a okręt żyje', () => {
+  // Jak scripts/zbiornik-taran-sym.mjs (strona „rufa”, tryb „szarza”): ciąg szarży 1100 j/s² od 2200 do 3000 j/s.
+  const V = shipWithTank('battleship', 0, 0, 0);
+  const tail = extentX(V).lo;
+  const A = shipWithTank('atlas', 0, 0, 0);
+  const nose = extentX(A).hi;
+  HullBodies.release(A);
+  const atlas = shipWithTank('atlas', tail - nose - 120, 0, 0);
+  atlas.vx = 2200;
+  const dt = 1 / 60;
+  let ruptureT = null;
+  for (let k = 0; k < 90 && ruptureT === null; k++) {
+    if (atlas.vx < 3000) atlas.vx += 1100 * dt;
+    for (const e of [atlas, V, ...window.wrecks]) { e.x += e.vx * dt; e.y += e.vy * dt; e.angle += (e.angVel || 0) * dt; }
+    HullBodies.step(dt, [atlas, V, ...window.wrecks]);
+    if (FT.stepFuelTankRupture(V, {}, { candidates: window.wrecks, time: (k + 1) * dt })) ruptureT = (k + 1) * dt;
+  }
+  assert.ok(ruptureT !== null && ruptureT < 1.5, `zbiornik pęka w szarży (${ruptureT})`);
+  const st = HullBodies.structuralState(V);
+  assert.ok(st && st.ratio > 0.2, `pancernik żyje (konstrukcja ${st?.ratio?.toFixed(2)}) — dawniej taran bez śmierci nie dawał wybuchu`);
+  cleanup([atlas, V]);
+});
+
+test('index.html: pęknięcie zbiornika w kroku integralności (gracz i okręty) PRZED sufitem punktów; śmierć po pęknięciu', () => {
+  const src = readIndexHtml();
+  assert.match(src, /import \{[^}]*stepFuelTankRupture[^}]*\} from "\.\/src\/game\/fuelTank\.js"/);
+  const hp = sliceFunction(src, 'function updateHardpointIntegrity(');
+  assert.match(hp, /if \(ship && !ship\.destroyed\) stepEntityFuelTankRupture\(ship\);/);
+  assert.match(hp, /if \(entity\.fuelTank\) stepEntityFuelTankRupture\(entity\);/);
+  const iHp = src.indexOf('updateHardpointIntegrity(_integrityDtAcc, dynamicDestructibles);');
+  const iCap = src.indexOf('enforceNpcHexIntegrityBalance();', iHp);
+  assert.ok(iHp > 0 && iCap > iHp && iCap - iHp < 200, 'pęknięcie przed sufitem punktów (śmierć w tym samym ticku nie dubluje wybuchu)');
+  const step = sliceFunction(src, 'function stepEntityFuelTankRupture(');
+  assert.match(step, /SHIP_BLAST_TUNE\.rupture/);
+  assert.match(step, /stepFuelTankRupture\(entity, _fuelBlast, \{ candidates: window\.wrecks, time: HullBodies\.simTime \}\)/);
+  assert.match(step, /shipBlastFactory\?\.\(fuelBlastOpts\(tb\)\)/);
+  assert.match(src, /const SHIP_BLAST_TUNE = \{[^}]*rupture: true/);
+  const blast = sliceFunction(src, 'function spawnShipDeathBlast(');
+  assert.match(blast, /tank\?\.ruptured/);
+  assert.match(blast, /HullBodies\.simTime - tank\.rupturedAt < FUEL_TANK_TUNE\.ruptureQuiet\) return true/);
+  assert.match(blast, /\* k;/);
+  assert.ok(DATA.FUEL_TANK_TUNE.ruptureDeadFrac > 0 && DATA.FUEL_TANK_TUNE.ruptureDeadFrac <= 1);
+  assert.ok(DATA.FUEL_TANK_TUNE.afterRuptureSize > 0 && DATA.FUEL_TANK_TUNE.afterRuptureSize < 1);
+});

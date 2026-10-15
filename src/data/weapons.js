@@ -7,8 +7,9 @@ import {
 /**
  * MASTER_WEAPONS - Ustandaryzowana baza uzbrojenia HULLFALL
  * * Parametry:
- * - mountType: 'main', 'aux', 'missile', 'hangar', 'special', 'special_missile', 'builtin' (gdzie można zamontować)
- * - category: 'rail', 'beam', 'plasma', 'autocannon', 'rocket', 'ciws', 'flak', 'superweapon' (dla renderera)
+ * - mountType: 'main', 'aux', 'missile', 'hangar', 'special', 'special_missile', 'builtin' (gdzie można zamontować);
+ *   'fighter' — broń maszyn eskadr (nie montuje się na okrętach, nie sprzedaje osobno — isFighterWeapon)
+ * - category: 'rail', 'beam', 'plasma', 'autocannon', 'rocket', 'ciws', 'flak', 'superweapon', 'bomb' (dla renderera)
  * - size: 'S', 'M', 'L', 'Capital' (wymagany rozmiar hardpointu)
  * - baseRange: Twardy zasięg w jednostkach silnika (silnik sam wyliczy life pocisku: range/speed)
  * - cooldown: Czas między strzałami w sekundach
@@ -434,6 +435,74 @@ export const MASTER_WEAPONS = {
     baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
     squadronId: 'strike', description: FIGHTER_SQUADRON_DEFS.strike.role
   },
+  // Hangary ról z audytu myśliwców (2026-10-14, docs/AUDYT-mysliwce-2026-10-14.md): bombowce, torpedowce,
+  // kanonierki — broń maszyn niżej (§ BROŃ MASZYN ESKADR).
+  fighter_squad_bomber: {
+    id: 'fighter_squad_bomber', name: FIGHTER_SQUADRON_DEFS.bomber.name,
+    mountType: 'hangar', category: 'hangar', size: 'S',
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: 'bomber', description: FIGHTER_SQUADRON_DEFS.bomber.role
+  },
+  fighter_squad_torpedo: {
+    id: 'fighter_squad_torpedo', name: FIGHTER_SQUADRON_DEFS.torpedo.name,
+    mountType: 'hangar', category: 'hangar', size: 'S',
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: 'torpedo', description: FIGHTER_SQUADRON_DEFS.torpedo.role
+  },
+  fighter_squad_gunship: {
+    id: 'fighter_squad_gunship', name: FIGHTER_SQUADRON_DEFS.gunship.name,
+    mountType: 'hangar', category: 'hangar', size: 'S',
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: 'gunship', description: FIGHTER_SQUADRON_DEFS.gunship.role
+  },
+
+  // ==========================================================================
+  // BROŃ MASZYN ESKADR (mountType 'fighter', 2026-10-14)
+  // Uzbrojenie integralne bombowców, torpedowców i kanonierek (src/data/fighterSquadrons.js: weaponId /
+  // missileId). Nie montuje się jej na okrętach i nie sprzedaje osobno: weaponBuildCost → null (katalog,
+  // ceny portu, refit), magazyn broni gracza jej nie przyjmuje (weaponInventory.fillWeaponInventory).
+  // Amunicję bomb i torped liczy przezbrojenie eskadry (weaponEconomy.squadronRearmCost: missileAmmo
+  // × weaponAmmoPerMissile × squadSize).
+  // ==========================================================================
+  // Bomba: spada na punkt kadłuba POD bombowcem w chwili zrzutu — jedzie z celem w jego układzie i po
+  // `fallTime` wybucha (src/game/fighterBombs.js): tarcza w tym punkcie (bez przebicia) — obrażenia w tarczę,
+  // kadłub — krater na miarę rany (rodzina stempla `rocket`: 420 obr. → lej ~11,7 j., src/3d/hullDamageStamps.js)
+  // i HP z pominięciem tarczy, dziura albo chybienie — przelatuje bez obrażeń. Lot i obraz: fighterBombs.js,
+  // src/vfx/fighterBombSprite.js; wybuch na pancerzu — WeaponFx.bombBlast.
+  //   cooldown — odstęp bomb w serii [s]; fallTime — czas spadania [s]; bombScatter — rozrzut punktu
+  //   upadku [j.] (losowanie z generatora gry); bombRadius — promień bomby na ekranie przy zrzucie [j.].
+  fighter_bomb: {
+    id: 'fighter_bomb', name: 'Bomba lotnicza', mountType: 'fighter', category: 'bomb', size: 'S',
+    baseDamage: 420, baseRange: 0, baseSpeed: 0, cooldown: 0.25, fallTime: 0.5,
+    bombScatter: 6, bombRadius: 5, energyCost: 0, vfxColor: '#ffb04a',
+    recoil: 0, shake: 0.5, impactScale: 1.4,
+    description: 'Bomba zrzucana nad kadłubem celu — spada na pancerz pod maszyną. Tarcza ją zatrzymuje, dziura w poszyciu przepuszcza.'
+  },
+  // Torpeda lotnicza: ścieżka pocisków 2D jak torpedy okrętowe (fireWeaponCore → bullets, type 'torpedo'):
+  // lekkie naprowadzanie po homingDelay, kilwater RocketEffects.torpedoWake, cel obrony punktowej, krater
+  // rodziny `rocket` (1100 obr. → lej ~18,9 j.), IFF myśliwców (src/game/friendlyFire.js).
+  aerial_torpedo: {
+    id: 'aerial_torpedo', name: 'Torpeda lotnicza', mountType: 'fighter', category: 'torpedo', size: 'S',
+    baseDamage: 1100, baseRange: 4500, baseSpeed: 1250, cooldown: 1.0,
+    // ordnancePerMissile 0,3 torpedo_round na torpedę: przezbrojenie klucza (2 torpedy × 6 maszyn = 3,6 sztuki, ~2600 CR)
+    // tańsze niż nowe maszyny (~3570 CR) — inaczej taniej stracić eskadrę niż ją dozbroić (scripts/tests/weaponEconomy).
+    turnRate: 22, homingDelay: 0.5, bulletRadius: 9, burstCount: 1, ordnancePerMissile: 0.3,
+    // Punkty życia obrony punktowej (jak rakieta manewrująca w modelu V3, ROCKET_PD_TUNE): CIWS Mk I — 5 trafień,
+    // laser PD — 8. Bez nich jedno trafienie zestrzeliwało torpedę: 79% torped strąconych przez jeden pancernik.
+    pdHp: 60,
+    explosionRadius: 80, vfxColor: '#ff7a55',
+    recoil: 2, shake: 1.2,
+    description: 'Lekka torpeda zrzucana z ~3 km: wolna, lekko się naprowadza, trafia kadłub jak rakieta manewrująca.'
+  },
+  // Działko kanonierki: wieżyczka obrotowa na orbicie celu. Kategoria autocannon (nie ciws — ciws zadaje
+  // okrętom 20%); efekty i rana z rodziny autokanonu.
+  gunship_autocannon: {
+    id: 'gunship_autocannon', name: 'Działko kanonierki', mountType: 'fighter', category: 'autocannon', size: 'S',
+    baseDamage: 26, baseRange: 2200, baseSpeed: 3200, cooldown: 0.22, spread: 0.035,
+    penetration: 0, energyCost: 0, vfxColor: '#ffc27a',
+    recoil: 3, shake: 1.5,
+    description: 'Szybkostrzelne działko w wieżyczce kanonierki — bije bez przerwy, krążąc wokół celu.'
+  },
 
   // ==========================================================================
   // SUPERBRONIE (Special)
@@ -670,6 +739,8 @@ const CATEGORY_PROFILE = Object.freeze({
   flak: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.FLAK, shotsPerAmmo: 8, good: WEAPON_GOOD.POINT_DEFENCE },
   rocket: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.MISSILE, shotsPerAmmo: 1, good: WEAPON_GOOD.ORDNANCE },
   torpedo: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.TORPEDO, shotsPerAmmo: 1, good: WEAPON_GOOD.ORDNANCE },
+  // Bomba lotnicza (fighter_bomb): sztuka = zasobnik pocisku, jak rakieta.
+  bomb: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.MISSILE, shotsPerAmmo: 1, good: WEAPON_GOOD.ORDNANCE },
   beam: { damage: DAMAGE_TYPE.ENERGY, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.ENERGY },
   plasma: { damage: DAMAGE_TYPE.ENERGY, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.ENERGY },
   superweapon: { damage: DAMAGE_TYPE.ENERGY, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.ENERGY },
@@ -740,6 +811,17 @@ export function shieldImpactClass(weaponOrId) {
 /** Próg klasy „special” tarczy: obrażenia pojedynczego pocisku i przeładowanie [s]. */
 export const SHIELD_SPECIAL_MIN_DAMAGE = 150;
 export const SHIELD_SPECIAL_MIN_COOLDOWN = 1;
+
+/** Rodzaj zaczepu broni maszyn eskadr (bomba, torpeda lotnicza, działko kanonierki). */
+export const FIGHTER_MOUNT_TYPE = 'fighter';
+
+/**
+ * Broń maszyn eskadr: nie montuje się na okrętach i nie sprzedaje osobno (katalog, ceny portu, refit,
+ * magazyn broni gracza ją pomijają). Przyjmuje definicję albo id.
+ */
+export function isFighterWeapon(weaponOrId) {
+  return weaponDef(weaponOrId)?.mountType === FIGHTER_MOUNT_TYPE;
+}
 
 /** `ballistic` | `energy` | `carrier`. Nieznana broń liczy się jak balistyczna. */
 export function weaponDamageType(weaponOrId) {

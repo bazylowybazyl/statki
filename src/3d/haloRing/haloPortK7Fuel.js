@@ -193,6 +193,9 @@ function hoseState(g, index) {
     quiet: 0,
     poseKey: NaN,
     hullKey: NaN,
+    // poza „ustawiona” (pose.settle): klucze pozy i obrysu, przy których przewód ostatnio ułożono od razu
+    settleKey: NaN,
+    settleHull: NaN,
     version: 0,
     latches: 0,
     unlatches: 0,
@@ -204,8 +207,9 @@ function hoseState(g, index) {
   return h;
 }
 
-// Przewód rozłożony łukiem (parabola zwisu) od wylotu bębna do złączki, długość `L` — stan początkowy.
-function layHose(h, L) {
+// Przewód rozłożony łukiem (parabola zwisu) od wylotu bębna do złączki C (domyślnie pod przegubem wysięgnika),
+// długość `L` — stan początkowy.
+function layHose(h, L, C = { x: h.wrist.x, y: h.wy - K7_FUEL_STATION.wrist, z: h.wrist.z }) {
   const M = K7_HOSE_NODES;
   const s0 = K7_HOSE_SEG;
   const segs = clamp(Math.ceil(L / s0), 2, M - 1);
@@ -213,7 +217,6 @@ function layHose(h, L) {
   h.sFirst = L - (segs - 1) * s0;
   h.length = L;
   const E = h.g.exit;
-  const C = { x: h.wrist.x, y: h.wy - K7_FUEL_STATION.wrist, z: h.wrist.z };
   const P = h.pos;
   // zwis paraboli dobrany do długości (bisekcja)
   const lenFor = (depth) => {
@@ -561,7 +564,9 @@ function stepHose(rig, h, dt, pose, T) {
 /**
  * Krok obsługi paliwowej hali: dt — czas gry [s] (0 = stoi), poses — Map berthId → poza obsługi (rejestr hali;
  * null — wszystko złożone), hull — obrys kadłuba statku w hubie TEJ hali (wypukły, punkty { x, z }) albo null.
- * Stały podkrok; przewód, którego poza, kadłub i ruch stoją, śpi (zero pracy).
+ * Stały podkrok; przewód, którego poza, kadłub i ruch stoją, śpi (zero pracy). Poza z `settle` (np. start w doku)
+ * jest „ustawiona”: ramię i przewód od razu w jej spoczynku, także przy dt = 0 — ponownie przy zmianie pozy albo
+ * obrysu kadłuba.
  */
 export function stepK7FuelRig(rig, dt, poses, hull) {
   const T = K7_FUEL_TUNE;
@@ -591,6 +596,15 @@ export function stepK7FuelRig(rig, dt, poses, hull) {
     if (pk !== h.poseKey || (hk !== h.hullKey && hullNear(rig, h))) { h.asleep = false; h.quiet = 0; }
     h.poseKey = pk;
     h.hullKey = hk;
+    if (pose && pose.settle) {
+      if (pk !== h.settleKey || hk !== h.settleHull) {
+        settleHose(rig, h, pose, T);
+        h.settleKey = pk;
+        h.settleHull = hk;
+      }
+    } else {
+      h.settleKey = NaN;
+    }
     if (h.latched) st.latched++;
     if (h.asleep || n === 0) continue;
     let speed = 0;
@@ -618,6 +632,67 @@ function hullNear(rig, h) {
     if (v > R) return false;
   }
   return true;
+}
+
+// Ułożenie (settleHose): 1,2 s dojścia z oporem ~8× większym — wahania gasną, przewód kończy ~1 j. (Atlas dziobem
+// ku bramie, jak w fabule) do ~10 j. (odwrotnie) od spoczynku po 20 s zwykłej fizyki; koszt ~8 ms na dwa przewody, raz.
+const _settleTune = { ...K7_FUEL_TUNE };
+const SETTLE_SEC = 1.2;
+const _sc = { x: 0, y: 0, z: 0 };
+
+/**
+ * Przewód i ramię OD RAZU w spoczynku pozy `pose` (bez ruchu ramienia): przeguby i wysięgnik na zadanych kątach,
+ * złączka zaryglowana na wlewie (rygle zamknięte, wlew w zasięgu naprowadzania) albo pod przegubem, przewód
+ * rozłożony łukiem i dociśnięty krótkim, mocno tłumionym dojściem (pokład, słupek, kadłub), prędkości zero.
+ * Start w doku (fabuła: statek przypięty, zanim pokaże go kamera — świat stoi, czas gry 0).
+ */
+function settleHose(rig, h, pose, T) {
+  const g = h.g;
+  const ext = clamp(Number(pose.extension) || 0, 0, 1);
+  const seat = clamp(Number(pose.seat) || 0, 0, 1);
+  const lock = clamp(Number(pose.lock) || 0, 0, 1);
+  k7FuelJoints(g, ext, _j);
+  h.q1 = _j.q1; h.q1v = 0;
+  h.q2 = _j.q2; h.q2v = 0;
+  h.wy = g.wristUp + (g.wristSeat - g.wristUp) * seat; h.wyv = 0;
+  k7ScaraTip(g, h.q1, h.q2, h.tip);
+  h.wrist.x = h.tip.x; h.wrist.y = h.wy; h.wrist.z = h.tip.z;
+  const port = g.port;
+  _sc.x = h.tip.x; _sc.y = h.wy - K7_FUEL_STATION.wrist; _sc.z = h.tip.z;
+  const latched = lock >= 0.5 && Math.hypot(_sc.x - port.x, _sc.y - port.y, _sc.z - port.z) < T.guide;
+  h.latched = latched;
+  h.lockLast = lock;
+  h.lockRise = 0;
+  h.upLatch = latched ? 1 : 0;
+  const C = latched ? port : _sc;
+  layHose(h, reelTarget(h, C.x, C.y, C.z, T), C);
+  // łuk przechodzący przez kadłub → nad grzbiet (jak przewód przeciągnięty ramieniem; inaczej zderzenia wypchnęłyby
+  // go w bok, pod burtę)
+  if (rig.hullN) {
+    const P = h.pos;
+    const E = rig._hullE;
+    const r = K7_FUEL_STATION.hoseR;
+    const yt = K7_HEIGHTS.hullTop + r;
+    for (let i = h.k0 + 1; i < K7_HOSE_NODES - 1; i++) {
+      const o = i * 3;
+      if (P[o + 1] >= yt) continue;
+      let sd = -Infinity;
+      for (let e = 0; e < rig.hullN; e++) sd = Math.max(sd, E[e * 3] * P[o] + E[e * 3 + 1] * P[o + 2] - E[e * 3 + 2]);
+      if (sd < r) P[o + 1] = yt;
+    }
+    h.prev.set(P);
+  }
+  if (latched) { h.up.x = 0; h.up.y = 1; h.up.z = 0; }
+  const S = Object.assign(_settleTune, T);
+  S.drag = Math.max(T.drag, 6);
+  S.couplerDrag = Math.max(T.couplerDrag, 6);
+  const n = Math.ceil(SETTLE_SEC / T.substep);
+  for (let i = 0; i < n; i++) stepHose(rig, h, T.substep, pose, S);
+  h.prev.set(h.pos);
+  h.q1v = 0; h.q2v = 0; h.wyv = 0;
+  h.asleep = false;
+  h.quiet = 0;
+  h.version++;
 }
 
 /** Budzi wszystkie przewody (zmiana strojenia, reset). */

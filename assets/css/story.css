@@ -401,6 +401,9 @@
 .st-cmd-alt:hover, .st-cmd-alt:focus-visible { border-color: var(--st-accent); color: #fff; outline: none; }
 .st-cmd-alt:disabled { opacity: 0.4; cursor: default; border-color: var(--st-line); }
 .st-cmd.busy .st-cmd-key { display: none; }
+/* sam przycisk (ODDOKOWANIE w misji 1, 2026-10-14 — bez panelu stanowiska): bez tła, ramki i nagłówka */
+.st-cmd.bare { width: min(300px, calc(100vw - 32px)); padding: 0; background: none; border: 0; box-shadow: none; }
+.st-cmd.bare .st-cmd-head, .st-cmd.bare .st-cmd-rows { display: none; }
 @keyframes st-cmd-glow { 0%, 100% { box-shadow: 0 0 0 0 var(--st-accent-soft); } 50% { box-shadow: 0 0 0 5px var(--st-accent-soft); } }
 
 /* ---------- pasek maskowania ---------- */

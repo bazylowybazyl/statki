@@ -207,6 +207,8 @@ test('klej gry (index.html): ciąg × stan silników, blokady skoku i szarży z 
   assert.ok(/interiorLightAt\(x, y\) \{[\s\S]{0,700}hallDomainDistance\(dom, hx, hz\) > 0\) return 0;/.test(hd), 'światło wnętrza tylko w domenie aktywnej hali');
   const story = readFileSync(new URL('../src/game/story/storyGame.js', import.meta.url), 'utf8');
   assert.ok(/setEngineState\(this\.deps\.ship\?\.\(\), ENGINE_OFF\)/.test(story), 'Atlas w doku z wyłączonymi silnikami');
-  assert.ok(/s\.t >= Math\.max\(0, STORY_UNDOCK\.driveAt - ENGINE_IGNITION_TUNE\.smokeTime\)[\s\S]{0,80}igniteEngine\(this\.deps\.ship\?\.\(\)\)/.test(story),
-    'zapłon smokeTime przed zwolnieniem zamków (błysk w chwili zwolnienia)');
+  // 2026-10-14 (prośba użytkownika): ODDOKUJ nie odpala silników — dym dopiero po pierwszym W (autozapłon gry)
+  const undock = story.match(/_stepUndock\(dt\) \{[\s\S]*?\n {2}\},/)?.[0] || '';
+  assert.ok(undock.length > 0 && !/igniteEngine\(/.test(undock), 'odcumowanie bez zapłonu silników');
+  assert.ok(/autoIgnitePlayerEngines\(\);/.test(html), 'zapłon po ODDOKUJ: autozapłon przy ciągu gracza');
 });

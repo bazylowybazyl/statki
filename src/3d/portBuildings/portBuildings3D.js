@@ -381,10 +381,15 @@ export class PortBuilding3D {
    * budowli, który stał się ciałem silnika belek, rysuje się tym samym cieniowaniem co jego bryły (zestaw bg / fg,
    * te same uniformy budowli: kanały, lampy, paleta, słońce). Jeden na zestaw — wartości ciała w userData siatki.
    */
-  skinMaterial(set = 'bg') {
+  skinMaterial(set = 'bg', solid = false) {
     if (!this._skinMats) this._skinMats = {};
-    if (!this._skinMats[set]) this._skinMats[set] = this._material(`PortBuildingSkin_${set}`, this.graphs.skin, this._common);
-    return this._skinMats[set];
+    // solid — BRYŁA 3D (kratownica wielowarstwowa, wariant „skin3”: FFD i maska z 8 rogów komórki)
+    const key = solid ? `${set}3` : set;
+    if (!this._skinMats[key]) {
+      this._skinMats[key] = this._material(solid ? `PortBuildingSkin3_${set}` : `PortBuildingSkin_${set}`,
+        solid ? this.graphs.skin3 : this.graphs.skin, this._common);
+    }
+    return this._skinMats[key];
   }
 
   /** Warstwy gospodarza: BG pod statkami, FG nad nimi (dach też w FG). */

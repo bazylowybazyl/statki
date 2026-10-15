@@ -30,6 +30,7 @@ import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { COLD_BEAM_KIND, captureBeamColdSnapshot, restoreBeamColdBody } from './hullColdSnapshot.js';
 import { CollisionFX, impactEvent, grindEvent } from '../vfx/collisionFx.js';
+import { bandSweep, bandProbe, bandCapsule, bandHit, bodyRotation } from './beamBand3D.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from '../3d/fx/fxRandom.js';
 
@@ -58,6 +59,33 @@ export const HULL_BODY_CONFIG = {
 
   // --- silnik (strojenie z dema destruktor2d.html) ---
   crushStrength: 300000,
+  // Prawo kontaktu v2 (destructorBeams3D createBeamConfig — contactV2; audyt docs/AUDYT-destruktor-3d-2026-10-14.md).
+  contactV2: true,
+  pinYieldMul: 28,          // kotwica we froncie styku = tyle komórek frontu (1500 j/s wgniata pierścień habitatu, 2200+ go zrywa)
+  crushTravelMul: 1,        // zgniatany węzeł przesuwa się co najmniej o drogę zbliżania w kroku (taran nie przeskakuje węzłów)
+  friction: 0.35,           // tarcie styku (silnik: 0,5) — muśnięcie ściany 300 j/s traci < 15% prędkości wzdłuż ruchu
+  pinBreakCells: 1,         // [komórki] przesunięcie kotwicy, przy którym spaw puszcza
+  // Słup kadłuba płaskiego dla brył 3D (pary mieszane silnika — wieża habitatu spadająca na okręt): ± tyle j. od
+  // płaszczyzny gry. Budowle mają słup z wysokości swoich brył (worldBodies — piece.column).
+  shipColumn: 70,
+  // PAS BRONI dla brył 3D (src/game/beamBand3D.js; prośba użytkownika 2026-10-15: „rzeczom 2D przy rzeczach 3D dać
+  // hitboxy 3D”): pocisk, wiązka, rzaz i orka lecą w płaszczyźnie gry w pasie ± tyle j. — jak słup okrętu. Węzeł
+  // bryły w pasie (|z| ≤ pas + ½ komórki) jest trafialny; co bryła ma nad i pod pasem, broń mija (jak okręt).
+  weaponBand: 70,
+  // Odłam bryły 3D poniżej tej wysokości (spadł z budowli w otchłań — grawitacja habitatu) znika (pętla wraków gry).
+  solidFloorZ: -6000,
+  // Tarcie styku brył 3D (para bierze większe z dwóch; kadłuby — friction): przewrócona wieża szoruje po koronie bębna
+  // i dysku, zamiast się z nich zsuwać.
+  solidFriction: 0.75,
+  // [j/s] Para z bryłą 3D zbliżająca się wolniej — styk sprężysty bez zgniotu (silnik: crushRestSpeed3D): wieża leżąca
+  // na koronie bębna nie gniecie jej samym ciężarem co krok (pomiar 2026-10-15: pełzanie po koronie kończyło się ~3 s
+  // wcześniej; razem z tłumieniem brył i zamrożeniem solver po uderzeniu liczy ~2 s zamiast ~8 s całej wieży).
+  crushRestSpeed3D: 40,
+  // Bryły 3D: tłumienie węzłów (silnik: nodeDamping, 0,12) i próg aktywności solvera lokalnego w KOMÓRKACH bryły
+  // (kadłuby: 0,4 · 15 = 6 j/s — próg w j/s nie rośnie z komórką): duża kratownica po zgniocie ma osiąść, a nie dzwonić
+  // sekundami z całą wieżą w solverze.
+  solidNodeDamping: 0.4,
+  solidActiveCells: 0.4,
   globalBreakMul: 0.6,
   maxContacts: 384,
   maxWrecks: 400,           // wraki w ruchu jednocześnie; ponad to odłamy idą w odłamki
@@ -235,8 +263,16 @@ const _poseB = { x: 0, y: 0, theta: 0, c: 1, s: 0 };     // druga poza (overlaps
 const _local = { x: 0, y: 0 };
 const _sweepOut = { t: Infinity, node: -1 };
 const _impactVel = { x: 0, y: 0, z: 0 };
-const _impactOpts = { radius: 0, hpBudget: 0, damageFraction: 1, killRadius: 0 };
-const _nodeWorld = { x: 0, y: 0 };
+const _impactOpts = { radius: 0, hpBudget: 0, damageFraction: 1, killRadius: 0, kick3D: false };
+const _nodeWorld = { x: 0, y: 0, z: 0 };
+// Bryły 3D (pas broni): macierz obrotu ciała, punkt w układzie ciała, węzły rzazu.
+const _solidRot = new Float64Array(9);
+const _solidL = { x: 0, y: 0, z: 0 };
+const SOLID_CUT_CAP = 8192;
+const _solidCutI = new Int32Array(SOLID_CUT_CAP);
+const _solidCutT = new Float64Array(SOLID_CUT_CAP);
+const _solidCutP = new Float64Array(SOLID_CUT_CAP);
+const _solidDw = { x: 0, y: 0, z: 0 };
 // Zapytania powierzchni mają własne scratche: syncBodyPose pisze do _pose i _local.
 const _qPose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
 const _qLocal = { x: 0, y: 0 };
@@ -248,8 +284,11 @@ const _regrowTouched = [];
 // Klucz mapy ran (18-C): kolejny numer kadłuba, dziedziczony przez wraki i odłamy.
 let _nextDmgKey = 0;
 
-/** Wynik sweep() — współdzielony, ważny do następnego wywołania. */
-export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0, node: -1, hitShard: null };
+/**
+ * Wynik sweep() — współdzielony, ważny do następnego wywołania. z — wysokość świata trafionego węzła (bryła 3D: węzeł
+ * w pasie broni; ciało płaskie: 0).
+ */
+export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0, node: -1, hitShard: null, z: 0 };
 
 /**
  * Wynik impact() / cutSegment() — współdzielony, ważny do następnego wywołania.
@@ -263,10 +302,13 @@ export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, pro
  * droga od wejścia do końca odcinka (stemple rzazu mapy ran, 18-C), impact: 0; crater — impact:
  * zasięg prawdziwej dziury = najdalszy węzeł zabity przez krater od punktu [j.] (0 = krater nikogo
  * nie zabił; utrata oparcia się nie liczy) — w tym promieniu mapa ran maluje lej (zadanie 25c), cut: 0.
+ * BRYŁA 3D (solid = true; pas broni — src/game/beamBand3D.js): z — wysokość świata trafienia (węzeł w pasie),
+ * latX / latY / latZ — punkt w komórkach kratownicy szablonu (jak aLat skóry 3D: węzeł (ix, iy, iz) = liczby
+ * całkowite) — stempel ran 3D (src/3d/solidWounds.js); u, v = 0. Ciało płaskie: z = 0, solid = false.
  */
 export const hullImpactResult = {
   kind: '', hit: false, killed: 0, radius: 0, node: -1, u: 0, v: 0, x: 0, y: 0, dmgKey: 0, dirX: 0, dirY: 0, len: 0,
-  crater: 0
+  crater: 0, z: 0, solid: false, latX: 0, latY: 0, latZ: 0
 };
 
 /** Wynik surfaceNormal() — normalna na zewnątrz (świat gry) i węzeł, przy którym ją liczono. */
@@ -277,6 +319,9 @@ export const hullTraceResult = { solidLen: 0, entryT: -1, exitT: -1, node: -1 };
 
 /** Wynik spriteUvAt() — uv sprite'a w konwencji skóry (v = 0 to górny wiersz obrazu). */
 export const hullUvResult = { u: 0, v: 0, ok: false, node: -1 };
+
+/** Wynik solidLatticeAt() — punkt bryły 3D w komórkach kratownicy szablonu (stemple ran 3D) i wysokość świata. */
+export const hullLatticeResult = { ok: false, node: -1, latX: 0, latY: 0, latZ: 0, z: 0 };
 
 /**
  * Wynik straightenAt() — współdzielony, ważny do następnego wywołania. changed — w obszarze coś się jeszcze zmieniło
@@ -304,6 +349,7 @@ export const HullBodies = {
   perf: { lastStepMs: 0, bodies: 0, contacts: 0, lastContacts: 0 },
   _bodies: [],
   _hulls: [],
+  _solids: [],
   _pairs: new WeakMap(),
   _structures: new WeakMap(),
   _seam: new Float32Array(64),
@@ -323,6 +369,9 @@ export const HullBodies = {
   // skóry i punkt świata gry. Trafienia (impact, cutSegment) mają własny hak onImpact. Mapa ran: rozdarcie
   // (poszarpany, osmalony brzeg dziury). Domyślnie brak.
   onNodeLost: null,
+  // (entity, hull, ix, iy, iz, x, y, z) — to samo dla BRYŁY 3D (komórka kratownicy szablonu, punkt świata gry i
+  // wysokość): rany 3D (src/3d/solidWounds.js — rozdarcie: osmalony brzeg dziury po zgniocie). Domyślnie brak.
+  onSolidNodeLost: null,
   // (islandEntity, parentEntity) — wyspa ciała ŚWIATA, która przy rozpadzie dalej trzyma się kotwicy: osobna encja
   // budowli (isWorldPiece, stoi), nie wrak. Gra (worldBodies.js) dopisuje ją do swojego kawałka. Domyślnie brak.
   onWorldIsland: null,
@@ -341,6 +390,14 @@ export const HullBodies = {
       activeMotionThreshold: 0.4 * C.cellPx,
       activeSettleFrames: 4,
       crushStrength: C.crushStrength,
+      // Prawo kontaktu v2 (audyt 2026-10-14): normalna z geometrii, granica plastyczności z frontu, zgniot w kroku,
+      // kotwice o skończonej wytrzymałości (createBeamConfig — contactV2).
+      contactV2: C.contactV2,
+      pinYieldMul: C.pinYieldMul,
+      pinBreakCells: C.pinBreakCells,
+      crushTravelMul: C.crushTravelMul,
+      friction: C.friction,
+      crushRestSpeed3D: C.crushRestSpeed3D,
       globalBreakMul: C.globalBreakMul,
       maxContacts: C.maxContacts,
       maxWrecks: C.maxWrecks,
@@ -441,6 +498,7 @@ export const HullBodies = {
     // odrost (regrowCell, restoreHull) ożywia wpisy w miejscu, z ich masą i pancerzem (mostek, komora reaktora).
     // Wrak (convertToWreck) i budowla zagęszczają się jak dawniej.
     body.keepLayout = !opts.world && !opts.anchored;
+    if (!opts.world) { body.colZ0 = -C.shipColumn; body.colZ1 = C.shipColumn; }
     const entityMass = Number(entity.mass);
     const mass = Number.isFinite(entityMass) && entityMass > 0 ? entityMass : body.mass;
     const skin = structure.spriteSkin;
@@ -503,6 +561,102 @@ export const HullBodies = {
     return hull;
   },
 
+  /**
+   * CIAŁO 3D (bryła budowli spoza płaszczyzny gry — wieża habitatu, dysk; docs/PORT-silnik-belek.md § „Ciała 3D”):
+   * konstrukcja 3D z wokselizacji (buildBeamStructure — współrzędne węzłów względem środka masy, `structure.com` —
+   * środek masy w układzie wokselizacji F), poza świata silnika (opts.position — początek układu F w świecie silnika:
+   * x gry, −y gry, z wysokość; opts.quaternion — obrót F → świat), kotwice `pins(x, y, z)` w układzie F, materiał
+   * (massPerArea — masa węzła = gęstość · komórka², jak komórka ciała płaskiego; collisionArmor), opts.gravity [j/s²]
+   * (świat silnika), opts.world — rekord kawałka (worldBodies.js). Silnik całkuje ruch ciała 3D sam (HullBodies.step:
+   * integrate z grawitacją i przegubami); encja jest jego lustrem: x, y (gra), z, quat, vx, vy, vz (solid3D).
+   * Zwraca rekord `entity.beamHull` albo null.
+   */
+  createSolid(entity, structure, opts = {}) {
+    if (!entity || !structure?.nodeStore) return null;
+    this.init();
+    const cs = structure.cellSize;
+    const ns0 = structure.nodeStore;
+    let live = 0;
+    for (let i = 0; i < ns0.count; i++) if (ns0.active[i]) live++;
+    if (live <= 0) return null;
+    const density = Number(opts.massPerArea) > 0 ? Number(opts.massPerArea) : C.massPerArea;
+    const collisionMass = density * cs * cs * live;
+    const massMul = collisionMass / structure.mass;
+    const armor = Number(opts.collisionArmor) > 0 ? Number(opts.collisionArmor) : 1;
+    const com = structure.com || { x: 0, y: 0, z: 0 };
+    const q = opts.quaternion || { x: 0, y: 0, z: 0, w: 1 };
+    const o = opts.position || { x: 0, y: 0, z: 0 };
+    // początek ciała = środek masy: o + R·com
+    const rc = rotateByQuat(q, com.x, com.y, com.z);
+    const body = D.createBody(cloneStructure(structure), {
+      name: String(entity.name || 'bryła 3D'),
+      collisionArmor: armor,
+      massMultiplier: massMul,
+      anchored: !!opts.anchored,
+      planar: false,
+      gravity: opts.gravity || null,
+      friction: Number.isFinite(opts.friction) ? opts.friction : C.solidFriction,
+      nodeDamping: C.solidNodeDamping,
+      activeThreshold: C.solidActiveCells * cs,
+      position: { x: o.x + rc.x, y: o.y + rc.y, z: o.z + rc.z },
+      quaternion: { x: q.x, y: q.y, z: q.z, w: q.w }
+    });
+    body.keepLayout = false;
+    const hpPerNode = Number(opts.hexPerNode) > 0 ? Number(opts.hexPerNode) : 4;
+    const s = body.nodeStore;
+    for (let i = 0; i < s.count; i++) { s.hp[i] *= hpPerNode; s.maxHp[i] *= hpPerNode; }
+    const hull = {
+      entity,
+      body,
+      solid3D: true,
+      structure,                          // konstrukcja szablonu (skóra 3D, liczba węzłów)
+      image: null,
+      visualImage: null,
+      normalMapImage: null,
+      srcWidth: 1,
+      srcHeight: 1,
+      scale: 1,
+      cellSize: cs,
+      pixelPitch: cs,
+      nx: structure.dims.x,
+      ny: structure.dims.y,
+      pivot: { x: 0, y: 0 },
+      anchorMode: 'com',
+      // Początek układu F (wokselizacji — tam leży geometria skóry) w układzie ciała = latticeMin + anchorD
+      // (jak środek sprite'a ciał płaskich; przeżywa przesunięcia środka masy przy rozpadzie).
+      anchorDX: -structure.latticeMin.x - com.x,
+      anchorDY: -structure.latticeMin.y - com.y,
+      anchorDZ: -structure.latticeMin.z - com.z,
+      baseNodes: body.activeNodes,
+      hexPerNode: hpPerNode,
+      massScale: 1,
+      massMul,
+      isFragment: false,
+      world: opts.world || null,
+      cellPx: 0,
+      pins: 0,
+      dmgKey: ++_nextDmgKey,
+      radius: body.radius,
+      revision: 0,
+      shieldCells: null,
+      _shieldCellsOf: null,
+      _massRef: body.mass,
+      _inPx: 0, _inPy: 0, _inVx: 0, _inVy: 0, _inW: 0, _inNodes: body.activeNodes
+    };
+    body.entity = entity;
+    body.hull = hull;
+    entity.beamHull = hull;
+    entity.solid3D = true;
+    entity.mass = Number(entity.mass) > 0 ? Number(entity.mass) : body.mass;
+    entity.radius = body.radius;
+    entity._bpRadius = body.radius;
+    if (opts.anchored && typeof opts.pins === 'function') {
+      hull.pins = pinBeamNodes(body, (ox, oy, oz) => !!opts.pins(ox + com.x, oy + com.y, oz + com.z));
+    }
+    syncSolidOut(hull, true);
+    return hull;
+  },
+
   /** Kadłub encji przestaje istnieć (encja znika albo oddała go wrakowi). */
   release(entity) {
     const hull = entity?.beamHull;
@@ -523,9 +677,10 @@ export const HullBodies = {
     if (!this.ready) this.init();
     this.simTime += dt;
     this.perf.contacts = 0;
-    const bodies = this._bodies, hulls = this._hulls;
+    const bodies = this._bodies, hulls = this._hulls, solids = this._solids;
     bodies.length = 0;
     hulls.length = 0;
+    solids.length = 0;
     for (let k = 0; k < entities.length; k++) {
       const e = entities[k];
       const hull = e?.beamHull;
@@ -533,14 +688,18 @@ export const HullBodies = {
       const body = hull.body;
       if (!body || body.dead || body.activeNodes <= 0) continue;
       if (e.dead && !e.isWreck) continue;
-      syncIn(hull);
+      // ciało 3D: ruch prowadzi silnik (integrate niżej), encja jest jego lustrem — bez syncIn
+      if (hull.solid3D) solids.push(body);
+      else syncIn(hull);
       bodies.push(body);
       hulls.push(hull);
     }
     const count = hulls.length;
+    if (solids.length > 0) D.integrate(dt, solids);
     if (count > 0) D.update(dt, bodies);
     for (let k = 0; k < count; k++) {
       const hull = hulls[k];
+      if (hull.solid3D) { syncSolidOut(hull, false); continue; }
       dissolveCrumbWreck(hull.body);
       syncOut(hull);
     }
@@ -598,11 +757,13 @@ export const HullBodies = {
   /**
    * Pierwszy żywy węzeł na odcinku pocisku (świat gry, y w dół). Wynik we współdzielonym
    * hullSweepResult albo null. `worldX/Y` = punkt wejścia na koło węzła — z niego
-   * impact() zaczyna krater, więc trafia ten sam węzeł.
+   * impact() zaczyna krater, więc trafia ten sam węzeł. Bryła 3D: węzły w PASIE broni
+   * (src/game/beamBand3D.js — przekrój bryły z płaszczyzną gry ± weaponBand), `z` — wysokość węzła.
    */
   sweep(entity, x0, y0, x1, y1, radius = 0) {
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return null;
+    if (hull.solid3D) return solidSweep(hull, x0, y0, x1, y1, radius);
     const body = hull.body;
     const pose = entityPose(hull, _pose);
     toLocal(hull, pose, x0, y0, _local);
@@ -619,13 +780,18 @@ export const HullBodies = {
     r.projectileY = y0 + (y1 - y0) * t;
     r.worldX = r.projectileX;
     r.worldY = r.projectileY;
+    r.z = 0;
     return r;
   },
 
-  /** Czy w punkcie (świat gry) jest żywy węzeł — podparcie gniazd broni i rdzeni. */
+  /** Czy w punkcie (świat gry) jest żywy węzeł — podparcie gniazd broni i rdzeni (bryła 3D: węzeł w pasie broni). */
   probe(entity, x, y, reach = 0) {
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return false;
+    if (hull.solid3D) {
+      const R = reach > 0 ? reach : C.probeReachCells * hull.body.cellSize;
+      return bandProbe(hull.body, x, -y, R, C.weaponBand, HullBodies.simTime) >= 0;
+    }
     const pose = entityPose(hull, _pose);
     toLocal(hull, pose, x, y, _local);
     const r = reach > 0 ? reach : C.probeReachCells * hull.body.cellSize;
@@ -639,7 +805,7 @@ export const HullBodies = {
    */
   overlaps(a, b) {
     const ha = a?.beamHull, hb = b?.beamHull;
-    if (!ha || !hb || ha.entity !== a || hb.entity !== b || ha.body.dead || hb.body.dead) return false;
+    if (!ha || !hb || ha.entity !== a || hb.entity !== b || ha.body.dead || hb.body.dead || ha.solid3D || hb.solid3D) return false;
     const it = ha.body.activeNodes <= hb.body.activeNodes ? ha : hb;
     const ho = it === ha ? hb : ha;
     const reach = (it.body.cellSize + ho.body.cellSize) * (D.config.nodeRadius / D.config.cellSize);
@@ -666,11 +832,15 @@ export const HullBodies = {
    * budżetu HP; wgniecenie sięga komórkę dalej (brzeg dziury).
    * Zwraca, czy trafienie objęło jakikolwiek węzeł. Szczegóły (węzeł, uv, zabite węzły, zasięg
    * dziury, klucz mapy ran) w `hullImpactResult`.
+   * Bryła 3D (pas broni — src/game/beamBand3D.js): trafiony węzeł = najbliższy w pasie (XY) w zasięgu krateru,
+   * krater (budżet HP albo killRadius) to KULA wokół punktu trafienia na wysokości tego węzła, odrzut w 3D; bez węzła
+   * w pasie — brak trafienia (pocisk minął bryłę nad nią / pod nią).
    */
   impact(entity, x, y, damage, vel = null, opts = null) {
     const r = resetImpactResult('impact', x, y);
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return false;
+    if (hull.solid3D) return solidImpact(entity, hull, x, y, damage, vel, opts, r);
     r.dmgKey = hull.dmgKey;
     const dmg = Math.max(0, Number(damage) || 0);
     if (dmg <= 0) return (r.hit = this.probe(entity, x, y));
@@ -685,6 +855,7 @@ export const HullBodies = {
     _impactOpts.hpBudget = craterR > 0 ? 0 : dmg * C.craterHpPerDamage;
     _impactOpts.killRadius = craterR;
     _impactOpts.damageFraction = 1;
+    _impactOpts.kick3D = false;
     _impactVel.x = Number(vel?.x) || 0;
     _impactVel.y = -(Number(vel?.y) || 0);
     _impactVel.z = 0;
@@ -720,12 +891,14 @@ export const HullBodies = {
    * (świat gry). Zwraca liczbę zniszczonych węzłów; pierwszy punkt wejścia w `hullSweepResult`,
    * węzeł i uv wejścia w `hullImpactResult` (kind 'cut'). `opts.push` — rzaz pocisku z pędem
    * (odcinek = tor): odłamki lecą wzdłuż toru, kadłub dostaje impuls (applyCutPush); bez niego
-   * węzły giną w miejscu jak dawniej.
+   * węzły giną w miejscu jak dawniej. Bryła 3D: pas rzazu = węzły w pasie broni bliżej osi odcinka (XY) niż
+   * `halfWidth` (pionowa płyta przez pas gry), impuls — ciało swobodne w 3D.
    */
   cutSegment(entity, x0, y0, x1, y1, halfWidth, opts = null) {
     const r = resetImpactResult('cut', x0, y0);
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return 0;
+    if (hull.solid3D) return solidCut(entity, hull, x0, y0, x1, y1, halfWidth, opts, r);
     r.dmgKey = hull.dmgKey;
     r.radius = halfWidth;
     const body = hull.body;
@@ -740,6 +913,7 @@ export const HullBodies = {
     hullSweepResult.t = t;
     hullSweepResult.worldX = hullSweepResult.projectileX = x0 + (x1 - x0) * t;
     hullSweepResult.worldY = hullSweepResult.projectileY = y0 + (y1 - y0) * t;
+    hullSweepResult.z = 0;
     r.x = hullSweepResult.worldX;
     r.y = hullSweepResult.worldY;
     r.node = _sweepOut.node;
@@ -778,7 +952,9 @@ export const HullBodies = {
     const ux = dl > 1e-12 ? dirX / dl : 0, uy = dl > 1e-12 ? dirY / dl : 0;
     const hull = entity?.beamHull;
     let found = false;
-    if (hull && hull.entity === entity && !hull.body.dead) {
+    // bryła 3D: gradient zajętości w 3D wokół węzła w pasie broni, rzut na płaszczyznę gry
+    if (hull && hull.entity === entity && !hull.body.dead && hull.solid3D) found = solidNormal(hull, x, y, ux, uy, out);
+    else if (hull && hull.entity === entity && !hull.body.dead) {
       const body = hull.body, s = body.nodeStore, cs = body.cellSize;
       const pose = entityPose(hull, _qPose);
       toLocal(hull, pose, x, y, _qLocal);
@@ -839,26 +1015,35 @@ export const HullBodies = {
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return null;
     const body = hull.body, cs = body.cellSize;
-    const pose = entityPose(hull, _qPose);
-    toLocal(hull, pose, x0, y0, _qLocal);
-    toLocal(hull, pose, x1, y1, _qEnd);
-    const ax = _qLocal.x, ay = _qLocal.y, dx = _qEnd.x - ax, dy = _qEnd.y - ay;
+    // bryła 3D: marsz w świecie silnika po węzłach pasa broni (sonda pasa zamiast siatki ciała płaskiego)
+    const solid = !!hull.solid3D;
+    let ax, ay, dx, dy;
+    if (solid) {
+      ax = x0; ay = -y0; dx = x1 - x0; dy = -(y1 - y0);
+    } else {
+      const pose = entityPose(hull, _qPose);
+      toLocal(hull, pose, x0, y0, _qLocal);
+      toLocal(hull, pose, x1, y1, _qEnd);
+      ax = _qLocal.x; ay = _qLocal.y; dx = _qEnd.x - ax; dy = _qEnd.y - ay;
+    }
     const len = Math.sqrt(dx * dx + dy * dy);
     const reach = C.traceReachCells * cs + Math.max(0, Number(radius) || 0);
     const n = Math.max(1, Math.ceil(len / (cs * 0.5)));
     let prevT = 0;
-    let prevNode = D.probeLocal2D(body, ax, ay, reach);
+    let prevNode = solid ? solidTraceProbe(body, ax, ay, reach) : D.probeLocal2D(body, ax, ay, reach);
     if (prevNode >= 0) { out.entryT = 0; out.node = prevNode; }
     for (let k = 1; k <= n; k++) {
       const t = k / n;
-      const node = D.probeLocal2D(body, ax + dx * t, ay + dy * t, reach);
+      const node = solid ? solidTraceProbe(body, ax + dx * t, ay + dy * t, reach)
+        : D.probeLocal2D(body, ax + dx * t, ay + dy * t, reach);
       const inside = node >= 0;
       if (inside !== (prevNode >= 0)) {
         // Połowienie przejścia między próbkami (lo = strona prevNode, hi = strona node).
         let lo = prevT, hi = t;
         for (let r = 0; r < C.traceRefineSteps; r++) {
           const m = (lo + hi) * 0.5;
-          const mn = D.probeLocal2D(body, ax + dx * m, ay + dy * m, reach);
+          const mn = solid ? solidTraceProbe(body, ax + dx * m, ay + dy * m, reach)
+            : D.probeLocal2D(body, ax + dx * m, ay + dy * m, reach);
           if ((mn >= 0) === inside) hi = m;
           else { lo = m; if (mn >= 0) out.node = mn; }
         }
@@ -891,7 +1076,7 @@ export const HullBodies = {
     out.ok = false;
     out.node = -1;
     const hull = entity?.beamHull;
-    if (!hull || hull.entity !== entity) return out;
+    if (!hull || hull.entity !== entity || hull.solid3D) return out;
     const body = hull.body, s = body.nodeStore;
     toLocal(hull, entityPose(hull, _qPose), x, y, _qLocal);
     let i = Number.isInteger(nodeHint) && nodeHint >= 0 && nodeHint < s.count ? nodeHint : -1;
@@ -902,10 +1087,32 @@ export const HullBodies = {
     return out;
   },
 
+  /**
+   * BRYŁA 3D: punkt (świat gry) w komórkach kratownicy szablonu — przy najbliższym węźle pasa broni (`uvProbeCells`
+   * albo podany promień), na jego wysokości; liczony względem bieżącej pozycji węzła (stempel jedzie z wgnieceniem jak
+   * aLat skóry 3D). ok = false: bryła bez węzła w pasie w pobliżu. Wynik w `out` (domyślnie hullLatticeResult).
+   */
+  solidLatticeAt(entity, x, y, reach = 0, out = hullLatticeResult) {
+    out.ok = false;
+    out.node = -1;
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !hull.solid3D || !hull.body || hull.body.dead) return out;
+    const body = hull.body;
+    const R = reach > 0 ? reach : C.uvProbeCells * body.cellSize;
+    const i = bandProbe(body, x, -y, R, C.weaponBand, HullBodies.simTime);
+    if (i < 0) return out;
+    const z = solidNodeWorldZ(body, i);
+    writeSolidLattice(body, i, x, -y, z, out);
+    out.z = z;
+    out.node = i;
+    out.ok = true;
+    return out;
+  },
+
   /** Cięcie wraku w polu: zdejmuje do `count` żywych węzłów najbliżej punktu (świat gry). */
   cutNearest(entity, x, y, count) {
     const hull = entity?.beamHull;
-    if (!hull || hull.entity !== entity || hull.body.dead) return 0;
+    if (!hull || hull.entity !== entity || hull.body.dead || hull.solid3D) return 0;
     const body = hull.body, s = body.nodeStore;
     syncBodyPose(hull);
     const pose = entityPose(hull, _pose);
@@ -931,7 +1138,7 @@ export const HullBodies = {
   /** Cięcie w polu: zdejmuje żywy węzeł najdalszy od środka masy — wrak znika od krawędzi. */
   cutOuterNode(entity) {
     const hull = entity?.beamHull;
-    if (!hull || hull.entity !== entity || hull.body.dead) return false;
+    if (!hull || hull.entity !== entity || hull.body.dead || hull.solid3D) return false;
     const body = hull.body, s = body.nodeStore;
     let best = -1, bestD2 = -1;
     for (let i = 0; i < s.count; i++) {
@@ -954,7 +1161,7 @@ export const HullBodies = {
    */
   ensureCargoCarrier(entity) {
     const hull = entity?.beamHull;
-    if (!hull || hull.entity !== entity) return null;
+    if (!hull || hull.entity !== entity || hull.solid3D) return null;
     const body = hull.body, s = body.nodeStore;
     if (body.dead || body.activeNodes <= 0) {
       let best = -1, bestD2 = Infinity;
@@ -1107,6 +1314,85 @@ export const HullBodies = {
     return { fragments, debris, wreck };
   },
 
+  /**
+   * Rozpad BRYŁY 3D (finał budowli — worldBodies.breakPiece kawałka 3D, implozja habitatu): ciało staje się wrakiem 3D,
+   * węzły przy punkcie (x, y gry, z — wysokość) w odłamki, PĘKNIĘCIA VORONOI W 3D (ziarna w żywych węzłach, belki
+   * między komórkami pękają, część węzłów szwów sypie się w odłamki), odłamy mniejsze niż minFragmentNodes — całe
+   * w odłamki. Odłamy dostają pęd: od punktu rozpadu × speed·radial + kierunek (outX, outY, outZ — gra: y w dół)
+   * × speed ± rozrzut, obrót ± spin. opts: { cells, debrisFrac, debrisMax, crackDebris, minFragmentNodes, speed,
+   * radial, outX, outY, outZ, spread, spin }. Zwraca { fragments, debris, wreck }.
+   */
+  shatterSolid(entity, worldX, worldY, worldZ = 0, opts = {}) {
+    const wreck = this.convertToWreck(entity);
+    if (!wreck) return { fragments: 0, debris: 0, wreck: null };
+    const hull = wreck.beamHull, body = hull.body, s = body.nodeStore, cs = body.cellSize;
+    const q = body.quat;
+    // punkt rozpadu w układzie ciała: Rᵀ (P − pos), P silnika = (x, −y, z)
+    const qi = { x: -q.x, y: -q.y, z: -q.z, w: q.w };
+    const L = rotateByQuat(qi, worldX - body.pos.x, -worldY - body.pos.y, worldZ - body.pos.z, { x: 0, y: 0, z: 0 });
+    const nodes = body.activeNodes;
+    let debrisFrac = Number.isFinite(opts.debrisFrac) ? Math.max(0, Math.min(0.9, opts.debrisFrac)) : 0.12;
+    if (Number.isFinite(opts.debrisMax) && nodes > 0) debrisFrac = Math.min(debrisFrac, Math.max(0, opts.debrisMax) / nodes);
+    const coreR = Math.cbrt((3 * nodes * debrisFrac * cs * cs * cs) / (4 * Math.PI));
+    const coreR2 = coreR * coreR;
+    const speed = Number(opts.speed) > 0 ? Number(opts.speed) : 120;
+    let debris = 0;
+    for (let i = 0; i < s.count && !body.dead; i++) {
+      if (!s.active[i]) continue;
+      const dx = s.x[i] - L.x, dy = s.y[i] - L.y, dz = s.z[i] - L.z, d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > coreR2) continue;
+      const d = Math.sqrt(d2) || 1, v = speed * (1 + Math.random());
+      s.vx[i] = dx / d * v; s.vy[i] = dy / d * v; s.vz[i] = dz / d * v;
+      D.destroyNode(body, i);
+      debris++;
+    }
+    if (body.dead) return { fragments: 0, debris, wreck };
+    // pęknięcia Voronoi w 3D
+    const cells = Number.isFinite(opts.cells) ? Math.max(0, opts.cells | 0) : 0;
+    if (cells > 1) debris += voronoiFracture3D(body, cells, Number.isFinite(opts.crackDebris) ? opts.crackDebris : 0.3, L, speed * 0.6);
+    // rozpad od razu: powstają encje wraków 3D (onWreck → makeSolidWreckEntity, lista wraków gry)
+    const wrecks = typeof window !== 'undefined' && Array.isArray(window.wrecks) ? window.wrecks : null;
+    const before = wrecks ? wrecks.length : 0;
+    if (!body.dead) {
+      const queued = D.splitQueue;
+      D.splitQueue = [body];
+      body.structureDirty = true;
+      D.processSplits([body]);
+      for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
+    }
+    const ox = Number(opts.outX) || 0, oy = -(Number(opts.outY) || 0), oz = Number(opts.outZ) || 0;
+    const radial = Number.isFinite(opts.radial) ? opts.radial : 0.35;
+    const spread = Number.isFinite(opts.spread) ? opts.spread : 0.5;
+    const spin = Number.isFinite(opts.spin) ? opts.spin : 0.3;
+    const minFrag = Number.isFinite(opts.minFragmentNodes) ? opts.minFragmentNodes | 0 : 0;
+    let fragments = 0;
+    const kick = (w) => {
+      const b = w?.beamHull?.entity === w ? w.beamHull.body : null;
+      if (!b || b.dead || b.activeNodes <= 0) return;
+      if (minFrag > 0 && b.activeNodes < minFrag) {
+        const ns = b.nodeStore;
+        for (let i = 0; i < ns.count && !b.dead; i++) if (ns.active[i]) { D.destroyNode(b, i); debris++; }
+        w.dead = true;
+        return;
+      }
+      const dx = b.pos.x - worldX, dy = b.pos.y + worldY, dz = b.pos.z - worldZ;
+      const dl = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      const v = speed * (0.5 + Math.random());
+      b.vel.x += dx / dl * speed * radial + ox * v + (Math.random() - 0.5) * spread * v;
+      b.vel.y += dy / dl * speed * radial + oy * v + (Math.random() - 0.5) * spread * v;
+      b.vel.z += dz / dl * speed * radial + oz * v + (Math.random() - 0.5) * spread * v;
+      b.angVel.x += (Math.random() - 0.5) * spin;
+      b.angVel.y += (Math.random() - 0.5) * spin;
+      b.angVel.z += (Math.random() - 0.5) * spin;
+      D.wake(b, D.config.wakeHoldFrames);
+      syncSolidOut(b.hull, true);
+      fragments++;
+    };
+    kick(wreck);
+    if (wrecks) for (let i = before; i < wrecks.length; i++) kick(wrecks[i]);
+    return { fragments, debris, wreck };
+  },
+
   /** Budzi solver kadłuba (np. śpiący wrak, w który coś wjeżdża). */
   wake(entity, hold = 0) {
     const hull = entity?.beamHull;
@@ -1127,6 +1413,7 @@ export const HullBodies = {
   normalResult: hullNormalResult,
   traceResult: hullTraceResult,
   uvResult: hullUvResult,
+  latticeResult: hullLatticeResult,
 
   /** Wrak z CAŁEGO kadłuba encji (śmierć statku). Kadłub przechodzi na nową encję wraku. */
   convertToWreck(entity) {
@@ -1134,6 +1421,13 @@ export const HullBodies = {
     if (!hull || hull.entity !== entity) return null;
     const body = hull.body;
     if (body.dead || body.activeNodes <= 0) return null;
+    if (hull.solid3D) {
+      body.isWreck = true;
+      const w = makeSolidWreckEntity(entity, body, hull);
+      entity.beamHull = null;
+      finishWreck(w, entity, body.activeNodes, null);
+      return w;
+    }
     syncIn(hull);
     body.isWreck = true;
     body.keepLayout = false;           // wrak nie odrasta — po rozpadzie może się zagęścić
@@ -1169,7 +1463,7 @@ export const HullBodies = {
   /** Klucz komórki (ix,iy) najbliższej punktowi w pikselach sprite'a względem środka (gniazda broni). */
   cellKeyAtSpritePx(entity, px, py) {
     const hull = entity?.beamHull;
-    if (!hull || hull.entity !== entity) return null;
+    if (!hull || hull.entity !== entity || hull.solid3D) return null;
     const body = hull.body, s = body.nodeStore;
     const lx = body.latticeMin.x + hull.anchorDX + px * hull.scale;
     const ly = body.latticeMin.y + hull.anchorDY - py * hull.scale;
@@ -1189,7 +1483,7 @@ export const HullBodies = {
    */
   shieldCells(entity) {
     const hull = entity?.beamHull;
-    if (!hull) return null;
+    if (!hull || hull.solid3D) return null;
     const body = hull.body, s = body.nodeStore;
     // Indeksy jak w BIEŻĄCYM magazynie (plan kadłuba czyta je razem z HP węzłów) — nowy magazyn (zagęszczenie,
     // odrost z szablonu) = obrys od nowa.
@@ -1205,9 +1499,16 @@ export const HullBodies = {
     return out;
   },
 
-  /** Pozycja węzła w świecie gry (y w dół). */
+  /** Pozycja węzła w świecie gry (y w dół; bryła 3D — także z, wysokość). */
   nodeWorld(hull, i, out = _nodeWorld) {
     const body = hull.body, s = body.nodeStore;
+    if (hull.solid3D) {
+      const m = bodyRotation(body.quat, _solidRot), x = s.x[i], y = s.y[i], z = s.z[i];
+      out.x = body.pos.x + m[0] * x + m[1] * y + m[2] * z;
+      out.y = -(body.pos.y + m[3] * x + m[4] * y + m[5] * z);
+      out.z = body.pos.z + m[6] * x + m[7] * y + m[8] * z;
+      return out;
+    }
     const pose = entityPose(hull, _pose);
     const ax = anchorLocalX(hull), ay = anchorLocalY(hull);
     const lx = s.x[i] - ax, ly = s.y[i] - ay;
@@ -1331,7 +1632,7 @@ export const HullBodies = {
    */
   cellWorld(entity, ix, iy, out = _nodeWorld) {
     const hull = entity?.beamHull;
-    if (!hull || hull.entity !== entity) return null;
+    if (!hull || hull.entity !== entity || hull.solid3D) return null;
     const body = hull.body, cs = body.cellSize, lm = body.latticeMin;
     const pose = entityPose(hull, _qPose);
     const lx = lm.x + (ix + 0.5) * cs - anchorLocalX(hull), ly = lm.y + (iy + 0.5) * cs - anchorLocalY(hull);
@@ -1597,6 +1898,11 @@ function resetImpactResult(kind, x, y) {
   r.dirY = 0;
   r.len = 0;
   r.crater = 0;
+  r.z = 0;
+  r.solid = false;
+  r.latX = 0;
+  r.latY = 0;
+  r.latZ = 0;
   return r;
 }
 
@@ -1675,6 +1981,272 @@ function syncOut(hull) {
     e._bpRadius = b.radius;
     hull.radius = b.radius;
   }
+}
+
+// q·v (kwaternion jednostkowy) — wynik we wspólnym _rotQ (albo `out`).
+const _rotQ = { x: 0, y: 0, z: 0 };
+function rotateByQuat(q, vx, vy, vz, out = _rotQ) {
+  const tx = 2 * (q.y * vz - q.z * vy), ty = 2 * (q.z * vx - q.x * vz), tz = 2 * (q.x * vy - q.y * vx);
+  out.x = vx + q.w * tx + (q.y * tz - q.z * ty);
+  out.y = vy + q.w * ty + (q.z * tx - q.x * tz);
+  out.z = vz + q.w * tz + (q.x * ty - q.y * tx);
+  return out;
+}
+
+// Encja ← ciało 3D (silnik prowadzi ruch): pozycja gry (x, −y), wysokość z, kwaternion (render), prędkości,
+// odchylenie wokół z (kurs gry: radar, mgła), masa za metalem jak syncOut, rewizja przy zmianie węzłów.
+function syncSolidOut(hull, force) {
+  const b = hull.body, e = hull.entity;
+  if (!e) return;
+  if (b.mass !== hull._massRef) {
+    const ratio = hull._massRef > 0 ? b.mass / hull._massRef : 1;
+    if (ratio > 0 && ratio !== 1 && Number.isFinite(ratio)) e.mass = Math.max(10, (Number(e.mass) > 0 ? Number(e.mass) : b.mass) * ratio);
+    hull._massRef = b.mass;
+  }
+  if (b.activeNodes !== hull._inNodes || force) {
+    if (b.activeNodes !== hull._inNodes) hull.revision++;
+    hull._inNodes = b.activeNodes;
+    e.radius = b.radius;
+    e._bpRadius = b.radius;
+    hull.radius = b.radius;
+  }
+  setEntityPos(e, b.pos.x, -b.pos.y);
+  setEntityVel(e, b.vel.x, -b.vel.y);
+  e.z = b.pos.z;
+  e.vz = b.vel.z;
+  const q = e.quat || (e.quat = { x: 0, y: 0, z: 0, w: 1 });
+  q.x = b.quat.x; q.y = b.quat.y; q.z = b.quat.z; q.w = b.quat.w;
+  e.angle = -Math.atan2(2 * (b.quat.w * b.quat.z + b.quat.x * b.quat.y), 1 - 2 * (b.quat.y * b.quat.y + b.quat.z * b.quat.z));
+  e.angVel = -b.angVel.z;
+}
+
+// ============================ BRYŁY 3D — BROŃ (pas broni) ============================
+//
+// Broń gry leci w płaszczyźnie z = 0; bryła 3D jest dla niej swoim PRZEKROJEM z pasem |z| ≤ weaponBand (+ ½ komórki):
+// indeks pasa w świecie silnika (src/game/beamBand3D.js — X = x gry, Y = −y gry). Trafienie bierze węzeł z pasa, krater
+// i odrzut liczy silnik w 3D (applyImpact w punkcie na wysokości węzła), rzaz — węzły pasa w pionowej płycie wzdłuż toru.
+
+// Wysokość świata węzła ciała (bieżąca poza ciała, bez pamięci obrotu silnika).
+function solidNodeWorldZ(body, i) {
+  const m = bodyRotation(body.quat, _solidRot), s = body.nodeStore;
+  return body.pos.z + m[6] * s.x[i] + m[7] * s.y[i] + m[8] * s.z[i];
+}
+
+// Punkt świata silnika (X, Y, Z) → komórki kratownicy szablonu względem węzła i (aLat skóry 3D: węzeł = (ix, iy, iz)).
+function writeSolidLattice(body, i, X, Y, Z, out) {
+  const m = bodyRotation(body.quat, _solidRot), s = body.nodeStore, cs = body.cellSize;
+  const rx = X - body.pos.x, ry = Y - body.pos.y, rz = Z - body.pos.z;
+  const lx = m[0] * rx + m[3] * ry + m[6] * rz;
+  const ly = m[1] * rx + m[4] * ry + m[7] * rz;
+  const lz = m[2] * rx + m[5] * ry + m[8] * rz;
+  out.latX = s.ix[i] + (lx - s.x[i]) / cs;
+  out.latY = s.iy[i] + (ly - s.y[i]) / cs;
+  out.latZ = s.iz[i] + (lz - s.z[i]) / cs;
+  return out;
+}
+
+function solidSweep(hull, x0, y0, x1, y1, radius) {
+  const body = hull.body;
+  const reach = C.hitReachCells * body.cellSize + Math.max(0, Number(radius) || 0);
+  if (bandSweep(body, x0, -y0, x1, -y1, reach, C.weaponBand, HullBodies.simTime) < 0) return null;
+  const r = hullSweepResult;
+  const t = bandHit.t;
+  r.t = t;
+  r.node = bandHit.node;
+  r.hitShard = null;
+  r.projectileX = x0 + (x1 - x0) * t;
+  r.projectileY = y0 + (y1 - y0) * t;
+  r.worldX = r.projectileX;
+  r.worldY = r.projectileY;
+  r.z = bandHit.z;
+  return r;
+}
+
+// Sonda pasa w świecie silnika (traceThrough bryły).
+function solidTraceProbe(body, X, Y, reach) {
+  return bandProbe(body, X, Y, reach, C.weaponBand, HullBodies.simTime);
+}
+
+function solidImpact(entity, hull, x, y, damage, vel, opts, r) {
+  r.dmgKey = hull.dmgKey;
+  r.solid = true;
+  const body = hull.body, cs = body.cellSize;
+  const dmg = Math.max(0, Number(damage) || 0);
+  // promień krateru jak ciało płaskie (heksy przez hexPerNode), krater na miarę rany — kula w 3D
+  const hexPitch = cs / Math.sqrt(hull.hexPerNode || 1);
+  const hexes = Math.max(C.craterMinCells, Math.min(C.craterMaxCells, C.craterMinCells + Math.sqrt(dmg / C.craterRefDamage)));
+  const baseRadius = Number(opts?.radius) > 0 ? Number(opts.radius) : hexes * hexPitch;
+  const craterR = Number(opts?.craterRadius) > 0 ? Number(opts.craterRadius) : 0;
+  _impactOpts.radius = craterR > 0 ? Math.max(baseRadius, craterR + cs) : baseRadius;
+  _impactOpts.hpBudget = craterR > 0 ? 0 : dmg * C.craterHpPerDamage;
+  _impactOpts.killRadius = craterR;
+  _impactOpts.damageFraction = 1;
+  _impactOpts.kick3D = true;
+  r.radius = Math.max(Number(D.config?.cellSize) || 0, _impactOpts.radius);
+  // węzeł trafienia: najbliższy w pasie broni (XY) — bez niego pocisk przeszedł nad / pod bryłą
+  const i = bandProbe(body, x, -y, Math.max(r.radius, C.probeReachCells * cs), C.weaponBand, HullBodies.simTime);
+  if (i < 0) return false;
+  const z = solidNodeWorldZ(body, i);
+  r.node = i;
+  r.z = z;
+  writeSolidLattice(body, i, x, -y, z, r);
+  if (dmg <= 0) return (r.hit = true);
+  _impactVel.x = Number(vel?.x) || 0;
+  _impactVel.y = -(Number(vel?.y) || 0);
+  _impactVel.z = 0;
+  writeImpactDir(r, _impactVel.x, -_impactVel.y, 0);
+  const before = body.activeNodes;
+  // obrót ciała z bieżącego kwaternionu (pamięć silnika jest z jego kroku)
+  body._rotTick = -1;
+  let hit;
+  HullBodies._weaponDepth++;
+  try {
+    hit = D.applyImpact(body, x, -y, z, dmg, _impactVel, _impactOpts);
+  } finally {
+    HullBodies._weaponDepth--;
+  }
+  r.hit = hit;
+  r.killed = before - body.activeNodes;
+  r.crater = hit ? D.lastCraterReach : 0;
+  if (hit && entity.isWreck) {
+    entity._wreckSleeping = false;
+    entity._wreckSleepTimer = 0;
+    entity._lastImpactMs = HullBodies.simTime * 1000;
+  }
+  if (hit && typeof HullBodies.onImpact === 'function') HullBodies.onImpact(entity, r);
+  return hit;
+}
+
+function solidCut(entity, hull, x0, y0, x1, y1, halfWidth, opts, r) {
+  r.dmgKey = hull.dmgKey;
+  r.radius = halfWidth;
+  r.solid = true;
+  const body = hull.body, s = body.nodeStore, now = HullBodies.simTime, H = C.weaponBand;
+  const X0 = x0, Y0 = -y0, X1 = x1, Y1 = -y1;
+  if (bandSweep(body, X0, Y0, X1, Y1, halfWidth, H, now) < 0) return 0;
+  const t = bandHit.t;
+  hullSweepResult.t = t;
+  hullSweepResult.worldX = hullSweepResult.projectileX = x0 + (x1 - x0) * t;
+  hullSweepResult.worldY = hullSweepResult.projectileY = y0 + (y1 - y0) * t;
+  hullSweepResult.node = bandHit.node;
+  hullSweepResult.z = bandHit.z;
+  r.x = hullSweepResult.worldX;
+  r.y = hullSweepResult.worldY;
+  r.node = bandHit.node;
+  r.z = solidNodeWorldZ(body, r.node);
+  writeSolidLattice(body, r.node, r.x, -r.y, r.z, r);
+  writeImpactDir(r, x1 - x0, y1 - y0, 1 - t);
+  const n = bandCapsule(body, X0, Y0, X1, Y1, halfWidth, H, now, _solidCutI, _solidCutT, _solidCutP, SOLID_CUT_CAP);
+  if (n === 0) return 0;
+  const push = !!opts?.push;
+  const dx = X1 - X0, dy = Y1 - Y0, len = Math.sqrt(dx * dx + dy * dy);
+  const ux = len > 1e-9 ? dx / len : 0, uy = len > 1e-9 ? dy / len : 0;
+  const m = bodyRotation(body.quat, _solidRot);
+  const before = body.activeNodes;
+  let killed = 0, cutMass = 0, cx = 0, cy = 0, cz = 0;
+  HullBodies._weaponDepth++;
+  try {
+    for (let k = 0; k < n && !body.dead; k++) {
+      const i = _solidCutI[k];
+      if (!s.active[i]) continue;
+      // pas rzazu: odległość od ODCINKA w XY ≤ halfWidth (kapsuła z okrągłymi końcami, jak cutLocalBand)
+      const tt = _solidCutT[k], pp = _solidCutP[k];
+      const over = tt < 0 ? -tt : tt > len ? tt - len : 0;
+      if (over > 0 && over * over + pp * pp > halfWidth * halfWidth) continue;
+      if (push && len > 1e-9) {
+        // odłamek wzdłuż toru × (0,5–1,3), na bok od osi (strona węzła) 0,15–0,5 — w świecie, do układu ciała (Rᵀ)
+        const lx = s.x[i], ly = s.y[i], lz = s.z[i];
+        const wx = m[0] * lx + m[1] * ly + m[2] * lz, wy = m[3] * lx + m[4] * ly + m[5] * lz;
+        const side = (body.pos.x + wx - X0) * -uy + (body.pos.y + wy - Y0) * ux >= 0 ? 1 : -1;
+        const sp = C.cutDebrisSpeed * (0.5 + 0.8 * nodeHash01(i, 0x3C6EF372));
+        const lat = side * (0.15 + 0.35 * nodeHash01(i, 0x1B873593));
+        const vx = (ux - uy * lat) * sp, vy = (uy + ux * lat) * sp;
+        s.vx[i] = m[0] * vx + m[3] * vy;
+        s.vy[i] = m[1] * vx + m[4] * vy;
+        s.vz[i] = m[2] * vx + m[5] * vy;
+        const mi = s.mass[i];
+        cutMass += mi; cx += lx * mi; cy += ly * mi; cz += lz * mi;
+      }
+      D.destroyNode(body, i);
+      killed++;
+    }
+  } finally {
+    HullBodies._weaponDepth--;
+  }
+  if (killed > 0) {
+    D.wake(body, D.config.wakeHoldFrames);
+    if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
+    if (push && cutMass > 0 && !body.dead) applySolidCutPush(body, m, ux, uy, cutMass, cx / cutMass, cy / cutMass, cz / cutMass);
+  }
+  r.hit = killed > 0;
+  r.killed = before - body.activeNodes;
+  if (killed > 0 && typeof HullBodies.onImpact === 'function') HullBodies.onImpact(entity, r);
+  return killed;
+}
+
+// Rzaz z pędem bryły swobodnej (spadająca wieża, odłam): impuls masy wyciętego metalu × cutPushSpeed wzdłuż toru
+// (świat) w środku masy rzazu (układ ciała) — ruch i obrót ciała w 3D, sufity jak kadłuba płaskiego. Zakotwiczona stoi.
+function applySolidCutPush(body, m, ux, uy, mass, lx, ly, lz) {
+  if (body.static || body.anchored || !(body.invMass > 0)) return;
+  const jx = ux * mass * C.cutPushSpeed, jy = uy * mass * C.cutPushSpeed;
+  let dvx = jx * body.invMass, dvy = jy * body.invMass;
+  const dv = Math.sqrt(dvx * dvx + dvy * dvy);
+  if (dv > C.cutPushMaxDv) { dvx *= C.cutPushMaxDv / dv; dvy *= C.cutPushMaxDv / dv; }
+  body.vel.x += dvx; body.vel.y += dvy;
+  const rx = m[0] * lx + m[1] * ly + m[2] * lz, ry = m[3] * lx + m[4] * ly + m[5] * lz, rz = m[6] * lx + m[7] * ly + m[8] * lz;
+  // Δω = I⁻¹ (r × J), J = (jx, jy, 0)
+  const w = D._invInertiaWorld(body, m, -rz * jy, rz * jx, rx * jy - ry * jx, _solidDw);
+  const dw = Math.sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
+  const k = dw > C.cutPushMaxDw ? C.cutPushMaxDw / dw : 1;
+  body.angVel.x += w.x * k; body.angVel.y += w.y * k; body.angVel.z += w.z * k;
+  D.wake(body, D.config.wakeHoldFrames);
+}
+
+// Normalna bryły na zewnątrz (świat gry): gradient zajętości żywych węzłów w kuli `normalWindowCells` komórek wokół
+// węzła pasa, obrócony do świata i rzucony na płaszczyznę gry. Prawie pionowy (strop, dno) — false (wołający bierze
+// −kierunek lotu). Normalna z kierunkiem lotu — styczna (jak ciało płaskie).
+function solidNormal(hull, x, y, ux, uy, out) {
+  const body = hull.body, s = body.nodeStore, cs = body.cellSize;
+  const i = bandProbe(body, x, -y, C.normalProbeCells * cs, C.weaponBand, HullBodies.simTime);
+  if (i < 0) return false;
+  out.node = i;
+  const cells = D._latticeIndex(body).cells, active = s.active, d = body.dims, dxy = d.x * d.y;
+  const ix = s.ix[i], iy = s.iy[i], iz = s.iz[i];
+  const R = C.normalWindowCells, R2 = R * R, w = Math.floor(R);
+  let gx = 0, gy = 0, gz = 0;
+  for (let dz = -w; dz <= w; dz++) {
+    const cz = iz + dz;
+    if (cz < 0 || cz >= d.z) continue;
+    for (let dy = -w; dy <= w; dy++) {
+      const cy = iy + dy;
+      if (cy < 0 || cy >= d.y) continue;
+      for (let dx = -w; dx <= w; dx++) {
+        if ((dx === 0 && dy === 0 && dz === 0) || dx * dx + dy * dy + dz * dz > R2) continue;
+        const cx = ix + dx;
+        if (cx < 0 || cx >= d.x) continue;
+        const j = cells[cx + cy * d.x + cz * dxy];
+        if (j >= 0 && active[j]) { gx -= dx; gy -= dy; gz -= dz; }
+      }
+    }
+  }
+  const gl = Math.sqrt(gx * gx + gy * gy + gz * gz);
+  if (!(gl > 1e-9)) return false;
+  const m = bodyRotation(body.quat, _solidRot);
+  // układ ciała → świat silnika → gra (y w dół)
+  let nx = m[0] * gx + m[1] * gy + m[2] * gz;
+  let ny = -(m[3] * gx + m[4] * gy + m[5] * gz);
+  const hl = Math.sqrt(nx * nx + ny * ny);
+  if (!(hl > 0.15 * gl)) return false;
+  nx /= hl; ny /= hl;
+  const along = nx * ux + ny * uy;
+  if (along > 0) {
+    nx -= along * ux; ny -= along * uy;
+    const tl = Math.sqrt(nx * nx + ny * ny);
+    if (!(tl > 1e-6)) return false;
+    nx /= tl; ny /= tl;
+  }
+  out.nx = nx; out.ny = ny;
+  return true;
 }
 
 // Zasięg kadłuba od kotwicy (statek: od środka sprite'a) — okrąg broadphase gry.
@@ -2380,6 +2952,64 @@ function voronoiFracture(body, cells, crackDebris, lx, ly, speed) {
   return debris;
 }
 
+// Pęknięcia Voronoi BRYŁY 3D (shatterSolid): jak voronoiFracture, ziarna i odległości w 3D (układ ciała), punkt
+// rozpadu L {x, y, z}. Zwraca liczbę węzłów szwów, które poszły w odłamki.
+function voronoiFracture3D(body, cells, crackDebris, L, speed) {
+  const s = body.nodeStore, n = s.count, cs = body.cellSize;
+  const sx = new Float64Array(cells), sy = new Float64Array(cells), sz = new Float64Array(cells);
+  let k = 0;
+  for (let tries = 0; tries < cells * 16 && k < cells; tries++) {
+    const i = Math.floor(Math.random() * n);
+    if (!s.active[i]) continue;
+    sx[k] = s.x[i] + (Math.random() - 0.5) * cs;
+    sy[k] = s.y[i] + (Math.random() - 0.5) * cs;
+    sz[k] = s.z[i] + (Math.random() - 0.5) * cs;
+    k++;
+  }
+  if (k < 2) return 0;
+  const owner = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!s.active[i]) continue;
+    let best = 0, bd = Infinity;
+    for (let q = 0; q < k; q++) {
+      const dx = s.x[i] - sx[q], dy = s.y[i] - sy[q], dz = s.z[i] - sz[q];
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < bd) { bd = d; best = q; }
+    }
+    owner[i] = best;
+  }
+  const e = body.beamStore, ea = e.a, eb = e.b, broken = e.broken;
+  const seam = new Uint8Array(n);
+  let cut = 0;
+  for (let bi = 0; bi < e.count; bi++) {
+    if (broken[bi]) continue;
+    const a = ea[bi], b = eb[bi];
+    if (!s.active[a] || !s.active[b] || owner[a] === owner[b]) continue;
+    broken[bi] = 1;
+    seam[a] = 1; seam[b] = 1;
+    cut++;
+  }
+  if (!cut) return 0;
+  body.liveBeams = Math.max(0, body.liveBeams - cut);
+  D.perf.beamsBroken += cut;
+  body.structureDirty = true;
+  body.meshDirty = true;
+  let debris = 0;
+  const p = Math.max(0, Math.min(1, Number(crackDebris) || 0));
+  for (let i = 0; i < n && p > 0 && !body.dead; i++) {
+    if (!seam[i] || !s.active[i] || Math.random() >= p) continue;
+    const dx = s.x[i] - L.x, dy = s.y[i] - L.y, dz = s.z[i] - L.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    const v = speed * (0.5 + Math.random());
+    s.vx[i] = dx / d * v; s.vy[i] = dy / d * v; s.vz[i] = dz / d * v;
+    D.destroyNode(body, i);
+    debris++;
+  }
+  D.wake(body, D.config.wakeHoldFrames);
+  if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
+  return debris;
+}
+
 // Drobny odłam (shatter → opts.minFragmentNodes) cały w odłamki: węzły lecą z prędkością ENCJI wraku (pchnięcie
 // z kroku 4, którego ciało jeszcze nie zna — syncIn dopiero w kroku) i rozrzutem do `speed` j/s.
 function crumbleWreck(w, speed) {
@@ -2494,7 +3124,16 @@ function isColdWreck(e) {
 function pairFilter(A, B) {
   const ea = A.entity, eb = B.entity;
   if (!ea || !eb) return true;
-  if (ea.isCollidable === false || eb.isCollidable === false) return false;
+  // Warstwy z (scenariusz szyi habitatu: dysk mieszkalny pod płaszczyzną gry, spadająca głowa): ciała różnych warstw
+  // się nie dotykają; w warstwie ≠ 0 (duchy budowli i ich odłamy, isCollidable = false dla reszty gry) — zderzają się.
+  // Bryła 3D (createSolid) zderza się w prawdziwym z (słupy ciał płaskich, kule węzłów) — warstwy jej nie dotyczą.
+  if (ea.solid3D || eb.solid3D) {
+    if (ea.isCollidable === false || eb.isCollidable === false) return false;
+  } else {
+    const la = ea.zLayer || 0, lb = eb.zLayer || 0;
+    if (la !== lb) return false;
+    if (la === 0 && (ea.isCollidable === false || eb.isCollidable === false)) return false;
+  }
   // Kadłub bez kolizji z innymi kadłubami, ale nadal kontakt dla AI, cel pocisków itd. (isCollidable wyłącza
   // też to) — gracz w warpie i na rampie wyjścia (decyzja użytkownika 2026-10-11: warp niewrażliwy, kolizje
   // dopiero w zwykłym locie); flagę pisze gra co krok przed kolizjami.
@@ -2611,6 +3250,15 @@ function onContact(A, B, info) {
   const ea = A.entity, eb = B.entity;
   if (!ea || !eb) return;
   HullBodies.perf.contacts += info.count;
+  // bryła 3D: ostatni styk (czas symulacji i punkt — gra: y w dół) — scenariusze (przewracana wieża habitatu)
+  if (ea.solid3D || eb.solid3D) {
+    const t = HullBodies.simTime;
+    for (const e of [ea, eb]) {
+      if (!e.solid3D) continue;
+      e.__contactT = t; e.__contactX = info.x; e.__contactY = -info.y; e.__contactZ = info.z;
+      e.__contactWith = e === ea ? eb : ea;
+    }
+  }
   const pair = pairRecord(ea, eb);
   if (pair.fresh) {
     pair.yieldPressure = 0;
@@ -2642,10 +3290,21 @@ function onContact(A, B, info) {
 // kształtownik (węzeł z wręgiem/grodzią), kolor blachy komórki, rozmiar ~ bok komórki.
 const _lostUv = { u: 0, v: 0 };
 
-function onNodeDebris(body, i, wx, wy, wz, vx, vy) {
+function onNodeDebris(body, i, wx, wy, wz, vx, vy, vz) {
   const hull = body.hull;
   if (!hull) return;
   const s = body.nodeStore;
+  // Bryła 3D: odłamek na wysokości węzła i z jego prędkością pionową; rozdarcie poza bronią — rany 3D (hak
+  // onSolidNodeLost: komórka kratownicy szablonu; mapa ran sprite'a zna tylko uv ciał płaskich).
+  if (hull.solid3D) {
+    if (HullBodies._weaponDepth === 0 && typeof HullBodies.onSolidNodeLost === 'function' && hull.entity) {
+      HullBodies.onSolidNodeLost(hull.entity, hull, s.ix[i], s.iy[i], s.iz[i], wx, -wy, wz);
+    }
+    if (typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
+    const scale3 = body.cellSize * (0.6 + fxRandom.next() * 0.7);
+    window.spawnHullDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], scale3, fxRandom.next() < 0.4, wz, vz);
+    return;
+  }
   // Rozdarcie poza trafieniem broni (hak onNodeLost — mapa ran): uv komórki węzła w konwencji skóry.
   if (HullBodies._weaponDepth === 0 && typeof HullBodies.onNodeLost === 'function' && hull.entity) {
     writeSpriteUv(hull, i, s.x[i], s.y[i], _lostUv);
@@ -2757,7 +3416,96 @@ function makeWreckEntity(parent, body, parentHull) {
   if (parentHull.world) {
     wreck.worldDebris = true;
     if (parentHull.world.ghost) wreck.isCollidable = false;
+    if (parent && parent.zLayer) wreck.zLayer = parent.zLayer;   // odłam ducha w warstwie z zostaje w swojej warstwie
   }
+  return wreck;
+}
+
+// Wrak CIAŁA 3D (bryła budowli, jej odłam): ruch prowadzi silnik (integrate z grawitacją), encja jest lustrem
+// (syncSolidOut) — pętla wraków gry go nie całkuje (solid3D), nie usypia (noWreckSleep) i nie zamraża
+// (_coldUnsupported — migawka zimnego wraku zna tylko kadłuby płaskie). Rysuje go skóra brył budowli (worldBodies3D).
+function makeSolidWreckEntity(parent, body, parentHull) {
+  const wreck = {
+    x: body.pos.x,
+    y: -body.pos.y,
+    z: body.pos.z,
+    vx: body.vel.x,
+    vy: -body.vel.y,
+    vz: body.vel.z,
+    angle: 0,
+    angVel: -body.angVel.z,
+    quat: { x: body.quat.x, y: body.quat.y, z: body.quat.z, w: body.quat.w },
+    radius: body.radius,
+    _bpRadius: body.radius,
+    mass: Math.max(10, body.mass * (parentHull.massScale > 0 ? parentHull.massScale : 1)),
+    friction: 1,
+    dead: false,
+    isWreck: true,
+    isAsteroidHex: false,
+    noWreckSleep: true,
+    destructionMaterial: parent?.destructionMaterial,
+    isCollidable: true,
+    _inPool: false,
+    isCold: false,
+    _coldSnapshot: null,
+    _coldUnsupported: true,
+    _wreckAge: 0,
+    _wreckSleepTimer: 0,
+    _wreckSleeping: false,
+    _wreckSleptSec: 0,
+    _lastImpactMs: HullBodies.simTime * 1000,
+    _cargoOrderId: null,
+    _cargoWreckId: null,
+    _cargoManifest: null,
+    owner: parent?.owner || parent,
+    shipFrame: parent?.shipFrame,
+    displayName: parent?.displayName,
+    visual: { spriteScale: 1, spriteScaleX: 1, spriteScaleY: 1, spriteRotation: 0 },
+    solid3D: true,
+    worldDebris: !!parentHull.world,
+    beamHull: null
+  };
+  const hull = {
+    entity: wreck,
+    body,
+    solid3D: true,
+    structure: parentHull.structure,
+    image: null,
+    visualImage: null,
+    normalMapImage: null,
+    srcWidth: 1,
+    srcHeight: 1,
+    scale: 1,
+    cellSize: parentHull.cellSize,
+    pixelPitch: parentHull.pixelPitch,
+    nx: parentHull.nx,
+    ny: parentHull.ny,
+    pivot: { x: 0, y: 0 },
+    anchorMode: 'com',
+    anchorDX: parentHull.anchorDX,
+    anchorDY: parentHull.anchorDY,
+    anchorDZ: parentHull.anchorDZ,
+    baseNodes: body.activeNodes,
+    hexPerNode: parentHull.hexPerNode,
+    massScale: parentHull.massScale,
+    massMul: parentHull.massMul,
+    isFragment: true,
+    world: parentHull.world || null,
+    cellPx: 0,
+    pins: 0,
+    dmgKey: parentHull.dmgKey,
+    radius: body.radius,
+    revision: 0,
+    shieldCells: null,
+    _shieldCellsOf: null,
+    _massRef: body.mass,
+    _inPx: 0, _inPy: 0, _inVx: 0, _inVy: 0, _inW: 0, _inNodes: body.activeNodes
+  };
+  body.entity = wreck;
+  body.hull = hull;
+  body.isWreck = true;
+  wreck.beamHull = hull;
+  syncSolidOut(hull, true);
   return wreck;
 }
 
@@ -2785,6 +3533,21 @@ function onWreck(parentBody, wreckBody) {
   // Ciało świata (budowla): wyspa, która dalej trzyma się kotwicy, zostaje BUDOWLĄ — stoi, bez listy wraków,
   // łupu i holowania; gra (worldBodies.js) dopisuje ją do kawałka przez hak onWorldIsland. Wyspa bez kotwicy
   // to zwykły wrak (lista wraków całkuje jego ruch) z obrazem budowli (hull.world).
+  if (parentHull.solid3D) {
+    // bryła 3D: wyspa z kotwicą zostaje budowlą (stoi), bez kotwicy — wrak 3D z grawitacją rodzica
+    const w = makeSolidWreckEntity(parent || { visual: null }, wreckBody, parentHull);
+    if (wreckBody.anchored) {
+      w.isWreck = false;
+      w.worldDebris = false;
+      w.isWorldPiece = true;
+      w.static = true;
+      wreckBody.isWreck = false;
+      if (typeof HullBodies.onWorldIsland === 'function') HullBodies.onWorldIsland(w, parent);
+      return;
+    }
+    finishWreck(w, parent, wreckBody.activeNodes, parentBody);
+    return;
+  }
   if (parentHull.world && wreckBody.anchored) {
     const island = makeWreckEntity(parent || { visual: null }, wreckBody, parentHull);
     island.isWreck = false;

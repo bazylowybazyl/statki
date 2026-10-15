@@ -1,3 +1,5 @@
+// AGENT: od 2026-10-14 misja 1 pokazuje w doku sam przycisk ODDOKOWANIE (F) — bez panelu stanowiska i WYPOSAŻENIA
+// (decyzja użytkownika); skrypt sprawdza dawny panel — do przepisania, gdy WYPOSAŻENIE wróci do doku inną drogą.
 // WYPOSAŻENIE w misji startowej (D2 / D8 planu fitowania, docs/PLAN-fitowanie.md) w PRAWDZIWEJ grze: kampania →
 // lot intro przewinięty → odprawa przewinięta → panel stanowiska K-7 z przyciskami ODDOKUJ i WYPOSAŻENIE. Sprawdza:
 //  1) start kampanii na karcie UNIWERSALNA, komplety pozostałych kart w hangarze (karty „W HANGARZE … · 0 CR”),

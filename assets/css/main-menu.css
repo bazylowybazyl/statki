@@ -469,6 +469,13 @@
   border-color: var(--mm-orange);
   box-shadow: 0 0 16px rgba(255, 106, 26, 0.45);
 }
+/* Opcje grafiki: chip „Własna” tylko pokazuje stan (nie da się go wybrać), ostrzeżenie o restarcie. */
+#main-menu .menu-chip[hidden],
+#main-menu .mm-note[hidden] { display: none; }
+#main-menu .menu-chip.mm-chip-static { cursor: default; }
+#main-menu .mm-gfx-preset .menu-chip { min-width: calc(86 * var(--mm-u)); }
+#main-menu .mm-note-warn { color: var(--mm-amber); }
+#main-menu .mm-note-warn .menu-chip { margin-left: calc(8 * var(--mm-u)); padding: calc(4 * var(--mm-u)) calc(10 * var(--mm-u)); font-size: calc(11 * var(--mm-u)); }
 
 /* suwaki (dźwięk) */
 #main-menu .mm-slider {

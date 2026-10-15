@@ -173,9 +173,9 @@ function boxAt(f, p, y, w, h, d, mat, rot = 0) { f.box(p[0], y, p[1], w, h, d, m
 
 function habitatCore(f, l) {
   const H = l.habitat;
-  // szyb (przecina płaszczyznę gry), grodzie wewnętrzne, trzon do dysku (pod płaszczyzną)
-  f.cyl(0, (H.floorY + 900) / 2, 0, H.coreR, 900 - H.floorY, M.steel);
-  for (const y of [H.floorY + 60, 40, 230, 520, 760]) f.ring(0, y, 0, H.coreR + 8, 0, M.rail, [Math.PI / 2, 0, 0]);
+  // szyb (przecina płaszczyznę gry; nad bębnem przechodzi w szyję — habitatTech), grodzie wewnętrzne, trzon do dysku
+  f.cyl(0, (H.floorY + H.coreTop) / 2, 0, H.coreR, H.coreTop - H.floorY, M.steel);
+  for (const y of [H.floorY + 60, 40, 230, 520]) f.ring(0, y, 0, H.coreR + 8, 0, M.rail, [Math.PI / 2, 0, 0]);
   for (const s of H.innerSpokes) {
     const r0 = H.coreR;
     const r1 = H.innerR - H.innerW;
@@ -192,7 +192,7 @@ function habitatCore(f, l) {
   // światła windy (bieg wzdłuż szybu — z góry widać pas na obwodzie)
   for (let i = 0; i < 12; i++) {
     f.fx(1.2, PB_FX.chase, i / 12, 0.35);
-    boxAt(f, ang((i / 12) * TAU, H.coreR + 12), 880, 22, 10, 22, M.cyan);
+    boxAt(f, ang((i / 12) * TAU, H.coreR + 12), H.wallTop + 120, 22, 10, 22, M.cyan);
     f.nofx();
   }
   // trzon pod bębnem do dysku mieszkalnego
@@ -200,65 +200,208 @@ function habitatCore(f, l) {
   for (const y of [H.floorY - 120, (H.floorY + H.tier2Y) / 2, H.tier2Y + 60]) f.ring(0, y, 0, H.stemR + 10, 0, M.rail, [Math.PI / 2, 0, 0]);
 }
 
-// Część techniczna nad bębnem (FG, duch): pierścień z oknami (cywile), szyb górny, anteny, talerze, radiatory.
+// Część techniczna nad bębnem (FG, duch) = SZYJA i GŁOWA (2026-10-14, prośba użytkownika: „powiększ górę i zrób
+// znacznie dłuższą szyję”). Szyja: rura z kratownicą czterech dźwigarów, obręcze, rury, winda (bieg świateł),
+// platforma w połowie. Głowa: talerz ze schodkowym spodem do szyi, okna cywilów na obwodzie i świetliki na wierzchu
+// (zasilanie habitatu), piasta z kopułą, radiatory, talerze łączności, maszty anten, kolce na obrzeżu.
 function habitatTech(f, l) {
   const H = l.habitat;
   f.set = 'fg';
-  const ry = (H.ringY0 + H.ringY1) / 2;
-  const rh = H.ringY1 - H.ringY0;
-  const rr = (H.ringR0 + H.ringR1) / 2;
-  const rd = H.ringR1 - H.ringR0;
-  ringBoxes(f, rr, rd, ry, rh, 0, TAU, TAU / 28, M.steel);
-  ringBoxes(f, rr, rd + 16, H.ringY1 + 4, 10, 0, TAU, TAU / 28, M.dark);
-  // świetliki pierścienia (okna cywilów — zasilanie habitatu)
-  for (let k = 0; k < 28; k++) {
-    const a = ((k + 0.5) / 28) * TAU;
-    f.fx(1.2, PB_FX.fill, 0.1 + 0.6 * pbHash1(k * 4.1), PBASE_CH.habitat);
-    boxAt(f, ang(a, rr), H.ringY1 + 12, 46, 4, rd * 0.5, k % 3 ? M.warm : M.white, -(a + Math.PI / 2));
-    f.nofx();
+  habitatNeck(f, H);
+  habitatHead(f, H);
+  f.set = 'bg';
+}
+
+function habitatNeck(f, H) {
+  const n0 = H.neckY0;
+  const n1 = H.neckY1;
+  const nl = n1 - n0;
+  // nasada na szczycie szybu, rura szyi, kołnierz pod głową
+  f.cyl(0, H.coreTop - 20, 0, H.coreR + 24, 70, M.rail);
+  f.cyl(0, H.coreTop + 110, 0, H.neckR + 80, 200, M.steel);
+  f.cyl(0, (n0 + n1) / 2, 0, H.neckR, nl, M.dark);
+  f.cyl(0, n1 - 70, 0, H.neckR + 70, 180, M.steel);
+  // obręcze rury w pasy
+  let k = 0;
+  for (let y = n0 + 520; y < n1 - 260; y += 600, k++) {
+    f.cyl(0, y, 0, H.neckR + 12, 50, M.rail);
+    f.cyl(0, y + 34, 0, H.neckR + 6, 16, k % 2 ? M.yellow : M.red);
   }
-  // szprychy pierścienia do szybu
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * TAU + Math.PI / 4;
-    boxAt(f, ang(a, (H.coreR + H.ringR0) / 2), ry, H.ringR0 - H.coreR + 20, 60, 70, M.dark, -a);
+  // kratownica: cztery dźwigary od nasady do kołnierza, obręcze i stężenia zygzakiem w każdym przęśle
+  const legR = H.neckR + 80;
+  const legs = [0, 1, 2, 3].map((i) => (i / 4) * TAU + Math.PI / 4);
+  const t0 = H.coreTop + 160;
+  const t1 = n1 - 150;
+  for (const a of legs) {
+    const [x, z] = ang(a, legR);
+    f.cyl(x, (t0 + t1) / 2, z, 24, t1 - t0, M.steel);
   }
-  // szyb górny i kopułka
-  f.cyl(0, (900 + H.coreTop) / 2, 0, H.coreR * 0.82, H.coreTop - 900, M.dark);
-  f.cyl(0, H.coreTop + 20, 0, H.coreR * 0.95, 40, M.rail);
-  f.cyl(0, H.coreTop + 60, 0, H.coreR * 0.6, 50, M.glass);
-  // radiatory (miedź) na krzyż
-  for (const a of [0, Math.PI / 2]) {
-    for (let i = -4; i <= 4; i++) {
-      if (i === 0) continue;
-      const along = i * 70;
-      boxAt(f, [Math.cos(a) * along, Math.sin(a) * along], H.coreTop - 120, 12, 150, 300, M.copper, -a);
+  const bays = Math.max(3, Math.round((t1 - t0) / 360));
+  const bh = (t1 - t0) / bays;
+  for (let i = 0; i <= bays; i++) {
+    const y0 = t0 + i * bh;
+    f.ring(0, y0, 0, legR, 0, M.rail, [Math.PI / 2, 0, 0]);
+    if (i === bays) break;
+    for (let s = 0; s < 4; s++) {
+      const [ax, az] = ang(legs[s], legR);
+      const [bx, bz] = ang(legs[(s + 1) % 4], legR);
+      if ((i + s) % 2) f.beam([ax, y0, az], [bx, y0 + bh, bz], 12, M.rail);
+      else f.beam([bx, y0, bz], [ax, y0 + bh, az], 12, M.rail);
     }
   }
-  // maszty anten z poprzeczkami i światłami przeszkodowymi
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * TAU + 0.35;
-    const [x, z] = ang(a, H.coreR * 0.55);
-    const top = H.mastTop - k * 180;
-    f.cyl(x, (H.coreTop + top) / 2, z, 12, top - H.coreTop, M.rail);
-    for (let y = H.coreTop + 200; y < top - 100; y += 260) f.box(x, y, z, 90, 6, 8, M.dark, -a);
-    f.fx(1.8, PB_FX.blink, k * 0.25, 0.5);
-    f.box(x, top + 14, z, 18, 14, 18, M.red);
+  // rury (miedź) wzdłuż szyi
+  for (const a of [0, Math.PI]) {
+    const [x, z] = ang(a, H.neckR + 30);
+    f.cyl(x, (t0 + t1) / 2, z, 16, t1 - t0, M.copper);
+  }
+  // winda: bieg świateł w górę po obu stronach rury
+  const lifts = Math.max(6, Math.round(nl / 150));
+  for (const side of [Math.PI / 2, -Math.PI / 2]) {
+    for (let i = 0; i < lifts; i++) {
+      f.fx(1.3, PB_FX.chase, i / lifts, 0.35);
+      boxAt(f, ang(side, H.neckR + 6), n0 + 260 + i * ((nl - 420) / lifts), 16, 34, 16, M.cyan, -side);
+      f.nofx();
+    }
+  }
+  // platforma w połowie szyi: pokład, kolce, światła przeszkodowe, kogut alarmu
+  const py = n0 + nl * 0.45;
+  const pr = H.neckR + 240;
+  f.cyl(0, py, 0, pr, 60, M.steel);
+  f.cyl(0, py - 50, 0, pr * 0.7, 60, M.dark);
+  ringBoxes(f, pr - 16, 40, py + 36, 14, 0, TAU, TAU / 24, M.rail, (a, i) => {
+    boxAt(f, ang(a, pr - 16), py + 44, 40, 3, 46, i % 2 ? M.black : M.yellow, -(a + Math.PI / 2));
+  });
+  for (let i = 0; i < 8; i++) {
+    const a = ((i + 0.5) / 8) * TAU;
+    const [cx, cz] = ang(a, pr + 40);
+    f.cone(cx, py, cz, 18, 130, M.rail, [Math.cos(a), 0.25, Math.sin(a)]);
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU;
+    f.fx(1.6, PB_FX.blink, i / 4, 0.6);
+    boxAt(f, ang(a, pr - 40), py + 56, 20, 16, 20, M.red);
     f.nofx();
   }
-  // talerze łączności (pochylone ku wnętrzu układu)
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * TAU + 1.1;
-    const [x, z] = ang(a, H.ringR1 * 0.8);
-    const dx = Math.cos(a), dz = Math.sin(a);
-    f.cyl(x, H.ringY1 + 70, z, 14, 120, M.steel);
-    f.cone(x + dx * 30, H.ringY1 + 170, z + dz * 30, 120, 60, M.pale, [dx, 1.2, dz]);
-    f.ring(x + dx * 34, H.ringY1 + 176, z + dz * 34, 118, 0, M.rail, [Math.PI / 2 - 0.6, -a, 0]);
-  }
-  // kogut alarmu na szczycie szybu
-  f.fx(1.8, PB_FX.alarm, 0.5, PBASE_CH.alarm);
-  f.box(0, H.coreTop + 110, 0, 40, 30, 40, M.red);
+  f.fx(1.8, PB_FX.alarm, 0.25, PBASE_CH.alarm);
+  boxAt(f, ang(Math.PI / 4, pr - 60), py + 60, 30, 24, 30, M.red);
   f.nofx();
-  f.set = 'bg';
+}
+
+function habitatHead(f, H) {
+  const y0 = H.ringY0;
+  const y1 = H.ringY1;
+  const ry = (y0 + y1) / 2;
+  const rh = y1 - y0;
+  const rr = (H.ringR0 + H.ringR1) / 2;
+  const rd = H.ringR1 - H.ringR0;
+  const hr = H.headR;
+  // spód talerza: schodki od obrzeża do szyi
+  const steps = [[H.ringR1 - 30, 90], [H.ringR1 - 170, 90], [H.ringR1 - 330, 90], [hr + 60, 100], [H.neckR + 110, 110]];
+  let yb = y0;
+  steps.forEach(([r, h], i) => {
+    f.cyl(0, yb - h / 2, 0, r, h + 4, i % 2 ? M.steel : M.dark);
+    yb -= h;
+  });
+  // talerz: pierścień, ciemny pas w połowie, listwa szczytowa w pasy
+  ringBoxes(f, rr, rd, ry, rh, 0, TAU, TAU / 44, M.steel);
+  ringBoxes(f, H.ringR1 - 6, 20, y0 + rh * 0.36, 60, 0, TAU, TAU / 44, M.dark);
+  ringBoxes(f, H.ringR1 - 30, 70, y1 + 6, 14, 0, TAU, TAU / 56, M.rail, (a, i) => {
+    boxAt(f, ang(a, H.ringR1 - 30), y1 + 14, 60, 3, 76, i % 2 ? M.black : M.yellow, -(a + Math.PI / 2));
+  });
+  // okna cywilów na obwodzie (cztery rzędy) i świetliki na wierzchu — zasilanie habitatu
+  const wins = 64;
+  const wlen = 2 * H.ringR1 * Math.tan(Math.PI / wins) * 0.62;
+  [0.16, 0.56, 0.72, 0.88].forEach((t, row) => {
+    for (let i = 0; i < wins; i++) {
+      const h = pbHash1(row * 41.7 + i * 2.9);
+      if (h < 0.18) continue;
+      const a = ((i + 0.5) / wins) * TAU;
+      f.fx(1.2, PB_FX.fill, 0.08 + 0.7 * h, PBASE_CH.habitat);
+      boxAt(f, ang(a, H.ringR1 + 2), y0 + rh * t, wlen, 34, 10, h < 0.7 ? M.warm : h < 0.9 ? M.white : M.cyan, -(a + Math.PI / 2));
+      f.nofx();
+    }
+  });
+  const skyR = H.ringR0 + rd * 0.3;
+  for (let i = 0; i < 40; i++) {
+    const a = ((i + 0.5) / 40) * TAU;
+    f.fx(1.2, PB_FX.fill, 0.1 + 0.6 * pbHash1(i * 4.1), PBASE_CH.habitat);
+    boxAt(f, ang(a, skyR), y1 + 12, 54, 4, rd * 0.22, i % 3 ? M.warm : M.white, -(a + Math.PI / 2));
+    f.nofx();
+  }
+  // włazy i kratki na wierzchu talerza
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + 0.26;
+    const [x, z] = ang(a, H.ringR0 + 40);
+    f.box(x, y1 + 6, z, 70, 12, 70, M.dark, -a);
+    hatch(f, x, y1 + 12, z, 26);
+    const [gx, gz] = ang(a + Math.PI / 6, H.ringR0 + 40);
+    grille(f, gx, y1 + 10, gz, 120, 40, -(a + Math.PI / 6 + Math.PI / 2));
+  }
+  // piasta z oknami, obręcze, szprychy do talerza
+  f.cyl(0, (y0 - 80 + H.headTop) / 2, 0, hr, H.headTop - y0 + 80, M.dark);
+  for (const y of [y0 + 100, y1 - 30]) f.ring(0, y, 0, hr + 6, 0, M.rail, [Math.PI / 2, 0, 0]);
+  ringBoxes(f, hr + 10, 30, H.headTop - 30, 40, 0, TAU, TAU / 32, M.rail);
+  for (let i = 0; i < 24; i++) {
+    const h = pbHash1(i * 7.3 + 3.1);
+    if (h < 0.25) continue;
+    const a = ((i + 0.5) / 24) * TAU;
+    f.fx(1.1, PB_FX.fill, 0.1 + 0.6 * h, PBASE_CH.habitat);
+    boxAt(f, ang(a, hr + 2), (y1 + H.headTop) / 2, 2 * hr * Math.tan(Math.PI / 24) * 0.55, 44, 8, h < 0.75 ? M.warm : M.white, -(a + Math.PI / 2));
+    f.nofx();
+  }
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + Math.PI / 6;
+    boxAt(f, ang(a, (hr + H.ringR0) / 2), ry, H.ringR0 - hr + 40, 90, 90, M.dark, -a);
+  }
+  // kopuła na piaście
+  f.cyl(0, H.headTop + 20, 0, hr * 0.92, 40, M.steel);
+  f.cyl(0, H.headTop + 70, 0, hr * 0.7, 60, M.glass);
+  f.cyl(0, H.headTop + 115, 0, hr * 0.42, 40, M.glass);
+  // radiatory (miedź): cztery baterie żeber na wierzchu talerza
+  for (let b = 0; b < 4; b++) {
+    const a = (b / 4) * TAU + Math.PI / 4;
+    const [cx, cz] = ang(a, H.ringR1 - 140);
+    const tx = -Math.sin(a);
+    const tz = Math.cos(a);
+    for (let i = -2; i <= 2; i++) f.box(cx + tx * i * 48, y1 + 120, cz + tz * i * 48, 12, 220, 220, M.copper, -(a + Math.PI / 2));
+  }
+  // talerze łączności (pochylone na zewnątrz)
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU;
+    const [x, z] = ang(a, H.ringR1 - 170);
+    const dx = Math.cos(a);
+    const dz = Math.sin(a);
+    f.cyl(x, y1 + 110, z, 20, 200, M.steel);
+    f.cone(x + dx * 40, y1 + 260, z + dz * 40, 200, 90, M.pale, [dx, 1.2, dz]);
+    f.ring(x + dx * 46, y1 + 268, z + dz * 46, 196, 0, M.rail, [Math.PI / 2 - 0.6, -a, 0]);
+  }
+  // maszty anten z poprzeczkami i światłami przeszkodowymi
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + 0.35;
+    const [x, z] = ang(a, hr * 0.82);
+    const base = H.headTop + 40;
+    const top = H.mastTop - i * 260;
+    f.cyl(x, (base + top) / 2, z, 14, top - base, M.rail);
+    for (let y = base + 220; y < top - 120; y += 300) f.box(x, y, z, 110, 6, 8, M.dark, -a);
+    f.fx(1.8, PB_FX.blink, i * 0.25, 0.5);
+    f.box(x, top + 14, z, 20, 16, 20, M.red);
+    f.nofx();
+  }
+  // kolce na obrzeżu i światła przeszkodowe pod talerzem
+  for (let a = 0.08; a < TAU; a += 0.15) {
+    const [x, z] = ang(a, H.ringR1 + 50);
+    f.cone(x, y1 - 30, z, 20, 140, M.rail, [Math.cos(a), 0.3, Math.sin(a)]);
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = ((i + 0.5) / 8) * TAU;
+    f.fx(1.6, PB_FX.blink, i / 8, 0.5);
+    boxAt(f, ang(a, H.ringR1 + 8), y0 + 20, 22, 16, 22, M.red);
+    f.nofx();
+  }
+  // kogut alarmu na szczycie kopuły
+  f.fx(1.8, PB_FX.alarm, 0.5, PBASE_CH.alarm);
+  f.box(0, H.headTop + 160, 0, 50, 36, 50, M.red);
+  f.nofx();
 }
 
 // Sektor dysku mieszkalnego (pod płaszczyzną gry, duch): płyta z pierścieni brył, tarasy, świetliki (okna gasną od
@@ -308,13 +451,14 @@ function discSector(f, l, k, n) {
       f.nofx();
     }
   }
-  // kopuły (ogrody / hale) na płycie zewnętrznej
+  // kopuły (ogrody / hale) na płycie zewnętrznej — między tarasem a obrzeżem
+  const band = H.discR - H.tier1R;
   for (let i = 0; i < 2; i++) {
     const h = pbHash1(seed * 3 + i * 7.7);
     const a = a0 + (a1 - a0) * (0.25 + 0.5 * h);
-    const r = H.tier1R + 300 + 600 * pbHash1(seed + i);
+    const rd = Math.min(160 + 90 * h, band * 0.36);
+    const r = H.tier1R + band / 2 + (pbHash1(seed + i) - 0.5) * Math.max(0, band - 2 * rd - 160);
     const [x, z] = ang(a, r);
-    const rd = 160 + 90 * h;
     f.cyl(x, H.discY1 + 30, z, rd, 60, M.dark);
     f.cyl(x, H.discY1 + 70, z, rd * 0.86, 30, M.glass);
     f.fx(0.9, PB_FX.fill, 0.2, PBASE_CH.disc);

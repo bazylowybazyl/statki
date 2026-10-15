@@ -16,7 +16,8 @@ const close = (a, b, tol, msg = '') => assert.ok(Math.abs(a - b) <= tol, `${msg}
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 test('torpedy z danych: kategoria, rury, wąski < szeroki, grywalny czas dolotu', () => {
-  const ids = Object.keys(MASTER_WEAPONS).filter((id) => isTorpedoWeapon(MASTER_WEAPONS[id]));
+  // Torpedy okrętowe (tryb torped); torpeda lotnicza (mountType 'fighter') to broń torpedowców — test niżej.
+  const ids = Object.keys(MASTER_WEAPONS).filter((id) => isTorpedoWeapon(MASTER_WEAPONS[id]) && MASTER_WEAPONS[id].mountType !== 'fighter');
   assert.deepEqual(ids.sort(), ['siege_torpedo', 'siege_torpedo_mk2', 'torpedo_salvo']);
   assert.equal(isTorpedoWeapon(MASTER_WEAPONS.missile_rack), false, 'rakieta to nie torpeda');
   for (const id of ids) {

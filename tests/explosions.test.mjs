@@ -723,7 +723,7 @@ test('E2: zapłon — domena ZAPŁONU na okręt: dym (bez paliwa) → płomień 
   frame(fx, core, 1 / 60);
   assert.ok(fx.director.emitters.filter((m) => m.alive).length <= n1);
   // błysk: płomień w tej samej domenie, z paliwem, błysk i światło z właścicielem domeny
-  for (let i = 0; i < 80; i++) IGN.stepEngineIgnition(e, 1 / 60);
+  for (let i = 0; i < Math.ceil((IGN.ENGINE_IGNITION_TUNE.smokeTime + 0.2) * 60); i++) IGN.stepEngineIgnition(e, 1 / 60);
   assert.equal(IGN.ignitionPhase(e), 1);
   const fl0 = fx.flashes.n;
   core.calls.lights.length = 0;

@@ -9,6 +9,10 @@
 //    (src/game/story/pirateBaseBodies.js → worldBodies): kawałek w bańce gracza jest ciałem silnika belek (taran,
 //    broń przez solver), rysuje go skóra (src/3d/worldBodies3D.js). Poza bańką — statyka; kawałki, których nie ma
 //    jako statyki (odpadłe, schowane, żywe ciała — `_dockGone`, wspólny zbiór), pomijają bryły trafień.
+//  - PLANETOIDA pod bazą (prośba użytkownika 2026-10-15; src/3d/portBuildings/pirateRockLayout.js): skała (pirateRock3D.js)
+//    i osada z windą kosmiczną (pirateRockSite3D.js) w passie tła (warstwa 1, perspektywa — głębia), ta sama ramka
+//    co baza. Skała to teren (widać ją zawsze), osada i lina chowają się we mgle wojny razem z bazą. Rozpad habitatu
+//    zrywa windę i kładzie osadę (collapsePirateRockSite — storyGame._chainExplosion).
 import * as THREE from 'three/webgpu';
 import { Core3D } from './core3d.js';
 import { PirateBase3D } from './portBuildings/pirateBase3D.js';
@@ -18,6 +22,9 @@ import { buildingSkinWarmGeometry } from './portBuildings/portBuildingSkin3D.js'
 import { worldBodies } from '../game/worldBodies.js';
 import { createPirateBaseSites, prebuildPirateBaseBodies } from '../game/story/pirateBaseBodies.js';
 import { resetWorldBodies3D } from './worldBodies3D.js';
+import { PirateRock3D } from './pirateRock3D.js';
+import { PirateRockSite3D } from './portBuildings/pirateRockSite3D.js';
+import { createPirateRockLayout } from './portBuildings/pirateRockLayout.js';
 
 const LAYER_BG = 1;
 const LAYER_FG = 2;
@@ -50,6 +57,24 @@ function ensurePrebuilt() {
 }
 
 Core3D.warmup?.add({ name: 'baza piratów: bryła', objects: () => ensurePrebuilt()?.root || null, phase: 'loading' });
+
+// ---- planetoida pod bazą: skała, osada, winda (pass tła, warstwa BG)
+let rock = null;
+let rockSite = null;
+let rockAt = { x: 0, y: 0 };
+function ensureRock() {
+  if (rock || !Core3D.scene) return rock;
+  const layout = createPirateRockLayout();
+  rock = new PirateRock3D(layout, LAYER_BG);
+  rockSite = new PirateRockSite3D({ layout, frame: portModuleFrame(0, 0, 0), layer: LAYER_BG, name: 'Osada piratów na planetoidzie' });
+  rockSite.root.userData.fgCategory = 'stations';
+  return rock;
+}
+Core3D.warmup?.add({
+  name: 'baza piratów: planetoida, osada, winda',
+  objects: () => (ensureRock() ? [rock.root, ...rockSite.warmupObjects()] : null),
+  phase: 'loading'
+});
 let _skinHolders = null;
 function skinWarmHolders() {
   const d = prebuilt || base;
@@ -62,6 +87,19 @@ function skinWarmHolders() {
       m.frustumCulled = false;
       m.layers.set(layer);
       root.add(m);
+    }
+  }
+  // Bryły 3D (wieża habitatu, dysk — wariant „skin3”): każdy zestaw w OBU passach (część pod płaszczyzną gry w tle,
+  // nad nią w FG — worldBodies3D), z indeksem (odłamy) i bez.
+  for (const set of ['bg', 'fg']) {
+    for (const layer of [LAYER_BG, LAYER_FG]) {
+      for (const indexed of [false, true]) {
+        const m = new THREE.Mesh(buildingSkinWarmGeometry(indexed), d.skinMaterial(set, true));
+        m.frustumCulled = false;
+        m.layers.set(layer);
+        m.userData.clipZ = new THREE.Vector2(layer === LAYER_BG ? -1 : 1, 0);
+        root.add(m);
+      }
     }
   }
   _skinHolders = { base: d, root };
@@ -95,10 +133,35 @@ export function attachPirateBase3D(owners, basePlace) {
     st._base3d = base;
     st._dockGone = gone;
   }
+  attachPirateRock(basePlace);
   return base;
 }
 
+function attachPirateRock(basePlace) {
+  if (!ensureRock()) return;
+  const frame = portModuleFrame(basePlace.origin.x, -basePlace.origin.y, basePlace.frameAngle);
+  const c = rock.layout.center;
+  rockAt = basePlace.toGame(c[0], c[2], {});
+  rock.setFrame(frame, rockAt);
+  rockSite.setFrame(frame);
+  rockSite.reset();
+  rockSite.update(0, {});
+  for (const r of [rock.root, rockSite.root, rockSite.fx.root]) {
+    if (r.parent !== Core3D.scene) Core3D.scene.add(r);
+    r.visible = true;
+  }
+}
+
+/** Rozpad habitatu: winda puszcza, osada na planetoidzie wybucha po kolei (scenariusz). Zwraca false bez osady. */
+export function collapsePirateRockSite() {
+  if (!rockSite || !rockSite.root.parent) return false;
+  return rockSite.collapse();
+}
+/** Skała i osada (albo null) — dev, zrzuty, narzędzia. */
+export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt } : null; }
+
 export function detachPirateBase3D() {
+  for (const r of [rock?.root, rockSite?.root, rockSite?.fx.root]) r?.removeFromParent();
   if (!base) return;
   detachPirateBaseBodies();
   base.root.removeFromParent();
@@ -128,6 +191,8 @@ export function attachPirateBaseBodies(owners, basePlace) {
       layers: { bg: LAYER_BG, fg: LAYER_FG },
       hidden: () => fogHidden,
       setSkinned: (piece, on) => base.setChunkSkinned(piece.id, on),
+      // statyka kawałka straconego trzymana, dopóki skóra odłamów się piecze (wypiek w workerze — worldBodies3D)
+      setHold: (piece, on) => base.setChunkHold(piece.id, on),
       groupOf: (piece) => piece.group,
       rasterCenter: (piece) => piece.rasterCenter()
     };
@@ -160,6 +225,7 @@ function syncGone() {
 }
 
 const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, daylight: 0.3, lampPower: undefined };
+const _rockState = { sun: null, at: null, daylight: 0.3 };
 const _sunOpts = { sun: null, at: null };
 
 /**
@@ -176,6 +242,15 @@ export function updatePirateBase3D(dt, state = {}) {
   if (hidden !== fogHidden) {
     fogHidden = hidden;
     base.root.visible = !hidden;
+    if (rockSite) { rockSite.root.visible = !hidden; rockSite.fx.root.visible = !hidden; }
+  }
+  // planetoida: teren (zawsze), osada i lina — czas gry także we mgle (kabiny jeżdżą)
+  if (rock && rock.root.parent) {
+    rock.update(state.sun);
+    _rockState.sun = state.sun || null;
+    _rockState.at = rockAt;
+    _rockState.daylight = state.daylight ?? 0.3;
+    rockSite.update(dt, _rockState);
   }
   if (hidden) return;
   if (state.sun && place) {
@@ -210,6 +285,11 @@ export function ramPirateBaseChunk(id, dirX, dirY, speed) {
   if (!base.ramChunk(id, _dh, speed)) return false;
   gone.add(id);
   return true;
+}
+
+/** Kawałek już odpadł albo jest schowany (bez alokacji — krok fizyki). */
+export function pirateBaseChunkGone(id) {
+  return !!base?.isChunkGone(id);
 }
 
 /** Kawałki już odpadłe albo schowane. */

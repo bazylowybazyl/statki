@@ -16,10 +16,17 @@
  * (komórka 2,7 j., pocisk ~150 komórek/s) przenosi się na grę (komórka 15 j., pociski 150–800 komórek/s) bez
  * przeliczania liczb. Układ: silnik (X = x gry, Y = −y gry).
  * Bez dymu, ognia i wybuchów (decyzja użytkownika 2026-10-05) — tylko fizyka; obraz trafień dają efekty broni gry.
+ * BRYŁY 3D (docs/PORT-silnik-belek.md § „Ciała 3D” — trafienia brył): broń leci w PASIE gry (|z| ≤ band.half —
+ * src/game/beamBand3D.js), więc orka i ciepło biorą węzły bryły z jej przekroju z pasem (indeks pasa w świecie), a
+ * zmiana prędkości węzłów idzie do układu ciała pełnym obrotem (Rᵀ); front ciśnienia to KULA wokół punktu wybuchu
+ * (z = 0) w 3D. Prawa prędkości (zatrzymanie, niecka, kopnięcie fali, ablacja) w komórkach ODNIESIENIA (`refCell` —
+ * komórka ciał płaskich świata), nie komórkach bryły (45 j.): ten sam wybuch daje ten sam ruch w jednostkach świata.
+ * Ciała płaskie — bez zmian (bit w bit).
  * Bez three i DOM (testy w node).
  */
 
 import { activateNode } from './beamActiveRegion3D.js';
+import { bandCapsule, bandProbe, bodyRotation, latticeWindow3D, solidBricks } from './beamBand3D.js';
 
 /** Strojenie kanałów (komórki, komórki/s, masy węzła). */
 export function createWorldChannelTuning() {
@@ -40,6 +47,9 @@ export function createWorldChannelTuning() {
     blastTime: 0.16,          // s — tyle front idzie do brzegu fali
     blastKickCells: 193,      // komórki/s prędkości węzła komórkę od środka (∝ 1/d²) przy mocy 1
     blastKickMaxCells: 296,
+    // BRYŁY 3D: front nie odwiedza węzłów, którym dałby mniej niż ten ułamek progu aktywności bryły (solver i tak je
+    // wygasza) — kula fali bywa kilometrowa, a kopnięcie maleje jak 1/d² (moc 6: zasięg działania ~0,9 km)
+    blastMinKickFrac: 0.25,
     blastForward: 0.3,        // domieszka kierunku lotu do kopnięcia promieniowego
     blastHeat: 0.9,
     // --- ciepło ---
@@ -84,7 +94,14 @@ export class WorldChannels {
     if (tune) Object.assign(this.tune, tune);
     this.hot = new Set();
     this.blasts = Array.from({ length: BLAST_CAP }, () => ({
-      active: false, x: 0, y: 0, fx: 0, fy: 0, radius: 0, kick: 0, age: 0, frontR: 0, owner: null }));
+      active: false, x: 0, y: 0, z: 0, fx: 0, fy: 0, radius: 0, kick: 0, age: 0, frontR: 0, owner: null }));
+    // Bryły 3D: pas broni (pół-wysokość, czas kroku indeksu pasa — ustawia gospodarz: worldBodies) i komórka
+    // odniesienia praw prędkości (komórka ciał płaskich świata).
+    this.band = { half: 70, now: 0 };
+    this.refCell = 15;
+    this._m3 = new Float64Array(9);
+    this._win = [];
+    this._v3 = { x: 0, y: 0, z: 0 };
     // bufory orki (bez alokacji w kroku)
     this._candT = new Float64Array(MAX_CAND);
     this._candI = new Int32Array(MAX_CAND);
@@ -114,6 +131,7 @@ export class WorldChannels {
     r.hit = false; r.stopped = false; r.stopT = 1; r.entryT = 1; r.node = -1; r.impulse = 0; r.energy = 0;
     r.x = x0; r.y = y0;
     if (!body || body.dead || body.activeNodes <= 0 || p.stopped) return r;
+    if (!body.planar) return this._plowSegment3D(body, p, x0, y0, x1, y1);
     const D = this.D, t = this.tune;
     const m = D._refreshRot(body);
     const s = body.nodeStore, cs = body.cellSize;
@@ -205,6 +223,122 @@ export class WorldChannels {
       // obrót ciała swobodnego: impuls w punkcie trafienia (ruch liniowy przejmie solver ze średniej węzłów)
       if (free) this._angularImpulse(body, wxp, wyp, jx, jy);
       // strata energii zderzenia grzeje rdzeń (żar trafienia)
+      const loss = 0.5 * mu * un2;
+      if (t.impactHeat > 0 && s.temp) {
+        const T = s.temp[i] + loss * t.impactHeat / Math.max(1e-6, s.mass[i]);
+        s.temp[i] = Math.min(t.melt * t.impactHeatCap * 0.5, T);
+        hot = true;
+      }
+      r.hit = true;
+      const J = Math.sqrt(jx * jx + jy * jy);
+      r.impulse += J;
+      r.energy += loss;
+      this.stats.impulse += J;
+    }
+    if (r.hit) {
+      this.stats.hits++;
+      D.wake(body, D.config.wakeHoldFrames);
+      body.meshDirty = true;
+      if (hot) this.hot.add(body);
+    }
+    return r;
+  }
+
+  // Orka BRYŁY 3D (plowSegment ciała nie płaskiego): kandydaci z indeksu pasa (przekrój bryły z pasem gry, świat
+  // silnika), pocisk w płaszczyźnie gry (zderzenie w XY — pocisk nie oddaje ani nie bierze pędu pionowego), zmiana
+  // prędkości węzłów i rozchylenie niecki do układu ciała (Rᵀ), obrót ciała swobodnego w 3D. Prawa prędkości
+  // w komórkach odniesienia (refCell). Wynik jak plowSegment.
+  _plowSegment3D(body, p, x0, y0, x1, y1) {
+    const r = this.result;
+    const D = this.D, t = this.tune;
+    const s = body.nodeStore, cs = body.cellSize, rc = this.refCell;
+    const dx = x1 - x0, dy = y1 - y0, len = Math.sqrt(dx * dx + dy * dy);
+    if (!(len > 1e-9)) return r;
+    const dwx = dx / len, dwy = dy / len;
+    const nodeR = t.nodeReachCells * cs;
+    const reach = (Number(p.radius) || 0) + nodeR;
+    const n = bandCapsule(body, x0, y0, x1, y1, reach, this.band.half, this.band.now, this._candI, this._candT, this._candP, MAX_CAND);
+    if (n === 0) return r;
+    if (this._stamp.length < s.count) this._stamp = new Int32Array(Math.max(s.count, this._stamp.length * 2));
+    let gen = (this._gen + 1) | 0; if (gen <= 0) { this._stamp.fill(0); gen = 1; }
+    this._gen = gen;
+    const stamp = this._stamp, X = s.x, Y = s.y, Z = s.z, active = s.active;
+    const m = bodyRotation(body.quat, this._m3);
+    const local = !!D.config.localSolver;
+    const free = !body.static && !body.anchored;
+    const stopSpeed = t.stopSpeedCells * rc;
+    const dishSpeed = p.dishSpeed > 0 ? p.dishSpeed : t.dishSpeedCells * rc;
+    const rings = p.dishRings >= 0 ? p.dishRings : t.dishRings;
+    const W = body.angVel, bp = body.pos;
+    let hot = false;
+    this.stats.plows++;
+    for (let k = 0; k < n; k++) {
+      const i = this._candI[k];
+      if (!active[i] || stamp[i] === gen) continue;
+      const lx = X[i], ly = Y[i], lz = Z[i];
+      const wxp = m[0] * lx + m[1] * ly + m[2] * lz, wyp = m[3] * lx + m[4] * ly + m[5] * lz, wzp = m[6] * lx + m[7] * ly + m[8] * lz;
+      const vlx = s.vx[i], vly = s.vy[i], vlz = s.vz[i];
+      const nvx = body.vel.x + (W.y * wzp - W.z * wyp) + m[0] * vlx + m[1] * vly + m[2] * vlz;
+      const nvy = body.vel.y + (W.z * wxp - W.x * wzp) + m[3] * vlx + m[4] * vly + m[5] * vlz;
+      const ux = p.vx - nvx, uy = p.vy - nvy;
+      if (ux * dwx + uy * dwy <= 0) continue;
+      const un2 = ux * ux + uy * uy;
+      const tk = this._candT[k];
+      if (!r.hit) { r.entryT = Math.max(0, tk / len); r.node = i; r.x = x0 + dwx * Math.max(0, tk); r.y = y0 + dwy * Math.max(0, tk); }
+      if (un2 < stopSpeed * stopSpeed) {
+        p.stopped = true;
+        r.stopped = true;
+        r.hit = true;
+        r.stopT = Math.max(0, Math.min(1, (tk - (Number(p.radius) || 0)) / len));
+        break;
+      }
+      const un = Math.sqrt(un2);
+      const meff = this._gatherDish(body, i, gen, Math.min(1, dishSpeed / un), rings);
+      const perp = this._candP[k];
+      const pr = Number(p.radius) || 0;
+      const coupling = perp <= pr ? 1 : Math.max(0.3, 1 - 0.7 * (perp - pr) / nodeR);
+      const mu = p.mass * meff / (p.mass + meff) * coupling;
+      const jx = mu * ux, jy = mu * uy;
+      p.vx -= jx / p.mass; p.vy -= jy / p.mass;
+      // węzły: Δv = w · J / m_eff (świat, bez składowej pionowej) → układ ciała Rᵀ
+      const ax = jx / meff, ay = jy / meff;
+      const lax = m[0] * ax + m[3] * ay, lay = m[1] * ax + m[4] * ay, laz = m[2] * ax + m[5] * ay;
+      const aLen = Math.sqrt(ax * ax + ay * ay);
+      const count = this._dishCount, dishI = this._dishI, dishW = this._dishW;
+      const lateral = t.lateral > 0 && count > 1;
+      let mlx = 0, mly = 0;
+      if (lateral) {
+        let sm = 0;
+        for (let q = 1; q < count; q++) {
+          const d = dishI[q];
+          if (s.invMass[d] <= 0) continue;
+          const ex = bp.x + m[0] * X[d] + m[1] * Y[d] + m[2] * Z[d] - x0;
+          const ey = bp.y + m[3] * X[d] + m[4] * Y[d] + m[5] * Z[d] - y0;
+          this._lateralOf(ex, ey, dwx, dwy, t.lateral * dishW[q] * aLen);
+          const md = s.mass[d];
+          mlx += this._w.x * md; mly += this._w.y * md; sm += md;
+        }
+        if (sm > 0) { mlx /= sm; mly /= sm; }
+      }
+      for (let q = 0; q < count; q++) {
+        const d = dishI[q];
+        if (s.invMass[d] <= 0) continue;
+        const w = dishW[q];
+        s.vx[d] += lax * w; s.vy[d] += lay * w; s.vz[d] += laz * w;
+        if (q > 0 && lateral) {
+          const ex = bp.x + m[0] * X[d] + m[1] * Y[d] + m[2] * Z[d] - x0;
+          const ey = bp.y + m[3] * X[d] + m[4] * Y[d] + m[5] * Z[d] - y0;
+          this._lateralOf(ex, ey, dwx, dwy, t.lateral * w * aLen);
+          const qx = this._w.x - mlx, qy = this._w.y - mly;
+          s.vx[d] += m[0] * qx + m[3] * qy; s.vy[d] += m[1] * qx + m[4] * qy; s.vz[d] += m[2] * qx + m[5] * qy;
+        }
+        if (local) activateNode(body, d);
+      }
+      // obrót ciała swobodnego: Δω = I⁻¹ (r × J), J = (jx, jy, 0) w punkcie węzła
+      if (free && body.invInertiaLocal) {
+        const o = D._invInertiaWorld(body, m, -wzp * jy, wzp * jx, wxp * jy - wyp * jx, this._v3);
+        W.x += o.x; W.y += o.y; W.z += o.z;
+      }
       const loss = 0.5 * mu * un2;
       if (t.impactHeat > 0 && s.temp) {
         const T = s.temp[i] + loss * t.impactHeat / Math.max(1e-6, s.mass[i]);
@@ -338,7 +472,7 @@ export class WorldChannels {
     let b = null;
     for (const q of this.blasts) if (!q.active) { b = q; break; }
     if (!b) return false;
-    b.active = true; b.x = x; b.y = y; b.radius = Math.max(1, radius); b.kick = Math.max(0, power);
+    b.active = true; b.x = x; b.y = y; b.z = 0; b.radius = Math.max(1, radius); b.kick = Math.max(0, power);
     const fl = Math.sqrt(fx * fx + fy * fy);
     b.fx = fl > 1e-9 ? fx / fl : 0; b.fy = fl > 1e-9 ? fy / fl : 0;
     b.age = 0; b.frontR = 0; b.owner = owner;
@@ -353,16 +487,120 @@ export class WorldChannels {
    */
   kick(body, x, y, radius, power = 1, fx = 0, fy = 0) {
     if (!body || body.dead || body.static || body.activeNodes <= 0) return false;
-    const b = this._kickBlast || (this._kickBlast = { active: false, x: 0, y: 0, fx: 0, fy: 0, radius: 0, kick: 0, age: 0, frontR: 0, owner: null });
-    b.x = x; b.y = y; b.radius = Math.max(1, radius); b.kick = Math.max(0, power);
+    const b = this._kickBlast || (this._kickBlast = { active: false, x: 0, y: 0, z: 0, fx: 0, fy: 0, radius: 0, kick: 0, age: 0, frontR: 0, owner: null });
+    b.x = x; b.y = y; b.z = 0; b.radius = Math.max(1, radius); b.kick = Math.max(0, power);
     const fl = Math.sqrt(fx * fx + fy * fy);
     b.fx = fl > 1e-9 ? fx / fl : 0; b.fy = fl > 1e-9 ? fy / fl : 0;
-    this._blastBody(body, b, 0, b.radius);
+    if (body.planar) this._blastBody(body, b, 0, b.radius);
+    else this._blastBody3D(body, b, 0, b.radius);
     return true;
   }
 
-  /** Krok frontów fal (raz na krok fizyki, przed krokiem silnika) dla ciał `bodies`. */
-  stepBlasts(dt, bodies) {
+  /**
+   * UDERZENIE Z GÓRY na jednym ciele (świat silnika): spadająca bryła (głowa habitatu na dysk mieszkalny) w kole
+   * (x, y, radius). Pęd pionowy płaska gra oddaje w płaszczyźnie: węzły w kole dostają prędkość `speed` [j/s] — w stronę
+   * dryfu (dirX, dirY) i od środka (miska krateru), słabnąc ku brzegowi; kotwice w kole puszczają (stropy wyrwane
+   * z podpór). Dziurę robi solver (belki pękają), jak przy orce. Zwraca liczbę poruszonych węzłów.
+   */
+  slam(body, x, y, radius, speed, dirX = 0, dirY = 0, along = 0.6) {
+    if (!body || body.dead || body.static || body.activeNodes <= 0 || !(radius > 0) || !(speed > 0)) return 0;
+    const D = this.D;
+    const m = D._refreshRot(body), s = body.nodeStore, cs = body.cellSize;
+    const rx = x - body.pos.x, ry = y - body.pos.y;
+    const lx = m[0] * rx + m[3] * ry, ly = m[1] * rx + m[4] * ry;
+    const dl = Math.sqrt(dirX * dirX + dirY * dirY);
+    const fx = dl > 1e-9 ? (m[0] * dirX + m[3] * dirY) / dl : 0, fy = dl > 1e-9 ? (m[1] * dirX + m[4] * dirY) / dl : 0;
+    const local = !!D.config.localSolver;
+    const index = D._latticeIndex(body), cells = index.cells, lm = body.latticeMin, dims = body.dims;
+    const pad = radius + (body._maxDisp || 0) + cs;
+    const x0 = Math.max(0, Math.floor((lx - pad - lm.x) / cs - 0.5)), x1 = Math.min(dims.x - 1, Math.ceil((lx + pad - lm.x) / cs - 0.5));
+    const y0 = Math.max(0, Math.floor((ly - pad - lm.y) / cs - 0.5)), y1 = Math.min(dims.y - 1, Math.ceil((ly + pad - lm.y) / cs - 0.5));
+    const R2 = radius * radius;
+    let moved = 0, released = 0;
+    for (let iy = y0; iy <= y1; iy++) {
+      const rowBase = iy * dims.x;
+      for (let ix = x0; ix <= x1; ix++) {
+        const i = cells[rowBase + ix];
+        if (i < 0 || !s.active[i]) continue;
+        const qx = s.x[i] - lx, qy = s.y[i] - ly;
+        const d2 = qx * qx + qy * qy;
+        if (d2 > R2) continue;
+        const d = Math.sqrt(d2);
+        if (s.invMass[i] === 0) { s.invMass[i] = 1 / Math.max(1e-6, s.mass[i]); released++; }
+        const ux = d > 1e-6 ? qx / d : fx, uy = d > 1e-6 ? qy / d : fy;
+        const fall = 1 - 0.5 * d2 / R2;
+        const k = speed * fall;
+        s.vx[i] += (fx * along + ux * (1 - along)) * k;
+        s.vy[i] += (fy * along + uy * (1 - along)) * k;
+        if (local) activateNode(body, i);
+        moved++;
+      }
+    }
+    if (!moved) return 0;
+    if (released) {
+      D.perf.pinsReleased = (D.perf.pinsReleased || 0) + released;
+      body.structureDirty = true;
+      if (!body.noSplit && !D.splitQueue.includes(body)) D.splitQueue.push(body);
+    }
+    D.wake(body, D.config.wakeHoldFrames);
+    body.meshDirty = true;
+    body._hashTick = -1;
+    return moved;
+  }
+
+  /**
+   * ZGNIECENIE Z GÓRY pod obrysem bryły `top` (świat silnika, płasko): każdy żywy węzeł ciała `body` leżący na żywym
+   * węźle `top` (bliżej niż `reachCells` komórki `top`) ginie — jak krater na miarę rany ciężkiej broni (killRadius):
+   * bryła, która spadła na strop, nie dzieli z nim płaszczyzny (bez tego płaskie zderzenie wystrzeliwało ją z dysku).
+   * Odłamki z ginących węzłów — hak silnika (onNodeDebris). Zwraca liczbę zniszczonych węzłów.
+   */
+  carveUnder(body, top, reachCells = 0.75) {
+    if (!body || body.dead || !top || top.dead || body.activeNodes <= 0 || top.activeNodes <= 0) return 0;
+    const D = this.D;
+    const mB = D._refreshRot(body), mT = D._refreshRot(top);
+    const s = body.nodeStore, ts = top.nodeStore, cs = top.cellSize;
+    const index = D._latticeIndex(top), cells = index.cells, lm = top.latticeMin, dims = top.dims;
+    const reach2 = (reachCells * cs) ** 2;
+    const pad = (top._maxDisp || 0) / cs + 1;
+    let killed = 0;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      // węzeł body → świat → układ top
+      const wx = mB[0] * s.x[i] + mB[1] * s.y[i] + body.pos.x - top.pos.x;
+      const wy = mB[3] * s.x[i] + mB[4] * s.y[i] + body.pos.y - top.pos.y;
+      const lx = mT[0] * wx + mT[3] * wy, ly = mT[1] * wx + mT[4] * wy;
+      const cx = (lx - lm.x) / cs - 0.5, cy = (ly - lm.y) / cs - 0.5;
+      const x0 = Math.max(0, Math.floor(cx - pad)), x1 = Math.min(dims.x - 1, Math.ceil(cx + pad));
+      const y0 = Math.max(0, Math.floor(cy - pad)), y1 = Math.min(dims.y - 1, Math.ceil(cy + pad));
+      if (x0 > x1 || y0 > y1) continue;
+      let hit = false;
+      for (let iy = y0; iy <= y1 && !hit; iy++) {
+        const row = iy * dims.x;
+        for (let ix = x0; ix <= x1; ix++) {
+          const j = cells[row + ix];
+          if (j < 0 || !ts.active[j]) continue;
+          const dx = ts.x[j] - lx, dy = ts.y[j] - ly;
+          if (dx * dx + dy * dy < reach2) { hit = true; break; }
+        }
+      }
+      if (!hit) continue;
+      D.destroyNode(body, i);
+      killed++;
+    }
+    if (killed) {
+      D.wake(body, D.config.wakeHoldFrames);
+      body.meshDirty = true;
+      body._hashTick = -1;
+      if (!body.noSplit && !D.splitQueue.includes(body)) D.splitQueue.push(body);
+    }
+    return killed;
+  }
+
+  /**
+   * Krok frontów fal (raz na krok fizyki, przed krokiem silnika) dla ciał płaskich `bodies` i brył 3D `solids`
+   * (opcjonalnie — front jako kula wokół punktu wybuchu w płaszczyźnie gry).
+   */
+  stepBlasts(dt, bodies, solids = null) {
     if (!(dt > 0)) return;
     const t = this.tune;
     for (const b of this.blasts) {
@@ -379,8 +617,101 @@ export class WorldChannels {
         if (ex * ex + ey * ey > reach * reach) continue;
         this._blastBody(B, b, prevR, R);
       }
+      if (solids) {
+        for (let n = 0; n < solids.length; n++) {
+          const B = solids[n];
+          if (!B || B.dead || B.static || B.planar || B === b.owner || B.activeNodes <= 0) continue;
+          const ex = B.pos.x - b.x, ey = B.pos.y - b.y, ez = B.pos.z - b.z;
+          const reach = B.radius + R + B.cellSize;
+          if (ex * ex + ey * ey + ez * ez > reach * reach) continue;
+          this._blastBody3D(B, b, prevR, R);
+        }
+      }
       if (b.age >= t.blastTime) { b.active = false; b.owner = null; }
     }
+  }
+
+  /** Czy któraś bryła 3D z listy leży w zasięgu kuli wybuchu (x, y, 0 silnika, promień). */
+  solidsInBlast(solids, x, y, radius) {
+    if (!solids) return false;
+    for (let n = 0; n < solids.length; n++) {
+      const B = solids[n];
+      if (!B || B.dead || B.static || B.planar || B.activeNodes <= 0) continue;
+      const ex = B.pos.x - x, ey = B.pos.y - y, ez = B.pos.z;
+      const reach = B.radius + radius + B.cellSize;
+      if (ex * ex + ey * ey + ez * ez <= reach * reach) return true;
+    }
+    return false;
+  }
+
+  // Front fali na BRYLE 3D: węzły w powłoce kuli (prevR, R] wokół punktu wybuchu (świat silnika, z = blast.z) dostają
+  // prędkość od środka (∝ 1/d² w komórkach odniesienia — ten sam ruch w jednostkach świata co ciało płaskie) +
+  // domieszkę kierunku lotu; obrót ciała swobodnego z momentu impulsów w 3D. Odwiedzane są tylko KLOCKI bryły
+  // (beamBand3D.solidBricks), które powłoka przecina — kula fali bywa większa niż bryła, a front idzie ~10 kroków
+  // (pełny przegląd wieży i dysku habitatu: 39 tys. węzłów × liczba wybuchów na krok).
+  _blastBody3D(B, blast, prevR, R) {
+    const D = this.D, t = this.tune;
+    const m = bodyRotation(B.quat, this._m3), s = B.nodeStore, rc = this.refCell;
+    const rx = blast.x - B.pos.x, ry = blast.y - B.pos.y, rz = (blast.z || 0) - B.pos.z;
+    const lx = m[0] * rx + m[3] * ry + m[6] * rz, ly = m[1] * rx + m[4] * ry + m[7] * rz, lz = m[2] * rx + m[5] * ry + m[8] * rz;
+    const fx = m[0] * blast.fx + m[3] * blast.fy, fy = m[1] * blast.fx + m[4] * blast.fy, fz = m[2] * blast.fx + m[5] * blast.fy;
+    const local = !!D.config.localSolver, free = !B.anchored && !B.static;
+    const d0 = rc * 0.8, kickAt1 = t.blastKickCells * rc * blast.kick * rc * rc, kickMax = t.blastKickMaxCells * rc;
+    // zasięg działania: kopnięcie (∝ 1/d²) poniżej blastMinKickFrac progu aktywności bryły — dalej nic do roboty
+    const thr = Number(B.activeThreshold) > 0 ? B.activeThreshold : D.config.activeMotionThreshold;
+    const kMin = t.blastMinKickFrac * thr;
+    if (kMin > 0) R = Math.min(R, Math.sqrt(kickAt1 / kMin));
+    if (!(R > prevR)) return;
+    // węzeł leży najdalej _maxDisp od spoczynku w każdej osi (+ komórka: zgniot w tym kroku przed aktualizacją)
+    const pad = 1.7321 * ((B._maxDisp || 0) + B.cellSize);
+    if (Math.sqrt(rx * rx + ry * ry + rz * rz) - (B.radius || 0) - pad > R) return;
+    const br = solidBricks(B), bs = br.start, bn = br.nodes, bcx = br.cx, bcy = br.cy, bcz = br.cz, brr = br.r;
+    let tx = 0, ty = 0, tz = 0, any = false, hot = false;
+    const R2 = R * R, P2 = prevR > 0 ? prevR * prevR : -1;
+    for (let k = 0; k < br.n; k++) {
+      const cx = bcx[k] - lx, cy = bcy[k] - ly, cz = bcz[k] - lz;
+      const dc = Math.sqrt(cx * cx + cy * cy + cz * cz), rb = brr[k] + pad;
+      if (dc - rb > R || dc + rb <= prevR) continue;
+      for (let j = bs[k], je = bs[k + 1]; j < je; j++) {
+        const i = bn[j];
+        if (!s.active[i]) continue;
+        const qx = s.x[i] - lx, qy = s.y[i] - ly, qz = s.z[i] - lz;
+        const d2 = qx * qx + qy * qy + qz * qz;
+        if (d2 > R2 || d2 <= P2) continue;
+        const d = Math.sqrt(d2);
+        const kick = Math.min(kickMax, kickAt1 / Math.max(d0 * d0, d2));
+        if (s.invMass[i] > 0) {
+          let ux = d > 1e-6 ? qx / d : fx, uy = d > 1e-6 ? qy / d : fy, uz = d > 1e-6 ? qz / d : fz;
+          ux += fx * t.blastForward; uy += fy * t.blastForward; uz += fz * t.blastForward;
+          const ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+          const vx = ux / ul * kick, vy = uy / ul * kick, vz = uz / ul * kick;
+          s.vx[i] += vx; s.vy[i] += vy; s.vz[i] += vz;
+          if (free) {
+            // moment w układzie ciała: p × (m v)
+            const mi = s.mass[i];
+            tx += (s.y[i] * vz - s.z[i] * vy) * mi;
+            ty += (s.z[i] * vx - s.x[i] * vz) * mi;
+            tz += (s.x[i] * vy - s.y[i] * vx) * mi;
+          }
+          if (local) activateNode(B, i);
+        }
+        if (t.blastHeat > 0 && s.temp) {
+          const T = t.blastHeat * kick / kickMax;
+          if (T > s.temp[i]) { s.temp[i] = T; hot = true; }
+        }
+        any = true;
+      }
+    }
+    if (!any) return;
+    if (free && B.invInertiaLocal) {
+      // moment z układu ciała do świata, Δω = I⁻¹ τ (świat)
+      const wx = m[0] * tx + m[1] * ty + m[2] * tz, wy = m[3] * tx + m[4] * ty + m[5] * tz, wz = m[6] * tx + m[7] * ty + m[8] * tz;
+      const o = D._invInertiaWorld(B, m, wx, wy, wz, this._v3);
+      B.angVel.x += o.x; B.angVel.y += o.y; B.angVel.z += o.z;
+    }
+    D.wake(B, D.config.wakeHoldFrames);
+    B.meshDirty = true;
+    if (hot) this.hot.add(B);
   }
 
   _blastBody(B, blast, prevR, R) {
@@ -398,9 +729,26 @@ export class WorldChannels {
     const y0 = Math.max(0, Math.floor((ly - pad - lm.y) / cs - 0.5)), y1 = Math.min(dims.y - 1, Math.ceil((ly + pad - lm.y) / cs - 0.5));
     let tz = 0, any = false, hot = false;
     const R2 = R * R, P2 = prevR > 0 ? prevR * prevR : -1;
+    // Tylko PIERŚCIEŃ frontu (2026-10-15): komórka, której środek leży w kole `inner`, ma węzeł na pewno w kole prevR
+    // (odchylenie węzła od środka komórki ≤ √2 · (_maxDisp + 1,5 komórki) — przemieszczenie, opóźnienie _maxDisp w kroku
+    // i pół komórki zapasu), więc test d2 <= P2 i tak by go odrzucił — pominięta bez zmiany wyniku (strażnik:
+    // tests/worldBlastRing.test.mjs). Dawniej co krok frontu całe koło: 30 wybuchów R 2 km ≈ 2,3 ms na krok.
+    const inner = prevR - 1.415 * ((B._maxDisp || 0) + 1.5 * cs);
+    const inner2 = inner > 0 ? inner * inner : 0;
     for (let iy = y0; iy <= y1; iy++) {
       const rowBase = iy * dims.x;
+      let sa = x1 + 1, sb = x1;   // pominięte komórki [sa, sb] tego wiersza (puste, gdy sa > sb)
+      if (inner2 > 0) {
+        const cy = lm.y + (iy + 0.5) * cs - ly;
+        const w2 = inner2 - cy * cy;
+        if (w2 > 0) {
+          const w = Math.sqrt(w2);
+          sa = Math.ceil((lx - w - lm.x) / cs - 0.5 + 1e-9);
+          sb = Math.floor((lx + w - lm.x) / cs - 0.5 - 1e-9);
+        }
+      }
       for (let ix = x0; ix <= x1; ix++) {
+        if (ix >= sa && ix <= sb) { ix = sb; continue; }
         const i = cells[rowBase + ix];
         if (i < 0 || !s.active[i]) continue;
         const qx = s.x[i] - lx, qy = s.y[i] - ly;
@@ -443,6 +791,7 @@ export class WorldChannels {
    */
   heat(body, x, y, power, dt, dirX = 0, dirY = 0) {
     if (!body || body.dead || body.activeNodes <= 0 || !(power > 0) || !(dt > 0)) return false;
+    if (!body.planar) return this._heat3D(body, x, y, power, dt, dirX, dirY);
     const D = this.D, t = this.tune;
     const s = body.nodeStore;
     if (!s.temp) return false;
@@ -474,6 +823,46 @@ export class WorldChannels {
         // kierunek ablacji: w stronę strzelca (układ ciała)
         body._heatDirX = -(m[0] * dirX + m[3] * dirY) / dl;
         body._heatDirY = -(m[1] * dirX + m[4] * dirY) / dl;
+      }
+      this.hot.add(body);
+    }
+    return any;
+  }
+
+  // Plama ciepła wiązki na BRYLE 3D: środek w węźle pasa najbliższym punktu trafienia (wiązka leci w płaszczyźnie gry —
+  // węzeł dostaje pełną moc), Gauss w 3D (σ w komórkach odniesienia, nie mniej niż pół komórki bryły), okno siatki
+  // ciała w 3D; kierunek ablacji (w stronę strzelca) w układzie ciała z obrotu.
+  _heat3D(body, x, y, power, dt, dirX, dirY) {
+    const D = this.D, t = this.tune;
+    const s = body.nodeStore;
+    if (!s.temp) return false;
+    const cs = body.cellSize;
+    const sigma = Math.max(0.5 * cs, t.beamRadiusCells * this.refCell), reach = 3 * sigma, inv = 1 / (2 * sigma * sigma);
+    const i0 = bandProbe(body, x, y, Math.max(reach, cs), this.band.half, this.band.now);
+    if (i0 < 0) return false;
+    const lx = s.x[i0], ly = s.y[i0], lz = s.z[i0];
+    const list = this._win;
+    const nWin = latticeWindow3D(body, D._latticeIndex(body).cells, lx, ly, lz, reach, list);
+    const all = nWin < 0, total = all ? s.count : nWin;
+    const q = power * dt, R2 = reach * reach;
+    let any = false;
+    for (let k = 0; k < total; k++) {
+      const i = all ? k : list[k];
+      if (!s.active[i]) continue;
+      const qx = s.x[i] - lx, qy = s.y[i] - ly, qz = s.z[i] - lz;
+      const d2 = qx * qx + qy * qy + qz * qz;
+      if (d2 > R2) continue;
+      s.temp[i] += q * Math.exp(-d2 * inv);
+      any = true;
+    }
+    if (any) {
+      const dl = Math.sqrt(dirX * dirX + dirY * dirY);
+      if (dl > 1e-9) {
+        const m = bodyRotation(body.quat, this._m3);
+        // kierunek ablacji: w stronę strzelca (układ ciała: Rᵀ · (−kierunek wiązki))
+        body._heatDirX = -(m[0] * dirX + m[3] * dirY) / dl;
+        body._heatDirY = -(m[1] * dirX + m[4] * dirY) / dl;
+        body._heatDirZ = -(m[2] * dirX + m[5] * dirY) / dl;
       }
       this.hot.add(body);
     }
@@ -538,6 +927,7 @@ export class WorldChannels {
   }
 
   _ablate(B, i) {
+    if (!B.planar) { this._ablate3D(B, i); return; }
     const D = this.D, t = this.tune, s = B.nodeStore, cs = B.cellSize;
     const hx = B._heatDirX || 0, hy = B._heatDirY || 0;
     const r1 = hash01(i, B.id) - 0.5, r2 = hash01(i + 7, B.id) - 0.5;
@@ -556,9 +946,33 @@ export class WorldChannels {
     this.stats.ablated++;
   }
 
-  /** Krok kanałów zależnych od czasu: fale i ciepło (raz na krok fizyki, przed krokiem silnika). */
-  step(dt, bodies) {
-    this.stepBlasts(dt, bodies);
+  // Ablacja węzła BRYŁY 3D: kropla w stronę strzelca w 3D (układ ciała), odrzut sąsiadów w głąb; prędkości
+  // w komórkach odniesienia.
+  _ablate3D(B, i) {
+    const D = this.D, t = this.tune, s = B.nodeStore, rc = this.refCell;
+    const hx = B._heatDirX || 0, hy = B._heatDirY || 0, hz = B._heatDirZ || 0;
+    const r1 = hash01(i, B.id) - 0.5, r2 = hash01(i + 7, B.id) - 0.5, r3 = hash01(i + 13, B.id) - 0.5;
+    const sp = t.ablateSpeedCells * rc;
+    s.vx[i] = hx * sp + r1 * sp * 0.6; s.vy[i] = hy * sp + r2 * sp * 0.6; s.vz[i] = hz * sp + r3 * sp * 0.6;
+    const adjStart = s.adjStart, adj = s.adj, e = B.beamStore, rec = t.ablateRecoilCells * rc;
+    for (let q = adjStart[i]; q < adjStart[i + 1]; q++) {
+      const bi = adj[q];
+      if (e.broken[bi]) continue;
+      const o = e.a[bi] === i ? e.b[bi] : e.a[bi];
+      if (!s.active[o] || s.invMass[o] <= 0) continue;
+      s.vx[o] -= hx * rec; s.vy[o] -= hy * rec; s.vz[o] -= hz * rec;
+    }
+    s.temp[i] = 0;
+    D.destroyNode(B, i);
+    this.stats.ablated++;
+  }
+
+  /**
+   * Krok kanałów zależnych od czasu: fale i ciepło (raz na krok fizyki, przed krokiem silnika). solids — bryły 3D
+   * (fronty fal jako kule; opcjonalnie).
+   */
+  step(dt, bodies, solids = null) {
+    this.stepBlasts(dt, bodies, solids);
     this.stepThermal(dt);
   }
 

@@ -160,6 +160,55 @@ test('przewód: cykl dokowania — ramię nad wlewem, złączka zaryglowana na w
   assert.ok(hoseStats(hs[0]).minY < K7_FUEL_STATION.exit.y - 40, 'zwis przewodu');
 });
 
+test('poza „ustawiona” (settle — start fabuły w doku): ramię i przewód od razu na wlewie także przy dt = 0, jak po fizyce; potem bez ruchu', () => {
+  const { rig, poses, pose } = rigWorld();
+  // Atlas dziobem ku bramie (kurs stanowiska + π) — jak w fabule (StoryGame._dockPlace)
+  const hull = k7TransformHull(K7_ATLAS_COLLISION, K7_ATLAS.w, K7_ATLAS.h, C01.x, C01.z, C01.angle + Math.PI, k7MakeHullBuffer());
+  Object.assign(pose, { clamp: 1, extension: 1, seat: 1, lock: 1, flow: 1, vent: 0, settle: 1 });
+  stepK7FuelRig(rig, 0, poses, hull);   // świat stoi (intro, scena) — mimo to zadokowany
+  const hs = rig.hoses.filter((h) => h.berthId === 'C-01');
+  assert.equal(hs.length, 2);
+  // wzorzec: ta sama poza bez `settle`, 20 s fizyki podpinania
+  const ref = rigWorld();
+  Object.assign(ref.pose, { clamp: 1, extension: 1, seat: 1, lock: 1, flow: 1, vent: 0 });
+  for (let i = 0; i < 1200; i++) stepK7FuelRig(ref.rig, DT, ref.poses, hull);
+  const rs = ref.rig.hoses.filter((h) => h.berthId === 'C-01');
+  for (let k = 0; k < 2; k++) {
+    const h = hs[k];
+    const g = h.g;
+    const s = hoseStats(h);
+    assert.ok(s.finite);
+    assert.ok(h.latched, 'złączka zaryglowana od razu');
+    assert.ok(Math.hypot(s.cx - g.port.x, s.cy - g.port.y, s.cz - g.port.z) < 1e-6, 'złączka na wlewie');
+    assert.ok(Math.hypot(h.wrist.x - g.port.x, h.wrist.z - g.port.z) < 1, 'wysięgnik nad wlewem');
+    assert.ok(s.minY >= K7_FUEL_STATION.hoseR - 0.5, 'przewód nad pokładem');
+    assert.ok(Math.abs(h.length - rs[k].length) < 2, `długość przewodu jak po fizyce (${h.length.toFixed(1)} / ${rs[k].length.toFixed(1)})`);
+    let d = 0;
+    for (let i = Math.max(h.k0, rs[k].k0); i < K7_HOSE_NODES; i++) {
+      const o = i * 3;
+      d = Math.max(d, Math.hypot(h.pos[o] - rs[k].pos[o], h.pos[o + 1] - rs[k].pos[o + 1], h.pos[o + 2] - rs[k].pos[o + 2]));
+    }
+    assert.ok(d < 4, `kształt przewodu jak po fizyce (${d.toFixed(1)} j.)`);
+  }
+  // drugi krok bez zmian pozy — bez ponownego układania; z czasem gry — przewód prawie stoi
+  const ver = hs[0].version;
+  stepK7FuelRig(rig, 0, poses, hull);
+  assert.equal(hs[0].version, ver, 'bez ponownego układania');
+  const snap = hs.map((h) => h.pos.slice());
+  for (let i = 0; i < 180; i++) stepK7FuelRig(rig, DT, poses, hull);
+  for (let k = 0; k < 2; k++) {
+    let d = 0;
+    for (let i = hs[k].k0; i < K7_HOSE_NODES; i++) {
+      const o = i * 3;
+      d = Math.max(d, Math.hypot(hs[k].pos[o] - snap[k][o], hs[k].pos[o + 1] - snap[k][o + 1], hs[k].pos[o + 2] - snap[k][o + 2]));
+    }
+    assert.ok(d < 4, `po 3 s czasu gry przewód prawie stoi (${d.toFixed(1)} j.) — bez „łapania” statku`);
+    assert.ok(hs[k].latched);
+  }
+  // inne stanowiska nietknięte (złożone)
+  for (const h of rig.hoses.filter((x) => x.berthId !== 'C-01')) assert.ok(!h.latched);
+});
+
 test('przewód: odryglowanie — odrzut złączki, ramię się składa, bęben zwija, przewody usypiają; pauza stoi', () => {
   const { rig, poses, hull, pose } = rigWorld();
   for (let t = 0; t < K7_SERVICE_DOCK.end + 1; t += DT) { k7ServiceConnectPose(K7_SERVICE_DOCK, t, null, pose); stepK7FuelRig(rig, DT, poses, hull); }

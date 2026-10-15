@@ -54,7 +54,11 @@ export const EXPLOSION_PROFILES = Object.freeze({
   // Rozpad stacji: wybuchy łańcuchowe przy oderwanych fragmentach, cięcie skorupy, finał.
   chain: Object.freeze({ fire: 1.15, gas: true, power: 0.8, lobes: [3, 5], trails: [3, 6], jets: [1, 3], sparks: 340, embers: 800, chunks: 12, smoke: 0.8, flash: 0.85, light: 0.85, shock: 0.6, haze: 0.8, secondaries: [0, 1], afterburn: 0, life: 0.85 }),
   cut: Object.freeze({ fire: 1.45, gas: true, power: 1.0, lobes: [4, 6], trails: [5, 8], jets: [2, 3], sparks: 520, embers: 1300, chunks: 20, smoke: 1.0, flash: 1.0, light: 1.0, shock: 0.9, haze: 1.0, secondaries: [1, 2], afterburn: 1.0, life: 1.0 }),
-  final: Object.freeze({ fire: 2.0, gas: true, power: 1.3, lobes: [6, 8], trails: [10, 14], jets: [4, 6], sparks: 1300, embers: 2600, chunks: 44, smoke: 1.35, flash: 1.3, light: 1.4, shock: 1.4, haze: 1.3, secondaries: [2, 4], afterburn: 2.4, life: 1.25 })
+  final: Object.freeze({ fire: 2.0, gas: true, power: 1.3, lobes: [6, 8], trails: [10, 14], jets: [4, 6], sparks: 1300, embers: 2600, chunks: 44, smoke: 1.35, flash: 1.3, light: 1.4, shock: 1.4, haze: 1.3, secondaries: [2, 4], afterburn: 2.4, life: 1.25 }),
+  // DYM ZGNIOTU kadłuba w taranie (src/game/crushSmoke.js, 2026-10-15): rozdarte poszycie i przewody — dużo dymu (dym
+  // w tym modelu gazu to głównie sadza ze spalanego paliwa: przy połowie paliwa po 1,5 s prawie znikał — A/B w grze),
+  // słaby błysk i światło, strumienie gazu z wyrwy, bez fali i wtórnych.
+  crush: Object.freeze({ fire: 1.3, gas: true, power: 0.8, lobes: [2, 3], trails: [1, 2], jets: [2, 3], sparks: 180, embers: 300, chunks: 6, smoke: 1.3, flash: 0.45, light: 0.5, shock: 0, haze: 0.4, secondaries: [0, 0], afterburn: 0, life: 1.0 })
 });
 
 export const DEFAULT_EXPLOSION_PROFILE = 'capital';

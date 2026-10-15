@@ -48,19 +48,22 @@ from wspolne import *  # noqa: E402,F401,F403
 from infrastruktura import linia, szum2  # noqa: E402
 import ksiezyce as K  # noqa: E402
 
-CIALA = ('ceres', 'westa', 'pallas', 'hygiea', 'psyche', 'pluton', 'charon')
-PLIK = dict(ceres='ceres', westa='vesta', pallas='pallas', hygiea='hygiea', psyche='psyche', pluton='pluto', charon='charon')
-R_KM = dict(ceres=469.7, westa=262.7, pallas=256.0, hygiea=216.5, psyche=111.0, pluton=1188.3, charon=606.0)
+CIALA = ('ceres', 'westa', 'pallas', 'hygiea', 'psyche', 'pluton', 'charon', 'hidalgo')
+PLIK = dict(ceres='ceres', westa='vesta', pallas='pallas', hygiea='hygiea', psyche='psyche', pluton='pluto', charon='charon',
+            hidalgo='hidalgo')
+# hidalgo — planetoida pod bazą piratów (misja 1): promień MAPY 1600 km = 10 j. gry na km jak Ceres (w grze 16 000 j.,
+# dobrane do bazy 12 km — pirateRockLayout.js); prawdziwe Hidalgo ma ~19 km, skala gry go nie dotyczy
+R_KM = dict(ceres=469.7, westa=262.7, pallas=256.0, hygiea=216.5, psyche=111.0, pluton=1188.3, charon=606.0, hidalgo=1600.0)
 # Rozdzielczość gry (promień w grze z src/data/smallBodies.js: Ceres 4 717 j., Pluton 7 503 j. → 4096 = 7–12 j. na teksel,
 # reszta 2 300–5 400 j. → 2048 = 7–16 j. na teksel; Luna 4096 ma 14)
-GRA_SZER = dict(ceres=4096, westa=2048, pallas=2048, hygiea=2048, psyche=2048, pluton=4096, charon=2048)
+GRA_SZER = dict(ceres=4096, westa=2048, pallas=2048, hygiea=2048, psyche=2048, pluton=4096, charon=2048, hidalgo=4096)
 KSZTALT_W = 512
 # siatka w grze 256 × 128 oczek: rzeźba szersza niż ~1,2 oczka idzie w bryłę, węższa w mapę normalnych
 SIATKA_OCZKA = 256
-PRZEWYZSZENIE = dict(ceres=1.6, westa=1.3, pallas=2.6, hygiea=2.0, psyche=2.2, pluton=1.8, charon=1.8)
+PRZEWYZSZENIE = dict(ceres=1.6, westa=1.3, pallas=2.6, hygiea=2.0, psyche=2.2, pluton=1.8, charon=1.8, hidalgo=2.2)
 # Średnia jasność liniowa map dnia (ważona polem). Względem albedo (Ceres 0,09, Hygiea 0,07 — ciemne; Pallas, Psyche
 # 0,15; Westa 0,42; Charon 0,38; Pluton 0,52) ściśnięte pierwiastkiem jak księżyce (ksiezyce.py: JASNOSC)
-JASNOSC = dict(ceres=0.19, westa=0.36, pallas=0.21, hygiea=0.16, psyche=0.23, pluton=0.33, charon=0.31)
+JASNOSC = dict(ceres=0.19, westa=0.36, pallas=0.21, hygiea=0.16, psyche=0.23, pluton=0.33, charon=0.31, hidalgo=0.15)
 ZRODLA = dict(
     ceres=('ceres/Ceres_Dawn_FC_DLR_global_20ppd_Oct2015.tif', 'ceres/Ceres_Dawn_FC_HAMO_DTM_DLR_Global_60ppd_Oct2016.tif'),
     westa=('westa/Vesta_Dawn_FC_HAMO_Mosaic_Global_74ppd.tif', 'westa/Vesta_Dawn_HAMO_DTM_DLR_Global_48ppd.tif'),
@@ -68,10 +71,11 @@ ZRODLA = dict(
     charon=('charon/Charon_NewHorizons_Global_Mosaic_300m_Jul2017_8bit.tif', None),
 )
 # osie [km] (średnice a, b, c) brył proceduralnych — Pallas, Hygiea: VLT SPHERE (Marsset 2020, Vernazza 2019), Psyche: radar
-OSIE_KM = dict(pallas=(569.0, 525.0, 500.0), hygiea=(450.0, 430.0, 424.0), psyche=(278.0, 238.0, 171.0))
+OSIE_KM = dict(pallas=(569.0, 525.0, 500.0), hygiea=(450.0, 430.0, 424.0), psyche=(278.0, 238.0, 171.0),
+               hidalgo=(3290.0, 3180.0, 3140.0))
 # promień [km], od którego krater jest złożony (płaskie dno, górka, tarasy): Księżyc ~9 km przy 1,62 m/s², próg ∝ 1 / g —
 # Pallas g ≈ 0,21 m/s² → ~70 km, Hygiea ≈ 0,12 → ~120, Psyche ≈ 0,12 → ~115 (masy: 2,04e20 / 8,3e19 / 2,3e19 kg)
-R_ZLOZONY = dict(pallas=70.0, hygiea=120.0, psyche=115.0)
+R_ZLOZONY = dict(pallas=70.0, hygiea=120.0, psyche=115.0, hidalgo=400.0)
 ZAKRES_KSZTALTU = wczytaj_json_z_js(os.path.join(KATALOG_REPO, 'src', '3d', 'planetMaps.js'), 'SMALL_BODY_SHAPE')
 
 NOC = dict(K.NOC)
@@ -835,6 +839,116 @@ def psyche(W, H):
     return M
 
 
+# ── HIDALGO: planetoida pod bazą piratów (misja 1) ────────────────────────────
+# Prośba użytkownika 2026-10-15: baza piratów nad planetoidą z windą kosmiczną i osadą, która ginie razem z bazą;
+# skała „ciemna z lodem” (centaur: czerwonawa skorupa z tolinami, lód pod spodem). Osada, drogi i odkrywki lodu
+# z bloku PIRATE_ROCK_SITE (src/3d/portBuildings/pirateRockLayout.js — te same miejsca co bryły 3D): stopa windy na
+# (lon 0, lat 0), (e, n) [j. gry po powierzchni] → (lon, lat) jak pirateRockLonLat. Taras osady wyrównany w bryle
+# (d = 0 — gra stawia budowle na kuli R) i w mapie (plac, bez kraterów). Nocą: światła osady, dróg, odkrywek, placówek.
+ROCK_SITE = wczytaj_json_z_js(os.path.join(KATALOG_REPO, 'src', '3d', 'portBuildings', 'pirateRockLayout.js'), 'PIRATE_ROCK_SITE')
+
+
+def _rock_ll(e, n):
+    """(e, n) [j. gry po powierzchni od stopy windy] → (lon, lat) [°] — lustro pirateRockLonLat (pirateRockLayout.js)."""
+    R = float(ROCK_SITE['radius'])
+    rho = math.hypot(e, n)
+    if rho < 1e-9:
+        return 0.0, 0.0
+    phi = rho / R
+    s_ = math.sin(phi)
+    return (math.degrees(math.atan2(s_ * e / rho, math.cos(phi))),
+            math.degrees(math.asin(max(-1.0, min(1.0, s_ * n / rho)))))
+
+
+def hidalgo(W, H):
+    M = Cialo('hidalgo', W, H, 149)
+    KM = M.R / float(ROCK_SITE['radius'])          # km mapy na jednostkę gry
+    PAL = {k: kolor(v_) for k, v_ in dict(
+        ciemny='#241a16', jasny='#3b2a22', swiezy='#57504f', dno='#1b1512', plyta='#55504c', hala='#4a4440',
+        zbiornik='#a7a39b', droga='#4b423c', lod='#a4b0b7', plac='#3d3633', sciana='#5b5450', pyl='#625a55',
+        halda='#544d48', zaklad='#433e3b', zuzel='#4a372d', tolin='#5a2e1d',
+    ).items()}
+    baza_proceduralna(M, PAL, 53, skala_plam=3.0, kontrast=0.45)
+    one = np.ones((H, W, 1), np.float32)
+    # toliny (czerwonobrązowe smugi) i lód pod skorupą — płaty odsłoniętego lodu (niebieskawe, jaśniejsze)
+    tol = pole_szumu(W, H, lambda x, y, z: fbm3(x, y, z, 2.2, 4, 55))
+    M.kol = mix(M.kol, one * PAL['tolin'], np.clip((tol - 0.45) * 1.8, 0.0, 1.0)[..., None] * 0.45)
+    lod = pole_szumu(W, H, lambda x, y, z: fbm3(x, y, z, 4.5, 5, 57))
+    ziarna = pole_szumu(W, H, lambda x, y, z: fbm3(x, y, z, 60.0, 3, 59))
+    plat = smoothstep(0.64, 0.84, lod) * smoothstep(0.45, 0.75, ziarna)
+    M.kol = mix(M.kol, one * PAL['lod'], plat[..., None] * 0.13).astype(np.float32)
+    # bryła: lekko trójosiowa, garby; TARAS osady (d → 0) wokół stopy windy
+    M.ksztalt = ksztalt_elipsoidy(OSIE_KM['hidalgo'], M.R, 0.012, 15)
+    garby(M, 9, 0.014, (16.0, 40.0), 73, dodatnie=0.5)
+    xs, _ys, _zs = kierunki(KSZTALT_W, KSZTALT_W // 2)
+    kat = np.arccos(np.clip(xs, -1.0, 1.0))                        # kąt od (lon 0, lat 0)
+    p_rad = float(ROCK_SITE['plateau']) / float(ROCK_SITE['radius'])
+    M.ksztalt = (M.ksztalt * (1.0 - smoothstep(p_rad * 1.5, p_rad * 1.02, kat))).astype(np.float32)
+    plateau_km = float(ROCK_SITE['plateau']) * KM
+    for k, (lo, la, r, wiek) in enumerate(kratery_losowe(M.rng, 3200, 3.0, 320.0, 1.65)):
+        d_km = math.acos(max(-1.0, min(1.0, math.cos(math.radians(la)) * math.cos(math.radians(lo))))) * M.R
+        if d_km < plateau_km + 1.6 * r:
+            continue
+        krater(M, lo, la, r, wiek, PAL, 700 + k, glab_k=1.0)        # świeże kratery odsłaniają lód (ton „swiezy”)
+    M.kol = K.do_sredniej(M.kol, JASNOSC['hidalgo'], H, W)
+    M.log('bryła, kratery, lód')
+    # ---- taras osady: wyrównany plac (bez rzeźby kraterów), skarpa na brzegu
+    rows, cols, xk, yk = M.okno(0.0, 0.0, plateau_km * 1.7)
+    rr = np.sqrt(xk * xk + yk * yk)
+    taras = smoothstep(plateau_km * 1.08, plateau_km * 0.9, rr)
+    M.wysokosc(rows, cols, -M.h[np.ix_(rows, cols)] * taras)
+    M.mieszaj(rows, cols, PAL['plac'], taras * 0.7 * (0.85 + 0.3 * szum2(xk, yk, 1 / 20.0, 31)))
+    skarpa = np.exp(-((rr - plateau_km * 1.03) / (plateau_km * 0.05)) ** 2).astype(np.float32)
+    M.wysokosc(rows, cols, skarpa * 700.0)
+    M.mieszaj(rows, cols, PAL['halda'], skarpa * 0.55)
+    # place budowli (pod bryłami 3D) i światła
+    pos = {}
+    for b in ROCK_SITE['buildings']:
+        lo, la = _rock_ll(b['e'], b['n'])
+        pos[b['id']] = (lo, la)
+        bx = M.R * math.cos(math.radians(la)) * math.radians(lo)
+        by = M.R * math.radians(la)
+        rb = b['r'] * KM
+        db = np.sqrt((xk - bx) ** 2 + (yk - by) ** 2)
+        M.mieszaj(rows, cols, PAL['plyta'], smoothstep(rb * 1.25, rb * 0.95, db) * 0.3)
+        M.wysokosc(rows, cols, smoothstep(rb * 1.2, rb * 0.9, db) * 120.0)
+        ang = M.rng.uniform(0, 2 * math.pi, 9)
+        rad = rb * M.rng.uniform(0.4, 1.15, 9)
+        lo2, la2 = M.lonlat(lo, la, np.cos(ang) * rad, np.sin(ang) * rad)
+        M.punkty(lo2, la2, M.rng.uniform(0.15, 0.5, 9), 0.6, NOC['sod'])
+        M.punkty([lo], [la], 0.45, rb * 0.25, NOC['okna'])
+    # drogi osady (linie po kole wielkim, światła wzdłuż)
+    maska = np.zeros((H, W), np.float32)
+    for a, c in ROCK_SITE['roads']:
+        A = kierunek_z_lonlat(*pos[a])
+        B = kierunek_z_lonlat(*pos[c])
+        smp = linia(maska, A, B, W, H, M.R, waga=1.0)
+        if smp is not None:
+            jj, ii, _tt = smp
+            sel = np.arange(0, len(jj), 4)
+            lo_ = (ii[sel] + 0.5) / W * 360.0 - 180.0
+            la_ = 90.0 - (jj[sel] + 0.5) / H * 180.0
+            M.punkty(lo_, la_, 0.18, 0.5, NOC['sod'])
+    M.kol = mix(M.kol, one * PAL['droga'], (np.clip(maska, 0, 1) * 0.6)[..., None]).astype(np.float32)
+    M.miejsca += [(pos[b['id']][0], pos[b['id']][1], b['id']) for b in ROCK_SITE['buildings']]
+    M.log('taras osady, drogi')
+    # ---- odkrywki lodu (pierwsza — przy osadzie, pod kopalnią 3D) i placówki
+    with swiatla_odkrywki(sod='sod', biel='up_biel', huta='huta'):
+        for k, p_ in enumerate(ROCK_SITE['pits']):
+            lo, la = _rock_ll(p_['e'], p_['n'])
+            K.odkrywka(M, lo, la, p_['r'] * KM, PAL, PAL['lod'], 160 + k)
+            M.miejsca.append((lo, la, 'odkrywka'))
+    for k, o in enumerate(ROCK_SITE['outposts']):
+        lo, la = _rock_ll(o['e'], o['n'])
+        K.ladowisko(M, lo, la, 6.0, 2, PAL['plyta'], NOC['sod'], NOC['czerwien'], 180 + k, NOC['czerwien'], skala=0.8)
+        K.farma_zbiornikow(M, lo + 0.35, la - 0.25, 3.0, int(M.rng.integers(6, 12)), PAL['zbiornik'], NOC['sod'], 190 + k, skala=0.7)
+        M.miejsca.append((lo, la, 'placowka'))
+    K.drogi(M, [(a, b) for a, b, c in M.miejsca if c in ('odkrywka', 'placowka', 'foot')], PAL['droga'], NOC['sod'],
+            maks_km=1300.0, skroty=0, gestosc_swiatel=0.04, sila=0.3)
+    M.log('odkrywki lodu, placówki piratów')
+    return M
+
+
 # ── PLUTON, CHARON: New Horizons ──────────────────────────────────────────────
 def kolano(kol, prog=0.62):
     """Miękkie nasycenie jasnych miejsc (liniowo): powyżej progu kompresja — bez przepalonych plam (serce Plutona)."""
@@ -899,7 +1013,8 @@ def charon(W, H):
     return M
 
 
-GENERATORY = dict(ceres=ceres, westa=westa, pallas=pallas, hygiea=hygiea, psyche=psyche, pluton=pluton, charon=charon)
+GENERATORY = dict(ceres=ceres, westa=westa, pallas=pallas, hygiea=hygiea, psyche=psyche, pluton=pluton, charon=charon,
+                  hidalgo=hidalgo)
 
 
 # ── Zapis ──────────────────────────────────────────────────────────────────────

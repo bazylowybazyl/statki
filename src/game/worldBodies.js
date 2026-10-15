@@ -16,6 +16,12 @@
  *     cellSize (opcjonalnie) — komórka ciała [j.] zamiast WORLD_BODY_TUNE.cellSize,
  *     ghost (opcjonalnie) — DUCH: bryła poza płaszczyzną gry (dach), ciałem tylko w rozpadzie (breakPiece,
  *       setAllLive), bez kolizji i broni — jego odłamy lecą nad grą,
+ *     solid3D (opcjonalnie) — BRYŁA 3D (docs/PORT-silnik-belek.md § „Ciała 3D”): zamiast build() — buildSolid() →
+ *       { structure (konstrukcja 3D z wokselizacji brył), position (początek układu wokselizacji F w świecie silnika:
+ *       x gry, −y gry, z), quaternion (F → świat), pins(x, y, z) (kotwice w układzie F), gravity? } — ciało 3D
+ *       (HullBodies.createSolid): budowane w bańce jak zwykłe (także „duch” dla punktów), zderza się w prawdziwym z
+ *       (słupy ciał płaskich — piece.column), bez broni gry (AGENT: trafienia ciał 3D w płaszczyźnie gry),
+ *     column (opcjonalnie, ciało płaskie) — { z0, z1 } słup dla ciał 3D (zakres wysokości brył kawałka),
  *     skinEdgeCells (render — podział skóry, worldBodies3D.js) }
  * Każda spójna składowa kratownicy dostaje kotwice (anchorComponents): w 3D trzyma się budowli poza płaszczyzną.
  * Kawałek w BAŃCE gracza staje się ciałem (budowa w budżecie czasu na krok), nietknięty i daleko — wraca do
@@ -36,6 +42,11 @@ export const WORLD_BODY_TUNE = {
   rasterUpp: 5,              // j. na piksel rastra (3 piksele na komórkę)
   bubbleRadius: 7000,        // kawałki bliżej gracza (obwiednia) stają się ciałami
   releaseRadius: 11000,      // dalej nietknięty kawałek wraca do statyki
+  // Swobodna, nieuśpiona bryła 3D (przewracana wieża habitatu, gruz) trzyma kawałki w promieniu (swój promień + tyle)
+  // jako ciała, niezależnie od gracza: Atlas, który przebił habitat szarżą 3000 j/s i odleciał dalej niż releaseRadius,
+  // zdejmował dysk spod spadającej wieży — dysk wracał do statyki i wieża przelatywała przez niego w otchłań
+  // (pomiar w grze 2026-10-15).
+  looseSolidPad: 1500,
   buildBudgetMs: 6,          // czas budowy ciał na krok (co najmniej jedno)
   massPerArea: 2.4,          // domyślna gęstość konstrukcji (kadłub: 1,19)
   armor: 2,                  // domyślny pancerz zderzeń (Atlas 16 — hullArmor.js)
@@ -157,13 +168,18 @@ export class WorldBodies {
     this.sites = [];
     this.channels = null;
     this._entities = [];
+    this._layered = [];
+    this._solids = [];
+    // ciała 3D z ostatniego kroku HullBodies (kawałki-bryły i odłamy-wraki brył) — fronty fal jako kule
+    this._solidBodies = [];
+    this._detached = null;
     this._bodies = [];
     this._queue = [];
     this._order = [];
     this._orderD = [];
     this.focus = [];
     this.stats = { live: 0, built: 0, released: 0, buildMs: 0, islands: 0, debris: 0, hits: 0, stops: 0, stepMs: 0, stepPeakMs: 0,
-      shattered: 0, shatterDebris: 0 };
+      shattered: 0, shatterDebris: 0, solids: 0 };
     this._installed = false;
   }
 
@@ -226,12 +242,22 @@ export class WorldBodies {
     this._install();
     this.focus = focus;
     const R2 = T.bubbleRadius * T.bubbleRadius, F2 = T.releaseRadius * T.releaseRadius;
+    // swobodne bryły 3D w ruchu (bryły z poprzedniego kroku HullBodies): x, y (gra), zasięg
+    const loose = this._loose || (this._loose = []);
+    loose.length = 0;
+    const solids = HullBodies._solids;
+    for (let i = 0; i < solids.length; i++) {
+      const b = solids[i];
+      if (b.dead || b.anchored || b.static || b.isSleeping) continue;
+      loose.push(b.pos.x, -b.pos.y, (b.radius || 0) + T.looseSolidPad);
+    }
     for (const site of this.sites) {
       if (site.disabled) continue;
       for (const p of site.pieces) {
         // duch (dach nad płaszczyzną gry): ciałem staje się tylko przed rozpadem budowli (setAllLive — wypiek skóry
-        // z wyprzedzeniem) albo w breakPiece; ciało ducha nie wchodzi do kroku silnika (_collectBodies)
-        if (p.lost || (p.ghost && !site.allLive)) continue;
+        // z wyprzedzeniem) albo w breakPiece; ciało ducha nie wchodzi do kroku silnika (_collectBodies). Bryła 3D
+        // (solid3D) — w bańce jak zwykły kawałek (zakotwiczona i uśpiona nic nie kosztuje), także gdy dla punktów duch.
+        if (p.lost || (p.ghost && !p.solid3D && !site.allLive)) continue;
         let d2 = Infinity;
         if (site.allLive) d2 = 0;   // budowla tuż przed rozpadem: wszystkie kawałki ciałami (setAllLive)
         else {
@@ -240,6 +266,10 @@ export class WorldBodies {
             if (!f) continue;
             const dd = boundsDist2(p.bounds, f.x, f.y);
             if (dd < d2) d2 = dd;
+          }
+          for (let k = 0; k < loose.length && d2 > 0; k += 3) {
+            const rr = loose[k + 2];
+            if (boundsDist2(p.bounds, loose[k], loose[k + 1]) <= rr * rr) d2 = 0;
           }
         }
         if (p.state === 'static') {
@@ -271,7 +301,9 @@ export class WorldBodies {
       }
     }
     this._collectBodies();
-    this.channels.step(dt, this._bodies);
+    this._collectSolidBodies();
+    this._syncBand();
+    this.channels.step(dt, this._bodies, this._solidBodies);
     // czas kroku (bez kroku silnika — ten liczy HullBodies.step): wykładnicza średnia i szczyt od ostatniego odczytu
     const ms = nowMs() - tStep0;
     this.stats.stepMs = this.stats.stepMs * 0.95 + ms * 0.05;
@@ -279,6 +311,7 @@ export class WorldBodies {
   }
 
   _buildPiece(p) {
+    if (p.solid3D) { this._buildSolidPiece(p); return; }
     let spec = null;
     try { spec = p.build(); } catch (err) { console.warn('[WorldBodies] raster kawałka', p.id, err); }
     if (!spec || !spec.image) { p.lost = true; return; }
@@ -310,6 +343,8 @@ export class WorldBodies {
     if (!hull) { p.lost = true; return; }
     const extraPins = anchorComponents(hull.body, p.pinGridCells | 0);
     if (Number.isFinite(hull.pins)) hull.pins += extraPins;
+    // słup ciała płaskiego dla ciał 3D (zakres wysokości brył kawałka; z węzłów = 0 — płaszczyzna gry)
+    if (p.column) { hull.body.colZ0 = Number(p.column.z0) || 0; hull.body.colZ1 = Number(p.column.z1) || 0; }
     p.entity = entity;
     p.image = spec.image;
     p.upp = upp;
@@ -319,6 +354,50 @@ export class WorldBodies {
     p.state = 'live';
     this.stats.built++;
     // Bez kotwic (kawałek wisi w próżni) — ciało od razu swobodne (pierwszy krok silnika je puści).
+    if (typeof p.site.onLive === 'function') p.site.onLive(p, true);
+  }
+
+  // Kawałek-BRYŁA 3D (p.solid3D): ciało 3D zakotwiczone (HullBodies.createSolid), encja budowli jak zwykła.
+  _buildSolidPiece(p) {
+    let spec = null;
+    try { spec = p.buildSolid(); } catch (err) { console.warn('[WorldBodies] bryła kawałka', p.id, err); }
+    if (!spec || !spec.structure) { p.lost = true; return; }
+    const entity = {
+      id: `${p.site.id}:${p.id}`,
+      name: p.label || p.id,
+      type: 'worldPiece',
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, angle: 0, angVel: 0, quat: null,
+      radius: 0, mass: 0,
+      isWorldPiece: true,
+      worldPiece: p,
+      static: true,
+      isCollidable: true,
+      owner: p.site.owner || p.site,
+      visual: { spriteScale: 1, spriteScaleX: 1, spriteScaleY: 1, spriteRotation: 0 },
+      solid3D: true,
+      beamHull: null
+    };
+    const mat = p.material || {};
+    const hull = HullBodies.createSolid(entity, spec.structure, {
+      position: spec.position,
+      quaternion: spec.quaternion,
+      anchored: true,
+      pins: typeof spec.pins === 'function' ? spec.pins : null,
+      gravity: spec.gravity || null,
+      massPerArea: mat.density || T.massPerArea,
+      collisionArmor: mat.armor || T.armor,
+      hexPerNode: T.hexPerNode,
+      world: p
+    });
+    if (!hull) { p.lost = true; return; }
+    p.entity = entity;
+    p.image = null;
+    p.upp = 1;
+    p.baseNodes = hull.body.activeNodes;
+    p.islands.length = 0;
+    p.touched = false;
+    p.state = 'live';
+    this.stats.built++;
     if (typeof p.site.onLive === 'function') p.site.onLive(p, true);
   }
 
@@ -367,7 +446,7 @@ export class WorldBodies {
       if (!body.anchored) {
         // ostatnia kotwica puściła: cała wyspa leci z pędem węzłów jako wrak z bryłą kawałka
         const wreck = HullBodies.convertToWreck(e);
-        if (wreck) { wreck.worldDebris = true; this.stats.debris++; }
+        if (wreck) { wreck.worldDebris = true; this.stats.debris++; if (this._detached) this._detached.push(wreck); }
         e.dead = true;
         p.touched = true;
         continue;
@@ -391,15 +470,44 @@ export class WorldBodies {
     const out = this._bodies;
     out.length = 0;
     this._entities.length = 0;
+    this._layered.length = 0;
+    this._solids.length = 0;
     for (const site of this.sites) {
       for (const p of site.pieces) {
-        // duch (dach nad płaszczyzną) nie bierze udziału w kolizjach i nie łapie broni
-        if (p.state !== 'live' || p.ghost) continue;
+        if (p.state !== 'live') continue;
+        if (p.solid3D) {
+          // bryła 3D: krok silnika i render, bez broni gry i kanałów (płaskich) — osobna lista
+          if (p.entity) this._pushSolid(p.entity);
+          for (const e of p.islands) this._pushSolid(e);
+          continue;
+        }
+        if (p.ghost) {
+          // duch (dach nad płaszczyzną, dysk pod nią) nie łapie broni i nie zderza się z okrętami; duch W WARSTWIE Z
+          // (p.zLayer ≠ 0 — scenariusz „głowa habitatu spada na dysk”) wchodzi do kroku silnika i zderza się z ciałami
+          // swojej warstwy (HullBodies pairFilter: entity.zLayer)
+          if (!p.zLayer) continue;
+          if (p.entity) this._pushLayered(p.entity, p.zLayer);
+          for (const e of p.islands) this._pushLayered(e, p.zLayer);
+          continue;
+        }
         if (p.entity) this._pushEntity(p.entity);
         for (const e of p.islands) this._pushEntity(e);
       }
     }
-    this.stats.live = this._entities.length;
+    this.stats.live = this._entities.length + this._layered.length + this._solids.length;
+  }
+
+  _pushSolid(e) {
+    const hull = e.beamHull;
+    if (!hull || hull.entity !== e || hull.body.dead) return;
+    this._solids.push(e);
+  }
+
+  _pushLayered(e, layer) {
+    const hull = e.beamHull;
+    if (!hull || hull.entity !== e || hull.body.dead) return;
+    e.zLayer = layer;
+    this._layered.push(e);
   }
 
   _pushEntity(e) {
@@ -409,16 +517,84 @@ export class WorldBodies {
     this._bodies.push(hull.body);
   }
 
-  /** Żywe encje budowli (do listy kroku HullBodies — kolizje z okrętami). */
+  // Ciała 3D z ostatniego kroku HullBodies (kawałki-bryły i odłamy-wraki brył — lista wraków gry): fronty fal jako kule.
+  _collectSolidBodies() {
+    const out = this._solidBodies;
+    out.length = 0;
+    const src = HullBodies._solids;
+    for (let i = 0; i < src.length; i++) {
+      const b = src[i];
+      if (b && !b.dead && !b.planar && b.activeNodes > 0) out.push(b);
+    }
+    this.stats.solids = out.length;
+    return out;
+  }
+
+  // Pas broni brył 3D dla kanałów (pół-wysokość, czas kroku indeksu pasa, komórka odniesienia praw prędkości).
+  _syncBand() {
+    const ch = this.channels;
+    if (!ch) return;
+    ch.band.half = HullBodies.config.weaponBand;
+    ch.band.now = HullBodies.simTime;
+    ch.refCell = T.cellSize;
+  }
+
+  /** Żywe encje budowli w płaszczyźnie gry (broń, kolizje z okrętami). */
   entities() { return this._entities; }
 
-  /** `base` + encje budowli w jednej (wielokrotnej) tablicy — wejście HullBodies.step. */
+  /** Żywe bryły 3D budowli (zakotwiczone i wyspy; odłamy-wraki są w liście wraków gry). */
+  solids() { return this._solids; }
+
+  /** Żywe encje do rysowania: płaszczyzna gry + duchy w warstwie z + bryły 3D (worldBodies3D). */
+  renderEntities() {
+    if (!this._layered.length && !this._solids.length) return this._entities;
+    const out = this._renderList || (this._renderList = []);
+    out.length = 0;
+    for (let i = 0; i < this._entities.length; i++) out.push(this._entities[i]);
+    for (let i = 0; i < this._layered.length; i++) out.push(this._layered[i]);
+    for (let i = 0; i < this._solids.length; i++) out.push(this._solids[i]);
+    return out;
+  }
+
+  /** `base` + encje budowli (także duchy w warstwie z i bryły 3D) w jednej (wielokrotnej) tablicy — wejście HullBodies.step. */
   withEntities(base) {
-    if (!this._entities.length) return base;
+    if (!this._entities.length && !this._layered.length && !this._solids.length) return base;
     const out = this._merged || (this._merged = []);
     out.length = 0;
     for (let i = 0; i < base.length; i++) out.push(base[i]);
     for (let i = 0; i < this._entities.length; i++) out.push(this._entities[i]);
+    for (let i = 0; i < this._layered.length; i++) out.push(this._layered[i]);
+    for (let i = 0; i < this._solids.length; i++) out.push(this._solids[i]);
+    return out;
+  }
+
+  /**
+   * Kawałek ODPADA W CAŁOŚCI (bez pęknięć — scenariusz szyi habitatu): ciało na miejscu (buildPiece), kotwice puszczają,
+   * encje kawałka stają się wrakami (`worldDebris`, lista wraków gry) z prędkością (vx, vy) [j/s gry] i obrotem angVel.
+   * Zwraca listę nowych wraków (pusta — kawałka nie da się zbudować).
+   */
+  detachPiece(piece, { vx = 0, vy = 0, vz = 0, angVel = 0, spin = null } = {}) {
+    const out = [];
+    if (!piece || piece.lost || !this.buildPiece(piece)) return out;
+    this.releaseAnchors(piece, 1);
+    this._detached = out;
+    this._checkPiece(piece);
+    this._detached = null;
+    for (const w of out) {
+      if (w.solid3D) {
+        // bryła 3D: ruch prowadzi silnik — prędkość w świecie silnika (y odwrócone), obrót wektorem (spin) albo wokół z
+        const b = w.beamHull?.body;
+        if (!b) continue;
+        b.vel.x += vx; b.vel.y -= vy; b.vel.z += vz;
+        if (spin) { b.angVel.x += spin.x || 0; b.angVel.y += spin.y || 0; b.angVel.z += spin.z || 0; }
+        else b.angVel.z -= angVel;
+        continue;
+      }
+      w.vx = (Number(w.vx) || 0) + vx;
+      w.vy = (Number(w.vy) || 0) + vy;
+      w.angVel = (Number(w.angVel) || 0) + angVel;
+      if (w.vel) { w.vel.x = w.vx; w.vel.y = w.vy; }
+    }
     return out;
   }
 
@@ -433,30 +609,15 @@ export class WorldBodies {
    * stopped, stopT (ułamek odcinka), vx, vy (prędkość po orce, gra), energy (oddana konstrukcji), entity, piece.
    */
   plowSegment(siteId, x0, y0, x1, y1, mass, radius, vx, vy, dishSpeed = 0, dishRings = -1, vCap = 0) {
-    if (!this.channels || !this._entities.length) return null;
-    const ents = this._entities;
-    // kolejność wejścia: odległość środka obwiedni od początku toru (kawałki są małe wobec toru pocisku)
+    if (!this.channels || (!this._entities.length && !this._solids.length)) return null;
+    // kolejność wejścia: odległość środka obwiedni od początku toru (kawałki są małe wobec toru pocisku); bryły 3D —
+    // te same zasady (orka po ich przekroju z pasem broni, worldChannels._plowSegment3D)
     const order = this._order, ordD = this._orderD;
     order.length = 0; ordD.length = 0;
-    for (let k = 0; k < ents.length; k++) {
-      const e = ents[k];
-      const p = e.worldPiece;
-      if (!p || (siteId && p.site.id !== siteId)) continue;
-      const hull = e.beamHull;
-      const pad = (hull?.radius || 0) + radius;
-      const ex = e.x - x0, ey = e.y - y0;
-      const sx = x1 - x0, sy = y1 - y0;
-      const sl2 = sx * sx + sy * sy;
-      const tp = sl2 > 0 ? Math.max(0, Math.min(1, (ex * sx + ey * sy) / sl2)) : 0;
-      const cx = x0 + sx * tp - e.x, cy = y0 + sy * tp - e.y;
-      if (cx * cx + cy * cy > pad * pad) continue;
-      let at = order.length;
-      const dd = tp;
-      order.push(e); ordD.push(dd);
-      while (at > 0 && ordD[at - 1] > dd) { order[at] = order[at - 1]; ordD[at] = ordD[at - 1]; at--; }
-      order[at] = e; ordD[at] = dd;
-    }
+    this._orderPlow(this._entities, siteId, x0, y0, x1, y1, radius);
+    this._orderPlow(this._solids, siteId, x0, y0, x1, y1, radius);
     if (!order.length) return null;
+    this._syncBand();
     const ch = this.channels;
     const p = _shell;
     const v = Math.sqrt(vx * vx + vy * vy);
@@ -491,6 +652,29 @@ export class WorldBodies {
     if (out.stopped) this.stats.stops++;
     out.vx = p.vx / scale; out.vy = -p.vy / scale;
     return out;
+  }
+
+  // Kandydaci orki z listy encji budowli (płaskich albo brył): obwiednia w promieniu toru, wstawianie wg drogi środka.
+  _orderPlow(ents, siteId, x0, y0, x1, y1, radius) {
+    const order = this._order, ordD = this._orderD;
+    for (let k = 0; k < ents.length; k++) {
+      const e = ents[k];
+      const p = e.worldPiece;
+      if (!p || (siteId && p.site.id !== siteId)) continue;
+      const hull = e.beamHull;
+      const pad = (hull?.radius || 0) + radius;
+      const ex = e.x - x0, ey = e.y - y0;
+      const sx = x1 - x0, sy = y1 - y0;
+      const sl2 = sx * sx + sy * sy;
+      const tp = sl2 > 0 ? Math.max(0, Math.min(1, (ex * sx + ey * sy) / sl2)) : 0;
+      const cx = x0 + sx * tp - e.x, cy = y0 + sy * tp - e.y;
+      if (cx * cx + cy * cy > pad * pad) continue;
+      let at = order.length;
+      const dd = tp;
+      order.push(e); ordD.push(dd);
+      while (at > 0 && ordD[at - 1] > dd) { order[at] = order[at - 1]; ordD[at] = ordD[at - 1]; at--; }
+      order[at] = e; ordD[at] = dd;
+    }
   }
 
   /**
@@ -529,12 +713,13 @@ export class WorldBodies {
   /**
    * Wybuch (gra): front fali przez kawałki w promieniu. power — mnożnik (1 ≈ rakieta dema), (dirX, dirY) —
    * kierunek lotu głowicy (domieszka). Zwraca właścicieli budowli w zasięgu (wspólna tablica — obrażenia
-   * rozgrywki raz na budowlę liczy wołający).
+   * rozgrywki raz na budowlę liczy wołający; tylko kawałki płaskie — punkty z reguł 2D). Bryły 3D (kawałki
+   * i odłamy-wraki z ostatniego kroku) dostają front jako KULĘ wokół (x, y, 0) — wysokość brył się liczy.
    */
   detonate(x, y, radius, power = 1, dirX = 0, dirY = 0) {
     const owners = this._owners || (this._owners = []);
     owners.length = 0;
-    if (!this.channels || !this._entities.length || !(radius > 0)) return owners;
+    if (!this.channels || !(radius > 0)) return owners;
     const R2 = radius * radius;
     const ents = this._entities;
     let any = false;
@@ -545,6 +730,7 @@ export class WorldBodies {
       const o = p.site.owner;
       if (o && owners.indexOf(o) < 0) owners.push(o);
     }
+    if (!any) any = this.channels.solidsInBlast(this._collectSolidBodies(), x, -y, radius);
     if (any) this.channels.detonate(x, -y, radius, Math.min(T.blastPowerMax, Math.max(0, power)), dirX, -dirY, null);
     return owners;
   }
@@ -559,17 +745,20 @@ export class WorldBodies {
    * (x0, y0) → (x1, y1) — wiązki. Zwraca { t (ułamek odcinka), x, y, entity, piece } (wspólny obiekt) albo null.
    */
   raySite(siteId, x0, y0, x1, y1, radius = 0) {
-    if (!this._entities.length) return null;
+    if (!this._entities.length && !this._solids.length) return null;
     const out = this._ray || (this._ray = { t: 1, x: 0, y: 0, entity: null, piece: null });
     let best = null, bestT = Infinity;
-    const ents = this._entities;
-    for (let k = 0; k < ents.length; k++) {
-      const e = ents[k];
-      const p = e.worldPiece;
-      if (!p || (siteId && p.site.id !== siteId)) continue;
-      if (!segBoundsHit(p.bounds, x0, y0, x1, y1, (e.beamHull?.body?._maxDisp || 0) + T.cellSize + radius)) continue;
-      const r = HullBodies.sweep(e, x0, y0, x1, y1, radius);
-      if (r && r.t < bestT) { bestT = r.t; best = e; out.x = r.worldX; out.y = r.worldY; }
+    // ciała płaskie, potem bryły 3D (HullBodies.sweep — przekrój bryły z pasem broni)
+    for (let list = 0; list < 2; list++) {
+      const ents = list === 0 ? this._entities : this._solids;
+      for (let k = 0; k < ents.length; k++) {
+        const e = ents[k];
+        const p = e.worldPiece;
+        if (!p || (siteId && p.site.id !== siteId)) continue;
+        if (list === 0 && !segBoundsHit(p.bounds, x0, y0, x1, y1, (e.beamHull?.body?._maxDisp || 0) + T.cellSize + radius)) continue;
+        const r = HullBodies.sweep(e, x0, y0, x1, y1, radius);
+        if (r && r.t < bestT) { bestT = r.t; best = e; out.x = r.worldX; out.y = r.worldY; }
+      }
     }
     if (!best) return null;
     out.t = bestT; out.entity = best; out.piece = best.worldPiece;
@@ -583,6 +772,7 @@ export class WorldBodies {
   heatAt(entity, x, y, damage, dirX = 0, dirY = 0) {
     const body = entity?.beamHull?.entity === entity ? entity.beamHull.body : null;
     if (!this.channels || !body || body.dead) return false;
+    this._syncBand();
     const ok = this.channels.heat(body, x, -y, Math.max(0, Number(damage) || 0) * T.heatPerDamage, 1, dirX, -dirY);
     if (ok && entity.worldPiece) entity.worldPiece.touched = true;
     return ok;
@@ -592,6 +782,7 @@ export class WorldBodies {
   heatBeam(siteId, x0, y0, x1, y1, damagePerSec, dt) {
     const r = this.raySite(siteId, x0, y0, x1, y1, 0);
     if (!r || !this.channels) return null;
+    this._syncBand();
     this.channels.heat(r.entity.beamHull.body, r.x, -r.y, Math.max(0, damagePerSec) * T.heatPerDamage, dt, x1 - x0, -(y1 - y0));
     return r;
   }
@@ -642,9 +833,10 @@ export class WorldBodies {
    * od punktu rozpadu i z obrotem. power — siła (1 ≈ próg punktów, 2 ≈ trzon). Zwraca { fragments, debris } albo
    * null (kawałka nie da się zbudować — gospodarz rozpada go po staremu).
    */
-  breakPiece(piece, x, y, { power = 1.2, speed = 70, outX = 0, outY = 0 } = {}) {
+  breakPiece(piece, x, y, { power = 1.2, speed = 70, outX = 0, outY = 0, outZ = 0, z = null } = {}) {
     if (!piece || piece.lost || !this.buildPiece(piece)) return null;
     this.releaseAnchors(piece, 1);
+    if (piece.solid3D) return this._breakSolidPiece(piece, x, y, z, power, speed, outX, outY, outZ);
     const ol = Math.sqrt(outX * outX + outY * outY);
     const ux = ol > 1e-9 ? outX / ol : 0, uy = ol > 1e-9 ? outY / ol : 0;
     const sev = Math.max(0, Math.min(1.4, (Number(power) || 1) - 1));
@@ -696,6 +888,45 @@ export class WorldBodies {
     return { fragments, debris };
   }
 
+  // Rozpad kawałka-BRYŁY 3D (breakPiece): HullBodies.shatterSolid — Voronoi w 3D, odłamy z grawitacją kawałka;
+  // punkt rozpadu na wysokości z (domyślnie środek ciała). Kierunek (outX, outY gry, outZ) × speed.
+  _breakSolidPiece(piece, x, y, z, power, speed, outX, outY, outZ) {
+    const sev = Math.max(0, Math.min(1.4, (Number(power) || 1) - 1));
+    const ol = Math.sqrt(outX * outX + outY * outY + outZ * outZ);
+    const ux = ol > 1e-9 ? outX / ol : 0, uy = ol > 1e-9 ? outY / ol : 0, uz = ol > 1e-9 ? outZ / ol : 0;
+    const list = [];
+    if (piece.entity) list.push(piece.entity);
+    for (const e of piece.islands) list.push(e);
+    let fragments = 0, debris = 0;
+    for (const e of list) {
+      const body = e?.beamHull?.entity === e ? e.beamHull.body : null;
+      if (!body || body.dead || body.activeNodes <= 0) continue;
+      const n = body.activeNodes;
+      const cells = Math.max(T.shatterCellsMin, Math.min(T.shatterCellsMax * 2, Math.round(Math.cbrt(n) / 2.2)));
+      const pz = Number.isFinite(z) ? z : body.pos.z;
+      const r = HullBodies.shatterSolid(e, x, y, pz, {
+        cells,
+        debrisFrac: Math.min(0.4, T.shatterCoreDebris * (1 + sev)),
+        debrisMax: T.shatterCoreDebrisMax,
+        crackDebris: T.shatterCrackDebris,
+        minFragmentNodes: T.shatterMinFragment,
+        speed: Math.max(1, speed),
+        radial: T.shatterRadial,
+        outX: ux, outY: uy, outZ: uz,
+        spread: T.shatterSpread,
+        spin: T.shatterSpin
+      });
+      fragments += r.fragments;
+      debris += r.debris;
+    }
+    piece.touched = true;
+    this.stats.debris += fragments;
+    this.stats.shattered++;
+    this.stats.shatterDebris += debris;
+    this._checkPiece(piece);
+    return { fragments, debris };
+  }
+
   /** Zrywa kotwice kawałka (próg obrażeń, łańcuch rozpadu budowli): bez kotwic całość odpada jako wrak. */
   releaseAnchors(piece, fraction = 1) {
     if (!piece || piece.state !== 'live') return 0;
@@ -723,6 +954,8 @@ export class WorldBodies {
   reset() {
     for (const site of this.sites.slice()) this.removeSite(site.id);
     this._queue.length = 0;
+    this._solidBodies.length = 0;
+    this.stats.solids = 0;
     this.channels?.reset();
   }
 }

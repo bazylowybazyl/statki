@@ -7,11 +7,16 @@
 // FFD ugina bryłę po węzłach w płaszczyźnie, wysokość podziału nie potrzebuje (ściana 300 j. wysoka, 700 j. długa
 // to ~50 trójkątów, nie 1000). Wierzchołek poza kratownicą (bryły pod i nad płaszczyzną gry wystające poza raster
 // ciała — szpony, rękawy) jedzie za NAJBLIŻSZĄ komórką konstrukcji (mapa odległości po siatce), nie znika.
+//
+// Rdzeń wypieku (bez three) — portBuildingSkinBake.js; w grze liczy go WORKER (requestBuildingSkinBake,
+// portBuildingSkinWorker.js — 2026-10-15: wypiek kawałka w klatce gry trwał 40–210 ms), w wątku głównym tylko zapas
+// (bez workerów) i testy (bakeBuildingChunkSkin / bakeBuildingChunkSkinSteps — te same geometrie).
 import * as THREE from 'three/webgpu';
 import { PB_STRIDE } from './portBuildingScene.js';
+import { SKIN_KINDS, SKIN_INTER_STRIDE, skinBakeParts, bakeSkinCoreSteps } from './portBuildingSkinBake.js';
 
-const KINDS = Object.freeze(['box', 'cyl', 'torus', 'cone']);
 let _bases = null;
+let _baseArrays = null;
 
 // Te same bryły bazowe co instancje budowli (portBuildings3D.baseGeometries), bez indeksu.
 function bases() {
@@ -30,49 +35,70 @@ function bases() {
   return _bases;
 }
 
-function qrot(qx, qy, qz, qw, vx, vy, vz, out) {
-  const tx = 2 * (qy * vz - qz * vy);
-  const ty = 2 * (qz * vx - qx * vz);
-  const tz = 2 * (qx * vy - qy * vx);
-  out[0] = vx + qw * tx + (qy * tz - qz * ty);
-  out[1] = vy + qw * ty + (qz * tx - qx * tz);
-  out[2] = vz + qw * tz + (qx * ty - qy * tx);
+// Atrybut xyz jako płaska Float32Array (to samo, co czyta getX / getY / getZ).
+function xyzArray(attr) {
+  if (!attr.isInterleavedBufferAttribute && attr.itemSize === 3 && !attr.normalized && attr.array instanceof Float32Array &&
+    attr.array.length === attr.count * 3) return attr.array;
+  const a = new Float32Array(attr.count * 3);
+  for (let i = 0; i < attr.count; i++) { a[i * 3] = attr.getX(i); a[i * 3 + 1] = attr.getY(i); a[i * 3 + 2] = attr.getZ(i); }
+  return a;
+}
+
+/** Bryły bazowe dla rdzenia wypieku: { box|cyl|torus|cone: { pos, nor, count } }. */
+export function skinBakeBases() {
+  if (_baseArrays) return _baseArrays;
+  const B = bases();
+  const out = {};
+  for (const kind of SKIN_KINDS) {
+    const g = B[kind];
+    out[kind] = { pos: xyzArray(g.attributes.position), nor: xyzArray(g.attributes.normal), count: g.attributes.position.count };
+  }
+  _baseArrays = out;
   return out;
 }
 
 /**
- * Mapa „najbliższa zajęta komórka” kratownicy (BFS 8-sąsiedni od komórek konstrukcji): Int32Array nx·ny z indeksem
- * komórki zajętej (x + y·nx). Wierzchołek poza zasięgiem okna kotwicy hullSkin3D (2 komórki) dostaje komórkę
- * z tej mapy.
+ * Wejście rdzenia wypieku dla grupy kawałka budowli (portBuildingSkinBake.bakeSkinCoreSteps) albo null (budowla bez
+ * zestawów brył albo bez kratownicy). building — PortBuilding3D (scene.sets), group — numer grupy kawałka, cx / cz —
+ * środek rastra ciała w układzie budowli, lattice — hullSkinLattice(konstrukcja, anchorDX, anchorDY) (cs, dims, occ, ax,
+ * ay[, az]).
  */
-function nearestOccupied(lattice) {
-  const nx = lattice.dims.x, ny = lattice.dims.y, occ = lattice.occ;
-  const near = new Int32Array(nx * ny).fill(-1);
-  const q = new Int32Array(nx * ny);
-  let head = 0, tail = 0;
-  for (let i = 0; i < nx * ny; i++) if (occ[i]) { near[i] = i; q[tail++] = i; }
-  while (head < tail) {
-    const i = q[head++];
-    const x = i % nx, y = (i / nx) | 0;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const X = x + dx, Y = y + dy;
-        if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue;
-        const j = X + Y * nx;
-        if (near[j] >= 0) continue;
-        near[j] = near[i];
-        q[tail++] = j;
-      }
-    }
+export function buildingSkinBakeInput(building, group, { cx, cz, lattice, maxEdgeCells = 2 }) {
+  const sets = building?.scene?.sets;
+  if (!sets || !lattice) return null;
+  return { bases: skinBakeBases(), parts: skinBakeParts(sets, group, PB_STRIDE), stride: PB_STRIDE, cx, cz, lattice, maxEdgeCells };
+}
+
+/** Geometrie three z wyniku rdzenia: { bg, fg, triangles } (BufferGeometry ze sferą ograniczającą z wypieku). */
+export function buildingSkinGeometries(res) {
+  const out = { bg: null, fg: null, triangles: res ? res.triangles : 0 };
+  if (!res) return out;
+  for (const set of ['bg', 'fg']) {
+    const r = res[set];
+    if (!r) continue;
+    const geo = new THREE.BufferGeometry();
+    // z indeksem: wierzchołki puli wspólne dla trójkątów podziału (portBuildingSkinBake.js); odłamy rysują podzbiór
+    // trójkątów własnym indeksem na tych samych atrybutach (worldBodies3D.fragmentSkinSubset)
+    geo.setIndex(new THREE.BufferAttribute(r.index, 1));
+    geo.setAttribute('position', new THREE.BufferAttribute(r.pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(r.nor, 3));
+    const ib = new THREE.InterleavedBuffer(r.inter, SKIN_INTER_STRIDE);
+    geo.setAttribute('aPbA', new THREE.InterleavedBufferAttribute(ib, 4, 0));
+    geo.setAttribute('aPbN', new THREE.InterleavedBufferAttribute(ib, 4, 4));
+    geo.setAttribute('aPbFx', new THREE.InterleavedBufferAttribute(ib, 4, 8));
+    geo.setAttribute('aLat', new THREE.InterleavedBufferAttribute(ib, 3, 12));
+    geo.setAttribute('aOwn', new THREE.InterleavedBufferAttribute(ib, 3, 15));
+    // sfera z wypieku = BufferGeometry.computeBoundingSphere (ten sam algorytm na tych samych float32)
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(r.sphere[0], r.sphere[1], r.sphere[2]), r.sphere[3]);
+    out[set] = geo;
   }
-  return near;
+  return out;
 }
 
 /**
  * Geometrie skóry kawałka: { bg, fg } (BufferGeometry albo null — zestaw bez brył grupy).
- * building — PortBuilding3D (scene.sets), group — numer grupy kawałka, cx / cz — środek rastra ciała w układzie
- * budowli, lattice — hullSkinLattice(konstrukcja, anchorDX, anchorDY) (cs, dims, occ, ax, ay).
+ * Kratownica 3D (lattice.dims.z > 1 — bryła budowli, docs/PORT-silnik-belek.md § „Ciała 3D”): aLat z wysokością
+ * (az — początek układu bryły względem latticeMin w z), trójkąty dzielone w 3D, kotwica szukana w 3D.
  */
 export function bakeBuildingChunkSkin(building, group, opts) {
   const it = bakeBuildingChunkSkinSteps(building, group, opts);
@@ -82,136 +108,137 @@ export function bakeBuildingChunkSkin(building, group, opts) {
 }
 
 /**
- * To samo co bakeBuildingChunkSkin, w KROKACH (generator: yield co porcję pracy, wynik w `value` po `done`) —
- * wypiek w tle (worldBodies3D.js, requestIdleCallback) bez długich przestojów klatki: odcinek trzonu to kilkadziesiąt
- * tysięcy wierzchołków.
+ * To samo co bakeBuildingChunkSkin, w KROKACH (generator: yield co porcję pracy ~1 ms, wynik w `value` po `done`) —
+ * zapas wypieku w wątku głównym (bez workerów).
  */
-export function* bakeBuildingChunkSkinSteps(building, group, { cx, cz, lattice, maxEdgeCells = 2 }) {
-  const out = { bg: null, fg: null, triangles: 0 };
-  const sets = building?.scene?.sets;
-  if (!sets || !lattice) return out;
-  const B = bases();
-  const cs = lattice.cs, nx = lattice.dims.x, ny = lattice.dims.y, occ = lattice.occ;
-  const ox = lattice.ax, oy = lattice.ay;     // środek rastra względem latticeMin
-  const near = nearestOccupied(lattice);
-  const maxEdge2 = (maxEdgeCells * cs) ** 2;
-  const lp = [0, 0, 0], r = [0, 0, 0], nl = [0, 0, 0];
-  // dach (zestaw roof — w budowli zanika jak K-7; w grze dach suchego doku zostaje) jedzie skórą FG
-  for (const set of ['bg', 'fg']) {
-    const verts = [];      // [x, y, z (model), nx, ny, nz (model), lx, ly, lz, mat, bnx, bny, bnz, fx0..3] na wierzchołek
-    for (const src of set === 'fg' ? ['fg', 'roof'] : ['bg']) {
-      const S = sets[src];
-      if (!S) continue;
-      for (const kind of KINDS) {
-        const a = S[kind];
-        if (!a || !a.length) continue;
-        const g = B[kind];
-        const P = g.attributes.position, N = g.attributes.normal;
-        let seen = 0;
-        for (let i = 0; i < a.length; i += PB_STRIDE) {
-          if (a[i + 12] !== group) continue;
-          if ((++seen & 63) === 0) yield;
-          const c0 = a[i], c1 = a[i + 1], c2 = a[i + 2], vs = a[i + 3];
-          const sx = a[i + 4], sy = a[i + 5], sz = a[i + 6], mat = a[i + 7];
-          const qx = a[i + 8], qy = a[i + 9], qz = a[i + 10], qw = a[i + 11];
-          const f0 = a[i + 16], f1 = a[i + 17], f2 = a[i + 18], f3 = a[i + 19];
-          for (let v = 0; v < P.count; v++) {
-            const px = P.getX(v), py = P.getY(v), pz = P.getZ(v);
-            const bnx = N.getX(v), bny = N.getY(v), bnz = N.getZ(v);
-            lp[0] = px * sx; lp[1] = py * sy; lp[2] = pz * sz;
-            qrot(qx, qy, qz, qw, lp[0], lp[1], lp[2], r);
-            const hx = c0 + r[0], hy = c1 + r[1] * vs, hz = c2 + r[2];
-            let nnx = bnx / Math.max(1e-3, sx), nny = bny / Math.max(1e-3, sy), nnz = bnz / Math.max(1e-3, sz);
-            let nlen = Math.hypot(nnx, nny, nnz) || 1;
-            qrot(qx, qy, qz, qw, nnx / nlen, nny / nlen, nnz / nlen, nl);
-            nnx = nl[0]; nny = nl[1] / Math.max(1e-3, vs); nnz = nl[2];
-            nlen = Math.hypot(nnx, nny, nnz) || 1;
-            // układ budowli (x, wysokość, z) → model ciała (x − cx, cz − z, wysokość)
-            verts.push(hx - cx, cz - hz, hy, nnx / nlen, -nnz / nlen, nny / nlen, lp[0], lp[1], lp[2], mat, bnx, bny, bnz, f0, f1, f2, f3);
-          }
-        }
-      }
-    }
-    if (!verts.length) continue;
-    // podział w rzucie: trójkąty wzdłuż najdłuższej krawędzi (x, y), aż ≤ maxEdge
-    const K = 17;
-    const tris = [];
-    const mid = (A, Bv) => {
-      const m = new Array(K);
-      for (let k = 0; k < K; k++) m[k] = (A[k] + Bv[k]) * 0.5;
-      const l = Math.hypot(m[3], m[4], m[5]) || 1;
-      m[3] /= l; m[4] /= l; m[5] /= l;
-      m[9] = A[9];
-      m[13] = A[13]; m[14] = A[14]; m[15] = A[15]; m[16] = A[16];
-      return m;
-    };
-    const e2 = (A, Bv) => (A[0] - Bv[0]) ** 2 + (A[1] - Bv[1]) ** 2;
-    const split = (A, Bv, C, depth) => {
-      const ab = e2(A, Bv), bc = e2(Bv, C), ca = e2(C, A);
-      const m = Math.max(ab, bc, ca);
-      if (depth >= 14 || m <= maxEdge2) { tris.push(A, Bv, C); return; }
-      if (m === ab) { const M = mid(A, Bv); split(A, M, C, depth + 1); split(M, Bv, C, depth + 1); }
-      else if (m === bc) { const M = mid(Bv, C); split(A, Bv, M, depth + 1); split(A, M, C, depth + 1); }
-      else { const M = mid(C, A); split(A, Bv, M, depth + 1); split(M, Bv, C, depth + 1); }
-    };
-    const nV = verts.length / K;
-    const vert = (j) => verts.slice(j * K, j * K + K);
-    for (let j = 0; j + 2 < nV; j += 3) {
-      split(vert(j), vert(j + 1), vert(j + 2), 0);
-      if ((j & 1023) === 0) yield;
-    }
-    yield;
-    const n = tris.length;
-    const pos = new Float32Array(n * 3);
-    const nor = new Float32Array(n * 3);
-    const STR = 18;
-    const inter = new Float32Array(n * STR);   // aPbA(4) aPbN(4) aPbFx(4) aLat(3) aOwn(3)
-    for (let j = 0; j < n; j++) {
-      if ((j & 8191) === 8191) yield;
-      const v = tris[j];
-      pos[j * 3] = v[0]; pos[j * 3 + 1] = v[1]; pos[j * 3 + 2] = v[2];
-      nor[j * 3] = v[3]; nor[j * 3 + 1] = v[4]; nor[j * 3 + 2] = v[5];
-      const o = j * STR;
-      inter[o] = v[6]; inter[o + 1] = v[7]; inter[o + 2] = v[8]; inter[o + 3] = v[9];
-      inter[o + 4] = v[10]; inter[o + 5] = v[11]; inter[o + 6] = v[12]; inter[o + 7] = 0;
-      inter[o + 8] = v[13]; inter[o + 9] = v[14]; inter[o + 10] = v[15]; inter[o + 11] = v[16];
-      // kratownica: komórki od latticeMin (środek komórki i = (i + ½)·cs)
-      const fx = (v[0] + ox) / cs - 0.5, fy = (v[1] + oy) / cs - 0.5;
-      inter[o + 12] = fx; inter[o + 13] = fy; inter[o + 14] = 0;
-      // kotwica widoczności: najbliższa zajęta komórka w oknie 3×3 / 5×5, dalej — mapa najbliższej komórki
-      const rx = Math.round(fx), ry = Math.round(fy);
-      let bx = -1, by = -1, best = Infinity;
-      for (let R = 1; R <= 2 && bx < 0; R++) {
-        for (let y = ry - R; y <= ry + R; y++) {
-          if (y < 0 || y >= ny) continue;
-          for (let x = rx - R; x <= rx + R; x++) {
-            if (x < 0 || x >= nx || !occ[x + y * nx]) continue;
-            const dd = (x - fx) ** 2 + (y - fy) ** 2;
-            if (dd < best) { best = dd; bx = x; by = y; }
-          }
-        }
-      }
-      if (bx < 0) {
-        const cxl = Math.max(0, Math.min(nx - 1, rx)), cyl = Math.max(0, Math.min(ny - 1, ry));
-        const k = near[cxl + cyl * nx];
-        if (k >= 0) { bx = k % nx; by = (k / nx) | 0; } else { bx = cxl; by = cyl; }
-      }
-      inter[o + 15] = bx; inter[o + 16] = by; inter[o + 17] = 0;
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    const ib = new THREE.InterleavedBuffer(inter, STR);
-    geo.setAttribute('aPbA', new THREE.InterleavedBufferAttribute(ib, 4, 0));
-    geo.setAttribute('aPbN', new THREE.InterleavedBufferAttribute(ib, 4, 4));
-    geo.setAttribute('aPbFx', new THREE.InterleavedBufferAttribute(ib, 4, 8));
-    geo.setAttribute('aLat', new THREE.InterleavedBufferAttribute(ib, 3, 12));
-    geo.setAttribute('aOwn', new THREE.InterleavedBufferAttribute(ib, 3, 15));
-    geo.computeBoundingSphere();
-    out[set] = geo;
-    out.triangles += n / 3;
+export function* bakeBuildingChunkSkinSteps(building, group, opts) {
+  const input = buildingSkinBakeInput(building, group, opts);
+  if (!input) return { bg: null, fg: null, triangles: 0 };
+  const res = yield* bakeSkinCoreSteps(input);
+  return buildingSkinGeometries(res);
+}
+
+// --- wypiek w WORKERACH -----------------------------------------------------------------------------------------
+// Pula workerów (SKIN_BAKE_WORKERS); kolejka zadań w wątku głównym — pilne (kawałek ruszony, odłamy czekają na skórę)
+// przed wypiekiem z wyprzedzeniem, w każdej klasie po kolei. Worker liczy jedno zadanie naraz.
+const SKIN_BAKE_WORKERS = 2;
+const _workers = [];
+const _waiting = [];
+let _workersBroken = false;
+let _seq = 0;
+/** Liczniki wypieku w workerach: zadania, czas wypieku w workerze (suma i szczyt), oczekiwanie w kolejce. */
+export const SKIN_BAKE_STATS = { requested: 0, done: 0, failed: 0, cancelled: 0, workerMs: 0, workerPeakMs: 0, waitPeakMs: 0, queued: 0 };
+
+function failAll(reason) {
+  for (const slot of _workers) {
+    const job = slot.job;
+    slot.job = null;
+    if (job && !job.cancelled) job.cb(null, reason);
   }
-  return out;
+  const list = _waiting.splice(0);
+  for (const job of list) if (!job.cancelled) job.cb(null, reason);
+}
+
+function ensureWorkers() {
+  if (_workersBroken) return false;
+  if (_workers.length) return true;
+  if (typeof Worker === 'undefined' || typeof window === 'undefined') { _workersBroken = true; return false; }
+  try {
+    const B = skinBakeBases();
+    for (let i = 0; i < SKIN_BAKE_WORKERS; i++) {
+      const w = new Worker(new URL('./portBuildingSkinWorker.js', import.meta.url), { type: 'module', name: `skin-bake-${i}` });
+      const slot = { w, job: null };
+      w.onmessage = (ev) => onWorkerMessage(slot, ev.data);
+      w.onerror = (err) => {
+        console.warn('[skóra budowli] worker wypieku padł — wypiek w wątku gry:', err?.message || err);
+        _workersBroken = true;
+        failAll('worker');
+        for (const s of _workers) { try { s.w.terminate(); } catch { /* już zamknięty */ } }
+        _workers.length = 0;
+      };
+      w.postMessage({ type: 'bases', bases: B });
+      _workers.push(slot);
+    }
+  } catch (err) {
+    console.warn('[skóra budowli] bez workerów wypieku:', err?.message || err);
+    _workersBroken = true;
+    for (const s of _workers) { try { s.w.terminate(); } catch { /* już zamknięty */ } }
+    _workers.length = 0;
+    return false;
+  }
+  return true;
+}
+
+function takeNext() {
+  let best = -1;
+  for (let i = 0; i < _waiting.length; i++) {
+    const j = _waiting[i];
+    if (j.cancelled) { _waiting.splice(i--, 1); continue; }
+    if (j.urgent) { best = i; break; }
+    if (best < 0) best = i;
+  }
+  return best < 0 ? null : _waiting.splice(best, 1)[0];
+}
+
+function pump() {
+  for (const slot of _workers) {
+    if (slot.job) continue;
+    const job = takeNext();
+    if (!job) break;
+    slot.job = job;
+    const wait = performance.now() - job.t0;
+    if (wait > SKIN_BAKE_STATS.waitPeakMs) SKIN_BAKE_STATS.waitPeakMs = wait;
+    const inp = job.input;
+    const L = inp.lattice;
+    // rekordy grupy skopiowane dla tego zadania — przekazane (bez kopii); kratownica i bryły bazowe — kopia
+    const transfer = [];
+    for (const set of ['bg', 'fg']) for (const p of inp.parts[set]) transfer.push(p.inst.buffer);
+    slot.w.postMessage({
+      type: 'bake', id: job.id, parts: inp.parts, stride: inp.stride, cx: inp.cx, cz: inp.cz, maxEdgeCells: inp.maxEdgeCells,
+      lattice: { cs: L.cs, dims: { x: L.dims.x, y: L.dims.y, z: L.dims.z }, occ: L.occ, ax: L.ax, ay: L.ay, az: L.az }
+    }, transfer);
+    job.input = null;
+  }
+  SKIN_BAKE_STATS.queued = _waiting.length;
+}
+
+function onWorkerMessage(slot, msg) {
+  const job = slot.job;
+  slot.job = null;
+  if (job && msg && msg.id === job.id) {
+    const ms = Number(msg.ms) || 0;
+    SKIN_BAKE_STATS.workerMs += ms;
+    if (ms > SKIN_BAKE_STATS.workerPeakMs) SKIN_BAKE_STATS.workerPeakMs = ms;
+    if (job.cancelled) SKIN_BAKE_STATS.cancelled++;
+    else if (msg.err || !msg.res) { SKIN_BAKE_STATS.failed++; console.warn('[skóra budowli] wypiek nieudany:', msg.err); job.cb(null, msg.err || 'brak wyniku'); }
+    else { SKIN_BAKE_STATS.done++; job.cb(msg.res, null); }
+  }
+  pump();
+}
+
+/**
+ * Wypiek skóry kawałka w WORKERZE (gra): uchwyt { cancel(), promote() } albo null — bez workerów (wołający piecze
+ * w wątku głównym: bakeBuildingChunkSkinSteps). cb(res, err) w wątku głównym, res — wynik rdzenia (tablice; geometrie
+ * three: buildingSkinGeometries). urgent — przed zadaniami z wyprzedzeniem.
+ */
+export function requestBuildingSkinBake(building, group, opts, cb, urgent = false) {
+  if (!ensureWorkers()) return null;
+  const input = buildingSkinBakeInput(building, group, opts);
+  const job = { id: ++_seq, input, cb, urgent: !!urgent, cancelled: false, t0: performance.now() };
+  const handle = {
+    cancel() { job.cancelled = true; },
+    promote() { if (!job.urgent) { job.urgent = true; pump(); } }
+  };
+  SKIN_BAKE_STATS.requested++;
+  if (!input) { queueMicrotask(() => { if (!job.cancelled) cb({ bg: null, fg: null, triangles: 0 }, null); }); return handle; }
+  _waiting.push(job);
+  pump();
+  return handle;
+}
+
+/** Zadania czekające i liczone (testy, narzędzia). */
+export function skinBakeQueueState() {
+  return { waiting: _waiting.filter((j) => !j.cancelled).length, busy: _workers.filter((s) => s.job).length, workers: _workers.length, broken: _workersBroken };
 }
 
 const _warmGeo = [null, null];
@@ -226,7 +253,7 @@ export function buildingSkinWarmGeometry(indexed = false) {
   if (indexed) g.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2]), 1));
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3));
   g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3));
-  const ib = new THREE.InterleavedBuffer(new Float32Array(3 * 18), 18);
+  const ib = new THREE.InterleavedBuffer(new Float32Array(3 * SKIN_INTER_STRIDE), SKIN_INTER_STRIDE);
   g.setAttribute('aPbA', new THREE.InterleavedBufferAttribute(ib, 4, 0));
   g.setAttribute('aPbN', new THREE.InterleavedBufferAttribute(ib, 4, 4));
   g.setAttribute('aPbFx', new THREE.InterleavedBufferAttribute(ib, 4, 8));

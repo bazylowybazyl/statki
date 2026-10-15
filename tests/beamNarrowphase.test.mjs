@@ -173,3 +173,74 @@ test('pairFilter → k: para liczona co k-ty krok (faza z id ciał) z krokiem k 
     }
   } finally { D.collideBodies = orig; D.pairFilter = null; }
 });
+
+test('kandydaci z SIATKI iterowanego ciała = skan liniowy (zbiór i kolejność od kursora); ścieżka mapy i progi', () => {
+  // Długi pręt (dużo węzłów) kontra pudło w różnych miejscach i obrotach: obszar wspólny mały w stosunku do pręta —
+  // ścieżka siatki (2026-10-15, _contactCandidatesGrid) bierze kandydatów z kubełków i sortuje do kolejności skanu.
+  const LONG = buildBeamStructure(voxelizeTriangles(makeBoxTriangles(40, 2, 2, 0.05, 0.05, 0.05), null, { cellSize: CS, shellLayers: 0 }),
+    { cellMassBase: 10, frameStride: 1, bulkheadEvery: 8 });
+  const keep = D.candGridMinNodes;
+  let grid = 0, same = 0;
+  try {
+    for (let trial = 0; trial < 80; trial++) {
+      fresh();
+      const base = { x: 7e6 + rnd() * 1e5, y: -3e6 + rnd() * 1e5, z: rnd() * 1e3 };
+      const A = D.createBody(cloneBeamStructure(LONG), { position: base, quaternion: quat() });
+      const B = D.createBody(cloneBeamStructure(BOX), { quaternion: quat() });
+      // pudło przy losowym punkcie pręta (świat), od nałożenia po styk sfer
+      const s = A.nodeStore, pick = (rnd() * s.count) | 0, m = D._refreshRot(A);
+      const px = m[0] * s.x[pick] + m[1] * s.y[pick] + m[2] * s.z[pick] + base.x;
+      const py = m[3] * s.x[pick] + m[4] * s.y[pick] + m[5] * s.z[pick] + base.y;
+      const pz = m[6] * s.x[pick] + m[7] * s.y[pick] + m[8] * s.z[pick] + base.z;
+      const dir = unit(), dist = B.radius * (0.2 + rnd() * 1.4);
+      B.pos.x = px + dir.x * dist; B.pos.y = py + dir.y * dist; B.pos.z = pz + dir.z * dist;
+      // co piąta próba: węzeł pręta odrzucony daleko — siatka pręta na mapie (hashKey)
+      if (trial % 5 === 4) { A.nodes[(rnd() * s.count) | 0].x += 4e4; }
+      // co siódma: martwe węzły w środku pręta
+      if (trial % 7 === 3) for (let k = 0; k < 40; k++) D.destroyNode(A, (rnd() * s.count) | 0);
+      const iter = A, holder = B;
+      const mI = D._refreshRot(iter), mH = D._refreshRot(holder), g = D._refreshHash(holder);
+      const cd = (A.cellSize + B.cellSize) * (D.config.nodeRadius / D.config.cellSize);
+      const reach = holder.radius + holder.cellSize * 2;
+      const total = iter.nodeStore.count, start = (rnd() * total) | 0;
+      D.candGridMinNodes = Infinity;
+      const n0 = D._contactCandidates(iter, holder, mI, mH, g, cd, reach, start, total);
+      const lin = Array.from(D._ncList.slice(0, n0));
+      D.candGridMinNodes = 0;
+      const n1 = D._contactCandidates(iter, holder, mI, mH, g, cd, reach, start, total);
+      const viaGrid = Array.from(D._ncList.slice(0, n1));
+      assert.deepEqual(viaGrid, lin, `próba ${trial}: kandydaci z siatki = skan`);
+      if (n0 > 0) same++;
+      // czy ścieżka siatki w ogóle zadziałała (obszar mały w stosunku do pręta)
+      const gi = D._refreshHash(iter);
+      if (Number.isFinite(gi.maxX) && n0 > 0) grid++;
+    }
+  } finally { D.candGridMinNodes = keep; }
+  assert.ok(same > 25 && grid > 20, `próby z kandydatami ${same}, przez siatkę ${grid}`);
+});
+
+test('para mieszana (bryła 3D × ciało płaskie): kontakty i kursor bez zmian ze ścieżką siatki kandydatów', () => {
+  const LONG = buildBeamStructure(voxelizeTriangles(makeBoxTriangles(30, 3, 3, 0.05, 0.05, 0.05), null, { cellSize: CS, shellLayers: 0 }),
+    { cellMassBase: 10, frameStride: 1, bulkheadEvery: 8 });
+  const keep = D.candGridMinNodes;
+  try {
+    for (let trial = 0; trial < 30; trial++) {
+      const run = (minNodes) => {
+        seed = 1000 + trial;
+        fresh({ maxContacts: trial % 2 ? 8 : 10000, separationPercent: 0 });
+        D.candGridMinNodes = minNodes;
+        const T = D.createBody(cloneBeamStructure(LONG), { position: { x: 0, y: 0, z: 0 }, quaternion: quat(), planar: false });
+        const P = D.createBody(cloneBeamStructure(BOX), { position: { x: 0, y: 0, z: 0 }, planar: true });
+        P.colZ0 = -2; P.colZ1 = 2;
+        const s = T.nodeStore, pick = (rnd() * s.count) | 0, m = D._refreshRot(T);
+        P.pos.x = m[0] * s.x[pick] + m[1] * s.y[pick] + m[2] * s.z[pick] + (rnd() - 0.5) * 2;
+        P.pos.y = m[3] * s.x[pick] + m[4] * s.y[pick] + m[5] * s.z[pick] + (rnd() - 0.5) * 2;
+        T._contactCursor = (rnd() * s.count) | 0;
+        const n = D._collideMixed(T, P, 1 / 120, true);
+        return { n, a: Array.from(T._contacts.slice(0, n)), b: Array.from(P._contacts.slice(0, n)), cur: T._contactCursor };
+      };
+      const lin = run(Infinity), viaGrid = run(0);
+      assert.deepEqual(viaGrid, lin, `próba ${trial}`);
+    }
+  } finally { D.candGridMinNodes = keep; }
+});

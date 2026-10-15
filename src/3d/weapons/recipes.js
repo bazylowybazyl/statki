@@ -1044,6 +1044,30 @@ export function droneBlast(ctx, x, y, size = 40) {
 }
 
 /**
+ * Wybuch bomby lotniczej na pancerzu (fighter_bomb — src/game/fighterBombs.js, 2026-10-14): wyraźnie
+ * cięższy niż trafienie działka i drona — bomba spada z góry, więc ogień, iskry i odłamki idą na cały
+ * obwód (bez kierunku w płaszczyźnie), do tego fala, dym i światło; na kadłubie czasem płonąca wyrwa.
+ * Krater i stempel rany robi hak krateru (HullBodies.onImpact z rodziną `rocket`) — tu sam obraz.
+ * scale 1 ≈ bomba 420 obr. (promień kuli ~120 j.); hull — trafiony kadłub (płonąca wyrwa) albo null.
+ */
+export function bombBlast(ctx, x, y, scale = 1, hull = null) {
+  const s = Math.max(0.4, Math.min(2.5, Number(scale) || 1));
+  blast(ctx, x, y, 120 * s, PAL.armata, null, 3.14, 14, 110, 16, 12, 1.3, 3.14);
+  if (hull && fxRandom.next() < 0.35) {
+    const a = fxRandom.next() * TAU;
+    ctx.burn(hull, x, y, Math.cos(a), Math.sin(a), 2.2, 0.8, 'armata');
+  }
+  ctx.shake(3.2 * s, 0.22);
+}
+
+/** Bomba, która nie trafiła poszycia (dziura, chybienie): słaby błysk zapalnika pod kadłubem. */
+export function bombDud(ctx, x, y, scale = 1) {
+  const s = Math.max(0.4, Math.min(2.5, Number(scale) || 1));
+  E(ctx.fx.add, K.GLOW, 1, sp(x, y, _P), _FLAK_N).life(0.12, 0.12).s0(6 * s, 6 * s).s1(34 * s, 34 * s)
+    .color(2.2, 1.3, 0.6).color1(0.6, 0.2, 0.05).mix(10).alpha(0.7, 0.7).fade(0.004, 2).grow(0.4).emit();
+}
+
+/**
  * Tani błysk (wylot poza LOD / ponad budżet klatki): jeden rdzeń GLOW w barwie broni —
  * odpowiednik dawnego instancjonowanego błysku z weapon3DSystem.
  */

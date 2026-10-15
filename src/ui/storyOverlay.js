@@ -140,11 +140,14 @@ export function createStoryOverlay(story) {
       }
       return;
     }
-    // panel akcji: klawisz przycisku (Enter → też NumpadEnter); przy otwartym terminalu stacji (WYPOSAŻENIE z panelu)
-    // klawisze należą do terminala — Enter zatwierdza tam kartę, nie odcumowuje
+    // panel akcji: klawisz przycisku (Enter → też NumpadEnter; litera → kod klawisza, bez względu na Shift i układ);
+    // przy otwartym terminalu stacji (WYPOSAŻENIE z panelu) klawisze należą do terminala — Enter zatwierdza tam kartę,
+    // nie odcumowuje
     const a = story.ui.action;
     if (a && !a.pressed && a.key && !story.letterbox && !window.isStationUIOpen?.()) {
-      const want = a.key === 'Enter' ? (k === 'Enter' || k === 'NumpadEnter') : (e.key === a.key || k === a.key);
+      const want = a.key === 'Enter' ? (k === 'Enter' || k === 'NumpadEnter')
+        : /^[A-Za-z]$/.test(a.key) ? (k === `Key${a.key.toUpperCase()}` && !e.ctrlKey && !e.altKey && !e.metaKey)
+          : (e.key === a.key || k === a.key);
       if (want) {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -337,6 +340,8 @@ export function createStoryOverlay(story) {
       actBtnKey.textContent = a.key ? (a.key === 'Enter' ? '↵ ENTER' : a.key) : '';
       actAlt.textContent = a.alt?.label || '';
       actAlt.hidden = !a.alt;
+      // sam przycisk (bez nagłówka, wierszy i drugiego przycisku — ODDOKOWANIE w misji 1): bez tła panelu
+      act.classList.toggle('bare', !a.title && !a.subtitle && !a.rows && !a.alt);
       act.classList.add('on');
     }
     if (!a) return;

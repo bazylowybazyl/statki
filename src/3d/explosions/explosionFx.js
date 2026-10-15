@@ -233,7 +233,9 @@ export const EXPLOSION_TUNE = {
   engineFade: 1.5,
   engineDecay: 0.45,
   engineCarrier: 1,
-  engineSmoke: 1,
+  // 1 → 1,5 (2026-10-14, prośba użytkownika: „podkręć trochę dym, niech będzie go nieco więcej — żeby zasymulować
+  // odpalanie”; razem z dłuższym dymem przed błyskiem — ENGINE_IGNITION_TUNE.smokeTime)
+  engineSmoke: 1.5,
   engineFlame: 1,
   engineTint: [1.8, 1.9, 2.2],
   engineLift: 0.3,
@@ -587,7 +589,8 @@ export class ExplosionFx {
     const W = Number(core.composerTarget?.width) || 1600, H = Number(core.composerTarget?.height) || 900;
     let x0, y0, x1, y1;
     if (!free && cam) {
-      const z = Math.max(1e-4, Number(cam.zoom) || 1), hw = W * 0.5 / z, hh = H * 0.5 / z;
+      const z = typeof core.viewZoom === 'function' ? core.viewZoom(cam) : Math.max(1e-4, Number(cam.zoom) || 1);
+      const hw = W * 0.5 / z, hh = H * 0.5 / z;
       const cx = Number(cam.x) || 0, cy = Number(cam.y) || 0;
       x0 = cx - hw; x1 = cx + hw; y0 = cy - hh; y1 = cy + hh;
     } else {
@@ -629,7 +632,7 @@ export class ExplosionFx {
         return (H * 0.5) / (d * tanH);
       }
     }
-    return Math.max(1e-4, Number(core.activeCam1?.zoom) || 1);
+    return Math.max(1e-4, Number(core.activeCam1?.zoom) || 1) * (Number(core.pxScale) || 1);
   }
 
   _record(x, y, R, size, lod, slot, cx, cy, prof, seed, power) {

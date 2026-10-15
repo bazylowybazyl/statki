@@ -22,7 +22,7 @@ import { BeamNodeStore, BeamLinkStore, BeamNodeView, buildAdjacency, defineLazyV
   cachedBeamViews, nodeViewAt } from './beamStore3D.js';
 import { beamSolverScratch, refreshBeamMounts, prepareBeamConstraints, projectBeamConstraints,
   projectBeamConstraints2D } from './beamConstraintSolver3D.js';
-import { updateBeamBounds, extendBeamBounds, beamBoundsOverlap } from './beamBounds3D.js';
+import { updateBeamBounds, extendBeamBounds, beamBoundsOverlap, worldBeamBounds } from './beamBounds3D.js';
 import { beamConnectivityScratch, findBeamBridgesStore } from './beamConnectivity3D.js';
 import { activeRegion, activateNode, activateNeighbors, markSkinDirty, resetActiveRegion } from './beamActiveRegion3D.js';
 
@@ -64,6 +64,23 @@ export function createBeamConfig(cellSize = 1) {
     // nie z liczbą węzłów. Dawne prawo w dużym kadłubie 2D dawało ~0,3% impulsu na
     // krok: rozpychała sama korekta pozycji, a styk trwał sekundami i zależał od siatki.
     crushStrength: 0,
+    // Prawo kontaktu v2 (gra — HullBodies.init; audyt docs/AUDYT-destruktor-3d-2026-10-14.md R1–R7). false = dawne
+    // prawo (dema, testy silnika — bit w bit). v2 (wymaga crushStrength > 0):
+    //  - normalna z GEOMETRII: różnica środków materiału obu ciał w oknie wokół styku (nie −prędkość) — muśnięcie
+    //    odpycha bokiem, wycofanie (rozchodzenie się wzdłuż normalnej) nie hamuje;
+    //  - granica plastyczności z FRONTU: impuls ≤ crushStrength · pancerz · masa węzła / cs · (szerokość frontu
+    //    w komórkach, kosze w poprzek normalnej; kotwica liczy się × pinYieldMul) · dt. Potrzebny impuls poniżej
+    //    granicy = styk sprężysty (bez progu prędkości, płynnie od zera); powyżej — granica + zgniot nadmiaru;
+    //  - zgniot = przesunięcie o głębokość styku + prędkość węzła dopasowana do frontu (węzeł jedzie z taranem,
+    //    nie zostaje w kadłubie), wyboczenie od środka styku; belki przeciążone zgniotem pękają W TYM KROKU;
+    //  - kotwice (invMass 0) zgniot rusza; przesunięta ponad pinBreakCells od spoczynku — spaw puszcza.
+    contactV2: false,
+    pinYieldMul: 3,             // kotwica we froncie = tyle komórek frontu (spaw z resztą budowli)
+    pinBreakCells: 0.5,         // [komórki] przesunięcie kotwicy, przy którym spaw puszcza
+    crushMaxCells: 1.5,         // [komórki] sufit przesunięcia węzła na jeden styk
+    crushTravelMul: 0,          // przesunięcie zgniatanego węzła ≥ droga zbliżania w kroku × to (0 = sama głębokość styku)
+    contactNormalCells: 3,      // [komórki] okno środków materiału normalnej (rośnie z rozrzutem styku do × 3)
+    contactRestSpeed: 0.35 * cs, // [j/s] rozchodzenie się poniżej = spoczynek (korekta pozycji przenikania)
 
     // --- broń ---
     impactRadius: 3.0 * cs,
@@ -89,8 +106,24 @@ export function createBeamConfig(cellSize = 1) {
     linearDamping: 0.02,
     angularDamping: 0.20,
     // Płaszczyzna gry (kadłuby 2D ze sprite'ów): ruch w XY, obrót tylko wokół Z,
-    // węzły zostają na swoim z spoczynkowym.
+    // węzły zostają na swoim z spoczynkowym. DOMYŚLNA wartość pola ciała `planar` (createBody — opts.planar
+    // bierze górę): gra ma ciała płaskie (kadłuby, budowle w płaszczyźnie) i ciała 3D (bryły budowli spoza
+    // płaszczyzny — wieża habitatu, dysk; docs/PORT-silnik-belek.md § „Ciała 3D”) w jednym kroku.
     planar: false,
+    // --- ciała 3D wśród płaskich (pary MIESZANE: _collideMixed) ---
+    // Ciało płaskie dla ciał 3D jest SŁUPEM: węzeł = pionowa kapsuła od colZ0 do colZ1 (pola ciała, układ
+    // lokalny, względem z węzła). Pionowy zgniot słupa (płaskie ciało nie ma osi z) zdejmuje HP węzła: zgniot
+    // o columnCrushCells komórek = pełne HP (kolumna ginie w całości — ograniczenie 2,5D).
+    columnCrushCells: 4,
+    // [j/s] Para z ciałem 3D (mieszana albo 3D × 3D) zbliżająca się wolniej niż tyle to styk SPRĘŻYSTY bez zgniotu —
+    // także przy impulsie ponad granicą plastyczności frontu. Ciężka bryła leżąca na wąskiej koronie ściany (wieża
+    // habitatu, 4·10⁷ masy na ~40 węzłach frontu) przekraczała granicę samym ciężarem: gniotła się co krok bez końca,
+    // węzły nigdy nie usypiały i solver liczył CAŁĄ wieżę (~110 tys. belek na krok przez 8 s po uderzeniu; pomiar
+    // 2026-10-15). Statyczny ciężar nie gniecie — gniecie uderzenie. 0 = bez progu (dema, testy — bit w bit).
+    // Pary płaskie (kadłuby, budowle w płaszczyźnie) bez zmian.
+    crushRestSpeed3D: 0,
+    // Przeguby (addJoint): korekta położenia punktu przegubu (ułamek błędu na sekundę × 60, jak separacja).
+    jointBeta: 0.25,
 
     // --- sen ---
     sleepFrames: 40,
@@ -323,7 +356,12 @@ export const DestructorBeams3D = {
     aabbRejected: 0,
     narrowphasePairs: 0,
     hashLookups: 0,         // kubełki siatki węzłów odwiedzone przez kontakty (narastająco)
-    narrowCandidates: 0     // węzły iterowanych ciał w obszarach nakładania par (narastająco)
+    narrowCandidates: 0,    // węzły iterowanych ciał w obszarach nakładania par (narastająco)
+    pinsReleased: 0,        // kotwice, których spaw puścił pod zgniotem (kontakt v2, narastająco)
+    // węzły zniszczone przy rozpadzie wysp (narastająco): drobnica < splitMinNodes, ponad splitMaxFragments, ponad maxWrecks
+    splitDestroyedSmall: 0,
+    splitDestroyedCap: 0,
+    splitDestroyedWrecks: 0
   },
 
   _s1: { x: 0, y: 0, z: 0 }, _s2: { x: 0, y: 0, z: 0 }, _s3: { x: 0, y: 0, z: 0 },
@@ -416,6 +454,19 @@ export const DestructorBeams3D = {
       // bez całkowania), węzły się gną, belki pękają. Kotwice = węzły z invMass 0 (pinBeamNodes);
       // wyspa bez kotwicy odpada jako swobodny wrak. `static` dalej = nieruchome I niezniszczalne.
       anchored: !!opts.anchored,
+      // Płaskie (płaszczyzna gry) albo 3D; słup ciała płaskiego dla ciał 3D (colZ0..colZ1 — z lokalne względem
+      // węzłów); grawitacja świata [j/s²] dla swobodnego ciała 3D (integrate) — dziedziczą je wraki.
+      planar: opts.planar === undefined ? !!cfg.planar : !!opts.planar,
+      gravity: opts.gravity ? { x: Number(opts.gravity.x) || 0, y: Number(opts.gravity.y) || 0, z: Number(opts.gravity.z) || 0 } : null,
+      colZ0: Number(opts.colZ0) || 0,
+      colZ1: Number(opts.colZ1) || 0,
+      joints: null,
+      // tarcie styku ciała (null = cfg.friction); para bierze większe — gruz bryły 3D szoruje po konstrukcji
+      friction: Number.isFinite(opts.friction) ? opts.friction : null,
+      // tłumienie węzłów [jak cfg.nodeDamping] i próg aktywności solvera lokalnego [j/s] CIAŁA (null = cfg): duża
+      // kratownica bryły 3D po zgniocie „dzwoniła” sekundami (cały obszar w solverze), a próg w j/s nie rośnie z komórką
+      nodeDamping: Number.isFinite(opts.nodeDamping) ? opts.nodeDamping : null,
+      activeThreshold: Number.isFinite(opts.activeThreshold) ? opts.activeThreshold : null,
       invInertiaLocal: structure.invInertia.map(v => v / massMultiplier),
       radius: structure.radius,
       config: cfg,
@@ -475,6 +526,54 @@ export const DestructorBeams3D = {
     body.isSleeping = false;
     body.sleepFrames = 0;
     if (hold > 0) body.wakeHold = Math.max(body.wakeHold | 0, hold | 0);
+  },
+
+  /**
+   * ZAMROŻENIE ciała w spoczynku (gruz, przewrócona wieża): ciało staje się zakotwiczone — kotwice na rzadkiej siatce
+   * komórek (ix, iy, iz podzielne przez `pinEvery`; bez takiego węzła — wszystkie), prędkości węzłów zero, obszar
+   * aktywny pusty, belki przyjmują obecną długość (kształt po zgniocie jest nowym spoczynkiem — bez naprężeń
+   * resztkowych, które budziłyby obszar), przeguby zdjęte, ciało uśpione. Trafienia i zgniot dalej je łamią (wyspa
+   * bez kotwicy odpada). Zwraca liczbę kotwic.
+   */
+  freezeBody(body, pinEvery = 3) {
+    if (!body || body.dead || body.static) return 0;
+    const s = body.nodeStore, e = body.beamStore, g = Math.max(1, pinEvery | 0);
+    const active = s.active;
+    let pins = 0;
+    for (let pass = 0; pass < 2 && pins === 0; pass++) {
+      for (let i = 0; i < s.count; i++) {
+        if (!active[i]) continue;
+        if (pass === 0 && (s.ix[i] % g !== 0 || s.iy[i] % g !== 0 || s.iz[i] % g !== 0)) continue;
+        s.invMass[i] = 0;
+        pins++;
+      }
+    }
+    if (!pins) return 0;
+    const x = s.x, y = s.y, z = s.z, drift = this.config.maxRestDrift;
+    for (let i = 0; i < s.count; i++) {
+      s.vx[i] = 0; s.vy[i] = 0; s.vz[i] = 0;
+      s.act[i] = 0; s.quiet[i] = 0;
+    }
+    const ea = e.a, eb = e.b, broken = e.broken, rest = e.rest, restBase = e.restBase;
+    for (let bi = 0; bi < e.count; bi++) {
+      if (broken[bi]) continue;
+      const a = ea[bi], b = eb[bi];
+      if (!active[a] || !active[b]) continue;
+      const len = Math.sqrt((x[b] - x[a]) ** 2 + (y[b] - y[a]) ** 2 + (z[b] - z[a]) ** 2);
+      rest[bi] = Math.max(restBase[bi] * (1 - drift), Math.min(restBase[bi] * (1 + drift), len));
+    }
+    const region = body._region;
+    if (region) { region.list.length = 0; region.frontierCount = 0; region.drift = 0; }
+    body.joints = null;
+    body.anchored = true;
+    body.invMass = 0;
+    body.vel.x = 0; body.vel.y = 0; body.vel.z = 0;
+    body.angVel.x = 0; body.angVel.y = 0; body.angVel.z = 0;
+    body.isSleeping = true;
+    body.wakeHold = 0;
+    body.sleepFrames = 0;
+    body.meshDirty = true;
+    return pins;
   },
 
   _refreshRot(body) {
@@ -557,15 +656,20 @@ export const DestructorBeams3D = {
     const cfg = this.config;
     const linK = Math.exp(-cfg.linearDamping * dt);
     const angK = Math.exp(-cfg.angularDamping * dt);
-    const planar = !!cfg.planar;
     for (const b of bodies) {
       if (!b || b.dead || b.static || b.anchored) continue;
+      const planar = !!b.planar;
       if (planar) {
         // Odrzut odłamu (_spawnWreck) i szum numeryczny nie wyprowadzą kadłuba z płaszczyzny.
         b.vel.z = 0; b.angVel.x = 0; b.angVel.y = 0;
+      } else if (b.gravity) {
+        // Grawitacja ciała 3D (wieża habitatu, jej odłamy): jednorodne przyspieszenie całości — węzły się od niego nie
+        // odkształcają (konstrukcja zakotwiczona stoi bez naprężeń od ciężaru, jak w Teardown: spada to, co odpadło).
+        b.vel.x += b.gravity.x * dt; b.vel.y += b.gravity.y * dt; b.vel.z += b.gravity.z * dt;
       }
       b.vel.x *= linK; b.vel.y *= linK; b.vel.z *= linK;
       b.angVel.x *= angK; b.angVel.y *= angK; b.angVel.z *= angK;
+      if (b.joints !== null && b.joints !== undefined) this._solveJoints(b, dt);
       b.pos.x += b.vel.x * dt;
       b.pos.y += b.vel.y * dt;
       b.pos.z += b.vel.z * dt;
@@ -583,6 +687,113 @@ export const DestructorBeams3D = {
     }
   },
 
+  // --------------------------- PRZEGUBY (ciała swobodne) ---------------------------
+
+  /**
+   * PRZEGUB kulisty: punkt ciała (dziś w świecie: wx, wy, wz) trzymany w miejscu świata — zawias przewracanej wieży,
+   * zwisająca sekcja. Liczony w integrate (impuls prędkości w punkcie, dokładny dla jednego więzu, + korekta położenia
+   * jointBeta), więc działa tylko na ciało swobodne (zakotwiczone stoi i tak). Pęka, gdy siła więzu przekroczy
+   * opts.breakForce [masa · j/s²] albo ciało przechyli się o więcej niż opts.breakTilt [rad] od osi „w górę” z chwili
+   * założenia (opts.up — oś świata, domyślnie +z). Zwraca rekord przegubu (broken — pękł).
+   */
+  addJoint(body, wx, wy, wz, opts = {}) {
+    if (!body) return null;
+    const m = quatToMat3(body.quat, this._jm);
+    const a = matVecT(m, wx - body.pos.x, wy - body.pos.y, wz - body.pos.z, this._s1);
+    const up = opts.up || null;
+    const u = matVecT(m, up ? up.x : 0, up ? up.y : 0, up ? up.z : 1, this._s2);
+    const joint = {
+      lx: a.x, ly: a.y, lz: a.z, wx, wy, wz,
+      ux: u.x, uy: u.y, uz: u.z,
+      upX: up ? up.x : 0, upY: up ? up.y : 0, upZ: up ? up.z : 1,
+      breakForce: Number.isFinite(opts.breakForce) ? opts.breakForce : Infinity,
+      breakTilt: Number.isFinite(opts.breakTilt) ? opts.breakTilt : Infinity,
+      force: 0, tilt: 0, broken: false, name: opts.name || ''
+    };
+    (body.joints || (body.joints = [])).push(joint);
+    return joint;
+  },
+
+  /** Zdejmuje przegub (albo wszystkie przeguby ciała, gdy joint == null). */
+  removeJoint(body, joint = null) {
+    if (!body || !body.joints) return;
+    if (joint === null) { body.joints = null; return; }
+    const i = body.joints.indexOf(joint);
+    if (i >= 0) body.joints.splice(i, 1);
+    if (!body.joints.length) body.joints = null;
+  },
+
+  _jm: new Float64Array(9),
+  _jK: new Float64Array(9),
+
+  // Odwrotny tensor bezwładności w świecie razy wektor (macierz obrotu `m` — świeża, nie z pamięci kroku).
+  _invInertiaWorld(body, m, vx, vy, vz, o) {
+    const lx0 = m[0] * vx + m[3] * vy + m[6] * vz;
+    const ly0 = m[1] * vx + m[4] * vy + m[7] * vz;
+    const lz0 = m[2] * vx + m[5] * vy + m[8] * vz;
+    const I = body.invInertiaLocal;
+    const s = 1 / Math.max(1e-6, body.rammingMassMult);
+    const lx = (I[0] * lx0 + I[1] * ly0 + I[2] * lz0) * s;
+    const ly = (I[3] * lx0 + I[4] * ly0 + I[5] * lz0) * s;
+    const lz = (I[6] * lx0 + I[7] * ly0 + I[8] * lz0) * s;
+    o.x = m[0] * lx + m[1] * ly + m[2] * lz;
+    o.y = m[3] * lx + m[4] * ly + m[5] * lz;
+    o.z = m[6] * lx + m[7] * ly + m[8] * lz;
+    return o;
+  },
+
+  _solveJoints(body, dt) {
+    const joints = body.joints;
+    const m = quatToMat3(body.quat, this._jm);
+    const invM = body.invMass > 0 ? body.invMass : 1 / Math.max(1, body.mass);
+    const beta = Math.max(0, this.config.jointBeta) * 60;
+    const K = this._jK, t = this._s3, w = this._s4;
+    let write = 0;
+    for (let k = 0; k < joints.length; k++) {
+      const j = joints[k];
+      if (j.broken) continue;
+      const r = matVec(m, j.lx, j.ly, j.lz, this._s1);
+      const rx = r.x, ry = r.y, rz = r.z;
+      // przechył osi „w górę” ciała od osi świata z chwili założenia
+      const ax = m[0] * j.ux + m[1] * j.uy + m[2] * j.uz;
+      const ay = m[3] * j.ux + m[4] * j.uy + m[5] * j.uz;
+      const az = m[6] * j.ux + m[7] * j.uy + m[8] * j.uz;
+      j.tilt = Math.acos(Math.max(-1, Math.min(1, ax * j.upX + ay * j.upY + az * j.upZ)));
+      if (j.tilt > j.breakTilt) { j.broken = true; continue; }
+      // prędkość punktu i błąd położenia
+      const vpx = body.vel.x + body.angVel.y * rz - body.angVel.z * ry;
+      const vpy = body.vel.y + body.angVel.z * rx - body.angVel.x * rz;
+      const vpz = body.vel.z + body.angVel.x * ry - body.angVel.y * rx;
+      const ex = body.pos.x + rx - j.wx, ey = body.pos.y + ry - j.wy, ez = body.pos.z + rz - j.wz;
+      const dx = -beta * ex - vpx, dy = -beta * ey - vpy, dz = -beta * ez - vpz;
+      // K = invM·I − [r]× I⁻¹ [r]× (kolumny: K·e_c)
+      for (let c = 0; c < 3; c++) {
+        const cx = c === 0 ? 1 : 0, cy = c === 1 ? 1 : 0, cz = c === 2 ? 1 : 0;
+        // r × e
+        const qx = ry * cz - rz * cy, qy = rz * cx - rx * cz, qz = rx * cy - ry * cx;
+        this._invInertiaWorld(body, m, qx, qy, qz, t);
+        // −(r × (I⁻¹ (r × e))) = (I⁻¹ (r × e)) × r
+        K[c] = invM * cx + (t.y * rz - t.z * ry);
+        K[3 + c] = invM * cy + (t.z * rx - t.x * rz);
+        K[6 + c] = invM * cz + (t.x * ry - t.y * rx);
+      }
+      const det = K[0] * (K[4] * K[8] - K[5] * K[7]) - K[1] * (K[3] * K[8] - K[5] * K[6]) + K[2] * (K[3] * K[7] - K[4] * K[6]);
+      if (!(Math.abs(det) > 1e-30)) { joints[write++] = j; continue; }
+      const id = 1 / det;
+      const lx = id * (dx * (K[4] * K[8] - K[5] * K[7]) - K[1] * (dy * K[8] - K[5] * dz) + K[2] * (dy * K[7] - K[4] * dz));
+      const ly = id * (K[0] * (dy * K[8] - K[5] * dz) - dx * (K[3] * K[8] - K[5] * K[6]) + K[2] * (K[3] * dz - dy * K[6]));
+      const lz = id * (K[0] * (K[4] * dz - dy * K[7]) - K[1] * (K[3] * dz - dy * K[6]) + dx * (K[3] * K[7] - K[4] * K[6]));
+      j.force = Math.sqrt(lx * lx + ly * ly + lz * lz) / Math.max(1e-9, dt);
+      if (j.force > j.breakForce) { j.broken = true; continue; }
+      body.vel.x += lx * invM; body.vel.y += ly * invM; body.vel.z += lz * invM;
+      this._invInertiaWorld(body, m, ry * lz - rz * ly, rz * lx - rx * lz, rx * ly - ry * lx, w);
+      body.angVel.x += w.x; body.angVel.y += w.y; body.angVel.z += w.z;
+      joints[write++] = j;
+    }
+    joints.length = write;
+    if (write === 0) body.joints = null;
+  },
+
   // --------------------------- SOLVER MIĘKKIEGO CIAŁA (PBD) ---------------------------
 
   solveSoftBody(dt, bodies) {
@@ -592,19 +803,21 @@ export const DestructorBeams3D = {
     const damp = Math.exp(-cfg.nodeDamping * dt * 60);
     const plasticRate = 1 - Math.pow(1 - Math.min(1, cfg.plasticRate), dt * 120);
     const stepScaleSq = (dt * 120) ** 2;
-    const planar = !!cfg.planar;
     let solved = 0;
     let broke = 0;
 
     for (const body of bodies) {
       if (!body || body.dead || body.static) continue;
       if (body.isSleeping && (body.wakeHold | 0) <= 0) continue;
+      // tłumienie ciała (bryły 3D) — null = cfg.nodeDamping
+      const bodyDamp = body.nodeDamping === null || body.nodeDamping === undefined ? damp : Math.exp(-body.nodeDamping * dt * 60);
       if (cfg.localSolver) {
-        broke += this._solveLocal(body, dt, iterations, damp, plasticRate, stepScaleSq);
+        broke += this._solveLocal(body, dt, iterations, bodyDamp, plasticRate, stepScaleSq);
         solved += this._localSolved;
         continue;
       }
 
+      const planar = !!body.planar;
       const s = body.nodeStore, count = s.count, active = s.active;
       const x = s.x, y = s.y, z = s.z, px = s.px, py = s.py, pz = s.pz;
       const vx = s.vx, vy = s.vy, vz = s.vz, ox = s.ox, oy = s.oy, oz = s.oz, mass = s.mass;
@@ -646,9 +859,9 @@ export const DestructorBeams3D = {
         if (!active[i]) continue;
         const j = i * 3;
         x[i] = positions[j]; y[i] = positions[j + 1]; z[i] = planar ? oz[i] : positions[j + 2];
-        vx[i] = (x[i] - px[i]) * invDt * damp;
-        vy[i] = (y[i] - py[i]) * invDt * damp;
-        vz[i] = (z[i] - pz[i]) * invDt * damp;
+        vx[i] = (x[i] - px[i]) * invDt * bodyDamp;
+        vy[i] = (y[i] - py[i]) * invDt * bodyDamp;
+        vz[i] = (z[i] - pz[i]) * invDt * bodyDamp;
         const m = Math.abs(vx[i]) + Math.abs(vy[i]) + Math.abs(vz[i]);
         if (m > motion) motion = m;
       }
@@ -738,7 +951,7 @@ export const DestructorBeams3D = {
     let stamp = (this._regionStamp + 1) | 0;
     if (stamp <= 0) stamp = 1;
     this._regionStamp = stamp;
-    const planar = !!cfg.planar;
+    const planar = !!body.planar;
 
     // Kroki 1–3 w trzech przebiegach zamiast pięciu (te same zbiory, ta sama kolejność belek, wynik bit
     // w bit): belki węzłów A wychodzą już przy szukaniu F (drugi koniec belki A zawsze jest w A ∪ F,
@@ -869,7 +1082,7 @@ export const DestructorBeams3D = {
     // 5) Zapis A ∪ F, impuls więzów J (reakcja pierścienia = −J), aktywność; od razu lista F
     // na następny krok (stan `act` węzła jest już ostateczny po jego własnym zapisie).
     const invDt = 1 / dt;
-    const threshold = cfg.activeMotionThreshold;
+    const threshold = body.activeThreshold ?? cfg.activeMotionThreshold;
     const mm = body._boundsMinMax;
     const keep = 1 - damp;
     const dirty = region.dirty, frontier = region.frontier;
@@ -1093,10 +1306,13 @@ export const DestructorBeams3D = {
         const relVz = A.vel.z - B.vel.z;
         const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy + relVz * relVz);
         const margin = relSpeed * pairDt * 2 + cfg.cellSize * 2;
-        const rs = A.radius + B.radius + margin;
+        // Para mieszana (ciało płaskie × 3D): ciało płaskie sięga w z na swój słup.
+        const mixed = !A.planar !== !B.planar;
+        let rs = A.radius + B.radius + margin;
+        if (mixed) { const P = A.planar ? A : B; rs += Math.max(Math.abs(P.colZ0 || 0), Math.abs(P.colZ1 || 0)); }
         if (dx * dx + dy * dy + dz * dz > rs * rs) continue;
         const padding = (A.cellSize + B.cellSize) * (cfg.nodeRadius / cfg.cellSize);
-        if (!beamBoundsOverlap(A, B, padding, this._tick)) { this.perf.aabbRejected++; continue; }
+        if (mixed ? !this._overlapMixed(A, B, padding) : !beamBoundsOverlap(A, B, padding, this._tick)) { this.perf.aabbRejected++; continue; }
 
         this.perf.narrowphasePairs++;
         if (this.collideBodies(A, B, pairDt, it === 0) === 0) { quietA[p] = A._geomVer; quietB[p] = B._geomVer; }
@@ -1153,7 +1369,14 @@ export const DestructorBeams3D = {
     const range = this._bpRange, big = this._bpBig, seen = this._bpSeen, head = this._bpHead;
     const mask = head.length - 1;
     const cell = cfg.broadphaseCell > 0 ? cfg.broadphaseCell : 64 * cfg.cellSize;
-    const inv = 1 / cell, planar = !!cfg.planar;
+    const inv = 1 / cell;
+    // Same ciała płaskie (gra bez brył 3D): jedna warstwa z, jak dawniej (bit w bit). Z ciałem 3D w liście — prawdziwe
+    // zakresy z: ciało płaskie swoim słupem (colZ0..colZ1 nad węzłami), ciało 3D sferą.
+    let any3D = false;
+    for (let i = 0; i < count; i++) {
+      const b = bodies[i];
+      if (b && !b.dead && !b.planar) { any3D = true; break; }
+    }
     head.fill(-1);
     big.fill(0, 0, count);
     let entries = 0, bigCount = 0;
@@ -1166,7 +1389,17 @@ export const DestructorBeams3D = {
       const r = b.radius + speed * dt * 2 + cfg.cellSize * 3;
       const x0 = Math.floor((b.pos.x - r) * inv), x1 = Math.floor((b.pos.x + r) * inv);
       const y0 = Math.floor((b.pos.y - r) * inv), y1 = Math.floor((b.pos.y + r) * inv);
-      const z0 = planar ? 0 : Math.floor((b.pos.z - r) * inv), z1 = planar ? 0 : Math.floor((b.pos.z + r) * inv);
+      let z0 = 0, z1 = 0;
+      if (any3D) {
+        if (b.planar) {
+          const pad = speed * dt * 2 + cfg.cellSize * 3, mm = b._boundsMinMax;
+          z0 = Math.floor((b.pos.z + mm[2] + (b.colZ0 || 0) - pad) * inv);
+          z1 = Math.floor((b.pos.z + mm[5] + (b.colZ1 || 0) + pad) * inv);
+        } else {
+          z0 = Math.floor((b.pos.z - r) * inv);
+          z1 = Math.floor((b.pos.z + r) * inv);
+        }
+      }
       if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 64) { big[i] = 1; bigCount++; continue; }
       range[o] = x0; range[o + 1] = x1; range[o + 2] = y0; range[o + 3] = y1; range[o + 4] = z0; range[o + 5] = z1;
       for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
@@ -1241,7 +1474,9 @@ export const DestructorBeams3D = {
    */
   collideBodies(A, B, dt, doDamage) {
     const cfg = this.config;
-    const planar = !!cfg.planar;
+    // Para mieszana (ciało płaskie × ciało 3D): węzeł 3D kontra słup węzła płaskiego.
+    if (!A.planar !== !B.planar) return this._collideMixed(A, B, dt, doDamage);
+    const planar = !!A.planar;
     // Iterujemy po węzłach ciała o mniejszej powierzchni, szukając w hashu drugiego.
     let iter = A, holder = B;
     if (A.activeNodes > B.activeNodes) { iter = B; holder = A; }
@@ -1396,6 +1631,7 @@ export const DestructorBeams3D = {
     this.perf.contacts += count;
     this.wake(A, cfg.wakeHoldFrames);
     this.wake(B, cfg.wakeHoldFrames);
+    if (cfg.contactV2 && cfg.crushStrength > 0) return this._contactV2(A, B, dt, doDamage, count, hitX, hitY, hitZ, nX, nY, nZ, penetration);
 
     const rAx = hitX - A.pos.x, rAy = hitY - A.pos.y, rAz = hitZ - A.pos.z;
     const rBx = hitX - B.pos.x, rBy = hitY - B.pos.y, rBz = hitZ - B.pos.z;
@@ -1577,6 +1813,710 @@ export const DestructorBeams3D = {
     return count;
   },
 
+  // ------------------------------------------------------------------ KONTAKT v2 (cfg.contactV2)
+
+  _cwA: { x: 0, y: 0, z: 0 },
+  _cwB: { x: 0, y: 0, z: 0 },
+  _lnA: { x: 0, y: 0, z: 0 },
+  _lnB: { x: 0, y: 0, z: 0 },
+  _ldA: { x: 0, y: 0, z: 0 },
+  _ldB: { x: 0, y: 0, z: 0 },
+  _frontStamp: new Int32Array(2048),
+  _frontW: new Float64Array(2048),
+  _frontGen: 0,
+  _crushedA: new Int32Array(512),
+  _crushedB: new Int32Array(512),
+  _crushMomentum: 0,
+
+  /**
+   * Styk pary w prawie v2 (cfg.contactV2 — gra). Kontakty już zebrane (A._contacts / B._contacts / A._contactDepths),
+   * (sX, sY, sZ) — znormalizowana suma normalnych węzeł-węzeł (zapas, gdy geometria nie rozstrzyga). Zwraca count.
+   * Opis prawa przy createBeamConfig (contactV2). Bez alokacji (bufory systemu).
+   */
+  _contactV2(A, B, dt, doDamage, count, hitX, hitY, hitZ, sX, sY, sZ, penetration) {
+    const cfg = this.config;
+    // Para płaska (kadłuby i budowle w płaszczyźnie gry): normalna i front w płaszczyźnie. Para MIESZANA
+    // (_collideMixed — ciało płaskie × ciało 3D): normalna 3D, ciało płaskie odpowiada tylko w XY i obrotem wokół z
+    // (pA / pB), jego pionowy zgniot zdejmuje HP węzła (słup nie ma osi z).
+    const mixed = !A.planar !== !B.planar;
+    const planar = !mixed && !!A.planar;
+    const pA = mixed && !!A.planar, pB = mixed && !!B.planar;
+    const sa = A.nodeStore, sb = B.nodeStore;
+    const contactsA = A._contacts, contactsB = B._contacts, depths = A._contactDepths;
+    const mA = this._refreshRot(A), mB = this._refreshRot(B);
+    const cs = Math.max(A.cellSize, B.cellSize);
+    const pAx = A.pos.x, pAy = A.pos.y, pAz = A.pos.z;
+
+    // --- rozrzut styku → okno środków materiału ---
+    let spread2 = 0;
+    for (let k = 0; k < count; k++) {
+      const i = contactsA[k];
+      const lx = sa.x[i], ly = sa.y[i], lz = sa.z[i];
+      const ox = mA[0] * lx + mA[1] * ly + mA[2] * lz + pAx - hitX;
+      const oy = mA[3] * lx + mA[4] * ly + mA[5] * lz + pAy - hitY;
+      const oz = mA[6] * lx + mA[7] * ly + mA[8] * lz + pAz - hitZ;
+      spread2 += ox * ox + oy * oy + oz * oz;
+    }
+    const baseR = Math.max(1, cfg.contactNormalCells) * cs;
+    const R = Math.max(baseR, Math.min(3 * baseR, Math.sqrt(spread2 / count)));
+
+    // --- prędkość względna w punkcie styku ---
+    const rAx = hitX - pAx, rAy = hitY - pAy, rAz = hitZ - pAz;
+    const rBx = hitX - B.pos.x, rBy = hitY - B.pos.y, rBz = hitZ - B.pos.z;
+    const dvx = A.vel.x + (A.angVel.y * rAz - A.angVel.z * rAy) - (B.vel.x + (B.angVel.y * rBz - B.angVel.z * rBy));
+    const dvy = A.vel.y + (A.angVel.z * rAx - A.angVel.x * rAz) - (B.vel.y + (B.angVel.z * rBx - B.angVel.x * rBz));
+    const dvz = A.vel.z + (A.angVel.x * rAy - A.angVel.y * rAx) - (B.vel.z + (B.angVel.x * rBy - B.angVel.y * rBx));
+    const speed = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+
+    // --- normalna B → A z geometrii: środek materiału A minus środek materiału B w oknie wokół styku ---
+    // Para mieszana: suma normalnych WYJŚCIA z litego płata ciała płaskiego (_collideMixed — ważona głębokością) jest
+    // już geometryczna; okno środków materiału nie widzi słupa w pionie (bryła zanurzona poniżej korony dostawała
+    // normalną w bok i przelatywała przez płytę).
+    const cA = this._cwA, cB = this._cwB;
+    const nAw = mixed ? 1 : this._windowCentroid(A, hitX, hitY, hitZ, R, cA, pA);
+    const nBw = mixed ? 1 : this._windowCentroid(B, hitX, hitY, hitZ, R, cB, pB);
+    let nX = mixed ? sX : cA.x - cB.x, nY = mixed ? sY : cA.y - cB.y, nZ = mixed ? sZ : planar ? 0 : cA.z - cB.z;
+    let gl = Math.sqrt(nX * nX + nY * nY + nZ * nZ);
+    if (mixed) {
+      if (!(gl > 1e-9)) { nX = 0; nY = 0; nZ = 1; gl = 1; }
+    } else if (!(nAw > 0 && nBw > 0 && gl > 0.12 * R)) {
+      // Głęboko w materiale (środki prawie się pokrywają): kierunek ruchu względnego, gdy ciała się zbliżają,
+      // inaczej suma normalnych węzeł-węzeł.
+      const closing = dvx * (pAx - B.pos.x) + dvy * (pAy - B.pos.y) + dvz * (pAz - B.pos.z);
+      if (speed > 1e-6 && closing < 0) { nX = -dvx; nY = -dvy; nZ = planar ? 0 : -dvz; }
+      else { nX = sX; nY = sY; nZ = planar ? 0 : sZ; }
+      gl = Math.sqrt(nX * nX + nY * nY + nZ * nZ);
+      if (gl < 1e-9) { nX = 1; nY = 0; nZ = 0; gl = 1; }
+    }
+    nX /= gl; nY /= gl; nZ /= gl;
+    const velAlongNormal = dvx * nX + dvy * nY + dvz * nZ;
+    const approach = Math.max(0, -velAlongNormal);
+
+    const massA = Math.max(1, A.mass * A.rammingMassMult);
+    const massB = Math.max(1, B.mass * B.rammingMassMult);
+    const armorA = A.collisionArmor, armorB = B.collisionArmor;
+    const fixedA = A.static || A.anchored, fixedB = B.static || B.anchored;
+    const invMassA = fixedA ? 0 : 1 / massA;
+    const invMassB = fixedB ? 0 : 1 / massB;
+    let impulse = 0, crushing = false, closingAfter = 0, denomN = 0;
+
+    // --- impuls: sprężysty do granicy plastyczności frontu, powyżej — granica i zgniot nadmiaru ---
+    if (velAlongNormal < 0 && mixed) {
+      const r = this._mixedImpulse(A, B, pA, pB, invMassA, invMassB, dt, doDamage, count, hitX, hitY, hitZ,
+        rAx, rAy, rAz, rBx, rBy, rBz, nX, nY, nZ, dvx, dvy, dvz, velAlongNormal, mA, cs);
+      impulse = r.impulse; crushing = r.crushing; closingAfter = r.closingAfter; denomN = r.denom;
+    } else if (velAlongNormal < 0) {
+      const iaN = applyInvInertia(A, rAy * nZ - rAz * nY, rAz * nX - rAx * nZ, rAx * nY - rAy * nX, this._s4);
+      const tqAx = iaN.y * rAz - iaN.z * rAy, tqAy = iaN.z * rAx - iaN.x * rAz, tqAz = iaN.x * rAy - iaN.y * rAx;
+      const ibN = applyInvInertia(B, rBy * nZ - rBz * nY, rBz * nX - rBx * nZ, rBx * nY - rBy * nX, this._s5);
+      const tqBx = ibN.y * rBz - ibN.z * rBy, tqBy = ibN.z * rBx - ibN.x * rBz, tqBz = ibN.x * rBy - ibN.y * rBx;
+      const denom = invMassA + invMassB + (tqAx * nX + tqAy * nY + tqAz * nZ) + (tqBx * nX + tqBy * nY + tqBz * nZ);
+      if (Number.isFinite(denom) && denom > 1e-9) {
+        denomN = denom;
+        const jReq = (-(1 + cfg.restitution) * velAlongNormal) / denom;
+        const front = this._contactFront(A, B, count, hitX, hitY, hitZ, nX, nY, nZ, mA, planar, cs);
+        const light = fixedA ? B : fixedB ? A : (A.mass <= B.mass ? A : B);
+        const nodeMass = light.mass / Math.max(1, light.activeNodes);
+        const armor = (A.static || B.static) ? (fixedA ? armorB : armorA) : Math.min(armorA, armorB);
+        const jYield = cfg.crushStrength * armor * nodeMass / Math.max(1e-6, light.cellSize) * front * dt;
+        let j;
+        // 3D × 3D: wolne zbliżanie (ciężar, osiadanie) — sprężyście (crushRestSpeed3D); płasko — bez progu jak dawniej
+        if (jReq <= jYield || (!planar && approach < cfg.crushRestSpeed3D)) j = jReq;
+        else {
+          crushing = true;
+          // Druga iteracja kontaktów nie wytraca drugi raz granicy (zgniot potrzebuje drogi hamowania).
+          j = doDamage ? jYield : 0;
+          closingAfter = Math.max(0, -(velAlongNormal + j * denom));
+        }
+        impulse = j;
+        if (j > 0) {
+          this._applyImpulse(A, rAx, rAy, rAz, nX * j, nY * j, nZ * j, invMassA);
+          this._applyImpulse(B, rBx, rBy, rBz, -nX * j, -nY * j, -nZ * j, invMassB);
+          let tx = dvx - nX * velAlongNormal, ty = dvy - nY * velAlongNormal, tz = dvz - nZ * velAlongNormal;
+          const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+          if (tLen > 1e-6) {
+            tx /= tLen; ty /= tLen; tz /= tLen;
+            let jt = -tLen / Math.max(1e-9, invMassA + invMassB);
+            const maxF = j * this._pairFriction(A, B);
+            if (jt < -maxF) jt = -maxF;
+            this._applyImpulse(A, rAx, rAy, rAz, tx * jt, ty * jt, tz * jt, invMassA);
+            this._applyImpulse(B, rBx, rBy, rBz, -tx * jt, -ty * jt, -tz * jt, invMassB);
+          }
+        }
+      }
+    }
+
+    // --- zgniot nadmiaru ---
+    if (doDamage && crushing) {
+      const bias = cfg.crushMassBias;
+      const total = massA + massB;
+      const anchoredPair = A.anchored || B.anchored;
+      const weightA = A.static ? 0 : (B.static || anchoredPair ? 1 : Math.pow(massB / total, bias)) / (armorA * armorA);
+      const weightB = B.static ? 0 : (A.static || anchoredPair ? 1 : Math.pow(massA / total, bias)) / (armorB * armorB);
+      const weightSum = weightA + weightB || 1;
+      const shareA = weightA / weightSum, shareB = weightB / weightSum;
+      const stamp = this._nextContactStamp();
+      const lnA = matVecT(mA, nX, nY, nZ, this._lnA);
+      const lnB = matVecT(mB, -nX, -nY, -nZ, this._lnB);
+      // Para mieszana: ciało płaskie gniecie się tylko w swojej płaszczyźnie (z węzła wraca do oz), pionowa część
+      // zgniotu (|n_z|) idzie w HP słupa (_crushColumn).
+      let vertA = 0, vertB = 0;
+      if (pA) { vertA = Math.abs(lnA.z); lnA.z = 0; }
+      if (pB) { vertB = Math.abs(lnB.z); lnB.z = 0; }
+      const maxD = Math.max(0, cfg.crushMaxCells) * cs;
+      const local = !!cfg.localSolver;
+      const level = cfg.heatGain > 0 ? Math.min(1, approach / Math.max(1e-6, cfg.heatSpeed)) * cfg.heatGain : 0;
+      const heatNow = level > 0.02 ? this.clock() : 0;
+      const heat = level * cfg.heatContact;
+      if (heatNow > 0) {
+        if (level >= (A._woundHeat || 0) || heatNow - (A._woundHeatAt || 0) > cfg.heatWoundWindow) { A._woundHeat = level; A._woundHeatAt = heatNow; }
+        if (level >= (B._woundHeat || 0) || heatNow - (B._woundHeatAt || 0) > cfg.heatWoundWindow) { B._woundHeat = level; B._woundHeatAt = heatNow; }
+      }
+      if (this._crushedA.length < count) { this._crushedA = new Int32Array(count * 2); this._crushedB = new Int32Array(count * 2); }
+      const listA = this._crushedA, listB = this._crushedB;
+      let cntA = 0, cntB = 0, pushA = 0, pushB = 0;
+      const ldA = this._ldA, ldB = this._ldB;
+      for (let k = 0; k < count; k++) {
+        const na = contactsA[k], nb = contactsB[k];
+        // co najmniej droga zbliżania w kroku (taran przy 50 j./krok przeskakuje węzły głębiej niż promień styku)
+        const depth = Math.min(maxD, Math.max(depths[k], approach * dt * cfg.crushTravelMul));
+        // Wyboczenie od ŚRODKA STYKU (w poprzek normalnej), nie od początku ciała.
+        const lx = sa.x[na], ly = sa.y[na], lz = sa.z[na];
+        const ox = mA[0] * lx + mA[1] * ly + mA[2] * lz + pAx - hitX;
+        const oy = mA[3] * lx + mA[4] * ly + mA[5] * lz + pAy - hitY;
+        const oz = planar ? 0 : mA[6] * lx + mA[7] * ly + mA[8] * lz + pAz - hitZ;
+        const along = ox * nX + oy * nY + oz * nZ;
+        let qx = ox - along * nX, qy = oy - along * nY, qz = oz - along * nZ;
+        const ql = Math.sqrt(qx * qx + qy * qy + qz * qz);
+        const buckle = cfg.crushBuckling * ql / (ql + cs);
+        if (ql > 1e-6) { qx /= ql; qy /= ql; qz /= ql; }
+        if (shareA > 0 && sa.active[na] && (sa.invMass[na] > 0 || A.anchored)) {
+          matVecT(mA, qx, qy, qz, ldA);
+          if (pA) ldA.z = 0;
+          if (this._crushNodeV2(A, na, lnA, ldA, buckle, depth * shareA, closingAfter * shareA, stamp, approach * dt * shareA)) {
+            pushA += this._crushMomentum;
+            listA[cntA++] = na;
+            if (heatNow > 0) this._heatCrushed(A, na, heat, heatNow, local);
+          }
+          if (vertA > 0.05) this._crushColumn(A, na, depth * shareA * vertA);
+        }
+        if (shareB > 0 && sb.active[nb] && (sb.invMass[nb] > 0 || B.anchored)) {
+          matVecT(mB, qx, qy, qz, ldB);
+          if (pB) ldB.z = 0;
+          if (this._crushNodeV2(B, nb, lnB, ldB, buckle, depth * shareB, closingAfter * shareB, stamp, approach * dt * shareB)) {
+            pushB += this._crushMomentum;
+            listB[cntB++] = nb;
+            if (heatNow > 0) this._heatCrushed(B, nb, heat, heatNow, local);
+          }
+          if (vertB > 0.05) this._crushColumn(B, nb, depth * shareB * vertB);
+        }
+      }
+      // Zachowanie pędu: materiał pchnięty przez front (węzeł dostał prędkość frontu) oddaje reakcję drugiemu ciału —
+      // węzły B popchnięte wzdłuż −n hamują A (+n), węzły A wzdłuż +n hamują B. Materiał trzymany przez belki
+      // i kotwice płaci co krok (opór konstrukcji), oderwany — raz. Nie więcej niż zatrzymanie zbliżania.
+      const push = pushA + pushB;
+      if (push > 0) {
+        const jPush = Math.min(push, closingAfter / Math.max(1e-12, denomN));
+        const fB = pushB / push;
+        impulse += jPush;
+        if (mixed) {
+          this._applyImpulseSide(A, pA, rAx, rAy, rAz, nX * jPush * fB, nY * jPush * fB, nZ * jPush * fB, invMassA);
+          this._applyImpulseSide(B, pB, rBx, rBy, rBz, -nX * jPush * (1 - fB), -nY * jPush * (1 - fB), -nZ * jPush * (1 - fB), invMassB);
+        } else {
+          this._applyImpulse(A, rAx, rAy, rAz, nX * jPush * fB, nY * jPush * fB, nZ * jPush * fB, invMassA);
+          this._applyImpulse(B, rBx, rBy, rBz, -nX * jPush * (1 - fB), -nY * jPush * (1 - fB), -nZ * jPush * (1 - fB), invMassB);
+        }
+      }
+      // Belki przeciążone zgniotem pękają w tym kroku — render nie widzi gumy przed zerwaniem.
+      if (cntA > 0) this._breakOverloaded(A, listA, cntA);
+      if (cntB > 0) this._breakOverloaded(B, listB, cntB);
+      A.meshDirty = true;
+      B.meshDirty = true;
+      if (!A.static) A._hashTick = -1;
+      if (!B.static) B._hashTick = -1;
+    }
+
+    // --- separacja ciał sztywnych (przy zgniocie część penetracji rozchodzi się w węzłach) ---
+    // Tylko para, która się zbliża albo spoczywa: ciała już rozchodzące się wzdłuż normalnej rozdzielą się same,
+    // a korekta wzdłuż geometrycznej normalnej boków wyłomu wciągała okręt w głąb budowli (przy 120 Hz dwa razy
+    // więcej korekt na sekundę — Atlas przy 1500 j/s przeskakiwał pierścień).
+    const slop = cfg.separationSlop;
+    if (mixed) {
+      // ciało płaskie rozchodzi się tylko w XY (jego z stoi): ruchliwość wzdłuż normalnej × (nx² + ny²)
+      const h = nX * nX + nY * nY;
+      const wA = invMassA * (pA ? h : 1), wB = invMassB * (pB ? h : 1);
+      if (penetration > slop && wA + wB > 0 && velAlongNormal < cfg.contactRestSpeed) {
+        const transfer = crushing ? Math.max(0, Math.min(1, cfg.crushTransfer)) : 0;
+        const separation = 1 - Math.pow(1 - cfg.separationPercent, dt * 60);
+        const corr = (penetration - slop) / (wA + wB) * separation * (1 - transfer);
+        A.pos.x += nX * corr * invMassA; A.pos.y += nY * corr * invMassA; if (!pA) A.pos.z += nZ * corr * invMassA;
+        B.pos.x -= nX * corr * invMassB; B.pos.y -= nY * corr * invMassB; if (!pB) B.pos.z -= nZ * corr * invMassB;
+      }
+    } else if (penetration > slop && (invMassA + invMassB) > 0 && velAlongNormal < cfg.contactRestSpeed) {
+      const transfer = crushing ? Math.max(0, Math.min(1, cfg.crushTransfer)) : 0;
+      const separation = 1 - Math.pow(1 - cfg.separationPercent, dt * 60);
+      const corr = (penetration - slop) / (invMassA + invMassB) * separation * (1 - transfer);
+      A.pos.x += nX * corr * invMassA; A.pos.y += nY * corr * invMassA; A.pos.z += nZ * corr * invMassA;
+      B.pos.x -= nX * corr * invMassB; B.pos.y -= nY * corr * invMassB; B.pos.z -= nZ * corr * invMassB;
+    }
+
+    if (this.onContact !== null) {
+      const info = this._contactInfo;
+      info.count = count;
+      info.x = hitX; info.y = hitY; info.z = hitZ;
+      info.nx = nX; info.ny = nY; info.nz = nZ;
+      info.relSpeed = speed;
+      info.approach = approach;
+      info.slide = Math.sqrt(Math.max(0, speed * speed - velAlongNormal * velAlongNormal));
+      info.penetration = penetration;
+      info.crushing = crushing;
+      info.impulse = impulse;
+      info.doDamage = doDamage;
+      this.onContact(A, B, info);
+    }
+    return count;
+  },
+
+  // ------------------------------------------------------------------ PARY MIESZANE (płaskie × 3D)
+
+  _mixRes: { impulse: 0, crushing: false, closingAfter: 0, denom: 0 },
+
+  // Tarcie styku pary (prawo v2): ciała bez własnego (null — kadłuby, budowle płaskie) = cfg.friction bit w bit; para
+  // z bryłą 3D o własnym tarciu (gruz szoruje po konstrukcji) — większe z dwóch.
+  _pairFriction(A, B) {
+    const fa = A.friction, fb = B.friction, f = this.config.friction;
+    if ((fa === null || fa === undefined) && (fb === null || fb === undefined)) return f;
+    return Math.max(fa ?? f, fb ?? f);
+  },
+
+  // Odwrotność momentu bezwładności ciała płaskiego wokół osi z świata (obrót płaski — oś z ciała = oś z świata).
+  _invIzz(body) {
+    if (body.static || body.anchored) return 0;
+    return body.invInertiaLocal[8] / Math.max(1e-6, body.rammingMassMult);
+  },
+
+  // Ruchliwość strony pary wzdłuż normalnej n w punkcie r (jak człon mianownika impulsu): ciało płaskie w parze
+  // mieszanej — tylko XY (× (nx² + ny²) = h) i obrót wokół z; ciało 3D — pełny tensor.
+  _sideMobility(body, planarSide, invMass, rx, ry, rz, nX, nY, nZ, h, s) {
+    if (planarSide) {
+      const tz = rx * nY - ry * nX;
+      return invMass * h + this._invIzz(body) * tz * tz;
+    }
+    const ia = applyInvInertia(body, ry * nZ - rz * nY, rz * nX - rx * nZ, rx * nY - ry * nX, s);
+    return invMass + (ia.y * rz - ia.z * ry) * nX + (ia.z * rx - ia.x * rz) * nY + (ia.x * ry - ia.y * rx) * nZ;
+  },
+
+  // Impuls strony pary: ciało płaskie w parze mieszanej dostaje tylko składowe XY i obrót wokół z.
+  _applyImpulseSide(body, planarSide, rx, ry, rz, jx, jy, jz, invMass) {
+    if (!planarSide) { this._applyImpulse(body, rx, ry, rz, jx, jy, jz, invMass); return; }
+    if (invMass <= 0) return;
+    body.vel.x += jx * invMass;
+    body.vel.y += jy * invMass;
+    body.angVel.z += this._invIzz(body) * (rx * jy - ry * jx);
+  },
+
+  /**
+   * Impuls styku pary mieszanej (prawo v2: sprężysty do granicy plastyczności frontu, powyżej — granica i zgniot
+   * nadmiaru) z ruchliwością ciała płaskiego ograniczoną do jego płaszczyzny. Wynik we wspólnym _mixRes.
+   */
+  _mixedImpulse(A, B, pA, pB, invMassA, invMassB, dt, doDamage, count, hitX, hitY, hitZ,
+    rAx, rAy, rAz, rBx, rBy, rBz, nX, nY, nZ, dvx, dvy, dvz, velAlongNormal, mA, cs) {
+    const cfg = this.config, res = this._mixRes;
+    res.impulse = 0; res.crushing = false; res.closingAfter = 0; res.denom = 0;
+    const h = nX * nX + nY * nY;
+    const denom = this._sideMobility(A, pA, invMassA, rAx, rAy, rAz, nX, nY, nZ, h, this._s4) +
+      this._sideMobility(B, pB, invMassB, rBx, rBy, rBz, nX, nY, nZ, h, this._s5);
+    if (!(Number.isFinite(denom) && denom > 1e-9)) return res;
+    res.denom = denom;
+    const jReq = (-(1 + cfg.restitution) * velAlongNormal) / denom;
+    const front = this._contactFront(A, B, count, hitX, hitY, hitZ, nX, nY, nZ, mA, false, cs);
+    const fixedA = A.static || A.anchored, fixedB = B.static || B.anchored;
+    const light = fixedA ? B : fixedB ? A : (A.mass <= B.mass ? A : B);
+    const nodeMass = light.mass / Math.max(1, light.activeNodes);
+    const armor = (A.static || B.static) ? (fixedA ? B.collisionArmor : A.collisionArmor) : Math.min(A.collisionArmor, B.collisionArmor);
+    const jYield = cfg.crushStrength * armor * nodeMass / Math.max(1e-6, light.cellSize) * front * dt;
+    let j;
+    // wolne zbliżanie (ciężar bryły na koronie ściany, osiadanie) — sprężyście, bez zgniotu (crushRestSpeed3D)
+    if (jReq <= jYield || -velAlongNormal < cfg.crushRestSpeed3D) j = jReq;
+    else {
+      res.crushing = true;
+      j = doDamage ? jYield : 0;
+      res.closingAfter = Math.max(0, -(velAlongNormal + j * denom));
+    }
+    res.impulse = j;
+    if (j > 0) {
+      this._applyImpulseSide(A, pA, rAx, rAy, rAz, nX * j, nY * j, nZ * j, invMassA);
+      this._applyImpulseSide(B, pB, rBx, rBy, rBz, -nX * j, -nY * j, -nZ * j, invMassB);
+      let tx = dvx - nX * velAlongNormal, ty = dvy - nY * velAlongNormal, tz = dvz - nZ * velAlongNormal;
+      const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+      if (tLen > 1e-6) {
+        tx /= tLen; ty /= tLen; tz /= tLen;
+        const ht = tx * tx + ty * ty;
+        const wt = invMassA * (pA ? ht : 1) + invMassB * (pB ? ht : 1);
+        let jt = -tLen / Math.max(1e-9, wt);
+        const maxF = j * this._pairFriction(A, B);
+        if (jt < -maxF) jt = -maxF;
+        this._applyImpulseSide(A, pA, rAx, rAy, rAz, tx * jt, ty * jt, tz * jt, invMassA);
+        this._applyImpulseSide(B, pB, rBx, rBy, rBz, -tx * jt, -ty * jt, -tz * jt, invMassB);
+      }
+    }
+    return res;
+  },
+
+  /**
+   * Pionowy zgniot słupa węzła ciała płaskiego (para mieszana): o `depth` [j.] — HP węzła maleje (columnCrushCells
+   * komórek = pełne HP); bez HP węzeł ginie (cała kolumna — ciało płaskie nie ma wysokości per węzeł).
+   */
+  _crushColumn(body, i, depth) {
+    if (!(depth > 0)) return;
+    const s = body.nodeStore;
+    if (!s.active[i]) return;
+    const cells = Math.max(0.1, Number(this.config.columnCrushCells) || 2);
+    s.hp[i] -= s.maxHp[i] * depth / (cells * body.cellSize);
+    if (s.hp[i] > 0) return;
+    this.destroyNode(body, i);
+    if (!body.noSplit && !this.splitQueue.includes(body)) this.splitQueue.push(body);
+  },
+
+  // Obrysy pary mieszanej: ciało płaskie sięga w z na swój słup (colZ0..colZ1).
+  _overlapMixed(A, B, padding) {
+    const a = worldBeamBounds(A, this._tick), b = worldBeamBounds(B, this._tick);
+    let acz = A.pos.z + a[2], aez = a[5], bcz = B.pos.z + b[2], bez = b[5];
+    if (A.planar) { acz += ((A.colZ0 || 0) + (A.colZ1 || 0)) * 0.5; aez += ((A.colZ1 || 0) - (A.colZ0 || 0)) * 0.5; }
+    if (B.planar) { bcz += ((B.colZ0 || 0) + (B.colZ1 || 0)) * 0.5; bez += ((B.colZ1 || 0) - (B.colZ0 || 0)) * 0.5; }
+    return Math.abs(A.pos.x - B.pos.x + a[0] - b[0]) <= a[3] + b[3] + padding &&
+      Math.abs(A.pos.y - B.pos.y + a[1] - b[1]) <= a[4] + b[4] + padding &&
+      Math.abs(acz - bcz) <= aez + bez + padding;
+  },
+
+  /**
+   * Styk pary MIESZANEJ: węzły ciała 3D (kule promienia styku) kontra węzły ciała płaskiego jako pionowe KAPSUŁY
+   * (słup colZ0..colZ1 nad węzłem). Iteruje ciało 3D (kandydaci w obrysie słupów), szuka najbliższego słupa w siatce
+   * węzłów ciała płaskiego (warstwa jego węzłów — tylko XY). Normalna węzeł-węzeł = od osi kapsuły do węzła 3D (spód
+   * spadającej wieży na koronie ściany — w górę, bok — w poprzek). Dalej prawo v2 (_contactV2 w trybie mieszanym).
+   * Zwraca liczbę kontaktów.
+   */
+  _collideMixed(A, B, dt, doDamage) {
+    const cfg = this.config;
+    const P = A.planar ? A : B, T = A.planar ? B : A;
+    const swapped = T !== A;
+    const mT = this._refreshRot(T), mP = this._refreshRot(P);
+    const grid = this._refreshHash(P);
+    if (!(grid.minX <= grid.maxX)) return 0;
+    const gHeads = grid.heads, gMap = grid.map;
+    const gi0 = grid.i0, gj0 = grid.j0, gk0 = grid.k0, gnx = grid.nx, gny = grid.ny, gnz = grid.nz;
+    const cs = P.cellSize;
+    const contactDist = (A.cellSize + B.cellSize) * (cfg.nodeRadius / cfg.cellSize);
+    const cd2 = contactDist * contactDist;
+    const colZ0 = P.colZ0 || 0, colZ1 = P.colZ1 || 0;
+    const zLo = grid.minZ + colZ0, zHi = grid.maxZ + colZ1;
+    const k0 = Math.floor(grid.minZ / cs), k1 = Math.floor(grid.maxZ / cs);
+    const colR = Math.max(Math.abs(colZ0), Math.abs(colZ1));
+    const reach = Math.sqrt(P.radius * P.radius + colR * colR) + cs * 2;
+    const total = T.nodeStore.count;
+    const start = T._contactCursor % total;
+    const candidates = this._contactCandidates(T, P, mT, mP, grid, contactDist, reach, start, total, zLo, zHi);
+    const list = this._ncList;
+    this.perf.narrowCandidates += candidates;
+    const ts = T.nodeStore, ps = P.nodeStore;
+    const tx = ts.x, ty = ts.y, tz = ts.z, tActive = ts.active;
+    const hx = ps.x, hy = ps.y, hz = ps.z, hNext = ps.hashNext;
+    const sa = A.nodeStore, sb = B.nodeStore;
+    const t00 = mT[0], t01 = mT[1], t02 = mT[2], t10 = mT[3], t11 = mT[4], t12 = mT[5], t20 = mT[6], t21 = mT[7], t22 = mT[8];
+    const h00 = mP[0], h01 = mP[1], h02 = mP[2], h10 = mP[3], h11 = mP[4], h12 = mP[5], h20 = mP[6], h21 = mP[7], h22 = mP[8];
+    const pTx = T.pos.x, pTy = T.pos.y, pTz = T.pos.z, pPx = P.pos.x, pPy = P.pos.y, pPz = P.pos.z;
+    let count = 0, lookups = 0;
+    let hitX = 0, hitY = 0, hitZ = 0, nX = 0, nY = 0, nZ = 0, penetration = 0;
+    const massStamp = this._nextContactStamp();
+    const contactsA = A._contacts, contactsB = B._contacts, depths = A._contactDepths;
+    const maxContacts = Math.max(8, cfg.maxContacts | 0);
+    for (let c = 0; c < candidates; c++) {
+      const ni = list[c];
+      if (!tActive[ni]) continue;
+      const lx = tx[ni], ly = ty[ni], lz = tz[ni];
+      const wTx = t00 * lx + t01 * ly + t02 * lz + pTx;
+      const wTy = t10 * lx + t11 * ly + t12 * lz + pTy;
+      const wTz = t20 * lx + t21 * ly + t22 * lz + pTz;
+      const dx = wTx - pPx, dy = wTy - pPy, dz = wTz - pPz;
+      const lHx = h00 * dx + h10 * dy + h20 * dz;
+      const lHy = h01 * dx + h11 * dy + h21 * dz;
+      const lHz = h02 * dx + h12 * dy + h22 * dz;
+      if (lHz < zLo - contactDist || lHz > zHi + contactDist) continue;
+      const ez = lHz < zLo ? zLo - lHz : lHz > zHi ? lHz - zHi : 0;
+      const ez2 = ez * ez;
+      if (ez2 >= cd2) continue;
+      const i0 = Math.floor((lHx - contactDist) / cs), i1 = Math.floor((lHx + contactDist) / cs);
+      const j0 = Math.floor((lHy - contactDist) / cs), j1 = Math.floor((lHy + contactDist) / cs);
+      let found = -1, best = cd2;
+      for (let k = k0; k <= k1; k++) {
+        for (let j = j0; j <= j1; j++) {
+          const ey = Math.max(0, j * cs - lHy, lHy - (j + 1) * cs);
+          const yz2 = ez2 + ey * ey;
+          if (yz2 >= best) continue;
+          for (let i = i0; i <= i1; i++) {
+            const ex = Math.max(0, i * cs - lHx, lHx - (i + 1) * cs);
+            if (yz2 + ex * ex >= best) continue;
+            lookups++;
+            let bucket;
+            if (gMap) {
+              const head = gMap.get(hashKey(i, j, k));
+              if (head === undefined) continue;
+              bucket = head;
+            } else {
+              const ci = i - gi0, cj = j - gj0, ck = k - gk0;
+              if (ci < 0 || cj < 0 || ck < 0 || ci >= gnx || cj >= gny || ck >= gnz) continue;
+              bucket = gHeads[ci + gnx * (cj + gny * ck)];
+            }
+            for (let h = bucket; h >= 0; h = hNext[h]) {
+              const ddx = lHx - hx[h], ddy = lHy - hy[h];
+              const d2 = ddx * ddx + ddy * ddy + ez2;
+              if (d2 < best) { best = d2; found = h; }
+            }
+          }
+        }
+      }
+      if (found < 0) continue;
+      // Ciało płaskie to LITY płat (suma słupów), nie osobne kapsuły: węzeł 3D nad / pod słupem — kapsuła (normalna od
+      // osi); w wysokości słupu — wyjście najkrótsze z płata: przy węźle brzegu rastra (surface) w bok albo pionowo,
+      // przy węźle wnętrza tylko pionowo (w bok czeka sąsiedni słup), pod prąd ruchu względnego (spadająca bryła — w górę).
+      const zLoN = hz[found] + colZ0, zHiN = hz[found] + colZ1;
+      const nlx = lHx - hx[found], nly = lHy - hy[found];
+      let pen, lnx, lny, lnz, fz;
+      if (lHz > zHiN || lHz < zLoN) {
+        fz = lHz > zHiN ? zHiN : zLoN;
+        const nlz = lHz - fz;
+        const dist = Math.sqrt(nlx * nlx + nly * nly + nlz * nlz);
+        pen = contactDist - dist;
+        if (pen <= 0) continue;
+        const inv = dist > 1e-9 ? 1 / dist : 0;
+        lnx = nlx * inv; lny = nly * inv; lnz = dist > 1e-9 ? nlz * inv : (lHz > zHiN ? 1 : -1);
+      } else {
+        fz = lHz;
+        const dXY = Math.sqrt(nlx * nlx + nly * nly);
+        const ph = contactDist - dXY;
+        // ruch względny w osi z słupa (ciało płaskie nie ma pionu): bryła opada → wyjście w górę
+        const vz = h02 * T.vel.x + h12 * T.vel.y + h22 * T.vel.z;
+        const up = vz <= 0;
+        const pv = up ? zHiN - lHz + contactDist : lHz - zLoN + contactDist;
+        if (ps.surface[found] && ph > 0 && ph < pv && dXY > 1e-9) {
+          pen = ph; lnx = nlx / dXY; lny = nly / dXY; lnz = 0;
+        } else {
+          // Głębokość wyjścia pionowego przycięta do promienia styku: węzeł głęboko w słupie (bryła wgniotła się w ścianę
+          // albo przez nią przeszła) gniecie słup (HP), a nie katapultuje bryły korektą położenia o wysokość ściany
+          // (pomiar: wieża po pęknięciu przegubu podskakiwała o ~550 j.).
+          pen = pv < contactDist ? pv : contactDist; lnx = 0; lny = 0; lnz = up ? 1 : -1;
+          fz = up ? zHiN : zLoN;
+        }
+      }
+      const wPx = h00 * hx[found] + h01 * hy[found] + h02 * fz + pPx;
+      const wPy = h10 * hx[found] + h11 * hy[found] + h12 * fz + pPy;
+      const wPz = h20 * hx[found] + h21 * hy[found] + h22 * fz + pPz;
+      hitX += (wTx + wPx) * 0.5; hitY += (wTy + wPy) * 0.5; hitZ += (wTz + wPz) * 0.5;
+      // normalna wyjścia (ciało płaskie → 3D) w świecie, ważona głębokością; suma w konwencji B → A
+      const cnx = (h00 * lnx + h01 * lny + h02 * lnz) * pen;
+      const cny = (h10 * lnx + h11 * lny + h12 * lnz) * pen;
+      const cnz = (h20 * lnx + h21 * lny + h22 * lnz) * pen;
+      nX += swapped ? -cnx : cnx; nY += swapped ? -cny : cny; nZ += swapped ? -cnz : cnz;
+      if (pen > penetration) penetration = pen;
+      const ca = swapped ? found : ni, cb = swapped ? ni : found;
+      contactsA[count] = ca;
+      contactsB[count] = cb;
+      depths[count] = pen;
+      if (sa.massStamp[ca] !== massStamp) sa.massStamp[ca] = massStamp;
+      if (sb.massStamp[cb] !== massStamp) sb.massStamp[cb] = massStamp;
+      count++;
+      if (count >= maxContacts) {
+        if (doDamage) T._contactCursor = ni + 1;
+        break;
+      }
+    }
+    this.perf.hashLookups += lookups;
+    if (count === 0) return 0;
+    this._touchGeometry(A);
+    this._touchGeometry(B);
+    hitX /= count; hitY /= count; hitZ /= count;
+    let nLenSq = nX * nX + nY * nY + nZ * nZ;
+    if (nLenSq < 1e-12) {
+      nX = A.pos.x - B.pos.x; nY = A.pos.y - B.pos.y; nZ = A.pos.z - B.pos.z;
+      nLenSq = nX * nX + nY * nY + nZ * nZ;
+      if (nLenSq < 1e-12) { nX = 0; nY = 0; nZ = 1; nLenSq = 1; }
+    }
+    const invN = 1 / Math.sqrt(nLenSq);
+    nX *= invN; nY *= invN; nZ *= invN;
+    this.perf.contacts += count;
+    this.wake(A, cfg.wakeHoldFrames);
+    this.wake(B, cfg.wakeHoldFrames);
+    return this._contactV2(A, B, dt, doDamage, count, hitX, hitY, hitZ, nX, nY, nZ, penetration);
+  },
+
+  /**
+   * Środek żywych węzłów ciała w kole o promieniu R wokół punktu świata (wx, wy, wz) — wynik w świecie w `out`.
+   * Ciało płaskie: okno walcowe (z węzłów pominięte); `column` (para mieszana) — z wyniku = punkt styku przycięty do
+   * słupa ciała (materiał ściany sięga od colZ0 do colZ1). Zwraca liczbę węzłów (0 = brak materiału w oknie).
+   */
+  _windowCentroid(body, wx, wy, wz, R, out, column = false) {
+    const grid = this._refreshHash(body);
+    const s = body.nodeStore, hx = s.x, hy = s.y, hz = s.z, next = s.hashNext;
+    const m = this._refreshRot(body);
+    const dx = wx - body.pos.x, dy = wy - body.pos.y, dz = wz - body.pos.z;
+    const lx = m[0] * dx + m[3] * dy + m[6] * dz;
+    const ly = m[1] * dx + m[4] * dy + m[7] * dz;
+    const lz = m[2] * dx + m[5] * dy + m[8] * dz;
+    const cs = body.cellSize, R2 = R * R;
+    const planar = !!body.planar;
+    const i0 = Math.floor((lx - R) / cs), i1 = Math.floor((lx + R) / cs);
+    const j0 = Math.floor((ly - R) / cs), j1 = Math.floor((ly + R) / cs);
+    // ciało płaskie: warstwa jego węzłów (słup w parze mieszanej — punkt styku bywa wysoko nad węzłami)
+    const k0 = planar ? (column ? Math.floor(grid.minZ / cs) : Math.floor(lz / cs + 0.5)) : Math.floor((lz - R) / cs);
+    const k1 = planar ? (column ? Math.floor(grid.maxZ / cs) : k0) : Math.floor((lz + R) / cs);
+    let sx = 0, sy = 0, sz = 0, n = 0;
+    const gHeads = grid.heads, gMap = grid.map;
+    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      let h;
+      if (gMap) {
+        const head = gMap.get(hashKey(i, j, k));
+        if (head === undefined) continue;
+        h = head;
+      } else {
+        const ci = i - grid.i0, cj = j - grid.j0, ck = k - grid.k0;
+        if (ci < 0 || cj < 0 || ck < 0 || ci >= grid.nx || cj >= grid.ny || ck >= grid.nz) continue;
+        h = gHeads[ci + grid.nx * (cj + grid.ny * ck)];
+      }
+      for (; h >= 0; h = next[h]) {
+        const ex = hx[h] - lx, ey = hy[h] - ly, ez = planar ? 0 : hz[h] - lz;
+        if (ex * ex + ey * ey + ez * ez > R2) continue;
+        sx += hx[h]; sy += hy[h]; sz += hz[h]; n++;
+      }
+    }
+    if (n === 0) { out.x = wx; out.y = wy; out.z = wz; return 0; }
+    sx /= n; sy /= n; sz /= n;
+    out.x = m[0] * sx + m[1] * sy + m[2] * sz + body.pos.x;
+    out.y = m[3] * sx + m[4] * sy + m[5] * sz + body.pos.y;
+    out.z = m[6] * sx + m[7] * sy + m[8] * sz + body.pos.z;
+    if (column && planar) {
+      // materiał słupa sięga od colZ0 do colZ1 nad węzłami — środek okna na wysokości styku, w granicach słupa
+      const zLo = body.pos.z + grid.minZ + (body.colZ0 || 0), zHi = body.pos.z + grid.maxZ + (body.colZ1 || 0);
+      out.z = wz < zLo ? zLo : wz > zHi ? zHi : wz;
+    }
+    return n;
+  },
+
+  /**
+   * Szerokość frontu styku [komórki]: kosze komórki w poprzek normalnej (płasko — jedna oś), w każdym koszu
+   * największa waga kontaktu (kotwica ciała zakotwiczonego — pinYieldMul, reszta 1). Węzły zanurzone za frontem
+   * (ten sam kosz) nie dokładają oporu. Poza płaszczyzną — liczba kontaktów (v2 jest prawem gry płaskiej).
+   */
+  _contactFront(A, B, count, hitX, hitY, hitZ, nX, nY, nZ, mA, planar, cs) {
+    const cfg = this.config;
+    const sa = A.nodeStore, sb = B.nodeStore, contactsA = A._contacts, contactsB = B._contacts;
+    const pinMul = Math.max(1, Number(cfg.pinYieldMul) || 1);
+    const pinA = A.anchored, pinB = B.anchored;
+    if (!planar) {
+      let w = 0;
+      for (let k = 0; k < count; k++) {
+        w += (pinA && sa.invMass[contactsA[k]] === 0) || (pinB && sb.invMass[contactsB[k]] === 0) ? pinMul : 1;
+      }
+      return w;
+    }
+    let gen = (this._frontGen + 1) | 0;
+    if (gen <= 0) { this._frontStamp.fill(0); gen = 1; }
+    this._frontGen = gen;
+    const stampArr = this._frontStamp, wArr = this._frontW, half = stampArr.length >> 1;
+    const tx = -nY, ty = nX;
+    const pAx = A.pos.x, pAy = A.pos.y;
+    let total = 0;
+    for (let k = 0; k < count; k++) {
+      const i = contactsA[k];
+      const lx = sa.x[i], ly = sa.y[i], lz = sa.z[i];
+      const ox = mA[0] * lx + mA[1] * ly + mA[2] * lz + pAx - hitX;
+      const oy = mA[3] * lx + mA[4] * ly + mA[5] * lz + pAy - hitY;
+      let bin = Math.floor((ox * tx + oy * ty) / cs) + half;
+      if (bin < 0) bin = 0; else if (bin >= stampArr.length) bin = stampArr.length - 1;
+      const w = (pinA && sa.invMass[i] === 0) || (pinB && sb.invMass[contactsB[k]] === 0) ? pinMul : 1;
+      if (stampArr[bin] !== gen) { stampArr[bin] = gen; wArr[bin] = w; total += w; }
+      else if (w > wArr[bin]) { total += w - wArr[bin]; wArr[bin] = w; }
+    }
+    return total;
+  },
+
+  /**
+   * Zgniot węzła w prawie v2: przesunięcie o `depth` wzdłuż normalnej lokalnej `ln` z wyboczeniem `buckle` w stronę
+   * `ld` (od środka styku) i prędkość węzła wzdłuż normalnej co najmniej `vTarget` (węzeł jedzie z frontem taranu).
+   * Kotwica (invMass 0) przesuwa się o głębokość bez prędkości (spaw się gnie); dalej niż pinBreakCells od spoczynku
+   * — spaw puszcza (węzeł zwykły). Zwraca true = węzeł przesunięty.
+   */
+  _crushNodeV2(body, i, ln, ld, buckle, depth, vTarget, stamp, travel) {
+    const s = body.nodeStore;
+    this._crushMomentum = 0;
+    const pinned = s.invMass[i] === 0;
+    // Kotwica ustępuje najwyżej o drogę zbliżania w kroku (prędkość × dt): spaw puszcza po tej samej drodze taranu
+    // przy każdym kroku fizyki (głębokość styku co krok dawała przy 120 Hz dwa razy szybsze zerwanie).
+    if (pinned && depth > travel) depth = travel;
+    const previous = s.crushStamp[i] === stamp ? s.crushDepth[i] : 0;
+    const d = Math.max(0, depth - previous);
+    s.crushStamp[i] = stamp;
+    if (depth > previous) s.crushDepth[i] = depth;
+    const dx = ln.x + ld.x * buckle, dy = ln.y + ld.y * buckle, dz = ln.z + ld.z * buckle;
+    s.x[i] += dx * d; s.y[i] += dy * d; s.z[i] += dz * d;
+    if (pinned) {
+      s.vx[i] = 0; s.vy[i] = 0; s.vz[i] = 0;
+      const ex = s.x[i] - s.ox[i], ey = s.y[i] - s.oy[i], ez = s.z[i] - s.oz[i];
+      const lim = Math.max(0, this.config.pinBreakCells) * body.cellSize;
+      if (ex * ex + ey * ey + ez * ez > lim * lim) {
+        s.invMass[i] = 1 / Math.max(1e-6, s.mass[i]);
+        this.perf.pinsReleased = (this.perf.pinsReleased || 0) + 1;
+        body.structureDirty = true;
+        if (!body.noSplit && !this.splitQueue.includes(body)) this.splitQueue.push(body);
+      }
+    } else if (vTarget > 0) {
+      const vn = s.vx[i] * ln.x + s.vy[i] * ln.y + s.vz[i] * ln.z;
+      if (vn < vTarget) {
+        const k = vTarget - vn;
+        s.vx[i] += ln.x * k; s.vy[i] += ln.y * k; s.vz[i] += ln.z * k;
+        this._crushMomentum = s.mass[i] * k;
+      }
+    }
+    extendBeamBounds(body, s.x[i], s.y[i], s.z[i]);
+    if (this.config.localSolver) activateNode(body, i);
+    return true;
+  },
+
+  /** Belki węzłów `list` rozciągnięte / ściśnięte ponad próg zerwania (jak prepareBeamConstraints) — pękają teraz. */
+  _breakOverloaded(body, list, n) {
+    const cfg = this.config;
+    if ((cfg.breakEnabled | 0) !== 1) return 0;
+    const s = body.nodeStore, e = body.beamStore;
+    const x = s.x, y = s.y, z = s.z, active = s.active, adjStart = s.adjStart, adj = s.adj;
+    const ea = e.a, eb = e.b, broken = e.broken, rest = e.rest, restBase = e.restBase, brk = e.brk;
+    const breakMul = cfg.globalBreakMul, local = !!cfg.localSolver;
+    let broke = 0;
+    for (let k = 0; k < n; k++) {
+      const i = list[k];
+      if (!active[i]) continue;
+      for (let q = adjStart[i]; q < adjStart[i + 1]; q++) {
+        const bi = adj[q];
+        if (broken[bi]) continue;
+        const o = ea[bi] ^ eb[bi] ^ i;
+        if (!active[o]) continue;
+        const ddx = x[o] - x[i], ddy = y[o] - y[i], ddz = z[o] - z[i];
+        const len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+        const limit = brk[bi] * breakMul, base = restBase[bi], r = rest[bi];
+        if (Math.abs(len - r) / r <= limit && Math.abs(len - base) / base <= limit) continue;
+        broken[bi] = 1;
+        broke++;
+        if (local) { activateNode(body, i); activateNode(body, o); }
+      }
+    }
+    if (broke > 0) {
+      body.liveBeams = Math.max(0, body.liveBeams - broke);
+      body.structureDirty = true;
+      body.meshDirty = true;
+      this.perf.beamsBroken += broke;
+      if (!body.noSplit && !this.splitQueue.includes(body)) this.splitQueue.push(body);
+    }
+    return broke;
+  },
+
   _ncList: new Int32Array(1024),
 
   /**
@@ -1588,14 +2528,14 @@ export const DestructorBeams3D = {
    * sfera i drugi obrót na każdy węzeł). Kubełki siatki węzłów iterowanego ciała + sortowanie do
    * kolejności skanu zmierzone 2026-10-07 — bez zysku (tarany, wraki, burta w burtę). Zwraca liczbę.
    */
-  _contactCandidates(iter, holder, mI, mH, grid, contactDist, reach, start, total) {
+  _contactCandidates(iter, holder, mI, mH, grid, contactDist, reach, start, total, zLo = grid.minZ, zHi = grid.maxZ) {
     // Gospodarz bez żywych węzłów: każdy węzeł odpada na pudle (skan nic nie znajduje).
     if (!(grid.minX <= grid.maxX)) return 0;
-    // Pudło gospodarza: środek i półosie w jego układzie.
-    const hcx = (grid.minX + grid.maxX) * 0.5, hcy = (grid.minY + grid.maxY) * 0.5, hcz = (grid.minZ + grid.maxZ) * 0.5;
+    // Pudło gospodarza: środek i półosie w jego układzie (z — zakres węzłów albo słup ciała płaskiego w parze mieszanej).
+    const hcx = (grid.minX + grid.maxX) * 0.5, hcy = (grid.minY + grid.maxY) * 0.5, hcz = (zLo + zHi) * 0.5;
     const hex = (grid.maxX - grid.minX) * 0.5 + contactDist;
     const hey = (grid.maxY - grid.minY) * 0.5 + contactDist;
-    const hez = (grid.maxZ - grid.minZ) * 0.5 + contactDist;
+    const hez = (zHi - zLo) * 0.5 + contactDist;
     // Początek gospodarza w układzie iterowanego: Rᵢᵀ (p_H − p_I); obrót gospodarz → iterowany M = Rᵢᵀ R_H.
     const pIx = iter.pos.x, pIy = iter.pos.y, pIz = iter.pos.z;
     const pHx = holder.pos.x, pHy = holder.pos.y, pHz = holder.pos.z;
@@ -1632,6 +2572,13 @@ export const DestructorBeams3D = {
 
     let list = this._ncList;
     if (list.length < total) list = this._ncList = new Int32Array(Math.max(total, list.length * 2));
+    // Duże ciało iterowane i mały obszar (bryła 3D w parze mieszanej — wieża habitatu 13 tys. węzłów skanowana raz na
+    // każdą parę z ciałem płaskim): kandydaci z siatki węzłów iterowanego ciała — ten sam zbiór i ta sama kolejność
+    // (2026-10-15, optymalizacja przestojów; strażnik tests/beamNarrowphase.test.mjs).
+    if (total >= this.candGridMinNodes) {
+      const mg = this._contactCandidatesGrid(iter, list, rx0, rx1, ry0, ry1, rz0, rz1, start, total);
+      if (mg >= 0) return mg;
+    }
     const s = iter.nodeStore, x = s.x, y = s.y, z = s.z, active = s.active;
     let m = 0;
     for (let n = start; n < total; n++) {
@@ -1646,6 +2593,64 @@ export const DestructorBeams3D = {
       if (px < rx0 || px > rx1 || py < ry0 || py > ry1 || pz < rz0 || pz > rz1) continue;
       list[m++] = n;
     }
+    return m;
+  },
+
+  // Próg ścieżki z siatki w _contactCandidates [węzły magazynu iterowanego ciała]; Infinity — zawsze skan liniowy (A/B).
+  candGridMinNodes: 2048,
+
+  /**
+   * Kandydaci _contactCandidates z SIATKI węzłów iterowanego ciała (_refreshHash — ta sama, której używa jako
+   * gospodarz): kubełki przecinające obszar [r*0, r*1] (układ iterowanego ciała), test obszaru jak w skanie, potem
+   * sortowanie do kolejności skanu (od `start` rosnąco, z zawinięciem). Siatka zawiera dokładnie żywe węzły w bieżących
+   * położeniach (unieważnienie — _hashTick / shapeVersion), więc zbiór = zbiór skanu. Zwraca liczbę kandydatów albo
+   * −1 (obszar wielu kubełków albo granice siatki nieskończone — skan liniowy).
+   */
+  _contactCandidatesGrid(iter, list, rx0, rx1, ry0, ry1, rz0, rz1, start, total) {
+    const g = this._refreshHash(iter);
+    if (!(Number.isFinite(g.minX) && Number.isFinite(g.maxX) && Number.isFinite(g.minY) && Number.isFinite(g.maxY) &&
+      Number.isFinite(g.minZ) && Number.isFinite(g.maxZ))) return -1;
+    // obszar przycięty do pudła żywych węzłów (poza nim nikt nie przejdzie testu)
+    const x0 = rx0 > g.minX ? rx0 : g.minX, x1 = rx1 < g.maxX ? rx1 : g.maxX;
+    const y0 = ry0 > g.minY ? ry0 : g.minY, y1 = ry1 < g.maxY ? ry1 : g.maxY;
+    const z0 = rz0 > g.minZ ? rz0 : g.minZ, z1 = rz1 < g.maxZ ? rz1 : g.maxZ;
+    if (!(x0 <= x1 && y0 <= y1 && z0 <= z1)) return 0;
+    const cs = iter.cellSize;
+    const i0 = Math.floor(x0 / cs), i1 = Math.floor(x1 / cs);
+    const j0 = Math.floor(y0 / cs), j1 = Math.floor(y1 / cs);
+    const k0 = Math.floor(z0 / cs), k1 = Math.floor(z1 / cs);
+    const cells = (i1 - i0 + 1) * (j1 - j0 + 1) * (k1 - k0 + 1);
+    // kubełek kosztuje ~tyle co węzeł skanu, kandydat — dodatkowo sortowanie: siatka tylko dla obszaru dużo mniejszego
+    if (!(cells * 4 < total)) return -1;
+    const s = iter.nodeStore, x = s.x, y = s.y, z = s.z, active = s.active, next = s.hashNext;
+    const heads = g.heads, map = g.map, gi0 = g.i0, gj0 = g.j0, gk0 = g.k0, gnx = g.nx, gny = g.ny, gnz = g.nz;
+    const off = total - start;
+    let m = 0;
+    for (let k = k0; k <= k1; k++) {
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          let h;
+          if (map) {
+            const head = map.get(hashKey(i, j, k));
+            if (head === undefined) continue;
+            h = head;
+          } else {
+            const ci = i - gi0, cj = j - gj0, ck = k - gk0;
+            if (ci < 0 || cj < 0 || ck < 0 || ci >= gnx || cj >= gny || ck >= gnz) continue;
+            h = heads[ci + gnx * (cj + gny * ck)];
+          }
+          for (; h >= 0; h = next[h]) {
+            if (!active[h]) continue;
+            const px = x[h], py = y[h], pz = z[h];
+            if (px < rx0 || px > rx1 || py < ry0 || py > ry1 || pz < rz0 || pz > rz1) continue;
+            // klucz kolejności skanu: od `start` rosnąco, potem od 0
+            list[m++] = h >= start ? h - start : h + off;
+          }
+        }
+      }
+    }
+    if (m > 1) list.subarray(0, m).sort();
+    for (let c = 0; c < m; c++) { const kk = list[c]; list[c] = kk < off ? kk + start : kk - off; }
     return m;
   },
 
@@ -1859,6 +2864,10 @@ export const DestructorBeams3D = {
       // Bez kierunku pocisku — promieniście od punktu trafienia. Tempo rośnie z obrażeniami.
       const kick = Math.min(260, 40 + damage * 0.04);
       const hasDir = dir.x * dir.x + dir.y * dir.y > 1e-6;
+      // Bryła 3D gry (opts.kick3D — trafienie z pasa broni, src/game/beamBand3D.js): kierunek pocisku w układzie ciała
+      // ma składową z (ciało obrócone dowolnie), odrzut liczony w 3D; bez opcji — jak dotąd (bit w bit, także dema 3D).
+      const kick3D = !!opts?.kick3D;
+      const hasDir3 = kick3D && dir.x * dir.x + dir.y * dir.y + dir.z * dir.z > 1e-6;
       let reachSq = 0;
       // Węzły posortowane od najbliższego: wymuszone (≤ killRadius) są na początku listy, potem budżet.
       for (let k = 0; k < craterCount; k++) {
@@ -1873,7 +2882,9 @@ export const DestructorBeams3D = {
           // Odrzut: węzeł wymuszony — rozkład jak niżej, ale z haszu węzła (bez Math.random).
           const r0 = forced ? craterHash(i, 0x51ED27) : Math.random();
           const speed = kick * (0.6 + r0 * 0.8);
-          if (hasDir) {
+          if (kick3D) {
+            this._crater3DKick(s, i, l, dir, hasDir3, speed, forced);
+          } else if (hasDir) {
             const along = (forced ? craterHash(i, 0x2C1B3C6D) : Math.random()) < 0.65 ? -0.8 : 0.8;
             const side = ((forced ? craterHash(i, 0x297A2D39) : Math.random()) - 0.5) * 1.6;
             s.vx[i] += (dir.x * along - dir.y * side) * speed;
@@ -1943,6 +2954,35 @@ export const DestructorBeams3D = {
       this.splitQueue.push(body);
     }
     return true;
+  },
+
+  // Odrzut wybitego węzła krateru w 3D (applyImpact z opts.kick3D): większość wstecz wzdłuż pocisku, reszta wzdłuż
+  // niego, na bok — od osi trafienia (prostopadle do kierunku: blacha rozchyla się od rany); bez kierunku —
+  // promieniście od punktu. Losowanie jak w 2D (wymuszony — hasz węzła).
+  _crater3DKick(s, i, l, dir, hasDir, speed, forced) {
+    const rx = s.x[i] - l.x, ry = s.y[i] - l.y, rz = s.z[i] - l.z;
+    if (!hasDir) {
+      const rl = Math.sqrt(rx * rx + ry * ry + rz * rz) || 1;
+      s.vx[i] += rx / rl * speed; s.vy[i] += ry / rl * speed; s.vz[i] += rz / rl * speed;
+      return;
+    }
+    const along = (forced ? craterHash(i, 0x2C1B3C6D) : Math.random()) < 0.65 ? -0.8 : 0.8;
+    const side = Math.abs((forced ? craterHash(i, 0x297A2D39) : Math.random()) - 0.5) * 1.6;
+    const dot = rx * dir.x + ry * dir.y + rz * dir.z;
+    let px = rx - dot * dir.x, py = ry - dot * dir.y, pz = rz - dot * dir.z;
+    let pl = Math.sqrt(px * px + py * py + pz * pz);
+    if (pl < 1e-6) {
+      // węzeł na osi trafienia: dowolna prostopadła (oś świata najmniej zgodna z kierunkiem)
+      const ax = Math.abs(dir.x), ay = Math.abs(dir.y), az = Math.abs(dir.z);
+      if (ax <= ay && ax <= az) { px = 0; py = -dir.z; pz = dir.y; }
+      else if (ay <= az) { px = dir.z; py = 0; pz = -dir.x; }
+      else { px = -dir.y; py = dir.x; pz = 0; }
+      pl = Math.sqrt(px * px + py * py + pz * pz) || 1;
+    }
+    const k = side / pl;
+    s.vx[i] += (dir.x * along + px * k) * speed;
+    s.vy[i] += (dir.y * along + py * k) * speed;
+    s.vz[i] += (dir.z * along + pz * k) * speed;
   },
 
   _impactNodesList: [],
@@ -2366,6 +3406,10 @@ export const DestructorBeams3D = {
         const group = groups[gi];
         if (group.length < Math.max(2, cfg.splitMinNodes | 0) ||
             fragments >= cfg.splitMaxFragments || wreckCount >= cfg.maxWrecks) {
+          // diagnostyka: węzły zniszczone przez rozpad (drobnica / limit odłamów na rozpad / limit wraków)
+          if (group.length < Math.max(2, cfg.splitMinNodes | 0)) this.perf.splitDestroyedSmall += group.length;
+          else if (fragments >= cfg.splitMaxFragments) this.perf.splitDestroyedCap += group.length;
+          else this.perf.splitDestroyedWrecks += group.length;
           for (const i of group) this.destroyNode(body, i);
           continue;
         }
@@ -2617,6 +3661,14 @@ export const DestructorBeams3D = {
       invMass: anchored ? 0 : 1 / Math.max(1, info.mass),
       static: false,
       anchored: !!anchored,
+      planar: !!parent.planar,
+      gravity: parent.gravity ? { x: parent.gravity.x, y: parent.gravity.y, z: parent.gravity.z } : null,
+      colZ0: parent.colZ0 || 0,
+      colZ1: parent.colZ1 || 0,
+      joints: null,
+      friction: parent.friction ?? null,
+      nodeDamping: parent.nodeDamping ?? null,
+      activeThreshold: parent.activeThreshold ?? null,
       invInertiaLocal: info.invInertia,
       radius: radius + parent.cellSize,
       config: cfg,
@@ -2700,6 +3752,14 @@ export const DestructorBeams3D = {
       invMass: 1 / mass,
       static: false,
       anchored: false,
+      planar: props.planar === undefined ? !!cfg?.planar : !!props.planar,
+      gravity: props.gravity ? { x: props.gravity.x, y: props.gravity.y, z: props.gravity.z } : null,
+      colZ0: Number(props.colZ0) || 0,
+      colZ1: Number(props.colZ1) || 0,
+      joints: null,
+      friction: Number.isFinite(props.friction) ? props.friction : null,
+      nodeDamping: Number.isFinite(props.nodeDamping) ? props.nodeDamping : null,
+      activeThreshold: Number.isFinite(props.activeThreshold) ? props.activeThreshold : null,
       invInertiaLocal: props.invInertiaLocal.slice(),
       radius: 0,
       config: cfg,

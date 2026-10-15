@@ -150,8 +150,8 @@ export class FxFrame {
 
   /**
    * Kadr w świecie gry (x0, y0, x1, y1) z zapasem: kamera gracza 1 i — w podzielonym ekranie —
-   * gracza 2 (jeden budżet siatki na klatkę, suma kadrów). bufW / bufH — cel sceny w px
-   * (kamera ortho Core3D: pół kadru = bufW / 2 / zoom).
+   * gracza 2 (jeden budżet siatki na klatkę, suma kadrów). bufW / bufH — kadr w px kanwy gry
+   * (kamera ortho Core3D: pół kadru = bufW / 2 / zoom; Core3D podaje px CSS, nie bufor rysowania).
    */
   _viewRect(cam, cam2, bufW, bufH, freeCam) {
     const v = this.view;
@@ -186,7 +186,8 @@ export class FxFrame {
   /**
    * Klatka efektów (raz na klatkę rAF — kolejne wywołania z tym samym renderer.info.frame
    * nic nie robią). cam — kamera gry gracza 1 (x, y, zoom albo wolna: position), cam2 — gracza 2
-   * w podzielonym ekranie albo null, bufW / bufH — cel sceny w px, nowMs — performance.now().
+   * w podzielonym ekranie albo null, bufW / bufH — kadr w px kanwy gry (Core3D: pół kadru = bufW / 2 / zoom),
+   * nowMs — performance.now().
    * Zwraca true, gdy klatka się wykonała.
    */
   frame(renderer, cam, cam2, bufW, bufH, freeCam, nowMs) {
@@ -270,7 +271,7 @@ export class FxFrame {
    * frameId — renderer.info.frame: render następnej klatki bez nowych zgłoszeń kasuje kolejkę.
    * Zwraca liczbę spakowanych źródeł.
    */
-  commitDistortion(cam, bufW, bufH, off, frameId) {
+  commitDistortion(cam, bufW, bufH, off, frameId, pxScale = 1) {
     const f = this.distortion;
     if (this._distortConsumed && frameId !== this._distortFrame) f.begin();
     this._distortConsumed = true;
@@ -281,8 +282,10 @@ export class FxFrame {
     } else {
       f.on = 1;
     }
-    const zoom = Math.max(1e-4, Number(cam?.zoom) || 1);
-    const n = f.commit(Number(cam?.x) || 0, Number(cam?.y) || 0, zoom, Math.max(1, bufW | 0), Math.max(1, bufH | 0), this.time);
+    // bufW / bufH — cel sceny w px bufora; pxScale — px bufora na px kanwy (skala renderu, Core3D.viewZoom).
+    const ps = pxScale > 0 ? pxScale : 1;
+    const zoom = Math.max(1e-4, Number(cam?.zoom) || 1) * ps;
+    const n = f.commit(Number(cam?.x) || 0, Number(cam?.y) || 0, zoom, Math.max(1, bufW | 0), Math.max(1, bufH | 0), this.time, ps);
     this.stats.distortSources = n;
     return n;
   }

@@ -582,6 +582,8 @@ export const Core3D = {
   // próg to uniformy (_applyBloomPassConfig co klatkę z bloomConfig.js albo tunera DevVFX.bloom),
   // rozmiar = bufor rysowania × resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
+  // Skala rozdzielczości bloomu z opcji grafiki (1 / 0,5), mnożona przez skalę panelu w _getBloomConfig.
+  bloomQualityScale: 1,
   // Post: dwa RenderPipeline zbudowane raz — z bloomem (_post) i bez (_postBezBloomu,
   // perfToggles.bloom = false: bez kosztu passów bloomu, bez przebudowy przy
   // przełączeniu). Wspólne uniformy „uber” (gorące powietrze, uHeatOn zamiast define).
@@ -600,6 +602,8 @@ export const Core3D = {
   // Promise (SPIKE 8); wynik = ms GPU ostatniej rozwiązanej klatki.
   gpuFrameMs: 0,
   gpuComputeMs: 0,
+  gpuFrameSamples: 0,
+  gpuComputeSamples: 0,
   // Co którą klatkę rAF mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
   // 1 = każda klatka (narzędzia pomiaru: koszt-klatki.mjs).
   gpuTimerSampleEvery: 4,
@@ -615,6 +619,15 @@ export const Core3D = {
   _shaftCfg: resolveShadowShaftsQuality('medium'),
   _passTogglesDirty: true,
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
+  // Opcje grafiki (src/game/graphicsQuality.js): skala rozdzielczości renderu 3D względem kanwy gry (px CSS;
+  // null = dawne min(1,5; devicePixelRatio) — dema i narzędzia bez opcji) i próbki MSAA celu sceny (0 / 4) —
+  // MSAA tylko przed init (zmiana próbek = nowy klucz KAŻDEGO pipeline'u, configureQuality).
+  renderScale: null, msaaBoot: 4,
+  // Hak przed utworzeniem urządzenia: (adapter) => void — dobór presetu przy pierwszym uruchomieniu (index.html).
+  onAdapter: null, _msaaLocked: false,
+  // px bufora rysowania na px kanwy gry (CSS): kamera ortho pokazuje kanwę / zoom j. świata, więc
+  // px bufora na j. świata = zoom · pxScale (viewZoom). Ustawia resize.
+  pxScale: 1,
   _clearColorScratch: new THREE.Color(),
   lastFramePerf: null,
   lastFrameRenderInfo: null,
@@ -636,9 +649,11 @@ export const Core3D = {
     const strength = Number.isFinite(Number(bloom?.strength)) ? Number(bloom.strength) : this.bloomBaseStrength;
     const radius = Number.isFinite(Number(bloom?.radius)) ? Number(bloom.radius) : BLOOM_DEFAULTS.radius;
     const threshold = Number.isFinite(Number(bloom?.threshold)) ? Number(bloom.threshold) : this.bloomBaseThreshold;
-    const resolutionScale = Number.isFinite(Number(bloom?.resolutionScale))
+    // Skala panelu strojenia (DevVFX.bloom / bloomResolutionScale) × skala z opcji grafiki (bloomQualityScale:
+    // „Połowa” = 0,5) — panel ustawia swoją przy starcie, więc opcja nie może pisać w to samo pole.
+    const resolutionScale = (Number.isFinite(Number(bloom?.resolutionScale))
       ? Number(bloom.resolutionScale)
-      : this.bloomResolutionScale;
+      : this.bloomResolutionScale) * (Number(this.bloomQualityScale) || 1);
     return {
       strength: Math.max(0, strength),
       radius: Math.max(0, radius),
@@ -836,7 +851,7 @@ export const Core3D = {
     // (storeOp store) i rozwiązuje go do .texture na końcu każdego passa.
     const rt = new THREE.RenderTarget(w0, h0, {
       format: THREE.RGBAFormat, type: THREE.HalfFloatType,
-      depthBuffer: true, stencilBuffer: false, samples: 4
+      depthBuffer: true, stencilBuffer: false, samples: this.msaaBoot > 0 ? 4 : 0
     });
     this.composerTarget = rt;
     this.msaaSamples = Number(rt.samples) || 0;
@@ -941,7 +956,8 @@ export const Core3D = {
     this.shadowShaftsPass = createShadowShaftsPass();
 
     const bloomCfg = this._getBloomConfig();
-    this.bloomResolutionScale = bloomCfg.resolutionScale;
+    // Skala panelu bez mnożnika z opcji grafiki (bloomQualityScale zostaje osobno).
+    this.bloomResolutionScale = bloomCfg.resolutionScale / (Number(this.bloomQualityScale) || 1);
 
     // Handlery zegara GPU i pomiaru bloomu przypięte raz (bez domknięć per klatka).
     this._onGpuRenderTimestamp = (ms) => this._handleGpuTimestamp('render', ms);
@@ -985,6 +1001,11 @@ export const Core3D = {
       adapter = null;
     }
     if (!adapter) return this._failGpu('brak adaptera');
+    // Hak gry (pierwszy moduł index.html): dobór presetu grafiki przy pierwszym uruchomieniu z adaptera
+    // (src/game/graphicsAutoPreset.js). Woła się PRZED utworzeniem urządzenia — MSAA presetu (configureQuality)
+    // trafia jeszcze do celów sceny; po haku próbek już się nie zmienia.
+    try { this.onAdapter?.(adapter); } catch (err) { console.warn('[Core3D] onAdapter:', err); }
+    this._msaaLocked = true;
     const requiredLimits = {};
     for (const key of GPU_REQUIRED_LIMITS) {
       const value = adapter.limits?.[key];
@@ -1387,7 +1408,7 @@ export const Core3D = {
     if (!this.isInitialized) return;
     const width = Math.max(1, w | 0);
     const height = Math.max(1, h | 0);
-    this.pixelRatio = Math.min(1.5, Math.max(1, (typeof window !== 'undefined' ? window.devicePixelRatio : 1)));
+    this.pixelRatio = this._pixelRatioFor(width, height);
     this.width = width; this.height = height;
     if (this.renderer) {
       this.renderer.setPixelRatio(this.pixelRatio);
@@ -1395,6 +1416,7 @@ export const Core3D = {
     }
     const bufW = Math.max(1, Math.floor(width * this.pixelRatio));
     const bufH = Math.max(1, Math.floor(height * this.pixelRatio));
+    this.pxScale = bufH / height;
     const readyRenderer = this.gpuReady ? this.renderer : null;
     resizeRenderTarget(this.composerTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.sunShadowTarget, bufW, bufH, readyRenderer);
@@ -1402,7 +1424,56 @@ export const Core3D = {
     resizeRenderTarget(this.planetHaloTarget, bufW, bufH, readyRenderer);
     // Bloom sam bierze rozmiar bufora rysowania w każdym renderze (BloomNode.updateBefore);
     // tu tylko skala rozdzielczości (tuner zmienia bloomResolutionScale i woła resize).
-    if (this.bloomPass) this.bloomPass.resolutionScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
+    if (this.bloomPass) this.bloomPass.resolutionScale = this._getBloomConfig().resolutionScale;
+  },
+
+  // Px bufora rysowania na px kanwy gry: skala renderu z opcji grafiki albo (bez niej) dawne
+  // min(1,5; devicePixelRatio). Kanwa 2D gry ma rozmiar okna w px CSS, a obraz 3D jest na nią
+  // kopiowany (drawHexShips3D) — skala < 1 = render w niższej rozdzielczości, > 1 = nadpróbkowanie.
+  _pixelRatioFor(width, height) {
+    const s = Number(this.renderScale);
+    let pr = (Number.isFinite(s) && s > 0)
+      ? s
+      : Math.min(1.5, Math.max(1, (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1));
+    pr = Math.max(0.25, Math.min(2, pr));
+    // Cel sceny nie większy niż limit tekstury urządzenia (zwykle 8192 px w osi).
+    const maxDim = Number(this.renderer?.backend?.device?.limits?.maxTextureDimension2D) || 8192;
+    return Math.min(pr, maxDim / Math.max(1, width), maxDim / Math.max(1, height));
+  },
+
+  // Kadr kamery z góry w px kanwy gry (CSS): kamera ortho pokazuje _viewCssW() / zoom j. świata —
+  // tyle, ile nakładki 2D (HUD, wieżyczki kanwy, znaczniki). Przed pierwszym resize — rozmiar celu.
+  _viewCssW() { return this.width > 0 ? this.width : (Number(this.composerTarget?.width) || 1); },
+  _viewCssH() { return this.height > 0 ? this.height : (Number(this.composerTarget?.height) || 1); },
+
+  // Px bufora rysowania (cel sceny, maska, DIST, bloom) na j. świata w kamerze z góry. Kod, który
+  // liczy położenie w pikselach bufora z zoomu kamery gry, mnoży przez pxScale (= ta funkcja) —
+  // przy skali renderu ≠ 1 sam zoom kamery gry rozjechałby się z obrazem 3D.
+  viewZoom(cam) {
+    return Math.max(0.0001, Number(cam?.zoom) || 1) * (this.pxScale || 1);
+  },
+
+  // Skala rozdzielczości renderu 3D (opcje grafiki): null = dawne min(1,5; DPR). Na żywo — tylko
+  // rozmiar celów (resize), bez nowych pipeline'ów.
+  setRenderScale(scale) {
+    const s = Number(scale);
+    this.renderScale = Number.isFinite(s) && s > 0 ? s : null;
+    if (this.isInitialized && this.width > 0) this.resize(this.width, this.height);
+    return this.pixelRatio;
+  },
+
+  // Ustawienia jakości z zapisu (src/game/graphicsQuality.js) — wołane PRZED init (pierwszy moduł
+  // index.html): msaa (0 / 4) wchodzi w cel sceny przy init; później zmiana próbek to nowy klucz każdego
+  // pipeline'u (rozgrzewka by się zmarnowała) — zostaje na następne uruchomienie. Wyjątek: do haka onAdapter
+  // (dobór presetu przy pierwszym uruchomieniu) urządzenia jeszcze nie ma — próbki celów sceny można zmienić.
+  // renderScale — kiedykolwiek.
+  configureQuality({ renderScale, msaa } = {}) {
+    if (msaa !== undefined && !this._msaaLocked) {
+      this.msaaBoot = Number(msaa) > 0 ? 4 : 0;
+      if (this.isInitialized) this.setMsaaEnabled(this.msaaBoot > 0, 4);
+    }
+    if (renderScale !== undefined) this.setRenderScale(renderScale);
+    return { renderScale: this.renderScale, msaa: this.msaaBoot, pixelRatio: this.pixelRatio };
   },
 
   syncCamera(gameCamera, viewWidth, viewHeight, viewOffsetX = 0) {
@@ -1526,8 +1597,9 @@ export const Core3D = {
   _handleGpuTimestamp(type, ms) {
     this._gpuTimerPending[type] = false;
     if (Number.isFinite(ms) && ms > 0) {
-      if (type === 'render') this.gpuFrameMs = ms;
-      else this.gpuComputeMs = ms;
+      // Liczniki próbek: odbiorca (rozdzielczość dynamiczna) bierze tylko NOWE wyniki.
+      if (type === 'render') { this.gpuFrameMs = ms; this.gpuFrameSamples++; }
+      else { this.gpuComputeMs = ms; this.gpuComputeSamples++; }
     }
     this.renderer?.backend?.timestampQueryPool?.[type]?.timestamps?.clear?.();
   },
@@ -1697,7 +1769,8 @@ export const Core3D = {
       uShafts.uFieldOccRect.value.set(field.x0, field.y0, 1 / Math.max(1e-6, field.w), 1 / Math.max(1e-6, field.h));
     }
     const cam1 = this.activeCam1 || { x: 0, y: 0 };
-    const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
+    // px celu maski (= bufor sceny) na j. świata: zoom · pxScale (viewZoom).
+    const zoom1 = this.viewZoom(cam1);
     const camX = Number(cam1.x) || 0;
     const camY = -(Number(cam1.y) || 0);
     // Kadr w świecie = kadr kamery ortho passów sceny: render() ustawia ją z rozmiaru celu sceny
@@ -1855,7 +1928,8 @@ export const Core3D = {
 
     // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
     // każdego passa), potem post bez MSAA na kanwę.
-    this.syncCamera(this.activeCam1, this.composerTarget.width, this.composerTarget.height);
+    // Kadr = kanwa gry (px CSS) / zoom — jak nakładki 2D; bufor ma pxScale px na px kanwy (opcje grafiki).
+    this.syncCamera(this.activeCam1, this._viewCssW(), this._viewCssH());
     this._updateFogUniforms(freePerspective);
     renderer.setRenderTarget(this.composerTarget);
     for (const pass of this._scenePasses) {
@@ -1986,7 +2060,7 @@ export const Core3D = {
       v.persp = false;
       v.refX = Number(cam.x) || 0;
       v.refY = Number(cam.y) || 0;
-      v.zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+      v.zoom = this.viewZoom(cam);   // px bufora na j. świata
     }
     packFogView(u, world, v);
   },
@@ -2011,7 +2085,8 @@ export const Core3D = {
     if (!fx || !this.composerTarget) return;
     const split = typeof window !== 'undefined' && !!window.splitScreenMode;
     const cam2 = split && !freePerspective ? (window.camera2 || null) : null;
-    fx.frame(this.renderer, this.activeCam1, cam2, this.composerTarget.width, this.composerTarget.height, !!freePerspective, performance.now());
+    // Kadr siatki świateł w j. świata: kanwa (px CSS) / zoom.
+    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, performance.now());
   },
 
   // Na każdy render: źródła zniekształceń rzutowane na kamerę tego renderu (blok „uber”) i warstwa
@@ -2023,7 +2098,7 @@ export const Core3D = {
     if (!fx || !u || !this.composerTarget) return;
     const w = this.composerTarget.width;
     const h = this.composerTarget.height;
-    fx.commitDistortion(this.activeCam1, w, h, off, this.renderer?.info?.frame ?? 0);
+    fx.commitDistortion(this.activeCam1, w, h, off, this.renderer?.info?.frame ?? 0, this.pxScale || 1);
     // Przygaszenie od efektów (implozja Supernowej, fx.post — gałąź efektów „uber”).
     if (u.uFxExposure) u.uFxExposure.value = off ? 1 : (Number(fx.post?.exposure) || 1);
     const target = this.distortionTarget;
@@ -2062,7 +2137,7 @@ export const Core3D = {
     renderer.setRenderTarget(target);
     renderer.setClearColor(0x000000, 0.0);
     renderer.clear(true, true, true);
-    this.syncCamera(this.activeCam1, target.width, target.height);
+    this.syncCamera(this.activeCam1, this._viewCssW(), this._viewCssH());
 
     scene.overrideMaterial = this.haloDepthMaskMaterial;
     camera.layers.set(PLANET_RENDER_LAYER);

@@ -147,6 +147,9 @@ export function createRadarTerrain(tune = RADAR_TUNE) {
     }
     const rings = world?.rings;
     if (Array.isArray(rings)) s += '|r' + rings.length;
+    // cechy dokładane w biegu (planetoida pod bazą piratów — index.html: radarFeaturesWithPirateRock)
+    const feats = world?.features;
+    if (Array.isArray(feats)) s += '|f' + feats.length;
     return s;
   }
 

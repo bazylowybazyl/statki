@@ -430,7 +430,8 @@ export class AsteroidBelt {
     const bufH = Math.max(1, target ? target.height : 1);
     const v = this._view;
     if (Core3D.isFreePerspectiveCamera(cam1)) return this._computeView3D(cam1, bufW, bufH);
-    const z1 = Math.max(1e-4, Number(cam1.zoom) || 1);
+    // px bufora na j. świata (kadr = bufor / zoom; skala renderu z opcji grafiki — Core3D.viewZoom).
+    const z1 = Core3D.viewZoom(cam1);
     let x = Number(cam1.x) || 0;
     let y = Number(cam1.y) || 0;
     let zoom = z1;
@@ -439,7 +440,7 @@ export class AsteroidBelt {
     const split = typeof window !== 'undefined' && !!window.splitScreenMode;
     const cam2 = split ? window.camera2 : null;
     if (cam2 && !Core3D.isFreePerspectiveCamera(cam2)) {
-      const z2 = Math.max(1e-4, Number(cam2.zoom) || 1);
+      const z2 = Core3D.viewZoom(cam2);
       const x2 = Number(cam2.x) || 0;
       const y2 = Number(cam2.y) || 0;
       const hw1 = bufW * 0.5 / z1; const hh1 = bufH * 0.5 / z1;

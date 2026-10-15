@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, relative } from 'node:path';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { isAbsolute, relative, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Wersja w menu (index.html: __HULLFALL_VERSION__) = "version" z package.json — tę samą dostaje exe
@@ -39,9 +39,48 @@ function watchIgnored(file) {
   return parts[0] === '.claude' && parts[1] === 'worktrees';
 }
 
+// A/B WERSJI KODU w narzędziach pomiarowych (2026-10-15, sesja optymalizacji wydajności): HULLFALL_AB_DIR=<katalog> —
+// pliki z katalogu (te same ścieżki względne repo, np. <katalog>/src/3d/worldBodies3D.js) serwowane ZAMIAST plików
+// drzewa: moduły JS przez `load`, index.html przez transformIndexHtml (skrypty inline idą z podmienionego HTML).
+// Wariant A (stary kod) i B (drzewo robocze) w tym samym drzewie, obok niezacommitowanej pracy innych sesji.
+// Bez zmiennej — wtyczki nie ma. Wzór: scripts/webgpu/przestoje-gra.mjs --ab <katalog>.
+function abOverride() {
+  const dir = process.env.HULLFALL_AB_DIR;
+  if (!dir || !existsSync(dir)) return null;
+  const norm = (p) => String(p).replace(/\\/g, '/').toLowerCase();
+  const files = new Map();
+  const walk = (d) => {
+    for (const n of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, n.name);
+      if (n.isDirectory()) walk(p);
+      else files.set(norm(resolve(repoRoot, relative(dir, p))), p);
+    }
+  };
+  walk(resolve(dir));
+  console.log(`[A/B] HULLFALL_AB_DIR: ${files.size} plików zastępczych z ${dir}`);
+  return {
+    name: 'hullfall-ab-override',
+    enforce: 'pre',
+    load(id) {
+      if (!id || id.startsWith('\0')) return null;
+      const clean = id.split('?')[0];
+      if (clean.endsWith('.html')) return null;
+      const f = files.get(norm(clean));
+      return f ? readFileSync(f, 'utf8') : null;
+    },
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html, ctx) {
+        const f = ctx && ctx.filename ? files.get(norm(ctx.filename)) : null;
+        return f ? readFileSync(f, 'utf8') : html;
+      }
+    }
+  };
+}
+
 export default defineConfig({
   base: './',
-  plugins: [demaIndexRedirect, gameVersion],
+  plugins: [demaIndexRedirect, gameVersion, abOverride()].filter(Boolean),
   define: {
     __HEX_SIM_BUILD__: JSON.stringify('hex-sim-v2'),
   },

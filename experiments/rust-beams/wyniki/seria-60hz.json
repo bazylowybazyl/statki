@@ -1,0 +1,360 @@
+{
+ "hz": 60,
+ "rounds": 6,
+ "modes": [
+  "js",
+  "A",
+  "B"
+ ],
+ "node": "v22.20.0",
+ "scenes": {
+  "szyja": {
+   "steps": 1080,
+   "peakSteps": 109,
+   "peakThresholdMs": 8.278,
+   "meta": {
+    "impactT": 6.08,
+    "landT": 8.5,
+    "snapAt": 90.53
+   },
+   "modes": {
+    "js": {
+     "meanMs": 2.448,
+     "p50Ms": 1.209,
+     "p95Ms": 9.813,
+     "maxMs": 13.77,
+     "peakMeanMs": 9.866,
+     "peakSolverMs": 4.911,
+     "peakCollisionMs": 4.633,
+     "solverMs": 0.706,
+     "collisionMs": 1.646,
+     "kernelMs": {
+      "solve": 0.403,
+      "scan": 0.923
+     },
+     "peakKernelMs": {
+      "solve": 2.826,
+      "scan": 1.457
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.167,
+      "project": 0.244,
+      "scan": 0.952
+     },
+     "callsPerStep": {
+      "prepare": 3.056,
+      "project": 3.056,
+      "scan": 85.515
+     },
+     "wallS": 2.76,
+     "hashes": [
+      "63ce553d"
+     ]
+    },
+    "A": {
+     "meanMs": 1.92,
+     "p50Ms": 0.801,
+     "p95Ms": 8.562,
+     "maxMs": 12.42,
+     "peakMeanMs": 8.706,
+     "peakSolverMs": 4.409,
+     "peakCollisionMs": 3.969,
+     "solverMs": 0.635,
+     "collisionMs": 1.19,
+     "kernelMs": {
+      "solve": 0.333,
+      "scan": 0.483
+     },
+     "peakKernelMs": {
+      "solve": 2.326,
+      "scan": 0.801
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.129,
+      "project": 0.208,
+      "scan": 0.503
+     },
+     "callsPerStep": {
+      "prepare": 3.056,
+      "project": 3.056,
+      "scan": 85.515
+     },
+     "wallS": 2.145,
+     "hashes": [
+      "63ce553d"
+     ]
+    },
+    "B": {
+     "meanMs": 1.722,
+     "p50Ms": 0.659,
+     "p95Ms": 8.418,
+     "maxMs": 12.805,
+     "peakMeanMs": 8.49,
+     "peakSolverMs": 4.618,
+     "peakCollisionMs": 3.564,
+     "solverMs": 0.669,
+     "collisionMs": 0.961,
+     "kernelMs": {
+      "solve": 0.368,
+      "scan": 0.264
+     },
+     "peakKernelMs": {
+      "solve": 2.56,
+      "scan": 0.426
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.136,
+      "project": 0.237,
+      "scan": 0.276
+     },
+     "callsPerStep": {
+      "prepare": 3.056,
+      "project": 3.056,
+      "scan": 85.515
+     },
+     "wallS": 1.927,
+     "hashes": [
+      "63ce553d"
+     ]
+    }
+   },
+   "bitExact": {
+    "js": true,
+    "A": true,
+    "B": true
+   }
+  },
+  "taran": {
+   "steps": 360,
+   "peakSteps": 37,
+   "peakThresholdMs": 0.547,
+   "meta": null,
+   "modes": {
+    "js": {
+     "meanMs": 0.264,
+     "p50Ms": 0.19,
+     "p95Ms": 0.601,
+     "maxMs": 1.417,
+     "peakMeanMs": 0.69,
+     "peakSolverMs": 0.163,
+     "peakCollisionMs": 0.358,
+     "solverMs": 0.045,
+     "collisionMs": 0.184,
+     "kernelMs": {
+      "solve": 0.021,
+      "scan": 0.01
+     },
+     "peakKernelMs": {
+      "solve": 0.076,
+      "scan": 0.013
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.009,
+      "project": 0.012,
+      "scan": 0.011
+     },
+     "callsPerStep": {
+      "prepare": 2.064,
+      "project": 2.064,
+      "scan": 18.531
+     },
+     "wallS": 0.117,
+     "hashes": [
+      "125f03ee"
+     ]
+    },
+    "A": {
+     "meanMs": 0.242,
+     "p50Ms": 0.182,
+     "p95Ms": 0.573,
+     "maxMs": 1.367,
+     "peakMeanMs": 0.599,
+     "peakSolverMs": 0.139,
+     "peakCollisionMs": 0.333,
+     "solverMs": 0.039,
+     "collisionMs": 0.178,
+     "kernelMs": {
+      "solve": 0.018,
+      "scan": 0.01
+     },
+     "peakKernelMs": {
+      "solve": 0.063,
+      "scan": 0.013
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.008,
+      "project": 0.01,
+      "scan": 0.01
+     },
+     "callsPerStep": {
+      "prepare": 2.064,
+      "project": 2.064,
+      "scan": 18.531
+     },
+     "wallS": 0.108,
+     "hashes": [
+      "125f03ee"
+     ]
+    },
+    "B": {
+     "meanMs": 0.247,
+     "p50Ms": 0.184,
+     "p95Ms": 0.579,
+     "maxMs": 1.401,
+     "peakMeanMs": 0.618,
+     "peakSolverMs": 0.153,
+     "peakCollisionMs": 0.334,
+     "solverMs": 0.043,
+     "collisionMs": 0.178,
+     "kernelMs": {
+      "solve": 0.021,
+      "scan": 0.007
+     },
+     "peakKernelMs": {
+      "solve": 0.075,
+      "scan": 0.01
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.009,
+      "project": 0.013,
+      "scan": 0.007
+     },
+     "callsPerStep": {
+      "prepare": 2.064,
+      "project": 2.064,
+      "scan": 18.531
+     },
+     "wallS": 0.112,
+     "hashes": [
+      "125f03ee"
+     ]
+    }
+   },
+   "bitExact": {
+    "js": true,
+    "A": true,
+    "B": true
+   }
+  },
+  "ostrzal": {
+   "steps": 600,
+   "peakSteps": 61,
+   "peakThresholdMs": 0.401,
+   "meta": {
+    "hits": 819
+   },
+   "modes": {
+    "js": {
+     "meanMs": 0.173,
+     "p50Ms": 0.114,
+     "p95Ms": 0.496,
+     "maxMs": 0.802,
+     "peakMeanMs": 0.516,
+     "peakSolverMs": 0.437,
+     "peakCollisionMs": 0.008,
+     "solverMs": 0.103,
+     "collisionMs": 0.038,
+     "kernelMs": {
+      "solve": 0.053,
+      "scan": 0.002
+     },
+     "peakKernelMs": {
+      "solve": 0.234,
+      "scan": 0
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.021,
+      "project": 0.032,
+      "scan": 0.002
+     },
+     "callsPerStep": {
+      "prepare": 3.85,
+      "project": 3.85,
+      "scan": 7.317
+     },
+     "wallS": 0.113,
+     "hashes": [
+      "8084c055"
+     ]
+    },
+    "A": {
+     "meanMs": 0.176,
+     "p50Ms": 0.12,
+     "p95Ms": 0.509,
+     "maxMs": 0.85,
+     "peakMeanMs": 0.528,
+     "peakSolverMs": 0.435,
+     "peakCollisionMs": 0.01,
+     "solverMs": 0.101,
+     "collisionMs": 0.041,
+     "kernelMs": {
+      "solve": 0.047,
+      "scan": 0.002
+     },
+     "peakKernelMs": {
+      "solve": 0.21,
+      "scan": 0
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.02,
+      "project": 0.029,
+      "scan": 0.003
+     },
+     "callsPerStep": {
+      "prepare": 3.85,
+      "project": 3.85,
+      "scan": 7.317
+     },
+     "wallS": 0.118,
+     "hashes": [
+      "8084c055"
+     ]
+    },
+    "B": {
+     "meanMs": 0.177,
+     "p50Ms": 0.12,
+     "p95Ms": 0.491,
+     "maxMs": 0.868,
+     "peakMeanMs": 0.522,
+     "peakSolverMs": 0.44,
+     "peakCollisionMs": 0.008,
+     "solverMs": 0.104,
+     "collisionMs": 0.04,
+     "kernelMs": {
+      "solve": 0.053,
+      "scan": 0.002
+     },
+     "peakKernelMs": {
+      "solve": 0.23,
+      "scan": 0
+     },
+     "kernelMsPerStep": {
+      "prepare": 0.02,
+      "project": 0.034,
+      "scan": 0.002
+     },
+     "callsPerStep": {
+      "prepare": 3.85,
+      "project": 3.85,
+      "scan": 7.317
+     },
+     "wallS": 0.116,
+     "hashes": [
+      "8084c055"
+     ]
+    }
+   },
+   "bitExact": {
+    "js": true,
+    "A": true,
+    "B": true
+   }
+  }
+ },
+ "crossing": {
+  "jsCallNs": 9.11,
+  "wasmCallNs": 8.84,
+  "prepareDispatchNs": 248.4,
+  "acc": 74999985000000
+ }
+}

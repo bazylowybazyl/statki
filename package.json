@@ -1,6 +1,6 @@
 {
   "name": "statki",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "HULLFALL: Battle For Solar System",
   "main": "electron/main.js",
   "scripts": {
@@ -10,7 +10,9 @@
     "benchmark:100k": "node scripts/benchmark100k.mjs",
     "preview": "vite preview",
     "electron": "electron .",
-    "package": "vite build && electron-builder"
+    "package": "vite build && electron-builder",
+    "package:portable": "vite build && electron-builder --win portable",
+    "package:all": "vite build && electron-builder --win nsis portable"
   },
   "build": {
     "appId": "com.hullfall.game",
@@ -34,6 +36,10 @@
       "createStartMenuShortcut": true,
       "shortcutName": "HULLFALL",
       "artifactName": "HULLFALL-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "HULLFALL-Portable-${version}.${ext}",
+      "unpackDirName": "HULLFALL-portable"
     },
     "files": [
       "dist/**/*",

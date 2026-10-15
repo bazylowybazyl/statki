@@ -27,12 +27,12 @@ export const ENGINE_SHUTDOWN = 3;
 
 /** Strojenie (konsola: window.EngineIgnitionTune). Czasy [s] czasu gry. */
 export const ENGINE_IGNITION_TUNE = {
-  smokeTime: 1.1,      // ZAPŁON: zimny dym z dysz przed błyskiem
+  smokeTime: 1.4,      // ZAPŁON: zimny dym z dysz przed błyskiem (1,1 → 1,4 — 2026-10-14: więcej dymu przy odpalaniu)
   flameTime: 0.7,      // ZAPŁON: od błysku do pełnej pracy (struga MAIN narasta)
   shutdownTime: 1.0,   // GASZENIE: ciąg i struga spadają do zera, z dysz resztkowy dym
   autoIgnite: true,    // ciąg (W / S, gałka) przy wyłączonych silnikach odpala zapłon
   flameKick: 0.6,      // rozbłysk strugi w płomieniu zapłonu (dolna granica mocy strugi, potem jałowa / pilot)
-  smokeFlow: 0.45      // przepływ zimnego gazu z dysz w dymie zapłonu (× ciąg pełny) — pole gazu hali K-7 (pył 2D)
+  smokeFlow: 0.55      // przepływ zimnego gazu z dysz w dymie zapłonu (× ciąg pełny) — pole gazu hali K-7 (pył 2D)
 };
 
 /** Pełny zapłon z WYŁĄCZONYCH (dym + płomień) [s] — wylot z doku zaczyna zapłon tyle przed startem. */

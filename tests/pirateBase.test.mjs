@@ -33,7 +33,8 @@ test('układ bazy: kawałki w limicie grup, budowle, stanowiska z załogą i her
   assert.equal(L.berths.filter((b) => b.supercap).length, 3, 'trzy supercapitale w zatoce');
   for (const b of L.berths) assert.equal(L.chunkById.get(b.chunk)?.kind, 'pier', `${b.id} przy pomoście`);
   for (const h of L.hitSolids) assert.ok(L.chunkById.has(h.chunk), h.id);
-  assert.equal(L.ram.berths.length, 4, 'rząd do taranu: cztery okręty');
+  assert.equal(L.ram.berths.length, 9, 'rząd do taranu: zewnętrzna strona poprzeczki T (4 + 5)');
+  assert.ok(L.ram.berths.every((id) => L.berthById.get(id).crew), 'rząd do taranu: same okręty z załogą');
   assert.ok(L.width > 12000 && L.depth > 7000, 'baza większa niż dawny dok');
 });
 

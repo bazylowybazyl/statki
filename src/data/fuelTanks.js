@@ -40,7 +40,16 @@ export const FUEL_TANK_TUNE = Object.freeze({
   // Strumienie gazu z rozerwanego zbiornika (wzdłuż osi kadłuba; kierunki i czas bicia — explosionFx.js
   // JET_AXIS_*): zanik narzucenia prędkości per strumień [s] (velTau reżysera gazu ma 0,15 s dla kłębów — strumień
   // zbiornika bije dłużej, zanim zacznie się rwać).
-  jetVelTau: 0.6
+  jetVelTau: 0.6,
+  // PĘKNIĘCIE za życia okrętu (src/game/fuelTank.js — stepFuelTankRupture; prośba użytkownika 2026-10-15: „wybuchy dymu
+  // przy taranowaniu, jeśli rozwalę fuel tank”): zbiornik wybucha, gdy martwy jest co najmniej taki ułamek jego komórek
+  // (taran, zgniot, krater, rozpad; komórki odcięte z odłamem są całe). Pomiar `scripts/zbiornik-taran-sym.mjs`
+  // (Atlas, 126 taranów): przy 0,5 zbiornik pęka w ~40% taranów, w ponad połowie z nich okręt przeżywa.
+  ruptureDeadFrac: 0.5,
+  // Śmierć po pęknięciu: do ruptureQuiet s po nim — bez drugiego wybuchu (wybuch zbiornika jest wybuchem śmierci),
+  // później — wybuch resztek ze środka okrętu × afterRuptureSize.
+  ruptureQuiet: 1.5,
+  afterRuptureSize: 0.6
 });
 
 /**

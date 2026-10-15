@@ -13,9 +13,14 @@ test('developer fill tops up every weapon in the master catalog', () => {
 
   const changed = fillWeaponInventory(inventory, Object.values(MASTER_WEAPONS), 99);
 
-  assert.equal(changed, Object.keys(MASTER_WEAPONS).length - 1);
-  for (const weapon of Object.values(MASTER_WEAPONS)) {
+  // Broń maszyn eskadr (mountType 'fighter') nie trafia do magazynu okrętu.
+  const shipWeapons = Object.values(MASTER_WEAPONS).filter((w) => w.mountType !== 'fighter');
+  assert.equal(changed, shipWeapons.length - 1);
+  for (const weapon of shipWeapons) {
     assert.ok(inventory.count(weapon.id) >= 99, `${weapon.id} should be available for loadout testing`);
+  }
+  for (const weapon of Object.values(MASTER_WEAPONS)) {
+    if (weapon.mountType === 'fighter') assert.equal(inventory.count(weapon.id), 0, `${weapon.id}: broń maszyn eskadr poza magazynem`);
   }
   assert.equal(inventory.count('railgun_mk2'), 120, 'a larger existing stock must not be reduced');
 });

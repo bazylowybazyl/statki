@@ -288,7 +288,9 @@ export class HaloRingGame {
     const target = Core3D.composerTarget;
     const vw = target?.width || this.renderer?.domElement?.width || 1920;
     const vh = target?.height || this.renderer?.domElement?.height || 1080;
-    const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+    // px bufora (vw × vh) na j. świata — skala renderu z opcji grafiki (Core3D.viewZoom): kamera ringu i kadr
+    // z bufora / zoom muszą pokryć ten sam wycinek świata co kamera gry (kanwa CSS / zoom gry).
+    const zoom = Core3D.viewZoom(cam);
     const cx = Number(cam?.x) || 0;
     const cy = Number(cam?.y) || 0;
     // Kamery 3D gry (tryb free3d): kamera ringu = kamera perspektywy Core3D (render() woła

@@ -51,7 +51,7 @@ test('HUD radar refresh follows the selected view range', () => {
   assert.match(html, /hudRadarSnapshot\?\.range\)\s*!==\s*hudRadarRange/);
   assert.match(html, /hudRadarSnapshot\.pingSerial\s*!==\s*radarPingSerial/);
   assert.match(html, /hudRadarSnapshot\s*=\s*refreshRadarFeed\(hudRadarRange\)/);
-  assert.match(html, /env\.features\s*=\s*hudRadarWorldFeatures/);
+  assert.match(html, /env\.features\s*=\s*(?:radarFeaturesWithPirateRock\()?hudRadarWorldFeatures/);
   assert.match(html, /env\.range\s*=\s*range/);
 });
 

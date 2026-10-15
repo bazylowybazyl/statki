@@ -14,8 +14,8 @@ import {
 const FAMILIES = new Set(['tempest', 'vulcan', 'autocannon', 'helios', 'armata', 'goliath', 'yamato', 'plasmaGatling',
   'hexlance', 'mjolnir', 'valkyrie', 'beamC', 'beamP', 'laserPD', 'ciws', 'flak']);
 
-test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L mają wpis w tabeli efektów, rodziny z listy receptur', () => {
-  assert.equal(WEAPON_FX_IDS.length, 32);
+test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L + działko kanonierki mają wpis w tabeli efektów, rodziny z listy receptur', () => {
+  assert.equal(WEAPON_FX_IDS.length, 33);
   for (const id of WEAPON_FX_IDS) {
     assert.ok(MASTER_WEAPONS[id], `${id}: brak w MASTER_WEAPONS`);
     assert.ok(FAMILIES.has(WEAPON_FX[id].fx), `${id}: nieznana rodzina ${WEAPON_FX[id].fx}`);
@@ -25,7 +25,7 @@ test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L maj
   assert.deepEqual([...FAMILIES].filter((f) => !used.has(f)), []);
 });
 
-test('każda broń MASTER_WEAPONS poza rakietami, torpedami i hangarami ma efekt z tabeli', () => {
+test('każda broń MASTER_WEAPONS poza rakietami, torpedami, bombami i hangarami ma efekt z tabeli', () => {
   const missing = [];
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     if (WEAPON_FX_EXCLUDED_CATEGORIES.has(def.category)) continue;

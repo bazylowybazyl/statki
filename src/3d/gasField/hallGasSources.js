@@ -86,8 +86,10 @@ export function createHallGasSources(layout, rig = k7LightRig(layout)) {
   const fans = [-1620, 1620].map((x) => ({ x, z: layout.backZ + 120, dirX: 0, dirZ: 1 }));
   return {
     hoses, walls, fans, writer:makeWriter(),
-    // na przewód: poprzedni rygiel, wiek buchu po odryglowaniu / ryglowaniu (−1 = brak), poprzednie wysunięcie
-    prevLock: new Float64Array(hoses.length),
+    // na przewód: poprzedni rygiel (−1 = nieznany: pierwszy odczyt po starcie / zmianie hali tylko zapamiętuje stan —
+    // statek zastany zadokowany nie dostaje buchu ryglowania), wiek buchu po odryglowaniu / ryglowaniu (−1 = brak),
+    // poprzednie wysunięcie
+    prevLock: new Float64Array(hoses.length).fill(-1),
     burstAge: new Float64Array(hoses.length).fill(-1),
     latchAge: new Float64Array(hoses.length).fill(-1),
     burstCount: new Float64Array(hoses.length),
@@ -101,7 +103,7 @@ export function createHallGasSources(layout, rig = k7LightRig(layout)) {
 
 /** Zeruje pamięć rygli i buchów (nowa hala). */
 export function resetHallGasSources(src) {
-  src.prevLock.fill(0);
+  src.prevLock.fill(-1);
   src.burstAge.fill(-1);
   src.latchAge.fill(-1);
   src.prevExt.fill(0);
@@ -184,7 +186,7 @@ export function writeHallGasSources(src, J, first, max, IN, dom, dt, T = HALL_GA
     H.venting = vent;
     const prev = src.prevLock[i];
     // ryglowanie: rygiel przechodzi przez 0,5 w górę ze złączką na wlewie — mały buch (wyrównanie ciśnienia)
-    if (prev < 0.5 && lock >= 0.5 && seat > 0.8) {
+    if (prev >= 0 && prev < 0.5 && lock >= 0.5 && seat > 0.8) {
       src.latchAge[i] = 0;
       pushEvent(src, HALL_GAS_EVENT.latch, H, 0.6, i);
     }

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kreator kadłuba — WebGPU</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #d9e4ea; --muted: #7f929c; --line: #9fc6d626; --panel: #060c12e8; --accent: #ffb54a; --warn: #f0b060; --bad: #ff5a52; --good: #7be0a0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.4 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: crosshair; }
+  #title { position: fixed; left: 14px; top: 12px; z-index: 40; pointer-events: none; }
+  #title .name { font: 600 15px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+  #title .hint { margin-top: 4px; color: var(--muted); font-size: 12px; text-shadow: 0 0 8px #000; max-width: 620px; }
+  #hud { position: fixed; left: 14px; bottom: 14px; z-index: 40; padding: 8px 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace; min-width: 340px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .bad { color: var(--bad); } #hud .warn { color: var(--warn); } #hud .good { color: var(--good); }
+  #panel { position: fixed; right: 12px; top: 12px; z-index: 40; width: 300px; max-height: calc(100vh - 24px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .08em; }
+  #panel .sub { color: var(--muted); margin-bottom: 6px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 11px 0 5px; font-weight: 600; }
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .btns3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+  button, select, input { background: #0d1822; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 7px; font: inherit; }
+  button { cursor: pointer; text-align: left; }
+  button kbd { float: right; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #2c2210; border-color: var(--accent); color: #fff; }
+  select, input[type=text] { width: 100%; }
+  input[type=color] { padding: 0; width: 34px; height: 24px; vertical-align: middle; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+  .row > * { flex: 1; }
+  .row > input[type=color] { flex: 0 0 34px; }
+  #recipe { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  #recipe .bad { color: var(--bad); } #recipe .warn { color: var(--warn); } #recipe .good { color: var(--good); }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #json { display: none; width: 100%; height: 160px; margin-top: 4px; background: #050a0f; color: var(--ink); border: 1px solid #2a4252; font: 10px ui-monospace, Consolas, monospace; }
+  #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 12px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #nogpu { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: #030406f2; font-size: 15px; text-align: center; }
+  #abtag { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 41; padding: 4px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 600 12px "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; display: none; pointer-events: none; }
+  body.clean #panel, body.clean #hud, body.clean #title { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Kreator kadłuba: edycja bloków, brył, modułów i naklejek na skórze kadłuba z gry"></canvas>
+</div>
+<div id="title"><div class="name">Kreator kadłuba · WebGPU</div><div class="hint">Projekt z bloków, wielokątów, gotowych części i modułów → ten sam pakiet co sprite (alfa → belki, albedo, mapa powierzchni, emisja, mocowania), na prawdziwej skórze kadłuba gry z oświetleniem v2. Flota Terra Novy odtworzona w kreatorze — A/B ze sprite'ami (klawisz A).</div></div>
+<div id="abtag"></div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Ładowanie kompozytora i shaderów…</div>
+<div id="errors"></div>
+<div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
+<div id="panel">
+  <h1>KREATOR KADŁUBA — DEMO</h1>
+  <div class="sub">Projekt: src/game/hullDesign/ (rama + pancerz + nadbudówka + mostek; bloki, wielokąty, części, moduły, rowki, naklejki, receptura). Pakiet: src/3d/hullDesign/hullComposer.js (TSL).</div>
+
+  <h2>Projekt</h2>
+  <select id="sel-preset"></select>
+  <div class="btns3" style="margin-top:4px">
+    <button id="btn-style-chamfer">fazowany</button>
+    <button id="btn-style-rounded">zaokrąglony</button>
+    <button id="btn-style-sharp">ostry</button>
+  </div>
+  <div class="row"><select id="sel-palette"></select><button id="btn-mirror">Lustro<kbd>L</kbd></button></div>
+  <div class="row"><span id="lbl-detail" style="flex:0 0 112px;color:var(--muted)">detal</span><input id="inp-detail" type="range" style="min-width:0"></div>
+  <div class="row"><span id="lbl-bevel" style="flex:0 0 112px;color:var(--muted)">faza płyt</span><input id="inp-bevel" type="range" min="0.3" max="4" step="0.05" style="min-width:0"><button id="btn-round" style="flex:0 0 44px;text-align:center">łuk</button></div>
+  <div class="row"><span style="flex:0 0 112px;color:var(--muted)">panele losowe</span><input id="inp-panels" type="range" min="0" max="1" step="0.05" style="min-width:0"></div>
+  <div class="row"><span id="lbl-pipenet" style="flex:0 0 112px;color:var(--muted)">sieć rur</span><input id="inp-pipenet" type="range" min="0" max="2" step="0.05" style="min-width:0"><button id="btn-pipeseed" style="flex:0 0 44px;text-align:center" title="inny układ sieci (ziarno)">⟳</button></div>
+  <div class="btns" style="margin-top:4px"><button id="btn-windows">okna tarasów</button><button id="btn-underlay">podkład: sprite<kbd>U</kbd></button></div>
+
+  <h2>Narzędzie</h2>
+  <div class="btns">
+    <button id="tool-block">Bloki<kbd>B</kbd></button>
+    <button id="tool-move">Przesuń / skala<kbd>V</kbd></button>
+    <button id="tool-circle">Koło (Shift: wycięcie)<kbd>C</kbd></button>
+    <button id="tool-poly">Wielokąt<kbd>P</kbd></button>
+    <button id="tool-groove">Rowek (linia płyt)<kbd>R</kbd></button>
+    <button id="tool-pipe">Rura (wiązka)<kbd>W</kbd></button>
+    <button id="btn-polycut">wielokąt-wycięcie</button>
+    <button id="tool-stripe">Pas<kbd>S</kbd></button>
+    <button id="tool-emblem">Emblemat<kbd>E</kbd></button>
+    <button id="tool-text">Napis<kbd>T</kbd></button>
+    <button id="tool-module">Moduł<kbd>M</kbd></button>
+    <button id="tool-part">Część<kbd>K</kbd></button>
+    <button id="tool-castle">Kasztel<kbd>Q</kbd></button>
+    <button id="btn-castleclip">kasztel na płytach</button>
+  </div>
+  <div class="btns" style="margin-top:4px">
+    <button id="lvl-0">rama<kbd>1</kbd></button>
+    <button id="lvl-1">pancerz<kbd>2</kbd></button>
+    <button id="lvl-2">nadbudówka<kbd>3</kbd></button>
+    <button id="lvl-3">mostek<kbd>4</kbd></button>
+  </div>
+  <div class="row"><select id="sel-module"></select></div>
+  <div class="row"><select id="sel-part"></select></div>
+  <div class="row"><select id="sel-emblem"></select><input id="inp-color" type="color" value="#d06a22"></div>
+  <div class="row"><input id="inp-text" type="text" value="HF-07" maxlength="16"></div>
+  <div class="row"><select id="sel-pipen"></select><select id="sel-pipemat"></select></div>
+  <div class="hint">LPM — maluj / postaw / przeciągnij · PPM — usuń (element pod kursorem albo blok) · kółko nad elementem (Przesuń) — skala, Shift+kółko — obrót · kółko poza — zoom · ŚPM — przesuw. Wielokąt: LPM punkty, PPM / Enter zamyka (pierwszy i ostatni punkt na osi → symetryczny), Backspace cofa. Rura (W): łamana wiązki (rowem i po płytach), PPM / Enter kończy; kółko nad rurą (Przesuń) — średnica. Poziomy: rama = ciemna maszynownia z rurami, pancerz = białe płyty. Sieć rur: od gondol silników przez rowy do reaktora, mostka, wież i wzdłuż grzbietu (⟳ — inny układ).</div>
+
+  <h2>Widok</h2>
+  <div class="btns3">
+    <button id="view-game">gra</button>
+    <button id="view-albedo">albedo</button>
+    <button id="view-normal">normalne</button>
+    <button id="view-ao">AO</button>
+    <button id="view-relief">relief</button>
+    <button id="view-emis">emisja</button>
+    <button id="view-cells">belki</button>
+    <button id="btn-grid">siatka<kbd>G</kbd></button>
+    <button id="btn-glow">okna→albedo</button>
+  </div>
+  <div class="btns3" style="margin-top:4px">
+    <button id="zoom-022">0,22</button>
+    <button id="zoom-05">0,5</button>
+    <button id="zoom-1">1</button>
+  </div>
+  <div class="row"><select id="sel-ref"></select><button id="btn-ab">A/B<kbd>A</kbd></button></div>
+
+  <h2>Receptura</h2>
+  <div id="recipe">—</div>
+
+  <h2>JSON</h2>
+  <div class="btns"><button id="btn-json">Pokaż / wczytaj</button><button id="btn-clean">Bez paneli<kbd>H</kbd></button></div>
+  <textarea id="json" spellcheck="false"></textarea>
+</div>
+<script type="module" src="./kreator-kadluba-webgpu.js"></script>
+</body>
+</html>

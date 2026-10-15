@@ -37,12 +37,20 @@ test('fighter squadron catalog exposes distinct flight stats and weapons', () =>
   assert.ok(strike.hp > interceptor.hp);
   assert.ok(strike.missileAmmo < multirole.missileAmmo);
 
+  // Klucz: 9 myśliwców; maszyny uderzeniowe cięższe i mniej liczne (6 bombowców / torpedowców, 4 kanonierki).
+  const SIZE_BY_DOCTRINE = { interceptor: 9, fighter: 9, strike: 9, bomber: 6, torpedo: 6, gunship: 4 };
   for (const def of Object.values(FIGHTER_SQUADRON_DEFS)) {
-    assert.equal(def.squadSize, 9);
+    assert.equal(def.squadSize, SIZE_BY_DOCTRINE[def.doctrine], `${def.id}: liczebność klucza`);
     assert.ok(def.accel > 0);
     assert.ok(def.maxSpeed > 0);
     assert.ok(def.turn > 0);
+    assert.ok(def.flight && def.flight.latAccel > 0 && def.flight.maxTurnDeg > 0 && def.flight.rollAccel > 0,
+      `${def.id}: karta lotu pilota`);
   }
+  // Role eskadr: bombowiec zrzuca bomby, torpedowiec — torpedy, kanonierka strzela z wieżyczki.
+  assert.equal(getFighterSquadronDef('bomber').missileId, 'fighter_bomb');
+  assert.equal(getFighterSquadronDef('torpedo').missileId, 'aerial_torpedo');
+  assert.equal(getFighterSquadronDef('gunship').weaponId, 'gunship_autocannon');
 });
 
 test('unknown squadron ids fall back to the default multirole squadron', () => {

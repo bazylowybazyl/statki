@@ -19,7 +19,7 @@
 
 import {
   MASTER_WEAPONS, weaponTradeGood, weaponAmmoType, weaponAmmoPerShot, weaponAmmoPerMissile,
-  weaponDamageType, DAMAGE_TYPE
+  weaponDamageType, DAMAGE_TYPE, isFighterWeapon
 } from '../data/weapons.js';
 import {
   FIGHTER_SQUADRON_DEFS, getFighterSquadronDef, getHangarSquadronCapacity,
@@ -150,6 +150,10 @@ function bagMass(bag) {
 export function weaponBuildCost(weaponOrId) {
   const weapon = def(weaponOrId);
   if (!weapon) return null;
+  // Broń maszyn eskadr (bomba, torpeda lotnicza, działko kanonierki) nie jest towarem: siedzi w płatowcu,
+  // a jej amunicję liczy przezbrojenie eskadry (squadronRearmCost). Bez ceny wypada z katalogu, cen portu
+  // i zakupów refitu.
+  if (isFighterWeapon(weapon)) return null;
   const good = weaponTradeGood(weapon);
   if (!good) return null;
 

@@ -1,22 +1,28 @@
 // Baza piratów (misja 1) — układ wg szkicu użytkownika z 2026-10-11 (zastępuje suchy dok: „kopiowanie K-7 było złym
 // pomysłem, trzeba stworzyć kompletnie nowy kompleks piracki”). Czysta matematyka (bez Three i DOM).
 //
-//                                         M (magazyn)
-//            A1 ╲                          ┃ ▮▮▮▮        P1
-//                ╲ ▮▮▮▮  (ramię A)          ┃     ▮▮▮▮ ┃ ▮▮▮▮   (supercapitale ▮ w zatoce między pomostami)
-//   gracz →       F ━━━━━ ( HABITAT ) ━━━━━━ E ╲      N ━━━━━━━ P0 ▸ P (zbiorniki paliwa)
-//                ╱ ▮▮▮▮▮ (ramię B)                 ╲ ▮▮▮ ╱
-//            B1 ╱
+//              A1                                       M (magazyn)
+//               ┃ ▮▮▮▮ (ramię A — na zewnątrz okręty z załogą)         ┃ ▮▮▮▮        P1
+//               ┃                                                     ┃     ▮▮▮▮ ┃ ▮▮▮▮   (supercapitale ▮ w zatoce)
+//   gracz →     F ━━━━━━━━━━━━ ( HABITAT ) ━━━━━━ E ╲      N ━━━━━━━ P0 ▸ P (zbiorniki paliwa)
+//               ┃                                       ╲ ▮▮▮ ╱
+//               ┃ ▮▮▮▮▮ (ramię B — na zewnątrz okręty z załogą)
+//              B1
 //
-// Układ lokalny jak budowle Z7 (portBuildingScene.js): x wzdłuż osi podejścia (gracz nadlatuje od −x — rozwidlenie Y
-// otwiera się ku niemu, magazyn i zbiorniki są na drugim końcu, za habitatem), z w poprzek, y = wysokość K-7
+// 2026-10-14 (prośba użytkownika): zamiast rozwidlenia Y („>”) litera T — trzon od habitatu do F i SZEROKA poprzeczka
+// (ramiona A i B w poprzek osi podejścia). Na ZEWNĘTRZNEJ stronie poprzeczki (ku graczowi) stoją okręty z załogą (te,
+// które startują), w remoncie — od strony habitatu; gracz rozbija rząd szarżą (F) wzdłuż całej poprzeczki (l.ram).
+//
+// Układ lokalny jak budowle Z7 (portBuildingScene.js): x wzdłuż osi podejścia (gracz nadlatuje od −x — na poprzeczkę T,
+// magazyn i zbiorniki są na drugim końcu, za habitatem), z w poprzek, y = wysokość K-7
 // (płaszczyzna gry y = 116 = z świata 0, nad nią ×0,42 — k7HeightToZ). Kurs w układzie: kąt od +x ku +z.
 //
 // Decyzje użytkownika (2026-10-11):
 //  - HABITAT: w płaszczyźnie gry BĘBEN — „rura” (ściana zewnętrzna, grodzie promieniowe, pierścień wewnętrzny, szyb),
-//    otwarty od góry, żeby taran i ostrzał było widać z kamery gry; nad nim WĘŻSZA część techniczna (anteny, talerze,
-//    pierścień z oknami — cywile), pod płaszczyzną DYSK MIESZKALNY kilka razy większy od bębna (nic go nie zasłania,
-//    widać ogromną strukturę). Zniszczony bęben → góra i dół „implodują”.
+//    otwarty od góry, żeby taran i ostrzał było widać z kamery gry; nad nim część techniczna (anteny, talerze,
+//    pierścień z oknami — cywile), pod płaszczyzną DYSK MIESZKALNY większy od bębna. Zniszczony bęben → góra i dół
+//    „implodują”. 2026-10-14: „pomniejsz dół, powiększ górę i zrób znacznie dłuższą szyję” — dysk r 3,3 → 1,95 km,
+//    część techniczna = GŁOWA (talerz r 880) na długiej SZYI z kratownicą (~1,3 km nad bębnem).
 //  - POMOSTY z okrętami po obu stronach (także na ramionach Y); większość okrętów w remoncie (bez załogi), kilkanaście
 //    z załogą startuje na zegar; 3 supercapitale w zatoce przy zbiornikach — herszt i dwa w remoncie.
 //  - P = zbiorniki paliwa, rury od P po pomostach, przez habitat do ramion Y. Wysadzony zbiornik = reakcja
@@ -44,13 +50,19 @@ export function pirateBaseShipClass(key) {
   return 'frigate';
 }
 
+// Habitat (proporcje wg prośby użytkownika z 2026-10-14: „pomniejsz dół, powiększ górę i zrób znacznie dłuższą
+// szyję”): szyb bębna (kawałek H-C) do coreTop; nad nim SZYJA (część techniczna, FG) — rura neckR z kratownicą
+// od neckY0 do neckY1; GŁOWA — talerz ringR0..ringR1 (ringY0..ringY1) z lejkiem w dół do szyi, piasta do headTop,
+// maszty do mastTop. Wysokości K-7 (nad płaszczyzną gry ×0,42: szyja ~1,3 km, szczyt masztów ~2,3 km).
+// ringR1 < wewnętrzna ściana bębna (drumR − wall): z góry widać koronę ściany, w którą celuje taran i ostrzał.
 export const PIRATE_BASE_SPEC = Object.freeze({
   habitat: Object.freeze({
     drumR: 1000, wall: 90, innerR: 560, innerW: 60, coreR: 240,
     spokeW: 64, spokes: 10, innerSpokes: 6,
     floorY: -170, wallTop: 330, rimTop: 352,
-    coreTop: 1150, ringR0: 360, ringR1: 560, ringY0: 760, ringY1: 900, mastTop: 2300,
-    stemR: 560, discR: 3300, discY0: -1010, discY1: -720, tier1R: 2150, tier1Y: -620, tier2R: 1000, tier2Y: -540,
+    coreTop: 640, neckR: 150, neckY0: 560, neckY1: 3500,
+    ringR0: 480, ringR1: 880, ringY0: 3550, ringY1: 4080, headR: 400, headTop: 4360, mastTop: 5600,
+    stemR: 560, discR: 1950, discY0: -940, discY1: -720, tier1R: 1500, tier1Y: -620, tier2R: 1150, tier2Y: -540,
     discSectors: 8
   }),
   pier: Object.freeze({ halfW: 85, deckY0: -40, deckY1: 200, gap: 60, pipeOff: 132, pipeY: 34, pipeR: 26 }),
@@ -61,16 +73,16 @@ export const PIRATE_BASE_SPEC = Object.freeze({
 
 // Węzły układu (x, z) — szkielet pomostów.
 const NODES = Object.freeze({
-  Hw: [-1000, 0], He: [1000, 0], F: [-3300, 0], A1: [-5780, -2480], B1: [-5350, 2570],
+  Hw: [-1000, 0], He: [1000, 0], F: [-4600, 0], A1: [-4600, -4200], B1: [-4600, 4200],
   E: [3600, 0], N: [5100, -1450], Mp: [5100, -3550], P0: [7100, -1450], P1: [7100, -4200]
 });
 
 // Pomosty: kawałki (długie — dwa), klasy okrętów stanowisk po stronach (σ = −1 — strona −n, +1 — strona +n, gdzie
 // n = kierunek pomostu obrócony o +90°), litera stanowisk, strona rury (pipe), napis.
 const PIERS = Object.freeze([
-  { id: 'Y-A', letter: 'A', from: 'F', to: 'A1', chunks: ['YA-1', 'YA-2'], pipe: -1, label: 'ramię A',
+  { id: 'Y-A', letter: 'A', from: 'F', to: 'A1', chunks: ['YA-1', 'YA-2'], pipe: 1, label: 'ramię A',
     sides: { '-1': ['destroyer', 'frigate', 'battleship', 'destroyer'], '1': ['frigate', 'destroyer', 'frigate', 'battleship'] } },
-  { id: 'Y-B', letter: 'B', from: 'F', to: 'B1', chunks: ['YB-1', 'YB-2'], pipe: 1, label: 'ramię B',
+  { id: 'Y-B', letter: 'B', from: 'F', to: 'B1', chunks: ['YB-1', 'YB-2'], pipe: -1, label: 'ramię B',
     sides: { '-1': ['frigate', 'destroyer', 'battleship', 'frigate', 'destroyer'], '1': ['destroyer', 'frigate', 'destroyer', 'battleship', 'frigate'] } },
   { id: 'N-P', letter: 'C', from: 'Hw', to: 'F', chunks: ['NP'], pipe: 1, label: 'pomost wschodni',
     sides: { '-1': ['battleship', 'destroyer'], '1': ['destroyer', 'battleship'] } },
@@ -87,13 +99,15 @@ const PIERS = Object.freeze([
 ]);
 
 // Załogi (decyzja 2026-10-11: większość w remoncie): te stanowiska mają załogę i startują na zegar wodowania;
-// herszt — supercapital przy otwartym końcu zatoki (startuje pierwszy na alarm, wyjazd wzdłuż zatoki). Rząd do taranu (samouczek) = wewnętrzna strona
-// ramienia A (σ = −1, ku osi lejka): dwa z czterech okrętów z załogą — taran zatrzymuje start.
-export const PIRATE_BASE_CREWED = Object.freeze(['A-L2', 'A-L4', 'B-R3', 'B-L2', 'C-L1', 'C-R2', 'D-L2', 'D-R1', 'E-R1', 'E-L2', 'F-L1', 'H-R3']);
+// herszt — supercapital przy otwartym końcu zatoki (startuje pierwszy na alarm, wyjazd wzdłuż zatoki). Rząd do taranu
+// (samouczek, 2026-10-14) = ZEWNĘTRZNA strona poprzeczki T (ramię A σ = −1, ramię B σ = +1 — ku graczowi): same okręty
+// z załogą — szarża wzdłuż poprzeczki zatrzymuje ich start; w remoncie stoją po stronie habitatu.
+export const PIRATE_BASE_CREWED = Object.freeze(['A-L1', 'A-L2', 'A-L3', 'A-L4', 'B-R1', 'B-R2', 'B-R3', 'B-R4', 'B-R5', 'D-R1', 'E-R1', 'H-R3']);
 export const PIRATE_BASE_BOSS = 'H-L3';
 // offset: oś toru od osi pomostu — Atlas (szer. 806) mija pokład pomostu (pół 85 + rękawy), a miażdży każdy okręt rzędu
 // (fregata sięga 337 j. od osi, pancernik 865).
-export const PIRATE_BASE_RAM = Object.freeze({ pier: 'Y-A', side: -1, offset: 600, runUp: 900, stopFrac: 0.12 });
+// Tor: od końca ramienia A (z rozbiegiem runUp) przez F do końca ramienia B (+ runOut), po stronie zewnętrznej.
+export const PIRATE_BASE_RAM = Object.freeze({ piers: Object.freeze([['Y-A', -1], ['Y-B', 1]]), offset: 600, runUp: 900, runOut: 300 });
 
 const TAU = Math.PI * 2;
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -284,8 +298,8 @@ export function createPirateBaseLayout(opts = {}) {
     mast('L-F', nodes.F.x, nodes.F.z - 140, 'NP', nodes.F.x - 900, 0, 2000),
     habMast((5 * Math.PI) / 4, 'L-H1'),
     habMast((3 * Math.PI) / 4, 'L-H2'),
-    mast('L-A', nodes.A1.x + 260, nodes.A1.z + 200, 'YA-2', nodes.A1.x + 900, nodes.A1.z + 1100),
-    mast('L-B', nodes.B1.x + 260, nodes.B1.z - 200, 'YB-2', nodes.B1.x + 900, nodes.B1.z - 1100),
+    mast('L-A', nodes.A1.x + 140, nodes.A1.z + 150, 'YA-2', nodes.A1.x - 1100, nodes.A1.z + 700),
+    mast('L-B', nodes.B1.x + 140, nodes.B1.z - 150, 'YB-2', nodes.B1.x - 1100, nodes.B1.z - 700),
     mast('L-E', nodes.E.x, nodes.E.z + 140, 'FP', nodes.E.x - 600, 900),
     mast('L-N', nodes.N.x - 140, nodes.N.z + 140, 'DG', nodes.N.x - 900, nodes.N.z - 900),
     mast('L-P', P0.x + 150, P0.z - 150, 'PP', P0.x - 900, P0.z - 1100, 2000, [1.0, 0.62, 0.32]),
@@ -315,7 +329,7 @@ export function createPirateBaseLayout(opts = {}) {
   }
   add('H-C', 'core', 'habitat', 'szyb habitatu', { x0: -Hs.innerR, x1: Hs.innerR, y0: Hs.discY1, y1: Hs.coreTop, z0: -Hs.innerR, z1: Hs.innerR },
     hab.quadrants.map((qd) => qd.id), 3);
-  add('H-T', 'tech', 'habitat', 'część techniczna habitatu', { x0: -Hs.ringR1 - 200, x1: Hs.ringR1 + 200, y0: Hs.coreTop - 400, y1: Hs.mastTop, z0: -Hs.ringR1 - 200, z1: Hs.ringR1 + 200 },
+  add('H-T', 'tech', 'habitat', 'część techniczna habitatu', { x0: -Hs.ringR1 - 200, x1: Hs.ringR1 + 200, y0: Hs.neckY0, y1: Hs.mastTop, z0: -Hs.ringR1 - 200, z1: Hs.ringR1 + 200 },
     ['H-C'], 1, true);
   const ds = Hs.discSectors;
   for (let k = 0; k < ds; k++) {
@@ -401,20 +415,20 @@ export function createPirateBaseLayout(opts = {}) {
   hits.push({ id: 'hit-M-2', chunk: 'M-2', poly: boxPoly(AX.x, AX.z, AX.w, AX.d) });
   l.hitSolids = hits;
 
-  // ---- taran samouczka: wzdłuż wewnętrznej strony ramienia A (od końca ku rozwidleniu), w połowie długości okrętów
-  const ramPier = l.piers.find((p) => p.id === PIRATE_BASE_RAM.pier);
-  const rs = PIRATE_BASE_RAM.side;
-  const ro = PIRATE_BASE_RAM.offset;
-  const rx = ramPier.nx * rs * ro;
-  const rz = ramPier.nz * rs * ro;
+  // ---- taran samouczka: wzdłuż zewnętrznej strony poprzeczki T (od końca ramienia A do końca ramienia B), w połowie
+  // długości okrętów
+  const RAM = PIRATE_BASE_RAM;
+  const [[pa, sa], [pb, sb]] = RAM.piers;
+  const ramA = l.piers.find((p) => p.id === pa);
+  const ramB = l.piers.find((p) => p.id === pb);
   l.ram = {
-    pier: ramPier.id, side: rs,
-    start: { x: ramPier.bx + ramPier.ux * PIRATE_BASE_RAM.runUp + rx, z: ramPier.bz + ramPier.uz * PIRATE_BASE_RAM.runUp + rz },
-    end: { x: ramPier.ax + ramPier.ux * ramPier.len * PIRATE_BASE_RAM.stopFrac + rx, z: ramPier.az + ramPier.uz * ramPier.len * PIRATE_BASE_RAM.stopFrac + rz },
-    berths: l.berths.filter((b) => b.pier === ramPier.id && b.side === rs).map((b) => b.id)
+    pier: ramA.id, side: sa, piers: RAM.piers,
+    start: { x: ramA.bx + ramA.ux * RAM.runUp + ramA.nx * sa * RAM.offset, z: ramA.bz + ramA.uz * RAM.runUp + ramA.nz * sa * RAM.offset },
+    end: { x: ramB.bx + ramB.ux * RAM.runOut + ramB.nx * sb * RAM.offset, z: ramB.bz + ramB.uz * RAM.runOut + ramB.nz * sb * RAM.offset },
+    berths: l.berths.filter((b) => RAM.piers.some(([id, side]) => b.pier === id && b.side === side)).map((b) => b.id)
   };
   l.ram.dir = Math.atan2(l.ram.end.z - l.ram.start.z, l.ram.end.x - l.ram.start.x);
-  // wylot lejka (środek między końcami ramion) — tam celuje podejście
+  // przedpole poprzeczki T (środek między końcami ramion, przed nią) — tam celuje podejście
   l.mouth = { x: Math.min(nodes.A1.x, nodes.B1.x) - 600, z: (nodes.A1.z + nodes.B1.z) / 2 };
 
   // ---- obwiednia: kawałki, okręty stanowisk, dysk

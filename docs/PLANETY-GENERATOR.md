@@ -325,6 +325,13 @@ metalu i krzemianu; materiał metalness 0,45.
 - Zrzuty w grze: `node scripts/webgpu/male-ciala-gra.mjs [--tylko ceres-cala,pluton-charon] [--query trafficV2]`
   (`.tmp/ciala/`: każde ciało z bliska i z dystansu gry, stolica dniem i nocą, stacja, dok z rynkiem, położenia,
   pipeline'y synchroniczne). Demo: `dema/planety-webgpu.html?cialo=ceres|westa|pallas|hygiea|psyche|pluton|charon`.
+- **Hidalgo — planetoida pod bazą piratów** (misja 1, 2026-10-15; `--cialo hidalgo`): centaur — ciemna, czerwonawa
+  skorupa z tolinami, płaty lodu, świeże kratery odsłaniają lód; promień MAPY 1600 km (10 j. gry na km jak Ceres; w grze
+  16 000 j. dobrane do bazy, nie do skali małych ciał). Osada, drogi i odkrywki lodu z bloku `PIRATE_ROCK_SITE`
+  (`src/3d/portBuildings/pirateRockLayout.js` — te same miejsca co bryły 3D): stopa windy na (lon 0, lat 0), (e, n) po
+  powierzchni → (lon, lat) jak `pirateRockLonLat`; WYRÓWNANY TARAS osady (d = 0 w kształcie, bez kraterów w mapie, skarpa
+  na brzegu) — gra stawia budowle na kuli R. Nie ma jej w `smallBodies.js` (skała stoi przy bazie: `pirateRock3D.js`,
+  pass tła). Zmiana bloku osady = ponowny wypiek (`--cialo hidalgo --do-gry`).
 
 ## Demo (2026-10-09)
 

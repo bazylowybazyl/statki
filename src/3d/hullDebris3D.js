@@ -197,7 +197,7 @@ export const HullDebris3D = {
    * Odłamek w świecie gry (y w dół), prędkość j./s. r, g, b — kolor blachy komórki (sRGB 0–1),
    * scale — rozmiar (bok komórki × ~0,5–0,95), structural = kształtownik zamiast płyty.
    */
-  spawn(x, y, vx, vy, r, g, b, scale, structural, nowSec) {
+  spawn(x, y, vx, vy, r, g, b, scale, structural, nowSec, z = 0, vz = 0) {
     if (!this.ensure()) return;
     if (this._alive() === 0) {
       sceneOriginNearCamera(_origin);
@@ -206,9 +206,9 @@ export const HullDebris3D = {
     const batch = this.batches[structural ? 1 : 0];
     const i = batch.cursor, i3 = i * 3, i4 = i * 4;
     const a = batch.arrays;
-    a.aStart[i3] = x - this.originX; a.aStart[i3 + 1] = -y - this.originY; a.aStart[i3 + 2] = 0;
-    // Lekki ruch poza płaszczyznę tylko w obrocie — tor zostaje w płaszczyźnie gry.
-    a.aVel[i3] = vx; a.aVel[i3 + 1] = -vy; a.aVel[i3 + 2] = 0;
+    // z / vz — odłamek bryły 3D spoza płaszczyzny gry (wieża habitatu); kadłuby płaskie: 0 (tor w płaszczyźnie gry).
+    a.aStart[i3] = x - this.originX; a.aStart[i3 + 1] = -y - this.originY; a.aStart[i3 + 2] = Number(z) || 0;
+    a.aVel[i3] = vx; a.aVel[i3 + 1] = -vy; a.aVel[i3 + 2] = Number(vz) || 0;
     a.aRot[i4] = fxRandom.next() * 2 - 1; a.aRot[i4 + 1] = fxRandom.next() * 2 - 1; a.aRot[i4 + 2] = fxRandom.next() * 2 - 1;
     a.aRot[i4 + 3] = (fxRandom.next() - 0.5) * 7;
     a.aInfo[i3] = nowSec; a.aInfo[i3 + 1] = scale; a.aInfo[i3 + 2] = HULL_DEBRIS_LIFE;
@@ -283,6 +283,6 @@ export const HullDebris3D = {
 if (typeof window !== 'undefined') {
   window.HullDebris3D = HullDebris3D;
   // Wołane z hullBodies (onNodeDebris) — gra, y w dół.
-  window.spawnHullDebris = (x, y, vx, vy, r, g, b, scale, structural) =>
-    HullDebris3D.spawn(x, y, vx, vy, r, g, b, scale, structural, performance.now() * 0.001);
+  window.spawnHullDebris = (x, y, vx, vy, r, g, b, scale, structural, z = 0, vz = 0) =>
+    HullDebris3D.spawn(x, y, vx, vy, r, g, b, scale, structural, performance.now() * 0.001, z, vz);
 }

@@ -10,12 +10,16 @@
 // u gospodarza, a gdy odcięty odłam zabrał wszystkie, na wraku tego rodu (wtedy wybuch leci z wrakiem odłamu);
 // komórki zniszczone — miejsce zbiornika w kadłubie gospodarza. Pozycja w świecie z pozy encji (HullBodies.entityPose —
 // ta sama, którą rysuje skóra kadłuba).
+// PĘKNIĘCIE (2026-10-15, prośba użytkownika: „wybuchy dymu przy taranowaniu, jeśli rozwalę fuel tank”): zbiornik rozbity
+// za życia gospodarza (≥ FUEL_TANK_TUNE.ruptureDeadFrac komórek martwych — taran, zgniot, krater, rozpad) wybucha OD RAZU
+// (`stepFuelTankRupture`, krok integralności gry), raz na zbiornik; potem `fuelTankBlast` → null (śmierć bez drugiego
+// wybuchu zbiornika — politykę wybuchu śmierci po pęknięciu ma wołający).
 // Moduł bez DOM i three.
 
 import { HullBodies } from './hullBodies.js';
-import { reactorHull, reactorCellNode, reactorCoreWorld, reactorLocalDirToWorld } from './reactorCore.js';
+import { reactorHull, reactorCellNode, reactorCellWorld, reactorCoreWorld, reactorLocalDirToWorld } from './reactorCore.js';
 import {
-  FUEL_TANK_MARKERS, FUEL_TANK_PROFILE_BY_CLASS, fuelTankBlastSize, fuelTankCapacityForArea, fuelTankClassForLength
+  FUEL_TANK_MARKERS, FUEL_TANK_PROFILE_BY_CLASS, FUEL_TANK_TUNE, fuelTankBlastSize, fuelTankCapacityForArea, fuelTankClassForLength
 } from '../data/fuelTanks.js';
 
 const finite = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -200,7 +204,11 @@ function buildTank(entity, hull, marker, pngW, pngH, hullId, auto) {
     cellX: Int16Array.from(ixs),
     cellY: Int16Array.from(iys),
     lastX: 0,
-    lastY: 0
+    lastY: 0,
+    // pęknięcie za życia gospodarza (stepFuelTankRupture): czas gry [s] i liczba żywych węzłów przy ostatnim sprawdzeniu
+    ruptured: false,
+    rupturedAt: 0,
+    _seenNodes: -1
   };
 }
 
@@ -267,14 +275,15 @@ function entityVel(e, out) {
 
 /**
  * Wybuch zbiornika przy śmierci gospodarza: { x, y, size, profile, vx, vy, axisX, axisY, onHost } (świat gry) albo
- * null (brak zbiornika / kadłuba). Miejsce: żywe komórki zbiornika u gospodarza; odcięte z odłamem — na wraku rodu z
- * `candidates` (window.wrecks), z jego prędkością; zniszczone — miejsce zbiornika w kadłubie gospodarza. Oś = oś kadłuba
- * (dziób) w świecie. Wołać PRZED zamianą kadłuba we wrak (createWreckage przenosi ciało).
+ * null (brak zbiornika / kadłuba, zbiornik już pękł — `stepFuelTankRupture`). Miejsce: żywe komórki zbiornika
+ * u gospodarza; odcięte z odłamem — na wraku rodu z `candidates` (window.wrecks), z jego prędkością; zniszczone — miejsce
+ * zbiornika w kadłubie gospodarza. Oś = oś kadłuba (dziób) w świecie. Wołać PRZED zamianą kadłuba we wrak
+ * (createWreckage przenosi ciało).
  */
 export function fuelTankBlast(entity, out = {}, { candidates = null } = {}) {
   const tank = entity?.fuelTank;
   const hull = reactorHull(entity);
-  if (!tank || !hull) return null;
+  if (!tank || !hull || tank.ruptured) return null;
   const loc = locateTank(tank, entity, candidates, out);
   const owner = loc ? out.entity : entity;
   if (!loc) {
@@ -288,6 +297,70 @@ export function fuelTankBlast(entity, out = {}, { candidates = null } = {}) {
   out.size = tank.size;
   out.profile = tank.profile;
   out.entity = owner;
+  tank.lastX = out.x; tank.lastY = out.y;
+  return out;
+}
+
+// Kadłuby rodu zbiornika poza gospodarzem (wraki odłamów) — bufor wielokrotnego użytku (krok bez alokacji).
+const _lineageHulls = [];
+
+/**
+ * PĘKNIĘCIE zbiornika za życia gospodarza (krok integralności gry): martwych ≥ FUEL_TANK_TUNE.ruptureDeadFrac komórek
+ * zbiornika (nie żyją u gospodarza ani na wrakach rodu z `candidates` — zbiornik odcięty z odłamem jest cały) → zbiornik
+ * pęka RAZ (`tank.ruptured`, `tank.rupturedAt` = `time`) i wynik jak `fuelTankBlast`: { x, y, size, profile, vx, vy,
+ * axisX, axisY, onHost, entity } — miejsce = środek martwych komórek w kadłubie gospodarza, prędkość i oś gospodarza.
+ * Inaczej null. Sprawdza tylko po zmianie liczby żywych węzłów gospodarza od ostatniego wywołania (tani w każdym kroku).
+ * Pęknięty zbiornik, którego wszystkie komórki znów żyją u gospodarza (remont w doku, odrost dronów), jest znów cały.
+ */
+export function stepFuelTankRupture(entity, out = {}, { candidates = null, time = 0 } = {}) {
+  const tank = entity?.fuelTank;
+  if (!tank) return null;
+  const hull = reactorHull(entity);
+  if (!hull) return null;
+  const nodes = hull.body.activeNodes;
+  if (tank._seenNodes === nodes) return null;
+  tank._seenNodes = nodes;
+  const n = tank.cellX.length;
+  if (tank.ruptured) {
+    for (let k = 0; k < n; k++) if (reactorCellNode(hull, tank.cellX[k], tank.cellY[k]) < 0) return null;
+    tank.ruptured = false;
+    return null;
+  }
+  const need = Math.max(1, Math.ceil(n * FUEL_TANK_TUNE.ruptureDeadFrac - 1e-9));
+  let off = 0;
+  for (let k = 0; k < n; k++) if (reactorCellNode(hull, tank.cellX[k], tank.cellY[k]) < 0) off++;
+  if (off < need) return null;
+  _lineageHulls.length = 0;
+  if (Array.isArray(candidates)) {
+    for (let c = 0; c < candidates.length; c++) {
+      const e = candidates[c];
+      if (!e || e === entity) continue;
+      const h = reactorHull(e);
+      if (h && h.dmgKey === tank.lineage) _lineageHulls.push(h);
+    }
+  }
+  let dead = 0, sx = 0, sy = 0;
+  for (let k = 0; k < n; k++) {
+    const ix = tank.cellX[k], iy = tank.cellY[k];
+    if (reactorCellNode(hull, ix, iy) >= 0) continue;
+    let carried = false;
+    for (let j = 0; j < _lineageHulls.length; j++) if (reactorCellNode(_lineageHulls[j], ix, iy) >= 0) { carried = true; break; }
+    if (carried) continue;
+    reactorCellWorld(tank, k, _q);
+    sx += _q.x; sy += _q.y; dead++;
+  }
+  _lineageHulls.length = 0;
+  if (dead < need) return null;
+  tank.ruptured = true;
+  tank.rupturedAt = time;
+  out.x = sx / dead; out.y = sy / dead;
+  reactorLocalDirToWorld(hull, 1, 0, _q);
+  out.axisX = _q.x; out.axisY = _q.y;
+  entityVel(entity, out);
+  out.onHost = true;
+  out.size = tank.size;
+  out.profile = tank.profile;
+  out.entity = entity;
   tank.lastX = out.x; tank.lastY = out.y;
   return out;
 }

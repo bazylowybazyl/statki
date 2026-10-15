@@ -158,6 +158,8 @@ export function fillWeaponInventory(inventory, weapons, amount = 1) {
   let changed = 0;
 
   for (const entry of weapons || []) {
+    // Broń maszyn eskadr (mountType 'fighter', src/data/weapons.js) nie trafia do magazynu okrętu.
+    if (entry && typeof entry === 'object' && entry.mountType === 'fighter') continue;
     const id = String(typeof entry === 'string' ? entry : (entry?.id || ''));
     if (!id || seen.has(id)) continue;
     seen.add(id);

@@ -1,8 +1,14 @@
 // Wybuch okrętu ze ZBIORNIKA PALIWA (F14 audytu wybuchów, etap A2 — src/game/fuelTank.js) w PRAWDZIWEJ grze: Vite +
 // headless Chrome z WebGPU (CDP), gra swobodna w pustej przestrzeni (gracz nieśmiertelny, bez mgły wojny).
 //
-//   node scripts/webgpu/zbiornik-gra.mjs [--tryb sceny,bitwa] [--out .tmp/zbiornik-gra] [--rozmiar 1600x900] [--port 5377]
-//        [--sklad 24,10,5,1] [--zoom 0.16] [--masowe 4] [--naRaz 12] [--bitwa 30] [--ab swiatla]
+//   node scripts/webgpu/zbiornik-gra.mjs [--tryb sceny,bitwa,taran] [--out .tmp/zbiornik-gra] [--rozmiar 1600x900] [--port 5377]
+//        [--sklad 24,10,5,1] [--zoom 0.16] [--masowe 4] [--naRaz 12] [--bitwa 30] [--ab swiatla] [--zoomTaran 0.2]
+//
+// taran (2026-10-15, PĘKNIĘCIE zbiornika za życia okrętu — stepFuelTankRupture): Atlas szarżą w rufę pancernika Terra Nova
+//   i w burty: pancernika piratów, pancernika TN przy dziobie i niszczyciela piratów (dwie ostatnie — zbiornik cały, sam
+//   DYM ZGNIOTU, src/game/crushSmoke.js); A/B ShipBlastTune.rupture + .crush (z pęknięciem i zgniotem ↔ dawniej: wybuch
+//   tylko przy śmierci), zrzuty +0,15 / +0,6 / +1,5 s od pierwszego dymu, liczniki (`--tylko pancernikTN-rufa,…`).
+//   Bitwa naturalna liczy też pęknięcia od broni (`bitwa pęknięcia zbiorników`).
 //
 // sceny (czas wirtualny harnessu, zrzuty na zatrzymanej klatce; A/B dawnej śmierci ↔ nowej tej samej chwili):
 //   fregata / niszczyciel / pancernik — okręt w ruchu (nośnik), śmierć z puli HP: dawniej wybuch drona
@@ -260,6 +266,117 @@ try {
     }
   }
 
+  // taran (2026-10-15, PĘKNIĘCIE zbiornika — stepFuelTankRupture): Atlas gracza taranuje okręt szarżą (2200 → 3000 j/s,
+  // 1100 j/s²; prędkość ustawiana co klatkę jak ciąg), kamera jedzie z ofiarą. A/B tej samej sceny w osobnym miejscu:
+  // ShipBlastTune.rupture = true (pęknięcie) ↔ false (dawniej: wybuch tylko przy śmierci); przed każdym wariantem
+  // remont kadłuba Atlasa (HullBodies.restoreHull — nieśmiertelność odnawia tylko punkty, a zmiażdżony dziób taranuje
+  // inaczej). Zrzuty z tych samych chwil (od pęknięcia w wariancie z pęknięciem), liczniki pęknięć i wybuchów,
+  // pipeline'y synchroniczne (ma być 0).
+  if (tryby.includes('taran')) {
+    await ev('(() => { const h = window.__harness; h.clock.t = h.realNow(); h.clock.mode = "frozen"; h.hold(true); return true; })()');
+    await ev('window.__harness.step(20)');
+    const TZOOM = Number(args.zoomTaran || 0.2);
+    // [nazwa, klucz wezwania, strona, burta (null = rufa: Atlas w rufę ofiary; liczba = punkt burty −1 rufa … 1 dziób)]
+    const TARANY = [
+      ['pancernikTN-rufa', 'battleship', 'friendly', null],
+      ['pancernikPir-burta', 'pirate_battleship', 'pirate', -0.3],
+      // bez trafienia w zbiornik — sam DYM ZGNIOTU (src/game/crushSmoke.js)
+      ['pancernikTN-burtaDziob', 'battleship', 'friendly', 0.6],
+      ['niszczycielPir-burta', 'destroyer', 'pirate', 0.3]
+    ].filter((r) => !args.tylko || String(args.tylko).split(',').includes(r[0]));
+    // Scena: ofiara stoi (kąt 0) w (cx, cy), Atlas (po remoncie) 150 j. przed rufą / burtą, prędkość 2200 j/s ku ofierze.
+    await ev(`(() => {
+      const H = window.HullBodies, q = {};
+      const ext = (e, ang) => { const s = e.beamHull.body.nodeStore, c = Math.cos(ang), sn = Math.sin(ang);
+        const ox = e.x ?? e.pos.x, oy = e.y ?? e.pos.y; let lo = Infinity, hi = -Infinity, w = 0;
+        for (let i = 0; i < s.count; i++) { if (!s.active[i]) continue; H.nodeWorld(e.beamHull, i, q);
+          const a = (q.x - ox) * c + (q.y - oy) * sn, b = -(q.x - ox) * sn + (q.y - oy) * c;
+          if (a < lo) lo = a; if (a > hi) hi = a; if (Math.abs(b) > w) w = Math.abs(b); } return { lo, hi, w }; };
+      window.__ramSetup = async (key, mode, cx, cy, burta, rupture) => {
+        const spawn = ${SPAWN};
+        const n = spawn(key, mode, cx, cy, 0);
+        if (!n) return null;
+        for (let i = 0; i < 40 && !n.beamHull; i++) await window.__harness.step(1);
+        n.angle = 0; n.desiredAngle = 0; n.vx = 0; n.vy = 0; n.angVel = 0;
+        await window.__harness.step(4);
+        const V = ext(n, 0);
+        const s = window.ship;
+        window.DevScene.teleport(cx - 20000, cy, 0);
+        H.restoreHull(s);
+        if (s.hull) s.hull.val = s.hull.max;
+        await window.__harness.step(2);
+        const A = ext(s, s.angle);
+        const ang = burta === null ? 0 : Math.PI / 2;
+        const ax = burta === null ? n.x + V.lo - A.hi - 150 : n.x + (V.lo + V.hi) / 2 + burta * (V.hi - V.lo) / 2;
+        const ay = burta === null ? n.y : n.y - (V.w + A.hi + 150);
+        window.DevScene.teleport(ax, ay, ang);
+        window.ShipBlastTune.rupture = rupture;
+        window.ShipBlastTune.crush = rupture;
+        const hx = Math.cos(ang), hy = Math.sin(ang);
+        window.__ram = { n, hx, hy, t: 0, r0: window.FuelTankRuptureStats.n, c0: window.CrushSmokeStats?.n ?? 0, tRup: null, tCrush: null, tDeath: null, ex0: { ...window.__explosions.stats } };
+        s.vel.x = hx * 2200; s.vel.y = hy * 2200;
+        return { tank: n.fuelTank ? { n: n.fuelTank.cellX.length, size: +n.fuelTank.size.toFixed(0), profile: n.fuelTank.profile } : null,
+          V: { len: Math.round(V.hi - V.lo), w: Math.round(V.w) }, atlas: { nose: Math.round(A.hi), nodes: s.beamHull.body.activeNodes } };
+      };
+      // krok taranu do czasu T: „ciąg szarży” co klatkę, kamera z ofiarą
+      window.__ramRun = async (T) => {
+        const R = window.__ram, s = window.ship, c = window.camera;
+        while (R.t < T - 1e-6) {
+          const along = s.vel.x * R.hx + s.vel.y * R.hy;
+          if (along < 3000) { s.vel.x += R.hx * 1100 / 60; s.vel.y += R.hy * 1100 / 60; }
+          await window.__harness.step(1);
+          R.t += 1 / 60;
+          if (R.tRup === null && window.FuelTankRuptureStats.n > R.r0) R.tRup = R.t;
+          if (R.tCrush === null && (window.CrushSmokeStats?.n ?? 0) > R.c0) R.tCrush = R.t;
+          if (R.tDeath === null && R.n.dead) R.tDeath = R.t;
+          if (!R.n.dead) { c.x = c.targetX = R.n.x; c.y = c.targetY = R.n.y; }
+        }
+        return { t: +R.t.toFixed(2), tRup: R.tRup, tCrush: R.tCrush, tDeath: R.tDeath };
+      };
+      return true;
+    })()`);
+    report.taran = {};
+    let slotT = 10;
+    for (const [name, key, mode, f] of TARANY) {
+      const rows = {};
+      let shotTimes = null;
+      for (const wariant of ['z', 'bez']) {
+        const k0 = await frameK();
+        slotT++;
+        const cx = P.x + 40000 * slotT, cy = P.y - 30000;
+        await ev(`(() => { window.DevScene.teleport(${cx} - 9000, ${cy} + 9000, 0); if (window.fireControl) window.fireControl.posture = 'hold'; return true; })()`);
+        await camAt(cx, cy, TZOOM);
+        const info = await ev(`window.__ramSetup('${key}', '${mode}', ${cx}, ${cy}, ${f === null ? 'null' : f}, ${wariant === 'z'})`, 600000);
+        console.log('taran', name, wariant, JSON.stringify(info));
+        if (!shotTimes) {
+          // wariant z pęknięciem i dymem zgniotu: krokami po 0,05 s do pierwszego dymu (pęknięcie zbiornika albo zgniot,
+          // najwyżej 2,5 s); zrzuty +0,15 / +0,6 / +1,5 s od niego
+          let r = null;
+          do { r = await ev(`window.__ramRun(window.__ram.t + 0.05)`, 600000); } while (r.tRup === null && r.tCrush === null && r.t < 2.5);
+          const t1 = Math.min(r.tRup ?? Infinity, r.tCrush ?? Infinity);
+          shotTimes = Number.isFinite(t1) ? [t1 + 0.15, t1 + 0.6, t1 + 1.5] : [0.5, 1.2, 2.2];
+          console.log('taran', name, 'pęknięcie', JSON.stringify(r), 'zrzuty', shotTimes.map((t) => t.toFixed(2)).join(','));
+        }
+        const shots = [];
+        for (let i = 0; i < shotTimes.length; i++) {
+          const r = await ev(`window.__ramRun(${shotTimes[i]})`, 600000);
+          const st = await shot(`taran-${name}-${wariant}-${i}`, 0);
+          shots.push({ ...r, ...st });
+        }
+        const fin = await ev(`(() => { const R = window.__ram, e = window.__explosions.stats;
+          return { tRup: R.tRup, tCrush: R.tCrush, tDeath: R.tDeath, ruptures: window.FuelTankRuptureStats.n - R.r0,
+            zgniot: (window.CrushSmokeStats?.n ?? 0) - R.c0, lastZgniot: window.CrushSmokeStats?.last ?? null,
+            wybuchy: e.spawned - R.ex0.spawned, gaz: e.gas - R.ex0.gas, czastki: e.particles - R.ex0.particles, noSlot: e.noSlot - R.ex0.noSlot,
+            ofiaraZyje: !R.n.dead, konstrukcja: R.n.beamHull ? +(window.HullBodies.structuralState(R.n)?.ratio ?? 0).toFixed(2) : 0 }; })()`);
+        rows[wariant] = { info, shots, fin, pipeline: await pipesSince(k0) };
+        console.log('taran', name, wariant, JSON.stringify(fin), 'pipeline', JSON.stringify(rows[wariant].pipeline));
+        await ev('window.ShipBlastTune.rupture = true; window.ShipBlastTune.crush = true; window.ship.vel.x = 0; window.ship.vel.y = 0; window.__harness.step(300)');
+      }
+      report.taran[name] = rows;
+    }
+    await ev('(() => { const h = window.__harness; h.hold(false); h.clock.mode = "real"; return true; })()');
+  }
+
   if (tryby.includes('bitwa')) {
     await ev('(() => { const h = window.__harness; h.hold(false); h.clock.mode = "real"; return true; })()');
     const k0 = await frameK();
@@ -430,6 +547,10 @@ try {
     })()`);
     console.log('bitwa spawn', JSON.stringify(sp));
     const res = { spawn: sp, odcinki: [], masowe };
+    // Pęknięcia zbiorników od BRONI w bitwie naturalnej (2026-10-15; w odcinkach „dawnych” — ShipBlastTune.fuelTank = false —
+    // pęknięcie jest wyłączone): pęknięcia ↔ okręty ze zbiornikiem, które zginęły.
+    const rupCount = `({ n: window.FuelTankRuptureStats?.n ?? 0, zywe: (window.npcs || []).filter((n) => n && !n.dead && n.fuelTank).length })`;
+    const rup0 = await ev(rupCount);
     // Bitwa naturalna: rozgrzewka (floty się zbliżają), potem odcinki po 6 s, nowa / dawna śmierć na przemian (ABBA).
     await sleep(Math.max(0, BITWA) * 1000);
     const SEG = [true, false, false, true, true, false, false, true];
@@ -437,6 +558,9 @@ try {
       const r = await measure(`bitwa ${i}`, 6000, 0, SEG[i]);
       res.odcinki.push(r); console.log('odcinek', JSON.stringify(r));
     }
+    const rup1 = await ev(rupCount);
+    res.pekniecia = { pekniecia: rup1.n - rup0.n, zginelo: rup0.zywe - rup1.zywe, zywe: rup1.zywe };
+    console.log('bitwa pęknięcia zbiorników', JSON.stringify(res.pekniecia));
     res.pipeline = await pipesSince(k0);
     console.log('bitwa pipeline', JSON.stringify(res.pipeline));
     const sum = (list, nowa) => {

@@ -1597,7 +1597,8 @@ export function setEntityHiddenTest(fn) {
 
 function isBeamHullEntity(entity) {
   const hull = entity?.beamHull;
-  return !!hull && hull.entity === entity && !!hull.body && !hull.body.dead && hull.body.activeNodes > 0;
+  // bryła 3D (budowla, jej odłam — hullBodies.createSolid) nie ma sprite'a: rysuje ją skóra brył budowli (worldBodies3D)
+  return !!hull && hull.entity === entity && !hull.solid3D && !!hull.body && !hull.body.dead && hull.body.activeNodes > 0;
 }
 
 const _beamSkinRange = { min: 0, max: -1 };

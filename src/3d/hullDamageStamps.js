@@ -193,12 +193,17 @@ export const WEAPON_STAMP_FAMILY = Object.freeze({
   flak_s: 'flak',
   flak_m: 'flak',
   flak_l: 'flak',
-  flak_capital: 'flak'
+  flak_capital: 'flak',
+  // Broń maszyn eskadr (2026-10-14): bomba i torpeda lotnicza — krater rakiety (wzorzec 1000 obr.: bomba 420 obr.
+  // → lej ~11,7 j., torpeda 1100 → ~18,9 j.), działko kanonierki — autokanon (bez krateru na miarę rany).
+  fighter_bomb: 'rocket',
+  aerial_torpedo: 'rocket',
+  gunship_autocannon: 'autocannon'
 });
 
 /**
  * Rodzina z kategorii pocisku / broni (pociski spoza fireWeaponCore — CIWS, flak — nie mają
- * vfxKey). Jak `projectileFamilyFor` zadania 17; rakiety i torpedy → `rocket`, nieznane → `generic`.
+ * vfxKey). Jak `projectileFamilyFor` zadania 17; rakiety, torpedy i bomby lotnicze → `rocket`, nieznane → `generic`.
  */
 export function stampFamilyForType(type, beamMode = null) {
   switch (type) {
@@ -209,7 +214,8 @@ export function stampFamilyForType(type, beamMode = null) {
     case 'plasma': return 'helios';
     case 'armata': return 'armata';
     case 'rocket':
-    case 'torpedo': return 'rocket';
+    case 'torpedo':
+    case 'bomb': return 'rocket';
     case 'beam': return beamMode === 'continuous' ? 'beamC' : 'beamP';
     case 'superweapon': return 'hexlance';
     default: return 'generic';

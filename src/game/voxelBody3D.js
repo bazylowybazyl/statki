@@ -662,6 +662,107 @@ export function invertSymmetric3(m) {
 }
 
 // ---------------------------------------------------------------------------
+// Spójność wokselizacji (bryły 3D budowli — docs/PORT-silnik-belek.md § „Ciała 3D”): kratownica belek łączy komórki
+// w sąsiedztwie 18-kierunkowym, a budowla z wielu brył (szyja, kołnierz, talerz, maszty) bywa w siatce kilkoma
+// składowymi — bez kotwicy każda poza główną odpadłaby przy pierwszym rozpadzie. bridgeVoxelComponents dokłada
+// komórki MOSTKA (linia DDA) od każdej mniejszej składowej do najbliższej komórki głównej — rozpórka bez skóry.
+// Zwraca liczbę dodanych komórek (vox.cells i vox.solidMask uzupełnione w miejscu).
+// ---------------------------------------------------------------------------
+const NEIGHBOR18 = [];
+for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+  const n = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+  if (n === 1 || n === 2) NEIGHBOR18.push([dx, dy, dz]);
+}
+
+export function voxelComponents(vox) {
+  const nx = vox.nx, ny = vox.ny, nz = vox.nz, cells = vox.cells;
+  const index = new Map();
+  for (let i = 0; i < cells.length; i++) index.set(cells[i].ix + cells[i].iy * nx + cells[i].iz * nx * ny, i);
+  const comp = new Int32Array(cells.length).fill(-1);
+  const sizes = [];
+  const stack = [];
+  for (let i0 = 0; i0 < cells.length; i0++) {
+    if (comp[i0] >= 0) continue;
+    const id = sizes.length;
+    let size = 0;
+    comp[i0] = id;
+    stack.push(i0);
+    while (stack.length) {
+      const i = stack.pop();
+      size++;
+      const c = cells[i];
+      for (const d of NEIGHBOR18) {
+        const x = c.ix + d[0], y = c.iy + d[1], z = c.iz + d[2];
+        if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) continue;
+        const j = index.get(x + y * nx + z * nx * ny);
+        if (j === undefined || comp[j] >= 0) continue;
+        comp[j] = id;
+        stack.push(j);
+      }
+    }
+    sizes.push(size);
+  }
+  return { comp, sizes, index };
+}
+
+export function bridgeVoxelComponents(vox, opts = {}) {
+  const maxSearch = Number(opts.maxSearchCells) > 0 ? opts.maxSearchCells : 64;
+  let added = 0;
+  for (let pass = 0; pass < 8; pass++) {
+    const { comp, sizes, index } = voxelComponents(vox);
+    if (sizes.length <= 1) return added;
+    let main = 0;
+    for (let k = 1; k < sizes.length; k++) if (sizes[k] > sizes[main]) main = k;
+    const nx = vox.nx, ny = vox.ny, nz = vox.nz, cells = vox.cells;
+    const mainCells = [];
+    for (let i = 0; i < cells.length; i++) if (comp[i] === main) mainCells.push(i);
+    const done = new Uint8Array(sizes.length);
+    done[main] = 1;
+    for (let i = 0; i < cells.length; i++) {
+      const k = comp[i];
+      if (done[k]) continue;
+      done[k] = 1;
+      // najbliższa para (komórka składowej, komórka główna): próbka komórek składowej × wszystkie główne
+      let best = Infinity, bi = -1, bj = -1;
+      const step = Math.max(1, Math.floor(sizes[k] / 24));
+      let seen = 0;
+      for (let a = i; a < cells.length; a++) {
+        if (comp[a] !== k) continue;
+        if ((seen++ % step) !== 0) continue;
+        const ca = cells[a];
+        for (const b of mainCells) {
+          const cb = cells[b];
+          const d = (ca.ix - cb.ix) ** 2 + (ca.iy - cb.iy) ** 2 + (ca.iz - cb.iz) ** 2;
+          if (d < best) { best = d; bi = a; bj = b; }
+        }
+      }
+      if (bi < 0 || best > maxSearch * maxSearch) continue;
+      // linia DDA komórek od bi do bj (bez końców, które już są)
+      const A = cells[bi], B = cells[bj];
+      const steps = Math.max(Math.abs(B.ix - A.ix), Math.abs(B.iy - A.iy), Math.abs(B.iz - A.iz));
+      for (let t = 1; t < steps; t++) {
+        const x = Math.round(A.ix + (B.ix - A.ix) * t / steps);
+        const y = Math.round(A.iy + (B.iy - A.iy) * t / steps);
+        const z = Math.round(A.iz + (B.iz - A.iz) * t / steps);
+        const key = x + y * nx + z * nx * ny;
+        if (index.has(key)) continue;
+        index.set(key, cells.length);
+        cells.push({
+          ix: x, iy: y, iz: z,
+          x: vox.origin.x + (x + 0.5) * vox.cellSize,
+          y: vox.origin.y + (y + 0.5) * vox.cellSize,
+          z: vox.origin.z + (z + 0.5) * vox.cellSize,
+          surface: true, depth: 1, coverage: 0.85, r: A.r, g: A.g, b: A.b, bridge: true
+        });
+        if (vox.solidMask) vox.solidMask[key] = 1;
+        added++;
+      }
+    }
+  }
+  return added;
+}
+
+// ---------------------------------------------------------------------------
 // Pomocnik: trójkąty prostopadłościanu (12 tris = 108 floatów) — do testów
 // i proceduralnych statków w demo bez three.
 // ---------------------------------------------------------------------------

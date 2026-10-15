@@ -61,6 +61,8 @@ import {
   DMG_CLASSES, DMG_POOL_TEXELS, DMG_FLAG_CLEAR, DMG_FLAG_ZERO_HEAT, DMG_JOB_VEC4, DMG_STAMP_VEC4, DMG_STAMP_REACH,
   createHullDamageKernel, damageHotSeconds, hullDamagePool
 } from './hullDamageMap.tsl.js';
+// Bryły 3D (wieża habitatu, dysk): rany w komórkach kratownicy szablonu, nie w uv sprite'a — src/3d/solidWounds.js.
+import { SolidWounds } from './solidWounds.js';
 
 /** Żar świeżego spawu łaty (pas przy krawędzi komórki — stygnie jak rana: czerwień ~2–3 s). */
 export const DMG_PATCH_SEAM_HEAT = 1.6;
@@ -359,6 +361,7 @@ export const HullDamageMap = {
     const hull = entity?.beamHull;
     if (!hull || !r || !(r.dmgKey > 0) || !self.enabled) return;
     if (self._offView(r.x, r.y)) return;
+    if (hull.solid3D) { self._solidImpact(hull, r); return; }
     const worldW = hull.srcWidth * hull.scale;
     const worldH = hull.srcHeight * hull.scale;
     const slot = self.acquire(r.dmgKey, worldW, worldH);
@@ -407,6 +410,22 @@ export const HullDamageMap = {
     }
   },
 
+  // Krater / rzaz BRYŁY 3D (hullImpactResult z latX/Y/Z): ta sama rodzina i wariant źródła co ciało płaskie, stempel
+  // w polu ran 3D (solidWounds.js); krater z haka pamiętany jak płaski (receptura w tym punkcie — pomijana).
+  _solidImpact(hull, r) {
+    const src = this._src.active ? this._src : null;
+    const cut = r.kind === 'cut';
+    const family = src ? src.family : (cut ? 'hexlance' : 'generic');
+    const variant = src ? src.variant : (cut ? 'kerf' : 'impact');
+    const e = stampEntry(family, variant);
+    let power = e[S_POW] ? (src ? src.power : 1) : 1;
+    if (family === 'flak' && src && src.flakR > 0 && e[S_R] > 0) power = (src.flakR * 0.2) / e[S_R];
+    if (SolidWounds.onImpact(hull, r, e, power) && !cut) {
+      const holeR = r.crater > 0 ? r.crater + 0.5 * hull.cellSize : 0;
+      this._rememberHook(r.dmgKey, r.x, r.y, Math.max(e[S_R] * power, holeR));
+    }
+  },
+
   // Krater z haka w tej klatce (pierścień): receptura efektu trafienia (17) woła ctx.stamp w tym samym
   // punkcie — ten stempel już jest (bez bramki LOD efektu), więc stampRecipe go pomija.
   _rememberHook(key, x, y, r) {
@@ -449,6 +468,13 @@ export const HullDamageMap = {
     }
     if (this._hookedHere(hull.dmgKey, x, y, r)) { this.stats.recipeDup++; return false; }
     if (this._offView(x, y)) return false;
+    if (hull.solid3D) {
+      // bryła 3D: komórka kratownicy przy najbliższym węźle pasa broni (solidWounds.js)
+      const L = HullBodies.solidLatticeAt(entity, x, y);
+      const ok = L.ok && SolidWounds.stamp(hull, L.latX, L.latY, L.latZ, r, heat, scorch);
+      if (ok) this.stats.recipeStamps++;
+      return ok;
+    }
     const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
     if (!slot) return false;
     const uv = HullBodies.spriteUvAt(entity, x, y);
@@ -486,6 +512,16 @@ export const HullDamageMap = {
     const o = i * 3;
     self._tearData[o] = key; self._tearData[o + 1] = x; self._tearData[o + 2] = y;
     self._tearFrame[i] = self.frame;
+  },
+
+  /**
+   * HullBodies.onSolidNodeLost: węzeł BRYŁY 3D zniszczony poza bronią (zgniot przy uderzeniu wieży, rozpad) — rozdarcie
+   * (`tear`) w komórce (ix, iy, iz) szablonu, w polu ran 3D (solidWounds.js — łączenie sąsiadów i limit na klatkę).
+   */
+  onSolidNodeLost(entity, hull, ix, iy, iz, x, y) {
+    const self = HullDamageMap;
+    if (!hull || !(hull.dmgKey > 0) || !self.enabled || self._offView(x, y)) return;
+    SolidWounds.tear(hull, ix, iy, iz, stampEntry('tear'), TEAR_HOLE_CELLS);
   },
 
   _tornHere(key, x, y, r) {
@@ -573,6 +609,11 @@ export const HullDamageMap = {
   stampAt(entity, x, y, family = 'generic', variant = 'impact', dirX = 0, dirY = 0, power = 1) {
     const hull = entity?.beamHull;
     if (!hull || !(hull.dmgKey > 0) || !this.enabled || this._offView(x, y)) return false;
+    if (hull.solid3D) {
+      const L = HullBodies.solidLatticeAt(entity, x, y);
+      const e = stampEntry(family, variant);
+      return L.ok && SolidWounds.stamp(hull, L.latX, L.latY, L.latZ, e[S_R] * (e[S_POW] ? power : 1), e[S_HEAT], e[S_SCORCH]);
+    }
     const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
     if (!slot) return false;
     const uv = HullBodies.spriteUvAt(entity, x, y);
@@ -587,10 +628,22 @@ export const HullDamageMap = {
   stampKerf(entity, x0, y0, x1, y1, family = 'hexlance') {
     const hull = entity?.beamHull;
     if (!hull || !(hull.dmgKey > 0) || !this.enabled || this._offView(x0, y0)) return 0;
-    const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
-    if (!slot) return 0;
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.sqrt(dx * dx + dy * dy);
+    if (hull.solid3D) {
+      // bryła 3D: znaki wzdłuż odcinka przy węzłach pasa broni (solidWounds.js)
+      const e = stampEntry(family, 'kerf');
+      const n = Math.max(1, Math.min(DMG_KERF_MAX, Math.ceil(len / DMG_KERF_STEP)));
+      let made = 0;
+      for (let k = 0; k < n; k++) {
+        const f = n > 1 ? k / (n - 1) : 0;
+        const L = HullBodies.solidLatticeAt(entity, x0 + dx * f, y0 + dy * f);
+        if (L.ok && SolidWounds.stamp(hull, L.latX, L.latY, L.latZ, e[S_R], e[S_HEAT], e[S_SCORCH])) made++;
+      }
+      return made;
+    }
+    const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
+    if (!slot) return 0;
     const uv = HullBodies.spriteUvAt(entity, x0, y0);
     const u0 = uv.u, v0 = uv.v;
     const e = stampEntry(family, 'kerf');
@@ -890,6 +943,7 @@ export const HullDamageMap = {
     st.stamps = 0; st.droppedStamps = 0; st.offView = 0; st.noSlot = 0; st.evictions = 0; st.downgrades = 0; st.upgrades = 0;
     st.jobs = 0; st.threads = 0; st.dispatch = 0; st.heals = 0; st.recipeStamps = 0; st.recipeDup = 0;
     st.tearStamps = 0; st.tearMerged = 0; st.tearCapped = 0;
+    SolidWounds.reset();
   }
 };
 

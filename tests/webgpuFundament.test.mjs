@@ -124,7 +124,9 @@ test('Core3D: tylko WebGPURenderer z limitami adaptera, bez zapasu WebGL2, konfi
     assert.ok(cfg.includes(line), line);
   }
   // Cele: RenderTarget, scena HalfFloat MSAA 4, halo z próbkami sceny, maska RGBA8, refrakcja w połowie.
-  assert.match(core, /const rt = new THREE\.RenderTarget\(w0, h0, \{\s*format: THREE\.RGBAFormat, type: THREE\.HalfFloatType,\s*depthBuffer: true, stencilBuffer: false, samples: 4\s*\}\);/);
+  // MSAA 4 (domyślnie) albo wyłączone z opcji grafiki przy starcie (Core3D.msaaBoot — src/game/graphicsQuality.js).
+  assert.match(core, /const rt = new THREE\.RenderTarget\(w0, h0, \{\s*format: THREE\.RGBAFormat, type: THREE\.HalfFloatType,\s*depthBuffer: true, stencilBuffer: false, samples: this\.msaaBoot > 0 \? 4 : 0\s*\}\);/);
+  assert.match(core, /renderScale: null, msaaBoot: 4,/);
   assert.match(core, /this\.planetHaloTarget = new THREE\.RenderTarget\([\s\S]*?samples: rt\.samples/);
   assert.match(core, /rt\.samples = targetSamples;\s*rt\.dispose\(\);/, 'setMsaaEnabled: samples + dispose (SPIKE 17)');
 });

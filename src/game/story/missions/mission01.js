@@ -47,8 +47,8 @@ export const MISSION01 = Object.freeze({
 });
 
 export const MISSION01_HINTS = Object.freeze({
-  undock: { keys: ['LPM', 'Enter'], title: 'Odcumowanie', text: 'Atlas jest przypięty do stanowiska — paliwo, zasilanie, mocowania. Kliknij ODDOKUJ (albo Enter): obsługa odłączy przewody i zwolni mocowania, potem stery są twoje.' },
-  flight: { keys: ['W', 'S', 'A', 'D', 'Q', 'E'], title: 'Sterowanie', text: 'Atlas stoi dziobem do bramy. W / S — ciąg przód i wstecz, A / D — obrót, Q / E — ruch na boki. Wyprowadź Atlasa naprzód przez bramę G-01.' },
+  undock: { keys: ['F'], title: 'Odcumowanie', text: 'Atlas jest przypięty do stanowiska. F — ODDOKOWANIE (albo klik): obsługa odłączy przewody i zwolni mocowania, potem stery są twoje.' },
+  flight: { keys: ['W', 'S', 'A', 'D', 'Q', 'E'], title: 'Sterowanie', text: 'Atlas stoi dziobem do bramy, silniki główne są zimne. W — zapłon i ciąg naprzód (najpierw dym z dysz, potem płomień), S — wstecz, A / D — obrót, Q / E — ruch na boki. Wyprowadź Atlasa naprzód przez bramę G-01.' },
   scoutBay: { keys: ['H'], title: 'Fregata zwiadu', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła; czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. W ładowni Atlasa czeka fregata zwiadu: H — wrota się otwierają, fregata wylatuje, a ty przejmujesz jej stery i kamerę (Atlas stoi w miejscu). Jej wzrok sięga 10 km. Niezamaskowanego Atlasa obrona zobaczy z ~9 km — podleć nim najwyżej do skraju mgły.' },
   scoutFly: { keys: ['W', 'S', 'A', 'D', 'I', 'X', '3', '4', 'T', 'H'], title: 'Zwiad', text: 'W / S — prędkość, A / D — skręt, Q / E — w bok. I — maskowanie fregaty (obrona jej nie widzi; pęka przy trafieniu i taranie). 3 — OKO: sonda odsłania mgłę w kole pod kursorem (do 22 km od fregaty, z baterii). 4 — DALEKI SKAN w stronę kursora: klin do 70 km zostawia echa — przybliżone położenie, klasę masy i liczbę obiektów. X — skan: fala oznacza wrogie kontakty w 10 km od fregaty. T nad kontaktem — oznacz go (trzymaj T i przeciągnij kursor — kilka naraz). Obleć bazę dookoła — to, co leży za habitatem, widać dopiero z drugiej strony. Bez maskowania obrona wykryje fregatę bliżej niż ~3 km od bazy. H — fregata sama wraca do ładowni.' },
   scout: { keys: ['PPM', 'M'], title: 'Mgła wojny', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła. Czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. Rozpoznaj ją: PPM w pustej przestrzeni → DRON ZWIADU (leci w punkt i odsłania mgłę wokół siebie; także mapa CIC, M) albo podejdź ostrożnie — niezamaskowanego Atlasa obrona wykryje z ~9 km.' },
@@ -109,18 +109,16 @@ export async function mission01(ctx) {
     await api.say(D.briefing, 'scene');
 
     // Odcumowanie na rozkaz gracza (2026-10-07): HUD i stery wracają, Atlas stoi przypięty do stanowiska, dopóki
-    // gracz nie kliknie ODDOKUJ; obsługa odłącza się po kolei (upust z przewodów paliwowych), potem wylot sam.
+    // gracz nie naciśnie F — ODDOKOWANIE; obsługa odłącza się po kolei (upust z przewodów paliwowych), potem wylot sam.
+    // Silniki główne zostają zimne do pierwszego W (zapłon: dym, potem płomień). Poprawki użytkownika 2026-10-14:
+    // klawisz F (dawniej Enter, chwilę E), sam przycisk ODDOKOWANIE — bez panelu stanowiska (wiersze obsługi: paliwo,
+    // złącza, przewody, mocowania, napęd) i bez przycisku WYPOSAŻENIE (`api.dock.openFitting` zostaje).
     ctx.phase('undock');
     await api.cinema.release();
     const berthId = api.dock.berthId();
-    api.ui.objective('undock', `Odcumuj Atlasa ze stanowiska ${berthId}`, () => api.dock.step());
+    api.ui.objective('undock', `Odcumuj Atlasa ze stanowiska ${berthId} (F)`, () => api.dock.step());
     hint('undock', () => !api.dock.locked());
-    await api.ui.action({
-      id: 'undock', title: `STANOWISKO ${berthId} · K-7`, subtitle: 'OBSŁUGA PODŁĄCZONA',
-      label: 'ODDOKUJ', busyLabel: 'ODCUMOWANIE…', key: 'Enter', rows: () => api.dock.serviceRows(),
-      // Komplety wszystkich kart leżą w hangarze — przed wylotem gracz może zmienić konfigurację (D8 fitowania).
-      alt: { label: 'WYPOSAŻENIE', run: () => api.dock.openFitting() }
-    });
+    await api.ui.action({ id: 'undock', label: 'ODDOKOWANIE', busyLabel: 'ODDOKOWANIE…', key: 'F' });
     await api.dock.undock();
     api.say(D.undock, 'radio');
     ctx.spawn(async (sub) => { await sub.wait(1.6); api.ui.action(null); });

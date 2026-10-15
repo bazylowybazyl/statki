@@ -57,7 +57,9 @@ export const WEAPON3D_FAMILY = Object.freeze({
   // Lanca M / L (klasa snajperska): wieża Tempesta z długą lufą
   lance_rail_m: 'lance', lance_rail_l: 'lance',
   hexlance_siege: null,
-  fighter_bay: null, fighter_squad_interceptor: null, fighter_squad_multirole: null, fighter_squad_strike: null
+  fighter_bay: null, fighter_squad_interceptor: null, fighter_squad_multirole: null, fighter_squad_strike: null,
+  // Hangary ról eskadr (2026-10-14): bombowce, torpedowce, kanonierki — bez wieży, jak reszta hangarów.
+  fighter_squad_bomber: null, fighter_squad_torpedo: null, fighter_squad_gunship: null
 });
 
 /** Etykiety rodzin (galeria dema). */

@@ -28,7 +28,7 @@ import { GpuFx } from './gpuFx.js';
 import { ProjectileSystem, PSTYLE } from './projectiles.js';
 import { TrailSystem } from './trails.js';
 import { BeamSystem, BEAM, PULSE_SPEED } from './beams.js';
-import { RECIPES, runAfter, burnStep, droneBlast, cheapMuzzle, cheapImpact, createChargeState } from './recipes.js';
+import { RECIPES, runAfter, burnStep, droneBlast, bombBlast, bombDud, cheapMuzzle, cheapImpact, createChargeState } from './recipes.js';
 import { WEAPON_FX, projectileFamilyFor, hexHdr, SIZE_POWER, TRAIL_FAMILIES } from './weaponFxTable.js';
 import { fxNoise } from '../fx/noise.js';
 import { FX_DISTORT_LAYER } from '../fx/fxFrame.js';
@@ -222,6 +222,9 @@ export const WeaponFx = {
   _syncZoom: 1,       // zoom kadru tej klatki (najmniejsza szerokość pocisku na ekranie)
   _muzzleBudget: MUZZLE_PER_FRAME,
   _impactBudget: IMPACT_PER_FRAME,
+  // Budżety pełnych wylotów i trafień na klatkę (ponad — tani błysk); opcje grafiki („Szczegóły efektów”).
+  muzzlePerFrame: MUZZLE_PER_FRAME,
+  impactPerFrame: IMPACT_PER_FRAME,
   _weaponShake: 0,
   // Mnożnik wstrząsu kamery bieżącego strzału (1 = pełny). Ustawia go strzelający wokół fireWeaponCore.
   shotShakeScale: 1,
@@ -1006,6 +1009,35 @@ export const WeaponFx = {
     return true;
   },
 
+  /**
+   * Wybuch bomby lotniczej (fighter_bomb, src/game/fighterBombs.js — env.hitHull gry): cięższy blast na
+   * pancerzu i czasem płonąca wyrwa na `hull`. scale 1 ≈ 420 obr. (gra: obrażenia / baseDamage ×
+   * impactScale broni). Liczy się do budżetu trafień klatki (ponad — tani błysk); ActiveCarrier
+   * (trafiony kadłub) ustawia wołający. Wstrząs kamery tylko, gdy bomba trafiła gracza (P1 / P2).
+   */
+  bombBlast(x, y, scale = 1, hull = null) {
+    if (!this.available || !this._inView(x, y, 600 * Math.max(0.4, scale))) return false;
+    if (this._impactBudget <= 0) {
+      cheapImpact(this.ctx, x, y, 3.0, 1.55, 0.5, 60 * Math.max(0.4, scale));
+      this.stats.cheapImpacts++;
+      return true;
+    }
+    this._impactBudget--;
+    this.stats.impacts++;
+    const player = typeof window !== 'undefined' ? window.ship : null;
+    const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
+    this._shakeAllowed = !!hull && (hull === player || hull === p2);
+    try { bombBlast(this.ctx, x, y, scale, hull); } finally { this._shakeAllowed = true; }
+    return true;
+  },
+
+  /** Bomba bez poszycia pod sobą (dziura, chybienie): słaby błysk zapalnika. */
+  bombDud(x, y, scale = 1) {
+    if (!this.available || !this._inView(x, y, 200)) return false;
+    bombDud(this.ctx, x, y, scale);
+    return true;
+  },
+
   // -------------------------------------------------------------------------
   // Hexlance (zdarzenie K) — superweapon.js woła wprost
 
@@ -1139,8 +1171,8 @@ export const WeaponFx = {
     if (!this.ensure()) return;
     this._frame++;
     this._syncZoom = this._zoom();
-    this._muzzleBudget = MUZZLE_PER_FRAME;
-    this._impactBudget = IMPACT_PER_FRAME;
+    this._muzzleBudget = this.muzzlePerFrame;
+    this._impactBudget = this.impactPerFrame;
     const frame = this._frame;
     const list = Array.isArray(bullets) ? bullets : [];
     const renderLag = Math.max(0, SimClock.sim - SimClock.render);

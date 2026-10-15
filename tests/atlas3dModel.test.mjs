@@ -93,6 +93,8 @@ const GAME_MUZZLES = {
 
 test('broń: każda broń gry ma model 3D (albo świadomie brak: hangar, Hexlance w kadłubie)', () => {
   for (const [id, w] of Object.entries(MASTER_WEAPONS)) {
+    // Broń maszyn eskadr (bomba, torpeda lotnicza, działko kanonierki) nie stoi w wieży okrętu.
+    if (w.mountType === 'fighter') continue;
     assert.ok(id in WEAPON3D_FAMILY, `${id}: brak wpisu w WEAPON3D_FAMILY`);
     const fam = WEAPON3D_FAMILY[id];
     if (fam === null) assert.ok(w.mountType === 'hangar' || w.mountType === 'builtin', `${id}: bez modelu, a nie hangar/builtin`);

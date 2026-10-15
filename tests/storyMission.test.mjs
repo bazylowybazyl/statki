@@ -10,7 +10,7 @@ import { engageCloak, stepCloak } from '../src/game/cloak.js';
 import { MISSION01 } from '../src/game/story/missions/mission01.js';
 import { MISSION02 } from '../src/game/story/missions/mission02.js';
 import { PIRATE_BASE_TUNE } from '../src/game/story/pirateBaseSite.js';
-import { ENGINE_OFF, ENGINE_IGNITION, engineStateOf, ignitionPhase, stepEngineIgnition } from '../src/game/engineIgnition.js';
+import { ENGINE_OFF, ENGINE_IGNITION, engineStateOf, stepEngineIgnition } from '../src/game/engineIgnition.js';
 
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
@@ -151,35 +151,42 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(!S.worldFrozen, 'odcumowanie w czasie gry');
   assert.equal(S.cine.mode, null, 'kino skończone');
   assert.equal(w.hud, true, 'HUD wrócił przed odcumowaniem');
-  // dok: Atlas przypięty do stanowiska, dopóki gracz nie kliknie ODDOKUJ (2026-10-07)
-  assert.ok(S.ui.action && S.ui.action.id === 'undock' && S.ui.action.label === 'ODDOKUJ', 'panel stanowiska z przyciskiem ODDOKUJ');
+  // dok: Atlas przypięty do stanowiska, dopóki gracz nie naciśnie F — ODDOKOWANIE (2026-10-07; 2026-10-14: sam przycisk,
+  // bez panelu stanowiska z wierszami obsługi i bez WYPOSAŻENIA)
+  const act = S.ui.action;
+  assert.ok(act && act.id === 'undock' && act.label === 'ODDOKOWANIE', 'przycisk ODDOKOWANIE');
+  assert.ok(!act.title && !act.subtitle && !act.rows && !act.alt, 'bez panelu stanowiska (paliwo, złącza…) i WYPOSAŻENIA');
   assert.ok(S.ui.hint, 'samouczek: odcumowanie');
   await frames(S, w, 30 * 10, view);
   assert.ok(S.lock && S.blocksInput, 'bez kliknięcia Atlas stoi w doku (stery zablokowane)');
   assert.equal(engineStateOf(w.ship), ENGINE_OFF, 'silniki Atlasa wyłączone w doku (etap E2)');
   assert.ok(Math.hypot(w.ship.pos.x - berth.x, w.ship.pos.y - berth.y) < 1, 'na stanowisku');
-  const row = (label) => S.ui.action.rows().find((r) => r[0] === label)?.[1];
+  const row = (label) => S._serviceRows().find((r) => r[0] === label)?.[1];
   assert.equal(row('PALIWO'), 'PRZEPŁYW');
   assert.equal(row('ZŁĄCZA'), 'ZARYGLOWANE');
   const pose = w.hallPoses.get('C-01');
   assert.ok(pose.lock === 1 && pose.extension === 1 && pose.flow === 1, 'przewody podpięte w rejestrze hali');
   assert.equal(pose.owner, 'story', 'poza fabuły ma właściciela (automat stanowisk gry swobodnej jej nie rusza)');
-  assert.equal(S.triggerAction('undock'), true, 'klik ODDOKUJ');
+  assert.equal(pose.settle, 1, 'Atlas przypięty: ramiona i przewody od razu na wlewach (bez ruchu podpinania po intro)');
+  assert.equal(S.ui.action.key, 'F', 'ODDOKOWANIE pod klawiszem F (2026-10-14)');
+  assert.equal(S.triggerAction('undock'), true, 'F / klik ODDOKOWANIE');
   assert.equal(S.triggerAction('undock'), false, 'drugi klik nic nie robi');
   // sekwencja obsługi: przepływ → kontrolowany upust (gaz z przewodów) → rygle → złączki w górę → zamki → napęd
   let maxVent = 0;
   let lockWhenVent = 0;
-  let ignitedLocked = false;
+  let ignited = false;
+  let settleInSeq = false;
   await frames(S, w, Math.ceil(STORY_UNDOCK.driveAt * 30) + 4, view, () => {
     if (pose.vent > maxVent) { maxVent = pose.vent; lockWhenVent = pose.lock; }
-    if (S.lock && engineStateOf(w.ship) === ENGINE_IGNITION) ignitedLocked = true;
+    if (engineStateOf(w.ship) !== ENGINE_OFF) ignited = true;
+    if (S.dock.seq && S.dock.seq.t > 0.2 && pose.settle) settleInSeq = true;
   });
-  assert.ok(ignitedLocked, 'zapłon (dym) jeszcze przy zamkach — smokeTime przed zwolnieniem');
+  assert.ok(!settleInSeq, 'w sekwencji odcumowania ramiona i przewody z fizyką (bez ustawiania od razu)');
+  assert.ok(!ignited, 'ODDOKUJ nie odpala silników — dym dopiero po W (2026-10-14)');
   assert.ok(maxVent > 0.95, `kontrolowany upust: ${maxVent}`);
   assert.ok(lockWhenVent > 0.9, 'upust przed odryglowaniem');
   assert.equal(S.lock, null, 'napęd odblokowany po zwolnieniu mocowań');
-  assert.equal(engineStateOf(w.ship), ENGINE_IGNITION, 'w chwili zwolnienia zamków zapłon w płomieniu');
-  assert.equal(ignitionPhase(w.ship), 1, 'błysk i struga w chwili zwolnienia zamków (dym był przy zamkach)');
+  assert.equal(engineStateOf(w.ship), ENGINE_OFF, 'po zwolnieniu zamków silniki dalej zimne');
   assert.ok(!S.blocksInput, 'stery u gracza');
   assert.ok(pose.lock < 0.01 && pose.seat < 0.01 && pose.clamp < 0.01, 'złączki odryglowane i podniesione, zamki pola zwolnione');
   assert.ok(Math.hypot(w.ship.pos.x - berth.x, w.ship.pos.y - berth.y) < 1, 'bez automatycznego wysuwania — wylot należy do gracza');
@@ -242,12 +249,12 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.equal(S.phase, 'ram');
   assert.ok(!S.site.alarmed);
   const ramRow = S.site.ramList();
-  assert.equal(ramRow.length, 4, 'rząd do taranu: wewnętrzna strona ramienia A');
-  assert.equal(S.ui.targets.size, 4, 'znacznik na każdym okręcie rzędu');
+  assert.equal(ramRow.length, 9, 'rząd do taranu: zewnętrzna strona poprzeczki T');
+  assert.equal(S.ui.targets.size, 9, 'znacznik na każdym okręcie rzędu');
   assert.ok(/\(F\).*\(4\)/.test(S.ui.objective?.text || ''), 'cel podaje obie drogi: ' + S.ui.objective?.text);
   const kill = (n) => { n.dead = true; n.hp = 0; };
   const crew = S.site.crewList;
-  kill(ramRow.find((n) => n.__repair));
+  kill(ramRow[ramRow.length - 1]);
   await frames(S, w, 2, view);
   assert.ok(S.site.alarmed, 'alarm po taranie');
   // herszt startuje z zatoki pierwszy (trasa z planu bazy), drony z hangarów bębna habitatu
@@ -258,16 +265,17 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
 
   // ZEGAR STARTÓW: okręty z załogą odchodzą od pomostów po kolei; cele: załogi, herszt, drony
   assert.equal(S.phase, 'defences');
-  assert.equal(S.ui.targets.size, 12 + 1 + S.site.droneList.length, 'załogi, herszt, drony');
+  assert.equal(S.ui.targets.size, 11 + 1 + S.site.droneList.length, 'załogi (bez okrętu rzędu zniszczonego taranem), herszt, drony');
   assert.ok(/Nie dopuść/.test(S.ui.objective?.text || '') && /start za 0:\d\d/.test(S.ui.objective.progress()), S.ui.objective?.progress?.());
   assert.equal(S.ui.hint?.spec?.title, 'Drony piratów', 'pierwsza karta samouczka w bitwie: drony (myśliwce gracza — Z)');
   // taran: zmiażdżony okręt z załogą w rzędzie, w styku z Atlasem
   const rowCrew = ramRow.filter((n) => !n.__repair);
-  assert.equal(rowCrew.length, 2, 'dwa okręty rzędu mają załogę');
+  assert.equal(rowCrew.length, ramRow.length, 'cały rząd ma załogę');
   rowCrew[0].hullRatio = 0.2;
   w.contact = new Set([rowCrew[0]]);
   await frames(S, w, 2, view);
-  assert.ok(/STARANOWANY A-L\d · 1 \/ 12/.test(S.ui.banner?.text || ''), S.ui.banner?.text);
+  // drugi zatrzymany: pierwszy to okręt rzędu zniszczony przed alarmem (cały rząd poprzeczki T ma załogę)
+  assert.ok(/STARANOWANY A-L\d · 2 \/ 12/.test(S.ui.banner?.text || ''), S.ui.banner?.text);
   w.contact = null;
   // pierwszy start: najdalszy od wylotu lejka; w połowie rozgrzewania strzela ze stanowiska
   const m = S.site.mouth;
@@ -498,7 +506,7 @@ test('misja 1: zbiorniki paliwa wysadzone przed habitatem — reakcja łańcucho
   fuel.hp = 0;
   await frames(S, w, 3, view);
   assert.ok(S.site.chain.fuel, 'reakcja z zbiorników ruszyła');
-  await frames(S, w, 30 * 16, view);
+  await frames(S, w, 30 * 20, view);   // zapas na front w rurach do końców poprzeczki T
   assert.ok(S.site.repairList.every((n) => n.dead), 'okręty w remoncie wybuchły w stanowiskach');
   assert.ok(S.site.structures.habitat.hp <= 0, 'bez śluz ogień przeszedł przez habitat');
   const blows1 = w.blows;

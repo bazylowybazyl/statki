@@ -1473,7 +1473,8 @@ class RocketSystem3D {
      */
     _blastWorldBodies(r, ex, ez) {
         const W = typeof window !== "undefined" ? window.WorldBodies : null;
-        if (!W || !(W.stats?.live > 0) || r.shooter?.isPirate) return;
+        // kawałki-ciała w bańce albo bryły 3D (wieża habitatu i jej odłamy — front jako kula, worldBodies.detonate)
+        if (!W || !(W.stats?.live > 0 || W.stats?.solids > 0) || r.shooter?.isPirate) return;
         const radius = Math.max(0, Number(r.blastRadius) || 0);
         const dmg = Math.max(0, Number(r.damage) || 0);
         if (radius <= 0 || dmg <= 0) return;

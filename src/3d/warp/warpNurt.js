@@ -140,6 +140,25 @@ export const WarpNurt = {
   onShake: null,
   stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, seams: 0, rifts: 0, glows: 0, smears: 0, waves: 0, arrivals: 0, flow: 0, lens: 0 },
 
+  // Opcje grafiki („Szczegóły efektów”): liczba drobin ośrodka, najwyżej pojemność z init. setCount losuje
+  // wszystkie drobiny od nowa, więc zmiana czeka, aż ośrodek uśnie (update) — w trakcie skoku nic nie skacze.
+  _wantCount: 0,
+  setMediumCount(n) {
+    this._wantCount = Math.max(4096, Math.floor(Number(n) || MEDIUM_COUNT_DEFAULT));
+    if (!this.awake) this._applyWantCount();
+    return this._wantCount;
+  },
+
+  _applyWantCount() {
+    const medium = this.medium;
+    const renderer = Core3D.gpuReady ? Core3D.renderer : null;
+    if (!medium || !medium.initialized || !renderer) return;   // przed rozgrzewką: _warm weźmie this.count
+    const n = Math.min(medium.capacity, this._wantCount);
+    this._wantCount = 0;
+    this.count = n;
+    if (n !== medium.count) medium.setCount(renderer, n, 1);
+  },
+
   /** Tworzy zasoby i rejestruje krok compute (raz). Wołać po Core3D.init(). */
   init(opts = {}) {
     if (this.initialized || !Core3D.isInitialized || !Core3D.scene) return this;
@@ -205,7 +224,9 @@ export const WarpNurt = {
     const cam = o.cam;
     const camX = Number(cam?.x) || 0;
     const camY = Number(cam?.y) || 0;
-    const zoom = Math.max(1e-4, Number(cam?.zoom) || 1);
+    // px BUFORA na j. świata (Core3D.viewZoom — skala renderu z opcji grafiki): ośrodek, szczeliny, fale,
+    // gwiazdy, rulon i soczewka liczą położenia w px celu sceny.
+    const zoom = Core3D.viewZoom(cam);
     const frame = this.frame;
     frame.reset();
 
@@ -334,6 +355,7 @@ export const WarpNurt = {
     }
     const idleFor = t - this.lastBusyT;
     if (this.awake && idleFor > MEDIUM_SLEEP_AFTER) this.awake = false;
+    if (this._wantCount > 0 && !this.awake) this._applyWantCount();
     let fade = frame.mediumFade;
     if (!busy && idleFor > MEDIUM_SLEEP_AFTER - MEDIUM_TAIL_FADE) fade = Math.max(fade, 3);
     this.medium.setFade(fade);

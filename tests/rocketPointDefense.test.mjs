@@ -231,6 +231,37 @@ test('killRocketThreat (index.html): rakieta 3D — intercept, kanwa — efekt i
   assert.deepEqual(calls, [['3d', 'flak', 40], ['kanwa', 1.3]]);
 });
 
+test('killRocketThreat (index.html): torpeda kanwy z pdHp traci punkty jak rakieta 3D (model V3)', () => {
+  const calls = [];
+  const scope = {
+    window: { RocketPdTune: { dmgMul: { ciws: 1, laser: 0.5, flak: 0.025, other: 1 } } },
+    ActiveCarrier: { set: () => {}, clear: () => {} },
+    writeCarrierVelocity: () => null,
+    SimClock: { sim: 0 },
+    _impactCarrier: {},
+    spawnBulletImpactEffect: (rb, x, y, s) => calls.push(s)
+  };
+  const kill = loadIndexFunction(html, 'function killRocketThreat(rb, cause, fxScale, damage) {', 'killRocketThreat', scope);
+  // Torpeda lotnicza: 60 punktów — CIWS Mk I (12 obr.) zestrzeliwuje ją piątym trafieniem.
+  const torp = { life: 3, x: 0, y: 0, ivx: 0, ivy: 0, pdHp: 60 };
+  for (let i = 0; i < 4; i++) {
+    assert.equal(kill(torp, 'ciws', 1.3, 12), true, 'trafienie zużywa pocisk obrony');
+    assert.ok(torp.life > 0, `po ${i + 1} trafieniach leci dalej`);
+  }
+  assert.equal(kill(torp, 'ciws', 1.3, 12), true);
+  assert.equal(torp.life, -1, 'piąte trafienie zestrzeliwuje');
+  // Laser PD liczy się w połowie, flak w 2,5% (jak rakiety 3D).
+  const t2 = { life: 3, x: 0, y: 0, ivx: 0, ivy: 0, pdHp: 60 };
+  kill(t2, 'laser', 1.2, 16);
+  assert.equal(t2.pdHp, 52);
+  kill(t2, 'flak', 0.9, 200);
+  assert.equal(t2.pdHp, 47);
+  // Pocisk kanwy bez pdHp — jak dotąd jedno trafienie.
+  const rocket = { life: 2, x: 0, y: 0, ivx: 0, ivy: 0 };
+  assert.equal(kill(rocket, 'ciws', 1.3, 12), true);
+  assert.equal(rocket.life, -1);
+});
+
 test('index.html: obrona punktowa gracza i NPC bierze rakiety 3D (bufory, CIWS obu stron, laser, flak)', () => {
   const ciws = html.slice(html.indexOf('function ciwsStep(dt) {'), html.indexOf('function fireCIWSGun('));
   assert.match(ciws, /window\.rocketSystem3D\?\.syncThreats\(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock\.sim, _pdHostileRocketVisible\)/);

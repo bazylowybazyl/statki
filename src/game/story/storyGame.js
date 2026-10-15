@@ -24,7 +24,7 @@ import { planFuelChain } from './pirateBaseFuel.js';
 import { beltAmbushReached, planBeltAmbush } from './beltAmbush.js';
 import { createCloak, isCloakHidden } from '../cloak.js';
 import { K7_POSE_OWNER } from '../k7BerthService.js';
-import { ENGINE_OFF, ENGINE_IGNITION_TUNE, igniteEngine, setEngineState } from '../engineIgnition.js';
+import { ENGINE_OFF, igniteEngine, setEngineState } from '../engineIgnition.js';
 import { K7_SERVICE_UNDOCK, k7ServiceDisconnectPose, k7ServiceStep } from '../../3d/haloRing/haloPortK7Layout.js';
 import { MISSION01 } from './missions/mission01.js';
 import { CAMPAIGN_PHASES, runCampaign } from './campaign.js';
@@ -438,7 +438,8 @@ export const StoryGame = {
     // w ścianę tylną. Przewody paliwowe łapią kadłub przy dziobie (te same wlewy stanowiska).
     const angle = pose.angle + Math.PI;
     this.deps.placePlayer(pose.x, pose.y, angle);
-    // Silniki MAIN wyłączone w doku (src/game/engineIgnition.js — etap E2): zapłon przy zwolnieniu zamków (ODDOKUJ).
+    // Silniki MAIN wyłączone w doku (src/game/engineIgnition.js — etap E2): zapłon dopiero przy pierwszym ciągu gracza
+    // (W) po ODDOKUJ — autozapłon gry.
     setEngineState(this.deps.ship?.(), ENGINE_OFF);
     this.lock = { x: pose.x, y: pose.y, angle, anim: null };
     this._block.add('dock');
@@ -491,16 +492,22 @@ export const StoryGame = {
     this._lastBerth = null;
     this._craneMap?.clear();
     const target = id ? this.deps?.k7HallPoses?.(0)?.get(id) : null;
-    if (target && target.owner === K7_POSE_OWNER.story) target.owner = null;
+    if (target && target.owner === K7_POSE_OWNER.story) { target.owner = null; target.settle = 0; }
   },
 
-  /** Poza obsługi stanowiska gracza teraz: sekwencja odcumowania albo wszystkie elementy razem (`service`). */
+  /**
+   * Poza obsługi stanowiska gracza teraz: sekwencja odcumowania albo wszystkie elementy razem (`service`).
+   * `settle` — Atlas stoi przypięty (start w doku, powrót): ramiona i przewody paliwowe hali od razu na wlewach, bez
+   * ruchu podpinania (poprawka użytkownika 2026-10-14: „zanim kamera pójdzie na statek, już powinien być zadokowany” —
+   * w intro świat stoi, więc fizyka ramion dopinała statek dopiero po locie kamery).
+   */
   _servicePose(out) {
     const seq = this.dock.seq;
-    if (seq) return Object.assign(out, seq.pose);
+    if (seq) { Object.assign(out, seq.pose); out.settle = 0; return out; }
     const k = this.dock.service;
     for (const key of SERVICE_KEYS) out[key] = k;
     out.vent = 0;
+    out.settle = this.lock && k >= 1 ? 1 : 0;
     return out;
   },
 
@@ -523,13 +530,9 @@ export const StoryGame = {
     if (!s) return;
     s.t += dt;
     storyUndockPose(s.t, s.pose);
-    // Zapłon silników (etap E2, poprawka 2026-10-09): dym z dysz idzie jeszcze przy zamkach i składających się ramionach
-    // (smokeTime przed zwolnieniem zamków; za krótka sekwencja — od jej początku), błysk i struga w chwili zwolnienia —
-    // ciąg główny najpóźniej przy driveAt + flameTime.
-    if (!s.ignited && s.t >= Math.max(0, STORY_UNDOCK.driveAt - ENGINE_IGNITION_TUNE.smokeTime)) {
-      s.ignited = true;
-      igniteEngine(this.deps.ship?.());
-    }
+    // Silniki MAIN zostają zimne (poprawka użytkownika 2026-10-14: „dym z silników niech idzie dopiero, jak gracz wciśnie
+    // W”) — zapłon (dym, błysk, struga) odpala autozapłon gry przy pierwszym ciągu po zwolnieniu zamków (index.html:
+    // stepPlayerEngineIgnition); wcześniej stery są zablokowane.
     if (!s.drive && s.t >= STORY_UNDOCK.driveAt) {
       // zamki pola zwolnione — napęd wraca do gracza (ramiona paliwowe dokładają się już w trakcie wylotu)
       s.drive = true;
@@ -786,7 +789,7 @@ export const StoryGame = {
       parkedCrushed(n) { return !!n && (n.dead || n.hp <= 0 || (self.deps.hullRatio?.(n) ?? 1) < 0.3); },
       parkedKilled() { return site.parkedList.filter((n) => site.parkedCrushed(n)).length; },
       parkedTouching(n) { return !!n && !!self.deps.hasContact?.(self.deps.ship(), n); },
-      // rząd do taranu (samouczek): okręty wewnętrznej strony ramienia A
+      // rząd do taranu (samouczek): okręty z załogą na zewnętrznej stronie poprzeczki T (ramiona A i B)
       ramList() { return site.parkedList.filter((n) => site.ramBerths.includes(n.__berthId)); },
       // taran: uderzenie w ciało bazy (gra ustawia gateRammed) albo dotknięty okręt w stanowisku
       gateRammed: false,
@@ -991,6 +994,9 @@ export const StoryGame = {
       });
       at(1.1, () => d.baseBreak?.('H-T', { power: 1.8, speed: 70, dir: 'in' }));
       at(1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: 60, dir: 'out' }));
+      // winda kosmiczna spod dysku mieszkalnego puszcza: lina i głowica spadają na planetoidę, osada wybucha po kolei
+      // (scenariusz — src/3d/portBuildings/pirateRockSite3D.js; prośba użytkownika 2026-10-15)
+      at(1.5, () => d.rockCollapse?.());
       for (let k = 0; k < H.discSectors; k++) {
         const a = (k / H.discSectors) * Math.PI * 2;
         const p = place.toGame(Math.cos(a) * H.discR * 0.55, Math.sin(a) * H.discR * 0.55);

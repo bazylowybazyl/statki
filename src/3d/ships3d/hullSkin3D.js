@@ -106,6 +106,18 @@ export function hullSkinLattice(structure, anchorDX, anchorDY) {
 }
 
 /**
+ * Kratownica BRYŁY 3D do skóry (konstrukcja z wokselizacji — wiele warstw): { cs, dims (x, y, z), occ (Uint8Array
+ * x·y·z — komórki z węzłem), ax, ay, az (początek układu bryły względem latticeMin) }.
+ */
+export function hullSkinLattice3D(structure, anchorDX, anchorDY, anchorDZ) {
+  const d = structure.dims, ns = structure.nodeStore;
+  const sxy = d.x * d.y;
+  const occ = new Uint8Array(sxy * d.z);
+  for (let i = 0; i < ns.count; i++) occ[ns.ix[i] + ns.iy[i] * d.x + ns.iz[i] * sxy] = 1;
+  return { cs: structure.cellSize, dims: { x: d.x, y: d.y, z: d.z }, occ, ax: anchorDX, ay: anchorDY, az: anchorDZ };
+}
+
+/**
  * Geometria skóry: kopia geometrii modelu (jednostki świata, środek sprite'a = 0) × skala `scale`,
  * trójkąty dzielone na połówki krawędzi, aż najdłuższa krawędź ≤ maxEdgeCells komórek (wgniecenia z FFD
  * potrzebują wierzchołków w komórkach), z atrybutami aLat (położenie w komórkach kratownicy `lattice`,
@@ -436,7 +448,8 @@ export function ensureHullSkinSlot(hull, occ) {
   // kawałek pierwotnej kratownicy (żywe węzły ciała).
   const s = body.nodeStore;
   let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
-  if (!hull.isFragment && occ && occ.length === body.dims.x * body.dims.y) {
+  const sxy = body.dims.x * body.dims.y;
+  if (!hull.isFragment && occ && occ.length === sxy) {
     const W = body.dims.x;
     for (let c = 0; c < occ.length; c++) {
       if (!occ[c]) continue;
@@ -445,6 +458,16 @@ export function ensureHullSkinSlot(hull, occ) {
       if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
     }
     if (x1 >= x0) { z0 = 0; z1 = 0; }
+  } else if (!hull.isFragment && occ && body.dims.z > 1 && occ.length === sxy * body.dims.z) {
+    // bryła 3D (hullSkinLattice3D): pudło całej pierwotnej konstrukcji
+    const W = body.dims.x;
+    for (let c = 0; c < occ.length; c++) {
+      if (!occ[c]) continue;
+      const iz = (c / sxy) | 0, rem = c - iz * sxy, iy = (rem / W) | 0, ix = rem - iy * W;
+      if (ix < x0) x0 = ix; if (ix > x1) x1 = ix;
+      if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+      if (iz < z0) z0 = iz; if (iz > z1) z1 = iz;
+    }
   }
   if (!(x1 >= x0)) {
     for (let i = 0; i < s.count; i++) {
@@ -504,7 +527,8 @@ export function writeHullSkinField(hull) {
   const st = hull.__skin3D;
   if (!st) return 0;
   const body = hull.body, s = body.nodeStore, lm = body.latticeMin, cs = body.cellSize;
-  st.off.set(lm.x + hull.anchorDX, lm.y + hull.anchorDY, 0);
+  // bryła 3D: początek jej układu w ciele także w z (latticeMin.z + anchorDZ); ciało płaskie — z = 0
+  st.off.set(lm.x + hull.anchorDX, lm.y + hull.anchorDY, hull.solid3D ? lm.z + (hull.anchorDZ || 0) : 0);
   // Śpiące ciało bez zmian węzłów — pole aktualne.
   if (body.isSleeping && st.revision === hull.revision && st.wroteSleep) return 0;
   st.revision = hull.revision;

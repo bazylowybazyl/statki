@@ -9,8 +9,9 @@
 //   struga) | A/B: bez gazu zapłonu (engineGas false) — sama mechanika (struga rośnie od błysku) | bez mechaniki (silniki
 //   zawsze w pracy — dawny obraz: struga od razu) | autozapłon W przy dryfie 300 j/s: nośnik = prędkość z chwili zapłonu
 //   (1) i 0 (dym stoi w świecie) | gaszenie (klawisz 0 w pracy) | NPC: Terra Nova (wodór) i pirat (rakieta) — paleta.
-// hala (kampania, Atlas na C-01 w hali K-7): klik ODDOKUJ → zrzuty od zwolnienia zamków (driveAt): dym w hali, ściana tylna
-//   jako przeszkoda gazu, błysk, struga, W | A/B tej samej klatki: bez przeszkód gazu, bez pyłu hal.
+// hala (kampania, Atlas na C-01 w hali K-7): odprawa (ramiona i przewody już na wlewach — bez „łapania” po intro), F —
+//   ODDOKOWANIE → zrzuty odcumowania (silniki dalej zimne), potem W — zapłon: dym w hali, ściana tylna jako przeszkoda gazu,
+//   błysk, struga | A/B tej samej klatki: bez przeszkód gazu, bez pyłu hal.
 // wodowanie (misja 1, ?story=defences): pierwszy okręt parkingu suchego doku — zapłon przed startem (zegar wodowania),
 //   zrzuty dymu w stanowisku i wyjazdu rufą.
 // koszt (czas rzeczywisty, pustka): Atlas + 3 NPC w kadrze, cykl zapłon / praca / gaszenie co 4 s; odcinki po 8 s
@@ -267,6 +268,14 @@ try {
     await ev(`(() => { const S = window.StoryGame; S.REVEAL_SEC = 1.2; S.REVEAL_DELAY_SEC = 0.2; const f = window.__menuBackdrop.flight; f.devTime = NaN; f.t = f.duration; return true; })()`);
     if (!await waitFor(cdp, '!!window.StoryGame.dialogue.current', 120000, 200)) throw new Error('brak odprawy');
     await sleep(1500);
+    // odprawa (świat stoi od intro): ramiona paliwowe i przewody już na wlewach Atlasa
+    const R = {};
+    // (świat zamrożony przez scenę — pętla gry nie eksportuje jeszcze window.camera: kadr z odsłonięcia hali)
+    await freeze();
+    if (await ev('!!window.camera')) await shipCam(Number(args.zoomHala || 0.42));
+    R.odprawa = await shot('h00a-odprawa-zadokowany', { przewody: await ev(`(() => { const hall = window.__haloRings?.entries?.find((e) => e.key === "earth")?.ring?.k7Halls?.[0];
+      const hs = hall?.fuelRig?.hoses?.filter((h) => h.berthId === 'C-01') || []; return hs.map((h) => ({ zaryglowana: h.latched, q1: +h.q1.toFixed(3) })); })()`) });
+    await unfreeze();
     for (let k = 0; k < 20; k++) {
       const d = await ev('(() => { const d = window.StoryGame.dialogue; return d.active && d.mode === "scene"; })()');
       if (!d) break;
@@ -275,7 +284,7 @@ try {
     }
     if (!await waitFor(cdp, "window.StoryGame.phase === 'undock' && !!window.StoryGame.ui.action", 60000, 200)) throw new Error('brak panelu ODDOKUJ');
     await sleep(4000);
-    const R = { przed: await ev('({ silnik: window.ship.engineIgn ? { ...window.ship.engineIgn } : null, blokada: !!window.StoryGame.lock })') };
+    R.przed = await ev('({ silnik: window.ship.engineIgn ? { ...window.ship.engineIgn } : null, blokada: !!window.StoryGame.lock })');
     console.log('dok przed ODDOKUJ', JSON.stringify(R.przed));
     await freeze();
     await ev('window.__harness.step(20)');
@@ -283,26 +292,29 @@ try {
     await ev('window.__harness.step(30)');
     R.k0 = await frameK();
     R.dok = await shot('h00-dok-wylaczone');
-    await ev(`(() => { window.StoryGame.triggerAction('undock'); return true; })()`);
-    // zapłon smokeTime (1,1 s) przed driveAt (3,45 s): dym od 2,35 s przy zamkach, błysk w chwili zwolnienia, płomień
-    // 0,7 s, potem W — Atlas wylatuje ku bramie G-01, silnik dmucha w ścianę tylną
-    R.seria = await series('h01-oddokuj', [2.2, 2.6, 2.9, 3.2, 3.4, 3.55, 3.75, 4.0, 4.5, 5.2, 6.2], async (t) => {
-      if (args.sonda && (Math.abs(t - 2.9) < 1e-6 || Math.abs(t - 3.2) < 1e-6)) {
+    // F — ODDOKOWANIE (nakładka fabuły, 2026-10-14): odcumowanie bez zapłonu, silniki zimne do pierwszego W
+    await keyEv('keyDown', 'f', 'KeyF', 70);
+    await keyEv('keyUp', 'f', 'KeyF', 70);
+    R.oddokuj = await series('h01-oddokuj', [1.0, 2.5, 3.6]);
+    R.poOdcumowaniu = await ev('({ silnik: window.ship.engineIgn ? { ...window.ship.engineIgn } : null, blokada: !!window.StoryGame.lock })');
+    console.log('po odcumowaniu', JSON.stringify(R.poOdcumowaniu));
+    // W — zapłon: dym smokeTime (1,4 s), błysk, płomień 0,7 s; Atlas wylatuje ku bramie G-01, silnik dmucha w ścianę tylną
+    await keyEv('keyDown', 'w', 'KeyW', 87);
+    R.seria = await series('h02-W-zaplon', [0.3, 0.7, 1.0, 1.3, 1.5, 1.75, 2.1, 2.6, 3.4, 4.4], async (t) => {
+      if (args.sonda && (Math.abs(t - 0.7) < 1e-6 || Math.abs(t - 1.3) < 1e-6)) {
         const p = await ev(PROBE);
         (R.sonda ||= {})[t] = p;
         console.log('SONDA', t, JSON.stringify(p));
       }
-      if (Math.abs(t - 3.2) < 1e-6 || Math.abs(t - 4.5) < 1e-6) {
+      if (Math.abs(t - 1.0) < 1e-6 || Math.abs(t - 2.1) < 1e-6) {
         // A/B tej samej klatki: bez przeszkód gazu (ściana tylna hali), bez pyłu hal
         await ev(`(async () => { window.__explosions.tune.obstacles = false; await window.__harness.frames(2); return true; })()`);
-        await sleep(60); await screenshotPng(cdp, join(out, `h01-oddokuj-${String(t).replace('.', '_')}-bezPrzeszkod.png`));
+        await sleep(60); await screenshotPng(cdp, join(out, `h02-W-zaplon-${String(t).replace('.', '_')}-bezPrzeszkod.png`));
         await ev(`(async () => { window.__explosions.tune.obstacles = true; window.HallDustTune.enabled = false; await window.__harness.frames(2); return true; })()`);
-        await sleep(60); await screenshotPng(cdp, join(out, `h01-oddokuj-${String(t).replace('.', '_')}-bezPylu.png`));
+        await sleep(60); await screenshotPng(cdp, join(out, `h02-W-zaplon-${String(t).replace('.', '_')}-bezPylu.png`));
         await ev(`(async () => { window.HallDustTune.enabled = true; await window.__harness.frames(1); return true; })()`);
       }
     });
-    await keyEv('keyDown', 'w', 'KeyW', 87);
-    R.wylot = await series('h02-W', [0.5, 1.5, 3.0]);
     await keyEv('keyUp', 'w', 'KeyW', 87);
     R.pipeline = await pipesSince(R.k0);
     console.log('hala pipeline', JSON.stringify(R.pipeline));

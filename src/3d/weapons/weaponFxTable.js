@@ -25,7 +25,8 @@ const W = (fx, pattern, extra = null) => Object.freeze({ fx, pattern, charge: 0,
 /**
  * 27 broni z dema (działa Capital / L / M / S, wiązki, obrona punktowa) + 3 warianty rozmiarowe
  * broni specjalnej (Kolec S, Oszczep M, Yamato L — rodziny rodziców) + 2 działa main klasy
- * snajperskiej (Lanca M / L, 2026-10-08 — receptura Valkyrie, bez ładowania).
+ * snajperskiej (Lanca M / L, 2026-10-08 — receptura Valkyrie, bez ładowania) + działko kanonierki
+ * (broń maszyn eskadr, 2026-10-14 — receptura autokanonu).
  */
 export const WEAPON_FX = Object.freeze({
   // Capital / specjalne
@@ -58,6 +59,9 @@ export const WEAPON_FX = Object.freeze({
   tempest_ion_s: W('tempest', 'single', { short: 'Tempest S' }),
   helios_laser_s: W('helios', 'alt', { short: 'Helios S' }),
   gatling_s: W('vulcan', 'single', { short: 'Gatling S' }),
+  // broń maszyn eskadr (mountType 'fighter', 2026-10-14) — bomba i torpeda lotnicza poza tabelą (kategorie
+  // wyłączone niżej: bomby rysuje src/vfx/fighterBombSprite.js, torpedy — _torpedoConf w weaponFx.js)
+  gunship_autocannon: W('autocannon', 'single', { short: 'Kanonierka' }),
   // obrona punktowa
   ciws_mk1: W('ciws', 'single', { pd: true, short: 'CIWS Mk I' }),
   ciws_mk2: W('ciws', 'single', { pd: true, short: 'CIWS Mk II' }),
@@ -68,8 +72,12 @@ export const WEAPON_FX = Object.freeze({
   flak_capital: W('flak', 'salvo', { pd: true, short: 'Flak Perun' })
 });
 
-/** Kategorie MASTER_WEAPONS poza zakresem efektów broni (rakiety — zadanie 19, hangary). */
-export const WEAPON_FX_EXCLUDED_CATEGORIES = Object.freeze(new Set(['rocket', 'torpedo', 'hangar']));
+/**
+ * Kategorie MASTER_WEAPONS poza zakresem efektów broni (rakiety — zadanie 19, hangary; bomby lotnicze —
+ * nie są pociskami w `bullets`: lot i obraz src/game/fighterBombs.js + src/vfx/fighterBombSprite.js,
+ * wybuch WeaponFx.bombBlast).
+ */
+export const WEAPON_FX_EXCLUDED_CATEGORIES = Object.freeze(new Set(['rocket', 'torpedo', 'hangar', 'bomb']));
 
 /**
  * Rodziny, których pociski zostawiają smugę gazu (TrailSystem, trails.js). Decyzja użytkownika

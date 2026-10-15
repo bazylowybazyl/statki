@@ -74,7 +74,7 @@ export const MOON_MAPS = Object.freeze(PLANET_MAPS_OLD ? {
 // Bez `shape` — kula ze skalą osi `axes` (smallBodies.js). `metalness` / `roughness` — materiał (Psyche metaliczna).
 const SMALL_DIR = 'assets/planety/solar/small';
 export const SMALL_BODY_SHAPE_RANGE = Object.freeze(
-    /*SMALL_BODY_SHAPE*/{"ceres": [-0.08, 0.06], "vesta": [-0.24, 0.16], "pallas": [-0.16, 0.18], "hygiea": [-0.07, 0.07], "psyche": [-0.36, 0.36]}/*SMALL_BODY_SHAPE-KONIEC*/
+    /*SMALL_BODY_SHAPE*/{"ceres": [-0.08, 0.06], "vesta": [-0.24, 0.16], "pallas": [-0.16, 0.18], "hygiea": [-0.07, 0.07], "psyche": [-0.36, 0.36], "hidalgo": [-0.05, 0.05]}/*SMALL_BODY_SHAPE-KONIEC*/
 );
 const smallMaps = (id, extra = {}) => Object.freeze({
     day: `${SMALL_DIR}/${id}_hf_color.jpg`, night: `${SMALL_DIR}/${id}_hf_night.jpg`, normal: `${SMALL_DIR}/${id}_hf_normal.jpg`,
@@ -90,5 +90,7 @@ export const SMALL_BODY_MAPS = Object.freeze({
     hygiea: smallMaps('hygiea'),
     psyche: smallMaps('psyche', { metalness: 0.45, roughness: 0.62 }),
     pluto: smallMaps('pluto'),
-    charon: smallMaps('charon')
+    charon: smallMaps('charon'),
+    // planetoida pod bazą piratów (misja 1 — src/3d/pirateRock3D.js; nie ma jej w src/data/smallBodies.js: stoi przy bazie)
+    hidalgo: smallMaps('hidalgo')
 });

@@ -393,6 +393,35 @@ export const SUPPORT_SHIP_TEMPLATES = {
     stats: fighterStatsFromSquadron(FIGHTER_SQUADRON_DEFS.interceptor),
     configureId: 'interceptor'
   },
+  // Role eskadr (2026-10-14, src/data/fighterSquadrons.js): typ encji 'fighter' (supportType) — wszystko, co
+  // rozpoznaje myśliwce po typie, działa bez zmian; rolę niesie squadronId / fighterDoctrine.
+  bomber: {
+    color: FIGHTER_SQUADRON_DEFS.bomber.color,
+    count: FIGHTER_SQUADRON_DEFS.bomber.squadSize,
+    sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
+    squadronId: 'bomber',
+    supportType: 'fighter',
+    stats: fighterStatsFromSquadron(FIGHTER_SQUADRON_DEFS.bomber),
+    configureId: 'bomber'
+  },
+  torpedo_bomber: {
+    color: FIGHTER_SQUADRON_DEFS.torpedo.color,
+    count: FIGHTER_SQUADRON_DEFS.torpedo.squadSize,
+    sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
+    squadronId: 'torpedo',
+    supportType: 'fighter',
+    stats: fighterStatsFromSquadron(FIGHTER_SQUADRON_DEFS.torpedo),
+    configureId: 'torpedo_bomber'
+  },
+  gunship: {
+    color: FIGHTER_SQUADRON_DEFS.gunship.color,
+    count: FIGHTER_SQUADRON_DEFS.gunship.squadSize,
+    sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
+    squadronId: 'gunship',
+    supportType: 'fighter',
+    stats: fighterStatsFromSquadron(FIGHTER_SQUADRON_DEFS.gunship),
+    configureId: 'gunship'
+  },
   frigate_pd: {
     shield: { max: 650, val: 650, regenRate: 130, regenDelay: 3.6, impacts: [], state: 'activating' },
     sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },

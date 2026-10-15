@@ -116,9 +116,10 @@ export class DistortionField {
   /**
    * Rzutuje zgłoszenia na widok i pakuje do bloku. camX, camY — środek kadru w świecie
    * gry, zoom — px ekranu na jednostkę świata, width / height — rozmiar celu [px],
-   * time — zegar efektów [s]. Zwraca liczbę spakowanych źródeł.
+   * time — zegar efektów [s], pxScale — px celu na px kanwy gry (skala renderu z opcji grafiki:
+   * siła zgłoszeń jest w px ekranu). Zwraca liczbę spakowanych źródeł.
    */
-  commit(camX, camY, zoom, width, height, time = 0) {
+  commit(camX, camY, zoom, width, height, time = 0, pxScale = 1) {
     const A = this.array;
     const z = zoom > 0 ? zoom : 1;
     const hw = width * 0.5;
@@ -159,7 +160,7 @@ export class DistortionField {
       const sx = (this.qx[i] - camX) * z;
       const sy = -(this.qy[i] - camY) * z;
       A[b].set(sx, sy, q[o + 1] * z, q[o + 2] * z);
-      A[b + 1].set(q[o + 3], type, q[o + 4], this._reach(type, q[o + 1], q[o + 2], q[o + 7]) * z);
+      A[b + 1].set(q[o + 3] * pxScale, type, q[o + 4], this._reach(type, q[o + 1], q[o + 2], q[o + 7]) * z);
       // Kierunek świat → scena (y odwrócone), jednostkowy albo 0.
       let dx = q[o + 5];
       let dy = 0 - q[o + 6];

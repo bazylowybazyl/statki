@@ -64,7 +64,11 @@ const SUPPORT_FACTIONS = Object.freeze({
       { key: 'service_tug', name: 'Holownik', role: 'Serwis — naprawa, transport do K-7', count: '×1', icon: 'carrier', click: true, hull: 'service_tug' },
       // `dev: true` — karta tylko z ?dev (spawner testowy), nie w rezerwie gracza.
       { key: 'frigate_laser', name: 'Custos-L', role: 'Fregata laserowa', count: '×50', icon: 'frigate', dev: true },
-      { key: 'interceptor', name: 'Interceptor Wing', role: 'Skrzydło przechwytujące', count: '×200', icon: 'fighter', click: true, dev: true }
+      { key: 'interceptor', name: 'Interceptor Wing', role: 'Skrzydło przechwytujące', count: '×200', icon: 'fighter', click: true, dev: true },
+      // Role eskadr (2026-10-14, src/data/fighterSquadrons.js) — spawner testowy.
+      { key: 'bomber', name: 'Bomber Wing', role: 'Bombowce — bomby na kadłub', count: '×6', icon: 'fighter', click: true, dev: true },
+      { key: 'torpedo_bomber', name: 'Torpedo Wing', role: 'Torpedowce — torpedy z burty', count: '×6', icon: 'fighter', click: true, dev: true },
+      { key: 'gunship', name: 'Gunship Wing', role: 'Kanonierki — orbita i wieżyczka', count: '×4', icon: 'fighter', click: true, dev: true }
     ]
   },
   pirate: {
@@ -74,6 +78,11 @@ const SUPPORT_FACTIONS = Object.freeze({
       { key: 'destroyer', name: 'Pirate Destroyer', role: 'Niszczyciel rajderski', count: '×5', icon: 'destroyer' },
       { key: 'pirate_battleship', name: 'Pirate Battleship', role: 'Pancernik rajderski', count: '×1', icon: 'battleship' },
       { key: 'pirate_supercapital', name: 'Iron Skull — Supercapital', role: 'Supercapital piratów', count: '×1', icon: 'supercapital' },
+      // Pirackie eskadry (2026-10-14): myśliwce i role uderzeniowe na Atlasa.
+      { key: 'interceptor', name: 'Pirate Interceptors', role: 'Myśliwce przechwytujące', count: '×9', icon: 'fighter', click: true },
+      { key: 'bomber', name: 'Pirate Bombers', role: 'Bombowce — bomby na kadłub', count: '×6', icon: 'fighter', click: true },
+      { key: 'torpedo_bomber', name: 'Pirate Torpedo Wing', role: 'Torpedowce', count: '×6', icon: 'fighter', click: true },
+      { key: 'gunship', name: 'Pirate Gunships', role: 'Kanonierki na orbicie', count: '×4', icon: 'fighter', click: true },
       // Kadłuby ruchu v2 bez AI i broni (spawnDevHull w index.html).
       { key: 'smuggler', name: 'Przemytnik', role: 'Bez broni i AI', count: '×1', icon: 'frigate', hull: 'smuggler', hp: 600, speed: 240 },
       { key: 'pirate_raider', name: 'Rajder', role: 'Bez broni i AI', count: '×1', icon: 'destroyer', hull: 'pirate_raider', hp: 1400, speed: 220 }

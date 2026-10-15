@@ -102,6 +102,180 @@ Test `tests/hullCollisionArmor.test.mjs`: rząd z misji 1, prawdziwe sprite'y, s
 z `SHIP_SYSTEMS.atlas`, zgniecenie co najmniej trzech jednostek i strata <1% kadłuba
 Atlasa; także taran Atlas–Atlas, dziedziczenie pancerza oraz niezmieniony budżet broni.
 
+## Prawo kontaktu v2 (2026-10-14, audyt `docs/AUDYT-destruktor-3d-2026-10-14.md`)
+
+Zgłoszenie użytkownika: „ciężko miażdżyć, nienaturalnie się rozciąga, statek grzęźnie”. `createBeamConfig.contactV2`
+(domyślnie false — dema i testy silnika bez zmian), gra włącza w `HullBodies.init` (`HULL_BODY_CONFIG.contactV2`).
+Gałąź `DestructorBeams3D._contactV2` po zebraniu kontaktów pary:
+
+- **Normalna z geometrii**: środek materiału A minus środek materiału B w oknie wokół styku (`_windowCentroid`, okno
+  `contactNormalCells` × komórka, do × 3 z rozrzutem styku). Gdy środki się pokrywają (głęboko w materiale) — kierunek
+  ruchu względnego (ciała się zbliżają) albo suma normalnych węzeł-węzeł. Rozchodzenie się wzdłuż normalnej = brak
+  impulsu (wycofanie nie hamuje); korekta pozycji tylko dla pary zbliżającej się / spoczywającej (`contactRestSpeed`).
+- **Granica plastyczności z frontu**: `jYield = crushStrength · pancerz · masa węzła lżejszego / cs · front · dt`,
+  front = kosze komórki w poprzek normalnej (`_contactFront`; kotwica ciała zakotwiczonego = `pinYieldMul` komórek).
+  Potrzebny impuls ≤ granica → styk sprężysty (płynnie od zera — trzymane W stoi albo wgniata zależnie od siły, nie od
+  progu 45 j/s); większy → granica + zgniot nadmiaru.
+- **Zgniot** (`_crushNodeV2`): przesunięcie o max(głębokość styku, droga zbliżania w kroku × `crushTravelMul`) z sufitem
+  `crushMaxCells`, wyboczenie od ŚRODKA STYKU, prędkość węzła wzdłuż normalnej ≥ nadmiar zbliżania × udział (węzeł jedzie
+  z frontem). Pęd nadany węzłom wraca reakcją na drugie ciało (materiał trzymany przez konstrukcję stawia ciągły opór).
+  Belki przeciążone zgniotem pękają w tym samym kroku (`_breakOverloaded` — render nie widzi gumy).
+- **Kotwice o skończonej wytrzymałości**: zgniot rusza kotwicę (`invMass 0`) najwyżej o drogę zbliżania w kroku; dalej
+  niż `pinBreakCells` od spoczynku — spaw puszcza (`invMass` = 1/m, `perf.pinsReleased`, kolejka podziału — wyspa bez
+  kotwicy odpada).
+- Strojenie gry (`HULL_BODY_CONFIG`): `pinYieldMul` 28, `pinBreakCells` 1, `crushTravelMul` 1, `friction` 0,35,
+  `crushStrength` 300 000 (bez zmian). Wynik (Atlas × bęben habitatu): 900 i 1500 j/s stają na pierścieniu wewnętrznym,
+  2200 i 3000 j/s go zrywają; muśnięcie 25 j. traci 2–14% prędkości wzdłuż ruchu; 60 ≈ 120 Hz (głębokość ≤ 11%).
+  Tabela przed / po — audyt § 8; pomiar `node scripts/destrukcja-taran-sym.mjs`, odbiór `tests/destrukcjaTaran.test.mjs`.
+- Warstwy z (`entity.zLayer`, `pairFilter`): ciała różnych warstw się nie zderzają; w warstwie ≠ 0 zderzają się także
+  encje z `isCollidable = false` (duchy budowli: dysk pod płaszczyzną gry, spadająca głowa habitatu). Wrak dziedziczy
+  warstwę rodzica.
+
+## Ciała 3D (2026-10-15)
+
+Decyzja użytkownika: „silnik prawdziwie 3D — będzie potrzebny do fabuły, wybuchów i zniszczeń (hala K-7, ring,
+budynki)”. Pierwsze użycie: wieża habitatu bazy piratów po zerwaniu szyi przechyla się powoli jak wieża, uderza BOKIEM
+w koronę bębna i dysk, bok się gniecie (AGENTS.md § „Baza piratów” — SZYJA HABITATU).
+
+Silnik był 6DoF od zawsze (poza + kwaternion, węzły w układzie ciała); gra włączała `cfg.planar` globalnie. Teraz
+płaskość jest polem CIAŁA, a płaskie sceny liczą się BIT W BIT jak przed (testy silnika, ślad
+`destrukcja-taran-sym.mjs` poza czasem).
+
+- **Pola ciała** (`createBody`; ta sama kolejność w `_spawnWreck` i `createRestoredBody`, wrak dziedziczy):
+  `planar` (domyślnie `cfg.planar`), `gravity` {x, y, z} [j/s²] (tylko swobodne ciało 3D — `integrate`; węzły się
+  od niej nie odkształcają: zakotwiczona konstrukcja stoi bez naprężeń od ciężaru, spada to, co odpadło), `colZ0` /
+  `colZ1` (słup ciała płaskiego dla brył), `joints`, `friction` (para bierze większe; null = `cfg.friction`),
+  `nodeDamping` / `activeThreshold` (tłumienie węzłów i próg aktywności solvera lokalnego CIAŁA; null = konfiguracja).
+- **Przeguby** (`addJoint(ciało, wx, wy, wz, { breakTilt, breakForce, up })`, `removeJoint`): kulisty, punkt ciała
+  trzymany w miejscu świata; liczony w `integrate` (impuls prędkości dokładny dla jednego więzu — macierz 3 × 3
+  K = m⁻¹·I − [r]×·I⁻¹·[r]×, + korekta położenia `jointBeta`); pęka przy przechyle od osi „w górę” z chwili założenia
+  albo przy sile więzu.
+- **Para MIESZANA** (płaskie × 3D, `_collideMixed`): ciało płaskie jest dla brył SŁUPEM — węzeł = pionowa kapsuła
+  od `colZ0` do `colZ1` nad węzłem (kadłuby ± `shipColumn` 70; budowle — z wysokości swoich brył, `piece.column`).
+  Iteruje się bryłę (kandydaci w obrysie słupów), najbliższy słup z siatki ciała płaskiego (tylko XY). Płat jest LITY:
+  węzeł bryły we wnętrzu wychodzi PIONOWO pod prąd ruchu (głębokość pionowa najwyżej promień styku — bez katapulty),
+  przy brzegu (`surface`) — w bok. Normalna pary = suma normalnych wyjścia ważona głębokością (okno środków materiału
+  nie widzi słupa). Impuls (`_mixedImpulse`): ciało płaskie ma ruchliwość tylko w XY i obrotem wokół z; jego pionowy
+  zgniot zdejmuje HP węzła (`_crushColumn`, `columnCrushCells` komórek = pełne HP — kolumna ginie w całości:
+  ograniczenie 2,5D, AGENT: wysokości kolumn per węzeł). Broadphase liczy zakresy z tylko, gdy w kroku jest bryła.
+- **Bryła × bryła** — prawo v2 bez płaszczyzny (front = liczba kontaktów).
+- **Spoczynek bez zgniotu**: para z bryłą zbliżająca się wolniej niż `crushRestSpeed3D` (gra: 40 j/s) to styk
+  sprężysty, także ponad granicą plastyczności. Ciężka wieża (4·10⁷ masy) na wąskiej koronie bębna (~40 węzłów frontu)
+  przekraczała granicę samym ciężarem — gniotła się co krok bez końca i solver liczył ją CAŁĄ (~110 tys. belek na
+  krok przez ~8 s po uderzeniu). Statyczny ciężar nie gniecie, gniecie uderzenie.
+- **Tłumienie i próg brył** (gra: `HULL_BODY_CONFIG.solidNodeDamping` 0,4, `solidActiveCells` 0,4 × komórka bryły):
+  kadłuby mają próg 0,4 × 15 = 6 j/s, a próg w j/s nie rośnie z komórką — kratownica wieży (komórka 45) po zgniocie
+  „dzwoniła” sekundami całą długością. Z tłumieniem zgniot zostaje LOKALNY (bok), reszta wieży sztywna (Teardown),
+  obszar solvera po uderzeniu ~1–4 tys. węzłów zamiast 13 tys.
+- **Zamrożenie** (`freezeBody(ciało, pinEvery)`): ciało w spoczynku staje się zakotwiczone na rzadkiej siatce kotwic
+  (ix, iy, iz podzielne przez `pinEvery`; bez takiego węzła — wszystkie), prędkości węzłów zero, obszar aktywny pusty,
+  belki przyjmują obecną długość (kształt po zgniocie jest nowym spoczynkiem — bez naprężeń resztkowych), przeguby
+  zdjęte. Trafienia i zgniot dalej je łamią (wyspa bez kotwicy odpada, ciało bez kotwic znów swobodne). Koszt kroku 0.
+
+Gra (`HullBodies`): `createSolid(encja, struktura3D, opts)` — konstrukcja z wokselizacji (`voxelizeTriangles` →
+`bridgeVoxelComponents` — mostki komórek łączą rozłączne bryły → `buildBeamStructure(…, { bulkheadEvery: 0 })`),
+poza świata silnika (x gry, −y gry, z), kotwice `pins(x, y, z)`, materiał, grawitacja. Silnik CAŁKUJE bryły sam
+(`HullBodies.step` → `D.integrate(solids)`), encja jest lustrem (`syncSolidOut`: x, y = −pos.y, z, quat, kąt, vx, vy,
+vz). Wrak bryły — `makeSolidWreckEntity` (`solid3D`): pętla wraków gry go nie całkuje, usuwa poniżej `solidFloorZ`
+(−6000); rozpad — `shatterSolid` (Voronoi 3D); odłamki węzłów z wysokością (`hullDebris3D.spawn(…, z, vz)`). Filtr
+par: bryły ignorują warstwy z (zderzają się w prawdziwym z). Broń trafia bryły w PASIE gry (§ „Trafienia brył” niżej).
+Zimne wraki — bryły wykluczone.
+`worldBodies`: kawałek z `piece.solid3D` (+ `buildSolid()`) staje się bryłą (lista `_solids` — fizyka i render),
+`detachPiece` / `breakPiece` mają gałęzie brył.
+
+Render (`worldBodies3D.js`, `portBuildingSkin3D.js`, `portBuildings3D.tsl.js`): wypiek skóry 3D (kratownica
+wielowarstwowa, `hullSkinLattice3D`, podział i kotwica w 3D), wariant grafu budowli „skin3” (FFD z 8 rogów) z cięciem
+po z świata — bryła rysuje się DWIEMA siatkami: pod płaszczyzną gry w passie tła, nad nią w FG (passy czyszczą
+głębię; `userData.clipZ`), poza z kwaternionu, podzbiory odłamów w 3D (`fragmentSkinSubset3D`); bryły z wyprzedzeniem
+wypieku `PREBAKE_RADIUS_SOLID` (9 km). Rozgrzewka wariantu skin3 — `pirateBaseGame.js`.
+
+Pomiar (Node, 60 Hz, szarża 3000 j/s w szyb habitatu, `node scripts/destrukcja-taran-sym.mjs --tryb szyja [--pary 1]
+[--hb solidNodeDamping=…] [--neck k=v] [--solid k=v] [--mat k=v] [--odlot 1]`): przechył 1,6–3,8 ms/krok, faza
+uderzenia ~2 s (solver 1–9 ms, kolizje 3–6 ms — pary mieszane ~1,5 ms; średnio ~5 ms/krok), po zamrożeniu ~1,3 ms
+(sama reszta sceny). Przed poprawkami kosztu (spoczynek bez zgniotu, tłumienie brył, zamrożenie) solver po uderzeniu
+liczył CAŁĄ wieżę (~110 tys. belek, 15–20 ms/krok) przez ~8 s. W przeglądarce: przechył 2–5 ms fizyki na krok,
+~1,5–2 s po uderzeniu 10–17 ms (klatki ~40–45 ms), po zamrożeniu ~2 ms. W przeglądarce `node
+scripts/webgpu/baza-zniszczenie-gra.mjs --tryb szyja [--kamera tactical] [--zoom 0.5] [--seria 1]` (czas kroku fizyki
+i klatek w oknach 0,25 s, kadry, pipeline'y synchroniczne). Testy `tests/beamSolid3D.test.mjs` (grawitacja,
+przegub, bryła na słupie płyty 60 / 120 Hz, płaskie bez ruchu w pionie, przebicie słabej płyty, mostki komórek),
+odbiór scenariusza — `tests/destrukcjaTaran.test.mjs`.
+
+### Trafienia brył: pas broni (2026-10-15)
+
+Prośba użytkownika: „rzeczom 2D przy rzeczach 3D (misja piracka) dać hitboxy 3D, żeby mogły normalnie rozwalać świat
+3D”. Rozgrywka zostaje w płaszczyźnie gry, więc rzeczy 2D dostają dla brył WYSOKOŚĆ: okręt to słup ± `shipColumn`
+(pary mieszane — wyżej), broń gry (pocisk, wiązka, rzaz Hexlance'a, orka kanałów świata) leci w PASIE
+|z| ≤ `HULL_BODY_CONFIG.weaponBand` (70 j. = słup okrętu). Węzeł bryły jest w pasie, gdy jego wysokość świata mieści się
+w pasie poszerzonym o pół komórki (kula węzła dotyka pasa). Co bryła ma poza pasem, broń mija — jak okręt: stojąca
+wieża habitatu (z 209…2324) jest nad pasem, dysk mieszkalny (z −1034…−674) POD nim — pociski, wiązki i Hexlance go
+mijają, a kula fali wybuchu w płaszczyźnie gry wprawdzie sięga w dół, ale ≥ 674 j. pod punktem wybuchu kopnięcie
+(∝ 1/d²) to kilka j/s (Supernowa nad dyskiem: 0 węzłów straconych); dysk w praktyce niszczą spadająca wieża i rozpad
+habitatu. Przewrócona wieża (z −801…890) ma w pasie ~2 tys. z 12,7–13 tys. węzłów (przekrój 1,4–1,5 km wzdłuż
+leżącej wieży).
+
+- **Indeks pasa** (`src/game/beamBand3D.js`, bez three i DOM): węzły pasa z położeniem świata silnika (X = x gry,
+  Y = −y gry, Z) w siatce 2D o boku komórki ciała (`bandIndex`; szybkie odrzucenie ciała z obwiedni lokalnej
+  i `_maxDisp`) — przekrój bryły z pasem jest dla broni zwykłym ciałem płaskim w świecie: `bandSweep` (odcinek — jak
+  `sweepLocal2D`), `bandProbe` (sonda), `bandCapsule` (kandydaci kapsuły, posortowani wzdłuż toru), `bandCircle`,
+  `latticeWindow3D` (okno siatki ciała w 3D). Indeks żyje na ciele (`body._band`) do zmiany pozy, nowego kroku ciała
+  obudzonego albo zmiany geometrii; trafienia w tym samym kroku tylko gaszą węzły (odczyt sprawdza `active`). W kolumnie
+  węzłów nad jednym XY wygrywa węzeł najbliżej płaszczyzny (najmniejsze |z|) — sweep i sonda biorą ten sam.
+- **HullBodies** — każde zapytanie broni przyjmuje bryłę (`hull.solid3D` → gałąź bryły; ciała płaskie bez zmian, wynik
+  `z = 0`): `sweep` (`hullSweepResult.z`), `probe`, `impact` — krater w 3D: węzeł pasa najbliżej punktu, `D.applyImpact`
+  w punkcie na WYSOKOŚCI węzła (promień i budżet HP jak ciała płaskiego, `craterRadius` = kula w 3D), odrzut blachy
+  w 3D (`opts.kick3D` — tylko bryły gry: dema 3D i testy silnika bez zmian), wynik `hullImpactResult.z / solid / latX /
+  latY / latZ` (komórki kratownicy szablonu); `cutSegment` — rzaz Hexlance'a = węzły pasa w kapsule wzdłuż toru
+  (pionowa płyta przez cały pas), z `push` odłamki wzdłuż toru i impuls w 3D bryły swobodnej (`applySolidCutPush`);
+  `surfaceNormal` (gradient zajętości żywych węzłów w kuli w 3D, rzucony na płaszczyznę; strop / dno → false —
+  wołający bierze −kierunek lotu), `traceThrough` (przebicia Mjolnira / Valkyrie idą przez przekrój), `nodeWorld` (z),
+  `solidLatticeAt(e, x, y, reach, out)` (punkt gry → komórki kratownicy, dla stempli receptur). Odłamki krateru lecą
+  z wysokością (`hullDebris3D.spawn(…, z, vz)`), bez nowej ścieżki w grze: pętla pocisków, wiązki, Hexlance, PD
+  i mechanika przebić wołają te same funkcje.
+- **Kanały świata** (`worldChannels.js` — kawałek-bryła budowli, np. sektor dysku): orka pocisków `_plowSegment3D`
+  (kandydaci z kapsuły pasa, pęd pocisku w XY, zmiana prędkości węzłów do układu ciała pełnym obrotem Rᵀ, obrót ciała
+  swobodnego w 3D), wiązka `_heat3D` (plama Gaussa w 3D wokół węzła pasa, ablacja ku strzelcowi), front ciśnienia
+  `_blastBody3D` (KULA wokół punktu wybuchu, ∝ 1/d²), ablacja `_ablate3D`. Prawa prędkości w komórkach ODNIESIENIA
+  (`refCell` 15 — komórka ciał płaskich świata), nie bryły (45): ten sam wybuch daje ten sam ruch w jednostkach
+  świata. Koszt frontu: powłoka kuli odwiedza tylko KLOCKI bryły, które przecina (`solidBricks` — węzły w klockach
+  4 × 4 × 4 komórek, środek i promień z pozycji spoczynkowych + √3 · (`_maxDisp` + komórka)), a front kończy się
+  tam, gdzie kopnięcie spada poniżej `blastMinKickFrac` (0,25) progu aktywności bryły (solver i tak je wygasza; moc 6 —
+  zasięg działania ~0,9 km, moc 1 — ~0,4 km). Bez tego kilometrowe kule rozpadu habitatu kopały co krok wszystkie
+  węzły wieży i dysku (39 tys.) o ułamki j/s: 30 wybuchów R 2 km naraz — 5,1 ms na krok brył, teraz 0,8 (Node,
+  prawdziwy habitat); ciała płaskie bez zmian (2,3 ms — ta sama droga, bit w bit). `worldBodies`: bryły w orce, wiązce i fali (`_collectSolidBodies`, `stats.solids`),
+  punkty budowli dalej z reguł 2D (właściciele wybuchu tylko z kawałków płaskich; bryła w kuli — `solidsInBlast` — też
+  uruchamia front); rakiety (`_blastWorldBodies`) i fala rdzenia (`onDetonate`) wchodzą także przy samych bryłach.
+- **Rany 3D** (`src/3d/solidWounds.js`): mapa ran sprite'a nie pasuje do bryły, która się przewraca — pole ran
+  w KOMÓRKACH kratownicy szablonu (vec4: żar w chwili stempla, czas stempla, osmalenie), slot na ród (`hull.dmgKey` —
+  bryła, wrak i odłamy dzielą komórki szablonu), komórki slotu w blokach 4 × 4 × 4, wysyłka zakresami bloków raz na
+  klatkę (`SolidWounds.flush` na końcu `syncWorldBodies3D`), stygnięcie wzorem zamkniętym w shaderze
+  (`damageCoolHeat` — jak mapa ran, bez kernela). Stemple: kratery i rzazy (hak `onImpact` → `HullDamageMap` →
+  `SolidWounds.onImpact`, parametry tabeli STAMP; stempel mniejszy niż komórka — z wagą pola), receptury efektów
+  (`stampRecipe` / `stampAt` / `stampKerf` → `solidLatticeAt`), rozdarcia po zgniocie (`HullBodies.onSolidNodeLost`,
+  poza bronią; łączone w klatce, sufit na slot). Skóra skin3 (`portBuildings3D.tsl.js`) czyta pole trójliniowo z 8 rogów
+  komórki (żar, osmalenie, lakier gaśnie), bez mapy ran sprite'a. Pamięć `WOUND_CAP` 512 Ki komórek (8 MB GPU + kopia
+  CPU); habitat (wieża + 8 sektorów dysku) zajmuje ~0,27 mln.
+- **Zgodność**: płaskie sceny bit w bit (ślad `destrukcja-taran-sym.mjs` — tryby domyślne i szyja — identyczny poza
+  czasem kroku), bryły dem i testów silnika bez zmian (odrzut 3D tylko z `kick3D`).
+
+Testy `tests/beamSolidHits.test.mjs` (pas: trafienie i przelot nad pasem, krater-kula i kolumna, odłamki z wysokością,
+rzaz Hexlance'a w płycie, normalna i `traceThrough`, orka kanałów na obróconym kawałku-bryle, kula fali, ciepło
+i ablacja, ciała płaskie z = 0, klocki frontu i odcięcie słabej fali) i `tests/solidWounds.test.mjs` (indeks bloków,
+stempel — też drobny kaliber mniejszy niż komórka, ród, rozdarcia, WGSL skin3); w grze `node
+scripts/webgpu/baza-zniszczenie-gra.mjs --tryb szyja --ostrzal 1 [--bronie id,id] [--serie 24] [--kamery 0]
+[--profil 1]` (po osiadaniu wieży: Atlas w wolnym miejscu 3–6 km od niej, serie z lufy 1,8 km w poprzek osi wieży w
+punkty jej przekroju z pasem, Hexlance z gniazd Atlasa, Yamato w dysk, Supernowa nad dyskiem; węzły wieży i dysku,
+kratery, stemple ran, czasy fizyki i klatek, pipeline'y synchroniczne).
+
+Pomiar w grze (2026-10-15, 1600 × 900, kamera klasyczna; wieża po osiadaniu 12,9 tys. węzłów, w pasie 2,1 tys.,
+przekrój 1,37 km; 24 strzały na broń): Yamato — 11 kraterów, 96 węzłów; armata — 13 wgnieceń, 0 węzłów; laser
+pulsacyjny — 13 trafień, 0 węzłów (żar i osmalenie); rakiety na punkt — 18 węzłów (fala); Mjolnir — 457 kraterów
+rowu, 1312 węzłów (pas wieży 2,0 → 0,9 tys.: przebicia przechodzą przez cały przekrój); Hexlance (1 salwa) — 43
+węzły. Yamato w dysk — 0 trafień (pod pasem). Fizyka 0,6–1,8 ms średnio na krok (szczyt 11 ms przy Mjolnirze),
+klatki 4–10 ms średnio, jedna klatka > 50 ms (Mjolnir, 66 ms); pipeline'y synchroniczne w szyi i ostrzale — 0.
+Supernowa nad dyskiem: 2 klatki 90–150 ms — profil CPU (`--profil 1`): kod trafień brył ≤ 1,5 ms na klatkę (przed
+klockami i odcięciem słabej fali sam front na bryłach brał 43 ms w klatce rozpadu habitatu), resztę bierze wypiek
+skór kawałków w klatce (`worldBodies3D.stepSkinBake` 39–49 ms po `breakPiece` z progu punktów) i strona GPU efektu.
+
 ## Zderzenia
 
 - Filtr par: `isCollidable`, moduły jednego właściciela (poza wrakami), liny holownicze,
@@ -210,6 +384,10 @@ w `towSystem.js`, `salvage.js`, `shipBridgeRuntime.js` (korzystają z nich destr
 ## Testy i narzędzia
 
 - `tests/hullBodies.test.mjs` — układy, sweep, krater, taran i zdarzenia, filtr par, śmierć, okruchy, łup, wybuch reaktora.
+- `tests/destrukcjaTaran.test.mjs` — prawo kontaktu v2 na prawdziwym habitacie (60 i 120 Hz): pierścień trzyma 1500 j/s,
+  szarża go zrywa, muśnięcie, wycofanie, niszczyciel bez porwania, scenariusz szyi.
+- `node scripts/destrukcja-taran-sym.mjs [--tryb kotwice,czolo,pchanie,musniecie,wycof,statek,szyja] [--dt 60,120]
+  [--v …] [--set klucz=wartość,…] [--ciag 1100]` — taran w Node na prawdziwym HullBodies + worldBodies (przed / po).
 - `tests/beamGameHooks.test.mjs` — haki silnika, krater, zapytania 2D, UV skóry, cień z komórek.
 - `node scripts/dym-gry-belki.mjs [--scen taran|bitwa|oba] [--s 30]` — prawdziwa gra w headless
   Chrome: kadłuby, kratery, taran, bitwa, próbki kroku, zrzuty.

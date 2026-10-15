@@ -1,6 +1,7 @@
 // src/ai/aiUtils.js
 
 import { isCloakHidden } from '../game/cloak.js';
+import { getFighterSquadronDef } from '../data/fighterSquadrons.js';
 
 const _clampTurnOut = { vx: 0, vy: 0 };
 export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg, out = _clampTurnOut) {
@@ -95,9 +96,21 @@ export function isAiFighterUnit(u) {
   return !!(u && (u.fighter || u.type === 'fighter' || u.type === 'interceptor'));
 }
 
+/**
+ * Doktryna maszyny eskadry (src/data/fighterSquadrons.js): mózg trzyma ją w `fighterDoctrine`, przed pierwszym
+ * tickiem — z karty eskadry; bez karty przechwytujący po typie, reszta myśliwiec.
+ */
+export function aiFighterDoctrine(u) {
+  if (u.fighterDoctrine) return u.fighterDoctrine;
+  if (u.squadronId) return getFighterSquadronDef(u.squadronId).doctrine || 'fighter';
+  return u.type === 'interceptor' ? 'interceptor' : 'fighter';
+}
+
 // Wspólna skala scoringu celów. Wydzielone z aiPickBestTarget, żeby mózgi mogły
 // PORÓWNAĆ obecny cel z kandydatem na tej samej skali — histereza po samym
 // dystansie nie umiała odróżnić "gracz" od "myśliwiec lecący tuż obok gracza".
+// Role myśliwców (2026-10-14): bombowiec / torpedowiec / kanonierka biją wyłącznie okręty (myśliwiec = -∞),
+// szturmowy woli okręty, przechwytujący i wielozadaniowy wolą myśliwce, a wśród nich maszyny uderzeniowe.
 export function scoreAiTarget(self, target, amFighter) {
   if (!self || !target) return -Infinity;
   const isMe = (amFighter === undefined) ? isAiFighterUnit(self) : amFighter;
@@ -111,21 +124,37 @@ export function scoreAiTarget(self, target, amFighter) {
   let score = -distSq * 0.00016;
 
   const playerShip = (typeof window !== 'undefined') ? window.ship : null;
-  if (target === playerShip) {
-    // Gracz atrakcyjny, ale NIE jest magnesem — wrogie okręty (2600) i myśliwce
-    // (5000) biją gracza w scoringu, żeby flota się rozdzielała na cele.
-    score += isMe ? 1600 : 4200; // player is never a fighter
-  } else if (isMe) {
-    // Wrogie okręty są łakomym kąskiem dla bombardujących myśliwców (2600),
-    // ale wciąż priorytetem są wrogie myśliwce (5000).
-    score += isAiFighterUnit(target) ? 5000 : 2600;
+  const targetIsFighter = target !== playerShip && isAiFighterUnit(target);
+  if (isMe) {
+    const doc = aiFighterDoctrine(self);
+    if (STRIKE_DOCTRINES.has(doc)) {
+      if (targetIsFighter) return -Infinity;
+      score += 4200;
+    } else if (doc === 'strike') {
+      score += targetIsFighter ? 2600 : 4200;
+    } else if (target === playerShip) {
+      // Gracz atrakcyjny, ale NIE jest magnesem — wrogie okręty (2600) i myśliwce
+      // (5000) biją gracza w scoringu, żeby flota się rozdzielała na cele.
+      score += 1600;
+    } else if (targetIsFighter) {
+      score += 5000;
+      // Bombowiec, torpedowiec i kanonierka niosą zagrożenie dla okrętów — myśliwce osłony biją je najpierw.
+      if (STRIKE_DOCTRINES.has(aiFighterDoctrine(target))) score += (doc === 'interceptor') ? 1800 : 900;
+    } else {
+      // Wrogie okręty: przelot z działek (myśliwiec), przechwytujący — tylko gdy nie ma maszyn.
+      score += (doc === 'interceptor') ? 1400 : 2600;
+    }
+  } else if (target === playerShip) {
+    score += 4200; // player is never a fighter
   } else {
-    score += isAiFighterUnit(target) ? 2200 : 4200;
+    score += targetIsFighter ? 2200 : 4200;
   }
 
   if (distSq < 350 * 350) score += 1200;
   return score;
 }
+
+const STRIKE_DOCTRINES = new Set(['bomber', 'torpedo', 'gunship']);
 
 export function aiPickBestTarget(self, rangeLimit) {
   const tPick0 = (typeof performance !== 'undefined') ? performance.now() : 0;
