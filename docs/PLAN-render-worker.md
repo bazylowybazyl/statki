@@ -1446,6 +1446,23 @@ Pliki: `src/3d/weapons/weaponFx.js` (bez `camera.addShake` i `__weapon3dCameraSh
 w grze), `index.html` (kamera). Kryterium: zrzuty `warp-kop` bit w bit; wstrząs strzałów nie później niż dziś.
 Zależności: RW-21. Kolizje: `render()` w `index.html` (kamera).
 
+**Stan RW-30 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
+zrzutami `warp-kop` po pauzie obciążenia):** nowy `src/game/cameraShakes.js` (akumulator wstrząsu strzałów
+`WeaponShotShake` — dodawanie z sufitem 18, wygaszanie e^(−8·dt) raz na klatkę renderu w tym miejscu, gdzie dawniej
+WeaponFx.sync; `requestCameraShake` — reguła „nie słabszy od bieżącego”, `requestCameraShakePeak` — reguła
+Supernowej; `ShotFeel.onPlayerShot` — kopnięcie kadru dla strzałów spoza wieżyczek, Hexlance). Wstrząs strzałów
+i kopnięcie kadru liczy gra przy zapisie rekordu SHOT / PD_LASER (hak `RenderCommands.writer.onShotFeel` — dane broni
+z rekordu wieżyczki × `writer.shotShakeScale`, ta sama chwila co dawniej w efekcie wylotu); WeaponFx nie ma już
+`_weaponShake`, `__weapon3dCameraShake`, `onPlayerShot`, `shotShakeScale` ani `window.camera.addShake` (wstrząsy
+receptur → hak `WeaponFx.onShake`). `RocketEffects.onShake` (Supernowa), `reactorBlastFx.onShake` i `WarpNurt.onShake`
+— żądania do gry przez haki (w trybie `inline` wywołanie wprost, w `worker` — kanał zwrotny). Odstępstwo: decyzje
+wstrząsów warpa (kop przy skoku, wyjście, hamowanie rampy, wyrzut NPC z tunelu) zostają w `src/3d/warp/player.js`
+/ `warpNurt.js` jako żądania — przeniesienie samych decyzji do czasu gry razem z harmonogramem warpa (RW-28, tor
+`rw-swiat`); dziś obraz `warp-kop` bez zmian z założenia (ta sama reguła, ta sama chwila). Szew: `okno:camera` 6 → 4,
+`okno:ship` 17 → 16, `index:aktualizacja` 101 → 100. Testy: `tests/weaponRecoilSource.test.mjs` (wstrząs strzałów
+z rekordu SHOT, ułamek, wiązka ciągła bez, wygaszanie; reguły żądań; efekty broni bez kamery gry), `rocketFx`
+(Supernowa przez hak).
+
 **RW-31 Zimne wraki i flagi w obiektach gry.**
 Pliki: `src/game/coldWrecks.js` (bramka „czy widać” z kamery i progu LOD po stronie gry), `index.html`
 (`coldWreckSystem`), pozostałe flagi z § 2.6 p. 17. Kryterium: testy zimnych wraków, zrzuty `kosmos` (wraki).

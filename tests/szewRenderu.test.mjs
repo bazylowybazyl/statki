@@ -14,7 +14,7 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 101, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym)
+  'index:aktualizacja': 100,
   'index:dane': 15,
   'index:konfiguracja': 168,
   'index:zapytanie': 70,
@@ -93,14 +93,14 @@ const SUFITY = {
   'okno:applyDamageToStation': 1,
   'okno:applyRocketHullImpact': 2,
   'okno:bullets': 2,
-  'okno:camera': 6,
+  'okno:camera': 4,
   'okno:camera2': 4,
   'okno:isShieldBreachedAt': 2,
   'okno:npcs': 2,
   'okno:planets': 3,
   'okno:player2Ship': 3,
   'okno:registerShieldImpact': 2,
-  'okno:ship': 17,
+  'okno:ship': 16,
   'okno:shipDriveState': 1,
   'okno:splitScreenMode': 7,
   'okno:stationPivotById': 1,

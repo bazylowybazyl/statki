@@ -801,7 +801,7 @@ const GALERIA_POMOC = `const G = window.__galeria;
   // × 1e-6 trzymają kadłub w całości, ale mapa stempluje każde trafienie, więc bez tego ujęcie pokazywałoby
   // rany wszystkich wcześniejszych rodzin w jednym miejscu.
   const clear = async () => { for (const b of window.bullets) b.life = -1; window.HullDamageMap?.heal(G.T.beamHull?.dmgKey, 1); await H.step(2); WFX?.reset(); noShield(); };
-  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
+  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; if (window.WeaponShotShake) window.WeaponShotShake.mag = 0; G.T.hp = G.T.maxHp; };`;
 for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
   SCENES[`galeria-${name}`] = {
     opis: `Galeria broni: ${id} — ${shots} strz. co ${gap} kl. w pancernik z 1050 j., zrzut ${after} kl. po ostatnim, zoom ${zoom}`,

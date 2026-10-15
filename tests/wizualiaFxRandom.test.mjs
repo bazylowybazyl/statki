@@ -61,7 +61,7 @@ test('wizualia gry nie wołają Math.random gry (fxRandom — warstwa efektów)'
   for (const p of WIZUALIA.slice(0, 15)) assert.match(code(p), /fxRandom(?:Game)?\.next\(\)/, `${p}: brak fxRandom`);
   for (const p of ['src/vfx/collisionSparks.js', 'src/vfx/canvasParticleSystem.js', 'src/game/superweapon.js']) {
     assert.match(code(p), /fxRandomGame\.next\(\)/, `${p}: wątek główny — strumień gry`);
-    assert.doesNotMatch(code(p), /fxRandom\.next\(/, `${p}: bez strumienia renderu`);
+    assert.doesNotMatch(code(p), /\bfxRandom\.next\(/, `${p}: bez strumienia renderu`);
   }
 });
 
@@ -76,7 +76,7 @@ test('hullBodies: wygląd odłamka ginącego węzła z fxRandom (fizyka rozpadu 
 test('index.html: cząstki kanwy (ślad pocisku, iskry wyrzutni rakiet, start myśliwca) i ton dźwięku z fxRandomGame', () => {
   const html = readIndexHtml();
   assert.match(html, /import \{ fxRandomGame \} from "\.\/src\/game\/fxRandomGame\.js";/);
-  assert.doesNotMatch(html, /fxRandom\.next\(/, 'index.html bez strumienia renderu');
+  assert.doesNotMatch(html, /\bfxRandom\.next\(/, 'index.html bez strumienia renderu');
   for (const header of ['function spawnBulletTrail(b, count, frameDt) {', 'function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {']) {
     const fn = sliceFunction(html, header);
     assert.doesNotMatch(fn, /Math\.random/, header);

@@ -1375,6 +1375,8 @@
     // RW-21 (docs/PLAN-render-worker.md § 3.3): zdarzenia efektów broni idą rekordami strumienia rozkazów (tryb inline —
     // dyspozycja zaraz po zapisie); dekoder renderu woła WeaponFx.
     import { RenderCommands } from "./src/render/renderCommands.js";
+    // RW-30: wstrząsy kamery po stronie gry — wstrząs strzałów i kopnięcie kadru z rekordu SHOT, żądania wstrząsu z renderu.
+    import { createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak, ShotFeel } from "./src/game/cameraShakes.js";
     import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
       FLAK_TUNING,
@@ -1713,6 +1715,8 @@
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
         const rocketFx = createRocketFx(Core3D);
+        // RW-30: wstrząs Supernowej — żądanie do gry (reguła dawnego efektu: silniejszy od siły bieżącego wstrząsu).
+        if (rocketFx?.director) rocketFx.director.onShake = (mag, dur) => requestCameraShakePeak(camera, mag, dur);
         initRocketSystem3D(Core3D.scene, { effects: rocketFx });
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
         HallDust.setVaporSmoke(rocketFx.smoke);
@@ -6389,9 +6393,22 @@
     // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
     const cameraRig = createCameraRig();
     // Kopnięcie kadru od ciężkich strzałów gracza (sprężyna w px ekranu, weaponKick* w cameraRigTune):
-    // impuls z WeaponFx.onPlayerShot (wieżyczki) i superweapon.js (Hexlance), krok i przesunięcie w render() obok wstrząsu.
+    // impuls ze strzału z wieżyczki (rekord SHOT — hak onShotFeel strumienia rozkazów) i z superweapon.js (Hexlance —
+    // ShotFeel), krok i przesunięcie w render() obok wstrząsu.
     const cameraKick = createCameraKick();
-    WeaponFx.onPlayerShot = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    const playerShotKick = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    ShotFeel.onPlayerShot = playerShotKick;
+    // RW-30: wstrząs strzałów (dane broni × ułamek kierowania ogniem) — akumulator gry, gaśnie raz na klatkę renderu
+    // (stepWeaponShotShake po updateHexShips3D); dawniej WeaponFx → window.__weapon3dCameraShake.
+    const weaponShotShake = createWeaponShotShake();
+    window.WeaponShotShake = weaponShotShake;
+    RenderCommands.writer.onShotFeel = (gunner, dirX, dirY, shake, cooldown) => {
+      if (!RenderCommands.ready) return;
+      addWeaponShotShake(weaponShotShake, shake);
+      if (gunner && gunner === window.ship) playerShotKick(dirX, dirY, shake, cooldown);
+    };
+    // Wstrząsy z receptur efektów broni — żądanie do gry (kamerą rządzi gra).
+    WeaponFx.onShake = (mag, dur) => requestCameraShake(camera, mag, dur);
     window.CameraRig = { rig: cameraRig, tune: cameraRigTune, kick: cameraKick };
     const _cameraShakePx = { x: 0, y: 0 };
     // Wejście riga pisane co klatkę w render() — jeden obiekt, bez alokacji.
@@ -28752,10 +28769,7 @@
       return o;
     }
     // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
-    WarpNurt.onShake = (mag, dur) => {
-      const cur = (camera.shakeDur > 0) ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur) : 0;
-      if (mag > cur) camera.addShake(mag, dur);
-    };
+    WarpNurt.onShake = (mag, dur) => { requestCameraShake(camera, mag, dur); };
 
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();
@@ -28918,7 +28932,7 @@
       // kadłuby i pociski 3D drgały, a wieżyczki, myśliwce i znaczniki z kanwy 2D
       // stały w miejscu. Wartość strzałów jest z poprzedniej klatki
       // (WeaponFx.sync liczy ją później).
-      const weaponShake = window.__weapon3dCameraShake;
+      const weaponShake = weaponShotShake;
       if (!DevFlags.disableCameraShake) {
         const addShakeMag = (camera.shakeMag > 0 && camera.shakeDur > 0)
           ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur)
@@ -29175,6 +29189,8 @@
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
         updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
+        // RW-30: wygaszanie wstrząsu strzałów — raz na klatkę, po próbkowaniu kamery (dawniej WeaponFx.sync).
+        stepWeaponShotShake(weaponShotShake, performance.now());
         // Strumień rozkazów: koniec klatki (sloty obiektów bez odwołań wracają do puli).
         RenderCommands.endFrame();
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.

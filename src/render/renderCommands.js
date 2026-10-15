@@ -21,6 +21,7 @@ import { createRenderIds, RenderIdSpace } from './renderIds.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
 import { CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
+import { MASTER_WEAPONS } from '../data/weapons.js';
 
 /** Kody typów rekordów (1…65535; 0 = PAD pierścienia). */
 export const RC = Object.freeze({
@@ -60,7 +61,7 @@ export const MUZZLE_WORDS = 6 + ENT_WORDS; // znaleziona (0/1), x, y, kąt, skal
 export const SHOT = Object.freeze({
   KIND: 0, WEAPON: 1, SHOOTER: 2, X: 4, Y: 5, IS_BEAM: 6, BEAM_MODE: 7, DIR_X: 8, DIR_Y: 9,
   HAS_BEAM: 10, B_KIND: 11, B_MODE: 12, B_SX: 13, B_SY: 14, B_EX: 15, B_EY: 16, B_WIDTH: 17, B_HIT: 18,
-  B_NX: 20, B_NY: 21, B_UID: 22, SHAKE: 23, MUZZLE: 24, WORDS: 24 + MUZZLE_WORDS
+  B_NX: 20, B_NY: 21, B_UID: 22, MUZZLE: 23, WORDS: 23 + MUZZLE_WORDS
 });
 // Pocisk w rekordzie (pola, które receptury czytają przy zdarzeniu) — blok BULLET.
 export const BULLET = Object.freeze({
@@ -91,7 +92,7 @@ export const CHARGE = Object.freeze({
   WEAPON: 0, X: 1, Y: 2, ANGLE: 3, SCALE: 4, U: 5, DT: 6, KEY: 7, HAS_CARRIER: 9, CARRIER: 10, WORDS: 10 + CARRIER_WORDS
 });
 export const PD_LASER = Object.freeze({
-  WEAPON: 0, X0: 1, Y0: 2, X1: 3, Y1: 4, SHOOTER: 5, TARGET: 7, SHAKE: 9, MUZZLE: 10, WORDS: 10 + MUZZLE_WORDS
+  WEAPON: 0, X0: 1, Y0: 2, X1: 3, Y1: 4, SHOOTER: 5, TARGET: 7, MUZZLE: 9, WORDS: 9 + MUZZLE_WORDS
 });
 export const HEX = Object.freeze({
   // HEX_CHARGE: x, y, dirX, dirY, dt, u, index, nośnik
@@ -129,8 +130,11 @@ export class RenderCommandWriter {
     this.frame = 0;
     this.records = 0;
     // Ułamek wstrząsu strzału (kierowanie ogniem gracza ścisza wieże na auto — index.html ustawia go wokół
-    // fireWeaponCore); rekordy SHOT / PD_LASER niosą go do efektu wylotu (dawniej WeaponFx.shotShakeScale z gry).
+    // fireWeaponCore; dawniej WeaponFx.shotShakeScale pisany z gry) — mnoży wstrząs w haku onShotFeel.
     this.shotShakeScale = 1;
+    // Hak gry na strzał z wieżyczki (RW-30): (kadłub z wieżyczką, kierunek lufy x, y, wstrząs × ułamek, przeładowanie [s])
+    // — wstrząs strzałów i kopnięcie kadru liczy gra (src/game/cameraShakes.js), nie efekt wylotu. null — bez.
+    this.onShotFeel = null;
     this._strIds = new Map();
     this._strNext = 0;
     this._hexNext = 1;
@@ -211,7 +215,8 @@ export class RenderCommandWriter {
   }
 
   // Lufa rozwiązana w grze (Turret2D.shotMuzzle — bez odrzutu): ta sama, którą dawniej brał efekt wylotu.
-  _muzzle(d, o, weaponId, x, y, shooter) {
+  // feel — strzał z efektem wylotu (bez wiązki ciągłej): wstrząs strzałów i kopnięcie kadru (hak onShotFeel).
+  _muzzle(d, o, weaponId, x, y, shooter, feel = false) {
     const shot = Turret2D.shotMuzzle(normalizeWeaponFxKey(weaponId), x, y, shooter || null);
     if (!shot) {
       d[o] = 0; d[o + 1] = d[o + 2] = d[o + 3] = d[o + 4] = d[o + 5] = 0; d[o + 6] = -1; d[o + 7] = 0;
@@ -220,6 +225,11 @@ export class RenderCommandWriter {
     d[o] = 1;
     d[o + 1] = shot.x; d[o + 2] = shot.y; d[o + 3] = shot.angle; d[o + 4] = shot.scale; d[o + 5] = shot.shake;
     this._ent(d, o + 6, shot.entity);
+    if (feel && this.onShotFeel !== null) {
+      const gunner = shot.entity || shooter || null;
+      this.onShotFeel(gunner, Math.cos(shot.angle), Math.sin(shot.angle), (Number(shot.shake) || 0) * this.shotShakeScale,
+        Number(MASTER_WEAPONS[weaponId]?.cooldown) || 1);
+    }
     shot.entity = null;
   }
 
@@ -264,7 +274,6 @@ export class RenderCommandWriter {
     d[o + S.DIR_X] = Number(detail.dirX); d[o + S.DIR_Y] = Number(detail.dirY);
     d[o + S.HAS_BEAM] = beam ? 1 : 0;
     d[o + S.B_KIND] = bk; d[o + S.B_MODE] = bm; d[o + S.B_UID] = buid;
-    d[o + S.SHAKE] = this.shotShakeScale;
     if (beam) {
       d[o + S.B_SX] = Number(beam.startX); d[o + S.B_SY] = Number(beam.startY);
       d[o + S.B_EX] = Number(beam.endX); d[o + S.B_EY] = Number(beam.endY);
@@ -276,9 +285,12 @@ export class RenderCommandWriter {
       d[o + S.B_HIT] = -1; d[o + S.B_HIT + 1] = 0; d[o + S.B_NX] = d[o + S.B_NY] = 0;
     }
     // Wylot: impuls / PD — z początku wiązki, strzał — z punktu strzału (jak dawny efekt wylotu WeaponFx).
-    const mx = beam && detail.isBeam ? Number(beam.startX) : x;
-    const my = beam && detail.isBeam ? Number(beam.startY) : y;
-    this._muzzle(d, o + S.MUZZLE, detail.weaponId, mx, my, detail.shooter);
+    const isBeam = !!(beam && detail.isBeam);
+    const mx = isBeam ? Number(beam.startX) : x;
+    const my = isBeam ? Number(beam.startY) : y;
+    // Efekt wylotu (a z nim wstrząs i kopnięcie) — strzał i impuls / PD, nie wiązka ciągła (jak WeaponFx._onShot).
+    const feel = !isBeam || (beam.kind || detail.beamMode || beam.mode) !== 'continuous';
+    this._muzzle(d, o + S.MUZZLE, detail.weaponId, mx, my, detail.shooter, feel);
     this._commit();
   }
 
@@ -298,8 +310,7 @@ export class RenderCommandWriter {
     d[o + S.DIR_X] = angle;
     d[o + S.B_KIND] = d[o + S.B_MODE] = d[o + S.B_UID] = STR_UNDEFINED;
     d[o + S.B_HIT] = -1;
-    d[o + S.SHAKE] = this.shotShakeScale;
-    this._muzzle(d, o + S.MUZZLE, weaponId, x, y, shooter);
+    this._muzzle(d, o + S.MUZZLE, weaponId, x, y, shooter, true);
     this._commit();
   }
 
@@ -313,8 +324,7 @@ export class RenderCommandWriter {
     d[o + P.X0] = x0; d[o + P.Y0] = y0; d[o + P.X1] = x1; d[o + P.Y1] = y1;
     this._ent(d, o + P.SHOOTER, shooter);
     this._ent(d, o + P.TARGET, target);
-    d[o + P.SHAKE] = this.shotShakeScale;
-    this._muzzle(d, o + P.MUZZLE, weaponId, x0, y0, shooter);
+    this._muzzle(d, o + P.MUZZLE, weaponId, x0, y0, shooter, true);
     this._commit();
   }
 

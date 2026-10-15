@@ -55,16 +55,9 @@ function onShot(r, d, o) {
   const pre = readMuzzle(r, d, o + S.MUZZLE);
   const shooter = r.ent(d, o + S.SHOOTER);
   const weaponId = r.str(d[o + S.WEAPON]);
-  // Ułamek wstrząsu strzału z gry (kierowanie ogniem) — na czas zdarzenia.
-  const shake = WeaponFx.shotShakeScale;
-  WeaponFx.shotShakeScale = d[o + S.SHAKE];
   if (d[o + S.KIND] === SHOT_KIND.PD) {
-    try {
-      WeaponFx.pdShot(weaponId, d[o + S.X], d[o + S.Y], d[o + S.DIR_X], shooter, pre);
-    } finally {
-      WeaponFx.shotShakeScale = shake;
-      _shot.entity = null;
-    }
+    WeaponFx.pdShot(weaponId, d[o + S.X], d[o + S.Y], d[o + S.DIR_X], shooter, pre);
+    _shot.entity = null;
     return;
   }
   const det = _detail;
@@ -88,7 +81,6 @@ function onShot(r, d, o) {
   try {
     WeaponFx._onShot(det, pre);
   } finally {
-    WeaponFx.shotShakeScale = shake;
     det.shooter = null; det.beam = null; _beam.hitEntity = null; _shot.entity = null;
   }
 }
@@ -96,15 +88,9 @@ function onShot(r, d, o) {
 function onPdLaser(r, d, o) {
   const P = PD_LASER;
   const pre = readMuzzle(r, d, o + P.MUZZLE);
-  const shake = WeaponFx.shotShakeScale;
-  WeaponFx.shotShakeScale = d[o + P.SHAKE];
-  try {
-    WeaponFx.pdLaser(r.str(d[o + P.WEAPON]), d[o + P.X0], d[o + P.Y0], d[o + P.X1], d[o + P.Y1],
-      r.ent(d, o + P.SHOOTER), r.ent(d, o + P.TARGET), pre);
-  } finally {
-    WeaponFx.shotShakeScale = shake;
-    _shot.entity = null;
-  }
+  WeaponFx.pdLaser(r.str(d[o + P.WEAPON]), d[o + P.X0], d[o + P.Y0], d[o + P.X1], d[o + P.Y1],
+    r.ent(d, o + P.SHOOTER), r.ent(d, o + P.TARGET), pre);
+  _shot.entity = null;
 }
 
 function onImpact(r, d, o) {

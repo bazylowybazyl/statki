@@ -9,7 +9,7 @@
  */
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
-import { WeaponFx } from '../3d/weapons/weaponFx.js';
+import { ShotFeel } from './cameraShakes.js';
 // RW-21: zdarzenia efektów Hexlance'a — rekordy strumienia rozkazów (uchwyt smugi `proj.slug` = id gry; render trzyma
 // pod nim swój uchwyt).
 import { RenderCommands } from '../render/renderCommands.js';
@@ -222,7 +222,8 @@ function fireSingleMount(ship, cannonIndex) {
     // `recoil: 0` (lufa wtopiona w kil, bez wieżyczki) i `shake: 14` (dawniej 14 wpisane tutaj).
     superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + weaponRecoil(HEXLANCE_DEF));
     if (window.camera && window.camera.addShake) window.camera.addShake(weaponShake(HEXLANCE_DEF), fx3d ? 0.4 : 0.25);
-    if (ship === window.ship && WeaponFx.onPlayerShot) WeaponFx.onPlayerShot(m.dir.x, m.dir.y, weaponShake(HEXLANCE_DEF), HEXLANCE_DEF.cooldown || 1);
+    // Kopnięcie kadru za strzał gracza — hak gry (RW-30, src/game/cameraShakes.js).
+    if (ship === window.ship && ShotFeel.onPlayerShot) ShotFeel.onPlayerShot(m.dir.x, m.dir.y, weaponShake(HEXLANCE_DEF), HEXLANCE_DEF.cooldown || 1);
     window.dispatchEvent(new CustomEvent('game_weapon_fired', {
         detail: { weaponId: 'hexlance', x: m.x, y: m.y }
     }));
