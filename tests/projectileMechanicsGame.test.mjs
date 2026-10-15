@@ -58,12 +58,13 @@ function withSeed(seed, fn) {
 // ---------------- pętla pocisków gry w piaskownicy ----------------
 const events = [];
 // Mapa ran (18-C) w piaskownicy: zapis źródeł kraterów (setSource przed HullBodies.impact) i pasów
-// rzazu (stampKerf) — rodzina ze źródła jak w prawdziwej mapie (hullDamageStamps.stampFamilyFor).
+// rzazu (kerf) — rodzina ze źródła jak w prawdziwej mapie (hullDamageStamps.stampFamilyFor). RW-22: gra pisze je
+// rekordami strumienia rozkazów (src/game/hullDamageEvents.js — HullDamageEvents w index.html).
 const stamps = [];
-const HullDamageMap = {
+const HullDamageEvents = {
   setSource(src, variant = 'impact') { stamps.push({ type: 'source', family: stampFamilyFor(src), variant }); },
   clearSource() { stamps.push({ type: 'clear' }); },
-  stampKerf(e, x0, y0, x1, y1, family) { stamps.push({ type: 'kerf', family, entity: e, x0, y0, x1, y1 }); return 1; }
+  kerf(e, x0, y0, x1, y1, family) { stamps.push({ type: 'kerf', family, entity: e, x0, y0, x1, y1 }); }
 };
 const game = {
   bullets: [], npcs: [], wrecks: window.wrecks, ship: null, player2Ship: null, splitScreenMode: false,
@@ -107,7 +108,7 @@ const game = {
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false, projectilePassesAlly,
-  HullBodies, HullDamageMap, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  HullBodies, HullDamageEvents, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
