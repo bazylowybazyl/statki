@@ -148,7 +148,7 @@ const SCENES = {
     opis: `Pas asteroid — ${BELT_SCENES.olbrzym.opis} (siatka SDF z workerów — czekanie w czasie rzeczywistym)`,
     hud: false, warm: 30,
     js: BELT_JS('olbrzym', `
-         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && e.view); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
+         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && (B.giantView ? B.giantView(e) : e.view)); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
   },
   menu: {
     opis: 'Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach',
@@ -238,8 +238,8 @@ const SCENES = {
     opis: 'Kalibracja tolerancji portu: same wbudowane materiały three (Standard, Basic HDR, addytywny, tekstura-gradient) na warstwie 0 — wariant __ortho nie ma zamienników już po zadaniach 01–02',
     hud: false, warm: 30, warstwy: true,
     js: `DevScene.teleport(${DEEP.x}, ${DEEP.y + 60000}, 0);
-         const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-         const T = await import(url);
+         const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+         const T = window.THREE || await import(url);
          const root = new T.Group(); root.name = 'harness-kalibracja';
          const x0 = ship.pos.x, y0 = -ship.pos.y;
          const add = (mesh, dx, dy) => { mesh.position.set(x0 + dx, y0 + dy, 20); mesh.layers.set(0); root.add(mesh); };
@@ -322,8 +322,8 @@ const SCENES = {
          // Czarna, NIEPRZEZROCZYSTA płyta pod sceną (warstwa 0, z = −900): tło gry to jeszcze zamiennik
          // (zadanie 05), a bez nieprzezroczystego tła kanwa premultiplied pokazuje blask efektów addytywnych
          // (rgb > alfa) ~2× jaśniej — obraz byłby nieporównywalny z demem (niebo dema jest nieprzezroczyste).
-         { const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-           const T = await import(url);
+         { const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+           const T = window.THREE || await import(url);
            const bd = new T.Mesh(new T.PlaneGeometry(2000000, 2000000), new T.MeshBasicMaterial({ color: 0x000000 }));
            bd.position.set(ship.pos.x, -ship.pos.y, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern';
            Core3D.scene.add(bd); bd.updateMatrixWorld(true); }
@@ -1352,8 +1352,8 @@ async function runSession(session, backend, outDir, base) {
           if (document.querySelector('canvas.overlay3d')) { document.getElementById('webgl-layer').style.visibility = 'hidden'; return 'overlay'; }
           let plate = window.__harnessCzern;
           if (!plate) {
-            const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-            const T = await import(url);
+            const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+            const T = window.THREE || await import(url);
             plate = new T.Mesh(new T.PlaneGeometry(4000000, 4000000), new T.MeshBasicMaterial({ color: 0x000000 }));
             plate.name = 'harness-czern'; plate.renderOrder = -1000; plate.layers.set(0); plate.frustumCulled = false;
             window.__harnessCzern = plate;

@@ -67,6 +67,8 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/asteroidFieldLight.js': 'A',
   'src/game/asteroidGiants.js': 'A',
   'src/game/asteroidRockKinds.js': 'A',
+  'src/game/asteroidShapeRadius.js': 'A',
+  'src/game/beltPlayZ.js': 'A',
   'src/game/asteroidRotation.js': 'A',
   'src/game/asteroidStorms.js': 'A',
   'src/game/beamBand3D.js': 'A',

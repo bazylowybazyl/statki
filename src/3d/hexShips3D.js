@@ -1,4 +1,4 @@
-﻿import { getEntityPosX, getEntityPosY, getEntityScaleX, getEntityScaleY, getEntityScale, isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX } from '../render/renderCull.js';
+﻿import { getEntityPosX, getEntityPosY, getEntityScaleX, getEntityScaleY, getEntityScale } from '../render/drawBox.js';
 import * as THREE from 'three';
 // Heksy (dema mostków, rdzenia, asteroid): strojenie i żar bez silnika, reszta przez haki, które
 // wpisuje destructor.js — gra go nie ładuje (etap 8, docs/PORT-silnik-belek.md), więc bytów z hexGrid nie ma.
@@ -29,7 +29,7 @@ import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
-// Próg smugi i promień ciała na ekranie — wspólne z grą (src/game/coldWreckView.js, RW-31; pudła — renderCull.js).
+// Próg smugi i promień ciała na ekranie — wspólne z grą (src/game/coldWreckView.js, RW-31; pudła — drawBox.js).
 import { WRECK_IMPOSTOR_PX, wreckImpostorEnterPx, beamBodyRadiusPx as beamBodyRadiusPxAt } from '../render/drawBox.js';
 import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
@@ -231,6 +231,9 @@ function usesBillboardLighting(entity) {
 function usesBillboardOrientation(entity) {
   return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardOrientation === true;
 }
+
+// Pudło rozgrzania i pudło RYSOWANIA (isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX) — src/render/drawBox.js:
+// te same reguły liczy gra (src/game/coldWreckView.js — flaga `__inDrawBox`, zimne wraki).
 
 function getInterpolatedRenderPose(entity) {
   if (typeof window === 'undefined') return null;
@@ -2237,7 +2240,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // wiązek szukają w nim lufy, z której padł strzał.
   // Przełącznik "Bronie" w perf HUD gasi rekordy (a z nimi wieże 3D) — dźwignia do porównania kosztu w locie.
   // Rekordy wież liczy gra przed updateHexShips3D (RW-26: Turret2D.syncFrame w render() index.html — te same encje,
-  // co drawVfx: src/render/renderCull.js), razem z odrzutem (strzały — WeaponShotBus w index.html).
+  // co drawVfx: src/render/drawBox.js), razem z odrzutem (strzały — WeaponShotBus w index.html).
   DrawCallStats.setTurrets2D(Turret2D.frameCount);
   // Efekty broni (zadanie 17): pociski, smugi, lot, wstrząs strzałów, bank Fx3D — raz na klatkę
   // renderu, po Turret2D.sync (lufy wiązek ciągłych i błysków z rekordów tej klatki).

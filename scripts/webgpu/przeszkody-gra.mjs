@@ -163,7 +163,7 @@ try {
     for (const nm of ['pomost', 'wyrwa'].filter((q) => sceny.includes(q))) {
       const k0 = await frameK();
       await camAt(gate.cx, gate.cy, 0.22);
-      if (nm === 'wyrwa') await ev(`(() => { window.StoryGame.site.station._base3d.hideChunk('${gate.id}'); return true; })()`);
+      if (nm === 'wyrwa') await ev(`(() => { window.PirateBase.hide('${gate.id}'); return true; })()`);
       await ev('window.__harness.step(3)');
       const rows = await abScene(nm, {
         boom: `window.makeReactorBlow({ x: ${gate.x}, y: ${gate.y}, size: 300, profile: 'capital' })`,

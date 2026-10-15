@@ -14,23 +14,23 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 99, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym); RW-31 (rw-kadluby): Core3D.pixelRatio do widoku klatki gry (setDrawView) — w workerze z RET_F64.PIXEL_RATIO
-  'index:dane': 17, // 2026-10-15 RW-22 (rw-kadluby): installExplosionCommands (dekoder rekordu EXPLOSION); RW-23 (rw-bronie): installRocketFxCommands (dekoder RKT_*) — moduły bez three liczone jako dane, konfiguracja renderu w trybie inline
-  'index:konfiguracja': 164,
-  'index:zapytanie': 58,
-  'index:zdarzenie': 30,
+  'index:aktualizacja': 90, // 2026-10-16 zmierzone po scaleniu main (rw-bronie B3D, RW-26/20/21/30/23; RW-25/27/24/29/31) z RW-22
+  'index:dane': 17, // 2026-10-16 zmierzone po scaleniu main (rw-bronie B3D, RW-26/20/21/30/23; RW-25/27/24/29/31) z RW-22; +1 względem main: installExplosionCommands (RW-22, dekoder rekordu EXPLOSION — moduł bez three liczony jako dane)
+  'index:konfiguracja': 150, // 2026-10-16 zmierzone po scaleniu main (rw-bronie B3D, RW-26/20/21/30/23; RW-25/27/24/29/31) z RW-22
+  'index:zapytanie': 28, // 2026-10-16 zmierzone po scaleniu main (rw-bronie B3D, RW-26/20/21/30/23; RW-25/27/24/29/31) z RW-22
+  'index:zdarzenie': 26, // 2026-10-16 zmierzone po scaleniu main (rw-bronie B3D, RW-26/20/21/30/23; RW-25/27/24/29/31) z RW-22
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
-  'import:src/game/asteroidBeltGiants.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,
-  'import:src/game/asteroidGiantBuilder.js': 1,
   'import:src/game/asteroidGiants.js': 1,
-  'import:src/game/asteroidMining.js': 2,
-  'import:src/game/asteroidMiningRig.js': 2,
+  'import:src/game/asteroidMining.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'import:src/game/asteroidMiningRig.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   'import:src/game/asteroidRockKinds.js': 5,
   'import:src/game/asteroidRotation.js': 2,
+  'import:src/game/asteroidShapeRadius.js': 1, // 2026-10-15 RW-25: promień kształtów banku skał — jedno źródło arytmetyki fizyki skał (gra) i banku (render), klasa A
   'import:src/game/asteroidStorms.js': 3,
   'import:src/game/beamBand3D.js': 1,
+  'import:src/game/beltPlayZ.js': 1, // 2026-10-15 RW-25: głębokość skał pasma PLAY — wspólna dla platformy wydobywczej (gra) i warstwy PLAY (obraz), klasa A
   'import:src/game/cargoPortOps.js': 1,
   'import:src/game/carrierVelocity.js': 16,
   'import:src/game/cloakLook.js': 8,
@@ -42,14 +42,12 @@ const SUFITY = {
   'import:src/game/engineIgnition.js': 3,
   'import:src/game/fxRandomGame.js': 2, // 2026-10-15 RW-20 (rw-bronie): strumień losowy gry dla modułów kanwy wątku głównego (collisionSparks, canvasParticleSystem)
   'import:src/game/gameState.js': 2,
-  'import:src/game/haloRingCollision.js': 1,
   'import:src/game/haloRingPlanets.js': 2,
   'import:src/game/hexBodyHooks.js': 1,
   'import:src/game/hexGridSpace.js': 1,
   'import:src/game/hullBodies.js': 8,
   'import:src/game/hullCraters.js': 1,
   'import:src/game/hullMounts.js': 2,
-  'import:src/game/k7BerthService.js': 1,
   'import:src/game/reactorCore.js': 1,
   'import:src/game/repairRig.js': 1,
   'import:src/game/repairSwarm.js': 1,
@@ -59,7 +57,6 @@ const SUFITY = {
   'import:src/game/shipLightRuntime.js': 5,
   'import:src/game/simClock.js': 14,
   'import:src/game/skyRegion.js': 1,
-  'import:src/game/story/pirateBaseBodies.js': 1,
   'import:src/game/traffic/dockLayout.js': 2,
   'import:src/game/traffic/shipyards.js': 2,
   'import:src/game/view3D.js': 1,
@@ -67,7 +64,7 @@ const SUFITY = {
   'import:src/game/weaponAim.js': 1,
   'import:src/game/weaponFeel.js': 2,
   'import:src/game/weaponShotBus.js': 1,
-  'import:src/game/worldBodies.js': 2,
+  'import:src/game/worldBodies.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   // zmienne gry czytane w modułach przenoszonych (§ 2.4; RW-12 → 0)
   'okno:Destruction3D': 4,
   'okno:Dev': 2,

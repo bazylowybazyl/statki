@@ -10,7 +10,7 @@
 // błyski wylotowe, pociski i wiązki biorą z nich pozycję wylotu przez `triggerShot` / `findTurretSlot`.
 
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
-import { collectDrawBoxEntities, getEntityPosX, getEntityPosY, getEntityScale } from '../render/renderCull.js';
+import { collectDrawBoxEntities, getEntityPosX, getEntityPosY, getEntityScale } from '../render/drawBox.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
 
@@ -693,7 +693,7 @@ export const Turret2D = {
   /**
    * Rekordy klatki po stronie GRY (RW-26, docs/PLAN-render-worker.md): raz na klatkę renderu PRZED
    * updateHexShips3D (i przed pakowaniem migawki) — encje w pudle rysowania (te same co kadłuby 3D:
-   * src/render/renderCull.js), poza z `poseOf(e)` (interpolowana poza gracza) albo z encji, potem wygaszanie
+   * src/render/drawBox.js), poza z `poseOf(e)` (interpolowana poza gracza) albo z encji, potem wygaszanie
    * odrzutu. o: { cull, zoom, hidden(e) — ukryta (mgła wojny), poseOf(e) → { x, y, angle } | null, enabled }.
    */
   syncFrame(entities, o) {

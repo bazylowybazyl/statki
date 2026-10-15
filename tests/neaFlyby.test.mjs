@@ -209,7 +209,7 @@ test('radar: bodies list → neutral body tracks with name and class, dead ones 
 test('index.html: flyby wired before the belt frame step, campaign session latched, radar bodies, warmup before flush', () => {
   const src = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const step = src.indexOf('stepNeaFlyby();');
-  const belt = src.indexOf('asteroidBelt.prepareFrame(frameDt');
+  const belt = src.indexOf('stepBeltWorldFrame(frameDt, cam);');
   assert.ok(step > 0 && belt > step, 'krok przelotu przed krokiem pasa');
   assert.match(src, /if \(StoryGame\.active\) neaCampaignSession = true;/);
   assert.match(src, /env\.bodies = neaFlybyRadarBodies\(_neaRadarBodies\);/);

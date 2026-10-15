@@ -1297,7 +1297,10 @@
     window.isShieldBreachedAt = isShieldBreachedAt;   // rakiety (rocketSystem3D) — przebicie tarczy
     import { initWorld3D, attachPirateStation3D, updateWorld3D, setWorld3DHiddenTest } from "./src/3d/world3d.js";
     // Suchy dok piratów (misja 1): bryła 3D (budowle Z7), bryły trafień i kawałki zniszczeń.
-    import { attachPirateBase3D, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRockSite, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockSite, setPirateBaseHiddenTest, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
+    import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
+    // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
+    // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
+    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
@@ -1306,8 +1309,10 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { prepareStations3D } from "./src/3d/stations3D.js";
-    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
+    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
+    // gry (RW-25: pole, cień pól, olbrzymy i kolizje, wydobycie, zegar skał).
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    import { createBeltWorld } from "./src/game/beltWorld.js";
     import { NeaFlyby, neaFlybyMessage } from "./src/game/neaFlyby.js";
     import { createNeaFlyby3D } from "./src/3d/neaFlyby3D.js";
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
@@ -1645,6 +1650,8 @@
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
     import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
+    // Świat ringów po stronie gry (RW-27): kolidery, teren, automat stanowisk K-7, lampki, zegar migania świateł hal.
+    import { HaloRingWorld } from "./src/game/haloRingWorld.js";
     import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
     import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
     import { computeHaloPortStation, haloRingKey } from "./src/game/haloRingPlanets.js";
@@ -5975,8 +5982,8 @@
         env.travelTarget = null;
       }
       env.features = radarFeaturesWithPirateRock(hudRadarWorldFeatures);   // + planetoida pod bazą piratów (misja 1)
-      env.rings = haloRings ? haloRings.entries : null;
-      env.belt = asteroidBelt || null;
+      env.rings = haloWorld ? haloWorld.entries : null;
+      env.belt = beltWorld || null;
       _neaRadarBodies.length = 0;
       env.bodies = neaFlybyRadarBodies(_neaRadarBodies);
       cometRadarBodies(env.bodies);   // jądra komet — kontakty z podpisem (blok „KOMETY”)
@@ -7100,7 +7107,7 @@
     // Mgła wojny: kadłub ukryty przed graczem (siatka żyje — bez przebudowy na brzegu kręgu wzroku).
     setEntityHiddenTest((e) => SensorSystem.hides(e));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
-    setPirateBaseHiddenTest((st) => SensorSystem.hides(st));
+    onPirateBaseEvent(pirateBase3DEvent);
     // Nadproże bramy hali K-7 (FG) nad okrętem w bramie (obrysy nadproży hal przy kamerze odświeża render() —
     // refreshLintelCover). Wieże 3D chowa pod nadprożem i pod fregatą zwiadu głębia / kolejność passów.
     const k7Lintels = createLintelCover();
@@ -7913,8 +7920,8 @@
           priority: zonePriority.kuiper_belt
         });
       }
-      // window.__asteroidBelt — pas powstaje na ekranie ładowania (createAsteroidBelt), później niż ta funkcja.
-      const beltField = window.__asteroidBelt?.field;
+      // window.__beltWorld — świat pasa powstaje w starcie świata (createBeltWorld), później niż ta funkcja.
+      const beltField = window.__beltWorld?.field;
       if (beltField?.penetrationOf) {
         const trojanPen = beltField.penetrationOf(TROJAN_ZONE_BELTS, pos.x, pos.y);
         if (trojanPen > -Infinity) {
@@ -8024,7 +8031,7 @@
       z.t -= dt;
       if (z.t > 0) return;
       z.t = 0.5;
-      const field = asteroidBelt?.field;
+      const field = beltWorld?.field;
       if (!field || typeof field.familyAt !== 'function' || !ship?.pos || ship.dead) return;
       const fam = field.familyAt(ship.pos.x, ship.pos.y);
       const id = fam ? fam.id : null;
@@ -8042,7 +8049,7 @@
       pushZoneMessage(title, 3.2, { label: 'POLE PLANETOID', tone: 'info' });
       window.hudSystem?.logZone?.(title, `family_${id}`);
     }
-    window.beltFamilyAt = (x, y) => asteroidBelt?.field?.familyAt?.(x, y) || null;
+    window.beltFamilyAt = (x, y) => beltWorld?.field?.familyAt?.(x, y) || null;
     window.__beltFamilyZone = _beltFamilyZone;
 
     function handleZoneTransition(prevZoneId, currentZoneId) {
@@ -8219,11 +8226,10 @@
     }
 
     // Skały pola nie leżą w ciele ani w stacji (pass ortho rysuje się nad ciałem): wyłączenia pola obok olbrzymów.
-    function applySmallBodyExclusions(belt) {
-      const field = belt?.field;
-      if (!field || typeof field.setExclusions !== 'function') return;
-      const giants = typeof belt.giants?.exclusions === 'function' ? belt.giants.exclusions() : [];
-      field.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
+    function applySmallBodyExclusions(world) {
+      if (!world || typeof world.setExclusions !== 'function') return;
+      const giants = typeof world.giants?.exclusions === 'function' ? world.giants.exclusions() : [];
+      world.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
     }
 
     const STATION_STYLES = ['ringGate', 'hexHub', 'triRing', 'solarPetals', 'shipyard', 'tradeSpindle'];
@@ -9406,7 +9412,7 @@
     function pickPirateCallInOrigin() {
       const belt = ASTEROID_BELT;
       if (!belt || !(belt.outer > belt.inner)) return null;
-      const field = asteroidBelt?.field || null;
+      const field = beltWorld?.field || null;
       const r0sq = belt.inner * belt.inner;
       const r1sq = belt.outer * belt.outer;
       let first = null;
@@ -12163,10 +12169,16 @@
     // Pas asteroid (zadanie 21) — tworzony w starcie świata (DOMContentLoaded), GPU na
     // ekranie ładowania (startGame).
     let asteroidBelt = null;
+    // Świat pasa gry (RW-25, src/game/beltWorld.js): rozgrywka pasa bez renderu — obraz (asteroidBelt) go czyta.
+    let beltWorld = null;
+    // Świat ringów gry (RW-27, src/game/haloRingWorld.js): rozgrywka ringów bez renderu — obraz (haloRings) go czyta.
+    let haloWorld = null;
     function initHaloRings() {
       if (!Core3D.isInitialized) Core3D.init();
+      haloWorld = new HaloRingWorld({ planets });
+      window.__haloWorld = haloWorld;
       // Jakość z opcji grafiki (OPTIONS.planetQuality = zapis 'sc_gfx' / dawny sc_planet_quality / preset z adresu).
-      haloRings = new HaloRingGame({ planets, quality: window.OPTIONS?.planetQuality || 'high' });
+      haloRings = new HaloRingGame({ world: haloWorld, quality: window.OPTIONS?.planetQuality || 'high' });
       window.__haloRings = haloRings;
     }
 
@@ -12399,12 +12411,16 @@
       // Lagrange'a i Hildas = planety w tej chwili (jak dawne pole).
       if (!asteroidBelt) {
         try {
-          asteroidBelt = createAsteroidBelt({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
-          applySmallBodyExclusions(asteroidBelt);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
+          beltWorld = createBeltWorld({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
+          window.__beltWorld = beltWorld;
+          applySmallBodyExclusions(beltWorld);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
           // Rodziny Westy i Hygiei przy ciałach tego świata (kąty z resolveSmallBodyAngles — A2, asteroidFamilies.js);
           // lista szczytów pól (~20 ms) teraz, nie w klatce pierwszego wlotu w pas.
-          asteroidBelt.field?.setSmallBodyAnchors?.(smallBodies);
-          asteroidBelt.field?.familyPeaks?.();
+          beltWorld.setSmallBodyAnchors(smallBodies);
+          beltWorld.familyPeaks();
+          // Obraz pasa: własna instancja pola z konfiguracją świata pasa (operacje wyżej dochodzą same).
+          asteroidBelt = createAsteroidBelt({ world: beltWorld });
+          beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
           window.__asteroidBelt = asteroidBelt;
           applyGraphicsEffects();   // reflektory i mapy cienia pasa wg opcji grafiki (blok „OPCJE GRAFIKI”)
         } catch (err) {
@@ -12430,7 +12446,7 @@
     function setupNeaFlyby3D() {
       if (neaFlyby3D || !asteroidBelt) return;
       neaFlyby3D = createNeaFlyby3D({ core: Core3D, getBelt: () => asteroidBelt, getFlyby: () => neaFlyby });
-      if (asteroidBelt.field && !asteroidBelt.field.wakeSpots.includes(neaFlyby.wake)) asteroidBelt.field.wakeSpots.push(neaFlyby.wake);
+      beltWorld?.addWakeSpot(neaFlyby.wake);
       window.NeaFlyby3D = neaFlyby3D;
     }
 
@@ -24337,7 +24353,7 @@
         // przelatują nad nimi (stare pole: trafienia, niszczenie i łup — usunięte). Ściany
         // olbrzymów mają setki–tysiące j., pocisk ≤ ~170 j./krok — bez tunelowania.
         // Trafienie jak w ring (17): kierunek z prędkości własnej pocisku, bez encji.
-        if (!hitNPC && asteroidBelt && asteroidBelt.giants.readyCount > 0 && asteroidBelt.pointBlocked(b.x, b.y)) {
+        if (!hitNPC && beltWorld && beltWorld.giants.readyCount > 0 && beltWorld.pointBlocked(b.x, b.y)) {
           writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'asteroid');
           spawnBulletImpactEffect(b, b.x, b.y, 0.9, _impactHit);
           removeBulletAt(i);
@@ -24356,7 +24372,7 @@
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
         // (tranzyty otwarte). Pocisk ≤ ~170 j./krok, płyta ≥ ~450 j. — bez tunelowania.
-        if (haloRings && haloRings.pointInSlab(b.x, b.y)) {
+        if (haloWorld && haloWorld.pointInSlab(b.x, b.y)) {
           writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'ring');
           spawnBulletImpactEffect(b, b.x, b.y, 0.95, _impactHit);
           removeBulletAt(i);
@@ -26849,6 +26865,8 @@
       _worldFocus[0] = ship && !ship.destroyed ? ship.pos : null;
       _worldFocus[1] = (splitScreenMode && player2Ship && !player2Ship.destroyed) ? player2Ship.pos : null;
       worldBodies.step(dt, _worldFocus);
+      // Baza piratów: kawałki nieobecne jako statyka (`_dockGone` — pęknięte, schowane, żywe ciała) po kroku ciał świata.
+      syncPirateBaseGone();
       // Kadłuby statków, NPC i wraków: silnik belek.
       HullBodies.step(dt, worldBodies.withEntities(allDestructibles));
       // Baza piratów (misja 1): zgniot ciał budowli taranem → punkty budowli; budowla bez stojącego kawałka ginie.
@@ -26893,9 +26911,31 @@
     // nadpisuje następny krok — do kolizji ze światem (olbrzymy, ring) idą przez
     // widok kinematyki (src/game/npcCollisionBody.js), wynik wraca do x/y/vx/vy.
     // Kadłub belkowy dostaje nową pozycję encji w HullBodies.step (ruch encji, nie węzłów).
+    // Klatka świata pasa gry (render(), przed wejściem klatki obrazu): punkty uwagi budowy olbrzymów =
+    // środki kamer i pozycje statków graczy (bez alokacji).
+    const _beltFocus = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+    const _beltFocusList = [];
+    function stepBeltWorldFrame(frameDt, cam) {
+      const list = _beltFocusList;
+      list.length = 0;
+      const put = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || list.length >= _beltFocus.length) return;
+        const p = _beltFocus[list.length];
+        p.x = x; p.y = y;
+        list.push(p);
+      };
+      if (cam) put(Number(cam.x), Number(cam.y));
+      if (ship?.pos && !ship.dead) put(ship.pos.x, ship.pos.y);
+      if (splitScreenMode) {
+        if (camera2) put(Number(camera2.x), Number(camera2.y));
+        if (player2Ship?.pos && !player2Ship.dead) put(player2Ship.pos.x, player2Ship.pos.y);
+      }
+      beltWorld.frame(frameDt, PAUSED, list);
+    }
+
     const _npcCollisionBody = createNpcCollisionBody();
     function stepShipAsteroidCollisions(dt) {
-      const belt = asteroidBelt;
+      const belt = beltWorld;
       if (!belt || belt.giants.readyCount === 0) return;
       if (ship && !ship.dead && !ship.noHullCollisions) belt.collideShip(ship);
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) belt.collideShip(player2Ship);
@@ -26920,7 +26960,7 @@
     const MINING_SAW_DRAG_PX = 26;
 
     function getMiningRig() {
-      return asteroidBelt && asteroidBelt.rig ? asteroidBelt.rig : null;
+      return beltWorld && beltWorld.rig ? beltWorld.rig : null;
     }
 
     // Callbacki platformy: urobek do ładowni (pełne tony, udźwig kadłuba), wolne miejsce,
@@ -27795,7 +27835,7 @@
         lines.push(`ładunki: S ${st.S | 0} · M ${st.M | 0} · L ${st.L | 0} · XL ${st.XL | 0} · osadzone ${rig.charges.length}`);
         lines.push(`ładownia ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cap)} · urobek: ${ores.length ? ores.join(' · ') : '—'} · skała płonna ${fmtMining1(rig.totals.waste)} t${rig.totals.lostOre > 0 ? ` · przepadło ${Math.round(rig.totals.lostOre)} t rudy` : ''}`);
         // Rodzina pola pod statkiem (A2 — AsteroidBeltField.familyAt): skład rud tego pola.
-        const fam = ship?.pos ? asteroidBelt?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
+        const fam = ship?.pos ? beltWorld?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
         if (fam) lines.push(`pole: ${familyTitle(fam)}`);
         for (const msg of rig.recentMessages(3, _miningMsgScratch)) lines.push(`› ${msg}`);
         _miningHudLines = lines;
@@ -27831,21 +27871,21 @@
     let _ringGate = new Float64Array(12);
     const RING_GATE_SLACK = 64;   // zapas na zaokrąglenia obrotu do układu ringu (j. świata)
     function stepShipRingCollisions(dt) {
-      if (!haloRings) return;
+      if (!haloWorld) return;
       if (ship && !ship.dead && !ship.noHullCollisions) {
-        const hit = haloRings.constrainShip(ship, true);
+        const hit = haloWorld.constrainShip(ship, true);
         const nowMs = performance.now();
         if (hit && hit.impactSpeed > 150 && nowMs - _haloRingNoticeAtMs > 2500) {
           _haloRingNoticeAtMs = nowMs;
           pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
         }
       }
-      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloRings.constrainShip(player2Ship, true);
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloWorld.constrainShip(player2Ship, true);
       // NPC (bez ścian portu) kolider odrzuca, gdy środek kadłuba jest dalej od planety niż
       // floorMid + terrainReach + zasięg kadłuba (HaloRingCollider.constrainShip, nearFloor) — ten
-      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingGame) — bez bramki.
+      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingWorld) — bez bramki.
       let gateN = -1;
-      const entries = haloRings.entries;
+      const entries = haloWorld.entries;
       if (Array.isArray(entries)) {
         if (_ringGate.length < entries.length * 3) _ringGate = new Float64Array(entries.length * 3);
         gateN = 0;
@@ -27876,7 +27916,7 @@
           if (!near) continue;
         }
         if (!npcCollidesWithWorld(npc)) continue;
-        if (haloRings.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
+        if (haloWorld.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
       }
     }
 
@@ -28230,7 +28270,7 @@
     const _drawFogHidden = (e) => SensorSystem.hides(e);
     const _coldEnsureBody = (w) => coldWreckSystem.ensureRenderBody(w);
     const _hexCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
-    // RW-26: rekordy wież (Turret2D.syncFrame) po stronie gry — te same encje co kadłuby 3D (src/render/renderCull.js).
+    // RW-26: rekordy wież (Turret2D.syncFrame) po stronie gry — te same encje co kadłuby 3D (src/render/drawBox.js).
     const _turretSyncOpts = { cull: _hexCullInfo, zoom: 1, hidden: (e) => SensorSystem.hides(e), poseOf: bridgeRenderPose, enabled: true };
 
     function getViewportForCamera(cam) {
@@ -28463,7 +28503,7 @@
       const t0 = performance.now();
       const o = _gasObstOpts;
       o.dt = dt; o.camX = cam.x; o.camY = cam.y; o.viewHalf = viewHalf;
-      o.rings = haloRings ? haloRings.entries : null;
+      o.rings = haloWorld ? haloWorld.entries : null;
       o.dock = gasDockObstacles();
       o.nDomains = ex.domainRects(_gasDomRects);
       _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
@@ -29116,11 +29156,17 @@
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       // Ring „Halo”: kamera TEJ klatki (cam, ze wstrząsem — ta sama trafia do
       // passów Core3D), bo ring liczy pozycje względem kamery (RTE).
+      // Świat ringów gry: zegar migania świateł hal, automat obsługi stanowisk K-7 w czasie gry (postój, podpinanie,
+      // odpięcie stoją w pauzie i scenach fabuły; każdy ring, także poza kadrem i w podzielonym ekranie), lampki
+      // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
+      if (haloWorld) {
+        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+      }
       if (haloRings) {
         haloRings.update(frameDt, cam, {
           sun: SUN,
           ship,
-          // czas gry (automat obsługi stanowisk K-7: postój, podpinanie, odpięcie stoją w pauzie i scenach fabuły)
+          // czas gry (ramiona i przewody paliwowe hal: stoją w pauzie i scenach fabuły)
           gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
           quality: window.OPTIONS?.planetQuality,
           splitScreen: splitScreenMode
@@ -29155,9 +29201,14 @@
       // pola. Liczenie (skały, ośrodek, burza, światła) idzie w kroku Core3D.fx przed passami;
       // kolizje z olbrzymami w physicsStep (stepShipAsteroidCollisions).
       stepNeaFlyby();   // przelot NEA: pozycja skały i koło budzenia pasa przed krokiem pasa
-      if (asteroidBelt) {
+      if (beltWorld) {
+        // Świat pasa: zegar skał (dt klatki, 0 w pauzie), budowa olbrzymów przy kamerach i statkach (kolizje
+        // istnieją, zanim kadr dotknie pasa), przycięcie cache pola gry.
+        stepBeltWorldFrame(frameDt, cam);
+      }
+      if (asteroidBelt && beltWorld) {
         // mgła wojny: reflektory ukrytych okrętów nie oświetlają skał (zdradzałyby pozycję)
-        asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList), PAUSED);
+        asteroidBelt.prepareFrame(beltWorld.time, beltWorld.frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList));
       }
       // Komety (blok „KOMETY”): obrót jąder, fazy gazu, odcinanie poza kadrem.
       updateComets3D(cam);
@@ -29168,11 +29219,11 @@
         dt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
         camX: cam.x, camY: cam.y,
         viewHalf: Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1),
-        rings: haloRings ? haloRings.entries : null,
+        rings: haloWorld ? haloWorld.entries : null,
         ship, ship2: splitScreenMode ? player2Ship : null,
         npcs: fogSeenInto(npcs, _npcSeenList), sun: SUN,
         // zegar migania świateł hal K-7 (ten sam dostaje shader hali) — światła hali w siatce oświetlają pył i parę
-        clock: haloRings ? haloRings.clock : 0
+        clock: haloWorld ? haloWorld.clock : 0
       });
       HallDust.submit(HallDust.input);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
@@ -29266,7 +29317,7 @@
         // kadłubów (pass ortho).
         syncScoutBay3D(vfxTime);
         // Nadproża bram K-7 przy kamerze (lampy pozycyjne i okna mostków pod nimi gasną).
-        refreshLintelCover(k7Lintels, haloRings ? haloRings.entries : null, cam.x, cam.y,
+        refreshLintelCover(k7Lintels, haloWorld ? haloWorld.entries : null, cam.x, cam.y,
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
         BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
@@ -31145,7 +31196,7 @@
         stations.push(st);
         out[key] = st;
       }
-      attachPirateBase3D(out, place);
+      attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
       return out;
@@ -31307,10 +31358,12 @@
       return snapNeck(hs.neck, hs, _neckCtx, dirX, dirY, speed);
     };
     // Dev / skrypty: planetoida pod bazą (skała, osada, winda) i zerwanie windy teraz (bez rozpadu habitatu).
-    window.PirateRock = { state: () => pirateRockSite(), collapse: () => collapsePirateRockSite() };
+    window.PirateRock = { state: () => pirateRockSite(), collapse: () => collapsePirateRock() };
+    // Dev / skrypty: stan kawałków bazy (gra) i bryła (obraz).
+    window.PirateBase = { broken: () => pirateBaseBrokenChunks(), gone: (id) => pirateBaseChunkGone(id), hide: (id) => hidePirateBaseChunk(id), view: () => pirateBase3D() };
 
     // Planetoida pod bazą na radarze i mapie CIC (teren — rysowana zawsze, także we mgle, jak komety; tylko obraz,
-    // bez kolizji i studni). Póki baza misji stoi (StoryGame.site) i skała jest w scenie: podkład radaru = ląd
+    // bez kolizji i studni). Póki baza misji stoi (StoryGame.site i baza w świecie gry): podkład radaru = ląd
     // o promieniu skały (rzut z góry — szczyt leży 8 km pod płaszczyzną gry), kontakt „HIDALGO AST” w środku
     // (`env.bodies`, mała kropla — ląd rysuje podkład), mapa CIC — window.pirateRockLandmark (cicDisplay.js).
     const _pirateRockMark = { id: 'pirate-rock', label: PIRATE_ROCK_SPEC.label, x: 0, y: 0, radius: PIRATE_ROCK_SPEC.radius };
@@ -31321,10 +31374,11 @@
     const _radarFeaturesWithRock = [];
     function pirateRockLandmark() {
       if (!StoryGame.site) return null;
-      const r = pirateRockSite();
-      if (!r?.at || !r.rock?.root?.parent) return null;
-      _pirateRockMark.x = _pirateRockBody.x = r.at.x;
-      _pirateRockMark.y = _pirateRockBody.y = r.at.y;
+      // środek skały z czystego układu planetoidy i ramki bazy (src/game/story/pirateBaseWorld.js)
+      const at = pirateRockAt();
+      if (!at) return null;
+      _pirateRockMark.x = _pirateRockBody.x = at.x;
+      _pirateRockMark.y = _pirateRockBody.y = at.y;
       return _pirateRockMark;
     }
     function radarFeaturesWithPirateRock(features) {
@@ -31342,10 +31396,18 @@
     Object.defineProperty(window, 'pirateRockLandmark', { configurable: true, get: pirateRockLandmark });
 
     // Stan klatki bryły bazy z misji (render → updatePirateBase3D). Bez alokacji na klatkę.
-    const _baseFrameState = { alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
+    const _baseFrameState = { hidden: false, habitatDead: false, alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
     function storyBaseFrameState() {
       const s = _baseFrameState;
       const site = StoryGame.site;
+      // Mgła wojny: baza schowana, dopóki strona gracza nie zobaczy żadnej z jej budowli (SensorSystem — gra).
+      const structs = site?.structures;
+      s.hidden = false;
+      if (structs) {
+        s.hidden = true;
+        for (const k in structs) { const st = structs[k]; if (st && !SensorSystem.hides(st)) { s.hidden = false; break; } }
+      }
+      s.habitatDead = !!(structs?.habitat && !(structs.habitat.hp > 0));
       s.alarm = !!site?.alarmed;
       const age = s.alarm ? Math.max(0, StoryGame.time - (site.alarmAt ?? StoryGame.time)) : 0;
       // hangary dronów: światła startu po alarmie (fale dronów)
@@ -31557,10 +31619,11 @@
       showHud: (on) => toggleGameUI(!!on),
       fadeScreen: (on, ms) => fadeScreen(on, ms),
       shake: (mag, dur) => camera.addShake(mag, dur),
-      k7Hall: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.ring?.k7Halls?.[i] || null,
-      // pozy obsługi stanowisk hali (suwnice, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
+      // zajętość stanowiska hali (lampka) — stan gry w rejestrze świata ringów; obraz przenosi go na lampki hali
+      k7SetBerth: (i, id, occupied, reserved, force) => !!haloWorld?.setBerthState('earth', i, id, occupied, reserved, force),
+      // pozy obsługi stanowisk hali (zamki pola, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
       // i biorą się źródła gazu z przewodów (pył hal, src/3d/gasField/)
-      k7HallPoses: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.collider?.registry?.halls?.[i]?.poses || null,
+      k7HallPoses: (i = 0) => haloWorld?.hall('earth', i)?.poses || null,
       // WYPOSAŻENIE z panelu stanowiska (przed ODDOKUJ): terminal portu Ziemi (K-7) na zakładce kart.
       openFitting: () => {
         const port = stations.find(st => st?.ringPort === 'earth');
@@ -31579,8 +31642,8 @@
       // Zasadzka w pasie asteroid (misja 2, src/game/story/beltAmbush.js): wyrwanie z warpa, gęstość skał na
       // kursie (pole pasa) i olbrzymy (miejsce zasadzki przy bryle, gdy kurs ją mija).
       interdictWarp: () => storyInterdictWarp(),
-      beltDensity: (x, y) => (asteroidBelt?.field ? asteroidBelt.field.sampleMacro(x, y).density : 0),
-      beltGiants: () => (asteroidBelt?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
+      beltDensity: (x, y) => (beltWorld?.field ? beltWorld.field.sampleMacro(x, y).density : 0),
+      beltGiants: () => (beltWorld?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
       spawnShip: (key, opts) => spawnCallInShip(key, opts),
       spawnPirateStation: spawnStoryPirateStation,
       // Baza piratów (misja 1, szkic 2026-10-11): budowle (byty stacji z bryłami trafień) + bryła 3D + ciała świata;
@@ -31591,7 +31654,7 @@
       baseBreak: (id, o) => storyBaseBreak(id, { ...(o || {}), allLive: true }),
       baseBrokenChunks: () => pirateBaseBrokenChunks(),
       // Planetoida pod bazą (2026-10-15): rozpad habitatu zrywa windę kosmiczną, osada na skale wybucha po kolei.
-      rockCollapse: () => collapsePirateRockSite(),
+      rockCollapse: () => collapsePirateRock(),
       launchNpc: storyNpcs.launch,
       // Zegar wodowania i herszt (misja 1, 2026-10-07): załoga przy działach w stanowisku, brama stanowiska
       // przy starcie, ucieczka herszta, mostek jako słaby punkt, okręt bez dowodzenia (hulk).
@@ -31840,12 +31903,14 @@
       // pasem: kompilacje stacji idą w wolnych chwilach rejestru, gdy strona czeka na pipeline'y pasa (flush niżej — reszta).
       setLoadingProgress(71, 'Stacje');
       await prepareStations3D(stations);
+      // Baza piratów (misja 1): rastry kawałków i szablony kratownic ciał świata — strona gry, bez Core3D.scene (RW-24).
+      prebuildPirateBaseWorld();
 
       // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
       // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
       if (asteroidBelt) {
         setLoadingProgress(72, 'Cień pól asteroid');
-        await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
+        await beltWorld.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
         setLoadingProgress(77, 'Pola asteroid');
         await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
         // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.

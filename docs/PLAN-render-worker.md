@@ -1307,8 +1307,8 @@ strumień renderu; w RW-22 losowanie przejdzie do workera razem z rekordem `HULL
 Kryterium: dwa przebiegi harnessu identyczne; nowa baza zrzutów zatwierdzona RAZ (sceny z efektami się zmienią —
 D4); sceny bez efektów bit w bit. Zależności: brak. Kolizje: `index.html` (kilka linii), `hullBodies.js` (1 linia).
 
-**Stan RW-20 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
-zrzutami po pauzie obciążenia: dwa przebiegi harnessu identyczne, nowa baza raz — D4):** klasa `FxRandom` w nowym
+**Stan RW-20 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16 —
+dwa przebiegi harnessu identyczne, nowa baza raz (D4); § 7.1 „Weryfikacja toru rw-bronie”):** klasa `FxRandom` w nowym
 neutralnym `src/render/fxRandomCore.js` (bez three / DOM; `src/3d/fx/fxRandom.js` reeksportuje ją i trzyma strumień
 renderu `fxRandom`, API bez zmian). Strumień gry `fxRandomGame` (`src/game/fxRandomGame.js`, własne ziarno
 `FX_RANDOM_GAME_SEED`): `index.html` (15 losowań: ton dźwięku, cząstki kanwy — ślad pocisku, iskry wyrzutni, start
@@ -1331,8 +1331,8 @@ reguła `__renderedByThree` po stronie gry); `src/game/superweapon.js` (Hexlance
 `WeaponFx.stats` równe; testy kodowania każdego typu. Zależności: RW-04, RW-20, RW-26 (lufa i odrzut w grze).
 Kolizje: `index.html` (pętla pocisków, PD) — duże pole, jedno krótkie podejście.
 
-**Stan RW-21 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
-zrzutami `galeria`, `kosmos`, `rakiety` i `WeaponFx.stats` po pauzie obciążenia):** `src/render/renderCommands.js` —
+**Stan RW-21 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16 —
+kadry galerii broni bit w bit z RW-20; § 7.1 „Weryfikacja toru rw-bronie”):** `src/render/renderCommands.js` —
 kody typów `RC`, układ pól rekordów (obiekty `SHOT`, `IMPACT`, `KERF`, `PIERCE`, `FLAK`, `BLAST`, `CHARGE`, `PD_LASER`,
 `HEX` — wspólne dla kodera i dekodera), pisarz `RenderCommandWriter` (pierścień `EventRingWriter` z RW-04; wartości f64,
 encje i pociski (slot, gen) ze WSPÓLNYCH slotów renderu `RenderSlots` (`src/render/renderSlots.js` z RW-10, kopia
@@ -1406,8 +1406,8 @@ już dziś liczy salwy bez przeglądarki); zrzuty `rakiety` bit w bit przy niezm
 w `physicsStep` 120 Hz (trafienia niezależne od fps — zmiana rozgrywki: nowa baza, porównanie trafień w
 `rakiety-salwy-sym.mjs`, `rakiety-auto-gra.mjs`). Zależności: RW-21. Kolizje: `index.html` (kierowanie ogniem).
 
-**Stan RW-23 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację po
-pauzie obciążenia):** (1) przeniesienie bez zmiany zachowania — `git mv src/effects3d/rocketSystem3D.js
+**Stan RW-23 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16
+— zmienia tylko kadry z rakietami (D2); § 7.1 „Weryfikacja toru rw-bronie”):** (1) przeniesienie bez zmiany zachowania — `git mv src/effects3d/rocketSystem3D.js
 src/game/rockets/rocketSim.js`, three zastąpione `src/game/rockets/rocketMath.js` (Vec3 / Quat / clamp / lerp / degToRad
 — te same wzory co three r183, test bit w bit `tests/rocketMath.test.mjs`), importerzy (index.html, dema, skrypty,
 testy) na nowej ścieżce, katalog `src/effects3d/` pusty; rozgrywka dopisana od 10-07 (PD: `syncThreats`, `pdHit`,
@@ -1420,9 +1420,15 @@ nie odczyt bloku ROCKETS — kolejność emisji efektów (ciąg fxRandom) zostaj
 styku liczy jeszcze reżyser z kadłuba — do przeniesienia z RW-22 / lustrami). (2) D2 osobnym commitem: `step(dt)` w
 `physicsStep` po `SimClock.advance` (salwy gracza z tego kroku lecą od razu, NPC — od następnego; `syncThreats` bez
 dosuwania pozy), `frameFx(dt)` — klatka reżysera w `loop()`; `rocketsTime` PerfHUD = kroki lotu + klatka reżysera
-(kroki liczą się też do `physicsTime`). Pomiar trafień (`scripts/rakiety-salwy-sym.mjs`, `rakiety-auto-gra.mjs`,
-`pd-rakiety-gra.mjs`) i nowa baza zrzutów — po „WOLNO OBCIĄŻAĆ”. Testy: `tests/rocketMath.test.mjs`,
+(kroki liczą się też do `physicsTime`). Testy: `tests/rocketMath.test.mjs`,
 `tests/rocketStepD2.test.mjs`, RKT_* w `tests/renderCommands.test.mjs`, ścieżki w strażnikach źródeł.
+Pomiar 2026-10-15: (a) przeniesienie bez zmiany zachowania — `rakiety-salwy-sym.mjs` z `Math.random` z ziarnem
+(skrypt sam losuje bez ziarna — dwa przebiegi tego samego drzewa różnią się) na drzewie RW-20 (`bfe4c4cf`, stary
+`rocketSystem3D.js`) i na gałęzi po RW-23: tabela 12 przypadków identyczna (hash wiersza ten sam). (b) D2 — nowy
+`scripts/rakiety-d2-fps.mjs` (lot w klatce renderu `update(dt klatki)` ↔ `step(1/60)` + `frameFx`, cele w krokach
+fizyki, ziarno stałe): trafienia 100% w obu (Grad w małym celu 0% w obu), średni czas salwa → trafienie w D2 ten sam
+bit w bit przy 30 / 60 / 144 fps (np. manewrująca 3,7046 s), w dawnym zależny od fps (3,6852 / 3,7046 / 3,7028 s —
+do ~0,02 s na trafienie); przy 60 fps D2 = dawny przebieg.
 
 **RW-24 Suchy dok: stan po stronie gry.**
 Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, `live`, decyzje break / ram, plan
@@ -1433,6 +1439,29 @@ Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, 
 `tests/worldBodies*.test.mjs`; `scripts/webgpu/suchy-dok-gra.mjs` (usunięty 2026-10-11 — dok poza grą; bazę mierzy `baza-gra.mjs`), `zniszczenia-gra.mjs --final` bez zmiany
 zachowania; pipeline'y synchroniczne 0. Zależności: RW-22. Kolizje: misja 2 (`storyGame.js`, blok FABUŁA).
 
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Dok wypadł z gry — zadanie zrobione dla bazy piratów.
+Audyt: rozgrywkę liczył render w `src/3d/pirateBaseGame.js` (§ 2.6 p. 19–21) — stan kawałków (`chunkState` bryły:
+broken / hidden), zbiór `_dockGone` przebudowywany TYLKO w `updatePirateBase3D` (render, stał we mgle), wynik
+`breakPirateBaseChunk` / `ramPirateBaseChunk` z bryły, ciała świata z obiektu 3D (`createPirateBaseSites(…, base)`,
+`available()` → `base.isChunkGone`), prebuild kratownic w rozgrzewce (`Core3D.scene`), mgła bazy (predykat gry
+wołany z renderu), habitat martwy (`structures.habitat.hp` w renderze), `st._base3d` (obiekt 3D na bytach gry),
+środek planetoidy z grafu sceny (`r.rock.root.parent`). Zrobione: nowy `src/game/story/pirateBaseWorld.js` — dane bazy
+z czystych modułów (układ, scena, styl), stan kawałków i `_dockGone` (przebudowa `syncPirateBaseGone` po
+`worldBodies.step` — także we mgle; break / ram / hide dopisują od razu), decyzje break / ram (kawałek pęknięty albo
+schowany nie pęka drugi raz — jak bryła), ciała świata na danych gry, `prebuildPirateBaseWorld` na ekranie ładowania
+bez Core3D, `pirateRockAt` (środek z `createPirateRockLayout` + `place.toGame`), `collapsePirateRock`. Obraz
+(`pirateBaseGame.js`) = `pirateBase3DEvent` (attach, bodies — haki `site.render`, bodiesDetach, break, ram, hide,
+rockCollapse, detach — rekordy PBASE_* / ROCK_COLLAPSE z § 3.3) + stan klatki (`storyBaseFrameState`: `hidden` z mgły,
+`habitatDead`); dryf i zniknięcie odpadłego kawałka zostają w obrazie (kawałek pęknięty jest nieobecny od chwili
+pęknięcia — `isChunkGone` gry = broken || hidden). Obraz nie importuje już `worldBodies` ani `pirateBaseBodies`.
+Skrypty narzędzi bez `_base3d` (`window.PirateBase`: broken, gone, hide, view). Zmiany zachowania (zamierzone):
+`_dockGone` aktualny w kroku fizyki zamiast ≤ 1 klatkę później i także we mgle. Testy: nowy
+`tests/pirateBaseWorld.test.mjs`, `pirateBase`, `pirateBaseIntegrity` — zielone. Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `baza-gra.mjs`: taran rzędu, alarm, drony, reakcja łańcuchowa, rozpad habitatu do 0 — pipeline'y bazy
+synchroniczne 0; `zniszczenia-gra.mjs --final`: progi, wypiek w workerze, rozpad i implozja, 132 odłamy, skóry
+synchroniczne 0; `planetoida-gra.mjs`: zawalenie i rozpad habitatu jak w `main` — 4 pipeline'y synchroniczne skały i
+osady (MoonSurface:hidalgo, PirateRockSmoke / Fire, PortBuildingBG) są TAKŻE w `main` (pomiar `main` tym samym
+narzędziem — do poprawy osobno, nie RW-24).
+
 **RW-25 Pas asteroid: świat pasa po stronie gry.**
 Pliki: nowy `src/game/beltWorld.js` (pole, cień pól, olbrzymy z `requestNear` z kamery i statku, `collideShip`,
 `pointBlocked`, `roofAbove`, `AsteroidMining` i `MiningRig` po zdarzeniu `bankRadius`, zegar skał w czasie gry, `taken`,
@@ -1440,6 +1469,29 @@ konsument `dirtyBox`, `playZ`), `src/3d/asteroids/asteroidBelt.js` (obraz; włas
 deterministyczne), `minedRocks.js`, `index.html` (użycia z § 2.3), SDF olbrzymów i cień pól w SAB. Kryterium:
 `tests/asteroidBeltField.test.mjs` i testy wydobycia; `scripts/webgpu/asteroidy-gra.mjs --kolizja`,
 `wydobycie-gra.mjs`; zrzuty `pas`, `wydobycie` bit w bit. Zależności: RW-04, RW-12. Kolizje: brak aktywnych.
+
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Nowy `src/game/beltWorld.js`
+(`createBeltWorld`, `window.__beltWorld`): pole, cień pól (`precompute` → sektory w SharedArrayBuffer, render
+`adoptSectors` — bez drugiego liczenia), olbrzymy (`frame(dt, paused, focus)` co klatkę z kamer i statków graczy —
+kolizje istnieją, zanim kadr dotknie pasa; SDF olbrzymów w SharedArrayBuffer — `src/game/sharedTyped.js`),
+`collideShip` / `pointBlocked` / `roofAbove`, zegar skał `time` (czas bezwzględny, ta sama suma dt co dawny krok
+renderu — 0 w pauzie, ≤ 0,1 s), fizyka skał i platforma po zdarzeniu `attachShapeRadius` (mapy promienia banku;
+arytmetyka jedna — `src/game/asteroidShapeRadius.js`, `rockBank.radiusAt` ją woła), `playZ` (`src/game/beltPlayZ.js`),
+konsument `dirtyBox` (`ackMinedUpload`), konfiguracja pola (`setExclusions`, `setSmallBodyAnchors`, `familyPeaks`,
+`addWakeSpot` — przelot NEA) do pola gry i repliki obrazu (`createFieldReplica`, historia operacji). `asteroidBelt.js` =
+obraz na własnej instancji pola (`createAsteroidBelt({ world })`, `prepareFrame(time, dt, …)`, widoki olbrzymów poza
+obiektami gry — `giantView(entry)`; `rig` / `mining` / `giants` jako gettery dla narzędzi). Gra (kolizje, pociski,
+radar `env.belt`, fabuła `beltDensity` / `beltGiants`, przyloty piratów, rodziny, wydobycie) czyta `beltWorld`.
+Sprawdzone od 10-07: rumowiska, pary z księżycami, rodziny (`familyAt`), wycięcia populacji, `wakeSpots`, wyłączenia
+małych ciał (`applySmallBodyExclusions(beltWorld)`), komety (`penetrationOf` — pole gry). Zmiany zachowania (zamierzone):
+budowa SDF olbrzymów rusza przy statku / kamerze w zasięgu 420 tys. j. także poza kadrem pasa (np. przy Marsie). Testy:
+nowy `tests/beltWorld.test.mjs` (replika = te same skały, cień pól, zegar, olbrzymy, wydobycie, strażnik obrazu) i
+poprawione strażniki źródeł — zielone; strażnik szwu po RW-01 (spadki: `asteroidBeltGiants`, `asteroidGiantBuilder`,
+`asteroidMining` 2 → 1, `asteroidMiningRig` 2 → 1; nowe czyste moduły klasy A). Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `asteroidy-gra.mjs --kolizja`: wszystkie sceny ok, kolizja z olbrzymem
+(droga 812 j. zamiast 5400, maks. wbicie −11,8 j.), pipeline'y synchroniczne 0; `wydobycie-gra.mjs` (+ `--rumowisko`,
+`--pary`): skała, laser, piła, ładunek, urobek, rumowisko (głazy, wiązka wyrywa), para z księżycem (przejęcie obu) —
+pipeline'y synchroniczne 0. Narzędzia czytają widok olbrzyma przez `giantView` albo dawne `e.view` (harness działa z
+`--root` na starszym drzewie).
 
 **RW-26 Wieżyczki, maskowanie i jasność wieżyczek po stronie gry.**
 Pliki: `src/vfx/turret2D.js` (`sync` w grze przed pakowaniem; odrzut po gnieździe strzelca zamiast szukania po
@@ -1449,9 +1501,9 @@ zostaje obraz), lustro maski słońca dla `lightAt` po stronie gry (dyski planet
 Kryterium: zrzuty `kosmos`, `galeria` bit w bit, `scripts/webgpu/maskowanie-gra.mjs`; `tests/cloakLook.test.mjs`,
 `tests/turretBatch3D.test.mjs`. Zależności: brak. Kolizje: `hexShips3D.js` (sesja renderu CPU).
 
-**Stan RW-26 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — czeka na weryfikację zrzutami po pauzie
-obciążenia):** po B3D bez lustra maski słońca (wieżyczek kanwy nie ma). Rekordy wież liczy gra: `Turret2D.syncFrame`
-w `render()` przed `updateHexShips3D` (encje z pudła rysowania wg nowego czystego `src/render/renderCull.js` — te same
+**Stan RW-26 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — zweryfikowane 2026-10-16 —
+§ 7.1 „Weryfikacja toru rw-bronie”):** po B3D bez lustra maski słońca (wieżyczek kanwy nie ma). Rekordy wież liczy gra: `Turret2D.syncFrame`
+w `render()` przed `updateHexShips3D` (encje z pudła rysowania wg czystego `src/render/drawBox.js` (po scaleniu z RW-31 — jeden moduł pudeł; `collectDrawBoxEntities` dopisane tam) — te same
 funkcje bierze hexShips3D, więc zbiór i kolejność rekordów jak dawniej `drawVfx`; przełącznik „Bronie” PerfHUD —
 `enabled`). Odrzut po stronie gry: `Turret2D.recoilForShot(detail)` w słuchaczu `WeaponShotBus` (index.html) i
 `Turret2D.recoilAt` przy PD gracza (`ciwsStep`); `WeaponFx._muzzle` bierze lufę z `Turret2D.shotMuzzle` (ta sama
@@ -1474,6 +1526,27 @@ i lampki stanowisk; zegar migania), `src/3d/haloRing/haloRingGame.js` (obraz), `
 `tests/k7BerthService.test.mjs`, `tests/hallDust.test.mjs`, `scripts/webgpu/ring-kolizje-gra.mjs`,
 `hala-swiatla-gra.mjs --automat`; zrzuty `ziemia`, `ziemia-ring`, `mars`, `jowisz` bit w bit. Zależności: RW-12.
 Kolizje: misja 2 (fabuła K-7) — mała.
+
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.**
+Nowy `src/game/haloRingWorld.js` (`haloWorld`, `window.__haloWorld`): `entries` z kolidera, rejestru i automatu
+stanowisk; teren Marsa (ECUMENE) i Jowisza (Fable) od razu z `createEcumenePlan` / `createFablePlan` (ta sama funkcja
+co `archRing.terrainHeightAt` — test na 400 punktach), Ziemia — w trybie `inline` funkcja mapy CPU ringu obrazu po
+`ready` (`setRingTerrain`; profil z = 0 przez postMessage — przy workerze, RW-40+); automat stanowisk K-7 w czasie gry dla
+każdego ringu (bez bramki widoczności i podzielonego ekranu); zajętość i lampki w rejestrze kolidera
+(`owner.layout.berths` wyzerowane przy starcie jak dawniej po `ready` + `berthVersion`; fabuła — `deps.k7SetBerth`
+zamiast pisania w obiekcie hali 3D `deps.k7Hall`); zegar migania `clock` (zegar ściany w tym samym miejscu klatki) i poziom
+lamp hal `owner.lampLevel` (cień planety ze słońca gry; wzór obrazu, `uSunDir` jak `THREE.Vector3.normalize` z pamięcią
+1e-6 — test bit w bit). `haloRingGame.js` = obraz (`new HaloRingGame({ world })`, wpisy obrazu z odwołaniami do wpisów
+świata, lampki hal z rejestru przy zmianie wersji, `clock` — getter). Fizyka przewodów paliwowych zostaje obrazem (pozy —
+stan gry w rejestrze, jak dotąd). Pola siłowe bram (`k7ForceFieldList`) i nadproża (`k7GateLintels.js`) — czyste, gra
+czyta `haloWorld.entries`; hala z Blendera bez zmian. Zmiany zachowania (zamierzone): teren w kolizjach Marsa i Jowisza
+od startu (dawniej płaska płyta do zbudowania ringu przy kamerze), automat stanowisk także poza kadrem i w podzielonym
+ekranie, `lampLevel` hal ringów niezbudowanych. Testy: nowy `tests/haloRingWorld.test.mjs`, poprawione strażniki
+(`k7BerthService`, `haloRingGame`, `npcWorldCollisions`, `warpGhostCollisions`, `haloRingAsync`, `menuBackdrop`).
+Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `ring-kolizje-gra.mjs`: teren w koliderze = ring (`colliderVsRing` 0), płyta i odpychanie od
+podłogi; `hala-swiatla-gra.mjs --automat`: postój → podpinanie → podpięte → awaryjne odpięcie przy 45 j/s, buchy pary,
+pipeline'y po starcie 0 (krok `release 3.0` narzędzia był nieosiągalny także w `main` — automat wraca do idle w tym
+samym kroku; kadr przesunięty na 2,9 s).
 
 **RW-28 Warp „Nurt”: harmonogram w czasie gry.**
 Pliki: nowy `src/game/warpTraffic.js` (rejestr przylotów i odlotów, limit 24, poza z czystych `arrivalFxPose` /
@@ -1511,8 +1584,8 @@ Pliki: `src/3d/weapons/weaponFx.js` (bez `camera.addShake` i `__weapon3dCameraSh
 w grze), `index.html` (kamera). Kryterium: zrzuty `warp-kop` bit w bit; wstrząs strzałów nie później niż dziś.
 Zależności: RW-21. Kolizje: `render()` w `index.html` (kamera).
 
-**Stan RW-30 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
-zrzutami `warp-kop` po pauzie obciążenia):** nowy `src/game/cameraShakes.js` (akumulator wstrząsu strzałów
+**Stan RW-30 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16 —
+`warp-kop` bit w bit; § 7.1 „Weryfikacja toru rw-bronie”):** nowy `src/game/cameraShakes.js` (akumulator wstrząsu strzałów
 `WeaponShotShake` — dodawanie z sufitem 18, wygaszanie e^(−8·dt) raz na klatkę renderu w tym miejscu, gdzie dawniej
 WeaponFx.sync; `requestCameraShake` — reguła „nie słabszy od bieżącego”, `requestCameraShakePeak` — reguła
 Supernowej; `ShotFeel.onPlayerShot` — kopnięcie kadru dla strzałów spoza wieżyczek, Hexlance). Wstrząs strzałów
@@ -1682,6 +1755,17 @@ jest gotowe — działaj.”
     0,47 ms ↔ partia 0,07–0,11 ms (2D: dysze 0,02–0,04), draw calle 36 ↔ 50, klatka 29,9 ↔ 28,9 ms. GPU (`gpuMs`
     próbkowany co N klatek) — w szumie. Wniosek: wieże 3D nie kosztują wyraźnie więcej niż kanwa (CPU podobny, +10–14
     rysunków — po jednym na rodzinę w kadrze); poprawek wydajności nie trzeba.
+  - Pomiar powtórzony 2026-10-15 przy ciszy pozostałych torów (START / KONIEC), bez chaosu bitwy:
+    `profil-bitwy-flot.mjs --sklad 50,20,10,3 --tryb spokoj --seed 7 --trwanie 40 --profile 15:6`
+    (`sc_camera_frame=off`, 166 okrętów Terra Nova bez walki), przebiegi kolejno A / B / C × 2: A — kod sprzed B3D
+    z „Bronie 2D”, B — ten sam kod z „Bronie 3D”, C — gałąź po B3D … RW-23. Zoom 0,45: wieżyczki kanwy
+    (`render2dTurretTime`) A 0,20 / 0,26 ms ↔ B / C: partia wież (`syncShipModels3D` inkluzywnie z profilu CPU)
+    0,02–0,03 ms + rekordy wież (C: `Turret2D.syncFrame` 0,02–0,03 ms, w A / B — wewnątrz `updateHexShips3D`);
+    `drawTime` A 2,3 / 3,0, B 1,8 / 1,7, C 1,6 / 3,4 ms (drugi przebieg C — szum); draw calle A 17–23 ↔ B 25–29 ↔
+    C 25–32; GPU (mediana `gpuMs`) 0,85–1,05 ↔ 0,92 ↔ 0,92 ms. Zoom 0,1: kanwa 0,06 ms ↔ partia 0,03–0,04 + rekordy
+    0,06–0,08 ms, `drawTime` 3,6–3,7 ↔ 3,6–3,9 ↔ 3,7 ms, draw calle 13–14 ↔ 20–22 ↔ 22–24, GPU bez zmian (0,79–0,85).
+    Wniosek bez zmian: bronie 3D kosztują CPU tyle co kanwa albo mniej (przy przybliżeniu ~0,2 ms mniej), +6–10
+    rysunków (rodziny w kadrze), GPU w szumie. Bez ognia (tryb spokoj) — wieże stoją, koszt rekordu i partii ten sam.
   - Kod: opcja i chipy `data-visual-weapons` usunięte, `VisualMode.weapons3D` zawsze prawda (`sc_weapons3d`
     ignorowany), `setVisualMode(statki3D)` (drugi argument starych skryptów ignorowany), `configureShipModels3D` bez
     `weapons`. `Turret2D.draw` / `skipDraw` / `occlude` / `lightAt`, ciemnienie sylwetką i importy atlasów sprite'ów
@@ -1693,8 +1777,41 @@ jest gotowe — działaj.”
   - Zasłanianie i oświetlenie wież 3D: fregata zwiadu nad Atlasem — głębia (`__skinZ` 12,5 nad warstwą wież na
     sprite'ach), nadproża K-7 — pass FG po ortho, maskowanie — `entityCloakVisAt` ≥ 0,5 w `syncTurrets`, mgła —
     rekordy tylko dla bytów w kadrze, `__turretsHidden` — `Turret2D.sync` bez rekordów, cień planety / pole pasa —
-    maska słońca materiału partii. Weryfikacja zrzutami (sceny z wieżami zmieniają obraz) — czeka na „WOLNO
-    OBCIĄŻAĆ” (pauza obciążenia: użytkownik gra).
+    maska słońca materiału partii. Weryfikacja zrzutami — niżej („Weryfikacja toru rw-bronie”).
+  **Weryfikacja toru rw-bronie (2026-10-16, po „WOLNO OBCIĄŻAĆ”; B3D, RW-26, RW-20, RW-21, RW-30, RW-23):**
+  - Harness `zrzuty.mjs --backend webgpu --uuid osobne` (wszystkie sesje, 75 kadrów), eksporty drzew przez `--root`:
+    PRZED = 45431670 (HEAD sprzed B3D, `VisualMode.weapons3D` wymuszone na prawdę — inaczej porównanie kanwy z 3D),
+    RW-26 = 973168ae (podzbiór sesji kosmos, rakiety, split, galeria, warp-kop), RW-20 = bfe4c4cf (dwa przebiegi:
+    pełny i podzbiór), TIP = gałąź przed scaleniem main, SCAL = po scaleniu main (RW-25/27/24/29/31). Porównanie
+    `porownaj.mjs` (kadry różne > 2 / > 32 na 255).
+  - Determinizm (RW-20 a vs b): identyczne poza `galeria-rakiet` (0,23% > 2, przeskakuje między dwoma stanami
+    przebieg do przebiegu — ten sam stan w PRZED i RW-26) i `split` (maks 6/255 — szum). Sceny sesji kosmos (bitwa,
+    wraki, wybuch, planeta-cien, kalibracja, warp) są deterministyczne, więc różnice niżej to skutek kodu.
+  - PRZED → RW-26 (B3D + RW-26): `bitwa` 6,5% / 0,55%, `wraki` 2,0% / 0,15%, `wybuch` 1,0% / 0,17%,
+    `galeria-broni` 0,47% / 0,05%, `galeria-rakiet` (szum jw.). Układ kadrów ten sam, różnią się ziarna dymu rakiet
+    i błysków wylotu: wylot czyta lufę bez odrzutu (`Turret2D.shotMuzzle`), odrzut liczy gra przy SHOT — inna
+    kolejność losowań fxRandom. Pozostałe kadry (w tym wszystkie pojedyncze bronie galerii) bit w bit.
+    `kalibracja` w eksporcie RW-26 nie wyszła (harness nie znalazł three — przed poprawką `window.THREE`), w PRZED,
+    RW-20, TIP identyczna.
+  - RW-26 → RW-20: zmienia się większość kadrów walki (rozdzielenie strumieni fxRandom gry i renderu — oczekiwane,
+    D4): galeria broni 0,2–22% > 2 (`galeria-krater-yamato` 81% — inne ziarna efektów trafienia),
+    `wraki` 29%, `bitwa` 6,8%, `planeta-cien` 0,5% (stan przeniesiony z wcześniejszych scen sesji).
+  - RW-20 → TIP (RW-21 + RW-30 + RW-23): wszystkie kadry galerii broni, `warp-kop` (13 kadrów kopu warpa — wstrząs
+    z RW-30) i `split` BIT W BIT — strumień rozkazów broni (RW-21) i wstrząsy po stronie gry (RW-30) nie zmieniają
+    obrazu. Różnią się sceny z rakietami (D2 — lot w kroku fizyki): `galeria-rakiet*` 6–59%, `wraki` 35%, `bitwa`
+    6,4%, `wybuch` 2,9%, oraz `planeta-cien` 0,26% (obrót stacji — niżej) i `warp` 0,1% (następstwo w tej samej sesji).
+  - TIP → SCAL (scalenie main: RW-25/27/24/29/31): bit w bit poza `planeta-cien` (0,33% — sama stacja Wenus w FG
+    obrócona: `stations3D.js` dokłada `spinOffset += 0.002` na każde wywołanie, więc kąt zależy od liczby klatek przed
+    sceną; tak samo w RW-20 → TIP) i `split` (szum). Nowa baza (D4): przebieg SCAL, kopia w głównym drzewie
+    `.tmp/webgpu/baza-rw-bronie-2026-10-16` (`--baza` dla kolejnych porównań).
+  - Gra (drzewo po scaleniu): `maskowanie-gra.mjs` (fazy, ekrany, wizjer), `zwiad-gra.mjs` (wrota, wynurzenie,
+    wylot nad Atlasem, stery, skan, maskowanie fregaty, oko, daleki skan, lądowanie), `hala-swiatla-gra.mjs` (dok
+    z przewodami, odcumowanie, ciąg, cała hala, A/B) — wszystkie przeszły, pipeline'y synchroniczne 0, błędy strony 0
+    (poza favicon 404). Testy `node --test "tests/*.test.mjs"`: 4 niepowodzenia = baza main (moduł hali LF, maska
+    słońca, wątki `renderBuffers` — przechodzi sam); `npm test` i `vite build` przechodzą.
+  - Poprawka harnessu (commit 9d989810): `zrzuty.mjs`, `gorace-powietrze.mjs`, `maska-slonca.mjs`,
+    `post-kontrola.mjs`, `rakiety-sekwencje.mjs` biorą three z `window.THREE` (gra wystawia uchwyt), adres zasobu
+    tylko w zapasie — wcześniej `import(undefined)` w scenach kalibracja i reaktor.
 - **D1 = B2cr** — rekomendacja RW-02 (`docs/webgpu/RW-02-PROTOTYP.md` § 4, § 7): bitmapa 3D z workera
   (`transferToImageBitmap` → `transferFromImageBitmap`) + nakładki klatki k rysowane na wątku głównym do pierścienia
   5 zwykłych kanw 2D w DOM z regułą ochrony (nietykalne: kanwa pokazana, klatki odebrane, a nie złożone — worker pisze
