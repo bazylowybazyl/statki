@@ -27,8 +27,9 @@
 // liczy (A/B: `node scripts/webgpu/tsl-uuid-gra.mjs`). Stan: `tslUuidStan` (Core3D.tslUuid, window.__tslUuid).
 
 import { MathUtils, Node, TextureNode, UniformNode } from 'three/webgpu';
+import { RenderWorld } from '../../render/renderWorld.js';
 
-const NAPRAWA = globalThis.__TSL_UUID_NAPRAWA !== false;
+const NAPRAWA = RenderWorld.config.tslUuidFix !== false;
 
 export const tslUuidStan = {
   naprawa: NAPRAWA,

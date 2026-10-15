@@ -32,6 +32,7 @@
 // wieże duże na ekranie (zbliżenie, kamery 3D z bliska) — bitwa z oddali idzie cała na LOD1.
 
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RenderWorld } from '../../../render/renderWorld.js';
 import { Vector3, Matrix3 } from 'three';
 import { SHIP3D_MAT } from '../meshBuilder3D.js';
 
@@ -252,11 +253,12 @@ let _loading = null;
  */
 export function weaponGlbFamilies() {
   if (_override) return _override;
-  const g = globalThis;
-  if (g.__WEAPON_GLB === false) return new Map();
-  if (Array.isArray(g.__WEAPON_GLB) || typeof g.__WEAPON_GLB === 'string') return parseWeaponGlbList(g.__WEAPON_GLB);
+  const glb = RenderWorld.config.weaponGlb;
+  if (glb === false) return new Map();
+  if (Array.isArray(glb) || typeof glb === 'string') return parseWeaponGlbList(glb);
   try {
-    const q = g.location?.search ? new URLSearchParams(g.location.search) : null;
+    const search = RenderWorld.pageSearch;
+    const q = search ? new URLSearchParams(search) : null;
     if (q && q.has('bronieGlb')) return parseWeaponGlbList(q.get('bronieGlb'));
   } catch (e) { /* bez location */ }
   return new Map(Object.entries(WEAPON_GLB_GAME));

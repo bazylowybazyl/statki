@@ -33,6 +33,7 @@
 // niszczenie, łup) usunięte — patrz docs/webgpu/POSTEP.md (zadanie 21, otwarte).
 
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { Core3D } from '../core3d.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { View3D } from '../../game/view3D.js';
@@ -437,8 +438,8 @@ export class AsteroidBelt {
     let zoom = z1;
     let viewW = bufW;
     let viewH = bufH;
-    const split = typeof window !== 'undefined' && !!window.splitScreenMode;
-    const cam2 = split ? window.camera2 : null;
+    const split = !!RenderWorld.splitScreenMode;
+    const cam2 = split ? RenderWorld.camera2 : null;
     if (cam2 && !Core3D.isFreePerspectiveCamera(cam2)) {
       const z2 = Core3D.viewZoom(cam2);
       const x2 = Number(cam2.x) || 0;

@@ -29,6 +29,7 @@
 // Rozgrzewka: puste dispatche kerneli gazu i żaru + pipeline'y siatek w passie ortho (kamera z góry i kamery 3D).
 
 import { GasGrid } from '../gas/gasGrid.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { GasGridSet } from '../gas/gasGridSet.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
 import { GasVolume, GAS_LIGHT_OWNER_BASE } from '../gas/gasVolume.js';
@@ -283,8 +284,8 @@ export class ExplosionFx {
     const noise3D = fxNoise.noise3D();
     // window.__EXPLOSION_GRID — nadpisanie siatek przed startem gry (harness: A/B konfiguracji domen, np. dawne 10 domen
     // bez atlasu „fine”); opcja `grid` (testy, dema) bierze górę.
-    const cfg = { ...EXPLOSION_GRID, ...(globalThis.__EXPLOSION_GRID || {}), ...(grid || {}) };
-    if (globalThis.__EXPLOSION_TUNE_OVR) Object.assign(EXPLOSION_TUNE, globalThis.__EXPLOSION_TUNE_OVR);
+    const cfg = { ...EXPLOSION_GRID, ...(RenderWorld.config.explosionGrid || {}), ...(grid || {}) };
+    if (RenderWorld.config.explosionTune) Object.assign(EXPLOSION_TUNE, RenderWorld.config.explosionTune);
     // Atlas podstawowy + „fine” (F5b) — dla reżysera, emiterów i żaru jedna siatka (GasGridSet: indeksy domen globalne).
     const main = new GasGrid({ ...cfg, noise3D, rng: fxRandom, nRef: cfg.N });
     const tier = (n, nz, slots, jacobi, maxSources, opts) => (slots | 0) > 0 ? new GasGrid({ N: n, NZ: nz, slots, jacobi, maxSources,
@@ -1756,7 +1757,7 @@ export class ExplosionFx {
     const sunDir = this.rocketFx?.sunDir;
     if (sunDir) { this.grid.sunDir.copy(sunDir); return; }
     const cam = ctx.core?.activeCam1;
-    const sun = typeof window !== 'undefined' ? window.SUN : null;
+    const sun = RenderWorld.sun;
     if (sun && cam) {
       const dx = sun.x - (Number(cam.x) || 0);
       const dy = -(sun.y - (Number(cam.y) || 0));

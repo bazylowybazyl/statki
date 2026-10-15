@@ -42,6 +42,7 @@ import {
   BAND_FRIENDLY, BAND_HOSTILE, rocketVfxIndex, PULSAR_BEAM
 } from './palette.js';
 import { GLOW_ROUND } from './glow.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { fillRandom } from './rand.js';
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { getEntityShieldRadiusTowards } from '../../../shieldSystem.js';
@@ -146,8 +147,7 @@ function entY(e) { return Number(e?.pos?.y ?? e?.y) || 0; }
 function entVx(e) { return Number(e?.vx ?? e?.vel?.x) || 0; }
 function entVy(e) { return Number(e?.vy ?? e?.vel?.y) || 0; }
 function isPlayerEntity(e) {
-  const w = typeof window !== 'undefined' ? window : null;
-  return !!e && !!w && (e === w.ship || e === w.player2Ship || e._isPlayerShip === true);
+  return !!e && RenderWorld.isBrowser && (e === RenderWorld.ship || e === RenderWorld.player2Ship || e._isPlayerShip === true);
 }
 
 export class RocketEffects {
@@ -818,7 +818,7 @@ export class RocketEffects {
     ct.valid = false;
     ct.rocket = r.index;
     const target = r.target;
-    const HB = typeof window !== 'undefined' ? window.HullBodies : null;
+    const HB = RenderWorld.hullBodies;
     if (!target || target._isPositionTarget) return;
     const c = rocketHullContact(HB, target, x0, y0, x1, y1, this.hc[r.index], this.hs[r.index]);
     if (!c.valid) return;
@@ -1060,7 +1060,7 @@ export class RocketEffects {
     }
     // Wstrząs kamery — tylko supernowa w kadrze (standardowe salwy trzęsłyby bitwą bez przerwy).
     if (inView && this.opts.novaShake && typeof window !== 'undefined') {
-      const cam = window.camera;
+      const cam = RenderWorld.camera;
       if (cam && typeof cam.addShake === 'function') {
         const left = (Number(cam.shakeMag) || 0) * ((Number(cam.shakeDur) || 0) > 0 ? 1 : 0);
         if (16 > left) cam.addShake(16, 0.45);
@@ -1248,8 +1248,8 @@ export class RocketEffects {
     let hx = entX(h);
     let hy = entY(h);
     let ha = Number(h?.angle) || 0;
-    if (typeof window !== 'undefined' && h === window.ship && window.__interpShipPose) {
-      const p = window.__interpShipPose;
+    if (h === RenderWorld.ship && RenderWorld.playerPose) {
+      const p = RenderWorld.playerPose;
       hx = p.x; hy = p.y; ha = p.angle;
     }
     const o = c * 5;

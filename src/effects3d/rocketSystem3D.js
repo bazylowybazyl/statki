@@ -42,6 +42,7 @@
  *   //       albo window.rocketSystem3D.fire(gameX, gameY, target, damage, weaponDef, 'blue', vx, vy)
  */
 import * as THREE from "three";
+import { RenderWorld } from '../render/renderWorld.js';
 import { isEntityShieldBlocking } from "../../shieldSystem.js";
 import { shieldImpactClass, submunitionDef } from "../data/weapons.js";
 import { SimClock } from "../game/simClock.js";
@@ -643,8 +644,8 @@ class RocketSystem3D {
         r.salvoCount = count;
         r.seed = seed;
         r.shooter = launch ? (launch.shooter || null) : null;
-        r.fighterSide = fighterSideOf(r.shooter, typeof window !== "undefined" ? window.ship : null);
-        r.byPlayer = !!r.shooter && typeof window !== "undefined" && r.shooter === window.ship;
+        r.fighterSide = fighterSideOf(r.shooter, RenderWorld.ship);
+        r.byPlayer = !!r.shooter && r.shooter === RenderWorld.ship;
         r.hostile = colorTheme === "red";
 
         r.target          = target;
@@ -1367,7 +1368,7 @@ class RocketSystem3D {
         if (!target || target.dead) return;
         if (target._isPositionTarget) return;
         // Rakieta myśliwca nie rani własnej strony (src/game/friendlyFire.js) — jak pociski myśliwców.
-        if (fighterSideSparesAlly(r.fighterSide, target, window.ship)) return;
+        if (fighterSideSparesAlly(r.fighterSide, target, RenderWorld.ship)) return;
 
         const dmg = r.damage || 60;
 
@@ -1375,11 +1376,11 @@ class RocketSystem3D {
         // rejestrowały trafienia — pole nie dostawało ani ripple, ani cząsteczek.
         let shieldBlocking = isEntityShieldBlocking(target);
         // Przebicie tarczy (src/3d/shield3D.js): głowica w dziurze przegrzanego pola trafia pancerz.
-        const breach = shieldBlocking && typeof window !== "undefined" && !!(target._realEntity || target).__shieldBreach
-            && typeof window.isShieldBreachedAt === "function" && window.isShieldBreachedAt(target, r.position.x, r.position.z);
+        const breach = shieldBlocking && !!(target._realEntity || target).__shieldBreach
+            && typeof RenderWorld.game.isShieldBreachedAt === "function" && RenderWorld.game.isShieldBreachedAt(target, r.position.x, r.position.z);
         if (breach) shieldBlocking = false;
-        if (shieldBlocking && typeof window !== "undefined" && window.registerShieldImpact) {
-            window.registerShieldImpact(
+        if (shieldBlocking && RenderWorld.game.registerShieldImpact) {
+            RenderWorld.game.registerShieldImpact(
                 target, r.position.x, r.position.z, dmg, shieldImpactClass(r.weaponDef)
             );
             // Kula ognia na polu energetycznym to VFX trafienia w PANCERZ.
@@ -1391,18 +1392,18 @@ class RocketSystem3D {
         // Głowica na poszyciu (zadanie 25c): mały krater na miarę rany rakiety w punkcie styku
         // (ten sam co obraz wybuchu) — przed obrażeniami HP, żeby śmierć celu (wrak z całego
         // kadłuba) nie zabrała mu kadłuba. Punkt i krater liczy gra (index.html).
-        if (!shieldBlocking && target.beamHull && typeof window !== "undefined" && window.applyRocketHullImpact) {
+        if (!shieldBlocking && target.beamHull && RenderWorld.game.applyRocketHullImpact) {
             const tvx = Number(target.vx ?? target.vel?.x) || 0;
             const tvy = Number(target.vy ?? target.vel?.y) || 0;
-            window.applyRocketHullImpact(target, x0, z0, x1, z1, dmg, r.weaponDef,
+            RenderWorld.game.applyRocketHullImpact(target, x0, z0, x1, z1, dmg, r.weaponDef,
                 r.velocity.x + r.frameVel.x - tvx, r.velocity.z + r.frameVel.z - tvy);
         }
 
-        const applyNpc    = window.applyDamageToNPC;
-        const applyPlayer = window.applyDamageToPlayer;
+        const applyNpc    = RenderWorld.game.applyDamageToNPC;
+        const applyPlayer = RenderWorld.game.applyDamageToPlayer;
 
         // Determine if target is the player
-        const isPlayer = (target === window.ship) || !!target._isPlayerShip || (target === window.Game?.player);
+        const isPlayer = (target === RenderWorld.ship) || !!target._isPlayerShip || (target === RenderWorld.game.Game?.player);
         const dmgOpts = breach ? ROCKET_BREACH_DAMAGE_OPTS : undefined;
         if (isPlayer) {
             if (applyPlayer) applyPlayer(dmg, dmgOpts);
@@ -1418,9 +1419,9 @@ class RocketSystem3D {
         const damageBase = Math.max(0, Number(r.damage) || 0);
         if (damageBase <= 0) return;
 
-        const applyNpc = window.applyDamageToNPC;
-        const applyPlayer = window.applyDamageToPlayer;
-        const player = window.ship;
+        const applyNpc = RenderWorld.game.applyDamageToNPC;
+        const applyPlayer = RenderWorld.game.applyDamageToPlayer;
+        const player = RenderWorld.ship;
         const getEntityRadius = (entity) => Math.max(
             Number(entity?.radius) || 0,
             (Number(entity?.w) || 0) * 0.5,
@@ -1445,7 +1446,7 @@ class RocketSystem3D {
             }
         }
 
-        const npcs = Array.isArray(window.npcs) ? window.npcs : [];
+        const npcs = Array.isArray(RenderWorld.npcs) ? RenderWorld.npcs : [];
         for (let i = 0; i < npcs.length; i++) {
             const npc = npcs[i];
             if (!npc || npc.dead) continue;
@@ -1472,14 +1473,14 @@ class RocketSystem3D {
      * Piraci we własny dok nie strzelają (jak pociski).
      */
     _blastWorldBodies(r, ex, ez) {
-        const W = typeof window !== "undefined" ? window.WorldBodies : null;
+        const W = RenderWorld.game.WorldBodies;
         // kawałki-ciała w bańce albo bryły 3D (wieża habitatu i jej odłamy — front jako kula, worldBodies.detonate)
         if (!W || !(W.stats?.live > 0 || W.stats?.solids > 0) || r.shooter?.isPirate) return;
         const radius = Math.max(0, Number(r.blastRadius) || 0);
         const dmg = Math.max(0, Number(r.damage) || 0);
         if (radius <= 0 || dmg <= 0) return;
         const owners = W.detonateDamage(ex, ez, radius, dmg, r.velocity.x + r.frameVel.x, r.velocity.z + r.frameVel.z);
-        const applyStation = window.applyDamageToStation;
+        const applyStation = RenderWorld.game.applyDamageToStation;
         if (!owners || !owners.length || typeof applyStation !== "function") return;
         for (let i = 0; i < owners.length; i++) {
             const st = owners[i];
@@ -1492,10 +1493,10 @@ class RocketSystem3D {
      * głowicy (pełne w środku, połowa na brzegu). Strona rakiety = strona strzelca.
      */
     _blastRepairDrones(r, ex, ez) {
-        const S = typeof window !== "undefined" ? window.RepairSwarm : null;
+        const S = RenderWorld.game.RepairSwarm;
         if (!S || !(S.out > 0)) return;
         const sh = r.shooter;
-        const friendly = !!sh && (sh === window.ship || sh.isPlayer === true || sh.friendly === true);
+        const friendly = !!sh && (sh === RenderWorld.ship || sh.isPlayer === true || sh.friendly === true);
         S.blast(ex, ez, Math.max(24, Number(r.blastRadius) || 0), Math.max(0, Number(r.damage) || 0), friendly);
     }
 

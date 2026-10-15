@@ -80,6 +80,6 @@ test('rakieta 3D myśliwca (strona zapamiętana przy wyrzucie) nie rani swojej s
 test('rocketSystem3D: strona myśliwca w rakiecie, filtr w trafieniu głowicy i w wybuchu', () => {
   const src = readFileSync(new URL('../src/effects3d/rocketSystem3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /r\.fighterSide = fighterSideOf\(r\.shooter,/);
-  assert.match(src, /_onHit\(r[^\n]*\{[\s\S]{0,300}fighterSideSparesAlly\(r\.fighterSide, target, window\.ship\)/);
+  assert.match(src, /_onHit\(r[^\n]*\{[\s\S]{0,300}fighterSideSparesAlly\(r\.fighterSide, target, RenderWorld\.ship\)/);
   assert.match(src, /_applyBlastDamage\(r, ex, ez\) \{[\s\S]{0,1400}fighterSideSparesAlly\(side, player, player\)[\s\S]{0,1600}fighterSideSparesAlly\(side, npc, player\)/);
 });

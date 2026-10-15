@@ -16,6 +16,7 @@
 // reżyserowi przez `createRocketFx(Core3D).director`.
 
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { SmokeSystem, SMOKE_SHADOW_LEN } from './smoke.js';
 import { PlumeSystem } from './plumes.js';
 import { MissileBodies } from './missileBodies.js';
@@ -136,7 +137,7 @@ export class RocketFx {
     }
     const tl = d.time - d.epoch;
     // Słońce: kierunek z pozycji SUN względem kamery, podniesiony o 30° (jak demo).
-    const sun = typeof window !== 'undefined' ? window.SUN : null;
+    const sun = RenderWorld.sun;
     if (sun) {
       const dx = sun.x - camX;
       const dy = -(sun.y - camY);

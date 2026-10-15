@@ -9,6 +9,7 @@
 //     warstwę (Core3D.setDistortLayerActive — flagę kasuje klatka efektów, więc zgłoszenie idzie z kroku);
 //   • cząstki i światła (cloakFx.js), rozgrzewka pipeline'u warstwy DIST na ekranie ładowania.
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { Core3D } from '../core3d.js';
 import { FX_DISTORT_LAYER } from '../fx/fxFrame.js';
 import { HULL_EMPTY_SPRITE_TEXTURE, HULL_FLAT_NORMAL_TEXTURE, HULL_SHARED, HullCloakDistNodeMaterial } from '../hexShips3D.tsl.js';
@@ -70,7 +71,7 @@ export function updateCloakLooks(entities, nowMs, getPose, zoomPx, player = null
 // Wizjer gracza (cloakView.js): ukrycie, zakłócenie, migotanie przy końcu energii (bez pierścienia przy
 // włączaniu — usunięty 2026-10-05). Podzielony ekran — bez wizjera (post jest wspólny dla obu połówek).
 function updateView(look, dt, t) {
-  if (typeof window !== 'undefined' && window.splitScreenMode) return;
+  if (RenderWorld.splitScreenMode) return;
   if (!look.active) return;   // bez zgłoszenia — post wyłącza wizjer sam
   const flick = look.flicker > 0 ? 1 - 0.45 * look.flicker * (0.5 + 0.5 * Math.sin(t * 31) * Math.sin(t * 7.3)) : 1;
   setCloakView((1 - look.vis) * flick, look.glitch);

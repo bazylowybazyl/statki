@@ -22,7 +22,7 @@
 // widocznej (punkt skoku) też. Gwiazdy: limit przesuwu wzoru 14 tys. j/s (demo) w warpie.
 
 import { Core3D } from '../core3d.js';
-import { GameState } from '../../game/gameState.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { planWarpFleetArrival, warpSizeScale } from '../../game/warpDrive.js';
 import { getEntityHullSprite } from '../hexShips3D.js';
 import { WarpMedium, BUBBLE_CAP, SEAM_CAP, MEDIUM_COUNT_DEFAULT, RULON_BOX } from './medium.js';
@@ -66,8 +66,8 @@ function entityHullWidth(e) {
 
 /** Poza encji w świecie (gracz: poza interpolowana renderu; NPC: x/y — kanoniczne). */
 function entityPose(e, out) {
-  const isPlayer = e && e === GameState.ship;
-  const ip = isPlayer && typeof window !== 'undefined' ? window.__interpShipPose : null;
+  const isPlayer = e && e === RenderWorld.ship;
+  const ip = isPlayer ? RenderWorld.playerPose : null;
   if (ip && Number.isFinite(ip.x)) {
     out.x = ip.x; out.y = ip.y; out.angle = ip.angle;
   } else if (Number.isFinite(e?.x) && Number.isFinite(e?.y)) {

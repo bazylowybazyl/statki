@@ -24,6 +24,7 @@
 // wyrwy i rykoszety w pulach o stałej pojemności.
 
 import { Core3D } from '../core3d.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { GpuFx } from './gpuFx.js';
 import { ProjectileSystem, PSTYLE } from './projectiles.js';
 import { TrailSystem } from './trails.js';
@@ -345,7 +346,7 @@ export const WeaponFx = {
 
   _shake(mag, dur) {
     if (!this._shakeAllowed || !(mag > 0)) return;
-    const cam = typeof window !== 'undefined' ? window.camera : null;
+    const cam = RenderWorld.camera;
     if (!cam || typeof cam.addShake !== 'function') return;
     const m = mag * this._shakeScale;
     const left = cam.shakeDur > 0 ? cam.shakeMag * Math.max(0, cam.shakeTime / cam.shakeDur) : 0;
@@ -354,7 +355,7 @@ export const WeaponFx = {
 
   _hullInside(hull, x, y) {
     if (!hull) return true;
-    const HB = typeof window !== 'undefined' ? window.HullBodies : null;
+    const HB = RenderWorld.hullBodies;
     if (hull.beamHull && HB?.probe) return HB.probe(hull, x, y);
     return true;
   },
@@ -464,7 +465,7 @@ export const WeaponFx = {
   },
 
   _zoom() {
-    const z = Number(Core3D.activeCam1?.zoom ?? (typeof window !== 'undefined' ? window.camera?.zoom : 1));
+    const z = Number(Core3D.activeCam1?.zoom ?? RenderWorld.camera?.zoom);
     return z > 0 ? z : 1;
   },
 
@@ -528,7 +529,7 @@ export const WeaponFx = {
       // wieże na auto, ekranem trzęsie tylko grupa w ręku.
       this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(shot.shake) || 0) * this.shotShakeScale);
       // Kopnięcie kadru wzdłuż lufy (strzał gracza 1; index.html → cameraRig.addCameraKick).
-      if (this.onPlayerShot !== null && gunner && typeof window !== 'undefined' && gunner === window.ship) {
+      if (this.onPlayerShot !== null && gunner && gunner === RenderWorld.ship) {
         this.onPlayerShot(Math.cos(shot.angle), Math.sin(shot.angle), (Number(shot.shake) || 0) * this.shotShakeScale, Number(w.def?.cooldown) || 1);
       }
       shot.entity = null;
@@ -854,8 +855,8 @@ export const WeaponFx = {
     }
     // wstrząs z trafień tylko dla gracza (strzelał albo oberwał) — bitwa NPC nie trzęsie kamerą;
     // siła × impactScale broni (18-D — obraz receptury bez zmian)
-    const player = typeof window !== 'undefined' ? window.ship : null;
-    const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
+    const player = RenderWorld.ship;
+    const p2 = RenderWorld.player2Ship;
     const ent = hit?.entity || null;
     this._shakeAllowed = b.owner === 'player' || b.owner === 'player2' || (ent && (ent === player || ent === p2));
     this._shakeScale = b.vfxKey ? weaponImpactScale(weaponCtx(b.vfxKey).def) : 1;
@@ -958,8 +959,8 @@ export const WeaponFx = {
     p.x = x; p.y = y;
     p.vx = relVx; p.vy = relVy; p.rvx = relVx; p.rvy = relVy;
     p.power = SIZE_POWER[b.weaponSize] || 1;
-    const player = typeof window !== 'undefined' ? window.ship : null;
-    const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
+    const player = RenderWorld.ship;
+    const p2 = RenderWorld.player2Ship;
     this._shakeAllowed = b.owner === 'player' || b.owner === 'player2' || (hull && (hull === player || hull === p2));
     this._shakeScale = b.vfxKey ? weaponImpactScale(weaponCtx(b.vfxKey).def) : 1;
     try {
@@ -1024,8 +1025,8 @@ export const WeaponFx = {
     }
     this._impactBudget--;
     this.stats.impacts++;
-    const player = typeof window !== 'undefined' ? window.ship : null;
-    const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
+    const player = RenderWorld.ship;
+    const p2 = RenderWorld.player2Ship;
     this._shakeAllowed = !!hull && (hull === player || hull === p2);
     try { bombBlast(this.ctx, x, y, scale, hull); } finally { this._shakeAllowed = true; }
     return true;

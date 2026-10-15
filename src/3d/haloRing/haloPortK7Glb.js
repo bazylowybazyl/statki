@@ -24,6 +24,7 @@
 // LOD0, gdy jednostka hali ma na ekranie ≥ K7_GLB_TUNE.lod0Ppu px (domyślnie 0,3 — zoom gry z góry ≈ 0,3).
 
 import * as THREE from 'three';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { K7_MAT, buildK7Scene } from './haloPortK7Build.js';
 import { K7_ABOVE_SCALE, K7_HEIGHTS, createK7Layout, k7HeightToZ } from './haloPortK7Layout.js';
@@ -61,17 +62,18 @@ const K7_GLB_OFF = new Set(['stara', 'old', '0', 'false']);
 
 /** Czy hala z Blendera jest włączona w tej sesji (przełącznik; o gotowości pliku — k7GlbData). */
 export function k7GlbEnabled() {
-  const g = globalThis;
-  if (g.__K7_GLB === true) return true;
-  if (g.__K7_GLB === false) return false;
+  const flag = RenderWorld.config.k7Glb;
+  if (flag === true) return true;
+  if (flag === false) return false;
   try {
-    const q = g.location?.search ? new URLSearchParams(g.location.search) : null;
+    const search = RenderWorld.pageSearch;
+    const q = search ? new URLSearchParams(search) : null;
     const v = q?.get('k7');
     if (v != null) return !K7_GLB_OFF.has(v);
   } catch (e) { /* bez location */ }
   // domyślnie tylko w przeglądarce: w Node pliku nie ma skąd pobrać, a budowa ringu pompowana synchronicznie
   // (tests/haloRingArchTlo.test.mjs) czekałaby na wczytanie bez końca — testy z GLB ustawiają __K7_GLB jawnie
-  return typeof window !== 'undefined';
+  return RenderWorld.isBrowser;
 }
 
 // ---------------------------------------------------------------------------
