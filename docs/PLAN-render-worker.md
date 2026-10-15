@@ -1307,8 +1307,8 @@ strumień renderu; w RW-22 losowanie przejdzie do workera razem z rekordem `HULL
 Kryterium: dwa przebiegi harnessu identyczne; nowa baza zrzutów zatwierdzona RAZ (sceny z efektami się zmienią —
 D4); sceny bez efektów bit w bit. Zależności: brak. Kolizje: `index.html` (kilka linii), `hullBodies.js` (1 linia).
 
-**Stan RW-20 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
-zrzutami po pauzie obciążenia: dwa przebiegi harnessu identyczne, nowa baza raz — D4):** klasa `FxRandom` w nowym
+**Stan RW-20 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16 —
+dwa przebiegi harnessu identyczne, nowa baza raz (D4); § 7.1 „Weryfikacja toru rw-bronie”):** klasa `FxRandom` w nowym
 neutralnym `src/render/fxRandomCore.js` (bez three / DOM; `src/3d/fx/fxRandom.js` reeksportuje ją i trzyma strumień
 renderu `fxRandom`, API bez zmian). Strumień gry `fxRandomGame` (`src/game/fxRandomGame.js`, własne ziarno
 `FX_RANDOM_GAME_SEED`): `index.html` (15 losowań: ton dźwięku, cząstki kanwy — ślad pocisku, iskry wyrzutni, start
@@ -1331,8 +1331,8 @@ reguła `__renderedByThree` po stronie gry); `src/game/superweapon.js` (Hexlance
 `WeaponFx.stats` równe; testy kodowania każdego typu. Zależności: RW-04, RW-20, RW-26 (lufa i odrzut w grze).
 Kolizje: `index.html` (pętla pocisków, PD) — duże pole, jedno krótkie podejście.
 
-**Stan RW-21 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
-zrzutami `galeria`, `kosmos`, `rakiety` i `WeaponFx.stats` po pauzie obciążenia):** `src/render/renderCommands.js` —
+**Stan RW-21 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16 —
+kadry galerii broni bit w bit z RW-20; § 7.1 „Weryfikacja toru rw-bronie”):** `src/render/renderCommands.js` —
 kody typów `RC`, układ pól rekordów (obiekty `SHOT`, `IMPACT`, `KERF`, `PIERCE`, `FLAK`, `BLAST`, `CHARGE`, `PD_LASER`,
 `HEX` — wspólne dla kodera i dekodera), pisarz `RenderCommandWriter` (pierścień `EventRingWriter` z RW-04; wartości f64,
 encje i pociski (slot, gen) ze WSPÓLNYCH slotów renderu `RenderSlots` (`src/render/renderSlots.js` z RW-10, kopia
@@ -1379,8 +1379,8 @@ już dziś liczy salwy bez przeglądarki); zrzuty `rakiety` bit w bit przy niezm
 w `physicsStep` 120 Hz (trafienia niezależne od fps — zmiana rozgrywki: nowa baza, porównanie trafień w
 `rakiety-salwy-sym.mjs`, `rakiety-auto-gra.mjs`). Zależności: RW-21. Kolizje: `index.html` (kierowanie ogniem).
 
-**Stan RW-23 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację po
-pauzie obciążenia):** (1) przeniesienie bez zmiany zachowania — `git mv src/effects3d/rocketSystem3D.js
+**Stan RW-23 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16
+— zmienia tylko kadry z rakietami (D2); § 7.1 „Weryfikacja toru rw-bronie”):** (1) przeniesienie bez zmiany zachowania — `git mv src/effects3d/rocketSystem3D.js
 src/game/rockets/rocketSim.js`, three zastąpione `src/game/rockets/rocketMath.js` (Vec3 / Quat / clamp / lerp / degToRad
 — te same wzory co three r183, test bit w bit `tests/rocketMath.test.mjs`), importerzy (index.html, dema, skrypty,
 testy) na nowej ścieżce, katalog `src/effects3d/` pusty; rozgrywka dopisana od 10-07 (PD: `syncThreats`, `pdHit`,
@@ -1474,8 +1474,8 @@ zostaje obraz), lustro maski słońca dla `lightAt` po stronie gry (dyski planet
 Kryterium: zrzuty `kosmos`, `galeria` bit w bit, `scripts/webgpu/maskowanie-gra.mjs`; `tests/cloakLook.test.mjs`,
 `tests/turretBatch3D.test.mjs`. Zależności: brak. Kolizje: `hexShips3D.js` (sesja renderu CPU).
 
-**Stan RW-26 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — czeka na weryfikację zrzutami po pauzie
-obciążenia):** po B3D bez lustra maski słońca (wieżyczek kanwy nie ma). Rekordy wież liczy gra: `Turret2D.syncFrame`
+**Stan RW-26 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — zweryfikowane 2026-10-16 —
+§ 7.1 „Weryfikacja toru rw-bronie”):** po B3D bez lustra maski słońca (wieżyczek kanwy nie ma). Rekordy wież liczy gra: `Turret2D.syncFrame`
 w `render()` przed `updateHexShips3D` (encje z pudła rysowania wg czystego `src/render/drawBox.js` (po scaleniu z RW-31 — jeden moduł pudeł; `collectDrawBoxEntities` dopisane tam) — te same
 funkcje bierze hexShips3D, więc zbiór i kolejność rekordów jak dawniej `drawVfx`; przełącznik „Bronie” PerfHUD —
 `enabled`). Odrzut po stronie gry: `Turret2D.recoilForShot(detail)` w słuchaczu `WeaponShotBus` (index.html) i
@@ -1557,8 +1557,8 @@ Pliki: `src/3d/weapons/weaponFx.js` (bez `camera.addShake` i `__weapon3dCameraSh
 w grze), `index.html` (kamera). Kryterium: zrzuty `warp-kop` bit w bit; wstrząs strzałów nie później niż dziś.
 Zależności: RW-21. Kolizje: `render()` w `index.html` (kamera).
 
-**Stan RW-30 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
-zrzutami `warp-kop` po pauzie obciążenia):** nowy `src/game/cameraShakes.js` (akumulator wstrząsu strzałów
+**Stan RW-30 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe; zweryfikowane 2026-10-16 —
+`warp-kop` bit w bit; § 7.1 „Weryfikacja toru rw-bronie”):** nowy `src/game/cameraShakes.js` (akumulator wstrząsu strzałów
 `WeaponShotShake` — dodawanie z sufitem 18, wygaszanie e^(−8·dt) raz na klatkę renderu w tym miejscu, gdzie dawniej
 WeaponFx.sync; `requestCameraShake` — reguła „nie słabszy od bieżącego”, `requestCameraShakePeak` — reguła
 Supernowej; `ShotFeel.onPlayerShot` — kopnięcie kadru dla strzałów spoza wieżyczek, Hexlance). Wstrząs strzałów
@@ -1750,8 +1750,41 @@ jest gotowe — działaj.”
   - Zasłanianie i oświetlenie wież 3D: fregata zwiadu nad Atlasem — głębia (`__skinZ` 12,5 nad warstwą wież na
     sprite'ach), nadproża K-7 — pass FG po ortho, maskowanie — `entityCloakVisAt` ≥ 0,5 w `syncTurrets`, mgła —
     rekordy tylko dla bytów w kadrze, `__turretsHidden` — `Turret2D.sync` bez rekordów, cień planety / pole pasa —
-    maska słońca materiału partii. Weryfikacja zrzutami (sceny z wieżami zmieniają obraz) — czeka na „WOLNO
-    OBCIĄŻAĆ” (pauza obciążenia: użytkownik gra).
+    maska słońca materiału partii. Weryfikacja zrzutami — niżej („Weryfikacja toru rw-bronie”).
+  **Weryfikacja toru rw-bronie (2026-10-16, po „WOLNO OBCIĄŻAĆ”; B3D, RW-26, RW-20, RW-21, RW-30, RW-23):**
+  - Harness `zrzuty.mjs --backend webgpu --uuid osobne` (wszystkie sesje, 75 kadrów), eksporty drzew przez `--root`:
+    PRZED = 45431670 (HEAD sprzed B3D, `VisualMode.weapons3D` wymuszone na prawdę — inaczej porównanie kanwy z 3D),
+    RW-26 = 973168ae (podzbiór sesji kosmos, rakiety, split, galeria, warp-kop), RW-20 = bfe4c4cf (dwa przebiegi:
+    pełny i podzbiór), TIP = gałąź przed scaleniem main, SCAL = po scaleniu main (RW-25/27/24/29/31). Porównanie
+    `porownaj.mjs` (kadry różne > 2 / > 32 na 255).
+  - Determinizm (RW-20 a vs b): identyczne poza `galeria-rakiet` (0,23% > 2, przeskakuje między dwoma stanami
+    przebieg do przebiegu — ten sam stan w PRZED i RW-26) i `split` (maks 6/255 — szum). Sceny sesji kosmos (bitwa,
+    wraki, wybuch, planeta-cien, kalibracja, warp) są deterministyczne, więc różnice niżej to skutek kodu.
+  - PRZED → RW-26 (B3D + RW-26): `bitwa` 6,5% / 0,55%, `wraki` 2,0% / 0,15%, `wybuch` 1,0% / 0,17%,
+    `galeria-broni` 0,47% / 0,05%, `galeria-rakiet` (szum jw.). Układ kadrów ten sam, różnią się ziarna dymu rakiet
+    i błysków wylotu: wylot czyta lufę bez odrzutu (`Turret2D.shotMuzzle`), odrzut liczy gra przy SHOT — inna
+    kolejność losowań fxRandom. Pozostałe kadry (w tym wszystkie pojedyncze bronie galerii) bit w bit.
+    `kalibracja` w eksporcie RW-26 nie wyszła (harness nie znalazł three — przed poprawką `window.THREE`), w PRZED,
+    RW-20, TIP identyczna.
+  - RW-26 → RW-20: zmienia się większość kadrów walki (rozdzielenie strumieni fxRandom gry i renderu — oczekiwane,
+    D4): galeria broni 0,2–22% > 2 (`galeria-krater-yamato` 81% — inne ziarna efektów trafienia),
+    `wraki` 29%, `bitwa` 6,8%, `planeta-cien` 0,5% (stan przeniesiony z wcześniejszych scen sesji).
+  - RW-20 → TIP (RW-21 + RW-30 + RW-23): wszystkie kadry galerii broni, `warp-kop` (13 kadrów kopu warpa — wstrząs
+    z RW-30) i `split` BIT W BIT — strumień rozkazów broni (RW-21) i wstrząsy po stronie gry (RW-30) nie zmieniają
+    obrazu. Różnią się sceny z rakietami (D2 — lot w kroku fizyki): `galeria-rakiet*` 6–59%, `wraki` 35%, `bitwa`
+    6,4%, `wybuch` 2,9%, oraz `planeta-cien` 0,26% (obrót stacji — niżej) i `warp` 0,1% (następstwo w tej samej sesji).
+  - TIP → SCAL (scalenie main: RW-25/27/24/29/31): bit w bit poza `planeta-cien` (0,33% — sama stacja Wenus w FG
+    obrócona: `stations3D.js` dokłada `spinOffset += 0.002` na każde wywołanie, więc kąt zależy od liczby klatek przed
+    sceną; tak samo w RW-20 → TIP) i `split` (szum). Nowa baza (D4): przebieg SCAL, kopia w głównym drzewie
+    `.tmp/webgpu/baza-rw-bronie-2026-10-16` (`--baza` dla kolejnych porównań).
+  - Gra (drzewo po scaleniu): `maskowanie-gra.mjs` (fazy, ekrany, wizjer), `zwiad-gra.mjs` (wrota, wynurzenie,
+    wylot nad Atlasem, stery, skan, maskowanie fregaty, oko, daleki skan, lądowanie), `hala-swiatla-gra.mjs` (dok
+    z przewodami, odcumowanie, ciąg, cała hala, A/B) — wszystkie przeszły, pipeline'y synchroniczne 0, błędy strony 0
+    (poza favicon 404). Testy `node --test "tests/*.test.mjs"`: 4 niepowodzenia = baza main (moduł hali LF, maska
+    słońca, wątki `renderBuffers` — przechodzi sam); `npm test` i `vite build` przechodzą.
+  - Poprawka harnessu (commit 9d989810): `zrzuty.mjs`, `gorace-powietrze.mjs`, `maska-slonca.mjs`,
+    `post-kontrola.mjs`, `rakiety-sekwencje.mjs` biorą three z `window.THREE` (gra wystawia uchwyt), adres zasobu
+    tylko w zapasie — wcześniej `import(undefined)` w scenach kalibracja i reaktor.
 - **D1 = B2cr** — rekomendacja RW-02 (`docs/webgpu/RW-02-PROTOTYP.md` § 4, § 7): bitmapa 3D z workera
   (`transferToImageBitmap` → `transferFromImageBitmap`) + nakładki klatki k rysowane na wątku głównym do pierścienia
   5 zwykłych kanw 2D w DOM z regułą ochrony (nietykalne: kanwa pokazana, klatki odebrane, a nie złożone — worker pisze
