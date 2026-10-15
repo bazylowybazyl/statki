@@ -41,6 +41,7 @@ const SUFITY = {
   'import:src/game/destructorConfig.js': 2,
   'import:src/game/engineIgnition.js': 3,
   'import:src/game/friendlyFire.js': 1,
+  'import:src/game/fxRandomGame.js': 2, // 2026-10-15 RW-20 (rw-bronie): strumień losowy gry dla modułów kanwy wątku głównego (collisionSparks, canvasParticleSystem)
   'import:src/game/gameState.js': 2,
   'import:src/game/haloRingCollision.js': 1,
   'import:src/game/haloRingPlanets.js': 2,
@@ -155,7 +156,6 @@ const SUFITY = {
   'gpu:src/3d/tsl/zapisF16.js': 2,
   // Math.random w renderze (RW-20)
   'random:src/3d/planet3d.assets.js': 8,
-  'random:src/3d/reactor3D.js': 3,
   'random:src/effects3d/rocketSystem3D.js': 2
 };
 

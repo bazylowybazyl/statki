@@ -114,7 +114,7 @@ test('porcje smugi leżą wzdłuż drogi pocisku w tej klatce, bez obiektów poz
   const spawnBulletTrail = loadIndexFunction(html, 'function spawnBulletTrail(b, count, frameDt) {', 'spawnBulletTrail', {
     WeaponFx: { available: false },
     CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) },
-    fxRandom
+    fxRandomGame: fxRandom
   });
   spawnBulletTrail({ type: 'autocannon', x: 100, y: 50, vx: 1200, vy: 0 }, 2, 2 / 120);
   assert.equal(spawns.length, 2);

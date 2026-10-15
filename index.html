@@ -1367,7 +1367,8 @@
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
     // Losowość warstwy efektów (zadanie 23): cząstki kanwy (ślady pocisków, iskry wyrzutni i startu
     // myśliwca) i wariacja tonu dźwięku nie zużywają Math.random gry — przebieg bitwy nie zależy od obrazu.
-    import { fxRandom } from "./src/3d/fx/fxRandom.js";
+    // RW-20: wizualia i drobna losowość wątku głównego — strumień gry (osobny od strumienia renderu fxRandom).
+    import { fxRandomGame } from "./src/game/fxRandomGame.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
     // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
     import { WeaponFx } from "./src/3d/weapons/weaponFx.js";
@@ -2442,7 +2443,7 @@
       if (!ctx || !buffer) return;
 
       // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
-      const rate = pitchVar ? 1.0 + (fxRandom.next() - 0.5) * 2 * pitchVar : 1.0;
+      const rate = pitchVar ? 1.0 + (fxRandomGame.next() - 0.5) * 2 * pitchVar : 1.0;
       const dist = (Number.isFinite(x) && Number.isFinite(y)) ? Math.hypot(x - camera.x, y - camera.y) : 0;
       const durationMs = (Number(buffer.duration) || 0) / rate * 1000;
       const voiceVolume = shotVoiceLimiter.admit(soundKey, performance.now(), volume, dist, durationMs);
@@ -12328,7 +12329,7 @@
     // `bodies` zbieracza; komunikaty z etykietą NEA. Tylko gra swobodna (sesja, w której ruszyła kampania, nigdy),
     // raz na sesję po ≥ 20 min czasu gry, gdy gracz jest przy Ziemi; `?apophis` — start po kilku s. Bez kolizji.
     const NEA_FLYBY_DEV = (() => { try { return new URLSearchParams(location.search).has('apophis'); } catch { return false; } })();
-    const neaFlyby = new NeaFlyby({ dev: NEA_FLYBY_DEV, rand: () => fxRandom.next() });
+    const neaFlyby = new NeaFlyby({ dev: NEA_FLYBY_DEV, rand: () => fxRandomGame.next() });
     let neaFlyby3D = null;
     let neaCampaignSession = false;   // kampania ruszyła w tej sesji — przelotu nie będzie
     const _neaRadarBodies = [];
@@ -21514,8 +21515,8 @@
       ActiveCarrier.set(launch);
       spawnParticle({ x: gunWorld.x, y: gunWorld.y }, { x: baseDir.x * 120, y: baseDir.y * 120 }, 0.14, '#b4ffb4', 3.2, true);
       for (let k = 0; k < 6; k++) {
-        const aa = Math.atan2(baseDir.y, baseDir.x) + (fxRandom.next() - 0.5) * 0.9;
-        spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + fxRandom.next() * 0.06, '#a8ff9a', 1.1, true);
+        const aa = Math.atan2(baseDir.y, baseDir.x) + (fxRandomGame.next() - 0.5) * 0.9;
+        spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + fxRandomGame.next() * 0.06, '#a8ff9a', 1.1, true);
       }
       ActiveCarrier.clear();
     }
@@ -21678,13 +21679,13 @@
 
       if (window.spawnParticle) {
         for (let i = 0; i < 6; i++) {
-          const spread = (fxRandom.next() - 0.5) * 0.5;
+          const spread = (fxRandomGame.next() - 0.5) * 0.5;
           const px = launch.nx * Math.cos(spread) - launch.ny * Math.sin(spread);
           const py = launch.nx * Math.sin(spread) + launch.ny * Math.cos(spread);
           window.spawnParticle(
             { x: launch.x, y: launch.y },
-            { x: frame.vx - px * (180 + fxRandom.next() * 220), y: frame.vy - py * (180 + fxRandom.next() * 220) },
-            0.35, '#cfe8ff', 2 + fxRandom.next() * 3, true
+            { x: frame.vx - px * (180 + fxRandomGame.next() * 220), y: frame.vy - py * (180 + fxRandomGame.next() * 220) },
+            0.35, '#cfe8ff', 2 + fxRandomGame.next() * 3, true
           );
         }
       }
@@ -23640,13 +23641,13 @@
           continue;
         }
         CanvasVFX.spawnParticleXY(
-          px + (fxRandom.next() - 0.5) * 3, py + (fxRandom.next() - 0.5) * 3,
-          -rvx * 0.02 + (fxRandom.next() - 0.5) * 10, -rvy * 0.02 + (fxRandom.next() - 0.5) * 10,
+          px + (fxRandomGame.next() - 0.5) * 3, py + (fxRandomGame.next() - 0.5) * 3,
+          -rvx * 0.02 + (fxRandomGame.next() - 0.5) * 10, -rvy * 0.02 + (fxRandomGame.next() - 0.5) * 10,
           isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false
         );
         // Extra engine glow for torpedoes
         if (isTorpedo) {
-          CanvasVFX.spawnParticleXY(px, py, (fxRandom.next() - 0.5) * 20, (fxRandom.next() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
+          CanvasVFX.spawnParticleXY(px, py, (fxRandomGame.next() - 0.5) * 20, (fxRandomGame.next() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
         }
         // Bright additive head glow for canvas-only fighter missiles.
         if (b.forceCanvas) {
@@ -31233,7 +31234,7 @@
       for (const f of list) {
         f.squad = null;
         f.__carrierParent = null;
-        const a = angle + (fxRandom.next() - 0.5) * 0.8;
+        const a = angle + (fxRandomGame.next() - 0.5) * 0.8;
         f.vx = Math.cos(a) * 520;
         f.vy = Math.sin(a) * 520;
         f.angle = a;

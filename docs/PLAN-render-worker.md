@@ -1307,6 +1307,20 @@ strumień renderu; w RW-22 losowanie przejdzie do workera razem z rekordem `HULL
 Kryterium: dwa przebiegi harnessu identyczne; nowa baza zrzutów zatwierdzona RAZ (sceny z efektami się zmienią —
 D4); sceny bez efektów bit w bit. Zależności: brak. Kolizje: `index.html` (kilka linii), `hullBodies.js` (1 linia).
 
+**Stan RW-20 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
+zrzutami po pauzie obciążenia: dwa przebiegi harnessu identyczne, nowa baza raz — D4):** klasa `FxRandom` w nowym
+neutralnym `src/render/fxRandomCore.js` (bez three / DOM; `src/3d/fx/fxRandom.js` reeksportuje ją i trzyma strumień
+renderu `fxRandom`, API bez zmian). Strumień gry `fxRandomGame` (`src/game/fxRandomGame.js`, własne ziarno
+`FX_RANDOM_GAME_SEED`): `index.html` (15 losowań: ton dźwięku, cząstki kanwy — ślad pocisku, iskry wyrzutni, start
+myśliwca —, plan przelotu NEA, wyrzut dronów fabuły `storyLaunchDrones` — ten ostatni to rozgrywka, nie wizualia),
+`src/game/superweapon.js` (Hexlance kanwy), `src/vfx/canvasParticleSystem.js`, `src/vfx/collisionSparks.js` (oba
+zostają na wątku głównym). `src/3d/reactor3D.js` — `Math.random` → `fxRandom`. Bez zmian względem planu:
+`hullBodies.js` (`onNodeDebris`) zostaje na strumieniu renderu (losowanie przejdzie do workera z `HULL_DEBRIS`, RW-22);
+`planet3d.assets.js` (8 × `Math.random`, budowa nieba) i `rocketSystem3D.js` (2 — wyrzut rakiet, rozgrywka; RW-23) —
+nietknięte (zmiana przesunęłaby ciąg `Math.random` gry przy budowie świata). Harness: `reseed(v)` sieje też
+`window.fxRandomGame` (`v ^ 0x9e3779b9`), licznik `--losowania efekty` zna ramki `fxRandomCore.js`. Szew:
+`import:src/game/fxRandomGame.js` 2 (klasa B, moduły kanwy wątku głównego), `random:src/3d/reactor3D.js` 3 → 0.
+
 **RW-21 Strumień rozkazów — infrastruktura i broń.**
 Pliki: nowy `src/render/renderCommands.js` (kody typów, pisarz, dyspozytor `inline`) + testy; źródła: słuchacz
 `WeaponShotBus` → `SHOT` / `BEAM`; `index.html` (`spawnBulletImpactEffect`, `applyBulletHullPass`, `ciwsStep`,
