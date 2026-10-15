@@ -13,15 +13,15 @@
 // odbicia): położenie = środek skały w układzie bazy, obrót = meshQuat (stopa windy = lon 0, lat 0 mapy). Skała nie
 // obraca się (winda trzyma bazę nad tarasem).
 import * as THREE from 'three/webgpu';
+import { loadTexture } from './canvas2d.js';
 import { Core3D } from './core3d.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_MAPS } from './planetMaps.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
 import { portHubMatrixElements } from './portBuildings/portModuleTraffic.js';
 
-const loader = new THREE.TextureLoader();
 function loadTex(path, srgb) {
-  const tex = loader.load(path, (t) => {
+  const tex = loadTexture(path, (t) => {
     const img = t?.image;
     const decoding = img && typeof img.decode === 'function' ? img.decode() : null;
     if (decoding) decoding.catch(() => {}).then(() => Core3D.queueTextureUpload?.(t));

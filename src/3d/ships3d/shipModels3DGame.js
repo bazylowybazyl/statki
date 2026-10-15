@@ -22,6 +22,8 @@
 // tarcze, mapa ran i efekty zostają z gry 2D.
 // ============================================================
 import * as THREE from 'three/webgpu';
+import { loadImageBitmap } from '../canvas2d.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { Fn, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, fract, min } from 'three/tsl';
 import { Core3D } from '../core3d.js';
 import { buildShip3D, SHIP3D_MODELS } from './ships/ships3D.js';
@@ -119,12 +121,7 @@ export function shipModel3DIdFor(e) {
 const _models = new Map();   // id → { hull, geometry, material, skinMaterial, skinGeo: Map(klucz → { geo, lat }) }
 
 function loadImage(src) {
-  return new Promise((ok, fail) => {
-    const img = new Image();
-    img.onload = () => ok(img);
-    img.onerror = () => fail(new Error(`sprite ${src}`));
-    img.src = src;
-  });
+  return loadImageBitmap(src).catch(() => { throw new Error(`sprite ${src}`); });
 }
 
 // Materiał modelu w grze: mapa otoczenia, maska słońca (cień planet i ringu), głębia w warstwie.
@@ -159,7 +156,7 @@ function modelAssets(id) {
   m.material = gameMaterial(createShipMaterial({ palette: m.hull.palette || null, name: `okręt 3D ${id}` }));
   m.skinMaterial = gameMaterial(makeHullSkinMaterial(createShipMaterial({ palette: m.hull.palette || null, name: `okręt 3D ${id} (skóra)` })));
   m.ready = true;
-  if (spec.sprite && typeof Image !== 'undefined') {
+  if (spec.sprite && RenderWorld.isBrowser) {
     loadImage(spec.sprite).then((img) => {
       const aniso = Math.min(8, Number(Core3D.getMaxAnisotropy?.()) || 8);
       const deck = createDeckTexture(img, aniso);

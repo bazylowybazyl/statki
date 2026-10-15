@@ -1397,6 +1397,34 @@ rozkazy, `pirateStationFactory.js`, `arch/ecumene.js`, `arch/fable.js`. Kryteriu
 przenoszonych; zrzuty bit w bit (`mars`, `jowisz`, `piraci`). Zależności: RW-01. Kolizje: rozproszone, małe;
 `core3d.js` (sesja renderu CPU).
 
+**Stan (2026-10-15, tor `rw-szew`): kod na gałęzi, CZEKA NA WERYFIKACJĘ** (pełne testy, `npm test`, build, zrzuty
+wszystkich sesji z naciskiem na `menu`, `ziemia`, `mars`, `jowisz`, `piraci`, `kosmos`, `stacja` — pauza obciążenia).
+Strażnik: `dom:` 81 w 24 plikach → 0 (licznik dostał `new THREE.TextureLoader / ImageLoader` — wcześniej niewidoczne,
+i render spoza katalogów: `src/space/pirateStation/pirateStationFactory.js`, `Engineeffects.js`; `shieldSystem.js`
+z korzenia liczy się jako symulacja — import istniał, sufit 4 z powodem). Nowe: `src/3d/canvas2d.js` —
+`createCanvas2D` (OffscreenCanvas; bez niego tylko atrapa `document.createElement` testów Node), `imageSize`,
+`isImageReady`, `isCanvasSource`, `loadImageBitmap` / `loadTexture` (fetch + `createImageBitmap(blob,
+{ premultiplyAlpha: 'none', colorSpaceConversion: 'default' })` — jak `<img>`; NIE `THREE.ImageBitmapLoader`, który
+wymusza `colorSpaceConversion: 'none'`; `texture.flipY` WebGPU three r183 stosuje do każdego źródła zewnętrznego,
+więc tekstury planet bez zmian orientacji — DO POTWIERDZENIA zrzutami); `src/3d/harmonogram.js` — `requestIdle`
+(requestIdleCallback z wykryciem, w workerze dawny zapas wołającego), `requestFrame` / `cancelFrame`. Fasada
+`RenderWorld`: `viewWidth / viewHeight / devicePixelRatio / screenWidth / screenHeight`, `layerCanvas`,
+`pageHidden` + `onVisibilityChange` / `offVisibilityChange` / `emitVisibilityChange` (tło menu), `storageItem(klucz)`
+(`planetMaps.js`: `sc_planet_maps`), `pageSearch`. Przerobione: `core3d` (kanwa, DPR, rozmiar, wysyłka tekstur
+w tle), `menuBackdrop3D` (widoczność, rAF, tekstury), `planet3d.assets` (rozmiar okna, tekstury, kanwa gwiazd),
+`planetMaps`, `hexShips3D`, `bridge3D`, `beltMedium`, `scoutBay3D`, `portHullBuild3D`, `shipModels3DGame`,
+`shipMaterials3D.tsl`, `hullSurface` / `hullLacquer` / `hullShadowSdf` (wspólne pomocniki zamiast trzech kopii),
+`fxParticles3D`, `hexBodyImpostorBatch`, `portBuildings3D`, `haloPortK7`, `arch/ecumene`, `arch/fable`,
+`smallBodyShape`, `pirateRock3D`, `rozgrzewka`, `shield3D`, `worldBodies3D`, `pirateStationFactory`,
+`Engineeffects`. Odstępstwa i ryzyka do zrzutów: kanwy tekstur proceduralnych to teraz OffscreenCanvas także na
+wątku głównym (dawniej `<canvas>` — możliwe różnice wygładzania tekstu atlasów K-7 i budowli portowych, gradientów);
+sprite'y luku Atlasa, kadłubów w budowie i pokładów modeli 3D — ImageBitmap zamiast `<img>`. Nie zmienione:
+osłony `typeof window` przy zapisach strojeń do konsoli (`window.*Tune = …`) — w workerze zadziała podkładka
+`globalThis.window = globalThis` (RW-36). Dla RW-40/41: workery zagnieżdżone (`hullSurfaceWorker`,
+`portBuildingSkinWorker`, `asteroidGiantWorker`, `cometNucleusWorker`) mają formę `new Worker(new URL('…',
+import.meta.url), { type: 'module' })` rozpoznawaną przez Vite, ale build workera renderu z workerami w środku
+wymaga `worker.format: 'es'` w `vite.config.js` (domyślne `iife` nie obsługuje podziału kodu).
+
 **RW-36 Most konsoli i strojeń.**
 Pliki: nowy `src/render/renderDebug.js` (RPC), podkładka `globalThis.window = globalThis` w workerze, `src/ui/devTools.js`,
 `bloomTunerPanel.js`, `cameraTunerPanel.js`, konsolowe `Core3DPerf` / `Core3DPreset` / `*Tune` przez most.

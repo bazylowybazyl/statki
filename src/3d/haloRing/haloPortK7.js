@@ -24,6 +24,7 @@
 // wtedy wszystkie hale passa dostałyby dane jednej), atlas napisów — węzeł tekstury per
 // obiekt (`teksturaObiektu`; `texture().onObjectUpdate()` w r183 nie działa).
 import * as THREE from 'three';
+import { createCanvas2D } from '../canvas2d.js';
 import {
   Fn, If, Loop, Discard,
   float, int, vec2, vec3, vec4, mat3, mat4,
@@ -645,10 +646,8 @@ function makeLabelAtlas(labels) {
   const cols = 4;
   const rows = Math.ceil(unique.size / cols);
   const H = Math.max(128, 2 ** Math.ceil(Math.log2(rows * cellH)));
-  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  const canvas = createCanvas2D(cellW * cols, H);
   if (!canvas) return null;
-  canvas.width = cellW * cols;
-  canvas.height = H;
   const g = canvas.getContext('2d');
   g.clearRect(0, 0, canvas.width, canvas.height);
   g.fillStyle = '#ffffff';

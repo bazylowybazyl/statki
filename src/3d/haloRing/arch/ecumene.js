@@ -9,6 +9,7 @@
 // szkło kopuł, żebra i dno kopuł — partie instancji archetypów (archBatchMesh), bez
 // THREE.InstancedMesh (PLAN §3).
 import * as THREE from 'three';
+import { createCanvas2D } from '../../canvas2d.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   Fn, If, Loop, Discard,
@@ -237,8 +238,7 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
 // Tekstura płyt metalu (createPanelTexture dema): mapa + chropowatość w jednym.
 function makeEcumenePanelTexture(seed) {
   const size = 512;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
+  const c = createCanvas2D(size, size);
   const x = c.getContext('2d');
   let a = (seed ^ 0x7971) >>> 0;
   const r = () => {
@@ -294,9 +294,7 @@ function blackTexture() {
 
 // Tablice sektorów (createSectorSigns): atlas 2 × 6 tablic 512 × 256.
 function makeSignAtlas(plan) {
-  const c = document.createElement('canvas');
-  c.width = 1024;
-  c.height = 1536;
+  const c = createCanvas2D(1024, 1536);
   const x = c.getContext('2d');
   plan.sectors.forEach((sec, p) => {
     const ox = (p % 2) * 512;

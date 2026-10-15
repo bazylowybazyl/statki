@@ -26,6 +26,7 @@
 // Pieczenie ma budżet na klatkę. hexShips3D woła acquire od największych
 // kadłubów, więc duże okręty dostają cień od pierwszej klatki.
 import * as THREE from 'three';
+import { createCanvas2D, imageSize, isImageReady } from './canvas2d.js';
 import { Break, Continue, If, Loop, clamp, dot, float, int, max, min, select, smoothstep, texture, vec2 } from 'three/tsl';
 
 export const HULL_SDF_LAYER_SIZE = 256;     // bok warstwy w tekselach
@@ -631,27 +632,7 @@ export function traceHullShadowCpu(worldX, worldY, dx, dy, sunDist, packed, offs
 
 // ── Runtime: tablica warstw w przeglądarce ─────────────────────────────────
 
-function makeCanvas(w, h) {
-  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
-  if (typeof document === 'undefined') return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  return canvas;
-}
-
-function imageSize(image) {
-  const w = Number(image?.naturalWidth || image?.videoWidth || image?.width) || 0;
-  const h = Number(image?.naturalHeight || image?.videoHeight || image?.height) || 0;
-  return { w, h };
-}
-
-function isImageReady(image) {
-  if (!image) return false;
-  if (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement && !image.complete) return false;
-  const { w, h } = imageSize(image);
-  return w > 0 && h > 0;
-}
+const makeCanvas = createCanvas2D;
 
 // Mapa alfy obrazu kadłuba, pomniejszona (≤ ALPHA_MAP_MAX_SIDE) i trzymana raz na obraz.
 const _alphaMaps = new WeakMap();

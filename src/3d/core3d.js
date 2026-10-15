@@ -10,6 +10,7 @@
 // bezpiecznik w biegu). Tylko WebGPU: bez adaptera renderer nie powstaje,
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
+import { requestIdle } from './harmonogram.js';
 import { RenderWorld } from '../render/renderWorld.js';
 // Niepowtarzalne uuid węzłów TSL + strażnik kolizji (pułapka 38) — PRZED resztą zależności: węzły tworzone
 // w modułach Core3D dostają już uuid z licznikiem (src/3d/tsl/uuidWezlow.js).
@@ -797,9 +798,9 @@ export const Core3D = {
   init(canvasElement) {
     if (this.isInitialized) return this;
 
-    this.canvas = canvasElement || document.getElementById('webgl-layer');
+    this.canvas = canvasElement || RenderWorld.layerCanvas;
 
-    const dpr = (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1;
+    const dpr = Number(RenderWorld.devicePixelRatio ?? 1) || 1;
     this.pixelRatio = Math.min(1.0, Math.max(1, dpr));
 
     this.scene = new THREE.Scene();
@@ -829,10 +830,10 @@ export const Core3D = {
     this.scene.add(coreLight);
 
     this.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
-    this.cameraPersp = new THREE.PerspectiveCamera(FLAT_PERSP_FOV, window.innerWidth / window.innerHeight, FLAT_PERSP_NEAR, FLAT_PERSP_FAR);
+    this.cameraPersp = new THREE.PerspectiveCamera(FLAT_PERSP_FOV, RenderWorld.viewWidth / RenderWorld.viewHeight, FLAT_PERSP_NEAR, FLAT_PERSP_FAR);
 
-    const w0 = Math.max(1, window.innerWidth | 0);
-    const h0 = Math.max(1, window.innerHeight | 0);
+    const w0 = Math.max(1, RenderWorld.viewWidth | 0);
+    const h0 = Math.max(1, RenderWorld.viewHeight | 0);
 
     const shadowGeo = new THREE.PlaneGeometry(500000, 500000);
     const shadowMat = new THREE.ShadowMaterial({ opacity: 0.6, color: 0x000000, transparent: true, depthWrite: false, depthTest: false });
@@ -972,7 +973,7 @@ export const Core3D = {
 
     this._applyPassToggles();
     this.isInitialized = true;
-    this.resize(window.innerWidth, window.innerHeight);
+    this.resize(RenderWorld.viewWidth, RenderWorld.viewHeight);
 
     if (this.renderer) {
       // Ponowny init po _disposeComposerChain: urządzenie zostaje, nowy post.
@@ -1435,7 +1436,7 @@ export const Core3D = {
     const s = Number(this.renderScale);
     let pr = (Number.isFinite(s) && s > 0)
       ? s
-      : Math.min(1.5, Math.max(1, (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1));
+      : Math.min(1.5, Math.max(1, Number(RenderWorld.devicePixelRatio ?? 1) || 1));
     pr = Math.max(0.25, Math.min(2, pr));
     // Cel sceny nie większy niż limit tekstury urządzenia (zwykle 8192 px w osi).
     const maxDim = Number(this.renderer?.backend?.device?.limits?.maxTextureDimension2D) || 8192;
@@ -2689,8 +2690,7 @@ export const Core3D = {
     }
     this._textureUploadScheduled = true;
     const run = () => this._pumpTextureUpload();
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });
-    else setTimeout(run, 100);
+    requestIdle(run, { timeout: 2000 }, () => setTimeout(run, 100));
   },
   _pumpTextureUpload() {
     this._textureUploadScheduled = false;

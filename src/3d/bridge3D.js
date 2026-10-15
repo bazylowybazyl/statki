@@ -1456,7 +1456,7 @@ export const Bridge3D = {
       const cp = gc ? gc.position : Core3D.cameraPersp.position;
       _camP.set(cp.x, cp.y, cp.z);
       const fov = Math.max(10, Math.min(120, Number(gc?.fov) || Core3D.cameraPersp.fov || 50));
-      const vh = Number(Core3D.height) || (typeof window !== 'undefined' ? window.innerHeight : 900) || 900;
+      const vh = Number(Core3D.height) || (RenderWorld.viewHeight ?? 900) || 900;
       ctx.pxAtUnit = (vh * 0.5) / Math.tan(fov * 0.5 * DEG);
     }
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createCanvas2D } from '../../3d/canvas2d.js';
 // Losowość wyglądu (zadanie 25a): WŁASNY strumień generatora warstwy efektów (FxRandom, stałe ziarno) — wygląd stacji
 // (panele, okna) nie zużywa ani Math.random gry (przebieg misji nie zależy od tego, kiedy i ile razy bryła powstała),
 // ani wspólnego fxRandom (bryła powstaje na ekranie ładowania — przesunięty ciąg efektów zmieniał iskry i światła
@@ -22,9 +23,8 @@ function buildPirateStation(THREE, opts = {}) {
   const textures = [];
 
   function makePanelTexture(size = 256) {
-    const c = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+    const c = createCanvas2D(size, size);
     if (!c) return null;
-    c.width = c.height = size;
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#616775';
     ctx.fillRect(0, 0, size, size);
@@ -48,9 +48,8 @@ function buildPirateStation(THREE, opts = {}) {
   }
 
   function makeGlowTexture(size = 128) {
-    const c = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+    const c = createCanvas2D(size, size);
     if (!c) return null;
-    c.width = c.height = size;
     const ctx = c.getContext('2d');
     const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     g.addColorStop(0.0, 'rgba(255,255,255,1)');
@@ -67,10 +66,8 @@ function buildPirateStation(THREE, opts = {}) {
   function makeArrowTexture(txt = '>>>') {
     const w = 256;
     const h = 128;
-    const c = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+    const c = createCanvas2D(w, h);
     if (!c) return null;
-    c.width = w;
-    c.height = h;
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, w, h);
     ctx.shadowColor = 'rgba(255,70,70,0.95)';
@@ -89,10 +86,8 @@ function buildPirateStation(THREE, opts = {}) {
   function makeTickerTexture() {
     const W = 2048;
     const H = 256;
-    const c = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+    const c = createCanvas2D(W, H);
     if (!c) return null;
-    c.width = W;
-    c.height = H;
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#001015';
     ctx.fillRect(0, 0, W, H);

@@ -3,10 +3,11 @@
 // Mapy planet z generatora (scripts/planety/: Ziemia „zajechana” z wielką kopalnią ringu, Mars
 // w trakcie terraformacji). Dawne zdjęcia NASA zostają do porównania: `?planety=stare` albo
 // localStorage `sc_planet_maps = 'stare'` (bez dziury i bez map Marsa).
+import { RenderWorld } from '../render/renderWorld.js';
 const PLANET_MAPS_OLD = (() => {
     try {
-        if (new URLSearchParams(window.location.search).get('planety') === 'stare') return true;
-        return window.localStorage?.getItem('sc_planet_maps') === 'stare';
+        if (new URLSearchParams(RenderWorld.pageSearch).get('planety') === 'stare') return true;
+        return RenderWorld.storageItem('sc_planet_maps') === 'stare';
     } catch { return false; }
 })();
 export const PLANET_MAPS = Object.freeze(PLANET_MAPS_OLD ? {

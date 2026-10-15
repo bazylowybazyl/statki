@@ -2,6 +2,7 @@
 // Heksy (dema mostków, rdzenia, asteroid): strojenie i żar bez silnika, reszta przez haki, które
 // wpisuje destructor.js — gra go nie ładuje (etap 8, docs/PORT-silnik-belek.md), więc bytów z hexGrid nie ma.
 import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
+import { isCanvasSource } from './canvas2d.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { HexBodyHooks } from '../game/hexBodyHooks.js';
 import { Core3D } from './core3d.js';
@@ -537,9 +538,7 @@ function setAttrUpdateRange(attr, start, count) {
 
 function createManagedTexture(source, isLinearData = false) {
   if (!source) return null;
-  const isCanvas =
-    (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) ||
-    (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas);
+  const isCanvas = isCanvasSource(source);
   const texture = isCanvas ? new THREE.CanvasTexture(source) : new THREE.Texture(source);
   // WebGPU (jak dawniej WebGL2) ma mipmapy także dla tekstur NPOT (sprite'y
   // kadłubów), więc zawsze trilinear + anizotropia do 4.
@@ -2251,7 +2250,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   if (shaftHullBudget > 0) {
     HullShadowSdf.beginFrame(frameId);
     Core3D.setShaftHullSdfTexture(HullShadowSdf.ensureTexture());
-    const halfView = Math.max(window.innerWidth || 1920, window.innerHeight || 1080) * 0.5 / cameraZoom;
+    const halfView = Math.max(RenderWorld.viewWidth || 1920, RenderWorld.viewHeight || 1080) * 0.5 / cameraZoom;
     const occluderReach = halfView + 30000;
     const cands = state.shaftHullCandidates || (state.shaftHullCandidates = []);
     cands.length = 0;

@@ -11,6 +11,8 @@
 // świata float32 (tablica ładowni) — przy 5–10 mln j. ~0,5 j. błędu w świetle lamp, bryła stoi (AGENT: początek
 // przy kamerze dla tablicy ładowni, gdy luk dostanie kontenery i drony).
 import * as THREE from 'three/webgpu';
+import { loadImageBitmap } from '../canvas2d.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { CargoBayRig } from './bay.tsl.js';
 import { CARGO_LIGHT, setCargoSun } from './cargoLight.tsl.js';
 import { cargoBayDoorTimeline, cargoBayHull, cargoBayScale, cargoHullBays } from '../../data/cargoBays.js';
@@ -74,18 +76,18 @@ export function createScoutBay3D(Core3D, hullId = 'atlas') {
   let group = null;
   const pose = { x: 0, y: 0, angle: 0 };
 
+  let spriteLoading = false;
   function loadSprite() {
-    if (spriteTex || !H || typeof Image === 'undefined') return;
-    const img = new Image();
-    img.onload = () => {
+    if (spriteTex || spriteLoading || !H || !RenderWorld.isBrowser) return;
+    spriteLoading = true;
+    loadImageBitmap(H.sprite).then((img) => {
       const tex = new THREE.Texture(img);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = Core3D.getMaxAnisotropy?.() || 8;
       tex.needsUpdate = true;
       spriteTex = tex;
       if (rig) for (const lf of rig.leaves) lf.mesh.material.uniforms.uSprite.value = tex;
-    };
-    img.src = H.sprite;
+    }, (err) => { spriteLoading = false; console.warn('[scoutBay3D] sprite luku:', err); });
   }
 
   function ensure() {

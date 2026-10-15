@@ -66,6 +66,7 @@ const SUFITY = {
   'import:src/game/weaponAim.js': 1,
   'import:src/game/weaponFeel.js': 2,
   'import:src/game/weaponShotBus.js': 1,
+  'import:shieldSystem.js': 4, // 2026-10-15 RW-35: shieldSystem.js (korzeń repo) liczony od teraz jako symulacja — importy były już wcześniej
   'import:src/game/worldBodies.js': 2,
   // zmienne gry czytane w modułach przenoszonych (§ 2.4): 0 od RW-12 (2026-10-15) — tylko przez fasadę
   // RenderWorld (src/render/renderWorld.js); `okno:` / `okno-wartosc:` / `gamestate:` nie mają sufitów
@@ -83,31 +84,8 @@ const SUFITY = {
   'okno-kanwa:ship': 2,
   'okno-kanwa:worldToScreen': 5,
   'okno-kanwa:worldToScreenInto': 1,
-  // DOM i okno przeglądarki w modułach przenoszonych (§ 2.9; RW-35 → 0)
-  'dom:src/3d/asteroids/beltMedium.js': 4,
-  'dom:src/3d/bridge3D.js': 1,
-  'dom:src/3d/cargo/scoutBay3D.js': 1,
-  'dom:src/3d/core3d.js': 10,
-  'dom:src/3d/fxParticles3D.js': 2,
-  'dom:src/3d/haloRing/arch/ecumene.js': 4,
-  'dom:src/3d/haloRing/arch/fable.js': 6,
-  'dom:src/3d/haloRing/haloPortK7.js': 2,
-  'dom:src/3d/hexBodyImpostorBatch.js': 2,
-  'dom:src/3d/hexShips3D.js': 3,
-  'dom:src/3d/hullLacquer.js': 3,
-  'dom:src/3d/hullShadowSdf.js': 3,
-  'dom:src/3d/hullSurface.js': 4,
-  'dom:src/3d/menuBackdrop3D.js': 8,
-  'dom:src/3d/planet3d.assets.js': 16,
-  'dom:src/3d/planetMaps.js': 1,
-  'dom:src/3d/portBuildings/portBuildings3D.js': 2,
-  'dom:src/3d/portBuildings/portHullBuild3D.js': 1,
-  'dom:src/3d/rozgrzewka.js': 1,
-  'dom:src/3d/shield3D.js': 1,
-  'dom:src/3d/ships3d/shipMaterials3D.tsl.js': 2,
-  'dom:src/3d/ships3d/shipModels3DGame.js': 1,
-  'dom:src/3d/smallBodyShape.js': 2,
-  'dom:src/3d/worldBodies3D.js': 1,
+  // DOM i okno przeglądarki w modułach przenoszonych (§ 2.9): 0 od RW-35 (2026-10-15) — kanwy i obrazy przez
+  // src/3d/canvas2d.js, praca w tle przez src/3d/harmonogram.js, okno i strona przez RenderWorld; `dom:` bez sufitów
   // odczyty GPU → CPU (§ 2.6)
   'gpu:src/3d/asteroids/rockBank.js': 1,
   'gpu:src/3d/gas/gasGrid.js': 5,

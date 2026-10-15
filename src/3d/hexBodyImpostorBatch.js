@@ -19,6 +19,7 @@
 // barwę swojego kadłuba zamiast jednolitej szarości.
 
 import * as THREE from 'three/webgpu';
+import { createCanvas2D } from './canvas2d.js';
 import { Fn, If, Discard, float, vec2, vec3, vec4, attribute, uv, positionGeometry, cos, sin, length, smoothstep } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
@@ -135,10 +136,8 @@ export function computeAverageBodyColor(source) {
   // przeglądarce przenieść backing store do pamięci CPU i od tej pory KAŻDY
   // upload tekstury z tego canvasa jest wolny, na stałe. Kopiujemy do własnego
   // bufora 32x32 i czytamy tylko jego.
-  if (typeof document === 'undefined') return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.min(32, width);
-  canvas.height = Math.min(32, height);
+  const canvas = createCanvas2D(Math.min(32, width), Math.min(32, height));
+  if (!canvas) return null;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return null;
   try { ctx.drawImage(source, 0, 0, canvas.width, canvas.height); }

@@ -12,6 +12,7 @@
 // nieokreślona. Mapa stref RGBA8 z NEAREST: odczyt textureLoad z zawinięciem (TSL). Szkło
 // i żebra kopuł — partie instancji archetypów (archBatchMesh), bez THREE.InstancedMesh.
 import * as THREE from 'three';
+import { createCanvas2D } from '../../canvas2d.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   Fn, If, Discard,
@@ -240,11 +241,9 @@ function makePanelTextures(kind, seedTag, size = 1024) {
     int(a, b) { return Math.floor(this.range(a, b + 1)); }
     chance(p) { return this.f() < p; }
   })(seedTag);
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
+  const c = createCanvas2D(size, size);
   const ctx = c.getContext('2d');
-  const e = document.createElement('canvas');
-  e.width = e.height = size;
+  const e = createCanvas2D(size, size);
   const ectx = e.getContext('2d');
   const base = kind === 'hull' ? [78, 82, 88] : kind === 'wall' ? [92, 96, 104] : [70, 72, 78];
   ctx.fillStyle = `rgb(${base[0]},${base[1]},${base[2]})`;
@@ -443,9 +442,7 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   // atlas: kadłub (lewa połowa) | zamieszkane ściany (prawa) — jedno wywołanie
   // rysowania na stronę zamiast czterech
   const atlasOf = (a, b) => {
-    const c = document.createElement('canvas');
-    c.width = 2048;
-    c.height = 1024;
+    const c = createCanvas2D(2048, 1024);
     const x = c.getContext('2d');
     x.drawImage(a.image, 0, 0, 1024, 1024);
     x.drawImage(b.image, 1024, 0, 1024, 1024);

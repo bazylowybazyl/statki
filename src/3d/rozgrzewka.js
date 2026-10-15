@@ -54,6 +54,7 @@
 // ringu, maska słońca, DIST) rozgrzewka robiła pipeline z Depth24Plus, a pierwszy prawdziwy rysunek — drugi,
 // synchronicznie (przestój). Renderer dostaje stan bieżącego celu na czas wywołania (część synchroniczna
 // compileAsync czyta te pola od razu). Każde compileAsync na celu innym niż ekran — przez tę funkcję.
+import { requestIdle } from './harmonogram.js';
 export function compileAsyncNaCelu(renderer, scene, camera, targetScene = null) {
   const target = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
   if (!target || !('depth' in renderer)) return renderer.compileAsync(scene, camera, targetScene);
@@ -284,8 +285,7 @@ export class Rozgrzewka {
       } while (deadline && typeof deadline.timeRemaining === 'function' ? deadline.timeRemaining() > 6 : nowMs() - t0 < 6);
       this._kick();
     };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 200 });
-    else setTimeout(() => run(null), 16);
+    requestIdle(run, { timeout: 200 }, () => setTimeout(() => run(null), 16));
   }
 
   // Jedno zadanie (jedna siatka albo cały obiekt przy split: false). false = kolejka pusta.

@@ -24,6 +24,7 @@
 // w double na CPU (jak LightGrid.localPosition — dokładne przy 6–10 mln j.).
 
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../../render/renderWorld.js';
 import {
   If, vec2, vec3, vec4, uniform, texture3D, floor, renderGroup,
   positionView, cameraWorldMatrix
@@ -54,8 +55,8 @@ class BeltMedium {
     this.cfg = cfg;
     // Rozmiar tekstury: największy kadr (ekran), kolumna ≥ cellPx; przy dużym kadrze
     // kolumna rośnie ponad cellPx (2560 px → ~6 px), najwyżej maxColumns w poprzek.
-    const w = typeof window !== 'undefined' ? Math.max(window.innerWidth || 0, window.screen?.width || 0, 640) : 1920;
-    const h = typeof window !== 'undefined' ? Math.max(window.innerHeight || 0, window.screen?.height || 0, 360) : 1080;
+    const w = RenderWorld.isBrowser ? Math.max(RenderWorld.viewWidth || 0, RenderWorld.screenWidth || 0, 640) : 1920;
+    const h = RenderWorld.isBrowser ? Math.max(RenderWorld.viewHeight || 0, RenderWorld.screenHeight || 0, 360) : 1080;
     const cellPx = Math.max(cfg.cellPx, w / cfg.maxColumns);
     this.NX = Math.ceil((w / cellPx) * 1.2) + 4;
     this.NY = Math.ceil((h / cellPx) * 1.2) + 4;

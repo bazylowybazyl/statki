@@ -21,6 +21,7 @@
 // slotów, światła i iskry; krok Core3D.fx „tarcze” (przed passami) liczy compute.
 // ============================================================
 import * as THREE from 'three/webgpu';
+import { requestIdle } from './harmonogram.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import { FX_DISTORT_LAYER } from './fx/fxFrame.js';
@@ -137,7 +138,7 @@ function scheduleLattice(rec) {
   latticeQueue.push(rec);
   if (latticeIdle) return;
   latticeIdle = true;
-  const ric = typeof requestIdleCallback === 'function' ? requestIdleCallback : (fn) => setTimeout(fn, 16);
+  const ric = (fn) => requestIdle(fn, undefined, () => setTimeout(fn, 16));
   const work = (deadline) => {
     while (latticeQueue.length) {
       const r = latticeQueue.shift();

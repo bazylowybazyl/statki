@@ -1,6 +1,7 @@
 // Planety, słońce, mgławica i gwiazdy (warstwy 1 / 3 / 5 / 6). Materiały w TSL:
 // planet3d.assets.tsl.js (port WebGPU, zadanie 05) — tu tylko obiekty, strojenie i aktualizacja.
 import * as THREE from 'three/webgpu';
+import { createCanvas2D, loadTexture } from './canvas2d.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { texture, uniform, uniformArray, uv, vec2 } from 'three/tsl';
 import { Core3D } from './core3d.js';
@@ -339,7 +340,7 @@ const NebulaSystem = {
         if (!Core3D.isInitialized) return;
         // Tło z wypiekacza nieba (src/3d/skybake/, styl „galaktyka”, nastawa „gra”, ziarno 1 — 2026-10-06;
         // dawne nebula.png było cudzą grafiką). Tekstura zapisana po odwróceniu ACES gry (skyGameColor.js).
-        const tex = new THREE.TextureLoader().load('assets/nebula.webp');
+        const tex = loadTexture('assets/nebula.webp');
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
         tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
@@ -412,7 +413,7 @@ const StarSystem = {
             warpFactor: uniform(0.0), moveDir: uniform(new THREE.Vector2(0, 1)), stretchStrength: uniform(20.0),
             zoomComp: uniform(1.0),
             exitWhipFactor: uniform(0.0), exitWhipStrength: uniform(1.75),
-            viewportSize: uniform(new THREE.Vector2(window.innerWidth || 1, window.innerHeight || 1)),
+            viewportSize: uniform(new THREE.Vector2(RenderWorld.viewWidth || 1, RenderWorld.viewHeight || 1)),
             thinningStrength: uniform(38.0), baseSizeMul: uniform(1.65),
             planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)), 'vec4')
         });
@@ -421,7 +422,7 @@ const StarSystem = {
         Core3D.scene.add(this.mesh); Core3D.enableBackground3D(this.mesh);
     },
     createStarTexture: function () {
-        const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64; const ctx = canvas.getContext('2d');
+        const canvas = createCanvas2D(64, 64); const ctx = canvas.getContext('2d');
         const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32); grad.addColorStop(0, 'rgba(255, 255, 255, 1)'); grad.addColorStop(0.3, 'rgba(200, 230, 255, 0.7)'); grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
         ctx.fillStyle = grad; ctx.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(canvas);
     },
@@ -442,7 +443,7 @@ const StarSystem = {
         const speedCap = Number(WARP_STAR_CAMERA.speedCap) || 0;
         advanceStarCamera(this.starCam, cx, cy, zoomComp, speedCap > 0 ? speedCap * Math.max(0, dt) : 0);
         this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
-        this.uniforms.viewportSize.value.set(Core3D.width || window.innerWidth || 1, Core3D.height || window.innerHeight || 1);
+        this.uniforms.viewportSize.value.set(Core3D.width || RenderWorld.viewWidth || 1, Core3D.height || RenderWorld.viewHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
         if (Array.isArray(planetMasks) && planetMasks.length && RenderWorld.planets) {
             for (let i = 0; i < STAR_PLANET_MASK_CAP; i++) if (planetMasks[i]) planetMasks[i].set(0, 0, 0, 0);
@@ -465,7 +466,6 @@ const StarSystem = {
     }
 };
 
-const textureLoader = new THREE.TextureLoader();
 const _planetCullCenter = new THREE.Vector3();
 const _planetCullEdgeX = new THREE.Vector3();
 const _planetCullEdgeY = new THREE.Vector3();
@@ -490,7 +490,7 @@ function isBodyLikelyOnScreen(gameX, gameY, visualZ, worldRadius, anchoredToRing
     if (anchoredToRing) {
         const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
         return isCircleVisibleInGameCamera(gameX, gameY, r * 1.25 + 160 / zoom, cam,
-            window.innerWidth || 1920, window.innerHeight || 1080);
+            RenderWorld.viewWidth || 1920, RenderWorld.viewHeight || 1080);
     }
     const camera = Core3D.cameraPersp;
     if (!camera) return true;
@@ -518,7 +518,7 @@ function prewarmLoadedTexture(texture) {
     if (decoding) decoding.catch(() => {}).then(() => Core3D.queueTextureUpload(texture));
     else Core3D.queueTextureUpload(texture);
 }
-function loadTex(path) { const tex = textureLoader.load(path, prewarmLoadedTexture); tex.anisotropy = Core3D.getMaxAnisotropy(); return tex; }
+function loadTex(path) { const tex = loadTexture(path, prewarmLoadedTexture); tex.anisotropy = Core3D.getMaxAnisotropy(); return tex; }
 
 
 class DirectPlanet {
@@ -761,8 +761,8 @@ class DirectPlanet {
             // planet that is still visible to player one.
             const worldCullRadius = scale * Math.max(1.0, this.visibleRadiusMul || 1.0);
             const splitScreen = !!(RenderWorld.splitScreenMode && Core3D.activeCam2);
-            const viewportWidth = (window.innerWidth || 1920) / (splitScreen ? 2 : 1);
-            const viewportHeight = window.innerHeight || 1080;
+            const viewportWidth = (RenderWorld.viewWidth || 1920) / (splitScreen ? 2 : 1);
+            const viewportHeight = RenderWorld.viewHeight || 1080;
             // A visible planet gets a larger keep-alive margin than a hidden
             // one needs to re-enter. This hysteresis absorbs camera shake and
             // prevents Earth from alternating visible/hidden at screen edges.
@@ -809,8 +809,8 @@ class DirectPlanet {
             const cullMarginPx = this._visibilityCulled ? 24 : 72;
             const planetRadius = scale * Math.max(1.0, this.visibleRadiusMul || 1.0) +
                 cullMarginPx / Math.max(0.0001, Number(camZoom) || 1);
-            const halfVpX = (window.innerWidth || 1920) * 0.5 / camZoom + planetRadius;
-            const halfVpY = (window.innerHeight || 1080) * 0.5 / camZoom + planetRadius;
+            const halfVpX = (RenderWorld.viewWidth || 1920) * 0.5 / camZoom + planetRadius;
+            const halfVpY = (RenderWorld.viewHeight || 1080) * 0.5 / camZoom + planetRadius;
             const dx = this.data.x - (cam.x || 0);
             const dy = this.data.y - (cam.y || 0);
             offScreen = Math.abs(dx) > halfVpX || Math.abs(dy) > halfVpY;
@@ -1441,7 +1441,7 @@ class DirectSun {
 
         if (this.sunLight && this.sunLight.castShadow) {
             const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
-            let halfSpan = Math.max((window.innerWidth * 0.5) / zoom, (window.innerHeight * 0.5) / zoom) * SUN_SHADOW_TUNE.frustumMul + SUN_SHADOW_TUNE.frustumPad;
+            let halfSpan = Math.max((RenderWorld.viewWidth * 0.5) / zoom, (RenderWorld.viewHeight * 0.5) / zoom) * SUN_SHADOW_TUNE.frustumMul + SUN_SHADOW_TUNE.frustumPad;
             halfSpan = Math.round(Math.max(SUN_SHADOW_TUNE.frustumMin, Math.min(SUN_SHADOW_TUNE.frustumMax, halfSpan)) / 8) * 8;
             const texelSize = (halfSpan * 2) / this.sunLight.shadow.mapSize.width;
             if (texelSize > 0) {
@@ -1569,5 +1569,5 @@ window.__warpWorldLens = { state: WARP_WORLD_LENS, lens: _warpLens, bodies: () =
 window.drawPlanets3D = function (ctx, cam) { };
 window.worldToScreen = function (x, y, cam) {
     if (!cam) return { x: 0, y: 0 };
-    return { x: (x - cam.x) * cam.zoom + window.innerWidth / 2, y: (y - cam.y) * cam.zoom + window.innerHeight / 2 };
+    return { x: (x - cam.x) * cam.zoom + RenderWorld.viewWidth / 2, y: (y - cam.y) * cam.zoom + RenderWorld.viewHeight / 2 };
 };

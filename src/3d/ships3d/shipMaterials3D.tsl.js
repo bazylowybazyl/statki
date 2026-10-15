@@ -14,6 +14,7 @@
 // z mnożnikiem ciągu `uniforms.engine`.
 
 import * as THREE from 'three/webgpu';
+import { createCanvas2D, imageSize } from '../canvas2d.js';
 import {
   Fn, attribute, uv, texture, uniform, uniformArray, vec2, vec3, float, int,
   mix, step, smoothstep, fract, floor, min, max, clamp, dot, fwidth, normalize, pow, abs,
@@ -156,10 +157,10 @@ export function createShipMaterial(o = {}) {
  * jasność × alfa, Sobel, połowa rozdzielczości. Tylko przeglądarka (kanwa 2D).
  */
 export function createDeckNormalTexture(image, strength = 2.4) {
-  const W = Math.ceil(image.naturalWidth / 2);
-  const H = Math.ceil(image.naturalHeight / 2);
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
+  const size = imageSize(image);
+  const W = Math.ceil(size.w / 2);
+  const H = Math.ceil(size.h / 2);
+  const cv = createCanvas2D(W, H);
   const c2 = cv.getContext('2d', { willReadFrequently: true });
   c2.drawImage(image, 0, 0, W, H);
   const img = c2.getImageData(0, 0, W, H);

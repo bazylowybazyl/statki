@@ -6,6 +6,7 @@
 // wzdłuż promienia na CPU raz po wczytaniu: układ atrybutów jak zwykła kula — ten sam pipeline co księżyce.
 // Czyste funkcje (bez Core3D) — gra (planet3d.assets.js: DirectSmallBody), demo (dema/planety-webgpu.js) i testy.
 import * as THREE from 'three/webgpu';
+import { createCanvas2D, imageSize, loadImageBitmap } from './canvas2d.js';
 
 /** Gęstość siatki ciała (szerokość × wysokość oczek). */
 export const SMALL_BODY_SEGMENTS = Object.freeze({ w: 256, h: 128 });
@@ -29,18 +30,15 @@ export function loadSmallBodyShape(url, range) {
   let p = _cache.get(key);
   if (p) return p;
   p = new Promise((resolve, reject) => {
-    new THREE.ImageLoader().load(url, (img) => {
+    loadImageBitmap(url).then((img) => {
       try {
-        const w = img.naturalWidth || img.width;
-        const h = img.naturalHeight || img.height;
-        const cv = typeof OffscreenCanvas === 'function'
-          ? new OffscreenCanvas(w, h)
-          : Object.assign(document.createElement('canvas'), { width: w, height: h });
+        const { w, h } = imageSize(img);
+        const cv = createCanvas2D(w, h);
         const ctx = cv.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(img, 0, 0);
         resolve(decodeSmallBodyShape(ctx.getImageData(0, 0, w, h).data, w, h, range));
       } catch (err) { reject(err); }
-    }, undefined, reject);
+    }, reject);
   });
   _cache.set(key, p);
   return p;

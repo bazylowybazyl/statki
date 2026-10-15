@@ -15,6 +15,8 @@
 //   bd.launch();                // start gry: przejazd kamery ({ dolly: false } — tylko planeta na środek kadru)
 //   bd.stop();                  // przed pierwszą klatką gry: ring wraca do gry
 import * as THREE from 'three';
+import { loadTexture } from './canvas2d.js';
+import { requestFrame, cancelFrame } from './harmonogram.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
 import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
@@ -122,7 +124,7 @@ export class MenuBackdrop3D {
     if (this.running) return true;
     if (!Core3D.isInitialized || !this.haloRings) return false;
     this.running = true;
-    document.addEventListener('visibilitychange', this._onVisibility);
+    RenderWorld.onVisibilityChange(this._onVisibility);
     this._startAsync().catch((err) => {
       console.error('[MenuBackdrop3D] start nie wyszedł — zostaje tło CSS', err);
       this.stop();
@@ -225,7 +227,7 @@ export class MenuBackdrop3D {
     this._live = false;
     this.active = false;
     this._sync();
-    document.removeEventListener('visibilitychange', this._onVisibility);
+    RenderWorld.offVisibilityChange(this._onVisibility);
     const o = this._objects;
     if (o) {
       o.earthGroup.parent?.remove(o.earthGroup);
@@ -243,12 +245,12 @@ export class MenuBackdrop3D {
 
   // ---------------------------------------------------------------------
   _sync() {
-    const want = this.running && this._live && this.active && document.visibilityState !== 'hidden';
+    const want = this.running && this._live && this.active && !RenderWorld.pageHidden;
     if (want && !this._raf) {
       this._last = performance.now();
-      this._raf = requestAnimationFrame(this._tick);
+      this._raf = requestFrame(this._tick);
     } else if (!want && this._raf) {
-      cancelAnimationFrame(this._raf);
+      cancelFrame(this._raf);
       this._raf = 0;
     }
   }
@@ -258,7 +260,7 @@ export class MenuBackdrop3D {
     const u = src?.uniforms;
     const pick = (tex, path, srgb) => {
       if (tex?.isTexture) return tex;
-      const own = new THREE.TextureLoader().load(path, (t) => Core3D.queueTextureUpload(t));
+      const own = loadTexture(path, (t) => Core3D.queueTextureUpload(t));
       if (srgb) own.colorSpace = THREE.SRGBColorSpace;
       own.anisotropy = Core3D.getMaxAnisotropy();
       this._ownTextures.push(own);
@@ -369,7 +371,7 @@ export class MenuBackdrop3D {
   _frame(now) {
     this._raf = 0;
     if (!this.running || !this.active) return;
-    this._raf = requestAnimationFrame(this._tick);
+    this._raf = requestFrame(this._tick);
     const t0 = performance.now();
     const dt = this.frozen ? 0 : Math.min(0.1, Math.max(0, (now - this._last) / 1000));
     this._last = now;
@@ -419,8 +421,8 @@ export class MenuBackdrop3D {
     const M = ring.group.matrix;
     const cam = this.camera;
     const target = Core3D.composerTarget;
-    const vw = Math.max(1, target?.width || window.innerWidth);
-    const vh = Math.max(1, target?.height || window.innerHeight);
+    const vw = Math.max(1, target?.width || RenderWorld.viewWidth);
+    const vh = Math.max(1, target?.height || RenderWorld.viewHeight);
     // niebo obrócone o azymut kamery: w jego układzie kamera stoi na azymucie 0
     o.sky.rotation.z = az;
     this._skyFrame(o.skyUniforms, s);

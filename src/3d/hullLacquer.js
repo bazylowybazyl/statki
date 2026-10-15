@@ -34,6 +34,8 @@
 // Tekstury zastępcze mają filtr liniowy: TSL wybiera ścieżkę próbkowania
 // (textureSample albo textureLoad) z tekstury obecnej przy BUDOWIE materiału.
 import * as THREE from 'three';
+import { loadTexture } from './canvas2d.js';
+import { createCanvas2D, imageSize, isImageReady } from './canvas2d.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { renderGroup, texture, uniform } from 'three/tsl';
 
@@ -280,27 +282,7 @@ export function buildLacquerEnvPixels(srcRGBA, size, options = {}) {
 
 // ── Runtime (przeglądarka) ─────────────────────────────────────────────────
 
-function makeCanvas(w, h) {
-  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
-  if (typeof document === 'undefined') return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  return canvas;
-}
-
-function imageSize(image) {
-  const w = Number(image?.naturalWidth || image?.videoWidth || image?.width) || 0;
-  const h = Number(image?.naturalHeight || image?.videoHeight || image?.height) || 0;
-  return { w, h };
-}
-
-function isImageReady(image) {
-  if (!image) return false;
-  if (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement && !image.complete) return false;
-  const { w, h } = imageSize(image);
-  return w > 0 && h > 0;
-}
+const makeCanvas = createCanvas2D;
 
 function toHalfFloatData(floats) {
   const out = new Uint16Array(floats.length);
@@ -532,7 +514,7 @@ export const HullLacquer = {
       this._setSky(null);
       return;
     }
-    new THREE.TextureLoader().load(
+    loadTexture(
       url,
       (texture) => {
         if (this._skyUrl !== url) {
@@ -541,7 +523,6 @@ export const HullLacquer = {
         }
         this._setSky(configureSkyTexture(texture));
       },
-      undefined,
       (err) => console.warn('[HullLacquer] Nie wczytano obłoków odbić:', url, err)
     );
   },

@@ -36,10 +36,14 @@ import { join } from 'node:path';
 import { parseAst } from 'rollup/parseAst';
 import { grafImportow, repo, scriptBlocks, resolveSpec, rel, lex, importsOf } from './grafGry.mjs';
 
+// Render spoza katalogów renderu: bryła stacji pirackiej (three, kanwy tekstur) i dawne tekstury flar dysz (three).
+export const PLIKI_RENDERU_POZA = Object.freeze(['src/space/pirateStation/pirateStationFactory.js', 'Engineeffects.js']);
 export const WARSTWA_RENDERU = Object.freeze(['src/3d/', 'src/vfx/', 'src/effects3d/']);
 export const WARSTWA_SYMULACJI = Object.freeze(['src/game/', 'src/ai/']);
-export const isRender = (f) => WARSTWA_RENDERU.some((d) => f.startsWith(d));
-export const isSim = (f) => WARSTWA_SYMULACJI.some((d) => f.startsWith(d));
+export const isRender = (f) => WARSTWA_RENDERU.some((d) => f.startsWith(d)) || PLIKI_RENDERU_POZA.includes(f);
+// Logika gry spoza src/game (korzeń repo): stan tarcz czytany przez render.
+export const PLIKI_SYMULACJI_POZA = Object.freeze(['shieldSystem.js']);
+export const isSim = (f) => WARSTWA_SYMULACJI.some((d) => f.startsWith(d)) || PLIKI_SYMULACJI_POZA.includes(f);
 
 // Moduły renderu, które zostają na wątku głównym (kanwa 2D gry, sprite'y wieżyczek kanwy, szyna zderzeń) — § 2.1 uwagi,
 // § 2.4 („tylko moduły kanwy 2D”). Nie liczą się do „przenoszonych”.
@@ -59,6 +63,12 @@ export const ZOSTAJE_NA_WATKU_GLOWNYM = Object.freeze(new Set([
   'src/vfx/yamatoSprite2D.js'
 ]));
 export const isPrzenoszony = (f) => isRender(f) && !ZOSTAJE_NA_WATKU_GLOWNYM.has(f);
+
+// Moduły renderu, które sięgają po API okna z wykryciem i zapasem (jedyne dozwolone miejsce) — DOM się w nich nie liczy.
+export const MODULY_Z_WYKRYCIEM = Object.freeze(new Set([
+  'src/3d/harmonogram.js', // requestIdleCallback / requestAnimationFrame z wykryciem; w workerze zapas wołającego
+  'src/3d/canvas2d.js' // OffscreenCanvas; `document.createElement` tylko bez OffscreenCanvas (atrapy testów w Node)
+]));
 
 // Klasy modułów symulacji importowanych przez render (§ 2.2): A — czyste dane i matematyka, B — zegary i kontenery
 // klatki, C — stan rozgrywki czytany przez render, D — rozgrywka tworzona albo krokowana przez moduły 3D (do wyjęcia:
@@ -112,7 +122,8 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/haloRingCollision.js': 'D',
   'src/game/k7BerthService.js': 'D',
   'src/game/story/pirateBaseBodies.js': 'D',
-  'src/game/weaponShotBus.js': 'E'
+  'src/game/weaponShotBus.js': 'E',
+  'shieldSystem.js': 'A'
 });
 
 export const GRUPY_INDEX = Object.freeze(['aktualizacja', 'zdarzenie', 'konfiguracja', 'zapytanie', 'dane']);
@@ -580,22 +591,22 @@ function szewRenderuWlasciwy(root, grafGotowy, nadpisz) {
           const k = `${przenoszony ? 'okno' : 'okno-kanwa'}:${name}`;
           add(k); gdzie(k, at(n));
         }
-        if (przenoszony && DOM_GLOBALE.has(name) && !(p && p.type === 'UnaryExpression' && p.operator === 'typeof')) { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} window.${name}`); }
-        if (przenoszony && (name === 'addEventListener' || name === 'removeEventListener')) { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} window.${name}`); }
+        if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f) && DOM_GLOBALE.has(name) && !(p && p.type === 'UnaryExpression' && p.operator === 'typeof')) { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} window.${name}`); }
+        if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f) && (name === 'addEventListener' || name === 'removeEventListener')) { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} window.${name}`); }
         return;
       }
       if (n.type === 'Identifier' && n.name === 'GameState' && p && p.type === 'MemberExpression' && p.object === n) { add(`gamestate:${f}`); gdzie(`gamestate:${f}`, at(n)); }
       if (n.type === 'Identifier' && isReference(n, parents) && !declared.has(n.name)) {
         const typeofOnly = p && p.type === 'UnaryExpression' && p.operator === 'typeof';
         // samo okno jako wartość (argument, przypisanie) — moduł dostaje zmienne gry hurtem
-        if (przenoszony && OKNO.has(n.name) && !typeofOnly && !(p && p.type === 'MemberExpression' && p.object === n)) {
+        if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f) && OKNO.has(n.name) && !typeofOnly && !(p && p.type === 'MemberExpression' && p.object === n)) {
           add(`okno-wartosc:${f}`); gdzie(`okno-wartosc:${f}`, at(n));
         }
         if (!ZNANE_GLOBALE.has(n.name) && zmiennaGry(n.name) && writtenByGame.has(n.name) && !typeofOnly) {
           const k = `${przenoszony ? 'okno' : 'okno-kanwa'}:${n.name}`;
           add(k); gdzie(k, at(n));
         }
-        if (przenoszony && DOM_GLOBALE.has(n.name) && !typeofOnly) { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} ${n.name}`); }
+        if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f) && DOM_GLOBALE.has(n.name) && !typeofOnly) { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} ${n.name}`); }
         return;
       }
       if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && !n.callee.computed && n.callee.property.type === 'Identifier') {
@@ -603,11 +614,17 @@ function szewRenderuWlasciwy(root, grafGotowy, nadpisz) {
         const obj = n.callee.object;
         if (m === 'random' && obj.type === 'Identifier' && obj.name === 'Math') { add(`random:${f}`); gdzie(`random:${f}`, at(n)); }
         if (GPU_ODCZYT.has(m)) { add(`gpu:${f}`); gdzie(`gpu:${f}`, `${at(n)} ${m}`); }
-        if (przenoszony) {
+        if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f)) {
           if (m === 'createElement' || m === 'createElementNS') { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} ${m}`); }
         }
       }
-      if (przenoszony && n.type === 'CallExpression' && n.callee.type === 'Identifier' && (n.callee.name === 'addEventListener' || n.callee.name === 'removeEventListener') && !declared.has(n.callee.name)) {
+      // ładowarki obrazów three na <img> (TextureLoader, ImageLoader) — w workerze bez DOM (canvas2d.loadTexture)
+      if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f) && n.type === 'NewExpression') {
+        const c = n.callee;
+        const nm = c.type === 'Identifier' ? c.name : (c.type === 'MemberExpression' && !c.computed ? c.property.name : null);
+        if (nm === 'TextureLoader' || nm === 'ImageLoader' || nm === 'CubeTextureLoader') { add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} new ${nm}`); }
+      }
+      if (przenoszony && !MODULY_Z_WYKRYCIEM.has(f) && n.type === 'CallExpression' && n.callee.type === 'Identifier' && (n.callee.name === 'addEventListener' || n.callee.name === 'removeEventListener') && !declared.has(n.callee.name)) {
         add(`dom:${f}`); gdzie(`dom:${f}`, `${at(n)} ${n.callee.name}`);
       }
     });

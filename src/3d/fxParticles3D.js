@@ -41,6 +41,7 @@
 // WebGPU konwertuje sama. Wzory 1:1 z dawnym GLSL.
 
 import * as THREE from 'three/webgpu';
+import { createCanvas2D } from './canvas2d.js';
 import {
   Fn, If, Discard, attribute, varying, uv, vec2, vec3, vec4, cos, sin, cross, length, max, normalize, select,
   positionGeometry, modelViewMatrix, modelPosition, cameraPosition, cameraViewMatrix, cameraProjectionMatrix
@@ -119,8 +120,7 @@ export function coneDir(out, dir, spread, flat = 1) {
    TEKSTURY PROCEDURALNE — leniwe, jeden komplet na sesję
    ========================================================================== */
 function canvasTex(size, draw) {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = size;
+  const cv = createCanvas2D(size, size);
   draw(cv.getContext('2d'), size);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;

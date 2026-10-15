@@ -13,6 +13,8 @@
 // suwnice FG nad wszystkim). Wierzchołki przeliczane przy zmianie kadłuba (bez
 // skali w macierzy — normalne w świetle zostają poprawne).
 import * as THREE from 'three';
+import { loadImageBitmap } from '../canvas2d.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { TRAFFIC_HULLS, trafficHullRenderSize } from '../../data/trafficHulls.js';
 import { SHIPYARD_HULL_Y } from './portShipyardLayout.js';
@@ -36,10 +38,8 @@ function hullTexture(hullId) {
   let t = ownTextures.get(hullId);
   if (!t) {
     const def = TRAFFIC_HULLS[hullId];
-    if (!def || typeof Image === 'undefined') return null;
-    const img = new Image();
-    img.decoding = 'async';
-    t = new THREE.Texture(img);
+    if (!def || !RenderWorld.isBrowser) return null;
+    t = new THREE.Texture();
     // jak createManagedTexture w hexShips3D: flipY = false, sRGB, mipmapy
     t.flipY = false;
     t.colorSpace = THREE.SRGBColorSpace;
@@ -47,8 +47,9 @@ function hullTexture(hullId) {
     t.magFilter = THREE.LinearFilter;
     t.generateMipmaps = true;
     t.anisotropy = 4;
-    img.onload = () => { t.needsUpdate = true; t.userData.ready = true; };
-    img.src = def.sprite;
+    const tex = t;
+    loadImageBitmap(def.sprite).then((img) => { tex.image = img; tex.needsUpdate = true; tex.userData.ready = true; },
+      (err) => console.warn('[portHullBuild3D] sprite kadłuba:', err));
     ownTextures.set(hullId, t);
   }
   return { texture: t, flipY: false, ready: !!t.userData.ready };

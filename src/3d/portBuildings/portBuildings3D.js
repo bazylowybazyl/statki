@@ -23,6 +23,7 @@
 // Emisja w paśmie HDR 0,9–1,4 (bloom przy progu 0,9), iskry spawania i błyski
 // drobne (≤ kilka px) do ~6 — AGENTS.md: emitery HDR > 1.
 import * as THREE from 'three';
+import { createCanvas2D } from '../canvas2d.js';
 import { K7_ABOVE_SCALE, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { sunShadowUniforms } from '../sunShadowMask.js';
 import { pbNodeMaterial, portBuildingGraphs } from './portBuildings3D.tsl.js';
@@ -157,9 +158,7 @@ function makeLabelAtlas(labels) {
   const cols = 4;
   const rows = Math.ceil(unique.size / cols);
   const H = Math.max(128, 2 ** Math.ceil(Math.log2(rows * cellH)));
-  const canvas = document.createElement('canvas');
-  canvas.width = cellW * cols;
-  canvas.height = H;
+  const canvas = createCanvas2D(cellW * cols, H);
   const g = canvas.getContext('2d');
   g.clearRect(0, 0, canvas.width, canvas.height);
   g.fillStyle = '#ffffff';

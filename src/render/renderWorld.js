@@ -21,7 +21,10 @@
 //           __EXPLOSION_TUNE_OVR, tslUuidFix ← __TSL_UUID_NAPRAWA, enginePointLights ← ENGINE_POINT_LIGHTS_ENABLED,
 //           stationScaleById, stationPivotById, debugRecord ← __renderDbgRecord, k7Glb ← __K7_GLB,
 //           weaponGlb ← __WEAPON_GLB)
-//   strona: isBrowser ← typeof window !== 'undefined', pageSearch ← location.search strony
+//   strona: isBrowser ← typeof window !== 'undefined', pageSearch ← location.search strony, viewWidth / viewHeight ←
+//           innerWidth / innerHeight, devicePixelRatio, screenWidth / screenHeight ← screen.*, storageItem(klucz) ←
+//           localStorage (w migawce: obiekt `storage`), layerCanvas ← #webgl-layer, pageHidden i słuchacze
+//           visibilitychange (onVisibilityChange / offVisibilityChange)
 //   gra:    game ← window — rozgrywka, która dziś mieszka w module renderu (rakiety `rocketSystem3D`: applyDamage*,
 //           registerShieldImpact, isShieldBreachedAt, Game, WorldBodies, RepairSwarm; do gry w RW-23), hullBodies ←
 //           window.HullBodies, scoutBay ← window.ScoutBay, destruction3D ← window.Destruction3D (moduł renderu
@@ -41,6 +44,7 @@ class RenderWorldFacade {
     /** Źródło trybu inline / worker (obiekt z migawki) albo null — tryb `off` (globale gry). */
     this._src = null;
     this._config = new RenderWorldConfig(this);
+    this._visListeners = new Set();
   }
 
   /** Obiekt z migawki (pola jak gettery tej klasy) albo null — powrót do globali gry. */
@@ -52,6 +56,33 @@ class RenderWorldFacade {
   get isBrowser() { const s = this._src; return s ? !!s.isBrowser : typeof G.window !== 'undefined'; }
   /** `location.search` STRONY gry (w workerze `location` to adres skryptu workera). */
   get pageSearch() { const s = this._src; return s ? s.pageSearch : G.location?.search; }
+  /** Okno przeglądarki (RW-35): rozmiar w px CSS, DPR, ekran — w workerze z HEAD migawki. */
+  get viewWidth() { const s = this._src; return s ? s.viewWidth : W().innerWidth; }
+  get viewHeight() { const s = this._src; return s ? s.viewHeight : W().innerHeight; }
+  get devicePixelRatio() { const s = this._src; return s ? s.devicePixelRatio : W().devicePixelRatio; }
+  get screenWidth() { const s = this._src; return s ? s.screenWidth : W().screen?.width; }
+  get screenHeight() { const s = this._src; return s ? s.screenHeight : W().screen?.height; }
+  /** Kanwa warstwy 3D strony (#webgl-layer) — Core3D.init bez argumentu; w workerze OffscreenCanvas z mostu. */
+  get layerCanvas() { const s = this._src; return s ? s.layerCanvas : G.document?.getElementById('webgl-layer'); }
+  /** Karta strony ukryta (document.visibilityState === 'hidden'). */
+  get pageHidden() { const s = this._src; return s ? !!s.pageHidden : G.document?.visibilityState === 'hidden'; }
+  /** Słuchacz zmiany widoczności strony; w trybie migawki wołany przez `emitVisibilityChange()` mostu. */
+  onVisibilityChange(fn) {
+    if (this._src) { this._visListeners.add(fn); return; }
+    G.document?.addEventListener('visibilitychange', fn);
+  }
+  offVisibilityChange(fn) {
+    this._visListeners.delete(fn);
+    G.document?.removeEventListener('visibilitychange', fn);
+  }
+  /** Most (tryb migawki): widoczność strony się zmieniła — powiadom słuchaczy. */
+  emitVisibilityChange() { for (const fn of [...this._visListeners]) fn(); }
+  /** Wartość z localStorage strony (preferencje czytane przez render przy imporcie); null — brak / niedostępne. */
+  storageItem(key) {
+    const s = this._src;
+    if (s) return s.storage?.[key] ?? null;
+    try { return W().localStorage?.getItem(key) ?? null; } catch { return null; }
+  }
 
   // HEAD
   get camera() { const s = this._src; return s ? s.camera : W().camera; }

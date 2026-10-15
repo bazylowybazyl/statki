@@ -24,6 +24,7 @@
 // macierz układ → scena), layers: { bg, fg }, hidden() → bool (mgła wojny), setSkinned(piece, on), groupOf(piece),
 // rasterCenter(piece) → { x, z }, setHold?(piece, on) — statyka kawałka widoczna mimo straty (tylko obraz) }.
 import * as THREE from 'three/webgpu';
+import { requestIdle } from './harmonogram.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import { HullBodies } from '../game/hullBodies.js';
@@ -176,8 +177,7 @@ let _bakeScheduled = false;
 function scheduleBake() {
   if (_bakeScheduled || !_bakeQueue.length) return;
   _bakeScheduled = true;
-  const ric = typeof requestIdleCallback === 'function' ? requestIdleCallback : (fn) => setTimeout(() => fn(null), 16);
-  ric(runBake, { timeout: 250 });
+  requestIdle(runBake, { timeout: 250 }, () => setTimeout(() => runBake(null), 16));
 }
 function runBake(deadline) {
   _bakeScheduled = false;

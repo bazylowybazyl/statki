@@ -8,13 +8,13 @@
 // usunięte. Płomień SIDE żyje w engineExhaustBatch.js (TSL).
 
 import * as THREE from "three";
+import { createCanvas2D } from './src/3d/canvas2d.js';
 
 // --- TEKSTURY POMOCNICZE ---
 
 export function makeFlareTexture() {
     // Anamorficzna flara - ostra pozioma linia
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 32;
+    const canvas = createCanvas2D(256, 32);
     const ctx = canvas.getContext('2d');
 
     // Gradient poziomy (zanika na końcach)
@@ -44,8 +44,7 @@ export function makeFlareTexture() {
 }
 
 export function makeGlowTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
+    const canvas = createCanvas2D(64, 64);
     const ctx = canvas.getContext('2d');
     const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
     grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
@@ -58,8 +57,7 @@ export function makeGlowTexture() {
 }
 
 export function makeRingTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
+    const canvas = createCanvas2D(64, 64);
     const ctx = canvas.getContext('2d');
     ctx.lineWidth = 4;
     ctx.strokeStyle = 'rgba(255, 200, 100, 1)';

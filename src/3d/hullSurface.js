@@ -10,6 +10,8 @@
 // (hullSurfaceWorker.js); jeden obraz naraz (kolejka). Bez workera (stare przeglądarki, testy) —
 // na wątku gry przez kanwę. Ekran ładowania może wypiec znane kadłuby z góry (`prebake`).
 import * as THREE from 'three/webgpu';
+import { createCanvas2D, imageSize, isImageReady } from './canvas2d.js';
+import { requestIdle } from './harmonogram.js';
 import { Core3D } from './core3d.js';
 import { bakeHullSurfaceField, hullSurfaceSize } from './hullSurfaceBake.js';
 
@@ -32,27 +34,7 @@ function makeFlatTexture() {
 
 export const HULL_SURFACE_FLAT = makeFlatTexture();
 
-function imageSize(image) {
-  const w = Number(image?.naturalWidth || image?.videoWidth || image?.width) || 0;
-  const h = Number(image?.naturalHeight || image?.videoHeight || image?.height) || 0;
-  return { w, h };
-}
-
-function isImageReady(image) {
-  if (!image) return false;
-  if (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement && !image.complete) return false;
-  const { w, h } = imageSize(image);
-  return w > 0 && h > 0;
-}
-
-function makeCanvas(w, h) {
-  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
-  if (typeof document === 'undefined') return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  return canvas;
-}
+const makeCanvas = createCanvas2D;
 
 function createSurfaceTexture(data, w, h) {
   const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -300,8 +282,7 @@ export const HullSurface = {
       if (old && old !== tex) old.dispose();
       if (!this._busy()) this._wake();
     };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(apply, { timeout: 250 });
-    else apply();
+    requestIdle(apply, { timeout: 250 }, () => apply());
   }
 };
 
