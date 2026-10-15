@@ -1996,13 +1996,6 @@ function pushEngineHullLights() {
 }
 const ENGINE_LIGHT_FALLBACK = Object.freeze([0.5, 0.7, 1.0]);
 
-// Jasność wieżyczek kanwy 2D (Turret2D.lightAt, oświetlenie v2): cień planet z tarcz tej klatki
-// (Core3D.sunVisibilityAtWorld — lustro CPU maski słońca), w pełnym cieniu `turretNight`.
-function turretLightAt(x, y) {
-  const night = HullLighting.turretNight();
-  return night + (1 - night) * Core3D.sunVisibilityAtWorld(x, y);
-}
-
 // Wartości wspólne kadłubów (węzły HULL_SHARED, hexShips3D.tsl.js): raz na klatkę
 // zamiast per mesh. Strojenie światła z panelu (window.__shipLightTune) tylko przy
 // zmianie epoki; żar pod przełącznikiem glow stresu, jasność z configu (suwaki
@@ -2063,11 +2056,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // kształtu (jeden sprite na klatkę). Nic z kamery — odbicia zależą tylko od
   // położenia i obrotu statku.
   HullLacquer.update();
-  // Oświetlenie v2: strojenie → wspólne węzły, kolejka wypieku map powierzchni (worker); wieżyczki
-  // na kanwie 2D ciemnieją w cieniu planet razem z kadłubem.
+  // Oświetlenie v2: strojenie → wspólne węzły, kolejka wypieku map powierzchni (worker). Wieże 3D czytają
+  // maskę słońca w materiale (B3D — kanwa wieżyczek nie rysuje).
   HullLighting.update();
   HullSurface.pump();
-  Turret2D.lightAt = HullLighting.isPbr() ? turretLightAt : null;
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
@@ -2310,14 +2302,13 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     lodFrameStats.shaftBakes = HullShadowSdf.stats.bakes;
   }
 
-  // Wieżyczki: zbieramy je do bufora 2D, rysuje je pętla renderu w index.html.
+  // Wieżyczki: rekordy klatki (Turret2D) — rysuje je partia wież 3D (shipModels3DGame.js, B3D).
   // Bufor MUSI powstać przed syncProjectiles — błyski wylotowe i początki
   // wiązek szukają w nim lufy, z której padł strzał.
-  // Przelacznik "Bronie" w perf HUD gasi teraz wiezyczki 2D (wczesniej chowal
-  // kontenery siatek) — zostaje dzwignia do porownania kosztu w locie.
+  // Przełącznik "Bronie" w perf HUD gasi rekordy (a z nimi wieże 3D) — dźwignia do porównania kosztu w locie.
   Turret2D.enabled = Core3D.perfToggles?.fgWeapons !== false;
   Turret2D.beginFrame();
-  // Tylko pudło rysowania — Turret2D.draw i tak odrzuca wieżyczki spoza kadru,
+  // Tylko pudło rysowania — partia wież i tak odrzuca wieże spoza kadru,
   // a sync liczył je dla całych 9 ekranów.
   for (const entity of drawVfx) {
     const interpPose = getInterpolatedRenderPose(entity);

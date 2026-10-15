@@ -6,22 +6,23 @@ import { readFileSync } from 'node:fs';
 // wybór wyglądu, skóra modelu na kratownicy kadłuba 2D, warstwy głębi i wpięcie w index.html.
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
-test('VisualMode: domyślnie 2D / 2D, wybór zapamiętany w localStorage', async () => {
-  const store = new Map();
+test('VisualMode: domyślnie statki 2D, bronie zawsze 3D (B3D — sc_weapons3d ignorowany), wybór zapamiętany', async () => {
+  const store = new Map([['sc_weapons3d', '0']]);
   globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
   try {
     const { VisualMode } = await import('../src/game/visualMode.js');
     VisualMode.load();
     assert.equal(VisualMode.ships3D, false);
-    assert.equal(VisualMode.weapons3D, false);
+    assert.equal(VisualMode.weapons3D, true, 'dawny zapis „bronie 2D” nie działa');
     VisualMode.set('ships', true);
     VisualMode.set('weapons', false);
     assert.equal(store.get('sc_ships3d'), '1');
-    assert.equal(store.get('sc_weapons3d'), '0');
+    assert.equal(store.get('sc_weapons3d'), '0', 'klucza broni nikt już nie pisze');
+    assert.equal(VisualMode.weapons3D, true);
     VisualMode.ships3D = false;
     VisualMode.load();
     assert.equal(VisualMode.ships3D, true);
-    assert.equal(VisualMode.label(), 'statki 3D, bronie 2D');
+    assert.equal(VisualMode.label(), 'statki 3D, bronie 3D');
   } finally {
     delete globalThis.localStorage;
   }
@@ -67,13 +68,14 @@ test('warstwy głębi modeli: kadłub pod strugą MAIN i efektami, nad skałami 
 test('index.html: wybór w „Nowej grze”, skóra sprite\'a i wieżyczki kanwy oddane modelom, klatka po kadłubach', () => {
   const html = read('index.html');
   assert.match(html, /data-visual-ships="0">2D<\/button>/);
-  assert.match(html, /data-visual-weapons="1">3D<\/button>/);
+  assert.doesNotMatch(html, /data-visual-weapons/, 'B3D: bez wyboru „Bronie 2D / 3D”');
   // Predykat skóry: model z opcji „Statki 3D” albo z kamery 3D (setShipModels3DView) — shipModel3DIdFor;
   // ciała świata (budowle i ich odłamy, hull.world) rysuje skóra brył — src/3d/worldBodies3D.js.
   assert.match(html, /setBeamSkinSuppressor\(\(e\) => !!e\.beamHull\?\.world \|\| !!shipModel3DIdFor\(e\)\);/);
   assert.match(html, /setShipModels3DView\(View3D\.active\);/);
-  assert.match(html, /if \(!View3D\.active\) Turret2D\.draw\(ctx, cam\);/);
-  assert.match(html, /Turret2D\.skipDraw = \(rec\) => VisualMode\.weapons3D && !!WEAPON3D_FAMILY\[rec\.weaponId\];/);
+  // B3D: kanwa nie rysuje wieżyczek — tylko partia wież 3D (rekordy Turret2D).
+  assert.doesNotMatch(html, /Turret2D\.draw\(|Turret2D\.skipDraw/);
+  assert.match(html, /configureShipModels3D\(\{ ships: VisualMode\.ships3D, modelIdOf: model3DIdOf \}\);/);
   // modele bez bytów ukrytych w mgle wojny (renderSeen — lista po fogSeenInto, src/game/fogOfWar.js) i zimne wraki
   // z ciałem do rysowania (renderSeenCold = withColdNearWrecks(renderSeen) — model wraku zostaje po zamrożeniu)
   assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);\s*\/\/[^\n]*\n\s*syncShipModels3D\(\{ entities: renderSeenCold,/);
@@ -83,8 +85,8 @@ test('index.html: wybór w „Nowej grze”, skóra sprite\'a i wieżyczki kanwy
   assert.doesNotMatch(html, /createHull3D|setFlight3DSixDof|stepSixDof|flight3DLiftInput|setShotQueryZ/);
   const hex = read('src/3d/hexShips3D.js');
   assert.match(hex, /if \(beam && beamSkinSuppressor !== null && beamSkinSuppressor\(entity\)\) continue;/);
-  const turret = read('src/vfx/turret2D.js');
-  assert.match(turret, /if \(skipDraw !== null && skipDraw\(rec\)\) continue;/);
+  const models = read('src/3d/ships3d/shipModels3DGame.js');
+  assert.match(models, /return \{ ships: _cfg\.ships, weapons: true, view3D: _cfg\.view3D \};/);
 });
 
 test('kamery 3D: sam widok, domyślnie kamera klasyczna, bez 6DoF', async () => {

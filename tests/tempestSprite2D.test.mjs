@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Turret2D } from '../src/vfx/turret2D.js';
+import { drawTurretsCanvas } from '../src/vfx/turretCanvasPreview.js';
 import { TempestSprite2D } from '../src/vfx/tempestSprite2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { getMountedWeaponAim } from '../src/game/weaponAim.js';
@@ -38,7 +39,7 @@ test('Tempest sprites retain all variant scales, mounted aim, muzzles and fallba
     fills = 0;
     Turret2D.beginFrame();
     Turret2D.sync(entity, 10, 20, entity.angle, 1);
-    return Turret2D.draw(ctx, { zoom });
+    return drawTurretsCanvas(ctx, { zoom });
   }
   function tip({ args, matrix: [a, b, c, d, e, f] }) {
     const [, , , , , x, y, w, h] = args;

@@ -1505,11 +1505,35 @@ jest gotowe — działaj.”
   Nowa gra, `VisualMode.weapons3D` zawsze prawda (dawny klucz `sc_weapons3d` ignorowany). Wieże wszystkich okrętów
   rysuje partia wież 3D (`turretBatch3D.js`) — także na sprite'ach w kamerze z góry; kanwa nie rysuje wieżyczek
   (`Turret2D` zostaje źródłem rekordów: kurs lufy, odrzut, LOD; po RW-26 liczy je strona gry). Każda broń z wieżą ma
-  rodzinę 3D (dziś `hexlance_siege: null` — Hexlance rysuje kanwa). Zachowania zrobione dotąd tylko dla wieżyczek kanwy
+  rodzinę 3D — już dziś (sprawdzone na `MASTER_WEAPONS`); Hexlance (`builtin`) nie ma żadnej wieży ani w 2D, ani w 3D
+  (decyzja użytkownika 2026-09-20: lufa = kil sprite'a Atlasa) i tak zostaje. Zachowania zrobione dotąd tylko dla wieżyczek kanwy
   przechodzą na wieże 3D albo okazują się zbędne dzięki głębi: maskowanie, mgła wojny, `__turretsHidden` (wrota
   ładowni), zasłonięcie pod nadprożami K-7 i pod fregatą zwiadu (`Turret2D.occlude`), cień planety i pole pasa
   (`Turret2D.lightAt`), LOD. „Statki 2D / 3D” zostaje (domyślnie 2D). Skutki dla planu: RW-26 bez lustra maski słońca
-  dla `lightAt`; § 2.7 i § 3.8 bez wieżyczek kanwy; D5 nie dotyczy. Stan B3D — dopisać tutaj.
+  dla `lightAt`; § 2.7 i § 3.8 bez wieżyczek kanwy; D5 nie dotyczy.
+
+  **Stan B3D (2026-10-15, `rw-bronie`):**
+  - Pomiar A/B na kodzie sprzed zmiany (`profil-bitwy-flot.mjs --sklad 50,20,10,3 --seed 7 --trwanie 80`, pary
+    uruchamiane równolegle, średnie z próbek bitwy co 3 s; bitwa chaotyczna — klatki różnią się bardziej szumem niż
+    bronią): zoom 0,1 (reżyser kadru zszedł do ~0,093): wieżyczki kanwy `render2dTurretTime` 0,26 ms ↔ wieże 3D
+    `syncShipModels3D` 0,25–0,43 ms (profil CPU, inkluzywnie; w 2D ta funkcja = same dysze SIDE 0,003), draw calle
+    mediana 49 ↔ 59, klatka 36,5 ↔ 28,4 ms (szum bitwy), p95 62,7 ↔ 41,1; zoom 0,45 (`sc_camera_frame=off`): kanwa
+    0,47 ms ↔ partia 0,07–0,11 ms (2D: dysze 0,02–0,04), draw calle 36 ↔ 50, klatka 29,9 ↔ 28,9 ms. GPU (`gpuMs`
+    próbkowany co N klatek) — w szumie. Wniosek: wieże 3D nie kosztują wyraźnie więcej niż kanwa (CPU podobny, +10–14
+    rysunków — po jednym na rodzinę w kadrze); poprawek wydajności nie trzeba.
+  - Kod: opcja i chipy `data-visual-weapons` usunięte, `VisualMode.weapons3D` zawsze prawda (`sc_weapons3d`
+    ignorowany), `setVisualMode(statki3D)` (drugi argument starych skryptów ignorowany), `configureShipModels3D` bez
+    `weapons`. `Turret2D.draw` / `skipDraw` / `occlude` / `lightAt`, ciemnienie sylwetką i importy atlasów sprite'ów
+    z `turret2D.js` usunięte; rysunek kanwy przeniesiony do `src/vfx/turretCanvasPreview.js` (tylko podgląd
+    `dema/bronie/yamato-preview.html` i testy atlasów — moduły sprite'ów broni zostają, bo z ich prostokątów
+    `weapons3D.js` buduje bryły, a `dema/bronie-webgpu` je rysuje). `HullLighting.turretNight` i `turretLightAt`
+    usunięte; `Core3D.sunVisibilityAtWorld` zostaje (diagnostyka `oswietlenie-gra.mjs`, `zaplon-gra.mjs`). Wiersz
+    PerfHUD „R wieżyczki” zostaje i pokazuje 0. Nowej rodziny nie było potrzeby robić (patrz wyżej — Hexlance).
+  - Zasłanianie i oświetlenie wież 3D: fregata zwiadu nad Atlasem — głębia (`__skinZ` 12,5 nad warstwą wież na
+    sprite'ach), nadproża K-7 — pass FG po ortho, maskowanie — `entityCloakVisAt` ≥ 0,5 w `syncTurrets`, mgła —
+    rekordy tylko dla bytów w kadrze, `__turretsHidden` — `Turret2D.sync` bez rekordów, cień planety / pole pasa —
+    maska słońca materiału partii. Weryfikacja zrzutami (sceny z wieżami zmieniają obraz) — czeka na „WOLNO
+    OBCIĄŻAĆ” (pauza obciążenia: użytkownik gra).
 - **D1 = B2cr** — rekomendacja RW-02 (`docs/webgpu/RW-02-PROTOTYP.md` § 4, § 7): bitmapa 3D z workera
   (`transferToImageBitmap` → `transferFromImageBitmap`) + nakładki klatki k rysowane na wątku głównym do pierścienia
   5 zwykłych kanw 2D w DOM z regułą ochrony (nietykalne: kanwa pokazana, klatki odebrane, a nie złożone — worker pisze

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Turret2D } from '../src/vfx/turret2D.js';
+import { drawTurretsCanvas } from '../src/vfx/turretCanvasPreview.js';
 import { YamatoSprite2D } from '../src/vfx/yamatoSprite2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 
@@ -35,7 +36,7 @@ test('Yamato atlas preserves muzzle placement, fallback, and distant LOD', () =>
     draws.length = 0;
     Turret2D.beginFrame();
     Turret2D.sync(entity, 0, 0, 0, 1);
-    return Turret2D.draw(ctx, { zoom });
+    return drawTurretsCanvas(ctx, { zoom });
   }
 
   try {

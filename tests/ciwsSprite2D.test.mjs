@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Turret2D, normalizeWeaponFxKey } from '../src/vfx/turret2D.js';
+import { drawTurretsCanvas } from '../src/vfx/turretCanvasPreview.js';
 import { CiwsSprite2D } from '../src/vfx/ciwsSprite2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 
@@ -28,7 +29,7 @@ test('CIWS sprites retain auxiliary aim, sizes, muzzle alignment and fallback un
     draws.length = 0; fills = 0;
     Turret2D.beginFrame();
     Turret2D.sync(entity, 10, 20, 0, 1);
-    return Turret2D.draw(ctx, { zoom });
+    return drawTurretsCanvas(ctx, { zoom });
   }
   function tip({ args, matrix: [a, b, c, d, e, f] }) {
     const [, , , , , x, y, w, h] = args;

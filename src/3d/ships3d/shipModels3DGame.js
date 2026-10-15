@@ -1,14 +1,14 @@
 // ============================================================
-// Modele 3D okrętów i broni w grze 2D — opcje nowej gry „Statki 2D / 3D” i „Bronie 2D / 3D”
-// (src/game/visualMode.js, menu „Nowa gra”; 2026-09-30). Rozgrywka bez zmian — model to tylko wygląd.
+// Modele 3D okrętów i broni w grze 2D — opcja nowej gry „Statki 2D / 3D” (src/game/visualMode.js, menu
+// „Nowa gra”; 2026-09-30); bronie zawsze 3D (B3D, 2026-10-15). Rozgrywka bez zmian — model to tylko wygląd.
 //
 //  • Statki 3D: encja z modelem w rejestrze (ships/ships3D.js) i kadłubem na belkach (HullBodies, sprite)
 //    rysuje się bryłą 3D zamiast skóry sprite'a (hexShips3D ją pomija — setBeamSkinSuppressor). Bryła jest
 //    skórą FFD na węzłach kadłuba 2D (hullSkin3D.js): wgniecenia, dziury, rozpad i wraki jak na sprite'cie.
 //    Wraki i odłamy dziedziczą model rodu (hull.dmgKey).
-//  • Bronie 3D: wieże 3D (weapons/weapons3D.js) w miejscach wieżyczek gry z rekordów Turret2D tej klatki
-//    (kurs lufy, odrzut) — na modelu i na sprite'cie; wieżyczek kanwy z modelem 3D Turret2D nie rysuje
-//    (Turret2D.skipDraw, index.html). Rysunek w PARTIACH (turretBatch3D.js): jeden na rodzinę broni dla
+//  • Bronie 3D (zawsze): wieże 3D (weapons/weapons3D.js) w miejscach wieżyczek gry z rekordów Turret2D tej
+//    klatki (kurs lufy, odrzut) — na modelu i na sprite'cie; kanwa wieżyczek nie rysuje (Turret2D to tylko
+//    źródło rekordów). Rysunek w PARTIACH (turretBatch3D.js): jeden na rodzinę broni dla
 //    wszystkich wież w kadrze — tu tylko stan wieży (pochylenie, wirnik, wylot) i jej rekord instancji.
 //  • Dysze SIDE 3D (2026-10-07, każdy wariant wyglądu — sprite'y nie mają namalowanych dysz manewrowych): model
 //    thrusters/sideThruster3D.js w markerze dyszy, dzwon za kierunkiem wydechu, farba frakcji kadłuba; pozycje,
@@ -61,17 +61,16 @@ const DEG = Math.PI / 180;
 // ---------------------------------------------------------------------------
 // Ustawienia (gra: configureShipModels3D przy starcie i po zmianie opcji)
 // ---------------------------------------------------------------------------
-const _cfg = { ships: false, weapons: false, modelIdOf: null, view3D: false };
+const _cfg = { ships: false, modelIdOf: null, view3D: false };
 
-/** ships / weapons — opcje nowej gry; modelIdOf(e) — id modelu encji (gracz, NPC) albo null. */
-export function configureShipModels3D({ ships = false, weapons = false, modelIdOf = null } = {}) {
+/** ships — opcja nowej gry; modelIdOf(e) — id modelu encji (gracz, NPC) albo null. Bronie zawsze 3D (B3D). */
+export function configureShipModels3D({ ships = false, modelIdOf = null } = {}) {
   _cfg.ships = !!ships;
-  _cfg.weapons = !!weapons;
   if (typeof modelIdOf === 'function') _cfg.modelIdOf = modelIdOf;
 }
 
 export function shipModels3DConfig() {
-  return { ships: _cfg.ships, weapons: _cfg.weapons, view3D: _cfg.view3D };
+  return { ships: _cfg.ships, weapons: true, view3D: _cfg.view3D };
 }
 
 /**
@@ -84,7 +83,6 @@ export function setShipModels3DView(active) {
   setModelSlabDepthOn(!_cfg.view3D);
 }
 const shipsOn = () => _cfg.ships || _cfg.view3D;
-const weaponsOn = () => _cfg.weapons || _cfg.view3D;
 
 // Model rodu kadłuba (hull.dmgKey): wrak i odłamy rysują się modelem statku, z którego powstały.
 const _lineage = new Map();
@@ -674,18 +672,18 @@ export function syncShipModels3D(p) {
   _frame++;
   let shown = 0;
   // Partie wież: liczniki na zero i początek przy kamerze (x, −y świata gry) — rekordy tej klatki względem niego.
-  const batches = weaponsOn() && Core3D.scene ? turretBatches() : _batches;
+  const batches = Core3D.scene ? turretBatches() : _batches;
   if (batches) {
-    if (weaponsOn()) sceneOriginNearCamera(_org);
+    sceneOriginNearCamera(_org);
     batches.begin(_org.x, _org.y);
   }
-  if (shipsOn() || weaponsOn()) {
+  {
     const dt = Math.max(0, Number(p.dt) || 0);
     for (const e of p.entities) {
       if (!e || e.dead) continue;
       const hull = liveHull(e);
       const id = hull ? shipModel3DIdFor(e) : null;
-      const recs = weaponsOn() && !e.isWreck && p.turrets?.recordsFor ? p.turrets.recordsFor(e) : null;
+      const recs = !e.isWreck && p.turrets?.recordsFor ? p.turrets.recordsFor(e) : null;
       const nRecs = recs ? recs.length : 0;
       e.__model3D = !!id;
       if (!id && nRecs === 0) continue;

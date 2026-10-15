@@ -84,6 +84,7 @@
   <footer><span>Oba podglądy używają renderera wieżyczek z gry. Tutaj sprawdzisz wygląd i odrzut; efekty strzału zobaczysz w grze.</span><span id="status" role="status">Ładowanie…</span></footer>
   <script type="module">
     import { Turret2D, normalizeWeaponFxKey } from '../../src/vfx/turret2D.js';
+    import { drawTurretsCanvas } from '../../src/vfx/turretCanvasPreview.js';
     import { YamatoSprite2D } from '../../src/vfx/yamatoSprite2D.js';
     import { TempestSprite2D } from '../../src/vfx/tempestSprite2D.js';
     import { CiwsSprite2D } from '../../src/vfx/ciwsSprite2D.js';
@@ -178,7 +179,7 @@
       SpecialWeaponSprite2D.enabled = sprites;
       MainWeaponSprite2D.enabled = sprites;
       PdWeaponSprite2D.enabled = sprites;
-      Turret2D.draw(ctx, camera);
+      drawTurretsCanvas(ctx, camera);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 

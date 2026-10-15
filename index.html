@@ -328,13 +328,6 @@
                 <button class="menu-chip" data-visual-ships="1">3D</button>
               </div>
             </div>
-            <div class="mm-field">
-              <div class="mm-field-label">Bronie</div>
-              <div class="menu-chip-group" role="group" aria-label="Bronie 2D albo 3D">
-                <button class="menu-chip" data-visual-weapons="0">2D</button>
-                <button class="menu-chip" data-visual-weapons="1">3D</button>
-              </div>
-            </div>
           </div>
           <div class="mm-group mm-visual-mode" aria-label="Fabuła">
             <div class="mm-field">
@@ -1332,7 +1325,6 @@
       prepareShipModels3D
     } from "./src/3d/ships3d/shipModels3DGame.js";
     import { SHIP3D_MODELS } from "./src/3d/ships3d/ships/ships3D.js";
-    import { WEAPON3D_FAMILY } from "./src/3d/ships3d/weapons/weapons3D.js";
     // Wybuchy WebGPU (src/3d/explosions/ — 2026-10-07, zamiast starego reactorblow.js): kula ognia i dym z gazu na
     // siatce 3D (compute), żar, iskry i odłamki gry, światła w siatce, fala jako sama refrakcja; trafienia broni to
     // receptury WeaponFx, rakiety src/3d/rockets/.
@@ -6997,18 +6989,18 @@
       return e.__model3DIdResolved;
     }
 
-    // Wygląd wybrany w menu „Nowa gra” → moduł modeli, skóra sprite'a i wieżyczki kanwy.
+    // Wygląd wybrany w menu „Nowa gra” → moduł modeli (statki 2D / 3D; bronie zawsze 3D — B3D, 2026-10-15).
     function applyVisualMode() {
-      configureShipModels3D({ ships: VisualMode.ships3D, weapons: VisualMode.weapons3D, modelIdOf: model3DIdOf });
+      configureShipModels3D({ ships: VisualMode.ships3D, modelIdOf: model3DIdOf });
     }
     VisualMode.load();
     applyVisualMode();
     window.Game3D = Game3D;
     window.View3D = View3D;
     // Konsola / harness (scripts/webgpu/modele3d-gra.mjs): zmiana wyglądu w trakcie gry.
-    window.setVisualMode = (ships3D, weapons3D) => {
+    // Drugi argument (dawne „bronie 3D”) ignorowany — bronie zawsze 3D; zostaje dla starych skryptów narzędzi.
+    window.setVisualMode = (ships3D) => {
       VisualMode.set('ships', ships3D);
-      VisualMode.set('weapons', weapons3D);
       applyVisualMode();
       updateVisualModeUI();
       return VisualMode.label();
@@ -7019,13 +7011,10 @@
     setEntityHiddenTest((e) => SensorSystem.hides(e));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
     setPirateBaseHiddenTest((st) => SensorSystem.hides(st));
-    Turret2D.skipDraw = (rec) => VisualMode.weapons3D && !!WEAPON3D_FAMILY[rec.weaponId];
-    // Fregata zwiadu nad Atlasem (wylot z luku): kanwa nie zna głębi — wieże Atlasa pod fregatą się nie rysują.
-    // Nadproże bramy hali K-7 (FG) nad okrętem w bramie — to samo dla wszystkich okrętów (obrysy nadproży hal przy
-    // kamerze odświeża render() — refreshLintelCover).
+    // Nadproże bramy hali K-7 (FG) nad okrętem w bramie (obrysy nadproży hal przy kamerze odświeża render() —
+    // refreshLintelCover). Wieże 3D chowa pod nadprożem i pod fregatą zwiadu głębia / kolejność passów.
     const k7Lintels = createLintelCover();
     function k7LintelOver(x, y) { return k7Lintels.n > 0 && lintelCovers(k7Lintels, x, y, 0); }
-    Turret2D.occlude = (rec) => (rec.entity === ship && scoutCoversPoint(rec.wx, rec.wy, 4)) || k7LintelOver(rec.wx, rec.wy);
     // Okna i lampy mostków (warstwa FG — nad passem ortho) pod fregatą nad Atlasem i pod nadprożem bramy gasną.
     Bridge3D.emitterOcclusion = (host, x, y) => ((host === ship && scoutCoversPoint(x, y, 0)) || k7LintelOver(x, y) ? 0 : 1);
     setPositionLightOcclusion(k7LintelOver);
@@ -29637,16 +29626,6 @@
         PerfHUD.addTiming('render2dPlayerTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();
 
-        // === Turret Pass ===
-        // Wiezyczki siedza NAD kadlubem (WebGL jest juz przeblitowany na te
-        // kanwe) i POD pociskami logicznie, choc pociski lecą warstwe nizej —
-        // pocisk wychodzacy z lufy wynurza sie zza dziala, i o to chodzi.
-        // Kamery 3D: wieżyczki kanwy leżałyby płasko nad kadrem — rysują je wieże 3D (shipModels3DGame.js).
-        if (!View3D.active) Turret2D.draw(ctx, cam);
-
-        PerfHUD.addTiming('render2dTurretTime', performance.now() - tRender2dSection);
-        tRender2dSection = performance.now();
-
         // === Projectile Pass ===
         for (const b of bullets) {
           if (b.__renderedByThree === true) continue;
@@ -32461,7 +32440,7 @@
     }
     refreshShieldControlButtons();
 
-    // --- WYGLĄD NOWEJ GRY: statki i bronie 2D albo 3D (src/game/visualMode.js) ---
+    // --- WYGLĄD NOWEJ GRY: statki 2D albo 3D (src/game/visualMode.js; bronie zawsze 3D) ---
     // Przełączniki w panelu „Nowa gra”; wybór zapamiętany, działa od razu (także w trakcie gry).
     function updateVisualModeUI() {
       document.querySelectorAll('[data-visual-ships]').forEach(btn => {
@@ -32469,22 +32448,10 @@
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on);
       });
-      document.querySelectorAll('[data-visual-weapons]').forEach(btn => {
-        const on = (btn.dataset.visualWeapons === '1') === VisualMode.weapons3D;
-        btn.classList.toggle('active', on);
-        btn.setAttribute('aria-pressed', on);
-      });
     }
     document.querySelectorAll('[data-visual-ships]').forEach(btn => {
       btn.addEventListener('click', () => {
         VisualMode.set('ships', btn.dataset.visualShips === '1');
-        applyVisualMode();
-        updateVisualModeUI();
-      });
-    });
-    document.querySelectorAll('[data-visual-weapons]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        VisualMode.set('weapons', btn.dataset.visualWeapons === '1');
         applyVisualMode();
         updateVisualModeUI();
       });

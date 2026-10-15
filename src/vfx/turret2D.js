@@ -1,34 +1,17 @@
 // src/vfx/turret2D.js
 //
-// Wieżyczki rysowane na kanwie 2D zamiast siatek Three.js.
+// Wieżyczki okrętów: ŹRÓDŁO REKORDÓW (pozycja, kurs lufy, odrzut, skala, sylwetka z punktami wylotu)
+// zbieranych co klatkę w `sync`. Od 2026-10-15 (B3D, docs/PLAN-render-worker.md § 7.1) wieże rysuje WYŁĄCZNIE
+// partia wież 3D (src/3d/ships3d/turretBatch3D.js przez shipModels3DGame.js) — kanwa 2D gry ich nie rysuje.
+// Rysunek sylwetek i atlasów sprite'ów na kanwie przeniesiony do src/vfx/turretCanvasPreview.js (tylko podgląd
+// dema/bronie/yamato-preview.html i testy atlasów).
 //
-// Powód: modele 3D wieżyczek niosły w passie FG po kilka oświetlanych draw calli
-// na broń, a przy zbliżeniu na flotę potrafiły spuchnąć klatkę na stałe (patrz
-// historia `_detachContainer` w dawnym weapon3DSystem.js). Gra jest ortograficzna i
-// patrzy z góry, więc wieżyczka i tak była płaską sylwetką — tutaj rysujemy ją
-// wprost.
-//
-// Sylwetki proceduralne są wyprowadzone z geometrii builderów 3D (te same offsety luf,
-// te same punkty wylotowe), żeby nie zmienić czytelności ani pozycji błysków.
-// Błyski wylotowe, pociski, wiązki i trafienia ZOSTAJĄ w 3D — ten moduł oddaje
-// im tylko pozycję wylotu przez `triggerShot`.
-//
-// Koszt rysowania: jedna macierz + 2–4 `fill(Path2D)` na wieżyczkę. Ścieżki są
-// budowane RAZ na sylwetkę i cache'owane; per klatkę nie powstaje żadna geometria.
-// Broń ze sprite'ami w bliskim LOD używa współdzielonych atlasów (korpus + lufy).
-// Zachowuje proceduralny fallback, daleki LOD i te same punkty wylotowe.
+// Sylwetki (SPECS) są wyprowadzone z geometrii builderów 3D (te same offsety luf, te same punkty wylotowe):
+// błyski wylotowe, pociski i wiązki biorą z nich pozycję wylotu przez `triggerShot` / `findTurretSlot`.
 
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
-import { YamatoSprite2D } from './yamatoSprite2D.js';
-import { TempestSprite2D } from './tempestSprite2D.js';
-import { CiwsSprite2D } from './ciwsSprite2D.js';
-import { LauncherSprite2D } from './launcherSprite2D.js';
-import { SpecialWeaponSprite2D } from './specialWeaponSprite2D.js';
-import { MainWeaponSprite2D } from './mainWeaponSprite2D.js';
-import { PdWeaponSprite2D } from './pdWeaponSprite2D.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
-import { entityCloakVisAt } from '../game/cloakLook.js';
 
 // Barwy odpowiadają materiałom Lambert z dawnego weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
@@ -49,13 +32,6 @@ const CATEGORY_TRIM = Object.freeze({
   beam: 0.94, ciws: 0.88, flak: 0.92, rocket: 0.82, torpedo: 0.90, default: 1.0
 });
 
-// LOD ekranowy. Wieżyczka mierzona w pikselach promienia sylwetki:
-//  < HIDE_PX      — nie rysujemy wcale,
-//  < BLOB_PX      — jeden prostokąt w barwie pancerza (1 fill),
-//  wyżej          — pełna sylwetka.
-const TURRET_HIDE_PX = 2.0;
-const TURRET_BLOB_PX = 5.5;
-
 // Przypisanie strzału do wieżyczki, gdy wołający NIE poda strzelca: punkt
 // strzału musi leżeć przy lufie (dwa promienie sylwetki + zapas na ruch statku
 // między tickiem fizyki a interpolowaną pozą renderu). Bez limitu najbliższa
@@ -65,12 +41,6 @@ const OWNERLESS_SNAP_PAD = 60;
 function ownerlessSnapSq(rec) {
   const reach = rec.spec.r * rec.scale * 2 + OWNERLESS_SNAP_PAD;
   return reach * reach;
-}
-
-function tunable(name, fallback) {
-  if (typeof window === 'undefined') return fallback;
-  const v = Number(window.DevTuning?.[name]);
-  return Number.isFinite(v) && v >= 0 ? v : fallback;
 }
 
 // ── Sylwetki ────────────────────────────────────────────────────────────────
@@ -462,64 +432,9 @@ function fxKeyFor(weaponId) {
   return direct ? direct.key : normalizeWeaponFxKey(id);
 }
 
-// ── Kompilacja sylwetek do Path2D (raz na sylwetkę) ─────────────────────────
-
-function addPart(path, part) {
-  switch (part[0]) {
-    case 'r': {
-      const [, x, y, w, h, rad] = part;
-      const r = Math.min(Number(rad) || 0, w * 0.5, h * 0.5);
-      if (r > 0.01 && typeof path.roundRect === 'function') path.roundRect(x - w / 2, y - h / 2, w, h, r);
-      else path.rect(x - w / 2, y - h / 2, w, h);
-      break;
-    }
-    case 'c':
-      path.moveTo(part[1] + part[3], part[2]);
-      path.arc(part[1], part[2], part[3], 0, Math.PI * 2);
-      break;
-    case 'p': {
-      const pts = part[1];
-      if (!pts || pts.length < 3) break;
-      path.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) path.lineTo(pts[i][0], pts[i][1]);
-      path.closePath();
-      break;
-    }
-    case 'ring': {
-      const [, x, y, rOut, rIn] = part;
-      // Przeciwne kierunki → reguła nonzero wycina środek.
-      path.moveTo(x + rOut, y);
-      path.arc(x, y, rOut, 0, Math.PI * 2, false);
-      path.moveTo(x + rIn, y);
-      path.arc(x, y, rIn, Math.PI * 2, 0, true);
-      break;
-    }
-    default:
-      break;
-  }
-}
-
-function compileSpec(spec) {
-  if (spec.__layers) return spec.__layers;
-  const layers = [];
-  for (const group of spec.g) {
-    if (!group?.p?.length) continue;
-    const path = new Path2D();
-    for (const part of group.p) addPart(path, part);
-    layers.push({ color: group.c, path, barrel: group.b === 1 });
-  }
-  // Blob LOD: jeden prostokąt obejmujący sylwetkę, rysowany zamiast wszystkiego.
-  const blob = new Path2D();
-  const len = spec.r;
-  addPart(blob, ['r', len * 0.42, 0, len * 0.95, Math.max(6, len * 0.42), 2]);
-  spec.__layers = layers;
-  spec.__blob = blob;
-  return layers;
-}
-
 // ── Stan ────────────────────────────────────────────────────────────────────
 
-// Rekordy widocznych wieżyczek zbierane w `sync`, konsumowane w `draw`.
+// Rekordy widocznych wieżyczek zbierane w `sync`, konsumowane przez partię wież 3D i efekty broni.
 // Pula obiektów: w bitwie idzie ich kilkaset na klatkę, nie chcemy alokacji.
 const frameRecords = [];
 let frameCount = 0;
@@ -651,7 +566,7 @@ function shouldRenderTurret(def) {
 // KAŻDA wieżyczka składała uid (`npc_wep_3_…`) i klucz rekordu z konkatenacji,
 // a resolveSpec / fxKeyFor / weaponScale / shouldRenderTurret robiły
 // toLowerCase + serię includes — przy 200 okrętach ~15 000 stringów na klatkę,
-// także przy dalekim zoomie, gdzie draw() i tak wszystko chowa. Definicja broni
+// także przy dalekim zoomie, gdzie wież i tak nie widać. Definicja broni
 // i slot są stabilne, więc liczymy to raz. WeakMap zamiast pól na obiektach
 // gry: loadout gracza jest zapisywany. Odrzut i wstrząs — z danych broni (18-D).
 const defInfoCache = new WeakMap();
@@ -738,80 +653,11 @@ function emitPlayerTurretList(list, prefix, aimAlpha) {
 
 let lastFxTimeSec = 0;
 
-// ── Cień na wieżyczkach (oświetlenie kadłubów v2, 2026-10-06) ─────────────────
-// Kanwa 2D nie czyta maski słońca GPU, a kadłub w cieniu planety ciemnieje — jasna wieżyczka na
-// czarnym kadłubie świeciła jak naklejka. Po narysowaniu wieżyczki kładziemy na nią jej CZARNĄ
-// sylwetkę z alfą (1 − jasność): ścieżki — drugie wypełnienie tej samej ścieżki, sprite'y — kopia
-// atlasu w połowie rozdzielczości z samą alfą (raz na atlas). `ctx.filter = 'brightness()'` odpada:
-// zmierzone ~4,6 ms na drawImage (Chrome, kanwa GPU) zamiast ~0,03.
-const _silhouettes = new WeakMap();
-function silhouetteOf(image) {
-  let e = _silhouettes.get(image);
-  if (e !== undefined) return e;
-  e = null;
-  try {
-    const iw = Number(image.naturalWidth || image.width) || 0;
-    const ih = Number(image.naturalHeight || image.height) || 0;
-    if (iw > 0 && ih > 0) {
-      const w = Math.max(1, Math.round(iw / 2));
-      const h = Math.max(1, Math.round(ih / 2));
-      const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const g = canvas.getContext('2d');
-      g.drawImage(image, 0, 0, w, h);
-      g.globalCompositeOperation = 'source-in';
-      g.fillStyle = '#000';
-      g.fillRect(0, 0, w, h);
-      e = { canvas, kx: w / iw, ky: h / ih };
-    }
-  } catch {
-    e = null;
-  }
-  _silhouettes.set(image, e);
-  return e;
-}
-
-// Kontekst-podkładka dla rysowników sprite'ów (używają tylko setTransform i 9-argumentowego drawImage):
-// każdy obraz dostaje zaraz po sobie swoją sylwetkę z alfą `dark` (× alfa maskowania).
-const shadedCtx = {
-  ctx: null,
-  dark: 0,
-  alpha: 1,
-  setTransform(a, b, c, d, e, f) { this.ctx.setTransform(a, b, c, d, e, f); },
-  drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh) {
-    const ctx = this.ctx;
-    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-    const s = silhouetteOf(img);
-    if (!s) return;
-    ctx.globalAlpha = this.alpha * this.dark;
-    ctx.drawImage(s.canvas, sx * s.kx, sy * s.ky, sw * s.kx, sh * s.ky, dx, dy, dw, dh);
-    ctx.globalAlpha = this.alpha;
-  }
-};
-const SHADE_DARK = 'rgb(0,0,0)';
-
 export const Turret2D = {
   enabled: true,
 
-  /**
-   * Jasność wieżyczki w punkcie świata gry (oświetlenie kadłubów v2): (x, y) → 0..1, 1 = bez zmian.
-   * Ustawia hexShips3D (cień planet z Core3D.sunVisibilityAtWorld); null — wieżyczki jak dotąd.
-   */
-  lightAt: null,
-
   /** Sylwetka dla danej broni — wystawione dla testów i podglądu w konsoli. */
   resolveSpec,
-
-  /**
-   * Opcja „Bronie 3D” (src/3d/ships3d/shipModels3DGame.js): (rec) → true = wieżyczki nie rysuje kanwa
-   * (rysuje ją model 3D z rekordu tej klatki). null — kanwa rysuje wszystkie.
-   */
-  skipDraw: null,
-  /**
-   * (rec) → true = wieżyczka zasłonięta (np. fregata zwiadu przelatuje nad Atlasem — kanwa nie zna głębi). null — brak.
-   */
-  occlude: null,
 
   /** Rekordy wieżyczek encji z tej klatki (tablica z puli — tylko do odczytu w tej klatce) albo null. */
   recordsFor(entity) {
@@ -993,7 +839,8 @@ export const Turret2D = {
 
     const cosA = Math.cos(best.ang);
     const sinA = Math.sin(best.ang);
-    // Błysk przesuwamy lekko PRZED wylot: kanwa 2D leży nad warstwą WebGL, więc
+    // Błysk przesuwamy lekko PRZED wylot (z czasów wieżyczek kanwy, które leżały nad warstwą WebGL; zostaje —
+    // przesunięcie efektów wylotu bez zmian), więc
     // płomień wyśrodkowany na wylocie byłby do połowy przykryty lufą.
     const forward = best.spec.r * 0.06 + 3;
     const mx = muzzles[idx][0] * best.scale + forward;
@@ -1153,157 +1000,13 @@ export const Turret2D = {
     }
   },
 
-  /**
-   * Rysuje wszystkie wieżyczki zebrane w tej klatce.
-   * Cache Path2D lub atlas broni; zero budowy ścieżek i obrazów per klatkę.
-   */
-  draw(ctx, cam) {
-    if (!this.enabled || frameCount === 0 || !ctx) return 0;
-    const worldToScreen = (typeof window !== 'undefined') ? window.worldToScreen : null;
-    if (!worldToScreen) return 0;
-
-    const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
-    const origin = worldToScreen(0, 0, cam);
-    const ox = origin.x;
-    const oy = origin.y;
-
-    const hidePx = tunable('turretHidePx', TURRET_HIDE_PX);
-    const blobPx = tunable('turretBlobPx', TURRET_BLOB_PX);
-
-    // Zgrubny prostokąt widoku w pikselach ekranu — wieżyczki poza nim odpadają
-    // przed jakimkolwiek ustawieniem macierzy.
-    const vw = ctx.canvas?.width || 0;
-    const vh = ctx.canvas?.height || 0;
-
-    let drawn = 0;
-    const skipDraw = typeof this.skipDraw === 'function' ? this.skipDraw : null;
-    const occlude = typeof this.occlude === 'function' ? this.occlude : null;
-    const lightAt = typeof this.lightAt === 'function' ? this.lightAt : null;
-    let alpha = 1;
-    // Jasność liczona raz na encję (cień planety jest dużo większy niż okręt).
-    let lightEntity = null;
-    let light = 1;
-    shadedCtx.ctx = ctx;
-    ctx.save();
-    for (let i = 0; i < frameCount; i++) {
-      const rec = frameRecords[i];
-      if (skipDraw !== null && skipDraw(rec)) continue;
-      if (occlude !== null && occlude(rec)) continue;
-      const spec = rec.spec;
-      const worldScale = rec.scale;
-      const screenR = spec.r * worldScale * zoom;
-      if (screenR < hidePx) continue;
-      const layers = spec.__layers || compileSpec(spec);
-
-      const sx = ox + rec.wx * zoom;
-      const sy = oy + rec.wy * zoom;
-      if (vw > 0 && (sx < -screenR * 2 || sy < -screenR * 2 || sx > vw + screenR * 2 || sy > vh + screenR * 2)) continue;
-      // Maskowanie (src/game/cloakLook.js): wieżyczka gaśnie razem z komórką kadłuba pod sobą.
-      const vis = rec.entity && rec.entity.__cloakLook ? entityCloakVisAt(rec.entity, rec.wx, rec.wy) : 1;
-      if (vis <= 0.01) continue;
-      if (vis !== alpha) { alpha = vis; ctx.globalAlpha = vis; }
-      if (lightAt !== null && (rec.entity !== lightEntity || rec.entity == null)) {
-        lightEntity = rec.entity;
-        const l = lightAt(rec.wx, rec.wy);
-        light = l >= 0 && l <= 1 ? l : 1;
-      }
-      // Ciemnienie: rysownicy sprite'ów przez podkładkę, ścieżki — drugie wypełnienie (niżej).
-      const dark = 1 - light;
-      const shade = dark > 0.02;
-      const dctx = shade ? shadedCtx : ctx;
-      if (shade) { shadedCtx.dark = dark; shadedCtx.alpha = alpha; }
-
-      const st = rec.state;
-      const k = worldScale * zoom;
-      const cosA = Math.cos(rec.ang);
-      const sinA = Math.sin(rec.ang);
-      const a = cosA * k, b = sinA * k, c = -sinA * k, d = cosA * k;
-
-      if (screenR < blobPx) {
-        ctx.setTransform(a, b, c, d, sx, sy);
-        ctx.fillStyle = C.armor;
-        ctx.fill(spec.__blob);
-        if (shade) {
-          ctx.globalAlpha = alpha * dark;
-          ctx.fillStyle = SHADE_DARK;
-          ctx.fill(spec.__blob);
-          ctx.globalAlpha = alpha;
-        }
-        drawn++;
-        continue;
-      }
-
-      const barrelBack = st ? st.barrel : 0;
-      const housingBack = st ? st.housing : 0;
-
-      if ((spec === SPECS.vulcan || spec === SPECS.helios || spec === SPECS.heavyAutocannon
-        || spec === SPECS.armata || spec === SPECS.beamEmitter || spec === SPECS.beamPulse)
-        && MainWeaponSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
-        drawn++;
-        continue;
-      }
-
-      if ((spec === SPECS.goliath || spec === SPECS.plasmaGatling || spec === SPECS.tempest2 || spec === SPECS.siegeRail)
-        && SpecialWeaponSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
-        drawn++;
-        continue;
-      }
-
-      if ((spec === SPECS.missileRack || spec === SPECS.siegeTorpedo || spec === SPECS.fbDefault)
-        && LauncherSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
-        drawn++;
-        continue;
-      }
-
-      if ((spec === SPECS.flak || spec === SPECS.laserPD)
-        && PdWeaponSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
-        drawn++;
-        continue;
-      }
-
-      if (spec === SPECS.ciws && CiwsSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
-        drawn++;
-        continue;
-      }
-
-      if ((spec === SPECS.yamato || spec === SPECS.yamatoTwin)
-        && YamatoSprite2D.draw(dctx, a, b, c, d, sx, sy, housingBack, barrelBack, spec === SPECS.yamatoTwin)) {
-        drawn++;
-        continue;
-      }
-
-      if ((spec === SPECS.tempest1 || spec === SPECS.tempest2 || spec === SPECS.lance)
-        && TempestSprite2D.draw(dctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
-        drawn++;
-        continue;
-      }
-
-      for (let li = 0; li < layers.length; li++) {
-        const layer = layers[li];
-        // Odrzut: cała wieżyczka cofa się o `housing`, lufy dodatkowo o `barrel`.
-        const back = housingBack + (layer.barrel ? barrelBack : 0);
-        const e = sx - back * a;
-        const f = sy - back * b;
-        ctx.setTransform(a, b, c, d, e, f);
-        ctx.fillStyle = layer.color;
-        ctx.fill(layer.path);
-        if (shade) {
-          ctx.globalAlpha = alpha * dark;
-          ctx.fillStyle = SHADE_DARK;
-          ctx.fill(layer.path);
-          ctx.globalAlpha = alpha;
-        }
-      }
-      drawn++;
-    }
-    // restore() cofa też macierz — kanwa wraca dokładnie w stan sprzed passa.
-    ctx.restore();
-    shadedCtx.ctx = null;
-    return drawn;
-  },
-
   /** Liczba wieżyczek zebranych w tej klatce (dla perf HUD). */
   get frameCount() { return frameCount; },
+
+  /** i-ty rekord tej klatki (0 ≤ i < frameCount; tylko do odczytu w tej klatce) — podgląd kanwy, narzędzia. */
+  recordAt(i) {
+    return i >= 0 && i < frameCount ? frameRecords[i] : null;
+  },
 
   clear() {
     frameCount = 0;
@@ -1314,3 +1017,5 @@ export const Turret2D = {
 };
 
 if (typeof window !== 'undefined') window.Turret2D = Turret2D;
+
+export { SPECS as TURRET_SPECS };
