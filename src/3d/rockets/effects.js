@@ -1,7 +1,7 @@
 // src/3d/rockets/effects.js
 //
 // REŻYSER EFEKTÓW RAKIET (port `Effects` z dema dema/rakiety-webgpu/effects.js do gry,
-// zadanie 19). Zdarzenia lotu z src/effects3d/rocketSystem3D.js (lot, naprowadzanie,
+// zadanie 19). Zdarzenia lotu z src/game/rockets/rocketSim.js (lot, naprowadzanie,
 // trafienia i obrażenia zostają tam — gameplay) → receptury na pulach: dym (smoke.js),
 // iskry (SparkSystem3D), płomienie (plumes.js), kule ognia, mgławica, łuki, duszki blasku,
 // światła siatki Core3D, zniekształcenia Core3D (fala, implozja, gorące powietrze — zamiast
@@ -174,6 +174,7 @@ export class RocketEffects {
     this.sparks = sparks;
     this.rng = rng;
     this.renderer = null;           // dla spawn mgławicy (compute) — ustawia krok efektów
+    this.onShake = null;            // (siła, czas) → wstrząs kamery — hak gry (RW-30, index.html)
     // Zegar reżysera [s] (suma dt lotu rakiet) i epoka czasów na GPU (łuki, mgławica).
     this.time = 0;
     this.epoch = 0;
@@ -1059,13 +1060,8 @@ export class RocketEffects {
       this._spark(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 0.6 + rng.next() * 1.3, 0.3 + rng.next() * 0.5, 0.8 + rng.next() * 0.9, col, 0.8, 0, 0, CLOCK_SIM);
     }
     // Wstrząs kamery — tylko supernowa w kadrze (standardowe salwy trzęsłyby bitwą bez przerwy).
-    if (inView && this.opts.novaShake && typeof window !== 'undefined') {
-      const cam = window.camera;
-      if (cam && typeof cam.addShake === 'function') {
-        const left = (Number(cam.shakeMag) || 0) * ((Number(cam.shakeDur) || 0) > 0 ? 1 : 0);
-        if (16 > left) cam.addShake(16, 0.45);
-      }
-    }
+    // RW-30: żądanie do gry (hak `onShake` — kamerą rządzi gra; reguła: src/game/cameraShakes.js requestCameraShakePeak).
+    if (inView && this.opts.novaShake && this.onShake) this.onShake(16, 0.45);
   }
 
   // --- klatka (zegar reżysera) -------------------------------------------------

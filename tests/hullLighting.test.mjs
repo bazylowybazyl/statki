@@ -74,7 +74,6 @@ test('HullLighting: strojenie → wspólne węzły (grupa render), przełącznik
   assert.ok(Math.abs(HullLighting.uniforms.uKeyElev.value.y - Math.SQRT1_2) < 1e-6);
   Object.assign(t, HULL_LIGHT_DEFAULTS);
   HullLighting.update();
-  assert.ok(HullLighting.turretNight() > 0 && HullLighting.turretNight() < 1);
 });
 
 // WGSL w Node (jak tests/hexShips3DShader.test.mjs).
@@ -134,12 +133,10 @@ test('cień planety na CPU (lustro passa maski): umbra za planetą, słońce obo
   assert.ok(vis(100000 + 6000 * 5 + 7000, 0) > 0.95, 'za końcem smugi (discLenMul)');
 });
 
-test('wieżyczki kanwy 2D: ciemnienie sylwetką (bez ctx.filter), wszystkie rysowniki sprite\'ów przez podkładkę', () => {
-  const src = read('src/vfx/turret2D.js');
-  assert.doesNotMatch(src.replace(/\/\/.*$/gm, ''), /ctx\.filter\s*=/, 'filtr kanwy kosztuje ~4,6 ms na drawImage');
-  assert.equal((src.match(/Sprite2D\.draw\(dctx,/g) || []).length, 7, 'każdy rysownik przez podkładkę');
-  assert.match(src, /lightAt: null,/);
-  const hex = read('src/3d/hexShips3D.js');
-  assert.match(hex, /Turret2D\.lightAt = HullLighting\.isPbr\(\) \? turretLightAt : null;/);
+// B3D (2026-10-15): wieżyczek kanwy 2D nie ma — wieże 3D czytają maskę słońca w materiale; dawne ciemnienie
+// sylwetką (Turret2D.lightAt) usunięte, lustro CPU zostaje jako diagnostyka narzędzi.
+test('B3D: bez jasności wieżyczek kanwy (Turret2D.lightAt), lustro CPU maski dla narzędzi', () => {
+  assert.doesNotMatch(read('src/vfx/turret2D.js'), /lightAt/);
+  assert.doesNotMatch(read('src/3d/hexShips3D.js'), /Turret2D\.lightAt|turretLightAt/);
   assert.match(read('src/3d/core3d.js'), /sunVisibilityAtWorld\(worldX, worldY\) \{/);
 });

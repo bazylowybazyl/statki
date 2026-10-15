@@ -328,13 +328,6 @@
                 <button class="menu-chip" data-visual-ships="1">3D</button>
               </div>
             </div>
-            <div class="mm-field">
-              <div class="mm-field-label">Bronie</div>
-              <div class="menu-chip-group" role="group" aria-label="Bronie 2D albo 3D">
-                <button class="menu-chip" data-visual-weapons="0">2D</button>
-                <button class="menu-chip" data-visual-weapons="1">3D</button>
-              </div>
-            </div>
           </div>
           <div class="mm-group mm-visual-mode" aria-label="Fabuła">
             <div class="mm-field">
@@ -1281,7 +1274,10 @@
     window.isShieldBreachedAt = isShieldBreachedAt;   // rakiety (rocketSystem3D) — przebicie tarczy
     import { initWorld3D, attachPirateStation3D, updateWorld3D, setWorld3DHiddenTest } from "./src/3d/world3d.js";
     // Suchy dok piratów (misja 1): bryła 3D (budowle Z7), bryły trafień i kawałki zniszczeń.
-    import { attachPirateBase3D, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRockSite, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockSite, setPirateBaseHiddenTest, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
+    import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
+    // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
+    // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
+    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
@@ -1290,8 +1286,10 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
-    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
+    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
+    // gry (RW-25: pole, cień pól, olbrzymy i kolizje, wydobycie, zegar skał).
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    import { createBeltWorld } from "./src/game/beltWorld.js";
     import { NeaFlyby, neaFlybyMessage } from "./src/game/neaFlyby.js";
     import { createNeaFlyby3D } from "./src/3d/neaFlyby3D.js";
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
@@ -1357,7 +1355,6 @@
       prepareShipModels3D
     } from "./src/3d/ships3d/shipModels3DGame.js";
     import { SHIP3D_MODELS } from "./src/3d/ships3d/ships/ships3D.js";
-    import { WEAPON3D_FAMILY } from "./src/3d/ships3d/weapons/weapons3D.js";
     // Wybuchy WebGPU (src/3d/explosions/ — 2026-10-07, zamiast starego reactorblow.js): kula ognia i dym z gazu na
     // siatce 3D (compute), żar, iskry i odłamki gry, światła w siatce, fala jako sama refrakcja; trafienia broni to
     // receptury WeaponFx, rakiety src/3d/rockets/.
@@ -1369,8 +1366,11 @@
     } from "./src/game/graphicsQuality.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
-    import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
+    import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
+    // RW-23: zdarzenia lotu rakiet — rekordy RKT_* (adapter gry → dekoder renderu, reżyser efektów rakiet).
+    import { installRocketFxCommands } from "./src/3d/rockets/rocketFxCommands.js";
+    import { createRocketCommandAdapter } from "./src/game/rockets/rocketCommandAdapter.js";
     // Rdzeń reaktora na belkach (src/game/reactorCore.js, klej reactorCoreGame.js) i jego wybuch
     // WebGPU (src/3d/reactorBlast/) z dema rdzen-webgpu — zastępuje dawny losowy wybuch reaktora
     // przy śmierci okrętu (docs/webgpu/DEMO-RDZEN.md § 7).
@@ -1400,10 +1400,18 @@
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
     // Losowość warstwy efektów (zadanie 23): cząstki kanwy (ślady pocisków, iskry wyrzutni i startu
     // myśliwca) i wariacja tonu dźwięku nie zużywają Math.random gry — przebieg bitwy nie zależy od obrazu.
-    import { fxRandom } from "./src/3d/fx/fxRandom.js";
+    // RW-20: wizualia i drobna losowość wątku głównego — strumień gry (osobny od strumienia renderu fxRandom).
+    import { fxRandomGame } from "./src/game/fxRandomGame.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
     // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
     import { WeaponFx } from "./src/3d/weapons/weaponFx.js";
+    // RW-21 (docs/PLAN-render-worker.md § 3.3): zdarzenia efektów broni idą rekordami strumienia rozkazów (tryb inline —
+    // dyspozycja zaraz po zapisie); dekoder renderu woła WeaponFx.
+    import { RenderCommands } from "./src/render/renderCommands.js";
+    import { beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
+    // RW-30: wstrząsy kamery po stronie gry — wstrząs strzałów i kopnięcie kadru z rekordu SHOT, żądania wstrząsu z renderu.
+    import { createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak, ShotFeel } from "./src/game/cameraShakes.js";
+    import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
       FLAK_TUNING,
       collectFlakBurstHits,
@@ -1612,9 +1620,12 @@
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
     import { cloakLightGain } from "./src/game/cloakLook.js";
+    import { stepCloakLooks } from "./src/game/cloakLooks.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
     import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
+    // Świat ringów po stronie gry (RW-27): kolidery, teren, automat stanowisk K-7, lampki, zegar migania świateł hal.
+    import { HaloRingWorld } from "./src/game/haloRingWorld.js";
     import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
     import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
     import { computeHaloPortStation, haloRingKey } from "./src/game/haloRingPlanets.js";
@@ -1740,7 +1751,12 @@
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
         const rocketFx = createRocketFx(Core3D);
-        initRocketSystem3D(Core3D.scene, { effects: rocketFx });
+        // RW-23: lot (gra) → rekordy RKT_* → reżyser efektów (pula rakiet i dekoder renderu).
+        const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
+        if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(rocketSim.rockets);
+        installRocketFxCommands(RenderCommands.reader, rocketFx?.director || null, (i) => rocketSim.rockets[i]);
+        // RW-30: wstrząs Supernowej — żądanie do gry.
+        if (rocketFx?.director) rocketFx.director.onShake = (mag, dur) => requestCameraShakePeak(camera, mag, dur);
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
         HallDust.setVaporSmoke(rocketFx.smoke);
         // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
@@ -2474,7 +2490,7 @@
       if (!ctx || !buffer) return;
 
       // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
-      const rate = pitchVar ? 1.0 + (fxRandom.next() - 0.5) * 2 * pitchVar : 1.0;
+      const rate = pitchVar ? 1.0 + (fxRandomGame.next() - 0.5) * 2 * pitchVar : 1.0;
       const dist = (Number.isFinite(x) && Number.isFinite(y)) ? Math.hypot(x - camera.x, y - camera.y) : 0;
       const durationMs = (Number(buffer.duration) || 0) / rate * 1000;
       const voiceVolume = shotVoiceLimiter.admit(soundKey, performance.now(), volume, dist, durationMs);
@@ -5935,8 +5951,8 @@
         env.travelTarget = null;
       }
       env.features = radarFeaturesWithPirateRock(hudRadarWorldFeatures);   // + planetoida pod bazą piratów (misja 1)
-      env.rings = haloRings ? haloRings.entries : null;
-      env.belt = asteroidBelt || null;
+      env.rings = haloWorld ? haloWorld.entries : null;
+      env.belt = beltWorld || null;
       _neaRadarBodies.length = 0;
       env.bodies = neaFlybyRadarBodies(_neaRadarBodies);
       cometRadarBodies(env.bodies);   // jądra komet — kontakty z podpisem (blok „KOMETY”)
@@ -6416,9 +6432,22 @@
     // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
     const cameraRig = createCameraRig();
     // Kopnięcie kadru od ciężkich strzałów gracza (sprężyna w px ekranu, weaponKick* w cameraRigTune):
-    // impuls z WeaponFx.onPlayerShot (wieżyczki) i superweapon.js (Hexlance), krok i przesunięcie w render() obok wstrząsu.
+    // impuls ze strzału z wieżyczki (rekord SHOT — hak onShotFeel strumienia rozkazów) i z superweapon.js (Hexlance —
+    // ShotFeel), krok i przesunięcie w render() obok wstrząsu.
     const cameraKick = createCameraKick();
-    WeaponFx.onPlayerShot = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    const playerShotKick = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    ShotFeel.onPlayerShot = playerShotKick;
+    // RW-30: wstrząs strzałów (dane broni × ułamek kierowania ogniem) — akumulator gry, gaśnie raz na klatkę renderu
+    // (stepWeaponShotShake po updateHexShips3D); dawniej WeaponFx → window.__weapon3dCameraShake.
+    const weaponShotShake = createWeaponShotShake();
+    window.WeaponShotShake = weaponShotShake;
+    RenderCommands.writer.onShotFeel = (gunner, dirX, dirY, shake, cooldown) => {
+      if (!RenderCommands.ready) return;
+      addWeaponShotShake(weaponShotShake, shake);
+      if (gunner && gunner === window.ship) playerShotKick(dirX, dirY, shake, cooldown);
+    };
+    // Wstrząsy z receptur efektów broni — żądanie do gry (kamerą rządzi gra).
+    WeaponFx.onShake = (mag, dur) => requestCameraShake(camera, mag, dur);
     window.CameraRig = { rig: cameraRig, tune: cameraRigTune, kick: cameraKick };
     const _cameraShakePx = { x: 0, y: 0 };
     // Wejście riga pisane co klatkę w render() — jeden obiekt, bez alokacji.
@@ -6436,10 +6465,14 @@
     // Strzał gracza: cały rdzeń broni idzie szyną (strzelec w detail.shooter),
     // Hexlance — zdarzeniem DOM bez strzelca (superbroń ma tylko gracz).
     WeaponShotBus.on((detail) => {
+      // Odrzut wieży strzelca (RW-26: stan wież po stronie gry; efekt wylotu WeaponFx tylko czyta lufę).
+      Turret2D.recoilForShot(detail);
       if (detail && detail.shooter === ship) {
         noteCameraCombat('strzał');
         breakPlayerCloak('fire');
       }
+      // RW-21: efekt strzału — rekord SHOT (lufa rozwiązana tutaj; dekoder renderu: weaponFxCommands.js).
+      RenderCommands.writer.shot(detail);
     });
     window.addEventListener('game_weapon_fired', (e) => {
       if (e?.detail?.weaponId === 'hexlance') {
@@ -7022,18 +7055,18 @@
       return e.__model3DIdResolved;
     }
 
-    // Wygląd wybrany w menu „Nowa gra” → moduł modeli, skóra sprite'a i wieżyczki kanwy.
+    // Wygląd wybrany w menu „Nowa gra” → moduł modeli (statki 2D / 3D; bronie zawsze 3D — B3D, 2026-10-15).
     function applyVisualMode() {
-      configureShipModels3D({ ships: VisualMode.ships3D, weapons: VisualMode.weapons3D, modelIdOf: model3DIdOf });
+      configureShipModels3D({ ships: VisualMode.ships3D, modelIdOf: model3DIdOf });
     }
     VisualMode.load();
     applyVisualMode();
     window.Game3D = Game3D;
     window.View3D = View3D;
     // Konsola / harness (scripts/webgpu/modele3d-gra.mjs): zmiana wyglądu w trakcie gry.
-    window.setVisualMode = (ships3D, weapons3D) => {
+    // Drugi argument (dawne „bronie 3D”) ignorowany — bronie zawsze 3D; zostaje dla starych skryptów narzędzi.
+    window.setVisualMode = (ships3D) => {
       VisualMode.set('ships', ships3D);
-      VisualMode.set('weapons', weapons3D);
       applyVisualMode();
       updateVisualModeUI();
       return VisualMode.label();
@@ -7043,19 +7076,20 @@
     // Mgła wojny: kadłub ukryty przed graczem (siatka żyje — bez przebudowy na brzegu kręgu wzroku).
     setEntityHiddenTest((e) => SensorSystem.hides(e));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
-    setPirateBaseHiddenTest((st) => SensorSystem.hides(st));
-    Turret2D.skipDraw = (rec) => VisualMode.weapons3D && !!WEAPON3D_FAMILY[rec.weaponId];
-    // Fregata zwiadu nad Atlasem (wylot z luku): kanwa nie zna głębi — wieże Atlasa pod fregatą się nie rysują.
-    // Nadproże bramy hali K-7 (FG) nad okrętem w bramie — to samo dla wszystkich okrętów (obrysy nadproży hal przy
-    // kamerze odświeża render() — refreshLintelCover).
+    onPirateBaseEvent(pirateBase3DEvent);
+    // Nadproże bramy hali K-7 (FG) nad okrętem w bramie (obrysy nadproży hal przy kamerze odświeża render() —
+    // refreshLintelCover). Wieże 3D chowa pod nadprożem i pod fregatą zwiadu głębia / kolejność passów.
     const k7Lintels = createLintelCover();
     function k7LintelOver(x, y) { return k7Lintels.n > 0 && lintelCovers(k7Lintels, x, y, 0); }
-    Turret2D.occlude = (rec) => (rec.entity === ship && scoutCoversPoint(rec.wx, rec.wy, 4)) || k7LintelOver(rec.wx, rec.wy);
     // Okna i lampy mostków (warstwa FG — nad passem ortho) pod fregatą nad Atlasem i pod nadprożem bramy gasną.
     Bridge3D.emitterOcclusion = (host, x, y) => ((host === ship && scoutCoversPoint(x, y, 0)) || k7LintelOver(x, y) ? 0 : 1);
     setPositionLightOcclusion(k7LintelOver);
     // Kamery 3D: błysk wylotu na wysokości lufy wieży 3D.
     WeaponFx.muzzleZOf = turretMuzzleZ;
+    // RW-21: strumień rozkazów w trybie inline — dekoder efektów broni (WeaponFx przestaje słuchać szyny strzałów);
+    // gotowość renderu dla bramek gry i reguły __renderedByThree.
+    installWeaponFxCommands(RenderCommands.reader);
+    RenderCommands.setReady(() => WeaponFx.available, () => WeaponFx._ready === true);
     // Kamery 3D: pocisk startuje na wysokości lufy strzelca (b.visZ0, raz — przy pierwszym rysowaniu) i schodzi
     // do płaszczyzny gry (połowa drogi w ~0,17 s), więc trafia w burtę celu; SAM WYGLĄD — lot i trafienia 2D.
     const SHOT3D_DROP_TAU = 0.25;
@@ -7855,8 +7889,8 @@
           priority: zonePriority.kuiper_belt
         });
       }
-      // window.__asteroidBelt — pas powstaje na ekranie ładowania (createAsteroidBelt), później niż ta funkcja.
-      const beltField = window.__asteroidBelt?.field;
+      // window.__beltWorld — świat pasa powstaje w starcie świata (createBeltWorld), później niż ta funkcja.
+      const beltField = window.__beltWorld?.field;
       if (beltField?.penetrationOf) {
         const trojanPen = beltField.penetrationOf(TROJAN_ZONE_BELTS, pos.x, pos.y);
         if (trojanPen > -Infinity) {
@@ -7966,7 +8000,7 @@
       z.t -= dt;
       if (z.t > 0) return;
       z.t = 0.5;
-      const field = asteroidBelt?.field;
+      const field = beltWorld?.field;
       if (!field || typeof field.familyAt !== 'function' || !ship?.pos || ship.dead) return;
       const fam = field.familyAt(ship.pos.x, ship.pos.y);
       const id = fam ? fam.id : null;
@@ -7984,7 +8018,7 @@
       pushZoneMessage(title, 3.2, { label: 'POLE PLANETOID', tone: 'info' });
       window.hudSystem?.logZone?.(title, `family_${id}`);
     }
-    window.beltFamilyAt = (x, y) => asteroidBelt?.field?.familyAt?.(x, y) || null;
+    window.beltFamilyAt = (x, y) => beltWorld?.field?.familyAt?.(x, y) || null;
     window.__beltFamilyZone = _beltFamilyZone;
 
     function handleZoneTransition(prevZoneId, currentZoneId) {
@@ -8161,11 +8195,10 @@
     }
 
     // Skały pola nie leżą w ciele ani w stacji (pass ortho rysuje się nad ciałem): wyłączenia pola obok olbrzymów.
-    function applySmallBodyExclusions(belt) {
-      const field = belt?.field;
-      if (!field || typeof field.setExclusions !== 'function') return;
-      const giants = typeof belt.giants?.exclusions === 'function' ? belt.giants.exclusions() : [];
-      field.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
+    function applySmallBodyExclusions(world) {
+      if (!world || typeof world.setExclusions !== 'function') return;
+      const giants = typeof world.giants?.exclusions === 'function' ? world.giants.exclusions() : [];
+      world.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
     }
 
     const STATION_STYLES = ['ringGate', 'hexHub', 'triRing', 'solarPetals', 'shipyard', 'tradeSpindle'];
@@ -9348,7 +9381,7 @@
     function pickPirateCallInOrigin() {
       const belt = ASTEROID_BELT;
       if (!belt || !(belt.outer > belt.inner)) return null;
-      const field = asteroidBelt?.field || null;
+      const field = beltWorld?.field || null;
       const r0sq = belt.inner * belt.inner;
       const r1sq = belt.outer * belt.outer;
       let first = null;
@@ -11468,7 +11501,7 @@
               };
             }
             // Rakieta startuje z prędkością wyrzutni, silnik przejmuje ją potem
-            // stopniowo (src/effects3d/rocketSystem3D.js, układ rakiety). Salwa: zimny wyrzut
+            // stopniowo (src/game/rockets/rocketSim.js, układ rakiety). Salwa: zimny wyrzut
             // z kolejnych komór wyrzutni (kierunek wyrzutni = kąt strzału), myśliwiec — jedna
             // rakieta zrzucona z belki (LAUNCH_RAIL).
             const fighterShooter = window.getUnitKind?.(shooter) === 'fighter';
@@ -11626,10 +11659,10 @@
       }, weapon);
       if (res === CHARGE_FIRE) {
         fireSpecialLoadout(loadout, hp, slot);
-      } else if (res === CHARGE_CHARGING && WeaponFx.available && dt > 0) {
+      } else if (res === CHARGE_CHARGING && RenderCommands.ready && dt > 0) {
         const m = p1WeaponCtrl.computeMountedMuzzle(loadout, Number(aim.nextBarrel) || 0);
-        if (!st.fx) st.fx = WeaponFx.createChargeState();
-        WeaponFx.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st.fx,
+        // Stan efektu ładowania trzyma render po kluczu działa (`st` — stan ładowania gniazda).
+        RenderCommands.writer.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st,
           writeCarrier(ship, m.pos.x, m.pos.y, false, _chargeCarrier));
       }
       return st.event;
@@ -11687,9 +11720,9 @@
       const base = `special:${hp?.id || slot}`;
       muzzle.emitterUid = multiBarrel ? `${base}:b${barrelIndex}` : base;
       // Salwa wieży na auto (kierowanie ogniem) nie trzęsie kamerą — tylko strzały gracza.
-      WeaponFx.shotShakeScale = hp?.fcAutoShot === true ? FC_AUTO_SHAKE : 1;
+      RenderCommands.writer.shotShakeScale = hp?.fcAutoShot === true ? FC_AUTO_SHAKE : 1;
       const cd = Number(window.fireWeaponCore(ship, target, weapon.id, muzzle)) || 0;
-      WeaponFx.shotShakeScale = 1;
+      RenderCommands.writer.shotShakeScale = 1;
       return cd;
     }
 
@@ -11895,7 +11928,7 @@
     // kąt wieżyczki AI, receptura broni (WeaponFx.charge), stan efektu na dziale.
     const _npcChargeCarrier = createCarrier();
     window.spawnWeaponChargeFx = function (owner, weapon, u, dt) {
-      if (!WeaponFx.available || !owner || !weapon?.def) return;
+      if (!RenderCommands.ready || !owner || !weapon?.def) return;
       let x = owner.x;
       let y = owner.y;
       const hp = weapon.hpOffset;
@@ -11908,9 +11941,9 @@
         x = owner.x + (hpX * c - hpY * s);
         y = owner.y + (hpX * s + hpY * c);
       }
-      if (!weapon.chargeFx) weapon.chargeFx = WeaponFx.createChargeState();
       const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
-      WeaponFx.charge(weapon.def.id, x, y, a, 1, u, dt, weapon.chargeFx, writeCarrier(owner, x, y, false, _npcChargeCarrier));
+      // Stan efektu ładowania — w renderze po kluczu działa (obiekt broni NPC).
+      RenderCommands.writer.charge(weapon.def.id, x, y, a, 1, u, dt, weapon, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
 
     // Uid emitera (wiązka ciągła trzyma się po nim swojej lufy). Liczony raz na
@@ -12105,10 +12138,16 @@
     // Pas asteroid (zadanie 21) — tworzony w starcie świata (DOMContentLoaded), GPU na
     // ekranie ładowania (startGame).
     let asteroidBelt = null;
+    // Świat pasa gry (RW-25, src/game/beltWorld.js): rozgrywka pasa bez renderu — obraz (asteroidBelt) go czyta.
+    let beltWorld = null;
+    // Świat ringów gry (RW-27, src/game/haloRingWorld.js): rozgrywka ringów bez renderu — obraz (haloRings) go czyta.
+    let haloWorld = null;
     function initHaloRings() {
       if (!Core3D.isInitialized) Core3D.init();
+      haloWorld = new HaloRingWorld({ planets });
+      window.__haloWorld = haloWorld;
       // Jakość z opcji grafiki (OPTIONS.planetQuality = zapis 'sc_gfx' / dawny sc_planet_quality / preset z adresu).
-      haloRings = new HaloRingGame({ planets, quality: window.OPTIONS?.planetQuality || 'high' });
+      haloRings = new HaloRingGame({ world: haloWorld, quality: window.OPTIONS?.planetQuality || 'high' });
       window.__haloRings = haloRings;
     }
 
@@ -12341,12 +12380,16 @@
       // Lagrange'a i Hildas = planety w tej chwili (jak dawne pole).
       if (!asteroidBelt) {
         try {
-          asteroidBelt = createAsteroidBelt({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
-          applySmallBodyExclusions(asteroidBelt);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
+          beltWorld = createBeltWorld({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
+          window.__beltWorld = beltWorld;
+          applySmallBodyExclusions(beltWorld);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
           // Rodziny Westy i Hygiei przy ciałach tego świata (kąty z resolveSmallBodyAngles — A2, asteroidFamilies.js);
           // lista szczytów pól (~20 ms) teraz, nie w klatce pierwszego wlotu w pas.
-          asteroidBelt.field?.setSmallBodyAnchors?.(smallBodies);
-          asteroidBelt.field?.familyPeaks?.();
+          beltWorld.setSmallBodyAnchors(smallBodies);
+          beltWorld.familyPeaks();
+          // Obraz pasa: własna instancja pola z konfiguracją świata pasa (operacje wyżej dochodzą same).
+          asteroidBelt = createAsteroidBelt({ world: beltWorld });
+          beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
           window.__asteroidBelt = asteroidBelt;
           applyGraphicsEffects();   // reflektory i mapy cienia pasa wg opcji grafiki (blok „OPCJE GRAFIKI”)
         } catch (err) {
@@ -12361,7 +12404,7 @@
     // `bodies` zbieracza; komunikaty z etykietą NEA. Tylko gra swobodna (sesja, w której ruszyła kampania, nigdy),
     // raz na sesję po ≥ 20 min czasu gry, gdy gracz jest przy Ziemi; `?apophis` — start po kilku s. Bez kolizji.
     const NEA_FLYBY_DEV = (() => { try { return new URLSearchParams(location.search).has('apophis'); } catch { return false; } })();
-    const neaFlyby = new NeaFlyby({ dev: NEA_FLYBY_DEV, rand: () => fxRandom.next() });
+    const neaFlyby = new NeaFlyby({ dev: NEA_FLYBY_DEV, rand: () => fxRandomGame.next() });
     let neaFlyby3D = null;
     let neaCampaignSession = false;   // kampania ruszyła w tej sesji — przelotu nie będzie
     const _neaRadarBodies = [];
@@ -12372,7 +12415,7 @@
     function setupNeaFlyby3D() {
       if (neaFlyby3D || !asteroidBelt) return;
       neaFlyby3D = createNeaFlyby3D({ core: Core3D, getBelt: () => asteroidBelt, getFlyby: () => neaFlyby });
-      if (asteroidBelt.field && !asteroidBelt.field.wakeSpots.includes(neaFlyby.wake)) asteroidBelt.field.wakeSpots.push(neaFlyby.wake);
+      beltWorld?.addWakeSpot(neaFlyby.wake);
       window.NeaFlyby3D = neaFlyby3D;
     }
 
@@ -12740,13 +12783,13 @@
       if (out && pass.craterDamage > 0) {
         applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');
       }
-      if (WeaponFx.available) {
+      if (RenderCommands.ready) {
         ActiveCarrier.set(carrier);
         if (pass.kerfs > 0) {
-          WeaponFx.kerf(b, pass.kerfX, pass.kerfY, pass.kerfDX, pass.kerfDY, pass.kerfs, _passRelVel.x, _passRelVel.y, e);
+          RenderCommands.writer.kerf(b, pass.kerfX, pass.kerfY, pass.kerfDX, pass.kerfDY, pass.kerfs, _passRelVel.x, _passRelVel.y, e);
         }
-        if (ev === PASS_EXIT) WeaponFx.pierceExit(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
-        else if (stuck) WeaponFx.pierceStuck(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        if (ev === PASS_EXIT) RenderCommands.writer.pierceExit(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        else if (stuck) RenderCommands.writer.pierceStuck(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
         ActiveCarrier.clear();
       }
       return stuck;
@@ -12774,14 +12817,26 @@
     // ciężkie trafienia (Mjolnir 5, Yamato 4,5, Valkyrie 3,5) widać z dalszego zoomu, lekkie
     // wiązki (0,4–0,7) znikają wcześniej. Obrazu receptury skala nie zmienia (jak w demie).
     function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
-      if (!WeaponFx.available) return;
+      if (!RenderCommands.ready) return;
       const fxKind = impactFxKindOf(b);
       const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind] * (b?.vfxKey ? weaponImpactScale(WEAPONS[b.vfxKey]) : 1);
       if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, IMPACT_FX_COOLDOWN_MS[fxKind], x, y)) {
-        WeaponFx.impact(b, x, y, scale, hit);
+        RenderCommands.writer.impact(b, x, y, scale, hit);
       }
     }
     window.spawnBulletImpactEffect = spawnBulletImpactEffect;
+
+    // RW-21: reguła __renderedByThree po stronie gry (dawniej pisał ją WeaponFx.sync na obiektach pocisków) — ten sam
+    // warunek: żywy pocisk o skończonej pozycji; forceCanvas — kanwa, reszta — render 3D.
+    function markThreeRenderedBullets(list) {
+      if (!Array.isArray(list)) return;
+      for (let i = 0; i < list.length; i++) {
+        const b = list[i];
+        if (!b || !(b.life > 0)) continue;
+        if (!Number.isFinite(Number(b.x)) || !Number.isFinite(Number(b.y))) continue;
+        b.__renderedByThree = !b.forceCanvas;
+      }
+    }
 
     // =============== Station UI ===============
     let stationUI = {
@@ -21547,8 +21602,8 @@
       ActiveCarrier.set(launch);
       spawnParticle({ x: gunWorld.x, y: gunWorld.y }, { x: baseDir.x * 120, y: baseDir.y * 120 }, 0.14, '#b4ffb4', 3.2, true);
       for (let k = 0; k < 6; k++) {
-        const aa = Math.atan2(baseDir.y, baseDir.x) + (fxRandom.next() - 0.5) * 0.9;
-        spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + fxRandom.next() * 0.06, '#a8ff9a', 1.1, true);
+        const aa = Math.atan2(baseDir.y, baseDir.x) + (fxRandomGame.next() - 0.5) * 0.9;
+        spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + fxRandomGame.next() * 0.06, '#a8ff9a', 1.1, true);
       }
       ActiveCarrier.clear();
     }
@@ -21625,17 +21680,17 @@
         }
         if (e === window.ship) applyDamageToPlayer(dmg, SHIELD_BREACH_DAMAGE_OPTS);
         else applyDamageToNPC(e, dmg, 'bomb', SHIELD_BREACH_DAMAGE_OPTS, false);
-        if (WeaponFx.available) {
+        if (RenderCommands.ready) {
           ActiveCarrier.set(writeCarrier(e, x, y, false, _bombCarrier));
           try {
-            WeaponFx.bombBlast(x, y, (dmg / (Number(def?.baseDamage) || 420)) * (Number(def?.impactScale) || 1), e);
+            RenderCommands.writer.bombBlast(x, y, (dmg / (Number(def?.baseDamage) || 420)) * (Number(def?.impactScale) || 1), e);
           } finally {
             ActiveCarrier.clear();
           }
         }
       },
       miss(x, y) {
-        if (WeaponFx.available) WeaponFx.bombDud(x, y, 1);
+        if (RenderCommands.ready) RenderCommands.writer.bombDud(x, y, 1);
       },
       // Rozrzut punktu upadku to rozgrywka (gdzie trafi bomba) — generator gry.
       random: () => Math.random()
@@ -21711,13 +21766,13 @@
 
       if (window.spawnParticle) {
         for (let i = 0; i < 6; i++) {
-          const spread = (fxRandom.next() - 0.5) * 0.5;
+          const spread = (fxRandomGame.next() - 0.5) * 0.5;
           const px = launch.nx * Math.cos(spread) - launch.ny * Math.sin(spread);
           const py = launch.nx * Math.sin(spread) + launch.ny * Math.cos(spread);
           window.spawnParticle(
             { x: launch.x, y: launch.y },
-            { x: frame.vx - px * (180 + fxRandom.next() * 220), y: frame.vy - py * (180 + fxRandom.next() * 220) },
-            0.35, '#cfe8ff', 2 + fxRandom.next() * 3, true
+            { x: frame.vx - px * (180 + fxRandomGame.next() * 220), y: frame.vy - py * (180 + fxRandomGame.next() * 220) },
+            0.35, '#cfe8ff', 2 + fxRandomGame.next() * 3, true
           );
         }
       }
@@ -22071,9 +22126,9 @@
         : (weapon.size === 'L' ? 1 : 2);
       const uid = `p_main_${index}_${weapon.id || 'x'}`;
       muzzle.emitterUid = barrels > 1 ? `${uid}:b${barrel}` : uid;
-      WeaponFx.shotShakeScale = auto ? FC_AUTO_SHAKE : 1;
+      RenderCommands.writer.shotShakeScale = auto ? FC_AUTO_SHAKE : 1;
       const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
-      WeaponFx.shotShakeScale = 1;
+      RenderCommands.writer.shotShakeScale = 1;
       return cd;
     }
 
@@ -22522,7 +22577,7 @@
           _pdEnemyRocketBuffer.push(rb);
         }
       }
-      // Rakiety 3D (salwy gracza i NPC, src/effects3d/rocketSystem3D.js) — zastępniki w kształcie pocisku,
+      // Rakiety 3D (salwy gracza i NPC, src/game/rockets/rocketSim.js) — zastępniki w kształcie pocisku,
       // pozycja w czasie tego kroku; wroga rakieta we mgle wojny nie jest celem strony gracza.
       window.rocketSystem3D?.syncThreats(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock.sim, _pdHostileRocketVisible);
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
@@ -22652,7 +22707,7 @@
               // impuls do rakiety, trafienie.
               const lcx = Math.cos(gun.angle);
               const lcy = Math.sin(gun.angle);
-              WeaponFx.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
+              RenderCommands.writer.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
               killRocketThreat(target, 'laser', 1.2, (stats?.dmg ?? wDef.baseDamage) || LASER_PD_DAMAGE);
             }
             gun.cd = fireInterval;
@@ -22695,8 +22750,9 @@
         type: 'ciws'
       });
       // Błysk wylotu z receptury CIWS (WeaponFx, zadanie 17 — dawniej cząstka kanwy): lufa
-      // z rekordu wieżyczki p_aux, nośnik — wieżyczka.
-      WeaponFx.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
+      // z rekordu wieżyczki p_aux, nośnik — wieżyczka. Odrzut wieży — strona gry (RW-26).
+      Turret2D.recoilAt(wDef?.id || 'ciws_mk1', px, py, ship);
+      RenderCommands.writer.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
 
@@ -22715,7 +22771,7 @@
       // Laser PD w 3D (WeaponFx, zadanie 17 — decyzja 2026-09-27: PD z kanwy do 3D, efekty
       // z dema bronie-webgpu): wylot z wieżyczki, impuls do celu, trafienie. Wiązka jedzie
       // z wieżyczką (nośnik), trafienie — z celem.
-      WeaponFx.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
+      RenderCommands.writer.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -22766,8 +22822,9 @@
         });
       }
 
-      // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy).
-      WeaponFx.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
+      // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy); odrzut wieży — strona gry (RW-26).
+      Turret2D.recoilAt(wDef.id, muzzle.x, muzzle.y, ship);
+      RenderCommands.writer.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
     }
 
@@ -22849,7 +22906,7 @@
       const shellIvx = Number(b.ivx) || 0;
       const shellIvy = Number(b.ivy) || 0;
       ActiveCarrier.set(writeCarrierVelocity(shellIvx, shellIvy, b.clock, SimClock.sim, _impactCarrier));
-      WeaponFx.flakBurst(b, b.x, b.y, radius);
+      RenderCommands.writer.flakBurst(b, b.x, b.y, radius);
       ActiveCarrier.clear();
       if (window.AudioSys) AudioSys.playSound('explosion');
     }
@@ -23645,7 +23702,7 @@
       // Receptura 3D jest właścicielem śladu już przed pierwszym sync renderu.
       // __renderedByThree pojawia się dopiero potem; Vulcan / CIWS / flak
       // mają w demie tylko krótki smugowiec, bez dodatkowych cząstek 2D.
-      if (!b.forceCanvas && WeaponFx.available) return;
+      if (!b.forceCanvas && RenderCommands.ready) return;
       const stepT = frameDt / count;
       const autocannon = b.type === 'autocannon';
       const isTorpedo = b.type === 'torpedo';
@@ -23671,13 +23728,13 @@
           continue;
         }
         CanvasVFX.spawnParticleXY(
-          px + (fxRandom.next() - 0.5) * 3, py + (fxRandom.next() - 0.5) * 3,
-          -rvx * 0.02 + (fxRandom.next() - 0.5) * 10, -rvy * 0.02 + (fxRandom.next() - 0.5) * 10,
+          px + (fxRandomGame.next() - 0.5) * 3, py + (fxRandomGame.next() - 0.5) * 3,
+          -rvx * 0.02 + (fxRandomGame.next() - 0.5) * 10, -rvy * 0.02 + (fxRandomGame.next() - 0.5) * 10,
           isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false
         );
         // Extra engine glow for torpedoes
         if (isTorpedo) {
-          CanvasVFX.spawnParticleXY(px, py, (fxRandom.next() - 0.5) * 20, (fxRandom.next() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
+          CanvasVFX.spawnParticleXY(px, py, (fxRandomGame.next() - 0.5) * 20, (fxRandomGame.next() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
         }
         // Bright additive head glow for canvas-only fighter missiles.
         if (b.forceCanvas) {
@@ -23856,7 +23913,7 @@
         const threeVisual = b.__renderedByThree === true;
         // Torpedy: kilwater w dymie rakiet (src/3d/rockets/effects.js) — blady ślad, po którym
         // widać wachlarz (jak w World of Warships); też przy pocisku rysowanym w 3D.
-        if (b.type === 'torpedo' && trailCount > 0) window.__rocketFx?.director?.torpedoWake(b, trailDt);
+        if (b.type === 'torpedo' && trailCount > 0) RenderCommands.writer.torpedoWake(b, trailDt);
         if (!threeVisual && (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo')) {
           if (trailCount > 0) spawnBulletTrail(b, trailCount, trailDt);
 
@@ -24266,7 +24323,7 @@
         // przelatują nad nimi (stare pole: trafienia, niszczenie i łup — usunięte). Ściany
         // olbrzymów mają setki–tysiące j., pocisk ≤ ~170 j./krok — bez tunelowania.
         // Trafienie jak w ring (17): kierunek z prędkości własnej pocisku, bez encji.
-        if (!hitNPC && asteroidBelt && asteroidBelt.giants.readyCount > 0 && asteroidBelt.pointBlocked(b.x, b.y)) {
+        if (!hitNPC && beltWorld && beltWorld.giants.readyCount > 0 && beltWorld.pointBlocked(b.x, b.y)) {
           writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'asteroid');
           spawnBulletImpactEffect(b, b.x, b.y, 0.9, _impactHit);
           removeBulletAt(i);
@@ -24285,7 +24342,7 @@
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
         // (tranzyty otwarte). Pocisk ≤ ~170 j./krok, płyta ≥ ~450 j. — bez tunelowania.
-        if (haloRings && haloRings.pointInSlab(b.x, b.y)) {
+        if (haloWorld && haloWorld.pointInSlab(b.x, b.y)) {
           writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'ring');
           spawnBulletImpactEffect(b, b.x, b.y, 0.95, _impactHit);
           removeBulletAt(i);
@@ -25615,6 +25672,8 @@
       }
     }
 
+    // Czas kroków lotu rakiet w tej klatce (PerfHUD rocketsTime — sumowany w loop()).
+    let _rocketStepMs = 0;
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
@@ -26395,6 +26454,14 @@
       // Czas pozy fizycznej (src/game/simClock.js): broń gracza strzelała wyżej
       // z pozy sprzed kroku, CIWS, NPC i trafienia niżej — z pozy po kroku.
       SimClock.advance(dt);
+      // Rakiety 3D: lot, zapalnik, trafienia w KROKU FIZYKI (RW-23 / D2 — niezależne od fps; dawniej raz na klatkę
+      // przed render()): po SimClock.advance (salwy gracza z tego kroku lecą od razu, NPC — od następnego), przed
+      // ciwsStep (obrona punktowa widzi pozy z tego kroku). Klatka reżysera efektów — frameFx w loop().
+      if (window.rocketSystem3D) {
+        const tRocketStep0 = performance.now();
+        window.rocketSystem3D.step(dt);
+        _rocketStepMs += performance.now() - tRocketStep0;
+      }
 
       // granice
       const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
@@ -26768,6 +26835,8 @@
       _worldFocus[0] = ship && !ship.destroyed ? ship.pos : null;
       _worldFocus[1] = (splitScreenMode && player2Ship && !player2Ship.destroyed) ? player2Ship.pos : null;
       worldBodies.step(dt, _worldFocus);
+      // Baza piratów: kawałki nieobecne jako statyka (`_dockGone` — pęknięte, schowane, żywe ciała) po kroku ciał świata.
+      syncPirateBaseGone();
       // Kadłuby statków, NPC i wraków: silnik belek.
       HullBodies.step(dt, worldBodies.withEntities(allDestructibles));
       // Baza piratów (misja 1): zgniot ciał budowli taranem → punkty budowli; budowla bez stojącego kawałka ginie.
@@ -26812,9 +26881,31 @@
     // nadpisuje następny krok — do kolizji ze światem (olbrzymy, ring) idą przez
     // widok kinematyki (src/game/npcCollisionBody.js), wynik wraca do x/y/vx/vy.
     // Kadłub belkowy dostaje nową pozycję encji w HullBodies.step (ruch encji, nie węzłów).
+    // Klatka świata pasa gry (render(), przed wejściem klatki obrazu): punkty uwagi budowy olbrzymów =
+    // środki kamer i pozycje statków graczy (bez alokacji).
+    const _beltFocus = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+    const _beltFocusList = [];
+    function stepBeltWorldFrame(frameDt, cam) {
+      const list = _beltFocusList;
+      list.length = 0;
+      const put = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || list.length >= _beltFocus.length) return;
+        const p = _beltFocus[list.length];
+        p.x = x; p.y = y;
+        list.push(p);
+      };
+      if (cam) put(Number(cam.x), Number(cam.y));
+      if (ship?.pos && !ship.dead) put(ship.pos.x, ship.pos.y);
+      if (splitScreenMode) {
+        if (camera2) put(Number(camera2.x), Number(camera2.y));
+        if (player2Ship?.pos && !player2Ship.dead) put(player2Ship.pos.x, player2Ship.pos.y);
+      }
+      beltWorld.frame(frameDt, PAUSED, list);
+    }
+
     const _npcCollisionBody = createNpcCollisionBody();
     function stepShipAsteroidCollisions(dt) {
-      const belt = asteroidBelt;
+      const belt = beltWorld;
       if (!belt || belt.giants.readyCount === 0) return;
       if (ship && !ship.dead && !ship.noHullCollisions) belt.collideShip(ship);
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) belt.collideShip(player2Ship);
@@ -26839,7 +26930,7 @@
     const MINING_SAW_DRAG_PX = 26;
 
     function getMiningRig() {
-      return asteroidBelt && asteroidBelt.rig ? asteroidBelt.rig : null;
+      return beltWorld && beltWorld.rig ? beltWorld.rig : null;
     }
 
     // Callbacki platformy: urobek do ładowni (pełne tony, udźwig kadłuba), wolne miejsce,
@@ -27714,7 +27805,7 @@
         lines.push(`ładunki: S ${st.S | 0} · M ${st.M | 0} · L ${st.L | 0} · XL ${st.XL | 0} · osadzone ${rig.charges.length}`);
         lines.push(`ładownia ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cap)} · urobek: ${ores.length ? ores.join(' · ') : '—'} · skała płonna ${fmtMining1(rig.totals.waste)} t${rig.totals.lostOre > 0 ? ` · przepadło ${Math.round(rig.totals.lostOre)} t rudy` : ''}`);
         // Rodzina pola pod statkiem (A2 — AsteroidBeltField.familyAt): skład rud tego pola.
-        const fam = ship?.pos ? asteroidBelt?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
+        const fam = ship?.pos ? beltWorld?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
         if (fam) lines.push(`pole: ${familyTitle(fam)}`);
         for (const msg of rig.recentMessages(3, _miningMsgScratch)) lines.push(`› ${msg}`);
         _miningHudLines = lines;
@@ -27750,21 +27841,21 @@
     let _ringGate = new Float64Array(12);
     const RING_GATE_SLACK = 64;   // zapas na zaokrąglenia obrotu do układu ringu (j. świata)
     function stepShipRingCollisions(dt) {
-      if (!haloRings) return;
+      if (!haloWorld) return;
       if (ship && !ship.dead && !ship.noHullCollisions) {
-        const hit = haloRings.constrainShip(ship, true);
+        const hit = haloWorld.constrainShip(ship, true);
         const nowMs = performance.now();
         if (hit && hit.impactSpeed > 150 && nowMs - _haloRingNoticeAtMs > 2500) {
           _haloRingNoticeAtMs = nowMs;
           pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
         }
       }
-      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloRings.constrainShip(player2Ship, true);
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloWorld.constrainShip(player2Ship, true);
       // NPC (bez ścian portu) kolider odrzuca, gdy środek kadłuba jest dalej od planety niż
       // floorMid + terrainReach + zasięg kadłuba (HaloRingCollider.constrainShip, nearFloor) — ten
-      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingGame) — bez bramki.
+      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingWorld) — bez bramki.
       let gateN = -1;
-      const entries = haloRings.entries;
+      const entries = haloWorld.entries;
       if (Array.isArray(entries)) {
         if (_ringGate.length < entries.length * 3) _ringGate = new Float64Array(entries.length * 3);
         gateN = 0;
@@ -27795,7 +27886,7 @@
           if (!near) continue;
         }
         if (!npcCollidesWithWorld(npc)) continue;
-        if (haloRings.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
+        if (haloWorld.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
       }
     }
 
@@ -27944,6 +28035,9 @@
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
       stepDynamicResolution(now);
+      // Sloty renderu (src/render/renderSlots.js): jeden cykl mark & sweep na klatkę — rozkazy z fizyki, migawka i RET
+      // w tej samej epoce; koniec po renderze.
+      beginRenderSlotsFrame();
       // Fabuła: sceny, lot kamery i podsumowanie zamrażają świat jak pauza (kamera i UI biegną dalej).
       if (PAUSED || StoryGame.worldFrozen) {
         saveState();
@@ -27960,6 +28054,7 @@
         // upływu czasu — inaczej świat mgły z 0 kół do pierwszego kroku fizyki i kadr przy statku jest szary.
         if (StoryGame.worldFrozen) stepSensors(0);
         render(0, frame);
+        endRenderSlotsFrame();
         updateStoryOverlay();
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
@@ -28083,11 +28178,13 @@
       // Bezpiecznik: nośnik ustawia się tylko na czas serii spawnów — wyjątek
       // między set/clear nie może nieść kolejnych efektów cudzą prędkością.
       ActiveCarrier.clear();
-      // Rakiety (lot, trafienia, zdarzenia efektów) PRZED render(): rysuje je Core3D w tej
-      // samej klatce (src/3d/rockets/ — zadanie 19; dawniej overlay po render()).
+      // Rakiety: lot krokuje physicsStep (RW-23 / D2); tu klatka reżysera efektów PRZED render() (rysuje je Core3D
+      // w tej samej klatce — src/3d/rockets/, zadanie 19).
       const tRockets0 = performance.now();
-      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
-      const rocketsMs = performance.now() - tRockets0;
+      if (window.rocketSystem3D) window.rocketSystem3D.frameFx(frame);
+      const rocketsFxMs = performance.now() - tRockets0;
+      const rocketsMs = rocketsFxMs + _rocketStepMs;
+      _rocketStepMs = 0;
       // Wezwania i POWRÓT skrzydła tunelem warpa (src/game/supportWarp.js): spawn w klatce wyrzutu,
       // duch i usunięcie odlatujących — przed render(), który przesuwa zegar efektu o `frame`.
       // Fabuła: skrypt misji w czasie gry (kroki fizyki tej klatki), potem kamera kinowa / UI w czasie klatki.
@@ -28095,8 +28192,9 @@
       StoryGame.frame(frame);
       stepSupportWarp(frame);
       render(alpha, frame);
+      endRenderSlotsFrame();
       updateStoryOverlay();
-      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
+      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsFxMs);
 
       // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
       window.camera = camera;
@@ -28142,6 +28240,8 @@
     const _drawFogHidden = (e) => SensorSystem.hides(e);
     const _coldEnsureBody = (w) => coldWreckSystem.ensureRenderBody(w);
     const _hexCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
+    // RW-26: rekordy wież (Turret2D.syncFrame) po stronie gry — te same encje co kadłuby 3D (src/render/drawBox.js).
+    const _turretSyncOpts = { cull: _hexCullInfo, zoom: 1, hidden: (e) => SensorSystem.hides(e), poseOf: bridgeRenderPose, enabled: true };
 
     function getViewportForCamera(cam) {
       _vpScratch.w = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
@@ -28373,7 +28473,7 @@
       const t0 = performance.now();
       const o = _gasObstOpts;
       o.dt = dt; o.camX = cam.x; o.camY = cam.y; o.viewHalf = viewHalf;
-      o.rings = haloRings ? haloRings.entries : null;
+      o.rings = haloWorld ? haloWorld.entries : null;
       o.dock = gasDockObstacles();
       o.nDomains = ex.domainRects(_gasDomRects);
       _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
@@ -28769,10 +28869,7 @@
       return o;
     }
     // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
-    WarpNurt.onShake = (mag, dur) => {
-      const cur = (camera.shakeDur > 0) ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur) : 0;
-      if (mag > cur) camera.addShake(mag, dur);
-    };
+    WarpNurt.onShake = (mag, dur) => { requestCameraShake(camera, mag, dur); };
 
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();
@@ -28935,7 +29032,7 @@
       // kadłuby i pociski 3D drgały, a wieżyczki, myśliwce i znaczniki z kanwy 2D
       // stały w miejscu. Wartość strzałów jest z poprzedniej klatki
       // (WeaponFx.sync liczy ją później).
-      const weaponShake = window.__weapon3dCameraShake;
+      const weaponShake = weaponShotShake;
       if (!DevFlags.disableCameraShake) {
         const addShakeMag = (camera.shakeMag > 0 && camera.shakeDur > 0)
           ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur)
@@ -29029,11 +29126,17 @@
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       // Ring „Halo”: kamera TEJ klatki (cam, ze wstrząsem — ta sama trafia do
       // passów Core3D), bo ring liczy pozycje względem kamery (RTE).
+      // Świat ringów gry: zegar migania świateł hal, automat obsługi stanowisk K-7 w czasie gry (postój, podpinanie,
+      // odpięcie stoją w pauzie i scenach fabuły; każdy ring, także poza kadrem i w podzielonym ekranie), lampki
+      // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
+      if (haloWorld) {
+        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+      }
       if (haloRings) {
         haloRings.update(frameDt, cam, {
           sun: SUN,
           ship,
-          // czas gry (automat obsługi stanowisk K-7: postój, podpinanie, odpięcie stoją w pauzie i scenach fabuły)
+          // czas gry (ramiona i przewody paliwowe hal: stoją w pauzie i scenach fabuły)
           gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
           quality: window.OPTIONS?.planetQuality,
           splitScreen: splitScreenMode
@@ -29068,9 +29171,14 @@
       // pola. Liczenie (skały, ośrodek, burza, światła) idzie w kroku Core3D.fx przed passami;
       // kolizje z olbrzymami w physicsStep (stepShipAsteroidCollisions).
       stepNeaFlyby();   // przelot NEA: pozycja skały i koło budzenia pasa przed krokiem pasa
-      if (asteroidBelt) {
+      if (beltWorld) {
+        // Świat pasa: zegar skał (dt klatki, 0 w pauzie), budowa olbrzymów przy kamerach i statkach (kolizje
+        // istnieją, zanim kadr dotknie pasa), przycięcie cache pola gry.
+        stepBeltWorldFrame(frameDt, cam);
+      }
+      if (asteroidBelt && beltWorld) {
         // mgła wojny: reflektory ukrytych okrętów nie oświetlają skał (zdradzałyby pozycję)
-        asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList), PAUSED);
+        asteroidBelt.prepareFrame(beltWorld.time, beltWorld.frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList));
       }
       // Komety (blok „KOMETY”): obrót jąder, fazy gazu, odcinanie poza kadrem.
       updateComets3D(cam);
@@ -29081,11 +29189,11 @@
         dt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
         camX: cam.x, camY: cam.y,
         viewHalf: Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1),
-        rings: haloRings ? haloRings.entries : null,
+        rings: haloWorld ? haloWorld.entries : null,
         ship, ship2: splitScreenMode ? player2Ship : null,
         npcs: fogSeenInto(npcs, _npcSeenList), sun: SUN,
         // zegar migania świateł hal K-7 (ten sam dostaje shader hali) — światła hali w siatce oświetlają pył i parę
-        clock: haloRings ? haloRings.clock : 0
+        clock: haloWorld ? haloWorld.clock : 0
       });
       HallDust.submit(HallDust.input);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
@@ -29179,8 +29287,8 @@
         // Luk Atlasa (fregata zwiadu): __bayCut i poza renderu fregaty przed mostkami, skórą modelu 3D i zapisem slotów
         // kadłubów (pass ortho).
         syncScoutBay3D(vfxTime);
-        // Nadproża bram K-7 przy kamerze (wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną).
-        refreshLintelCover(k7Lintels, haloRings ? haloRings.entries : null, cam.x, cam.y,
+        // Nadproża bram K-7 przy kamerze (lampy pozycyjne i okna mostków pod nimi gasną).
+        refreshLintelCover(k7Lintels, haloWorld ? haloWorld.entries : null, cam.x, cam.y,
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
         BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
@@ -29190,9 +29298,23 @@
         setDrawView(_drawView, _hexCullInfo, zoomNow, Core3D.pixelRatio, renderFrameId, window.DevTuning);
         stampDrawBoxFlags(renderEntities, _drawView, _drawFogHidden);
         selectColdRenderBodies(coldWrecks, _drawView, coldWreckSystem.config, _coldEnsureBody);
+        // RW-26 (docs/PLAN-render-worker.md): wygląd maskowania i rekordy wież tej klatki liczy GRA, render tylko je
+        // czyta. Wizjer maskowania: okręt, którym gracz steruje (przy sterach fregaty zwiadu — fregata).
+        const cloakViewer = ScoutBay.controlling && ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : ship;
+        const cloakFrame = stepCloakLooks(renderEntities, performance.now(), bridgeRenderPose, cloakViewer);
+        // RW-21: kto rysuje pocisk (dawniej pisał to WeaponFx.sync): żywy pocisk o skończonej pozycji bez forceCanvas
+        // — render 3D (gdy pule pocisków gotowe); reszta — kanwa.
+        if (RenderCommands.projectilesReady) markThreeRenderedBullets(window.bullets);
+        _turretSyncOpts.zoom = cam.zoom;
+        _turretSyncOpts.enabled = Core3D.perfToggles?.fgWeapons !== false;
+        Turret2D.syncFrame(renderEntities, _turretSyncOpts);
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
-        updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);
+        updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
+        // RW-30: wygaszanie wstrząsu strzałów — raz na klatkę, po próbkowaniu kamery (dawniej WeaponFx.sync).
+        stepWeaponShotShake(weaponShotShake, performance.now());
+        // Strumień rozkazów: koniec klatki (sloty obiektów bez odwołań wracają do puli).
+        RenderCommands.endFrame();
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.
         syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
         // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.
@@ -29682,16 +29804,6 @@
 
 
         PerfHUD.addTiming('render2dPlayerTime', performance.now() - tRender2dSection);
-        tRender2dSection = performance.now();
-
-        // === Turret Pass ===
-        // Wiezyczki siedza NAD kadlubem (WebGL jest juz przeblitowany na te
-        // kanwe) i POD pociskami logicznie, choc pociski lecą warstwe nizej —
-        // pocisk wychodzacy z lufy wynurza sie zza dziala, i o to chodzi.
-        // Kamery 3D: wieżyczki kanwy leżałyby płasko nad kadrem — rysują je wieże 3D (shipModels3DGame.js).
-        if (!View3D.active) Turret2D.draw(ctx, cam);
-
-        PerfHUD.addTiming('render2dTurretTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();
 
         // === Projectile Pass ===
@@ -31054,7 +31166,7 @@
         stations.push(st);
         out[key] = st;
       }
-      attachPirateBase3D(out, place);
+      attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
       return out;
@@ -31216,10 +31328,12 @@
       return snapNeck(hs.neck, hs, _neckCtx, dirX, dirY, speed);
     };
     // Dev / skrypty: planetoida pod bazą (skała, osada, winda) i zerwanie windy teraz (bez rozpadu habitatu).
-    window.PirateRock = { state: () => pirateRockSite(), collapse: () => collapsePirateRockSite() };
+    window.PirateRock = { state: () => pirateRockSite(), collapse: () => collapsePirateRock() };
+    // Dev / skrypty: stan kawałków bazy (gra) i bryła (obraz).
+    window.PirateBase = { broken: () => pirateBaseBrokenChunks(), gone: (id) => pirateBaseChunkGone(id), hide: (id) => hidePirateBaseChunk(id), view: () => pirateBase3D() };
 
     // Planetoida pod bazą na radarze i mapie CIC (teren — rysowana zawsze, także we mgle, jak komety; tylko obraz,
-    // bez kolizji i studni). Póki baza misji stoi (StoryGame.site) i skała jest w scenie: podkład radaru = ląd
+    // bez kolizji i studni). Póki baza misji stoi (StoryGame.site i baza w świecie gry): podkład radaru = ląd
     // o promieniu skały (rzut z góry — szczyt leży 8 km pod płaszczyzną gry), kontakt „HIDALGO AST” w środku
     // (`env.bodies`, mała kropla — ląd rysuje podkład), mapa CIC — window.pirateRockLandmark (cicDisplay.js).
     const _pirateRockMark = { id: 'pirate-rock', label: PIRATE_ROCK_SPEC.label, x: 0, y: 0, radius: PIRATE_ROCK_SPEC.radius };
@@ -31230,10 +31344,11 @@
     const _radarFeaturesWithRock = [];
     function pirateRockLandmark() {
       if (!StoryGame.site) return null;
-      const r = pirateRockSite();
-      if (!r?.at || !r.rock?.root?.parent) return null;
-      _pirateRockMark.x = _pirateRockBody.x = r.at.x;
-      _pirateRockMark.y = _pirateRockBody.y = r.at.y;
+      // środek skały z czystego układu planetoidy i ramki bazy (src/game/story/pirateBaseWorld.js)
+      const at = pirateRockAt();
+      if (!at) return null;
+      _pirateRockMark.x = _pirateRockBody.x = at.x;
+      _pirateRockMark.y = _pirateRockBody.y = at.y;
       return _pirateRockMark;
     }
     function radarFeaturesWithPirateRock(features) {
@@ -31251,10 +31366,18 @@
     Object.defineProperty(window, 'pirateRockLandmark', { configurable: true, get: pirateRockLandmark });
 
     // Stan klatki bryły bazy z misji (render → updatePirateBase3D). Bez alokacji na klatkę.
-    const _baseFrameState = { alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
+    const _baseFrameState = { hidden: false, habitatDead: false, alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
     function storyBaseFrameState() {
       const s = _baseFrameState;
       const site = StoryGame.site;
+      // Mgła wojny: baza schowana, dopóki strona gracza nie zobaczy żadnej z jej budowli (SensorSystem — gra).
+      const structs = site?.structures;
+      s.hidden = false;
+      if (structs) {
+        s.hidden = true;
+        for (const k in structs) { const st = structs[k]; if (st && !SensorSystem.hides(st)) { s.hidden = false; break; } }
+      }
+      s.habitatDead = !!(structs?.habitat && !(structs.habitat.hp > 0));
       s.alarm = !!site?.alarmed;
       const age = s.alarm ? Math.max(0, StoryGame.time - (site.alarmAt ?? StoryGame.time)) : 0;
       // hangary dronów: światła startu po alarmie (fale dronów)
@@ -31287,7 +31410,7 @@
       for (const f of list) {
         f.squad = null;
         f.__carrierParent = null;
-        const a = angle + (fxRandom.next() - 0.5) * 0.8;
+        const a = angle + (fxRandomGame.next() - 0.5) * 0.8;
         f.vx = Math.cos(a) * 520;
         f.vy = Math.sin(a) * 520;
         f.angle = a;
@@ -31466,10 +31589,11 @@
       showHud: (on) => toggleGameUI(!!on),
       fadeScreen: (on, ms) => fadeScreen(on, ms),
       shake: (mag, dur) => camera.addShake(mag, dur),
-      k7Hall: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.ring?.k7Halls?.[i] || null,
-      // pozy obsługi stanowisk hali (suwnice, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
+      // zajętość stanowiska hali (lampka) — stan gry w rejestrze świata ringów; obraz przenosi go na lampki hali
+      k7SetBerth: (i, id, occupied, reserved, force) => !!haloWorld?.setBerthState('earth', i, id, occupied, reserved, force),
+      // pozy obsługi stanowisk hali (zamki pola, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
       // i biorą się źródła gazu z przewodów (pył hal, src/3d/gasField/)
-      k7HallPoses: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.collider?.registry?.halls?.[i]?.poses || null,
+      k7HallPoses: (i = 0) => haloWorld?.hall('earth', i)?.poses || null,
       // WYPOSAŻENIE z panelu stanowiska (przed ODDOKUJ): terminal portu Ziemi (K-7) na zakładce kart.
       openFitting: () => {
         const port = stations.find(st => st?.ringPort === 'earth');
@@ -31488,8 +31612,8 @@
       // Zasadzka w pasie asteroid (misja 2, src/game/story/beltAmbush.js): wyrwanie z warpa, gęstość skał na
       // kursie (pole pasa) i olbrzymy (miejsce zasadzki przy bryle, gdy kurs ją mija).
       interdictWarp: () => storyInterdictWarp(),
-      beltDensity: (x, y) => (asteroidBelt?.field ? asteroidBelt.field.sampleMacro(x, y).density : 0),
-      beltGiants: () => (asteroidBelt?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
+      beltDensity: (x, y) => (beltWorld?.field ? beltWorld.field.sampleMacro(x, y).density : 0),
+      beltGiants: () => (beltWorld?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
       spawnShip: (key, opts) => spawnCallInShip(key, opts),
       spawnPirateStation: spawnStoryPirateStation,
       // Baza piratów (misja 1, szkic 2026-10-11): budowle (byty stacji z bryłami trafień) + bryła 3D + ciała świata;
@@ -31500,7 +31624,7 @@
       baseBreak: (id, o) => storyBaseBreak(id, { ...(o || {}), allLive: true }),
       baseBrokenChunks: () => pirateBaseBrokenChunks(),
       // Planetoida pod bazą (2026-10-15): rozpad habitatu zrywa windę kosmiczną, osada na skale wybucha po kolei.
-      rockCollapse: () => collapsePirateRockSite(),
+      rockCollapse: () => collapsePirateRock(),
       launchNpc: storyNpcs.launch,
       // Zegar wodowania i herszt (misja 1, 2026-10-07): załoga przy działach w stanowisku, brama stanowiska
       // przy starcie, ucieczka herszta, mostek jako słaby punkt, okręt bez dowodzenia (hulk).
@@ -31749,12 +31873,14 @@
       // pasem: kompilacje stacji idą w wolnych chwilach rejestru, gdy strona czeka na pipeline'y pasa (flush niżej — reszta).
       setLoadingProgress(71, 'Stacje');
       await prepareStations3D(stations);
+      // Baza piratów (misja 1): rastry kawałków i szablony kratownic ciał świata — strona gry, bez Core3D.scene (RW-24).
+      prebuildPirateBaseWorld();
 
       // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
       // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
       if (asteroidBelt) {
         setLoadingProgress(72, 'Cień pól asteroid');
-        await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
+        await beltWorld.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
         setLoadingProgress(77, 'Pola asteroid');
         await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
         // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.
@@ -32508,7 +32634,7 @@
     }
     refreshShieldControlButtons();
 
-    // --- WYGLĄD NOWEJ GRY: statki i bronie 2D albo 3D (src/game/visualMode.js) ---
+    // --- WYGLĄD NOWEJ GRY: statki 2D albo 3D (src/game/visualMode.js; bronie zawsze 3D) ---
     // Przełączniki w panelu „Nowa gra”; wybór zapamiętany, działa od razu (także w trakcie gry).
     function updateVisualModeUI() {
       document.querySelectorAll('[data-visual-ships]').forEach(btn => {
@@ -32516,22 +32642,10 @@
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on);
       });
-      document.querySelectorAll('[data-visual-weapons]').forEach(btn => {
-        const on = (btn.dataset.visualWeapons === '1') === VisualMode.weapons3D;
-        btn.classList.toggle('active', on);
-        btn.setAttribute('aria-pressed', on);
-      });
     }
     document.querySelectorAll('[data-visual-ships]').forEach(btn => {
       btn.addEventListener('click', () => {
         VisualMode.set('ships', btn.dataset.visualShips === '1');
-        applyVisualMode();
-        updateVisualModeUI();
-      });
-    });
-    document.querySelectorAll('[data-visual-weapons]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        VisualMode.set('weapons', btn.dataset.visualWeapons === '1');
         applyVisualMode();
         updateVisualModeUI();
       });

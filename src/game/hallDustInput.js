@@ -140,10 +140,10 @@ function putShip(out, n, e) {
 
 /**
  * Wejście klatki. `o`: dt [s] (0 w pauzie), camX / camY (środek kadru, świat gry), viewHalf (pół przekątnej
- * kadru [j.]), rings — lista z polem `collider` (HaloRingGame.entries), ship / ship2 / npcs (okręty gry —
+ * kadru [j.]), rings — lista z polem `collider` (HaloRingWorld.entries), ship / ship2 / npcs (okręty gry —
  * do tablicy trafiają tylko liczby), sun ({ x, y } — Słońce gry), clock — zegar migania świateł hal
- * (HaloRingGame.clock). Z rejestru kolidera (hala `registry.halls[k]`): pozy obsługi stanowisk (`poses` —
- * przewody paliwowe: źródła gazu) i poziom lamp (`lampLevel`, dzień / noc — pisze HaloRingGame).
+ * (HaloRingWorld.clock). Z rejestru kolidera (hala `registry.halls[k]`): pozy obsługi stanowisk (`poses` —
+ * przewody paliwowe: źródła gazu) i poziom lamp (`lampLevel`, dzień / noc — liczy świat ringów gry, src/game/haloRingWorld.js).
  */
 export function packHallDustFrame(out, o = {}) {
   const I = HALL_DUST_IN;

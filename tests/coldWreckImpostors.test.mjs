@@ -71,7 +71,7 @@ test('pełny batch: culling po odległości od środka kadru, nie wyjątek', () 
 
 test('hexShips3D: przebieg zimnych przed flush batcha, bez listy encji; eksporty dla zamrażania', () => {
   const hex = read('src/3d/hexShips3D.js');
-  assert.match(hex, /export function updateHexShips3D\(viewCamera, entities = \[\], cullInfo = null, coldWrecks = null\)/);
+  assert.match(hex, /export function updateHexShips3D\(viewCamera, entities = \[\], cullInfo = null, coldWrecks = null(, cloakFrame = null)?\)/);
   // Wraki na belkach rysowane w tej klatce skórą (znacznik `_coldSkinFrame === frameId`) smugi nie dostają.
   assert.match(hex, /pushColdWreckImpostors\(HexBodyImpostorBatch, coldWrecks, cullInfo, COLD_WRECK_CONFIG\.impostorOpacity, frameId\);[\s\S]*?HexBodyImpostorBatch\.flush\(\);/);
   assert.match(hex, /export function isColdFreezeVisuallySafe\(entity, config = null\)/);

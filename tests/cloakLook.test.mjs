@@ -292,13 +292,19 @@ test('wpięcie: shader, slot, refrakcja, wieżyczki, dysze, lampy, cień (źród
   const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const hex = read('src/3d/hexShips3D.js');
   assert.match(hex, /uCloakA: cloakHullHolder\(entity, 'a'\)/);
-  assert.match(hex, /updateCloakLooks\(valid, now, getInterpolatedRenderPose/);
+  // RW-26: krok wyglądu liczy gra (src/game/cloakLooks.js) przed updateHexShips3D i przed rekordami wież, render
+  // (hullCloak.renderCloakLooks) bierze wynik tej klatki PRZED światłami.
+  assert.match(hex, /renderCloakLooks\(cloakFrame, cameraZoom \* \(Core3D\.pixelRatio \|\| 1\)\);/);
   assert.match(hex, /syncCloakDist\(_skinBatches\.values\(\), Core3D\.scene\)/);
   assert.match(hex, /if \(cloakHidesShadow\(entity\)\) continue;/);
-  // wygląd PRZED światłami i wieżyczkami tej klatki
-  assert.ok(hex.indexOf('updateCloakLooks(valid') < hex.indexOf('buildRoadLightWorldEmitters(visibleHex'));
-  assert.ok(hex.indexOf('updateCloakLooks(valid') < hex.indexOf('Turret2D.sync(entity'));
-  assert.match(read('src/vfx/turret2D.js'), /entityCloakVisAt\(rec\.entity, rec\.wx, rec\.wy\)/);
+  assert.ok(hex.indexOf('renderCloakLooks(cloakFrame') < hex.indexOf('buildRoadLightWorldEmitters(visibleHex'));
+  const html = read('index.html');
+  assert.match(html, /const cloakFrame = stepCloakLooks\(renderEntities, performance\.now\(\), bridgeRenderPose, cloakViewer\);/);
+  assert.ok(html.indexOf('stepCloakLooks(renderEntities') < html.indexOf('Turret2D.syncFrame(renderEntities'));
+  assert.ok(html.indexOf('Turret2D.syncFrame(renderEntities') < html.indexOf('updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame)'));
+  assert.doesNotMatch(read('src/3d/cloak/hullCloak.js'), /stepCloakLook\(/, 'krok wyglądu tylko po stronie gry');
+  // wieże (B3D — tylko 3D) gasną z komórką kadłuba pod sobą
+  assert.match(read('src/3d/ships3d/shipModels3DGame.js'), /if \(e\.__cloakLook && entityCloakVisAt\(e, rec\.wx, rec\.wy\) < 0\.5\) continue;/);
   assert.match(read('src/3d/engineVfxSystem.js'), /cloakVisAtWorld\(cloakLook, nozzleWorldX, -nozzleWorldY\)/);
   assert.match(read('src/game/shipLightRuntime.js'), /entityCloakVisAt\(entity, wx, wy\)/);
   assert.match(read('src/3d/fx/lightGrid.js'), /cloakLightGain\(entity\)/);

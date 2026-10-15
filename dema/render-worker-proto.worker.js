@@ -661,7 +661,7 @@ if (IS_WORKER) {
   const CORE3D_MODULES = [
     '../src/3d/hexShips3D.js', '../src/3d/planet3d.assets.js', '../src/3d/stations3D.js', '../src/3d/world3d.js',
     '../src/3d/haloRing/haloRingGame.js', '../src/3d/asteroids/asteroidBelt.js', '../src/3d/weapons/weaponFx.js',
-    '../src/3d/rockets/effects.js', '../src/effects3d/rocketSystem3D.js', '../src/3d/shield3D.js',
+    '../src/3d/rockets/effects.js', '../src/game/rockets/rocketSim.js', '../src/3d/shield3D.js',
     '../src/3d/explosions/explosionFx.js', '../src/3d/warp/warpNurt.js', '../src/3d/dust/spaceDust3D.js',
     '../src/3d/ships3d/shipModels3DGame.js', '../src/3d/bridge3D.js', '../src/3d/menuBackdrop3D.js',
     '../src/vfx/destruction3D.js', '../src/3d/pirateDryDockGame.js', '../src/3d/worldBodies3D.js',

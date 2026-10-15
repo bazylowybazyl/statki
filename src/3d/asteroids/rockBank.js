@@ -28,6 +28,7 @@ import {
 } from 'three/tsl';
 import { SHAPE_COUNT, SHAPE_VARIANTS, FAMILY } from '../../game/asteroidRockKinds.js';
 import { octDecode, octTexUv } from './tslCommon.js';
+import { octEncodeCpu, shapeRadiusAt } from '../../game/asteroidShapeRadius.js';
 
 export const ROCK_SHAPE_DEFAULTS = Object.freeze({
   count: SHAPE_COUNT,
@@ -49,19 +50,8 @@ export const ROCK_MAX_RADIUS = 1.45;
 // ---------------------------------------------------------------------------
 // Mapowanie oktaedryczne (CPU) — kopia z rockShapes3D.js
 
-export function octEncodeCpu(x, y, z, out = { u: 0, v: 0 }) {
-  const s = Math.abs(x) + Math.abs(y) + Math.abs(z) || 1;
-  let px = x / s;
-  let py = y / s;
-  if (z / s < 0) {
-    const ox = px;
-    px = (1 - Math.abs(py)) * (ox >= 0 ? 1 : -1);
-    py = (1 - Math.abs(ox)) * (py >= 0 ? 1 : -1);
-  }
-  out.u = px * 0.5 + 0.5;
-  out.v = py * 0.5 + 0.5;
-  return out;
-}
+// octEncodeCpu — jedno źródło z promieniem kształtów po stronie gry (asteroidShapeRadius.js, RW-25).
+export { octEncodeCpu };
 
 export function octDecodeCpu(u, v, out = { x: 0, y: 0, z: 1 }) {
   let fx = u * 2 - 1;
@@ -606,7 +596,6 @@ function createBakeMaterials(bank, procTexture) {
 // Bank
 
 const _dec = { x: 0, y: 0, z: 1 };
-const _oct = { u: 0, v: 0 };
 
 export class RockShapeBankGPU {
   constructor(opts = {}) {
@@ -822,21 +811,7 @@ export class RockShapeBankGPU {
    * (minerals.js) sadzają na nim kryształy.
    */
   radiusAt(shape, x, y, z) {
-    const map = this.radiusMaps && this.radiusMaps[shape];
-    if (!map) return 1;
-    const R = this.readbackSize;
-    const o = octEncodeCpu(x, y, z, _oct);
-    const fx = o.u * (R - 1);
-    const fy = o.v * (R - 1);
-    const x0 = Math.min(R - 2, Math.max(0, Math.floor(fx)));
-    const y0 = Math.min(R - 2, Math.max(0, Math.floor(fy)));
-    const tx = Math.min(1, Math.max(0, fx - x0));
-    const ty = Math.min(1, Math.max(0, fy - y0));
-    const a = map[y0 * R + x0];
-    const b = map[y0 * R + x0 + 1];
-    const c = map[(y0 + 1) * R + x0];
-    const d = map[(y0 + 1) * R + x0 + 1];
-    return (a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty;
+    return shapeRadiusAt(this.radiusMaps, this.readbackSize, shape, x, y, z);
   }
 
   dispose() {

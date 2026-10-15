@@ -163,8 +163,9 @@ test('P1 index firing paths use the same simulated mount state as the shared con
     ctx.barrelsPerShotOf = barrelsPerShotOf;
     ctx.queueSalvoBarrels = queueSalvoBarrels;
     // Kierowanie ogniem (2026-10-01): strzał zaczepu special ustawia skalę wstrząsu kamery
-    // (wieża na auto nie trzęsie ekranem) — fireSpecialBarrel czyta WeaponFx i FC_AUTO_SHAKE.
-    ctx.WeaponFx = { shotShakeScale: 1 };
+    // (wieża na auto nie trzęsie ekranem) — fireSpecialBarrel pisze ją pisarzowi strumienia rozkazów (RW-21: rekord SHOT
+    // niesie ją do efektu wylotu) i czyta FC_AUTO_SHAKE.
+    ctx.RenderCommands = { writer: { shotShakeScale: 1 } };
     ctx.FC_AUTO_SHAKE = 0.1;
     // Zadanie 18-B: strzał zaczepu special wydzielony do fireSpecialLoadout (wspólny z ładowaniem),
     // broń z `chargeTime` tylko zgłasza strzał (weaponCharge.js).

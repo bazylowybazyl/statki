@@ -22,8 +22,8 @@ const czesc = String(args.czesc || 'AB');
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 const DEEP = { x: 6210000, y: 5330000 };
 // Te same obiekty co scena `kalibracja` w zrzuty.mjs.
-const KALIBRACJA = `const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-      const T = await import(url);
+const KALIBRACJA = `const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+      const T = window.THREE || await import(url);
       const root = new T.Group(); root.name = 'harness-kalibracja';
       const x0 = ship.pos.x, y0 = -ship.pos.y;
       const add = (mesh, dx, dy) => { mesh.position.set(x0 + dx, y0 + dy, 20); mesh.layers.set(0); root.add(mesh); };

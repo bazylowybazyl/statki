@@ -36,7 +36,7 @@ test('stacje planet: szablony GLB na ekranie ładowania — warstwa FG, wypiek r
   const at = start.indexOf('await prepareStations3D(stations);');
   assert.ok(at > 0 && at < start.indexOf('await Core3D.warmup?.flush('), 'stacje przed flush()');
   // przed pasem asteroid: rejestr kompiluje stacje w wolnych chwilach, gdy strona czeka na pipeline'y pasa
-  assert.ok(at < start.indexOf('await asteroidBelt.precompute('), 'stacje przed pasem');
+  assert.ok(at < start.indexOf('await beltWorld.precompute('), 'stacje przed pasem');
 });
 
 test('rozpad przez rejestr: pass sceny i pass cienia (tylko siatki rzucające cień), trójkąty w miejscu na układzie wypieku', async () => {

@@ -105,7 +105,7 @@ test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
   const cooldown = fn.indexOf('impactFxCooldownReady(');
   assert.ok(cooldown > gate, 'cooldown komórki za bramką kadru');
-  assert.ok(fn.indexOf('WeaponFx.impact(') > cooldown, 'receptura trafienia musi stać za bramkami');
+  assert.ok(fn.indexOf('RenderCommands.writer.impact(') > cooldown, 'receptura trafienia (rekord IMPACT, RW-21) musi stać za bramkami');
   assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
@@ -243,9 +243,10 @@ test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
 });
 
 test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
-  // RW-31: pudła wspólne z grą (src/render/drawBox.js).
+  // RW-31 / RW-26: pudła wspólne z grą (src/render/drawBox.js) — kadłuby 3D, zimne wraki i rekordy wież.
   assert.match(readSource(new URL('../src/render/drawBox.js', import.meta.url)), /export function isEntityInDrawBox\(entity, cull, cameraZoom\)/);
   assert.match(hexShips, /isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX/);
+  assert.match(hexShips, /isEntityInDrawBox\(entity, cullInfo, cameraZoom\)/);
   assert.match(hexShips, /for \(const entity of drawHex\) \{/);
   assert.match(indexHtml, /_hexCullInfo\.drawHalfW = viewHalfW;/);
 });
@@ -337,7 +338,7 @@ test('pule rakiet (Core3D) i odłamków paneli: puste siatki są niewidoczne', (
   const smoke = readSrc('src/3d/rockets/smoke.js');
   assert.match(smoke, /this\.mesh\.visible = n > 1;/);
   assert.match(smoke, /this\.densityMesh\.visible = n > 1;/);
-  assert.doesNotMatch(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
+  assert.doesNotMatch(readSrc('src/game/rockets/rocketSim.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
   const shards = readSrc('src/vfx/panelShardManager.js');
   assert.match(shards, /if \(this\.activeCount === 0\) return;/);
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);

@@ -2,8 +2,10 @@
 
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
-// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
-import { fxRandom } from '../3d/fx/fxRandom.js';
+// Losowość wizualiów (zadanie 23): nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu. Strumień GRY
+// (RW-20: liczone na wątku głównym — osobny ciąg od strumienia renderu fxRandom).
+import { fxRandomGame } from '../game/fxRandomGame.js';
+import { RenderCommands } from '../render/renderCommands.js';
 
 // NOSNIK (src/game/carrierVelocity.js): czastka, blysk i fala rodza sie
 // z predkoscia kadluba, z ktorego wyszly, i rysuja sie w  pos + v * (T - t0)
@@ -211,10 +213,10 @@ export const CanvasVFX = {
   // z dema bronie-webgpu (WeaponFx.droneBlast, zadanie 17 — dawniej fabryka trafienia działka
   // w overlayu przez spawnProjectileImpact3D, usunięta z fabrykami trafień). Rozmiar jak dawniej.
   _spawnDeathBlast3D(x, y, scale) {
-    const fx = typeof window !== 'undefined' ? window.WeaponFx : null;
-    if (!fx || !fx.available || !this.isWorldPointNearViewport(x, y, 260)) return;
+    // RW-21: rekord DRONE_BLAST strumienia rozkazów (nośnik — bieżący ActiveCarrier).
+    if (!RenderCommands.ready || !this.isWorldPointNearViewport(x, y, 260)) return;
     const h = window.ship?.h || 250;
-    fx.droneBlast(x, y, h * 0.18 * Math.max(0.7, scale));
+    RenderCommands.writer.droneBlast(x, y, h * 0.18 * Math.max(0.7, scale));
   },
 
   spawnExplosionPlasma(x, y, scale = 1) {
@@ -331,7 +333,7 @@ export const CanvasVFX = {
       projectInto(p.x + (p.cvx ? p.cvx * ce : 0), p.y + (p.cvy ? p.cvy * ce : 0), cam, s);
       if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       ctx.strokeStyle = `rgba(180, 240, 255, ${t * 0.8})`;
-      ctx.lineWidth = (1 + fxRandom.next()) * cam.zoom;
+      ctx.lineWidth = (1 + fxRandomGame.next()) * cam.zoom;
       const len = p.size * t * 2.0 * cam.zoom;
       const ax = Math.cos(p.angle) * len;
       const ay = Math.sin(p.angle) * len;
@@ -343,7 +345,7 @@ export const CanvasVFX = {
         const progress = i / segments;
         const tx = x1 + (x2 - x1) * progress;
         const ty = y1 + (y2 - y1) * progress;
-        const noise = (fxRandom.next() - 0.5) * p.size * 0.4 * t * cam.zoom;
+        const noise = (fxRandomGame.next() - 0.5) * p.size * 0.4 * t * cam.zoom;
         if (i < segments) ctx.lineTo(tx - Math.sin(p.angle) * noise, ty + Math.cos(p.angle) * noise);
         else ctx.lineTo(x2, y2);
       }
@@ -441,7 +443,7 @@ export const CanvasVFX = {
       coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.55)'); coreGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
       ctx.fillStyle = coreGrad;
       ctx.beginPath(); ctx.roundRect(-lenPx / 2, -width / 2, lenPx, width, width / 2); ctx.fill();
-      if (fxRandom.next() < 0.3) this.spawnLightningSpark({ x: rx + (fxRandom.next()-0.5)*10, y: ry + (fxRandom.next()-0.5)*10 }, 0.3, 18, fxRandom.next() * Math.PI * 2);
+      if (fxRandomGame.next() < 0.3) this.spawnLightningSpark({ x: rx + (fxRandomGame.next()-0.5)*10, y: ry + (fxRandomGame.next()-0.5)*10 }, 0.3, 18, fxRandomGame.next() * Math.PI * 2);
       ctx.restore();
       return;
     }

@@ -83,12 +83,14 @@ test('frame buffer is pooled, not reallocated', () => {
   assert.doesNotMatch(source, /frameRecords\.push\(/);
 });
 
-// Ścieżki muszą powstawać raz na sylwetkę, nie co klatkę — to jest cały powód,
-// dla którego 2D ma być tańsze od siatek.
-test('Path2D geometry is compiled once per silhouette', () => {
-  assert.match(source, /if \(spec\.__layers\) return spec\.__layers;/);
-  const drawBody = source.slice(source.indexOf('  draw(ctx, cam) {'));
-  assert.doesNotMatch(drawBody.slice(0, drawBody.indexOf('\n  },')), /new Path2D\(/);
+// B3D (2026-10-15, docs/PLAN-render-worker.md § 7.1): bronie tylko 3D — Turret2D jest źródłem rekordów, kanwa gry
+// wieżyczek nie rysuje; rysunek kanwy żyje tylko w podglądzie (turretCanvasPreview.js), którego gra nie ładuje.
+test('B3D: Turret2D bez rysunku kanwy, gra nie ładuje podglądu kanwy', () => {
+  assert.doesNotMatch(source, /\n  draw\(ctx, cam\) \{|skipDraw|occlude:|lightAt|Path2D|Sprite2D'/);
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /Turret2D\.draw\(|turretCanvasPreview|Turret2D\.(skipDraw|occlude|lightAt)/);
+  const preview = readFileSync(new URL('../src/vfx/turretCanvasPreview.js', import.meta.url), 'utf8');
+  assert.match(preview, /_compiled\.set\(spec, c\)/, 'Path2D raz na sylwetkę');
 });
 
 test('turret drawing is skipped while the CIC overlay is up', () => {

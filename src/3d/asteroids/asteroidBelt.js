@@ -27,19 +27,23 @@
 //     duszki → zasłona pola → pole przesłaniające maski słońca Core3D.
 // Poza pasem (kadr nie dotyka pasa) krok nic nie liczy — sceny bez pól bez zmian.
 //
-// ROZGRYWKA: kolizje statków z olbrzymami (collideShip — index.html, physicsStep),
-// pociski zatrzymuje skała olbrzyma (pointBlocked); małe skały bez kolizji (pod
-// płaszczyzną), pioruny bez obrażeń. Stare pole (sprite'y, zderzenia z małymi skałami,
-// niszczenie, łup) usunięte — patrz docs/webgpu/POSTEP.md (zadanie 21, otwarte).
+// ROZGRYWKA pasa jest po stronie gry (RW-25): src/game/beltWorld.js — pole, cień pól, olbrzymy
+// (budowa SDF przy kamerze i statkach, kolizje, pociski, strop), fizyka skał i platforma
+// wydobywcza, zegar skał. Ten moduł to sam obraz: WŁASNA instancja pola (konfiguracja z gry —
+// `world.createFieldReplica`; id skał deterministyczne), sektory cienia pól z gry
+// (`adoptSectors`), wejście klatki = czas bezwzględny skał i dt (`prepareFrame`). Do gry wraca
+// tylko zdarzenie `bankRadius` (mapy promienia banku kształtów po pieczeniu → `world.attachShapeRadius`
+// — dopiero wtedy powstaje fizyka skał) i potwierdzenie wysłania zmian siatek ciał
+// (`world.ackMinedUpload`). Dane gry czytane wprost w trybie `inline` (siatki SDF olbrzymów —
+// SharedArrayBuffer, `rig.taken`, ciała wydobycia) w workerze przyjdą z migawki (RW-11c).
 
 import * as THREE from 'three/webgpu';
 import { Core3D } from '../core3d.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { View3D } from '../../game/view3D.js';
-import { AsteroidBeltField, BELT_BAND } from '../../game/asteroidBeltField.js';
-import { FieldSunOcclusion } from '../../game/asteroidFieldLight.js';
-import { BeltGiants } from '../../game/asteroidBeltGiants.js';
-import { GiantBuilder } from '../../game/asteroidGiantBuilder.js';
+import { BELT_BAND } from '../../game/asteroidBeltField.js';
+import { FieldSunOcclusion, NIGHT_KNEE, nightKnee } from '../../game/asteroidFieldLight.js';
+import { beltPlayZ } from '../../game/beltPlayZ.js';
 import { getEntityHullLengthWorld } from '../../game/shipLightRuntime.js';
 import { addShipLights, CAVE_SHIP_LIGHTS, FIELD_SHIP_LIGHTS } from '../fx/lightGrid.js';
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
@@ -47,7 +51,7 @@ import { RockShapeBankGPU } from './rockBank.js';
 import { createRockNoiseVolume } from './rockNoise.js';
 import { createRockShared, RockNodeMaterial, ROCK_LIGHT_DEFAULTS } from './rockMaterial.js';
 import { RockLayer } from './rockLayers.js';
-import { MineralTemplates, MineralLayer, MineralMaterial, MINERAL_TYPES } from './minerals.js';
+import { MineralTemplates, MineralLayer, MineralMaterial } from './minerals.js';
 import { ShadowAtlas } from './spotShadows.js';
 import { FieldMap } from './fieldMap.js';
 import { VolumeLight } from './volumetrics.js';
@@ -60,8 +64,6 @@ import { GlowSprites } from './glowSprites.js';
 import { BeltVeil } from './beltVeil.js';
 import { MinedRocks } from './minedRocks.js';
 import { MiningView } from './miningView.js';
-import { AsteroidMining } from '../../game/asteroidMining.js';
-import { MiningRig } from '../../game/asteroidMiningRig.js';
 
 /** Warstwy passów Core3D: gra (ortho) i tło (perspektywa). */
 export const BELT_LAYER_PLAY = 0;
@@ -77,15 +79,9 @@ const RENDER_ORDER = Object.freeze({ rocks: 1, minerals: -70, backRocks: 2 });
 // przy samym dole zakresu zoomu, głębia zostaje.
 const BACK_FADE = Object.freeze({ [BELT_BAND.RUBBLE]: [0.22, 0.09], [BELT_BAND.MID]: [0.07, 0.03], [BELT_BAND.DEEP]: null });
 
-// Głęboka noc (dema: nightKnee) — słońce przesiane przez pole gaśnie w rdzeniu szybciej
-// niż transmitancja: poniżej T = 0,12 jasność ∝ T · smoothstep(0, 0,12, T). Tę wartość
-// dostają materiały, mgła, zasłona, olbrzymy i maska słońca Core3D; logika — surowe T.
-export const NIGHT_KNEE = 0.12;
-export function nightKnee(t) {
-  if (!(t < NIGHT_KNEE)) return t;
-  const u = Math.max(0, t) / NIGHT_KNEE;
-  return t * u * u * (3 - 2 * u);
-}
+// Głęboka noc (dema: nightKnee) — w src/game/asteroidFieldLight.js (platforma wydobywcza liczy
+// tę samą wartość); tu re-eksport dla modułów obrazu.
+export { NIGHT_KNEE, nightKnee };
 
 // Świecące typy skał (indeksy ROCK_TYPES): kryształ, uran, energetyczna (dynamics.js dema).
 const GLOW_ROCK = Object.freeze({ 4: Object.freeze([0.34, 0.82, 1.0]), 6: Object.freeze([0.34, 1.0, 0.24]), 8: Object.freeze([0.62, 0.5, 1.0]) });
@@ -111,24 +107,22 @@ export const ASTEROID_BELT_CONFIG = Object.freeze({
 
 export class AsteroidBelt {
   /**
-   * Część CPU (natychmiast, bez GPU): pole, cień pól, olbrzymy (plan + wykluczenia).
+   * Część CPU (natychmiast, bez GPU): własna instancja pola i cienia pól na danych świata pasa gry.
    * @param {object} o
-   * @param {Array} o.planets planety gry (kotwice Lagrange'a i Hildas — zamrożone teraz)
-   * @param {{x:number,y:number}} o.sun
-   * @param {number} o.auToWorld
+   * @param {import('../../game/beltWorld.js').BeltWorld} o.world świat pasa gry
    */
-  constructor({ planets = [], sun, auToWorld, config = null } = {}) {
+  constructor({ world, config = null } = {}) {
     this.cfg = { ...ASTEROID_BELT_CONFIG, ...(config || {}) };
-    this.sun = { x: Number(sun?.x) || 0, y: Number(sun?.y) || 0 };
-    this.au = auToWorld;
-    this.field = new AsteroidBeltField({ planets, sunX: this.sun.x, sunY: this.sun.y, auToWorld });
+    this.world = world;
+    this.sun = { x: world.sun.x, y: world.sun.y };
+    this.au = world.au;
+    // Własne pole (cache komórek, przycięcie co klatkę) — konfiguracja z gry, skały te same co w polu gry.
+    this.field = world.createFieldReplica();
+    // Cień pól: sektory policzone po stronie gry (ekran ładowania) — bez drugiego liczenia.
     this.occlusion = new FieldSunOcclusion(this.field);
-    this.giants = new BeltGiants({
-      field: this.field, sunX: this.sun.x, sunY: this.sun.y, au: auToWorld,
-      createBuilder: () => new GiantBuilder()
-    });
-    this.giants.applyExclusions(this.field);
-    this.field.clearCache();
+    world.onOcclusion((sectors) => this.occlusion.adoptSectors(sectors));
+    // Widoki olbrzymów (GiantView) po id wpisu świata — stan obrazu poza obiektami gry.
+    this._giantViews = new Map();
     this.medium = getBeltMedium();
     // Atlas map cienia reflektorów = mapy cienia SIATKI ŚWIATEŁ GRY: ustawiany przed
     // budową materiałów czytających siatkę (lightGrid.js: `loop` sprawdza `shadows`).
@@ -139,11 +133,11 @@ export class AsteroidBelt {
     this.ready = false;
     this.failed = null;
     this.active = false;
+    // Zegar skał tej klatki (czas bezwzględny z gry — world.time).
     this.time = 0;
-    this.precomputed = false;
     this._gpuPromise = null;
     // Wejście klatki z index.html (render): dt gry (0 w pauzie), statki do świateł.
-    this._in = { dt: 0, ship: null, player2: null, npcs: null, prepared: false };
+    this._in = { time: 0, dt: 0, ship: null, player2: null, npcs: null, prepared: false };
     this._view = { x: 0, y: 0, zoom: 1 };
     this._box3D = { x: 0, y: 0, halfW: 1, halfH: 1 };
     this._frame = { cam: this._view, viewW: 1, viewH: 1, focalPx: 1, time: 0, budgetMs: 0 };
@@ -166,10 +160,8 @@ export class AsteroidBelt {
     this._rockLightBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
     this._rockLightCount = 0;
     this._pendingViews = 0;
-    // Wydobycie (zadanie 21b): fizyka skał + platforma gracza (logika — src/game/) i ich
-    // obraz (minedRocks.js, miningView.js); powstają w initGpu (kształty z banku GPU).
-    this.mining = null;
-    this.rig = null;
+    // Wydobycie (zadanie 21b): fizyka skał + platforma gracza — świat pasa gry (powstają po
+    // zdarzeniu bankRadius z initGpu); tu ich obraz (minedRocks.js, miningView.js).
     this.mined = null;
     this.miningView = null;
     this._takenVersion = -1;
@@ -177,8 +169,8 @@ export class AsteroidBelt {
     this._miningFrame = { dt: 0, time: 0, originX: 0, originY: 0, zoom: 1, ship: null, sunT: null };
     this._miningShip = { x: 0, y: 0 };
     this.sunT = (x, y) => nightKnee(this.occlusion.transmittance(x, y));
-    // To samo pole na CPU dla Core3D.sunVisibilityAtWorld (wieżyczki kanwy 2D ciemnieją w głębi pola,
-    // jak kadłuby z maską słońca) — liczone tylko przy aktywnym polu maski (setSunOcclusionField).
+    // To samo pole na CPU dla Core3D.sunVisibilityAtWorld (diagnostyka narzędzi) — liczone tylko przy aktywnym
+    // polu maski (setSunOcclusionField).
     Core3D.sunFieldCpu = this.sunT;
     this.stats = {
       active: false, cpuMs: 0, lights: 0, shipLights: 0, rockLights: 0, rocks: [0, 0, 0, 0], minerals: 0,
@@ -195,12 +187,15 @@ export class AsteroidBelt {
 
   // ── Start ──────────────────────────────────────────────────────────────────
 
-  /** Cień pól dla całego układu (ekran ładowania, ~1 s, oddaje wątek). */
-  async precompute(onProgress = null) {
-    if (this.precomputed) return this;
-    await this.occlusion.precomputeAll({ onProgress });
-    this.precomputed = true;
-    return this;
+  /** Świat pasa gry: olbrzymy, fizyka skał i platforma (dane gry — w trybie `inline` wprost). */
+  get giants() { return this.world.giants; }
+  get mining() { return this.world.mining; }
+  get rig() { return this.world.rig; }
+  get precomputed() { return !!this.occlusion.precomputed; }
+
+  /** Widok GPU olbrzyma (wpis świata pasa) albo null — narzędzia (zrzuty, asteroidy-gra). */
+  giantView(entry) {
+    return entry ? (this._giantViews.get(entry.id) || null) : null;
   }
 
   /**
@@ -247,8 +242,7 @@ export class AsteroidBelt {
     this.volume = new VolumeLight({ renderer, grid: this.grid, fieldMap: this.fieldMap, parent: root, layer: BELT_LAYER_PLAY });
     // Czubek skały gry pod płaszczyzną: kadłuby (z = 0) zawsze nad skałą; skały
     // z minerałami sięgają dalej (czubki kryształów ~1,6 promienia).
-    const mineralTypes = new Set(MINERAL_TYPES);
-    this.playZ = (rock) => -rock.r * (mineralTypes.has(rock.type) ? 1.62 : 1.45) * Math.max(rock.sx, rock.sy, rock.sz);
+    this.playZ = beltPlayZ;
     this.mineralTemplates = new MineralTemplates(this.bank);
     const mineralMat = new MineralMaterial({ shared, layer: playMaterial.L, grid: this.grid, minRockPx: 9 });
     this.playMinerals = new MineralLayer({
@@ -273,14 +267,15 @@ export class AsteroidBelt {
     this.storm = new StormSystem({ parent: root, layer: BELT_LAYER_PLAY, field: this.field, shared, sparks: this.sparks });
     this.fog = new BeltFog({ renderer, bgParent: root, fgParent: root, bgLayer: BELT_LAYER_BACK, fgLayer: BELT_LAYER_PLAY, field: this.field, grid: this.grid, fieldMap: this.fieldMap });
     // Wydobycie (zadanie 21b): fizyka skał liczy siatki ciał z promienia kształtów banku
-    // (odczyt CPU po pieczeniu); platforma gracza bierze skały z danych pola (te same, które
-    // rysuje warstwa PLAY) — przejęte id chowa warstwa (wspólny zbiór `hidden`).
-    this.mining = new AsteroidMining({ radiusAt: (shape, x, y, z) => this.bank.radiusAt(shape, x, y, z), seed: 0x51A7 });
-    this.rig = new MiningRig({ mining: this.mining, field: this.field, playZ: this.playZ, sunT: this.sunT, timeSource: () => this.time });
+    // (odczyt CPU po pieczeniu) — zdarzenie bankRadius do świata pasa gry, który dopiero teraz
+    // tworzy fizykę skał i platformę; platforma bierze skały z pola GRY (te same, które rysuje
+    // warstwa PLAY z pola obrazu) — przejęte id chowa warstwa (zbiór `taken` platformy).
+    this.world.attachShapeRadius({ maps: this.bank.radiusMaps, size: this.bank.readbackSize });
     this.playLayer.hidden = this.rig.taken;
     this.mined = new MinedRocks({
       renderer, parent: root, layer: BELT_LAYER_PLAY, bank: this.bank, shared, playMaterial, grid: this.grid,
-      mining: this.mining, mineralTemplates: this.mineralTemplates, shadows: this.atlas, sunT: this.sunT
+      mining: this.mining, mineralTemplates: this.mineralTemplates, shadows: this.atlas, sunT: this.sunT,
+      onUploaded: (body) => this.world.ackMinedUpload(body)
     });
     this.miningView = new MiningView({ parent: root, layer: BELT_LAYER_PLAY, shared, grid: this.grid, sparks: this.sparks });
     this.miningView.attach(this.rig);
@@ -404,12 +399,14 @@ export class AsteroidBelt {
   // ── Klatka ─────────────────────────────────────────────────────────────────
 
   /**
-   * Wejście klatki (index.html, render(), przed Core3D.render): dt gry (0 w pauzie)
-   * i statki do świateł pola. Bez alokacji — zapamiętane referencje.
+   * Wejście klatki (index.html, render(), przed Core3D.render): zegar skał (czas bezwzględny
+   * świata pasa — world.time), dt klatki (world.frameDt: 0 w pauzie) i statki do świateł pola.
+   * Bez alokacji — zapamiętane referencje.
    */
-  prepareFrame(dt, ship, player2, npcs, paused = false) {
+  prepareFrame(time, dt, ship, player2, npcs) {
     const i = this._in;
-    i.dt = paused ? 0 : Math.max(0, Math.min(0.1, Number(dt) || 0));
+    i.time = Number(time) || 0;
+    i.dt = Math.max(0, Number(dt) || 0);
     i.ship = ship || null;
     i.player2 = player2 || null;
     i.npcs = npcs || null;
@@ -515,7 +512,7 @@ export class AsteroidBelt {
     this.glow.begin();
     this.glow.commit();
     this.atlas.clear();
-    for (const e of this.giants.entries) if (e.view) e.view.setVisible(false);
+    for (const view of this._giantViews.values()) view.setVisible(false);
     // Wydobycie: ciała zostają w fizyce, obraz znika z kadrem.
     this.mined?.hide();
     this.miningView?.hide();
@@ -528,8 +525,8 @@ export class AsteroidBelt {
     const t0 = performance.now();
     const input = this._in;
     const dt = input.prepared ? input.dt : 0;
+    if (input.prepared) this.time = input.time;
     input.prepared = false;
-    this.time += dt;
     this._dt = dt;
     const viewOk = this.enabled && this._computeView();
     const touches = viewOk && this._viewTouchesBelt();
@@ -579,7 +576,7 @@ export class AsteroidBelt {
       mf.zoom = v.zoom; mf.originX = ox; mf.originY = oy; mf.camX = v.x; mf.camY = v.y;
       this.mined.update(mf);
     }
-    // Olbrzymy: budowa w workerach przy kadrze / statku, widoki GPU, przekrój pod stropem.
+    // Olbrzymy: widoki GPU gotowych siatek (budowę zleca świat pasa gry), przekrój pod stropem.
     this._updateGiants(dt, ox, oy);
     // Mapa pola nad kadrem (słońce, pył, lód, burze): mgła, ośrodek, maska Core3D.
     const mf = this._mapFrame;
@@ -688,8 +685,6 @@ export class AsteroidBelt {
     const giants = this.giants;
     const v = this._view;
     const ship = this._in.ship;
-    giants.requestNear(v.x, v.y);
-    if (ship && ship.pos) giants.requestNear(ship.pos.x, ship.pos.y);
     const gf = this._giantFrame;
     gf.viewW = this._frame.viewW; gf.viewH = this._frame.viewH; gf.dt = dt;
     gf.originX = ox; gf.originY = oy;
@@ -706,22 +701,24 @@ export class AsteroidBelt {
     for (const e of giants.entries) {
       const giant = e.giant;
       if (!giant || !giant.ready) continue;
-      if (!e.view) {
+      let view = this._giantViews.get(e.id);
+      if (!view) {
         // Jeden nowy widok na klatkę (wgranie siatki SDF + pieczenie światła + graf).
         if (created) continue;
-        e.view = new GiantView({
+        view = new GiantView({
           renderer: this.renderer, parent: this.root, layer: BELT_LAYER_PLAY, giant, noise: this.shared.noise,
           shared: this.shared, grid: this.grid, sun: this.sun, sunElevDeg: ROCK_LIGHT_DEFAULTS.sunElevDeg
         });
+        this._giantViews.set(e.id, view);
         created = true;
-        Core3D.prewarmPass(e.view.mesh, BELT_LAYER_PLAY);
+        Core3D.prewarmPass(view.mesh, BELT_LAYER_PLAY);
       }
       // Widoczny, gdy obrys olbrzyma dotyka kadru (z zapasem).
       const vis = Math.abs(e.x - v.x) < halfW * 1.5 + e.halfX && Math.abs(e.y - v.y) < halfH * 1.5 + e.halfY;
-      e.view.setVisible(vis);
+      view.setVisible(vis);
       if (!vis) continue;
       gf.sunT = this.sunT(e.x, e.y);
-      e.view.update(gf, hasFocus ? focus : null);
+      view.update(gf, hasFocus ? focus : null);
     }
   }
 
@@ -755,7 +752,7 @@ export class AsteroidBelt {
       opts.owner = this._ownerOf(e);
       const x = Number(e.pos?.x ?? e.x);
       const y = Number(e.pos?.y ?? e.y);
-      opts.profile = this.giants.roofAbove(x, y) ? CAVE_SHIP_LIGHTS : FIELD_SHIP_LIGHTS;
+      opts.profile = this.world.roofAbove(x, y) ? CAVE_SHIP_LIGHTS : FIELD_SHIP_LIGHTS;
       opts.spotShadows = i < this.cfg.maxShadowShips;
       addShipLights(grid, e, len, opts);
       list[i] = null;
@@ -873,22 +870,7 @@ export class AsteroidBelt {
     this.veil.setFlashes(this._flashes, n);
   }
 
-  // ── Rozgrywka ──────────────────────────────────────────────────────────────
-
-  /** Kolizja statku z olbrzymami (body: pos, vel, angle, w, h, radius). Zwraca głębokość wbicia. */
-  collideShip(body) {
-    return this.giants.collideShip(body);
-  }
-
-  /** Czy punkt płaszczyzny gry leży w skale olbrzyma (pociski). */
-  pointBlocked(x, y) {
-    return this.giants.pointBlocked(x, y);
-  }
-
-  /** Transmitancja słońca w punkcie (logika — surowe T, 1 = pełne słońce). */
-  sunTransmittance(x, y) {
-    return this.occlusion.transmittance(x, y);
-  }
+  // ── Narzędzia ──────────────────────────────────────────────────────────────
 
   /** Piorun na żądanie przy punkcie świata (narzędzia, harness): łuk między skałami. */
   forceStrike(x, y) {

@@ -212,7 +212,7 @@ function makeShieldAudio({ inFrame = () => false } = {}) {
     impactFxScreenPx: (x, y, size) => (inFrame(x, y) ? size : 0),
     shotVoiceLimiter,
     performance: { now: () => now.ms },
-    fxRandom: { next: () => { throw new Error('dźwięk tarczy nie losuje z fxRandom'); } },
+    fxRandomGame: { next: () => { throw new Error('dźwięk tarczy nie losuje z fxRandomGame'); } },
     OPTIONS: { audio: { sfx: 1 } },
     window: {
       AudioSys: {

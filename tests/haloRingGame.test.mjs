@@ -212,11 +212,13 @@ test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje
   // krok silnika belek z encjami budowli (ciała świata — src/game/worldBodies.js)
   const destr = html.indexOf('HullBodies.step(dt, worldBodies.withEntities(allDestructibles));', phys);
   assert.ok(ast > 0 && ring > ast && destr > ring, 'kolejność kolizji w physicsStep');
-  assert.match(html, /haloRings\.constrainShip\(ship, true\)/);
+  // rozgrywka ringów — świat ringów gry (RW-27, src/game/haloRingWorld.js)
+  assert.match(html, /import \{ HaloRingWorld \} from "\.\/src\/game\/haloRingWorld\.js";/);
+  assert.match(html, /haloWorld\.constrainShip\(ship, true\)/);
   // NPC: widok kinematyki x/y/vx/vy (zachowanie: tests/npcWorldCollisions.test.mjs)
-  assert.match(html, /haloRings\.constrainShip\(loadNpcCollisionBody\(body, npc\), false\)/);
+  assert.match(html, /haloWorld\.constrainShip\(loadNpcCollisionBody\(body, npc\), false\)/);
   // pociski: płyta zatrzymuje, stacja-port nie łapie trafień
-  assert.match(html, /haloRings && haloRings\.pointInSlab\(b\.x, b\.y\)/);
+  assert.match(html, /haloWorld && haloWorld\.pointInSlab\(b\.x, b\.y\)/);
   assert.match(html, /b\.source !== st && st\.isCollidable !== false/);
   // terminal stacji-portu w całej hali K-7
   assert.match(html, /Number\(station\.terminalRange\)/);

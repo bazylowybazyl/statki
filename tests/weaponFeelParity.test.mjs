@@ -24,9 +24,9 @@ test('smuga jest wyborem receptury jak w demie; lekka broń nie dostaje trwałeg
 test('pierwszy krok pocisku 3D nie emituje smugi 2D; wymuszona kanwa zachowuje ślad', () => {
   let particles = 0;
   const scope = {
-    WeaponFx: { available: true },
+    RenderCommands: { ready: true },
     CanvasVFX: { spawnParticleXY() { particles++; } },
-    fxRandom: { next: () => 0.5 }
+    fxRandomGame: { next: () => 0.5 }
   };
   const spawn = loadIndexFunction(readIndexHtml(), 'function spawnBulletTrail(', 'spawnBulletTrail', scope);
   const bullet = { x: 0, y: 0, vx: 100, vy: 0, type: 'autocannon' };
@@ -36,7 +36,7 @@ test('pierwszy krok pocisku 3D nie emituje smugi 2D; wymuszona kanwa zachowuje �
   spawn(bullet, 2, 1 / 60);
   assert.equal(particles, 2);
   bullet.forceCanvas = false;
-  scope.WeaponFx.available = false;
+  scope.RenderCommands.ready = false;
   spawn(bullet, 2, 1 / 60);
   assert.equal(particles, 4, 'zapas kanwy');
 });
