@@ -68,8 +68,6 @@ export const PULSE_CAP = 1024;
 export const RICOCHET_CAP = 256;
 /** Pocisków spoza tablicy `bullets` (Hexlance) naraz. */
 export const EXTERNAL_CAP = 16;
-/** Sufit wstrząsu strzałów (window.__weapon3dCameraShake.mag, jak dawny weapon3DSystem). */
-export const WEAPON_SHAKE_CAP = 18;
 /** Znaków rzazu pocisku przebijającego na jedno wywołanie (po przerzedzeniu jak w demie — niżej). */
 export const KERF_PER_CALL = 16;
 /** Podkrok symulacji pocisków dema [Hz]: najwyżej jeden znak rzazu na podkrok (odstęp v / 240). */
@@ -226,9 +224,6 @@ export const WeaponFx = {
   // Budżety pełnych wylotów i trafień na klatkę (ponad — tani błysk); opcje grafiki („Szczegóły efektów”).
   muzzlePerFrame: MUZZLE_PER_FRAME,
   impactPerFrame: IMPACT_PER_FRAME,
-  _weaponShake: 0,
-  // Mnożnik wstrząsu kamery bieżącego strzału (1 = pełny). Ustawia go strzelający wokół fireWeaponCore.
-  shotShakeScale: 1,
   _states: [],
   _free: [],
   _active: [],
@@ -335,7 +330,7 @@ export const WeaponFx = {
       get time() { return Core3D.fx.time; },
       /** Zdarzenie opóźnione: rodzaj i liczby (bez domknięć), nośnik z ActiveCarrier. */
       after(delay, kind, a0, a1, a2, a3, a4, a5, ref) { self._scheduleAfter(delay, kind, a0, a1, a2, a3, a4, a5, ref); },
-      /** Wstrząs kamery: camera.addShake porównany z tym, co zostało (addShake nadpisuje). */
+      /** Wstrząs kamery: żądanie do gry (hak onShake — RW-30; gra porównuje z bieżącym wstrząsem). */
       shake(mag, dur) { self._shake(mag, dur); },
       /**
        * Mapa ran na kadłubie (zadanie 18-C, HullDamageMap.stampRecipe): stempel w miejscu krateru z haka
@@ -357,13 +352,11 @@ export const WeaponFx = {
   // broni (zadanie 18-D, src/game/weaponFeel.js); poza trafieniem 1.
   _shakeScale: 1,
 
+  // Wstrząs kamery z receptury — ŻĄDANIE do gry (RW-30: hak `onShake`, index.html → src/game/cameraShakes.js
+  // requestCameraShake: nie słabszy od bieżącego). Kamerą rządzi gra; efekty jej nie piszą.
   _shake(mag, dur) {
     if (!this._shakeAllowed || !(mag > 0)) return;
-    const cam = typeof window !== 'undefined' ? window.camera : null;
-    if (!cam || typeof cam.addShake !== 'function') return;
-    const m = mag * this._shakeScale;
-    const left = cam.shakeDur > 0 ? cam.shakeMag * Math.max(0, cam.shakeTime / cam.shakeDur) : 0;
-    if (m > left) cam.addShake(m, dur);
+    if (this.onShake !== null) this.onShake(mag * this._shakeScale, dur);
   },
 
   _hullInside(hull, x, y) {
@@ -507,11 +500,8 @@ export const WeaponFx = {
   /** Kamery 3D: (encja, x, y) → wysokość lufy nad płaszczyzną (błysk wylotu) albo null. */
   muzzleZOf: null,
 
-  /**
-   * Strzał gracza 1 z wieżyczki: (kierunek lufy x, y [świat], wstrząs broni × ułamek grupy, przeładowanie [s]) —
-   * index.html podpina kopnięcie kadru (cameraRig.addCameraKick). null — bez haka.
-   */
-  onPlayerShot: null,
+  /** (siła, czas) → żądanie wstrząsu kamery (hak gry — RW-30; null — bez wstrząsu, np. dema). */
+  onShake: null,
 
   /**
    * GAZ Z LUFY (etap E1, reżyser wybuchów — ExplosionFx.muzzleShot podpina się sam): (rodzina receptury, wylot `m`, moc
@@ -540,14 +530,8 @@ export const WeaponFx = {
       writeCarrier(gunner, shot.x, shot.y, true, _carrier);
       // Kamery 3D: błysk na wysokości lufy wieży 3D (shipModels3DGame.turretMuzzleZ; w kamerze z góry 0).
       if (this.muzzleZOf !== null) _carrier.z += this.muzzleZOf(shot.entity || shooter, shot.x, shot.y) || 0;
-      // Wstrząs strzałów z profilu wieżyczki (jak dawny weapon3DSystem) — 18-D przełączy na dane.
-      // `shotShakeScale` — ułamek wstrząsu tego strzału: kierowanie ogniem gracza (index.html) ścisza
-      // wieże na auto, ekranem trzęsie tylko grupa w ręku.
-      this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(shot.shake) || 0) * this.shotShakeScale);
-      // Kopnięcie kadru wzdłuż lufy (strzał gracza 1; index.html → cameraRig.addCameraKick).
-      if (this.onPlayerShot !== null && gunner && typeof window !== 'undefined' && gunner === window.ship) {
-        this.onPlayerShot(Math.cos(shot.angle), Math.sin(shot.angle), (Number(shot.shake) || 0) * this.shotShakeScale, Number(w.def?.cooldown) || 1);
-      }
+      // Wstrząs strzałów i kopnięcie kadru liczy gra przy zapisie rekordu SHOT (RW-30: src/render/renderCommands.js
+      // `onShotFeel` → src/game/cameraShakes.js).
       shot.entity = null;
     } else {
       if (!this._inView(x, y, 200)) return false;
@@ -1188,7 +1172,6 @@ export const WeaponFx = {
     // Bank cząstek Fx3D (iskry dysz MAIN, mostki, rdzenie) — dokładnie raz na klatkę renderu
     // (dawniej Weapon3DSystem.syncProjectiles).
     Fx3D.update(dt);
-    this._updateWeaponShake(dt);
     if (!this.ensure()) return;
     this._frame++;
     this._syncZoom = this._zoom();
@@ -1357,26 +1340,6 @@ export const WeaponFx = {
     }
   },
 
-  // Wstrząs strzałów z profilu wieżyczek (window.__weapon3dCameraShake — czyta render() w
-  // index.html przez cameraShakeAmplitudePx). Bez losowania (dawniej Math.random w x/y).
-  _updateWeaponShake(dt) {
-    if (typeof window === 'undefined') return;
-    const out = window.__weapon3dCameraShake || (window.__weapon3dCameraShake = { x: 0, y: 0, mag: 0 });
-    this._weaponShake *= Math.exp(-8.0 * dt);
-    if (this._weaponShake < 0.01) this._weaponShake = 0;
-    out.mag = this._weaponShake;
-    out.x = 0;
-    out.y = 0;
-  },
-
-  /** Dokłada wstrząs strzałów (np. rakieta Supernowa — 19). */
-  addWeaponShake(mag) {
-    this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(mag) || 0));
-  },
-
-  get weaponShake() { return this._weaponShake; },
-  set weaponShake(v) { this._weaponShake = Math.max(0, Math.min(WEAPON_SHAKE_CAP, Number(v) || 0)); },
-
   // -------------------------------------------------------------------------
   // Kroki klatki efektów (Core3D.fx)
 
@@ -1407,12 +1370,6 @@ export const WeaponFx = {
 
   /** Nowa gra / sprzątanie sceny: stany, kolejki i pule od zera (bez zwalniania GPU). */
   reset() {
-    this._weaponShake = 0;
-    if (typeof window !== 'undefined' && window.__weapon3dCameraShake) {
-      window.__weapon3dCameraShake.mag = 0;
-      window.__weapon3dCameraShake.x = 0;
-      window.__weapon3dCameraShake.y = 0;
-    }
     if (!this._ready) return;
     const A = this._active;
     for (let i = 0; i < A.length; i++) {

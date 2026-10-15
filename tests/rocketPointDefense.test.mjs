@@ -1,4 +1,4 @@
-// Obrona punktowa kontra rakiety 3D (2026-10-12): rakiety z src/effects3d/rocketSystem3D.js są celami CIWS,
+// Obrona punktowa kontra rakiety 3D (2026-10-12): rakiety z src/game/rockets/rocketSim.js są celami CIWS,
 // lasera PD i flaku gracza i NPC (zastępniki w buforach zagrożeń — syncThreats), zestrzelenie = intercept
 // (bez detonacji głowicy). Trafienie pocisku CIWS na odcinku kroku w ruchu względnym — src/game/rocketIntercept.js.
 // node --test tests/rocketPointDefense.test.mjs
@@ -11,7 +11,7 @@ import { ciwsShotHitsRocket, ciwsRocketReach } from '../src/game/rocketIntercept
 import { loadIndexFunction } from './helpers/indexSource.mjs';
 
 globalThis.window = globalThis.window ?? {};
-const { initRocketSystem3D, LAUNCH_ELEVATED, ROCKET_PD_TUNE } = await import('../src/effects3d/rocketSystem3D.js');
+const { initRocketSystem3D, LAUNCH_ELEVATED, ROCKET_PD_TUNE } = await import('../src/game/rockets/rocketSim.js');
 const { SimClock } = await import('../src/game/simClock.js');
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');

@@ -14,7 +14,9 @@ import { Turret2D } from '../src/vfx/turret2D.js';
 import { WEAPON_FX_IDS } from '../src/3d/weapons/weaponFxTable.js';
 import { Core3D } from '../src/3d/core3d.js';
 import { FxFrame } from '../src/3d/fx/fxFrame.js';
-import { WeaponFx, WEAPON_SHAKE_CAP } from '../src/3d/weapons/weaponFx.js';
+import { WeaponFx } from '../src/3d/weapons/weaponFx.js';
+import { createRenderCommands } from '../src/render/renderCommands.js';
+import { WEAPON_SHAKE_CAP, createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak } from '../src/game/cameraShakes.js';
 import { readIndexHtml, loadIndexFunction } from './helpers/indexSource.mjs';
 
 const turretSrc = readFileSync(new URL('../src/vfx/turret2D.js', import.meta.url), 'utf8');
@@ -108,33 +110,62 @@ function withCamera(fn) {
   try { fn(calls); } finally { if (saved) globalThis.window = saved; }
 }
 
-test('WeaponFx: wstrząs strzału z danych broni (kanał strzałów), sufit WEAPON_SHAKE_CAP', () => {
-  WeaponFx.weaponShake = 0;
+// RW-30: wstrząs strzałów liczy gra przy zapisie rekordu SHOT (hak onShotFeel strumienia rozkazów → akumulator
+// src/game/cameraShakes.js); efekt wylotu (WeaponFx) już go nie liczy.
+test('gra: wstrząs strzału z danych broni przy rekordzie SHOT (onShotFeel), sufit WEAPON_SHAKE_CAP, gaśnie co klatkę', () => {
   const shooter = { autoWeapons: [{ def: MASTER_WEAPONS.armata_mk1, hpOffset: { x: 10, y: 0 } }] };
+  const rc = createRenderCommands({ mode: 'inline' });
+  const acc = createWeaponShotShake();
+  const kicks = [];
+  rc.writer.onShotFeel = (gunner, dx, dy, shake, cd) => { addWeaponShotShake(acc, shake); kicks.push([gunner, dx, dy, shake, cd]); };
   try {
     Turret2D.enabled = true;
     Turret2D.beginFrame();
     Turret2D.sync(shooter, 0, 0, 0, 1);
-    withCamera(() => {
-      WeaponFx._muzzle({ id: 'armata_mk1', fx: 'armata', def: MASTER_WEAPONS.armata_mk1, size: 'L' }, 20, 0, shooter, 1, 0);
-    });
-    assert.equal(WeaponFx.weaponShake, 6.5, 'armata: shake 6,5 z danych');
-    for (let k = 0; k < 10; k++) {
-      Turret2D.sync(shooter, 0, 0, 0, 1);
-      withCamera(() => WeaponFx._muzzle({ id: 'armata_mk1', fx: 'armata', def: MASTER_WEAPONS.armata_mk1, size: 'L' }, 20, 0, shooter, 1, 0));
-    }
-    assert.equal(WeaponFx.weaponShake, WEAPON_SHAKE_CAP);
+    rc.writer.shot({ weaponId: 'armata_mk1', shooter, x: 20, y: 0, isBeam: false, beamMode: null, beam: null, dirX: 1, dirY: 0 });
+    assert.equal(acc.mag, 6.5, 'armata: shake 6,5 z danych');
+    assert.equal(kicks[0][0], shooter, 'kadłub z wieżyczką');
+    assert.equal(kicks[0][4], MASTER_WEAPONS.armata_mk1.cooldown);
+    rc.writer.shotShakeScale = 0.1;
+    rc.writer.shot({ weaponId: 'armata_mk1', shooter, x: 20, y: 0, isBeam: false, beamMode: null, beam: null, dirX: 1, dirY: 0 });
+    assert.ok(Math.abs(acc.mag - 7.15) < 1e-9, 'wieża na auto — ułamek wstrząsu');
+    rc.writer.shotShakeScale = 1;
+    for (let k = 0; k < 10; k++) rc.writer.shot({ weaponId: 'armata_mk1', shooter, x: 20, y: 0, isBeam: false, beamMode: null, beam: null, dirX: 1, dirY: 0 });
+    assert.equal(acc.mag, WEAPON_SHAKE_CAP);
+    const n = kicks.length;
+    rc.writer.shot({ weaponId: 'beam_continuous', shooter, x: 20, y: 0, isBeam: true, beamMode: 'continuous',
+      beam: { kind: 'continuous', startX: 20, startY: 0, endX: 90, endY: 0 }, dirX: 1, dirY: 0 });
+    assert.equal(kicks.length, n, 'wiązka ciągła — bez wstrząsu (jak efekt wylotu)');
+    stepWeaponShotShake(acc, 1000);
+    const m1 = acc.mag;
+    stepWeaponShotShake(acc, 1016);
+    assert.ok(Math.abs(acc.mag - m1 * Math.exp(-8 * 0.016)) < 1e-9, 'e^(−8·dt)');
   } finally {
     Turret2D.clear();
-    WeaponFx.reset();
   }
+});
+
+test('żądania wstrząsu z renderu: nie słabszy od bieżącego (receptury, warp), reguła Supernowej', () => {
+  const calls = [];
+  const cam = { shakeMag: 10, shakeTime: 0.2, shakeDur: 0.4, addShake(m, d) { calls.push([m, d]); } };
+  assert.equal(requestCameraShake(cam, 4, 0.3), false, 'zostało 5 — 4 nie nadpisuje');
+  assert.equal(requestCameraShake(cam, 6, 0.3), true);
+  assert.equal(requestCameraShakePeak(cam, 6, 0.3), false, 'Supernowa: porównanie z pełną siłą (10)');
+  assert.equal(requestCameraShakePeak(cam, 16, 0.45), true);
+  assert.deepEqual(calls, [[6, 0.3], [16, 0.45]]);
+  const src = readFileSync(new URL('../src/3d/weapons/weaponFx.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /window\.camera\b(?!\?\.zoom)|addShake|__weapon3dCameraShake/, 'efekty broni nie piszą kamery gry');
+  assert.doesNotMatch(readFileSync(new URL('../src/3d/rockets/effects.js', import.meta.url), 'utf8'), /addShake/);
 });
 
 test('WeaponFx.impact: wstrząs trafienia × impactScale broni (receptura bez zmian), tylko gdy strzelał gracz', () => {
   const hit = { x: 0, y: 0, nx: -1, ny: 0, entity: null, relVx: 25000, relVy: 0, kind: 'hull', through: false, ric: false };
   const mag = (b) => {
     let out = null;
+    // RW-30: receptura żąda wstrząsu hakiem onShake, regułę stosuje gra (requestCameraShake).
+    WeaponFx.onShake = (m, d) => requestCameraShake(globalThis.window.camera, m, d);
     withCamera((calls) => { WeaponFx.impact(b, 0, 0, 1, hit); out = calls.map((c) => c[0]); });
+    WeaponFx.onShake = null;
     WeaponFx.reset();
     return out;
   };

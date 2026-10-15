@@ -14,11 +14,11 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 102, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym); RW-31 (rw-kadluby): Core3D.pixelRatio do widoku klatki gry (setDrawView) — w workerze z RET_F64.PIXEL_RATIO
-  'index:dane': 16, // 2026-10-15 RW-22 (rw-kadluby): installExplosionCommands (dekoder rekordu EXPLOSION — moduł bez three liczony jako dane); za to zdarzenia 51 → 47, zapytania 70 → 64
-  'index:konfiguracja': 169, // 2026-10-15 RW-22 (rw-kadluby): instalacja dekoderów rekordów kadłubów (mapa ran, reaktor, drony, iskry) — jednorazowa konfiguracja; za to zdarzenia 51 → 47, zapytania 70 → 64
-  'index:zapytanie': 70,
-  'index:zdarzenie': 51,
+  'index:aktualizacja': 99, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym); RW-31 (rw-kadluby): Core3D.pixelRatio do widoku klatki gry (setDrawView) — w workerze z RET_F64.PIXEL_RATIO
+  'index:dane': 17, // 2026-10-15 RW-22 (rw-kadluby): installExplosionCommands (dekoder rekordu EXPLOSION); RW-23 (rw-bronie): installRocketFxCommands (dekoder RKT_*) — moduły bez three liczone jako dane, konfiguracja renderu w trybie inline
+  'index:konfiguracja': 164,
+  'index:zapytanie': 58,
+  'index:zdarzenie': 30,
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidBeltGiants.js': 1,
@@ -32,7 +32,7 @@ const SUFITY = {
   'import:src/game/asteroidStorms.js': 3,
   'import:src/game/beamBand3D.js': 1,
   'import:src/game/cargoPortOps.js': 1,
-  'import:src/game/carrierVelocity.js': 17, // 2026-10-15 RW-21 (rw-bronie): dekoder rekordów broni (weaponFxCommands.js) ustawia ActiveCarrier z bloku nośnika rekordu
+  'import:src/game/carrierVelocity.js': 16,
   'import:src/game/cloakLook.js': 8,
   'import:src/game/coldWrecks.js': 1,
   'import:src/game/cometNucleus.js': 1,
@@ -40,7 +40,6 @@ const SUFITY = {
   'import:src/game/coreModel.js': 3,
   'import:src/game/destructorConfig.js': 2,
   'import:src/game/engineIgnition.js': 3,
-  'import:src/game/friendlyFire.js': 1,
   'import:src/game/fxRandomGame.js': 2, // 2026-10-15 RW-20 (rw-bronie): strumień losowy gry dla modułów kanwy wątku głównego (collisionSparks, canvasParticleSystem)
   'import:src/game/gameState.js': 2,
   'import:src/game/haloRingCollision.js': 1,
@@ -58,7 +57,7 @@ const SUFITY = {
   'import:src/game/shipBridgeBeams.js': 2,
   'import:src/game/shipBridgeRuntime.js': 1,
   'import:src/game/shipLightRuntime.js': 5,
-  'import:src/game/simClock.js': 15,
+  'import:src/game/simClock.js': 14,
   'import:src/game/skyRegion.js': 1,
   'import:src/game/story/pirateBaseBodies.js': 1,
   'import:src/game/traffic/dockLayout.js': 2,
@@ -76,31 +75,21 @@ const SUFITY = {
   'okno:DevTuning': 11,
   'okno:DevVFX': 8,
   'okno:ENGINE_POINT_LIGHTS_ENABLED': 1,
-  'okno:Game': 1,
   'okno:HullBodies': 2,
   'okno:OPTIONS': 5,
-  'okno:RepairSwarm': 1,
   'okno:SUN': 35,
   'okno:VFX_TUNE': 2,
-  'okno:WorldBodies': 1,
   'okno:__EXPLOSION_GRID': 1,
   'okno:__EXPLOSION_TUNE_OVR': 2,
   'okno:__TSL_UUID_NAPRAWA': 1,
   'okno:__interpShipPose': 5,
   'okno:__renderDbgRecord': 3,
-  'okno:applyDamageToNPC': 2,
-  'okno:applyDamageToPlayer': 2,
-  'okno:applyDamageToStation': 1,
-  'okno:applyRocketHullImpact': 2,
   'okno:bullets': 2,
-  'okno:camera': 6,
+  'okno:camera': 4,
   'okno:camera2': 4,
-  'okno:isShieldBreachedAt': 2,
-  'okno:npcs': 2,
   'okno:planets': 3,
   'okno:player2Ship': 3,
-  'okno:registerShieldImpact': 2,
-  'okno:ship': 17,
+  'okno:ship': 10,
   'okno:shipDriveState': 1,
   'okno:splitScreenMode': 7,
   'okno:stationPivotById': 1,
@@ -155,8 +144,7 @@ const SUFITY = {
   'gpu:src/3d/shield3D.js': 2,
   'gpu:src/3d/tsl/zapisF16.js': 2,
   // Math.random w renderze (RW-20)
-  'random:src/3d/planet3d.assets.js': 8,
-  'random:src/effects3d/rocketSystem3D.js': 2
+  'random:src/3d/planet3d.assets.js': 8
 };
 
 const graf = grafGry();

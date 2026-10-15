@@ -18,9 +18,11 @@
 
 import { EventRingReader, EventRingWriter, createEventRingBuffer } from './eventRing.js';
 import { createRenderIds, RenderIdSpace } from './renderIds.js';
+import { RenderSlots } from './renderSlots.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
 import { CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
+import { MASTER_WEAPONS } from '../data/weapons.js';
 
 /** Kody typów rekordów (1…65535; 0 = PAD pierścienia). */
 export const RC = Object.freeze({
@@ -40,7 +42,20 @@ export const RC = Object.freeze({
   HEX_BEGIN: 14,
   HEX_STEP: 15,
   HEX_END: 16,
-  HEX_HIT: 17
+  HEX_HIT: 17,
+  // Zakresy torów (równoległe tory nie mogą zderzyć się kodami): 1–31 broń (rw-bronie; wolne od 18), 32–63 kadłuby /
+  // rany / wybuchy / iskry / odłamki / reaktor / stacje (rw-kadluby — `HC` w src/render/hullCommands.js), 64–73 rakiety
+  // (RW-23), 74–127 świat (rw-swiat).
+  RKT_BEGIN: 64,     // początek kroku lotu: liczba rakiet w locie i w kolejkach
+  RKT_LAUNCH: 65,    // wyrzut: slot rakiety, motyw barw
+  RKT_IGNITE: 66,    // zapłon
+  RKT_FLY: 67,       // krok lotu rakiety (dt) — w kolejności lotu, jak dawne wywołania reżysera
+  RKT_SPLIT: 68,     // podział nosiciela (Hydra)
+  RKT_INTERCEPT: 69, // zestrzelenie (obrona punktowa)
+  RKT_CONTACT: 70,   // punkt i odcinek styku przed wybuchem
+  RKT_DETONATE: 71,  // wybuch: punkt, trafiona encja, tarcza
+  RKT_UPDATE: 72,    // koniec kroku lotu (klatka reżysera)
+  RKT_WAKE: 73       // kilwater torpedy (pocisk kanwy / WeaponFx — slot pocisku)
 });
 
 /** Rodzaje rekordu SHOT i HEX_HIT. */
@@ -60,7 +75,7 @@ export const MUZZLE_WORDS = 6 + ENT_WORDS; // znaleziona (0/1), x, y, kąt, skal
 export const SHOT = Object.freeze({
   KIND: 0, WEAPON: 1, SHOOTER: 2, X: 4, Y: 5, IS_BEAM: 6, BEAM_MODE: 7, DIR_X: 8, DIR_Y: 9,
   HAS_BEAM: 10, B_KIND: 11, B_MODE: 12, B_SX: 13, B_SY: 14, B_EX: 15, B_EY: 16, B_WIDTH: 17, B_HIT: 18,
-  B_NX: 20, B_NY: 21, B_UID: 22, SHAKE: 23, MUZZLE: 24, WORDS: 24 + MUZZLE_WORDS
+  B_NX: 20, B_NY: 21, B_UID: 22, MUZZLE: 23, WORDS: 23 + MUZZLE_WORDS
 });
 // Pocisk w rekordzie (pola, które receptury czytają przy zdarzeniu) — blok BULLET.
 export const BULLET = Object.freeze({
@@ -91,7 +106,7 @@ export const CHARGE = Object.freeze({
   WEAPON: 0, X: 1, Y: 2, ANGLE: 3, SCALE: 4, U: 5, DT: 6, KEY: 7, HAS_CARRIER: 9, CARRIER: 10, WORDS: 10 + CARRIER_WORDS
 });
 export const PD_LASER = Object.freeze({
-  WEAPON: 0, X0: 1, Y0: 2, X1: 3, Y1: 4, SHOOTER: 5, TARGET: 7, SHAKE: 9, MUZZLE: 10, WORDS: 10 + MUZZLE_WORDS
+  WEAPON: 0, X0: 1, Y0: 2, X1: 3, Y1: 4, SHOOTER: 5, TARGET: 7, MUZZLE: 9, WORDS: 9 + MUZZLE_WORDS
 });
 export const HEX = Object.freeze({
   // HEX_CHARGE: x, y, dirX, dirY, dt, u, index, nośnik
@@ -123,14 +138,20 @@ export class RenderCommandWriter {
     this.ring = new EventRingWriter(this.buffer, { shared, onGrow: (b) => { this.buffer = b; if (this.onGrow) this.onGrow(b); } });
     this.onGrow = onGrow;
     this.ids = ids || createRenderIds();
+    // Cudze sloty (gra: RenderSlots — wspólne z migawką i kanałem zwrotnym, src/render/renderSlots.js) mają jeden cykl
+    // mark & sweep na klatkę w pętli gry; pisarz robi go sam tylko na własnych (testy, dema).
+    this.ownsIds = !ids;
     // Klucze stanu ładowania (stan efektu na dziale): obiekt stanu gry → slot; długie trzymanie (przerwy między
     // ładowaniami — stan łuków przeżywa je jak dawniej na obiekcie gry).
     this.chargeKeys = new RenderIdSpace('charge', { capacity: 16, retain: 3600 });
     this.frame = 0;
     this.records = 0;
     // Ułamek wstrząsu strzału (kierowanie ogniem gracza ścisza wieże na auto — index.html ustawia go wokół
-    // fireWeaponCore); rekordy SHOT / PD_LASER niosą go do efektu wylotu (dawniej WeaponFx.shotShakeScale z gry).
+    // fireWeaponCore; dawniej WeaponFx.shotShakeScale pisany z gry) — mnoży wstrząs w haku onShotFeel.
     this.shotShakeScale = 1;
+    // Hak gry na strzał z wieżyczki (RW-30): (kadłub z wieżyczką, kierunek lufy x, y, wstrząs × ułamek, przeładowanie [s])
+    // — wstrząs strzałów i kopnięcie kadru liczy gra (src/game/cameraShakes.js), nie efekt wylotu. null — bez.
+    this.onShotFeel = null;
     this._strIds = new Map();
     this._strNext = 0;
     this._hexNext = 1;
@@ -140,16 +161,20 @@ export class RenderCommandWriter {
 
   _beginIds() {
     const s = this.ids;
-    if (s.entities) s.entities.begin();
-    if (s.shots) s.shots.begin();
+    if (this.ownsIds) {
+      if (s.entities) s.entities.begin();
+      if (s.shots) s.shots.begin();
+    }
     this.chargeKeys.begin();
   }
 
-  /** Koniec klatki renderu: zwolnienie slotów obiektów bez odwołań, numer klatki rekordów + 1. */
+  /** Koniec klatki renderu: zwolnienie slotów bez odwołań (własne przestrzenie i klucze ładowania), numer klatki + 1. */
   endFrame() {
     const s = this.ids;
-    if (s.entities) s.entities.end();
-    if (s.shots) s.shots.end();
+    if (this.ownsIds) {
+      if (s.entities) s.entities.end();
+      if (s.shots) s.shots.end();
+    }
     this.chargeKeys.end();
     this.frame++;
     this._beginIds();
@@ -211,7 +236,8 @@ export class RenderCommandWriter {
   }
 
   // Lufa rozwiązana w grze (Turret2D.shotMuzzle — bez odrzutu): ta sama, którą dawniej brał efekt wylotu.
-  _muzzle(d, o, weaponId, x, y, shooter) {
+  // feel — strzał z efektem wylotu (bez wiązki ciągłej): wstrząs strzałów i kopnięcie kadru (hak onShotFeel).
+  _muzzle(d, o, weaponId, x, y, shooter, feel = false) {
     const shot = Turret2D.shotMuzzle(normalizeWeaponFxKey(weaponId), x, y, shooter || null);
     if (!shot) {
       d[o] = 0; d[o + 1] = d[o + 2] = d[o + 3] = d[o + 4] = d[o + 5] = 0; d[o + 6] = -1; d[o + 7] = 0;
@@ -220,6 +246,11 @@ export class RenderCommandWriter {
     d[o] = 1;
     d[o + 1] = shot.x; d[o + 2] = shot.y; d[o + 3] = shot.angle; d[o + 4] = shot.scale; d[o + 5] = shot.shake;
     this._ent(d, o + 6, shot.entity);
+    if (feel && this.onShotFeel !== null) {
+      const gunner = shot.entity || shooter || null;
+      this.onShotFeel(gunner, Math.cos(shot.angle), Math.sin(shot.angle), (Number(shot.shake) || 0) * this.shotShakeScale,
+        Number(MASTER_WEAPONS[weaponId]?.cooldown) || 1);
+    }
     shot.entity = null;
   }
 
@@ -264,7 +295,6 @@ export class RenderCommandWriter {
     d[o + S.DIR_X] = Number(detail.dirX); d[o + S.DIR_Y] = Number(detail.dirY);
     d[o + S.HAS_BEAM] = beam ? 1 : 0;
     d[o + S.B_KIND] = bk; d[o + S.B_MODE] = bm; d[o + S.B_UID] = buid;
-    d[o + S.SHAKE] = this.shotShakeScale;
     if (beam) {
       d[o + S.B_SX] = Number(beam.startX); d[o + S.B_SY] = Number(beam.startY);
       d[o + S.B_EX] = Number(beam.endX); d[o + S.B_EY] = Number(beam.endY);
@@ -276,9 +306,12 @@ export class RenderCommandWriter {
       d[o + S.B_HIT] = -1; d[o + S.B_HIT + 1] = 0; d[o + S.B_NX] = d[o + S.B_NY] = 0;
     }
     // Wylot: impuls / PD — z początku wiązki, strzał — z punktu strzału (jak dawny efekt wylotu WeaponFx).
-    const mx = beam && detail.isBeam ? Number(beam.startX) : x;
-    const my = beam && detail.isBeam ? Number(beam.startY) : y;
-    this._muzzle(d, o + S.MUZZLE, detail.weaponId, mx, my, detail.shooter);
+    const isBeam = !!(beam && detail.isBeam);
+    const mx = isBeam ? Number(beam.startX) : x;
+    const my = isBeam ? Number(beam.startY) : y;
+    // Efekt wylotu (a z nim wstrząs i kopnięcie) — strzał i impuls / PD, nie wiązka ciągła (jak WeaponFx._onShot).
+    const feel = !isBeam || (beam.kind || detail.beamMode || beam.mode) !== 'continuous';
+    this._muzzle(d, o + S.MUZZLE, detail.weaponId, mx, my, detail.shooter, feel);
     this._commit();
   }
 
@@ -298,8 +331,7 @@ export class RenderCommandWriter {
     d[o + S.DIR_X] = angle;
     d[o + S.B_KIND] = d[o + S.B_MODE] = d[o + S.B_UID] = STR_UNDEFINED;
     d[o + S.B_HIT] = -1;
-    d[o + S.SHAKE] = this.shotShakeScale;
-    this._muzzle(d, o + S.MUZZLE, weaponId, x, y, shooter);
+    this._muzzle(d, o + S.MUZZLE, weaponId, x, y, shooter, true);
     this._commit();
   }
 
@@ -313,8 +345,7 @@ export class RenderCommandWriter {
     d[o + P.X0] = x0; d[o + P.Y0] = y0; d[o + P.X1] = x1; d[o + P.Y1] = y1;
     this._ent(d, o + P.SHOOTER, shooter);
     this._ent(d, o + P.TARGET, target);
-    d[o + P.SHAKE] = this.shotShakeScale;
-    this._muzzle(d, o + P.MUZZLE, weaponId, x0, y0, shooter);
+    this._muzzle(d, o + P.MUZZLE, weaponId, x0, y0, shooter, true);
     this._commit();
   }
 
@@ -496,6 +527,80 @@ export class RenderCommandWriter {
 
 const _bs = [0, 0, 0, 0];
 
+// Rakiety (RW-23): rakieta = indeks w puli symulacji (src/game/rockets/rocketSim.js — `r.index`; w trybie worker —
+// lustro bloku ROCKETS migawki), bez generacji (pula stała, zdarzenia rakiety idą w kolejności jej życia).
+export const RKT = Object.freeze({
+  SLOT: 0,
+  L_COLOR: 1, L_WORDS: 2,
+  F_DT: 1, F_WORDS: 2,
+  I_X: 1, I_Y: 2, I_WORDS: 3,
+  C_X0: 1, C_Y0: 2, C_X1: 3, C_Y1: 4, C_WORDS: 5,
+  D_X: 1, D_Y: 2, D_HIT: 3, D_SHIELD: 5, D_WORDS: 6,
+  W_SHOT: 0, W_DT: 2, W_WORDS: 3
+});
+
+Object.assign(RenderCommandWriter.prototype, {
+  _rkt1(type, r) {
+    const o = this._begin(type, 1);
+    this.ring.data[o] = r.index;
+    this._commit();
+  },
+  rocketBegin(active) {
+    const o = this._begin(RC.RKT_BEGIN, 1);
+    this.ring.data[o] = active;
+    this._commit();
+  },
+  rocketLaunch(r, colorTheme) {
+    const c = this.str(colorTheme);
+    const o = this._begin(RC.RKT_LAUNCH, RKT.L_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.L_COLOR] = c;
+    this._commit();
+  },
+  rocketIgnite(r) { this._rkt1(RC.RKT_IGNITE, r); },
+  rocketSplit(r) { this._rkt1(RC.RKT_SPLIT, r); },
+  rocketFly(r, dt) {
+    const o = this._begin(RC.RKT_FLY, RKT.F_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.F_DT] = dt;
+    this._commit();
+  },
+  rocketIntercept(r, x, y) {
+    const o = this._begin(RC.RKT_INTERCEPT, RKT.I_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.I_X] = x; d[o + RKT.I_Y] = y;
+    this._commit();
+  },
+  rocketContact(r, x0, y0, x1, y1) {
+    const o = this._begin(RC.RKT_CONTACT, RKT.C_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.C_X0] = x0; d[o + RKT.C_Y0] = y0; d[o + RKT.C_X1] = x1; d[o + RKT.C_Y1] = y1;
+    this._commit();
+  },
+  rocketDetonate(r, x, y, hit, hitShield) {
+    const o = this._begin(RC.RKT_DETONATE, RKT.D_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.D_X] = x; d[o + RKT.D_Y] = y;
+    this._ent(d, o + RKT.D_HIT, hit);
+    d[o + RKT.D_SHIELD] = hitShield ? 1 : 0;
+    this._commit();
+  },
+  rocketUpdate(dt) {
+    const o = this._begin(RC.RKT_UPDATE, 1);
+    this.ring.data[o] = dt;
+    this._commit();
+  },
+  /** Kilwater torpedy (pętla pocisków gry): pocisk = slot pocisku (stan kilwateru trzyma render). */
+  torpedoWake(b, dt) {
+    if (!b) return;
+    const o = this._begin(RC.RKT_WAKE, RKT.W_WORDS);
+    const d = this.ring.data;
+    this._ent(d, o + RKT.W_SHOT, b, this.ids.shots);
+    d[o + RKT.W_DT] = dt;
+    this._commit();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Czytelnik / dyspozytor (render)
 // ---------------------------------------------------------------------------
@@ -586,8 +691,8 @@ function idSpaceLookup(space) {
  * (render rejestruje obsługę typów: reader.on(RC.X, fn)). `ready` — render gotowy na efekty (inline: haczyk renderu,
  * worker: flaga z kanału zwrotnego); gra bramkuje nim kosztowne przygotowania zdarzeń (bramki kadru, cooldown).
  */
-export function createRenderCommands({ mode = 'inline', capacity = 4096 } = {}) {
-  const writer = new RenderCommandWriter({ capacity, shared: mode === 'worker' });
+export function createRenderCommands({ mode = 'inline', capacity = 4096, ids = null } = {}) {
+  const writer = new RenderCommandWriter({ capacity, shared: mode === 'worker', ids });
   const api = {
     mode,
     writer,
@@ -617,7 +722,7 @@ export function createRenderCommands({ mode = 'inline', capacity = 4096 } = {}) 
   return api;
 }
 
-/** Strumień rozkazów gry (jeden na stronę). */
-export const RenderCommands = createRenderCommands();
+/** Strumień rozkazów gry (jeden na stronę) — na wspólnych slotach renderu (cykl klatki: pętla gry). */
+export const RenderCommands = createRenderCommands({ ids: RenderSlots });
 
 if (typeof window !== 'undefined') window.RenderCommands = RenderCommands;

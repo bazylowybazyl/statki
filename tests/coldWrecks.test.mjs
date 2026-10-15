@@ -548,7 +548,7 @@ test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawn
     'smuga zapisana, zanim meshe znikną');
   assert.match(freezeHook, /TowSystem\.detachBody\(w, 'wreck-cold'\)/);
 
-  assert.match(src, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);/);
+  assert.match(src, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks[,)]/);
   assert.match(src, /for \(const w of wrecks\) if \(w && !w\.dead\) renderEntities\.push\(w\);/, 'renderEntities tylko z wrecks');
   assert.match(src, /setPerfHudWorldSource\(\(\) => \(\{ ship, npcs, wrecks, coldWrecks, bullets/);
   const hud = readFileSync(new URL('../src/ui/perfHud.js', import.meta.url), 'utf8');

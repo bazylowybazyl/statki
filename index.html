@@ -1267,7 +1267,7 @@
     } from "./src/ui/liveDebug.js";
     import { updateShields3D, prewarmShields3D, getShieldPoolStats, probeShieldSlot, setShieldReturnChannel, SHIELD_TUNING } from "./src/3d/shield3D.js";
     // Szew renderu (docs/PLAN-render-worker.md § 3.2, § 3.4): kanał zwrotny RET (RW-04), który pisze render, a czyta gra;
-    // sloty encji — wspólna przestrzeń strumienia rozkazów (RenderCommands.writer.ids, RW-21; RW-10 — ta sama w migawce).
+    // sloty encji — RenderSlots (src/render/renderSlots.js, import niżej): jedna przestrzeń dla strumienia rozkazów, migawki i RET.
     import { createReturnBuffer, createReturnViews } from "./src/render/returnLayout.js";
     // Przebicia tarcz po stronie gry (RW-29): rekordy RET → flaga `__shieldBreach` i test punktu na siatce płytek.
     import { createShieldBreachReader } from "./src/game/shieldBreach.js";
@@ -1279,7 +1279,6 @@
     const SHIELD_BREACH_DAMAGE_OPTS = Object.freeze({ bypassShield: true });
     window.getShieldPoolStats = getShieldPoolStats;
     window.probeShieldSlot = probeShieldSlot;
-    const RenderSlots = RenderCommands.writer.ids;
     const RenderReturn = createReturnViews(createReturnBuffer());
     window.RenderSlots = RenderSlots;
     const ShieldBreach = createShieldBreachReader({
@@ -1384,8 +1383,11 @@
     } from "./src/game/graphicsQuality.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
-    import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
+    import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
+    // RW-23: zdarzenia lotu rakiet — rekordy RKT_* (adapter gry → dekoder renderu, reżyser efektów rakiet).
+    import { installRocketFxCommands } from "./src/3d/rockets/rocketFxCommands.js";
+    import { createRocketCommandAdapter } from "./src/game/rockets/rocketCommandAdapter.js";
     // Rdzeń reaktora na belkach (src/game/reactorCore.js, klej reactorCoreGame.js) i jego wybuch
     // WebGPU (src/3d/reactorBlast/) z dema rdzen-webgpu — zastępuje dawny losowy wybuch reaktora
     // przy śmierci okrętu (docs/webgpu/DEMO-RDZEN.md § 7).
@@ -1423,6 +1425,9 @@
     // RW-21 (docs/PLAN-render-worker.md § 3.3): zdarzenia efektów broni idą rekordami strumienia rozkazów (tryb inline —
     // dyspozycja zaraz po zapisie); dekoder renderu woła WeaponFx.
     import { RenderCommands } from "./src/render/renderCommands.js";
+    import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
+    // RW-30: wstrząsy kamery po stronie gry — wstrząs strzałów i kopnięcie kadru z rekordu SHOT, żądania wstrząsu z renderu.
+    import { createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak, ShotFeel } from "./src/game/cameraShakes.js";
     import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
       FLAK_TUNING,
@@ -1767,7 +1772,12 @@
         // Scena Core3D jest (warunek bloku), więc init się udaje — gra pisze rekordy iskier od teraz.
         GameSparks.ready = true;
         const rocketFx = createRocketFx(Core3D);
-        initRocketSystem3D(Core3D.scene, { effects: rocketFx });
+        // RW-23: lot (gra) → rekordy RKT_* → reżyser efektów (pula rakiet i dekoder renderu).
+        const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
+        if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(rocketSim.rockets);
+        installRocketFxCommands(RenderCommands.reader, rocketFx?.director || null, (i) => rocketSim.rockets[i]);
+        // RW-30: wstrząs Supernowej — żądanie do gry.
+        if (rocketFx?.director) rocketFx.director.onShake = (mag, dur) => requestCameraShakePeak(camera, mag, dur);
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
         HallDust.setVaporSmoke(rocketFx.smoke);
         // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
@@ -6446,9 +6456,22 @@
     // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
     const cameraRig = createCameraRig();
     // Kopnięcie kadru od ciężkich strzałów gracza (sprężyna w px ekranu, weaponKick* w cameraRigTune):
-    // impuls z WeaponFx.onPlayerShot (wieżyczki) i superweapon.js (Hexlance), krok i przesunięcie w render() obok wstrząsu.
+    // impuls ze strzału z wieżyczki (rekord SHOT — hak onShotFeel strumienia rozkazów) i z superweapon.js (Hexlance —
+    // ShotFeel), krok i przesunięcie w render() obok wstrząsu.
     const cameraKick = createCameraKick();
-    WeaponFx.onPlayerShot = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    const playerShotKick = (dirX, dirY, shake, cooldown) => addCameraKick(cameraKick, dirX, dirY, shake, cameraRigTune, cooldown);
+    ShotFeel.onPlayerShot = playerShotKick;
+    // RW-30: wstrząs strzałów (dane broni × ułamek kierowania ogniem) — akumulator gry, gaśnie raz na klatkę renderu
+    // (stepWeaponShotShake po updateHexShips3D); dawniej WeaponFx → window.__weapon3dCameraShake.
+    const weaponShotShake = createWeaponShotShake();
+    window.WeaponShotShake = weaponShotShake;
+    RenderCommands.writer.onShotFeel = (gunner, dirX, dirY, shake, cooldown) => {
+      if (!RenderCommands.ready) return;
+      addWeaponShotShake(weaponShotShake, shake);
+      if (gunner && gunner === window.ship) playerShotKick(dirX, dirY, shake, cooldown);
+    };
+    // Wstrząsy z receptur efektów broni — żądanie do gry (kamerą rządzi gra).
+    WeaponFx.onShake = (mag, dur) => requestCameraShake(camera, mag, dur);
     window.CameraRig = { rig: cameraRig, tune: cameraRigTune, kick: cameraKick };
     const _cameraShakePx = { x: 0, y: 0 };
     // Wejście riga pisane co klatkę w render() — jeden obiekt, bez alokacji.
@@ -11503,7 +11526,7 @@
               };
             }
             // Rakieta startuje z prędkością wyrzutni, silnik przejmuje ją potem
-            // stopniowo (src/effects3d/rocketSystem3D.js, układ rakiety). Salwa: zimny wyrzut
+            // stopniowo (src/game/rockets/rocketSim.js, układ rakiety). Salwa: zimny wyrzut
             // z kolejnych komór wyrzutni (kierunek wyrzutni = kąt strzału), myśliwiec — jedna
             // rakieta zrzucona z belki (LAUNCH_RAIL).
             const fighterShooter = window.getUnitKind?.(shooter) === 'fighter';
@@ -22574,7 +22597,7 @@
           _pdEnemyRocketBuffer.push(rb);
         }
       }
-      // Rakiety 3D (salwy gracza i NPC, src/effects3d/rocketSystem3D.js) — zastępniki w kształcie pocisku,
+      // Rakiety 3D (salwy gracza i NPC, src/game/rockets/rocketSim.js) — zastępniki w kształcie pocisku,
       // pozycja w czasie tego kroku; wroga rakieta we mgle wojny nie jest celem strony gracza.
       window.rocketSystem3D?.syncThreats(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock.sim, _pdHostileRocketVisible);
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
@@ -23904,7 +23927,7 @@
         const threeVisual = b.__renderedByThree === true;
         // Torpedy: kilwater w dymie rakiet (src/3d/rockets/effects.js) — blady ślad, po którym
         // widać wachlarz (jak w World of Warships); też przy pocisku rysowanym w 3D.
-        if (b.type === 'torpedo' && trailCount > 0) window.__rocketFx?.director?.torpedoWake(b, trailDt);
+        if (b.type === 'torpedo' && trailCount > 0) RenderCommands.writer.torpedoWake(b, trailDt);
         if (!threeVisual && (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo')) {
           if (trailCount > 0) spawnBulletTrail(b, trailCount, trailDt);
 
@@ -25663,6 +25686,8 @@
       }
     }
 
+    // Czas kroków lotu rakiet w tej klatce (PerfHUD rocketsTime — sumowany w loop()).
+    let _rocketStepMs = 0;
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
@@ -26443,6 +26468,14 @@
       // Czas pozy fizycznej (src/game/simClock.js): broń gracza strzelała wyżej
       // z pozy sprzed kroku, CIWS, NPC i trafienia niżej — z pozy po kroku.
       SimClock.advance(dt);
+      // Rakiety 3D: lot, zapalnik, trafienia w KROKU FIZYKI (RW-23 / D2 — niezależne od fps; dawniej raz na klatkę
+      // przed render()): po SimClock.advance (salwy gracza z tego kroku lecą od razu, NPC — od następnego), przed
+      // ciwsStep (obrona punktowa widzi pozy z tego kroku). Klatka reżysera efektów — frameFx w loop().
+      if (window.rocketSystem3D) {
+        const tRocketStep0 = performance.now();
+        window.rocketSystem3D.step(dt);
+        _rocketStepMs += performance.now() - tRocketStep0;
+      }
 
       // granice
       const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
@@ -27992,6 +28025,9 @@
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
       stepDynamicResolution(now);
+      // Sloty renderu (src/render/renderSlots.js): jeden cykl mark & sweep na klatkę — rozkazy z fizyki, migawka i RET
+      // w tej samej epoce; koniec po renderze.
+      beginRenderSlotsFrame();
       // Fabuła: sceny, lot kamery i podsumowanie zamrażają świat jak pauza (kamera i UI biegną dalej).
       if (PAUSED || StoryGame.worldFrozen) {
         saveState();
@@ -28008,6 +28044,7 @@
         // upływu czasu — inaczej świat mgły z 0 kół do pierwszego kroku fizyki i kadr przy statku jest szary.
         if (StoryGame.worldFrozen) stepSensors(0);
         render(0, frame);
+        endRenderSlotsFrame();
         updateStoryOverlay();
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
@@ -28131,11 +28168,13 @@
       // Bezpiecznik: nośnik ustawia się tylko na czas serii spawnów — wyjątek
       // między set/clear nie może nieść kolejnych efektów cudzą prędkością.
       ActiveCarrier.clear();
-      // Rakiety (lot, trafienia, zdarzenia efektów) PRZED render(): rysuje je Core3D w tej
-      // samej klatce (src/3d/rockets/ — zadanie 19; dawniej overlay po render()).
+      // Rakiety: lot krokuje physicsStep (RW-23 / D2); tu klatka reżysera efektów PRZED render() (rysuje je Core3D
+      // w tej samej klatce — src/3d/rockets/, zadanie 19).
       const tRockets0 = performance.now();
-      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
-      const rocketsMs = performance.now() - tRockets0;
+      if (window.rocketSystem3D) window.rocketSystem3D.frameFx(frame);
+      const rocketsFxMs = performance.now() - tRockets0;
+      const rocketsMs = rocketsFxMs + _rocketStepMs;
+      _rocketStepMs = 0;
       // Wezwania i POWRÓT skrzydła tunelem warpa (src/game/supportWarp.js): spawn w klatce wyrzutu,
       // duch i usunięcie odlatujących — przed render(), który przesuwa zegar efektu o `frame`.
       // Fabuła: skrypt misji w czasie gry (kroki fizyki tej klatki), potem kamera kinowa / UI w czasie klatki.
@@ -28143,8 +28182,9 @@
       StoryGame.frame(frame);
       stepSupportWarp(frame);
       render(alpha, frame);
+      endRenderSlotsFrame();
       updateStoryOverlay();
-      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
+      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsFxMs);
 
       // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
       window.camera = camera;
@@ -28819,10 +28859,7 @@
       return o;
     }
     // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
-    WarpNurt.onShake = (mag, dur) => {
-      const cur = (camera.shakeDur > 0) ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur) : 0;
-      if (mag > cur) camera.addShake(mag, dur);
-    };
+    WarpNurt.onShake = (mag, dur) => { requestCameraShake(camera, mag, dur); };
 
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();
@@ -28985,7 +29022,7 @@
       // kadłuby i pociski 3D drgały, a wieżyczki, myśliwce i znaczniki z kanwy 2D
       // stały w miejscu. Wartość strzałów jest z poprzedniej klatki
       // (WeaponFx.sync liczy ją później).
-      const weaponShake = window.__weapon3dCameraShake;
+      const weaponShake = weaponShotShake;
       if (!DevFlags.disableCameraShake) {
         const addShakeMag = (camera.shakeMag > 0 && camera.shakeDur > 0)
           ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur)
@@ -29167,8 +29204,8 @@
       // model 3D okrętu i rdzeń reaktora jak u wraku śpiącego (ColdWreckConfig.nearExtras).
       const renderSeenCold = withColdNearWrecks(renderSeen);
       // Sloty renderu encji tej klatki (rekordy przebić tarcz w RET niosą slot + generację; RW-29 — RW-10 zastąpi to
-      // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot. Klatkę
-      // przestrzeni (begin / end) zamyka RenderCommands.endFrame() niżej — znakowanie musi iść PRZED nim.
+      // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot. Cykl
+      // przestrzeni ma jeden właściciel: beginRenderSlotsFrame / endRenderSlotsFrame w loop() (renderSlots.js).
       for (let i = 0; i < renderEntities.length; i++) RenderSlots.entities.slotOf(renderEntities[i]);
 
       tRender3dSub = performance.now();
@@ -29252,6 +29289,8 @@
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
         updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
+        // RW-30: wygaszanie wstrząsu strzałów — raz na klatkę, po próbkowaniu kamery (dawniej WeaponFx.sync).
+        stepWeaponShotShake(weaponShotShake, performance.now());
         // Strumień rozkazów: koniec klatki (sloty obiektów bez odwołań wracają do puli).
         RenderCommands.endFrame();
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.

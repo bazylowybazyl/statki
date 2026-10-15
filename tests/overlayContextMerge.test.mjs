@@ -64,7 +64,9 @@ test('overlay efektów usunięty: moduł, wpięcie w index.html, bloom overlaya'
 // (SparkSystem3D) w scenie Core3D; wybuchy (2026-10-07: src/3d/explosions/ — gaz 3D, pule gry; zastąpiły
 // reactorblow.js, „tragiczne, do usunięcia”) też jako krok klatki efektów.
 test('rakiety, iskry i wybuchy WebGPU w scenie Core3D (kroki klatki efektów)', () => {
-  assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);\s*const rocketFx = createRocketFx\(Core3D\);\s*initRocketSystem3D\(Core3D\.scene, \{ effects: rocketFx \}\);/);
+  // RW-23: symulacja rakiet (gra) zgłasza zdarzenia adapterowi rekordów RKT_*, reżyser efektów czyta pulę i rekordy.
+  assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);[\s\S]{0,200}?GameSparks\.ready = true;\s*const rocketFx = createRocketFx\(Core3D\);[\s\S]{0,300}const rocketSim = initRocketSystem3D\(Core3D\.scene, \{ effects: createRocketCommandAdapter\(RenderCommands\.writer\) \}\);/);
+  assert.match(indexHtml, /installRocketFxCommands\(RenderCommands\.reader, rocketFx\?\.director \|\| null, \(i\) => rocketSim\.rockets\[i\]\);/);
   assert.doesNotMatch(indexHtml, /createReactorBlowFactory|effects3d\/reactorblow/);
   assert.equal(existsSync(new URL('../src/effects3d/reactorblow.js', import.meta.url)), false, 'stary wybuch usunięty');
   assert.match(indexHtml, /window\.makeReactorBlow = createExplosionFactory\(Core3D, \{ rocketFx, weaponFx: WeaponFx \}\);/);

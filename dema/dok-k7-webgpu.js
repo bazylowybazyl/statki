@@ -23,7 +23,7 @@ import { drawHexShips3D, initHexShips3D, prewarmHexShipVisual, resizeHexShips3D,
 import { Fx3D } from '../src/3d/fxParticles3D.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { createRocketFx } from '../src/3d/rockets/rocketFx.js';
-import { initRocketSystem3D } from '../src/effects3d/rocketSystem3D.js';
+import { initRocketSystem3D } from '../src/game/rockets/rocketSim.js';
 import { WeaponFx } from '../src/3d/weapons/weaponFx.js';
 import { SimClock } from '../src/game/simClock.js';
 import { HullBodies } from '../src/game/hullBodies.js';

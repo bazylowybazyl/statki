@@ -55,7 +55,7 @@ test('fala i haze wybuchów w świecie gry (zniekształcenia Core3D); rakiety i 
   assert.match(blow, /field\.shock\(x, y, fr,/, 'fala wybuchu: źródło zniekształceń w świecie gry (x, y), sama refrakcja');
   assert.match(blow, /field\.heat\(x, y, R \*/, 'haze wybuchu: źródło zniekształceń w świecie gry (x, y)');
   assert.doesNotMatch(blow, /pushHeatHazeWorld|trigger3DShockwave|useShockwave3D/, 'wybuchy bez starego haze i fali');
-  const rockets = code('src/effects3d/rocketSystem3D.js');
+  const rockets = code('src/game/rockets/rocketSim.js');
   assert.doesNotMatch(rockets, /pushHeatHazeWorld|trigger3DShockwave|makeSupernovaMissileBlow/, 'rakiety bez starego haze i fali');
   const fx = code('src/3d/rockets/effects.js');
   assert.match(fx, /field\.shock\(this\.sx\[i\] \+ S\[o \+ 6\] \* a, this\.sy\[i\] \+ S\[o \+ 7\] \* a,/, 'fala w świecie gry (x, y), nie w osi sceny');
@@ -137,7 +137,7 @@ test('panel skanera: przyciski akcji budowane raz na cel (klik nie ginie), schow
 // rakiet; pierścienie z wysyłką zakresów (iskry, łuki) mają test zachowania w
 // tests/rocketFx.test.mjs („pierścień: zawinięcie = dwa wycinki, bez pełnego bufora”).
 test('cząstki rakiet: stare pule uploadu CPU zastąpione (dym compute, pierścienie z zakresami)', () => {
-  const rockets = code('src/effects3d/rocketSystem3D.js');
+  const rockets = code('src/game/rockets/rocketSim.js');
   assert.doesNotMatch(rockets, /RocketFireGPU|RocketSmokeGPU|fireGPU|smokeGPU/);
   assert.match(code('src/3d/rockets/smoke.js'), /this\._qRange\.count = n \* 16;/, 'zlecenia dymu: jeden zakres na stałe, tylko zapisana część');
   for (const path of ['src/3d/rockets/sparks.js', 'src/3d/rockets/arcs.js']) {
