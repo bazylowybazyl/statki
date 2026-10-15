@@ -1338,6 +1338,9 @@
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
     import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
+    // RW-23: zdarzenia lotu rakiet — rekordy RKT_* (adapter gry → dekoder renderu, reżyser efektów rakiet).
+    import { installRocketFxCommands } from "./src/3d/rockets/rocketFxCommands.js";
+    import { createRocketCommandAdapter } from "./src/game/rockets/rocketCommandAdapter.js";
     // Rdzeń reaktora na belkach (src/game/reactorCore.js, klej reactorCoreGame.js) i jego wybuch
     // WebGPU (src/3d/reactorBlast/) z dema rdzen-webgpu — zastępuje dawny losowy wybuch reaktora
     // przy śmierci okrętu (docs/webgpu/DEMO-RDZEN.md § 7).
@@ -1715,7 +1718,11 @@
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
         const rocketFx = createRocketFx(Core3D);
-        initRocketSystem3D(Core3D.scene, { effects: rocketFx });
+        // RW-23: symulacja rakiet (gra) zgłasza zdarzenia adapterowi rekordów RKT_*; reżyser efektów czyta pulę rakiet
+        // i rekordy (dekoder renderu, tryb inline — dyspozycja zaraz po zapisie).
+        const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
+        if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(rocketSim.rockets);
+        installRocketFxCommands(RenderCommands.reader, rocketFx?.director || null, (i) => rocketSim.rockets[i]);
         // RW-30: wstrząs Supernowej — żądanie do gry (reguła dawnego efektu: silniejszy od siły bieżącego wstrząsu).
         if (rocketFx?.director) rocketFx.director.onShake = (mag, dur) => requestCameraShakePeak(camera, mag, dur);
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
@@ -23865,7 +23872,7 @@
         const threeVisual = b.__renderedByThree === true;
         // Torpedy: kilwater w dymie rakiet (src/3d/rockets/effects.js) — blady ślad, po którym
         // widać wachlarz (jak w World of Warships); też przy pocisku rysowanym w 3D.
-        if (b.type === 'torpedo' && trailCount > 0) window.__rocketFx?.director?.torpedoWake(b, trailDt);
+        if (b.type === 'torpedo' && trailCount > 0) RenderCommands.writer.torpedoWake(b, trailDt);
         if (!threeVisual && (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo')) {
           if (trailCount > 0) spawnBulletTrail(b, trailCount, trailDt);
 

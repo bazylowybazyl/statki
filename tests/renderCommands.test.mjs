@@ -255,3 +255,45 @@ test('sloty encji: endFrame zwalnia obiekty bez odwołań (bez wycieku obiektów
   assert.equal(w.ids.entities.count, 0);
   assert.equal(RC.SHOT > 0, true);
 });
+
+test('RW-23: rekordy RKT_* — adapter gry → reżyser renderu z rakietą z puli, kolejność wywołań 1:1, kaseta szarpie gra', async () => {
+  const { createRocketCommandAdapter } = await import('../src/game/rockets/rocketCommandAdapter.js');
+  const { installRocketFxCommands } = await import('../src/3d/rockets/rocketFxCommands.js');
+  const rc = createRenderCommands({ mode: 'inline' });
+  const pool = [0, 1, 2].map((index) => ({ index, mode: 0, shooter: null, position: { x: 10 * index, y: 0, z: 5 }, weaponDef: { id: 'missile_rack' } }));
+  const log = [];
+  const director = {
+    opts: { launcherKick: true },
+    beginUpdate: (n) => log.push(['begin', n]),
+    onLaunch: (r, c) => log.push(['launch', r, c]),
+    onIgnite: (r) => log.push(['ignite', r]),
+    onFly: (r, dt) => log.push(['fly', r, dt]),
+    onSplit: (r) => log.push(['split', r]),
+    onIntercept: (r, x, y) => log.push(['intercept', r, x, y]),
+    prepareContact: (r, a, b, c, d) => log.push(['contact', r, a, b, c, d]),
+    onDetonate: (r, x, y, hit, sh) => log.push(['detonate', r, x, y, hit, sh]),
+    update: (dt) => log.push(['update', dt]),
+    torpedoWake: (b, dt) => log.push(['wake', b, dt])
+  };
+  assert.equal(installRocketFxCommands(rc.reader, director, (i) => pool[i]), true);
+  assert.equal(director.opts.launcherKick, false, 'kasetą szarpie gra (adapter), nie render');
+  const fx = createRocketCommandAdapter(rc.writer);
+  const hit = ent('kadłub');
+  const torpedo = { x: 1, y: 2 };
+  fx.beginUpdate(3);
+  fx.onLaunch(pool[1], 'red');
+  fx.onIgnite(pool[1]);
+  fx.onFly(pool[2], 1 / 60);
+  fx.onSplit(pool[0]);
+  fx.onIntercept(pool[2], 7.5, -8);
+  fx.prepareContact(pool[1], 1, 2, 3, 4);
+  fx.onDetonate(pool[1], 5, 6, hit, true);
+  fx.onDetonate(pool[0], 5, 6, null, false);
+  rc.writer.torpedoWake(torpedo, 0.02);
+  fx.update(1 / 60);
+  assert.deepEqual(log, [
+    ['begin', 3], ['launch', pool[1], 'red'], ['ignite', pool[1]], ['fly', pool[2], 1 / 60], ['split', pool[0]],
+    ['intercept', pool[2], 7.5, -8], ['contact', pool[1], 1, 2, 3, 4], ['detonate', pool[1], 5, 6, hit, true],
+    ['detonate', pool[0], 5, 6, null, false], ['wake', torpedo, 0.02], ['update', 1 / 60]
+  ]);
+});

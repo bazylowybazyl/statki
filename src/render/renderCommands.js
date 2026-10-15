@@ -41,7 +41,19 @@ export const RC = Object.freeze({
   HEX_BEGIN: 14,
   HEX_STEP: 15,
   HEX_END: 16,
-  HEX_HIT: 17
+  HEX_HIT: 17,
+  // Zakresy torów (żeby równoległe tory nie zderzyły się kodami): 1–17 broń, 18–29 kadłuby / rany / wybuchy (rw-kadluby),
+  // 30–49 świat (rw-swiat), 50–59 rakiety (RW-23).
+  RKT_BEGIN: 50,     // początek kroku lotu: liczba rakiet w locie i w kolejkach
+  RKT_LAUNCH: 51,    // wyrzut: slot rakiety, motyw barw
+  RKT_IGNITE: 52,    // zapłon
+  RKT_FLY: 53,       // krok lotu rakiety (dt) — w kolejności lotu, jak dawne wywołania reżysera
+  RKT_SPLIT: 54,     // podział nosiciela (Hydra)
+  RKT_INTERCEPT: 55, // zestrzelenie (obrona punktowa)
+  RKT_CONTACT: 56,   // punkt i odcinek styku przed wybuchem
+  RKT_DETONATE: 57,  // wybuch: punkt, trafiona encja, tarcza
+  RKT_UPDATE: 58,    // koniec kroku lotu (klatka reżysera)
+  RKT_WAKE: 59       // kilwater torpedy (pocisk kanwy / WeaponFx — slot pocisku)
 });
 
 /** Rodzaje rekordu SHOT i HEX_HIT. */
@@ -505,6 +517,80 @@ export class RenderCommandWriter {
 }
 
 const _bs = [0, 0, 0, 0];
+
+// Rakiety (RW-23): rakieta = indeks w puli symulacji (src/game/rockets/rocketSim.js — `r.index`; w trybie worker —
+// lustro bloku ROCKETS migawki), bez generacji (pula stała, zdarzenia rakiety idą w kolejności jej życia).
+export const RKT = Object.freeze({
+  SLOT: 0,
+  L_COLOR: 1, L_WORDS: 2,
+  F_DT: 1, F_WORDS: 2,
+  I_X: 1, I_Y: 2, I_WORDS: 3,
+  C_X0: 1, C_Y0: 2, C_X1: 3, C_Y1: 4, C_WORDS: 5,
+  D_X: 1, D_Y: 2, D_HIT: 3, D_SHIELD: 5, D_WORDS: 6,
+  W_SHOT: 0, W_DT: 2, W_WORDS: 3
+});
+
+Object.assign(RenderCommandWriter.prototype, {
+  _rkt1(type, r) {
+    const o = this._begin(type, 1);
+    this.ring.data[o] = r.index;
+    this._commit();
+  },
+  rocketBegin(active) {
+    const o = this._begin(RC.RKT_BEGIN, 1);
+    this.ring.data[o] = active;
+    this._commit();
+  },
+  rocketLaunch(r, colorTheme) {
+    const c = this.str(colorTheme);
+    const o = this._begin(RC.RKT_LAUNCH, RKT.L_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.L_COLOR] = c;
+    this._commit();
+  },
+  rocketIgnite(r) { this._rkt1(RC.RKT_IGNITE, r); },
+  rocketSplit(r) { this._rkt1(RC.RKT_SPLIT, r); },
+  rocketFly(r, dt) {
+    const o = this._begin(RC.RKT_FLY, RKT.F_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.F_DT] = dt;
+    this._commit();
+  },
+  rocketIntercept(r, x, y) {
+    const o = this._begin(RC.RKT_INTERCEPT, RKT.I_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.I_X] = x; d[o + RKT.I_Y] = y;
+    this._commit();
+  },
+  rocketContact(r, x0, y0, x1, y1) {
+    const o = this._begin(RC.RKT_CONTACT, RKT.C_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.C_X0] = x0; d[o + RKT.C_Y0] = y0; d[o + RKT.C_X1] = x1; d[o + RKT.C_Y1] = y1;
+    this._commit();
+  },
+  rocketDetonate(r, x, y, hit, hitShield) {
+    const o = this._begin(RC.RKT_DETONATE, RKT.D_WORDS);
+    const d = this.ring.data;
+    d[o + RKT.SLOT] = r.index; d[o + RKT.D_X] = x; d[o + RKT.D_Y] = y;
+    this._ent(d, o + RKT.D_HIT, hit);
+    d[o + RKT.D_SHIELD] = hitShield ? 1 : 0;
+    this._commit();
+  },
+  rocketUpdate(dt) {
+    const o = this._begin(RC.RKT_UPDATE, 1);
+    this.ring.data[o] = dt;
+    this._commit();
+  },
+  /** Kilwater torpedy (pętla pocisków gry): pocisk = slot pocisku (stan kilwateru trzyma render). */
+  torpedoWake(b, dt) {
+    if (!b) return;
+    const o = this._begin(RC.RKT_WAKE, RKT.W_WORDS);
+    const d = this.ring.data;
+    this._ent(d, o + RKT.W_SHOT, b, this.ids.shots);
+    d[o + RKT.W_DT] = dt;
+    this._commit();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Czytelnik / dyspozytor (render)

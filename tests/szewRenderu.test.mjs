@@ -15,7 +15,7 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
   'index:aktualizacja': 98,
-  'index:dane': 15,
+  'index:dane': 16, // 2026-10-15 RW-23 (rw-bronie): installRocketFxCommands — dekoder rekordów RKT_* (konfiguracja renderu w trybie inline)
   'index:konfiguracja': 165,
   'index:zapytanie': 64,
   'index:zdarzenie': 47,
