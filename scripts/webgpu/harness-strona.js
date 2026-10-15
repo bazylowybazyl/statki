@@ -19,6 +19,10 @@
 //   frameLog, marks, pipes, frameStats(od, do, próg).
 (() => {
   if (window.__harness) return;
+  // Bufor Resource Timing (domyślnie 250 wpisów) zapełniały moduły gry — sceny szukające adresu three.js przez
+  // performance.getEntriesByType('resource') (kalibracja, galeria rakiet) czasem go nie znajdowały
+  // („Failed to resolve module specifier 'undefined'”) i dalsze sceny sesji szły z innego stanu.
+  try { performance.setResourceTimingBufferSize(100000); } catch (e) { /* stara przeglądarka */ }
   const SEED = Number(window.__HARNESS_SEED__ || 0x5eed1234) >>> 0;
   const realNow = performance.now.bind(performance);
   const realDateNow = Date.now.bind(Date);
