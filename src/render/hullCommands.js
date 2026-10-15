@@ -18,7 +18,8 @@ export const HC = Object.freeze({
   DMG_REPAIR: 35,      // HullBodies.onRepair → HullDamageMap.onHullRepair
   DMG_PATCH: 36,       // łata roju naprawczego (onCellRegrown) → HullDamageMap.patchCell
   DMG_KERF: 37,        // pas rzazu przebicia (applyBulletHullPass) → HullDamageMap.stampKerf
-  EXPLOSION: 38        // wybuch z gazu (fabryka wybuchów WebGPU: makeReactorBlow / shipBlastFactory)
+  EXPLOSION: 38,       // wybuch z gazu (fabryka wybuchów WebGPU: makeReactorBlow / shipBlastFactory)
+  HULL_DEBRIS: 39      // odłamek zniszczonego węzła (HullBodies.onDebris → window.spawnHullDebris; losowanie w renderze)
 });
 
 /** Najwięcej znaków rzazu na odcinek (= DMG_KERF_MAX w hullDamageMap.js; pilnuje test). */
@@ -67,6 +68,12 @@ export const DMG_KERF = Object.freeze({
 export const EXPLOSION = Object.freeze({
   X: 0, Y: 1, SIZE: 2, PROFILE: 3, VX: 4, VY: 5, AXIS_X: 6, AXIS_Y: 7, JET_TAU: 8, HAS_TINT: 9, TINT_R: 10, TINT_G: 11,
   TINT_B: 12, GAS_ONLY: 13, HOST_KEY: 14, WORDS: 15
+});
+
+// Odłamek węzła: punkt i prędkość (świat gry), kolor blachy, komórka, kształtownik możliwy, bryła, wysokość i prędkość
+// pionowa (bryła 3D).
+export const HULL_DEBRIS = Object.freeze({
+  X: 0, Y: 1, VX: 2, VY: 3, R: 4, G: 5, B: 6, CELL: 7, STRUCT: 8, SOLID: 9, Z: 10, VZ: 11, WORDS: 12
 });
 
 /**

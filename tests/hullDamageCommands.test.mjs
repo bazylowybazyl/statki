@@ -205,3 +205,38 @@ test('wybuch: rekord EXPLOSION = dawne opcje fabryki (domyślne, oś, zanik, bar
   assert.deepEqual(swept, [10], 'drony tylko przy blast(o, true)');
   assert.equal(stats.ok, cases.length);
 });
+
+test('odłamki węzłów: rekord HULL_DEBRIS = dawna droga (te same losowania skali i kształtownika, ciało płaskie i bryła)', () => {
+  window.wrecks.length = 0;
+  const { ev } = setup();
+  const calls = [];
+  const prevSpawn = window.spawnHullDebris;
+  const prevRandom = Math.random;
+  window.spawnHullDebris = (...a) => { calls.push(a.map((v) => (typeof v === 'number' ? +v.toFixed(9) : v))); };
+  const run = (hooked) => {
+    calls.length = 0;
+    fxRandom.seed(0x777);
+    // Silnik belek: ten sam ciąg Math.random i zegar w obu przebiegach (odrzut węzłów, rozpad).
+    let a = 0x9e3779b9;
+    Math.random = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    HullBodies.simTime = 0;
+    HullBodies.onDebris = hooked ? (...a) => ev.debris(...a) : null;
+    const e = ship(0, 0, 0.2);
+    HullBodies.impact(e, e.x + 100, e.y + 10, 4000, { x: -800, y: 50 });
+    HullBodies.cutSegment(e, e.x - 220, e.y - 30, e.x + 220, e.y + 40, 20);
+    for (let k = 0; k < 20; k++) HullBodies.step(1 / 60, [e, ...window.wrecks]);
+    HullBodies.release(e);
+    for (const w of window.wrecks.splice(0)) HullBodies.release(w);
+    return calls.slice();
+  };
+  try {
+    const legacy = run(false);
+    const viaRecord = run(true);
+    assert.ok(legacy.length > 10, `odłamki: ${legacy.length}`);
+    assert.deepEqual(viaRecord, legacy);
+  } finally {
+    HullBodies.onDebris = null;
+    window.spawnHullDebris = prevSpawn;
+    Math.random = prevRandom;
+  }
+});

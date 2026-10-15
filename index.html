@@ -1102,6 +1102,8 @@
     HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
     HullBodies.onSolidNodeLost = (e, hull, ix, iy, iz, x, y) => HullDamageEvents.solidNodeLost(e, hull, ix, iy, iz, x, y);
+    // Odłamki zniszczonych węzłów (rekord HULL_DEBRIS; skala i kształtownik losuje render — strumień efektów).
+    HullBodies.onDebris = (x, y, vx, vy, r, g, b, cell, st, solid, z, vz) => HullDamageEvents.debris(x, y, vx, vy, r, g, b, cell, st, solid, z, vz);
     // Rój dronów naprawczych okrętów (src/game/repairRig.js, rejestr src/game/repairSwarm.js, dane src/data/repairDrones.js,
     // obraz src/3d/repair/): R wypuszcza i odwołuje drony gracza, holownik serwisowy ma własny rig (nosiciel ≠ cel).
     // Strojenie z konsoli: RepairTune (weldTime, maxSpeed, cellsPerUnit…), RepairDroneLook (iskry, palnik).

@@ -10,7 +10,7 @@
 
 import { HullBodies, hullSpriteRotation } from './hullBodies.js';
 import {
-  HC, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, writeHullDesc
+  HC, HULL_DEBRIS, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, writeHullDesc
 } from '../render/hullCommands.js';
 import {
   stampFamilyFor, stampPowerFor, stampFlakRadiusFor
@@ -118,6 +118,17 @@ export function createHullDamageEvents(writer) {
       d[o + P.IX] = ix; d[o + P.IY] = iy;
       d[o + P.HAS_W] = w ? 1 : 0; d[o + P.WX] = w ? w.x : 0; d[o + P.WY] = w ? w.y : 0;
       d[o + P.SEAM] = seamHeat === undefined ? NaN : seamHeat;
+      writer._commit();
+    },
+
+    /** Odłamek zniszczonego węzła (HullBodies.onDebris) — losowanie skali i kształtownika robi render. */
+    debris(x, y, vx, vy, r, g, b, cell, struct, solid, z, vz) {
+      const D = HULL_DEBRIS;
+      const o = writer._begin(HC.HULL_DEBRIS, D.WORDS);
+      const d = writer.ring.data;
+      d[o + D.X] = x; d[o + D.Y] = y; d[o + D.VX] = vx; d[o + D.VY] = vy;
+      d[o + D.R] = r; d[o + D.G] = g; d[o + D.B] = b; d[o + D.CELL] = cell;
+      d[o + D.STRUCT] = struct; d[o + D.SOLID] = solid; d[o + D.Z] = z; d[o + D.VZ] = vz;
       writer._commit();
     },
 

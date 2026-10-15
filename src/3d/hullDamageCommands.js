@@ -5,8 +5,9 @@
 // mapy ran co dawne wywołania gry — ten sam kod stempli, więc obraz bit w bit. Wzór: src/3d/weapons/weaponFxCommands.js.
 
 import { HullDamageMap } from './hullDamageMap.js';
+import { fxRandom } from './fx/fxRandom.js';
 import {
-  HC, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, createHullProxy, readHullDesc
+  HC, HULL_DEBRIS, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, createHullProxy, readHullDesc
 } from '../render/hullCommands.js';
 
 const _proxy = createHullProxy();
@@ -73,6 +74,24 @@ export function installHullDamageCommands(reader) {
     const lat = _kerfPre.lat;
     for (let i = 0; i < KERF_MAX * 4; i++) lat[i] = d[o + K.LAT + i];
     HullDamageMap.stampKerf(hull.entity, d[o + K.X0], d[o + K.Y0], d[o + K.X1], d[o + K.Y1], rd.str(d[o + K.FAMILY]), _kerfPre);
+  });
+
+  // Odłamek węzła: losowanie skali i kształtownika w strumieniu efektów (ta sama kolejność losowań co dawniej
+  // w hullBodies.js — kształtownik losowany tylko przy kandydacie), potem pula odłamków (hullDebris3D.js).
+  reader.on(HC.HULL_DEBRIS, (rd, d, o) => {
+    const D = HULL_DEBRIS;
+    const spawn = typeof window !== 'undefined' ? window.spawnHullDebris : null;
+    if (typeof spawn !== 'function') return;
+    const cell = d[o + D.CELL];
+    if (d[o + D.SOLID]) {
+      const scale3 = cell * (0.6 + fxRandom.next() * 0.7);
+      spawn(d[o + D.X], d[o + D.Y], d[o + D.VX], d[o + D.VY], d[o + D.R], d[o + D.G], d[o + D.B], scale3,
+        fxRandom.next() < 0.4, d[o + D.Z], d[o + D.VZ]);
+      return;
+    }
+    const scale = cell * (0.9 + fxRandom.next() * 0.9);
+    const structural = d[o + D.STRUCT] === 1 && fxRandom.next() < 0.4;
+    spawn(d[o + D.X], d[o + D.Y], d[o + D.VX], d[o + D.VY], d[o + D.R], d[o + D.G], d[o + D.B], scale, structural);
   });
 
   return reader;
