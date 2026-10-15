@@ -64,8 +64,8 @@ await session(async ({ cdp, ev }) => {
   await ev('window.__harness.hold(true)');
   await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; H.reseed(0x1234); S.hideHud(true);
     DevScene.teleport(${DEEP.x}, ${DEEP.y + 60000}, 0);
-    const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-    const T = await import(url);
+    const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+    const T = window.THREE || await import(url);
     const root = new T.Group();
     const x0 = ship.pos.x, y0 = -ship.pos.y;
     const add = (mesh, dx, dy) => { mesh.position.set(x0 + dx, y0 + dy, 20); mesh.layers.set(0); root.add(mesh); };

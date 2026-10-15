@@ -39,7 +39,7 @@ try {
     DevFlags.globalShieldsOff = true;
     DevScene.teleport(${DEEP.x}, ${DEEP.y}, 0);
     { const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js|three\\.webgpu/.test(n));
-      const T = await import(url);
+      const T = window.THREE || await import(url);
       const bd = new T.Mesh(new T.PlaneGeometry(2000000, 2000000), new T.MeshBasicMaterial({ color: 0x000000 }));
       bd.position.set(ship.pos.x, -ship.pos.y, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern';
       Core3D.scene.add(bd); bd.updateMatrixWorld(true); }

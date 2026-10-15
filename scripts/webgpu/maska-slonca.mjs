@@ -98,8 +98,8 @@ const SESSIONS = [
       H.reseed(0xb17a);
       await H.step(180);
       S.cam(s.pos.x + 1800, s.pos.y, 0.3);` },
-    { id: 'pole', warm: 20, js: `const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-      const T = await import(url);
+    { id: 'pole', warm: 20, js: `const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+      const T = window.THREE || await import(url);
       const N = 64, px = new Uint8Array(N * N);
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
         const dx = (x + 0.5) / N - 0.5, dy = (y + 0.5) / N - 0.3;
