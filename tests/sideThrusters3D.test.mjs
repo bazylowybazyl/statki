@@ -355,6 +355,7 @@ test('LOD dysz SIDE: automat bez obrazu = automat pełnej ścieżki, kolejność
   const src = read('src/3d/engineVfxSystem.js');
   assert.match(src, /if \(sideQuiet && slot\.kind === 'side'\) \{\n\s+SideJets3D\.idle\(item\.jet, /);
   assert.match(src, /if \(sideModelsHere && cloakVis >= 0\.5 && !SideNozzleFrame\.near\(/);
-  assert.match(read('src/3d/hexShips3D.js'), /entity\.__inDrawBox = inDrawBox;/);
+  // RW-31: flagę pudła rysowania liczy gra przed przebiegiem kadłubów (src/game/coldWreckView.js).
+  assert.match(read('src/game/coldWreckView.js'), /entity\.__inDrawBox = isEntityInCull\(entity, cull\) \? isEntityInDrawBox\(entity, cull, zoom\) : false;/);
   assert.match(read('src/3d/hexShips3D.js'), /EngineVfxSystem\.update\(visibleVfx, cullInfo \? DRAW_BOX_MARGIN_PX \/ cameraZoom : Infinity, cullInfo\);/);
 });

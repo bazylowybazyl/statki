@@ -14,7 +14,7 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 100,
+  'index:aktualizacja': 101, // 2026-10-15 RW-31: Core3D.pixelRatio do widoku klatki gry (setDrawView) — w workerze z RET_F64.PIXEL_RATIO; za to −2 isColdFreezeVisuallySafe (zdarzenie, zapytanie)
   'index:dane': 31,
   'index:konfiguracja': 169,
   'index:zapytanie': 76,

@@ -1393,6 +1393,25 @@ Pliki: `src/game/coldWrecks.js` (bramka „czy widać” z kamery i progu LOD po
 (`coldWreckSystem`), pozostałe flagi z § 2.6 p. 17. Kryterium: testy zimnych wraków, zrzuty `kosmos` (wraki).
 Zależności: RW-22. Kolizje: brak.
 
+**Stan (2026-10-15, tor `rw-kadluby`, commit „RW-31 cz. 1: …”) — część 1 zrobiona, CZEKA NA WERYFIKACJĘ** (zrzuty
+`kosmos` / pełny harness przed / po — tryb lekki maszyny; „przed” = eksport bazowego commita przez `--root`). Bramka
+i zapotrzebowanie nie zależą od RW-22, więc poszły przed nim. Gra liczy sama z widoku klatki (`_hexCullInfo`, zoom,
+skala renderu, numer klatki — `src/game/coldWreckView.js`, pudła wspólne z renderem w `src/render/drawBox.js`):
+(1) `entity.__inDrawBox` (+ `__drawFogHidden`) — `stampDrawBoxFlags(renderEntities)` przed `updateHexShips3D`, render
+już jej nie pisze (§ 2.6 p. 30); (2) bramka zamrażania `coldFreezeVisuallySafe` zamiast `isColdFreezeVisuallySafe`
+renderu (§ 2.6 p. 29); (3) ciała do rysowania zimnych wraków — `selectColdRenderBodies` (ta sama reguła i kolejność
+wywołań `ensureRenderBody`, po mostkach — nowe ciało dołącza do list mostków w następnej klatce jak dawniej), render
+dostaje znacznik `w._coldDrawFrame` przez hak `drawn` zamiast wołać grę; (4) smuga zimnego wraku na belkach przy
+zamrażaniu — `captureBeamColdImpostor` w grze (kolor: `src/render/bodyColor.js`, wspólny z
+`computeAverageBodyColor`), render liczy smugę tylko wrakom heksowym dem. Odstępstwa: wrak bez kadłuba na belkach
+(w grze nie ma heksów) jest „bezpieczny” bez pytania renderu (render i tak nie miał dla niego obrazu); poza domyślną
+konfiguracją (`nearExtras` / `staticSkin` wyłączone) bramka liczy próg smugi bez histerezy renderu (ostrożniej —
+mniej zamrożeń w kadrze); dema bez gry nie stemplują `__inDrawBox` (LOD dysz w demach wyłączony — dawniej włączony).
+Strażnik szwu: `index:aktualizacja` 100 → 101 (`Core3D.pixelRatio` — w workerze z `RET_F64.PIXEL_RATIO`), za to −2
+odwołania `isColdFreezeVisuallySafe`. Testy `tests/coldWreckView.test.mjs` (6), strażniki zaktualizowane:
+`coldWrecksBeam`, `renderPerfGates`, `sideThrusters3D`. Część 2 (po RW-22): poza holownika w ENT zamiast
+`ServiceTugGame.beginRender` (§ 2.6 p. 27), pozostałe flagi § 2.6 p. 17.
+
 ### Etap 3 — moduły renderu bez DOM
 
 Korzyść bez workera: moduły renderu ładowalne w Node (testy bez przeglądarki), mniej ukrytych zależności od okna.
