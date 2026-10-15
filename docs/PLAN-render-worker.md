@@ -1449,6 +1449,23 @@ Pliki: `src/3d/shield3D.js` (bity do bloku `RET`), nowy `src/game/shieldBreach.j
 z `acquireShieldLattice`), `index.html` (pociski, wiązki), rakiety. Kryterium: `node scripts/webgpu/tarcze-gra.mjs` —
 przebicia jak dziś (przy D3 = bez zmian); test geometrii płytek. Zależności: RW-04. Kolizje: mało.
 
+**Stan (2026-10-16, tor `rw-kadluby`, commit „RW-29: …”) — ZROBIONE, w `main`.** Weryfikacja: `tarcze-gra.mjs` przed
+(eksport `be571e17`) i po — przebicie, pociski przez dziurę i bez niej (6 / 5 zapytań, te same obrażenia tarczy i kadłuba),
+zamknięcie po stygnięciu, bitwa: wynik identyczny, 0 kompilacji w klatce; `tarcza-pokazana-gra.mjs` przed / po — maks.
+różnica 5/255 (szum); testy Node i `npm test` bez nowych porażek, build. Render (`shield3D.js`, `setShieldReturnChannel(views, keyOf)`)
+po odczycie GPU pisze rekord slotu puli do RET (`retWriteBreach`: slot + generacja encji, `shieldProfileHash` obrysu,
+epoka w `RET_I32.BREACH_EPOCH`, bity płytek), przy przydziale slotu — rekord bez przebić, przy zwolnieniu — slot −1;
+bez kanału (dema, testy) dawna droga. Gra: `index.html` tworzy `RenderSlots = createRenderIds()` i `RenderReturn`
+(RET), w `render()` znakuje sloty encji całego `renderEntities` (uzgodnione z `rw-migawka` — RW-10 przejmie instancję
+i zastąpi znakowanie pakowaniem list), czytelnik `src/game/shieldBreach.js` (`ShieldBreach.refresh()` raz na klatkę
+przed krokami fizyki) stawia `__shieldBreach` i testuje punkt (`isShieldBreachedAt` z gry — pociski, wiązki, bomby,
+drony, rakiety przez `window.isShieldBreachedAt`). Stałe puli (`SHIELD_SLOTS`, `SHIELD_SLOT_CAP`) przeszły do czystego
+`shieldLattice.js` (pula je reeksportuje). Semantyka D3 bez zmian (slot tylko dla tarcz na ekranie, twardość, pokazanie
+i klasa trafienia działają w polu GPU), opóźnienie +≤ 1 klatka. Odstępstwo: punkt trafienia przechodzi do klatki
+lokalnej tarczy z POZY GRY w chwili testu (dawniej poza ostatniej klatki renderu, gracz — interpolowana). Testy
+`tests/shieldBreach.test.mjs` (5: stałe, geometria płytek 64 kierunki, dziura / druga strona / obrót / obrys / zwolnienie,
+właściciel slotu i generacja, wpięcie); `tarcze-gra.mjs` czyta liczniki z `ShieldBreach.stats`.
+
 **RW-30 Kamera: wstrząsy po stronie gry.**
 Pliki: `src/3d/weapons/weaponFx.js` (bez `camera.addShake` i `__weapon3dCameraShake`), wstrząs z danych broni
 (`src/game/weaponFeel.js`) przy `SHOT` / `IMPACT`, supernowa, reaktor, warp (`src/3d/warp/player.js` → przejścia
@@ -1459,6 +1476,27 @@ Zależności: RW-21. Kolizje: `render()` w `index.html` (kamera).
 Pliki: `src/game/coldWrecks.js` (bramka „czy widać” z kamery i progu LOD po stronie gry), `index.html`
 (`coldWreckSystem`), pozostałe flagi z § 2.6 p. 17. Kryterium: testy zimnych wraków, zrzuty `kosmos` (wraki).
 Zależności: RW-22. Kolizje: brak.
+
+**Stan (2026-10-16, tor `rw-kadluby`, commit „RW-31 cz. 1: …”) — część 1 ZROBIONA, w `main`.** Weryfikacja: sesja
+`kosmos` przed (`--root` eksport `be571e17`) / po — `wraki`, `wybuch`, `kalibracja`, `warp` i wszystkie warstwy bit w bit
+(maks. 1/255); złożony kadr `bitwa` różni się, ale nie jest powtarzalny nawet na tym samym kodzie (przed ↔ przed 3,7%
+pikseli > 8, przed ↔ po 0,05–0,7%). Harness: sesje z grą startują grę swobodną (kampania domyślna zamrażała świat). Bramka
+i zapotrzebowanie nie zależą od RW-22, więc poszły przed nim. Gra liczy sama z widoku klatki (`_hexCullInfo`, zoom,
+skala renderu, numer klatki — `src/game/coldWreckView.js`, pudła wspólne z renderem w `src/render/drawBox.js`):
+(1) `entity.__inDrawBox` (+ `__drawFogHidden`) — `stampDrawBoxFlags(renderEntities)` przed `updateHexShips3D`, render
+już jej nie pisze (§ 2.6 p. 30); (2) bramka zamrażania `coldFreezeVisuallySafe` zamiast `isColdFreezeVisuallySafe`
+renderu (§ 2.6 p. 29); (3) ciała do rysowania zimnych wraków — `selectColdRenderBodies` (ta sama reguła i kolejność
+wywołań `ensureRenderBody`, po mostkach — nowe ciało dołącza do list mostków w następnej klatce jak dawniej), render
+dostaje znacznik `w._coldDrawFrame` przez hak `drawn` zamiast wołać grę; (4) smuga zimnego wraku na belkach przy
+zamrażaniu — `captureBeamColdImpostor` w grze (kolor: `src/render/bodyColor.js`, wspólny z
+`computeAverageBodyColor`), render liczy smugę tylko wrakom heksowym dem. Odstępstwa: wrak bez kadłuba na belkach
+(w grze nie ma heksów) jest „bezpieczny” bez pytania renderu (render i tak nie miał dla niego obrazu); poza domyślną
+konfiguracją (`nearExtras` / `staticSkin` wyłączone) bramka liczy próg smugi bez histerezy renderu (ostrożniej —
+mniej zamrożeń w kadrze); dema bez gry nie stemplują `__inDrawBox` (LOD dysz w demach wyłączony — dawniej włączony).
+Strażnik szwu: `index:aktualizacja` 100 → 101 (`Core3D.pixelRatio` — w workerze z `RET_F64.PIXEL_RATIO`), za to −2
+odwołania `isColdFreezeVisuallySafe`. Testy `tests/coldWreckView.test.mjs` (6), strażniki zaktualizowane:
+`coldWrecksBeam`, `renderPerfGates`, `sideThrusters3D`. Część 2 (po RW-22): poza holownika w ENT zamiast
+`ServiceTugGame.beginRender` (§ 2.6 p. 27), pozostałe flagi § 2.6 p. 17.
 
 ### Etap 3 — moduły renderu bez DOM
 

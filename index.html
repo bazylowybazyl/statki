@@ -1111,6 +1111,10 @@
     HullBodies.onRegrow = raiseHullHpForRegrowth;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
+    // Widok klatki po stronie gry (RW-31): flaga pudła rysowania, bramka zamrażania i ciała do rysowania zimnych wraków.
+    import {
+      createDrawView, setDrawView, stampDrawBoxFlags, coldFreezeVisuallySafe, selectColdRenderBodies, captureBeamColdImpostor
+    } from "./src/game/coldWreckView.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
     import { buildWreckFields } from "./src/game/wreckFields.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
@@ -1243,7 +1247,13 @@
       setLiveDebugPerfHud,
       installLiveDebugConsoleApi
     } from "./src/ui/liveDebug.js";
-    import { updateShields3D, prewarmShields3D, getShieldPoolStats, isShieldBreachedAt, probeShieldSlot, SHIELD_TUNING } from "./src/3d/shield3D.js";
+    import { updateShields3D, prewarmShields3D, getShieldPoolStats, probeShieldSlot, setShieldReturnChannel, SHIELD_TUNING } from "./src/3d/shield3D.js";
+    // Szew renderu (docs/PLAN-render-worker.md § 3.2, § 3.4): sloty renderu encji (slot + generacja — RW-03; RW-10 przejmie
+    // znakowanie list migawki) i kanał zwrotny RET (RW-04), który pisze render, a czyta gra.
+    import { createRenderIds } from "./src/render/renderIds.js";
+    import { createReturnBuffer, createReturnViews } from "./src/render/returnLayout.js";
+    // Przebicia tarcz po stronie gry (RW-29): rekordy RET → flaga `__shieldBreach` i test punktu na siatce płytek.
+    import { createShieldBreachReader } from "./src/game/shieldBreach.js";
     // Tarcza z dema WebGPU (dema/tarcza-webgpu): przezroczysta, widac ja tylko w miejscu
     // trafienia (plytki-heksy, fala, iskry na czaszy) i przy peknieciu. Strojenie z konsoli
     // dziala od razu: ShieldTuning.sparks = 0.5, ShieldTuning.shatter.crossTime = 0.8 itd.
@@ -1252,6 +1262,22 @@
     const SHIELD_BREACH_DAMAGE_OPTS = Object.freeze({ bypassShield: true });
     window.getShieldPoolStats = getShieldPoolStats;
     window.probeShieldSlot = probeShieldSlot;
+    const RenderSlots = createRenderIds();
+    const RenderReturn = createReturnViews(createReturnBuffer());
+    window.RenderSlots = RenderSlots;
+    const ShieldBreach = createShieldBreachReader({
+      ret: RenderReturn,
+      entityAt: (slot, gen) => (RenderSlots.entities.isLive(slot, gen) ? RenderSlots.entities.objectAt(slot) : null)
+    });
+    const isShieldBreachedAt = ShieldBreach.isShieldBreachedAt;
+    window.ShieldBreach = ShieldBreach;
+    setShieldReturnChannel(RenderReturn, (e, out) => {
+      const slot = RenderSlots.entities.peek(e);
+      if (slot < 0) return false;
+      out[0] = slot;
+      out[1] = RenderSlots.entities.gen(slot);
+      return true;
+    });
     window.isShieldBreachedAt = isShieldBreachedAt;   // rakiety (rocketSystem3D) — przebicie tarczy
     import { initWorld3D, attachPirateStation3D, updateWorld3D, setWorld3DHiddenTest } from "./src/3d/world3d.js";
     // Suchy dok piratów (misja 1): bryła 3D (budowle Z7), bryły trafień i kawałki zniszczeń.
@@ -1305,7 +1331,6 @@
       drawHexShips3D,
       invalidateHexShipEntity3D,
       prewarmHexShipVisual,
-      isColdFreezeVisuallySafe,
       captureColdWreckImpostor,
       setColdWreckRenderHooks,
       setBeamSkinSuppressor,
@@ -25366,7 +25391,9 @@
       getAwakeBodies: () => _cachedDynamicDestructibles || wrecks,
       markReferences: markColdWreckReferences,
       isReferenced: isColdWreckReferencedDirect,
-      isVisuallySafe: (w) => (isColdFreezeVisuallySafe ? isColdFreezeVisuallySafe(w, coldWreckSystem.config) : true),
+      // Z widoku klatki gry (RW-31; gra nie ma wraków heksowych — wrak bez kadłuba na belkach nie ma też obrazu,
+      // który zamrożenie mogłoby zmienić).
+      isVisuallySafe: (w) => coldFreezeVisuallySafe(w, _drawView, coldWreckSystem.config),
       getPlayerPos: () => ship?.pos || null,
       getFrameId: () => renderFrameId,
       // Wrak na belkach (także zimny — sama migawka) zwalnia HullBodies.
@@ -25378,7 +25405,8 @@
         if (salvageState.cutting === w) stopFieldSalvage();
         TowSystem.detachBody(w, 'wreck-cold');
         // Smuga (kolor z meshu, póki jest) PRZED zwolnieniem meshy.
-        if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
+        if (w._coldSnapshot?.kind === 'beam') captureBeamColdImpostor(w, w._coldSnapshot, coldWreckSystem.config);
+        else if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
         // Wrak na belkach zostaje z ciałem do rysowania i swoją siatką skóry (render przejmuje je bez przebudowy,
         // poza kadrem ciało i siatka znikają same) — meshe kasujemy tylko heksom.
         if (!w.beamHull && invalidateHexShipEntity3D) invalidateHexShipEntity3D(w);
@@ -25401,7 +25429,8 @@
     // i konfiguracja (staticSkin / nearLights / nearExtras — wygląd zimnego w kadrze).
     if (setColdWreckRenderHooks) {
       setColdWreckRenderHooks({
-        ensureBody: (w) => coldWreckSystem.ensureRenderBody(w),
+        // Ciało do rysowania wybrała gra w tej klatce (selectColdRenderBodies przed updateHexShips3D, RW-31).
+        drawn: (w) => w._coldDrawFrame === renderFrameId,
         config: coldWreckSystem.config,
         // W liście mostków / modeli 3D tej klatki (withColdNearWrecks) — ciało odtworzone dopiero w tej klatce
         // rysuje skóra, model 3D przejmie je w następnej (bez klatki bez obrazu).
@@ -28000,6 +28029,8 @@
       beginAsteroidMiningFrame();
       // Tryb torped gaśnie przy stacji / warpie / RTS / śmierci.
       stepTorpedoMode();
+      // Przebicia tarcz z kanału zwrotnego (RW-29): rekordy zapisane przez render od poprzedniej klatki → flagi encji.
+      ShieldBreach.refresh();
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
@@ -28145,6 +28176,11 @@
     // Pudła cullingu dla updateHexShips3D: halfW/H = rozgrzanie (OVERSCAN),
     // drawHalfW/H = kadr. Jeden obiekt na całą grę zamiast literału co klatkę.
     const _hexCullInfo = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
+    // Widok ostatniej klatki rysowania po stronie gry (src/game/coldWreckView.js, RW-31): pudło (_hexCullInfo), zoom,
+    // skala renderu, numer klatki — z niego gra liczy `__inDrawBox`, bramkę zamrażania i ciała do rysowania zimnych.
+    const _drawView = createDrawView();
+    const _drawFogHidden = (e) => SensorSystem.hides(e);
+    const _coldEnsureBody = (w) => coldWreckSystem.ensureRenderBody(w);
     const _hexCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
 
     function getViewportForCamera(cam) {
@@ -29131,6 +29167,11 @@
       // Zimne wraki z ciałem do rysowania (skórę rysuje updateHexShips3D z coldWrecks): mostek 3D, okna mostka,
       // model 3D okrętu i rdzeń reaktora jak u wraku śpiącego (ColdWreckConfig.nearExtras).
       const renderSeenCold = withColdNearWrecks(renderSeen);
+      // Sloty renderu encji tej klatki (rekordy przebić tarcz w RET niosą slot + generację; RW-29 — RW-10 zastąpi to
+      // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot.
+      RenderSlots.entities.begin();
+      for (let i = 0; i < renderEntities.length; i++) RenderSlots.entities.slotOf(renderEntities[i]);
+      RenderSlots.entities.end();
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -29194,6 +29235,12 @@
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
         BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+        // Widok klatki po stronie gry (RW-31): flaga pudła rysowania encji (model lotu, LOD dysz) i ciała do rysowania
+        // zimnych wraków na belkach (budżet coldWreckSystem) — PO mostkach: nowe ciało dołącza do list mostków i modeli
+        // w następnej klatce, jak dawniej, gdy prosił o nie render.
+        setDrawView(_drawView, _hexCullInfo, zoomNow, Core3D.pixelRatio, renderFrameId, window.DevTuning);
+        stampDrawBoxFlags(renderEntities, _drawView, _drawFogHidden);
+        selectColdRenderBodies(coldWrecks, _drawView, coldWreckSystem.config, _coldEnsureBody);
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
         updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);

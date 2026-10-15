@@ -14,10 +14,10 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 91, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'index:aktualizacja': 92, // 2026-10-16 po scaleniu RW-25/27/24 (rozgrywka pasa, ringu i bazy po stronie gry) z RW-31 (Core3D.pixelRatio do widoku klatki gry)
   'index:dane': 31,
   'index:konfiguracja': 155, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
-  'index:zapytanie': 46, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'index:zapytanie': 40, // 2026-10-16 po scaleniu RW-25/27/24 z RW-31 (−2 isColdFreezeVisuallySafe)
   'index:zdarzenie': 62, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
