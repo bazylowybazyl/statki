@@ -152,7 +152,7 @@ test('WeaponFx.impact: wstrząs trafienia × impactScale broni (receptura bez zm
 test('bramka efektu trafienia: rozmiar × impactScale broni (index.html spawnBulletImpactEffect)', () => {
   const sizes = [];
   const scope = {
-    WeaponFx: { available: true, impact() {} },
+    RenderCommands: { ready: true, writer: { impact() {} } },
     impactFxKindOf: () => 2,
     IMPACT_FX_SIZE: [2.4, 1.5, 1.2, 1.0], IMPACT_FX_COOLDOWN_MS: [0, 28, 8, 42], IMPACT_FX_MIN_PX: 3,
     impactFxScreenPx: (x, y, size) => { sizes.push(size); return 100; },

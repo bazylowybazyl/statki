@@ -1372,6 +1372,10 @@
     import { Turret2D } from "./src/vfx/turret2D.js";
     // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
     import { WeaponFx } from "./src/3d/weapons/weaponFx.js";
+    // RW-21 (docs/PLAN-render-worker.md § 3.3): zdarzenia efektów broni idą rekordami strumienia rozkazów (tryb inline —
+    // dyspozycja zaraz po zapisie); dekoder renderu woła WeaponFx.
+    import { RenderCommands } from "./src/render/renderCommands.js";
+    import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
       FLAK_TUNING,
       collectFlakBurstHits,
@@ -6411,6 +6415,8 @@
         noteCameraCombat('strzał');
         breakPlayerCloak('fire');
       }
+      // RW-21: efekt strzału — rekord SHOT (lufa rozwiązana tutaj; dekoder renderu: weaponFxCommands.js).
+      RenderCommands.writer.shot(detail);
     });
     window.addEventListener('game_weapon_fired', (e) => {
       if (e?.detail?.weaponId === 'hexlance') {
@@ -7024,6 +7030,10 @@
     setPositionLightOcclusion(k7LintelOver);
     // Kamery 3D: błysk wylotu na wysokości lufy wieży 3D.
     WeaponFx.muzzleZOf = turretMuzzleZ;
+    // RW-21: strumień rozkazów w trybie inline — dekoder efektów broni (WeaponFx przestaje słuchać szyny strzałów);
+    // gotowość renderu dla bramek gry i reguły __renderedByThree.
+    installWeaponFxCommands(RenderCommands.reader);
+    RenderCommands.setReady(() => WeaponFx.available, () => WeaponFx._ready === true);
     // Kamery 3D: pocisk startuje na wysokości lufy strzelca (b.visZ0, raz — przy pierwszym rysowaniu) i schodzi
     // do płaszczyzny gry (połowa drogi w ~0,17 s), więc trafia w burtę celu; SAM WYGLĄD — lot i trafienia 2D.
     const SHOT3D_DROP_TAU = 0.25;
@@ -11594,10 +11604,10 @@
       }, weapon);
       if (res === CHARGE_FIRE) {
         fireSpecialLoadout(loadout, hp, slot);
-      } else if (res === CHARGE_CHARGING && WeaponFx.available && dt > 0) {
+      } else if (res === CHARGE_CHARGING && RenderCommands.ready && dt > 0) {
         const m = p1WeaponCtrl.computeMountedMuzzle(loadout, Number(aim.nextBarrel) || 0);
-        if (!st.fx) st.fx = WeaponFx.createChargeState();
-        WeaponFx.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st.fx,
+        // Stan efektu ładowania trzyma render po kluczu działa (`st` — stan ładowania gniazda).
+        RenderCommands.writer.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st,
           writeCarrier(ship, m.pos.x, m.pos.y, false, _chargeCarrier));
       }
       return st.event;
@@ -11655,9 +11665,9 @@
       const base = `special:${hp?.id || slot}`;
       muzzle.emitterUid = multiBarrel ? `${base}:b${barrelIndex}` : base;
       // Salwa wieży na auto (kierowanie ogniem) nie trzęsie kamerą — tylko strzały gracza.
-      WeaponFx.shotShakeScale = hp?.fcAutoShot === true ? FC_AUTO_SHAKE : 1;
+      RenderCommands.writer.shotShakeScale = hp?.fcAutoShot === true ? FC_AUTO_SHAKE : 1;
       const cd = Number(window.fireWeaponCore(ship, target, weapon.id, muzzle)) || 0;
-      WeaponFx.shotShakeScale = 1;
+      RenderCommands.writer.shotShakeScale = 1;
       return cd;
     }
 
@@ -11863,7 +11873,7 @@
     // kąt wieżyczki AI, receptura broni (WeaponFx.charge), stan efektu na dziale.
     const _npcChargeCarrier = createCarrier();
     window.spawnWeaponChargeFx = function (owner, weapon, u, dt) {
-      if (!WeaponFx.available || !owner || !weapon?.def) return;
+      if (!RenderCommands.ready || !owner || !weapon?.def) return;
       let x = owner.x;
       let y = owner.y;
       const hp = weapon.hpOffset;
@@ -11876,9 +11886,9 @@
         x = owner.x + (hpX * c - hpY * s);
         y = owner.y + (hpX * s + hpY * c);
       }
-      if (!weapon.chargeFx) weapon.chargeFx = WeaponFx.createChargeState();
       const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
-      WeaponFx.charge(weapon.def.id, x, y, a, 1, u, dt, weapon.chargeFx, writeCarrier(owner, x, y, false, _npcChargeCarrier));
+      // Stan efektu ładowania — w renderze po kluczu działa (obiekt broni NPC).
+      RenderCommands.writer.charge(weapon.def.id, x, y, a, 1, u, dt, weapon, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
 
     // Uid emitera (wiązka ciągła trzyma się po nim swojej lufy). Liczony raz na
@@ -12708,13 +12718,13 @@
       if (out && pass.craterDamage > 0) {
         applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');
       }
-      if (WeaponFx.available) {
+      if (RenderCommands.ready) {
         ActiveCarrier.set(carrier);
         if (pass.kerfs > 0) {
-          WeaponFx.kerf(b, pass.kerfX, pass.kerfY, pass.kerfDX, pass.kerfDY, pass.kerfs, _passRelVel.x, _passRelVel.y, e);
+          RenderCommands.writer.kerf(b, pass.kerfX, pass.kerfY, pass.kerfDX, pass.kerfDY, pass.kerfs, _passRelVel.x, _passRelVel.y, e);
         }
-        if (ev === PASS_EXIT) WeaponFx.pierceExit(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
-        else if (stuck) WeaponFx.pierceStuck(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        if (ev === PASS_EXIT) RenderCommands.writer.pierceExit(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        else if (stuck) RenderCommands.writer.pierceStuck(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
         ActiveCarrier.clear();
       }
       return stuck;
@@ -12742,14 +12752,26 @@
     // ciężkie trafienia (Mjolnir 5, Yamato 4,5, Valkyrie 3,5) widać z dalszego zoomu, lekkie
     // wiązki (0,4–0,7) znikają wcześniej. Obrazu receptury skala nie zmienia (jak w demie).
     function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
-      if (!WeaponFx.available) return;
+      if (!RenderCommands.ready) return;
       const fxKind = impactFxKindOf(b);
       const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind] * (b?.vfxKey ? weaponImpactScale(WEAPONS[b.vfxKey]) : 1);
       if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, IMPACT_FX_COOLDOWN_MS[fxKind], x, y)) {
-        WeaponFx.impact(b, x, y, scale, hit);
+        RenderCommands.writer.impact(b, x, y, scale, hit);
       }
     }
     window.spawnBulletImpactEffect = spawnBulletImpactEffect;
+
+    // RW-21: reguła __renderedByThree po stronie gry (dawniej pisał ją WeaponFx.sync na obiektach pocisków) — ten sam
+    // warunek: żywy pocisk o skończonej pozycji; forceCanvas — kanwa, reszta — render 3D.
+    function markThreeRenderedBullets(list) {
+      if (!Array.isArray(list)) return;
+      for (let i = 0; i < list.length; i++) {
+        const b = list[i];
+        if (!b || !(b.life > 0)) continue;
+        if (!Number.isFinite(Number(b.x)) || !Number.isFinite(Number(b.y))) continue;
+        b.__renderedByThree = !b.forceCanvas;
+      }
+    }
 
     // =============== Station UI ===============
     let stationUI = {
@@ -21593,17 +21615,17 @@
         }
         if (e === window.ship) applyDamageToPlayer(dmg, SHIELD_BREACH_DAMAGE_OPTS);
         else applyDamageToNPC(e, dmg, 'bomb', SHIELD_BREACH_DAMAGE_OPTS, false);
-        if (WeaponFx.available) {
+        if (RenderCommands.ready) {
           ActiveCarrier.set(writeCarrier(e, x, y, false, _bombCarrier));
           try {
-            WeaponFx.bombBlast(x, y, (dmg / (Number(def?.baseDamage) || 420)) * (Number(def?.impactScale) || 1), e);
+            RenderCommands.writer.bombBlast(x, y, (dmg / (Number(def?.baseDamage) || 420)) * (Number(def?.impactScale) || 1), e);
           } finally {
             ActiveCarrier.clear();
           }
         }
       },
       miss(x, y) {
-        if (WeaponFx.available) WeaponFx.bombDud(x, y, 1);
+        if (RenderCommands.ready) RenderCommands.writer.bombDud(x, y, 1);
       },
       // Rozrzut punktu upadku to rozgrywka (gdzie trafi bomba) — generator gry.
       random: () => Math.random()
@@ -22039,9 +22061,9 @@
         : (weapon.size === 'L' ? 1 : 2);
       const uid = `p_main_${index}_${weapon.id || 'x'}`;
       muzzle.emitterUid = barrels > 1 ? `${uid}:b${barrel}` : uid;
-      WeaponFx.shotShakeScale = auto ? FC_AUTO_SHAKE : 1;
+      RenderCommands.writer.shotShakeScale = auto ? FC_AUTO_SHAKE : 1;
       const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
-      WeaponFx.shotShakeScale = 1;
+      RenderCommands.writer.shotShakeScale = 1;
       return cd;
     }
 
@@ -22620,7 +22642,7 @@
               // impuls do rakiety, trafienie.
               const lcx = Math.cos(gun.angle);
               const lcy = Math.sin(gun.angle);
-              WeaponFx.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
+              RenderCommands.writer.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
               killRocketThreat(target, 'laser', 1.2, (stats?.dmg ?? wDef.baseDamage) || LASER_PD_DAMAGE);
             }
             gun.cd = fireInterval;
@@ -22665,7 +22687,7 @@
       // Błysk wylotu z receptury CIWS (WeaponFx, zadanie 17 — dawniej cząstka kanwy): lufa
       // z rekordu wieżyczki p_aux, nośnik — wieżyczka. Odrzut wieży — strona gry (RW-26).
       Turret2D.recoilAt(wDef?.id || 'ciws_mk1', px, py, ship);
-      WeaponFx.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
+      RenderCommands.writer.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
 
@@ -22684,7 +22706,7 @@
       // Laser PD w 3D (WeaponFx, zadanie 17 — decyzja 2026-09-27: PD z kanwy do 3D, efekty
       // z dema bronie-webgpu): wylot z wieżyczki, impuls do celu, trafienie. Wiązka jedzie
       // z wieżyczką (nośnik), trafienie — z celem.
-      WeaponFx.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
+      RenderCommands.writer.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -22737,7 +22759,7 @@
 
       // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy); odrzut wieży — strona gry (RW-26).
       Turret2D.recoilAt(wDef.id, muzzle.x, muzzle.y, ship);
-      WeaponFx.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
+      RenderCommands.writer.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
     }
 
@@ -22819,7 +22841,7 @@
       const shellIvx = Number(b.ivx) || 0;
       const shellIvy = Number(b.ivy) || 0;
       ActiveCarrier.set(writeCarrierVelocity(shellIvx, shellIvy, b.clock, SimClock.sim, _impactCarrier));
-      WeaponFx.flakBurst(b, b.x, b.y, radius);
+      RenderCommands.writer.flakBurst(b, b.x, b.y, radius);
       ActiveCarrier.clear();
       if (window.AudioSys) AudioSys.playSound('explosion');
     }
@@ -23615,7 +23637,7 @@
       // Receptura 3D jest właścicielem śladu już przed pierwszym sync renderu.
       // __renderedByThree pojawia się dopiero potem; Vulcan / CIWS / flak
       // mają w demie tylko krótki smugowiec, bez dodatkowych cząstek 2D.
-      if (!b.forceCanvas && WeaponFx.available) return;
+      if (!b.forceCanvas && RenderCommands.ready) return;
       const stepT = frameDt / count;
       const autocannon = b.type === 'autocannon';
       const isTorpedo = b.type === 'torpedo';
@@ -29144,12 +29166,17 @@
         // czyta. Wizjer maskowania: okręt, którym gracz steruje (przy sterach fregaty zwiadu — fregata).
         const cloakViewer = ScoutBay.controlling && ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : ship;
         const cloakFrame = stepCloakLooks(renderEntities, performance.now(), bridgeRenderPose, cloakViewer);
+        // RW-21: kto rysuje pocisk (dawniej pisał to WeaponFx.sync): żywy pocisk o skończonej pozycji bez forceCanvas
+        // — render 3D (gdy pule pocisków gotowe); reszta — kanwa.
+        if (RenderCommands.projectilesReady) markThreeRenderedBullets(window.bullets);
         _turretSyncOpts.zoom = cam.zoom;
         _turretSyncOpts.enabled = Core3D.perfToggles?.fgWeapons !== false;
         Turret2D.syncFrame(renderEntities, _turretSyncOpts);
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
         updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
+        // Strumień rozkazów: koniec klatki (sloty obiektów bez odwołań wracają do puli).
+        RenderCommands.endFrame();
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.
         syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
         // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.

@@ -10,6 +10,9 @@
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
 import { WeaponFx } from '../3d/weapons/weaponFx.js';
+// RW-21: zdarzenia efektów Hexlance'a — rekordy strumienia rozkazów (uchwyt smugi `proj.slug` = id gry; render trzyma
+// pod nim swój uchwyt).
+import { RenderCommands } from '../render/renderCommands.js';
 import { createCarrier, writeCarrier } from './carrierVelocity.js';
 import { buildHexlanceBurst } from './weaponCharge.js';
 import { weaponRecoil, weaponShake } from './weaponFeel.js';
@@ -214,7 +217,7 @@ function spawnChargeEffect(targetPos) {
 function fireSingleMount(ship, cannonIndex) {
     const m = getMuzzlePos(ship, cannonIndex);
     const angle = Math.atan2(m.dir.y, m.dir.x);
-    const fx3d = WeaponFx.available;
+    const fx3d = RenderCommands.ready;
     // Odrzut i wstrząs z danych broni (zadanie 18-D, src/game/weaponFeel.js): Hexlance ma
     // `recoil: 0` (lufa wtopiona w kil, bez wieżyczki) i `shake: 14` (dawniej 14 wpisane tutaj).
     superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + weaponRecoil(HEXLANCE_DEF));
@@ -243,10 +246,10 @@ function fireSingleMount(ship, cannonIndex) {
     };
     hexlanceProjectiles.push(proj);
     if (fx3d) {
-        WeaponFx.hexlanceFire(m.x, m.y, m.dir.x, m.dir.y, carrier);
+        RenderCommands.writer.hexlanceFire(m.x, m.y, m.dir.x, m.dir.y, carrier);
         // Smuga startuje z lufy, nie ze środka pierwszego kroku — inaczej po
         // wystrzale zostaje dziura długości jednej klatki lotu (200 jednostek).
-        proj.slug = WeaponFx.hexlanceBegin(m.x, m.y, proj.vx, proj.vy, carrier.vx, carrier.vy);
+        proj.slug = RenderCommands.writer.hexlanceBegin(m.x, m.y, proj.vx, proj.vy, carrier.vx, carrier.vy);
     }
     // Cały stary rozbłysk 2D — biała cząstka kanwy, pierścień uderzeniowy
     // i iskry — zostaje WYŁĄCZNIE jako zapas, gdy warstwa 3D jest niedostępna.
@@ -314,8 +317,8 @@ export function updateSuperweapon(dt, ship, aimPos) {
             const m = getMuzzlePos(ship, i);
             // Receptura ładowania pokazuje energię biegnącą szynami w głąb kadłuba;
             // stary efekt zasysał cząstki do lufy i dublowałby się z nią.
-            if (WeaponFx.available) {
-                WeaponFx.hexlanceCharge(m.x, m.y, m.dir.x, m.dir.y, dt, chargeU, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier), i);
+            if (RenderCommands.ready) {
+                RenderCommands.writer.hexlanceCharge(m.x, m.y, m.dir.x, m.dir.y, dt, chargeU, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier), i);
             }
             else for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
@@ -338,8 +341,8 @@ export function updateSuperweapon(dt, ship, aimPos) {
         const nextShot = superweaponState.queue[0];
         if (nextShot.delay > 0 && nextShot.delay <= 0.22) {
              const m = getMuzzlePos(ship, nextShot.cannonIndex);
-             if (WeaponFx.available) {
-                 WeaponFx.hexlanceCharge(m.x, m.y, m.dir.x, m.dir.y, dt, 1, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier), nextShot.cannonIndex);
+             if (RenderCommands.ready) {
+                 RenderCommands.writer.hexlanceCharge(m.x, m.y, m.dir.x, m.dir.y, dt, 1, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier), nextShot.cannonIndex);
              }
              else for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
@@ -374,7 +377,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
         // Smuga świata idzie za pociskiem: emiter dostaje CAŁY przebyty odcinek,
         // więc próbki lądują co ~120 jednostek niezależnie od długości klatki.
         if (proj.slug) {
-            WeaponFx.hexlanceStep(proj.slug, prevX, prevY, proj.x, proj.y, proj.vx, proj.vy);
+            RenderCommands.writer.hexlanceStep(proj.slug, prevX, prevY, proj.x, proj.y, proj.vx, proj.vy);
         }
         // Czy pocisk ciął w tym kroku kadłub, w którym był (wyjście za burtą = pierwszy
         // krok bez rzazu w tym kadłubie — efekt w punkcie ostatniego rzazu).
@@ -417,7 +420,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     // lanca) należy się WEJŚCIU w dany kadłub, raz na cel; dalej
                     // sypie już sam rzaz, dławiony odstępem, żeby cięcie przez
                     // pancernik nie zamieniło się w stroboskop.
-                    if (bitFrac >= 0 && WeaponFx.available) {
+                    if (bitFrac >= 0 && RenderCommands.ready) {
                         if (!proj.bitten) proj.bitten = new Set();
                         // Rozbłysk i rzaz jadą z trafionym kadłubem; kierunek
                         // wyrzutu z prędkości pocisku WZGLĘDEM celu.
@@ -427,10 +430,10 @@ export function updateSuperweapon(dt, ship, aimPos) {
                         if (!proj.bitten.has(t)) {
                             proj.bitten.add(t);
                             proj.cutCd = 0.05;
-                            WeaponFx.hexlanceImpact(biteX, biteY, relVx, relVy, hitCarrier);
+                            RenderCommands.writer.hexlanceImpact(biteX, biteY, relVx, relVy, hitCarrier);
                         } else if (proj.cutCd <= 0) {
                             proj.cutCd = 0.05;
-                            WeaponFx.hexlanceKerf(biteX, biteY, relVx, relVy, hitCarrier);
+                            RenderCommands.writer.hexlanceKerf(biteX, biteY, relVx, relVy, hitCarrier);
                         }
                         proj.inside = t;
                         proj.exitX = biteX;
@@ -463,11 +466,11 @@ export function updateSuperweapon(dt, ship, aimPos) {
                         }
                         st.lastHitX = wh.x;
                         st.lastHitY = wh.y;
-                        if (WeaponFx.available && (first || proj.cutCd <= 0)) {
+                        if (RenderCommands.ready && (first || proj.cutCd <= 0)) {
                             proj.cutCd = 0.05;
                             const c = writeCarrier(st, wh.x, wh.y, false, _targetCarrier);
-                            if (first) WeaponFx.hexlanceImpact(wh.x, wh.y, proj.vx - c.vx, proj.vy - c.vy, c);
-                            else WeaponFx.hexlanceKerf(wh.x, wh.y, proj.vx - c.vx, proj.vy - c.vy, c);
+                            if (first) RenderCommands.writer.hexlanceImpact(wh.x, wh.y, proj.vx - c.vx, proj.vy - c.vy, c);
+                            else RenderCommands.writer.hexlanceKerf(wh.x, wh.y, proj.vx - c.vx, proj.vy - c.vy, c);
                         }
                         if (wh.stopped) {
                             // utknął w konstrukcji — koniec lotu w punkcie zatrzymania
@@ -491,9 +494,9 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     st.lastHitX = dh.x;
                     st.lastHitY = dh.y;
                     window.applyDamageToStation(st, HEXLANCE_STATION_DAMAGE);
-                    if (WeaponFx.available) {
+                    if (RenderCommands.ready) {
                         const c = writeCarrier(st, dh.x, dh.y, false, _targetCarrier);
-                        WeaponFx.hexlanceImpact(dh.x, dh.y, proj.vx - c.vx, proj.vy - c.vy, c);
+                        RenderCommands.writer.hexlanceImpact(dh.x, dh.y, proj.vx - c.vx, proj.vy - c.vy, c);
                     }
                     continue;
                 }
@@ -510,9 +513,9 @@ export function updateSuperweapon(dt, ship, aimPos) {
                 if (!proj.bittenStations) proj.bittenStations = new Set();
                 proj.bittenStations.add(st);
                 window.applyDamageToStation(st, HEXLANCE_STATION_DAMAGE);
-                if (WeaponFx.available) {
+                if (RenderCommands.ready) {
                     const c = writeCarrier(st, ix, iy, false, _targetCarrier);
-                    WeaponFx.hexlanceImpact(ix, iy, proj.vx - c.vx, proj.vy - c.vy, c);
+                    RenderCommands.writer.hexlanceImpact(ix, iy, proj.vx - c.vx, proj.vy - c.vy, c);
                 }
             }
         }
@@ -522,15 +525,15 @@ export function updateSuperweapon(dt, ship, aimPos) {
         if (proj.inside && !cutInside) {
             const t = proj.inside;
             proj.inside = null;
-            if (WeaponFx.available) {
+            if (RenderCommands.ready) {
                 const exitCarrier = writeCarrier(t, proj.exitX, proj.exitY, false, _targetCarrier);
-                WeaponFx.hexlanceExit(proj.exitX, proj.exitY, proj.vx - exitCarrier.vx, proj.vy - exitCarrier.vy, exitCarrier);
+                RenderCommands.writer.hexlanceExit(proj.exitX, proj.exitY, proj.vx - exitCarrier.vx, proj.vy - exitCarrier.vy, exitCarrier);
             }
         }
 
         if (proj.life <= 0 || proj.traveled > superweaponState.range) {
             // Historia smugi gaśnie dalej sama; zwalniamy tylko slot żywej głowy.
-            if (proj.slug) WeaponFx.hexlanceEnd(proj.slug, proj.x, proj.y);
+            if (proj.slug) RenderCommands.writer.hexlanceEnd(proj.slug, proj.x, proj.y);
             hexlanceProjectiles.splice(i, 1);
         }
     }

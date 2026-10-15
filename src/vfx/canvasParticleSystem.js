@@ -5,6 +5,7 @@ import { ActiveCarrier } from '../game/carrierVelocity.js';
 // Losowość wizualiów (zadanie 23): nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu. Strumień GRY
 // (RW-20: liczone na wątku głównym — osobny ciąg od strumienia renderu fxRandom).
 import { fxRandomGame } from '../game/fxRandomGame.js';
+import { RenderCommands } from '../render/renderCommands.js';
 
 // NOSNIK (src/game/carrierVelocity.js): czastka, blysk i fala rodza sie
 // z predkoscia kadluba, z ktorego wyszly, i rysuja sie w  pos + v * (T - t0)
@@ -212,10 +213,10 @@ export const CanvasVFX = {
   // z dema bronie-webgpu (WeaponFx.droneBlast, zadanie 17 — dawniej fabryka trafienia działka
   // w overlayu przez spawnProjectileImpact3D, usunięta z fabrykami trafień). Rozmiar jak dawniej.
   _spawnDeathBlast3D(x, y, scale) {
-    const fx = typeof window !== 'undefined' ? window.WeaponFx : null;
-    if (!fx || !fx.available || !this.isWorldPointNearViewport(x, y, 260)) return;
+    // RW-21: rekord DRONE_BLAST strumienia rozkazów (nośnik — bieżący ActiveCarrier).
+    if (!RenderCommands.ready || !this.isWorldPointNearViewport(x, y, 260)) return;
     const h = window.ship?.h || 250;
-    fx.droneBlast(x, y, h * 0.18 * Math.max(0.7, scale));
+    RenderCommands.writer.droneBlast(x, y, h * 0.18 * Math.max(0.7, scale));
   },
 
   spawnExplosionPlasma(x, y, scale = 1) {

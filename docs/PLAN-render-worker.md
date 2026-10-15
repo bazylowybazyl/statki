@@ -1331,6 +1331,33 @@ reguła `__renderedByThree` po stronie gry); `src/game/superweapon.js` (Hexlance
 `WeaponFx.stats` równe; testy kodowania każdego typu. Zależności: RW-04, RW-20, RW-26 (lufa i odrzut w grze).
 Kolizje: `index.html` (pętla pocisków, PD) — duże pole, jedno krótkie podejście.
 
+**Stan RW-21 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
+zrzutami `galeria`, `kosmos`, `rakiety` i `WeaponFx.stats` po pauzie obciążenia):** `src/render/renderCommands.js` —
+kody typów `RC`, układ pól rekordów (obiekty `SHOT`, `IMPACT`, `KERF`, `PIERCE`, `FLAK`, `BLAST`, `CHARGE`, `PD_LASER`,
+`HEX` — wspólne dla kodera i dekodera), pisarz `RenderCommandWriter` (pierścień `EventRingWriter` z RW-04; wartości f64,
+encje i pociski (slot, gen) z `createRenderIds` (własna instancja — przy RW-10 / RW-40 podmienić na przestrzenie migawki;
+`endFrame()` w `render()` zwalnia sloty bez odwołań), napisy w tablicy z rekordem STR przy pierwszym użyciu, nośnik =
+blok `ActiveCarrier` (5 słów) albo argument), czytelnik `RenderCommandReader` (`drain(maxFrame)`, obsługa typów
+`on(type, fn)`, rozwiązanie slotów hakami), `createRenderCommands({ mode })` — `inline`: dyspozycja zaraz po zatwierdzeniu
+(obraz bit w bit z dawnymi wywołaniami), singleton `RenderCommands` (`ready`, `projectilesReady`, `endFrame`).
+Dekoder renderu `src/3d/weapons/weaponFxCommands.js` (`installWeaponFxCommands(reader)` — też `WeaponFx.useCommands()`:
+efekty przestają słuchać szyny strzałów). Rekordy (nazwy jak w kodzie): SHOT (szyna — strzał / wiązka, i PD gracza;
+lufa ROZWIĄZANA w grze `Turret2D.shotMuzzle`, ułamek wstrząsu `writer.shotShakeScale` zamiast `WeaponFx.shotShakeScale`
+pisanego z gry), PD_LASER, IMPACT (widok pocisku: pola czytane przez receptury + `__ref` do stanu smugi), KERF,
+PIERCE (wyjście / zakleszczenie), FLAK_BURST, DRONE_BLAST (`CanvasVFX._spawnDeathBlast3D`), BOMB_BLAST / BOMB_DUD,
+CHARGE (stan efektu ładowania w dekoderze po kluczu działa — przestrzeń `chargeKeys`, trzymanie 3600 klatek),
+HEX_CHARGE / HEX_FIRE / HEX_BEGIN / HEX_STEP / HEX_END / HEX_HIT (uchwyt smugi = id gry, `proj.slug`). Odstępstwa:
+`BEAM` z katalogu § 3.3 nie jest osobnym typem — wiązki jadą w SHOT (pola szyny 1:1) i PD_LASER; `KERF` i `PIERCE`
+osobno. Reguła `__renderedByThree` po stronie gry (`markThreeRenderedBullets` w `render()` przed `updateHexShips3D`,
+warunek `RenderCommands.projectilesReady` = pule pocisków WeaponFx gotowe); `WeaponFx.sync` jej już nie pisze. Zostają
+na później: `WeaponFx.onPlayerShot` (kopnięcie kadru — RW-30), `RocketEffects.onIntercept` i `Turret2D.triggerShot`
+rakiet (RW-23), wywołania wewnątrz renderu (`coreFx3D`, `repairDrones3D`, `muzzleGas`) — bez zmian. Pocisk Hexlance'a,
+gdy render nie przydzieli smugi (pula 16), nie dostaje już zapasu kanwy (`proj.slug` zawsze niezerowe) — w grze nie
+występuje. Szew: `import:src/game/carrierVelocity.js` 16 → 17 (dekoder ustawia `ActiveCarrier`), `index:zdarzenie`
+68 → 51, `index:zapytanie` 76 → 70, `index:dane` 30 → 15. Testy: `tests/renderCommands.test.mjs` (każdy typ: pisarz →
+czytelnik → dekoder z podstawionym WeaponFx — argumenty, encje, widok pocisku, nośnik, stan ładowania, uchwyty
+Hexlance'a, wzrost pierścienia, zwalnianie slotów), poprawione atrapy funkcji `index.html` w 9 testach.
+
 **RW-22 Rozkazy: kadłuby, mapa ran, iskry, odłamki, stacje, wybuchy, reaktor.**
 Pliki: `index.html` (haki `HullBodies.onImpact / onRepair / onNodeLost` → `DMG_*`, `setSource / clearSource` → pole
 rekordu, uv liczone w grze; `makeReactorBlow` → `EXPLOSION`; `applyDamageToStation` → `STATION_FX` po id stacji

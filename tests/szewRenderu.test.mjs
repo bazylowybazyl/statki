@@ -15,10 +15,10 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
   'index:aktualizacja': 101, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym)
-  'index:dane': 30,
+  'index:dane': 15,
   'index:konfiguracja': 168,
-  'index:zapytanie': 76,
-  'index:zdarzenie': 68, // 2026-10-15 RW-26 (rw-bronie): odrzut wież po stronie gry — Turret2D.recoilForShot (szyna strzałów), recoilAt ×2 (PD gracza); Turret2D zostaje na wątku głównym
+  'index:zapytanie': 70,
+  'index:zdarzenie': 51,
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidBeltGiants.js': 1,
@@ -32,7 +32,7 @@ const SUFITY = {
   'import:src/game/asteroidStorms.js': 3,
   'import:src/game/beamBand3D.js': 1,
   'import:src/game/cargoPortOps.js': 1,
-  'import:src/game/carrierVelocity.js': 16,
+  'import:src/game/carrierVelocity.js': 17, // 2026-10-15 RW-21 (rw-bronie): dekoder rekordów broni (weaponFxCommands.js) ustawia ActiveCarrier z bloku nośnika rekordu
   'import:src/game/cloakLook.js': 8,
   'import:src/game/coldWrecks.js': 1,
   'import:src/game/cometNucleus.js': 1,

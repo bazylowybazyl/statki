@@ -105,7 +105,7 @@ test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
   const cooldown = fn.indexOf('impactFxCooldownReady(');
   assert.ok(cooldown > gate, 'cooldown komórki za bramką kadru');
-  assert.ok(fn.indexOf('WeaponFx.impact(') > cooldown, 'receptura trafienia musi stać za bramkami');
+  assert.ok(fn.indexOf('RenderCommands.writer.impact(') > cooldown, 'receptura trafienia (rekord IMPACT, RW-21) musi stać za bramkami');
   assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 

@@ -12,6 +12,7 @@ import { WeaponController, barrelsPerShotOf, queueSalvoBarrels, drainSalvoQueue 
 import { getMountedWeaponAim } from '../src/game/weaponAim.js';
 import * as C from '../src/game/weaponCharge.js';
 import { createCarrier, writeCarrier } from '../src/game/carrierVelocity.js';
+import { RenderCommands } from '../src/render/renderCommands.js';
 import { readIndexHtml, loadIndexFunction } from './helpers/indexSource.mjs';
 
 globalThis.window = globalThis.window || {};
@@ -52,10 +53,10 @@ function p1Game(f) {
     chargeTimeOf: C.chargeTimeOf, mountChargeState: C.mountChargeState, requestMountCharge: C.requestMountCharge,
     stepMountCharge: C.stepMountCharge, cancelMountCharge: C.cancelMountCharge,
     CHARGE_FIRE: C.CHARGE_FIRE, CHARGE_CHARGING: C.CHARGE_CHARGING,
-    WeaponFx: {
-      get available() { return fx.available; },
-      createChargeState: () => ({ arcT: 0 }),
-      charge(id, x, y, a, s, u, dt, st) { fx.charges++; assert.ok(st && typeof st.arcT === 'number'); assert.ok(u >= 0 && u <= 1); }
+    // RW-21: efekt ładowania — rekord CHARGE (klucz stanu efektu = stan ładowania gniazda `st`).
+    RenderCommands: {
+      get ready() { return fx.available; },
+      writer: { charge(id, x, y, a, s, u, dt, st) { fx.charges++; assert.ok(st && typeof st === 'object'); assert.ok(u >= 0 && u <= 1); } }
     },
     writeCarrier, _chargeCarrier: createCarrier(),
     warp: { busy: false, isBusy() { return this.busy; } },
@@ -176,7 +177,8 @@ test('P2 (WeaponController): Mjolnir ładuje 3 s w update(), strzela z obu zacze
   window.warp = { state: 'idle', isBusy: () => false };
   window.stationUI = { open: false };
   let charges = 0;
-  window.WeaponFx = { available: true, createChargeState: () => ({ arcT: 0 }), charge: () => { charges++; } };
+  const chargeOrig = RenderCommands.writer.charge;
+  RenderCommands.writer.charge = () => { charges++; };
   try {
     assert.equal(f.controller.tryFireSpecialWeapons(), true);
     let steps = 0;
@@ -189,7 +191,8 @@ test('P2 (WeaponController): Mjolnir ładuje 3 s w update(), strzela z obu zacze
     for (let k = 0; k < 2000; k++) f.controller.update(DT);
     assert.equal(shots.length, 2, 'w ruchu Mjolnir P2 nie strzela');
   } finally {
-    delete window.fireWeaponCore; delete window.WeaponFx; delete window.warp; delete window.stationUI;
+    RenderCommands.writer.charge = chargeOrig;
+    delete window.fireWeaponCore; delete window.warp; delete window.stationUI;
   }
 });
 
