@@ -1152,6 +1152,24 @@ czasu workera (decyzja D7).
 
 **RW-10 Układ migawki i pakowanie.**
 Pliki: nowe `src/render/snapshotLayout.js`, `src/render/snapshotPack.js` (czyste), testy; `index.html` — jedno
+**Stan (2026-10-15, tor `rw-migawka`, commit „RW-04: bufory współdzielone…”):** zrobione. `src/render/tripleBuffer.js`
+(`createTripleBuffer`, `TripleBufferWriter.publish`, `TripleBufferReader.acquire`; nagłówek 64 B: MID z bitem NOWA,
+liczniki publikacji / odbiorów / stron nadpisanych przed odbiorem, rozmiar strony, generacja układu; strony wyrównane
+do 64 B, widoki stron tworzone raz funkcją `views`), `src/render/eventRing.js` (`EventRingWriter.begin / commit`,
+`EventRingReader.next(maxFrame)` / `adopt`; liczniki słów zawijane w Int32, pojemność = potęga dwójki, typ 0 = PAD —
+ładunek zawsze w jednym kawałku; wzrost: nowy pierścień generacji + 1, stary zamknięty flagą CLOSED po ostatnim
+WRITE, czytelnik dopija stary i przechodzi tylko na generację + 1) i — ponad plan — `src/render/returnLayout.js`
+(układ `RET` z § 3.4: numery odebranej / narysowanej migawki i ostatniego rozkazu, pierścień 4 odebranych klatek dla
+B2cr — `retNoteConsumed` / `retRecentConsumed`, flagi `RET_FLAG`, statystyki Float64 pod seqlockiem, rekordy przebić
+tarcz per slot puli — slot i generacja encji, profil, epoka, flaga ANY, 128 słów bitów, każdy pod własnym seqlockiem;
+wymiary puli parametrem, domyślne = `SHIELD_SLOTS` × `SHIELD_SLOT_CAP` / 32 — strażnik w teście). Działa też na
+zwykłym `ArrayBuffer` (tryb `inline`, strona bez izolacji). Testy `tests/renderBuffers.test.mjs` (9): wszystkie
+przeploty publish / acquire do 12 operacji (trzy strony zawsze różne, odbiór = najnowsza publikacja); wątki
+`worker_threads` na SAB — pisarz stron 64 KB 1000 Hz, czytelnik z przerwami 0–12 ms i w połowie strony: 0 rozdartych
+stron, suma kontrolna zgodna, numery rosną, strony pomijane; pierścień startujący z 256 słów, 0–60 rekordów na
+klatkę 1000 Hz (rekordy 0–3300 słów), czytelnik z opóźnieniem 0–3 klatek i przerwami: ~25 tys. rekordów, ≥ 3 wzrosty
+w locie (bufor nowego pierścienia przez `MessageChannel`), 0 zgubionych, 0 przestawionych, 0 o klatce > k; przebicia
+tarcz — pisarz bez przerw, czytelnik: 0 rozdartych rekordów.
 wywołanie w `render()` po kamerze, przed aktualizacjami 3D, za `?szew=inline`. Bloki HEAD, LISTS, ENT, BODY, NODES,
 NOZZLES, SHOTS, TURRETS (na razie z rekordów `Turret2D` po `updateHexShips3D`), WORLD, CORES, HALL; reguła „zmienione
 od ostatniej odebranej”; liczniki: węzły zmienione na klatkę (D — dziś niezmierzone), bajty na blok.
