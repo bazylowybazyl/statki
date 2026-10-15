@@ -1315,6 +1315,7 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
 ### Lista kontrolna PR
 - [ ] Brak nowych rendererów (WebGPU / WebGL) poza `Core3D`.
 - [ ] Nowy kod renderu w TSL — bez GLSL, `ShaderMaterial` i API WebGL (`tests/graBezGlsl.test.mjs`); nowy materiał / obiekt w rozgrzewce (`Core3D.warmup`).
+- [ ] Szew gra ↔ render nie rośnie (`tests/szewRenderu.test.mjs`, render w workerze — `docs/PLAN-render-worker.md`): moduł `src/3d` / `src/vfx` / `src/effects3d` nie czyta nowych zmiennych gry z `window` ani DOM, nie importuje nowych modułów `src/game` / `src/ai`; `index.html` nie dokłada odwołań do renderu. Sufit podnosi się tylko z powodem w linii sufitu; obecne liczby: `node scripts/webgpu/szewRenderu.mjs`.
 - [ ] Brak alokacji w pętli render/update tam, gdzie były bufory/pule.
 - [ ] Brak regresji sterowania i kolizji 2D.
 - [ ] Spójność osi/rotacji (sprite, thrusters, impact/local transforms).
