@@ -1255,7 +1255,10 @@
     window.isShieldBreachedAt = isShieldBreachedAt;   // rakiety (rocketSystem3D) — przebicie tarczy
     import { initWorld3D, attachPirateStation3D, updateWorld3D, setWorld3DHiddenTest } from "./src/3d/world3d.js";
     // Suchy dok piratów (misja 1): bryła 3D (budowle Z7), bryły trafień i kawałki zniszczeń.
-    import { attachPirateBase3D, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRockSite, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockSite, setPirateBaseHiddenTest, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
+    import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
+    // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
+    // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
+    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
@@ -7022,7 +7025,7 @@
     // Mgła wojny: kadłub ukryty przed graczem (siatka żyje — bez przebudowy na brzegu kręgu wzroku).
     setEntityHiddenTest((e) => SensorSystem.hides(e));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
-    setPirateBaseHiddenTest((st) => SensorSystem.hides(st));
+    onPirateBaseEvent(pirateBase3DEvent);
     Turret2D.skipDraw = (rec) => VisualMode.weapons3D && !!WEAPON3D_FAMILY[rec.weaponId];
     // Fregata zwiadu nad Atlasem (wylot z luku): kanwa nie zna głębi — wieże Atlasa pod fregatą się nie rysują.
     // Nadproże bramy hali K-7 (FG) nad okrętem w bramie — to samo dla wszystkich okrętów (obrysy nadproży hal przy
@@ -26752,6 +26755,8 @@
       _worldFocus[0] = ship && !ship.destroyed ? ship.pos : null;
       _worldFocus[1] = (splitScreenMode && player2Ship && !player2Ship.destroyed) ? player2Ship.pos : null;
       worldBodies.step(dt, _worldFocus);
+      // Baza piratów: kawałki nieobecne jako statyka (`_dockGone` — pęknięte, schowane, żywe ciała) po kroku ciał świata.
+      syncPirateBaseGone();
       // Kadłuby statków, NPC i wraków: silnik belek.
       HullBodies.step(dt, worldBodies.withEntities(allDestructibles));
       // Baza piratów (misja 1): zgniot ciał budowli taranem → punkty budowli; budowla bez stojącego kawałka ginie.
@@ -31053,7 +31058,7 @@
         stations.push(st);
         out[key] = st;
       }
-      attachPirateBase3D(out, place);
+      attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
       return out;
@@ -31215,10 +31220,12 @@
       return snapNeck(hs.neck, hs, _neckCtx, dirX, dirY, speed);
     };
     // Dev / skrypty: planetoida pod bazą (skała, osada, winda) i zerwanie windy teraz (bez rozpadu habitatu).
-    window.PirateRock = { state: () => pirateRockSite(), collapse: () => collapsePirateRockSite() };
+    window.PirateRock = { state: () => pirateRockSite(), collapse: () => collapsePirateRock() };
+    // Dev / skrypty: stan kawałków bazy (gra) i bryła (obraz).
+    window.PirateBase = { broken: () => pirateBaseBrokenChunks(), gone: (id) => pirateBaseChunkGone(id), hide: (id) => hidePirateBaseChunk(id), view: () => pirateBase3D() };
 
     // Planetoida pod bazą na radarze i mapie CIC (teren — rysowana zawsze, także we mgle, jak komety; tylko obraz,
-    // bez kolizji i studni). Póki baza misji stoi (StoryGame.site) i skała jest w scenie: podkład radaru = ląd
+    // bez kolizji i studni). Póki baza misji stoi (StoryGame.site i baza w świecie gry): podkład radaru = ląd
     // o promieniu skały (rzut z góry — szczyt leży 8 km pod płaszczyzną gry), kontakt „HIDALGO AST” w środku
     // (`env.bodies`, mała kropla — ląd rysuje podkład), mapa CIC — window.pirateRockLandmark (cicDisplay.js).
     const _pirateRockMark = { id: 'pirate-rock', label: PIRATE_ROCK_SPEC.label, x: 0, y: 0, radius: PIRATE_ROCK_SPEC.radius };
@@ -31229,10 +31236,11 @@
     const _radarFeaturesWithRock = [];
     function pirateRockLandmark() {
       if (!StoryGame.site) return null;
-      const r = pirateRockSite();
-      if (!r?.at || !r.rock?.root?.parent) return null;
-      _pirateRockMark.x = _pirateRockBody.x = r.at.x;
-      _pirateRockMark.y = _pirateRockBody.y = r.at.y;
+      // środek skały z czystego układu planetoidy i ramki bazy (src/game/story/pirateBaseWorld.js)
+      const at = pirateRockAt();
+      if (!at) return null;
+      _pirateRockMark.x = _pirateRockBody.x = at.x;
+      _pirateRockMark.y = _pirateRockBody.y = at.y;
       return _pirateRockMark;
     }
     function radarFeaturesWithPirateRock(features) {
@@ -31250,10 +31258,18 @@
     Object.defineProperty(window, 'pirateRockLandmark', { configurable: true, get: pirateRockLandmark });
 
     // Stan klatki bryły bazy z misji (render → updatePirateBase3D). Bez alokacji na klatkę.
-    const _baseFrameState = { alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
+    const _baseFrameState = { hidden: false, habitatDead: false, alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
     function storyBaseFrameState() {
       const s = _baseFrameState;
       const site = StoryGame.site;
+      // Mgła wojny: baza schowana, dopóki strona gracza nie zobaczy żadnej z jej budowli (SensorSystem — gra).
+      const structs = site?.structures;
+      s.hidden = false;
+      if (structs) {
+        s.hidden = true;
+        for (const k in structs) { const st = structs[k]; if (st && !SensorSystem.hides(st)) { s.hidden = false; break; } }
+      }
+      s.habitatDead = !!(structs?.habitat && !(structs.habitat.hp > 0));
       s.alarm = !!site?.alarmed;
       const age = s.alarm ? Math.max(0, StoryGame.time - (site.alarmAt ?? StoryGame.time)) : 0;
       // hangary dronów: światła startu po alarmie (fale dronów)
@@ -31500,7 +31516,7 @@
       baseBreak: (id, o) => storyBaseBreak(id, { ...(o || {}), allLive: true }),
       baseBrokenChunks: () => pirateBaseBrokenChunks(),
       // Planetoida pod bazą (2026-10-15): rozpad habitatu zrywa windę kosmiczną, osada na skale wybucha po kolei.
-      rockCollapse: () => collapsePirateRockSite(),
+      rockCollapse: () => collapsePirateRock(),
       launchNpc: storyNpcs.launch,
       // Zegar wodowania i herszt (misja 1, 2026-10-07): załoga przy działach w stanowisku, brama stanowiska
       // przy starcie, ucieczka herszta, mostek jako słaby punkt, okręt bez dowodzenia (hulk).
@@ -31749,6 +31765,8 @@
       // pasem: kompilacje stacji idą w wolnych chwilach rejestru, gdy strona czeka na pipeline'y pasa (flush niżej — reszta).
       setLoadingProgress(71, 'Stacje');
       await prepareStations3D(stations);
+      // Baza piratów (misja 1): rastry kawałków i szablony kratownic ciał świata — strona gry, bez Core3D.scene (RW-24).
+      prebuildPirateBaseWorld();
 
       // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
       // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
