@@ -21,7 +21,7 @@
 // Czysty moduł (bez three, DOM i `window`).
 
 import {
-  HEAD, HEAD_FLAG, LIST, ENT, ENT_FLAG, ENT_FLAG2, BODY, BODY_FLAG, NOZZLE, SHOT, SHOT_FLAG, TURRET, STATION, CORE,
+  HEAD, HEAD_FLAG, LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, BODY, BODY_FLAG, NOZZLE, SHOT, SHOT_FLAG, TURRET, STATION, CORE,
   WORLD, HALL_WORDS, SNAPSHOT_LAYOUT_VERSION, SNAPSHOT_DEFAULT_CAPACITY, createSnapshotLayout, createSnapshotViews,
   growSnapshotCapacity, bodyNodeF64Words, bodyNodeU8Bytes
 } from './snapshotLayout.js';
@@ -38,6 +38,9 @@ const TF = TURRET.F64, TI = TURRET.I32;
 const STF = STATION.F64, STI = STATION.I32;
 const CF = CORE.F64, CI = CORE.I32;
 const ES64 = ENT.stride.f64, ESI = ENT.stride.i32;
+
+/** Pamięć poziomu B na slot: Float64 (w, h, skale gniazd, wymiary sprite'a i obrazu) i Int32 (flagi, id, kody). */
+const TB_F64 = 11, TB_I32 = 8;
 
 /** Okres odświeżania pól poziomu B (klatki); encja odświeżana, gdy (slot + k) % okres === 0. */
 export const TIER_B_PERIOD = 16;
@@ -193,8 +196,8 @@ export class SnapshotPacker {
       const g = new Uint32Array(ne); g.set(this._entGenSeen); this._entGenSeen = g;
       this._ver = grow32(this._ver, ne * 6);
       const vs = new Float64Array(ne * 4); vs.set(this._visScale); this._visScale = vs;
-      const b = new Float64Array(ne * 5); b.set(this._tierB); this._tierB = b;
-      this._tierBI = grow32(this._tierBI, ne * 3);
+      const b = new Float64Array(ne * TB_F64); b.set(this._tierB); this._tierB = b;
+      this._tierBI = grow32(this._tierBI, ne * TB_I32);
     }
     const nb = this.ids.bodies.capacity;
     if (this._bodyPacked.length < nb) {
@@ -461,7 +464,7 @@ export class SnapshotPacker {
     const L = this._lists;
     const st = this.stats;
     st.ents = 0; st.bodies = 0; st.bodiesPacked = 0; st.nodesPacked = 0; st.beamsPacked = 0; st.nozzles = 0;
-    this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0;
+    this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0; this._imp = 0;
     const hides = f.fog ? f.hides : null;
     const ship = f.ship, p2 = f.p2;
     // kolejność: listy po kolei, encja pakowana raz (pierwsze wystąpienie); stacje mają własny blok
@@ -500,7 +503,7 @@ export class SnapshotPacker {
       this._entGenSeen[s] = gen;
       this._tierBRead(e, s);
     }
-    const tb = s * 5, tbi = s * 3;
+    const tb = s * TB_F64, tbi = s * TB_I32;
     // ── poziom A: pola encji czytane co klatkę, każde raz ──
     const pos = e.pos, vel = e.vel;
     f64[b + EF.X] = raw(e.x);
@@ -522,6 +525,12 @@ export class SnapshotPacker {
     const tB = this._tierB;
     f64[b + EF.W] = tB[tb]; f64[b + EF.H] = tB[tb + 1];
     f64[b + EF.HP_SCALE] = tB[tb + 2]; f64[b + EF.HP_SCALE_X] = tB[tb + 3]; f64[b + EF.HP_SCALE_Y] = tB[tb + 4];
+    f64[b + EF.SPRITE_W] = tB[tb + 5]; f64[b + EF.SPRITE_H] = tB[tb + 6];
+    f64[b + EF.RS_W] = tB[tb + 7]; f64[b + EF.RS_H] = tB[tb + 8]; f64[b + EF.RS_NW] = tB[tb + 9]; f64[b + EF.RS_NH] = tB[tb + 10];
+    const tBI = this._tierBI;
+    i32[bi + EI.WEAPON_TIER] = tBI[tbi + 3]; i32[bi + EI.FACTION] = tBI[tbi + 4]; i32[bi + EI.FACTION_ID] = tBI[tbi + 5];
+    i32[bi + EI.HULL_ID] = tBI[tbi + 6]; i32[bi + EI.SHIP_ID] = tBI[tbi + 7];
+    i32[bi + EI.MODEL3D] = this.dict.code(e.model3DProfileId);
     let flags = this._tierBI[tbi] | (pos ? ENT_FLAG.HAS_POS : 0) | (vel ? ENT_FLAG.HAS_VEL : 0);
     let flags2 = this._tierBI[tbi + 1];
     if (e.dead) flags |= ENT_FLAG.DEAD;
@@ -540,6 +549,8 @@ export class SnapshotPacker {
     if (e.__editorBoost === true) flags |= ENT_FLAG.EDITOR_BOOST;
     if (e.__fSysBoost === true) flags |= ENT_FLAG.FSYS_BOOST;
     if (e.__warpPreview === true) flags |= ENT_FLAG.WARP_PREVIEW;
+    if (e.fighter) flags2 |= ENT_FLAG2.FIGHTER;
+    if (e._shieldForcedOff) flags2 |= ENT_FLAG2.SH_FORCED_OFF;
     i32[bi + EI.STATE] = this.dict.code(e.state);
     i32[bi + EI.PHASE] = this.dict.code(e.phase);
     i32[bi + EI.OWNER_ID] = this._tierBI[tbi + 2];
@@ -571,12 +582,15 @@ export class SnapshotPacker {
       f64[b + EF.SH_HARD] = raw(sh.hardness);
       f64[b + EF.SH_SHOW] = raw(sh.show);
       i32[bi + EI.SH_STATE] = this.dict.code(sh.state);
+      if (sh.forceOff) flags2 |= ENT_FLAG2.SH_FORCE_OFF;
       const imp = sh.impacts;
-      i32[bi + EI.SH_IMPACT_ID] = imp && imp.length ? (num(imp[imp.length - 1].id) | 0) : 0;
+      i32[bi + EI.SH_IMPACT_ID] = imp && imp.length ? (num(imp[0].id) | 0) : 0;
+      this._packImpacts(v, imp, bi);
     } else {
       f64[b + EF.SH_MAX] = NaN; f64[b + EF.SH_VAL] = NaN; f64[b + EF.SH_ACT] = NaN;
       f64[b + EF.SH_HARD] = NaN; f64[b + EF.SH_SHOW] = NaN;
       i32[bi + EI.SH_STATE] = -1; i32[bi + EI.SH_IMPACT_ID] = 0;
+      i32[bi + EI.IMP_OFF] = -1; i32[bi + EI.IMP_N] = 0;
     }
     // maskowanie (stan gry)
     const ck = e.cloak;
@@ -591,6 +605,24 @@ export class SnapshotPacker {
     } else {
       f64[b + EF.CLOAK_LEVEL] = NaN; f64[b + EF.CLOAK_ENERGY] = NaN;
       i32[bi + EI.CLOAK_STATE] = -1; i32[bi + EI.CLOAK_BREAK] = 0;
+    }
+    // zimny wrak: smuga z migawki i ród (orphany mostków 3D)
+    const cs = (flags & ENT_FLAG.COLD) !== 0 ? e._coldSnapshot : null;
+    if (cs) {
+      flags2 |= ENT_FLAG2.HAS_COLD_SNAP;
+      i32[bi + EI.COLD_KIND] = this.dict.code(cs.kind);
+      const ch = cs.hull;
+      i32[bi + EI.COLD_DMG_KEY] = ch ? this.dict.code(ch.dmgKey) : -1;
+      const im = cs.impostor;
+      if (im) {
+        f64[b + EF.CI_X] = raw(im.x); f64[b + EF.CI_Y] = raw(im.y); f64[b + EF.CI_ROT] = raw(im.rot);
+        f64[b + EF.CI_HALF_W] = raw(im.halfW); f64[b + EF.CI_HALF_H] = raw(im.halfH);
+        f64[b + EF.CI_R] = raw(im.r); f64[b + EF.CI_G] = raw(im.g); f64[b + EF.CI_B] = raw(im.b);
+        f64[b + EF.CI_WX] = raw(im.wx); f64[b + EF.CI_WY] = raw(im.wy); f64[b + EF.CI_REACH] = raw(im.reach);
+        f64[b + EF.CI_OPACITY] = raw(im.opacity);
+      } else f64[b + EF.CI_X] = NaN;
+    } else {
+      i32[bi + EI.COLD_KIND] = -1; i32[bi + EI.COLD_DMG_KEY] = -1;
     }
     i32[bi + EI.SLOT] = s;
     i32[bi + EI.GEN] = gen;
@@ -682,13 +714,26 @@ export class SnapshotPacker {
   }
 
   _tierBRead(e, s) {
-    const tb = s * 5, tbi = s * 3;
+    const tb = s * TB_F64, tbi = s * TB_I32;
     const B = this._tierB;
     B[tb] = raw(e.w);
     B[tb + 1] = raw(e.h);
     B[tb + 2] = raw(e.__hardpointScale);
     B[tb + 3] = raw(e.__hardpointScaleX);
     B[tb + 4] = raw(e.__hardpointScaleY);
+    B[tb + 5] = raw(e.spriteW);
+    B[tb + 6] = raw(e.spriteH);
+    const rs = e.renderSpriteImage;
+    B[tb + 7] = rs ? raw(rs.width) : NaN;
+    B[tb + 8] = rs ? raw(rs.height) : NaN;
+    B[tb + 9] = rs ? raw(rs.naturalWidth) : NaN;
+    B[tb + 10] = rs ? raw(rs.naturalHeight) : NaN;
+    const dict = this.dict, BI_ = this._tierBI;
+    BI_[tbi + 3] = dict.code(e.weaponTier);
+    BI_[tbi + 4] = dict.code(e.faction);
+    BI_[tbi + 5] = dict.code(e.factionId);
+    BI_[tbi + 6] = dict.code(e.__hullId);
+    BI_[tbi + 7] = dict.code(e.shipId);
     let fl = 0, fl2 = 0;
     if (e.isWreck) fl |= ENT_FLAG.WRECK;
     if (e.isFragment) fl |= ENT_FLAG.FRAGMENT;
@@ -698,9 +743,35 @@ export class SnapshotPacker {
     if (e.isAsteroidHex) fl |= ENT_FLAG.ASTEROID_HEX;
     if (e.isPlayer) fl2 |= ENT_FLAG2.IS_PLAYER_FIELD;
     if (e.isCapitalShip) fl2 |= ENT_FLAG2.CAPITAL;
+    if (rs) fl2 |= ENT_FLAG2.HAS_RS;
     this._tierBI[tbi] = fl;
     this._tierBI[tbi + 1] = fl2;
     this._tierBI[tbi + 2] = this.dict.code(e.id || e.uid || e.name);
+  }
+
+  _packImpacts(v, imp, bi) {
+    const i32 = v.entI32;
+    const n = imp ? imp.length : 0;
+    if (n === 0) { i32[bi + EI.IMP_OFF] = -1; i32[bi + EI.IMP_N] = 0; return; }
+    const cap = this.layout.cap.impacts;
+    if (this._imp + n > cap) {
+      this._requestGrow('impacts', (this._imp + n) * 2);
+      i32[bi + EI.IMP_OFF] = -1; i32[bi + EI.IMP_N] = 0;
+      return;
+    }
+    const F = v.impF64, dict = this.dict;
+    let o = this._imp * IMPACT.STRIDE;
+    for (let j = 0; j < n; j++, o += IMPACT.STRIDE) {
+      const t = imp[j];
+      F[o + IMPACT.ID] = raw(t.id);
+      F[o + IMPACT.GRID_ANGLE] = raw(t.gridAngle);
+      F[o + IMPACT.DAMAGE] = raw(t.damage);
+      F[o + IMPACT.INTENSITY] = raw(t.intensity);
+      F[o + IMPACT.FX_CLASS] = dict.code(t.fxClass);
+    }
+    i32[bi + EI.IMP_OFF] = this._imp;
+    i32[bi + EI.IMP_N] = n;
+    this._imp += n;
   }
 
   _breakSerial(obj) {

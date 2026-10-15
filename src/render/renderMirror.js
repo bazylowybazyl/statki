@@ -13,7 +13,7 @@
 //
 // Czysty moduł (bez three, DOM i `window`).
 
-import { LIST, ENT, ENT_FLAG, ENT_FLAG2, NOZZLE, BODY, BODY_FLAG, HEAD } from './snapshotLayout.js';
+import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, NOZZLE, BODY, BODY_FLAG, HEAD } from './snapshotLayout.js';
 import { MirrorBody, applyBodyPage } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
@@ -69,6 +69,10 @@ export class MirrorEntity {
     this.state = undefined; this.phase = undefined;
     this.id = undefined; this.uid = undefined; this.name = undefined;
     this.type = undefined; this.shipFrame = undefined; this.activeHullId = undefined;
+    this.model3DProfileId = undefined; this.fighter = false; this.weaponTier = undefined;
+    this.faction = undefined; this.factionId = undefined; this.__hullId = undefined; this.shipId = undefined;
+    this.spriteW = undefined; this.spriteH = undefined; this.renderSpriteImage = null;
+    this._shieldForcedOff = false; this._coldSnapshot = null;
     // napęd
     this.thrusterInput = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
     this.input = { main: 0, thrustY: 0 };
@@ -216,6 +220,38 @@ export function applyEntityPage(rm, m, v, s) {
   const dict = rm.dict;
   m.state = dict.value(i32[bi + EI.STATE]);
   m.phase = dict.value(i32[bi + EI.PHASE]);
+  m.model3DProfileId = dict.value(i32[bi + EI.MODEL3D]);
+  m.fighter = (flags2 & ENT_FLAG2.FIGHTER) !== 0;
+  m.weaponTier = dict.value(i32[bi + EI.WEAPON_TIER]);
+  m.faction = dict.value(i32[bi + EI.FACTION]);
+  m.factionId = dict.value(i32[bi + EI.FACTION_ID]);
+  m.__hullId = dict.value(i32[bi + EI.HULL_ID]);
+  m.shipId = dict.value(i32[bi + EI.SHIP_ID]);
+  m.spriteW = und(f64[b + EF.SPRITE_W]);
+  m.spriteH = und(f64[b + EF.SPRITE_H]);
+  if (flags2 & ENT_FLAG2.HAS_RS) {
+    if (!m.renderSpriteImage) m.renderSpriteImage = { width: 0, height: 0, naturalWidth: 0, naturalHeight: 0 };
+    const rsi = m.renderSpriteImage;
+    rsi.width = und(f64[b + EF.RS_W]); rsi.height = und(f64[b + EF.RS_H]);
+    rsi.naturalWidth = und(f64[b + EF.RS_NW]); rsi.naturalHeight = und(f64[b + EF.RS_NH]);
+  } else m.renderSpriteImage = null;
+  m._shieldForcedOff = (flags2 & ENT_FLAG2.SH_FORCED_OFF) !== 0;
+  if (flags2 & ENT_FLAG2.HAS_COLD_SNAP) {
+    if (!m._coldSnapshot) m._coldSnapshot = { kind: undefined, hull: { dmgKey: undefined }, impostor: null };
+    const cs = m._coldSnapshot;
+    cs.kind = dict.value(i32[bi + EI.COLD_KIND]);
+    cs.hull.dmgKey = dict.value(i32[bi + EI.COLD_DMG_KEY]);
+    const cx = f64[b + EF.CI_X];
+    if (cx === cx) {
+      if (!cs.impostor) cs.impostor = { x: 0, y: 0, rot: 0, halfW: 0, halfH: 0, r: 0, g: 0, b: 0, wx: 0, wy: 0, reach: 0, opacity: 0 };
+      const im = cs.impostor;
+      im.x = cx; im.y = f64[b + EF.CI_Y]; im.rot = f64[b + EF.CI_ROT];
+      im.halfW = f64[b + EF.CI_HALF_W]; im.halfH = f64[b + EF.CI_HALF_H];
+      im.r = f64[b + EF.CI_R]; im.g = f64[b + EF.CI_G]; im.b = f64[b + EF.CI_B];
+      im.wx = f64[b + EF.CI_WX]; im.wy = f64[b + EF.CI_WY]; im.reach = f64[b + EF.CI_REACH];
+      im.opacity = und(f64[b + EF.CI_OPACITY]);
+    } else cs.impostor = null;
+  } else m._coldSnapshot = null;
   // napęd (obiekty stałe)
   const ti = m.thrusterInput;
   ti.main = und(f64[b + EF.TI_MAIN]); ti.leftSide = und(f64[b + EF.TI_LEFT]);
@@ -231,13 +267,15 @@ export function applyEntityPage(rm, m, v, s) {
   } else m.engineIgn = null;
   // tarcza
   if (flags & ENT_FLAG.HAS_SHIELD) {
-    if (!m.shield) m.shield = { max: 0, val: 0, state: undefined, activationProgress: 0, hardness: undefined, show: undefined, impacts: null, impactId: 0 };
+    if (!m.shield) m.shield = { max: 0, val: 0, state: undefined, activationProgress: 0, hardness: undefined, show: undefined, forceOff: false, impacts: [], impactId: 0, _impPool: [] };
     const sh = m.shield;
     sh.max = und(f64[b + EF.SH_MAX]); sh.val = und(f64[b + EF.SH_VAL]);
     sh.activationProgress = und(f64[b + EF.SH_ACT]); sh.hardness = und(f64[b + EF.SH_HARD]);
     sh.show = und(f64[b + EF.SH_SHOW]);
     sh.state = dict.value(i32[bi + EI.SH_STATE]);
     sh.impactId = i32[bi + EI.SH_IMPACT_ID];
+    sh.forceOff = (flags2 & ENT_FLAG2.SH_FORCE_OFF) !== 0;
+    applyImpacts(sh, v, i32[bi + EI.IMP_OFF], i32[bi + EI.IMP_N], dict);
   } else m.shield = null;
   // maskowanie (stan gry; `lastBreak` — obiekt o tożsamości stałej dla numeru zerwania)
   if (flags & ENT_FLAG.HAS_CLOAK) {
@@ -286,6 +324,25 @@ export function applyEntityPage(rm, m, v, s) {
     mb.dims = hull.dims;
     mb.anchored = hull.anchored;
     hull.body = mb;
+  }
+}
+
+/** Trafienia tarczy (najnowsze pierwsze, jak shield.impacts): obiekty z puli lustra, aktualizowane w miejscu. */
+function applyImpacts(sh, v, off, n, dict) {
+  const out = sh.impacts, pool = sh._impPool;
+  out.length = 0;
+  if (n <= 0) return;
+  const F = v.impF64;
+  for (let j = 0; j < n; j++) {
+    let t = pool[j];
+    if (!t) { t = { id: 0, gridAngle: 0, damage: 0, intensity: 0, fxClass: undefined }; pool[j] = t; }
+    const o = (off + j) * IMPACT.STRIDE;
+    t.id = F[o + IMPACT.ID];
+    t.gridAngle = F[o + IMPACT.GRID_ANGLE];
+    t.damage = und(F[o + IMPACT.DAMAGE]);
+    t.intensity = und(F[o + IMPACT.INTENSITY]);
+    t.fxClass = dict.value(F[o + IMPACT.FX_CLASS]);
+    out.push(t);
   }
 }
 

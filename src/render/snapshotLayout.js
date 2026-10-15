@@ -106,12 +106,21 @@ export const ENT = record({
     // tarcza
     'SH_MAX', 'SH_VAL', 'SH_ACT', 'SH_HARD', 'SH_SHOW',
     // maskowanie (stan gry; wygląd liczy render)
-    'CLOAK_LEVEL', 'CLOAK_ENERGY'
+    'CLOAK_LEVEL', 'CLOAK_ENERGY',
+    // poziom B: wymiary sprite'a (koło zapasowe tarczy), obraz sprite'a renderu (width, height, natural*)
+    'SPRITE_W', 'SPRITE_H', 'RS_W', 'RS_H', 'RS_NW', 'RS_NH',
+    // zimny wrak: smuga z migawki (_coldSnapshot.impostor)
+    'CI_X', 'CI_Y', 'CI_ROT', 'CI_HALF_W', 'CI_HALF_H', 'CI_R', 'CI_G', 'CI_B', 'CI_WX', 'CI_WY', 'CI_REACH', 'CI_OPACITY'
   ],
   i32: [
     'SLOT', 'GEN', 'FLAGS', 'FLAGS2', 'BODY_SLOT', 'BODY_GEN',
     'NOZ_OFF', 'NOZ_N', 'IGN_STATE', 'STATE', 'PHASE', 'OWNER_ID',
     'SH_STATE', 'SH_IMPACT_ID', 'CLOAK_STATE', 'CLOAK_BREAK',
+    // trafienia tarczy (pula impF64: IMP_N rekordów od IMP_OFF, najnowsze pierwsze — jak shield.impacts)
+    'IMP_OFF', 'IMP_N',
+    // kody słownika: profil modelu 3D (A), stopień broni, frakcja, id kadłuba, id statku (B); zimny wrak: rodzaj
+    // migawki i ród (A)
+    'MODEL3D', 'WEAPON_TIER', 'FACTION', 'FACTION_ID', 'HULL_ID', 'SHIP_ID', 'COLD_KIND', 'COLD_DMG_KEY',
     // wersje konfiguracji statycznej (rosną przy zmianie tożsamości źródła)
     'V_VISUAL', 'V_HULL', 'V_NOZZLES', 'V_LIGHTS', 'V_BRIDGE', 'V_SHIELD'
   ]
@@ -127,7 +136,13 @@ export const ENT_FLAG = Object.freeze({
 });
 
 /** Bity ENT.FLAGS2. */
-export const ENT_FLAG2 = Object.freeze({ IS_PLAYER_FIELD: 1, CAPITAL: 2, SLEEPING: 4, CLOAK_FORCED: 8 });
+export const ENT_FLAG2 = Object.freeze({
+  IS_PLAYER_FIELD: 1, CAPITAL: 2, SLEEPING: 4, CLOAK_FORCED: 8, FIGHTER: 16, SH_FORCE_OFF: 32, SH_FORCED_OFF: 64,
+  HAS_RS: 128, HAS_COLD_SNAP: 256
+});
+
+/** Trafienie tarczy w puli impF64 (to, co czyta shield3D.processEntity). */
+export const IMPACT = Object.freeze({ ID: 0, GRID_ANGLE: 1, DAMAGE: 2, INTENSITY: 3, FX_CLASS: 4, STRIDE: 5 });
 
 // ── BODY (rekord na slot ciała belek; pola rekordu kadłuba `beamHull` i ciała `hull.body`) ──────────────────
 export const BODY = record({
@@ -206,7 +221,7 @@ export const HALL_WORDS = HALL_DUST_IN.size;
 
 /** Pojemności domyślne (rosną przez growSnapshotCapacity). */
 export const SNAPSHOT_DEFAULT_CAPACITY = Object.freeze({
-  entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nodeI32: 1 << 15, nozzles: 4096, shots: 1024, turrets: 2048,
+  entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nodeI32: 1 << 15, impacts: 2048, nozzles: 4096, shots: 1024, turrets: 2048,
   stations: 64, cores: 256
 });
 
@@ -241,6 +256,7 @@ export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen =
   region('nodeF64', Float64Array, cap.nodeF64);
   region('nodeU8', Uint8Array, cap.nodeU8);
   region('nodeI32', Int32Array, cap.nodeI32);
+  region('impF64', Float64Array, cap.impacts * IMPACT.STRIDE);
   recRegions('noz', NOZZLE, cap.nozzles);
   recRegions('shot', SHOT, cap.shots);
   recRegions('tur', TURRET, cap.turrets);

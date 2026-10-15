@@ -144,3 +144,37 @@ test('lustro: zerwanie maskowania — obiekt lastBreak o stałej tożsamości dl
   step();
   assert.notEqual(m.cloak.lastBreak, o1);
 });
+
+test('lustro: trafienia tarczy (najnowsze pierwsze), wyłączenie wymuszone, zimny wrak ze smugą, kody encji', () => {
+  const ents = [makeShip('A', 0)];
+  const e = ents[0];
+  e.shield.impacts = [{ id: 9, gridAngle: 0.5, damage: 120, intensity: 0.7, fxClass: 'special' }, { id: 8, gridAngle: -1, intensity: 0.3, fxClass: 'main' }];
+  e.shield.forceOff = true;
+  e.model3DProfileId = 'bellator'; e.faction = 'terra_nova'; e.weaponTier = 'L'; e.fighter = false;
+  const cold = makeShip('W', 500);
+  cold.isCold = true;
+  cold._coldSnapshot = { kind: 'beam', hull: { dmgKey: 'ród-W' }, impostor: { x: 1, y: 2, rot: 0.1, halfW: 50, halfH: 20, r: 0.2, g: 0.3, b: 0.4, wx: 501, wy: -39, reach: 60, opacity: 0.9 } };
+  const { rm, step, frame } = setup(ents);
+  frame.coldWrecks = [cold];
+  step();
+  const m = rm.player;
+  assert.equal(m.shield.impacts.length, 2);
+  assert.deepEqual({ ...m.shield.impacts[0] }, { id: 9, gridAngle: 0.5, damage: 120, intensity: 0.7, fxClass: 'special' });
+  assert.equal(m.shield.impacts[1].damage, undefined, 'brak damage → undefined (shield3D bierze intensity)');
+  assert.equal(m.shield.forceOff, true);
+  assert.equal(m.model3DProfileId, 'bellator');
+  assert.equal(m.faction, 'terra_nova');
+  assert.equal(m.weaponTier, 'L');
+  const mc = rm.lists[LIST.COLD][0];
+  assert.equal(mc.isCold, true);
+  assert.equal(mc._coldSnapshot.kind, 'beam');
+  assert.equal(mc._coldSnapshot.hull.dmgKey, 'ród-W');
+  assert.deepEqual({ ...mc._coldSnapshot.impostor }, cold._coldSnapshot.impostor);
+  // nowe trafienie: lista z puli, te same obiekty
+  const t0 = m.shield.impacts[0];
+  e.shield.impacts.unshift({ id: 10, gridAngle: 1, damage: 5, intensity: 0.3, fxClass: 'main' });
+  step();
+  assert.equal(m.shield.impacts.length, 3);
+  assert.equal(m.shield.impacts[0], t0, 'obiekt z puli lustra');
+  assert.equal(m.shield.impacts[0].id, 10);
+});
