@@ -823,6 +823,29 @@ Workery w workerze są dozwolone (wypiek mapy powierzchni kadłubów `hullSurfac
 `OffscreenCanvas` (`node_modules/three/src/renderers/common/Backend.js:668`, `webgpu/WebGPUBackend.js:278`), a
 rdzeń renderera WebGPU nie używa `document`.
 
+### 2.10 Szew 2026-10-15 vs 2026-10-07 (RW-01)
+
+Ten sam skrypt inwentarza (`.tmp/render-szew/inwentarz.mjs`) na `main` 45431670 — gra urosła (§ 7.2), szew razem z nią:
+
+| miara | 2026-10-07 | 2026-10-15 |
+|---|---|---|
+| pliki gry / moduły renderu / linie renderu | 481 / 244 / 106 625 | 569 / 282 / 121 190 |
+| `index.html` → render: odwołania / symbole (z uchwytami) / uchwyty | 350 / 93 / 6 | 453 / 111 / 9 (`scoutBay3D`, `neaFlyby3D`, `cometsView`) |
+| symulacja → render: importy / z modułów | 29 / 15 | 33 / 18 |
+| render → symulacja: importy / z modułów / do modułów | 105 / 52 / 39 | 122 / 59 / 48 (nowe: `engineIgnition`, `asteroidRotation`, `destructorConfig`, `comets`, `cometNucleus`, `hexBodyHooks`, `pirateBaseBodies` (D), `hexGridSpace`, `repairSwarm` (C), `repairRig`, `beamBand3D`, `friendlyFire`) |
+| `window.*` zmiennych gry w renderze: nazwy / odczyty | 43 / 164 | 48 / 186 |
+| `GameState.*` w renderze | 9 | 8 |
+| odczyty GPU → CPU w modułach gry | 14 | 16 |
+| DOM w renderze: `document` / `requestIdleCallback` / `TextureLoader` itp. / `devicePixelRatio` / `localStorage` | 20 / 15 / 8 / 2 / 1 | 21 / 15 / 18 / 5 / 3 |
+
+Strażnik (`scripts/webgpu/szewRenderu.mjs` + `tests/szewRenderu.test.mjs`) liczy dokładniej niż inwentarz (AST zamiast
+wyrażeń regularnych, bez komentarzy, osobno moduły przenoszone i kanwa 2D) — jego sufity z 2026-10-15: `index.html` →
+render 442 odwołania (aktualizacja 100, zdarzenie 66, konfiguracja 169, zapytanie 76, dane 31; grupy z grafu jednostek
+i reguł `grupy.mjs` bez numerów linii), importy render → symulacja 122 do 48 modułów (klasy A 32, B 4, C 4, D 7, E 1),
+zmienne gry w modułach przenoszonych 38 nazw / 156 odczytów (z wolnymi identyfikatorami; `SUN` 35, `ship` 18,
+`DevTuning` 11), w modułach kanwy 2D 13 / 30, `GameState` 6, DOM w modułach przenoszonych 81 w 24 plikach, odczyty
+GPU 11 w 5 plikach, `Math.random` 13 w 3 plikach.
+
 ## 3. Projekt
 
 ### 3.1 Architektura i przebieg klatki
@@ -1174,6 +1197,18 @@ w modułach renderu. Liczba może spaść (sufit idzie w dół), nie może wzros
 Kryterium: zielony na dzisiejszym drzewie; dopisek `window.ship` w module `src/3d` albo nowy import `src/game/*.js`
 z renderu — czerwony. Zależności: brak. Kolizje: brak.
 
+**Stan (2026-10-15, tor `rw-szew`):** zrobione. `scripts/webgpu/szewRenderu.mjs` (graf `grafImportow` + AST
+`rollup/parseAst` modułów renderu i głównego skryptu `index.html`) i `tests/szewRenderu.test.mjs` (sufity jako mapa
+klucz → liczba, klucz bez sufitu = 0; liczby w § 2.10). Odstępstwa: (1) lekser `grafGry.mjs` przepisany na kody
+znaków — graf gry liczył się ~5–12 s (strażnik i `graBezGlsl` czekały), teraz ~1,8 s; wynik `lex` bit w bit na 1533
+plikach `src/`, `scripts/`, `dema/`, `tests/`; (2) moduły kanwy 2D (`ZOSTAJE_NA_WATKU_GLOWNYM`) liczą się osobno
+(`okno-kanwa:`), DOM w nich się nie liczy; `getContext('2d')` się nie liczy (działa na `OffscreenCanvas`) — liczy się
+`document` / `createElement`; (3) grupa „dane” `index.html` = symbole z modułów renderu bez three (przechodnio), bez
+`window` i bez stanu najwyższego poziomu + `fxRandom`, `SHIP3D_MODELS`, `WEAPON3D_FAMILY`, `stampFamilyFor`; (4) zmienna
+gry liczy się także jako wolny identyfikator (bez `window.`); (5) test negatywny w samym strażniku: kopia
+`core3d.js` w pamięci z `window.ship` i importem `src/game/stepDecay.js` — oba przekroczenia złapane (sprawdzone też na
+prawdziwym pliku). Test ~5 s. Commit — `RW-01: …` w historii `main`.
+
 **RW-02 Prototyp kompozycji A / B.**
 Pliki: nowe `dema/render-worker-proto.html`, `.js`, `.worker.js`, `scripts/webgpu/render-worker-proto.mjs`. Worker
 z `OffscreenCanvas` i `WebGPURenderer` three r183 (scena o koszcie podobnym do gry: kilkaset instancji, post z bloomem),
@@ -1186,12 +1221,39 @@ Zależności: brak. Kolizje: brak.
 **RW-03 Sloty renderu.** Pliki: nowe `src/render/renderIds.js`, `tests/renderIds.test.mjs` — slot + generacja dla
 encji, ciał belek, pocisków i zasobów, zwalnianie po zniknięciu z list, wzrost. Bez wpięcia w grę.
 Kryterium: testy. Zależności: brak. Kolizje: brak.
+**Stan (2026-10-15, tor `rw-migawka`, commit „RW-03: sloty renderu…”):** zrobione, bez wpięcia w grę.
+`src/render/renderIds.js`: `RenderIdSpace` (slot = najmniejszy wolny — kopiec minimalny wolnych slotów, zakres
+`highWater` zwija się z końca; generacja Uint32 rośnie przy zwolnieniu, bez 0; tożsamość w `Map`, bez stempli na
+obiektach gry), mark & sweep na klatkę migawki: `begin()` → `slotOf(obj)` z każdej listy → `end()` zwalnia sloty
+bez odwołania od `retain` klatek (encje, ciała, pociski: 1, zasoby: 600); `stamp` — obiekt z puli użyty ponownie
+dostaje nową generację w tym samym slocie (pociski gry to dziś świeże literały — `stamp` na zapas); `release(obj)` —
+zwolnienie od razu; `isLive(slot, gen)`, `objectAt`. `createRenderIds()` — przestrzenie encji, ciał (wrak dziedziczy
+slot ciała rodzica), pocisków i zasobów z `begin` / `end` naraz. Testy `tests/renderIds.test.mjs` (6, w tym losowa
+symulacja 3000 klatek z dwiema listami: para slot + generacja nigdy dla dwóch obiektów, liczba zajętych = żywe).
 
 **RW-04 Bufory współdzielone.** Pliki: nowe `src/render/tripleBuffer.js`, `src/render/eventRing.js`,
 `tests/renderBuffers.test.mjs` — potrójny bufor na `Atomics.exchange` (§ 3.2), pierścień rekordów zmiennej długości
 z przejściem na większy (§ 3.3). Kryterium: testy w Node z `worker_threads` na SAB: pisarz 1000 Hz, czytelnik wolny
 i nieregularny — żadnej rozdartej strony (suma kontrolna), żadnego zgubionego ani przestawionego rekordu, poprawne
 przejście na większy pierścień. Zależności: brak. Kolizje: brak.
+**Stan (2026-10-15, tor `rw-migawka`, commit „RW-04: bufory współdzielone…”):** zrobione. `src/render/tripleBuffer.js`
+(`createTripleBuffer`, `TripleBufferWriter.publish`, `TripleBufferReader.acquire`; nagłówek 64 B: MID z bitem NOWA,
+liczniki publikacji / odbiorów / stron nadpisanych przed odbiorem, rozmiar strony, generacja układu; strony wyrównane
+do 64 B, widoki stron tworzone raz funkcją `views`), `src/render/eventRing.js` (`EventRingWriter.begin / commit`,
+`EventRingReader.next(maxFrame)` / `adopt`; liczniki słów zawijane w Int32, pojemność = potęga dwójki, typ 0 = PAD —
+ładunek zawsze w jednym kawałku; wzrost: nowy pierścień generacji + 1, stary zamknięty flagą CLOSED po ostatnim
+WRITE, czytelnik dopija stary i przechodzi tylko na generację + 1) i — ponad plan — `src/render/returnLayout.js`
+(układ `RET` z § 3.4: numery odebranej / narysowanej migawki i ostatniego rozkazu, pierścień 4 odebranych klatek dla
+B2cr — `retNoteConsumed` / `retRecentConsumed`, flagi `RET_FLAG`, statystyki Float64 pod seqlockiem, rekordy przebić
+tarcz per slot puli — slot i generacja encji, profil, epoka, flaga ANY, 128 słów bitów, każdy pod własnym seqlockiem;
+wymiary puli parametrem, domyślne = `SHIELD_SLOTS` × `SHIELD_SLOT_CAP` / 32 — strażnik w teście). Działa też na
+zwykłym `ArrayBuffer` (tryb `inline`, strona bez izolacji). Testy `tests/renderBuffers.test.mjs` (9): wszystkie
+przeploty publish / acquire do 12 operacji (trzy strony zawsze różne, odbiór = najnowsza publikacja); wątki
+`worker_threads` na SAB — pisarz stron 64 KB 1000 Hz, czytelnik z przerwami 0–12 ms i w połowie strony: 0 rozdartych
+stron, suma kontrolna zgodna, numery rosną, strony pomijane; pierścień startujący z 256 słów, 0–60 rekordów na
+klatkę 1000 Hz (rekordy 0–3300 słów), czytelnik z opóźnieniem 0–3 klatek i przerwami: ~25 tys. rekordów, ≥ 3 wzrosty
+w locie (bufor nowego pierścienia przez `MessageChannel`), 0 zgubionych, 0 przestawionych, 0 o klatce > k; przebicia
+tarcz — pisarz bez przerw, czytelnik: 0 rozdartych rekordów.
 
 ### Etap 1 — migawka i lustra na jednym wątku (tryb `inline`)
 
