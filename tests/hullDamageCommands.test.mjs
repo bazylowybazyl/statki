@@ -175,3 +175,33 @@ test('bryła 3D: krater, rzaz i rozdarcie przez rekord = dawne wywołanie (komó
   HullBodies.release(e);
 });
 
+
+test('wybuch: rekord EXPLOSION = dawne opcje fabryki (domyślne, oś, zanik, barwa, sam gaz, gospodarz); drony zmiata gra', async () => {
+  const { createExplosionEvents } = await import('../src/game/explosionEvents.js');
+  const { installExplosionCommands } = await import('../src/3d/explosions/explosionCommands.js');
+  const rc = createRenderCommands({ mode: 'inline' });
+  const seen = [];
+  // Opcje tak, jak czyta je fabryka (createExplosionFactory → system.spawn): domyślne `??`, potem normalizacja spawn().
+  const norm = (o) => [o.x ?? 0, o.y ?? 0, o.size ?? 300, o.profile ?? 'capital', Number(o.vx ?? 0) || 0, Number(o.vy ?? 0) || 0,
+    Number(o.axisX) || 0, Number(o.axisY) || 0, Number(o.jetVelTau) > 0 ? Number(o.jetVelTau) : -1,
+    o.tint ? [o.tint[0], o.tint[1], o.tint[2]] : null, !!o.gasOnly, Number(o.hostKey) || 0];
+  const factory = (o) => { seen.push(norm(o)); return true; };
+  let ready = null;
+  const stats = installExplosionCommands(rc.reader, () => ready);
+  const swept = [];
+  const ev = createExplosionEvents(rc.writer, { sweepDrones: (o) => swept.push(o.x) });
+  const cases = [
+    { x: 10, y: -20, size: 300 },
+    { x: 1e7 + 0.25, y: -5e6, size: 560, profile: 'escort', vx: 120, vy: -40, axisX: 0.3, axisY: -0.9, jetVelTau: 0.42, hostKey: 77 },
+    { x: 5, y: 6, size: 220, profile: 'capital', tint: [0.9, 0.7, 1], gasOnly: true, hostKey: 3 },
+    { x: 1, y: 2, size: 180, profile: 'crush', vx: 0, vy: 0 }
+  ];
+  assert.equal(ev.blast(cases[0], true), false, 'render bez fabryki — ani rekordu, ani obrażeń dronów');
+  assert.equal(swept.length, 0);
+  ready = factory;
+  ev.ready = true;
+  for (const [i, o] of cases.entries()) ev.blast(o, i === 0);
+  assert.deepEqual(seen, cases.map(norm));
+  assert.deepEqual(swept, [10], 'drony tylko przy blast(o, true)');
+  assert.equal(stats.ok, cases.length);
+});

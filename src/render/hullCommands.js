@@ -17,7 +17,8 @@ export const HC = Object.freeze({
   DMG_SOLID_TEAR: 34,  // HullBodies.onSolidNodeLost → HullDamageMap.onSolidNodeLost (SolidWounds.tear)
   DMG_REPAIR: 35,      // HullBodies.onRepair → HullDamageMap.onHullRepair
   DMG_PATCH: 36,       // łata roju naprawczego (onCellRegrown) → HullDamageMap.patchCell
-  DMG_KERF: 37         // pas rzazu przebicia (applyBulletHullPass) → HullDamageMap.stampKerf
+  DMG_KERF: 37,        // pas rzazu przebicia (applyBulletHullPass) → HullDamageMap.stampKerf
+  EXPLOSION: 38        // wybuch z gazu (fabryka wybuchów WebGPU: makeReactorBlow / shipBlastFactory)
 });
 
 /** Najwięcej znaków rzazu na odcinek (= DMG_KERF_MAX w hullDamageMap.js; pilnuje test). */
@@ -59,6 +60,13 @@ export const DMG_PATCH = Object.freeze({
 export const DMG_KERF = Object.freeze({
   HULL: 0, X0: HULL.WORDS, Y0: HULL.WORDS + 1, X1: HULL.WORDS + 2, Y1: HULL.WORDS + 3, FAMILY: HULL.WORDS + 4,
   U0: HULL.WORDS + 5, V0: HULL.WORDS + 6, N: HULL.WORDS + 7, LAT: HULL.WORDS + 8, WORDS: HULL.WORDS + 8 + KERF_MAX * 4
+});
+
+// Wybuch (opcje fabryki createExplosionFactory rozwiązane w grze: domyślne `??` jak w fabryce, oś, zanik strumieni,
+// barwa dymu, sam gaz, gospodarz — klucz rodu kadłuba). Profil — napis (id z rekordu STR).
+export const EXPLOSION = Object.freeze({
+  X: 0, Y: 1, SIZE: 2, PROFILE: 3, VX: 4, VY: 5, AXIS_X: 6, AXIS_Y: 7, JET_TAU: 8, HAS_TINT: 9, TINT_R: 10, TINT_G: 11,
+  TINT_B: 12, GAS_ONLY: 13, HOST_KEY: 14, WORDS: 15
 });
 
 /**

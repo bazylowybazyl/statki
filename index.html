@@ -1091,6 +1091,13 @@
     import { installHullDamageCommands } from "./src/3d/hullDamageCommands.js";
     const HullDamageEvents = createHullDamageEvents(RenderCommands.writer);
     installHullDamageCommands(RenderCommands.reader);
+    // RW-22: wybuchy z gry — rekord EXPLOSION (src/game/explosionEvents.js; drony naprawcze w zasięgu zmiata gra), fabrykę
+    // wybuchów WebGPU woła dekoder renderu (src/3d/explosions/explosionCommands.js).
+    import { createExplosionEvents } from "./src/game/explosionEvents.js";
+    import { installExplosionCommands } from "./src/3d/explosions/explosionCommands.js";
+    const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
+    window.GameBlasts = GameBlasts;
+    window.__explosionCmdStats = installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
     HullBodies.onImpact = (e, r) => HullDamageEvents.impact(e, r);
     HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
@@ -1759,6 +1766,8 @@
         // Wybuchy okrętów (zbiornik paliwa przy śmierci NPC, gaz detonacji rdzenia) — fabryka BEZ zmiatania dronów
         // naprawczych: śmierć okrętu z puli HP dawniej dronów nie raniła (sam obraz, rozgrywka bez zmian).
         shipBlastFactory = window.makeReactorBlow;
+        // Gra pisze rekordy EXPLOSION, gdy render ma fabrykę (w workerze — flaga z kanału zwrotnego).
+        GameBlasts.ready = !!shipBlastFactory;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
         window.makeReactorBlow = withRepairDroneBlast(window.makeReactorBlow);
         window.Destruction3D.init({
@@ -6937,7 +6946,7 @@
     // Wybuch w punkcie świata gry przez fabrykę `window.makeReactorBlow` (wybuchy WebGPU, src/3d/explosions/;
     // options: profile — klucz EXPLOSION_PROFILES, vx / vy — nośnik).
     function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
-      window.makeReactorBlow?.({ x, y, size, ...options });
+      GameBlasts.blast({ x, y, size, ...options }, true);
     }
 
     window.triggerReactorBlow3D = triggerReactorBlow3D;
@@ -14155,11 +14164,16 @@
 
     // Wybuch (window.makeReactorBlow — rozpad stacji i doku, śmierć bez rdzenia) zmiata drony naprawcze w promieniu
     // ~½ rozmiaru wybuchu, bez strony.
+    // Gra wybucha przez GameBlasts.blast(o, true) (rekord EXPLOSION, zmiatanie tutaj); opakowanie zostaje dla wybuchów,
+    // które rodzi render (rozpad stacji — Destruction3D) i dla konsoli (window.makeReactorBlow).
+    function sweepRepairDronesForBlast(opts) {
+      if (RepairSwarm.out > 0 && opts && Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
+        RepairSwarm.blast(opts.x, opts.y, Math.max(60, (Number(opts.size) || 280) * 0.55), REPAIR_TUNE.droneHp * 4, null);
+      }
+    }
     function withRepairDroneBlast(factory) {
       return (opts) => {
-        if (RepairSwarm.out > 0 && opts && Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
-          RepairSwarm.blast(opts.x, opts.y, Math.max(60, (Number(opts.size) || 280) * 0.55), REPAIR_TUNE.droneHp * 4, null);
-        }
+        sweepRepairDronesForBlast(opts);
         return factory(opts);
       };
     }
@@ -23352,8 +23366,7 @@
       if (!SHIP_BLAST_TUNE.crush || !e || e.dead || e.destroyed || e.isWreck || !e.fuelTank) return false;
       const t = HullBodies.simTime;
       if (e.fuelTank.ruptured && t - e.fuelTank.rupturedAt < CRUSH_SMOKE_TUNE.afterRupture) return false;
-      const spawn = shipBlastFactory;
-      if (!spawn) return false;
+      if (!GameBlasts.ready) return false;
       const o = _crushOpts;
       o.size = crushSmokeSize(nodes);
       crushSmokeCenter(e, x, y, o.size, o);
@@ -23362,7 +23375,7 @@
       o.hostKey = Number(e.beamHull?.dmgKey) || 0;
       const st = CRUSH_SMOKE_STATS;
       st.n++;
-      const ok = !!spawn(o);
+      const ok = GameBlasts.blast(o);
       if (ok) st.gas++;
       st.last = { name: e.name || e.type || null, x, y, size: o.size, nodes, t };
       return true;
@@ -23406,9 +23419,8 @@
     // Śmierć NPC bez detonacji rdzenia: wybuch zbiornika (tb z fuelTankBlast, liczony przed zamianą we wrak); kadłub
     // bez zbiornika — wybuch w środku okrętu z klasą z promienia.
     function spawnShipDeathBlast(npc, tb, hostKey = 0) {
-      const spawn = shipBlastFactory;
-      if (!spawn) return false;
-      if (tb) { const o = fuelBlastOpts(tb); if (hostKey) o.hostKey = hostKey; return spawn(o); }
+      if (!GameBlasts.ready) return false;
+      if (tb) { const o = fuelBlastOpts(tb); if (hostKey) o.hostKey = hostKey; return GameBlasts.blast(o); }
       // Zbiornik pękł za życia (fuelTankBlast → null): świeży wybuch zbiornika JEST wybuchem śmierci (bez drugiego),
       // po FUEL_TANK_TUNE.ruptureQuiet s — mniejszy wybuch resztek ze środka okrętu.
       const tank = npc.fuelTank;
@@ -23424,7 +23436,7 @@
       o.size = Math.max(70, Math.min(460, r * 0.9)) * k;
       o.axisX = 0; o.axisY = 0;
       o.hostKey = hostKey || Number(npc.beamHull?.dmgKey) || 0;
-      return spawn(o);
+      return GameBlasts.blast(o);
     }
     // PĘKNIĘCIE zbiornika za życia okrętu (src/game/fuelTank.js — stepFuelTankRupture; prośba użytkownika 2026-10-15):
     // taran, zgniot, krater albo rozpad zabił ≥ połowę komórek zbiornika → wybuch z gazu z jego miejsca od razu (sam obraz,
@@ -23436,7 +23448,7 @@
       if (!tb) return false;
       const st = FUEL_RUPTURE_STATS;
       st.n++;
-      const ok = !!shipBlastFactory?.(fuelBlastOpts(tb));
+      const ok = GameBlasts.blast(fuelBlastOpts(tb));
       if (ok) st.gas++;
       st.last = { name: entity.name || entity.type || null, x: tb.x, y: tb.y, size: tb.size, profile: tb.profile, t: HullBodies.simTime };
       return ok;
@@ -23445,9 +23457,8 @@
     // zbiornika — dym w barwie plazmy frakcji (jedna rodzina wybuchów okrętów). Sam gaz (gasOnly).
     const _coreGasOpts = { x: 0, y: 0, size: 0, profile: 'capital', vx: 0, vy: 0, tint: [1, 1, 1], gasOnly: true, hostKey: 0 };
     function spawnReactorDetonationGas(ev) {
-      const spawn = shipBlastFactory;
       const host = ev?.host;
-      if (!SHIP_BLAST_TUNE.coreGas || !spawn || !host || !Number.isFinite(ev.x) || !Number.isFinite(ev.y)) return false;
+      if (!SHIP_BLAST_TUNE.coreGas || !GameBlasts.ready || !host || !Number.isFinite(ev.x) || !Number.isFinite(ev.y)) return false;
       const o = _coreGasOpts;
       const tank = host.fuelTank;
       const cls = ev.core?.classId;
@@ -23461,7 +23472,7 @@
       const col = ev.core?.color || reactorColorFor(host);
       const m = Math.max(1e-3, col[0], col[1], col[2]);
       o.tint[0] = 0.55 + 0.45 * col[0] / m; o.tint[1] = 0.55 + 0.45 * col[1] / m; o.tint[2] = 0.55 + 0.45 * col[2] / m;
-      return spawn(o);
+      return GameBlasts.blast(o);
     }
 
     // Stan struktury kadłuba do sufitu HP: węzły kadłuba na belkach.
@@ -31108,13 +31119,13 @@
       const c = id ? l.chunkById.get(id) : null;
       if (!c || !storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } })) {
         if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-        window.makeReactorBlow?.({ x: hx, y: hy, size: 300 });
+        GameBlasts.blast({ x: hx, y: hy, size: 300 }, true);
         camera.addShake(8, 0.4);
         return;
       }
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-      window.makeReactorBlow?.({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 });
+      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 }, true);
       camera.addShake(12, 0.5);
     }
 
@@ -31201,7 +31212,7 @@
       onSnap(st) {
         const owner = pirateBaseSites()?.habitat?.owner;
         const hc = _neckCtx.habitat;
-        window.makeReactorBlow?.({ x: hc.x, y: hc.y, size: 560 });
+        GameBlasts.blast({ x: hc.x, y: hc.y, size: 560 }, true);
         camera.addShake(26, 0.9);
         noteCameraCombat('taran');
         if (StoryGame.site) StoryGame.site.neckSnapped = true;
@@ -31209,7 +31220,7 @@
         if (owner && owner.hp > 0) _baseIntegrityHooks.damage(owner, (Number(owner.maxHp) || 0) * NECK_TUNE.hpFrac, hc.x, hc.y);
       },
       onImpact(st) {
-        window.makeReactorBlow?.({ x: st.impactX, y: st.impactY, size: 620 });
+        GameBlasts.blast({ x: st.impactX, y: st.impactY, size: 620 }, true);
         camera.addShake(32, 1.1);
       },
       onLand(st) {
@@ -31564,7 +31575,7 @@
       warpArrivalsFree: () => Math.max(0, 24 - (WarpNurt.arrivals?.length || 0)),
       warpOut: (list, origin) => storyWarpOutUnits(list, origin),
       returnWing: () => returnSupportWingToEarth(),
-      reactorBlow: (o) => window.makeReactorBlow?.(o),
+      reactorBlow: (o) => GameBlasts.blast(o, true),
       addCredits: (n) => { if (window.DevEconomy?.addCredits) window.DevEconomy.addCredits(n); else PLAYER.credits += n; },
       changeReputation: (f, d, reason) => changePlayerReputation(f, d, reason),
       factionLabel: (f) => FACTIONS[normalizeFaction(f)]?.name || f,

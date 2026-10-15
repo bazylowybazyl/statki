@@ -70,7 +70,7 @@ test('rakiety, iskry i wybuchy WebGPU w scenie Core3D (kroki klatki efektów)', 
   assert.match(indexHtml, /window\.makeReactorBlow = createExplosionFactory\(Core3D, \{ rocketFx, weaponFx: WeaponFx \}\);/);
   assert.match(indexHtml, /Destruction3D\.init\(\{\s*scene:\s*Core3D\.scene,\s*reactorFactory:\s*window\.makeReactorBlow,/);
   const trigger = indexHtml.match(/function triggerReactorBlow3D\([^)]*\) \{[\s\S]*?\n    \}/)?.[0] || '';
-  assert.match(trigger, /window\.makeReactorBlow\?\.\(\{ x, y, size, \.\.\.options \}\);/);
+  assert.match(trigger, /GameBlasts\.blast\(\{ x, y, size, \.\.\.options \}, true\);/);
   const blow = code(read('src/3d/explosions/explosionFx.js'));
   assert.match(blow, /core\.addFxStep\(this\.step\)/);
   assert.doesNotMatch(blow, /overlay3D|WebGLRenderer|WebGPURenderer|new THREE\.RenderPipeline/);

@@ -166,7 +166,7 @@ test('index.html: hak strat węzłów, styk z CollisionFX, ocena po sufitach pun
   assert.match(src, /import \{ createCrushSmoke, crushSmokeSize, crushSmokeCenter, CRUSH_SMOKE_TUNE \} from "\.\/src\/game\/crushSmoke\.js"/);
   assert.match(src, /HullBodies\.onNodeLost = noteHullNodeLost;/);
   const lost = sliceFunction(src, 'function noteHullNodeLost(');
-  assert.match(lost, /HullDamageMap\.onHullNodeLost\(entity, hull, u, v, x, y\)/, 'rozdarcia mapy ran zostają');
+  assert.match(lost, /HullDamageEvents\.nodeLost\(entity, hull, u, v, x, y\)/, 'rozdarcia mapy ran zostają (rekord DMG_TEAR, RW-22)');
   assert.match(lost, /if \(entity\?\.fuelTank\) crushSmoke\.lost\(entity, x, y, HullBodies\.simTime\)/);
   assert.match(src, /CollisionFX\.on\('grind', _crushContact\);/);
   assert.match(src, /CollisionFX\.on\('impact', _crushContact\);/);
@@ -179,6 +179,7 @@ test('index.html: hak strat węzłów, styk z CollisionFX, ocena po sufitach pun
   assert.match(emit, /o\.size = crushSmokeSize\(nodes\)/);
   assert.match(emit, /crushSmokeCenter\(e, x, y, o\.size, o\)/);
   assert.match(emit, /o\.profile = CRUSH_SMOKE_TUNE\.profile/);
-  assert.match(emit, /shipBlastFactory/);
+  assert.match(emit, /if \(!GameBlasts\.ready\) return false;/);
+  assert.match(emit, /GameBlasts\.blast\(o\)/, 'wybuch okrętu bez zmiatania dronów (rekord EXPLOSION, RW-22)');
   assert.match(src, /const SHIP_BLAST_TUNE = \{[^}]*crush: true/);
 });
