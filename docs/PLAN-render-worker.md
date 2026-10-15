@@ -1393,9 +1393,15 @@ nie odczyt bloku ROCKETS — kolejność emisji efektów (ciąg fxRandom) zostaj
 styku liczy jeszcze reżyser z kadłuba — do przeniesienia z RW-22 / lustrami). (2) D2 osobnym commitem: `step(dt)` w
 `physicsStep` po `SimClock.advance` (salwy gracza z tego kroku lecą od razu, NPC — od następnego; `syncThreats` bez
 dosuwania pozy), `frameFx(dt)` — klatka reżysera w `loop()`; `rocketsTime` PerfHUD = kroki lotu + klatka reżysera
-(kroki liczą się też do `physicsTime`). Pomiar trafień (`scripts/rakiety-salwy-sym.mjs`, `rakiety-auto-gra.mjs`,
-`pd-rakiety-gra.mjs`) i nowa baza zrzutów — po „WOLNO OBCIĄŻAĆ”. Testy: `tests/rocketMath.test.mjs`,
+(kroki liczą się też do `physicsTime`). Testy: `tests/rocketMath.test.mjs`,
 `tests/rocketStepD2.test.mjs`, RKT_* w `tests/renderCommands.test.mjs`, ścieżki w strażnikach źródeł.
+Pomiar 2026-10-15: (a) przeniesienie bez zmiany zachowania — `rakiety-salwy-sym.mjs` z `Math.random` z ziarnem
+(skrypt sam losuje bez ziarna — dwa przebiegi tego samego drzewa różnią się) na drzewie RW-20 (`bfe4c4cf`, stary
+`rocketSystem3D.js`) i na gałęzi po RW-23: tabela 12 przypadków identyczna (hash wiersza ten sam). (b) D2 — nowy
+`scripts/rakiety-d2-fps.mjs` (lot w klatce renderu `update(dt klatki)` ↔ `step(1/60)` + `frameFx`, cele w krokach
+fizyki, ziarno stałe): trafienia 100% w obu (Grad w małym celu 0% w obu), średni czas salwa → trafienie w D2 ten sam
+bit w bit przy 30 / 60 / 144 fps (np. manewrująca 3,7046 s), w dawnym zależny od fps (3,6852 / 3,7046 / 3,7028 s —
+do ~0,02 s na trafienie); przy 60 fps D2 = dawny przebieg.
 
 **RW-24 Suchy dok: stan po stronie gry.**
 Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, `live`, decyzje break / ram, plan
@@ -1617,6 +1623,17 @@ jest gotowe — działaj.”
     0,47 ms ↔ partia 0,07–0,11 ms (2D: dysze 0,02–0,04), draw calle 36 ↔ 50, klatka 29,9 ↔ 28,9 ms. GPU (`gpuMs`
     próbkowany co N klatek) — w szumie. Wniosek: wieże 3D nie kosztują wyraźnie więcej niż kanwa (CPU podobny, +10–14
     rysunków — po jednym na rodzinę w kadrze); poprawek wydajności nie trzeba.
+  - Pomiar powtórzony 2026-10-15 przy ciszy pozostałych torów (START / KONIEC), bez chaosu bitwy:
+    `profil-bitwy-flot.mjs --sklad 50,20,10,3 --tryb spokoj --seed 7 --trwanie 40 --profile 15:6`
+    (`sc_camera_frame=off`, 166 okrętów Terra Nova bez walki), przebiegi kolejno A / B / C × 2: A — kod sprzed B3D
+    z „Bronie 2D”, B — ten sam kod z „Bronie 3D”, C — gałąź po B3D … RW-23. Zoom 0,45: wieżyczki kanwy
+    (`render2dTurretTime`) A 0,20 / 0,26 ms ↔ B / C: partia wież (`syncShipModels3D` inkluzywnie z profilu CPU)
+    0,02–0,03 ms + rekordy wież (C: `Turret2D.syncFrame` 0,02–0,03 ms, w A / B — wewnątrz `updateHexShips3D`);
+    `drawTime` A 2,3 / 3,0, B 1,8 / 1,7, C 1,6 / 3,4 ms (drugi przebieg C — szum); draw calle A 17–23 ↔ B 25–29 ↔
+    C 25–32; GPU (mediana `gpuMs`) 0,85–1,05 ↔ 0,92 ↔ 0,92 ms. Zoom 0,1: kanwa 0,06 ms ↔ partia 0,03–0,04 + rekordy
+    0,06–0,08 ms, `drawTime` 3,6–3,7 ↔ 3,6–3,9 ↔ 3,7 ms, draw calle 13–14 ↔ 20–22 ↔ 22–24, GPU bez zmian (0,79–0,85).
+    Wniosek bez zmian: bronie 3D kosztują CPU tyle co kanwa albo mniej (przy przybliżeniu ~0,2 ms mniej), +6–10
+    rysunków (rodziny w kadrze), GPU w szumie. Bez ognia (tryb spokoj) — wieże stoją, koszt rekordu i partii ten sam.
   - Kod: opcja i chipy `data-visual-weapons` usunięte, `VisualMode.weapons3D` zawsze prawda (`sc_weapons3d`
     ignorowany), `setVisualMode(statki3D)` (drugi argument starych skryptów ignorowany), `configureShipModels3D` bez
     `weapons`. `Turret2D.draw` / `skipDraw` / `occlude` / `lightAt`, ciemnienie sylwetką i importy atlasów sprite'ów
