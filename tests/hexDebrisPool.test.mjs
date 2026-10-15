@@ -7,6 +7,7 @@ import { DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
 // Port WebGPU (zadanie 04): materiał puli to graf TSL (HullDebrisNodeMaterial) — prawdziwy
 // materiał węzłowy da się zbudować w Node (bez GPU), zanik i siła żaru w DEBRIS_SHARED.
 import { DEBRIS_SHARED, HullDebrisNodeMaterial } from '../src/3d/hexShips3D.tsl.js';
+import { RenderWorld } from '../src/render/renderWorld.js';
 
 // CRLF → LF: wycinek niżej szuka znacznika z `\n` (checkout z core.autocrlf daje CRLF).
 const source = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -15,7 +16,7 @@ const poolCode = source.slice(source.indexOf('const GPU_DEBRIS_MAX ='), source.i
 function makePool() {
   const context = { THREE, Core3D: { scene: new THREE.Scene() },
     createManagedTexture: () => new THREE.Texture(), SHIP_LIGHT_DEFAULTS: {},
-    HullDebrisNodeMaterial, DEBRIS_SHARED, DESTRUCTOR_CONFIG,
+    HullDebrisNodeMaterial, DEBRIS_SHARED, DESTRUCTOR_CONFIG, RenderWorld,
     setAttrUpdateRange: (attr, start, count) => { attr.clearUpdateRanges(); attr.addUpdateRange(start, count); } };
   return vm.runInNewContext(`${poolCode}\n({ Pool: GpuDebrisPool, manager: GpuDebrisManager })`, context);
 }

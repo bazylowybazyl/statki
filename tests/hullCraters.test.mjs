@@ -262,7 +262,7 @@ test('gra: applyHexImpact podaje krater na miarę rany, rakieta — hak applyRoc
   assert.match(fn, /rocketCraterHit\(HullBodies, target, x0, y0, x1, y1, damage, weaponDef \|\| 'rocket', _rocketHullVel, applyHexImpact\)/);
   const rs = read('src/effects3d/rocketSystem3D.js');
   const onHit = rs.slice(rs.indexOf('_onHit(r'), rs.indexOf('_applyBlastDamage(r'));
-  const i = onHit.indexOf('window.applyRocketHullImpact(');
+  const i = onHit.indexOf('RenderWorld.game.applyRocketHullImpact(');
   const j = onHit.indexOf('applyNpc(target, dmg');
   assert.ok(i > 0 && j > i, 'krater przed obrażeniami HP (śmierć celu zabiera kadłub wrakowi)');
   assert.match(onHit, /!shieldBlocking && target\.beamHull/, 'tylko gdy tarcza nie blokuje');

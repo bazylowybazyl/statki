@@ -396,5 +396,5 @@ test('tekstury planet: dekodowanie po pobraniu i upload z kolejki Core3D', () =>
   // (tekstury planet zgłaszają się, zanim urządzenie powstanie).
   const schedule = core3d.slice(core3d.indexOf('_scheduleTextureUpload() {'), core3d.indexOf('_pumpTextureUpload() {'));
   assert.match(schedule, /if \(!this\.gpuReady\) \{[\s\S]*?this\.ready\.then\(/);
-  assert.match(readSrc('src/3d/planet3d.assets.js'), /textureLoader\.load\(path, prewarmLoadedTexture\)/);
+  assert.match(readSrc('src/3d/planet3d.assets.js'), /loadTexture\(path, prewarmLoadedTexture\)/);
 });
