@@ -27,7 +27,7 @@ import {
 } from './snapshotLayout.js';
 import { createTripleBuffer, TripleBufferWriter } from './tripleBuffer.js';
 import { createRenderIds } from './renderIds.js';
-import { describeEntity, describeCore } from './describeEntity.js';
+import { describeEntity, describeCore, describeStation } from './describeEntity.js';
 import { describeBodyTopology } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
@@ -134,6 +134,8 @@ export class SnapshotPacker {
     this.topoQueue = [];
     this.coreDescs = new Map();   // uid rdzenia → opis (część statyczna)
     this.coreQueue = [];
+    this.stationDescs = [];       // slot stacji → { gen, desc }
+    this.stationQueue = [];
     this._resourceSlot = (img) => this.ids.resources.slotOf(img);
     // numery obiektów źródła opisów (tożsamość podobiektów konfiguracji — renderMirror.reconcileDescriptor)
     this._oids = new WeakMap();
@@ -239,6 +241,7 @@ export class SnapshotPacker {
     this.descQueue.length = 0;
     this.topoQueue.length = 0;
     this.coreQueue.length = 0;
+    this.stationQueue.length = 0;
     if (this.ownsIds) this.ids.begin();
     this._buildLists(frame);
     if (frame.coresOf) {
@@ -1124,6 +1127,11 @@ export class SnapshotPacker {
       const b = i * STATION.stride.f64, bi = i * STATION.stride.i32;
       if (!st) { i32[bi + STI.SLOT] = -1; continue; }
       const s = ents.slotOf(st);
+      if (this.describe) {
+        const d = this.stationDescs[s];
+        const gen = ents.gen(s);
+        if (!d || d.gen !== gen) { this.stationDescs[s] = { gen, desc: describeStation(st) }; this.stationQueue.push(s); }
+      }
       f64[b + STF.X] = raw(st.x);
       f64[b + STF.Y] = raw(st.y);
       f64[b + STF.ANGLE] = raw(st.angle);

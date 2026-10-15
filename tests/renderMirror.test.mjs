@@ -281,3 +281,25 @@ test('lustro: rdzenie reaktorów — opis po uid, gospodarz = lustro, stan komó
   assert.deepEqual(Array.from(c.cellState), [0, 1, 0]);
   assert.equal(c.integrity, 0.66);
 });
+
+test('lustro: stacje — opis (wybór modelu), poza co klatkę, tożsamość po slocie', () => {
+  const ents = [makeShip('A', 0)];
+  const st = { id: 'mars_station', name: 'Mars Station', style: 'military', planet: { name: 'Mars', id: 'mars' }, x: 100, y: 200, angle: 0.5, r: 900, baseR: 800 };
+  const packer = new SnapshotPacker({ shared: false, describe: true });
+  const frame = createSnapshotFrame();
+  Object.assign(frame, { ship: ents[0], npcs: [], wrecks: [], stations: [st], cam: { x: 0, y: 0, zoom: 1 } });
+  const rm = new RenderMirror({ dict: packer.dict, describe: (s, gen) => { const d = packer.descriptors[s]; return d && d.gen === gen ? d.desc : null; } });
+  rm.stationOf = (s, gen) => { const d = packer.stationDescs[s]; return d && d.gen === gen ? d.desc : null; };
+  const step = () => { frame.lastConsumed = packer.k; packer.begin(frame); rm.apply(packer.view); packer.finish(frame); };
+  step();
+  assert.equal(rm.stations.length, 1);
+  const ms = rm.stations[0];
+  assert.equal(ms.id, 'mars_station');
+  assert.deepEqual(ms.planet, { name: 'Mars', id: 'mars' });
+  assert.equal(ms.x, 100);
+  st.x = 150; st._destroyed3D = true;
+  step();
+  assert.equal(rm.stations[0], ms);
+  assert.equal(ms.x, 150);
+  assert.equal(ms._destroyed3D, true);
+});

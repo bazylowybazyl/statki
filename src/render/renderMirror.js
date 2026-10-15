@@ -13,7 +13,7 @@
 //
 // Czysty moduł (bez three, DOM i `window`).
 
-import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, VENT, BRIDGE_HEAD, BRIDGE_REC, NOZZLE, BODY, BODY_FLAG, HEAD, CORE } from './snapshotLayout.js';
+import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, VENT, BRIDGE_HEAD, BRIDGE_REC, NOZZLE, BODY, BODY_FLAG, HEAD, CORE, STATION } from './snapshotLayout.js';
 import { MirrorBody, applyBodyPage } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
@@ -99,6 +99,9 @@ export class RenderMirror {
     this.cores = [];             // rdzenie reaktorów (kolejność ReactorGame.cores — lustra po uid)
     this._coreMirrors = new Map();
     this.coreOf = null;          // (uid) → opis rdzenia albo null
+    this.stations = [];          // stacje (kolejność listy gry) — lustra po slocie i generacji
+    this._stationMirrors = [];
+    this.stationOf = null;       // (slot, gen) → opis stacji albo null
     this._breaks = new Map();    // numer zerwania maskowania → obiekt (tożsamość jak cloak.lastBreak gry)
     this.stats = { created: 0, dropped: 0, waitingDescriptor: 0, waitingTopology: 0 };
     this._seen = new Int32Array(0);
@@ -137,6 +140,7 @@ export class RenderMirror {
       }
     }
     applyCores(this, v);
+    applyStations(this, v);
     const ps = v.head[HEAD.PLAYER_SLOT];
     this.player = ps >= 0 ? (this.entities[ps] || null) : null;
     const p2 = v.head[HEAD.P2_SLOT];
@@ -504,6 +508,39 @@ function applyCores(rm, v) {
     if (co >= 0) c.cellState.set(U.subarray(co, co + i32[bi + CORE.I32.CELL_N]));
     else c.cellState.fill(0);
     out.push(c);
+  }
+}
+
+/** Stacje ze strony (blok STATIONS + opis): lustro na slot i generację; `_mesh3d` pisze render (stations3D). */
+function applyStations(rm, v) {
+  const out = rm.stations;
+  out.length = 0;
+  const n = v.head[HEAD.N_STATIONS] | 0;
+  const f64 = v.staF64, i32 = v.staI32;
+  for (let i = 0; i < n; i++) {
+    const b = i * STATION.stride.f64, bi = i * STATION.stride.i32;
+    const s = i32[bi + STATION.I32.SLOT];
+    if (s < 0) continue;
+    const gen = i32[bi + STATION.I32.GEN] >>> 0;
+    let st = rm._stationMirrors[s];
+    if (!st || st.gen !== gen) {
+      const d = rm.stationOf ? rm.stationOf(s, gen) : null;
+      if (!d) continue;
+      st = {
+        __mirror: true, slot: s, gen, id: d.id, name: d.name, style: d.style, type: d.type, isPirate: d.isPirate,
+        planet: d.planet, orbit: d.orbit, host: d.host, home: d.home, ringPort: d.ringPort, faction: d.faction,
+        x: 0, y: 0, angle: 0, r: undefined, baseR: undefined, _destroyed3D: false, fogHidden: false, _mesh3d: undefined,
+        __game: null
+      };
+      rm._stationMirrors[s] = st;
+    }
+    st.x = f64[b + STATION.F64.X]; st.y = f64[b + STATION.F64.Y];
+    st.angle = und(f64[b + STATION.F64.ANGLE]);
+    st.r = und(f64[b + STATION.F64.R]); st.baseR = und(f64[b + STATION.F64.BASE_R]);
+    const fl = i32[bi + STATION.I32.FLAGS];
+    st._destroyed3D = (fl & 1) !== 0;
+    st.fogHidden = (fl & 2) !== 0;
+    out.push(st);
   }
 }
 

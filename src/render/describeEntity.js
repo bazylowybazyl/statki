@@ -155,3 +155,13 @@ export function describeCore(c) {
     cellX: copy(c.cellX), cellY: copy(c.cellY), cellBaseHp: copy(c.cellBaseHp), cellMaxHp: copy(c.cellMaxHp)
   };
 }
+
+/** Część statyczna stacji (wybór modelu w stations3D.js: id, nazwa, styl, planeta, orbita, gospodarz, piracka). */
+export function describeStation(st) {
+  const ref = (o) => (o && typeof o === 'object' ? { name: o.name, id: o.id } : o);
+  return {
+    id: st.id, name: st.name, style: st.style, type: st.type, isPirate: st.isPirate === true,
+    planet: ref(st.planet), orbit: ref(st.orbit), host: typeof st.host === 'object' ? ref(st.host) : st.host,
+    home: typeof st.home === 'object' ? ref(st.home) : st.home, ringPort: !!st.ringPort, faction: st.faction
+  };
+}
