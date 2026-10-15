@@ -23,6 +23,17 @@ const _world = { x: 0, y: 0 };
 const _kerfPre = { u0: 0, v0: 0, lat: new Float64Array(KERF_MAX * 4) };
 let _seam = new Float32Array(64);
 
+/** Rekord pasa rzazu (DMG_KERF, też RX_JETCUT) → HullDamageMap.stampKerf z wynikami zapytań policzonymi przez grę. */
+export function decodeKerf(rd, d, o) {
+  const K = DMG_KERF;
+  const hull = readHullDesc(d, o + K.HULL, _proxy, null);
+  _kerfPre.u0 = d[o + K.U0];
+  _kerfPre.v0 = d[o + K.V0];
+  const lat = _kerfPre.lat;
+  for (let i = 0; i < KERF_MAX * 4; i++) lat[i] = d[o + K.LAT + i];
+  HullDamageMap.stampKerf(hull.entity, d[o + K.X0], d[o + K.Y0], d[o + K.X1], d[o + K.Y1], rd.str(d[o + K.FAMILY]), _kerfPre);
+}
+
 /** Rejestruje obsługę rekordów mapy ran w czytelniku rozkazów (RenderCommands.reader). */
 export function installHullDamageCommands(reader) {
   reader.on(HC.DMG_HOOK, (rd, d, o) => {
@@ -70,15 +81,7 @@ export function installHullDamageCommands(reader) {
     HullDamageMap.patchCell(hull.entity, d[o + P.IX], d[o + P.IY], Number.isNaN(seam) ? undefined : seam, world);
   });
 
-  reader.on(HC.DMG_KERF, (rd, d, o) => {
-    const K = DMG_KERF;
-    const hull = readHullDesc(d, o + K.HULL, _proxy, null);
-    _kerfPre.u0 = d[o + K.U0];
-    _kerfPre.v0 = d[o + K.V0];
-    const lat = _kerfPre.lat;
-    for (let i = 0; i < KERF_MAX * 4; i++) lat[i] = d[o + K.LAT + i];
-    HullDamageMap.stampKerf(hull.entity, d[o + K.X0], d[o + K.Y0], d[o + K.X1], d[o + K.Y1], rd.str(d[o + K.FAMILY]), _kerfPre);
-  });
+  reader.on(HC.DMG_KERF, decodeKerf);
 
   // Odłamek węzła: losowanie skali i kształtownika w strumieniu efektów (ta sama kolejność losowań co dawniej
   // w hullBodies.js — kształtownik losowany tylko przy kandydacie), potem pula odłamków (hullDebris3D.js).

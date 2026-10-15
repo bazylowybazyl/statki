@@ -660,6 +660,9 @@ export class ReactorBlastFx {
     bc[0] = col[0] * 1.6 + 1.3; bc[1] = col[1] * 1.6 + 1.3; bc[2] = col[2] * 1.6 + 1.3;
     bg[0] = col[0] * 0.4; bg[1] = col[1] * 0.4; bg[2] = col[2] * 0.4;
     const step = Math.max(8, Rs * 0.06);
+    // Przebiegi pęknięć policzone przez grę (RW-22: reactorCrackRuns — w rekordzie RX_DETONATION) albo tutaj.
+    const pre = res.crackRuns || null;
+    let preIdx = 0;
     this._setCarrier(cx, cy);
     try {
       for (let c = 0; c + 3 < cuts.length; c += 4) {
@@ -674,7 +677,8 @@ export class ReactorBlastFx {
         const tc = clamp((res.x - ax) * dx + (res.y - ay) * dy, 0, L);
         for (let side = 1; side >= -1; side -= 2) {
           if (side < 0 && tc < step) break;
-          this._crackRun(res, ax, ay, dx, dy, tc, side > 0 ? L : 0, side, step, run);
+          if (pre) { const p = pre[preIdx++] || []; run.length = 0; for (let q = 0; q < p.length; q++) run.push(p[q]); }
+          else this._crackRun(res, ax, ay, dx, dy, tc, side > 0 ? L : 0, side, step, run);
           const np = run.length >> 1;
           if (np < 2) continue;
           // szew plazmy: poszarpane, migoczące wyładowanie wzdłuż szczeliny (co ~3 punkty)

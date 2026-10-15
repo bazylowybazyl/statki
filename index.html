@@ -1098,6 +1098,12 @@
     const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
     window.GameBlasts = GameBlasts;
     installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
+    // RW-22: obraz rdzenia reaktora — fasada env.fx ReactorGame pisze rekordy RX_* (src/game/reactorFxEvents.js: pęknięcia
+    // i rzazy liczy gra, strumienie i kule przez id), dekoder renderu woła reżysera (src/3d/reactorBlast/reactorCommands.js).
+    import { createReactorFxEvents } from "./src/game/reactorFxEvents.js";
+    import { installReactorCommands } from "./src/3d/reactorBlast/reactorCommands.js";
+    const ReactorFxEvents = createReactorFxEvents(RenderCommands.writer, HullDamageEvents);
+    installReactorCommands(RenderCommands.reader, () => reactorBlastFx, (id) => ReactorFxEvents.hazardAt(id));
     HullBodies.onImpact = (e, r) => HullDamageEvents.impact(e, r);
     HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
@@ -1788,6 +1794,7 @@
         WeaponFx.ensure();
         reactorBlastFx = createReactorBlastFx(Core3D, { rocketFx, weaponFx: WeaponFx });
         if (reactorBlastFx) reactorBlastFx.onShake = (mag, dur) => camera.addShake?.(mag, dur);
+        ReactorFxEvents.ready = !!reactorBlastFx;
         reactorModel3D = createReactor3D({
           scene: Core3D.scene,
           markLayerActive: () => Core3D.setShieldLayerActive(true),
@@ -23266,7 +23273,7 @@
     // fala rani sąsiadów (łańcuch), obraz z dema rdzen-webgpu (reactorBlastFx, reactorModel3D).
     const ReactorGame = createReactorCoreGame({
       wrecks: () => window.wrecks,
-      fx: () => reactorBlastFx,
+      fx: () => (ReactorFxEvents.ready ? ReactorFxEvents : null),
       isPlayer: (e) => e === ship || e === player2Ship,
       hullDamage: (e, dmg) => {
         if (e === ship || e === player2Ship) applyDamageToPlayer(dmg);

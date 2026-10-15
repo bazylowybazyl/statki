@@ -22,7 +22,16 @@ export const HC = Object.freeze({
   HULL_DEBRIS: 39,     // odłamek zniszczonego węzła (HullBodies.onDebris → window.spawnHullDebris; losowanie w renderze)
   SPARK_BURST: 40,     // snop iskier tarcia / uderzenia kadłubów (collisionSparks.js → SparkSystem3D.grindingBurst)
   SPARK_SEAM: 41,      // iskry wzdłuż szwu styku (→ SparkSystem3D.grindingSeam), punkty w rekordzie
-  STATION_FX: 42       // stacja: kawałek odpada (próg punktów) / rozpad (śmierć) — Destruction3D, destroyStation3D
+  STATION_FX: 42,      // stacja: kawałek odpada (próg punktów) / rozpad (śmierć) — Destruction3D, destroyStation3D
+  // Rdzeń reaktora (ReactorGame → env.fx: reactorBlastFx). Strumienie i kule to obiekty logiki czytane co klatkę —
+  // rekordy niosą ich id (inline: rejestr gry; worker: blok CORES migawki).
+  RX_DETONATION: 43,
+  RX_ORB_BURST: 44,
+  RX_SECONDARY: 45,
+  RX_MELT: 46,
+  RX_JETCUT: 47,       // układ DMG_KERF (pas żaru wzdłuż rzazu strumienia; render sprawdza swoje opts.heat)
+  RX_HAZARD: 48,       // strumień / kula do obrazu (addJet / addOrb)
+  RX_CLEAR: 49
 });
 
 /** Najwięcej znaków rzazu na odcinek (= DMG_KERF_MAX w hullDamageMap.js; pilnuje test). */
@@ -91,6 +100,19 @@ export const SPARK_SEAM = Object.freeze({
 // Stacja: encja (slot, gen), rodzaj (0 — kawałek przy progu punktów, 1 — rozpad), fala uderzeniowa przy rozpadzie.
 export const STATION_FX = Object.freeze({ STATION: 0, KIND: 2, SHOCKWAVE: 3, WORDS: 4 });
 export const STATION_FX_KIND = Object.freeze({ CHUNK: 0, DESTROY: 1 });
+
+// Detonacja rdzenia: stałe pola, potem tablice (szczeliny N_CUTS liczb; krawędzie rany N_EDGES × (x, y, slot, gen);
+// długości przebiegów pęknięć N_RUNS i ich punkty N_RUNPTS liczb; trafieni sąsiedzi N_HITS × (slot, gen, x, y, nx, ny, t)).
+export const RX_DET = Object.freeze({
+  X: 0, Y: 1, VARIANT: 2, CLASS: 3, HAS_COLOR: 4, CR: 5, CG: 6, CB: 7, FACTION: 8, HOST_R: 9, HOST_VX: 10, HOST_VY: 11,
+  RES_X: 12, RES_Y: 13, WRECK: 14, CRATER_R: 16, N_CUTS: 17, N_EDGES: 18, N_RUNS: 19, N_RUNPTS: 20, N_HITS: 21, WORDS: 22
+});
+export const RX_HIT_WORDS = 7;
+export const RX_ORB = Object.freeze({ X: 0, Y: 1, ORB: 2, N_HITS: 3, WORDS: 4 });
+export const RX_SEC = Object.freeze({ X: 0, Y: 1, ENT: 2, SIZE: 4, WORDS: 5 });
+export const RX_MELT = Object.freeze({ ENT: 0, ORB: 2, KILLED: 3, WORDS: 4 });
+export const RX_HAZ = Object.freeze({ KIND: 0, ID: 1, WORDS: 2 });
+export const RX_HAZ_KIND = Object.freeze({ JET: 0, ORB: 1 });
 
 /**
  * Zapis opisu kadłuba do rekordu. `entSlot`, `entGen` — encja (przestrzeń slotów rozkazów); `theta` — kąt skóry z pozy

@@ -305,3 +305,80 @@ test('stacja: STATION_FX — kawałek tylko dla stacji z bryłą 3D (stan render
     Destruction3D.shatter = saved.shatter;
   }
 });
+
+test('reaktor: przebiegi pęknięć gry = dawny _crackRun renderu; rekordy RX_* = dawne wywołania reżysera', async () => {
+  const { ReactorBlastFx } = await import('../src/3d/reactorBlast/reactorBlastFx.js');
+  const { reactorCrackRuns, reactorBlastSceneRadius } = await import('../src/game/reactorCore.js');
+  const { createReactorFxEvents } = await import('../src/game/reactorFxEvents.js');
+  const { installReactorCommands } = await import('../src/3d/reactorBlast/reactorCommands.js');
+  window.wrecks.length = 0;
+  const frag = ship(0, 0, 0.3);
+  const host = { radius: 260, vx: 30, vy: -12, faction: 'pirate' };
+  const res = {
+    x: 10, y: -5, cuts: [-300, -40, 280, 60, 0, 0, 0, 0.0001, 40, 200, -30, -220], fragments: [frag],
+    edges: [100, 20, frag, 0, 0, 0, -80, 5, null, 0, 0, 0], wreck: frag, craterR: 55
+  };
+  // Dawne przebiegi: ta sama pętla co reactorBlastFx._cracks, krok z Rs.
+  const Rs = reactorBlastSceneRadius(host);
+  const step = Math.max(8, Rs * 0.06);
+  const legacy = [];
+  for (let c = 0; c + 3 < res.cuts.length; c += 4) {
+    const ax = res.cuts[c], ay = res.cuts[c + 1], bx = res.cuts[c + 2], by = res.cuts[c + 3];
+    let dx = bx - ax, dy = by - ay;
+    const L = Math.sqrt(dx * dx + dy * dy);
+    if (!(L > 1e-3)) continue;
+    dx /= L; dy /= L;
+    const tc = Math.min(L, Math.max(0, (res.x - ax) * dx + (res.y - ay) * dy));
+    for (let side = 1; side >= -1; side -= 2) {
+      if (side < 0 && tc < step) break;
+      const run = [];
+      ReactorBlastFx.prototype._crackRun.call({}, res, ax, ay, dx, dy, tc, side > 0 ? L : 0, side, step, run);
+      legacy.push(run);
+    }
+  }
+  assert.deepEqual(reactorCrackRuns(res, Rs), legacy);
+  assert.ok(legacy.some((r) => r.length >= 4), 'pęknięcie przez odłam');
+
+  // Rekordy: reżyser-atrapa zapisuje to, co czyta prawdziwy (pola zdarzenia, wyniku, trafień).
+  const snap = (kind, ev, r, hits) => ({
+    kind, x: ev.x, y: ev.y, variant: ev.variant, cls: ev.core?.classId,
+    col: Array.isArray(ev.core?.color) ? [...ev.core.color] : String(ev.core?.host?.faction || ev.core?.origin?.faction || ''),
+    hostR: Number(ev.host?.radius), hvx: Number(ev.host?.vel?.x ?? ev.host?.vx) || 0,
+    res: r ? { x: r.x, y: r.y, cuts: [...r.cuts], wreck: r.wreck, craterR: r.craterR,
+      edges: (() => { const o = []; for (let k = 0; k + 2 < r.edges.length; k += 6) o.push(r.edges[k], r.edges[k + 1], r.edges[k + 2] || null); return o; })() } : null,
+    hits: (hits || []).map((h) => [h.entity, h.x, h.y, h.nx, h.ny, h.t])
+  });
+  const calls = [];
+  const fake = {
+    opts: { heat: true },
+    detonation: (ev, r, hits) => calls.push(snap('det', ev, r, hits)),
+    orbBurst: (ev, hits) => calls.push(['orb', ev.x, ev.y, ev.orb, hits.map((h) => [h.entity, h.x, h.t])]),
+    secondary: (x, y, e, s) => calls.push(['sec', x, y, e, s]),
+    melt: (e, orb, k) => calls.push(['melt', e, orb, k]),
+    addJet: (j) => calls.push(['jet', j]), addOrb: (o) => calls.push(['addOrb', o]), clear: () => calls.push(['clear'])
+  };
+  const { rc, ev: hullEv } = setup();
+  const rx = createReactorFxEvents(rc.writer, hullEv);
+  installReactorCommands(rc.reader, () => fake, (id) => rx.hazardAt(id));
+  const core = { classId: 'capital', host };
+  const hits = [{ entity: frag, x: 5, y: 6, nx: 0.6, ny: -0.8, t: 0.7 }];
+  const orb = { x: 3, y: 4, radius: 30, core, detonated: false };
+  const jet = { done: false, env: 1 };
+  const run = (fx) => {
+    calls.length = 0;
+    fx.detonation({ x: 1, y: 2, variant: 'shatter', core, host }, res, hits);
+    fx.detonation({ x: 1, y: 2, variant: 'jet', core: { classId: 'escort', color: [0.2, 0.9, 1] }, host: { radius: undefined, vel: { x: 4, y: 1 } } }, res, null);
+    fx.addOrb(orb); fx.addJet(jet);
+    fx.melt(frag, orb, 3);
+    fx.secondary(7, 8, frag, 40);
+    orb.detonated = true;
+    fx.orbBurst({ x: 9, y: 9, orb }, hits);
+    fx.clear();
+    orb.detonated = false;
+    return calls.map((c) => (Array.isArray(c) ? c : { ...c, res: c.res && { ...c.res } }));
+  };
+  const direct = run(fake);
+  const viaRecord = run(rx);
+  assert.deepEqual(viaRecord, direct);
+  HullBodies.release(frag);
+});

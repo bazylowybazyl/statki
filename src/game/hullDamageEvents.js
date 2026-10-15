@@ -149,12 +149,12 @@ export function createHullDamageEvents(writer) {
     },
 
     /** Pas rzazu przebicia (odcinek świata gry) — uv początku (ciało płaskie) albo komórki znaków (bryła). */
-    kerf(entity, x0, y0, x1, y1, family = 'hexlance') {
+    kerf(entity, x0, y0, x1, y1, family = 'hexlance', code = HC.DMG_KERF) {
       const hull = entity?.beamHull;
       if (!hull || !(hull.dmgKey > 0)) return;
       const fam = writer.str(family);
       const K = DMG_KERF;
-      const o = writer._begin(HC.DMG_KERF, K.WORDS);
+      const o = writer._begin(code, K.WORDS);
       const d = writer.ring.data;
       desc(d, o + K.HULL, entity, hull);
       d[o + K.X0] = x0; d[o + K.Y0] = y0; d[o + K.X1] = x1; d[o + K.Y1] = y1; d[o + K.FAMILY] = fam;
