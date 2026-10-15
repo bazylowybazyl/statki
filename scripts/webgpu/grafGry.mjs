@@ -22,93 +22,107 @@ export const POZA_PORTEM = Object.freeze([]);
 // ── Lekser ────────────────────────────────────────────────────────────────────
 const REGEX_BEFORE_WORD = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'yield', 'await', 'instanceof']);
 
+// Znaki jako kody UTF-16 (2026-10-15, RW-01: dawny lekser na tablicach napisów i wyrażeniach regularnych per znak
+// liczył graf gry ~12 s — strażnik szwu i graBezGlsl czekały na niego; wynik bit w bit ten sam).
+const C_NL = 10, C_CR = 13, C_SP = 32, C_SLASH = 47, C_STAR = 42, C_BSL = 92, C_BT = 96, C_DQ = 34, C_SQ = 39;
+const C_DOLLAR = 36, C_LBRACE = 123, C_RBRACE = 125, C_LBRACK = 91, C_RBRACK = 93;
+const isWordCode = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+// \s w wyrażeniach regularnych JS
+const isSpaceCode = (c) => (c >= 9 && c <= 13) || c === 32 || c === 160 || c === 5760 || (c >= 8192 && c <= 8202)
+  || c === 8232 || c === 8233 || c === 8239 || c === 8287 || c === 12288 || c === 65279;
+const isLetterCode = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+const REGEX_AFTER_PUNCT = new Set([...'(,=:[!&|?{};+-*%<>~^'].map((ch) => ch.charCodeAt(0)));
+const GLSL_COMMENT = /^\/\*\s*glsl\s*\*\/$/;
+const UTF16 = new TextDecoder('utf-16le', { ignoreBOM: true }); // BOM zostaje (jak w dawnym join)
+
 export function lex(src) {
   const n = src.length;
-  const noCom = src.split('');
-  const codeOnly = src.split('');
+  const sc = new Uint16Array(n);
+  for (let k = 0; k < n; k++) sc[k] = src.charCodeAt(k);
+  const noCom = sc.slice();
+  const codeOnly = sc.slice();
   const strings = [];
   const stack = [{ type: 'code', depth: 0, inTpl: false }];
   let i = 0;
-  let prevSig = '';
+  let prevSig = -1; // kod ostatniego znaku znaczącego (−1 = brak)
   let prevWord = '';
-  const blank = (arr, a, b) => { for (let k = a; k < b; k++) if (arr[k] !== '\n' && arr[k] !== '\r') arr[k] = ' '; };
+  const blank = (arr, a, b) => { if (b > n) b = n; for (let k = a; k < b; k++) if (arr[k] !== C_NL && arr[k] !== C_CR) arr[k] = C_SP; };
   while (i < n) {
     const top = stack[stack.length - 1];
-    const c = src[i];
+    const c = sc[i];
     if (top.type === 'template') {
-      if (c === '\\') { blank(codeOnly, i, i + 2); i += 2; continue; }
-      if (c === '`') { top.tpl.end = i + 1; strings.push(top.tpl); stack.pop(); i++; prevSig = '`'; prevWord = ''; continue; }
-      if (c === '$' && src[i + 1] === '{') { top.tpl.hasExpr = true; stack.push({ type: 'code', depth: 0, inTpl: true }); i += 2; continue; }
-      if (c !== '\n' && c !== '\r') codeOnly[i] = ' ';
+      if (c === C_BSL) { blank(codeOnly, i, i + 2); i += 2; continue; }
+      if (c === C_BT) { top.tpl.end = i + 1; strings.push(top.tpl); stack.pop(); i++; prevSig = C_BT; prevWord = ''; continue; }
+      if (c === C_DOLLAR && sc[i + 1] === C_LBRACE) { top.tpl.hasExpr = true; stack.push({ type: 'code', depth: 0, inTpl: true }); i += 2; continue; }
+      if (c !== C_NL && c !== C_CR) codeOnly[i] = C_SP;
       i++;
       continue;
     }
-    const d = src[i + 1];
-    if (c === '/' && d === '/') {
+    const d = i + 1 < n ? sc[i + 1] : -1;
+    if (c === C_SLASH && d === C_SLASH) {
       const e = src.indexOf('\n', i);
       const end = e < 0 ? n : e;
       blank(noCom, i, end); blank(codeOnly, i, end);
       i = end;
       continue;
     }
-    if (c === '/' && d === '*') {
+    if (c === C_SLASH && d === C_STAR) {
       const e = src.indexOf('*/', i + 2);
       const end = e < 0 ? n : e + 2;
-      const text = src.slice(i, end);
       // /* glsl */ przed szablonem zostaje w noCom jako znacznik
-      if (!/^\/\*\s*glsl\s*\*\/$/.test(text)) { blank(noCom, i, end); }
+      if (!GLSL_COMMENT.test(src.slice(i, end))) { blank(noCom, i, end); }
       blank(codeOnly, i, end);
       i = end;
       continue;
     }
-    if (c === '"' || c === "'") {
+    if (c === C_DQ || c === C_SQ) {
       let j = i + 1;
-      while (j < n && src[j] !== c && src[j] !== '\n') { if (src[j] === '\\') j++; j++; }
-      strings.push({ kind: c, start: i, end: j + 1 });
+      while (j < n && sc[j] !== c && sc[j] !== C_NL) { if (sc[j] === C_BSL) j++; j++; }
+      strings.push({ kind: String.fromCharCode(c), start: i, end: j + 1 });
       blank(codeOnly, i + 1, j);
       i = j + 1;
       prevSig = c; prevWord = '';
       continue;
     }
-    if (c === '`') { stack.push({ type: 'template', tpl: { kind: '`', start: i, end: -1, hasExpr: false } }); i++; continue; }
-    if (c === '/') {
-      const wordCtx = /[A-Za-z0-9_$]/.test(prevSig);
-      const isRegex = prevSig === '' || (!wordCtx && '(,=:[!&|?{};+-*%<>~^'.includes(prevSig)) || (wordCtx && REGEX_BEFORE_WORD.has(prevWord));
+    if (c === C_BT) { stack.push({ type: 'template', tpl: { kind: '`', start: i, end: -1, hasExpr: false } }); i++; continue; }
+    if (c === C_SLASH) {
+      const wordCtx = prevSig >= 0 && isWordCode(prevSig);
+      const isRegex = prevSig < 0 || (!wordCtx && REGEX_AFTER_PUNCT.has(prevSig)) || (wordCtx && REGEX_BEFORE_WORD.has(prevWord));
       if (isRegex) {
         let j = i + 1;
         let inClass = false;
         while (j < n) {
-          const ch = src[j];
-          if (ch === '\\') { j += 2; continue; }
-          if (ch === '\n') break;
-          if (ch === '[') inClass = true;
-          else if (ch === ']') inClass = false;
-          else if (ch === '/' && !inClass) break;
+          const ch = sc[j];
+          if (ch === C_BSL) { j += 2; continue; }
+          if (ch === C_NL) break;
+          if (ch === C_LBRACK) inClass = true;
+          else if (ch === C_RBRACK) inClass = false;
+          else if (ch === C_SLASH && !inClass) break;
           j++;
         }
         j++;
-        while (j < n && /[a-z]/i.test(src[j])) j++;
+        while (j < n && isLetterCode(sc[j])) j++;
         blank(codeOnly, i + 1, j - 1);
         i = j;
-        prevSig = '/'; prevWord = '';
+        prevSig = C_SLASH; prevWord = '';
         continue;
       }
     }
-    if (c === '{') top.depth++;
-    if (c === '}') {
+    if (c === C_LBRACE) top.depth++;
+    if (c === C_RBRACE) {
       if (top.inTpl && top.depth === 0) { stack.pop(); i++; continue; }
       top.depth--;
     }
-    if (!/\s/.test(c)) {
-      if (/[A-Za-z0-9_$]/.test(c)) {
-        if (!/[A-Za-z0-9_$]/.test(prevSig)) prevWord = '';
-        prevWord += c;
+    if (!isSpaceCode(c)) {
+      if (isWordCode(c)) {
+        if (!(prevSig >= 0 && isWordCode(prevSig))) prevWord = '';
+        prevWord += String.fromCharCode(c);
       } else prevWord = '';
       prevSig = c;
     }
     i++;
   }
-  return { noCom: noCom.join(''), codeOnly: codeOnly.join(''), strings };
+  return { noCom: UTF16.decode(noCom), codeOnly: UTF16.decode(codeOnly), strings };
 }
 
 export const GLSL_MARKERS = [

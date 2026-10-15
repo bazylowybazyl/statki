@@ -800,6 +800,29 @@ Workery w workerze są dozwolone (wypiek mapy powierzchni kadłubów `hullSurfac
 `OffscreenCanvas` (`node_modules/three/src/renderers/common/Backend.js:668`, `webgpu/WebGPUBackend.js:278`), a
 rdzeń renderera WebGPU nie używa `document`.
 
+### 2.10 Szew 2026-10-15 vs 2026-10-07 (RW-01)
+
+Ten sam skrypt inwentarza (`.tmp/render-szew/inwentarz.mjs`) na `main` 45431670 — gra urosła (§ 7.2), szew razem z nią:
+
+| miara | 2026-10-07 | 2026-10-15 |
+|---|---|---|
+| pliki gry / moduły renderu / linie renderu | 481 / 244 / 106 625 | 569 / 282 / 121 190 |
+| `index.html` → render: odwołania / symbole (z uchwytami) / uchwyty | 350 / 93 / 6 | 453 / 111 / 9 (`scoutBay3D`, `neaFlyby3D`, `cometsView`) |
+| symulacja → render: importy / z modułów | 29 / 15 | 33 / 18 |
+| render → symulacja: importy / z modułów / do modułów | 105 / 52 / 39 | 122 / 59 / 48 (nowe: `engineIgnition`, `asteroidRotation`, `destructorConfig`, `comets`, `cometNucleus`, `hexBodyHooks`, `pirateBaseBodies` (D), `hexGridSpace`, `repairSwarm` (C), `repairRig`, `beamBand3D`, `friendlyFire`) |
+| `window.*` zmiennych gry w renderze: nazwy / odczyty | 43 / 164 | 48 / 186 |
+| `GameState.*` w renderze | 9 | 8 |
+| odczyty GPU → CPU w modułach gry | 14 | 16 |
+| DOM w renderze: `document` / `requestIdleCallback` / `TextureLoader` itp. / `devicePixelRatio` / `localStorage` | 20 / 15 / 8 / 2 / 1 | 21 / 15 / 18 / 5 / 3 |
+
+Strażnik (`scripts/webgpu/szewRenderu.mjs` + `tests/szewRenderu.test.mjs`) liczy dokładniej niż inwentarz (AST zamiast
+wyrażeń regularnych, bez komentarzy, osobno moduły przenoszone i kanwa 2D) — jego sufity z 2026-10-15: `index.html` →
+render 442 odwołania (aktualizacja 100, zdarzenie 66, konfiguracja 169, zapytanie 76, dane 31; grupy z grafu jednostek
+i reguł `grupy.mjs` bez numerów linii), importy render → symulacja 122 do 48 modułów (klasy A 32, B 4, C 4, D 7, E 1),
+zmienne gry w modułach przenoszonych 38 nazw / 156 odczytów (z wolnymi identyfikatorami; `SUN` 35, `ship` 18,
+`DevTuning` 11), w modułach kanwy 2D 13 / 30, `GameState` 6, DOM w modułach przenoszonych 81 w 24 plikach, odczyty
+GPU 11 w 5 plikach, `Math.random` 13 w 3 plikach.
+
 ## 3. Projekt
 
 ### 3.1 Architektura i przebieg klatki
@@ -1124,6 +1147,18 @@ A–E), `window.<zmienna gry>` w modułach renderu (43 nazwy), DOM w modułach r
 w modułach renderu. Liczba może spaść (sufit idzie w dół), nie może wzrosnąć bez wpisu z powodem.
 Kryterium: zielony na dzisiejszym drzewie; dopisek `window.ship` w module `src/3d` albo nowy import `src/game/*.js`
 z renderu — czerwony. Zależności: brak. Kolizje: brak.
+
+**Stan (2026-10-15, tor `rw-szew`):** zrobione. `scripts/webgpu/szewRenderu.mjs` (graf `grafImportow` + AST
+`rollup/parseAst` modułów renderu i głównego skryptu `index.html`) i `tests/szewRenderu.test.mjs` (sufity jako mapa
+klucz → liczba, klucz bez sufitu = 0; liczby w § 2.10). Odstępstwa: (1) lekser `grafGry.mjs` przepisany na kody
+znaków — graf gry liczył się ~5–12 s (strażnik i `graBezGlsl` czekały), teraz ~1,8 s; wynik `lex` bit w bit na 1533
+plikach `src/`, `scripts/`, `dema/`, `tests/`; (2) moduły kanwy 2D (`ZOSTAJE_NA_WATKU_GLOWNYM`) liczą się osobno
+(`okno-kanwa:`), DOM w nich się nie liczy; `getContext('2d')` się nie liczy (działa na `OffscreenCanvas`) — liczy się
+`document` / `createElement`; (3) grupa „dane” `index.html` = symbole z modułów renderu bez three (przechodnio), bez
+`window` i bez stanu najwyższego poziomu + `fxRandom`, `SHIP3D_MODELS`, `WEAPON3D_FAMILY`, `stampFamilyFor`; (4) zmienna
+gry liczy się także jako wolny identyfikator (bez `window.`); (5) test negatywny w samym strażniku: kopia
+`core3d.js` w pamięci z `window.ship` i importem `src/game/stepDecay.js` — oba przekroczenia złapane (sprawdzone też na
+prawdziwym pliku). Test ~5 s. Commit — `RW-01: …` w historii `main`.
 
 **RW-02 Prototyp kompozycji A / B.**
 Pliki: nowe `dema/render-worker-proto.html`, `.js`, `.worker.js`, `scripts/webgpu/render-worker-proto.mjs`. Worker
