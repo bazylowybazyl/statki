@@ -1344,6 +1344,28 @@ Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, 
 `tests/worldBodies*.test.mjs`; `scripts/webgpu/suchy-dok-gra.mjs` (usunięty 2026-10-11 — dok poza grą; bazę mierzy `baza-gra.mjs`), `zniszczenia-gra.mjs --final` bez zmiany
 zachowania; pipeline'y synchroniczne 0. Zależności: RW-22. Kolizje: misja 2 (`storyGame.js`, blok FABUŁA).
 
+**Stan (2026-10-15, tor `rw-swiat`, commit „RW-24 (w toku): baza piratów…”) — CZEKA NA WERYFIKACJĘ z harnessu
+(pauza obciążenia orkiestratora; bez fast-forwardu do main).** Dok wypadł z gry — zadanie zrobione dla bazy piratów.
+Audyt: rozgrywkę liczył render w `src/3d/pirateBaseGame.js` (§ 2.6 p. 19–21) — stan kawałków (`chunkState` bryły:
+broken / hidden), zbiór `_dockGone` przebudowywany TYLKO w `updatePirateBase3D` (render, stał we mgle), wynik
+`breakPirateBaseChunk` / `ramPirateBaseChunk` z bryły, ciała świata z obiektu 3D (`createPirateBaseSites(…, base)`,
+`available()` → `base.isChunkGone`), prebuild kratownic w rozgrzewce (`Core3D.scene`), mgła bazy (predykat gry
+wołany z renderu), habitat martwy (`structures.habitat.hp` w renderze), `st._base3d` (obiekt 3D na bytach gry),
+środek planetoidy z grafu sceny (`r.rock.root.parent`). Zrobione: nowy `src/game/story/pirateBaseWorld.js` — dane bazy
+z czystych modułów (układ, scena, styl), stan kawałków i `_dockGone` (przebudowa `syncPirateBaseGone` po
+`worldBodies.step` — także we mgle; break / ram / hide dopisują od razu), decyzje break / ram (kawałek pęknięty albo
+schowany nie pęka drugi raz — jak bryła), ciała świata na danych gry, `prebuildPirateBaseWorld` na ekranie ładowania
+bez Core3D, `pirateRockAt` (środek z `createPirateRockLayout` + `place.toGame`), `collapsePirateRock`. Obraz
+(`pirateBaseGame.js`) = `pirateBase3DEvent` (attach, bodies — haki `site.render`, bodiesDetach, break, ram, hide,
+rockCollapse, detach — rekordy PBASE_* / ROCK_COLLAPSE z § 3.3) + stan klatki (`storyBaseFrameState`: `hidden` z mgły,
+`habitatDead`); dryf i zniknięcie odpadłego kawałka zostają w obrazie (kawałek pęknięty jest nieobecny od chwili
+pęknięcia — `isChunkGone` gry = broken || hidden). Obraz nie importuje już `worldBodies` ani `pirateBaseBodies`.
+Skrypty narzędzi bez `_base3d` (`window.PirateBase`: broken, gone, hide, view). Zmiany zachowania (zamierzone):
+`_dockGone` aktualny w kroku fizyki zamiast ≤ 1 klatkę później i także we mgle. Testy: nowy
+`tests/pirateBaseWorld.test.mjs`, `pirateBase`, `pirateBaseIntegrity` — zielone. Do zrobienia przy weryfikacji:
+`storyMission`, `worldBodies*`, `pirateRock`, pełne testy, build, `baza-gra.mjs`, `zniszczenia-gra.mjs --final`,
+`planetoida-gra.mjs` (pipeline'y synchroniczne 0).
+
 **RW-25 Pas asteroid: świat pasa po stronie gry.**
 Pliki: nowy `src/game/beltWorld.js` (pole, cień pól, olbrzymy z `requestNear` z kamery i statku, `collideShip`,
 `pointBlocked`, `roofAbove`, `AsteroidMining` i `MiningRig` po zdarzeniu `bankRadius`, zegar skał w czasie gry, `taken`,
@@ -1351,6 +1373,27 @@ konsument `dirtyBox`, `playZ`), `src/3d/asteroids/asteroidBelt.js` (obraz; włas
 deterministyczne), `minedRocks.js`, `index.html` (użycia z § 2.3), SDF olbrzymów i cień pól w SAB. Kryterium:
 `tests/asteroidBeltField.test.mjs` i testy wydobycia; `scripts/webgpu/asteroidy-gra.mjs --kolizja`,
 `wydobycie-gra.mjs`; zrzuty `pas`, `wydobycie` bit w bit. Zależności: RW-04, RW-12. Kolizje: brak aktywnych.
+
+**Stan (2026-10-15, tor `rw-swiat`, commit „RW-25 (w toku): świat pasa…”) — CZEKA NA WERYFIKACJĘ z harnessu
+(pauza obciążenia; zrzuty „przed” przerwane — do powtórzenia z drzewa `main`).** Nowy `src/game/beltWorld.js`
+(`createBeltWorld`, `window.__beltWorld`): pole, cień pól (`precompute` → sektory w SharedArrayBuffer, render
+`adoptSectors` — bez drugiego liczenia), olbrzymy (`frame(dt, paused, focus)` co klatkę z kamer i statków graczy —
+kolizje istnieją, zanim kadr dotknie pasa; SDF olbrzymów w SharedArrayBuffer — `src/game/sharedTyped.js`),
+`collideShip` / `pointBlocked` / `roofAbove`, zegar skał `time` (czas bezwzględny, ta sama suma dt co dawny krok
+renderu — 0 w pauzie, ≤ 0,1 s), fizyka skał i platforma po zdarzeniu `attachShapeRadius` (mapy promienia banku;
+arytmetyka jedna — `src/game/asteroidShapeRadius.js`, `rockBank.radiusAt` ją woła), `playZ` (`src/game/beltPlayZ.js`),
+konsument `dirtyBox` (`ackMinedUpload`), konfiguracja pola (`setExclusions`, `setSmallBodyAnchors`, `familyPeaks`,
+`addWakeSpot` — przelot NEA) do pola gry i repliki obrazu (`createFieldReplica`, historia operacji). `asteroidBelt.js` =
+obraz na własnej instancji pola (`createAsteroidBelt({ world })`, `prepareFrame(time, dt, …)`, widoki olbrzymów poza
+obiektami gry — `giantView(entry)`; `rig` / `mining` / `giants` jako gettery dla narzędzi). Gra (kolizje, pociski,
+radar `env.belt`, fabuła `beltDensity` / `beltGiants`, przyloty piratów, rodziny, wydobycie) czyta `beltWorld`.
+Sprawdzone od 10-07: rumowiska, pary z księżycami, rodziny (`familyAt`), wycięcia populacji, `wakeSpots`, wyłączenia
+małych ciał (`applySmallBodyExclusions(beltWorld)`), komety (`penetrationOf` — pole gry). Zmiany zachowania (zamierzone):
+budowa SDF olbrzymów rusza przy statku / kamerze w zasięgu 420 tys. j. także poza kadrem pasa (np. przy Marsie). Testy:
+nowy `tests/beltWorld.test.mjs` (replika = te same skały, cień pól, zegar, olbrzymy, wydobycie, strażnik obrazu) i
+poprawione strażniki źródeł — zielone; strażnik szwu po RW-01 (spadki: `asteroidBeltGiants`, `asteroidGiantBuilder`,
+`asteroidMining` 2 → 1, `asteroidMiningRig` 2 → 1; nowe czyste moduły klasy A). Do zrobienia: pełne testy, build,
+`asteroidy-gra.mjs --kolizja`, `wydobycie-gra.mjs` (+ `--rumowisko`, `--pary`), zrzuty `pas`, `wydobycie` bit w bit.
 
 **RW-26 Wieżyczki, maskowanie i jasność wieżyczek po stronie gry.**
 Pliki: `src/vfx/turret2D.js` (`sync` w grze przed pakowaniem; odrzut po gnieździe strzelca zamiast szukania po
@@ -1368,6 +1411,25 @@ i lampki stanowisk; zegar migania), `src/3d/haloRing/haloRingGame.js` (obraz), `
 `tests/k7BerthService.test.mjs`, `tests/hallDust.test.mjs`, `scripts/webgpu/ring-kolizje-gra.mjs`,
 `hala-swiatla-gra.mjs --automat`; zrzuty `ziemia`, `ziemia-ring`, `mars`, `jowisz` bit w bit. Zależności: RW-12.
 Kolizje: misja 2 (fabuła K-7) — mała.
+
+**Stan (2026-10-15, tor `rw-swiat`, commit „RW-27 (w toku): świat ringów…”) — CZEKA NA WERYFIKACJĘ z harnessu.**
+Nowy `src/game/haloRingWorld.js` (`haloWorld`, `window.__haloWorld`): `entries` z kolidera, rejestru i automatu
+stanowisk; teren Marsa (ECUMENE) i Jowisza (Fable) od razu z `createEcumenePlan` / `createFablePlan` (ta sama funkcja
+co `archRing.terrainHeightAt` — test na 400 punktach), Ziemia — w trybie `inline` funkcja mapy CPU ringu obrazu po
+`ready` (`setRingTerrain`; profil z = 0 przez postMessage — przy workerze, RW-40+); automat stanowisk K-7 w czasie gry dla
+każdego ringu (bez bramki widoczności i podzielonego ekranu); zajętość i lampki w rejestrze kolidera
+(`owner.layout.berths` wyzerowane przy starcie jak dawniej po `ready` + `berthVersion`; fabuła — `deps.k7SetBerth`
+zamiast pisania w obiekcie hali 3D `deps.k7Hall`); zegar migania `clock` (zegar ściany w tym samym miejscu klatki) i poziom
+lamp hal `owner.lampLevel` (cień planety ze słońca gry; wzór obrazu, `uSunDir` jak `THREE.Vector3.normalize` z pamięcią
+1e-6 — test bit w bit). `haloRingGame.js` = obraz (`new HaloRingGame({ world })`, wpisy obrazu z odwołaniami do wpisów
+świata, lampki hal z rejestru przy zmianie wersji, `clock` — getter). Fizyka przewodów paliwowych zostaje obrazem (pozy —
+stan gry w rejestrze, jak dotąd). Pola siłowe bram (`k7ForceFieldList`) i nadproża (`k7GateLintels.js`) — czyste, gra
+czyta `haloWorld.entries`; hala z Blendera bez zmian. Zmiany zachowania (zamierzone): teren w kolizjach Marsa i Jowisza
+od startu (dawniej płaska płyta do zbudowania ringu przy kamerze), automat stanowisk także poza kadrem i w podzielonym
+ekranie, `lampLevel` hal ringów niezbudowanych. Testy: nowy `tests/haloRingWorld.test.mjs`, poprawione strażniki
+(`k7BerthService`, `haloRingGame`, `npcWorldCollisions`, `warpGhostCollisions`, `haloRingAsync`, `menuBackdrop`).
+Do zrobienia: pełne testy, build, `ring-kolizje-gra.mjs`, `hala-swiatla-gra.mjs --automat`, zrzuty `ziemia`,
+`ziemia-ring`, `mars`, `jowisz` bit w bit.
 
 **RW-28 Warp „Nurt”: harmonogram w czasie gry.**
 Pliki: nowy `src/game/warpTraffic.js` (rejestr przylotów i odlotów, limit 24, poza z czystych `arrivalFxPose` /
