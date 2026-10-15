@@ -88,6 +88,8 @@ export function createSnapshotFrame() {
     sun: null, skyZone: null,
     warp: null, boost: null,
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
+    turretFrame: null,          // faza begin (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame) —
+                                // pierwszeństwo przed turretsOf
     consumeDirty: false,        // lustra (RW-11a): zerować flagi brudu skóry ciał gry po spakowaniu (tylko inline)
     hall: null,                 // faza finish: Float64Array HALL_DUST_IN
     repair: null,               // blok `repair` (blocks/repairBlock.js): RepairSwarm
@@ -162,6 +164,7 @@ export class SnapshotPacker {
     this._bodyBeams = [];
     this._blocks = [];
     this._blocksDirty = false;
+    this._turretsPacked = false;  // strona: wieże już w fazie begin (frame.turretFrame)
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
     this._coreLists = [[null, null], null, null, null];
@@ -265,6 +268,8 @@ export class SnapshotPacker {
     this._packStations(v, frame);
     this._packCores(v, frame);
     this._packWorld(v, frame);
+    this._turretsPacked = false;
+    if (frame.turretFrame) this._packTurretFrame(v, frame.turretFrame);
     if (this._blocks.length) this._packBlocks(v, frame, 'begin');
     this.stats.beginMs = this.now() - t0;
   }
@@ -274,7 +279,7 @@ export class SnapshotPacker {
     const t0 = this.now();
     const v = this.view;
     if (frame.cull) writeCull(v.head, frame.cull);
-    this._packTurrets(v, frame);
+    if (!this._turretsPacked) this._packTurrets(v, frame);
     if (frame.hall && frame.hall.length >= HALL_WORDS) v.hall.set(frame.hall.subarray(0, HALL_WORDS));
     else v.hall.fill(0);
     if (this._blocks.length) this._packBlocks(v, frame, 'finish');
@@ -1226,9 +1231,7 @@ export class SnapshotPacker {
     const of = f.turretsOf;
     const list = this._lists[LIST.SEEN_COLD];
     const ents = this.ids.entities;
-    const dict = this.dict;
     const cap = this.layout.cap.turrets;
-    const f64 = v.turF64, i32 = v.turI32;
     let n = 0, need = 0;
     if (of) {
       for (let i = 0; i < list.length; i++) {
@@ -1239,34 +1242,59 @@ export class SnapshotPacker {
         const gen = s >= 0 ? ents.gen(s) : 0;
         for (let j = 0; j < recs.length; j++) {
           need++;
-          if (n >= cap) continue;
-          const r = recs[j];
-          const b = n * TURRET.stride.f64, bi = n * TURRET.stride.i32;
-          i32[bi + TI.ENT_SLOT] = s;
-          i32[bi + TI.ENT_GEN] = gen;
-          i32[bi + TI.KEY] = dict.code(r.key);
-          i32[bi + TI.UID] = dict.code(r.uid);
-          i32[bi + TI.WEAPON] = dict.code(r.weaponId);
-          i32[bi + TI.FX_KEY] = dict.code(r.fxKey);
-          f64[b + TF.WX] = raw(r.wx);
-          f64[b + TF.WY] = raw(r.wy);
-          f64[b + TF.ANG] = raw(r.ang);
-          f64[b + TF.SCALE] = raw(r.scale);
-          f64[b + TF.RECOIL] = raw(r.recoil);
-          f64[b + TF.SHAKE] = raw(r.shake);
-          const spec = r.spec;
-          f64[b + TF.R] = spec ? raw(spec.r) : NaN;
-          const rs = r.state;
-          f64[b + TF.HOUSING] = rs ? raw(rs.housing) : NaN;
-          f64[b + TF.BARREL] = rs ? raw(rs.barrel) : NaN;
-          f64[b + TF.FLASH] = rs ? raw(rs.flash) : NaN;
-          n++;
+          if (n < cap) this._writeTurret(v, n++, recs[j], s, gen);
         }
       }
     }
+    this._endTurrets(v, n, need, cap);
+  }
+
+  /** RW-26: rekordy wież klatki (Turret2D.syncFrame przed updateHexShips3D) w fazie begin, w kolejności klatki. */
+  _packTurretFrame(v, tf) {
+    const ents = this.ids.entities;
+    const cap = this.layout.cap.turrets;
+    const count = tf.frameCount | 0;
+    let n = 0, need = 0;
+    for (let i = 0; i < count; i++) {
+      const r = tf.recordAt(i);
+      const e = r ? r.entity : null;
+      const s = e ? ents.peek(e) : -1;
+      if (s < 0) continue;            // encja spoza list migawki — render jej nie zna
+      need++;
+      if (n < cap) this._writeTurret(v, n++, r, s, ents.gen(s));
+    }
+    this._endTurrets(v, n, need, cap);
+    this._turretsPacked = true;
+  }
+
+  _endTurrets(v, n, need, cap) {
     v.head[HEAD.N_TURRETS] = n;
     this.stats.turrets = n;
     if (need > cap) this._requestGrow('turrets', need * 2);
+  }
+
+  _writeTurret(v, n, r, s, gen) {
+    const f64 = v.turF64, i32 = v.turI32;
+    const dict = this.dict;
+    const b = n * TURRET.stride.f64, bi = n * TURRET.stride.i32;
+    i32[bi + TI.ENT_SLOT] = s;
+    i32[bi + TI.ENT_GEN] = gen;
+    i32[bi + TI.KEY] = dict.code(r.key);
+    i32[bi + TI.UID] = dict.code(r.uid);
+    i32[bi + TI.WEAPON] = dict.code(r.weaponId);
+    i32[bi + TI.FX_KEY] = dict.code(r.fxKey);
+    f64[b + TF.WX] = raw(r.wx);
+    f64[b + TF.WY] = raw(r.wy);
+    f64[b + TF.ANG] = raw(r.ang);
+    f64[b + TF.SCALE] = raw(r.scale);
+    f64[b + TF.RECOIL] = raw(r.recoil);
+    f64[b + TF.SHAKE] = raw(r.shake);
+    const spec = r.spec;
+    f64[b + TF.R] = spec ? raw(spec.r) : NaN;
+    const rs = r.state;
+    f64[b + TF.HOUSING] = rs ? raw(rs.housing) : NaN;
+    f64[b + TF.BARREL] = rs ? raw(rs.barrel) : NaN;
+    f64[b + TF.FLASH] = rs ? raw(rs.flash) : NaN;
   }
 }
 

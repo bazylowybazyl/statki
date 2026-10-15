@@ -237,6 +237,40 @@ test('wzrost pojemności: nowy układ stron (generacja), dane zachowane; listy, 
   assert.ok(rep.ent > 0 && rep.nodes > 0 && rep.total <= rep.pageBytes);
 });
 
+test('wieże z rekordów klatki (RW-26, faza begin): te same rekordy co turretsOf, kolejność klatki, encje spoza list pominięte', () => {
+  const ents = [makeShip(1, 0, 0), makeShip(2, 10, 0), makeShip(3, 20, 0)];
+  const stranger = { x: 5, y: 5 };
+  const mk = (e, k, b) => ({ entity: e, key: k, uid: 'u' + k, weaponId: 'tempest', fxKey: 'T', wx: b, wy: -b, ang: b * 0.1, scale: 1, recoil: 0, shake: 0.5, spec: { r: 12 }, state: { housing: 0.1, barrel: b, flash: 0 } });
+  const recs = [mk(ents[2], 'a', 1), mk(ents[2], 'b', 2), mk(stranger, 'x', 9), mk(ents[0], 'c', 3)];
+  const tf = { frameCount: recs.length, recordAt: (i) => recs[i] };
+  const packA = new SnapshotPacker({ shared: false });
+  const fA = baseFrame(ents, {});
+  fA.turretFrame = tf;
+  fA.turretsOf = () => { throw new Error('turretsOf nie może być wołane, gdy jest turretFrame'); };
+  packA.begin(fA);
+  const vA = packA.view;
+  assert.equal(vA.head[HEAD.N_TURRETS], 3, 'po fazie begin');
+  packA.finish(fA);
+  const packB = new SnapshotPacker({ shared: false });
+  const fB = baseFrame(ents, {});
+  fB.turretsOf = (e) => recs.filter((r) => r.entity === e);
+  packB.begin(fB);
+  const vB = packB.view;
+  packB.finish(fB);
+  const keyA = [], keyB = [];
+  for (let i = 0; i < 3; i++) {
+    keyA.push(packA.dict.value(vA.turI32[i * TURRET.stride.i32 + TURRET.I32.KEY]));
+    keyB.push(packB.dict.value(vB.turI32[i * TURRET.stride.i32 + TURRET.I32.KEY]));
+  }
+  assert.deepEqual(keyA, ['a', 'b', 'c'], 'kolejność rekordów klatki');
+  assert.deepEqual(keyA.slice().sort(), keyB.slice().sort(), 'ten sam zbiór co ścieżka turretsOf');
+  for (let i = 0; i < 3; i++) {
+    const j = keyB.indexOf(keyA[i]);
+    for (let w = 0; w < TURRET.stride.f64; w++) assert.ok(Object.is(vA.turF64[i * TURRET.stride.f64 + w], vB.turF64[j * TURRET.stride.f64 + w]));
+    assert.equal(vA.turI32[i * TURRET.stride.i32 + TURRET.I32.ENT_SLOT], packA.ids.entities.peek(recs.find((r) => r.key === keyA[i]).entity));
+  }
+});
+
 test('mgła wojny: SEEN bez ukrytych; zimne wraki z ciałem w SEEN_COLD; stacje', () => {
   const ents = [makeShip(1, 0, 0), makeShip(2, 10, 0), makeShip(3, 20, 0)];
   const cold = deepFreeze({ isCold: true, dead: false, beamHull: ents[2].beamHull, x: 0, y: 0 });

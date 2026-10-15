@@ -1351,7 +1351,9 @@ miejsce uzgodnić z sesją renderu CPU.
   wygląd każdej encji listy RENDER, która go ma, i ramka klatki (dt, zegar, lista aktywnych, gracz); układ rekordu
   z szablonu `createCloakLook()` (nowe pole wyglądu przechodzi samo, lustro ma klasę ukrytą wyglądu gry), bity
   zdarzeń `look.events` = suma od ostatnio odebranej strony (pominięta strona w `worker` ich nie gubi). Most
-  `__cloakLook` lustro → gra znika przy wpięciu bloku. Zostaje: rekordy wież w fazie begin (po RW-26), zapisy renderu czytane przez grę
+  `__cloakLook` lustro → gra znika przy wpięciu bloku. Wieże w fazie begin: `frame.turretFrame` (`{ frameCount,
+  recordAt(i) }` — Turret2D po `syncFrame` z RW-26) ma pierwszeństwo przed `turretsOf` (faza finish); te same rekordy,
+  kolejność klatki, encje spoza list migawki pominięte (test w `tests/snapshotPack.test.mjs`). Zostaje: zapisy renderu czytane przez grę
   (`__shieldBreach` — RW-29, `station._mesh3d` — RW-22, `core.lastX/Y`), strugi i kule rdzeni (rozkazy RX_* — RW-22).
 - **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
