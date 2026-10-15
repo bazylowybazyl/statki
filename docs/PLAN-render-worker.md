@@ -1488,8 +1488,10 @@ Pliki: `src/3d/shield3D.js` (bity do bloku `RET`), nowy `src/game/shieldBreach.j
 z `acquireShieldLattice`), `index.html` (pociski, wiązki), rakiety. Kryterium: `node scripts/webgpu/tarcze-gra.mjs` —
 przebicia jak dziś (przy D3 = bez zmian); test geometrii płytek. Zależności: RW-04. Kolizje: mało.
 
-**Stan (2026-10-15, tor `rw-kadluby`, commit „RW-29: …”) — zrobione, CZEKA NA WERYFIKACJĘ** (`tarcze-gra.mjs`,
-`tarcza-pokazana-gra.mjs`, zrzuty — tryb lekki maszyny). Render (`shield3D.js`, `setShieldReturnChannel(views, keyOf)`)
+**Stan (2026-10-16, tor `rw-kadluby`, commit „RW-29: …”) — ZROBIONE, w `main`.** Weryfikacja: `tarcze-gra.mjs` przed
+(eksport `be571e17`) i po — przebicie, pociski przez dziurę i bez niej (6 / 5 zapytań, te same obrażenia tarczy i kadłuba),
+zamknięcie po stygnięciu, bitwa: wynik identyczny, 0 kompilacji w klatce; `tarcza-pokazana-gra.mjs` przed / po — maks.
+różnica 5/255 (szum); testy Node i `npm test` bez nowych porażek, build. Render (`shield3D.js`, `setShieldReturnChannel(views, keyOf)`)
 po odczycie GPU pisze rekord slotu puli do RET (`retWriteBreach`: slot + generacja encji, `shieldProfileHash` obrysu,
 epoka w `RET_I32.BREACH_EPOCH`, bity płytek), przy przydziale slotu — rekord bez przebić, przy zwolnieniu — slot −1;
 bez kanału (dema, testy) dawna droga. Gra: `index.html` tworzy `RenderSlots = createRenderIds()` i `RenderReturn`
@@ -1531,8 +1533,10 @@ Pliki: `src/game/coldWrecks.js` (bramka „czy widać” z kamery i progu LOD po
 (`coldWreckSystem`), pozostałe flagi z § 2.6 p. 17. Kryterium: testy zimnych wraków, zrzuty `kosmos` (wraki).
 Zależności: RW-22. Kolizje: brak.
 
-**Stan (2026-10-15, tor `rw-kadluby`, commit „RW-31 cz. 1: …”) — część 1 zrobiona, CZEKA NA WERYFIKACJĘ** (zrzuty
-`kosmos` / pełny harness przed / po — tryb lekki maszyny; „przed” = eksport bazowego commita przez `--root`). Bramka
+**Stan (2026-10-16, tor `rw-kadluby`, commit „RW-31 cz. 1: …”) — część 1 ZROBIONA, w `main`.** Weryfikacja: sesja
+`kosmos` przed (`--root` eksport `be571e17`) / po — `wraki`, `wybuch`, `kalibracja`, `warp` i wszystkie warstwy bit w bit
+(maks. 1/255); złożony kadr `bitwa` różni się, ale nie jest powtarzalny nawet na tym samym kodzie (przed ↔ przed 3,7%
+pikseli > 8, przed ↔ po 0,05–0,7%). Harness: sesje z grą startują grę swobodną (kampania domyślna zamrażała świat). Bramka
 i zapotrzebowanie nie zależą od RW-22, więc poszły przed nim. Gra liczy sama z widoku klatki (`_hexCullInfo`, zoom,
 skala renderu, numer klatki — `src/game/coldWreckView.js`, pudła wspólne z renderem w `src/render/drawBox.js`):
 (1) `entity.__inDrawBox` (+ `__drawFogHidden`) — `stampDrawBoxFlags(renderEntities)` przed `updateHexShips3D`, render
