@@ -12,6 +12,7 @@
 // okręgach albo (biegun N Saturna) sześciokącie — dżet sześciokątny stoi w Systemie III, a chmury płyną wzdłuż
 // jego boków. Pas-segment nad czapą ma prędkość sztywną 0 (czapa nie jedzie), więc szew czapy z pasami nie narasta.
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 import { uniformArray } from 'three/tsl';
 import { SimClock } from '../game/simClock.js';
 
@@ -424,7 +425,7 @@ export class GasGiantAtmosphere {
     const period = Math.max(0.5, Number(T.period) || 9);
     // Tempo z powiększenia tylko dla planety w kamerze gry (pass ortho przy ringu); planeta tła (perspektywa,
     // isRingAnchored === false) ma stałą tarczę na ekranie — tempo 1.
-    const cam = typeof window !== 'undefined' && this.planet?.isRingAnchored !== false ? window.camera : null;
+    const cam = this.planet?.isRingAnchored !== false ? RenderWorld.camera : null;
     const radius = this.planet?.group?.scale?.x || 48000;
     const want = cam ? this.paceFor(cam.zoom, radius) : 1;
     // Wygładzone; skok o więcej niż połowę (cięcie kamery, teleport) — od razu.

@@ -126,7 +126,7 @@ test('stacja piracka w grze: stałe światła latarni (wszystkie warstwy, zgaszo
   assert.match(src, /pirateStation3D = prebuiltPirate \|\| buildPirateStation3D\(\);/);
   // wypiek rozpadu na ekranie ładowania nie przesuwa wspólnego ciągu efektów (stan fxRandom wraca)
   const pre = src.slice(src.indexOf('function ensurePrebuiltPirateStation('), src.indexOf("Core3D.warmup?.add({ name: 'stacja piracka: bryła'"));
-  assert.match(pre, /const fxState = fxRandom\.state;[\s\S]*Destruction3D\.prebake\([\s\S]*finally \{\s*fxRandom\.state = fxState;/);
+  assert.match(pre, /const fxState = fxRandom\.state;[\s\S]*[dD]estruction3D\.prebake\([\s\S]*finally \{\s*fxRandom\.state = fxState;/);
   assert.match(src, /createPirateStation\(\{ worldRadius: 360, beaconLights: ensurePirateBeaconLights\(\) \|\| undefined \}\)/);
 });
 

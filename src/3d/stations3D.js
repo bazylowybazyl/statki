@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RenderWorld } from '../render/renderWorld.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { Core3D } from './core3d.js';
@@ -250,26 +251,25 @@ function isPirateStation(station) {
 }
 
 function getDevScale() {
-  if (typeof window === 'undefined') return 1;
-  const devValue = window.Dev?.station3DScale;
-  const tuning = window.DevTuning?.pirateStationScale;
+  const devValue = RenderWorld.dev?.station3DScale;
+  const tuning = RenderWorld.devTuning?.pirateStationScale;
   const value = Number.isFinite(devValue) ? devValue : Number.isFinite(tuning) ? tuning : 1;
   return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
 function getPerStationScaleMap() {
-  if (typeof window === 'undefined') return {};
-  const cfg = (window.DevConfig && window.DevConfig.stationScaleById) || {};
-  const tun = (window.DevTuning && window.DevTuning.stationScaleById) || {};
-  const fb = window.stationScaleById || {};
+  const devConfig = RenderWorld.devConfig, devTuning = RenderWorld.devTuning;
+  const cfg = (devConfig && devConfig.stationScaleById) || {};
+  const tun = (devTuning && devTuning.stationScaleById) || {};
+  const fb = RenderWorld.config.stationScaleById || {};
   return Object.assign({}, fb, tun, cfg);
 }
 
 function getPerStationPivotMap() {
-  if (typeof window === 'undefined') return {};
-  const cfg = (window.DevConfig && window.DevConfig.stationPivotById) || {};
-  const tun = (window.DevTuning && window.DevTuning.stationPivotById) || {};
-  const fb = window.stationPivotById || {};
+  const devConfig = RenderWorld.devConfig, devTuning = RenderWorld.devTuning;
+  const cfg = (devConfig && devConfig.stationPivotById) || {};
+  const tun = (devTuning && devTuning.stationPivotById) || {};
+  const fb = RenderWorld.config.stationPivotById || {};
   return Object.assign({}, fb, tun, cfg);
 }
 
@@ -612,9 +612,10 @@ export function setStationScale(id, scale = 1) {
   if (typeof window === 'undefined') return;
   const key = String(id ?? '').toLowerCase();
   if (!key) return;
-  if (!window.DevConfig) window.DevConfig = {};
-  if (!window.DevConfig.stationScaleById) window.DevConfig.stationScaleById = {};
-  window.DevConfig.stationScaleById[key] = Number(scale) || 1;
+  let devConfig = RenderWorld.devConfig;
+  if (!devConfig) devConfig = window.DevConfig = {};
+  if (!devConfig.stationScaleById) devConfig.stationScaleById = {};
+  devConfig.stationScaleById[key] = Number(scale) || 1;
   const devScale = getDevScale();
   for (const rec of stationRecords.values()) {
     const st = rec.stationRef;

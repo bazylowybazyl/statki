@@ -25,6 +25,7 @@
 // same czynniki co WebGL r183 (SRC_ALPHA, ONE | ONE, ONE) — mieszanie bez zmian.
 
 import * as THREE from 'three';
+import { RenderWorld } from '../render/renderWorld.js';
 import { NodeMaterial } from 'three/webgpu';
 import {
   Fn, abs, attribute, clamp, cos, dot, float, floor, fract, length, max, mix, positionGeometry, pow,
@@ -305,7 +306,7 @@ function ensureBuilt() {
 
 function areEnginePointLightsEnabled() {
   if (typeof window === 'undefined') return false;
-  if (window.ENGINE_POINT_LIGHTS_ENABLED === true) return true;
+  if (RenderWorld.config.enginePointLights === true) return true;
   return Core3D?.perfToggles?.enginePointLights === true;
 }
 

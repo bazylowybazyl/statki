@@ -21,6 +21,7 @@
 // slotów, światła i iskry; krok Core3D.fx „tarcze” (przed passami) liczy compute.
 // ============================================================
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import { FX_DISTORT_LAYER } from './fx/fxFrame.js';
 import { fxRandom } from './fx/fxRandom.js';
@@ -205,7 +206,7 @@ function resolveEntityPose(entity, interp, out) {
   let x = Number.isFinite(entity.x) ? entity.x : entity.pos?.x;
   let y = Number.isFinite(entity.y) ? entity.y : entity.pos?.y;
   let angle = getShieldHullAngle(entity);
-  if (interp && entity.isPlayer && entity === (typeof window !== 'undefined' ? window.ship : null)) {
+  if (interp && entity.isPlayer && entity === RenderWorld.ship) {
     x = interp.x; y = interp.y;
     if (Number.isFinite(interp.angle)) angle = interp.angle;
   }
@@ -361,7 +362,7 @@ function flash(rec, lx, ly, cls, dmg) {
   const c = lightColor(rec);
   const wx = localToWorldX(rec, lx, ly), wy = localToWorldY(rec, lx, ly);
   const e = rec.entity;
-  ActiveCarrier.set(writeCarrier(e, wx, wy, typeof window !== 'undefined' && e === window.ship, _carrier));
+  ActiveCarrier.set(writeCarrier(e, wx, wy, e === RenderWorld.ship, _carrier));
   fl.flash(wx, wy, c.r * 0.6 + 0.4, c.g * 0.6 + 0.4, c.b * 0.6 + 0.4, k.power * boost, k.range * rec.sizeK, k.life, 2, 0,
     40 + domeZ(rec, lx * 0.95, ly * 0.95));
   ActiveCarrier.clear();

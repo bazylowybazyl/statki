@@ -128,7 +128,7 @@ test('DirectMoon: mapy z MOON_MAPS, materiał księżyca, Słońce w płaszczyź
   const src = read('src/3d/planet3d.assets.js');
   assert.match(src, /MOON_MAPS\[String\(this\.tune\?\.id \|\| 'moon'\)\]/);
   assert.match(src, /createMoonSurfaceMaterial\(\{/);
-  assert.match(src, /setMoonSunDirection\(this\.mesh\.material, window\.SUN\.x - mx, -\(window\.SUN\.y - my\), 0\)/, 'Słońce − środek, z = 0');
+  assert.match(src, /setMoonSunDirection\(this\.mesh\.material, RenderWorld\.sun\.x - mx, -\(RenderWorld\.sun\.y - my\), 0\)/, 'Słońce − środek, z = 0');
   assert.match(src, /setMoonSunDirection\(this\.mesh\.material, _lensSun\.x, _lensSun\.y, _lensSun\.z\)/, 'soczewka: słońce obrócone z bryłą');
   assert.match(src, /setMoonSunLight\(Core3D\._sunShadowLight\)/);
   assert.doesNotMatch(src, /colorTex: 'assets|bumpTex: 'assets/, 'ścieżki map tylko w planetMaps.js');

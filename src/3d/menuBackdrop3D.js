@@ -15,6 +15,7 @@
 //   bd.launch();                // start gry: przejazd kamery ({ dolly: false } — tylko planeta na środek kadru)
 //   bd.stop();                  // przed pierwszą klatką gry: ring wraca do gry
 import * as THREE from 'three';
+import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
 import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
@@ -385,7 +386,7 @@ export class MenuBackdrop3D {
     this.time += dt;
     this.orbit = s.swayDeg * Math.sin((this.time * Math.PI * 2) / Math.max(1, s.swayPeriodSec));
     // jakość z opcji menu (jak haloRings.update w grze): zmiana = przebudowa ringu
-    this.haloRings.setQuality(window.OPTIONS?.planetQuality || this.haloRings.qualityKey);
+    this.haloRings.setQuality(RenderWorld.options?.planetQuality || this.haloRings.qualityKey);
     const L = ring.layout;
 
     if (!this.ready) {

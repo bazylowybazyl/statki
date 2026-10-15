@@ -2,6 +2,7 @@
 // Heksy (dema mostków, rdzenia, asteroid): strojenie i żar bez silnika, reszta przez haki, które
 // wpisuje destructor.js — gra go nie ładuje (etap 8, docs/PORT-silnik-belek.md), więc bytów z hexGrid nie ma.
 import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
+import { RenderWorld } from '../render/renderWorld.js';
 import { HexBodyHooks } from '../game/hexBodyHooks.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
@@ -295,9 +296,9 @@ function isEntityInDrawBox(entity, cull, cameraZoom) {
 }
 
 function getInterpolatedRenderPose(entity) {
-  if (typeof window === 'undefined') return null;
-  if (!window.ship || entity !== window.ship) return null;
-  const pose = window.__interpShipPose;
+  const ship = RenderWorld.ship;
+  if (!ship || entity !== ship) return null;
+  const pose = RenderWorld.playerPose;
   if (!pose) return null;
   if (!Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.angle)) return null;
   return pose;
@@ -952,8 +953,8 @@ const GpuDebrisManager = {
     DEBRIS_SHARED.uHeatTint.value = this.heatTintEnabled
       ? Math.max(0, Number(DESTRUCTOR_CONFIG.debrisHeatGlow) || 0)
       : 0;
-    const sun = typeof window !== 'undefined' ? window.SUN : null;
-    const camera = typeof window !== 'undefined' ? window.camera : null;
+    const sun = RenderWorld.sun;
+    const camera = RenderWorld.camera;
     for (const pool of this.pools.values()) {
       pool.commit();
       // All sizes have expired; a later small chip must not truncate a big one.
@@ -1337,7 +1338,7 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
     const lodScaleY = getEntityScaleY(entity);
     const extent = getGridActiveExtent(grid, state.lastTime);
     const bodyRadiusPx = Math.max(extent.halfW * Math.abs(lodScaleX), extent.halfH * Math.abs(lodScaleY)) * zoomPx;
-    const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
+    const tuning = RenderWorld.devTuning || null;
     const enterPx = Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
     const exitPx = enterPx * WRECK_IMPOSTOR_EXIT_MUL;
     const wasImpostor = data.batchedImpostor === true;
@@ -1532,7 +1533,7 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   // Strojenie światła (panel), glow naprężenia i żar heksów (DESTRUCTOR_CONFIG)
   // to wspólne węzły HULL_SHARED — zapis raz na klatkę w syncHullSharedUniforms.
 
-  const sun = typeof window !== 'undefined' ? window.SUN : null;
+  const sun = RenderWorld.sun;
   if (sun) {
     const dx = sun.x - ex;
     const dy = -(sun.y - ey);
@@ -1799,7 +1800,7 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
     const halfW = (mm[3] - mm[0]) * 0.5 + body.cellSize * 0.5;
     const halfH = (mm[4] - mm[1]) * 0.5 + body.cellSize * 0.5;
     const bodyRadiusPx = Math.max(halfW, halfH) * zoomPx;
-    const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
+    const tuning = RenderWorld.devTuning || null;
     const enterPx = Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
     const exitPx = enterPx * WRECK_IMPOSTOR_EXIT_MUL;
     const isImpostor = data.batchedImpostor === true ? bodyRadiusPx < exitPx : bodyRadiusPx < enterPx;
@@ -1832,7 +1833,7 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   // Czas, strojenie światła i żar skóry belek (HULL_BODY_CONFIG — żar belek to
   // wyłącznie zgniot i brzeg rany ZDERZENIA; heatGlowPeak destruktora zostaje
   // heksom) to wspólne węzły HULL_SHARED (syncHullSharedUniforms).
-  const sun = typeof window !== 'undefined' ? window.SUN : null;
+  const sun = RenderWorld.sun;
   if (sun) uniforms.uLightDir.value.set(sun.x - ex, -(sun.y - ey), 600).normalize();
   uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   const bodyRadiusPx = Math.max(hull.srcWidth, hull.srcHeight) * 0.5 * entityScale * zoomPx;
@@ -2156,9 +2157,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // Maskowanie (src/3d/cloak/hullCloak.js): wygląd encji z `cloak` PRZED światłami, wieżyczkami i dyszami
   // tej klatki (gaszą się z komórką pod sobą — cloakVisAtWorld), cząstki frontu i zerwania.
   // Wizjer maskowania: okręt, którym gracz steruje (przy sterach fregaty zwiadu — fregata, src/game/scoutBay.js).
-  const scoutBay = typeof window !== 'undefined' ? window.ScoutBay : null;
+  const scoutBay = RenderWorld.scoutBay;
   const viewer = scoutBay?.controlling && scoutBay.npc && !scoutBay.npc.dead ? scoutBay.npc
-    : (typeof window !== 'undefined' ? window.ship : null);
+    : RenderWorld.ship;
   updateCloakLooks(valid, now, getInterpolatedRenderPose, cameraZoom * (Core3D.pixelRatio || 1), viewer);
 
   // Emitery świateł drogowych z CAŁEGO pudła rozgrzania: statek tuż poza
@@ -2333,7 +2334,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   Turret2D.update();
   // Efekty broni (zadanie 17): pociski, smugi, lot, wstrząs strzałów, bank Fx3D — raz na klatkę
   // renderu, po Turret2D.sync (lufy wiązek ciągłych i błysków z rekordów tej klatki).
-  WeaponFx.sync((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
+  WeaponFx.sync(Array.isArray(RenderWorld.bullets) ? RenderWorld.bullets : []);
 
   GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
   GpuDebrisManager.updateTime(now * 0.001);
@@ -2407,8 +2408,7 @@ export function drawHexShips3D(ctx, width, height) {
 
   const w = Math.max(1, Number(width) || ctx.canvas?.width || 1);
   const h = Math.max(1, Number(height) || ctx.canvas?.height || 1);
-  const isSplit = typeof window !== 'undefined'
-    && window.splitScreenMode && Core3D.activeCam2;
+  const isSplit = RenderWorld.splitScreenMode && Core3D.activeCam2;
 
   ctx.clearRect(0, 0, w, h);
   ctx.save();
@@ -2491,7 +2491,7 @@ export function getEntityHullSprite(entity) {
 // === ZIMNE WRAKI (src/game/coldWrecks.js) ===
 
 function getWreckImpostorEnterPx() {
-  const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
+  const tuning = RenderWorld.devTuning || null;
   return Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
 }
 

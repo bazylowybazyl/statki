@@ -24,6 +24,7 @@
 // macierz układ → scena), layers: { bg, fg }, hidden() → bool (mgła wojny), setSkinned(piece, on), groupOf(piece),
 // rasterCenter(piece) → { x, z }, setHold?(piece, on) — statyka kawałka widoczna mimo straty (tylko obraz) }.
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import { HullBodies } from '../game/hullBodies.js';
 import { worldBodies } from '../game/worldBodies.js';
@@ -506,7 +507,7 @@ function disposeInstance(inst) {
 function collect() {
   _list.length = 0;
   for (const e of worldBodies.renderEntities()) _list.push(e);
-  const wrecks = typeof window !== 'undefined' && Array.isArray(window.wrecks) ? window.wrecks : null;
+  const wrecks = Array.isArray(RenderWorld.wrecks) ? RenderWorld.wrecks : null;
   if (wrecks) {
     for (let i = 0; i < wrecks.length; i++) {
       const w = wrecks[i];

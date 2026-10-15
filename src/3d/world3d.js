@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js'; // Upewnij się, że ścieżka jest poprawna!
 import { createPirateStation } from '../space/pirateStation/pirateStationFactory.js';
 import { fxRandom } from './fx/fxRandom.js';
@@ -57,8 +58,8 @@ function ensurePrebuiltPirateStation() {
       prebuiltPirate = buildPirateStation3D();
       prebuiltPirate.object3d.scale.setScalar(25);
       prebuiltPirate.object3d.updateMatrixWorld(true);
-      if (typeof window !== 'undefined' && window.Destruction3D?.prebake) {
-        window.Destruction3D.prebake(prebuiltPirate.object3d);
+      if (RenderWorld.destruction3D?.prebake) {
+        RenderWorld.destruction3D.prebake(prebuiltPirate.object3d);
       }
     } finally {
       fxRandom.state = fxState;
@@ -108,8 +109,8 @@ export function attachPirateStation3D(_sceneIgnored, station2D) {
   }
 
   // Pre-bake geometry for Tier-1 GPU shatter (amortises cost, runs once per load)
-  if (typeof window !== 'undefined' && window.Destruction3D?.prebake) {
-      window.Destruction3D.prebake(pirateStation3D.object3d);
+  if (RenderWorld.destruction3D?.prebake) {
+      RenderWorld.destruction3D.prebake(pirateStation3D.object3d);
   }
 
   initialRadius = pirateStation3D.radius;

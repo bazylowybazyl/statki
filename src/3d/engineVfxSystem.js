@@ -12,6 +12,7 @@
 //           ships3d/thrusters/sideThruster3D.js) — tu wpis na listę klatki (SideNozzleFrame), a struga
 //           zaczyna się w wylocie dzwonu.
 import { Core3D } from './core3d.js';
+import { RenderWorld } from '../render/renderWorld.js';
 import { EngineExhaustBatch, createExhaustState } from './engineExhaustBatch.js';
 import { getEngineVfxClassScale } from './engineVfxScale.js';
 import {
@@ -30,7 +31,6 @@ import { enginePlumeScale, engineIgnitionKick } from '../game/engineIgnition.js'
 import { SideNozzleFrame, SIDE_NOZZLE_RADIUS, SIDE_NOZZLE_MOUTH } from './sideNozzleFrame.js';
 // Dysze SIDE na WebGPU (2026-10-07): struga TSL, gaz w pulach GPU, światło na blasze — zamiast engineExhaustBatch.
 import { SideJets3D, createSideJetState, SIDE_JET_TUNE, SIDE_JET_REACH_R } from './sideJets3D.js';
-import { GameState } from '../game/gameState.js';
 import { buildEntityEngineFx, fallbackNozzleRadius } from '../data/engineFx.js';
 import { cloakVisAtWorld } from '../game/cloakLook.js';
 // Rozpad kadłuba belkowego: dysza gaśnie, gdy komórka pod nią nie jest już żywym węzłem ciała właściciela.
@@ -531,9 +531,9 @@ function resolveEntityEngineFx(entity) {
 /** Tryb napędu skokowego encji: 'off' | 'charging' | 'active'. */
 function resolveWarpMode(entity) {
   if (entity.__warpPreview === true) return 'active';
-  const player = GameState.ship;
+  const player = RenderWorld.ship;
   if (player && entity === player) {
-    const w = GameState.warp;
+    const w = RenderWorld.warp;
     if (w?.state === 'charging') return 'charging';
     if (w?.state === 'active') return 'active';
     // Wyjście z warpa = przylot jak u NPC (warpDrive.js: WARP_EXIT): plazma do hamowania.
@@ -555,8 +555,8 @@ function resolveWarpMode(entity) {
  */
 function resolveMainBoost(entity) {
   if (entity.__editorBoost === true || entity.__fSysBoost === true) return true;
-  const player = GameState.ship;
-  return !!(player && entity === player && GameState.boost?.state === 'active');
+  const player = RenderWorld.ship;
+  return !!(player && entity === player && RenderWorld.boost?.state === 'active');
 }
 
 /**
@@ -742,9 +742,9 @@ function updateEffects(entity, fxData, dt) {
   const plumeK = entity.engineIgn ? enginePlumeScale(entity) : 1;
   const plumeKick = entity.engineIgn ? engineIgnitionKick(entity) : 0;   // silnik „łapie” — rozbłysk strugi w zapłonie
   const mainBoost = resolveMainBoost(entity) && plumeK >= 1;
-  const isPlayerEntity = entity === GameState.ship || entity.isPlayer === true;
+  const isPlayerEntity = entity === RenderWorld.ship || entity.isPlayer === true;
   const isHulk = entity.isBridgeHulk === true;
-  const jetGainRaw = (isPlayerEntity && typeof window !== 'undefined') ? Number(window.OPTIONS?.vfx?.bloomGain) : NaN;
+  const jetGainRaw = isPlayerEntity ? Number(RenderWorld.options?.vfx?.bloomGain) : NaN;
   const jetGain = Number.isFinite(jetGainRaw) && jetGainRaw >= 0 ? jetGainRaw : 1;
   const sparkMul = isPlayerEntity ? 1 : NPC_SPARK_MUL;
   // Maskowanie (src/game/cloakLook.js): dysza gaśnie z komórką kadłuba pod sobą; ukryty okręt zostawia
@@ -971,12 +971,12 @@ function updateEffects(entity, fxData, dt) {
       const state = item.state;
       state.curve = curve;
       state.throttleTarget = slotThrottle;
-      if (entity.isPlayer && typeof window !== 'undefined' && window.OPTIONS?.vfx) {
-        const driveColorTemp = Number(window.shipDriveState?.engineColorTempK);
+      if (entity.isPlayer && RenderWorld.options?.vfx) {
+        const driveColorTemp = Number(RenderWorld.driveState?.engineColorTempK);
         state.colorTempK = Number.isFinite(driveColorTemp)
           ? driveColorTemp
-          : window.OPTIONS.vfx.colorTempK;
-        state.bloomGain = window.OPTIONS.vfx.bloomGain;
+          : RenderWorld.options.vfx.colorTempK;
+        state.bloomGain = RenderWorld.options.vfx.bloomGain;
       }
       // Dalej łańcuch dyszy bocznej: . Rz(nozzleRot) . S(widthMul*effectScale,
       // lengthMul*effectScale) — para skal na instancję. Maskowanie: jasność × widoczność komórki dyszy,
@@ -1073,15 +1073,14 @@ export const EngineVfxSystem = {
     frameCtx.camera = Core3D.getPassCamera(true);
     frameCtx.isOrtho = frameCtx.camera === Core3D.cameraOrtho;
     frameCtx.viewportH = Math.max(1, Number(Core3D.renderer?.domElement?.height) || Number(Core3D.height) || 1080);
-    const hasWindow = typeof window !== 'undefined';
-    frameCtx.playerShip = hasWindow ? (window.ship || null) : null;
-    frameCtx.playerPose = frameCtx.playerShip ? (window.__interpShipPose || null) : null;
-    frameCtx.tune = (hasWindow && window.VFX_TUNE) ? window.VFX_TUNE : null;
+    frameCtx.playerShip = RenderWorld.ship || null;
+    frameCtx.playerPose = frameCtx.playerShip ? (RenderWorld.playerPose || null) : null;
+    frameCtx.tune = RenderWorld.vfxTune || null;
     frameCtx.sideWidthMul = Math.max(0.05, Number(frameCtx.tune?.sideW) || 1);
     frameCtx.lod = frameCtx.isOrtho;
     frameCtx.drawMargin = Number.isFinite(drawMargin) && drawMargin > 0 ? drawMargin : 0;
     frameCtx.modelMinPx = Number(SideNozzleFrame.modelMinPx) || 0;
-    prepareMainLod(view, dt, hasWindow ? window : null);
+    prepareMainLod(view, dt, RenderWorld); // kamera i podzielony ekran z fasady (pola camera, splitScreenMode)
     MainLodStats.nozzles = 0;
     MainLodStats.offBox = 0;
     MainLodStats.cut = 0;

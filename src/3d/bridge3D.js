@@ -65,6 +65,7 @@
 // brzegiem jak rozdarcia skóry kadłuba.
 
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import {
   BRIDGE_KILL_TIMELINE,
@@ -1460,7 +1461,7 @@ export const Bridge3D = {
     }
 
     // Słońce jak w hexShips3D (window.SUN); bez niego — z lewej od góry.
-    const sun = typeof window !== 'undefined' ? window.SUN : null;
+    const sun = RenderWorld.sun;
     if (sun && Number.isFinite(sun.x) && Number.isFinite(sun.y)) {
       ctx.sunX = sun.x;
       ctx.sunY = sun.y;

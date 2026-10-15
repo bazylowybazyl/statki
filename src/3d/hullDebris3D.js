@@ -12,6 +12,7 @@
 //  - materiał w TSL (port WebGPU, zadanie 04): jeden graf, jeden materiał na obie pule;
 //    maska słońca przez to samo miejsce importu co kadłuby (hexShips3D.tsl.js).
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 import {
   Fn, If, Discard, float, vec2, vec3, vec4, attribute, varying,
   positionGeometry, normalGeometry, modelViewMatrix, cameraProjectionMatrix, frontFacing, screenCoordinate,
@@ -239,8 +240,8 @@ export const HullDebris3D = {
         this._rebase(_origin.x, _origin.y);
       }
       // Słońce jak u kadłubów: kierunek z punktu (tu: środka kadru) do słońca, uniesiony o 600.
-      const sun = typeof window !== 'undefined' ? window.SUN : null;
-      const cam = typeof window !== 'undefined' ? window.camera : null;
+      const sun = RenderWorld.sun;
+      const cam = RenderWorld.camera;
       if (sun && cam) u.uLightDir.value.set(sun.x - cam.x, -(sun.y - cam.y), 600).normalize();
     }
     for (const batch of this.batches) {

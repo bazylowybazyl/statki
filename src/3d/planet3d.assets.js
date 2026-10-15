@@ -1,6 +1,7 @@
 // Planety, słońce, mgławica i gwiazdy (warstwy 1 / 3 / 5 / 6). Materiały w TSL:
 // planet3d.assets.tsl.js (port WebGPU, zadanie 05) — tu tylko obiekty, strojenie i aktualizacja.
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 import { texture, uniform, uniformArray, uv, vec2 } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import {
@@ -39,7 +40,7 @@ import {
 import { JupiterAtmosphere } from './jupiterAtmosphere.js';
 import { SaturnAtmosphere } from './saturnAtmosphere.js';
 
-window.Dev = window.Dev || {};
+if (!RenderWorld.dev) window.Dev = {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
 
 // Kamery 3D (src/game/game3D.js — sam widok, 2026-09-30): planety zostają na swoich miejscach (tło z paralaksą
@@ -219,7 +220,7 @@ function lensDiscVisible(x, y, r, W, H) {
 
 /** Kierunek słońca z prawdziwego środka ciała (scena, y w górę), obrócony przelotem → _lensSun; zwraca odległość. */
 function lensSunDir(bx, by, q) {
-    const sun = window.SUN;
+    const sun = RenderWorld.sun;
     if (!sun) { _lensSun.set(1, 0, 0); return 1; }
     const sx = sun.x - bx;
     const sy = -(sun.y - by);
@@ -366,8 +367,8 @@ const NebulaSystem = {
         if (!flat) return;
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
         const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
-        const sunX = (window.SUN && window.SUN.x) || 0;
-        const sunY = (window.SUN && window.SUN.y) || 0;
+        const sunX = (RenderWorld.sun && RenderWorld.sun.x) || 0;
+        const sunY = (RenderWorld.sun && RenderWorld.sun.y) || 0;
         this.mesh.position.x = sunX + (cx - sunX) * this.parallaxFactor;
         this.mesh.position.y = (-sunY) + ((-cy) - (-sunY)) * this.parallaxFactor;
         // Warp (zadanie 22): mgławica bez dawnego rozjaśniania w skoku (uniform warpFactor = 0) —
@@ -443,11 +444,11 @@ const StarSystem = {
         this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
         this.uniforms.viewportSize.value.set(Core3D.width || window.innerWidth || 1, Core3D.height || window.innerHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
-        if (Array.isArray(planetMasks) && planetMasks.length && window.planets) {
+        if (Array.isArray(planetMasks) && planetMasks.length && RenderWorld.planets) {
             for (let i = 0; i < STAR_PLANET_MASK_CAP; i++) if (planetMasks[i]) planetMasks[i].set(0, 0, 0, 0);
             let writeIdx = 0;
-            for (let i = 0; i < window.planets.length && writeIdx < STAR_PLANET_MASK_CAP; i++) {
-                const planet = window.planets[i];
+            for (let i = 0; i < RenderWorld.planets.length && writeIdx < STAR_PLANET_MASK_CAP; i++) {
+                const planet = RenderWorld.planets[i];
                 if (planet?.x && planet?.y && planet?.r > 0) {
                     const key = String(planet.id || planet.name || '').toLowerCase();
                     const visualRadius = RING_PLANET_NAMES.has(key)
@@ -484,7 +485,7 @@ const BODY_ACTIVITY_NDC_PAD = 0.25;
 function isBodyLikelyOnScreen(gameX, gameY, visualZ, worldRadius, anchoredToRing, cam) {
     if (!cam) return true;
     if (Core3D.isFreePerspectiveCamera(cam)) return isSphereInFreeCamera(gameX, -gameY, visualZ, Math.max(1, Number(worldRadius) || 1) * 1.25);
-    if (window.splitScreenMode && Core3D.activeCam2) return true;
+    if (RenderWorld.splitScreenMode && Core3D.activeCam2) return true;
     const r = Math.max(1, Number(worldRadius) || 1);
     if (anchoredToRing) {
         const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
@@ -759,7 +760,7 @@ class DirectPlanet {
             // frame on player two, so projecting against it alone can hide a
             // planet that is still visible to player one.
             const worldCullRadius = scale * Math.max(1.0, this.visibleRadiusMul || 1.0);
-            const splitScreen = !!(window.splitScreenMode && Core3D.activeCam2);
+            const splitScreen = !!(RenderWorld.splitScreenMode && Core3D.activeCam2);
             const viewportWidth = (window.innerWidth || 1920) / (splitScreen ? 2 : 1);
             const viewportHeight = window.innerHeight || 1080;
             // A visible planet gets a larger keep-alive margin than a hidden
@@ -823,20 +824,20 @@ class DirectPlanet {
         // Ta sama decyzja co chowanie grupy: planeta w kadrze = jej passy mają pracę.
         if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(anchoredToRing, true);
 
-        this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined) ? window.DevVFX.planetBloomMultiplier : 1.0);
-        if (window.SUN) {
+        this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((RenderWorld.devVFX && RenderWorld.devVFX.planetBloomMultiplier !== undefined) ? RenderWorld.devVFX.planetBloomMultiplier : 1.0);
+        if (RenderWorld.sun) {
             const sunZ = this.group.position.z;
-            this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
-            if (this.cloudUniforms) this.cloudUniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
+            this.uniforms.sunPosition.value.set(RenderWorld.sun.x, -RenderWorld.sun.y, sunZ);
+            if (this.cloudUniforms) this.cloudUniforms.sunPosition.value.set(RenderWorld.sun.x, -RenderWorld.sun.y, sunZ);
             const atmU = this.atmosphere?.material?.uniforms;
             if (atmU?.uSunDir) {
                 // poświata limbu (createRingAtmosphere): kierunek planeta → Słońce, w płaszczyźnie
-                const dx = window.SUN.x - this.data.x;
-                const dy = -(window.SUN.y - this.data.y);
+                const dx = RenderWorld.sun.x - this.data.x;
+                const dy = -(RenderWorld.sun.y - this.data.y);
                 const len = Math.hypot(dx, dy) || 1;
                 atmU.uSunDir.value.set(dx / len, dy / len, 0);
             } else if (atmU?.sunPosition) {
-                atmU.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
+                atmU.sunPosition.value.set(RenderWorld.sun.x, -RenderWorld.sun.y, sunZ);
             }
         }
         if (this.isRingAnchored && this._ringShadowRadius > 0) {
@@ -973,7 +974,7 @@ class DirectPlanet {
             this.uniforms.uRingShadowReach.value = this._ringShadowReach;
             this.uniforms.uRingShadowCenter.value.set(b.x, -b.y);
         }
-        this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined) ? window.DevVFX.planetBloomMultiplier : 1.0);
+        this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((RenderWorld.devVFX && RenderWorld.devVFX.planetBloomMultiplier !== undefined) ? RenderWorld.devVFX.planetBloomMultiplier : 1.0);
     }
     _lensRestore() {
         this._lensed = false;
@@ -1100,7 +1101,7 @@ class DirectMoon {
         if (this.mesh) {
             // Słońce księżyca w płaszczyźnie gry, jak planet (moonSurface.tsl.js: dzień i zmrok świateł nocnych
             // z kierunku Słońce − środek, z = 0) — ciemna połowa przechodzi prosto w smugę cienia za ciałem.
-            if (window.SUN) setMoonSunDirection(this.mesh.material, window.SUN.x - mx, -(window.SUN.y - my), 0);
+            if (RenderWorld.sun) setMoonSunDirection(this.mesh.material, RenderWorld.sun.x - mx, -(RenderWorld.sun.y - my), 0);
             const sizeRatio = Math.max(0.01, Number(this.tune?.sizeRatioToParent) || MOON_TUNE.sizeRatioToParent);
             const moonR = parentR * sizeRatio;
             const scale = Math.max(900, moonR * (this.isRingAnchored ? 1 : PLANET_SIZE_MULTIPLIER));
@@ -1114,8 +1115,8 @@ class DirectMoon {
             this.mesh.rotation.set(0, this._spinAngle, 0);
             if (this.halo) {
                 this.halo.scale.set(scale, scale, scale);
-                if (window.SUN) {
-                    this.halo.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, z);
+                if (RenderWorld.sun) {
+                    this.halo.material.uniforms.sunPosition.value.set(RenderWorld.sun.x, -RenderWorld.sun.y, z);
                 }
             }
             // Księżyc nie ma własnego cullingu (frustum robi three), więc flagę
@@ -1302,7 +1303,7 @@ class DirectSmallBody {
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
         const scale = Math.max(100, Number(this.data.r) || 1000);
         // Słońce powierzchni w płaszczyźnie gry (moonSurface.tsl.js) — kierunek Słońce − środek, z = 0.
-        if (window.SUN) setMoonSunDirection(this.mesh.material, window.SUN.x - x, -(window.SUN.y - y), 0);
+        if (RenderWorld.sun) setMoonSunDirection(this.mesh.material, RenderWorld.sun.x - x, -(RenderWorld.sun.y - y), 0);
         // Tarcza w masce słońca (smuga cienia za ciałem, cień na okrętach) — płaszczyzna gry (ortho, z = 0). Promień =
         // NAJMNIEJSZY promień bryły: tarcza większa od sylwetki (spłaszczenie, wcięcia Westy) zostawiała jasny sierp
         // tła między nocnym brzegiem a smugą.
@@ -1312,7 +1313,7 @@ class DirectSmallBody {
         if (this._lensed) this._lensRestore();
         this._place(x, y, scale);
         this._orient();
-        if (this.halo && window.SUN) this.halo.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, this.group.position.z);
+        if (this.halo && RenderWorld.sun) this.halo.material.uniforms.sunPosition.value.set(RenderWorld.sun.x, -RenderWorld.sun.y, this.group.position.z);
         if (typeof Core3D.markPlanetLayersActive === 'function'
             && isBodyLikelyOnScreen(x, y, 0, scale * this._extent * 1.1, true, cam)) {
             Core3D.markPlanetLayersActive(true, true);
@@ -1536,7 +1537,7 @@ window.updatePlanets3D = function (dt, cam) {
     // Flagi warstw planet/halo/ring-planet: każde ciało w kadrze zapala swoje
     // (Core3D pomija potem puste passy — patrz layerActivity).
     if (typeof Core3D.beginPlanetLayerFrame === 'function') Core3D.beginPlanetLayerFrame();
-    NebulaSystem.update(dt, cam); StarSystem.update(dt, cam, window.ship);
+    NebulaSystem.update(dt, cam); StarSystem.update(dt, cam, RenderWorld.ship);
     // Skok gracza: planety i księżyce w soczewce świata (warpNurt.js pisze WARP_WORLD_LENS przed tym krokiem).
     const lensOn = WARP_WORLD_LENS.active === true;
     if (window._entities) window._entities.forEach(ent => { if (ent.update) ent.update(dt, cam, lensOn); });

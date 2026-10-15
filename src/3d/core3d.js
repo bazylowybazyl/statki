@@ -10,6 +10,7 @@
 // bezpiecznik w biegu). Tylko WebGPU: bez adaptera renderer nie powstaje,
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
+import { RenderWorld } from '../render/renderWorld.js';
 // Niepowtarzalne uuid węzłów TSL + strażnik kolizji (pułapka 38) — PRZED resztą zależności: węzły tworzone
 // w modułach Core3D dostają już uuid z licznikiem (src/3d/tsl/uuidWezlow.js).
 import { tslUuidStan } from './tsl/uuidWezlow.js';
@@ -501,7 +502,7 @@ function makeScenePass(name, bucket, layer, isOrtho, clearColor, clearDepth = tr
 }
 
 function recordRenderDbg(name, ms) {
-  const fn = (typeof globalThis !== 'undefined') ? globalThis.__renderDbgRecord : null;
+  const fn = RenderWorld.config.debugRecord;
   if (typeof fn !== 'function') return;
   if (!Number.isFinite(ms) || ms < 0) return;
   fn(name, ms);
@@ -645,7 +646,7 @@ export const Core3D = {
   fx: null, fxStats: null, distortionTarget: null,
 
   _getBloomConfig() {
-    const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
+    const bloom = RenderWorld.devVFX?.bloom || null;
     const strength = Number.isFinite(Number(bloom?.strength)) ? Number(bloom.strength) : this.bloomBaseStrength;
     const radius = Number.isFinite(Number(bloom?.radius)) ? Number(bloom.radius) : BLOOM_DEFAULTS.radius;
     const threshold = Number.isFinite(Number(bloom?.threshold)) ? Number(bloom.threshold) : this.bloomBaseThreshold;
@@ -1481,8 +1482,8 @@ export const Core3D = {
     
     if (viewWidth === undefined) {
        this.activeCam1 = gameCamera;
-       if (typeof window !== 'undefined' && window.camera2) {
-           this.activeCam2 = window.camera2;
+       if (RenderWorld.camera2) {
+           this.activeCam2 = RenderWorld.camera2;
        } else {
            this.activeCam2 = gameCamera;
        }
@@ -1586,7 +1587,7 @@ export const Core3D = {
     const frame = renderer.info.frame;
     const firstOfFrame = frame !== this._gpuTimerFrame;
     this._gpuTimerFrame = frame;
-    const split = typeof window !== 'undefined' && !!window.splitScreenMode;
+    const split = !!RenderWorld.splitScreenMode;
     if (!split || !firstOfFrame) this._gpuTimerPoll();
   },
 
@@ -1853,7 +1854,7 @@ export const Core3D = {
   render() {
     if (!this.isInitialized || !this.gpuReady) return;
     const renderer = this.renderer;
-    const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
+    const dbgEnabled = typeof RenderWorld.config.debugRecord === 'function';
     const tRenderTotal0 = performance.now();
     this._gpuTimerGate();
 
@@ -1900,7 +1901,7 @@ export const Core3D = {
 
     // Maska widoczności słońca — PRZED pre-passem halo i passami sceny, bo
     // czytają ją materiały (kadłuby, tło, planety przy ringu, atmosfery).
-    const sun = typeof window !== 'undefined' ? window.SUN : null;
+    const sun = RenderWorld.sun;
     this._renderSunShadowMask(raysEnabled && !!sun, sun, shaftCfg);
 
     // Pre-pass halo tylko gdy planety są w ogóle renderowane — wcześniej te
@@ -2083,8 +2084,8 @@ export const Core3D = {
   _runFxFrame(freePerspective) {
     const fx = this.fx;
     if (!fx || !this.composerTarget) return;
-    const split = typeof window !== 'undefined' && !!window.splitScreenMode;
-    const cam2 = split && !freePerspective ? (window.camera2 || null) : null;
+    const split = !!RenderWorld.splitScreenMode;
+    const cam2 = split && !freePerspective ? (RenderWorld.camera2 || null) : null;
     // Kadr siatki świateł w j. świata: kanwa (px CSS) / zoom.
     fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, performance.now());
   },
@@ -2170,7 +2171,7 @@ export const Core3D = {
   // SPIKE 13; dawna ścieżka „split w jednym renderze” usunięta w porcie).
   renderSingle(gameCamera = null) {
     if (!this.isInitialized) return;
-    const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
+    const dbgEnabled = typeof RenderWorld.config.debugRecord === 'function';
     const tCall0 = dbgEnabled ? performance.now() : 0;
     const prevCam1 = this.activeCam1;
     const prevCam2 = this.activeCam2;
@@ -2421,7 +2422,7 @@ export const Core3D = {
   // i ringów; sunShadowMask.js, discSunVisibilityCpu) — dla rzeczy rysowanych na kanwie 2D (wieżyczki).
   // 1 = pełne słońce; bez słońca, przy wyłączonych smugach albo w wolnej kamerze 3D — 1.
   sunVisibilityAtWorld(worldX, worldY) {
-    const sun = typeof window !== 'undefined' ? window.SUN : null;
+    const sun = RenderWorld.sun;
     if (!sun || !this.shaftDiscs || this.isFreePerspectiveCamera()) return 1;
     if (this.perfToggles && this.perfToggles.shadowShafts === false) return 1;
     const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);

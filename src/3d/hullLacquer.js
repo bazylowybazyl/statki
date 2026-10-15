@@ -34,6 +34,7 @@
 // Tekstury zastępcze mają filtr liniowy: TSL wybiera ścieżkę próbkowania
 // (textureSample albo textureLoad) z tekstury obecnej przy BUDOWIE materiału.
 import * as THREE from 'three';
+import { RenderWorld } from '../render/renderWorld.js';
 import { renderGroup, texture, uniform } from 'three/tsl';
 
 export const HULL_LACQUER_DEFAULTS = Object.freeze({
@@ -489,7 +490,7 @@ export const HullLacquer = {
       clampNum(t.sunElevDeg, 0, 89, 30) * DEG
     );
     // W warpie bliskie obłoki gasną: kafel przewijałby się szybciej niż klatki.
-    const warpActive = typeof window !== 'undefined' && window.warp?.state === 'active';
+    const warpActive = RenderWorld.warp?.state === 'active';
     const fadeStep = dt / SKY_WARP_FADE_S;
     this._skyFade = warpActive
       ? Math.max(0, this._skyFade - fadeStep)
