@@ -1438,8 +1438,8 @@ wiadomościami (`SendMessage`, nazwy sesji z tabeli); orkiestrator — sesja „
 | `rw-szew` | RW-01 → RW-12 → RW-35 → pomoc przy RW-11c (uzgodnić z `rw-migawka`) | — |
 | `rw-migawka` | RW-04 → RW-03 → RW-10 → RW-11a → RW-11b → RW-11c | — |
 | `rw-bronie` | B3D (bronie tylko 3D, § 7.1) → RW-26 → RW-20 → RW-21 → RW-30 → RW-23 | — |
-| `rw-kadluby` | katalog rozkazów § 3.3 odświeżony o § 7.2 → RW-22 → RW-31 | RW-21 (`rw-bronie`) |
-| `rw-swiat` | RW-25 → RW-27 → RW-24 (baza piratów) → RW-29 → RW-28 | RW-04 przed RW-29; RW-21 przed RW-28 |
+| `rw-kadluby` | katalog rozkazów § 3.3 odświeżony o § 7.2 → RW-29 → RW-22 → RW-31 | RW-04 (`rw-migawka`) przed RW-29; RW-21 (`rw-bronie`) przed RW-22 |
+| `rw-swiat` | RW-25 → RW-27 → RW-24 (baza piratów) → RW-28 | RW-21 (`rw-bronie`) przed RW-28 |
 | `rw-worker` | RW-40 → RW-41 → RW-42 (B2cr) → RW-43 → RW-44 → RW-36 → RW-45 | koniec pozostałych torów |
 
 ### 7.4 Zasady scalania i pomiarów
