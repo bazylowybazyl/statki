@@ -13,7 +13,7 @@
 //
 // Czysty moduł (bez three, DOM i `window`).
 
-import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, NOZZLE, BODY, BODY_FLAG, HEAD } from './snapshotLayout.js';
+import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, VENT, BRIDGE_HEAD, BRIDGE_REC, NOZZLE, BODY, BODY_FLAG, HEAD } from './snapshotLayout.js';
 import { MirrorBody, applyBodyPage } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
@@ -21,25 +21,6 @@ const NF = NOZZLE.F64, NI = NOZZLE.I32;
 
 /** NaN ze strony → undefined na lustrze (pole nieobecne na obiekcie gry). */
 const und = (v) => (v === v ? v : undefined);
-
-/** Dysza-lustro: pola czytane przez EngineVfxSystem i lakier (statyczne z opisu, dynamiczne z NOZZLES). */
-export class MirrorNozzle {
-  constructor(src) {
-    // statyczne (opis): offset, forward, mount, side
-    this.offset = src && src.offset ? { x: src.offset.x, y: src.offset.y } : undefined;
-    this.forward = src && src.forward ? { x: src.forward.x, y: src.forward.y } : undefined;
-    this.mount = src ? src.mount : undefined;
-    this.side = src ? src.side : undefined;
-    // dynamiczne (NOZZLES)
-    this.baseDeg = src ? src.baseDeg : undefined;
-    this.gimbalMinDeg = src ? src.gimbalMinDeg : undefined;
-    this.gimbalMaxDeg = src ? src.gimbalMaxDeg : undefined;
-    this.nozzleDeg = src ? src.nozzleDeg : undefined;
-    this.__throttle = src ? src.__throttle : undefined;
-    this.vfxScale = src ? src.vfxScale : undefined;
-    this.__destroyed = src ? src.__destroyed : undefined;
-  }
-}
 
 /**
  * Encja-lustro. Pola poza i stanu z ENT (co klatkę), konfiguracja z opisu, pola pisane przez render (inicjowane tu —
@@ -84,6 +65,8 @@ export class MirrorEntity {
     this.visual = null; this.capitalProfile = undefined; this.profile = undefined; this.editorLights = undefined;
     this.engines = undefined;
     this.beamHull = null;
+    this.bridgeState = null;
+    this._oidPool = new Map();
     // pisane przez render
     this.__cloakLook = undefined; this.__warpHullU = undefined; this.__warpNurtMode = undefined; this.__bayCut = undefined;
     this.__hiddenFromView = false; this.__inDrawBox = false; this.__engineFxFallback = undefined;
@@ -100,7 +83,9 @@ const CLOAK_BREAK_NONE = null;
  * statyczna; wersje V_* w `i32[off … off + 5]`) albo null; `topologyOf(bodySlot, storeVer)` → topologia magazynu albo null; `dict` — słownik napisów pakującego.
  */
 export class RenderMirror {
-  constructor({ dict, describe = null, topologyOf = null, resourceOf = null } = {}) {
+  constructor({ dict, describe = null, topologyOf = null, resourceOf = null, bridgeBackends = null } = {}) {
+    this.bridgeBackends = bridgeBackends;
+    this._vents = new Map();     // numer obiektu wyrzutu → obiekt (tożsamość jak vent gry)
     this.dict = dict;
     this.describe = describe;
     this.topologyOf = topologyOf;
@@ -298,10 +283,13 @@ export function applyEntityPage(rm, m, v, s) {
   if (stale) {
     const desc = rm.describe ? rm.describe(s, m.gen, i32, bi + EI.V_VISUAL) : null;
     if (desc) {
-      applyDescriptor(m, desc, rm.resourceOf);
+      applyDescriptor(m, desc, rm.resourceOf, rm.bridgeBackends);
       for (let q = 0; q < 6; q++) dv[q] = i32[bi + EI.V_VISUAL + q];
     } else rm.stats.waitingDescriptor++;
   }
+  // mostki (stan dynamiczny)
+  const brOff = i32[bi + EI.BR_OFF];
+  if (brOff >= 0 && m.bridgeState) applyBridgePage(rm, m.bridgeState, v, brOff, i32[bi + EI.BR_N]);
   // dysze
   applyNozzles(m, v, i32[bi + EI.NOZ_OFF], i32[bi + EI.NOZ_N]);
   // ciało
@@ -398,42 +386,109 @@ function applyNozzles(m, v, off, n) {
 }
 
 /**
- * Opis encji (`describeEntity`) → lustro: kopie konfiguracji (dysze → MirrorNozzle — EngineVfxSystem trzyma je jako
- * `slot.source`, pola klatki z NOZZLES), kadłub-lustro (obrazy ze slotów zasobów; pola zmienne — z BODY co klatkę).
+ * Uzgodnienie drzewa opisu z obiektami lustra: węzeł z `__oid` widzianym wcześniej → TEN SAM obiekt lustra, pola
+ * nadpisane w miejscu (klucze spoza opisu — np. pisane przez render: `model3D`, `fxBurst`, `lit` — zostają); nowy
+ * `__oid` → nowy obiekt. `used` zbiera obiekty tego opisu (pula na następny raz). Tablice typowane — jak są.
  */
-export function applyDescriptor(m, desc, resourceOf) {
-  const vis = desc.visual ? { ...desc.visual } : desc.visual;
-  if (vis) {
-    if (Array.isArray(vis.mainThrusters)) vis.mainThrusters = vis.mainThrusters.map((t) => (t ? new MirrorNozzle(t) : t));
-    if (Array.isArray(vis.torqueThrusters)) vis.torqueThrusters = vis.torqueThrusters.map((t) => (t ? new MirrorNozzle(t) : t));
+export function reconcileDescriptor(node, pool, used) {
+  if (node === null || typeof node !== 'object' || ArrayBuffer.isView(node)) return node;
+  const id = node.__oid || 0;
+  if (Array.isArray(node)) {
+    let arr = id ? pool.get(id) : undefined;
+    if (!Array.isArray(arr)) arr = [];
+    arr.length = node.length;
+    for (let i = 0; i < node.length; i++) arr[i] = reconcileDescriptor(node[i], pool, used);
+    if (id) used.set(id, arr);
+    return arr;
   }
-  m.visual = vis;
-  m.capitalProfile = desc.capitalProfile;
-  m.profile = desc.profile;
-  m.editorLights = desc.editorLights;
-  const en = desc.engines;
-  m.engines = en ? { main: en.main ? Object.assign(new MirrorNozzle(en.main), {
-    visualOffset: en.main.visualOffset, vfxOffset: en.main.vfxOffset, vfxForward: en.main.vfxForward,
-    vfxYNudge: en.main.vfxYNudge, maxThrust: en.main.maxThrust
-  }) : en.main } : en;
+  let obj = id ? pool.get(id) : undefined;
+  if (!obj || Array.isArray(obj)) obj = {};
+  for (const k in node) {
+    if (k === '__oid') continue;
+    obj[k] = reconcileDescriptor(node[k], pool, used);
+  }
+  if (id) used.set(id, obj);
+  return obj;
+}
+
+/**
+ * Opis encji (`describeEntity`) → lustro: konfiguracja uzgodniona po `__oid` (tożsamość podobiektów jak w grze —
+ * dysze to `slot.source` EngineVfxSystem), kadłub-lustro po tożsamości rekordu kadłuba gry (render porównuje
+ * `data.hull !== hull`), obrazy ze slotów zasobów, `bridgeState` z backendem realmu renderu.
+ */
+export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null) {
+  const pool = m._oidPool, used = new Map();
+  m.visual = reconcileDescriptor(desc.visual, pool, used);
+  m.capitalProfile = reconcileDescriptor(desc.capitalProfile, pool, used);
+  m.profile = reconcileDescriptor(desc.profile, pool, used);
+  m.editorLights = reconcileDescriptor(desc.editorLights, pool, used);
+  m.engines = reconcileDescriptor(desc.engines, pool, used);
   m.id = desc.id; m.uid = desc.uid; m.name = desc.name;
   m.type = desc.type; m.shipFrame = desc.shipFrame; m.activeHullId = desc.activeHullId;
+  const db = desc.bridge;
+  if (db) {
+    const st = reconcileDescriptor(db, pool, used);
+    st.backend = bridgeBackends ? (bridgeBackends[db.backendKind] || null) : null;
+    st.grid = null;
+    m.bridgeState = st;
+  } else m.bridgeState = null;
   const dh = desc.hull;
   if (dh) {
-    // kadłub-lustro: nowy obiekt przy nowym opisie kadłuba (render porównuje `data.hull !== hull` → nowa skóra,
-    // jak przy podmianie rekordu kadłuba w grze); obrazy — te same obiekty zasobów (tożsamość = klucz tekstury)
-    const prev = m.beamHull;
-    const hull = {
-      entity: m, body: prev ? prev.body : null,
-      image: dh.image >= 0 ? resourceOf(dh.image) : null,
-      visualImage: dh.visualImage >= 0 ? resourceOf(dh.visualImage) : null,
-      normalMapImage: dh.normalMapImage >= 0 ? resourceOf(dh.normalMapImage) : null,
-      cellSize: dh.cellSize, pixelPitch: dh.pixelPitch, nx: dh.nx, ny: dh.ny, cellPx: dh.cellPx,
-      anchorMode: dh.anchorMode, hexPerNode: dh.hexPerNode, anchorDZ: dh.anchorDZ,
+    const prev = dh.__oid ? pool.get(dh.__oid) : undefined;
+    const hull = prev || {
+      entity: m, body: null, image: null, visualImage: null, normalMapImage: null,
+      cellSize: undefined, pixelPitch: undefined, nx: undefined, ny: undefined, cellPx: undefined,
+      anchorMode: undefined, hexPerNode: undefined, anchorDZ: undefined,
       srcWidth: undefined, srcHeight: undefined, scale: undefined, pivot: null, anchorDX: undefined, anchorDY: undefined,
-      isFragment: false, solid3D: null, world: null, disableSolidArmorLod: false, dmgKey: undefined,
-      _shadowGrid: null, spriteSkin: dh.spriteSkin, dims: dh.dims, anchored: dh.anchored
+      isFragment: false, solid3D: null, world: null, disableSolidArmorLod: false, dmgKey: undefined, revision: 0,
+      _shadowGrid: null, spriteSkin: null, dims: null, anchored: false
     };
+    hull.entity = m;
+    hull.image = dh.image >= 0 ? resourceOf(dh.image) : null;
+    hull.visualImage = dh.visualImage >= 0 ? resourceOf(dh.visualImage) : null;
+    hull.normalMapImage = dh.normalMapImage >= 0 ? resourceOf(dh.normalMapImage) : null;
+    hull.cellSize = dh.cellSize; hull.pixelPitch = dh.pixelPitch; hull.nx = dh.nx; hull.ny = dh.ny; hull.cellPx = dh.cellPx;
+    hull.anchorMode = dh.anchorMode; hull.hexPerNode = dh.hexPerNode; hull.anchorDZ = dh.anchorDZ;
+    hull.spriteSkin = reconcileDescriptor(dh.spriteSkin, pool, used);
+    hull.dims = reconcileDescriptor(dh.dims, pool, used);
+    hull.anchored = dh.anchored;
+    if (dh.__oid) used.set(dh.__oid, hull);
     m.beamHull = hull;
   } else m.beamHull = null;
+  m._oidPool = used;
+}
+
+/** Stan mostków ze strony (blok brF64) na `bridgeState` lustra — wyrzuty atmosfery o tożsamości stałej per obiekt gry. */
+function applyBridgePage(rm, st, v, off, n) {
+  const F = v.brF64;
+  st.commandLost = F[off + BRIDGE_HEAD.CMD_LOST] === 1;
+  st.commandLostAt = und(F[off + BRIDGE_HEAD.CMD_LOST_AT]);
+  st.vent = ventOf(rm, F, off + BRIDGE_HEAD.VENT);
+  const list = st.bridges;
+  if (!list) return;
+  let p = off + BRIDGE_HEAD.STRIDE;
+  const m = n < list.length ? n : list.length;
+  for (let j = 0; j < m; j++, p += BRIDGE_REC.STRIDE) {
+    const b = list[j];
+    if (!b) continue;
+    b.dead = F[p + BRIDGE_REC.DEAD] === 1;
+    b.deadAt = und(F[p + BRIDGE_REC.DEAD_AT]);
+    b.missing = F[p + BRIDGE_REC.MISSING] === 1;
+    b.vent = ventOf(rm, F, p + BRIDGE_REC.VENT);
+  }
+}
+
+function ventOf(rm, F, o) {
+  const id = F[o + VENT.ID];
+  if (!(id > 0)) return null;
+  let vent = rm._vents.get(id);
+  if (!vent) {
+    vent = { x: 0, y: 0, dirX: 0, dirY: 0, bridgeId: undefined, exitX: 0, exitY: 0 };
+    rm._vents.set(id, vent);
+  }
+  vent.x = F[o + VENT.X]; vent.y = F[o + VENT.Y];
+  vent.dirX = F[o + VENT.DIRX]; vent.dirY = F[o + VENT.DIRY];
+  vent.exitX = und(F[o + VENT.EXITX]); vent.exitY = und(F[o + VENT.EXITY]);
+  vent.bridgeId = rm.dict.value(F[o + VENT.BID]);
+  return vent;
 }

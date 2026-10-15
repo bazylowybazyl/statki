@@ -129,6 +129,12 @@ export function applyBodyPage(mb, v, bs) {
   mb._maxDisp = f64[b + BF.MAX_DISP];
   const s = mb.nodeStore, e = mb.beamStore;
   s.shapeVersion = i32[bi + BI.SHAPE_VER];
+  const ho = i32[bi + BI.HP_F64_OFF];
+  if (ho >= 0) {
+    const c = s.count;
+    s.hp.set(v.nodeF64.subarray(ho, ho + c));
+    s.maxHp.set(v.nodeF64.subarray(ho + c, ho + 2 * c));
+  }
   const n = i32[bi + BI.NODE_N];
   if (n > 0) {
     const F = v.nodeF64, U = v.nodeU8;

@@ -21,7 +21,7 @@
 // Czysty moduł (bez three, DOM i `window`).
 
 import {
-  HEAD, HEAD_FLAG, LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, BODY, BODY_FLAG, NOZZLE, SHOT, SHOT_FLAG, TURRET, STATION, CORE,
+  HEAD, HEAD_FLAG, LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, VENT, BRIDGE_HEAD, BRIDGE_REC, BODY, BODY_FLAG, NOZZLE, SHOT, SHOT_FLAG, TURRET, STATION, CORE,
   WORLD, HALL_WORDS, SNAPSHOT_LAYOUT_VERSION, SNAPSHOT_DEFAULT_CAPACITY, createSnapshotLayout, createSnapshotViews,
   growSnapshotCapacity, bodyNodeF64Words, bodyNodeU8Bytes
 } from './snapshotLayout.js';
@@ -133,6 +133,14 @@ export class SnapshotPacker {
     this.topologies = [];
     this.topoQueue = [];
     this._resourceSlot = (img) => this.ids.resources.slotOf(img);
+    // numery obiektów źródła opisów (tożsamość podobiektów konfiguracji — renderMirror.reconcileDescriptor)
+    this._oids = new WeakMap();
+    this._oidSeq = 0;
+    this._oid = (o) => {
+      let id = this._oids.get(o);
+      if (id === undefined) { id = ++this._oidSeq; this._oids.set(o, id); }
+      return id;
+    };
     this._tierB = new Float64Array(0);   // ENT.F64 poziomu B na slot (W, H, HP_SCALE*)
     this._tierBI = new Int32Array(0);    // flagi i kody poziomu B na slot: [flagsB, flags2B, ownerId]
     // pamięć na slot ciała
@@ -142,6 +150,8 @@ export class SnapshotPacker {
     this._bodyStoreVer = new Int32Array(0);
     this._bodyShapeVer = new Int32Array(0);
     this._bodyRestK = new Int32Array(0);
+    this._bodyHpK = new Int32Array(0);
+    this._bodyHpSum = new Float64Array(0);   // 2 na ciało: Σ hp, Σ maxHp
     this._bodyStore = [];
     this._bodyBeams = [];
     this._blocks = [];
@@ -207,6 +217,8 @@ export class SnapshotPacker {
       this._bodyStoreVer = grow32(this._bodyStoreVer, nb);
       this._bodyShapeVer = grow32(this._bodyShapeVer, nb);
       this._bodyRestK = grow32(this._bodyRestK, nb);
+      this._bodyHpK = grow32(this._bodyHpK, nb);
+      const hs = new Float64Array(nb * 2).fill(NaN); hs.set(this._bodyHpSum); this._bodyHpSum = hs;
     }
   }
 
@@ -464,7 +476,7 @@ export class SnapshotPacker {
     const L = this._lists;
     const st = this.stats;
     st.ents = 0; st.bodies = 0; st.bodiesPacked = 0; st.nodesPacked = 0; st.beamsPacked = 0; st.nozzles = 0;
-    this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0; this._imp = 0;
+    this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0; this._imp = 0; this._br = 0;
     const hides = f.fog ? f.hides : null;
     const ship = f.ship, p2 = f.p2;
     // kolejność: listy po kolei, encja pakowana raz (pierwsze wystąpienie); stacje mają własny blok
@@ -658,6 +670,7 @@ export class SnapshotPacker {
     if (this._refLights[s] !== lights) { this._refLights[s] = lights; ver[vb + 3]++; }
     const bridge = e.bridgeState;
     if (this._refBridge[s] !== bridge) { this._refBridge[s] = bridge; ver[vb + 4]++; }
+    this._packBridge(v, bridge, bi);
     if (this._refShield[s] !== sh) { this._refShield[s] = sh; ver[vb + 5]++; }
     i32[bi + EI.V_VISUAL] = ver[vb];
     i32[bi + EI.V_HULL] = ver[vb + 1];
@@ -669,7 +682,7 @@ export class SnapshotPacker {
     if (this.describe) {
       const d = this.descriptors[s];
       if (!d || d.gen !== gen || !sameVers(d.vers, ver, vb)) {
-        const desc = describeEntity(e, this._resourceSlot);
+        const desc = describeEntity(e, this._resourceSlot, this._oid);
         const rec = d && d.gen === gen ? d : { gen, vers: new Int32Array(6), desc: null, res: new Int32Array(3) };
         for (let q = 0; q < 6; q++) rec.vers[q] = ver[vb + q];
         rec.desc = desc;
@@ -703,7 +716,7 @@ export class SnapshotPacker {
       if (this._bodyPacked[bs] !== k) {
         this._bodyPacked[bs] = k;
         const px = f64[b + EF.POS_X];
-        this._packBody(v, body, hull, bs, s, k, f, px === px ? px : f64[b + EF.X], px === px ? f64[b + EF.POS_Y] : f64[b + EF.Y]);
+        this._packBody(v, body, hull, bs, s, k, f, px === px ? px : f64[b + EF.X], px === px ? f64[b + EF.POS_Y] : f64[b + EF.Y], !!bridge);
       }
     } else {
       i32[bi + EI.BODY_SLOT] = -1;
@@ -774,6 +787,47 @@ export class SnapshotPacker {
     this._imp += n;
   }
 
+  _packBridge(v, st, bi) {
+    const i32 = v.entI32;
+    const list = st ? st.bridges : null;
+    if (!st || !Array.isArray(list)) { i32[bi + EI.BR_OFF] = -1; i32[bi + EI.BR_N] = 0; return; }
+    const n = list.length;
+    const words = BRIDGE_HEAD.STRIDE + n * BRIDGE_REC.STRIDE;
+    if (this._br + words > this.layout.cap.bridgeWords) {
+      this._requestGrow('bridgeWords', (this._br + words) * 2);
+      i32[bi + EI.BR_OFF] = -1; i32[bi + EI.BR_N] = 0;
+      return;
+    }
+    const F = v.brF64;
+    const o = this._br;
+    F[o + BRIDGE_HEAD.CMD_LOST] = st.commandLost ? 1 : 0;
+    F[o + BRIDGE_HEAD.CMD_LOST_AT] = raw(st.commandLostAt);
+    this._writeVent(F, o + BRIDGE_HEAD.VENT, st.vent);
+    let p = o + BRIDGE_HEAD.STRIDE;
+    for (let j = 0; j < n; j++, p += BRIDGE_REC.STRIDE) {
+      const br = list[j];
+      F[p + BRIDGE_REC.DEAD] = br && br.dead ? 1 : 0;
+      F[p + BRIDGE_REC.DEAD_AT] = br ? raw(br.deadAt) : NaN;
+      F[p + BRIDGE_REC.MISSING] = br && br.missing ? 1 : 0;
+      this._writeVent(F, p + BRIDGE_REC.VENT, br ? br.vent : null);
+    }
+    i32[bi + EI.BR_OFF] = o;
+    i32[bi + EI.BR_N] = n;
+    this._br = o + words;
+  }
+
+  _writeVent(F, o, vent) {
+    if (!vent) { F[o + VENT.ID] = 0; return; }
+    if (!this._ventIds) { this._ventIds = new WeakMap(); this._ventSeq = 0; }
+    let id = this._ventIds.get(vent);
+    if (id === undefined) { id = ++this._ventSeq; this._ventIds.set(vent, id); }
+    F[o + VENT.ID] = id;
+    F[o + VENT.X] = raw(vent.x); F[o + VENT.Y] = raw(vent.y);
+    F[o + VENT.DIRX] = raw(vent.dirX); F[o + VENT.DIRY] = raw(vent.dirY);
+    F[o + VENT.EXITX] = raw(vent.exitX); F[o + VENT.EXITY] = raw(vent.exitY);
+    F[o + VENT.BID] = this.dict.code(vent.bridgeId);
+  }
+
   _breakSerial(obj) {
     // `cloak.lastBreak` porównywany po TOŻSAMOŚCI (cloakLook.js) — numer kolejnego obiektu zerwania
     if (obj === this._lastBreakObj) return this._lastBreakId;
@@ -834,7 +888,7 @@ export class SnapshotPacker {
     if (!(this._growNext[key] >= n)) this._growNext[key] = n;
   }
 
-  _packBody(v, body, hull, bs, es, k, f, ex, ey) {
+  _packBody(v, body, hull, bs, es, k, f, ex, ey, wantHp) {
     const f64 = v.bodyF64, i32 = v.bodyI32;
     const b = bs * BODY.stride.f64, bi = bs * BODY.stride.i32;
     const st = this.stats;
@@ -849,6 +903,7 @@ export class SnapshotPacker {
       changed = true;
       this._bodyRestK[bs] = k;
       this._bodyShapeVer[bs] = store ? store.shapeVersion | 0 : 0;
+      this._bodyHpSum[bs * 2] = NaN;   // nowa replika — HP do wysłania
       if (this.describe && store) {
         this.topologies[bs] = { gen: this.ids.bodies.gen(bs), storeVer: this._bodyStoreVer[bs], topo: describeBodyTopology(body) };
         this.topoQueue.push(bs);
@@ -918,7 +973,28 @@ export class SnapshotPacker {
     i32[bi + BI.NODE_F64_OFF] = -1; i32[bi + BI.NODE_U8_OFF] = -1; i32[bi + BI.NODE_N] = 0;
     i32[bi + BI.BEAM_F64_OFF] = -1; i32[bi + BI.BEAM_U8_OFF] = -1; i32[bi + BI.BEAM_N] = 0;
     i32[bi + BI.REST_F64_OFF] = -1; i32[bi + BI.DIRTY_OFF] = -1; i32[bi + BI.DIRTY_N] = 0;
-    if (store && count > 0 && this._bodyChangedK[bs] > f.lastConsumed && inCullBox(f.cull, ex, ey, hull)) {
+    i32[bi + BI.HP_F64_OFF] = -1;
+    const inBox = inCullBox(f.cull, ex, ey, hull);
+    if (wantHp && store && count > 0 && inBox) {
+      // HP (mostki 3D): suma kontrolna — trafienia zmieniają HP bez flag brudu skóry
+      const hp = store.hp, mh = store.maxHp;
+      let sh = 0, sm = 0;
+      for (let i = 0; i < count; i++) { sh += hp[i]; sm += mh[i]; }
+      const o = bs * 2, S = this._bodyHpSum;
+      if (S[o] !== sh || S[o + 1] !== sm) { S[o] = sh; S[o + 1] = sm; this._bodyHpK[bs] = k; }
+      i32[bi + BI.HP_K] = this._bodyHpK[bs];
+      if (this._bodyHpK[bs] > f.lastConsumed) {
+        const p = this._nodeF64;
+        if (p + 2 * count > this.layout.cap.nodeF64) this._requestGrow('nodeF64', (p + 2 * count) * 2);
+        else {
+          v.nodeF64.set(hp.subarray(0, count), p);
+          v.nodeF64.set(mh.subarray(0, count), p + count);
+          i32[bi + BI.HP_F64_OFF] = p;
+          this._nodeF64 = p + 2 * count;
+        }
+      }
+    }
+    if (store && count > 0 && this._bodyChangedK[bs] > f.lastConsumed && inBox) {
       const rest = this._bodyRestK[bs] > f.lastConsumed;
       const dirtyN = region && region.store === store && !region.dirtyAll ? region.dirtyCount | 0 : 0;
       if (this._packNodes(v, store, beams, count, beamCount, planar, bi, rest, dirtyN ? region.dirty : null, dirtyN)) {

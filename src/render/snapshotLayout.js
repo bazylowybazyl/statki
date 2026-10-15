@@ -118,6 +118,8 @@ export const ENT = record({
     'SH_STATE', 'SH_IMPACT_ID', 'CLOAK_STATE', 'CLOAK_BREAK',
     // trafienia tarczy (pula impF64: IMP_N rekordów od IMP_OFF, najnowsze pierwsze — jak shield.impacts)
     'IMP_OFF', 'IMP_N',
+    // stan mostków (pula brF64 od BR_OFF: nagłówek BRIDGE_HEAD + BR_N × BRIDGE_REC; −1 — bez bridgeState)
+    'BR_OFF', 'BR_N',
     // kody słownika: profil modelu 3D (A), stopień broni, frakcja, id kadłuba, id statku (B); zimny wrak: rodzaj
     // migawki i ród (A)
     'MODEL3D', 'WEAPON_TIER', 'FACTION', 'FACTION_ID', 'HULL_ID', 'SHIP_ID', 'COLD_KIND', 'COLD_DMG_KEY',
@@ -141,6 +143,12 @@ export const ENT_FLAG2 = Object.freeze({
   HAS_RS: 128, HAS_COLD_SNAP: 256
 });
 
+/** Wyrzut atmosfery mostka (obiekt `vent` gry; ID = numer obiektu — tożsamość dla prepareEmitterDelays). */
+export const VENT = Object.freeze({ ID: 0, X: 1, Y: 2, DIRX: 3, DIRY: 4, EXITX: 5, EXITY: 6, BID: 7, STRIDE: 8 });
+/** Stan mostków encji w puli brF64: nagłówek, potem rekord na mostek (kolejność bridgeState.bridges). */
+export const BRIDGE_HEAD = Object.freeze({ CMD_LOST: 0, CMD_LOST_AT: 1, VENT: 2, STRIDE: 2 + VENT.STRIDE });
+export const BRIDGE_REC = Object.freeze({ DEAD: 0, DEAD_AT: 1, MISSING: 2, VENT: 3, STRIDE: 3 + VENT.STRIDE });
+
 /** Trafienie tarczy w puli impF64 (to, co czyta shield3D.processEntity). */
 export const IMPACT = Object.freeze({ ID: 0, GRID_ANGLE: 1, DAMAGE: 2, INTENSITY: 3, FX_CLASS: 4, STRIDE: 5 });
 
@@ -150,7 +158,7 @@ export const BODY = record({
     'LAT_MIN_Z', 'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP'],
   i32: ['SLOT', 'GEN', 'ENT_SLOT', 'FLAGS', 'NODE_COUNT', 'ACTIVE_NODES', 'BEAM_COUNT', 'STORE_VER', 'SHAPE_VER',
     'DMG_KEY', 'NODE_F64_OFF', 'NODE_U8_OFF', 'NODE_N', 'BEAM_F64_OFF', 'BEAM_U8_OFF', 'BEAM_N', 'REST_F64_OFF',
-    'DIRTY_OFF', 'DIRTY_N', 'CHANGED_K', 'REST_K']
+    'DIRTY_OFF', 'DIRTY_N', 'CHANGED_K', 'REST_K', 'HP_F64_OFF', 'HP_K']
 });
 
 export const BODY_FLAG = Object.freeze({
@@ -165,7 +173,10 @@ export const BODY_FLAG = Object.freeze({
  * REST_F64_OFF — tylko po zmianie kształtu magazynu (`shapeVersion`: przesunięcie początku ciała, zapis przez widok
  * węzła) od ostatniej klatki odebranej. Brudne węzły skóry (Int32, pula `nodeI32`): DIRTY_N indeksów od DIRTY_OFF —
  * `_region.dirty` z chwili pakowania (żar czworokąta liczy się w chwili zapisu, więc lustro przepisuje DOKŁADNIE ten
- * zbiór; flagi DIRTY_ALL / MESH_DIRTY w FLAGS). Topologia (ix, iy, a, b, restBase, adj) — raz na magazyn, poza stroną.
+ * zbiór; flagi DIRTY_ALL / MESH_DIRTY w FLAGS). HP węzłów Float64 [hp[n], maxHp[n]] od HP_F64_OFF — tylko ciała
+ * okrętów z mostkami (mostki 3D czytają HP komórek pod modelem co klatkę), po zmianie sumy HP od ostatniej klatki
+ * odebranej (HP zmienia się przy trafieniach bez flag brudu skóry). Topologia (ix, iy, a, b, restBase, adj) — raz na
+ * magazyn, poza stroną.
  */
 export function bodyNodeF64Words(n, planar) {
   return n * (planar ? 4 : 5);
@@ -221,7 +232,7 @@ export const HALL_WORDS = HALL_DUST_IN.size;
 
 /** Pojemności domyślne (rosną przez growSnapshotCapacity). */
 export const SNAPSHOT_DEFAULT_CAPACITY = Object.freeze({
-  entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nodeI32: 1 << 15, impacts: 2048, nozzles: 4096, shots: 1024, turrets: 2048,
+  entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nodeI32: 1 << 15, impacts: 2048, bridgeWords: 8192, nozzles: 4096, shots: 1024, turrets: 2048,
   stations: 64, cores: 256
 });
 
@@ -257,6 +268,7 @@ export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen =
   region('nodeU8', Uint8Array, cap.nodeU8);
   region('nodeI32', Int32Array, cap.nodeI32);
   region('impF64', Float64Array, cap.impacts * IMPACT.STRIDE);
+  region('brF64', Float64Array, cap.bridgeWords);
   recRegions('noz', NOZZLE, cap.nozzles);
   recRegions('shot', SHOT, cap.shots);
   recRegions('tur', TURRET, cap.turrets);

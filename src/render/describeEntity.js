@@ -1,97 +1,147 @@
 // src/render/describeEntity.js — opis encji dla lustra renderu: konfiguracja statyczna z BIAŁEJ LISTY pól
-// (docs/PLAN-render-worker.md § 3.6, RW-11a).
+// (docs/PLAN-render-worker.md § 3.6, RW-11a / RW-11b).
 //
 // Obiekty gry nie przechodzą przez `structuredClone`: obrazy DOM (`hull.image`, `visualImage`), funkcje
 // (`hull.world.build`, `__lightOcclude`), cykle (encja ↔ kadłub ↔ ciało), instancje klas (magazyny SoA). Opis kopiuje
 // tylko pola, które czyta render, jako zwykłe dane (w workerze — `postMessage`; w `inline` — świeże kopie, więc gra
 // może dalej zmieniać swoje obiekty bez wpływu na lustro). Obrazy → sloty zasobów (`resourceSlot(obraz)`).
-// Dysze: tylko klucze konfiguracji (offset, forward, mount, side, długości / szerokości VFX); kąty, ciąg, skala VFX
-// i zniszczenie idą co klatkę w bloku NOZZLES.
+//
+// TOŻSAMOŚĆ: każdy obiekt i tablica opisu niesie `__oid` — numer obiektu źródła (`oid(obj)`, WeakMap po stronie gry).
+// Lustro uzgadnia drzewo (`reconcileDescriptor` w renderMirror.js): ten sam `__oid` = ten sam obiekt lustra
+// aktualizowany w miejscu, nowy = nowy obiekt. Moduły renderu trzymają pamięć po tożsamości (`visual`, tablice dysz
+// — `slot.source` w EngineVfxSystem, `engineFx`, `bridgeState`, `bridges[]`, rekord kadłuba), więc lustro musi
+// zmieniać tożsamość dokładnie wtedy, gdy gra podmienia obiekt — nie przy każdym nowym opisie.
+// Dysze: konfiguracja + pola klatki z chwili opisu (__throttle, nozzleDeg, …) — co klatkę nadpisuje je blok NOZZLES.
 //
 // Czysty moduł (bez three, DOM i `window`).
 
-const pt = (p) => (p && typeof p === 'object' ? { x: p.x, y: p.y } : p);
+const NO_OID = () => 0;
 
-/** Konfiguracja dyszy (bez pól klatki: __throttle, __*, nozzleDeg, vfxScale, __destroyed — NOZZLES). */
-function nozzleConfig(t) {
-  if (!t || typeof t !== 'object') return t;
-  return {
-    offset: pt(t.offset), forward: pt(t.forward), mount: t.mount, side: t.side,
-    baseDeg: t.baseDeg, nozzleDeg: t.nozzleDeg, gimbalMinDeg: t.gimbalMinDeg, gimbalMaxDeg: t.gimbalMaxDeg,
-    yNudge: t.yNudge, vfxLengthMin: t.vfxLengthMin, vfxLengthMax: t.vfxLengthMax,
-    vfxWidthMin: t.vfxWidthMin, vfxWidthMax: t.vfxWidthMax
-  };
+function tag(out, src, oid) {
+  if (out && src && typeof src === 'object') out.__oid = oid(src);
+  return out;
 }
 
-/** Kopia zwykłych danych (JSON: liczby, napisy, tablice, obiekty) — dla profili i lamp edytora. */
-export function plainCopy(o, depth = 0) {
+const pt = (p, oid) => (p && typeof p === 'object' ? tag({ x: p.x, y: p.y }, p, oid) : p);
+
+/** Kopia zwykłych danych (liczby, napisy, tablice, obiekty) z `__oid` na każdym obiekcie i tablicy. */
+export function plainCopy(o, oid = NO_OID, depth = 0) {
   if (o === null || typeof o !== 'object') return typeof o === 'function' ? undefined : o;
   if (depth > 6) return undefined;
-  if (Array.isArray(o)) return o.map((x) => plainCopy(x, depth + 1));
   if (ArrayBuffer.isView(o)) return o.slice();
+  if (Array.isArray(o)) return tag(o.map((x) => plainCopy(x, oid, depth + 1)), o, oid);
   const proto = Object.getPrototypeOf(o);
   if (proto !== Object.prototype && proto !== null) return undefined;   // DOM, klasy, Map — poza opisem
   const out = {};
   for (const k of Object.keys(o)) {
-    const v = plainCopy(o[k], depth + 1);
+    const v = plainCopy(o[k], oid, depth + 1);
     if (v !== undefined) out[k] = v;
   }
-  return out;
+  return tag(out, o, oid);
 }
 
-function visualConfig(v) {
+/** Dysza: konfiguracja i pola klatki (stała kolejność kluczy — jedna klasa ukryta obiektów lustra). */
+function nozzle(t, oid) {
+  if (!t || typeof t !== 'object') return t;
+  return tag({
+    offset: pt(t.offset, oid), forward: pt(t.forward, oid), mount: t.mount, side: t.side,
+    baseDeg: t.baseDeg, nozzleDeg: t.nozzleDeg, gimbalMinDeg: t.gimbalMinDeg, gimbalMaxDeg: t.gimbalMaxDeg,
+    yNudge: t.yNudge, vfxLengthMin: t.vfxLengthMin, vfxLengthMax: t.vfxLengthMax,
+    vfxWidthMin: t.vfxWidthMin, vfxWidthMax: t.vfxWidthMax,
+    __throttle: t.__throttle, vfxScale: t.vfxScale, __destroyed: t.__destroyed
+  }, t, oid);
+}
+
+function nozzleList(a, oid) {
+  return Array.isArray(a) ? tag(a.map((t) => nozzle(t, oid)), a, oid) : a;
+}
+
+function visualConfig(v, oid) {
   if (!v || typeof v !== 'object') return v === undefined ? undefined : null;
-  return {
+  // klucze zawsze obecne (także undefined) — usunięcie pola w grze = undefined w lustrze
+  return tag({
     spriteScale: v.spriteScale, spriteScaleX: v.spriteScaleX, spriteScaleY: v.spriteScaleY,
     spriteRotation: v.spriteRotation,
     preserveBillboardLighting: v.preserveBillboardLighting, preserveBillboardOrientation: v.preserveBillboardOrientation,
     hideHexMesh: v.hideHexMesh, engineVfxClassScale: v.engineVfxClassScale,
-    turretTop: pt(v.turretTop), turretBottom: pt(v.turretBottom), mainEngine: pt(v.mainEngine),
-    engineFx: plainCopy(v.engineFx),
-    lights: plainCopy(v.lights),
-    mainThrusters: Array.isArray(v.mainThrusters) ? v.mainThrusters.map(nozzleConfig) : v.mainThrusters,
-    torqueThrusters: Array.isArray(v.torqueThrusters) ? v.torqueThrusters.map(nozzleConfig) : v.torqueThrusters
-  };
+    turretTop: pt(v.turretTop, oid), turretBottom: pt(v.turretBottom, oid), mainEngine: pt(v.mainEngine, oid),
+    engineFx: plainCopy(v.engineFx, oid),
+    lights: plainCopy(v.lights, oid),
+    mainThrusters: nozzleList(v.mainThrusters, oid),
+    torqueThrusters: nozzleList(v.torqueThrusters, oid)
+  }, v, oid);
 }
 
-function enginesConfig(en) {
+function enginesConfig(en, oid) {
   if (!en || typeof en !== 'object') return en;
   const m = en.main;
-  return {
-    main: m ? {
-      ...nozzleConfig(m), visualOffset: pt(m.visualOffset), vfxOffset: pt(m.vfxOffset), vfxForward: pt(m.vfxForward),
-      vfxYNudge: m.vfxYNudge, maxThrust: m.maxThrust
-    } : m
-  };
+  const main = m ? Object.assign(nozzle(m, oid), {
+    visualOffset: pt(m.visualOffset, oid), vfxOffset: pt(m.vfxOffset, oid), vfxForward: pt(m.vfxForward, oid),
+    vfxYNudge: m.vfxYNudge, maxThrust: m.maxThrust
+  }) : m;
+  return tag({ main }, en, oid);
 }
 
 /**
- * Opis encji. `resourceSlot(obraz)` → slot zasobu (renderIds.resources) albo −1. Pola kadłuba stałe dla rekordu
- * (obrazy, siatka, kotwica) — zmienne w czasie (kotwica, skala, pivot, flagi, ród) idą w BODY co klatkę.
+ * Część statyczna `bridgeState` po montażu (shipBridgeBeams.js: createBeamBridgeState, windows): pola czytane przez
+ * Bridge3D i BridgeFx3D. Zmienne (commandLost, commandLostAt, vent, bridges[].dead / deadAt / missing / vent) idą co
+ * klatkę w bloku mostków strony. `backendKind` — lustro dostaje obiekt backendu z realmu renderu.
  */
-export function describeEntity(e, resourceSlot) {
+export function describeBridgeState(st, oid = NO_OID) {
+  if (!st || typeof st !== 'object') return null;
+  const w = st.windows;
+  const copy = (a) => (ArrayBuffer.isView(a) ? a.slice() : a);
+  const bridges = Array.isArray(st.bridges) ? tag(st.bridges.map((b) => tag({
+    def: plainCopy(b.def, oid), id: b.id, index: b.index, total: b.total,
+    cellX: copy(b.cellX), cellY: copy(b.cellY), pos: copy(b.pos), lossX: b.lossX, lossY: b.lossY,
+    dead: !!b.dead, deadAt: b.deadAt, missing: !!b.missing, vent: null
+  }, b, oid)), st.bridges, oid) : null;
+  return tag({
+    version: st.version, backendKind: st.backend && st.backend.kind ? st.backend.kind : 'beam',
+    lineage: st.lineage, srcW: st.srcW, srcH: st.srcH, spriteScale: st.spriteScale,
+    anchorDX: st.anchorDX, anchorDY: st.anchorDY, cellSize: st.cellSize, dimsX: st.dimsX, dimsY: st.dimsY,
+    scaleX: st.scaleX, scaleY: st.scaleY, rule: st.rule, hullKey: st.hullKey, hexRadius: st.hexRadius,
+    windowColorSrgb: plainCopy(st.windowColorSrgb, oid),
+    commandLost: !!st.commandLost, commandLostAt: st.commandLostAt, vent: null,
+    bridges,
+    windows: w ? tag({
+      count: w.count, px: copy(w.px), py: copy(w.py), cellX: copy(w.cellX), cellY: copy(w.cellY),
+      offX: copy(w.offX), offY: copy(w.offY), angle: copy(w.angle), seed: copy(w.seed), level: copy(w.level),
+      bridge: copy(w.bridge), delay: copy(w.delay), colorsLinear: plainCopy(w.colorsLinear, oid), length: w.length,
+      width: w.width
+    }, w, oid) : null
+  }, st, oid);
+}
+
+/**
+ * Opis encji. `resourceSlot(obraz)` → slot zasobu (renderIds.resources) albo −1; `oid(obiekt)` → numer obiektu
+ * źródła. Pola kadłuba stałe dla rekordu (obrazy, siatka, kotwica) — zmienne w czasie (kotwica, skala, pivot, flagi,
+ * ród) idą w BODY co klatkę.
+ */
+export function describeEntity(e, resourceSlot, oid = NO_OID) {
   const hull = e.beamHull;
   const body = hull ? hull.body : null;
   return {
-    visual: visualConfig(e.visual),
-    capitalProfile: plainCopy(e.capitalProfile),
-    profile: plainCopy(e.profile),
-    editorLights: plainCopy(e.editorLights),
-    engines: enginesConfig(e.engines),
+    visual: visualConfig(e.visual, oid),
+    capitalProfile: plainCopy(e.capitalProfile, oid),
+    profile: plainCopy(e.profile, oid),
+    editorLights: plainCopy(e.editorLights, oid),
+    engines: enginesConfig(e.engines, oid),
     id: e.id, uid: e.uid, name: e.name,
     type: e.type, shipFrame: e.shipFrame, activeHullId: e.activeHullId,
-    hull: hull ? {
+    bridge: describeBridgeState(e.bridgeState, oid),
+    hull: hull ? tag({
       image: hull.image ? resourceSlot(hull.image) : -1,
       visualImage: hull.visualImage ? resourceSlot(hull.visualImage) : -1,
       normalMapImage: hull.normalMapImage ? resourceSlot(hull.normalMapImage) : -1,
       cellSize: hull.cellSize, pixelPitch: hull.pixelPitch, nx: hull.nx, ny: hull.ny, cellPx: hull.cellPx,
       anchorMode: hull.anchorMode, hexPerNode: hull.hexPerNode, anchorDZ: hull.anchorDZ,
-      spriteSkin: body && body.spriteSkin ? {
+      spriteSkin: body && body.spriteSkin ? tag({
         width: body.spriteSkin.width, height: body.spriteSkin.height, pixelPitch: body.spriteSkin.pixelPitch,
         nx: body.spriteSkin.nx, ny: body.spriteSkin.ny, cellSize: body.spriteSkin.cellSize
-      } : null,
-      dims: body && body.dims ? { x: body.dims.x, y: body.dims.y, z: body.dims.z } : null,
+      }, body.spriteSkin, oid) : null,
+      dims: body && body.dims ? tag({ x: body.dims.x, y: body.dims.y, z: body.dims.z }, body.dims, oid) : null,
       anchored: body ? !!body.anchored : false
-    } : null
+    }, hull, oid) : null
   };
 }

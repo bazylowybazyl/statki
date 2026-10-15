@@ -178,3 +178,69 @@ test('lustro: trafienia tarczy (najnowsze pierwsze), wyłączenie wymuszone, zim
   assert.equal(m.shield.impacts[0], t0, 'obiekt z puli lustra');
   assert.equal(m.shield.impacts[0].id, 10);
 });
+
+test('lustro: bridgeState — część statyczna z opisu, stan z bloku mostków, tożsamość stała, HP ciała z mostkiem', () => {
+  const BACKEND = { kind: 'beam', owns: () => true };
+  const ents = [makeShip('A', 0)];
+  const e = ents[0];
+  const store = e.beamHull.body.nodeStore;
+  store.hp = new Float64Array(store.count).fill(100);
+  store.maxHp = new Float64Array(store.count).fill(120);
+  e.bridgeState = {
+    version: 1, backend: BACKEND, grid: null, lineage: 'ród-A', srcW: 300, srcH: 150, spriteScale: 1.25, anchorDX: 2, anchorDY: -3,
+    cellSize: 15, dimsX: 5, dimsY: 4, scaleX: 1, scaleY: 1, rule: 'all', hullKey: 'bellator', hexRadius: 6,
+    windowColorSrgb: [0.9, 0.95, 1], commandLost: false, commandLostAt: -1, vent: null,
+    bridges: [{ def: { id: 'main', x: 10, y: 20, w: 30, h: 40 }, id: 'main', index: 0, total: 12, cellX: new Int32Array([1, 2]), cellY: new Int32Array([3, 3]), dead: false, deadAt: -1, missing: false, vent: null }],
+    windows: { count: 2, px: new Float32Array([1, 2]), py: new Float32Array([3, 4]), cellX: new Int16Array(2), cellY: new Int16Array(2), offX: new Float32Array(2), offY: new Float32Array(2), angle: new Float32Array(2), seed: new Float32Array(2), level: new Float32Array(2), bridge: new Uint8Array(2), delay: new Float32Array(2), colorsLinear: [[1, 1, 1]], length: 8, width: 2 }
+  };
+  const packer = new SnapshotPacker({ shared: false, describe: true });
+  const frame = createSnapshotFrame();
+  Object.assign(frame, { ship: e, npcs: [], wrecks: [], cam: { x: 0, y: 0, zoom: 1 }, consumeDirty: true });
+  const rm = new RenderMirror({
+    dict: packer.dict, bridgeBackends: { beam: BACKEND },
+    describe: (s, gen) => { const d = packer.descriptors[s]; return d && d.gen === gen ? d.desc : null; },
+    topologyOf: (bs, gen, sv) => { const t = packer.topologies[bs]; return t && t.gen === gen && t.storeVer === sv ? t.topo : null; },
+    resourceOf: (slot) => packer.ids.resources.objectAt(slot)
+  });
+  const step = () => { frame.lastConsumed = packer.k; packer.begin(frame); rm.apply(packer.view); packer.finish(frame); };
+  step();
+  const m = rm.player;
+  const st = m.bridgeState;
+  assert.ok(st);
+  assert.equal(st.backend, BACKEND);
+  assert.equal(st.hullKey, 'bellator');
+  assert.deepEqual(Array.from(st.bridges[0].cellX), [1, 2]);
+  assert.deepEqual(st.bridges[0].def, e.bridgeState.bridges[0].def);
+  assert.equal(st.windows.length, 8);
+  assert.equal(st.commandLost, false);
+  assert.equal(m.beamHull.body.nodeStore.hp[3], 100, 'HP ciała okrętu z mostkiem');
+  st.bridges[0].fxBurst = 5;      // pole pisane przez render
+  st.model3D = true;
+  // inna zmiana wersji (podmiana tablicy dysz) — bridgeState i mostki to te same obiekty, pola renderu zostają
+  e.visual.mainThrusters = [...e.visual.mainThrusters];
+  const b0 = st.bridges[0];
+  step();
+  assert.equal(m.bridgeState, st);
+  assert.equal(st.bridges[0], b0);
+  assert.equal(b0.fxBurst, 5);
+  assert.equal(st.model3D, true);
+  // zgon mostka: wyrzut atmosfery (nowy obiekt w grze) — w lustrze jeden obiekt na wyrzut
+  const vent = { x: 5, y: 6, dirX: 0, dirY: -1, bridgeId: 'main', exitX: 5, exitY: -30 };
+  e.bridgeState.bridges[0].dead = true;
+  e.bridgeState.bridges[0].deadAt = 12.5;
+  e.bridgeState.bridges[0].vent = vent;
+  e.bridgeState.commandLost = true;
+  e.bridgeState.commandLostAt = 12.5;
+  e.bridgeState.vent = vent;
+  store.hp[3] = 40;
+  step();
+  assert.equal(b0.dead, true);
+  assert.equal(b0.deadAt, 12.5);
+  assert.equal(st.commandLost, true);
+  assert.ok(st.vent && st.vent === b0.vent, 'ten sam obiekt wyrzutu w obu miejscach (jak w grze)');
+  assert.equal(st.vent.exitY, -30);
+  const v1 = st.vent;
+  step();
+  assert.equal(st.vent, v1, 'tożsamość wyrzutu stała między klatkami');
+  assert.equal(m.beamHull.body.nodeStore.hp[3], 40, 'zmiana HP bez brudu skóry — z sumy kontrolnej');
+});
