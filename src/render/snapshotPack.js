@@ -90,7 +90,9 @@ export function createSnapshotFrame() {
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
     consumeDirty: false,        // lustra (RW-11a): zerować flagi brudu skóry ciał gry po spakowaniu (tylko inline)
     hall: null,                 // faza finish: Float64Array HALL_DUST_IN
-    lastConsumed: -1            // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)
+    repair: null,               // blok `repair` (blocks/repairBlock.js): RepairSwarm
+    cloak: null,                // blok `cloak` (blocks/cloakBlock.js): CLOAK_LOOK_FRAME po stepCloakLooks (RW-26)
+    lastConsumed: -1           // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)
   };
 }
 

@@ -1346,8 +1346,12 @@ miejsce uzgodnić z sesją renderu CPU.
   (utrata dowodzenia, zgony, braki, wyrzuty atmosfery z tożsamością); HP / maxHp ciał okrętów z mostkiem po zmianie
   sumy kontrolnej (trafienia zmieniają HP bez flag brudu). Rdzenie: opis po uid, stan i komórki komory (pula `coreU8`
   przy stratach), gospodarz = lustro; `hull.revision`. Stacje: opis (wybór modelu) + poza. Drony naprawcze: blok
-  modułu `src/render/blocks/repairBlock.js` (rigi, drony, nowe wpisy pierścienia zdarzeń). Zostaje: blok wyglądu
-  maskowania (po RW-26 — `CLOAK_LOOK_FRAME`), rekordy wież w fazie begin (po RW-26), zapisy renderu czytane przez grę
+  modułu `src/render/blocks/repairBlock.js` (rigi, drony, nowe wpisy pierścienia zdarzeń). Wygląd maskowania: blok
+  `src/render/blocks/cloakBlock.js` (gotowy przed RW-26, rejestracja przy wpięciu: `frame.cloak = CLOAK_LOOK_FRAME`) —
+  wygląd każdej encji listy RENDER, która go ma, i ramka klatki (dt, zegar, lista aktywnych, gracz); układ rekordu
+  z szablonu `createCloakLook()` (nowe pole wyglądu przechodzi samo, lustro ma klasę ukrytą wyglądu gry), bity
+  zdarzeń `look.events` = suma od ostatnio odebranej strony (pominięta strona w `worker` ich nie gubi). Most
+  `__cloakLook` lustro → gra znika przy wpięciu bloku. Zostaje: rekordy wież w fazie begin (po RW-26), zapisy renderu czytane przez grę
   (`__shieldBreach` — RW-29, `station._mesh3d` — RW-22, `core.lastX/Y`), strugi i kule rdzeni (rozkazy RX_* — RW-22).
 - **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki

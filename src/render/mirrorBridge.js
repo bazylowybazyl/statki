@@ -10,7 +10,8 @@
 //     __lightMate                   — tożsamość innej encji (holownik / fregata) → lustro tej encji;
 //   lustro → gra (pisze render, czyta gra albo moduł renderu jeszcze na obiektach gry):
 //     __cloakLook                   — referencja (mutowana w miejscu przez render): czytają kanwa 2D, mostki,
-//                                     drony, modele 3D, luk (RW-26: wygląd maskowania liczony w grze);
+//                                     drony, modele 3D, luk (RW-26: wygląd maskowania liczony w grze — wtedy
+//                                     kierunek odwrotny i bez mostu: blok migawki `cloak`, blocks/cloakBlock.js);
 //     __inDrawBox                   — model lotu NPC (LOD stanu dysz; RW-31 / RW-26: pudło po stronie gry);
 //     __hiddenFromView, _coldSkinFrame — zimne wraki i cień (RW-31);
 //     __engineFxFallback            — paleta warpa (warp/palette.js na encjach gry; RW-28).
