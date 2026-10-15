@@ -59,6 +59,9 @@ const seed = Number(args.seed || 0x5eed1234);
 const extraArgs = args.chrome ? args.chrome.split(/\s+/).filter(Boolean) : [];
 const onlyScenes = args.sceny ? new Set(args.sceny.split(',')) : null;
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
+// „single” startuje domyślnie kampanię (intro w doku K-7, świat zamrożony) — __frameId nie rośnie i sesja pada na
+// „gra nie ruszyła”. Sceny harnessu to gra swobodna bez samouczka (jak asteroidy-gra.mjs), ustawiona przed nawigacją.
+const GRA_SWOBODNA = `try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); } catch (e) {}\n`;
 // Losowanie UUID three (patrz --uuid w nagłówku): jawna flaga > tryb bazy > „osobne”.
 const uuidMode = (() => {
   if (args.uuid) {
@@ -1236,7 +1239,7 @@ async function runSession(session, backend, outDir, base) {
   sessionInfos.push(sessionInfo);
   try {
     const uuidStat = await prepareUuid(cdp);
-    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${session.start ? GRA_SWOBODNA : ''}window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
     await cdp.send('Page.navigate', { url: `${base}/index.html?${session.query}${QUERY_EXTRA}&renderer=${backend}` });
     // gpuReady: na WebGPU urządzenie powstaje w tle po Core3D.init() (na tagu pola nie ma — undefined).
     if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała (Core3D/ship/urządzenie)');
@@ -1441,7 +1444,7 @@ async function runPerf(backend, outDir, base) {
   const ev = (e, t = 180000) => evaluate(cdp, e, t);
   try {
     const uuidStat = await prepareUuid(cdp);
-    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${GRA_SWOBODNA}window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
     await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1&renderer=${backend}` });
     if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
     checkUuid(uuidStat);
