@@ -1718,12 +1718,11 @@
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
         const rocketFx = createRocketFx(Core3D);
-        // RW-23: symulacja rakiet (gra) zgłasza zdarzenia adapterowi rekordów RKT_*; reżyser efektów czyta pulę rakiet
-        // i rekordy (dekoder renderu, tryb inline — dyspozycja zaraz po zapisie).
+        // RW-23: lot (gra) → rekordy RKT_* → reżyser efektów (pula rakiet i dekoder renderu).
         const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
         if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(rocketSim.rockets);
         installRocketFxCommands(RenderCommands.reader, rocketFx?.director || null, (i) => rocketSim.rockets[i]);
-        // RW-30: wstrząs Supernowej — żądanie do gry (reguła dawnego efektu: silniejszy od siły bieżącego wstrząsu).
+        // RW-30: wstrząs Supernowej — żądanie do gry.
         if (rocketFx?.director) rocketFx.director.onShake = (mag, dur) => requestCameraShakePeak(camera, mag, dur);
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
         HallDust.setVaporSmoke(rocketFx.smoke);
