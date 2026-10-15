@@ -36,6 +36,21 @@ export function createRepairBlock() {
       const sw = frame.repair;
       const rigs = sw && Array.isArray(sw.rigs) ? sw.rigs : null;
       const ents = packer.ids.entities;
+      const fxCount = (rig) => {
+        const fw = rig.fxWrite | 0;
+        const sent = fxSent.has(rig) ? fxSent.get(rig) : Math.max(0, fw - REPAIR_BLOCK.FX_CAP);
+        return Math.min(REPAIR_BLOCK.FX_CAP, Math.max(0, fw - sent));
+      };
+      if (rigs) {
+        // za mały blok: następna strona większa (nowy układ stron), ta niesie tyle rigów, ile się zmieści
+        let total = REPAIR_BLOCK.HEAD;
+        for (let r = 0; r < rigs.length; r++) {
+          const rig = rigs[r];
+          if (!rig) continue;
+          total += R.STRIDE + (Array.isArray(rig.drones) ? rig.drones.length : 0) * D.STRIDE + fxCount(rig) * X.STRIDE;
+        }
+        if (total > F.length) packer.resizeBlock('repair', { f64: Math.ceil(total * 1.5) });
+      }
       let o = REPAIR_BLOCK.HEAD, n = 0;
       if (rigs) {
         for (let r = 0; r < rigs.length; r++) {
@@ -43,10 +58,9 @@ export function createRepairBlock() {
           if (!rig) continue;
           const drones = Array.isArray(rig.drones) ? rig.drones : [];
           const fw = rig.fxWrite | 0;
-          const sent = fxSent.has(rig) ? fxSent.get(rig) : Math.max(0, fw - REPAIR_BLOCK.FX_CAP);
-          const fxN = Math.min(REPAIR_BLOCK.FX_CAP, Math.max(0, fw - sent));
+          const fxN = fxCount(rig);
           const need = R.STRIDE + drones.length * D.STRIDE + fxN * X.STRIDE;
-          if (o + need > F.length) { packer.resizeBlock('repair', { f64: (o + need) * 2 }); break; }
+          if (o + need > F.length) break;
           let id = rigIds.get(rig);
           if (id === undefined) { id = ++rigSeq; rigIds.set(rig, id); }
           const cs = rig.carrier ? ents.peek(rig.carrier) : -1;
