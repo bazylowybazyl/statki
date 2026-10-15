@@ -953,14 +953,39 @@ class RocketSystem3D {
 
     /* ─────────────────── UPDATE ─────────────────── */
 
+    /**
+     * Krok lotu w KROKU FIZYKI gry (RW-23 / D2, docs/PLAN-render-worker.md § 7.1): trafienia, zapalnik i zasięg
+     * niezależne od fps. Pozy w czasie symulacji (SimClock.sim — po SimClock.advance kroku); klatka reżysera efektów
+     * (beginUpdate / update) idzie raz na klatkę renderu — `frameFx`.
+     */
+    step(dt) {
+        this._update(dt, true);
+    }
+
+    /** Klatka reżysera efektów (raz na klatkę renderu, gdy lot krokuje `step`): tłok salw i zegar efektów. */
+    frameFx(dt) {
+        if (!(dt > 0)) return;
+        const fx = this.effects;
+        if (!fx) return;
+        if (typeof fx.beginUpdate === "function") fx.beginUpdate(this.activeRockets + this._qN);
+        fx.update(Math.min(dt, 0.05));
+    }
+
+    /** Dawny krok raz na klatkę renderu (dema, testy): lot + klatka reżysera, pozy w czasie renderu. */
     update(dt) {
+        this._update(dt, false);
+    }
+
+    _update(dt, physics) {
         if (dt <= 0) return;
         dt = Math.min(dt, 0.05);
         this.globalTime += dt;
         const frameNo = ++this._frameNo;
         const fx = this.effects;
         const R  = ROCKET;
-        if (fx && typeof fx.beginUpdate === "function") fx.beginUpdate(this.activeRockets + this._qN);
+        // Zegar pozy: krok fizyki — czas symulacji; dawny krok klatki — czas renderu.
+        const poseClock = physics ? SimClock.sim : SimClock.render;
+        if (!physics && fx && typeof fx.beginUpdate === "function") fx.beginUpdate(this.activeRockets + this._qN);
         // Salwy: rakiety, na które przyszła kolej (przed krokiem — lecą już w tej klatce).
         if (this._qN > 0) this._drainSalvos(dt);
 
@@ -1237,7 +1262,7 @@ class RocketSystem3D {
 
             // Układ rakiety: pierwszy update dosuwa pozę z kroku fizyki (bornSim)
             // do czasu tej klatki — potem SimClock.render rośnie o to samo dt.
-            const frameDt = r.frameSynced ? dt : (SimClock.render - r.bornSim);
+            const frameDt = r.frameSynced ? dt : (poseClock - r.bornSim);
             r.frameSynced = true;
             r.position.x += r.frameVel.x * frameDt;
             r.position.z += r.frameVel.z * frameDt;
@@ -1307,12 +1332,12 @@ class RocketSystem3D {
             }
         }
 
-        // Pozycje rakiet są teraz w czasie tej klatki (syncThreats dosuwa je do kroku fizyki).
-        this._poseTime = SimClock.render;
+        // Pozycje rakiet są teraz w czasie tej klatki / kroku (syncThreats dosuwa je do kroku fizyki).
+        this._poseTime = poseClock;
 
         // Wygląd: zegar reżysera efektów (dym jedzie z rakietą co do kroku), sekwencje
-        // Supernowej, płonące odłamki, przypalenia.
-        if (fx) fx.update(dt);
+        // Supernowej, płonące odłamki, przypalenia — przy kroku fizyki raz na klatkę (frameFx).
+        if (!physics && fx) fx.update(dt);
     }
 
     /* ─────────────────── SPLIT (Hydra) ─────────────────── */

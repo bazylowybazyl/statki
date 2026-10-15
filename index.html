@@ -25627,6 +25627,8 @@
       }
     }
 
+    // Czas kroków lotu rakiet w tej klatce (PerfHUD rocketsTime — sumowany w loop()).
+    let _rocketStepMs = 0;
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
@@ -26407,6 +26409,14 @@
       // Czas pozy fizycznej (src/game/simClock.js): broń gracza strzelała wyżej
       // z pozy sprzed kroku, CIWS, NPC i trafienia niżej — z pozy po kroku.
       SimClock.advance(dt);
+      // Rakiety 3D: lot, zapalnik, trafienia w KROKU FIZYKI (RW-23 / D2 — niezależne od fps; dawniej raz na klatkę
+      // przed render()): po SimClock.advance (salwy gracza z tego kroku lecą od razu, NPC — od następnego), przed
+      // ciwsStep (obrona punktowa widzi pozy z tego kroku). Klatka reżysera efektów — frameFx w loop().
+      if (window.rocketSystem3D) {
+        const tRocketStep0 = performance.now();
+        window.rocketSystem3D.step(dt);
+        _rocketStepMs += performance.now() - tRocketStep0;
+      }
 
       // granice
       const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
@@ -28093,11 +28103,13 @@
       // Bezpiecznik: nośnik ustawia się tylko na czas serii spawnów — wyjątek
       // między set/clear nie może nieść kolejnych efektów cudzą prędkością.
       ActiveCarrier.clear();
-      // Rakiety (lot, trafienia, zdarzenia efektów) PRZED render(): rysuje je Core3D w tej
-      // samej klatce (src/3d/rockets/ — zadanie 19; dawniej overlay po render()).
+      // Rakiety: lot krokuje physicsStep (RW-23 / D2); tu klatka reżysera efektów PRZED render() (rysuje je Core3D
+      // w tej samej klatce — src/3d/rockets/, zadanie 19).
       const tRockets0 = performance.now();
-      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
-      const rocketsMs = performance.now() - tRockets0;
+      if (window.rocketSystem3D) window.rocketSystem3D.frameFx(frame);
+      const rocketsFxMs = performance.now() - tRockets0;
+      const rocketsMs = rocketsFxMs + _rocketStepMs;
+      _rocketStepMs = 0;
       // Wezwania i POWRÓT skrzydła tunelem warpa (src/game/supportWarp.js): spawn w klatce wyrzutu,
       // duch i usunięcie odlatujących — przed render(), który przesuwa zegar efektu o `frame`.
       // Fabuła: skrypt misji w czasie gry (kroki fizyki tej klatki), potem kamera kinowa / UI w czasie klatki.
@@ -28106,7 +28118,7 @@
       stepSupportWarp(frame);
       render(alpha, frame);
       updateStoryOverlay();
-      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
+      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsFxMs);
 
       // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
       window.camera = camera;
