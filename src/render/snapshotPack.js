@@ -48,8 +48,26 @@ export const TIER_B_PERIOD = 16;
 const num = (v) => (typeof v === 'number' ? v : 0);
 const raw = (v) => (typeof v === 'number' ? v : NaN);
 const EMPTY = Object.freeze([]);
+const PACK_LISTS = Object.freeze([LIST.RENDER, LIST.COLD_NEAR, LIST.NPCS, LIST.WRECKS, LIST.COLD]);
 
 /** Słownik wartości (napisy, czasem liczby — id encji) → kody 0…n−1; −1 = brak (null / undefined / ''). */
+/**
+ * Pamięć ostatniego kodu na miejsce (slot encji × pole, indeks rekordu wieży × pole): ta sama wartość co w poprzedniej
+ * klatce — kod bez wyszukiwania w słowniku (słownik tylko rośnie, więc kod wartości się nie zmienia).
+ */
+class CodeCache {
+  constructor(dict) { this.dict = dict; this.v = []; this.c = new Int32Array(64); }
+  code(i, val) {
+    if (i < this.v.length && this.v[i] === val && val !== undefined) return this.c[i];
+    const c = this.dict.code(val);
+    if (i >= this.c.length) { const n = new Int32Array(Math.max(i + 1, this.c.length * 2)); n.set(this.c); this.c = n; }
+    while (this.v.length <= i) this.v.push(undefined);
+    this.v[i] = val;
+    this.c[i] = c;
+    return c;
+  }
+}
+
 export class SnapshotDict {
   constructor() {
     this.values = [];
@@ -110,6 +128,8 @@ export class SnapshotPacker {
     // w pierwszym. Własna instancja (testy, ids nie podane) — cykl robi pakujący.
     this.ownsIds = ownsIds == null ? !ids : !!ownsIds;
     this.dict = new SnapshotDict();
+    this._entCodes = new CodeCache(this.dict);   // slot × 5: model3D, state, phase, stan tarczy, stan maskowania
+    this._turCodes = new CodeCache(this.dict);   // rekord wieży × 4: key, uid, weaponId, fxKey
     this.shared = shared;
     this.onLayout = onLayout;
     this.now = now || (typeof performance !== 'undefined' ? () => performance.now() : () => 0);
@@ -165,6 +185,7 @@ export class SnapshotPacker {
     this._blocks = [];
     this._blocksDirty = false;
     this._turretsPacked = false;  // strona: wieże już w fazie begin (frame.turretFrame)
+    this._fogR = new Uint8Array(64);     // RENDER: 1 = ukryte mgłą (jedno pytanie na encję w klatce)
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
     this._coreLists = [[null, null], null, null, null];
@@ -337,11 +358,23 @@ export class SnapshotPacker {
     const p2 = f.p2;
     if (f.split && p2 && !p2.destroyed) render.push(p2);
     const npcs = f.npcs || EMPTY;
+    const rNpc = render.length;
     for (let i = 0; i < npcs.length; i++) { const e = npcs[i]; if (e && !e.dead) render.push(e); }
     const wrecks = f.wrecks || EMPTY;
+    const rWreck = render.length;
     for (let i = 0; i < wrecks.length; i++) { const e = wrecks[i]; if (e && !e.dead) render.push(e); }
     const hides = f.fog ? f.hides : null;
-    fogInto(render, L[LIST.SEEN], hides);
+    // mgła: jedno pytanie na encję listy RENDER (wynik w _fogR po indeksie) — listy NPCS_SEEN / WRECKS_SEEN i flaga
+    // FOG_HIDDEN encji biorą je stąd (żywe NPC i wraki leżą w RENDER w tej samej kolejności)
+    if (this._fogR.length < render.length) this._fogR = new Uint8Array(Math.max(render.length, this._fogR.length * 2));
+    const fogR = this._fogR;
+    const seenR = L[LIST.SEEN];
+    for (let i = 0; i < render.length; i++) {
+      const e = render[i];
+      const h = hides && hides(e) ? 1 : 0;
+      fogR[i] = h;
+      if (!h) seenR.push(e);
+    }
     // zimne wraki z ciałem do rysowania (index.html: withColdNearWrecks — tu bez zapisu _coldExtrasFrame)
     const near = L[LIST.COLD_NEAR];
     const cold = f.coldRenderList || EMPTY;
@@ -357,9 +390,9 @@ export class SnapshotPacker {
     for (let i = 0; i < seen.length; i++) seenCold.push(seen[i]);
     for (let i = 0; i < near.length; i++) seenCold.push(near[i]);
     copyInto(npcs, L[LIST.NPCS]);
-    fogInto(npcs, L[LIST.NPCS_SEEN], hides);
+    fogIntoCached(npcs, L[LIST.NPCS_SEEN], hides, fogR, rNpc);
     copyInto(wrecks, L[LIST.WRECKS]);
-    fogInto(wrecks, L[LIST.WRECKS_SEEN], hides);
+    fogIntoCached(wrecks, L[LIST.WRECKS_SEEN], hides, fogR, rWreck);
     copyInto(f.coldWrecks || EMPTY, L[LIST.COLD]);
     copyInto(f.stations || EMPTY, L[LIST.STATIONS]);
   }
@@ -492,17 +525,21 @@ export class SnapshotPacker {
     this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0; this._imp = 0; this._br = 0;
     const hides = f.fog ? f.hides : null;
     const ship = f.ship, p2 = f.p2;
-    // kolejność: listy po kolei, encja pakowana raz (pierwsze wystąpienie); stacje mają własny blok
-    for (let l = 0; l < LIST.COUNT; l++) {
-      if (l === LIST.STATIONS) continue;
-      const list = L[l];
+    // kolejność: listy źródłowe po kolei, encja pakowana raz (pierwsze wystąpienie) — listy pochodne (SEEN ⊂ RENDER,
+    // SEEN_COLD ⊂ RENDER ∪ COLD_NEAR, NPCS_SEEN ⊂ NPCS, WRECKS_SEEN ⊂ WRECKS) nie wnoszą nowych encji, a kolejność
+    // pierwszych wystąpień (sloty) jest ta sama co w przeglądzie wszystkich list; stacje mają własny blok
+    const fogR = this._fogR;
+    for (let q = 0; q < PACK_LISTS.length; q++) {
+      const list = L[PACK_LISTS[q]];
+      const inRender = PACK_LISTS[q] === LIST.RENDER;
       for (let i = 0; i < list.length; i++) {
         const e = list[i];
         if (!e) continue;
         const s = ents.slotOf(e);
         if (this._entPacked[s] === k) continue;
         this._entPacked[s] = k;
-        this._packEntity(v, e, s, k, f, hides, e === ship, e === p2);
+        const fogHidden = inRender ? fogR[i] === 1 : !!(hides && hides(e));
+        this._packEntity(v, e, s, k, f, fogHidden, e === ship, e === p2);
         st.ents++;
       }
     }
@@ -518,7 +555,7 @@ export class SnapshotPacker {
     st.nodeU8Bytes = this._nodeU8;
   }
 
-  _packEntity(v, e, s, k, f, hides, isPlayer, isP2) {
+  _packEntity(v, e, s, k, f, fogHidden, isPlayer, isP2) {
     const ents = this.ids.entities;
     const f64 = v.entF64, i32 = v.entI32;
     const b = s * ES64, bi = s * ESI;
@@ -555,13 +592,14 @@ export class SnapshotPacker {
     const tBI = this._tierBI;
     i32[bi + EI.WEAPON_TIER] = tBI[tbi + 3]; i32[bi + EI.FACTION] = tBI[tbi + 4]; i32[bi + EI.FACTION_ID] = tBI[tbi + 5];
     i32[bi + EI.HULL_ID] = tBI[tbi + 6]; i32[bi + EI.SHIP_ID] = tBI[tbi + 7];
-    i32[bi + EI.MODEL3D] = this.dict.code(e.model3DProfileId);
+    const ec = this._entCodes, ecb = s * 5;
+    i32[bi + EI.MODEL3D] = ec.code(ecb, e.model3DProfileId);
     let flags = this._tierBI[tbi] | (pos ? ENT_FLAG.HAS_POS : 0) | (vel ? ENT_FLAG.HAS_VEL : 0);
     let flags2 = this._tierBI[tbi + 1];
     if (e.dead) flags |= ENT_FLAG.DEAD;
     if (isPlayer) flags |= ENT_FLAG.PLAYER;
     if (isP2) flags |= ENT_FLAG.P2;
-    if (hides && hides(e)) flags |= ENT_FLAG.FOG_HIDDEN;
+    if (fogHidden) flags |= ENT_FLAG.FOG_HIDDEN;
     if (e.isBridgeHulk) flags |= ENT_FLAG.BRIDGE_HULK;
     if (e.lightsOff) flags |= ENT_FLAG.LIGHTS_OFF;
     if (e.roadLightsOff) flags |= ENT_FLAG.ROAD_LIGHTS_OFF;
@@ -576,8 +614,8 @@ export class SnapshotPacker {
     if (e.__warpPreview === true) flags |= ENT_FLAG.WARP_PREVIEW;
     if (e.fighter) flags2 |= ENT_FLAG2.FIGHTER;
     if (e._shieldForcedOff) flags2 |= ENT_FLAG2.SH_FORCED_OFF;
-    i32[bi + EI.STATE] = this.dict.code(e.state);
-    i32[bi + EI.PHASE] = this.dict.code(e.phase);
+    i32[bi + EI.STATE] = ec.code(ecb + 1, e.state);
+    i32[bi + EI.PHASE] = ec.code(ecb + 2, e.phase);
     i32[bi + EI.OWNER_ID] = this._tierBI[tbi + 2];
     // napęd i silniki
     const ti = e.thrusterInput;
@@ -606,7 +644,7 @@ export class SnapshotPacker {
       f64[b + EF.SH_ACT] = raw(sh.activationProgress);
       f64[b + EF.SH_HARD] = raw(sh.hardness);
       f64[b + EF.SH_SHOW] = raw(sh.show);
-      i32[bi + EI.SH_STATE] = this.dict.code(sh.state);
+      i32[bi + EI.SH_STATE] = ec.code(ecb + 3, sh.state);
       if (sh.forceOff) flags2 |= ENT_FLAG2.SH_FORCE_OFF;
       const imp = sh.impacts;
       i32[bi + EI.SH_IMPACT_ID] = imp && imp.length ? (num(imp[0].id) | 0) : 0;
@@ -623,7 +661,7 @@ export class SnapshotPacker {
       flags |= ENT_FLAG.HAS_CLOAK;
       f64[b + EF.CLOAK_LEVEL] = raw(ck.level);
       f64[b + EF.CLOAK_ENERGY] = raw(ck.energy);
-      i32[bi + EI.CLOAK_STATE] = this.dict.code(ck.state);
+      i32[bi + EI.CLOAK_STATE] = ec.code(ecb + 4, ck.state);
       const lb = ck.lastBreak;
       i32[bi + EI.CLOAK_BREAK] = lb ? this._breakSerial(lb) : 0;
       if (lb && lb.forced) flags2 |= ENT_FLAG2.CLOAK_FORCED;
@@ -991,11 +1029,13 @@ export class SnapshotPacker {
     const inBox = inCullBox(f.cull, ex, ey, hull);
     if (wantHp && store && count > 0 && inBox) {
       // HP (mostki 3D): suma kontrolna — trafienia zmieniają HP bez flag brudu skóry
+      // samo hp: render czyta stosunek hp / maxHp, a maxHp zmienia się proporcjonalnie z hp (pancerz mostka,
+      // odrost — nowa replika i tak wysyła oba)
       const hp = store.hp, mh = store.maxHp;
-      let sh = 0, sm = 0;
-      for (let i = 0; i < count; i++) { sh += hp[i]; sm += mh[i]; }
+      let sh = 0;
+      for (let i = 0; i < count; i++) sh += hp[i];
       const o = bs * 2, S = this._bodyHpSum;
-      if (S[o] !== sh || S[o + 1] !== sm) { S[o] = sh; S[o + 1] = sm; this._bodyHpK[bs] = k; }
+      if (S[o] !== sh) { S[o] = sh; this._bodyHpK[bs] = k; }
       i32[bi + BI.HP_K] = this._bodyHpK[bs];
       if (this._bodyHpK[bs] > f.lastConsumed) {
         const p = this._nodeF64;
@@ -1275,14 +1315,14 @@ export class SnapshotPacker {
 
   _writeTurret(v, n, r, s, gen) {
     const f64 = v.turF64, i32 = v.turI32;
-    const dict = this.dict;
+    const tc = this._turCodes, tcb = n * 4;
     const b = n * TURRET.stride.f64, bi = n * TURRET.stride.i32;
     i32[bi + TI.ENT_SLOT] = s;
     i32[bi + TI.ENT_GEN] = gen;
-    i32[bi + TI.KEY] = dict.code(r.key);
-    i32[bi + TI.UID] = dict.code(r.uid);
-    i32[bi + TI.WEAPON] = dict.code(r.weaponId);
-    i32[bi + TI.FX_KEY] = dict.code(r.fxKey);
+    i32[bi + TI.KEY] = tc.code(tcb, r.key);
+    i32[bi + TI.UID] = tc.code(tcb + 1, r.uid);
+    i32[bi + TI.WEAPON] = tc.code(tcb + 2, r.weaponId);
+    i32[bi + TI.FX_KEY] = tc.code(tcb + 3, r.fxKey);
     f64[b + TF.WX] = raw(r.wx);
     f64[b + TF.WY] = raw(r.wy);
     f64[b + TF.ANG] = raw(r.ang);
@@ -1315,11 +1355,15 @@ function copyInto(src, out) {
   for (let i = 0; i < src.length; i++) out.push(src[i]);
 }
 
-function fogInto(src, out, hides) {
+// Jak fogInto, ale żywe encje (w RENDER od indeksu r0, w tej samej kolejności) biorą wynik z fogR.
+function fogIntoCached(src, out, hides, fogR, r0) {
   if (!hides) { copyInto(src, out); return; }
+  let ri = r0;
   for (let i = 0; i < src.length; i++) {
     const e = src[i];
-    if (e && !hides(e)) out.push(e);
+    if (!e) continue;
+    const h = !e.dead ? fogR[ri++] === 1 : hides(e);
+    if (!h) out.push(e);
   }
 }
 
