@@ -13,7 +13,7 @@
 //
 // Czysty moduł (bez three, DOM i `window`).
 
-import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, VENT, BRIDGE_HEAD, BRIDGE_REC, NOZZLE, BODY, BODY_FLAG, HEAD } from './snapshotLayout.js';
+import { LIST, ENT, ENT_FLAG, ENT_FLAG2, IMPACT, VENT, BRIDGE_HEAD, BRIDGE_REC, NOZZLE, BODY, BODY_FLAG, HEAD, CORE } from './snapshotLayout.js';
 import { MirrorBody, applyBodyPage } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
@@ -96,6 +96,9 @@ export class RenderMirror {
     for (let i = 0; i < LIST.COUNT; i++) this.lists[i] = [];
     this.player = null;
     this.player2 = null;
+    this.cores = [];             // rdzenie reaktorów (kolejność ReactorGame.cores — lustra po uid)
+    this._coreMirrors = new Map();
+    this.coreOf = null;          // (uid) → opis rdzenia albo null
     this._breaks = new Map();    // numer zerwania maskowania → obiekt (tożsamość jak cloak.lastBreak gry)
     this.stats = { created: 0, dropped: 0, waitingDescriptor: 0, waitingTopology: 0 };
     this._seen = new Int32Array(0);
@@ -133,6 +136,7 @@ export class RenderMirror {
         if (m) out.push(m);
       }
     }
+    applyCores(this, v);
     const ps = v.head[HEAD.PLAYER_SLOT];
     this.player = ps >= 0 ? (this.entities[ps] || null) : null;
     const p2 = v.head[HEAD.P2_SLOT];
@@ -356,6 +360,7 @@ function applyHullPage(hull, v, bs, dict) {
   hull.world = (fl & BODY_FLAG.WORLD) !== 0 ? (hull.world || true) : null;
   hull.disableSolidArmorLod = (fl & BODY_FLAG.NO_SOLID_LOD) !== 0;
   hull.dmgKey = dict.value(i32[bi + BI.DMG_KEY]);
+  hull.revision = i32[bi + BI.REVISION];
 }
 
 /** Dysze ze strony: obiekty dysz luster aktualizowane w miejscu (EngineVfxSystem trzyma je jako `slot.source`). */
@@ -456,6 +461,50 @@ export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null) {
     m.beamHull = hull;
   } else m.beamHull = null;
   m._oidPool = used;
+}
+
+/** Rdzenie reaktorów ze strony: lustra po uid (stała tożsamość — mapy renderu po rdzeniu), gospodarz = lustro. */
+function applyCores(rm, v) {
+  const out = rm.cores;
+  out.length = 0;
+  const n = v.head[HEAD.N_CORES] | 0;
+  const f64 = v.coreF64, i32 = v.coreI32, U = v.coreU8, dict = rm.dict;
+  for (let i = 0; i < n; i++) {
+    const b = i * CORE.stride.f64, bi = i * CORE.stride.i32;
+    const uid = i32[bi + CORE.I32.UID];
+    let c = rm._coreMirrors.get(uid);
+    if (!c) {
+      const d = rm.coreOf ? rm.coreOf(uid) : null;
+      if (!d) continue;
+      c = {
+        uid: d.uid, id: d.id, lineage: d.lineage, gx: d.gx, gy: d.gy, gridR: d.gridR, classId: d.classId, color: d.color,
+        kind: d.kind, armorMul: d.armorMul, meltdownSec: d.meltdownSec, chamberMaxHpSum: d.chamberMaxHpSum,
+        cellX: d.cellX, cellY: d.cellY, cellBaseHp: d.cellBaseHp, cellMaxHp: d.cellMaxHp,
+        cellState: new Uint8Array(d.cellX ? d.cellX.length : 0),
+        host: null, state: undefined, invalid: null, integrity: 0, meltdownRemaining: 0, meltdownDuration: 0,
+        deadCount: 0, elsewhereCount: 0, aliveCount: 0, lastX: 0, lastY: 0
+      };
+      rm._coreMirrors.set(uid, c);
+    }
+    const hs = i32[bi + CORE.I32.HOST_SLOT];
+    const hm = hs >= 0 ? rm.entities[hs] : null;
+    c.host = hm && hm.gen === (i32[bi + CORE.I32.HOST_GEN] >>> 0) ? hm : null;
+    c.state = dict.value(i32[bi + CORE.I32.STATE]);
+    const inv = dict.value(i32[bi + CORE.I32.INVALID]);
+    c.invalid = inv === undefined ? null : inv;
+    c.deadCount = i32[bi + CORE.I32.DEAD_COUNT];
+    c.elsewhereCount = i32[bi + CORE.I32.ELSEWHERE];
+    c.aliveCount = i32[bi + CORE.I32.ALIVE_COUNT];
+    c.integrity = und(f64[b + CORE.F64.INTEGRITY]);
+    c.meltdownRemaining = und(f64[b + CORE.F64.MELT_REMAIN]);
+    c.meltdownDuration = und(f64[b + CORE.F64.MELT_DUR]);
+    c.lastX = und(f64[b + CORE.F64.LAST_X]);
+    c.lastY = und(f64[b + CORE.F64.LAST_Y]);
+    const co = i32[bi + CORE.I32.CELL_OFF];
+    if (co >= 0) c.cellState.set(U.subarray(co, co + i32[bi + CORE.I32.CELL_N]));
+    else c.cellState.fill(0);
+    out.push(c);
+  }
 }
 
 /** Stan mostków ze strony (blok brF64) na `bridgeState` lustra — wyrzuty atmosfery o tożsamości stałej per obiekt gry. */

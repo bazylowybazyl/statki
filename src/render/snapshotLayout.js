@@ -156,7 +156,7 @@ export const IMPACT = Object.freeze({ ID: 0, GRID_ANGLE: 1, DAMAGE: 2, INTENSITY
 export const BODY = record({
   f64: ['ANCHOR_DX', 'ANCHOR_DY', 'SCALE', 'SRC_W', 'SRC_H', 'PIVOT_X', 'PIVOT_Y', 'CELL', 'LAT_MIN_X', 'LAT_MIN_Y',
     'LAT_MIN_Z', 'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP'],
-  i32: ['SLOT', 'GEN', 'ENT_SLOT', 'FLAGS', 'NODE_COUNT', 'ACTIVE_NODES', 'BEAM_COUNT', 'STORE_VER', 'SHAPE_VER',
+  i32: ['SLOT', 'GEN', 'ENT_SLOT', 'FLAGS', 'NODE_COUNT', 'ACTIVE_NODES', 'BEAM_COUNT', 'STORE_VER', 'SHAPE_VER', 'REVISION',
     'DMG_KEY', 'NODE_F64_OFF', 'NODE_U8_OFF', 'NODE_N', 'BEAM_F64_OFF', 'BEAM_U8_OFF', 'BEAM_N', 'REST_F64_OFF',
     'DIRTY_OFF', 'DIRTY_N', 'CHANGED_K', 'REST_K', 'HP_F64_OFF', 'HP_K']
 });
@@ -212,9 +212,13 @@ export const STATION = record({
 });
 
 // ── CORES ────────────────────────────────────────────────────────────────────────────────────────────────────
+// Rdzeń reaktora (kolejność ReactorGame.cores na listach migawki). Część statyczna (uid, rodzina, środek i promień
+// komory, klasa, barwa, komórki komory) — opis rdzenia przy pierwszym wystąpieniu; stan komórek (cellState: 0 żywa,
+// 1 martwa, 2 na innym ciele rodu) w puli coreU8 tylko, gdy któraś nie jest żywa.
 export const CORE = record({
   f64: ['INTEGRITY', 'MELT_REMAIN', 'MELT_DUR', 'LAST_X', 'LAST_Y'],
-  i32: ['HOST_SLOT', 'HOST_GEN', 'INDEX', 'STATE', 'DEAD_COUNT', 'ELSEWHERE']
+  i32: ['UID', 'HOST_SLOT', 'HOST_GEN', 'INDEX', 'STATE', 'INVALID', 'DEAD_COUNT', 'ELSEWHERE', 'ALIVE_COUNT',
+    'CELL_OFF', 'CELL_N']
 });
 
 // ── WORLD (Float64, skalary) ─────────────────────────────────────────────────────────────────────────────────
@@ -233,7 +237,7 @@ export const HALL_WORDS = HALL_DUST_IN.size;
 /** Pojemności domyślne (rosną przez growSnapshotCapacity). */
 export const SNAPSHOT_DEFAULT_CAPACITY = Object.freeze({
   entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nodeI32: 1 << 15, impacts: 2048, bridgeWords: 8192, nozzles: 4096, shots: 1024, turrets: 2048,
-  stations: 64, cores: 256
+  stations: 64, cores: 256, coreCells: 1 << 15
 });
 
 const ALIGN = 8;
@@ -274,6 +278,7 @@ export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen =
   recRegions('tur', TURRET, cap.turrets);
   recRegions('sta', STATION, cap.stations);
   recRegions('core', CORE, cap.cores);
+  region('coreU8', Uint8Array, cap.coreCells);
   // bloki modułów (RW-11c: ring, pas, baza, warp, planety… — własne pliki układu, wzór pyłu hal): obszary `blk:<nazwa>:f64|i32|u8`
   const blockList = [];
   if (blocks) {

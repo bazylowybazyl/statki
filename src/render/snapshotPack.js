@@ -27,7 +27,7 @@ import {
 } from './snapshotLayout.js';
 import { createTripleBuffer, TripleBufferWriter } from './tripleBuffer.js';
 import { createRenderIds } from './renderIds.js';
-import { describeEntity } from './describeEntity.js';
+import { describeEntity, describeCore } from './describeEntity.js';
 import { describeBodyTopology } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
@@ -132,6 +132,8 @@ export class SnapshotPacker {
     this.descQueue = [];
     this.topologies = [];
     this.topoQueue = [];
+    this.coreDescs = new Map();   // uid rdzenia → opis (część statyczna)
+    this.coreQueue = [];
     this._resourceSlot = (img) => this.ids.resources.slotOf(img);
     // numery obiektów źródła opisów (tożsamość podobiektów konfiguracji — renderMirror.reconcileDescriptor)
     this._oids = new WeakMap();
@@ -236,6 +238,7 @@ export class SnapshotPacker {
     // kolejki opisów i topologii: nowe z tej strony (worker — wysyłka między finish a następnym begin)
     this.descQueue.length = 0;
     this.topoQueue.length = 0;
+    this.coreQueue.length = 0;
     if (this.ownsIds) this.ids.begin();
     this._buildLists(frame);
     if (frame.coresOf) {
@@ -967,6 +970,7 @@ export class SnapshotPacker {
     i32[bi + BI.STORE_VER] = this._bodyStoreVer[bs];
     i32[bi + BI.SHAPE_VER] = store ? (store.shapeVersion | 0) : 0;
     i32[bi + BI.DMG_KEY] = this.dict.code(hull.dmgKey);
+    i32[bi + BI.REVISION] = num(hull.revision) | 0;
     i32[bi + BI.CHANGED_K] = this._bodyChangedK[bs];
     i32[bi + BI.REST_K] = this._bodyRestK[bs];
     // NODES: zmienione po ostatniej klatce odebranej, w pudle rozgrzania
@@ -1141,25 +1145,42 @@ export class SnapshotPacker {
   _packCores(v, f) {
     const list = f.reactorCores || EMPTY;
     const ents = this.ids.entities;
+    const dict = this.dict;
     const n = Math.min(list.length, this.layout.cap.cores);
-    const f64 = v.coreF64, i32 = v.coreI32;
+    const f64 = v.coreF64, i32 = v.coreI32, U = v.coreU8, ucap = this.layout.cap.coreCells;
+    let u = 0;
     for (let i = 0; i < n; i++) {
       const c = list[i];
       const b = i * CORE.stride.f64, bi = i * CORE.stride.i32;
+      const uid = c ? num(c.uid) | 0 : 0;
+      i32[bi + CI.UID] = uid;
+      if (c && this.describe && !this.coreDescs.has(uid)) {
+        this.coreDescs.set(uid, describeCore(c));
+        this.coreQueue.push(uid);
+      }
       const host = c ? c.host : null;
       const hs = host ? ents.peek(host) : -1;
       i32[bi + CI.HOST_SLOT] = hs;
       i32[bi + CI.HOST_GEN] = hs >= 0 ? ents.gen(hs) : 0;
       const hc = host ? host.reactorCores : null;
       i32[bi + CI.INDEX] = Array.isArray(hc) ? hc.indexOf(c) : -1;
-      i32[bi + CI.STATE] = c ? this.dict.code(c.state) : -1;
-      i32[bi + CI.DEAD_COUNT] = c ? num(c.deadCount) | 0 : 0;
-      i32[bi + CI.ELSEWHERE] = c ? num(c.elsewhereCount) | 0 : 0;
+      i32[bi + CI.STATE] = c ? dict.code(c.state) : -1;
+      i32[bi + CI.INVALID] = c ? dict.code(c.invalid) : -1;
+      const dead = c ? num(c.deadCount) | 0 : 0, els = c ? num(c.elsewhereCount) | 0 : 0;
+      i32[bi + CI.DEAD_COUNT] = dead;
+      i32[bi + CI.ELSEWHERE] = els;
+      i32[bi + CI.ALIVE_COUNT] = c ? num(c.aliveCount) | 0 : 0;
       f64[b + CF.INTEGRITY] = c ? raw(c.integrity) : NaN;
       f64[b + CF.MELT_REMAIN] = c ? raw(c.meltdownRemaining) : NaN;
       f64[b + CF.MELT_DUR] = c ? raw(c.meltdownDuration) : NaN;
       f64[b + CF.LAST_X] = c ? raw(c.lastX) : NaN;
       f64[b + CF.LAST_Y] = c ? raw(c.lastY) : NaN;
+      const cs = c ? c.cellState : null;
+      const cn = cs ? cs.length : 0;
+      if (cn > 0 && dead + els > 0) {
+        if (u + cn > ucap) { this._requestGrow('coreCells', (u + cn) * 2); i32[bi + CI.CELL_OFF] = -1; i32[bi + CI.CELL_N] = 0; }
+        else { U.set(cs, u); i32[bi + CI.CELL_OFF] = u; i32[bi + CI.CELL_N] = cn; u += cn; }
+      } else { i32[bi + CI.CELL_OFF] = -1; i32[bi + CI.CELL_N] = cn; }
     }
     v.head[HEAD.N_CORES] = n;
     this.stats.cores = n;

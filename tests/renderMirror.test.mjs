@@ -244,3 +244,40 @@ test('lustro: bridgeState — część statyczna z opisu, stan z bloku mostków,
   assert.equal(st.vent, v1, 'tożsamość wyrzutu stała między klatkami');
   assert.equal(m.beamHull.body.nodeStore.hp[3], 40, 'zmiana HP bez brudu skóry — z sumy kontrolnej');
 });
+
+test('lustro: rdzenie reaktorów — opis po uid, gospodarz = lustro, stan komórek tylko przy stratach, rewizja kadłuba', () => {
+  const ents = [makeShip('A', 0)];
+  const e = ents[0];
+  e.beamHull.revision = 4;
+  const core = { uid: 77, id: 'core_0', lineage: 'ród-A', gx: 12, gy: 9, gridR: 30, classId: 'M', color: '#4af', kind: 'ship',
+    cellX: new Int16Array([1, 2, 3]), cellY: new Int16Array([4, 4, 4]), cellBaseHp: new Float32Array(3), cellMaxHp: new Float32Array(3),
+    cellState: new Uint8Array(3), host: e, state: 'nominal', invalid: null, integrity: 1, meltdownRemaining: 0, meltdownDuration: 0,
+    deadCount: 0, elsewhereCount: 0, aliveCount: 3, lastX: 5, lastY: 6 };
+  e.reactorCores = [core];
+  const packer = new SnapshotPacker({ shared: false, describe: true });
+  const frame = createSnapshotFrame();
+  Object.assign(frame, { ship: e, npcs: [], wrecks: [], cam: { x: 0, y: 0, zoom: 1 }, coresOf: (lists) => lists[0][0].reactorCores });
+  const rm = new RenderMirror({
+    dict: packer.dict,
+    describe: (s, gen) => { const d = packer.descriptors[s]; return d && d.gen === gen ? d.desc : null; },
+    topologyOf: (bs, gen, sv) => { const t = packer.topologies[bs]; return t && t.gen === gen && t.storeVer === sv ? t.topo : null; },
+    resourceOf: (slot) => packer.ids.resources.objectAt(slot)
+  });
+  rm.coreOf = (uid) => packer.coreDescs.get(uid) || null;
+  const step = () => { frame.lastConsumed = packer.k; packer.begin(frame); rm.apply(packer.view); packer.finish(frame); };
+  step();
+  assert.equal(rm.cores.length, 1);
+  const c = rm.cores[0];
+  assert.equal(c.uid, 77);
+  assert.equal(c.host, rm.player);
+  assert.equal(c.state, 'nominal');
+  assert.equal(c.invalid, null);
+  assert.deepEqual(Array.from(c.cellX), [1, 2, 3]);
+  assert.equal(rm.player.beamHull.revision, 4);
+  core.state = 'exposed'; core.deadCount = 1; core.cellState[1] = 1; core.integrity = 0.66;
+  step();
+  assert.equal(rm.cores[0], c, 'lustro rdzenia — ten sam obiekt');
+  assert.equal(c.state, 'exposed');
+  assert.deepEqual(Array.from(c.cellState), [0, 1, 0]);
+  assert.equal(c.integrity, 0.66);
+});
