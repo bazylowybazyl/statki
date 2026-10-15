@@ -1579,6 +1579,7 @@
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
     import { cloakLightGain } from "./src/game/cloakLook.js";
+    import { stepCloakLooks } from "./src/game/cloakLooks.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
     import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
@@ -6403,6 +6404,8 @@
     // Strzał gracza: cały rdzeń broni idzie szyną (strzelec w detail.shooter),
     // Hexlance — zdarzeniem DOM bez strzelca (superbroń ma tylko gracz).
     WeaponShotBus.on((detail) => {
+      // Odrzut wieży strzelca (RW-26: stan wież po stronie gry; efekt wylotu WeaponFx tylko czyta lufę).
+      Turret2D.recoilForShot(detail);
       if (detail && detail.shooter === ship) {
         noteCameraCombat('strzał');
         breakPlayerCloak('fire');
@@ -22659,7 +22662,8 @@
         type: 'ciws'
       });
       // Błysk wylotu z receptury CIWS (WeaponFx, zadanie 17 — dawniej cząstka kanwy): lufa
-      // z rekordu wieżyczki p_aux, nośnik — wieżyczka.
+      // z rekordu wieżyczki p_aux, nośnik — wieżyczka. Odrzut wieży — strona gry (RW-26).
+      Turret2D.recoilAt(wDef?.id || 'ciws_mk1', px, py, ship);
       WeaponFx.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
@@ -22730,7 +22734,8 @@
         });
       }
 
-      // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy).
+      // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy); odrzut wieży — strona gry (RW-26).
+      Turret2D.recoilAt(wDef.id, muzzle.x, muzzle.y, ship);
       WeaponFx.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
     }
@@ -28095,6 +28100,8 @@
     // drawHalfW/H = kadr. Jeden obiekt na całą grę zamiast literału co klatkę.
     const _hexCullInfo = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
     const _hexCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
+    // RW-26: rekordy wież (Turret2D.syncFrame) po stronie gry — te same encje co kadłuby 3D (src/render/renderCull.js).
+    const _turretSyncOpts = { cull: _hexCullInfo, zoom: 1, hidden: (e) => SensorSystem.hides(e), poseOf: bridgeRenderPose, enabled: true };
 
     function getViewportForCamera(cam) {
       _vpScratch.w = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
@@ -29127,14 +29134,21 @@
         // Luk Atlasa (fregata zwiadu): __bayCut i poza renderu fregaty przed mostkami, skórą modelu 3D i zapisem slotów
         // kadłubów (pass ortho).
         syncScoutBay3D(vfxTime);
-        // Nadproża bram K-7 przy kamerze (wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną).
+        // Nadproża bram K-7 przy kamerze (lampy pozycyjne i okna mostków pod nimi gasną).
         refreshLintelCover(k7Lintels, haloRings ? haloRings.entries : null, cam.x, cam.y,
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
         BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+        // RW-26 (docs/PLAN-render-worker.md): wygląd maskowania i rekordy wież tej klatki liczy GRA, render tylko je
+        // czyta. Wizjer maskowania: okręt, którym gracz steruje (przy sterach fregaty zwiadu — fregata).
+        const cloakViewer = ScoutBay.controlling && ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : ship;
+        const cloakFrame = stepCloakLooks(renderEntities, performance.now(), bridgeRenderPose, cloakViewer);
+        _turretSyncOpts.zoom = cam.zoom;
+        _turretSyncOpts.enabled = Core3D.perfToggles?.fgWeapons !== false;
+        Turret2D.syncFrame(renderEntities, _turretSyncOpts);
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
-        updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);
+        updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.
         syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
         // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.

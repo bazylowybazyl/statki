@@ -514,7 +514,8 @@ export const WeaponFx = {
     const recipe = RECIPES[w.fx];
     if (!recipe) return false;
     const key = normalizeWeaponFxKey(w.id);
-    const shot = Turret2D.triggerShot(key, x, y, shooter);
+    // Odrzut zadaje strona gry (RW-26: Turret2D.recoilForShot w słuchaczu szyny, triggerShot przy PD) — tu sam wylot.
+    const shot = Turret2D.shotMuzzle(key, x, y, shooter);
     const m = _m;
     let gunner = shooter;
     if (shot) {

@@ -10,6 +10,7 @@
 // błyski wylotowe, pociski i wiązki biorą z nich pozycję wylotu przez `triggerShot` / `findTurretSlot`.
 
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
+import { collectDrawBoxEntities, getEntityPosX, getEntityPosY, getEntityScale } from '../render/renderCull.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
 
@@ -652,6 +653,7 @@ function emitPlayerTurretList(list, prefix, aimAlpha) {
 }
 
 let lastFxTimeSec = 0;
+const _syncEntities = [];
 
 export const Turret2D = {
   enabled: true,
@@ -687,6 +689,47 @@ export const Turret2D = {
   },
 
   _dt: 1 / 60,
+
+  /**
+   * Rekordy klatki po stronie GRY (RW-26, docs/PLAN-render-worker.md): raz na klatkę renderu PRZED
+   * updateHexShips3D (i przed pakowaniem migawki) — encje w pudle rysowania (te same co kadłuby 3D:
+   * src/render/renderCull.js), poza z `poseOf(e)` (interpolowana poza gracza) albo z encji, potem wygaszanie
+   * odrzutu. o: { cull, zoom, hidden(e) — ukryta (mgła wojny), poseOf(e) → { x, y, angle } | null, enabled }.
+   */
+  syncFrame(entities, o) {
+    this.enabled = o?.enabled !== false;
+    this.beginFrame();
+    const zoom = Math.max(0.0001, Number(o?.zoom) || 1);
+    const list = collectDrawBoxEntities(entities, o?.cull || null, zoom, o?.hidden || null, _syncEntities);
+    const poseOf = typeof o?.poseOf === 'function' ? o.poseOf : null;
+    for (let i = 0; i < list.length; i++) {
+      const entity = list[i];
+      const pose = poseOf ? poseOf(entity) : null;
+      this.sync(entity, pose ? pose.x : getEntityPosX(entity), pose ? pose.y : getEntityPosY(entity),
+        pose ? pose.angle : (entity.angle || 0), getEntityScale(entity));
+    }
+    list.length = 0;
+    // Wygaszanie odrzutu — raz na klatkę.
+    this.update();
+    return frameCount;
+  },
+
+  /**
+   * Odrzut wieży za strzał z szyny strzałów (strona gry, RW-26 — słuchacz WeaponShotBus w index.html): ta sama
+   * wieża i lufa, którą efekt wylotu (WeaponFx, `shotMuzzle`) bierze na błysk. Wiązka ciągła odrzutu nie daje.
+   */
+  recoilForShot(detail) {
+    if (!detail) return null;
+    if (detail.isBeam && detail.beam && (detail.beam.kind || detail.beamMode || detail.beam.mode) === 'continuous') return null;
+    const x = Number(detail.x); const y = Number(detail.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return this.recoilAt(detail.weaponId, x, y, detail.shooter || null);
+  },
+
+  /** Odrzut wieży broni `weaponId` strzelca przy punkcie wylotu (strona gry — także PD gracza spoza szyny). */
+  recoilAt(weaponId, x, y, shooter = null) {
+    return this.triggerShot(normalizeWeaponFxKey(weaponId), x, y, shooter);
+  },
 
   /**
    * Zbiera wieżyczki jednej encji do bufora klatki. Wywoływane z hexShips3D
@@ -789,6 +832,18 @@ export const Turret2D = {
    * strzał dokładał wstrząs kamery.
    */
   triggerShot(weaponKey, shotX, shotY, owner = null) {
+    return this._shot(weaponKey, shotX, shotY, owner, true);
+  },
+
+  /**
+   * Jak triggerShot, ale BEZ odrzutu — tylko wylot (efekt wylotu WeaponFx; odrzut zadaje strona gry:
+   * recoilForShot / triggerShot). Wynik — ten sam obiekt co triggerShot.
+   */
+  shotMuzzle(weaponKey, shotX, shotY, owner = null) {
+    return this._shot(weaponKey, shotX, shotY, owner, false);
+  },
+
+  _shot(weaponKey, shotX, shotY, owner, recoil) {
     if (!this.enabled || frameCount === 0) return null;
 
     let best = null;
@@ -828,14 +883,16 @@ export const Turret2D = {
     // Odrzut i wstrząs z danych broni (rekord niesie je z getDefInfo — src/game/weaponFeel.js).
     const st = best.state;
     const kick = Math.max(0.1, best.recoil);
-    st.housing = Math.min(st.housing + kick * 0.4, kick * 3.0);
-    st.barrel = Math.max(st.barrel, kick);
+    if (recoil) {
+      st.housing = Math.min(st.housing + kick * 0.4, kick * 3.0);
+      st.barrel = Math.max(st.barrel, kick);
+    }
 
     // Punkt wylotowy wybieramy cyklicznie, jeśli broń ma kilka luf, ale ten
     // najbliższy strzałowi ma pierwszeństwo — pociski wychodzą z właściwej lufy.
     const muzzles = best.spec.m;
     const idx = muzzles.length > 1 ? bestMuzzle : 0;
-    st.nextBarrel = (idx + 1) % Math.max(1, muzzles.length);
+    if (recoil) st.nextBarrel = (idx + 1) % Math.max(1, muzzles.length);
 
     const cosA = Math.cos(best.ang);
     const sinA = Math.sin(best.ang);

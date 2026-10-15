@@ -33,7 +33,9 @@ test('weapon-fired events carry the shooter and the 3D listener looks only at it
 
   // Lufa, odrzut i wstrząs tylko z wieżyczek strzelca (wylot i wiązka ciągła).
   assert.match(weaponFx, /this\._muzzle\(w, x, y, detail\.shooter \|\| null, detail\.dirX, detail\.dirY\)/);
-  assert.match(weaponFx, /Turret2D\.triggerShot\(key, x, y, shooter\)/);
+  // RW-26: wylot tylko z wieżyczek strzelca (shotMuzzle — bez odrzutu); odrzut zadaje strona gry tą samą regułą.
+  assert.match(weaponFx, /Turret2D\.shotMuzzle\(key, x, y, shooter\)/);
+  assert.match(html, /Turret2D\.recoilForShot\(detail\);/);
   assert.match(weaponFx, /Turret2D\.findTurretSlot\([^;]*detail\.shooter/);
 });
 

@@ -14,11 +14,11 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 100,
-  'index:dane': 31,
-  'index:konfiguracja': 169,
+  'index:aktualizacja': 101, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym)
+  'index:dane': 30,
+  'index:konfiguracja': 168,
   'index:zapytanie': 76,
-  'index:zdarzenie': 66,
+  'index:zdarzenie': 68, // 2026-10-15 RW-26 (rw-bronie): odrzut wież po stronie gry — Turret2D.recoilForShot (szyna strzałów), recoilAt ×2 (PD gracza); Turret2D zostaje na wątku głównym
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidBeltGiants.js': 1,
@@ -33,7 +33,7 @@ const SUFITY = {
   'import:src/game/beamBand3D.js': 1,
   'import:src/game/cargoPortOps.js': 1,
   'import:src/game/carrierVelocity.js': 16,
-  'import:src/game/cloakLook.js': 9,
+  'import:src/game/cloakLook.js': 8,
   'import:src/game/coldWrecks.js': 1,
   'import:src/game/cometNucleus.js': 1,
   'import:src/game/comets.js': 1,
@@ -80,7 +80,6 @@ const SUFITY = {
   'okno:OPTIONS': 5,
   'okno:RepairSwarm': 1,
   'okno:SUN': 35,
-  'okno:ScoutBay': 1,
   'okno:VFX_TUNE': 2,
   'okno:WorldBodies': 1,
   'okno:__EXPLOSION_GRID': 1,
@@ -100,7 +99,7 @@ const SUFITY = {
   'okno:planets': 3,
   'okno:player2Ship': 3,
   'okno:registerShieldImpact': 2,
-  'okno:ship': 18,
+  'okno:ship': 17,
   'okno:shipDriveState': 1,
   'okno:splitScreenMode': 7,
   'okno:stationPivotById': 1,
@@ -110,7 +109,6 @@ const SUFITY = {
   // zmienne gry czytane w modułach kanwy 2D (zostają na wątku głównym)
   'okno-kanwa:CANVAS_WEAPON_VFX_ENABLED': 1,
   'okno-kanwa:CICDisplay': 1,
-  'okno-kanwa:DevTuning': 1,
   'okno-kanwa:H': 5,
   'okno-kanwa:PHYS_HZ': 1,
   'okno-kanwa:SparkSystem3D': 2,
@@ -119,7 +117,7 @@ const SUFITY = {
   'okno-kanwa:__weaponAimAlpha': 2,
   'okno-kanwa:camera': 2,
   'okno-kanwa:ship': 2,
-  'okno-kanwa:worldToScreen': 5,
+  'okno-kanwa:worldToScreen': 4,
   'okno-kanwa:worldToScreenInto': 1,
   // GameState w renderze (RW-12)
   'gamestate:src/3d/engineVfxSystem.js': 5,

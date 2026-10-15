@@ -1360,6 +1360,23 @@ zostaje obraz), lustro maski słońca dla `lightAt` po stronie gry (dyski planet
 Kryterium: zrzuty `kosmos`, `galeria` bit w bit, `scripts/webgpu/maskowanie-gra.mjs`; `tests/cloakLook.test.mjs`,
 `tests/turretBatch3D.test.mjs`. Zależności: brak. Kolizje: `hexShips3D.js` (sesja renderu CPU).
 
+**Stan RW-26 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — czeka na weryfikację zrzutami po pauzie
+obciążenia):** po B3D bez lustra maski słońca (wieżyczek kanwy nie ma). Rekordy wież liczy gra: `Turret2D.syncFrame`
+w `render()` przed `updateHexShips3D` (encje z pudła rysowania wg nowego czystego `src/render/renderCull.js` — te same
+funkcje bierze hexShips3D, więc zbiór i kolejność rekordów jak dawniej `drawVfx`; przełącznik „Bronie” PerfHUD —
+`enabled`). Odrzut po stronie gry: `Turret2D.recoilForShot(detail)` w słuchaczu `WeaponShotBus` (index.html) i
+`Turret2D.recoilAt` przy PD gracza (`ciwsStep`); `WeaponFx._muzzle` bierze lufę z `Turret2D.shotMuzzle` (ta sama
+lufa, bez odrzutu). Odstępstwo: odrzut dalej po najbliższym wylocie na wieżach STRZELCA (szyna nie niesie gniazda —
+`muzzleData.emitterUid` to inny klucz niż uid rekordu); gniazdo w rekordzie SHOT — przy RW-21 (sloty `renderIds`).
+Rakiety (`rockets/effects.js`) dalej `triggerShot` w module renderu — przeniesie RW-23. Wygląd maskowania: nowy
+`src/game/cloakLooks.js` (`stepCloakLooks` → `CLOAK_LOOK_FRAME`: dt, czas wzoru, encje z aktywnym wyglądem, wygląd
+gracza), wołany w `render()` przed rekordami wież; `hullCloak.renderCloakLooks(frame, zoomPx)` robi tylko obraz
+(CloakFx, wizjer, uZoomPx) — `updateHexShips3D(…, cloakFrame)`. Dema z `updateHexShips3D` bez tych kroków: bez rekordów
+wież (żadne z nich nie rysuje wież ani maskowania; efekty wylotu mają ścieżkę bez wieżyczki). Szew: `index:aktualizacja`
+100 → 101, `index:zdarzenie` 66 → 68 (Turret2D zostaje na wątku głównym — wpisy z powodem), inne liczniki w dół.
+Testy: `tests/rw26GameSide.test.mjs` (pudło, `syncFrame`, odrzut bez / z, wiązka ciągła, krok wyglądu), poprawione
+strażniki źródeł (cloakLook, fighterCombatFixes, weapon3DModelMaterials, renderPerfGates, modele3dGra).
+
 **RW-27 Ring: świat ringu po stronie gry.**
 Pliki: nowy `src/game/haloRingWorld.js` (`entries {key, planet, collider, place, service}`; teren Marsa i Jowisza
 z planów CPU od razu, Ziemi z profilu z = 0 z workera; automat stanowisk K-7 bez bramki widoczności; zajętość
