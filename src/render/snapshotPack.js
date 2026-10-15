@@ -27,6 +27,8 @@ import {
 } from './snapshotLayout.js';
 import { createTripleBuffer, TripleBufferWriter } from './tripleBuffer.js';
 import { createRenderIds } from './renderIds.js';
+import { describeEntity } from './describeEntity.js';
+import { describeBodyTopology } from './mirrorBody.js';
 
 const EF = ENT.F64, EI = ENT.I32;
 const BF = BODY.F64, BI = BODY.I32;
@@ -94,7 +96,7 @@ export function createSnapshotFrame() {
  * (wzrost pojemności): czytelnik tworzy nowy `TripleBufferReader` z `createSnapshotViews`.
  */
 export class SnapshotPacker {
-  constructor({ ids = null, capacity = SNAPSHOT_DEFAULT_CAPACITY, shared = true, onLayout = null, now = null } = {}) {
+  constructor({ ids = null, capacity = SNAPSHOT_DEFAULT_CAPACITY, shared = true, onLayout = null, now = null, describe = false } = {}) {
     this.ids = ids || createRenderIds();
     this.dict = new SnapshotDict();
     this.shared = shared;
@@ -107,7 +109,7 @@ export class SnapshotPacker {
     this._growNext = null;
     this.stats = {
       packs: 0, layoutGrows: 0, ents: 0, bodies: 0, bodiesPacked: 0, nodesPacked: 0, beamsPacked: 0,
-      nodeF64Words: 0, nodeU8Bytes: 0, nozzles: 0, shots: 0, turrets: 0, stations: 0, cores: 0,
+      nodeF64Words: 0, nodeU8Bytes: 0, nozzles: 0, shots: 0, turrets: 0, stations: 0, cores: 0, descriptors: 0, topologies: 0,
       beginMs: 0, finishMs: 0, bytes: null
     };
     // pamięć pakującego na slot encji
@@ -115,7 +117,15 @@ export class SnapshotPacker {
     this._entGenSeen = new Uint32Array(0);
     this._ver = new Int32Array(0);   // 6 wersji na slot
     this._refVisual = []; this._refHull = []; this._refNozA = []; this._refNozB = []; this._refLights = [];
-    this._refBridge = []; this._refShield = [];
+    this._refBridge = []; this._refShield = []; this._refEngFx = [];
+    this._visScale = new Float64Array(0);
+    // opisy encji i topologie magazynów (RW-11a): najnowszy na slot + kolejka nowych (worker — postMessage)
+    this.describe = describe;
+    this.descriptors = [];
+    this.descQueue = [];
+    this.topologies = [];
+    this.topoQueue = [];
+    this._resourceSlot = (img) => this.ids.resources.slotOf(img);
     this._tierB = new Float64Array(0);   // ENT.F64 poziomu B na slot (W, H, HP_SCALE*)
     this._tierBI = new Int32Array(0);    // flagi i kody poziomu B na slot: [flagsB, flags2B, ownerId]
     // pamięć na slot ciała
@@ -149,6 +159,7 @@ export class SnapshotPacker {
       this._entPacked = grow32(this._entPacked, ne);
       const g = new Uint32Array(ne); g.set(this._entGenSeen); this._entGenSeen = g;
       this._ver = grow32(this._ver, ne * 6);
+      const vs = new Float64Array(ne * 4); vs.set(this._visScale); this._visScale = vs;
       const b = new Float64Array(ne * 5); b.set(this._tierB); this._tierB = b;
       this._tierBI = grow32(this._tierBI, ne * 3);
     }
@@ -173,6 +184,9 @@ export class SnapshotPacker {
     }
     this.k++;
     const k = this.k;
+    // kolejki opisów i topologii: nowe z tej strony (worker — wysyłka między finish a następnym begin)
+    this.descQueue.length = 0;
+    this.topoQueue.length = 0;
     this.ids.begin();
     this._buildLists(frame);
     if (frame.coresOf) {
@@ -547,7 +561,18 @@ export class SnapshotPacker {
     const vb = s * 6;
     const ver = this._ver;
     const visual = e.visual;
-    if (this._refVisual[s] !== visual) { this._refVisual[s] = visual; ver[vb]++; }
+    // `visual` zmienia klucze bez zmiany tożsamości (podmiana tablic dysz, engineFx, spriteScale — index.html,
+    // npcHardpointRuntime.js): wersja z tożsamości obiektu, jego tablic i engineFx oraz skal sprite'a.
+    const vEngFx = visual ? visual.engineFx : undefined;
+    const vsc = this._visScale, vo = s * 4;
+    const sc0 = visual ? raw(visual.spriteScale) : NaN, sc1 = visual ? raw(visual.spriteScaleX) : NaN;
+    const sc2 = visual ? raw(visual.spriteScaleY) : NaN, sc3 = visual ? raw(visual.spriteRotation) : NaN;
+    if (this._refVisual[s] !== visual || this._refEngFx[s] !== vEngFx ||
+        !sameNum(vsc[vo], sc0) || !sameNum(vsc[vo + 1], sc1) || !sameNum(vsc[vo + 2], sc2) || !sameNum(vsc[vo + 3], sc3)) {
+      this._refVisual[s] = visual; this._refEngFx[s] = vEngFx;
+      vsc[vo] = sc0; vsc[vo + 1] = sc1; vsc[vo + 2] = sc2; vsc[vo + 3] = sc3;
+      ver[vb]++;
+    }
     const hull = e.beamHull;
     if (this._refHull[s] !== hull) { this._refHull[s] = hull; ver[vb + 1]++; }
     let nozA = visual ? visual.mainThrusters : undefined;
@@ -571,6 +596,27 @@ export class SnapshotPacker {
     i32[bi + EI.V_LIGHTS] = ver[vb + 3];
     i32[bi + EI.V_BRIDGE] = ver[vb + 4];
     i32[bi + EI.V_SHIELD] = ver[vb + 5];
+    // opis encji (konfiguracja statyczna, biała lista) przy zmianie którejkolwiek wersji albo generacji slotu
+    if (this.describe) {
+      const d = this.descriptors[s];
+      if (!d || d.gen !== gen || !sameVers(d.vers, ver, vb)) {
+        const desc = describeEntity(e, this._resourceSlot);
+        const rec = d && d.gen === gen ? d : { gen, vers: new Int32Array(6), desc: null, res: new Int32Array(3) };
+        for (let q = 0; q < 6; q++) rec.vers[q] = ver[vb + q];
+        rec.desc = desc;
+        const dh = desc.hull;
+        rec.res[0] = dh ? dh.image : -1; rec.res[1] = dh ? dh.visualImage : -1; rec.res[2] = dh ? dh.normalMapImage : -1;
+        this.descriptors[s] = rec;
+        this.descQueue.push(s);
+        this.stats.descriptors++;
+      } else {
+        // obrazy opisu żyją, dopóki żyje encja (zasoby zwalniane po `retain` klatkach bez odwołania)
+        const res = this.ids.resources, r = d.res;
+        if (r[0] >= 0) res.touch(r[0]);
+        if (r[1] >= 0) res.touch(r[1]);
+        if (r[2] >= 0) res.touch(r[2]);
+      }
+    }
     // dysze
     i32[bi + EI.NOZ_OFF] = this._noz;
     let nn = 0;
@@ -695,6 +741,11 @@ export class SnapshotPacker {
       changed = true;
       this._bodyRestK[bs] = k;
       this._bodyShapeVer[bs] = store ? store.shapeVersion | 0 : 0;
+      if (this.describe && store) {
+        this.topologies[bs] = { gen: this.ids.bodies.gen(bs), storeVer: this._bodyStoreVer[bs], topo: describeBodyTopology(body) };
+        this.topoQueue.push(bs);
+        this.stats.topologies++;
+      }
     } else if (store && (store.shapeVersion | 0) !== this._bodyShapeVer[bs]) {
       // przesunięcie początku ciała (shiftBodyOrigin) albo zapis przez widok węzła — pozycje spoczynkowe do wysłania
       this._bodyShapeVer[bs] = store.shapeVersion | 0;
@@ -1002,6 +1053,13 @@ export class SnapshotPacker {
     this.stats.turrets = n;
     if (need > cap) this._requestGrow('turrets', need * 2);
   }
+}
+
+const sameNum = (a, b) => a === b || (a !== a && b !== b);
+
+function sameVers(a, ver, vb) {
+  for (let q = 0; q < 6; q++) if (a[q] !== ver[vb + q]) return false;
+  return true;
 }
 
 function grow32(a, n) {

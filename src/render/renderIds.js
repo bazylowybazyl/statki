@@ -90,6 +90,11 @@ export class RenderIdSpace {
     return s;
   }
 
+  /** Odwołanie do zajętego slotu w tej klatce bez wyszukiwania (np. obraz z opisu żywej encji). */
+  touch(slot) {
+    if (slot >= 0 && slot < this.highWater && this.objects[slot] !== null) this.seen[slot] = this.epoch;
+  }
+
   /** Slot obiektu bez przydziału i bez odwołania (−1 — obiekt bez slotu). */
   peek(obj) {
     const s = this._map.get(obj);
