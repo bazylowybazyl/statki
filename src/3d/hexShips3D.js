@@ -1,4 +1,5 @@
-﻿import * as THREE from 'three';
+﻿import { getEntityPosX, getEntityPosY, getEntityScaleX, getEntityScaleY, getEntityScale, isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX } from '../render/renderCull.js';
+import * as THREE from 'three';
 // Heksy (dema mostków, rdzenia, asteroid): strojenie i żar bez silnika, reszta przez haki, które
 // wpisuje destructor.js — gra go nie ładuje (etap 8, docs/PORT-silnik-belek.md), więc bytów z hexGrid nie ma.
 import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
@@ -28,11 +29,8 @@ import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
-// Pudła klatki (rozgrzanie / rysowanie) i próg smugi — wspólne z grą (src/game/coldWreckView.js, RW-31).
-import {
-  isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX, WRECK_IMPOSTOR_PX, wreckImpostorEnterPx,
-  beamBodyRadiusPx as beamBodyRadiusPxAt
-} from '../render/drawBox.js';
+// Próg smugi i promień ciała na ekranie — wspólne z grą (src/game/coldWreckView.js, RW-31; pudła — renderCull.js).
+import { WRECK_IMPOSTOR_PX, wreckImpostorEnterPx, beamBodyRadiusPx as beamBodyRadiusPxAt } from '../render/drawBox.js';
 import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
@@ -59,7 +57,7 @@ import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
 import { HullSkinBatch } from './hullSkinBatch.js';
 import { HullDamageMap } from './hullDamageMap.js';
-import { cloakHidesShadow, cloakHullHolder, syncCloakDist, updateCloakLooks } from './cloak/hullCloak.js';
+import { cloakHidesShadow, cloakHullHolder, syncCloakDist, renderCloakLooks } from './cloak/hullCloak.js';
 
 // Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
 // są w TSL: src/3d/hexShips3D.tsl.js — graf na wariant, wartości per encja
@@ -226,24 +224,6 @@ function refreshTuneEpoch() {
 
 function ensureShipLightPanelApi() { }
 
-function getEntityPosX(entity) { return entity?.pos ? entity.pos.x : entity?.x || 0; }
-function getEntityPosY(entity) { return entity?.pos ? entity.pos.y : entity?.y || 0; }
-function getEntityScaleX(entity) {
-  if (entity?.visual && typeof entity.visual.spriteScaleX === 'number') return entity.visual.spriteScaleX;
-  if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
-  return 1.0;
-}
-
-function getEntityScaleY(entity) {
-  if (entity?.visual && typeof entity.visual.spriteScaleY === 'number') return entity.visual.spriteScaleY;
-  if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
-  return 1.0;
-}
-
-function getEntityScale(entity) {
-  return Math.max(getEntityScaleX(entity), getEntityScaleY(entity));
-}
-
 function usesBillboardLighting(entity) {
   return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardLighting === true;
 }
@@ -251,9 +231,6 @@ function usesBillboardLighting(entity) {
 function usesBillboardOrientation(entity) {
   return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardOrientation === true;
 }
-
-// Pudło rozgrzania i pudło RYSOWANIA (isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX) — src/render/drawBox.js:
-// te same reguły liczy gra (src/game/coldWreckView.js — flaga `__inDrawBox`, zimne wraki).
 
 function getInterpolatedRenderPose(entity) {
   if (typeof window === 'undefined') return null;
@@ -1957,13 +1934,6 @@ function pushEngineHullLights() {
 }
 const ENGINE_LIGHT_FALLBACK = Object.freeze([0.5, 0.7, 1.0]);
 
-// Jasność wieżyczek kanwy 2D (Turret2D.lightAt, oświetlenie v2): cień planet z tarcz tej klatki
-// (Core3D.sunVisibilityAtWorld — lustro CPU maski słońca), w pełnym cieniu `turretNight`.
-function turretLightAt(x, y) {
-  const night = HullLighting.turretNight();
-  return night + (1 - night) * Core3D.sunVisibilityAtWorld(x, y);
-}
-
 // Wartości wspólne kadłubów (węzły HULL_SHARED, hexShips3D.tsl.js): raz na klatkę
 // zamiast per mesh. Strojenie światła z panelu (window.__shipLightTune) tylko przy
 // zmianie epoki; żar pod przełącznikiem glow stresu, jasność z configu (suwaki
@@ -2006,7 +1976,7 @@ export function setHexShipWorldLights(lights) {
   for (let i = 0; i < lights.length; i++) if (lights[i]) out.push(lights[i]);
 }
 
-export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, coldWrecks = null) {
+export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, coldWrecks = null, cloakFrame = null) {
   if (!Core3D.isInitialized) return;
 
   const now = performance.now();
@@ -2024,11 +1994,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // kształtu (jeden sprite na klatkę). Nic z kamery — odbicia zależą tylko od
   // położenia i obrotu statku.
   HullLacquer.update();
-  // Oświetlenie v2: strojenie → wspólne węzły, kolejka wypieku map powierzchni (worker); wieżyczki
-  // na kanwie 2D ciemnieją w cieniu planet razem z kadłubem.
+  // Oświetlenie v2: strojenie → wspólne węzły, kolejka wypieku map powierzchni (worker). Wieże 3D czytają
+  // maskę słońca w materiale (B3D — kanwa wieżyczek nie rysuje).
   HullLighting.update();
   HullSurface.pump();
-  Turret2D.lightAt = HullLighting.isPbr() ? turretLightAt : null;
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
@@ -2109,13 +2078,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     if (inDrawBox) drawHex.push(entity);
   }
 
-  // Maskowanie (src/3d/cloak/hullCloak.js): wygląd encji z `cloak` PRZED światłami, wieżyczkami i dyszami
-  // tej klatki (gaszą się z komórką pod sobą — cloakVisAtWorld), cząstki frontu i zerwania.
-  // Wizjer maskowania: okręt, którym gracz steruje (przy sterach fregaty zwiadu — fregata, src/game/scoutBay.js).
-  const scoutBay = typeof window !== 'undefined' ? window.ScoutBay : null;
-  const viewer = scoutBay?.controlling && scoutBay.npc && !scoutBay.npc.dead ? scoutBay.npc
-    : (typeof window !== 'undefined' ? window.ship : null);
-  updateCloakLooks(valid, now, getInterpolatedRenderPose, cameraZoom * (Core3D.pixelRatio || 1), viewer);
+  // Maskowanie: wygląd tej klatki liczy gra przed updateHexShips3D (RW-26 — src/game/cloakLooks.js, `cloakFrame`);
+  // tu obraz (src/3d/cloak/hullCloak.js) PRZED światłami i dyszami tej klatki (gaszą się z komórką pod sobą —
+  // cloakVisAtWorld), cząstki frontu i zerwania, wizjer.
+  renderCloakLooks(cloakFrame, cameraZoom * (Core3D.pixelRatio || 1));
 
   // Emitery świateł drogowych z CAŁEGO pudła rozgrzania: statek tuż poza
   // kadrem może oświetlać kadłub, który w kadrze jest.
@@ -2266,27 +2232,13 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     lodFrameStats.shaftBakes = HullShadowSdf.stats.bakes;
   }
 
-  // Wieżyczki: zbieramy je do bufora 2D, rysuje je pętla renderu w index.html.
+  // Wieżyczki: rekordy klatki (Turret2D) — rysuje je partia wież 3D (shipModels3DGame.js, B3D).
   // Bufor MUSI powstać przed syncProjectiles — błyski wylotowe i początki
   // wiązek szukają w nim lufy, z której padł strzał.
-  // Przelacznik "Bronie" w perf HUD gasi teraz wiezyczki 2D (wczesniej chowal
-  // kontenery siatek) — zostaje dzwignia do porownania kosztu w locie.
-  Turret2D.enabled = Core3D.perfToggles?.fgWeapons !== false;
-  Turret2D.beginFrame();
-  // Tylko pudło rysowania — Turret2D.draw i tak odrzuca wieżyczki spoza kadru,
-  // a sync liczył je dla całych 9 ekranów.
-  for (const entity of drawVfx) {
-    const interpPose = getInterpolatedRenderPose(entity);
-    const ex = interpPose ? interpPose.x : getEntityPosX(entity);
-    const ey = interpPose ? interpPose.y : getEntityPosY(entity);
-    const eAngle = interpPose ? interpPose.angle : (entity.angle || 0);
-    const scale = getEntityScale(entity);
-    Turret2D.sync(entity, ex, ey, eAngle, scale);
-  }
+  // Przełącznik "Bronie" w perf HUD gasi rekordy (a z nimi wieże 3D) — dźwignia do porównania kosztu w locie.
+  // Rekordy wież liczy gra przed updateHexShips3D (RW-26: Turret2D.syncFrame w render() index.html — te same encje,
+  // co drawVfx: src/render/renderCull.js), razem z odrzutem (strzały — WeaponShotBus w index.html).
   DrawCallStats.setTurrets2D(Turret2D.frameCount);
-  // Wygaszanie odrzutu — raz na klatke, niezaleznie od liczby passow 2D
-  // (split-screen rysuje ten sam bufor dwa razy).
-  Turret2D.update();
   // Efekty broni (zadanie 17): pociski, smugi, lot, wstrząs strzałów, bank Fx3D — raz na klatkę
   // renderu, po Turret2D.sync (lufy wiązek ciągłych i błysków z rekordów tej klatki).
   WeaponFx.sync((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);

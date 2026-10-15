@@ -1307,6 +1307,20 @@ strumień renderu; w RW-22 losowanie przejdzie do workera razem z rekordem `HULL
 Kryterium: dwa przebiegi harnessu identyczne; nowa baza zrzutów zatwierdzona RAZ (sceny z efektami się zmienią —
 D4); sceny bez efektów bit w bit. Zależności: brak. Kolizje: `index.html` (kilka linii), `hullBodies.js` (1 linia).
 
+**Stan RW-20 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
+zrzutami po pauzie obciążenia: dwa przebiegi harnessu identyczne, nowa baza raz — D4):** klasa `FxRandom` w nowym
+neutralnym `src/render/fxRandomCore.js` (bez three / DOM; `src/3d/fx/fxRandom.js` reeksportuje ją i trzyma strumień
+renderu `fxRandom`, API bez zmian). Strumień gry `fxRandomGame` (`src/game/fxRandomGame.js`, własne ziarno
+`FX_RANDOM_GAME_SEED`): `index.html` (15 losowań: ton dźwięku, cząstki kanwy — ślad pocisku, iskry wyrzutni, start
+myśliwca —, plan przelotu NEA, wyrzut dronów fabuły `storyLaunchDrones` — ten ostatni to rozgrywka, nie wizualia),
+`src/game/superweapon.js` (Hexlance kanwy), `src/vfx/canvasParticleSystem.js`, `src/vfx/collisionSparks.js` (oba
+zostają na wątku głównym). `src/3d/reactor3D.js` — `Math.random` → `fxRandom`. Bez zmian względem planu:
+`hullBodies.js` (`onNodeDebris`) zostaje na strumieniu renderu (losowanie przejdzie do workera z `HULL_DEBRIS`, RW-22);
+`planet3d.assets.js` (8 × `Math.random`, budowa nieba) i `rocketSystem3D.js` (2 — wyrzut rakiet, rozgrywka; RW-23) —
+nietknięte (zmiana przesunęłaby ciąg `Math.random` gry przy budowie świata). Harness: `reseed(v)` sieje też
+`window.fxRandomGame` (`v ^ 0x9e3779b9`), licznik `--losowania efekty` zna ramki `fxRandomCore.js`. Szew:
+`import:src/game/fxRandomGame.js` 2 (klasa B, moduły kanwy wątku głównego), `random:src/3d/reactor3D.js` 3 → 0.
+
 **RW-21 Strumień rozkazów — infrastruktura i broń.**
 Pliki: nowy `src/render/renderCommands.js` (kody typów, pisarz, dyspozytor `inline`) + testy; źródła: słuchacz
 `WeaponShotBus` → `SHOT` / `BEAM`; `index.html` (`spawnBulletImpactEffect`, `applyBulletHullPass`, `ciwsStep`,
@@ -1316,6 +1330,33 @@ reguła `__renderedByThree` po stronie gry); `src/game/superweapon.js` (Hexlance
 żywe encje — przez lustra). Kryterium: zrzuty `galeria`, `kosmos`, `rakiety` bit w bit względem bazy po RW-20;
 `WeaponFx.stats` równe; testy kodowania każdego typu. Zależności: RW-04, RW-20, RW-26 (lufa i odrzut w grze).
 Kolizje: `index.html` (pętla pocisków, PD) — duże pole, jedno krótkie podejście.
+
+**Stan RW-21 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację
+zrzutami `galeria`, `kosmos`, `rakiety` i `WeaponFx.stats` po pauzie obciążenia):** `src/render/renderCommands.js` —
+kody typów `RC`, układ pól rekordów (obiekty `SHOT`, `IMPACT`, `KERF`, `PIERCE`, `FLAK`, `BLAST`, `CHARGE`, `PD_LASER`,
+`HEX` — wspólne dla kodera i dekodera), pisarz `RenderCommandWriter` (pierścień `EventRingWriter` z RW-04; wartości f64,
+encje i pociski (slot, gen) z `createRenderIds` (własna instancja — przy RW-10 / RW-40 podmienić na przestrzenie migawki;
+`endFrame()` w `render()` zwalnia sloty bez odwołań), napisy w tablicy z rekordem STR przy pierwszym użyciu, nośnik =
+blok `ActiveCarrier` (5 słów) albo argument), czytelnik `RenderCommandReader` (`drain(maxFrame)`, obsługa typów
+`on(type, fn)`, rozwiązanie slotów hakami), `createRenderCommands({ mode })` — `inline`: dyspozycja zaraz po zatwierdzeniu
+(obraz bit w bit z dawnymi wywołaniami), singleton `RenderCommands` (`ready`, `projectilesReady`, `endFrame`).
+Dekoder renderu `src/3d/weapons/weaponFxCommands.js` (`installWeaponFxCommands(reader)` — też `WeaponFx.useCommands()`:
+efekty przestają słuchać szyny strzałów). Rekordy (nazwy jak w kodzie): SHOT (szyna — strzał / wiązka, i PD gracza;
+lufa ROZWIĄZANA w grze `Turret2D.shotMuzzle`, ułamek wstrząsu `writer.shotShakeScale` zamiast `WeaponFx.shotShakeScale`
+pisanego z gry), PD_LASER, IMPACT (widok pocisku: pola czytane przez receptury + `__ref` do stanu smugi), KERF,
+PIERCE (wyjście / zakleszczenie), FLAK_BURST, DRONE_BLAST (`CanvasVFX._spawnDeathBlast3D`), BOMB_BLAST / BOMB_DUD,
+CHARGE (stan efektu ładowania w dekoderze po kluczu działa — przestrzeń `chargeKeys`, trzymanie 3600 klatek),
+HEX_CHARGE / HEX_FIRE / HEX_BEGIN / HEX_STEP / HEX_END / HEX_HIT (uchwyt smugi = id gry, `proj.slug`). Odstępstwa:
+`BEAM` z katalogu § 3.3 nie jest osobnym typem — wiązki jadą w SHOT (pola szyny 1:1) i PD_LASER; `KERF` i `PIERCE`
+osobno. Reguła `__renderedByThree` po stronie gry (`markThreeRenderedBullets` w `render()` przed `updateHexShips3D`,
+warunek `RenderCommands.projectilesReady` = pule pocisków WeaponFx gotowe); `WeaponFx.sync` jej już nie pisze. Zostają
+na później: `WeaponFx.onPlayerShot` (kopnięcie kadru — RW-30), `RocketEffects.onIntercept` i `Turret2D.triggerShot`
+rakiet (RW-23), wywołania wewnątrz renderu (`coreFx3D`, `repairDrones3D`, `muzzleGas`) — bez zmian. Pocisk Hexlance'a,
+gdy render nie przydzieli smugi (pula 16), nie dostaje już zapasu kanwy (`proj.slug` zawsze niezerowe) — w grze nie
+występuje. Szew: `import:src/game/carrierVelocity.js` 16 → 17 (dekoder ustawia `ActiveCarrier`), `index:zdarzenie`
+68 → 51, `index:zapytanie` 76 → 70, `index:dane` 30 → 15. Testy: `tests/renderCommands.test.mjs` (każdy typ: pisarz →
+czytelnik → dekoder z podstawionym WeaponFx — argumenty, encje, widok pocisku, nośnik, stan ładowania, uchwyty
+Hexlance'a, wzrost pierścienia, zwalnianie slotów), poprawione atrapy funkcji `index.html` w 9 testach.
 
 **RW-22 Rozkazy: kadłuby, mapa ran, iskry, odłamki, stacje, wybuchy, reaktor.**
 Pliki: `index.html` (haki `HullBodies.onImpact / onRepair / onNodeLost` → `DMG_*`, `setSource / clearSource` → pole
@@ -1359,6 +1400,23 @@ zostaje obraz), lustro maski słońca dla `lightAt` po stronie gry (dyski planet
 `src/3d/hexShips3D.js` (usunięcie tych kroków), `index.html` (`render()` przed pakowaniem). Może iść przed RW-10.
 Kryterium: zrzuty `kosmos`, `galeria` bit w bit, `scripts/webgpu/maskowanie-gra.mjs`; `tests/cloakLook.test.mjs`,
 `tests/turretBatch3D.test.mjs`. Zależności: brak. Kolizje: `hexShips3D.js` (sesja renderu CPU).
+
+**Stan RW-26 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — czeka na weryfikację zrzutami po pauzie
+obciążenia):** po B3D bez lustra maski słońca (wieżyczek kanwy nie ma). Rekordy wież liczy gra: `Turret2D.syncFrame`
+w `render()` przed `updateHexShips3D` (encje z pudła rysowania wg nowego czystego `src/render/renderCull.js` — te same
+funkcje bierze hexShips3D, więc zbiór i kolejność rekordów jak dawniej `drawVfx`; przełącznik „Bronie” PerfHUD —
+`enabled`). Odrzut po stronie gry: `Turret2D.recoilForShot(detail)` w słuchaczu `WeaponShotBus` (index.html) i
+`Turret2D.recoilAt` przy PD gracza (`ciwsStep`); `WeaponFx._muzzle` bierze lufę z `Turret2D.shotMuzzle` (ta sama
+lufa, bez odrzutu). Odstępstwo: odrzut dalej po najbliższym wylocie na wieżach STRZELCA (szyna nie niesie gniazda —
+`muzzleData.emitterUid` to inny klucz niż uid rekordu); gniazdo w rekordzie SHOT — przy RW-21 (sloty `renderIds`).
+Rakiety (`rockets/effects.js`) dalej `triggerShot` w module renderu — przeniesie RW-23. Wygląd maskowania: nowy
+`src/game/cloakLooks.js` (`stepCloakLooks` → `CLOAK_LOOK_FRAME`: dt, czas wzoru, encje z aktywnym wyglądem, wygląd
+gracza), wołany w `render()` przed rekordami wież; `hullCloak.renderCloakLooks(frame, zoomPx)` robi tylko obraz
+(CloakFx, wizjer, uZoomPx) — `updateHexShips3D(…, cloakFrame)`. Dema z `updateHexShips3D` bez tych kroków: bez rekordów
+wież (żadne z nich nie rysuje wież ani maskowania; efekty wylotu mają ścieżkę bez wieżyczki). Szew: `index:aktualizacja`
+100 → 101, `index:zdarzenie` 66 → 68 (Turret2D zostaje na wątku głównym — wpisy z powodem), inne liczniki w dół.
+Testy: `tests/rw26GameSide.test.mjs` (pudło, `syncFrame`, odrzut bez / z, wiązka ciągła, krok wyglądu), poprawione
+strażniki źródeł (cloakLook, fighterCombatFixes, weapon3DModelMaterials, renderPerfGates, modele3dGra).
 
 **RW-27 Ring: świat ringu po stronie gry.**
 Pliki: nowy `src/game/haloRingWorld.js` (`entries {key, planet, collider, place, service}`; teren Marsa i Jowisza
@@ -1539,11 +1597,35 @@ jest gotowe — działaj.”
   Nowa gra, `VisualMode.weapons3D` zawsze prawda (dawny klucz `sc_weapons3d` ignorowany). Wieże wszystkich okrętów
   rysuje partia wież 3D (`turretBatch3D.js`) — także na sprite'ach w kamerze z góry; kanwa nie rysuje wieżyczek
   (`Turret2D` zostaje źródłem rekordów: kurs lufy, odrzut, LOD; po RW-26 liczy je strona gry). Każda broń z wieżą ma
-  rodzinę 3D (dziś `hexlance_siege: null` — Hexlance rysuje kanwa). Zachowania zrobione dotąd tylko dla wieżyczek kanwy
+  rodzinę 3D — już dziś (sprawdzone na `MASTER_WEAPONS`); Hexlance (`builtin`) nie ma żadnej wieży ani w 2D, ani w 3D
+  (decyzja użytkownika 2026-09-20: lufa = kil sprite'a Atlasa) i tak zostaje. Zachowania zrobione dotąd tylko dla wieżyczek kanwy
   przechodzą na wieże 3D albo okazują się zbędne dzięki głębi: maskowanie, mgła wojny, `__turretsHidden` (wrota
   ładowni), zasłonięcie pod nadprożami K-7 i pod fregatą zwiadu (`Turret2D.occlude`), cień planety i pole pasa
   (`Turret2D.lightAt`), LOD. „Statki 2D / 3D” zostaje (domyślnie 2D). Skutki dla planu: RW-26 bez lustra maski słońca
-  dla `lightAt`; § 2.7 i § 3.8 bez wieżyczek kanwy; D5 nie dotyczy. Stan B3D — dopisać tutaj.
+  dla `lightAt`; § 2.7 i § 3.8 bez wieżyczek kanwy; D5 nie dotyczy.
+
+  **Stan B3D (2026-10-15, `rw-bronie`):**
+  - Pomiar A/B na kodzie sprzed zmiany (`profil-bitwy-flot.mjs --sklad 50,20,10,3 --seed 7 --trwanie 80`, pary
+    uruchamiane równolegle, średnie z próbek bitwy co 3 s; bitwa chaotyczna — klatki różnią się bardziej szumem niż
+    bronią): zoom 0,1 (reżyser kadru zszedł do ~0,093): wieżyczki kanwy `render2dTurretTime` 0,26 ms ↔ wieże 3D
+    `syncShipModels3D` 0,25–0,43 ms (profil CPU, inkluzywnie; w 2D ta funkcja = same dysze SIDE 0,003), draw calle
+    mediana 49 ↔ 59, klatka 36,5 ↔ 28,4 ms (szum bitwy), p95 62,7 ↔ 41,1; zoom 0,45 (`sc_camera_frame=off`): kanwa
+    0,47 ms ↔ partia 0,07–0,11 ms (2D: dysze 0,02–0,04), draw calle 36 ↔ 50, klatka 29,9 ↔ 28,9 ms. GPU (`gpuMs`
+    próbkowany co N klatek) — w szumie. Wniosek: wieże 3D nie kosztują wyraźnie więcej niż kanwa (CPU podobny, +10–14
+    rysunków — po jednym na rodzinę w kadrze); poprawek wydajności nie trzeba.
+  - Kod: opcja i chipy `data-visual-weapons` usunięte, `VisualMode.weapons3D` zawsze prawda (`sc_weapons3d`
+    ignorowany), `setVisualMode(statki3D)` (drugi argument starych skryptów ignorowany), `configureShipModels3D` bez
+    `weapons`. `Turret2D.draw` / `skipDraw` / `occlude` / `lightAt`, ciemnienie sylwetką i importy atlasów sprite'ów
+    z `turret2D.js` usunięte; rysunek kanwy przeniesiony do `src/vfx/turretCanvasPreview.js` (tylko podgląd
+    `dema/bronie/yamato-preview.html` i testy atlasów — moduły sprite'ów broni zostają, bo z ich prostokątów
+    `weapons3D.js` buduje bryły, a `dema/bronie-webgpu` je rysuje). `HullLighting.turretNight` i `turretLightAt`
+    usunięte; `Core3D.sunVisibilityAtWorld` zostaje (diagnostyka `oswietlenie-gra.mjs`, `zaplon-gra.mjs`). Wiersz
+    PerfHUD „R wieżyczki” zostaje i pokazuje 0. Nowej rodziny nie było potrzeby robić (patrz wyżej — Hexlance).
+  - Zasłanianie i oświetlenie wież 3D: fregata zwiadu nad Atlasem — głębia (`__skinZ` 12,5 nad warstwą wież na
+    sprite'ach), nadproża K-7 — pass FG po ortho, maskowanie — `entityCloakVisAt` ≥ 0,5 w `syncTurrets`, mgła —
+    rekordy tylko dla bytów w kadrze, `__turretsHidden` — `Turret2D.sync` bez rekordów, cień planety / pole pasa —
+    maska słońca materiału partii. Weryfikacja zrzutami (sceny z wieżami zmieniają obraz) — czeka na „WOLNO
+    OBCIĄŻAĆ” (pauza obciążenia: użytkownik gra).
 - **D1 = B2cr** — rekomendacja RW-02 (`docs/webgpu/RW-02-PROTOTYP.md` § 4, § 7): bitmapa 3D z workera
   (`transferToImageBitmap` → `transferFromImageBitmap`) + nakładki klatki k rysowane na wątku głównym do pierścienia
   5 zwykłych kanw 2D w DOM z regułą ochrony (nietykalne: kanwa pokazana, klatki odebrane, a nie złożone — worker pisze

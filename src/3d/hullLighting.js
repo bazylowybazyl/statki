@@ -65,8 +65,6 @@ export const HULL_LIGHT_DEFAULTS = Object.freeze({
   // Lakier (hullLacquer.js) w modelu v2: rozmyte odbicie nieba barwione blachą działało w klasycznym
   // jak dodatkowe otoczenie (granatowy nalot spłaszczał cień) — v2 ma własne niebo, więc mniej.
   lacquerSheen: 0.35,
-  // Wieżyczki rysowane na kanwie 2D w pełnym cieniu planety (jasność; kadłub ciemnieje w shaderze).
-  turretNight: 0.3,
   // Poświata dysz MAIN na blachę (moc światła przy pełnym ciągu; 0 = wył.).
   engineGain: 8.0,
   // Podgląd diagnostyczny (0 = wył.): 1 normalna świata, 2 AO, 3 samocień, 4 sam klucz (N·L), 5 relief.
@@ -133,11 +131,6 @@ export const HullLighting = {
   /** Moc poświaty dysz MAIN na blachę przy pełnym ciągu (0 = wył.). */
   engineGain() {
     return clampNum(this.getTuning().engineGain, 0, 64, HULL_LIGHT_DEFAULTS.engineGain);
-  },
-
-  /** Jasność wieżyczek kanwy 2D w pełnym cieniu planety (0..1). */
-  turretNight() {
-    return clampNum(this.getTuning().turretNight, 0, 1, HULL_LIGHT_DEFAULTS.turretNight);
   },
 
   /** Raz na klatkę (hexShips3D): strojenie → wspólne węzły. */

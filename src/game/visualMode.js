@@ -1,11 +1,12 @@
 // ============================================================
-// Wygląd nowej gry (menu „Nowa gra”, 2026-09-30): statki i bronie 2D (sprite'y, wieżyczki kanwy — gra
-// jak dotąd) albo 3D (modele z src/3d/ships3d/ — shipModels3DGame.js). Rozgrywka ta sama w każdym
-// wariancie, różni się tylko obraz. Wybór zapamiętany w localStorage (sc_ships3d, sc_weapons3d),
-// czytany przy starcie gry.
+// Wygląd nowej gry (menu „Nowa gra”, 2026-09-30): statki 2D (sprite'y — gra jak dotąd) albo 3D (modele
+// z src/3d/ships3d/ — shipModels3DGame.js). Rozgrywka ta sama w każdym wariancie, różni się tylko obraz.
+// Wybór zapamiętany w localStorage (sc_ships3d), czytany przy starcie gry.
+// Bronie są ZAWSZE 3D (decyzja użytkownika 2026-10-15, docs/PLAN-render-worker.md § 7.1 — B3D): wieże rysuje
+// partia wież 3D (turretBatch3D.js) także na sprite'ach; dawny klucz `sc_weapons3d` jest ignorowany.
 // ============================================================
 
-const KEYS = Object.freeze({ ships3D: 'sc_ships3d', weapons3D: 'sc_weapons3d' });
+const KEYS = Object.freeze({ ships3D: 'sc_ships3d' });
 
 function readFlag(key) {
   try {
@@ -23,25 +24,26 @@ function writeFlag(key, on) {
 
 export const VisualMode = {
   ships3D: false,
-  weapons3D: false,
+  /** Zawsze prawda (B3D) — pole zostaje dla czytelników (raporty, harness). */
+  weapons3D: true,
 
-  /** Wczytuje zapamiętany wybór (domyślnie 2D / 2D). */
+  /** Wczytuje zapamiętany wybór (domyślnie statki 2D). */
   load() {
     this.ships3D = readFlag(KEYS.ships3D);
-    this.weapons3D = readFlag(KEYS.weapons3D);
+    this.weapons3D = true;
     return this;
   },
 
-  /** kind: 'ships' | 'weapons'; on — 3D. Zapamiętuje wybór. */
+  /** kind: 'ships' (on — 3D); zapamiętuje wybór. 'weapons' — bez skutku (bronie zawsze 3D). */
   set(kind, on) {
-    const field = kind === 'weapons' ? 'weapons3D' : 'ships3D';
-    this[field] = !!on;
-    writeFlag(KEYS[field], this[field]);
+    if (kind !== 'ships') return this;
+    this.ships3D = !!on;
+    writeFlag(KEYS.ships3D, this.ships3D);
     return this;
   },
 
   /** Krótki opis wariantu (komunikat startu, raporty harnessu). */
   label() {
-    return `statki ${this.ships3D ? '3D' : '2D'}, bronie ${this.weapons3D ? '3D' : '2D'}`;
+    return `statki ${this.ships3D ? '3D' : '2D'}, bronie 3D`;
   }
 };

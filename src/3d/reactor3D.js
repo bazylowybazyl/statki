@@ -57,6 +57,7 @@ import { CORE_STATE, coreStateRank } from '../game/coreModel.js';
 import { gridToLocal, localToWorld } from '../game/hexGridSpace.js';
 import { CORE_FX_BANDS, CORE_FX_LAYER, coreStateBand } from './coreBands.js';
 import { REACTOR3D_KINDS, buildReactorModel } from './reactor3DShapes.js';
+import { fxRandom } from './fx/fxRandom.js';
 import { createReactorPlasmaMaterial, createReactorStructMaterial } from './reactor3D.tsl.js';
 
 export const REACTOR3D_TUNE = {
@@ -299,8 +300,9 @@ export function createReactor3D(options = {}) {
       const k = kindFor(core);
       rec = {
         core, host: core.host, kind: kinds.has(k) ? k : 'terran',
-        seed: ((Math.imul(uidHash(core.uid) + 1, 2654435761) >>> 0) % 1000) / 1000 + Math.random() * 0.001,
-        flowPhase: Math.random(), pulsePhase: Math.random() * Math.PI * 2,
+        // RW-20: wizualia renderu — strumień renderu fxRandom (nie Math.random gry).
+        seed: ((Math.imul(uidHash(core.uid) + 1, 2654435761) >>> 0) % 1000) / 1000 + fxRandom.next() * 0.001,
+        flowPhase: fxRandom.next(), pulsePhase: fxRandom.next() * Math.PI * 2,
         burnt: null, lastSeen: clock
       };
       records.set(core, rec);

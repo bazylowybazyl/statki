@@ -3,6 +3,7 @@
 // Extracts firing logic from index.html into reusable instances
 import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim, turretDriveFor } from './weaponAim.js';
 import { Turret2D } from '../vfx/turret2D.js';
+import { RenderCommands } from '../render/renderCommands.js';
 import { writePointVelocity, writeCarrier, createCarrier } from './carrierVelocity.js';
 import {
   chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
@@ -469,11 +470,10 @@ export class WeaponController {
     if (res === CHARGE_FIRE) {
       this.fireSpecialLoadout(loadout, hp, slot, emitterPrefix);
     } else if (res === CHARGE_CHARGING) {
-      const fx = typeof window !== 'undefined' ? window.WeaponFx : null;
-      if (fx?.available && dt > 0) {
+      // RW-21: rekord CHARGE (stan efektu ładowania trzyma render po kluczu działa — `st`).
+      if (RenderCommands.ready && dt > 0) {
         const m = this.computeMountedMuzzle(loadout, Number(aim.nextBarrel) || 0);
-        if (!st.fx) st.fx = fx.createChargeState();
-        fx.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st.fx,
+        RenderCommands.writer.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st,
           writeCarrier(ship, m.pos.x, m.pos.y, false, _chargeCarrier));
       }
     }

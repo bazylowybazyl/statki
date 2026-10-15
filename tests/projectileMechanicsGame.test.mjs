@@ -94,11 +94,14 @@ const game = {
   spawnBulletImpactEffect(b, x, y, scale, hit) {
     events.push({ type: 'impact', x, y, through: !!hit?.through, ric: !!hit?.ric, ricSpeed: hit?.ricSpeed || 0, ricDirX: hit?.ricDirX || 0, ricDirY: hit?.ricDirY || 0, entity: hit?.entity || null });
   },
-  WeaponFx: {
-    available: true,
-    kerf(b, x, y, dx, dy, count, rvx, rvy, hull) { events.push({ type: 'kerf', count, entity: hull }); },
-    pierceExit(b, x, y, rvx, rvy, hull) { events.push({ type: 'exit', x, y, damage: b.damage, entity: hull }); },
-    pierceStuck(b, x, y, rvx, rvy, hull) { events.push({ type: 'stuck', x, y, entity: hull }); }
+  // RW-21: zdarzenia efektów przebicia — rekordy strumienia rozkazów (RenderCommands.writer).
+  RenderCommands: {
+    ready: true,
+    writer: {
+      kerf(b, x, y, dx, dy, count, rvx, rvy, hull) { events.push({ type: 'kerf', count, entity: hull }); },
+      pierceExit(b, x, y, rvx, rvy, hull) { events.push({ type: 'exit', x, y, damage: b.damage, entity: hull }); },
+      pierceStuck(b, x, y, rvx, rvy, hull) { events.push({ type: 'stuck', x, y, entity: hull }); }
+    }
   },
   stepInsideHull: M.stepInsideHull, skipsHull: M.skipsHull, resolveHullHit: M.resolveHullHit, entryDamage: M.entryDamage,
   ricochetBounce: M.ricochetBounce,
