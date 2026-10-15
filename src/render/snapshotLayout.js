@@ -134,7 +134,8 @@ export const BODY = record({
   f64: ['ANCHOR_DX', 'ANCHOR_DY', 'SCALE', 'SRC_W', 'SRC_H', 'PIVOT_X', 'PIVOT_Y', 'CELL', 'LAT_MIN_X', 'LAT_MIN_Y',
     'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP'],
   i32: ['SLOT', 'GEN', 'ENT_SLOT', 'FLAGS', 'NODE_COUNT', 'ACTIVE_NODES', 'BEAM_COUNT', 'STORE_VER', 'SHAPE_VER',
-    'DMG_KEY', 'NODE_F64_OFF', 'NODE_U8_OFF', 'NODE_N', 'BEAM_F64_OFF', 'BEAM_U8_OFF', 'BEAM_N', 'CHANGED_K']
+    'DMG_KEY', 'NODE_F64_OFF', 'NODE_U8_OFF', 'NODE_N', 'BEAM_F64_OFF', 'BEAM_U8_OFF', 'BEAM_N', 'REST_F64_OFF',
+    'DIRTY_OFF', 'DIRTY_N', 'CHANGED_K', 'REST_K']
 });
 
 export const BODY_FLAG = Object.freeze({
@@ -145,8 +146,11 @@ export const BODY_FLAG = Object.freeze({
 /**
  * Węzły ciała w NODES: Float64 [x[n], y[n], (z[n] gdy ciało nie jest płaskie), heat[n], heatStamp[n]],
  * Uint8 [active[n], patch[n]] — od przesunięć NODE_F64_OFF / NODE_U8_OFF rekordu BODY. Belki: Float64 [rest[m]],
- * Uint8 [broken[m]] od BEAM_F64_OFF / BEAM_U8_OFF (topologia — ix, iy, ox, oy, a, b, restBase, adj — raz na magazyn,
- * poza stroną).
+ * Uint8 [broken[m]] od BEAM_F64_OFF / BEAM_U8_OFF. Pozycje spoczynkowe Float64 [ox[n], oy[n](, oz[n])] od
+ * REST_F64_OFF — tylko po zmianie kształtu magazynu (`shapeVersion`: przesunięcie początku ciała, zapis przez widok
+ * węzła) od ostatniej klatki odebranej. Brudne węzły skóry (Int32, pula `nodeI32`): DIRTY_N indeksów od DIRTY_OFF —
+ * `_region.dirty` z chwili pakowania (żar czworokąta liczy się w chwili zapisu, więc lustro przepisuje DOKŁADNIE ten
+ * zbiór; flagi DIRTY_ALL / MESH_DIRTY w FLAGS). Topologia (ix, iy, a, b, restBase, adj) — raz na magazyn, poza stroną.
  */
 export function bodyNodeF64Words(n, planar) {
   return n * (planar ? 4 : 5);
@@ -202,7 +206,7 @@ export const HALL_WORDS = HALL_DUST_IN.size;
 
 /** Pojemności domyślne (rosną przez growSnapshotCapacity). */
 export const SNAPSHOT_DEFAULT_CAPACITY = Object.freeze({
-  entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nozzles: 4096, shots: 1024, turrets: 2048,
+  entities: 512, bodies: 512, nodeF64: 1 << 18, nodeU8: 1 << 17, nodeI32: 1 << 15, nozzles: 4096, shots: 1024, turrets: 2048,
   stations: 64, cores: 256
 });
 
@@ -236,6 +240,7 @@ export function createSnapshotLayout(capacity = SNAPSHOT_DEFAULT_CAPACITY, gen =
   recRegions('body', BODY, cap.bodies);
   region('nodeF64', Float64Array, cap.nodeF64);
   region('nodeU8', Uint8Array, cap.nodeU8);
+  region('nodeI32', Int32Array, cap.nodeI32);
   recRegions('noz', NOZZLE, cap.nozzles);
   recRegions('shot', SHOT, cap.shots);
   recRegions('tur', TURRET, cap.turrets);

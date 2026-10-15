@@ -83,6 +83,7 @@ export function createSnapshotFrame() {
     sun: null, skyZone: null,
     warp: null, boost: null,
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
+    consumeDirty: false,        // lustra (RW-11a): zerować flagi brudu skóry ciał gry po spakowaniu (tylko inline)
     hall: null,                 // faza finish: Float64Array HALL_DUST_IN
     lastConsumed: -1            // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)
   };
@@ -122,6 +123,8 @@ export class SnapshotPacker {
     this._bodyChangedK = new Int32Array(0);
     this._bodyActive = new Int32Array(0);
     this._bodyStoreVer = new Int32Array(0);
+    this._bodyShapeVer = new Int32Array(0);
+    this._bodyRestK = new Int32Array(0);
     this._bodyStore = [];
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
@@ -154,6 +157,8 @@ export class SnapshotPacker {
       this._bodyChangedK = grow32(this._bodyChangedK, nb);
       this._bodyActive = grow32(this._bodyActive, nb);
       this._bodyStoreVer = grow32(this._bodyStoreVer, nb);
+      this._bodyShapeVer = grow32(this._bodyShapeVer, nb);
+      this._bodyRestK = grow32(this._bodyRestK, nb);
     }
   }
 
@@ -404,7 +409,7 @@ export class SnapshotPacker {
     const L = this._lists;
     const st = this.stats;
     st.ents = 0; st.bodies = 0; st.bodiesPacked = 0; st.nodesPacked = 0; st.beamsPacked = 0; st.nozzles = 0;
-    this._nodeF64 = 0; this._nodeU8 = 0; this._noz = 0;
+    this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0;
     const hides = f.fog ? f.hides : null;
     const ship = f.ship, p2 = f.p2;
     // kolejność: listy po kolei, encja pakowana raz (pierwsze wystąpienie); stacje mają własny blok
@@ -686,6 +691,13 @@ export class SnapshotPacker {
       this._bodyStore[bs] = store;
       this._bodyStoreVer[bs]++;
       changed = true;
+      this._bodyRestK[bs] = k;
+      this._bodyShapeVer[bs] = store ? store.shapeVersion | 0 : 0;
+    } else if (store && (store.shapeVersion | 0) !== this._bodyShapeVer[bs]) {
+      // przesunięcie początku ciała (shiftBodyOrigin) albo zapis przez widok węzła — pozycje spoczynkowe do wysłania
+      this._bodyShapeVer[bs] = store.shapeVersion | 0;
+      this._bodyRestK[bs] = k;
+      changed = true;
     }
     const active = body.activeNodes | 0;
     if (this._bodyActive[bs] !== active) { this._bodyActive[bs] = active; changed = true; }
@@ -739,25 +751,35 @@ export class SnapshotPacker {
     i32[bi + BI.SHAPE_VER] = store ? (store.shapeVersion | 0) : 0;
     i32[bi + BI.DMG_KEY] = this.dict.code(hull.dmgKey);
     i32[bi + BI.CHANGED_K] = this._bodyChangedK[bs];
+    i32[bi + BI.REST_K] = this._bodyRestK[bs];
     // NODES: zmienione po ostatniej klatce odebranej, w pudle rozgrzania
     i32[bi + BI.NODE_F64_OFF] = -1; i32[bi + BI.NODE_U8_OFF] = -1; i32[bi + BI.NODE_N] = 0;
     i32[bi + BI.BEAM_F64_OFF] = -1; i32[bi + BI.BEAM_U8_OFF] = -1; i32[bi + BI.BEAM_N] = 0;
+    i32[bi + BI.REST_F64_OFF] = -1; i32[bi + BI.DIRTY_OFF] = -1; i32[bi + BI.DIRTY_N] = 0;
     if (store && count > 0 && this._bodyChangedK[bs] > f.lastConsumed && inCullBox(f.cull, ex, ey, hull)) {
-      if (this._packNodes(v, store, beams, count, beamCount, planar, bi)) {
+      const rest = this._bodyRestK[bs] > f.lastConsumed;
+      const dirtyN = region && region.store === store && !region.dirtyAll ? region.dirtyCount | 0 : 0;
+      if (this._packNodes(v, store, beams, count, beamCount, planar, bi, rest, dirtyN ? region.dirty : null, dirtyN)) {
         st.bodiesPacked++;
         st.nodesPacked += count;
         st.beamsPacked += beamCount;
+        // Lustro (RW-11a) przejęło zmiany: flagi brudu gry zerowane tu, a nie w renderze (render czyści REPLIKĘ).
+        // Tylko w trybie, w którym render odbiera każdą stronę (inline); worker — AGENT: RW-40, zbiór brudnych
+        // węzłów na ciało do odebrania strony.
+        if (f.consumeDirty) consumeBodyDirty(body, store, region);
       }
     }
   }
 
-  _packNodes(v, s, e, n, m, planar, bi) {
-    const words = bodyNodeF64Words(n, planar) + m;
+  _packNodes(v, s, e, n, m, planar, bi, rest, dirty, dirtyN) {
+    const restWords = rest ? n * (planar ? 2 : 3) : 0;
+    const words = bodyNodeF64Words(n, planar) + m + restWords;
     const bytes = bodyNodeU8Bytes(n) + m;
     const cap = this.layout.cap;
-    if (this._nodeF64 + words > cap.nodeF64 || this._nodeU8 + bytes > cap.nodeU8) {
+    if (this._nodeF64 + words > cap.nodeF64 || this._nodeU8 + bytes > cap.nodeU8 || this._nodeI32 + dirtyN > cap.nodeI32) {
       this._requestGrow('nodeF64', (this._nodeF64 + words) * 2);
       this._requestGrow('nodeU8', (this._nodeU8 + bytes) * 2);
+      this._requestGrow('nodeI32', (this._nodeI32 + dirtyN) * 2);
       return false;
     }
     const o = this._nodeF64, u = this._nodeU8;
@@ -782,6 +804,19 @@ export class SnapshotPacker {
       i32[bi + BI.BEAM_U8_OFF] = q;
       i32[bi + BI.BEAM_N] = m;
       p += m; q += m;
+    }
+    if (rest) {
+      i32[bi + BI.REST_F64_OFF] = p;
+      F.set(s.ox.subarray(0, n), p); p += n;
+      F.set(s.oy.subarray(0, n), p); p += n;
+      if (!planar) { F.set(s.oz.subarray(0, n), p); p += n; }
+    }
+    if (dirtyN > 0) {
+      const d = this._nodeI32;
+      v.nodeI32.set(dirty.subarray(0, dirtyN), d);
+      i32[bi + BI.DIRTY_OFF] = d;
+      i32[bi + BI.DIRTY_N] = dirtyN;
+      this._nodeI32 = d + dirtyN;
     }
     this._nodeF64 = p;
     this._nodeU8 = q;
@@ -982,6 +1017,25 @@ function fogInto(src, out, hides) {
     const e = src[i];
     if (e && !hides(e)) out.push(e);
   }
+}
+
+/**
+ * Zerowanie flag brudu skóry ciała gry (jak `clearHullSkinDirty` + `body.meshDirty = false` w renderze) — po
+ * przekazaniu zmian do strony, gdy lustro renderu prowadzi własną replikę.
+ */
+function consumeBodyDirty(body, store, region) {
+  if (region && region.store === store) {
+    const sd = store.skinDirty;
+    if (region.dirtyAll) {
+      if (sd) sd.fill(0);
+      region.dirtyAll = false;
+    } else if (sd) {
+      const d = region.dirty;
+      for (let k = 0; k < region.dirtyCount; k++) sd[d[k]] = 0;
+    }
+    region.dirtyCount = 0;
+  }
+  body.meshDirty = false;
 }
 
 function writeCull(h, c) {

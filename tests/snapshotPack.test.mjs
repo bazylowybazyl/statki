@@ -20,10 +20,13 @@ function makeStore(n, base = 0) {
   const s = {
     count: n, shapeVersion: 3,
     x: new Float64Array(n), y: new Float64Array(n), z: new Float64Array(n),
-    heat: new Float64Array(n), heatStamp: new Float64Array(n), active: new Uint8Array(n), patch: new Uint8Array(n)
+    ox: new Float64Array(n), oy: new Float64Array(n), oz: new Float64Array(n),
+    heat: new Float64Array(n), heatStamp: new Float64Array(n), active: new Uint8Array(n), patch: new Uint8Array(n),
+    skinDirty: new Uint8Array(n)
   };
   for (let i = 0; i < n; i++) {
     s.x[i] = base + i * 15.25; s.y[i] = -i * 7.5; s.z[i] = 0; s.heat[i] = i * 0.01; s.heatStamp[i] = 1000 + i;
+    s.ox[i] = base + i * 15; s.oy[i] = -i * 7.5;
     s.active[i] = i % 7 ? 1 : 0; s.patch[i] = i % 11 ? 0 : 1;
   }
   return s;
@@ -32,7 +35,8 @@ function makeStore(n, base = 0) {
 function makeShip(id, x, y, { n = 40, dirty = false, nozzles = 2 } = {}) {
   const store = makeStore(n, id * 1000);
   const beams = { count: n * 2, rest: new Float64Array(n * 2).fill(15), broken: new Uint8Array(n * 2) };
-  const region = { store, dirty: new Int32Array(4), dirtyCount: dirty ? 1 : 0, dirtyAll: false };
+  const region = { store, dirty: new Int32Array([3, 9, 0, 0]), dirtyCount: dirty ? 2 : 0, dirtyAll: false };
+  if (dirty) { store.skinDirty[3] = 1; store.skinDirty[9] = 1; }
   const body = {
     nodeStore: store, beamStore: beams, activeNodes: n - 6, meshDirty: dirty, isSleeping: !dirty, planar: true,
     cellSize: 15, latticeMin: { x: -100, y: -50 }, _boundsMinMax: new Float64Array([-1, -2, -3, 4, 5, 6]), _maxDisp: 0.5,
@@ -133,6 +137,13 @@ test('pakowanie nie zapisuje do obiektów gry; strona odczytana z potrójnego bu
   assert.equal(v.nodeF64[no + 40 + 5], ents[0].beamHull.body.nodeStore.y[5]);
   assert.equal(v.nodeU8[v.bodyI32[bb + BODY.I32.NODE_U8_OFF] + 7], 0);
   assert.equal(v.bodyI32[bb + BODY.I32.BEAM_N], 80);
+  const ro = v.bodyI32[bb + BODY.I32.REST_F64_OFF];
+  assert.ok(ro >= 0, 'nowy magazyn — pozycje spoczynkowe na stronie');
+  assert.equal(v.nodeF64[ro + 40 + 2], ents[0].beamHull.body.nodeStore.oy[2]);
+  assert.equal(v.bodyI32[bb + BODY.I32.DIRTY_N], 2);
+  const dOff = v.bodyI32[bb + BODY.I32.DIRTY_OFF];
+  assert.deepEqual([v.nodeI32[dOff], v.nodeI32[dOff + 1]], [3, 9]);
+  assert.equal(ents[0].beamHull.body.nodeStore.skinDirty[3], 1, 'tryb obserwacji (RW-10) — flagi gry nietknięte');
   assert.equal(v.bodyF64[bs * BODY.stride.f64 + BODY.F64.MAX_X], 4, '_boundsMinMax: [min xyz, max xyz]');
   assert.equal(packer.dict.value(v.bodyI32[bb + BODY.I32.DMG_KEY]), 'ród-1');
   assert.equal(packer.stats.bodiesPacked, 3);
@@ -238,4 +249,36 @@ test('mgła wojny: SEEN bez ukrytych; zimne wraki z ciałem w SEEN_COLD; stacje'
   assert.equal(packer._lists[LIST.SEEN_COLD].length, 3);
   assert.equal(packer._lists[LIST.STATIONS].length, 1);
   assert.equal(packer.stats.stations, 1);
+});
+
+test('lustra (consumeDirty): flagi brudu gry zerowane po spakowaniu; pozycje spoczynkowe po zmianie kształtu', () => {
+  const ents = [makeShip(1, 0, 0, { dirty: true })];
+  const packer = new SnapshotPacker({ shared: false });
+  const frame = baseFrame(ents, { cam: { x: 0, y: 0, zoom: 1 }, cull: { x: 0, y: 0, halfW: 5000, halfH: 5000, drawHalfW: 800, drawHalfH: 450 } });
+  const body = ents[0].beamHull.body, st = body.nodeStore;
+  frame.consumeDirty = true;
+  frame.lastConsumed = 0;
+  packer.begin(frame); packer.finish(frame);
+  assert.equal(packer.stats.bodiesPacked, 1);
+  assert.equal(st.skinDirty[3], 0);
+  assert.equal(st.skinDirty[9], 0);
+  assert.equal(body._region.dirtyCount, 0);
+  assert.equal(body.meshDirty, false);
+  // nic nowego — bez węzłów
+  frame.lastConsumed = 1;
+  packer.begin(frame); packer.finish(frame);
+  assert.equal(packer.stats.bodiesPacked, 0);
+  // przesunięcie początku ciała: shapeVersion + dirtyAll → węzły, spoczynek i bez listy (dirtyAll)
+  st.shapeVersion++;
+  body._region.dirtyAll = true;
+  frame.lastConsumed = 2;
+  packer.begin(frame);
+  const v = packer.view;
+  const bs = packer.ids.bodies.peek(body);
+  const bi = bs * BODY.stride.i32;
+  assert.ok(v.bodyI32[bi + BODY.I32.REST_F64_OFF] >= 0);
+  assert.equal(v.bodyI32[bi + BODY.I32.DIRTY_N], 0);
+  assert.ok(v.bodyI32[bi + BODY.I32.FLAGS] & BODY_FLAG.DIRTY_ALL);
+  packer.finish(frame);
+  assert.equal(body._region.dirtyAll, false);
 });
