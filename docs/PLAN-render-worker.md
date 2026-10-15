@@ -1376,6 +1376,24 @@ już dziś liczy salwy bez przeglądarki); zrzuty `rakiety` bit w bit przy niezm
 w `physicsStep` 120 Hz (trafienia niezależne od fps — zmiana rozgrywki: nowa baza, porównanie trafień w
 `rakiety-salwy-sym.mjs`, `rakiety-auto-gra.mjs`). Zależności: RW-21. Kolizje: `index.html` (kierowanie ogniem).
 
+**Stan RW-23 (2026-10-15, `rw-bronie`, gałąź `claude/rw-bronie-34f60f` — kod i testy gotowe, czeka na weryfikację po
+pauzie obciążenia):** (1) przeniesienie bez zmiany zachowania — `git mv src/effects3d/rocketSystem3D.js
+src/game/rockets/rocketSim.js`, three zastąpione `src/game/rockets/rocketMath.js` (Vec3 / Quat / clamp / lerp / degToRad
+— te same wzory co three r183, test bit w bit `tests/rocketMath.test.mjs`), importerzy (index.html, dema, skrypty,
+testy) na nowej ścieżce, katalog `src/effects3d/` pusty; rozgrywka dopisana od 10-07 (PD: `syncThreats`, `pdHit`,
+punkty życia; plan salw: `planNextSalvo`, `hasSalvoPlan`, `collectIncoming`, `retarget`) przeszła razem z plikiem.
+Zdarzenia reżysera → rekordy RKT_* (kody 50–59; adapter gry `rocketCommandAdapter.js` — te same metody co reżyser,
+`Turret2D.triggerShot` kasety po stronie gry; dekoder `src/3d/rockets/rocketFxCommands.js` — rakieta z puli przez
+`rocketAt(i)`, w workerze z bloku ROCKETS migawki). Odstępstwo: krok lotu każdej rakiety (`onFly`) to rekord RKT_FLY,
+nie odczyt bloku ROCKETS — kolejność emisji efektów (ciąg fxRandom) zostaje bit w bit; blok ROCKETS (RW-10, tor
+`rw-migawka`) daje lustra pól rakiet czytanych przez reżysera. `prepareContact` — rekord RKT_CONTACT (punkt i normalną
+styku liczy jeszcze reżyser z kadłuba — do przeniesienia z RW-22 / lustrami). (2) D2 osobnym commitem: `step(dt)` w
+`physicsStep` po `SimClock.advance` (salwy gracza z tego kroku lecą od razu, NPC — od następnego; `syncThreats` bez
+dosuwania pozy), `frameFx(dt)` — klatka reżysera w `loop()`; `rocketsTime` PerfHUD = kroki lotu + klatka reżysera
+(kroki liczą się też do `physicsTime`). Pomiar trafień (`scripts/rakiety-salwy-sym.mjs`, `rakiety-auto-gra.mjs`,
+`pd-rakiety-gra.mjs`) i nowa baza zrzutów — po „WOLNO OBCIĄŻAĆ”. Testy: `tests/rocketMath.test.mjs`,
+`tests/rocketStepD2.test.mjs`, RKT_* w `tests/renderCommands.test.mjs`, ścieżki w strażnikach źródeł.
+
 **RW-24 Suchy dok: stan po stronie gry.**
 Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, `live`, decyzje break / ram, plan
 łańcucha — zaraz po `worldBodies.step`), `src/3d/pirateDryDockGame.js` (tylko obraz + dryf odpadłych kawałków),
