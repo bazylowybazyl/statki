@@ -1104,6 +1104,11 @@
     import { installReactorCommands } from "./src/3d/reactorBlast/reactorCommands.js";
     const ReactorFxEvents = createReactorFxEvents(RenderCommands.writer, HullDamageEvents);
     installReactorCommands(RenderCommands.reader, () => reactorBlastFx, (id) => ReactorFxEvents.hazardAt(id));
+    // RW-22: zdarzenia rigów dronów naprawczych (pierścień rig.fx) — rekordy REPAIR_FX tuż przed przebiegiem dronów.
+    import { createRepairFxEvents } from "./src/game/repairFxEvents.js";
+    import { installRepairFxCommands } from "./src/3d/repair/repairDrones3D.js";
+    const RepairFxEvents = createRepairFxEvents(RenderCommands.writer);
+    installRepairFxCommands(RenderCommands.reader, (id) => RepairFxEvents.rigAt(id));
     HullBodies.onImpact = (e, r) => HullDamageEvents.impact(e, r);
     HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
@@ -29258,6 +29263,7 @@
         _repairDronesSync.dt = PAUSED ? 0 : frameDt;
         _repairDronesSync.zoom = cam.zoom;
         _repairDronesSync.time = SimClock.render;
+        RepairFxEvents.flush(RepairSwarm.rigs);
         syncRepairDrones3D(_repairDronesSync);
       }
       const render3dHexMs = performance.now() - tRender3dSub;

@@ -34,6 +34,7 @@ import { ActiveCarrier, writeCarrier, createCarrier } from '../../game/carrierVe
 import { entityCloakVisAt } from '../../game/cloakLook.js';
 import { RepairSwarm } from '../../game/repairSwarm.js';
 import { DRONE_STATE, REPAIR_FX, REPAIR_JOB } from '../../game/repairRig.js';
+import { HC, REPAIR_FX_REC } from '../../render/hullCommands.js';
 import { REPAIR_TUNE } from '../../data/repairDrones.js';
 import { buildRepairDroneArrays, REPAIR_DRONE_DIMS, REPAIR_DRONE_PALETTE } from './repairDroneModel.js';
 
@@ -339,8 +340,10 @@ export class RepairDronesView {
     return n;
   }
 
-  // Zdarzenia rigu od ostatniego odczytu: błysk odbudowanej komórki, zestrzelony dron.
+  // Zdarzenia rigu od ostatniego odczytu: błysk odbudowanej komórki, zestrzelony dron. RW-22: z rekordów REPAIR_FX
+  // (kolejka rigu z dekodera — gra przepisuje pierścień tuż przed tym przebiegiem), bez nich — pierścień rig.fx wprost.
   _drainFx(rig) {
+    if (_fxQueues) { this._drainQueue(rig); return; }
     let read = this._fxRead.get(rig);
     if (read === undefined) { read = rig.fxWrite; this._fxRead.set(rig, read); return; }
     const cap = rig.fx.length;
@@ -364,6 +367,31 @@ export class RepairDronesView {
       }
     }
     this._fxRead.set(rig, read);
+  }
+
+  _drainQueue(rig) {
+    const q = _fxQueues.get(rig);
+    if (!q || q.n === 0) return;
+    for (let i = 0; i < q.n; i++) this._fxEvent(rig, q.kind[i], q.x[i], q.y[i]);
+    q.n = 0;
+  }
+
+  _fxEvent(rig, kind, x, y) {
+    const L = REPAIR_DRONE_LOOK;
+    const fl = Core3D.fx?.lights;
+    this.stats.events++;
+    if (kind === REPAIR_FX.REGROWN) {
+      ActiveCarrier.set(writeCarrier(rig.target, x, y, false, _carrier));
+      const q = L.regrowFlash;
+      if (fl) fl.flash(x, y, q[0], q[1], q[2], q[3], q[4], q[5], 2, 0.3, 18);
+      this._sparks(x, y, 10, L.sparkColor);
+      ActiveCarrier.clear();
+    } else if (kind === REPAIR_FX.DRONE_LOST) {
+      const q = L.lostFlash;
+      if (fl) fl.flash(x, y, q[0], q[1], q[2], q[3], q[4], q[5], 2, 0.4, 30);
+      WeaponFx.droneBlast?.(x, y, 26);
+      SparkSystem3D.burst(x, y, 18, 260, 0.5, 0.6, '#ffb070');
+    }
   }
 
   _push(R) {
@@ -402,6 +430,27 @@ export function repairDronesView() {
 }
 
 /** Raz na klatkę renderu (index.html: po syncShipModels3D) — opcje jak RepairDronesView.sync. */
+// Kolejki zdarzeń rigów z rekordów REPAIR_FX (RW-22): rig → { n, kind[], x[], y[] }. null — dawna droga (pierścień).
+let _fxQueues = null;
+
+/**
+ * Rekordy REPAIR_FX w czytelniku rozkazów: zdarzenie trafia do kolejki rigu (`rigAt(id)` — inline: rejestr gry;
+ * worker — lustro rigu), rysunek przy najbliższym przebiegu dronów w tym samym miejscu co dawne drenowanie pierścienia.
+ */
+export function installRepairFxCommands(reader, rigAt) {
+  _fxQueues = new WeakMap();
+  const layout = REPAIR_FX_REC;
+  reader.on(HC.REPAIR_FX, (rd, d, o) => {
+    const rig = rigAt(d[o + layout.RIG]);
+    if (!rig) return;
+    let q = _fxQueues.get(rig);
+    if (!q) { q = { n: 0, kind: [], x: [], y: [] }; _fxQueues.set(rig, q); }
+    q.kind[q.n] = d[o + layout.KIND]; q.x[q.n] = d[o + layout.X]; q.y[q.n] = d[o + layout.Y];
+    q.n++;
+  });
+  return reader;
+}
+
 export function syncRepairDrones3D(p) {
   if (RepairSwarm.out === 0 && !_view) return 0;
   const v = repairDronesView();

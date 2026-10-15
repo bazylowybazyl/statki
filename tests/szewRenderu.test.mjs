@@ -16,7 +16,7 @@ const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
   'index:aktualizacja': 102, // 2026-10-15 RW-26 (rw-bronie): Turret2D.syncFrame — rekordy wież liczy gra przed renderem (Turret2D zostaje na wątku głównym); RW-31 (rw-kadluby): Core3D.pixelRatio do widoku klatki gry (setDrawView) — w workerze z RET_F64.PIXEL_RATIO
   'index:dane': 16, // 2026-10-15 RW-22 (rw-kadluby): installExplosionCommands (dekoder rekordu EXPLOSION — moduł bez three liczony jako dane); za to zdarzenia 51 → 47, zapytania 70 → 64
-  'index:konfiguracja': 168,
+  'index:konfiguracja': 169, // 2026-10-15 RW-22 (rw-kadluby): instalacja dekoderów rekordów kadłubów (mapa ran, reaktor, drony, iskry) — jednorazowa konfiguracja; za to zdarzenia 51 → 47, zapytania 70 → 64
   'index:zapytanie': 70,
   'index:zdarzenie': 51,
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)

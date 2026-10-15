@@ -382,3 +382,25 @@ test('reaktor: przebiegi pęknięć gry = dawny _crackRun renderu; rekordy RX_* 
   assert.deepEqual(viaRecord, direct);
   HullBodies.release(frag);
 });
+
+test('drony naprawcze: REPAIR_FX — gra przepisuje pierścień rig.fx jak dawne drenowanie (pierwsze spotkanie, przepełnienie)', async () => {
+  const { createRepairFxEvents } = await import('../src/game/repairFxEvents.js');
+  const { HC: H, REPAIR_FX_REC: R } = await import('../src/render/hullCommands.js');
+  const rc = createRenderCommands({ mode: 'inline' });
+  const got = [];
+  const ev = createRepairFxEvents(rc.writer);
+  rc.reader.on(H.REPAIR_FX, (rd, d, o) => got.push([ev.rigAt(d[o + R.RIG]).name, d[o + R.KIND], d[o + R.X], d[o + R.Y]]));
+  const mk = (name) => ({ name, fx: Array.from({ length: 4 }, () => ({ kind: 0, x: 0, y: 0 })), fxWrite: 0 });
+  const push = (rig, kind, x) => { const f = rig.fx[rig.fxWrite % rig.fx.length]; f.kind = kind; f.x = x; f.y = -x; rig.fxWrite++; };
+  const a = mk('a'), b = mk('b');
+  push(a, 1, 1);
+  ev.flush([a, b]);
+  assert.deepEqual(got, [], 'pierwsze spotkanie — stare zdarzenia pominięte');
+  push(a, 1, 2); push(b, 2, 3); push(a, 6, 4);
+  ev.flush([a, b]);
+  assert.deepEqual(got, [['a', 1, 2, -2], ['a', 6, 4, -4], ['b', 2, 3, -3]], 'kolejność rejestru rigów, w rigu — zapisu');
+  got.length = 0;
+  for (let k = 0; k < 7; k++) push(b, 1, 10 + k);
+  ev.flush([a, b]);
+  assert.deepEqual(got.map((g) => g[2]), [13, 14, 15, 16], 'przepełnienie — najnowsze `cap`');
+});
