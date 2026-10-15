@@ -1294,7 +1294,10 @@ miejsce uzgodnić z sesją renderu CPU.
   z tożsamości źródeł. NODES: ciało zmienione (nowy magazyn, `activeNodes`, `meshDirty`, brudny region) po
   `lastConsumed` i w pudle rozgrzania (+ zasięg sprite'a). Każde pole encji czytane raz; bez zapisów do obiektów gry
   (test: zamrożone atrapy). Historia klatek `packer.hist` (ms, węzły, ciała, bajty), `pageReport()`.
-- `index.html`: `?szew=inline` (`SZEW_MODE`), `RenderSlots = createRenderIds()`, `renderSnapshot`;
+- `index.html`: `?szew=inline` (`SZEW_MODE`), `renderSnapshot`; sloty — `src/render/renderSlots.js` (jedna przestrzeń
+  dla rozkazów RW-21, migawki i RET RW-29, uzgodnione z `rw-kadluby` i `rw-bronie`): `RenderSlots` + JEDEN cykl mark
+  & sweep na klatkę w `loop()` (`beginRenderSlotsFrame` przed fizyką, `endRenderSlotsFrame` po `render()`; dwa cykle
+  w klatce zwolniłyby sloty widziane tylko w pierwszym), pakujący z cudzymi slotami nie robi cyklu (`ownsIds`);
   `fillHexCullInfo(cam, out, box3d)` — wzór pudła cullingu wyjęty z `render()` (bit w bit ten sam), migawka liczy go
   do własnego obiektu (`_hexCullInfo` w klatce bez zmian); wywołania faz w `render()`; `window.RenderSnapshot`.
 - Strażnik szwu RW-01: `index:aktualizacja` 100 → 102 z powodem (Turret2D.recordsFor do RW-26, HallDust.input do
@@ -1306,6 +1309,10 @@ miejsce uzgodnić z sesją renderu CPU.
   pakowanie zamrożonych atrap i odczyt strony z potrójnego bufora, NODES wg „zmienione po ostatniej odebranej”
   (pominięta strona nie gubi zmiany, nowy magazyn, poza pudłem), wersje i poziom B, wzrost pojemności (700 encji —
   nowy układ), mgła / zimne wraki / stacje.
+- Dopisane później (commity „RW-10: …”): NODES z listą brudnych węzłów skóry (żar czworokąta liczy się w chwili
+  zapisu — lustro przepisuje dokładnie zbiór `_region.dirty`) i pozycjami spoczynkowymi po zmianie kształtu;
+  `frame.consumeDirty` (tryb luster: pakujący zeruje flagi brudu gry); `packer.addBlock` — bloki modułów (RW-11c,
+  drony naprawcze) w osobnych plikach.
 - Do zrobienia po zdjęciu trybu lekkiego: zrzuty `--query szew=inline` vs bez (sesje kosmos, galeria, stacja, reaktor,
   warp, split, ziemia, pas, piraci), pary A/B kosztu w bitwie 50,20,10,3 (zoom 0,1 i 0,45), raport rozmiarów bloków
   i D (węzły zmienione na klatkę) — tu.
@@ -1317,9 +1324,32 @@ miejsce uzgodnić z sesją renderu CPU.
   `kosmos`, `galeria`, `stacja`, `reaktor`, `warp`, `split` bit w bit; POMIAR hipotezy z § 3.6 (czas `updateHexShips3D`
   na lustrach vs na encjach, pary równoległe). Kolizje: sesja renderu CPU (`hexShips3D.js`, `engineVfxSystem.js`),
   sesja odrostu (skóra) — po ich wylądowaniu.
+  **Stan (2026-10-15, tor `rw-migawka`): część niezależna od innych torów zrobiona (commity „RW-11a (część): …”),
+  WPIĘCIE CZEKA na RW-12 (`RenderWorld.setSource` — `rw-szew`) i RW-26 (wieże, wygląd maskowania po stronie gry —
+  `rw-bronie`) w main oraz na zdjęcie trybu lekkiego.** `src/render/mirrorBody.js` — replika ciała (magazyny SoA,
+  obszar brudu, stan z BODY / NODES); test równoważności z dzisiejszym protokołem (1500 klatek: ten sam brud i te
+  same dane w każdej rysowanej klatce). `src/render/describeEntity.js` — opis z białej listy (obiekty gry nie
+  przechodzą przez `structuredClone`: DOM, funkcje, cykle) z `__oid` na każdym obiekcie; `src/render/renderMirror.js`
+  — `RenderMirror` (lustra encji o stałej klasie ukrytej, uzgadnianie tożsamości podobiektów po `__oid`: `visual`,
+  tablice i obiekty dysz = `slot.source` EngineVfxSystem, `engineFx`, rekord kadłuba — jak w grze, nie przy każdym
+  opisie); `src/render/mirrorBridge.js` — przejściowe mosty gra ↔ lustro z zadaniem, które je usunie. Inwentarz
+  odczytów ścieżki kadłubów (subagent): moduły trzymają tożsamość encji (getter-y uniformów łapią encję), `slot.source`
+  dysz, `__inDrawBox` czyta model lotu NPC. Kolizja do rozstrzygnięcia przy wpięciu: `WeaponFx` porównuje strzelca
+  z `RenderWorld.ship` (do RW-21 — prawdziwa encja z szyny strzałów, w trybie luster `ship` = lustro gracza).
 - **RW-11b mostki, tarcze, modele 3D, rdzenie, stacje** — `bridge3D.js`, `bridgeFx3D.js`, `shield3D.js`,
   `shipModels3DGame.js`, `reactorBlastFx.js`, `stations3D.js`. Kryterium: `stacja`, `reaktor`, `galeria`, modele
   (`scripts/webgpu/modele3d-gra.mjs`). Kolizje: małe.
+  **Stan (2026-10-15, tor `rw-migawka`): migawka i lustra zrobione (commity „RW-11b (część): …”), wpięcie jak RW-11a.**
+  Tarcze: lista trafień (pula `impF64`, najnowsze pierwsze), `forceOff` / `_shieldForcedOff`; kody encji (profil
+  modelu 3D, myśliwiec, stopień broni, frakcja, id kadłuba i statku), wymiary sprite'a i obrazu; zimne wraki (rodzaj
+  migawki, ród, smuga). Mostki: `bridgeState` statyczny w opisie (backend z realmu renderu), dynamiczny w puli `brF64`
+  (utrata dowodzenia, zgony, braki, wyrzuty atmosfery z tożsamością); HP / maxHp ciał okrętów z mostkiem po zmianie
+  sumy kontrolnej (trafienia zmieniają HP bez flag brudu). Rdzenie: opis po uid, stan i komórki komory (pula `coreU8`
+  przy stratach), gospodarz = lustro; `hull.revision`. Stacje: opis (wybór modelu) + poza. Drony naprawcze: blok
+  modułu `src/render/blocks/repairBlock.js` (rigi, drony, nowe wpisy pierścienia zdarzeń). Zostaje: blok wyglądu
+  maskowania (po RW-26 — `CLOAK_LOOK_FRAME`), rekordy wież w fazie begin (po RW-26), zapisy renderu czytane przez grę
+  (`__shieldBreach` — RW-29, `station._mesh3d` — RW-22, `core.lastX/Y`), strugi i kule rdzeni (rozkazy RX_* — RW-22).
+- **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,
   `wydobycie`, `piraci`; `scripts/webgpu/hala-swiatla-gra.mjs`. Kolizje: blok FABUŁA (misja 2) przy doku.
