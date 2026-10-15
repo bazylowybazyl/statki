@@ -1368,6 +1368,33 @@ zamiast `station._mesh3d`; `invalidateHexShipEntity3D`, `captureColdWreckImposto
 kraterów bit w bit; testy rekordów. Zależności: RW-21. Kolizje: `hullBodies.js` (sesja odrostu), `storyGame.js`
 (misja 2).
 
+**Stan (2026-10-15, tor `rw-kadluby`, gałąź `claude/rw-kadluby-rw22`, commity „RW-22 cz. 1–8”) — zrobione w kodzie,
+CZEKA NA WERYFIKACJĘ** (tryb lekki maszyny: zrzuty `stacja`, `reaktor`, `kosmos`, `galeria`, narzędzia bazy i pipeline'y
+synchroniczne — po „WOLNO OBCIĄŻAĆ”; gałąź stoi na niezweryfikowanym RW-21 z `rw-bronie`, fast-forward po jego wejściu do
+`main`). Kody rekordów kadłubów 32…63 w osobnym `src/render/hullCommands.js` (RW-21 ma 1…31), pisarz i czytelnik z
+`src/render/renderCommands.js`, sloty encji — `RenderCommands.writer.ids` (wspólne z RW-29). Zakres:
+(1) mapa ran `DMG_HOOK / TEAR / SOLID_TEAR / REPAIR / PATCH / KERF` — gra (`hullDamageEvents.js`) liczy pozę (`HULL.THETA`),
+uv (`spriteUvAt`), komórki brył (`solidLatticeAt`), środek łaty (`cellWorld`) i źródło (dawne `HullDamageMap.setSource` —
+stan renderu), dekoder woła te same funkcje mapy ran na zastępniku kadłuba (`createHullProxy`; `HullDamageMap` dostał
+`poseOf` / `setSourceRaw`, `patchCell(…, world)`, `stampKerf(…, pre)`); (2) wybuchy `EXPLOSION` (`GameBlasts`, drony
+naprawcze zmiata gra — § 2.6 p. 23; wybuchy rodzone w renderze, Destruction3D, zostają z opakowaniem — do decyzji przy
+RW-11b); (3) odłamki węzłów `HULL_DEBRIS` (hak `HullBodies.onDebris`; losowanie skali i kształtownika przeszło do dekodera —
+ta sama kolejność losowań strumienia renderu); (4) iskry `SPARK_BURST / SPARK_SEAM` (budżet w grze — `collisionSparks.js`
+z odbiorcą `setCollisionSparkSink`); (5) stacje `STATION_FX` (gra nie czyta `station._mesh3d`); (6) reaktor `RX_*` —
+fasada `env.fx` w grze (`src/game/reactorFxEvents.js`, ReactorGame bez zmian), przebiegi pęknięć liczy gra
+(`reactorCrackRuns` w `reactorCore.js` zamiast `HullBodies.probe` w renderze), strumienie i kule przez id (inline —
+rejestr gry `hazardAt`; per klatka `syncCores / syncHazards` dalej czyta obiekty logiki — blok CORES to RW-11b), dekoder
+`src/3d/reactorBlast/reactorCommands.js`; (7) drony naprawcze `REPAIR_FX` (gra przepisuje pierścień `rig.fx` tuż przed
+przebiegiem dronów, render konsumuje kolejkę rigu w tym samym miejscu — bez zmiany kolejności losowań; pozy dronów —
+blok migawki, RW-11b); (8) `ENTITY_FX` (dawne `invalidateHexShipEntity3D`). Testy `tests/hullDamageCommands.test.mjs`
+(10: kolejka stempli po rekordzie = po dawnym wywołaniu — ciało płaskie, łaty, rzaz, bryła 3D; wybuch; odłamki; iskry;
+stacja; reaktor — pęknięcia gry = dawny `_crackRun`, rekordy = dawne wywołania reżysera; drony), strażniki zaktualizowane
+(`projectileMechanicsGame`, `crushSmoke`, `fuelTank`, `overlayContextMerge`, `coldWrecks*`). Strażnik szwu: zdarzenia
+51 → 47, zapytania 70 → 64; `index:dane` +1 (`installExplosionCommands`), `index:konfiguracja` +1 (instalacje dekoderów) —
+z powodem w teście. Odstępstwa: liczniki `FUEL_RUPTURE_STATS.gas` / `CRUSH_SMOKE_STATS.gas` liczą zapisane rekordy (wynik
+fabryki — `explosionCommandStats` dekodera); baza piratów i planetoida (`PBASE_*`, `ROCK_COLLAPSE`) — w RW-24 (`rw-swiat`,
+§ 3.3); wstrząs `reactorBlastFx.onShake` — RW-30.
+
 **RW-23 Rakiety: symulacja do gry.**
 Pliki: `src/effects3d/rocketSystem3D.js` → `src/game/rockets/rocketSim.js` (bez three: `Vector3` / `Quaternion` →
 pola), adapter reżysera → `RKT_*` + blok ROCKETS, `prepareContact` po stronie gry, `Turret2D.triggerShot` z gry,
