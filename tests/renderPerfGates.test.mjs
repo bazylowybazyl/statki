@@ -243,7 +243,9 @@ test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
 });
 
 test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
-  assert.match(hexShips, /function isEntityInDrawBox\(entity, cull, cameraZoom\)/);
+  // RW-31: pudła wspólne z grą (src/render/drawBox.js).
+  assert.match(readSource(new URL('../src/render/drawBox.js', import.meta.url)), /export function isEntityInDrawBox\(entity, cull, cameraZoom\)/);
+  assert.match(hexShips, /isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX/);
   assert.match(hexShips, /for \(const entity of drawHex\) \{/);
   // Pudło liczy fillHexCullInfo (RW-10 — ten sam wzór dostaje migawka renderu): kadr osobno od pudła rozgrzania.
   assert.match(indexHtml, /out\.drawHalfW = viewHalfW;/);

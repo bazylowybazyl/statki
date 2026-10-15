@@ -281,17 +281,24 @@ test('lampki stanowisk: postój — zarezerwowane, obsługa — zajęte, spoczyn
   assert.deepEqual([c3.occupied, c3.reserved], [null, null]);
 });
 
-test('klej: czysty moduł, krok w HaloRingGame._portVisuals przed halami, czas gry z index.html, właściciel w fabule', () => {
+test('klej: czysty moduł, krok w świecie ringów gry (HaloRingWorld.frame) przed obrazem ringów, czas gry z index.html, właściciel w fabule', () => {
   const mod = strip(readFileSync(new URL('../src/game/k7BerthService.js', import.meta.url), 'utf8'));
   for (const bad of ['window', 'document', "from 'three'", 'Core3D', 'Math.random', 'performance.now']) assert.ok(!mod.includes(bad), `bez ${bad}`);
   const step = mod.slice(mod.indexOf('export function stepK7BerthService'), mod.indexOf('export function syncK7BerthLamps'));
   assert.ok(!/new |\[\]|=\s*\{/.test(step), 'krok bez alokacji');
+  // RW-27: automat i lampki po stronie gry (bez bramki widoczności ringu), obraz tylko przenosi lampki
+  const world = strip(readFileSync(new URL('../src/game/haloRingWorld.js', import.meta.url), 'utf8'));
+  const fr = world.slice(world.indexOf('  frame({'), world.indexOf('  _updateSun(e, sun)'));
+  assert.ok(fr.indexOf('stepK7BerthService(') > 0 && fr.indexOf('stepK7BerthService(') < fr.indexOf('syncK7BerthLamps('), 'automat przed lampkami');
+  assert.doesNotMatch(fr, /visible|ring\b/, 'bez bramki widoczności');
   const game = strip(readFileSync(new URL('../src/3d/haloRing/haloRingGame.js', import.meta.url), 'utf8'));
-  const pv = game.slice(game.indexOf('_portVisuals(e, dt, ship'), game.indexOf('constrainShip(ship'));
-  assert.ok(pv.indexOf('stepK7BerthService(') > 0 && pv.indexOf('stepK7BerthService(') < pv.indexOf('hall.update('), 'automat przed rysowaniem hal');
-  assert.ok(pv.indexOf('syncK7BerthLamps(') < pv.indexOf('hall.update('));
+  assert.ok(!game.includes('stepK7BerthService(') && !game.includes('syncK7BerthLamps('), 'obraz nie krokuje automatu');
+  const pv = game.slice(game.indexOf('_portVisuals(e, dt, ship'), game.indexOf('_hullInHall(hull, inv)'));
+  assert.ok(pv.indexOf('this._syncBerthLamps(') > 0 && pv.indexOf('this._syncBerthLamps(') < pv.indexOf('hall.update('), 'lampki przed rysowaniem hal');
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /haloRings\.update\(frameDt, cam, \{[\s\S]{0,400}gameDt: \(PAUSED \|\| StoryGame\.worldFrozen\) \? 0 : frameDt/);
+  assert.match(html, /haloWorld\.frame\(\{ nowMs: performance\.now\(\), gameDt: \(PAUSED \|\| StoryGame\.worldFrozen\) \? 0 : frameDt, ship, sun: SUN \}\);/);
+  assert.ok(html.indexOf('haloWorld.frame({') < html.indexOf('haloRings.update(frameDt, cam, {'), 'świat przed obrazem');
+  assert.ok(html.indexOf('haloRings.update(frameDt, cam, {') < html.indexOf('packHallDustFrame(HallDust.input'), 'przed wejściem pyłu hal');
   const story = strip(readFileSync(new URL('../src/game/story/storyGame.js', import.meta.url), 'utf8'));
   assert.ok(/target\.owner = K7_POSE_OWNER\.story/.test(story), 'fabuła oznacza swoją pozę');
   assert.ok(/_releaseHallPose\(\)/.test(story.slice(story.indexOf('_reset(reason)'))), 'reset oddaje pozę');

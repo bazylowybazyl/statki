@@ -59,6 +59,6 @@ test('physicsStep: flaga ducha przed kolizjami gracza; olbrzymy, ring i budzenie
     assert.ok(at > flag, `${call} po fladze ducha`);
   }
   assert.match(sliceFunction(html, 'function stepShipAsteroidCollisions(dt) {'), /if \(ship && !ship\.dead && !ship\.noHullCollisions\) belt\.collideShip\(ship\);/);
-  assert.match(sliceFunction(html, 'function stepShipRingCollisions(dt) {'), /if \(ship && !ship\.dead && !ship\.noHullCollisions\) \{\n\s+const hit = haloRings\.constrainShip\(ship, true\);/);
+  assert.match(sliceFunction(html, 'function stepShipRingCollisions(dt) {'), /if \(ship && !ship\.dead && !ship\.noHullCollisions\) \{\n\s+const hit = haloWorld\.constrainShip\(ship, true\);/);
   assert.match(step, /wakeSleepingWrecksNearBodies\(_sleepingWrecksBuffer, dynamicDestructibles, isPlayerWarpGhost\(\) \? ship : null\);/);
 });

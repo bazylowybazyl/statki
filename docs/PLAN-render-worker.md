@@ -1420,6 +1420,29 @@ Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, 
 `tests/worldBodies*.test.mjs`; `scripts/webgpu/suchy-dok-gra.mjs` (usunięty 2026-10-11 — dok poza grą; bazę mierzy `baza-gra.mjs`), `zniszczenia-gra.mjs --final` bez zmiany
 zachowania; pipeline'y synchroniczne 0. Zależności: RW-22. Kolizje: misja 2 (`storyGame.js`, blok FABUŁA).
 
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Dok wypadł z gry — zadanie zrobione dla bazy piratów.
+Audyt: rozgrywkę liczył render w `src/3d/pirateBaseGame.js` (§ 2.6 p. 19–21) — stan kawałków (`chunkState` bryły:
+broken / hidden), zbiór `_dockGone` przebudowywany TYLKO w `updatePirateBase3D` (render, stał we mgle), wynik
+`breakPirateBaseChunk` / `ramPirateBaseChunk` z bryły, ciała świata z obiektu 3D (`createPirateBaseSites(…, base)`,
+`available()` → `base.isChunkGone`), prebuild kratownic w rozgrzewce (`Core3D.scene`), mgła bazy (predykat gry
+wołany z renderu), habitat martwy (`structures.habitat.hp` w renderze), `st._base3d` (obiekt 3D na bytach gry),
+środek planetoidy z grafu sceny (`r.rock.root.parent`). Zrobione: nowy `src/game/story/pirateBaseWorld.js` — dane bazy
+z czystych modułów (układ, scena, styl), stan kawałków i `_dockGone` (przebudowa `syncPirateBaseGone` po
+`worldBodies.step` — także we mgle; break / ram / hide dopisują od razu), decyzje break / ram (kawałek pęknięty albo
+schowany nie pęka drugi raz — jak bryła), ciała świata na danych gry, `prebuildPirateBaseWorld` na ekranie ładowania
+bez Core3D, `pirateRockAt` (środek z `createPirateRockLayout` + `place.toGame`), `collapsePirateRock`. Obraz
+(`pirateBaseGame.js`) = `pirateBase3DEvent` (attach, bodies — haki `site.render`, bodiesDetach, break, ram, hide,
+rockCollapse, detach — rekordy PBASE_* / ROCK_COLLAPSE z § 3.3) + stan klatki (`storyBaseFrameState`: `hidden` z mgły,
+`habitatDead`); dryf i zniknięcie odpadłego kawałka zostają w obrazie (kawałek pęknięty jest nieobecny od chwili
+pęknięcia — `isChunkGone` gry = broken || hidden). Obraz nie importuje już `worldBodies` ani `pirateBaseBodies`.
+Skrypty narzędzi bez `_base3d` (`window.PirateBase`: broken, gone, hide, view). Zmiany zachowania (zamierzone):
+`_dockGone` aktualny w kroku fizyki zamiast ≤ 1 klatkę później i także we mgle. Testy: nowy
+`tests/pirateBaseWorld.test.mjs`, `pirateBase`, `pirateBaseIntegrity` — zielone. Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `baza-gra.mjs`: taran rzędu, alarm, drony, reakcja łańcuchowa, rozpad habitatu do 0 — pipeline'y bazy
+synchroniczne 0; `zniszczenia-gra.mjs --final`: progi, wypiek w workerze, rozpad i implozja, 132 odłamy, skóry
+synchroniczne 0; `planetoida-gra.mjs`: zawalenie i rozpad habitatu jak w `main` — 4 pipeline'y synchroniczne skały i
+osady (MoonSurface:hidalgo, PirateRockSmoke / Fire, PortBuildingBG) są TAKŻE w `main` (pomiar `main` tym samym
+narzędziem — do poprawy osobno, nie RW-24).
+
 **RW-25 Pas asteroid: świat pasa po stronie gry.**
 Pliki: nowy `src/game/beltWorld.js` (pole, cień pól, olbrzymy z `requestNear` z kamery i statku, `collideShip`,
 `pointBlocked`, `roofAbove`, `AsteroidMining` i `MiningRig` po zdarzeniu `bankRadius`, zegar skał w czasie gry, `taken`,
@@ -1427,6 +1450,29 @@ konsument `dirtyBox`, `playZ`), `src/3d/asteroids/asteroidBelt.js` (obraz; włas
 deterministyczne), `minedRocks.js`, `index.html` (użycia z § 2.3), SDF olbrzymów i cień pól w SAB. Kryterium:
 `tests/asteroidBeltField.test.mjs` i testy wydobycia; `scripts/webgpu/asteroidy-gra.mjs --kolizja`,
 `wydobycie-gra.mjs`; zrzuty `pas`, `wydobycie` bit w bit. Zależności: RW-04, RW-12. Kolizje: brak aktywnych.
+
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Nowy `src/game/beltWorld.js`
+(`createBeltWorld`, `window.__beltWorld`): pole, cień pól (`precompute` → sektory w SharedArrayBuffer, render
+`adoptSectors` — bez drugiego liczenia), olbrzymy (`frame(dt, paused, focus)` co klatkę z kamer i statków graczy —
+kolizje istnieją, zanim kadr dotknie pasa; SDF olbrzymów w SharedArrayBuffer — `src/game/sharedTyped.js`),
+`collideShip` / `pointBlocked` / `roofAbove`, zegar skał `time` (czas bezwzględny, ta sama suma dt co dawny krok
+renderu — 0 w pauzie, ≤ 0,1 s), fizyka skał i platforma po zdarzeniu `attachShapeRadius` (mapy promienia banku;
+arytmetyka jedna — `src/game/asteroidShapeRadius.js`, `rockBank.radiusAt` ją woła), `playZ` (`src/game/beltPlayZ.js`),
+konsument `dirtyBox` (`ackMinedUpload`), konfiguracja pola (`setExclusions`, `setSmallBodyAnchors`, `familyPeaks`,
+`addWakeSpot` — przelot NEA) do pola gry i repliki obrazu (`createFieldReplica`, historia operacji). `asteroidBelt.js` =
+obraz na własnej instancji pola (`createAsteroidBelt({ world })`, `prepareFrame(time, dt, …)`, widoki olbrzymów poza
+obiektami gry — `giantView(entry)`; `rig` / `mining` / `giants` jako gettery dla narzędzi). Gra (kolizje, pociski,
+radar `env.belt`, fabuła `beltDensity` / `beltGiants`, przyloty piratów, rodziny, wydobycie) czyta `beltWorld`.
+Sprawdzone od 10-07: rumowiska, pary z księżycami, rodziny (`familyAt`), wycięcia populacji, `wakeSpots`, wyłączenia
+małych ciał (`applySmallBodyExclusions(beltWorld)`), komety (`penetrationOf` — pole gry). Zmiany zachowania (zamierzone):
+budowa SDF olbrzymów rusza przy statku / kamerze w zasięgu 420 tys. j. także poza kadrem pasa (np. przy Marsie). Testy:
+nowy `tests/beltWorld.test.mjs` (replika = te same skały, cień pól, zegar, olbrzymy, wydobycie, strażnik obrazu) i
+poprawione strażniki źródeł — zielone; strażnik szwu po RW-01 (spadki: `asteroidBeltGiants`, `asteroidGiantBuilder`,
+`asteroidMining` 2 → 1, `asteroidMiningRig` 2 → 1; nowe czyste moduły klasy A). Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `asteroidy-gra.mjs --kolizja`: wszystkie sceny ok, kolizja z olbrzymem
+(droga 812 j. zamiast 5400, maks. wbicie −11,8 j.), pipeline'y synchroniczne 0; `wydobycie-gra.mjs` (+ `--rumowisko`,
+`--pary`): skała, laser, piła, ładunek, urobek, rumowisko (głazy, wiązka wyrywa), para z księżycem (przejęcie obu) —
+pipeline'y synchroniczne 0. Narzędzia czytają widok olbrzyma przez `giantView` albo dawne `e.view` (harness działa z
+`--root` na starszym drzewie).
 
 **RW-26 Wieżyczki, maskowanie i jasność wieżyczek po stronie gry.**
 Pliki: `src/vfx/turret2D.js` (`sync` w grze przed pakowaniem; odrzut po gnieździe strzelca zamiast szukania po
@@ -1445,6 +1491,27 @@ i lampki stanowisk; zegar migania), `src/3d/haloRing/haloRingGame.js` (obraz), `
 `hala-swiatla-gra.mjs --automat`; zrzuty `ziemia`, `ziemia-ring`, `mars`, `jowisz` bit w bit. Zależności: RW-12.
 Kolizje: misja 2 (fabuła K-7) — mała.
 
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.**
+Nowy `src/game/haloRingWorld.js` (`haloWorld`, `window.__haloWorld`): `entries` z kolidera, rejestru i automatu
+stanowisk; teren Marsa (ECUMENE) i Jowisza (Fable) od razu z `createEcumenePlan` / `createFablePlan` (ta sama funkcja
+co `archRing.terrainHeightAt` — test na 400 punktach), Ziemia — w trybie `inline` funkcja mapy CPU ringu obrazu po
+`ready` (`setRingTerrain`; profil z = 0 przez postMessage — przy workerze, RW-40+); automat stanowisk K-7 w czasie gry dla
+każdego ringu (bez bramki widoczności i podzielonego ekranu); zajętość i lampki w rejestrze kolidera
+(`owner.layout.berths` wyzerowane przy starcie jak dawniej po `ready` + `berthVersion`; fabuła — `deps.k7SetBerth`
+zamiast pisania w obiekcie hali 3D `deps.k7Hall`); zegar migania `clock` (zegar ściany w tym samym miejscu klatki) i poziom
+lamp hal `owner.lampLevel` (cień planety ze słońca gry; wzór obrazu, `uSunDir` jak `THREE.Vector3.normalize` z pamięcią
+1e-6 — test bit w bit). `haloRingGame.js` = obraz (`new HaloRingGame({ world })`, wpisy obrazu z odwołaniami do wpisów
+świata, lampki hal z rejestru przy zmianie wersji, `clock` — getter). Fizyka przewodów paliwowych zostaje obrazem (pozy —
+stan gry w rejestrze, jak dotąd). Pola siłowe bram (`k7ForceFieldList`) i nadproża (`k7GateLintels.js`) — czyste, gra
+czyta `haloWorld.entries`; hala z Blendera bez zmian. Zmiany zachowania (zamierzone): teren w kolizjach Marsa i Jowisza
+od startu (dawniej płaska płyta do zbudowania ringu przy kamerze), automat stanowisk także poza kadrem i w podzielonym
+ekranie, `lampLevel` hal ringów niezbudowanych. Testy: nowy `tests/haloRingWorld.test.mjs`, poprawione strażniki
+(`k7BerthService`, `haloRingGame`, `npcWorldCollisions`, `warpGhostCollisions`, `haloRingAsync`, `menuBackdrop`).
+Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `ring-kolizje-gra.mjs`: teren w koliderze = ring (`colliderVsRing` 0), płyta i odpychanie od
+podłogi; `hala-swiatla-gra.mjs --automat`: postój → podpinanie → podpięte → awaryjne odpięcie przy 45 j/s, buchy pary,
+pipeline'y po starcie 0 (krok `release 3.0` narzędzia był nieosiągalny także w `main` — automat wraca do idle w tym
+samym kroku; kadr przesunięty na 2,9 s).
+
 **RW-28 Warp „Nurt”: harmonogram w czasie gry.**
 Pliki: nowy `src/game/warpTraffic.js` (rejestr przylotów i odlotów, limit 24, poza z czystych `arrivalFxPose` /
 `departFxPose` w kroku fizyki, `isCollidable`, `onGone`, wykrywanie `warping_in` zdarzeniem), `src/game/supportWarp.js`
@@ -1458,6 +1525,23 @@ Pliki: `src/3d/shield3D.js` (bity do bloku `RET`), nowy `src/game/shieldBreach.j
 z `acquireShieldLattice`), `index.html` (pociski, wiązki), rakiety. Kryterium: `node scripts/webgpu/tarcze-gra.mjs` —
 przebicia jak dziś (przy D3 = bez zmian); test geometrii płytek. Zależności: RW-04. Kolizje: mało.
 
+**Stan (2026-10-16, tor `rw-kadluby`, commit „RW-29: …”) — ZROBIONE, w `main`.** Weryfikacja: `tarcze-gra.mjs` przed
+(eksport `be571e17`) i po — przebicie, pociski przez dziurę i bez niej (6 / 5 zapytań, te same obrażenia tarczy i kadłuba),
+zamknięcie po stygnięciu, bitwa: wynik identyczny, 0 kompilacji w klatce; `tarcza-pokazana-gra.mjs` przed / po — maks.
+różnica 5/255 (szum); testy Node i `npm test` bez nowych porażek, build. Render (`shield3D.js`, `setShieldReturnChannel(views, keyOf)`)
+po odczycie GPU pisze rekord slotu puli do RET (`retWriteBreach`: slot + generacja encji, `shieldProfileHash` obrysu,
+epoka w `RET_I32.BREACH_EPOCH`, bity płytek), przy przydziale slotu — rekord bez przebić, przy zwolnieniu — slot −1;
+bez kanału (dema, testy) dawna droga. Gra: `index.html` tworzy `RenderSlots = createRenderIds()` i `RenderReturn`
+(RET), w `render()` znakuje sloty encji całego `renderEntities` (uzgodnione z `rw-migawka` — RW-10 przejmie instancję
+i zastąpi znakowanie pakowaniem list), czytelnik `src/game/shieldBreach.js` (`ShieldBreach.refresh()` raz na klatkę
+przed krokami fizyki) stawia `__shieldBreach` i testuje punkt (`isShieldBreachedAt` z gry — pociski, wiązki, bomby,
+drony, rakiety przez `window.isShieldBreachedAt`). Stałe puli (`SHIELD_SLOTS`, `SHIELD_SLOT_CAP`) przeszły do czystego
+`shieldLattice.js` (pula je reeksportuje). Semantyka D3 bez zmian (slot tylko dla tarcz na ekranie, twardość, pokazanie
+i klasa trafienia działają w polu GPU), opóźnienie +≤ 1 klatka. Odstępstwo: punkt trafienia przechodzi do klatki
+lokalnej tarczy z POZY GRY w chwili testu (dawniej poza ostatniej klatki renderu, gracz — interpolowana). Testy
+`tests/shieldBreach.test.mjs` (5: stałe, geometria płytek 64 kierunki, dziura / druga strona / obrót / obrys / zwolnienie,
+właściciel slotu i generacja, wpięcie); `tarcze-gra.mjs` czyta liczniki z `ShieldBreach.stats`.
+
 **RW-30 Kamera: wstrząsy po stronie gry.**
 Pliki: `src/3d/weapons/weaponFx.js` (bez `camera.addShake` i `__weapon3dCameraShake`), wstrząs z danych broni
 (`src/game/weaponFeel.js`) przy `SHOT` / `IMPACT`, supernowa, reaktor, warp (`src/3d/warp/player.js` → przejścia
@@ -1468,6 +1552,27 @@ Zależności: RW-21. Kolizje: `render()` w `index.html` (kamera).
 Pliki: `src/game/coldWrecks.js` (bramka „czy widać” z kamery i progu LOD po stronie gry), `index.html`
 (`coldWreckSystem`), pozostałe flagi z § 2.6 p. 17. Kryterium: testy zimnych wraków, zrzuty `kosmos` (wraki).
 Zależności: RW-22. Kolizje: brak.
+
+**Stan (2026-10-16, tor `rw-kadluby`, commit „RW-31 cz. 1: …”) — część 1 ZROBIONA, w `main`.** Weryfikacja: sesja
+`kosmos` przed (`--root` eksport `be571e17`) / po — `wraki`, `wybuch`, `kalibracja`, `warp` i wszystkie warstwy bit w bit
+(maks. 1/255); złożony kadr `bitwa` różni się, ale nie jest powtarzalny nawet na tym samym kodzie (przed ↔ przed 3,7%
+pikseli > 8, przed ↔ po 0,05–0,7%). Harness: sesje z grą startują grę swobodną (kampania domyślna zamrażała świat). Bramka
+i zapotrzebowanie nie zależą od RW-22, więc poszły przed nim. Gra liczy sama z widoku klatki (`_hexCullInfo`, zoom,
+skala renderu, numer klatki — `src/game/coldWreckView.js`, pudła wspólne z renderem w `src/render/drawBox.js`):
+(1) `entity.__inDrawBox` (+ `__drawFogHidden`) — `stampDrawBoxFlags(renderEntities)` przed `updateHexShips3D`, render
+już jej nie pisze (§ 2.6 p. 30); (2) bramka zamrażania `coldFreezeVisuallySafe` zamiast `isColdFreezeVisuallySafe`
+renderu (§ 2.6 p. 29); (3) ciała do rysowania zimnych wraków — `selectColdRenderBodies` (ta sama reguła i kolejność
+wywołań `ensureRenderBody`, po mostkach — nowe ciało dołącza do list mostków w następnej klatce jak dawniej), render
+dostaje znacznik `w._coldDrawFrame` przez hak `drawn` zamiast wołać grę; (4) smuga zimnego wraku na belkach przy
+zamrażaniu — `captureBeamColdImpostor` w grze (kolor: `src/render/bodyColor.js`, wspólny z
+`computeAverageBodyColor`), render liczy smugę tylko wrakom heksowym dem. Odstępstwa: wrak bez kadłuba na belkach
+(w grze nie ma heksów) jest „bezpieczny” bez pytania renderu (render i tak nie miał dla niego obrazu); poza domyślną
+konfiguracją (`nearExtras` / `staticSkin` wyłączone) bramka liczy próg smugi bez histerezy renderu (ostrożniej —
+mniej zamrożeń w kadrze); dema bez gry nie stemplują `__inDrawBox` (LOD dysz w demach wyłączony — dawniej włączony).
+Strażnik szwu: `index:aktualizacja` 100 → 101 (`Core3D.pixelRatio` — w workerze z `RET_F64.PIXEL_RATIO`), za to −2
+odwołania `isColdFreezeVisuallySafe`. Testy `tests/coldWreckView.test.mjs` (6), strażniki zaktualizowane:
+`coldWrecksBeam`, `renderPerfGates`, `sideThrusters3D`. Część 2 (po RW-22): poza holownika w ENT zamiast
+`ServiceTugGame.beginRender` (§ 2.6 p. 27), pozostałe flagi § 2.6 p. 17.
 
 ### Etap 3 — moduły renderu bez DOM
 

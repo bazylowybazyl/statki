@@ -14,23 +14,23 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 102, // 2026-10-15 RW-10: migawka (?szew=inline) czyta rekordy wież Turret2D.recordsFor (do RW-26 — wieże po stronie gry) i wejście pyłu hal HallDust.input (do RW-11c — blok HALL z gry)
+  'index:aktualizacja': 94, // 2026-10-16 po scaleniu RW-25/27/24 i RW-31 (92) + RW-10: migawka (?szew=inline) czyta rekordy wież Turret2D.recordsFor (do RW-26 — wieże po stronie gry) i wejście pyłu hal HallDust.input (do RW-11c — blok HALL z gry)
   'index:dane': 31,
-  'index:konfiguracja': 169,
-  'index:zapytanie': 76,
-  'index:zdarzenie': 66,
+  'index:konfiguracja': 155, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'index:zapytanie': 40, // 2026-10-16 po scaleniu RW-25/27/24 z RW-31 (−2 isColdFreezeVisuallySafe)
+  'index:zdarzenie': 62, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
-  'import:src/game/asteroidBeltGiants.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,
-  'import:src/game/asteroidGiantBuilder.js': 1,
   'import:src/game/asteroidGiants.js': 1,
-  'import:src/game/asteroidMining.js': 2,
-  'import:src/game/asteroidMiningRig.js': 2,
+  'import:src/game/asteroidMining.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'import:src/game/asteroidMiningRig.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   'import:src/game/asteroidRockKinds.js': 5,
   'import:src/game/asteroidRotation.js': 2,
+  'import:src/game/asteroidShapeRadius.js': 1, // 2026-10-15 RW-25: promień kształtów banku skał — jedno źródło arytmetyki fizyki skał (gra) i banku (render), klasa A
   'import:src/game/asteroidStorms.js': 3,
   'import:src/game/beamBand3D.js': 1,
+  'import:src/game/beltPlayZ.js': 1, // 2026-10-15 RW-25: głębokość skał pasma PLAY — wspólna dla platformy wydobywczej (gra) i warstwy PLAY (obraz), klasa A
   'import:src/game/cargoPortOps.js': 1,
   'import:src/game/carrierVelocity.js': 16,
   'import:src/game/cloakLook.js': 9,
@@ -42,14 +42,12 @@ const SUFITY = {
   'import:src/game/engineIgnition.js': 3,
   'import:src/game/friendlyFire.js': 1,
   'import:src/game/gameState.js': 2,
-  'import:src/game/haloRingCollision.js': 1,
   'import:src/game/haloRingPlanets.js': 2,
   'import:src/game/hexBodyHooks.js': 1,
   'import:src/game/hexGridSpace.js': 1,
   'import:src/game/hullBodies.js': 8,
   'import:src/game/hullCraters.js': 1,
   'import:src/game/hullMounts.js': 2,
-  'import:src/game/k7BerthService.js': 1,
   'import:src/game/reactorCore.js': 1,
   'import:src/game/repairRig.js': 1,
   'import:src/game/repairSwarm.js': 1,
@@ -59,7 +57,6 @@ const SUFITY = {
   'import:src/game/shipLightRuntime.js': 5,
   'import:src/game/simClock.js': 15,
   'import:src/game/skyRegion.js': 1,
-  'import:src/game/story/pirateBaseBodies.js': 1,
   'import:src/game/traffic/dockLayout.js': 2,
   'import:src/game/traffic/shipyards.js': 2,
   'import:src/game/view3D.js': 1,
@@ -67,7 +64,7 @@ const SUFITY = {
   'import:src/game/weaponAim.js': 1,
   'import:src/game/weaponFeel.js': 2,
   'import:src/game/weaponShotBus.js': 1,
-  'import:src/game/worldBodies.js': 2,
+  'import:src/game/worldBodies.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   // zmienne gry czytane w modułach przenoszonych (§ 2.4; RW-12 → 0)
   'okno:Destruction3D': 4,
   'okno:Dev': 2,

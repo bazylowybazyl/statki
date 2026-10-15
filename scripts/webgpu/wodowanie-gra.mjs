@@ -76,7 +76,7 @@ try {
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && window.StoryGame.active && window.StoryGame.phase === 'defences'", 300000, 400)) throw new Error('brak fazy defences');
   // Atlas przy życiu; kawałki bazy odpadłe (rozbite albo schowane bryły — nie ciała w bańce gracza)
   await ev(`(() => {
-    window.__baseBroken = () => { const b = window.StoryGame.site?.station?._base3d; return b ? b.chunkState.filter((s) => s.broken || s.hidden).map((s) => s.id) : []; };
+    window.__baseBroken = () => { return window.PirateBase ? window.PirateBase.broken() : []; };
     setInterval(() => { const s = window.ship; if (s?.shield) s.shield.val = s.shield.max; if (s && s.maxHp) s.hp = s.maxHp; }, 250);
     return true;
   })()`);

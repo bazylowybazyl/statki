@@ -453,11 +453,14 @@ test('index.html: wpięcie zimnych wraków na belkach', () => {
   const src = readIndexHtml();
   const options = src.slice(src.indexOf('const coldWreckSystem = createColdWreckSystem({'), src.indexOf('function thawWreck(wreck, reason'));
   assert.match(options, /recycle: recycleWreckEntity,/, 'recykling po rodzaju wraku');
-  assert.match(options, /isColdFreezeVisuallySafe\(w, coldWreckSystem\.config\)/);
+  // RW-31: bramka z widoku klatki gry (src/game/coldWreckView.js), reguła renderu tylko dla heksów dem.
+  assert.match(options, /coldFreezeVisuallySafe\(w, _drawView, coldWreckSystem\.config\)/);
+  assert.match(options, /captureBeamColdImpostor\(w, w\._coldSnapshot, coldWreckSystem\.config\)/);
   assert.match(options, /if \(!w\.beamHull && invalidateHexShipEntity3D\) invalidateHexShipEntity3D\(w\);/,
     'wrak na belkach zostaje z siatką skóry (render przejmuje ją bez przebudowy)');
   assert.doesNotMatch(options, /getSimTimeMs/, 'zegar „ciszy po trafieniu” po rodzaju wraku (HullBodies.simTime)');
-  assert.match(src, /ensureBody: \(w\) => coldWreckSystem\.ensureRenderBody\(w\),\s*config: coldWreckSystem\.config,/);
+  assert.match(src, /drawn: \(w\) => w\._coldDrawFrame === renderFrameId,\s*config: coldWreckSystem\.config,/);
+  assert.match(src, /const _coldEnsureBody = \(w\) => coldWreckSystem\.ensureRenderBody\(w\);/);
   assert.match(src, /listedForExtras: \(w\) => w\._coldExtrasFrame === renderFrameId/);
   const render = sliceFunction(src, 'function withColdNearWrecks(seen)');
   assert.match(render, /coldWreckSystem\.renderList/);

@@ -123,7 +123,7 @@ try {
       await H.step(2);
     }
     await H.step(20);
-    return { q: window.getShieldPoolStats().breachQ, bron: wid, tarczaPrzed: Math.round(before.sh), tarczaPo: Math.round(e.shield.val), kadlubPrzed: Math.round(before.hp), kadlubPo: Math.round(e.hp), dziura: !!e.__shieldBreach };
+    return { q: (window.ShieldBreach ? { calls: window.ShieldBreach.stats.calls, yes: window.ShieldBreach.stats.yes } : window.getShieldPoolStats().breachQ), bron: wid, tarczaPrzed: Math.round(before.sh), tarczaPo: Math.round(e.shield.val), kadlubPrzed: Math.round(before.hp), kadlubPo: Math.round(e.hp), dziura: !!e.__shieldBreach };
   })()`, 300000));
   result.etapy.pociskiPrzezDziure = await strzal(0);
   console.log('pociski przez dziurę', JSON.stringify(result.etapy.pociskiPrzezDziure));

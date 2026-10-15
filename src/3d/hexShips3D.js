@@ -28,6 +28,11 @@ import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
+// Pudła klatki (rozgrzanie / rysowanie) i próg smugi — wspólne z grą (src/game/coldWreckView.js, RW-31).
+import {
+  isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX, WRECK_IMPOSTOR_PX, wreckImpostorEnterPx,
+  beamBodyRadiusPx as beamBodyRadiusPxAt
+} from '../render/drawBox.js';
 import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
@@ -102,7 +107,6 @@ const HEX_LOD = Object.freeze({ FULL: 0, HYBRID: 1, IMPOSTOR: 2 });
 // rysowany własnym wywołaniem i wpada do wspólnego batcha smug. Dotyczy tylko
 // wraków i fragmentów — żywe kadłuby mają swoją ścieżkę LOD. Histereza trzyma
 // przełączenie z dala od progu, żeby nie migotało przy powolnym zoomie.
-const WRECK_IMPOSTOR_PX = 15;
 const WRECK_IMPOSTOR_EXIT_MUL = 1.35;
 const HEX_LOD_FULL_PX = 1.25;
 const HEX_LOD_IMPOSTOR_PX = 0.45;
@@ -248,51 +252,8 @@ function usesBillboardOrientation(entity) {
   return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardOrientation === true;
 }
 
-function isEntityInCull(entity, cull) {
-  if (!cull) return true;
-  const x = getEntityPosX(entity);
-  const y = getEntityPosY(entity);
-  const r = Math.max(140, Number(entity?.radius) || Number(entity?.r) || 140);
-  return (
-    Math.abs(x - cull.x) <= cull.halfW + r &&
-    Math.abs(y - cull.y) <= cull.halfH + r
-  );
-}
-
-// Pudło RYSOWANIA. Pudło z index.html (cull.halfW/halfH = 3× połowa widoku,
-// czyli 9 ekranów) zostaje pudłem ROZGRZANIA: mesh powstaje zawczasu, emitery
-// świateł drogowych i dysze trzymają ciągłość. Pełna aktualizacja mesha
-// (instancje, LOD, lampy, uniformy), draw call, billboardy świateł i wieżyczki
-// 2D idą tylko dla encji, które mogą być na ekranie — meshe kadłubów mają
-// frustumCulled=false, więc bez tego ~8/9 wywołań trafiało poza kadr.
-// Promień z wymiarów sprite'a × skala (entity.radius wraków jest w jednostkach
-// siatki), plus pivot i stały margines ekranowy na dryf/deformację.
-// Bez cull.drawHalfW (np. lot po mieście) — dawne zachowanie: rysuj całe pudło.
-const DRAW_BOX_MARGIN_PX = 96;
-
-function isEntityInDrawBox(entity, cull, cameraZoom) {
-  if (!cull || !Number.isFinite(cull.drawHalfW) || !Number.isFinite(cull.drawHalfH)) return true;
-  const x = getEntityPosX(entity);
-  const y = getEntityPosY(entity);
-  // Kadłub na belkach niesie te same wymiary sprite'a i pivot co siatka heksów.
-  const grid = entity?.hexGrid || entity?.beamHull;
-  let r;
-  if (grid) {
-    const sx = Math.abs(getEntityScaleX(entity)) || 1;
-    const sy = Math.abs(getEntityScaleY(entity)) || 1;
-    const pivotX = (Number(grid.pivot?.x) || 0) * sx;
-    const pivotY = (Number(grid.pivot?.y) || 0) * sy;
-    r = Math.hypot((Number(grid.srcWidth) || 0) * sx, (Number(grid.srcHeight) || 0) * sy) * 0.5
-      + Math.hypot(pivotX, pivotY);
-  } else {
-    r = Math.max(140, Number(entity?.radius) || Number(entity?.r) || 140);
-  }
-  r += DRAW_BOX_MARGIN_PX / Math.max(0.0001, cameraZoom);
-  return (
-    Math.abs(x - cull.x) <= cull.drawHalfW + r &&
-    Math.abs(y - cull.y) <= cull.drawHalfH + r
-  );
-}
+// Pudło rozgrzania i pudło RYSOWANIA (isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX) — src/render/drawBox.js:
+// te same reguły liczy gra (src/game/coldWreckView.js — flaga `__inDrawBox`, zimne wraki).
 
 function getInterpolatedRenderPose(entity) {
   if (typeof window === 'undefined') return null;
@@ -2112,7 +2073,6 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     valid.push(entity);
     const hideHexVisual = entity.hideHexVisual === true || entity.visual?.hideHexMesh === true;
     if (hideHexVisual) {
-      entity.__inDrawBox = false;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
       if (data?.armorMesh) data.armorMesh.visible = false;
@@ -2122,7 +2082,6 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     if (hasBody) validSet.add(entity);
     if (entityHiddenTest && entityHiddenTest(entity)) {
       entity.__hiddenFromView = true;
-      entity.__inDrawBox = false;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
       if (data?.armorMesh) data.armorMesh.visible = false;
@@ -2132,7 +2091,6 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
 
     const visible = isEntityInCull(entity, cullInfo);
     if (!visible) {
-      entity.__inDrawBox = false;
       lodFrameStats.culled++;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
@@ -2141,11 +2099,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     }
 
     visibleVfx.push(entity);
+    // Flagę `entity.__inDrawBox` (LOD dysz w engineVfxSystem.js, stan dysz w modelu lotu) liczy GRA przed tym
+    // przebiegiem z tych samych reguł (src/game/coldWreckView.js stampDrawBoxFlags, RW-31) — render jej nie pisze.
     const inDrawBox = isEntityInDrawBox(entity, cullInfo, cameraZoom);
-    // Encja w pudle rysowania tej klatki — LOD dysz (engineVfxSystem.js: dysze SIDE poza pudłem bez obrazu)
-    // i stanu dysz w modelu lotu (shipFlightModel.js: FLIGHT_VFX_LOD). false też dla ukrytych i poza pudłem
-    // rozgrzania (wyżej).
-    entity.__inDrawBox = inDrawBox;
     if (inDrawBox) drawVfx.push(entity);
     else lodFrameStats.warmOnly++;
     if (!hasBody) continue;
@@ -2491,29 +2447,27 @@ export function getEntityHullSprite(entity) {
 // === ZIMNE WRAKI (src/game/coldWrecks.js) ===
 
 function getWreckImpostorEnterPx() {
-  const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
-  return Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
+  return wreckImpostorEnterPx((typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null);
 }
 
-// Haki gry (index.html): ciało do rysowania zimnego wraku na belkach (coldWreckSystem.ensureRenderBody — budżet
-// węzłów na klatkę) i konfiguracja systemu zimnych (COLD_WRECK_CONFIG z nadpisaniami, strojenie na żywo).
-const coldRenderHooks = { ensureBody: null, config: null, listedForExtras: null };
+// Haki gry (index.html): które zimne wraki na belkach mają w tej klatce ciało do rysowania (`drawn` — wybiera je GRA
+// przed tym przebiegiem: src/game/coldWreckView.js selectColdRenderBodies, budżet węzłów coldWreckSystem; RW-31 — render
+// nie prosi gry o ciało) i konfiguracja systemu zimnych (COLD_WRECK_CONFIG z nadpisaniami, strojenie na żywo).
+const coldRenderHooks = { drawn: null, config: null, listedForExtras: null };
 export function setColdWreckRenderHooks(hooks = {}) {
-  coldRenderHooks.ensureBody = typeof hooks.ensureBody === 'function' ? hooks.ensureBody : null;
+  coldRenderHooks.drawn = typeof hooks.drawn === 'function' ? hooks.drawn : null;
   coldRenderHooks.config = hooks.config || null;
   coldRenderHooks.listedForExtras = typeof hooks.listedForExtras === 'function' ? hooks.listedForExtras : null;
 }
 
 // Promień zasięgu żywych węzłów kadłuba na belkach na ekranie [px] — miara smugi z updateBeamSkinMesh.
 function beamBodyRadiusPx(entity, zoom) {
-  const body = entity.beamHull.body;
-  const mm = body._boundsMinMax;
-  if (!mm) return Infinity;
-  const half = Math.max(mm[3] - mm[0], mm[4] - mm[1]) * 0.5 + body.cellSize * 0.5;
-  return half * Math.max(0.0001, zoom) * (Core3D.pixelRatio || 1);
+  return beamBodyRadiusPxAt(entity, zoom, Core3D.pixelRatio);
 }
 
 /**
+ * (Gra liczy to samo dla kadłubów na belkach sama — src/game/coldWreckView.js coldFreezeVisuallySafe, RW-31; tu zostaje
+ * reguła wraków heksowych dem i zapas.)
  * Czy zamrożenie wraku przejdzie niezauważone: wrak jest poza pudłem
  * rysowania ostatniej klatki albo już leży w batchu smug (to samo kryterium
  * co updateEntityMesh), więc zamiana heksów na smugę nie przeskoczy obrazem.
@@ -2635,20 +2589,19 @@ export function captureColdWreckImpostor(entity, snapshot) {
 }
 
 /**
- * Zimne wraki na belkach w tej klatce (z updateHexShips3D, po kadłubach z listy encji). Wrak w pudle rysowania
- * i większy od smugi (0,8 progu — ciało gotowe, zanim skóra jest potrzebna) prosi grę o ciało do rysowania
- * (coldRenderHooks.ensureBody — budżet węzłów na klatkę; odmowa = smuga z migawki w pushColdWreckImpostors).
+ * Zimne wraki na belkach w tej klatce (z updateHexShips3D, po kadłubach z listy encji). Ciało do rysowania wybiera
+ * GRA przed tym przebiegiem (src/game/coldWreckView.js selectColdRenderBodies: wrak w pudle rysowania i większy od
+ * 0,8 progu smugi, z ciałem — do połowy progu albo poza kadrem w pudle rozgrzania; budżet węzłów na klatkę) i oznacza
+ * je (`coldRenderHooks.drawn`); reszta — smuga z migawki w pushColdWreckImpostors.
  * Wrak z ciałem: ta sama ścieżka skóry co wrak śpiący (updateBeamSkinMesh: skóra albo jej smuga, mapa ran,
  * lakier); w pudle rozgrzania poza kadrem — siatka czeka ukryta. Z nearExtras trafia do `valid` (cień SDF).
  * Model 3D okrętu („Statki 3D”) rysuje syncShipModels3D z listy encji zimnych z ciałem (index.html).
  * Zwraca, czy narysowano jakąś skórę.
  */
 function updateColdBeamWrecks(coldWrecks, cull, camX, camY, cameraZoom, frameId, valid, validSet) {
-  const ensureBody = coldRenderHooks.ensureBody;
-  if (!ensureBody) return false;
+  const drawn = coldRenderHooks.drawn;
+  if (!drawn) return false;
   const cfg = coldRenderHooks.config || COLD_WRECK_CONFIG;
-  const zoomPx = Math.max(0.0001, cameraZoom) * (Core3D.pixelRatio || 1);
-  const enterPx = getWreckImpostorEnterPx();
   const boxed = !!cull && Number.isFinite(cull.x) && Number.isFinite(cull.y);
   const drawBoxed = boxed && Number.isFinite(cull.drawHalfW) && Number.isFinite(cull.drawHalfH);
   const margin = DRAW_BOX_MARGIN_PX / Math.max(0.0001, cameraZoom);
@@ -2663,14 +2616,7 @@ function updateColdBeamWrecks(coldWrecks, cull, camX, camY, cameraZoom, frameId,
     if (boxed && (Math.abs(imp.wx - cull.x) > cull.halfW + imp.reach || Math.abs(imp.wy - cull.y) > cull.halfH + imp.reach)) continue;
     const inDraw = !drawBoxed || (Math.abs(imp.wx - cull.x) <= cull.drawHalfW + imp.reach + margin &&
       Math.abs(imp.wy - cull.y) <= cull.drawHalfH + imp.reach + margin);
-    const rPx = Math.max(imp.halfW, imp.halfH) * zoomPx;
-    const has = isBeamHullEntity(w);
-    // Ciało: skóra potrzebna albo już jest (poza kadrem w pudle rozgrzania — czeka; w kadrze — do połowy progu smugi).
-    // Bez staticSkin zimny jest zawsze smugą: ciało z chwili zamrożenia wraca do migawki (renderClaimMs).
-    const skins = cfg.staticSkin !== false;
-    const want = skins && inDraw && rPx >= enterPx * 0.8;
-    const keep = skins && has && (!inDraw || rPx >= enterPx * 0.5);
-    if (!(want || keep) || !ensureBody(w) || !isBeamHullEntity(w)) continue;
+    if (!drawn(w) || !isBeamHullEntity(w)) continue;
     // Zimny rysuje się jak teren — bez mgły wojny (flaga z czasu, gdy był na liście encji, nie gasi cienia).
     w.__hiddenFromView = false;
     validSet.add(w);
