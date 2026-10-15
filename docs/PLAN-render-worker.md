@@ -1269,6 +1269,46 @@ od ostatniej odebranej”; liczniki: węzły zmienione na klatkę (D — dziś n
 Kryterium: zrzuty bit w bit z flagą i bez (pakowanie nie zmienia stanu); koszt w bitwie 166 okrętów średnio ≤ 0,7 ms,
 p95 ≤ 1,5 ms; raport rozmiarów bloków. Zależności: RW-03, RW-04. Kolizje: `render()` w `index.html` (kilka linii) —
 miejsce uzgodnić z sesją renderu CPU.
+**Stan (2026-10-15, tor `rw-migawka`, commit „RW-10: układ migawki i pakowanie…”): kod gotowy, CZEKA NA WERYFIKACJĘ**
+(zrzuty z flagą i bez, koszt w bitwie, raport rozmiarów — tryb lekki maszyny od 2026-10-15 wieczorem, bez Chrome).
+- `src/render/snapshotLayout.js`: bloki HEAD, WORLD, HALL (kopia `HALL_DUST_IN`), LISTS (10 list: RENDER, SEEN,
+  SEEN_COLD, NPCS, NPCS_SEEN, WRECKS, WRECKS_SEEN, COLD, COLD_NEAR, STATIONS), ENT, BODY, NODES (pula: węzły x, y[, z],
+  żar, znacznik żaru, active, patch + belki rest, broken), NOZZLES (pula), SHOTS, TURRETS, STATIONS, CORES; rekord =
+  części Float64 / Int32 (Float32 w układzie dostępne, nieużywane); `createSnapshotLayout(cap, gen)`,
+  `createSnapshotViews` (widoki strony raz — `views` potrójnego bufora), `growSnapshotCapacity`.
+- **Odstępstwo od § 3.2: liczby z gry w Float64, nie Float32** — render liczy kąty, prędkości, skale i tarcze w double,
+  więc zaokrąglenie zmieniłoby macierze (warunek bit w bit). Pole nieobecne na obiekcie = NaN (lustro odtworzy
+  `undefined` — moduły rozróżniają `vel` / `vx`, `angVel ?? angularVelocity`). Napisy (stany AI i tarcz, id broni,
+  klucze wież, ród `dmgKey`, id właściciela świateł) — kody słownika pakującego (`SnapshotDict`; `WORLD.DICT_N`).
+- `src/render/snapshotPack.js`: `SnapshotPacker` — DWIE FAZY (odstępstwo od „jednego wywołania”: rekordy wież
+  i wejście pyłu hal powstają dziś w przebiegu 3D tej klatki): `begin` po kamerze, przed `WarpNurt.update` (HEAD,
+  listy budowane jak w `render()` bez zapisów — `withColdNearWrecks` pisze `_coldExtrasFrame`, pakujący nie; ENT,
+  BODY, NODES, NOZZLES, SHOTS, STATIONS, CORES — `ReactorGame.cores` na listach migawki; WORLD — słońce, strefa nieba,
+  warp gracza, dopalacz), `finish` po kadłubach (pudło z `render()`, TURRETS z `Turret2D.recordsFor` po encjach
+  SEEN_COLD, HALL, publikacja). Po RW-26 i RW-11c fazy się zleją. Pola encji z inwentarza odczytów ścieżki kadłubów
+  (subagent, 2026-10-15): poziom A co klatkę (poza, ruch, napęd, `engineIgn`, tarcza, maskowanie z tożsamością
+  `lastBreak` → numer, flagi `__lightsHidden` / `__enginesHidden` / `__turretsHidden` / `__editorBoost` /
+  `__fSysBoost` / `__warpPreview`, `state` / `phase`, `__skinZ`, `__renderScale`), poziom B (strona, wrak, odłam,
+  `hexGrid`, pierścień, `isAsteroidHex`, `isCapitalShip`, w, h, skale gniazd, id) — przy nowym slocie i rotacyjnie
+  co 16 klatek; wersje konfiguracji (visual, kadłub, układ dysz — też `engines.main`, lampy edytora, mostek, tarcza)
+  z tożsamości źródeł. NODES: ciało zmienione (nowy magazyn, `activeNodes`, `meshDirty`, brudny region) po
+  `lastConsumed` i w pudle rozgrzania (+ zasięg sprite'a). Każde pole encji czytane raz; bez zapisów do obiektów gry
+  (test: zamrożone atrapy). Historia klatek `packer.hist` (ms, węzły, ciała, bajty), `pageReport()`.
+- `index.html`: `?szew=inline` (`SZEW_MODE`), `RenderSlots = createRenderIds()`, `renderSnapshot`;
+  `fillHexCullInfo(cam, out, box3d)` — wzór pudła cullingu wyjęty z `render()` (bit w bit ten sam), migawka liczy go
+  do własnego obiektu (`_hexCullInfo` w klatce bez zmian); wywołania faz w `render()`; `window.RenderSnapshot`.
+- Strażnik szwu RW-01: `index:aktualizacja` 100 → 102 z powodem (Turret2D.recordsFor do RW-26, HallDust.input do
+  RW-11c); `tests/renderPerfGates.test.mjs` sprawdza pudło w `fillHexCullInfo`.
+- Narzędzia: `scripts/webgpu/zrzuty.mjs --query szew=inline` (dodatkowe parametry adresu w każdej sesji),
+  `scripts/profil-bitwy-flot.mjs --query szew=inline` — pole `snap` próbek (ms średnio / p95 / maks., węzły i ciała
+  w NODES, bajty, `pageReport()` bloków) i średnie `snapMs`, `snapP95`, `snapWezly`, `snapKB`.
+- Testy `tests/snapshotPack.test.mjs` (6): układ (strażnik złapał pole `COUNT` w BODY — zderzenie z licznikiem pól),
+  pakowanie zamrożonych atrap i odczyt strony z potrójnego bufora, NODES wg „zmienione po ostatniej odebranej”
+  (pominięta strona nie gubi zmiany, nowy magazyn, poza pudłem), wersje i poziom B, wzrost pojemności (700 encji —
+  nowy układ), mgła / zimne wraki / stacje.
+- Do zrobienia po zdjęciu trybu lekkiego: zrzuty `--query szew=inline` vs bez (sesje kosmos, galeria, stacja, reaktor,
+  warp, split, ziemia, pas, piraci), pary A/B kosztu w bitwie 50,20,10,3 (zoom 0,1 i 0,45), raport rozmiarów bloków
+  i D (węzły zmienione na klatkę) — tu.
 
 **RW-11 Lustra i moduły 3D na lustrach** (`inline`), trzy podzadania kolejno, każde z własnym kryterium bit w bit:
 - **RW-11a kadłuby i dysze** — `updateHexShips3D` / `drawHexShips3D`, `EngineVfxSystem`, lampy, cień SDF, smugi.

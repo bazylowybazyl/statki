@@ -1,0 +1,1000 @@
+// src/render/snapshotPack.js — pakowanie migawki klatki renderu (docs/PLAN-render-worker.md § 3.2, RW-10).
+//
+// Strona gry: z obiektów gry i kamer tej klatki pisze stronę potrójnego bufora o układzie `snapshotLayout.js`.
+// Pakowanie NIE zmienia stanu gry (warunek RW-10: zrzuty bit w bit z flagą `?szew=inline` i bez): żadnych zapisów
+// do encji, ciał ani list; tożsamość obiektów → sloty `renderIds` (Map po stronie pakującego), wersje konfiguracji
+// statycznej liczone z tożsamości obiektów źródła (pamięć w tablicach pakującego, bez stempli na obiektach).
+//
+// Dwie fazy (póki rekordy wież i wejście pyłu hal powstają w przebiegu 3D tej klatki):
+//   begin(frame)  — przed aktualizacjami 3D: HEAD, LISTS, ENT, BODY, NODES, NOZZLES, SHOTS, STATIONS, CORES, WORLD;
+//   finish(frame) — po updateHexShips3D: pudło cullingu, TURRETS (rekordy Turret2D), HALL, publikacja strony.
+// Po RW-26 (wieże po stronie gry) i RW-11c (bloki modułów świata) fazy się zleją.
+//
+// Reguła bloków zmiennych (NODES): do strony k trafiają ciała zmienione PO ostatniej klatce ODEBRANEJ przez render
+// (`frame.lastConsumed`; w trybie `inline` = k − 1), a nie tylko w klatce k — pominięta strona nie gubi zmian.
+//
+// Pola encji: poziom A (co klatkę) — wszystko, co moduły 3D czytają w każdej klatce (inwentarz RW-10 w
+// docs/PLAN-render-worker.md § 4); poziom B (pola konfiguracji ustalane przy narodzinach: strona, profil, wymiary,
+// skale gniazd) — przy nowym slocie / generacji i rotacyjnie co `TIER_B_PERIOD` klatek. Encje mają dziesiątki klas
+// ukrytych (odczyt megamorficzny), więc każde pole czyta się najwyżej raz na klatkę.
+//
+// Czysty moduł (bez three, DOM i `window`).
+
+import {
+  HEAD, HEAD_FLAG, LIST, ENT, ENT_FLAG, ENT_FLAG2, BODY, BODY_FLAG, NOZZLE, SHOT, SHOT_FLAG, TURRET, STATION, CORE,
+  WORLD, HALL_WORDS, SNAPSHOT_LAYOUT_VERSION, SNAPSHOT_DEFAULT_CAPACITY, createSnapshotLayout, createSnapshotViews,
+  growSnapshotCapacity, bodyNodeF64Words, bodyNodeU8Bytes
+} from './snapshotLayout.js';
+import { createTripleBuffer, TripleBufferWriter } from './tripleBuffer.js';
+import { createRenderIds } from './renderIds.js';
+
+const EF = ENT.F64, EI = ENT.I32;
+const BF = BODY.F64, BI = BODY.I32;
+const NF = NOZZLE.F64, NI = NOZZLE.I32;
+const SF = SHOT.F64, SI = SHOT.I32;
+const TF = TURRET.F64, TI = TURRET.I32;
+const STF = STATION.F64, STI = STATION.I32;
+const CF = CORE.F64, CI = CORE.I32;
+const ES64 = ENT.stride.f64, ESI = ENT.stride.i32;
+
+/** Okres odświeżania pól poziomu B (klatki); encja odświeżana, gdy (slot + k) % okres === 0. */
+export const TIER_B_PERIOD = 16;
+
+const num = (v) => (typeof v === 'number' ? v : 0);
+const raw = (v) => (typeof v === 'number' ? v : NaN);
+const EMPTY = Object.freeze([]);
+
+/** Słownik wartości (napisy, czasem liczby — id encji) → kody 0…n−1; −1 = brak (null / undefined / ''). */
+export class SnapshotDict {
+  constructor() {
+    this.values = [];
+    this._map = new Map();
+  }
+  code(v) {
+    if (v === undefined || v === null || v === '') return -1;
+    let c = this._map.get(v);
+    if (c === undefined) {
+      c = this.values.length;
+      this.values.push(v);
+      this._map.set(v, c);
+    }
+    return c;
+  }
+  value(c) {
+    return c >= 0 ? this.values[c] : undefined;
+  }
+}
+
+/** Wejście klatki (jeden obiekt na grę, wypełniany przez `index.html`). */
+export function createSnapshotFrame() {
+  return {
+    frameId: 0, frameDt: 0, alpha: 0, physDt: 0,
+    paused: false, worldFrozen: false, split: false, view3d: false, fog: false, skipWorld3D: false,
+    sim: 0, simRender: 0, simRenderSim: 0, vfxTime: 0, bridgeTime: 0, wall: 0, wallOrigin: 0,
+    W: 0, H: 0, dpr: 1,
+    cam: null, camNoShake: null, shakePxX: 0, shakePxY: 0, cam2: null,
+    cull: null,                 // pudło cullingu (x, y, halfW, halfH, drawHalfW, drawHalfH) albo null
+    interpPose: null,           // window.__interpShipPose
+    ship: null, p2: null, npcs: null, wrecks: null, coldWrecks: null, coldRenderList: null, coldNearExtras: true,
+    stations: null, bullets: null,
+    hides: null,                // SensorSystem.hides (używane tylko przy fog)
+    reactorCores: null,         // lista rdzeni albo null — wtedy coresOf
+    coresOf: null,              // (listy) → rdzenie (ReactorGame.cores) z list migawki: [gracz, P2], NPC i wraki widoczne, zimne
+    sun: null, skyZone: null,
+    warp: null, boost: null,
+    turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
+    hall: null,                 // faza finish: Float64Array HALL_DUST_IN
+    lastConsumed: -1            // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)
+  };
+}
+
+/**
+ * Pakujący migawki: potrójny bufor, sloty, słownik, pamięć wersji. `onLayout(buffer, layout)` — nowy zestaw stron
+ * (wzrost pojemności): czytelnik tworzy nowy `TripleBufferReader` z `createSnapshotViews`.
+ */
+export class SnapshotPacker {
+  constructor({ ids = null, capacity = SNAPSHOT_DEFAULT_CAPACITY, shared = true, onLayout = null, now = null } = {}) {
+    this.ids = ids || createRenderIds();
+    this.dict = new SnapshotDict();
+    this.shared = shared;
+    this.onLayout = onLayout;
+    this.now = now || (typeof performance !== 'undefined' ? () => performance.now() : () => 0);
+    this.k = 0;
+    this._tFrame = 0;
+    this._tPlay = 0;
+    this._tGame = 0;
+    this._growNext = null;
+    this.stats = {
+      packs: 0, layoutGrows: 0, ents: 0, bodies: 0, bodiesPacked: 0, nodesPacked: 0, beamsPacked: 0,
+      nodeF64Words: 0, nodeU8Bytes: 0, nozzles: 0, shots: 0, turrets: 0, stations: 0, cores: 0,
+      beginMs: 0, finishMs: 0, bytes: null
+    };
+    // pamięć pakującego na slot encji
+    this._entPacked = new Int32Array(0);
+    this._entGenSeen = new Uint32Array(0);
+    this._ver = new Int32Array(0);   // 6 wersji na slot
+    this._refVisual = []; this._refHull = []; this._refNozA = []; this._refNozB = []; this._refLights = [];
+    this._refBridge = []; this._refShield = [];
+    this._tierB = new Float64Array(0);   // ENT.F64 poziomu B na slot (W, H, HP_SCALE*)
+    this._tierBI = new Int32Array(0);    // flagi i kody poziomu B na slot: [flagsB, flags2B, ownerId]
+    // pamięć na slot ciała
+    this._bodyPacked = new Int32Array(0);
+    this._bodyChangedK = new Int32Array(0);
+    this._bodyActive = new Int32Array(0);
+    this._bodyStoreVer = new Int32Array(0);
+    this._bodyStore = [];
+    this._lists = new Array(LIST.COUNT);
+    for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
+    this._coreLists = [[null, null], null, null, null];
+    // historia klatek (raport RW-10): czas pakowania [ms], węzły i ciała w NODES, bajty zajęte na stronie
+    this.hist = { n: 0, ms: new Float64Array(4096), nodes: new Int32Array(4096), bodies: new Int32Array(4096), bytes: new Int32Array(4096) };
+    this._setLayout(createSnapshotLayout(capacity, 0));
+  }
+
+  _setLayout(layout) {
+    this.layout = layout;
+    this.buffer = createTripleBuffer(layout.pageBytes, { shared: this.shared, layoutGen: layout.gen });
+    this.writer = new TripleBufferWriter(this.buffer, { views: (buf, off) => createSnapshotViews(buf, off, layout) });
+    this.view = this.writer.page;
+    if (this.onLayout) this.onLayout(this.buffer, layout);
+  }
+
+  _ensureSlotMemory() {
+    const ne = this.ids.entities.capacity;
+    if (this._entPacked.length < ne) {
+      this._entPacked = grow32(this._entPacked, ne);
+      const g = new Uint32Array(ne); g.set(this._entGenSeen); this._entGenSeen = g;
+      this._ver = grow32(this._ver, ne * 6);
+      const b = new Float64Array(ne * 5); b.set(this._tierB); this._tierB = b;
+      this._tierBI = grow32(this._tierBI, ne * 3);
+    }
+    const nb = this.ids.bodies.capacity;
+    if (this._bodyPacked.length < nb) {
+      this._bodyPacked = grow32(this._bodyPacked, nb);
+      this._bodyChangedK = grow32(this._bodyChangedK, nb);
+      this._bodyActive = grow32(this._bodyActive, nb);
+      this._bodyStoreVer = grow32(this._bodyStoreVer, nb);
+    }
+  }
+
+  /** Faza 1 (przed aktualizacjami 3D). */
+  begin(frame) {
+    const t0 = this.now();
+    if (this._growNext) {
+      const next = growSnapshotCapacity(this.layout.cap, this._growNext);
+      this._growNext = null;
+      if (next !== this.layout.cap) this._regrow(next);
+    }
+    this.k++;
+    const k = this.k;
+    this.ids.begin();
+    this._buildLists(frame);
+    if (frame.coresOf) {
+      const cl = this._coreLists, L = this._lists;
+      cl[0][0] = frame.ship || null;
+      cl[0][1] = frame.p2 || null;
+      cl[1] = L[LIST.NPCS_SEEN];
+      cl[2] = L[LIST.WRECKS_SEEN];
+      cl[3] = L[LIST.COLD_NEAR].length > 0 ? L[LIST.COLD_NEAR] : null;
+      frame.reactorCores = frame.coresOf(cl);
+    }
+    this._ensureCapacity(frame);
+    this._ensureSlotMemory();
+    const v = this.view;
+    this._packHead(v, frame, k);
+    this._packLists(v);
+    this._packEntities(v, frame, k);
+    this._packShots(v, frame);
+    this._packStations(v, frame);
+    this._packCores(v, frame);
+    this._packWorld(v, frame);
+    this.stats.beginMs = this.now() - t0;
+  }
+
+  /** Faza 2 (po updateHexShips3D): pudło cullingu, wieże, pył hal, publikacja. */
+  finish(frame) {
+    const t0 = this.now();
+    const v = this.view;
+    if (frame.cull) writeCull(v.head, frame.cull);
+    this._packTurrets(v, frame);
+    if (frame.hall && frame.hall.length >= HALL_WORDS) v.hall.set(frame.hall.subarray(0, HALL_WORDS));
+    else v.hall.fill(0);
+    v.world[WORLD.DICT_N] = this.dict.values.length;
+    this.ids.end();
+    this.writer.publish();
+    this.view = this.writer.page;
+    this.stats.packs++;
+    this.stats.finishMs = this.now() - t0;
+    const hs = this.hist, i = hs.n++ & 4095, st = this.stats;
+    hs.ms[i] = st.beginMs + st.finishMs;
+    hs.nodes[i] = st.nodesPacked;
+    hs.bodies[i] = st.bodiesPacked;
+    hs.bytes[i] = HEAD.COUNT * 8 + st.ents * (ENT.stride.f64 * 8 + ENT.stride.i32 * 4) + st.nodeF64Words * 8 + st.nodeU8Bytes +
+      st.shots * (SHOT.stride.f64 * 8 + SHOT.stride.i32 * 4);
+  }
+
+  /**
+   * Bajty bloków ostatnio spakowanej strony (raport RW-10): stałe (HEAD, WORLD, HALL) i zajęte w blokach zmiennych.
+   */
+  pageReport() {
+    const st = this.stats;
+    const L = this._lists;
+    let listWords = 0;
+    for (let i = 0; i < LIST.COUNT; i++) listWords += L[i].length;
+    const rec = (r, n) => n * (r.stride.f64 * 8 + r.stride.f32 * 4 + r.stride.i32 * 4 + r.stride.u8);
+    const out = {
+      head: HEAD.COUNT * 8,
+      world: WORLD.COUNT * 8,
+      hall: HALL_WORDS * 8,
+      lists: (LIST.COUNT + listWords) * 4,
+      ent: rec(ENT, st.ents),
+      body: rec(BODY, st.bodies),
+      nodes: st.nodeF64Words * 8 + st.nodeU8Bytes,
+      nozzles: rec(NOZZLE, st.nozzles),
+      shots: rec(SHOT, st.shots),
+      turrets: rec(TURRET, st.turrets),
+      stations: rec(STATION, st.stations),
+      cores: rec(CORE, st.cores)
+    };
+    let total = 0;
+    for (const k in out) total += out[k];
+    out.total = total;
+    out.pageBytes = this.layout.pageBytes;
+    return out;
+  }
+
+  // ── LISTS ────────────────────────────────────────────────────────────────────────────────────────────────
+  _buildLists(f) {
+    const L = this._lists;
+    for (let i = 0; i < LIST.COUNT; i++) L[i].length = 0;
+    const render = L[LIST.RENDER];
+    const ship = f.ship;
+    if (ship && !ship.dead) render.push(ship);
+    const p2 = f.p2;
+    if (f.split && p2 && !p2.destroyed) render.push(p2);
+    const npcs = f.npcs || EMPTY;
+    for (let i = 0; i < npcs.length; i++) { const e = npcs[i]; if (e && !e.dead) render.push(e); }
+    const wrecks = f.wrecks || EMPTY;
+    for (let i = 0; i < wrecks.length; i++) { const e = wrecks[i]; if (e && !e.dead) render.push(e); }
+    const hides = f.fog ? f.hides : null;
+    fogInto(render, L[LIST.SEEN], hides);
+    // zimne wraki z ciałem do rysowania (index.html: withColdNearWrecks — tu bez zapisu _coldExtrasFrame)
+    const near = L[LIST.COLD_NEAR];
+    const cold = f.coldRenderList || EMPTY;
+    if (f.coldNearExtras !== false) {
+      for (let i = 0; i < cold.length; i++) {
+        const w = cold[i];
+        if (!w || !w.isCold || w.dead || !w.beamHull) continue;
+        near.push(w);
+      }
+    }
+    const seenCold = L[LIST.SEEN_COLD];
+    const seen = L[LIST.SEEN];
+    for (let i = 0; i < seen.length; i++) seenCold.push(seen[i]);
+    for (let i = 0; i < near.length; i++) seenCold.push(near[i]);
+    copyInto(npcs, L[LIST.NPCS]);
+    fogInto(npcs, L[LIST.NPCS_SEEN], hides);
+    copyInto(wrecks, L[LIST.WRECKS]);
+    fogInto(wrecks, L[LIST.WRECKS_SEEN], hides);
+    copyInto(f.coldWrecks || EMPTY, L[LIST.COLD]);
+    copyInto(f.stations || EMPTY, L[LIST.STATIONS]);
+  }
+
+  _ensureCapacity(f) {
+    const cap = this.layout.cap;
+    let listMax = 0, sum = 0;
+    for (let i = 0; i < LIST.COUNT; i++) {
+      const n = this._lists[i].length;
+      if (n > listMax) listMax = n;
+      sum += n;
+    }
+    // sloty encji ≤ suma list (encja w kilku listach ma jeden slot) — highWater po przydziale nie przekroczy
+    // highWater + suma
+    const need = {
+      entities: Math.max(listMax, this.ids.entities.highWater + sum),
+      bodies: this.ids.bodies.highWater + sum,
+      shots: (f.bullets ? f.bullets.length : 0) + 16,
+      stations: (f.stations ? f.stations.length : 0) + 4,
+      cores: (f.reactorCores ? f.reactorCores.length : 0) + 8
+    };
+    const next = growSnapshotCapacity(cap, need);
+    if (next !== cap) this._regrow(next);
+  }
+
+  _regrow(cap) {
+    this.stats.layoutGrows++;
+    this._setLayout(createSnapshotLayout(cap, this.layout.gen + 1));
+  }
+
+  _packLists(v) {
+    const L = this._lists;
+    const stride = v.listStride;
+    const ents = this.ids.entities;
+    const out = v.listData;
+    for (let l = 0; l < LIST.COUNT; l++) {
+      const list = L[l];
+      const n = list.length;
+      v.listCount[l] = n;
+      const base = l * stride;
+      for (let i = 0; i < n; i++) out[base + i] = list[i] ? ents.slotOf(list[i]) : -1;
+    }
+  }
+
+  // ── HEAD ─────────────────────────────────────────────────────────────────────────────────────────────────
+  _packHead(v, f, k) {
+    const h = v.head;
+    h[HEAD.VERSION] = SNAPSHOT_LAYOUT_VERSION;
+    h[HEAD.LAYOUT_GEN] = this.layout.gen;
+    h[HEAD.K] = k;
+    h[HEAD.FRAME_ID] = num(f.frameId);
+    const dt = num(f.frameDt);
+    this._tFrame += dt;
+    if (!f.paused) this._tPlay += dt;
+    if (!f.paused && !f.worldFrozen) this._tGame += dt;
+    h[HEAD.T_FRAME] = this._tFrame;
+    h[HEAD.T_PLAY] = this._tPlay;
+    h[HEAD.T_GAME] = this._tGame;
+    h[HEAD.FRAME_DT] = raw(f.frameDt);
+    h[HEAD.ALPHA] = num(f.alpha);
+    h[HEAD.PHYS_DT] = num(f.physDt);
+    h[HEAD.SIM] = num(f.sim);
+    h[HEAD.SIM_RENDER] = num(f.simRender);
+    h[HEAD.SIM_RENDER_SIM] = num(f.simRenderSim);
+    h[HEAD.VFX_TIME] = num(f.vfxTime);
+    h[HEAD.BRIDGE_TIME] = num(f.bridgeTime);
+    h[HEAD.WALL] = num(f.wall);
+    h[HEAD.WALL_ORIGIN] = num(f.wallOrigin);
+    h[HEAD.W] = num(f.W);
+    h[HEAD.H] = num(f.H);
+    h[HEAD.DPR] = num(f.dpr) || 1;
+    let flags = 0;
+    if (f.paused) flags |= HEAD_FLAG.PAUSED;
+    if (f.worldFrozen) flags |= HEAD_FLAG.WORLD_FROZEN;
+    if (f.split) flags |= HEAD_FLAG.SPLIT;
+    if (f.skipWorld3D) flags |= HEAD_FLAG.SKIP_WORLD_3D;
+    if (f.view3d) flags |= HEAD_FLAG.VIEW3D;
+    if (f.fog) flags |= HEAD_FLAG.FOG;
+    h[HEAD.FLAGS] = flags;
+    const cam = f.cam;
+    h[HEAD.CAM_X] = cam ? raw(cam.x) : NaN;
+    h[HEAD.CAM_Y] = cam ? raw(cam.y) : NaN;
+    h[HEAD.CAM_ZOOM] = cam ? raw(cam.zoom) : NaN;
+    const ns = f.camNoShake;
+    h[HEAD.CAMNS_X] = ns ? raw(ns.x) : NaN;
+    h[HEAD.CAMNS_Y] = ns ? raw(ns.y) : NaN;
+    h[HEAD.CAMNS_ZOOM] = ns ? raw(ns.zoom) : NaN;
+    h[HEAD.SHAKE_PX_X] = num(f.shakePxX);
+    h[HEAD.SHAKE_PX_Y] = num(f.shakePxY);
+    const free = !!(cam && cam.mode === 'free3d' && cam.position && cam.quaternion);
+    h[HEAD.CAM_MODE] = free ? 1 : 0;
+    if (free) {
+      const p = cam.position, q = cam.quaternion;
+      h[HEAD.CAM_POS_X] = p.x; h[HEAD.CAM_POS_Y] = p.y; h[HEAD.CAM_POS_Z] = p.z;
+      h[HEAD.CAM_QX] = q.x; h[HEAD.CAM_QY] = q.y; h[HEAD.CAM_QZ] = q.z; h[HEAD.CAM_QW] = q.w;
+      h[HEAD.CAM_FOV] = raw(cam.fov); h[HEAD.CAM_NEAR] = raw(cam.near); h[HEAD.CAM_FAR] = raw(cam.far);
+      h[HEAD.CAM_VIEW_DIST] = raw(cam.viewDistance);
+    } else {
+      for (let i = HEAD.CAM_POS_X; i <= HEAD.CAM_VIEW_DIST; i++) h[i] = 0;
+    }
+    const c2 = f.cam2;
+    h[HEAD.CAM2_ON] = c2 ? 1 : 0;
+    h[HEAD.CAM2_X] = c2 ? raw(c2.x) : 0;
+    h[HEAD.CAM2_Y] = c2 ? raw(c2.y) : 0;
+    h[HEAD.CAM2_ZOOM] = c2 ? raw(c2.zoom) : 1;
+    if (f.cull) writeCull(h, f.cull);
+    else for (let i = HEAD.CULL_X; i <= HEAD.CULL_DRAW_HALF_H; i++) h[i] = 0;
+    const ents = this.ids.entities;
+    const ship = f.ship, p2 = f.p2;
+    const ps = ship ? ents.slotOf(ship) : -1;
+    h[HEAD.PLAYER_SLOT] = ps;
+    h[HEAD.PLAYER_GEN] = ps >= 0 ? ents.gen(ps) : 0;
+    const p2s = (p2 && f.split) ? ents.slotOf(p2) : -1;
+    h[HEAD.P2_SLOT] = p2s;
+    h[HEAD.P2_GEN] = p2s >= 0 ? ents.gen(p2s) : 0;
+    const ip = f.interpPose;
+    h[HEAD.INTERP_X] = ip ? raw(ip.x) : NaN;
+    h[HEAD.INTERP_Y] = ip ? raw(ip.y) : NaN;
+    h[HEAD.INTERP_ANGLE] = ip ? raw(ip.angle) : NaN;
+    h[HEAD.EVENT_LAST] = 0;
+  }
+
+  // ── ENT, BODY, NODES, NOZZLES ───────────────────────────────────────────────────────────────────────────
+  _packEntities(v, f, k) {
+    const ents = this.ids.entities;
+    const L = this._lists;
+    const st = this.stats;
+    st.ents = 0; st.bodies = 0; st.bodiesPacked = 0; st.nodesPacked = 0; st.beamsPacked = 0; st.nozzles = 0;
+    this._nodeF64 = 0; this._nodeU8 = 0; this._noz = 0;
+    const hides = f.fog ? f.hides : null;
+    const ship = f.ship, p2 = f.p2;
+    // kolejność: listy po kolei, encja pakowana raz (pierwsze wystąpienie); stacje mają własny blok
+    for (let l = 0; l < LIST.COUNT; l++) {
+      if (l === LIST.STATIONS) continue;
+      const list = L[l];
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (!e) continue;
+        const s = ents.slotOf(e);
+        if (this._entPacked[s] === k) continue;
+        this._entPacked[s] = k;
+        this._packEntity(v, e, s, k, f, hides, e === ship, e === p2);
+        st.ents++;
+      }
+    }
+    const h = v.head;
+    h[HEAD.N_ENT] = ents.highWater;
+    h[HEAD.N_BODY] = this.ids.bodies.highWater;
+    h[HEAD.N_NOZZLES] = this._noz;
+    h[HEAD.NODE_F64_USED] = this._nodeF64;
+    h[HEAD.NODE_U8_USED] = this._nodeU8;
+    h[HEAD.N_BODIES_PACKED] = st.bodiesPacked;
+    h[HEAD.N_NODES_PACKED] = st.nodesPacked;
+    st.nodeF64Words = this._nodeF64;
+    st.nodeU8Bytes = this._nodeU8;
+  }
+
+  _packEntity(v, e, s, k, f, hides, isPlayer, isP2) {
+    const ents = this.ids.entities;
+    const f64 = v.entF64, i32 = v.entI32;
+    const b = s * ES64, bi = s * ESI;
+    const gen = ents.gen(s);
+    // ── poziom B: przy nowym właścicielu slotu i rotacyjnie ──
+    if (this._entGenSeen[s] !== gen || ((s + k) % TIER_B_PERIOD) === 0) {
+      this._entGenSeen[s] = gen;
+      this._tierBRead(e, s);
+    }
+    const tb = s * 5, tbi = s * 3;
+    // ── poziom A: pola encji czytane co klatkę, każde raz ──
+    const pos = e.pos, vel = e.vel;
+    f64[b + EF.X] = raw(e.x);
+    f64[b + EF.Y] = raw(e.y);
+    f64[b + EF.POS_X] = pos ? raw(pos.x) : NaN;
+    f64[b + EF.POS_Y] = pos ? raw(pos.y) : NaN;
+    f64[b + EF.ANGLE] = raw(e.angle);
+    f64[b + EF.VX] = raw(e.vx);
+    f64[b + EF.VY] = raw(e.vy);
+    f64[b + EF.VEL_X] = vel ? raw(vel.x) : NaN;
+    f64[b + EF.VEL_Y] = vel ? raw(vel.y) : NaN;
+    f64[b + EF.ANG_VEL] = raw(e.angVel);
+    f64[b + EF.ANGULAR_VELOCITY] = raw(e.angularVelocity);
+    f64[b + EF.Z] = raw(e.z);
+    f64[b + EF.RADIUS] = raw(e.radius);
+    f64[b + EF.R] = raw(e.r);
+    f64[b + EF.SKIN_Z] = raw(e.__skinZ);
+    f64[b + EF.RENDER_SCALE] = raw(e.__renderScale);
+    const tB = this._tierB;
+    f64[b + EF.W] = tB[tb]; f64[b + EF.H] = tB[tb + 1];
+    f64[b + EF.HP_SCALE] = tB[tb + 2]; f64[b + EF.HP_SCALE_X] = tB[tb + 3]; f64[b + EF.HP_SCALE_Y] = tB[tb + 4];
+    let flags = this._tierBI[tbi] | (pos ? ENT_FLAG.HAS_POS : 0) | (vel ? ENT_FLAG.HAS_VEL : 0);
+    let flags2 = this._tierBI[tbi + 1];
+    if (e.dead) flags |= ENT_FLAG.DEAD;
+    if (isPlayer) flags |= ENT_FLAG.PLAYER;
+    if (isP2) flags |= ENT_FLAG.P2;
+    if (hides && hides(e)) flags |= ENT_FLAG.FOG_HIDDEN;
+    if (e.isBridgeHulk) flags |= ENT_FLAG.BRIDGE_HULK;
+    if (e.lightsOff) flags |= ENT_FLAG.LIGHTS_OFF;
+    if (e.roadLightsOff) flags |= ENT_FLAG.ROAD_LIGHTS_OFF;
+    if (e.isCold) flags |= ENT_FLAG.COLD;
+    if (e.friendly) flags |= ENT_FLAG.FRIENDLY;
+    if (e.hideHexVisual) flags |= ENT_FLAG.HIDE_HEX;
+    if (e.__lightsHidden === true) flags |= ENT_FLAG.LIGHTS_HIDDEN;
+    if (e.__enginesHidden === true) flags |= ENT_FLAG.ENGINES_HIDDEN;
+    if (e.__turretsHidden === true) flags |= ENT_FLAG.TURRETS_HIDDEN;
+    if (e.__editorBoost === true) flags |= ENT_FLAG.EDITOR_BOOST;
+    if (e.__fSysBoost === true) flags |= ENT_FLAG.FSYS_BOOST;
+    if (e.__warpPreview === true) flags |= ENT_FLAG.WARP_PREVIEW;
+    i32[bi + EI.STATE] = this.dict.code(e.state);
+    i32[bi + EI.PHASE] = this.dict.code(e.phase);
+    i32[bi + EI.OWNER_ID] = this._tierBI[tbi + 2];
+    // napęd i silniki
+    const ti = e.thrusterInput;
+    f64[b + EF.TI_MAIN] = ti ? raw(ti.main) : NaN;
+    f64[b + EF.TI_LEFT] = ti ? raw(ti.leftSide) : NaN;
+    f64[b + EF.TI_RIGHT] = ti ? raw(ti.rightSide) : NaN;
+    f64[b + EF.TI_TORQUE] = ti ? raw(ti.torque) : NaN;
+    const inp = e.input;
+    f64[b + EF.IN_MAIN] = inp ? raw(inp.main) : NaN;
+    f64[b + EF.IN_THRUST_Y] = inp ? raw(inp.thrustY) : NaN;
+    const ign = e.engineIgn;
+    if (ign) {
+      i32[bi + EI.IGN_STATE] = num(ign.state) | 0;
+      f64[b + EF.IGN_T] = raw(ign.t);
+      if (ign.hot) flags |= ENT_FLAG.IGN_HOT;
+    } else {
+      i32[bi + EI.IGN_STATE] = -1;
+      f64[b + EF.IGN_T] = NaN;
+    }
+    // tarcza
+    const sh = e.shield;
+    if (sh) {
+      flags |= ENT_FLAG.HAS_SHIELD;
+      f64[b + EF.SH_MAX] = raw(sh.max);
+      f64[b + EF.SH_VAL] = raw(sh.val);
+      f64[b + EF.SH_ACT] = raw(sh.activationProgress);
+      f64[b + EF.SH_HARD] = raw(sh.hardness);
+      f64[b + EF.SH_SHOW] = raw(sh.show);
+      i32[bi + EI.SH_STATE] = this.dict.code(sh.state);
+      const imp = sh.impacts;
+      i32[bi + EI.SH_IMPACT_ID] = imp && imp.length ? (num(imp[imp.length - 1].id) | 0) : 0;
+    } else {
+      f64[b + EF.SH_MAX] = NaN; f64[b + EF.SH_VAL] = NaN; f64[b + EF.SH_ACT] = NaN;
+      f64[b + EF.SH_HARD] = NaN; f64[b + EF.SH_SHOW] = NaN;
+      i32[bi + EI.SH_STATE] = -1; i32[bi + EI.SH_IMPACT_ID] = 0;
+    }
+    // maskowanie (stan gry)
+    const ck = e.cloak;
+    if (ck) {
+      flags |= ENT_FLAG.HAS_CLOAK;
+      f64[b + EF.CLOAK_LEVEL] = raw(ck.level);
+      f64[b + EF.CLOAK_ENERGY] = raw(ck.energy);
+      i32[bi + EI.CLOAK_STATE] = this.dict.code(ck.state);
+      const lb = ck.lastBreak;
+      i32[bi + EI.CLOAK_BREAK] = lb ? this._breakSerial(lb) : 0;
+      if (lb && lb.forced) flags2 |= ENT_FLAG2.CLOAK_FORCED;
+    } else {
+      f64[b + EF.CLOAK_LEVEL] = NaN; f64[b + EF.CLOAK_ENERGY] = NaN;
+      i32[bi + EI.CLOAK_STATE] = -1; i32[bi + EI.CLOAK_BREAK] = 0;
+    }
+    i32[bi + EI.SLOT] = s;
+    i32[bi + EI.GEN] = gen;
+    // wersje konfiguracji statycznej (tożsamość obiektów źródła)
+    const vb = s * 6;
+    const ver = this._ver;
+    const visual = e.visual;
+    if (this._refVisual[s] !== visual) { this._refVisual[s] = visual; ver[vb]++; }
+    const hull = e.beamHull;
+    if (this._refHull[s] !== hull) { this._refHull[s] = hull; ver[vb + 1]++; }
+    let nozA = visual ? visual.mainThrusters : undefined;
+    const nozB = visual ? visual.torqueThrusters : undefined;
+    let mainKind = 0;
+    if (!nozA || !nozA.length) {
+      const eng = e.engines;
+      if (eng && eng.main) { nozA = eng.main; mainKind = 2; }
+    }
+    if (this._refNozA[s] !== nozA || this._refNozB[s] !== nozB) {
+      this._refNozA[s] = nozA; this._refNozB[s] = nozB; ver[vb + 2]++;
+    }
+    const lights = e.editorLights;
+    if (this._refLights[s] !== lights) { this._refLights[s] = lights; ver[vb + 3]++; }
+    const bridge = e.bridgeState;
+    if (this._refBridge[s] !== bridge) { this._refBridge[s] = bridge; ver[vb + 4]++; }
+    if (this._refShield[s] !== sh) { this._refShield[s] = sh; ver[vb + 5]++; }
+    i32[bi + EI.V_VISUAL] = ver[vb];
+    i32[bi + EI.V_HULL] = ver[vb + 1];
+    i32[bi + EI.V_NOZZLES] = ver[vb + 2];
+    i32[bi + EI.V_LIGHTS] = ver[vb + 3];
+    i32[bi + EI.V_BRIDGE] = ver[vb + 4];
+    i32[bi + EI.V_SHIELD] = ver[vb + 5];
+    // dysze
+    i32[bi + EI.NOZ_OFF] = this._noz;
+    let nn = 0;
+    if (mainKind === 2) nn += this._packNozzleOne(v, nozA, 2);
+    else nn += this._packNozzles(v, nozA, 0);
+    nn += this._packNozzles(v, nozB, 1);
+    i32[bi + EI.NOZ_N] = nn;
+    // ciało belek
+    const body = hull ? hull.body : null;
+    if (body) {
+      const bs = this.ids.bodies.slotOf(body);
+      i32[bi + EI.BODY_SLOT] = bs;
+      i32[bi + EI.BODY_GEN] = this.ids.bodies.gen(bs);
+      if (body.isSleeping) flags2 |= ENT_FLAG2.SLEEPING;
+      if (this._bodyPacked[bs] !== k) {
+        this._bodyPacked[bs] = k;
+        const px = f64[b + EF.POS_X];
+        this._packBody(v, body, hull, bs, s, k, f, px === px ? px : f64[b + EF.X], px === px ? f64[b + EF.POS_Y] : f64[b + EF.Y]);
+      }
+    } else {
+      i32[bi + EI.BODY_SLOT] = -1;
+      i32[bi + EI.BODY_GEN] = 0;
+    }
+    i32[bi + EI.FLAGS] = flags;
+    i32[bi + EI.FLAGS2] = flags2;
+  }
+
+  _tierBRead(e, s) {
+    const tb = s * 5, tbi = s * 3;
+    const B = this._tierB;
+    B[tb] = raw(e.w);
+    B[tb + 1] = raw(e.h);
+    B[tb + 2] = raw(e.__hardpointScale);
+    B[tb + 3] = raw(e.__hardpointScaleX);
+    B[tb + 4] = raw(e.__hardpointScaleY);
+    let fl = 0, fl2 = 0;
+    if (e.isWreck) fl |= ENT_FLAG.WRECK;
+    if (e.isFragment) fl |= ENT_FLAG.FRAGMENT;
+    if (e.isPirate) fl |= ENT_FLAG.PIRATE;
+    if (e.hexGrid) fl |= ENT_FLAG.HAS_HEXGRID;
+    if (e.isRingSegment) fl |= ENT_FLAG.RING_SEGMENT;
+    if (e.isAsteroidHex) fl |= ENT_FLAG.ASTEROID_HEX;
+    if (e.isPlayer) fl2 |= ENT_FLAG2.IS_PLAYER_FIELD;
+    if (e.isCapitalShip) fl2 |= ENT_FLAG2.CAPITAL;
+    this._tierBI[tbi] = fl;
+    this._tierBI[tbi + 1] = fl2;
+    this._tierBI[tbi + 2] = this.dict.code(e.id || e.uid || e.name);
+  }
+
+  _breakSerial(obj) {
+    // `cloak.lastBreak` porównywany po TOŻSAMOŚCI (cloakLook.js) — numer kolejnego obiektu zerwania
+    if (obj === this._lastBreakObj) return this._lastBreakId;
+    if (!this._breakIds) this._breakIds = new WeakMap();
+    let id = this._breakIds.get(obj);
+    if (id === undefined) {
+      this._breakSeq = (this._breakSeq || 0) + 1;
+      id = this._breakSeq;
+      this._breakIds.set(obj, id);
+    }
+    this._lastBreakObj = obj;
+    this._lastBreakId = id;
+    return id;
+  }
+
+  _packNozzles(v, list, kind) {
+    if (!list || !list.length) return 0;
+    const n = list.length;
+    if (this._noz + n > this.layout.cap.nozzles) {
+      this._requestGrow('nozzles', (this._noz + n) * 2);
+      return 0;
+    }
+    for (let i = 0; i < n; i++) this._writeNozzle(v, this._noz++, list[i], kind);
+    this.stats.nozzles += n;
+    return n;
+  }
+
+  _packNozzleOne(v, t, kind) {
+    if (this._noz + 1 > this.layout.cap.nozzles) {
+      this._requestGrow('nozzles', (this._noz + 1) * 2);
+      return 0;
+    }
+    this._writeNozzle(v, this._noz++, t, kind);
+    this.stats.nozzles++;
+    return 1;
+  }
+
+  _writeNozzle(v, o, t, kind) {
+    const f64 = v.nozF64, i32 = v.nozI32;
+    const b = o * NOZZLE.stride.f64, bi = o * NOZZLE.stride.i32;
+    i32[bi + NI.KIND] = kind;
+    if (!t) {
+      for (let j = 0; j < NOZZLE.stride.f64; j++) f64[b + j] = NaN;
+      i32[bi + NI.FLAGS] = 2;
+      return;
+    }
+    f64[b + NF.THROTTLE] = raw(t.__throttle);
+    f64[b + NF.VFX_SCALE] = raw(t.vfxScale);
+    f64[b + NF.NOZZLE_DEG] = raw(t.nozzleDeg);
+    f64[b + NF.BASE_DEG] = raw(t.baseDeg);
+    f64[b + NF.GIMBAL_MIN] = raw(t.gimbalMinDeg);
+    f64[b + NF.GIMBAL_MAX] = raw(t.gimbalMaxDeg);
+    i32[bi + NI.FLAGS] = t.__destroyed ? 1 : 0;
+  }
+
+  _requestGrow(key, n) {
+    if (!this._growNext) this._growNext = {};
+    if (!(this._growNext[key] >= n)) this._growNext[key] = n;
+  }
+
+  _packBody(v, body, hull, bs, es, k, f, ex, ey) {
+    const f64 = v.bodyF64, i32 = v.bodyI32;
+    const b = bs * BODY.stride.f64, bi = bs * BODY.stride.i32;
+    const st = this.stats;
+    st.bodies++;
+    const store = body.nodeStore;
+    const beams = body.beamStore;
+    let changed = false;
+    if (this._bodyStore[bs] !== store) {
+      this._bodyStore[bs] = store;
+      this._bodyStoreVer[bs]++;
+      changed = true;
+    }
+    const active = body.activeNodes | 0;
+    if (this._bodyActive[bs] !== active) { this._bodyActive[bs] = active; changed = true; }
+    const region = body._region;
+    let flags = 0;
+    if (body.meshDirty) { flags |= BODY_FLAG.MESH_DIRTY; changed = true; }
+    if (region && region.store === store && (region.dirtyAll || region.dirtyCount > 0)) {
+      if (region.dirtyAll) flags |= BODY_FLAG.DIRTY_ALL;
+      changed = true;
+    }
+    if (changed) this._bodyChangedK[bs] = k;
+    if (body.isSleeping) flags |= BODY_FLAG.SLEEPING;
+    const planar = body.planar !== false;
+    if (planar) flags |= BODY_FLAG.PLANAR;
+    if (body.dead) flags |= BODY_FLAG.DEAD;
+    if (hull.isFragment) flags |= BODY_FLAG.FRAGMENT;
+    if (hull.anchorMode === 'com') flags |= BODY_FLAG.ANCHOR_COM;
+    if (hull.solid3D) flags |= BODY_FLAG.SOLID3D;
+    if (hull.world) flags |= BODY_FLAG.WORLD;
+    if (hull.disableSolidArmorLod) flags |= BODY_FLAG.NO_SOLID_LOD;
+    f64[b + BF.ANCHOR_DX] = raw(hull.anchorDX);
+    f64[b + BF.ANCHOR_DY] = raw(hull.anchorDY);
+    f64[b + BF.SCALE] = raw(hull.scale);
+    f64[b + BF.SRC_W] = raw(hull.srcWidth);
+    f64[b + BF.SRC_H] = raw(hull.srcHeight);
+    const pv = hull.pivot;
+    f64[b + BF.PIVOT_X] = pv ? raw(pv.x) : NaN;
+    f64[b + BF.PIVOT_Y] = pv ? raw(pv.y) : NaN;
+    f64[b + BF.CELL] = raw(body.cellSize);
+    const lm = body.latticeMin;
+    f64[b + BF.LAT_MIN_X] = lm ? raw(lm.x) : NaN;
+    f64[b + BF.LAT_MIN_Y] = lm ? raw(lm.y) : NaN;
+    const bmm = body._boundsMinMax;   // [minX, minY, minZ, maxX, maxY, maxZ]
+    f64[b + BF.MIN_X] = bmm ? bmm[0] : NaN;
+    f64[b + BF.MIN_Y] = bmm ? bmm[1] : NaN;
+    f64[b + BF.MIN_Z] = bmm ? bmm[2] : NaN;
+    f64[b + BF.MAX_X] = bmm ? bmm[3] : NaN;
+    f64[b + BF.MAX_Y] = bmm ? bmm[4] : NaN;
+    f64[b + BF.MAX_Z] = bmm ? bmm[5] : NaN;
+    f64[b + BF.MAX_DISP] = raw(body._maxDisp);
+    i32[bi + BI.SLOT] = bs;
+    i32[bi + BI.GEN] = this.ids.bodies.gen(bs);
+    i32[bi + BI.ENT_SLOT] = es;
+    i32[bi + BI.FLAGS] = flags;
+    const count = store ? store.count | 0 : 0;
+    const beamCount = beams ? beams.count | 0 : 0;
+    i32[bi + BI.NODE_COUNT] = count;
+    i32[bi + BI.BEAM_COUNT] = beamCount;
+    i32[bi + BI.ACTIVE_NODES] = active;
+    i32[bi + BI.STORE_VER] = this._bodyStoreVer[bs];
+    i32[bi + BI.SHAPE_VER] = store ? (store.shapeVersion | 0) : 0;
+    i32[bi + BI.DMG_KEY] = this.dict.code(hull.dmgKey);
+    i32[bi + BI.CHANGED_K] = this._bodyChangedK[bs];
+    // NODES: zmienione po ostatniej klatce odebranej, w pudle rozgrzania
+    i32[bi + BI.NODE_F64_OFF] = -1; i32[bi + BI.NODE_U8_OFF] = -1; i32[bi + BI.NODE_N] = 0;
+    i32[bi + BI.BEAM_F64_OFF] = -1; i32[bi + BI.BEAM_U8_OFF] = -1; i32[bi + BI.BEAM_N] = 0;
+    if (store && count > 0 && this._bodyChangedK[bs] > f.lastConsumed && inCullBox(f.cull, ex, ey, hull)) {
+      if (this._packNodes(v, store, beams, count, beamCount, planar, bi)) {
+        st.bodiesPacked++;
+        st.nodesPacked += count;
+        st.beamsPacked += beamCount;
+      }
+    }
+  }
+
+  _packNodes(v, s, e, n, m, planar, bi) {
+    const words = bodyNodeF64Words(n, planar) + m;
+    const bytes = bodyNodeU8Bytes(n) + m;
+    const cap = this.layout.cap;
+    if (this._nodeF64 + words > cap.nodeF64 || this._nodeU8 + bytes > cap.nodeU8) {
+      this._requestGrow('nodeF64', (this._nodeF64 + words) * 2);
+      this._requestGrow('nodeU8', (this._nodeU8 + bytes) * 2);
+      return false;
+    }
+    const o = this._nodeF64, u = this._nodeU8;
+    const F = v.nodeF64, U = v.nodeU8;
+    F.set(s.x.subarray(0, n), o);
+    F.set(s.y.subarray(0, n), o + n);
+    let p = o + 2 * n;
+    if (!planar) { F.set(s.z.subarray(0, n), p); p += n; }
+    F.set(s.heat.subarray(0, n), p); p += n;
+    F.set(s.heatStamp.subarray(0, n), p); p += n;
+    U.set(s.active.subarray(0, n), u);
+    U.set(s.patch.subarray(0, n), u + n);
+    let q = u + 2 * n;
+    const i32 = v.bodyI32;
+    i32[bi + BI.NODE_F64_OFF] = o;
+    i32[bi + BI.NODE_U8_OFF] = u;
+    i32[bi + BI.NODE_N] = n;
+    if (e && m > 0) {
+      F.set(e.rest.subarray(0, m), p);
+      U.set(e.broken.subarray(0, m), q);
+      i32[bi + BI.BEAM_F64_OFF] = p;
+      i32[bi + BI.BEAM_U8_OFF] = q;
+      i32[bi + BI.BEAM_N] = m;
+      p += m; q += m;
+    }
+    this._nodeF64 = p;
+    this._nodeU8 = q;
+    return true;
+  }
+
+  // ── SHOTS ────────────────────────────────────────────────────────────────────────────────────────────────
+  _packShots(v, f) {
+    const list = f.bullets || EMPTY;
+    const shots = this.ids.shots;
+    const ents = this.ids.entities;
+    const dict = this.dict;
+    const cap = this.layout.cap.shots;
+    const n = Math.min(list.length, cap);
+    const f64 = v.shotF64, i32 = v.shotI32;
+    const ship = f.ship;
+    for (let i = 0; i < n; i++) {
+      const bl = list[i];
+      const b = i * SHOT.stride.f64, bi = i * SHOT.stride.i32;
+      if (!bl) { i32[bi + SI.SLOT] = -1; continue; }
+      const s = shots.slotOf(bl);
+      f64[b + SF.X] = raw(bl.x);
+      f64[b + SF.Y] = raw(bl.y);
+      f64[b + SF.VX] = raw(bl.vx);
+      f64[b + SF.VY] = raw(bl.vy);
+      f64[b + SF.VZ] = raw(bl.vz);
+      f64[b + SF.Z] = raw(bl.z);
+      f64[b + SF.IVX] = raw(bl.ivx);
+      f64[b + SF.IVY] = raw(bl.ivy);
+      f64[b + SF.IVZ] = raw(bl.ivz);
+      f64[b + SF.LIFE] = raw(bl.life);
+      f64[b + SF.AGE] = raw(bl.age);
+      f64[b + SF.BORN_SIM] = raw(bl.bornSim);
+      i32[bi + SI.SLOT] = s;
+      i32[bi + SI.GEN] = shots.gen(s);
+      i32[bi + SI.VFX_KEY] = dict.code(bl.vfxKey);
+      i32[bi + SI.TYPE] = dict.code(bl.type);
+      i32[bi + SI.WEAPON_SIZE] = dict.code(bl.weaponSize);
+      let fl = 0;
+      if (bl.forceCanvas) fl |= SHOT_FLAG.FORCE_CANVAS;
+      const src = bl.source;
+      if (src && src === ship) fl |= SHOT_FLAG.PLAYER;
+      i32[bi + SI.FLAGS] = fl;
+      const ss = src ? ents.peek(src) : -1;
+      i32[bi + SI.SOURCE_SLOT] = ss;
+      i32[bi + SI.SOURCE_GEN] = ss >= 0 ? ents.gen(ss) : 0;
+      i32[bi + SI.CLOCK] = dict.code(bl.clock);
+    }
+    v.head[HEAD.N_SHOTS] = n;
+    this.stats.shots = n;
+    if (list.length > cap) this._requestGrow('shots', list.length * 2);
+  }
+
+  // ── STATIONS, CORES, WORLD, TURRETS ─────────────────────────────────────────────────────────────────────
+  _packStations(v, f) {
+    const list = this._lists[LIST.STATIONS];
+    const ents = this.ids.entities;
+    const hides = f.fog ? f.hides : null;
+    const n = Math.min(list.length, this.layout.cap.stations);
+    const f64 = v.staF64, i32 = v.staI32;
+    for (let i = 0; i < n; i++) {
+      const st = list[i];
+      const b = i * STATION.stride.f64, bi = i * STATION.stride.i32;
+      if (!st) { i32[bi + STI.SLOT] = -1; continue; }
+      const s = ents.slotOf(st);
+      f64[b + STF.X] = raw(st.x);
+      f64[b + STF.Y] = raw(st.y);
+      f64[b + STF.ANGLE] = raw(st.angle);
+      f64[b + STF.R] = raw(st.r);
+      f64[b + STF.BASE_R] = raw(st.baseR);
+      let fl = 0;
+      if (st._destroyed3D) fl |= 1;
+      if (hides && hides(st)) fl |= 2;
+      if (st.ringPort) fl |= 4;
+      if (st.isPirate) fl |= 8;
+      i32[bi + STI.SLOT] = s;
+      i32[bi + STI.GEN] = ents.gen(s);
+      i32[bi + STI.FLAGS] = fl;
+    }
+    v.head[HEAD.N_STATIONS] = n;
+    this.stats.stations = n;
+  }
+
+  _packCores(v, f) {
+    const list = f.reactorCores || EMPTY;
+    const ents = this.ids.entities;
+    const n = Math.min(list.length, this.layout.cap.cores);
+    const f64 = v.coreF64, i32 = v.coreI32;
+    for (let i = 0; i < n; i++) {
+      const c = list[i];
+      const b = i * CORE.stride.f64, bi = i * CORE.stride.i32;
+      const host = c ? c.host : null;
+      const hs = host ? ents.peek(host) : -1;
+      i32[bi + CI.HOST_SLOT] = hs;
+      i32[bi + CI.HOST_GEN] = hs >= 0 ? ents.gen(hs) : 0;
+      const hc = host ? host.reactorCores : null;
+      i32[bi + CI.INDEX] = Array.isArray(hc) ? hc.indexOf(c) : -1;
+      i32[bi + CI.STATE] = c ? this.dict.code(c.state) : -1;
+      i32[bi + CI.DEAD_COUNT] = c ? num(c.deadCount) | 0 : 0;
+      i32[bi + CI.ELSEWHERE] = c ? num(c.elsewhereCount) | 0 : 0;
+      f64[b + CF.INTEGRITY] = c ? raw(c.integrity) : NaN;
+      f64[b + CF.MELT_REMAIN] = c ? raw(c.meltdownRemaining) : NaN;
+      f64[b + CF.MELT_DUR] = c ? raw(c.meltdownDuration) : NaN;
+      f64[b + CF.LAST_X] = c ? raw(c.lastX) : NaN;
+      f64[b + CF.LAST_Y] = c ? raw(c.lastY) : NaN;
+    }
+    v.head[HEAD.N_CORES] = n;
+    this.stats.cores = n;
+    if (list.length > this.layout.cap.cores) this._requestGrow('cores', list.length * 2);
+  }
+
+  _packWorld(v, f) {
+    const w = v.world;
+    const sun = f.sun;
+    w[WORLD.SUN_X] = sun ? raw(sun.x) : NaN;
+    w[WORLD.SUN_Y] = sun ? raw(sun.y) : NaN;
+    w[WORLD.SUN_R] = sun ? raw(sun.r) : NaN;
+    w[WORLD.SKY_ZONE] = this.dict.code(f.skyZone);
+    const wp = f.warp;
+    w[WORLD.WARP_STATE] = wp ? this.dict.code(wp.state) : -1;
+    w[WORLD.WARP_CHARGE] = wp ? raw(wp.charge) : NaN;
+    w[WORLD.WARP_CHARGE_TIME] = wp ? raw(wp.chargeTime) : NaN;
+    w[WORLD.WARP_GEAR] = wp ? raw(wp.gear) : NaN;
+    w[WORLD.WARP_DIR] = wp ? raw(wp.dir) : NaN;
+    w[WORLD.WARP_FLYBY] = wp ? raw(wp.flybyFactor) : NaN;
+    w[WORLD.WARP_CRUISE] = wp ? raw(wp.cruise) : NaN;
+    w[WORLD.WARP_SPEED] = wp ? raw(wp.speed) : NaN;
+    const ramp = wp ? wp.exitRamp : null;
+    w[WORLD.WARP_EXIT_ACTIVE] = ramp ? (ramp.active ? 1 : 0) : -1;
+    w[WORLD.WARP_EXIT_AGE] = ramp ? raw(ramp.age) : NaN;
+    w[WORLD.WARP_EXIT_TBRAKE] = ramp ? raw(ramp.tBrake) : NaN;
+    w[WORLD.WARP_TARGET_BODY] = -1;   // AGENT: RW-11c — indeks planety warp.targetBody na liście planet
+    const bo = f.boost;
+    w[WORLD.BOOST_STATE] = bo ? this.dict.code(bo.state) : -1;
+  }
+
+  _packTurrets(v, f) {
+    const of = f.turretsOf;
+    const list = this._lists[LIST.SEEN_COLD];
+    const ents = this.ids.entities;
+    const dict = this.dict;
+    const cap = this.layout.cap.turrets;
+    const f64 = v.turF64, i32 = v.turI32;
+    let n = 0, need = 0;
+    if (of) {
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        const recs = e ? of(e) : null;
+        if (!recs || !recs.length) continue;
+        const s = ents.peek(e);
+        const gen = s >= 0 ? ents.gen(s) : 0;
+        for (let j = 0; j < recs.length; j++) {
+          need++;
+          if (n >= cap) continue;
+          const r = recs[j];
+          const b = n * TURRET.stride.f64, bi = n * TURRET.stride.i32;
+          i32[bi + TI.ENT_SLOT] = s;
+          i32[bi + TI.ENT_GEN] = gen;
+          i32[bi + TI.KEY] = dict.code(r.key);
+          i32[bi + TI.UID] = dict.code(r.uid);
+          i32[bi + TI.WEAPON] = dict.code(r.weaponId);
+          i32[bi + TI.FX_KEY] = dict.code(r.fxKey);
+          f64[b + TF.WX] = raw(r.wx);
+          f64[b + TF.WY] = raw(r.wy);
+          f64[b + TF.ANG] = raw(r.ang);
+          f64[b + TF.SCALE] = raw(r.scale);
+          f64[b + TF.RECOIL] = raw(r.recoil);
+          f64[b + TF.SHAKE] = raw(r.shake);
+          const spec = r.spec;
+          f64[b + TF.R] = spec ? raw(spec.r) : NaN;
+          const rs = r.state;
+          f64[b + TF.HOUSING] = rs ? raw(rs.housing) : NaN;
+          f64[b + TF.BARREL] = rs ? raw(rs.barrel) : NaN;
+          f64[b + TF.FLASH] = rs ? raw(rs.flash) : NaN;
+          n++;
+        }
+      }
+    }
+    v.head[HEAD.N_TURRETS] = n;
+    this.stats.turrets = n;
+    if (need > cap) this._requestGrow('turrets', need * 2);
+  }
+}
+
+function grow32(a, n) {
+  const b = new Int32Array(n);
+  b.set(a);
+  return b;
+}
+
+function copyInto(src, out) {
+  for (let i = 0; i < src.length; i++) out.push(src[i]);
+}
+
+function fogInto(src, out, hides) {
+  if (!hides) { copyInto(src, out); return; }
+  for (let i = 0; i < src.length; i++) {
+    const e = src[i];
+    if (e && !hides(e)) out.push(e);
+  }
+}
+
+function writeCull(h, c) {
+  h[HEAD.CULL_X] = c.x; h[HEAD.CULL_Y] = c.y;
+  h[HEAD.CULL_HALF_W] = c.halfW; h[HEAD.CULL_HALF_H] = c.halfH;
+  h[HEAD.CULL_DRAW_HALF_W] = c.drawHalfW; h[HEAD.CULL_DRAW_HALF_H] = c.drawHalfH;
+  h[HEAD.FLAGS] = h[HEAD.FLAGS] | HEAD_FLAG.CULL_SET;
+}
+
+/** Ciało w pudle rozgrzania (pudło + zasięg sprite'a kadłuba). Bez pudła — zawsze. */
+function inCullBox(cull, x, y, hull) {
+  if (!cull) return true;
+  const sw = num(hull.srcWidth), sh = num(hull.srcHeight);
+  const ext = (sw > sh ? sw : sh) * Math.max(1, num(hull.scale));
+  return Math.abs(x - cull.x) <= cull.halfW + ext && Math.abs(y - cull.y) <= cull.halfH + ext;
+}

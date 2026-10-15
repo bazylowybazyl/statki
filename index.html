@@ -1271,6 +1271,9 @@
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
     import { HallDust, HALL_DUST_TUNE } from "./src/3d/gasField/hallDust.js";
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
+    // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
+    import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
+    import { createRenderIds } from "./src/render/renderIds.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
     // Nadproża bram K-7 (zestaw FG hali) nad okrętem w bramie: wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną.
@@ -28107,6 +28110,135 @@
     const _hexCullInfo = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
     const _hexCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
 
+    // Pudło cullingu kadłubów z kamery klatki: halfW/H = pudło rozgrzania (OVERSCAN × pół kadru), drawHalfW/H = kadr;
+    // podzielony ekran — pudło obejmuje obie kamery; kamera 3D — rzut bryły widzenia na płaszczyznę gry.
+    function fillHexCullInfo(cam, out, box3d) {
+      const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const camX = Number(cam?.x) || 0;
+      const camY = Number(cam?.y) || 0;
+      // In split screen, expand cull region to cover both cameras
+      const cam2X = (splitScreenMode && camera2) ? Number(camera2.x) || 0 : camX;
+      const cam2Y = (splitScreenMode && camera2) ? Number(camera2.y) || 0 : camY;
+      const cullCamX = (camX + cam2X) / 2;
+      const cullCamY = (camY + cam2Y) / 2;
+      const cullExtra = (splitScreenMode && camera2) ? Math.hypot(camX - cam2X, camY - cam2Y) / 2 : 0;
+      const viewHalfW = (W * 0.5) / zoomNow + cullExtra;
+      const viewHalfH = (H * 0.5) / zoomNow + cullExtra;
+
+      // --- OVERSCAN = PUDLO ROZGRZANIA ---
+      // Mnoznik POLOWY wymiarow widoku, wiec 3.0 daje pudlo o DZIEWIECIU polach
+      // ekranu. W nim hexShips3D tylko przygotowuje meshe zawczasu (emitery
+      // swiatel drogowych, ciaglosc dysz). Aktualizacja i draw call ida dla
+      // encji w pudle RYSOWANIA (drawHalfW/H = kadr; margines i realny rozmiar
+      // sprite'a dolicza isEntityInDrawBox) — meshe kadlubow maja
+      // `frustumCulled = false`, wiec bez tego ~8/9 wywolan trafialo poza kadr.
+      // Strojenie na zywo: window.DevTuning.cullOverscan
+      const _overscanTune = Number(window.DevTuning?.cullOverscan);
+      const OVERSCAN = Number.isFinite(_overscanTune) && _overscanTune > 0 ? _overscanTune : 3.0;
+      const cullHalfW = viewHalfW * OVERSCAN;
+      const cullHalfH = viewHalfH * OVERSCAN;
+
+      // Ring segments are now rendered as 3D SynthCity buildings/infrastructure.
+      // Old hex segment rendering is disabled — segments still exist for collision only.
+
+      out.x = cullCamX;
+      out.y = cullCamY;
+      out.halfW = cullHalfW;
+      out.halfH = cullHalfH;
+      out.drawHalfW = viewHalfW;
+      out.drawHalfH = viewHalfH;
+      if (View3D.active) {
+        // Kamera 3D: pudło = rzut bryły widzenia na płaszczyznę gry do zasięgu rysowania
+        // (patrzymy wzdłuż płaszczyzny — kadr sięga daleko przed statek).
+        const reach3d = clamp((Number(Game3D.rig.dist) || 8000) * 14, 40000, 220000);
+        const b3 = View3D.groundBox(reach3d, box3d);
+        out.x = b3.x;
+        out.y = b3.y;
+        out.drawHalfW = b3.halfW;
+        out.drawHalfH = b3.halfH;
+        out.halfW = b3.halfW * 1.25 + 4000;
+        out.halfH = b3.halfH * 1.25 + 4000;
+      }
+      return out;
+    }
+
+    // SZEW RENDERU (docs/PLAN-render-worker.md § 3.2, RW-10): `?szew=inline` pakuje w render() stronę migawki klatki
+    // (src/render/snapshotPack.js) — faza 1 po kamerze, przed aktualizacjami 3D; faza 2 po kadłubach (rekordy wież,
+    // wejście pyłu hal) i publikacja. Bez flagi (`off`) — nic. Pakowanie nie zmienia stanu gry (własne listy i pudło
+    // cullingu). Sloty encji, ciał, pocisków i zasobów: RenderSlots. Diagnostyka: window.RenderSnapshot
+    // (packer.stats, packer.hist, packer.pageReport()).
+    const SZEW_MODE = (() => {
+      try { return new URLSearchParams(location.search).get('szew') || 'off'; } catch (_) { return 'off'; }
+    })();
+    const RenderSlots = createRenderIds();
+    const renderSnapshot = SZEW_MODE === 'inline' ? new SnapshotPacker({ ids: RenderSlots }) : null;
+    const _snapFrame = createSnapshotFrame();
+    const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
+    const _snapCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
+    const _snapHides = (e) => SensorSystem.hides(e);
+    const _snapCoresOf = (lists) => ReactorGame.cores(lists);
+    const _snapTurretsOf = (e) => Turret2D.recordsFor(e);
+    window.RenderSnapshot = { mode: SZEW_MODE, packer: renderSnapshot, slots: RenderSlots };
+
+    function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY) {
+      const f = _snapFrame;
+      f.frameId = renderFrameId;
+      f.frameDt = frameDt;
+      f.alpha = alpha;
+      f.physDt = PHYS_DT;
+      f.paused = !!PAUSED;
+      f.worldFrozen = !!StoryGame.worldFrozen;
+      f.split = !!splitScreenMode;
+      f.view3d = !!View3D.active;
+      f.fog = !!SensorSystem.fogEnabled;
+      f.skipWorld3D = !!(CICDisplay.active && ship);
+      f.sim = SimClock.sim;
+      f.simRender = SimClock.render;
+      f.simRenderSim = SimClock.renderSim;
+      f.vfxTime = vfxTime;
+      f.bridgeTime = bridgeSimTime;
+      f.wall = performance.now();
+      f.wallOrigin = performance.timeOrigin;
+      f.W = W;
+      f.H = H;
+      f.dpr = window.devicePixelRatio || 1;
+      f.cam = cam;
+      f.camNoShake = camNoShake;
+      f.shakePxX = shakePxX;
+      f.shakePxY = shakePxY;
+      f.cam2 = window.__splitCamera2;
+      f.cull = fillHexCullInfo(cam, _snapCull, _snapCullBox3D);
+      f.interpPose = window.__interpShipPose;
+      f.ship = ship;
+      f.p2 = player2Ship;
+      f.npcs = npcs;
+      f.wrecks = wrecks;
+      f.coldWrecks = coldWrecks;
+      f.coldRenderList = coldWreckSystem.renderList;
+      f.coldNearExtras = coldWreckSystem.config.nearExtras !== false;
+      f.stations = stations;
+      f.bullets = window.bullets;
+      f.hides = _snapHides;
+      f.coresOf = _snapCoresOf;
+      f.sun = SUN;
+      f.skyZone = zoneState.current?.id || null;
+      f.warp = warp;
+      f.boost = boost;
+      f.turretsOf = null;
+      f.hall = null;
+      // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)
+      f.lastConsumed = renderSnapshot.k;
+      renderSnapshot.begin(f);
+    }
+
+    function packRenderSnapshotFinish() {
+      const f = _snapFrame;
+      f.cull = _hexCullInfo;
+      f.turretsOf = _snapTurretsOf;
+      f.hall = HallDust.input;
+      renderSnapshot.finish(f);
+    }
+
     function getViewportForCamera(cam) {
       _vpScratch.w = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
       _vpScratch.h = Math.max(1, Number(cam?.viewportH) || _wtsVpH || H);
@@ -28961,6 +29093,8 @@
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
         ? { x: camera2.x, y: camera2.y, zoom: camera2.zoom }
         : null;
+      // Szew renderu (RW-10, ?szew=inline): faza 1 migawki — po kamerze, przed aktualizacjami 3D.
+      if (renderSnapshot) packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY);
 
       if (renderDbgEnabled) {
         RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
@@ -29085,51 +29219,8 @@
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (updateHexShips3D) {
         const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
-        const camX = Number(cam?.x) || 0;
-        const camY = Number(cam?.y) || 0;
-        // In split screen, expand cull region to cover both cameras
-        const cam2X = (splitScreenMode && camera2) ? Number(camera2.x) || 0 : camX;
-        const cam2Y = (splitScreenMode && camera2) ? Number(camera2.y) || 0 : camY;
-        const cullCamX = (camX + cam2X) / 2;
-        const cullCamY = (camY + cam2Y) / 2;
-        const cullExtra = (splitScreenMode && camera2) ? Math.hypot(camX - cam2X, camY - cam2Y) / 2 : 0;
-        const viewHalfW = (W * 0.5) / zoomNow + cullExtra;
-        const viewHalfH = (H * 0.5) / zoomNow + cullExtra;
-
-        // --- OVERSCAN = PUDLO ROZGRZANIA ---
-        // Mnoznik POLOWY wymiarow widoku, wiec 3.0 daje pudlo o DZIEWIECIU polach
-        // ekranu. W nim hexShips3D tylko przygotowuje meshe zawczasu (emitery
-        // swiatel drogowych, ciaglosc dysz). Aktualizacja i draw call ida dla
-        // encji w pudle RYSOWANIA (drawHalfW/H = kadr; margines i realny rozmiar
-        // sprite'a dolicza isEntityInDrawBox) — meshe kadlubow maja
-        // `frustumCulled = false`, wiec bez tego ~8/9 wywolan trafialo poza kadr.
-        // Strojenie na zywo: window.DevTuning.cullOverscan
-        const _overscanTune = Number(window.DevTuning?.cullOverscan);
-        const OVERSCAN = Number.isFinite(_overscanTune) && _overscanTune > 0 ? _overscanTune : 3.0;
-        const cullHalfW = viewHalfW * OVERSCAN;
-        const cullHalfH = viewHalfH * OVERSCAN;
-
-        // Ring segments are now rendered as 3D SynthCity buildings/infrastructure.
-        // Old hex segment rendering is disabled — segments still exist for collision only.
-
-        _hexCullInfo.x = cullCamX;
-        _hexCullInfo.y = cullCamY;
-        _hexCullInfo.halfW = cullHalfW;
-        _hexCullInfo.halfH = cullHalfH;
-        _hexCullInfo.drawHalfW = viewHalfW;
-        _hexCullInfo.drawHalfH = viewHalfH;
-        if (View3D.active) {
-          // Kamera 3D: pudło = rzut bryły widzenia na płaszczyznę gry do zasięgu rysowania
-          // (patrzymy wzdłuż płaszczyzny — kadr sięga daleko przed statek).
-          const reach3d = clamp((Number(Game3D.rig.dist) || 8000) * 14, 40000, 220000);
-          const box3d = View3D.groundBox(reach3d, _hexCullBox3D);
-          _hexCullInfo.x = box3d.x;
-          _hexCullInfo.y = box3d.y;
-          _hexCullInfo.drawHalfW = box3d.halfW;
-          _hexCullInfo.drawHalfH = box3d.halfH;
-          _hexCullInfo.halfW = box3d.halfW * 1.25 + 4000;
-          _hexCullInfo.halfH = box3d.halfH * 1.25 + 4000;
-        }
+        // Pudło rozgrzania i kadr (fillHexCullInfo — ten sam wzór liczy migawka renderu, RW-10).
+        fillHexCullInfo(cam, _hexCullInfo, _hexCullBox3D);
         // Mostki: dławienie dysz i gaśnięcie świateł hulków (czyta je
         // EngineVfxSystem / ShipLights3D w updateHexShips3D), okna i wyrzut.
         applyBridgeHulkVisuals(renderSeen, bridgeSimTime);
@@ -29157,6 +29248,8 @@
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateHexShips3D', render3dHexMs);
+      // Szew renderu (RW-10): faza 2 migawki — pudło cullingu, rekordy wież tej klatki, pył hal; publikacja strony.
+      if (renderSnapshot) packRenderSnapshotFinish();
 
       // NOWOSC: TARCZA 3D
       tRender3dSub = performance.now();

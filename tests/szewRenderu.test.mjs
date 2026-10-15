@@ -14,7 +14,7 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 100,
+  'index:aktualizacja': 102, // 2026-10-15 RW-10: migawka (?szew=inline) czyta rekordy wież Turret2D.recordsFor (do RW-26 — wieże po stronie gry) i wejście pyłu hal HallDust.input (do RW-11c — blok HALL z gry)
   'index:dane': 31,
   'index:konfiguracja': 169,
   'index:zapytanie': 76,
