@@ -18,6 +18,7 @@
 
 import { EventRingReader, EventRingWriter, createEventRingBuffer } from './eventRing.js';
 import { createRenderIds, RenderIdSpace } from './renderIds.js';
+import { RenderSlots } from './renderSlots.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
 import { CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
@@ -137,6 +138,9 @@ export class RenderCommandWriter {
     this.ring = new EventRingWriter(this.buffer, { shared, onGrow: (b) => { this.buffer = b; if (this.onGrow) this.onGrow(b); } });
     this.onGrow = onGrow;
     this.ids = ids || createRenderIds();
+    // Cudze sloty (gra: RenderSlots — wspólne z migawką i kanałem zwrotnym, src/render/renderSlots.js) mają jeden cykl
+    // mark & sweep na klatkę w pętli gry; pisarz robi go sam tylko na własnych (testy, dema).
+    this.ownsIds = !ids;
     // Klucze stanu ładowania (stan efektu na dziale): obiekt stanu gry → slot; długie trzymanie (przerwy między
     // ładowaniami — stan łuków przeżywa je jak dawniej na obiekcie gry).
     this.chargeKeys = new RenderIdSpace('charge', { capacity: 16, retain: 3600 });
@@ -157,16 +161,20 @@ export class RenderCommandWriter {
 
   _beginIds() {
     const s = this.ids;
-    if (s.entities) s.entities.begin();
-    if (s.shots) s.shots.begin();
+    if (this.ownsIds) {
+      if (s.entities) s.entities.begin();
+      if (s.shots) s.shots.begin();
+    }
     this.chargeKeys.begin();
   }
 
-  /** Koniec klatki renderu: zwolnienie slotów obiektów bez odwołań, numer klatki rekordów + 1. */
+  /** Koniec klatki renderu: zwolnienie slotów bez odwołań (własne przestrzenie i klucze ładowania), numer klatki + 1. */
   endFrame() {
     const s = this.ids;
-    if (s.entities) s.entities.end();
-    if (s.shots) s.shots.end();
+    if (this.ownsIds) {
+      if (s.entities) s.entities.end();
+      if (s.shots) s.shots.end();
+    }
     this.chargeKeys.end();
     this.frame++;
     this._beginIds();
@@ -683,8 +691,8 @@ function idSpaceLookup(space) {
  * (render rejestruje obsługę typów: reader.on(RC.X, fn)). `ready` — render gotowy na efekty (inline: haczyk renderu,
  * worker: flaga z kanału zwrotnego); gra bramkuje nim kosztowne przygotowania zdarzeń (bramki kadru, cooldown).
  */
-export function createRenderCommands({ mode = 'inline', capacity = 4096 } = {}) {
-  const writer = new RenderCommandWriter({ capacity, shared: mode === 'worker' });
+export function createRenderCommands({ mode = 'inline', capacity = 4096, ids = null } = {}) {
+  const writer = new RenderCommandWriter({ capacity, shared: mode === 'worker', ids });
   const api = {
     mode,
     writer,
@@ -714,7 +722,7 @@ export function createRenderCommands({ mode = 'inline', capacity = 4096 } = {}) 
   return api;
 }
 
-/** Strumień rozkazów gry (jeden na stronę). */
-export const RenderCommands = createRenderCommands();
+/** Strumień rozkazów gry (jeden na stronę) — na wspólnych slotach renderu (cykl klatki: pętla gry). */
+export const RenderCommands = createRenderCommands({ ids: RenderSlots });
 
 if (typeof window !== 'undefined') window.RenderCommands = RenderCommands;

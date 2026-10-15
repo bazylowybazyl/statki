@@ -1335,8 +1335,11 @@ Kolizje: `index.html` (pętla pocisków, PD) — duże pole, jedno krótkie pode
 zrzutami `galeria`, `kosmos`, `rakiety` i `WeaponFx.stats` po pauzie obciążenia):** `src/render/renderCommands.js` —
 kody typów `RC`, układ pól rekordów (obiekty `SHOT`, `IMPACT`, `KERF`, `PIERCE`, `FLAK`, `BLAST`, `CHARGE`, `PD_LASER`,
 `HEX` — wspólne dla kodera i dekodera), pisarz `RenderCommandWriter` (pierścień `EventRingWriter` z RW-04; wartości f64,
-encje i pociski (slot, gen) z `createRenderIds` (własna instancja — przy RW-10 / RW-40 podmienić na przestrzenie migawki;
-`endFrame()` w `render()` zwalnia sloty bez odwołań), napisy w tablicy z rekordem STR przy pierwszym użyciu, nośnik =
+encje i pociski (slot, gen) ze WSPÓLNYCH slotów renderu `RenderSlots` (`src/render/renderSlots.js` z RW-10, kopia
+1:1 z gałęzi `rw-migawka`, commit 6d08b2ce — te same sloty co migawka i kanał zwrotny; cykl mark & sweep RAZ na klatkę
+w `loop()`: `beginRenderSlotsFrame()` przed krokami fizyki, `endRenderSlotsFrame()` po `render()`; `endFrame()` strumienia
+w `render()` zwalnia już tylko klucze ładowania i podbija numer klatki rekordów; `createRenderCommands({ ids })` — bez
+`ids` pisarz ma własne przestrzenie i cykl, dema i testy), napisy w tablicy z rekordem STR przy pierwszym użyciu, nośnik =
 blok `ActiveCarrier` (5 słów) albo argument), czytelnik `RenderCommandReader` (`drain(maxFrame)`, obsługa typów
 `on(type, fn)`, rozwiązanie slotów hakami), `createRenderCommands({ mode })` — `inline`: dyspozycja zaraz po zatwierdzeniu
 (obraz bit w bit z dawnymi wywołaniami), singleton `RenderCommands` (`ready`, `projectilesReady`, `endFrame`).

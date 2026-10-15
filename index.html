@@ -1378,6 +1378,7 @@
     // RW-21 (docs/PLAN-render-worker.md § 3.3): zdarzenia efektów broni idą rekordami strumienia rozkazów (tryb inline —
     // dyspozycja zaraz po zapisie); dekoder renderu woła WeaponFx.
     import { RenderCommands } from "./src/render/renderCommands.js";
+    import { beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // RW-30: wstrząsy kamery po stronie gry — wstrząs strzałów i kopnięcie kadru z rekordu SHOT, żądania wstrząsu z renderu.
     import { createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak, ShotFeel } from "./src/game/cameraShakes.js";
     import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
@@ -27965,6 +27966,9 @@
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
       stepDynamicResolution(now);
+      // Sloty renderu (src/render/renderSlots.js): jeden cykl mark & sweep na klatkę — rozkazy z fizyki, migawka i RET
+      // w tej samej epoce; koniec po renderze.
+      beginRenderSlotsFrame();
       // Fabuła: sceny, lot kamery i podsumowanie zamrażają świat jak pauza (kamera i UI biegną dalej).
       if (PAUSED || StoryGame.worldFrozen) {
         saveState();
@@ -27981,6 +27985,7 @@
         // upływu czasu — inaczej świat mgły z 0 kół do pierwszego kroku fizyki i kadr przy statku jest szary.
         if (StoryGame.worldFrozen) stepSensors(0);
         render(0, frame);
+        endRenderSlotsFrame();
         updateStoryOverlay();
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
@@ -28116,6 +28121,7 @@
       StoryGame.frame(frame);
       stepSupportWarp(frame);
       render(alpha, frame);
+      endRenderSlotsFrame();
       updateStoryOverlay();
       PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsFxMs);
 

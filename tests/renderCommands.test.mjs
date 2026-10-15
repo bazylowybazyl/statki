@@ -297,3 +297,29 @@ test('RW-23: rekordy RKT_* — adapter gry → reżyser renderu z rakietą z pul
     ['detonate', pool[0], 5, 6, null, false], ['wake', torpedo, 0.02], ['update', 1 / 60]
   ]);
 });
+
+test('wspólne sloty renderu (RW-10): strumień gry na RenderSlots, cykl klatki robi pętla gry, nie pisarz', async () => {
+  const { RenderCommands } = await import('../src/render/renderCommands.js');
+  const { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } = await import('../src/render/renderSlots.js');
+  assert.equal(RenderCommands.writer.ids, RenderSlots, 'te same sloty co migawka i kanał zwrotny');
+  assert.equal(RenderCommands.writer.ownsIds, false);
+  const e = { name: 'okręt' };
+  beginRenderSlotsFrame();
+  const s = RenderSlots.entities.slotOf(e);
+  const g = RenderSlots.entities.gen(s);
+  RenderCommands.endFrame();
+  RenderCommands.endFrame();
+  assert.equal(RenderSlots.entities.isLive(s, g), true, 'endFrame strumienia nie zwalnia wspólnych slotów');
+  endRenderSlotsFrame();
+  beginRenderSlotsFrame();
+  endRenderSlotsFrame();
+  assert.equal(RenderSlots.entities.isLive(s, g), false, 'slot bez odwołania wraca w cyklu pętli');
+  // Własne sloty (dema, testy): pisarz robi cykl sam.
+  const own = createRenderCommands({ mode: 'inline' });
+  assert.equal(own.writer.ownsIds, true);
+  const s2 = own.writer.ids.entities.slotOf(e);
+  const g2 = own.writer.ids.entities.gen(s2);
+  own.endFrame();
+  own.endFrame();
+  assert.equal(own.writer.ids.entities.isLive(s2, g2), false);
+});
