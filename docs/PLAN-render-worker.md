@@ -1344,8 +1344,7 @@ Pliki: nowy `src/game/story/pirateDryDockState.js` (stan 39 kawałków, `gone`, 
 `tests/worldBodies*.test.mjs`; `scripts/webgpu/suchy-dok-gra.mjs` (usunięty 2026-10-11 — dok poza grą; bazę mierzy `baza-gra.mjs`), `zniszczenia-gra.mjs --final` bez zmiany
 zachowania; pipeline'y synchroniczne 0. Zależności: RW-22. Kolizje: misja 2 (`storyGame.js`, blok FABUŁA).
 
-**Stan (2026-10-15, tor `rw-swiat`, commit „RW-24 (w toku): baza piratów…”) — CZEKA NA WERYFIKACJĘ z harnessu
-(pauza obciążenia orkiestratora; bez fast-forwardu do main).** Dok wypadł z gry — zadanie zrobione dla bazy piratów.
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Dok wypadł z gry — zadanie zrobione dla bazy piratów.
 Audyt: rozgrywkę liczył render w `src/3d/pirateBaseGame.js` (§ 2.6 p. 19–21) — stan kawałków (`chunkState` bryły:
 broken / hidden), zbiór `_dockGone` przebudowywany TYLKO w `updatePirateBase3D` (render, stał we mgle), wynik
 `breakPirateBaseChunk` / `ramPirateBaseChunk` z bryły, ciała świata z obiektu 3D (`createPirateBaseSites(…, base)`,
@@ -1362,9 +1361,11 @@ rockCollapse, detach — rekordy PBASE_* / ROCK_COLLAPSE z § 3.3) + stan klatki
 pęknięcia — `isChunkGone` gry = broken || hidden). Obraz nie importuje już `worldBodies` ani `pirateBaseBodies`.
 Skrypty narzędzi bez `_base3d` (`window.PirateBase`: broken, gone, hide, view). Zmiany zachowania (zamierzone):
 `_dockGone` aktualny w kroku fizyki zamiast ≤ 1 klatkę później i także we mgle. Testy: nowy
-`tests/pirateBaseWorld.test.mjs`, `pirateBase`, `pirateBaseIntegrity` — zielone. Do zrobienia przy weryfikacji:
-`storyMission`, `worldBodies*`, `pirateRock`, pełne testy, build, `baza-gra.mjs`, `zniszczenia-gra.mjs --final`,
-`planetoida-gra.mjs` (pipeline'y synchroniczne 0).
+`tests/pirateBaseWorld.test.mjs`, `pirateBase`, `pirateBaseIntegrity` — zielone. Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `baza-gra.mjs`: taran rzędu, alarm, drony, reakcja łańcuchowa, rozpad habitatu do 0 — pipeline'y bazy
+synchroniczne 0; `zniszczenia-gra.mjs --final`: progi, wypiek w workerze, rozpad i implozja, 132 odłamy, skóry
+synchroniczne 0; `planetoida-gra.mjs`: zawalenie i rozpad habitatu jak w `main` — 4 pipeline'y synchroniczne skały i
+osady (MoonSurface:hidalgo, PirateRockSmoke / Fire, PortBuildingBG) są TAKŻE w `main` (pomiar `main` tym samym
+narzędziem — do poprawy osobno, nie RW-24).
 
 **RW-25 Pas asteroid: świat pasa po stronie gry.**
 Pliki: nowy `src/game/beltWorld.js` (pole, cień pól, olbrzymy z `requestNear` z kamery i statku, `collideShip`,
@@ -1374,8 +1375,7 @@ deterministyczne), `minedRocks.js`, `index.html` (użycia z § 2.3), SDF olbrzym
 `tests/asteroidBeltField.test.mjs` i testy wydobycia; `scripts/webgpu/asteroidy-gra.mjs --kolizja`,
 `wydobycie-gra.mjs`; zrzuty `pas`, `wydobycie` bit w bit. Zależności: RW-04, RW-12. Kolizje: brak aktywnych.
 
-**Stan (2026-10-15, tor `rw-swiat`, commit „RW-25 (w toku): świat pasa…”) — CZEKA NA WERYFIKACJĘ z harnessu
-(pauza obciążenia; zrzuty „przed” przerwane — do powtórzenia z drzewa `main`).** Nowy `src/game/beltWorld.js`
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Nowy `src/game/beltWorld.js`
 (`createBeltWorld`, `window.__beltWorld`): pole, cień pól (`precompute` → sektory w SharedArrayBuffer, render
 `adoptSectors` — bez drugiego liczenia), olbrzymy (`frame(dt, paused, focus)` co klatkę z kamer i statków graczy —
 kolizje istnieją, zanim kadr dotknie pasa; SDF olbrzymów w SharedArrayBuffer — `src/game/sharedTyped.js`),
@@ -1392,8 +1392,11 @@ małych ciał (`applySmallBodyExclusions(beltWorld)`), komety (`penetrationOf` �
 budowa SDF olbrzymów rusza przy statku / kamerze w zasięgu 420 tys. j. także poza kadrem pasa (np. przy Marsie). Testy:
 nowy `tests/beltWorld.test.mjs` (replika = te same skały, cień pól, zegar, olbrzymy, wydobycie, strażnik obrazu) i
 poprawione strażniki źródeł — zielone; strażnik szwu po RW-01 (spadki: `asteroidBeltGiants`, `asteroidGiantBuilder`,
-`asteroidMining` 2 → 1, `asteroidMiningRig` 2 → 1; nowe czyste moduły klasy A). Do zrobienia: pełne testy, build,
-`asteroidy-gra.mjs --kolizja`, `wydobycie-gra.mjs` (+ `--rumowisko`, `--pary`), zrzuty `pas`, `wydobycie` bit w bit.
+`asteroidMining` 2 → 1, `asteroidMiningRig` 2 → 1; nowe czyste moduły klasy A). Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `asteroidy-gra.mjs --kolizja`: wszystkie sceny ok, kolizja z olbrzymem
+(droga 812 j. zamiast 5400, maks. wbicie −11,8 j.), pipeline'y synchroniczne 0; `wydobycie-gra.mjs` (+ `--rumowisko`,
+`--pary`): skała, laser, piła, ładunek, urobek, rumowisko (głazy, wiązka wyrywa), para z księżycem (przejęcie obu) —
+pipeline'y synchroniczne 0. Narzędzia czytają widok olbrzyma przez `giantView` albo dawne `e.view` (harness działa z
+`--root` na starszym drzewie).
 
 **RW-26 Wieżyczki, maskowanie i jasność wieżyczek po stronie gry.**
 Pliki: `src/vfx/turret2D.js` (`sync` w grze przed pakowaniem; odrzut po gnieździe strzelca zamiast szukania po
@@ -1412,7 +1415,7 @@ i lampki stanowisk; zegar migania), `src/3d/haloRing/haloRingGame.js` (obraz), `
 `hala-swiatla-gra.mjs --automat`; zrzuty `ziemia`, `ziemia-ring`, `mars`, `jowisz` bit w bit. Zależności: RW-12.
 Kolizje: misja 2 (fabuła K-7) — mała.
 
-**Stan (2026-10-15, tor `rw-swiat`, commit „RW-27 (w toku): świat ringów…”) — CZEKA NA WERYFIKACJĘ z harnessu.**
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.**
 Nowy `src/game/haloRingWorld.js` (`haloWorld`, `window.__haloWorld`): `entries` z kolidera, rejestru i automatu
 stanowisk; teren Marsa (ECUMENE) i Jowisza (Fable) od razu z `createEcumenePlan` / `createFablePlan` (ta sama funkcja
 co `archRing.terrainHeightAt` — test na 400 punktach), Ziemia — w trybie `inline` funkcja mapy CPU ringu obrazu po
@@ -1428,8 +1431,10 @@ czyta `haloWorld.entries`; hala z Blendera bez zmian. Zmiany zachowania (zamierz
 od startu (dawniej płaska płyta do zbudowania ringu przy kamerze), automat stanowisk także poza kadrem i w podzielonym
 ekranie, `lampLevel` hal ringów niezbudowanych. Testy: nowy `tests/haloRingWorld.test.mjs`, poprawione strażniki
 (`k7BerthService`, `haloRingGame`, `npcWorldCollisions`, `warpGhostCollisions`, `haloRingAsync`, `menuBackdrop`).
-Do zrobienia: pełne testy, build, `ring-kolizje-gra.mjs`, `hala-swiatla-gra.mjs --automat`, zrzuty `ziemia`,
-`ziemia-ring`, `mars`, `jowisz` bit w bit.
+Weryfikacja 2026-10-16 (wspólna dla RW-24/25/27): pełne testy Node — tylko porażki obecne w `main` (pył hal LF, shadowShafts „emitters”, 2 TODO rdzeni), `npm test` OK, build OK; zrzuty `rw25-przed` (harness tej gałęzi z `--root` na drzewie `main` be571e17) ↔ `rw25-po`: sesje ziemia, ziemia-ring, mars, jowisz, pas, wydobycie, piraci — bit w bit poza szumem `main` (`planeta-cien__fg` — stacja Wenus, ten sam rozjazd `main` ↔ `main`; `k7-hala` / pas / wydobycie maks 1–2). `ring-kolizje-gra.mjs`: teren w koliderze = ring (`colliderVsRing` 0), płyta i odpychanie od
+podłogi; `hala-swiatla-gra.mjs --automat`: postój → podpinanie → podpięte → awaryjne odpięcie przy 45 j/s, buchy pary,
+pipeline'y po starcie 0 (krok `release 3.0` narzędzia był nieosiągalny także w `main` — automat wraca do idle w tym
+samym kroku; kadr przesunięty na 2,9 s).
 
 **RW-28 Warp „Nurt”: harmonogram w czasie gry.**
 Pliki: nowy `src/game/warpTraffic.js` (rejestr przylotów i odlotów, limit 24, poza z czystych `arrivalFxPose` /
