@@ -19,7 +19,7 @@ globalThis.document = globalThis.document ?? {
   })
 };
 
-const { initRocketSystem3D } = await import('../src/effects3d/rocketSystem3D.js');
+const { initRocketSystem3D } = await import('../src/game/rockets/rocketSim.js');
 
 const system = initRocketSystem3D(new THREE.Scene());
 
@@ -135,7 +135,7 @@ test('zasięg rakiety liczy się z drogi własnej, nie z przelotu razem z wyrzut
 });
 
 // --- „Feel” rakiet (2026-09-30): wyrzut z komory, przechył, wachlarz salwy, kolejka komór, Hydra ---
-const { LAUNCH_ELEVATED, LAUNCH_RAIL } = await import('../src/effects3d/rocketSystem3D.js');
+const { LAUNCH_ELEVATED, LAUNCH_RAIL } = await import('../src/game/rockets/rocketSim.js');
 
 function stepFor(seconds, fn = null, dt = 1 / 60) {
   for (let t = 0; t < seconds; t += dt) {

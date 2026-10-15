@@ -1336,7 +1336,7 @@
     } from "./src/game/graphicsQuality.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
-    import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
+    import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
     // Rdzeń reaktora na belkach (src/game/reactorCore.js, klej reactorCoreGame.js) i jego wybuch
     // WebGPU (src/3d/reactorBlast/) z dema rdzen-webgpu — zastępuje dawny losowy wybuch reaktora
@@ -1715,9 +1715,9 @@
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
         const rocketFx = createRocketFx(Core3D);
+        initRocketSystem3D(Core3D.scene, { effects: rocketFx });
         // RW-30: wstrząs Supernowej — żądanie do gry (reguła dawnego efektu: silniejszy od siły bieżącego wstrząsu).
         if (rocketFx?.director) rocketFx.director.onShake = (mag, dur) => requestCameraShakePeak(camera, mag, dur);
-        initRocketSystem3D(Core3D.scene, { effects: rocketFx });
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.
         HallDust.setVaporSmoke(rocketFx.smoke);
         // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
@@ -11463,7 +11463,7 @@
               };
             }
             // Rakieta startuje z prędkością wyrzutni, silnik przejmuje ją potem
-            // stopniowo (src/effects3d/rocketSystem3D.js, układ rakiety). Salwa: zimny wyrzut
+            // stopniowo (src/game/rockets/rocketSim.js, układ rakiety). Salwa: zimny wyrzut
             // z kolejnych komór wyrzutni (kierunek wyrzutni = kąt strzału), myśliwiec — jedna
             // rakieta zrzucona z belki (LAUNCH_RAIL).
             const fighterShooter = window.getUnitKind?.(shooter) === 'fighter';
@@ -22529,7 +22529,7 @@
           _pdEnemyRocketBuffer.push(rb);
         }
       }
-      // Rakiety 3D (salwy gracza i NPC, src/effects3d/rocketSystem3D.js) — zastępniki w kształcie pocisku,
+      // Rakiety 3D (salwy gracza i NPC, src/game/rockets/rocketSim.js) — zastępniki w kształcie pocisku,
       // pozycja w czasie tego kroku; wroga rakieta we mgle wojny nie jest celem strony gracza.
       window.rocketSystem3D?.syncThreats(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock.sim, _pdHostileRocketVisible);
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];

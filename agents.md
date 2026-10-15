@@ -951,7 +951,7 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
 - Mapa ran (18-C) z mechaniką 18-B: `ctx.stamp` → `HullDamageMap.stampRecipe`. Kratery stempluje hak `HullBodies.onImpact` ze źródłem z `applyHexImpact(…, shard, pocisk, wariant)`: wejście `impact`, rykoszet `ricochet` (płytkie osmalenie Vulcana / Gatlinga, `hullDamageStamps.js`), wylot `exit`, zakleszczenie `stuck` (receptura `stuck` z encją kadłuba — duplikat z tej klatki pomijany). Pas rzazu przebicia stempluje gra (`HullDamageMap.stampKerf` w `applyBulletHullPass`, każdy krok w materiale, bez bramki kadru efektu), a receptura `kerf` w `WeaponFx.kerf` dostaje kadłub `null` — bez drugiego stempla.
 
 ### Rakiety (`src/3d/rockets/`, port WebGPU zadanie 19; opis `docs/webgpu/DEMO-RAKIETY.md` § Port w grze)
-- Lot, naprowadzanie, trafienia i obrażenia zostają w `src/effects3d/rocketSystem3D.js` (profil lotu z `weaponDef`, pula
+- Lot, naprowadzanie, trafienia i obrażenia zostają w GRZE — `src/game/rockets/rocketSim.js` (RW-23, 2026-10-15: dawniej `src/effects3d/rocketSystem3D.js`; bez three — `rocketMath.js` z wzorami three r183, wynik bit w bit; profil lotu z `weaponDef`, pula
   rakiet bez pól wyglądu); obraz z dema `rakiety-webgpu` to reżyser `RocketEffects` (`effects.js`) na zdarzeniach lotu
   (`onLaunch / onIgnite / onFly / prepareContact / onDetonate / update`) i krok efektów „rakiety” (`rocketFx.js`): dym compute
   (mapa gęstości, samocień, światło z siatki, siła śladu tylko w dymie > 0,8 s), płomienie, kadłubki (słońce × `sunVisibility`

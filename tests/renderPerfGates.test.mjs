@@ -337,7 +337,7 @@ test('pule rakiet (Core3D) i odłamków paneli: puste siatki są niewidoczne', (
   const smoke = readSrc('src/3d/rockets/smoke.js');
   assert.match(smoke, /this\.mesh\.visible = n > 1;/);
   assert.match(smoke, /this\.densityMesh\.visible = n > 1;/);
-  assert.doesNotMatch(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
+  assert.doesNotMatch(readSrc('src/game/rockets/rocketSim.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
   const shards = readSrc('src/vfx/panelShardManager.js');
   assert.match(shards, /if \(this\.activeCount === 0\) return;/);
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);

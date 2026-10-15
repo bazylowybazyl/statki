@@ -1,7 +1,7 @@
 // src/3d/rockets/effects.js
 //
 // REŻYSER EFEKTÓW RAKIET (port `Effects` z dema dema/rakiety-webgpu/effects.js do gry,
-// zadanie 19). Zdarzenia lotu z src/effects3d/rocketSystem3D.js (lot, naprowadzanie,
+// zadanie 19). Zdarzenia lotu z src/game/rockets/rocketSim.js (lot, naprowadzanie,
 // trafienia i obrażenia zostają tam — gameplay) → receptury na pulach: dym (smoke.js),
 // iskry (SparkSystem3D), płomienie (plumes.js), kule ognia, mgławica, łuki, duszki blasku,
 // światła siatki Core3D, zniekształcenia Core3D (fala, implozja, gorące powietrze — zamiast
