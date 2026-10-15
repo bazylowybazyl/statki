@@ -19,7 +19,9 @@ export const HC = Object.freeze({
   DMG_PATCH: 36,       // łata roju naprawczego (onCellRegrown) → HullDamageMap.patchCell
   DMG_KERF: 37,        // pas rzazu przebicia (applyBulletHullPass) → HullDamageMap.stampKerf
   EXPLOSION: 38,       // wybuch z gazu (fabryka wybuchów WebGPU: makeReactorBlow / shipBlastFactory)
-  HULL_DEBRIS: 39      // odłamek zniszczonego węzła (HullBodies.onDebris → window.spawnHullDebris; losowanie w renderze)
+  HULL_DEBRIS: 39,     // odłamek zniszczonego węzła (HullBodies.onDebris → window.spawnHullDebris; losowanie w renderze)
+  SPARK_BURST: 40,     // snop iskier tarcia / uderzenia kadłubów (collisionSparks.js → SparkSystem3D.grindingBurst)
+  SPARK_SEAM: 41       // iskry wzdłuż szwu styku (→ SparkSystem3D.grindingSeam), punkty w rekordzie
 });
 
 /** Najwięcej znaków rzazu na odcinek (= DMG_KERF_MAX w hullDamageMap.js; pilnuje test). */
@@ -74,6 +76,15 @@ export const EXPLOSION = Object.freeze({
 // pionowa (bryła 3D).
 export const HULL_DEBRIS = Object.freeze({
   X: 0, Y: 1, VX: 2, VY: 3, R: 4, G: 5, B: 6, CELL: 7, STRUCT: 8, SOLID: 9, Z: 10, VZ: 11, WORDS: 12
+});
+
+// Iskry kadłubów (budżet — tempo z prędkości styku — liczy gra: src/vfx/collisionSparks.js, strumień gry).
+export const SPARK_BURST = Object.freeze({
+  X: 0, Y: 1, NX: 2, NY: 3, TX: 4, TY: 5, APPROACH: 6, SLIDE: 7, BVX: 8, BVY: 9, COUNT: 10, GAIN: 11, WORDS: 12
+});
+// Szew: stałe pola, potem N czwórek (x, y, nx, ny) — rekord zmiennej długości (SEAM.WORDS + 4 · N).
+export const SPARK_SEAM = Object.freeze({
+  TX: 0, TY: 1, APPROACH: 2, SLIDE: 3, BVX: 4, BVY: 5, COUNT: 6, GAIN: 7, N: 8, POINTS: 9, WORDS: 9
 });
 
 /**

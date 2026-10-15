@@ -240,3 +240,46 @@ test('odłamki węzłów: rekord HULL_DEBRIS = dawna droga (te same losowania sk
     Math.random = prevRandom;
   }
 });
+
+test('iskry kadłubów: rekordy SPARK_BURST / SPARK_SEAM = dawne wywołania SparkSystem3D (budżet w grze)', async () => {
+  const { CollisionFX } = await import('../src/vfx/collisionFx.js');
+  const { setCollisionSparkSink } = await import('../src/vfx/collisionSparks.js');
+  const { SparkSystem3D } = await import('../src/3d/sparkSystem3D.js');
+  const { createSparkEvents } = await import('../src/game/sparkEvents.js');
+  const { fxRandomGame } = await import('../src/game/fxRandomGame.js');
+  const { rc } = setup();
+  const calls = [];
+  const saved = { burst: SparkSystem3D.grindingBurst, seam: SparkSystem3D.grindingSeam, init: SparkSystem3D.isInitialized, win: window.SparkSystem3D };
+  SparkSystem3D.grindingBurst = (...a) => calls.push(['burst', ...a]);
+  SparkSystem3D.grindingSeam = (pts, n, ...a) => calls.push(['seam', Array.from(pts.subarray(0, n * 4)), n, ...a]);
+  SparkSystem3D.isInitialized = true;
+  window.SparkSystem3D = SparkSystem3D;
+  const seam = Float32Array.from([1.5, 2.25, 0.6, -0.8, 3, 4, 0, 1, 7.125, -9, 1, 0, 99, 99, 99, 99]);
+  const run = () => {
+    calls.length = 0;
+    fxRandomGame.seed?.(0x55);
+    const A = {}, B = {};
+    for (let k = 1; k <= 12; k++) {
+      CollisionFX.onGrind({ A, B, simTime: k / 60, approachSpeed: 40 + k * 10, slideSpeed: 90, bounceForce: 1e5, x: 10 * k, y: -3,
+        nx: 0.6, ny: 0.8, tx: -0.8, ty: 0.6, contactVelX: 120, contactVelY: -30, points: seam, pointCount: k % 3 === 0 ? 1 : 3 });
+    }
+    CollisionFX.onImpact({ A, B, approachSpeed: 300, slideSpeed: 50, x: 1, y: 2, nx: 0, ny: 1, tx: 1, ty: 0, contactVelX: 5, contactVelY: 6 });
+    return calls.map((c) => c.map((v) => (typeof v === 'number' ? Math.fround(v) : v)));
+  };
+  try {
+    setCollisionSparkSink(null);
+    const legacy = run();
+    const sink = createSparkEvents(rc.writer);
+    sink.ready = true;
+    setCollisionSparkSink(sink);
+    const viaRecord = run();
+    assert.ok(legacy.some((c) => c[0] === 'seam') && legacy.some((c) => c[0] === 'burst'));
+    assert.deepEqual(viaRecord, legacy);
+    sink.ready = false;
+    assert.deepEqual(run(), [], 'render bez iskier — bez budżetu i rekordów');
+  } finally {
+    setCollisionSparkSink(null);
+    SparkSystem3D.grindingBurst = saved.burst; SparkSystem3D.grindingSeam = saved.seam;
+    SparkSystem3D.isInitialized = saved.init; window.SparkSystem3D = saved.win;
+  }
+});

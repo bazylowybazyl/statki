@@ -1097,7 +1097,7 @@
     import { installExplosionCommands } from "./src/3d/explosions/explosionCommands.js";
     const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
     window.GameBlasts = GameBlasts;
-    window.__explosionCmdStats = installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
+    installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
     HullBodies.onImpact = (e, r) => HullDamageEvents.impact(e, r);
     HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
@@ -1425,7 +1425,11 @@
     import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
     // Import z efektem ubocznym: podpina iskry tarcia pod zdarzenie 'grind'
     // CollisionFX. Destructor nie woła już SparkSystem3D bezpośrednio.
-    import './src/vfx/collisionSparks.js';
+    import { setCollisionSparkSink } from './src/vfx/collisionSparks.js';
+    // RW-22: iskry kadłubów rekordami SPARK_BURST / SPARK_SEAM (budżet w grze — collisionSparks.js, rysunek — dekoder).
+    import { createSparkEvents } from "./src/game/sparkEvents.js";
+    const GameSparks = createSparkEvents(RenderCommands.writer);
+    setCollisionSparkSink(GameSparks);
     import { SensorSystem } from "./src/game/sensorSystem.js";
     import { loadFogOption, saveFogOption, formatMassEstimate } from "./src/game/fogOfWar.js";
     import { createFogHud } from "./src/ui/fogHud.js";
@@ -1750,6 +1754,8 @@
         // rakiety-webgpu: src/3d/rockets/) — w scenie Core3D, jako kroki klatki efektów
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
+        // Scena Core3D jest (warunek bloku), więc init się udaje — gra pisze rekordy iskier od teraz.
+        GameSparks.ready = true;
         const rocketFx = createRocketFx(Core3D);
         initRocketSystem3D(Core3D.scene, { effects: rocketFx });
         // Kłęby pary przewodów paliwowych K-7 (buchy dookoła złączek przy ryglowaniu / odryglowaniu, upust) — pula dymu rakiet.

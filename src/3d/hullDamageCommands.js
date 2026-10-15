@@ -6,8 +6,9 @@
 
 import { HullDamageMap } from './hullDamageMap.js';
 import { fxRandom } from './fx/fxRandom.js';
+import { SparkSystem3D } from './sparkSystem3D.js';
 import {
-  HC, HULL_DEBRIS, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, createHullProxy, readHullDesc
+  HC, HULL_DEBRIS, SPARK_BURST, SPARK_SEAM, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, createHullProxy, readHullDesc
 } from '../render/hullCommands.js';
 
 const _proxy = createHullProxy();
@@ -18,6 +19,7 @@ const _r = {
 };
 const _world = { x: 0, y: 0 };
 const _kerfPre = { u0: 0, v0: 0, lat: new Float64Array(KERF_MAX * 4) };
+let _seam = new Float32Array(64);
 
 /** Rejestruje obsługę rekordów mapy ran w czytelniku rozkazów (RenderCommands.reader). */
 export function installHullDamageCommands(reader) {
@@ -92,6 +94,23 @@ export function installHullDamageCommands(reader) {
     const scale = cell * (0.9 + fxRandom.next() * 0.9);
     const structural = d[o + D.STRUCT] === 1 && fxRandom.next() < 0.4;
     spawn(d[o + D.X], d[o + D.Y], d[o + D.VX], d[o + D.VY], d[o + D.R], d[o + D.G], d[o + D.B], scale, structural);
+  });
+
+  // Iskry kadłubów (budżet policzony w grze): snop i szew → SparkSystem3D (te same argumenty co dawne wywołania).
+  reader.on(HC.SPARK_BURST, (rd, d, o) => {
+    const S = SPARK_BURST;
+    SparkSystem3D.grindingBurst(d[o + S.X], d[o + S.Y], d[o + S.NX], d[o + S.NY], d[o + S.TX], d[o + S.TY],
+      d[o + S.APPROACH], d[o + S.SLIDE], d[o + S.BVX], d[o + S.BVY], d[o + S.COUNT], d[o + S.GAIN]);
+  });
+  reader.on(HC.SPARK_SEAM, (rd, d, o) => {
+    const S = SPARK_SEAM;
+    const n = d[o + S.N];
+    if (_seam.length < n * 4) _seam = new Float32Array(n * 4);
+    for (let i = 0; i < n * 4; i++) _seam[i] = d[o + S.POINTS + i];
+    // Bufor pokrywa dokładnie n punktów (grindingSeam bierze min(pointCount, długość / 4)).
+    const pts = _seam.length === n * 4 ? _seam : _seam.subarray(0, n * 4);
+    SparkSystem3D.grindingSeam(pts, n, d[o + S.TX], d[o + S.TY], d[o + S.APPROACH], d[o + S.SLIDE],
+      d[o + S.BVX], d[o + S.BVY], d[o + S.COUNT], d[o + S.GAIN]);
   });
 
   return reader;

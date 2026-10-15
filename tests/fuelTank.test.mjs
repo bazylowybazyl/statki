@@ -204,7 +204,7 @@ test('index.html: śmierć bez rdzenia → wybuch z gazu z miejsca zbiornika; dr
   assert.match(src, /shipBlastFactory = window\.makeReactorBlow;/);
   assert.match(src, /GameBlasts\.ready = !!shipBlastFactory;/);
   assert.match(src, /window\.makeReactorBlow = withRepairDroneBlast\(window\.makeReactorBlow\);/);
-  assert.match(src, /installExplosionCommands\(RenderCommands\.reader, \(\) => shipBlastFactory\)/);
+  assert.match(src, /\n\s*installExplosionCommands\(RenderCommands\.reader, \(\) => shipBlastFactory\);/);
 });
 
 // ─── PĘKNIĘCIE zbiornika za życia okrętu (2026-10-15, prośba użytkownika: „wybuchy dymu przy taranowaniu, jeśli rozwalę

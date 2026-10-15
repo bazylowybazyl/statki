@@ -11,12 +11,15 @@ const _opts = {
   gasOnly: false, hostKey: 0
 };
 
+/** Liczniki dekodera: rekordy i wybuchy, które ruszyły (fabryka zwróciła true). */
+export const explosionCommandStats = { n: 0, ok: 0 };
+
 /**
  * @param reader — czytelnik rozkazów (RenderCommands.reader)
  * @param getFactory — () → fabryka wybuchów albo null (render jeszcze bez niej)
  */
 export function installExplosionCommands(reader, getFactory) {
-  const stats = { n: 0, ok: 0 };
+  const stats = explosionCommandStats;
   reader.on(HC.EXPLOSION, (rd, d, o) => {
     const E = EXPLOSION;
     const f = getFactory();
