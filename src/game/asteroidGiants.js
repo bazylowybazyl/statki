@@ -21,6 +21,8 @@
 // Moduł bez three i DOM-u (worker: asteroidGiantWorker.js, testy:
 // tests/asteroidGiants.test.mjs).
 
+import { sharedTypedArray } from './sharedTyped.js';
+
 export const BAND_VOXELS = 6;
 
 // ---------------------------------------------------------------------------
@@ -712,7 +714,8 @@ export class GiantRock {
     this.x = x;
     this.y = y;
     this.dims = giantGridDims(plan);
-    this.grid = grid || new Uint8Array(this.dims.nx * this.dims.ny * this.dims.nz);
+    // SDF w SharedArrayBuffer (gdy jest): czyta go kolizja gry i tekstura 3D renderu (RW-25).
+    this.grid = grid || sharedTypedArray(Uint8Array, this.dims.nx * this.dims.ny * this.dims.nz);
     this.ready = !!grid;
     this.band = BAND_VOXELS * plan.voxel;
     // Promień obrysu (do szybkiego odrzucania).

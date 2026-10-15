@@ -1264,8 +1264,10 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
-    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
+    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
+    // gry (RW-25: pole, cień pól, olbrzymy i kolizje, wydobycie, zegar skał).
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    import { createBeltWorld } from "./src/game/beltWorld.js";
     import { NeaFlyby, neaFlybyMessage } from "./src/game/neaFlyby.js";
     import { createNeaFlyby3D } from "./src/3d/neaFlyby3D.js";
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
@@ -5911,7 +5913,7 @@
       }
       env.features = radarFeaturesWithPirateRock(hudRadarWorldFeatures);   // + planetoida pod bazą piratów (misja 1)
       env.rings = haloRings ? haloRings.entries : null;
-      env.belt = asteroidBelt || null;
+      env.belt = beltWorld || null;
       _neaRadarBodies.length = 0;
       env.bodies = neaFlybyRadarBodies(_neaRadarBodies);
       cometRadarBodies(env.bodies);   // jądra komet — kontakty z podpisem (blok „KOMETY”)
@@ -7830,8 +7832,8 @@
           priority: zonePriority.kuiper_belt
         });
       }
-      // window.__asteroidBelt — pas powstaje na ekranie ładowania (createAsteroidBelt), później niż ta funkcja.
-      const beltField = window.__asteroidBelt?.field;
+      // window.__beltWorld — świat pasa powstaje w starcie świata (createBeltWorld), później niż ta funkcja.
+      const beltField = window.__beltWorld?.field;
       if (beltField?.penetrationOf) {
         const trojanPen = beltField.penetrationOf(TROJAN_ZONE_BELTS, pos.x, pos.y);
         if (trojanPen > -Infinity) {
@@ -7941,7 +7943,7 @@
       z.t -= dt;
       if (z.t > 0) return;
       z.t = 0.5;
-      const field = asteroidBelt?.field;
+      const field = beltWorld?.field;
       if (!field || typeof field.familyAt !== 'function' || !ship?.pos || ship.dead) return;
       const fam = field.familyAt(ship.pos.x, ship.pos.y);
       const id = fam ? fam.id : null;
@@ -7959,7 +7961,7 @@
       pushZoneMessage(title, 3.2, { label: 'POLE PLANETOID', tone: 'info' });
       window.hudSystem?.logZone?.(title, `family_${id}`);
     }
-    window.beltFamilyAt = (x, y) => asteroidBelt?.field?.familyAt?.(x, y) || null;
+    window.beltFamilyAt = (x, y) => beltWorld?.field?.familyAt?.(x, y) || null;
     window.__beltFamilyZone = _beltFamilyZone;
 
     function handleZoneTransition(prevZoneId, currentZoneId) {
@@ -8136,11 +8138,10 @@
     }
 
     // Skały pola nie leżą w ciele ani w stacji (pass ortho rysuje się nad ciałem): wyłączenia pola obok olbrzymów.
-    function applySmallBodyExclusions(belt) {
-      const field = belt?.field;
-      if (!field || typeof field.setExclusions !== 'function') return;
-      const giants = typeof belt.giants?.exclusions === 'function' ? belt.giants.exclusions() : [];
-      field.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
+    function applySmallBodyExclusions(world) {
+      if (!world || typeof world.setExclusions !== 'function') return;
+      const giants = typeof world.giants?.exclusions === 'function' ? world.giants.exclusions() : [];
+      world.setExclusions([...giants, ...smallBodyExclusions(SUN, AU_IN_WORLD_UNITS, 900, SMALL_BODY_ANGLES)]);
     }
 
     const STATION_STYLES = ['ringGate', 'hexHub', 'triRing', 'solarPetals', 'shipyard', 'tradeSpindle'];
@@ -9323,7 +9324,7 @@
     function pickPirateCallInOrigin() {
       const belt = ASTEROID_BELT;
       if (!belt || !(belt.outer > belt.inner)) return null;
-      const field = asteroidBelt?.field || null;
+      const field = beltWorld?.field || null;
       const r0sq = belt.inner * belt.inner;
       const r1sq = belt.outer * belt.outer;
       let first = null;
@@ -12080,6 +12081,8 @@
     // Pas asteroid (zadanie 21) — tworzony w starcie świata (DOMContentLoaded), GPU na
     // ekranie ładowania (startGame).
     let asteroidBelt = null;
+    // Świat pasa gry (RW-25, src/game/beltWorld.js): rozgrywka pasa bez renderu — obraz (asteroidBelt) go czyta.
+    let beltWorld = null;
     function initHaloRings() {
       if (!Core3D.isInitialized) Core3D.init();
       // Jakość z opcji grafiki (OPTIONS.planetQuality = zapis 'sc_gfx' / dawny sc_planet_quality / preset z adresu).
@@ -12316,12 +12319,16 @@
       // Lagrange'a i Hildas = planety w tej chwili (jak dawne pole).
       if (!asteroidBelt) {
         try {
-          asteroidBelt = createAsteroidBelt({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
-          applySmallBodyExclusions(asteroidBelt);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
+          beltWorld = createBeltWorld({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
+          window.__beltWorld = beltWorld;
+          applySmallBodyExclusions(beltWorld);   // skały pola omijają małe ciała i stacje Unii (blok „MAŁE CIAŁA”)
           // Rodziny Westy i Hygiei przy ciałach tego świata (kąty z resolveSmallBodyAngles — A2, asteroidFamilies.js);
           // lista szczytów pól (~20 ms) teraz, nie w klatce pierwszego wlotu w pas.
-          asteroidBelt.field?.setSmallBodyAnchors?.(smallBodies);
-          asteroidBelt.field?.familyPeaks?.();
+          beltWorld.setSmallBodyAnchors(smallBodies);
+          beltWorld.familyPeaks();
+          // Obraz pasa: własna instancja pola z konfiguracją świata pasa (operacje wyżej dochodzą same).
+          asteroidBelt = createAsteroidBelt({ world: beltWorld });
+          beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
           window.__asteroidBelt = asteroidBelt;
           applyGraphicsEffects();   // reflektory i mapy cienia pasa wg opcji grafiki (blok „OPCJE GRAFIKI”)
         } catch (err) {
@@ -12347,7 +12354,7 @@
     function setupNeaFlyby3D() {
       if (neaFlyby3D || !asteroidBelt) return;
       neaFlyby3D = createNeaFlyby3D({ core: Core3D, getBelt: () => asteroidBelt, getFlyby: () => neaFlyby });
-      if (asteroidBelt.field && !asteroidBelt.field.wakeSpots.includes(neaFlyby.wake)) asteroidBelt.field.wakeSpots.push(neaFlyby.wake);
+      beltWorld?.addWakeSpot(neaFlyby.wake);
       window.NeaFlyby3D = neaFlyby3D;
     }
 
@@ -24241,7 +24248,7 @@
         // przelatują nad nimi (stare pole: trafienia, niszczenie i łup — usunięte). Ściany
         // olbrzymów mają setki–tysiące j., pocisk ≤ ~170 j./krok — bez tunelowania.
         // Trafienie jak w ring (17): kierunek z prędkości własnej pocisku, bez encji.
-        if (!hitNPC && asteroidBelt && asteroidBelt.giants.readyCount > 0 && asteroidBelt.pointBlocked(b.x, b.y)) {
+        if (!hitNPC && beltWorld && beltWorld.giants.readyCount > 0 && beltWorld.pointBlocked(b.x, b.y)) {
           writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'asteroid');
           spawnBulletImpactEffect(b, b.x, b.y, 0.9, _impactHit);
           removeBulletAt(i);
@@ -26783,9 +26790,31 @@
     // nadpisuje następny krok — do kolizji ze światem (olbrzymy, ring) idą przez
     // widok kinematyki (src/game/npcCollisionBody.js), wynik wraca do x/y/vx/vy.
     // Kadłub belkowy dostaje nową pozycję encji w HullBodies.step (ruch encji, nie węzłów).
+    // Klatka świata pasa gry (render(), przed wejściem klatki obrazu): punkty uwagi budowy olbrzymów =
+    // środki kamer i pozycje statków graczy (bez alokacji).
+    const _beltFocus = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+    const _beltFocusList = [];
+    function stepBeltWorldFrame(frameDt, cam) {
+      const list = _beltFocusList;
+      list.length = 0;
+      const put = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || list.length >= _beltFocus.length) return;
+        const p = _beltFocus[list.length];
+        p.x = x; p.y = y;
+        list.push(p);
+      };
+      if (cam) put(Number(cam.x), Number(cam.y));
+      if (ship?.pos && !ship.dead) put(ship.pos.x, ship.pos.y);
+      if (splitScreenMode) {
+        if (camera2) put(Number(camera2.x), Number(camera2.y));
+        if (player2Ship?.pos && !player2Ship.dead) put(player2Ship.pos.x, player2Ship.pos.y);
+      }
+      beltWorld.frame(frameDt, PAUSED, list);
+    }
+
     const _npcCollisionBody = createNpcCollisionBody();
     function stepShipAsteroidCollisions(dt) {
-      const belt = asteroidBelt;
+      const belt = beltWorld;
       if (!belt || belt.giants.readyCount === 0) return;
       if (ship && !ship.dead && !ship.noHullCollisions) belt.collideShip(ship);
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) belt.collideShip(player2Ship);
@@ -26810,7 +26839,7 @@
     const MINING_SAW_DRAG_PX = 26;
 
     function getMiningRig() {
-      return asteroidBelt && asteroidBelt.rig ? asteroidBelt.rig : null;
+      return beltWorld && beltWorld.rig ? beltWorld.rig : null;
     }
 
     // Callbacki platformy: urobek do ładowni (pełne tony, udźwig kadłuba), wolne miejsce,
@@ -27685,7 +27714,7 @@
         lines.push(`ładunki: S ${st.S | 0} · M ${st.M | 0} · L ${st.L | 0} · XL ${st.XL | 0} · osadzone ${rig.charges.length}`);
         lines.push(`ładownia ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cap)} · urobek: ${ores.length ? ores.join(' · ') : '—'} · skała płonna ${fmtMining1(rig.totals.waste)} t${rig.totals.lostOre > 0 ? ` · przepadło ${Math.round(rig.totals.lostOre)} t rudy` : ''}`);
         // Rodzina pola pod statkiem (A2 — AsteroidBeltField.familyAt): skład rud tego pola.
-        const fam = ship?.pos ? asteroidBelt?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
+        const fam = ship?.pos ? beltWorld?.field?.familyAt?.(ship.pos.x, ship.pos.y) : null;
         if (fam) lines.push(`pole: ${familyTitle(fam)}`);
         for (const msg of rig.recentMessages(3, _miningMsgScratch)) lines.push(`› ${msg}`);
         _miningHudLines = lines;
@@ -29032,9 +29061,14 @@
       // pola. Liczenie (skały, ośrodek, burza, światła) idzie w kroku Core3D.fx przed passami;
       // kolizje z olbrzymami w physicsStep (stepShipAsteroidCollisions).
       stepNeaFlyby();   // przelot NEA: pozycja skały i koło budzenia pasa przed krokiem pasa
-      if (asteroidBelt) {
+      if (beltWorld) {
+        // Świat pasa: zegar skał (dt klatki, 0 w pauzie), budowa olbrzymów przy kamerach i statkach (kolizje
+        // istnieją, zanim kadr dotknie pasa), przycięcie cache pola gry.
+        stepBeltWorldFrame(frameDt, cam);
+      }
+      if (asteroidBelt && beltWorld) {
         // mgła wojny: reflektory ukrytych okrętów nie oświetlają skał (zdradzałyby pozycję)
-        asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList), PAUSED);
+        asteroidBelt.prepareFrame(beltWorld.time, beltWorld.frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList));
       }
       // Komety (blok „KOMETY”): obrót jąder, fazy gazu, odcinanie poza kadrem.
       updateComets3D(cam);
@@ -31441,8 +31475,8 @@
       // Zasadzka w pasie asteroid (misja 2, src/game/story/beltAmbush.js): wyrwanie z warpa, gęstość skał na
       // kursie (pole pasa) i olbrzymy (miejsce zasadzki przy bryle, gdy kurs ją mija).
       interdictWarp: () => storyInterdictWarp(),
-      beltDensity: (x, y) => (asteroidBelt?.field ? asteroidBelt.field.sampleMacro(x, y).density : 0),
-      beltGiants: () => (asteroidBelt?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
+      beltDensity: (x, y) => (beltWorld?.field ? beltWorld.field.sampleMacro(x, y).density : 0),
+      beltGiants: () => (beltWorld?.giants?.entries || []).map((e) => ({ id: e.id, x: e.x, y: e.y, radius: e.radius })),
       spawnShip: (key, opts) => spawnCallInShip(key, opts),
       spawnPirateStation: spawnStoryPirateStation,
       // Baza piratów (misja 1, szkic 2026-10-11): budowle (byty stacji z bryłami trafień) + bryła 3D + ciała świata;
@@ -31707,7 +31741,7 @@
       // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
       if (asteroidBelt) {
         setLoadingProgress(72, 'Cień pól asteroid');
-        await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
+        await beltWorld.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
         setLoadingProgress(77, 'Pola asteroid');
         await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
         // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.
