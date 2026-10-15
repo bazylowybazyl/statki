@@ -1341,7 +1341,6 @@
       updateHexShips3D,
       resizeHexShips3D,
       drawHexShips3D,
-      invalidateHexShipEntity3D,
       prewarmHexShipVisual,
       captureColdWreckImpostor,
       setColdWreckRenderHooks,
@@ -7336,7 +7335,7 @@
       applyHullThrusterLayout(activeHullKey);
       tryPreserveMounts(prev);
       syncWeaponSystems();
-      if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(ship);
+      HullDamageEvents.invalidate(ship);
       // Kadłub z belek z obrazu w rozmiarze renderu; tekstura skóry = pełny sprite.
       // Promień (od środka sprite'a) i masę ustawia createHull.
       HullBodies.release(ship);
@@ -23149,9 +23148,7 @@
 
     function releaseNpcHexBody(npc) {
       if (npc?.beamHull) {
-        if (invalidateHexShipEntity3D) {
-          try { invalidateHexShipEntity3D(npc); } catch (_) {}
-        }
+        HullDamageEvents.invalidate(npc);
         HullBodies.release(npc);
       }
     }
@@ -25444,7 +25441,7 @@
         else if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
         // Wrak na belkach zostaje z ciałem do rysowania i swoją siatką skóry (render przejmuje je bez przebudowy,
         // poza kadrem ciało i siatka znikają same) — meshe kasujemy tylko heksom.
-        if (!w.beamHull && invalidateHexShipEntity3D) invalidateHexShipEntity3D(w);
+        if (!w.beamHull) HullDamageEvents.invalidate(w);
       },
       onThawed(w, reason) {
         if (window.DEBUG_COLD_WRECKS) console.log('[ColdWrecks] odmrożony (' + reason + ')', w);
@@ -30974,7 +30971,7 @@
         const desiredResolved = (() => {
           try { return new URL(desiredSprite, window.location.href).href; } catch { return desiredSprite; }
         })();
-        if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(ship);
+        HullDamageEvents.invalidate(ship);
         HullBodies.release(ship);
         if (shipSprite.src !== desiredResolved) {
           ship.spriteReady = false;
@@ -32373,7 +32370,7 @@
         player2Ship.spriteW = Math.max(1, Number(renderImage.width) || Number(p2Sprite.naturalWidth) || 1);
         player2Ship.spriteH = Math.max(1, Number(renderImage.height) || Number(p2Sprite.naturalHeight) || 1);
         // Kadłub na belkach (render 3D skóry, kolizje, trafienia).
-        if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(player2Ship);
+        HullDamageEvents.invalidate(player2Ship);
         HullBodies.release(player2Ship);
         HullBodies.createHull(player2Ship, hexInitImage, { visualImage: p2Sprite, hullProfileId });
         attachEntityReactorCores(player2Ship);

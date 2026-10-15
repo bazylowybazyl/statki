@@ -8,9 +8,10 @@ import { HullDamageMap } from './hullDamageMap.js';
 import { fxRandom } from './fx/fxRandom.js';
 import { SparkSystem3D } from './sparkSystem3D.js';
 import { destroyStation3D } from './stations3D.js';
+import { invalidateHexShipEntity3D } from './hexShips3D.js';
 import { Destruction3D } from '../vfx/destruction3D.js';
 import {
-  HC, STATION_FX, STATION_FX_KIND, HULL_DEBRIS, SPARK_BURST, SPARK_SEAM, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, createHullProxy, readHullDesc
+  HC, ENTITY_FX, STATION_FX, STATION_FX_KIND, HULL_DEBRIS, SPARK_BURST, SPARK_SEAM, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, createHullProxy, readHullDesc
 } from '../render/hullCommands.js';
 
 const _proxy = createHullProxy();
@@ -116,6 +117,12 @@ export function installHullDamageCommands(reader) {
     const pts = _seam.length === n * 4 ? _seam : _seam.subarray(0, n * 4);
     SparkSystem3D.grindingSeam(pts, n, d[o + S.TX], d[o + S.TY], d[o + S.APPROACH], d[o + S.SLIDE],
       d[o + S.BVX], d[o + S.BVY], d[o + S.COUNT], d[o + S.GAIN]);
+  });
+
+  reader.on(HC.ENTITY_FX, (rd, d, o) => {
+    const e = rd.ent(d, o + ENTITY_FX.ENT);
+    // jak dawniej przy zwalnianiu kadłuba NPC: błąd sprzątania siatki nie przerywa gry
+    if (e) { try { invalidateHexShipEntity3D(e); } catch (_) { /* siatka już zwolniona */ } }
   });
 
   // Stacja: kawałek odpada tylko, gdy stacja ma bryłę 3D (`_mesh3d` — stan renderu), rozpad — destroyStation3D.

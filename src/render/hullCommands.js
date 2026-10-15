@@ -32,7 +32,8 @@ export const HC = Object.freeze({
   RX_JETCUT: 47,       // układ DMG_KERF (pas żaru wzdłuż rzazu strumienia; render sprawdza swoje opts.heat)
   RX_HAZARD: 48,       // strumień / kula do obrazu (addJet / addOrb)
   RX_CLEAR: 49,
-  REPAIR_FX: 50        // zdarzenie rigu dronów naprawczych (pierścień rig.fx: odbudowana komórka, zestrzelony dron)
+  REPAIR_FX: 50,       // zdarzenie rigu dronów naprawczych (pierścień rig.fx: odbudowana komórka, zestrzelony dron)
+  ENTITY_FX: 51        // encja: siatka kadłuba 3D do przebudowy (podmiana sprite'a / kadłuba — invalidateHexShipEntity3D)
 });
 
 /** Najwięcej znaków rzazu na odcinek (= DMG_KERF_MAX w hullDamageMap.js; pilnuje test). */
@@ -118,6 +119,9 @@ export const RX_HAZ_KIND = Object.freeze({ JET: 0, ORB: 1 });
 // Zdarzenie rigu dronów naprawczych: id rigu (inline: rejestr gry; worker — blok dronów migawki), rodzaj (REPAIR_FX
 // z src/game/repairRig.js), punkt świata gry.
 export const REPAIR_FX_REC = Object.freeze({ RIG: 0, KIND: 1, X: 2, Y: 3, WORDS: 4 });
+
+export const ENTITY_FX = Object.freeze({ ENT: 0, KIND: 2, WORDS: 3 });
+export const ENTITY_FX_KIND = Object.freeze({ INVALIDATE: 0 });
 
 /**
  * Zapis opisu kadłuba do rekordu. `entSlot`, `entGen` — encja (przestrzeń slotów rozkazów); `theta` — kąt skóry z pozy

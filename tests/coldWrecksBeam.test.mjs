@@ -456,7 +456,7 @@ test('index.html: wpięcie zimnych wraków na belkach', () => {
   // RW-31: bramka z widoku klatki gry (src/game/coldWreckView.js), reguła renderu tylko dla heksów dem.
   assert.match(options, /coldFreezeVisuallySafe\(w, _drawView, coldWreckSystem\.config\)/);
   assert.match(options, /captureBeamColdImpostor\(w, w\._coldSnapshot, coldWreckSystem\.config\)/);
-  assert.match(options, /if \(!w\.beamHull && invalidateHexShipEntity3D\) invalidateHexShipEntity3D\(w\);/,
+  assert.match(options, /if \(!w\.beamHull\) HullDamageEvents\.invalidate\(w\);/,
     'wrak na belkach zostaje z siatką skóry (render przejmuje ją bez przebudowy)');
   assert.doesNotMatch(options, /getSimTimeMs/, 'zegar „ciszy po trafieniu” po rodzaju wraku (HullBodies.simTime)');
   assert.match(src, /drawn: \(w\) => w\._coldDrawFrame === renderFrameId,\s*config: coldWreckSystem\.config,/);

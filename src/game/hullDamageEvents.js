@@ -10,7 +10,7 @@
 
 import { HullBodies, hullSpriteRotation } from './hullBodies.js';
 import {
-  HC, HULL_DEBRIS, STATION_FX, STATION_FX_KIND, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, writeHullDesc
+  HC, HULL_DEBRIS, STATION_FX, STATION_FX_KIND, ENTITY_FX, ENTITY_FX_KIND, DMG_HOOK, DMG_TEAR, DMG_SOLID_TEAR, DMG_REPAIR, DMG_PATCH, DMG_KERF, KERF_MAX, writeHullDesc
 } from '../render/hullCommands.js';
 import {
   stampFamilyFor, stampPowerFor, stampFlakRadiusFor
@@ -134,6 +134,18 @@ export function createHullDamageEvents(writer) {
       d[o + S.STATION] = slot; d[o + S.STATION + 1] = ent.gen(slot);
       d[o + S.KIND] = kind === STATION_FX_KIND.DESTROY ? STATION_FX_KIND.DESTROY : STATION_FX_KIND.CHUNK;
       d[o + S.SHOCKWAVE] = shockwave ? 1 : 0;
+      writer._commit();
+    },
+
+    /** Siatka kadłuba 3D encji do przebudowy (podmiana sprite'a / kadłuba; dawniej invalidateHexShipEntity3D wprost). */
+    invalidate(entity) {
+      if (!entity || typeof entity !== 'object') return;
+      const E = ENTITY_FX;
+      const o = writer._begin(HC.ENTITY_FX, E.WORDS);
+      const d = writer.ring.data;
+      const ent = writer.ids.entities;
+      const slot = ent.slotOf(entity);
+      d[o + E.ENT] = slot; d[o + E.ENT + 1] = ent.gen(slot); d[o + E.KIND] = ENTITY_FX_KIND.INVALIDATE;
       writer._commit();
     },
 
