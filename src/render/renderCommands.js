@@ -42,18 +42,19 @@ export const RC = Object.freeze({
   HEX_STEP: 15,
   HEX_END: 16,
   HEX_HIT: 17,
-  // Zakresy torów (żeby równoległe tory nie zderzyły się kodami): 1–17 broń, 18–29 kadłuby / rany / wybuchy (rw-kadluby),
-  // 30–49 świat (rw-swiat), 50–59 rakiety (RW-23).
-  RKT_BEGIN: 50,     // początek kroku lotu: liczba rakiet w locie i w kolejkach
-  RKT_LAUNCH: 51,    // wyrzut: slot rakiety, motyw barw
-  RKT_IGNITE: 52,    // zapłon
-  RKT_FLY: 53,       // krok lotu rakiety (dt) — w kolejności lotu, jak dawne wywołania reżysera
-  RKT_SPLIT: 54,     // podział nosiciela (Hydra)
-  RKT_INTERCEPT: 55, // zestrzelenie (obrona punktowa)
-  RKT_CONTACT: 56,   // punkt i odcinek styku przed wybuchem
-  RKT_DETONATE: 57,  // wybuch: punkt, trafiona encja, tarcza
-  RKT_UPDATE: 58,    // koniec kroku lotu (klatka reżysera)
-  RKT_WAKE: 59       // kilwater torpedy (pocisk kanwy / WeaponFx — slot pocisku)
+  // Zakresy torów (równoległe tory nie mogą zderzyć się kodami): 1–31 broń (rw-bronie; wolne od 18), 32–63 kadłuby /
+  // rany / wybuchy / iskry / odłamki / reaktor / stacje (rw-kadluby — `HC` w src/render/hullCommands.js), 64–73 rakiety
+  // (RW-23), 74–127 świat (rw-swiat).
+  RKT_BEGIN: 64,     // początek kroku lotu: liczba rakiet w locie i w kolejkach
+  RKT_LAUNCH: 65,    // wyrzut: slot rakiety, motyw barw
+  RKT_IGNITE: 66,    // zapłon
+  RKT_FLY: 67,       // krok lotu rakiety (dt) — w kolejności lotu, jak dawne wywołania reżysera
+  RKT_SPLIT: 68,     // podział nosiciela (Hydra)
+  RKT_INTERCEPT: 69, // zestrzelenie (obrona punktowa)
+  RKT_CONTACT: 70,   // punkt i odcinek styku przed wybuchem
+  RKT_DETONATE: 71,  // wybuch: punkt, trafiona encja, tarcza
+  RKT_UPDATE: 72,    // koniec kroku lotu (klatka reżysera)
+  RKT_WAKE: 73       // kilwater torpedy (pocisk kanwy / WeaponFx — slot pocisku)
 });
 
 /** Rodzaje rekordu SHOT i HEX_HIT. */

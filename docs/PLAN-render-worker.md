@@ -1382,7 +1382,7 @@ src/game/rockets/rocketSim.js`, three zastąpione `src/game/rockets/rocketMath.j
 — te same wzory co three r183, test bit w bit `tests/rocketMath.test.mjs`), importerzy (index.html, dema, skrypty,
 testy) na nowej ścieżce, katalog `src/effects3d/` pusty; rozgrywka dopisana od 10-07 (PD: `syncThreats`, `pdHit`,
 punkty życia; plan salw: `planNextSalvo`, `hasSalvoPlan`, `collectIncoming`, `retarget`) przeszła razem z plikiem.
-Zdarzenia reżysera → rekordy RKT_* (kody 50–59; adapter gry `rocketCommandAdapter.js` — te same metody co reżyser,
+Zdarzenia reżysera → rekordy RKT_* (kody 64–73 — zakresy torów w komentarzu `RC`; adapter gry `rocketCommandAdapter.js` — te same metody co reżyser,
 `Turret2D.triggerShot` kasety po stronie gry; dekoder `src/3d/rockets/rocketFxCommands.js` — rakieta z puli przez
 `rocketAt(i)`, w workerze z bloku ROCKETS migawki). Odstępstwo: krok lotu każdej rakiety (`onFly`) to rekord RKT_FLY,
 nie odczyt bloku ROCKETS — kolejność emisji efektów (ciąg fxRandom) zostaje bit w bit; blok ROCKETS (RW-10, tor
