@@ -10,6 +10,8 @@
 
 ## 0. W skrócie
 
+- **Wdrożenie (od 2026-10-15) — § 7:** decyzje użytkownika (bronie tylko 3D, kompozycja B2cr), zmiany gry od
+  inwentarza, tory sesji, zasady scalania i stan zadań.
 - **Zysk.** Bez warstwy 3D na wątku głównym klatka bitwy 166 okrętów spada z ~27 do ~5 ms (zoom 0,1) i z ~18 do
   ~8 ms (0,45). Fizyka 120 Hz zabiera stały kawałek sekundy, więc fps = (1000 − 120·S) / D — każda milisekunda zdjęta
   z D działa podwójnie. Realny worker ogranicza własny koszt (~10–13 ms przy zoomie 0,1): szacunek **~2× fps**.
@@ -1355,6 +1357,8 @@ tryb). Zależności: RW-40…RW-44.
 | D7 | tryb `inline` jako domyślny przed workerem | po RW-11a | domyślnie `off`, chyba że lustra okażą się szybsze |
 | D8 | domyślny tryb po etapie 4 | RW-45 | `worker`, z `inline` jako zapasem |
 
+Stan decyzji od 2026-10-15 — § 7.1 (D1 = B2cr, D5 i D6 nie dotyczą, D2 — krok fizyki `PHYS_HZ`).
+
 ## 6. Odtworzenie inwentarza
 
 Skrypty leżą w `.tmp/render-szew/` (poza gitem — `.tmp/` jest w `.gitignore`; RW-01 przenosi inwentarz do
@@ -1378,3 +1382,80 @@ i `physicsStep`), uchwyty z fabryk renderu, `window.*` czytane w renderze z pisa
 i DOM → `wynik.json`, `wynik.md`; `grupy.mjs` przypisuje grupy (reguły + jawne wyjątki dla jednostek wołanych przez
 `window.*`, których graf wywołań nie widzi) → `grupy.json`, `grupy.md`. Opisy modułów (§ 2.3, 2.5–2.7) powstały
 z czytania kodu (pięć równoległych przeglądów, 2026-10-07) — przy zmianach modułów sprawdzać po nazwach funkcji.
+
+## 7. Wdrożenie (od 2026-10-15)
+
+### 7.1 Decyzje
+
+Użytkownik (2026-10-15): „Robimy na 3D, bronie 2D wypadają, domyślny tryb: gra 2D, bronie 3D. Myślę, że wszystko
+jest gotowe — działaj.”
+
+- **Bronie tylko 3D — nowe zadanie B3D (tor `rw-bronie`, przed RW-26).** Opcja „Bronie 2D / 3D” znika z panelu
+  Nowa gra, `VisualMode.weapons3D` zawsze prawda (dawny klucz `sc_weapons3d` ignorowany). Wieże wszystkich okrętów
+  rysuje partia wież 3D (`turretBatch3D.js`) — także na sprite'ach w kamerze z góry; kanwa nie rysuje wieżyczek
+  (`Turret2D` zostaje źródłem rekordów: kurs lufy, odrzut, LOD; po RW-26 liczy je strona gry). Każda broń z wieżą ma
+  rodzinę 3D (dziś `hexlance_siege: null` — Hexlance rysuje kanwa). Zachowania zrobione dotąd tylko dla wieżyczek kanwy
+  przechodzą na wieże 3D albo okazują się zbędne dzięki głębi: maskowanie, mgła wojny, `__turretsHidden` (wrota
+  ładowni), zasłonięcie pod nadprożami K-7 i pod fregatą zwiadu (`Turret2D.occlude`), cień planety i pole pasa
+  (`Turret2D.lightAt`), LOD. „Statki 2D / 3D” zostaje (domyślnie 2D). Skutki dla planu: RW-26 bez lustra maski słońca
+  dla `lightAt`; § 2.7 i § 3.8 bez wieżyczek kanwy; D5 nie dotyczy. Stan B3D — dopisać tutaj.
+- **D1 = B2cr** — rekomendacja RW-02 (`docs/webgpu/RW-02-PROTOTYP.md` § 4, § 7): bitmapa 3D z workera
+  (`transferToImageBitmap` → `transferFromImageBitmap`) + nakładki klatki k rysowane na wątku głównym do pierścienia
+  5 zwykłych kanw 2D w DOM z regułą ochrony (nietykalne: kanwa pokazana, klatki odebrane, a nie złożone — worker pisze
+  4 ostatnie w `RET` — i ostatnio opublikowana); przeciwciśnienie / późna publikacja nakładek tam, gdzie wątek główny
+  rysuje szybciej, niż worker renderuje. Para „3D i 2D z jednej klatki” zostaje; D6 nie dotyczy (myśliwce zostają
+  na kanwie).
+- **D2** — tak: lot rakiet w kroku fizyki (`PHYS_HZ`, od 2026-10-11 domyślnie 60 Hz — plan pisał o 120 Hz), osobnym
+  krokiem po przeniesieniu bez zmiany zachowania. **D3** — jak dziś. **D4** — tak (jedna nowa baza zrzutów po RW-20).
+  **D7** — `off`, dopóki RW-11a nie pokaże, że lustra są szybsze. **D8** — `worker` po RW-45, `inline` jako zapas.
+
+### 7.2 Gra od inwentarza (2026-10-07 → 2026-10-15)
+
+`index.html` urósł z 29 765 do 32 840 linii — numery linii w § 2 są nieaktualne (szukać po nazwach funkcji). Nowe
+miejsca szwu, których § 2 nie zna (RW-01 liczy szew na nowo, tory sprawdzają je przy swoich zadaniach):
+- baza piratów zamiast suchego doku (dok poza grą — RW-24 dotyczy bazy): `src/3d/pirateBaseGame.js`,
+  `pirateBase3D.js`, ciała świata `worldBodies` / `worldBodies3D` (wypiek skór w workerach, trzymanie statyki
+  `setChunkHold`), bryły 3D szyi i dysku habitatu, rany brył `src/3d/solidWounds.js`, planetoida Hidalgo
+  (`collapsePirateRockSite`), reakcja w rurach;
+- krok fizyki `PHYS_HZ` = 60 (`?physHz=120` do A/B) — model zysku § 1 liczył 120·S;
+- opcje grafiki: skala renderu (`Core3D.pxScale`, `Core3D.viewZoom`), MSAA przed `Core3D.init` (`configureQuality`),
+  dobór presetu w haku `Core3D.onAdapter` (w trybie `worker` adapter powstaje w workerze), rozdzielczość dynamiczna
+  z `Core3D.gpuFrameSamples` (w workerze — przez `RET`);
+- komety (`src/3d/comets/`), małe ciała (`DirectSmallBody`), przelot NEA (`neaFlyby3D.js`), zbiorniki paliwa i dym
+  zgniotu (`makeReactorBlow` z nowych miejsc), PD kontra rakiety 3D (`rocketSystem3D.syncThreats` / `pdHit` —
+  rozgrywka w module renderu), kopnięcie kadru (`WeaponFx.onPlayerShot`), dysze SIDE WebGPU (`sideJets3D.js`,
+  `SideNozzleFrame`), fregata zwiadu i luk Atlasa (`scoutBay3D.js`, `__bayCut`, `__renderScale`, `__skinZ`), tarcza
+  pokazana (czasza pola), bomby lotnicze (`fighterBombs.js` → `WeaponFx.bombBlast`), bronie i hala K-7 z Blendera
+  (GLB), pola siłowe bram K-7.
+
+### 7.3 Tory
+
+Każdy tor to jedna sesja we własnym worktree i gałęzi, zadania po kolei (kryteria — § 4). Tory wymieniają się
+wiadomościami (`SendMessage`, nazwy sesji z tabeli); orkiestrator — sesja „Render-worker wdrożenie”.
+
+| tor (sesja) | zadania po kolei | czeka na |
+|---|---|---|
+| `rw-szew` | RW-01 → RW-12 → RW-35 → pomoc przy RW-11c (uzgodnić z `rw-migawka`) | — |
+| `rw-migawka` | RW-04 → RW-03 → RW-10 → RW-11a → RW-11b → RW-11c | — |
+| `rw-bronie` | B3D (bronie tylko 3D, § 7.1) → RW-26 → RW-20 → RW-21 → RW-30 → RW-23 | — |
+| `rw-kadluby` | katalog rozkazów § 3.3 odświeżony o § 7.2 → RW-22 → RW-31 | RW-21 (`rw-bronie`) |
+| `rw-swiat` | RW-25 → RW-27 → RW-24 (baza piratów) → RW-29 → RW-28 | RW-04 przed RW-29; RW-21 przed RW-28 |
+| `rw-worker` | RW-40 → RW-41 → RW-42 (B2cr) → RW-43 → RW-44 → RW-36 → RW-45 | koniec pozostałych torów |
+
+### 7.4 Zasady scalania i pomiarów
+
+- Pracuj tylko w swoim worktree. Przed zadaniem: `git merge main` (LOKALNA gałąź `main` — inne tory przesuwają ją
+  fast-forwardem; `origin` nie gra roli), stan testów jako baza (stare porażki to nie Twoje), zrzuty „przed” — już po
+  scaleniu; między „przed” i „po” nie scalaj.
+- Koniec zadania: testy (`node --test "tests/*.test.mjs"` bez nowych porażek, `npm test`, build
+  `npx vite build --outDir <scratchpad>/dist --emptyOutDir`), dowód z harnessu wg kryterium § 4, wpis **Stan** pod
+  zadaniem w § 4 (data, commit, liczby, odstępstwa od planu), AGENTS.md tam, gdzie zmienia się architektura, commit
+  `RW-xx: …` na gałęzi; potem `git merge main` → szybkie testy →
+  `git -C C:\Users\Szymon\Documents\GitHub\statki merge --ff-only <gałąź>`. Gdy git odmówi (zmiany w głównym drzewie
+  albo `main` uciekł) — scal `main` jeszcze raz i ponów; nigdy `stash`, `reset`, `--force` ani `push`.
+- Zadanie, na które czeka inny tor: po fast-forwardzie wiadomość „RW-xx w main (commit …)” do tego toru.
+- Pomiary wydajności (Chrome / WebGPU / benchmark Node): przed — „START <co, ile min>” do pozostałych sesji `rw-*`,
+  po — „KONIEC”; nie mierz, gdy inna sesja ma pomiar w toku. Zrzuty harnessu są deterministyczne i mogą iść równolegle.
+- Decyzja sprzeczna z § 7.1 albo z wcześniejszymi decyzjami użytkownika — wiadomość do orkiestratora; resztę
+  rozstrzygaj sam wg planu i zapisz w **Stan**.
+- Koniec toru: wiadomość „TOR <nazwa> ZAKOŃCZONY” (co weszło do `main`, co zostało) do `rw-worker` i do orkiestratora.
