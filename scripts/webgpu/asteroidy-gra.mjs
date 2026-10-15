@@ -471,9 +471,9 @@ async function main() {
         if (sc.olbrzym) {
           // Siatka olbrzyma liczy się w workerach (prawdziwy czas) — czekamy na gotowy widok.
           await ev('window.__harness.frames(4)');
-          if (!await waitFor(cdp, `(() => { const B = window.__asteroidBelt; return B.giants.entries.some((e) => e.id === 'warren' && B.giantView(e)); })()`, 180000, 500)) {
+          if (!await waitFor(cdp, `(() => { const B = window.__asteroidBelt; return B.giants.entries.some((e) => e.id === 'warren' && (B.giantView ? B.giantView(e) : e.view)); })()`, 180000, 500)) {
             // klatki, żeby pas utworzył widok
-            for (let i = 0; i < 40; i++) { await ev('window.__harness.frames(2)'); if (await ev(`(() => { const B = window.__asteroidBelt; return B.giants.entries.some((e) => e.id === 'warren' && B.giantView(e)); })()`)) break; await sleep(500); }
+            for (let i = 0; i < 40; i++) { await ev('window.__harness.frames(2)'); if (await ev(`(() => { const B = window.__asteroidBelt; return B.giants.entries.some((e) => e.id === 'warren' && (B.giantView ? B.giantView(e) : e.view)); })()`)) break; await sleep(500); }
           }
         }
         await ev(`window.__harness.frames(${warmFrames})`);
