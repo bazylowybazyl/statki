@@ -73,7 +73,7 @@ function ringGameFor(col, planet = EARTH) {
 
 function loadRingStep(haloRings, npcs, extra = {}) {
   const scope = {
-    haloRings,
+    haloWorld: haloRings,
     ship: null,
     player2Ship: null,
     npcs,

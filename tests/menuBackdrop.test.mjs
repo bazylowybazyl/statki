@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
+import { HaloRingWorld } from '../src/game/haloRingWorld.js';
 import { HaloRingGame, HALO_GAME } from '../src/3d/haloRing/haloRingGame.js';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
 import { createArchRing } from '../src/3d/haloRing/arch/archRing.js';
@@ -80,7 +81,7 @@ const linearTexture = () => {
 };
 
 test('showcase: menu dostaje ring gry, release oddaje go z warstwami gry, bez wycięć i schowany', () => {
-  const game = new HaloRingGame({ planets: [EARTH], renderer: {}, scene: fakeScene() });
+  const game = new HaloRingGame({ world: new HaloRingWorld({ planets: [EARTH] }), renderer: {}, scene: fakeScene() });
   const entry = game.entries[0];
   const ring = fakeRing();
   entry.ring = ring; // budowa ringu wymaga GPU — tu gotowy
@@ -93,7 +94,7 @@ test('showcase: menu dostaje ring gry, release oddaje go z warstwami gry, bez wy
   assert.equal(ring.group.visible, false, 'widoczność ustawi pierwszy update() gry');
   assert.ok(Number.isNaN(entry.sunAz), 'słońce gry nałoży się przy pierwszym update()');
   // menu przerwane przed budową ringu: release bez wyjątku
-  const early = new HaloRingGame({ planets: [EARTH], renderer: {}, scene: fakeScene() });
+  const early = new HaloRingGame({ world: new HaloRingWorld({ planets: [EARTH] }), renderer: {}, scene: fakeScene() });
   assert.doesNotThrow(() => early.releaseShowcase('earth'));
   // bez drugiego ringu: tło bierze ring przez showcaseRing i oddaje releaseShowcase
   const src = read('src/3d/menuBackdrop3D.js');
@@ -210,7 +211,7 @@ test('HaloRingGame: hak rozgrzewki idzie do Core3D.warmup (kamera ze wszystkimi 
   const src = read('src/3d/haloRing/haloRingGame.js');
   assert.match(src, /prewarm: \(objects, opts = \{\}\) => \(Core3D\.gpuReady && Core3D\.warmup\s*\n?\s*\? Core3D\.warmup\.now\(objects, \{ \.\.\.opts, layer: 'all' \}\)/);
   // w Node (bez urządzenia) ring buduje się bez rozgrzewki i zgłasza gotowość
-  const game = new HaloRingGame({ planets: [EARTH], renderer: fakeRenderer(), scene: fakeScene(), quality: 'low' });
+  const game = new HaloRingGame({ world: new HaloRingWorld({ planets: [EARTH] }), renderer: fakeRenderer(), scene: fakeScene(), quality: 'low' });
   const ring = game.showcaseRing('earth');
   assert.equal(await ring.ready, true);
   game.dispose();

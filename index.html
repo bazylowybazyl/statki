@@ -1592,6 +1592,8 @@
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
     import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
+    // Świat ringów po stronie gry (RW-27): kolidery, teren, automat stanowisk K-7, lampki, zegar migania świateł hal.
+    import { HaloRingWorld } from "./src/game/haloRingWorld.js";
     import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
     import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
     import { computeHaloPortStation, haloRingKey } from "./src/game/haloRingPlanets.js";
@@ -5912,7 +5914,7 @@
         env.travelTarget = null;
       }
       env.features = radarFeaturesWithPirateRock(hudRadarWorldFeatures);   // + planetoida pod bazą piratów (misja 1)
-      env.rings = haloRings ? haloRings.entries : null;
+      env.rings = haloWorld ? haloWorld.entries : null;
       env.belt = beltWorld || null;
       _neaRadarBodies.length = 0;
       env.bodies = neaFlybyRadarBodies(_neaRadarBodies);
@@ -12083,10 +12085,14 @@
     let asteroidBelt = null;
     // Świat pasa gry (RW-25, src/game/beltWorld.js): rozgrywka pasa bez renderu — obraz (asteroidBelt) go czyta.
     let beltWorld = null;
+    // Świat ringów gry (RW-27, src/game/haloRingWorld.js): rozgrywka ringów bez renderu — obraz (haloRings) go czyta.
+    let haloWorld = null;
     function initHaloRings() {
       if (!Core3D.isInitialized) Core3D.init();
+      haloWorld = new HaloRingWorld({ planets });
+      window.__haloWorld = haloWorld;
       // Jakość z opcji grafiki (OPTIONS.planetQuality = zapis 'sc_gfx' / dawny sc_planet_quality / preset z adresu).
-      haloRings = new HaloRingGame({ planets, quality: window.OPTIONS?.planetQuality || 'high' });
+      haloRings = new HaloRingGame({ world: haloWorld, quality: window.OPTIONS?.planetQuality || 'high' });
       window.__haloRings = haloRings;
     }
 
@@ -24267,7 +24273,7 @@
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
         // (tranzyty otwarte). Pocisk ≤ ~170 j./krok, płyta ≥ ~450 j. — bez tunelowania.
-        if (haloRings && haloRings.pointInSlab(b.x, b.y)) {
+        if (haloWorld && haloWorld.pointInSlab(b.x, b.y)) {
           writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'ring');
           spawnBulletImpactEffect(b, b.x, b.y, 0.95, _impactHit);
           removeBulletAt(i);
@@ -27750,21 +27756,21 @@
     let _ringGate = new Float64Array(12);
     const RING_GATE_SLACK = 64;   // zapas na zaokrąglenia obrotu do układu ringu (j. świata)
     function stepShipRingCollisions(dt) {
-      if (!haloRings) return;
+      if (!haloWorld) return;
       if (ship && !ship.dead && !ship.noHullCollisions) {
-        const hit = haloRings.constrainShip(ship, true);
+        const hit = haloWorld.constrainShip(ship, true);
         const nowMs = performance.now();
         if (hit && hit.impactSpeed > 150 && nowMs - _haloRingNoticeAtMs > 2500) {
           _haloRingNoticeAtMs = nowMs;
           pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
         }
       }
-      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloRings.constrainShip(player2Ship, true);
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloWorld.constrainShip(player2Ship, true);
       // NPC (bez ścian portu) kolider odrzuca, gdy środek kadłuba jest dalej od planety niż
       // floorMid + terrainReach + zasięg kadłuba (HaloRingCollider.constrainShip, nearFloor) — ten
-      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingGame) — bez bramki.
+      // sam test tu, przed kopią do bryły. Obiekt ringów bez `entries` (nie HaloRingWorld) — bez bramki.
       let gateN = -1;
-      const entries = haloRings.entries;
+      const entries = haloWorld.entries;
       if (Array.isArray(entries)) {
         if (_ringGate.length < entries.length * 3) _ringGate = new Float64Array(entries.length * 3);
         gateN = 0;
@@ -27795,7 +27801,7 @@
           if (!near) continue;
         }
         if (!npcCollidesWithWorld(npc)) continue;
-        if (haloRings.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
+        if (haloWorld.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
       }
     }
 
@@ -28366,7 +28372,7 @@
       const t0 = performance.now();
       const o = _gasObstOpts;
       o.dt = dt; o.camX = cam.x; o.camY = cam.y; o.viewHalf = viewHalf;
-      o.rings = haloRings ? haloRings.entries : null;
+      o.rings = haloWorld ? haloWorld.entries : null;
       o.dock = gasDockObstacles();
       o.nDomains = ex.domainRects(_gasDomRects);
       _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
@@ -29022,11 +29028,17 @@
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       // Ring „Halo”: kamera TEJ klatki (cam, ze wstrząsem — ta sama trafia do
       // passów Core3D), bo ring liczy pozycje względem kamery (RTE).
+      // Świat ringów gry: zegar migania świateł hal, automat obsługi stanowisk K-7 w czasie gry (postój, podpinanie,
+      // odpięcie stoją w pauzie i scenach fabuły; każdy ring, także poza kadrem i w podzielonym ekranie), lampki
+      // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
+      if (haloWorld) {
+        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+      }
       if (haloRings) {
         haloRings.update(frameDt, cam, {
           sun: SUN,
           ship,
-          // czas gry (automat obsługi stanowisk K-7: postój, podpinanie, odpięcie stoją w pauzie i scenach fabuły)
+          // czas gry (ramiona i przewody paliwowe hal: stoją w pauzie i scenach fabuły)
           gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
           quality: window.OPTIONS?.planetQuality,
           splitScreen: splitScreenMode
@@ -29079,11 +29091,11 @@
         dt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
         camX: cam.x, camY: cam.y,
         viewHalf: Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1),
-        rings: haloRings ? haloRings.entries : null,
+        rings: haloWorld ? haloWorld.entries : null,
         ship, ship2: splitScreenMode ? player2Ship : null,
         npcs: fogSeenInto(npcs, _npcSeenList), sun: SUN,
         // zegar migania świateł hal K-7 (ten sam dostaje shader hali) — światła hali w siatce oświetlają pył i parę
-        clock: haloRings ? haloRings.clock : 0
+        clock: haloWorld ? haloWorld.clock : 0
       });
       HallDust.submit(HallDust.input);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
@@ -29173,7 +29185,7 @@
         // kadłubów (pass ortho).
         syncScoutBay3D(vfxTime);
         // Nadproża bram K-7 przy kamerze (wieże kanwy, lampy pozycyjne i okna mostków pod nimi gasną).
-        refreshLintelCover(k7Lintels, haloRings ? haloRings.entries : null, cam.x, cam.y,
+        refreshLintelCover(k7Lintels, haloWorld ? haloWorld.entries : null, cam.x, cam.y,
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
         BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
@@ -31453,10 +31465,11 @@
       showHud: (on) => toggleGameUI(!!on),
       fadeScreen: (on, ms) => fadeScreen(on, ms),
       shake: (mag, dur) => camera.addShake(mag, dur),
-      k7Hall: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.ring?.k7Halls?.[i] || null,
-      // pozy obsługi stanowisk hali (suwnice, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
+      // zajętość stanowiska hali (lampka) — stan gry w rejestrze świata ringów; obraz przenosi go na lampki hali
+      k7SetBerth: (i, id, occupied, reserved, force) => !!haloWorld?.setBerthState('earth', i, id, occupied, reserved, force),
+      // pozy obsługi stanowisk hali (zamki pola, przewody paliwowe) — stan gry w rejestrze kolidera: z niego rysuje hala
       // i biorą się źródła gazu z przewodów (pył hal, src/3d/gasField/)
-      k7HallPoses: (i = 0) => haloRings?.entries?.find(e => e.key === 'earth')?.collider?.registry?.halls?.[i]?.poses || null,
+      k7HallPoses: (i = 0) => haloWorld?.hall('earth', i)?.poses || null,
       // WYPOSAŻENIE z panelu stanowiska (przed ODDOKUJ): terminal portu Ziemi (K-7) na zakładce kart.
       openFitting: () => {
         const port = stations.find(st => st?.ringPort === 'earth');
