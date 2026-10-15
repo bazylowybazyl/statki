@@ -126,6 +126,7 @@ export class SnapshotPacker {
     this._bodyShapeVer = new Int32Array(0);
     this._bodyRestK = new Int32Array(0);
     this._bodyStore = [];
+    this._bodyBeams = [];
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
     this._coreLists = [[null, null], null, null, null];
@@ -687,8 +688,9 @@ export class SnapshotPacker {
     const store = body.nodeStore;
     const beams = body.beamStore;
     let changed = false;
-    if (this._bodyStore[bs] !== store) {
+    if (this._bodyStore[bs] !== store || this._bodyBeams[bs] !== beams) {
       this._bodyStore[bs] = store;
+      this._bodyBeams[bs] = beams;
       this._bodyStoreVer[bs]++;
       changed = true;
       this._bodyRestK[bs] = k;
@@ -730,6 +732,7 @@ export class SnapshotPacker {
     const lm = body.latticeMin;
     f64[b + BF.LAT_MIN_X] = lm ? raw(lm.x) : NaN;
     f64[b + BF.LAT_MIN_Y] = lm ? raw(lm.y) : NaN;
+    f64[b + BF.LAT_MIN_Z] = lm ? raw(lm.z) : NaN;
     const bmm = body._boundsMinMax;   // [minX, minY, minZ, maxX, maxY, maxZ]
     f64[b + BF.MIN_X] = bmm ? bmm[0] : NaN;
     f64[b + BF.MIN_Y] = bmm ? bmm[1] : NaN;

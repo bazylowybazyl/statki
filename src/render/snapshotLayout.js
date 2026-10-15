@@ -132,7 +132,7 @@ export const ENT_FLAG2 = Object.freeze({ IS_PLAYER_FIELD: 1, CAPITAL: 2, SLEEPIN
 // ── BODY (rekord na slot ciała belek; pola rekordu kadłuba `beamHull` i ciała `hull.body`) ──────────────────
 export const BODY = record({
   f64: ['ANCHOR_DX', 'ANCHOR_DY', 'SCALE', 'SRC_W', 'SRC_H', 'PIVOT_X', 'PIVOT_Y', 'CELL', 'LAT_MIN_X', 'LAT_MIN_Y',
-    'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP'],
+    'LAT_MIN_Z', 'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP'],
   i32: ['SLOT', 'GEN', 'ENT_SLOT', 'FLAGS', 'NODE_COUNT', 'ACTIVE_NODES', 'BEAM_COUNT', 'STORE_VER', 'SHAPE_VER',
     'DMG_KEY', 'NODE_F64_OFF', 'NODE_U8_OFF', 'NODE_N', 'BEAM_F64_OFF', 'BEAM_U8_OFF', 'BEAM_N', 'REST_F64_OFF',
     'DIRTY_OFF', 'DIRTY_N', 'CHANGED_K', 'REST_K']
