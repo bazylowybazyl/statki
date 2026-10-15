@@ -83,6 +83,7 @@ export class MirrorEntity {
     // pisane przez render
     this.__cloakLook = undefined; this.__warpHullU = undefined; this.__warpNurtMode = undefined; this.__bayCut = undefined;
     this.__hiddenFromView = false; this.__inDrawBox = false; this.__engineFxFallback = undefined;
+    this._coldSkinFrame = undefined; this._shadowGrid = undefined; this.__lightOcclude = undefined; this.__lightMate = undefined;
     // przejściowe (do RW-26 / RW-28 / RW-31): obiekt gry dla kroków jeszcze nieprzeniesionych
     this.__game = null;
   }
