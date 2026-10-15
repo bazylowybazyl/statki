@@ -1264,6 +1264,24 @@ w `engineVfxSystem.js`, `warpNurt.js`); `SimClock` w workerze ustawiany z HEAD. 
 strażnik RW-01: 0 odczytów `window.<zmienna gry>` w modułach przenoszonych. Zależności: RW-01.
 Kolizje: wiele plików renderu, zmiany mechaniczne — po katalogach, po sesji renderu CPU.
 
+**Stan (2026-10-15, tor `rw-szew`): kod na gałęzi, CZEKA NA WERYFIKACJĘ** (pełne testy, `npm test`, build i zrzuty
+bit w bit — wstrzymane przez pauzę obciążenia; zrzuty „przed” trzeba zrobić z drzewa `main` przez `zrzuty.mjs --root`).
+`src/render/renderWorld.js` — obiekt `RenderWorld` z getterami; tryb `off` czyta dokładnie dawne źródło (dawne
+`window.X` z `globalThis.window || globalThis` — testy w Node podkładają osobny `window`; dawne `globalThis.X`
+z `globalThis`; `boost` z `GameState`), `setSource(obiekt)` — źródło z migawki dla `inline` / `worker` (nazwy pól
+uzgodnione z `rw-migawka`: HEAD `camera, camera2, splitScreenMode, sun, options, vfxTune`, gracz `ship, player2Ship,
+playerPose, driveState, warp, boost`, listy `bullets, wrecks, npcs`, świat `planets`, dev `devTuning, devVFX,
+devConfig, dev`, `config.*` (nastawy harnessu i haki konsoli), strona `isBrowser, pageSearch`, rozgrywka w renderze
+`game.*` (rakiety — do RW-23), `hullBodies`, `scoutBay`, `destruction3D`). 26 modułów przerobionych (zamiana
+mechaniczna, osłony `typeof window` usunięte tam, gdzie wynik zależał od okna — w workerze dawałyby `null`):
+`okno:` 156 → 0, `gamestate:` 6 → 0, import `gameState.js` z renderu 2 → 0. Strażnik dostał licznik
+`okno-wartosc:` (okno jako wartość — `prepareMainLod(…, window)`, `const w = window`, `const g = globalThis`): wyłapał
+3 ukryte miejsca (`__K7_GLB`, `__WEAPON_GLB`, gracz w `rockets/effects.js`) → też przez fasadę. Odstępstwa: `SimClock`
+zostaje importem (klasa B) — w workerze moduł ustawia się z HEAD (RW-40); `RenderWorld.config.*` czytane przy imporcie
+modułu (`tslUuidFix`) wymagają w workerze `setSource` PRZED importem modułów renderu; w Node `typeof window ? … :
+null` dawało `null`, fasada daje `undefined` (zmiana tylko w testach Node — sprawdzone pojedynczymi plikami testów).
+Moduły kanwy 2D (`okno-kanwa:`) bez zmian — zostają na wątku głównym.
+
 ### Etap 2 — rozkazy i rozgrywka poza modułami 3D (jeden wątek)
 
 Korzyść bez workera: wizualia deterministyczne niezależnie od kanwy 2D i dźwięku (zrzuty A/B przestają się rozjeżdżać

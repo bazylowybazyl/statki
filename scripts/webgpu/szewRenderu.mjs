@@ -21,6 +21,8 @@
 //   okno:<nazwa>         odczyty zmiennej gry (`window.X`, `globalThis.X`, `self.X` albo wolny identyfikator X), którą
 //                        pisze gra (index.html, src poza renderem) albo nikt (haki dev), w modułach przenoszonych
 //                        do workera (§ 2.4); `okno-kanwa:<nazwa>` — to samo w modułach kanwy 2D;
+//   okno-wartosc:<plik>  `window` / `globalThis` / `self` jako wartość (argument, przypisanie) w module przenoszonym —
+//                        zmienne gry hurtem, poza licznikiem `okno:`;
 //   gamestate:<plik>     odczyty `GameState.*` w module renderu (§ 2.4, RW-12);
 //   dom:<plik>           DOM i okno przeglądarki w module przenoszonym (§ 2.9): document, localStorage,
 //                        requestIdleCallback, requestAnimationFrame, innerWidth / innerHeight / devicePixelRatio /
@@ -585,6 +587,10 @@ function szewRenderuWlasciwy(root, grafGotowy, nadpisz) {
       if (n.type === 'Identifier' && n.name === 'GameState' && p && p.type === 'MemberExpression' && p.object === n) { add(`gamestate:${f}`); gdzie(`gamestate:${f}`, at(n)); }
       if (n.type === 'Identifier' && isReference(n, parents) && !declared.has(n.name)) {
         const typeofOnly = p && p.type === 'UnaryExpression' && p.operator === 'typeof';
+        // samo okno jako wartość (argument, przypisanie) — moduł dostaje zmienne gry hurtem
+        if (przenoszony && OKNO.has(n.name) && !typeofOnly && !(p && p.type === 'MemberExpression' && p.object === n)) {
+          add(`okno-wartosc:${f}`); gdzie(`okno-wartosc:${f}`, at(n));
+        }
         if (!ZNANE_GLOBALE.has(n.name) && zmiennaGry(n.name) && writtenByGame.has(n.name) && !typeofOnly) {
           const k = `${przenoszony ? 'okno' : 'okno-kanwa'}:${n.name}`;
           add(k); gdzie(k, at(n));
