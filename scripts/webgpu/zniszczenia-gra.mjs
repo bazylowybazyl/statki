@@ -418,7 +418,9 @@ try {
     const p = (window.__pipeRec?.pipes || []).filter((x) => x.frame > 0);
     const sync = p.filter((x) => x.sync);
     const skin = sync.filter((x) => /PortBuildingSkin|ciało świata/.test(x.nazwa));
-    return { wszystkie: (window.__pipeRec?.pipes || []).length, wGrze: p.length, sync: sync.length, syncSkora: skin.length, listaSkora: skin.slice(0, 20).map((x) => x.nazwa), lista: sync.slice(0, 30).map((x) => x.nazwa) };
+    const W = window.Core3D?.warmup?.stats;
+    return { wszystkie: (window.__pipeRec?.pipes || []).length, wGrze: p.length, sync: sync.length, syncSkora: skin.length, listaSkora: skin.slice(0, 20).map((x) => x.nazwa), lista: sync.slice(0, 30).map((x) => x.nazwa),
+      klatki: sync.slice(0, 30).map((x) => x.frame), rozgrzewka: W ? { flush: W.flush, grupy: W.grupy } : null };
   })()`);
   console.log('pipeline:', JSON.stringify(report.pipeline));
   report.koniec = await worldState();

@@ -153,7 +153,9 @@ try {
     const p = (window.__pipeRec?.pipes || []).filter((x) => x.frame > 0);
     const sync = p.filter((x) => x.sync);
     const rock = sync.filter((x) => /hidalgo|PirateRock|Osada|PortBuilding/.test(x.nazwa));
-    return { wGrze: p.length, sync: sync.length, syncSkala: rock.length, listaSkala: rock.slice(0, 20).map((x) => x.nazwa), lista: sync.slice(0, 30).map((x) => x.nazwa) };
+    const W = window.Core3D?.warmup?.stats;
+    return { wGrze: p.length, sync: sync.length, syncSkala: rock.length, listaSkala: rock.slice(0, 20).map((x) => x.nazwa), lista: sync.slice(0, 30).map((x) => x.nazwa),
+      klatki: sync.slice(0, 30).map((x) => x.frame), rozgrzewka: W ? { flush: W.flush, grupy: W.grupy } : null };
   })()`);
   console.log('pipeline:', JSON.stringify(report.pipeline));
   report.bledy = logs.errors().slice(0, 80);

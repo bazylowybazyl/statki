@@ -176,7 +176,9 @@ function modelAssets(id) {
       };
       const w = Core3D.warmup;
       if (!w?.now) { swap(); return; }
-      w.now([_warmHolder(m.geometry, mat, true), _warmHolder(skinWarmGeometry(), skin, true)], { layer: 0 }).then(swap, swap);
+      // z góry i w kamerach 3D (perspektywa = inny pipeline) — modele rysują też kamery 3D
+      const holders = () => [_warmHolder(m.geometry, mat, true), _warmHolder(skinWarmGeometry(), skin, true)];
+      Promise.all([w.now(holders(), { layer: 0 }), w.now(holders(), { layer: 0, ortho: false })]).then(swap, swap);
     }).catch((err) => console.warn('[ships3D]', err.message));
   }
   return m;
@@ -1020,6 +1022,13 @@ export function prepareShipModels3D({ timeoutMs = 5000 } = {}) {
 export function setShipModels3DWarmIds(fn) { if (typeof fn === 'function') _warmIds = fn; }
 Core3D.warmup?.add({ name: 'modele 3D statków i broni', objects: () => warmupShipModels3D(_warmIds()), layer: 0, phase: 'loading' });
 Core3D.warmup?.add({ name: 'modele 3D statków i broni (kamery 3D)', objects: () => warmupShipModels3D(_warmIds()), layer: 0, ortho: false, phase: 'loading' });
+// Floty bojowe, które przylatują w trakcie gry (baza piratów misji 1, fale, wezwania wsparcia): materiały ich modeli
+// (kamery 3D, „Statki 3D”). Pipeline'y wszystkich modeli są wspólne (stałe nazwy buforów palety —
+// shipMaterials3D.tsl.js), zostaje sama budowa grafu (~1 s CPU na flotę) — w tle PO ekranie ładowania (phase
+// 'after'): w kolejce ekranu ładowania wypierała za limit flush() skałę, bazę i niebo kamer 3D.
+const WARM_FLEET = Object.keys(SHIP3D_MODELS).filter((id) => /^(terran|pirate)_/.test(id) || id === 'supercapital' || id === 'capital_carrier');
+Core3D.warmup?.add({ name: 'modele 3D floty', objects: () => warmupShipModels3D(WARM_FLEET), layer: 0, phase: 'after' });
+Core3D.warmup?.add({ name: 'modele 3D floty (kamery 3D)', objects: () => warmupShipModels3D(WARM_FLEET), layer: 0, ortho: false, phase: 'after' });
 
 /** Stan ostatniej klatki: egzemplarze, widoczne (model albo wieże), wieże w partiach, skóry, rysunki partii. */
 export function shipModels3DStats() {

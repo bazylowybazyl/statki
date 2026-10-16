@@ -89,9 +89,11 @@ export function createShipMaterial(o = {}) {
   const palSets = o.palettes && o.paletteIndex ? o.palettes : [o.palette || null];
   const pal = [];
   for (const ov of palSets) for (let i = 0; i < PAL.length; i++) pal.push({ ...PAL[i], ...(ov?.[i] || {}) });
-  const colors = uniformArray(pal.map((p) => new THREE.Color(p.color)), 'color');
-  const pbr = uniformArray(pal.map((p) => new THREE.Vector4(p.rough, p.metal, p.power, p.seams)), 'vec4');
-  const emis = uniformArray(pal.map((p) => new THREE.Color(p.emissive)), 'color');
+  // Stałe nazwy buforów (pułapka 25): bez nich nazwa bufora to id węzła — każdy model miał inny WGSL i własny
+  // pipeline, więc model, którego nie było na ekranie ładowania (piraci bazy, wezwania), kompilował się w klatce.
+  const colors = uniformArray(pal.map((p) => new THREE.Color(p.color)), 'color').setName('ship3dPalColor');
+  const pbr = uniformArray(pal.map((p) => new THREE.Vector4(p.rough, p.metal, p.power, p.seams)), 'vec4').setName('ship3dPalPbr');
+  const emis = uniformArray(pal.map((p) => new THREE.Color(p.emissive)), 'color').setName('ship3dPalEmis');
 
   const aMat = attribute('aMat', 'float');
   const id = clamp(aMat.add(0.5), 0, SHIP3D_MAT_COUNT - 1).toInt();
