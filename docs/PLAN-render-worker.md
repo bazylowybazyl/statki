@@ -1291,8 +1291,17 @@ w `engineVfxSystem.js`, `warpNurt.js`); `SimClock` w workerze ustawiany z HEAD. 
 strażnik RW-01: 0 odczytów `window.<zmienna gry>` w modułach przenoszonych. Zależności: RW-01.
 Kolizje: wiele plików renderu, zmiany mechaniczne — po katalogach, po sesji renderu CPU.
 
-**Stan (2026-10-15, tor `rw-szew`): kod na gałęzi, CZEKA NA WERYFIKACJĘ** (pełne testy, `npm test`, build i zrzuty
-bit w bit — wstrzymane przez pauzę obciążenia; zrzuty „przed” trzeba zrobić z drzewa `main` przez `zrzuty.mjs --root`).
+**Stan (2026-10-16, tor `rw-szew`): ZWERYFIKOWANE** — zrzuty wszystkich sesji „przed” (eksport `main` przez
+`zrzuty.mjs --root`) ↔ „po” bit w bit (galeria + kosmos + rakiety 60 / 60 obrazów różnicy > 8 = 0; reszta sesji
+identyczna już w pierwszym porównaniu), pełne testy, `npm test`, build. Weryfikacja znalazła jedną różnicę obrazu:
+`prepareMainLod(…, RenderWorld)` czytało z trzeciego argumentu także `CameraRig.tune.shakeMaxPx`, którego fasada nie
+miała — zapas kadru LOD strug MAIN spadał do domyślnych 80 px, LOD zdejmował inne strugi i iskry, a przesunięty ciąg
+fxRandom zmieniał efekty całych scen (wraki 9–15% pikseli, kratery galerii do 16%). Poprawka: getter `cameraRig`
+(← `window.CameraRig`), test `tests/mainExhaustLod.test.mjs` „kadr z fasady RenderWorld”. Lekcja: fasada przekazana
+jako ARGUMENT zamiast okna — strażnik szwu nie widzi odczytów pól parametru; takie miejsce sprawdzać polem po polu
+(w drzewie było jedno). Do wyszukania różnic: bisekcja po commitach i po plikach na eksportach (`--root`), próba
+opóźnienia (1 ms CPU na klatkę w `updateHexShips3D` — pętla iteracji, nie `performance.now()`: harness zamraża zegar)
+wykluczyła wrażliwość galerii i wraków na czas CPU.
 `src/render/renderWorld.js` — obiekt `RenderWorld` z getterami; tryb `off` czyta dokładnie dawne źródło (dawne
 `window.X` z `globalThis.window || globalThis` — testy w Node podkładają osobny `window`; dawne `globalThis.X`
 z `globalThis`; `boost` z `GameState`), `setSource(obiekt)` — źródło z migawki dla `inline` / `worker` (nazwy pól
@@ -1424,8 +1433,9 @@ rozkazy, `pirateStationFactory.js`, `arch/ecumene.js`, `arch/fable.js`. Kryteriu
 przenoszonych; zrzuty bit w bit (`mars`, `jowisz`, `piraci`). Zależności: RW-01. Kolizje: rozproszone, małe;
 `core3d.js` (sesja renderu CPU).
 
-**Stan (2026-10-15, tor `rw-szew`): kod na gałęzi, CZEKA NA WERYFIKACJĘ** (pełne testy, `npm test`, build, zrzuty
-wszystkich sesji z naciskiem na `menu`, `ziemia`, `mars`, `jowisz`, `piraci`, `kosmos`, `stacja` — pauza obciążenia).
+**Stan (2026-10-16, tor `rw-szew`): ZWERYFIKOWANE** — zrzuty wszystkich sesji „przed” ↔ „po” bit w bit (menu, ziemia,
+mars, jowisz, piraci, kosmos, stacja i reszta; tekstury planet z ImageBitmap — orientacja i barwy bez zmian), pełne
+testy, `npm test`, build (razem z RW-12).
 Strażnik: `dom:` 81 w 24 plikach → 0 (licznik dostał `new THREE.TextureLoader / ImageLoader` — wcześniej niewidoczne,
 i render spoza katalogów: `src/space/pirateStation/pirateStationFactory.js`, `Engineeffects.js`; `shieldSystem.js`
 z korzenia liczy się jako symulacja — import istniał, sufit 4 z powodem). Nowe: `src/3d/canvas2d.js` —
