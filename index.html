@@ -28341,6 +28341,9 @@
     const _snapCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
     const _snapHides = (e) => SensorSystem.hides(e);
     const _snapCoresOf = (lists) => ReactorGame.cores(lists);
+    // Poza renderu holownika pod graczem (RW-31, § 2.6 p. 27): liczona przy pakowaniu, bez zapisu w encji. Dziś render
+    // czyta jeszcze żywe encje, więc ServiceTugGame.beginRender / restorePose zostają do renderu z luster (RW-11).
+    const _snapTugPose = (e, out) => e.serviceTug === true && ServiceTugGame.renderPoseOf(e, window.__interpShipPose, out);
     window.RenderSnapshot = { mode: SZEW_MODE, packer: renderSnapshot, slots: RenderSlots };
 
     function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY) {
@@ -28374,6 +28377,7 @@
       f.interpPose = window.__interpShipPose;
       f.ship = ship;
       f.p2 = player2Ship;
+      f.poseOf = ServiceTugGame.missions.length ? _snapTugPose : null;
       f.npcs = npcs;
       f.wrecks = wrecks;
       f.coldWrecks = coldWrecks;

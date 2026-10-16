@@ -112,6 +112,8 @@ export function createSnapshotFrame() {
     hall: null,                 // faza finish: Float64Array HALL_DUST_IN
     repair: null,               // blok `repair` (blocks/repairBlock.js): RepairSwarm
     cloak: null,                // blok `cloak` (blocks/cloakBlock.js): CLOAK_LOOK_FRAME po stepCloakLooks (RW-26)
+    poseOf: null,               // (encja, out { x, y, a }) → true: poza RENDERU encji inna niż jej pola (RW-31, § 2.6 p. 27 —
+                                // holownik pod graczem na pokładzie: ServiceTugGame.renderPoseOf), bez zapisu w encji
     lastConsumed: -1           // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)
   };
 }
@@ -185,6 +187,7 @@ export class SnapshotPacker {
     this._blocks = [];
     this._blocksDirty = false;
     this._fogR = new Uint8Array(64);     // RENDER: 1 = ukryte mgłą (jedno pytanie na encję w klatce)
+    this._poseOut = { x: 0, y: 0, a: 0 };  // poza renderu z frame.poseOf (RW-31: holownik pod graczem)
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
     this._coreLists = [[null, null], null, null, null];
@@ -577,6 +580,12 @@ export class SnapshotPacker {
     f64[b + EF.VEL_Y] = vel ? raw(vel.y) : NaN;
     f64[b + EF.ANG_VEL] = raw(e.angVel);
     f64[b + EF.ANGULAR_VELOCITY] = raw(e.angularVelocity);
+    const poseOf = f.poseOf;
+    if (poseOf && poseOf(e, this._poseOut)) {
+      const p = this._poseOut;
+      f64[b + EF.X] = p.x; f64[b + EF.Y] = p.y; f64[b + EF.ANGLE] = p.a;
+      if (pos) { f64[b + EF.POS_X] = p.x; f64[b + EF.POS_Y] = p.y; }
+    }
     f64[b + EF.Z] = raw(e.z);
     f64[b + EF.RADIUS] = raw(e.radius);
     f64[b + EF.R] = raw(e.r);

@@ -338,3 +338,24 @@ test('bloki modułów (RW-11c): rejestracja, pakowanie w fazie, widoki strony u 
   assert.equal(reader.page.blocks.ring.f64.length, 64);
   assert.equal(reader.page.blocks.ring.f64[0], 12.5);
 });
+
+test('poza renderu z frame.poseOf (RW-31: holownik pod graczem) — w ENT, encja nietknięta', () => {
+  const ents = [makeShip(1, 5_000_000, -7_000_000), makeShip(2, 5_000_300, -7_000_100)];
+  const tug = ents[1];
+  const frame = baseFrame(ents, { poseOf: (e, out) => { if (e !== tug) return false; out.x = 5_000_123.5; out.y = -7_000_456.25; out.a = 1.25; return true; } });
+  deepFreeze(ents);
+  let reader = null;
+  const packer = new SnapshotPacker({ shared: false, onLayout: (buf, layout) => { reader = new TripleBufferReader(buf, { views: (b, off) => createSnapshotViews(b, off, layout) }); } });
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  const v = reader.page;
+  const slotOf = (e) => packer.ids.entities.peek(e);
+  const t = slotOf(tug) * ENT.stride.f64, p = slotOf(ents[0]) * ENT.stride.f64;
+  assert.equal(v.entF64[t + ENT.F64.X], 5_000_123.5);
+  assert.equal(v.entF64[t + ENT.F64.POS_Y], -7_000_456.25);
+  assert.equal(v.entF64[t + ENT.F64.ANGLE], 1.25);
+  assert.equal(v.entF64[t + ENT.F64.VX], 20, 'prędkość z fizyki');
+  assert.equal(v.entF64[p + ENT.F64.X], 5_000_000, 'reszta encji — pola encji');
+  assert.equal(tug.x, 5_000_300);
+});

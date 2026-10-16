@@ -1743,8 +1743,19 @@ konfiguracją (`nearExtras` / `staticSkin` wyłączone) bramka liczy próg smugi
 mniej zamrożeń w kadrze); dema bez gry nie stemplują `__inDrawBox` (LOD dysz w demach wyłączony — dawniej włączony).
 Strażnik szwu: `index:aktualizacja` 100 → 101 (`Core3D.pixelRatio` — w workerze z `RET_F64.PIXEL_RATIO`), za to −2
 odwołania `isColdFreezeVisuallySafe`. Testy `tests/coldWreckView.test.mjs` (6), strażniki zaktualizowane:
-`coldWrecksBeam`, `renderPerfGates`, `sideThrusters3D`. Część 2 (po RW-22): poza holownika w ENT zamiast
-`ServiceTugGame.beginRender` (§ 2.6 p. 27), pozostałe flagi § 2.6 p. 17.
+`coldWrecksBeam`, `renderPerfGates`, `sideThrusters3D`.
+
+**Stan części 2 (2026-10-16, tor `rw-kadluby`, commit „RW-31 cz. 2: …”) — ZROBIONA, w `main`.** Poza renderu holownika
+(§ 2.6 p. 27) idzie do ENT migawki z gry, bez zapisu w encji: pole ramki `frame.poseOf(encja, out)` (`snapshotPack.js` —
+nadpisuje X / Y / POS / ANGLE rekordu, prędkości z fizyki), w `index.html` `_snapTugPose` = `ServiceTugGame.renderPoseOf`
+(ta sama poza, którą `beginRender` wpisuje w encję — test), ustawiane tylko przy misji holownika. `beginRender` /
+`restorePose` zostają, dopóki render czyta żywe encje — znikną z renderem z luster (RW-11). Flagi holownika:
+`__skinZ` → `ENT.SKIN_Z`, `__lightMate` → `mirrorBridge.js` (RW-10). § 2.6 p. 17: `__renderedByThree`, `proj.slug`,
+`st.fx`, `WeaponFx.available` — RW-21; `station._mesh3d` — RW-22 (`STATION_FX`); zostaje `__warpNurtMode` /
+`__warpHullU` (render → render przez encję) — warp poza renderem (tor `rw-swiat`). Testy: `tests/snapshotPack.test.mjs`
+(poza z `poseOf` w ENT, encja zamrożona), `tests/serviceTug.test.mjs` (`renderPoseOf` = `beginRender`, bez zapisu),
+strażnik wpięcia w `tests/coldWreckView.test.mjs`; testy Node, `npm test`, build. Zrzuty bez zmian z definicji: `poseOf`
+czyta tylko pakujący migawki (`?szew=inline`).
 
 ### Etap 3 — moduły renderu bez DOM
 

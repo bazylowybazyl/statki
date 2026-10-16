@@ -170,3 +170,9 @@ test('wpięcie: gra liczy widok klatki, render nie pisze flag gry ani nie woła 
   assert.doesNotMatch(hex, /ensureBody\(w\)/, 'render nie prosi gry o ciało');
   assert.match(hex, /from '\.\.\/render\/drawBox\.js'/);
 });
+
+test('RW-31 cz. 2: poza renderu holownika do migawki przez frame.poseOf (bez zapisu w encji)', () => {
+  const src = readIndexHtml();
+  assert.match(src, /const _snapTugPose = \(e, out\) => e\.serviceTug === true && ServiceTugGame\.renderPoseOf\(e, window\.__interpShipPose, out\);/);
+  assert.match(src, /f\.poseOf = ServiceTugGame\.missions\.length \? _snapTugPose : null;/);
+});
