@@ -28379,13 +28379,10 @@
       ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_LATE }) : null;
     let rwHost = null;
     if (RW_WORKER) {
-      // strumień rozkazów bez dyspozytora na stronie: efekty broni, ran, rakiet i wybuchów w trybie worker wyłączone
-      // (RW-40b: czytelnik w workerze)
-      RenderCommands.reader.handlers = [];
-      RenderCommands.reader.on = () => {};
+      // strumień rozkazów: czytelnik i dekodery w workerze (RW-40b) — pierścień przełącza rwHost (commands)
       try {
         rwHost = createRenderWorkerHost({
-          packer: renderSnapshot, slots: RenderSlots, gameCanvas: canvas, mainCanvas: document.getElementById('webgl-layer'), W, H,
+          packer: renderSnapshot, slots: RenderSlots, commands: RenderCommands, gameCanvas: canvas, mainCanvas: document.getElementById('webgl-layer'), W, H,
           dpr: window.devicePixelRatio || 1, quality: { renderScale: Core3D.renderScale, msaa: Core3D.msaaBoot }
         });
         window.RenderWorkerHost = rwHost;

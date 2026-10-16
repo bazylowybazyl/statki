@@ -13,8 +13,8 @@
 export const RW_WORKER_DISABLED = Object.freeze([
   'planety i słońce', 'ring „Halo” i hale K-7', 'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył kosmiczny', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
-  'mostki 3D i okna', 'drony naprawcze', 'rdzenie reaktorów', 'wieże 3D', 'zimne wraki',
-  'efekty broni, rakiet, ran, wybuchów (strumień rozkazów)', 'tło menu', 'podzielony ekran'
+  'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
+  'rakiety (lot w grze bez bloku migawki)', 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
 
 const isWorker = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;
@@ -26,7 +26,11 @@ if (isWorker) {
     descriptors: [], topologies: [], coreDescs: new Map(), stationDescs: [], resources: [],
     dict: { values: [], value(c) { return c >= 0 ? this.values[c] : undefined; } },
     cam: { x: 0, y: 0, zoom: 1 }, cull: { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 },
-    sun: { x: 0, y: 0, r: 0 }, frames: 0, errors: 0
+    sun: { x: 0, y: 0, r: 0 }, frames: 0, errors: 0,
+    // strumień rozkazów (RW-40b): czytelnik pierścienia strony, pociski-lustra po slocie (SHOTS)
+    cmd: null, cmdBuf: null, evFrame: -1, pageEv: new Float64Array(64).fill(-1), shots: [], shotList: [],
+    // wieże 3D (blok TURRETS — rekordy Turret2D tej klatki po stronie gry, RW-26): lustro → rekordy
+    turByEnt: new Map(), turPool: [], turrets: null
   };
   const report = (e, where) => {
     st.errors++;
@@ -56,7 +60,15 @@ if (isWorker) {
       import('./tripleBuffer.js'), import('./returnLayout.js'), import('./blocks/cloakBlock.js'),
       import('../game/shipBridgeBeams.js')
     ]);
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak };
+    const [cmdMod, wfxCmd, dmgCmd, blastCmd, blastFx, rktFx, sparks, clock, wfx] = await Promise.all([
+      import('./renderCommands.js'), import('../3d/weapons/weaponFxCommands.js'), import('../3d/hullDamageCommands.js'),
+      import('../3d/explosions/explosionCommands.js'), import('../3d/explosions/explosionFx.js'), import('../3d/rockets/rocketFx.js'),
+      import('../3d/sparkSystem3D.js'), import('../game/simClock.js'), import('../3d/weapons/weaponFx.js')
+    ]);
+    const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
+      import('../3d/bridge3D.js'), import('../3d/bridgeFx3D.js'), import('../game/cloakLook.js'), import('../3d/reactorBlast/reactorBlastFx.js')
+    ]);
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook };
     const Core3D = core.Core3D;
     st.Core3D = Core3D;
     if (m.quality) Core3D.configureQuality(m.quality);
@@ -88,10 +100,104 @@ if (isWorker) {
     }
     ret.retSetFlag(st.ret, ret.RET_FLAG.GPU_READY | ret.RET_FLAG.READY);
     try { hex.prewarmHexShips3D({ canvas: st.canvas }); } catch (e) { report(e, 'prewarmHexShips3D'); }
+    // efekty ze strumienia rozkazów: iskry, rakiety (pule dymu — wybuchy), wybuchy WebGPU, efekty broni, mapa ran
+    try {
+      sparks.SparkSystem3D.init(Core3D.scene);
+      const rocketFx = rktFx.createRocketFx(Core3D);
+      wfx.WeaponFx.ensure();
+      st.blastFactory = blastFx.createExplosionFactory(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
+      // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
+      bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
+      bridge3d.Bridge3D.attach(Core3D.scene);
+      st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
+    } catch (e) { report(e, 'efekty'); }
+    if (st.cmdBuf) makeReader(st.cmdBuf);
     try { shields.prewarmShields3D(); } catch (e) { report(e, 'prewarmShields3D'); }
     postMessage({ type: 'ready', ok: true });
     Core3D.warmup.flush().then(() => ret.retSetFlag(st.ret, ret.RET_FLAG.WARM_FLUSHED), (e) => report(e, 'warmup.flush'));
     requestAnimationFrame(frame);
+  }
+
+  function makeReader(buffer) {
+    const { cmdMod, wfxCmd, dmgCmd, blastCmd } = st.mods;
+    const rm = st.rm;
+    st.cmd = new cmdMod.RenderCommandReader(buffer, {
+      entityAt: (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; },
+      shotAt: (slot, gen) => { const b = st.shots[slot]; return b && b.__gen === gen ? b : null; }
+    });
+    wfxCmd.installWeaponFxCommands(st.cmd);
+    dmgCmd.installHullDamageCommands(st.cmd);
+    blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
+  }
+
+  function setCmdRing(m) {
+    st.cmdBuf = m.buffer;
+    if (!st.mods) return;
+    if (st.cmd) st.cmd.adopt(m.buffer);
+    else makeReader(m.buffer);
+  }
+
+  // Pociski-lustra z bloku SHOTS (obiekt na slot + generację — stan efektu `__fx` żyje na nim jak na pocisku gry).
+  function applyShots(v) {
+    const { layoutMod } = st.mods;
+    const SF = layoutMod.SHOT.F64, SI = layoutMod.SHOT.I32, sf = layoutMod.SHOT.stride.f64, si = layoutMod.SHOT.stride.i32;
+    const n = v.head[layoutMod.HEAD.N_SHOTS] | 0;
+    const f64 = v.shotF64, i32 = v.shotI32, dict = st.dict, rm = st.rm;
+    const list = st.shotList;
+    list.length = 0;
+    for (let i = 0; i < n; i++) {
+      const b = i * sf, bi = i * si;
+      const s = i32[bi + SI.SLOT];
+      if (s < 0) continue;
+      const gen = i32[bi + SI.GEN];
+      let o = st.shots[s];
+      if (!o || o.__gen !== gen) {
+        o = { __gen: gen, x: 0, y: 0, vx: 0, vy: 0, vz: 0, z: 0, ivx: 0, ivy: 0, ivz: 0, life: 0, age: 0, bornSim: 0,
+          vfxKey: undefined, type: undefined, weaponSize: undefined, forceCanvas: false, clock: undefined, source: null,
+          active: true, __fx: null, __renderedByThree: false };
+        st.shots[s] = o;
+      }
+      o.x = f64[b + SF.X]; o.y = f64[b + SF.Y]; o.vx = f64[b + SF.VX]; o.vy = f64[b + SF.VY];
+      o.vz = f64[b + SF.VZ]; o.z = f64[b + SF.Z]; o.ivx = f64[b + SF.IVX]; o.ivy = f64[b + SF.IVY]; o.ivz = f64[b + SF.IVZ];
+      o.life = f64[b + SF.LIFE]; o.age = f64[b + SF.AGE]; o.bornSim = f64[b + SF.BORN_SIM];
+      o.vfxKey = dict.value(i32[bi + SI.VFX_KEY]); o.type = dict.value(i32[bi + SI.TYPE]);
+      o.weaponSize = dict.value(i32[bi + SI.WEAPON_SIZE]); o.clock = dict.value(i32[bi + SI.CLOCK]);
+      const fl = i32[bi + SI.FLAGS];
+      o.forceCanvas = (fl & layoutMod.SHOT_FLAG.FORCE_CANVAS) !== 0;
+      o.__renderedByThree = !o.forceCanvas;
+      const ss = i32[bi + SI.SOURCE_SLOT];
+      const se = ss >= 0 ? rm.entities[ss] : null;
+      o.source = se && se.gen === i32[bi + SI.SOURCE_GEN] ? se : null;
+      list.push(o);
+    }
+    globalThis.bullets = list;
+  }
+
+  function applyTurrets(v) {
+    const { layoutMod } = st.mods;
+    const T = layoutMod.TURRET, TF = T.F64, TI = T.I32, sf = T.stride.f64, si = T.stride.i32;
+    const n = v.head[layoutMod.HEAD.N_TURRETS] | 0;
+    const f64 = v.turF64, i32 = v.turI32, dict = st.dict, rm = st.rm, map = st.turByEnt, pool = st.turPool;
+    for (const arr of map.values()) arr.length = 0;
+    for (let i = 0; i < n; i++) {
+      const b = i * sf, bi = i * si;
+      const s = i32[bi + TI.ENT_SLOT];
+      const e = s >= 0 ? rm.entities[s] : null;
+      if (!e || e.gen !== i32[bi + TI.ENT_GEN]) continue;
+      let r = pool[i];
+      if (!r) { r = pool[i] = { entity: null, key: undefined, uid: undefined, weaponId: undefined, fxKey: undefined, wx: 0, wy: 0, ang: 0, scale: 1, recoil: 0, shake: 0, spec: { r: 0 }, state: { housing: 0, barrel: 0, flash: 0 } }; }
+      r.entity = e;
+      r.key = dict.value(i32[bi + TI.KEY]); r.uid = dict.value(i32[bi + TI.UID]);
+      r.weaponId = dict.value(i32[bi + TI.WEAPON]); r.fxKey = dict.value(i32[bi + TI.FX_KEY]);
+      r.wx = f64[b + TF.WX]; r.wy = f64[b + TF.WY]; r.ang = f64[b + TF.ANG]; r.scale = f64[b + TF.SCALE];
+      r.recoil = f64[b + TF.RECOIL]; r.shake = f64[b + TF.SHAKE]; r.spec.r = f64[b + TF.R];
+      r.state.housing = f64[b + TF.HOUSING]; r.state.barrel = f64[b + TF.BARREL]; r.state.flash = f64[b + TF.FLASH];
+      let arr = map.get(e);
+      if (!arr) { arr = []; map.set(e, arr); }
+      arr.push(r);
+    }
+    // lustra zwolnionych slotów: puste wpisy czyszczone hurtem
+    if (map.size > 2 * rm.entities.length + 64) map.clear();
   }
 
   function setLayout(m) {
@@ -112,7 +218,8 @@ if (isWorker) {
     }
     const dv = st.dict.values;
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
-    if (m.k > st.lastMsgK) st.lastMsgK = m.k;
+    if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
+    if (m.k > st.lastMsgK) { st.lastMsgK = m.k; st.pageEv[m.k & 63] = m.evFrame; }
   }
 
   function frame() {
@@ -155,6 +262,13 @@ if (isWorker) {
       rm.lists[L.RENDER], st.dict, st.cloak);
     st.players.ship = rm.player;
     st.players.player2Ship = rm.player2;
+    // zegary gry tej strony (efekty niesione nośnikiem, smugi pocisków)
+    const SC = st.mods.clock.SimClock;
+    SC.sim = h[H.SIM]; SC.render = h[H.SIM_RENDER]; SC.renderSim = h[H.SIM_RENDER_SIM];
+    applyShots(v);
+    applyTurrets(v);
+    // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
+    if (st.cmd) { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); }
     const cam = st.cam;
     cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM];
     const c = st.cull;
@@ -165,9 +279,32 @@ if (isWorker) {
     const t0 = performance.now();
     Core3D.syncCamera(cam);
     stations.updateStations3D(rm.stations);
+    {
+      const { bridge3d, bridgeFx, cloakLook } = st.mods;
+      const nowSec = h[H.BRIDGE_TIME];
+      if (!st.bridgeOpts) {
+        st.bridgeOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf: null, cull: c, camera: cam,
+          visibility: (e) => (models.shipModel3DIdFor(e) ? 0 : cloakLook.cloakLightGain(e)) };
+        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf: null, visibility: cloakLook.cloakLightGain };
+      }
+      const bo = st.bridgeOpts, fo = st.bridgeFxOpts;
+      bo.nowSec = fo.nowSec = nowSec; bo.dt = fo.dt = dt; bo.zoom = fo.zoom = cam.zoom;
+      const list = rm.lists[L.SEEN_COLD];
+      bridge3d.Bridge3D.update(list, bo);
+      bridgeFx.BridgeFx3D.update(list, fo);
+    }
     hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, null, st.cloak.frame);
-    models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: null, inView: null, zoom: cam.zoom, zoomAt: null, dt });
+    if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
+    models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
     shields.updateShields3D(dt, rm.lists[L.SEEN], null);
+    if (st.reactorFx) {
+      const simNow = h[H.SIM];
+      const rdt = Math.max(0, Math.min(0.1, simNow - (st.reactorSim || simNow)));
+      st.reactorSim = simNow;
+      st.reactorFx.advance(rdt);
+      st.reactorFx.syncCores(rm.cores, rdt);
+      st.reactorFx.syncHazards(rdt);
+    }
     const t1 = performance.now();
     Core3D.renderSingle(cam);
     const t2 = performance.now();
@@ -188,6 +325,7 @@ if (isWorker) {
     try {
       if (m.type === 'layout') setLayout(m);
       else if (m.type === 'frame') applyFrameMsg(m);
+      else if (m.type === 'cmdRing') setCmdRing(m);
     } catch (err) {
       report(err, m && m.type);
     }

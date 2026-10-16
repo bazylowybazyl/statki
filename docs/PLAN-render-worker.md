@@ -2015,6 +2015,21 @@ kolei, maszyna wolna; worker — klatki obrazu 3D = złożenia `RenderWorkerHost
 (t 10–40 s: ~180, t 40–90 s: ~155), CPU klatki workera 1,9–4,2 ms. Stosunek obrazu 3D ~1,6–1,9×. GÓRNE OSZACOWANIE:
 worker rysuje mniej (bez planet, ringu, efektów, wież, mostków — mniej CPU i GPU w workerze), a strona nie dekoduje
 rozkazów efektów; bitwy w dwóch przebiegach toczyły się różnie (czas rzeczywisty).
+**Stan RW-40b cz. 1 (2026-10-16, tor `rw-worker`, commit „RW-40b cz. 1: …”): koszt bitwy w workerze.** Strumień rozkazów:
+pierścień pisarza na SharedArrayBuffer (`renderWorkerHost.js` przełącza pierścień i napisy przy starcie trybu, strona
+bez dyspozytora), w workerze `RenderCommandReader` (encje → lustra, pociski → lustra z bloku SHOTS po slocie +
+generacji) z dekoderami efektów broni, mapy ran (rany, iskry, odłamki) i wybuchów (fabryka wybuchów WebGPU, pule
+dymu rakiet, iskry); wiadomość `frame` niesie `evFrame` (ostatnia zamknięta klatka pisarza — rekordy ≤ niej przed
+renderem strony). Zegary gry (`SimClock` sim / render / renderSim) z HEAD. Wieże 3D z bloku TURRETS (rekordy po lustrze:
+`spec.r`, stan wieży). Mostki (Bridge3D, BridgeFx3D) i obraz rdzeni (`reactorBlastFx`: syncCores / syncHazards) na
+lustrach. ZOSTAJE wyłączone: rakiety (lot w grze — dekoder czyta pulę rakiet gry; potrzebny blok ROCKETS), strugi
+i kule rdzeni (RX_* — `hazardAt` gry), model reaktora w wyrwie, drony naprawcze, zimne wraki, moduły świata.
+Zrzuty `kosmos` (kalibracja, bitwa, bitwa-blisko, wybuch, wraki) i `galeria` (galeria-broni) w trybie worker — bez
+błędów konsoli; efekty broni, iskry, wybuchy i wieże widoczne. BRAMKA (orkiestrator: obraz 3D ≥ 1,4× off),
+`profil-bitwy-flot.mjs --sklad 50,20,10,3 --zoom 0.1 --seed 7`, ABAB (worker, off, worker, off), maszyna wolna,
+t 10–90 s: obraz 3D worker 146 / 133 kl/s ↔ off 87 / 85 fps → **1,68× / 1,56× (śr. 1,62×) — przechodzi**; wątek główny
+w trybie worker 259 / 204 fps (p95 klatki śr. 9,1 / 10,3 ms ↔ off 18,3 / 18,1 ms), CPU klatki workera 2,8–7,8 ms.
+Obraz 3D nie jest już ograniczony CPU workera (klatka 3–4 ms przy ~140 kl/s) — limit to publikacja stron i GPU.
 
 **RW-41 Zasoby, ekran ładowania, tło menu.** Sprite'y jako `ImageBitmap`, GLB i tekstury ładowane w workerze,
 `Core3D.warmup.flush` przez `postMessage`, `MenuBackdrop3D` w workerze (`launchDone`, `flightDone`, plan lotu jako

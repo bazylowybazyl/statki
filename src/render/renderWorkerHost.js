@@ -11,12 +11,13 @@
 import { OverlayRing, OVERLAY_RING_DEFAULT } from './overlayRing.js';
 import { createReturnBuffer, createReturnViews, retRecentConsumed, retReadStats, RET_I32, RET_F64, RET_FLAG, retHasFlag } from './returnLayout.js';
 import { RW_WORKER_DISABLED } from './render.worker.js';
+import { createEventRingBuffer, EventRingWriter } from './eventRing.js';
 
 function plainLayout(layout) {
   try { return structuredClone(layout); } catch (_) { return JSON.parse(JSON.stringify(layout)); }
 }
 
-export function createRenderWorkerHost({ packer, slots, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, onError = null }) {
+export function createRenderWorkerHost({ packer, slots, commands = null, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, onError = null }) {
   const retBuffer = createReturnBuffer();
   const ret = createReturnViews(retBuffer);
   const worker = new Worker(new URL('./render.worker.js', import.meta.url), { type: 'module' });
@@ -84,6 +85,18 @@ export function createRenderWorkerHost({ packer, slots, gameCanvas, mainCanvas =
   const sendLayout = (buffer, layout) => worker.postMessage({ type: 'layout', buffer, layout: plainLayout(layout) });
   sendLayout(packer.buffer, packer.layout);
   packer.onLayout = sendLayout;
+  // Strumień rozkazów (RW-21 / 22): pierścień pisarza na SharedArrayBuffer, czytelnik i dekodery w workerze (RW-40b);
+  // na stronie bez dyspozytora. Napisy (rekordy STR) od nowa — wcześniejsze poszły do czytelnika strony.
+  if (commands) {
+    const w = commands.writer;
+    const buf = createEventRingBuffer(1 << 16, { shared: true });
+    w.buffer = buf;
+    w.ring = new EventRingWriter(buf, { shared: true, onGrow: (b) => { w.buffer = b; worker.postMessage({ type: 'cmdRing', buffer: b }); } });
+    w._strIds.clear();
+    w._strNext = 0;
+    w.setInlineSink(null);
+    worker.postMessage({ type: 'cmdRing', buffer: buf });
+  }
   console.info(`[render worker] tryb worker (RW-40a). W workerze wyłączone: ${RW_WORKER_DISABLED.join(', ')}.`);
 
   /** Ostatnio odebrana przez worker strona (reguła pakowania węzłów: zmiany od tej strony). */
@@ -94,7 +107,9 @@ export function createRenderWorkerHost({ packer, slots, gameCanvas, mainCanvas =
   host.postFrame = () => {
     const p = packer;
     const k = p.k;
-    const msg = { type: 'frame', k, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
+    // rekordy rozkazów tej strony: klatki pisarza do ostatniej zamkniętej (RenderCommands.endFrame przed fazą 2 migawki)
+    const evFrame = commands ? commands.writer.frame - 1 : -1;
+    const msg = { type: 'frame', k, evFrame, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
     const pending = [];
     for (const s of p.descQueue) {
       const rec = p.descriptors[s];
