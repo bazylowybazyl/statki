@@ -14,7 +14,7 @@ export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety',
   'drony naprawcze', 'model reaktora w wyrwie', 
-'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
+'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran (ścieżka gotowa, sesja split harnessu bez klatek workera — do zbadania)'
 ]);
 
 const isWorker = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;
@@ -356,6 +356,14 @@ if (isWorker) {
     c.x = h[H.CULL_X]; c.y = h[H.CULL_Y]; c.halfW = h[H.CULL_HALF_W]; c.halfH = h[H.CULL_HALF_H];
     c.drawHalfW = h[H.CULL_DRAW_HALF_W]; c.drawHalfH = h[H.CULL_DRAW_HALF_H];
     const paused = (h[H.FLAGS] & layoutMod.HEAD_FLAG.PAUSED) !== 0;
+    // podzielony ekran: kamera gracza 2 z HEAD (RenderWorld.camera2 / splitScreenMode — globale realmu workera)
+    const split = (h[H.FLAGS] & layoutMod.HEAD_FLAG.SPLIT) !== 0 && h[H.CAM2_ON] === 1;
+    globalThis.splitScreenMode = split;
+    if (split) {
+      const c2 = st.cam2 || (st.cam2 = { x: 0, y: 0, zoom: 1 });
+      c2.x = h[H.CAM2_X]; c2.y = h[H.CAM2_Y]; c2.zoom = h[H.CAM2_ZOOM];
+      globalThis.camera2 = c2;
+    } else globalThis.camera2 = null;
     const dt = paused ? 0 : h[H.FRAME_DT];
     const t0 = performance.now();
     Core3D.syncCamera(cam);
@@ -439,9 +447,31 @@ if (isWorker) {
       st.reactorFx.syncHazards(rdt);
     }
     const t1 = performance.now();
-    Core3D.renderSingle(cam);
+    let bmp;
+    if ((h[H.FLAGS] & layoutMod.HEAD_FLAG.SKIP_WORLD_3D) !== 0) {
+      // CIC zakrywa ekran — bez renderu świata (pusta klatka dla pary z nakładkami)
+      const e = st.empty || (st.empty = new OffscreenCanvas(1, 1));
+      e.getContext('2d');
+      bmp = e.transferToImageBitmap();
+      Core3D.beginHeatHazeFrame();
+    } else if (split) {
+      // dwa widoki i środkowe połowy kadrów (jak drawHexShips3D na stronie)
+      const src = st.canvas;
+      const comp = st.comp || (st.comp = new OffscreenCanvas(src.width, src.height));
+      if (comp.width !== src.width || comp.height !== src.height) { comp.width = src.width; comp.height = src.height; }
+      const cx = st.compCtx || (st.compCtx = comp.getContext('2d'));
+      const sw = src.width, sh = src.height, half = Math.floor(sw / 2), cropX = Math.floor(sw / 4), cropW = Math.floor(sw / 2);
+      cx.clearRect(0, 0, sw, sh);
+      Core3D.renderSingle(Core3D.activeCam1);
+      cx.drawImage(src, cropX, 0, cropW, sh, 0, 0, half, sh);
+      Core3D.renderSingle(Core3D.activeCam2);
+      cx.drawImage(src, cropX, 0, cropW, sh, half, 0, sw - half, sh);
+      bmp = comp.transferToImageBitmap();
+    } else {
+      Core3D.renderSingle(cam);
+      bmp = st.canvas.transferToImageBitmap();
+    }
     const t2 = performance.now();
-    const bmp = st.canvas.transferToImageBitmap();
     postMessage({ type: 'frame', k, bmp }, [bmp]);
     retMod.retNoteRendered(st.ret, k);
     const f = st.ret.f64, R = retMod.RET_F64;
