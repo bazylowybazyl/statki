@@ -1447,7 +1447,8 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   `wydobycie`, `piraci`; `scripts/webgpu/hala-swiatla-gra.mjs`. Kolizje: blok FABUŁA (misja 2) przy doku.
   **Stan (2026-10-16, tor `rw-szew`): ZWERYFIKOWANE dla bloków `gasObst`, `warp`, `pirateBase`, `ring`** (podział
   z `rw-migawka`: rw-szew — bloki modułów świata, rw-migawka — wpięcie RW-11a/b). Kryterium: zrzuty sesji `ziemia`,
-  `ziemia-ring`, `mars`, `jowisz`, `piraci` bez flagi ↔ `--query szew=inline` (po kolei) — 45 / 45 obrazów, różni się
+  `ziemia-ring`, `mars`, `jowisz`, `piraci` bez flagi ↔ `--query szew=inline` (po kolei; wtedy flaga = samo pakowanie,
+  od f77e425c to `?szew=pakuj` — `inline` renderuje na lustrach) — 45 / 45 obrazów, różni się
   tylko `planeta-cien` (0,3% — scena waha się też między dwoma przebiegami tego samego kodu); `hala-swiatla-gra.mjs
   [--query szew=inline]` (nowa opcja) — raporty równe poza położeniem hali i kosztem GPU (gra losuje kąty planet na
   nową grę, więc obraz skryptu w czasie rzeczywistym nie jest porównywalny piksel w piksel), pipeline'y synchroniczne
