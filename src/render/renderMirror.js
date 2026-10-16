@@ -8,7 +8,7 @@
 // magazynu) przychodzi OPISEM encji (`describeEntity` po stronie gry — przy nowym slocie i przy zmianie wersji;
 // w workerze `postMessage`, w `inline` kopia `structuredClone`, obrazy przez tabelę zasobów).
 //
-// Pola, które dziś piszą moduły renderu na obiektach gry (`__cloakLook`, `__warpHullU`, `__warpNurtMode`, `__bayCut`,
+// Pola, które moduły renderu piszą na encjach (`__warpHullU`, `__warpNurtMode` — WarpNurt, mosty: mirrorBridge.js;
 // `__hiddenFromView`, `__inDrawBox`, `_shadowGrid`, `__engineFxFallback`, `_lattice`), lądują w lustrach.
 //
 // Czysty moduł (bez three, DOM i `window`).
@@ -70,7 +70,7 @@ export class MirrorEntity {
     // pisane przez render
     this.__cloakLook = undefined; this.__warpHullU = undefined; this.__warpNurtMode = undefined; this.__bayCut = undefined;
     this.__hiddenFromView = false; this.__inDrawBox = false; this.__engineFxFallback = undefined;
-    this._coldSkinFrame = undefined; this._shadowGrid = undefined; this.__lightOcclude = undefined; this.__lightMate = undefined;
+    this._coldSkinFrame = undefined; this._coldDrawFrame = undefined; this._shadowGrid = undefined; this.__lightOcclude = undefined; this.__lightMate = undefined;
     // przejściowe (do RW-26 / RW-28 / RW-31): obiekt gry dla kroków jeszcze nieprzeniesionych
     this.__game = null;
   }

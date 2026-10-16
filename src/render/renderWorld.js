@@ -140,3 +140,16 @@ class RenderWorldConfig {
 const EMPTY = Object.freeze({});
 
 export const RenderWorld = new RenderWorldFacade();
+
+/**
+ * Źródło trybu luster `inline` (RW-11a): wszystkie pola jak w trybie `off` (globale gry — osobna fasada bez źródła),
+ * poza graczami — `ship` / `player2Ship` to LUSTRA graczy, bo moduły renderu na lustrach porównują encje z
+ * `RenderWorld.ship` po tożsamości. Gra ustawia je (`setSource`) tylko na czas wywołań modułów na lustrach; moduły
+ * jeszcze na obiektach gry (strumień rozkazów, mostki, stacje, warp) widzą dawne źródło.
+ */
+export function createMirrorPlayersSource() {
+  const src = Object.create(new RenderWorldFacade());
+  Object.defineProperty(src, 'ship', { value: null, writable: true, enumerable: true });
+  Object.defineProperty(src, 'player2Ship', { value: null, writable: true, enumerable: true });
+  return src;
+}

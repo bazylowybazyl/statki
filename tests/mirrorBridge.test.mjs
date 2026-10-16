@@ -18,12 +18,17 @@ test('mosty: pola renderu przez obiekty gry w obie strony, tożsamość __lightM
   assert.equal(mA.__warpNurtMode, 'active');
   assert.equal(mA.__lightOcclude, gA.__lightOcclude);
   assert.equal(mA.__lightMate, mB, 'tożsamość partnera świateł → jego lustro');
-  // render pisze na lustrach
-  mA.__cloakLook = look; mA.__inDrawBox = true; mA.__hiddenFromView = false;
-  mB.__inDrawBox = false; mB._coldSkinFrame = 7;
-  bridgeMirrorsToGame(rm, [mA], [mB]);
-  assert.equal(gA.__cloakLook, look);
-  assert.equal(gA.__inDrawBox, true);
-  assert.equal(gB._coldSkinFrame, 7);
-  assert.equal('__inDrawBox' in gB, false, 'zimny wrak — bez pola pudła rysowania (jak dziś)');
+  // widok klatki gry (RW-31) → lustro
+  gA.__inDrawBox = false; gB._coldDrawFrame = 7;
+  bridgeGameToMirrors(rm, (s) => games[s], (o) => games.indexOf(o));
+  assert.equal(mA.__inDrawBox, false);
+  assert.equal(mB._coldDrawFrame, 7);
+  // render pisze na lustrach — do gry wraca tylko paleta zastępcza dysz (warpTraffic.js)
+  const fb = { warpPalette: 'x' };
+  mA.__engineFxFallback = fb; mA.__cloakLook = look; mA.__hiddenFromView = true;
+  bridgeMirrorsToGame(rm, [mA, mB]);
+  assert.equal(gA.__engineFxFallback, fb);
+  assert.equal('__cloakLook' in gA, false, 'wygląd maskowania liczy gra (RW-26) — bez mostu');
+  assert.equal('__hiddenFromView' in gA, false);
+  assert.equal('__engineFxFallback' in gB, false, 'bez pola, którego render nie ustawił');
 });

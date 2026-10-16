@@ -1288,6 +1288,8 @@
     const isShieldBreachedAt = ShieldBreach.isShieldBreachedAt;
     window.ShieldBreach = ShieldBreach;
     setShieldReturnChannel(RenderReturn, (e, out) => {
+      // lustro (RW-11b, `?szew=inline`): slot i generacja ze strony migawki
+      if (e && e.__mirror === true) { out[0] = e.slot; out[1] = e.gen; return true; }
       const slot = RenderSlots.entities.peek(e);
       if (slot < 0) return false;
       out[0] = slot;
@@ -1322,6 +1324,12 @@
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
     import { createWarpBlock } from "./src/render/blocks/warpBlock.js";
+    // RW-11a / b: lustra encji dla modułów renderu (`?szew=inline`)
+    import { RenderMirror } from "./src/render/renderMirror.js";
+    import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
+    import { bridgeGameToMirrors, bridgeMirrorsToGame } from "./src/render/mirrorBridge.js";
+    import { createCloakBlock, applyCloakBlock, createCloakMirrorState } from "./src/render/blocks/cloakBlock.js";
+    import { RenderWorld, createMirrorPlayersSource } from "./src/render/renderWorld.js";
     import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
@@ -5396,7 +5404,8 @@
     // Gracz jest rysowany z pozą interpolowaną (hexShips3D) — okna i wyrzut
     // mostka muszą iść za nią, inaczej „pływają” po kadłubie przy prędkości.
     function bridgeRenderPose(entity) {
-      if (entity !== ship) return null;
+      // lustro gracza (RW-11, `?szew=inline`) — poza renderu jak statek gry
+      if (entity !== ship && !(entity && entity.__mirror === true && entity.__game === ship)) return null;
       const p = window.__interpShipPose;
       return p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.angle) ? p : null;
     }
@@ -7113,7 +7122,8 @@
     // Skórę sprite'a pomijają modele 3D okrętów i ciała świata (budowle i ich odłamy rysuje worldBodies3D.js).
     setBeamSkinSuppressor((e) => !!e.beamHull?.world || !!shipModel3DIdFor(e));
     // Mgła wojny: kadłub ukryty przed graczem (siatka żyje — bez przebudowy na brzegu kręgu wzroku).
-    setEntityHiddenTest((e) => SensorSystem.hides(e));
+    // lustra (RW-11a, `?szew=inline`): flaga mgły ze strony migawki (to samo pytanie zadane przy pakowaniu)
+    setEntityHiddenTest((e) => (e.__mirror === true ? e.fogHidden : SensorSystem.hides(e)));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
     onPirateBaseEvent(pirateBase3DEvent);
     // Nadproże bramy hali K-7 (FG) nad okrętem w bramie (obrysy nadproży hal przy kamerze odświeża render() —
@@ -25518,7 +25528,7 @@
     if (setColdWreckRenderHooks) {
       setColdWreckRenderHooks({
         // Ciało do rysowania wybrała gra w tej klatce (selectColdRenderBodies przed updateHexShips3D, RW-31).
-        drawn: (w) => w._coldDrawFrame === renderFrameId,
+        drawn: (w) => w._coldDrawFrame === renderFrameId,   // lustra: pole z mostu gra → lustro (mirrorBridge.js)
         config: coldWreckSystem.config,
         // W liście mostków / modeli 3D tej klatki (withColdNearWrecks) — ciało odtworzone dopiero w tej klatce
         // rysuje skóra, model 3D przejmie je w następnej (bez klatki bez obrazu).
@@ -28350,11 +28360,17 @@
     const SZEW_MODE = (() => {
       try { return new URLSearchParams(location.search).get('szew') || 'off'; } catch (_) { return 'off'; }
     })();
-    const renderSnapshot = SZEW_MODE === 'inline' ? new SnapshotPacker({ ids: RenderSlots }) : null;
+    // `inline` (RW-11a / b) = pakowanie + moduły renderu NA LUSTRACH encji (src/render/renderMirror.js); `pakuj` — samo
+    // pakowanie, render na encjach gry (dawne `inline` RW-10 — pomiar kosztu szwu).
+    const SZEW_MIRRORS = SZEW_MODE === 'inline';
+    const renderSnapshot = (SZEW_MODE === 'inline' || SZEW_MODE === 'pakuj')
+      ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_MIRRORS }) : null;
     // RW-11c: bloki modułów świata (src/render/blocks/) — wejścia klatki modułów renderu w stronie migawki
     if (renderSnapshot) {
       renderSnapshot.addBlock(createGasObstBlock());
       renderSnapshot.addBlock(createWarpBlock());
+      // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
+      if (SZEW_MIRRORS) renderSnapshot.addBlock(createCloakBlock());
     }
     const _snapFrame = createSnapshotFrame();
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
@@ -28364,9 +28380,44 @@
     // Poza renderu holownika pod graczem (RW-31, § 2.6 p. 27): liczona przy pakowaniu, bez zapisu w encji. Dziś render
     // czyta jeszcze żywe encje, więc ServiceTugGame.beginRender / restorePose zostają do renderu z luster (RW-11).
     const _snapTugPose = (e, out) => e.serviceTug === true && ServiceTugGame.renderPoseOf(e, window.__interpShipPose, out);
-    window.RenderSnapshot = { mode: SZEW_MODE, packer: renderSnapshot, slots: RenderSlots };
+    // Lustra encji (RW-11a / b, `?szew=inline`): moduły renderu na lustrach — kadłuby, dysze, lampy, cień SDF, smugi,
+    // zimne wraki (updateHexShips3D), modele 3D i tarcze. Mostki, rdzenie, stacje i drony naprawcze zostają na
+    // obiektach gry (docs/PLAN-render-worker.md, Stan RW-11b). RenderWorld: na czas wywołań modułów na lustrach źródło
+    // `_mirrorPlayers` (gracze = lustra, reszta — globale gry), poza nimi — dawne (strumień rozkazów, warp, mostki).
+    const renderMirror = SZEW_MIRRORS ? new RenderMirror({
+      dict: renderSnapshot.dict,
+      describe: (s, gen) => { const d = renderSnapshot.descriptors[s]; return d && d.gen === gen ? d.desc : null; },
+      topologyOf: (bs, gen, storeVer) => {
+        const t = renderSnapshot.topologies[bs];
+        return t && t.gen === gen && t.storeVer === storeVer ? t.topo : null;
+      },
+      resourceOf: (slot) => RenderSlots.resources.objectAt(slot)
+    }) : null;
+    if (renderMirror) {
+      renderMirror.coreOf = (uid) => renderSnapshot.coreDescs.get(uid) || null;
+      renderMirror.stationOf = (s, gen) => { const d = renderSnapshot.stationDescs[s]; return d && d.gen === gen ? d.desc : null; };
+    }
+    const _cloakMirrorState = SZEW_MIRRORS ? createCloakMirrorState() : null;
+    const _mirrorPlayers = SZEW_MIRRORS ? createMirrorPlayersSource() : null;
+    const _mirrorEntityAt = (slot, gen) => { const m = renderMirror.entities[slot]; return m && m.gen === gen ? m : null; };
+    const _mirrorGameOf = (s) => RenderSlots.entities.objectAt(s);
+    const _mirrorSlotOf = (o) => RenderSlots.entities.peek(o);
+    // Wieże modeli 3D na lustrach: rekordy klatki Turret2D (liczy gra, RW-26) po obiekcie gry lustra.
+    // AGENT: RW-11b — rekordy z bloku TURRETS strony (worker), bez mostu __game.
+    const _mirrorTurrets = { recordsFor: (e) => Turret2D.recordsFor(e && e.__mirror ? e.__game : e) };
+    window.RenderSnapshot = { mode: SZEW_MODE, packer: renderSnapshot, slots: RenderSlots, mirror: renderMirror };
 
-    function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY) {
+    /** Lustra ze strony tej klatki (po fazie begin): encje, mosty gra → lustro, wygląd maskowania, gracze fasady. */
+    function applyRenderMirrors() {
+      const rm = renderMirror;
+      rm.apply(renderSnapshot.view);
+      bridgeGameToMirrors(rm, _mirrorGameOf, _mirrorSlotOf);
+      applyCloakBlock(renderSnapshot.view.blocks.cloak, _mirrorEntityAt, rm.lists[SNAP_LIST.RENDER], renderSnapshot.dict, _cloakMirrorState);
+      _mirrorPlayers.ship = rm.player;
+      _mirrorPlayers.player2Ship = rm.player2;
+    }
+
+    function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY, cloakFrame = null) {
       const f = _snapFrame;
       f.frameId = renderFrameId;
       f.frameDt = frameDt;
@@ -28401,7 +28452,9 @@
       f.npcs = npcs;
       f.wrecks = wrecks;
       f.coldWrecks = coldWrecks;
-      f.coldRenderList = coldWreckSystem.renderList;
+      // lustra: begin po selectColdRenderBodies — zimne wraki z ciałem z listy klatki sprzed wyboru (withColdNearWrecks),
+      // jak listy mostków i modeli gry (nowe ciało dołącza w następnej klatce)
+      f.coldRenderList = SZEW_MIRRORS ? _coldNearList : coldWreckSystem.renderList;
       f.coldNearExtras = coldWreckSystem.config.nearExtras !== false;
       f.stations = stations;
       f.bullets = window.bullets;
@@ -28418,6 +28471,9 @@
       f.hall = null;
       // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)
       f.lastConsumed = renderSnapshot.k;
+      // lustra (RW-11a): render czyta brud skóry z luster — pakujący zeruje flagi gry; wygląd maskowania tej klatki (RW-26)
+      f.consumeDirty = SZEW_MIRRORS;
+      f.cloak = cloakFrame;
       renderSnapshot.begin(f);
     }
 
@@ -29284,8 +29340,9 @@
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
         ? { x: camera2.x, y: camera2.y, zoom: camera2.zoom }
         : null;
-      // Szew renderu (RW-10, ?szew=inline): faza 1 migawki — po kamerze, przed aktualizacjami 3D.
-      if (renderSnapshot) packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY);
+      // Szew renderu (RW-10, ?szew=pakuj): faza 1 migawki — po kamerze, przed aktualizacjami 3D. Lustra (?szew=inline):
+      // faza 1 tuż przed updateHexShips3D (po wyglądzie maskowania i rekordach wież tej klatki — RW-26).
+      if (renderSnapshot && !SZEW_MIRRORS) packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY);
 
       if (renderDbgEnabled) {
         RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
@@ -29458,13 +29515,31 @@
         Turret2D.syncFrame(renderEntities, _turretSyncOpts);
         // Zimne wraki nie są w renderEntities — rysuje je osobny przebieg (coldWrecks): skóra z ciała do rysowania
         // (wraki na belkach w kadrze) albo smuga z migawki.
-        updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
+        if (SZEW_MIRRORS) {
+          // Lustra (RW-11a): faza 1 migawki (pakowanie tylko czyta stan gry), lustra ze strony, kadłuby na lustrach.
+          packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
+          applyRenderMirrors();
+          RenderWorld.setSource(_mirrorPlayers);
+          updateHexShips3D(cam, renderMirror.lists[SNAP_LIST.RENDER], _hexCullInfo, renderMirror.lists[SNAP_LIST.COLD], _cloakMirrorState.frame);
+          RenderWorld.setSource(null);
+        } else {
+          updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
+        }
         // RW-30: wygaszanie wstrząsu strzałów — raz na klatkę, po próbkowaniu kamery (dawniej WeaponFx.sync).
         stepWeaponShotShake(weaponShotShake, performance.now());
         // Strumień rozkazów: koniec klatki (sloty obiektów bez odwołań wracają do puli).
         RenderCommands.endFrame();
         // Modele 3D statków i broni (opcje nowej gry) — po kadłubach: rekordy wieżyczek tej klatki.
-        syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
+        if (SZEW_MIRRORS) {
+          // RW-11b: modele 3D na lustrach (lista SEEN_COLD strony), wieże z rekordów klatki gry.
+          RenderWorld.setSource(_mirrorPlayers);
+          syncShipModels3D({ entities: renderMirror.lists[SNAP_LIST.SEEN_COLD], poseOf: bridgeRenderPose, turrets: _mirrorTurrets, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
+          RenderWorld.setSource(null);
+          // lustra → gra: pola pisane przez render, czytane przez grę (mirrorBridge.js)
+          bridgeMirrorsToGame(renderMirror, renderMirror.lists[SNAP_LIST.RENDER]);
+        } else {
+          syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
+        }
         // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.
         _repairDronesSync.dt = PAUSED ? 0 : frameDt;
         _repairDronesSync.zoom = cam.zoom;
@@ -29482,7 +29557,14 @@
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       // Czas tarcz = czas gry renderu (pauza stoi: fala, odłamki i iskry zamierają razem z grą).
-      updateShields3D(PAUSED ? 0 : frameDt, renderSeen, window.__interpShipPose);
+      if (SZEW_MIRRORS && renderSnapshot.k > 0) {
+        // RW-11b: tarcze na lustrach (lista SEEN strony; kanał zwrotny przebić — slot i generacja lustra)
+        RenderWorld.setSource(_mirrorPlayers);
+        updateShields3D(PAUSED ? 0 : frameDt, renderMirror.lists[SNAP_LIST.SEEN], window.__interpShipPose);
+        RenderWorld.setSource(null);
+      } else {
+        updateShields3D(PAUSED ? 0 : frameDt, renderSeen, window.__interpShipPose);
+      }
       const render3dShieldsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
 

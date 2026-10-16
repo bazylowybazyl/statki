@@ -1,20 +1,21 @@
 // src/render/mirrorBridge.js — PRZEJŚCIOWE mosty gra ↔ lustro w trybie `inline` (docs/PLAN-render-worker.md § 3.6,
-// RW-11a). Jawna lista pól, które dziś płyną między modułami renderu PRZEZ obiekty gry albo są pisane przez render
-// i czytane przez grę. W trybie `worker` mostów nie ma — każde pole ma zadanie, które je usuwa:
+// RW-11a). Jawna lista pól, które płyną do modułów renderu na lustrach PRZEZ obiekty gry albo są pisane przez render
+// i czytane przez grę. W trybie `worker` mostów nie ma — każde pole ma zadanie, które je usuwa (pole w migawce):
 //
-//   gra → lustro (pisze inny moduł renderu albo gra w przebiegu renderu, czyta ścieżka kadłubów na lustrze):
+//   gra → lustro (pisze gra albo moduł renderu jeszcze na obiektach gry, czyta ścieżka kadłubów na lustrze):
 //     __warpHullU, __warpNurtMode   — WarpNurt.update pisze na encjach gry (RW-28: harmonogram warpa w grze,
 //                                     obraz z rekordów; lustro dostaje stan z migawki);
-//     __bayCut                      — scoutBay3D.sync pisze na statku gry (RW-11b: luk na lustrze gracza);
-//     __lightOcclude                — funkcja gry (fregata nad Atlasem; RW-26: zasłonięcie po stronie gry → flaga);
+//     __bayCut                      — scoutBay3D.sync pisze na statku gry (luk na lustrze gracza — pole migawki);
+//     __lightOcclude                — funkcja gry (fregata nad Atlasem; zasłonięcie po stronie gry → flaga / obrys);
 //     __lightMate                   — tożsamość innej encji (holownik / fregata) → lustro tej encji;
-//   lustro → gra (pisze render, czyta gra albo moduł renderu jeszcze na obiektach gry):
-//     __cloakLook                   — referencja (mutowana w miejscu przez render): czytają kanwa 2D, mostki,
-//                                     drony, modele 3D, luk (RW-26: wygląd maskowania liczony w grze — wtedy
-//                                     kierunek odwrotny i bez mostu: blok migawki `cloak`, blocks/cloakBlock.js);
-//     __inDrawBox                   — model lotu NPC (LOD stanu dysz; RW-31 / RW-26: pudło po stronie gry);
-//     __hiddenFromView, _coldSkinFrame — zimne wraki i cień (RW-31);
-//     __engineFxFallback            — paleta warpa (warp/palette.js na encjach gry; RW-28).
+//     __inDrawBox, _coldDrawFrame   — widok klatki po stronie gry (RW-31: stampDrawBoxFlags, selectColdRenderBodies)
+//                                     — pola ENT / zimnych wraków w migawce;
+//   lustro → gra (pisze render, czyta gra):
+//     __engineFxFallback            — paleta dysz z obrazu kadłuba (engineVfxSystem.js); czyta ją gra
+//                                     (warpTraffic.js — paleta warpa; RW-28: paleta liczona w grze).
+//
+// Dawne mosty `__cloakLook` (od RW-26 wygląd maskowania liczy gra — blok migawki `cloak`), `__hiddenFromView`
+// i `_coldSkinFrame` (pisze i czyta tylko render) usunięte przy wpięciu (RW-11a).
 //
 // Czysty moduł (bez three, DOM i `window`).
 
@@ -31,6 +32,8 @@ export function bridgeGameToMirrors(rm, gameOf, slotOf) {
     m.__warpNurtMode = g.__warpNurtMode;
     m.__bayCut = g.__bayCut;
     m.__lightOcclude = g.__lightOcclude;
+    m.__inDrawBox = g.__inDrawBox;
+    m._coldDrawFrame = g._coldDrawFrame;
     const mate = g.__lightMate;
     if (mate) {
       const ms = slotOf(mate);
@@ -40,26 +43,14 @@ export function bridgeGameToMirrors(rm, gameOf, slotOf) {
 }
 
 /**
- * Lustra → gra (po modułach renderu na lustrach). Pola pisze render tylko encjom ze swoich list: `__inDrawBox`,
- * `__hiddenFromView` — lista RENDER (updateHexShips3D), `_coldSkinFrame`, `__hiddenFromView` — zimne wraki (COLD);
- * most przepisuje tylko tam (bez nowych pól na innych obiektach gry — klasy ukryte bez zmian).
+ * Lustra → gra (po modułach renderu na lustrach): pola, które render pisze encjom listy RENDER, a czyta gra. Most
+ * przepisuje tylko zmienione (bez nowych pól na obiektach gry, gdy render ich nie ustawił).
  */
-export function bridgeMirrorsToGame(rm, renderList, coldList) {
+export function bridgeMirrorsToGame(rm, renderList) {
   for (let i = 0; i < renderList.length; i++) {
     const m = renderList[i];
     const g = m.__game;
     if (!g) continue;
-    if (m.__cloakLook !== undefined && g.__cloakLook !== m.__cloakLook) g.__cloakLook = m.__cloakLook;
-    if (g.__inDrawBox !== m.__inDrawBox) g.__inDrawBox = m.__inDrawBox;
-    if (g.__hiddenFromView !== m.__hiddenFromView) g.__hiddenFromView = m.__hiddenFromView;
     if (m.__engineFxFallback !== undefined && g.__engineFxFallback !== m.__engineFxFallback) g.__engineFxFallback = m.__engineFxFallback;
-  }
-  if (!coldList) return;
-  for (let i = 0; i < coldList.length; i++) {
-    const m = coldList[i];
-    const g = m.__game;
-    if (!g) continue;
-    if (m._coldSkinFrame !== undefined && g._coldSkinFrame !== m._coldSkinFrame) g._coldSkinFrame = m._coldSkinFrame;
-    if (g.__hiddenFromView !== m.__hiddenFromView) g.__hiddenFromView = m.__hiddenFromView;
   }
 }
