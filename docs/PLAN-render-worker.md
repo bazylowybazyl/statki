@@ -1992,6 +1992,29 @@ komety, `CanvasVFX` (kanwa — zostaje na wątku głównym w B2cr); (2) mosty `m
 gra → render bez kanału zwrotnego: `__explosions.domainRects`, `attachShapeRadius`, `roofAbove` (RW-41b);
 (4) start kanwy, zasoby, rozgrzewka i tło menu (RW-41); (5) rozkazy (RW-21 / 22 / 28) dekodowane dziś w tym samym
 zadaniu — w workerze dyspozytor po `eventRing`. Worker (`render.worker.js`) i przeniesienie Core3D — następna część.
+**Stan RW-40a (2026-10-16, tor `rw-worker`, commit „RW-40a: …”; zakres wg orkiestratora): ZROBIONE — worker z modułami
+już na lustrach.** `?renderWorker=1` (`renderBridge.js` wpięty w `index.html` — `SZEW_MODE`, `RW_WORKER`, `SZEW_LATE`):
+strona pakuje migawkę jak `inline` (opisy, faza begin tuż przed kadłubami, blok `cloak`, `lastConsumed` z RET), modułów
+renderu nie woła; `src/render/render.worker.js` — Core3D na OffscreenCanvas (podkładki RW-02 § 8, RenderWorld przed
+importem modułów), `RenderMirror` z opisów / topologii / rdzeni / stacji / słownika z wiadomości `frame` (strona czeka,
+aż przyjdzie wiadomość ze swoim k), zasoby kadłubów jako `ImageBitmap` (`createImageBitmap` w łańcuchu — kolejność
+wiadomości = kolejność stron), na lustrach: `updateStations3D`, `updateHexShips3D` (kadłuby, dysze, lampy, cień SDF,
+smugi), `syncShipModels3D` (bez wież), `updateShields3D`, potem `renderSingle` i `transferToImageBitmap`;
+`src/render/renderWorkerHost.js` — strona: worker, RET, kompozycja B2cr (`OverlayRing`, 5 kanw w DOM; kanwa gry `#c`
+zostaje celem zdarzeń z `opacity: 0`, jej obraz klatki k kopiowany do kanwy pierścienia na końcu `render()`;
+przy bitmapie k — `transferFromImageBitmap` + przełączenie kanw; kanwa WebGPU strony ukryta po pierwszym złożeniu).
+W trybie worker WYŁĄCZONE (komunikat `[render worker]` w konsoli z listą — `RW_WORKER_DISABLED`): planety i słońce,
+ring i hale, świat 3D, baza piratów i ciała świata, pas, komety, warp, pył kosmiczny, pył hal, rozpad stacji, mostki,
+drony naprawcze, rdzenie, wieże 3D, zimne wraki, efekty ze strumienia rozkazów (czytelnik strony bez obsługi), tło
+menu (zostaje na stronie — rysuje Core3D strony), podzielony ekran. `vite.config.js`: `worker.format = 'es'`.
+Zrzuty (`zrzuty.mjs --query renderWorker=1`, sesje `kosmos` — kalibracja, bitwa, bitwa-blisko — i `galeria`): bez błędów
+konsoli strony i workera; kadłub i dysze jak w `inline` (`.tmp/rw40/w1` ↔ `i1` w worktree `rw-worker`), brak tła,
+wież, mostków i efektów (lista wyżej). POMIAR DECYZYJNY (`profil-bitwy-flot.mjs --sklad 50,20,10,3 --zoom 0.1`, po
+kolei, maszyna wolna; worker — klatki obrazu 3D = złożenia `RenderWorkerHost.composed`): `off` 53–132 fps (t 3–39 s:
+~110, t 40–103 s: ~85; p95 klatki 11–26 ms); `worker` — wątek główny 144–393 fps (p95 5–14 ms), obraz 3D 140–213 kl/s
+(t 10–40 s: ~180, t 40–90 s: ~155), CPU klatki workera 1,9–4,2 ms. Stosunek obrazu 3D ~1,6–1,9×. GÓRNE OSZACOWANIE:
+worker rysuje mniej (bez planet, ringu, efektów, wież, mostków — mniej CPU i GPU w workerze), a strona nie dekoduje
+rozkazów efektów; bitwy w dwóch przebiegach toczyły się różnie (czas rzeczywisty).
 
 **RW-41 Zasoby, ekran ładowania, tło menu.** Sprite'y jako `ImageBitmap`, GLB i tekstury ładowane w workerze,
 `Core3D.warmup.flush` przez `postMessage`, `MenuBackdrop3D` w workerze (`launchDone`, `flightDone`, plan lotu jako

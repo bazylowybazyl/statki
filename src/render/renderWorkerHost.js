@@ -1,0 +1,169 @@
+// src/render/renderWorkerHost.js — strona trybu `worker` (docs/PLAN-render-worker.md § 3.1, § 3.8, RW-40a / RW-42).
+//
+// Tworzy worker renderu (src/render/render.worker.js), podaje mu zestaw stron migawki (SharedArrayBuffer pakującego)
+// i kanał zwrotny RET, po każdej publikacji wysyła opisy, topologie, słownik i nowe zasoby (ImageBitmap z obrazów
+// kadłubów), a klatkę 3D składa z nakładkami TEJ SAMEJ klatki — B2cr (src/render/overlayRing.js): kanwa gry `#c`
+// jest niewidoczna (zostaje celem zdarzeń myszy), jej obraz klatki k idzie do kanwy pierścienia, a przy przyjściu
+// bitmapy k — `transferFromImageBitmap` 3D i przełączenie widoczności kanw nakładek w jednym zadaniu.
+//
+// Moduł strony (DOM): tylko w trybie `?renderWorker=1`.
+
+import { OverlayRing, OVERLAY_RING_DEFAULT } from './overlayRing.js';
+import { createReturnBuffer, createReturnViews, retRecentConsumed, retReadStats, RET_I32, RET_F64, RET_FLAG, retHasFlag } from './returnLayout.js';
+import { RW_WORKER_DISABLED } from './render.worker.js';
+
+function plainLayout(layout) {
+  try { return structuredClone(layout); } catch (_) { return JSON.parse(JSON.stringify(layout)); }
+}
+
+export function createRenderWorkerHost({ packer, slots, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, onError = null }) {
+  const retBuffer = createReturnBuffer();
+  const ret = createReturnViews(retBuffer);
+  const worker = new Worker(new URL('./render.worker.js', import.meta.url), { type: 'module' });
+  const parent = gameCanvas.parentNode;
+  // obraz 3D (pod nakładkami) i pierścień kanw nakładek — przed kanwą gry, która zostaje na wierzchu dla zdarzeń
+  const view3d = document.createElement('canvas');
+  view3d.id = 'rw-3d';
+  const ring = new OverlayRing(OVERLAY_RING_DEFAULT);
+  const ringCanvases = [];
+  const ringCtx = [];
+  const place = (c, z) => {
+    c.style.cssText = `position:absolute;left:0;top:0;width:${W}px;height:${H}px;pointer-events:none;z-index:${z};visibility:hidden`;
+    parent.insertBefore(c, gameCanvas);
+  };
+  place(view3d, 0);
+  const bctx = view3d.getContext('bitmaprenderer');
+  for (let i = 0; i < ring.count; i++) {
+    const c = document.createElement('canvas');
+    c.id = `rw-ov${i}`;
+    c.width = W; c.height = H;
+    place(c, 1);
+    ringCanvases.push(c);
+    ringCtx.push(c.getContext('2d'));
+  }
+  const recent = new Int32Array(RET_I32.CONS_RING);
+  const host = {
+    worker, ret, ring, ready: false, failed: null, frames: 0, composed: 0, lastPostedK: -1, lastCommittedK: -1,
+    errors: [], stats: new Float64Array(RET_F64.COUNT), _shown: false, _dictSent: 0,
+    _sentRes: [], _chain: Promise.resolve(), _W: W, _H: H
+  };
+  worker.onerror = (e) => { host.errors.push(`worker: ${e.message}`); if (onError) onError(e.message); };
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'ready') {
+      host.ready = !!m.ok;
+      if (!m.ok) host.failed = m.why || 'worker bez WebGPU';
+      return;
+    }
+    if (m.type === 'error') {
+      host.errors.push(`${m.where}: ${m.msg}`);
+      console.error(`[render worker] ${m.where}: ${m.msg}`);
+      return;
+    }
+    if (m.type === 'frame') compose(m.k, m.bmp);
+  };
+
+  function compose(k, bmp) {
+    bctx.transferFromImageBitmap(bmp);
+    const slot = ring.compose(k);
+    if (slot >= 0) {
+      if (ring.hidePrev >= 0) ringCanvases[ring.hidePrev].style.visibility = 'hidden';
+      ringCanvases[slot].style.visibility = 'visible';
+    }
+    host.composed++;
+    if (!host._shown) {
+      host._shown = true;
+      view3d.style.visibility = 'visible';
+      gameCanvas.style.opacity = '0';
+      // kanwa WebGPU strony (tło menu) — pod obrazem workera niewidoczna
+      if (mainCanvas) mainCanvas.style.visibility = 'hidden';
+    }
+  }
+
+  worker.postMessage({ type: 'init', W, H, dpr, retBuffer, quality });
+  const sendLayout = (buffer, layout) => worker.postMessage({ type: 'layout', buffer, layout: plainLayout(layout) });
+  sendLayout(packer.buffer, packer.layout);
+  packer.onLayout = sendLayout;
+  console.info(`[render worker] tryb worker (RW-40a). W workerze wyłączone: ${RW_WORKER_DISABLED.join(', ')}.`);
+
+  /** Ostatnio odebrana przez worker strona (reguła pakowania węzłów: zmiany od tej strony). */
+  host.lastConsumed = () => Atomics.load(ret.i32, RET_I32.LAST_CONSUMED);
+  host.gpuReady = () => retHasFlag(ret, RET_FLAG.GPU_READY);
+
+  /** Po publikacji strony k (packer.finish): opisy, topologie, słownik i nowe zasoby tej strony. */
+  host.postFrame = () => {
+    const p = packer;
+    const k = p.k;
+    const msg = { type: 'frame', k, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
+    const pending = [];
+    for (const s of p.descQueue) {
+      const rec = p.descriptors[s];
+      msg.desc.push(s, rec);
+      for (let q = 0; q < 3; q++) {
+        const rs = rec.res[q];
+        if (rs < 0) continue;
+        const img = slots.resources.objectAt(rs);
+        if (!img || host._sentRes[rs] === img) continue;
+        host._sentRes[rs] = img;
+        pending.push(rs, img);
+      }
+    }
+    for (const bs of p.topoQueue) msg.topo.push(bs, p.topologies[bs]);
+    for (const uid of p.coreQueue) msg.cores.push(uid, p.coreDescs.get(uid));
+    for (const s of p.stationQueue) msg.stations.push(s, p.stationDescs[s]);
+    const dv = p.dict.values;
+    msg.dict = dv.slice(host._dictSent);
+    host._dictSent = dv.length;
+    host.lastPostedK = k;
+    // kolejność wiadomości = kolejność stron (bitmapy zasobów asynchronicznie — następne strony czekają w łańcuchu)
+    if (pending.length === 0) {
+      host._chain = host._chain.then(() => worker.postMessage(msg));
+      return;
+    }
+    host._chain = host._chain.then(async () => {
+      const transfer = [];
+      for (let i = 0; i < pending.length; i += 2) {
+        const img = pending[i + 1];
+        try {
+          if (img.decode && img.complete === false) await img.decode();
+          const bmp = await createImageBitmap(img);
+          msg.res.push(pending[i], bmp);
+          transfer.push(bmp);
+        } catch (err) {
+          host.errors.push(`zasób ${pending[i]}: ${err?.message || err}`);
+        }
+      }
+      worker.postMessage(msg, transfer);
+    });
+  };
+
+  /** Nakładki klatki k gotowe na kanwie gry — kopia do kanwy pierścienia (B2cr). */
+  host.commitOverlay = (k) => {
+    if (k !== host.lastPostedK || k === host.lastCommittedK) return;
+    host.lastCommittedK = k;
+    const n = retRecentConsumed(ret, recent);
+    const slot = ring.acquire(k, recent, n);
+    const c = ringCanvases[slot], cx = ringCtx[slot];
+    if (c.width !== gameCanvas.width || c.height !== gameCanvas.height) { c.width = gameCanvas.width; c.height = gameCanvas.height; }
+    cx.clearRect(0, 0, c.width, c.height);
+    cx.drawImage(gameCanvas, 0, 0);
+  };
+
+  host.resize = (w, h) => {
+    if (w === host._W && h === host._H) return;
+    host._W = w; host._H = h;
+    const css = (c) => { c.style.width = `${w}px`; c.style.height = `${h}px`; };
+    css(view3d);
+    for (const c of ringCanvases) css(c);
+  };
+
+  host.readStats = () => retReadStats(ret, host.stats);
+  host.stop = () => {
+    worker.terminate();
+    gameCanvas.style.opacity = '';
+    if (mainCanvas) mainCanvas.style.visibility = '';
+    view3d.remove();
+    for (const c of ringCanvases) c.remove();
+  };
+  return host;
+}

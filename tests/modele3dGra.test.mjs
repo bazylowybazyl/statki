@@ -80,7 +80,7 @@ test('index.html: wybór w „Nowej grze”, skóra sprite\'a i wieżyczki kanwy
   // z ciałem do rysowania (renderSeenCold = withColdNearWrecks(renderSeen) — model wraku zostaje po zamrożeniu)
   // (między kadłubami a modelami: wygaszanie wstrząsu strzałów — RW-30 — i koniec klatki strumienia rozkazów — RW-21)
   // RW-11a/b: gałąź luster (`?szew=inline`) — kadłuby i modele na listach luster, dawna droga w `else`
-  assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame\);\s*\}(?:\s*\/\/[^\n]*\n\s*(?:stepWeaponShotShake\(weaponShotShake, performance\.now\(\)\);|RenderCommands\.endFrame\(\);))*\s*\/\/[^\n]*\n\s*if \(SZEW_MIRRORS\) \{[\s\S]{0,400}?syncShipModels3D\(\{ entities: renderMirror\.lists\[SNAP_LIST\.SEEN_COLD\],[\s\S]{0,400}?\} else \{\s*syncShipModels3D\(\{ entities: renderSeenCold,/);
+  assert.match(html, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame\);\s*\}(?:\s*\/\/[^\n]*\n\s*(?:stepWeaponShotShake\(weaponShotShake, performance\.now\(\)\);|RenderCommands\.endFrame\(\);))*\s*\/\/[^\n]*\n\s*if \(SZEW_MIRRORS\) \{[\s\S]{0,400}?syncShipModels3D\(\{ entities: renderMirror\.lists\[SNAP_LIST\.SEEN_COLD\],[\s\S]{0,400}?\} else (?:if \(!RW_WORKER\) )?\{\s*syncShipModels3D\(\{ entities: renderSeenCold,/);
   // Rozgrywka bez zmian: kadłuby dalej ze sprite'a (HullBodies.createHull), bez gałęzi 3D.
   assert.match(html, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image, hullProfileId: getNpcHullRenderProfileId\(npc\) \}\);/);
   // Kamery 3D to sam widok: bez kadłubów 3D, lotu w pionie i 6DoF (wycofana gra 3D).

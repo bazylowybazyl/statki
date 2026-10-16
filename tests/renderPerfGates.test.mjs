@@ -380,7 +380,8 @@ test('wybuchy w spoczynku: puste siatki niewidoczne, gaz bez domen bez compute, 
 
 test('CIC: bez renderu świata 3D pod planszą', () => {
   assert.match(indexHtml, /const skipWorld3D = CICDisplay\.active && !!ship;/);
-  assert.match(indexHtml, /if \(skipWorld3D\) \{\s*ctx\.clearRect\(0, 0, W, H\);\s*Core3D\.beginHeatHazeFrame\(\);\s*\} else if \(drawHexShips3D\)/);
+  // tryb worker (RW-40a): obraz 3D z workera — ta sama gałąź bez kopii klatki
+  assert.match(indexHtml, /if \(skipWorld3D(?: \|\| RW_WORKER)?\) \{(?:\s*\/\/[^\n]*)?\s*ctx\.clearRect\(0, 0, W, H\);\s*Core3D\.beginHeatHazeFrame\(\);\s*\} else if \(drawHexShips3D\)/);
 });
 
 test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakieru typu kadłuba', () => {

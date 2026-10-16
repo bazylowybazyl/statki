@@ -85,6 +85,8 @@ export default defineConfig({
   // („504 Outdated Optimize Dep”, „gra nie wstała” w harnessach).
   cacheDir: join(repoRoot, '.tmp', 'vite-deps'),
   plugins: [demaIndexRedirect, gameVersion, abOverride()].filter(Boolean),
+  // Worker renderu (src/render/render.worker.js, RW-40) importuje moduły dynamicznie — format ES (IIFE nie dzieli kodu).
+  worker: { format: 'es' },
   define: {
     __HEX_SIM_BUILD__: JSON.stringify('hex-sim-v2'),
   },

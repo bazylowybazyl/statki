@@ -1328,6 +1328,8 @@
     import { createRingBlock } from "./src/render/blocks/ringBlock.js";
     // RW-11a / b: lustra encji dla modułów renderu (`?szew=inline`)
     import { RenderMirror } from "./src/render/renderMirror.js";
+    import { resolveRenderMode, renderWorkerCaps } from "./src/render/renderBridge.js";
+    import { createRenderWorkerHost } from "./src/render/renderWorkerHost.js";
     import { BEAM_BRIDGE_BACKEND } from "./src/game/shipBridgeBeams.js";
     import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
     import { bridgeGameToMirrors, bridgeMirrorsToGame, bridgeStationsGameToMirrors, bridgeStationsMirrorsToGame } from "./src/render/mirrorBridge.js";
@@ -28360,14 +28362,37 @@
     // wejście pyłu hal) i publikacja. Bez flagi (`off`) — nic. Pakowanie nie zmienia stanu gry (własne listy i pudło
     // cullingu). Sloty encji, ciał, pocisków i zasobów: RenderSlots (wspólne z rozkazami i RET; cykl w loop()). Diagnostyka: window.RenderSnapshot
     // (packer.stats, packer.hist, packer.pageReport()).
-    const SZEW_MODE = (() => {
-      try { return new URLSearchParams(location.search).get('szew') || 'off'; } catch (_) { return 'off'; }
+    // Tryb szwu (src/render/renderBridge.js): `?szew=inline|pakuj`, `?renderWorker=1` (worker — zapas `inline` z powodem).
+    const SZEW_RESOLVED = (() => {
+      try { return resolveRenderMode(location.search, renderWorkerCaps(window)); } catch (_) { return { mode: 'off', fallback: null }; }
     })();
+    if (SZEW_RESOLVED.fallback) console.warn(`[render worker] tryb inline zamiast worker: ${SZEW_RESOLVED.fallback}`);
+    const SZEW_MODE = SZEW_RESOLVED.mode;
     // `inline` (RW-11a / b) = pakowanie + moduły renderu NA LUSTRACH encji (src/render/renderMirror.js); `pakuj` — samo
     // pakowanie, render na encjach gry (dawne `inline` RW-10 — pomiar kosztu szwu).
     const SZEW_MIRRORS = SZEW_MODE === 'inline';
-    const renderSnapshot = (SZEW_MODE === 'inline' || SZEW_MODE === 'pakuj')
-      ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_MIRRORS }) : null;
+    // `worker` (RW-40a): pakowanie jak `inline` (opisy, faza begin tuż przed kadłubami), moduły na lustrach w workerze
+    // (src/render/render.worker.js), moduły bez luster wyłączone; kompozycja B2cr (src/render/renderWorkerHost.js).
+    const RW_WORKER = SZEW_MODE === 'worker';
+    const SZEW_LATE = SZEW_MIRRORS || RW_WORKER;
+    const renderSnapshot = (SZEW_MODE === 'inline' || SZEW_MODE === 'pakuj' || RW_WORKER)
+      ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_LATE }) : null;
+    let rwHost = null;
+    if (RW_WORKER) {
+      // strumień rozkazów bez dyspozytora na stronie: efekty broni, ran, rakiet i wybuchów w trybie worker wyłączone
+      // (RW-40b: czytelnik w workerze)
+      RenderCommands.reader.handlers = [];
+      RenderCommands.reader.on = () => {};
+      try {
+        rwHost = createRenderWorkerHost({
+          packer: renderSnapshot, slots: RenderSlots, gameCanvas: canvas, mainCanvas: document.getElementById('webgl-layer'), W, H,
+          dpr: window.devicePixelRatio || 1, quality: { renderScale: Core3D.renderScale, msaa: Core3D.msaaBoot }
+        });
+        window.RenderWorkerHost = rwHost;
+      } catch (err) {
+        console.error('[render worker] start nieudany:', err);
+      }
+    }
     // RW-11c: bloki modułów świata (src/render/blocks/) — wejścia klatki modułów renderu w stronie migawki
     if (renderSnapshot) {
       renderSnapshot.addBlock(createGasObstBlock());
@@ -28375,7 +28400,7 @@
       renderSnapshot.addBlock(createPirateBaseBlock());
       renderSnapshot.addBlock(createRingBlock());
       // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
-      if (SZEW_MIRRORS) renderSnapshot.addBlock(createCloakBlock());
+      if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
     }
     const _snapFrame = createSnapshotFrame();
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
@@ -28464,7 +28489,7 @@
       f.coldWrecks = coldWrecks;
       // lustra: begin po selectColdRenderBodies — zimne wraki z ciałem z listy klatki sprzed wyboru (withColdNearWrecks),
       // jak listy mostków i modeli gry (nowe ciało dołącza w następnej klatce)
-      f.coldRenderList = SZEW_MIRRORS ? _coldNearList : coldWreckSystem.renderList;
+      f.coldRenderList = SZEW_LATE ? _coldNearList : coldWreckSystem.renderList;
       f.coldNearExtras = coldWreckSystem.config.nearExtras !== false;
       f.stations = stations;
       f.bullets = window.bullets;
@@ -28487,9 +28512,9 @@
       f.turretsOf = null;
       f.hall = null;
       // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)
-      f.lastConsumed = renderSnapshot.k;
+      f.lastConsumed = rwHost ? rwHost.lastConsumed() : renderSnapshot.k;
       // lustra (RW-11a): render czyta brud skóry z luster — pakujący zeruje flagi gry; wygląd maskowania tej klatki (RW-26)
-      f.consumeDirty = SZEW_MIRRORS;
+      f.consumeDirty = SZEW_LATE;
       f.cloak = cloakFrame;
       renderSnapshot.begin(f);
     }
@@ -28503,6 +28528,7 @@
       // przeszkody gazu wybuchów (packGasObstacles w render(); bez reżysera wybuchów — brak wejścia)
       f.gasObst = window.__explosions ? gasObstIn : null;
       renderSnapshot.finish(f);
+      if (rwHost) rwHost.postFrame();
     }
 
     function getViewportForCamera(cam) {
@@ -29359,7 +29385,7 @@
         : null;
       // Szew renderu (RW-10, ?szew=pakuj): faza 1 migawki — po kamerze, przed aktualizacjami 3D. Lustra (?szew=inline):
       // faza 1 tuż przed updateHexShips3D (po wyglądzie maskowania i rekordach wież tej klatki — RW-26).
-      if (renderSnapshot && !SZEW_MIRRORS) packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY);
+      if (renderSnapshot && !SZEW_LATE) packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY);
 
       if (renderDbgEnabled) {
         RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
@@ -29377,13 +29403,13 @@
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       // Warp „Nurt” (src/3d/warp/warpNurt.js): przed planetami — ustawia na tę klatkę limit
       // kamery gwiazd, smugi gwiazd, zgięcie mgławicy, ośrodek i efekty przylotów NPC.
-      WarpNurt.update(_warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam));
+      if (!RW_WORKER) WarpNurt.update(_warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam));
       // Jasność tła wg strefy gracza (src/game/skyRegion.js): pas asteroid ciemniej, pusta przestrzeń jaśniej.
-      if (window.setSkyZone) window.setSkyZone(zoneState.current?.id || null);
-      if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
+      if (!RW_WORKER && window.setSkyZone) window.setSkyZone(zoneState.current?.id || null);
+      if (!RW_WORKER && window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
       // Pył kosmiczny: prędkość kamery BEZ wstrząsu (smugi), gracz 2 podzielonego ekranu, opcja z menu. W pauzie
       // dt = 0 — smugi stoją jak zatrzymana klatka.
-      SpaceDust3D.frame(PAUSED ? 0 : frameDt, camNoShake, (splitScreenMode && camera2) ? camera2 : null, OPTIONS.spaceDust !== 'off');
+      if (!RW_WORKER) SpaceDust3D.frame(PAUSED ? 0 : frameDt, camNoShake, (splitScreenMode && camera2) ? camera2 : null, OPTIONS.spaceDust !== 'off');
       const render3dPlanetsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dPlanetsUpdateTime', render3dPlanetsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updatePlanets3D', render3dPlanetsMs);
@@ -29398,7 +29424,7 @@
       if (haloWorld) {
         haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
       }
-      if (haloRings) {
+      if (haloRings && !RW_WORKER) {
         haloRings.update(frameDt, cam, {
           sun: SUN,
           ship,
@@ -29415,19 +29441,19 @@
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       // lustra (`?szew=inline`, RW-11b): stacje po fazie begin migawki — niżej, przed updateHexShips3D
-      if (!SZEW_MIRRORS && window.updateStations3D) window.updateStations3D(stations);
+      if (!SZEW_LATE && window.updateStations3D) window.updateStations3D(stations);
       const render3dStationsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dStationsUpdateTime', render3dStationsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateStations3D', render3dStationsMs);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
-      if (updateWorld3D) updateWorld3D(frameDt, vfxTime);
+      if (updateWorld3D && !RW_WORKER) updateWorld3D(frameDt, vfxTime);
       // Suchy dok piratów (misja 1): alarm, wylot eskorty, dach nad graczem w hali, lampki stanowisk, kawałki
       // (zegar dryfu stoi w pauzie i w scenach fabuły)
-      updatePirateBase3D((PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, storyBaseFrameState());
+      if (!RW_WORKER) updatePirateBase3D((PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, storyBaseFrameState());
       // Skóra ciał świata (kawałki budowli w bańce gracza, ich wyspy i odłamy): bryły jadą po węzłach ciała.
-      syncWorldBodies3D();
+      if (!RW_WORKER) syncWorldBodies3D();
       const render3dWorldMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dWorldUpdateTime', render3dWorldMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', render3dWorldMs);
@@ -29443,12 +29469,12 @@
         // istnieją, zanim kadr dotknie pasa), przycięcie cache pola gry.
         stepBeltWorldFrame(frameDt, cam);
       }
-      if (asteroidBelt && beltWorld) {
+      if (asteroidBelt && beltWorld && !RW_WORKER) {
         // mgła wojny: reflektory ukrytych okrętów nie oświetlają skał (zdradzałyby pozycję)
         asteroidBelt.prepareFrame(beltWorld.time, beltWorld.frameDt, ship, splitScreenMode ? player2Ship : null, fogSeenInto(npcs, _npcSeenList));
       }
       // Komety (blok „KOMETY”): obrót jąder, fazy gazu, odcinanie poza kadrem.
-      updateComets3D(cam);
+      if (!RW_WORKER) updateComets3D(cam);
       // Pył w halach K-7 (src/3d/gasField/): gra pakuje wejście klatki (hala przy kamerze, przekształcenie
       // hala → świat w double, okręty w domenie, dt gry — 0 w pauzie i scenach fabuły); symulacja i obraz
       // w kroku Core3D.fx czytają tylko tę tablicę i dysze MAIN z EngineFrame.
@@ -29462,7 +29488,7 @@
         // zegar migania świateł hal K-7 (ten sam dostaje shader hali) — światła hali w siatce oświetlają pył i parę
         clock: haloWorld ? haloWorld.clock : 0
       });
-      HallDust.submit(HallDust.input);
+      if (!RW_WORKER) HallDust.submit(HallDust.input);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
       // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
       // efektów „wybuchy” czyta tylko tę tablicę.
@@ -29473,7 +29499,7 @@
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
-      if (window.Destruction3D) window.Destruction3D.update(vfxTime, frameDt);
+      if (window.Destruction3D && !RW_WORKER) window.Destruction3D.update(vfxTime, frameDt);
       const render3dDestructionMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dDestructionUpdateTime', render3dDestructionMs);
       if (renderDbgEnabled) RenderLiveDebug.record('Destruction3D.update', render3dDestructionMs);
@@ -29514,7 +29540,7 @@
         refreshLintelCover(k7Lintels, haloWorld ? haloWorld.entries : null, cam.x, cam.y,
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
         // lustra (`?szew=inline`, RW-11b): mostki po fazie begin migawki — niżej, przed updateHexShips3D
-        if (!SZEW_MIRRORS) {
+        if (!SZEW_LATE) {
           Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
           BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
         }
@@ -29555,6 +29581,11 @@
           RenderWorld.setSource(_mirrorPlayers);
           updateHexShips3D(cam, renderMirror.lists[SNAP_LIST.RENDER], _hexCullInfo, renderMirror.lists[SNAP_LIST.COLD], _cloakMirrorState.frame);
           RenderWorld.setSource(null);
+        } else if (RW_WORKER) {
+          // RW-40a: faza 1 migawki; kadłuby, modele, tarcze i stacje rysuje worker (render.worker.js)
+          const tMirror = performance.now();
+          packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
+          PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
         } else {
           updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
         }
@@ -29570,7 +29601,7 @@
           RenderWorld.setSource(null);
           // lustra → gra: pola pisane przez render, czytane przez grę (mirrorBridge.js)
           bridgeMirrorsToGame(renderMirror, renderMirror.lists[SNAP_LIST.RENDER]);
-        } else {
+        } else if (!RW_WORKER) {
           syncShipModels3D({ entities: renderSeenCold, poseOf: bridgeRenderPose, turrets: Turret2D, inView: shipModel3DInView, zoom: cam.zoom, zoomAt: View3D.active ? shipModel3DZoomAt : null, dt: PAUSED ? 0 : frameDt });
         }
         // Drony naprawcze (src/3d/repair/repairDrones3D.js): jedna partia, iskry i łuk spawania, zestrzelone — wybuch.
@@ -29578,7 +29609,7 @@
         _repairDronesSync.zoom = cam.zoom;
         _repairDronesSync.time = SimClock.render;
         RepairFxEvents.flush(RepairSwarm.rigs);
-        syncRepairDrones3D(_repairDronesSync);
+        if (!RW_WORKER) syncRepairDrones3D(_repairDronesSync);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -29595,7 +29626,7 @@
         RenderWorld.setSource(_mirrorPlayers);
         updateShields3D(PAUSED ? 0 : frameDt, renderMirror.lists[SNAP_LIST.SEEN], window.__interpShipPose);
         RenderWorld.setSource(null);
-      } else {
+      } else if (!RW_WORKER) {
         updateShields3D(PAUSED ? 0 : frameDt, renderSeen, window.__interpShipPose);
       }
       const render3dShieldsMs = performance.now() - tRender3dSub;
@@ -29604,7 +29635,7 @@
       // Rdzenie reaktorów: obraz stopienia i zagrożeń (reżyser wybuchu — krok klatki efektów
       // przed passami) i model reaktora w wyrwie (warstwa 7 — po tarczach, które ją zgłaszają
       // przypisaniem). Zegar = czas symulacji tej klatki (pauza = 0).
-      if (reactorBlastFx) {
+      if (reactorBlastFx && !RW_WORKER) {
         const simNow = SimClock.sim;
         const reactorSimDt = Math.max(0, Math.min(0.1, simNow - _reactorFxSim));
         _reactorFxSim = simNow;
@@ -29639,7 +29670,8 @@
       // inaczej pierwsza klatka po zamknięciu pokazałaby stare.
       // (CICDisplay.draw bez statku nic nie rysuje — wtedy świat zostaje.)
       const skipWorld3D = CICDisplay.active && !!ship;
-      if (skipWorld3D) {
+      if (skipWorld3D || RW_WORKER) {
+        // RW-40a: obraz 3D z workera (B2cr — rwHost), kanwa gry niesie same nakładki
         ctx.clearRect(0, 0, W, H);
         Core3D.beginHeatHazeFrame();
       } else if (drawHexShips3D) {
@@ -30924,6 +30956,8 @@
       }
       mouse.click = false;
       mouse2.click = false;
+      // B2cr: nakładki klatki k do kanwy pierścienia (para z bitmapą 3D klatki k)
+      if (rwHost && renderSnapshot) { rwHost.resize(W, H); rwHost.commitOverlay(renderSnapshot.k); }
     }
 
     function renderZoneMessages() {
