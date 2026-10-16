@@ -387,15 +387,20 @@ if (isWorker) {
         onOcclusion(fn) { if (world.sectors) fn(world.sectors); occSubs.push(fn); },
         // wydobycie w workerze (RW-41b cz. 2): repliki fizyki skał i platformy z wiadomości klatki strony
         // (src/render/miningSync.js — ciała `RockBody`, okruchy, drony, piła, ładunki, zdarzenia, `taken`)
-        attachShapeRadius() {
+        attachShapeRadius(data) {
           if (!world.rig) { st.mineRep = mm.sync.createMiningReplica(); world.mining = st.mineRep.mining; world.rig = st.mineRep.rig; }
+          // mapy promienia kształtów banku → strona (fizyka wydobycia gry — beltWorld.attachShapeRadius)
+          if (data && data.maps && !st.beltShapeSent) { st.beltShapeSent = true; postMessage({ type: 'beltShape', maps: data.maps, size: data.size }); }
           return world.rig;
         }, ackMinedUpload(body) { if (body) body.dirtyBox = null; }, roofAbove(x, y) { return giants.roofAbove(x, y); } };
       st.beltWorld = world; st.beltSubs = subs; st.beltOccSubs = occSubs;
       for (const g of st.pendingGiants || []) addGiant(g);
       const belt = createAsteroidBelt({ world });
+      const tB = performance.now();
       await belt.initGpu();
+      console.log(`[render.worker] pas: initGpu ${Math.round(performance.now() - tB)} ms`);
       st.belt = belt;
+      postMessage({ type: 'beltReady' });
     } catch (e) { report(e, 'pas'); }
   }
   function addGiant(m) {
@@ -805,13 +810,23 @@ if (isWorker) {
         if (!p || Math.hypot((p.x || 0) - m.x, (p.y || 0) - m.y) > 420000) continue;
         const ring = e.ring || st.haloRings.showcaseRing(e.key);
         // ringi-archetypy budują się krokami w klatkach (pumpBuild w update) — tu krokami między zadaniami
-        if (ring && ring.pumpBuild) waits.push((async () => { while (ring.pumpBuild()) await new Promise((r) => setTimeout(r, 0)); })());
+        if (ring && ring.pumpBuild) waits.push((async () => { while (ring.pumpBuild()) await new Promise((r) => setTimeout(r, 4)); })());
         if (ring && ring.ready) waits.push(Promise.resolve(ring.ready));
       }
     }
     const limit = (ms) => new Promise((r) => setTimeout(() => r(false), ms));
     if (waits.length) await Promise.race([Promise.all(waits), limit(m.ringMs || 20000)]);
     const tRing = performance.now();
+    if (m.afterFrame) {
+      // klatka zero strony (pod kurtyną ładowania): lustra kadłubów i obiekty gry są w scenie — passy Core3D jeszcze raz
+      // z tym, co w niej jest (jak flush strony w trybie off: wpisy „start gry” ruszyły przy starcie workera, przed grą)
+      const f0 = st.frames;
+      for (let i = 0; i < 300 && st.frames <= f0; i++) await new Promise((r) => setTimeout(r, 16));
+      const C = st.Core3D, scene = C.scene, w = C.warmup, jobs = [];
+      for (const layer of [0, 7, 2, 1, 3, 5, 6]) jobs.push(w.now(scene, { layer, visible: false }));
+      for (const layer of [0, 7, 2]) jobs.push(w.now(scene, { layer, visible: false, ortho: false }));
+      await Promise.race([Promise.all(jobs), limit(6000)]);
+    }
     await Promise.race([st.Core3D.warmup.flush({ timeoutMs: 4000 }), limit(6000)]);
     console.log(`[render.worker] przygotowanie sceny: ringi ${waits.length} ${Math.round(tRing - t0)} ms, rozgrzewka ${Math.round(performance.now() - tRing)} ms`);
     return true;

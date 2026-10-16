@@ -109,3 +109,22 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
 - Baza piratów: worker przy zdarzeniu 'bodies' liczy rastry i bryły kawałków sam (~0,5 s pracy workera przy starcie misji).
 - Wydobycie: siatki skał idą do workera całe przy każdej zmianie (laser — do ~0,5 MB na klatkę wiadomością).
 - Soczewka świata warpa: cel `targetBody` nieustawiony w pakującym (AGENT) — planeta celu w skoku może się zachowywać inaczej niż w off.
+
+## RW-41 — stan i plan (2026-10-16 wieczór, do wznowienia po resecie limitu)
+
+D8 = worker (decyzja użytkownika); przełączenie domyślnego trybu czeka na RW-41 i poprawkę Fable (spadek przy 0,45 — takt rAF workera brał najnowszą stronę bez wiadomości; Fable, gałąź `claude/rw-fps045`).
+
+ZROBIONE w tym commicie (RW-41a):
+- `startGame` w trybie worker pomija przygotowanie 3D strony (modele broni GLB, rozgrzewki kadłubów i tarcz, HullSurface, stacje, obraz komet — jądra komet dalej się budują jako przeszkody, tekstury planet, flush rozgrzewki strony).
+- Pas: bank skał piecze worker (`attachBeltEarly` już w menu — blok tworzenia pasa w DOMContentLoaded); mapy promienia kształtów wracają do gry wiadomością `beltShape` (→ `beltWorld.attachShapeRadius`, wydobycie przez `beltWorld.onMining`), `beltReady` po `initGpu` workera.
+- Klatka zero: na końcu ładowania strona robi `render(1, 0)` pod kurtyną, a `RenderWorkerHost.prepare(x, y, …, afterFrame = true)` czeka na jej rysunek w workerze i rozgrzewa passy sceny z tym, co w niej jest (`Core3D.warmup.now(scene, { layer, visible: false })`, warstwy 0, 7, 2, 1, 3, 5, 6 + perspektywa). Pipeline'y synchroniczne w grze: 0 (wszystkie w klatce zero, pod kurtyną).
+- Znaczniki kroków startu `window.__startSteps` (ms od kliknięcia; `start-gry.mjs` → `kroki`, `render-worker-gra.mjs` → `startSteps`), czas `initGpu` pasa w konsoli workera.
+
+WYNIK: przestoje w pierwszych sekundach gry prawie zniknęły (gra 2 / 899 klatek > 50 ms, maks 0,4 s; było 7 / 299, maks 2 s), ALE start jest DŁUŻSZY: worker piecze w menu ring Ziemi (~10–11 s) i bank pasa (~4 s) na swoim urządzeniu, a strona równolegle piecze własny ring dla tła menu — dwa urządzenia biją się o GPU. `start-gry` (klik 2 s po gotowym menu): 18–33 s od kliku (ostatni przebieg mógł się nałożyć z pomiarem Fable); `render-worker-gra`: krok `pas` ~17 s po kliknięciu.
+
+DO ZROBIENIA (RW-41c — jedno urządzenie GPU; bez tego kryterium „start ≤ off” nie przejdzie):
+1. Tryb renderu rozstrzygany w PIERWSZYM module strony (`resolveRenderMode` jest czyste: `location.search` + `renderWorkerCaps`) — w trybie worker Core3D strony bez `_initGpu` (scena bez urządzenia), `Core3D.ready` / bramki menu („wymaga WebGPU”) z flagi RET `GPU_READY` workera.
+2. Tło menu w workerze: `MenuBackdrop3D` (ring z `haloRings.showcaseRing('earth')` workera, Ziemia, mgławica, kamera kinowa) i pętla menu workera bez stron migawki (worker rysuje sam co rAF, strona pokazuje bitmapę bez pierścienia nakładek); sterowanie z menu strony wiadomościami: start / launch({ dolly }) / stop; lot intro kampanii (`StoryGame.planMenuIntro` → plan jako dane, dziś domknięcia), `launchDone` / `flightDone` z powrotem do strony.
+3. Teren ringu Ziemi dla kolizji gry (`haloWorld.setRingTerrain` z mapy CPU ringu obrazu): mapa CPU z workera wiadomością (dziś strona bierze ją z własnego ringu tła menu).
+4. Ring Ziemi wtedy piecze się RAZ (worker, w menu) i służy i tłu menu, i grze — start jak w off.
+5. Potem: `?renderWorker=0` = off, domyślnie worker (`src/render/renderBridge.js`), AGENTS.md, krótki pomiar końcowy przy wolnej maszynie.

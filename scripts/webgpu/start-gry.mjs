@@ -185,6 +185,7 @@ async function runOnce(base, n) {
     const rec = await ev(`(() => { const R = window.__startRec; return { loaf: R.loaf, n: R.n, marks: R.marks, start: Array.from(R.start.subarray(0, R.n)), cpu: Array.from(R.cpu.subarray(0, R.n)), game: Array.from(R.game.subarray(0, R.n)), pipes: R.pipes }; })()`);
     res.chwile = rec.marks;
     res.loafGra = (rec.loaf || []).filter((x) => x.t >= (rec.marks.graPierwszaKlatka || Infinity) - 50);
+    res.kroki = await ev('window.__startSteps || null');
     res.rw = await ev('(() => { const h = window.RenderWorkerHost; return h ? { composed: h.composed, ready: h.ready, failed: h.failed, errors: h.errors.slice(0, 5) } : null; })()');
     if (Number.isFinite(rec.marks.graPierwszaKlatka) && Number.isFinite(rec.marks.klik)) {
       res.chwile.graOdKliku = +(rec.marks.graPierwszaKlatka - rec.marks.klik).toFixed(1);
