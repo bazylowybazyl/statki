@@ -29410,7 +29410,8 @@
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
-      if (window.updateStations3D) window.updateStations3D(stations);
+      // lustra (`?szew=inline`, RW-11b): stacje po fazie begin migawki — niżej, przed updateHexShips3D
+      if (!SZEW_MIRRORS && window.updateStations3D) window.updateStations3D(stations);
       const render3dStationsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dStationsUpdateTime', render3dStationsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateStations3D', render3dStationsMs);
@@ -29508,8 +29509,11 @@
         // Nadproża bram K-7 przy kamerze (lampy pozycyjne i okna mostków pod nimi gasną).
         refreshLintelCover(k7Lintels, haloWorld ? haloWorld.entries : null, cam.x, cam.y,
           Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1));
-        Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
-        BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+        // lustra (`?szew=inline`, RW-11b): mostki po fazie begin migawki — niżej, przed updateHexShips3D
+        if (!SZEW_MIRRORS) {
+          Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
+          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+        }
         // Widok klatki po stronie gry (RW-31): flaga pudła rysowania encji (model lotu, LOD dysz) i ciała do rysowania
         // zimnych wraków na belkach (budżet coldWreckSystem) — PO mostkach: nowe ciało dołącza do list mostków i modeli
         // w następnej klatce, jak dawniej, gdy prosił o nie render.
@@ -29533,6 +29537,11 @@
           const tMirror = performance.now();
           packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
           applyRenderMirrors();
+          // RW-11b (krok 1, decyzja D4 — nowa baza zrzutów `inline`): stacje i mostki ZA fazą begin (w `off` przed
+          // updateWorld3D i przed widokiem klatki / wyglądem maskowania); na razie na obiektach gry
+          if (window.updateStations3D) window.updateStations3D(stations);
+          Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
+          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
           // pomiar D7: faza begin + lustra (część render3dHexUpdateTime, którą trzeba odjąć od czasu modułów)
           PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
           RenderWorld.setSource(_mirrorPlayers);
