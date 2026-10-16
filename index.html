@@ -29613,7 +29613,8 @@
         _reactorCoreLists[1] = fogSeenInto(npcs, _npcSeenList);
         _reactorCoreLists[2] = fogSeenInto(window.wrecks, _wreckSeenList);
         _reactorCoreLists[3] = _coldNearList.length > 0 ? _coldNearList : null;
-        const reactorCores = ReactorGame.cores(_reactorCoreLists);
+        // RW-11b krok 3: lustra rdzeni (blok CORES + opis; gospodarz = lustro encji, sonda kadłuba na replice ciała)
+        const reactorCores = SZEW_MIRRORS && renderSnapshot.k > 0 ? renderMirror.cores : ReactorGame.cores(_reactorCoreLists);
         reactorBlastFx.advance(reactorSimDt);
         reactorBlastFx.syncCores(reactorCores, reactorSimDt);
         reactorBlastFx.syncHazards(reactorSimDt);
