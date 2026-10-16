@@ -1675,6 +1675,30 @@ Pliki: nowy `src/game/warpTraffic.js` (rejestr przylotów i odlotów, limit 24, 
 przestanie biec przy zamrożonym świecie — zamierzona poprawka); `tests/storyMission.test.mjs`,
 `scripts/webgpu/fabula-gra.mjs --faza counter`. Zależności: RW-21. Kolizje: misja 2 (`supportWarp.js`, fale).
 
+**Stan (2026-10-16, tor `rw-swiat`) — ZROBIONE.** Nowy `src/game/warpTraffic.js` (`warpTraffic` w `index.html`,
+`window.WarpTraffic`): rejestr przylotów i odlotów NPC tunelem w CZASIE GRY — zegar `time` (suma dt gry ≤ 0,1 s; 0 w pauzie
+i przy zamrożonym świecie fabuły), pula 24 (`free` → `warpArrivalsFree`), osie (`planWarpArrivalAxis`,
+`planWarpDepartureAxis` — dawna część osi `planWarpArrivalFx` / `planWarpDepartureFx`), prowadzenie okrętów w tunelu
+(`arrivalAxisPose`, `departAxisPose`, duch `isCollidable`, `setArrivalMovingBrake`), `onGone`, warp-in piratów
+zdarzeniem `noteWarpIn` przy spawnie (dawny skan `npcs` w renderze), wymiary kadłuba i paleta WARP (jedno źródło —
+`palette.js` re-eksportuje). Krok `warpTraffic.step(dt)` na końcu `stepSupportWarp` (po wezwaniach i powrotach, tuż
+przed `render()`) — ta sama kolejka decyzji i te same liczby co dawny krok efektu na początku `WarpNurt.update`.
+Render (`warpNurt.js`) tylko rysuje: rekordy `WARP_BEGIN` / `WARP_ATTACH` / `WARP_END` / `WARP_CLEAR` (kody 74–77,
+`src/render/renderCommands.js`; dekoder `src/3d/warp/warpTrafficCommands.js`), oś z puli rejestru (`recordAt(slot)` —
+inline ten sam obiekt; worker: lustro bloku WARP migawki — do zrobienia przy RW-11c), ubiór `dressWarpArrival` /
+`dressWarpDeparture` (`arrivals.js`), zegar osi `o.trafficTime`; nie pisze pozy, ducha ani `onGone`. Gra
+(`callInSupport`, tryb LINIE, POWRÓT, `storyWarpOut`, odlot holownika, ETA, `serviceTugBusy`, `warpArrivalsFree`)
+pyta rejestr. Zmiany zachowania (zamierzone): przy zamrożonym świecie fabuły i w pauzie harmonogram stoi (dawniej zegar
+efektu biegł w scenach; `stepSupportWarp` w pauzie dostawał dt klatki); przylot / odlot planuje się także bez
+zainicjowanego renderu (dawniej bez GPU `WarpNurt.arrive` zwracał null i wołający spawnował od razu). Wstrząsy warpa
+(`WarpNurt.onShake`) zostają żądaniami z renderu (RW-30). Weryfikacja: zrzuty sesji `warp` przed (harness gałęzi
+z `--root` na `main` bb532540) / po — bit w bit w progu szumu (`>8` 0%, maks. 0–4/255; harness: `WarpTraffic` albo
+dawne API `WarpNurt`); `tests/warpTraffic.test.mjs` (zegar, pula, rekordy WARP_*, warp-in zdarzeniem, strażnik obrazu
+bez rozgrywki), `tests/supportWarp.test.mjs` (wezwanie i odlot na rejestrze z obrazem na rekordach), `storyMission`,
+pełne testy (tylko porażki `main`; `hullShadowSdf` — chwiejny, sam 3/3), `npm test`, build; `fabula-gra.mjs --faza counter` (fale odwetu przylatują tunelem, licznik celu rośnie), `holownik-gra.mjs` (wezwanie tunelem z Ziemi, burta w burtę, rój, paka, skok z ładunkiem, wyładunek w K-7, odlot — pipeline'y renderu synchroniczne 0).
+Szew: `index:zapytanie` i `index:zdarzenie` −4, `index:konfiguracja` i `index:dane` +1 (dekoder), `import:src/game/warpDrive.js`
+3 → 2, nowy moduł klasy A `src/game/warpTraffic.js`.
+
 **RW-29 Tarcze: przebicia przez kanał zwrotny.**
 Pliki: `src/3d/shield3D.js` (bity do bloku `RET`), nowy `src/game/shieldBreach.js` (test punktu na siatce płytek
 z `acquireShieldLattice`), `index.html` (pociski, wiązki), rakiety. Kryterium: `node scripts/webgpu/tarcze-gra.mjs` —
