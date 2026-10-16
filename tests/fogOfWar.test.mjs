@@ -217,7 +217,8 @@ test('wpięcie w grę: render, celowanie, HUD i post respektują mgłę (źród�
   assert.match(html, /Bridge3D\.update\(renderSeenCold,/);
   assert.match(html, /updateShields3D\(PAUSED \? 0 : frameDt, renderSeen,/);
   assert.match(html, /syncShipModels3D\(\{ entities: renderSeenCold,/);
-  assert.match(html, /setEntityHiddenTest\(\(e\) => SensorSystem\.hides\(e\)\);/);
+  // RW-11a: lustra (`?szew=inline`) — flaga mgły ze strony migawki (to samo pytanie przy pakowaniu)
+  assert.match(html, /setEntityHiddenTest\(\(e\) => \(e\.__mirror === true \? e\.fogHidden : SensorSystem\.hides\(e\)\)\);/);
   assert.match(html, /setWorld3DHiddenTest\(\(st\) => SensorSystem\.hides\(st\)\);/);
   assert.match(html, /isPlayerLockTargetInRange\(target\) && !SensorSystem\.hides\(target\);/, 'namiar tylko na widziane');
   assert.match(html, /if \(SensorSystem\.hides\(e\)\) return;   \/\/ mgła wojny: wieże/, 'wieże na auto nie strzelają w mgłę');

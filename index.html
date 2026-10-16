@@ -25528,7 +25528,7 @@
     if (setColdWreckRenderHooks) {
       setColdWreckRenderHooks({
         // Ciało do rysowania wybrała gra w tej klatce (selectColdRenderBodies przed updateHexShips3D, RW-31).
-        drawn: (w) => w._coldDrawFrame === renderFrameId,   // lustra: pole z mostu gra → lustro (mirrorBridge.js)
+        drawn: (w) => w._coldDrawFrame === renderFrameId,
         config: coldWreckSystem.config,
         // W liście mostków / modeli 3D tej klatki (withColdNearWrecks) — ciało odtworzone dopiero w tej klatce
         // rysuje skóra, model 3D przejmie je w następnej (bez klatki bez obrazu).

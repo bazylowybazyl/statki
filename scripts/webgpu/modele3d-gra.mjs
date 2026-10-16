@@ -5,7 +5,7 @@
 // tej samej zatrzymanej klatce: cała bitwa i zbliżenie. Na końcu (bez pauzy) ciąg W — struga MAIN.
 //
 //   node scripts/webgpu/modele3d-gra.mjs [--warianty 2d2d,3d3d,3d2d,2d3d] [--kamery chase,orbit,cinema,tactical,top] [--out .tmp/modele3d]
-//        [--rozmiar 1600x900] [--czekaj 2500]
+//        [--rozmiar 1600x900] [--czekaj 2500] [--query szew=inline]
 //
 // Wynik: <out>/menu.png, <out>/<wariant>-<scena>.png, <out>/raport.json (błędy konsoli, statystyki modeli).
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -63,7 +63,7 @@ async function shot(v, sc, info = null) {
 try {
   // Gra swobodna bez samouczka — „Start” w kampanii (domyślnej od misji 1) zaczyna intrem w doku K-7, nie przy Ziemi.
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); } catch {} })();` });
-  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
+  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1${args.query ? `&${args.query}` : ''}` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.setVisualMode)', 240000, 400)) throw new Error('gra nie wstała');
   // Menu „Nowa gra” z przełącznikami (3D / 3D — zrzut z aktywnymi chipami).
   await ev(`(() => { window.setVisualMode(true, true); document.getElementById('btn-new-game')?.click(); return true; })()`);
