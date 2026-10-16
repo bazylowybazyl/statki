@@ -42,9 +42,10 @@ test('wybuchy (Core3D): rozgrzewka kroku — kernele gazu i żaru, siatki odsło
   // Kernel przesunięcia żaru zarejestrowany w początku pul PRZED krokiem (rozgrzewka kroku kompiluje i jego).
   assert.ok(explosions.indexOf('origin.register({') > 0 && explosions.indexOf('origin.register({') < explosions.indexOf('core.addFxStep(this.step)'));
   // W grze fabryka powstaje przy starcie efektów Core3D (przed ekranem ładowania — rozgrzewka kroku w rejestrze).
+  // Odstęp 2600 znaków: blok startu efektów urósł o rekordy rozkazów RW-22 / RW-23 (GameSparks, rakiety, dekodery).
   const start = indexHtml.indexOf('SparkSystem3D.init(Core3D.scene);');
   const factory = indexHtml.indexOf('window.makeReactorBlow = createExplosionFactory(');
-  assert.ok(start > 0 && factory > start && factory - start < 1800, 'fabryka wybuchów przy starcie efektów Core3D');
+  assert.ok(start > 0 && factory > start && factory - start < 2600, 'fabryka wybuchów przy starcie efektów Core3D');
 });
 
 // Zadanie 17: fabryk trafień broni w overlayu (rail, armata, działko, Yamato) już nie ma — trafienia

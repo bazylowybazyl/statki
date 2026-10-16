@@ -108,9 +108,19 @@ export function impactSparkCount(approachSpeed) {
   return Math.round(T.impactSparks * k);
 }
 
-function onImpact(ev) {
+// Odbiorca iskier: RW-22 — pisarz rekordów SPARK_BURST / SPARK_SEAM (src/game/sparkEvents.js, te same metody co
+// SparkSystem3D; `ready` = render ma iskry); bez niego — dawna droga, SparkSystem3D wprost (dema, testy).
+let _sink = null;
+export function setCollisionSparkSink(sink) { _sink = sink || null; }
+function sparksOut() {
+  if (_sink) return _sink.ready ? _sink : null;
   const sparks = typeof window !== 'undefined' ? window.SparkSystem3D : null;
-  if (!sparks?.isInitialized) return;
+  return sparks?.isInitialized ? sparks : null;
+}
+
+function onImpact(ev) {
+  const sparks = sparksOut();
+  if (!sparks) return;
   const count = impactSparkCount(ev.approachSpeed);
   if (count <= 0) return;
   sparks.grindingBurst(
@@ -124,8 +134,8 @@ function onImpact(ev) {
 }
 
 function onGrind(ev) {
-  const sparks = typeof window !== 'undefined' ? window.SparkSystem3D : null;
-  if (!sparks?.isInitialized) return;
+  const sparks = sparksOut();
+  if (!sparks) return;
 
   const count = grindSparkBudget(ev);
   if (count <= 0) return;

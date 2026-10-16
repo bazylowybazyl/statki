@@ -544,7 +544,7 @@ test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawn
   assert.doesNotMatch(recycle, /DestructorSystem/);
 
   const freezeHook = src.slice(src.indexOf('onBeforeFreeze(w) {'), src.indexOf('onThawed(w, reason) {'));
-  assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('invalidateHexShipEntity3D(w)'),
+  assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('HullDamageEvents.invalidate(w)'),
     'smuga zapisana, zanim meshe znikną');
   assert.match(freezeHook, /TowSystem\.detachBody\(w, 'wreck-cold'\)/);
 

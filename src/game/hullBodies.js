@@ -372,6 +372,11 @@ export const HullBodies = {
   // (entity, hull, ix, iy, iz, x, y, z) — to samo dla BRYŁY 3D (komórka kratownicy szablonu, punkt świata gry i
   // wysokość): rany 3D (src/3d/solidWounds.js — rozdarcie: osmalony brzeg dziury po zgniocie). Domyślnie brak.
   onSolidNodeLost: null,
+  // (x, y, vx, vy, r, g, b, cellSize, structCandidate, solid, z, vz) — odłamek zniszczonego węzła (świat gry, y w dół;
+  // kolor blachy komórki; kształtownik możliwy — węzeł z wręgiem / grodzią; bryła 3D z wysokością). Losowanie skali
+  // i kształtownika robi odbiorca (render — strumień efektów; RW-22: rekord HULL_DEBRIS). Bez haka — dawna droga:
+  // losowanie tutaj i window.spawnHullDebris.
+  onDebris: null,
   // (islandEntity, parentEntity) — wyspa ciała ŚWIATA, która przy rozpadzie dalej trzyma się kotwicy: osobna encja
   // budowli (isWorldPiece, stoi), nie wrak. Gra (worldBodies.js) dopisuje ją do swojego kawałka. Domyślnie brak.
   onWorldIsland: null,
@@ -3300,6 +3305,10 @@ function onNodeDebris(body, i, wx, wy, wz, vx, vy, vz) {
     if (HullBodies._weaponDepth === 0 && typeof HullBodies.onSolidNodeLost === 'function' && hull.entity) {
       HullBodies.onSolidNodeLost(hull.entity, hull, s.ix[i], s.iy[i], s.iz[i], wx, -wy, wz);
     }
+    if (typeof HullBodies.onDebris === 'function') {
+      HullBodies.onDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], body.cellSize, 1, 1, wz, vz);
+      return;
+    }
     if (typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
     const scale3 = body.cellSize * (0.6 + fxRandom.next() * 0.7);
     window.spawnHullDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], scale3, fxRandom.next() < 0.4, wz, vz);
@@ -3309,6 +3318,10 @@ function onNodeDebris(body, i, wx, wy, wz, vx, vy, vz) {
   if (HullBodies._weaponDepth === 0 && typeof HullBodies.onNodeLost === 'function' && hull.entity) {
     writeSpriteUv(hull, i, s.x[i], s.y[i], _lostUv);
     HullBodies.onNodeLost(hull.entity, hull, _lostUv.u, _lostUv.v, wx, -wy);
+  }
+  if (typeof HullBodies.onDebris === 'function') {
+    HullBodies.onDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], body.cellSize, s.beamCount[i] > s.localBeamCount[i] ? 1 : 0, 0, 0, 0);
+    return;
   }
   if (typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
   // Rozmiar jak odłamki dema: ~0,9–1,8 komórki (siatka gry = siatka dema, 15 j.).

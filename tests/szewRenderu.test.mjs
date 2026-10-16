@@ -14,11 +14,11 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 88, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
-  'index:dane': 17, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
-  'index:konfiguracja': 152, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
-  'index:zapytanie': 24, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
-  'index:zdarzenie': 38, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
+  'index:aktualizacja': 90, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:dane': 18, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:konfiguracja': 151, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:zapytanie': 24, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:zdarzenie': 22, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,

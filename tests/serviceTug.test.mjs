@@ -233,3 +233,27 @@ test('POWRÓT skrzydła w trakcie naprawy: misja kończy się bez własnego odlo
   assert.equal(w.st.departs.length, 0, 'bez drugiego odlotu (POWRÓT już prowadzi)');
   assert.equal(w.st.locks.length, 0);
 });
+
+test('RW-31: renderPoseOf = poza, którą beginRender wpisuje w encję holownika — bez zapisu (dla migawki renderu)', async () => {
+  const { ServiceTugGame } = await import('../src/game/serviceTugGame.js');
+  const player = { x: 1_000_000, y: 2_000_000, pos: { x: 1_000_000, y: 2_000_000 }, angle: 0.4, dead: false };
+  const npc = { x: 999_000, y: 2_000_500, pos: { x: 999_000, y: 2_000_500 }, angle: 0.3, dead: false, serviceTug: true, w: 5000, h: 2100, length: 5000, beam: 2100 };
+  const saved = { missions: ServiceTugGame.missions, deps: ServiceTugGame.deps };
+  try {
+    ServiceTugGame.deps = { player: () => player };
+    ServiceTugGame.missions = [{ npc, target: player, carried: true, phase: T.TUG_PHASE.CARRY, rel: 0.05 }];
+    const renderPose = { x: 1_000_010.5, y: 2_000_004.25, angle: 0.41 };
+    const out = { x: 0, y: 0, a: 0 };
+    assert.equal(ServiceTugGame.renderPoseOf(npc, renderPose, out), true);
+    assert.deepEqual([npc.x, npc.y, npc.angle], [999_000, 2_000_500, 0.3], 'renderPoseOf nie pisze w encji');
+    assert.equal(ServiceTugGame.renderPoseOf(player, renderPose, { x: 0, y: 0, a: 0 }), false, 'inna encja — poza z pól');
+    ServiceTugGame.beginRender(renderPose);
+    assert.deepEqual([npc.x, npc.y, npc.pos.x, npc.pos.y, npc.angle], [out.x, out.y, out.x, out.y, out.a]);
+    ServiceTugGame.restorePose();
+    assert.deepEqual([npc.x, npc.y, npc.angle], [999_000, 2_000_500, 0.3]);
+    ServiceTugGame.missions[0].phase = T.TUG_PHASE.CLAMP;
+    assert.equal(ServiceTugGame.renderPoseOf(npc, renderPose, out), false, 'zaczepy — poza fizyki');
+  } finally {
+    ServiceTugGame.missions = saved.missions; ServiceTugGame.deps = saved.deps;
+  }
+});
