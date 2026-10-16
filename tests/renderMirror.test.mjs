@@ -317,3 +317,18 @@ test('lustro: poza renderu z frame.poseOf (RW-31, holownik pod graczem) — w lu
   step();
   assert.deepEqual([mB.x, mB.angle], [900, 0.3], 'bez haka — znów pola encji');
 });
+
+test('lustro: przesunięcie początku układu ciała (latticeMin i pozycje spoczynkowe w miejscu, bez shapeVersion) dochodzi do lustra', () => {
+  const ents = [makeShip('A', 100)];
+  const { rm, step } = setup(ents);
+  step();
+  const body = ents[0].beamHull.body, s = body.nodeStore;
+  // jak D._shiftStore przy przebudowie po rozpadzie: magazyn i latticeMin razem, bez podbicia shapeVersion
+  for (let i = 0; i < s.count; i++) { s.ox[i] -= 7; s.x[i] -= 7; }
+  body.latticeMin.x -= 7;
+  body.meshDirty = true;
+  step();
+  const mb = rm.lists[LIST.RENDER][0].beamHull.body;
+  assert.deepEqual(Array.from(mb.nodeStore.ox), Array.from(s.ox));
+  assert.equal(mb.latticeMin.x, body.latticeMin.x);
+});

@@ -182,6 +182,25 @@ test('NODES: tylko ciała zmienione po ostatniej klatce odebranej; pominięta st
   frame.lastConsumed = 5;
   packer.begin(frame); packer.finish(frame);
   assert.equal(packer.stats.bodiesPacked, 0);
+  // RW-11a: zmiana spoza pudła (i nowy magazyn — pozycje spoczynkowe) czeka na stronę z ciałem w pudle, choć ciało
+  // już się nie zmienia (lustro bez zaległości: dawniej węzły i spoczynek z klatki poza pudłem przepadały)
+  ents[1].beamHull.body.nodeStore = makeStore(30, 91);
+  frame.lastConsumed = 6;
+  packer.begin(frame); packer.finish(frame);
+  assert.equal(packer.stats.bodiesPacked, 0);
+  ents[1].beamHull.body.meshDirty = false;
+  ents[1].pos.x = 0; ents[1].x = 0;
+  frame.lastConsumed = 7;
+  packer.begin(frame);
+  const bsl = packer.ids.bodies.peek(ents[1].beamHull.body);
+  const bi = bsl * BODY.stride.i32;
+  assert.ok(packer.view.bodyI32[bi + BODY.I32.NODE_F64_OFF] >= 0, 'węzły z zaległej zmiany');
+  assert.ok(packer.view.bodyI32[bi + BODY.I32.REST_F64_OFF] >= 0, 'pozycje spoczynkowe z zaległej zmiany');
+  packer.finish(frame);
+  assert.equal(packer.stats.bodiesPacked, 1);
+  frame.lastConsumed = 8;
+  packer.begin(frame); packer.finish(frame);
+  assert.equal(packer.stats.bodiesPacked, 0, 'po wysłaniu — bez powtórek');
 });
 
 test('wersje konfiguracji rosną przy zmianie tożsamości źródła; poziom B odświeżany rotacyjnie', () => {

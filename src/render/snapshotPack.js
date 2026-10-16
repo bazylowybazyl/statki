@@ -184,6 +184,13 @@ export class SnapshotPacker {
     // pamięć na slot ciała
     this._bodyPacked = new Int32Array(0);
     this._bodyChangedK = new Int32Array(0);
+    // ostatnia strona, na którą węzły ciała (i pozycje spoczynkowe) NAPRAWDĘ trafiły — zmiana spoza pudła albo przy
+    // braku miejsca na stronie czeka na najbliższą stronę z ciałem w pudle (RW-11a: lustra bez zaległości)
+    this._bodyNodesW = new Int32Array(0);
+    this._bodyRestW = new Int32Array(0);
+    // latticeMin ciała z ostatniej strony: przesunięcie początku układu ciała (D._shiftStore przy przebudowie po
+    // rozpadzie — bez podbicia shapeVersion) zmienia pozycje spoczynkowe razem z latticeMin
+    this._bodyLatMin = new Float64Array(0);
     this._bodyActive = new Int32Array(0);
     this._bodyStoreVer = new Int32Array(0);
     this._bodyShapeVer = new Int32Array(0);
@@ -253,6 +260,9 @@ export class SnapshotPacker {
     if (this._bodyPacked.length < nb) {
       this._bodyPacked = grow32(this._bodyPacked, nb);
       this._bodyChangedK = grow32(this._bodyChangedK, nb);
+      this._bodyNodesW = grow32(this._bodyNodesW, nb);
+      this._bodyRestW = grow32(this._bodyRestW, nb);
+      const lmn = new Float64Array(nb * 3).fill(NaN); lmn.set(this._bodyLatMin); this._bodyLatMin = lmn;
       this._bodyActive = grow32(this._bodyActive, nb);
       this._bodyStoreVer = grow32(this._bodyStoreVer, nb);
       this._bodyShapeVer = grow32(this._bodyShapeVer, nb);
@@ -981,6 +991,16 @@ export class SnapshotPacker {
       this._bodyRestK[bs] = k;
       changed = true;
     }
+    const lmb = body.latticeMin;
+    if (lmb) {
+      const L = this._bodyLatMin, o3 = bs * 3;
+      const lx = +lmb.x || 0, ly = +lmb.y || 0, lz = +lmb.z || 0;   // pole nieobecne = 0 (porównanie bez NaN)
+      if (L[o3] !== lx || L[o3 + 1] !== ly || L[o3 + 2] !== lz) {
+        // pierwsza strona ciała (NaN) albo przesunięty początek układu — pozycje spoczynkowe do wysłania
+        if (L[o3] === L[o3]) { this._bodyRestK[bs] = k; changed = true; }
+        L[o3] = lx; L[o3 + 1] = ly; L[o3 + 2] = lz;
+      }
+    }
     const active = body.activeNodes | 0;
     if (this._bodyActive[bs] !== active) { this._bodyActive[bs] = active; changed = true; }
     const region = body._region;
@@ -1063,11 +1083,15 @@ export class SnapshotPacker {
         }
       }
     }
-    if (store && count > 0 && this._bodyChangedK[bs] > f.lastConsumed && inBox) {
-      const rest = this._bodyRestK[bs] > f.lastConsumed;
+    const changedK = this._bodyChangedK[bs];
+    if (store && count > 0 && (changedK > f.lastConsumed || changedK > this._bodyNodesW[bs]) && inBox) {
+      const restK = this._bodyRestK[bs];
+      const rest = restK > f.lastConsumed || restK > this._bodyRestW[bs];
       const dirtyN = region && region.store === store && !region.dirtyAll ? region.dirtyCount | 0 : 0;
       if (this._packNodes(v, store, beams, count, beamCount, planar, bi, rest, dirtyN ? region.dirty : null, dirtyN)) {
         st.bodiesPacked++;
+        this._bodyNodesW[bs] = k;
+        if (rest) this._bodyRestW[bs] = k;
         st.nodesPacked += count;
         st.beamsPacked += beamCount;
         // Lustro (RW-11a) przejęło zmiany: flagi brudu gry zerowane tu, a nie w renderze (render czyści REPLIKĘ).
