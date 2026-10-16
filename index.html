@@ -1590,6 +1590,10 @@
       normalizeCallInSpawnMode
     } from "./src/game/callInSpawnPolicy.js";
     import { createSupportWarpCallIns, createSupportReturn, supportWarpCourse } from "./src/game/supportWarp.js";
+    // Ruch warpa „Nurt” po stronie gry (RW-28): przyloty i odloty NPC tunelem w CZASIE GRY — harmonogram, prowadzenie
+    // okrętów w tunelu (duch), onGone, warp-in piratów; render (WarpNurt) rysuje je z rekordów WARP_* strumienia rozkazów.
+    import { createWarpTraffic } from "./src/game/warpTraffic.js";
+    import { installWarpTrafficCommands } from "./src/3d/warp/warpTrafficCommands.js";
     // Holownik serwisowy (2026-10-08): naprawa rojem, „paka” i lot do K-7 — logika src/game/serviceTug.js, klej serviceTugGame.js.
     import { ServiceTugGame, TUG_PHASE } from "./src/game/serviceTugGame.js";
     import { createScoutBay, SCOUT_TUNE, SCOUT_PHASE } from "./src/game/scoutBay.js";
@@ -2212,7 +2216,7 @@
       for (let i = 0; i < count; i++) {
         const t = count === 1 ? 0.5 : i / (count - 1);
         const pos = { x: startWorld.x + dx * t, y: startWorld.y + dy * t };
-        WarpNurt.arriveAll(spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true }));
+        warpTraffic.arriveAll(spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true }));
       }
       toast(`LINIA: ${count}x ${key}`);
     }
@@ -9400,7 +9404,7 @@
     // Wymiary kadłuba wezwania PRZED spawnem (szczelina i nić rosną z długością kadłuba) — tą samą
     // drogą co budowa kadłuba (getNpcHexInitSource → HullBodies.createHull): profil renderu
     // (getHullRenderSize) i proporcje sprite'a. Po wyrzucie efekt i tak przelicza się z kadłuba
-    // (WarpNurt.attach). null — myśliwce i wezwania bez kadłuba (spawn od razu, jak dawniej).
+    // (warpTraffic.attach). null — myśliwce i wezwania bez kadłuba (spawn od razu, jak dawniej).
     function estimateCallInHull(key, mode) {
       const dev = DEV_HULL_SPAWNS[key];
       let profileId = null;
@@ -9449,8 +9453,14 @@
       if (typeof req?.opts?.onSpawned === 'function') req.opts.onSpawned(list);
     }
 
+    // Rejestr ruchu warpa (RW-28, src/game/warpTraffic.js) i jego obraz: rekordy WARP_* → WarpNurt (inline: oś z puli
+    // rejestru — ten sam obiekt; worker: lustro migawki).
+    const warpTraffic = createWarpTraffic({ commands: RenderCommands.writer });
+    installWarpTrafficCommands(RenderCommands.reader, WarpNurt, (slot) => warpTraffic.recordAt(slot));
+    window.WarpTraffic = warpTraffic;
+
     const supportCallIns = createSupportWarpCallIns({
-      warp: WarpNurt,
+      warp: warpTraffic,
       spawn: (req) => {
         const result = spawnCallInShip(req.key, req.opts);
         // Skład megafrachtowca: głowa dostaje zaplanowany przylot, wagony wypadają w tej samej chwili.
@@ -9490,18 +9500,18 @@
           palette: hull.palette, pirate: hull.pirate, heraldReach: homeDist,
           key, opts: { ...opts, mode, spawnPos: at, pos: at, angle, spawnAngle: angle }
         });
-        if (rec) return { planned: true, eta: Math.max(0, rec.fx.tBurst - WarpNurt.time), from: hull.pirate ? 'belt' : 'earth' };
+        if (rec) return { planned: true, eta: Math.max(0, rec.fx.tBurst - warpTraffic.time), from: hull.pirate ? 'belt' : 'earth' };
       }
       const result = spawnCallInShip(key, { ...opts, mode });
       if (!result || (Array.isArray(result) && result.length === 0)) return null;
-      WarpNurt.arriveAll(result);
+      warpTraffic.arriveAll(result);
       if (typeof opts.onSpawned === 'function') opts.onSpawned(Array.isArray(result) ? result : [result]);
       return { planned: false, eta: 0 };
     }
     window.callInSupport = callInSupport;
 
     const supportReturn = createSupportReturn({
-      warp: WarpNurt,
+      warp: warpTraffic,
       origin: getSupportWarpHome,
       hold: holdSupportReturnUnit,
       keep: keepSupportReturnUnit,
@@ -9550,7 +9560,7 @@
       npc.desiredAngle = face;
     }
 
-    // Wejście w szczelinę prowadzi efekt (WarpNurt.depart, drive): duch bez zderzeń i trafień,
+    // Wejście w szczelinę prowadzi oś rejestru ruchu warpa (warpTraffic.depart, drive): duch bez zderzeń i trafień,
     // jak przylot 'warping_in'; resztkę obrotu dociągamy do kursu.
     function diveSupportReturnUnit(npc, angle) {
       npc.isCollidable = false;
@@ -9598,20 +9608,21 @@
     }
     window.returnSupportWingToEarth = returnSupportWingToEarth;
 
-    // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — zegar efektu
-    // (WarpNurt.time) przesuwa render tej klatki o `frameDt`.
-    function stepSupportWarp(frameDt) {
-      supportCallIns.flush(frameDt);
-      supportReturn.step(frameDt, frameDt);
-      storyWarpOut.step(frameDt, frameDt);
-      tugWarpOut.step(frameDt, frameDt);
+    // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — potem krok rejestru ruchu warpa
+    // (warpTraffic.step) przesuwa zegar tej klatki o `dt` (dt gry: 0 w pauzie i przy zamrożonym świecie fabuły).
+    function stepSupportWarp(dt) {
+      supportCallIns.flush(dt);
+      supportReturn.step(dt, dt);
+      storyWarpOut.step(dt, dt);
+      tugWarpOut.step(dt, dt);
+      warpTraffic.step(dt);
     }
 
     // Fabuła: odlot tunelem dowolnej grupy (np. ucieczka piratów) do wskazanego punktu — ten sam automat co
     // POWRÓT skrzydła (obrót, ładowanie, szczelina, zniknięcie bez wraku), inny cel skoku.
     let storyWarpOutOrigin = null;
     const storyWarpOut = createSupportReturn({
-      warp: WarpNurt,
+      warp: warpTraffic,
       origin: () => storyWarpOutOrigin,
       hold: holdSupportReturnUnit,
       keep: keepSupportReturnUnit,
@@ -9648,7 +9659,7 @@
     // Odlot holownika tunelem (po wyładunku przy K-7 — od hali na zewnątrz, nie przez ring ku Ziemi).
     let tugWarpOutOrigin = null;
     const tugWarpOut = createSupportReturn({
-      warp: WarpNurt,
+      warp: warpTraffic,
       origin: () => tugWarpOutOrigin,
       hold: holdSupportReturnUnit,
       keep: keepSupportReturnUnit,
@@ -9711,7 +9722,7 @@
     }
 
     function serviceTugBusy() {
-      if (serviceTugPending && WarpNurt.time - serviceTugPending.t < 40) return true;
+      if (serviceTugPending && warpTraffic.time - serviceTugPending.t < 40) return true;
       for (const m of ServiceTugGame.missions) if (m.phase !== TUG_PHASE.DEPART && m.phase !== TUG_PHASE.DONE) return true;
       return false;
     }
@@ -9738,7 +9749,7 @@
         if (pd > 1 && pd < well + SERVICE_TUG_SPAWN.standoff) { dx = px / pd; dy = py / pd; break; }
       }
       const at = { x: tx + dx * SERVICE_TUG_SPAWN.standoff, y: ty + dy * SERVICE_TUG_SPAWN.standoff };
-      const pending = serviceTugPending = { target, t: WarpNurt.time };
+      const pending = serviceTugPending = { target, t: warpTraffic.time };
       // „Paka” tylko dla gracza: skok z ładunkiem robi automat skoku gracza (AGENT: sojusznik bez napędu — odlot
       // tunelem razem z holownikiem albo własny skok holownika); sojusznika holownik tylko naprawia.
       const missionOpts = { carry: opts.carry !== false && target === ship, repair: opts.repair !== false };
@@ -10278,6 +10289,8 @@
         npc.angle = Math.atan2(fwd.y, fwd.x);
         npc.state = 'warping_in';
         npc.isCollidable = false;
+        // Przylot tunelem (efekt odsłania kadłub od miejsca pojawienia się) — zdarzenie dla rejestru ruchu warpa.
+        warpTraffic.noteWarpIn(npc);
 
         // Lekka losowość hamowania, żeby nie wyglądały jak roboty
         const randomBrake = 280 + Math.random() * 40;
@@ -28185,12 +28198,12 @@
       const rocketsFxMs = performance.now() - tRockets0;
       const rocketsMs = rocketsFxMs + _rocketStepMs;
       _rocketStepMs = 0;
-      // Wezwania i POWRÓT skrzydła tunelem warpa (src/game/supportWarp.js): spawn w klatce wyrzutu,
-      // duch i usunięcie odlatujących — przed render(), który przesuwa zegar efektu o `frame`.
       // Fabuła: skrypt misji w czasie gry (kroki fizyki tej klatki), potem kamera kinowa / UI w czasie klatki.
       StoryGame.tick(steps * PHYS_DT);
       StoryGame.frame(frame);
-      stepSupportWarp(frame);
+      // Wezwania i POWRÓT skrzydła tunelem warpa (src/game/supportWarp.js): spawn w klatce wyrzutu, potem rejestr ruchu
+      // warpa (src/game/warpTraffic.js — zegar, prowadzenie okrętów w tunelu, duch, onGone) — w czasie gry, przed render().
+      stepSupportWarp((PAUSED || StoryGame.worldFrozen) ? 0 : frame);
       render(alpha, frame);
       endRenderSlotsFrame();
       updateStoryOverlay();
@@ -28862,7 +28875,8 @@
       o.camFollow = camera.mode === 'ship' && !camera.transition;
       o.ship = ship;
       o.warp = warp;
-      o.npcs = npcs;
+      // Zegar rejestru ruchu warpa (RW-28): osie przylotów i odlotów NPC liczone w czasie gry.
+      o.trafficTime = warpTraffic.time;
       // Soczewka świata (planety w skoku — src/3d/warp/worldLens.js) tylko w kamerze z góry jednego gracza:
       // planety są wspólne dla obu widoków podzielonego ekranu, a kamery 3D i kino fabuły patrzą inaczej.
       o.lensAllowed = !splitScreenMode && !View3D.active;
@@ -31661,7 +31675,7 @@
       killNpc: storyKillNpc,
       destroyStation: storyDestroyStation,
       callInWarp: (key, opts) => callInSupport(key, opts),
-      warpArrivalsFree: () => Math.max(0, 24 - (WarpNurt.arrivals?.length || 0)),
+      warpArrivalsFree: () => warpTraffic.free,
       warpOut: (list, origin) => storyWarpOutUnits(list, origin),
       returnWing: () => returnSupportWingToEarth(),
       reactorBlow: (o) => window.makeReactorBlow?.(o),

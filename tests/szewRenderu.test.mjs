@@ -14,11 +14,11 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 90, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
-  'index:dane': 16, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
-  'index:konfiguracja': 151, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
-  'index:zapytanie': 28, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
-  'index:zdarzenie': 42, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
+  'index:aktualizacja': 88, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
+  'index:dane': 17, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
+  'index:konfiguracja': 152, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
+  'index:zapytanie': 24, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
+  'index:zdarzenie': 38, // 2026-10-16 RW-28: harmonogram warpa w grze (warpTraffic) — zapytania i zdarzenia do WarpNurt zeszły, +1 konfiguracja i +1 dane za dekoder WARP_* (installWarpTrafficCommands)
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,
@@ -60,7 +60,8 @@ const SUFITY = {
   'import:src/game/traffic/dockLayout.js': 2,
   'import:src/game/traffic/shipyards.js': 2,
   'import:src/game/view3D.js': 1,
-  'import:src/game/warpDrive.js': 3,
+  'import:src/game/warpDrive.js': 2, // 2026-10-16 RW-28: warpNurt.js nie planuje już przylotów (oś — rejestr gry)
+  'import:src/game/warpTraffic.js': 3, // 2026-10-16 RW-28: osie przylotu / odlotu, wymiary kadłuba i paleta WARP z rejestru ruchu warpa gry — czyste funkcje (obraz bierze oś, harmonogramu nie rusza), klasa A
   'import:src/game/weaponAim.js': 1,
   'import:src/game/weaponFeel.js': 2,
   'import:src/game/weaponShotBus.js': 1,

@@ -95,6 +95,7 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/traffic/dockLayout.js': 'A',
   'src/game/traffic/shipyards.js': 'A',
   'src/game/warpDrive.js': 'A',
+  'src/game/warpTraffic.js': 'A',
   'src/game/weaponAim.js': 'A',
   'src/game/weaponFeel.js': 'A',
   'src/game/carrierVelocity.js': 'B',

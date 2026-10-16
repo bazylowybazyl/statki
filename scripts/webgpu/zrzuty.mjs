@@ -429,12 +429,12 @@ const SCENES = {
     js: `await H.step(39); S.shipCam(0.1);`
   },
   'warp-zwiastun': {
-    opis: 'Przylot NPC tunelem (plan z wyprzedzeniem, WarpNurt.planArrival): zwiastun 2,5 s — nić ośrodka do punktu wyjścia, punkt zbierania, szczelina się otwiera; kamera RTS 0,13',
+    opis: 'Przylot NPC tunelem (plan z wyprzedzeniem, WarpTraffic.planArrival — rejestr gry, RW-28): zwiastun 2,5 s — nić ośrodka do punktu wyjścia, punkt zbierania, szczelina się otwiera; kamera RTS 0,13',
     hud: false, warm: 20,
     js: `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 190000}, -0.35);
          const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
          S.cam(X - 900, Y - 900, 0.13); H.reseed(0x22b2); await H.step(30);
-         window.__warpRec = WarpNurt.planArrival({ x: X - 2300, y: Y - 1700, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstIn: 3.0 });
+         window.__warpRec = (window.WarpTraffic || WarpNurt).planArrival({ x: X - 2300, y: Y - 1700, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstIn: 3.0 });
          await H.step(150); S.cam(X - 900, Y - 900, 0.13);`
   },
   'warp-przylot': {
@@ -445,18 +445,18 @@ const SCENES = {
          const at = { x: X - 2300, y: Y - 1700 };
          const r = spawnCallInShip('supercapital', { mode: 'friendly', spawnPos: at, pos: at, spawnAngle: -0.5 });
          const npc = Array.isArray(r) ? r[0] : r; window.__warpNpc = npc;
-         if (npc) { npc.angle = -0.5; npc.vx = 0; npc.vy = 0; npc.command = { type: 'hold', faceAngle: -0.5 }; WarpNurt.attach(window.__warpRec, npc); }
+         if (npc) { npc.angle = -0.5; npc.vx = 0; npc.vy = 0; npc.command = { type: 'hold', faceAngle: -0.5 }; (window.WarpTraffic || WarpNurt).attach(window.__warpRec, npc); }
          for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
-         if (npc) WarpNurt.attach(window.__warpRec, npc);
+         if (npc) (window.WarpTraffic || WarpNurt).attach(window.__warpRec, npc);
          await H.step(9); S.cam(X - 900, Y - 900, 0.13);`
   },
   'warp-odlot-ladowanie': {
-    opis: 'Odlot NPC tunelem (WarpNurt.depart): ładowanie — punkt skoku przed dziobem, ośrodek zbierany, szczelina otwiera się przed dziobem',
+    opis: 'Odlot NPC tunelem (WarpTraffic.depart): ładowanie — punkt skoku przed dziobem, ośrodek zbierany, szczelina otwiera się przed dziobem',
     hud: false, warm: 20,
     js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
          await H.step(150);
-         const npc = window.__warpNpc; window.__warpDep = npc ? WarpNurt.depart(npc, { drive: true }) : null;
-         const d = window.__warpDep?.fx; const n = d ? Math.round((d.tDive - 0.15 - WarpNurt.time) * 60) : 60;
+         const npc = window.__warpNpc; window.__warpDep = npc ? (window.WarpTraffic || WarpNurt).depart(npc, { drive: true }) : null;
+         const d = window.__warpDep?.fx; const n = d ? Math.round((d.tDive - 0.15 - (window.WarpTraffic || WarpNurt).time) * 60) : 60;
          await H.step(Math.max(1, n)); S.cam(X - 900, Y - 900, 0.13);`
   },
   'warp-odlot': {

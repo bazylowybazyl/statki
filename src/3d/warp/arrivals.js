@@ -16,124 +16,86 @@
 // Osie i drogi: src/game/warpDrive.js (createWarpArrival + planWarpRush / sampleWarpRush,
 // createWarpDeparture / sampleWarpDeparture) — tu tylko wygląd w języku „Nurtu”.
 //
-// W GRZE okręt jest encją rozgrywki:
-//  - `drive` (wezwania i przyloty „teraz”): efekt PROWADZI okręt przez wlot i hamowanie (pozycja
-//    i prędkość z warpPose — sterownik pisze je encji; okręt jest wtedy duchem), od zatrzymania
-//    oddaje go grze;
-//  - `moving` (warp-in piratów — spawnPirateHeavyFleet): pozycję prowadzi gra (4000 j/s); efekt
-//    odsłania kadłub od miejsca pojawienia się, a hamowanie zaczyna się, gdy okręt wyjdzie
-//    z 'warping_in' (sterownik ustawia wtedy tBrake);
+// W GRZE okręt jest encją rozgrywki, a OŚ przylotu / odlotu (czasy, droga, wymiary), prowadzenie okrętu w tunelu,
+// duch i `onGone` należą do gry (RW-28: src/game/warpTraffic.js — rejestr ruchu warpa w czasie gry):
+//  - `drive` (wezwania i przyloty „teraz”): gra prowadzi okręt przez wlot i hamowanie (`arrivalAxisPose`), od
+//    zatrzymania okręt wraca do zwykłej gry;
+//  - `moving` (warp-in piratów — spawnPirateHeavyFleet): pozycję prowadzi gra (4000 j/s); efekt odsłania kadłub od
+//    miejsca pojawienia się, a hamowanie zaczyna się, gdy okręt wyjdzie z 'warping_in' (gra ustawia wtedy tBrake);
 //  - odlot: `drive` — droga z osi; bez niego pozycję trzyma gra.
-// Czysty moduł (bez three) — pozycje w klatce względem kamery (frame.js).
+// Tu tylko WYGLĄD: barwy, przegródki ośrodka, błyski, fale, kadłub (odsłanianie, żar) — „ubiór” rekordu
+// (`dressWarpArrival` / `dressWarpDeparture`) obok osi z gry. Czysty moduł (bez three) — pozycje w klatce względem
+// kamery (frame.js).
 
+import { sampleWarpArrival, sampleWarpRush, warpBrakeBubbleFront, sampleWarpDeparture } from '../../game/warpDrive.js';
 import {
-  createWarpArrival, sampleWarpArrival, planWarpRush, sampleWarpRush, warpBrakeTime, warpBrakeBubbleFront,
-  createWarpDeparture, sampleWarpDeparture
-} from '../../game/warpDrive.js';
+  HERALD_REACH, planWarpArrivalAxis, planWarpDepartureAxis, arrivalAxisPose, departAxisPose, setArrivalMovingBrake
+} from '../../game/warpTraffic.js';
 import { newWarpSlot } from './frame.js';
 import { warpPalette, seamColor, heatColor } from './palette.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const easeOut3 = (x) => { const u = 1 - clamp01(x); return 1 - u * u * u; };
 const smoothK = (x) => { const u = clamp01(x); return u * u * (3 - 2 * u); };
-/** Zasięg nici zwiastuna wstecz od miejsca zatrzymania [j.] (od krawędzi kadru). */
-export const HERALD_REACH = 60000;
+export { HERALD_REACH };
 
 function newHullFx() {
   return { on: false, revealMode: 0, revealLine: 0, seamLine: 0, seamW: 0, seam: 0, seamRGB: [0, 0, 0], heat: 0, heatRGB: [0, 0, 0], rimW: 0 };
 }
 
 /**
- * Przylot okrętu (hullLength, hullWidth w j.) do (x, y) z kursem `angle` (świat gry) — (x, y) =
- * miejsce zatrzymania. startTime — start zwiastuna; burstTime (zamiast startTime) — początek
- * hamowania; appearTime (zamiast obu) — okręt pojawia się w tej chwili (przylot „teraz”).
- * moving — pozycję prowadzi gra (hamowanie z chwili wyjścia z warp-in: setMovingBrake);
- * rush — minimalna droga wlotu [× długość kadłuba]; heraldReach — nić krótsza, gdy znane
- * miejsce startu jest bliżej (wezwanie z Ziemi).
+ * Ubiór przylotu (render): barwy, przegródki ośrodka, kadłub, ziarno — obok osi `a` z gry (planWarpArrivalAxis).
+ * `v` — obiekt ubioru (domyślnie sama oś: dawny jeden obiekt efektu — testy, warsztat).
  */
-export function planWarpArrivalFx(o) {
-  const probe = planWarpRush(createWarpArrival({ hullLength: o.hullLength, heraldExtra: o.heraldExtra }), o.rush);
-  const lead = probe.tBurst - probe.t0;
-  let startTime = Number(o.startTime) || 0;
-  if (Number.isFinite(o.burstTime)) startTime = o.burstTime - lead;
-  else if (Number.isFinite(o.appearTime)) startTime = o.appearTime - (probe.tAppear - probe.t0);
-  const a = createWarpArrival({
-    x: o.x, y: o.y, angle: o.angle, hullLength: o.hullLength, hullWidth: o.hullWidth,
-    startTime, heraldExtra: o.heraldExtra, palette: o.palette, entity: o.entity || null, id: o.id
-  });
-  planWarpRush(a, o.rush);
-  a.sx = a.x;
-  a.sy = a.y;
-  // Chwila, w której okręt musi już być w grze (wezwanie: spawn — src/game/supportWarp.js).
-  a.tSpawn = a.tAppear;
-  a.pal = warpPalette(o.palette);
-  a.pirate = !!o.pirate;
-  a.moving = !!o.moving;
-  a.drive = !o.moving;
-  const reach = Number(o.heraldReach);
-  a.heraldReach = reach > 0 ? Math.max(a.hullLength * 2, Math.min(HERALD_REACH, reach)) : HERALD_REACH;
-  a.sample = {};
-  a.rushSample = {};
+export function dressWarpArrival(a, v = {}) {
+  v.pal = warpPalette(a.palette);
+  v.sample = {};
+  v.rushSample = {};
   // Przegródki ośrodka — NIE `a.herald` (to czas zwiastuna z createWarpArrival).
-  a.heraldSlot = newWarpSlot();
-  a.bubbleSlot = newWarpSlot();
-  a.pushSlot = newWarpSlot();
-  a.pushSlot.releaseT = a.tBrake + 0.02;
-  a.seed = ((o.x * 0.013 + o.y * 0.007) % 100 + 100) % 100;
-  a.hull = newHullFx();
-  a.plasmaMode = null;
-  if (a.moving) {
-    // Gra prowadzi okręt: pojawia się teraz (w miejscu encji), hamowanie — gdy wyjdzie z warp-in.
-    a.tAppear = Number.isFinite(o.appearTime) ? o.appearTime : a.tAppear;
-    a.tBrake = Infinity;
-    a.tStop = Infinity;
-    a.tEnd = Infinity;
-    a.v0 = Math.max(1, Number(o.speed) || a.v0);
-    a.brake = warpBrakeTime(a.hullLength, a.v0);
-  }
+  v.heraldSlot = newWarpSlot();
+  v.bubbleSlot = newWarpSlot();
+  v.pushSlot = newWarpSlot();
+  v.pushSlot.releaseT = a.pushReleaseT;
+  v.seed = ((a.x * 0.013 + a.y * 0.007) % 100 + 100) % 100;
+  v.hull = newHullFx();
+  v.plasmaMode = null;
+  return v;
+}
+
+/** Przylot z osią i ubiorem w jednym obiekcie (testy, warsztat) — oś: planWarpArrivalAxis (src/game/warpTraffic.js). */
+export function planWarpArrivalFx(o) {
+  const a = planWarpArrivalAxis(o);
+  dressWarpArrival(a, a);
   return a;
 }
 
-/** Warp-in prowadzony przez grę: okręt wyszedł z 'warping_in' w chwili t — hamowanie od teraz. */
-export function setMovingBrake(a, t, speed) {
-  if (Number(speed) > 1) a.v0 = speed;
-  a.brake = warpBrakeTime(a.hullLength, a.v0);
-  a.tBrake = t;
-  a.tStop = t + a.brake;
-  a.tEnd = a.tStop + 4.5;
-  a.pushSlot.releaseT = t + 0.02;
-}
+/** Warp-in prowadzony przez grę: okręt wyszedł z 'warping_in' w chwili t — hamowanie od teraz (oś: gra). */
+export const setMovingBrake = setArrivalMovingBrake;
 
-/** Pozycja okrętu prowadzonego przez wlot i hamowanie (drive): świat, prędkość. */
-export function arrivalFxPose(a, t, out) {
-  const r = sampleWarpRush(a, t, a.rushSample);
-  out.x = a.x + a.dirX * r.off;
-  out.y = a.y + a.dirY * r.off;
-  out.vx = a.dirX * r.speed;
-  out.vy = a.dirY * r.speed;
-  out.appeared = r.appeared;
-  return out;
-}
+/** Pozycja okrętu prowadzonego przez wlot i hamowanie (drive): świat, prędkość (oś: gra). */
+export const arrivalFxPose = arrivalAxisPose;
 
 /**
- * Stan przylotu w chwili t → klatka (przegródki, błyski, fale), kadłub encji (a.hull:
- * odsłanianie, żar), plazma (a.plasmaMode). `ship` = { x, y, angle, vx, vy, visible } — poza
+ * Stan przylotu w chwili t → klatka (przegródki, błyski, fale), kadłub encji (v.hull:
+ * odsłanianie, żar), plazma (v.plasmaMode; v — ubiór, domyślnie sama oś). `ship` = { x, y, angle, vx, vy, visible } — poza
  * encji w świecie (albo null przed `attach`; drive — z arrivalFxPose). camX, camY — kamera.
  * Zwraca wstrząs 0..1 (× skala wołającego).
  */
-export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
-  const s = sampleWarpArrival(a, t, a.sample);
+export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a) {
+  const s = sampleWarpArrival(a, t, v.sample);
   const L = a.hullLength;
-  const pal = a.pal;
+  const pal = v.pal;
   const size = a.sizeScale;
-  const hull = a.hull;
+  const hull = v.hull;
   hull.on = false;
-  a.plasmaMode = null;
+  v.plasmaMode = null;
+  // Puszczenie iskier przed dziobem — chwila z osi gry (hamowanie warp-in ustawia ją gra).
+  v.pushSlot.releaseT = a.pushReleaseT;
   if (t < a.t0 || t > a.tEnd) return 0;
 
   // --- zwiastun: nić wzdłuż kursu i punkt zbierania w miejscu zatrzymania ---
   if (!a.moving && s.herald > 0.002 && t < a.tBrake + 0.6) {
-    const h = a.heraldSlot;
+    const h = v.heraldSlot;
     const reach = a.heraldReach || HERALD_REACH;
     h.on = true;
     h.x = a.sx - a.dirX * reach - camX;
@@ -150,7 +112,7 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
     h.releaseT = Infinity;
     h.rearT = Infinity;
     frame.pushBubble(h);
-    const pulse = 0.85 + 0.15 * Math.sin(t * 17 + a.seed);
+    const pulse = 0.85 + 0.15 * Math.sin(t * 17 + v.seed);
     const k = (0.4 + 1.4 * s.herald * s.herald) * pulse;
     frame.addFlash(a.sx - camX, a.sy - camY, L * (0.08 + 0.12 * s.herald), k, pal, true);
   }
@@ -163,7 +125,7 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
   // Droga od miejsca pojawienia się (drive: z osi; moving: z pozycji encji).
   const along = a.moving
     ? (ship.x - a.x0) * c + (ship.y - a.y0) * sn
-    : sampleWarpRush(a, t, a.rushSample).along;
+    : sampleWarpRush(a, t, v.rushSample).along;
   const svx = Number(ship.vx) || 0;
   const svy = Number(ship.vy) || 0;
   const speed = Math.sqrt(svx * svx + svy * svy);
@@ -181,13 +143,13 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
   heatColor(hull.heat, hull.heatRGB);
   hull.rimW = Math.max(8, L * 0.011);
   if (!hull.revealMode && hull.heat < 0.003 && tb > 0.2) hull.on = false;
-  a.plasmaMode = tb < 0.3 ? 'active' : null;
+  v.plasmaMode = tb < 0.3 ? 'active' : null;
 
   const sx = ship.x - camX;
   const sy = ship.y - camY;
   // Bańka okrętu w locie: rozpycha ośrodek; przy hamowaniu zapada się od dziobu.
   if (t < a.tStop + 0.35) {
-    const b = a.bubbleSlot;
+    const b = v.bubbleSlot;
     const vk = Math.min(1, speed / Math.max(1, a.v0));
     b.on = true;
     b.x = sx; b.y = sy;
@@ -207,7 +169,7 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
     frame.pushBubble(b);
   }
   // Iskry ośrodka pchnięte przed dziób przy hamowaniu (bezwładność).
-  const p = a.pushSlot;
+  const p = v.pushSlot;
   p.on = tb > -0.05 && tb < 0.5;
   if (p.on) {
     p.x = sx; p.y = sy;
@@ -240,54 +202,46 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
 }
 
 /**
- * Odlot: okręt w (x, y), kurs `angle`; startTime — start ładowania; rush — rozpęd [× L].
- * drive — efekt sam prowadzi okręt w rozpędzie (droga z osi; encja dostaje pozycję i prędkość
- * w `departFxPose`) — bez tego pozycję trzyma gra.
+ * Ubiór odlotu (render): barwy, przegródki, kadłub, punkt skoku — obok osi `d` z gry (planWarpDepartureAxis).
  */
-export function planWarpDepartureFx(o) {
-  const d = createWarpDeparture({
-    x: o.x, y: o.y, angle: o.angle, hullLength: o.hullLength, hullWidth: o.hullWidth,
-    startTime: o.startTime, rush: o.rush, palette: o.palette, entity: o.entity || null, id: o.id
-  });
-  d.pal = warpPalette(o.palette);
-  d.pirate = !!o.pirate;
-  d.drive = !!o.drive;
-  d.sample = {};
-  d.heraldSlot = newWarpSlot();
-  d.bubbleSlot = newWarpSlot();
-  d.seed = ((o.x * 0.011 + o.y * 0.017) % 100 + 100) % 100;
-  d.hull = newHullFx();
-  d.plasmaMode = null;
+export function dressWarpDeparture(d, v = {}) {
+  v.pal = warpPalette(d.palette);
+  v.sample = {};
+  v.heraldSlot = newWarpSlot();
+  v.bubbleSlot = newWarpSlot();
+  v.seed = ((d.x * 0.011 + d.y * 0.017) % 100 + 100) % 100;
+  v.hull = newHullFx();
+  v.plasmaMode = null;
   // Punkt skoku (świat) — tu kadłub znika od dziobu.
-  d.mouthX = d.cx;
-  d.mouthY = d.cy;
+  v.mouthX = d.cx;
+  v.mouthY = d.cy;
+  return v;
+}
+
+/** Odlot z osią i ubiorem w jednym obiekcie (testy, warsztat) — oś: planWarpDepartureAxis (src/game/warpTraffic.js). */
+export function planWarpDepartureFx(o) {
+  const d = planWarpDepartureAxis(o);
+  dressWarpDeparture(d, d);
   return d;
 }
 
-/** Pozycja okrętu w odlocie z osi (drive): świat, prędkość. */
-export function departFxPose(d, t, out) {
-  const s = sampleWarpDeparture(d, t, d.sample);
-  out.x = d.x + d.dirX * s.dist;
-  out.y = d.y + d.dirY * s.dist;
-  out.vx = d.dirX * s.speed;
-  out.vy = d.dirY * s.speed;
-  return out;
-}
+/** Pozycja okrętu w odlocie z osi (drive): świat, prędkość (oś: gra). */
+export const departFxPose = departAxisPose;
 
-/** Stan odlotu w chwili t → klatka, kadłub (d.hull), plazma. Zwraca wstrząs. */
-export function warpDepartureFxState(d, t, frame, camX, camY, ship) {
-  const s = sampleWarpDeparture(d, t, d.sample);
-  const pal = d.pal;
+/** Stan odlotu w chwili t → klatka, kadłub (v.hull), plazma (v — ubiór). Zwraca wstrząs. */
+export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d) {
+  const s = sampleWarpDeparture(d, t, v.sample);
+  const pal = v.pal;
   const L = d.hullLength;
-  const hull = d.hull;
+  const hull = v.hull;
   hull.on = false;
-  d.plasmaMode = null;
+  v.plasmaMode = null;
   if (s.phase === 'wait' || s.phase === 'done') return 0;
   const build = s.build;
-  d.plasmaMode = t < d.tGone ? (build > 0.55 || t >= d.tDive ? 'active' : 'charging') : null;
+  v.plasmaMode = t < d.tGone ? (build > 0.55 || t >= d.tDive ? 'active' : 'charging') : null;
   // Punkt skoku przed dziobem: ośrodek zbierany, rdzeń jaśnieje.
   if (t < d.tGone) {
-    const h = d.heraldSlot;
+    const h = v.heraldSlot;
     h.on = true;
     h.x = d.cx - camX;
     h.y = d.cy - camY;
@@ -303,7 +257,7 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship) {
     h.releaseT = Infinity;
     h.rearT = Infinity;
     frame.pushBubble(h);
-    const pulse = 0.85 + 0.15 * Math.sin(t * (8 + 22 * s.u) + d.seed);
+    const pulse = 0.85 + 0.15 * Math.sin(t * (8 + 22 * s.u) + v.seed);
     frame.addFlash(d.cx - camX, d.cy - camY, L * (0.08 + 0.18 * build), (0.35 + 1.6 * build * build) * pulse, pal, true);
   }
   // Kop: błysk i fala za rufą (punkt, od którego okręt się odbił).
@@ -320,8 +274,8 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship) {
   // Skok z pełną prędkością: błysk i fala w punkcie skoku.
   const ti = s.inT;
   if (ti >= 0) {
-    const mx = d.mouthX - camX;
-    const my = d.mouthY - camY;
+    const mx = v.mouthX - camX;
+    const my = v.mouthY - camY;
     if (ti < 0.25) frame.addFlash(mx, my, L * 0.5, Math.pow(1 - ti / 0.25, 2) * 1.5, pal, false);
     if (ti < 1.1) {
       const age = ti / 1.1;
@@ -332,7 +286,7 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship) {
     const c = Math.cos(ship.angle);
     const sn = Math.sin(ship.angle);
     // Linia punktu skoku w układzie kadłuba: widać tylko część za nią (x < linia).
-    const line = (d.mouthX - ship.x) * c + (d.mouthY - ship.y) * sn;
+    const line = (v.mouthX - ship.x) * c + (v.mouthY - ship.y) * sn;
     const diving = t >= d.tDive;
     hull.on = true;
     hull.revealMode = diving ? -1 : 0;
@@ -346,7 +300,7 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship) {
     hull.rimW = Math.max(8, L * 0.011);
     // Bańka okrętu w rozpędzie: rozpycha ośrodek (rośnie z prędkością).
     if (diving && t < d.tGone) {
-      const b = d.bubbleSlot;
+      const b = v.bubbleSlot;
       const vk = s.speed / Math.max(1, d.vEnd);
       b.on = true;
       b.x = ship.x - camX;

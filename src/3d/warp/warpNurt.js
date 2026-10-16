@@ -3,8 +3,8 @@
 // Warp „Nurt” w grze (zadanie 22 portu WebGPU; demo: dema/warp-webgpu.html, opis
 // docs/webgpu/DEMO-WARP.md). Sterownik: co klatkę renderu (index.html, przed updatePlanets3D)
 // czyta stan gry — automat warpa gracza (GameState.warp: ładowanie → skok → lot → wyjście),
-// okręty NPC w warp-in (spawnPirateHeavyFleet: state 'warping_in') i zgłoszenia API (wezwania,
-// harness) — i rozdaje efekt do Core3D:
+// rekordy ruchu warpa NPC (przyloty, odloty, warp-in piratów — rejestr gry src/game/warpTraffic.js, rekordy WARP_*
+// strumienia rozkazów, RW-28) — i rozdaje efekt do Core3D:
 //   • OŚRODEK (medium.js): krok compute 1/240 s w kroku efektów Core3D (addFxStep — klatka efektów
 //     przed passami), render w passie warstwy 8 (Core3D.renderPassWarp). Bez baniek, szczelin
 //     i wzbudzenia (~4 s po ostatniej) ośrodek ŚPI: zero dispatchy i zero draw calli;
@@ -13,7 +13,8 @@
 //   • FALE — przezroczysta refrakcja, źródła zniekształceń „uber” (Core3D.fxDistortion().shock);
 //   • KADŁUB — odsłanianie, szew, żar brzegu (entity.__warpHullU → materiał kadłuba, 04) i plazma
 //     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13).
-// Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji).
+// Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji, osie rekordów ruchu warpa — harmonogram,
+// prowadzenie okrętów w tunelu, duch i onGone liczy gra w czasie gry).
 //
 // PRZESTRZEŃ WIDOCZNA. Warp gry leci setki tysięcy j/s (biegi 10–80 tys. × strefa); ośrodek
 // płynie z prędkością WIDOCZNĄ (bieg I 16 tys., wyżej 21 tys. j/s — player.js: WARP_FLOW), jak
@@ -23,13 +24,13 @@
 
 import { Core3D } from '../core3d.js';
 import { GameState } from '../../game/gameState.js';
-import { planWarpFleetArrival, warpSizeScale } from '../../game/warpDrive.js';
 import { getEntityHullSprite } from '../hexShips3D.js';
 import { WarpMedium, BUBBLE_CAP, SEAM_CAP, MEDIUM_COUNT_DEFAULT, RULON_BOX } from './medium.js';
 import { RiftSprites, GlowSprites, SmearPool, GLOW_ROUND, GLOW_LINE } from './sprites.js';
 import { WarpFrame, newWarpSlot, cullWarpFrameToView } from './frame.js';
 import { WarpPlayerFx, WARP_BUBBLE } from './player.js';
-import { planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, warpDepartureFxState, departFxPose, arrivalFxPose, setMovingBrake } from './arrivals.js';
+import { warpArrivalFxState, warpDepartureFxState, dressWarpArrival, dressWarpDeparture } from './arrivals.js';
+import { entityWarpHullLength as entityHullLength, entityWarpHullWidth as entityHullWidth } from '../../game/warpTraffic.js';
 import { setRulon, resetRulon, RULON_STATE } from './rulon.js';
 import { WARP_WORLD_LENS, resetWarpWorldLens } from './worldLens.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
@@ -44,25 +45,8 @@ const MEDIUM_TAIL_FADE = 1.6;          // [s] końcówka przed uśpieniem — ga
 const CAMERA_JUMP = 60000;             // [j.] skok kamery (teleport, RTS) = nowa kotwica bez przepływu
 const IDLE_FLOW_CAP = 60000;           // [j/s] poza warpem ośrodek nadąża za zwykłym ruchem kamery
 const STAR_SPEED_CAP = 14000;          // [j/s] demo: kamera gwiazd w warpie
-const ARRIVAL_CAP = 24;
 
 const _v4 = () => new THREE.Vector4();
-
-function entityHullLength(e) {
-  const h = e?.beamHull;
-  if (h && h.srcWidth > 0 && h.scale > 0) return h.srcWidth * h.scale;
-  const sc = Number(e?.visual?.spriteScale) || 1;
-  if (Number(e?.w) > 0) return e.w * sc;
-  return Math.max(120, (Number(e?.radius) || 200) * 2.2);
-}
-
-function entityHullWidth(e) {
-  const h = e?.beamHull;
-  if (h && h.srcHeight > 0 && h.scale > 0) return h.srcHeight * h.scale;
-  const sc = Number(e?.visual?.spriteScale) || 1;
-  if (Number(e?.h) > 0) return e.h * sc;
-  return entityHullLength(e) * 0.45;
-}
 
 /** Poza encji w świecie (gracz: poza interpolowana renderu; NPC: x/y — kanoniczne). */
 function entityPose(e, out) {
@@ -122,9 +106,9 @@ export const WarpNurt = {
   // plan kroków tej klatki (wykonuje krok efektów Core3D)
   _steps: Array.from({ length: MAX_STEPS_PER_FRAME }, () => ({ sx: 0, sy: 0, t: 0, back: 0 })),
   _stepCount: 0,
-  // przyloty / odloty NPC
+  // przyloty / odloty NPC: wygląd rekordów ruchu warpa gry (oś — rejestr gry, src/game/warpTraffic.js; RW-28)
   arrivals: [],
-  _seenWarpIn: new WeakSet(),
+  _trafficAt: null,
   _pose: { x: 0, y: 0, angle: 0, vx: 0, vy: 0, visible: true },
   _hullTouched: new Set(),
   _hullTouchedPrev: new Set(),
@@ -214,7 +198,8 @@ export const WarpNurt = {
   /**
    * Klatka efektu. o = { dt (czas gry — 0 w pauzie), cam (kamera gry bez wstrząsu: x, y, zoom),
    * camShake (kamera renderu, ze wstrząsem), camFollow (kamera statku bez przejścia — kamera =
-   * statek + offset riga), ship, warp (GameState.warp), npcs, zoneWarpMul }.
+   * statek + offset riga), ship, warp (GameState.warp), trafficTime (zegar rejestru ruchu warpa gry — osie przylotów
+   * i odlotów NPC), zoneWarpMul }.
    */
   update(o) {
     if (!this.initialized || !this.enabled) { resetWarpWorldLens(); return; }
@@ -331,17 +316,8 @@ export const WarpNurt = {
       this._applyHull(ship, player.hull);
     }
 
-    // --- przyloty NPC: warp-in piratów (spawnPirateHeavyFleet) ---
-    const npcs = o.npcs;
-    if (Array.isArray(npcs)) {
-      for (let i = 0; i < npcs.length; i++) {
-        const n = npcs[i];
-        if (!n || n.dead || n.state !== 'warping_in' || this._seenWarpIn.has(n)) continue;
-        this._seenWarpIn.add(n);
-        this.arrive(n, { moving: true });
-      }
-    }
-    this._updateArrivals(t, frame, camX, camY);
+    // --- przyloty i odloty NPC: wygląd rekordów ruchu warpa (osie w czasie gry rejestru) ---
+    this._updateArrivals(Number.isFinite(o.trafficTime) ? o.trafficTime : t, frame, camX, camY);
 
     // --- ośrodek: budzenie / sen, plan kroków ---
     // Tylko przegródki i szczeliny w zasięgu pudła ośrodka wokół kamery (daleki przylot go nie budzi).
@@ -827,109 +803,81 @@ export const WarpNurt = {
     this._hullTouched.clear();
   },
 
-  // ── Przyloty i odloty NPC ──────────────────────────────────────────────────
+  // ── Przyloty i odloty NPC (wygląd) ──────────────────────────────────────────
+  // Rekord gry (oś, encja) przychodzi rekordami WARP_* (src/3d/warp/warpTrafficCommands.js): BEGIN — ubiór (barwy,
+  // przegródki ośrodka, kadłub), ATTACH — encja, END / CLEAR — koniec. Poza okrętu, duch i onGone — gra.
+
+  /** WARP_BEGIN: nowy rekord ruchu warpa (fx — oś z rejestru gry). */
+  warpBegin(id, kind, fx, entity) {
+    if (!fx) return null;
+    const departure = kind === 'departure';
+    const v = { id, kind, fx, entity: entity || null, burstShaken: false, dress: null };
+    v.dress = departure ? dressWarpDeparture(fx) : dressWarpArrival(fx);
+    this.arrivals.push(v);
+    return v;
+  },
+
+  /** WARP_ATTACH: okręt podpięty do zaplanowanego przylotu. */
+  warpAttach(id, entity) {
+    const v = this._visual(id);
+    if (v) v.entity = entity || null;
+  },
+
+  /** WARP_END: rekord gry skończony — plazma okrętu gaśnie, kadłub wraca do „off” (_finishHulls). */
+  warpEnd(id) {
+    const list = this.arrivals;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].id !== id) continue;
+      const e = list[i].entity;
+      if (e) e.__warpNurtMode = null;
+      list.splice(i, 1);
+      return;
+    }
+  },
+
+  _visual(id) {
+    const list = this.arrivals;
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].id === id) return list[i];
+    return null;
+  },
 
   _updateArrivals(t, frame, camX, camY) {
     const list = this.arrivals;
     let shake = 0;
     for (let i = list.length - 1; i >= 0; i--) {
-      const rec = list[i];
-      const e = rec.entity;
-      if (e && e.dead && rec.kind === 'arrival') { this._releaseDrive(rec); rec.entity = null; }
-      if (rec.kind === 'arrival') {
-        // Długość kadłuba znana dopiero po zbudowaniu siatki (warp-in piratów, wezwanie podpięte
-        // w chwili pojawienia się) — przeliczenie PRZED próbką.
-        if (rec.entity && !rec.sized && rec.entity.beamHull) this._resize(rec);
-        const fx = rec.fx;
-        const en = rec.entity;
-        let pose = null;
-        if (en) {
-          // Warp-in prowadzony przez grę: hamowanie od chwili, gdy okręt wyszedł z 'warping_in'.
-          if (fx.moving && fx.tBrake === Infinity && en.state !== 'warping_in') {
-            const p0 = entityPose(en, this._pose);
-            setMovingBrake(fx, t, Math.max(fx.v0, Math.sqrt(p0.vx * p0.vx + p0.vy * p0.vy)));
-          }
-          if (fx.drive && t < fx.tStop) {
-            // Wlot i hamowanie prowadzi efekt (duch — bez zderzeń; okręt pojawia się za kadrem).
-            if (!rec.driving) {
-              rec.driving = true;
-              rec.wasCollidable = en.isCollidable !== false;
-              en.isCollidable = false;
-            }
-            const p = arrivalFxPose(fx, t, this._drivePose);
-            this._writePose(en, p.x, p.y, p.vx, p.vy);
-            en.angle = fx.angle;
-            if (Number.isFinite(en.desiredAngle)) en.desiredAngle = fx.angle;
-            en.angVel = 0;
-          } else if (rec.driving) {
-            // Zatrzymanie: okręt stoi w miejscu zwiastuna i wraca do gry.
-            this._writePose(en, fx.x, fx.y, 0, 0);
-            this._releaseDrive(rec);
-          }
-          pose = entityPose(en, this._pose);
-        }
-        const sh = warpArrivalFxState(fx, t, frame, camX, camY, pose);
+      const v = list[i];
+      const fx = v.fx;
+      if (v.kind === 'arrival') {
+        // Okręt zniszczony w tunelu — gra zdjęła go z rekordu (warpTraffic); wygląd dalej bez kadłuba.
+        if (v.entity && v.entity.dead) v.entity = null;
+        const en = v.entity;
+        const pose = en ? entityPose(en, this._pose) : null;
+        const sh = warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress);
         shake = Math.max(shake, sh);
         if (en) {
           if (t < fx.tAppear) this._hideHull(en);
-          else this._applyHull(en, fx.hull);
-          en.__warpNurtMode = fx.plasmaMode;
+          else this._applyHull(en, v.dress.hull);
+          en.__warpNurtMode = v.dress.plasmaMode;
         }
-        if (!rec.burstShaken && t >= fx.tBrake) {
-          rec.burstShaken = true;
+        if (!v.burstShaken && t >= fx.tBrake) {
+          v.burstShaken = true;
           this._burstShake(fx, camX, camY);
         }
-        if (t > fx.tEnd) {
-          this._releaseDrive(rec);
-          if (rec.entity) rec.entity.__warpNurtMode = null;
-          list.splice(i, 1);
-        }
       } else {
-        const d = rec.fx;
-        let pose = null;
-        if (e && !e.dead) {
-          if (d.drive && t >= d.tDive) {
-            // Efekt prowadzi okręt w rozpędzie (POWRÓT skrzydła na Ziemię — src/game/supportWarp.js;
-            // harness). Okręt jest wtedy duchem (isCollidable = false), więc nikogo nie taranuje.
-            const p = departFxPose(d, t, this._drivePose);
-            this._writePose(e, p.x, p.y, p.vx, p.vy);
-          }
-          pose = entityPose(e, this._pose);
+        const e = v.entity;
+        const alive = !!(e && !e.dead);
+        const pose = alive ? entityPose(e, this._pose) : null;
+        shake = Math.max(shake, warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress));
+        if (alive) {
+          this._applyHull(e, v.dress.hull);
+          e.__warpNurtMode = v.dress.plasmaMode;
         }
-        shake = Math.max(shake, warpDepartureFxState(d, t, frame, camX, camY, pose));
-        if (e && !e.dead) {
-          this._applyHull(e, d.hull);
-          e.__warpNurtMode = d.plasmaMode;
-          if (t >= d.tGone) {
-            // Po zniknięciu w punkcie skoku okręt zostaje schowany, dopóki gra go nie usunie.
-            this._hideHull(e);
-            if (!rec.goneFired) { rec.goneFired = true; rec.onGone?.(e); }
-          }
-        }
-        if (t > d.tEnd && (!e || e.dead || rec.goneFired)) {
-          if (t > d.tEnd + 0.5 || !e || e.dead) {
-            if (e) e.__warpNurtMode = null;
-            if (!e || e.dead) list.splice(i, 1);
-          }
-        }
+        // Po zniknięciu w punkcie skoku kadłub zostaje schowany, dopóki gra go nie usunie (onGone — w kroku gry,
+        // przed renderem: okręt bywa już martwy, a jego kadłub jeszcze w liście rysowanych).
+        if (e && t >= fx.tGone) this._hideHull(e);
       }
     }
     frame.shake = shake;
-  },
-
-  // Pozycja i prędkość encji z osi efektu (NPC: x/y kanoniczne + lustro pos/vel).
-  _writePose(e, x, y, vx, vy) {
-    if (Number.isFinite(e.x)) { e.x = x; e.y = y; e.vx = vx; e.vy = vy; }
-    if (e.pos) { e.pos.x = x; e.pos.y = y; }
-    if (e.vel) { e.vel.x = vx; e.vel.y = vy; }
-  },
-
-  // Koniec prowadzenia przylotu: okręt znów zderza się i słucha gry.
-  _releaseDrive(rec) {
-    if (!rec.driving) return;
-    rec.driving = false;
-    const e = rec.entity;
-    if (e && !e.dead && rec.wasCollidable) e.isCollidable = true;
   },
 
   _hideHull(e) {
@@ -953,118 +901,19 @@ export const WarpNurt = {
     this.onShake(12 * (0.4 + 0.8 * fx.sizeScale) * near, 0.35);   // demo: 6 px × (0,4 + 0,8 s)
   },
 
-  // Wymiary z prawdziwego kadłuba (podpięty okręt): oś wlotu i hamowania zostaje (okręt może już
-  // lecieć), zmieniają się tylko wymiary efektu (bańka, błyski, odsłanianie).
-  _resize(rec) {
-    const e = rec.entity;
-    rec.sized = true;
-    const fx = rec.fx;
-    fx.hullLength = entityHullLength(e);
-    fx.hullWidth = entityHullWidth(e);
-    fx.sizeScale = warpSizeScale(fx.hullLength);
-  },
-
-  /**
-   * Przylot okrętu w chwili pojawienia się w grze (bez zapowiedzi — rozgrywka nie zna go
-   * wcześniej): okręt wpada z daleka i hamuje w miejscu, w którym postawiła go gra (efekt prowadzi
-   * go przez wlot — duch). opts.moving — pozycję prowadzi gra (warp-in piratów: odsłanianie od
-   * miejsca pojawienia się, hamowanie po wyjściu z 'warping_in').
-   */
-  arrive(entity, opts = {}) {
-    if (!this.initialized || !entity || this.arrivals.length >= ARRIVAL_CAP) return null;
-    const pose = entityPose(entity, this._pose);
-    const angle = opts.angle ?? pose.angle;
-    const moving = !!opts.moving;
-    const speed = Math.max(Number(entity.warpData?.speed) || 0, Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy));
-    const fx = planWarpArrivalFx({
-      x: pose.x, y: pose.y, angle, hullLength: entityHullLength(entity), hullWidth: entityHullWidth(entity),
-      palette: opts.palette || entityWarpPaletteId(entity), pirate: !!(opts.pirate ?? entity.isPirate),
-      moving, appearTime: this.time, speed, entity, rush: opts.rush
-    });
-    if (moving) { fx.x0 = pose.x; fx.y0 = pose.y; }
-    const rec = { kind: 'arrival', fx, entity, sized: !!entity.beamHull, moving, burstShaken: false, driving: false, wasCollidable: true };
-    this.arrivals.push(rec);
-    return rec;
-  },
-
-  /**
-   * Wezwanie bez zapowiedzi: wynik spawnCallInShip (encja albo lista) — każdy okręt kadłubowy
-   * wpada w chwili pojawienia się (myśliwce bez efektu). Zwykłe wezwanie z zakładki wsparcia
-   * idzie z wyprzedzeniem (planArrival + attach, src/game/supportWarp.js); tędy tylko tryb LINIE
-   * i wezwania bez punktu albo przy pełnej puli przylotów.
-   */
-  arriveAll(result) {
-    if (!result) return;
-    if (Array.isArray(result)) {
-      for (let i = 0; i < result.length; i++) this.arriveAll(result[i]);
-      return;
-    }
-    if (typeof result !== 'object' || result.dead || result.fighter || result.isFighter) return;
-    this.arrive(result);
-  },
-
-  /**
-   * Przylot zaplanowany (zwiastun → wlot → hamowanie): efekt zaczyna się teraz w (x, y) = miejsce
-   * zatrzymania; hamowanie po czasie zwiastuna (albo `burstIn` s). Wołający stawia okręt w grze
-   * w chwili `rec.fx.tSpawn` (= pojawienie się daleko za celem, czas WarpNurt.time) i podpina go
-   * `attach(rec, encja)` — efekt prowadzi go przez wlot i hamowanie (wezwania z zakładki
-   * wsparcia: src/game/supportWarp.js). o.heraldReach — nić krótsza (start przy Ziemi).
-   */
-  planArrival(o) {
-    if (!this.initialized || this.arrivals.length >= ARRIVAL_CAP) return null;
-    const fx = planWarpArrivalFx({
-      x: o.x, y: o.y, angle: o.angle || 0, hullLength: o.hullLength, hullWidth: o.hullWidth,
-      palette: o.palette || 'magenta', pirate: !!o.pirate, moving: false, rush: o.rush,
-      startTime: Number.isFinite(o.burstIn) ? undefined : this.time + (Number(o.delay) || 0),
-      burstTime: Number.isFinite(o.burstIn) ? this.time + o.burstIn : undefined, heraldExtra: o.heraldExtra || 0,
-      heraldReach: o.heraldReach
-    });
-    const rec = { kind: 'arrival', fx, entity: null, sized: true, moving: false, burstShaken: false, driving: false, wasCollidable: true };
-    this.arrivals.push(rec);
-    return rec;
-  },
-
-  /** Wezwanie floty z planem (planWarpFleetArrival): zwiastuny razem, wyrzuty od najmniejszego. */
-  planFleetArrival(ships, opts = {}) {
-    const plan = planWarpFleetArrival(ships.map((s) => ({ hullLength: s.hullLength })), { ...opts, startTime: this.time });
-    return plan.map((p) => this.planArrival({ ...ships[p.index], delay: p.startTime - this.time, heraldExtra: p.heraldExtra }));
-  },
-
-  attach(rec, entity) {
-    if (!rec || !entity) return;
-    rec.entity = entity;
-    rec.fx.entity = entity;
-    // Wymiary z prawdziwego kadłuba, gdy już jest — oś wlotu i hamowania bez zmian.
-    rec.sized = false;
-    if (entity.beamHull) this._resize(rec);
-  },
-
-  /**
-   * Odlot tunelem: ładowanie (punkt skoku przed dziobem), szczelina, okręt wchodzi w nią od
-   * dziobu. opts.drive — efekt prowadzi okręt w szczelinie (pozycja z osi dema), opts.onGone(e)
-   * — okręt zniknął (wołający usuwa encję); do tego czasu kadłub zostaje schowany.
-   */
-  depart(entity, opts = {}) {
-    if (!this.initialized || !entity || this.arrivals.length >= ARRIVAL_CAP) return null;
-    const pose = entityPose(entity, this._pose);
-    const d = planWarpDepartureFx({
-      x: pose.x, y: pose.y, angle: opts.angle ?? pose.angle, hullLength: entityHullLength(entity),
-      hullWidth: entityHullWidth(entity), startTime: this.time + (Number(opts.delay) || 0),
-      palette: opts.palette || entityWarpPaletteId(entity), pirate: !!(opts.pirate ?? entity.isPirate),
-      drive: !!opts.drive, rush: opts.rush, entity
-    });
-    const rec = { kind: 'departure', fx: d, entity, onGone: opts.onGone || null, goneFired: false };
-    this.arrivals.push(rec);
-    return rec;
-  },
-
-  /** Wszystko do zera (nowa gra, teleport w harnessie). */
+  /** Wygląd do zera (WARP_CLEAR, nowa gra; skok gracza też). */
   clear() {
-    for (const rec of this.arrivals) if (rec.entity) { rec.entity.__warpNurtMode = null; rec.entity.__warpHullU = null; }
+    for (const v of this.arrivals) if (v.entity) { v.entity.__warpNurtMode = null; v.entity.__warpHullU = null; }
     this.arrivals.length = 0;
     this.player?.reset();
     this.lastBusyT = -1e9;
     this._reseed = true;
+  },
+
+  /** WARP_CLEAR: rekordy gry wyczyszczone — sam wygląd przylotów i odlotów do zera (skok gracza zostaje). */
+  warpClear() {
+    for (const v of this.arrivals) if (v.entity) { v.entity.__warpNurtMode = null; v.entity.__warpHullU = null; }
+    this.arrivals.length = 0;
   }
 };
 
@@ -1074,6 +923,5 @@ WarpNurt._seamLineSrc = {
   count: 0,
   add() { return this.count < this.items.length ? this.items[this.count++] : null; }
 };
-WarpNurt._drivePose = { x: 0, y: 0, vx: 0, vy: 0 };
 
 const FLASH_WHITE = Object.freeze([0.55, 0.85, 1.0]);

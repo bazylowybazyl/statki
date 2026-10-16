@@ -55,7 +55,13 @@ export const RC = Object.freeze({
   RKT_CONTACT: 70,   // punkt i odcinek styku przed wybuchem
   RKT_DETONATE: 71,  // wybuch: punkt, trafiona encja, tarcza
   RKT_UPDATE: 72,    // koniec kroku lotu (klatka reżysera)
-  RKT_WAKE: 73       // kilwater torpedy (pocisk kanwy / WeaponFx — slot pocisku)
+  RKT_WAKE: 73,      // kilwater torpedy (pocisk kanwy / WeaponFx — slot pocisku)
+  // Warp „Nurt” (RW-28, rw-swiat): rekord ruchu warpa = slot puli rejestru gry (src/game/warpTraffic.js — `rec.id`;
+  // w trybie worker — lustro bloku WARP migawki); stan osi (czasy, droga, wymiary) render czyta z rekordu w puli.
+  WARP_BEGIN: 74,    // nowy przylot / odlot: slot, rodzaj, encja (slot, gen)
+  WARP_ATTACH: 75,   // podpięcie okrętu do zaplanowanego przylotu: slot, encja
+  WARP_END: 76,      // koniec rekordu: slot
+  WARP_CLEAR: 77     // wszystkie rekordy do zera (nowa gra, teleport w harnessie)
 });
 
 /** Rodzaje rekordu SHOT i HEX_HIT. */
@@ -537,6 +543,42 @@ export const RKT = Object.freeze({
   C_X0: 1, C_Y0: 2, C_X1: 3, C_Y1: 4, C_WORDS: 5,
   D_X: 1, D_Y: 2, D_HIT: 3, D_SHIELD: 5, D_WORDS: 6,
   W_SHOT: 0, W_DT: 2, W_WORDS: 3
+});
+
+// Warp (RW-28): slot rekordu w puli rejestru ruchu warpa gry (stała pula 24), rodzaj 0 = przylot, 1 = odlot.
+export const WARP_KIND = Object.freeze({ ARRIVAL: 0, DEPARTURE: 1 });
+export const WARP = Object.freeze({
+  SLOT: 0,
+  B_KIND: 1, B_ENT: 2, B_WORDS: 2 + ENT_WORDS,
+  A_ENT: 1, A_WORDS: 1 + ENT_WORDS
+});
+
+Object.assign(RenderCommandWriter.prototype, {
+  /** Nowy rekord ruchu warpa (src/game/warpTraffic.js): slot, rodzaj, encja (przylot zaplanowany — bez). */
+  warpBegin(rec) {
+    const o = this._begin(RC.WARP_BEGIN, WARP.B_WORDS);
+    const d = this.ring.data;
+    d[o + WARP.SLOT] = rec.id;
+    d[o + WARP.B_KIND] = rec.kind === 'departure' ? WARP_KIND.DEPARTURE : WARP_KIND.ARRIVAL;
+    this._ent(d, o + WARP.B_ENT, rec.entity);
+    this._commit();
+  },
+  warpAttach(rec) {
+    const o = this._begin(RC.WARP_ATTACH, WARP.A_WORDS);
+    const d = this.ring.data;
+    d[o + WARP.SLOT] = rec.id;
+    this._ent(d, o + WARP.A_ENT, rec.entity);
+    this._commit();
+  },
+  warpEnd(rec) {
+    const o = this._begin(RC.WARP_END, 1);
+    this.ring.data[o] = rec.id;
+    this._commit();
+  },
+  warpClear() {
+    this._begin(RC.WARP_CLEAR, 0);
+    this._commit();
+  }
 });
 
 Object.assign(RenderCommandWriter.prototype, {

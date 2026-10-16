@@ -241,7 +241,7 @@ test('POWRÓT: bez Ziemi (inny układ) — kurs zostaje z kadłuba, obrót bez l
   assert.ok(near(warp.calls[0].opts.angle, 0.7));
 });
 
-// ── Sterownik efektu w Node (bez GPU) ─────────────────────────────────────────────────────────
+// ── Rejestr ruchu warpa (gra, RW-28) + obraz efektu w Node (bez GPU) ──────────────────────────
 
 async function initNurt() {
   const { Core3D } = await import('../src/3d/core3d.js');
@@ -254,68 +254,91 @@ async function initNurt() {
   return WarpNurt;
 }
 
-test('WarpNurt: wezwanie z Ziemi — nić od Ziemi, okręt podpięty w klatce wyrzutu, przeliczenie z kadłuba zachowuje przegródki', async () => {
+// Rejestr gry z obrazem efektu na rekordach WARP_* (strumień inline z własnymi slotami — jak w grze).
+async function makeTraffic(WarpNurt) {
+  const { createRenderCommands } = await import('../src/render/renderCommands.js');
+  const { createWarpTraffic } = await import('../src/game/warpTraffic.js');
+  const { installWarpTrafficCommands } = await import('../src/3d/warp/warpTrafficCommands.js');
+  const rc = createRenderCommands();
+  const traffic = createWarpTraffic({ commands: rc.writer });
+  installWarpTrafficCommands(rc.reader, WarpNurt, (slot) => traffic.recordAt(slot));
+  return traffic;
+}
+
+test('ruch warpa: wezwanie z Ziemi — nić od Ziemi, okręt podpięty w klatce wyrzutu, przeliczenie z kadłuba zachowuje przegródki', async () => {
   const WarpNurt = await initNurt();
   WarpNurt.clear();
+  const traffic = await makeTraffic(WarpNurt);
   const cam = { x: 0, y: 0, zoom: 0.2 };
-  const o = { dt: 1 / 60, cam, camShake: cam, camFollow: false, ship: null, warp: null, npcs: [] };
+  const o = { dt: 1 / 60, cam, camShake: cam, camFollow: false, ship: null, warp: null, trafficTime: 0 };
+  const frame = () => { traffic.step(o.dt); o.trafficTime = traffic.time; WarpNurt.update(o); };
   const entity = { x: 1000, y: 0, vx: 0, vy: 0, angle: 0, beamHull: null };
   const q = createSupportWarpCallIns({
-    warp: WarpNurt,
+    warp: traffic,
     spawn: () => entity,
     onSpawned: (list, req) => { for (const e of list) e.angle = req.angle; }
   });
   const rec = q.request({ x: 1000, y: 0, angle: 0, hullLength: 400, hullWidth: 160, palette: 'magenta', heraldReach: 20000 });
   assert.ok(rec, 'przylot zaplanowany');
-  const heraldSlot = rec.fx.heraldSlot;
-  const pushSlot = rec.fx.pushSlot;
+  const vis = WarpNurt._visual(rec.id);
+  assert.ok(vis && vis.fx === rec.fx, 'obraz dostał rekord WARP_BEGIN z osią rejestru');
+  const heraldSlot = vis.dress.heraldSlot;
+  const pushSlot = vis.dress.pushSlot;
   // Zwiastun: nić 20 tys. j. od strony Ziemi, kończy się w punkcie zbierania (sx).
-  for (let i = 0; i < 30; i++) { q.flush(o.dt); WarpNurt.update(o); }
+  for (let i = 0; i < 30; i++) { q.flush(o.dt); frame(); }
   assert.equal(rec.entity, null, 'w zwiastunie okrętu jeszcze nie ma');
   assert.equal(heraldSlot.heraldLen, 20000);
   assert.ok(near(heraldSlot.x + heraldSlot.heraldLen, rec.fx.sx - cam.x, 1e-6));
   let spawnedAt = -1;
   for (let i = 0; i < 600 && spawnedAt < 0; i++) {
-    const before = WarpNurt.time;
+    const before = traffic.time;
     if (q.flush(o.dt)) spawnedAt = before;
-    WarpNurt.update(o);
+    frame();
   }
   assert.ok(spawnedAt >= 0, 'okręt powstał');
   // Okręt powstaje w chwili pojawienia się daleko za celem (tSpawn), hamowanie później (tBrake).
-  assert.ok(spawnedAt < rec.fx.tSpawn && WarpNurt.time >= rec.fx.tSpawn - 1e-9, 'w klatce, której render przekracza pojawienie się');
+  assert.ok(spawnedAt < rec.fx.tSpawn && traffic.time >= rec.fx.tSpawn - 1e-9, 'w klatce, której krok rejestru przekracza pojawienie się');
   assert.ok(rec.fx.tSpawn < rec.fx.tBrake);
   assert.equal(rec.entity, entity);
+  assert.equal(vis.entity, entity, 'obraz dostał WARP_ATTACH');
   assert.equal(rec.sized, false, 'kadłub jeszcze niezbudowany');
-  assert.ok(entity.x < 1000 - rec.fx.rushDist * 0.8, 'efekt prowadzi okręt — wlot zza celu');
+  assert.ok(entity.x < 1000 - rec.fx.rushDist * 0.8, 'gra prowadzi okręt — wlot zza celu');
   assert.equal(entity.isCollidable, false, 'w locie duch');
   // Gra buduje kadłub przy pierwszym rysunku — następna klatka przelicza wymiary z prawdziwego kadłuba.
   entity.beamHull = { srcWidth: 420, srcHeight: 170, scale: 1 };
-  WarpNurt.update(o);
+  frame();
   assert.equal(rec.sized, true);
   assert.equal(rec.fx.hullLength, 420);
-  assert.equal(rec.fx.heraldSlot, heraldSlot, 'ta sama przegródka zwiastuna');
-  assert.equal(rec.fx.pushSlot, pushSlot, 'ta sama przegródka iskier hamowania');
+  assert.equal(vis.dress.heraldSlot, heraldSlot, 'ta sama przegródka zwiastuna');
+  assert.equal(vis.dress.pushSlot, pushSlot, 'ta sama przegródka iskier hamowania');
   assert.ok(near(pushSlot.releaseT, rec.fx.tBrake + 0.02));
   assert.equal(rec.fx.heraldReach, 20000);
   assert.ok(entity.__warpHullU, 'odsłanianie kadłuba od dziobu');
   // Po zatrzymaniu: okręt w miejscu zwiastuna, znów zderza się.
-  for (let i = 0; i < 300 && WarpNurt.time < rec.fx.tStop + 0.05; i++) WarpNurt.update(o);
+  for (let i = 0; i < 300 && traffic.time < rec.fx.tStop + 0.05; i++) frame();
   assert.ok(near(entity.x, 1000, 1e-6) && entity.vx === 0);
   assert.equal(entity.isCollidable, true);
+  // Koniec rekordu: WARP_END — obraz zwalnia wygląd, plazma okrętu gaśnie.
+  for (let i = 0; i < 600 && traffic.records.includes(rec); i++) frame();
+  assert.ok(!traffic.records.includes(rec));
+  assert.equal(WarpNurt._visual(rec.id), null);
+  assert.equal(entity.__warpNurtMode, null);
   WarpNurt.clear();
 });
 
-test('WarpNurt: odlot z prowadzeniem — okręt wchodzi w szczelinę wzdłuż kursu, onGone raz, kadłub schowany', async () => {
+test('ruch warpa: odlot z prowadzeniem — okręt wchodzi w punkt skoku wzdłuż kursu, onGone raz, kadłub schowany', async () => {
   const WarpNurt = await initNurt();
   WarpNurt.clear();
+  const traffic = await makeTraffic(WarpNurt);
   const cam = { x: 0, y: 0, zoom: 0.2 };
-  const o = { dt: 1 / 60, cam, camShake: cam, camFollow: false, ship: null, warp: null, npcs: [] };
+  const o = { dt: 1 / 60, cam, camShake: cam, camFollow: false, ship: null, warp: null, trafficTime: 0 };
+  const frame = () => { traffic.step(o.dt); o.trafficTime = traffic.time; WarpNurt.update(o); };
   const course = 2.4;
   const npc = { x: 300, y: -200, vx: 0, vy: 0, angle: course, beamHull: { srcWidth: 400, srcHeight: 160, scale: 1 } };
   let gone = 0;
-  const rec = WarpNurt.depart(npc, { angle: course, drive: true, onGone: () => { gone++; } });
+  const rec = traffic.depart(npc, { angle: course, drive: true, onGone: () => { gone++; } });
   assert.ok(rec);
-  for (let i = 0; i < 400 && WarpNurt.time < rec.fx.tGone + 0.1; i++) WarpNurt.update(o);
+  for (let i = 0; i < 400 && traffic.time < rec.fx.tGone + 0.1; i++) frame();
   assert.equal(gone, 1);
   const dx = npc.x - 300;
   const dy = npc.y + 200;
@@ -325,10 +348,11 @@ test('WarpNurt: odlot z prowadzeniem — okręt wchodzi w szczelinę wzdłuż ku
   assert.ok(along >= rec.fx.rushDist + 400 * 1.1 - 1e-6, `droga rozpędu ${along}`);
   assert.ok(Math.abs(across) < 1e-6);
   assert.equal(npc.__warpHullU.a.y, -1, 'po wejściu kadłub schowany do usunięcia przez grę');
-  // Gra usuwa okręt — efekt dogrywa zamknięcie szczeliny i zwalnia rekord.
+  // Gra usuwa okręt — obraz dogrywa zamknięcie i rejestr zwalnia rekord.
   npc.dead = true;
-  for (let i = 0; i < 120; i++) WarpNurt.update(o);
-  assert.ok(!WarpNurt.arrivals.includes(rec));
+  for (let i = 0; i < 120; i++) frame();
+  assert.ok(!traffic.records.includes(rec));
+  assert.equal(WarpNurt._visual(rec.id), null);
   WarpNurt.clear();
 });
 
@@ -351,7 +375,9 @@ test('gra: callInSupport, POWRÓT w API kokpitu, krok przed render(), wracający
   assert.match(html, /import \{ createSupportWarpCallIns, createSupportReturn, supportWarpCourse \} from "\.\/src\/game\/supportWarp\.js";/);
   assert.match(html, /window\.callInSupport = callInSupport;/);
   assert.match(html, /returnToEarth: \(\) => returnSupportWingToEarth\(\)/);
-  assert.match(html, /stepSupportWarp\(frame\);\n\s*render\(alpha, frame\);/);
+  // Krok wezwań i rejestru ruchu warpa w czasie gry (RW-28: 0 w pauzie i przy zamrożonym świecie fabuły), przed render().
+  assert.match(html, /stepSupportWarp\(\(PAUSED \|\| StoryGame\.worldFrozen\) \? 0 : frame\);\n\s*render\(alpha, frame\);/);
+  assert.match(html, /warpTraffic\.step\(dt\);/);
   assert.match(html, /const earth = planets\.find\(p => p\?\.id === 'earth'\);/);
   // Piraci — z losowego pola pasa asteroid, reszta — z Ziemi.
   assert.match(html, /const home = hull\.pirate \? pickPirateCallInOrigin\(\) : getSupportWarpHome\(\);/);

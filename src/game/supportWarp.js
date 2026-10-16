@@ -8,9 +8,9 @@
 // Magazynu floty i ekonomii jeszcze nie ma, więc portem macierzystym wezwań jest Ziemia:
 //  - WEZWANIE — okręt z zakładki wsparcia przylatuje OD Ziemi: kurs przylotu Ziemia → punkt
 //    wyjścia, nić zwiastuna ciągnie się od strony Ziemi. Rozgrywka zna okręt dopiero w chwili
-//    wyrzutu, więc efekt planuje się z wyprzedzeniem (WarpNurt.planArrival), a spawn czeka
-//    w kolejce do chwili wyrzutu (zegar efektu WarpNurt.time — w pauzie stoi razem z efektem)
-//    i dopiero wtedy stawia okręt w grze i podpina go do efektu (WarpNurt.attach);
+//    wyrzutu, więc przylot planuje się z wyprzedzeniem (rejestr ruchu warpa gry — src/game/warpTraffic.js, planArrival),
+//    a spawn czeka w kolejce do chwili wyrzutu (zegar rejestru — czas gry: w pauzie i przy zamrożonym świecie stoi)
+//    i dopiero wtedy stawia okręt w grze i podpina go do przylotu (attach — rejestr prowadzi go przez wlot);
 //  - POWRÓT — jednostka obraca się dziobem do Ziemi i hamuje, ładuje skok, wchodzi w szczelinę
 //    (duch — bez zderzeń) i wypada z gry: bez wraku, łupu i wybuchu (magazynu, do którego
 //    mogłaby wrócić, jeszcze nie ma).
@@ -33,8 +33,8 @@ export function supportWarpCourse(from, to, fallback = 0) {
 
 /**
  * Kolejka wezwań. request(req) planuje przylot — efekt zaczyna się od razu (zwiastun, rozdarcie);
- * flush(lead) stawia okręty, których wyrzut wypada najpóźniej w najbliższej klatce efektu
- * (warp.time + lead ≥ tBurst: zegar efektu przesuwa render tej samej klatki).
+ * flush(lead) stawia okręty, których wyrzut wypada najpóźniej w najbliższym kroku rejestru
+ * (warp.time + lead ≥ tBurst: krok rejestru tej samej klatki przesuwa jego zegar o lead).
  *
  * req: { x, y, angle, hullLength, hullWidth, palette, pirate, heraldReach, ...pola gry }.
  * deps:
@@ -69,7 +69,7 @@ export function createSupportWarpCallIns({ warp, spawn, isHull = () => true, onS
       for (let i = 0; i < pending.length; i++) {
         const p = pending[i];
         // Okręt powstaje w chwili pojawienia się daleko za celem (tSpawn) — wlot i hamowanie
-        // prowadzi efekt; stare plany bez tSpawn — w chwili wyrzutu.
+        // prowadzi rejestr ruchu warpa; stare plany bez tSpawn — w chwili wyrzutu.
         const tSpawn = Number.isFinite(p.rec.fx.tSpawn) ? p.rec.fx.tSpawn : p.rec.fx.tBurst;
         if (!(tSpawn <= now)) { pending[write++] = p; continue; }
         done++;
@@ -109,7 +109,7 @@ export const SUPPORT_RETURN = Object.freeze({
 /**
  * Powrót jednostek na Ziemię tunelem: 'align' (hamowanie, dziób do Ziemi) → 'charge' (ładowanie:
  * punkt skoku przed dziobem, okręt trzyma pozycję) → 'dive' (wejście w szczelinę — duch, drogę
- * prowadzi efekt) → usunięcie z gry.
+ * prowadzi rejestr ruchu warpa) → usunięcie z gry.
  *
  * deps:
  *   warp    — { time, depart(encja, { angle, drive, onGone }) → rec | null } (rec.fx: x, y, tDive, tGone),
@@ -150,9 +150,9 @@ export function createSupportReturn({ warp, origin, hold, keep, dive, remove, tu
     has(e) { return !!e && !!e.__warpReturn && units.includes(e.__warpReturn); },
 
     /**
-     * Klatka przed renderem (czas gry: dt; lead — o ile render tej klatki przesunie zegar efektu).
-     * Duch od klatki, w której efekt zaczyna prowadzić okręt w szczelinę; usunięcie dopiero, gdy
-     * efekt schował kadłub (onGone albo zegar efektu za tGone).
+     * Klatka przed krokiem rejestru ruchu warpa (czas gry: dt; lead — o ile ten krok przesunie jego zegar).
+     * Duch od klatki, w której rejestr zaczyna prowadzić okręt w punkt skoku; usunięcie dopiero, gdy
+     * okręt zniknął (onGone albo zegar rejestru za tGone).
      */
     step(dt, lead = dt) {
       if (!units.length) return;
