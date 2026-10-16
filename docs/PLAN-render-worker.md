@@ -1404,9 +1404,10 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   render o prostokąty domen gazu `__explosions.domainRects` — w workerze przez RET) i `warp` (`blocks/warpBlock.js` —
   lustro osi przylotów / odlotów rejestru `warpTraffic` dla `recordAt(slot)`, klatka „Nurtu”: `trafficTime`, `dt`,
   `camFollow`, `lensAllowed`), `pirateBase` (`blocks/pirateBaseBlock.js` — stan klatki obrazu bazy: mgła, alarm, hangary,
-  zasilanie, stanowiska bitami, słońce, pora dnia, dt; `applyPirateBaseBlock` → obiekt dla `updatePirateBase3D`). Dalej:
-  ring (obraz czyta kolider gry: `registry` hal — pozy obsługi i lampki stanowisk — i `hubOutline(ship)` z węzłów
-  belek gracza), pas, komety, pył kosmiczny i planety (wejścia z HEAD).
+  zasilanie, stanowiska bitami, słońce, pora dnia, dt; `applyPirateBaseBlock` → obiekt dla `updatePirateBase3D`). `ring` (`blocks/ringBlock.js` — zegar hal, na ring obrys kadłuba gracza w hubie, na halę
+  wersja i zajętość stanowisk, poziom lamp, pozy obsługi z `settle` i właścicielem; nadpisanie dachu z fabuły —
+  `storyHallRoof` po stronie gry; geometria kolidera statyczna — worker buduje ją z układu; przebieg `ziemia` z
+  `?szew=inline` bez błędów). Dalej: pas, komety, pył kosmiczny i planety (wejścia z HEAD).
 
 **RW-12 `RenderWorld` zamiast globali gry.**
 Pliki: nowy `src/render/renderWorld.js`; moduły z § 2.4 (33 zmienne, 134 odczyty: `SUN` 26, `ship` 15, `DevTuning`

@@ -1323,6 +1323,7 @@
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
     import { createWarpBlock } from "./src/render/blocks/warpBlock.js";
     import { createPirateBaseBlock } from "./src/render/blocks/pirateBaseBlock.js";
+    import { createRingBlock } from "./src/render/blocks/ringBlock.js";
     import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
@@ -28357,8 +28358,11 @@
       renderSnapshot.addBlock(createGasObstBlock());
       renderSnapshot.addBlock(createWarpBlock());
       renderSnapshot.addBlock(createPirateBaseBlock());
+      renderSnapshot.addBlock(createRingBlock());
     }
     const _snapFrame = createSnapshotFrame();
+    // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
+    let storyHallRoof = null;
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
     const _snapCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
     const _snapHides = (e) => SensorSystem.hides(e);
@@ -28419,6 +28423,10 @@
       // baza piratów misji 1: stan klatki obrazu (ten sam, który dostaje updatePirateBase3D) i dt gry
       f.pirateBase = storyBaseFrameState();
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
+      // ringi „Halo”: świat ringów gry (zegar hal, rejestr — stanowiska, lampy, pozy obsługi), statek do obrysu w hubie
+      f.ringWorld = haloWorld;
+      f.ringShip = ship;
+      f.ringRoof = storyHallRoof;
       f.turretsOf = null;
       f.hall = null;
       // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)
@@ -31740,7 +31748,7 @@
         if (camera.mode !== 'ship') { spec?.onDone?.(); return; }
         startStoryCameraLook(spec);
       },
-      setHallRoof: (o) => { if (haloRings) haloRings.hallRoofOverride = o; },
+      setHallRoof: (o) => { storyHallRoof = o || null; if (haloRings) haloRings.hallRoofOverride = o; },
       placePlayer: (x, y, angle) => devTeleportTo(x, y, { angle, quiet: true }),
       showHud: (on) => toggleGameUI(!!on),
       fadeScreen: (on, ms) => fadeScreen(on, ms),
