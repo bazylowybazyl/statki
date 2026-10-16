@@ -41,7 +41,9 @@ const RECORDER = `(() => {
   const now = performance.now.bind(performance);
   const raf = window.requestAnimationFrame.bind(window);
   const N = 60000;
-  const R = { start: new Float64Array(N), cpu: new Float32Array(N), game: new Int32Array(N), n: 0, marks: {}, pipes: [] };
+  const R = { start: new Float64Array(N), cpu: new Float32Array(N), game: new Int32Array(N), n: 0, marks: {}, pipes: [], loaf: [] };
+  // długie klatki animacji (LoAF): czas, blokada i skrypty z przypisaniem — przestoje poza wywołaniami rAF
+  try { new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.duration > 150 && R.loaf.length < 200) R.loaf.push({ t: +e.startTime.toFixed(0), ms: +e.duration.toFixed(0), blok: +(e.blockingDuration || 0).toFixed(0), render: +((e.renderStart || 0) ? (e.startTime + e.duration - e.renderStart) : 0).toFixed(0), skrypty: (e.scripts || []).filter((s) => s.duration > 20).map((s) => (s.invoker || '?') + ' ' + (s.sourceFunctionName || '') + ' ' + String(s.sourceURL || '').split('/').pop() + ':' + Math.round(s.duration)) }); }).observe({ type: 'long-animation-frame', buffered: true }); } catch (_) {}
   let curTs = -1; let idx = 0; let inFrame = false;
   window.requestAnimationFrame = (cb) => raf((ts) => {
     const t0 = now();
@@ -180,8 +182,9 @@ async function runOnce(base, n) {
     await sleep(menuMs);
     const click = await ev('(() => { const t = performance.now(); document.getElementById("btn-mode-single").click(); window.__startRec.marks.klik = +t.toFixed(1); return window.__startRec.n; })()');
     if (!await waitFor(cdp, `(window.__frameId | 0) >= ${gameFrames}`, 180000, 100)) throw new Error('gra nie ruszyła');
-    const rec = await ev(`(() => { const R = window.__startRec; return { n: R.n, marks: R.marks, start: Array.from(R.start.subarray(0, R.n)), cpu: Array.from(R.cpu.subarray(0, R.n)), game: Array.from(R.game.subarray(0, R.n)), pipes: R.pipes }; })()`);
+    const rec = await ev(`(() => { const R = window.__startRec; return { loaf: R.loaf, n: R.n, marks: R.marks, start: Array.from(R.start.subarray(0, R.n)), cpu: Array.from(R.cpu.subarray(0, R.n)), game: Array.from(R.game.subarray(0, R.n)), pipes: R.pipes }; })()`);
     res.chwile = rec.marks;
+    res.loafGra = (rec.loaf || []).filter((x) => x.t >= (rec.marks.graPierwszaKlatka || Infinity) - 50);
     res.rw = await ev('(() => { const h = window.RenderWorkerHost; return h ? { composed: h.composed, ready: h.ready, failed: h.failed, errors: h.errors.slice(0, 5) } : null; })()');
     if (Number.isFinite(rec.marks.graPierwszaKlatka) && Number.isFinite(rec.marks.klik)) {
       res.chwile.graOdKliku = +(rec.marks.graPierwszaKlatka - rec.marks.klik).toFixed(1);

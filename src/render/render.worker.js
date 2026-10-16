@@ -142,6 +142,25 @@ if (isWorker) {
       return;
     }
     ret.retSetFlag(st.ret, ret.RET_FLAG.GPU_READY | ret.RET_FLAG.READY);
+    // dziennik pipeline'ów tworzonych SYNCHRONICZNIE w klatkach workera (przestój GPU — to, czego rozgrzewka nie objęła);
+    // pierwsze 60 do konsoli workera (render-worker-gra.mjs zbiera logi workera), liczba w st.pipeSync
+    try {
+      const pu = Core3D.renderer && Core3D.renderer.backend && Core3D.renderer.backend.pipelineUtils;
+      if (pu) {
+        const orig = pu.createRenderPipeline;
+        st.pipeSync = 0;
+        pu.createRenderPipeline = function (ro, promises) {
+          if (!promises && st.inFrame) {
+            st.pipeSync++;
+            if (st.pipeSync <= 60) {
+              const m = ro && ro.material, o = ro && ro.object;
+              console.log(`[render.worker] pipeline sync #${st.pipeSync} k=${st.frames}: ${(m && m.type) || '?'}${m && m.name ? ':' + m.name : ''} @ ${(o && o.type) || '?'}${o && o.name ? ':' + o.name : (o && o.parent && o.parent.name ? ' w ' + o.parent.name : '')}`);
+            }
+          }
+          return orig.call(this, ro, promises);
+        };
+      }
+    } catch (e) { report(e, 'dziennik pipeline'); }
     try { hex.prewarmHexShips3D({ canvas: st.canvas }); } catch (e) { report(e, 'prewarmHexShips3D'); }
     // efekty ze strumienia rozkazów: iskry, rakiety (pule dymu — wybuchy), wybuchy WebGPU, efekty broni, mapa ran
     try {
@@ -155,6 +174,8 @@ if (isWorker) {
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
+      Core3D.warmup.add({ name: 'mostki 3D (bridge3D, szczeliny)', phase: 'loading',
+        objects: () => [...bridge3d.Bridge3D.warmupMeshes(), bridgeFx.BridgeFx3D.mesh].filter(Boolean) });
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       const rc = st.hazMods.core;
       st.reactorModel = st.hazMods.model.createReactor3D({
@@ -492,11 +513,12 @@ if (isWorker) {
     if (st.pendingK < 0 || st.pendingK > st.lastMsgK) return;
     const k = st.pendingK;
     st.pendingK = -1;
+    st.inFrame = true;
     try {
       renderPage(r.page, k);
     } catch (e) {
       report(e, 'renderPage');
-    }
+    } finally { st.inFrame = false; }
   }
 
   function renderPage(v, k) {
@@ -719,6 +741,8 @@ if (isWorker) {
         const p = e.planet;
         if (!p || Math.hypot((p.x || 0) - m.x, (p.y || 0) - m.y) > 420000) continue;
         const ring = e.ring || st.haloRings.showcaseRing(e.key);
+        // ringi-archetypy budują się krokami w klatkach (pumpBuild w update) — tu krokami między zadaniami
+        if (ring && ring.pumpBuild) waits.push((async () => { while (ring.pumpBuild()) await new Promise((r) => setTimeout(r, 0)); })());
         if (ring && ring.ready) waits.push(Promise.resolve(ring.ready));
       }
     }
