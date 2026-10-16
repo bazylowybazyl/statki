@@ -12,7 +12,7 @@
 
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
-  'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'rozpad stacji (Destruction3D)',
+  'pas asteroid i wydobycie', 'komety', 'rozpad stacji (Destruction3D)',
   'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
@@ -72,6 +72,9 @@ if (isWorker) {
       import('../3d/sparkSystem3D.js'), import('../game/simClock.js'), import('../3d/weapons/weaponFx.js')
     ]);
     const [rktBlock, rktCmd] = await Promise.all([import('./blocks/rocketBlock.js'), import('../3d/rockets/rocketFxCommands.js')]);
+    const [warpMod, warpCmd, warpBlock] = await Promise.all([
+      import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js')
+    ]);
     const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
@@ -82,7 +85,11 @@ if (isWorker) {
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, ringWorldMod, ringGameMod, ringBlockMod };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
+    st.warpMirror = warpBlock.createWarpMirror();
+    st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
+    st.warpRamp = { active: false, age: 0, tBrake: 0 };
+    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: st.warpObj, trafficTime: 0, lensAllowed: false };
     st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
     st.weaponDefs = new Map();
@@ -131,6 +138,7 @@ if (isWorker) {
       bridge3d.Bridge3D.attach(Core3D.scene);
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       st.dust.init();
+      warpMod.WarpNurt.init();
     } catch (e) { report(e, 'efekty'); }
     if (st.cmdBuf) makeReader(st.cmdBuf);
     try { shields.prewarmShields3D(); } catch (e) { report(e, 'prewarmShields3D'); }
@@ -149,6 +157,7 @@ if (isWorker) {
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
+    st.mods.warpCmd.installWarpTrafficCommands(st.cmd, st.mods.warpMod.WarpNurt, (slot) => st.warpMirror.recordAt(slot));
     if (st.rocketFx && st.rocketFx.director) st.mods.rktCmd.installRocketFxCommands(st.cmd, st.rocketFx.director, (i) => st.rockets.pool[i] || null);
   }
 
@@ -335,6 +344,24 @@ if (isWorker) {
     const dt = paused ? 0 : h[H.FRAME_DT];
     const t0 = performance.now();
     Core3D.syncCamera(cam);
+    // warp „Nurt” przed planetami (soczewka świata w skoku): stan warpa gracza z WORLD, ruch warpa NPC z bloku `warp`
+    if (v.blocks.warp && v.blocks.warp.f64) {
+      const { warpMod, warpBlock } = st.mods;
+      const mir = warpBlock.applyWarpBlock(v.blocks.warp, st.dict, st.warpMirror);
+      const W0 = v.world, wo = st.warpObj;
+      wo.state = st.dict.value(W0[WD.WARP_STATE]); wo.charge = W0[WD.WARP_CHARGE]; wo.chargeTime = W0[WD.WARP_CHARGE_TIME];
+      wo.gear = W0[WD.WARP_GEAR]; wo.dir = W0[WD.WARP_DIR]; wo.flybyFactor = W0[WD.WARP_FLYBY];
+      wo.cruise = W0[WD.WARP_CRUISE]; wo.speed = W0[WD.WARP_SPEED];
+      const ra = W0[WD.WARP_EXIT_ACTIVE];
+      if (ra < 0) wo.exitRamp = null;
+      else { const r = st.warpRamp; r.active = ra === 1; r.age = W0[WD.WARP_EXIT_AGE]; r.tBrake = W0[WD.WARP_EXIT_TBRAKE]; wo.exitRamp = r; }
+      const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
+      cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
+      const wf = st.warpFrame;
+      wf.dt = Number.isFinite(mir.frame.dt) ? mir.frame.dt : dt; wf.cam = cns; wf.camShake = cam; wf.camFollow = mir.frame.camFollow;
+      wf.ship = rm.player; wf.trafficTime = mir.frame.trafficTime; wf.lensAllowed = mir.frame.lensAllowed;
+      warpMod.WarpNurt.update(wf);
+    }
     if (st.planets && globalThis.updatePlanets3D) {
       const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
       cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
