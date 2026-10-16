@@ -29,8 +29,11 @@ import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
-// Próg smugi i promień ciała na ekranie — wspólne z grą (src/game/coldWreckView.js, RW-31; pudła — drawBox.js).
-import { WRECK_IMPOSTOR_PX, wreckImpostorEnterPx, beamBodyRadiusPx as beamBodyRadiusPxAt } from '../render/drawBox.js';
+// Pudła klatki (rozgrzanie / rysowanie) i próg smugi — wspólne z grą (src/game/coldWreckView.js, RW-31).
+import {
+  isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX, WRECK_IMPOSTOR_PX, wreckImpostorEnterPx,
+  beamBodyRadiusPx as beamBodyRadiusPxAt
+} from '../render/drawBox.js';
 import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
