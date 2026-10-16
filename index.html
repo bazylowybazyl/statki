@@ -28388,6 +28388,7 @@
           dpr: window.devicePixelRatio || 1, quality: { renderScale: Core3D.renderScale, msaa: Core3D.msaaBoot }
         });
         window.RenderWorkerHost = rwHost;
+        if (cometField) rwHost.sendComets(cometField);
       } catch (err) {
         console.error('[render worker] start nieudany:', err);
       }

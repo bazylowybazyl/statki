@@ -12,7 +12,7 @@
 
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
-  'pas asteroid i wydobycie', 'komety',
+  'pas asteroid i wydobycie',
   'drony naprawcze', 'model reaktora w wyrwie', 
 'rdzenie: strugi i kule (RX_*)', 'tło menu'
 ]);
@@ -199,6 +199,22 @@ if (isWorker) {
     upd(st.sunData, m.sun);
     for (let i = 0; i < m.planets.length; i++) upd(st.planets[i], m.planets[i]);
     for (let i = 0; i < m.small.length; i++) upd(st.small[i], m.small[i]);
+  }
+
+  async function setComets(m) {
+    try {
+      const [{ CometField }, { CometsView }, { COMETS }] = await Promise.all([
+        import('../game/cometField.js'), import('../3d/comets/comets3D.js'), import('../data/comets.js')
+      ]);
+      const field = new CometField({ sun: m.sun, au: m.au, defs: [] });
+      for (const s of m.sites) {
+        const def = COMETS.find((d) => d.id === s.id);
+        if (def) field._addPlaced({ def, x: s.x, y: s.y, offset: s.offset, state: s.state, geo: s.geo });
+      }
+      st.cometsView = new CometsView(st.Core3D, field);
+      st.cometField = field;
+      field.build();
+    } catch (e) { report(e, 'komety'); }
   }
 
   function setCmdRing(m) {
@@ -412,6 +428,11 @@ if (isWorker) {
       const frozen = (h[H.FLAGS] & layoutMod.HEAD_FLAG.WORLD_FROZEN) !== 0;
       st.haloRings.update(h[H.FRAME_DT], cam, { sun: st.sun, ship: rm.player, gameDt: frozen ? 0 : dt, quality: st.ringQuality || 'high', splitScreen: false });
     }
+    if (st.cometsView) {
+      const tr = h[H.SIM_RENDER];
+      st.cometField.update(tr);
+      st.cometsView.update(tr, cam, null);
+    }
     // pył hal K-7: wejście klatki = blok HALL (kopia HALL_DUST_IN strony); krok Core3D.fx czyta tylko tę tablicę
     if (st.hallDust && v.hall) st.hallDust.submit(v.hall);
     if (st.dust) {
@@ -490,6 +511,7 @@ if (isWorker) {
       else if (m.type === 'frame') applyFrameMsg(m);
       else if (m.type === 'cmdRing') setCmdRing(m);
       else if (m.type === 'planets') setPlanets(m);
+      else if (m.type === 'comets') setComets(m);
     } catch (err) {
       report(err, m && m.type);
     }

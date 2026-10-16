@@ -236,6 +236,15 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     worker.postMessage({ type: 'planets', planets: plainData(planets || []), sun: plainData(sun), small: plainData(small || []), quality: host.ringQuality || 'high' });
   };
 
+  // Komety (RW-40b): miejsca z pola komet gry (rozmieszczenie liczy gra — strefy, pasy), raz; worker buduje własne
+  // pole (jądra w zagnieżdżonych workerach) i obraz.
+  host.sendComets = (field) => {
+    if (!field || host._cometsSent) return;
+    host._cometsSent = true;
+    worker.postMessage({ type: 'comets', sun: plainData(field.sun), au: field.au,
+      sites: field.sites.map((s) => ({ id: s.id, x: s.x, y: s.y, offset: s.offset, state: plainData(s.state), geo: plainData(s.geo) })) });
+  };
+
   host.readStats = () => retReadStats(ret, host.stats);
   host.stop = () => {
     worker.terminate();
