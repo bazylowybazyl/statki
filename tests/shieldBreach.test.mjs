@@ -171,4 +171,6 @@ test('wpięcie: render pisze RET, gra odświeża przed fizyką i testuje punkt s
   assert.ok(refresh > 0 && refresh < src.indexOf('while (acc >= PHYS_DT && steps < 10)'), 'odświeżenie przed krokami fizyki');
   const marks = src.indexOf('RenderSlots.entities.slotOf(renderEntities[i]);');
   assert.ok(marks > 0 && marks < src.indexOf('updateShields3D(PAUSED ? 0 : frameDt, renderSeen'), 'sloty encji przed tarczami');
+  assert.ok(marks < src.indexOf('RenderCommands.endFrame();'), 'znakowanie przed końcem klatki przestrzeni slotów');
+  assert.match(src, /import \{ RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame \} from \"\.\/src\/render\/renderSlots\.js\";/);
 });

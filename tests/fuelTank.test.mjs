@@ -181,7 +181,7 @@ test('index.html: śmierć bez rdzenia → wybuch z gazu z miejsca zbiornika; dr
   }
   const blast = sliceFunction(src, 'function spawnShipDeathBlast(');
   assert.match(blast, /fuelBlastOpts\(tb\)/);
-  assert.match(blast, /shipBlastFactory/);
+  assert.match(blast, /GameBlasts\.blast\(o\)/);
   const opts = sliceFunction(src, 'function fuelBlastOpts(');
   for (const k of ['o.x = tb.x', 'o.vx = tb.vx', 'o.axisX = tb.axisX', 'o.profile = tb.profile', 'o.size = tb.size']) assert.ok(opts.includes(k), k);
   // Gracz bez rdzenia.
@@ -199,7 +199,12 @@ test('index.html: śmierć bez rdzenia → wybuch z gazu z miejsca zbiornika; dr
   // Platformy — dawny wybuch drona.
   assert.match(src, /CanvasVFX\.spawnExplosionPlasma\(platform\.x, platform\.y/);
   // Fabryka okrętów bez zmiatania dronów naprawczych (rozgrywka bez zmian).
-  assert.match(src, /shipBlastFactory = window\.makeReactorBlow;\s*\n(\s*\/\/[^\n]*\n)*\s*window\.makeReactorBlow = withRepairDroneBlast/);
+  // RW-22: gra pisze rekordy EXPLOSION (GameBlasts.blast(o) — bez zmiatania dronów, blast(o, true) — z nim); dekoder
+  // woła fabrykę BEZ opakowania (shipBlastFactory), opakowanie zostaje dla wybuchów renderu (Destruction3D) i konsoli.
+  assert.match(src, /shipBlastFactory = window\.makeReactorBlow;/);
+  assert.match(src, /GameBlasts\.ready = !!shipBlastFactory;/);
+  assert.match(src, /window\.makeReactorBlow = withRepairDroneBlast\(window\.makeReactorBlow\);/);
+  assert.match(src, /\n\s*installExplosionCommands\(RenderCommands\.reader, \(\) => shipBlastFactory\);/);
 });
 
 // ─── PĘKNIĘCIE zbiornika za życia okrętu (2026-10-15, prośba użytkownika: „wybuchy dymu przy taranowaniu, jeśli rozwalę
@@ -321,7 +326,7 @@ test('index.html: pęknięcie zbiornika w kroku integralności (gracz i okręty)
   const step = sliceFunction(src, 'function stepEntityFuelTankRupture(');
   assert.match(step, /SHIP_BLAST_TUNE\.rupture/);
   assert.match(step, /stepFuelTankRupture\(entity, _fuelBlast, \{ candidates: window\.wrecks, time: HullBodies\.simTime \}\)/);
-  assert.match(step, /shipBlastFactory\?\.\(fuelBlastOpts\(tb\)\)/);
+  assert.match(step, /GameBlasts\.blast\(fuelBlastOpts\(tb\)\)/);
   assert.match(src, /const SHIP_BLAST_TUNE = \{[^}]*rupture: true/);
   const blast = sliceFunction(src, 'function spawnShipDeathBlast(');
   assert.match(blast, /tank\?\.ruptured/);

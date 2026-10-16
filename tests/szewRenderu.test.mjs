@@ -15,10 +15,10 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
   'index:aktualizacja': 92, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31) = 90; +2 RW-10: migawka (?szew=inline) bierze rekordy wież klatki Turret2D (frameCount / recordAt, do przeniesienia migawki za syncFrame w RW-11a) i wejście pyłu hal HallDust.input (do RW-11c — blok HALL z gry)
-  'index:dane': 16, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
-  'index:konfiguracja': 151, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
+  'index:dane': 17, // main = 16; +1 RW-22 (rw-kadluby, 2026-10-16): installExplosionCommands (dekoder rekordu EXPLOSION — moduł bez three liczony jako dane)
+  'index:konfiguracja': 150, // zmierzone po scaleniu main (RW-10) z RW-22 (rw-kadluby, 2026-10-16): rekordy kadłubów, mapy ran, wybuchów, iskier, stacji, reaktora i dronów zamiast wywołań renderu
   'index:zapytanie': 28, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
-  'index:zdarzenie': 42, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
+  'index:zdarzenie': 26, // zmierzone po scaleniu main (RW-10) z RW-22 (rw-kadluby, 2026-10-16): rekordy kadłubów, mapy ran, wybuchów, iskier, stacji, reaktora i dronów zamiast wywołań renderu
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,

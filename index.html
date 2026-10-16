@@ -1083,13 +1083,38 @@
     import { engineIgnitionOf, engineThrustScale, engineBlocksDrive, engineHudLabel, engineStateOf, igniteEngine, shutdownEngine, toggleEngine, stepEngineIgnition, ENGINE_OFF, ENGINE_SHUTDOWN, ENGINE_IGNITION_TUNE } from "./src/game/engineIgnition.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
-    import { HullDamageMap } from "./src/3d/hullDamageMap.js";
     import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
     import { craterOptsFor, rocketCraterHit, hasTrench, trenchCraters } from "./src/game/hullCraters.js";
-    HullBodies.onImpact = HullDamageMap.onHullImpact;
-    HullBodies.onRepair = HullDamageMap.onHullRepair;
+    // RW-22: haki silnika belek, łaty, źródło i rzazy idą rekordami strumienia rozkazów (src/game/hullDamageEvents.js —
+    // gra liczy pozę, uv i komórki w chwili zdarzenia; dekoder renderu src/3d/hullDamageCommands.js woła mapę ran).
+    import { createHullDamageEvents } from "./src/game/hullDamageEvents.js";
+    import { installHullDamageCommands } from "./src/3d/hullDamageCommands.js";
+    const HullDamageEvents = createHullDamageEvents(RenderCommands.writer);
+    installHullDamageCommands(RenderCommands.reader);
+    // RW-22: wybuchy z gry — rekord EXPLOSION (src/game/explosionEvents.js; drony naprawcze w zasięgu zmiata gra), fabrykę
+    // wybuchów WebGPU woła dekoder renderu (src/3d/explosions/explosionCommands.js).
+    import { createExplosionEvents } from "./src/game/explosionEvents.js";
+    import { installExplosionCommands } from "./src/3d/explosions/explosionCommands.js";
+    const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
+    window.GameBlasts = GameBlasts;
+    installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
+    // RW-22: obraz rdzenia reaktora — fasada env.fx ReactorGame pisze rekordy RX_* (src/game/reactorFxEvents.js: pęknięcia
+    // i rzazy liczy gra, strumienie i kule przez id), dekoder renderu woła reżysera (src/3d/reactorBlast/reactorCommands.js).
+    import { createReactorFxEvents } from "./src/game/reactorFxEvents.js";
+    import { installReactorCommands } from "./src/3d/reactorBlast/reactorCommands.js";
+    const ReactorFxEvents = createReactorFxEvents(RenderCommands.writer, HullDamageEvents);
+    installReactorCommands(RenderCommands.reader, () => reactorBlastFx, (id) => ReactorFxEvents.hazardAt(id));
+    // RW-22: zdarzenia rigów dronów naprawczych (pierścień rig.fx) — rekordy REPAIR_FX tuż przed przebiegiem dronów.
+    import { createRepairFxEvents } from "./src/game/repairFxEvents.js";
+    import { installRepairFxCommands } from "./src/3d/repair/repairDrones3D.js";
+    const RepairFxEvents = createRepairFxEvents(RenderCommands.writer);
+    installRepairFxCommands(RenderCommands.reader, (id) => RepairFxEvents.rigAt(id));
+    HullBodies.onImpact = (e, r) => HullDamageEvents.impact(e, r);
+    HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
-    HullBodies.onSolidNodeLost = HullDamageMap.onSolidNodeLost;
+    HullBodies.onSolidNodeLost = (e, hull, ix, iy, iz, x, y) => HullDamageEvents.solidNodeLost(e, hull, ix, iy, iz, x, y);
+    // Odłamki zniszczonych węzłów (rekord HULL_DEBRIS; skala i kształtownik losuje render — strumień efektów).
+    HullBodies.onDebris = (x, y, vx, vy, r, g, b, cell, st, solid, z, vz) => HullDamageEvents.debris(x, y, vx, vy, r, g, b, cell, st, solid, z, vz);
     // Rój dronów naprawczych okrętów (src/game/repairRig.js, rejestr src/game/repairSwarm.js, dane src/data/repairDrones.js,
     // obraz src/3d/repair/): R wypuszcza i odwołuje drony gracza, holownik serwisowy ma własny rig (nosiciel ≠ cel).
     // Strojenie z konsoli: RepairTune (weldTime, maxSpeed, cellsPerUnit…), RepairDroneLook (iskry, palnik).
@@ -1283,7 +1308,7 @@
     import { BASE_INTEGRITY_TUNE, baseStepChunk, markBaseBroken, noteBaseRam, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
-    import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
+    import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
     // gry (RW-25: pole, cień pól, olbrzymy i kolizje, wydobycie, zegar skał).
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
@@ -1323,7 +1348,6 @@
       updateHexShips3D,
       resizeHexShips3D,
       drawHexShips3D,
-      invalidateHexShipEntity3D,
       prewarmHexShipVisual,
       captureColdWreckImpostor,
       setColdWreckRenderHooks,
@@ -1423,7 +1447,11 @@
     import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
     // Import z efektem ubocznym: podpina iskry tarcia pod zdarzenie 'grind'
     // CollisionFX. Destructor nie woła już SparkSystem3D bezpośrednio.
-    import './src/vfx/collisionSparks.js';
+    import { setCollisionSparkSink } from './src/vfx/collisionSparks.js';
+    // RW-22: iskry kadłubów rekordami SPARK_BURST / SPARK_SEAM (budżet w grze — collisionSparks.js, rysunek — dekoder).
+    import { createSparkEvents } from "./src/game/sparkEvents.js";
+    const GameSparks = createSparkEvents(RenderCommands.writer);
+    setCollisionSparkSink(GameSparks);
     import { SensorSystem } from "./src/game/sensorSystem.js";
     import { loadFogOption, saveFogOption, formatMassEstimate } from "./src/game/fogOfWar.js";
     import { createFogHud } from "./src/ui/fogHud.js";
@@ -1750,6 +1778,8 @@
         // rakiety-webgpu: src/3d/rockets/) — w scenie Core3D, jako kroki klatki efektów
         // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
         SparkSystem3D.init(Core3D.scene);
+        // Scena Core3D jest (warunek bloku), więc init się udaje — gra pisze rekordy iskier od teraz.
+        GameSparks.ready = true;
         const rocketFx = createRocketFx(Core3D);
         // RW-23: lot (gra) → rekordy RKT_* → reżyser efektów (pula rakiet i dekoder renderu).
         const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
@@ -1773,6 +1803,8 @@
         // Wybuchy okrętów (zbiornik paliwa przy śmierci NPC, gaz detonacji rdzenia) — fabryka BEZ zmiatania dronów
         // naprawczych: śmierć okrętu z puli HP dawniej dronów nie raniła (sam obraz, rozgrywka bez zmian).
         shipBlastFactory = window.makeReactorBlow;
+        // Gra pisze rekordy EXPLOSION, gdy render ma fabrykę (w workerze — flaga z kanału zwrotnego).
+        GameBlasts.ready = !!shipBlastFactory;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
         window.makeReactorBlow = withRepairDroneBlast(window.makeReactorBlow);
         window.Destruction3D.init({
@@ -1785,6 +1817,7 @@
         WeaponFx.ensure();
         reactorBlastFx = createReactorBlastFx(Core3D, { rocketFx, weaponFx: WeaponFx });
         if (reactorBlastFx) reactorBlastFx.onShake = (mag, dur) => camera.addShake?.(mag, dur);
+        ReactorFxEvents.ready = !!reactorBlastFx;
         reactorModel3D = createReactor3D({
           scene: Core3D.scene,
           markLayerActive: () => Core3D.setShieldLayerActive(true),
@@ -6964,7 +6997,7 @@
     // Wybuch w punkcie świata gry przez fabrykę `window.makeReactorBlow` (wybuchy WebGPU, src/3d/explosions/;
     // options: profile — klucz EXPLOSION_PROFILES, vx / vy — nośnik).
     function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
-      window.makeReactorBlow?.({ x, y, size, ...options });
+      GameBlasts.blast({ x, y, size, ...options }, true);
     }
 
     window.triggerReactorBlow3D = triggerReactorBlow3D;
@@ -7334,7 +7367,7 @@
       applyHullThrusterLayout(activeHullKey);
       tryPreserveMounts(prev);
       syncWeaponSystems();
-      if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(ship);
+      HullDamageEvents.invalidate(ship);
       // Kadłub z belek z obrazu w rozmiarze renderu; tekstura skóry = pełny sprite.
       // Promień (od środka sprite'a) i masę ustawia createHull.
       HullBodies.release(ship);
@@ -10144,7 +10177,7 @@
             cellBlocked: repairCellBlocked,
             sockets: playerRepairSockets,
             restoreSocket: restorePlayerRepairSocket,
-            onCellRegrown: (e, ix, iy) => HullDamageMap.patchCell(e, ix, iy)
+            onCellRegrown: (e, ix, iy) => HullDamageEvents.patch(e, ix, iy)
           }
         });
         if (!rig) return null;
@@ -10851,11 +10884,11 @@
       if (entity?.beamHull) {
         if (!fxSource) return HullBodies.impact(entity, x, y, damage, vel);
         const craterOpts = craterOptsFor(fxSource, fxVariant, damage);
-        HullDamageMap.setSource(fxSource, fxVariant);
+        HullDamageEvents.setSource(fxSource, fxVariant);
         try {
           return HullBodies.impact(entity, x, y, damage, vel, craterOpts);
         } finally {
-          HullDamageMap.clearSource();
+          HullDamageEvents.clearSource();
         }
       }
       // Bez kadłuba na belkach nie ma czego kraterować (heksów w grze nie ma od etapu 8 portu belek;
@@ -12753,7 +12786,7 @@
     // Nośnik efektów i kierunek krateru — kadłub (prędkość pocisku względem niego). Zwraca
     // true, gdy pocisk ugrzązł (wołający go usuwa).
     // Mapa ran (18-C): krater wyjścia / zakleszczenia stempluje hak onImpact (źródło = pocisk,
-    // wariant 'exit' / 'stuck'), pas rzazu — HullDamageMap.stampKerf na drodze w materiale tego
+    // wariant 'exit' / 'stuck'), pas rzazu — HullDamageEvents.kerf (rekord DMG_KERF → HullDamageMap.stampKerf) na drodze w materiale tego
     // kroku (niezależnie od LOD efektu; receptura `kerf` dostaje kadłub null — bez drugiego stempla).
     // Rów przebicia (Mjolnir, 2026-09-29): zamiast pasa rzazu łańcuch kraterów na znakach rzazu
     // (trenchCraters, bez HP; każdy krater stempluje mapę ran przez hak — wariant 'kerf').
@@ -12777,7 +12810,7 @@
           // Od pierwszego do ostatniego znaku kroku (jeden znak: odcinek pół kroku — sam kierunek
           // wydłużenia stempla; stampKerf kładzie wtedy jeden znak na początku).
           const k = pass.kerfs > 1 ? pass.kerfs - 1 : 0.5;
-          HullDamageMap.stampKerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
+          HullDamageEvents.kerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
         }
       }
       if (out && pass.craterDamage > 0) {
@@ -14154,7 +14187,7 @@
         sockets: playerRepairSockets,
         restoreSocket: restorePlayerRepairSocket,
         // Łata czyści lej i osmalenie komórki w mapie ran, przy krawędzi zostaje świeży spaw.
-        onCellRegrown: (e, ix, iy) => HullDamageMap.patchCell(e, ix, iy)
+        onCellRegrown: (e, ix, iy) => HullDamageEvents.patch(e, ix, iy)
       }
     });
     playerRepairRig.onMessage = (text, kind) => {
@@ -14191,11 +14224,16 @@
 
     // Wybuch (window.makeReactorBlow — rozpad stacji i doku, śmierć bez rdzenia) zmiata drony naprawcze w promieniu
     // ~½ rozmiaru wybuchu, bez strony.
+    // Gra wybucha przez GameBlasts.blast(o, true) (rekord EXPLOSION, zmiatanie tutaj); opakowanie zostaje dla wybuchów,
+    // które rodzi render (rozpad stacji — Destruction3D) i dla konsoli (window.makeReactorBlow).
+    function sweepRepairDronesForBlast(opts) {
+      if (RepairSwarm.out > 0 && opts && Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
+        RepairSwarm.blast(opts.x, opts.y, Math.max(60, (Number(opts.size) || 280) * 0.55), REPAIR_TUNE.droneHp * 4, null);
+      }
+    }
     function withRepairDroneBlast(factory) {
       return (opts) => {
-        if (RepairSwarm.out > 0 && opts && Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
-          RepairSwarm.blast(opts.x, opts.y, Math.max(60, (Number(opts.size) || 280) * 0.55), REPAIR_TUNE.droneHp * 4, null);
-        }
+        sweepRepairDronesForBlast(opts);
         return factory(opts);
       };
     }
@@ -23151,9 +23189,7 @@
 
     function releaseNpcHexBody(npc) {
       if (npc?.beamHull) {
-        if (invalidateHexShipEntity3D) {
-          try { invalidateHexShipEntity3D(npc); } catch (_) {}
-        }
+        HullDamageEvents.invalidate(npc);
         HullBodies.release(npc);
       }
     }
@@ -23280,7 +23316,7 @@
     // fala rani sąsiadów (łańcuch), obraz z dema rdzen-webgpu (reactorBlastFx, reactorModel3D).
     const ReactorGame = createReactorCoreGame({
       wrecks: () => window.wrecks,
-      fx: () => reactorBlastFx,
+      fx: () => (ReactorFxEvents.ready ? ReactorFxEvents : null),
       isPlayer: (e) => e === ship || e === player2Ship,
       hullDamage: (e, dmg) => {
         if (e === ship || e === player2Ship) applyDamageToPlayer(dmg);
@@ -23373,7 +23409,7 @@
     window.CrushSmokeStats = CRUSH_SMOKE_STATS;
     const _crushOpts = { x: 0, y: 0, size: 0, profile: CRUSH_SMOKE_TUNE.profile, vx: 0, vy: 0, hostKey: 0 };
     function noteHullNodeLost(entity, hull, u, v, x, y) {
-      HullDamageMap.onHullNodeLost(entity, hull, u, v, x, y);
+      HullDamageEvents.nodeLost(entity, hull, u, v, x, y);
       if (entity?.fuelTank) crushSmoke.lost(entity, x, y, HullBodies.simTime);
     }
     const _crushContact = (ev) => {
@@ -23388,8 +23424,7 @@
       if (!SHIP_BLAST_TUNE.crush || !e || e.dead || e.destroyed || e.isWreck || !e.fuelTank) return false;
       const t = HullBodies.simTime;
       if (e.fuelTank.ruptured && t - e.fuelTank.rupturedAt < CRUSH_SMOKE_TUNE.afterRupture) return false;
-      const spawn = shipBlastFactory;
-      if (!spawn) return false;
+      if (!GameBlasts.ready) return false;
       const o = _crushOpts;
       o.size = crushSmokeSize(nodes);
       crushSmokeCenter(e, x, y, o.size, o);
@@ -23398,7 +23433,7 @@
       o.hostKey = Number(e.beamHull?.dmgKey) || 0;
       const st = CRUSH_SMOKE_STATS;
       st.n++;
-      const ok = !!spawn(o);
+      const ok = GameBlasts.blast(o);
       if (ok) st.gas++;
       st.last = { name: e.name || e.type || null, x, y, size: o.size, nodes, t };
       return true;
@@ -23442,9 +23477,8 @@
     // Śmierć NPC bez detonacji rdzenia: wybuch zbiornika (tb z fuelTankBlast, liczony przed zamianą we wrak); kadłub
     // bez zbiornika — wybuch w środku okrętu z klasą z promienia.
     function spawnShipDeathBlast(npc, tb, hostKey = 0) {
-      const spawn = shipBlastFactory;
-      if (!spawn) return false;
-      if (tb) { const o = fuelBlastOpts(tb); if (hostKey) o.hostKey = hostKey; return spawn(o); }
+      if (!GameBlasts.ready) return false;
+      if (tb) { const o = fuelBlastOpts(tb); if (hostKey) o.hostKey = hostKey; return GameBlasts.blast(o); }
       // Zbiornik pękł za życia (fuelTankBlast → null): świeży wybuch zbiornika JEST wybuchem śmierci (bez drugiego),
       // po FUEL_TANK_TUNE.ruptureQuiet s — mniejszy wybuch resztek ze środka okrętu.
       const tank = npc.fuelTank;
@@ -23460,7 +23494,7 @@
       o.size = Math.max(70, Math.min(460, r * 0.9)) * k;
       o.axisX = 0; o.axisY = 0;
       o.hostKey = hostKey || Number(npc.beamHull?.dmgKey) || 0;
-      return spawn(o);
+      return GameBlasts.blast(o);
     }
     // PĘKNIĘCIE zbiornika za życia okrętu (src/game/fuelTank.js — stepFuelTankRupture; prośba użytkownika 2026-10-15):
     // taran, zgniot, krater albo rozpad zabił ≥ połowę komórek zbiornika → wybuch z gazu z jego miejsca od razu (sam obraz,
@@ -23472,7 +23506,7 @@
       if (!tb) return false;
       const st = FUEL_RUPTURE_STATS;
       st.n++;
-      const ok = !!shipBlastFactory?.(fuelBlastOpts(tb));
+      const ok = GameBlasts.blast(fuelBlastOpts(tb));
       if (ok) st.gas++;
       st.last = { name: entity.name || entity.type || null, x: tb.x, y: tb.y, size: tb.size, profile: tb.profile, t: HullBodies.simTime };
       return ok;
@@ -23481,9 +23515,8 @@
     // zbiornika — dym w barwie plazmy frakcji (jedna rodzina wybuchów okrętów). Sam gaz (gasOnly).
     const _coreGasOpts = { x: 0, y: 0, size: 0, profile: 'capital', vx: 0, vy: 0, tint: [1, 1, 1], gasOnly: true, hostKey: 0 };
     function spawnReactorDetonationGas(ev) {
-      const spawn = shipBlastFactory;
       const host = ev?.host;
-      if (!SHIP_BLAST_TUNE.coreGas || !spawn || !host || !Number.isFinite(ev.x) || !Number.isFinite(ev.y)) return false;
+      if (!SHIP_BLAST_TUNE.coreGas || !GameBlasts.ready || !host || !Number.isFinite(ev.x) || !Number.isFinite(ev.y)) return false;
       const o = _coreGasOpts;
       const tank = host.fuelTank;
       const cls = ev.core?.classId;
@@ -23497,7 +23530,7 @@
       const col = ev.core?.color || reactorColorFor(host);
       const m = Math.max(1e-3, col[0], col[1], col[2]);
       o.tint[0] = 0.55 + 0.45 * col[0] / m; o.tint[1] = 0.55 + 0.45 * col[1] / m; o.tint[2] = 0.55 + 0.45 * col[2] / m;
-      return spawn(o);
+      return GameBlasts.blast(o);
     }
 
     // Stan struktury kadłuba do sufitu HP: węzły kadłuba na belkach.
@@ -23571,12 +23604,13 @@
           const after = Math.floor((1 - station.hp / maxHp) * station.damageSteps);
           for (let s = before + 1; s <= after; s++) station.onDamageStep(station, s);
         }
-        // Progressive chunk detachment at 75 / 50 / 25 % HP thresholds
-        if (!wasDead && !station._destroyed3D && station._mesh3d) {
+        // Progressive chunk detachment at 75 / 50 / 25 % HP thresholds (rekord STATION_FX — RW-22: czy stacja ma bryłę 3D,
+        // sprawdza render).
+        if (!wasDead && !station._destroyed3D) {
           const maxHp = station.maxHp || 3000;
           for (const t of [0.75, 0.50, 0.25]) {
             if (hpBefore > maxHp * t && station.hp <= maxHp * t) {
-              window.Destruction3D?.detachChunk(station._mesh3d);
+              HullDamageEvents.station(station, 0);
               break; // at most one chunk per hit
             }
           }
@@ -23585,9 +23619,7 @@
         if (!wasDead && station.hp <= 0) {
           // First death — trigger 3D destruction effect
           station._destroyed3D = true;
-          if (typeof destroyStation3D === 'function') {
-            destroyStation3D(station, { shockwave: true });
-          }
+          HullDamageEvents.station(station, 1, true);
           if (mercMission?.station === station) {
             const completed = completeMission('merc_pirate_station', {
               rewardCredits: 50000,
@@ -25450,7 +25482,7 @@
         else if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
         // Wrak na belkach zostaje z ciałem do rysowania i swoją siatką skóry (render przejmuje je bez przebudowy,
         // poza kadrem ciało i siatka znikają same) — meshe kasujemy tylko heksom.
-        if (!w.beamHull && invalidateHexShipEntity3D) invalidateHexShipEntity3D(w);
+        if (!w.beamHull) HullDamageEvents.invalidate(w);
       },
       onThawed(w, reason) {
         if (window.DEBUG_COLD_WRECKS) console.log('[ColdWrecks] odmrożony (' + reason + ')', w);
@@ -29407,6 +29439,7 @@
         _repairDronesSync.dt = PAUSED ? 0 : frameDt;
         _repairDronesSync.zoom = cam.zoom;
         _repairDronesSync.time = SimClock.render;
+        RepairFxEvents.flush(RepairSwarm.rigs);
         syncRepairDrones3D(_repairDronesSync);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
@@ -31119,7 +31152,7 @@
         const desiredResolved = (() => {
           try { return new URL(desiredSprite, window.location.href).href; } catch { return desiredSprite; }
         })();
-        if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(ship);
+        HullDamageEvents.invalidate(ship);
         HullBodies.release(ship);
         if (shipSprite.src !== desiredResolved) {
           ship.spriteReady = false;
@@ -31284,13 +31317,13 @@
       const c = id ? l.chunkById.get(id) : null;
       if (!c || !storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } })) {
         if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-        window.makeReactorBlow?.({ x: hx, y: hy, size: 300 });
+        GameBlasts.blast({ x: hx, y: hy, size: 300 }, true);
         camera.addShake(8, 0.4);
         return;
       }
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-      window.makeReactorBlow?.({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 });
+      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 }, true);
       camera.addShake(12, 0.5);
     }
 
@@ -31377,7 +31410,7 @@
       onSnap(st) {
         const owner = pirateBaseSites()?.habitat?.owner;
         const hc = _neckCtx.habitat;
-        window.makeReactorBlow?.({ x: hc.x, y: hc.y, size: 560 });
+        GameBlasts.blast({ x: hc.x, y: hc.y, size: 560 }, true);
         camera.addShake(26, 0.9);
         noteCameraCombat('taran');
         if (StoryGame.site) StoryGame.site.neckSnapped = true;
@@ -31385,7 +31418,7 @@
         if (owner && owner.hp > 0) _baseIntegrityHooks.damage(owner, (Number(owner.maxHp) || 0) * NECK_TUNE.hpFrac, hc.x, hc.y);
       },
       onImpact(st) {
-        window.makeReactorBlow?.({ x: st.impactX, y: st.impactY, size: 620 });
+        GameBlasts.blast({ x: st.impactX, y: st.impactY, size: 620 }, true);
         camera.addShake(32, 1.1);
       },
       onLand(st) {
@@ -31752,7 +31785,7 @@
       warpArrivalsFree: () => Math.max(0, 24 - (WarpNurt.arrivals?.length || 0)),
       warpOut: (list, origin) => storyWarpOutUnits(list, origin),
       returnWing: () => returnSupportWingToEarth(),
-      reactorBlow: (o) => window.makeReactorBlow?.(o),
+      reactorBlow: (o) => GameBlasts.blast(o, true),
       addCredits: (n) => { if (window.DevEconomy?.addCredits) window.DevEconomy.addCredits(n); else PLAYER.credits += n; },
       changeReputation: (f, d, reason) => changePlayerReputation(f, d, reason),
       factionLabel: (f) => FACTIONS[normalizeFaction(f)]?.name || f,
@@ -32532,7 +32565,7 @@
         player2Ship.spriteW = Math.max(1, Number(renderImage.width) || Number(p2Sprite.naturalWidth) || 1);
         player2Ship.spriteH = Math.max(1, Number(renderImage.height) || Number(p2Sprite.naturalHeight) || 1);
         // Kadłub na belkach (render 3D skóry, kolizje, trafienia).
-        if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(player2Ship);
+        HullDamageEvents.invalidate(player2Ship);
         HullBodies.release(player2Ship);
         HullBodies.createHull(player2Ship, hexInitImage, { visualImage: p2Sprite, hullProfileId });
         attachEntityReactorCores(player2Ship);

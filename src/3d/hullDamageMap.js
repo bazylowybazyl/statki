@@ -139,6 +139,11 @@ function permanentUpdateRange(attr) {
 const _pose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
 const _uv = { u: 0, v: 0, du: 0, dv: 0 };
 const _patchWorld = { x: 0, y: 0 };
+// Poza kadłuba (c, s — kąt skóry): zastępnik z rekordu rozkazów (src/render/hullCommands.js — `__pose` policzona przez
+// grę w chwili zdarzenia, RW-22) albo, dla wołających z renderu (receptury, reaktor), żywa encja.
+function poseOf(hull) {
+  return hull.__pose || HullBodies.entityPose(hull, _pose);
+}
 
 // Parametry stempla dla _enqueueStamp — tablica zamiast argumentów: liczby double w argumentach
 // wywołań nieinlinowanych V8 pakuje w obiekty (~45 B na trafienie, pomiar w teście alokacji).
@@ -341,12 +346,17 @@ export const HullDamageMap = {
    * (impact: wektor `vel`, cut: odcinek).
    */
   setSource(src, variant = 'impact') {
+    this.setSourceRaw(stampFamilyFor(src), variant || 'impact', stampPowerFor(src), stampFlakRadiusFor(src));
+  },
+
+  /** Źródło już rozwiązane (rodzina, wariant, moc, promień flaku) — z rekordu DMG_HOOK (RW-22). */
+  setSourceRaw(family, variant, power, flakR) {
     const s = this._src;
     s.active = true;
-    s.family = stampFamilyFor(src);
-    s.variant = variant || 'impact';
-    s.power = stampPowerFor(src);
-    s.flakR = stampFlakRadiusFor(src);
+    s.family = family;
+    s.variant = variant;
+    s.power = power;
+    s.flakR = flakR;
   },
 
   clearSource() {
@@ -551,10 +561,11 @@ export const HullDamageMap = {
    * stygnący jak rana). Podkład ze spawami rysuje skóra (beamHullSkin.js → hexShips3D.tsl.js). Bez slotu — slot
    * dostaje (świeży spaw też jest raną). Zwraca, czy stempel trafił do kolejki.
    */
-  patchCell(entity, ix, iy, seamHeat = DMG_PATCH_SEAM_HEAT) {
+  patchCell(entity, ix, iy, seamHeat = DMG_PATCH_SEAM_HEAT, world = undefined) {
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || !(hull.dmgKey > 0) || !this.enabled) return false;
-    const w = HullBodies.cellWorld(entity, ix, iy, _patchWorld);
+    // Środek komórki w świecie: z rekordu (`world` — policzony przez grę; null — brak) albo z silnika belek.
+    const w = world !== undefined ? world : HullBodies.cellWorld(entity, ix, iy, _patchWorld);
     if (w && this._offView(w.x, w.y)) return false;
     const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
     if (!slot) return false;
@@ -624,8 +635,12 @@ export const HullDamageMap = {
     return this._enqueueStamp(slot, hull);
   },
 
-  /** Znaki rzazu wzdłuż odcinka (świat gry) — przebicie z 18-B (pas żaru; dziurę robi geometria). */
-  stampKerf(entity, x0, y0, x1, y1, family = 'hexlance') {
+  /**
+   * Znaki rzazu wzdłuż odcinka (świat gry) — przebicie z 18-B (pas żaru; dziurę robi geometria). `pre` — wyniki
+   * zapytań silnika belek policzone przez grę (rekord DMG_KERF, RW-22): ciało płaskie `{ u0, v0 }` (spriteUvAt początku),
+   * bryła `{ lat }` (ok, latX, latY, latZ na znak); bez — zapytania wprost (wołający z renderu).
+   */
+  stampKerf(entity, x0, y0, x1, y1, family = 'hexlance', pre = null) {
     const hull = entity?.beamHull;
     if (!hull || !(hull.dmgKey > 0) || !this.enabled || this._offView(x0, y0)) return 0;
     const dx = x1 - x0, dy = y1 - y0;
@@ -637,6 +652,11 @@ export const HullDamageMap = {
       let made = 0;
       for (let k = 0; k < n; k++) {
         const f = n > 1 ? k / (n - 1) : 0;
+        if (pre) {
+          const P = pre.lat, o = k * 4;
+          if (P[o] && SolidWounds.stamp(hull, P[o + 1], P[o + 2], P[o + 3], e[S_R], e[S_HEAT], e[S_SCORCH])) made++;
+          continue;
+        }
         const L = HullBodies.solidLatticeAt(entity, x0 + dx * f, y0 + dy * f);
         if (L.ok && SolidWounds.stamp(hull, L.latX, L.latY, L.latZ, e[S_R], e[S_HEAT], e[S_SCORCH])) made++;
       }
@@ -644,8 +664,11 @@ export const HullDamageMap = {
     }
     const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
     if (!slot) return 0;
-    const uv = HullBodies.spriteUvAt(entity, x0, y0);
-    const u0 = uv.u, v0 = uv.v;
+    let u0, v0;
+    if (pre) { u0 = pre.u0; v0 = pre.v0; } else {
+      const uv = HullBodies.spriteUvAt(entity, x0, y0);
+      u0 = uv.u; v0 = uv.v;
+    }
     const e = stampEntry(family, 'kerf');
     const n = Math.max(1, Math.min(DMG_KERF_MAX, Math.ceil(len / DMG_KERF_STEP)));
     let made = 0;
@@ -681,9 +704,9 @@ export const HullDamageMap = {
     const dirX = _p[P_DX], dirY = _p[P_DY];
     const dl = Math.sqrt(dirX * dirX + dirY * dirY);
     if (dl > 1e-9 && hull && hull.entity && _p[P_EL] > 1) {
-      HullBodies.entityPose(hull, _pose);
-      const lx = _pose.c * dirX - _pose.s * dirY;
-      const ly = -_pose.s * dirX - _pose.c * dirY;
+      const P = poseOf(hull);
+      const lx = P.c * dirX - P.s * dirY;
+      const ly = -P.s * dirX - P.c * dirY;
       const l2 = Math.sqrt(lx * lx + ly * ly);
       if (l2 > 1e-9) { cx = lx / l2; cy = -ly / l2; el = _p[P_EL]; }
     }
@@ -962,10 +985,10 @@ export function worldVecToUv(hull, dx, dy, out = _uv) {
 
 // Wersja wewnętrzna: wektor z _vec, wynik w _uv (bez argumentów double — zero alokacji).
 function uvDelta(hull) {
-  HullBodies.entityPose(hull, _pose);
+  const P = poseOf(hull);
   const dx = _vec[0], dy = _vec[1];
-  const lx = _pose.c * dx - _pose.s * dy;
-  const ly = -_pose.s * dx - _pose.c * dy;
+  const lx = P.c * dx - P.s * dy;
+  const ly = -P.s * dx - P.c * dy;
   _uv.du = lx / Math.max(1e-6, hull.srcWidth * hull.scale);
   _uv.dv = -ly / Math.max(1e-6, hull.srcHeight * hull.scale);
 }
