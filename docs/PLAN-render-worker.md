@@ -1397,8 +1397,13 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,
   `wydobycie`, `piraci`; `scripts/webgpu/hala-swiatla-gra.mjs`. Kolizje: blok FABUŁA (misja 2) przy doku.
-  **Stan (2026-10-16, tor `rw-szew`): W TOKU** (podział z `rw-migawka`: rw-szew — bloki modułów świata, rw-migawka —
-  wpięcie RW-11a/b). Zrobione (rejestracja przy `?szew=inline` zaraz po `const renderSnapshot`, przebieg `kosmos`
+  **Stan (2026-10-16, tor `rw-szew`): ZWERYFIKOWANE dla bloków `gasObst`, `warp`, `pirateBase`, `ring`** (podział
+  z `rw-migawka`: rw-szew — bloki modułów świata, rw-migawka — wpięcie RW-11a/b). Kryterium: zrzuty sesji `ziemia`,
+  `ziemia-ring`, `mars`, `jowisz`, `piraci` bez flagi ↔ `--query szew=inline` (po kolei) — 45 / 45 obrazów, różni się
+  tylko `planeta-cien` (0,3% — scena waha się też między dwoma przebiegami tego samego kodu); `hala-swiatla-gra.mjs
+  [--query szew=inline]` (nowa opcja) — raporty równe poza położeniem hali i kosztem GPU (gra losuje kąty planet na
+  nową grę, więc obraz skryptu w czasie rzeczywistym nie jest porównywalny piksel w piksel), pipeline'y synchroniczne
+  0, bez błędów. Pas — RW-41b. Zrobione (rejestracja przy `?szew=inline` zaraz po `const renderSnapshot`, przebieg `kosmos`
   z `?szew=inline` bez błędów): `gasObst` (`src/render/blocks/gasObstBlock.js` — wejście przeszkód gazu `GAS_OBST_IN`
   w tym samym układzie, strona renderu `gasObstInputOf(view)` → `setObstacleInput`; ZOSTAJE kanał zwrotny: gra pyta
   render o prostokąty domen gazu `__explosions.domainRects` — w workerze przez RET) i `warp` (`blocks/warpBlock.js` —
