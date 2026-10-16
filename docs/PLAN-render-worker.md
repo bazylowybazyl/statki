@@ -1969,6 +1969,8 @@ wymaga `worker.format: 'es'` w `vite.config.js` (domyślne `iife` nie obsługuje
 Pliki: nowy `src/render/renderDebug.js` (RPC), podkładka `globalThis.window = globalThis` w workerze, `src/ui/devTools.js`,
 `bloomTunerPanel.js`, `cameraTunerPanel.js`, konsolowe `Core3DPerf` / `Core3DPreset` / `*Tune` przez most.
 Kryterium: panele F12 działają w trybach `inline` i `worker`. Zależności: RW-40. Kolizje: `src/ui/devTools.js` (małe).
+Zakres (decyzja użytkownika 2026-10-16, § 7.1 „Weryfikacja odchudzona”): w trybie `worker` tylko panele F12, których
+użytkownik używa — reszta może zostać tylko w `off` / `inline`.
 
 ### Etap 4 — worker
 
@@ -2015,11 +2017,15 @@ na wątku głównym (gotowość i pomiary z `RET`), bariera „narysowano k”, 
 56 skryptów wg § 2.8 (55 gotowość → fasada, 21 pomiary → `RET` / RPC, 12 sterowanie → rozkazy / RPC, 16 introspekcja →
 ewaluacja w workerze). Kryterium: `zrzuty.mjs` w trybie `worker` daje te same obrazy co w `inline` (poza kompozycją);
 pozostałe skrypty uruchamiają się w obu trybach. Zależności: RW-40.
+Zakres (decyzja użytkownika 2026-10-16, § 7.1): w trybie `worker` wymagane tylko kluczowe skrypty — `zrzuty.mjs`,
+`start-gry.mjs`, `profil-bitwy-flot.mjs`, `fabula-gra.mjs`; pozostałe działają w `off` / `inline` i przechodzą na
+`worker` przy potrzebie.
 
 **RW-45 Pomiar końcowy i tryb domyślny.** `profil-bitwy-flot.mjs` przy zoomie 0,1 i 0,45, pary równoległe; cel
 ≥ 1,6× fps przy 0,1 (szacunek ~2×), p95 klatki nie gorsze; `zasiegi-gra.mjs`, `fabula-gra.mjs`, `pad-gra.mjs`
 przechodzą. Pliki: tylko domyślna flaga w `src/render/renderBridge.js` i wpis w `AGENTS.md`. Decyzja D8 (domyślny
-tryb). Zależności: RW-40…RW-44.
+tryb). Zależności: RW-40…RW-44. Pomiar wydajności workera dopiero tutaj (decyzja użytkownika 2026-10-16, § 7.1) —
+wcześniejsze zadania etapu 4 sprawdzają obraz i działanie, nie fps.
 
 ### Etap 5 — po pomiarze
 
@@ -2160,6 +2166,15 @@ jest gotowe — działaj.”
 - **D2** — tak: lot rakiet w kroku fizyki (`PHYS_HZ`, od 2026-10-11 domyślnie 60 Hz — plan pisał o 120 Hz), osobnym
   krokiem po przeniesieniu bez zmiany zachowania. **D3** — jak dziś. **D4** — tak (jedna nowa baza zrzutów po RW-20).
   **D7** — `off`, dopóki RW-11a nie pokaże, że lustra są szybsze. **D8** — `worker` po RW-45, `inline` jako zapas.
+  D7 rozstrzygnięte (2026-10-16, RW-11a): `off` — moduły na lustrach −7–21%, ale begin + lustra 1,0–1,45 ms, więc
+  `inline` jest o ~0,3–1 ms na klatkę droższy od `off`; zysk przyjdzie z workerem.
+- **Weryfikacja odchudzona** (decyzja użytkownika 2026-10-16, przez orkiestratora): po każdej zmianie zrzuty tylko
+  z sesji, których zmiana dotyczy (2–4, nie wszystkie 17), jeden przebieg na wariant; pełne porównanie wszystkich sesji
+  raz — na koniec toru. Różnica wyłącznie w losowych efektach (iskry, dym, błyski) przy kadłubach, stacjach, mostkach
+  i kadrze bez zmian → przyjęta po jednym spojrzeniu na wycinek, nowa baza, bez śledzenia losowań (wpis w **Stan**).
+  Mostki zostają na obiektach gry do etapu 4. Etap 4: w trybie `worker` tylko kluczowe skrypty narzędzi (`zrzuty.mjs`,
+  `start-gry.mjs`, `profil-bitwy-flot.mjs`, `fabula-gra.mjs`), panele F12 tylko te, których użytkownik używa; pomiar
+  wydajności dopiero w RW-45.
 
 ### 7.2 Gra od inwentarza (2026-10-07 → 2026-10-15)
 
@@ -2207,7 +2222,9 @@ wiadomościami (`SendMessage`, nazwy sesji z tabeli); orkiestrator — sesja „
   albo `main` uciekł) — scal `main` jeszcze raz i ponów; nigdy `stash`, `reset`, `--force` ani `push`.
 - Zadanie, na które czeka inny tor: po fast-forwardzie wiadomość „RW-xx w main (commit …)” do tego toru.
 - Pomiary wydajności (Chrome / WebGPU / benchmark Node): przed — „START <co, ile min>” do pozostałych sesji `rw-*`,
-  po — „KONIEC”; nie mierz, gdy inna sesja ma pomiar w toku. Zrzuty harnessu są deterministyczne i mogą iść równolegle.
+  po — „KONIEC”; nie mierz, gdy inna sesja ma pomiar w toku. Zrzuty A/B (wersja kodu, flaga) — przebiegi PO KOLEI,
+  nie równolegle z innym harnessem: sceny z wgrywaniem „w wolnej chwili” zależą od czasu CPU (Stan RW-10); zakres
+  zrzutów wg „Weryfikacja odchudzona” (§ 7.1): sesje, których zmiana dotyczy, pełne porównanie raz na koniec toru.
 - Decyzja sprzeczna z § 7.1 albo z wcześniejszymi decyzjami użytkownika — wiadomość do orkiestratora; resztę
   rozstrzygaj sam wg planu i zapisz w **Stan**.
 - Koniec toru: wiadomość „TOR <nazwa> ZAKOŃCZONY” (co weszło do `main`, co zostało) do `rw-worker` i do orkiestratora.
