@@ -12,7 +12,7 @@
 
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
-  'pas asteroid i wydobycie', 'komety', 'rozpad stacji (Destruction3D)',
+  'pas asteroid i wydobycie', 'komety',
   'drony naprawcze', 'model reaktora w wyrwie', 
 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
@@ -79,6 +79,7 @@ if (isWorker) {
     const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
+    st.destruction = (await import('../vfx/destruction3D.js')).Destruction3D;
     const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
       import('../3d/bridge3D.js'), import('../3d/bridgeFx3D.js'), import('../game/cloakLook.js'), import('../3d/reactorBlast/reactorBlastFx.js')
     ]);
@@ -142,6 +143,7 @@ if (isWorker) {
       bridge3d.Bridge3D.attach(Core3D.scene);
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       st.dust.init();
+      st.destruction.init({ scene: Core3D.scene, reactorFactory: st.blastFactory, shockwaveManager: null });
       warpMod.WarpNurt.init();
     } catch (e) { report(e, 'efekty'); }
     if (st.cmdBuf) makeReader(st.cmdBuf);
@@ -155,7 +157,14 @@ if (isWorker) {
     const { cmdMod, wfxCmd, dmgCmd, blastCmd } = st.mods;
     const rm = st.rm;
     st.cmd = new cmdMod.RenderCommandReader(buffer, {
-      entityAt: (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; },
+      // encja albo stacja (stacje mają sloty w tej samej przestrzeni encji)
+      entityAt: (slot, gen) => {
+        const e = rm.entities[slot];
+        if (e && e.gen === gen) return e;
+        const sts = rm.stations;
+        for (let i = 0; i < sts.length; i++) if (sts[i].slot === slot && sts[i].gen === gen) return sts[i];
+        return null;
+      },
       shotAt: (slot, gen) => { const b = st.shots[slot]; return b && b.__gen === gen ? b : null; }
     });
     wfxCmd.installWeaponFxCommands(st.cmd);
@@ -416,6 +425,7 @@ if (isWorker) {
       bridge3d.Bridge3D.update(list, bo);
       bridgeFx.BridgeFx3D.update(list, fo);
     }
+    if (st.destruction) st.destruction.update(h[H.VFX_TIME], h[H.FRAME_DT]);
     hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
