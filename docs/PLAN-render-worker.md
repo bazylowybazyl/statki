@@ -1269,8 +1269,10 @@ od ostatniej odebranej”; liczniki: węzły zmienione na klatkę (D — dziś n
 Kryterium: zrzuty bit w bit z flagą i bez (pakowanie nie zmienia stanu); koszt w bitwie 166 okrętów średnio ≤ 0,7 ms,
 p95 ≤ 1,5 ms; raport rozmiarów bloków. Zależności: RW-03, RW-04. Kolizje: `render()` w `index.html` (kilka linii) —
 miejsce uzgodnić z sesją renderu CPU.
-**Stan (2026-10-15, tor `rw-migawka`, commit „RW-10: układ migawki i pakowanie…”): kod gotowy, CZEKA NA WERYFIKACJĘ**
-(zrzuty z flagą i bez, koszt w bitwie, raport rozmiarów — tryb lekki maszyny od 2026-10-15 wieczorem, bez Chrome).
+**Stan (2026-10-16, tor `rw-migawka`): ZWERYFIKOWANE — zrzuty z flagą i bez bit w bit; koszt w bitwie p95 ≤ 1,5 ms
+spełnione, średnia ≤ 0,7 ms w bitwie NIE (0,63–0,88 ms, w fazie wraków do 1,17 ms — niżej, za co i co dalej).**
+Kod z 2026-10-15 (commit „RW-10: układ migawki i pakowanie…”), weryfikacja 2026-10-16 po scaleniu main z RW-21, RW-26,
+RW-29, RW-31 cz. 1 i RW-24/25/27.
 - `src/render/snapshotLayout.js`: bloki HEAD, WORLD, HALL (kopia `HALL_DUST_IN`), LISTS (10 list: RENDER, SEEN,
   SEEN_COLD, NPCS, NPCS_SEEN, WRECKS, WRECKS_SEEN, COLD, COLD_NEAR, STATIONS), ENT, BODY, NODES (pula: węzły x, y[, z],
   żar, znacznik żaru, active, patch + belki rest, broken), NOZZLES (pula), SHOTS, TURRETS, STATIONS, CORES; rekord =
@@ -1313,9 +1315,45 @@ miejsce uzgodnić z sesją renderu CPU.
   zapisu — lustro przepisuje dokładnie zbiór `_region.dirty`) i pozycjami spoczynkowymi po zmianie kształtu;
   `frame.consumeDirty` (tryb luster: pakujący zeruje flagi brudu gry); `packer.addBlock` — bloki modułów (RW-11c,
   drony naprawcze) w osobnych plikach.
-- Do zrobienia po zdjęciu trybu lekkiego: zrzuty `--query szew=inline` vs bez (sesje kosmos, galeria, stacja, reaktor,
-  warp, split, ziemia, pas, piraci), pary A/B kosztu w bitwie 50,20,10,3 (zoom 0,1 i 0,45), raport rozmiarów bloków
-  i D (węzły zmienione na klatkę) — tu.
+- WERYFIKACJA ZRZUTÓW (2026-10-16): pełny przebieg 17 sesji bez flagi i z `--query szew=inline` puszczony RÓWNOLEGLE
+  rozjechał galerię broni o 50–90% pikseli, a sesje `rakiety` i `warp` się wywróciły. Przyczyny (wszystkie poza
+  migawką, sprawdzone): (1) dwa harnessy naraz zmieniają obraz scen z wgrywaniem „w wolnej chwili” (mapa powierzchni
+  kadłuba z workera przez `requestIdleCallback`, limit 250 ms) — SAMO opóźnienie CPU 1 ms na klatkę, bez pakowania,
+  daje te same piksele różnicy w `galeria-ladowanie(-strzal)` co flaga i rozjeżdża też `galeria-broni`,
+  `galeria-przebicie-po`; `warp-przylot` reaguje na flagę tak samo (nowy okręt tuż przed zrzutem); (2) `kalibracja`
+  i `galeria-rakiet` szukały three.js w Resource Timing i czasem padały („Failed to resolve module specifier
+  'undefined'”), a dalsze sceny sesji startowały z innego stanu — naprawione w main (9d989810, three z `window.THREE`);
+  (3) start sesji bez gry swobodnej (8ead6bb7). Przebiegi PO KOLEI na scalonym stanie: przekrój sesji z planu
+  (kosmos 7 scen, split, stacja, reaktor, ziemia, pas, piraci, galeria — 21 scen z warstwami, 44 obrazy) — 44 / 44
+  identyczne (maks. różnica ≤ 2); galeria + rakiety + warp (51 obrazów): dwa przebiegi bez flagi 51 / 51 identyczne,
+  z flagą 48 / 51 (trzy sceny wrażliwe na czas jak wyżej). Wniosek: migawka nie zmienia stanu gry; A/B zrzutów tylko
+  po kolei, sceny z wgrywaniem w wolnej chwili — przez próbę opóźnienia.
+- KOSZT W BITWIE (`profil-bitwy-flot.mjs --sklad 50,20,10,3`, 166 okrętów, pole `snap`, okna „t ≤ 15 s” / „t > 15 s”):
+  przed optymalizacją zoom 0,1: średnio 1,15 / 1,43 ms, p95 1,72 / 2,03; zoom 0,45: 0,80 / 1,31, p95 1,14 / 1,83.
+  Po (commit „RW-10: tańsze pakowanie w bitwie…” + wieże z rekordów klatki): zoom 0,1 — 0,76 / 0,88 ms, p95 0,94 / 1,08;
+  zoom 0,45 — 0,63 / 0,84 ms, p95 0,85 / 1,09; najcięższe okno 3 s (dziesiątki wraków, 3–13 tys. węzłów na klatkę)
+  1,11–1,17 ms, p95 1,41–1,52. Profil (t = 20 s, przed optymalizacją): `_packEntity` czas własny 0,38 ms — odczyty
+  pól encji rozłożone równo po ~45 polach: NPC mają 72–84 różne mapy V8 (odczyt megamorficzny), 50 ze 166 ciał belek
+  w trybie słownikowym (`--diag 1`); suma kontrolna HP 0,08 ms; dysze 0,09; wieże 0,12. Optymalizacje (wynik strony bit
+  w bit): pakowanie tylko z list źródłowych (RENDER, COLD_NEAR, NPCS, WRECKS, COLD — kolejność pierwszych wystąpień
+  i sloty jak przy przeglądzie wszystkich list), jedno pytanie o mgłę na encję (wynik listy RENDER dla NPCS_SEEN,
+  WRECKS_SEEN i flagi FOG_HIDDEN), pamięć ostatniego kodu słownika na slot / rekord wieży, suma kontrolna samego `hp`
+  (render czyta stosunek hp / maxHp ze strefy mostka; maxHp zmienia się z hp). RESZTA kosztu to odczyty pól encji gry
+  (megamorficzne) i kopia węzłów (∝ D) — ten sam render na lustrach (RW-11a) czyta monomorficzne obiekty, więc
+  POMIAR D7 (czas `updateHexShips3D` na lustrach vs na encjach) pokaże bilans szwu; kształt obiektów NPC (jedna klasa
+  ukryta) — osobne zadanie gry, poza torem.
+- D (węzły zmienione na klatkę, w pudle rozgrzania): zoom 0,1 — średnio 56–127 w fazie bez wraków, 1–4 tys. przy
+  wrakach (szczyt ~5,8 tys.); zoom 0,45 — 330–490, przy wrakach 2,4–10,7 tys. (szczyt ~13 tys.).
+- ROZMIARY BLOKÓW (strona 4,87 MB; zajęte w bitwie): HEAD 560 B, WORLD 144 B, HALL 10,6 KB, LISTS 3,5 KB, ENT ~95 KB
+  (166 encji), BODY ~41 KB, NODES 2,6 KB → 236–629 KB (∝ D), NOZZLES ~37–44 KB, SHOTS 0–90 KB, TURRETS 34–134 KB
+  (~1300 rekordów przy zoomie 0,1), STATIONS 0,5 KB, CORES 11–14 KB; razem 0,34–0,98 MB.
+- Po RW-26 (main): wieże migawka bierze z rekordów klatki `Turret2D` (`frame.turretFrame`: `frameCount` /
+  `recordAt` po `syncFrame`, kolejność klatki) w fazie finish — `syncFrame` stoi tuż przed `updateHexShips3D`, czyli po
+  fazie begin; przeniesienie całej migawki za `syncFrame` przy wpięciu luster (RW-11a). Sufit szwu
+  `index:aktualizacja` po scaleniu: 90 z main + 2 migawki (rekordy wież, wejście pyłu hal) = 92.
+- Sloty: RW-29 w main miało własne `createRenderIds()` i cykl w `render()` — po scaleniu jedna przestrzeń
+  `RenderSlots` z `renderSlots.js` (import singletonu, pętla `slotOf` po encjach w `render()`, cykl w `loop()`; strażnik
+  `tests/shieldBreach.test.mjs` szuka pętli znakowania).
 
 **RW-11 Lustra i moduły 3D na lustrach** (`inline`), trzy podzadania kolejno, każde z własnym kryterium bit w bit:
 - **RW-11a kadłuby i dysze** — `updateHexShips3D` / `drawHexShips3D`, `EngineVfxSystem`, lampy, cień SDF, smugi.
