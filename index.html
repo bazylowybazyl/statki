@@ -1322,6 +1322,7 @@
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
     import { createWarpBlock } from "./src/render/blocks/warpBlock.js";
+    import { createPirateBaseBlock } from "./src/render/blocks/pirateBaseBlock.js";
     import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
@@ -28355,6 +28356,7 @@
     if (renderSnapshot) {
       renderSnapshot.addBlock(createGasObstBlock());
       renderSnapshot.addBlock(createWarpBlock());
+      renderSnapshot.addBlock(createPirateBaseBlock());
     }
     const _snapFrame = createSnapshotFrame();
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
@@ -28414,6 +28416,9 @@
       // ruch warpa NPC (osie rejestru gry) i klatka „Nurtu” — ta sama, którą dostaje WarpNurt.update
       f.warpTraffic = warpTraffic;
       f.warpNurt = _warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam);
+      // baza piratów misji 1: stan klatki obrazu (ten sam, który dostaje updatePirateBase3D) i dt gry
+      f.pirateBase = storyBaseFrameState();
+      f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
       f.turretsOf = null;
       f.hall = null;
       // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)
