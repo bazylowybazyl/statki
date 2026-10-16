@@ -12,7 +12,7 @@
 
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'ciała świata bazy piratów (skóry kawałków)',
-  'pas asteroid i wydobycie',
+  'wydobycie skał (siatki ciał, platforma — RW-41b cz. 2)',
   'model reaktora w wyrwie', 
 'rdzenie: strugi i kule (RX_*)', 'tło menu'
 ]);
@@ -240,6 +240,54 @@ if (isWorker) {
     } catch (e) { report(e, 'baza piratów'); }
   }
 
+  // Pas asteroid (RW-41b): świat pasa w workerze = zastępnik z danymi od strony (pole z tych samych argumentów
+  // i operacji, sektory cienia pól, olbrzymy z siatką SDF w SAB, zegar skał z wiadomości klatki); wydobycie — jeszcze nie.
+  async function setBelt(m) {
+    try {
+      const [{ AsteroidBeltField }, { GiantRock }, { createAsteroidBelt }] = await Promise.all([
+        import('../game/asteroidBeltField.js'), import('../game/asteroidGiants.js'), import('../3d/asteroids/asteroidBelt.js')
+      ]);
+      st.GiantRock = GiantRock;
+      const [r1, r2, r3, r4] = await Promise.all([import('../game/asteroidShapeRadius.js'), import('../game/asteroidMining.js'), import('../game/asteroidMiningRig.js'), import('../game/beltPlayZ.js')]);
+      const mm = { ShapeRadius: r1.ShapeRadius, AsteroidMining: r2.AsteroidMining, MiningRig: r3.MiningRig, beltPlayZ: r4.beltPlayZ };
+      const ops = st.beltOps || (st.beltOps = []);
+      const subs = [], occSubs = [];
+      const apply = (field, op, arg) => {
+        if (op === 'exclusions') field.setExclusions(arg);
+        else if (op === 'anchors') field.setSmallBodyAnchors(arg);
+        else if (op === 'peaks') field.familyPeaks();
+        else if (op === 'wake') field.wakeSpots.push(arg);
+      };
+      const giants = { entries: [],
+        get readyCount() { let n = 0; for (const e of this.entries) if (e.giant && e.giant.ready) n++; return n; },
+        roofAbove(x, y, zFrom = 300) {
+          for (const e of this.entries) { const g = e.giant; if (g && g.ready && g.containsWorld(x, y, g.band) && g.solidAbove(x, y, zFrom)) return true; }
+          return false;
+        } };
+      const world = { sun: m.sun, au: m.au, fieldArgs: m.fieldArgs, time: 0, frameDt: 0, giants, mining: null, rig: null, sectors: st.beltSectors || null,
+        createFieldReplica() { const f = new AsteroidBeltField(m.fieldArgs); for (const [op, arg] of ops) apply(f, op, arg); subs.push((op, arg) => apply(f, op, arg)); return f; },
+        onOcclusion(fn) { if (world.sectors) fn(world.sectors); occSubs.push(fn); },
+        // wydobycie w workerze (RW-41b cz. 2): dziś zastępcza fizyka i platforma bez stanu gry (warstwa skał wymaga
+        // zbioru taken i ciał) — przejęte skały i ciała wydobycia z gry jeszcze nie przychodzą
+        attachShapeRadius(data) {
+          if (world.rig || !data || !data.maps) return world.rig;
+          const shapes = new mm.ShapeRadius(data);
+          world.mining = new mm.AsteroidMining({ radiusAt: shapes.radiusAt, seed: 0x51A7 });
+          world.rig = new mm.MiningRig({ mining: world.mining, field: new AsteroidBeltField(m.fieldArgs), playZ: mm.beltPlayZ, sunT: () => 1, timeSource: () => world.time });
+          return world.rig;
+        }, ackMinedUpload() {}, roofAbove(x, y) { return giants.roofAbove(x, y); } };
+      st.beltWorld = world; st.beltSubs = subs; st.beltOccSubs = occSubs;
+      for (const g of st.pendingGiants || []) addGiant(g);
+      const belt = createAsteroidBelt({ world });
+      await belt.initGpu();
+      st.belt = belt;
+    } catch (e) { report(e, 'pas'); }
+  }
+  function addGiant(m) {
+    if (!st.beltWorld || !st.GiantRock) { (st.pendingGiants || (st.pendingGiants = [])).push(m); return; }
+    st.beltWorld.giants.entries.push({ id: m.id, giant: new st.GiantRock(m.plan, m.x, m.y, m.grid) });
+  }
+
   function setCmdRing(m) {
     st.cmdBuf = m.buffer;
     if (!st.mods) return;
@@ -330,6 +378,7 @@ if (isWorker) {
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
     if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
     st.skyZone = m.skyZone;
+    if (m.belt) st.beltFrame = m.belt;
     if (m.fog) {
       const fw = st.fog || (st.fog = { on: false, time: 0, count: 0, circles: new Float64Array(0), massCount: 0, masses: new Float64Array(0), look: null });
       fw.on = m.fog.on; fw.time = m.fog.time; fw.count = m.fog.count; fw.massCount = m.fog.massCount; fw.look = m.fog.look;
@@ -465,6 +514,10 @@ if (isWorker) {
       st.cometField.update(tr);
       st.cometsView.update(tr, cam, null);
     }
+    if (st.belt && st.beltFrame) {
+      const w = st.beltWorld; w.time = st.beltFrame.time; w.frameDt = st.beltFrame.dt;
+      st.belt.prepareFrame(w.time, w.frameDt, rm.player, null, rm.lists[L.NPCS_SEEN]);
+    }
     // pył hal K-7: wejście klatki = blok HALL (kopia HALL_DUST_IN strony); krok Core3D.fx czyta tylko tę tablicę
     if (st.hallDust && v.hall) st.hallDust.submit(v.hall);
     if (st.dust) {
@@ -549,6 +602,10 @@ if (isWorker) {
       else if (m.type === 'cmdRing') setCmdRing(m);
       else if (m.type === 'planets') setPlanets(m);
       else if (m.type === 'comets') setComets(m);
+      else if (m.type === 'belt') st.beltChain = setBelt(m);
+      else if (m.type === 'beltOp') { (st.beltOps || (st.beltOps = [])).push([m.op, m.arg]); if (st.beltSubs) for (const f of st.beltSubs) f(m.op, m.arg); }
+      else if (m.type === 'beltOcc') { st.beltSectors = m.sectors; if (st.beltWorld) { st.beltWorld.sectors = m.sectors; for (const f of st.beltOccSubs) f(m.sectors); } }
+      else if (m.type === 'beltGiant') addGiant(m);
       else if (m.type === 'pbase') st.pbChain = (st.pbChain || Promise.resolve()).then(() => pirateBaseEvent(m));
     } catch (err) {
       report(err, m && m.type);
