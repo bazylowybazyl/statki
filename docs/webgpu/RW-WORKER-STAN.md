@@ -17,6 +17,7 @@ RW-40a, RW-40b cz. 1–12, RW-41b cz. 1, RW-42 cz. 1; § 7 — decyzje i zasady)
 | 0f399b9a | RW-41b cz. 1: obraz pasa asteroid |
 | 7b501d1f | ta notatka + bariera „narysowano k” w `zrzuty.mjs` (RW-44) |
 | (cz. 13) | drony naprawcze: blok `repair` (id rigu = `RepairFxEvents.idOf`, wspólne z rekordami REPAIR_FX), lustro rigów w workerze |
+| (cz. 14) | luk Atlasa: strona wysyła `bay` { door, hidden } w wiadomości klatki, worker — `createScoutBay3D` na lustrze gracza (`__bayCut`); poza fregaty jak dawniej w ENT |
 
 Pomiary (`profil-bitwy-flot.mjs --sklad 50,20,10,3 --zoom 0.1 --seed 7`, obraz 3D w trybie worker = złożenia
 `RenderWorkerHost.composed` na sekundę): bramka (cz. 1, ABAB) worker 146 / 133 kl/s ↔ off 87 / 85 fps (1,62×); po
@@ -67,7 +68,7 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
 1. Wyłączone w workerze (`RW_WORKER_DISABLED` w `render.worker.js`, komunikat w konsoli): stacja piracka
    (`world3d.js`), skóry ciał świata bazy piratów (`worldBodies3D` — encje kawałków są obiektami gry; blok jak `view`),
    wydobycie (RW-41b cz. 2: `rig.taken`, ciała i okruchy, zdarzenia `fx`, `__explosions.domainRects` przez RET), model reaktora w wyrwie i RX_* rdzeni (`hazardAt` gry),
-   luk Atlasa (`scoutBay3D`, `__bayCut`), tło menu (RW-41). Cel soczewki warpa `targetBody` — AGENT w pakującym.
+   tło menu (RW-41). Cel soczewki warpa `targetBody` — AGENT w pakującym.
 2. RW-41 (zasoby, ekran ładowania, tło menu w workerze — bez Core3D strony), RW-41b cz. 2.
 3. RW-44 odchudzone (§ 7.1): w trybie worker tylko `zrzuty.mjs`, `start-gry.mjs`, `profil-bitwy-flot.mjs`,
    `fabula-gra.mjs`; fasada Core3D z RET, sprawdzić barierę.

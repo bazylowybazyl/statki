@@ -90,6 +90,9 @@ if (isWorker) {
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
+    // luk Atlasa (fregata zwiadu): rig ładowni i dziura w skórze lustra gracza; postęp wrót z wiadomości strony
+    st.bayMod = await import('../3d/cargo/scoutBay3D.js');
+    st.bayPose = { x: 0, y: 0, angle: 0 };
     st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: null, hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
     st.warpMirror = warpBlock.createWarpMirror();
@@ -147,6 +150,8 @@ if (isWorker) {
       bridge3d.Bridge3D.attach(Core3D.scene);
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       st.dust.init();
+      st.bay = st.bayMod.createScoutBay3D(Core3D, 'atlas');
+      Core3D.warmup.add({ name: 'ładownia Atlasa (fregata zwiadu)', objects: () => st.bay.warmupMeshes(), phase: 'loading' });
       st.destruction.init({ scene: Core3D.scene, reactorFactory: st.blastFactory, shockwaveManager: null });
       warpMod.WarpNurt.init();
     } catch (e) { report(e, 'efekty'); }
@@ -378,6 +383,7 @@ if (isWorker) {
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
     if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
     st.skyZone = m.skyZone;
+    st.bayMsg = m.bay || null;
     if (m.belt) st.beltFrame = m.belt;
     if (m.fog) {
       const fw = st.fog || (st.fog = { on: false, time: 0, count: 0, circles: new Float64Array(0), massCount: 0, masses: new Float64Array(0), look: null });
@@ -543,6 +549,11 @@ if (isWorker) {
     if (st.pbg && v.blocks.pirateBase && v.blocks.pirateBase.f64) {
       const pm = st.pbMods.blk.applyPirateBaseBlock(v.blocks.pirateBase, st.pbMirror);
       if (pm.present) st.pbg.updatePirateBase3D(pm.dt, pm.state);
+    }
+    if (st.bay) {
+      const pl = rm.player, bm = st.bayMsg, bp = st.bayPose;
+      if (pl) { bp.x = pl.pos ? pl.pos.x : pl.x; bp.y = pl.pos ? pl.pos.y : pl.y; bp.angle = pl.angle || 0; }
+      st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     }
     hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };

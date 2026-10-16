@@ -188,6 +188,9 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const fw = host.fogWorld;
     if (fw) msg.fog = { on: fw.on, time: fw.time, count: fw.count, massCount: fw.massCount, look: fw.look,
       circles: fw.circles.slice(0, fw.count * 4), masses: fw.masses.slice(0, fw.massCount * 8) };
+    // luk Atlasa (fregata zwiadu): postęp wrót i ukrycie — obraz rigu i dziura w skórze lustra gracza w workerze
+    const sb = host.scoutBay;
+    if (sb) msg.bay = { door: sb.door, hidden: sb.hidden };
     const dv = p.dict.values;
     msg.dict = dv.slice(host._dictSent);
     host._dictSent = dv.length;

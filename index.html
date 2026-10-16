@@ -9940,7 +9940,10 @@
       const hidden = !ship || ship.destroyed || !isAtlasHullForScout() || (cl && cl.active && cl.vis < 0.5);
       const sunRef = (typeof SUN !== 'undefined' && SUN) ? SUN : null;
       if (sunRef) { _scoutSun.x = sunRef.x; _scoutSun.y = sunRef.y; }
-      scoutBay3D.sync(ship, pose, ScoutBay.door, sunRef ? _scoutSun : null, hidden, time);
+      if (RW_WORKER) {
+        // obraz luku w workerze (RW-40b): tylko postęp wrót i ukrycie
+        if (rwHost) { const sb = rwHost.scoutBay || (rwHost.scoutBay = { door: 0, hidden: true }); sb.door = ScoutBay.door; sb.hidden = !!hidden; }
+      } else scoutBay3D.sync(ship, pose, ScoutBay.door, sunRef ? _scoutSun : null, hidden, time);
       const n = ScoutBay.npc;
       if (n && !n.dead) {
         // Poza renderu fregaty (scoutFrigateRenderPose): na dnie luku mniejsza, wynurza się do rozmiaru z gry i NAD
