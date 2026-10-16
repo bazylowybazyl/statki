@@ -12,6 +12,7 @@ import { OverlayRing, OVERLAY_RING_DEFAULT } from './overlayRing.js';
 import { createReturnBuffer, createReturnViews, retRecentConsumed, retReadStats, RET_I32, RET_F64, RET_FLAG, retHasFlag } from './returnLayout.js';
 import { RW_WORKER_DISABLED } from './render.worker.js';
 import { createEventRingBuffer, EventRingWriter } from './eventRing.js';
+import { createMiningPackState, packMiningFrame } from './miningSync.js';
 
 /** Dane ciał do workera: liczby, napisy, tablice i zwykłe obiekty do głębokości 5; bez funkcji, klas, `_pól` i cykli. */
 function plainData(v, depth = 0, seen = new Set()) {
@@ -176,6 +177,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     if (bw && !host._belt) attachBelt(bw);
     if (bw) {
       msg.belt = { time: bw.time, dt: bw.frameDt };
+      // wydobycie (RW-41b cz. 2): ciała skał po zmianie, pozy, okruchy, platforma, zdarzenia, przejęte id
+      if (bw.mining) msg.mine = packMiningFrame(bw.mining, bw.rig, host._mineState || (host._mineState = createMiningPackState()), (b) => bw.ackMinedUpload(b));
       const ents = bw.giants && bw.giants.entries;
       if (ents) for (const e of ents) {
         const g = e.giant;

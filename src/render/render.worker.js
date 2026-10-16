@@ -11,7 +11,6 @@
 // Worker → strona: `ready`, `frame` { k, bmp }, `error`.
 
 export const RW_WORKER_DISABLED = Object.freeze([
-  'wydobycie skał (siatki ciał, platforma — RW-41b cz. 2)',
   'tło menu'
 ]);
 
@@ -336,8 +335,9 @@ if (isWorker) {
         import('../game/asteroidBeltField.js'), import('../game/asteroidGiants.js'), import('../3d/asteroids/asteroidBelt.js')
       ]);
       st.GiantRock = GiantRock;
-      const [r1, r2, r3, r4] = await Promise.all([import('../game/asteroidShapeRadius.js'), import('../game/asteroidMining.js'), import('../game/asteroidMiningRig.js'), import('../game/beltPlayZ.js')]);
-      const mm = { ShapeRadius: r1.ShapeRadius, AsteroidMining: r2.AsteroidMining, MiningRig: r3.MiningRig, beltPlayZ: r4.beltPlayZ };
+      const [r2, sync] = await Promise.all([import('../game/asteroidMining.js'), import('./miningSync.js')]);
+      const mm = { RockBody: r2.RockBody, sync };
+      st.mineMods = mm;
       const ops = st.beltOps || (st.beltOps = []);
       const subs = [], occSubs = [];
       const apply = (field, op, arg) => {
@@ -355,15 +355,12 @@ if (isWorker) {
       const world = { sun: m.sun, au: m.au, fieldArgs: m.fieldArgs, time: 0, frameDt: 0, giants, mining: null, rig: null, sectors: st.beltSectors || null,
         createFieldReplica() { const f = new AsteroidBeltField(m.fieldArgs); for (const [op, arg] of ops) apply(f, op, arg); subs.push((op, arg) => apply(f, op, arg)); return f; },
         onOcclusion(fn) { if (world.sectors) fn(world.sectors); occSubs.push(fn); },
-        // wydobycie w workerze (RW-41b cz. 2): dziś zastępcza fizyka i platforma bez stanu gry (warstwa skał wymaga
-        // zbioru taken i ciał) — przejęte skały i ciała wydobycia z gry jeszcze nie przychodzą
-        attachShapeRadius(data) {
-          if (world.rig || !data || !data.maps) return world.rig;
-          const shapes = new mm.ShapeRadius(data);
-          world.mining = new mm.AsteroidMining({ radiusAt: shapes.radiusAt, seed: 0x51A7 });
-          world.rig = new mm.MiningRig({ mining: world.mining, field: new AsteroidBeltField(m.fieldArgs), playZ: mm.beltPlayZ, sunT: () => 1, timeSource: () => world.time });
+        // wydobycie w workerze (RW-41b cz. 2): repliki fizyki skał i platformy z wiadomości klatki strony
+        // (src/render/miningSync.js — ciała `RockBody`, okruchy, drony, piła, ładunki, zdarzenia, `taken`)
+        attachShapeRadius() {
+          if (!world.rig) { st.mineRep = mm.sync.createMiningReplica(); world.mining = st.mineRep.mining; world.rig = st.mineRep.rig; }
           return world.rig;
-        }, ackMinedUpload() {}, roofAbove(x, y) { return giants.roofAbove(x, y); } };
+        }, ackMinedUpload(body) { if (body) body.dirtyBox = null; }, roofAbove(x, y) { return giants.roofAbove(x, y); } };
       st.beltWorld = world; st.beltSubs = subs; st.beltOccSubs = occSubs;
       for (const g of st.pendingGiants || []) addGiant(g);
       const belt = createAsteroidBelt({ world });
@@ -468,6 +465,7 @@ if (isWorker) {
     st.skyZone = m.skyZone;
     st.bayMsg = m.bay || null;
     if (m.belt) st.beltFrame = m.belt;
+    if (m.mine && st.mineRep && st.mineMods) st.mineMods.sync.applyMiningFrame(m.mine, st.mineRep, st.mineMods.RockBody);
     if (m.fog) {
       const fw = st.fog || (st.fog = { on: false, time: 0, count: 0, circles: new Float64Array(0), massCount: 0, masses: new Float64Array(0), look: null });
       fw.on = m.fog.on; fw.time = m.fog.time; fw.count = m.fog.count; fw.massCount = m.fog.massCount; fw.look = m.fog.look;
