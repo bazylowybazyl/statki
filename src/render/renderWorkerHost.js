@@ -131,7 +131,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const k = p.k;
     // rekordy rozkazów tej strony: klatki pisarza do ostatniej zamkniętej (RenderCommands.endFrame przed fazą 2 migawki)
     const evFrame = commands ? commands.writer.frame - 1 : -1;
-    const msg = { type: 'frame', k, evFrame, skyZone: host._skyZone || null, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
+    const msg = { type: 'frame', k, evFrame, skyZone: host._skyZone || null, dust: host.dustOn !== false, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
     const pending = [];
     for (const s of p.descQueue) {
       const rec = p.descriptors[s];

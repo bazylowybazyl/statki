@@ -12,7 +12,7 @@
 
 export const RW_WORKER_DISABLED = Object.freeze([
   'ring „Halo” i hale K-7', 'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
-  'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył kosmiczny', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
+  'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
   'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
   'rakiety (lot w grze bez bloku migawki)', 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
@@ -76,6 +76,7 @@ if (isWorker) {
     ]);
     // planety, słońce, księżyce, małe ciała, mgławica i gwiazdy (API globalne: initPlanets3D / updatePlanets3D)
     await import('../3d/planet3d.assets.js');
+    st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook };
     const Core3D = core.Core3D;
     st.Core3D = Core3D;
@@ -118,6 +119,7 @@ if (isWorker) {
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
+      st.dust.init();
     } catch (e) { report(e, 'efekty'); }
     if (st.cmdBuf) makeReader(st.cmdBuf);
     try { shields.prewarmShields3D(); } catch (e) { report(e, 'prewarmShields3D'); }
@@ -244,6 +246,7 @@ if (isWorker) {
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
     if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
     st.skyZone = m.skyZone;
+    st.dustOn = m.dust !== false;
     if (m.k > st.lastMsgK) { st.lastMsgK = m.k; st.pageEv[m.k & 63] = m.evFrame; }
   }
 
@@ -308,6 +311,10 @@ if (isWorker) {
       cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
       if (globalThis.setSkyZone) globalThis.setSkyZone(st.skyZone || null);
       globalThis.updatePlanets3D(h[H.FRAME_DT], cns);
+    }
+    if (st.dust) {
+      const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
+      st.dust.frame(dt, cns, null, st.dustOn !== false);
     }
     stations.updateStations3D(rm.stations);
     {
