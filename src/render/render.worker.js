@@ -11,7 +11,7 @@
 // Worker → strona: `ready`, `frame` { k, bmp }, `error`.
 
 export const RW_WORKER_DISABLED = Object.freeze([
-  'ring „Halo” i hale K-7', 'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
+  'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
   'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
@@ -72,13 +72,17 @@ if (isWorker) {
       import('../3d/sparkSystem3D.js'), import('../game/simClock.js'), import('../3d/weapons/weaponFx.js')
     ]);
     const [rktBlock, rktCmd] = await Promise.all([import('./blocks/rocketBlock.js'), import('../3d/rockets/rocketFxCommands.js')]);
+    const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
+      import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
+    ]);
     const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
       import('../3d/bridge3D.js'), import('../3d/bridgeFx3D.js'), import('../game/cloakLook.js'), import('../3d/reactorBlast/reactorBlastFx.js')
     ]);
     // planety, słońce, księżyce, małe ciała, mgławica i gwiazdy (API globalne: initPlanets3D / updatePlanets3D)
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, ringWorldMod, ringGameMod, ringBlockMod };
+    st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
     st.weaponDefs = new Map();
     const Core3D = core.Core3D;
@@ -154,6 +158,17 @@ if (isWorker) {
       globalThis.planets = m.planets;
       globalThis.smallBodies = m.small;
       globalThis.initPlanets3D(m.planets, m.sun, { smallBodies: m.small });
+      // Ringi „Halo” (RW-40b): świat ringów z tych samych planet — geometria kolidera z układu; stan klatki (zegar,
+      // lampki, pozy obsługi, obrys kadłuba gracza w hubie, dach z fabuły) z bloku `ring` migawki
+      try {
+        const { ringWorldMod, ringGameMod } = st.mods;
+        st.haloWorld = new ringWorldMod.HaloRingWorld({ planets: m.planets });
+        for (const e of st.haloWorld.entries) {
+          const key = e.key;
+          e.collider.hubOutline = () => { const r = st.ringMirror.entries[key]; return r ? r.hub : null; };
+        }
+        st.haloRings = new ringGameMod.HaloRingGame({ world: st.haloWorld, quality: m.quality || 'high' });
+      } catch (e) { report(e, 'ringi'); }
       return;
     }
     const upd = (dst, src) => { if (dst && src) Object.assign(dst, src); };
@@ -254,6 +269,7 @@ if (isWorker) {
     st.skyZone = m.skyZone;
     if (m.weaponDefs) for (let i = 0; i < m.weaponDefs.length; i += 2) st.weaponDefs.set(m.weaponDefs[i], m.weaponDefs[i + 1]);
     st.dustOn = m.dust !== false;
+    if (m.ringQuality) st.ringQuality = m.ringQuality;
     if (m.k > st.lastMsgK) { st.lastMsgK = m.k; st.pageEv[m.k & 63] = m.evFrame; }
   }
 
@@ -322,6 +338,27 @@ if (isWorker) {
       cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
       if (globalThis.setSkyZone) globalThis.setSkyZone(st.skyZone || null);
       globalThis.updatePlanets3D(h[H.FRAME_DT], cns);
+    }
+    if (st.haloRings && v.blocks.ring && v.blocks.ring.f64) {
+      const mir = st.mods.ringBlockMod.applyRingBlock(v.blocks.ring, st.dict, st.ringMirror);
+      const w = st.haloWorld;
+      if (Number.isFinite(mir.clock)) w.clock = mir.clock;
+      for (const e of w.entries) {
+        const r = mir.entries[e.key];
+        const halls = e.collider.registry && e.collider.registry.halls;
+        if (!r || !halls) continue;
+        for (let i = 0; i < halls.length && i < r.halls.length; i++) {
+          const dst = halls[i], src = r.halls[i];
+          if (Number.isFinite(src.berthVersion)) dst.berthVersion = src.berthVersion;
+          if (Number.isFinite(src.lampLevel)) dst.lampLevel = src.lampLevel;
+          const db = dst.layout && dst.layout.berths;
+          if (db) for (let j = 0; j < db.length && j < src.berths.length; j++) { db[j].occupied = src.berths[j].occupied; db[j].reserved = src.berths[j].reserved; }
+          if (src.poses) dst.poses = src.poses;
+        }
+      }
+      st.haloRings.hallRoofOverride = mir.roof;
+      const frozen = (h[H.FLAGS] & layoutMod.HEAD_FLAG.WORLD_FROZEN) !== 0;
+      st.haloRings.update(h[H.FRAME_DT], cam, { sun: st.sun, ship: rm.player, gameDt: frozen ? 0 : dt, quality: st.ringQuality || 'high', splitScreen: false });
     }
     if (st.dust) {
       const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
