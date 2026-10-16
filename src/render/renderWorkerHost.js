@@ -84,6 +84,9 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       console.error(`[render worker] ${m.where}: ${m.msg}`);
       return;
     }
+    // pas (RW-41): mapy promienia banku skał z workera → fizyka wydobycia gry; pas workera gotowy
+    if (m.type === 'beltShape') { if (host._belt) host._belt.attachShapeRadius({ maps: m.maps, size: m.size }); return; }
+    if (m.type === 'beltReady') { host._beltReady = true; for (const f of host._beltWait.splice(0)) f(true); return; }
     if (m.type === 'prepared') { const f = host._prep.get(m.id); if (f) { host._prep.delete(m.id); f(!!m.ok); } return; }
     if (m.type === 'frame') {
       host.domainCount = m.nd | 0;
@@ -293,10 +296,12 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   // Ekran ładowania (RW-41): worker buduje ringi przy (x, y) i dokańcza rozgrzewkę — strona czeka (z limitem).
   host._prep = new Map();
   host._prepSeq = 0;
-  host.prepare = (x, y, timeoutMs = 25000) => new Promise((resolve) => {
+  host.prepare = (x, y, timeoutMs = 25000, afterFrame = false) => new Promise((resolve) => {
     const id = ++host._prepSeq;
     host._prep.set(id, resolve);
-    worker.postMessage({ type: 'prepare', id, x, y });
+    // afterFrame: po wiadomości ostatniej strony (łańcuch wiadomości) — worker czeka na jej rysunek, potem rozgrzewa passy
+    if (afterFrame) host._chain = host._chain.then(() => worker.postMessage({ type: 'prepare', id, x, y, afterFrame: true }));
+    else worker.postMessage({ type: 'prepare', id, x, y });
     setTimeout(() => { if (host._prep.delete(id)) resolve(false); }, timeoutMs);
   });
   // Narzędzia (RW-44, harness): operacja dla workera stosowana PRZED stroną, po której ją zgłoszono —
@@ -308,6 +313,16 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   host.domainRects = new Float64Array(4 * 16);
   host.domainCount = 0;
   host.copyDomainRects = (out) => { const n = Math.min(host.domainCount, out.length >> 2); out.set(host.domainRects.subarray(0, n * 4)); return n; };
+  // Pas asteroid na ekranie ładowania (RW-41): worker buduje pas (bank skał, rozgrzewka) i odsyła mapy promienia
+  // kształtów dla fizyki wydobycia — strona nie piecze banku na własnym urządzeniu GPU. Promise: pas workera gotowy.
+  host._beltWait = [];
+  host._beltReady = false;
+  host.attachBeltEarly = (bw, timeoutMs = 30000) => new Promise((resolve) => {
+    if (bw && !host._belt) attachBelt(bw);
+    if (host._beltReady || !bw) { resolve(host._beltReady); return; }
+    host._beltWait.push(resolve);
+    setTimeout(() => resolve(false), timeoutMs);
+  });
   function attachBelt(bw) {
     host._belt = bw;
     worker.postMessage({ type: 'belt', fieldArgs: plainData(bw.fieldArgs), sun: plainData(bw.sun), au: bw.au });

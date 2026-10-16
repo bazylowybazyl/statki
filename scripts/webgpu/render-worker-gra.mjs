@@ -73,6 +73,7 @@ try {
     samples.push({ t: Math.round((Date.now() - t0) / 1000), ...(await read()) });
   }
   report.samples = samples;
+  report.startSteps = await evaluate(cdp, 'window.__startSteps || null');
   await screenshotPng(cdp, join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}${TAG}.png`));
 } catch (err) {
   report.error = String(err?.stack || err);

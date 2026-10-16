@@ -12465,6 +12465,8 @@
           asteroidBelt = createAsteroidBelt({ world: beltWorld });
           beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
           window.__asteroidBelt = asteroidBelt;
+          // tryb worker (RW-41): pas workera (bank skał, rozgrzewka) buduje się już w menu — start gry czeka tylko na resztę
+          if (rwHost) rwHost.attachBeltEarly(beltWorld);
           applyGraphicsEffects();   // reflektory i mapy cienia pasa wg opcji grafiki (blok „OPCJE GRAFIKI”)
         } catch (err) {
           console.error('[AsteroidBelt] start nie wyszedł', err);
@@ -32110,6 +32112,9 @@
       // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
       // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.
       const launchT0 = performance.now();
+      // kroki startu (ms od kliknięcia) — narzędzia: start-gry.mjs / render-worker-gra.mjs
+      const startSteps = window.__startSteps = {};
+      const stepMark = (k) => { startSteps[k] = Math.round(performance.now() - launchT0); };
       // RW-41: worker przygotowuje scenę (ringi przy statku, rozgrzewka) równolegle z ekranem ładowania strony
       const rwPrepare = rwHost ? rwHost.prepare(ship.pos.x, ship.pos.y) : null;
       // Kampania z lotem intro w tle menu: kamera tła NIE dojeżdża do Ziemi (tylko planeta na środek kadru) — tor intro
@@ -32131,7 +32136,8 @@
         AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav'),
         AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav'),
         // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
-        prepareShipModels3D()
+        // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
+        RW_WORKER ? null : prepareShipModels3D()
       ]);
 
       if (typeof ship !== 'undefined') {
@@ -32174,6 +32180,7 @@
       setMenuView('home');
       toggleGameUI(false);
 
+      stepMark('menuZjechalo');
       showLoadingOverlay(0, 'Przygotowanie świata');
       setLoadingProgress(20, 'Inicjalizacja systemów');
       await nextFrame();
@@ -32186,15 +32193,18 @@
       syncPlayerMegafreighterTrain(PLAYER.activeHullId);
       setLoadingProgress(60, 'Kalibracja floty');
       await nextFrame();
+      stepMark('npcFlota');
       setLoadingProgress(70, 'Kompilacja shaderów broni');
       // Rozgrzewki modułów przez rejestr (Core3D.warmup.run, zadanie 11): ta sama chwila i logika, czas i pipeline'y
       // w jednym miejscu (flush niżej czeka na nie). Kroki Core3D.fx (broń, rakiety, iskry, warp, pas, mapa ran) — same.
-      if (prewarmHexShips3D) {
+      // Tryb worker (RW-41): grę rysuje worker — przygotowanie obrazu 3D na stronie (rozgrzewki, wypieki, stacje, komety,
+      // flush) pomijane: kompilowało wszystko drugi raz na urządzeniu GPU strony i zabierało GPU workerowi na starcie.
+      if (prewarmHexShips3D && !RW_WORKER) {
         Core3D.warmup.run('kadłuby i Fx3D (hexShips3D)', () => prewarmHexShips3D({ canvas: hexShipsCanvas }));
       }
       // Tarcze: pula płytek i iskier (pass tarcz i warstwa DIST) — pierwsze trafienie w tarczę
       // nie kompiluje nic w klatce (shield3D.js, prewarmShields3D; kernele — krok „tarcze”).
-      Core3D.warmup.run('tarcze (shield3D)', () => prewarmShields3D());
+      if (!RW_WORKER) Core3D.warmup.run('tarcze (shield3D)', () => prewarmShields3D());
       await nextFrame();
 
       // Oświetlenie kadłubów v2 (src/3d/hullSurface.js): mapa powierzchni kadłuba gracza z góry (worker, ~0,3 s) —
@@ -32202,7 +32212,7 @@
       setLoadingProgress(71, 'Powierzchnie kadłubów');
       try {
         const playerVisual = shipSprite.complete ? getPlayerHullVisualImage(shipSprite) : null;
-        if (playerVisual) await HullSurface.prebake([playerVisual], 4000);
+        if (playerVisual && !RW_WORKER) await HullSurface.prebake([playerVisual], 4000);
       } catch (err) {
         console.warn('[HullSurface] wypiek kadłuba gracza:', err);
       }
@@ -32210,7 +32220,7 @@
       // Stacje (zadanie 25a, stations3D.js): szablony GLB — wypiek i rozgrzewka rozpadu, pass FG i cień, bryły. Przed
       // pasem: kompilacje stacji idą w wolnych chwilach rejestru, gdy strona czeka na pipeline'y pasa (flush niżej — reszta).
       setLoadingProgress(71, 'Stacje');
-      await prepareStations3D(stations);
+      if (!RW_WORKER) await prepareStations3D(stations);
       // Baza piratów (misja 1): rastry kawałków i szablony kratownic ciał świata — strona gry, bez Core3D.scene (RW-24).
       prebuildPirateBaseWorld();
 
@@ -32219,29 +32229,45 @@
       if (asteroidBelt) {
         setLoadingProgress(72, 'Cień pól asteroid');
         await beltWorld.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
+        stepMark('cienPol');
         setLoadingProgress(77, 'Pola asteroid');
-        await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
+        // tryb worker (RW-41): pas buduje worker (bank skał, rozgrzewka) — mapy promienia kształtów wracają do fizyki
+        // wydobycia gry (beltWorld.onMining), strona nie piecze banku na drugim urządzeniu GPU
+        if (rwHost) { beltWorld.onMining(() => wireAsteroidMining()); await rwHost.attachBeltEarly(beltWorld); }
+        else await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
         // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.
+        stepMark('pas');
         wireAsteroidMining();
         setupNeaFlyby3D();   // przelot NEA: skała z banku pasa (wpis rozgrzewki przed flush)
         await nextFrame();
       }
 
       // Komety (blok „KOMETY”): arkusze gazu i jądra z workerów — wpis rozgrzewki przed flush() niżej.
-      await prepareComets3D();
+      if (!RW_WORKER) await prepareComets3D();
+      else if (cometField) await Promise.race([cometField.build(), new Promise(resolve => setTimeout(resolve, 4000))]);   // jądra = przeszkody gry
 
       // Wstępna symulacja fizyki
+      stepMark('komety');
       for (let i = 0; i < 60; i++) npcStep(PHYS_DT);
       setLoadingProgress(80, 'Rozruch silników');
 
-      await waitForPlanetsReady();
+      if (!RW_WORKER) await waitForPlanetsReady();
 
       // Rozgrzewka pipeline'ów (src/3d/rozgrzewka.js, zadanie 11): reszta kolejki z menu i wpisy „na start gry”
       // (dysze SIDE, światła pozycyjne, passy Core3D z tym, co już jest w scenie) — pierwsza klatka gry bez kompilacji.
       setLoadingProgress(90, 'Kompilacja shaderów');
-      await Core3D.warmup?.flush({ timeoutMs: 4000 });
+      if (!RW_WORKER) await Core3D.warmup?.flush({ timeoutMs: 4000 });
       // tryb worker: scena workera gotowa (zaczęta przy kliknięciu — zwykle już jest)
-      if (rwPrepare) { setLoadingProgress(95, 'Render w tle'); await rwPrepare; }
+      stepMark('flush');
+      if (rwPrepare) {
+        setLoadingProgress(95, 'Render w tle');
+        await rwPrepare;
+        stepMark('workerScena');
+        // klatka zero pod kurtyną: worker buduje lustra i rysuje świat startu, potem rozgrzewa passy z tym, co w scenie
+        try { render(1, 0); } catch (err) { console.warn('[render worker] klatka zero:', err); }
+        await rwHost.prepare(ship.pos.x, ship.pos.y, 15000, true);
+        stepMark('workerKlatkaZero');
+      }
 
       setLoadingProgress(100, 'Start!');
       await nextFrame();
