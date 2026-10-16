@@ -11,7 +11,7 @@
 //
 // Pola (nazwa fasady ← dzisiejsze źródło):
 //   HEAD:   camera ← window.camera (kamera gracza 1: x, y, zoom…), camera2, splitScreenMode, sun ← window.SUN,
-//           options ← window.OPTIONS, vfxTune ← window.VFX_TUNE
+//           options ← window.OPTIONS, vfxTune ← window.VFX_TUNE, cameraRig ← window.CameraRig
 //   gracz:  ship ← window.ship (= GameState.ship), player2Ship, playerPose ← window.__interpShipPose,
 //           driveState ← window.shipDriveState, warp ← window.warp (= GameState.warp), boost ← GameState.boost
 //   listy:  bullets, wrecks, npcs ← window.*
@@ -91,6 +91,8 @@ class RenderWorldFacade {
   get sun() { const s = this._src; return s ? s.sun : W().SUN; }
   get options() { const s = this._src; return s ? s.options : W().OPTIONS; }
   get vfxTune() { const s = this._src; return s ? s.vfxTune : W().VFX_TUNE; }
+  /** Rig kamery gry (`tune.shakeMaxPx` — zapas kadru LOD strug MAIN na wstrząs). */
+  get cameraRig() { const s = this._src; return s ? s.cameraRig : W().CameraRig; }
 
   // gracz
   get ship() { const s = this._src; return s ? s.ship : W().ship; }

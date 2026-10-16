@@ -155,7 +155,7 @@ test('decyzja kadru: odległość za kadrem > zapas + zasięg; ruch kadru, szczy
   const saved = { ...fc };
   try {
     const cam = { x: 0, y: 0, zoom: 0.1 };
-    const win = { camera: cam, CameraRig: { tune: { shakeMaxPx: 16 } }, splitScreenMode: false };
+    const win = { camera: cam, cameraRig: { tune: { shakeMaxPx: 16 } }, splitScreenMode: false };
     const view = { x: 0, y: 0, drawHalfW: 9600, drawHalfH: 5400 };
     const frame = (dt = 1 / 60) => {
       fc.lod = true; fc.zoom = cam.zoom; fc.drawMargin = 96 / cam.zoom;
@@ -199,6 +199,32 @@ test('decyzja kadru: odległość za kadrem > zapas + zasięg; ruch kadru, szczy
     assert.equal(fc.mainLod, false, 'bez kadru');
   } finally {
     Object.assign(fc, saved);
+  }
+});
+
+// Gra woła prepareMainLod z fasadą RenderWorld (RW-12), nie z `window`: każde pole, które funkcja czyta, musi mieć
+// getter w fasadzie. Do 2026-10-16 brakowało `cameraRig` — zapas kadru spadał do domyślnego wstrząsu 80 px, LOD
+// zdejmował inne strugi i iskry, a przesunięty ciąg fxRandom zmieniał efekty całej sceny (zrzuty galerii i wraków).
+test('kadr z fasady RenderWorld (tryb off) = kadr z window — także wstrząs riga kamery', async () => {
+  const { EngineNozzleInternals: I } = await import('../src/3d/engineVfxSystem.js');
+  const { RenderWorld } = await import('../src/render/renderWorld.js');
+  const fc = I.frameCtx;
+  const saved = { ...fc };
+  const hadWindow = 'window' in globalThis;
+  const prevWindow = globalThis.window;
+  try {
+    const cam = { x: 0, y: 0, zoom: 0.1 };
+    globalThis.window = { camera: cam, CameraRig: { tune: { shakeMaxPx: 16 } }, splitScreenMode: false };
+    const view = { x: 0, y: 0, drawHalfW: 9600, drawHalfH: 5400 };
+    for (let i = 0; i < 2; i++) {
+      fc.lod = true; fc.zoom = cam.zoom; fc.drawMargin = 96 / cam.zoom;
+      I.prepareMainLod(view, 1 / 60, RenderWorld);
+    }
+    assert.equal(fc.mainLod, true);
+    assert.ok(Math.abs(fc.viewPad - (960 + 320)) < 1e-9, `zapas ${fc.viewPad} — wstrząs z window.CameraRig przez fasadę`);
+  } finally {
+    Object.assign(fc, saved);
+    if (hadWindow) globalThis.window = prevWindow; else delete globalThis.window;
   }
 });
 

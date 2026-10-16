@@ -673,7 +673,7 @@ function prepareMainLod(view, dt, win) {
   // Zapas: kadr tej klatki jest ze wstrząsem (do shakeMaxPx w każdą stronę — za chwilę może być po drugiej), a
   // przyspieszenia kadru (szarpnięcie kursora w postawie walki, start przejścia) prędkość nie przewiduje — margines
   // pudła rysowania (96 px).
-  const shakeRaw = Number(win?.CameraRig?.tune?.shakeMaxPx);
+  const shakeRaw = Number(win?.cameraRig?.tune?.shakeMaxPx);
   const shakePx = Number.isFinite(shakeRaw) ? Math.max(0, shakeRaw) : 80;
   frameCtx.viewPad = frameCtx.drawMargin + (2 * shakePx) / frameCtx.zoom;
 }
@@ -1080,7 +1080,7 @@ export const EngineVfxSystem = {
     frameCtx.lod = frameCtx.isOrtho;
     frameCtx.drawMargin = Number.isFinite(drawMargin) && drawMargin > 0 ? drawMargin : 0;
     frameCtx.modelMinPx = Number(SideNozzleFrame.modelMinPx) || 0;
-    prepareMainLod(view, dt, RenderWorld); // kamera i podzielony ekran z fasady (pola camera, splitScreenMode)
+    prepareMainLod(view, dt, RenderWorld); // kamera, podzielony ekran i wstrząs z fasady (camera, splitScreenMode, cameraRig)
     MainLodStats.nozzles = 0;
     MainLodStats.offBox = 0;
     MainLodStats.cut = 0;
