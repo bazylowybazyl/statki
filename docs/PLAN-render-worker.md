@@ -1978,6 +1978,20 @@ użytkownik używa — reszta może zostać tylko w `off` / `inline`.
 `inline` / `worker`), `index.html` (`?renderWorker=1`; start kanwy wg D1). Kryterium: gra z `?renderWorker=1` przechodzi
 menu, start kampanii, ODDOKUJ, bitwę 166 okrętów, podzielony ekran; brak błędów konsoli strony i workera; zrzuty jak
 w `inline` (różnice tylko z kompozycji). Zależności: etapy 1–3. Kolizje: `index.html` (start, pętla).
+**Stan (2026-10-16, tor `rw-worker`, commit „RW-40 / RW-42 (część): …”): CZĘŚĆ 1 — wybór trybu.** `src/render/renderBridge.js`
+— tryby `off` / `pakuj` / `inline` / `worker` z adresu (`?renderWorker=1`, zgodnie z dzisiejszym `?szew=`), opis
+możliwości strony (`renderWorkerCaps`) i zapas `inline` z powodem (brak izolacji COOP / COEP, `SharedArrayBuffer`,
+`transferControlToOffscreen`, `ImageBitmapRenderingContext`); test `tests/overlayRing.test.mjs`. Jeszcze NIEWPIĘTY:
+`index.html` dalej czyta `?szew=` sam (`SZEW_MODE`). Co zostało przed workerem (inwentarz po torach etapów 1–3):
+(1) moduły wołane w `render()` nadal wprost na obiektach gry albo bez bloku migawki — `updatePlanets3D`, `haloRings.update`,
+`updateWorld3D`, `updatePirateBase3D` (blok `pirateBase` gotowy, wpięcie w workerze), `WarpNurt.update` (blok `warp`),
+`SpaceDust3D.frame`, `HallDust.submit`, `asteroidBelt.prepareFrame` (RW-41b), `reactorBlastFx.advance / syncHazards`,
+`Bridge3D` / `BridgeFx3D` (na obiektach gry — RW-11b krok 2), `syncRepairDrones3D` (blok `repair` niezarejestrowany),
+komety, `CanvasVFX` (kanwa — zostaje na wątku głównym w B2cr); (2) mosty `mirrorBridge.js` (lista w Stan RW-11b),
+`ServiceTugGame.beginRender / restorePose`, wieże modeli z bloku TURRETS (`rec.spec`, `rec.state`); (3) zapytania
+gra → render bez kanału zwrotnego: `__explosions.domainRects`, `attachShapeRadius`, `roofAbove` (RW-41b);
+(4) start kanwy, zasoby, rozgrzewka i tło menu (RW-41); (5) rozkazy (RW-21 / 22 / 28) dekodowane dziś w tym samym
+zadaniu — w workerze dyspozytor po `eventRing`. Worker (`render.worker.js`) i przeniesienie Core3D — następna część.
 
 **RW-41 Zasoby, ekran ładowania, tło menu.** Sprite'y jako `ImageBitmap`, GLB i tekstury ładowane w workerze,
 `Core3D.warmup.flush` przez `postMessage`, `MenuBackdrop3D` w workerze (`launchDone`, `flightDone`, plan lotu jako
@@ -2004,6 +2018,13 @@ worker bit w bit z `off`; pipeline'y synchroniczne 0. Zależności: RW-40, RW-41
 **RW-42 Kompozycja wg D1 i podzielony ekran.** Pliki: `src/render/renderBridge.js`, `src/render/render.worker.js`,
 `src/3d/hexShips3D.js` (`drawHexShips3D` — kopia znika), `index.html` (kanwy `#webgl-layer` / `#c`, `render()`).
 Kryterium: kryteria 1–5 z § 3.8 zmierzone w grze, zrzuty sesji `split`. Zależności: RW-02, RW-40. Kolizje: `render()`.
+**Stan (2026-10-16, tor `rw-worker`): CZĘŚĆ 1 — reguła pierścienia.** `src/render/overlayRing.js` (`OverlayRing`:
+`acquire(k, ostatnio odebrane z RET, ile)`, `compose(k)` → kanwa do pokazania i `hidePrev`, `canPublish` dla
+przeciwciśnienia B2cp; liczniki `full`, `guardMax`, `misses`) — reguła z RW-02 § 4 (kanwa pokazana, klatki odebrane
+a nie złożone, ostatnia publikacja), 5 kanw; RET ma pierścień odebranych od RW-04 (`retNoteConsumed` /
+`retRecentConsumed`). Test (symulacja jak RW-02: wątek główny 3× szybszy od workera, worker szybszy, FIFO wiadomości) —
+0 zgubionych par przy kolejce wiadomości ≤ zadaniu wątku głównego; dłuższa kolejka przy szybkim workerze (> 4 klatki
+w drodze) przepełnia pierścień RET — RW-02 nie widział więcej niż 4 chronionych. Kanwy w DOM i składanie — z RW-40.
 
 **RW-43 Nakładki 2D wg kompozycji.** A: wieżyczki i myśliwce do workera (partie / kwady — `src/vfx/turret2D.js`,
 `src/vfx/fighterSprite.js`, nowa partia w `src/3d/`), pierścień kamer dla ramek (`src/ui/radar/scanOverlay.js`, nakładki
