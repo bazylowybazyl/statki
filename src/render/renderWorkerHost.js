@@ -13,6 +13,28 @@ import { createReturnBuffer, createReturnViews, retRecentConsumed, retReadStats,
 import { RW_WORKER_DISABLED } from './render.worker.js';
 import { createEventRingBuffer, EventRingWriter } from './eventRing.js';
 
+/** Dane ciał do workera: liczby, napisy, tablice i zwykłe obiekty do głębokości 5; bez funkcji, klas, `_pól` i cykli. */
+function plainData(v, depth = 0, seen = new Set()) {
+  if (v === null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
+  if (depth > 5 || seen.has(v)) return undefined;
+  if (ArrayBuffer.isView(v)) return v.slice();
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) return undefined;
+  seen.add(v);
+  let out;
+  if (Array.isArray(v)) out = v.map((x) => plainData(x, depth + 1, seen));
+  else {
+    out = {};
+    for (const k of Object.keys(v)) {
+      if (k.charCodeAt(0) === 95) continue; // '_'
+      const x = plainData(v[k], depth + 1, seen);
+      if (x !== undefined) out[k] = x;
+    }
+  }
+  seen.delete(v);
+  return out;
+}
+
 function plainLayout(layout) {
   try { return structuredClone(layout); } catch (_) { return JSON.parse(JSON.stringify(layout)); }
 }
@@ -81,7 +103,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     }
   }
 
-  worker.postMessage({ type: 'init', W, H, dpr, retBuffer, quality });
+  worker.postMessage({ type: 'init', W, H, dpr, retBuffer, quality, pageBase: location.href });
   const sendLayout = (buffer, layout) => worker.postMessage({ type: 'layout', buffer, layout: plainLayout(layout) });
   sendLayout(packer.buffer, packer.layout);
   packer.onLayout = sendLayout;
@@ -109,7 +131,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const k = p.k;
     // rekordy rozkazów tej strony: klatki pisarza do ostatniej zamkniętej (RenderCommands.endFrame przed fazą 2 migawki)
     const evFrame = commands ? commands.writer.frame - 1 : -1;
-    const msg = { type: 'frame', k, evFrame, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
+    const msg = { type: 'frame', k, evFrame, skyZone: host._skyZone || null, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
     const pending = [];
     for (const s of p.descQueue) {
       const rec = p.descriptors[s];
@@ -170,6 +192,21 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const css = (c) => { c.style.width = `${w}px`; c.style.height = `${h}px`; };
     css(view3d);
     for (const c of ringCanvases) css(c);
+  };
+
+  // Planety, słońce i małe ciała (RW-40b): dane ciał (zwykłe obiekty — bez funkcji, obiektów three i cykli) przy
+  // zmianie położeń / promieni (nowa gra losuje kąty planet); strefa nieba — w każdej wiadomości `frame`.
+  host._planetSig = '';
+  host.syncPlanets = (planets, sun, small, skyZone) => {
+    host._skyZone = skyZone || null;
+    let sig = '';
+    const add = (b) => { if (b) sig += `${b.id || b.name}:${Math.round(b.x)},${Math.round(b.y)},${Math.round(b.r || b.radius || 0)};`; };
+    add(sun);
+    if (planets) for (const p of planets) add(p);
+    if (small) for (const p of small) add(p);
+    if (sig === host._planetSig) return;
+    host._planetSig = sig;
+    worker.postMessage({ type: 'planets', planets: plainData(planets || []), sun: plainData(sun), small: plainData(small || []) });
   };
 
   host.readStats = () => retReadStats(ret, host.stats);

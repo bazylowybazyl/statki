@@ -11,7 +11,7 @@
 // Worker → strona: `ready`, `frame` { k, bmp }, `error`.
 
 export const RW_WORKER_DISABLED = Object.freeze([
-  'planety i słońce', 'ring „Halo” i hale K-7', 'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
+  'ring „Halo” i hale K-7', 'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył kosmiczny', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
   'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
   'rakiety (lot w grze bez bloku migawki)', 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
@@ -50,6 +50,12 @@ if (isWorker) {
       globalThis.cancelIdleCallback = (id) => clearTimeout(id);
     }
     st.W = m.W; st.H = m.H; st.dpr = m.dpr || 1;
+    // adresy zasobów względne do STRONY (assets/…), nie do skryptu workera — fetch i loadery three
+    if (m.pageBase && !globalThis.__rwFetch) {
+      const base = m.pageBase, f0 = globalThis.fetch.bind(globalThis);
+      globalThis.__rwFetch = f0;
+      globalThis.fetch = (input, init) => f0(typeof input === 'string' && !/^[a-z][a-z0-9+.-]*:/i.test(input) && !input.startsWith('/') ? new URL(input, base).href : input, init);
+    }
     globalThis.SUN = st.sun;
     const { RenderWorld, createMirrorPlayersSource } = await import('./renderWorld.js');
     st.players = createMirrorPlayersSource();
@@ -68,6 +74,8 @@ if (isWorker) {
     const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
       import('../3d/bridge3D.js'), import('../3d/bridgeFx3D.js'), import('../game/cloakLook.js'), import('../3d/reactorBlast/reactorBlastFx.js')
     ]);
+    // planety, słońce, księżyce, małe ciała, mgławica i gwiazdy (API globalne: initPlanets3D / updatePlanets3D)
+    await import('../3d/planet3d.assets.js');
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook };
     const Core3D = core.Core3D;
     st.Core3D = Core3D;
@@ -128,6 +136,22 @@ if (isWorker) {
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
+  }
+
+  // Dane ciał ze strony: pierwsza wiadomość — initPlanets3D, kolejne — wartości w miejscu (encje czytają obiekty danych).
+  function setPlanets(m) {
+    if (!st.planets) {
+      st.planets = m.planets; st.sunData = m.sun; st.small = m.small;
+      Object.assign(st.sun, { x: m.sun?.x || 0, y: m.sun?.y || 0, r: m.sun?.r || 0 });
+      globalThis.planets = m.planets;
+      globalThis.smallBodies = m.small;
+      globalThis.initPlanets3D(m.planets, m.sun, { smallBodies: m.small });
+      return;
+    }
+    const upd = (dst, src) => { if (dst && src) Object.assign(dst, src); };
+    upd(st.sunData, m.sun);
+    for (let i = 0; i < m.planets.length; i++) upd(st.planets[i], m.planets[i]);
+    for (let i = 0; i < m.small.length; i++) upd(st.small[i], m.small[i]);
   }
 
   function setCmdRing(m) {
@@ -219,6 +243,7 @@ if (isWorker) {
     const dv = st.dict.values;
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
     if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
+    st.skyZone = m.skyZone;
     if (m.k > st.lastMsgK) { st.lastMsgK = m.k; st.pageEv[m.k & 63] = m.evFrame; }
   }
 
@@ -278,6 +303,12 @@ if (isWorker) {
     const dt = paused ? 0 : h[H.FRAME_DT];
     const t0 = performance.now();
     Core3D.syncCamera(cam);
+    if (st.planets && globalThis.updatePlanets3D) {
+      const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
+      cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
+      if (globalThis.setSkyZone) globalThis.setSkyZone(st.skyZone || null);
+      globalThis.updatePlanets3D(h[H.FRAME_DT], cns);
+    }
     stations.updateStations3D(rm.stations);
     {
       const { bridge3d, bridgeFx, cloakLook } = st.mods;
@@ -326,6 +357,7 @@ if (isWorker) {
       if (m.type === 'layout') setLayout(m);
       else if (m.type === 'frame') applyFrameMsg(m);
       else if (m.type === 'cmdRing') setCmdRing(m);
+      else if (m.type === 'planets') setPlanets(m);
     } catch (err) {
       report(err, m && m.type);
     }

@@ -29403,6 +29403,8 @@
       if (!RW_WORKER) WarpNurt.update(_warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam));
       // Jasność tła wg strefy gracza (src/game/skyRegion.js): pas asteroid ciemniej, pusta przestrzeń jaśniej.
       if (!RW_WORKER && window.setSkyZone) window.setSkyZone(zoneState.current?.id || null);
+      // RW-40b: planety w workerze — dane ciał przy zmianie, strefa nieba w wiadomości klatki
+      if (rwHost) rwHost.syncPlanets(planets, SUN, window.smallBodies, zoneState.current?.id || null);
       if (!RW_WORKER && window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
       // Pył kosmiczny: prędkość kamery BEZ wstrząsu (smugi), gracz 2 podzielonego ekranu, opcja z menu. W pauzie
       // dt = 0 — smugi stoją jak zatrzymana klatka.
