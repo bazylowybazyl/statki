@@ -146,3 +146,20 @@ test('losowa symulacja: para (slot, generacja) nigdy nie wskazuje dwóch obiekt�
     assert.ok(sp.highWater <= Math.max(live.length * 3, 8), `zakres ${sp.highWater} przy ${live.length} żywych`);
   }
 });
+
+test('renderSlots: jeden cykl na klatkę — powtórne begin / end bez skutku; odwołania z fizyki i renderu w tej samej epoce', async () => {
+  const { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame, renderSlotsFrameOpen } = await import('../src/render/renderSlots.js');
+  const ent = {}, other = {};
+  beginRenderSlotsFrame();
+  assert.ok(renderSlotsFrameOpen());
+  const s = RenderSlots.entities.slotOf(ent);          // rozkaz z kroku fizyki
+  beginRenderSlotsFrame();                             // drugi użytkownik w tej klatce — bez nowej epoki
+  RenderSlots.entities.slotOf(other);                  // migawka
+  assert.equal(endRenderSlotsFrame(), 0, 'nic nie zwolnione — oba odwołania w tej samej epoce');
+  assert.equal(endRenderSlotsFrame(), 0);
+  assert.equal(RenderSlots.entities.peek(ent), s);
+  beginRenderSlotsFrame();
+  RenderSlots.entities.slotOf(other);
+  assert.equal(endRenderSlotsFrame(), 1, 'encja bez odwołania w klatce — zwolniona');
+  assert.equal(RenderSlots.entities.peek(ent), -1);
+});
