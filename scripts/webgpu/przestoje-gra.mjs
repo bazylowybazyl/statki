@@ -519,6 +519,8 @@ async function runVariant(label, abDir, port) {
       console.log(`  [${label}] scena ${sc}: ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     }
     res.pipeline = await ev('(() => window.__pz.pipes.slice(0, 40))()');
+    res.rozgrzewka = await ev('(() => { const s = window.Core3D?.warmup?.stats; return s ? { flush: s.flush || null, ciezkie: s.ciezkie || [] } : null; })()');
+    if (res.rozgrzewka?.ciezkie?.length) console.log(`  [${label}] rozgrzewka — najcięższe kompilacje:`, res.rozgrzewka.ciezkie.slice(0, 10).map((c) => `${c.ms} ms ${c.nazwa} / ${c.obiekt}${c.poFlush ? ' (W GRZE)' : ''}`).join(' | '));
     if (args.diag === '1') {
       res.mostkiSkoki = await ev('(() => (window.__pz.brSpikes || []).slice(0, 50))()');
       for (const s of res.mostkiSkoki.slice(0, 12)) console.log(`  [${label}] Bridge3D ${JSON.stringify(s)}`);

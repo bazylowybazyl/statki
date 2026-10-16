@@ -164,3 +164,24 @@ Fizyka bez przeglądarki (`destrukcja-taran-sym.mjs --tryb szyja`, 60 Hz, 3000 j
 3. **Gęstość skóry ciał świata** — pomost NP to 252 tys. trójkątów (podział do 3 komórek), cała baza 1,4 mln
    trójkątów (176 MB po zmianie na indeks). `skinEdgeCells` per rodzaj to pokrętło jakość ↔ pamięć i czas wypieku
    (zmiana wyglądu ugięć).
+
+## 7. Dopisek 2026-10-17: duża bitwa i pierwszy wybuch rdzenia (oba tryby renderu)
+
+Pomiar: `przestoje-gra.mjs --sceny bitwa --sklad 50,20,10,3 --seed 7` (off) i `profil-bitwy-flot.mjs … --query
+renderWorker=1 --workerProf 1` (nowa flaga: profil CPU i konsola workera renderu), A/B przez `HULLFALL_AB_DIR`.
+
+1. **Off — długie zadania poza rAF** (klatki 115–190 ms przy CPU rAF 3–35 ms): kolejka `Core3D.warmup` w trakcie gry
+   budowała materiały MODELI 3D okrętów — każdy model miał własne grafy (4 materiały × 2 kamery, NodeBuilder ~110 ms
+   każdy, ~0,9 s na typ kadłuba; wpis „modele 3D floty” w fazie `after` i `warmup.now` przy nowym typie). Poprawka:
+   jeden graf na wariant, model = klon na wspólnych węzłach (`sharedModelMaterial`). Okno „spokój” (po starcie gry):
+   długie zadania 4–5 → 0, najdłuższa klatka 121–146 → 5,5 ms; start bitwy: klatki > 100 ms 4–10 → 0, najdłuższa
+   162–186 → 92 ms (zostaje koszt pierwszego okrętu typu — § 6 pkt 5); ekran ładowania `flush()` 1,8 s.
+2. **Worker — przestoje 330–550 ms w bitwie i ~0,7 s przy 1. wybuchu rdzenia**: pierwsza domena atlasu „coarse” /
+   podstawowego gazu wybuchów budowała bryły `WybuchCoarseBack/Front`, `WybuchBack/Front` W KLATCE (NodeBuilder
+   130–370 ms na bryłę + pipeline synchroniczny) — rozgrzewka z `warm` kroku fx nie trafiała w klucz workera.
+   Poprawka: bryły gazu, żar, błyski, łby odłamów (`explosionFx.js`) i pule wybuchu rdzenia (`reactorBlastFx.js`) w
+   rejestrze ekranu ładowania (`WARIANT_INSTANCJI`). Bitwa: najgorsze opóźnienie stron 516 / 431 → 12,6 ms, najniższe
+   kl/s obrazu 57 → 171; wymuszona detonacja rdzenia pancernika: 669 ms / 17,5 kl/s → 1,1 ms / 267 kl/s.
+3. **Zostaje** (drobne, worker): pipeline'y synchroniczne `MainExhaustJets`, `RocketBodies` (pierwsze sekundy gry),
+   `spaceDust`, `hullSkinBatch` (klatka 0), kompilacje „rozpad stacji” 25–48 ms po `flush()` w workerze; w obu
+   trybach koszt pierwszego okrętu każdego typu (`createHull` → `getImageData` 30–50 ms, cień SDF, mapa powierzchni).

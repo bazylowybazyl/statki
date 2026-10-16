@@ -24,7 +24,9 @@
 import * as THREE from 'three/webgpu';
 import { loadImageBitmap } from '../canvas2d.js';
 import { RenderWorld } from '../../render/renderWorld.js';
-import { Fn, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, fract, min } from 'three/tsl';
+import { Fn, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, fract, min, uv } from 'three/tsl';
+import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
+import { FLEET3D_PALETTES } from './ships/fleetHulls3D.js';
 import { Core3D } from '../core3d.js';
 import { buildShip3D, SHIP3D_MODELS } from './ships/ships3D.js';
 import { WEAPON3D_FAMILY, weapon3DScale } from './weapons/weapons3D.js';
@@ -130,6 +132,56 @@ function gameMaterial(mat) {
   return mat;
 }
 
+// MATERIAŁY MODELI — JEDEN GRAF NA WARIANT (2026-10-17, przestoje w bitwie): dawniej każdy model budował własne grafy
+// (bryła, skóra; bez pokładu i z pokładem), a każdy graf to osobna budowa NodeBuildera (~110 ms CPU) w każdej kamerze —
+// ~0,9 s na typ kadłuba, w trakcie gry (rozgrzewka 'after' i warmup.now przy nowym typie) jako długie zadania
+// i klatki 115–190 ms (w workerze — opóźnienie stron 330–550 ms). WGSL był wspólny, NodeBuilder nie: klucz programu to
+// id węzłów. Teraz cztery grafy (bez pokładu / z pokładem × bryła / skóra), model dostaje lekki klon (te same węzły):
+// paleta z tablicy wszystkich palet (indeks `material.uniforms.palIndex`), pokład i jego normalne — tekstury per obiekt
+// (`material.uniforms.deckMap` / `deckNormalMap`). Paleta spoza listy — dawny graf na model.
+const SHARED_PALETTES = [null, ...Object.values(FLEET3D_PALETTES)];
+const _sharedBases = new Map();
+function _sharedBase(deck, skin) {
+  const key = (deck ? 2 : 0) + (skin ? 1 : 0);
+  let b = _sharedBases.get(key);
+  if (b) return b;
+  const o = {
+    palettes: SHARED_PALETTES,
+    paletteIndex: uniform(0).onObjectUpdate((frame) => frame.material?.uniforms?.palIndex?.value || 0),
+    name: `okręt 3D${deck ? ' (pokład' + (skin ? ', skóra)' : ')') : (skin ? ' (skóra)' : '')}`
+  };
+  if (deck) {
+    o.deckMapNode = teksturaObiektu('deckMap', teksturaZastepcza(128, 128, 128, 255, THREE.SRGBColorSpace), uv());
+    o.deckNormalNode = teksturaObiektu('deckNormalMap', teksturaZastepcza(128, 128, 255, 255, THREE.NoColorSpace), uv());
+  }
+  let mat = createShipMaterial(o);
+  if (skin) mat = makeHullSkinMaterial(mat);
+  b = gameMaterial(mat);
+  _sharedBases.set(key, b);
+  return b;
+}
+// Klon materiału na wspólnych węzłach. userData bazy (węzły uniformów) wspólne — Material.copy robi z userData kopię
+// przez JSON (węzły się nie serializują).
+function sharedModelMaterial(palette, skin, deck = null, deckN = null) {
+  const palIndex = SHARED_PALETTES.indexOf(palette || null);
+  if (palIndex < 0) return null;
+  const base = _sharedBase(!!deck, skin);
+  const ud = base.userData;
+  base.userData = {};
+  const mat = base.clone();
+  base.userData = ud;
+  mat.userData = ud;
+  // Haki w polach materiału (setupLightingModel, customProgramCacheKey maski słońca) i węzły spoza listy
+  // NodeMaterial.copy — z bazy (inaczej klon miałby inny program niż baza).
+  for (const k of Object.keys(base)) {
+    const v = base[k];
+    if (mat[k] !== v && (typeof v === 'function' || (v && v.isNode === true))) mat[k] = v;
+  }
+  mat.uniforms = { palIndex: { value: palIndex }, deckMap: { value: deck }, deckNormalMap: { value: deckN } };
+  applyShipEnv(mat);
+  return mat;
+}
+
 function modelAssets(id) {
   let m = _models.get(id);
   if (m) return m;
@@ -151,16 +203,20 @@ function modelAssets(id) {
     return m;
   }
   // Materiał bez tekstury od razu (bryła widoczna), pokład ze sprite'a po wczytaniu obrazu.
-  m.material = gameMaterial(createShipMaterial({ palette: m.hull.palette || null, name: `okręt 3D ${id}` }));
-  m.skinMaterial = gameMaterial(makeHullSkinMaterial(createShipMaterial({ palette: m.hull.palette || null, name: `okręt 3D ${id} (skóra)` })));
+  m.material = sharedModelMaterial(m.hull.palette, false)
+    || gameMaterial(createShipMaterial({ palette: m.hull.palette || null, name: `okręt 3D ${id}` }));
+  m.skinMaterial = sharedModelMaterial(m.hull.palette, true)
+    || gameMaterial(makeHullSkinMaterial(createShipMaterial({ palette: m.hull.palette || null, name: `okręt 3D ${id} (skóra)` })));
   m.ready = true;
   if (spec.sprite && RenderWorld.isBrowser) {
     loadImage(spec.sprite).then((img) => {
       const aniso = Math.min(8, Number(Core3D.getMaxAnisotropy?.()) || 8);
       const deck = createDeckTexture(img, aniso);
       const deckN = createDeckNormalTexture(img);
-      const mat = gameMaterial(createShipMaterial({ deckMap: deck, deckNormalMap: deckN, palette: m.hull.palette || null, name: `okręt 3D ${id} (pokład)` }));
-      const skin = gameMaterial(makeHullSkinMaterial(createShipMaterial({ deckMap: deck, deckNormalMap: deckN, palette: m.hull.palette || null, name: `okręt 3D ${id} (pokład, skóra)` })));
+      const mat = sharedModelMaterial(m.hull.palette, false, deck, deckN)
+        || gameMaterial(createShipMaterial({ deckMap: deck, deckNormalMap: deckN, palette: m.hull.palette || null, name: `okręt 3D ${id} (pokład)` }));
+      const skin = sharedModelMaterial(m.hull.palette, true, deck, deckN)
+        || gameMaterial(makeHullSkinMaterial(createShipMaterial({ deckMap: deck, deckNormalMap: deckN, palette: m.hull.palette || null, name: `okręt 3D ${id} (pokład, skóra)` })));
       // Materiały z pokładem podmieniane dopiero po kompilacji w tle — bez przestoju klatki.
       const swap = () => {
         m.material = mat;

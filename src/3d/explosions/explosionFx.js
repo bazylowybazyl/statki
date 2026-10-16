@@ -31,6 +31,7 @@
 import { GasGrid } from '../gas/gasGrid.js';
 import { RenderWorld } from '../../render/renderWorld.js';
 import { GasGridSet } from '../gas/gasGridSet.js';
+import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
 import { GasVolume, GAS_LIGHT_OWNER_BASE } from '../gas/gasVolume.js';
 import { GasExplosions } from '../gas/gasExplosions.js';
@@ -350,6 +351,17 @@ export class ExplosionFx {
     this.glow.mesh.layers.set(FG_LAYER);
     this.warmMeshes = [this.meshes.back, this.meshes.front, this.embers.mesh, this.flashes.mesh, this.glow.mesh];
     for (let t = 1; t < this._meshSets.length; t++) this.warmMeshes.push(this._meshSets[t].back, this._meshSets[t].front);
+    // Rozgrzewka także w rejestrze ekranu ładowania (2026-10-17, przestoje w bitwie): w workerze renderu (?renderWorker=1)
+    // klucz z `_warm` kroku (prewarmPass przy tworzeniu reżysera) nie trafiał w prawdziwy rysunek — pierwsza domena
+    // atlasu „coarse” i podstawowego budowała bryły gazu w klatce (NodeBuilder 130–370 ms na bryłę, pipeline'y
+    // synchroniczne; opóźnienie stron workera 220–520 ms). Rejestr kompiluje je z kamerą i celem passa jak resztę
+    // sceny; licznik instancji ≥ 2 jak w rysowaniu (wariant), z góry i w kamerach 3D.
+    if (core.warmup && typeof core.warmup.add === 'function') {
+      const meshes = () => this.warmMeshes.slice();
+      const variant = WARIANT_INSTANCJI;
+      core.warmup.add({ name: 'wybuchy: bryły gazu i duszki', objects: meshes, phase: 'loading', variant });
+      core.warmup.add({ name: 'wybuchy: bryły gazu i duszki (kamery 3D)', objects: meshes, phase: 'loading', ortho: false, variant });
+    }
     // Żar trzyma pozycje WZGLĘDEM początku pul Core3D (gasEmbers: P.xyz) — przeskok początku przesuwa żywe dane
     // kernelem (rejestracja przed addFxStep: rozgrzewka kroku kompiluje też kernel przesunięcia).
     const origin = core.fx?.origin;

@@ -37,6 +37,7 @@
 // Pozycje w świecie gry (double); do GPU względem początku pul Core3D (fx.origin).
 // Zero alokacji na klatkę: rekordy SoA o stałej pojemności, wpisy robocze pul.
 
+import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { PlasmaFireballSystem, PLASMA_KIND_BLAST, PLASMA_KIND_ORB } from './plasmaFireballs.js';
 import { PlasmaJetSystem } from './plasmaJets.js';
 import { GlowSprites, GLOW_ROUND, GLOW_STREAK } from '../rockets/glow.js';
@@ -163,6 +164,13 @@ export class ReactorBlastFx {
       warm: (ctx) => self._warm(ctx)
     };
     core.addFxStep(this.step);
+    // Też w rejestrze ekranu ładowania (2026-10-17): w workerze renderu klucz z `_warm` kroku nie trafiał w prawdziwy
+    // rysunek (jak bryły gazu wybuchów — explosionFx.js) — pierwsza detonacja rdzenia budowała materiały w klatce.
+    if (core.warmup && typeof core.warmup.add === 'function') {
+      const meshes = () => this.meshes.slice();
+      core.warmup.add({ name: 'rdzeń reaktora: pule wybuchu', objects: meshes, phase: 'loading', variant: WARIANT_INSTANCJI });
+      core.warmup.add({ name: 'rdzeń reaktora: pule wybuchu (kamery 3D)', objects: meshes, phase: 'loading', ortho: false, variant: WARIANT_INSTANCJI });
+    }
   }
 
   // ------------------------------------------------------------------ zegar

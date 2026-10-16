@@ -72,7 +72,10 @@ const hash12 = Fn(([p]) => {
  */
 export function createShipMaterial(o = {}) {
   const mat = new (o.materialClass || THREE.MeshStandardNodeMaterial)();
-  mat.name = o.name || (o.deckMap ? 'okręt 3D (pokład)' : 'broń 3D');
+  // Pokład: tekstura (o.deckMap) albo gotowy węzeł próbki (o.deckMapNode — tekstura per obiekt w grafie wspólnym,
+  // shipModels3DGame.js: jeden graf na wariant zamiast grafu na model). Tak samo mapa normalnych (o.deckNormalNode).
+  const hasDeck = !!(o.deckMap || o.deckMapNode);
+  mat.name = o.name || (hasDeck ? 'okręt 3D (pokład)' : 'broń 3D');
 
   const u = {
     engine: uniform(o.engine ?? 1),        // moc wnętrz dysz (0..~2, ciąg)
@@ -129,17 +132,17 @@ export function createShipMaterial(o = {}) {
   const emission = emis.element(pid).mul(power).add(vec3(0.030, 0.042, 0.062).mul(rim).mul(u.rim));
   mat.emissiveNode = o.emissiveAdd ? emission.add(o.emissiveAdd) : emission;
 
-  if (o.deckMap) {
+  if (hasDeck) {
     const deckMask = step(aMat, float(0.5));
-    const tex = texture(o.deckMap, uv());
+    const tex = o.deckMapNode || texture(o.deckMap, uv());
     const lum = dot(tex.rgb, vec3(0.2126, 0.7152, 0.0722));
     const deckColor = mix(colors.element(palBase ? palBase.add(int(M.PAINT)) : int(M.PAINT)).mul(1.15), tex.rgb, u.deck);
     mat.colorNode = mix(palColor, deckColor, deckMask);
     // Jaśniejsze płyty gładsze (lakier), ciemne szczeliny matowe.
     mat.roughnessNode = mix(P.x, float(0.72).sub(lum.mul(0.35)), deckMask);
     mat.metalnessNode = P.y;
-    if (o.deckNormalMap) {
-      const nm = texture(o.deckNormalMap, uv()).xy.mul(2).sub(1);
+    if (o.deckNormalMap || o.deckNormalNode) {
+      const nm = (o.deckNormalNode || texture(o.deckNormalMap, uv())).xy.mul(2).sub(1);
       const up = step(0.5, normalLocal.z).mul(deckMask).mul(u.bump);
       const n = normalize(normalLocal.add(vec3(nm.x, nm.y, 0).mul(up)));
       mat.normalNode = transformNormalToView(n);
