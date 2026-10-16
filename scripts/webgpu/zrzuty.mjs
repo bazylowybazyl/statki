@@ -1300,6 +1300,13 @@ async function runSession(session, backend, outDir, base) {
       }
       if (sc.capture === false) { console.log(`  ${id.padEnd(14)} ${error ? 'BŁĄD ' + error : '(bez zrzutu)'}`); continue; }
       const png = join(outDir, `${id}.png`);
+      // Tryb `?renderWorker=1` (RW-44): bariera „narysowano k” — zrzut dopiero, gdy na ekranie jest złożona klatka
+      // workera z ostatnią opublikowaną stroną (inaczej pierwsza scena sesji łapała kanwę strony).
+      try {
+        await waitFor(cdp, '!window.RenderWorkerHost || window.RenderWorkerHost.ring.lastComposed >= window.RenderWorkerHost.lastPostedK', 60000, 100);
+      } catch (err) {
+        error = error || `worker: brak złożonej klatki (${String(err?.message || err).slice(0, 120)})`;
+      }
       await screenshotPng(cdp, png);
       // --losowania (zadanie 23): kto wołał Math.random gry od startu sceny do zrzutu (plik:linia funkcja → liczba).
       let losowania = null;

@@ -1,0 +1,87 @@
+# Render w workerze — stan etapu 4 (2026-10-16, tor `rw-worker`)
+
+Notatka przekazania dla następnej sesji etapu 4. Plan: `docs/PLAN-render-worker.md` (§ 3, § 4 — wpisy **Stan** RW-40,
+RW-40a, RW-40b cz. 1–12, RW-41b cz. 1, RW-42 cz. 1; § 7 — decyzje i zasady). Prototyp: `docs/webgpu/RW-02-PROTOTYP.md`.
+
+## Co jest w main
+
+| commit | co |
+|---|---|
+| 8cffc9d5, e4dd955c | RW-40a: worker z modułami na lustrach + kompozycja B2cr |
+| 9c09945e | RW-40b cz. 1: rozkazy (broń, rany, wybuchy), wieże, mostki, rdzenie — **bramka 1,62×** |
+| (cz. 2), 81c68a61, a596afb8 | planety / niebo, pył kosmiczny, rakiety (blok `rockets`) |
+| c547ebc0, 276e6af2, 6b167b8c | ringi „Halo” i hale K-7, pył hal, warp „Nurt” |
+| a37cf9b9, 7793f40f | blok `view` + zimne wraki, rozpad stacji (Destruction3D) |
+| (cz. 10), 4f3141f2 | podzielony ekran, CIC, poprawka łańcucha wiadomości, `scripts/webgpu/render-worker-gra.mjs` |
+| aab11c53, cd84576d | komety; baza piratów (zdarzenia obrazu) + mgła wojny |
+| 0f399b9a | RW-41b cz. 1: obraz pasa asteroid |
+| (ten commit) | ta notatka + bariera „narysowano k” w `zrzuty.mjs` (RW-44) |
+
+Pomiary (`profil-bitwy-flot.mjs --sklad 50,20,10,3 --zoom 0.1 --seed 7`, obraz 3D w trybie worker = złożenia
+`RenderWorkerHost.composed` na sekundę): bramka (cz. 1, ABAB) worker 146 / 133 kl/s ↔ off 87 / 85 fps (1,62×); po
+dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fps (~2,1×), CPU klatki workera 5–7 ms.
+
+## Architektura
+
+- **`src/render/renderBridge.js`** — tryb z adresu: `?renderWorker=1` → `worker` (zapas `inline` z powodem: brak
+  izolacji, SAB, `transferControlToOffscreen`, `ImageBitmapRenderingContext`), `?szew=inline|pakuj`, domyślnie `off`.
+- **`index.html`**: `SZEW_MODE` z `resolveRenderMode`, `RW_WORKER`, `SZEW_LATE` (pakowanie jak `inline`: opisy encji,
+  faza begin tuż przed kadłubami, blok `cloak`, `lastConsumed` z RET). Bloki migawki tylko w trybie worker:
+  `rockets` (`src/render/blocks/rocketBlock.js`), `view` (`src/render/blocks/viewBlock.js`; `_snapFrame.viewList =
+  renderEntities` przed begin). W `render()` każdy moduł 3D ma gałąź `if (!RW_WORKER)`; strona woła
+  `rwHost.syncPlanets(...)`, ustawia `rwHost.dustOn` / `ringQuality`, `rwHost.postFrame()` po `renderSnapshot.finish`,
+  `rwHost.commitOverlay(k)` na końcu `render()`. Zdarzenia obrazu bazy piratów → `rwHost.pirateBaseEvent`. Strumień
+  rozkazów: pierścień przełączany na SAB przez host (strona bez dyspozytora).
+- **`src/render/renderWorkerHost.js`** (strona): worker, RET (`returnLayout.js`), wiadomości `init` (wymiary, jakość,
+  `pageBase`), `layout`, `frame` (k, `evFrame` = ostatnia zamknięta klatka pisarza rozkazów, opisy encji — ODKŁADANE,
+  gdy obraz kadłuba się jeszcze wczytuje (`_pendDesc`), topologie, rdzenie, stacje, słownik, zasoby jako ImageBitmap
+  z limitem 3 s, definicje broni rakiet, strefa nieba, opcje, mgła wojny, zegar pasa), `planets` (`plainData` ciał przy
+  zmianie), `comets` (raz), `pbase`, `belt` / `beltOp` / `beltOcc` / `beltGiant`, `cmdRing`. Łańcuch obietnic
+  wiadomości z `catch` (błąd jednej nie zatrzymuje kolejnych). Kompozycja B2cr: `OverlayRing` (`overlayRing.js`,
+  5 kanw w DOM), `#c` z `opacity: 0` zostaje celem myszy, kopia `#c` → kanwa pierścienia na końcu `render()`;
+  kanwa WebGPU strony (`#webgl-layer`) ukryta po pierwszym złożeniu.
+- **`src/render/render.worker.js`**: podkładki (`window = globalThis`, `innerWidth`, rIC, `fetch` z adresami względem
+  STRONY), `RenderWorld.setSource` przed importem modułów, Core3D na OffscreenCanvas. Kolejność klatki: SimClock z
+  HEAD → widok (`view`) → pociski-lustra (SHOTS) → wieże (TURRETS) → rakiety (blok) → `drain(evFrame strony)` →
+  `syncCamera` → warp → planety → ringi (+ blok `ring`) → pas → pył hal → pył kosmiczny → komety → stacje → mostki →
+  Destruction3D → baza piratów (blok `pirateBase`) → kadłuby (+ zimne wraki) → modele 3D → tarcze → obraz rdzeni →
+  render (podzielony ekran: dwa widoki na kanwie 2D workera; CIC: pusta klatka) → `transferToImageBitmap`. Strona
+  workera czeka na wiadomość ze swoim k. `entityAt` czytelnika rozkazów szuka też stacji.
+
+## Pułapki złapane
+- `SnapshotDict` w workerze to obiekt z `value(c)`; rekordy układu mają pola `F64 / I32` (wielkie litery).
+- Adresy `assets/…` w workerze rozwiązują się względem skryptu workera (Vite oddaje index.html → DOMException w
+  `createImageBitmap`) — podmiana `fetch` z `pageBase`.
+- Łańcuch wiadomości strony stał na `createImageBitmap` niewczytanego obrazu (podzielony ekran, kadłub gracza 2) —
+  bez złożeń, bez błędów. Teraz opis czeka na stronie.
+- Bez świata mgły w wiadomości klatki tryb worker nie miał mgły wojny (post Core3D workera bez danych).
+- Build: `vite.config.js` `worker.format = 'es'`.
+- Worker piecze dłużej niż strona (ringi, pas) — pierwsza scena sesji harnessu łapała kanwę strony; bariera w
+  `zrzuty.mjs` (czeka na `RenderWorkerHost.ring.lastComposed >= lastPostedK`) — niesprawdzona przebiegiem.
+- Statystyki dc / GPU w raportach harnessu są ze strony (w trybie worker nieaktualne) — RW-44: fasada z RET.
+- Core3D strony nadal istnieje (tło menu, rozgrzewka, pas strony piecze bank skał dla fizyki wydobycia) — dwa
+  urządzenia GPU; RW-41 przeniesie tło menu i zasoby.
+
+## Do zrobienia (kolejność)
+1. Wyłączone w workerze (`RW_WORKER_DISABLED` w `render.worker.js`, komunikat w konsoli): stacja piracka
+   (`world3d.js`), skóry ciał świata bazy piratów (`worldBodies3D` — encje kawałków są obiektami gry; blok jak `view`),
+   wydobycie (RW-41b cz. 2: `rig.taken`, ciała i okruchy, zdarzenia `fx`, `__explosions.domainRects` przez RET), drony
+   naprawcze (blok `repair` gotowy; widok czyta `RepairSwarm`), model reaktora w wyrwie i RX_* rdzeni (`hazardAt` gry),
+   luk Atlasa (`scoutBay3D`, `__bayCut`), tło menu (RW-41). Cel soczewki warpa `targetBody` — AGENT w pakującym.
+2. RW-41 (zasoby, ekran ładowania, tło menu w workerze — bez Core3D strony), RW-41b cz. 2.
+3. RW-44 odchudzone (§ 7.1): w trybie worker tylko `zrzuty.mjs`, `start-gry.mjs`, `profil-bitwy-flot.mjs`,
+   `fabula-gra.mjs`; fasada Core3D z RET, sprawdzić barierę.
+4. RW-36 (panele F12, których używa użytkownik), RW-45 (pomiar końcowy, Electron, tryb domyślny D8).
+5. Kryteria RW-42 (opóźnienie, rozjazd, równość klatek) zmierzone w grze — dziś zmierzone tylko w prototypie RW-02.
+
+## Jak testować tryb worker
+- Gra: `node scripts/webgpu/render-worker-gra.mjs --start single|split --czas 25` (stan hosta: złożenia, ostatnio
+  odebrana / opublikowana strona, CPU klatki workera, pierścień kanw, błędy; logi workera przez Target.setAutoAttach;
+  zrzut w `.tmp/rw40/gra/`); kampania: `--kampania 1 --query story=scout`; porównanie bez workera: `--tryb off`.
+- Zrzuty: `node scripts/webgpu/zrzuty.mjs --backend webgpu --uuid osobne --sceny <sceny> --query renderWorker=1
+  --out .tmp/…` (porównywać z `--query szew=inline`; różnice z modułów wyłączonych i kompozycji).
+- Wydajność: `node scripts/profil-bitwy-flot.mjs --sklad 50,20,10,3 --zoom 0.1 --seed 7 --profile 999
+  [--query renderWorker=1] --zdarzenia "10@(window.RenderWorkerHost?(RenderWorkerHost.readStats(),[Math.round(performance.now()),RenderWorkerHost.composed,RenderWorkerHost.stats[6]]):-1)|20@…"`
+  — obraz 3D = przyrost `composed` / czas; pary ABAB, START / KONIEC do aktywnych sesji.
+- Testy: `node --test tests/overlayRing.test.mjs tests/szewRenderu.test.mjs tests/graBezGlsl.test.mjs`; pełne
+  `node --test "tests/*.test.mjs"` (znane porażki: hallGas LF, gpuFx sun-mask, 2 TODO rdzeni), `npm test`, build.
