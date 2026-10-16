@@ -1321,6 +1321,7 @@
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
+    import { createWarpBlock } from "./src/render/blocks/warpBlock.js";
     import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
@@ -28351,7 +28352,10 @@
     })();
     const renderSnapshot = SZEW_MODE === 'inline' ? new SnapshotPacker({ ids: RenderSlots }) : null;
     // RW-11c: bloki modułów świata (src/render/blocks/) — wejścia klatki modułów renderu w stronie migawki
-    if (renderSnapshot) renderSnapshot.addBlock(createGasObstBlock());
+    if (renderSnapshot) {
+      renderSnapshot.addBlock(createGasObstBlock());
+      renderSnapshot.addBlock(createWarpBlock());
+    }
     const _snapFrame = createSnapshotFrame();
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
     const _snapCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
@@ -28407,6 +28411,9 @@
       f.skyZone = zoneState.current?.id || null;
       f.warp = warp;
       f.boost = boost;
+      // ruch warpa NPC (osie rejestru gry) i klatka „Nurtu” — ta sama, którą dostaje WarpNurt.update
+      f.warpTraffic = warpTraffic;
+      f.warpNurt = _warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam);
       f.turretsOf = null;
       f.hall = null;
       // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)

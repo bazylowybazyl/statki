@@ -113,6 +113,8 @@ export function createSnapshotFrame() {
     repair: null,               // blok `repair` (blocks/repairBlock.js): RepairSwarm
     cloak: null,                // blok `cloak` (blocks/cloakBlock.js): CLOAK_LOOK_FRAME po stepCloakLooks (RW-26)
     gasObst: null,              // blok `gasObst` (blocks/gasObstBlock.js, RW-11c): wejście przeszkód gazu GAS_OBST_IN
+    warpTraffic: null,          // blok `warp` (blocks/warpBlock.js, RW-11c): rejestr ruchu warpa gry (osie przylotów / odlotów)
+    warpNurt: null,             // blok `warp`: klatka „Nurtu” (_warpNurtFrame — dt, camFollow, lensAllowed)
     poseOf: null,               // (encja, out { x, y, a }) → true: poza RENDERU encji inna niż jej pola (RW-31, § 2.6 p. 27 —
                                 // holownik pod graczem na pokładzie: ServiceTugGame.renderPoseOf), bez zapisu w encji
     lastConsumed: -1           // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)
