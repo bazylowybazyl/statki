@@ -7132,7 +7132,8 @@
     // lustra (RW-11a, `?szew=inline`): flaga mgły ze strony migawki (to samo pytanie zadane przy pakowaniu)
     setEntityHiddenTest((e) => (e.__mirror === true ? e.fogHidden : SensorSystem.hides(e)));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
-    onPirateBaseEvent(pirateBase3DEvent);
+    // tryb worker (RW-40b): zdarzenia obrazu bazy idą do workera (bryła bazy tam); `rwHost` — przy zdarzeniu (po starcie)
+    onPirateBaseEvent((t, a, b, c) => (rwHost ? rwHost.pirateBaseEvent(t, a, b, c) : pirateBase3DEvent(t, a, b, c)));
     // Nadproże bramy hali K-7 (FG) nad okrętem w bramie (obrysy nadproży hal przy kamerze odświeża render() —
     // refreshLintelCover). Wieże 3D chowa pod nadprożem i pod fregatą zwiadu głębia / kolejność passów.
     const k7Lintels = createLintelCover();
@@ -28389,6 +28390,8 @@
         });
         window.RenderWorkerHost = rwHost;
         if (cometField) rwHost.sendComets(cometField);
+        // mgła wojny (koła wzroku, sygnatury masy) — w każdej wiadomości klatki
+        rwHost.fogWorld = SensorSystem.fogWorld;
       } catch (err) {
         console.error('[render worker] start nieudany:', err);
       }

@@ -11,7 +11,7 @@
 // Worker → strona: `ready`, `frame` { k, bmp }, `error`.
 
 export const RW_WORKER_DISABLED = Object.freeze([
-  'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
+  'świat 3D (stacja piracka)', 'ciała świata bazy piratów (skóry kawałków)',
   'pas asteroid i wydobycie',
   'drony naprawcze', 'model reaktora w wyrwie', 
 'rdzenie: strugi i kule (RX_*)', 'tło menu'
@@ -217,6 +217,24 @@ if (isWorker) {
     } catch (e) { report(e, 'komety'); }
   }
 
+  async function pirateBaseEvent(m) {
+    try {
+      if (!st.pbg) {
+        const [pbg, site, lay, blk] = await Promise.all([import('../3d/pirateBaseGame.js'), import('../game/story/pirateBaseSite.js'),
+          import('../3d/portBuildings/pirateBaseLayout.js'), import('./blocks/pirateBaseBlock.js')]);
+        st.pbMods = { site, lay, blk };
+        st.pbMirror = blk.createPirateBaseMirror();
+        st.pbg = pbg;
+      }
+      if (m.ev === 'attach') {
+        const l = st.pbMods.lay.createPirateBaseLayout();
+        const ux = Math.cos(m.axis), uy = Math.sin(m.axis), nx = -uy, ny = ux;
+        const center = { x: m.origin.x + ux * l.center.x + nx * l.center.z, y: m.origin.y + uy * l.center.x + ny * l.center.z };
+        st.pbg.pirateBase3DEvent('attach', null, st.pbMods.site.placePirateBase(center, m.axis, l));
+      } else st.pbg.pirateBase3DEvent(m.ev, m.a, m.b, m.c);
+    } catch (e) { report(e, 'baza piratów'); }
+  }
+
   function setCmdRing(m) {
     st.cmdBuf = m.buffer;
     if (!st.mods) return;
@@ -307,6 +325,12 @@ if (isWorker) {
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
     if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
     st.skyZone = m.skyZone;
+    if (m.fog) {
+      const fw = st.fog || (st.fog = { on: false, time: 0, count: 0, circles: new Float64Array(0), massCount: 0, masses: new Float64Array(0), look: null });
+      fw.on = m.fog.on; fw.time = m.fog.time; fw.count = m.fog.count; fw.massCount = m.fog.massCount; fw.look = m.fog.look;
+      fw.circles = m.fog.circles; fw.masses = m.fog.masses;
+      if (st.Core3D && st.Core3D.fogOfWar !== fw) st.Core3D.setFogOfWar(fw);
+    }
     if (m.weaponDefs) for (let i = 0; i < m.weaponDefs.length; i += 2) st.weaponDefs.set(m.weaponDefs[i], m.weaponDefs[i + 1]);
     st.dustOn = m.dust !== false;
     if (m.ringQuality) st.ringQuality = m.ringQuality;
@@ -455,6 +479,10 @@ if (isWorker) {
       bridgeFx.BridgeFx3D.update(list, fo);
     }
     if (st.destruction) st.destruction.update(h[H.VFX_TIME], h[H.FRAME_DT]);
+    if (st.pbg && v.blocks.pirateBase && v.blocks.pirateBase.f64) {
+      const pm = st.pbMods.blk.applyPirateBaseBlock(v.blocks.pirateBase, st.pbMirror);
+      if (pm.present) st.pbg.updatePirateBase3D(pm.dt, pm.state);
+    }
     hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
@@ -512,6 +540,7 @@ if (isWorker) {
       else if (m.type === 'cmdRing') setCmdRing(m);
       else if (m.type === 'planets') setPlanets(m);
       else if (m.type === 'comets') setComets(m);
+      else if (m.type === 'pbase') st.pbChain = (st.pbChain || Promise.resolve()).then(() => pirateBaseEvent(m));
     } catch (err) {
       report(err, m && m.type);
     }

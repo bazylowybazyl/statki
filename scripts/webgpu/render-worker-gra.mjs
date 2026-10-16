@@ -3,6 +3,7 @@
 // (`window.RenderWorkerHost`: złożenia, ostatnio odebrana / narysowana strona, błędy, CPU klatki workera), błędy
 // konsoli strony i workera (sesje workerów przez Target.setAutoAttach), zrzut ekranu.
 //   node scripts/webgpu/render-worker-gra.mjs [--start single|split] [--czas 10] [--out .tmp/rw40/gra] [--port 5352]
+//        [--kampania 1] [--query story=scout] (kampania: bez wyłączenia fabuły; --query — dodatkowe parametry adresu)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { startVite, evaluate, sleep, repo, startChrome, parseArgs, attachLogs, waitFor, screenshotPng } from './wspolne.mjs';
@@ -12,6 +13,9 @@ const START = args.start || 'single';
 const SECONDS = Number(args.czas || 10);
 const OUT = resolve(repo, args.out || '.tmp/rw40/gra');
 const PORT = Number(args.port || 5352);
+const EXTRA = args.query ? '&' + args.query : '';
+const CAMPAIGN = args.kampania === '1';
+const OFF = args.tryb === 'off';   // porównanie: ten sam scenariusz bez workera
 mkdirSync(OUT, { recursive: true });
 
 const vite = await startVite(PORT);
@@ -34,13 +38,13 @@ cdp.on((msg) => {
 });
 await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-  source: "try { localStorage.setItem('sc_story_campaign','0'); localStorage.setItem('sc_story_tutorial','0'); } catch (_) {}"
+  source: CAMPAIGN ? '' : "try { localStorage.setItem('sc_story_campaign','0'); localStorage.setItem('sc_story_tutorial','0'); } catch (_) {}"
 });
 const report = { start: START, seconds: SECONDS };
 try {
-  await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/index.html?dev=1&renderWorker=1` });
+  await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/index.html?dev=1${OFF ? '' : '&renderWorker=1'}${EXTRA}` });
   await waitFor(cdp, '!!(window.DevScene && window.Core3D && window.Core3D.isInitialized)', 120000);
-  await waitFor(cdp, '!!window.RenderWorkerHost', 60000);
+  if (!OFF) await waitFor(cdp, '!!window.RenderWorkerHost', 60000);
   await sleep(4000);
   if (START === 'split') await evaluate(cdp, '(() => { window.DevScene.startSplit(); return true; })()');
   else await evaluate(cdp, "(() => { document.getElementById('btn-mode-single')?.click(); return true; })()");
@@ -60,13 +64,13 @@ try {
     samples.push({ t: Math.round((Date.now() - t0) / 1000), ...(await read()) });
   }
   report.samples = samples;
-  await screenshotPng(cdp, join(OUT, `${START}.png`));
+  await screenshotPng(cdp, join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}.png`));
 } catch (err) {
   report.error = String(err?.stack || err);
 }
 report.pageErrors = logs.filter((l) => /error|exception/i.test(l)).slice(0, 30);
 report.workerLogs = workerLogs.slice(0, 40);
-writeFileSync(join(OUT, `${START}.json`), JSON.stringify(report, null, 2));
+writeFileSync(join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}.json`), JSON.stringify(report, null, 2));
 console.log(JSON.stringify({ last: report.samples?.[report.samples.length - 1], pageErrors: report.pageErrors.length, workerLogs: report.workerLogs.length, error: report.error }, null, 1));
 await chrome.close();
 await vite.close?.();

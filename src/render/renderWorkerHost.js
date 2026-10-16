@@ -170,6 +170,10 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
         (msg.weaponDefs || (msg.weaponDefs = [])).push(def.id, plainData(def));
       }
     }
+    // mgła wojny tej klatki (świat mgły liczy gra — SensorSystem; post Core3D workera)
+    const fw = host.fogWorld;
+    if (fw) msg.fog = { on: fw.on, time: fw.time, count: fw.count, massCount: fw.massCount, look: fw.look,
+      circles: fw.circles.slice(0, fw.count * 4), masses: fw.masses.slice(0, fw.massCount * 8) };
     const dv = p.dict.values;
     msg.dict = dv.slice(host._dictSent);
     host._dictSent = dv.length;
@@ -243,6 +247,18 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     host._cometsSent = true;
     worker.postMessage({ type: 'comets', sun: plainData(field.sun), au: field.au,
       sites: field.sites.map((s) => ({ id: s.id, x: s.x, y: s.y, offset: s.offset, state: plainData(s.state), geo: plainData(s.geo) })) });
+  };
+
+  // Baza piratów (RW-40b): zdarzenia obrazu z gry (src/game/story/pirateBaseWorld.js) do workera; ramka bazy jako
+  // środek + oś (worker liczy miejsce placePirateBase sam), ciała świata ('bodies') — jeszcze bez workera.
+  host.pirateBaseEvent = (type, a, b, c) => {
+    if (type === 'bodies') return;
+    if (type === 'attach') {
+      if (!b || !b.origin) return;
+      worker.postMessage({ type: 'pbase', ev: 'attach', origin: { x: b.origin.x, y: b.origin.y }, axis: b.axis });
+      return;
+    }
+    worker.postMessage({ type: 'pbase', ev: type, a: plainData(a), b: plainData(b), c: plainData(c) });
   };
 
   host.readStats = () => retReadStats(ret, host.stats);
