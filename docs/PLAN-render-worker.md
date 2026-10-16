@@ -1407,7 +1407,14 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   zasilanie, stanowiska bitami, słońce, pora dnia, dt; `applyPirateBaseBlock` → obiekt dla `updatePirateBase3D`). `ring` (`blocks/ringBlock.js` — zegar hal, na ring obrys kadłuba gracza w hubie, na halę
   wersja i zajętość stanowisk, poziom lamp, pozy obsługi z `settle` i właścicielem; nadpisanie dachu z fabuły —
   `storyHallRoof` po stronie gry; geometria kolidera statyczna — worker buduje ją z układu; przebieg `ziemia` z
-  `?szew=inline` bez błędów). Dalej: pas, komety, pył kosmiczny i planety (wejścia z HEAD).
+  `?szew=inline` bez błędów). Bez bloku: pył kosmiczny i planety (wejścia z HEAD: kamery, dt, słońce, planety, opcja),
+  komety (obraz z czasu renderu i stałych miejsc pola — worker buduje własne `CometField` z danych rozmieszczenia,
+  przekazanych raz). ZOSTAJE PAS — nie blok klatki, tylko transport danych: obraz (`asteroidBelt.js`) czyta ze świata
+  pasa gry `time`, `frameDt`, `sun`, `au` (blok wystarczy), ale też replikę pola z historią operacji
+  (`createFieldReplica` — operacje do strumienia rozkazów), olbrzymy (SDF już w SharedArrayBuffer), wydobycie
+  (`mining` / `rig`: siatki komórek ciał skał, pierścień zdarzeń efektów — potrzebny SAB albo przesył brudnych pudeł,
+  dziś `ackMinedUpload`), zwrotne `attachShapeRadius` (mapy promienia banku render → gra) i zapytanie `roofAbove` —
+  do decyzji projektowej (rw-swiat / rw-worker), koszt większy niż pozostałe bloki razem.
 
 **RW-12 `RenderWorld` zamiast globali gry.**
 Pliki: nowy `src/render/renderWorld.js`; moduły z § 2.4 (33 zmienne, 134 odczyty: `SUN` 26, `ship` 15, `DevTuning`
