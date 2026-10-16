@@ -28789,7 +28789,8 @@
       o.dt = dt; o.camX = cam.x; o.camY = cam.y; o.viewHalf = viewHalf;
       o.rings = haloWorld ? haloWorld.entries : null;
       o.dock = gasDockObstacles();
-      o.nDomains = ex.domainRects(_gasDomRects);
+      // tryb worker: domeny gazu ma reżyser wybuchów workera (prostokąty z ostatniej narysowanej klatki)
+      o.nDomains = rwHost ? rwHost.copyDomainRects(_gasDomRects) : ex.domainRects(_gasDomRects);
       _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
       _gasHullLists[1] = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
       _gasHullLists[2] = o.nDomains ? fogSeenInto(npcs, _gasNpcSeen) : null;

@@ -84,7 +84,11 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       console.error(`[render worker] ${m.where}: ${m.msg}`);
       return;
     }
-    if (m.type === 'frame') compose(m.k, m.bmp);
+    if (m.type === 'frame') {
+      host.domainCount = m.nd | 0;
+      if (m.dr) host.domainRects.set(m.dr.subarray(0, Math.min(m.dr.length, host.domainRects.length)));
+      compose(m.k, m.bmp);
+    }
   };
 
   function compose(k, bmp) {
@@ -284,6 +288,10 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   };
 
   host._beltGiants = new Set();
+  // domeny gazu wybuchów workera (ostatnia klatka) — strona: przeszkody kadłubów (packGasObstacles)
+  host.domainRects = new Float64Array(4 * 16);
+  host.domainCount = 0;
+  host.copyDomainRects = (out) => { const n = Math.min(host.domainCount, out.length >> 2); out.set(host.domainRects.subarray(0, n * 4)); return n; };
   function attachBelt(bw) {
     host._belt = bw;
     worker.postMessage({ type: 'belt', fieldArgs: plainData(bw.fieldArgs), sun: plainData(bw.sun), au: bw.au });

@@ -693,7 +693,11 @@ if (isWorker) {
       bmp = st.canvas.transferToImageBitmap();
     }
     const t2 = performance.now();
-    postMessage({ type: 'frame', k, bmp }, [bmp]);
+    // prostokąty domen gazu wybuchów (strona pakuje z nich przeszkody kadłubów — packGasObstacles, RW-41b)
+    const ex = globalThis.__explosions;
+    const dr = st.domRects || (st.domRects = new Float64Array(4 * 16));
+    const nd = ex && typeof ex.domainRects === 'function' ? ex.domainRects(dr) : 0;
+    postMessage({ type: 'frame', k, bmp, nd, dr: nd ? dr.slice(0, nd * 4) : null }, [bmp]);
     retMod.retNoteRendered(st.ret, k);
     const f = st.ret.f64, R = retMod.RET_F64;
     f[R.CPU_UPDATE_MS] = t1 - t0;

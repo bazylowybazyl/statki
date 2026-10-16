@@ -2061,7 +2061,7 @@ zamiast dzisiejszego konsumenta `ackMinedUpload` (dirtyBox), zdarzenia przez roz
 cienia pól) i zapytanie `roofAbove` (pod stropem olbrzyma — profil świateł statków; liczyć po stronie gry z SDF
 olbrzymów w SAB, wynik w migawce); olbrzymy — SDF już w SharedArrayBuffer (RW-25). Do tego kanał zwrotny
 `__explosions.domainRects` (gra pyta reżysera wybuchów o prostokąty domen gazu dla przeszkód kadłubów —
-`packGasObstacles`) przez RET. **Stan cz. 2 (2026-10-16, `rw-worker`):** wydobycie — `src/render/miningSync.js` (ciała skał po zmianie wersji z pudłem zmian, pozy, okruchy, platforma, zdarzenia, `taken` w wiadomości klatki; repliki `RockBody` i platformy w workerze); zostaje `__explosions.domainRects` przez RET. Kryterium: sesje `pas`, `wydobycie` i `scripts/webgpu/wydobycie-gra.mjs` w trybie
+`packGasObstacles`) przez RET. **Stan cz. 2 (2026-10-16, `rw-worker`):** wydobycie — `src/render/miningSync.js` (ciała skał po zmianie wersji z pudłem zmian, pozy, okruchy, platforma, zdarzenia, `taken` w wiadomości klatki; repliki `RockBody` i platformy w workerze); domeny gazu (`__explosions.domainRects`) wracają w wiadomości `frame` workera (`RenderWorkerHost.copyDomainRects` → `packGasObstacles`), nie przez RET. Kryterium: sesje `pas`, `wydobycie` i `scripts/webgpu/wydobycie-gra.mjs` w trybie
 worker bit w bit z `off`; pipeline'y synchroniczne 0. Zależności: RW-40, RW-41 (zagnieżdżone workery olbrzymów).
 **Stan RW-41b cz. 1 (2026-10-16, `rw-worker`):** obraz pasa w workerze — zastępnik świata pasa w workerze (pole
 z `fieldArgs` i historii operacji strony, kolejne operacje `beltOp`, sektory cienia pól `beltOcc`, olbrzymy `beltGiant`:
