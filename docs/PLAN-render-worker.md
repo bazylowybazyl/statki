@@ -1397,6 +1397,13 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,
   `wydobycie`, `piraci`; `scripts/webgpu/hala-swiatla-gra.mjs`. Kolizje: blok FABUŁA (misja 2) przy doku.
+  **Stan (2026-10-16, tor `rw-szew`): W TOKU** (podział z `rw-migawka`: rw-szew — bloki modułów świata, rw-migawka —
+  wpięcie RW-11a/b). Zrobione (rejestracja przy `?szew=inline` zaraz po `const renderSnapshot`, przebieg `kosmos`
+  z `?szew=inline` bez błędów): `gasObst` (`src/render/blocks/gasObstBlock.js` — wejście przeszkód gazu `GAS_OBST_IN`
+  w tym samym układzie, strona renderu `gasObstInputOf(view)` → `setObstacleInput`; ZOSTAJE kanał zwrotny: gra pyta
+  render o prostokąty domen gazu `__explosions.domainRects` — w workerze przez RET) i `warp` (`blocks/warpBlock.js` —
+  lustro osi przylotów / odlotów rejestru `warpTraffic` dla `recordAt(slot)`, klatka „Nurtu”: `trafficTime`, `dt`,
+  `camFollow`, `lensAllowed`). Dalej: pas, ring / pył hal (HALL już w stronie), baza piratów, komety.
 
 **RW-12 `RenderWorld` zamiast globali gry.**
 Pliki: nowy `src/render/renderWorld.js`; moduły z § 2.4 (33 zmienne, 134 odczyty: `SUN` 26, `ship` 15, `DevTuning`
