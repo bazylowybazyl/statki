@@ -2035,7 +2035,7 @@ Obraz 3D nie jest już ograniczony CPU workera (klatka 3–4 ms przy ~140 kl/s) 
 `_pól` i cykli, wysyłane przy zmianie położeń / promieni; potem wartości w miejscu; strefa nieba w wiadomości `frame`)
 i pył kosmiczny (`SpaceDust3D` — kamera bez wstrząsu z HEAD, opcja w wiadomości). `fetch` workera rozwiązuje adresy
 względne zasobów (`assets/…`) względem strony (`pageBase`). Zrzuty `kosmos` w trybie worker: mgławica, gwiazdy, smugi
-cienia słońca, pociski, kadłuby — bez błędów. ZOSTAJE (następna sesja — notatka `rw-worker-stan.md` w folderze notatek
+cienia słońca, pociski, kadłuby — bez błędów. Cz. 4: RAKIETY — blok `rockets` migawki (`src/render/blocks/rocketBlock.js`: pola puli czytane przez reżysera — stan, tryb, faza, broń przez słownik, strzelec / cel jako slot + generacja, ciąg, nos, pozycja, prędkości; definicje broni rakiet strona wysyła raz na id), lustro puli w workerze, `attachRockets` i dekoder RKT_* na lustrze; zrzuty `rakiety` (galeria rakiet, trafienie, Supernowa) w trybie worker — salwy, smugi dymu, płomienie, bez błędów. Rekordy RKT_* klatki są odtwarzane na stanie puli z końca klatki (rakieta wystrzelona i zakończona w jednej klatce — efekt na stanie końcowym). ZOSTAJE (następna sesja — notatka `rw-worker-stan.md` w folderze notatek
 torów): ring „Halo” i hale K-7 (budowa ringów w workerze: profil, wypiek map, kolider z układu; blok `ring` gotowy;
 tło menu na stronie korzysta z ringu strony — RW-41), pył hal (wejście `HALL_DUST_IN` = blok HALL), warp „Nurt” (stan
 warpa gracza z bloku WORLD + dekoder WARP_* na lustrze bloku `warp`), świat 3D i baza piratów (blok `pirateBase`

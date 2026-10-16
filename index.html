@@ -1330,6 +1330,7 @@
     import { RenderMirror } from "./src/render/renderMirror.js";
     import { resolveRenderMode, renderWorkerCaps } from "./src/render/renderBridge.js";
     import { createRenderWorkerHost } from "./src/render/renderWorkerHost.js";
+    import { createRocketBlock } from "./src/render/blocks/rocketBlock.js";
     import { BEAM_BRIDGE_BACKEND } from "./src/game/shipBridgeBeams.js";
     import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
     import { bridgeGameToMirrors, bridgeMirrorsToGame, bridgeStationsGameToMirrors, bridgeStationsMirrorsToGame } from "./src/render/mirrorBridge.js";
@@ -28398,6 +28399,8 @@
       renderSnapshot.addBlock(createRingBlock());
       // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
       if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
+      // RW-40b: pula rakiet (lot w grze) dla reżysera efektów rakiet w workerze
+      if (RW_WORKER) renderSnapshot.addBlock(createRocketBlock());
     }
     const _snapFrame = createSnapshotFrame();
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
@@ -28513,6 +28516,7 @@
       // lustra (RW-11a): render czyta brud skóry z luster — pakujący zeruje flagi gry; wygląd maskowania tej klatki (RW-26)
       f.consumeDirty = SZEW_LATE;
       f.cloak = cloakFrame;
+      f.rockets = RW_WORKER ? (window.rocketSystem3D?.rockets || null) : null;
       renderSnapshot.begin(f);
     }
 

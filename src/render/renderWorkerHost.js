@@ -68,7 +68,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   const host = {
     worker, ret, ring, ready: false, failed: null, frames: 0, composed: 0, lastPostedK: -1, lastCommittedK: -1,
     errors: [], stats: new Float64Array(RET_F64.COUNT), _shown: false, _dictSent: 0,
-    _sentRes: [], _chain: Promise.resolve(), _W: W, _H: H
+    _sentRes: [], _sentDefs: new Set(), _chain: Promise.resolve(), _W: W, _H: H
   };
   worker.onerror = (e) => { host.errors.push(`worker: ${e.message}`); if (onError) onError(e.message); };
   worker.onmessage = (e) => {
@@ -148,6 +148,16 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     for (const bs of p.topoQueue) msg.topo.push(bs, p.topologies[bs]);
     for (const uid of p.coreQueue) msg.cores.push(uid, p.coreDescs.get(uid));
     for (const s of p.stationQueue) msg.stations.push(s, p.stationDescs[s]);
+    // definicje broni rakiet w locie (raz na id — blok ROCKETS niesie samo id)
+    const pool = typeof window !== 'undefined' && window.rocketSystem3D ? window.rocketSystem3D.rockets : null;
+    if (pool) {
+      for (let i = 0; i < pool.length; i++) {
+        const def = pool[i] && pool[i].active ? pool[i].weaponDef : null;
+        if (!def || !def.id || host._sentDefs.has(def.id)) continue;
+        host._sentDefs.add(def.id);
+        (msg.weaponDefs || (msg.weaponDefs = [])).push(def.id, plainData(def));
+      }
+    }
     const dv = p.dict.values;
     msg.dict = dv.slice(host._dictSent);
     host._dictSent = dv.length;

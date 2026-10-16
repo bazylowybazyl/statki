@@ -14,7 +14,7 @@ export const RW_WORKER_DISABLED = Object.freeze([
   'ring „Halo” i hale K-7', 'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
   'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
-  'rakiety (lot w grze bez bloku migawki)', 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
+'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
 
 const isWorker = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;
@@ -71,13 +71,16 @@ if (isWorker) {
       import('../3d/explosions/explosionCommands.js'), import('../3d/explosions/explosionFx.js'), import('../3d/rockets/rocketFx.js'),
       import('../3d/sparkSystem3D.js'), import('../game/simClock.js'), import('../3d/weapons/weaponFx.js')
     ]);
+    const [rktBlock, rktCmd] = await Promise.all([import('./blocks/rocketBlock.js'), import('../3d/rockets/rocketFxCommands.js')]);
     const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
       import('../3d/bridge3D.js'), import('../3d/bridgeFx3D.js'), import('../game/cloakLook.js'), import('../3d/reactorBlast/reactorBlastFx.js')
     ]);
     // planety, słońce, księżyce, małe ciała, mgławica i gwiazdy (API globalne: initPlanets3D / updatePlanets3D)
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd };
+    st.rockets = rktBlock.createRocketMirror();
+    st.weaponDefs = new Map();
     const Core3D = core.Core3D;
     st.Core3D = Core3D;
     if (m.quality) Core3D.configureQuality(m.quality);
@@ -113,6 +116,8 @@ if (isWorker) {
     try {
       sparks.SparkSystem3D.init(Core3D.scene);
       const rocketFx = rktFx.createRocketFx(Core3D);
+      st.rocketFx = rocketFx;
+      if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(st.rockets.pool);
       wfx.WeaponFx.ensure();
       st.blastFactory = blastFx.createExplosionFactory(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
@@ -138,6 +143,7 @@ if (isWorker) {
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
+    if (st.rocketFx && st.rocketFx.director) st.mods.rktCmd.installRocketFxCommands(st.cmd, st.rocketFx.director, (i) => st.rockets.pool[i] || null);
   }
 
   // Dane ciał ze strony: pierwsza wiadomość — initPlanets3D, kolejne — wartości w miejscu (encje czytają obiekty danych).
@@ -246,6 +252,7 @@ if (isWorker) {
     for (let i = 0; i < m.dict.length; i++) dv[m.dictFrom + i] = m.dict[i];
     if (m.evFrame > st.evFrame) st.evFrame = m.evFrame;
     st.skyZone = m.skyZone;
+    if (m.weaponDefs) for (let i = 0; i < m.weaponDefs.length; i += 2) st.weaponDefs.set(m.weaponDefs[i], m.weaponDefs[i + 1]);
     st.dustOn = m.dust !== false;
     if (m.k > st.lastMsgK) { st.lastMsgK = m.k; st.pageEv[m.k & 63] = m.evFrame; }
   }
@@ -295,6 +302,10 @@ if (isWorker) {
     SC.sim = h[H.SIM]; SC.render = h[H.SIM_RENDER]; SC.renderSim = h[H.SIM_RENDER_SIM];
     applyShots(v);
     applyTurrets(v);
+    if (v.blocks.rockets && v.blocks.rockets.f64) {
+      st.mods.rktBlock.applyRocketBlock(v.blocks.rockets, st.dict, st.rockets,
+        (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, (id) => st.weaponDefs.get(id));
+    }
     // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
     if (st.cmd) { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); }
     const cam = st.cam;
