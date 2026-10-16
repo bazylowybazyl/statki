@@ -79,6 +79,21 @@ const lowestLayer = (mask) => {
   return -1;
 };
 const LISTA_MAX = 96;
+const CIEZKIE_MS = 25;
+
+/**
+ * Wariant rozgrzewki siatek instancjonowanych (pule efektów rysowane z licznikiem instancji 0 do pierwszego użycia):
+ * na czas kompilacji licznik ≥ 2 — jak w prawdziwym rysowaniu (InstancedMesh.count albo geometry.instanceCount).
+ */
+export const WARIANT_INSTANCJI = Object.freeze({
+  apply(m) {
+    if (m.isInstancedMesh) { const c = m.count; m.count = Math.max(2, c); return () => { m.count = c; }; }
+    const g = m.geometry, c = g && g.instanceCount;
+    if (!Number.isFinite(c)) return null;
+    g.instanceCount = Math.max(2, c);
+    return () => { g.instanceCount = c; };
+  }
+});
 
 export class Rozgrzewka {
   /** core — Core3D (renderer, scene, composerTarget, warmupCamera(layer), warmupTarget(layer)). */
@@ -161,6 +176,18 @@ export class Rozgrzewka {
     tracked.then(() => this._pending.delete(tracked));
     if (this._current) this._current.promises.push(tracked);
     return promise;
+  }
+
+  // Pojedyncza kompilacja ≥ CIEZKIE_MS (budowa NodeBuildera w jednym zadaniu): po ekranie ładowania to długie zadanie
+  // w trakcie gry (przestój klatki). stats.ciezkie — najdłuższe, z nazwą wpisu, obiektu i fazą (diagnostyka narzędzi).
+  _heavy(entry, obj, ms) {
+    const list = this.stats.ciezkie || (this.stats.ciezkie = []);
+    const mat = obj && obj.material;
+    list.push({ nazwa: entry.name, obiekt: (obj && obj.name) || (mat && (mat.name || mat.type)) || '?', ms: +ms.toFixed(1),
+      faza: entry.spec.phase || (entry.urgent ? 'pilne' : 'add'), poFlush: !!this.stats.flush });
+    list.sort((a, b) => b.ms - a.ms);
+    if (list.length > 24) list.length = 24;
+    if (this.stats.flush) console.warn(`[Core3D.warmup] kompilacja w grze ${ms.toFixed(0)} ms: „${entry.name}” / ${list.find((r) => r.ms === +ms.toFixed(1))?.obiekt || '?'}`);
   }
 
   _list(row) {
@@ -407,6 +434,7 @@ export class Rozgrzewka {
     this.stats.siatki++;
     this.stats.cpuMs += ms;
     if (ms > this.stats.maksZadanieMs) this.stats.maksZadanieMs = +ms.toFixed(1);
+    if (ms >= CIEZKIE_MS) this._heavy(entry, obj, ms);
     this._markDone(obj, this._doneShadow);
     const tracked = promise.then((ok) => {
       if (ok === true) return true;
@@ -488,6 +516,7 @@ export class Rozgrzewka {
     this.stats.siatki++;
     this.stats.cpuMs += ms;
     if (ms > this.stats.maksZadanieMs) this.stats.maksZadanieMs = +ms.toFixed(1);
+    if (ms >= CIEZKIE_MS) this._heavy(entry, obj, ms);
     if (split && !spec.variant) this._markDone(obj, doneMap);
     const tracked = promise.then(() => true, (err) => {
       this.stats.bledy++;

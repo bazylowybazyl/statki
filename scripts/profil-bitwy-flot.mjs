@@ -68,6 +68,29 @@ await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };` : ''}
 })();` });
 const ev = (expr) => evaluate(cdp, expr);
+// --workerProf 1 (2026-10-17, przestoje w bitwie): profil CPU workera renderu (?renderWorker=1) przez cały pomiar
+// (próbkowanie 500 µs) + jego konsola z czasem → worker.cpuprofile i worker-konsola.txt w --out.
+const WORKER_PROF = arg('workerProf', '0') === '1';
+const _wk = { sid: null, id: 7000000, logs: [], t0: Date.now() };
+const wkSend = (method, params = {}) => {
+  const id = ++_wk.id;
+  cdp.ws.send(JSON.stringify({ id, method, params, sessionId: _wk.sid }));
+  return new Promise((ok, reject) => cdp.pending.set(id, { ok, reject }));
+};
+if (WORKER_PROF) {
+  cdp.on((msg) => {
+    if (msg.method === 'Target.attachedToTarget' && msg.params?.targetInfo?.type === 'worker' && !_wk.sid
+      && /render\.worker/.test(msg.params.targetInfo.url || '')) {
+      _wk.sid = msg.params.sessionId;
+      wkSend('Runtime.enable').catch(() => {});
+      wkSend('Runtime.runIfWaitingForDebugger').catch(() => {});
+    }
+    if (msg.sessionId && msg.sessionId === _wk.sid && msg.method === 'Runtime.consoleAPICalled') {
+      _wk.logs.push(`${((Date.now() - _wk.t0) / 1000).toFixed(1)} s [${msg.params.type}] ${msg.params.args.map((x) => x.value ?? x.description ?? '').join(' ')}`.slice(0, 600));
+    }
+  });
+  await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+}
 const report = (label, value) => console.log(String(label).padEnd(12), typeof value === 'string' ? value : JSON.stringify(value));
 const errors = () => logs.filter((l) => /^\[(error|exception)\]/.test(l) && !/AudioSys/.test(l));
 
@@ -301,6 +324,7 @@ try {
   const t0 = Date.now();
   const sec = () => (Date.now() - t0) / 1000;
   const todo = [...PROFILE_AT].sort((a, b) => a.at - b.at);
+  if (WORKER_PROF && _wk.sid) { _wk.t0 = Date.now(); await wkSend('Profiler.enable'); await wkSend('Profiler.setSamplingInterval', { interval: 500 }); await wkSend('Profiler.start'); }
   await cdp.send('Profiler.enable');
   await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
   const STEPS_EXPR = `(window.__aiDecisionTickId || 0) * ${STEPS_PER_AI}`;
@@ -328,6 +352,12 @@ try {
     if (d.diag) report('  diag', diagLine(d.diag));
     if (DIAG && samples.length % 4 === 1) { try { report('  V8 pola', await ev(NATIVE_EXPR)); } catch (e) { report('  V8 pola', String(e.message || e)); } }
   }
+  if (WORKER_PROF && _wk.sid) {
+    const { profile } = await wkSend('Profiler.stop');
+    writeFileSync(join(OUT, 'worker.cpuprofile'), JSON.stringify(profile));
+    report('worker', { profil: join(OUT, 'worker.cpuprofile'), konsola: _wk.logs.length });
+  }
+  if (WORKER_PROF) writeFileSync(join(OUT, 'worker-konsola.txt'), _wk.logs.join('\n'));
   writeFileSync(join(OUT, 'probki.json'), JSON.stringify({ sklad: SKLAD, zoom: ZOOM, seed: SEED, calm, samples,
     profiles: profiles.map((p) => ({ at: p.at, dur: p.dur, frames: p.frames, steps: p.steps, file: p.file, before: p.before })) }, null, 1));
 
