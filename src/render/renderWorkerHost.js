@@ -84,6 +84,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       console.error(`[render worker] ${m.where}: ${m.msg}`);
       return;
     }
+    if (m.type === 'prepared') { const f = host._prep.get(m.id); if (f) { host._prep.delete(m.id); f(!!m.ok); } return; }
     if (m.type === 'frame') {
       host.domainCount = m.nd | 0;
       if (m.dr) host.domainRects.set(m.dr.subarray(0, Math.min(m.dr.length, host.domainRects.length)));
@@ -287,6 +288,15 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     worker.postMessage({ type: 'pbase', ev: type, a: plainData(a), b: plainData(b), c: plainData(c) });
   };
 
+  // Ekran ładowania (RW-41): worker buduje ringi przy (x, y) i dokańcza rozgrzewkę — strona czeka (z limitem).
+  host._prep = new Map();
+  host._prepSeq = 0;
+  host.prepare = (x, y, timeoutMs = 25000) => new Promise((resolve) => {
+    const id = ++host._prepSeq;
+    host._prep.set(id, resolve);
+    worker.postMessage({ type: 'prepare', id, x, y });
+    setTimeout(() => { if (host._prep.delete(id)) resolve(false); }, timeoutMs);
+  });
   host._beltGiants = new Set();
   // domeny gazu wybuchów workera (ostatnia klatka) — strona: przeszkody kadłubów (packGasObstacles)
   host.domainRects = new Float64Array(4 * 16);

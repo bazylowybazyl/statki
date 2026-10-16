@@ -74,6 +74,10 @@ const errors = () => logs.filter((l) => /^\[(error|exception)\]/.test(l) && !/Au
 // Próbka: cały PerfHUD.display (pola liczbowe) + stan bitwy i passy Core3D.
 const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.round(v * 1000) / 1000;
   const hud = {}; for (const k in d) if (typeof d[k] === 'number' && Number.isFinite(d[k])) hud[k] = r(d[k]);
+  // tryb worker (?renderWorker=1, RW-44): obraz 3D = złożenia bitmap workera na sekundę (fps3d), CPU klatki workera
+  { const h = window.RenderWorkerHost; if (h) { h.readStats(); const now = performance.now(), c = h.composed;
+    const p = window.__rwPrev || { t: now, c }; window.__rwPrev = { t: now, c }; const dt = (now - p.t) / 1000;
+    hud.fps3d = dt > 0 ? r((c - p.c) / dt) : 0; hud.workerCpuMs = r(h.stats[6] || 0); hud.workerRenderMs = r(h.stats[5] || 0); } }
   const npcs = window.npcs || [], live = npcs.filter((n) => !n.dead && !n.fighter);
   const C = window.Core3D, P = window.__rendererInfo?.passes || C?.lastFrameRenderInfo || {};
   const passes = {}; for (const k in P) if (P[k] && P[k].calls) passes[k] = [P[k].calls, Math.round((P[k].triangles || 0) / 1000), r(P[k].ms || 0)];
@@ -115,10 +119,12 @@ const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.
 const KEY = ['fps', 'frameMs', 'frameP95', 'physicsTime', 'physicsPerStep', 'aiTime', 'projectileTime', 'collisionTime',
   'destructorTime', 'drawTime', 'render3dHexUpdateTime', 'render3dCoreRenderTime', 'rocketsTime',
   // RW-11a (D7, --query szew=inline): faza begin migawki + lustra — część render3dHexUpdateTime (moduły = Uhex − lustra)
-  'renderMirrorTime'];
+  'renderMirrorTime',
+  // RW-44 (tryb worker): złożenia obrazu 3D na sekundę, CPU klatki workera (całość / render)
+  'fps3d', 'workerCpuMs', 'workerRenderMs'];
 const short = (s) => {
   const h = s.hud, steps = h.physicsPerStep > 0 ? h.physicsTime / h.physicsPerStep : 0;
-  return `fps ${h.fps} kl ${h.frameMs?.toFixed(1)} p95 ${h.frameP95?.toFixed(1)} | fiz ${h.physicsTime?.toFixed(2)} (${h.physicsPerStep?.toFixed(2)}/krok × ${steps.toFixed(2)}) ` +
+  return `fps ${h.fps}${h.fps3d !== undefined ? ` w3d ${h.fps3d} cpuW ${h.workerCpuMs}` : ''} kl ${h.frameMs?.toFixed(1)} p95 ${h.frameP95?.toFixed(1)} | fiz ${h.physicsTime?.toFixed(2)} (${h.physicsPerStep?.toFixed(2)}/krok × ${steps.toFixed(2)}) ` +
     `AI ${h.aiTime?.toFixed(2)} poc ${h.projectileTime?.toFixed(2)} kol ${h.collisionTime?.toFixed(2)} | rys ${h.drawTime?.toFixed(2)} Uhex ${h.render3dHexUpdateTime?.toFixed(2)}${h.renderMirrorTime ? ` lustra ${h.renderMirrorTime.toFixed(2)}` : ''} ` +
     `core ${h.render3dCoreRenderTime?.toFixed(2)} | gpu ${s.gpu.gpuMs} dc ${s.gpu.dc} | npc ${s.stan.npc} (${s.stan.piraci}/${s.stan.tn}) wr ${s.stan.wraki} poc ${s.stan.pociski} węzły ${s.stan.wezly} | zoom ${s.stan.zoom}`;
 };

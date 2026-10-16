@@ -7,7 +7,10 @@
 //
 //   node scripts/webgpu/start-gry.mjs [--root <repo gry, np. worktree tagu webgl-baseline>] [--powtorz 3]
 //        [--port 5358] [--out katalog] [--klatki 300] [--menu-ms 2000] [--etykieta nazwa] [--bez-rozbiegu]
-//        [--root-b <drugie repo> [--etykieta-b nazwa]]
+//        [--root-b <drugie repo> [--etykieta-b nazwa]] [--query renderWorker=1] [--kampania 1]
+//
+// --query: dodatkowe parametry adresu gry (RW-44: tryb worker — chwila graObraz3D = pierwsze złożenie obrazu workera;
+// pipeline'y synchroniczne i klatki liczone na stronie — w trybie worker to wątek gry, nie render).
 //
 // --root-b (zadanie 25a): porównanie A/B NA PRZEMIAN (A, B, A, B…; dwa serwery, rozbieg każdego) — obciążenie
 // maszyny zmienia bezwzględne czasy między seriami o sekundy, więc „przed / po” tylko w jednej serii naprzemiennej.
@@ -91,7 +94,9 @@ const RECORDER = `(() => {
       const e = window.__haloRings && window.__haloRings.entries && window.__haloRings.entries.find((x) => x.key === 'earth');
       mark('ringZiemi', !!(e && e.ring && e.ring.mapsReady));
       mark('graPierwszaKlatka', (window.__frameId | 0) >= 1);
-      if (R.marks.graPierwszaKlatka !== undefined) clearInterval(poll);
+      const H = window.RenderWorkerHost;
+      mark('graObraz3D', !!(H && H.composed > 0));
+      if (R.marks.graPierwszaKlatka !== undefined && (!H || R.marks.graObraz3D !== undefined)) clearInterval(poll);
     } catch (err) { /* strona się ładuje */ }
   }, 5);
   window.__startRec = R;
@@ -164,7 +169,9 @@ async function runOnce(base, n) {
   const res = { przebieg: n, bledy: [] };
   try {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: RECORDER });
-    await cdp.send('Page.navigate', { url: `${base}/index.html` });
+    // gra swobodna (świeży profil = kampania: odprawa w doku zatrzymuje świat i __frameId); --kampania 1 — kampania
+    if (args.kampania !== '1') await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('sc_story_campaign','0'); localStorage.setItem('sc_story_tutorial','0'); } catch (_) {}" });
+    await cdp.send('Page.navigate', { url: `${base}/index.html${args.query ? '?' + args.query : ''}` });
     if (!await waitFor(cdp, '!!(window.__startRec && window.Core3D && window.Core3D.isInitialized)', 120000, 100)) throw new Error('gra nie wstała');
     res.renderer = await ev('(() => new Promise((ok) => { const f = () => { const r = window.Core3D.renderer; if (r) ok(r.isWebGPURenderer ? "webgpu" : "webgl"); else setTimeout(f, 50); }; f(); }))()');
     if (!await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 180000, 50)) throw new Error('tło menu nie gotowe');
@@ -175,8 +182,12 @@ async function runOnce(base, n) {
     if (!await waitFor(cdp, `(window.__frameId | 0) >= ${gameFrames}`, 180000, 100)) throw new Error('gra nie ruszyła');
     const rec = await ev(`(() => { const R = window.__startRec; return { n: R.n, marks: R.marks, start: Array.from(R.start.subarray(0, R.n)), cpu: Array.from(R.cpu.subarray(0, R.n)), game: Array.from(R.game.subarray(0, R.n)), pipes: R.pipes }; })()`);
     res.chwile = rec.marks;
+    res.rw = await ev('(() => { const h = window.RenderWorkerHost; return h ? { composed: h.composed, ready: h.ready, failed: h.failed, errors: h.errors.slice(0, 5) } : null; })()');
     if (Number.isFinite(rec.marks.graPierwszaKlatka) && Number.isFinite(rec.marks.klik)) {
       res.chwile.graOdKliku = +(rec.marks.graPierwszaKlatka - rec.marks.klik).toFixed(1);
+    }
+    if (Number.isFinite(rec.marks.graObraz3D) && Number.isFinite(rec.marks.klik)) {
+      res.chwile.obraz3DOdKliku = +(rec.marks.graObraz3D - rec.marks.klik).toFixed(1);
     }
     // okna klatek: menu (pierwsza klatka tła → klik), gra (pierwsze `gameFrames` klatek gry)
     const firstMenu = rec.start.findIndex((t) => t >= (rec.marks.menuPierwszaKlatka ?? Infinity) - 20);
@@ -227,7 +238,7 @@ function logRun(i, side, r) {
   const c = r.chwile || {};
   console.log(`przebieg ${i} (${side.label}, ${r.renderer || '?'}): ${r.blad ? 'BŁĄD ' + r.blad : ''}`
     + ` gpu ${c.gpuReady ?? '-'} | menu 1. klatka ${c.menuPierwszaKlatka ?? '-'} gotowe ${c.menuGotowe ?? '-'} | ring ${c.ringZiemi ?? '-'}`
-    + ` | gra od kliku ${c.graOdKliku ?? '-'} ms, 1. klatka ${r.gra?.pierwszaKlatkaMs ?? '-'} ms (CPU ${r.gra?.pierwszaKlatkaCpu ?? '-'})`
+    + ` | gra od kliku ${c.graOdKliku ?? '-'} ms${c.obraz3DOdKliku !== undefined ? ` (obraz workera ${c.obraz3DOdKliku} ms)` : ''}, 1. klatka ${r.gra?.pierwszaKlatkaMs ?? '-'} ms (CPU ${r.gra?.pierwszaKlatkaCpu ?? '-'})`
     + ` | przestoje menu ${r.menu?.przestoje ?? '-'}/${r.menu?.klatki ?? '-'} (maks ${r.menu?.maksMs ?? '-'}), ładowanie ${r.ladowanie?.przestoje ?? '-'}/${r.ladowanie?.klatki ?? '-'} (maks ${r.ladowanie?.maksMs ?? '-'}), gra ${r.gra?.przestoje ?? '-'}/${r.gra?.klatki ?? '-'} (maks ${r.gra?.maksMs ?? '-'})`
     + ` | pipeline'y sync: przed menu ${r.przedMenu?.pipeline?.sync ?? '-'}, menu ${r.menu?.pipeline?.sync ?? '-'}, ładowanie ${r.ladowanie?.pipeline?.sync ?? '-'}, gra ${r.gra?.pipeline?.sync ?? '-'}`
     + ` | budowy w klatkach: menu ${r.menu?.pipeline?.budowy ?? '-'}, gra ${r.gra?.pipeline?.budowy ?? '-'} (${r.gra?.pipeline?.budowyMs ?? '-'} ms)`

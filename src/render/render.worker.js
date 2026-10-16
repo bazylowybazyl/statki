@@ -707,6 +707,29 @@ if (isWorker) {
     st.frames++;
   }
 
+  // Ekran ładowania strony (RW-41): ringi przy punkcie startu zbudowane (wypiek map, bryły rozgrzane — hak prewarm)
+  // i kolejka rozgrzewki workera dokończona, zanim strona zdejmie kurtynę — inaczej pierwsze sekundy gry worker
+  // budował ring i kompilował pipeline'y w klatkach (200–400 ms na klatkę).
+  async function prepareScene(m) {
+    const t0 = performance.now();
+    const waits = [];
+    if (st.haloRings) {
+      st.haloRings.syncEntries?.();
+      for (const e of st.haloRings.entries || []) {
+        const p = e.planet;
+        if (!p || Math.hypot((p.x || 0) - m.x, (p.y || 0) - m.y) > 420000) continue;
+        const ring = e.ring || st.haloRings.showcaseRing(e.key);
+        if (ring && ring.ready) waits.push(Promise.resolve(ring.ready));
+      }
+    }
+    const limit = (ms) => new Promise((r) => setTimeout(() => r(false), ms));
+    if (waits.length) await Promise.race([Promise.all(waits), limit(m.ringMs || 20000)]);
+    const tRing = performance.now();
+    await Promise.race([st.Core3D.warmup.flush({ timeoutMs: 4000 }), limit(6000)]);
+    console.log(`[render.worker] przygotowanie sceny: ringi ${waits.length} ${Math.round(tRing - t0)} ms, rozgrzewka ${Math.round(performance.now() - tRing)} ms`);
+    return true;
+  }
+
   // wiadomości przed końcem init (moduły ładują się asynchronicznie) — w kolejce, w kolejności
   const early = [];
   const handle = (m) => {
@@ -721,6 +744,7 @@ if (isWorker) {
       else if (m.type === 'beltOcc') { st.beltSectors = m.sectors; if (st.beltWorld) { st.beltWorld.sectors = m.sectors; for (const f of st.beltOccSubs) f(m.sectors); } }
       else if (m.type === 'beltGiant') addGiant(m);
       else if (m.type === 'pbase') st.pbChain = (st.pbChain || Promise.resolve()).then(() => pirateBaseEvent(m));
+      else if (m.type === 'prepare') prepareScene(m).then((ok) => postMessage({ type: 'prepared', id: m.id, ok }), (err) => { report(err, 'prepare'); postMessage({ type: 'prepared', id: m.id, ok: false }); });
     } catch (err) {
       report(err, m && m.type);
     }

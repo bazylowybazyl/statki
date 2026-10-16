@@ -28401,6 +28401,10 @@
         if (cometField) rwHost.sendComets(cometField);
         // mgła wojny (koła wzroku, sygnatury masy) — w każdej wiadomości klatki
         rwHost.fogWorld = SensorSystem.fogWorld;
+        // RW-41: planety i ring przy statku budują się w workerze już w menu (ekran ładowania czeka tylko na resztę)
+        rwHost.ringQuality = window.OPTIONS?.planetQuality || 'high';
+        rwHost.syncPlanets(planets, SUN, window.smallBodies, null);
+        rwHost.prepare(ship.pos.x, ship.pos.y, 60000);
       } catch (err) {
         console.error('[render worker] start nieudany:', err);
       }
@@ -32106,6 +32110,8 @@
       // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
       // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.
       const launchT0 = performance.now();
+      // RW-41: worker przygotowuje scenę (ringi przy statku, rozgrzewka) równolegle z ekranem ładowania strony
+      const rwPrepare = rwHost ? rwHost.prepare(ship.pos.x, ship.pos.y) : null;
       // Kampania z lotem intro w tle menu: kamera tła NIE dojeżdża do Ziemi (tylko planeta na środek kadru) — tor intro
       // leci jednym najazdem z tej pozy prosto na dok K-7 (dawniej: dojazd tu + tor „do Ziemi, odjazd, dok”).
       const storyFlightPlanned = storyCampaign && !!menuBackdrop && !StoryOptions.devStartPhase();
@@ -32234,6 +32240,8 @@
       // (dysze SIDE, światła pozycyjne, passy Core3D z tym, co już jest w scenie) — pierwsza klatka gry bez kompilacji.
       setLoadingProgress(90, 'Kompilacja shaderów');
       await Core3D.warmup?.flush({ timeoutMs: 4000 });
+      // tryb worker: scena workera gotowa (zaczęta przy kliknięciu — zwykle już jest)
+      if (rwPrepare) { setLoadingProgress(95, 'Render w tle'); await rwPrepare; }
 
       setLoadingProgress(100, 'Start!');
       await nextFrame();

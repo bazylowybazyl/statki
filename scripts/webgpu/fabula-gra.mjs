@@ -1,7 +1,7 @@
 // Fabuła w PRAWDZIWEJ grze (2026-09-30, src/game/story/): Vite + headless Chrome z WebGPU (CDP).
 //
 //   node scripts/webgpu/fabula-gra.mjs [--intro] [--faza scout|approach|ram|defences|shipyard|aftermath|repair|counter|counter2|counter3|return]
-//        [--kadry 0,2,4,6,8,10,12,14] [--rozmiar 1600x900] [--out .tmp/fabula] [--czas 20]
+//        [--kadry 0,2,4,6,8,10,12,14] [--rozmiar 1600x900] [--out .tmp/fabula] [--czas 20] [--query renderWorker=1]
 //
 // --intro (domyślnie): nowa gra w trybie kampanii — kadry lotu kamery w stałych chwilach toru (StoryGame.cine.devTime),
 //   odprawa w doku (dialog), panel stanowiska i klik ODDOKUJ, odcumowanie, kamera gry z celem i samouczkiem.
@@ -53,13 +53,16 @@ const state = () => ev(`(() => {
 async function shot(name, extra = null) {
   await sleep(Number(args.czekaj || 700));
   const st = await state();
+  // tryb worker: obraz workera złożony dla ostatniej opublikowanej strony (bariera „narysowano k”, jak zrzuty.mjs)
+  await waitFor(cdp, '!window.RenderWorkerHost || window.RenderWorkerHost.ring.lastComposed >= window.RenderWorkerHost.lastPostedK', 5000, 50);
   await screenshotPng(cdp, join(out, `${name}.png`));
   report.kadry.push({ name, ...st, ...(extra || {}) });
   console.log(name.padEnd(22), JSON.stringify(st));
 }
 
 try {
-  const url = `${base}/index.html?dev=1${faza ? `&story=${faza}` : ''}`;
+  // --query a=b — dodatkowe parametry adresu (RW-44: renderWorker=1 — tryb worker; zrzut = złożenie obrazu workera)
+  const url = `${base}/index.html?dev=1${faza ? `&story=${faza}` : ''}${args.query ? '&' + args.query : ''}`;
   await cdp.send('Page.navigate', { url });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.StoryGame)', 240000, 400)) throw new Error('gra nie wstała');
   // Tło menu gotowe (kamera kinowa menu — początek lotu intro).
