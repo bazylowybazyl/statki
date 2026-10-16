@@ -61,6 +61,16 @@ export const RET_F64 = Object.freeze({
   FX_STEPS: 10,           // kroki Core3D.fx w klatce
   FX_MS: 11,
   PIXEL_RATIO: 12,        // skala renderu w użyciu (rozdzielczość dynamiczna)
+  // uzgadnianie strona ↔ worker (RW-45b) — liczniki narastające: takty rAF workera, takty bez renderu (strona odebrana
+  // czeka na swoją wiadomość), strony odebrane i porzucone przed renderem (tryb `rwRender=raf`), rendery, rendery
+  // zrobione wprost z odbioru wiadomości `frame` (tryb `msg`)
+  W_TICKS: 13,
+  W_WAITS: 14,
+  W_ABANDONED: 15,
+  W_RENDERED: 16,
+  W_MSG_RENDERS: 17,
+  W_MSG_LAG_SUM: 18,      // suma opóźnień wiadomości `frame` (wysyłka strony → odbiór w workerze, ms epoki) i ich liczba
+  W_MSG_N: 19,
   COUNT: 32
 });
 

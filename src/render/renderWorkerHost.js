@@ -69,8 +69,11 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   const host = {
     worker, ret, ring, ready: false, failed: null, frames: 0, composed: 0, lastPostedK: -1, lastCommittedK: -1,
     errors: [], stats: new Float64Array(RET_F64.COUNT), _shown: false, _dictSent: 0,
-    _sentRes: [], _sentDefs: new Set(), _pendDesc: new Set(), _chain: Promise.resolve(), _W: W, _H: H
+    _sentRes: [], _sentDefs: new Set(), _pendDesc: new Set(), _chain: Promise.resolve(), _chainBusy: 0, _W: W, _H: H
   };
+  // RW-45b: wiadomość strony wychodzi od razu w zadaniu publikacji (gdy łańcuch nie czeka na bitmapy zasobów);
+  // `?rwSend=late` — dawne odkładanie na mikrozadanie (A/B)
+  host._sendEarly = !(typeof location !== 'undefined' && /[?&]rwSend=late(?:&|$)/.test(location.search));
   worker.onerror = (e) => { host.errors.push(`worker: ${e.message}`); if (onError) onError(e.message); };
   worker.onmessage = (e) => {
     const m = e.data;
@@ -208,14 +211,21 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     // kolejność wiadomości = kolejność stron (bitmapy zasobów asynchronicznie — następne strony czekają w łańcuchu);
     // błąd jednej wiadomości (np. opis z obiektem nie do sklonowania) nie może zatrzymać łańcucha
     const send = (transfer) => {
+      // znacznik wysyłki (ms epoki) — worker liczy opóźnienie wiadomości (RET_F64.W_MSG_LAG_SUM / W_MSG_N)
+      msg.tSend = performance.timeOrigin + performance.now();
       try { worker.postMessage(msg, transfer); return; } catch (err) { host.errors.push(`wiadomość k=${k}: ${err?.message || err}`); }
       for (let i = 1; i < msg.desc.length; i += 2) msg.desc[i] = plainData(msg.desc[i]);
       try { worker.postMessage(msg, transfer); } catch (err) { host.errors.push(`wiadomość k=${k} (oczyszczona): ${err?.message || err}`); worker.postMessage({ type: 'frame', k, evFrame: msg.evFrame, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: msg.dictFrom, dict: msg.dict }); }
     };
     if (pending.length === 0) {
+      // RW-45b (2026-10-16): bez bitmap w drodze wiadomość idzie TERAZ, w zadaniu publikacji. Odłożona na mikrozadanie
+      // wychodziła dopiero po reszcie klatki strony (nakładki 2D, 1–2 ms) i worker z odebraną stroną czekał na nią
+      // bezczynnie — przy zoomie 0,45 ~700 taktów czekania / s ≈ 35% czasu workera (profil-bitwy-flot: `czek/s`).
+      if (host._sendEarly && host._chainBusy === 0) { send(undefined); return; }
       host._chain = host._chain.then(() => send(undefined), (err) => { host.errors.push(String(err)); send(undefined); });
       return;
     }
+    host._chainBusy++;
     host._chain = host._chain.then(async () => {
       const transfer = [];
       for (let i = 0; i < pending.length; i += 2) {
@@ -229,7 +239,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
         }
       }
       send(transfer);
-    }).catch((err) => { host.errors.push(`łańcuch: ${err?.message || err}`); });
+    }).catch((err) => { host.errors.push(`łańcuch: ${err?.message || err}`); }).finally(() => { host._chainBusy--; });
   };
 
   /** Nakładki klatki k gotowe na kanwie gry — kopia do kanwy pierścienia (B2cr). */

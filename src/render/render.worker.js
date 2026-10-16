@@ -20,6 +20,10 @@ if (isWorker) {
   const st = {
     Core3D: null, mods: null, rm: null, cloak: null, players: null, reader: null, ret: null,
     canvas: null, W: 0, H: 0, dpr: 1, lastMsgK: -1, pendingK: -1,
+    // uzgadnianie strony k z jej wiadomością (RW-45b): `msg` — render od razu po odbiorze wiadomości, odebrana strona
+    // czeka na swoją wiadomość (nie jest porzucana na rzecz nowszej); `raf` — dawne zachowanie (render tylko w takcie
+    // rAF, takt bierze zawsze najnowszą stronę; A/B: `?rwRender=raf`). Liczniki idą do RET (RET_F64.W_*).
+    renderMode: 'msg', ticks: 0, waits: 0, abandoned: 0, rendered: 0, msgRenders: 0, msgLagSum: 0, msgN: 0,
     descriptors: [], topologies: [], coreDescs: new Map(), stationDescs: [], resources: [],
     dict: { values: [], value(c) { return c >= 0 ? this.values[c] : undefined; } },
     cam: { x: 0, y: 0, zoom: 1 }, cull: { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 },
@@ -53,6 +57,11 @@ if (isWorker) {
       globalThis.__rwFetch = f0;
       globalThis.fetch = (input, init) => f0(typeof input === 'string' && !/^[a-z][a-z0-9+.-]*:/i.test(input) && !input.startsWith('/') ? new URL(input, base).href : input, init);
     }
+    // tryb uzgadniania strony z wiadomością z adresu strony (A/B: `?rwRender=raf` — dawne zachowanie)
+    try {
+      const rr = m.pageBase ? new URL(m.pageBase).searchParams.get('rwRender') : null;
+      if (rr === 'raf' || rr === 'msg') st.renderMode = rr;
+    } catch (_) { /* adres bez składni URL — tryb domyślny */ }
     globalThis.SUN = st.sun;
     const { RenderWorld, createMirrorPlayersSource } = await import('./renderWorld.js');
     st.players = createMirrorPlayersSource();
@@ -471,6 +480,8 @@ if (isWorker) {
   }
 
   function applyFrameMsg(m) {
+    // opóźnienie wiadomości (RW-45b): znacznik wysyłki strony w ms epoki (timeOrigin + now, jak WALL_* w RET)
+    if (m.tSend > 0) { st.msgLagSum += performance.timeOrigin + performance.now() - m.tSend; st.msgN++; }
     if (m.dev) devOps(m.dev);
     for (let i = 0; i < m.desc.length; i += 2) st.descriptors[m.desc[i]] = m.desc[i + 1];
     for (let i = 0; i < m.topo.length; i += 2) st.topologies[m.topo[i]] = m.topo[i + 1];
@@ -498,28 +509,57 @@ if (isWorker) {
     st.dustOn = m.dust !== false;
     if (m.ringQuality) st.ringQuality = m.ringQuality;
     if (m.k > st.lastMsgK) { st.lastMsgK = m.k; st.pageEv[m.k & 63] = m.evFrame; }
+    // RW-45b: wiadomość strony k przyszła — render od razu, bez czekania na takt rAF
+    if (st.renderMode === 'msg' && st.Core3D && st.reader) tryRender(true);
   }
 
   function frame() {
     requestAnimationFrame(frame);
+    st.ticks++;
+    tryRender(false);
+  }
+
+  // Render strony, gdy jest i strona, i jej wiadomość (opisy, zasoby, słownik idą wiadomością PO publikacji).
+  // Tryb `msg` (RW-45b, 2026-10-16): woła to także odbiór wiadomości `frame` — worker nie czeka na następny takt rAF,
+  // a strona odebrana z potrójnego bufora czeka na swoją wiadomość (nie jest porzucana na rzecz nowszej). Dawniej render
+  // szedł tylko w takcie rAF i takt brał zawsze najnowszą stronę: przy stronie szybszej od taktu (harness bez limitu
+  // klatek — ~500 kl/s przy zoomie 0,45) wiadomość najnowszej strony prawie zawsze była jeszcze w drodze, więc takt
+  // porzucał stronę, na którą czekał, i czekał na kolejną — worker z CPU ~3 ms na klatkę stał bezczynny połowę czasu
+  // (RW-45: 85–97 kl/s ↔ off 136; etap 4 na wolnej maszynie: 165–182 ↔ 200–217). Tryb `raf` zostaje do A/B.
+  function tryRender(fromMsg) {
     const r = st.reader;
-    if (!r) return;
+    if (!r) return false;
     const { layoutMod, retMod } = st.mods;
     const H = layoutMod.HEAD;
-    if (r.acquire()) {
-      st.pendingK = r.page.head[H.K];
-      retMod.retNoteConsumed(st.ret, st.pendingK);
+    if (st.pendingK < 0 || st.renderMode === 'raf') {
+      if (r.acquire()) {
+        if (st.pendingK >= 0) st.abandoned++;
+        st.pendingK = r.page.head[H.K];
+        retMod.retNoteConsumed(st.ret, st.pendingK);
+      }
     }
+    const f = st.ret.f64, R = retMod.RET_F64;
+    if (st.pendingK < 0) return false;
     // strona czeka na wiadomość ze swoimi opisami (wiadomość idzie po publikacji)
-    if (st.pendingK < 0 || st.pendingK > st.lastMsgK) return;
+    if (st.pendingK > st.lastMsgK) {
+      if (!fromMsg) st.waits++;
+      f[R.W_TICKS] = st.ticks; f[R.W_WAITS] = st.waits;
+      return false;
+    }
     const k = st.pendingK;
     st.pendingK = -1;
     st.inFrame = true;
     try {
       renderPage(r.page, k);
+      st.rendered++;
+      if (fromMsg) st.msgRenders++;
     } catch (e) {
       report(e, 'renderPage');
     } finally { st.inFrame = false; }
+    f[R.W_TICKS] = st.ticks; f[R.W_WAITS] = st.waits; f[R.W_ABANDONED] = st.abandoned;
+    f[R.W_RENDERED] = st.rendered; f[R.W_MSG_RENDERS] = st.msgRenders;
+    f[R.W_MSG_LAG_SUM] = st.msgLagSum; f[R.W_MSG_N] = st.msgN;
+    return true;
   }
 
   function renderPage(v, k) {
