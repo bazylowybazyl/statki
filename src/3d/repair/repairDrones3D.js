@@ -452,7 +452,7 @@ export function installRepairFxCommands(reader, rigAt) {
 }
 
 export function syncRepairDrones3D(p) {
-  if (RepairSwarm.out === 0 && !_view) return 0;
+  if ((p && p.swarm ? p.swarm : RepairSwarm).out === 0 && !_view) return 0;
   const v = repairDronesView();
   return v ? v.sync(p) : 0;
 }

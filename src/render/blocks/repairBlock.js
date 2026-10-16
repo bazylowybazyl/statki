@@ -25,7 +25,9 @@ const R = REPAIR_BLOCK.RIG, D = REPAIR_BLOCK.DRONE, X = REPAIR_BLOCK.FX;
 const num = (v) => (typeof v === 'number' ? v : NaN);
 
 /** Blok do `packer.addBlock` (faza begin). */
-export function createRepairBlock() {
+export function createRepairBlock(opts = {}) {
+  // id rigu: wspólne z rekordami REPAIR_FX (`RepairFxEvents.idOf`) — worker kieruje zdarzenia do lustra rigu po nim
+  const idOfRig = typeof opts.idOf === 'function' ? opts.idOf : null;
   const rigIds = new WeakMap();
   let rigSeq = 0;
   const fxSent = new WeakMap();      // rig → fxWrite z ostatniej spakowanej strony
@@ -61,7 +63,7 @@ export function createRepairBlock() {
           const fxN = fxCount(rig);
           const need = R.STRIDE + drones.length * D.STRIDE + fxN * X.STRIDE;
           if (o + need > F.length) break;
-          let id = rigIds.get(rig);
+          let id = idOfRig ? idOfRig(rig) : rigIds.get(rig);
           if (id === undefined) { id = ++rigSeq; rigIds.set(rig, id); }
           const cs = rig.carrier ? ents.peek(rig.carrier) : -1;
           const ts = rig.target ? ents.peek(rig.target) : -1;

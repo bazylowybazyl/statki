@@ -1332,6 +1332,7 @@
     import { createRenderWorkerHost } from "./src/render/renderWorkerHost.js";
     import { createRocketBlock } from "./src/render/blocks/rocketBlock.js";
     import { createViewBlock } from "./src/render/blocks/viewBlock.js";
+    import { createRepairBlock } from "./src/render/blocks/repairBlock.js";
     import { BEAM_BRIDGE_BACKEND } from "./src/game/shipBridgeBeams.js";
     import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
     import { bridgeGameToMirrors, bridgeMirrorsToGame, bridgeStationsGameToMirrors, bridgeStationsMirrorsToGame } from "./src/render/mirrorBridge.js";
@@ -28408,6 +28409,8 @@
       if (RW_WORKER) renderSnapshot.addBlock(createRocketBlock());
       // RW-40b: widok klatki gry (pudło rysowania, ciała zimnych wraków) dla luster w workerze
       if (RW_WORKER) renderSnapshot.addBlock(createViewBlock());
+      // RW-40b: rój dronów naprawczych (id rigu jak w rekordach REPAIR_FX)
+      if (RW_WORKER) renderSnapshot.addBlock(createRepairBlock({ idOf: (rig) => RepairFxEvents.idOf(rig) }));
     }
     const _snapFrame = createSnapshotFrame();
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
@@ -28524,6 +28527,7 @@
       f.consumeDirty = SZEW_LATE;
       f.cloak = cloakFrame;
       f.rockets = RW_WORKER ? (window.rocketSystem3D?.rockets || null) : null;
+      f.repair = RW_WORKER ? RepairSwarm : null;
       renderSnapshot.begin(f);
     }
 

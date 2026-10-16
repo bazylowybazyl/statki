@@ -13,7 +13,7 @@
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'ciała świata bazy piratów (skóry kawałków)',
   'pas asteroid i wydobycie',
-  'drony naprawcze', 'model reaktora w wyrwie', 
+  'model reaktora w wyrwie', 
 'rdzenie: strugi i kule (RX_*)', 'tło menu'
 ]);
 
@@ -87,6 +87,10 @@ if (isWorker) {
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
+    // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
+    st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
+    st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
+    st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: null, hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
@@ -171,6 +175,7 @@ if (isWorker) {
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
     st.mods.warpCmd.installWarpTrafficCommands(st.cmd, st.mods.warpMod.WarpNurt, (slot) => st.warpMirror.recordAt(slot));
+    st.repairMods.drones.installRepairFxCommands(st.cmd, (id) => st.repairMirror._rigs.get(id) || null);
     if (st.rocketFx && st.rocketFx.director) st.mods.rktCmd.installRocketFxCommands(st.cmd, st.rocketFx.director, (i) => st.rockets.pool[i] || null);
   }
 
@@ -388,6 +393,9 @@ if (isWorker) {
       st.mods.rktBlock.applyRocketBlock(v.blocks.rockets, st.dict, st.rockets,
         (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, (id) => st.weaponDefs.get(id));
     }
+    if (v.blocks.repair && v.blocks.repair.f64) {
+      st.repairMods.blk.applyRepairBlock(v.blocks.repair, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.repairMirror);
+    }
     // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
     if (st.cmd) { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); }
     const cam = st.cam;
@@ -486,6 +494,7 @@ if (isWorker) {
     hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
+    { const rs = st.repairSync; rs.dt = dt; rs.zoom = cam.zoom; rs.time = h[H.SIM_RENDER]; st.repairMods.drones.syncRepairDrones3D(rs); }
     shields.updateShields3D(dt, rm.lists[L.SEEN], null);
     if (st.reactorFx) {
       const simNow = h[H.SIM];

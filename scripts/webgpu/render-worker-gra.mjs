@@ -4,7 +4,8 @@
 // konsoli strony i workera (sesje workerów przez Target.setAutoAttach), zrzut ekranu.
 //   node scripts/webgpu/render-worker-gra.mjs [--start single|split] [--czas 10] [--out .tmp/rw40/gra] [--port 5352]
 //        [--kampania 1] [--query story=scout] (kampania: bez wyłączenia fabuły; --query — dodatkowe parametry adresu)
-import { mkdirSync, writeFileSync } from 'node:fs';
+//        [--js plik.js] [--tag x] (--js — wyrażenie z pliku wołane po starcie gry (złożenia płyną), wynik w raporcie `js`; --tag — nazwa plików)
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { startVite, evaluate, sleep, repo, startChrome, parseArgs, attachLogs, waitFor, screenshotPng } from './wspolne.mjs';
 
@@ -16,6 +17,8 @@ const PORT = Number(args.port || 5352);
 const EXTRA = args.query ? '&' + args.query : '';
 const CAMPAIGN = args.kampania === '1';
 const OFF = args.tryb === 'off';   // porównanie: ten sam scenariusz bez workera
+const JS = args.js ? readFileSync(resolve(args.js), 'utf8') : '';
+const TAG = args.tag ? '-' + args.tag : '';
 mkdirSync(OUT, { recursive: true });
 
 const vite = await startVite(PORT);
@@ -48,6 +51,12 @@ try {
   await sleep(4000);
   if (START === 'split') await evaluate(cdp, '(() => { window.DevScene.startSplit(); return true; })()');
   else await evaluate(cdp, "(() => { document.getElementById('btn-mode-single')?.click(); return true; })()");
+  if (JS) {
+    // gra wystartowała (worker: złożenia płyną; off: pętla gry) — potem wyrażenie
+    if (OFF) await sleep(15000);
+    else await waitFor(cdp, '(window.RenderWorkerHost?.composed || 0) > 60', 120000);
+    report.js = await evaluate(cdp, JS);
+  }
   const t0 = Date.now();
   const read = () => evaluate(cdp, `(() => {
     const h = window.RenderWorkerHost; if (!h) return null;
@@ -64,13 +73,13 @@ try {
     samples.push({ t: Math.round((Date.now() - t0) / 1000), ...(await read()) });
   }
   report.samples = samples;
-  await screenshotPng(cdp, join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}.png`));
+  await screenshotPng(cdp, join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}${TAG}.png`));
 } catch (err) {
   report.error = String(err?.stack || err);
 }
 report.pageErrors = logs.filter((l) => /error|exception/i.test(l)).slice(0, 30);
 report.workerLogs = workerLogs.slice(0, 40);
-writeFileSync(join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}.json`), JSON.stringify(report, null, 2));
+writeFileSync(join(OUT, `${START}${CAMPAIGN ? '-kampania' : ''}${OFF ? '-off' : ''}${TAG}.json`), JSON.stringify(report, null, 2));
 console.log(JSON.stringify({ last: report.samples?.[report.samples.length - 1], pageErrors: report.pageErrors.length, workerLogs: report.workerLogs.length, error: report.error }, null, 1));
 await chrome.close();
 await vite.close?.();

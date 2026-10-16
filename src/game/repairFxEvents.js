@@ -20,6 +20,8 @@ export function createRepairFxEvents(writer) {
   };
   return {
     rigAt(id) { return byId.get(id) || null; },
+    /** Id rigu (to samo w rekordach REPAIR_FX i w bloku dronów migawki — worker łączy je po nim). */
+    idOf,
     /** Nowe zdarzenia wszystkich rigów (kolejność rejestru) → rekordy. */
     flush(rigs) {
       if (!rigs) return;
