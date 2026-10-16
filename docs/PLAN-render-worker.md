@@ -1466,6 +1466,24 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   stronę, dawniej przepadało: `_bodyHpW` w pakującym — model mostka Atlasa w hali K-7 bez komórek); (2) stan mostków
   WSPÓLNY dla luster po numerze obiektu gry (`RenderMirror._bridgeShared`: okręt i jego wrak niosą w grze ten sam
   `bridgeState`).
+  **RW-11b krok 3 (2026-10-16): RDZENIE NA LUSTRACH** — `reactorBlastFx.syncCores` / `reactorModel3D.sync` dostają
+  `renderMirror.cores` (blok CORES + opis rdzenia, gospodarz = lustro encji); `HullBodies.probe` i `reactorCoreWorld`
+  działają na replice ciała (`D.probeLocal2D` + `_latticeIndex` na `MirrorBody`), więc pole „sonda w bloku CORES” nie
+  było potrzebne. Zrzuty: reaktor (10 scen) + kosmos — 36 / 36 identyczne z bazą D4; pełny harness (17 sesji, stacje + rdzenie na lustrach, mostki na obiektach gry) — 202 / 204 identyczne, różna tylko niedeterministyczna `planeta-cien`. Zasady dalszych kroków (decyzja użytkownika 2026-10-16): zrzuty tylko z sesji, których zmiana dotyczy, jeden przebieg na wariant; różnica wyłącznie w losowych efektach przy kadłubach, stacjach, mostkach i kadrze bez zmian — przyjęta po spojrzeniu na wycinek, nowa baza; pełne porównanie raz na końcu; mostki zostają na obiektach gry do etapu 4.
+  ZOSTAJE (nie zrobione w tej turze): drony naprawcze na lustrach (blok `repair` gotowy, ale kolejka efektów widoku
+  dronów `_fxQueues` jest kluczowana obiektem rigu GRY z dekodera rozkazów `RX_*` / `RepairFxEvents.rigAt` — lustro
+  rigu potrzebuje tego samego id rigu w bloku i dekodera na lustrach; `rig.tune` w bloku ma 3 pola), wieże modeli z
+  bloku TURRETS (rekord modelu czyta `rec.spec` — sylwetka `TURRET_SPECS` — i `rec.state` — stan wieży; blok ich nie
+  niesie), mostki (krok 2).
+  MOSTY `mirrorBridge.js` W TRYBIE `inline` (do zdjęcia przed `worker`): gra → lustro `__warpHullU`,
+  `__warpNurtMode` (RW-28 — harmonogram warpa w grze, pola w migawce), `__bayCut` (luk Atlasa — pole ENT),
+  `__lightOcclude` (funkcja zasłonięcia lamp → flaga / obrys), `__lightMate` (tożsamość → slot), `__inDrawBox`,
+  `_coldDrawFrame` (widok klatki RW-31 → pole ENT / zimnych wraków), `__game` (obiekt gry lustra: most wież
+  `Turret2D.recordsFor(lustro.__game)`), stacje: `__station3DKey` (klucz rekordu stacji 3D → slot) i `__game`;
+  lustro → gra: `__engineFxFallback` (paleta dysz dla `warpTraffic.js` — RW-28), stacje `_mesh3d` (dekoder obrażeń
+  stacji `hullDamageCommands.js` czyta bryłę na obiekcie gry — RW-22). Poza `mirrorBridge.js`: `ServiceTugGame.
+  beginRender` / `restorePose` (poza holownika na encji gry — dla mostków, dronów, kanwy 2D), `bridgeRenderPose`
+  rozpoznaje lustro gracza po `__game`.
 - **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,
