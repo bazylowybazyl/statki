@@ -12291,6 +12291,8 @@
     // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
     if (new URLSearchParams(location.search).has('dev')) {
       window.DevScene = Object.assign(window.DevScene || {}, {
+        // misja najemnicza (stacja piracka world3d) — zwraca stację
+        mercMission() { startMercenaryMission(); return mercMission?.station || null; },
         teleport(x, y, heading = ship.angle) {
           ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
           if (Number.isFinite(heading)) ship.angle = heading;
@@ -16598,6 +16600,7 @@
           const res = initWorld3D();
           mainScene3D = res?.scene || mainScene3D;
         }
+        station.__world3dPirate = true;   // obraz world3d (worker: lustro tej stacji — describeStation)
         attachPirateStation3D(mainScene3D, station);
       }
       mercMission = {
@@ -31451,6 +31454,7 @@
           const res = initWorld3D();
           mainScene3D = res?.scene || mainScene3D;
         }
+        station.__world3dPirate = true;   // obraz world3d (worker: lustro tej stacji — describeStation)
         attachPirateStation3D(mainScene3D, station);
       }
       return station;

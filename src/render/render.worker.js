@@ -11,7 +11,7 @@
 // Worker → strona: `ready`, `frame` { k, bmp }, `error`.
 
 export const RW_WORKER_DISABLED = Object.freeze([
-  'świat 3D (stacja piracka)', 'ciała świata bazy piratów (skóry kawałków)',
+  'ciała świata bazy piratów (skóry kawałków)',
   'wydobycie skał (siatki ciał, platforma — RW-41b cz. 2)',
   'tło menu'
 ]);
@@ -79,6 +79,7 @@ if (isWorker) {
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
     st.destruction = (await import('../vfx/destruction3D.js')).Destruction3D;
+    globalThis.Destruction3D = st.destruction;   // RenderWorld.destruction3D (prebake brył: stacja piracka)
     const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
       import('../3d/bridge3D.js'), import('../3d/bridgeFx3D.js'), import('../game/cloakLook.js'), import('../3d/reactorBlast/reactorBlastFx.js')
     ]);
@@ -95,6 +96,10 @@ if (isWorker) {
     st.hazards = st.hazMods.blk.createHazardMirrorState();
     // luk Atlasa (fregata zwiadu): rig ładowni i dziura w skórze lustra gracza; postęp wrót z wiadomości strony
     st.bayMod = await import('../3d/cargo/scoutBay3D.js');
+    // stacja piracka (world3d.js): bryła na lustrze stacji, którą strona podpięła (`world3dPirate` w opisie)
+    st.w3 = await import('../3d/world3d.js');
+    st.w3.setWorld3DHiddenTest((s) => !!s.fogHidden);
+    st.w3Station = null;
     st.bayPose = { x: 0, y: 0, angle: 0 };
     st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: null, hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
@@ -546,6 +551,16 @@ if (isWorker) {
       st.dust.frame(dt, cns, null, st.dustOn !== false);
     }
     stations.updateStations3D(rm.stations);
+    {
+      let ps = null;
+      for (let i = 0; i < rm.stations.length; i++) if (rm.stations[i].world3dPirate) { ps = rm.stations[i]; break; }
+      if (ps !== st.w3Station) {
+        if (st.w3Station) st.w3.dettachPirateStation3D(null);
+        st.w3Station = ps;
+        if (ps) { st.w3.initWorld3D(); st.w3.attachPirateStation3D(null, ps); }
+      }
+      if (ps) st.w3.updateWorld3D(dt, h[H.VFX_TIME]);
+    }
     {
       const { bridge3d, bridgeFx, cloakLook } = st.mods;
       const nowSec = h[H.BRIDGE_TIME];

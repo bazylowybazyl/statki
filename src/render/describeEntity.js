@@ -162,6 +162,7 @@ export function describeStation(st) {
   return {
     id: st.id, name: st.name, style: st.style, type: st.type, isPirate: st.isPirate === true,
     planet: ref(st.planet), orbit: ref(st.orbit), host: typeof st.host === 'object' ? ref(st.host) : st.host,
-    home: typeof st.home === 'object' ? ref(st.home) : st.home, ringPort: !!st.ringPort, faction: st.faction
+    home: typeof st.home === 'object' ? ref(st.home) : st.home, ringPort: !!st.ringPort, faction: st.faction,
+    world3dPirate: st.__world3dPirate === true
   };
 }

@@ -559,6 +559,7 @@ function applyStations(rm, v) {
       st = {
         __mirror: true, slot: s, gen, id: d.id, name: d.name, style: d.style, type: d.type, isPirate: d.isPirate,
         planet: d.planet, orbit: d.orbit, host: d.host, home: d.home, ringPort: d.ringPort, faction: d.faction,
+        world3dPirate: d.world3dPirate === true,
         x: 0, y: 0, angle: 0, r: undefined, baseR: undefined, _destroyed3D: false, fogHidden: false, _mesh3d: undefined, __bridgedMesh: undefined,
         __game: null
       };
