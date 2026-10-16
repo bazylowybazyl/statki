@@ -96,3 +96,16 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
   — obraz 3D = przyrost `composed` / czas; pary ABAB, START / KONIEC do aktywnych sesji.
 - Testy: `node --test tests/overlayRing.test.mjs tests/szewRenderu.test.mjs tests/graBezGlsl.test.mjs`; pełne
   `node --test "tests/*.test.mjs"` (znane porażki: hallGas LF, gpuFx sun-mask, 2 TODO rdzeni), `npm test`, build.
+
+## Co w trybie worker działa inaczej niż w off (2026-10-16, do D8)
+
+- Dwa urządzenia GPU: Core3D strony rysuje menu, tło menu, intro kampanii i ekran ładowania; w grze rysuje worker. Start gry o 2–3 s dłuższy, w pierwszych ~3 s gry przestoje 0,3–2 s (strona czeka na GPU).
+- Wydajność: przy zoomie 0,1 obraz ~1,5× szybszy niż off, wątek gry dużo równiejszy (p95 7–10 ↔ 17–31 ms); przy zoomie 0,45 obraz workera 0,6–0,9× off w pierwszej fazie bitwy.
+- Obraz 3D złożony z nakładkami tej samej klatki (B2cr) — opóźnienie obrazu o 1–2 klatki strony względem wejścia nie zmierzone w grze (kryteria RW-42).
+- Losowe efekty (iskry, wtórne błyski Yamato, odłamki) losują z ciągu workera — inny przebieg niż w off; rozgrywka bez zmian.
+- Pierwszy wybuch rdzenia — jednorazowy przestój workera ~1–2 s.
+- Panele F12, tunery renderu i konsolowe `*Tune` / `window.Core3D` / `__explosions` / `WeaponFx` działają na Core3D strony — na obraz workera nie wpływają (RW-36 bez mostu).
+- Narzędzia: statystyki dc / GPU Core3D w raportach (zrzuty, profil) są ze strony; przechwyty passów (`__fg`, `__ortho`, `__planety`, `__tlo`) i sesja `stacja-przygotowanie` w trybie worker bez sensu / nie przechodzą; pamięć GPU workera niezmierzona (`pamiec.mjs` haczy tylko stronę).
+- Baza piratów: worker przy zdarzeniu 'bodies' liczy rastry i bryły kawałków sam (~0,5 s pracy workera przy starcie misji).
+- Wydobycie: siatki skał idą do workera całe przy każdej zmianie (laser — do ~0,5 MB na klatkę wiadomością).
+- Soczewka świata warpa: cel `targetBody` nieustawiony w pakującym (AGENT) — planeta celu w skoku może się zachowywać inaczej niż w off.

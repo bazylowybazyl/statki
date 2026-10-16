@@ -1971,6 +1971,7 @@ Pliki: nowy `src/render/renderDebug.js` (RPC), podkładka `globalThis.window = g
 Kryterium: panele F12 działają w trybach `inline` i `worker`. Zależności: RW-40. Kolizje: `src/ui/devTools.js` (małe).
 Zakres (decyzja użytkownika 2026-10-16, § 7.1 „Weryfikacja odchudzona”): w trybie `worker` tylko panele F12, których
 użytkownik używa — reszta może zostać tylko w `off` / `inline`.
+**Stan RW-36 (2026-10-16, `rw-worker`): bez mostu** (użytkownik nie używa paneli F12 — orkiestrator) — w trybie worker panel F12 otwiera się bez błędów (21 przycisków, worker dalej składa klatki — `render-worker-gra.mjs --js`), tunery renderu i konsolowe `*Tune` działają na Core3D STRONY, więc na obraz workera nie wpływają; stan gry (np. kredyty) — normalnie, bo żyje na wątku głównym.
 
 ### Etap 4 — worker
 
