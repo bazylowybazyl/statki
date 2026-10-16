@@ -115,6 +115,11 @@ export function createSnapshotFrame() {
     gasObst: null,              // blok `gasObst` (blocks/gasObstBlock.js, RW-11c): wejście przeszkód gazu GAS_OBST_IN
     warpTraffic: null,          // blok `warp` (blocks/warpBlock.js, RW-11c): rejestr ruchu warpa gry (osie przylotów / odlotów)
     warpNurt: null,             // blok `warp`: klatka „Nurtu” (_warpNurtFrame — dt, camFollow, lensAllowed)
+    pirateBase: null,           // blok `pirateBase` (blocks/pirateBaseBlock.js, RW-11c): storyBaseFrameState()
+    pirateBaseDt: 0,            // blok `pirateBase`: dt gry obrazu bazy (0 w pauzie i scenach fabuły)
+    ringWorld: null,            // blok `ring` (blocks/ringBlock.js, RW-11c): świat ringów gry (HaloRingWorld)
+    ringShip: null,             // blok `ring`: statek gracza (obrys w hubie hali)
+    ringRoof: null,             // blok `ring`: nadpisanie dachu hali przez fabułę
     poseOf: null,               // (encja, out { x, y, a }) → true: poza RENDERU encji inna niż jej pola (RW-31, § 2.6 p. 27 —
                                 // holownik pod graczem na pokładzie: ServiceTugGame.renderPoseOf), bez zapisu w encji
     lastConsumed: -1           // k ostatnio odebranej strony (RET.LAST_CONSUMED; inline: k − 1)

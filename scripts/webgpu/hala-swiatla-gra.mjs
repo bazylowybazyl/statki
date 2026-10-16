@@ -111,7 +111,8 @@ const gpuAvg = () => ev(`(async () => {
 })()`, 60000);
 
 try {
-  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
+  // --query k=v[&…] — dodatkowe parametry adresu gry (np. szew=inline: migawka renderu, RW-11c)
+  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1${args.query ? '&' + args.query : ''}` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship)', 240000, 400)) throw new Error('gra nie wstała');
   await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 500);
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);

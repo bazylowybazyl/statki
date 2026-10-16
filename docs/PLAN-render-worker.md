@@ -1180,7 +1180,7 @@ etap 2:  RW-20 fxRandom ─► RW-21 rozkazy: broń ─► RW-22, RW-23, RW-28, 
          RW-26 wieże / maskowanie (wcześnie, niezależne) ─► RW-21
          RW-24 dok (po RW-22), RW-25 pas, RW-27 ring (po RW-12), RW-29 tarcze (po RW-04)
 etap 3:  RW-35 DOM, RW-36 most konsoli                          │
-etap 4:  RW-40 worker (po etapach 1–3) ─► RW-41, RW-42, RW-43, RW-44 ─► RW-45 pomiar i decyzja
+etap 4:  RW-40 worker (po etapach 1–3) ─► RW-41, RW-41b, RW-42, RW-43, RW-44 ─► RW-45 pomiar i decyzja
 etap 5:  RW-50 delty węzłów, RW-51 koszt aktualizacji 3D w workerze, RW-52 wygaszenie trybu off
 ```
 
@@ -1397,13 +1397,29 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,
   `wydobycie`, `piraci`; `scripts/webgpu/hala-swiatla-gra.mjs`. Kolizje: blok FABUŁA (misja 2) przy doku.
-  **Stan (2026-10-16, tor `rw-szew`): W TOKU** (podział z `rw-migawka`: rw-szew — bloki modułów świata, rw-migawka —
-  wpięcie RW-11a/b). Zrobione (rejestracja przy `?szew=inline` zaraz po `const renderSnapshot`, przebieg `kosmos`
+  **Stan (2026-10-16, tor `rw-szew`): ZWERYFIKOWANE dla bloków `gasObst`, `warp`, `pirateBase`, `ring`** (podział
+  z `rw-migawka`: rw-szew — bloki modułów świata, rw-migawka — wpięcie RW-11a/b). Kryterium: zrzuty sesji `ziemia`,
+  `ziemia-ring`, `mars`, `jowisz`, `piraci` bez flagi ↔ `--query szew=inline` (po kolei) — 45 / 45 obrazów, różni się
+  tylko `planeta-cien` (0,3% — scena waha się też między dwoma przebiegami tego samego kodu); `hala-swiatla-gra.mjs
+  [--query szew=inline]` (nowa opcja) — raporty równe poza położeniem hali i kosztem GPU (gra losuje kąty planet na
+  nową grę, więc obraz skryptu w czasie rzeczywistym nie jest porównywalny piksel w piksel), pipeline'y synchroniczne
+  0, bez błędów. Pas — RW-41b. Zrobione (rejestracja przy `?szew=inline` zaraz po `const renderSnapshot`, przebieg `kosmos`
   z `?szew=inline` bez błędów): `gasObst` (`src/render/blocks/gasObstBlock.js` — wejście przeszkód gazu `GAS_OBST_IN`
   w tym samym układzie, strona renderu `gasObstInputOf(view)` → `setObstacleInput`; ZOSTAJE kanał zwrotny: gra pyta
   render o prostokąty domen gazu `__explosions.domainRects` — w workerze przez RET) i `warp` (`blocks/warpBlock.js` —
   lustro osi przylotów / odlotów rejestru `warpTraffic` dla `recordAt(slot)`, klatka „Nurtu”: `trafficTime`, `dt`,
-  `camFollow`, `lensAllowed`). Dalej: pas, ring / pył hal (HALL już w stronie), baza piratów, komety.
+  `camFollow`, `lensAllowed`), `pirateBase` (`blocks/pirateBaseBlock.js` — stan klatki obrazu bazy: mgła, alarm, hangary,
+  zasilanie, stanowiska bitami, słońce, pora dnia, dt; `applyPirateBaseBlock` → obiekt dla `updatePirateBase3D`). `ring` (`blocks/ringBlock.js` — zegar hal, na ring obrys kadłuba gracza w hubie, na halę
+  wersja i zajętość stanowisk, poziom lamp, pozy obsługi z `settle` i właścicielem; nadpisanie dachu z fabuły —
+  `storyHallRoof` po stronie gry; geometria kolidera statyczna — worker buduje ją z układu; przebieg `ziemia` z
+  `?szew=inline` bez błędów). Bez bloku: pył kosmiczny i planety (wejścia z HEAD: kamery, dt, słońce, planety, opcja),
+  komety (obraz z czasu renderu i stałych miejsc pola — worker buduje własne `CometField` z danych rozmieszczenia,
+  przekazanych raz). ZOSTAJE PAS — nie blok klatki, tylko transport danych: obraz (`asteroidBelt.js`) czyta ze świata
+  pasa gry `time`, `frameDt`, `sun`, `au` (blok wystarczy), ale też replikę pola z historią operacji
+  (`createFieldReplica` — operacje do strumienia rozkazów), olbrzymy (SDF już w SharedArrayBuffer), wydobycie
+  (`mining` / `rig`: siatki komórek ciał skał, pierścień zdarzeń efektów — potrzebny SAB albo przesył brudnych pudeł,
+  dziś `ackMinedUpload`), zwrotne `attachShapeRadius` (mapy promienia banku render → gra) i zapytanie `roofAbove` —
+  przeniesione do RW-41b (etap 4, rw-worker).
 
 **RW-12 `RenderWorld` zamiast globali gry.**
 Pliki: nowy `src/render/renderWorld.js`; moduły z § 2.4 (33 zmienne, 134 odczyty: `SUN` 26, `ship` 15, `DevTuning`
@@ -1877,6 +1893,20 @@ Pliki: `src/render/render.worker.js`, `src/3d/menuBackdrop3D.js`, `src/game/stor
 Kryterium: `node scripts/webgpu/start-gry.mjs` — pipeline'y synchroniczne 0, start nie dłuższy niż dziś; intro kampanii
 (`scripts/webgpu/fabula-gra.mjs`) bez zmian. Zależności: RW-40. Kolizje: misja 2 (intro, `storyGame.js`).
 
+**RW-41b Transport danych pasa i wydobycia** (wydzielone z RW-11c, inwentarz `rw-szew` 2026-10-16). Obraz pasa
+(`src/3d/asteroids/asteroidBelt.js`, `minedRocks.js`, `miningView.js`) czyta ze świata pasa gry (`src/game/beltWorld.js`)
+więcej niż wejście klatki: (1) `time`, `frameDt`, `sun`, `au` — blok migawki jak w RW-11c (wzór `src/render/blocks/`);
+(2) replika pola `createFieldReplica` z historią operacji (`setExclusions`, `setSmallBodyAnchors`, `addWakeSpot`, …) —
+operacje jako rozkazy strumienia (RW-21); (3) wydobycie `mining` / `rig`: siatki komórek ciał skał (przejęcie, kopanie,
+ładunki, odłamy), okruchy, pierścień zdarzeń efektów `fx` — SharedArrayBuffer siatek ciał albo przesył brudnych pudeł
+zamiast dzisiejszego konsumenta `ackMinedUpload` (dirtyBox), zdarzenia przez rozkazy; (4) zwrotne render → gra:
+`attachShapeRadius` (mapy promienia banku skał — gra liczy z nich kolizje i wydobycie; postMessage / SAB jak sektory
+cienia pól) i zapytanie `roofAbove` (pod stropem olbrzyma — profil świateł statków; liczyć po stronie gry z SDF
+olbrzymów w SAB, wynik w migawce); olbrzymy — SDF już w SharedArrayBuffer (RW-25). Do tego kanał zwrotny
+`__explosions.domainRects` (gra pyta reżysera wybuchów o prostokąty domen gazu dla przeszkód kadłubów —
+`packGasObstacles`) przez RET. Kryterium: sesje `pas`, `wydobycie` i `scripts/webgpu/wydobycie-gra.mjs` w trybie
+worker bit w bit z `off`; pipeline'y synchroniczne 0. Zależności: RW-40, RW-41 (zagnieżdżone workery olbrzymów).
+
 **RW-42 Kompozycja wg D1 i podzielony ekran.** Pliki: `src/render/renderBridge.js`, `src/render/render.worker.js`,
 `src/3d/hexShips3D.js` (`drawHexShips3D` — kopia znika), `index.html` (kanwy `#webgl-layer` / `#c`, `render()`).
 Kryterium: kryteria 1–5 z § 3.8 zmierzone w grze, zrzuty sesji `split`. Zależności: RW-02, RW-40. Kolizje: `render()`.
@@ -2070,7 +2100,7 @@ wiadomościami (`SendMessage`, nazwy sesji z tabeli); orkiestrator — sesja „
 | `rw-bronie` | B3D (bronie tylko 3D, § 7.1) → RW-26 → RW-20 → RW-21 → RW-30 → RW-23 | — |
 | `rw-kadluby` | katalog rozkazów § 3.3 odświeżony o § 7.2 → RW-29 → RW-22 → RW-31 | RW-04 (`rw-migawka`) przed RW-29; RW-21 (`rw-bronie`) przed RW-22 |
 | `rw-swiat` | RW-25 → RW-27 → RW-24 (baza piratów) → RW-28 | RW-21 (`rw-bronie`) przed RW-28 |
-| `rw-worker` | RW-40 → RW-41 → RW-42 (B2cr) → RW-43 → RW-44 → RW-36 → RW-45 | koniec pozostałych torów |
+| `rw-worker` | RW-40 → RW-41 → RW-41b (pas i wydobycie) → RW-42 (B2cr) → RW-43 → RW-44 → RW-36 → RW-45 | koniec pozostałych torów |
 
 ### 7.4 Zasady scalania i pomiarów
 
