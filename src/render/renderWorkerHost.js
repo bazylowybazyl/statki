@@ -40,7 +40,7 @@ function plainLayout(layout) {
   try { return structuredClone(layout); } catch (_) { return JSON.parse(JSON.stringify(layout)); }
 }
 
-export function createRenderWorkerHost({ packer, slots, commands = null, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, onError = null }) {
+export function createRenderWorkerHost({ packer, slots, commands = null, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, autoGfx = null, onError = null }) {
   const retBuffer = createReturnBuffer();
   const ret = createReturnViews(retBuffer);
   const worker = new Worker(new URL('./render.worker.js', import.meta.url), { type: 'module' });
@@ -79,9 +79,15 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const m = e.data;
     if (m.type === 'ready') {
       host.ready = !!m.ok;
-      if (!m.ok) host.failed = m.why || 'worker bez WebGPU';
+      if (!m.ok) { host.failed = m.why || 'worker bez WebGPU'; if (host.onFail) host.onFail(host.failed); }
       return;
     }
+    // RW-41c: tło menu w workerze, teren ringu dla kolizji gry, preset grafiki z adaptera workera
+    if (m.type === 'menuFrame') { menuFrame(m); return; }
+    if (m.type === 'menuReady') { host.menuStats = m.stats || null; const bd = host._menu; if (bd && !m.failed) { bd.ready = true; for (const f of bd._cbs.splice(0)) f(); } return; }
+    if (m.type === 'menuFlown') { const bd = host._menu, f = bd && bd._fly.get(m.id); if (f) { bd._fly.delete(m.id); bd.flight = null; f(!!m.ok); } return; }
+    if (m.type === 'ringTerrain') { if (host.onRingTerrain) host.onRingTerrain(m); return; }
+    if (m.type === 'gfxAuto') { if (host.onGfxAuto) host.onGfxAuto(m); return; }
     if (m.type === 'error') {
       host.errors.push(`${m.where}: ${m.msg}`);
       console.error(`[render worker] ${m.where}: ${m.msg}`);
@@ -89,7 +95,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     }
     // pas (RW-41): mapy promienia banku skał z workera → fizyka wydobycia gry; pas workera gotowy
     if (m.type === 'beltShape') { if (host._belt) host._belt.attachShapeRadius({ maps: m.maps, size: m.size }); return; }
-    if (m.type === 'beltReady') { host._beltReady = true; for (const f of host._beltWait.splice(0)) f(true); return; }
+    if (m.type === 'beltReady') { host.beltT = m.t || null; host._beltReady = true; for (const f of host._beltWait.splice(0)) f(true); return; }
     if (m.type === 'prepared') { const f = host._prep.get(m.id); if (f) { host._prep.delete(m.id); f(!!m.ok); } return; }
     if (m.type === 'frame') {
       host.domainCount = m.nd | 0;
@@ -99,6 +105,9 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   };
 
   function compose(k, bmp) {
+    // RW-41c: póki rysuje tło menu (lot intro kampanii), klatka zero gry spod kurtyny nie zasłania go — obraz i nakładki
+    // gry pokazują się od pierwszej strony po stopMenuBackdrop
+    if (host._menu) { ring.compose(k); bmp.close(); host.composed++; return; }
     bctx.transferFromImageBitmap(bmp);
     const slot = ring.compose(k);
     if (slot >= 0) {
@@ -115,7 +124,65 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     }
   }
 
-  worker.postMessage({ type: 'init', W, H, dpr, retBuffer, quality, pageBase: location.href });
+  // Tło menu (RW-41c): klatki tła z pętli workera — na kanwę obrazu 3D, póki gra nie złoży pierwszej strony
+  function menuFrame(m) {
+    const bd = host._menu;
+    if (!bd) { m.bmp.close(); return; }
+    bd._pose = m.pose || bd._pose;
+    bd.launchDone = !!m.launchDone;
+    if (m.sun) bd.sunLocal = m.sun;
+    bd.stats.frames++;
+    if (m.final && bd.onFinal) { try { bd.onFinal(m.bmp); } catch (err) { host.errors.push(String(err)); } }
+    bctx.transferFromImageBitmap(m.bmp);
+    if (!host._menuShown) {
+      host._menuShown = true;
+      view3d.style.visibility = 'visible';
+      if (mainCanvas) mainCanvas.style.visibility = 'hidden';
+    }
+    // kanwa gry (klatka zero spod kurtyny: nakładki 2D) nie wychodzi nad tło menu — nakładki gry pokaże pierścień
+    gameCanvas.style.opacity = '0';
+  }
+
+  /** Pełnomocnik MenuBackdrop3D (index.html: tło menu, start gry, lot intro kampanii) — tło rysuje worker. */
+  host.createMenuBackdrop = () => {
+    const post = (o) => worker.postMessage({ type: 'menu', ...o });
+    const bd = {
+      worker: true, ready: false, launchDone: false, sunLocal: { az: 0, el: 0 }, flight: null, onFinal: null,
+      stats: { frames: 0 }, _pose: null, _cbs: [], _fly: new Map(), _seq: 0, _active: null,
+      start() { host._menu = bd; post({ op: 'start', active: false, focus: 0 }); return true; },
+      setActive(on) { on = !!on; if (on === bd._active) return; bd._active = on; post({ op: 'active', on }); },
+      setPointer(x, y) { post({ op: 'pointer', x, y }); },
+      setFocus(k) { post({ op: 'focus', k }); },
+      launch(o = {}) { post({ op: 'launch', dolly: o.dolly !== false }); },
+      cameraPose() { return bd._pose; },
+      onReady(fn) { if (typeof fn !== 'function') return; if (bd.ready) fn(); else bd._cbs.push(fn); },
+      // lot intro z DANYCH planu (introCamera.menuIntroFlight); `flight` — jak w MenuBackdrop3D dla narzędzi
+      // (duration; devTime / t przekazywane do workera)
+      flyData(data, duration) {
+        const id = ++bd._seq;
+        let devTime = NaN, t = 0;
+        bd.flight = {
+          duration,
+          get devTime() { return devTime; }, set devTime(v) { devTime = v; post({ op: 'flightSet', devTime: v }); },
+          get t() { return t; }, set t(v) { t = v; post({ op: 'flightSet', t: v }); }
+        };
+        return new Promise((resolve) => { bd._fly.set(id, resolve); post({ op: 'fly', id, data }); });
+      },
+      stop() {
+        if (host._menu !== bd) return;
+        host._menu = null;
+        post({ op: 'stop' });
+        for (const f of bd._fly.values()) f(false);
+        bd._fly.clear();
+        bd._cbs.length = 0;
+      }
+    };
+    return bd;
+  };
+
+  let menu3d = true;
+  try { menu3d = new URLSearchParams(location.search).get('menu3d') !== '0'; } catch (_) { menu3d = true; }
+  worker.postMessage({ type: 'init', W, H, dpr, retBuffer, quality, autoGfx, menu3d, pageBase: location.href });
   const sendLayout = (buffer, layout) => worker.postMessage({ type: 'layout', buffer, layout: plainLayout(layout) });
   sendLayout(packer.buffer, packer.layout);
   packer.onLayout = sendLayout;
@@ -231,15 +298,18 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     host._chainBusy++;
     host._chain = host._chain.then(async () => {
       const transfer = [];
+      // RW-41c: wszystkie bitmapy strony RÓWNOLEGLE (dekodowanie w wątkach przeglądarki) — po kolei klatka zero
+      // (kilkadziesiąt kadłubów) czekała sekundy
+      const jobs = [];
       for (let i = 0; i < pending.length; i += 2) {
-        const img = pending[i + 1];
-        try {
-          const bmp = await Promise.race([createImageBitmap(img), new Promise((_, no) => setTimeout(() => no(new Error('createImageBitmap: limit czasu')), 3000))]);
-          msg.res.push(pending[i], bmp);
-          transfer.push(bmp);
-        } catch (err) {
-          host.errors.push(`zasób ${pending[i]}: ${err?.message || err}`);
-        }
+        const rs = pending[i], img = pending[i + 1];
+        jobs.push(Promise.race([createImageBitmap(img), new Promise((_, no) => setTimeout(() => no(new Error('createImageBitmap: limit czasu')), 3000))])
+          .then((bmp) => [rs, bmp], (err) => { host.errors.push(`zasób ${rs}: ${err?.message || err}`); return null; }));
+      }
+      for (const r of await Promise.all(jobs)) {
+        if (!r) continue;
+        msg.res.push(r[0], r[1]);
+        transfer.push(r[1]);
       }
       send(transfer);
     }).catch((err) => { host.errors.push(`łańcuch: ${err?.message || err}`); }).finally(() => { host._chainBusy--; });
@@ -306,12 +376,12 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   // Ekran ładowania (RW-41): worker buduje ringi przy (x, y) i dokańcza rozgrzewkę — strona czeka (z limitem).
   host._prep = new Map();
   host._prepSeq = 0;
-  host.prepare = (x, y, timeoutMs = 25000, afterFrame = false) => new Promise((resolve) => {
+  host.prepare = (x, y, timeoutMs = 25000, afterFrame = false, idle = false) => new Promise((resolve) => {
     const id = ++host._prepSeq;
     host._prep.set(id, resolve);
     // afterFrame: po wiadomości ostatniej strony (łańcuch wiadomości) — worker czeka na jej rysunek, potem rozgrzewa passy
-    if (afterFrame) host._chain = host._chain.then(() => worker.postMessage({ type: 'prepare', id, x, y, afterFrame: true }));
-    else worker.postMessage({ type: 'prepare', id, x, y });
+    if (afterFrame) { const k = host.lastPostedK; host._chain = host._chain.then(() => worker.postMessage({ type: 'prepare', id, x, y, afterFrame: true, k })); }
+    else worker.postMessage({ type: 'prepare', id, x, y, idle });
     setTimeout(() => { if (host._prep.delete(id)) resolve(false); }, timeoutMs);
   });
   // Narzędzia (RW-44, harness): operacja dla workera stosowana PRZED stroną, po której ją zgłoszono —

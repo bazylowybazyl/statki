@@ -627,6 +627,8 @@ export const Core3D = {
   renderScale: null, msaaBoot: 4,
   // Hak przed utworzeniem urządzenia: (adapter) => void — dobór presetu przy pierwszym uruchomieniu (index.html).
   onAdapter: null, _msaaLocked: false,
+  // RW-41c: strona trybu worker — init() bez urządzenia WebGPU (ustawia pierwszy moduł index.html przed init).
+  noDevice: false,
   // px bufora rysowania na px kanwy gry (CSS): kamera ortho pokazuje kanwę / zoom j. świata, więc
   // px bufora na j. świata = zoom · pxScale (viewZoom). Ustawia resize.
   pxScale: 1,
@@ -980,6 +982,9 @@ export const Core3D = {
       this._post = this._createPost(this.renderer);
       return this;
     }
+    // Strona w trybie renderu w workerze (RW-41c): scena bez urządzenia — GPU ma tylko worker (jedno urządzenie na
+    // kartę). `ready` zostaje w toku (nic na stronie nie czeka na GPU), gotowość podaje worker (RET GPU_READY).
+    if (this.noDevice) return this;
     this._initGpu().then(
       (ok) => resolveGpuReady?.(ok),
       (err) => { this._failGpu(err); resolveGpuReady?.(false); }

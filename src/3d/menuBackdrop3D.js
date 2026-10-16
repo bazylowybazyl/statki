@@ -112,6 +112,7 @@ export class MenuBackdrop3D {
     this._inv = new THREE.Matrix4();
     this._tick = (now) => this._frame(now);
     this._onVisibility = () => this._sync();
+    this.onRendered = null;
   }
 
   // Start w tle (menu zostaje responsywne, pod kurtyną .mm-curtain): ring gry
@@ -376,6 +377,8 @@ export class MenuBackdrop3D {
     const dt = this.frozen ? 0 : Math.min(0.1, Math.max(0, (now - this._last) / 1000));
     this._last = now;
     this.renderFrame(dt);
+    // worker renderu (RW-41c): bitmapa klatki do strony w tym samym zadaniu co render
+    if (this.onRendered) this.onRendered();
     this.stats.frameMs = this.stats.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   }
 

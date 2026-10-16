@@ -491,6 +491,9 @@ export function createHaloRing(options = {}) {
 
     // Wysokość terenu (CPU, niska rozdzielczość) — kolizje płyty, dynamiczny near
     // kamery. Przed pierwszym odczytem mapy 0 (host czeka na `ready`).
+    // Mapa CPU wysokości { w, h, heights } (po odczycie) — worker renderu wysyła ją grze (RW-41c, kolizje płyty).
+    get terrainMap() { return parts?.maps?.cpu || null; },
+
     terrainHeightAt(x, y, z) {
       const maps = parts?.maps;
       if (!maps?.cpu) return 0;

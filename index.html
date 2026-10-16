@@ -877,6 +877,14 @@
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx } from './src/game/graphicsQuality.js';
     import { describeGpuAdapter, pickGfxPresetAuto, gfxAutoFromQuery } from './src/game/graphicsAutoPreset.js';
+    import { resolveRenderMode as resolveRenderModeBoot, renderWorkerCaps as renderWorkerCapsBoot } from './src/render/renderBridge.js';
+
+    // Tryb renderu (src/render/renderBridge.js) rozstrzygany PRZED Core3D.init (RW-41c): w trybie worker Core3D strony
+    // nie tworzy urządzenia WebGPU — GPU ma tylko worker (tło menu, ekran ładowania i gra; jedno urządzenie na kartę).
+    window.__renderModeBoot = (() => {
+      try { return resolveRenderModeBoot(location.search, renderWorkerCapsBoot(window)); } catch (_) { return { mode: 'off', requested: 'off', fallback: null }; }
+    })();
+    if (window.__renderModeBoot.mode === 'worker') Core3D.noDevice = true;
 
     // Opcje grafiki (src/game/graphicsQuality.js) PRZED Core3D.init: MSAA wchodzi w cel sceny tylko przy starcie
     // (zmiana próbek = nowy klucz każdego pipeline'u), skala renderu — od pierwszej klatki. ?grafika=niska|srednia|
@@ -893,7 +901,13 @@
       window.__gfxBoot = Object.freeze({ ...gfx, urlPreset });
       Core3D.configureQuality({ renderScale: gfx.renderScale, msaa: gfx.msaa });
       const autoMode = gfxAutoFromQuery(location.search);
-      if (!urlPreset && autoMode !== 'off' && (autoMode === 'force' || !hasSavedGfx(localStorage))) {
+      if (!urlPreset && autoMode !== 'off' && (autoMode === 'force' || !hasSavedGfx(localStorage)) && Core3D.noDevice) {
+        // tryb worker: dobór z adaptera WORKERA (render.worker.js, wiadomość gfxAuto — blok hosta niżej)
+        window.__gfxAutoWorker = {
+          gfx, force: autoMode === 'force', fake: window.__GFX_AUTO_FAKE || null,
+          env: { screenW: window.screen?.width, screenH: window.screen?.height, viewW: window.innerWidth, viewH: window.innerHeight, deviceMemory: navigator.deviceMemory }
+        };
+      } else if (!urlPreset && autoMode !== 'off' && (autoMode === 'force' || !hasSavedGfx(localStorage))) {
         Core3D.onAdapter = (adapter) => {
           window.__gfxAdapter = describeGpuAdapter(adapter);   // diagnostyka (narzędzia): prawdziwy opis adaptera
           const desc = { ...window.__gfxAdapter, ...(window.__GFX_AUTO_FAKE || {}) };
@@ -2765,7 +2779,8 @@
         if (btn) btn.disabled = true;
       }
     }
-    Core3D.ready?.then((ok) => { if (!ok) showWebGpuRequired(); });
+    // tryb worker: urządzenie ma tylko worker — komunikat z jego `ready` (rwHost.onFail)
+    if (window.__renderModeBoot?.mode !== 'worker') Core3D.ready?.then((ok) => { if (!ok) showWebGpuRequired(); });
 
     // --- TŁO MENU: Ziemia z ringiem (src/3d/menuBackdrop3D.js) ---
     // Renderuje przed startem gry, póki menu widać (edytor i nakładki
@@ -2784,7 +2799,8 @@
       if (menuBackdrop || gameStarted) return;
       let enabled = !!haloRings;
       try { enabled = enabled && new URLSearchParams(location.search).get('menu3d') !== '0'; } catch { }
-      const backdrop = enabled ? new MenuBackdrop3D({ haloRings }) : null;
+      // tryb worker (RW-41c): tło rysuje worker (ring Ziemi piecze się tam raz — dla menu i gry), tu pełnomocnik
+      const backdrop = !enabled ? null : rwHost ? rwHost.createMenuBackdrop() : new MenuBackdrop3D({ haloRings });
       try {
         if (!backdrop?.start()) return;
       } catch (err) {
@@ -12465,8 +12481,9 @@
           asteroidBelt = createAsteroidBelt({ world: beltWorld });
           beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
           window.__asteroidBelt = asteroidBelt;
-          // tryb worker (RW-41): pas workera (bank skał, rozgrzewka) buduje się już w menu — start gry czeka tylko na resztę
-          if (rwHost) rwHost.attachBeltEarly(beltWorld);
+          // tryb worker: pas workera (bank skał) piecze się na ekranie ładowania (startGame — attachBeltEarly), nie w menu
+          // (RW-41c): pipeline'y compute three r183 powstają synchronicznie — proces GPU staje i strona menu nie dostaje
+          // klatek przez kilka sekund
           applyGraphicsEffects();   // reflektory i mapy cienia pasa wg opcji grafiki (blok „OPCJE GRAFIKI”)
         } catch (err) {
           console.error('[AsteroidBelt] start nie wyszedł', err);
@@ -28378,6 +28395,7 @@
     // (packer.stats, packer.hist, packer.pageReport()).
     // Tryb szwu (src/render/renderBridge.js): `?szew=inline|pakuj`, `?renderWorker=1` (worker — zapas `inline` z powodem).
     const SZEW_RESOLVED = (() => {
+      if (window.__renderModeBoot) return window.__renderModeBoot;   // ten sam wynik co przed Core3D.init (pierwszy moduł)
       try { return resolveRenderMode(location.search, renderWorkerCaps(window)); } catch (_) { return { mode: 'off', fallback: null }; }
     })();
     if (SZEW_RESOLVED.fallback) console.warn(`[render worker] tryb inline zamiast worker: ${SZEW_RESOLVED.fallback}`);
@@ -28397,16 +28415,29 @@
       try {
         rwHost = createRenderWorkerHost({
           packer: renderSnapshot, slots: RenderSlots, commands: RenderCommands, gameCanvas: canvas, mainCanvas: document.getElementById('webgl-layer'), W, H,
-          dpr: window.devicePixelRatio || 1, quality: { renderScale: Core3D.renderScale, msaa: Core3D.msaaBoot }
+          dpr: window.devicePixelRatio || 1, quality: { renderScale: Core3D.renderScale, msaa: Core3D.msaaBoot },
+          autoGfx: window.__gfxAutoWorker || null
         });
         window.RenderWorkerHost = rwHost;
+        // RW-41c: strona bez urządzenia GPU — brak WebGPU w workerze = komunikat w menu; teren ringu Ziemi z mapy CPU
+        // ringu workera (kolizje płyty); preset pierwszego uruchomienia z adaptera workera
+        rwHost.onFail = () => showWebGpuRequired();
+        rwHost.onRingTerrain = (m) => haloWorld?.setRingTerrainMap(m.key, m);
+        rwHost.onGfxAuto = (m) => {
+          window.__gfxAdapter = m.adapter;
+          Core3D.configureQuality(m.quality);
+          window.__gfxAuto = m.auto;
+          window.GraphicsQuality?.applyAuto?.();
+        };
         if (cometField) rwHost.sendComets(cometField);
         // mgła wojny (koła wzroku, sygnatury masy) — w każdej wiadomości klatki
         rwHost.fogWorld = SensorSystem.fogWorld;
         // RW-41: planety i ring przy statku budują się w workerze już w menu (ekran ładowania czeka tylko na resztę)
         rwHost.ringQuality = window.OPTIONS?.planetQuality || 'high';
         rwHost.syncPlanets(planets, SUN, window.smallBodies, null);
-        rwHost.prepare(ship.pos.x, ship.pos.y, 60000);
+        // RW-41c: przygotowanie sceny (ringi przy statku, rozgrzewka gry) w menu — worker robi je dopiero w wolnym czasie,
+        // po tle menu, efektach i banku pasa (`idle`); „Start” czeka tylko na to, czego jeszcze nie skończył
+        rwHost.prepare(ship.pos.x, ship.pos.y, 120000, false, true);
       } catch (err) {
         console.error('[render worker] start nieudany:', err);
       }
@@ -31844,6 +31875,12 @@
       if (!plan) return false;
       storyOverlay.preCinematic(true);
       hideLoadingOverlay();
+      // tryb worker (RW-41c): lot leci w workerze z danych planu; ostatnia klatka (bitmapa) = obraz przenikania
+      if (bd.worker) {
+        bd.onFinal = (bmp) => captureStorySnapshot(bmp);
+        await bd.flyData(plan.data, plan.duration);
+        return true;
+      }
       await bd.fly({
         duration: plan.duration,
         sample: plan.sample,
@@ -32105,7 +32142,7 @@
     async function startGame() {
       if (gameStarted) return;
       // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
-      if (Core3D.gpuUnsupported) { showWebGpuRequired(); return; }
+      if (Core3D.gpuUnsupported || rwHost?.failed) { showWebGpuRequired(); return; }
       // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra.
       const storyCampaign = startGameCampaign && StoryOptions.campaign;
 

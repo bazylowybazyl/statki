@@ -168,3 +168,28 @@ export function buildDockIntroKeys(p) {
   keys.push({ t, eye: { ...e.eye }, target: { ...e.target }, up: { ...e.up }, fov: e.fov, stop: true });
   return keys;
 }
+
+function lerpAngle(a, b, t) {
+  const d = ((b - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  return a + d * t;
+}
+
+/**
+ * Lot intro w tle menu z DANYCH (RW-41c: ten sam plan na stronie i w workerze renderu — lot leci tam, gdzie tło menu):
+ * { keys, menuSun?, gameSun? } → { duration, keys, sample(t, out), sun(w) | null, gameView(w), cut(w) }.
+ * Słońce menu → gra w środku lotu (na końcu oświetlenie = gra), końcówka (kamera prawie z góry) liczy ring jak kamera
+ * gry, wycięcie górnej ściany nad halą narasta od włączenia widoku gry.
+ */
+export function menuIntroFlight({ keys, menuSun: ms = null, gameSun: gs = null }) {
+  return {
+    duration: keysDuration(keys),
+    keys,
+    sample: (t, o) => sampleKeys(keys, t, o),
+    sun: (ms && gs) ? (w) => {
+      const k = smooth01((w - 0.15) / 0.6);
+      return { az: lerpAngle(ms.az, gs.az, k), el: ms.el + (gs.el - ms.el) * k };
+    } : null,
+    gameView: (w) => w >= 0.72,
+    cut: (w) => smooth01((w - 0.72) / 0.2)
+  };
+}

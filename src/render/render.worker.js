@@ -33,6 +33,9 @@ if (isWorker) {
     // wieże 3D (blok TURRETS — rekordy Turret2D tej klatki po stronie gry, RW-26): lustro → rekordy
     turByEnt: new Map(), turPool: [], turrets: null
   };
+  // tło menu gotowe (RW-41c) — reszta init workera (efekty) rusza po nim
+  st.menuReadyP = new Promise((r) => { st.menuReadyRes = r; });
+  st.liveP = new Promise((r) => { st.liveRes = r; });
   const report = (e, where) => {
     st.errors++;
     if (st.errors <= 20) postMessage({ type: 'error', where, msg: String(e?.stack || e?.message || e).slice(0, 2000) });
@@ -41,13 +44,18 @@ if (isWorker) {
   self.addEventListener('unhandledrejection', (e) => report(e.reason, 'promise'));
 
   async function init(m) {
+    st.t0 = performance.now();
+    if (m.menu3d === false) st.menuReadyRes();   // bez tła menu (?menu3d=0) — efekty od razu
     // podkładki (RW-02 § 8; moduły czytają config przy imporcie — RenderWorld przed modułami renderu)
     globalThis.window = globalThis;
     globalThis.innerWidth = m.W;
     globalThis.innerHeight = m.H;
     globalThis.devicePixelRatio = m.dpr || 1;
     if (typeof globalThis.requestIdleCallback !== 'function') {
-      globalThis.requestIdleCallback = (fn, opt) => setTimeout(() => fn({ didTimeout: false, timeRemaining: () => 8 }), Math.min(50, opt?.timeout ?? 1));
+      // budżet jak w przeglądarce: ~8 ms od wywołania (stałe 8 ms robiło z pętli „póki starcza czasu” jedną długą
+      // serię — rozgrzewka w tle kompilowała całą kolejkę naraz i dławiła worker oraz proces GPU w menu, RW-41c); bez
+      // czekania do `timeout` (dawne 50 ms między porcjami rozciągało budowę ringu i rozgrzewkę na sekundy)
+      globalThis.requestIdleCallback = (fn, opt) => setTimeout(() => { const t0 = performance.now(); fn({ didTimeout: false, timeRemaining: () => Math.max(0, 10 - (performance.now() - t0)) }); }, 1);
       globalThis.cancelIdleCallback = (id) => clearTimeout(id);
     }
     st.W = m.W; st.H = m.H; st.dpr = m.dpr || 1;
@@ -85,6 +93,11 @@ if (isWorker) {
     const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
+    // tło menu i lot intro (RW-41c) — wczytane z góry, żeby start tła nie czekał na import w trakcie init efektów
+    // moduły pasa — w tle od razu: bank skał rusza zaraz po gotowym tle menu, bez importów w trakcie init efektów
+    st.beltModsP = Promise.all([import('../game/asteroidBeltField.js'), import('../game/asteroidGiants.js'), import('../3d/asteroids/asteroidBelt.js'),
+      import('../game/asteroidMining.js'), import('./miningSync.js')]);
+    [st.menuMod, st.introMod] = await Promise.all([import('../3d/menuBackdrop3D.js'), import('../game/story/introCamera.js')]);
     st.destruction = (await import('../vfx/destruction3D.js')).Destruction3D;
     globalThis.Destruction3D = st.destruction;   // RenderWorld.destruction3D (prebake brył: stacja piracka)
     const [bridge3d, bridgeFx, cloakLook, reactorFx] = await Promise.all([
@@ -121,6 +134,21 @@ if (isWorker) {
     const Core3D = core.Core3D;
     st.Core3D = Core3D;
     if (m.quality) Core3D.configureQuality(m.quality);
+    // RW-41c: pierwsze uruchomienie — preset grafiki z adaptera WORKERA (strona nie ma urządzenia), przed jego
+    // urządzeniem (MSAA presetu w celach sceny); wynik do strony (`gfxAuto` → opcje, zapis, informacja w menu)
+    if (m.autoGfx) {
+      const [gq, ga] = await Promise.all([import('../game/graphicsQuality.js'), import('../game/graphicsAutoPreset.js')]);
+      const a = m.autoGfx;
+      Core3D.onAdapter = (adapter) => {
+        const real = ga.describeGpuAdapter(adapter);
+        const desc = { ...real, ...(a.fake || {}) };
+        const pick = ga.pickGfxPresetAuto(desc, a.env || {});
+        const q = gq.gfxWithPreset(a.gfx, pick.preset);
+        Core3D.configureQuality({ renderScale: q.renderScale, msaa: q.msaa });
+        postMessage({ type: 'gfxAuto', adapter: real, quality: { renderScale: q.renderScale, msaa: q.msaa },
+          auto: { ...pick, gpu: { vendor: desc.vendor, architecture: desc.architecture }, force: !!a.force, applied: false } });
+      };
+    }
     st.ret = ret.createReturnViews(m.retBuffer);
     st.canvas = new OffscreenCanvas(Math.max(1, Math.round(m.W * (m.dpr || 1))), Math.max(1, Math.round(m.H * (m.dpr || 1))));
     hex.initHexShips3D({ canvas: st.canvas });
@@ -150,6 +178,14 @@ if (isWorker) {
       postMessage({ type: 'ready', ok: false, why: String(Core3D.gpuError || ok) });
       return;
     }
+    st.tGpu = performance.now();
+    // RW-41c: planety (ringi) i tło menu PRZED inicjalizacją efektów (kilka s synchronicznie) — pieczenie ringu tła
+    // rusza od razu i idzie na GPU równolegle z resztą init; wiadomości, które jeszcze nie przyszły, obsłuży onmessage
+    for (let i = 0; i < early.length;) {
+      const q = early[i];
+      if (q.type === 'planets' || q.type === 'menu' || q.type === 'belt' || q.type === 'beltOp' || q.type === 'beltOcc' || q.type === 'beltGiant') { early.splice(i, 1); handle(q); } else i++;
+    }
+    await new Promise((r) => setTimeout(r, 0));
     ret.retSetFlag(st.ret, ret.RET_FLAG.GPU_READY | ret.RET_FLAG.READY);
     // dziennik pipeline'ów tworzonych SYNCHRONICZNIE w klatkach workera (przestój GPU — to, czego rozgrzewka nie objęła);
     // pierwsze 60 do konsoli workera (render-worker-gra.mjs zbiera logi workera), liczba w st.pipeSync
@@ -170,7 +206,16 @@ if (isWorker) {
         };
       }
     } catch (e) { report(e, 'dziennik pipeline'); }
-    try { hex.prewarmHexShips3D({ canvas: st.canvas }); } catch (e) { report(e, 'prewarmHexShips3D'); }
+    // rozgrzewki kadłubów i tarcz — przy „Start” (prepareScene), jak w trybie off: w menu GPU ma tło (RW-41c)
+    st.gamePrewarm = () => {
+      st.gamePrewarm = null;
+      try { hex.prewarmHexShips3D({ canvas: st.canvas }); } catch (e) { report(e, 'prewarmHexShips3D'); }
+      try { shields.prewarmShields3D(); } catch (e) { report(e, 'prewarmShields3D'); }
+    };
+    // efekty (pule GPU, fabryki wybuchów, mostki, rdzenie, pył, luk, rozpad, warp) — RW-41c: PO gotowości tła menu
+    // (albo po 15 s), w porcjach z oddaniem wątku: synchroniczne kilka sekund stało przed budową ringu tła
+    const yieldTask = () => new Promise((r) => setTimeout(r, 0));
+    const initEffects = async () => {
     // efekty ze strumienia rozkazów: iskry, rakiety (pule dymu — wybuchy), wybuchy WebGPU, efekty broni, mapa ran
     try {
       sparks.SparkSystem3D.init(Core3D.scene);
@@ -179,10 +224,12 @@ if (isWorker) {
       if (rocketFx && rocketFx.smoke) st.hallDust.setVaporSmoke(rocketFx.smoke);
       if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(st.rockets.pool);
       wfx.WeaponFx.ensure();
+      await yieldTask();
       st.blastFactory = blastFx.createExplosionFactory(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
+      await yieldTask();
       Core3D.warmup.add({ name: 'mostki 3D (bridge3D, szczeliny)', phase: 'loading',
         objects: () => [...bridge3d.Bridge3D.warmupMeshes(), bridgeFx.BridgeFx3D.mesh].filter(Boolean) });
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
@@ -194,16 +241,21 @@ if (isWorker) {
       st.reactorModelOpts = { origin: { x: 0, y: 0 } };
       Core3D.warmup.add({ name: 'model reaktora (reactor3D)', layer: 7, phase: 'loading',
         objects: () => Object.values(st.reactorModel?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean) });
+      await yieldTask();
       st.dust.init();
+      await yieldTask();
       st.bay = st.bayMod.createScoutBay3D(Core3D, 'atlas');
       Core3D.warmup.add({ name: 'ładownia Atlasa (fregata zwiadu)', objects: () => st.bay.warmupMeshes(), phase: 'loading' });
       st.destruction.init({ scene: Core3D.scene, reactorFactory: st.blastFactory, shockwaveManager: null });
       warpMod.WarpNurt.init();
     } catch (e) { report(e, 'efekty'); }
+    };
+    await Promise.race([st.menuReadyP, new Promise((r) => setTimeout(r, 15000))]);
+    await initEffects();
     if (st.cmdBuf) makeReader(st.cmdBuf);
-    try { shields.prewarmShields3D(); } catch (e) { report(e, 'prewarmShields3D'); }
     postMessage({ type: 'ready', ok: true });
-    Core3D.warmup.flush().then(() => ret.retSetFlag(st.ret, ret.RET_FLAG.WARM_FLUSHED), (e) => report(e, 'warmup.flush'));
+    // wpisy rozgrzewki z fazą 'loading' dokańcza przygotowanie sceny przy „Start” (prepareScene → flush), nie start
+    // workera: w menu jedno urządzenie GPU rysuje tło — kompilacje tu zatrzymywały proces GPU i klatki strony (RW-41c)
     requestAnimationFrame(frame);
   }
 
@@ -233,6 +285,7 @@ if (isWorker) {
   // Dane ciał ze strony: pierwsza wiadomość — initPlanets3D, kolejne — wartości w miejscu (encje czytają obiekty danych).
   function setPlanets(m) {
     if (!st.planets) {
+      st.tPlanets0 = performance.now() - st.t0;
       st.planets = m.planets; st.sunData = m.sun; st.small = m.small;
       Object.assign(st.sun, { x: m.sun?.x || 0, y: m.sun?.y || 0, r: m.sun?.r || 0 });
       globalThis.planets = m.planets;
@@ -248,7 +301,17 @@ if (isWorker) {
           e.collider.hubOutline = () => { const r = st.ringMirror.entries[key]; return r ? r.hub : null; };
         }
         st.haloRings = new ringGameMod.HaloRingGame({ world: st.haloWorld, quality: m.quality || 'high' });
+        // RW-41c: mapa CPU terenu ringu (Ziemia — po odczycie map) do gry: kolizje płyty bez ringu na stronie
+        const hw = st.haloWorld, setT = hw.setRingTerrain.bind(hw);
+        hw.setRingTerrain = (key, fn) => {
+          setT(key, fn);
+          const ent = st.haloRings.entries.find((v) => v.key === key);
+          const map = ent && ent.ring && ent.ring.terrainMap;
+          if (map && map.heights) postMessage({ type: 'ringTerrain', key, w: map.w, h: map.h, heights: map.heights.slice() });
+        };
       } catch (e) { report(e, 'ringi'); }
+      st.tPlanets1 = performance.now() - st.t0;
+      if (st.menuPending) { const q = st.menuPending; st.menuPending = null; st.menuChain = (st.menuChain || Promise.resolve()).then(() => menuOp(q)).catch((e) => report(e, 'menu')); }
       return;
     }
     const upd = (dst, src) => { if (dst && src) Object.assign(dst, src); };
@@ -360,12 +423,10 @@ if (isWorker) {
   // Pas asteroid (RW-41b): świat pasa w workerze = zastępnik z danymi od strony (pole z tych samych argumentów
   // i operacji, sektory cienia pól, olbrzymy z siatką SDF w SAB, zegar skał z wiadomości klatki); wydobycie — jeszcze nie.
   async function setBelt(m) {
+    await st.menuReadyP;   // RW-41c: najpierw tło menu (ring Ziemi), potem bank skał
     try {
-      const [{ AsteroidBeltField }, { GiantRock }, { createAsteroidBelt }] = await Promise.all([
-        import('../game/asteroidBeltField.js'), import('../game/asteroidGiants.js'), import('../3d/asteroids/asteroidBelt.js')
-      ]);
+      const [{ AsteroidBeltField }, { GiantRock }, { createAsteroidBelt }, r2, sync] = await st.beltModsP;
       st.GiantRock = GiantRock;
-      const [r2, sync] = await Promise.all([import('../game/asteroidMining.js'), import('./miningSync.js')]);
       const mm = { RockBody: r2.RockBody, sync };
       st.mineMods = mm;
       const ops = st.beltOps || (st.beltOps = []);
@@ -400,7 +461,7 @@ if (isWorker) {
       await belt.initGpu();
       console.log(`[render.worker] pas: initGpu ${Math.round(performance.now() - tB)} ms`);
       st.belt = belt;
-      postMessage({ type: 'beltReady' });
+      postMessage({ type: 'beltReady', t: [tB - st.t0, performance.now() - st.t0] });
     } catch (e) { report(e, 'pas'); }
   }
   function addGiant(m) {
@@ -767,6 +828,7 @@ if (isWorker) {
     const ex = globalThis.__explosions;
     const dr = st.domRects || (st.domRects = new Float64Array(4 * 16));
     const nd = ex && typeof ex.domainRects === 'function' ? ex.domainRects(dr) : 0;
+    st.drawnK = k;
     postMessage({ type: 'frame', k, bmp, nd, dr: nd ? dr.slice(0, nd * 4) : null }, [bmp]);
     retMod.retNoteRendered(st.ret, k);
     const f = st.ret.f64, R = retMod.RET_F64;
@@ -800,8 +862,79 @@ if (isWorker) {
   // Ekran ładowania strony (RW-41): ringi przy punkcie startu zbudowane (wypiek map, bryły rozgrzane — hak prewarm)
   // i kolejka rozgrzewki workera dokończona, zanim strona zdejmie kurtynę — inaczej pierwsze sekundy gry worker
   // budował ring i kompilował pipeline'y w klatkach (200–400 ms na klatkę).
+  // Tło menu (RW-41c): MenuBackdrop3D w workerze — ring Ziemi piecze się RAZ (menu, potem gra), jedno urządzenie GPU.
+  // Pętla rAF tła rysuje sama (bez stron migawki) i oddaje bitmapę każdej klatki (`menuFrame`: poza kamery, słońce
+  // tła, launchDone; `final` — ostatnia klatka lotu intro, strona robi z niej obraz przenikania). Sterowanie ze strony:
+  // start / active / pointer / focus / launch / fly (plan lotu jako dane — introCamera.menuIntroFlight) / stop.
+  async function menuOp(m) {
+    const op = m.op;
+    if (op === 'start') {
+      if (st.tMenuMsg === undefined) st.tMenuMsg = performance.now() - st.t0;
+      if (st.menu) return;
+      if (!st.haloRings) { st.menuPending = m; return; }
+      const mod = st.menuMod || (st.menuMod = await import('../3d/menuBackdrop3D.js'));
+      const bd = new mod.MenuBackdrop3D({ haloRings: st.haloRings });
+      st.menu = bd;
+      bd.onRendered = () => {
+        if (st.menu !== bd) return;
+        const bmp = st.canvas.transferToImageBitmap();
+        const fin = !!st.menuFinal;
+        st.menuFinal = false;
+        const s = bd.sunLocal;
+        postMessage({ type: 'menuFrame', bmp, final: fin, launchDone: bd.launchDone, pose: bd.cameraPose(), sun: { az: s.az, el: s.el } }, [bmp]);
+      };
+      const tMenu = performance.now();
+      bd.onReady(() => {
+        st.menuReadyRes();
+        let ring = null;
+        try { ring = JSON.parse(JSON.stringify(bd.ring && bd.ring.stats || null)); } catch (_) { ring = null; }
+        postMessage({ type: 'menuReady', stats: { ...bd.stats, startMs: tMenu - st.t0, readyMs: performance.now() - st.t0, gpuMs: st.tGpu - st.t0, planets: [st.tPlanets0, st.tPlanets1], menuMsg: st.tMenuMsg, ring } });
+      });
+      if (!bd.start()) { st.menu = null; st.menuReadyRes(); postMessage({ type: 'menuReady', failed: true }); return; }
+      bd.setFocus(m.focus || 0);
+      bd.setActive(!!m.active);
+      return;
+    }
+    if (op === 'stop') { st.menuPending = null; st.menuReadyRes(); }
+    else if (st.menuPending && op === 'active') st.menuPending.active = !!m.on;
+    const bd = st.menu;
+    if (!bd) return;
+    if (op === 'active') bd.setActive(!!m.on);
+    else if (op === 'pointer') bd.setPointer(m.x, m.y);
+    else if (op === 'focus') bd.setFocus(m.k);
+    else if (op === 'launch') bd.launch({ dolly: m.dolly !== false });
+    else if (op === 'flightSet') { const f = bd.flight; if (f) { if ('devTime' in m) f.devTime = m.devTime; if ('t' in m) f.t = m.t; } }
+    else if (op === 'fly') {
+      const intro = st.introMod || (st.introMod = await import('../game/story/introCamera.js'));
+      const plan = intro.menuIntroFlight(m.data);
+      const rings = st.haloRings;
+      bd.fly({
+        duration: plan.duration, sample: plan.sample, sun: plan.sun, gameView: plan.gameView,
+        onFrame: (w) => rings && rings.showcaseHallCut && rings.showcaseHallCut('earth', 0, plan.cut(w)),
+        onFinish: () => { st.menuFinal = true; }
+      }).then((ok) => postMessage({ type: 'menuFlown', id: m.id, ok }));
+    } else if (op === 'stop') {
+      st.menu = null;
+      st.menuReadyRes();
+      bd.stop();
+    }
+  }
+
+  // Przygotowania po kolei (jedno na raz). `idle` (strona przy starcie, RW-41c): dopiero gdy worker skończy init (efekty)
+  // i bank pasa — w menu, w wolnym czasie; „Start” w trakcie ustawia się za nim i dostaje gotową scenę.
+  function runPrepare(m) {
+    const run = async () => {
+      if (m.idle) await st.liveP;
+      return prepareScene(m);
+    };
+    const p = (st.prepChain || Promise.resolve()).then(run, run);
+    st.prepChain = p.catch(() => {});
+    return p;
+  }
+
   async function prepareScene(m) {
     const t0 = performance.now();
+    if (st.gamePrewarm) st.gamePrewarm();
     const waits = [];
     if (st.haloRings) {
       st.haloRings.syncEntries?.();
@@ -820,14 +953,21 @@ if (isWorker) {
     if (m.afterFrame) {
       // klatka zero strony (pod kurtyną ładowania): lustra kadłubów i obiekty gry są w scenie — passy Core3D jeszcze raz
       // z tym, co w niej jest (jak flush strony w trybie off: wpisy „start gry” ruszyły przy starcie workera, przed grą)
+      // strona k (klatka zero) narysowana — worker rysuje stronę zaraz po jej wiadomości (RW-45b), więc zwykle już jest
+      // (dawne „następna klatka po wiadomości” czekało na stronę, której strona nie wyśle — ~5 s limitu pętli, RW-41c)
       const f0 = st.frames;
-      for (let i = 0; i < 300 && st.frames <= f0; i++) await new Promise((r) => setTimeout(r, 16));
+      for (let i = 0; i < 300 && (m.k >= 0 ? !((st.drawnK ?? -1) >= m.k) : st.frames <= f0); i++) await new Promise((r) => setTimeout(r, 16));
+      st.tFrame0 = performance.now() - t0;
       const C = st.Core3D, scene = C.scene, w = C.warmup, jobs = [];
       for (const layer of [0, 7, 2, 1, 3, 5, 6]) jobs.push(w.now(scene, { layer, visible: false }));
       for (const layer of [0, 7, 2]) jobs.push(w.now(scene, { layer, visible: false, ortho: false }));
       await Promise.race([Promise.all(jobs), limit(6000)]);
+      st.tPasses = performance.now() - t0;
     }
+    const tF = performance.now();
     await Promise.race([st.Core3D.warmup.flush({ timeoutMs: 4000 }), limit(6000)]);
+    console.log(`[render.worker] przygotowanie (afterFrame ${!!m.afterFrame}): od init ${Math.round(t0 - st.t0)} ms, klatka 0 po ${Math.round(st.tFrame0 || 0)} ms, passy do ${Math.round(st.tPasses || 0)} ms, flush ${Math.round(performance.now() - tF)} ms`);
+    st.ret && st.mods && st.mods.retMod.retSetFlag(st.ret, st.mods.retMod.RET_FLAG.WARM_FLUSHED);
     console.log(`[render.worker] przygotowanie sceny: ringi ${waits.length} ${Math.round(tRing - t0)} ms, rozgrzewka ${Math.round(performance.now() - tRing)} ms`);
     return true;
   }
@@ -846,7 +986,8 @@ if (isWorker) {
       else if (m.type === 'beltOcc') { st.beltSectors = m.sectors; if (st.beltWorld) { st.beltWorld.sectors = m.sectors; for (const f of st.beltOccSubs) f(m.sectors); } }
       else if (m.type === 'beltGiant') addGiant(m);
       else if (m.type === 'pbase') st.pbChain = (st.pbChain || Promise.resolve()).then(() => pirateBaseEvent(m));
-      else if (m.type === 'prepare') prepareScene(m).then((ok) => postMessage({ type: 'prepared', id: m.id, ok }), (err) => { report(err, 'prepare'); postMessage({ type: 'prepared', id: m.id, ok: false }); });
+      else if (m.type === 'menu') st.menuChain = (st.menuChain || Promise.resolve()).then(() => menuOp(m)).catch((err) => report(err, 'menu'));
+      else if (m.type === 'prepare') runPrepare(m).then((ok) => postMessage({ type: 'prepared', id: m.id, ok }), (err) => { report(err, 'prepare'); postMessage({ type: 'prepared', id: m.id, ok: false }); });
     } catch (err) {
       report(err, m && m.type);
     }
@@ -854,10 +995,16 @@ if (isWorker) {
   self.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'init') {
-      init(m).then(() => { for (const q of early) handle(q); early.length = 0; st.live = true; },
+      init(m).then(() => { for (const q of early) handle(q); early.length = 0; st.live = true; st.liveRes(); },
         (err) => { report(err, 'init'); postMessage({ type: 'ready', ok: false, why: String(err?.message || err) }); });
       return;
     }
+    // planety (ringi) i tło menu od razu, gdy moduły są już wczytane — menu nie czeka na resztę init (RW-41c)
+    if (!st.live && st.mods && (m.type === 'planets' || m.type === 'menu')) { handle(m); return; }
+    // pas (bank skał) i przygotowanie sceny przy „Start” — po gotowym GPU, nie po całym init (efekty idą w porcjach
+    // po gotowości tła menu; kliknięcie w trakcie nie czeka na nie z pieczeniem pasa)
+    if (!st.live && st.tGpu && (m.type === 'belt' || m.type === 'beltOp' || m.type === 'beltOcc' || m.type === 'beltGiant' ||
+      (m.type === 'prepare' && !m.afterFrame))) { handle(m); return; }
     if (!st.live) { early.push(m); return; }
     handle(m);
   };

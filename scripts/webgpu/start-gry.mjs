@@ -90,11 +90,13 @@ const RECORDER = `(() => {
   const mark = (k, ok) => { if (R.marks[k] === undefined && ok) R.marks[k] = +now().toFixed(1); };
   const poll = setInterval(() => {
     try {
-      mark('gpuReady', window.Core3D && window.Core3D.gpuReady === true);
+      mark('gpuReady', (window.Core3D && window.Core3D.gpuReady === true) || !!(window.RenderWorkerHost && window.RenderWorkerHost.gpuReady && window.RenderWorkerHost.gpuReady()));
       mark('menuPierwszaKlatka', ((window.__menuBackdrop && window.__menuBackdrop.stats && window.__menuBackdrop.stats.frames) || 0) > 0);
       mark('menuGotowe', !!(window.__menuBackdrop && window.__menuBackdrop.ready));
       const e = window.__haloRings && window.__haloRings.entries && window.__haloRings.entries.find((x) => x.key === 'earth');
-      mark('ringZiemi', !!(e && e.ring && e.ring.mapsReady));
+      // tryb worker (RW-41c): ring piecze worker — gotowy, gdy gra dostała jego mapę terenu
+      const hw = window.RenderWorkerHost && window.__haloWorld && window.__haloWorld.entry && window.__haloWorld.entry('earth');
+      mark('ringZiemi', !!(e && e.ring && e.ring.mapsReady) || !!(hw && hw.terrainReady));
       mark('graPierwszaKlatka', (window.__frameId | 0) >= 1);
       const H = window.RenderWorkerHost;
       mark('graObraz3D', !!(H && H.composed > 0));
@@ -175,7 +177,7 @@ async function runOnce(base, n) {
     if (args.kampania !== '1') await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('sc_story_campaign','0'); localStorage.setItem('sc_story_tutorial','0'); } catch (_) {}" });
     await cdp.send('Page.navigate', { url: `${base}/index.html${args.query ? '?' + args.query : ''}` });
     if (!await waitFor(cdp, '!!(window.__startRec && window.Core3D && window.Core3D.isInitialized)', 120000, 100)) throw new Error('gra nie wstała');
-    res.renderer = await ev('(() => new Promise((ok) => { const f = () => { const r = window.Core3D.renderer; if (r) ok(r.isWebGPURenderer ? "webgpu" : "webgl"); else setTimeout(f, 50); }; f(); }))()');
+    res.renderer = await ev('(() => new Promise((ok) => { const f = () => { const r = window.Core3D.renderer; if (window.Core3D.noDevice) ok("worker"); else if (r) ok(r.isWebGPURenderer ? "webgpu" : "webgl"); else setTimeout(f, 50); }; f(); }))()');
     if (!await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 180000, 50)) throw new Error('tło menu nie gotowe');
     if (!await waitFor(cdp, '!!window.__startRec.marks.ringZiemi', 180000, 50)) throw new Error('ring Ziemi bez map');
     // Menu na ekranie (intro, bezczynność) — potem „Start”.

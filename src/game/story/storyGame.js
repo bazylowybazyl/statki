@@ -16,7 +16,7 @@
 import { createStoryRunner, isStoryCancelled } from './storyRunner.js';
 import { createDialogueQueue } from './dialogue.js';
 import { createProgress, grantExp, rankProgress } from './progression.js';
-import { buildDockIntroKeys, keysDuration, sampleKeys, topDownPose } from './introCamera.js';
+import { buildDockIntroKeys, keysDuration, menuIntroFlight, sampleKeys, topDownPose } from './introCamera.js';
 import { k7AxesGame, k7BerthPose, k7FrameFor, k7HallCenter, k7HubToGame, k7IsOutsideHall, k7LayoutTemplate } from './k7Dock.js';
 import { planFleetWave, SHIPYARD_TUNE } from './shipyardLayout.js';
 import { PIRATE_BASE_STRUCTURES, PIRATE_BASE_TUNE, planPirateBase } from './pirateBaseSite.js';
@@ -162,22 +162,9 @@ export const StoryGame = {
       hall: { x: hc.x, y: -hc.y, outX: out.x, outY: -out.y },
       end: topDownPose(berth.x, berth.y, zoom, H, 30)
     });
-    const duration = keysDuration(keys);
-    const ms = p.menuSun, gs = p.gameSun;
-    return {
-      duration,
-      keys,
-      sample: (t, o) => sampleKeys(keys, t, o),
-      // słońce: menu → gra w środku lotu (na końcu oświetlenie = gra, cięcie bez zmiany światła)
-      sun: (ms && gs) ? (w) => {
-        const k = smooth01((w - 0.15) / 0.6);
-        return { az: lerpAngle(ms.az, gs.az, k), el: ms.el + (gs.el - ms.el) * k };
-      } : null,
-      // końcówka lotu (kamera prawie z góry): ring liczy jak w kamerze gry — górna ściana i wycięcia jak po cięciu
-      gameView: (w) => w >= 0.72,
-      // wycięcie górnej ściany nad halą (jak w grze przy otwartym dachu) — narasta od włączenia widoku gry
-      cut: (w) => smooth01((w - 0.72) / 0.2)
-    };
+    // lot z danych (introCamera.menuIntroFlight) — `data` idzie do workera renderu, gdy tło menu rysuje worker
+    const data = { keys, menuSun: p.menuSun || null, gameSun: p.gameSun || null };
+    return { ...menuIntroFlight(data), data };
   },
 
   /** Nowa gra w trybie kampanii: dok K-7, intro. opts: { tutorial, menuPose, introFromMenu, startPhase } */

@@ -114,6 +114,29 @@ export class HaloRingWorld {
   }
 
   /**
+   * Teren z MAPY CPU ringu renderu ({ w, h, heights } — mapa wysokości w uv podłogi, jak `heightAtUV` map świata):
+   * tryb worker (RW-41c) — ring Ziemi piecze tylko worker i wysyła mapę grze. Ta sama dwuliniowa próbka co obraz.
+   */
+  setRingTerrainMap(key, map) {
+    const e = this.entry(key);
+    const L = e?.collider?.layout;
+    if (!L || !map || !(map.w > 0) || !(map.h > 0) || !map.heights) return;
+    const { w, h, heights } = map;
+    const f = {};
+    this.setRingTerrain(key, (lx, ly) => {
+      L.worldToFloor(lx, ly, 0, f);
+      const x = ((f.u % 1) + 1) % 1 * w - 0.5;
+      const y = Math.max(0, Math.min(h - 1, f.v * h - 0.5));
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const fx = x - x0, fy = y - y0;
+      const X0 = ((x0 % w) + w) % w, X1 = (X0 + 1) % w, Y1 = Math.min(h - 1, y0 + 1);
+      const a = heights[y0 * w + X0] * (1 - fx) + heights[y0 * w + X1] * fx;
+      const b = heights[Y1 * w + X0] * (1 - fx) + heights[Y1 * w + X1] * fx;
+      return a * (1 - fy) + b * fy;
+    });
+  }
+
+  /**
    * Stanowisko hali K-7 zajęte / zarezerwowane (fabuła): zapis w rejestrze, wersja przy zmianie (albo `force`)
    * — obraz przenosi ją na lampki. Zwraca true, gdy wersja się zmieniła.
    */
