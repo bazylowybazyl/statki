@@ -471,6 +471,7 @@ if (isWorker) {
   }
 
   function applyFrameMsg(m) {
+    if (m.dev) devOps(m.dev);
     for (let i = 0; i < m.desc.length; i += 2) st.descriptors[m.desc[i]] = m.desc[i + 1];
     for (let i = 0; i < m.topo.length; i += 2) st.topologies[m.topo[i]] = m.topo[i + 1];
     for (let i = 0; i < m.cores.length; i += 2) st.coreDescs.set(m.cores[i], m.cores[i + 1]);
@@ -544,6 +545,8 @@ if (isWorker) {
     const SC = st.mods.clock.SimClock;
     SC.sim = h[H.SIM]; SC.render = h[H.SIM_RENDER]; SC.renderSim = h[H.SIM_RENDER_SIM];
     st.curFrame = h[H.FRAME_ID];
+    // zegar efektów Core3D.fx = czas strony tej klatki (strona pod harnessem: czas wirtualny — te same fazy efektów)
+    if (Number.isFinite(h[H.WALL])) st.Core3D.fxNowMs = h[H.WALL];
     if (v.blocks.view && v.blocks.view.f64) st.mods.viewBlock.applyViewBlock(v.blocks.view, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.curFrame);
     applyShots(v);
     applyTurrets(v);
@@ -727,6 +730,26 @@ if (isWorker) {
     f[R.CPU_FRAME_MS] = performance.now() - t0;
     if (Number.isFinite(Core3D.gpuFrameMs)) f[R.GPU_FRAME_MS] = Core3D.gpuFrameMs;
     st.frames++;
+  }
+
+  // Operacje narzędzi (RW-44, harness strony): ziarno generatora efektów, reset pul broni, kod w workerze (dev).
+  function devOps(ops) {
+    for (const op of ops) {
+      try {
+        if (op.seed !== undefined) {
+          const fx = globalThis.fxRandom;
+          if (fx && typeof fx.seed === 'function') fx.seed(op.seed >>> 0);
+          if (globalThis.Fx3D && typeof globalThis.Fx3D.time === 'number') globalThis.Fx3D.time = 0;
+        }
+        if (op.wfxReset) globalThis.WeaponFx?.reset?.();
+        if (op.eval) {
+          st.devChain = (st.devChain || Promise.resolve()).then(async () => {
+            const THREE = await import('three/webgpu');
+            await new Function('Core3D', 'THREE', 'st', `return (async () => { ${op.eval} })();`)(st.Core3D, THREE, st);
+          }).catch((e) => report(e, 'dev eval'));
+        }
+      } catch (e) { report(e, 'dev'); }
+    }
   }
 
   // Ekran ładowania strony (RW-41): ringi przy punkcie startu zbudowane (wypiek map, bryły rozgrzane — hak prewarm)

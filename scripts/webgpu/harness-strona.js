@@ -654,6 +654,8 @@
       // Strumień gry wizualiów wątku głównego (RW-20, src/game/fxRandomGame.js) — własne ziarno z tego samego v.
       try { if (window.fxRandomGame && typeof window.fxRandomGame.seed === 'function') window.fxRandomGame.seed((v ^ 0x9e3779b9) >>> 0); } catch { /* bez strumienia gry */ }
       try { if (window.Fx3D && typeof window.Fx3D.time === 'number') window.Fx3D.time = 0; } catch { /* bez banku iskier */ }
+      // tryb worker (RW-44): to samo ziarno generatora efektów workera, przed następną stroną migawki
+      try { window.RenderWorkerHost?.dev?.({ seed: (v ^ 0x5eed5eed) >>> 0 }); } catch { /* bez workera */ }
       return true;
     },
     // Licznik wywołań Math.random gry (zadanie 23): start() zeruje i włącza, stop() → { „plik:linia funkcja”: liczba }.

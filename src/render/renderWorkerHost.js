@@ -200,6 +200,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const sb = host.scoutBay;
     if (sb) msg.bay = { door: sb.door, hidden: sb.hidden };
     const dv = p.dict.values;
+    // narzędzia (RW-44): operacje harnessu dla workera w kolejności stron (ziarno efektów, reset pul, wyrażenie)
+    if (host._devOps.length) { msg.dev = host._devOps; host._devOps = []; }
     msg.dict = dv.slice(host._dictSent);
     host._dictSent = dv.length;
     host.lastPostedK = k;
@@ -297,6 +299,10 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     worker.postMessage({ type: 'prepare', id, x, y });
     setTimeout(() => { if (host._prep.delete(id)) resolve(false); }, timeoutMs);
   });
+  // Narzędzia (RW-44, harness): operacja dla workera stosowana PRZED stroną, po której ją zgłoszono —
+  // { seed } (fxRandom workera + zegar iskier), { wfxReset } (pule efektów broni), { eval } (kod w workerze: Core3D, THREE).
+  host._devOps = [];
+  host.dev = (op) => { if (op) host._devOps.push(op); };
   host._beltGiants = new Set();
   // domeny gazu wybuchów workera (ostatnia klatka) — strona: przeszkody kadłubów (packGasObstacles)
   host.domainRects = new Float64Array(4 * 16);

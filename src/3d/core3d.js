@@ -644,7 +644,7 @@ export const Core3D = {
   // siatka świateł (fx.grid; renderer.lighting = GridLighting „optIn”), światła efektów (fx.lights),
   // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget).
   // fxStats — pomiar klatki (PerfHUD, harness).
-  fx: null, fxStats: null, distortionTarget: null,
+  fx: null, fxStats: null, fxNowMs: NaN, distortionTarget: null,
 
   _getBloomConfig() {
     const bloom = RenderWorld.devVFX?.bloom || null;
@@ -2088,7 +2088,9 @@ export const Core3D = {
     const split = !!RenderWorld.splitScreenMode;
     const cam2 = split && !freePerspective ? (RenderWorld.camera2 || null) : null;
     // Kadr siatki świateł w j. świata: kanwa (px CSS) / zoom.
-    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, performance.now());
+    // fxNowMs: zegar klatki z zewnątrz (render w workerze — performance.now strony z migawki; pod harnessem wirtualny)
+    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective,
+      Number.isFinite(this.fxNowMs) ? this.fxNowMs : performance.now());
   },
 
   // Na każdy render: źródła zniekształceń rzutowane na kamerę tego renderu (blok „uber”) i warstwa

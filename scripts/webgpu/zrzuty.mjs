@@ -328,7 +328,9 @@ const SCENES = {
            const T = window.THREE || await import(url);
            const bd = new T.Mesh(new T.PlaneGeometry(2000000, 2000000), new T.MeshBasicMaterial({ color: 0x000000 }));
            bd.position.set(ship.pos.x, -ship.pos.y, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern';
-           Core3D.scene.add(bd); bd.updateMatrixWorld(true); }
+           Core3D.scene.add(bd); bd.updateMatrixWorld(true);
+           // tryb worker (RW-44): ta sama płyta w scenie workera
+           window.RenderWorkerHost?.dev({ eval: \`const bd = new THREE.Mesh(new THREE.PlaneGeometry(2000000, 2000000), new THREE.MeshBasicMaterial({ color: 0x000000 })); bd.position.set(${'$'}{ship.pos.x}, ${'$'}{-ship.pos.y}, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern'; Core3D.scene.add(bd); bd.updateMatrixWorld(true);\` }); }
          const s = ship; const at = (fx, fy) => ({ x: s.pos.x + fx, y: s.pos.y + fy });
          const made = [];
          const put = (k, x, y, a) => { const r = spawnCallInShip(k, { mode: 'pirate', spawnPos: at(x, y), spawnAngle: a }); for (const n of (Array.isArray(r) ? r : [r])) if (n) { n.ai = null; made.push(n); } };
@@ -805,7 +807,7 @@ const GALERIA_POMOC = `const G = window.__galeria;
   // Rany na kadłubie (mapa ran, 18-C) też od zera — jak „naprawa przy zmianie broni” w demie: obrażenia
   // × 1e-6 trzymają kadłub w całości, ale mapa stempluje każde trafienie, więc bez tego ujęcie pokazywałoby
   // rany wszystkich wcześniejszych rodzin w jednym miejscu.
-  const clear = async () => { for (const b of window.bullets) b.life = -1; window.HullDamageMap?.heal(G.T.beamHull?.dmgKey, 1); await H.step(2); WFX?.reset(); noShield(); };
+  const clear = async () => { for (const b of window.bullets) b.life = -1; window.HullDamageMap?.heal(G.T.beamHull?.dmgKey, 1); await H.step(2); WFX?.reset(); window.RenderWorkerHost?.dev({ wfxReset: true }); noShield(); };
   const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; if (window.WeaponShotShake) window.WeaponShotShake.mag = 0; G.T.hp = G.T.maxHp; };`;
 for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
   SCENES[`galeria-${name}`] = {
@@ -1262,7 +1264,10 @@ async function runSession(session, backend, outDir, base) {
       // Ring buduje się leniwie, gdy środek kadru jest bliżej planety niż 420 tys. j. — przy stojącym
       // czasie kamera nie dojedzie do statku sama (Mars, Jowisz; ring Ziemi piecze się już w menu).
       if (session.ring) await ev('(() => { window.__harness.scene.cam(window.ship.pos.x, window.ship.pos.y, 0.2); return true; })()');
-      if (session.ring && !await waitFor(cdp, `window.__harness.scene.ringReady('${session.ring}')`, 240000, 400)) throw new Error(`ring ${session.ring} bez map`);
+      // tryb worker (RW-44): ring buduje worker — przygotowanie sceny przy statku (ringi w promieniu aktywacji, rozgrzewka)
+      if (session.ring && await ev('!!window.RenderWorkerHost')) {
+        if (!await ev('window.RenderWorkerHost.prepare(window.ship.pos.x, window.ship.pos.y, 240000)', 250000)) throw new Error(`ring ${session.ring} (worker) bez przygotowania`);
+      } else if (session.ring && !await waitFor(cdp, `window.__harness.scene.ringReady('${session.ring}')`, 240000, 400)) throw new Error(`ring ${session.ring} bez map`);
       if (session.sprites && !await waitFor(cdp, 'window.DevScene.preloadHullSprites()', 120000, 250)) throw new Error('nie wczytano sprite’ów kadłubów');
       if (session.belt && !await waitFor(cdp, '!!(window.__asteroidBelt && window.__asteroidBelt.ready)', 180000, 400)) throw new Error('pas asteroid nie gotowy');
       sessionInfo.start = await statsFrom(f0);
