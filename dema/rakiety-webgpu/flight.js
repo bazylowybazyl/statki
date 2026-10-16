@@ -1,6 +1,6 @@
 // dema/rakiety-webgpu/flight.js
 //
-// Model lotu rakiet dema — port logiki z src/effects3d/rocketSystem3D.js
+// Model lotu rakiet dema — port logiki z src/game/rockets/rocketSim.js
 // (tam w scenie overlaya Y-up z kwaternionem; tu w płaszczyźnie gry, bo
 // wysokość i tak nie jest widoczna w kamerze ortho z góry):
 //   • zimny start z wyrzutni: wyrzut z rozrzutem ±150 j./s, zapłon po

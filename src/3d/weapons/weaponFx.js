@@ -69,8 +69,6 @@ export const PULSE_CAP = 1024;
 export const RICOCHET_CAP = 256;
 /** Pocisków spoza tablicy `bullets` (Hexlance) naraz. */
 export const EXTERNAL_CAP = 16;
-/** Sufit wstrząsu strzałów (window.__weapon3dCameraShake.mag, jak dawny weapon3DSystem). */
-export const WEAPON_SHAKE_CAP = 18;
 /** Znaków rzazu pocisku przebijającego na jedno wywołanie (po przerzedzeniu jak w demie — niżej). */
 export const KERF_PER_CALL = 16;
 /** Podkrok symulacji pocisków dema [Hz]: najwyżej jeden znak rzazu na podkrok (odstęp v / 240). */
@@ -217,6 +215,7 @@ export const WeaponFx = {
   enabled: true,
   _ready: false,
   _busBound: false,
+  _commands: false,
   _frame: 0,
   _lastSyncMs: 0,
   _frameDt: 1 / 60,   // czas klatki renderu, wygładzony (migawka pocisków)
@@ -226,9 +225,6 @@ export const WeaponFx = {
   // Budżety pełnych wylotów i trafień na klatkę (ponad — tani błysk); opcje grafiki („Szczegóły efektów”).
   muzzlePerFrame: MUZZLE_PER_FRAME,
   impactPerFrame: IMPACT_PER_FRAME,
-  _weaponShake: 0,
-  // Mnożnik wstrząsu kamery bieżącego strzału (1 = pełny). Ustawia go strzelający wokół fireWeaponCore.
-  shotShakeScale: 1,
   _states: [],
   _free: [],
   _active: [],
@@ -303,8 +299,21 @@ export const WeaponFx = {
     }
   },
 
+  /**
+   * RW-21: wejście efektów broni ze strumienia rozkazów (src/render/renderCommands.js — rekordy SHOT itd., dekoder
+   * src/3d/weapons/weaponFxCommands.js). Szyna strzałów przestaje być wejściem (strzał szedłby dwa razy).
+   */
+  useCommands(on = true) {
+    this._commands = !!on;
+    if (this._commands && this._busBound) {
+      WeaponShotBus.off(this._busListener);
+      this._busBound = false;
+    }
+  },
+
   _bindBus() {
-    if (this._busBound) return;
+    // Strumień rozkazów (RW-21): strzały przychodzą rekordami SHOT (src/render/renderCommands.js) — bez szyny.
+    if (this._busBound || this._commands) return;
     this._busListener = (detail) => this._onShot(detail);
     WeaponShotBus.on(this._busListener);
     this._busBound = true;
@@ -322,7 +331,7 @@ export const WeaponFx = {
       get time() { return Core3D.fx.time; },
       /** Zdarzenie opóźnione: rodzaj i liczby (bez domknięć), nośnik z ActiveCarrier. */
       after(delay, kind, a0, a1, a2, a3, a4, a5, ref) { self._scheduleAfter(delay, kind, a0, a1, a2, a3, a4, a5, ref); },
-      /** Wstrząs kamery: camera.addShake porównany z tym, co zostało (addShake nadpisuje). */
+      /** Wstrząs kamery: żądanie do gry (hak onShake — RW-30; gra porównuje z bieżącym wstrząsem). */
       shake(mag, dur) { self._shake(mag, dur); },
       /**
        * Mapa ran na kadłubie (zadanie 18-C, HullDamageMap.stampRecipe): stempel w miejscu krateru z haka
@@ -344,13 +353,11 @@ export const WeaponFx = {
   // broni (zadanie 18-D, src/game/weaponFeel.js); poza trafieniem 1.
   _shakeScale: 1,
 
+  // Wstrząs kamery z receptury — ŻĄDANIE do gry (RW-30: hak `onShake`, index.html → src/game/cameraShakes.js
+  // requestCameraShake: nie słabszy od bieżącego). Kamerą rządzi gra; efekty jej nie piszą.
   _shake(mag, dur) {
     if (!this._shakeAllowed || !(mag > 0)) return;
-    const cam = RenderWorld.camera;
-    if (!cam || typeof cam.addShake !== 'function') return;
-    const m = mag * this._shakeScale;
-    const left = cam.shakeDur > 0 ? cam.shakeMag * Math.max(0, cam.shakeTime / cam.shakeDur) : 0;
-    if (m > left) cam.addShake(m, dur);
+    if (this.onShake !== null) this.onShake(mag * this._shakeScale, dur);
   },
 
   _hullInside(hull, x, y) {
@@ -472,7 +479,8 @@ export const WeaponFx = {
   // -------------------------------------------------------------------------
   // Strzał (szyna) — zdarzenia A–E
 
-  _onShot(detail) {
+  /** pre — lufa rozwiązana w grze (rekord SHOT, RW-21): undefined — szukana tutaj (szyna, dema). */
+  _onShot(detail, pre = undefined) {
     if (!this.available || !detail) return;
     const id = detail.weaponId;
     const entry = WEAPON_FX[id];
@@ -484,20 +492,17 @@ export const WeaponFx = {
     if (detail.isBeam && detail.beam) {
       const kind = detail.beam.kind || detail.beamMode || detail.beam.mode;
       if (kind === 'continuous') { this._beamContinuousEvent(detail, w); return; }
-      this._pulseBeamEvent(detail, w, kind === 'pd' ? BEAM.PD : BEAM.PULSE);
+      this._pulseBeamEvent(detail, w, kind === 'pd' ? BEAM.PD : BEAM.PULSE, pre);
       return;
     }
-    this._muzzle(w, x, y, detail.shooter || null, detail.dirX, detail.dirY);
+    this._muzzle(w, x, y, detail.shooter || null, detail.dirX, detail.dirY, pre);
   },
 
   /** Kamery 3D: (encja, x, y) → wysokość lufy nad płaszczyzną (błysk wylotu) albo null. */
   muzzleZOf: null,
 
-  /**
-   * Strzał gracza 1 z wieżyczki: (kierunek lufy x, y [świat], wstrząs broni × ułamek grupy, przeładowanie [s]) —
-   * index.html podpina kopnięcie kadru (cameraRig.addCameraKick). null — bez haka.
-   */
-  onPlayerShot: null,
+  /** (siła, czas) → żądanie wstrząsu kamery (hak gry — RW-30; null — bez wstrząsu, np. dema). */
+  onShake: null,
 
   /**
    * GAZ Z LUFY (etap E1, reżyser wybuchów — ExplosionFx.muzzleShot podpina się sam): (rodzina receptury, wylot `m`, moc
@@ -511,11 +516,13 @@ export const WeaponFx = {
    * Wylot broni w punkcie (x, y): lufa i kąt z wieżyczki strzelca (Turret2D — odrzut), a bez
    * wieżyczki (myśliwiec) z kierunku strzału. Zwraca true, gdy powstał efekt.
    */
-  _muzzle(w, x, y, shooter, dirX, dirY) {
+  _muzzle(w, x, y, shooter, dirX, dirY, pre = undefined) {
     const recipe = RECIPES[w.fx];
     if (!recipe) return false;
     const key = normalizeWeaponFxKey(w.id);
-    const shot = Turret2D.triggerShot(key, x, y, shooter);
+    // Odrzut zadaje strona gry (RW-26: Turret2D.recoilForShot w słuchaczu szyny, triggerShot przy PD) — tu sam wylot.
+    // pre: lufa rozwiązana w grze (rekord SHOT / PD_LASER — ta sama reguła shotMuzzle, RW-21).
+    const shot = pre !== undefined ? pre : Turret2D.shotMuzzle(key, x, y, shooter);
     const m = _m;
     let gunner = shooter;
     if (shot) {
@@ -524,14 +531,8 @@ export const WeaponFx = {
       writeCarrier(gunner, shot.x, shot.y, true, _carrier);
       // Kamery 3D: błysk na wysokości lufy wieży 3D (shipModels3DGame.turretMuzzleZ; w kamerze z góry 0).
       if (this.muzzleZOf !== null) _carrier.z += this.muzzleZOf(shot.entity || shooter, shot.x, shot.y) || 0;
-      // Wstrząs strzałów z profilu wieżyczki (jak dawny weapon3DSystem) — 18-D przełączy na dane.
-      // `shotShakeScale` — ułamek wstrząsu tego strzału: kierowanie ogniem gracza (index.html) ścisza
-      // wieże na auto, ekranem trzęsie tylko grupa w ręku.
-      this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(shot.shake) || 0) * this.shotShakeScale);
-      // Kopnięcie kadru wzdłuż lufy (strzał gracza 1; index.html → cameraRig.addCameraKick).
-      if (this.onPlayerShot !== null && gunner && gunner === RenderWorld.ship) {
-        this.onPlayerShot(Math.cos(shot.angle), Math.sin(shot.angle), (Number(shot.shake) || 0) * this.shotShakeScale, Number(w.def?.cooldown) || 1);
-      }
+      // Wstrząs strzałów i kopnięcie kadru liczy gra przy zapisie rekordu SHOT (RW-30: src/render/renderCommands.js
+      // `onShotFeel` → src/game/cameraShakes.js).
       shot.entity = null;
     } else {
       if (!this._inView(x, y, 200)) return false;
@@ -578,12 +579,12 @@ export const WeaponFx = {
    * Strzał obrony punktowej gracza (ciwsStep — nie idzie przez szynę): CIWS, flak. Lufa z
    * rekordu wieżyczki p_aux (Turret2D), inaczej z pozycji i kąta działka.
    */
-  pdShot(weaponId, x, y, angle, shooter) {
+  pdShot(weaponId, x, y, angle, shooter, pre = undefined) {
     if (!this.available) return false;
     const w = weaponCtx(weaponId);
     if (!w.fx) return false;
     this.stats.shots++;
-    return this._muzzle(w, x, y, shooter, Math.cos(angle), Math.sin(angle));
+    return this._muzzle(w, x, y, shooter, Math.cos(angle), Math.sin(angle), pre);
   },
 
   /**
@@ -666,14 +667,14 @@ export const WeaponFx = {
     return oldest;
   },
 
-  _pulseBeamEvent(detail, w, style) {
+  _pulseBeamEvent(detail, w, style, pre = undefined) {
     const beam = detail.beam;
     const recipe = RECIPES[w.fx];
     const shooter = detail.shooter || null;
     const sx = Number(beam.startX); const sy = Number(beam.startY);
     const ex = Number(beam.endX); const ey = Number(beam.endY);
     if (!Number.isFinite(sx + sy + ex + ey)) return;
-    this._firePulse(w, recipe, style, sx, sy, ex, ey, shooter, beam.hitEntity || null, beam.nx, beam.ny, Number(beam.width) || 5);
+    this._firePulse(w, recipe, style, sx, sy, ex, ey, shooter, beam.hitEntity || null, beam.nx, beam.ny, Number(beam.width) || 5, pre);
   },
 
   /**
@@ -681,12 +682,12 @@ export const WeaponFx = {
    * (PULSE_SPEED), trafienie po dojściu — sam obraz (obrażenia liczy gra). Pierścień o stałej
    * pojemności — najstarszy nadpisywany.
    */
-  _firePulse(w, recipe, style, sx, sy, ex, ey, shooter, hitEntity, nx, ny, gameWidth) {
+  _firePulse(w, recipe, style, sx, sy, ex, ey, shooter, hitEntity, nx, ny, gameWidth, pre = undefined) {
     const inView = this._inView(sx, sy) || this._inView(ex, ey);
     // wylot (błysk, odrzut wieżyczki) — też poza kadrem: odrzut prowadzi Turret2D
     const dx = ex - sx; const dy = ey - sy;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    this._muzzle(w, sx, sy, shooter, dist > 1e-6 ? dx / dist : 1, dist > 1e-6 ? dy / dist : 0);
+    this._muzzle(w, sx, sy, shooter, dist > 1e-6 ? dx / dist : 1, dist > 1e-6 ? dy / dist : 0, pre);
     if (!inView) return;
     const P = this._pulses[this._pulseHead];
     this._pulseHead = (this._pulseHead + 1) % PULSE_CAP;
@@ -716,12 +717,12 @@ export const WeaponFx = {
    * Laser obrony punktowej gracza (ciwsStep): wylot z wieżyczki p_aux, impuls do celu, trafienie.
    * Rakietę zestrzeloną laserem obsługuje dodatkowo spawnBulletImpactEffect (wybuch).
    */
-  pdLaser(weaponId, x0, y0, x1, y1, shooter, target) {
+  pdLaser(weaponId, x0, y0, x1, y1, shooter, target, pre = undefined) {
     if (!this.available) return false;
     const w = weaponCtx(weaponId);
     const recipe = RECIPES[w.fx] || RECIPES.laserPD;
     this.stats.shots++;
-    this._firePulse(w, recipe, BEAM.PD, x0, y0, x1, y1, shooter, target || null, x0 - x1, y0 - y1, 5);
+    this._firePulse(w, recipe, BEAM.PD, x0, y0, x1, y1, shooter, target || null, x0 - x1, y0 - y1, 5, pre);
     return true;
   },
 
@@ -832,8 +833,10 @@ export const WeaponFx = {
     this.stats.impacts++;
     // koniec smugi pocisku w punkcie trafienia — chyba że pocisk przebija kadłub i leci dalej
     // (hit.through, 18-B: smuga kończy się w punkcie wyjścia / zakleszczenia)
-    const st = b.__fx;
-    if (st && st.bullet === b && !hit?.through) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
+    // b.__ref — pocisk gry, gdy `b` to widok z rekordu IMPACT (RW-21); stan smugi siedzi na nim.
+    const ref = b.__ref || b;
+    const st = ref.__fx;
+    if (st && st.bullet === ref && !hit?.through) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
     let family = projectileFamilyFor(b);
     const hx = hit ? hit.nx : 0; const hy = hit ? hit.ny : 0;
     const relVx = hit ? hit.relVx : (Number(b.vx) || 0) - (Number(b.ivx) || 0);
@@ -951,8 +954,9 @@ export const WeaponFx = {
     if (!recipe) return false;
     // pocisk kończy lot w materiale — smuga do punktu zakleszczenia
     if (stuck) {
-      const st = b.__fx;
-      if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
+      const ref = b.__ref || b;
+      const st = ref.__fx;
+      if (st && st.bullet === ref) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
     }
     if (!this._inView(x, y, 1200)) return false;
     const p = _imp;
@@ -990,8 +994,9 @@ export const WeaponFx = {
   flakBurst(b, x, y, radius) {
     if (!this.available) return false;
     if (!this._inView(x, y, radius * 2)) return false;
-    const st = b?.__fx;
-    if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
+    const ref = b ? (b.__ref || b) : null;
+    const st = ref?.__fx;
+    if (st && st.bullet === ref) { st.endX = x; st.endY = y; st.endZ = Number(b.z) || 0; st.endSet = true; }
     this._shakeAllowed = b?.owner === 'player' || b?.owner === 'player2';
     try { RECIPES.flak.burst(this.ctx, x, y, radius); } finally { this._shakeAllowed = true; }
     return true;
@@ -1168,7 +1173,6 @@ export const WeaponFx = {
     // Bank cząstek Fx3D (iskry dysz MAIN, mostki, rdzenie) — dokładnie raz na klatkę renderu
     // (dawniej Weapon3DSystem.syncProjectiles).
     Fx3D.update(dt);
-    this._updateWeaponShake(dt);
     if (!this.ensure()) return;
     this._frame++;
     this._syncZoom = this._zoom();
@@ -1191,8 +1195,8 @@ export const WeaponFx = {
       if (!b || !(b.life > 0)) continue;
       const bx = Number(b.x); const by = Number(b.y);
       if (!Number.isFinite(bx) || !Number.isFinite(by)) continue;
-      if (b.forceCanvas) { b.__renderedByThree = false; continue; }
-      b.__renderedByThree = true;
+      // Kto rysuje pocisk (`__renderedByThree`) rozstrzyga gra (RW-21: markThreeRenderedBullets w index.html, ten sam warunek).
+      if (b.forceCanvas) continue;
       let st = b.__fx;
       const vx = Number(b.vx) || 0; const vy = Number(b.vy) || 0;
       const lag = b.clock === CLOCK_RENDER ? renderLag : 0;
@@ -1337,26 +1341,6 @@ export const WeaponFx = {
     }
   },
 
-  // Wstrząs strzałów z profilu wieżyczek (window.__weapon3dCameraShake — czyta render() w
-  // index.html przez cameraShakeAmplitudePx). Bez losowania (dawniej Math.random w x/y).
-  _updateWeaponShake(dt) {
-    if (typeof window === 'undefined') return;
-    const out = window.__weapon3dCameraShake || (window.__weapon3dCameraShake = { x: 0, y: 0, mag: 0 });
-    this._weaponShake *= Math.exp(-8.0 * dt);
-    if (this._weaponShake < 0.01) this._weaponShake = 0;
-    out.mag = this._weaponShake;
-    out.x = 0;
-    out.y = 0;
-  },
-
-  /** Dokłada wstrząs strzałów (np. rakieta Supernowa — 19). */
-  addWeaponShake(mag) {
-    this._weaponShake = Math.min(WEAPON_SHAKE_CAP, this._weaponShake + (Number(mag) || 0));
-  },
-
-  get weaponShake() { return this._weaponShake; },
-  set weaponShake(v) { this._weaponShake = Math.max(0, Math.min(WEAPON_SHAKE_CAP, Number(v) || 0)); },
-
   // -------------------------------------------------------------------------
   // Kroki klatki efektów (Core3D.fx)
 
@@ -1387,12 +1371,6 @@ export const WeaponFx = {
 
   /** Nowa gra / sprzątanie sceny: stany, kolejki i pule od zera (bez zwalniania GPU). */
   reset() {
-    this._weaponShake = 0;
-    if (typeof window !== 'undefined' && window.__weapon3dCameraShake) {
-      window.__weapon3dCameraShake.mag = 0;
-      window.__weapon3dCameraShake.x = 0;
-      window.__weapon3dCameraShake.y = 0;
-    }
     if (!this._ready) return;
     const A = this._active;
     for (let i = 0; i < A.length; i++) {

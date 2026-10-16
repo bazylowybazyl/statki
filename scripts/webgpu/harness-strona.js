@@ -19,6 +19,10 @@
 //   frameLog, marks, pipes, frameStats(od, do, próg).
 (() => {
   if (window.__harness) return;
+  // Bufor Resource Timing (domyślnie 250 wpisów) zapełniały moduły gry — sceny szukające adresu three.js przez
+  // performance.getEntriesByType('resource') (kalibracja, galeria rakiet) czasem go nie znajdowały
+  // („Failed to resolve module specifier 'undefined'”) i dalsze sceny sesji szły z innego stanu.
+  try { performance.setResourceTimingBufferSize(100000); } catch (e) { /* stara przeglądarka */ }
   const SEED = Number(window.__HARNESS_SEED__ || 0x5eed1234) >>> 0;
   const realNow = performance.now.bind(performance);
   const realDateNow = Date.now.bind(Date);
@@ -259,7 +263,8 @@
     const key = m ? `${m[2]}:${m[3]}${m[1] ? ' ' + m[1] : ''}` : line.trim().slice(0, 120);
     tally.set(key, (tally.get(key) || 0) + 1);
   };
-  const FX_RANDOM_FRAME = /fxRandom\.js/;
+  // Ramki generatora (metody range / int / chance wołają next — RW-20: klasa w src/render/fxRandomCore.js).
+  const FX_RANDOM_FRAME = /fxRandom(?:Core|Game)?\.js/;
   let fxNextOrig = null;
   Math.random = () => {
     if (randTally) tallyCaller();
@@ -646,6 +651,8 @@
       usedSeeds.add(key);
       s = v >>> 0;
       try { if (window.fxRandom && typeof window.fxRandom.seed === 'function') window.fxRandom.seed((v ^ 0x5eed5eed) >>> 0); } catch { /* bez efektów */ }
+      // Strumień gry wizualiów wątku głównego (RW-20, src/game/fxRandomGame.js) — własne ziarno z tego samego v.
+      try { if (window.fxRandomGame && typeof window.fxRandomGame.seed === 'function') window.fxRandomGame.seed((v ^ 0x9e3779b9) >>> 0); } catch { /* bez strumienia gry */ }
       try { if (window.Fx3D && typeof window.Fx3D.time === 'number') window.Fx3D.time = 0; } catch { /* bez banku iskier */ }
       return true;
     },

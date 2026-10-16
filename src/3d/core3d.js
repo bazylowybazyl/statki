@@ -2420,7 +2420,8 @@ export const Core3D = {
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
 
   // Widoczność słońca w punkcie świata gry z tarcz tej klatki (lustro CPU passa maski — bez kadłubów
-  // i ringów; sunShadowMask.js, discSunVisibilityCpu) — dla rzeczy rysowanych na kanwie 2D (wieżyczki).
+  // i ringów; sunShadowMask.js, discSunVisibilityCpu) — diagnostyka narzędzi (oswietlenie-gra.mjs, zaplon-gra.mjs);
+  // dawniej jasność wieżyczek kanwy 2D (do B3D, 2026-10-15).
   // 1 = pełne słońce; bez słońca, przy wyłączonych smugach albo w wolnej kamerze 3D — 1.
   sunVisibilityAtWorld(worldX, worldY) {
     const sun = RenderWorld.sun;

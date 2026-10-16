@@ -70,7 +70,7 @@ function isGone(e) {
   return !e || e.dead === true || e.destroyed === true || e.removed === true;
 }
 
-// Okręt w tunelu warpa — przylot prowadzony przez efekt (WarpNurt.arrive: wpada z 12–30 tys. j/s),
+// Okręt w tunelu warpa — przylot prowadzony przez rejestr ruchu warpa gry (warpTraffic.arrive: wpada z 12–30 tys. j/s),
 // warp-in piratów, odlot POWRÓT — jest duchem (isCollidable = false): jeszcze go nie ma albo już
 // go nie ma. Czujniki go nie widzą: kontakt z prędkością przylotu wpychał do szyku wroga prędkość
 // 10 tys. j/s (slot ekstrapolowany o kilometry), a oś natarcia ustawiała się na pół drogi przylotu.

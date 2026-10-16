@@ -21,8 +21,9 @@
 // Import tego modułu ma efekt uboczny: rejestruje subskrybentów.
 
 import { CollisionFX } from './collisionFx.js';
-// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
-import { fxRandom } from '../3d/fx/fxRandom.js';
+// Losowość wizualiów (zadanie 23): nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu. Strumień GRY
+// (RW-20: liczone na wątku głównym — osobny ciąg od strumienia renderu fxRandom).
+import { fxRandomGame } from '../game/fxRandomGame.js';
 
 export const COLLISION_SPARKS_TUNE = {
   ratePerSec: 420,   // iskry/s na parę kadłubów przy pełnym tarciu
@@ -63,7 +64,7 @@ function pairState(a, b) {
     if (!pa) _pairs.set(a, pa = new WeakMap());
     let pb = _pairs.get(b);
     if (!pb) _pairs.set(b, pb = new WeakMap());
-    rec = { t: -Infinity, acc: fxRandom.next() };
+    rec = { t: -Infinity, acc: fxRandomGame.next() };
     pa.set(b, rec);
     pb.set(a, rec);
   }
@@ -107,9 +108,19 @@ export function impactSparkCount(approachSpeed) {
   return Math.round(T.impactSparks * k);
 }
 
-function onImpact(ev) {
+// Odbiorca iskier: RW-22 — pisarz rekordów SPARK_BURST / SPARK_SEAM (src/game/sparkEvents.js, te same metody co
+// SparkSystem3D; `ready` = render ma iskry); bez niego — dawna droga, SparkSystem3D wprost (dema, testy).
+let _sink = null;
+export function setCollisionSparkSink(sink) { _sink = sink || null; }
+function sparksOut() {
+  if (_sink) return _sink.ready ? _sink : null;
   const sparks = typeof window !== 'undefined' ? window.SparkSystem3D : null;
-  if (!sparks?.isInitialized) return;
+  return sparks?.isInitialized ? sparks : null;
+}
+
+function onImpact(ev) {
+  const sparks = sparksOut();
+  if (!sparks) return;
   const count = impactSparkCount(ev.approachSpeed);
   if (count <= 0) return;
   sparks.grindingBurst(
@@ -123,8 +134,8 @@ function onImpact(ev) {
 }
 
 function onGrind(ev) {
-  const sparks = typeof window !== 'undefined' ? window.SparkSystem3D : null;
-  if (!sparks?.isInitialized) return;
+  const sparks = sparksOut();
+  if (!sparks) return;
 
   const count = grindSparkBudget(ev);
   if (count <= 0) return;

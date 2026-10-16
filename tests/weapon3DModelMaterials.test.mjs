@@ -27,7 +27,7 @@ test('efekty broni nie budują modeli wieżyczek 3D (wieżyczki zostają na kanw
     assert.doesNotMatch(src, /BoxGeometry|CylinderGeometry|TorusGeometry|ExtrudeGeometry/, f);
   }
   // Lufa (pozycja wylotu, odrzut) przychodzi z warstwy 2D.
-  assert.match(read('weaponFx.js'), /Turret2D\.triggerShot\(/);
+  assert.match(read('weaponFx.js'), /Turret2D\.shotMuzzle\(/);
 });
 
 // Pociski: 8 stylów z dema w JEDNYM draw callu (instancje z bufora), addytywnie, alfa = max(rgb)

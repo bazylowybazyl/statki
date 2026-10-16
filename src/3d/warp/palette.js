@@ -37,12 +37,8 @@ export function warpPalette(id) {
   return out;
 }
 
-/** Paleta encji: blok engineFx z edytora albo zapas silników (piraci karmazyn, reszta magenta). */
-export function entityWarpPaletteId(entity) {
-  const id = entity?.visual?.engineFx?.warpPalette || entity?.__engineFxFallback?.warpPalette;
-  if (id) return id;
-  return (entity?.isPirate || entity?.pirate || entity?.faction === 'pirate') ? 'crimson' : 'magenta';
-}
+// Paleta encji (blok engineFx z edytora albo zapas silników) — jedno źródło w grze: rejestr ruchu warpa (RW-28).
+export { entityWarpPaletteId } from '../../game/warpTraffic.js';
 
 /** Barwa szwu (linia frontu na kadłubie, HDR): (rdzeń·0,7 + ciało·0,3)·6 — jak w demie. */
 export function seamColor(pal, out) {

@@ -270,7 +270,7 @@ export const MASTER_WEAPONS = {
 
   // ==========================================================================
   // RAKIETY
-  // Lot: src/effects3d/rocketSystem3D.js — zimny wyrzut z komory (rakieta wyskakuje nad
+  // Lot: src/game/rockets/rocketSim.js — zimny wyrzut z komory (rakieta wyskakuje nad
   // kadłub i na chwilę zawisa), zapłon, przechył w kurs wachlarza salwy, potem naprowadzanie
   // na cel z kluczeniem i zejście na płaszczyznę gry. Wysokość jest tylko obrazem (kamery 3D,
   // światło, skrót perspektywy) — trafienia liczą się w 2D. Pola rakiet poza wspólnymi:

@@ -101,7 +101,16 @@ const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.
   gpu: { gpuMs: r(Number(C?.gpuFrameMs) || 0), computeMs: r(Number(C?.gpuComputeMs) || 0),
     composer: r(C?.lastFramePerf?.composerMs || 0), renderTotal: r(C?.lastFramePerf?.renderTotalMs || 0),
     dc: window.__rendererInfo?.calls, tris: Math.round((window.__rendererInfo?.triangles || 0) / 1000),
-    fx: C?.fxStats ? { dispatch: C.fxStats.dispatches, cpuMs: r(C.fxStats.cpuMs || 0) } : null }, passes }; })()`;
+    fx: C?.fxStats ? { dispatch: C.fxStats.dispatches, cpuMs: r(C.fxStats.cpuMs || 0) } : null }, passes,
+  // migawka renderu (RW-10, --query szew=inline): koszt pakowania i rozmiary od poprzedniej próbki
+  snap: (() => { const P = window.RenderSnapshot?.packer; if (!P) return null; const h = P.hist, n1 = h.n;
+    const n0 = Math.max(window.__snapCur || 0, n1 - 4096); window.__snapCur = n1;
+    const ms = [], nodes = [], bodies = [], bytes = [];
+    for (let i = n0; i < n1; i++) { const j = i & 4095; ms.push(h.ms[j]); nodes.push(h.nodes[j]); bodies.push(h.bodies[j]); bytes.push(h.bytes[j]); }
+    ms.sort((a, b) => a - b); const q = (a, x) => a.length ? a[Math.min(a.length - 1, Math.floor(x * a.length))] : 0;
+    const mean = (a) => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
+    return { n: ms.length, msAvg: r(mean(ms)), msP95: r(q(ms, 0.95)), msMax: r(ms[ms.length - 1] || 0), nodesAvg: Math.round(mean(nodes)),
+      nodesMax: nodes.reduce((m, v) => Math.max(m, v), 0), bodiesAvg: r(mean(bodies)), bytesAvg: Math.round(mean(bytes)), blocks: P.pageReport() }; })() }; })()`;
 
 const KEY = ['fps', 'frameMs', 'frameP95', 'physicsTime', 'physicsPerStep', 'aiTime', 'projectileTime', 'collisionTime',
   'destructorTime', 'drawTime', 'render3dHexUpdateTime', 'render3dCoreRenderTime', 'rocketsTime'];
@@ -316,6 +325,12 @@ try {
     o.over17 = +avg(list, (s) => s.ft?.over17).toFixed(3); o.over25 = +avg(list, (s) => s.ft?.over25).toFixed(3);
     o.npc = Math.round(avg(list, (s) => s.stan.npc)); o.wraki = Math.round(avg(list, (s) => s.stan.wraki));
     o.pociski = Math.round(avg(list, (s) => s.stan.pociski)); o.wezly = Math.round(avg(list, (s) => s.stan.wezly));
+    if (list.some((s) => s.snap)) {
+      o.snapMs = +avg(list, (s) => s.snap?.msAvg).toFixed(3); o.snapP95 = +avg(list, (s) => s.snap?.msP95).toFixed(3);
+      o.snapMax = +Math.max(...list.map((s) => s.snap?.msMax || 0)).toFixed(3);
+      o.snapWezly = Math.round(avg(list, (s) => s.snap?.nodesAvg)); o.snapCiala = +avg(list, (s) => s.snap?.bodiesAvg).toFixed(1);
+      o.snapKB = +(avg(list, (s) => s.snap?.bytesAvg) / 1024).toFixed(1);
+    }
     return o;
   };
   const split = 15;

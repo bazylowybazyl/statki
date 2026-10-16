@@ -19,11 +19,11 @@
 // barwę swojego kadłuba zamiast jednolitej szarości.
 
 import * as THREE from 'three/webgpu';
-import { createCanvas2D } from './canvas2d.js';
 import { Fn, If, Discard, float, vec2, vec3, vec4, attribute, uv, positionGeometry, cos, sin, length, smoothstep } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { sunShadeUnlit } from './hexShips3D.tsl.js';
+import { averageImageRGB } from '../render/bodyColor.js';
 
 const MAX_IMPOSTORS = 2048;
 
@@ -115,50 +115,21 @@ const _avgColorBySource = new WeakMap();
 export const averageBodyColorCache = { enabled: true };
 
 /**
- * Średni kolor sprite'a ciała — liczony RAZ na obraz, z rzadkiego próbkowania canvasa.
- * Bierzemy tylko piksele o sensownej alfie, inaczej przezroczyste tło zjadałoby
- * barwę do czerni.
+ * Średni kolor sprite'a ciała — liczony RAZ na obraz (src/render/bodyColor.js, wspólny z grą: smuga zimnego wraku
+ * liczona przy zamrażaniu, RW-31). Tu jako THREE.Color — ten sam obiekt dla wszystkich wraków rodu.
  */
 export function computeAverageBodyColor(source) {
   if (!source || typeof source !== 'object') return null;
-  if (averageBodyColorCache.enabled) {
+  const cache = averageBodyColorCache.enabled;
+  if (cache) {
     const cached = _avgColorBySource.get(source);
     if (cached !== undefined) return cached;
   }
-  const width = source.naturalWidth || source.width || 0;
-  const height = source.naturalHeight || source.height || 0;
-  // obraz jeszcze bez rozmiaru (wczytuje się) — bez zapamiętania, następne wołanie spróbuje znowu
-  if (!width || !height) return null;
-
-  // NIGDY nie wołamy getContext/getImageData na źródle. `grid.cacheCanvas` to
-  // ten sam canvas, z którego leci texImage2D pancerza — pobranie z niego
-  // kontekstu 2D z `willReadFrequently` (albo samo getImageData) każe
-  // przeglądarce przenieść backing store do pamięci CPU i od tej pory KAŻDY
-  // upload tekstury z tego canvasa jest wolny, na stałe. Kopiujemy do własnego
-  // bufora 32x32 i czytamy tylko jego.
-  const canvas = createCanvas2D(Math.min(32, width), Math.min(32, height));
-  if (!canvas) return null;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-  try { ctx.drawImage(source, 0, 0, canvas.width, canvas.height); }
-  catch (_) { return null; }
-
-  let data;
-  try { data = ctx.getImageData(0, 0, canvas.width, canvas.height).data; }
-  catch (_) { return null; }
-
-  const stride = Math.max(1, Math.floor((canvas.width * canvas.height) / 1024));
-  let r = 0, g = 0, b = 0, n = 0;
-  for (let i = 0; i < canvas.width * canvas.height; i += stride) {
-    const o = i * 4;
-    if (data[o + 3] < 64) continue;
-    r += data[o]; g += data[o + 1]; b += data[o + 2];
-    n++;
-  }
-  if (n === 0) return null;
-  const color = new THREE.Color((r / n) / 255, (g / n) / 255, (b / n) / 255);
+  const rgb = averageImageRGB(source, cache);
+  if (!rgb) return null;
+  const color = new THREE.Color(rgb.r, rgb.g, rgb.b);
   // zapamiętany tylko udany wynik (płótno źródłowe bez treści albo błąd odczytu — następne wołanie spróbuje znowu)
-  if (averageBodyColorCache.enabled) _avgColorBySource.set(source, color);
+  if (cache) _avgColorBySource.set(source, color);
   return color;
 }
 

@@ -199,7 +199,7 @@ export class MinedRocks {
    * @param {import('./spotShadows.js').ShadowAtlas} [o.shadows]
    * @param {(x:number, y:number) => number} [o.sunT] transmitancja słońca (okruchy)
    */
-  constructor({ renderer, parent, layer = 0, bank, shared, playMaterial, grid, mining = null, mineralTemplates = null, shadows = null, sunT = null }) {
+  constructor({ renderer, parent, layer = 0, bank, shared, playMaterial, grid, mining = null, mineralTemplates = null, shadows = null, sunT = null, onUploaded = null }) {
     this.renderer = renderer;
     this.parent = parent;
     this.layer = layer;
@@ -207,6 +207,9 @@ export class MinedRocks {
     this.S = shared;
     this.grid = grid;
     this.mining = mining;
+    // Potwierdzenie wysłania zmian siatki ciała — pole zmian (body.dirtyBox) zeruje właściciel ciała
+    // (świat pasa gry, RW-25); bez właściciela (testy) — tu.
+    this.onUploaded = onUploaded;
     this.blocks = new BlockAtlas();
     // Sloty ciał: mapa ciało → slot i lista (bez iteratorów Map na klatkę).
     this.slots = new Map();
@@ -604,7 +607,7 @@ export class MinedRocks {
         if (!uploads) t0 = performance.now();
         cellsLeft -= this._upload(body, slot.block, slot.version < 0);
         slot.version = body.version;
-        body.dirtyBox = null;
+        if (this.onUploaded) this.onUploaded(body); else body.dirtyBox = null;
         uploads++;
       }
       if (slot.version < 0) continue;

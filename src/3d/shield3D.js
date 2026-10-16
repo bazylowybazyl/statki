@@ -33,7 +33,8 @@ import {
   ShieldPool, SHIELD_SLOTS, SHIELD_SLOT_CAP, SLOT, SHIELD_SUBSTEP, SHIELD_MAX_SUBSTEPS, SHIELD_MAX_EVENTS,
   SHIELD_BINS, SHIELD_HIT_CLASS, SHIELD_SPARK_CLASS, SHIELD_SPARK_COUNT_SCALE, SHIELD_SHATTER, shieldTileCircumradius
 } from './shield/shieldPool.js';
-import { acquireShieldLattice, circleShieldProfile, nearestShieldTile } from './shield/shieldLattice.js';
+import { acquireShieldLattice, circleShieldProfile, nearestShieldTile, shieldProfileHash } from './shield/shieldLattice.js';
+import { retWriteBreach, RET_I32 } from '../render/returnLayout.js';
 import {
   getEntityShieldBaseRadius, getEntityShieldProfile, getShieldHullAngle, isShieldSuppressed, sampleShieldProfileRadius
 } from '../../shieldSystem.js';
@@ -129,6 +130,13 @@ let breachCpu = null;
 let breachReadAt = 0;
 let breachBusy = false;
 const _breachRecsInFlight = new Array(SHIELD_SLOTS).fill(null); // rec slotu w chwili zlecenia odczytu
+// Kanał zwrotny (RW-29): mapa dziur idzie do gry rekordami RET (src/render/returnLayout.js — slot i generacja encji,
+// klucz obrysu, epoka, bity płytek); gra sama stawia `__shieldBreach` i testuje punkt (src/game/shieldBreach.js).
+// Bez kanału (dema, testy) — dawna droga: flaga na encji i isShieldBreachedAt niżej.
+let retViews = null;
+let retKeyOf = null;            // (encja, out[2]) → bool: slot i generacja encji w przestrzeni slotów renderu
+const _retKey = [-1, 0];
+let breachEpoch = 0;
 // Siatki płytek budowane w wolnych chwilach (3–8 ms na nową klasę kadłuba), zanim tarcza oberwie.
 const latticeQueue = [];
 let latticeIdle = false;
@@ -160,7 +168,7 @@ function newRec(entity) {
   return {
     entity, profile: null, lattice: null, slot: -1, seen: 0, lastImpactId: -1, prevState: null,
     px: 0, py: 0, angle: 0, c: 1, s: 0, sizeK: 1, meanR: 1, rPx: 0, onScreen: false,
-    lastHitX: 0, lastHitY: 0, wakeUntil: -1, shatterStart: -1, shatterOn: false, shatterEnd: -1, frontSpeed: 1,
+    profileHash: 0, lastHitX: 0, lastHitY: 0, wakeUntil: -1, shatterStart: -1, shatterOn: false, shatterEnd: -1, frontSpeed: 1,
     resetMode: 0, score: 0, latticeQueued: false, hard: 1, show: 0, rippleT: 0,
     hot: Array.from({ length: MAX_HOT }, () => ({ on: false, x: 0, y: 0, z: 0, e: 0 })),
     crackles: Array.from({ length: CRACKLE.count }, () => ({ on: false, t: 0, x: 0, y: 0, z: 0 }))
@@ -252,6 +260,7 @@ function acquireSlot(rec, force = false) {
   assignsThisFrame++;
   slotRec[s] = rec;
   rec.slot = s;
+  if (retViews) writeBreachRecord(s, rec, null, 0);   // nowy właściciel slotu, bez przebić
   const st = rec.entity.shield?.state;
   // Siatka gotowa (niewidoczna — płytki mają zerową wielkość bez żaru); w rozruchu odrasta za czołem.
   rec.resetMode = st === 'activating' ? 2 : 1;
@@ -270,6 +279,7 @@ function releaseSlot(rec, why = '') {
   slotRec[s] = null;
   rec.slot = -1;
   setEntityBreach(rec, false);
+  if (retViews) retWriteBreach(retViews, s, -1, 0, 0, breachEpoch, null);
   pool.slotVec(s, SLOT.GEOM).w = 0;
   pool.slotVec(s, SLOT.FLAGS).w = 0;
 }
@@ -502,6 +512,7 @@ function processEntity(entity, interp, zoomPx) {
   if (rec.profile !== profile) {
     if (rec.slot >= 0) releaseSlot(rec, 'obrys');
     rec.profile = profile;
+    rec.profileHash = shieldProfileHash(profile);
     rec.lattice = null;
     rec.sizeK = clamp(profile.maxR / 900, 0.35, 1.2);
     rec.meanR = (profile.maxR + profile.minR) * 0.5;
@@ -690,8 +701,31 @@ function dispatchFrame(renderer) {
 
 // ── Przebicie: mapa dziur z GPU → flaga encji i test punktu (pętla pocisków w index.html) ──────
 function setEntityBreach(rec, on) {
+  if (retViews) return;           // flagę stawia gra z rekordów RET (src/game/shieldBreach.js)
   const e = rec.entity;
   if (e) e.__shieldBreach = on ? true : null;
+}
+
+/**
+ * Kanał zwrotny przebić (RW-29): `views` — widoki RET (createReturnViews, pojemność rekordu = SHIELD_SLOTS ×
+ * SHIELD_SLOT_CAP / 32 słów), `keyOf(encja, out)` — slot i generacja encji (tryb inline: przestrzeń slotów gry; w workerze —
+ * z lustra encji). null — dawna droga (flaga na encji).
+ */
+export function setShieldReturnChannel(views, keyOf) {
+  retViews = views || null;
+  retKeyOf = typeof keyOf === 'function' ? keyOf : null;
+  if (!retViews) return;
+  for (let s = 0; s < SHIELD_SLOTS; s++) {
+    const rec = slotRec[s];
+    if (rec) writeBreachRecord(s, rec, null, 0);
+    else retWriteBreach(retViews, s, -1, 0, 0, breachEpoch, null);
+  }
+}
+
+function writeBreachRecord(s, rec, bits, offset) {
+  _retKey[0] = -1; _retKey[1] = 0;
+  const ok = retKeyOf ? retKeyOf(rec.entity, _retKey) : false;
+  retWriteBreach(retViews, s, ok ? _retKey[0] : -1, ok ? _retKey[1] : 0, rec.profileHash, breachEpoch, bits, offset);
 }
 
 function onBreachRead(buf) {
@@ -699,11 +733,14 @@ function onBreachRead(buf) {
   if (!breachCpu || breachCpu.length !== words.length) breachCpu = new Uint32Array(words.length);
   breachCpu.set(words);
   const wordsPerSlot = SHIELD_SLOT_CAP >> 5;
+  breachEpoch++;
+  if (retViews) Atomics.store(retViews.i32, RET_I32.BREACH_EPOCH, breachEpoch);
   for (let s = 0; s < SHIELD_SLOTS; s++) {
     const rec = _breachRecsInFlight[s];
     _breachRecsInFlight[s] = null;
     // Slot przeszedł w tym czasie do innej tarczy — odczyt jej nie dotyczy.
     if (!rec || slotRec[s] !== rec) continue;
+    if (retViews) { writeBreachRecord(s, rec, breachCpu, s * wordsPerSlot); continue; }
     let any = false;
     for (let w = s * wordsPerSlot, e = w + wordsPerSlot; w < e; w++) if (breachCpu[w] !== 0) { any = true; break; }
     setEntityBreach(rec, any);

@@ -11,7 +11,7 @@
 //   warm   — rozgrzewka: kernele z pustym licznikiem, mapa gęstości, compileAsync siatek passa
 //            ortho (cel composerTarget — pierwsza rakieta i pierwsza Supernowa bez kompilacji).
 //
-// Lot, naprowadzanie, trafienia i obrażenia zostają w src/effects3d/rocketSystem3D.js —
+// Lot, naprowadzanie, trafienia i obrażenia zostają w src/game/rockets/rocketSim.js —
 // zgłasza zdarzenia (onLaunch / onIgnite / onFly / prepareContact / onDetonate / update)
 // reżyserowi przez `createRocketFx(Core3D).director`.
 

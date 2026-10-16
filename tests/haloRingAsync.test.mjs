@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
+import { HaloRingWorld } from '../src/game/haloRingWorld.js';
 import { HaloRingGame } from '../src/3d/haloRing/haloRingGame.js';
 
 // Odczyt: kanał 0 = 50 + numer wiersza (wysokość terenu ≠ 0 wszędzie); odpowiedź po chwili.
@@ -90,7 +91,7 @@ test('setQuality: nowy zestaw w tle, stary rysuje się i odpowiada wysokością 
 test('HaloRingGame: kolizje z terenem i stanowiska K-7 dopiero po ready (nigdy pusta mapa)', async () => {
   const EARTH = { id: 'earth', x: 1060000, y: -250000, r: 2800 };
   const scene = { add() {}, remove() {} };
-  const game = new HaloRingGame({ planets: [EARTH], renderer: fakeRenderer(), scene, quality: 'low' });
+  const game = new HaloRingGame({ world: new HaloRingWorld({ planets: [EARTH] }), renderer: fakeRenderer(), scene, quality: 'low' });
   const entry = game.entries[0];
   assert.equal(entry.collider.terrainHeightAt, null);
   const ring = game.showcaseRing('earth');

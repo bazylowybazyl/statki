@@ -47,6 +47,8 @@ import { BELT_SCENES, STORM_STAGE } from './asteroidy-gra.mjs';
 import { MINING_STAGES } from './wydobycie-gra.mjs';
 
 const args = parseArgs();
+// --query a=b[&c=d]: dodatkowe parametry adresu gry w każdej sesji (np. szew=inline — migawka renderu RW-10 z flagą i bez).
+const QUERY_EXTRA = args.query ? `&${args.query}` : '';
 const backends = (args.backend || 'webgl') === 'oba' ? ['webgl', 'webgpu'] : [args.backend || 'webgl'];
 const [W, H] = (args.rozmiar || '1920x1080').split('x').map(Number);
 const port = Number(args.port || 5340);
@@ -148,7 +150,7 @@ const SCENES = {
     opis: `Pas asteroid — ${BELT_SCENES.olbrzym.opis} (siatka SDF z workerów — czekanie w czasie rzeczywistym)`,
     hud: false, warm: 30,
     js: BELT_JS('olbrzym', `
-         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && e.view); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
+         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && (B.giantView ? B.giantView(e) : e.view)); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
   },
   menu: {
     opis: 'Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach',
@@ -238,8 +240,8 @@ const SCENES = {
     opis: 'Kalibracja tolerancji portu: same wbudowane materiały three (Standard, Basic HDR, addytywny, tekstura-gradient) na warstwie 0 — wariant __ortho nie ma zamienników już po zadaniach 01–02',
     hud: false, warm: 30, warstwy: true,
     js: `DevScene.teleport(${DEEP.x}, ${DEEP.y + 60000}, 0);
-         const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-         const T = await import(url);
+         const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+         const T = window.THREE || await import(url);
          const root = new T.Group(); root.name = 'harness-kalibracja';
          const x0 = ship.pos.x, y0 = -ship.pos.y;
          const add = (mesh, dx, dy) => { mesh.position.set(x0 + dx, y0 + dy, 20); mesh.layers.set(0); root.add(mesh); };
@@ -322,8 +324,8 @@ const SCENES = {
          // Czarna, NIEPRZEZROCZYSTA płyta pod sceną (warstwa 0, z = −900): tło gry to jeszcze zamiennik
          // (zadanie 05), a bez nieprzezroczystego tła kanwa premultiplied pokazuje blask efektów addytywnych
          // (rgb > alfa) ~2× jaśniej — obraz byłby nieporównywalny z demem (niebo dema jest nieprzezroczyste).
-         { const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-           const T = await import(url);
+         { const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+           const T = window.THREE || await import(url);
            const bd = new T.Mesh(new T.PlaneGeometry(2000000, 2000000), new T.MeshBasicMaterial({ color: 0x000000 }));
            bd.position.set(ship.pos.x, -ship.pos.y, -900); bd.renderOrder = -1000; bd.layers.set(0); bd.name = 'harness-czern';
            Core3D.scene.add(bd); bd.updateMatrixWorld(true); }
@@ -429,12 +431,12 @@ const SCENES = {
     js: `await H.step(39); S.shipCam(0.1);`
   },
   'warp-zwiastun': {
-    opis: 'Przylot NPC tunelem (plan z wyprzedzeniem, WarpNurt.planArrival): zwiastun 2,5 s — nić ośrodka do punktu wyjścia, punkt zbierania, szczelina się otwiera; kamera RTS 0,13',
+    opis: 'Przylot NPC tunelem (plan z wyprzedzeniem, WarpTraffic.planArrival — rejestr gry, RW-28): zwiastun 2,5 s — nić ośrodka do punktu wyjścia, punkt zbierania, szczelina się otwiera; kamera RTS 0,13',
     hud: false, warm: 20,
     js: `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 190000}, -0.35);
          const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
          S.cam(X - 900, Y - 900, 0.13); H.reseed(0x22b2); await H.step(30);
-         window.__warpRec = WarpNurt.planArrival({ x: X - 2300, y: Y - 1700, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstIn: 3.0 });
+         window.__warpRec = (window.WarpTraffic || WarpNurt).planArrival({ x: X - 2300, y: Y - 1700, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstIn: 3.0 });
          await H.step(150); S.cam(X - 900, Y - 900, 0.13);`
   },
   'warp-przylot': {
@@ -445,18 +447,18 @@ const SCENES = {
          const at = { x: X - 2300, y: Y - 1700 };
          const r = spawnCallInShip('supercapital', { mode: 'friendly', spawnPos: at, pos: at, spawnAngle: -0.5 });
          const npc = Array.isArray(r) ? r[0] : r; window.__warpNpc = npc;
-         if (npc) { npc.angle = -0.5; npc.vx = 0; npc.vy = 0; npc.command = { type: 'hold', faceAngle: -0.5 }; WarpNurt.attach(window.__warpRec, npc); }
+         if (npc) { npc.angle = -0.5; npc.vx = 0; npc.vy = 0; npc.command = { type: 'hold', faceAngle: -0.5 }; (window.WarpTraffic || WarpNurt).attach(window.__warpRec, npc); }
          for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
-         if (npc) WarpNurt.attach(window.__warpRec, npc);
+         if (npc) (window.WarpTraffic || WarpNurt).attach(window.__warpRec, npc);
          await H.step(9); S.cam(X - 900, Y - 900, 0.13);`
   },
   'warp-odlot-ladowanie': {
-    opis: 'Odlot NPC tunelem (WarpNurt.depart): ładowanie — punkt skoku przed dziobem, ośrodek zbierany, szczelina otwiera się przed dziobem',
+    opis: 'Odlot NPC tunelem (WarpTraffic.depart): ładowanie — punkt skoku przed dziobem, ośrodek zbierany, szczelina otwiera się przed dziobem',
     hud: false, warm: 20,
     js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
          await H.step(150);
-         const npc = window.__warpNpc; window.__warpDep = npc ? WarpNurt.depart(npc, { drive: true }) : null;
-         const d = window.__warpDep?.fx; const n = d ? Math.round((d.tDive - 0.15 - WarpNurt.time) * 60) : 60;
+         const npc = window.__warpNpc; window.__warpDep = npc ? (window.WarpTraffic || WarpNurt).depart(npc, { drive: true }) : null;
+         const d = window.__warpDep?.fx; const n = d ? Math.round((d.tDive - 0.15 - (window.WarpTraffic || WarpNurt).time) * 60) : 60;
          await H.step(Math.max(1, n)); S.cam(X - 900, Y - 900, 0.13);`
   },
   'warp-odlot': {
@@ -804,7 +806,7 @@ const GALERIA_POMOC = `const G = window.__galeria;
   // × 1e-6 trzymają kadłub w całości, ale mapa stempluje każde trafienie, więc bez tego ujęcie pokazywałoby
   // rany wszystkich wcześniejszych rodzin w jednym miejscu.
   const clear = async () => { for (const b of window.bullets) b.life = -1; window.HullDamageMap?.heal(G.T.beamHull?.dmgKey, 1); await H.step(2); WFX?.reset(); noShield(); };
-  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
+  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; if (window.WeaponShotShake) window.WeaponShotShake.mag = 0; G.T.hp = G.T.maxHp; };`;
 for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
   SCENES[`galeria-${name}`] = {
     opis: `Galeria broni: ${id} — ${shots} strz. co ${gap} kl. w pancernik z 1050 j., zrzut ${after} kl. po ostatnim, zoom ${zoom}`,
@@ -1238,7 +1240,7 @@ async function runSession(session, backend, outDir, base) {
   try {
     const uuidStat = await prepareUuid(cdp);
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${session.start ? GRA_SWOBODNA : ''}window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
-    await cdp.send('Page.navigate', { url: `${base}/index.html?${session.query}&renderer=${backend}` });
+    await cdp.send('Page.navigate', { url: `${base}/index.html?${session.query}${QUERY_EXTRA}&renderer=${backend}` });
     // gpuReady: na WebGPU urządzenie powstaje w tle po Core3D.init() (na tagu pola nie ma — undefined).
     if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała (Core3D/ship/urządzenie)');
     checkUuid(uuidStat);
@@ -1352,8 +1354,8 @@ async function runSession(session, backend, outDir, base) {
           if (document.querySelector('canvas.overlay3d')) { document.getElementById('webgl-layer').style.visibility = 'hidden'; return 'overlay'; }
           let plate = window.__harnessCzern;
           if (!plate) {
-            const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
-            const T = await import(url);
+            const rs = performance.getEntriesByType('resource').map((e) => e.name); const url = rs.find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n)) || rs.find((n) => /three[._]webgpu\\.js(\\?|$)/.test(n));
+            const T = window.THREE || await import(url);
             plate = new T.Mesh(new T.PlaneGeometry(4000000, 4000000), new T.MeshBasicMaterial({ color: 0x000000 }));
             plate.name = 'harness-czern'; plate.renderOrder = -1000; plate.layers.set(0); plate.frustumCulled = false;
             window.__harnessCzern = plate;

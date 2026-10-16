@@ -14,41 +14,39 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 100,
-  'index:dane': 31,
-  'index:konfiguracja': 169,
-  'index:zapytanie': 76,
-  'index:zdarzenie': 66,
+  'index:aktualizacja': 90, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:dane': 18, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:konfiguracja': 151, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:zapytanie': 24, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:zdarzenie': 22, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
-  'import:src/game/asteroidBeltGiants.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,
-  'import:src/game/asteroidGiantBuilder.js': 1,
   'import:src/game/asteroidGiants.js': 1,
-  'import:src/game/asteroidMining.js': 2,
-  'import:src/game/asteroidMiningRig.js': 2,
+  'import:src/game/asteroidMining.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'import:src/game/asteroidMiningRig.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   'import:src/game/asteroidRockKinds.js': 5,
   'import:src/game/asteroidRotation.js': 2,
+  'import:src/game/asteroidShapeRadius.js': 1, // 2026-10-15 RW-25: promień kształtów banku skał — jedno źródło arytmetyki fizyki skał (gra) i banku (render), klasa A
   'import:src/game/asteroidStorms.js': 3,
   'import:src/game/beamBand3D.js': 1,
+  'import:src/game/beltPlayZ.js': 1, // 2026-10-15 RW-25: głębokość skał pasma PLAY — wspólna dla platformy wydobywczej (gra) i warstwy PLAY (obraz), klasa A
   'import:src/game/cargoPortOps.js': 1,
   'import:src/game/carrierVelocity.js': 16,
-  'import:src/game/cloakLook.js': 9,
+  'import:src/game/cloakLook.js': 8,
   'import:src/game/coldWrecks.js': 1,
   'import:src/game/cometNucleus.js': 1,
   'import:src/game/comets.js': 1,
   'import:src/game/coreModel.js': 3,
   'import:src/game/destructorConfig.js': 2,
   'import:src/game/engineIgnition.js': 3,
-  'import:src/game/friendlyFire.js': 1,
-  'import:src/game/haloRingCollision.js': 1,
+  'import:src/game/fxRandomGame.js': 2, // 2026-10-15 RW-20 (rw-bronie): strumień losowy gry dla modułów kanwy wątku głównego (collisionSparks, canvasParticleSystem)
   'import:src/game/haloRingPlanets.js': 2,
   'import:src/game/hexBodyHooks.js': 1,
   'import:src/game/hexGridSpace.js': 1,
   'import:src/game/hullBodies.js': 8,
   'import:src/game/hullCraters.js': 1,
   'import:src/game/hullMounts.js': 2,
-  'import:src/game/k7BerthService.js': 1,
   'import:src/game/reactorCore.js': 1,
   'import:src/game/repairRig.js': 1,
   'import:src/game/repairSwarm.js': 1,
@@ -56,33 +54,32 @@ const SUFITY = {
   'import:src/game/shipBridgeBeams.js': 2,
   'import:src/game/shipBridgeRuntime.js': 1,
   'import:src/game/shipLightRuntime.js': 5,
-  'import:src/game/simClock.js': 15,
+  'import:src/game/simClock.js': 14,
   'import:src/game/skyRegion.js': 1,
-  'import:src/game/story/pirateBaseBodies.js': 1,
   'import:src/game/traffic/dockLayout.js': 2,
   'import:src/game/traffic/shipyards.js': 2,
   'import:src/game/view3D.js': 1,
-  'import:src/game/warpDrive.js': 3,
+  'import:src/game/warpDrive.js': 2, // 2026-10-16 RW-28: warpNurt.js nie planuje już przylotów (oś — rejestr gry)
+  'import:src/game/warpTraffic.js': 3, // 2026-10-16 RW-28: osie przylotu / odlotu, wymiary kadłuba i paleta WARP z rejestru ruchu warpa gry — czyste funkcje (obraz bierze oś, harmonogramu nie rusza), klasa A
   'import:src/game/weaponAim.js': 1,
   'import:src/game/weaponFeel.js': 2,
   'import:src/game/weaponShotBus.js': 1,
-  'import:shieldSystem.js': 4, // 2026-10-15 RW-35: shieldSystem.js (korzeń repo) liczony od teraz jako symulacja — importy były już wcześniej
-  'import:src/game/worldBodies.js': 2,
+  'import:shieldSystem.js': 3, // 2026-10-15 RW-35: shieldSystem.js (korzeń repo) liczony od teraz jako symulacja — importy były już wcześniej
   // zmienne gry czytane w modułach przenoszonych (§ 2.4): 0 od RW-12 (2026-10-15) — tylko przez fasadę
   // RenderWorld (src/render/renderWorld.js); `okno:` / `okno-wartosc:` / `gamestate:` nie mają sufitów
+  'import:src/game/worldBodies.js': 1, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
   // zmienne gry czytane w modułach kanwy 2D (zostają na wątku głównym)
   'okno-kanwa:CANVAS_WEAPON_VFX_ENABLED': 1,
   'okno-kanwa:CICDisplay': 1,
-  'okno-kanwa:DevTuning': 1,
   'okno-kanwa:H': 5,
   'okno-kanwa:PHYS_HZ': 1,
-  'okno-kanwa:SparkSystem3D': 2,
+  'okno-kanwa:SparkSystem3D': 1,
   'okno-kanwa:W': 5,
   'okno-kanwa:__interpShipTurretAngles': 2,
   'okno-kanwa:__weaponAimAlpha': 2,
   'okno-kanwa:camera': 2,
   'okno-kanwa:ship': 2,
-  'okno-kanwa:worldToScreen': 5,
+  'okno-kanwa:worldToScreen': 4,
   'okno-kanwa:worldToScreenInto': 1,
   // DOM i okno przeglądarki w modułach przenoszonych (§ 2.9): 0 od RW-35 (2026-10-15) — kanwy i obrazy przez
   // src/3d/canvas2d.js, praca w tle przez src/3d/harmonogram.js, okno i strona przez RenderWorld; `dom:` bez sufitów
@@ -93,9 +90,7 @@ const SUFITY = {
   'gpu:src/3d/shield3D.js': 2,
   'gpu:src/3d/tsl/zapisF16.js': 2,
   // Math.random w renderze (RW-20)
-  'random:src/3d/planet3d.assets.js': 8,
-  'random:src/3d/reactor3D.js': 3,
-  'random:src/effects3d/rocketSystem3D.js': 2
+  'random:src/3d/planet3d.assets.js': 8
 };
 
 const graf = grafGry();

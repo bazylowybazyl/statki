@@ -21,7 +21,7 @@ import { createPirateDryDockLayout, dryDockShipPose, planDryDockChain } from '..
 import { createExplosionFactory } from '../src/3d/explosions/explosionFx.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { createRocketFx } from '../src/3d/rockets/rocketFx.js';
-import { initRocketSystem3D } from '../src/effects3d/rocketSystem3D.js';
+import { initRocketSystem3D } from '../src/game/rockets/rocketSim.js';
 import { WeaponFx } from '../src/3d/weapons/weaponFx.js';
 import { SimClock } from '../src/game/simClock.js';
 import { k7HeightToZ } from '../src/3d/haloRing/haloPortK7Layout.js';

@@ -73,7 +73,7 @@ function ringGameFor(col, planet = EARTH) {
 
 function loadRingStep(haloRings, npcs, extra = {}) {
   const scope = {
-    haloRings,
+    haloWorld: haloRings,
     ship: null,
     player2Ship: null,
     npcs,
@@ -330,7 +330,7 @@ test('ring: NPC 900 tys. j. od planet — zero kopii do bryły i zero zapytań k
 // Olbrzymy pasa (zadanie 21 portu WebGPU — stare pole skał usunięte)
 // ---------------------------------------------------------------------------
 
-// Pas gry dla pętli z index.html: API AsteroidBelt (giants.readyCount, collideShip),
+// Pas gry dla pętli z index.html: API świata pasa BeltWorld (giants.readyCount, collideShip),
 // olbrzym-ściana — lita skała dla x ≥ 0 (tests/helpers/beltGiantWall.mjs).
 function makeBelt() {
   const giants = wallBeltGiants('arch', 0, 0);
@@ -354,7 +354,7 @@ function loadAsteroidStep(npcs, extra = {}) {
     ship: null,
     player2Ship: null,
     npcs,
-    asteroidBelt: null,
+    beltWorld: null,
     _npcCollisionBody: createNpcCollisionBody(),
     ...helpers,
     ...extra
@@ -372,7 +372,7 @@ function flyIntoWall(npc, steps = 600) {
   const win = { applyDamageToNPC: (target, dmg, src) => damage.push({ target, dmg, src }) };
   return withGameWindow(win, () => {
     setFlightArrive(npc, 3000, 0, { speedMode: 'combat', arrival: 50 });
-    const stepRocks = loadAsteroidStep([npc], { asteroidBelt: belt });
+    const stepRocks = loadAsteroidStep([npc], { beltWorld: belt });
     let maxIn = 0;
     for (let i = 0; i < steps; i++) {
       stepShipFlight(npc, DT);
@@ -409,7 +409,7 @@ test('olbrzymy: gracz przez pos/vel, skok tranzytu NPC przelatuje, siatka w budo
   const belt = makeBelt();
   const player = { pos: { x: -250, y: 0 }, vel: { x: 300, y: 0 }, radius: 300, angle: 0, isPlayer: true, mass: 800000 };
   const warping = makeDestroyer(-100, 500, { vx: 4000, vy: 0, phase: 'warping' });
-  loadAsteroidStep([warping], { ship: player, asteroidBelt: belt })(DT);
+  loadAsteroidStep([warping], { ship: player, beltWorld: belt })(DT);
   assert.ok(player.pos.x + 300 < 3, `gracz wypchnięty przez pos (dziób ${(player.pos.x + 300).toFixed(2)})`);
   assert.ok(Math.abs(player.vel.x - (300 - 1.3 * 300)) < 1e-6, 'prędkość gracza w skałę odbita (×0,3)');
   assert.equal(player.x, undefined, 'graczowi nie dopisujemy x/y');
@@ -417,10 +417,10 @@ test('olbrzymy: gracz przez pos/vel, skok tranzytu NPC przelatuje, siatka w budo
   // Siatka olbrzyma jeszcze w workerach: pas bez gotowych olbrzymów nic nie robi.
   belt.giants.entries[0].giant.ready = false;
   const p2 = { pos: { x: -250, y: 0 }, vel: { x: 300, y: 0 }, radius: 300, angle: 0 };
-  loadAsteroidStep([], { ship: p2, asteroidBelt: belt })(DT);
+  loadAsteroidStep([], { ship: p2, beltWorld: belt })(DT);
   assert.deepEqual([p2.pos.x, p2.vel.x], [-250, 300]);
   // Bez pasa (świat bez pól) — też nic.
-  loadAsteroidStep([], { ship: p2, asteroidBelt: null })(DT);
+  loadAsteroidStep([], { ship: p2, beltWorld: null })(DT);
   assert.deepEqual([p2.pos.x, p2.vel.x], [-250, 300]);
 });
 

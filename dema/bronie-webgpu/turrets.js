@@ -36,7 +36,7 @@ export function turretScale(def) {
 
 const MAX_QUADS = 256;
 
-/** Moduł sprite'a dla broni (ten sam wybór co Turret2D.draw). */
+/** Moduł sprite'a dla broni (ten sam wybór co src/vfx/turretCanvasPreview.js — dawne Turret2D.draw). */
 function spriteFor(id) {
   if (id === 'special_yamato_cannon') return { mod: YamatoSprite2D, yamato: true };
   if (id === 'railgun_mk1' || id === 'railgun_mk2' || id === 'tempest_ion_s' || id === 'tempest_ion_l') return { mod: TempestSprite2D };

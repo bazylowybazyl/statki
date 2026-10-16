@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 globalThis.window = globalThis.window ?? {};
 const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
-const { initRocketSystem3D } = await import('../src/effects3d/rocketSystem3D.js');
+const { initRocketSystem3D } = await import('../src/game/rockets/rocketSim.js');
 const sys = initRocketSystem3D(new THREE.Scene());
 const hDet = [];
 const origExplode = sys._explode.bind(sys);

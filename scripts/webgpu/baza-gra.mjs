@@ -64,12 +64,12 @@ const camShip = (zoom) => ev(`(() => {
   return true;
 })()`);
 const baseState = () => ev(`(() => {
-  const S = window.StoryGame, site = S.site, st = site.structures || {}, b = st.habitat?._base3d;
+  const S = window.StoryGame, site = S.site, st = site.structures || {}, b = window.PirateBase;
   const hp = (s) => s ? Math.round(s.hp) : null;
   return {
     faza: S.phase, alarm: !!site.alarmed,
     habitat: hp(st.habitat), paliwo: hp(st.fuel), magazyn: hp(st.warehouse), pomosty: hp(st.piers),
-    odpadle: b ? b.chunkState.filter((s) => s.broken || s.hidden).map((s) => s.id) : [],
+    odpadle: b ? b.broken() : [],
     zywe: window.WorldBodies?.stats?.live ?? null,
     taran: !!site.gateRammed,
     stanowiska: site.parkedList.filter((n) => !n.dead).length, zaloga: site.crewList.filter((n) => !n.dead && !n.__storyLaunched).length,

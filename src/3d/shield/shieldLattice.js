@@ -12,6 +12,11 @@ import { sampleShieldProfileRadius } from '../../../shieldSystem.js';
 
 const SQ3_2 = 0.8660254;
 
+/** Pula tarcz (shieldPool.js): sloty i płytki na slot — rekord przebić w kanale zwrotnym RET ma SHIELD_SLOT_CAP / 32 słów
+ * (src/render/returnLayout.js), test punktu po stronie gry bierze siatkę tej samej pojemności (src/game/shieldBreach.js). */
+export const SHIELD_SLOTS = 12;
+export const SHIELD_SLOT_CAP = 4096;
+
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
 /** Wysokość czaszy (jak dawna kopuła gry i demo): clamp(0,85·minR, 8, 140). */
@@ -122,6 +127,14 @@ export function shieldProfileKey(profile) {
   let hash = 0;
   for (let i = 0; i < bins.length; i++) hash = ((hash * 31) + ((bins[i] * 4 + 0.5) | 0)) | 0;
   return bins.length + '|' + hash;
+}
+
+/** Klucz obrysu jako liczba całkowita (rekord przebić w RET — gra sprawdza, że płytki są z tego samego obrysu). */
+export function shieldProfileHash(profile) {
+  const bins = profile.bins;
+  let hash = 0;
+  for (let i = 0; i < bins.length; i++) hash = ((hash * 31) + ((bins[i] * 4 + 0.5) | 0)) | 0;
+  return (hash ^ Math.imul(bins.length, 0x9E3779B1)) | 0;
 }
 
 /** Siatka z pamięci (budowa przy pierwszym użyciu kształtu). */

@@ -143,14 +143,14 @@ try {
   await ev(`window.setShipMode('combat')`);
 
   // Wezwanie (wlot z daleka i hamowanie) i POWRÓT (odlot) w kadrze.
-  // Oddalenie, wezwanie obok statku (w kadrze), klatki po zegarze efektu (WarpNurt.time).
+  // Oddalenie, wezwanie obok statku (w kadrze), klatki po zegarze rejestru ruchu warpa (WarpTraffic.time — RW-28).
   await ev('(() => { window.camera.targetZoom = 0.06; return true; })()');
   await sleep(1500);
   const callPos = await ev(`(() => { const s = window.ship, a = s.angle + 1.9; return { x: s.pos.x + Math.cos(a) * 1800, y: s.pos.y + Math.sin(a) * 1800 }; })()`);
   const call = await ev(`window.callInSupport('destroyer', { spawnPos: ${JSON.stringify(callPos)}, mode: 'friendly' })`);
   report.wezwanie = call;
   console.log('wezwanie:', JSON.stringify(call));
-  const fxT = (k) => ev(`(() => { const r = window.WarpNurt.arrivals.find((q) => q.kind === 'arrival'); return r ? { now: window.WarpNurt.time, t: r.fx[${JSON.stringify(k)}] } : null; })()`);
+  const fxT = (k) => ev(`(() => { const r = (window.WarpTraffic?.records || window.WarpNurt.arrivals).find((q) => q.kind === 'arrival'); return r ? { now: (window.WarpTraffic || window.WarpNurt).time, t: r.fx[${JSON.stringify(k)}] } : null; })()`);
   const waitFx = async (k, off) => {
     for (let i = 0; i < 400; i++) { const f = await fxT(k); if (!f || f.now >= f.t + off) return; await sleep(20); }
   };
@@ -160,7 +160,7 @@ try {
     await waitFx('tBrake', 0.05); await shot('10-wezwanie-hamowanie');
     await sleep(2500); await shot('11-wezwanie-stoi');
     report.powrot = await ev('window.returnSupportWingToEarth ? window.returnSupportWingToEarth() : 0');
-    const dep = async () => ev(`(() => { const r = window.WarpNurt.arrivals.find((q) => q.kind === 'departure'); return r ? { now: window.WarpNurt.time, tDive: r.fx.tDive } : null; })()`);
+    const dep = async () => ev(`(() => { const r = (window.WarpTraffic?.records || window.WarpNurt.arrivals).find((q) => q.kind === 'departure'); return r ? { now: (window.WarpTraffic || window.WarpNurt).time, tDive: r.fx.tDive } : null; })()`);
     for (let i = 0; i < 1500; i++) { const d = await dep(); if (d && d.now >= d.tDive + 0.25) break; await sleep(20); }
     await shot('12-powrot-odlot');
   }

@@ -124,6 +124,55 @@ const _p = { x: 0, y: 0 };
 const _q = { x: 0, y: 0 };
 
 /** Kadłub belkowy encji (żywy i należący do niej) albo null. */
+/**
+ * Skala sceny wybuchu rdzenia (reactorBlastFx.js: Rs) z promienia gospodarza — gra liczy z niej pęknięcia.
+ */
+export function reactorBlastSceneRadius(host) {
+  const hostR = Math.max(60, Number(host?.radius) || 200);
+  const v = hostR * 0.95;
+  return v < 90 ? 90 : (v > 1100 ? 1100 : v);
+}
+
+/**
+ * Przebiegi pęknięć wybuchu rdzenia (RW-22 — dawniej `_crackRun` w renderze pytał HullBodies.probe): dla każdej
+ * szczeliny `res.cuts` (odcinki ax, ay, bx, by) od rzutu rdzenia w obie strony (strona −1 tylko, gdy rzut ≥ krok)
+ * punkty co krok max(8, Rs · 0,06), dopóki obok jest materiał odłamu (2 kolejne pudła — koniec). Kolejność wyników =
+ * kolejność przebiegów w reactorBlastFx._cracks (tablice [x0, y0, x1, y1, …], także krótkie).
+ */
+export function reactorCrackRuns(res, Rs) {
+  const out = [];
+  const cuts = res?.cuts;
+  if (!cuts || !cuts.length) return out;
+  const frags = res.fragments || [];
+  const step = Math.max(8, Rs * 0.06);
+  for (let c = 0; c + 3 < cuts.length; c += 4) {
+    const ax = cuts[c], ay = cuts[c + 1], bx = cuts[c + 2], by = cuts[c + 3];
+    let dx = bx - ax, dy = by - ay;
+    const L = Math.sqrt(dx * dx + dy * dy);
+    if (!(L > 1e-3)) continue;
+    dx /= L; dy /= L;
+    const t0 = (res.x - ax) * dx + (res.y - ay) * dy;
+    const tc = t0 < 0 ? 0 : (t0 > L ? L : t0);
+    for (let side = 1; side >= -1; side -= 2) {
+      if (side < 0 && tc < step) break;
+      const run = [];
+      const tEnd = side > 0 ? L : 0;
+      let miss = 0;
+      for (let t = tc; side > 0 ? t <= tEnd : t >= tEnd; t += side * step) {
+        const px = ax + dx * t, py = ay + dy * t;
+        let near = false;
+        for (let f = 0; f < frags.length && !near; f++) {
+          const h = reactorHull(frags[f]);
+          if (h && HullBodies.probe(frags[f], px, py, h.body.cellSize * 2.4)) near = true;
+        }
+        if (near) { run.push(px, py); miss = 0; } else if (run.length && ++miss >= 2) break;
+      }
+      out.push(run);
+    }
+  }
+  return out;
+}
+
 export function reactorHull(entity) {
   const h = entity?.beamHull;
   return h && h.entity === entity && h.body && !h.body.dead ? h : null;

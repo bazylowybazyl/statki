@@ -86,8 +86,12 @@ test('fireWeaponCore nadaje szyną, CustomEvent zostaje tylko dla superbroni', (
   // NIE słuchają (inaczej podwójny wylot).
   const wfx = read('../src/3d/weapons/weaponFx.js');
   assert.match(wfx, /WeaponShotBus\.on\(this\._busListener\)/);
+  // RW-21: w grze strzał idzie rekordem SHOT (słuchacz szyny w index.html), a WeaponFx zdejmuje swojego słuchacza.
+  assert.match(html, /RenderCommands\.writer\.shot\(detail\);/);
+  assert.match(html, /installWeaponFxCommands\(RenderCommands\.reader\);/);
+  assert.match(wfx, /useCommands\(on = true\) \{/);
   assert.doesNotMatch(wfx, /addEventListener\('game_weapon_fired'/);
-  assert.match(read('../src/game/superweapon.js'), /WeaponFx\.hexlanceFire\(/);
+  assert.match(read('../src/game/superweapon.js'), /RenderCommands\.writer\.hexlanceFire\(/);
 });
 
 // ---------------------------------------------------------------------------

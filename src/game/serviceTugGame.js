@@ -160,20 +160,47 @@ export const ServiceTugGame = {
     }
   },
 
-  /** render(): gracz na pokładzie — holownik w pozie renderu gracza (interpolacja), fizyka wraca w restorePose. */
+  // Misja, której holownik jedzie w pozie renderu gracza (gracz na pokładzie, nie zjazd), i poza pod ładunkiem w `out`
+  // (null — osiadanie: holownik w swojej pozie fizyki). Czyste — bez zapisu w encji.
+  _renderPoseFor(m, playerRenderPose, player, out) {
+    if (!m.carried || m.target !== player || !alive(m.npc) || m.phase === TUG_PHASE.UNLOAD) return -1;
+    // Osiadanie (zaczepy): ładunek względem pokładu się zmienia — holownik zostaje w swojej pozie fizyki.
+    if (m.phase === TUG_PHASE.CLAMP) return 0;
+    tugHullSize(m.npc, _size);
+    tugDeckLocal(_size, this.tune, _deck);
+    _cp.x = playerRenderPose.x; _cp.y = playerRenderPose.y; _cp.a = playerRenderPose.angle;
+    tugUnderCargo(_cp, _deck, m.rel, out);
+    return 1;
+  },
+
+  /**
+   * Poza renderu holownika `npc` (RW-31: dla migawki renderu — bez zapisu w encji): gracz na pokładzie → pod ładunkiem
+   * w pozie renderu gracza do `out` ({ x, y, a }), zwraca true; inaczej false (poza fizyki).
+   */
+  renderPoseOf(npc, playerRenderPose, out) {
+    if (!npc || !playerRenderPose || !this.missions.length) return false;
+    const player = this.deps?.player?.();
+    for (const m of this.missions) {
+      if (m.npc !== npc) continue;
+      return this._renderPoseFor(m, playerRenderPose, player, out) === 1;
+    }
+    return false;
+  },
+
+  /**
+   * render(): gracz na pokładzie — holownik w pozie renderu gracza (interpolacja), fizyka wraca w restorePose.
+   * AGENT: w trybie worker poza idzie przez renderPoseOf do bloku ENT migawki (RW-10 / RW-11a), bez zapisu w encji —
+   * wtedy beginRender / restorePose znikają (docs/PLAN-render-worker.md § 2.6 p. 27, RW-31).
+   */
   beginRender(playerRenderPose) {
     if (!playerRenderPose || !this.missions.length) return;
     const player = this.deps?.player?.();
     for (const m of this.missions) {
-      if (!m.carried || m.target !== player || !alive(m.npc) || m.phase === TUG_PHASE.UNLOAD) continue;
+      const k = this._renderPoseFor(m, playerRenderPose, player, _under);
+      if (k < 0) continue;
       const npc = m.npc;
       if (!this._saved) this._saved = { e: npc, x: npc.x, y: npc.y, a: npc.angle };
-      tugHullSize(npc, _size);
-      tugDeckLocal(_size, this.tune, _deck);
-      _cp.x = playerRenderPose.x; _cp.y = playerRenderPose.y; _cp.a = playerRenderPose.angle;
-      // Osiadanie (zaczepy): ładunek względem pokładu się zmienia — holownik zostaje w swojej pozie fizyki.
-      if (m.phase === TUG_PHASE.CLAMP) continue;
-      tugUnderCargo(_cp, _deck, m.rel, _under);
+      if (k === 0) continue;
       if (npc.pos) { npc.pos.x = _under.x; npc.pos.y = _under.y; }
       npc.x = _under.x; npc.y = _under.y; npc.angle = _under.a;
       break;

@@ -16,7 +16,11 @@
 //    lotu, dema/halo_ring_k7_flight.js);
 //  - okluder smug cieni (Core3D.setShaftRingOccluder) i jakość z ustawień gry
 //    (OPTIONS.planetQuality: low / medium / high / ultra);
-//  - kolizje: HaloRingCollider (płyta + ściany portu) z terenem z mapy ringu.
+//  - ROZGRYWKA ringów jest po stronie gry (RW-27): src/game/haloRingWorld.js — kolidery (płyta, teren,
+//    ściany portu), automat obsługi stanowisk K-7, zajętość i lampki stanowisk, zegar migania świateł hal,
+//    poziom lamp hali; tu tylko obraz z tych danych (wpisy obrazu niosą odwołania do wpisów świata:
+//    key, planet, collider, place, service — jak dawniej) i jedno zdarzenie do gry: teren Ziemi z mapy CPU
+//    ringu po zbudowaniu (world.setRingTerrain; archetypy Marsa i Jowisza gra liczy z planów sama).
 // Zero alokacji na klatkę (bufory i obiekty wycięć wielokrotnego użytku).
 import * as THREE from 'three';
 import { Core3D } from '../core3d.js';
@@ -25,12 +29,9 @@ import { createArchRing } from './arch/archRing.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
 import { resolveHaloQuality } from './haloRingConfig.js';
 import { K7RoofFade, k7HubToWorld } from './haloPortK7Layout.js';
-import { k7BeaconClock } from './haloPortK7Lights.js';
 import { haloXfPoint } from './haloPortBays.js';
 import { resolveRingPlanetWorldRadius } from '../ringScale.js';
-import { HALO_RING_PLANETS, haloGameToLocal, haloRingKey } from '../../game/haloRingPlanets.js';
-import { HaloRingCollider } from '../../game/haloRingCollision.js';
-import { createK7BerthService, stepK7BerthService, syncK7BerthLamps } from '../../game/k7BerthService.js';
+import { HALO_RING_PLANETS, haloGameToLocal } from '../../game/haloRingPlanets.js';
 
 export const HALO_GAME = Object.freeze({
   layers: Object.freeze({ default: 1, fg: 2 }),
@@ -55,7 +56,12 @@ function footprintHub(owner) {
 }
 
 export class HaloRingGame {
-  constructor({ planets = [], quality = 'high', renderer = null, scene = null } = {}) {
+  /**
+   * @param {object} o
+   * @param {import('../../game/haloRingWorld.js').HaloRingWorld} o.world świat ringów gry (kolidery, rejestr hal, automat)
+   */
+  constructor({ world, quality = 'high', renderer = null, scene = null } = {}) {
+    this.world = world;
     // Renderer Core3D powstaje asynchronicznie (urządzenie WebGPU) — bierzemy go
     // w chwili budowy ringu, nie przy konstrukcji (kolidery działają od razu).
     this._renderer = renderer;
@@ -71,40 +77,41 @@ export class HaloRingGame {
     this._hallOpts = { poses: null, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
     // obrys kadłuba gracza w hubie rysowanej hali (przewody paliwowe kładą się na kadłubie) — bufor bez alokacji
     this._hallHull = [];
-    this._serviceShips = [null];
-    // Zegar migania świateł hal K-7 (haloPortK7Lights.js): raz na klatkę — ten sam dostaje wejście pyłu hal
-    // (src/game/hallDustInput.js), więc soczewka i jej światło w gazie migają razem.
-    this.clock = 0;
     // Fabuła: { key: 'earth', hall: 0, roofFade: 0..1 (1 = dachu nie ma), cut: 0..1 } albo null (dach z kadłuba gracza).
     this.hallRoofOverride = null;
     this.stats = { rings: 0, visible: 0, updateMs: 0 };
-    this.setPlanets(planets);
+    this.syncEntries();
   }
 
-  // Planety z ringiem (Ziemia, Mars) — kolidery od razu, render leniwie.
-  setPlanets(planets) {
-    for (const planet of planets || []) {
-      const key = haloRingKey(planet);
-      if (!key || this.entries.some((e) => e.key === key)) continue;
-      const collider = new HaloRingCollider(planet);
-      const reg = collider.registry;
+  /** Zegar migania świateł hal K-7 (świat ringów gry — ten sam dostaje wejście pyłu hal). */
+  get clock() {
+    return this.world.clock;
+  }
+
+  // Wpisy obrazu dla ringów świata (nowe planety z ringiem) — render leniwie.
+  syncEntries() {
+    for (const w of this.world.entries) {
+      if (this.entries.some((e) => e.key === w.key)) continue;
+      const reg = w.collider.registry;
       this.entries.push({
-        key,
-        planet,
-        collider,
-        place: collider.place,
+        key: w.key,
+        planet: w.planet,
+        collider: w.collider,
+        place: w.place,
+        service: w.service,
+        world: w,
         ring: null,
         visible: false,
         sunAz: NaN,
-        // automat obsługi stanowisk capital (gra swobodna: zamki pola, ramiona i przewody paliwowe przy postoju gracza)
-        service: createK7BerthService(reg),
+        // wersja zajętości stanowisk z rejestru świata, przeniesiona na lampki hal (na halę)
+        berthVersions: reg.halls.map(() => -1),
         hallFades: reg.halls.map((o) => new K7RoofFade(footprintHub(o))),
         bayFades: reg.bays.map((o) => new K7RoofFade(footprintHub(o))),
         hallFade: 0,
         hallIndex: -1,
         bayFade: 0,
         bayIndex: -1,
-        occluderKey: `halo:${key}`,
+        occluderKey: `halo:${w.key}`,
         // ring rzuca cień w smugach (i pas na tarczy planety) dopiero od podpięcia brył (ring.ready)
         shadowReady: false
       });
@@ -162,14 +169,16 @@ export class HaloRingGame {
     Promise.resolve(ring.ready).then((ok) => {
       if (!ok || e.ring !== ring) return;
       e.shadowReady = true;
-      // stanowiska wolne: statków ruchu jeszcze nie ma (ring nie udaje życia),
-      // dokowanie gracza w hali K-7 przyjdzie z automatem portu
-      for (const hall of ring.k7Halls) {
-        for (const b of hall.layout.berths) { b.occupied = null; b.reserved = null; }
+      // stanowiska z rejestru świata (wolne: statków ruchu jeszcze nie ma — ring nie udaje życia; zajęte przez
+      // fabułę / automat obsługi stanowisk), pasy wolne
+      const reg = e.collider.registry;
+      for (let i = 0; i < ring.k7Halls.length; i++) {
+        const hall = ring.k7Halls[i];
         for (const lane of hall.layout.lanes || []) lane.reserved = null;
-        hall.setBerthLamps();
+        this._syncBerthLamps(e, i, hall, reg.halls[i], true);
       }
-      e.collider.setTerrain((lx, ly) => ring.terrainHeightAt(lx, ly, 0));
+      // teren Ziemi w kolizjach z mapy CPU ringu (zdarzenie do gry; ringi-archetypy — plan po stronie gry)
+      if (!e.world.terrainReady) this.world.setRingTerrain(e.key, (lx, ly) => ring.terrainHeightAt(lx, ly, 0));
     });
     this.stats.rings = this.entries.filter((v) => v.ring).length;
     return ring;
@@ -282,7 +291,6 @@ export class HaloRingGame {
   // i scenach fabuły; automat obsługi stanowisk), quality, splitScreen.
   update(dt, cam, opts = {}) {
     const t0 = performance.now();
-    this.clock = k7BeaconClock(t0);
     const gameDt = Number.isFinite(opts.gameDt) ? Math.max(0, opts.gameDt) : dt;
     if (opts.quality) this.setQuality(opts.quality);
     const target = Core3D.composerTarget;
@@ -304,7 +312,6 @@ export class HaloRingGame {
     let visible = 0;
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i];
-      e.collider.setPlanet(e.planet);
       const L = e.collider.layout;
       const dx = e.place.x - cx;
       const dy = e.place.y - cy;
@@ -363,16 +370,29 @@ export class HaloRingGame {
     return k * k * (3 - 2 * k);
   }
 
-  // Zanik dachów hal K-7 (statek w hali), wycięcia górnej ściany, lampy hal, automat obsługi stanowisk.
+  // Lampki stanowisk hali z rejestru świata (zajętość pisze automat obsługi stanowisk i fabuła) — przy zmianie wersji.
+  _syncBerthLamps(e, i, hall, owner, force = false) {
+    if (!owner || !hall?.layout?.berths) return;
+    if (!force && e.berthVersions[i] === owner.berthVersion) return;
+    e.berthVersions[i] = owner.berthVersion;
+    const src = owner.layout.berths;
+    const dst = hall.layout.berths;
+    for (let j = 0; j < dst.length; j++) {
+      const b = dst[j];
+      let g = src[j];
+      if (!g || g.id !== b.id) g = src.find((x) => x.id === b.id) || null;
+      b.occupied = g ? g.occupied : null;
+      b.reserved = g ? g.reserved : null;
+    }
+    hall.setBerthLamps?.();
+  }
+
+  // Zanik dachów hal K-7 (statek w hali), wycięcia górnej ściany, lampy hal (automat obsługi stanowisk
+  // i lampki — świat ringów gry; pozy z tej klatki).
   _portVisuals(e, dt, ship, gameDt = dt) {
     const ring = e.ring;
     const reg = e.collider.registry;
     const alive = ship && !ship.dead && ship.pos;
-    // Obsługa stanowisk capital w grze swobodnej (src/game/k7BerthService.js): gracz stoi na polu stanowiska —
-    // zamki pola, ramiona i przewody paliwowe podpinają się, rusza — awaryjne odpięcie (buch pary). Pozy fabuły
-    // (owner = 'story') nietknięte. Przed halami: rysują pozy z tej klatki.
-    this._serviceShips[0] = alive ? ship : null;
-    stepK7BerthService(e.service, gameDt, e.place, this._serviceShips, 1);
     const hull = alive ? e.collider.hubOutline(ship) : null;
     let hx = 0;
     let hz = 0;
@@ -421,10 +441,9 @@ export class HaloRingGame {
       // ramiona i przewody w czasie gry (pauza i sceny fabuły — stoją), obrys kadłuba gracza w hubie TEJ hali
       opts.gameDt = gameDt;
       opts.hull = hull && owner?.inv ? this._hullInHall(hull, owner.inv) : null;
-      if (syncK7BerthLamps(e.service, i, hall.layout?.berths)) hall.setBerthLamps?.();
+      this._syncBerthLamps(e, i, hall, owner);
       hall.update(dt, opts);
-      // poziom lamp hali (dzień / noc) dla świateł hali w siatce gry (pył, para, kadłuby)
-      if (owner) owner.lampLevel = hall.k7Uniforms.uHallLights.value.x;
+      // poziom lamp hali (dzień / noc) dla świateł hali w siatce gry liczy świat ringów gry (owner.lampLevel)
     }
     if (!alive) {
       ring.setCutaway(0, null);
@@ -462,29 +481,6 @@ export class HaloRingGame {
     out.length = hull.length;
     for (let i = 0; i < hull.length; i++) haloXfPoint(inv, hull[i].x, hull[i].z, out[i]);
     return out;
-  }
-
-  // Kolizje statku ze wszystkimi ringami (płyta; walls = ściany portu dla graczy).
-  // Wynik ostatniego trafienia albo null (ringi się nie nakładają).
-  constrainShip(ship, walls = false) {
-    let hit = null;
-    for (let i = 0; i < this.entries.length; i++) {
-      const e = this.entries[i];
-      e.collider.setPlanet(e.planet);
-      const res = e.collider.constrainShip(ship, walls);
-      if (res.hit) hit = res;
-    }
-    return hit;
-  }
-
-  // Punkt świata gry w płycie któregoś ringu (pociski).
-  pointInSlab(x, y, z = 0) {
-    for (let i = 0; i < this.entries.length; i++) {
-      const e = this.entries[i];
-      e.collider.setPlanet(e.planet);
-      if (e.collider.pointInSlab(x, y, z)) return true;
-    }
-    return false;
   }
 
   dispose() {

@@ -173,6 +173,6 @@ test('przebicie: pocisk przez dziurę omija tarczę do końca lotu i trafia panc
   assert.match(html, /applyDamageToNPC\(hitNPC, npcDamage \* entryK\.hp, b\.type, hitBreach \? SHIELD_BREACH_DAMAGE_OPTS : undefined[,)]/);
   // Wiązki i rakiety: ta sama dziura.
   assert.match(html, /out\.breach = hitBreach;/);
-  const rockets = read('src/effects3d/rocketSystem3D.js');
-  assert.match(rockets, /RenderWorld\.game\.isShieldBreachedAt\(target, r\.position\.x, r\.position\.z\)/);
+  const rockets = read('src/game/rockets/rocketSim.js');
+  assert.match(rockets, /window\.isShieldBreachedAt\(target, r\.position\.x, r\.position\.z\)/);
 });

@@ -46,7 +46,8 @@ test('każda broń wiązkowa ma recepturę wiązki w tabeli efektów', () => {
 test('laser PD gracza (ciwsStep) rysuje się w 3D, bez smugi kanwy', () => {
   const fn = sliceFunction(html, 'function firePointDefenseLaser(');
   assert.ok(fn.length > 0);
-  assert.match(fn, /WeaponFx\.pdLaser\(weaponId, muzzle\.x, muzzle\.y, beamEnd\.x, beamEnd\.y, ship, target\);/);
+  // RW-21: zdarzenie efektu — rekord PD_LASER strumienia rozkazów (dekoder woła WeaponFx.pdLaser).
+  assert.match(fn, /RenderCommands\.writer\.pdLaser\(weaponId, muzzle\.x, muzzle\.y, beamEnd\.x, beamEnd\.y, ship, target\);/);
   assert.doesNotMatch(fn, /spawnLaserBeam|spawnPointDefenseLaser/);
   assert.doesNotMatch(html, /LASER_PD_BEAM_WIDTH/);
 });

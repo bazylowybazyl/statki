@@ -544,11 +544,11 @@ test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawn
   assert.doesNotMatch(recycle, /DestructorSystem/);
 
   const freezeHook = src.slice(src.indexOf('onBeforeFreeze(w) {'), src.indexOf('onThawed(w, reason) {'));
-  assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('invalidateHexShipEntity3D(w)'),
+  assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('HullDamageEvents.invalidate(w)'),
     'smuga zapisana, zanim meshe znikną');
   assert.match(freezeHook, /TowSystem\.detachBody\(w, 'wreck-cold'\)/);
 
-  assert.match(src, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);/);
+  assert.match(src, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks[,)]/);
   assert.match(src, /for \(const w of wrecks\) if \(w && !w\.dead\) renderEntities\.push\(w\);/, 'renderEntities tylko z wrecks');
   assert.match(src, /setPerfHudWorldSource\(\(\) => \(\{ ship, npcs, wrecks, coldWrecks, bullets/);
   const hud = readFileSync(new URL('../src/ui/perfHud.js', import.meta.url), 'utf8');

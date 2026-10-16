@@ -80,6 +80,10 @@ function abOverride() {
 
 export default defineConfig({
   base: './',
+  // Prebundle zależności w drzewie (.tmp/vite-deps), nie w node_modules/.vite: worktree torów mają node_modules jako
+  // junction do jednego katalogu, więc serwery Vite z kilku drzew naraz unieważniały sobie wspólny prebundle
+  // („504 Outdated Optimize Dep”, „gra nie wstała” w harnessach).
+  cacheDir: join(repoRoot, '.tmp', 'vite-deps'),
   plugins: [demaIndexRedirect, gameVersion, abOverride()].filter(Boolean),
   define: {
     __HEX_SIM_BUILD__: JSON.stringify('hex-sim-v2'),

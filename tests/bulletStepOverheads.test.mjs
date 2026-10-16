@@ -67,7 +67,7 @@ test('pętla pocisków czyta listy kroku zamiast wszystkich stacji i platform', 
 
 test('pocisk sprawdza skałę olbrzyma tylko przy gotowej siatce, bez starego pola', () => {
   const step = sliceFunction(html, 'function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {');
-  assert.match(step, /!hitNPC && asteroidBelt && asteroidBelt\.giants\.readyCount > 0 && asteroidBelt\.pointBlocked\(b\.x, b\.y\)/);
+  assert.match(step, /!hitNPC && beltWorld && beltWorld\.giants\.readyCount > 0 && beltWorld\.pointBlocked\(b\.x, b\.y\)/);
   assert.doesNotMatch(step, /asteroidField/);
 });
 
@@ -112,9 +112,9 @@ test('liczba porcji smugi zależy od czasu klatki, nie od liczby kroków fizyki'
 test('porcje smugi leżą wzdłuż drogi pocisku w tej klatce, bez obiektów pozycji', () => {
   const spawns = [];
   const spawnBulletTrail = loadIndexFunction(html, 'function spawnBulletTrail(b, count, frameDt) {', 'spawnBulletTrail', {
-    WeaponFx: { available: false },
+    RenderCommands: { ready: false },
     CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) },
-    fxRandom
+    fxRandomGame: fxRandom
   });
   spawnBulletTrail({ type: 'autocannon', x: 100, y: 50, vx: 1200, vy: 0 }, 2, 2 / 120);
   assert.equal(spawns.length, 2);

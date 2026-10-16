@@ -30,11 +30,11 @@ import {
   abs, mix, floor, fract, smoothstep, saturate, select, sqrt, pow, step, If, Loop, clamp, hash, uv,
   cameraViewMatrix, transformNormalToView, texture, fwidth, varyingProperty
 } from 'three/tsl';
-import { SHIELD_NEIGHBOR_DIRS } from './shieldLattice.js';
+import { SHIELD_NEIGHBOR_DIRS, SHIELD_SLOTS, SHIELD_SLOT_CAP } from './shieldLattice.js';
 import { fxNoise } from '../fx/noise.js';
 
-export const SHIELD_SLOTS = 12;
-export const SHIELD_SLOT_CAP = 4096;
+// Wymiary puli (sloty, płytki na slot) — w czystym shieldLattice.js: czyta je też gra (przebicia, RW-29).
+export { SHIELD_SLOTS, SHIELD_SLOT_CAP };
 const TOTAL = SHIELD_SLOTS * SHIELD_SLOT_CAP;
 export const SHIELD_BINS = 96;
 export const SHIELD_MAX_EVENTS = 128;
