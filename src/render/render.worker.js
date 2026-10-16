@@ -14,7 +14,7 @@ export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety',
   'drony naprawcze', 'model reaktora w wyrwie', 
-'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran (ścieżka gotowa, sesja split harnessu bez klatek workera — do zbadania)'
+'rdzenie: strugi i kule (RX_*)', 'tło menu'
 ]);
 
 const isWorker = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;

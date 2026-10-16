@@ -68,7 +68,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   const host = {
     worker, ret, ring, ready: false, failed: null, frames: 0, composed: 0, lastPostedK: -1, lastCommittedK: -1,
     errors: [], stats: new Float64Array(RET_F64.COUNT), _shown: false, _dictSent: 0,
-    _sentRes: [], _sentDefs: new Set(), _chain: Promise.resolve(), _W: W, _H: H
+    _sentRes: [], _sentDefs: new Set(), _pendDesc: new Set(), _chain: Promise.resolve(), _W: W, _H: H
   };
   worker.onerror = (e) => { host.errors.push(`worker: ${e.message}`); if (onError) onError(e.message); };
   worker.onmessage = (e) => {
@@ -133,8 +133,20 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     const evFrame = commands ? commands.writer.frame - 1 : -1;
     const msg = { type: 'frame', k, evFrame, skyZone: host._skyZone || null, dust: host.dustOn !== false, ringQuality: host.ringQuality || null, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: host._dictSent, dict: null };
     const pending = [];
-    for (const s of p.descQueue) {
+    // opisy nowe z tej strony i odłożone (obraz kadłuba jeszcze się wczytywał — opis idzie razem z gotowym obrazem;
+    // łańcuch wiadomości nie może czekać na obraz bez końca)
+    for (const s of p.descQueue) host._pendDesc.add(s);
+    for (const s of host._pendDesc) {
       const rec = p.descriptors[s];
+      if (!rec) { host._pendDesc.delete(s); continue; }
+      let ok = true;
+      for (let q = 0; q < 3 && ok; q++) {
+        const rs = rec.res[q];
+        const img = rs >= 0 ? slots.resources.objectAt(rs) : null;
+        if (img && img.tagName === 'IMG' && !(img.complete && img.naturalWidth > 0)) ok = false;
+      }
+      if (!ok) continue;
+      host._pendDesc.delete(s);
       msg.desc.push(s, rec);
       for (let q = 0; q < 3; q++) {
         const rs = rec.res[q];
@@ -162,9 +174,15 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     msg.dict = dv.slice(host._dictSent);
     host._dictSent = dv.length;
     host.lastPostedK = k;
-    // kolejność wiadomości = kolejność stron (bitmapy zasobów asynchronicznie — następne strony czekają w łańcuchu)
+    // kolejność wiadomości = kolejność stron (bitmapy zasobów asynchronicznie — następne strony czekają w łańcuchu);
+    // błąd jednej wiadomości (np. opis z obiektem nie do sklonowania) nie może zatrzymać łańcucha
+    const send = (transfer) => {
+      try { worker.postMessage(msg, transfer); return; } catch (err) { host.errors.push(`wiadomość k=${k}: ${err?.message || err}`); }
+      for (let i = 1; i < msg.desc.length; i += 2) msg.desc[i] = plainData(msg.desc[i]);
+      try { worker.postMessage(msg, transfer); } catch (err) { host.errors.push(`wiadomość k=${k} (oczyszczona): ${err?.message || err}`); worker.postMessage({ type: 'frame', k, evFrame: msg.evFrame, desc: [], topo: [], cores: [], stations: [], res: [], dictFrom: msg.dictFrom, dict: msg.dict }); }
+    };
     if (pending.length === 0) {
-      host._chain = host._chain.then(() => worker.postMessage(msg));
+      host._chain = host._chain.then(() => send(undefined), (err) => { host.errors.push(String(err)); send(undefined); });
       return;
     }
     host._chain = host._chain.then(async () => {
@@ -172,16 +190,15 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       for (let i = 0; i < pending.length; i += 2) {
         const img = pending[i + 1];
         try {
-          if (img.decode && img.complete === false) await img.decode();
-          const bmp = await createImageBitmap(img);
+          const bmp = await Promise.race([createImageBitmap(img), new Promise((_, no) => setTimeout(() => no(new Error('createImageBitmap: limit czasu')), 3000))]);
           msg.res.push(pending[i], bmp);
           transfer.push(bmp);
         } catch (err) {
           host.errors.push(`zasób ${pending[i]}: ${err?.message || err}`);
         }
       }
-      worker.postMessage(msg, transfer);
-    });
+      send(transfer);
+    }).catch((err) => { host.errors.push(`łańcuch: ${err?.message || err}`); });
   };
 
   /** Nakładki klatki k gotowe na kanwie gry — kopia do kanwy pierścienia (B2cr). */
