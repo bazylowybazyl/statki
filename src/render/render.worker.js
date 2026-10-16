@@ -13,7 +13,7 @@
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
   'pas asteroid i wydobycie', 'komety', 'rozpad stacji (Destruction3D)',
-  'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
+  'drony naprawcze', 'model reaktora w wyrwie', 
 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
 
@@ -71,7 +71,8 @@ if (isWorker) {
       import('../3d/explosions/explosionCommands.js'), import('../3d/explosions/explosionFx.js'), import('../3d/rockets/rocketFx.js'),
       import('../3d/sparkSystem3D.js'), import('../game/simClock.js'), import('../3d/weapons/weaponFx.js')
     ]);
-    const [rktBlock, rktCmd] = await Promise.all([import('./blocks/rocketBlock.js'), import('../3d/rockets/rocketFxCommands.js')]);
+    const [rktBlock, rktCmd, viewBlock, coldMod] = await Promise.all([import('./blocks/rocketBlock.js'), import('../3d/rockets/rocketFxCommands.js'),
+      import('./blocks/viewBlock.js'), import('../game/coldWrecks.js')]);
     const [warpMod, warpCmd, warpBlock] = await Promise.all([
       import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js')
     ]);
@@ -85,7 +86,7 @@ if (isWorker) {
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
     st.warpRamp = { active: false, age: 0, tBrake: 0 };
@@ -103,6 +104,9 @@ if (isWorker) {
     const sid = models.shipModel3DIdFor;
     hex.setBeamSkinSuppressor((e) => !!e.beamHull?.world || !!sid(e));
     hex.setEntityHiddenTest((e) => (e.__mirror === true ? e.fogHidden : false));
+    // zimne wraki: ciało do rysowania wybrała gra (blok `view` — numer klatki strony)
+    hex.setColdWreckRenderHooks({ drawn: (w) => w._coldDrawFrame === st.curFrame, config: coldMod.COLD_WRECK_CONFIG,
+      listedForExtras: (w) => w._coldExtrasFrame === st.curFrame });
     st.rm = new mirror.RenderMirror({
       dict: st.dict,
       describe: (s, gen) => { const d = st.descriptors[s]; return d && d.gen === gen ? d.desc : null; },
@@ -327,6 +331,8 @@ if (isWorker) {
     // zegary gry tej strony (efekty niesione nośnikiem, smugi pocisków)
     const SC = st.mods.clock.SimClock;
     SC.sim = h[H.SIM]; SC.render = h[H.SIM_RENDER]; SC.renderSim = h[H.SIM_RENDER_SIM];
+    st.curFrame = h[H.FRAME_ID];
+    if (v.blocks.view && v.blocks.view.f64) st.mods.viewBlock.applyViewBlock(v.blocks.view, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.curFrame);
     applyShots(v);
     applyTurrets(v);
     if (v.blocks.rockets && v.blocks.rockets.f64) {
@@ -410,7 +416,7 @@ if (isWorker) {
       bridge3d.Bridge3D.update(list, bo);
       bridgeFx.BridgeFx3D.update(list, fo);
     }
-    hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, null, st.cloak.frame);
+    hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
     shields.updateShields3D(dt, rm.lists[L.SEEN], null);

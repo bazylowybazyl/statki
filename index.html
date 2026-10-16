@@ -1331,6 +1331,7 @@
     import { resolveRenderMode, renderWorkerCaps } from "./src/render/renderBridge.js";
     import { createRenderWorkerHost } from "./src/render/renderWorkerHost.js";
     import { createRocketBlock } from "./src/render/blocks/rocketBlock.js";
+    import { createViewBlock } from "./src/render/blocks/viewBlock.js";
     import { BEAM_BRIDGE_BACKEND } from "./src/game/shipBridgeBeams.js";
     import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
     import { bridgeGameToMirrors, bridgeMirrorsToGame, bridgeStationsGameToMirrors, bridgeStationsMirrorsToGame } from "./src/render/mirrorBridge.js";
@@ -28401,6 +28402,8 @@
       if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
       // RW-40b: pula rakiet (lot w grze) dla reżysera efektów rakiet w workerze
       if (RW_WORKER) renderSnapshot.addBlock(createRocketBlock());
+      // RW-40b: widok klatki gry (pudło rysowania, ciała zimnych wraków) dla luster w workerze
+      if (RW_WORKER) renderSnapshot.addBlock(createViewBlock());
     }
     const _snapFrame = createSnapshotFrame();
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
@@ -29587,6 +29590,7 @@
         } else if (RW_WORKER) {
           // RW-40a: faza 1 migawki; kadłuby, modele, tarcze i stacje rysuje worker (render.worker.js)
           const tMirror = performance.now();
+          _snapFrame.viewList = renderEntities;
           packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
           PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
         } else {
