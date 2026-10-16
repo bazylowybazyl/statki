@@ -1393,6 +1393,54 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   recordAt(i) }` — Turret2D po `syncFrame` z RW-26) ma pierwszeństwo przed `turretsOf` (faza finish); te same rekordy,
   kolejność klatki, encje spoza list migawki pominięte (test w `tests/snapshotPack.test.mjs`). Zostaje: zapisy renderu czytane przez grę
   (`__shieldBreach` — RW-29, `station._mesh3d` — RW-22, `core.lastX/Y`), strugi i kule rdzeni (rozkazy RX_* — RW-22).
+  **Stan (2026-10-16, tor `rw-migawka`): RW-11a WPIĘTE, RW-11b CZĘŚCIOWO (modele 3D, tarcze) — zweryfikowane.**
+  Flagi: `?szew=inline` = pakowanie + moduły renderu NA LUSTRACH; dawne samo pakowanie (render na encjach) = `?szew=pakuj`
+  (pomiar kosztu szwu); bez flagi (`off`) — ścieżka gry bez zmian (gałęzie `if (SZEW_MIRRORS)`). W trybie luster faza
+  begin stoi TUŻ PRZED `updateHexShips3D` — po `stepCloakLooks` i `Turret2D.syncFrame` (blok `cloak` z
+  `frame.cloak = CLOAK_LOOK_FRAME`, `frame.consumeDirty = true`; zimne wraki z ciałem z listy klatki `_coldNearList`
+  sprzed `selectColdRenderBodies` — nowe ciało dołącza w następnej klatce, jak listy gry), potem `rm.apply(view)`,
+  most gra → lustro, `applyCloakBlock`, a `updateHexShips3D` (kadłuby, dysze, lampy, cień SDF, smugi, zimne wraki),
+  `syncShipModels3D` (lista SEEN_COLD; wieże z rekordów klatki gry przez most `Turret2D.recordsFor(lustro.__game)`)
+  i `updateShields3D` (lista SEEN; kanał zwrotny przebić bierze slot i generację lustra) dostają listy luster.
+  RenderWorld: `createMirrorPlayersSource()` (`renderWorld.js`) — źródło jak tryb `off` (osobna fasada bez źródła), tylko
+  `ship` / `player2Ship` = lustra graczy; gra ustawia je `setSource` WYŁĄCZNIE na czas tych trzech wywołań, bo moduły
+  jeszcze na obiektach gry (dekoder rozkazów `WeaponFx.impact` — strzelec z rozkazu, warp, mostki) porównują encje gry
+  z `RenderWorld.ship`; `WeaponFx.sync` w `updateHexShips3D` niczego nie porównuje z graczem. `config.*` czytane przy
+  imporcie — bez zmian (fasada bez źródła). `bridgeRenderPose` i test mgły (`e.__mirror ? e.fogHidden : hides(e)`)
+  rozpoznają lustra. Holownik: `ServiceTugGame.beginRender` / `restorePose` ZOSTAJĄ — poza holownika na encji gry
+  potrzebna modułom na obiektach gry i kanwie 2D; `frame.poseOf` daje lustru tę samą pozę.
+  Mosty (`mirrorBridge.js`, przepisane wg aktualnego kodu): gra → lustro `__warpHullU`, `__warpNurtMode`, `__bayCut`,
+  `__lightOcclude`, `__lightMate`, oraz `__inDrawBox` i `_coldDrawFrame` (od RW-31 liczy je gra); lustro → gra tylko
+  `__engineFxFallback` (paleta dysz — czyta `warpTraffic.js`). Dawne mosty `__cloakLook`, `__hiddenFromView`,
+  `_coldSkinFrame` usunięte (RW-26 / RW-31: kierunek odwrotny albo pole tylko renderu).
+  LUKI ZNALEZIONE PRZY WERYFIKACJI (poprawione w pakującym): (1) węzły i pozycje spoczynkowe ciała zmienione, gdy ciało
+  było POZA pudłem rozgrzania (albo strona nie miała miejsca), przepadały, jeśli ciało wchodziło do pudła już bez zmian
+  — lustro Atlasa w hali K-7 miało zerowe pozycje spoczynkowe (obrys tarczy liczony z nich ~7× za mały, inne
+  oświetlenie kadłuba); teraz pakujący pamięta stronę, na którą węzły / spoczynek naprawdę trafiły (`_bodyNodesW`,
+  `_bodyRestW`); (2) `D._shiftStore` (przebudowa po rozpadzie) przesuwa pozycje spoczynkowe bez `shapeVersion` —
+  pakujący wykrywa to po zmianie `latticeMin` (galeria: przebicia Valkyrie, dym w kraterze Yamato). Diagnostyka luk:
+  porównanie pól lustro ↔ `lustro.__game` w przeglądarce (skrypt dołączany flagą adresu, `console.error` → harness).
+  Znana drobnica bez wpływu na obraz: śpiące ciało przesuwa węzły o ~0,002 j. bez flag brudu (lustro ma stare).
+  ZRZUTY (po kolei, `zrzuty.mjs --backend webgpu` bez flagi ↔ `--query szew=inline`, wszystkie 17 sesji, 204 obrazy):
+  202 / 204 identyczne (maks. różnica ≤ 2); różne tylko `planeta-cien` (+ `__fg`) — scena niedeterministyczna, dwa
+  przebiegi BEZ flagi też różnią się w niej o ~5–11 tys. px (stacja Marsa w innej fazie obrotu). Modele 3D
+  (`modele3d-gra.mjs --query szew=inline`, narzędzie w czasie rzeczywistym — piksele między przebiegami nie są
+  porównywalne): statystyki modeli w 13 / 14 kadrach równe, w `3d3d-ciag` jeden okręt więcej w kadrze (czas
+  rzeczywisty), obraz kadłubów, wież i dysz SIDE jak bez flagi. Testy: pełne `node --test` (znane: hallGas LF,
+  gpuFx sun-mask, TODO rdzeni), `npm test`, build.
+  POMIAR D7 (`profil-bitwy-flot.mjs --sklad 50,20,10,3`, 166 okrętów, okna t ≤ 15 s / t > 15 s, ms na klatkę;
+  `render3dHexUpdateTime` obejmuje w `inline` fazę begin i lustra — osobno `renderMirrorTime`, moduły = różnica):
+  zoom 0,1 — moduły na encjach (`pakuj`) 3,36 / 3,75, na lustrach 3,03 / 2,97 (−10% / −21%); begin + lustra 1,20 / 1,41;
+  zoom 0,45 — 2,50 / 3,00 → 2,13 / 2,80 (−15% / −7%); begin + lustra 1,02 / 1,45 (pakowanie razem z finish 0,8–1,15).
+  Pierwsza seria (bez rozbicia): `off` 4,42 / 4,14 i 2,27 / 2,99 ↔ `inline` 5,12 / 4,45 i 3,72 / 3,97 (szum między
+  przebiegami ~±0,4 ms). BILANS: hipoteza § 3.6 potwierdzona (moduły na monomorficznych lustrach szybsze o 0,2–0,8 ms),
+  ale pakowanie + lustra kosztują 1,0–1,45 ms, więc `inline` jest dziś o ~0,3–1 ms na klatkę droższy od `off` —
+  D7: zostaje `off` jako domyślny (zysk szwu dopiero z workerem).
+  ZOSTAJE (RW-11b): mostki (`Bridge3D` / `BridgeFx3D` biegną PRZED fazą begin — przeniesienie zmienia kolejność
+  losowań fxRandom; potrzebna faza begin wcześniej albo rekordy mostków), rdzenie (`reactorBlastFx` / `reactorModel3D`
+  pytają `HullBodies.probe` / `reactorCoreWorld` o gospodarza — na lustrze potrzebne zapytania na replice ciała),
+  stacje (`updateStations3D` — przed fazą begin), drony naprawcze (blok `repair` gotowy, niezarejestrowany), wieże
+  z bloku TURRETS zamiast mostu `__game`.
 - **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,

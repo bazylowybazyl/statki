@@ -482,6 +482,7 @@ export const PerfHUD = {
       render3dAsteroidsUpdateTime: 0,
       render3dDestructionUpdateTime: 0,
       render3dHexUpdateTime: 0,
+      renderMirrorTime: 0,
       render3dShieldsUpdateTime: 0,
       render3dDrawTime: 0,
       render3dCoreCallTime: 0,
@@ -595,6 +596,7 @@ export const PerfHUD = {
       render3dAsteroidsUpdateTime: 0,
       render3dDestructionUpdateTime: 0,
       render3dHexUpdateTime: 0,
+      renderMirrorTime: 0,
       render3dShieldsUpdateTime: 0,
       render3dDrawTime: 0,
       render3dCoreCallTime: 0,
@@ -1143,6 +1145,7 @@ export const PerfHUD = {
     this.display.render3dAsteroidsUpdateTime = this.accum.render3dAsteroidsUpdateTime / frames;
     this.display.render3dDestructionUpdateTime = this.accum.render3dDestructionUpdateTime / frames;
     this.display.render3dHexUpdateTime = this.accum.render3dHexUpdateTime / frames;
+    this.display.renderMirrorTime = this.accum.renderMirrorTime / frames;
     this.display.render3dShieldsUpdateTime = this.accum.render3dShieldsUpdateTime / frames;
     this.display.render3dDrawTime = this.accum.render3dDrawTime / frames;
     this.display.render3dCoreCallTime = this.accum.render3dCoreCallTime / frames;
@@ -1646,6 +1649,7 @@ export const PerfHUD = {
     this.accum.render3dAsteroidsUpdateTime = 0;
     this.accum.render3dDestructionUpdateTime = 0;
     this.accum.render3dHexUpdateTime = 0;
+    this.accum.renderMirrorTime = 0;
     this.accum.render3dShieldsUpdateTime = 0;
     this.accum.render3dDrawTime = 0;
     this.accum.render3dCoreCallTime = 0;
