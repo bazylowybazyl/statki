@@ -21,8 +21,9 @@
 // Import tego modułu ma efekt uboczny: rejestruje subskrybentów.
 
 import { CollisionFX } from './collisionFx.js';
-// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
-import { fxRandom } from '../3d/fx/fxRandom.js';
+// Losowość wizualiów (zadanie 23): nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu. Strumień GRY
+// (RW-20: liczone na wątku głównym — osobny ciąg od strumienia renderu fxRandom).
+import { fxRandomGame } from '../game/fxRandomGame.js';
 
 export const COLLISION_SPARKS_TUNE = {
   ratePerSec: 420,   // iskry/s na parę kadłubów przy pełnym tarciu
@@ -63,7 +64,7 @@ function pairState(a, b) {
     if (!pa) _pairs.set(a, pa = new WeakMap());
     let pb = _pairs.get(b);
     if (!pb) _pairs.set(b, pb = new WeakMap());
-    rec = { t: -Infinity, acc: fxRandom.next() };
+    rec = { t: -Infinity, acc: fxRandomGame.next() };
     pa.set(b, rec);
     pb.set(a, rec);
   }

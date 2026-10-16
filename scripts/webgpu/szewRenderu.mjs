@@ -99,6 +99,7 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/weaponFeel.js': 'A',
   'src/game/carrierVelocity.js': 'B',
   'src/game/gameState.js': 'B',
+  'src/game/fxRandomGame.js': 'B',
   'src/game/simClock.js': 'B',
   'src/game/view3D.js': 'B',
   'src/game/hexBodyHooks.js': 'C',

@@ -106,8 +106,8 @@ export function createSnapshotFrame() {
     sun: null, skyZone: null,
     warp: null, boost: null,
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
-    turretFrame: null,          // faza begin (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame) —
-                                // pierwszeństwo przed turretsOf
+    turretFrame: null,          // faza finish (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame)
+                                // — pierwszeństwo przed turretsOf
     consumeDirty: false,        // lustra (RW-11a): zerować flagi brudu skóry ciał gry po spakowaniu (tylko inline)
     hall: null,                 // faza finish: Float64Array HALL_DUST_IN
     repair: null,               // blok `repair` (blocks/repairBlock.js): RepairSwarm
@@ -184,7 +184,6 @@ export class SnapshotPacker {
     this._bodyBeams = [];
     this._blocks = [];
     this._blocksDirty = false;
-    this._turretsPacked = false;  // strona: wieże już w fazie begin (frame.turretFrame)
     this._fogR = new Uint8Array(64);     // RENDER: 1 = ukryte mgłą (jedno pytanie na encję w klatce)
     this._lists = new Array(LIST.COUNT);
     for (let i = 0; i < LIST.COUNT; i++) this._lists[i] = [];
@@ -289,8 +288,6 @@ export class SnapshotPacker {
     this._packStations(v, frame);
     this._packCores(v, frame);
     this._packWorld(v, frame);
-    this._turretsPacked = false;
-    if (frame.turretFrame) this._packTurretFrame(v, frame.turretFrame);
     if (this._blocks.length) this._packBlocks(v, frame, 'begin');
     this.stats.beginMs = this.now() - t0;
   }
@@ -300,7 +297,8 @@ export class SnapshotPacker {
     const t0 = this.now();
     const v = this.view;
     if (frame.cull) writeCull(v.head, frame.cull);
-    if (!this._turretsPacked) this._packTurrets(v, frame);
+    if (frame.turretFrame) this._packTurretFrame(v, frame.turretFrame);
+    else this._packTurrets(v, frame);
     if (frame.hall && frame.hall.length >= HALL_WORDS) v.hall.set(frame.hall.subarray(0, HALL_WORDS));
     else v.hall.fill(0);
     if (this._blocks.length) this._packBlocks(v, frame, 'finish');
@@ -1289,7 +1287,7 @@ export class SnapshotPacker {
     this._endTurrets(v, n, need, cap);
   }
 
-  /** RW-26: rekordy wież klatki (Turret2D.syncFrame przed updateHexShips3D) w fazie begin, w kolejności klatki. */
+  /** RW-26: rekordy wież klatki (Turret2D.syncFrame przed updateHexShips3D), w kolejności klatki. */
   _packTurretFrame(v, tf) {
     const ents = this.ids.entities;
     const cap = this.layout.cap.turrets;
@@ -1304,7 +1302,6 @@ export class SnapshotPacker {
       if (n < cap) this._writeTurret(v, n++, r, s, ents.gen(s));
     }
     this._endTurrets(v, n, need, cap);
-    this._turretsPacked = true;
   }
 
   _endTurrets(v, n, need, cap) {

@@ -25,18 +25,24 @@ export function wreckImpostorEnterPx(tuning) {
   return Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
 }
 
-function posX(entity) { return entity?.pos ? entity.pos.x : entity?.x || 0; }
-function posY(entity) { return entity?.pos ? entity.pos.y : entity?.y || 0; }
-function scaleX(entity) {
+// Położenie i skala sprite'a encji (RW-26: te same encje biorą kadłuby 3D i rekordy wież — Turret2D.syncFrame).
+export function getEntityPosX(entity) { return entity?.pos ? entity.pos.x : entity?.x || 0; }
+export function getEntityPosY(entity) { return entity?.pos ? entity.pos.y : entity?.y || 0; }
+export function getEntityScaleX(entity) {
   if (entity?.visual && typeof entity.visual.spriteScaleX === 'number') return entity.visual.spriteScaleX;
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
 }
-function scaleY(entity) {
+export function getEntityScaleY(entity) {
   if (entity?.visual && typeof entity.visual.spriteScaleY === 'number') return entity.visual.spriteScaleY;
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
 }
+export function getEntityScale(entity) { return Math.max(getEntityScaleX(entity), getEntityScaleY(entity)); }
+const posX = getEntityPosX;
+const posY = getEntityPosY;
+const scaleX = getEntityScaleX;
+const scaleY = getEntityScaleY;
 
 /** Encja w pudle ROZGRZANIA (bez pudła — zawsze). */
 export function isEntityInCull(entity, cull) {
@@ -85,4 +91,22 @@ export function beamBodyRadiusPx(entity, zoom, pixelRatio) {
   if (!mm) return Infinity;
   const half = Math.max(mm[3] - mm[0], mm[4] - mm[1]) * 0.5 + body.cellSize * 0.5;
   return half * Math.max(0.0001, zoom) * (pixelRatio || 1);
+}
+
+/**
+ * Encje klatki z efektami w pudle RYSOWANIA (RW-26) — w kolejności listy, jak `drawVfx` w hexShips3D.updateHexShips3D:
+ * żywe, bez `hideHexVisual` / `visual.hideHexMesh`, nieukryte (`hidden(e)` — mgła wojny), w pudle rozgrzania
+ * i rysowania. Wynik do `out` (wyczyszczona), zwraca `out`. Rekordy wież liczy gra (Turret2D.syncFrame).
+ */
+export function collectDrawBoxEntities(entities, cull, cameraZoom, hidden, out) {
+  out.length = 0;
+  if (!entities) return out;
+  for (const entity of entities) {
+    if (!entity || entity.dead) continue;
+    if (entity.hideHexVisual === true || entity.visual?.hideHexMesh === true) continue;
+    if (hidden && hidden(entity)) continue;
+    if (!isEntityInCull(entity, cull)) continue;
+    if (isEntityInDrawBox(entity, cull, cameraZoom)) out.push(entity);
+  }
+  return out;
 }

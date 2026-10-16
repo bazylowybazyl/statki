@@ -160,7 +160,7 @@ test('wpięcie: gra liczy widok klatki, render nie pisze flag gry ani nie woła 
   const src = readIndexHtml();
   assert.match(src, /stampDrawBoxFlags\(renderEntities, _drawView, /);
   assert.match(src, /selectColdRenderBodies\(coldWrecks, _drawView, coldWreckSystem\.config, /);
-  assert.ok(src.indexOf('selectColdRenderBodies(coldWrecks, _drawView') < src.indexOf('updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);'));
+  assert.ok(src.indexOf('selectColdRenderBodies(coldWrecks, _drawView') < src.indexOf('updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);'));
   assert.ok(src.indexOf('Bridge3D.update(renderSeenCold,') < src.indexOf('selectColdRenderBodies(coldWrecks, _drawView'),
     'wybór ciał po mostkach — nowe ciało dołącza do list mostków w następnej klatce, jak dawniej');
   assert.match(src, /isVisuallySafe: \(w\) => coldFreezeVisuallySafe\(w, _drawView, coldWreckSystem\.config\)/);

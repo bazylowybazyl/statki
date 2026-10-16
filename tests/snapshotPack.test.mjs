@@ -237,7 +237,7 @@ test('wzrost pojemności: nowy układ stron (generacja), dane zachowane; listy, 
   assert.ok(rep.ent > 0 && rep.nodes > 0 && rep.total <= rep.pageBytes);
 });
 
-test('wieże z rekordów klatki (RW-26, faza begin): te same rekordy co turretsOf, kolejność klatki, encje spoza list pominięte', () => {
+test('wieże z rekordów klatki (RW-26): te same rekordy co turretsOf, kolejność klatki, encje spoza list pominięte', () => {
   const ents = [makeShip(1, 0, 0), makeShip(2, 10, 0), makeShip(3, 20, 0)];
   const stranger = { x: 5, y: 5 };
   const mk = (e, k, b) => ({ entity: e, key: k, uid: 'u' + k, weaponId: 'tempest', fxKey: 'T', wx: b, wy: -b, ang: b * 0.1, scale: 1, recoil: 0, shake: 0.5, spec: { r: 12 }, state: { housing: 0.1, barrel: b, flash: 0 } });
@@ -249,8 +249,8 @@ test('wieże z rekordów klatki (RW-26, faza begin): te same rekordy co turretsO
   fA.turretsOf = () => { throw new Error('turretsOf nie może być wołane, gdy jest turretFrame'); };
   packA.begin(fA);
   const vA = packA.view;
-  assert.equal(vA.head[HEAD.N_TURRETS], 3, 'po fazie begin');
   packA.finish(fA);
+  assert.equal(vA.head[HEAD.N_TURRETS], 3);
   const packB = new SnapshotPacker({ shared: false });
   const fB = baseFrame(ents, {});
   fB.turretsOf = (e) => recs.filter((r) => r.entity === e);

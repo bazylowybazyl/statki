@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Turret2D, normalizeWeaponFxKey } from '../src/vfx/turret2D.js';
+import { drawTurretsCanvas } from '../src/vfx/turretCanvasPreview.js';
 import { LauncherSprite2D } from '../src/vfx/launcherSprite2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { getMountedWeaponAim } from '../src/game/weaponAim.js';
@@ -33,7 +34,7 @@ test('launcher atlases preserve every port, scale, aim, LOD and loading fallback
     draws.length = 0; fills = 0;
     Turret2D.beginFrame();
     Turret2D.sync(entity, 10, 20, .2, 1);
-    return Turret2D.draw(ctx, { zoom });
+    return drawTurretsCanvas(ctx, { zoom });
   }
   function tip({ args, matrix: [a, b, c, d, e, f] }) {
     const [, , , , , x, y, w, h] = args;

@@ -14,11 +14,11 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 94, // 2026-10-16 po scaleniu RW-25/27/24 i RW-31 (92) + RW-10: migawka (?szew=inline) czyta rekordy wież Turret2D.recordsFor (do RW-26 — wieże po stronie gry) i wejście pyłu hal HallDust.input (do RW-11c — blok HALL z gry)
-  'index:dane': 31,
-  'index:konfiguracja': 155, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
-  'index:zapytanie': 40, // 2026-10-16 po scaleniu RW-25/27/24 z RW-31 (−2 isColdFreezeVisuallySafe)
-  'index:zdarzenie': 62, // 2026-10-15 RW-25/27/24: rozgrywka pasa, ringu i bazy po stronie gry
+  'index:aktualizacja': 92, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31) = 90; +2 RW-10: migawka (?szew=inline) bierze rekordy wież klatki Turret2D (frameCount / recordAt, do przeniesienia migawki za syncFrame w RW-11a) i wejście pyłu hal HallDust.input (do RW-11c — blok HALL z gry)
+  'index:dane': 16, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
+  'index:konfiguracja': 151, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
+  'index:zapytanie': 28, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
+  'index:zdarzenie': 42, // 2026-10-16 zmierzone po scaleniu rw-bronie (B3D, RW-26/20/21/30/23) z main (RW-25/27/24/29/31)
   // importy render → src/game / src/ai (lista dozwolona; klasy A–E w KLASY_IMPORTOW, § 2.2)
   'import:src/game/asteroidBeltField.js': 1,
   'import:src/game/asteroidFieldLight.js': 1,
@@ -33,14 +33,14 @@ const SUFITY = {
   'import:src/game/beltPlayZ.js': 1, // 2026-10-15 RW-25: głębokość skał pasma PLAY — wspólna dla platformy wydobywczej (gra) i warstwy PLAY (obraz), klasa A
   'import:src/game/cargoPortOps.js': 1,
   'import:src/game/carrierVelocity.js': 16,
-  'import:src/game/cloakLook.js': 9,
+  'import:src/game/cloakLook.js': 8,
   'import:src/game/coldWrecks.js': 1,
   'import:src/game/cometNucleus.js': 1,
   'import:src/game/comets.js': 1,
   'import:src/game/coreModel.js': 3,
   'import:src/game/destructorConfig.js': 2,
   'import:src/game/engineIgnition.js': 3,
-  'import:src/game/friendlyFire.js': 1,
+  'import:src/game/fxRandomGame.js': 2, // 2026-10-15 RW-20 (rw-bronie): strumień losowy gry dla modułów kanwy wątku głównego (collisionSparks, canvasParticleSystem)
   'import:src/game/gameState.js': 2,
   'import:src/game/haloRingPlanets.js': 2,
   'import:src/game/hexBodyHooks.js': 1,
@@ -55,7 +55,7 @@ const SUFITY = {
   'import:src/game/shipBridgeBeams.js': 2,
   'import:src/game/shipBridgeRuntime.js': 1,
   'import:src/game/shipLightRuntime.js': 5,
-  'import:src/game/simClock.js': 15,
+  'import:src/game/simClock.js': 14,
   'import:src/game/skyRegion.js': 1,
   'import:src/game/traffic/dockLayout.js': 2,
   'import:src/game/traffic/shipyards.js': 2,
@@ -72,32 +72,21 @@ const SUFITY = {
   'okno:DevTuning': 11,
   'okno:DevVFX': 8,
   'okno:ENGINE_POINT_LIGHTS_ENABLED': 1,
-  'okno:Game': 1,
   'okno:HullBodies': 2,
   'okno:OPTIONS': 5,
-  'okno:RepairSwarm': 1,
   'okno:SUN': 35,
-  'okno:ScoutBay': 1,
   'okno:VFX_TUNE': 2,
-  'okno:WorldBodies': 1,
   'okno:__EXPLOSION_GRID': 1,
   'okno:__EXPLOSION_TUNE_OVR': 2,
   'okno:__TSL_UUID_NAPRAWA': 1,
   'okno:__interpShipPose': 5,
   'okno:__renderDbgRecord': 3,
-  'okno:applyDamageToNPC': 2,
-  'okno:applyDamageToPlayer': 2,
-  'okno:applyDamageToStation': 1,
-  'okno:applyRocketHullImpact': 2,
   'okno:bullets': 2,
-  'okno:camera': 6,
+  'okno:camera': 4,
   'okno:camera2': 4,
-  'okno:isShieldBreachedAt': 2,
-  'okno:npcs': 2,
   'okno:planets': 3,
   'okno:player2Ship': 3,
-  'okno:registerShieldImpact': 2,
-  'okno:ship': 18,
+  'okno:ship': 10,
   'okno:shipDriveState': 1,
   'okno:splitScreenMode': 7,
   'okno:stationPivotById': 1,
@@ -107,7 +96,6 @@ const SUFITY = {
   // zmienne gry czytane w modułach kanwy 2D (zostają na wątku głównym)
   'okno-kanwa:CANVAS_WEAPON_VFX_ENABLED': 1,
   'okno-kanwa:CICDisplay': 1,
-  'okno-kanwa:DevTuning': 1,
   'okno-kanwa:H': 5,
   'okno-kanwa:PHYS_HZ': 1,
   'okno-kanwa:SparkSystem3D': 2,
@@ -116,7 +104,7 @@ const SUFITY = {
   'okno-kanwa:__weaponAimAlpha': 2,
   'okno-kanwa:camera': 2,
   'okno-kanwa:ship': 2,
-  'okno-kanwa:worldToScreen': 5,
+  'okno-kanwa:worldToScreen': 4,
   'okno-kanwa:worldToScreenInto': 1,
   // GameState w renderze (RW-12)
   'gamestate:src/3d/engineVfxSystem.js': 5,
@@ -153,9 +141,7 @@ const SUFITY = {
   'gpu:src/3d/shield3D.js': 2,
   'gpu:src/3d/tsl/zapisF16.js': 2,
   // Math.random w renderze (RW-20)
-  'random:src/3d/planet3d.assets.js': 8,
-  'random:src/3d/reactor3D.js': 3,
-  'random:src/effects3d/rocketSystem3D.js': 2
+  'random:src/3d/planet3d.assets.js': 8
 };
 
 const graf = grafGry();

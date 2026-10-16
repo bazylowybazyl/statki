@@ -32,8 +32,10 @@ test('weapon-fired events carry the shooter and the 3D listener looks only at it
   assert.match(html.slice(emitAt, emitAt + 200), /WeaponShotBus\.emit\(\s*weapon\.id,\s*shooter,/, 'detail musi nieść strzelca');
 
   // Lufa, odrzut i wstrząs tylko z wieżyczek strzelca (wylot i wiązka ciągła).
-  assert.match(weaponFx, /this\._muzzle\(w, x, y, detail\.shooter \|\| null, detail\.dirX, detail\.dirY\)/);
-  assert.match(weaponFx, /Turret2D\.triggerShot\(key, x, y, shooter\)/);
+  assert.match(weaponFx, /this\._muzzle\(w, x, y, detail\.shooter \|\| null, detail\.dirX, detail\.dirY, pre\)/);
+  // RW-26: wylot tylko z wieżyczek strzelca (shotMuzzle — bez odrzutu); odrzut zadaje strona gry tą samą regułą.
+  assert.match(weaponFx, /Turret2D\.shotMuzzle\(key, x, y, shooter\)/);
+  assert.match(html, /Turret2D\.recoilForShot\(detail\);/);
   assert.match(weaponFx, /Turret2D\.findTurretSlot\([^;]*detail\.shooter/);
 });
 
@@ -45,7 +47,7 @@ test('weapon camera shake moves the shared camera, not just the Three scenes', (
   // Od 2026-09-27 wstrząs strzałów wchodzi amplitudą (`mag`) do wspólnego
   // wstrząsu w px ekranu (src/game/cameraRig.js), a ten przesuwa `cam`.
   assert.match(html,
-    /const weaponShake = window\.__weapon3dCameraShake;[\s\S]{0,700}Number\(weaponShake\.mag\)[\s\S]{0,400}cam\.x \+= _cameraShakePx\.x \/ cam\.zoom/);
+    /const weaponShake = weaponShotShake;[\s\S]{0,700}Number\(weaponShake\.mag\)[\s\S]{0,400}cam\.x \+= _cameraShakePx\.x \/ cam\.zoom/);
 });
 
 test('only the hangar-launch spawnFighter remains', () => {

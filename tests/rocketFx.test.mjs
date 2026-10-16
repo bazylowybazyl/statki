@@ -20,9 +20,10 @@ const { SparkPool } = await import('../src/3d/rockets/sparks.js');
 const { RingUpload, ringAttr } = await import('../src/3d/rockets/ringUpload.js');
 const { SparkSystem3D } = await import('../src/3d/sparkSystem3D.js');
 const { ActiveCarrier } = await import('../src/game/carrierVelocity.js');
+const { requestCameraShakePeak } = await import('../src/game/cameraShakes.js');
 const { CLOCK_RENDER, CLOCK_SIM } = await import('../src/game/simClock.js');
 const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
-const { initRocketSystem3D } = await import('../src/effects3d/rocketSystem3D.js');
+const { initRocketSystem3D } = await import('../src/game/rockets/rocketSim.js');
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
@@ -353,6 +354,8 @@ test('Supernowa: implozja (przygaszenie) → błysk, bloom, fala, pozostałość
   const shakes = [];
   const prevCam = window.camera;
   window.camera = { shakeMag: 0, shakeDur: 0, addShake: (m, d) => shakes.push([m, d]) };
+  // RW-30: wstrząs Supernowej — żądanie do gry (hak onShake reżysera; reguła requestCameraShakePeak).
+  director.onShake = (m, d) => requestCameraShakePeak(window.camera, m, d);
   const neb = rfx.nebula;
   try {
     director.renderer = fakeRenderer(1);
@@ -392,6 +395,7 @@ test('Supernowa: implozja (przygaszenie) → błysk, bloom, fala, pozostałość
     assert.equal(fx.post.exposure, 1);
   } finally {
     window.camera = prevCam;
+    director.onShake = null;
   }
 });
 
@@ -587,7 +591,7 @@ test('efekty rakiet i iskier bez Math.random (fxRandom); stare pule rakiet usuni
   for (const f of ['rocketFireGPU', 'rocketSmokeGPU', 'supernovaMissileBlow']) {
     assert.throws(() => read(`src/effects3d/${f}.js`), /ENOENT/, `${f}.js usunięty`);
   }
-  const rockets = stripComments(read('src/effects3d/rocketSystem3D.js'));
+  const rockets = stripComments(read('src/game/rockets/rocketSim.js'));
   // Losowanie gry w locie: JEDNO ziarno na rakietę (fire) albo na salwę (fireSalvo) — rozrzut wyrzutu,
   // zapłonu, wachlarza i kluczenia z haszu ziarna (2026-09-30; dawniej 3 losowania wyrzutu na rakietę).
   assert.equal((rockets.match(/Math\.random\(\)/g) || []).length, 2, 'losowanie gry: ziarno rakiety i ziarno salwy');
