@@ -303,3 +303,17 @@ test('lustro: stacje — opis (wybór modelu), poza co klatkę, tożsamość po 
   assert.equal(ms.x, 150);
   assert.equal(ms._destroyed3D, true);
 });
+
+test('lustro: poza renderu z frame.poseOf (RW-31, holownik pod graczem) — w lustrze, encja gry nietknięta', () => {
+  const ents = [makeShip('A', 100), makeShip('B', 900)];
+  const { rm, step, frame } = setup(ents);
+  frame.poseOf = (e, out) => { if (e !== ents[1]) return false; out.x = 1234.5; out.y = -77.25; out.a = 1.5; return true; };
+  step();
+  const mB = rm.lists[LIST.RENDER][1];
+  assert.deepEqual([mB.x, mB.y, mB.pos.x, mB.pos.y, mB.angle], [1234.5, -77.25, 1234.5, -77.25, 1.5]);
+  assert.deepEqual([mB.vx, mB.vy], [5, 6], 'prędkość z fizyki');
+  assert.deepEqual([ents[1].x, ents[1].pos.x, ents[1].angle], [900, 900, 0.3]);
+  frame.poseOf = null;
+  step();
+  assert.deepEqual([mB.x, mB.angle], [900, 0.3], 'bez haka — znów pola encji');
+});
