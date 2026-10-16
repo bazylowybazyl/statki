@@ -100,7 +100,7 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
 
 ## Co w trybie worker działa inaczej niż w off (2026-10-16, do D8)
 
-- Dwa urządzenia GPU: Core3D strony rysuje menu, tło menu, intro kampanii i ekran ładowania; w grze rysuje worker. Start gry o 2–3 s dłuższy, w pierwszych ~3 s gry przestoje 0,3–2 s (strona czeka na GPU).
+- Jedno urządzenie GPU (RW-41c): Core3D strony bez urządzenia (`Core3D.noDevice`); tło menu, lot intro kampanii, ekran ładowania i gra — worker. Start (mediany 3 przebiegów `start-gry`, 2026-10-17): tło menu gotowe 10,5 s ↔ off 12,2 s, od kliku (2 s po menu) 9,9 ↔ 7,7 s, od wejścia do gry 22,4 ↔ 22,0 s; po ≥ 8 s w menu od kliku ~4,3 s (worker kończy przygotowanie w wolnym czasie menu). Przestoje w pierwszych 300 klatkach gry ≤ 0,28 s, pipeline'y synchroniczne 0.
 - Wydajność: przy zoomie 0,1 obraz ~1,5× szybszy niż off (po RW-45b 1,8–2,1×), wątek gry dużo równiejszy (p95 7–10 ↔ 17–31 ms); przy zoomie 0,45 obraz workera 0,6–0,9× off w pierwszej fazie bitwy — po RW-45b 1,05–1,25× (uzgadnianie: wysyłka wiadomości przy publikacji, render po wiadomości).
 - Obraz 3D złożony z nakładkami tej samej klatki (B2cr) — opóźnienie obrazu o 1–2 klatki strony względem wejścia nie zmierzone w grze (kryteria RW-42).
 - Losowe efekty (iskry, wtórne błyski Yamato, odłamki) losują z ciągu workera — inny przebieg niż w off; rozgrywka bez zmian.
@@ -113,7 +113,7 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
 
 ## RW-41 — stan i plan (2026-10-16 wieczór, do wznowienia po resecie limitu)
 
-D8 = worker (decyzja użytkownika); przełączenie domyślnego trybu czeka już tylko na RW-41c. Poprawka Fable (RW-45b) jest w main: worker rysuje od razu po wiadomości strony (`tryRender`, tryb `msg`), a strona wysyła wiadomość przy publikacji. Przy 0,45 obraz workera 212/175 kl/s ↔ off 203/140 (para 1). Przed przełączeniem sprawdzić opóźnienie przy vsync w prawdziwym oknie.
+D8 = worker (decyzja użytkownika) — WDROŻONE w RW-41c (tryb domyślny). Poprawka Fable (RW-45b) jest w main: worker rysuje od razu po wiadomości strony (`tryRender`, tryb `msg`), a strona wysyła wiadomość przy publikacji. Przy 0,45 obraz workera 212/175 kl/s ↔ off 203/140 (para 1). Przed przełączeniem sprawdzić opóźnienie przy vsync w prawdziwym oknie.
 
 ZROBIONE w tym commicie (RW-41a):
 - `startGame` w trybie worker pomija przygotowanie 3D strony (modele broni GLB, rozgrzewki kadłubów i tarcz, HullSurface, stacje, obraz komet — jądra komet dalej się budują jako przeszkody, tekstury planet, flush rozgrzewki strony).
@@ -123,9 +123,14 @@ ZROBIONE w tym commicie (RW-41a):
 
 WYNIK: przestoje w pierwszych sekundach gry prawie zniknęły (gra 2 / 899 klatek > 50 ms, maks 0,4 s; było 7 / 299, maks 2 s), ALE start jest DŁUŻSZY: worker piecze w menu ring Ziemi (~10–11 s) i bank pasa (~4 s) na swoim urządzeniu, a strona równolegle piecze własny ring dla tła menu — dwa urządzenia biją się o GPU. `start-gry` (klik 2 s po gotowym menu): 18–33 s od kliku (ostatni przebieg mógł się nałożyć z pomiarem Fable); `render-worker-gra`: krok `pas` ~17 s po kliknięciu.
 
-DO ZROBIENIA (RW-41c — jedno urządzenie GPU; bez tego kryterium „start ≤ off” nie przejdzie):
-1. Tryb renderu rozstrzygany w PIERWSZYM module strony (`resolveRenderMode` jest czyste: `location.search` + `renderWorkerCaps`) — w trybie worker Core3D strony bez `_initGpu` (scena bez urządzenia), `Core3D.ready` / bramki menu („wymaga WebGPU”) z flagi RET `GPU_READY` workera.
-2. Tło menu w workerze: `MenuBackdrop3D` (ring z `haloRings.showcaseRing('earth')` workera, Ziemia, mgławica, kamera kinowa) i pętla menu workera bez stron migawki (worker rysuje sam co rAF, strona pokazuje bitmapę bez pierścienia nakładek); sterowanie z menu strony wiadomościami: start / launch({ dolly }) / stop; lot intro kampanii (`StoryGame.planMenuIntro` → plan jako dane, dziś domknięcia), `launchDone` / `flightDone` z powrotem do strony.
-3. Teren ringu Ziemi dla kolizji gry (`haloWorld.setRingTerrain` z mapy CPU ringu obrazu): mapa CPU z workera wiadomością (dziś strona bierze ją z własnego ringu tła menu).
-4. Ring Ziemi wtedy piecze się RAZ (worker, w menu) i służy i tłu menu, i grze — start jak w off.
-5. Potem: `?renderWorker=0` = off, domyślnie worker (`src/render/renderBridge.js`), AGENTS.md, krótki pomiar końcowy przy wolnej maszynie.
+ZROBIONE (RW-41c, 2026-10-17, gałąź claude/nifty-goldstine-cd3d91 → main) i tryb domyślny = worker:
+1. Tryb renderu rozstrzygany w pierwszym module `index.html` (`window.__renderModeBoot`) — w trybie worker `Core3D.noDevice` (init bez `_initGpu`, `Core3D.ready` w toku); komunikat „wymaga WebGPU” z `rwHost.onFail`; preset pierwszego uruchomienia z adaptera WORKERA (`autoGfx` w `init` → `gfxAuto`).
+2. Tło menu w workerze: `rwHost.createMenuBackdrop()` (pełnomocnik o API `MenuBackdrop3D`), w workerze `MenuBackdrop3D` z hakiem `onRendered` → `menuFrame` (bitmapa na kanwę obrazu 3D, poza kamery, słońce, `launchDone`); lot intro z DANYCH planu (`introCamera.menuIntroFlight`, `StoryGame.planMenuIntro().data`), `flight.devTime / t` przekazywane do workera (fabula-gra), ostatnia klatka lotu (`final`) = obraz przenikania. Póki tło działa, klatka zero gry spod kurtyny nie zasłania go (`compose` przy `host._menu`).
+3. Teren ringu Ziemi: worker po odczycie map wysyła `ringTerrain` (mapa CPU) → `HaloRingWorld.setRingTerrainMap` (ta sama dwuliniowa próbka co obraz).
+4. Ring Ziemi piecze się RAZ (worker, tło menu); kolejność w workerze: GPU → planety + tło menu (przed init efektów) → efekty po gotowym tle w porcjach → przygotowanie sceny (`prepare idle`) w wolnym czasie menu; pas (bank skał) na ekranie ładowania — pipeline'y compute three r183 powstają synchronicznie, w menu stawał proces GPU i strona.
+5. Złapane po drodze: podkładka `requestIdleCallback` workera miała stałe `timeRemaining() = 8` (rozgrzewka robiła całą kolejkę naraz) i 50 ms przerwy między porcjami; klatka zero po RW-45b czekała ~5 s na KOLEJNĄ stronę (worker rysuje od razu po wiadomości) — teraz czeka na narysowanie strony k; bitmapy zasobów strony szły po kolei (teraz równolegle).
+6. Domyślny tryb = worker (`renderBridge.js`, D8); `?renderWorker=0` = off; zapas `inline` z powodem bez izolacji. Narzędzia (`wspolne.mjs` → `window.__RENDER_MODE_DEFAULT`) domyślnie `off`; `startChrome({ headless: false })` — okno z vsync; `scripts/webgpu/okno-worker.mjs` — tryb worker w oknie.
+
+POMIAR KOŃCOWY (2026-10-17, GPU w spoczynku 1%, w tle CefSharp / RazerCortex): bitwa 50/20/10/3 seed 7, 45 s, ABAB — zoom 0,1: obraz workera 252–254 (t ≤ 15) / 233–246 kl/s ↔ off 168–178 / 142–161 fps (1,4–1,7×); zoom 0,45: 227–228 / 215–217 ↔ 227–233 / 197–225 (≈1,0–1,1×). Okno z vsync (180 Hz): worker — rAF strony 5,5 ms p99 6,0, złożenia 180,8/s (każda klatka), 0 chybień pierścienia, obraz ≤ 1 stronę za nakładkami; off — ten sam rytm. `fabula-gra --query renderWorker=1`: menu, lot intro, cięcie, dach, odprawa, ODDOKUJ, wylot — bez błędów.
+
+ZOSTAJE: szybki klik (≤ ~6 s po gotowym menu) czeka na init efektów i pas workera — od kliku +2 s względem off (od wejścia do gry wyrównane); przyspieszenie init efektów workera (~4,6 s CPU) skróciłoby i to.

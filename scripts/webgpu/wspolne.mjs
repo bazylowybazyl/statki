@@ -29,9 +29,10 @@ export async function startChrome(o = {}) {
   mkdirSync(profile, { recursive: true });
   const dbgPort = 9400 + Math.floor(Math.random() * 500);
   const args = [
-    '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
+    ...(o.headless === false ? [] : ['--headless=new']), `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
     '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
-    '--disable-gpu-vsync', '--disable-frame-rate-limit', '--hide-scrollbars',
+    // okno (headless: false) — z vsync jak u gracza; headless bez limitu klatek (pomiary kosztu)
+    ...(o.headless === false ? [] : ['--disable-gpu-vsync', '--disable-frame-rate-limit']), '--hide-scrollbars',
     '--autoplay-policy=no-user-gesture-required',
     // webgpu: false — bez flag włączających WebGPU (zadanie 23: sprawdzenie gry w Chrome bez WebGPU)
     ...(o.webgpu !== false ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU'] : []),
