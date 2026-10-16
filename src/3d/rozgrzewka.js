@@ -34,7 +34,9 @@
 //              pełnoekranowego); split: false — obiekt w całości jednym wywołaniem (bez cullingu poddrzewa);
 //              override — materiał zastępczy sceny na czas kompilacji (pre-pass głębi halo).
 //   phase    — 'loading': dopiero na ekranie ładowania (flush) — dla obiektów, które gra tworzy przy starcie
-//              rozgrywki (pule, które `objects()` musiałoby utworzyć wcześniej niż gra).
+//              rozgrywki (pule, które `objects()` musiałoby utworzyć wcześniej niż gra); 'after': w tle PO pierwszym
+//              flush() — dla obiektów, których gra nie rysuje od razu (modele flot przylatujących w trakcie gry),
+//              żeby nie wypierały za limit czasu flush() tego, co pierwsza klatka gry już rysuje.
 //   alive    — () => bool: false = właściciel zwolnił obiekty (tło menu zatrzymane, ring przebudowany) —
 //              reszta zadań wpisu przepada.
 //   shadow   — true: pass MAPY CIENIA słońca zamiast passa sceny (zadanie 25a) — siatki z castShadow, każda przez
@@ -93,6 +95,8 @@ export class Rozgrzewka {
     this._scheduled = false;
     this._flushing = 0;
     this._loadingOpen = false;   // po pierwszym flush() wpisy 'loading' idą od razu
+    this._after = [];            // wpisy 'after' — do kolejki w tle po końcu pierwszego flush()
+    this._afterOpen = false;
     this._current = null;        // wpis run() w toku — track() dopisuje mu obietnice
     this.stats = { wpisy: 0, gotowe: 0, siatki: 0, pominiete: 0, cpuMs: 0, maksZadanieMs: 0, bledy: 0, pierwszeMs: -1, ostatnieMs: -1, lista: [] };
   }
@@ -231,6 +235,10 @@ export class Rozgrzewka {
       };
     } finally {
       this._flushing--;
+      if (!this._afterOpen) {
+        this._afterOpen = true;
+        for (const e of this._after.splice(0)) this._normal.push(e);
+      }
       this._kick();
     }
     return this.stats;
@@ -259,6 +267,11 @@ export class Rozgrzewka {
     if (this.core?.gpuUnsupported) {
       entry.state = 'puste';
       entry._resolve(false);
+      return entry;
+    }
+    if (entry.spec.phase === 'after' && !this._afterOpen) {
+      entry.state = 'po ładowaniu';
+      this._after.push(entry);
       return entry;
     }
     if (entry.spec.phase === 'loading' && !this._loadingOpen) {
