@@ -2030,6 +2030,17 @@ błędów konsoli; efekty broni, iskry, wybuchy i wieże widoczne. BRAMKA (orkie
 t 10–90 s: obraz 3D worker 146 / 133 kl/s ↔ off 87 / 85 fps → **1,68× / 1,56× (śr. 1,62×) — przechodzi**; wątek główny
 w trybie worker 259 / 204 fps (p95 klatki śr. 9,1 / 10,3 ms ↔ off 18,3 / 18,1 ms), CPU klatki workera 2,8–7,8 ms.
 Obraz 3D nie jest już ograniczony CPU workera (klatka 3–4 ms przy ~140 kl/s) — limit to publikacja stron i GPU.
+**Stan RW-40b cz. 2–3 (2026-10-16, `rw-worker`):** planety, słońce, księżyce, małe ciała, mgławica i gwiazdy
+(`initPlanets3D` w workerze z danych ciał strony — `renderWorkerHost.syncPlanets`: zwykłe obiekty bez funkcji, klas,
+`_pól` i cykli, wysyłane przy zmianie położeń / promieni; potem wartości w miejscu; strefa nieba w wiadomości `frame`)
+i pył kosmiczny (`SpaceDust3D` — kamera bez wstrząsu z HEAD, opcja w wiadomości). `fetch` workera rozwiązuje adresy
+względne zasobów (`assets/…`) względem strony (`pageBase`). Zrzuty `kosmos` w trybie worker: mgławica, gwiazdy, smugi
+cienia słońca, pociski, kadłuby — bez błędów. ZOSTAJE (następna sesja — notatka `rw-worker-stan.md` w folderze notatek
+torów): ring „Halo” i hale K-7 (budowa ringów w workerze: profil, wypiek map, kolider z układu; blok `ring` gotowy;
+tło menu na stronie korzysta z ringu strony — RW-41), pył hal (wejście `HALL_DUST_IN` = blok HALL), warp „Nurt” (stan
+warpa gracza z bloku WORLD + dekoder WARP_* na lustrze bloku `warp`), świat 3D i baza piratów (blok `pirateBase`
+gotowy) z ciałami świata, rakiety (blok ROCKETS), strugi / kule rdzeni (RX_*), model reaktora, drony (blok `repair`),
+zimne wraki (`_coldDrawFrame` → pole), komety, Destruction3D, podzielony ekran; potem RW-41, RW-41b, RW-44, RW-36, RW-45.
 
 **RW-41 Zasoby, ekran ładowania, tło menu.** Sprite'y jako `ImageBitmap`, GLB i tekstury ładowane w workerze,
 `Core3D.warmup.flush` przez `postMessage`, `MenuBackdrop3D` w workerze (`launchDone`, `flightDone`, plan lotu jako
