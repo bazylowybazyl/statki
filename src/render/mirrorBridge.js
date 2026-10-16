@@ -54,3 +54,40 @@ export function bridgeMirrorsToGame(rm, renderList) {
     if (m.__engineFxFallback !== undefined && g.__engineFxFallback !== m.__engineFxFallback) g.__engineFxFallback = m.__engineFxFallback;
   }
 }
+
+/**
+ * Stacje (RW-11b): gra → lustro — obiekt gry i klucz rekordu stacji 3D (`keyProp`, pole niewyliczalne nadane przez
+ * stations3D przy rekordzie zbudowanym na ekranie ładowania z obiektu gry: lustro trafia do TEGO SAMEGO rekordu —
+ * bez nowego losowania obrotu). Zadanie, które usuwa most: rekordy stacji 3D po slocie (worker — RW-40).
+ */
+export function bridgeStationsGameToMirrors(rm, gameOf, keyProp) {
+  const list = rm.stations;
+  for (let i = 0; i < list.length; i++) {
+    const st = list[i];
+    const g = gameOf(st.slot);
+    st.__game = g || null;
+    if (g && keyProp && !Object.prototype.hasOwnProperty.call(st, keyProp) && Object.prototype.hasOwnProperty.call(g, keyProp)) {
+      Object.defineProperty(st, keyProp, { value: g[keyProp], configurable: true, enumerable: false, writable: false });
+    }
+  }
+}
+
+/**
+ * Stacje: lustro → gra — bryła 3D stacji (`_mesh3d`; czyta ją dekoder rozkazów obrażeń stacji `hullDamageCommands.js`
+ * na obiekcie gry — RW-22). Zdjęta z lustra (rekord zwolniony) — zdjęta z gry, tylko gdy to była bryła z mostu.
+ */
+export function bridgeStationsMirrorsToGame(rm) {
+  const list = rm.stations;
+  for (let i = 0; i < list.length; i++) {
+    const st = list[i];
+    const g = st.__game;
+    if (!g) continue;
+    const mesh = st._mesh3d;
+    if (mesh !== undefined) {
+      if (g._mesh3d !== mesh) g._mesh3d = mesh;
+    } else if (st.__bridgedMesh !== undefined && g._mesh3d === st.__bridgedMesh) {
+      delete g._mesh3d;
+    }
+    st.__bridgedMesh = mesh;
+  }
+}

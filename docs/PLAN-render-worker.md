@@ -1449,6 +1449,23 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   poprzedniej). Zmierzona: ŻADNA — pełny harness (17 sesji, 204 obrazy) `inline` po zmianie ↔ `inline` na f77e425c
   (`zrzuty.mjs --root` eksportu): 202 / 204 identyczne, różna tylko niedeterministyczna `planeta-cien` (+ `__fg`).
   Nowa baza: `.tmp/rw11/k1-nowa` (worktree `rw-migawka`; stara — `.tmp/rw11/k1-baza`).
+  **RW-11b krok 2 (2026-10-16): STACJE NA LUSTRACH — bit w bit z bazą D4; MOSTKI — jeszcze na obiektach gry.**
+  Stacje: `updateStations3D(renderMirror.stations)`; most gra → lustro przenosi klucz rekordu stacji 3D
+  (`__station3DKey`, nadany przy rekordzie z ekranu ładowania — lustro trafia do TEGO SAMEGO rekordu, bez nowego
+  losowania obrotu), lustro → gra — bryłę `_mesh3d` (czyta ją dekoder obrażeń stacji `hullDamageCommands.js`)
+  (`bridgeStationsGameToMirrors` / `bridgeStationsMirrorsToGame`). Zrzuty: pełny harness `inline` ↔ baza D4
+  (`.tmp/rw11/k1-nowa`) — 202 / 204, różna tylko `planeta-cien`. Mostki na lustrach (lista SEEN_COLD, backend
+  `BEAM_BRIDGE_BACKEND` w realmie renderu, `HullBodies.probe` działa na replice ciała — `D.probeLocal2D` +
+  `_latticeIndex` na `MirrorBody`, sprawdzone w przeglądarce porównaniem z ciałem gry) dają różnicę w `wraki`
+  (2,4 tys. px) i `wybuch` (249 px) — tylko efekty (iskry, smugi, poświata), kadłuby bez zmian; mostki nie zużywają
+  w tych scenach losowań fxRandom (ślad stanu fxRandom wokół wywołań — zero zmian), więc różnica idzie przez światła
+  okien / emitery Bridge3D w siatce świateł. A/B: stacje na lustrach — bez różnic; mostki na obiektach gry — bez różnic;
+  sam Bridge3D na obiektach gry, BridgeFx3D na lustrach — inne różnice (stan `model3D` na innym obiekcie). Do
+  znalezienia przy następnym podejściu; poprawki już w kodzie (zostają, testy): (1) lustro czeka z opisem mostków na
+  stronę z HP węzłów ciała (`bodyHpReady` — Bridge3D liczy przy adopcji obecność komórek z HP; HP, które nie weszło na
+  stronę, dawniej przepadało: `_bodyHpW` w pakującym — model mostka Atlasa w hali K-7 bez komórek); (2) stan mostków
+  WSPÓLNY dla luster po numerze obiektu gry (`RenderMirror._bridgeShared`: okręt i jego wrak niosą w grze ten sam
+  `bridgeState`).
 - **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,

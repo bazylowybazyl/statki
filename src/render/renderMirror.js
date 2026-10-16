@@ -66,6 +66,7 @@ export class MirrorEntity {
     this.engines = undefined;
     this.beamHull = null;
     this.bridgeState = null;
+    this._bridgeOid = 0;          // numer obiektu gry stanu mostków (wspólny wpis RenderMirror._bridgeShared)
     this._oidPool = new Map();
     // pisane przez render
     this.__cloakLook = undefined; this.__warpHullU = undefined; this.__warpNurtMode = undefined; this.__bayCut = undefined;
@@ -103,7 +104,10 @@ export class RenderMirror {
     this._stationMirrors = [];
     this.stationOf = null;       // (slot, gen) → opis stacji albo null
     this._breaks = new Map();    // numer zerwania maskowania → obiekt (tożsamość jak cloak.lastBreak gry)
-    this.stats = { created: 0, dropped: 0, waitingDescriptor: 0, waitingTopology: 0 };
+    // stany mostków WSPÓLNE dla luster (numer obiektu gry → { pool, st, k }): w grze okręt i jego wrak niosą TEN SAM
+    // obiekt `bridgeState` (stan efektów agonii BridgeFx3D / rekordy Bridge3D idą za nim) — lustra też
+    this._bridgeShared = new Map();
+    this.stats = { created: 0, dropped: 0, waitingDescriptor: 0, waitingTopology: 0, waitingHp: 0 };
     this._seen = new Int32Array(0);
     this._k = 0;
   }
@@ -141,6 +145,7 @@ export class RenderMirror {
     }
     applyCores(this, v);
     applyStations(this, v);
+    if ((k & 511) === 0) for (const [id, ent] of this._bridgeShared) if (k - ent.k > 1024) this._bridgeShared.delete(id);
     const ps = v.head[HEAD.PLAYER_SLOT];
     this.player = ps >= 0 ? (this.entities[ps] || null) : null;
     const p2 = v.head[HEAD.P2_SLOT];
@@ -289,12 +294,20 @@ export function applyEntityPage(rm, m, v, s) {
   let stale = false;
   for (let q = 0; q < 6; q++) if (dv[q] !== i32[bi + EI.V_VISUAL + q]) { stale = true; break; }
   if (stale) {
-    const desc = rm.describe ? rm.describe(s, m.gen, i32, bi + EI.V_VISUAL) : null;
+    let desc = rm.describe ? rm.describe(s, m.gen, i32, bi + EI.V_VISUAL) : null;
+    // mostki: Bridge3D liczy przy adopcji obecność komórek z HP węzłów — opis z mostkiem czeka na stronę z HP ciała
+    // (HP mogło nie wejść na stronę: brak miejsca, ciało poza pudłem); bez tego model mostka zostałby bez komórek
+    if (desc && desc.bridge && !bodyHpReady(rm, v, i32[bi + EI.BODY_SLOT], i32[bi + EI.BODY_GEN] >>> 0)) {
+      desc = null;
+      rm.stats.waitingHp++;
+    }
     if (desc) {
-      applyDescriptor(m, desc, rm.resourceOf, rm.bridgeBackends);
+      applyDescriptor(m, desc, rm.resourceOf, rm.bridgeBackends, rm._bridgeShared, rm._k);
       for (let q = 0; q < 6; q++) dv[q] = i32[bi + EI.V_VISUAL + q];
     } else rm.stats.waitingDescriptor++;
   }
+  // wspólny stan mostków w użyciu (sprzątanie wpisów nieużywanych od 1024 stron — RenderMirror.apply)
+  if (m._bridgeOid && m.bridgeState) { const ent = rm._bridgeShared.get(m._bridgeOid); if (ent) ent.k = rm._k; }
   // mostki (stan dynamiczny)
   const brOff = i32[bi + EI.BR_OFF];
   if (brOff >= 0 && m.bridgeState) applyBridgePage(rm, m.bridgeState, v, brOff, i32[bi + EI.BR_N]);
@@ -321,6 +334,14 @@ export function applyEntityPage(rm, m, v, s) {
     mb.anchored = hull.anchored;
     hull.body = mb;
   }
+}
+
+/** Czy HP węzłów ciała jest w replice albo na tej stronie (slot ciała < 0 — bez ciała: tak). */
+function bodyHpReady(rm, v, bs, bgen) {
+  if (bs < 0) return true;
+  if (v.bodyI32[bs * BODY.stride.i32 + BODY.I32.HP_F64_OFF] >= 0) return true;
+  const mb = rm.bodies[bs];
+  return !!(mb && mb.gen === bgen && mb.hpReceived);
 }
 
 /** Trafienia tarczy (najnowsze pierwsze, jak shield.impacts): obiekty z puli lustra, aktualizowane w miejscu. */
@@ -425,7 +446,7 @@ export function reconcileDescriptor(node, pool, used) {
  * dysze to `slot.source` EngineVfxSystem), kadłub-lustro po tożsamości rekordu kadłuba gry (render porównuje
  * `data.hull !== hull`), obrazy ze slotów zasobów, `bridgeState` z backendem realmu renderu.
  */
-export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null) {
+export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null, bridgeShared = null, k = 0) {
   const pool = m._oidPool, used = new Map();
   m.visual = reconcileDescriptor(desc.visual, pool, used);
   m.capitalProfile = reconcileDescriptor(desc.capitalProfile, pool, used);
@@ -436,11 +457,20 @@ export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null) {
   m.type = desc.type; m.shipFrame = desc.shipFrame; m.activeHullId = desc.activeHullId;
   const db = desc.bridge;
   if (db) {
-    const st = reconcileDescriptor(db, pool, used);
+    let st;
+    const bid = db.__oid || 0;
+    if (bridgeShared && bid) {
+      let ent = bridgeShared.get(bid);
+      if (!ent) { ent = { pool: new Map(), st: null, k }; bridgeShared.set(bid, ent); }
+      const usedB = new Map();
+      st = reconcileDescriptor(db, ent.pool, usedB);
+      ent.pool = usedB; ent.st = st; ent.k = k;
+      m._bridgeOid = bid;
+    } else st = reconcileDescriptor(db, pool, used);
     st.backend = bridgeBackends ? (bridgeBackends[db.backendKind] || null) : null;
     st.grid = null;
     m.bridgeState = st;
-  } else m.bridgeState = null;
+  } else { m.bridgeState = null; m._bridgeOid = 0; }
   const dh = desc.hull;
   if (dh) {
     const prev = dh.__oid ? pool.get(dh.__oid) : undefined;
@@ -529,7 +559,7 @@ function applyStations(rm, v) {
       st = {
         __mirror: true, slot: s, gen, id: d.id, name: d.name, style: d.style, type: d.type, isPirate: d.isPirate,
         planet: d.planet, orbit: d.orbit, host: d.host, home: d.home, ringPort: d.ringPort, faction: d.faction,
-        x: 0, y: 0, angle: 0, r: undefined, baseR: undefined, _destroyed3D: false, fogHidden: false, _mesh3d: undefined,
+        x: 0, y: 0, angle: 0, r: undefined, baseR: undefined, _destroyed3D: false, fogHidden: false, _mesh3d: undefined, __bridgedMesh: undefined,
         __game: null
       };
       rm._stationMirrors[s] = st;

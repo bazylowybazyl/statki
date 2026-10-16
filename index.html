@@ -1328,8 +1328,9 @@
     import { createRingBlock } from "./src/render/blocks/ringBlock.js";
     // RW-11a / b: lustra encji dla modułów renderu (`?szew=inline`)
     import { RenderMirror } from "./src/render/renderMirror.js";
+    import { BEAM_BRIDGE_BACKEND } from "./src/game/shipBridgeBeams.js";
     import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
-    import { bridgeGameToMirrors, bridgeMirrorsToGame } from "./src/render/mirrorBridge.js";
+    import { bridgeGameToMirrors, bridgeMirrorsToGame, bridgeStationsGameToMirrors, bridgeStationsMirrorsToGame } from "./src/render/mirrorBridge.js";
     import { createCloakBlock, applyCloakBlock, createCloakMirrorState } from "./src/render/blocks/cloakBlock.js";
     import { RenderWorld, createMirrorPlayersSource } from "./src/render/renderWorld.js";
     import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
@@ -28397,7 +28398,9 @@
         const t = renderSnapshot.topologies[bs];
         return t && t.gen === gen && t.storeVer === storeVer ? t.topo : null;
       },
-      resourceOf: (slot) => RenderSlots.resources.objectAt(slot)
+      resourceOf: (slot) => RenderSlots.resources.objectAt(slot),
+      // mostki luster: backend z realmu renderu (funkcje na kadłubie i ciele lustra)
+      bridgeBackends: { beam: BEAM_BRIDGE_BACKEND }
     }) : null;
     if (renderMirror) {
       renderMirror.coreOf = (uid) => renderSnapshot.coreDescs.get(uid) || null;
@@ -28418,6 +28421,7 @@
       const rm = renderMirror;
       rm.apply(renderSnapshot.view);
       bridgeGameToMirrors(rm, _mirrorGameOf, _mirrorSlotOf);
+      bridgeStationsGameToMirrors(rm, _mirrorGameOf, '__station3DKey');
       applyCloakBlock(renderSnapshot.view.blocks.cloak, _mirrorEntityAt, rm.lists[SNAP_LIST.RENDER], renderSnapshot.dict, _cloakMirrorState);
       _mirrorPlayers.ship = rm.player;
       _mirrorPlayers.player2Ship = rm.player2;
@@ -29537,13 +29541,17 @@
           const tMirror = performance.now();
           packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
           applyRenderMirrors();
-          // RW-11b (krok 1, decyzja D4 — nowa baza zrzutów `inline`): stacje i mostki ZA fazą begin (w `off` przed
-          // updateWorld3D i przed widokiem klatki / wyglądem maskowania); na razie na obiektach gry
-          if (window.updateStations3D) window.updateStations3D(stations);
-          Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
-          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
           // pomiar D7: faza begin + lustra (część render3dHexUpdateTime, którą trzeba odjąć od czasu modułów)
           PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
+          // RW-11b (krok 1, decyzja D4 — nowa baza zrzutów `inline`): stacje i mostki ZA fazą begin (w `off` przed
+          // updateWorld3D i przed widokiem klatki / wyglądem maskowania)
+          // RW-11b krok 2: stacje na lustrach (blok STATIONS + opis); bryła 3D wraca do gry mostem (dekoder obrażeń stacji)
+          if (window.updateStations3D) window.updateStations3D(renderMirror.stations);
+          bridgeStationsMirrorsToGame(renderMirror);
+          // Mostki: jeszcze na obiektach gry — na lustrach obraz różni się (światła okien / emitery w scenach wraków,
+          // Stan RW-11b krok 2). AGENT: RW-11b — lista SEEN_COLD luster, gdy różnica zostanie znaleziona.
+          Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
+          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
           RenderWorld.setSource(_mirrorPlayers);
           updateHexShips3D(cam, renderMirror.lists[SNAP_LIST.RENDER], _hexCullInfo, renderMirror.lists[SNAP_LIST.COLD], _cloakMirrorState.frame);
           RenderWorld.setSource(null);

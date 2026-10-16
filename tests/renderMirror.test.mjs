@@ -9,7 +9,7 @@ import { LIST } from '../src/render/snapshotLayout.js';
 function makeStore(n) {
   const f = () => new Float64Array(n), i = () => new Int32Array(n), u = () => new Uint8Array(n);
   const s = { count: n, shapeVersion: 1, x: f(), y: f(), z: f(), ox: f(), oy: f(), oz: f(), heat: f(), heatStamp: f(),
-    ix: i(), iy: i(), iz: i(), active: u().fill(1), patch: u(), skinDirty: u(), adjStart: new Int32Array(n + 1), adj: new Int32Array(0) };
+    ix: i(), iy: i(), iz: i(), active: u().fill(1), patch: u(), hp: f().fill(4), maxHp: f().fill(4), skinDirty: u(), adjStart: new Int32Array(n + 1), adj: new Int32Array(0) };
   for (let k = 0; k < n; k++) { s.ix[k] = k % 5; s.iy[k] = (k / 5) | 0; s.x[k] = s.ox[k] = k * 15; s.y[k] = s.oy[k] = k; }
   return s;
 }
@@ -331,4 +331,20 @@ test('lustro: przesunięcie początku układu ciała (latticeMin i pozycje spocz
   const mb = rm.lists[LIST.RENDER][0].beamHull.body;
   assert.deepEqual(Array.from(mb.nodeStore.ox), Array.from(s.ox));
   assert.equal(mb.latticeMin.x, body.latticeMin.x);
+});
+
+test('lustro: okręt i jego wrak z tym samym bridgeState gry dostają TEN SAM stan mostków lustra', () => {
+  const a = makeShip('A', 100), b = makeShip('B', 900);
+  const st = { version: 1, lineage: 'L', bridges: [{ def: { x: 1 }, id: 'b0', index: 0, total: 3, cellX: new Int32Array(3), cellY: new Int32Array(3) }], windows: null };
+  a.bridgeState = st;
+  const { rm, step } = setup([a, b]);
+  step();
+  const mA = rm.lists[LIST.RENDER][0];
+  assert.ok(mA.bridgeState, 'lustro okrętu ma stan mostków');
+  mA.bridgeState.model3D = true;   // pole pisane przez render (Bridge3D)
+  b.bridgeState = st;              // wrak przejmuje stan okrętu (ten sam obiekt gry)
+  step();
+  const mB = rm.lists[LIST.RENDER][1];
+  assert.equal(mB.bridgeState, mA.bridgeState);
+  assert.equal(mB.bridgeState.model3D, true);
 });

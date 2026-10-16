@@ -78,6 +78,7 @@ export class MirrorBody {
     this.slot = slot;
     this.gen = gen;
     this.storeVer = -1;
+    this.hpReceived = false;    // HP węzłów repliki doszło (mostki: obecność komórek liczona z HP przy adopcji)
     this.nodeStore = null;
     this.beamStore = null;
     this._region = null;
@@ -104,6 +105,7 @@ export class MirrorBody {
     this.beamStore = new MirrorBeamStore(topo);
     this._region = new MirrorRegion(s);
     this.storeVer = storeVer;
+    this.hpReceived = false;
   }
 }
 
@@ -134,6 +136,7 @@ export function applyBodyPage(mb, v, bs) {
     const c = s.count;
     s.hp.set(v.nodeF64.subarray(ho, ho + c));
     s.maxHp.set(v.nodeF64.subarray(ho + c, ho + 2 * c));
+    mb.hpReceived = true;
   }
   const n = i32[bi + BI.NODE_N];
   if (n > 0) {

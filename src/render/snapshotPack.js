@@ -188,6 +188,7 @@ export class SnapshotPacker {
     // braku miejsca na stronie czeka na najbliższą stronę z ciałem w pudle (RW-11a: lustra bez zaległości)
     this._bodyNodesW = new Int32Array(0);
     this._bodyRestW = new Int32Array(0);
+    this._bodyHpW = new Int32Array(0);
     // latticeMin ciała z ostatniej strony: przesunięcie początku układu ciała (D._shiftStore przy przebudowie po
     // rozpadzie — bez podbicia shapeVersion) zmienia pozycje spoczynkowe razem z latticeMin
     this._bodyLatMin = new Float64Array(0);
@@ -262,6 +263,7 @@ export class SnapshotPacker {
       this._bodyChangedK = grow32(this._bodyChangedK, nb);
       this._bodyNodesW = grow32(this._bodyNodesW, nb);
       this._bodyRestW = grow32(this._bodyRestW, nb);
+      this._bodyHpW = grow32(this._bodyHpW, nb);
       const lmn = new Float64Array(nb * 3).fill(NaN); lmn.set(this._bodyLatMin); this._bodyLatMin = lmn;
       this._bodyActive = grow32(this._bodyActive, nb);
       this._bodyStoreVer = grow32(this._bodyStoreVer, nb);
@@ -1072,13 +1074,14 @@ export class SnapshotPacker {
       const o = bs * 2, S = this._bodyHpSum;
       if (S[o] !== sh) { S[o] = sh; this._bodyHpK[bs] = k; }
       i32[bi + BI.HP_K] = this._bodyHpK[bs];
-      if (this._bodyHpK[bs] > f.lastConsumed) {
+      if (this._bodyHpK[bs] > f.lastConsumed || this._bodyHpK[bs] > this._bodyHpW[bs]) {
         const p = this._nodeF64;
         if (p + 2 * count > this.layout.cap.nodeF64) this._requestGrow('nodeF64', (p + 2 * count) * 2);
         else {
           v.nodeF64.set(hp.subarray(0, count), p);
           v.nodeF64.set(mh.subarray(0, count), p + count);
           i32[bi + BI.HP_F64_OFF] = p;
+          this._bodyHpW[bs] = k;
           this._nodeF64 = p + 2 * count;
         }
       }
