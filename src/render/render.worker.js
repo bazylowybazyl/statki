@@ -12,7 +12,7 @@
 
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'baza piratów i ciała świata',
-  'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'pył hal K-7', 'rozpad stacji (Destruction3D)',
+  'pas asteroid i wydobycie', 'komety', 'warp „Nurt”', 'rozpad stacji (Destruction3D)',
   'drony naprawcze', 'model reaktora w wyrwie', 'zimne wraki',
 'rdzenie: strugi i kule (RX_*)', 'tło menu', 'podzielony ekran'
 ]);
@@ -81,6 +81,7 @@ if (isWorker) {
     // planety, słońce, księżyce, małe ciała, mgławica i gwiazdy (API globalne: initPlanets3D / updatePlanets3D)
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
+    st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, ringWorldMod, ringGameMod, ringBlockMod };
     st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
@@ -121,6 +122,7 @@ if (isWorker) {
       sparks.SparkSystem3D.init(Core3D.scene);
       const rocketFx = rktFx.createRocketFx(Core3D);
       st.rocketFx = rocketFx;
+      if (rocketFx && rocketFx.smoke) st.hallDust.setVaporSmoke(rocketFx.smoke);
       if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(st.rockets.pool);
       wfx.WeaponFx.ensure();
       st.blastFactory = blastFx.createExplosionFactory(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
@@ -360,6 +362,8 @@ if (isWorker) {
       const frozen = (h[H.FLAGS] & layoutMod.HEAD_FLAG.WORLD_FROZEN) !== 0;
       st.haloRings.update(h[H.FRAME_DT], cam, { sun: st.sun, ship: rm.player, gameDt: frozen ? 0 : dt, quality: st.ringQuality || 'high', splitScreen: false });
     }
+    // pył hal K-7: wejście klatki = blok HALL (kopia HALL_DUST_IN strony); krok Core3D.fx czyta tylko tę tablicę
+    if (st.hallDust && v.hall) st.hallDust.submit(v.hall);
     if (st.dust) {
       const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
       st.dust.frame(dt, cns, null, st.dustOn !== false);
