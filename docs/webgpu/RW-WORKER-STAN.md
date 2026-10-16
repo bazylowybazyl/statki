@@ -113,7 +113,7 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
 
 ## RW-41 — stan i plan (2026-10-16 wieczór, do wznowienia po resecie limitu)
 
-D8 = worker (decyzja użytkownika); przełączenie domyślnego trybu czeka na RW-41 i poprawkę Fable (spadek przy 0,45 — takt rAF workera brał najnowszą stronę bez wiadomości; Fable, gałąź `claude/rw-fps045`).
+D8 = worker (decyzja użytkownika); przełączenie domyślnego trybu czeka już tylko na RW-41c. Poprawka Fable (RW-45b) jest w main: worker rysuje od razu po wiadomości strony (`tryRender`, tryb `msg`), a strona wysyła wiadomość przy publikacji. Przy 0,45 obraz workera 212/175 kl/s ↔ off 203/140 (para 1). Przed przełączeniem sprawdzić opóźnienie przy vsync w prawdziwym oknie.
 
 ZROBIONE w tym commicie (RW-41a):
 - `startGame` w trybie worker pomija przygotowanie 3D strony (modele broni GLB, rozgrzewki kadłubów i tarcz, HullSurface, stacje, obraz komet — jądra komet dalej się budują jako przeszkody, tekstury planet, flush rozgrzewki strony).
