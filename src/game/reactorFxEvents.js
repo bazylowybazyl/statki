@@ -51,6 +51,8 @@ export function createReactorFxEvents(writer, hullEvents) {
     ready: false,
     /** Obiekt strumienia / kuli z id (null — nieznany). */
     hazardAt(id) { return byId.get(id) || null; },
+    /** Każdy obiekt rejestru (id, obiekt) — blok `hazards` migawki (tryb worker). */
+    forEachHazard(fn) { for (const [id, o] of byId) fn(id, o); },
 
     detonation(ev, res, hits = null) {
       const core = ev.core || null;

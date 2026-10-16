@@ -13,8 +13,7 @@
 export const RW_WORKER_DISABLED = Object.freeze([
   'świat 3D (stacja piracka)', 'ciała świata bazy piratów (skóry kawałków)',
   'wydobycie skał (siatki ciał, platforma — RW-41b cz. 2)',
-  'model reaktora w wyrwie', 
-'rdzenie: strugi i kule (RX_*)', 'tło menu'
+  'tło menu'
 ]);
 
 const isWorker = typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' && self instanceof WorkerGlobalScope;
@@ -90,6 +89,10 @@ if (isWorker) {
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
+    // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
+    st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
+      model: await import('../3d/reactor3D.js'), core: await import('../game/reactorCore.js') };
+    st.hazards = st.hazMods.blk.createHazardMirrorState();
     // luk Atlasa (fregata zwiadu): rig ładowni i dziura w skórze lustra gracza; postęp wrót z wiadomości strony
     st.bayMod = await import('../3d/cargo/scoutBay3D.js');
     st.bayPose = { x: 0, y: 0, angle: 0 };
@@ -149,6 +152,14 @@ if (isWorker) {
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
+      const rc = st.hazMods.core;
+      st.reactorModel = st.hazMods.model.createReactor3D({
+        scene: Core3D.scene, markLayerActive: () => Core3D.setShieldLayerActive(true),
+        colorFor: (core) => core.color || [0.3, 0.7, 1.0], frameOf: rc.reactorCoreFrame, hostReady: (h) => !!rc.reactorHull(h)
+      });
+      st.reactorModelOpts = { origin: { x: 0, y: 0 } };
+      Core3D.warmup.add({ name: 'model reaktora (reactor3D)', layer: 7, phase: 'loading',
+        objects: () => Object.values(st.reactorModel?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean) });
       st.dust.init();
       st.bay = st.bayMod.createScoutBay3D(Core3D, 'atlas');
       Core3D.warmup.add({ name: 'ładownia Atlasa (fregata zwiadu)', objects: () => st.bay.warmupMeshes(), phase: 'loading' });
@@ -180,6 +191,7 @@ if (isWorker) {
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
     st.mods.warpCmd.installWarpTrafficCommands(st.cmd, st.mods.warpMod.WarpNurt, (slot) => st.warpMirror.recordAt(slot));
+    st.hazMods.cmd.installReactorCommands(st.cmd, () => st.reactorFx || null, (id) => st.hazards.byId.get(id) || null);
     st.repairMods.drones.installRepairFxCommands(st.cmd, (id) => st.repairMirror._rigs.get(id) || null);
     if (st.rocketFx && st.rocketFx.director) st.mods.rktCmd.installRocketFxCommands(st.cmd, st.rocketFx.director, (i) => st.rockets.pool[i] || null);
   }
@@ -448,6 +460,9 @@ if (isWorker) {
       st.mods.rktBlock.applyRocketBlock(v.blocks.rockets, st.dict, st.rockets,
         (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, (id) => st.weaponDefs.get(id));
     }
+    if (v.blocks.hazards && v.blocks.hazards.f64) {
+      st.hazMods.blk.applyHazardBlock(v.blocks.hazards, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.hazards);
+    }
     if (v.blocks.repair && v.blocks.repair.f64) {
       st.repairMods.blk.applyRepairBlock(v.blocks.repair, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.repairMirror);
     }
@@ -567,6 +582,10 @@ if (isWorker) {
       st.reactorFx.advance(rdt);
       st.reactorFx.syncCores(rm.cores, rdt);
       st.reactorFx.syncHazards(rdt);
+      if (st.reactorModel) {
+        st.reactorModelOpts.origin.x = cam.x; st.reactorModelOpts.origin.y = cam.y;
+        st.reactorModel.sync(rm.cores, 0, rdt, st.reactorModelOpts);
+      }
     }
     const t1 = performance.now();
     let bmp;

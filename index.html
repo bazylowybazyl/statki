@@ -1333,6 +1333,7 @@
     import { createRocketBlock } from "./src/render/blocks/rocketBlock.js";
     import { createViewBlock } from "./src/render/blocks/viewBlock.js";
     import { createRepairBlock } from "./src/render/blocks/repairBlock.js";
+    import { createHazardBlock } from "./src/render/blocks/hazardBlock.js";
     import { BEAM_BRIDGE_BACKEND } from "./src/game/shipBridgeBeams.js";
     import { LIST as SNAP_LIST } from "./src/render/snapshotLayout.js";
     import { bridgeGameToMirrors, bridgeMirrorsToGame, bridgeStationsGameToMirrors, bridgeStationsMirrorsToGame } from "./src/render/mirrorBridge.js";
@@ -28414,6 +28415,8 @@
       if (RW_WORKER) renderSnapshot.addBlock(createViewBlock());
       // RW-40b: rój dronów naprawczych (id rigu jak w rekordach REPAIR_FX)
       if (RW_WORKER) renderSnapshot.addBlock(createRepairBlock({ idOf: (rig) => RepairFxEvents.idOf(rig) }));
+      // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
+      if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
     }
     const _snapFrame = createSnapshotFrame();
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
