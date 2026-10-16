@@ -47,6 +47,8 @@ import { BELT_SCENES, STORM_STAGE } from './asteroidy-gra.mjs';
 import { MINING_STAGES } from './wydobycie-gra.mjs';
 
 const args = parseArgs();
+// --query a=b[&c=d]: dodatkowe parametry adresu gry w każdej sesji (np. szew=inline — migawka renderu RW-10 z flagą i bez).
+const QUERY_EXTRA = args.query ? `&${args.query}` : '';
 const backends = (args.backend || 'webgl') === 'oba' ? ['webgl', 'webgpu'] : [args.backend || 'webgl'];
 const [W, H] = (args.rozmiar || '1920x1080').split('x').map(Number);
 const port = Number(args.port || 5340);
@@ -1238,7 +1240,7 @@ async function runSession(session, backend, outDir, base) {
   try {
     const uuidStat = await prepareUuid(cdp);
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `${session.start ? GRA_SWOBODNA : ''}window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
-    await cdp.send('Page.navigate', { url: `${base}/index.html?${session.query}&renderer=${backend}` });
+    await cdp.send('Page.navigate', { url: `${base}/index.html?${session.query}${QUERY_EXTRA}&renderer=${backend}` });
     // gpuReady: na WebGPU urządzenie powstaje w tle po Core3D.init() (na tagu pola nie ma — undefined).
     if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała (Core3D/ship/urządzenie)');
     checkUuid(uuidStat);

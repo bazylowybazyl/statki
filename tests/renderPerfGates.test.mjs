@@ -248,7 +248,9 @@ test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
   assert.match(hexShips, /isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX/);
   assert.match(hexShips, /isEntityInDrawBox\(entity, cullInfo, cameraZoom\)/);
   assert.match(hexShips, /for \(const entity of drawHex\) \{/);
-  assert.match(indexHtml, /_hexCullInfo\.drawHalfW = viewHalfW;/);
+  // Pudło liczy fillHexCullInfo (RW-10 — ten sam wzór dostaje migawka renderu): kadr osobno od pudła rozgrzania.
+  assert.match(indexHtml, /out\.drawHalfW = viewHalfW;/);
+  assert.match(indexHtml, /fillHexCullInfo\(cam, _hexCullInfo, _hexCullBox3D\);/);
 });
 
 // Port WebGPU (zadanie 04): tablice lamp i stref dysz nie są już uniformami per

@@ -169,6 +169,6 @@ test('wpięcie: render pisze RET, gra odświeża przed fizyką i testuje punkt s
   assert.match(src, /setShieldReturnChannel\(RenderReturn, /);
   const refresh = src.indexOf('ShieldBreach.refresh();');
   assert.ok(refresh > 0 && refresh < src.indexOf('while (acc >= PHYS_DT && steps < 10)'), 'odświeżenie przed krokami fizyki');
-  const marks = src.indexOf('RenderSlots.entities.begin();');
+  const marks = src.indexOf('RenderSlots.entities.slotOf(renderEntities[i]);');
   assert.ok(marks > 0 && marks < src.indexOf('updateShields3D(PAUSED ? 0 : frameDt, renderSeen'), 'sloty encji przed tarczami');
 });
