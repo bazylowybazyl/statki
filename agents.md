@@ -52,6 +52,7 @@
    - `asteroidBelt.prepareFrame(frameDt, ship, …)` (pas asteroid — wejście klatki; praca w kroku `Core3D.fx` przed passami)
 3. Finalna klatka 3D (kanwa WebGPU `#webgl-layer`) jest kopiowana na główny canvas przez `drawHexShips3D(ctx, W, H)` — w TYM SAMYM zadaniu JS co render (po `await` kanwa WebGPU bywa pusta). Podzielony ekran = 2× `Core3D.renderSingle` + wycinki (jeden render z nożyczkami nie istnieje: `clear()` w WebGPU czyści cały cel).
 4. HUD/overlays 2D są rysowane na końcu.
+5. Tryb `?renderWorker=1` (RW-40a, częściowy — `docs/PLAN-render-worker.md` Stan RW-40): drugi `Core3D` w workerze (`src/render/render.worker.js`, ten sam kod — nie nowy renderer) rysuje z luster migawki kadłuby, dysze, modele 3D, tarcze i stacje; strona składa bitmapę z nakładkami tej samej klatki (B2cr, `src/render/renderWorkerHost.js`, `overlayRing.js`). Pozostałe moduły są w tym trybie wyłączone (lista w konsoli). Nowy moduł 3D wołany w `render()` dostaje gałąź `RW_WORKER` (pomiń albo przenieś do workera z blokiem migawki).
 
 **Zasada żelazna**: _Nie twórz nowych rendererów (`WebGPURenderer`, `WebGLRenderer`) poza `Core3D`._ Bez wyjątków — dawny overlay efektów (drugi `WebGLRenderer`, kanwa `overlay3d`) usunięty w zadaniu 20 portu; pilnuje `tests/overlayContextMerge.test.mjs`.
 
