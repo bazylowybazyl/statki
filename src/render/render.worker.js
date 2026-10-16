@@ -11,7 +11,6 @@
 // Worker → strona: `ready`, `frame` { k, bmp }, `error`.
 
 export const RW_WORKER_DISABLED = Object.freeze([
-  'ciała świata bazy piratów (skóry kawałków)',
   'wydobycie skał (siatki ciał, platforma — RW-41b cz. 2)',
   'tło menu'
 ]);
@@ -90,6 +89,7 @@ if (isWorker) {
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
+    st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
       model: await import('../3d/reactor3D.js'), core: await import('../game/reactorCore.js') };
@@ -257,9 +257,75 @@ if (isWorker) {
         const l = st.pbMods.lay.createPirateBaseLayout();
         const ux = Math.cos(m.axis), uy = Math.sin(m.axis), nx = -uy, ny = ux;
         const center = { x: m.origin.x + ux * l.center.x + nx * l.center.z, y: m.origin.y + uy * l.center.x + ny * l.center.z };
-        st.pbg.pirateBase3DEvent('attach', null, st.pbMods.site.placePirateBase(center, m.axis, l));
-      } else st.pbg.pirateBase3DEvent(m.ev, m.a, m.b, m.c);
+        st.pbPlace = st.pbMods.site.placePirateBase(center, m.axis, l);
+        st.pbg.pirateBase3DEvent('attach', null, st.pbPlace);
+      } else if (m.ev === 'bodies') attachWorldBodies();
+      else if (m.ev === 'bodiesDetach') detachWorldBodies();
+      else st.pbg.pirateBase3DEvent(m.ev, m.a, m.b, m.c);
     } catch (e) { report(e, 'baza piratów'); }
+  }
+
+  // Ciała świata bazy (RW-40b): REPLIKA miejsc z bryły bazy workera (te same kawałki w tej samej kolejności co
+  // createPirateBaseSites strony), stan klatki z bloku `worldBodies`, encje kawałków = lustra (lista WORLD_BODIES
+  // i odłamy-wraki z `worldRef`); obraz worldBodies3D na replice (setWorldBodiesSource).
+  async function attachWorldBodies() {
+    const base = st.pbg && st.pbg.pirateBase3D ? st.pbg.pirateBase3D() : null;
+    if (!base || !st.pbPlace) return;
+    if (!st.wbMods) {
+      const [bodies, w3d, blk] = await Promise.all([import('../game/story/pirateBaseBodies.js'), import('../3d/worldBodies3D.js'),
+        import('./blocks/worldBodiesBlock.js')]);
+      st.wbMods = { bodies, w3d, blk };
+    }
+    detachWorldBodies();
+    const t0 = performance.now();
+    // rastry i szablony kratownic (strona: ekran ładowania) — raz, przed pierwszym kawałkiem ciałem
+    try { st.wbMods.bodies.prebuildPirateBaseBodies(base.layout, base.scene, base.style?.palette || null); } catch (e) { report(e, 'ciała świata: prebuild'); }
+    const sitesObj = st.wbMods.bodies.createPirateBaseSites({}, base, st.pbPlace);
+    const keys = Object.keys(base.layout.structures);
+    const rep = st.wbReplica;
+    rep.sites = Object.values(sitesObj);
+    rep.sitesByKey = keys.map((k) => sitesObj[k] || null);
+    rep.byRef.clear();
+    for (const site of rep.sites) {
+      for (const p of site.pieces) {
+        p.site = site; p.state = 'static'; p.entity = null; p.touched = false; p.lost = false;
+        rep.byRef.set(site.structure + '|' + p.id, p);
+      }
+    }
+    st.pbg.pirateBase3DEvent('bodies', sitesObj);
+    st.wbMods.w3d.setWorldBodiesSource(rep);
+    console.log(`[render.worker] ciała świata bazy: ${rep.byRef.size} kawałków, przygotowanie ${Math.round(performance.now() - t0)} ms`);
+  }
+  function detachWorldBodies() {
+    const rep = st.wbReplica;
+    if (rep.sites.length && st.pbg) st.pbg.pirateBase3DEvent('bodiesDetach');
+    rep.sites = []; rep.sitesByKey = []; rep.byRef.clear(); rep._ents.length = 0;
+  }
+  // encje kawałków tej strony → replika: kawałek z `worldRef`, raster / konstrukcja szablonu z repliki (klucz skóry)
+  function syncWorldBodiesReplica(v, rm, L) {
+    const rep = st.wbReplica;
+    if (!st.wbMods || !rep.sites.length) return false;
+    if (v.blocks.worldBodies && v.blocks.worldBodies.f64) {
+      st.wbMods.blk.applyWorldBodiesBlock(v.blocks.worldBodies, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, rep);
+    }
+    const out = rep._ents;
+    out.length = 0;
+    const add = (e) => {
+      const ref = e && e.worldRef;
+      const hull = e && e.beamHull;
+      if (!ref || !hull) return;
+      const p = rep.byRef.get(ref.s + '|' + ref.p);
+      if (!p) return;
+      if (hull.world !== p) hull.world = p;
+      if (p.solid3D) { if (!hull.structure) hull.structure = p.solidFrame()?.structure || null; }
+      else if (!hull.image) hull.image = p.build()?.image || null;
+      out.push(e);
+    };
+    const wl = rm.lists[L.WORLD_BODIES];
+    for (let i = 0; i < wl.length; i++) add(wl[i]);
+    const wr = rm.lists[L.WRECKS];
+    for (let i = 0; i < wr.length; i++) if (wr[i] && wr[i].worldRef) add(wr[i]);
+    return true;
   }
 
   // Pas asteroid (RW-41b): świat pasa w workerze = zastępnik z danymi od strony (pole z tych samych argumentów
@@ -586,6 +652,7 @@ if (isWorker) {
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     }
     hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
+    if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D();
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
     { const rs = st.repairSync; rs.dt = dt; rs.zoom = cam.zoom; rs.time = h[H.SIM_RENDER]; st.repairMods.drones.syncRepairDrones3D(rs); }

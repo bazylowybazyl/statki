@@ -130,8 +130,11 @@ export function describeEntity(e, resourceSlot, oid = NO_OID) {
     id: e.id, uid: e.uid, name: e.name,
     type: e.type, shipFrame: e.shipFrame, activeHullId: e.activeHullId,
     bridge: describeBridgeState(e.bridgeState, oid),
+    // kawałek ciała świata (budowla) — worker łączy lustro z repliką kawałka (bryła i raster z układu budowli)
+    worldRef: hull && hull.world ? { s: hull.world.site?.structure ?? null, p: hull.world.id ?? null } : null,
     hull: hull ? tag({
-      image: hull.image ? resourceSlot(hull.image) : -1,
+      // raster kawałka ciała świata to obiekt { width, height, data } — worker liczy go sam z układu budowli
+      image: hull.image && !hull.world ? resourceSlot(hull.image) : -1,
       visualImage: hull.visualImage ? resourceSlot(hull.visualImage) : -1,
       normalMapImage: hull.normalMapImage ? resourceSlot(hull.normalMapImage) : -1,
       cellSize: hull.cellSize, pixelPitch: hull.pixelPitch, nx: hull.nx, ny: hull.ny, cellPx: hull.cellPx,

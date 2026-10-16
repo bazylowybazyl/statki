@@ -17,6 +17,7 @@ RW-40a, RW-40b cz. 1–12, RW-41b cz. 1, RW-42 cz. 1; § 7 — decyzje i zasady)
 | 0f399b9a | RW-41b cz. 1: obraz pasa asteroid |
 | 7b501d1f | ta notatka + bariera „narysowano k” w `zrzuty.mjs` (RW-44) |
 | (cz. 13) | drony naprawcze: blok `repair` (id rigu = `RepairFxEvents.idOf`, wspólne z rekordami REPAIR_FX), lustro rigów w workerze |
+| (cz. 17) | skóry ciał świata bazy (`worldBodies3D`): lista migawki `WORLD_BODIES` (encje kawałków), blok `worldBodies` (stan kawałków, `allLive`, punkty uwagi — `src/render/blocks/worldBodiesBlock.js`), `worldRef` w opisie encji, poza i kwaternion ciała w BODY (bryły 3D); worker buduje REPLIKĘ miejsc z własnej bryły bazy (`createPirateBaseSites` + `prebuildPirateBaseBodies`, ~0,5 s przy zdarzeniu 'bodies') i podaje ją `setWorldBodiesSource`; raster / konstrukcja szablonu kawałka z repliki (klucz skóry). `render-worker-gra.mjs --kampania 1 --query story=ram --js` (dwa progi pomostów) — odłamy ze skórą jak w off |
 | (cz. 16) | stacja piracka (`world3d.js`): strona znakuje stację podpiętą do world3d (`__world3dPirate` → opis `world3dPirate`), worker podpina bryłę do jej lustra (`_mesh3d` — rozpad Destruction3D działa), mgła z `fogHidden`; `DevScene.mercMission()` (?dev) |
 | (cz. 15) | rdzenie: blok `hazards` (`src/render/blocks/hazardBlock.js` — lustra strumieni i kul z rejestru id `ReactorFxEvents.forEachHazard`), dekoder RX_* w workerze (wcześniej rekordy RX_* worker pomijał — bez detonacji rdzeni), model reaktora (`createReactor3D` na `rm.cores`). Detonacja niszczyciela (`--js` z `ReactorGame.forceMeltdown`): bez błędów, ale jednorazowy przestój workera ~1–2 s w chwili wybuchu (odebrane strony zostają w tyle) — do zbadania (pipeline'y w workerze?) |
 | (cz. 14) | luk Atlasa: strona wysyła `bay` { door, hidden } w wiadomości klatki, worker — `createScoutBay3D` na lustrze gracza (`__bayCut`); poza fregaty jak dawniej w ENT |
@@ -68,7 +69,6 @@ dodaniu modułów (jedna para, maszyna wolniejsza) worker 107 kl/s ↔ off 50 fp
 
 ## Do zrobienia (kolejność)
 1. Wyłączone w workerze (`RW_WORKER_DISABLED` w `render.worker.js`, komunikat w konsoli):
-   skóry ciał świata bazy piratów (`worldBodies3D` — encje kawałków są obiektami gry; blok jak `view`),
    wydobycie (RW-41b cz. 2: `rig.taken`, ciała i okruchy, zdarzenia `fx`, `__explosions.domainRects` przez RET),
    tło menu (RW-41). Cel soczewki warpa `targetBody` — AGENT w pakującym.
 2. RW-41 (zasoby, ekran ładowania, tło menu w workerze — bez Core3D strony), RW-41b cz. 2.

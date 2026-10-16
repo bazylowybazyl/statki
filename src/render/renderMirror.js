@@ -70,6 +70,7 @@ export class MirrorEntity {
     this._oidPool = new Map();
     // pisane przez render
     this.__cloakLook = undefined; this.__warpHullU = undefined; this.__warpNurtMode = undefined; this.__bayCut = undefined;
+    this.worldRef = null;   // kawałek ciała świata (opis — worldBodiesBlock / worldBodies3D w workerze)
     this.__hiddenFromView = false; this.__inDrawBox = false; this.__engineFxFallback = undefined;
     this._coldSkinFrame = undefined; this._coldDrawFrame = undefined; this._shadowGrid = undefined; this.__lightOcclude = undefined; this.__lightMate = undefined;
     // przejściowe (do RW-26 / RW-28 / RW-31): obiekt gry dla kroków jeszcze nieprzeniesionych
@@ -455,6 +456,7 @@ export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null, brid
   m.engines = reconcileDescriptor(desc.engines, pool, used);
   m.id = desc.id; m.uid = desc.uid; m.name = desc.name;
   m.type = desc.type; m.shipFrame = desc.shipFrame; m.activeHullId = desc.activeHullId;
+  m.worldRef = desc.worldRef || null;
   const db = desc.bridge;
   if (db) {
     let st;

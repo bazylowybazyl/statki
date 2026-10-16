@@ -89,7 +89,8 @@ export const LIST = fields([
   'RENDER',       // renderEntities: gracz, P2, NPC, wraki (bez martwych)
   'SEEN',         // renderSeen: RENDER bez ukrytych mgłą
   'SEEN_COLD',    // renderSeenCold: SEEN + zimne wraki z ciałem do rysowania
-  'NPCS', 'NPCS_SEEN', 'WRECKS', 'WRECKS_SEEN', 'COLD', 'COLD_NEAR', 'STATIONS'
+  'NPCS', 'NPCS_SEEN', 'WRECKS', 'WRECKS_SEEN', 'COLD', 'COLD_NEAR', 'STATIONS',
+  'WORLD_BODIES'  // encje kawałków ciał świata (worldBodies.renderEntities — tryb worker: skóry worldBodies3D)
 ]);
 
 // ── ENT (rekord na slot encji) ───────────────────────────────────────────────────────────────────────────────
@@ -155,7 +156,8 @@ export const IMPACT = Object.freeze({ ID: 0, GRID_ANGLE: 1, DAMAGE: 2, INTENSITY
 // ── BODY (rekord na slot ciała belek; pola rekordu kadłuba `beamHull` i ciała `hull.body`) ──────────────────
 export const BODY = record({
   f64: ['ANCHOR_DX', 'ANCHOR_DY', 'SCALE', 'SRC_W', 'SRC_H', 'PIVOT_X', 'PIVOT_Y', 'CELL', 'LAT_MIN_X', 'LAT_MIN_Y',
-    'LAT_MIN_Z', 'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP'],
+    'LAT_MIN_Z', 'MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z', 'MAX_DISP',
+    'POS_X', 'POS_Y', 'POS_Z', 'QUAT_X', 'QUAT_Y', 'QUAT_Z', 'QUAT_W'],   // poza ciała w świecie silnika (bryły 3D)
   i32: ['SLOT', 'GEN', 'ENT_SLOT', 'FLAGS', 'NODE_COUNT', 'ACTIVE_NODES', 'BEAM_COUNT', 'STORE_VER', 'SHAPE_VER', 'REVISION',
     'DMG_KEY', 'NODE_F64_OFF', 'NODE_U8_OFF', 'NODE_N', 'BEAM_F64_OFF', 'BEAM_U8_OFF', 'BEAM_N', 'REST_F64_OFF',
     'DIRTY_OFF', 'DIRTY_N', 'CHANGED_K', 'REST_K', 'HP_F64_OFF', 'HP_K']

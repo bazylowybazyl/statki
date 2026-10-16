@@ -48,7 +48,7 @@ export const TIER_B_PERIOD = 16;
 const num = (v) => (typeof v === 'number' ? v : 0);
 const raw = (v) => (typeof v === 'number' ? v : NaN);
 const EMPTY = Object.freeze([]);
-const PACK_LISTS = Object.freeze([LIST.RENDER, LIST.COLD_NEAR, LIST.NPCS, LIST.WRECKS, LIST.COLD]);
+const PACK_LISTS = Object.freeze([LIST.RENDER, LIST.COLD_NEAR, LIST.NPCS, LIST.WRECKS, LIST.COLD, LIST.WORLD_BODIES]);
 
 /** Słownik wartości (napisy, czasem liczby — id encji) → kody 0…n−1; −1 = brak (null / undefined / ''). */
 /**
@@ -416,6 +416,7 @@ export class SnapshotPacker {
     fogIntoCached(wrecks, L[LIST.WRECKS_SEEN], hides, fogR, rWreck);
     copyInto(f.coldWrecks || EMPTY, L[LIST.COLD]);
     copyInto(f.stations || EMPTY, L[LIST.STATIONS]);
+    copyInto(f.worldPieces || EMPTY, L[LIST.WORLD_BODIES]);
   }
 
   _ensureCapacity(f) {
@@ -1043,6 +1044,10 @@ export class SnapshotPacker {
     f64[b + BF.MAX_Y] = bmm ? bmm[4] : NaN;
     f64[b + BF.MAX_Z] = bmm ? bmm[5] : NaN;
     f64[b + BF.MAX_DISP] = raw(body._maxDisp);
+    const bp = body.pos, bq = body.quat;
+    f64[b + BF.POS_X] = bp ? raw(bp.x) : NaN; f64[b + BF.POS_Y] = bp ? raw(bp.y) : NaN; f64[b + BF.POS_Z] = bp ? raw(bp.z) : NaN;
+    f64[b + BF.QUAT_X] = bq ? raw(bq.x) : NaN; f64[b + BF.QUAT_Y] = bq ? raw(bq.y) : NaN;
+    f64[b + BF.QUAT_Z] = bq ? raw(bq.z) : NaN; f64[b + BF.QUAT_W] = bq ? raw(bq.w) : NaN;
     i32[bi + BI.SLOT] = bs;
     i32[bi + BI.GEN] = this.ids.bodies.gen(bs);
     i32[bi + BI.ENT_SLOT] = es;

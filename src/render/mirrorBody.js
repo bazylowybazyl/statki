@@ -91,6 +91,8 @@ export class MirrorBody {
     this.latticeMin = { x: 0, y: 0, z: 0 };
     this._boundsMinMax = new Float64Array(6);
     this._maxDisp = 0;
+    this.pos = { x: 0, y: 0, z: 0 };            // poza w świecie silnika (bryły 3D — worldBodies3D)
+    this.quat = { x: 0, y: 0, z: 0, w: 1 };
     this.meshDirty = false;
     this.spriteSkin = null;
     this.dims = null;
@@ -129,6 +131,9 @@ export function applyBodyPage(mb, v, bs) {
   bmm[0] = f64[b + BF.MIN_X]; bmm[1] = f64[b + BF.MIN_Y]; bmm[2] = f64[b + BF.MIN_Z];
   bmm[3] = f64[b + BF.MAX_X]; bmm[4] = f64[b + BF.MAX_Y]; bmm[5] = f64[b + BF.MAX_Z];
   mb._maxDisp = f64[b + BF.MAX_DISP];
+  const bp = mb.pos, bq = mb.quat;
+  bp.x = f64[b + BF.POS_X]; bp.y = f64[b + BF.POS_Y]; bp.z = f64[b + BF.POS_Z];
+  bq.x = f64[b + BF.QUAT_X]; bq.y = f64[b + BF.QUAT_Y]; bq.z = f64[b + BF.QUAT_Z]; bq.w = f64[b + BF.QUAT_W];
   const s = mb.nodeStore, e = mb.beamStore;
   s.shapeVersion = i32[bi + BI.SHAPE_VER];
   const ho = i32[bi + BI.HP_F64_OFF];

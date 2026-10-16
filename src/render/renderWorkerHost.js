@@ -267,9 +267,11 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   };
 
   // Baza piratów (RW-40b): zdarzenia obrazu z gry (src/game/story/pirateBaseWorld.js) do workera; ramka bazy jako
-  // środek + oś (worker liczy miejsce placePirateBase sam), ciała świata ('bodies') — jeszcze bez workera.
+  // środek + oś (worker liczy miejsce placePirateBase sam), ciała świata ('bodies') — replika miejsc w workerze.
   host.pirateBaseEvent = (type, a, b, c) => {
-    if (type === 'bodies') return;
+    // ciała świata: worker buduje replikę miejsc z własnej bryły bazy (obiekty miejsc gry nie przechodzą przez postMessage)
+    if (type === 'bodies') { worker.postMessage({ type: 'pbase', ev: 'bodies' }); return; }
+    if (type === 'bodiesDetach') { worker.postMessage({ type: 'pbase', ev: 'bodiesDetach' }); return; }
     if (type === 'attach') {
       if (!b || !b.origin) return;
       worker.postMessage({ type: 'pbase', ev: 'attach', origin: { x: b.origin.x, y: b.origin.y }, axis: b.axis });

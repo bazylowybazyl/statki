@@ -42,6 +42,11 @@ let _invRoot = null, _invFrame = -1;   // _inv = odwrotność macierzy świata k
 // bakePeakId — kawałek najdłuższego jednorazowego kroku wypieku W WĄTKU GŁÓWNYM (zapas bez workerów; „!” — krok pilny
 // w klatce). urgent — zadania pilne (kawałek ruszony bez skóry), held — klatki z trzymaną statyką kawałka straconego,
 // worker — liczniki workerów (SKIN_BAKE_STATS).
+// Źródło miejsc i encji: `worldBodies` gry albo replika w workerze (render.worker.js — kawałki z bryły bazy workera,
+// stan z bloku `worldBodies` migawki, encje = lustra). Replika: bez `RenderWorld.wrecks` (odłamy-wraki są w jej liście).
+let _wb = worldBodies;
+export function setWorldBodiesSource(src) { _wb = src || worldBodies; }
+
 export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, bakePeakId: '',
   syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, worker: SKIN_BAKE_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
@@ -432,8 +437,8 @@ function runSubsets() {
   }
 }
 function queueBakes() {
-  const focus = worldBodies.focus || [];
-  for (const site of worldBodies.sites) {
+  const focus = _wb.focus || [];
+  for (const site of _wb.sites) {
     if (!site.render) continue;
     for (const p of site.pieces) {
       // Bryły 3D (kilka na budowlę, wypiek wieży habitatu ~200 ms): z szablonu, z wyprzedzeniem BEZ progu odległości
@@ -506,8 +511,8 @@ function disposeInstance(inst) {
 
 function collect() {
   _list.length = 0;
-  for (const e of worldBodies.renderEntities()) _list.push(e);
-  const wrecks = Array.isArray(RenderWorld.wrecks) ? RenderWorld.wrecks : null;
+  for (const e of _wb.renderEntities()) _list.push(e);
+  const wrecks = _wb === worldBodies && Array.isArray(RenderWorld.wrecks) ? RenderWorld.wrecks : null;
   if (wrecks) {
     for (let i = 0; i < wrecks.length; i++) {
       const w = wrecks[i];
@@ -530,7 +535,7 @@ export function syncWorldBodies3D() {
   let shown = 0, triangles = 0;
   const list = collect();
   // kawałki ruszone w tej klatce (statyka schowana) — dostawca dostaje stan raz na kawałek
-  for (const site of worldBodies.sites) {
+  for (const site of _wb.sites) {
     for (const p of site.pieces) { p.__skinShown = false; p.__skinPending = false; }
   }
   for (let k = 0; k < list.length; k++) {
@@ -633,7 +638,7 @@ export function syncWorldBodies3D() {
   // statyka kawałków: schowana, gdy kawałek ma skórę (ruszony) albo nie istnieje w miejscu; kawałek stracony, którego
   // odłamy czekają na skórę — statyka trzymana (tylko obraz: stan gry kawałka bez zmian)
   const now = typeof performance !== 'undefined' ? performance.now() : 0;
-  for (const site of worldBodies.sites) {
+  for (const site of _wb.sites) {
     const prov = site.render;
     if (!prov?.setSkinned) continue;
     for (const p of site.pieces) {
@@ -688,5 +693,5 @@ export function resetWorldBodies3D() {
   _bakeQueue.length = 0;
   _subsetQueue.length = 0;
   for (const job of [..._jobs]) cancelSkinJob(job);
-  for (const site of worldBodies.sites) for (const p of site.pieces) { p.__holdSince = 0; p.__holdTimedOut = false; }
+  for (const site of _wb.sites) for (const p of site.pieces) { p.__holdSince = 0; p.__holdTimedOut = false; }
 }
