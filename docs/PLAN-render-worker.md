@@ -1485,11 +1485,16 @@ zamiast `station._mesh3d`; `invalidateHexShipEntity3D`, `captureColdWreckImposto
 kraterów bit w bit; testy rekordów. Zależności: RW-21. Kolizje: `hullBodies.js` (sesja odrostu), `storyGame.js`
 (misja 2).
 
-**Stan (2026-10-15, tor `rw-kadluby`, gałąź `claude/rw-kadluby-rw22`, commity „RW-22 cz. 1–8”) — zrobione w kodzie,
-CZEKA NA WERYFIKACJĘ** (tryb lekki maszyny: zrzuty `stacja`, `reaktor`, `kosmos`, `galeria`, narzędzia bazy i pipeline'y
-synchroniczne — po „WOLNO OBCIĄŻAĆ”; gałąź stoi na niezweryfikowanym RW-21 z `rw-bronie`, fast-forward po jego wejściu do
-`main`). Kody rekordów kadłubów 32…63 w osobnym `src/render/hullCommands.js` (RW-21 ma 1…31), pisarz i czytelnik z
-`src/render/renderCommands.js`, sloty encji — `RenderCommands.writer.ids` (wspólne z RW-29). Zakres:
+**Stan (2026-10-16, tor `rw-kadluby`, commity „RW-22 cz. 1–8” + scalenia z RW-21 / RW-10) — ZROBIONE, w `main`.**
+Weryfikacja: zrzuty sesji `kosmos`, `stacja`, `reaktor`, `galeria` (63 sceny, 109 obrazów z warstwami) przed (`main` z RW-21)
+/ po — bit w bit (maks. ≤ 8/255; pierwsza próba przeciw gałęzi rw-bronie dała różnice tylko w przebiegu z przestojami —
+powtórzony bit w bit); po scaleniu z RW-10 — `kosmos` / `stacja` / `reaktor` jeszcze raz; `zniszczenia-gra.mjs --final`
+— finał habitatu i reakcja w rurach pełne, 0 pipeline'ów synchronicznych (uwaga: na samym `main` ten przebieg potrafi
+dać kilka synchronicznych — `bridge3D`, `SideJets`, światła pozycyjne — zmienne między przebiegami, nie z RW-22);
+`zbiornik-gra.mjs` i `baza-zniszczenie-gra.mjs` przed / po — te same wybuchy, zgony i pęknięcia w granicach rozrzutu
+przebiegów (narzędzia w czasie rzeczywistym: habitat pada po 60–100 strzałach w obu wersjach); testy Node, `npm test`,
+build. Kody rekordów kadłubów 32…63 w osobnym `src/render/hullCommands.js` (broń 1…17, rakiety 64…73, świat 74…127),
+pisarz i czytelnik z `src/render/renderCommands.js`, sloty encji — wspólne `RenderSlots` (`src/render/renderSlots.js`). Zakres:
 (1) mapa ran `DMG_HOOK / TEAR / SOLID_TEAR / REPAIR / PATCH / KERF` — gra (`hullDamageEvents.js`) liczy pozę (`HULL.THETA`),
 uv (`spriteUvAt`), komórki brył (`solidLatticeAt`), środek łaty (`cellWorld`) i źródło (dawne `HullDamageMap.setSource` —
 stan renderu), dekoder woła te same funkcje mapy ran na zastępniku kadłuba (`createHullProxy`; `HullDamageMap` dostał
