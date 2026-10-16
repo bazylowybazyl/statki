@@ -1441,6 +1441,14 @@ RW-29, RW-31 cz. 1 i RW-24/25/27.
   pytają `HullBodies.probe` / `reactorCoreWorld` o gospodarza — na lustrze potrzebne zapytania na replice ciała),
   stacje (`updateStations3D` — przed fazą begin), drony naprawcze (blok `repair` gotowy, niezarejestrowany), wieże
   z bloku TURRETS zamiast mostu `__game`.
+  **RW-11b krok 1 (2026-10-16, decyzja D4 — nowa baza zrzutów `inline`):** w trybie luster `updateStations3D` (w `off`
+  przed `updateWorld3D`) oraz `Bridge3D.update` / `BridgeFx3D.update` (w `off` przed widokiem klatki, wyglądem
+  maskowania i rekordami wież) stoją ZA fazą begin, tuż przed `updateHexShips3D` — jeszcze na obiektach gry; ścieżka `off`
+  bez zmian (gałęzie `if (!SZEW_MIRRORS)`). Spodziewana różnica: kolejność losowań fxRandom (stacje — `spinOffset` przy
+  nowym rekordzie, mostki — wyrzut atmosfery i błyski) i okna mostków pod maskowaniem z wyglądu TEJ klatki (dawniej
+  poprzedniej). Zmierzona: ŻADNA — pełny harness (17 sesji, 204 obrazy) `inline` po zmianie ↔ `inline` na f77e425c
+  (`zrzuty.mjs --root` eksportu): 202 / 204 identyczne, różna tylko niedeterministyczna `planeta-cien` (+ `__fg`).
+  Nowa baza: `.tmp/rw11/k1-nowa` (worktree `rw-migawka`; stara — `.tmp/rw11/k1-baza`).
 - **RW-11c**: przejmuje tor `rw-szew` (uzgodnienie 2026-10-15; bloki modułów przez `packer.addBlock`).
 - **RW-11c moduły świata** — wejścia klatki ringu, pasa, doku i ciał świata, pyłu, warpa, planet, hali jako bloki
   migawki (wzór pyłu hal; przy okazji poprawki § 3.7). Kryterium: `ziemia`, `ziemia-ring`, `mars`, `jowisz`, `pas`,
