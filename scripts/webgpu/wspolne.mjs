@@ -62,6 +62,11 @@ export async function startChrome(o = {}) {
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
+  // Tryb renderu narzędzi: gra domyślnie rysuje w workerze (RW-41c), narzędzia — w `off` (czytają Core3D strony, bazy
+  // zrzutów są z off). Jawne `?renderWorker=1` w adresie wybiera worker; `o.renderMode` / HULLFALL_RENDER_DEFAULT —
+  // inny domyślny (np. 'worker' — narzędzie mierzy grę tak, jak ją widzi gracz).
+  const renderDefault = o.renderMode || process.env.HULLFALL_RENDER_DEFAULT || 'off';
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__RENDER_MODE_DEFAULT = ${JSON.stringify(renderDefault)};` });
   return {
     cdp, logs,
     close: () => closeChrome(chrome, ws, profile) // usuwa też profil z %TEMP% (rdzen-cdp.js)

@@ -1,10 +1,11 @@
 // src/render/renderBridge.js — wybór trybu szwu renderu (docs/PLAN-render-worker.md § 3.1, RW-40).
 //
 // Tryby:
-//   off    — dzisiejsze wywołania modułów renderu wprost (domyślny, D7);
+//   off    — wywołania modułów renderu wprost na wątku gry (`?renderWorker=0`; zapas);
 //   pakuj  — samo pakowanie migawki (pomiar kosztu szwu, `?szew=pakuj`);
 //   inline — migawka, lustra i rozkazy na wątku głównym (`?szew=inline`, zapas trybu worker);
-//   worker — render w Web Workerze z OffscreenCanvas (`?renderWorker=1`; etap 4).
+//   worker — render w Web Workerze z OffscreenCanvas — DOMYŚLNY od RW-41c (D8, decyzja użytkownika 2026-10-16;
+//            `?renderWorker=1` wymusza, `?renderWorker=0` = off).
 // Tryb `worker` wymaga izolacji (SharedArrayBuffer — migawka, RET, pierścień rozkazów), `OffscreenCanvas`
 // z `transferControlToOffscreen` i `ImageBitmapRenderingContext` (kompozycja B2cr); bez nich — `inline` z powodem.
 // Czy WebGPU działa w workerze, rozstrzyga dopiero worker (adapter) — wtedy RET_FLAG.GPU_UNSUPPORTED.
@@ -39,9 +40,9 @@ export function renderWorkerBlocker(caps) {
 
 /**
  * Tryb z adresu: `?renderWorker=1` → worker (albo inline z powodem, gdy środowisko nie pozwala), `?szew=inline|pakuj`,
- * domyślnie `def` (dziś `off`). Zwraca `{ mode, requested, fallback }`.
+ * domyślnie `def` (`worker` — bez izolacji / OffscreenCanvas zapas `inline` z powodem). Zwraca `{ mode, requested, fallback }`.
  */
-export function resolveRenderMode(search, caps, def = 'off') {
+export function resolveRenderMode(search, caps, def = 'worker') {
   let params = null;
   try { params = new URLSearchParams(search || ''); } catch (_) { params = null; }
   const rw = params ? params.get('renderWorker') : null;

@@ -106,7 +106,11 @@ test('compose: ukrycie poprzedniej kanwy i brak nakładki', () => {
 
 test('tryb szwu z adresu i powody zapasu', () => {
   const ok = { isolated: true, shared: true, atomics: true, worker: true, offscreen: true, bitmapRenderer: true };
-  assert.deepEqual(resolveRenderMode('', ok), { mode: 'off', requested: 'off', fallback: null });
+  // domyślny tryb = worker (RW-41c, D8); bez izolacji zapas inline z powodem; ?renderWorker=0 = off
+  assert.deepEqual(resolveRenderMode('', ok), { mode: 'worker', requested: 'worker', fallback: null });
+  assert.equal(resolveRenderMode('', { ...ok, isolated: false }).mode, 'inline');
+  assert.equal(resolveRenderMode('?renderWorker=0', ok).mode, 'off');
+  assert.equal(resolveRenderMode('', ok, 'off').mode, 'off');
   assert.equal(resolveRenderMode('?szew=inline', ok).mode, 'inline');
   assert.equal(resolveRenderMode('?szew=pakuj', ok).mode, 'pakuj');
   assert.equal(resolveRenderMode('?renderWorker=1', ok).mode, 'worker');

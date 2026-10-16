@@ -882,7 +882,8 @@
     // Tryb renderu (src/render/renderBridge.js) rozstrzygany PRZED Core3D.init (RW-41c): w trybie worker Core3D strony
     // nie tworzy urządzenia WebGPU — GPU ma tylko worker (tło menu, ekran ładowania i gra; jedno urządzenie na kartę).
     window.__renderModeBoot = (() => {
-      try { return resolveRenderModeBoot(location.search, renderWorkerCapsBoot(window)); } catch (_) { return { mode: 'off', requested: 'off', fallback: null }; }
+      // window.__RENDER_MODE_DEFAULT — domyślny tryb narzędzi (scripts/webgpu/wspolne.mjs: 'off'); gra — worker (D8)
+      try { return resolveRenderModeBoot(location.search, renderWorkerCapsBoot(window), window.__RENDER_MODE_DEFAULT || 'worker'); } catch (_) { return { mode: 'off', requested: 'off', fallback: null }; }
     })();
     if (window.__renderModeBoot.mode === 'worker') Core3D.noDevice = true;
 
