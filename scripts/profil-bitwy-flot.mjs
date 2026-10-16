@@ -113,11 +113,13 @@ const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.
       nodesMax: nodes.reduce((m, v) => Math.max(m, v), 0), bodiesAvg: r(mean(bodies)), bytesAvg: Math.round(mean(bytes)), blocks: P.pageReport() }; })() }; })()`;
 
 const KEY = ['fps', 'frameMs', 'frameP95', 'physicsTime', 'physicsPerStep', 'aiTime', 'projectileTime', 'collisionTime',
-  'destructorTime', 'drawTime', 'render3dHexUpdateTime', 'render3dCoreRenderTime', 'rocketsTime'];
+  'destructorTime', 'drawTime', 'render3dHexUpdateTime', 'render3dCoreRenderTime', 'rocketsTime',
+  // RW-11a (D7, --query szew=inline): faza begin migawki + lustra — część render3dHexUpdateTime (moduły = Uhex − lustra)
+  'renderMirrorTime'];
 const short = (s) => {
   const h = s.hud, steps = h.physicsPerStep > 0 ? h.physicsTime / h.physicsPerStep : 0;
   return `fps ${h.fps} kl ${h.frameMs?.toFixed(1)} p95 ${h.frameP95?.toFixed(1)} | fiz ${h.physicsTime?.toFixed(2)} (${h.physicsPerStep?.toFixed(2)}/krok × ${steps.toFixed(2)}) ` +
-    `AI ${h.aiTime?.toFixed(2)} poc ${h.projectileTime?.toFixed(2)} kol ${h.collisionTime?.toFixed(2)} | rys ${h.drawTime?.toFixed(2)} Uhex ${h.render3dHexUpdateTime?.toFixed(2)} ` +
+    `AI ${h.aiTime?.toFixed(2)} poc ${h.projectileTime?.toFixed(2)} kol ${h.collisionTime?.toFixed(2)} | rys ${h.drawTime?.toFixed(2)} Uhex ${h.render3dHexUpdateTime?.toFixed(2)}${h.renderMirrorTime ? ` lustra ${h.renderMirrorTime.toFixed(2)}` : ''} ` +
     `core ${h.render3dCoreRenderTime?.toFixed(2)} | gpu ${s.gpu.gpuMs} dc ${s.gpu.dc} | npc ${s.stan.npc} (${s.stan.piraci}/${s.stan.tn}) wr ${s.stan.wraki} poc ${s.stan.pociski} węzły ${s.stan.wezly} | zoom ${s.stan.zoom}`;
 };
 

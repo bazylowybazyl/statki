@@ -29517,8 +29517,11 @@
         // (wraki na belkach w kadrze) albo smuga z migawki.
         if (SZEW_MIRRORS) {
           // Lustra (RW-11a): faza 1 migawki (pakowanie tylko czyta stan gry), lustra ze strony, kadłuby na lustrach.
+          const tMirror = performance.now();
           packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
           applyRenderMirrors();
+          // pomiar D7: faza begin + lustra (część render3dHexUpdateTime, którą trzeba odjąć od czasu modułów)
+          PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
           RenderWorld.setSource(_mirrorPlayers);
           updateHexShips3D(cam, renderMirror.lists[SNAP_LIST.RENDER], _hexCullInfo, renderMirror.lists[SNAP_LIST.COLD], _cloakMirrorState.frame);
           RenderWorld.setSource(null);
