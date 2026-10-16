@@ -1320,6 +1320,7 @@
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
+    import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
     import { RenderSlots, beginRenderSlotsFrame, endRenderSlotsFrame } from "./src/render/renderSlots.js";
     // Przeszkody gazu wybuchów (etap C): hale K-7, kawałki suchego doku, kadłuby przy domenach — wejście klatki jak pył hal.
     import { createGasObstacleInput, createGasObstacleState, packGasObstacleFrame, GAS_OBST_IN } from "./src/game/gasObstacleInput.js";
@@ -28349,6 +28350,8 @@
       try { return new URLSearchParams(location.search).get('szew') || 'off'; } catch (_) { return 'off'; }
     })();
     const renderSnapshot = SZEW_MODE === 'inline' ? new SnapshotPacker({ ids: RenderSlots }) : null;
+    // RW-11c: bloki modułów świata (src/render/blocks/) — wejścia klatki modułów renderu w stronie migawki
+    if (renderSnapshot) renderSnapshot.addBlock(createGasObstBlock());
     const _snapFrame = createSnapshotFrame();
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
     const _snapCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
@@ -28417,6 +28420,8 @@
       // RW-26: rekordy wież tej klatki (Turret2D.syncFrame przed updateHexShips3D) — frameCount / recordAt
       f.turretFrame = Turret2D;
       f.hall = HallDust.input;
+      // przeszkody gazu wybuchów (packGasObstacles w render(); bez reżysera wybuchów — brak wejścia)
+      f.gasObst = window.__explosions ? gasObstIn : null;
       renderSnapshot.finish(f);
     }
 

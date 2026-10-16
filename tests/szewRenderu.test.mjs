@@ -14,7 +14,7 @@ import { repo } from '../scripts/webgpu/grafGry.mjs';
 
 const SUFITY = {
   // index.html → render, per grupa (§ 2.1)
-  'index:aktualizacja': 90, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
+  'index:aktualizacja': 91, // 2026-10-16 RW-11c: +1 rejestracja bloku migawki gasObst (createGasObstBlock — szew do workera, nie render); wcześniej 90 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
   'index:dane': 18, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
   'index:konfiguracja': 151, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
   'index:zapytanie': 24, // 2026-10-16 zmierzone po scaleniu RW-28 (harmonogram warpa w grze — zapytania i zdarzenia do WarpNurt zeszły; +1 konfiguracja i +1 dane za dekoder WARP_*) z main (RW-10, RW-22)
