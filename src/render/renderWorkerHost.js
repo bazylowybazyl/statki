@@ -170,6 +170,20 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
         (msg.weaponDefs || (msg.weaponDefs = [])).push(def.id, plainData(def));
       }
     }
+    // pas asteroid (RW-41b): świat pasa gry (window.__beltWorld) — raz argumenty pola i historia operacji, potem
+    // operacje, sektory cienia pól i gotowe olbrzymy (siatka SDF w SharedArrayBuffer); zegar skał w klatce
+    const bw = typeof window !== 'undefined' ? window.__beltWorld : null;
+    if (bw && !host._belt) attachBelt(bw);
+    if (bw) {
+      msg.belt = { time: bw.time, dt: bw.frameDt };
+      const ents = bw.giants && bw.giants.entries;
+      if (ents) for (const e of ents) {
+        const g = e.giant;
+        if (!g || !g.ready || host._beltGiants.has(e.id)) continue;
+        host._beltGiants.add(e.id);
+        worker.postMessage({ type: 'beltGiant', id: e.id, plan: plainData(g.plan), x: g.x, y: g.y, grid: g.grid });
+      }
+    }
     // mgła wojny tej klatki (świat mgły liczy gra — SensorSystem; post Core3D workera)
     const fw = host.fogWorld;
     if (fw) msg.fog = { on: fw.on, time: fw.time, count: fw.count, massCount: fw.massCount, look: fw.look,
@@ -260,6 +274,14 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     }
     worker.postMessage({ type: 'pbase', ev: type, a: plainData(a), b: plainData(b), c: plainData(c) });
   };
+
+  host._beltGiants = new Set();
+  function attachBelt(bw) {
+    host._belt = bw;
+    worker.postMessage({ type: 'belt', fieldArgs: plainData(bw.fieldArgs), sun: plainData(bw.sun), au: bw.au });
+    bw.subscribeField((op, arg) => worker.postMessage({ type: 'beltOp', op, arg: plainData(arg) }));
+    bw.onOcclusion((sectors) => worker.postMessage({ type: 'beltOcc', sectors }));
+  }
 
   host.readStats = () => retReadStats(ret, host.stats);
   host.stop = () => {

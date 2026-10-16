@@ -2063,6 +2063,14 @@ olbrzymów w SAB, wynik w migawce); olbrzymy — SDF już w SharedArrayBuffer (R
 `__explosions.domainRects` (gra pyta reżysera wybuchów o prostokąty domen gazu dla przeszkód kadłubów —
 `packGasObstacles`) przez RET. Kryterium: sesje `pas`, `wydobycie` i `scripts/webgpu/wydobycie-gra.mjs` w trybie
 worker bit w bit z `off`; pipeline'y synchroniczne 0. Zależności: RW-40, RW-41 (zagnieżdżone workery olbrzymów).
+**Stan RW-41b cz. 1 (2026-10-16, `rw-worker`):** obraz pasa w workerze — zastępnik świata pasa w workerze (pole
+z `fieldArgs` i historii operacji strony, kolejne operacje `beltOp`, sektory cienia pól `beltOcc`, olbrzymy `beltGiant`:
+plan + siatka SDF w SharedArrayBuffer → `GiantRock` workera, `roofAbove` na nich, zegar skał w wiadomości klatki);
+wydobycie: w workerze zastępcza fizyka i platforma bez stanu gry (przejęte skały i ciała wydobycia nie przychodzą;
+fizykę skał gry daje dalej pas strony, który piecze bank na urządzeniu strony). Zrzut `pas-olbrzym` w trybie worker —
+pole skał, reflektor, cienie; `pas-pole` (pierwsza scena sesji) złapał jeszcze kanwę strony (worker piecze dłużej —
+bariera „narysowano k”, RW-44). ZOSTAJE (cz. 2): `rig.taken`, ciała i okruchy wydobycia, zdarzenia `fx` platformy,
+`__explosions.domainRects` przez RET.
 
 **RW-42 Kompozycja wg D1 i podzielony ekran.** Pliki: `src/render/renderBridge.js`, `src/render/render.worker.js`,
 `src/3d/hexShips3D.js` (`drawHexShips3D` — kopia znika), `index.html` (kanwy `#webgl-layer` / `#c`, `render()`).
