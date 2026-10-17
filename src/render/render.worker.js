@@ -47,6 +47,8 @@ if (isWorker) {
   // do strony pierwsze 3 błędy modułu, dalej tylko licznik `st.modErrors` (nazwa → liczba).
   st.modErrors = new Map();
   const frameTimes = globalThis.__rwFrameTimes = { ms: new Float64Array(8192), n: 0 };
+  // nowe próbki czasu GPU klatki (Core3D.gpuFrameMs, znaczniki co gpuTimerSampleEvery klatek) — narzędzia (--wkAb)
+  const gpuTimes = globalThis.__rwGpuTimes = { ms: new Float64Array(4096), n: 0, seen: -1 };
   const modFail = (name, e) => {
     const n = (st.modErrors.get(name) || 0) + 1;
     st.modErrors.set(name, n);
@@ -885,6 +887,8 @@ if (isWorker) {
     // pierścień czasów CAŁEJ klatki workera (lustra → bitmapa) dla narzędzi (A/B w bitwie — profil-bitwy-flot --wkAb)
     const ft = frameTimes;
     ft.ms[ft.n & 8191] = t2 - tPage; ft.n++;
+    const gs = Core3D.gpuFrameSamples;
+    if (gs !== gpuTimes.seen) { gpuTimes.seen = gs; if (Core3D.gpuFrameMs > 0) { gpuTimes.ms[gpuTimes.n & 4095] = Core3D.gpuFrameMs; gpuTimes.n++; } }
     st.frames++;
   }
 

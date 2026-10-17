@@ -8,7 +8,7 @@
 // (wysyłka → worker → złożenie), „wiek” obrazu 3D na ekranie i jego skoki (judder), najdłuższe klatki z kontekstem,
 // długie klatki animacji (LoAF) ze skryptami; --slad N — ślad Chrome (PipelineReporter: klatki pokazane / zgubione).
 //   node scripts/webgpu/rytm-bitwy.mjs [--sklad 50,20,10,3] [--zoom 0.45] [--czas 40] [--query renderWorker=1]
-//        [--okno 1] [--seed 7] [--slad 6] [--out katalog] [--szer 1920 --wys 1080]
+//        [--okno 1] [--seed 7] [--slad 6] [--watki 5] [--out katalog] [--szer 1920 --wys 1080] [--wkStart 'plik:ścieżka']
 // Tryb off do porównania: --query renderWorker=0. Okno wychodzi na ekran — przebieg nie może być zasłonięty
 // (Chrome z flagami bez dławienia zasłoniętych okien, ale rAF z vsync wymaga widocznego okna).
 // --analiza katalog — sama analiza zapisanego dziennika (katalog/rytm.json) bez uruchamiania gry.
@@ -33,7 +33,14 @@ const QUERY = args.query || 'renderWorker=1';
 const OKNO = (args.okno ?? '1') !== '0';
 const SEED = args.seed ?? '7';
 const SLAD = Number(args.slad ?? 6);
+// --watki N (2026-10-17): osobny ślad Chrome N s (kategoria toplevel — zadania każdego wątku) → zajętość wątków
+// [% czasu]: renderer strony, worker renderu, proces GPU (CrGpuMain — tam idą polecenia WebGPU workera i składanie
+// strony), kompozytor viz, przeglądarka. Pokazuje, który wątek trzyma rytm, gdy wątek gry ma zapas.
+const WATKI = Number(args.watki ?? 0);
 const SZER = Number(args.szer || 1920), WYS = Number(args.wys || 1080);
+// --wkStart (2026-10-17): kod w workerze renderu po starcie gry, przed spokojem (A/B przełączników Core3D w tym samym
+// buildzie — np. stare ścieżki GPU); `plik:ścieżka` — kod z pliku. Wynik w raporcie `wkStart`.
+const WK_START = args.wkStart ? (String(args.wkStart).startsWith('plik:') ? readFileSync(String(args.wkStart).slice(5), 'utf8') : String(args.wkStart)) : '';
 const OUT = args.out || join(tmpdir(), `rytm-bitwy-${Date.now()}`);
 mkdirSync(OUT, { recursive: true });
 
@@ -189,6 +196,11 @@ try {
   if (await ev('!!window.RenderWorkerHost')) {
     await ev(`(() => { window.RenderWorkerHost.dev({ eval: ${JSON.stringify(WORKER_INSTALL)} }); return true; })()`);
   }
+  if (WK_START && wk.sid) {
+    const r = await wkSend('Runtime.evaluate', { expression: WK_START, awaitPromise: true, returnByValue: true }).catch((e) => ({ error: String(e) }));
+    out.wkStart = r?.result?.value ?? r?.exceptionDetails?.text ?? r?.error ?? null;
+    report('wkStart', out.wkStart);
+  }
   await sleep(1000);
   // spokój: znacznik czasu strony (dziennik dzieli się na fazy po czasie)
   const tCalm0 = await ev('performance.now()');
@@ -254,6 +266,45 @@ try {
     report('ślad', slad);
   }
 
+  // zajętość wątków (--watki): zadania najwyższego poziomu (toplevel) każdego wątku, sumy rozłącznych przedziałów
+  let watki = null;
+  if (WATKI > 0) {
+    const events = [];
+    const onData = (msg) => { if (msg.method === 'Tracing.dataCollected') for (const e of msg.params.value) events.push(e); };
+    cdp.on(onData);
+    const done = new Promise((ok) => cdp.on((msg) => { if (msg.method === 'Tracing.tracingComplete') ok(); }));
+    await cdp.send('Tracing.start', { traceConfig: { recordMode: 'recordAsMuchAsPossible',
+      includedCategories: ['toplevel', '__metadata', ...String(args.watkiKat || '').split(',').filter(Boolean)], excludedCategories: ['*'] }, transferMode: 'ReportEvents' });
+    const tw0 = Date.now();
+    await sleep(WATKI * 1000);
+    await cdp.send('Tracing.end');
+    const tw = (Date.now() - tw0) * 1000;   // µs
+    await Promise.race([done, sleep(20000)]);
+    const tname = new Map(), pname = new Map(), iv = new Map();
+    for (const e of events) {
+      if (e.ph === 'M' && e.name === 'thread_name') tname.set(`${e.pid}:${e.tid}`, e.args?.name);
+      else if (e.ph === 'M' && e.name === 'process_name') pname.set(e.pid, e.args?.name);
+      else if (e.ph === 'X' && e.dur > 0) { const k = `${e.pid}:${e.tid}`; let a = iv.get(k); if (!a) iv.set(k, a = []); a.push([e.ts, e.ts + e.dur]); }
+    }
+    const rows = [];
+    let tMin = Infinity, tMax = -Infinity;
+    for (const a of iv.values()) for (const [b, c] of a) { if (b < tMin) tMin = b; if (c > tMax) tMax = c; }
+    const span = Math.max(1, Math.min(tw, tMax - tMin));
+    for (const [k, a] of iv) {
+      a.sort((x, y) => x[0] - y[0]);
+      let busy = 0, cs = -1, ce = -1;
+      for (const [b, c] of a) { if (b > ce) { if (ce > cs) busy += ce - cs; cs = b; ce = c; } else if (c > ce) ce = c; }
+      if (ce > cs) busy += ce - cs;
+      const pid = Number(k.split(':')[0]);
+      rows.push({ watek: `${pname.get(pid) || pid} / ${tname.get(k) || k}`, zajety: +(100 * busy / span).toFixed(1), zadan: a.length });
+    }
+    rows.sort((x, y) => y.zajety - x.zajety);
+    watki = { s: WATKI, okno_ms: +(span / 1000).toFixed(0), watki: rows.slice(0, 14) };
+    // --watkiKat 'gpu,viz,…': dodatkowe kategorie — surowy ślad do OUT/watki-slad.json (analiza poza grą)
+    if (args.watkiKat) writeFileSync(join(OUT, 'watki-slad.json'), JSON.stringify({ traceEvents: events }));
+    report('wątki', watki);
+  }
+
   const page = await ev(`(() => { const R = window.__rytm; R.on = false;
     const A = (a, n) => Array.from(a.subarray(0, Math.min(n, a.length)));
     return { origin: R.origin, worker: R.worker, n: R.n, fid: A(R.fid, R.n), cb0: A(R.cb0, R.n), cb1: A(R.cb1, R.n), phys: A(R.phys, R.n), steps: A(R.steps, R.n),
@@ -270,7 +321,7 @@ try {
         rn: W.rn, rs0: A(W.rs0, W.rn), rs1: A(W.rs1, W.rn) }; })()`, returnByValue: true });
     worker = r?.result?.value || null;
   }
-  Object.assign(out, { tCalm0, tCalm1, tBattle0, tBattle1, stan, slad, page, worker, bledy: logs.filter((l) => /^\[(error|exception)\]/.test(l)).slice(0, 20) });
+  Object.assign(out, { tCalm0, tCalm1, tBattle0, tBattle1, stan, slad, watki, page, worker, bledy: logs.filter((l) => /^\[(error|exception)\]/.test(l)).slice(0, 20) });
   writeFileSync(join(OUT, 'rytm.json'), JSON.stringify(out));
   const res = analyze(out);
   writeFileSync(join(OUT, 'wynik.json'), JSON.stringify(res, null, 1));
@@ -291,7 +342,7 @@ function stats(arr) { return { n: arr.length, sr: mean(arr), p50: q(arr, 0.5), p
 
 function analyze(o) {
   const P = o.page, Wk = o.worker;
-  const res = { args: o.args, bledy: o.bledy, slad: o.slad, stanOstatni: o.stan[o.stan.length - 1] || null, pacer: P.pacer || null };
+  const res = { args: o.args, bledy: o.bledy, slad: o.slad, watki: o.watki || null, stanOstatni: o.stan[o.stan.length - 1] || null, pacer: P.pacer || null };
   // okres vsync: mediana odstępów rAF w spokoju
   const tickIdx = (t0, t1) => { const out = []; for (let j = 0; j < P.tn; j++) if (P.tRun[j] >= t0 && P.tRun[j] < t1) out.push(j); return out; };
   const calmTicks = tickIdx(o.tCalm0, o.tCalm1);
