@@ -683,7 +683,9 @@ export class SnapshotPacker {
       f64[b + EF.SH_VAL] = raw(sh.val);
       f64[b + EF.SH_ACT] = raw(sh.activationProgress);
       f64[b + EF.SH_HARD] = raw(sh.hardness);
-      f64[b + EF.SH_SHOW] = raw(sh.show);
+      // shield.show to w grze flaga (tryb TARCZE: `!!tune.shieldShow`) — raw() zrobiłby z true NaN i worker nie pokazywał
+      // tarczy (2026-10-17); flaga jako 1 / 0, liczba bez zmian
+      f64[b + EF.SH_SHOW] = typeof sh.show === 'boolean' ? (sh.show ? 1 : 0) : raw(sh.show);
       i32[bi + EI.SH_STATE] = ec.code(ecb + 3, sh.state);
       if (sh.forceOff) flags2 |= ENT_FLAG2.SH_FORCE_OFF;
       const imp = sh.impacts;
