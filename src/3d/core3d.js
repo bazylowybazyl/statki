@@ -39,6 +39,7 @@ import { setBillboard3DCamera } from './tsl/billboard3D.js';
 import { installRulonGlobal, RULON, rulonActive, rulonInverse } from './warp/rulon.js';
 import { packFogView } from './fog/fogOfWarView.js';
 import { FOG_CACHE_MIN_ZOOM, FogNoiseCache } from './fog/fogOfWarPost.js';
+import { ZBIERACZ, ZGLOSZENIE_POWOD, wyslijZgloszenia, zainstalujZbieranieZgloszen } from './zbieraczZgloszen.js';
 
 // Rulon warpa zgina CAŁĄ grę (src/3d/warp/rulon.js): hak w każdym materiale węzłowym — zainstalowany
 // przed budową pierwszego materiału. Passy świata włączają go uniformem RULON.pass (_runScenePass).
@@ -603,6 +604,21 @@ export const Core3D = {
   uniformUploadStats: { merged: 0, savedWrites: 0, skippedFull: 0, skippedBytes: 0 },
   // wysyłki bufora z przeplotem pominięte jako powtórka tej samej wersji (_dedupeInterleavedUploads)
   attributeUploadStats: { skipped: 0 },
+  // Zgłoszenia kolejki GPU (src/3d/zbieraczZgloszen.js, 2026-10-17): three r183 robi queue.submit przy każdym
+  // render / compute / clear (~20 na klatkę), a każde zgłoszenie w Chrome to osobne zadanie procesu GPU. Zbieracz
+  // wysyła je razem na końcu klatki (wcześniej tylko przy konflikcie zapisu z odłożonymi poleceniami). Instalacja przy
+  // urządzeniu (_initGpu) — `submitBatching = false` przed nią albo `?gpuSubmit=0` — bez instalacji (ścieżka three);
+  // w biegu: `Core3D.submitBatching = false` — zgłoszenia od razu (A/B). Liczniki: `Core3D.submitStats`.
+  _submitBatchingWanted: true,
+  get submitBatching() { return ZBIERACZ.installed ? ZBIERACZ.enabled : this._submitBatchingWanted; },
+  set submitBatching(v) {
+    this._submitBatchingWanted = v !== false;
+    if (ZBIERACZ.installed) {
+      if (v === false) wyslijZgloszenia(ZGLOSZENIE_POWOD.WYLACZONE);
+      ZBIERACZ.enabled = v !== false;
+    }
+  },
+  get submitStats() { return ZBIERACZ.stats; },
   // Kolizje uuid w budowie TSL (src/3d/tsl/uuidWezlow.js): w grze ma być 0 — inaczej WGSL skażony cudzym węzłem.
   tslUuid: tslUuidStan,
   // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
@@ -1071,6 +1087,11 @@ export const Core3D = {
     for (const key of GPU_REQUIRED_LIMITS) {
       const value = adapter.limits?.[key];
       if (Number.isFinite(value)) requiredLimits[key] = value;
+    }
+    // Zbieranie zgłoszeń kolejki (zbieraczZgloszen.js) PRZED urządzeniem: każdy enkoder, grupa wiązań i widok tekstury
+    // three ma numer śledzenia — obiekt sprzed instalacji liczyłby się zachowawczo jako konflikt z każdym zapisem.
+    if (this._submitBatchingWanted !== false && !/[?&]gpuSubmit=0(?:&|$)/.test(String(RenderWorld.pageSearch || ''))) {
+      zainstalujZbieranieZgloszen();
     }
     const renderer = new THREE.WebGPURenderer({
       canvas: this.canvas, alpha: true, antialias: false, trackTimestamp: true, requiredLimits
@@ -2089,6 +2110,9 @@ export const Core3D = {
     }
     this._publishRendererInfo();
     this._gpuTimerAfterRender();
+    // Polecenia klatki do kolejki GPU jednym zgłoszeniem (zbieraczZgloszen.js) — przed odczytem kanwy przez stronę /
+    // worker (transferToImageBitmap, drawImage i tak wysyłają odłożone).
+    wyslijZgloszenia(ZGLOSZENIE_POWOD.KADR);
   },
 
   // Pass sceny albo pełnoekranowy quad; pomiar draw calli i czasu CPU do
@@ -2383,6 +2407,7 @@ export const Core3D = {
     perf.composerMs = 0;
     this._publishRendererInfo();
     this._gpuTimerPoll();
+    wyslijZgloszenia(ZGLOSZENIE_POWOD.KADR);
   },
 
   // Rozgrzewka pipeline'ów passa (PLAN §6): compileAsync odtwarza pass — kompiluje

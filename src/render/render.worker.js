@@ -154,6 +154,8 @@ if (isWorker) {
     st.weaponDefs = new Map();
     const Core3D = core.Core3D;
     st.Core3D = Core3D;
+    // zbieranie zgłoszeń kolejki GPU (src/3d/zbieraczZgloszen.js): `?gpuSubmit=0` strony — bez instalacji (A/B)
+    try { if (m.pageBase && new URL(m.pageBase).searchParams.get('gpuSubmit') === '0') Core3D.submitBatching = false; } catch (_) { /* adres bez składni URL */ }
     if (m.quality) Core3D.configureQuality(m.quality);
     // RW-41c: pierwsze uruchomienie — preset grafiki z adaptera WORKERA (strona nie ma urządzenia), przed jego
     // urządzeniem (MSAA presetu w celach sceny); wynik do strony (`gfxAuto` → opcje, zapis, informacja w menu)
