@@ -10089,6 +10089,7 @@
       return GA_HALT;
     }
     let scoutCamW = 0;
+    const _scoutCamPose = { x: 0, y: 0, angle: 0 };
     const scoutCamLast = { x: 0, y: 0 };
 
 
@@ -29551,8 +29552,17 @@
           scoutCamW += (want - scoutCamW) * k;
           if (Math.abs(want - scoutCamW) < 1e-3) scoutCamW = want;
           if (scoutCamW > 0 && scoutSn && !scoutSn.dead) {
-            scoutCamLast.x = scoutSn.pos ? scoutSn.pos.x : scoutSn.x;
-            scoutCamLast.y = scoutSn.pos ? scoutSn.pos.y : scoutSn.y;
+            // W trybach z migawką fregata rysuje się w pozie interpolowanej między krokami fizyki (renderPoses —
+            // frame() idzie dalej w render()): kamera jedzie za TĄ SAMĄ pozą, inaczej fregata drżała w kadrze
+            // (zgłoszenie użytkownika 2026-10-17). Tryb off — poza kroku, jak rysunek.
+            if (npcRenderLerpOn) {
+              const pp = renderPoses.predict(scoutSn, physicsTickId, (PAUSED || StoryGame.worldFrozen) ? 1 : alpha, _scoutCamPose);
+              scoutCamLast.x = pp.x;
+              scoutCamLast.y = pp.y;
+            } else {
+              scoutCamLast.x = scoutSn.pos ? scoutSn.pos.x : scoutSn.x;
+              scoutCamLast.y = scoutSn.pos ? scoutSn.pos.y : scoutSn.y;
+            }
           }
         }
         rigIn.velX = scouting ? (Number(scoutSn.vx) || 0) : ship.vel.x;

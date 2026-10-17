@@ -80,6 +80,35 @@ export class RenderPoses {
     }
   }
 
+  /**
+   * Poza, którą NASTĘPNE `frame(…, tick, alpha)` da bytowi `e` — bez zmiany stanu (2026-10-17: kamera przy sterach
+   * fregaty zwiadu liczy się w render() przed frame(); jechała za pozą kroku, a fregata rysowała się w pozie
+   * interpolowanej — fregata drżała w kadrze). Te same reguły co frame(); wynik do `out` ({ x, y, angle }).
+   */
+  predict(e, tick, alpha, out) {
+    const p = e.pos;
+    const cx = p ? p.x : (e.x || 0), cy = p ? p.y : (e.y || 0), ca = e.angle || 0;
+    const r = this._map.get(e);
+    out.x = cx; out.y = cy; out.angle = ca;
+    if (r === undefined) return out;
+    const a = alpha >= 0 ? (alpha <= 1 ? alpha : 1) : 0;
+    let px = r.px, py = r.py, pa = r.pa, k = r.k;
+    if (r.tick !== tick) {
+      k = tick > r.tick ? tick - r.tick : 1;
+      const prev = r.frame === this._frame;   // narysowany w bieżącej (dla następnej — poprzedniej) klatce
+      px = prev ? r.ax : cx; py = prev ? r.ay : cy; pa = prev ? r.aa : ca;
+    } else if (cx !== r.ax || cy !== r.ay || ca !== r.aa) {
+      px = cx; py = cy; pa = ca; k = 1;
+    }
+    const dx = cx - px, dy = cy - py;
+    if (dx * dx + dy * dy > this.snapDist * this.snapDist) { px = cx; py = cy; pa = ca; }
+    const t = 1 - (1 - a) / k;
+    out.x = px + (cx - px) * t;
+    out.y = py + (cy - py) * t;
+    out.angle = pa + wrapPi(ca - pa) * t;
+    return out;
+  }
+
   /** Poza renderu bytu z bieżącej klatki ({ x, y, angle } — obiekt stanu, tylko do odczytu) albo null. */
   poseOf(e) {
     const r = e ? this._map.get(e) : undefined;

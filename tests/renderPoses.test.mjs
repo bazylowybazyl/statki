@@ -83,3 +83,30 @@ test('pauza (α = 1) — poza bieżąca; pos ma pierwszeństwo przed x/y', () =>
   assert.equal(rp.poseOf(e).x, 40);
   assert.equal(rp.poseOf(e).y, 20);
 });
+
+// Kamera przy sterach fregaty zwiadu (index.html) liczy się przed renderPoses.frame — predict() musi dać tę samą pozę,
+// którą frame() zaraz policzy (inaczej fregata drży w kadrze; zgłoszenie użytkownika 2026-10-17).
+test('predict() = poza z następnego frame() — kroki, ruch w czasie klatki, teleport, byt bez historii, pauza', () => {
+  const rp = new RenderPoses();
+  const e = { x: 0, y: 0, angle: 0 };
+  const g = { pos: { x: 5, y: 5 }, angle: 1 };
+  const out = { x: 0, y: 0, angle: 0 };
+  let acc = 0, tick = 0;
+  for (let f = 0; f < 400; f++) {
+    acc += 1 / 240 + (f % 7 === 0 ? 0.004 : 0);
+    while (acc >= DT) { acc -= DT; tick++; e.x += 600 * DT; e.angle += 0.4 * DT; g.pos.y += 300 * DT; }
+    if (f === 120) e.x += 50;                     // ruch w czasie klatki (bez kroku)
+    if (f === 200) e.x += 100000;                 // teleport
+    const alpha = f > 300 && f < 320 ? 1 : acc / DT; // pauza
+    const list = f % 50 < 3 ? [e] : [e, g];        // g czasem poza listą (bez historii)
+    const pe = { ...rp.predict(e, tick, alpha, out) };
+    const pg = { ...rp.predict(g, tick, alpha, out) };
+    rp.frame(list, tick, alpha);
+    const re = rp.poseOf(e);
+    assert.ok(Math.abs(re.x - pe.x) < 1e-9 && Math.abs(re.y - pe.y) < 1e-9 && Math.abs(re.angle - pe.angle) < 1e-12, `klatka ${f}: e`);
+    if (list.length > 1) {
+      const rg = rp.poseOf(g);
+      assert.ok(Math.abs(rg.x - pg.x) < 1e-9 && Math.abs(rg.y - pg.y) < 1e-9 && Math.abs(rg.angle - pg.angle) < 1e-12, `klatka ${f}: g`);
+    }
+  }
+});
