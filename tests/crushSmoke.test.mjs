@@ -170,7 +170,7 @@ test('index.html: hak strat węzłów, styk z CollisionFX, ocena po sufitach pun
   assert.match(lost, /if \(entity\?\.fuelTank\) crushSmoke\.lost\(entity, x, y, HullBodies\.simTime\)/);
   assert.match(src, /CollisionFX\.on\('grind', _crushContact\);/);
   assert.match(src, /CollisionFX\.on\('impact', _crushContact\);/);
-  const iCap = src.indexOf('enforceNpcHexIntegrityBalance();\n        // Dym zgniotu');
+  const iCap = src.indexOf('enforceNpcHexIntegrityBalance();\n      // Dym zgniotu');
   const iStep = src.indexOf('stepCrushSmoke();', iCap);
   assert.ok(iCap > 0 && iStep > iCap && iStep - iCap < 200, 'dym zgniotu po sufitach punktów w kroku integralności');
   const emit = sliceFunction(src, 'function emitCrushSmoke(');

@@ -444,3 +444,95 @@ Etap 4 — pomiar w oknie 144 / 240 Hz, opóźnienie wejścia, A/B rozgrywki (ta
   `docs/webgpu/RW-WORKER-STAN.md`, `docs/AUDYT-render-worker-2026-10-17.md` (strona ↔ worker renderu, ten sam dzień:
   poprawka zamarzania obrazu, interpolacja NPC `src/game/renderPoses.js`, stały wiek obrazu `src/render/framePacer.js`,
   prawdziwe kl/s w PerfHUD — w drzewie roboczym, bez commita).
+
+## 10. Etap 0 — wyniki (2026-10-17, ta sama maszyna, tryb renderu `worker`, krok 60 Hz)
+
+Zrobione na jednym wątku (§ 6 E + część § 6 D), bez zmiany rozgrywki poza harmonogramem. A/B bez zmiany kodu:
+`?aiPoza=0` albo `window.AiOffStepTune.enabled = false` (wraca cały dawny harmonogram poniżej).
+
+### 10.1 Co się zmieniło
+
+- **Praca decyzyjna AI w klatkach bez kroku** (`index.html`, blok „AI W KLATKACH BEZ KROKU”). Mózgi kubełka NASTĘPNEGO
+  kroku (takt 20 Hz, 1/3 okrętów) i utrzymanie taktu (eskadry, kolejka startów z hangarów, skrzydło, układ gniazd,
+  odroczone starty, siatka AI, indeks wraków, dowódca floty — `npcAiMaintenance`) liczą się w klatkach bez kroku na
+  stanie z końca ostatniego kroku; mózgi piszą tylko zamiary (intencja lotu, cele, wieże, strzały), które całkuje krok.
+  Czego klatki nie zdążą — dokańcza krok jak dawniej (`npc.__brainTick`); bez wolnej klatki (monitor 60 Hz) wszystko
+  jest jak przed zmianą. Tylko okręty z modelem lotu i myśliwce z pilotem (inne mózgi potrafią całkować ruch same —
+  `npcFlight.js`), bez rozkazów RTS, przylotów `warping_in` i hulków mostka. Takt decyzji (`aiDecisionTickId` — klucz
+  pamięci separacji i zegar myśliwców) zaczyna się razem z utrzymaniem, przed mózgami kubełka 0. Budżet klatki:
+  praca taktu (EMA: część poza krokiem + to, co dokończył krok) rozłożona na wolne klatki do następnego kroku × 1,25,
+  w [0,3; 2] ms i nie więcej niż okres klatki × 0,9 minus średnia reszta pracy klatki bez kroku
+  (`AiOffStepTune`). Liczniki: `window.__aiOffStep` (`offN` / `inlN` — mózgi poza krokiem / dokończone w kroku, `estMs`),
+  PerfHUD — wiersz „Poza krokiem” (ms na klatkę).
+- **Warstwa informacyjna** (`stepFrameInfo`: skan pod kursorem, namiary, UI skanera i radaru, fale skanu, drony zwiadu,
+  czujniki i mgła wojny, CIC) i **stan UI stacji / infrastruktury** (`stepStationUiState`: terminal, przenikanie panelu,
+  edytor, postęp budowy — z sumowanym dt) — w pierwszej klatce bez kroku po krokach; bez takiej klatki — przed
+  krokami następnej. **Integralność** (co 3. krok: gniazda, rdzenie, mostki, dysze, zbiorniki, sufity punktów, dym
+  zgniotu — `runIntegrityPass`) — tak samo, na liście ciał zbudowanej poza krokiem.
+- **Kokpit** (`updatePlayerStatusUI`, z wejściem radaru ~10 Hz) przy monitorze szybszym niż ~110 Hz pomija klatkę
+  z krokiem (liczy go następna; dwie klatki z krokiem pod rząd — jak dawniej).
+- **Kamera gracza 2** (podzielony ekran) z kroku do `loop()`: z pozy P2 interpolowanej między krokami (`prevState2` —
+  zapisywana, a nieużywana), zoom i wstrząs w czasie klatki (`updateCamera2`).
+- **CIWS × rakiety przez siatkę** (`RocketThreatGrid`, `src/game/rocketIntercept.js`): kubełki budowane leniwie raz na
+  krok, zapytanie zwraca indeksy bufora rosnąco, więc pierwsze trafienie jest bit w bit to samo co przy pełnym
+  przeglądzie (złoty test `tests/rocketThreatGrid.test.mjs`, także z rakietami kanwy ruszonymi po budowie siatki); od
+  24 rakiet w buforze.
+- Narzędzia: `scripts/fizyka-kroki.mjs --query …` (parametry adresu), `--ab N` (A/B W JEDNYM PRZEBIEGU — przełączanie
+  `AiOffStepTune.enabled` co N s; fazy bitwy zmieniają się szybciej niż osobne przebiegi, a maszyna dzielona z innymi
+  sesjami dryfuje), próbki `aiOff` i `rp` (pozy renderu: `frameDriven` — byty przesunięte bez kroku); analiza — czas
+  pracy poza krokiem na klatkę, złożenia workera na sekundę, rozbicie A/B.
+
+Nie zrobione z § 6 D: jądra sąsiedztwa AI, pamięć skanu broni i `processAutonomousWeapons` przestały być w kroku
+(liczą się w mózgach poza krokiem), więc ich optymalizacja nie skraca już klatki z krokiem; promienie tarcz
+(`getEntityShieldRadiusTowards`, `stampBulletCollisionRadii` ~0,15–0,25 ms / krok) i `pairFilter` silnika belek
+(~0,09) — zysk mały, a pamięć „raz na krok” musiałaby uwzględniać śmierć i zmianę kadłuba w środku kroku; liczniki
+PerfHUD — bez zmian.
+
+### 10.2 Koszt kroku i klatki (bitwa V1, 166 okrętów, walka)
+
+| | A (dawny harmonogram) | B (etap 0) |
+|---|---|---|
+| krok, headless, t 35–70 s (osobne przebiegi) | 3,84 ms | 2,26 ms |
+| krok, okno 240 Hz, A/B co 3 s | 3,42 (p95 5,78) | 2,20 (p95 4,30) |
+| klatka `loop()` z krokiem, okno, p50 / p95 | 5,27 / 9,70 | 3,65 / 7,74 |
+| klatka bez kroku, okno, p50 / p95 | 1,68 / 2,89 | 2,12 / 4,14 |
+| klatki z krokiem > 4 ms (t ≥ 68 s / 35–50 s) | 53% / 100% | 23% / 32% |
+| mózgi policzone poza krokiem (okno / headless) | — | 86–98% / ~55% |
+
+W kroku zostaje: pociski i trafienia 0,6–0,65 ms, silnik belek 0,55–0,7, lot NPC (model lotu, każdy krok) 0,35–0,48,
+rakiety 0,19–0,27, kierowanie ogniem gracza 0,1–0,2, rdzenie 0,05–0,1, reszta (gracz, świat, kolizje z pasem,
+wraki) ~0,3. W headless klatki trwają 5–7 ms (brak vsync), więc między krokami jest ~1,5 wolnej klatki i krok
+dokańcza ~45% mózgów — w oknie 240 Hz tylko 2–14%.
+
+### 10.3 Złożenia workera renderu na sekundę (okno z vsync 240 Hz)
+
+| | A | B |
+|---|---|---|
+| V1, walka (t ≥ 35 s), wszystkie przedziały | 199 | 205 |
+| V1, przedziały, w których worker renderu nadąża (jego takty ≥ 215 / s) | 223 | 222 |
+| V1, cięższy przebieg (więcej pocisków) | 171 | 174 |
+| 2 × V1, podejście (t 35–60 s) | 220 | 224 |
+| 2 × V1, walka (t 63–127 s, pociski 50–420, worker nadąża — ogranicza wątek gry) | 206 | 220 |
+
+Okresy rAF > 1,5 vsynca: V1 t ≥ 68 s 2,8% → 2,7%, t 35–50 s 17,0% → 14,6%; 2 × V1 podejście 2,3% → 1,8%, walka
+8,7% → 3,2% (krok 4,44 → 2,41 ms, klatka z krokiem p50 6,64 → 4,55 ms). Pozy renderu: `frameDriven` = 0 przez cały
+przebieg — praca poza krokiem nie przesuwa bytów między krokami (interpolacja NPC nietknięta). Przebieg 2 × V1 stanął
+w 127 s (0 klatek wątku gry i 0 taktów workera, bez błędów, strona odpowiadała — okno zasłonięte; rAF staje na obu
+wątkach), liczby do 127 s. Klatek wątku gry
+w tym samym czasie +0,7–8,7%, worker renderu rzadziej czeka na stronę (2 × V1: 36–95 → 4–51 czekań / s).
+
+Cel „≥ ~225 złożeń / s w walce V1” — osiągnięty tam, gdzie worker renderu nadąża (222–238 / s po szczycie walki;
+w walce 2 × V1, gdzie ogranicza wątek gry, etap 0 daje +7%: 206 → 220), nie w szczycie (51–66 s V1: 123–160 / s w OBU trybach). W szczycie ogranicza już worker renderu, nie wątek gry:
+jego takty rAF spadają do 118–158 / s przy CPU klatki workera 3,4–8 ms (domena sesji „Klatka workera renderu pod
+240 Hz”). Druga lekcja: model vsync z § 4.2 (klatka z krokiem > 4,17 ms = chybiony vsync) jest zbyt surowy — Chrome
+wchłania pojedyncze długie klatki, gdy średnia praca na 1/60 s mieści się w czterech vsyncach (2 × V1 podejście,
+A: 100% klatek z krokiem > 4 ms, a spóźnionych okresów rAF 2,3%). Liczy się suma pracy wątku gry na 1/60 s
+(etap 0 jej nie zmniejsza — rozkłada ją; B dokłada ~0,05–0,1 ms narzutu na takt) i nadążanie workera renderu.
+Bez fizyki na wątku gry (wariant A z § 6) szczyt i tak stałby na workerze renderu.
+
+### 10.4 Do decyzji (bramka 1, § 7)
+
+Po etapie 0 klatka z krokiem mieści się w budżecie 240 Hz w ~70–77% przypadków (dawniej 0–47%); w bitwach V1 i
+2 × V1 gubione obrazy idą dziś z workera renderu w szczycie walki, nie z kroku fizyki. Worker symulacji (§ 6 A) ma
+sens dopiero przy bitwach, w których suma pracy wątku gry na 1/60 s przekracza ~16 ms (zrzut użytkownika: krok 6,8 ms
++ 4 × 3,3 ms reszty), albo dla kroku 120 Hz (D2).

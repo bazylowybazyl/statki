@@ -115,6 +115,47 @@ for (const [k, fs] of [...byK.entries()].sort((a, b) => a[0] - b[0])) {
 const nonPhys = loop.map((f) => f[0] - f[2]);
 const physPerFrame = mean(loop.map((f) => f[2]));
 console.log(`  średnio na klatkę: loop ${f2(mean(loop.map((f) => f[0])))} ms, fizyka ${f2(physPerFrame)} ms, reszta ${f2(mean(nonPhys))} ms`);
+// Praca decyzyjna poza krokiem (etap 0 — index.html „AI W KLATKACH BEZ KROKU”): f[4] = ms w tej klatce.
+{
+  const off0 = (byK.get(0) || []).map((f) => f[4] || 0);
+  if (off0.some((v) => v > 0)) {
+    console.log(`  poza krokiem: śr ${f2(mean(loop.map((f) => f[4] || 0)))} ms/klatkę; w klatkach bez kroku p50 ${f2(q(off0, 0.5))} p95 ${f2(q(off0, 0.95))} max ${f2(q(off0, 1))}`);
+  }
+}
+// Złożenia workera renderu na sekundę (nowe obrazy; tylko w oknie z vsync mają sens) — z próbek co ~3 s.
+{
+  const hs = (D.hud || []).filter((h) => h.composed != null && h.w && h.t >= 35);
+  const rates = [];
+  for (let i = 1; i < hs.length; i++) {
+    const dt = (hs[i].w.wall - hs[i - 1].w.wall) / 1000;
+    if (dt > 0.5) rates.push([hs[i].t, (hs[i].composed - hs[i - 1].composed) / dt, (hs[i].w.frames - hs[i - 1].w.frames) / dt]);
+  }
+  if (rates.length) {
+    console.log(`  złożenia workera / s (t ≥ 35 s): śr ${f2(mean(rates.map((r) => r[1])))}, min ${f2(Math.min(...rates.map((r) => r[1])))}; klatki wątku gry / s śr ${f2(mean(rates.map((r) => r[2])))}`);
+    console.log('   ' + rates.map((r) => `${Math.round(r[0])}s:${Math.round(r[1])}`).join(' '));
+  }
+}
+
+// A/B w jednym przebiegu (fizyka-kroki.mjs --ab N): tryb z dziennika przełączeń (A — praca decyzyjna w kroku,
+// B — w klatkach bez kroku); 0,5 s po przełączeniu pomijane (takt w toku).
+if (Array.isArray(D.dump.abLog) && D.dump.abLog.length > 1) {
+  const log = D.dump.abLog;
+  const modeAt = (t) => { let m = -1, since = -Infinity; for (const [tt, mm] of log) { if (tt <= t) { m = mm; since = tt; } } return t - since < 500 ? -1 : m; };
+  console.log(`\n== A/B w jednym przebiegu (t ≥ 35 s; ${log.length - 1} przełączeń)`);
+  for (const [m, name] of [[0, 'A (w kroku)      '], [1, 'B (poza krokiem) ']]) {
+    const fr = loop.filter((f) => modeAt(f[3]) === m);
+    const st = fight.filter((r) => modeAt(g(r, 't')) === m).map((r) => g(r, 'physicsTime'));
+    const w1 = fr.filter((f) => f[1] > 0).map((f) => f[0]), w0 = fr.filter((f) => f[1] === 0).map((f) => f[0]);
+    const hs = (D.hud || []);
+    const rates = [];
+    for (let i = 1; i < hs.length; i++) {
+      if (hs[i].ab !== m || hs[i].t < 35 || !hs[i].w || !hs[i - 1].w) continue;
+      const dt = (hs[i].w.wall - hs[i - 1].w.wall) / 1000;
+      if (dt > 0.5) rates.push((hs[i].composed - hs[i - 1].composed) / dt);
+    }
+    console.log(`  ${name} krok śr ${f2(mean(st))} p95 ${f2(q(st, 0.95))} | klatka z krokiem p50 ${f2(q(w1, 0.5))} p95 ${f2(q(w1, 0.95))} | bez kroku p50 ${f2(q(w0, 0.5))} p95 ${f2(q(w0, 0.95))} | złożeń / s ${rates.length ? f2(mean(rates)) : '–'} (n ${rates.length}: ${rates.map((r) => Math.round(r)).join(' ')})`);
+  }
+}
 
 // Odstępy rAF (cały wątek: wszystkie wywołania rAF) i CPU klatki
 const fw = D.dump.fw.filter((f) => (f[2] - spawnT) / 1000 >= 35);

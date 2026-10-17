@@ -4,7 +4,10 @@
 // rAF (odstęp, CPU wszystkich wywołań rAF klatki), longtask. Bitwa jak w scripts/profil-bitwy-flot.mjs (piraci przed
 // dziobem, Terra Nova za graczem, pustka między Wenus a Ziemią, gracz nieśmiertelny).
 //   node scripts/fizyka-kroki.mjs [--sklad 50,20,10,3] [--zoom 0.45] [--trwanie 90] [--tryb worker|off] [--okno 1]
-//        [--seed 7] [--physHz 60] [--profile 25:5,65:5] [--out .tmp/fizyka-kroki/<nazwa>] [--port 5296]
+//        [--seed 7] [--physHz 60] [--profile 25:5,65:5] [--out .tmp/fizyka-kroki/<nazwa>] [--port 5296] [--query a=1&b=2]
+// --ab N: A/B W JEDNYM PRZEBIEGU — co N s (od pojawienia się flot) przełącza window.AiOffStepTune.enabled (praca
+// decyzyjna poza krokiem: wł. = B, wył. = A); analiza dzieli klatki, kroki i złożenia po trybie (bez dryfu warunków).
+// --query: dodatkowe parametry adresu gry (A/B, np. aiPoza=0 — praca decyzyjna AI z powrotem w kroku).
 // --okno 1: prawdziwe okno z vsync (headless: false, 1280 × 720) — okresy rAF jak u gracza; bez niego headless bez
 // limitu klatek (koszty pod obciążeniem wątków bez vsync). Wynik: <out>/kroki.json (+ profile .cpuprofile);
 // analiza: node scripts/fizyka-kroki-analiza.mjs <out>/kroki.json.
@@ -24,7 +27,8 @@ const TRYB = args.tryb || 'worker';
 const SEED = Number(args.seed || 7) >>> 0;
 const PHYS_HZ = Number(args.physHz || 60);
 const PORT = Number(args.port || 5296);
-const OKNO = args.okno === '1';   // prawdziwe okno z vsync (headless: false) zamiast headless bez limitu klatek
+const OKNO = args.okno === '1';
+const AB = Number(args.ab || 0);   // s na połówkę A/B (0 — bez przełączania)   // prawdziwe okno z vsync (headless: false) zamiast headless bez limitu klatek
 const OUT = resolve(repoRoot, args.out || `.tmp/fizyka-kroki/${SKLAD.join('-')}-z${ZOOM}-${TRYB}-${PHYS_HZ}hz${args.okno === '1' ? '-okno' : ''}`);
 const PROFILE_AT = String(args.profile || '').split(',').filter(Boolean)
   .map((v) => { const [a, d] = v.split(':').map(Number); return { at: a, dur: Number.isFinite(d) && d > 0 ? d : 5 }; });
@@ -65,12 +69,13 @@ const INSTALL = `(async () => {
     stepT0: 0, lastClose: 0, inStep: false, loopFrames: [] };
   const cur = new Float64Array(NC);
   const oMark = PH.markPhysicsStep.bind(PH), oAdd = PH.addTiming.bind(PH), oRec = PH.recordFrameTime.bind(PH);
-  let stepsInFrame = 0, physInFrame = 0;
+  let stepsInFrame = 0, physInFrame = 0, offInFrame = 0;
   PH.markPhysicsStep = function () {
     if (R.on) { cur.fill(0); R.inStep = true; R.stepT0 = performance.now(); cur[idx.get('gap')] = R.lastClose ? R.stepT0 - R.lastClose : 0; }
     return oMark();
   };
   PH.addTiming = function (key, ms) {
+    if (R.on && key === 'offStepTime') offInFrame += ms;
     if (R.on && R.inStep) {
       const i = idx.get(key);
       if (i !== undefined) cur[i] += ms;
@@ -90,8 +95,8 @@ const INSTALL = `(async () => {
     return oAdd(key, ms);
   };
   PH.recordFrameTime = function (ms) {
-    if (R.on) { R.loopFrames.push([ms, stepsInFrame, physInFrame, performance.now()]); }
-    stepsInFrame = 0; physInFrame = 0;
+    if (R.on) { R.loopFrames.push([ms, stepsInFrame, physInFrame, performance.now(), offInFrame]); }
+    stepsInFrame = 0; physInFrame = 0; offInFrame = 0;
     return oRec(ms);
   };
   const wrap = (obj, name, col) => { if (!obj || typeof obj[name] !== 'function') return false; const o = obj[name];
@@ -108,7 +113,7 @@ const chrome = await startChrome({ width: OKNO ? 1280 : 1920, height: OKNO ? 720
 const { cdp, logs } = chrome;
 const ev = (e, t) => evaluate(cdp, e, t);
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: INJECT });
-const q = `dev=1&physHz=${PHYS_HZ}${TRYB === 'worker' ? '&renderWorker=1' : '&renderWorker=0'}`;
+const q = `dev=1&physHz=${PHYS_HZ}${TRYB === 'worker' ? '&renderWorker=1' : '&renderWorker=0'}${args.query ? '&' + String(args.query) : ''}`;
 const report = (k, v) => console.log(String(k).padEnd(10), typeof v === 'string' ? v : JSON.stringify(v));
 try {
   const ready = await navigateAndWait(cdp, `${base}/index.html?${q}`, '!!(window.ship && window.HullBodies && window.Core3D)', 180000);
@@ -157,12 +162,14 @@ try {
     block('supercapital', 'friendly', ${NS}, -8000, 3500, 4000, 5, -1, a);
     const cam = window.camera; cam.manualZoom = true; cam.zoom = cam.targetZoom = ${ZOOM};
     window.__spawnT = performance.now();
+    window.__abLog = [[performance.now(), window.AiOffStepTune ? (window.AiOffStepTune.enabled ? 1 : 0) : -1]];
     return out;
   })()`));
   const t0 = Date.now();
   const sec = () => (Date.now() - t0) / 1000;
   const todo = [...PROFILE_AT].sort((a, b) => a.at - b.at);
   const hud = [];
+  let abNext = AB > 0 ? AB : Infinity;
   await cdp.send('Profiler.enable');
   await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
   while (sec() < TRWANIE) {
@@ -182,17 +189,25 @@ try {
         wraki: (window.wrecks || []).length, zimne: (window.coldWrecks || []).length, pociski: (window.bullets || []).length,
         rakiety: window.rocketSystem3D?.rockets?.length ?? null, wezly: (() => { let k = 0; for (const h of (window.HullBodies?._hulls || [])) { const b = h?.body; if (b && !b.dead) k += b.activeNodes || 0; } return k; })(),
         composed: H ? H.composed : null,
+        // pozy renderu (renderPoses): byty przesunięte bez kroku fizyki w ostatniej klatce — praca poza krokiem nie może ich ruszać
+        rp: window.RenderPoses ? { interp: window.RenderPoses.stats.interpolated, frameDriven: window.RenderPoses.stats.frameDriven } : null,
+        aiOff: window.__aiOffStep ? { off: window.__aiOffStep.offN, inl: window.__aiOffStep.inlN, est: Math.round(window.__aiOffStep.estMs * 100) / 100, fr: Math.round(window.__aiOffStep.frameMs * 100) / 100 } : null,
         // worker renderu (RET_F64): CPU klatki workera [ms], GPU klatki, liczniki narastające — takty rAF, czekania na
         // stronę, rendery (różnice między próbkami → na sekundę)
         w: H ? { cpu: Math.round((H.stats[6] || 0) * 100) / 100, render: Math.round((H.stats[5] || 0) * 100) / 100,
           gpu: Math.round((H.stats[0] || 0) * 100) / 100, ticks: H.stats[13] || 0, waits: H.stats[14] || 0, renders: H.stats[16] || 0,
           msgRenders: H.stats[17] || 0, lagSum: H.stats[18] || 0, lagN: H.stats[19] || 0, frames: window.__frameId | 0, wall: performance.now() } : null };
     })()`);
+    if (AB > 0) h.ab = await ev('window.AiOffStepTune ? (window.AiOffStepTune.enabled ? 1 : 0) : -1');
     hud.push(h);
+    if (sec() >= abNext) {
+      abNext += AB;
+      report('A/B', await ev(`(() => { const T = window.AiOffStepTune; T.enabled = !T.enabled; window.__abLog.push([performance.now(), T.enabled ? 1 : 0]); return T.enabled ? 'B (poza krokiem)' : 'A (w kroku)'; })()`));
+    }
     report(`t=${Math.round(sec())}`, h);
   }
   const dump = await ev(`(() => { const R = window.__kr; R.on = false; window.__fw.on = false;
-    return { n: R.n, cols: R.cols, rows: Array.from(R.rows.subarray(0, R.n * R.NC)), loop: R.loopFrames.splice(0), fw: window.__fw.frames.splice(0), lt: window.__fw.lt.splice(0), spawnT: window.__spawnT }; })()`, 120000);
+    return { n: R.n, cols: R.cols, rows: Array.from(R.rows.subarray(0, R.n * R.NC)), loop: R.loopFrames.splice(0), fw: window.__fw.frames.splice(0), lt: window.__fw.lt.splice(0), spawnT: window.__spawnT, abLog: window.__abLog || null }; })()`, 120000);
   writeFileSync(join(OUT, 'kroki.json'), JSON.stringify({ sklad: SKLAD, zoom: ZOOM, tryb: TRYB, seed: SEED, physHz: PHYS_HZ, cols: COLS, calm, dump, hud }));
   report('zapis', { plik: join(OUT, 'kroki.json'), kroki: dump.n, klatki: dump.loop.length });
   const errs = logs.filter((l) => /^\[(error|exception)\]/.test(l) && !/AudioSys|favicon/.test(l));

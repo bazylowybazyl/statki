@@ -1254,7 +1254,7 @@
     } from "./src/game/megafreighterTrain.js";
     import { BulletSpatialGrid } from "./src/game/bulletSpatialGrid.js";
     import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics, projectileStepSpan } from "./src/game/projectileTrajectory.js";
-    import { ciwsShotHitsRocket, ciwsRocketReach } from "./src/game/rocketIntercept.js";
+    import { ciwsShotHitsRocket, ciwsRocketReach, RocketThreatGrid } from "./src/game/rocketIntercept.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
     import { stepCameraZoom, cameraZoomBase, wheelDeltaPx } from "./src/game/cameraZoom.js";
@@ -22677,6 +22677,14 @@
     }
     window.killRocketThreat = killRocketThreat;
 
+    // Siatki rakiet dla pocisków CIWS (pętla pocisków, „CIWS INTERCEPT RAKIET”): budowane leniwie raz na krok — znacznik
+    // = czas symulacji kroku (SimClock.sim rośnie przed ciwsStep, który buduje bufory od nowa). ROCKET_GRID_MIN: od tylu
+    // rakiet siatka się opłaca.
+    const ROCKET_GRID_MIN = 24;
+    const _pdEnemyRocketGrid = new RocketThreatGrid(256);
+    const _pdPlayerRocketGrid = new RocketThreatGrid(256);
+    _pdEnemyRocketGrid.stamp = _pdPlayerRocketGrid.stamp = -1;
+
     function ciwsStep(dt) {
       _pdEnemyRocketBuffer.length = 0;
       _pdPlayerRocketBuffer.length = 0;
@@ -23746,6 +23754,24 @@
     // Throttling integralności hardpointów/heksów (co 3. substep, z akumulacją dt).
     let _integrityDtAcc = 0;
     let _integrityTick = 0;
+    let _integrityPending = false;   // przebieg integralności czeka na klatkę bez kroku
+    // Integralność: gniazda, rdzenie, mostki, dysze, zbiorniki (updateHardpointIntegrity), sufity punktów, dym zgniotu
+    // — za czas gry zebrany od poprzedniego przebiegu. `entities` — ciała kroku (gracz, NPC, wraki — wraki pomija).
+    function runIntegrityPass(entities) {
+      updateHardpointIntegrity(_integrityDtAcc, entities);
+      enforceNpcHexIntegrityBalance();
+      // Dym zgniotu po pęknięciach zbiorników i po sufitach punktów (martwy okręt ma wybuch śmierci).
+      stepCrushSmoke();
+      _integrityDtAcc = 0;
+      _integrityPending = false;
+    }
+    // Przebieg odłożony z kroku — poza krokiem lista ciał od nowa (lista kroku żyje w pamięci klatki).
+    function runPendingIntegrity() {
+      if (!_integrityPending) return;
+      const p2 = (splitScreenMode && player2Ship && !player2Ship.destroyed && (player2Ship.hexGrid || player2Ship.beamHull)) ? player2Ship : null;
+      _destrPrepFrameId = -1;   // lista z pamięci klatki jest nadpisana — krok tej klatki zbuduje ją od nowa
+      runIntegrityPass(buildDynamicDestructibles(ship, npcs, _activeWrecksBuffer, p2));
+    }
     const _dynamicDestructibles = [];
     const _worldFocus = [null, null];   // punkty bańki ciał świata (gracz, P2)
 
@@ -24092,7 +24118,18 @@
           const by0 = Number.isFinite(b.py) ? b.py : b.y;
           const reach = ciwsRocketReach(b, span);
           let intercepted = false;
-          for (let j = 0; j < threats.length; j++) {
+          // Duży bufor: kandydaci z siatki rakiet (src/game/rocketIntercept.js — indeksy rosnąco, wynik jak pełny
+          // przegląd), budowanej leniwie raz na krok; mały — pełny przegląd.
+          const big = threats.length >= ROCKET_GRID_MIN;
+          let cand = null;
+          if (big) {
+            const grid = b.owner === 'npc' ? _pdPlayerRocketGrid : _pdEnemyRocketGrid;
+            if (grid.stamp !== SimClock.sim) { grid.build(threats, dt); grid.stamp = SimClock.sim; }
+            cand = grid.query(b.x, b.y, reach);
+          }
+          const nCand = big ? cand.length : threats.length;
+          for (let jj = 0; jj < nCand; jj++) {
+            const j = big ? cand[jj] : jj;
             const rb = threats[j];
             if (!rb || rb === b || rb.life <= 0) continue;
             if (!ciwsShotHitsRocket(b, bx0, by0, rb, span, reach)) continue;
@@ -24599,34 +24636,61 @@
     // kolejnych podkroków. Dzięki temu 189 mózgów nie budzi się w jednej klatce.
     // INTEGRACJA nadal działa w każdym podkroku — inaczej myśliwiec przy 3400 u/s
     // skakałby ~70 u naraz i pociski (16 u/podkrok) zaczęłyby go mijać.
-    function npcStep(dt, aiDbg = null, runAiMaintenance = true, brainDt = dt, brainPhase = 0, brainPhaseCount = 1) {
+    // Utrzymanie AI raz na takt 20 Hz (przed mózgami): układ gniazd z edytora, odroczone starty z hangarów, siatka AI,
+    // indeks wraków, dowódca floty. Woła je npcStep (takt w kroku) albo praca decyzyjna w klatkach bez kroku
+    // (blok „AI W KLATKACH BEZ KROKU”). Zwraca: czy zmienił się układ gniazd z edytora.
+    function npcAiMaintenance(brainDt) {
+      const layoutChanged = pollNpcEditorLayoutCache(brainDt);
+      // Odroczone starty myśliwców z hangarów NPC — dopisz do npcs PRZED budową
+      // grida i pętlą AI (spawn w trakcie iteracji npcs[] byłby ryzykowny).
+      flushCarrierSpawns(brainDt);
+      // Build AI spatial grid ONCE per 20 Hz cycle for all phased AI queries
+      // (separation, weapon scan, target pick, dogfight neighbors).
+      // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
+      const tAiGrid0 = performance.now();
+      if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
+      // Duże wraki jako przeszkody lotu NPC (src/ai/aiWreckIndex.js) — osobny indeks, nie siatka AI.
+      // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze.
+      if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks);
+      window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
+      // Koordynator bitewny: sloty linii walki + flankowania dla capitali
+      // (throttling wewnątrz — pełny rebuild co ~0.45s).
+      if (window.updateFleetCoordinator) {
+        const tCoord0 = performance.now();
+        window.updateFleetCoordinator(npcs, ship, brainDt);
+        window.__aiCoordMs = (window.__aiCoordMs || 0) + (performance.now() - tCoord0);
+      }
+      return layoutChanged;
+    }
+
+    // Mózg NPC (takt 20 Hz, kubełek fazowy) — jedno wywołanie z licznikami PerfHUD / AILiveDebug.
+    function runNpcBrain(npc, brainDt, aiDbg) {
+      const tAi0 = performance.now();
+      npc.ai(brainDt);
+      const aiMs = performance.now() - tAi0;
+      if (npc.friendly) window.__aiNpcFriendlyBrainMs = (window.__aiNpcFriendlyBrainMs || 0) + aiMs;
+      else window.__aiNpcEnemyBrainMs = (window.__aiNpcEnemyBrainMs || 0) + aiMs;
+      if (aiDbg?.enabled) {
+        aiDbg.record('npcBrain', aiMs);
+        const role = npc.isPirate
+          ? `pirate:${npc.type || 'npc'}`
+          : npc.friendly
+            ? `friendly:${npc.type || 'npc'}`
+            : `npc:${npc.type || 'npc'}`;
+        aiDbg.record(role, aiMs);
+      }
+      return aiMs;
+    }
+
+    // brainTick: numer kroku fizyki, który liczy npcStep — mózg policzony już dla niego w klatce bez kroku
+    // (`npc.__brainTick === brainTick`, blok „AI W KLATKACH BEZ KROKU”) nie liczy się drugi raz.
+    function npcStep(dt, aiDbg = null, runAiMaintenance = true, brainDt = dt, brainPhase = 0, brainPhaseCount = 1, brainTick = -1) {
       const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
       const frameNorm = dt / BASE_FRAME_DT;
       const phaseCount = Math.max(1, brainPhaseCount | 0);
       const phase = Math.max(0, brainPhase | 0) % phaseCount;
       let layoutChanged = false;
-      if (runAiMaintenance) {
-        layoutChanged = pollNpcEditorLayoutCache(brainDt);
-        // Odroczone starty myśliwców z hangarów NPC — dopisz do npcs PRZED budową
-        // grida i pętlą AI (spawn w trakcie iteracji npcs[] byłby ryzykowny).
-        flushCarrierSpawns(brainDt);
-        // Build AI spatial grid ONCE per 20 Hz cycle for all phased AI queries
-        // (separation, weapon scan, target pick, dogfight neighbors).
-        // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
-        const tAiGrid0 = performance.now();
-        if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
-        // Duże wraki jako przeszkody lotu NPC (src/ai/aiWreckIndex.js) — osobny indeks, nie siatka AI.
-        // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze.
-        if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks);
-        window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
-        // Koordynator bitewny: sloty linii walki + flankowania dla capitali
-        // (throttling wewnątrz — pełny rebuild co ~0.45s).
-        if (window.updateFleetCoordinator) {
-          const tCoord0 = performance.now();
-          window.updateFleetCoordinator(npcs, ship, brainDt);
-          window.__aiCoordMs = (window.__aiCoordMs || 0) + (performance.now() - tCoord0);
-        }
-      }
+      if (runAiMaintenance) layoutChanged = npcAiMaintenance(brainDt);
       let measuredAiMs = 0;
       for (const npc of npcs) {
         if (runAiMaintenance && (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version)) {
@@ -24730,22 +24794,9 @@
 
           // 2. AI — stabilny kubełek fazowy; każdy NPC trafia tu raz na 6 ticków.
           const npcBrainDue = phaseCount === 1 || (sepUid(npc) % phaseCount) === phase;
-          if (npcBrainDue && npc.ai) {
-            const tAi0 = performance.now();
-            npc.ai(brainDt);
-            const aiMs = performance.now() - tAi0;
-            measuredAiMs += aiMs;
-            if (npc.friendly) window.__aiNpcFriendlyBrainMs = (window.__aiNpcFriendlyBrainMs || 0) + aiMs;
-            else window.__aiNpcEnemyBrainMs = (window.__aiNpcEnemyBrainMs || 0) + aiMs;
-            if (aiDbg?.enabled) {
-              aiDbg.record('npcBrain', aiMs);
-              const role = npc.isPirate
-                ? `pirate:${npc.type || 'npc'}`
-                : npc.friendly
-                  ? `friendly:${npc.type || 'npc'}`
-                  : `npc:${npc.type || 'npc'}`;
-              aiDbg.record(role, aiMs);
-            }
+          if (npcBrainDue && npc.ai && !(brainTick > 0 && npc.__brainTick === brainTick)) {
+            measuredAiMs += runNpcBrain(npc, brainDt, aiDbg);
+            if (brainTick > 0) _aiOff.inlN++;
           }
 
           if (npc.__npcFlightIntegrated) {
@@ -25781,159 +25832,21 @@
 
     // Czas kroków lotu rakiet w tej klatce (PerfHUD rocketsTime — sumowany w loop()).
     let _rocketStepMs = 0;
-    function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
-      const tPhysics0 = performance.now();
-      PerfHUD.markPhysicsStep();
-      // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
-      ServiceTugGame.restorePose();
-      let tPhysSection0 = performance.now();
-      const tPreAiTotal0 = tPhysSection0;
-      let tPreSection0 = tPhysSection0;
-      updateCameraTarget(dt);
+    // Warstwa informacyjna raz na klatkę (nie fizyka): skan pod kursorem, lista namiarów, UI skanera i radaru, fale
+    // skanu, drony zwiadu, czujniki i mgła wojny, CIC. Dawniej w pierwszym kroku klatki — od etapu 0 audytu fizyki
+    // (docs/AUDYT-fizyka-worker-2026-10-17.md § 6 E) w pierwszej klatce BEZ kroku po nim (loop(), blok „AI W KLATKACH
+    // BEZ KROKU”); bez wolnej klatki (monitor 60 Hz) — przed krokami następnej klatki. `frameLogicDt` — czas gry
+    // od poprzedniego wywołania.
+    // Stan UI stacji (wejście w terminal, przenikanie panelu) i infrastruktury (edytor, postęp budowy, gospodarka
+    // budynków) — czas gry `dt` od poprzedniego wywołania (w kroku: dt kroku; odłożone: suma kroków).
+    function stepStationUiState(dt) {
       updateStationUIState(dt);
       InfrastructureUI.updateEditorState(dt);
       InfrastructureUI.update(dt);
-      if (trafficV2) {
-        // Ruch v2: gospodarka i vany żyją w workerze (czas idzie z pętli, razem
-        // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
-        syncTrafficV2Capacities(dt);
-      } else {
-        updateStationEconomies(dt);
-        updateCargoFleet(dt);
-      }
-      updateSalvage(dt);
-      if (window.updateInfrastructureAnimations) {
-        window.updateInfrastructureAnimations(dt);
-      }
-      // czas gry
-      gameTime = (gameTime + dt * TIME_SCALE) % (24 * 3600);
-      publishGameState({ gameTime });
-      bridgeSimTime += dt;
-      // aktualizacja orbit planet i stacji
-      for (const pl of planets) {
-        pl.angle += pl.speed * dt * TIME_SCALE;
-        const R = pl.devOrbitOverrideR ?? pl.orbitRadius ?? pl.orbit?.radius ?? pl.orbitR ?? BASE_ORBIT;
-        if ('orbitRadius' in pl) pl.orbitRadius = R;
-        if (pl.orbit && 'radius' in pl.orbit) pl.orbit.radius = R;
-        if ('orbitR' in pl) pl.orbitR = R;
-        pl.x = SUN.x + Math.cos(pl.angle) * R;
-        pl.y = SUN.y + Math.sin(pl.angle) * R;
-      }
-      for (const st of stations) {
-        if (st.static) continue;
-        st.angle += st.speed * dt * TIME_SCALE;
-        st.x = st.planet.x + Math.cos(st.angle) * st.orbitRadius;
-        st.y = st.planet.y + Math.sin(st.angle) * st.orbitRadius;
-      }
-      for (const st of stations) {
-        if (!st.warpGate) continue;
-        const off = st.warpGate.offset;
-        const ox = off && typeof off.x === 'number' ? off.x : 0;
-        const oy = off && typeof off.y === 'number' ? off.y : 0;
-        st.warpGate.x = st.x + ox;
-        st.warpGate.y = st.y + oy;
-      }
-      refreshWarpRoutes(warpRoutes);
-      InfrastructureUI.syncWorldPositions();
-      for (const st of stations) {
-        if (!st.shield) continue;
-        if (st.shield.regenTimer > 0) {
-          st.shield.regenTimer = Math.max(0, st.shield.regenTimer - dt);
-        } else {
-          st.shield.val = clamp(st.shield.val + st.shield.regenRate * dt, 0, st.shield.max);
-        }
-      }
-      for (const st of stations) {
-        if (st.noScale) continue;   // suchy dok piratów: wymiary z układu bryły, nie ze skali stacji
-        if (st.baseR == null) st.baseR = st.r;
-        const scale = stationScaleFor(st);
-        st.r = (st.baseR || st.r) * scale;
-      }
-      updateZoneState(dt);
-      updateBeltFamilyZone(dt);
-      ship.shadowFactor = 0;
-      ship.sunExposure = 1;
-      const solarExposureFactor = 1;
-      if (boost.state === 'active' && (warp.state !== 'idle' || warp.exitRamp?.active)) {
-        boost.state = 'idle';
-      }
-      if (typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
-        warpBrakeTimer -= dt;
-      }
-      // regen paliwa gdy nie warpuje
-      if (warp.state !== 'active') {
-        warp.fuel = clamp(warp.fuel + warp.regenRate * solarExposureFactor * dt, 0, warp.fuelMax);
-        if (DevFlags.unlimitedWarp) warp.fuel = warp.fuelMax;
-        warp.entryProgress = 0;
-      }
-      
-      
-      let boostActive = boost.state === 'active';
-      if (boost.state === 'active') {
-        boost.fuel = clamp(boost.fuel - boost.consumeRate * dt, 0, boost.fuelMax);
-        if (boost.fuel <= 0) {
-          boost.state = 'idle';
-          boostActive = false;
-        } else {
-          boostActive = true;
-        }
-      } else {
-        boostActive = false;
-        if (boost.effectTime <= 0) {
-          boost.fuel = clamp(boost.fuel + boost.regenRate * solarExposureFactor * dt, 0, boost.fuelMax);
-        }
-      }
-      if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
-      // Dopalacz podnosi limit regulatora napędu (po puszczeniu okręt wraca do limitu trybu hamowaniem regulatora).
-      driveState.boostLimit = boostActive ? driveBoostSpeed(driveState, shipModes.stance === 'cruise') : 0;
+    }
 
-      PerfHUD.addTiming('worldZoneTime', performance.now() - tPreSection0);
-      tPreSection0 = performance.now();
-
-      updatePlayerAttackCommand(dt);
-
-      // rail queue/cd
-      rail.cd[0] = Math.max(0, rail.cd[0] - dt);
-      rail.cd[1] = Math.max(0, rail.cd[1] - dt);
-      const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
-      // Kierowanie ogniem (src/game/fireControl.js): wieże na auto, grupa w ręku pod LPM.
-      // Dawna kolejka salw `rail` i przełączniki auto-fire nie biorą udziału (sterowanie klasyczne usunięte).
-      rail.queue.length = 0;
-      mainAutoFire = specialAutoFire = rocketAutoFire = false;
-      // fcTrigger.pad (RT pada) ustawia pumpInput raz na klatkę — warstwa wejścia, kontekst gry.
-      stepPlayerFireControl(dt);
-      if (specialMissileAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
-        tryFireSpecialMissiles();
-      }
-      railTimer = (requiredBarrels > 1) ? Math.min(rail.cd[0], rail.cd[1]) : rail.cd[0];
-
-      ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
-      updateSpecialWeaponCooldowns(dt);
-      if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
-      else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * stanceTune(shipModes).shieldRegen * solarExposureFactor * dt, 0, ship.shield.max);
-      updateShieldFx(ship, dt);
-      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
-        updateShieldFx(player2Ship, dt);
-        // P2 weapon controller update — handles main guns, missiles, specials
-        if (p2WeaponCtrl) p2WeaponCtrl.update(dt);
-      }
-      rocketCooldown = Math.max(0, rocketCooldown - dt);
-      for (const loadout of (Game.player.weapons?.[HP.MISSILE] || [])) {
-        const hp = loadout?.hp;
-        if (hp && typeof hp.missileCd === 'number') hp.missileCd = Math.max(0, hp.missileCd - dt);
-      }
-      // mouse world position
+    function stepFrameInfo(frameLogicDt) {
       const mouseWorld = screenToWorld(mouse.x, mouse.y);
-      updateAgilityLogic(dt, mouseWorld);
-      const hasMissilesEquipped = (Game.player.weapons?.[HP.MISSILE]?.length || 0) > 0;
-
-      PerfHUD.addTiming('playerSystemsTime', performance.now() - tPreSection0);
-      tPreSection0 = performance.now();
-
-      // Skan pod kursorem, fale radaru, drony, sensory i CIC — to warstwa
-      // informacyjna, nie fizyka. Odświeżana raz na klatkę; wcześniej CIC
-      // przeliczał się ~2.9× na klatkę (0.68 ms zamiast 0.24 ms).
-      if (runFrameLogic) {
       // hover scanning
       let hover = null;
       let hoverType = null;
@@ -26122,7 +26035,160 @@
 
       // === CIC UPDATE ===
       CICDisplay.update(frameLogicDt, ship, npcs, stations, SensorSystem);
-      } // koniec bloku runFrameLogic (skan/sensory/CIC)
+    } // koniec stepFrameInfo (skan/sensory/CIC)
+
+    function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1, brainTick = -1, aiMaintDone = false, frameInfoDeferred = false) {
+      const tPhysics0 = performance.now();
+      PerfHUD.markPhysicsStep();
+      // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
+      ServiceTugGame.restorePose();
+      let tPhysSection0 = performance.now();
+      const tPreAiTotal0 = tPhysSection0;
+      let tPreSection0 = tPhysSection0;
+      updateCameraTarget(dt);
+      // Stan UI stacji i infrastruktury (UI, postęp budowy) — z warstwą informacyjną w klatce bez kroku (stepFrameInfo).
+      if (!frameInfoDeferred) stepStationUiState(dt);
+      if (trafficV2) {
+        // Ruch v2: gospodarka i vany żyją w workerze (czas idzie z pętli, razem
+        // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
+        syncTrafficV2Capacities(dt);
+      } else {
+        updateStationEconomies(dt);
+        updateCargoFleet(dt);
+      }
+      updateSalvage(dt);
+      if (window.updateInfrastructureAnimations) {
+        window.updateInfrastructureAnimations(dt);
+      }
+      // czas gry
+      gameTime = (gameTime + dt * TIME_SCALE) % (24 * 3600);
+      publishGameState({ gameTime });
+      bridgeSimTime += dt;
+      // aktualizacja orbit planet i stacji
+      for (const pl of planets) {
+        pl.angle += pl.speed * dt * TIME_SCALE;
+        const R = pl.devOrbitOverrideR ?? pl.orbitRadius ?? pl.orbit?.radius ?? pl.orbitR ?? BASE_ORBIT;
+        if ('orbitRadius' in pl) pl.orbitRadius = R;
+        if (pl.orbit && 'radius' in pl.orbit) pl.orbit.radius = R;
+        if ('orbitR' in pl) pl.orbitR = R;
+        pl.x = SUN.x + Math.cos(pl.angle) * R;
+        pl.y = SUN.y + Math.sin(pl.angle) * R;
+      }
+      for (const st of stations) {
+        if (st.static) continue;
+        st.angle += st.speed * dt * TIME_SCALE;
+        st.x = st.planet.x + Math.cos(st.angle) * st.orbitRadius;
+        st.y = st.planet.y + Math.sin(st.angle) * st.orbitRadius;
+      }
+      for (const st of stations) {
+        if (!st.warpGate) continue;
+        const off = st.warpGate.offset;
+        const ox = off && typeof off.x === 'number' ? off.x : 0;
+        const oy = off && typeof off.y === 'number' ? off.y : 0;
+        st.warpGate.x = st.x + ox;
+        st.warpGate.y = st.y + oy;
+      }
+      refreshWarpRoutes(warpRoutes);
+      InfrastructureUI.syncWorldPositions();
+      for (const st of stations) {
+        if (!st.shield) continue;
+        if (st.shield.regenTimer > 0) {
+          st.shield.regenTimer = Math.max(0, st.shield.regenTimer - dt);
+        } else {
+          st.shield.val = clamp(st.shield.val + st.shield.regenRate * dt, 0, st.shield.max);
+        }
+      }
+      for (const st of stations) {
+        if (st.noScale) continue;   // suchy dok piratów: wymiary z układu bryły, nie ze skali stacji
+        if (st.baseR == null) st.baseR = st.r;
+        const scale = stationScaleFor(st);
+        st.r = (st.baseR || st.r) * scale;
+      }
+      updateZoneState(dt);
+      updateBeltFamilyZone(dt);
+      ship.shadowFactor = 0;
+      ship.sunExposure = 1;
+      const solarExposureFactor = 1;
+      if (boost.state === 'active' && (warp.state !== 'idle' || warp.exitRamp?.active)) {
+        boost.state = 'idle';
+      }
+      if (typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
+        warpBrakeTimer -= dt;
+      }
+      // regen paliwa gdy nie warpuje
+      if (warp.state !== 'active') {
+        warp.fuel = clamp(warp.fuel + warp.regenRate * solarExposureFactor * dt, 0, warp.fuelMax);
+        if (DevFlags.unlimitedWarp) warp.fuel = warp.fuelMax;
+        warp.entryProgress = 0;
+      }
+      
+      
+      let boostActive = boost.state === 'active';
+      if (boost.state === 'active') {
+        boost.fuel = clamp(boost.fuel - boost.consumeRate * dt, 0, boost.fuelMax);
+        if (boost.fuel <= 0) {
+          boost.state = 'idle';
+          boostActive = false;
+        } else {
+          boostActive = true;
+        }
+      } else {
+        boostActive = false;
+        if (boost.effectTime <= 0) {
+          boost.fuel = clamp(boost.fuel + boost.regenRate * solarExposureFactor * dt, 0, boost.fuelMax);
+        }
+      }
+      if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
+      // Dopalacz podnosi limit regulatora napędu (po puszczeniu okręt wraca do limitu trybu hamowaniem regulatora).
+      driveState.boostLimit = boostActive ? driveBoostSpeed(driveState, shipModes.stance === 'cruise') : 0;
+
+      PerfHUD.addTiming('worldZoneTime', performance.now() - tPreSection0);
+      tPreSection0 = performance.now();
+
+      updatePlayerAttackCommand(dt);
+
+      // rail queue/cd
+      rail.cd[0] = Math.max(0, rail.cd[0] - dt);
+      rail.cd[1] = Math.max(0, rail.cd[1] - dt);
+      const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
+      // Kierowanie ogniem (src/game/fireControl.js): wieże na auto, grupa w ręku pod LPM.
+      // Dawna kolejka salw `rail` i przełączniki auto-fire nie biorą udziału (sterowanie klasyczne usunięte).
+      rail.queue.length = 0;
+      mainAutoFire = specialAutoFire = rocketAutoFire = false;
+      // fcTrigger.pad (RT pada) ustawia pumpInput raz na klatkę — warstwa wejścia, kontekst gry.
+      stepPlayerFireControl(dt);
+      if (specialMissileAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
+        tryFireSpecialMissiles();
+      }
+      railTimer = (requiredBarrels > 1) ? Math.min(rail.cd[0], rail.cd[1]) : rail.cd[0];
+
+      ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
+      updateSpecialWeaponCooldowns(dt);
+      if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
+      else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * stanceTune(shipModes).shieldRegen * solarExposureFactor * dt, 0, ship.shield.max);
+      updateShieldFx(ship, dt);
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        updateShieldFx(player2Ship, dt);
+        // P2 weapon controller update — handles main guns, missiles, specials
+        if (p2WeaponCtrl) p2WeaponCtrl.update(dt);
+      }
+      rocketCooldown = Math.max(0, rocketCooldown - dt);
+      for (const loadout of (Game.player.weapons?.[HP.MISSILE] || [])) {
+        const hp = loadout?.hp;
+        if (hp && typeof hp.missileCd === 'number') hp.missileCd = Math.max(0, hp.missileCd - dt);
+      }
+      // mouse world position
+      const mouseWorld = screenToWorld(mouse.x, mouse.y);
+      updateAgilityLogic(dt, mouseWorld);
+      const hasMissilesEquipped = (Game.player.weapons?.[HP.MISSILE]?.length || 0) > 0;
+
+      PerfHUD.addTiming('playerSystemsTime', performance.now() - tPreSection0);
+      tPreSection0 = performance.now();
+
+      // Skan pod kursorem, fale radaru, drony, sensory i CIC — to warstwa
+      // informacyjna, nie fizyka. Odświeżana raz na klatkę; wcześniej CIC
+      // przeliczał się ~2.9× na klatkę (0.68 ms zamiast 0.24 ms).
+      if (runFrameLogic && !frameInfoDeferred) stepFrameInfo(frameLogicDt);
 
       PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
@@ -26645,20 +26711,7 @@
           else p2.shield.val = clamp(p2.shield.val + (p2.shield.regenRate || 150) * dt, 0, p2.shield.max);
         }
 
-        // Update camera2
-        if (camera2) {
-          camera2.x = p2.pos.x;
-          camera2.y = p2.pos.y;
-          camera2.targetX = p2.pos.x;
-          camera2.targetY = p2.pos.y;
-          // Independent zoom for P2 — smooth interpolation
-          const zoomLerp2 = 1 - Math.exp(-8 * dt);
-          camera2.zoom += (camera2.targetZoom - camera2.zoom) * zoomLerp2;
-          if (camera2.shakeTime > 0) {
-            camera2.shakeTime -= dt;
-            if (camera2.shakeTime <= 0) camera2.shakeMag = 0;
-          }
-        }
+        // Kamera gracza 2 — raz na klatkę w loop() z pozą interpolowaną (updateCamera2), nie w kroku.
       }
       // ====== END PLAYER 2 PHYSICS ======
 
@@ -26783,7 +26836,9 @@
       // wspólny, deterministyczny tick AI 20 Hz.
       let aiSquadsMs = 0;
       let aiSupportWingMs = 0;
-      if (runAiLogic) {
+      // Takt AI policzony już w klatce bez kroku (blok „AI W KLATKACH BEZ KROKU”) — eskadry, kolejka startów,
+      // skrzydło i utrzymanie npcStep tu się nie powtarzają.
+      if (runAiLogic && !aiMaintDone) {
         SQUADS.forEach(s => s.update());
         aiSquadsMs = performance.now() - tAiSection0;
         PerfHUD.addTiming('aiSquadsTime', aiSquadsMs);
@@ -26812,7 +26867,7 @@
       // (albo holownik pod graczem w skoku) po nim — w tym samym podkroku, bez opóźnienia o krok.
       ServiceTugGame.step(dt);
       ScoutBay.step(dt);
-      npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runAiLogic, aiLogicDt, aiBrainPhase, aiBrainPhaseCount);
+      _inlineBrainMs = npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runAiLogic && !aiMaintDone, aiLogicDt, aiBrainPhase, aiBrainPhaseCount, brainTick);
       // Bomby lotnicze: spadanie z celem (poza po ruchu NPC tego kroku) i wybuchy na pancerzu.
       FighterBombs.step(dt);
       ServiceTugGame.afterNpc(dt);
@@ -26959,15 +27014,14 @@
 
       tPhysSection0 = performance.now();
       // Stany integralności zmieniają się wolno — nie muszą chodzić w 120 Hz.
-      // Co 3. substep z zakumulowanym dt (opóźnienie detekcji ≤ ~25 ms).
+      // Co 3. substep z zakumulowanym dt (opóźnienie detekcji ≤ ~25 ms). Od etapu 0 audytu fizyki — w klatce bez kroku
+      // po tym kroku (loop(), blok „AI W KLATKACH BEZ KROKU”), na stanie z jego końca; bez wolnej klatki — przed
+      // krokami następnej.
       _integrityDtAcc += dt;
       _integrityTick++;
       if (_integrityTick % 3 === 0) {
-        updateHardpointIntegrity(_integrityDtAcc, dynamicDestructibles);
-        enforceNpcHexIntegrityBalance();
-        // Dym zgniotu po pęknięciach zbiorników i po sufitach punktów (martwy okręt ma wybuch śmierci).
-        stepCrushSmoke();
-        _integrityDtAcc = 0;
+        if (frameInfoDeferred) _integrityPending = true;
+        else runIntegrityPass(dynamicDestructibles);
       }
       PerfHUD.addTiming('hardpointTime', performance.now() - tPhysSection0);
 
@@ -28040,6 +28094,111 @@
     PerfHUD.setPhysicsHz(PHYS_HZ);
     window.__aiDecisionHz = aiDecisionCadence.hz;
     window.__aiDecisionTickId = aiDecisionTickId;
+
+    // ===== AI W KLATKACH BEZ KROKU (etap 0 audytu fizyki, docs/AUDYT-fizyka-worker-2026-10-17.md § 6 E) =====
+    // Krok fizyki 60 Hz wpada w co ~4. klatkę monitora 240 Hz i dokłada do niej cały koszt. Mózgi NPC (takt 20 Hz,
+    // 1/3 okrętów na krok) piszą tylko ZAMIARY (intencja lotu, cel, wieże, strzały), które czyta całkowanie w kolejnych
+    // krokach — więc mózgi kubełka NASTĘPNEGO kroku (i utrzymanie taktu: eskadry, starty z hangarów, skrzydło, siatka
+    // AI, dowódca floty) liczą się w klatkach BEZ kroku, z budżetem czasu na klatkę, na stanie z końca ostatniego
+    // kroku. Czego nie zdążą (albo bez wolnej klatki — monitor 60 Hz), liczy krok jak dawniej (`npc.__brainTick`).
+    // Tylko okręty z modelem lotu i myśliwce z pilotem: inne mózgi potrafią całkować ruch same (npcFlight.js).
+    // A/B: `?aiPoza=0` albo `window.AiOffStepTune.enabled = false`.
+    const AiOffStepTune = window.AiOffStepTune = {
+      enabled: !/[?&]aiPoza=0(&|$)/.test(location.search),
+      // Budżet klatki bez kroku: praca taktu (średnia z poprzednich, EMA) rozłożona równo na wolne klatki do następnego
+      // kroku, z zapasem; w granicach [minMs, maxMs]. Resztę liczy krok.
+      minMs: 0.3,
+      maxMs: 2.0,
+      spread: 1.25,
+      // Sufit z zapasu klatki: okres klatki × frameFill minus średnia reszta pracy klatki bez kroku (bez tej pracy) —
+      // praca poza krokiem nie wypycha wolnej klatki za vsync.
+      frameFill: 0.9,
+    };
+    // offN / inlN — liczniki mózgów policzonych poza krokiem / dokończonych w kroku (diagnostyka, narzędzia).
+    const _aiOff = { tick: 0, phase: -1, due: false, maintDone: false, cursor: 0, done: true, workMs: 0, estMs: 1, frameMs: 1000 / 60, offN: 0, inlN: 0, restMs: 2, offMs: 0 };
+    // Budżet tej klatki bez kroku [ms]; `frameDt` — czas klatki [s], `accLeft` — czas gry do następnego kroku [s].
+    // Okres klatki (EMA, ms) — co klatkę z loop().
+    function aiOffStepNoteFrame(frameDt) {
+      _aiOff.frameMs += (Math.min(50, frameDt * 1000) - _aiOff.frameMs) * 0.1;
+    }
+    let _statusUiSkipped = false;
+    function aiOffStepBudget(frameDt, accLeft) {
+      const o = _aiOff, T = AiOffStepTune;
+      const framesLeft = Math.max(1, Math.floor((accLeft * 1000) / Math.max(1, o.frameMs) + 0.5));
+      const want = Math.max(0, o.estMs - o.workMs) * T.spread / framesLeft;
+      const cap = Math.min(T.maxMs, Math.max(T.minMs, o.frameMs * T.frameFill - o.restMs));
+      return want < T.minMs ? T.minMs : (want > cap ? cap : want);
+    }
+    // Koniec klatki bez kroku: reszta jej pracy (bez pracy poza krokiem) — średnia do sufitu budżetu.
+    function aiOffStepNoteRest(frameMs) {
+      const o = _aiOff;
+      o.restMs += (Math.max(0, frameMs - o.offMs) - o.restMs) * 0.1;
+      o.offMs = 0;
+    }
+    let _frameInfoDt = 0;   // czas gry kroków, których warstwy informacyjnej (stepFrameInfo) jeszcze nie policzono
+    window.__aiOffStep = _aiOff;
+    function aiOffStepEligible(npc, phase, count) {
+      return !!(npc && npc.mission && !npc.dead && npc.ai && !npc.command
+        && !(npc.state === 'warping_in' && npc.warpData)
+        && (count === 1 || (sepUid(npc) % count) === phase)
+        && (npc.fighter || usesShipFlightModel(npc))
+        && !isBridgeHulk(npc));
+    }
+    // Praca decyzyjna dla kroku `tick` (następnego) do chwili `deadline` (performance.now()).
+    function runAiOffStep(tick, deadline) {
+      const o = _aiOff;
+      if (o.tick !== tick) {
+        o.tick = tick;
+        o.phase = aiDecisionCadence.phase(tick);
+        o.due = aiDecisionCadence.isDue(tick);
+        o.maintDone = !o.due;
+        o.cursor = 0;
+        o.done = false;
+        o.workMs = 0;
+      }
+      if (o.done) return;
+      const t0 = performance.now();
+      runAiOffStepWork(o, tick, deadline);
+      o.workMs += performance.now() - t0;
+    }
+    // Po kroku `tick`: praca taktu = część poza krokiem + mózgi, które dokończył krok (`inlineMs`) — średnia do budżetu
+    // następnych klatek bez kroku.
+    let _inlineBrainMs = 0;
+    function aiOffStepNoteStep(tick, inlineMs) {
+      const o = _aiOff;
+      if (o.tick !== tick) return;
+      o.estMs += (o.workMs + inlineMs - o.estMs) * 0.25;
+    }
+    function runAiOffStepWork(o, tick, deadline) {
+      const brainDt = aiDecisionCadence.dt;
+      const count = aiDecisionCadence.intervalTicks;
+      if (!o.maintDone) {
+        // Takt decyzji zaczyna się tu, nie w kroku: pamięć separacji (`__sepDecisionTick`) i zegar myśliwców
+        // (fighterAI.js) czytają numer taktu — mózgi kubełka 0 muszą widzieć już nowy.
+        aiDecisionTickId++;
+        window.__aiDecisionTickId = aiDecisionTickId;
+        PerfHUD.markAiDecisionTick();
+        // Kolejność jak w kroku: eskadry → kolejka startów z hangarów → skrzydło → utrzymanie npcStep.
+        SQUADS.forEach(s => s.update());
+        updateFighterLaunchQueue(brainDt);
+        updateSupportWing(brainDt);
+        if (npcAiMaintenance(brainDt)) {
+          for (let i = 0; i < npcs.length; i++) applyEditorLayoutToNpc(npcs[i]);
+        }
+        o.maintDone = true;
+        if (performance.now() >= deadline) return;
+      }
+      const dbg = AILiveDebug.enabled ? AILiveDebug : null;
+      while (o.cursor < npcs.length) {
+        const npc = npcs[o.cursor++];
+        if (!aiOffStepEligible(npc, o.phase, count) || npc.__brainTick === tick) continue;
+        runNpcBrain(npc, brainDt, dbg);
+        npc.__brainTick = tick;
+        o.offN++;
+        if (performance.now() >= deadline) return;
+      }
+      o.done = true;
+    }
     let acc = 0;
     let vfxTime = 0;
     let prevState = null;
@@ -28196,6 +28355,15 @@
       stepTorpedoMode();
       // Przebicia tarcz z kanału zwrotnego (RW-29): rekordy zapisane przez render od poprzedniej klatki → flagi encji.
       ShieldBreach.refresh();
+      // Warstwa informacyjna (skan pod kursorem, czujniki, CIC — stepFrameInfo) w klatce bez kroku po krokach; nie było
+      // takiej klatki od poprzednich kroków (monitor 60 Hz) — tu, przed krokami, jak dawniej w pierwszym kroku.
+      const frameInfoDeferred = AiOffStepTune.enabled;
+      if (plannedSteps > 0) runPendingIntegrity();
+      if (frameInfoDeferred && plannedSteps > 0 && _frameInfoDt > 0) {
+        stepStationUiState(_frameInfoDt);
+        stepFrameInfo(_frameInfoDt);
+        _frameInfoDt = 0;
+      }
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
@@ -28203,7 +28371,10 @@
         const nextPhysicsTickId = physicsTickId + 1;
         const aiBrainPhase = aiDecisionCadence.phase(nextPhysicsTickId);
         const runAiLogic = aiDecisionCadence.isDue(nextPhysicsTickId);
-        if (runAiLogic) {
+        // Praca decyzyjna tego kroku policzona w klatkach bez kroku (blok „AI W KLATKACH BEZ KROKU”) — resztę liczy krok;
+        // takt decyzji zaczęty tam już się nie liczy drugi raz.
+        const aiPre = _aiOff.tick === nextPhysicsTickId;
+        if (runAiLogic && !(aiPre && _aiOff.maintDone)) {
           aiDecisionTickId++;
           window.__aiDecisionTickId = aiDecisionTickId;
           PerfHUD.markAiDecisionTick();
@@ -28215,10 +28386,29 @@
           runAiLogic,
           aiDecisionCadence.dt,
           aiBrainPhase,
-          aiDecisionCadence.intervalTicks
+          aiDecisionCadence.intervalTicks,
+          nextPhysicsTickId,
+          aiPre && _aiOff.maintDone,
+          frameInfoDeferred
         );
+        if (aiPre) aiOffStepNoteStep(nextPhysicsTickId, _inlineBrainMs);
         physicsTickId = nextPhysicsTickId;
         acc -= PHYS_DT; steps++;
+      }
+      // Klatka bez kroku: warstwa informacyjna po krokach poprzedniej klatki i praca decyzyjna następnego kroku (mózgi
+      // AI kubełka, utrzymanie taktu) z budżetem.
+      if (frameInfoDeferred && steps > 0) _frameInfoDt += frameLogicDt;
+      if (steps === 0 && physicsTickId > 0 && AiOffStepTune.enabled) {
+        const tOff0 = performance.now();
+        runPendingIntegrity();
+        if (_frameInfoDt > 0) {
+          stepStationUiState(_frameInfoDt);
+          stepFrameInfo(_frameInfoDt);
+          _frameInfoDt = 0;
+        }
+        runAiOffStep(physicsTickId + 1, performance.now() + aiOffStepBudget(frame, PHYS_DT - acc));
+        _aiOff.offMs = performance.now() - tOff0;
+        PerfHUD.addTiming('offStepTime', _aiOff.offMs);
       }
       if (steps > 0 && physicsBridgeV2) {
         const pressure = Math.max(0, (PerfHUD.display?.frameP95 || 0) / 16.67 - 1);
@@ -28258,8 +28448,17 @@
       }
       updateCameraWarpKick(frame);
       updateCameraZoom(frame);
+      updateCamera2(alpha, frame);
       zoomIndicator.update(frame);
-      updatePlayerStatusUI();
+      // Kokpit (DOM, wejście radaru ~10 Hz): przy monitorze szybszym niż ~110 Hz klatka z krokiem fizyki ma najmniej
+      // zapasu do vsync — kokpit liczy następna klatka (bez kroku); dwie klatki z krokiem pod rząd — jak dawniej.
+      aiOffStepNoteFrame(frame);
+      if (steps > 0 && AiOffStepTune.enabled && _aiOff.frameMs < 9 && !_statusUiSkipped) {
+        _statusUiSkipped = true;
+      } else {
+        _statusUiSkipped = false;
+        updatePlayerStatusUI();
+      }
 
       // --- AUDIO UPDATE ---
       if (ship && ship.engineSound) {
@@ -28322,6 +28521,7 @@
       }
       const frameEndMs = performance.now();
       PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
+      if (steps === 0) aiOffStepNoteRest(frameEndMs - frameStartMs);
       PerfHUD.flush(frameEndMs);
       requestAnimationFrame(loop);
     }
@@ -29227,6 +29427,28 @@
 
     // ============== SPLIT SCREEN RENDER ==============
     let prevState2 = null;
+    // Kamera gracza 2 (podzielony ekran): raz na klatkę, przed render(), z pozy P2 interpolowanej między krokami
+    // fizyki (prevState2 → poza bieżąca, `alpha` jak u gracza 1) — dawniej w kroku z pozy z jego końca: przy monitorze
+    // szybszym niż krok tło widoku P2 stało 3–4 klatki i skakało (audyt fizyki 2026-10-17, § 5.1). Zoom i wstrząs
+    // w czasie klatki.
+    function updateCamera2(alpha, frameDt) {
+      if (!splitScreenMode || !camera2 || !player2Ship || player2Ship.destroyed) return;
+      const p2 = player2Ship;
+      const a = alpha > 0 ? (alpha < 1 ? alpha : 1) : 0;
+      const x = prevState2 ? prevState2.pos.x + (p2.pos.x - prevState2.pos.x) * a : p2.pos.x;
+      const y = prevState2 ? prevState2.pos.y + (p2.pos.y - prevState2.pos.y) * a : p2.pos.y;
+      camera2.x = x;
+      camera2.y = y;
+      camera2.targetX = x;
+      camera2.targetY = y;
+      // Independent zoom for P2 — smooth interpolation
+      const zoomLerp2 = 1 - Math.exp(-8 * frameDt);
+      camera2.zoom += (camera2.targetZoom - camera2.zoom) * zoomLerp2;
+      if (camera2.shakeTime > 0) {
+        camera2.shakeTime -= frameDt;
+        if (camera2.shakeTime <= 0) camera2.shakeMag = 0;
+      }
+    }
     function saveState2() {
       if (!player2Ship) return;
       if (!prevState2) prevState2 = { pos: { x: 0, y: 0 }, angle: 0 };

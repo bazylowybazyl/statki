@@ -209,6 +209,8 @@ const PERF_PANEL_HTML = `
     <div class="perf-bar" id="barHudNav" style="width:0%;background:#a3e635"></div>
   </div>
 
+  <div class="perf-row" title="Praca decyzyjna wyjęta z kroku fizyki do klatek bez kroku (mózgi AI, skan i czujniki, integralność) — ms na klatkę"><span class="perf-label">Poza krokiem</span><span class="perf-val" id="perfOffStep">--</span></div>
+
   <div class="perf-row perf-section-toggle" data-perf-toggle="render" role="button" tabindex="0"><span class="perf-label"><span class="perf-caret" data-perf-caret="render">-</span>Rysowanie</span><span class="perf-val" id="perfDraw">--</span></div>
   <div class="perf-bar-bg">
     <div class="perf-bar" id="barDraw" style="width:0%;background:#f4f"></div>
@@ -457,6 +459,7 @@ export const PerfHUD = {
       destructiblePrepTime: 0,
       hardpointTime: 0,
       hudNavTime: 0,
+      offStepTime: 0,
       worldZoneTime: 0,
       playerSystemsTime: 0,
       scanUiTime: 0,
@@ -558,6 +561,7 @@ export const PerfHUD = {
       hardpointPerStep: 0,
       hudNavTime: 0,
       hudNavPerStep: 0,
+      offStepTime: 0,
       worldZoneTime: 0,
       worldZonePerStep: 0,
       playerSystemsTime: 0,
@@ -657,7 +661,7 @@ export const PerfHUD = {
       'perfBulletNpcHit', 'perfBulletAsteroids', 'perfBulletRing',
       'perfBulletMiscHits', 'perfNpcFire', 'perfNpcFireScan',
       'perfNpcFireSpawn', 'perfDestructiblePrep',
-      'perfHardpoints', 'perfHudNav'
+      'perfHardpoints', 'perfHudNav', 'perfOffStep'
     ],
     ai: [
       'perfAiSquads', 'perfAiSupportWing', 'perfAiNpcStep',
@@ -718,6 +722,7 @@ export const PerfHUD = {
       destructiblePrep: document.getElementById('perfDestructiblePrep'),
       hardpoints: document.getElementById('perfHardpoints'),
       hudNav: document.getElementById('perfHudNav'),
+      offStep: document.getElementById('perfOffStep'),
       worldZone: document.getElementById('perfWorldZone'),
       playerSystems: document.getElementById('perfPlayerSystems'),
       scanUi: document.getElementById('perfScanUi'),
@@ -1099,6 +1104,7 @@ export const PerfHUD = {
     this.display.hardpointPerStep = this.accum.hardpointTime / Math.max(1, this.accum.physicsSteps);
     this.display.hudNavTime = this.accum.hudNavTime / frames;
     this.display.hudNavPerStep = this.accum.hudNavTime / Math.max(1, this.accum.physicsSteps);
+    this.display.offStepTime = this.accum.offStepTime / frames;
     this.display.worldZoneTime = this.accum.worldZoneTime / frames;
     this.display.worldZonePerStep = this.accum.worldZoneTime / Math.max(1, this.accum.physicsSteps);
     this.display.playerSystemsTime = this.accum.playerSystemsTime / frames;
@@ -1420,6 +1426,7 @@ export const PerfHUD = {
     setMsWithStep(e.destructiblePrep, d.destructiblePrepTime, d.destructiblePrepPerStep);
     setMsWithStep(e.hardpoints, d.hardpointTime, d.hardpointPerStep);
     setMsWithStep(e.hudNav, d.hudNavTime, d.hudNavPerStep);
+    if (e.offStep) e.offStep.textContent = `${d.offStepTime.toFixed(2)} ms`;
     setMs(e.draw, d.drawTime);
     setMs(e.renderPrep, d.renderPrepTime);
     setMs(e.render3dUpdate, d.render3dUpdateTime);
@@ -1648,6 +1655,7 @@ export const PerfHUD = {
     this.accum.destructiblePrepTime = 0;
     this.accum.hardpointTime = 0;
     this.accum.hudNavTime = 0;
+    this.accum.offStepTime = 0;
     this.accum.worldZoneTime = 0;
     this.accum.playerSystemsTime = 0;
     this.accum.scanUiTime = 0;

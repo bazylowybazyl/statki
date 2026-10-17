@@ -320,7 +320,7 @@ test('index.html: pęknięcie zbiornika w kroku integralności (gracz i okręty)
   const hp = sliceFunction(src, 'function updateHardpointIntegrity(');
   assert.match(hp, /if \(ship && !ship\.destroyed\) stepEntityFuelTankRupture\(ship\);/);
   assert.match(hp, /if \(entity\.fuelTank\) stepEntityFuelTankRupture\(entity\);/);
-  const iHp = src.indexOf('updateHardpointIntegrity(_integrityDtAcc, dynamicDestructibles);');
+  const iHp = src.indexOf('updateHardpointIntegrity(_integrityDtAcc, entities);');
   const iCap = src.indexOf('enforceNpcHexIntegrityBalance();', iHp);
   assert.ok(iHp > 0 && iCap > iHp && iCap - iHp < 200, 'pęknięcie przed sufitem punktów (śmierć w tym samym ticku nie dubluje wybuchu)');
   const step = sliceFunction(src, 'function stepEntityFuelTankRupture(');
