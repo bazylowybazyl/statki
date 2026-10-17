@@ -53,6 +53,8 @@ const WATKI_AB_POWT = Number(args.watkiPowt ?? 3), WATKI_AB_S = Number(args.watk
 // porównanie wariantów w osobnych przebiegach myli wariant z przebiegiem; tu oba warianty widzą tę samą fazę.
 // Wynik `wkAb`: wariant → rytm z jego okien (cała bitwa, bitwa < 30 s, bitwa ≥ 30 s — rzeź zaczyna się po ~40 s).
 const WK_AB = String(args.wkAb || '').split('|').filter(Boolean).map(kodZ);
+// --pgAb 'kodA|kodB' — to samo w stronie gry (razem z --wkAb: warianty parami po indeksie)
+const PG_AB = String(args.pgAb || '').split('|').filter(Boolean).map(kodZ);
 const WK_AB_OKRES = Number(args.wkAbOkres ?? 4), WK_AB_ROZBIEG = Number(args.wkAbRozbieg ?? 0.5);
 const SZER = Number(args.szer || 1920), WYS = Number(args.wys || 1080);
 // --wkStart (2026-10-17): kod w workerze renderu po starcie gry, przed spokojem (A/B przełączników Core3D w tym samym
@@ -254,11 +256,13 @@ try {
       snap: P ? { ents: P.stats.ents, bodies: P.stats.bodies, bodiesPacked: P.stats.bodiesPacked, nodes: P.stats.nodesPacked, grows: P.stats.layoutGrows } : null }; })()`;
   const tEnd = Date.now() + CZAS * 1000;
   const wkAbOkna = [];
-  if (WK_AB.length && wk.sid) {
+  const nAb = Math.max(wk.sid ? WK_AB.length : 0, PG_AB.length);
+  if (nAb > 1) {
     let i = 0, lastStan = Date.now();
     while (Date.now() < tEnd) {
-      const v = i % WK_AB.length;
-      await wkSend('Runtime.evaluate', { expression: WK_AB[v], awaitPromise: true, returnByValue: true }).catch(() => null);
+      const v = i % nAb;
+      if (PG_AB[v]) await ev(PG_AB[v]).catch(() => null);
+      if (WK_AB[v] && wk.sid) await wkSend('Runtime.evaluate', { expression: WK_AB[v], awaitPromise: true, returnByValue: true }).catch(() => null);
       const t0 = await ev('performance.now()');
       await sleep(WK_AB_OKRES * 1000);
       const t1 = await ev('performance.now()');

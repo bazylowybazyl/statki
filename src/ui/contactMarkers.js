@@ -7,7 +7,7 @@
 // Kontakty w kadrze (drawOnscreen): narożniki celownika i ten sam odczyt.
 
 import { RADAR_RGB, formatRadarDistance, radarClassCode } from './radar/radarConfig.js';
-import { drawRadarText, radarColor, stampRadarSymbol, stampRadarText, strokeRadarBrackets } from './radar/radarSymbols.js';
+import { drawRadarText, prepareRadarText, radarColor, stampRadarSymbol, stampRadarText, strokeRadarBrackets } from './radar/radarSymbols.js';
 
 const AWARENESS = { HIDDEN: 0, GHOST: 1, DETECTED: 2, TRACKED: 3 };
 
@@ -91,6 +91,20 @@ const _edgeBuckets = new Map();
 const _edgePt = { x: 0, y: 0 };
 const _scr = { x: 0, y: 0 };
 const _sym = { kind: 'ship', aff: 'hostile', rgb: null, s: 4, alpha: 1, fill: 0.25, dashed: false, capital: false, lw: 1.3, cls: '', rotation: 0, halo: 0, shape: null };
+// Znaczniki krawędzi klatki (dwa przebiegi: najpierw wszystkie przepieczenia stempli napisów, potem rysunek — atlas
+// stempli dostaje zmiany strony przed jej pierwszym rysunkiem w klatce: jedno zadanie rastra na stronę zamiast
+// kopii strony przy każdym przepieczeniu po rysunku; kolejność rysunku ta sama).
+const _edgeMarks = [];
+let _edgeMarksUsed = 0;
+function acquireEdgeMark() {
+  let r = _edgeMarks[_edgeMarksUsed];
+  if (!r) {
+    r = { c: null, ax: 0, ay: 0, angle: 0, rgb: '', alpha: 1, ix: 0, iy: 0, m: null, code: '', dist: '', place: 0, tx: 0, align: 'left' };
+    _edgeMarks[_edgeMarksUsed] = r;
+  }
+  _edgeMarksUsed++;
+  return r;
+}
 
 // Najpierw „żywe” kontakty, potem duchy; w obrębie — bliższe pierwsze.
 function compareOffscreenContacts(a, b) {
@@ -126,6 +140,13 @@ function contactCode(c, tracks, m = markOf(c.entity)) {
 }
 
 // Odczyt znacznika: kod (slot 0) albo odległość (slot 1) ze stempla w pamięci kontaktu; bez bytu — wprost.
+// Przepieczenie stempla odczytu przed rysunkiem (te same parametry co markText niżej — wtedy markText tylko rysuje).
+function markPrepare(m, slot, text, font, rgb, alpha, align, baseline) {
+  if (!m) return;
+  if (slot === 0) m.codeSt = prepareRadarText(m.codeSt, text, font, rgb, alpha, align, baseline);
+  else m.distSt = prepareRadarText(m.distSt, text, font, rgb, alpha, align, baseline);
+}
+
 function markText(ctx, m, slot, text, font, x, y, rgb, alpha, align, baseline) {
   if (!m) {
     ctx.font = font;
@@ -310,6 +331,7 @@ export const ContactMarkers = {
       const edgeBuckets = _edgeBuckets;
       edgeBuckets.clear();
       _bucketPoolUsed = 0;
+      _edgeMarksUsed = 0;
       let drawn = 0;
 
       for (let k = 0; k < offscreen.length; k++) {
@@ -342,36 +364,57 @@ export const ContactMarkers = {
         const ax = edgePt.x + (onTopBot ? i * MC.stackSpacingTopBot : 0);
         const ay = edgePt.y + (onTopBot ? 0 : i * MC.stackSpacing);
         const alpha = c.isGhost ? MC.ghostAlpha : 1;
-
-        drawEdgeCaret(ctx, ax, ay, angle, rgb, alpha, c.isCapital);
-
+        const r = acquireEdgeMark();
+        r.c = c; r.ax = ax; r.ay = ay; r.angle = angle; r.rgb = rgb; r.alpha = alpha;
         // Symbol śladu (jak na radarze) od strony środka ekranu, prosto (bez obrotu).
-        const ix = ax - Math.cos(angle) * 15;
-        const iy = ay - Math.sin(angle) * 15;
-        const o = _sym;
-        o.kind = c.isStation ? 'station' : 'ship'; o.rgb = rgb; o.s = c.isStation ? 4.6 : (c.isCapital ? 4.8 : 3.8);
-        o.alpha = alpha; o.fill = c.isGhost ? 0 : 0.25; o.dashed = c.isGhost; o.capital = c.isCapital;
-        stampRadarSymbol(ctx, ix, iy, o);
-
+        r.ix = ax - Math.cos(angle) * 15;
+        r.iy = ay - Math.sin(angle) * 15;
         // Odczyt w stronę środka ekranu: przy bocznej krawędzi obok symbolu, przy górnej / dolnej — pod / nad
         // nim (stos idzie wzdłuż krawędzi, odczyty obok siebie wchodziłyby na sąsiadów).
         // (stemple napisów w pamięci kontaktu; duch bez bytu — rysowany wprost)
         const m = markOf(c.entity);
-        const code = contactCode(c, tracks, m);
-        const dist = formatRadarDistance(c.dist);
+        r.m = m;
+        r.code = contactCode(c, tracks, m);
+        r.dist = formatRadarDistance(c.dist);
         if (onTop) {
-          markText(ctx, m, 0, code, MC.font, ix, iy + 8, rgb, alpha, 'center', 'top');
-          markText(ctx, m, 1, dist, MC.fontSmall, ix, iy + 19, RADAR_RGB.label, alpha * 0.9, 'center', 'top');
+          r.place = 0;
+          markPrepare(m, 0, r.code, MC.font, rgb, alpha, 'center', 'top');
+          markPrepare(m, 1, r.dist, MC.fontSmall, RADAR_RGB.label, alpha * 0.9, 'center', 'top');
         } else if (onBottom) {
-          markText(ctx, m, 0, code, MC.font, ix, iy - 19, rgb, alpha, 'center', 'bottom');
-          markText(ctx, m, 1, dist, MC.fontSmall, ix, iy - 8, RADAR_RGB.label, alpha * 0.9, 'center', 'bottom');
+          r.place = 1;
+          markPrepare(m, 0, r.code, MC.font, rgb, alpha, 'center', 'bottom');
+          markPrepare(m, 1, r.dist, MC.fontSmall, RADAR_RGB.label, alpha * 0.9, 'center', 'bottom');
         } else {
           const leftSide = ax < W / 2;
-          const tx = ix + (leftSide ? 9 : -9);
-          const align = leftSide ? 'left' : 'right';
-          markText(ctx, m, 0, code, MC.font, tx, iy - 1, rgb, alpha, align, 'bottom');
-          markText(ctx, m, 1, dist, MC.fontSmall, tx, iy + 1, RADAR_RGB.label, alpha * 0.9, align, 'top');
+          r.place = 2;
+          r.tx = r.ix + (leftSide ? 9 : -9);
+          r.align = leftSide ? 'left' : 'right';
+          markPrepare(m, 0, r.code, MC.font, rgb, alpha, r.align, 'bottom');
+          markPrepare(m, 1, r.dist, MC.fontSmall, RADAR_RGB.label, alpha * 0.9, r.align, 'top');
         }
+      }
+
+      // rysunek znaczników (kolejność jak dawniej: grot, symbol, kod, odległość)
+      for (let k = 0; k < _edgeMarksUsed; k++) {
+        const r = _edgeMarks[k];
+        const c = r.c;
+        const rgb = r.rgb, alpha = r.alpha, ix = r.ix, iy = r.iy, m = r.m;
+        drawEdgeCaret(ctx, r.ax, r.ay, r.angle, rgb, alpha, c.isCapital);
+        const o = _sym;
+        o.kind = c.isStation ? 'station' : 'ship'; o.rgb = rgb; o.s = c.isStation ? 4.6 : (c.isCapital ? 4.8 : 3.8);
+        o.alpha = alpha; o.fill = c.isGhost ? 0 : 0.25; o.dashed = c.isGhost; o.capital = c.isCapital;
+        stampRadarSymbol(ctx, ix, iy, o);
+        if (r.place === 0) {
+          markText(ctx, m, 0, r.code, MC.font, ix, iy + 8, rgb, alpha, 'center', 'top');
+          markText(ctx, m, 1, r.dist, MC.fontSmall, ix, iy + 19, RADAR_RGB.label, alpha * 0.9, 'center', 'top');
+        } else if (r.place === 1) {
+          markText(ctx, m, 0, r.code, MC.font, ix, iy - 19, rgb, alpha, 'center', 'bottom');
+          markText(ctx, m, 1, r.dist, MC.fontSmall, ix, iy - 8, RADAR_RGB.label, alpha * 0.9, 'center', 'bottom');
+        } else {
+          markText(ctx, m, 0, r.code, MC.font, r.tx, iy - 1, rgb, alpha, r.align, 'bottom');
+          markText(ctx, m, 1, r.dist, MC.fontSmall, r.tx, iy + 1, RADAR_RGB.label, alpha * 0.9, r.align, 'top');
+        }
+        r.c = null; r.m = null;
       }
 
       // Nadmiar przy krawędzi: licznik w miejscu następnego znacznika stosu.

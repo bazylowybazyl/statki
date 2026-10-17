@@ -29126,6 +29126,12 @@
       return s.x + r >= 0 && s.y + r >= 0 && s.x - r <= viewW && s.y - r <= viewH;
     }
 
+    // Kreska bramy warpa (środek x, y, pół długości dx, dy; grubość 2 px) zachodzi na kanwę gry.
+    function warpGateOnCanvas(x, y, dx, dy) {
+      const ax = Math.abs(dx) + 2, ay = Math.abs(dy) + 2;
+      return x + ax >= 0 && y + ay >= 0 && x - ax <= W && y - ay <= H;
+    }
+
     function drawTowRopes(ctx, cam) {
       if (TowSystem.size === 0) return;
       const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
@@ -30102,23 +30108,31 @@
         drawRangeRuler(ctx, cam);
         if (window.drawSunDirection) drawSunDirection(ctx, cam);
 
-        // Warp gates
+        // Warp gates — kreski na końcach tras; poza kanwą bez rysowania (2026-10-17: ~90 tras = 180 kresek na klatkę
+        // prawie zawsze poza kadrem — operacje zapisu kanwy odrzucane dopiero w rastrze; obraz bez zmian)
         for (const key in warpRoutes) {
           const route = warpRoutes[key];
           const perp = { x: -route.dir.y, y: route.dir.x };
           const w = 6 * cam.zoom;
           const s1 = worldToScreen(route.start.x, route.start.y, cam);
           const s2 = worldToScreen(route.end.x, route.end.y, cam);
+          const v1 = warpGateOnCanvas(s1.x, s1.y, perp.x * w, perp.y * w);
+          const v2 = warpGateOnCanvas(s2.x, s2.y, perp.x * w, perp.y * w);
+          if (!v1 && !v2) continue;
           ctx.strokeStyle = '#88aaff';
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(s1.x - perp.x * w, s1.y - perp.y * w);
-          ctx.lineTo(s1.x + perp.x * w, s1.y + perp.y * w);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(s2.x - perp.x * w, s2.y - perp.y * w);
-          ctx.lineTo(s2.x + perp.x * w, s2.y + perp.y * w);
-          ctx.stroke();
+          if (v1) {
+            ctx.beginPath();
+            ctx.moveTo(s1.x - perp.x * w, s1.y - perp.y * w);
+            ctx.lineTo(s1.x + perp.x * w, s1.y + perp.y * w);
+            ctx.stroke();
+          }
+          if (v2) {
+            ctx.beginPath();
+            ctx.moveTo(s2.x - perp.x * w, s2.y - perp.y * w);
+            ctx.lineTo(s2.x + perp.x * w, s2.y + perp.y * w);
+            ctx.stroke();
+          }
         }
 
         CanvasVFX.drawShockwaves(ctx, cam);

@@ -10,6 +10,7 @@
 // Bez alokacji na wywołanie: barwy z pamięci podręcznej `radarColor`; seria symboli — stemple (stampRadarSymbol).
 
 import { RADAR_RGB } from './radarConfig.js';
+import { StampAtlas } from './stampAtlas.js';
 
 const TAU = Math.PI * 2;
 const _colorCache = new Map();
@@ -284,17 +285,56 @@ export function stampRadarSymbol(ctx, x, y, o) {
 }
 
 // ---------------------------------------------------------------- stemple napisów
-// Napis z obrysem (drawRadarText) wypieczony do małego płótna; stempel `st` należy do wołającego (np. jeden na
-// kontakt i rodzaj odczytu) i jest pieczony od nowa tylko po zmianie napisu albo wyglądu. strokeText z obrysem
+// Napis z obrysem (drawRadarText) wypieczony do miejsca w atlasie stempli; stempel `st` należy do wołającego (np. jeden
+// na kontakt i rodzaj odczytu) i jest pieczony od nowa tylko po zmianie napisu albo wyglądu. strokeText z obrysem
 // to najdroższa operacja znaczników krawędzi — rysowanych w każdej klatce, z napisami, które prawie stoją.
+// ATLAS (2026-10-17, stampAtlas.js): dawniej każdy stempel miał własne płótno — w rastrze procesu GPU osobny obraz
+// na stempel (~47 na klatkę w bitwie, ~0,4 ms CrGpuMain). Napis pieczony w miejscu atlasu w tym samym położeniu
+// względem prostokąta stempla, przycięty do niego — piksele stempla jak z osobnego płótna. Za duży napis albo pełny
+// atlas — osobne płótno jak dawniej. A/B: window.RadarTextAtlas.enabled = false (nowe stemple na osobnych płótnach).
+// Strony atlasu: zwykłe płótna (raster kanw jak małe płótna stempli — piksele te same; płótno programowe
+// `willReadFrequently` rasteryzuje napis inaczej, do 15/255). Przepieczenia klatki przed jej rysunkami
+// (prepareRadarText) — strona zmieniona po rysunku w tej samej klatce to kopia strony w rastrze procesu GPU.
+export const RADAR_TEXT_ATLAS = {
+  enabled: true,
+  pageW: 512,
+  pageH: 256,
+  maxPages: 8,
+  atlas: null,
+  stats: { bakes: 0, atlasBakes: 0, standalone: 0 }
+};
+if (typeof window !== 'undefined') window.RadarTextAtlas = RADAR_TEXT_ATLAS;
+
+let _measureCtx = null;
+function measureCtx() {
+  if (_measureCtx) return _measureCtx;
+  const c = makeStampCanvas();
+  _measureCtx = c ? c.getContext('2d') : null;
+  return _measureCtx;
+}
+
+function textAtlas() {
+  const A = RADAR_TEXT_ATLAS;
+  if (!A.atlas) {
+    A.atlas = new StampAtlas({ pageW: A.pageW, pageH: A.pageH, maxPages: A.maxPages, makePage: (w, h) => {
+      const c = makeStampCanvas();
+      if (!c) return null;
+      c.width = w; c.height = h;
+      return c;
+    } });
+  }
+  return A.atlas;
+}
+
 function bakeTextStamp(st, text, font, rgb, aQ, align, baseline, outline) {
-  let canvas = st ? st.canvas : makeStampCanvas();
-  const g = canvas ? canvas.getContext('2d') : null;
-  if (!g) return null;
-  g.font = font;
-  g.textAlign = align;
-  g.textBaseline = baseline;
-  const m = g.measureText(text);
+  const A = RADAR_TEXT_ATLAS;
+  A.stats.bakes++;
+  const mg = (st && st.slot ? st.slot.page.canvas.getContext('2d') : null) || (st && st.canvas ? st.canvas.getContext('2d') : null) || measureCtx();
+  if (!mg) return null;
+  mg.font = font;
+  mg.textAlign = align;
+  mg.textBaseline = baseline;
+  const m = mg.measureText(text);
   const pad = Math.ceil(outline / 2) + 2;
   const left = Math.ceil(m.actualBoundingBoxLeft || 0) + pad;
   const right = Math.ceil(m.actualBoundingBoxRight || m.width) + pad;
@@ -302,19 +342,77 @@ function bakeTextStamp(st, text, font, rgb, aQ, align, baseline, outline) {
   const down = Math.ceil(m.actualBoundingBoxDescent || 0) + pad;
   const w = Math.max(1, left + right);
   const h = Math.max(1, up + down);
-  // płótno rośnie, nie maleje (zmiana rozmiaru = nowy bufor); rysujemy wycinek w×h
-  if (canvas.width < w || canvas.height < h) {
-    canvas.width = Math.max(canvas.width, w + 8);
-    canvas.height = Math.max(canvas.height, h + 4);
-  } else {
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.clearRect(0, 0, canvas.width, canvas.height);
+  if (!st) st = { canvas: null, slot: null, big: false, text: '', font: '', rgb: '', aQ: 0, align: '', baseline: '', outline: 0, w: 0, h: 0, ax: 0, ay: 0 };
+  // miejsce w atlasie: dotychczasowe, gdy napis się mieści, inaczej nowe (stare wraca do wolnych)
+  let slot = null;
+  if (A.enabled) {
+    const atlas = textAtlas();
+    if (st.slot && w <= st.slot.cw && h <= st.slot.ch) slot = st.slot;
+    else {
+      if (st.slot) { atlas.release(st.slot); st.slot = null; }
+      slot = atlas.alloc(w, h, st);
+      if (slot && !slot.page.canvas) { atlas.release(slot); slot = null; }
+    }
+  } else if (st.slot) {
+    textAtlas().release(st.slot);
+    st.slot = null;
   }
-  g.font = font;
-  drawRadarText(g, text, left, up, rgb, aQ / 64, align, baseline, outline);
-  if (!st) st = { canvas, text: '', font: '', rgb: '', aQ: 0, align: '', baseline: '', outline: 0, w: 0, h: 0, ax: 0, ay: 0 };
+  if (slot) {
+    const g = slot.page.canvas.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(slot.x - 1, slot.y - 1, slot.cw + 2, slot.ch + 2);
+    // przycięcie do prostokąta stempla (margines miejsca zostaje pusty). Stemple stawiane są w całych pikselach bez
+    // obrotu i skali (znaczniki krawędzi, duchy tarczy radaru — kontekst tożsamościowy): piksele jak z osobnego
+    // płótna. Pod obrotem filtr próbkuje inaczej (współrzędne tekstury innego rozmiaru: do ~10/255 na brzegach).
+    g.save();
+    g.beginPath();
+    g.rect(slot.x, slot.y, w, h);
+    g.clip();
+    g.font = font;
+    drawRadarText(g, text, slot.x + left, slot.y + up, rgb, aQ / 64, align, baseline, outline);
+    g.restore();
+    st.slot = slot;
+    st.canvas = null;
+    st.big = false;
+    A.stats.atlasBakes++;
+  } else {
+    // osobne płótno (jak przed atlasem): rośnie, nie maleje (zmiana rozmiaru = nowy bufor); rysujemy wycinek w×h
+    const canvas = st.canvas || makeStampCanvas();
+    const g = canvas ? canvas.getContext('2d') : null;
+    if (!g) return null;
+    if (canvas.width < w || canvas.height < h) {
+      canvas.width = Math.max(canvas.width, w + 8);
+      canvas.height = Math.max(canvas.height, h + 4);
+    } else {
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    g.font = font;
+    drawRadarText(g, text, left, up, rgb, aQ / 64, align, baseline, outline);
+    st.canvas = canvas;
+    st.big = A.enabled;   // atlas bez miejsca (za duży napis / pełny) — bez prób co klatkę
+    A.stats.standalone++;
+  }
   st.text = text; st.font = font; st.rgb = rgb; st.aQ = aQ; st.align = align; st.baseline = baseline; st.outline = outline;
   st.w = w; st.h = h; st.ax = left; st.ay = up;
+  return st;
+}
+
+/**
+ * Stempel napisu gotowy do rysunku: przepieczony, gdy zmienił się napis, wygląd albo miejsce (wyparte z atlasu,
+ * przełączony atlas). Zwraca stempel (null — bez płótna). Wołający, który rysuje wiele stempli w klatce, przepieka
+ * WSZYSTKIE przed pierwszym rysunkiem (znaczniki krawędzi) — strona atlasu zmieniona po rysunku w tej samej klatce
+ * to kopia całej strony w rastrze; potem stampRadarText z tymi samymi parametrami tylko rysuje.
+ */
+export function prepareRadarText(st, text, font, rgb, alpha = 1, align = 'left', baseline = 'middle', outline = 3) {
+  if (!text || alpha <= 0.01 || typeof document === 'undefined') return st;
+  const aQ = alpha >= 1 ? 64 : Math.round(alpha * 64);
+  // stempel bez miejsca i bez płótna (miejsce wyparte z atlasu) albo atlas przełączony — piecze się od nowa
+  if (!st || st.text !== text || st.font !== font || st.rgb !== rgb || st.aQ !== aQ || st.align !== align
+    || st.baseline !== baseline || st.outline !== outline || (!st.slot && !st.canvas)
+    || (st.slot && !RADAR_TEXT_ATLAS.enabled) || (st.canvas && RADAR_TEXT_ATLAS.enabled && !st.big)) {
+    return bakeTextStamp(st, text, font, rgb, aQ, align, baseline, outline);
+  }
   return st;
 }
 
@@ -329,15 +427,17 @@ export function stampRadarText(ctx, st, text, font, x, y, rgb, alpha = 1, align 
     drawRadarText(ctx, text, x, y, rgb, alpha, align, baseline, outline);
     return st;
   }
-  const aQ = alpha >= 1 ? 64 : Math.round(alpha * 64);
-  if (!st || st.text !== text || st.font !== font || st.rgb !== rgb || st.aQ !== aQ || st.align !== align
-    || st.baseline !== baseline || st.outline !== outline) {
-    st = bakeTextStamp(st, text, font, rgb, aQ, align, baseline, outline);
-    if (!st) { ctx.font = font; drawRadarText(ctx, text, x, y, rgb, alpha, align, baseline, outline); return null; }
-  }
+  st = prepareRadarText(st, text, font, rgb, alpha, align, baseline, outline);
+  if (!st) { ctx.font = font; drawRadarText(ctx, text, x, y, rgb, alpha, align, baseline, outline); return null; }
   const dx = Math.round(x) - st.ax;
   const dy = Math.round(y) - st.ay;
-  ctx.drawImage(st.canvas, 0, 0, st.w, st.h, dx, dy, st.w, st.h);
+  const slot = st.slot;
+  if (slot) {
+    RADAR_TEXT_ATLAS.atlas.touch(slot);
+    ctx.drawImage(slot.page.canvas, slot.x, slot.y, st.w, st.h, dx, dy, st.w, st.h);
+  } else {
+    ctx.drawImage(st.canvas, 0, 0, st.w, st.h, dx, dy, st.w, st.h);
+  }
   return st;
 }
 
