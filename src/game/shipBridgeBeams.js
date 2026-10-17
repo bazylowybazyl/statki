@@ -115,8 +115,17 @@ function poseOf(hull, pose, out) {
 
 /** Punkt siatki belek (względem latticeMin, j. świata, Y w górę) → świat gry. */
 export function beamLatticeToWorld(hull, lx, ly, out = { x: 0, y: 0 }, pose = null) {
-  const b = hull.body, lm = b.latticeMin;
-  const p = poseOf(hull, pose, _pose);
+  return beamLatticeToWorldPosed(hull, poseOf(hull, pose, _pose), lx, ly, out);
+}
+
+/** Poza kadłuba do beamLatticeToWorldPosed — raz na kilka punktów jednego kadłuba w klatce ({ x, y, c, s }). */
+export function beamLatticePose(hull, pose, out) {
+  return poseOf(hull, pose, out);
+}
+
+/** beamLatticeToWorld przy pozie z beamLatticePose (bez cos / sin na punkt). */
+export function beamLatticeToWorldPosed(hull, p, lx, ly, out) {
+  const lm = hull.body.latticeMin;
   const dx = lm.x + lx - HullBodies.anchorLocalX(hull);
   const dy = lm.y + ly - HullBodies.anchorLocalY(hull);
   out.x = p.x + p.c * dx - p.s * dy;

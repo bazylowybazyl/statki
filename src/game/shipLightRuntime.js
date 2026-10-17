@@ -435,6 +435,24 @@ function lightDirection(deg) {
   };
 }
 
+// Kierunek lampy z kąta markera — pamięć po wartości kąta (obiekt wspólny, TYLKO do odczytu — emitery reflektorów).
+const _lightDirCache = new Map();
+function lightDirectionCached(deg) {
+  if (typeof deg !== 'number') return lightDirection(deg);
+  let d = _lightDirCache.get(deg);
+  if (d === undefined) {
+    d = Object.freeze(lightDirection(deg));
+    if (_lightDirCache.size < 4096) _lightDirCache.set(deg, d);
+  }
+  return d;
+}
+
+// Identyfikatory emiterów bez markera z id (napis na klatkę na lampę)
+const _roadIds = [];
+const _navIds = [];
+function roadLightId(i) { return _roadIds[i] || (_roadIds[i] = `road${i}`); }
+function navLightId(i) { return _navIds[i] || (_navIds[i] = `nav${i}`); }
+
 function directionalScale(dir, scale) {
   const sx = Number(scale?.x) || 1;
   const sy = Number(scale?.y) || 1;
@@ -711,22 +729,23 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
       const marker = flood ? floods[i - roads.length] : roads[i];
       if (flood && !floodLightAllowed(marker, hullLen)) continue;
       const defaults = LIGHT_DEFAULTS[flood ? LIGHT_KINDS.FLOOD : LIGHT_KINDS.ROAD];
-      const local = getScaledLightLocal(marker, hardpointScale);
-      const dirLocal = lightDirection(marker?.deg ?? defaults.deg);
-      const scaledDir = normalizeVec2(
-        dirLocal.x * spriteScale.x,
-        dirLocal.y * spriteScale.y,
-        1,
-        0
-      );
+      // (2026-10-17, klatka workera pod 240 Hz) te same liczby co getScaledLightLocal / lightDirection / normalizeVec2,
+      // bez trzech obiektów pośrednich na lampę na klatkę; kierunek lokalny z pamięci po kącie markera
+      const localX = (Number(marker?.x) || 0) * (Number(hardpointScale?.x) || 1);
+      const localY = (Number(marker?.y) || 0) * (Number(hardpointScale?.y) || 1);
+      const dirLocal = lightDirectionCached(marker?.deg ?? defaults.deg);
+      let sdx = dirLocal.x * spriteScale.x;
+      let sdy = dirLocal.y * spriteScale.y;
+      const sdLen = Math.hypot(Number(sdx) || 0, Number(sdy) || 0);
+      if (!Number.isFinite(sdLen) || sdLen <= EPSILON) { sdx = 1; sdy = 0; } else { sdx = round2(sdx / sdLen); sdy = round2(sdy / sdLen); }
       const worldDir = normalizeVec2(
-        scaledDir.x * c - scaledDir.y * s,
-        scaledDir.x * s + scaledDir.y * c,
+        sdx * c - sdy * s,
+        sdx * s + sdy * c,
         1,
         0
       );
-      const scaledLocalX = local.x * spriteScale.x;
-      const scaledLocalY = local.y * spriteScale.y;
+      const scaledLocalX = localX * spriteScale.x;
+      const scaledLocalY = localY * spriteScale.y;
       const spriteDirectionalScale = directionalScale(dirLocal, spriteScale);
       const rangePx = clamp(marker?.range, 50, 4000, defaults.range) * directionalScale(dirLocal, hardpointScale);
       const radiusPx = clamp(marker?.radius, 1, 48, defaults.radius) * (Number(hardpointScale?.uniform) || 1);
@@ -735,7 +754,7 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
         owner: entity,
         ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
         lineage,
-        id: marker?.id || `road${i}`,
+        id: marker?.id || roadLightId(i),
         flood,
         x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
         y: round2(pos.y + scaledLocalX * s + scaledLocalY * c),
@@ -843,7 +862,7 @@ export function buildNavLightClusters(entities, options = {}) {
         owner: entity,
         ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
         lineage,
-        id: `nav${gi}`,
+        id: navLightId(gi),
         x: pos.x + lx * c - ly * s,
         y: pos.y + lx * s + ly * c,
         color: g.color,

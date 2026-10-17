@@ -81,7 +81,8 @@ import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
 import { HULL_BODY_CONFIG } from '../game/hullBodies.js';
 import {
   beamImageToLattice,
-  beamLatticeToWorld,
+  beamLatticePose,
+  beamLatticeToWorldPosed,
   bridgeBeamHull,
   bridgeCellNode,
   isBeamBridgeState
@@ -583,18 +584,21 @@ const _lat = { x: 0, y: 0 };
 const _bo = { x: 0, y: 0 };
 const _bpx = { x: 0, y: 0 };
 const _bpy = { x: 0, y: 0 };
+const _bPose = { x: 0, y: 0, c: 1, s: 0 };
 
 /** Baza instancji rekordu belkowego (jak bridgeInstanceBasis — obraz kadłuba → świat przez siatkę rodu). */
 export function beamBridgeInstanceBasis(rec, host, pose, out = {}) {
   const hull = host.beamHull;
   const st = rec.st;
   const map = rec.map;
+  // poza kadłuba raz na rekord (cos / sin), trzy punkty siatki
+  const p = beamLatticePose(hull, pose, _bPose);
   beamImageToLattice(st, map.zgx, map.zgy, _lat);
-  beamLatticeToWorld(hull, _lat.x, _lat.y, _bo, pose);
+  beamLatticeToWorldPosed(hull, p, _lat.x, _lat.y, _bo);
   beamImageToLattice(st, map.zgx + 1, map.zgy, _lat);
-  beamLatticeToWorld(hull, _lat.x, _lat.y, _bpx, pose);
+  beamLatticeToWorldPosed(hull, p, _lat.x, _lat.y, _bpx);
   beamImageToLattice(st, map.zgx, map.zgy + 1, _lat);
-  beamLatticeToWorld(hull, _lat.x, _lat.y, _bpy, pose);
+  beamLatticeToWorldPosed(hull, p, _lat.x, _lat.y, _bpy);
   const gxX = _bpx.x - _bo.x; const gxY = _bpx.y - _bo.y;
   const gyX = _bpy.x - _bo.x; const gyY = _bpy.y - _bo.y;
   out.sgx = Math.hypot(gxX, gxY);
