@@ -4,6 +4,9 @@
 (własny renderer, kamera perspektywy zamiast ortho, pył w pudle wokół kamery — stąd „ściany”, pył stoi przy
 5–10 mln j.). Z dema bierzemy pomysły i shadery, budujemy moduły na Core3D.
 
+**2026-10-16:** wygląd prototypu `dema/gazy-transport-webgpu.html` zaakceptowany — etapy 2–4 w otwartej przestrzeni
+(pas, ring, ławice) idą wg `docs/PLAN-gazy-kosmos.md` (port do Core3D, decyzje D1–D8). Hale K-7 — `docs/BRIEF-gaz-hali-3d.md`.
+
 ## Czego chce użytkownik
 
 1. Pył w halach K-7 i dokach: okręt rufą do ściany odpala silnik, pył uderza w ścianę — ma dobrze wyglądać.

@@ -660,6 +660,8 @@ export class RenderCommandReader {
     this.entityAt = entityAt;
     this.shotAt = shotAt;
     this.dispatched = 0;
+    this.errors = 0;        // rekordy, których dekoder rzucił wyjątek (pominięte)
+    this.onError = null;    // (błąd, typ) — zgłoszenie (worker: konsola strony)
     this._draining = false;
   }
 
@@ -708,7 +710,10 @@ export class RenderCommandReader {
           this.strs[d[o]] = s;
         } else {
           const fn = this.handlers[type];
-          if (fn) fn(this, d, o, r.words);
+          // błąd jednego rekordu (dekoder efektu) nie zatrzymuje reszty strumienia — rekord już zwolniony (`next`)
+          if (fn) {
+            try { fn(this, d, o, r.words); } catch (e) { this.errors++; if (this.onError) this.onError(e, type); }
+          }
         }
         n++;
       }

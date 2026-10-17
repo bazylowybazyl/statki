@@ -72,7 +72,9 @@ function entityPosY(e) { return (e?.pos && typeof e.pos.y === 'number') ? e.pos.
 /** Kadłub belkowy encji (żywy i należący do niej) albo null. */
 export function bridgeBeamHull(entity) {
   const h = entity?.beamHull;
-  return h && h.entity === entity && h.body && !h.body.dead ? h : null;
+  // `nodeStore`: lustro ciała w renderze (src/render/mirrorBody.js) przed topologią magazynu nie ma węzłów — mostek
+  // czeka (indeks komórek z `_latticeIndex` rzucał wyjątek; w workerze stawał cały obraz). Ciało gry ma magazyn zawsze.
+  return h && h.entity === entity && h.body && !h.body.dead && h.body.nodeStore ? h : null;
 }
 
 /** Indeks żywego węzła komórki (ix, iy) w ciele kadłuba albo −1. */

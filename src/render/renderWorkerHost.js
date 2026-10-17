@@ -9,6 +9,7 @@
 // Moduł strony (DOM): tylko w trybie `?renderWorker=1`.
 
 import { OverlayRing, OVERLAY_RING_DEFAULT } from './overlayRing.js';
+import { FramePacer } from './framePacer.js';
 import { createReturnBuffer, createReturnViews, retRecentConsumed, retReadStats, RET_I32, RET_F64, RET_FLAG, retHasFlag } from './returnLayout.js';
 import { RW_WORKER_DISABLED } from './render.worker.js';
 import { createEventRingBuffer, EventRingWriter } from './eventRing.js';
@@ -48,7 +49,13 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   // obraz 3D (pod nakładkami) i pierścień kanw nakładek — przed kanwą gry, która zostaje na wierzchu dla zdarzeń
   const view3d = document.createElement('canvas');
   view3d.id = 'rw-3d';
-  const ring = new OverlayRing(OVERLAY_RING_DEFAULT);
+  // Stały wiek obrazu (audyt 2026-10-17, src/render/framePacer.js): bitmapy workera czekają w kolejce i są składane na
+  // początku klatki strony (`present` z pętli gry) z wiekiem docelowym — bez tego w dużej bitwie przy 240 Hz treść 3D
+  // stała klatkę i przeskakiwała o dwie w ~44% klatek. `?rwPacing=0` — złożenie od razu po przyjściu (dawniej, A/B).
+  // Pierścień o kanwę dłuższy: chronione są wszystkie klatki w drodze (wiek do 5 klatek).
+  const pacing = !(typeof location !== 'undefined' && /[?&]rwPacing=0(?:&|$)/.test(location.search));
+  const pacer = new FramePacer();
+  const ring = new OverlayRing(pacing ? OVERLAY_RING_DEFAULT + 1 : OVERLAY_RING_DEFAULT);
   const ringCanvases = [];
   const ringCtx = [];
   const place = (c, z) => {
@@ -69,7 +76,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   const host = {
     worker, ret, ring, ready: false, failed: null, frames: 0, composed: 0, lastPostedK: -1, lastCommittedK: -1,
     errors: [], stats: new Float64Array(RET_F64.COUNT), _shown: false, _dictSent: 0,
-    _sentRes: [], _sentDefs: new Set(), _pendDesc: new Set(), _chain: Promise.resolve(), _chainBusy: 0, _W: W, _H: H
+    _sentRes: [], _sentDefs: new Set(), _pendDesc: new Set(), _chain: Promise.resolve(), _chainBusy: 0, _W: W, _H: H,
+    pacing, pacer, _lastPresent: -Infinity, _qK: [], _qB: []
   };
   // RW-45b: wiadomość strony wychodzi od razu w zadaniu publikacji (gdy łańcuch nie czeka na bitmapy zasobów);
   // `?rwSend=late` — dawne odkładanie na mikrozadanie (A/B)
@@ -100,8 +108,67 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     if (m.type === 'frame') {
       host.domainCount = m.nd | 0;
       if (m.dr) host.domainRects.set(m.dr.subarray(0, Math.min(m.dr.length, host.domainRects.length)));
-      compose(m.k, m.bmp);
+      // stały wiek obrazu: do kolejki, gdy pętla gry taktuje (`present` w ostatnich 100 ms czasu rzeczywistego) — inaczej
+      // (tło menu, klatka zero spod kurtyny, harness narzędzi, karta w tle) złożenie od razu, jak dawniej
+      if (pacingLive()) {
+        pacer.arrived(m.k);
+        host._qK.push(m.k);
+        host._qB.push(m.bmp);
+        armIdleFlush();
+      } else {
+        dropQueue();
+        compose(m.k, m.bmp);
+      }
     }
+  };
+
+  function dropQueue() {
+    const qb = host._qB;
+    for (let i = 0; i < qb.length; i++) qb[i].close();
+    qb.length = 0;
+    host._qK.length = 0;
+  }
+
+  // czas rzeczywisty (harness zamraża performance.now — window.__harness.realNow)
+  const realNow = () => (globalThis.__harness && typeof globalThis.__harness.realNow === 'function' ? globalThis.__harness.realNow() : performance.now());
+  const pacingLive = () => pacing && !host._menu && !globalThis.__harness && realNow() - host._lastPresent < 100;
+  // Pętla gry przestała taktować z bitmapami w kolejce (pauza rAF, karta w tle) — najnowsza złożona od razu.
+  let idleTimer = 0;
+  function armIdleFlush() {
+    if (idleTimer) return;
+    idleTimer = setTimeout(function flush() {
+      idleTimer = 0;
+      const qk = host._qK, qb = host._qB;
+      if (!qk.length) return;
+      if (realNow() - host._lastPresent < 60) { armIdleFlush(); return; }
+      const last = qk.length - 1;
+      for (let i = 0; i < last; i++) qb[i].close();
+      const k = qk[last], bmp = qb[last];
+      qk.length = 0; qb.length = 0;
+      compose(k, bmp);
+    }, 80);
+  }
+
+  /**
+   * Początek klatki strony (pętla gry, takt rAF — przed fizyką): złożenie najnowszej bitmapy z kolejki, której wiek
+   * osiągnął docelowy (FramePacer); starsze odrzucone. Złożenie w zadaniu rAF wchodzi do commitu TEJ klatki.
+   */
+  host.present = () => {
+    host._lastPresent = realNow();
+    if (!pacing || globalThis.__harness) return;
+    pacer.beginFrame();
+    const qk = host._qK, qb = host._qB;
+    let pick = -1;
+    for (let i = 0; i < qk.length; i++) { if (pacer.eligible(qk[i])) pick = i; else break; }
+    if (pick < 0) return;
+    for (let i = 0; i < pick; i++) qb[i].close();
+    const k = qk[pick], bmp = qb[pick];
+    // przesunięcie kolejki w miejscu (bez nowych tablic)
+    let w = 0;
+    for (let i = pick + 1; i < qk.length; i++, w++) { qk[w] = qk[i]; qb[w] = qb[i]; }
+    qk.length = w; qb.length = w;
+    pacer.composed(k);
+    compose(k, bmp);
   };
 
   function compose(k, bmp) {
@@ -278,6 +345,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     msg.dict = dv.slice(host._dictSent);
     host._dictSent = dv.length;
     host.lastPostedK = k;
+    if (pacing) pacer.posted(k);
     // kolejność wiadomości = kolejność stron (bitmapy zasobów asynchronicznie — następne strony czekają w łańcuchu);
     // błąd jednej wiadomości (np. opis z obiektem nie do sklonowania) nie może zatrzymać łańcucha
     const send = (transfer) => {
@@ -320,7 +388,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
     if (k !== host.lastPostedK || k === host.lastCommittedK) return;
     host.lastCommittedK = k;
     const n = retRecentConsumed(ret, recent);
-    const slot = ring.acquire(k, recent, n);
+    // bitmapy w kolejce stałego wieku obrazu — ich kanwy też nietykalne
+    const slot = ring.acquire(k, recent, n, host._qK, host._qK.length);
     const c = ringCanvases[slot], cx = ringCtx[slot];
     if (c.width !== gameCanvas.width || c.height !== gameCanvas.height) { c.width = gameCanvas.width; c.height = gameCanvas.height; }
     cx.clearRect(0, 0, c.width, c.height);
@@ -412,6 +481,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
 
   host.readStats = () => retReadStats(ret, host.stats);
   host.stop = () => {
+    dropQueue();
     worker.terminate();
     gameCanvas.style.opacity = '';
     if (mainCanvas) mainCanvas.style.visibility = '';

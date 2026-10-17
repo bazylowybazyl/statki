@@ -134,8 +134,9 @@ export function refreshHullMountSet(set, hull) {
   set.body = body;
   set.active = active;
   const n = set.count, cells = set.cells, alive = set.alive;
-  const lattice = active > 0 ? D._latticeIndex(body).cells : null;
-  const live = body.nodeStore.active;
+  // lustro ciała przed topologią magazynu (render w workerze) nie ma węzłów — mocowania zgaszone do jej przyjścia
+  const lattice = active > 0 && body.nodeStore ? D._latticeIndex(body).cells : null;
+  const live = lattice ? body.nodeStore.active : null;
   let changed = false, dead = 0;
   for (let k = 0; k < n; k++) {
     const c = cells[k];

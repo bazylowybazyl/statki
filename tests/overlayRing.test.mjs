@@ -90,6 +90,22 @@ test('pierścień „po kolei” bez reguły gubi pary — reguła ma znaczenie'
   assert.ok(r.lost > 0 || r.full > 0);
 });
 
+test('stały wiek obrazu: kanwy klatek z bitmapą w kolejce strony nietykalne, choć wypadły z 4 odebranych w RET', () => {
+  const ring = new OverlayRing(6);
+  const recent = new Int32Array(4);
+  for (let k = 0; k < 6; k++) ring.acquire(k, recent, 0);
+  ring.compose(0);
+  // odebrane przez worker: 3, 4, 5 (RET; 2 pominięta — worker wziął nowszą); bitmapa 1 czeka w kolejce strony na swój
+  // wiek (z RET już wypadła) — wolna jest tylko kanwa pominiętej klatki 2
+  recent.set([5, 4, 3, -1]);
+  const queued = [1];
+  const before = Array.from(ring.frameOf);
+  const slot = ring.acquire(6, recent, 3, queued, queued.length);
+  assert.equal(before[slot], 2, 'nowa nakładka w kanwie pominiętej klatki 2');
+  assert.equal(ring.full, 0);
+  assert.equal(ring.compose(1) >= 0, true, 'nakładka klatki 1 jest przy złożeniu');
+});
+
 test('compose: ukrycie poprzedniej kanwy i brak nakładki', () => {
   const ring = new OverlayRing(5);
   const a = ring.acquire(0, new Int32Array(4), 0);

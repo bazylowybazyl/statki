@@ -74,7 +74,8 @@ test('obraz bazy bez rozgrywki: zdarzenia zamiast stanu, mgła i habitat ze stan
   assert.ok(!/from '\.\.\/game\//.test(src), 'obraz nie importuje stanu gry');
   assert.match(src, /export function pirateBase3DEvent\(type, a, b, c\)/);
   const html = read('index.html');
-  assert.match(html, /onPirateBaseEvent\(pirateBase3DEvent\);/);
+  // tryb worker (RW-40b): zdarzenia obrazu do workera, `off` — obraz strony
+  assert.match(html, /onPirateBaseEvent\(\(t, a, b, c\) => \(rwHost \? rwHost\.pirateBaseEvent\(t, a, b, c\) : pirateBase3DEvent\(t, a, b, c\)\)\);/);
   assert.match(html, /worldBodies\.step\(dt, _worldFocus\);\n\s+\/\/[^\n]*\n\s+syncPirateBaseGone\(\);/);
   assert.match(html, /const at = pirateRockAt\(\);/);
   assert.ok(!html.includes('setPirateBaseHiddenTest'));

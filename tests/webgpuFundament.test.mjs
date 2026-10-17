@@ -269,7 +269,8 @@ test('strona: import map three/webgpu i three/tsl, Vite prebundluje razem, komun
   assert.match(html, /note\.textContent = 'Gra wymaga przeglądarki z WebGPU';/);
   assert.match(html, /Core3D\.ready\?\.then\(\(ok\) => \{ if \(!ok\) showWebGpuRequired\(\); \}\);/);
   const start = html.slice(html.indexOf('async function startGame() {'));
-  assert.match(start.slice(0, 300), /if \(Core3D\.gpuUnsupported\) \{ showWebGpuRequired\(\); return; \}/);
+  // RW-41c: w trybie worker urządzenie ma worker — jego brak WebGPU (rwHost.failed) też zatrzymuje start
+  assert.match(start.slice(0, 300), /if \(Core3D\.gpuUnsupported \|\| rwHost\?\.failed\) \{ showWebGpuRequired\(\); return; \}/);
 });
 
 test('jeden renderer: modelBaker usunięty, w src żadnego WebGLRenderer (overlay usunięty w zadaniu 20)', () => {

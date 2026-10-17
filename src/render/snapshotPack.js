@@ -182,6 +182,13 @@ export class SnapshotPacker {
     this._tierB = new Float64Array(0);   // ENT.F64 poziomu B na slot (W, H, HP_SCALE*)
     this._tierBI = new Int32Array(0);    // flagi i kody poziomu B na slot: [flagsB, flags2B, ownerId]
     // pamięć na slot ciała
+    this._bodyGenSeen = new Uint32Array(0);   // generacja slotu, dla której pamięć niżej jest ważna
+    // brud skóry do potwierdzenia odbioru (worker — `frame.consumeDirty === 'odbior'`): strona z ostatnią wysłaną listą
+    // i jej długość, strony zdarzeń „całość” (dirtyAll) i „siatka” (meshDirty) — flaga na każdej stronie do odbioru
+    this._dirtySentK = new Int32Array(0);
+    this._dirtySentN = new Int32Array(0);
+    this._allEventK = new Int32Array(0);
+    this._meshEventK = new Int32Array(0);
     this._bodyPacked = new Int32Array(0);
     this._bodyChangedK = new Int32Array(0);
     // ostatnia strona, na którą węzły ciała (i pozycje spoczynkowe) NAPRAWDĘ trafiły — zmiana spoza pudła albo przy
@@ -259,6 +266,11 @@ export class SnapshotPacker {
     }
     const nb = this.ids.bodies.capacity;
     if (this._bodyPacked.length < nb) {
+      const bg = new Uint32Array(nb); bg.set(this._bodyGenSeen); this._bodyGenSeen = bg;
+      this._dirtySentK = grow32(this._dirtySentK, nb);
+      this._dirtySentN = grow32(this._dirtySentN, nb);
+      this._allEventK = grow32(this._allEventK, nb);
+      this._meshEventK = grow32(this._meshEventK, nb);
       this._bodyPacked = grow32(this._bodyPacked, nb);
       this._bodyChangedK = grow32(this._bodyChangedK, nb);
       this._bodyNodesW = grow32(this._bodyNodesW, nb);
@@ -975,9 +987,21 @@ export class SnapshotPacker {
     const store = body.nodeStore;
     const beams = body.beamStore;
     let changed = false;
+    // Nowy właściciel slotu (generacja): ciało, którego przez klatkę nie było w listach (okręt zginął, wrak z tym samym
+    // ciałem powstaje krok później — detonacja rdzenia w następnym kroku), wraca z nową generacją i u czytelnika
+    // dostaje NOWE lustro, bez topologii. Pamięć slotu od zera: topologia, węzły, spoczynek i HP jak dla nowego
+    // magazynu. Dawniej ten sam magazyn = brak topologii dla nowej generacji: lustro bez węzłów (wrak niewidoczny),
+    // a mostki 3D w workerze rzucały wyjątek co klatkę i obraz stawał (audyt 2026-10-17).
+    const gen = this.ids.bodies.gen(bs);
+    if (this._bodyGenSeen[bs] !== gen) {
+      this._bodyGenSeen[bs] = gen;
+      this._bodyStore[bs] = null;
+      this._bodyBeams[bs] = null;
+    }
     if (this._bodyStore[bs] !== store || this._bodyBeams[bs] !== beams) {
       this._bodyStore[bs] = store;
       this._bodyBeams[bs] = beams;
+      this._dirtySentK[bs] = 0; this._dirtySentN[bs] = 0; this._allEventK[bs] = 0; this._meshEventK[bs] = 0;
       this._bodyStoreVer[bs]++;
       changed = true;
       this._bodyRestK[bs] = k;
@@ -1007,10 +1031,31 @@ export class SnapshotPacker {
     const active = body.activeNodes | 0;
     if (this._bodyActive[bs] !== active) { this._bodyActive[bs] = active; changed = true; }
     const region = body._region;
+    const ownRegion = !!region && region.store === store;
+    // Worker (strony bywają pominięte — worker bierze najnowszą): brud skóry zdejmowany po stronie gry dopiero, gdy
+    // render ODEBRAŁ stronę, która go niosła; do tego czasu każda strona niesie całą narosłą listę i flagi. Dawniej lista
+    // wychodziła raz — pominięta strona = węzły bez numerów na liście, czworokąty skóry nieprzepisane (audyt 2026-10-17).
+    const confirm = f.consumeDirty === 'odbior';
+    let meshDirty = body.meshDirty, dirtyAll = ownRegion && region.dirtyAll;
+    if (confirm && ownRegion) {
+      const lc = f.lastConsumed;
+      const allDone = this._allEventK[bs] > 0 && lc >= this._allEventK[bs];
+      if (allDone) this._allEventK[bs] = 0;
+      if (this._dirtySentK[bs] > 0 && lc >= this._dirtySentK[bs]) {
+        retireBodyDirty(store, region, this._dirtySentN[bs], allDone);
+        this._dirtySentK[bs] = 0; this._dirtySentN[bs] = 0;
+      }
+      if (this._meshEventK[bs] > 0 && lc >= this._meshEventK[bs]) this._meshEventK[bs] = 0;
+      // nowe zdarzenia gry → oczekujące (flagi gry zdjęte — gra ich nie czyta, render ma swoją replikę)
+      if (region.dirtyAll) { this._allEventK[bs] = k; region.dirtyAll = false; }
+      if (body.meshDirty) { this._meshEventK[bs] = k; body.meshDirty = false; }
+      meshDirty = this._meshEventK[bs] > 0;
+      dirtyAll = this._allEventK[bs] > 0;
+    }
     let flags = 0;
-    if (body.meshDirty) { flags |= BODY_FLAG.MESH_DIRTY; changed = true; }
-    if (region && region.store === store && (region.dirtyAll || region.dirtyCount > 0)) {
-      if (region.dirtyAll) flags |= BODY_FLAG.DIRTY_ALL;
+    if (meshDirty) { flags |= BODY_FLAG.MESH_DIRTY; changed = true; }
+    if (ownRegion && (dirtyAll || region.dirtyCount > 0)) {
+      if (dirtyAll) flags |= BODY_FLAG.DIRTY_ALL;
       changed = true;
     }
     if (changed) this._bodyChangedK[bs] = k;
@@ -1095,17 +1140,21 @@ export class SnapshotPacker {
     if (store && count > 0 && (changedK > f.lastConsumed || changedK > this._bodyNodesW[bs]) && inBox) {
       const restK = this._bodyRestK[bs];
       const rest = restK > f.lastConsumed || restK > this._bodyRestW[bs];
-      const dirtyN = region && region.store === store && !region.dirtyAll ? region.dirtyCount | 0 : 0;
+      const dirtyN = ownRegion && !dirtyAll ? region.dirtyCount | 0 : 0;
       if (this._packNodes(v, store, beams, count, beamCount, planar, bi, rest, dirtyN ? region.dirty : null, dirtyN)) {
         st.bodiesPacked++;
         this._bodyNodesW[bs] = k;
         if (rest) this._bodyRestW[bs] = k;
         st.nodesPacked += count;
         st.beamsPacked += beamCount;
-        // Lustro (RW-11a) przejęło zmiany: flagi brudu gry zerowane tu, a nie w renderze (render czyści REPLIKĘ).
-        // Tylko w trybie, w którym render odbiera każdą stronę (inline); worker — AGENT: RW-40, zbiór brudnych
-        // węzłów na ciało do odebrania strony.
-        if (f.consumeDirty) consumeBodyDirty(body, store, region);
+        if (confirm) {
+          // lista do potwierdzenia: odbiór tej (albo późniejszej) strony zdejmie pierwsze `dirtyCount` wpisów
+          if (ownRegion) { this._dirtySentK[bs] = k; this._dirtySentN[bs] = region.dirtyCount | 0; }
+        } else if (f.consumeDirty) {
+          // Lustro (RW-11a, inline — render odbiera każdą stronę): flagi brudu gry zerowane tu, a nie w renderze
+          // (render czyści REPLIKĘ).
+          consumeBodyDirty(body, store, region);
+        }
       }
     }
   }
@@ -1430,6 +1479,26 @@ function consumeBodyDirty(body, store, region) {
     region.dirtyCount = 0;
   }
   body.meshDirty = false;
+}
+
+/**
+ * Worker potwierdził stronę z listą brudu ciała (pierwsze `n` wpisów `region.dirty`): wpisy zdjęte z listy, ich
+ * znaczniki `skinDirty` wolne; reszta (dopisana po tej stronie) zostaje na początku listy. `all` — potwierdzona strona
+ * niosła pełne przepisanie skóry (dirtyAll): znaczniki od nowa tylko z pozostałych wpisów (węzły bez wpisu na liście
+ * po resecie obszaru nie mogą zostać zaznaczone na zawsze — markSkinDirty by ich już nie dopisał).
+ */
+function retireBodyDirty(store, region, n, all) {
+  const sd = store.skinDirty, d = region.dirty, c = region.dirtyCount | 0;
+  if (n > c) n = c;
+  let w = 0;
+  if (all) {
+    if (sd) sd.fill(0);
+    for (let i = n; i < c; i++) { const j = d[i]; if (sd && sd[j]) continue; if (sd) sd[j] = 1; d[w++] = j; }
+  } else {
+    if (sd) for (let i = 0; i < n; i++) sd[d[i]] = 0;
+    for (let i = n; i < c; i++) d[w++] = d[i];
+  }
+  region.dirtyCount = w;
 }
 
 function writeCull(h, c) {

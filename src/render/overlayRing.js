@@ -50,9 +50,11 @@ export class OverlayRing {
 
   /**
    * Kanwa dla nakładki klatki k. `recent` — ostatnio odebrane klatki (z RET, od najnowszej), `recentCount` — ile.
-   * Zwraca indeks kanwy (zawsze poprawny; przy pełnym pierścieniu — kanwa za pokazaną, licznik `full`).
+   * `queued` / `queuedCount` — klatki, których bitmapy czekają na złożenie po stronie gry (stały wiek obrazu,
+   * src/render/framePacer.js: więcej niż 4 odebrane z RET bywa w drodze). Zwraca indeks kanwy (zawsze poprawny; przy
+   * pełnym pierścieniu — kanwa za pokazaną, licznik `full`).
    */
-  acquire(k, recent, recentCount) {
+  acquire(k, recent, recentCount, queued = null, queuedCount = 0) {
     this.prevPublished = this.lastPublished;
     this.lastPublished = k;
     const frameOf = this.frameOf;
@@ -66,6 +68,7 @@ export class OverlayRing {
       let inFlight = false;
       if (kk > last) {
         for (let j = 0; j < recentCount; j++) if (recent[j] === kk) { inFlight = true; break; }
+        if (!inFlight) for (let j = 0; j < queuedCount; j++) if (queued[j] === kk) { inFlight = true; break; }
       }
       if (i === this.shown || inFlight || (kk >= 0 && kk === prev)) { guarded++; continue; }
       if (kk < oldest) { oldest = kk; slot = i; }

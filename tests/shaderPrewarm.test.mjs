@@ -92,5 +92,9 @@ test('tarcze: pula płytek i iskier rozgrzana na ekranie ładowania (pass tarcz,
   const loading = indexHtml.indexOf("setLoadingProgress(70, 'Kompilacja shaderów broni')");
   // zadanie 11: wywołanie przez rejestr (Core3D.warmup.run('tarcze …', () => prewarmShields3D())) — ta sama chwila
   const call = indexHtml.indexOf('prewarmShields3D()', loading);
-  assert.ok(loading > 0 && call > loading && call - loading < 900, 'prewarmShields3D na ekranie ładowania, obok shaderów broni');
+  assert.ok(loading > 0 && call > loading && call - loading < 1200, 'prewarmShields3D na ekranie ładowania, obok shaderów broni');
+  // tryb worker (RW-41a): strona bez przygotowania 3D — tarcze rozgrzewa worker przy „Start” (prepareScene → gamePrewarm)
+  assert.match(indexHtml, /if \(!RW_WORKER\) Core3D\.warmup\.run\('tarcze \(shield3D\)', \(\) => prewarmShields3D\(\)\);/);
+  const worker = readFileSync(new URL('../src/render/render.worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /st\.gamePrewarm = \(\) => \{[\s\S]{0,300}shields\.prewarmShields3D\(\)/);
 });

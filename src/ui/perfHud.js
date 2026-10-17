@@ -10,6 +10,7 @@ const PERF_PANEL_HTML = `
   <div class="perf-fps good" id="perfFps">--</div>
   <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
   <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
+  <div class="perf-row"><span class="perf-label">Obraz 3D (worker)</span><span class="perf-val" id="perfWorker3D">--</span></div>
   <div class="perf-row"><span class="perf-label">Hex LOD full/hybrid/far</span><span class="perf-val" id="perfHexLod">--</span></div>
   <div class="perf-row"><span class="perf-label">Culling rys./odrzuc. (cienie)</span><span class="perf-val" id="perfCulling">--</span></div>
   <div class="perf-row"><span class="perf-label">Physics worker</span><span class="perf-val" id="perfPhysicsWorker">--</span></div>
@@ -512,6 +513,9 @@ export const PerfHUD = {
   },
   display: {
     fps: 0,
+    // klatki na sekundę naprawdę (wywołania pętli / s — przy vsync najwyżej odświeżanie monitora); `fps` = 1000 / średni
+    // czas wywołania pętli (ile klatek wątek gry ZDĄŻYŁBY policzyć) — zostaje dla narzędzi (profil-bitwy-flot)
+    fpsReal: 0,
     frameMs: 0,
     frameP50: 0,
     frameP95: 0,
@@ -688,6 +692,7 @@ export const PerfHUD = {
       fps: document.getElementById('perfFps'),
       frameMs: document.getElementById('perfFrameTime'),
       framePercentiles: document.getElementById('perfFramePercentiles'),
+      worker3D: document.getElementById('perfWorker3D'),
       hexLod: document.getElementById('perfHexLod'),
       culling: document.getElementById('perfCulling'),
       physicsWorker: document.getElementById('perfPhysicsWorker'),
@@ -1045,6 +1050,7 @@ export const PerfHUD = {
     const frames = Math.max(1, this.accum.frameCount);
     const avgFrame = this.accum.frameMs / frames;
     this.display.fps = Math.round(1000 / Math.max(0.001, avgFrame));
+    this.display.fpsReal = Math.round(this.accum.frameCount / flushSeconds);
     this.display.frameMs = avgFrame;
     const percentileCount = Math.min(this.history.length, this.histIdx);
     for (let i = 0; i < percentileCount; i++) this.percentileScratch[i] = this.history[i];
@@ -1320,10 +1326,29 @@ export const PerfHUD = {
     };
 
     if (e.fps) {
-      e.fps.textContent = `${d.fps}`;
-      e.fps.className = `perf-fps ${d.fps >= 55 ? 'good' : d.fps >= 30 ? 'ok' : 'bad'}`;
+      // nagłówek: prawdziwe klatki na sekundę (audyt renderu 2026-10-17: dawniej 1000 / średni czas wywołania pętli —
+      // przy vsync i klatkach 3 / 10 ms na przemian pokazywało 159 przy ~138 prawdziwych)
+      const fr = d.fpsReal || d.fps;
+      e.fps.textContent = `${fr}`;
+      e.fps.className = `perf-fps ${fr >= 55 ? 'good' : fr >= 30 ? 'ok' : 'bad'}`;
     }
-    if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
+    if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms wątku gry na klatkę (wystarczy na ${d.fps} kl/s)`;
+    if (e.worker3D) {
+      // render w workerze (src/render/renderWorkerHost.js): złożenia obrazu 3D na sekundę, wiek obrazu (klatki od treści
+      // do ekranu — stały: framePacer), CPU i GPU klatki workera z kanału zwrotnego
+      const h = window.RenderWorkerHost;
+      if (h && typeof h.readStats === 'function') {
+        h.readStats();
+        const now = performance.now(), c = h.composed | 0;
+        const prev = this._w3d || (this._w3d = { t: now, c });
+        const dt = (now - prev.t) / 1000;
+        const fps3d = dt > 0.2 ? Math.round((c - prev.c) / dt) : (this._w3dLast || 0);
+        if (dt > 0.2) { prev.t = now; prev.c = c; this._w3dLast = fps3d; }
+        const st = h.stats, age = h.pacing && h.pacer ? `wiek ${h.pacer.age}` : 'bez kolejki';
+        e.worker3D.textContent = `${fps3d} kl/s · ${age} · CPU ${(st[6] || 0).toFixed(1)} · GPU ${(st[0] || 0).toFixed(1)} ms`;
+        e.worker3D.style.color = (d.fpsReal > 0 && fps3d < d.fpsReal * 0.9) ? '#fd4' : '';
+      } else e.worker3D.textContent = 'wyłączony';
+    }
     if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;
     if (e.hexLod) {
       const lod = window.__hexLodStats;

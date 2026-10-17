@@ -54,7 +54,7 @@ async function shot(name, extra = null) {
   await sleep(Number(args.czekaj || 700));
   const st = await state();
   // tryb worker: obraz workera złożony dla ostatniej opublikowanej strony (bariera „narysowano k”, jak zrzuty.mjs)
-  await waitFor(cdp, '!window.RenderWorkerHost || window.RenderWorkerHost.ring.lastComposed >= window.RenderWorkerHost.lastPostedK', 5000, 50);
+  await waitFor(cdp, '!window.RenderWorkerHost || window.RenderWorkerHost.ring.lastComposed >= window.RenderWorkerHost.lastPostedK - (window.RenderWorkerHost.pacing ? window.RenderWorkerHost.pacer.age : 0)', 5000, 50);
   await screenshotPng(cdp, join(out, `${name}.png`));
   report.kadry.push({ name, ...st, ...(extra || {}) });
   console.log(name.padEnd(22), JSON.stringify(st));

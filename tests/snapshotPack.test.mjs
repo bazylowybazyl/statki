@@ -203,6 +203,47 @@ test('NODES: tylko ciała zmienione po ostatniej klatce odebranej; pominięta st
   assert.equal(packer.stats.bodiesPacked, 0, 'po wysłaniu — bez powtórek');
 });
 
+test('ciało znów w migawce po przerwie (ten sam magazyn, nowa generacja slotu) — topologia, węzły i spoczynek od nowa', () => {
+  // Okręt ginie, wrak z TYM SAMYM ciałem powstaje krok później (rdzeń reaktora: detonacja w następnym kroku; przy 240 Hz
+  // i fizyce 60 Hz to kilka klatek) — w klatkach przerwy ciała nie ma w listach, slot wraca do puli i ciało dostaje go
+  // z nową generacją. Lustro renderu jest wtedy NOWE: bez topologii nie ma węzłów (wrak niewidoczny), a mostki 3D
+  // w workerze rzucały wyjątek co klatkę i obraz stawał (audyt 2026-10-17).
+  const a = makeShip(1, 0, 0), b = makeShip(2, 300, 0);
+  // pola topologii (describeBodyTopology) — opisy encji i ciał jak w trybie worker
+  for (const e of [a, b]) {
+    const s = e.beamHull.body.nodeStore, m = e.beamHull.body.beamStore, n = s.count;
+    s.ix = new Int32Array(n); s.iy = new Int32Array(n); s.iz = new Int32Array(n); s.adjStart = new Int32Array(n + 1); s.adj = new Int32Array(0);
+    m.a = new Int32Array(m.count); m.b = new Int32Array(m.count); m.restBase = new Float64Array(m.count); m.type = new Uint8Array(m.count);
+  }
+  const packer = new SnapshotPacker({ shared: false, describe: true });
+  const frame = baseFrame([a, b], { cam: { x: 0, y: 0, zoom: 1 }, cull: { x: 0, y: 0, halfW: 5000, halfH: 5000, drawHalfW: 800, drawHalfH: 450 } });
+  const body = b.beamHull.body;
+  frame.lastConsumed = 0;
+  packer.begin(frame); packer.finish(frame);
+  const bs0 = packer.ids.bodies.peek(body);
+  const gen0 = packer.ids.bodies.gen(bs0);
+  assert.equal(packer.topologies[bs0].gen, gen0);
+  // przerwa: ciała nie ma w żadnej liście — slot zwolniony
+  frame.npcs = [];
+  frame.lastConsumed = 1;
+  packer.begin(frame); packer.finish(frame);
+  assert.equal(packer.ids.bodies.peek(body), -1);
+  // wrak z tym samym ciałem
+  frame.npcs = [b];
+  frame.lastConsumed = 2;
+  packer.begin(frame);
+  const bs1 = packer.ids.bodies.peek(body);
+  const gen1 = packer.ids.bodies.gen(bs1);
+  assert.notEqual(gen1, gen0, 'nowa generacja slotu');
+  assert.ok(packer.topoQueue.includes(bs1), 'topologia dla nowej generacji w kolejce strony');
+  assert.equal(packer.topologies[bs1].gen, gen1);
+  const bi = bs1 * BODY.stride.i32;
+  assert.equal(packer.view.bodyI32[bi + BODY.I32.STORE_VER], packer.topologies[bs1].storeVer, 'wersja magazynu strony = topologii');
+  assert.ok(packer.view.bodyI32[bi + BODY.I32.NODE_F64_OFF] >= 0, 'węzły na stronie');
+  assert.ok(packer.view.bodyI32[bi + BODY.I32.REST_F64_OFF] >= 0, 'pozycje spoczynkowe na stronie');
+  packer.finish(frame);
+});
+
 test('wersje konfiguracji rosną przy zmianie tożsamości źródła; poziom B odświeżany rotacyjnie', () => {
   const ents = [makeShip(1, 0, 0)];
   const packer = new SnapshotPacker({ shared: false });
@@ -302,6 +343,59 @@ test('mgła wojny: SEEN bez ukrytych; zimne wraki z ciałem w SEEN_COLD; stacje'
   assert.equal(packer._lists[LIST.SEEN_COLD].length, 3);
   assert.equal(packer._lists[LIST.STATIONS].length, 1);
   assert.equal(packer.stats.stations, 1);
+});
+
+test('worker (consumeDirty: odbior): brud skóry zdejmowany dopiero po odbiorze strony — pominięta strona nie gubi węzłów', () => {
+  // Worker bierze NAJNOWSZĄ stronę: strona k z listą brudnych węzłów bywa pominięta. Dawniej lista wychodziła raz (flagi
+  // gry zerowane przy pakowaniu) — przy pominięciu worker dostawał węzły bez ich numerów na liście i nie przepisywał
+  // tych czworokątów skóry (stare kawałki kadłuba, dziury bez zmian). Teraz lista narasta do potwierdzenia odbioru.
+  const ents = [makeShip(1, 0, 0, { dirty: true })];
+  const packer = new SnapshotPacker({ shared: false });
+  const frame = baseFrame(ents, { cam: { x: 0, y: 0, zoom: 1 }, cull: { x: 0, y: 0, halfW: 5000, halfH: 5000, drawHalfW: 800, drawHalfH: 450 } });
+  const body = ents[0].beamHull.body, st = body.nodeStore, reg = body._region;
+  const dirtyOf = () => {
+    const bs = packer.ids.bodies.peek(body), bi = bs * BODY.stride.i32, v = packer.view;
+    const n = v.bodyI32[bi + BODY.I32.DIRTY_N], o = v.bodyI32[bi + BODY.I32.DIRTY_OFF];
+    return { list: n > 0 ? Array.from(v.nodeI32.subarray(o, o + n)) : [], flags: v.bodyI32[bi + BODY.I32.FLAGS] };
+  };
+  frame.consumeDirty = 'odbior';
+  // strona 1: brud {3, 9}
+  frame.lastConsumed = 0;
+  packer.begin(frame);
+  assert.deepEqual(dirtyOf().list, [3, 9]);
+  assert.ok(dirtyOf().flags & BODY_FLAG.MESH_DIRTY);
+  packer.finish(frame);
+  assert.equal(st.skinDirty[3], 1, 'flagi gry czekają na odbiór');
+  // strona 2: worker pominął stronę 1 (lastConsumed = 0); nowy brud {12}
+  st.skinDirty[12] = 1; reg.dirty[reg.dirtyCount++] = 12; body.meshDirty = true;
+  packer.begin(frame);
+  assert.deepEqual(dirtyOf().list, [3, 9, 12], 'strona 2 niesie też brud pominiętej strony 1');
+  assert.ok(dirtyOf().flags & BODY_FLAG.MESH_DIRTY);
+  packer.finish(frame);
+  // worker odebrał stronę 2 — brud zdjęty, flagi gry wolne, następna strona bez węzłów
+  frame.lastConsumed = 2;
+  packer.begin(frame);
+  assert.equal(reg.dirtyCount, 0);
+  assert.equal(st.skinDirty[3] + st.skinDirty[9] + st.skinDirty[12], 0);
+  assert.equal(packer.stats.bodiesPacked, 0);
+  packer.finish(frame);
+  // dirtyAll: flaga na każdej stronie do odbioru, potem znaczniki od nowa (węzły z listy po potwierdzeniu zostają)
+  reg.dirtyAll = true; st.skinDirty[5] = 1; reg.dirty[reg.dirtyCount++] = 5;
+  frame.lastConsumed = 3;
+  packer.begin(frame);
+  assert.ok(dirtyOf().flags & BODY_FLAG.DIRTY_ALL);
+  packer.finish(frame);
+  packer.begin(frame);
+  assert.ok(dirtyOf().flags & BODY_FLAG.DIRTY_ALL, 'strona 4 nieodebrana — flaga dalej');
+  packer.finish(frame);
+  st.skinDirty[7] = 1; reg.dirty[reg.dirtyCount++] = 7;   // zmiana po stronie 5 (nieodebranej)
+  frame.lastConsumed = 5;
+  packer.begin(frame);
+  assert.equal(dirtyOf().flags & BODY_FLAG.DIRTY_ALL, 0, 'odebrano stronę z pełnym przepisaniem');
+  assert.equal(st.skinDirty[5], 0);
+  assert.equal(st.skinDirty[7], 1, 'węzeł zmieniony po odebranej stronie zostaje na liście');
+  assert.deepEqual(dirtyOf().list, [7]);
+  packer.finish(frame);
 });
 
 test('lustra (consumeDirty): flagi brudu gry zerowane po spakowaniu; pozycje spoczynkowe po zmianie kształtu', () => {

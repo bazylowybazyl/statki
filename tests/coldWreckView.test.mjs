@@ -174,5 +174,7 @@ test('wpięcie: gra liczy widok klatki, render nie pisze flag gry ani nie woła 
 test('RW-31 cz. 2: poza renderu holownika do migawki przez frame.poseOf (bez zapisu w encji)', () => {
   const src = readIndexHtml();
   assert.match(src, /const _snapTugPose = \(e, out\) => e\.serviceTug === true && ServiceTugGame\.renderPoseOf\(e, window\.__interpShipPose, out\);/);
-  assert.match(src, /f\.poseOf = ServiceTugGame\.missions\.length \? _snapTugPose : null;/);
+  // audyt renderu 2026-10-17: poza do migawki = holownik (pierwszeństwo), potem interpolacja NPC i wraków (renderPoses)
+  assert.match(src, /f\.poseOf = npcRenderLerpOn \? _snapPoseLerp : \(ServiceTugGame\.missions\.length \? _snapTugPose : null\);/);
+  assert.match(src, /const _snapPoseLerp = \(e, out\) => \{\s*if \(ServiceTugGame\.missions\.length && _snapTugPose\(e, out\)\) return true;/);
 });

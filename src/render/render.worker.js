@@ -42,6 +42,15 @@ if (isWorker) {
   };
   self.addEventListener('error', (e) => report(e.error || e.message, 'onerror'));
   self.addEventListener('unhandledrejection', (e) => report(e.reason, 'promise'));
+  // Wyjątek jednego modułu nie zatrzymuje obrazu (audyt 2026-10-17: błąd mostków przy pierwszym wraku przerywał KAŻDĄ
+  // klatkę — bez bitmapy obraz stał do końca gry). Moduł z błędem pomijany w tej klatce, reszta i render idą dalej;
+  // do strony pierwsze 3 błędy modułu, dalej tylko licznik `st.modErrors` (nazwa → liczba).
+  st.modErrors = new Map();
+  const modFail = (name, e) => {
+    const n = (st.modErrors.get(name) || 0) + 1;
+    st.modErrors.set(name, n);
+    if (n <= 3) report(e, `renderPage/${name}`);
+  };
 
   async function init(m) {
     st.t0 = performance.now();
@@ -273,6 +282,8 @@ if (isWorker) {
       },
       shotAt: (slot, gen) => { const b = st.shots[slot]; return b && b.__gen === gen ? b : null; }
     });
+    // błędny rekord (dekoder efektu) pominięty — strumień idzie dalej
+    st.cmd.onError = (e, type) => modFail(`rozkaz ${type}`, e);
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
@@ -642,9 +653,11 @@ if (isWorker) {
     const sun = st.sun;
     sun.x = v.world[WD.SUN_X]; sun.y = v.world[WD.SUN_Y]; sun.r = v.world[WD.SUN_R];
     const rm = st.rm;
-    rm.apply(v);
-    cloak.applyCloakBlock(v.blocks.cloak, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; },
-      rm.lists[L.RENDER], st.dict, st.cloak);
+    try {
+      rm.apply(v);
+      cloak.applyCloakBlock(v.blocks.cloak, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; },
+        rm.lists[L.RENDER], st.dict, st.cloak);
+    } catch (e) { modFail('lustra', e); }
     st.players.ship = rm.player;
     st.players.player2Ship = rm.player2;
     // zegary gry tej strony (efekty niesione nośnikiem, smugi pocisków)
@@ -653,21 +666,29 @@ if (isWorker) {
     st.curFrame = h[H.FRAME_ID];
     // zegar efektów Core3D.fx = czas strony tej klatki (strona pod harnessem: czas wirtualny — te same fazy efektów)
     if (Number.isFinite(h[H.WALL])) st.Core3D.fxNowMs = h[H.WALL];
-    if (v.blocks.view && v.blocks.view.f64) st.mods.viewBlock.applyViewBlock(v.blocks.view, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.curFrame);
-    applyShots(v);
-    applyTurrets(v);
-    if (v.blocks.rockets && v.blocks.rockets.f64) {
-      st.mods.rktBlock.applyRocketBlock(v.blocks.rockets, st.dict, st.rockets,
-        (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, (id) => st.weaponDefs.get(id));
-    }
-    if (v.blocks.hazards && v.blocks.hazards.f64) {
-      st.hazMods.blk.applyHazardBlock(v.blocks.hazards, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.hazards);
-    }
-    if (v.blocks.repair && v.blocks.repair.f64) {
-      st.repairMods.blk.applyRepairBlock(v.blocks.repair, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.repairMirror);
-    }
+    try {
+      if (v.blocks.view && v.blocks.view.f64) st.mods.viewBlock.applyViewBlock(v.blocks.view, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.curFrame);
+    } catch (e) { modFail('widok', e); }
+    try { applyShots(v); } catch (e) { modFail('pociski', e); }
+    try { applyTurrets(v); } catch (e) { modFail('wieże', e); }
+    try {
+      if (v.blocks.rockets && v.blocks.rockets.f64) {
+        st.mods.rktBlock.applyRocketBlock(v.blocks.rockets, st.dict, st.rockets,
+          (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, (id) => st.weaponDefs.get(id));
+      }
+    } catch (e) { modFail('rakiety', e); }
+    try {
+      if (v.blocks.hazards && v.blocks.hazards.f64) {
+        st.hazMods.blk.applyHazardBlock(v.blocks.hazards, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.hazards);
+      }
+    } catch (e) { modFail('rdzenie', e); }
+    try {
+      if (v.blocks.repair && v.blocks.repair.f64) {
+        st.repairMods.blk.applyRepairBlock(v.blocks.repair, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.repairMirror);
+      }
+    } catch (e) { modFail('drony', e); }
     // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
-    if (st.cmd) { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); }
+    if (st.cmd) { try { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); } catch (e) { modFail('rozkazy', e); } }
     const cam = st.cam;
     cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM];
     const c = st.cull;
@@ -685,8 +706,9 @@ if (isWorker) {
     const dt = paused ? 0 : h[H.FRAME_DT];
     const t0 = performance.now();
     Core3D.syncCamera(cam);
+    // moduły po kolei, każdy osobno osłonięty (modFail — moduł z błędem pominięty w tej klatce, obraz idzie dalej)
     // warp „Nurt” przed planetami (soczewka świata w skoku): stan warpa gracza z WORLD, ruch warpa NPC z bloku `warp`
-    if (v.blocks.warp && v.blocks.warp.f64) {
+    try { if (v.blocks.warp && v.blocks.warp.f64) {
       const { warpMod, warpBlock } = st.mods;
       const mir = warpBlock.applyWarpBlock(v.blocks.warp, st.dict, st.warpMirror);
       const W0 = v.world, wo = st.warpObj;
@@ -702,14 +724,14 @@ if (isWorker) {
       wf.dt = Number.isFinite(mir.frame.dt) ? mir.frame.dt : dt; wf.cam = cns; wf.camShake = cam; wf.camFollow = mir.frame.camFollow;
       wf.ship = rm.player; wf.trafficTime = mir.frame.trafficTime; wf.lensAllowed = mir.frame.lensAllowed;
       warpMod.WarpNurt.update(wf);
-    }
-    if (st.planets && globalThis.updatePlanets3D) {
+    } } catch (e) { modFail('warp', e); }
+    try { if (st.planets && globalThis.updatePlanets3D) {
       const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
       cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
       if (globalThis.setSkyZone) globalThis.setSkyZone(st.skyZone || null);
       globalThis.updatePlanets3D(h[H.FRAME_DT], cns);
-    }
-    if (st.haloRings && v.blocks.ring && v.blocks.ring.f64) {
+    } } catch (e) { modFail('planety', e); }
+    try { if (st.haloRings && v.blocks.ring && v.blocks.ring.f64) {
       const mir = st.mods.ringBlockMod.applyRingBlock(v.blocks.ring, st.dict, st.ringMirror);
       const w = st.haloWorld;
       if (Number.isFinite(mir.clock)) w.clock = mir.clock;
@@ -729,24 +751,24 @@ if (isWorker) {
       st.haloRings.hallRoofOverride = mir.roof;
       const frozen = (h[H.FLAGS] & layoutMod.HEAD_FLAG.WORLD_FROZEN) !== 0;
       st.haloRings.update(h[H.FRAME_DT], cam, { sun: st.sun, ship: rm.player, gameDt: frozen ? 0 : dt, quality: st.ringQuality || 'high', splitScreen: false });
-    }
-    if (st.cometsView) {
+    } } catch (e) { modFail('ringi', e); }
+    try { if (st.cometsView) {
       const tr = h[H.SIM_RENDER];
       st.cometField.update(tr);
       st.cometsView.update(tr, cam, null);
-    }
-    if (st.belt && st.beltFrame) {
+    } } catch (e) { modFail('komety', e); }
+    try { if (st.belt && st.beltFrame) {
       const w = st.beltWorld; w.time = st.beltFrame.time; w.frameDt = st.beltFrame.dt;
       st.belt.prepareFrame(w.time, w.frameDt, rm.player, null, rm.lists[L.NPCS_SEEN]);
-    }
+    } } catch (e) { modFail('pas', e); }
     // pył hal K-7: wejście klatki = blok HALL (kopia HALL_DUST_IN strony); krok Core3D.fx czyta tylko tę tablicę
-    if (st.hallDust && v.hall) st.hallDust.submit(v.hall);
-    if (st.dust) {
+    try { if (st.hallDust && v.hall) st.hallDust.submit(v.hall); } catch (e) { modFail('pył hal', e); }
+    try { if (st.dust) {
       const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
       st.dust.frame(dt, cns, null, st.dustOn !== false);
-    }
-    stations.updateStations3D(rm.stations);
-    {
+    } } catch (e) { modFail('pył', e); }
+    try { stations.updateStations3D(rm.stations); } catch (e) { modFail('stacje', e); }
+    try {
       let ps = null;
       for (let i = 0; i < rm.stations.length; i++) if (rm.stations[i].world3dPirate) { ps = rm.stations[i]; break; }
       if (ps !== st.w3Station) {
@@ -755,8 +777,8 @@ if (isWorker) {
         if (ps) { st.w3.initWorld3D(); st.w3.attachPirateStation3D(null, ps); }
       }
       if (ps) st.w3.updateWorld3D(dt, h[H.VFX_TIME]);
-    }
-    {
+    } catch (e) { modFail('stacja piracka', e); }
+    try {
       const { bridge3d, bridgeFx, cloakLook } = st.mods;
       const nowSec = h[H.BRIDGE_TIME];
       if (!st.bridgeOpts) {
@@ -767,26 +789,26 @@ if (isWorker) {
       const bo = st.bridgeOpts, fo = st.bridgeFxOpts;
       bo.nowSec = fo.nowSec = nowSec; bo.dt = fo.dt = dt; bo.zoom = fo.zoom = cam.zoom;
       const list = rm.lists[L.SEEN_COLD];
-      bridge3d.Bridge3D.update(list, bo);
+      try { bridge3d.Bridge3D.update(list, bo); } catch (e) { modFail('mostki 3D', e); }
       bridgeFx.BridgeFx3D.update(list, fo);
-    }
-    if (st.destruction) st.destruction.update(h[H.VFX_TIME], h[H.FRAME_DT]);
-    if (st.pbg && v.blocks.pirateBase && v.blocks.pirateBase.f64) {
+    } catch (e) { modFail('okna mostków', e); }
+    try { if (st.destruction) st.destruction.update(h[H.VFX_TIME], h[H.FRAME_DT]); } catch (e) { modFail('rozpad stacji', e); }
+    try { if (st.pbg && v.blocks.pirateBase && v.blocks.pirateBase.f64) {
       const pm = st.pbMods.blk.applyPirateBaseBlock(v.blocks.pirateBase, st.pbMirror);
       if (pm.present) st.pbg.updatePirateBase3D(pm.dt, pm.state);
-    }
-    if (st.bay) {
+    } } catch (e) { modFail('baza piratów', e); }
+    try { if (st.bay) {
       const pl = rm.player, bm = st.bayMsg, bp = st.bayPose;
       if (pl) { bp.x = pl.pos ? pl.pos.x : pl.x; bp.y = pl.pos ? pl.pos.y : pl.y; bp.angle = pl.angle || 0; }
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
-    }
-    hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame);
-    if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D();
+    } } catch (e) { modFail('luk', e); }
+    try { hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
+    try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
-    models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt });
-    { const rs = st.repairSync; rs.dt = dt; rs.zoom = cam.zoom; rs.time = h[H.SIM_RENDER]; st.repairMods.drones.syncRepairDrones3D(rs); }
-    shields.updateShields3D(dt, rm.lists[L.SEEN], null);
-    if (st.reactorFx) {
+    try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }
+    try { const rs = st.repairSync; rs.dt = dt; rs.zoom = cam.zoom; rs.time = h[H.SIM_RENDER]; st.repairMods.drones.syncRepairDrones3D(rs); } catch (e) { modFail('drony 3D', e); }
+    try { shields.updateShields3D(dt, rm.lists[L.SEEN], null); } catch (e) { modFail('tarcze', e); }
+    try { if (st.reactorFx) {
       const simNow = h[H.SIM];
       const rdt = Math.max(0, Math.min(0.1, simNow - (st.reactorSim || simNow)));
       st.reactorSim = simNow;
@@ -797,10 +819,10 @@ if (isWorker) {
         st.reactorModelOpts.origin.x = cam.x; st.reactorModelOpts.origin.y = cam.y;
         st.reactorModel.sync(rm.cores, 0, rdt, st.reactorModelOpts);
       }
-    }
+    } } catch (e) { modFail('reaktory', e); }
     const t1 = performance.now();
-    let bmp;
-    if ((h[H.FLAGS] & layoutMod.HEAD_FLAG.SKIP_WORLD_3D) !== 0) {
+    let bmp = null;
+    try { if ((h[H.FLAGS] & layoutMod.HEAD_FLAG.SKIP_WORLD_3D) !== 0) {
       // CIC zakrywa ekran — bez renderu świata (pusta klatka dla pary z nakładkami)
       const e = st.empty || (st.empty = new OffscreenCanvas(1, 1));
       e.getContext('2d');
@@ -822,7 +844,9 @@ if (isWorker) {
     } else {
       Core3D.renderSingle(cam);
       bmp = st.canvas.transferToImageBitmap();
-    }
+    } } catch (e) { modFail('render', e); }
+    // bez bitmapy (wyjątek renderu) — to, co jest na kanwie: strona dostaje parę do nakładek tej klatki i idzie dalej
+    if (!bmp) { try { bmp = st.canvas.transferToImageBitmap(); } catch (_) { const e1 = st.empty || (st.empty = new OffscreenCanvas(1, 1)); e1.getContext('2d'); bmp = e1.transferToImageBitmap(); } }
     const t2 = performance.now();
     // prostokąty domen gazu wybuchów (strona pakuje z nich przeszkody kadłubów — packGasObstacles, RW-41b)
     const ex = globalThis.__explosions;

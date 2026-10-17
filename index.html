@@ -1688,6 +1688,7 @@
     import { Bridge3D } from "./src/3d/bridge3D.js";
     import { cloakLightGain } from "./src/game/cloakLook.js";
     import { stepCloakLooks } from "./src/game/cloakLooks.js";
+    import { RenderPoses } from "./src/game/renderPoses.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
     import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
@@ -5430,9 +5431,21 @@
 
     // Gracz jest rysowany z pozą interpolowaną (hexShips3D) — okna i wyrzut
     // mostka muszą iść za nią, inaczej „pływają” po kadłubie przy prędkości.
+    // Pozy renderu NPC i wraków między krokami fizyki (src/game/renderPoses.js, audyt renderu 2026-10-17): fizyka 60 Hz,
+    // obraz do 240 Hz — bez interpolacji kadłuby obcych okrętów stały 3–4 klatki i skakały o v/60. W trybach z migawką
+    // (worker / inline, `npcRenderLerpOn` ustawiane przy wyborze trybu szwu) pakujący zapisuje pozę interpolowaną, a wieże
+    // (Turret2D.syncFrame) i wygląd maskowania liczą się z tej samej; `off` bez zmian. A/B: `?npcLerp=0`.
+    const renderPoses = new RenderPoses();
+    let npcRenderLerpOn = false;
+    window.RenderPoses = renderPoses;
+
     function bridgeRenderPose(entity) {
       // lustro gracza (RW-11, `?szew=inline`) — poza renderu jak statek gry
-      if (entity !== ship && !(entity && entity.__mirror === true && entity.__game === ship)) return null;
+      if (entity !== ship && !(entity && entity.__mirror === true && entity.__game === ship)) {
+        if (!npcRenderLerpOn || entity === player2Ship) return null;
+        const r = renderPoses.poseOf(entity);
+        return r !== null && r.live ? r : null;
+      }
       const p = window.__interpShipPose;
       return p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.angle) ? p : null;
     }
@@ -28124,6 +28137,9 @@
       const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
+      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
+      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki.
+      if (rwHost) rwHost.present();
       // Wejście: pady i kontekst raz na klatkę (strażnik znacznika rAF — pętla wejścia mogła to już zrobić).
       pumpInput(now);
       scoutFrameInput();
@@ -28408,6 +28424,8 @@
     // (src/render/render.worker.js), moduły bez luster wyłączone; kompozycja B2cr (src/render/renderWorkerHost.js).
     const RW_WORKER = SZEW_MODE === 'worker';
     const SZEW_LATE = SZEW_MIRRORS || RW_WORKER;
+    // pozy renderu NPC i wraków (renderPoses — przy bridgeRenderPose): tylko z migawką, która niesie je do modułów 3D
+    npcRenderLerpOn = SZEW_LATE && !/[?&]npcLerp=0(?:&|$)/.test(location.search);
     const renderSnapshot = (SZEW_MODE === 'inline' || SZEW_MODE === 'pakuj' || RW_WORKER)
       ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_LATE }) : null;
     let rwHost = null;
@@ -28472,6 +28490,18 @@
     // Poza renderu holownika pod graczem (RW-31, § 2.6 p. 27): liczona przy pakowaniu, bez zapisu w encji. Dziś render
     // czyta jeszcze żywe encje, więc ServiceTugGame.beginRender / restorePose zostają do renderu z luster (RW-11).
     const _snapTugPose = (e, out) => e.serviceTug === true && ServiceTugGame.renderPoseOf(e, window.__interpShipPose, out);
+    // Poza do migawki z interpolacją NPC i wraków (renderPoses, audyt 2026-10-17): najpierw holownik pod graczem, gracz
+    // bez zmian (poza renderu gracza idzie w HEAD.INTERP — getInterpolatedRenderPose renderu), reszta — lerp między
+    // krokami fizyki. Ta sama poza trafia do rekordów wież (Turret2D.syncFrame → bridgeRenderPose).
+    const _snapPoseLerp = (e, out) => {
+      if (ServiceTugGame.missions.length && _snapTugPose(e, out)) return true;
+      // gracz 2 (podzielony ekran): kamera 2 idzie za pozą kroku (physicsStep) — kadłub w tej samej, bez interpolacji
+      if (e === ship || e === player2Ship) return false;
+      const r = renderPoses.poseOf(e);
+      if (r === null || !r.live) return false;
+      out.x = r.x; out.y = r.y; out.a = r.angle;
+      return true;
+    };
     // Lustra encji (RW-11a / b, `?szew=inline`): moduły renderu na lustrach — kadłuby, dysze, lampy, cień SDF, smugi,
     // zimne wraki (updateHexShips3D), modele 3D i tarcze. Mostki, rdzenie, stacje i drony naprawcze zostają na
     // obiektach gry (docs/PLAN-render-worker.md, Stan RW-11b). RenderWorld: na czas wywołań modułów na lustrach źródło
@@ -28543,7 +28573,7 @@
       f.interpPose = window.__interpShipPose;
       f.ship = ship;
       f.p2 = player2Ship;
-      f.poseOf = ServiceTugGame.missions.length ? _snapTugPose : null;
+      f.poseOf = npcRenderLerpOn ? _snapPoseLerp : (ServiceTugGame.missions.length ? _snapTugPose : null);
       f.npcs = npcs;
       f.wrecks = wrecks;
       f.coldWrecks = coldWrecks;
@@ -28574,7 +28604,9 @@
       // tryb inline: render odbiera każdą stronę (worker — RET.LAST_CONSUMED)
       f.lastConsumed = rwHost ? rwHost.lastConsumed() : renderSnapshot.k;
       // lustra (RW-11a): render czyta brud skóry z luster — pakujący zeruje flagi gry; wygląd maskowania tej klatki (RW-26)
-      f.consumeDirty = SZEW_LATE;
+      // worker: brud skóry zdejmowany po ODBIORZE strony (worker bierze najnowszą — pominięta strona nie gubi węzłów);
+      // inline: od razu (render odbiera każdą stronę)
+      f.consumeDirty = RW_WORKER ? 'odbior' : SZEW_LATE;
       f.cloak = cloakFrame;
       f.rockets = RW_WORKER ? (window.rocketSystem3D?.rockets || null) : null;
       f.repair = RW_WORKER ? RepairSwarm : null;
@@ -29588,6 +29620,9 @@
       // znakowaniem wszystkich list migawki). Cała lista kadłubów: encja wychodząca z mgły zachowuje slot. Cykl
       // przestrzeni ma jeden właściciel: beginRenderSlotsFrame / endRenderSlotsFrame w loop() (renderSlots.js).
       for (let i = 0; i < renderEntities.length; i++) RenderSlots.entities.slotOf(renderEntities[i]);
+      // Pozy renderu NPC i wraków między krokami fizyki (renderPoses) — przed wieżami, wyglądem maskowania i migawką;
+      // w pauzie i zamrożonym świecie poza bieżąca (α = 1).
+      if (npcRenderLerpOn) renderPoses.frame(renderEntities, physicsTickId, (PAUSED || StoryGame.worldFrozen) ? 1 : alpha);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -29937,6 +29972,10 @@
             drawX = npc.__px + (npc.x - npc.__px) * fighterLerp;
             drawY = npc.__py + (npc.y - npc.__py) * fighterLerp;
             if (Number.isFinite(npc.__pa)) _npcDrawAngle = interpAngleShort(npc.__pa, npc.angle || 0, fighterLerp);
+          } else if (npcRenderLerpOn) {
+            // nakładki okrętu w tej samej pozie co kadłub 3D (migawka z pozą renderu — renderPoses)
+            const rp = renderPoses.poseOf(npc);
+            if (rp !== null && rp.live) { drawX = rp.x; drawY = rp.y; _npcDrawAngle = rp.angle; }
           }
           const s = worldToScreenInto(drawX, drawY, cam, _npcScreenScratch);
           npc.shadowFactor = 0;
