@@ -235,7 +235,10 @@ Pomiary (RTX 5080, Ryzen 7 7800X3D, `nvidia-smi` 0–1% przed każdym przebiegie
 | — klatki strony / s | 229,9 | 238,2 |
 | bitwa 0–15 s: wiek śr., skoki | 4,36, 4,7% | 4,30, 4,2% |
 
-A/B przełączników w tej samej bitwie (`--wkAb`, kanapki 4 s): pkt 2 + 3 razem −0,13 ms mediany. W pierwszych 15 s
+Obraz: `zrzuty.mjs --sceny bitwa,bitwa-blisko,warp,warp-ladowanie --uuid osobne` (baza `--root` z 543809f5) — 0% pikseli
+> 2/255, maks. różnica 1–2/255 (strugi MAIN w kadrze bitwy i warpu); kompilacje pipeline'ów w klatkach workera: baza
+1–2 (`MainExhaustJets`, `RocketBody`), poprawki 0. A/B przełączników w tej samej bitwie (`--wkAb`, kanapki 4 s):
+pkt 2 + 3 razem −0,13 ms mediany. W pierwszych 15 s
 wiek obrazu zostaje ~4 — tam bitmapa spóźnia się przez stronę (klatki z krokiem fizyki wysyłają późno: wywołanie
 z krokiem p50 3,4 ms), czyli pkt 1–2 rankingu. Profil workera po poprawkach (headless, pod profilerem): `renderPage`
 2,54 ms/kl — `renderSingle` 1,27 (three `render` passów sceny 0,53, klatka efektów 0,33, macierze 0,09, post 0,08),
