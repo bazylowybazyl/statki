@@ -83,6 +83,12 @@ if (isWorker) {
     globalThis.SUN = st.sun;
     const { RenderWorld, createMirrorPlayersSource } = await import('./renderWorld.js');
     st.players = createMirrorPlayersSource();
+    // Poza renderu gracza (interpolowana między krokami fizyki — window.__interpShipPose strony) z HEAD.INTERP strony:
+    // bez niej kadłub gracza (hexShips3D), dysze, rakiety i warp szły w pozie KROKU fizyki (60 Hz), a kamera i wieże za
+    // pozą interpolowaną — przy 240 Hz kadłub skakał między 4 położeniami („kilka statków”, w warpie dwa obok siebie;
+    // zgłoszenie użytkownika 2026-10-17). Pole własne źródła tylko w workerze (inline czyta globalną pozę strony).
+    Object.defineProperty(st.players, 'playerPose', { value: null, writable: true, enumerable: true });
+    st.interpPose = { x: 0, y: 0, angle: 0 };
     RenderWorld.setSource(st.players);
     const [core, hex, models, shields, stations, mirror, layoutMod, tb, ret, cloak, bridges] = await Promise.all([
       import('../3d/core3d.js'), import('../3d/hexShips3D.js'), import('../3d/ships3d/shipModels3DGame.js'),
@@ -662,6 +668,14 @@ if (isWorker) {
     } catch (e) { modFail('lustra', e); }
     st.players.ship = rm.player;
     st.players.player2Ship = rm.player2;
+    {
+      const ix = h[H.INTERP_X], iy = h[H.INTERP_Y], ia = h[H.INTERP_ANGLE];
+      if (ix === ix && iy === iy && ia === ia) {
+        const ip = st.interpPose;
+        ip.x = ix; ip.y = iy; ip.angle = ia;
+        st.players.playerPose = ip;
+      } else st.players.playerPose = null;
+    }
     // zegary gry tej strony (efekty niesione nośnikiem, smugi pocisków)
     const SC = st.mods.clock.SimClock;
     SC.sim = h[H.SIM]; SC.render = h[H.SIM_RENDER]; SC.renderSim = h[H.SIM_RENDER_SIM];
