@@ -46,6 +46,7 @@ if (isWorker) {
   // klatkę — bez bitmapy obraz stał do końca gry). Moduł z błędem pomijany w tej klatce, reszta i render idą dalej;
   // do strony pierwsze 3 błędy modułu, dalej tylko licznik `st.modErrors` (nazwa → liczba).
   st.modErrors = new Map();
+  const frameTimes = globalThis.__rwFrameTimes = { ms: new Float64Array(8192), n: 0 };
   const modFail = (name, e) => {
     const n = (st.modErrors.get(name) || 0) + 1;
     st.modErrors.set(name, n);
@@ -652,6 +653,7 @@ if (isWorker) {
     }
     const sun = st.sun;
     sun.x = v.world[WD.SUN_X]; sun.y = v.world[WD.SUN_Y]; sun.r = v.world[WD.SUN_R];
+    const tPage = performance.now();
     const rm = st.rm;
     try {
       rm.apply(v);
@@ -860,6 +862,9 @@ if (isWorker) {
     f[R.CPU_RENDER_MS] = t2 - t1;
     f[R.CPU_FRAME_MS] = performance.now() - t0;
     if (Number.isFinite(Core3D.gpuFrameMs)) f[R.GPU_FRAME_MS] = Core3D.gpuFrameMs;
+    // pierścień czasów CAŁEJ klatki workera (lustra → bitmapa) dla narzędzi (A/B w bitwie — profil-bitwy-flot --wkAb)
+    const ft = frameTimes;
+    ft.ms[ft.n & 8191] = t2 - tPage; ft.n++;
     st.frames++;
   }
 
