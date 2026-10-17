@@ -89,6 +89,9 @@ if (isWorker) {
     // zgłoszenie użytkownika 2026-10-17). Pole własne źródła tylko w workerze (inline czyta globalną pozę strony).
     Object.defineProperty(st.players, 'playerPose', { value: null, writable: true, enumerable: true });
     st.interpPose = { x: 0, y: 0, angle: 0 };
+    // poseOf modułów na lustrach (mostki, modele 3D, drony naprawcze) — jak bridgeRenderPose strony: gracz w pozie
+    // interpolowanej, NPC i wraki mają ją już w ENT migawki (renderPoses)
+    st.playerPoseOf = (e) => (e === st.players.ship ? st.players.playerPose : null);
     RenderWorld.setSource(st.players);
     const [core, hex, models, shields, stations, mirror, layoutMod, tb, ret, cloak, bridges] = await Promise.all([
       import('../3d/core3d.js'), import('../3d/hexShips3D.js'), import('../3d/ships3d/shipModels3DGame.js'),
@@ -138,7 +141,7 @@ if (isWorker) {
     st.w3.setWorld3DHiddenTest((s) => !!s.fogHidden);
     st.w3Station = null;
     st.bayPose = { x: 0, y: 0, angle: 0 };
-    st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: null, hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
+    st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: (e) => st.playerPoseOf(e), hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
     st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
@@ -798,9 +801,11 @@ if (isWorker) {
       const { bridge3d, bridgeFx, cloakLook } = st.mods;
       const nowSec = h[H.BRIDGE_TIME];
       if (!st.bridgeOpts) {
-        st.bridgeOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf: null, cull: c, camera: cam,
+        // poza renderu gracza (st.playerPoseOf) — bez niej mostek gracza drżał na kadłubie w ruchu (2026-10-17)
+        const poseOf = st.playerPoseOf;
+        st.bridgeOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, cull: c, camera: cam,
           visibility: (e) => (models.shipModel3DIdFor(e) ? 0 : cloakLook.cloakLightGain(e)) };
-        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf: null, visibility: cloakLook.cloakLightGain };
+        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, visibility: cloakLook.cloakLightGain };
       }
       const bo = st.bridgeOpts, fo = st.bridgeFxOpts;
       bo.nowSec = fo.nowSec = nowSec; bo.dt = fo.dt = dt; bo.zoom = fo.zoom = cam.zoom;
@@ -821,9 +826,10 @@ if (isWorker) {
     try { hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
     try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
-    try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: null, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }
+    try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: st.playerPoseOf, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }
     try { const rs = st.repairSync; rs.dt = dt; rs.zoom = cam.zoom; rs.time = h[H.SIM_RENDER]; st.repairMods.drones.syncRepairDrones3D(rs); } catch (e) { modFail('drony 3D', e); }
-    try { shields.updateShields3D(dt, rm.lists[L.SEEN], null); } catch (e) { modFail('tarcze', e); }
+    // poza renderu gracza (jak strona: window.__interpShipPose) — bez niej tarcza gracza drżała w ruchu
+    try { shields.updateShields3D(dt, rm.lists[L.SEEN], st.players.playerPose); } catch (e) { modFail('tarcze', e); }
     try { if (st.reactorFx) {
       const simNow = h[H.SIM];
       const rdt = Math.max(0, Math.min(0.1, simNow - (st.reactorSim || simNow)));
