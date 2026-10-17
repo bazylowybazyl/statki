@@ -17,7 +17,7 @@
 // renderu three liczone od nowa, tryb słownikowy i mapy V8 obiektów gry (Chrome z --allow-natives-syntax).
 // Bitwa jest chaotyczna mimo ziarna (czas rzeczywisty) — A/B na kilku przebiegach na przemian.
 // Wyniki 2026-10-07: docs/AUDYT-wydajnosc-bitwa-2026-10-07.md.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startVite, navigateAndWait, evaluate, sleep } from '../dema/rdzen-cdp.js';
@@ -27,6 +27,8 @@ const arg = (name, fallback) => {
   const i = process.argv.indexOf('--' + name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 };
+// wyrażenie `plik:ścieżka` = kod z pliku (kod z `|`) — --zdarzenia, --wkZdarzenia, --wkAb
+const wkExpr = (e) => (e.startsWith('plik:') ? readFileSync(e.slice(5), 'utf8') : e);
 const SKLAD = String(arg('sklad', '50,20,10,3')).split(',').map((v) => Math.max(0, Number(v) || 0));
 const [NF, ND, NB, NS] = [SKLAD[0] || 0, SKLAD[1] || 0, SKLAD[2] || 0, SKLAD[3] || 0];
 const TRWANIE = Number(arg('trwanie', 100));
@@ -49,7 +51,7 @@ const LS = String(arg('ls', '')).split(';').filter(Boolean).map((kv) => { const 
 // --tryb spokoj: obie grupy to Terra Nova (bez walki) — koszt na byt bez chaosu bitwy (porównanie wersji).
 const TRYB = arg('tryb', 'bitwa');
 // --zdarzenia '60@window.setFogOfWar(false)|90@…' — wyrażenia w stronie w chwilach od pojawienia się flot.
-const EVENTS = String(arg('zdarzenia', '')).split('|').filter(Boolean).map((v) => { const i = v.indexOf('@'); return { at: Number(v.slice(0, i)), expr: v.slice(i + 1) }; }).sort((a, b) => a.at - b.at);
+const EVENTS = String(arg('zdarzenia', '')).split('|').filter(Boolean).map((v) => { const i = v.indexOf('@'); return { at: Number(v.slice(0, i)), expr: wkExpr(v.slice(i + 1)) }; }).sort((a, b) => a.at - b.at);
 // Kroki fizyki na takt AI (20 Hz): liczymy kroki z licznika taktów AI gry (window.__aiDecisionTickId).
 const STEPS_PER_AI = (Number((QUERY.match(/physHz=(\d+)/) || [])[1]) || 120) / 20;
 const OUT = arg('out', join(tmpdir(), `profil-bitwy-flot-${SKLAD.join('-')}`));
@@ -70,7 +72,15 @@ await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
 const ev = (expr) => evaluate(cdp, expr);
 // --workerProf 1 (2026-10-17, przestoje w bitwie): profil CPU workera renderu (?renderWorker=1) przez cały pomiar
 // (próbkowanie 500 µs) + jego konsola z czasem → worker.cpuprofile i worker-konsola.txt w --out.
-const WORKER_PROF = arg('workerProf', '0') === '1';
+const WORKER_PROF_ARG = arg('workerProf', '0') === '1';
+// --wkAb 'exprA|exprB' (2026-10-17, klatka workera pod 240 Hz): A/B W TEJ SAMEJ bitwie — co --wkAbOkres s (domyślnie 4)
+// wyrażenie kolejnego wariantu w workerze renderu (przełącznik modułu), czasy CAŁEJ klatki workera z jego pierścienia
+// (globalThis.__rwFrameTimes — lustra → bitmapa) przypisane do wariantu; pierwsze 0,5 s po przełączeniu pomijane.
+// Wynik: p50 / średnia / p95 na wariant i różnice sąsiednich okien (kanapki). --wkZdarzenia 't@wyrażenie|…' — kod w workerze.
+const WK_AB = String(arg('wkAb', '')).split('|').filter(Boolean).map(wkExpr);
+const WK_AB_PERIOD = Number(arg('wkAbOkres', 4));
+const WK_EVENTS = String(arg('wkZdarzenia', '')).split('|').filter(Boolean).map((v) => { const i = v.indexOf('@'); return { at: Number(v.slice(0, i)), expr: wkExpr(v.slice(i + 1)) }; }).sort((a, b) => a.at - b.at);
+const WORKER_PROF = WORKER_PROF_ARG || WK_AB.length > 0 || WK_EVENTS.length > 0;
 const _wk = { sid: null, id: 7000000, logs: [], t0: Date.now() };
 const wkSend = (method, params = {}) => {
   const id = ++_wk.id;
@@ -324,11 +334,20 @@ try {
   const t0 = Date.now();
   const sec = () => (Date.now() - t0) / 1000;
   const todo = [...PROFILE_AT].sort((a, b) => a.at - b.at);
-  if (WORKER_PROF && _wk.sid) { _wk.t0 = Date.now(); await wkSend('Profiler.enable'); await wkSend('Profiler.setSamplingInterval', { interval: 500 }); await wkSend('Profiler.start'); }
+  if (WORKER_PROF_ARG && _wk.sid) { _wk.t0 = Date.now(); await wkSend('Profiler.enable'); await wkSend('Profiler.setSamplingInterval', { interval: 500 }); await wkSend('Profiler.start'); }
   await cdp.send('Profiler.enable');
   await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
   const STEPS_EXPR = `(window.__aiDecisionTickId || 0) * ${STEPS_PER_AI}`;
+  const wkEval = async (expr) => { const r = await wkSend('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); return r?.result?.value ?? r?.exceptionDetails?.exception?.description ?? null; };
+  const ab = { i: -1, next: 0, n0: 0, t0: 0, wins: [] };
+  const abTake = async () => { if (ab.i < 0) return; const r = await wkEval(`(() => { const F = globalThis.__rwFrameTimes; const a = []; for (let j = Math.max(${ab.n0}, F.n - 8192); j < F.n; j++) a.push(F.ms[j & 8191]); return a; })()`);
+    if (Array.isArray(r) && r.length) ab.wins.push({ v: ab.i % WK_AB.length, t: ab.t0, ms: r }); };
   while (sec() < TRWANIE) {
+    if (WK_EVENTS.length && sec() >= WK_EVENTS[0].at) { const e = WK_EVENTS.shift(); report('wk zdarzenie', { at: e.at, expr: e.expr.slice(0, 80), wynik: await wkEval(e.expr) }); continue; }
+    if (WK_AB.length && _wk.sid && sec() >= ab.next) {
+      await abTake(); ab.i++; const v = ab.i % WK_AB.length; await wkEval(WK_AB[v]);
+      await sleep(500); ab.n0 = await wkEval('globalThis.__rwFrameTimes.n'); ab.t0 = Math.round(sec()); ab.next = sec() + WK_AB_PERIOD - 0.5; continue;
+    }
     if (EVENTS.length && sec() >= EVENTS[0].at) { const e = EVENTS.shift(); report('zdarzenie', { at: e.at, expr: e.expr, wynik: await ev(e.expr) }); continue; }
     if (todo.length && sec() >= todo[0].at) {
       const { at, dur } = todo.shift();
@@ -352,7 +371,20 @@ try {
     if (d.diag) report('  diag', diagLine(d.diag));
     if (DIAG && samples.length % 4 === 1) { try { report('  V8 pola', await ev(NATIVE_EXPR)); } catch (e) { report('  V8 pola', String(e.message || e)); } }
   }
-  if (WORKER_PROF && _wk.sid) {
+  if (WK_AB.length && _wk.sid) {
+    await abTake();
+    const q = (a, x) => a.length ? a[Math.min(a.length - 1, Math.floor(x * a.length))] : NaN;
+    const stat = (a) => { const s = [...a].sort((x, y) => x - y); return { n: s.length, p50: +q(s, 0.5).toFixed(3), avg: +(s.reduce((x, y) => x + y, 0) / Math.max(1, s.length)).toFixed(3), p95: +q(s, 0.95).toFixed(3) }; };
+    console.log('\n== A/B workera (--wkAb, okno ' + WK_AB_PERIOD + ' s)');
+    WK_AB.forEach((e, v) => report(`wariant ${v}`, { expr: e.slice(0, 70), ...stat(ab.wins.filter((w) => w.v === v).flatMap((w) => w.ms)) }));
+    // kanapki: mediana okna wariantu v minus średnia median sąsiednich okien wariantu 0
+    const med = ab.wins.map((w) => ({ v: w.v, t: w.t, p50: stat(w.ms).p50, n: w.ms.length }));
+    const d = []; for (let i = 1; i + 1 < med.length; i++) if (med[i].v !== 0 && med[i - 1].v === 0 && med[i + 1].v === 0) d.push(med[i].p50 - (med[i - 1].p50 + med[i + 1].p50) / 2);
+    if (d.length) { d.sort((x, y) => x - y); report('kanapki', { n: d.length, medianaRoznicy: +q(d, 0.5).toFixed(3), srednia: +(d.reduce((x, y) => x + y, 0) / d.length).toFixed(3) }); }
+    report('okna', med.map((m) => `${m.t}s:${m.v}:${m.p50}`).join(' '));
+    writeFileSync(join(OUT, 'wk-ab.json'), JSON.stringify({ exprs: WK_AB, wins: ab.wins }));
+  }
+  if (WORKER_PROF_ARG && _wk.sid) {
     const { profile } = await wkSend('Profiler.stop');
     writeFileSync(join(OUT, 'worker.cpuprofile'), JSON.stringify(profile));
     report('worker', { profil: join(OUT, 'worker.cpuprofile'), konsola: _wk.logs.length });

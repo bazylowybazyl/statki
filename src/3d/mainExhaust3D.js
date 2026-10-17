@@ -28,11 +28,13 @@
 // w WebGL nie robił — struga by ściemniała.
 
 import * as THREE from 'three';
-import { NodeMaterial } from 'three/webgpu';
+import { NodeMaterial, StorageBufferAttribute } from 'three/webgpu';
 import {
-  Fn, attribute, clamp, dot, exp, float, floor, fract, inverseSqrt, max, min, mix, pow,
-  positionGeometry, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4
+  Fn, attribute, clamp, dot, exp, float, floor, fract, int, inverseSqrt, max, min, mix, pow,
+  positionGeometry, select, smoothstep, storage, texture, uniform, uv, varying, vec2, vec3, vec4
 } from 'three/tsl';
+import { zbierzZakres, zbierzZakresy, zbierzZakresyCaly } from './zakresyWysylki.js';
+import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 import { Core3D } from './core3d.js';
 import { Fx3D, makeBasis, coneDir } from './fxParticles3D.js';
 // Losowość warstwy efektów (zadanie 23): Math.random gry przesuwał się o iskry dysz, a ich liczba zależy od
@@ -48,8 +50,6 @@ import {
   paletteSparkCool
 } from '../data/engineFx.js';
 
-const MAX_JETS = 4096;
-const MAX_OWNERS = 2048;
 // Atlas palet — tekstura HalfFloat: oś x to temperatura strugi (0 = chłodny
 // brzeg, 1 = rdzeń), oś y to odległość od dyszy; paleta = PAL_L wierszy.
 const PAL_MAX = 32;
@@ -120,12 +120,12 @@ export const MAIN_EXHAUST_REACH = Object.freeze({ JET_REACH, SPARK_SELF, SPARK_L
 
 /* ============================================================================
    MATERIAŁ (TSL) — kwady strug na instancjach
-   Atrybuty instancji:
-     iPos   wylot dyszy względem mesh.position (początek przy kamerze)
-     iDir   kierunek wydechu w płaszczyźnie gry
-     iPalG  x: indeks palety w atlasie, y: długość gradientu [j.]
-     iData  x: długość, y: szerokość, z: alfa, w: u życia
-     iSeed  ziarno szumu strugi
+   Atrybuty instancji (jeden bufor z przeplotem, rekord stały od narodzin strugi):
+     iA     l0, l1 (długość na początku / końcu życia), w0, w1 (szerokość)
+     iB     narodziny (zegar strug, zawinięty), życie [s], alfa, ziarno szumu
+     iC     indeks palety w atlasie, długość gradientu [j.], właściciel (wiersz bufora właścicieli)
+   Bufor właścicieli (storage, vec4 na wiersz): wylot dyszy względem mesh.position (początek przy kamerze),
+   kierunek wydechu w płaszczyźnie gry.
    ========================================================================== */
 // Szum strugi z dema: hash21 na węzłach siatki (floor) — wejście całkowite.
 // Funkcje z layoutem są CZYSTE (PLAN §3 — błąd r183 z uniformem w domknięciu).
@@ -150,38 +150,64 @@ const jetCloud = /*@__PURE__*/ Fn(([p]) =>
   float(0.68).mul(jetNoise2(p)).add(float(0.32).mul(jetNoise2(p.mul(2.07).add(17.3))))
 ).setLayout({ name: 'mainJetCloud', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
 
-function makeJetMaterial(atlasTex) {
+// Pula strug na GPU (2026-10-17, klatka workera pod 240 Hz): struga to STAŁY rekord instancji pisany raz przy narodzinach
+// (pierścień slotów — jets niżej), a wiek, długość, szerokość, alfa i położenie liczy shader: wiek z zegara strug
+// (uClock − narodziny, oba zawinięte co JET_CLOCK_WRAP s — float32 bez utraty dokładności), położenie i kierunek
+// z bufora właścicieli (dysza, do której struga jest doklejona; storage, wiersz na właściciela, pisany co klatkę).
+// Dawniej CPU co klatkę przeliczał i wysyłał ~3,8 tys. strug w bitwie 166 okrętów (0,2 ms pętli + ~200 KB).
+// Rekord instancji: iA = (l0, l1, w0, w1), iB = (narodziny, życie, alfa, ziarno),
+// iC = (paleta, gradient, właściciel, —). Martwa struga (wiek ≥ życie) zwija kwad do zera — bez fragmentów.
+const JET_CLOCK_WRAP = 256;
+
+function makeJetMaterial(atlasTex, ownerNode) {
   const U = uniformsAdapter({
     uZ: uniform(MAIN_EXHAUST_Z),
     // faza płynięcia szumu — ∫flow·dt liczone na CPU
     uFlowPh: uniform(0),
+    // zegar strug (zawinięty co JET_CLOCK_WRAP s) — wiek strugi = uClock − narodziny
+    uClock: uniform(0),
     uPal: texture(atlasTex)
   });
-  const iPos = attribute('iPos', 'vec2');
-  const iDir = attribute('iDir', 'vec2');
-  const iPalG = attribute('iPalG', 'vec2');
-  const iData = attribute('iData', 'vec4');
-  const iSeed = attribute('iSeed', 'float');
+  const iA = attribute('iA', 'vec4');
+  const iB = attribute('iB', 'vec4');
+  const iC = attribute('iC', 'vec4');
   // odległość od dyszy wzdłuż strugi (0 u wylotu)
   const alongLocal = positionGeometry.y.add(0.5);
+  // wiek (narodziny w przyszłości tej klatki: ujemny — u = 0, jak dawne max(0, wiek))
+  const age = U.uClock.sub(iB.x).toVar();
+  const ageW = age.add(select(age.lessThan(-JET_CLOCK_WRAP * 0.5), float(JET_CLOCK_WRAP), float(0)));
+  const life = max(iB.y, 1e-4);
+  const alive = ageW.lessThan(life);
+  const u = clamp(max(ageW, 0.0).div(life), 0.0, 1.0);
+  const om = float(1.0).sub(u);
+  const ease = float(1.0).sub(pow(om, 2.6));
+  const len = select(alive, mix(iA.x, iA.y, ease), float(0));
+  const wid = select(alive, mix(iA.z, iA.w, ease), float(0));
+  const own = ownerNode.element(int(iC.z));
 
   const m = new NodeMaterial();
   m.name = 'MainExhaustJets';
   m.positionNode = Fn(() => {
-    const axis = iDir.mul(inverseSqrt(max(dot(iDir, iDir), 1e-12))).toVar();
+    const dir = own.zw;
+    const axis = dir.mul(inverseSqrt(max(dot(dir, dir), 1e-12))).toVar();
     const side = vec2(axis.y.negate(), axis.x);              // kwad leży w płaszczyźnie XY
-    const p = iPos.add(axis.mul(alongLocal.mul(iData.x))).add(side.mul(positionGeometry.x.mul(iData.y)));
+    const p = own.xy.add(axis.mul(alongLocal.mul(len))).add(side.mul(positionGeometry.x.mul(wid)));
     return vec3(p, U.uZ);
   })();
-  const vDist = varying(alongLocal.mul(iData.x), 'vDist');
+  const vDist = varying(alongLocal.mul(len), 'vDist');
+  // alfa: zanik z wiekiem i miękkie wejście w pierwszych 5% życia (dawny CPU: (u / 0,05)² · (3 − 2 u / 0,05))
+  const vAlpha = varying(iB.z.mul(pow(om, 1.4)).mul(smoothstep(0.0, 0.05, u)), 'vJetA');
+  const vSeedV = varying(iB.w, 'vJetSeed');
+  const vPalG = varying(iC.xy, 'vJetPalG');
   m.fragmentNode = Fn(() => {
     const vUv = uv();
     // Clamp: MSAA ekstrapoluje varyingi do próbek POZA trójkątem, a pow() z ujemną
     // podstawą to NaN — w buforze HalfFloat bloom rozlewał go na cały ekran.
     const along = clamp(vUv.y, 0.0, 1.0).toVar();                    // 0 = dysza, 1 = koniec
     const x = clamp(vUv.x, 0.0, 1.0).mul(2.0).sub(1.0).toVar();
-    const vA = iData.z;
-    const vSeed = iSeed;
+    const vA = vAlpha;
+    const vSeed = vSeedV;
+    const iPalG = vPalG;
     const n = jetCloud(vec2(along.mul(5.5).sub(U.uFlowPh), x.mul(1.4).add(vSeed.mul(9.0))));
     const n2 = jetCloud(vec2(along.mul(2.2).sub(U.uFlowPh.mul(0.55)).add(vSeed.mul(5.0)), 0.3));
     const w = mix(0.30, 1.0, along);                                 // stożek się rozszerza
@@ -219,56 +245,96 @@ const rand = (a, b) => a + fxRandom.next() * (b - a);
 const flicker = (t, seed) => 0.55 + 0.45 * Math.sin(t * 13.7 + seed) * Math.sin(t * 7.31 + seed * 2.13);
 
 /* ============================================================================
-   PULA STRUG — struct-of-arrays, zero alokacji w klatce. Pozycje w double
-   (świat 5–10 mln j.), na GPU idą już względem początku.
+   PULA STRUG — pierścień slotów na GPU (2026-10-17). Struga dostaje slot przy narodzinach (rekord instancji pisany
+   RAZ — wysyłka tylko nowych rekordów, zwykle jeden ciągły wycinek na klatkę), umiera sama w shaderze (wiek ≥ życie),
+   a slot wraca do obiegu, gdy pierścień go dogoni. Żywa struga w slocie pod głowicą jest przeskakiwana (rzadkie
+   długie uderzenia dopalacza); pełny przegląd bez wolnego slotu = struga odrzucona (jetsDropped).
+   Zero alokacji w klatce; pozycje właścicieli w double (świat 5–10 mln j.), na GPU idą już względem początku.
    ========================================================================== */
+const MAX_JETS = 16384;
+// Najdłuższe życie strugi (uderzenie dopalacza, kick) — po tylu sekundach od zwolnienia wiersz właściciela jest wolny.
+const JET_MAX_LIFE = 0.55;
 const jets = {
-  count: 0,
-  px: new Float64Array(MAX_JETS),
-  py: new Float64Array(MAX_JETS),
-  dx: new Float32Array(MAX_JETS),
-  dy: new Float32Array(MAX_JETS),
-  age: new Float32Array(MAX_JETS),
+  // CPU: narodziny (zegar strug, double) i życie — żywotność slotu przy przydziale i liczniki
+  born: new Float64Array(MAX_JETS),
   life: new Float32Array(MAX_JETS),
-  l0: new Float32Array(MAX_JETS),
-  l1: new Float32Array(MAX_JETS),
-  w0: new Float32Array(MAX_JETS),
-  w1: new Float32Array(MAX_JETS),
-  pal: new Float32Array(MAX_JETS),
-  grad: new Float32Array(MAX_JETS),
-  alpha: new Float32Array(MAX_JETS),
-  seed: new Float32Array(MAX_JETS),
-  own: new Int32Array(MAX_JETS)
+  head: 0,          // następny slot do przydziału
+  hi: 0,            // najwyższy użyty slot + 1 (licznik instancji rysunku)
+  lastBorn: -1e9    // narodziny najmłodszej strugi (siatka niewidoczna, gdy wszystkie już nie żyją)
 };
-const JET_FIELDS = ['px', 'py', 'dx', 'dy', 'age', 'life', 'l0', 'l1', 'w0', 'w1', 'pal', 'grad', 'alpha', 'seed', 'own'];
-
-function killJet(i) {
-  const last = --jets.count;
-  if (i === last) return;
-  for (let k = 0; k < JET_FIELDS.length; k++) {
-    const a = jets[JET_FIELDS[k]];
-    a[i] = a[last];
-  }
-}
+// rekordy instancji: trzy atrybuty vec4 (bez przeplotu — wysyłka kilku wycinków naraz, zbierzZakresy)
+const jetA = new Float32Array(MAX_JETS * 4);
+const jetB = new Float32Array(MAX_JETS * 4);
+const jetC = new Float32Array(MAX_JETS * 4);
+// zegar strug: wiek strugi = jetClock − narodziny; rośnie we flush (krok klatki), jak dawny wiek strugi
+let jetClock = 0;
+// wycinki slotów zapisanych od ostatniej wysyłki (pierścień: najwyżej dwa — przed i po zawinięciu)
+let dirtyFrom = -1;
+let dirtyTo = -1;
 
 // Strugi i iskry odrzucone przy pełnej puli / wyczerpanym udziale w banku iskier (liczniki narastające — pomiar).
 let jetsDropped = 0;
 let sparksDropped = 0;
 
-function spawnJet(x, y, dx, dy, life, l0, l1, w0, w1, pal, grad, alpha, seed, age, owner) {
-  if (jets.count >= MAX_JETS) { jetsDropped++; return; }
-  const i = jets.count++;
-  jets.px[i] = x; jets.py[i] = y;
-  jets.dx[i] = dx; jets.dy[i] = dy;
-  jets.age[i] = age; jets.life[i] = life;
-  jets.l0[i] = l0; jets.l1[i] = l1;
-  jets.w0[i] = w0; jets.w1[i] = w1;
-  jets.pal[i] = pal; jets.grad[i] = grad;
-  jets.alpha[i] = alpha; jets.seed[i] = seed;
-  jets.own[i] = owner;
+function sendDirty() {
+  if (dirtyFrom < 0) return;
+  if (jetAttrs) {
+    const s = dirtyFrom * 4, n = (dirtyTo - dirtyFrom) * 4;
+    for (let k = 0; k < 3; k++) zbierzZakresy(jetAttrs[k], s, n);
+  }
+  dirtyFrom = -1;
+}
+
+// Zegar w shaderze jest zawinięty co JET_CLOCK_WRAP s: struga martwa od ~JET_CLOCK_WRAP s w slocie, którego pierścień
+// dawno nie dogonił (po bitwie hi zostaje wysokie), wyglądałaby na żywą. Co JET_SWEEP_EVERY s martwe sloty dostają
+// zerowe wymiary (kwad zwinięty przy każdym wieku) — jeden przegląd i jedna wysyłka iA na kilkadziesiąt sekund.
+const JET_SWEEP_EVERY = 32;
+let lastSweep = 0;
+function sweepDeadJets() {
+  lastSweep = jetClock;
+  let lo = -1, hi = -1;
+  for (let i = 0; i < jets.hi; i++) {
+    if (jetClock - jets.born[i] < jets.life[i] || jets.life[i] === 0) continue;
+    jets.life[i] = 0;
+    const o = i * 4;
+    jetA[o] = 0; jetA[o + 1] = 0; jetA[o + 2] = 0; jetA[o + 3] = 0;
+    if (lo < 0) lo = i;
+    hi = i + 1;
+  }
+  if (lo >= 0 && jetAttrs) zbierzZakresy(jetAttrs[0], lo * 4, (hi - lo) * 4);
+}
+
+function markDirty(i) {
+  if (dirtyFrom >= 0 && i === dirtyTo) { dirtyTo = i + 1; return; }
+  sendDirty();
+  dirtyFrom = i; dirtyTo = i + 1;
+}
+
+// age = dawny wiek strugi w chwili narodzin (≤ 0: narodziny „w przyszłości” tej klatki — część klatki po wylocie)
+function spawnJet(life, l0, l1, w0, w1, pal, grad, alpha, seed, age, owner) {
+  if (owner < 0) { jetsDropped++; return; }
+  let i = jets.head;
+  let tries = 0;
+  // slot żywy (długa struga) — następny; pierścień pełny żywych — odrzut
+  while (jetClock - jets.born[i] < jets.life[i]) {
+    if (++tries >= 64) { jetsDropped++; return; }
+    i = i + 1 < MAX_JETS ? i + 1 : 0;
+  }
+  jets.head = i + 1 < MAX_JETS ? i + 1 : 0;
+  if (i + 1 > jets.hi) jets.hi = i + 1;
+  const born = jetClock - age;
+  jets.born[i] = born;
+  jets.life[i] = life;
+  if (born > jets.lastBorn) jets.lastBorn = born;
+  const o = i * 4;
+  jetA[o] = l0; jetA[o + 1] = l1; jetA[o + 2] = w0; jetA[o + 3] = w1;
+  jetB[o] = born - Math.floor(born / JET_CLOCK_WRAP) * JET_CLOCK_WRAP; jetB[o + 1] = life; jetB[o + 2] = alpha; jetB[o + 3] = seed;
+  jetC[o] = pal; jetC[o + 1] = grad; jetC[o + 2] = owner; jetC[o + 3] = 0;
+  markDirty(i);
 }
 
 /* --- właściciele: dysze, do których strugi są doklejone ------------------ */
+const MAX_OWNERS = 2048;
 const owners = {
   x: new Float64Array(MAX_OWNERS),
   y: new Float64Array(MAX_OWNERS),
@@ -276,8 +342,14 @@ const owners = {
   dy: new Float32Array(MAX_OWNERS),
   free: new Int32Array(MAX_OWNERS),
   freeCount: 0,
-  used: 0
+  used: 0,
+  // zwolnione, ale ich strugi jeszcze mogą żyć (wiersz stoi w miejscu, aż minie JET_MAX_LIFE)
+  pend: new Int32Array(MAX_OWNERS),
+  pendAt: new Float64Array(MAX_OWNERS),
+  pendCount: 0
 };
+// wiersze bufora właścicieli na GPU: (x − początek, y − początek, dx, dy), pisane we flush dla [0, used)
+const ownerRows = new Float32Array(MAX_OWNERS * 4);
 
 function allocOwner() {
   if (owners.freeCount > 0) return owners.free[--owners.freeCount];
@@ -286,18 +358,23 @@ function allocOwner() {
 }
 
 // Dysza znika (statek poza kadrem, zniszczony, nowy układ): jej strugi zostają
-// tam, gdzie były, i dogasają same.
+// tam, gdzie były (wiersz właściciela przestaje się ruszać), i dogasają same.
 function freeOwner(k) {
   if (k < 0 || k >= MAX_OWNERS) return;
-  for (let i = 0; i < jets.count; i++) {
-    if (jets.own[i] !== k) continue;
-    jets.px[i] = owners.x[k];
-    jets.py[i] = owners.y[k];
-    jets.dx[i] = owners.dx[k];
-    jets.dy[i] = owners.dy[k];
-    jets.own[i] = -1;
+  owners.pend[owners.pendCount] = k;
+  owners.pendAt[owners.pendCount] = jetClock;
+  owners.pendCount++;
+}
+
+function releasePendingOwners() {
+  let w = 0;
+  for (let r = 0; r < owners.pendCount; r++) {
+    const k = owners.pend[r];
+    const at = owners.pendAt[r];
+    if (jetClock - at > JET_MAX_LIFE) { owners.free[owners.freeCount++] = k; continue; }
+    owners.pend[w] = k; owners.pendAt[w] = at; w++;
   }
-  owners.free[owners.freeCount++] = k;
+  owners.pendCount = w;
 }
 
 /* ============================================================================
@@ -307,7 +384,8 @@ let mesh = null;
 let geo = null;
 let mat = null;
 let atlas = null;
-const bufs = {};
+let jetAttrs = null;    // atrybuty instancji iA, iB, iC (rekordy strug)
+let ownerAttr = null;   // StorageBufferAttribute wierszy właścicieli
 let originX = 0;
 let originY = 0;
 let clock = 0;
@@ -337,23 +415,37 @@ function buildAtlas() {
   return tex;
 }
 
+// Siatka strug: kwad + trzy atrybuty instancji (iA, iB, iC) i bufor właścicieli. Wspólna dla gry i testów.
+function makeJetGeometry(jetArrays, ownerArray) {
+  const base = new THREE.PlaneGeometry(1, 1);
+  const g = new THREE.InstancedBufferGeometry();
+  g.index = base.index;
+  g.setAttribute('position', base.attributes.position);
+  g.setAttribute('uv', base.attributes.uv);
+  const names = ['iA', 'iB', 'iC'];
+  const attrs = names.map((name, k) => {
+    const attr = new THREE.InstancedBufferAttribute(jetArrays[k], 4);
+    g.setAttribute(name, attr);
+    return attr;
+  });
+  const owner = new StorageBufferAttribute(ownerArray, 4);
+  const ownerNode = storage(owner, 'vec4', ownerArray.length / 4).toReadOnly().setName('mainExhaustOwners');
+  g.instanceCount = 0;
+  return { geo: g, attrs, owner, ownerNode };
+}
+
 function ensureBuilt() {
   if (mesh) return true;
   if (!Core3D.isInitialized || !Core3D.scene) return false;
-  const base = new THREE.PlaneGeometry(1, 1);
-  geo = new THREE.InstancedBufferGeometry();
-  geo.index = base.index;
-  geo.setAttribute('position', base.attributes.position);
-  geo.setAttribute('uv', base.attributes.uv);
-  for (const [name, size] of [['iPos', 2], ['iDir', 2], ['iPalG', 2], ['iData', 4], ['iSeed', 1]]) {
-    const attr = new THREE.InstancedBufferAttribute(new Float32Array(MAX_JETS * size), size);
-    attr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute(name, attr);
-    bufs[name] = attr;
-  }
-  geo.instanceCount = 0;
+  const built = makeJetGeometry([jetA, jetB, jetC], ownerRows);
+  geo = built.geo;
+  jetAttrs = built.attrs;
+  ownerAttr = built.owner;
+  // rekordy zapisane przed budową siatki (narodziny bez Core3D — testy) idą w pierwszej wysyłce
+  for (const a of jetAttrs) zbierzZakresyCaly(a);
+  dirtyFrom = -1;
   atlas = buildAtlas();
-  mat = makeJetMaterial(atlas);
+  mat = makeJetMaterial(atlas, built.ownerNode);
   mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'MainExhaustJets';
   mesh.frustumCulled = false;
@@ -432,8 +524,8 @@ function kick(state, p, S, palIdx, grad, str) {
   const L = p.lengthMul;
   const W = p.widthMul;
   const J = p.jetGain;
-  spawnJet(p.x, p.y, p.dirX, p.dirY, 0.55, 12 * S, (72 + 40 * str) * S * L, 9 * S * W, 20 * S * W, palIdx, grad, 1.0 * str * J, fxRandom.next(), 0, state.owner);
-  spawnJet(p.x, p.y, p.dirX, p.dirY, 0.40, 8 * S, (46 + 26 * str) * S * L, 16 * S * W, 36 * S * W, palIdx, grad, 0.55 * str * J, fxRandom.next(), 0, state.owner);
+  spawnJet(0.55, 12 * S, (72 + 40 * str) * S * L, 9 * S * W, 20 * S * W, palIdx, grad, 1.0 * str * J, fxRandom.next(), 0, state.owner);
+  spawnJet(0.40, 8 * S, (46 + 26 * str) * S * L, 16 * S * W, 36 * S * W, palIdx, grad, 0.55 * str * J, fxRandom.next(), 0, state.owner);
   if (!(p.sparkMul > 0) || !Fx3D.spark) return;
   const want = Math.round(40 * str * p.sparkMul);
   const n = Math.min(sparkBudgetLeft(), want);
@@ -442,7 +534,7 @@ function kick(state, p, S, palIdx, grad, str) {
 }
 
 // Dla testów: materiał strugi i atlas palet (bez Core3D).
-export const MainExhaustInternals = Object.freeze({ makeJetMaterial, buildAtlas });
+export const MainExhaustInternals = Object.freeze({ makeJetMaterial, makeJetGeometry, buildAtlas, MAX_OWNERS });
 
 /* ============================================================================
    API
@@ -450,7 +542,12 @@ export const MainExhaustInternals = Object.freeze({ makeJetMaterial, buildAtlas 
 export const MainExhaust3D = {
   MAX_JETS,
 
-  get jetCount() { return jets.count; },
+  // żywe strugi (przegląd slotów — pomiar i testy, nie w klatce)
+  get jetCount() {
+    let c = 0;
+    for (let i = 0; i < jets.hi; i++) if (jetClock - jets.born[i] < jets.life[i]) c++;
+    return c;
+  },
   // narastające liczniki odrzuconych strug (pełna pula) i iskier (udział silników w banku Fx3D.spark wyczerpany)
   get jetsDropped() { return jetsDropped; },
   get sparksDropped() { return sparksDropped; },
@@ -557,7 +654,7 @@ export const MainExhaust3D = {
       while (a >= 1) {
         a -= 1;
         const ago = a / T.jetRate;
-        spawnJet(x, y, dirX, dirY, 0.09, 6 * S, (18 + 55 * pw) * S * L * gl * rand(0.85, 1.15),
+        spawnJet(0.09, 6 * S, (18 + 55 * pw) * S * L * gl * rand(0.85, 1.15),
           (4 + 6 * pw) * S * W, (9 + 14 * pw) * S * W, palIdx, grad,
           T.jetAlpha * clamp01(pw) * ga * J, fxRandom.next(), ago - dt, own);
       }
@@ -568,7 +665,7 @@ export const MainExhaust3D = {
       while (a >= 1) {
         a -= 1;
         const ago = a / T.tailRate;
-        spawnJet(x, y, dirX, dirY, 0.32, 12 * S, (40 + 75 * pw) * S * L * rand(0.9, 1.1),
+        spawnJet(0.32, 12 * S, (40 + 75 * pw) * S * L * rand(0.9, 1.1),
           (5 + 4 * pw) * S * W, (9 + 10 * pw) * S * W, palIdx, grad,
           T.tailAlpha * clamp01(pw) * J, fxRandom.next(), ago - dt, own);
       }
@@ -591,66 +688,66 @@ export const MainExhaust3D = {
     state.prevY = y;
   },
 
-  /** Koniec klatki: starzenie strug i wgranie instancji względem początku. */
+  /** Koniec klatki: zegar strug, wiersze właścicieli względem początku, wysyłka nowych rekordów strug. */
   flush(dt) {
     if (!mesh) return;
     const step = Math.max(0, Math.min(0.1, Number(dt) || 0));
     flowPhase = (flowPhase + T.flowSpeed * step) % FLOW_PHASE_WRAP;
-    mat.uniforms.uFlowPh.value = flowPhase;
+    jetClock += step;
+    const U = mat.uniforms;
+    U.uFlowPh.value = flowPhase;
+    U.uClock.value = jetClock - Math.floor(jetClock / JET_CLOCK_WRAP) * JET_CLOCK_WRAP;
+    if (owners.pendCount > 0) releasePendingOwners();
+    if (jetClock - lastSweep > JET_SWEEP_EVERY) sweepDeadJets();
 
-    for (let i = jets.count - 1; i >= 0; i--) {
-      const age = jets.age[i] + step;
-      if (age >= jets.life[i]) { killJet(i); continue; }
-      jets.age[i] = age;
+    // wiersze właścicieli (dysze tej klatki i zwolnione, których strugi jeszcze żyją) względem początku przy kamerze
+    const n = owners.used;
+    const R = ownerRows;
+    for (let k = 0; k < n; k++) {
+      const o = k * 4;
+      R[o] = owners.x[k] - originX;
+      R[o + 1] = owners.y[k] - originY;
+      R[o + 2] = owners.dx[k];
+      R[o + 3] = owners.dy[k];
     }
-
-    const n = jets.count;
-    const P = bufs.iPos.array;
-    const D = bufs.iDir.array;
-    const PG = bufs.iPalG.array;
-    const DA = bufs.iData.array;
-    const SD = bufs.iSeed.array;
-    for (let i = 0; i < n; i++) {
-      const i2 = i * 2;
-      const i4 = i * 4;
-      const u = Math.max(0, jets.age[i]) / jets.life[i];
-      const ease = 1 - Math.pow(1 - u, 2.6);
-      const o = jets.own[i];
-      let px;
-      let py;
-      if (o >= 0) {
-        px = owners.x[o]; py = owners.y[o];
-        D[i2] = owners.dx[o]; D[i2 + 1] = owners.dy[o];
-      } else {
-        px = jets.px[i]; py = jets.py[i];
-        D[i2] = jets.dx[i]; D[i2 + 1] = jets.dy[i];
-      }
-      P[i2] = px - originX;
-      P[i2 + 1] = py - originY;
-      PG[i2] = jets.pal[i];
-      PG[i2 + 1] = jets.grad[i];
-      DA[i4] = lerp(jets.l0[i], jets.l1[i], ease);
-      DA[i4 + 1] = lerp(jets.w0[i], jets.w1[i], ease);
-      DA[i4 + 2] = jets.alpha[i] * Math.pow(1 - u, 1.4) * (u < 0.05 ? (u / 0.05) * (u / 0.05) * (3 - 2 * (u / 0.05)) : 1);
-      DA[i4 + 3] = u;
-      SD[i] = jets.seed[i];
-    }
+    sendDirty();
 
     mesh.position.set(originX, originY, 0);
-    const visible = n > 0;
+    const visible = jets.hi > 0 && jetClock - jets.lastBorn < JET_MAX_LIFE;
     if (mesh.visible !== visible) mesh.visible = visible;
-    if (geo.instanceCount !== n) geo.instanceCount = n;
-    if (!visible) return;
-    for (const name in bufs) {
-      const attr = bufs[name];
-      attr.clearUpdateRanges();
-      attr.addUpdateRange(0, n * attr.itemSize);
-      attr.needsUpdate = true;
-    }
+    if (geo.instanceCount !== jets.hi) geo.instanceCount = jets.hi;
+    if (visible && n > 0) zbierzZakres(ownerAttr, 0, n * 4);
   },
 
+  /**
+   * Lustro CPU shadera strugi (testy): slot i → false, gdy struga nie żyje; inaczej out = { x, y } wylotu (scena),
+   * len, wid (długość i szerokość kwadu), alpha, u (część życia) — w chwili ostatniego flush.
+   */
+  jetAt(i, out) {
+    if (!(i >= 0 && i < jets.hi)) return false;
+    const age = jetClock - jets.born[i];
+    const life = Math.max(jets.life[i], 1e-4);
+    if (!(age < life)) return false;
+    const u = Math.min(1, Math.max(0, age) / life);
+    const om = 1 - u;
+    const ease = 1 - Math.pow(om, 2.6);
+    const o = i * 4;
+    const k = jetC[o + 2];
+    out.x = owners.x[k]; out.y = owners.y[k];
+    out.len = lerp(jetA[o], jetA[o + 1], ease);
+    out.wid = lerp(jetA[o + 2], jetA[o + 3], ease);
+    const s = Math.min(1, u / 0.05);
+    out.alpha = jetB[o + 2] * Math.pow(om, 1.4) * s * s * (3 - 2 * s);
+    out.u = u;
+    return true;
+  },
+
+  /** Sloty do przejrzenia w jetAt (licznik instancji rysunku). */
+  get slotCount() { return jets.hi; },
+
   getStats() {
-    return { nozzles: frameNozzles, jets: jets.count, draws: jets.count > 0 ? 1 : 0 };
+    const live = this.jetCount;
+    return { nozzles: frameNozzles, jets: live, draws: live > 0 ? 1 : 0 };
   },
 
   /** Siatka do kompilacji shadera na ekranie ładowania. */
@@ -664,12 +761,28 @@ export const MainExhaust3D = {
     mat?.dispose();
     atlas?.dispose();
     mesh = geo = mat = atlas = null;
-    for (const k of Object.keys(bufs)) delete bufs[k];
-    jets.count = 0;
+    jetAttrs = null;
+    ownerAttr = null;
+    jets.head = 0;
+    jets.hi = 0;
+    jets.lastBorn = -1e9;
+    jets.born.fill(0);
+    jets.life.fill(0);
+    dirtyFrom = -1;
+    lastSweep = jetClock;
     owners.freeCount = 0;
     owners.used = 0;
+    owners.pendCount = 0;
   }
 };
+
+// Rozgrzewka (2026-10-17): sam prewarmPass z prewarmFx3D (licznik instancji 0) nie trafiał w klucz prawdziwego rysunku —
+// pierwsza struga w workerze kompilowała pipeline w klatce (`pipeline sync … MainExhaustJets`). Rejestr z licznikiem ≥ 2.
+if (Core3D.warmup) {
+  const strugi = () => (ensureBuilt() ? [mesh] : []);
+  Core3D.warmup.add({ name: 'struga MAIN', objects: strugi, phase: 'loading', variant: WARIANT_INSTANCJI });
+  Core3D.warmup.add({ name: 'struga MAIN (kamery 3D)', objects: strugi, phase: 'loading', ortho: false, variant: WARIANT_INSTANCJI });
+}
 
 // A/B i pomiary z konsoli (MainExhaust3D.offscreenLod, jetCount, jetsDropped, sparksDropped).
 if (typeof window !== 'undefined') window.MainExhaust3D = MainExhaust3D;

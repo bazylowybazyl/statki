@@ -162,6 +162,13 @@ test('lustro: trafienia tarczy (najnowsze pierwsze), wyłączenie wymuszone, zim
   assert.deepEqual({ ...m.shield.impacts[0] }, { id: 9, gridAngle: 0.5, damage: 120, intensity: 0.7, fxClass: 'special' });
   assert.equal(m.shield.impacts[1].damage, undefined, 'brak damage → undefined (shield3D bierze intensity)');
   assert.equal(m.shield.forceOff, true);
+  // tryb TARCZE: gra trzyma shield.show jako flagę — lustro musi ją widzieć (shield3D: !!sh.show), 2026-10-17
+  e.shield.show = true;
+  step();
+  assert.ok(!!rm.player.shield.show, 'shield.show = true dociera do lustra');
+  e.shield.show = false;
+  step();
+  assert.ok(!rm.player.shield.show, 'shield.show = false');
   assert.equal(m.model3DProfileId, 'bellator');
   assert.equal(m.faction, 'terra_nova');
   assert.equal(m.weaponTier, 'L');

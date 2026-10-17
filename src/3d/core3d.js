@@ -107,26 +107,39 @@ function uploadFullUnlessSame(utils, binding, orig, stats) {
 // (castShadow). Zachowawczo: LOD (zmienia dzieci pod kamerą), odbiorca cienia inny niż łapacz, rzucający
 // bez testu kadru — „potrzebna”.
 function passShadowNeeded(scene, mask, catcher, frustum) {
+  return passShadowScan(scene, mask, catcher, frustum) !== SHADOW_SCAN_NONE;
+}
+
+// To samo z rozróżnieniem (2026-10-17, klatka workera pod 240 Hz): SHADOW_SCAN_CASTERS — rzucający w kadrze cienia
+// (albo zachowawczo: LOD, rzucający bez testu kadru) — mapa potrzebna; SHADOW_SCAN_RECEIVERS — w passie są tylko
+// odbiorcy inni niż łapacz (partie wież, trzymacze modeli: receiveShadow) — mapa musi być PUSTA, a nie odświeżana
+// co pass (pusta zostaje pusta); SHADOW_SCAN_NONE — nic. Dawniej sam odbiorca = „potrzebna”: w bitwie bez rzucających
+// mapa renderowała się 2× na klatkę (~0,1 ms CPU workera).
+const SHADOW_SCAN_NONE = 0;
+const SHADOW_SCAN_RECEIVERS = 1;
+const SHADOW_SCAN_CASTERS = 2;
+function passShadowScan(scene, mask, catcher, frustum) {
   const stack = _shadowScanStack;
   let n = 0;
-  let need = false;
+  let res = SHADOW_SCAN_NONE;
   stack[n++] = scene;
   while (n > 0) {
     const o = stack[--n];
     stack[n] = null;
     if (o.visible === false) continue;
     if ((o.layers.mask & mask) !== 0) {
-      if (o.isLOD === true || (o.receiveShadow === true && o !== catcher)) { need = true; break; }
+      if (o.isLOD === true) { res = SHADOW_SCAN_CASTERS; break; }
+      if (o.receiveShadow === true && o !== catcher) res = SHADOW_SCAN_RECEIVERS;
       if (o.castShadow === true && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) {
-        if (!o.frustumCulled) { need = true; break; }
-        if (o.isSprite ? frustum.intersectsSprite(o) : frustum.intersectsObject(o)) { need = true; break; }
+        if (!o.frustumCulled) { res = SHADOW_SCAN_CASTERS; break; }
+        if (o.isSprite ? frustum.intersectsSprite(o) : frustum.intersectsObject(o)) { res = SHADOW_SCAN_CASTERS; break; }
       }
     }
     const ch = o.children;
     for (let i = 0; i < ch.length; i++) stack[n++] = ch[i];
   }
   while (n > 0) stack[--n] = null;
-  return need;
+  return res;
 }
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko poza
 // ośrodkiem warpa (liczony wokół kamery gry w płaszczyźnie gry).
@@ -549,6 +562,8 @@ export const Core3D = {
   _sunShadowLight: null,
   // Scalone wysyłki buforów uniformów (_coalesceUniformUploads): bufory z ≥ 2 zakresami, oszczędzone zapisy.
   uniformUploadStats: { merged: 0, savedWrites: 0, skippedFull: 0, skippedBytes: 0 },
+  // wysyłki bufora z przeplotem pominięte jako powtórka tej samej wersji (_dedupeInterleavedUploads)
+  attributeUploadStats: { skipped: 0 },
   // Kolizje uuid w budowie TSL (src/3d/tsl/uuidWezlow.js): w grze ma być 0 — inaczej WGSL skażony cudzym węzłem.
   tslUuid: tslUuidStan,
   // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
@@ -1136,6 +1151,7 @@ export const Core3D = {
     // render() (~10–15 µs; 12 passów bloomu, post, maska, passy sceny) — ten sam klucz, bez przeliczania.
     zainstalujKluczSwiatel();
     this._coalesceUniformUploads(renderer);
+    this._dedupeInterleavedUploads(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
   },
@@ -1177,6 +1193,32 @@ export const Core3D = {
       this.backend.device.queue.writeBuffer(buffer, lo * array.BYTES_PER_ELEMENT, array, lo, hi - lo);
       stats.merged++;
       stats.savedWrites += n - 1;
+    };
+  },
+
+  // three r183 (Attributes.update) pilnuje wersji osobno dla KAŻDEGO atrybutu, a bufor z przeplotem
+  // (InterleavedBuffer) ma jedną wersję i jeden bufor GPU: zmiana bufora = wysyłka tego samego zakresu raz NA
+  // ATRYBUT (partia wież: 4 atrybuty → 4 × rekordy wszystkich wież co klatkę; bufor bez listy zakresów — 4 × cały
+  // bufor). Tu druga i kolejna wysyłka tej samej wersji bufora pominięta — dane GPU już są (2026-10-17, klatka
+  // workera pod 240 Hz). DynamicDrawUsage bez zmian (three wysyła go przy każdym renderze bez wersji).
+  // A/B: Core3D.interleavedDedupe = false.
+  _dedupeInterleavedUploads(renderer) {
+    const backend = renderer?.backend;
+    if (!backend || typeof backend.updateAttribute !== 'function' || backend.__core3dInterleavedDedupe) return;
+    const orig = backend.updateAttribute;
+    const stats = this.attributeUploadStats;
+    const core = this;
+    backend.__core3dInterleavedDedupe = true;
+    backend.updateAttribute = function (attribute) {
+      if (attribute && attribute.isInterleavedBufferAttribute === true && core.interleavedDedupe !== false) {
+        const ib = attribute.data;
+        if (ib && ib.usage !== THREE.DynamicDrawUsage) {
+          const d = this.get(ib);
+          if (d.__core3dSentVersion === ib.version) { stats.skipped++; return; }
+          d.__core3dSentVersion = ib.version;
+        }
+      }
+      return orig.call(this, attribute);
     };
   },
 
@@ -1732,13 +1774,16 @@ export const Core3D = {
     // bez testu kadru (mapa „potrzebna”).
     shadow.updateMatrices(light);
     const cam = shadow.camera;
-    let need = true;
+    let scan = SHADOW_SCAN_CASTERS;
     if (cam.coordinateSystem === this.renderer.coordinateSystem) {
       _shadowScanMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
       _shadowScanFrustum.setFromProjectionMatrix(_shadowScanMatrix, cam.coordinateSystem, cam.reversedDepth);
-      need = passShadowNeeded(this.scene, mask, catcher, _shadowScanFrustum);
+      scan = this.shadowReceiverSkip === false && passShadowNeeded(this.scene, mask, catcher, _shadowScanFrustum)
+        ? SHADOW_SCAN_CASTERS : passShadowScan(this.scene, mask, catcher, _shadowScanFrustum);
     }
-    if (need || (last && this._shadowMapEmpty !== true)) {
+    const need = scan === SHADOW_SCAN_CASTERS;
+    // bez rzucających: odbiorcy (albo planety po FG) czytają mapę — wystarczy, że jest pusta (raz odświeżona bez nich)
+    if (need || ((last || scan === SHADOW_SCAN_RECEIVERS) && this._shadowMapEmpty !== true)) {
       if (catcher.visible !== true) catcher.visible = true;
       this._requestSunShadowUpdate(t, mask);
       this._shadowMapEmpty = !need;

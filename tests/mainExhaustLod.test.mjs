@@ -31,10 +31,10 @@ const { MAIN_EXHAUST_TUNE: T, DEMO_NOZZLE_RADIUS } = await import('../src/data/e
 test('sufity zasięgu = liczby push / kick (lustro — zmiana strugi albo iskier = zmiana JET_REACH / SPARK_SELF)', () => {
   const src = read('src/3d/mainExhaust3D.js');
   // rdzeń, ogon, uderzenie dopalacza: życie, długość końcowa, szerokości
-  assert.match(src, /spawnJet\(x, y, dirX, dirY, 0\.09, 6 \* S, \(18 \+ 55 \* pw\) \* S \* L \* gl \* rand\(0\.85, 1\.15\),\n\s+\(4 \+ 6 \* pw\) \* S \* W, \(9 \+ 14 \* pw\) \* S \* W,/);
-  assert.match(src, /spawnJet\(x, y, dirX, dirY, 0\.32, 12 \* S, \(40 \+ 75 \* pw\) \* S \* L \* rand\(0\.9, 1\.1\),\n\s+\(5 \+ 4 \* pw\) \* S \* W, \(9 \+ 10 \* pw\) \* S \* W,/);
-  assert.match(src, /spawnJet\(p\.x, p\.y, p\.dirX, p\.dirY, 0\.55, 12 \* S, \(72 \+ 40 \* str\) \* S \* L, 9 \* S \* W, 20 \* S \* W,/);
-  assert.match(src, /spawnJet\(p\.x, p\.y, p\.dirX, p\.dirY, 0\.40, 8 \* S, \(46 \+ 26 \* str\) \* S \* L, 16 \* S \* W, 36 \* S \* W,/);
+  assert.match(src, /spawnJet\(0\.09, 6 \* S, \(18 \+ 55 \* pw\) \* S \* L \* gl \* rand\(0\.85, 1\.15\),\n\s+\(4 \+ 6 \* pw\) \* S \* W, \(9 \+ 14 \* pw\) \* S \* W,/);
+  assert.match(src, /spawnJet\(0\.32, 12 \* S, \(40 \+ 75 \* pw\) \* S \* L \* rand\(0\.9, 1\.1\),\n\s+\(5 \+ 4 \* pw\) \* S \* W, \(9 \+ 10 \* pw\) \* S \* W,/);
+  assert.match(src, /spawnJet\(0\.55, 12 \* S, \(72 \+ 40 \* str\) \* S \* L, 9 \* S \* W, 20 \* S \* W,/);
+  assert.match(src, /spawnJet\(0\.40, 8 \* S, \(46 \+ 26 \* str\) \* S \* L, 16 \* S \* W, 36 \* S \* W,/);
   assert.match(src, /const gl = lerp\(1, g, 0\.15\);/);
   assert.match(src, /const g = fl \/ 0\.55;/);
   assert.match(src, /const ps = 0\.6 \+ 0\.4 \* Math\.min\(k, 1\.5\);/);
@@ -88,7 +88,8 @@ test('prawdziwy push: strugi i iskry (dopalacz, migotanie, ruch) nie wychodzą p
       let maxSpark = 0;
       let jets = 0;
       let sparks = 0;
-      const hist = [];   // pozycje wylotu na końcu klatek (czas, x) — iskra rodzi się względem wylotu z końca klatki
+      const hist = [];
+      const q = {};   // pozycje wylotu na końcu klatek (czas, x) — iskra rodzi się względem wylotu z końca klatki
       for (let f = 0; f < 360; f++) {
         const dt = f % 5 === 0 ? 1 / 30 : 1 / 144;
         t += dt;
@@ -101,13 +102,12 @@ test('prawdziwy push: strugi i iskry (dopalacz, migotanie, ruch) nie wychodzą p
         MainExhaust3D.push(state, p);
         MainExhaust3D.flush(dt);
         hist.push([t, p.x]);
-        // strugi: doklejone do wylotu — dalszy róg kwadu od wylotu tej klatki
-        const n = mesh.geometry.instanceCount;
-        const P = mesh.geometry.attributes.iPos.array;
-        const D = mesh.geometry.attributes.iData.array;
+        // strugi: doklejone do wylotu — dalszy róg kwadu od wylotu tej klatki (lustro CPU shadera: jetAt)
+        const n = MainExhaust3D.slotCount;
         for (let i = 0; i < n; i++) {
-          assert.ok(Math.abs(P[i * 2] + mesh.position.x - p.x) < 0.05 && Math.abs(P[i * 2 + 1]) < 0.05, 'struga przy wylocie');
-          const d = Math.hypot(D[i * 4], D[i * 4 + 1] * 0.5);
+          if (!MainExhaust3D.jetAt(i, q)) continue;
+          assert.ok(Math.abs(q.x - p.x) < 0.05 && Math.abs(q.y) < 0.05, 'struga przy wylocie');
+          const d = Math.hypot(q.len, q.wid * 0.5);
           if (d > maxJet) maxJet = d;
           jets++;
         }
