@@ -182,12 +182,69 @@ jedna klatka powtórzona albo przeskoczona).
 |---|---|---|---|
 | 1 | **Fizyka poza wątkiem gry** albo praca decyzyjna rozłożona na klatki bez kroku (audyt fizyki § 6) | znika ~60 chybionych klatek / s w walce przy 240 Hz; u użytkownika (krok 6,8 ms) jedyna droga do równego rytmu | duży (worker symulacji) / średni (rozłożenie) |
 | 2 | **Render przed fizyką** w `loop()` (fizyka „na zapas” na koniec klatki, do przewidywanego następnego vsync) | wysyłka strony zawsze ~0,1 klatki po vsync → pacer o 1 klatkę niżej (−4 ms przy 240 Hz) | średni: zmienia semantykę interpolacji i chwilę wejścia; razem z pkt 1 |
-| 3 | **Klatka workera** (dziś 2,6–4,3 ms, budżet 4,17) — dysze `EngineVfxSystem` (0,56), narzut three na rysunek (~1 ms: partie, mniej obiektów), lustra (0,24) | wiek obrazu 4 → 3, wyższy sufit kl/s obrazu w dużych bitwach | średni, punktowo |
+| 3 | ~~**Klatka workera**~~ — ZROBIONE 2026-10-17 (§ 7.1): p50 2,89 → 2,32 ms w oknie 240 Hz | wiek obrazu śr. 3,78 → 3,46, skoki 9,8 → 2,3% | — |
 | 4 | **Tryb pół-odświeżania**: gdy worker nie nadąża za monitorem (bitwa 331: 150–178 kl/s przy 240 Hz), pacer składa co drugi vsync (120 Hz równo) | kroki treści 1 / 2 na przemian → równe 120 kl/s | mały (rozszerzenie pacera) |
 | 5 | Nakładki 2D rysowane wprost do kanwy pierścienia (bez `drawImage` całej kanwy gry co klatkę) | −0,1 ms wątku gry, mniej pracy procesu GPU | średni: `ctx` gry używany w wielu miejscach |
 | 6 | Pakowanie migawki: pola rzadko zmienne poza poziomem A (flagi, napisy), `Turret2D.syncFrame` | −0,2–0,4 ms wątku gry w dużej bitwie | mały–średni |
 | 7 | Interpolacja w trybie `off` (hexShips3D, mostki, modele — `poseOf` z `renderPoses`) | `off` / zapas bez drgań NPC | mały, `off` to dziś tryb zapasowy |
 | 8 | PerfHUD: draw calle, GPU, obiekty sceny workera z RET (dziś strona bez urządzenia → „--” / dane strony) | widoczność kosztów workera dla gracza | mały |
+
+### 7.1 Stan pkt 3 — klatka workera (2026-10-17, sesja „Klatka workera renderu pod 240 Hz”)
+
+Cel: p50 klatki workera ≤ 2,3 ms przy 166 okrętach, wiek obrazu 4 → 3 przy 240 Hz. Poprawki (każda bez zmiany obrazu
+poza zaznaczonym):
+
+1. **Struga MAIN na GPU** (`src/3d/mainExhaust3D.js`): pula strug to pierścień slotów, rekord strugi (długość /
+   szerokość na początku i końcu życia, narodziny, życie, alfa, ziarno, paleta, gradient, właściciel) pisany RAZ przy
+   narodzinach (3 atrybuty vec4, wysyłka tylko nowych rekordów — `zbierzZakresy`), wiek, długość, szerokość i alfę
+   liczy shader z zegara strug (zawinięty co 256 s; co 32 s martwe sloty dostają zerowe wymiary), położenie i kierunek
+   — z bufora storage właścicieli (dysz; wiersz zwolnionej dyszy stoi w miejscu, aż jej strugi dogasną). Dawniej CPU
+   co klatkę przeliczał i wysyłał wszystkie ~3,8 tys. strug (pętla `flush` 0,2 ms + ~200 KB `writeBuffer`): `flush`
+   0,246 → 0,004 ms/kl, rysunek strug spadł z czołówki kosztów rysunków (0,079 → ~0,02 ms). Pula ma 16 384 sloty —
+   dawny sufit 4096 żywych strug odrzucał strugi w największych bitwach, teraz nie (jedyna zmiana obrazu: więcej strug
+   przy > 4096 żywych). Rozgrzewka: wpis rejestru `struga MAIN` z licznikiem instancji ≥ 2 — sam `prewarmPass` z
+   licznikiem 0 nie trafiał w klucz rysunku (`pipeline sync … MainExhaustJets` w każdym starcie workera — zniknęło).
+   Lustro CPU shadera: `MainExhaust3D.jetAt` (test `mainExhaustLod`).
+2. **Bufor z przeplotem wysyłany raz na wersję** (`Core3D._dedupeInterleavedUploads`): three r183 pilnuje wersji
+   osobno dla każdego atrybutu, więc zmieniony InterleavedBuffer szedł `writeBuffer`-em raz NA ATRYBUT (partia wież: 4×
+   rekordy wszystkich wież co klatkę — wieże Tempesta 0,08–0,12 ms na rysunek). Powtórka tej samej wersji pominięta
+   (DynamicDrawUsage bez zmian). A/B: `Core3D.interleavedDedupe = false`, licznik `attributeUploadStats.skipped`.
+3. **Mapa cienia słońca tylko z rzucającymi** (`passShadowScan`): sam ODBIORCA cienia w passie (partie wież i trzymacze
+   z `receiveShadow`) uznawał mapę za potrzebną — w bitwie bez rzucających w kadrze cienia mapa i łapacz rysowały się
+   2× na klatkę (~0,07–0,1 ms CPU). Bez rzucających odbiorcom wystarcza PUSTA mapa (raz odświeżona, gdy poprzednia
+   miała rzucających). A/B: `Core3D.shadowReceiverSkip = false`. Test `renderPerfGates`.
+4. Drobne: baza instancji mostka 3D liczy pozę kadłuba raz na rekord zamiast 3× (`beamLatticePose` /
+   `beamLatticeToWorldPosed`, `_frameRecord` 0,12 → 0,04 ms), emitery reflektorów bez trzech obiektów pośrednich na
+   lampę na klatkę i bez napisów `road${i}` / `nav${i}` w klatce (`shipLightRuntime.js`).
+5. Przy okazji (zgłoszenie użytkownika): **tarcza w trybie TARCZE niewidoczna w trybie worker** — `shield.show` to
+   w grze flaga, a pakujący migawki (`raw`) przepuszczał tylko liczby → w workerze `undefined`. Pakowana jako 1 / 0
+   (`snapshotPack.js`, test `renderMirror`); w grze: pula tarcz workera po TARCZE `alive 0` → slot gracza `show: 1`.
+
+Sprawdzone i odrzucone: aktualizacja macierzy sceny z pominięciem ukrytych gałęzi (−0,1 ms, ale ukryte trzymacze
+rozgrzewki zostają z nieaktualną macierzą świata → inny wyznacznik w kluczu pipeline'u, pułapka 37 → kompilacje
+w klatce); pas asteroid w tej bitwie liczy się słusznie (bitwa w populacji NEA); dym rakiet zeruje pulę sam.
+
+Pomiary (RTX 5080, Ryzen 7 7800X3D, `nvidia-smi` 0–1% przed każdym przebiegiem, po kolei z sesją fizyki):
+
+| | baza (543809f5) | poprawki |
+|---|---|---|
+| headless, `profil-bitwy-flot --sklad 50,20,10,3 --zoom 0.45 --seed 7`, CAŁA klatka workera (lustra → bitmapa), ABAB | p50 2,78 / 2,89, p95 4,81 / 4,13 ms | p50 **2,29 / 2,32**, p95 3,29 / 3,30 ms |
+| okno 240 Hz `rytm-bitwy --czas 40`, bitwa > 15 s: klatka workera p50 / p95 | 2,89 / 4,13 ms | **2,32 / 3,18 ms** |
+| — wiek obrazu na ekranie śr. (rozkład 3 / 4 / ≥ 5) | 3,78 (42% / 44% / 15%) | **3,46** (61% / 37% / 2%) |
+| — skoki treści 3D (powtórzenia / przeskoki) | 9,8% (90 / 279) | **2,3%** (57 / 55) |
+| — klatki strony / s | 229,9 | 238,2 |
+| bitwa 0–15 s: wiek śr., skoki | 4,36, 4,7% | 4,30, 4,2% |
+
+A/B przełączników w tej samej bitwie (`--wkAb`, kanapki 4 s): pkt 2 + 3 razem −0,13 ms mediany. W pierwszych 15 s
+wiek obrazu zostaje ~4 — tam bitmapa spóźnia się przez stronę (klatki z krokiem fizyki wysyłają późno: wywołanie
+z krokiem p50 3,4 ms), czyli pkt 1–2 rankingu. Profil workera po poprawkach (headless, pod profilerem): `renderPage`
+2,54 ms/kl — `renderSingle` 1,27 (three `render` passów sceny 0,53, klatka efektów 0,33, macierze 0,09, post 0,08),
+`updateHexShips3D` 0,68 (dysze `EngineVfxSystem` 0,31), lustra 0,22, modele 0,08.
+
+Narzędzie: `profil-bitwy-flot.mjs --wkAb 'wyrA|wyrB' [--wkAbOkres 4]` — przełączniki w workerze co okno, czasy całej
+klatki workera z pierścienia `globalThis.__rwFrameTimes` (render.worker.js), wynik na wariant i kanapki;
+`--wkZdarzenia 't@wyrażenie|…'` — kod w workerze w zadanych chwilach (`plik:ścieżka` — kod z pliku, także w
+`--zdarzenia` i `--wkAb`).
 
 ## 8. Decyzje i to, czego nie zrobiono
 
