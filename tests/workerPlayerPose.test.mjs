@@ -13,6 +13,14 @@ test('worker: HEAD.INTERP_X / Y / ANGLE strony → RenderWorld.playerPose (włas
   assert.match(src, /Object\.defineProperty\(st\.players, 'playerPose', \{ value: null, writable: true/);
   assert.match(src, /const ix = h\[H\.INTERP_X\], iy = h\[H\.INTERP_Y\], ia = h\[H\.INTERP_ANGLE\];/);
   assert.match(src, /st\.players\.playerPose = ip;/);
+  // moduły z własną pozą gracza: tarcze (jak strona: updateShields3D(…, __interpShipPose)), mostki i okna mostków,
+  // modele 3D statków, drony naprawcze (poseOf jak bridgeRenderPose strony) — żaden z pustą pozą
+  assert.match(src, /st\.playerPoseOf = \(e\) => \(e === st\.players\.ship \? st\.players\.playerPose : null\);/);
+  assert.match(src, /shields\.updateShields3D\(dt, rm\.lists\[L\.SEEN\], st\.players\.playerPose\)/);
+  assert.match(src, /models\.syncShipModels3D\(\{ entities: rm\.lists\[L\.SEEN_COLD\], poseOf: st\.playerPoseOf,/);
+  assert.match(src, /const poseOf = st\.playerPoseOf;/);
+  assert.doesNotMatch(src, /poseOf: null/);
+  assert.doesNotMatch(src, /updateShields3D\([^)]*, null\)/);
   // pakujący nadal wysyła pozę gracza
   assert.match(read('src/render/snapshotPack.js'), /h\[HEAD\.INTERP_X\] = ip \? raw\(ip\.x\) : NaN;/);
 });
