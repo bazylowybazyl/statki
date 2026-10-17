@@ -41,7 +41,7 @@ import {
   modelWorldMatrix, modelWorldMatrixInverse, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
   transformNormalToView, screenCoordinate, screenSize, viewportSize,
   atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
-  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty, uint
+  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty, uint, screenUV
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
@@ -666,7 +666,7 @@ export const createSunMaterial = (uniforms) => new PlanetBodyNodeMaterial('sun',
  * tło menu ją pożycza), `u.warpFactor` = uniform (rozjaśnienie w skoku). Nieprzezroczysty,
  * bez testu i zapisu głębi (jak dawny ShaderMaterial).
  */
-export function createNebulaMaterial(u) {
+export function createNebulaMaterial(u, { cacheWrite = false } = {}) {
   const material = new THREE.NodeMaterial();
   material.name = PLANET_MATERIAL_NAMES.nebula;
   material.uniforms = u;
@@ -703,17 +703,38 @@ export function createNebulaMaterial(u) {
       const off = r.xy.sub(q);
       uvS.addAssign(gx.mul(off.x).add(gy.mul(off.y)));
     });
-    const tex = texture(nebulaTex, uvS).rgb;
     // Obraz WYŚWIETLANY (liniowo): tekstura jest zapisana po odwróceniu ACES gry (wypiekacz nieba,
     // src/3d/skybake/skyGameColor.js) i niesie same gładkie warstwy. Gwiazdy w rozdzielczości ekranu
     // (skyStars.tsl.js — komórki w tekselach, profil w pikselach; teksele na piksel z pochodnych uv
     // policzonych przed gałęziami) dokładane po stronie ekranu, potem jasność wg strefy gry
     // (src/game/skyRegion.js, NebulaSystem.update) i powrót do wartości tekstury (acesGryInv obcina do bieli).
-    const smooth = acesGry(tex).toVar();
-    const pxT = max(length(gx.mul(SKY_STAR_TEX)), length(gy.mul(SKY_STAR_TEX)));
-    const stars = skyStarField(uvS.mul(SKY_STAR_TEX), pxT, smooth, uint(1));
+    const skyNode = () => {
+      const tex = texture(nebulaTex, uvS).rgb;
+      const smooth = acesGry(tex).toVar();
+      const pxT = max(length(gx.mul(SKY_STAR_TEX)), length(gy.mul(SKY_STAR_TEX)));
+      const stars = skyStarField(uvS.mul(SKY_STAR_TEX), pxT, smooth, uint(1));
+      return smooth.add(stars);
+    };
+    // PAMIĘĆ NIEBA (2026-10-17, klatka pod 240 Hz przy 5120×1440: mgławica z gwiazdami liczonymi na piksel
+    // kosztowała ~1 ms GPU w każdej klatce, choć niebo stoi prawie w miejscu — paralaksa 0,02): materiał zapisu
+    // (`cacheWrite`) daje gładkie niebo z gwiazdami (przed jasnością strefy, rozjaśnieniem i smugą cienia) do celu
+    // pamięci NebulaSystem — osobny materiał, bo cel nie może być w tym samym passie próbkowany (gałąź odczytu
+    // wiązałaby go); materiał passa: `u.skyCacheMode` 2 — odczyt pamięci teksel w teksel (cel w rozmiarze bufora
+    // sceny), 0 — liczone wprost (zgięcie warpa, rulon, kamery bez pamięci). Gałąź po uniformie — jeden pipeline passa.
+    if (cacheWrite) return vec4(skyNode(), 1.0);
+    const mode = u.skyCacheMode || null;
+    const sum = vec3(0.0).toVar();
+    if (mode && u.skyCache) {
+      If(mode.greaterThan(1.5), () => {
+        sum.assign(texture(u.skyCache.value, screenUV).level(0).rgb);
+      }).Else(() => {
+        sum.assign(skyNode());
+      });
+    } else {
+      sum.assign(skyNode());
+    }
     const k = u.brightness || float(1.0);
-    const color = acesGryInv(smooth.add(stars).mul(k));
+    const color = acesGryInv(sum.mul(k));
     const boost = float(1.0).add(u.warpFactor.mul(0.8));
     // Tło dostaje długą smugę cienia z maski Core3D (sunShaftBackdrop).
     return vec4(sunShaftBackdrop(color.mul(boost)), 1.0);

@@ -45,11 +45,11 @@
 // dla sceny i bloomu, co gorące powietrze. Bez źródeł i bez warstwy obraz jest bit w bit jak
 // wcześniej (przesunięcia są dokładnymi zerami). Siatka bezpieczeństwa HDR (`hdrBezpieczny`):
 // NaN i ±Inf bufora sceny → 0 na wejściu bloomu i w odczytach „uber”.
-import { Vector2, Vector4, NodeUpdateType } from 'three/webgpu';
+import { StorageBufferAttribute, Vector2, Vector4, NodeUpdateType } from 'three/webgpu';
 import BloomNode from 'three/addons/tsl/display/BloomNode.js';
 import {
-  Continue, Fn, If, Loop, abs, clamp, dot, exp, float, floatBitsToUint, floor, fract, length, max, min, mix, select, smoothstep,
-  texture, uint, uniform, uniformArray, uv, vec2, vec3, vec4
+  Continue, Fn, If, Loop, abs, clamp, dot, exp, float, floatBitsToUint, floor, fract, int, length, max, min, mix, screenCoordinate,
+  select, smoothstep, storage, texture, uint, uniform, uniformArray, uv, vec2, vec3, vec4
 } from 'three/tsl';
 import { uniformsAdapter, uniformNode } from './uniformy.js';
 import { acesGry, linearDoSrgb } from './kolorGry.js';
@@ -60,6 +60,55 @@ import { CLOAK_SCREEN, applyCloakScreens, applyCloakView, cloakViewUniform } fro
 
 /** Ile źródeł gorącego powietrza przyjmuje uber w klatce (Core3D.pushHeatHazeWorld). */
 export const MAX_HEAT_HAZE_SOURCES = 24;
+
+// ── Kafle gorącego powietrza (2026-10-17, audyt renderu przy 5120 × 1440 — docs/AUDYT-render-worker-2026-10-17.md § 7.2)
+// Pętla po ≤ 24 źródłach szła dla KAŻDEGO piksela, a w bitwie źródła to dysze ~4 px promienia (24 dysze — 0,16 % ekranu):
+// 0,3–0,4 ms GPU postu samego przeglądu źródeł. CPU (Core3D._updatePostUniforms → heatHazeTileMask) zaznacza w kaflach
+// 32 × 32 px bity źródeł, których obszar (stożek dyszy along ∈ [0,4; 7,2] R, |across| < 2,6 R; koło izotropowe R — te
+// same warunki co w pętli) sięga kafla; „uber” czyta słowo swojego kafla i pomija źródła bez bitu (kafel bez źródeł — bez
+// pętli). Obraz bit w bit: pominięte źródło dawało dokładne zero.
+export const HEAT_TILE_PX = 32;
+/** Pojemność bufora kafli (słowa u32): do ~11 500 × 11 500 px bufora; więcej — bez kafli (pełna maska w shaderze). */
+export const HEAT_TILE_CAP = 1 << 17;
+
+/**
+ * LUSTRO warunków pętli źródeł: maski kafli (bit i = źródło i) dla bufora W × H px. `src` — xy środek (UV, v od dołu),
+ * z promień (jednostki osi v), w siła (×4 na źródło), `dirs` — kierunek dyszy (×2; (0, 0) = izotropowe), `aspect` = uAspect.
+ * Zwraca liczbę kafli (tx · ty) albo 0 — za dużo kafli (bez kafli). Zapas 2 px na kafel.
+ */
+export function heatHazeTileMask(out, src, dirs, count, aspect, W, H, tile = HEAT_TILE_PX) {
+  const tx = Math.ceil(W / tile), ty = Math.ceil(H / tile);
+  const n = tx * ty;
+  if (!(n > 0) || n > out.length) return 0;
+  out.fill(0, 0, n);
+  const asp = aspect > 0 ? aspect : 1;
+  for (let i = 0; i < count; i++) {
+    const sx = src[i * 4], sy = src[i * 4 + 1], R = Math.max(0.0001, src[i * 4 + 2]);
+    const dx = dirs[i * 2], dy = dirs[i * 2 + 1];
+    let x0, x1, y0, y1;   // obwiednia w przestrzeni p = (uvGl − źródło) · (aspekt, 1)
+    if (dx * dx + dy * dy > 0.25) {
+      const L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+      const a0 = 0.4 * R / L, a1 = 7.2 * R / L, c = 2.6 * R / L;
+      const ax0 = ux * a0, ay0 = uy * a0, ax1 = ux * a1, ay1 = uy * a1, cx = -uy * c, cy = ux * c;
+      x0 = Math.min(ax0, ax1) - Math.abs(cx); x1 = Math.max(ax0, ax1) + Math.abs(cx);
+      y0 = Math.min(ay0, ay1) - Math.abs(cy); y1 = Math.max(ay0, ay1) + Math.abs(cy);
+    } else {
+      x0 = -R; x1 = R; y0 = -R; y1 = R;
+    }
+    // p → px bufora (x od lewej, y od GÓRY jak screenCoordinate), zapas 2 px
+    const X0 = (sx + x0 / asp) * W - 2, X1 = (sx + x1 / asp) * W + 2;
+    const Y0 = (1 - (sy + y1)) * H - 2, Y1 = (1 - (sy + y0)) * H + 2;
+    if (!(X1 >= 0 && Y1 >= 0 && X0 < W && Y0 < H)) continue;
+    const i0 = Math.max(0, Math.floor(X0 / tile)), i1 = Math.min(tx - 1, Math.floor(X1 / tile));
+    const j0 = Math.max(0, Math.floor(Y0 / tile)), j1 = Math.min(ty - 1, Math.floor(Y1 / tile));
+    const bit = (1 << i) >>> 0;
+    for (let j = j0; j <= j1; j++) {
+      const row = j * tx;
+      for (let k = i0; k <= i1; k++) out[row + k] = (out[row + k] | bit) >>> 0;
+    }
+  }
+  return n;
+}
 
 /** Najwięcej rozszczepienia barw (aberracji) warstwy DIST [px bufora] — ×0,12 przesunięcia, z sufitem. */
 export const LAYER_ABER_MAX_PX = 2.5;
@@ -132,6 +181,12 @@ export const hdrBezpieczny = /*@__PURE__*/ Fn(([c]) => {
   return vec4(skonczona(bits.x, c.x), skonczona(bits.y, c.y), skonczona(bits.z, c.z), skonczona(bits.w, c.w));
 }).setLayout({ name: 'hdrBezpieczny', type: 'vec4', inputs: [{ name: 'c', type: 'vec4' }] });
 
+function heatTilesNode() {
+  const attr = new StorageBufferAttribute(new Uint32Array(HEAT_TILE_CAP), 1);
+  // Core3D pisze maski do .value.array (StorageBufferAttribute) i wysyła zakres użytych kafli
+  return storage(attr, 'uint', HEAT_TILE_CAP).toReadOnly().setName('heatTiles');
+}
+
 /**
  * Uniformy postu w kształcie `material.uniforms` (adapter, uniformy.js): kod Core3D
  * ustawia `.value` jak na WebGL, bez przebudowy pipeline'u. uHeatOn zastępuje define
@@ -155,6 +210,9 @@ export function createPostUniforms() {
     uHeatSources: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector4(2, 2, 0, 0)), 'vec4'),
     // kierunek wydechu dyszy w przestrzeni ekranu; (0, 0) = źródło izotropowe
     uHeatDirs: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector2(0, 0)), 'vec2'),
+    // Kafle źródeł (heatHazeTileMask): x, y — kafle w poziomie / pionie, z — 1 = maski ważne (0 — pełna maska).
+    uHeatTileGrid: uniform(new Vector4(0, 0, 0, 0)),
+    uHeatTiles: heatTilesNode(),
     ...createFogPostUniforms(),
     // Wizjer maskowania gracza (src/3d/cloak/cloakView.js): wartość odświeżana co render, bez zgłoszenia — wyłączony.
     uCloakView: cloakViewUniform()
@@ -179,6 +237,8 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
   const uHeatOn = uniformNode(uniforms.uHeatOn);
   const uHeatSources = uniformNode(uniforms.uHeatSources);
   const uHeatDirs = uniformNode(uniforms.uHeatDirs);
+  const uHeatTileGrid = uniforms.uHeatTileGrid ? uniformNode(uniforms.uHeatTileGrid) : null;
+  const uHeatTiles = uniforms.uHeatTiles && uHeatTileGrid ? uniformNode(uniforms.uHeatTiles) : null;
   const uDistLayerOn = uniforms.uDistLayerOn ? uniformNode(uniforms.uDistLayerOn) : null;
   const uFxExposure = uniforms.uFxExposure ? uniformNode(uniforms.uFxExposure) : null;
   const uCloakView = uniforms.uCloakView ? uniformNode(uniforms.uCloakView) : null;
@@ -225,55 +285,68 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
       // Przestrzeń skorygowana aspektem: dystanse izotropowe na ekranie (promień
       // źródła jest w jednostkach osi v).
       const asp = vec2(uAspect, 1.0).toVar();
-
-      Loop(uSourceCount, ({ i }) => {
-        const src = uHeatSources.element(i).toVar();
-        const radius = max(0.0001, src.z).toVar();
-        const p = uvGl.sub(src.xy).mul(asp).toVar();
-        const fi = float(i).toVar();
-
-        // dir = kierunek wydechu w przestrzeni ekranu; (0,0) => źródło izotropowe.
-        const dir = uHeatDirs.element(i).toVar();
-        If(dot(dir, dir).greaterThan(0.25), () => {
-          // DYSZA — maska zakłóceń z dema plazmy (dema/silniki): radius = promień wylotu.
-          // Stożek 7R za dyszą (szerokość 1,25R → 2,6R), najsilniej tuż za wylotem,
-          // zanik exp(−2,4 z / 10R) i gaśnięcie w drugiej połowie stożka; szum płynie
-          // w dół strumienia; przesunięcie ~0,12 promienia dyszy na ekranie; szczyt
-          // maski ~1R za wylotem (dysza siedzi na krawędzi kadłuba).
-          const along = dot(p, dir).div(radius).toVar();
-          If(along.lessThan(0.4).or(along.greaterThan(7.2)), () => { Continue(); });
-          const across = dot(p, vec2(dir.y.negate(), dir.x)).div(radius).toVar();
-          const halfW = mix(1.25, 2.6, clamp(along.div(7.0), 0.0, 1.0)).toVar();
-          const aw = abs(across).div(halfW).toVar();
-          If(aw.greaterThanEqual(1.0), () => { Continue(); });
-          const mask = exp(along.negate().mul(0.24))
-            .mul(float(1.0).sub(smoothstep(0.85, 1.25, halfW.div(1.8))))
-            .mul(smoothstep(0.4, 1.6, along))
-            .mul(float(1.0).sub(smoothstep(0.55, 1.0, aw))).toVar();
-          const nc = vec2(across.mul(2.2).add(fi.mul(7.3)), along.mul(0.9).sub(uTime.mul(9.9))).toVar();
-          const nx = hazeNoise(nc).mul(0.65).add(hazeNoise(nc.mul(2.03).add(vec2(7.1, 3.3))).mul(0.35));
-          const ny = hazeNoise(nc.add(vec2(31.7, 11.9))).mul(0.65).add(hazeNoise(nc.mul(2.03).add(vec2(17.3, 3.9))).mul(0.35));
-          const off = vec2(nx, ny).mul(2.0).sub(1.0).mul(mask.mul(src.w).mul(uGlobalStrength).mul(radius).mul(0.12));
-          nozzleHaze.addAssign(off.div(asp));
-          Continue();
+      // Maska kafla 32 × 32 px (heatHazeTileMask): bit i = źródło i może sięgać kafla; bez kafli — wszystkie źródła.
+      const heatMask = uint(0xFFFFFFFF).toVar('heatMask');
+      if (uHeatTiles) {
+        If(uHeatTileGrid.z.greaterThan(0.5), () => {
+          const tileXY = floor(screenCoordinate.xy.div(HEAT_TILE_PX));
+          const tx = clamp(int(tileXY.x), int(0), int(uHeatTileGrid.x).sub(1));
+          const ty = clamp(int(tileXY.y), int(0), int(uHeatTileGrid.y).sub(1));
+          heatMask.assign(uHeatTiles.element(ty.mul(int(uHeatTileGrid.x)).add(tx)));
         });
+      }
 
-        const maxExt = radius.mul(3.4).toVar();
-        If(abs(p.x).greaterThan(maxExt).or(abs(p.y).greaterThan(maxExt)), () => { Continue(); });
-        const t = length(p).div(radius).toVar();
-        If(t.greaterThanEqual(1.0), () => { Continue(); });
+      If(heatMask.notEqual(uint(0)), () => {
+        Loop(uSourceCount, ({ i }) => {
+          If(heatMask.shiftRight(uint(i)).bitAnd(uint(1)).equal(uint(0)), () => { Continue(); });
+          const src = uHeatSources.element(i).toVar();
+          const radius = max(0.0001, src.z).toVar();
+          const p = uvGl.sub(src.xy).mul(asp).toVar();
+          const fi = float(i).toVar();
 
-        // Źródło izotropowe: drobny szum adwektowany (dwie niezależne składowe).
-        const k = float(3.0).div(radius);
-        const nc = vec2(p.x.negate().mul(k).add(fi.mul(5.19)), p.y.mul(k).sub(uTime.mul(2.2))).toVar();
-        const n1 = hazeNoise(nc).mul(0.65).add(hazeNoise(nc.mul(2.17).add(11.3)).mul(0.35));
-        const n2 = hazeNoise(nc.mul(1.31).add(vec2(5.2, 8.7))).mul(0.65).add(hazeNoise(nc.mul(2.9).add(vec2(1.7, 9.2))).mul(0.35));
-        const wob = vec2(n1, n2).sub(0.5).toVar();
-        // smoothstep(1.0, 0.15, t) z GLSL (odwrócone krawędzie) = 1 − smoothstep(0.15, 1.0, t)
-        const fall = float(1.0).sub(smoothstep(0.15, 1.0, t)).mul(smoothstep(0.0, 0.1, t));
-        const ampl = src.w.mul(fall).mul(uGlobalStrength);
-        const disp = vec2(wob.x.negate().mul(1.4), wob.y.mul(0.6)).mul(ampl.mul(0.0035));
-        distortion.addAssign(disp.div(asp));
+          // dir = kierunek wydechu w przestrzeni ekranu; (0,0) => źródło izotropowe.
+          const dir = uHeatDirs.element(i).toVar();
+          If(dot(dir, dir).greaterThan(0.25), () => {
+            // DYSZA — maska zakłóceń z dema plazmy (dema/silniki): radius = promień wylotu.
+            // Stożek 7R za dyszą (szerokość 1,25R → 2,6R), najsilniej tuż za wylotem,
+            // zanik exp(−2,4 z / 10R) i gaśnięcie w drugiej połowie stożka; szum płynie
+            // w dół strumienia; przesunięcie ~0,12 promienia dyszy na ekranie; szczyt
+            // maski ~1R za wylotem (dysza siedzi na krawędzi kadłuba).
+            const along = dot(p, dir).div(radius).toVar();
+            If(along.lessThan(0.4).or(along.greaterThan(7.2)), () => { Continue(); });
+            const across = dot(p, vec2(dir.y.negate(), dir.x)).div(radius).toVar();
+            const halfW = mix(1.25, 2.6, clamp(along.div(7.0), 0.0, 1.0)).toVar();
+            const aw = abs(across).div(halfW).toVar();
+            If(aw.greaterThanEqual(1.0), () => { Continue(); });
+            const mask = exp(along.negate().mul(0.24))
+              .mul(float(1.0).sub(smoothstep(0.85, 1.25, halfW.div(1.8))))
+              .mul(smoothstep(0.4, 1.6, along))
+              .mul(float(1.0).sub(smoothstep(0.55, 1.0, aw))).toVar();
+            const nc = vec2(across.mul(2.2).add(fi.mul(7.3)), along.mul(0.9).sub(uTime.mul(9.9))).toVar();
+            const nx = hazeNoise(nc).mul(0.65).add(hazeNoise(nc.mul(2.03).add(vec2(7.1, 3.3))).mul(0.35));
+            const ny = hazeNoise(nc.add(vec2(31.7, 11.9))).mul(0.65).add(hazeNoise(nc.mul(2.03).add(vec2(17.3, 3.9))).mul(0.35));
+            const off = vec2(nx, ny).mul(2.0).sub(1.0).mul(mask.mul(src.w).mul(uGlobalStrength).mul(radius).mul(0.12));
+            nozzleHaze.addAssign(off.div(asp));
+            Continue();
+          });
+
+          const maxExt = radius.mul(3.4).toVar();
+          If(abs(p.x).greaterThan(maxExt).or(abs(p.y).greaterThan(maxExt)), () => { Continue(); });
+          const t = length(p).div(radius).toVar();
+          If(t.greaterThanEqual(1.0), () => { Continue(); });
+
+          // Źródło izotropowe: drobny szum adwektowany (dwie niezależne składowe).
+          const k = float(3.0).div(radius);
+          const nc = vec2(p.x.negate().mul(k).add(fi.mul(5.19)), p.y.mul(k).sub(uTime.mul(2.2))).toVar();
+          const n1 = hazeNoise(nc).mul(0.65).add(hazeNoise(nc.mul(2.17).add(11.3)).mul(0.35));
+          const n2 = hazeNoise(nc.mul(1.31).add(vec2(5.2, 8.7))).mul(0.65).add(hazeNoise(nc.mul(2.9).add(vec2(1.7, 9.2))).mul(0.35));
+          const wob = vec2(n1, n2).sub(0.5).toVar();
+          // smoothstep(1.0, 0.15, t) z GLSL (odwrócone krawędzie) = 1 − smoothstep(0.15, 1.0, t)
+          const fall = float(1.0).sub(smoothstep(0.15, 1.0, t)).mul(smoothstep(0.0, 0.1, t));
+          const ampl = src.w.mul(fall).mul(uGlobalStrength);
+          const disp = vec2(wob.x.negate().mul(1.4), wob.y.mul(0.6)).mul(ampl.mul(0.0035));
+          distortion.addAssign(disp.div(asp));
+        });
       });
 
       distortion.assign(clamp(distortion, vec2(-0.022), vec2(0.022)));

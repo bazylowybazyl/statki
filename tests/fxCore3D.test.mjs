@@ -262,7 +262,7 @@ test('„uber” 12-B: blok źródeł zniekształceń i warstwa DIST w gałęzi,
   // (limit 12)
   assert.equal((w.match(/var<uniform>/g) || []).length, 6);
   assert.equal((w.match(/var<uniform> fxDistort\b/g) || []).length, 1);
-  assert.equal((w.match(/texture_2d<f32>/g) || []).length, 3, 'scena, bloom, warstwa DIST');
+  assert.equal((w.match(/texture_2d<f32>/g) || []).length, 4, 'scena, bloom, warstwa DIST, pamięć szumu mgły wojny (fogOfWarPost.js)');
   assert.doesNotMatch(w, /textureSample\(/, 'wszystkie odczyty z poziomem 0 (gałęzie zależne od piksela)');
   // gałąź efektów tylko przy źródłach albo warstwie; bez nich dawna ścieżka dysz
   assert.match(w, /if \( \( \( fxDistort\.value\[ 0u \]\.x > 0\.5 \) \|\| nodeVar\d+ \) \) \{/);
@@ -295,7 +295,7 @@ test('„uber” bez bloku efektów (np. testy 02) — kod jak przed 12-B, siatk
   const w = buildWGSL(m);
   assert.equal((w.match(/var<uniform>/g) || []).length, 5);   // + blok mgły wojny, grupa renderu (rulon warpa)
   assert.doesNotMatch(w, /fxDistort|distortItem/);
-  assert.equal((w.match(/texture_2d<f32>/g) || []).length, 1);
+  assert.equal((w.match(/texture_2d<f32>/g) || []).length, 2, 'scena + pamięć szumu mgły wojny (fogOfWarPost.js)');
 });
 
 test('Core3D: wpięcie klatki efektów, zniekształceń, warstwy DIST i rozgrzewki (źródło)', () => {
