@@ -157,9 +157,10 @@ test('uber w TSL: pętla po źródłach z uniformu int, czyste funkcje szumu, cl
   }
   assert.equal((withBloom.match(/rulonInverse\( /g) || []).length, 1, 'odwrotność rulonu raz na piksel (mgła i przyciemnienie)');
   assert.match(withBloom, /fn rulonInverse \(/, 'odwrotność rulonu jako czysta funkcja');
-  // tekstury: scena + bloom (jedno wiązanie na teksturę mimo 3 odczytów), bez macierzy UV tekstury
-  assert.equal((withBloom.match(/texture_2d<f32>/g) || []).length, 2);
-  assert.equal((noBloom.match(/texture_2d<f32>/g) || []).length, 1);
+  // tekstury: scena + bloom (jedno wiązanie na teksturę mimo 3 odczytów) + pamięć szumu mgły wojny (fogOfWarPost.js,
+  // FogNoiseCache — 2026-10-17), bez macierzy UV tekstury
+  assert.equal((withBloom.match(/texture_2d<f32>/g) || []).length, 3);
+  assert.equal((noBloom.match(/texture_2d<f32>/g) || []).length, 2);
   assert.doesNotMatch(withBloom, /mat3x3<f32>/);
   // bloom 1:1 jak w demach (od zadania 25b — bez × 3 dawnego passu), alfa + max(rgb) bloomu; wyjście ACES gry + sRGB
   assert.doesNotMatch(withBloom, /\* vec3<f32>\( 3\.0 \)/);

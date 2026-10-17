@@ -16,11 +16,22 @@
 // początek kafla szumu (uFogBaseA / B, zawinięty do [0, 1)), shader dokłada przesunięcie piksela / FOG_TILE_WORLD;
 // szum jest okresowy w kaflu (siatka mod okres), więc zawinięcie nie robi szwu.
 // Funkcje z `setLayout` są CZYSTE (bez uniformów z domknięcia — pułapka 1); reszta wklejana w graf „uber”.
-import { Matrix4, Vector2, Vector4 } from 'three/webgpu';
+//
+// PAMIĘĆ SZUMU (2026-10-17, audyt renderu przy 5120 × 1440, docs/AUDYT-render-worker-2026-10-17.md § 7.2): szum mgły
+// (16 oktaw szumu kafelkowego na piksel — chmury, zawirowanie, welon, smugi) kosztował 0,7–0,85 ms GPU postu w bitwie,
+// a jego najdrobniejsze oczko to ~1,2 tys. j. (≥ 43 px bufora przy najdalszym zoomie gry 0,035). Kamera z góry bez
+// rulonu: kernel compute liczy chmury, welon i smugi RAZ na 4 × 4 px (FOG_CACHE_STEP) do tekstury rgba16float w kratce
+// zakotwiczonej w pikselach bufora, „uber” czyta ją dwuliniowo (wagi dokładne: środki pikseli na 1/8 teksela). Błąd
+// interpolacji < 1e-3 wartości szumu (krzywizna najdrobniejszej oktawy × (4 px)²), czyli poniżej kroku 8-bitowego
+// obrazu. Kamery 3D i rulon warpa (punkt świata piksela poza prostym kadrem) — szum na piksel jak dawniej, ta sama
+// gałąź za uniformem (uFogCacheOn). Koła wzroku, sygnatury i reszta mgły — dalej na piksel (ostre brzegi kręgów).
+import { ClampToEdgeWrapping, HalfFloatType, LinearFilter, Matrix4, RGBAFormat, StorageTexture, Vector2, Vector4 } from 'three/webgpu';
 import {
-  Fn, If, Loop, abs, clamp, cos, dot, exp, float, floor, fract, int, ivec2, length, max, mix, select, sin, smoothstep, sqrt,
-  uint, uniform, uniformArray, uvec2, vec2, vec3, vec4
+  Fn, If, Loop, Return, abs, clamp, cos, dot, exp, float, floor, fract, instanceIndex, int, ivec2, length, max, mix, select, sin,
+  smoothstep, sqrt, texture, textureStore, uint, uniform, uniformArray, uvec2, vec2, vec3, vec4
 } from 'three/tsl';
+import { sroundF16, ensureHalfRoundingProbe } from '../tsl/zapisF16.js';
+import { uniformNode } from '../tsl/uniformy.js';
 
 export const FOG_MAX_CIRCLES = 24;
 export const FOG_MAX_MASSES = 4;
@@ -30,6 +41,16 @@ export const FOG_DATA_LEN = FOG_MAX_CIRCLES + FOG_MAX_MASSES * 2;
 export const FOG_TILE_WORLD = 200000;
 /** Szerokość miękkiego brzegu kręgu wzroku (ułamek promienia). */
 export const FOG_EDGE_FRAC = 0.22;
+/** Pamięć szumu: teksel co tyle px bufora (całkowite — wagi filtra dwuliniowego dokładne). */
+export const FOG_CACHE_STEP = 4;
+/**
+ * Pamięć szumu od tego zoomu (px BUFORA na j. świata). Najdrobniejsze oczko szumu (1250 j.) ma wtedy ≥ 37 px:
+ * błąd interpolacji ≤ ~1e-3 wartości szumu (tests/fogNoiseCache.test.mjs). Ultra 100 % przy najdalszym zoomie gry
+ * (0,035) — pamięć; niższa skala renderu przy dalekim zoomie — szum na piksel (mało pikseli, tani).
+ */
+export const FOG_CACHE_MIN_ZOOM = 0.03;
+/** Krąg wzroku czysty od s ≥ tego progu (gałąź mgły pominięta). */
+const FOG_CLEAR_S = 1.75;
 
 /** Barwy (liniowe HDR przed ACES; 0,03 → ~0,15 sRGB). Strojenie: Core3D.fogOfWar.look. */
 export const FOG_POST_LOOK = Object.freeze({
@@ -116,22 +137,42 @@ export function createFogPostUniforms() {
     uFogTime: uniform(0.0),
     // x — gęstość mgły, y — podświetlenie brzegu, z — przygaszenie pod mgłą, w — siła sygnatur
     uFogLook: uniform(new Vector4(1, 1, 1, 1)),
-    uFogData: uniformArray(Array.from({ length: FOG_DATA_LEN }, () => new Vector4(0, 0, 0, 0)), 'vec4').setName('fogOfWar')
+    uFogData: uniformArray(Array.from({ length: FOG_DATA_LEN }, () => new Vector4(0, 0, 0, 0)), 'vec4').setName('fogOfWar'),
+    // Pamięć szumu (FogNoiseCache): 1 — „uber” czyta szum z tekstury; rozmiar w tekselach; tekstura (baza z jawnym UV —
+    // odczyty bez macierzy tekstury, pułapka 7).
+    uFogCacheOn: uniform(0.0),
+    uFogCacheSize: uniform(new Vector2(1, 1)),
+    uFogCache: texture(createFogCacheTexture(), vec2(0))
   };
 }
 
-const c3 = (a) => vec3(a[0], a[1], a[2]);
+function createFogCacheTexture() {
+  const t = new StorageTexture(1, 1);
+  t.type = HalfFloatType;
+  t.format = RGBAFormat;
+  t.minFilter = LinearFilter;
+  t.magFilter = LinearFilter;
+  t.wrapS = ClampToEdgeWrapping;
+  t.wrapT = ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.mipmapsAutoUpdate = false;
+  t.name = 'fogOfWar.szum';
+  return t;
+}
+
+/** Rozmiar pamięci szumu (teksele) dla bufora bufW × bufH: kratka co FOG_CACHE_STEP px + teksel zapasu z każdej strony. */
+export function fogCacheSizeFor(bufW, bufH, step = FOG_CACHE_STEP) {
+  return [Math.ceil(Math.max(1, bufW) / step) + 2, Math.ceil(Math.max(1, bufH) / step) + 2];
+}
 
 /**
- * Mgła na `sceneColor` (vec4 var, liniowy HDR) — wklejana w graf „uber” (Fn postu). `U` — węzły uniformów
- * (createFogPostUniforms po uniformNode), `uvTex` — UV kwadu (v od góry), `flatPx` — piksel w px bufora od
- * środka ekranu, oś y w górę, PO odwrotności rulonu.
+ * Punkt świata piksela względem kamery — kamera z góry: px od środka / zoom; kamery 3D: promień ∩ płaszczyzna gry.
+ * Zwraca { rel, seen } (var). Wspólne dla „uber” i kernela pamięci szumu (ten sam ciąg działań).
  */
-export function applyFogOfWar(U, sceneColor, uvTex, flatPx, look = FOG_POST_LOOK) {
-  If(U.uFogOn.greaterThan(0.5), () => {
-    // Punkt świata piksela względem kamery (osie sceny: x w prawo, y w górę), j. świata.
-    const rel = flatPx.div(max(U.uFogZoom, 1.0e-6)).toVar('fogRel');
-    const seen = float(1.0).toVar('fogSeen');
+function fogRelPoint(U, flatPx, uvTex, persp) {
+  const rel = flatPx.div(max(U.uFogZoom, 1.0e-6)).toVar('fogRel');
+  const seen = float(1.0).toVar('fogSeen');
+  if (persp) {
     If(U.uFogPersp.greaterThan(0.5), () => {
       const ndc = vec2(uvTex.x.mul(2.0).sub(1.0), float(1.0).sub(uvTex.y.mul(2.0)));
       const p = U.uFogInv.mul(vec4(ndc, 1.0, 1.0)).toVar('fogRay');
@@ -144,50 +185,185 @@ export function applyFogOfWar(U, sceneColor, uvTex, flatPx, look = FOG_POST_LOOK
         rel.assign(vec2(1.0e6, 1.0e6));
       });
     });
-    rel.assign(clamp(rel, vec2(-2.0e6), vec2(2.0e6)));
+  }
+  rel.assign(clamp(rel, vec2(-2.0e6), vec2(2.0e6)));
+  return { rel, seen };
+}
+
+/**
+ * Sygnatury masy: wir — skręt współrzędnych szumu wokół środka (spirala), zagęszczenie, jądro. Zwraca
+ * { relN, massDense, massCore, massRing } (var; relN — punkt szumu po skręcie wszystkich sygnatur po kolei).
+ */
+function fogMasses(U, rel) {
+  const relN = rel.toVar('fogRelN');
+  const massDense = float(0.0).toVar('fogMassD');
+  const massCore = float(0.0).toVar('fogMassC');
+  const massRing = float(0.0).toVar('fogMassR');
+  Loop({ start: 0, end: U.uFogMassCount, type: 'int', condition: '<', name: 'fogM' }, ({ fogM }) => {
+    const a = U.uFogData.element(int(FOG_MAX_CIRCLES).add(fogM.mul(2)));
+    const b = U.uFogData.element(int(FOG_MAX_CIRCLES).add(fogM.mul(2)).add(1));
+    const dm = relN.sub(a.xy).toVar('fogDm');
+    const R = max(a.z, 1.0);
+    const r2 = dot(dm, dm).div(R.mul(R)).toVar('fogR2');
+    const fall = exp(r2.negate()).toVar('fogFall');
+    const pulse = sin(U.uFogTime.mul(1.1).add(b.y)).mul(0.12).add(0.88);
+    const ang = b.x.mul(fall).add(U.uFogTime.mul(0.04).mul(fall));
+    const cs = cos(ang), sn = sin(ang);
+    relN.assign(a.xy.add(vec2(dm.x.mul(cs).sub(dm.y.mul(sn)), dm.x.mul(sn).add(dm.y.mul(cs)))));
+    const al = a.w.mul(U.uFogLook.w);
+    massDense.addAssign(al.mul(fall).mul(0.42).mul(pulse));
+    massCore.addAssign(al.mul(exp(r2.mul(-7.0))).mul(pulse));
+    const rr = sqrt(r2).sub(0.55).div(0.16);
+    massRing.addAssign(al.mul(exp(rr.mul(rr).negate())).mul(pulse));
+  });
+  return { relN, massDense, massCore, massRing };
+}
+
+/** Szum zakotwiczony w świecie: początki kafli (Core3D, double) + punkt / kafel. Zwraca { cloud, veil, detail }. */
+function fogNoise(U, relN) {
+  const pA = U.uFogBaseA.add(relN.div(FOG_TILE_WORLD)).toVar('fogPA');
+  const pB = U.uFogBaseB.add(relN.div(FOG_TILE_WORLD)).toVar('fogPB');
+  const warp = vec2(fowWarp(pB), fowWarp(pB.add(vec2(0.37, 0.71)))).sub(0.5).toVar('fogWarp');
+  const cloud = fowCloud(pA.add(warp.mul(0.07)));
+  const veil = fowVeil(pB.add(vec2(0.13, 0.29)));
+  // smugi: drobny szum (~5 tys. → 1,4 tys. j.) zawirowany razem z chmurami; grzbiety = włókna mgły
+  const detail = fowWisp(pB.add(warp.mul(0.05)));
+  return { cloud, veil, detail };
+}
+
+/** Najgłębsze wejście w któryś krąg wzroku: s = (r − d) / brzeg (0 = granica, ≥ 1 = czysto); opcjonalnie max 1/brzeg. */
+function fogCircles(U, rel, invW = null) {
+  const sMax = float(-1.0e9).toVar('fogS');
+  Loop({ start: 0, end: U.uFogCount, type: 'int', condition: '<', name: 'fogI' }, ({ fogI }) => {
+    const c = U.uFogData.element(fogI);
+    const w = max(c.z.mul(FOG_EDGE_FRAC), 1.0);
+    sMax.assign(max(sMax, c.z.sub(length(rel.sub(c.xy))).div(w)));
+    if (invW) invW.assign(max(invW, float(1.0).div(w)));
+  });
+  return sMax;
+}
+
+/**
+ * Pamięć szumu mgły (kamera z góry bez rulonu): kernel compute RAZ na teksel kratki co FOG_CACHE_STEP px bufora
+ * (środek teksela x: X = STEP·x − STEP/2 px od lewej krawędzi, y od góry; teksel zapasu z każdej strony) pisze
+ * (chmury, welon, smugi) w punkcie szumu po skręcie sygnatur. Teksele głęboko w kręgu wzroku (s ≥ 1,75 + zapas
+ * Lipschitza: |∇s| ≤ max 1/brzeg, piksel czyta teksele w promieniu < √2·STEP px) — bez szumu (żaden piksel ich nie czyta).
+ * `uniforms` — obiekt createPostUniforms (adapter), te same węzły co „uber”.
+ */
+export class FogNoiseCache {
+  constructor(uniforms) {
+    const U = {};
+    for (const key of Object.keys(uniforms)) if (key.startsWith('uFog')) U[key] = uniformNode(uniforms[key]);
+    this.uniforms = uniforms;
+    this.texture = uniforms.uFogCache.value;
+    this.stats = { dispatches: 0, texels: 0, resizes: 0 };
+    this._w = 0;
+    this._h = 0;
+    const tex = this.texture;
+    const S = FOG_CACHE_STEP;
+    this.kernel = Fn(() => {
+      const w = uint(U.uFogCacheSize.x);
+      const h = uint(U.uFogCacheSize.y);
+      If(instanceIndex.greaterThanEqual(w.mul(h)), () => { Return(); });
+      const x = instanceIndex.mod(w).toVar();
+      const y = instanceIndex.div(w).toVar();
+      const flatPx = vec2(
+        float(x).mul(S).sub(S * 0.5).sub(U.uFogBuf.x.mul(0.5)),
+        U.uFogBuf.y.mul(0.5).sub(float(y).mul(S).sub(S * 0.5))
+      );
+      const { rel } = fogRelPoint(U, flatPx, null, false);
+      const invW = float(0.0).toVar('fogInvW');
+      const sMax = fogCircles(U, rel, invW);
+      const margin = invW.mul(S * 1.5).div(max(U.uFogZoom, 1.0e-6));
+      const out = vec4(0.0).toVar('fogCacheOut');
+      If(sMax.lessThan(float(FOG_CLEAR_S).add(margin)), () => {
+        const { relN } = fogMasses(U, rel);
+        const n = fogNoise(U, relN);
+        // zapis f32 → f16 obcina na RTX — +½ odstępu liczb (sroundF16 z r = ½: do najbliższej na każdym sprzęcie)
+        out.assign(vec4(sroundF16(vec3(n.cloud, n.veil, n.detail), float(0.5)), 1.0));
+      });
+      textureStore(tex, uvec2(x, y), out);
+    })().compute(1).setName('fogOfWarSzum');
+  }
+
+  /** Rozmiar kratki do bufora; zmiana = nowa tekstura GPU (StorageTexture.setSize — wiązania odświeża three). */
+  _resize(bufW, bufH) {
+    const [w, h] = fogCacheSizeFor(bufW, bufH);
+    if (w === this._w && h === this._h) return;
+    this._w = w;
+    this._h = h;
+    this.texture.setSize(w, h);
+    this.uniforms.uFogCacheSize.value.set(w, h);
+    this.kernel.count = w * h;
+    this.stats.resizes++;
+  }
+
+  /**
+   * Przygotowanie kernela tego renderu (po packFogView — uniformy mgły tego widoku): rozmiar kratki; zwraca kernel do
+   * wysłania przed „uber” (Core3D dokleja go do passu compute bloomu — bez osobnego zgłoszenia do kolejki).
+   */
+  prepare(renderer, bufW, bufH) {
+    ensureHalfRoundingProbe(renderer);
+    this._resize(bufW, bufH);
+    this.stats.dispatches++;
+    this.stats.texels = this._w * this._h;
+    return this.kernel;
+  }
+
+  /** Przygotowanie i osobny pass compute (rozgrzewka, narzędzia). */
+  update(renderer, bufW, bufH) {
+    renderer.compute(this.prepare(renderer, bufW, bufH));
+  }
+
+  dispose() {
+    this.texture.dispose();
+    this.kernel.dispose?.();
+  }
+}
+
+const c3 = (a) => vec3(a[0], a[1], a[2]);
+
+/**
+ * Mgła na `sceneColor` (vec4 var, liniowy HDR) — wklejana w graf „uber” (Fn postu). `U` — węzły uniformów
+ * (createFogPostUniforms po uniformNode), `uvTex` — UV kwadu (v od góry), `flatPx` — piksel w px bufora od
+ * środka ekranu, oś y w górę, PO odwrotności rulonu.
+ */
+export function applyFogOfWar(U, sceneColor, uvTex, flatPx, look = FOG_POST_LOOK) {
+  If(U.uFogOn.greaterThan(0.5), () => {
+    // Punkt świata piksela względem kamery (osie sceny: x w prawo, y w górę), j. świata.
+    const { rel, seen } = fogRelPoint(U, flatPx, uvTex, true);
 
     // Najgłębsze wejście w któryś krąg wzroku: s = (r − d) / brzeg (0 = granica, ≥ 1 = czysto).
-    const sMax = float(-1.0e9).toVar('fogS');
-    Loop({ start: 0, end: U.uFogCount, type: 'int', condition: '<', name: 'fogI' }, ({ fogI }) => {
-      const c = U.uFogData.element(fogI);
-      const w = max(c.z.mul(FOG_EDGE_FRAC), 1.0);
-      sMax.assign(max(sMax, c.z.sub(length(rel.sub(c.xy))).div(w)));
-    });
+    const sMax = fogCircles(U, rel);
     // select, nie mix: mix(−1e9, s, 1) = −1e9 + (s + 1e9)·1 w float32 gubi s (ulp przy 1e9 = 64)
     sMax.assign(select(seen.greaterThan(0.5), sMax, float(-1.0e9)));
 
-    If(sMax.lessThan(1.75), () => {
-      // Sygnatury masy: wir — skręt współrzędnych szumu wokół środka (spirala), zagęszczenie, jądro.
-      const relN = rel.toVar('fogRelN');
-      const massDense = float(0.0).toVar('fogMassD');
-      const massCore = float(0.0).toVar('fogMassC');
-      const massRing = float(0.0).toVar('fogMassR');
-      Loop({ start: 0, end: U.uFogMassCount, type: 'int', condition: '<', name: 'fogM' }, ({ fogM }) => {
-        const a = U.uFogData.element(int(FOG_MAX_CIRCLES).add(fogM.mul(2)));
-        const b = U.uFogData.element(int(FOG_MAX_CIRCLES).add(fogM.mul(2)).add(1));
-        const dm = relN.sub(a.xy).toVar('fogDm');
-        const R = max(a.z, 1.0);
-        const r2 = dot(dm, dm).div(R.mul(R)).toVar('fogR2');
-        const fall = exp(r2.negate()).toVar('fogFall');
-        const pulse = sin(U.uFogTime.mul(1.1).add(b.y)).mul(0.12).add(0.88);
-        const ang = b.x.mul(fall).add(U.uFogTime.mul(0.04).mul(fall));
-        const cs = cos(ang), sn = sin(ang);
-        relN.assign(a.xy.add(vec2(dm.x.mul(cs).sub(dm.y.mul(sn)), dm.x.mul(sn).add(dm.y.mul(cs)))));
-        const al = a.w.mul(U.uFogLook.w);
-        massDense.addAssign(al.mul(fall).mul(0.42).mul(pulse));
-        massCore.addAssign(al.mul(exp(r2.mul(-7.0))).mul(pulse));
-        const rr = sqrt(r2).sub(0.55).div(0.16);
-        massRing.addAssign(al.mul(exp(rr.mul(rr).negate())).mul(pulse));
-      });
-
-      // Szum zakotwiczony w świecie: początki kafli (Core3D, double) + piksel / kafel.
-      const pA = U.uFogBaseA.add(relN.div(FOG_TILE_WORLD)).toVar('fogPA');
-      const pB = U.uFogBaseB.add(relN.div(FOG_TILE_WORLD)).toVar('fogPB');
-      const warp = vec2(fowWarp(pB), fowWarp(pB.add(vec2(0.37, 0.71)))).sub(0.5).toVar('fogWarp');
-      const cloud = fowCloud(pA.add(warp.mul(0.07))).toVar('fogCloud');
-      const veil = fowVeil(pB.add(vec2(0.13, 0.29))).toVar('fogVeil');
-      // smugi: drobny szum (~5 tys. → 1,4 tys. j.) zawirowany razem z chmurami; grzbiety = włókna mgły
-      const detail = fowWisp(pB.add(warp.mul(0.05))).toVar('fogDetail');
+    If(sMax.lessThan(FOG_CLEAR_S), () => {
+      const { relN, massDense, massCore, massRing } = fogMasses(U, rel);
+      const cloud = float(0.0).toVar('fogCloud');
+      const veil = float(0.0).toVar('fogVeil');
+      const detail = float(0.0).toVar('fogDetail');
+      const noiseHere = () => {
+        const n = fogNoise(U, relN);
+        cloud.assign(n.cloud);
+        veil.assign(n.veil);
+        detail.assign(n.detail);
+      };
+      if (U.uFogCache && U.uFogCacheOn && U.uFogCacheSize) {
+        // Pamięć szumu (FogNoiseCache): teksel x ma środek w X = STEP·x − STEP/2 px bufora → t = X / STEP + 1.
+        If(U.uFogCacheOn.greaterThan(0.5), () => {
+          const t = vec2(
+            flatPx.x.add(U.uFogBuf.x.mul(0.5)).div(FOG_CACHE_STEP).add(1.0),
+            U.uFogBuf.y.mul(0.5).sub(flatPx.y).div(FOG_CACHE_STEP).add(1.0)
+          );
+          const c = texture(U.uFogCache, t.div(U.uFogCacheSize), float(0)).toVar('fogCached');
+          cloud.assign(c.x);
+          veil.assign(c.y);
+          detail.assign(c.z);
+        }).Else(noiseHere);
+      } else {
+        noiseHere();
+      }
       const ridge = float(1.0).sub(abs(detail.mul(2.0).sub(1.0))).toVar('fogRidge');
       const body = smoothstep(0.38, 0.66, cloud).toVar('fogBody');
       const dense = clamp(body.mul(0.72).add(ridge.mul(ridge).mul(ridge).mul(0.45).mul(body.mul(0.7).add(0.3)))

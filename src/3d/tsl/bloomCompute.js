@@ -232,11 +232,23 @@ export class BloomGryCompute {
     return R;
   }
 
-  /** Bloom tego renderu: 12 kerneli w jednym passie compute. */
-  render(renderer) {
+  /**
+   * Bloom tego renderu: 12 kerneli w jednym passie compute. `extra` — kernel spoza bloomu w tym samym passie i tym
+   * samym zgłoszeniu do kolejki (pamięć szumu mgły wojny: każde renderer.compute to osobne Queue::Submit w procesie
+   * GPU, ~60 µs CPU procesu GPU przy 240 Hz), na początku listy.
+   */
+  render(renderer, extra = null) {
     if (this.onRenderBegin) this.onRenderBegin();
     this._resize(renderer);
-    renderer.compute(this._kernels);
+    if (extra) {
+      const list = this._withExtra || (this._withExtra = []);
+      list.length = 0;
+      list.push(extra);
+      for (let i = 0; i < this._kernels.length; i++) list.push(this._kernels[i]);
+      renderer.compute(list);
+    } else {
+      renderer.compute(this._kernels);
+    }
     if (this.onRenderEnd) this.onRenderEnd();
   }
 

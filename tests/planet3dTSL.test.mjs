@@ -88,7 +88,7 @@ test('planet3d.assets.js bez GLSL — materiały z grafów TSL, kontrakty unifor
   // Ziemi (window.EARTH.uniforms.*Texture.value, cloudUniforms.cloudTexture.value) — ten sam kształt.
   assert.match(src, /this\.mesh\.name = 'Nebula';/);
   // brightness — jasność tła wg strefy gry (src/game/skyRegion.js, mnożnik obrazu wyświetlanego).
-  assert.match(src, /this\.uniforms = uniformsAdapter\(\{ map: texture\(tex, uv\(\)\), warpFactor: uniform\(0\.0\), brightness: uniform\(1\.0\) \}\);/);
+  assert.match(src, /this\.uniforms = uniformsAdapter\(\{ map: texture\(tex, uv\(\)\), warpFactor: uniform\(0\.0\), brightness: uniform\(1\.0\),\s+skyCacheMode: uniform\(0\.0\), skyCache: texture\(this\.cacheTarget\.texture, vec2\(0\.5\)\) \}\);/);
   assert.match(src, /if \(name === 'earth'\) window\.EARTH = this;/);
   const nebula = uniformsAdapter({ map: texture(tex(THREE.SRGBColorSpace), uv()), warpFactor: uniform(0) });
   const material = createNebulaMaterial(nebula);
@@ -247,4 +247,24 @@ test('gwiazdy: kwadraty instancjonowane z jednym przeplecionym buforem danych, k
   const sample = fragment.indexOf('textureSample(');
   assert.ok(sample >= 0 && fragment.indexOf('discard', sample) > sample, 'próbka przed discard');
   for (const name of ['vStarAlong', 'vStarSide', 'vStarLen', 'vStarWidth', 'vStarSt']) assert.match(vertex, new RegExp(name), name);
+});
+
+// Pamięć nieba (2026-10-17): jeden graf mgławicy na trzy tryby (uniform skyCacheMode) — zapis gładkiego nieba
+// z gwiazdami, odczyt pamięci teksel w teksel (jawny poziom 0 — bez pochodnych w gałęzi), liczone wprost.
+test('mgławica z pamięcią nieba: tryby w jednym grafie, odczyt pamięci poziomem 0, gwiazdy tylko poza odczytem', () => {
+  const rt = new THREE.RenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+  const nebula = uniformsAdapter({ map: texture(tex(THREE.SRGBColorSpace), uv()), warpFactor: uniform(0), brightness: uniform(1),
+    skyCacheMode: uniform(0), skyCache: texture(rt.texture, vec2(0.5)) });
+  const material = createNebulaMaterial(nebula);
+  const { fragment } = buildWGSL(material);
+  assert.match(fragment, /textureSampleLevel\(/, 'odczyt pamięci z jawnym poziomem');
+  assert.match(fragment, /skyStarHash/, 'gwiazdy w grafie (zapis i tryb wprost)');
+  const plain = buildWGSL(createNebulaMaterial(uniformsAdapter({ map: texture(tex(THREE.SRGBColorSpace), uv()), warpFactor: uniform(0) }))).fragment;
+  const levels = (w) => (w.match(/textureSampleLevel\(/g) || []).length;
+  assert.equal(levels(fragment), levels(plain) + 1, 'bez pamięci — dawny graf (tło menu, devTools): o jeden odczyt mniej');
+  // zapis pamięci: osobny materiał bez wiązania celu pamięci (cel nie może być w passie i celem, i teksturą)
+  const write = createNebulaMaterial(nebula, { cacheWrite: true });
+  const w = buildWGSL(write).fragment;
+  assert.match(w, /skyStarHash/, 'zapis liczy gwiazdy');
+  assert.equal(levels(w), 0, 'zapis bez odczytu pamięci i maski słońca');
 });

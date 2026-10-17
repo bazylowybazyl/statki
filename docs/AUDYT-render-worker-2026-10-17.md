@@ -188,6 +188,8 @@ jedna klatka powtórzona albo przeskoczona).
 | 6 | Pakowanie migawki: pola rzadko zmienne poza poziomem A (flagi, napisy), `Turret2D.syncFrame` | −0,2–0,4 ms wątku gry w dużej bitwie | mały–średni |
 | 7 | Interpolacja w trybie `off` (hexShips3D, mostki, modele — `poseOf` z `renderPoses`) | `off` / zapas bez drgań NPC | mały, `off` to dziś tryb zapasowy |
 | 8 | PerfHUD: draw calle, GPU, obiekty sceny workera z RET (dziś strona bez urządzenia → „--” / dane strony) | widoczność kosztów workera dla gracza | mały |
+| 9 | ~~**GPU przy 5120 × 1440 (Ultra)**~~ — ZROBIONE 2026-10-17 (§ 7.2): passy pełnoekranowe z pętlami po listach | bitwa 192,7 → 216,4 kl/s, wiek 6,43 → 4,51 | — |
+| 10 | **Proces GPU** (`CrGpuMain` 96% przy 5120 × 1440): mniej zgłoszeń `Queue::Submit` na klatkę (~22: każdy `renderer.render` / `compute`), mniej pracy rastra kanwy 2D (nakładki, pierścień kanw B2cr w pełnej rozdzielczości) | dziś trzyma rytm w bitwie przy 5120 × 1440 | średni–duży: łączenie zgłoszeń zmienia kolejność `writeBuffer` ↔ passy (three r183) |
 
 ### 7.1 Stan pkt 3 — klatka workera (2026-10-17, sesja „Klatka workera renderu pod 240 Hz”)
 
@@ -248,6 +250,62 @@ Narzędzie: `profil-bitwy-flot.mjs --wkAb 'wyrA|wyrB' [--wkAbOkres 4]` — prze�
 klatki workera z pierścienia `globalThis.__rwFrameTimes` (render.worker.js), wynik na wariant i kanapki;
 `--wkZdarzenia 't@wyrażenie|…'` — kod w workerze w zadanych chwilach (`plik:ścieżka` — kod z pliku, także w
 `--zdarzenia` i `--wkAb`).
+
+### 7.2 GPU przy 5120 × 1440, Ultra (2026-10-17, ta sama sesja)
+
+Zgłoszenie użytkownika: RTX 5080 + Ryzen 7 7800X3D, monitor 5120 × 1440 przy 240 Hz, Ultra ze skalą renderu
+100% — w dużej bitwie spadki do 80–126 kl/s, w misji 1 do 100–120 kl/s, pełny ekran (F11) zabiera ~100 kl/s.
+Przy 7,4 Mpx bufora klatka GPU workera dochodziła do 8,6 ms (budżet 4,17 ms), a passy pełnoekranowe liczyły na
+KAŻDYM pikselu pętle po całych listach. Pomiar per pass: znaczniki czasu three z etykietą passa (haki
+`inspector.beginRender / beginCompute`), bitwa 166 okrętów, `profil-bitwy-flot --szer 5120 --wys 1440 --query
+"renderWorker=1&grafika=ultra"` + `Core3D.setRenderScale(1)`. Poprawki (każda za przełącznikiem A/B Core3D):
+
+1. **Maska słońca — pudła cieni** (`core3d.js` `shadowShaftsMaskNode`, `hullShadowSdf.js`): na CPU pudło cienia
+   każdego kadłuba (prostokąt SDF przesunięty od słońca o zasięg cienia, z zapasem na kierunek do słońca w kadrze —
+   `hullShadowAabb`) i każdej tarczy ze smugą (`shaftDiscAabb` — lustro warunków pętli tarcz); shader pomija
+   kadłub / tarczę poza pudłem przed odczytami. Ta sama klatka i uniformy (rysunki maski do celu roboczego, 20 tarcz,
+   24 kadłuby): **1,03 → 0,37 ms** na rysunek (bez pudeł tarcz 0,49, bez pudeł kadłubów 1,00); obraz bit w bit
+   (0 różnych pikseli przy 0,76–1,1 mln pikseli w cieniu). A/B: `shadowHullAabb` / `shadowDiscAabb = false`.
+2. **Pamięć nieba** (`planet3d.assets.js` — `skyCacheHook`, `planet3d.assets.tsl.js`): mgławica z gwiazdami
+   proceduralnymi (`skyStarField` na piksel) liczona raz do celu HalfFloat i czytana z niego, dopóki kadr nie
+   przesunie się o ≥ 0,25 px względem pamięci (test na rogach kadru) i nie zmieni się tekstura; zgięcie tła warpa
+   i rulon — na piksel jak dawniej. Pass tła **1,47–1,78 → 0,19–0,3 ms** (+ przeliczenie pamięci w 0,5–14% klatek
+   bitwy); maks. różnica 0,0029 liniowo, 0 pikseli > 1/255. A/B: `skyCacheEnabled = false`.
+3. **Pamięć szumu mgły wojny** (`fog/fogOfWarPost.js` — `FogNoiseCache`): 16 oktaw szumu kafelkowego (chmury,
+   zawirowanie, welon, smugi) kernel compute liczy RAZ na 4 × 4 px (rgba16float, kratka w pikselach bufora,
+   zaokrąglenie do najbliższej przy zapisie f16), w tym samym passie compute co bloom (bez osobnego zgłoszenia do
+   kolejki); teksele głęboko w kręgu wzroku bez szumu (zapas Lipschitza — piksel z mgłą nigdy ich nie czyta);
+   „uber” czyta dwuliniowo (wagi dokładne: środki pikseli na 1/8 teksela). Kamery 3D, rulon i zoom < 0,03 px
+   bufora / j. — szum na piksel. Koszt mgły **0,37–0,51 → ~0,1–0,2 ms** (w tym kernel 0,06–0,08 ms); maks. różnica
+   1/255 na ~2% pikseli (mgła na 23% kadru), 0 pikseli ≥ 2/255. A/B: `fogNoiseCache = false`.
+4. **Kafle gorącego powietrza** (`tsl/postGry.js` — `heatHazeTileMask`, `Core3D._updatePostUniforms`): pętla po
+   ≤ 24 źródłach szła na każdym pikselu, a w bitwie źródła to dysze ~4 px (0,16% ekranu) — sam przegląd 0,3–0,4 ms
+   (źródła przesunięte poza ekran kosztowały tyle samo). CPU zaznacza bity źródeł w kaflach 32 × 32 px (lustro
+   warunków pętli: stożek dyszy, koło izotropowe), „uber” czyta słowo kafla i pomija źródła bez bitu. Post
+   **0,82–1,01 → 0,42–0,51 ms**, obraz bit w bit. A/B: `heatHazeTiles = false`.
+
+| okno 240 Hz `rytm-bitwy`, 5120 × 1440, Ultra, skala 1, bitwa 166 okrętów > 15 s | stare ścieżki (przełączniki) | nowe |
+|---|---|---|
+| klatki strony / s | 192,7 | **216,4** |
+| wiek obrazu śr. | 6,43 | **4,51** |
+| skoki treści 3D | 43,6% | **18,5%** |
+| klatka workera p50 / p95 | 4,45 / 6,38 ms | **3,27 / 4,76 ms** |
+| złożeń / s | 177 | **212** |
+| bitwa 0–15 s: kl/s, wiek, skoki | 196,4, 6,54, 45,7% | 213,1, 5,20, 12,9% |
+
+Czas GPU passów w bitwie po poprawkach (przy 5120 × 1440): świat ortho 0,75 ms, maska słońca 0,37–0,7 (zależy od
+kadłubów w kadrze), post 0,42–0,51, bloom 0,33, światło objętościowe pasa 0,28–0,42, tło 0,19–0,3 — razem
+render ~2,2–2,8 + compute ~0,7–0,9 ms. **Nadal trzyma proces GPU**: `CrGpuMain` 96% zajęty (`--watki`), z tego
+`Queue::Submit` 30% (~1,26 ms na klatkę przy ~22 zgłoszeniach: każdy `renderer.render` / `renderer.compute` three
+r183 to osobne zgłoszenie), dekodowanie poleceń WebGPU workera 23%, raster kanwy 2D strony 25%
+(`DoRasterCHROMIUM` + flush — nakładki i składanie pierścienia kanw w pełnej rozdzielczości), kompozytor ~5%
+(ranking pkt 10). Worker 79%, strona 68%.
+
+Sprawdzone i odrzucone: maska słońca w połowie rozdzielczości (ciemna obwódka na brzegach kadłubów — piksel na
+własnym kadłubie pomija samocień tylko w pełnej rozdzielczości); mniej kroków marszu SDF kadłubów (zmiana
+półcienia). Narzędzia: `rytm-bitwy --wkStart 'plik:…'` (A/B przełączników w workerze przed bitwą), `--watki N`
+i `--watkiKat 'gpu,gpu.dawn,…'` (zajętość wątków, surowy ślad), `profil-bitwy-flot --szer / --wys` i czasy GPU
+w oknach A/B (`globalThis.__rwGpuTimes`).
 
 ## 8. Decyzje i to, czego nie zrobiono
 

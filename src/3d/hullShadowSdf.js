@@ -120,6 +120,15 @@ export function hullSdfShadow(u, worldP, d, sunDist) {
   const shadow = float(0.0).toVar('hullShadow');
   const backdrop = float(0.0).toVar('hullBackdrop');
   Loop({ start: int(0), end: u.uHullCount, type: 'int', condition: '<', name: 'hullIdx' }, ({ hullIdx }) => {
+    // Pudło cienia kadłuba w świecie (u.uHullB[i] = minX, minY, maxX, maxY — Core3D liczy je na CPU z prostokąta SDF
+    // przesuniętego od słońca o zasięg cienia, z zapasem na kierunek do słońca w kadrze; hullShadowAabb): piksel poza
+    // nim nie może dostać cienia tego kadłuba (promień ku słońcu nie trafia prostokąta SDF w zasięgu) — bez
+    // przekształceń i odczytów A / M / C (2026-10-17: przy 5120×1440 pętla po 32 kadłubach na każdym pikselu
+    // kosztowała ~0,6–0,75 ms GPU maski).
+    if (u.uHullB) {
+      const hB = u.uHullB.element(hullIdx);
+      If(worldP.x.lessThan(hB.x).or(worldP.y.lessThan(hB.y)).or(worldP.x.greaterThan(hB.z)).or(worldP.y.greaterThan(hB.w)), () => { Continue(); });
+    }
     const hA = u.uHullA.element(hullIdx).toVar();
     const hM = u.uHullM.element(hullIdx).toVar();
     const hC = u.uHullC.element(hullIdx).toVar();
@@ -556,6 +565,42 @@ export function packHullShaftOccluder(out, offset, ex, ey, rot, sx, sy, layout, 
   out[offset + 9] = (layout.gh - 0.5) / L;
   out[offset + 10] = layer;
   out[offset + 11] = strength;
+  return out;
+}
+
+/**
+ * Pudło cienia kadłuba w świecie (three-space) do uHullB maski słońca: prostokąt SDF (UV [UV_MIN, C]) z wpisu
+ * packHullShaftOccluder (A, M, C od `offset`) i ten sam prostokąt cofnięty od słońca o zasięg cienia (`reach` =
+ * długość kadłuba × uHullLenMul). Kierunek do słońca liczy shader per piksel — zapas na jego zmianę w obrębie
+ * cienia; słońce bliżej niż zasięg — pudło „wszędzie”. Wynik do `out[o..o+3]` = minX, minY, maxX, maxY.
+ */
+export function hullShadowAabb(out, o, packed, offset, sunX, sunY, lenMul) {
+  const ax = packed[offset], ay = packed[offset + 1];
+  const reach = Math.max(0, packed[offset + 3] * lenMul);
+  const m0 = packed[offset + 4], m1 = packed[offset + 5], m2 = packed[offset + 6], m3 = packed[offset + 7];
+  const cu = packed[offset + 8], cv = packed[offset + 9];
+  const det = m0 * m3 - m1 * m2;
+  if (!(Math.abs(det) > 1e-30) || !Number.isFinite(det)) { out[o] = -1e30; out[o + 1] = -1e30; out[o + 2] = 1e30; out[o + 3] = 1e30; return out; }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, cx = 0, cy = 0;
+  for (let k = 0; k < 4; k++) {
+    const qu = (k & 1) ? cu : UV_MIN, qv = (k & 2) ? cv : UV_MIN;
+    const wx = ax + (m3 * qu - m1 * qv) / det;
+    const wy = ay + (-m2 * qu + m0 * qv) / det;
+    cx += wx * 0.25; cy += wy * 0.25;
+    if (wx < x0) x0 = wx; if (wx > x1) x1 = wx; if (wy < y0) y0 = wy; if (wy > y1) y1 = wy;
+  }
+  const sx = sunX - cx, sy = sunY - cy;
+  const sunD = Math.sqrt(sx * sx + sy * sy);
+  const diag = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+  const far = diag + reach;
+  if (!(sunD > far * 2 + 1)) { out[o] = -1e30; out[o + 1] = -1e30; out[o + 2] = 1e30; out[o + 3] = 1e30; return out; }
+  const dx = sx / sunD, dy = sy / sunD;
+  // przesunięcie od słońca: P = punkt prostokąta − d · t, t ∈ [0, reach]
+  const bx0 = Math.min(x0, x0 - dx * reach), bx1 = Math.max(x1, x1 - dx * reach);
+  const by0 = Math.min(y0, y0 - dy * reach), by1 = Math.max(y1, y1 - dy * reach);
+  // kierunek ku słońcu z piksela P odchyla się od kierunku ze środka o ≤ |P − środek| / (|słońce − środek| − |P − środek|)
+  const pad = reach * (far / (sunD - far)) + 2 + 0.01 * far;
+  out[o] = bx0 - pad; out[o + 1] = by0 - pad; out[o + 2] = bx1 + pad; out[o + 3] = by1 + pad;
   return out;
 }
 

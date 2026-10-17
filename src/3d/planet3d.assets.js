@@ -20,6 +20,8 @@ import { WARP_STAR_CAMERA } from './warp/stars.js';
 import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
 import { WARP_WORLD_LENS, WarpWorldLens, newLensBody } from './warp/worldLens.js';
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
+import { warpSkyBendCount } from './warp/skyBend.js';
+import { resizeRenderTarget } from './renderTargetResize.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
 import { createEarthPitMesh, earthPitUniforms } from './earthPit3D.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
@@ -332,6 +334,9 @@ function createRingAtmosphere(key, planetRadius) {
     return { mesh, radiusMul: ra };
 }
 
+// Pamięć nieba: przesunięcie obrazu płaszczyzny mgławicy [px bufora], od którego niebo liczy się od nowa — gwiazdy
+// mają profil σ ≈ 0,5–0,75 px; ćwierć piksela przez kilka klatek (wstrząs kamery, dryf paralaksy) jest niewidoczne.
+const SKY_CACHE_PX = 0.25;
 const NebulaSystem = {
     mesh: null, uniforms: null, parallaxFactor: 0.98, baseScale: 800000, aspectRatio: 1.6,
     // Jasność wg strefy gry (src/game/skyRegion.js): cel z index.html (window.setSkyZone), dojście płynne.
@@ -346,8 +351,19 @@ const NebulaSystem = {
         tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
         // Węzły za adapterem: uniforms.map.value = tekstura (tło menu ją pożycza),
         // uniforms.warpFactor.value jak dawniej. Tło dostaje smugę cienia (sunShaftBackdrop).
-        this.uniforms = uniformsAdapter({ map: texture(tex, uv()), warpFactor: uniform(0.0), brightness: uniform(1.0) });
+        // Pamięć nieba (createNebulaMaterial: skyCacheMode / skyCache): gładkie niebo z gwiazdami w rozdzielczości
+        // bufora sceny, liczone od nowa dopiero, gdy obraz płaszczyzny przesunie się na ekranie (skyCacheHook).
+        this.cacheTarget = new THREE.RenderTarget(1, 1, {
+            format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+            generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
+        });
+        this.cacheTarget.texture.name = 'Nebula:pamiecNieba';
+        this.uniforms = uniformsAdapter({ map: texture(tex, uv()), warpFactor: uniform(0.0), brightness: uniform(1.0),
+            skyCacheMode: uniform(0.0), skyCache: texture(this.cacheTarget.texture, vec2(0.5)) });
         const mat = createNebulaMaterial(this.uniforms);
+        // materiał zapisu pamięci — ten sam węzeł nieba, bez wiązania celu pamięci (podmieniany na czas renderu do celu)
+        this.cacheWriteMaterial = createNebulaMaterial(this.uniforms, { cacheWrite: true });
+        this.cacheWriteMaterial.name = 'GameNebula:zapisPamieci';
         this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this.baseScale, this.baseScale / this.aspectRatio), mat);
         this.mesh.position.z = -150000; this.mesh.renderOrder = -999;
         
@@ -355,6 +371,74 @@ const NebulaSystem = {
 
         Core3D.scene.add(this.mesh);
         Core3D.enableBackground3D(this.mesh);
+        Core3D.addPassHook('bg', (camera) => this.skyCacheHook(camera));
+        Core3D.skyCacheStats = this.cacheStats;   // narzędzia (licznik przeliczeń / odczytów pamięci nieba)
+        // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry
+        if (Core3D.warmup) Core3D.warmup.add({ name: 'mgławica: pamięć nieba', objects: () => (this.mesh ? [this.mesh] : []),
+            layer: 1, target: () => this.cacheTarget, scene: null, phase: 'loading',
+            variant: { apply: (m) => { const prev = m.material; m.material = this.cacheWriteMaterial; return () => { m.material = prev; }; } } });
+    },
+    // ── Pamięć nieba (2026-10-17) ──
+    // Niebo (tekstura + gwiazdy na piksel) zależy tylko od położenia płaszczyzny mgławicy na ekranie (paralaksa 0,02 —
+    // przy 500 j/s i zoomie 0,45 ~0,02 px na klatkę przy 240 Hz), od rozmiaru bufora i tekstury. Przelicza się, gdy dwa
+    // punkty płaszczyzny przesuną się na ekranie o więcej niż SKY_CACHE_PX albo zmieni się rozmiar / tekstura; zgięcie
+    // warpa i rulon (przesunięcia na piksel) — liczone wprost. Jasność strefy, rozjaśnienie i smuga cienia — w passie
+    // tła na pamięci (tanie). A/B: Core3D.skyCacheEnabled = false. Liczniki: NebulaSystem.cacheStats.
+    cacheTarget: null, cacheWriteMaterial: null, cacheValid: false, cacheTexVersion: -1,
+    cacheP0: new THREE.Vector2(), cacheP1: new THREE.Vector2(),
+    cacheStats: { renders: 0, reused: 0, direct: 0 },
+    _skyV: new THREE.Vector4(), _skyQ0: new THREE.Vector2(), _skyQ1: new THREE.Vector2(),
+    _skyProject(camera, lx, ly, W, H, out) {
+        const v = this._skyV.set(lx, ly, 0, 1).applyMatrix4(this.mesh.matrixWorld).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+        const w = Math.abs(v.w) > 1e-12 ? v.w : 1e-12;
+        return out.set((v.x / w * 0.5 + 0.5) * W, (v.y / w * 0.5 + 0.5) * H);
+    },
+    skyCacheHook(camera) {
+        const u = this.uniforms, rt = this.cacheTarget, renderer = Core3D.renderer;
+        if (!u || !rt || !this.mesh || !renderer) return;
+        const st = this.cacheStats;
+        if (Core3D.skyCacheEnabled === false || !this.mesh.visible || warpSkyBendCount() > 0 || rulonActive()) {
+            u.skyCacheMode.value = 0; this.cacheValid = false; st.direct++; return;
+        }
+        const ct = Core3D.composerTarget;
+        const W = ct ? ct.width : 0, H = ct ? ct.height : 0;
+        if (!(W > 0 && H > 0)) { u.skyCacheMode.value = 0; st.direct++; return; }
+        if (rt.width !== W || rt.height !== H) { resizeRenderTarget(rt, W, H, renderer); this.cacheValid = false; }
+        // Płaszczyzna mgławicy jest równoległa do ekranu: obraz = skala na osi + przesunięcie (q = a·P + b). Ruch
+        // obrazu mierzony w ROGACH ekranu: piksel x pamięci pokazuje punkt płaszczyzny (x − b₀)/a₀, który w tej klatce
+        // leży w a·(x − b₀)/a₀ + b (punkty płaszczyzny poza ekranem przesadzałyby drobną zmianę zoomu).
+        const D = this.baseScale * 0.05;
+        const q0 = this._skyProject(camera, 0, 0, W, H, this._skyQ0);
+        const q1 = this._skyProject(camera, D, D, W, H, this._skyQ1);
+        const texVer = u.map.value ? u.map.value.version : -1;
+        const tol = SKY_CACHE_PX;
+        let moved = !this.cacheValid;
+        if (!moved) {
+            const p0 = this.cacheP0, p1 = this.cacheP1;
+            const kx = (p1.x - p0.x) !== 0 ? (q1.x - q0.x) / (p1.x - p0.x) : NaN;
+            const ky = (p1.y - p0.y) !== 0 ? (q1.y - q0.y) / (p1.y - p0.y) : NaN;
+            if (!(Number.isFinite(kx) && Number.isFinite(ky))) moved = true;
+            else {
+                for (let c = 0; c < 4 && !moved; c++) {
+                    const x = (c & 1) ? W : 0, y = (c & 2) ? H : 0;
+                    if (Math.abs(kx * (x - p0.x) + q0.x - x) > tol || Math.abs(ky * (y - p0.y) + q0.y - y) > tol) moved = true;
+                }
+            }
+        }
+        if (!this.cacheValid || moved || texVer !== this.cacheTexVersion) {
+            const prev = renderer.getRenderTarget();
+            const mat = this.mesh.material;
+            this.mesh.material = this.cacheWriteMaterial;
+            renderer.setRenderTarget(rt);
+            renderer.render(this.mesh, camera);
+            renderer.setRenderTarget(prev);
+            this.mesh.material = mat;
+            this.cacheP0.copy(q0); this.cacheP1.copy(q1);
+            this.cacheTexVersion = texVer;
+            this.cacheValid = true;
+            st.renders++;
+        } else st.reused++;
+        u.skyCacheMode.value = 2;
     },
     update: function (dt, gameCamera) {
         if (!this.uniforms || !gameCamera || !this.mesh) return;

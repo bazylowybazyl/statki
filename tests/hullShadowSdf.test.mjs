@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
@@ -21,7 +22,8 @@ import {
   sampleSdfLayer,
   signedDistanceField,
   squaredDistanceTransform,
-  traceHullShadowCpu
+  traceHullShadowCpu,
+  hullShadowAabb
 } from '../src/3d/hullShadowSdf.js';
 
 const L = HULL_SDF_LAYER_SIZE;
@@ -478,4 +480,57 @@ test('TSL: marsz po tablicy warstw ze stałymi lustra CPU, próbki jawnym LOD, p
   // Lustro CPU i marsz dzielą rozkład siatki (planowanie z tych samych stałych).
   const layout = planHullSdfLayout({ minX: -100, maxX: 100, minY: -40, maxY: 40, count: 10 }, 5);
   assert.ok(layout.gw > 0 && layout.gh > 0);
+});
+
+// Pudło cienia kadłuba (uHullB, hullShadowAabb — szybkie odrzucenie piksela w masce słońca, 2026-10-17): każdy piksel,
+// który marsz zacienia (oba kanały, słońce daleko i blisko, obroty, skale, zasięg), leży w pudle — inaczej odrzucenie
+// zmieniłoby obraz. Pudło nie jest też dużo większe od prawdziwego obszaru cienia.
+test('hullShadowAabb: pudło zawiera każdy piksel w cieniu kadłuba (marsz CPU), bez nadmiaru', () => {
+  const grid = makeGrid(420, 160, forkHull);
+  const { data, layout } = bake(grid);
+  const packed = new Float32Array(HULL_SDF_OCCLUDER_FLOATS);
+  const bb = new Float64Array(4);
+  let rnd = 12345;
+  const r = () => { rnd = (rnd * 1103515245 + 12345) & 0x7fffffff; return rnd / 0x7fffffff; };
+  let shaded = 0, hugeBoxes = 0, sumRatio = 0, boxes = 0;
+  for (let c = 0; c < 24; c++) {
+    const ex = (r() - 0.5) * 20000, ey = (r() - 0.5) * 20000, rot = (r() - 0.5) * 6.3;
+    const sc = 0.6 + r() * 1.4, sx = r() < 0.2 ? -sc : sc, sy = sc;
+    const lenMul = 2 + r() * 2;
+    packHullShaftOccluder(packed, 0, ex, ey, rot, sx, sy, layout, 0);
+    const ang = r() * 6.283, sunR = c % 6 === 0 ? 3000 + r() * 4000 : 1e6 + r() * 5e6;
+    const sunX = ex + Math.cos(ang) * sunR, sunY = -ey + Math.sin(ang) * sunR;
+    hullShadowAabb(bb, 0, packed, 0, sunX, sunY, lenMul);
+    const huge = bb[2] - bb[0] > 1e20;
+    if (huge) hugeBoxes++;
+    // próbki w szerokim kwadracie wokół kadłuba
+    const R = (420 * sc + packed[3] * lenMul) * 1.6;
+    let inShadow = 0, area = 0;
+    let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+    for (let k = 0; k < 5000; k++) {
+      const wx = ex + (r() - 0.5) * 2 * R, wy = -ey + (r() - 0.5) * 2 * R;
+      const dx = sunX - wx, dy = sunY - wy, dd = Math.hypot(dx, dy);
+      if (dd < 1) continue;
+      const s0 = traceHullShadowCpu(wx, wy, dx / dd, dy / dd, dd, packed, 0, data, { steps: 32, lenMul });
+      const s1 = traceHullShadowCpu(wx, wy, dx / dd, dy / dd, dd, packed, 0, data, { steps: 32, lenMul, backdrop: true });
+      if (s0 > 0 || s1 > 0) {
+        inShadow++;
+        assert.ok(wx >= bb[0] && wx <= bb[2] && wy >= bb[1] && wy <= bb[3], `przypadek ${c}: piksel w cieniu poza pudłem (${wx.toFixed(1)}, ${wy.toFixed(1)})`);
+        if (wx < sx0) sx0 = wx; if (wx > sx1) sx1 = wx; if (wy < sy0) sy0 = wy; if (wy > sy1) sy1 = wy;
+      }
+    }
+    shaded += inShadow;
+    if (!huge && inShadow > 50) { sumRatio += ((bb[2] - bb[0]) * (bb[3] - bb[1])) / Math.max(1, (sx1 - sx0) * (sy1 - sy0)); boxes++; }
+  }
+  assert.ok(shaded > 1500, `za mało pikseli w cieniu do sprawdzenia: ${shaded}`);
+  assert.ok(hugeBoxes >= 1 && hugeBoxes <= 6, `słońce blisko → pudło „wszędzie” (${hugeBoxes})`);
+  assert.ok(boxes > 10 && sumRatio / boxes < 2.5, `pudło nie za luźne: średnio ${(sumRatio / boxes).toFixed(2)} × obszaru cienia`);
+});
+
+test('hullSdfShadow: odrzucenie pudłem (uHullB) przed odczytem A / M / C kadłuba', () => {
+  const src = readFileSync(new URL('../src/3d/hullShadowSdf.js', import.meta.url), 'utf8').split(String.fromCharCode(13)).join('');
+  const at = src.indexOf('const hB = u.uHullB.element(hullIdx);');
+  assert.ok(at > 0 && at < src.indexOf('const hA = u.uHullA.element(hullIdx).toVar();'), 'pudło przed A');
+  const core = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
+  assert.ok(core.includes('hullShadowAabb(bb, 0, hulls, base, sunW.x, sunW.y, lenMul);'));
 });

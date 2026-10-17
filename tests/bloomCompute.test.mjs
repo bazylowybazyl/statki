@@ -95,6 +95,7 @@ test('Core3D: bloom compute przed „uber”, wejście = bufor sceny, kubełek b
   assert.match(core, /const bloom = new BloomGryCompute\(sceneTexture, cfg\.strength, cfg\.radius, cfg\.threshold\);/);
   assert.match(core, /bloomTexture: bloom\.getTextureNode\(\)/);
   const post = core.slice(core.indexOf('  _renderPost() {'), core.indexOf('\n  },', core.indexOf('  _renderPost() {')));
-  assert.ok(post.indexOf('this.bloomPass.render(this.renderer)') >= 0 && post.indexOf('this.bloomPass.render(this.renderer)') < post.indexOf('post.render();'), 'bloom przed postem');
+  // (drugi argument — kernel pamięci szumu mgły wojny w tym samym passie compute, fogOfWarPost.js)
+  assert.ok(post.indexOf('this.bloomPass.render(this.renderer, fogKernel)') >= 0 && post.indexOf('this.bloomPass.render(this.renderer, fogKernel)') < post.indexOf('post.render();'), 'bloom przed postem');
   assert.doesNotMatch(core, /_takeBloomOutOfPost/, 'bloom nie leży już w renderze postu');
 });

@@ -59,7 +59,9 @@ mkdirSync(OUT, { recursive: true });
 
 const { server, base } = await startVite(PORT);
 // webgpu: false — bez flag „unsafe” (domyślny WebGPU Chrome jak u gracza); --diag: %HasFastProperties w stronie.
-const chrome = await startChrome({ width: 1920, height: 1080, webgpu: false,
+// --szer / --wys (2026-10-17): rozmiar okna strony (np. 5120×1440 — pełny ekran gracza)
+const SZER = Number(arg('szer', 1920)), WYS = Number(arg('wys', 1080));
+const chrome = await startChrome({ width: SZER, height: WYS, webgpu: false,
   extraArgs: DIAG ? ['--js-flags=--allow-natives-syntax'] : [] });
 const { cdp, logs } = chrome;
 // Swobodna gra bez samouczka; --seed: Math.random z ziarnem (mulberry32) przed skryptami strony.
@@ -339,14 +341,18 @@ try {
   await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
   const STEPS_EXPR = `(window.__aiDecisionTickId || 0) * ${STEPS_PER_AI}`;
   const wkEval = async (expr) => { const r = await wkSend('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); return r?.result?.value ?? r?.exceptionDetails?.exception?.description ?? null; };
-  const ab = { i: -1, next: 0, n0: 0, t0: 0, wins: [] };
-  const abTake = async () => { if (ab.i < 0) return; const r = await wkEval(`(() => { const F = globalThis.__rwFrameTimes; const a = []; for (let j = Math.max(${ab.n0}, F.n - 8192); j < F.n; j++) a.push(F.ms[j & 8191]); return a; })()`);
-    if (Array.isArray(r) && r.length) ab.wins.push({ v: ab.i % WK_AB.length, t: ab.t0, ms: r }); };
+  const ab = { i: -1, next: 0, n0: 0, g0: 0, t0: 0, wins: [] };
+  // okno wariantu: czasy CPU klatek workera i nowe próbki czasu GPU klatki (__rwGpuTimes)
+  const abTake = async () => { if (ab.i < 0) return; const r = await wkEval(`(() => { const F = globalThis.__rwFrameTimes, G = globalThis.__rwGpuTimes; const a = [], g = [];
+      for (let j = Math.max(${ab.n0}, F.n - 8192); j < F.n; j++) a.push(F.ms[j & 8191]);
+      if (G) for (let j = Math.max(${ab.g0}, G.n - 4096); j < G.n; j++) g.push(G.ms[j & 4095]);
+      return { a, g }; })()`);
+    if (r && Array.isArray(r.a) && r.a.length) ab.wins.push({ v: ab.i % WK_AB.length, t: ab.t0, ms: r.a, gpu: r.g || [] }); };
   while (sec() < TRWANIE) {
     if (WK_EVENTS.length && sec() >= WK_EVENTS[0].at) { const e = WK_EVENTS.shift(); report('wk zdarzenie', { at: e.at, expr: e.expr.slice(0, 80), wynik: await wkEval(e.expr) }); continue; }
     if (WK_AB.length && _wk.sid && sec() >= ab.next) {
       await abTake(); ab.i++; const v = ab.i % WK_AB.length; await wkEval(WK_AB[v]);
-      await sleep(500); ab.n0 = await wkEval('globalThis.__rwFrameTimes.n'); ab.t0 = Math.round(sec()); ab.next = sec() + WK_AB_PERIOD - 0.5; continue;
+      await sleep(500); ab.n0 = await wkEval('globalThis.__rwFrameTimes.n'); ab.g0 = await wkEval('globalThis.__rwGpuTimes ? globalThis.__rwGpuTimes.n : 0'); ab.t0 = Math.round(sec()); ab.next = sec() + WK_AB_PERIOD - 0.5; continue;
     }
     if (EVENTS.length && sec() >= EVENTS[0].at) { const e = EVENTS.shift(); report('zdarzenie', { at: e.at, expr: e.expr, wynik: await ev(e.expr) }); continue; }
     if (todo.length && sec() >= todo[0].at) {
@@ -376,7 +382,18 @@ try {
     const q = (a, x) => a.length ? a[Math.min(a.length - 1, Math.floor(x * a.length))] : NaN;
     const stat = (a) => { const s = [...a].sort((x, y) => x - y); return { n: s.length, p50: +q(s, 0.5).toFixed(3), avg: +(s.reduce((x, y) => x + y, 0) / Math.max(1, s.length)).toFixed(3), p95: +q(s, 0.95).toFixed(3) }; };
     console.log('\n== A/B workera (--wkAb, okno ' + WK_AB_PERIOD + ' s)');
-    WK_AB.forEach((e, v) => report(`wariant ${v}`, { expr: e.slice(0, 70), ...stat(ab.wins.filter((w) => w.v === v).flatMap((w) => w.ms)) }));
+    WK_AB.forEach((e, v) => { const ws = ab.wins.filter((w) => w.v === v); const g = stat(ws.flatMap((w) => w.gpu || []));
+      report(`wariant ${v}`, { expr: e.slice(0, 70), ...stat(ws.flatMap((w) => w.ms)), gpuN: g.n, gpuP50: g.p50, gpuAvg: g.avg }); });
+    // kanapki GPU: mediana okna wariantu v minus średnia median sąsiednich okien wariantu 0 (próbki co gpuTimerSampleEvery)
+    // (okno bazowe = wyrażenie jak wariant 0 — lista 'baza|A|baza|B|…' daje kanapkę dla każdego wariantu)
+    const isBase = (v) => WK_AB[v] === WK_AB[0];
+    const medG = ab.wins.map((w) => ({ v: w.v, p50: stat(w.gpu || []).p50, c50: stat(w.ms).p50 }));
+    for (let v = 1; v < WK_AB.length; v++) { if (isBase(v)) continue; const d = [], dc = [];
+      for (let i = 1; i + 1 < medG.length; i++) if (medG[i].v === v && isBase(medG[i - 1].v) && isBase(medG[i + 1].v)) {
+        if (medG[i].p50 === medG[i].p50 && medG[i - 1].p50 === medG[i - 1].p50 && medG[i + 1].p50 === medG[i + 1].p50) d.push(medG[i].p50 - (medG[i - 1].p50 + medG[i + 1].p50) / 2);
+        dc.push(medG[i].c50 - (medG[i - 1].c50 + medG[i + 1].c50) / 2); }
+      d.sort((x, y) => x - y); dc.sort((x, y) => x - y);
+      report(`kanapka ${v}`, { expr: WK_AB[v].slice(0, 60), n: dc.length, gpuRoznica: d.length ? +q(d, 0.5).toFixed(3) : null, cpuRoznica: dc.length ? +q(dc, 0.5).toFixed(3) : null }); }
     // kanapki: mediana okna wariantu v minus średnia median sąsiednich okien wariantu 0
     const med = ab.wins.map((w) => ({ v: w.v, t: w.t, p50: stat(w.ms).p50, n: w.ms.length }));
     const d = []; for (let i = 1; i + 1 < med.length; i++) if (med[i].v !== 0 && med[i - 1].v === 0 && med[i + 1].v === 0) d.push(med[i].p50 - (med[i - 1].p50 + med[i + 1].p50) / 2);

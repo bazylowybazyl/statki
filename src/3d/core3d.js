@@ -21,12 +21,14 @@ import {
 } from 'three/tsl';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import {
-  HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHAFT_CAP, HullShadowSdf, createHullSdfPlaceholderTexture, hullSdfShadow
+  HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHAFT_CAP, HullShadowSdf, createHullSdfPlaceholderTexture, hullSdfShadow,
+  hullShadowAabb
 } from './hullShadowSdf.js';
 import { SUN_SHADOW_MAP_PLACEHOLDER, discSunVisibilityCpu, sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
-import { MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
+import { HEAT_TILE_PX, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, heatHazeTileMask } from './tsl/postGry.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 import { BloomGryCompute } from './tsl/bloomCompute.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
@@ -36,6 +38,7 @@ import { syncSky3D } from './sky3D.js';
 import { setBillboard3DCamera } from './tsl/billboard3D.js';
 import { installRulonGlobal, RULON, rulonActive, rulonInverse } from './warp/rulon.js';
 import { packFogView } from './fog/fogOfWarView.js';
+import { FOG_CACHE_MIN_ZOOM, FogNoiseCache } from './fog/fogOfWarPost.js';
 
 // Rulon warpa zgina CAŁĄ grę (src/3d/warp/rulon.js): hak w każdym materiale węzłowym — zainstalowany
 // przed budową pierwszego materiału. Passy świata włączają go uniformem RULON.pass (_runScenePass).
@@ -100,6 +103,9 @@ function uploadFullUnlessSame(utils, binding, orig, stats) {
   rec.words.set(rec.srcWords);
   data.__core3dShadow = rec;
 }
+
+// pudło cienia kadłuba w masce słońca (hullShadowAabb) — bez alokacji w klatce
+const _hullAabbScratch = new Float64Array(4);
 
 // Czy mapa cienia passa (rzucający z warstw `mask`) wyjdzie niepusta albo czyta ją ktoś poza łapaczem —
 // warunek jak Renderer._projectObject three r183 dla kamery cienia (widoczne gałęzie, warstwy, kadr cienia;
@@ -247,6 +253,7 @@ function shadowShaftsMaskNode(u) {
   const uDiscCount = uniformNode(u.uDiscCount);
   const uDiscs = uniformNode(u.uDiscs);
   const uDiscAxis = uniformNode(u.uDiscAxis);
+  const uDiscB = u.uDiscB ? uniformNode(u.uDiscB) : null;
   const uRingCount = uniformNode(u.uRingCount);
   const uRings = uniformNode(u.uRings);
   const uFieldOcc = uniformNode(u.uFieldOcc);
@@ -254,7 +261,8 @@ function shadowShaftsMaskNode(u) {
   const uFieldOccRect = uniformNode(u.uFieldOccRect);
   const hullUniforms = {
     uHullSdf: uniformNode(u.uHullSdf), uHullCount: uniformNode(u.uHullCount), uHullSteps: uniformNode(u.uHullSteps),
-    uHullLenMul: uniformNode(u.uHullLenMul), uHullA: uniformNode(u.uHullA), uHullM: uniformNode(u.uHullM), uHullC: uniformNode(u.uHullC)
+    uHullLenMul: uniformNode(u.uHullLenMul), uHullA: uniformNode(u.uHullA), uHullM: uniformNode(u.uHullM), uHullC: uniformNode(u.uHullC),
+    uHullB: u.uHullB ? uniformNode(u.uHullB) : null
   };
 
   return Fn(() => {
@@ -289,6 +297,11 @@ function shadowShaftsMaskNode(u) {
         // Środek i promień tarczy = miejsce, gdzie ciało WIDAĆ w płaszczyźnie gry (ciała tła z perspektywy,
         // soczewka warpa), oś smugi z prawdziwego środka ciała — liczone na CPU (_resolveShaftDiscs).
         Loop({ start: int(0), end: uDiscCount, type: 'int', condition: '<', name: 'discIdx' }, ({ discIdx }) => {
+          // Pudło tarczy i jej smugi w świecie (shaftDiscAabb — CPU): piksel poza nim nie leży ani w tarczy, ani w smudze.
+          if (uDiscB) {
+            const dB = uDiscB.element(discIdx);
+            If(worldP.x.lessThan(dB.x).or(worldP.y.lessThan(dB.y)).or(worldP.x.greaterThan(dB.z)).or(worldP.y.greaterThan(dB.w)), () => { Continue(); });
+          }
           const disc = uDiscs.element(discIdx).toVar();
           const discR = disc.z.toVar();
           If(discR.lessThanEqual(0.0), () => { Continue(); });
@@ -388,6 +401,28 @@ function shadowShaftsMaskNode(u) {
   })();
 }
 
+/**
+ * Pudło (świat, osie sceny) tarczy i jej smugi w masce słońca — LUSTRO warunków pętli tarcz (shadowShaftsMaskNode):
+ * piksel wnosi coś tylko w tarczy (|rel| < R — insideDisc) albo w smudze: along = rel · oś ∈ (0, R + max(R · lenMul, 1)),
+ * |perp| < 1,18 R (krawędź R + miękkość ≤ 0,18 R). Oś nie musi być jednostkowa (along, perp skalują się z |oś|). Zapas
+ * 2 j. + 0,1 % zasięgu (float32 świata przy 5–10 mln j.). Tarcza nieaktywna (R ≤ 0, |oś|² < 0,5) — pudło puste.
+ * Bez tego każdy piksel maski przechodził pętlę po wszystkich tarczach (2026-10-17: 20 tarcz w bitwie przy pasie
+ * asteroid — 0,25–0,29 ms GPU maski przy 5120 × 1440).
+ */
+export function shaftDiscAabb(out, o, x, y, R, ax, ay, lenMul) {
+  const a2 = ax * ax + ay * ay;
+  if (!(R > 0) || !(a2 >= 0.5)) { out[o] = 1e30; out[o + 1] = 1e30; out[o + 2] = -1e30; out[o + 3] = -1e30; return out; }
+  const L = Math.sqrt(a2), ux = ax / L, uy = ay / L;
+  const aMax = (R + Math.max(R * Math.max(lenMul, 0), 1)) / L, pMax = 1.18 * R / L;
+  const ex = ux * aMax, ey = uy * aMax, px = Math.abs(-uy * pMax), py = Math.abs(ux * pMax);
+  const pad = 2 + 1e-3 * (aMax + R);
+  out[o] = Math.min(x - R, x + Math.min(0, ex) - px) - pad;
+  out[o + 1] = Math.min(y - R, y + Math.min(0, ey) - py) - pad;
+  out[o + 2] = Math.max(x + R, x + Math.max(0, ex) + px) + pad;
+  out[o + 3] = Math.max(y + R, y + Math.max(0, ey) + py) + pad;
+  return out;
+}
+
 // Pass maski widoczności słońca: QuadMesh + NodeMaterial do sunShadowTarget (RGBA8, bez
 // MSAA i głębi, NoBlending — quad nadpisuje każdy teksel). Uniformy w kształcie
 // `material.uniforms` (adapter uniformy.js) — _renderSunShadowMask ustawia `.value` jak na
@@ -407,6 +442,8 @@ export function createShadowShaftsPass() {
     uDiscs: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
     // uDiscAxis[i].xy: jednostkowa oś smugi tarczy i (od słońca), z prawdziwego środka ciała.
     uDiscAxis: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
+    // pudło tarczy i jej smugi w świecie (minX, minY, maxX, maxY — shaftDiscAabb): szybkie odrzucenie piksela
+    uDiscB: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
     uHullLenMul: uniform(3.0),
     uHullCount: uniform(0, 'int'),
     uHullSteps: uniform(24, 'int'),
@@ -416,6 +453,8 @@ export function createShadowShaftsPass() {
     uHullA: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
     uHullM: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
     uHullC: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
+    // pudło cienia kadłuba w świecie (minX, minY, maxX, maxY — hullShadowAabb): szybkie odrzucenie piksela
+    uHullB: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
     uRingCount: uniform(0, 'int'),
     // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
     uRings: uniformArray(v4(SHAFT_RING_CAP), 'vec4'),
@@ -1120,6 +1159,10 @@ export const Core3D = {
     };
     w.now(postQuad('_post'), { name: 'Core3D: post (uber, bloom)', target: canvas });
     w.now(postQuad('_postBezBloomu'), { name: 'Core3D: post bez bloomu', target: canvas });
+    // Kernel pamięci szumu mgły wojny: pipeline compute powstaje synchronicznie przy pierwszym dispatchu — tu, pod
+    // kurtyną menu (kratka 1 × 1 teksel; rozmiar do bufora przy pierwszym renderze z mgłą).
+    const cache = this._fogCache;
+    if (cache && this.renderer) w.run('Core3D: mgła wojny — pamięć szumu (compute)', () => cache.update(this.renderer, 1, 1));
   },
 
   _failGpu(reason) {
@@ -1288,6 +1331,9 @@ export const Core3D = {
     this.bloomPass = bloom;
     this._postUniforms = uniforms;
     this._postBezBloomu = postBezBloomu;
+    // Pamięć szumu mgły wojny (fogOfWarPost.js — kernel compute co 4 × 4 px, „uber” czyta teksturę): ta sama
+    // tekstura i uniformy co oba pipeline'y postu.
+    this._fogCache = uniforms.uFogCache ? new FogNoiseCache(uniforms) : null;
     return post;
   },
 
@@ -1298,6 +1344,7 @@ export const Core3D = {
       try { this._post?.dispose?.(); } catch { }
       try { this._postBezBloomu?.dispose?.(); } catch { }
       try { this.bloomPass?.dispose?.(); } catch { }
+      try { this._fogCache?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
       try { this.distortionTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
@@ -1308,6 +1355,7 @@ export const Core3D = {
     this._post = null;
     this._postBezBloomu = null;
     this._postUniforms = null;
+    this._fogCache = null;
     this.bloomPass = null;
     this.shadowShaftsPass = null;
     this.sunShadowTarget = null;
@@ -1844,12 +1892,23 @@ export const Core3D = {
     uShafts.uDiscCount.value = discCount;
     const discVals = uShafts.uDiscs.value;
     const axisVals = uShafts.uDiscAxis.value;
+    const discB = uShafts.uDiscB ? uShafts.uDiscB.value : null;
     const view = this.shaftDiscView;
     const viewAxis = this.shaftDiscViewAxis;
+    const discLenMul = uShafts.uDiscLenMul.value;
+    const dbb = _hullAabbScratch;
     for (let i = 0; i < discCount; i++) {
       const base = i * 4;
       discVals[i].set(view[base], view[base + 1], view[base + 2], view[base + 3]);
       axisVals[i].set(viewAxis[i * 2], viewAxis[i * 2 + 1], 0, 0);
+      if (discB) {
+        // A/B: Core3D.shadowDiscAabb = false — pudła „wszędzie” (dawny koszt pętli tarcz)
+        if (this.shadowDiscAabb === false) discB[i].set(-1e30, -1e30, 1e30, 1e30);
+        else {
+          shaftDiscAabb(dbb, 0, view[base], view[base + 1], view[base + 2], viewAxis[i * 2], viewAxis[i * 2 + 1], discLenMul);
+          discB[i].set(dbb[0], dbb[1], dbb[2], dbb[3]);
+        }
+      }
     }
 
     // Kadłuby: hexShips3D zgłasza od największych i sam staje na budżecie
@@ -1865,11 +1924,23 @@ export const Core3D = {
     const hullA = uShafts.uHullA.value;
     const hullM = uShafts.uHullM.value;
     const hullC = uShafts.uHullC.value;
+    const hullB = uShafts.uHullB ? uShafts.uHullB.value : null;
+    const sunW = uShafts.uSunWorld.value;
+    const lenMul = Number(uShafts.uHullLenMul.value) || 1;
+    const bb = _hullAabbScratch;
     for (let i = 0; i < hullCount; i++) {
       const base = i * HULL_SDF_OCCLUDER_FLOATS;
       hullA[i].set(hulls[base], hulls[base + 1], hulls[base + 2], hulls[base + 3]);
       hullM[i].set(hulls[base + 4], hulls[base + 5], hulls[base + 6], hulls[base + 7]);
       hullC[i].set(hulls[base + 8], hulls[base + 9], hulls[base + 10], hulls[base + 11]);
+      if (hullB) {
+        // A/B: Core3D.shadowHullAabb = false — pudła „wszędzie” (dawny koszt pętli)
+        if (this.shadowHullAabb === false) hullB[i].set(-1e30, -1e30, 1e30, 1e30);
+        else {
+          hullShadowAabb(bb, 0, hulls, base, sunW.x, sunW.y, lenMul);
+          hullB[i].set(bb[0], bb[1], bb[2], bb[3]);
+        }
+      }
     }
 
     let ringCount = 0;
@@ -2078,6 +2149,22 @@ export const Core3D = {
         dstDirs[i].set(srcDirs[i * 2], srcDirs[i * 2 + 1]);
       }
     }
+    // Kafle źródeł (postGry.js — heatHazeTileMask): „uber” przegląda źródła tylko w kaflach 32 × 32 px, których źródło
+    // może sięgać (dawniej ≤ 24 źródła dla każdego piksela). Wysyłka: zakres użytych kafli. A/B: Core3D.heatHazeTiles = false.
+    const grid = u.uHeatTileGrid, tiles = u.uHeatTiles;
+    if (grid && tiles) {
+      let n = 0;
+      const target = this.composerTarget;
+      if (heatOn && count > 0 && this.heatHazeTiles !== false && target && this.heatHazeSources && this.heatHazeDirs) {
+        const W = target.width, H = target.height;
+        n = heatHazeTileMask(tiles.value.array, this.heatHazeSources, this.heatHazeDirs, count, u.uAspect.value, W, H);
+        if (n > 0) {
+          grid.value.set(Math.ceil(W / HEAT_TILE_PX), Math.ceil(H / HEAT_TILE_PX), 1, 0);
+          zbierzZakres(tiles.value, 0, n);
+        }
+      }
+      if (!(n > 0)) grid.value.z = 0;
+    }
   },
 
   /** Mgła wojny: świat mgły gry (createFogWorld z src/3d/fog/fogOfWarView.js) albo null — bez mgły. */
@@ -2094,6 +2181,8 @@ export const Core3D = {
     const world = this.fogOfWar;
     if (!world || !world.on || !cam || !this.composerTarget) {
       u.uFogOn.value = 0;
+      if (u.uFogCacheOn) u.uFogCacheOn.value = 0;
+      this._fogKernelDue = null;
       return;
     }
     const v = _fogView;
@@ -2115,13 +2204,26 @@ export const Core3D = {
       v.zoom = this.viewZoom(cam);   // px bufora na j. świata
     }
     packFogView(u, world, v);
+    // Pamięć szumu: kamera z góry bez rulonu (punkt świata piksela = px / zoom w prostym kadrze) i zoom, przy którym
+    // oczko szumu ma dość tekseli; kamery 3D, rulon i bardzo daleki zoom — szum na piksel w „uber”. A/B:
+    // Core3D.fogNoiseCache = false.
+    const cache = this._fogCache;
+    const useCache = !!cache && u.uFogOn.value === 1 && !v.persp && !rulonActive() && this.fogNoiseCache !== false &&
+      v.zoom >= FOG_CACHE_MIN_ZOOM;
+    if (u.uFogCacheOn) u.uFogCacheOn.value = useCache ? 1 : 0;
+    // kernel idzie w passie compute bloomu tuż przed „uber” (_renderPost) — jedno zgłoszenie do kolejki mniej
+    this._fogKernelDue = useCache ? cache.prepare(this.renderer, v.bufW, v.bufH) : null;
   },
 
   // Post na kanwę (bieżący cel = null): bloom (gdy włączony — jeden pass compute, bloomCompute.js,
   // kubełek 'bloom' przez haki) i „uber” (kubełek 'post').
   _renderPost() {
     const bezBloomu = this.perfToggles?.bloom === false && !!this._postBezBloomu;
-    if (!bezBloomu && this.bloomPass) this.bloomPass.render(this.renderer);
+    // Pamięć szumu mgły wojny tego renderu (_updateFogUniforms): w passie compute bloomu, bez bloomu — sama.
+    const fogKernel = this._fogKernelDue || null;
+    this._fogKernelDue = null;
+    if (!bezBloomu && this.bloomPass) this.bloomPass.render(this.renderer, fogKernel);
+    else if (fogKernel) this.renderer.compute(fogKernel);
     const before = this._renderInfoBefore;
     this._readRenderInfoInto(before);
     const post = bezBloomu ? this._postBezBloomu : this._post;
