@@ -189,7 +189,7 @@ jedna klatka powtórzona albo przeskoczona).
 | 7 | Interpolacja w trybie `off` (hexShips3D, mostki, modele — `poseOf` z `renderPoses`) | `off` / zapas bez drgań NPC | mały, `off` to dziś tryb zapasowy |
 | 8 | PerfHUD: draw calle, GPU, obiekty sceny workera z RET (dziś strona bez urządzenia → „--” / dane strony) | widoczność kosztów workera dla gracza | mały |
 | 9 | ~~**GPU przy 5120 × 1440 (Ultra)**~~ — ZROBIONE 2026-10-17 (§ 7.2): passy pełnoekranowe z pętlami po listach | bitwa 192,7 → 216,4 kl/s, wiek 6,43 → 4,51 | — |
-| 10 | **Proces GPU** (`CrGpuMain` 96% przy 5120 × 1440): mniej zgłoszeń `Queue::Submit` na klatkę (~22: każdy `renderer.render` / `compute`), mniej pracy rastra kanwy 2D (nakładki, pierścień kanw B2cr w pełnej rozdzielczości) | dziś trzyma rytm w bitwie przy 5120 × 1440 | średni–duży: łączenie zgłoszeń zmienia kolejność `writeBuffer` ↔ passy (three r183) |
+| 10 | ~~**Proces GPU** (`CrGpuMain` 96% przy 5120 × 1440)~~ — ZROBIONE 2026-10-17 (§ 7.3): zgłoszenia kolejki ~20 → 2,2 na klatkę, raster nakładek — atlas stempli napisów | bitwa: 182,7–183,3 → 195,2–198,5 kl/s, w pierwszych 30 s 199–201 → 226–235; `CrGpuMain` 98–99 → 85–89% | zostaje: dekodowanie poleceń WebGPU workera (~2 ms na klatkę — liczba rysunków i grup wiązań), w rzezi rytm trzyma wątek gry i GPU workera (§ 7.3) |
 
 ### 7.1 Stan pkt 3 — klatka workera (2026-10-17, sesja „Klatka workera renderu pod 240 Hz”)
 
@@ -307,6 +307,95 @@ półcienia). Narzędzia: `rytm-bitwy --wkStart 'plik:…'` (A/B przełącznikó
 i `--watkiKat 'gpu,gpu.dawn,…'` (zajętość wątków, surowy ślad), `profil-bitwy-flot --szer / --wys` i czasy GPU
 w oknach A/B (`globalThis.__rwGpuTimes`).
 
+### 7.3 Proces GPU przy 5120 × 1440 (2026-10-17, sesja „Proces GPU: zgłoszenia i raster”)
+
+Cel (ranking pkt 10): zdjąć pracę z wątku procesu GPU Chrome (`CrGpuMain` 96%: `Queue::Submit` 30%, dekodowanie
+poleceń WebGPU workera 23%, raster kanwy 2D strony 25%). Metoda — trzy narzędzia w `rytm-bitwy.mjs`, bo osobne
+przebiegi tej samej bitwy różnią się intensywnością (po 80 s raz 10, raz 90 wraków) i myliły wariant z przebiegiem:
+`--wkAb` / `--pgAb` (wariant w workerze / stronie co 3–4 s w TEJ SAMEJ bitwie, rytm bez śladu), `--watkiAb` (krótkie
+ślady wątków na wariant: zajętość, `Queue::Submit`, dekodowanie i raster na obraz) i `--okna N` (bitwa w oknach).
+Bitwa 80 s zamiast 40 (zgłoszenie użytkownika: krótszy test kończył się, zanim statki zaczęły się naprawdę nawalać —
+przy 40 s zostawało ~150 z 166 okrętów). Raster mierzony w ZATRZYMANEJ bitwie (`__setGamePaused` — ta sama treść
+nakładek w każdym oknie; ślad przy ruchu waha się o ±50% z oknem). Okna ze śladem obniżają kl/s — liczby rytmu
+tylko z przebiegów bez śladu.
+
+1. **Zgłoszenia kolejki zebrane w jedno na klatkę** (`src/3d/zbieraczZgloszen.js`, Core3D): three r183 robi
+   `queue.submit` przy każdym `render`, `compute` i `clear` (passy sceny i czyszczenie głębi między nimi, kroki
+   efektów, maska słońca, bloom, post — 13–20 w bitwie), a w Chrome każde zgłoszenie to też natychmiastowe opróżnienie
+   strumienia poleceń: osobne zadanie `CrGpuMain` (`PutChanged` + `Queue::Submit` z `ExecuteCommandLists`, płotem
+   i rezydencją) — w śladzie najmniejsze zgłoszenie 40–60 µs + 20–60 µs zadania, niezależnie od treści. Zbieracz
+   odkłada bufory poleceń i wysyła je razem na końcu klatki Core3D (`render` / `renderBackdrop`), a wcześniej tylko
+   wtedy, gdy różnicę dałoby się zobaczyć: zapis kolejki (`writeBuffer`, `writeTexture`) albo zniszczenie zasobu,
+   którego UŻYWA odłożony bufor poleceń (śledzenie: numer enkodera na zasobach z grup wiązań — zbiór buforów
+   i tekstur z `createBindGroup`, bufory wierzchołków / indeksów / pośrednie, załączniki passów, kopie, rozwiązania
+   zapytań, paczki rysunków; zasób pamięta najwyższy numer — enkodery bywają nagrywane naprzemiennie, np. mapa cienia
+   z `updateBefore` w środku passu sceny), `mapAsync`, `onSubmittedWorkDone`, zakresy błędów, konfiguracja kanwy,
+   odczyt kanwy (`transferToImageBitmap`, `drawImage`, `convertToBlob`) i — siatka bezpieczeństwa — mikrozadanie na
+   końcu zadania. Kolejność na osi kolejki: zapis dzieje się w chwili wywołania, odłożone polecenia wykonują się po
+   nim, więc zapis zasobu, którego nie używają, jest dla nich niewidoczny — wynik ten sam co przy zgłoszeniach od
+   razu. To odpowiada na zastrzeżenie z pkt 10 (kolejność `writeBuffer` ↔ passy, podzielony ekran rysuje te same
+   obiekty dwa razy): konflikt wysyła wcześniej, nie zmienia kolejności. Dowód: `tests/zbieraczZgloszen.test.mjs`
+   (atrapa kolejki z „GPU” wykonującym polecenia przy prawdziwym zgłoszeniu; 520 losowych ciągów zapisów, passów —
+   także otwartych przez wiele kroków i przeplatanych z innymi zgłoszeniami — obliczeń, kopii, paczek, zniszczeń,
+   map, zakresów błędów: dzienniki odczytów identyczne z trybem natychmiastowym; test wykrywa celowo zepsute warianty
+   — bez sprawdzenia zapisu, bez śledzenia buforów wierzchołków, kopii, niszczeń, z numerem „ostatni” zamiast
+   „najwyższy”). W bitwie konflikt wysyła ~1,2 razy na klatkę (zapis bufora), `mapAsync` (znaczniki czasu) ~0,4.
+   Obraz: `zrzuty.mjs` 18 scen z warstwami (menu, HUD, ring, K-7, planety, bitwa, wybuch, wraki, warp, rakiety,
+   podzielony ekran, rozpad stacji, pas, reaktor, słońce) z `?gpuSubmit=0` i bez — 0% pikseli > 2/255 poza
+   `planeta-cien` (stacja w passie FG; ta sama scena bez zbieracza różni się między przebiegami tyle samo:
+   0,026% ↔ 0,020%). A/B: `Core3D.submitBatching = false` (w biegu), `?gpuSubmit=0` (bez instalacji).
+
+   | 5120 × 1440, Ultra, skala 1, okno 240 Hz, bitwa 166 okrętów 80 s, A/B co 4 s w tej samej bitwie | od razu | zbieracz |
+   |---|---|---|
+   | zgłoszenia na klatkę (ślad) | 19,4–21,3 | **2,2** |
+   | `Queue::Submit` na klatkę | 1,93–2,30 ms | **0,73–0,84 ms** |
+   | `CrGpuMain` zajęty (ślad, koniec bitwy) | 94–99% | **73–89%** |
+   | bitwa po 30 s — ciężka (88 wraków): kl/s, wiek, skoki | 155,4, 6,45, 49% | **170,5**, 5,88, 37% |
+   | bitwa po 30 s — lżejsza (16 wraków): kl/s, wiek, skoki | 181,6, 5,33, 43% | **220,2**, 4,39, 16% |
+
+2. **Raster nakładek: atlas stempli napisów** (`src/ui/radar/stampAtlas.js`, `radarSymbols.stampRadarText`,
+   `contactMarkers.js`). A/B w zatrzymanej bitwie: treść nakładek kanwy gry ~1,0 ms `CrGpuMain` na klatkę (pierścień
+   kanw B2cr — czyszczenie i kopia całej kanwy w pierścień — prawie nic: 0,66 ↔ 0,68 ms), z tego `drawImage` ~0,6 ms,
+   ścieżki ~0,37, prostokąty i napisy ~0,12. `drawImage` to stemple znaczników krawędzi: ~47 napisów na klatkę,
+   KAŻDY na własnym małym płótnie (osobny obraz w rastrze: ~8 µs na rysunek), a w biegu jeszcze ~3,7 zadania rastra
+   na klatkę z przepieczeń tych płócien. Ten sam napis z jednego płótna: raster −0,27 ms, `CrGpuMain` 80 → 71%.
+   Atlas: napis pieczony w miejscu strony atlasu (klasy rozmiaru, wolne miejsca klasy, wyparcie najdawniej użytego —
+   właściciel piecze się od nowa), w tym samym położeniu względem prostokąta stempla, przycięty do niego — piksele
+   jak z osobnego płótna (`scripts/webgpu/stemple-atlas.mjs`: 48 napisów, czcionki, barwy, alfa, wyrównania,
+   przepieczenie — 0 różnych pikseli; pod obrotem kanwy docelowej filtr próbkuje inaczej — do 10/255 na brzegach,
+   dlatego stemple stawiane są w całych pikselach bez obrotu, jak dziś oba miejsca użycia). Znaczniki krawędzi
+   rysowane w DWÓCH przebiegach (najpierw przepieczenia — `prepareRadarText`, potem rysunek w tej samej kolejności):
+   strona atlasu zmieniona po rysunku w tej samej klatce to kopia całej strony w rastrze (bez tego zadania rastra
+   6,7 → 10,8 na klatkę). A/B: `window.RadarTextAtlas.enabled = false`.
+
+   | | osobne płótna | atlas |
+   |---|---|---|
+   | zatrzymana bitwa, ~45 stempli: raster na klatkę, `CrGpuMain` | 1,28–1,34 ms, 81–83% | **1,02–1,09 ms**, 76–79% |
+   | w biegu (ślad): raster, zadania rastra na klatkę | 1,42 ms, 5,3 | **1,19 ms**, 4,0 |
+   | rytm bez śladu (A/B co 3 s, dwie bitwy 60 s): kl/s | 215,1 / 190,8 | **217,4 / 195,5** |
+   | — bitwa po 30 s | 193,0 / 153,6 | **199,9 / 156,8** |
+
+Razem (nowe ↔ stare ścieżki przełączane co 4 s w tych samych bitwach, 2 × 80 s, obie z rzezią ~90 wraków):
+
+| | stare | nowe |
+|---|---|---|
+| cała bitwa: kl/s | 183,3 / 182,7 | **195,2 / 198,5** |
+| — złożeń / s, wiek, skoki | 170–174, 5,8–6,1, 42% | **185–192**, 5,4–5,7, 30% |
+| bitwa < 30 s: kl/s, skoki | 201,0 / 198,8, 31–33% | **235,3 / 225,8**, 8–15% |
+| bitwa ≥ 30 s (rzeź): kl/s | 171,6 / 172,0 | 168,4 / **180,3** |
+| `CrGpuMain` (ślad, koniec bitwy) | 98–99% | **85–89%** |
+
+**W rzezi rytmu nie trzyma już proces GPU**: wątek gry ma wywołanie p50 4,5 ms (p95 7–8 ms — fizyka i AI przy
+~100 okrętach i wrakach, audyt fizyki), worker CPU 3–6 ms z pikami do 9,5, GPU workera 2,5–6,3 ms (domeny gazu
+wybuchów w pełnej rozdzielczości). Z `CrGpuMain` zostaje dekodowanie poleceń WebGPU workera (`PutChanged` ~2 ms
+na klatkę — liczba rysunków, grup wiązań i zapisów, nie zgłoszeń) i raster pozostałych nakładek (~0,8 ms).
+
+Sprawdzone i odrzucone: płótno programowe dla atlasu (`willReadFrequently` — inny raster napisów, do 15/255 na 35 tys.
+pikseli), atlas bez dwóch przebiegów (zadania rastra 6,7 → 10,8 — kopia strony po rysunku), przycinanie kresek bram
+warpa poza kadrem (~180 kresek na klatkę — bez mierzalnej różnicy w procesie GPU, Skia odrzuca je w rastrze; zmiana
+nie weszła — index.html ma w main niezatwierdzone zmiany innej sesji), pośrednie zgłoszenia co 6 buforów
+(`ZBIERACZ.maxPending`) — w oknach ze śladem bez rozstrzygnięcia, zostaje 0 (jedno zgłoszenie na klatkę).
+
 ## 8. Decyzje i to, czego nie zrobiono
 
 - **Opóźnienie za płynność:** pacer trzyma wiek obrazu ~4 klatek przy 240 Hz w bitwie (~17 ms od treści do ekranu,
@@ -328,6 +417,9 @@ w oknach A/B (`globalThis.__rwGpuTimes`).
   `src/game/hullMounts.js` (ciało bez magazynu), `src/ui/perfHud.js` (prawdziwe kl/s, wiersz workera),
   `scripts/webgpu/fabula-gra.mjs` (bariera z `pacer.age`); strażniki `coldWreckView`, `pirateBaseWorld`,
   `webgpuFundament`, `shaderPrewarm`.
+- § 7.3: `src/3d/zbieraczZgloszen.js` (+ `tests/zbieraczZgloszen.test.mjs`), `src/ui/radar/stampAtlas.js`
+  (+ `tests/stampAtlas.test.mjs`, `scripts/webgpu/stemple-atlas.mjs`), `radarSymbols.js` (`prepareRadarText`),
+  `contactMarkers.js` (dwa przebiegi); `rytm-bitwy.mjs --wkAb / --pgAb / --watkiAb / --okna`.
 - Pomiar: `node scripts/webgpu/rytm-bitwy.mjs [--sklad 50,20,10,3] [--zoom 0.45] [--czas 40] [--query renderWorker=1]
   [--slad 0] [--out katalog]`; A/B: `--query "renderWorker=1&rwPacing=0&npcLerp=0"`; analiza zapisu: `--analiza katalog`.
   Okno wychodzi na ekran (vsync wymaga widocznego okna). Wyniki tego audytu: `.tmp/rytm/` (poza gitem).
