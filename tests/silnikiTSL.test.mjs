@@ -37,16 +37,9 @@ const count = (s, re) => (s.match(re) || []).length;
 const vertexBuffers = (geo) => new Set(Object.values(geo.attributes).map((a) => (a.isInterleavedBufferAttribute ? a.data : a))).size;
 
 function jetMesh() {
-  const { makeJetMaterial, buildAtlas } = MainExhaustInternals;
-  const geo = new THREE.InstancedBufferGeometry();
-  const base = new THREE.PlaneGeometry(1, 1);
-  geo.index = base.index;
-  geo.setAttribute('position', base.attributes.position);
-  geo.setAttribute('uv', base.attributes.uv);
-  for (const [name, size] of [['iPos', 2], ['iDir', 2], ['iPalG', 2], ['iData', 4], ['iSeed', 1]]) {
-    geo.setAttribute(name, new THREE.InstancedBufferAttribute(new Float32Array(4 * size), size));
-  }
-  return new THREE.Mesh(geo, makeJetMaterial(buildAtlas()));
+  const { makeJetMaterial, makeJetGeometry, buildAtlas, MAX_OWNERS } = MainExhaustInternals;
+  const { geo, ownerNode } = makeJetGeometry([0, 1, 2].map(() => new Float32Array(4 * 4)), new Float32Array(MAX_OWNERS * 4));
+  return new THREE.Mesh(geo, makeJetMaterial(buildAtlas(), ownerNode));
 }
 
 function sideLayers() {
