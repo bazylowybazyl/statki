@@ -214,11 +214,23 @@ test('Core3D: mapa cienia i łapacz pomijane bez rzucających (obraz bez zmian: 
   core.scene.add(group);
   run(4, true);
   assert.deepEqual(run(4, true), [false, false], 'niewidoczna gałąź — bez rzucających');
-  // inny odbiorca cienia na warstwach passa czyta mapę — zawsze odświeżana
+  // inny odbiorca cienia na warstwach passa czyta mapę (2026-10-17): bez rzucających wystarczy PUSTA mapa —
+  // mapa już pusta: bez odświeżenia; mapa z rzucającym (poprzedni pass): jedno odświeżenie do pustej, potem nic
   const recv = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
   recv.receiveShadow = true;
   core.scene.add(recv);
-  assert.deepEqual(run(1, false), [true, true], 'odbiorca na warstwie 0 — mapa ortho odświeżana');
+  assert.deepEqual(run(1, false), [false, false], 'odbiorca na warstwie 0, mapa pusta — bez odświeżenia');
+  group.visible = true;
+  assert.deepEqual(run(4, true), [true, true], 'FG: rzucający — mapa niepusta');
+  assert.deepEqual(run(1, false), [true, true], 'odbiorca na warstwie 0 po mapie z rzucającym — odświeżenie do pustej');
+  assert.deepEqual(run(1, false), [false, false], 'odbiorca, mapa pusta — bez odświeżenia');
+  box.layers.set(0);
+  assert.deepEqual(run(1, false), [true, true], 'rzucający na warstwie 0 przy odbiorcy — mapa odświeżana');
+  box.layers.set(2);
+  group.visible = false;
+  core.shadowReceiverSkip = false;
+  assert.deepEqual(run(1, false), [true, true], 'A/B: shadowReceiverSkip = false — odbiorca = mapa potrzebna (dawniej)');
+  delete core.shadowReceiverSkip;
   core.scene.remove(recv);
   // przełączniki wydajności cienia — dawny przepływ (bez sprawdzania)
   const t2 = { threeShadows: true, fgShadows: false };
@@ -227,7 +239,7 @@ test('Core3D: mapa cienia i łapacz pomijane bez rzucających (obraz bez zmian: 
   assert.equal(light.shadow.needsUpdate, true);
   assert.ok(core.shadowPassStats.skipped >= 4 && core.shadowPassStats.updated >= 5);
   // źródło: wywołania w pętli passów i dawny przepływ żądania mapy w środku
-  assert.match(core3d, /if \(need \|\| \(last && this\._shadowMapEmpty !== true\)\) \{/);
+  assert.match(core3d, /if \(need \|\| \(\(last \|\| scan === SHADOW_SCAN_RECEIVERS\) && this\._shadowMapEmpty !== true\)\) \{/);
   assert.match(core3d, /shadow\.updateMatrices\(light\);/);
 });
 
