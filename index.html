@@ -1126,6 +1126,15 @@
     const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
     window.GameBlasts = GameBlasts;
     installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
+    // Uderzenia w planetoidę pod bazą piratów (upadek bazy, 2026-10-19): kontrakt fizyki src/game/story/pirateRockImpacts.js
+    // (rockImpact / rockScrape / rockSettle → rekord ROCK_IMPACT), obraz z dekodera src/3d/pirateRockImpactFx.js — cząstki
+    // w passie tła i głębokie domeny gazu wybuchów (ExplosionFx.deepDomain). Dev: window.PirateRockImpacts (test, demo).
+    import { installPirateRockImpacts, stepPirateRockImpacts, PirateRockImpacts } from "./src/game/story/pirateRockImpacts.js";
+    import { pirateBasePlace } from "./src/game/story/pirateBaseWorld.js";
+    import { installRockImpactCommands } from "./src/3d/pirateRockImpactFx.js";
+    installPirateRockImpacts(RenderCommands.writer, { clock: () => SimClock.sim, place: () => pirateBasePlace() });
+    window.PirateRockImpacts = PirateRockImpacts;
+    installRockImpactCommands(RenderCommands.reader, () => shipBlastFactory?.system || null);
     // RW-22: obraz rdzenia reaktora — fasada env.fx ReactorGame pisze rekordy RX_* (src/game/reactorFxEvents.js: pęknięcia
     // i rzazy liczy gra, strumienie i kule przez id), dekoder renderu woła reżysera (src/3d/reactorBlast/reactorCommands.js).
     import { createReactorFxEvents } from "./src/game/reactorFxEvents.js";
@@ -27044,6 +27053,8 @@
         else runIntegrityPass(dynamicDestructibles);
       }
       PerfHUD.addTiming('hardpointTime', performance.now() - tPhysSection0);
+      // Uderzenia w planetoidę: zaplanowane zdarzenia testów / demo (PirateRockImpacts.demo) — bez nich nic.
+      stepPirateRockImpacts();
 
       tPhysSection0 = performance.now();
       hudUpdateNav(dt);

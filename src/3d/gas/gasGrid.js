@@ -240,13 +240,14 @@ export function gasProjectCpu(vel, solid, target, nx, ny, nz, iters, q0 = null, 
     const t = qa; qa = qb; qb = t;
   }
   const out = new Float64Array(n * 3);
-  const vb = [0, 0, 0], wallV = [0, 0, 0, 0], res = [0, 0, 0];
+  const vb = [0, 0, 0], wallV = [0, 0, 0, 0, 0, 0], res = [0, 0, 0];
   for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
     const i = id(x, y, z);
     around(x, y, z);
     for (let k = 0; k < 6; k++) nbQ[k] = qa[nbI[k]];
     vb[0] = vel[i * 3]; vb[1] = vel[i * 3 + 1]; vb[2] = vel[i * 3 + 2];
     wallV[0] = vel[nbI[0] * 3]; wallV[1] = vel[nbI[1] * 3]; wallV[2] = vel[nbI[2] * 3 + 1]; wallV[3] = vel[nbI[3] * 3 + 1];
+    wallV[4] = vel[nbI[4] * 3 + 2]; wallV[5] = vel[nbI[5] * 3 + 2];
     gasProjectCellCpu(vb, solid[i], qa[i], nbQ, nbS, nbIn, wallV, maxSpeed, res, wallBlock);
     out[i * 3] = res[0]; out[i * 3 + 1] = res[1]; out[i * 3 + 2] = res[2];
   }
@@ -267,10 +268,10 @@ export function gasJacobiCellCpu(q, nb, nbSolid, nbIn, rhs, solid) {
 
 /**
  * LUSTRO CPU rzutu jednej komórki (gasProject): vb [3] — prędkość po reakcji, solid — komórka stała, q — p komórki, nb / nbSolid
- * / nbIn — jak gasJacobiCellCpu (p po Jacobim), wallV [4] — prędkość sąsiadów x+, x−, y+, y− w ich osi (velB: vx dla x±, vy
- * dla y±), maxSpeed. v = vb − ∇p (różnica centralna / 2, Neumann), sufit |v| ≤ maxSpeed, potem bez wnikania: ku sąsiadowi
- * stałemu składowa ≤ prędkość ściany (x+ / y+ — min, x− / y− — max); komórka stała — vb. Wynik w out [3]. Zmiana w kernelu =
- * zmiana tutaj.
+ * / nbIn — jak gasJacobiCellCpu (p po Jacobim), wallV [4 albo 6] — prędkość sąsiadów x+, x−, y+, y− (i z+, z−) w ich osi (velB:
+ * vx dla x±, vy dla y±, vz dla z±), maxSpeed. v = vb − ∇p (różnica centralna / 2, Neumann), sufit |v| ≤ maxSpeed, potem bez
+ * wnikania: ku sąsiadowi stałemu składowa ≤ prędkość ściany (x+ / y+ / z+ — min, x− / y− / z− — max; z± — kula-przeszkoda domeny
+ * głębokiej, przy pryzmatach nigdy); komórka stała — vb. Wynik w out [3]. Zmiana w kernelu = zmiana tutaj.
  */
 /**
  * LUSTRO CPU dopływu skalarów 1. rzędu przy ścianie (gasProject, strojenie wallFill): den [4] komórki, up [4] — sąsiad od
@@ -295,6 +296,8 @@ export function gasProjectCellCpu(vb, solid, q, nb, nbSolid, nbIn, wallV, maxSpe
   if (nbIn[1] && nbSolid[1]) vx = Math.max(vx, vx + k * (wallV[1] - vx));
   if (nbIn[2] && nbSolid[2]) vy = Math.min(vy, vy + k * (wallV[2] - vy));
   if (nbIn[3] && nbSolid[3]) vy = Math.max(vy, vy + k * (wallV[3] - vy));
+  if (nbIn[4] && nbSolid[4]) vz = Math.min(vz, vz + k * ((wallV.length > 4 ? wallV[4] : vz) - vz));
+  if (nbIn[5] && nbSolid[5]) vz = Math.max(vz, vz + k * ((wallV.length > 5 ? wallV[5] : vz) - vz));
   out[0] = vx; out[1] = vy; out[2] = vz;
   return out;
 }
@@ -410,6 +413,16 @@ class GasSlot {
     // promienie blasku, gęstość optyczna obrazu) skalowane k — drobniejsza siatka (F5a, atlas „fine”) zmienia
     // ROZDZIELCZOŚĆ, nie strojenie (k = 1 — bit w bit jak dawniej). Wylot i zapłon: 1 (strojone na swojej komórce).
     this.k = 1;
+    // DOMENA GŁĘBOKA (2026-10-19, uderzenia w planetoidę pod bazą piratów): obraz w passie TŁA (warstwa 1, kamera
+    // perspektywy — GasVolume.createDeepMeshes) zamiast ortho / FG, bez rastra statyki i bez kadłubów-przeszkód (statyka
+    // gry to pryzmaty przez całą wysokość — pod budowlami zrobiłyby słupy); opcjonalna KULA-przeszkoda (gx, gy, gz, gr —
+    // scena; gr ≤ 0 = brak): komórki w kuli są stałe (gaz rozlewa się po powierzchni skały), marsz obrazu kończy się na niej.
+    this.deep = false;
+    this.gx = 0; this.gy = 0; this.gz = 0; this.gr = 0;
+    // Bez przeszkód gry (ogólne — domena głęboka ustawia oba; też domeny NAD płaszczyzną gry, np. głowa wieży habitatu):
+    // noStatics — bez rastra statyki (pryzmaty budowli przez całą wysokość domeny), noHulls — bez kadłubów-przeszkód.
+    this.noStatics = false;
+    this.noHulls = false;
     this.n = 0; this.nz = 0;                 // komórki domeny na bok / w pionie (siatka właściciela)
     this.gid = index;                        // indeks globalny (GasGridSet — kilka siatek; sama siatka: = index)
     this.tag = 0;                            // znacznik właściciela (np. id wybuchu)
@@ -581,6 +594,7 @@ export class GasGrid {
       hullB: v4Array(this._hullCap, 'gasHullB'),
       hullC: v4Array(this._hullCap, 'gasHullC'),
       slotK: v4Array(S, 'gasSlotK'),                // skala komórki domeny k (GasSlot.k) — x; reszta wolna
+      ground: v4Array(S, 'gasGround'),              // kula-przeszkoda domeny głębokiej: środek (komórki), promień (komórki; ≤ 0 — brak)
       ignition: uniform(0), burnRate: uniform(0), heat: uniform(0), soot: uniform(0),
       expansion: uniform(0), cooling: uniform(0), radiative: uniform(0), smokeDecay: uniform(0),
       fuelDecay: uniform(0), edgeCooling: uniform(0), restRelax: uniform(0.05), disperse: uniform(0), drag: uniform(0), dragQuad: uniform(0), vorticity: uniform(0), turbulence: uniform(0),
@@ -681,6 +695,15 @@ export class GasGrid {
     const bands = this.hullBands;
     const solid = float(0.0).toVar();
     const sv = vec3(0.0).toVar();
+    // Kula-przeszkoda domeny głębokiej (skała pod bazą — GasSlot.gr): komórka w kuli stała, prędkość ściany = −nośnik
+    // (skała stoi w świecie). Domeny bez kuli (w ≤ 0) — gałąź pominięta, wynik bit w bit jak dawniej.
+    const G = U.ground.element(c.slotI).toVar();
+    If(G.w.greaterThan(0.0), () => {
+      If(length(p.sub(G.xyz)).lessThan(G.w), () => {
+        solid.assign(1.0);
+        sv.assign(vec3(a3.z, a3.w, 0.0));
+      });
+    });
     If(a2.w.greaterThan(0.5), () => {
       If(this._maskAt(p.xy, c.sF, a3).greaterThan(0.5), () => {
         solid.assign(1.0);
@@ -1033,27 +1056,32 @@ export class GasGrid {
       // BEZ WNIKANIA (free-slip): rzut na siatce kolokowanej zostawia przy ścianie składową normalną w ścianę — gaz
       // płynąłby w komórkę stałą i tam znikał (zerowanie skalarów w bryle). Składowa ku sąsiadowi stałemu nie większa niż
       // prędkość przeszkody w tej osi (ściana nadjeżdżająca pcha gaz, odjeżdżająca go nie ciągnie); styczna wolna. Bryły
-      // to pryzmaty przez całą wysokość domeny — sąsiedzi stali tylko w x i y. Flagi z tych samych odczytów prs (z).
+      // statyki i kadłuby to pryzmaty przez całą wysokość domeny — przy nich sąsiedzi stali tylko w x i y; kula-przeszkoda
+      // domeny głębokiej (skała) ma sąsiadów stałych także w z (wZp / wZm — przy pryzmatach zawsze fałsz: komórka gazu nie
+      // ma stałego sąsiada w z, więc wynik bit w bit jak dawniej). Flagi z tych samych odczytów prs (z).
       const wXp = Sxp.z.greaterThan(0.5).and(inXp), wXm = Sxm.z.greaterThan(0.5).and(inXm);
       const wYp = Syp.z.greaterThan(0.5).and(inYp), wYm = Sym.z.greaterThan(0.5).and(inYm);
+      const wZp = Szp.z.greaterThan(0.5).and(c.zi.lessThan(int(NZ - 1))), wZm = Szm.z.greaterThan(0.5).and(c.zi.greaterThan(int(0)));
       const den = at(this.denC, c.p, c.sF).toVar();
-      If(vb.w.lessThan(0.5).and(wXp.or(wXm).or(wYp).or(wYm)), () => {
+      If(vb.w.lessThan(0.5).and(wXp.or(wXm).or(wYp).or(wYm).or(wZp).or(wZm)), () => {
         const kb = U.wallBlock;
         const fillK = U.wallFill.mul(U.dt).div(kS);
         // Ściana w osi: obcięcie składowej, potem dopływ skalarów z sąsiada od wnętrza w tempie zabranej prędkości (wallFill).
         const wall = (cond, comp, d, isMin) => If(cond, () => {
           const v0 = v[comp].toVar();
-          const w = at(this.velB, c.p.add(vec3(d[0], d[1], 0)), c.sF)[comp];
+          const w = at(this.velB, c.p.add(vec3(d[0], d[1], d[2])), c.sF)[comp];
           v[comp].assign(isMin ? min(v[comp], mix(v[comp], w, kb)) : max(v[comp], mix(v[comp], w, kb)));
           If(U.wallFill.greaterThan(0.0), () => {
             const removed = abs(v0.sub(v[comp]));
-            den.assign(mix(den, at(this.denC, c.p.sub(vec3(d[0], d[1], 0)), c.sF), min(float(1.0), fillK.mul(removed))));
+            den.assign(mix(den, at(this.denC, c.p.sub(vec3(d[0], d[1], d[2])), c.sF), min(float(1.0), fillK.mul(removed))));
           });
         });
-        wall(wXp, 'x', [1, 0], true);
-        wall(wXm, 'x', [-1, 0], false);
-        wall(wYp, 'y', [0, 1], true);
-        wall(wYm, 'y', [0, -1], false);
+        wall(wXp, 'x', [1, 0, 0], true);
+        wall(wXm, 'x', [-1, 0, 0], false);
+        wall(wYp, 'y', [0, 1, 0], true);
+        wall(wYm, 'y', [0, -1, 0], false);
+        wall(wZp, 'z', [0, 0, 1], true);
+        wall(wZm, 'z', [0, 0, -1], false);
       });
       v.assign(select(vb.w.greaterThan(0.5), vb.xyz, v));
       textureStore(this.velA, c.store, vec4(select(vb.w.greaterThan(0.5), v, this._w16(v, 5, 3)), vb.w));
@@ -1221,7 +1249,18 @@ export class GasGrid {
     // Paleta ognia, stały zanik dymu i czas wygaszania domeny (wylot działa: krótki, ostry dym — etap E1; wybuchy: dawne).
     s.fire = Math.max(0, Math.min(GAS_FIRE_MAX, Number(opts.fire) || 0));
     s.ambient = Math.max(0, Number(opts.ambient) || 0);
-    s.baseDecay = Math.max(0, Number(opts.baseDecay) || 0);
+    // Stały zanik dodatkowy może być UJEMNY (do −0,4/s: pył uderzeń w skałę trzyma się dłużej niż dym wybuchów — suma z
+    // zanikiem globalnym tune.smokeDecay 0,545/s zostaje dodatnia).
+    s.baseDecay = Math.max(-0.4, Number(opts.baseDecay) || 0);
+    // Domena głęboka (pass tła) i kula-przeszkoda (scena: środek, promień; brak — gr = 0); bez przeszkód gry (statyka,
+    // kadłuby) — opcje ogólne, domena głęboka zawsze bez nich.
+    s.deep = !!opts.deep;
+    s.noStatics = s.deep || !!opts.noStatics;
+    s.noHulls = s.deep || !!opts.noHulls;
+    const gnd = opts.ground;
+    if (gnd && Number(gnd.r) > 0 && Number.isFinite(gnd.x) && Number.isFinite(gnd.y) && Number.isFinite(gnd.z)) {
+      s.gx = gnd.x; s.gy = gnd.y; s.gz = gnd.z; s.gr = Number(gnd.r);
+    } else { s.gx = 0; s.gy = 0; s.gz = 0; s.gr = 0; }
     s.fadeTime = Number(opts.fadeTime) > 0 ? Number(opts.fadeTime) : 1.6;
     s.extraDecay = s.baseDecay;
     s.tag = opts.tag ?? 0;
@@ -1333,7 +1372,7 @@ export class GasGrid {
   /** Czy punkt sceny (x, y) leży w bryle statyki domeny (raster jak w kernelu — próbka liniowa, próg 0,5). */
   solidAt(slot, x, y) {
     const s = this.slots[slot];
-    if (!s || !s.active || !s.maskOn) return false;
+    if (!s || !s.active || !s.maskOn || s.noStatics) return false;
     return this._rasterSample(s, (x - s.mox) / s.h, (y - s.moy) / s.h) > 0.5;
   }
 
@@ -1374,7 +1413,7 @@ export class GasGrid {
    */
   clipSegment(slot, x0, y0, x1, y1, out) {
     const s = this.slots[slot];
-    if (!s || !s.active || !s.maskOn) return false;
+    if (!s || !s.active || !s.maskOn || s.noStatics) return false;
     if (this.solidAt(slot, x0, y0)) return false;
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -1519,6 +1558,8 @@ export class GasGrid {
   // z brył raz, przy pierwszym wstrzyknięciu — na starym rastrze rdzeń wybuchu pękającego kawałka doku jechał na brzeg
   // nieistniejącej już bryły; przegląd etapu C pkt 2) albo okno przy brzegu (domena dojechała z nośnikiem).
   _needsRaster(s, now) {
+    // domena bez statyki (głęboka — pryzmaty budowli w płaszczyźnie gry nie sięgają skały pod bazą; nad płaszczyzną): bez rastra
+    if (s.noStatics) return false;
     if (s.maskVer < 0) return true;
     if (s.maskVer !== this.staticVersion && (s._fedRaster || now - s.maskVerAt >= STATIC_MIN_INTERVAL)) return true;
     if (!s.maskOn && !this._boxN && !this._footN) return false;
@@ -1729,7 +1770,8 @@ export class GasGrid {
       // (komórki → teksle maski), przesunięcie −róg / bok teksla, prędkość kotwicy względem domeny [kom./s], ω.
       const hull0 = hullOut;
       const ext = h * half;
-      for (let i = 0; i < this._hullN; i++) {
+      // domena bez kadłubów-przeszkód (głęboka — płaszczyzna gry daleko nad nią; noHulls)
+      for (let i = 0; i < (s.noHulls ? 0 : this._hullN); i++) {
         const o = i * RS;
         const r = Hs[o + HR.reach];
         const ax = Hs[o + HR.ax], ay = Hs[o + HR.ay];
@@ -1747,13 +1789,16 @@ export class GasGrid {
       }
       // Raster statyki: przesunięcie komórka → teksel okna (okno stoi w świecie — domena jedzie przez nie) i prędkość
       // ściany względem domeny (−nośnik).
-      const mOn = s.maskOn ? 1 : 0;
+      const mOn = s.maskOn && !s.noStatics ? 1 : 0;
       masked += mOn;
       A[k * 4].set(s.index, src0, srcOut - src0, hull0);
       A[k * 4 + 1].set(hullOut - hull0, (s.rx - s.cx) * inv + half, (s.ry - s.cy) * inv + half, (s.rz - s.cz) * inv + halfZ);
       A[k * 4 + 2].set(s.extraDecay, s.seed, s.clear ? 1 : 0, mOn);
       A[k * 4 + 3].set((s.cx - s.mox) * inv - half, (s.cy - s.moy) * inv - half, -s.vx * inv, -s.vy * inv);
       U.slotK.array[s.index].x = s.k;
+      // kula-przeszkoda (domena głęboka): środek i promień w komórkach domeny (skała daleko — setki komórek, f32 dość)
+      if (s.gr > 0) U.ground.array[s.index].set((s.gx - s.cx) * inv + half, (s.gy - s.cy) * inv + half, (s.gz - s.cz) * inv + halfZ, s.gr * inv);
+      else U.ground.array[s.index].set(0, 0, 0, 0);
     }
     this.stats.sources = srcOut;
     this.stats.hulls = hullOut;
@@ -1767,7 +1812,7 @@ export class GasGrid {
    * — q = K · (p − kotwica) + przesunięcie w masce, próbka liniowa obcięta do pasma; próg 0,5. Zwraca 0 / 1 i prędkość
    * przeszkody względem domeny [kom./s] w `out` (vx, vy). Zmiana w kernelu = zmiana tutaj.
    */
-  solidCpu(slot, px, py, out = null) {
+  solidCpu(slot, px, py, out = null, pz = NaN) {
     const act = this.active;
     let k = -1;
     for (let i = 0; i < act.length; i++) if (act[i].index === slot) { k = i; break; }
@@ -1776,6 +1821,12 @@ export class GasGrid {
     const a0 = A[k * 4], a1 = A[k * 4 + 1], a2 = A[k * 4 + 2], a3 = A[k * 4 + 3];
     let solid = 0, vx = 0, vy = 0;
     const s = act[k];
+    // kula-przeszkoda domeny głębokiej (pz — warstwa komórki; bez pz — test 2D jak dawniej)
+    const G = this.U.ground.array[slot];
+    if (G.w > 0 && Number.isFinite(pz)) {
+      const dx = px - G.x, dy = py - G.y, dz = pz - G.z;
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) < G.w) { solid = 1; vx = a3.z; vy = a3.w; }
+    }
     if (a2.w > 0.5 && this._rasterSample(s, px + a3.x, py + a3.y) > 0.5) { solid = 1; vx = a3.z; vy = a3.w; }
     const HM = GAS_HULL_MASK, bands = this.hullBands, D = this.hullMaskData;
     const h0 = Math.round(a0.w), hN = Math.round(a1.x);

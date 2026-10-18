@@ -111,6 +111,8 @@ if (isWorker) {
     const [warpMod, warpCmd, warpBlock] = await Promise.all([
       import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js')
     ]);
+    // uderzenia w planetoidę pod bazą piratów (rekord ROCK_IMPACT — cel: obraz planetoidy z pirateBaseGame.js)
+    const rockImpactMod = await import('../3d/pirateRockImpactFx.js');
     const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
@@ -144,7 +146,7 @@ if (isWorker) {
     st.w3Station = null;
     st.bayPose = { x: 0, y: 0, angle: 0 };
     st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: (e) => st.playerPoseOf(e), hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock, rockImpactMod };
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
     st.warpRamp = { active: false, age: 0, tBrake: 0 };
@@ -301,6 +303,7 @@ if (isWorker) {
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
+    st.mods.rockImpactMod.installRockImpactCommands(st.cmd, () => (st.blastFactory && st.blastFactory.system) || null);
     st.mods.warpCmd.installWarpTrafficCommands(st.cmd, st.mods.warpMod.WarpNurt, (slot) => st.warpMirror.recordAt(slot));
     st.hazMods.cmd.installReactorCommands(st.cmd, () => st.reactorFx || null, (id) => st.hazards.byId.get(id) || null);
     st.repairMods.drones.installRepairFxCommands(st.cmd, (id) => st.repairMirror._rigs.get(id) || null);
