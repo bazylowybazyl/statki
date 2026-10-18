@@ -6,6 +6,7 @@ import {
   formatPhysicalVelocityKmS
 } from '../config/units.js';
 import { drawWreckFieldMarkers } from './wreckFieldMarkers.js';
+import { CicBeltLayer, CIC_BELT_TUNE, CIC_BELT_PALETTES, describeCicBeltAt } from './cicBeltLayer.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -174,6 +175,75 @@ function getCicOutlineSilhouette(source, width, height, tint) {
   ctx.globalCompositeOperation = 'source-over';
   CIC_SILHOUETTE_CACHE.set(key, canvas);
   return canvas;
+}
+
+// Akcent sylwetki z poświatą (shadowBlur w kanwie pomocniczej, raz na kanwę akcentu i barwę poświaty).
+const CIC_GLOW_SILHOUETTES = new WeakMap();
+function getCicGlowSilhouette(accentCanvas, glowColor) {
+  if (!accentCanvas || !glowColor) return null;
+  let byColor = CIC_GLOW_SILHOUETTES.get(accentCanvas);
+  if (!byColor) { byColor = new Map(); CIC_GLOW_SILHOUETTES.set(accentCanvas, byColor); }
+  let cached = byColor.get(glowColor);
+  if (cached !== undefined) return cached;
+  const blur = Math.max(4, Math.min(18, Math.max(accentCanvas.width, accentCanvas.height) * 0.08));
+  const pad = Math.ceil(blur * 1.5);
+  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  const g = canvas?.getContext('2d');
+  if (!g) { byColor.set(glowColor, null); return null; }
+  canvas.width = accentCanvas.width + pad * 2;
+  canvas.height = accentCanvas.height + pad * 2;
+  g.shadowColor = glowColor;
+  g.shadowBlur = blur;
+  g.drawImage(accentCanvas, pad, pad);
+  cached = { canvas, pad };
+  byColor.set(glowColor, cached);
+  return cached;
+}
+
+// Stemple poświat (planety, znacznik statku): radialny gradient barwy pieczony raz na barwę.
+const CIC_GLOW_STAMPS = new Map();
+function cicGlowStamp(color) {
+  let c = CIC_GLOW_STAMPS.get(color);
+  if (c) return c;
+  const S = 64;
+  c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(S, S) : document.createElement('canvas');
+  c.width = S; c.height = S;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(S / 2, S / 2, S * 0.04, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, color);
+  grad.addColorStop(0.35, color);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.globalAlpha = 0.55;
+  g.fillStyle = grad;
+  g.fillRect(0, 0, S, S);
+  CIC_GLOW_STAMPS.set(color, c);
+  return c;
+}
+
+// Słońce: 0 — korona (dawny gradient poświaty), 1 — tarcza.
+const CIC_SUN_STAMPS = [null, null];
+function cicSunStamp(kind) {
+  if (CIC_SUN_STAMPS[kind]) return CIC_SUN_STAMPS[kind];
+  const S = kind ? 64 : 128;
+  const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(S, S) : document.createElement('canvas');
+  c.width = S; c.height = S;
+  const g = c.getContext('2d');
+  const h = S / 2;
+  const grad = g.createRadialGradient(h, h, kind ? 0 : h * 0.06, h, h, h);
+  if (kind) {
+    grad.addColorStop(0, '#fff8e0');
+    grad.addColorStop(0.5, '#ffe080');
+    grad.addColorStop(0.97, '#ff9920');
+    grad.addColorStop(1, 'rgba(255, 153, 32, 0)');
+  } else {
+    grad.addColorStop(0, 'rgba(255, 220, 100, 0.35)');
+    grad.addColorStop(0.4, 'rgba(255, 180, 60, 0.12)');
+    grad.addColorStop(1, 'rgba(255, 140, 30, 0)');
+  }
+  g.fillStyle = grad;
+  g.fillRect(0, 0, S, S);
+  CIC_SUN_STAMPS[kind] = c;
+  return c;
 }
 
 function getEntityHullMetrics(entity, zoom) {
@@ -1134,10 +1204,16 @@ function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, acc
       ctx.drawImage(outline, -drawW * 0.5 - CIC_OUTLINE_PAD * sx, -drawH * 0.5 - CIC_OUTLINE_PAD * sy, outline.width * sx, outline.height * sy);
     }
   } else if (accentCanvas) {
+    // akcent z poświatą upieczoną raz (dawniej shadowBlur przy każdym rysunku każdego kontaktu)
     ctx.globalAlpha = accentAlpha;
-    ctx.shadowColor = palette.glow;
-    ctx.shadowBlur = Math.max(4, Math.min(18, Math.max(drawW, drawH) * 0.08));
-    ctx.drawImage(accentCanvas, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+    const glow = getCicGlowSilhouette(accentCanvas, palette.glow);
+    if (glow) {
+      const sx = drawW / accentCanvas.width;
+      const sy = drawH / accentCanvas.height;
+      ctx.drawImage(glow.canvas, -drawW * 0.5 - glow.pad * sx, -drawH * 0.5 - glow.pad * sy, glow.canvas.width * sx, glow.canvas.height * sy);
+    } else {
+      ctx.drawImage(accentCanvas, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+    }
   }
   ctx.restore();
   return true;
@@ -1169,6 +1245,7 @@ let cicDragButton = -1;             // which button is dragging
 let cicDragMoved = false;
 let cicDragStart = { x: 0, y: 0 };
 let cicMouseWorld = { x: 0, y: 0 };
+let cicMouseInView = false;           // kursor ruszył się nad CIC (wiersz KURSOR w panelu)
 
 // Box-select state (LMB rubber-band)
 let cicBoxSelecting = false;
@@ -1196,6 +1273,18 @@ const cicKeys = new Set();
 // Contact list refreshed each frame
 let cicContacts = [];
 
+// Pasy asteroid na mapie (kafle gęstości pola pasa gry — src/ui/cicBeltLayer.js); widok klatki bez alokacji.
+const cicBeltLayer = new CicBeltLayer({ getField: () => window.__beltWorld?.field || null });
+const CIC_BELT_VIEW = { W: 0, H: 0, cx: 0, cy: 0, viewX: 0, viewY: 0, zoom: 1, blend: 0 };
+if (typeof window !== 'undefined') window.CicBeltTune = CIC_BELT_TUNE;
+// Warstwa pasów nie może zatrzymać pętli gry (wyjątek w rysunku CIC = koniec klatek): błąd raz do konsoli.
+let cicBeltLayerFailed = false;
+function cicBeltLayerFail(e) {
+  if (cicBeltLayerFailed) return;
+  cicBeltLayerFailed = true;
+  console.error('[CIC] warstwa pasów asteroid:', e);
+}
+
 export const CICDisplay = {
   get active() { return cicActive; },
 
@@ -1212,12 +1301,16 @@ export const CICDisplay = {
       cicSystemBlend = 0;
     } else {
       cicKeys.clear();
+      cicMouseInView = false;
+      cicBeltLayer.releaseCache();
     }
     return cicActive;
   },
 
   close() {
     cicActive = false;
+    cicMouseInView = false;
+    cicBeltLayer.releaseCache();   // kanwa pamięci kadru (rozmiar ekranu) — kafle zostają
     cicSystemBlend = 0;
     cicBoxSelecting = false;
     cicSelectedContacts = [];
@@ -1283,6 +1376,24 @@ export const CICDisplay = {
   },
 
   get isSystemView() { return cicSystemBlend > 0.3; },
+
+  /** Narzędzia (scripts/webgpu/cic-gra.mjs): widok bez animacji — zoom i przesunięcie od statku [j.]. */
+  setView({ zoom, panX, panY, instant = true } = {}) {
+    if (Number.isFinite(zoom) && zoom > 0) {
+      // bez dolnej granicy kółka: widok układu (V) też schodzi poniżej zoomMin
+      cicTargetZoom = Math.min(CIC_CONFIG.zoomMax, zoom);
+      if (instant) cicZoom = cicTargetZoom;
+    }
+    if (Number.isFinite(panX)) { cicTargetPanX = panX; if (instant) cicPanX = panX; }
+    if (Number.isFinite(panY)) { cicTargetPanY = panY; if (instant) cicPanY = panY; }
+    if (instant) {
+      cicSystemBlend = Math.max(0, Math.min(1,
+        (SYSTEM_ZOOM_START - cicZoom) / (SYSTEM_ZOOM_START - SYSTEM_ZOOM_FULL)));
+    }
+  },
+  getView() { return { zoom: cicZoom, panX: cicPanX, panY: cicPanY, blend: cicSystemBlend }; },
+  /** Stan warstwy pasów (kafle, wypiek) — narzędzia i konsola. */
+  beltStats() { return { ...cicBeltLayer.stats }; },
 
   /** WSAD key pressed — returns true if consumed */
   onKeyDown(code) {
@@ -1450,6 +1561,7 @@ export const CICDisplay = {
     const shipY = (window.ship?.pos?.y || 0) + cicPanY;
     cicMouseWorld.x = shipX + (x - cx) / cicZoom;
     cicMouseWorld.y = shipY + (y - cy) / cicZoom;
+    cicMouseInView = true;
   },
 
   /** Handle mouse up in CIC */
@@ -1575,33 +1687,41 @@ export const CICDisplay = {
     const gridScreenSpacing = gridSpacing * cicZoom;
 
     if (gridScreenSpacing > 15) {
-      ctx.strokeStyle = CIC_CONFIG.colors.grid;
-      ctx.lineWidth = 0.5;
-
+      // Dwie ścieżki (linie zwykłe i co piąta) zamiast stroke na linię — ~40 rysunków mniej na klatkę.
       const startWX = Math.floor((shipX - cx / cicZoom) / gridSpacing) * gridSpacing;
       const endWX = shipX + cx / cicZoom;
       const startWY = Math.floor((shipY - cy / cicZoom) / gridSpacing) * gridSpacing;
       const endWY = shipY + cy / cicZoom;
-
       const majorMul = gridSpacing * 5;
-      for (let wx = startWX; wx <= endWX; wx += gridSpacing) {
-        const sx = toScreen(wx, 0).x;
-        const isMajor = Math.abs(wx % majorMul) < gridSpacing * 0.1;
-        ctx.strokeStyle = isMajor ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
-        ctx.lineWidth = isMajor ? 1 : 0.5;
-        ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
-      }
-      for (let wy = startWY; wy <= endWY; wy += gridSpacing) {
-        const sy = toScreen(0, wy).y;
-        const isMajor = Math.abs(wy % majorMul) < gridSpacing * 0.1;
-        ctx.strokeStyle = isMajor ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
-        ctx.lineWidth = isMajor ? 1 : 0.5;
-        ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke();
+      for (let pass = 0; pass < 2; pass++) {
+        const major = pass === 1;
+        ctx.beginPath();
+        for (let wx = startWX; wx <= endWX; wx += gridSpacing) {
+          if ((Math.abs(wx % majorMul) < gridSpacing * 0.1) !== major) continue;
+          const sx = Math.round(cx + (wx - shipX) * cicZoom) + 0.5;
+          ctx.moveTo(sx, 0); ctx.lineTo(sx, H);
+        }
+        for (let wy = startWY; wy <= endWY; wy += gridSpacing) {
+          if ((Math.abs(wy % majorMul) < gridSpacing * 0.1) !== major) continue;
+          const sy = Math.round(cy + (wy - shipY) * cicZoom) + 0.5;
+          ctx.moveTo(0, sy); ctx.lineTo(W, sy);
+        }
+        ctx.strokeStyle = major ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
+        ctx.lineWidth = major ? 1 : 0.5;
+        ctx.stroke();
       }
     }
 
+    // === PASY ASTEROID (src/ui/cicBeltLayer.js — kafle gęstości pola pasa, luki Kirkwooda) ===
+    const beltView = CIC_BELT_VIEW;
+    beltView.W = W; beltView.H = H; beltView.cx = cx; beltView.cy = cy;
+    beltView.viewX = shipX; beltView.viewY = shipY; beltView.zoom = cicZoom; beltView.blend = cicSystemBlend;
+    try { cicBeltLayer.draw(ctx, beltView); } catch (e) { cicBeltLayerFail(e); }
+
     // === SOLAR SYSTEM: Sun, Planets, Orbits, Rings ===
     drawSolarSystem(ctx, W, H, toScreen, cicZoom, gameTime);
+    // podpisy pasów, rodzin i olbrzymy nad orbitami
+    try { cicBeltLayer.drawLabels(ctx, beltView, window.__beltWorld?.giants?.entries || null); } catch (e) { cicBeltLayerFail(e); }
 
     // === RANGE RINGS (from ship center) ===
     const shipScr = toScreen(ship.pos.x, ship.pos.y);
@@ -1717,15 +1837,16 @@ export const CICDisplay = {
       // In system view: pulsing beacon dot
       const pulse = 0.6 + 0.4 * Math.sin(gameTime * 3);
       const beaconR = 4 + cicSystemBlend * 3;
-      ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = beaconR * 3 * pulse;
+      const haloR = beaconR * (2.2 + 1.6 * pulse);
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(cicGlowStamp('#38bdf8'), -haloR, -haloR, haloR * 2, haloR * 2);
+      ctx.globalAlpha = 1;
       ctx.fillStyle = '#e2e8f0';
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(0, 0, beaconR, 0, Math.PI * 2);
       ctx.fill(); ctx.stroke();
-      ctx.shadowBlur = 0;
       // Label
       ctx.font = 'bold 11px monospace';
       ctx.textAlign = 'center';
@@ -1962,88 +2083,76 @@ export const CICDisplay = {
       ctx.restore();
     }
 
-    // === HUD OVERLAY ===
-    // Top-left: CIC title
-    ctx.fillStyle = CIC_CONFIG.colors.textBright;
-    ctx.font = 'bold 14px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(isSystemScale ? 'CIC — SYSTEM OVERVIEW' : 'COMBAT INFORMATION CENTER', 20, 30);
-
-    // Contact count
-    ctx.font = '11px monospace';
-    ctx.fillStyle = CIC_CONFIG.colors.text;
-    const hostileCount = cicContacts.filter(c => c.hostile && !c.isGhost).length;
-    const ghostCount = cicContacts.filter(c => c.isGhost).length;
-    ctx.fillText(`CONTACTS: ${cicContacts.length}  HOSTILE: ${hostileCount}  GHOSTS: ${ghostCount}`, 20, 50);
-
-    // Zoom level
-    const viewRadius = Math.round((W / 2) / cicZoom);
-    const viewLabel = formatLocalDistance(viewRadius);
-    ctx.fillText(`ZOOM: ${cicZoom.toFixed(4)}  VIEW: ±${viewLabel}`, 20, 66);
-
-    // Probe status
+    // === PANEL INFORMACYJNY (prawy górny róg — lewy górny zajmują strefa i dziennik HUD-u, dół — kokpit) ===
+    let hostileCount = 0;
+    let ghostCount = 0;
+    for (let i = 0; i < cicContacts.length; i++) {
+      const c = cicContacts[i];
+      if (c.isGhost) ghostCount++;
+      else if (c.hostile) hostileCount++;
+    }
+    const viewLabel = formatLocalDistance(Math.round((W / 2) / cicZoom));
     const probes = SensorSystem.getProbes();
     const probeCd = SensorSystem.getProbeCooldown();
-    ctx.fillText(`PROBES: ${probes.length}/${SensorSystem.config.maxProbes}  CD: ${probeCd > 0 ? probeCd.toFixed(1) + 's' : 'READY'}`, 20, 82);
-
-    // Drone status
     const DroneSystem = window.SpotterDroneSystem;
-    if (DroneSystem) {
-      const drones = DroneSystem.getDrones();
-      const droneCd = DroneSystem.getCooldown();
-      ctx.fillText(`DRONES: ${drones.length}/${DroneSystem.config.maxDrones}  CD: ${droneCd > 0 ? droneCd.toFixed(1) + 's' : 'READY'}`, 20, 98);
+    const beltField = window.__beltWorld?.field || null;
+    const rows = CIC_PANEL_ROWS;
+    rows.length = 0;
+    rows.push(
+      [`KONTAKTY ${cicContacts.length}   WROGIE ${hostileCount}   DUCHY ${ghostCount}`, CIC_CONFIG.colors.text],
+      [`ZOOM ${formatCicZoom(cicZoom)}   KADR ±${viewLabel}`, CIC_CONFIG.colors.text],
+      [`SONDY ${probes.length}/${SensorSystem.config.maxProbes} ${probeCd > 0 ? Math.ceil(probeCd) + ' s' : 'GOTOWE'}`
+        + (DroneSystem ? `   DRONY ${DroneSystem.getDrones().length}/${DroneSystem.config.maxDrones} ${DroneSystem.getCooldown() > 0 ? Math.ceil(DroneSystem.getCooldown()) + ' s' : 'GOTOWE'}` : ''),
+        CIC_CONFIG.colors.text]
+    );
+    if (beltField) {
+      rows.push(['', null]);
+      rows.push([`STATEK  ${describeCicBeltAt(beltField, ship.pos.x, ship.pos.y) || 'POZA PASAMI'}`, '#e8c48a']);
+      if (cicMouseInView) rows.push([`KURSOR  ${describeCicBeltAt(beltField, cicMouseWorld.x, cicMouseWorld.y) || '—'}`, '#c9a978']);
     }
+    const panelBottom = drawCicInfoPanel(ctx, W, isSystemScale ? 'CIC · WIDOK UKŁADU' : 'CIC · WIDOK TAKTYCZNY',
+      rows, !!beltField, isSystemScale);
 
-    // Selected target info panel (bottom right) — shows first selected contact
+    // Dane zaznaczonego celu — pod panelem (dawniej w prawym dolnym rogu, pod podpowiedziami kokpitu)
     const _panelTarget = cicSelectedContacts[0]?.entity || null;
     if (_panelTarget && !_panelTarget.dead) {
       const t = _panelTarget;
-      const panelX = W - 260;
-      const panelY = H - 180;
+      const panelW = 260;
+      const panelX = W - panelW - 16;
+      const panelY = panelBottom + 10;
 
-      ctx.fillStyle = 'rgba(4, 12, 24, 0.85)';
+      ctx.fillStyle = 'rgba(4, 12, 26, 0.86)';
       ctx.strokeStyle = CIC_CONFIG.colors.selected;
       ctx.lineWidth = 1;
-      ctx.fillRect(panelX, panelY, 240, 160);
-      ctx.strokeRect(panelX, panelY, 240, 160);
+      ctx.fillRect(panelX, panelY, panelW, 160);
+      ctx.strokeRect(panelX + 0.5, panelY + 0.5, panelW - 1, 159);
 
       ctx.fillStyle = CIC_CONFIG.colors.textBright;
       ctx.font = 'bold 12px monospace';
       ctx.textAlign = 'left';
-      ctx.fillText('TARGET DATA', panelX + 10, panelY + 20);
+      ctx.fillText('DANE CELU', panelX + 10, panelY + 20);
 
       ctx.font = '10px monospace';
       ctx.fillStyle = CIC_CONFIG.colors.text;
       const dist = Math.hypot(t.x - ship.pos.x, t.y - ship.pos.y);
       const lines = [
-        `TYPE: ${(t.type || 'UNKNOWN').toUpperCase()}${t.subType ? ' / ' + t.subType.toUpperCase() : ''}`,
-        `DIST: ${formatLocalDistance(dist)}`,
-        `HULL: ${t.hp?.toFixed(0) || '?'} / ${t.maxHp?.toFixed(0) || '?'}`,
-        `SHLD: ${t.shield?.val?.toFixed(0) || '0'} / ${t.shield?.max?.toFixed(0) || '0'}`,
-        `STAT: ${t.isCapitalShip ? 'CAPITAL' : t.friendly ? 'FRIENDLY' : 'HOSTILE'}`,
-        `BEAR: ${((Math.atan2(t.y - ship.pos.y, t.x - ship.pos.x) * 180 / Math.PI + 360) % 360).toFixed(0)}°`,
+        `TYP:     ${(t.type || 'UNKNOWN').toUpperCase()}${t.subType ? ' / ' + t.subType.toUpperCase() : ''}`,
+        `DYST.:   ${formatLocalDistance(dist)}`,
+        `KADŁUB:  ${t.hp?.toFixed(0) || '?'} / ${t.maxHp?.toFixed(0) || '?'}`,
+        `TARCZA:  ${t.shield?.val?.toFixed(0) || '0'} / ${t.shield?.max?.toFixed(0) || '0'}`,
+        `STATUS:  ${t.isCapitalShip ? 'CAPITAL' : t.friendly ? 'SOJUSZNIK' : 'WRÓG'}`,
+        `NAMIAR:  ${((Math.atan2(t.y - ship.pos.y, t.x - ship.pos.x) * 180 / Math.PI + 360) % 360).toFixed(0)}°`,
       ];
       for (let i = 0; i < lines.length; i++) {
         ctx.fillText(lines[i], panelX + 10, panelY + 40 + i * 16);
       }
 
-      // Selection info
       ctx.fillStyle = '#38bdf8';
       const selCount = cicSelectedContacts.length;
       const hint = selCount > 1
         ? `${selCount} ZAZNACZONE  [PPM] ATAK`
-        : '[PPM] ATAK / RUCH / TRAVEL TO / DRONE';
+        : '[PPM] ATAK / RUCH / TRAVEL TO / DRON';
       ctx.fillText(hint, panelX + 10, panelY + 148);
-    }
-
-    // Bottom center: key hints
-    ctx.fillStyle = CIC_CONFIG.colors.text;
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    if (isSystemScale) {
-      ctx.fillText('[TAB/M] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
-    } else {
-      ctx.fillText('[TAB/M] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Travel to/Drone', W / 2, H - 16);
     }
 
     ctx.restore();
@@ -2096,27 +2205,13 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const blend = cicSystemBlend;
   const sunMinR = 3 + blend * 9;
   const sunScreenR = Math.max(sunMinR, SUN.r * zoom);
-  // Sun glow
+  // Sun glow + body — stemple (gradienty pieczone raz); poza kadrem nic
   ctx.save();
   const glowR = sunScreenR * (4 + blend * 2);
-  const sunGlow = ctx.createRadialGradient(sunScr.x, sunScr.y, sunScreenR * 0.3, sunScr.x, sunScr.y, glowR);
-  sunGlow.addColorStop(0, 'rgba(255, 220, 100, 0.35)');
-  sunGlow.addColorStop(0.4, 'rgba(255, 180, 60, 0.12)');
-  sunGlow.addColorStop(1, 'rgba(255, 140, 30, 0)');
-  ctx.fillStyle = sunGlow;
-  ctx.beginPath();
-  ctx.arc(sunScr.x, sunScr.y, glowR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Sun body
-  const sunBody = ctx.createRadialGradient(sunScr.x, sunScr.y, 0, sunScr.x, sunScr.y, sunScreenR);
-  sunBody.addColorStop(0, '#fff8e0');
-  sunBody.addColorStop(0.5, '#ffe080');
-  sunBody.addColorStop(1, '#ff9920');
-  ctx.fillStyle = sunBody;
-  ctx.beginPath();
-  ctx.arc(sunScr.x, sunScr.y, sunScreenR, 0, Math.PI * 2);
-  ctx.fill();
+  if (sunScr.x > -glowR && sunScr.x < W + glowR && sunScr.y > -glowR && sunScr.y < H + glowR) {
+    ctx.drawImage(cicSunStamp(0), sunScr.x - glowR, sunScr.y - glowR, glowR * 2, glowR * 2);
+    ctx.drawImage(cicSunStamp(1), sunScr.x - sunScreenR, sunScr.y - sunScreenR, sunScreenR * 2, sunScreenR * 2);
+  }
 
   // Sun label
   ctx.fillStyle = '#ffcc44';
@@ -2158,22 +2253,14 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
 
     ctx.save();
 
-    // Planet glow
+    // Planet glow — stempel (gradient pieczony raz na barwę; dawniej gradient + shadowBlur co klatkę)
     const glowAlpha = 0.15 + blend * 0.1;
     const glowMul = 3 + blend;
     if (dotR > 3) {
-      ctx.globalAlpha = glowAlpha;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = dotR * 2;
-      const plGlow = ctx.createRadialGradient(plScr.x, plScr.y, dotR * 0.3, plScr.x, plScr.y, dotR * glowMul);
-      plGlow.addColorStop(0, color);
-      plGlow.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = plGlow;
-      ctx.beginPath();
-      ctx.arc(plScr.x, plScr.y, dotR * glowMul, 0, Math.PI * 2);
-      ctx.fill();
+      const gr = dotR * glowMul;
+      ctx.globalAlpha = Math.min(1, glowAlpha * 1.5);
+      ctx.drawImage(cicGlowStamp(color), plScr.x - gr, plScr.y - gr, gr * 2, gr * 2);
       ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
     }
 
     // Planet body
@@ -2425,6 +2512,154 @@ function drawCicComets(ctx, W, H, toScreen, zoom, blend) {
 // więc musi pokazywać to, co dawała mapa: gdzie stoją stacje i gdzie jest cel
 // misji. Znaczniki mają stały rozmiar ekranowy, żeby nie znikały przy oddaleniu.
 
+// =============================================================================
+// PANEL INFORMACYJNY CIC (prawy górny róg): wiersze stanu, legenda pasów, klawisze. Pieczony do kanwy pomocniczej
+// i przerysowywany tylko przy zmianie tekstu — w klatce jeden drawImage (napisy na dużej kanwie kosztują w procesie
+// GPU przy każdym rysunku; audyt renderu § 7.3).
+// =============================================================================
+const CIC_PANEL_ROWS = [];
+const CIC_PANEL_W = 430;
+const CIC_PANEL = { canvas: null, ctx: null, key: '', h: 0 };
+const CIC_PANEL_LEGEND = [
+  { text: 'PAS GŁÓWNY', pal: 0 },
+  { text: 'ROJE JOWISZA', pal: 1 },
+  { text: 'KUIPER', pal: 2 },
+  { text: 'NEA / HUNGARIE', pal: 3 }
+];
+
+function formatCicZoom(z) {
+  if (!(z > 0)) return '0';
+  const digits = Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(z))));
+  return z.toFixed(digits).replace('.', ',');
+}
+
+function cicMakeCanvas(w, h) {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return c;
+}
+
+function cicFitText(g, text, maxW) {
+  if (g.measureText(text).width <= maxW) return text;
+  let t = text;
+  while (t.length > 4 && g.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+  return t + '…';
+}
+
+/** Rysuje panel (z pamięci, gdy tekst bez zmian); zwraca y dolnej krawędzi. */
+function drawCicInfoPanel(ctx, W, title, rows, legend, isSystemScale) {
+  const x0 = W - CIC_PANEL_W - 16;
+  const y0 = 16;
+  let key = `${title}|${legend ? 1 : 0}|${isSystemScale ? 1 : 0}`;
+  for (let i = 0; i < rows.length; i++) key += `|${rows[i][0]}`;
+  const lineH = 15;
+  const h = 34 + rows.length * lineH + (legend ? 44 : 0) + 40;
+  if (key !== CIC_PANEL.key || !CIC_PANEL.canvas) {
+    if (!CIC_PANEL.canvas || CIC_PANEL.h !== h) {
+      CIC_PANEL.canvas = cicMakeCanvas(CIC_PANEL_W, h);
+      CIC_PANEL.ctx = CIC_PANEL.canvas?.getContext('2d') || null;
+      CIC_PANEL.h = h;
+    }
+    const g = CIC_PANEL.ctx;
+    if (!g) return y0;
+    CIC_PANEL.key = key;
+    const PW = CIC_PANEL_W;
+    g.clearRect(0, 0, PW, h);
+    // tło i ramka z narożnikami
+    g.fillStyle = 'rgba(3, 11, 24, 0.86)';
+    g.fillRect(0, 0, PW, h);
+    g.strokeStyle = 'rgba(80, 160, 255, 0.28)';
+    g.lineWidth = 1;
+    g.strokeRect(0.5, 0.5, PW - 1, h - 1);
+    g.strokeStyle = 'rgba(120, 200, 255, 0.85)';
+    g.lineWidth = 2;
+    const arm = 10;
+    g.beginPath();
+    g.moveTo(1, arm); g.lineTo(1, 1); g.lineTo(arm, 1);
+    g.moveTo(PW - arm, 1); g.lineTo(PW - 1, 1); g.lineTo(PW - 1, arm);
+    g.moveTo(1, h - arm); g.lineTo(1, h - 1); g.lineTo(arm, h - 1);
+    g.moveTo(PW - arm, h - 1); g.lineTo(PW - 1, h - 1); g.lineTo(PW - 1, h - arm);
+    g.stroke();
+    // nagłówek
+    g.fillStyle = 'rgba(56, 140, 220, 0.16)';
+    g.fillRect(1, 1, PW - 2, 24);
+    g.fillStyle = CIC_CONFIG.colors.textBright;
+    g.font = 'bold 12px monospace';
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.fillText(title, 12, 13);
+    g.fillStyle = '#38bdf8';
+    g.beginPath();
+    g.arc(PW - 14, 13, 3.5, 0, Math.PI * 2);
+    g.fill();
+    // wiersze
+    g.font = '10px monospace';
+    let y = 34 + lineH * 0.5;
+    for (let i = 0; i < rows.length; i++) {
+      const [text, color] = rows[i];
+      if (text) {
+        g.fillStyle = color || CIC_CONFIG.colors.text;
+        g.fillText(cicFitText(g, text, PW - 24), 12, y);
+      } else {
+        g.strokeStyle = 'rgba(80, 160, 255, 0.18)';
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(12, y + 0.5); g.lineTo(PW - 12, y + 0.5); g.stroke();
+      }
+      y += lineH;
+    }
+    // legenda pasów
+    if (legend) {
+      y += 4;
+      g.font = '9px monospace';
+      let lx = 12;
+      for (const item of CIC_PANEL_LEGEND) {
+        const P = CIC_BELT_PALETTES[item.pal];
+        g.fillStyle = `rgba(${P.base[0]}, ${P.base[1]}, ${P.base[2]}, 0.55)`;
+        g.fillRect(lx, y - 4, 14, 8);
+        g.strokeStyle = `rgba(${P.line}, 0.7)`;
+        g.strokeRect(lx + 0.5, y - 3.5, 13, 7);
+        g.fillStyle = CIC_CONFIG.colors.text;
+        g.fillText(item.text, lx + 19, y);
+        lx += 19 + g.measureText(item.text).width + 14;
+      }
+      y += 16;
+      lx = 12;
+      // gęste pole (kontur), luka Kirkwooda, olbrzym
+      g.strokeStyle = `rgba(${CIC_BELT_PALETTES[0].line}, 0.75)`;
+      g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(lx, y + 2); g.quadraticCurveTo(lx + 7, y - 6, lx + 14, y + 1); g.stroke();
+      g.fillStyle = CIC_CONFIG.colors.text;
+      g.fillText('GĘSTE POLE', lx + 19, y);
+      lx += 19 + g.measureText('GĘSTE POLE').width + 14;
+      g.fillStyle = `rgba(${CIC_BELT_PALETTES[0].base[0]}, ${CIC_BELT_PALETTES[0].base[1]}, ${CIC_BELT_PALETTES[0].base[2]}, 0.5)`;
+      g.fillRect(lx, y - 4, 14, 8);
+      g.fillStyle = 'rgba(4, 12, 24, 0.9)';
+      g.fillRect(lx + 5, y - 4, 4, 8);
+      g.fillStyle = CIC_CONFIG.colors.text;
+      g.fillText('LUKA KIRKWOODA', lx + 19, y);
+      lx += 19 + g.measureText('LUKA KIRKWOODA').width + 14;
+      g.fillStyle = 'rgba(255, 170, 90, 0.9)';
+      g.beginPath(); g.moveTo(lx + 7, y - 5); g.lineTo(lx + 13, y + 4); g.lineTo(lx + 1, y + 4); g.closePath(); g.fill();
+      g.fillStyle = CIC_CONFIG.colors.text;
+      g.fillText('OLBRZYM (KOLIZJA)', lx + 19, y);
+      y += 16;
+    }
+    // klawisze
+    g.strokeStyle = 'rgba(80, 160, 255, 0.18)';
+    g.beginPath(); g.moveTo(12, y + 0.5); g.lineTo(PW - 12, y + 0.5); g.stroke();
+    y += 12;
+    g.font = '9px monospace';
+    g.fillStyle = 'rgba(148, 163, 184, 0.8)';
+    g.fillText(`[TAB/M] zamknij   [V] ${isSystemScale ? 'widok taktyczny' : 'widok układu'}   [KÓŁKO] zoom   [WSAD/ŚPM] przesuń`, 12, y);
+    y += 13;
+    g.fillText('[LPM] zaznacz / ramka   [PPM] atak · ruch · travel to · dron', 12, y);
+  }
+  if (CIC_PANEL.canvas) ctx.drawImage(CIC_PANEL.canvas, x0, y0);
+  return y0 + CIC_PANEL.h;
+}
+
 const CIC_OBJECTIVE_COLOR = '#ff5c8a';
 const CIC_HOSTILE_STATION_COLOR = '#ff5555';
 const CIC_FRIENDLY_STATION_COLOR = '#60a5fa';
@@ -2545,6 +2780,8 @@ function drawStationMarkers(ctx, W, H, toScreen, zoom) {
 
     ctx.restore();
 
+    // Widok układu: stacja planety bez własnego podpisu — nazwę niesie podpis planety (dawniej napisy na sobie).
+    if (!hostile && cicSystemBlend > 0.5 && st.planet && PLANET_COLORS[st.planet.id]) continue;
     const name = hostile
       ? 'STACJA PIRACKA'
       : `STACJA ${String(st.planet?.label || st.id || 'ORBIT').toUpperCase()}`;
