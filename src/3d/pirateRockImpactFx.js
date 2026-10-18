@@ -983,7 +983,9 @@ export class RockImpactFx {
     const vh = this._fitSpeed(Rc * (0.7 + 0.5 * q), 0.12, rh, availN);
     po.temp = 0.4 + 3.2 * q; po.smoke = 2.2 * k; po.grow = 1.9; po.velBlend = 36; po.noise = 0.55; po.tau = 0;
     po.dir[0] = ax * vh; po.dir[1] = ay * vh; po.dir[2] = az * vh;
-    d.puff(slot, X + nx * rh * 0.5, Y + ny * rh * 0.5, Z + nz * rh * 0.5, rh, 0, 0.1 + 0.05 * q, 0, Rc * (0.8 + 0.6 * q), po);
+    // rozprężanie na boki też w granicach domeny (w pionie jest najmniej miejsca)
+    const vr = this._fitSpeed(Rc * (0.8 + 0.6 * q), 0.15, rh, availN);
+    d.puff(slot, X + nx * rh * 0.5, Y + ny * rh * 0.5, Z + nz * rh * 0.5, rh, 0, 0.1 + 0.05 * q, 0, vr, po);
     // 1b. pióropusz pary i pyłu wzdłuż osi (chłodniejszy, w granicach domeny)
     jo.delay = 0.02; jo.fuel = 0; jo.temp = 0.25 + 1.3 * q; jo.smoke = 4.5 * k; jo.radial = Rc * 0.35; jo.velBlend = 32; jo.noise = 0.45;
     jo.tau = 0.35; jo.flicker = 0.15; jo.grow = 1.7; jo.rampIn = 0.02; jo.rampOut = 0.25; jo.velTau = 0.3;

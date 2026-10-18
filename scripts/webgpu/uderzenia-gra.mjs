@@ -233,6 +233,12 @@ try {
     report.koszt.upadekStan = await state();
     await sleep(9000);
     report.koszt.poUpadku = await sample(3);
+    // wybuch w głębi bez skały (deepBlast — przebicie dysku): obok dysku, w kadrze
+    await ev(`window.PirateRockImpacts.testBlast({ dx: 2600, z: -800, size: 800, id: 'koszt-blast' }) && true`);
+    await sleep(300);
+    report.koszt.wybuch = await sample(4);
+    report.koszt.wybuchStan = await state();
+    await sleep(9000);
     // to samo bez gazu (same cząstki) — koszt gazu = różnica
     await ev('(() => { const t = window.PirateRock?.state?.()?.impact?.tune; if (t) t.gas = false; return !!t; })()');
     await ev(`window.PirateRockImpacts.demo('upadek', { e: -3600, n: 0 })`);
