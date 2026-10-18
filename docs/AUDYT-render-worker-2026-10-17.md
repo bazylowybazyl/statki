@@ -190,7 +190,8 @@ jedna klatka powtórzona albo przeskoczona).
 | 8 | PerfHUD: draw calle, GPU, obiekty sceny workera z RET (dziś strona bez urządzenia → „--” / dane strony) | widoczność kosztów workera dla gracza | mały |
 | 9 | ~~**GPU przy 5120 × 1440 (Ultra)**~~ — ZROBIONE 2026-10-17 (§ 7.2): passy pełnoekranowe z pętlami po listach | bitwa 192,7 → 216,4 kl/s, wiek 6,43 → 4,51 | — |
 | 10 | ~~**Proces GPU** (`CrGpuMain` 96% przy 5120 × 1440)~~ — ZROBIONE 2026-10-17 (§ 7.3): zgłoszenia kolejki ~20 → 2,2 na klatkę, raster nakładek — atlas stempli napisów | bitwa: 182,7–183,3 → 195,2–198,5 kl/s, w pierwszych 30 s 199–201 → 226–235; `CrGpuMain` 98–99 → 85–89% | zostaje: dekodowanie poleceń WebGPU workera (~2 ms na klatkę — liczba rysunków i grup wiązań), w rzezi rytm trzyma wątek gry i GPU workera (§ 7.3) |
-| 11 | ~~**GPU workera w rzezi** (5120 × 1440, Ultra)~~ — ZROBIONE 2026-10-18 (§ 7.4): compute gazu wybuchów (dotąd niezmierzony) bez przeliczeń światła w klatkach bez kroku, kroki siatek „fine” / „coarse” rozłożone na klatki, marsz bez pustych kolumn | rzeź: 153,5 / 144,2 → 173,0 / 156,8 kl/s; GPU klatki render + compute śr. 5,9 → 5,1 ms, p95 compute 5,6 → 4,7 | zostaje: światło objętościowe pasa (0,5–0,75 ms — pętla świateł × 40 plastrów), krok siatki podstawowej gazu w jednej klatce (rozbicie wymaga osobnego atlasu światła, +~33 MB), pętla świateł siatki w marszu przedniego pasa gazu (~0,15 ms) |
+| 11 | ~~**GPU workera w rzezi** (5120 × 1440, Ultra)~~ — ZROBIONE 2026-10-18 (§ 7.4): compute gazu wybuchów (dotąd niezmierzony) bez przeliczeń światła w klatkach bez kroku, kroki siatek „fine” / „coarse” rozłożone na klatki, marsz bez pustych kolumn | rzeź: 153,5 / 144,2 → 173,0 / 156,8 kl/s; GPU klatki render + compute śr. 5,9 → 5,1 ms, p95 compute 5,6 → 4,7 | zostaje: ~~światło objętościowe pasa (0,5–0,75 ms — pętla świateł × 40 plastrów)~~ (§ 7.5), krok siatki podstawowej gazu w jednej klatce (rozbicie wymaga osobnego atlasu światła, +~33 MB), pętla świateł siatki w marszu przedniego pasa gazu (~0,15 ms) |
+| 12 | ~~**Światło objętościowe pasa w rzezi** (5120 × 1440, Ultra)~~ — ZROBIONE 2026-10-18 (§ 7.5): kernel `beltVolumeLight` z wątku na kolumnę na wątek na (kolumnę, 2 plastry), całkowanie w z po barierze grupy — tekstura bit w bit | rzeź: kernel 0,45 / 0,59 → 0,13 / 0,16 ms; kl/s (≥ 30 s) 148,6 / 157,2 → 157,2 / 164,9 | zostaje: compute gazu wybuchów (~0,8–1 ms w rzezi), pass ortho ~1 ms, maska słońca 0,5 |
 
 ### 7.1 Stan pkt 3 — klatka workera (2026-10-17, sesja „Klatka workera renderu pod 240 Hz”)
 
@@ -465,6 +466,62 @@ post 0,45, krok siatki podstawowej gazu w jednej klatce (~1,5 ms; rozbicie kroku
 światła — lightT dzieli teksturę z φ̂ adwekcji: +~33 MB na trzy siatki), pętla świateł siatki w marszu przedniego
 pasa gazu (~0,15 ms; dokładnie — tylko przybliżeniem), bloom z mgłą 0,3. Wątek gry i worker CPU — § 7.3.
 
+### 7.5 Światło objętościowe pasa w rzezi przy 5120 × 1440 (2026-10-18, sesja „Światło objętościowe pasa w rzezi”)
+
+Cel: po § 7.4 drugą pozycją compute workera w rzezi było światło objętościowe pasa asteroid (`beltVolumeLight`,
+`src/3d/asteroids/volumetrics.js`; bitwa testowa leży w populacji NEA pasa, więc ośrodek liczy się słusznie) —
+0,5–0,75 ms GPU na klatkę, w lekkiej fazie 0,22. Kernel: wątek na kolumnę froxeli (~73 tys. przy 5120 px, kolumna
+~11 px), w niej 40 plastrów w z po kolei, w każdym pętla po wszystkich światłach komórki siatki świateł
+(`Core3D.fx.grid`), na końcu całka od stropu w dół (tekstura RGBA16F: rozproszenie do z i transmitancja).
+
+**Gdzie idzie czas.** Lustro CPU kernela w workerze (`scripts/webgpu/pas-swiatlo-worker.js`, co 2 s bitwy): w rzezi
+550–940 świateł siatki, do 123 w komórce, ale na kolumnę średnio tylko 2,5–4,7 światła komórki, z tego 1–2,5 w zasięgu
+xy z rozpraszaniem; 36–83 trafienia (plaster ze światłem w zasięgu) na kolumnę. Poświata dysz MAIN na blachę to 200–510
+świateł o zasięgu ~150–200 j. i rozpraszaniu 0 — dają 3–12 trafień na kolumnę. Zatrzymana klatka (headless, A/B na tej
+samej klatce): bez pętli świateł (`dbg` = 1) kernel kosztuje 11% pełnego — 90% to pętla świateł, a w niej trafienia,
+nie pudła. Czas kernela wyznaczają NAJDŁUŻSZE WĄTKI: 73 tys. wątków to mniej niż jedna pełna fala GPU, a kolumna
+w gorącej komórce przechodzi 40 × do 123 świateł szeregowo.
+
+Próby (zatrzymana ciężka klatka, headless 2560 × 1440 — znaczniki zawyżone, liczy się stosunek; każda bit w bit):
+
+| wariant | kernel | uwagi |
+|---|---|---|
+| dawny | 0,95 ms | — |
+| lista świateł kolumny (raz na kolumnę: zasięg xy, rozpraszanie ≠ 0, zakres plastrów; tablica w pamięci lokalnej) | 0,96–1,0 | odcina pudła, nie trafienia; pamięć lokalna zjada zysk |
+| kafle 8 × 8 kolumn na grupę (warp w jednej komórce siatki) | −21% | samo przemapowanie wątków |
+| pomijanie świateł bez rozpraszania i trafień z zerowym tłumieniem | +4% | rozgałęzienia droższe niż oszczędzone `pow` |
+| **wątek na (kolumnę, plastry), całkowanie po barierze grupy** — układy kolumny × plastry na wątek 4 × 1 / **8 × 2** / 16 × 4 / 32 × 8 | 0,39 / **0,36** / 0,39 / 0,50 | lekka klatka (mediany): dawny 0,33 → 0,20 / **0,165** / 0,17 |
+
+Poprawka (`VOLUME_LIGHT_TUNE.slices`, domyślnie; `slices = false` — dawny kernel, oba zbudowane i rozgrzane): grupa
+robocza = 8 kolumn × 20 wątków (160), wątek liczy gęstość i rozproszenie SWOICH 2 plastrów (ta sama funkcja
+`_sliceLight` co dawny kernel), wyniki idą do pamięci grupy (vec4 + f32 na plaster, 6,4 KiB), po barierze (w
+jednolitym przepływie — bez wcześniejszego wyjścia) 8 sąsiednich wątków jednego warpu całkuje po swojej kolumnie od
+stropu w dół, w tej samej kolejności i z tą samą arytmetyką. Warp to plastry jednej, najwyżej dwóch sąsiednich kolumn:
+ta sama lista komórki, ten sam przebieg pętli świateł. Łańcuch szeregowy wątku: 2 plastry zamiast 40; wątków 20 × więcej.
+Lustro CPU podziału wątków `volumeSliceThread` / `volumeSliceThreads`, test `tests/beltVolumeLight.test.mjs`.
+
+**Bit w bit — pułapka sterownika.** Pierwszy podział (S = inS · rho·dz·gain i tHalf liczone w wątku plastra, w pamięci
+grupy S) dawał 1 ULP f16 w ~0,002% tekseli rgb (391 / 23,4 mln, od plastra 1 — plaster 0 ma T = 1 i acc = 0), a
+przeniesienie exp do wątku całkującego — także w alfie. Sterownik (D3D12, RTX 5080) przestawia iloczyny (fast-math)
+zależnie od tego, co jest zmienną w wątku: S · T · tHalf liczone jak w dawnym kernelu wymaga, żeby S = inS · k1 powstało
+w wątku całkującym z inS i k1 = rho·dz·gain zapisanych osobno (`toVar` w tych samych miejscach), a tHalf w wątku
+plastra. W tej postaci: **0 różnych słów na 23,4 mln** w każdej z 6 klatek bitwy (do 78 świateł w komórce) i w każdym
+układzie grupy; kontrola dawny ↔ dawny 0 (`scripts/webgpu/pas-swiatlo-gra.mjs` — oba kernele na tych samych wejściach
+w tej samej klatce, kopia tekstury do bufora i odczyt z GPU). Zrzuty A/B zatrzymanej klatki bitwy (355 świateł, do 56
+w komórce): dawny ↔ nowy 11–12 pikseli o 1/255, kontrola tego samego kernela 13–16 pikseli o 1/255. Nowa zmiana podziału tego kernela (albo podobnego, z całką
+po fazach) — sprawdzać odczytem tekstury, nie z góry.
+
+| 5120 × 1440, Ultra, skala 1, okno 240 Hz, A/B co 4 s w tej samej bitwie, 2 × 80 s | dawny | nowy |
+|---|---|---|
+| rzeź (≥ 40 s): `beltVolumeLight` śr. | 0,447 / 0,589 ms | **0,134 / 0,158 ms** |
+| lekka faza (< 30 s): `beltVolumeLight` śr. | 0,284 / 0,239 ms | **0,124 / 0,192 ms** |
+| rzeź: compute klatki śr. (gaz różny w oknach: 0,85 / 0,97, 0,78 / 0,99) | 1,78 / 1,99 ms | 1,65 / 1,76 ms |
+| bitwa ≥ 30 s kl/s | 148,6 / 157,2 | **157,2 / 164,9** |
+| cała bitwa kl/s; wiek obrazu; skoki treści | 159,9 / 153,6; 4,78 / 5,10; 10% / 19% | **166,6 / 164,8; 4,44 / 4,59; 8% / 13%** |
+
+Co zostaje w compute rzezi: symulacja gazu wybuchów ~0,8–1 ms (krok siatki podstawowej w jednej klatce — § 7.4), bloom
+z mgłą ~0,3, reszta drobna. Render: pass ortho ~1 ms, maska słońca 0,5, post 0,45.
+
 ## 8. Decyzje i to, czego nie zrobiono
 
 - **Opóźnienie za płynność:** pacer trzyma wiek obrazu ~4 klatek przy 240 Hz w bitwie (~17 ms od treści do ekranu,
@@ -493,6 +550,11 @@ pasa gazu (~0,15 ms; dokładnie — tylko przybliżeniem), bloom z mgłą 0,3. W
   `lightCache`, krok w locie), `gasGridSet.js` (`stagger`), `gasVolume.js` (`_occRange`), `explosions/explosionFx.js`
   (`marchSkip`, `gasLightCache`, `gasStagger`); testy `tests/gasOccupancy.test.mjs`, `tests/gasStagger.test.mjs`,
   `renderPerfGates`; narzędzia `scripts/webgpu/gpu-passy-worker.js`, `gpu-passy-wynik.js`, `rytm-bitwy.mjs --wkKoniec`.
+- § 7.5: `src/3d/asteroids/volumetrics.js` (kernel `plastry`, `VOLUME_LIGHT_TUNE`, `volumeSliceThread(s)`),
+  `asteroidBelt.js` (rozgrzewka obu kerneli); test `tests/beltVolumeLight.test.mjs`; narzędzia
+  `scripts/webgpu/pas-swiatlo-gra.mjs` (+ moduł strony `pas-swiatlo-sonda.js`: dokładność odczytem tekstury, rozkład
+  pracy, `--koszt` — czas kernela na zatrzymanej klatce, zrzuty A/B) i `pas-swiatlo-worker.js` (rozkład świateł w workerze
+  w trakcie `rytm-bitwy.mjs`).
 - Pomiar: `node scripts/webgpu/rytm-bitwy.mjs [--sklad 50,20,10,3] [--zoom 0.45] [--czas 40] [--query renderWorker=1]
   [--slad 0] [--out katalog]`; A/B: `--query "renderWorker=1&rwPacing=0&npcLerp=0"`; analiza zapisu: `--analiza katalog`.
   Okno wychodzi na ekran (vsync wymaga widocznego okna). Wyniki tego audytu: `.tmp/rytm/` (poza gitem).

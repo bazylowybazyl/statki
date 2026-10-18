@@ -376,7 +376,8 @@ export class AsteroidBelt {
   _prewarmCompute() {
     const renderer = this.renderer;
     try {
-      renderer.compute(this.volume.node, 1);
+      // Ośrodek: oba kernele (lista świateł kolumny i dawna pętla komórki — przełącznik A/B VOLUME_LIGHT_TUNE).
+      for (const node of this.volume.computeNodes()) renderer.compute(node, 1);
       const S = this.sparks.U;
       S.count.value = 0;
       renderer.compute(this.sparks.spawnNode, 1);
