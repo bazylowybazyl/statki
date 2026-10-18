@@ -195,8 +195,8 @@ function electronMain(distRoot, userData, query, W, H) {
   sub("const DIST_ROOT = path.resolve(__dirname, '../dist');", `const DIST_ROOT = ${JSON.stringify(distRoot)};`);
   sub("const USER_DATA_DIR = path.join(app.getPath('documents'), 'HULLFALL');", `const USER_DATA_DIR = ${JSON.stringify(userData)};`);
   sub('migrateLegacySaves();\n', '// pomiar RW-02: bez migracji zapisów\n');
-  sub("const { app, BrowserWindow, net, protocol } = require('electron');",
-    "const { app, BrowserWindow, net, protocol } = require('electron');\n// pomiar RW-02: okno w tle nie traci klatek (zasłonięte okno Windows = ukryte)\napp.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');");
+  sub("const { app, BrowserWindow, ipcMain, net, protocol, session } = require('electron');",
+    "const { app, BrowserWindow, ipcMain, net, protocol, session } = require('electron');\n// pomiar RW-02: okno w tle nie traci klatek (zasłonięte okno Windows = ukryte)\napp.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');");
   sub('    width: 1280,\n    height: 800,', `    width: ${W},\n    height: ${H},\n    useContentSize: true,\n    show: false,`);
   sub('      webSecurity: true,', '      webSecurity: true,\n      backgroundThrottling: false,');
   sub('win.loadURL(`${APP_SCHEME}://${APP_HOST}/index.html`);', `win.loadURL(\`\${APP_SCHEME}://\${APP_HOST}/dema/render-worker-proto.html?${query}\`);\n  win.showInactive();`);
@@ -212,6 +212,7 @@ async function startElectron(W, H, query) {
   const mainFile = join(base, 'electron', 'main.js');
   mkdirSync(join(base, 'electron'), { recursive: true });
   writeFileSync(mainFile, electronMain(dist, userData, query, W, H));
+  writeFileSync(join(base, 'electron', 'preload.js'), readFileSync(join(repo, 'electron/preload.js'), 'utf8'));
   writeFileSync(join(base, 'electron', 'package.json'), JSON.stringify({ name: 'rw02-pomiar', main: 'main.js' }));
   const exe = join(repo, 'node_modules/electron/dist/electron.exe');
   const port = 9600 + Math.floor(Math.random() * 300);

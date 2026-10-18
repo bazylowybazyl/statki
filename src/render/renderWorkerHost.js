@@ -41,7 +41,7 @@ function plainLayout(layout) {
   try { return structuredClone(layout); } catch (_) { return JSON.parse(JSON.stringify(layout)); }
 }
 
-export function createRenderWorkerHost({ packer, slots, commands = null, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, autoGfx = null, onError = null }) {
+export function createRenderWorkerHost({ packer, slots, commands = null, gameCanvas, mainCanvas = null, W, H, dpr = 1, quality = null, autoGfx = null, onError = null, pacing: pacingDefault = true }) {
   const retBuffer = createReturnBuffer();
   const ret = createReturnViews(retBuffer);
   const worker = new Worker(new URL('./render.worker.js', import.meta.url), { type: 'module' });
@@ -51,9 +51,13 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   view3d.id = 'rw-3d';
   // Stały wiek obrazu (audyt 2026-10-17, src/render/framePacer.js): bitmapy workera czekają w kolejce i są składane na
   // początku klatki strony (`present` z pętli gry) z wiekiem docelowym — bez tego w dużej bitwie przy 240 Hz treść 3D
-  // stała klatkę i przeskakiwała o dwie w ~44% klatek. `?rwPacing=0` — złożenie od razu po przyjściu (dawniej, A/B).
+  // stała klatkę i przeskakiwała o dwie w ~44% klatek. `?rwPacing=0` — złożenie od razu po przyjściu (dawniej, A/B),
+  // `?rwPacing=1` — stały wiek niezależnie od wołającego. Bez VSync (Electron, Opcje → Grafika) wołający podaje
+  // `pacing: false`: klatek strony nie taktuje odświeżanie ekranu, więc wiek w klatkach strony nic nie wyrównuje,
+  // a czekanie bitmapy w kolejce tylko dokłada opóźnienia.
   // Pierścień o kanwę dłuższy: chronione są wszystkie klatki w drodze (wiek do 5 klatek).
-  const pacing = !(typeof location !== 'undefined' && /[?&]rwPacing=0(?:&|$)/.test(location.search));
+  const pacingQuery = typeof location !== 'undefined' ? (/[?&]rwPacing=([01])(?:&|$)/.exec(location.search) || [])[1] : undefined;
+  const pacing = pacingQuery === '0' ? false : pacingQuery === '1' ? true : pacingDefault !== false;
   const pacer = new FramePacer();
   const ring = new OverlayRing(pacing ? OVERLAY_RING_DEFAULT + 1 : OVERLAY_RING_DEFAULT);
   const ringCanvases = [];

@@ -1,0 +1,217 @@
+{
+  "design": "VESPER III / forked capital carrier",
+  "independent_design": false,
+  "reference_assets": [
+    "reference.png"
+  ],
+  "axes_blender": "+X bow; +Z up",
+  "axes_glTF": "+X bow; +Y up",
+  "dimensions_blender": [
+    352.2671661376953,
+    124.76856994628906,
+    105.02307891845703
+  ],
+  "triangle_count": 344206,
+  "vertex_count": 183783,
+  "mesh_objects": 1271,
+  "height_to_length": 0.2981347369666728,
+  "source": "scripts/blender/vesper_forked.py",
+  "game_integration": false,
+  "stage": "editable concept model, no game LOD or collision fitting",
+  "design_method": "New volumetric meshes following the user-supplied 2D silhouette; no game assets used",
+  "main_engines": 5,
+  "side_engines": 4,
+  "drone_bays": 2,
+  "weapon_geometry": false,
+  "attachment_nodes": [
+    {
+      "name": "HP_MAIN_AFT_-1_0",
+      "type": "main",
+      "position_blender": [
+        -101,
+        -46,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_AFT_-1_1",
+      "type": "main",
+      "position_blender": [
+        -78,
+        -46,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_AFT_-1_2",
+      "type": "main",
+      "position_blender": [
+        -52,
+        -46,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_-1_0",
+      "type": "main",
+      "position_blender": [
+        32,
+        -34,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_-1_1",
+      "type": "main",
+      "position_blender": [
+        66,
+        -34,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_-1_2",
+      "type": "main",
+      "position_blender": [
+        108,
+        -26,
+        20
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_-1_3",
+      "type": "main",
+      "position_blender": [
+        138,
+        -21,
+        17
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_-1_4",
+      "type": "main",
+      "position_blender": [
+        164,
+        -14,
+        13
+      ]
+    },
+    {
+      "name": "HP_SPECIAL_-1_0",
+      "type": "special",
+      "position_blender": [
+        -96,
+        -20,
+        32
+      ]
+    },
+    {
+      "name": "HP_SPECIAL_-1_1",
+      "type": "special",
+      "position_blender": [
+        -55,
+        -20,
+        32
+      ]
+    },
+    {
+      "name": "HP_MAIN_AFT_1_0",
+      "type": "main",
+      "position_blender": [
+        -101,
+        46,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_AFT_1_1",
+      "type": "main",
+      "position_blender": [
+        -78,
+        46,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_AFT_1_2",
+      "type": "main",
+      "position_blender": [
+        -52,
+        46,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_1_0",
+      "type": "main",
+      "position_blender": [
+        32,
+        34,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_1_1",
+      "type": "main",
+      "position_blender": [
+        66,
+        34,
+        22
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_1_2",
+      "type": "main",
+      "position_blender": [
+        108,
+        26,
+        20
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_1_3",
+      "type": "main",
+      "position_blender": [
+        138,
+        21,
+        17
+      ]
+    },
+    {
+      "name": "HP_MAIN_BOW_1_4",
+      "type": "main",
+      "position_blender": [
+        164,
+        14,
+        13
+      ]
+    },
+    {
+      "name": "HP_SPECIAL_1_0",
+      "type": "special",
+      "position_blender": [
+        -96,
+        20,
+        32
+      ]
+    },
+    {
+      "name": "HP_SPECIAL_1_1",
+      "type": "special",
+      "position_blender": [
+        -55,
+        20,
+        32
+      ]
+    },
+    {
+      "name": "SOCKET_REACTOR",
+      "type": "reactor",
+      "position_blender": [
+        -28,
+        0,
+        11.8
+      ]
+    }
+  ]
+}

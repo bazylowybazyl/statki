@@ -473,6 +473,9 @@
 #main-menu .menu-chip[hidden],
 #main-menu .mm-note[hidden] { display: none; }
 #main-menu .menu-chip.mm-chip-static { cursor: default; }
+/* chip nieczynny (VSync w przeglądarce, samouczek bez kampanii) */
+#main-menu .menu-chip:disabled { cursor: not-allowed; opacity: 0.4; }
+#main-menu .menu-chip:disabled:not(.active) { color: #b7c1c8; border-color: rgba(255, 255, 255, 0.14); }
 #main-menu .mm-gfx-preset .menu-chip { min-width: calc(86 * var(--mm-u)); }
 #main-menu .mm-note-warn { color: var(--mm-amber); }
 #main-menu .mm-note-warn .menu-chip { margin-left: calc(8 * var(--mm-u)); padding: calc(4 * var(--mm-u)) calc(10 * var(--mm-u)); font-size: calc(11 * var(--mm-u)); }

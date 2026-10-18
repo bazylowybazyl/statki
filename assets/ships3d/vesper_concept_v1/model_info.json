@@ -1,0 +1,19 @@
+{
+  "design": "VESPER / expedition vessel",
+  "independent_design": true,
+  "reference_assets": [],
+  "axes_blender": "+X bow; +Z up",
+  "axes_glTF": "+X bow; +Y up",
+  "dimensions_blender": [
+    155.5500030517578,
+    81.99832153320312,
+    89.42308044433594
+  ],
+  "triangle_count": 137504,
+  "vertex_count": 73517,
+  "mesh_objects": 500,
+  "height_to_length": 0.5748831802631418,
+  "source": "scripts/blender/vesper_concept.py",
+  "game_integration": false,
+  "stage": "editable concept model, no game LOD or collision fitting"
+}

@@ -1,0 +1,19 @@
+{
+  "design": "VESPER / capital expedition carrier",
+  "independent_design": true,
+  "reference_assets": [],
+  "axes_blender": "+X bow; +Z up",
+  "axes_glTF": "+X bow; +Y up",
+  "dimensions_blender": [
+    352.54998779296875,
+    81.99832153320312,
+    93.52307891845703
+  ],
+  "triangle_count": 275408,
+  "vertex_count": 154517,
+  "mesh_objects": 1028,
+  "height_to_length": 0.2652760804331029,
+  "source": "scripts/blender/vesper_capital.py",
+  "game_integration": false,
+  "stage": "editable concept model, no game LOD or collision fitting"
+}

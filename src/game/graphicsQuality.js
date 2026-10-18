@@ -42,8 +42,26 @@ export const GFX_SETTINGS = Object.freeze({
   spaceDust: { values: ['on', 'off'], def: 'on', legacyKey: 'sc_space_dust', preset: false },
   // Rozdzielczość dynamiczna (src/game/dynamicResolution.js): docelowe FPS — gdy czas GPU klatki przekracza
   // budżet, skala renderu schodzi stopniami poniżej renderScale; 'off' — stała skala. Preferencja poza presetami.
-  dynamicRes: { values: ['off', '60', '120'], def: 'off', preset: false }
+  dynamicRes: { values: ['off', '60', '120'], def: 'off', preset: false },
+  // VSync: 'on' — klatki w takcie odświeżania ekranu, 'off' — bez limitu klatek. Tylko gra w Electronie (flagi
+  // Chromium przy starcie procesu — electron/main.js, plik Dokumenty\HULLFALL\uruchomienie.json przez preload;
+  // tam też źródło wyboru); w przeglądarce VSync ustawia przeglądarka. Preferencja poza presetami.
+  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true }
 });
+
+/**
+ * Ustawienia z `restart: true`, których wybór różni się od działającego w tym uruchomieniu — do informacji
+ * „zmieni się po ponownym uruchomieniu”. `running`: { msaa — próbki celu sceny tej strony, vsync — VSync tego
+ * uruchomienia (true / false; inna wartość — nieznany, np. przeglądarka: pomijany) }.
+ */
+export function gfxRestartPending(settings, running) {
+  const s = normalizeGfx(settings);
+  const out = [];
+  if (!running) return out;
+  if (Number.isFinite(Number(running.msaa)) && (s.msaa > 0) !== (Number(running.msaa) > 0)) out.push('msaa');
+  if (typeof running.vsync === 'boolean' && (s.vsync !== 'off') !== running.vsync) out.push('vsync');
+  return out;
+}
 
 // Docelowe FPS rozdzielczości dynamicznej (0 = wyłączona).
 export function gfxDynamicTargetFps(value) {

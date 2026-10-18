@@ -383,7 +383,7 @@
                 </div>
                 <p class="mm-note">Preset ustawia wszystko poniżej naraz; każde ustawienie można potem zmienić osobno (wtedy „Własna”). Niska — słabsze karty i laptopy, Wysoka — pełna jakość w rozdzielczości ekranu, Ultra — nadpróbkowanie, ring z mapami 16K i większe budżety efektów.</p>
                 <p class="mm-note" data-gfx-auto hidden></p>
-                <p class="mm-note mm-note-warn" data-gfx-restart hidden>Wygładzanie krawędzi zmieni się po ponownym uruchomieniu gry. <button class="menu-chip" data-gfx-reload>Uruchom ponownie</button></p>
+                <p class="mm-note mm-note-warn" data-gfx-restart hidden><span data-gfx-restart-text>Wygładzanie krawędzi zmieni się po ponownym uruchomieniu gry.</span> <button class="menu-chip" data-gfx-reload>Uruchom ponownie</button></p>
               </div>
               <div class="mm-field">
                 <div class="mm-field-label">Rozdzielczość renderu 3D</div>
@@ -405,6 +405,16 @@
                   <button class="menu-chip" data-gfx-dyn-res="120">120 FPS</button>
                 </div>
                 <p class="mm-note">Gdy karta graficzna nie nadąża za wybraną liczbą klatek (np. w dużej bitwie), rozdzielczość renderu schodzi stopniami — najwyżej trzy poniżej ustawionej (100% → 85% → 75% → 67%) — i wraca, gdy jest zapas. <span data-gfx-dyn-now hidden></span></p>
+              </div>
+              <div class="mm-field">
+                <div class="mm-field-label">VSync (synchronizacja pionowa)</div>
+                <div class="menu-chip-group" role="group" aria-label="VSync">
+                  <button class="menu-chip" data-gfx-vsync="on">Wł.</button>
+                  <button class="menu-chip" data-gfx-vsync="off">Wył.</button>
+                </div>
+                <p class="mm-note">Wł. — klatki w takt odświeżania monitora: równy obraz bez rozdarć. Wył. — gra rysuje tyle klatek, ile zdąży: więcej FPS i mniejsze opóźnienie, za to karta graficzna i procesor pracują na pełnych obrotach (także w menu), a obraz może się rozdzierać. Zmiana działa od następnego uruchomienia gry.</p>
+                <p class="mm-note" data-gfx-vsync-browser hidden>W przeglądarce o VSync decyduje przeglądarka — opcja działa w grze uruchomionej z instalatora albo wersji przenośnej.</p>
+                <p class="mm-note mm-note-warn" data-gfx-vsync-pending hidden><span data-gfx-vsync-pending-text></span> <button class="menu-chip" data-gfx-reload>Uruchom ponownie</button></p>
               </div>
               <div class="mm-field">
                 <div class="mm-field-label">Wygładzanie krawędzi (MSAA)</div>
@@ -895,10 +905,13 @@
     // trafia do celów sceny od razu; zapis i informacja „dobrane automatycznie” — blok „OPCJE GRAFIKI”
     // (window.__gfxAuto). ?grafikaAuto=0 — bez doboru, =1 — dobór także przy zapisanych ustawieniach (próby);
     // window.__GFX_AUTO_FAKE = { vendor, architecture, … } przed wczytaniem — atrapa opisu adaptera (narzędzia).
+    // VSync (gra w Electronie — electron/preload.js, window.hullfallApp): wybór z pliku ustawień startu
+    // (Dokumenty\HULLFALL\uruchomienie.json — z niego main.js ustawia flagi Chromium), nie z localStorage.
     {
       const urlPreset = gfxPresetFromQuery(location.search);
       let gfx = loadGfxSettings(localStorage);
       if (urlPreset) gfx = gfxWithPreset(gfx, urlPreset);
+      if (window.hullfallApp) gfx = { ...gfx, vsync: window.hullfallApp.vsyncSaved === false ? 'off' : 'on' };
       window.__gfxBoot = Object.freeze({ ...gfx, urlPreset });
       Core3D.configureQuality({ renderScale: gfx.renderScale, msaa: gfx.msaa });
       const autoMode = gfxAutoFromQuery(location.search);
@@ -1422,7 +1435,7 @@
     // Opcje grafiki (presety jakości, zapis sc_gfx) — blok „OPCJE GRAFIKI” przy opcjach menu.
     import {
       normalizeGfx, normalizeGfxValue, matchGfxPreset, saveGfxSettings, gfxWithPreset, gfxBloomScale, hasSavedGfx,
-      gfxDynamicTargetFps, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY
+      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY
     } from "./src/game/graphicsQuality.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
@@ -28636,7 +28649,9 @@
         rwHost = createRenderWorkerHost({
           packer: renderSnapshot, slots: RenderSlots, commands: RenderCommands, gameCanvas: canvas, mainCanvas: document.getElementById('webgl-layer'), W, H,
           dpr: window.devicePixelRatio || 1, quality: { renderScale: Core3D.renderScale, msaa: Core3D.msaaBoot },
-          autoGfx: window.__gfxAutoWorker || null
+          autoGfx: window.__gfxAutoWorker || null,
+          // VSync wył. (Electron, Opcje → Grafika): bez stałego wieku obrazu — złożenie od razu po przyjściu
+          pacing: !(window.hullfallApp && window.hullfallApp.vsync === false)
         });
         window.RenderWorkerHost = rwHost;
         // RW-41c: strona bez urządzenia GPU — brak WebGPU w workerze = komunikat w menu; teren ringu Ziemi z mapy CPU
@@ -33386,11 +33401,35 @@
     const GFX_CHIP_ATTR = Object.freeze({
       renderScale: 'gfxScale', msaa: 'gfxMsaa', bloom: 'gfxBloom', heatHaze: 'gfxHeat', explosions: 'gfxExplosions',
       effects: 'gfxEffects', hallDust: 'gfxHallDust', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
-      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes'
+      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'
     });
     const gfxChipSelector = (attr) => `[data-${attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]`;
     let gfxSettings = normalizeGfx(window.__gfxBoot || null);
     const GFX_PRESET_NAMES = Object.freeze({ low: 'Niska', medium: 'Średnia', high: 'Wysoka', ultra: 'Ultra' });
+
+    // VSync — tylko gra w Electronie (electron/preload.js → window.hullfallApp): flagi Chromium ustawia main.js przy
+    // starcie procesu z pliku ustawień startu, więc wybór zapisujemy tam (setVsync), a zmiana działa po ponownym
+    // uruchomieniu aplikacji (relaunch — samo przeładowanie strony nie wystarczy). W przeglądarce opcja nieczynna.
+    const hullfallApp = window.hullfallApp || null;
+    let gfxVsyncSaved = hullfallApp ? hullfallApp.vsyncSaved !== false : null;
+    function saveVsyncChoice(s) {
+      if (!hullfallApp) return;
+      const want = s.vsync !== 'off';
+      if (want === gfxVsyncSaved) return;
+      gfxVsyncSaved = want;
+      Promise.resolve(hullfallApp.setVsync(want)).then((saved) => {
+        if (typeof saved === 'boolean') gfxVsyncSaved = saved;
+        else console.warn('[grafika] VSync: zapis wyboru odrzucony');
+      }, (err) => console.warn('[grafika] VSync: zapis wyboru nieudany', err));
+    }
+    // Co zmieni się po ponownym uruchomieniu: MSAA (cel sceny powstał przy starcie strony), VSync (flagi procesu).
+    const gfxRestartNow = () => gfxRestartPending(gfxSettings, { msaa: Core3D.msaaBoot, vsync: hullfallApp ? hullfallApp.vsync : null });
+    function gfxRestartText(pending) {
+      const names = pending.map((k) => (k === 'msaa' ? 'Wygładzanie krawędzi' : 'VSync'));
+      if (!names.length) return '';
+      const what = names.length > 1 ? `${names.slice(0, -1).join(', ')} i ${names[names.length - 1]}` : names[0];
+      return `${what} ${names.length > 1 ? 'zmienią' : 'zmieni'} się po ponownym uruchomieniu gry.`;
+    }
 
     // Dobór przy pierwszym uruchomieniu (src/game/graphicsAutoPreset.js, hak Core3D.onAdapter w pierwszym module —
     // window.__gfxAuto): zapis jak zwykły preset + 'sc_gfx_auto' (co i dlaczego) — informacja w opcjach, dopóki
@@ -33508,11 +33547,26 @@
         btn.setAttribute('aria-pressed', on);
         if (btn.dataset.gfxPreset === 'custom') btn.hidden = !on;
       });
-      // MSAA zapisane ≠ MSAA tej strony (cel sceny powstał przy starcie) — informacja i restart (tylko w menu
-      // przed grą: przeładowanie w trakcie gry zgubiłoby bitwę).
-      const pending = (s.msaa > 0) !== (Core3D.msaaBoot > 0);
-      document.querySelectorAll('[data-gfx-restart]').forEach(el => { el.hidden = !pending; });
+      // MSAA albo VSync zapisane ≠ działające (cel sceny / flagi procesu powstały przy starcie) — informacja i restart
+      // (tylko w menu przed grą: ponowne uruchomienie w trakcie gry zgubiłoby bitwę).
+      const pending = gfxRestartNow();
+      document.querySelectorAll('[data-gfx-restart]').forEach(el => { el.hidden = pending.length === 0; });
+      document.querySelectorAll('[data-gfx-restart-text]').forEach(el => { el.textContent = gfxRestartText(pending); });
       document.querySelectorAll('[data-gfx-reload]').forEach(el => { el.hidden = gameStarted; });
+      const vsyncPending = pending.includes('vsync');
+      document.querySelectorAll('[data-gfx-vsync-pending]').forEach(el => { el.hidden = !vsyncPending; });
+      document.querySelectorAll('[data-gfx-vsync-pending-text]').forEach(el => {
+        el.textContent = `VSync ${s.vsync === 'off' ? 'wyłączy' : 'włączy'} się po ponownym uruchomieniu gry.`
+          + (hullfallApp?.portable && !gameStarted ? ' Wersja przenośna startuje ok. 20 s.' : '');
+      });
+      document.querySelectorAll('[data-gfx-vsync-browser]').forEach(el => { el.hidden = !!hullfallApp; });
+      if (!hullfallApp) {
+        document.querySelectorAll('[data-gfx-vsync]').forEach(btn => {
+          btn.disabled = true;
+          btn.classList.remove('active');
+          btn.setAttribute('aria-pressed', false);
+        });
+      }
       // „Dobrane automatycznie” — dopóki ustawienia są tym presetem.
       const auto = gfxAutoInfo && gfxAutoInfo.preset === preset ? gfxAutoInfo : null;
       document.querySelectorAll('[data-gfx-auto]').forEach(el => {
@@ -33525,6 +33579,7 @@
 
     function setGraphicsSettings(next, save = true) {
       gfxSettings = save ? saveGfxSettings(localStorage, next) : normalizeGfx(next);
+      if (save) saveVsyncChoice(gfxSettings);
       applyGraphicsSettings();
       updateGraphicsUI();
       return gfxSettings;
@@ -33549,18 +33604,28 @@
       });
     });
     document.querySelectorAll('[data-gfx-reload]').forEach(btn => {
-      btn.addEventListener('click', () => { if (!gameStarted) location.reload(); });
+      btn.addEventListener('click', () => {
+        if (gameStarted) return;
+        // VSync — nowe flagi Chromium tylko z nowym procesem: ponowne uruchomienie aplikacji; samo MSAA — przeładowanie
+        if (hullfallApp && gfxRestartNow().includes('vsync')) {
+          Promise.resolve(hullfallApp.relaunch()).then((ok) => { if (ok !== true) location.reload(); }, () => location.reload());
+          return;
+        }
+        location.reload();
+      });
     });
     // Skrypt modułu biegnie po sparsowaniu DOM — przyciski już są.
     applyGraphicsSettings();
     updateGraphicsUI();
     // Konsola / narzędzia: GraphicsQuality.set('low') albo .set({ renderScale: 0.67 }) — z zapisem;
     // .apply(…) — bez zapisu (pomiary A/B); .settings, .preset ('low' … 'ultra' | 'custom'); .auto — dobór przy
-    // pierwszym uruchomieniu (co i dlaczego); .dynamic — stan rozdzielczości dynamicznej.
+    // pierwszym uruchomieniu (co i dlaczego); .dynamic — stan rozdzielczości dynamicznej; .vsync — VSync tego
+    // uruchomienia i zapisany (Electron; w przeglądarce null).
     window.GraphicsQuality = {
       get settings() { return { ...gfxSettings }; },
       get preset() { return matchGfxPreset(gfxSettings); },
       get auto() { return gfxAutoInfo ? { ...gfxAutoInfo } : null; },
+      get vsync() { return hullfallApp ? { running: hullfallApp.vsync, saved: gfxVsyncSaved, pending: gfxRestartNow().includes('vsync') } : null; },
       get dynamic() {
         return { scale: dynResScale(), level: dynRes.level, levels: [...dynRes.levels], target: dynRes.target,
           emaMs: dynRes.ema > 0 ? +dynRes.ema.toFixed(2) : null, changes: dynRes.changes };

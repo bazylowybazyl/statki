@@ -165,3 +165,38 @@ test('zniekształcenia: siła w px ekranu × pxScale, położenie w px bufora z 
   assert.ok(Math.abs(A[DISTORT_HEADER].x - 100 * 0.5 * 0.67) < 1e-9, 'x w px bufora');
   assert.ok(Math.abs(A[DISTORT_HEADER + 1].x - 20 * 0.67) < 1e-9, 'siła w px bufora');
 });
+
+test('VSync: preferencja poza presetami (domyślnie wł., od ponownego uruchomienia); co czeka na restart', () => {
+  const d = G.defaultGfx();
+  assert.equal(d.vsync, 'on');
+  assert.equal(G.GFX_SETTINGS.vsync.preset, false);
+  assert.equal(G.GFX_SETTINGS.vsync.restart, true);
+  assert.ok(!G.GFX_PRESET_KEYS.includes('vsync'));
+  for (const id of G.GFX_PRESET_IDS) assert.equal(G.gfxWithPreset({ ...d, vsync: 'off' }, id).vsync, 'off', `preset ${id} nie rusza VSync`);
+  assert.equal(G.matchGfxPreset({ ...d, vsync: 'off' }), 'high');
+  assert.equal(G.normalizeGfxValue('vsync', 'OFF'), 'off');
+  assert.equal(G.normalizeGfxValue('vsync', 0), 'on');
+  // co zmieni się po ponownym uruchomieniu (MSAA — próbki celu sceny tej strony, VSync — flagi tego procesu)
+  assert.deepEqual(G.gfxRestartPending(d, { msaa: 4, vsync: true }), []);
+  assert.deepEqual(G.gfxRestartPending({ ...d, vsync: 'off' }, { msaa: 4, vsync: true }), ['vsync']);
+  assert.deepEqual(G.gfxRestartPending(d, { msaa: 4, vsync: false }), ['vsync']);
+  assert.deepEqual(G.gfxRestartPending({ ...d, msaa: 0, vsync: 'off' }, { msaa: 4, vsync: true }), ['msaa', 'vsync']);
+  assert.deepEqual(G.gfxRestartPending({ ...d, vsync: 'off' }, { msaa: 4, vsync: null }), [], 'przeglądarka — VSync nieznany');
+  assert.deepEqual(G.gfxRestartPending({ ...d, msaa: 0 }, { msaa: 4 }), ['msaa']);
+  assert.deepEqual(G.gfxRestartPending(d, null), []);
+});
+
+test('VSync w index.html: chipy, wybór z mostu Electrona przed startem, restart aplikacji, bez stałego wieku obrazu', () => {
+  const html = src('index.html');
+  for (const attr of ['data-gfx-vsync="on"', 'data-gfx-vsync="off"', 'data-gfx-vsync-pending', 'data-gfx-vsync-browser', 'data-gfx-restart-text']) {
+    assert.ok(html.includes(attr), `brak ${attr}`);
+  }
+  assert.match(html, /dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'/);
+  const boot = html.indexOf("vsync: window.hullfallApp.vsyncSaved === false ? 'off' : 'on'");
+  const frozen = html.indexOf('window.__gfxBoot = Object.freeze(');
+  assert.ok(boot > 0 && frozen > 0 && boot < frozen, 'wybór VSync z pliku ustawień startu przed __gfxBoot');
+  assert.match(html, /if \(save\) saveVsyncChoice\(gfxSettings\);/);
+  assert.match(html, /Promise\.resolve\(hullfallApp\.relaunch\(\)\)/);
+  assert.match(html, /pacing: !\(window\.hullfallApp && window\.hullfallApp\.vsync === false\)/);
+  assert.match(src('src/render/renderWorkerHost.js'), /pacing: pacingDefault = true \}\)/);
+});
