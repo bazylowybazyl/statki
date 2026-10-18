@@ -202,7 +202,7 @@ function attachPirateBaseBodies3D(sites) {
 /** Bryła bazy (albo null) — dev, zrzuty. */
 export function pirateBase3D() { return base; }
 
-const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, daylight: 0.3, lampPower: undefined };
+const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, tech: 1, drumQ: [1, 1, 1, 1], daylight: 0.3, lampPower: undefined };
 const _rockState = { sun: null, at: null, daylight: 0.3 };
 const _sunOpts = { sun: null, at: null };
 
@@ -241,6 +241,9 @@ export function updatePirateBase3D(dt, state = {}) {
   _state.berths = state.berths || null;
   _state.bays = state.bays ? 1 : 0;
   for (const k of ['habitat', 'disc', 'fuel', 'warehouse']) _state[k] = state[k] ?? 1;
+  // światła wnętrza (dekompresja): głowa wieży i ćwiartki bębna — bez pól jak habitat
+  _state.tech = state.tech ?? _state.habitat;
+  for (let q = 0; q < 4; q++) _state.drumQ[q] = state.drumQ ? (state.drumQ[q] ?? _state.habitat) : _state.habitat;
   _state.daylight = state.daylight ?? 0.3;
   const dead = !!state.habitatDead;
   _state.lampPower = dead ? 0.15 : undefined;

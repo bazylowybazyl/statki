@@ -126,9 +126,15 @@ export const MUZZLE_TAG = 7;
  */
 export const ENGINE_TAG = 8;
 
-/** Domena EFEKTU (nie wybuchu): wystrzał z lufy albo zapłon silnika — wybuchy mają pierwszeństwo (przejmują ją). */
+/**
+ * WYLOT POWIETRZA z wyrwy budowli bazy piratów (2026-10-19, dekompresja i pożary — src/3d/pirateBaseVents3D.js): domena
+ * strumienia pary / lodu (i ognia w wylatującym tlenie) na wyrwę; domena EFEKTU — wybuchy mają pierwszeństwo.
+ */
+export const VENT_TAG = 9;
+
+/** Domena EFEKTU (nie wybuchu): wystrzał z lufy, zapłon silnika, wylot powietrza — wybuchy mają pierwszeństwo (przejmują ją). */
 export function isEffectTag(tag) {
-  return tag === MUZZLE_TAG || tag === ENGINE_TAG;
+  return tag === MUZZLE_TAG || tag === ENGINE_TAG || tag === VENT_TAG;
 }
 
 /**

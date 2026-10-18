@@ -25,6 +25,8 @@
  * Bez three i DOM (testy i symulacja w Node: scripts/destrukcja-taran-sym.mjs --tryb upadek).
  */
 
+import { createPirateRockLayout } from '../../3d/portBuildings/pirateRockLayout.js';
+
 export const PIRATE_FALL_TUNE = {
   // grawitacja skały [j/s²] ku środkowi (stała; r0 > 0 — malejąca z kwadratem odległości od środka, g przy r0)
   gravity: 260,
@@ -165,7 +167,10 @@ function quatMat(q) {
  * mapa kształtu w WIERZCHOŁKACH siatki renderu skały (SphereGeometry segW × segH; bieguny — średnia wiersza), między
  * nimi dwuliniowo: powierzchnia zderzeń leży tam, gdzie rysuje się skała. Normalna z różnic promienia.
  */
+let _rockLayout = null;
 export function createPirateRockTerrain(rockLayout, place, shape = null, tune = PIRATE_FALL_TUNE) {
+  // układ skały (czysty, jak w pirateRockImpacts.js) — null: domyślny z pirateRockLayout
+  if (!rockLayout) rockLayout = _rockLayout || (_rockLayout = createPirateRockLayout());
   const R = rockLayout.R;
   const c = rockLayout.center;
   const g = place.toGame(c[0], c[2], {});
@@ -311,7 +316,8 @@ export function attachPirateRockTerrain(st, ctx) {
   st.terrain = T;
   const tune = ctx.tune || PIRATE_FALL_TUNE;
   const recs = st.recs || (st.recs = new Map());
-  const ev = st._ev || (st._ev = { id: 0, kind: 'debris', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, speed: 0, slide: 0, mass: 0, size: 0, energy: 0, body: null });
+  const ev = st._ev || (st._ev = { id: 0, kind: 'debris', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, speed: 0, slide: 0, mass: 0, size: 0, energy: 0,
+    vx: 0, vy: 0, vz: 0, body: null });
   T.onContact = (body, info) => {
     if (!info.doDamage) return;
     const now = ctx.simTime();
@@ -325,6 +331,7 @@ export function attachPirateRockTerrain(st, ctx) {
       ev.nx = info.nx; ev.ny = -info.ny; ev.nz = info.nz;
       ev.speed = info.approach; ev.slide = info.slide; ev.mass = body.mass;
       ev.size = Math.max(body.cellSize, body.radius); ev.energy = 0.5 * body.mass * info.approach * info.approach;
+      ev.vx = body.vel.x; ev.vy = -body.vel.y; ev.vz = body.vel.z;
       ev.body = body;
       return ev;
     };
@@ -997,7 +1004,7 @@ function settleBody(st, ctx, b, well) {
     ev.id = b.id; ev.kind = fallKindOf(b); ev.x = b.pos.x; ev.y = -b.pos.y; ev.z = b.pos.z;
     const ox = b.pos.x - well.x, oy = b.pos.y - well.y, oz = b.pos.z - well.z, ol = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
     ev.nx = ox / ol; ev.ny = -oy / ol; ev.nz = oz / ol;
-    ev.speed = 0; ev.slide = 0; ev.mass = b.mass; ev.size = b.radius; ev.energy = 0; ev.body = b;
+    ev.speed = 0; ev.slide = 0; ev.mass = b.mass; ev.size = b.radius; ev.energy = 0; ev.vx = 0; ev.vy = 0; ev.vz = 0; ev.body = b;
     ctx.hooks.onSettle(ev);
   }
 }

@@ -10,8 +10,9 @@
 
 export const PIRATE_BASE_BLOCK = Object.freeze({
   // HAS: stan obecny; FLAGS: bity hidden 1, habitatDead 2, alarm 4; BAYS 0/1; SUN_OK / DAY_OK: pole obecne
+  // TECH, DRUM_Q (4 liczby) — światła wnętrza głowy wieży i ćwiartek bębna (dekompresja, 2026-10-19)
   HEAD: Object.freeze({ HAS: 0, DT: 1, FLAGS: 2, BAYS: 3, HABITAT: 4, DISC: 5, FUEL: 6, WAREHOUSE: 7, SUN_OK: 8,
-    SUN_X: 9, SUN_Y: 10, DAY_OK: 11, DAYLIGHT: 12, BERTHS: 13, STRIDE: 16 }),
+    SUN_X: 9, SUN_Y: 10, DAY_OK: 11, DAYLIGHT: 12, BERTHS: 13, TECH: 14, DRUM_Q: 15, STRIDE: 20 }),
   BERTH_WORDS: 64,                 // 26 stanowisk na słowo (bity dokładne w mantysie)
   BITS: 26
 });
@@ -35,6 +36,8 @@ export function createPirateBaseBlock() {
       F[H.FLAGS] = (s.hidden ? 1 : 0) + (s.habitatDead ? 2 : 0) + (s.alarm ? 4 : 0);
       F[H.BAYS] = s.bays ? 1 : 0;
       F[H.HABITAT] = s.habitat; F[H.DISC] = s.disc; F[H.FUEL] = s.fuel; F[H.WAREHOUSE] = s.warehouse;
+      F[H.TECH] = s.tech ?? s.habitat;
+      for (let q = 0; q < 4; q++) F[H.DRUM_Q + q] = s.drumQ ? (s.drumQ[q] ?? s.habitat) : s.habitat;
       const sun = s.sun || null;
       F[H.SUN_OK] = sun ? 1 : 0;
       F[H.SUN_X] = sun ? sun.x : 0; F[H.SUN_Y] = sun ? sun.y : 0;
@@ -52,7 +55,8 @@ export function createPirateBaseBlock() {
 
 /** Stan klatki bazy po stronie renderu (obiekt do ponownego użycia). */
 export function createPirateBaseMirror() {
-  return { present: false, dt: 0, state: { hidden: false, habitatDead: false, alarm: false, bays: 0, berths: [], habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null } };
+  return { present: false, dt: 0, state: { hidden: false, habitatDead: false, alarm: false, bays: 0, berths: [], habitat: 1, disc: 1, fuel: 1, warehouse: 1,
+    tech: 1, drumQ: [1, 1, 1, 1], sun: null } };
 }
 
 /** Strona renderu: stan z bloku strony → `mirror.state` (dla updatePirateBase3D(mirror.dt, mirror.state)). */
@@ -66,6 +70,8 @@ export function applyPirateBaseBlock(blk, mirror) {
   s.hidden = (fl & 1) !== 0; s.habitatDead = (fl & 2) !== 0; s.alarm = (fl & 4) !== 0;
   s.bays = F[H.BAYS];
   s.habitat = F[H.HABITAT]; s.disc = F[H.DISC]; s.fuel = F[H.FUEL]; s.warehouse = F[H.WAREHOUSE];
+  s.tech = F[H.TECH];
+  for (let q = 0; q < 4; q++) s.drumQ[q] = F[H.DRUM_Q + q];
   if (F[H.SUN_OK] === 1) {
     if (!s.sun) s.sun = { x: 0, y: 0 };
     s.sun.x = F[H.SUN_X]; s.sun.y = F[H.SUN_Y];
