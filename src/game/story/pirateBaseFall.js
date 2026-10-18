@@ -723,7 +723,8 @@ export function promotePlanarPiece(st, ctx, piece, opts = {}) {
   });
   if (!hull) return 0;
   const body = hull.body;
-  body.gravityWell = wellFor(st, tune);
+  wellFor(st, tune);
+  body.gravityWell = lowerWell(st);
   // maska: komórka 3D bez żywego węzła płaskiego w rzucie (± 1 komórka płaska) — odpada bez odłamków i zdarzeń
   if (occ) {
     const m = rotOf(body.quat, _m), s = body.nodeStore;
