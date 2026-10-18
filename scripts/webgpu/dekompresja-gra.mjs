@@ -8,6 +8,7 @@
 //           storyBaseBreak): pęknięcie ćwiartki, wyrwa (strumień pary i lodu), ogień w wylatującym tlenie, szczątki;
 //           kadry w kilku chwilach z góry (zoom domyślny i bliski) i z kamery 3D (K).
 // krater  — strzały armatą Atlasa w ścianę bębna (kratery broni w ciele kawałka — HullBodies.onImpact): krótki syk.
+// taran   — szarża Atlasa w ścianę bębna (zgniot węzłów → rozdarcia → wyrwa ćwiartki, potem szyb).
 // szyja   — zerwanie szyi habitatu (window.snapPirateBaseNeck): wylot z kikuta wieży (wyrwa jedzie z bryłą) i szybu.
 // magazyn — próg punktów magazynu (pęknięcie M-1 — wylot, pożar towarów).
 // final   — habitat do zera (StoryGame._chainExplosion: ćwiartki, szyb, wieża, dysk — implozja, ogień).
@@ -242,6 +243,33 @@ async function trybKrater() {
   report.tryby.krater = { strzaly: n, kadry: rows, pipeline: await pipesSince(tp) };
 }
 
+// Taran: Atlas szarżą (2400 j/s przez 1,2 s) w ścianę bębna od południa — zgniot węzłów kawałka (straty poza bronią:
+// noteHullNodeLost → rozdarcia → wyrwa ćwiartki), dalej pierścień wewnętrzny i szyb.
+async function trybTaran() {
+  await startStory('shipyard');
+  const L = await ev(`(() => { const l = window.StoryGame.site.dock.layout; return { drumR: l.habitat.drumR }; })()`);
+  await placeHub(0, L.drumR + 1500, -Math.PI / 2);
+  await waitFor(cdp, '(window.WorldBodies?.stats?.live || 0) > 0', 30000, 200);
+  await sleep(1500);
+  await camHub(0, L.drumR + 200, ZOOM * 1.6);
+  await shot('taran-00-przed');
+  const tp = await nowMs();
+  const t0 = Date.now();
+  const r = await ev(`new Promise((res) => {
+    const d = window.StoryGame.site.dock, s = window.ship;
+    const a = d.toGame(0, 0), b = d.toGame(0, ${L.drumR + 1500});
+    const dx = a.x - b.x, dy = a.y - b.y, l = Math.hypot(dx, dy) || 1;
+    let k = 0;
+    const h = setInterval(() => {
+      s.vel.x = dx / l * 2400; s.vel.y = dy / l * 2400;
+      if (++k >= 12) { clearInterval(h); res({ breaches: window.PirateBaseAtmosphere.state().stats.breaches }); }
+    }, 100);
+  })`, 30000);
+  console.log('taran:', JSON.stringify(r));
+  const rows = await series('taran', t0, [0.8, 1.6, 3, 5]);
+  report.tryby.taran = { kadry: rows, pipeline: await pipesSince(tp) };
+}
+
 async function trybSzyja() {
   await startStory('shipyard');
   await placeHub(5200, 0, Math.PI);
@@ -298,7 +326,8 @@ async function trybFinal() {
   await shot('final-00-przed');
   const tp = await nowMs();
   const t0 = Date.now();
-  await ev(`(() => { const st = window.StoryGame.site.structures.habitat; window.applyDamageToStation(st, st.hp + 10); return true; })()`);
+  await ev(`(() => { const V = window.__pirateVents3D; if (V) { V.stats.cpuMax = 0; V.stats.cpuAvg = 0; }
+    const st = window.StoryGame.site.structures.habitat; window.applyDamageToStation(st, st.hp + 10); return true; })()`);
   const rows = await series('final', t0, CZASY || [0.5, 1.4, 2.4, 3.5, 5, 7.5, 11]);
   let rows3 = null;
   if (K3D) {
@@ -413,7 +442,7 @@ async function trybKoszt() {
   console.log(`KOSZT (${scen}) bez`, JSON.stringify([B, B2].map(row)));
 }
 
-const RUN = { prog: trybProg, krater: trybKrater, szyja: trybSzyja, magazyn: trybMagazyn, final: trybFinal, glebia: trybGlebia, koszt: trybKoszt };
+const RUN = { prog: trybProg, krater: trybKrater, taran: trybTaran, szyja: trybSzyja, magazyn: trybMagazyn, final: trybFinal, glebia: trybGlebia, koszt: trybKoszt };
 try {
   for (const t of tryby) {
     if (!RUN[t]) { console.log('nieznany tryb', t); continue; }
