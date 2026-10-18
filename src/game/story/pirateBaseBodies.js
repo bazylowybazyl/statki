@@ -29,6 +29,14 @@ export const PIRATE_BASE_SOLID = {
   disc: { cell: 45, interior: 'ribs', shellLayers: 1, ribStep: 3 },
   gravity: 400
 };
+// BRYŁY UPADKU (src/game/story/pirateBaseFall.js, 2026-10-19 — „w końcu wszystkie elementy spadają na planetoidę”):
+// bęben i szyb habitatu są w grze ciałami PŁASKIMI (taran, ostrzał w płaszczyźnie), a przy HP 0 habitatu zamieniają się
+// w bryły 3D z tych samych brył sceny (uszkodzenia z ciała płaskiego zostają: komórki bez węzła płaskiego odpadają) i
+// spadają na skałę. Szablon liczony z wyprzedzeniem (ekran ładowania — strona i worker renderu: klucz skóry 3D).
+export const PIRATE_BASE_FALL_SOLID = {
+  drum: { cell: 45, interior: 'full', shellLayers: 1, ribStep: 3 },
+  core: { cell: 45, interior: 'full', shellLayers: 1, ribStep: 3 }
+};
 // Szyb habitatu (H-C, płaski) dla brył 3D sięga najwyżej tyle pod spód wieży: podstawa przewracanej wieży schodzi pod
 // zawias (pół szyi × sin przechyłu) i nie może oprzeć się na szybie, zanim przegub pęknie.
 const CORE_COLUMN_GAP = 220;
@@ -166,12 +174,14 @@ export function pirateBaseSolidPinTest(layout, chunk, cs, bottom = 0) {
 // Bryła 3D kawałka (raz na układ — ekran ładowania): { structure, cx, cz, solids, bounds }. Układ wokselizacji F =
 // (x − cx, −(z − cz), h) — x osi budowli, −z (jak obraz ciała płaskiego), wysokość świata; (cx, cz) — środek pudła.
 const _solids3D = new WeakMap();
-export function pirateBaseSolidOf(layout, scene, chunkId, palette = null) {
-  let m = _solids3D.get(layout);
-  if (!m) _solids3D.set(layout, m = new Map());
+const _fallSolids3D = new WeakMap();
+export function pirateBaseSolidOf(layout, scene, chunkId, palette = null, table = PIRATE_BASE_SOLID) {
+  const cache = table === PIRATE_BASE_SOLID ? _solids3D : _fallSolids3D;
+  let m = cache.get(layout);
+  if (!m) cache.set(layout, m = new Map());
   if (m.has(chunkId)) return m.get(chunkId);
   const c = layout.chunkById.get(chunkId);
-  const cfg = c && PIRATE_BASE_SOLID[c.kind];
+  const cfg = c && table[c.kind];
   let out = false;
   if (cfg) {
     const solids = dryDockChunkSolids(layout, scene, [chunkId]);
@@ -208,6 +218,7 @@ export function prebuildPirateBaseBodies(layout, scene, palette = null) {
   let n = 0;
   for (const c of layout.chunks) {
     if (PIRATE_BASE_SOLID[c.kind]) { if (pirateBaseSolidOf(layout, scene, c.id, palette)) n++; continue; }
+    if (PIRATE_BASE_FALL_SOLID[c.kind]) pirateBaseSolidOf(layout, scene, c.id, palette, PIRATE_BASE_FALL_SOLID);
     const r = cachedRaster(layout, scene, c.id, palette);
     if (!r) continue;
     HullBodies.structureFor(r.image, r.upp, cellOf(c) / r.upp);
@@ -317,7 +328,9 @@ export function createPirateBaseSites(owners, base, place, hooks = {}) {
       const pinHub = pirateBasePinTest(layout, c);
       let raster = null;
       let nodes = -1;
+      const fall3d = PIRATE_BASE_FALL_SOLID[c.kind] ? fallPiece(layout, scene, place, c, palette, { x0, y0, x1, y1 }) : null;
       pieces.push({
+        fall3d,
         id: c.id, kind: c.kind, label: c.label, group: c.group, weight: c.weight, chunk: c, structure,
         bounds: { x0, y0, x1, y1 },
         material: pirateBaseMaterial(c.kind),
@@ -354,9 +367,47 @@ export function createPirateBaseSites(owners, base, place, hooks = {}) {
     sites[structure] = {
       id: `pbase:${structure}:${owner?.id || 'PB'}`,
       owner, structure, base, place, pieces,
+      // bryły upadku kawałków płaskich (poza listą kawałków — worldBodies ich nie buduje; obraz piecze ich skórę 3D)
+      fallPieces: pieces.filter((p) => p.fall3d).map((p) => p.fall3d),
       onLive: hooks.onLive || null,
       onLost: hooks.onLost || null
     };
+    for (const p of pieces) if (p.fall3d) { p.fall3d.site = sites[structure]; p.fall3d.planar = p; }
   }
   return sites;
+}
+
+// BRYŁA UPADKU kawałka płaskiego (bęben, szyb): rekord jak kawałek-bryła (solid3D, solidFrame, rasterCenter — obraz:
+// skóra 3D z grupy renderu kawałka), bez ciała w worldBodies — ciało tworzy src/game/story/pirateBaseFall.js
+// (promotePlanarPiece) przy HP 0 habitatu. id = id kawałka + '~3d' (lustro w workerze renderu: worldRef).
+function fallPiece(layout, scene, place, c, palette, bounds) {
+  const cfg = PIRATE_BASE_FALL_SOLID[c.kind];
+  const half = -place.axis * 0.5;
+  const quat = { x: 0, y: 0, z: Math.sin(half), w: Math.cos(half) };
+  const sol = () => pirateBaseSolidOf(layout, scene, c.id, palette, PIRATE_BASE_FALL_SOLID);
+  return {
+    id: `${c.id}~3d`, kind: c.kind, label: c.label, group: c.group, weight: c.weight, chunk: c,
+    bounds,
+    material: pirateBaseMaterial(c.kind),
+    ghost: false,
+    solid3D: true,
+    fallOf: c.id,
+    cellSize: cfg.cell,
+    skinEdgeCells: SKIN_EDGE_CELLS[c.kind] || 3,
+    pinGridCells: 0,
+    site: null, state: 'fall', entity: null, islands: [], lost: false, touched: true,
+    build() { return null; },
+    // poza szablonu w świecie silnika (jak solidPiece.buildSolid — ciało swobodne, bez kotwic)
+    buildSolid() {
+      const s = sol();
+      if (!s) return null;
+      const g = place.toGame(s.cx, s.cz, {});
+      return { structure: s.structure, position: { x: g.x, y: -g.y, z: 0 }, quaternion: quat };
+    },
+    pins() { return false; },
+    solidFrame() { const s = sol(); return s ? { cx: s.cx, cz: s.cz, structure: s.structure } : null; },
+    rasterCenter() { const s = sol(); return s ? { x: s.cx, z: s.cz } : null; },
+    nodeCount() { const s = sol(); return s ? s.structure.nodeStore.count : 0; },
+    available() { return true; }
+  };
 }
