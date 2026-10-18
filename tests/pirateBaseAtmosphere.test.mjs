@@ -7,7 +7,7 @@ import { placePirateBase } from '../src/game/story/pirateBaseSite.js';
 import {
   ATMO_TUNE, attachPirateBaseAtmosphere, breach, ignite, noteBaseChunkBreak, noteBaseCrater, noteBaseNodeLost,
   noteBaseNeckSnap, noteBaseBlast, pirateBaseAtmoModules, pirateBaseAtmosphereState, pirateBaseVentFrame,
-  stepPirateBaseAtmosphere, pirateBaseAtmoFlicker, detachPirateBaseAtmosphere
+  stepPirateBaseAtmosphere, pirateBaseAtmoFlicker, detachPirateBaseAtmosphere, rehomePirateBaseVents
 } from '../src/game/story/pirateBaseAtmosphere.js';
 import { VENT_REC, VENT_MAX, createPirateVentsBlock, applyPirateVentsBlock, createPirateVentsFrame } from '../src/render/blocks/pirateVentsBlock.js';
 
@@ -168,6 +168,33 @@ test('wyrwa przyczepiona do ciała płaskiego: obrót encji obraca punkt i norma
   assert.ok(Math.abs(v.nx) < 1e-9 && Math.abs(v.ny - 1) < 1e-9);
   assert.equal(v.vx, 50);
   assert.ok(m);
+});
+
+test('awans płaskiego odłamu do bryły 3D: wyrwa przechodzi na nową encję; obca wyrwa daleko od ciała zostaje', () => {
+  fresh();
+  const hx = place.habitat.x, hy = place.habitat.y;
+  // płaski odłam ćwiartki z wyrwą zgniotu
+  const flat = { x: hx + 1200, y: hy, angle: 0, vx: 0, vy: 0, angVel: 0, dead: false };
+  const id = breach({ module: 'H-E', x: hx + 1300, y: hy, z: 0, nx: 1, ny: 0, nz: 0, size: 120, entity: flat });
+  // druga wyrwa tego modułu na innym (już martwym) ciele — 3 km dalej
+  const other = { x: hx + 4200, y: hy, angle: 0, vx: 0, vy: 0, angVel: 0, dead: false };
+  const id2 = breach({ module: 'H-E', x: hx + 4300, y: hy + 40, z: 0, nx: 1, ny: 0, nz: 0, size: 110, entity: other, kind: 'main' });
+  stepPirateBaseAtmosphere(DT);
+  other.dead = true;
+  stepPirateBaseAtmosphere(DT);
+  // fizyka upadku: nowa bryła w miejscu odłamu (płaski znika) — przejęcie od rodzica
+  const body = { pos: { x: hx + 1200, y: -hy, z: 0 }, vel: { x: 0, y: 0, z: -150 }, angVel: { x: 0, y: 0, z: 0 },
+    quat: { x: 0, y: 0, z: 0, w: 1 }, planar: false, dead: false, radius: 260 };
+  const solid = { x: hx + 1200, y: hy, solid3D: true, beamHull: { body, solid3D: true, dmgKey: 5 } };
+  solid.beamHull.entity = solid;
+  flat.dead = true;
+  assert.equal(rehomePirateBaseVents(solid, flat, 'H-E'), 1);
+  const v = ventById(id), v2 = ventById(id2);
+  assert.equal(v.ent, solid);
+  assert.notEqual(v2.ent, solid, 'obca wyrwa 3 km dalej nie przechodzi na bryłę');
+  body.pos.z = -400;
+  stepPirateBaseAtmosphere(DT);
+  assert.ok(Math.abs(v.wz + 400) < 1e-6 && Math.abs(v.wx - (hx + 1300)) < 1e-6, `${v.wx}, ${v.wz}`);
 });
 
 test('zerwanie szyi: wyrwa u spodu wieży (z bryłą) i u szczytu szybu', () => {
