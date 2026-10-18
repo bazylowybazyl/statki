@@ -67,6 +67,7 @@ function ensureRock() {
   rockSite = new PirateRockSite3D({ layout, frame: portModuleFrame(0, 0, 0), layer: LAYER_BG, name: 'Osada piratów na planetoidzie' });
   rockSite.root.userData.fgCategory = 'stations';
   rockImpact = new RockImpactFx({ layer: LAYER_BG, core: Core3D });
+  rockImpact.onScar = (x, y, z, r, k) => rock.addScar(x, y, z, r, k);
   setRockImpactHost(rockImpact);
   return rock;
 }
@@ -157,6 +158,7 @@ function attachPirateRock(basePlace) {
   rockSite.update(0, {});
   // uderzenia: środek skały w scenie (x gry, −y gry, h) — początek siatek cząstek
   rockImpact.reset();
+  rock.clearScars();
   rockImpact.setRock(rockAt.x, -rockAt.y, c[1], rock.layout.R);
   for (const r of [rock.root, rockSite.root, rockSite.fx.root, rockImpact.root]) {
     if (r.parent !== Core3D.scene) Core3D.scene.add(r);

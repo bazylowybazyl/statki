@@ -377,3 +377,44 @@ test('RockImpactFx: uderzenie emituje cząstki (odłamki z lądowaniem, pył, pi
   fx.update(1 / 60, 1, 0);
   assert.equal(fx.alpha.mesh.visible, false);
 });
+
+test('ślady uderzeń na skale: lustro reguły (lód na dnie i w promieniach, ciemny wał), addScar w układzie siatki kuli, scalanie, sufit', async () => {
+  const { PirateRock3D, pirateRockScarCpu, PIRATE_ROCK_SCAR_CAP } = await import('../src/3d/pirateRock3D.js');
+  const { portModuleFrame } = await import('../src/3d/portBuildings/portModuleTraffic.js');
+  const c0 = pirateRockScarCpu(0, 1, 1), cRim = pirateRockScarCpu(1.0, 0, 1), cRay = pirateRockScarCpu(1.3, 1, 1), cFar = pirateRockScarCpu(3, 1, 1);
+  assert.ok(c0.ice > 0.6 && c0.dark === 0, 'dno — lód');
+  assert.ok(cRim.dark > 0.2 && cRim.ice < c0.ice, 'wał — ciemniejszy');
+  assert.ok(cRay.ice > cRim.ice, 'promień za wałem — lód');
+  assert.equal(pirateRockScarCpu(1.3, 0, 1).ice < cRay.ice, true, 'między promieniami — bez lodu');
+  assert.deepEqual(cFar, { ice: 0, dark: 0 });
+  const prevWarn = console.warn; console.warn = () => {};
+  const r = new PirateRock3D(createPirateRockLayout());
+  console.warn = prevWarn;
+  r.setFrame(portModuleFrame(4.2e6, -1.3e6, 0.7), { x: 4.2e6, y: 1.3e6 });
+  r.mesh.updateWorldMatrix(true, false);
+  const p = new THREE.Vector3(1, 0, 0).applyMatrix4(r.mesh.matrixWorld);   // stopa windy (lon 0, lat 0) w scenie
+  assert.equal(r.addScar(p.x, p.y, p.z, 600, 1), true);
+  const A = r._scarA.array, B = r._scarB.array;
+  assert.equal(r._scarCount, 1);
+  assert.ok(Math.abs(A[0].x - 1) < 1e-6 && Math.abs(A[0].y) < 1e-6 && Math.abs(A[0].z) < 1e-6, 'kierunek w układzie siatki kuli');
+  assert.ok(Math.abs(A[0].w - 600 / 16000) < 1e-9, 'promień kątowy');
+  assert.ok(Math.abs(B[0].w - Math.cos(A[0].w * 2.7)) < 1e-9, 'próg zasięgu pętli');
+  // bliski ślad — scalenie (bez nowego wpisu, większy)
+  const q = new THREE.Vector3(1, 0.01, 0).normalize().applyMatrix4(r.mesh.matrixWorld);
+  r.addScar(q.x, q.y, q.z, 500, 0.8);
+  assert.equal(r._scarCount, 1);
+  assert.ok(A[0].w > 600 / 16000);
+  // sufit: kolejne ślady w różnych miejscach — najwyżej PIRATE_ROCK_SCAR_CAP
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 40) * Math.PI * 2;
+    const w = new THREE.Vector3(Math.cos(a) * 0.6, Math.sin(a) * 0.6, 0.53).normalize().applyMatrix4(r.mesh.matrixWorld);
+    r.addScar(w.x, w.y, w.z, 300 + i * 10, 0.5 + (i % 3) * 0.3);
+  }
+  assert.equal(r._scarCount, PIRATE_ROCK_SCAR_CAP);
+  assert.equal(r._scarN.value, PIRATE_ROCK_SCAR_CAP);
+  r.clearScars();
+  assert.equal(r._scarN.value, 0);
+  // materiał skały ma własny graf barwy (colorNode) — WGSL z pętlą po śladach
+  const b = buildMesh(r.mesh);
+  assert.match(b.fragmentShader, /pirateRockScarA/);
+});
