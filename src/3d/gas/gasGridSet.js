@@ -12,7 +12,7 @@
 // Statystyki zbiorcze (`stats`) liczone po beginFrame / updateRasters / simulate — bez alokacji.
 
 const SUM_KEYS = ['active', 'sources', 'hulls', 'hullsIn', 'hullsDropped', 'masked', 'rasters', 'rasterMs', 'packMs', 'bandUploads',
-  'dropped', 'cells', 'allocs', 'releases'];
+  'dropped', 'cells', 'allocs', 'releases', 'lightSkipped', 'deferred'];
 
 export class GasGridSet {
   /** @param {import('./gasGrid.js').GasGrid[]} grids — pierwsza: siatka podstawowa (N, NZ, MS zestawu) */
@@ -39,6 +39,10 @@ export class GasGridSet {
     this.stats = {};
     for (const k of SUM_KEYS) this.stats[k] = 0;
     this.stats.substeps = 0;
+    // krok siatek rozłożony na klatki między krokami fizyki (simulate); false — wszystkie w klatce kroku (A/B)
+    this.stagger = true;
+    this._gap = 0;
+    this._sinceStep = 0;
     this._tierOf = new Int8Array(this.S);
     for (const s of this.slots) this._tierOf[s.gid] = s.tier;
   }
@@ -93,9 +97,22 @@ export class GasGridSet {
   beginFrame() { for (const g of this.grids) g.beginFrame(); this._sum(); }
   updateRasters() { for (const g of this.grids) g.updateRasters(); this._sum(); }
 
-  /** Krok wszystkich siatek (każda swoje renderer.compute; bez domen — bez zleceń). */
+  /**
+   * Krok wszystkich siatek (każda swoje renderer.compute; bez domen — bez zleceń).
+   * STAGGER (2026-10-18, docs/AUDYT-render-worker-2026-10-17.md § 7.4): zegar wybuchów to czas fizyki gry (kroki co
+   * 1/60 s), więc przy 240 kl/s podkrok przychodzi co ~4. klatkę i wszystkie siatki liczyły go w tej samej klatce (pik
+   * compute 3,6–5,3 ms na p95 w rzezi przy 5120 × 1440). Siatka t (0 — podstawowa, 1 — „fine”, 2 — „coarse”) zleca
+   * krok w locie min(t, odstęp − 1) klatek później (odstęp = klatki między dwoma ostatnimi krokami): ten sam stan
+   * symulacji, obraz tej siatki o tyle klatek później. Przy klatce ≤ kroku fizyki (60 kl/s) — bez przesunięcia.
+   */
   simulate(renderer, dt) {
-    for (const g of this.grids) g.simulate(renderer, dt);
+    if (dt > 0) { this._gap = this._sinceStep; this._sinceStep = 0; }
+    this._sinceStep = (this._sinceStep || 0) + 1;
+    const gap = this._gap | 0;
+    for (let t = 0; t < this.grids.length; t++) {
+      const delay = this.stagger !== false && dt > 0 ? Math.max(0, Math.min(t, gap - 1)) : 0;
+      this.grids[t].simulate(renderer, dt, delay);
+    }
     this._sum();
   }
 

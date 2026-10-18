@@ -190,6 +190,7 @@ jedna klatka powtórzona albo przeskoczona).
 | 8 | PerfHUD: draw calle, GPU, obiekty sceny workera z RET (dziś strona bez urządzenia → „--” / dane strony) | widoczność kosztów workera dla gracza | mały |
 | 9 | ~~**GPU przy 5120 × 1440 (Ultra)**~~ — ZROBIONE 2026-10-17 (§ 7.2): passy pełnoekranowe z pętlami po listach | bitwa 192,7 → 216,4 kl/s, wiek 6,43 → 4,51 | — |
 | 10 | ~~**Proces GPU** (`CrGpuMain` 96% przy 5120 × 1440)~~ — ZROBIONE 2026-10-17 (§ 7.3): zgłoszenia kolejki ~20 → 2,2 na klatkę, raster nakładek — atlas stempli napisów | bitwa: 182,7–183,3 → 195,2–198,5 kl/s, w pierwszych 30 s 199–201 → 226–235; `CrGpuMain` 98–99 → 85–89% | zostaje: dekodowanie poleceń WebGPU workera (~2 ms na klatkę — liczba rysunków i grup wiązań), w rzezi rytm trzyma wątek gry i GPU workera (§ 7.3) |
+| 11 | ~~**GPU workera w rzezi** (5120 × 1440, Ultra)~~ — ZROBIONE 2026-10-18 (§ 7.4): compute gazu wybuchów (dotąd niezmierzony) bez przeliczeń światła w klatkach bez kroku, kroki siatek „fine” / „coarse” rozłożone na klatki, marsz bez pustych kolumn | rzeź: 153,5 / 144,2 → 173,0 / 156,8 kl/s; GPU klatki render + compute śr. 5,9 → 5,1 ms, p95 compute 5,6 → 4,7 | zostaje: światło objętościowe pasa (0,5–0,75 ms — pętla świateł × 40 plastrów), krok siatki podstawowej gazu w jednej klatce (rozbicie wymaga osobnego atlasu światła, +~33 MB), pętla świateł siatki w marszu przedniego pasa gazu (~0,15 ms) |
 
 ### 7.1 Stan pkt 3 — klatka workera (2026-10-17, sesja „Klatka workera renderu pod 240 Hz”)
 
@@ -396,6 +397,74 @@ warpa poza kadrem (~180 kresek na klatkę — bez mierzalnej różnicy w procesi
 nie weszła — index.html ma w main niezatwierdzone zmiany innej sesji), pośrednie zgłoszenia co 6 buforów
 (`ZBIERACZ.maxPending`) — w oknach ze śladem bez rozstrzygnięcia, zostaje 0 (jedno zgłoszenie na klatkę).
 
+### 7.4 GPU workera w rzezi przy 5120 × 1440 (2026-10-18, sesja „GPU workera w rzezi bitwy przy 5120×1440”)
+
+Cel: po § 7.3 w rzezi (po ~40 s bitwy, ~90 wraków) gra trzymała ~155–180 kl/s, a `Core3D.gpuFrameMs` workera skakał
+2,5–6,3 ms (budżet 4,17 ms); podejrzane domeny gazu wybuchów. Metoda: kolektor czasów GPU passów w workerze
+(`scripts/webgpu/gpu-passy-worker.js` — haki inspektora three, pula znaczników przed wyczyszczeniem, znaczniki w każdej
+klatce, kubełki 5 s × wariant; odczyt `gpu-passy-wynik.js` przez nowe `rytm-bitwy.mjs --wkKoniec`), okno 240 Hz,
+warianty przełączane co 4 s w TEJ SAMEJ bitwie (`--wkAb`), bitwy 80 s. Przebieg headless odrzucony: bez limitu klatek
+GPU stoi na 99% i znaczniki passów wychodzą 3–4 × za duże (do tego trafił na grę użytkownika).
+
+**Błąd pomiaru — compute gazu nie był w ogóle mierzony.** three r183 daje LIŚCIE compute (`renderer.compute([…])`)
+uid znacznika `r:<nr renderu w klatce>:undefined:f<klatka>` (tablica nie ma `isComputeNode` ani `id`), więc wszystkie
+listy między dwoma renderami mają ten sam uid, a pula znaczników trzyma przesunięcia w mapie po uid — zostawał pomiar
+ostatniej listy. Symulacja gazu, jego światło i żar (listy zlecane na początku klatki efektów) wypadały z
+`Core3D.gpuComputeMs`, a etykiety list w narzędziach (§ 7.2) mieszały się między klatkami. Core3D nadaje teraz liście
+własny uid w formacie puli (`_uniqueComputeListTimestamps`, test `renderPerfGates`). Skutek uboczny: PerfHUD i
+rozdzielczość dynamiczna widzą prawdziwy compute (w rzezi ~1–1,7 ms więcej niż dotąd).
+
+Stan wyjściowy (rzeź ≥ 40 s, średnio na klatkę ze znacznikami): render 3,39 ms (p95 6,2–6,7), compute 2,4–3,0 ms
+(p95 5,2–6,8) — **razem średnio ponad budżet**. Render: pass ortho ~0,9–1,2, maska słońca 0,53, post 0,5–0,6, FG 0,5
+(z czego przedni pas gazu ~0,15–0,35, połowa to pętla świateł siatki w marszu: ~700 świateł, do ~125 w komórce), tło
+0,2–0,4, dym rakiet 0,26, niebo 0,07–0,36; tylny pas gazu w ortho ~0,1. Compute: **symulacja gazu 1,0–1,7 śr., p95
+3,6–5,3** (krok siatki „fine” 128² × 48 z 41 iteracjami Jacobiego ~1,3–3 ms w klatce kroku, podstawowa ~1,5), światło
+objętościowe pasa asteroid 0,6–0,75 (w lekkiej fazie 0,22 — rośnie z liczbą świateł), światło gazu i zajętość 0,25–0,38
+w KAŻDEJ klatce, bloom z mgłą 0,3. Zegar wybuchów w workerze to czas fizyki gry (kroki co 1/60 s), więc przy 240 kl/s
+podkrok gazu przychodzi co ~4. klatkę i wszystkie siatki liczyły go razem — pik co czwartą klatkę.
+
+Poprawki (przełączniki A/B w `EXPLOSION_TUNE`, działają na żywo):
+
+1. **Światło gazu i zajętość tylko po zmianie** (`gasLightCache`, `GasGrid.lightCache`): bez podkroku, bez zerowania
+   domen i przy tym samym podpisie wejść (strojenie światła, kierunek słońca, generacja atlasów, aktywne domeny i ich
+   skala komórki — `_lightSigSame`) `gasLight` i `gasOccupancy` dałyby bit w bit to samo (denA i lightT ≡ denB pisze tylko
+   krok). W rzezi 0,29 → 0,21 ms na klatkę (w bitwie domeny wystrzałów i zapłonów często się zmieniają).
+2. **Krok siatek w locie** (`gasStagger`, `GasGridSet.stagger`): siatka t (0 podstawowa, 1 „fine”, 2 „coarse”) zleca
+   listę kroku min(t, odstęp − 1) klatek po kroku fizyki (odstęp = klatki między dwoma ostatnimi krokami; przy 60 kl/s
+   0). Do zlecenia uniformy kroku zostają (klatki bez podkroku nic nie pakują; ziarno zaokrągleń i licznik klatek rosną
+   jak dawniej) — **stan symulacji ten sam**, test `gasStagger` porównuje każdą listę kroku z uniformami w chwili zlecenia
+   z przesunięciem i bez. Zmiana obrazu: dym siatek „fine” / „coarse” jest o 1–2 klatki (4–8 ms) „starszy” niż ich
+   pudła (żar porywany gazem czyta w tej klatce prędkość poprzedniego kroku). Bez przesunięcia: klatka z zerowaniem nowej
+   domeny i z wysyłką rastra statyki. p95 compute gazu w rzezi 4,1 → 3,3 ms.
+3. **Marsz bez pustych kolumn** (`marchSkip`, `GasVolume._occRange`, kernel `gasOccupancy`): na kolumnę domeny zakres
+   warstw z z dymem + temperaturą > 0,0015 (połowa progu marszu; teksele kolumny i sąsiadów +x, +y, +xy — wszystkie, które
+   czyta próbka trójliniowa), tekstura R32F N × N·S. Promień pionowy (kamera z góry) pomija pustą kolumnę i kroki poza
+   zakresem; pozycje próbek bez zmian (t narasta tak samo, kroki przed zakresem bez odczytu atlasu), więc obraz bit w bit
+   (test właściwości `gasOccupancy`: 40 losowych pól, 14 tys. odcinków — każda próbka ponad progiem w zakresie). Pass FG
+   w rzezi 0,54 → 0,41 ms. Kamery 3D — pełny marsz.
+
+Obraz: `wybuchy-gra.mjs --sceny prog,lancuch,pustka,dysze --ab marchSkip,gasLightCache,kontrola` (ta sama zatrzymana
+klatka z przełącznikiem i bez; `kontrola` — klucz bez działania, drugi zrzut bez zmian): kadry bez animacji 0–2 piksele
+o 1/255 (jak kontrola), `dysze-*` i trzy kadry łańcucha różnią się tyle samo co kontrola (struga MAIN i iskry chodzą
+zegarem efektów także w pauzie); pipeline'y synchroniczne 0.
+
+| 5120 × 1440, Ultra, skala 1, okno 240 Hz | stare | nowe |
+|---|---|---|
+| D4 (znaczniki co klatkę), rzeź: render śr. / p95 | 3,39 / 6,68 ms | **3,10 / 5,64 ms** |
+| — compute śr. / p95 | 2,49 / 5,64 ms | **1,98 / 4,65 ms** |
+| — symulacja gazu śr. / p95 | 1,34 / 4,13 ms | **0,88 / 3,28 ms** |
+| bitwa 80 s × 2, A/B co 4 s (znaczniki co 4 kl.): rzeź (≥ 30 s) kl/s | 153,5 / 144,2 | **173,0 / 156,8** |
+| — wiek obrazu, skoki treści | 6,26 / 6,68, 43% / 48% | **5,56 / 6,14, 34% / 45%** |
+| — cała bitwa kl/s | 187,4 / 180,5 | **197,9 / 189,3** |
+| — bitwa < 30 s (bez gazu) kl/s | 238,5 / 235,1 | 235,4 / 238,0 |
+
+Co zostaje w rzezi (render ~3,1 + compute ~2,0 ms): pass ortho ~1 ms, **światło objętościowe pasa** 0,5–0,75 ms
+(`asteroids/volumetrics.js` — na kolumnę 40 plastrów × pętla po wszystkich światłach komórki; zamiana pętli
+bez zmiany kolejności sumowania wymagałaby akumulatora na plaster w pamięci lokalnej — niepewny zysk), maska słońca 0,5,
+post 0,45, krok siatki podstawowej gazu w jednej klatce (~1,5 ms; rozbicie kroku na klatki wymaga osobnego atlasu
+światła — lightT dzieli teksturę z φ̂ adwekcji: +~33 MB na trzy siatki), pętla świateł siatki w marszu przedniego
+pasa gazu (~0,15 ms; dokładnie — tylko przybliżeniem), bloom z mgłą 0,3. Wątek gry i worker CPU — § 7.3.
+
 ## 8. Decyzje i to, czego nie zrobiono
 
 - **Opóźnienie za płynność:** pacer trzyma wiek obrazu ~4 klatek przy 240 Hz w bitwie (~17 ms od treści do ekranu,
@@ -420,6 +489,10 @@ nie weszła — index.html ma w main niezatwierdzone zmiany innej sesji), pośre
 - § 7.3: `src/3d/zbieraczZgloszen.js` (+ `tests/zbieraczZgloszen.test.mjs`), `src/ui/radar/stampAtlas.js`
   (+ `tests/stampAtlas.test.mjs`, `scripts/webgpu/stemple-atlas.mjs`), `radarSymbols.js` (`prepareRadarText`),
   `contactMarkers.js` (dwa przebiegi); `rytm-bitwy.mjs --wkAb / --pgAb / --watkiAb / --okna`.
+- § 7.4: `src/3d/core3d.js` (`_uniqueComputeListTimestamps`), `src/3d/gas/gasGrid.js` (`occTex`, `gasOccupancy`,
+  `lightCache`, krok w locie), `gasGridSet.js` (`stagger`), `gasVolume.js` (`_occRange`), `explosions/explosionFx.js`
+  (`marchSkip`, `gasLightCache`, `gasStagger`); testy `tests/gasOccupancy.test.mjs`, `tests/gasStagger.test.mjs`,
+  `renderPerfGates`; narzędzia `scripts/webgpu/gpu-passy-worker.js`, `gpu-passy-wynik.js`, `rytm-bitwy.mjs --wkKoniec`.
 - Pomiar: `node scripts/webgpu/rytm-bitwy.mjs [--sklad 50,20,10,3] [--zoom 0.45] [--czas 40] [--query renderWorker=1]
   [--slad 0] [--out katalog]`; A/B: `--query "renderWorker=1&rwPacing=0&npcLerp=0"`; analiza zapisu: `--analiza katalog`.
   Okno wychodzi na ekran (vsync wymaga widocznego okna). Wyniki tego audytu: `.tmp/rytm/` (poza gitem).

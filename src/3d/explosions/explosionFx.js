@@ -185,7 +185,15 @@ export const EXPLOSION_TUNE = {
   // Zmierzone 2026-10-09 (RTX 5080, 1600 × 900, zatrzymana klatka): domena „fine” na pół kadru ~82 mln próbek = 0,7–2,2 ms
   // marszu (~40–50 mln próbek / ms w gęstym dymie); krok × 2 — marsz ~½.
   marchBudget: 40,
-  relaxFit: true,     // bez wolnej domeny — łagodniejsze scalanie (RELAX_FIT_R) zamiast cząstek; false = ścisłe (A/B)
+  // Pomijanie pustej przestrzeni w marszu brył (zajętość kolumn domen — GasGrid.occTex, 2026-10-18): obraz bit w bit ten
+  // sam; false — pełny marsz (A/B kosztu tej samej klatki).
+  marchSkip: true,
+  // Objętość światła gazu i zajętość kolumn liczone tylko po podkroku / zmianie wejść (bit w bit); false — co klatkę.
+  gasLightCache: true,
+  // Krok siatek „fine” i „coarse” zlecany 1–2 klatki po kroku fizyki, gdy klatki są częstsze niż kroki (ten sam stan
+  // symulacji, obraz tych siatek o 1–2 klatki później; pik compute w klatce kroku niższy); false — wszystkie naraz.
+  gasStagger: true,
+  relaxFit: true,   // bez wolnej domeny — łagodniejsze scalanie (RELAX_FIT_R) zamiast cząstek; false = ścisłe (A/B)
   marchStepMax: 2.5,
   domainLife: 3.0,    // życie domeny po ostatnim wybuchu w niej [s] (potem wygaszanie 1,6 s — obłok znika do ~4,6 s)
   sparkGain: 1,
@@ -1641,6 +1649,8 @@ export class ExplosionFx {
     this.stats.obstMs = performance.now() - tO;
     this.director.update(dt);
     const tS = performance.now();
+    g.stagger = this.tune.gasStagger !== false;
+    for (const gr of g.grids) gr.lightCache = this.tune.gasLightCache !== false;
     g.simulate(ctx.renderer, dt);
     this.stats.simMs = performance.now() - tS;
     this.stats.hulls = g.stats.hulls;
@@ -1654,6 +1664,7 @@ export class ExplosionFx {
       vol.stepScale = stepK;
       vol.ambientScale = Number.isFinite(sky) ? sky * this.tune.ambientSky : 1;
       vol.gridEnabled = this.tune.gridLight !== false;
+      vol.skipEmpty = this.tune.marchSkip !== false;
       vol.syncLook();
       vol.updateMeshes(origin.x, origin.y, 0);
     }

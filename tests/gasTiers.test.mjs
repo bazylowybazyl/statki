@@ -90,7 +90,8 @@ test('F17: alokacja leniwa — atlasy 1 × 1 × 1 do pierwszej domeny, pełne po
   assert.ok(s >= 0 && g.allocated);
   for (const t of g._atlases) assert.deepEqual([t.image.width, t.image.height, t.image.depth], [16, 16, 8 * 3]);
   assert.ok(g.velA.version > ver0, 'nowa wersja — wiązania grupy odtwarzają się (jak resizeRenderTarget)');
-  assert.equal(g.memoryBytes - mem0, 16 * 16 * 8 * 3 * 8 * 10, '10 atlasów RGBA16F');
+  assert.equal(g.memoryBytes - mem0, 16 * 16 * 8 * 3 * 8 * 10 + 16 * 16 * 3 * 4, '10 atlasów RGBA16F + zajętość kolumn R32F');
+  assert.deepEqual([g.occTex.image.width, g.occTex.image.height], [16, 16 * 3], 'zajętość kolumn: N × N·S');
   const r = { compute() {} };
   for (let i = 0; i < 60 * 2.5; i++) g.simulate(r, 1 / 60);   // domena gaśnie (0,5 s + 1,6 s)
   assert.equal(g.slots[s].active, false);

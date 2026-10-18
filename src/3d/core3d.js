@@ -1216,6 +1216,7 @@ export const Core3D = {
     zainstalujKluczSwiatel();
     this._coalesceUniformUploads(renderer);
     this._dedupeInterleavedUploads(renderer);
+    this._uniqueComputeListTimestamps(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
   },
@@ -1283,6 +1284,28 @@ export const Core3D = {
         }
       }
       return orig.call(this, attribute);
+    };
+  },
+
+  // three r183 (Backend.updateTimeStampUID): uid znacznika czasu LISTY compute (renderer.compute([…]) — tablica)
+  // dostaje prefiks renderu i id `undefined` („r:<nr renderu w klatce>:undefined:f<klatka>”: tablica nie ma
+  // isComputeNode ani id), więc wszystkie listy między dwoma renderami mają TEN SAM uid, a pula znaczników trzyma
+  // przesunięcia w mapie po uid — zostawał pomiar ostatniej listy, wcześniejsze znikały z gpuComputeMs (2026-10-18:
+  // symulacja gazu wybuchów, żar i światło gazu — nigdy nie zmierzone; etykiety list w narzędziach mieszały się).
+  // Tu lista dostaje własny uid: „c:<nr compute w klatce>:L<id listy>:f<klatka>” (format puli bez zmian).
+  _uniqueComputeListTimestamps(renderer) {
+    const backend = renderer?.backend;
+    if (!backend || typeof backend.updateTimeStampUID !== 'function' || backend.__core3dComputeListUid) return;
+    const orig = backend.updateTimeStampUID;
+    const ids = new WeakMap();
+    let next = 1;
+    backend.__core3dComputeListUid = true;
+    backend.updateTimeStampUID = function (ctx) {
+      if (!Array.isArray(ctx)) return orig.call(this, ctx);
+      let id = ids.get(ctx);
+      if (id === undefined) { id = next++; ids.set(ctx, id); }
+      const info = this.renderer.info;
+      this.get(ctx).timestampUID = 'c:' + info.compute.frameCalls + ':L' + id + ':f' + info.frame;
     };
   },
 

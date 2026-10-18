@@ -34,11 +34,30 @@
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, Loop, Break, float, int, uint, vec3, vec4, uniform, uniformArray, texture3D, screenUV, screenCoordinate,
-  getViewPosition, select, mix, clamp, smoothstep, exp, max, min, abs, length, normalize, dot, pow,
+  Fn, If, Loop, Break, float, int, uint, vec3, vec4, ivec2, uniform, uniformArray, texture, texture3D, screenUV, screenCoordinate,
+  getViewPosition, select, mix, clamp, smoothstep, exp, max, min, abs, length, normalize, dot, pow, floor, ceil,
   attribute, positionGeometry, positionView, varyingProperty, cameraProjectionMatrix, cameraWorldMatrix
 } from 'three/tsl';
 import { gasFirePower, gasFireStops, gasFirePalette, gasFireGlow, gasLuma } from './gasCommon.js';
+import { GAS_OCC_PACK } from './gasGrid.js';
+
+/**
+ * LUSTRO CPU zakresu kroków marszu z zajętości kolumny (GasVolume._occRange): pA — punkt komórkowy promienia w tmin
+ * ({ x, y, z }), dz — przyrost z [komórki] na jednostkę t, code — kod zajętości (gasOccupancyCpu), dtW — krok, jitter,
+ * nSteps. Zwraca [kStart, kEnd): poza nim próbka z (przycięta do [0,5; NZ − 0,5], trójliniowo) nie czyta warstw
+ * zlo … zhi. Zmiana w shaderze = zmiana tutaj.
+ */
+export function gasOccRangeCpu(code, pA, dz, tmin, dtW, jitter, nSteps, NZ) {
+  if (code < 0) return [0, 0];
+  const zlo = Math.floor(code / GAS_OCC_PACK), zhi = code - zlo * GAS_OCC_PACK;
+  const zA = zlo < 0.5 ? -1e6 : zlo - 0.5;
+  const zB = zhi > NZ - 2.5 ? 1e6 : zhi + 1.5;
+  if (!(Math.abs(dz) > 1e-9)) return [0, nSteps];
+  const ta = tmin + (zA - pA.z) / dz, tb = tmin + (zB - pA.z) / dz;
+  const tlo = Math.min(ta, tb), thi = Math.max(ta, tb);
+  const cl = (v) => Math.min(Math.max(v, 0), nSteps);
+  return [Math.trunc(cl(Math.floor((tlo - tmin) / dtW - jitter) - 1)), Math.trunc(cl(Math.ceil((thi - tmin) / dtW - jitter) + 2))];
+}
 
 /**
  * Właściciel świateł siatki wybuchu w domenie gazu `slot`: GAS_LIGHT_OWNER_BASE + slot (L3.w siatki). Liczba
@@ -148,11 +167,14 @@ export class GasVolume {
       planeZ: uniform(0),              // płaszczyzna gry (scena lokalnie) — podział warstw brył
       ambientK: uniform(1),            // mnożnik otoczenia (strefa nieba — właściciel, `ambientScale`)
       gridOn: uniform(1), gridGain: uniform(1), gridKnee: uniform(0.45), gridShadow: uniform(0.85), gridScatter: uniform(1),
-      gridMinSigma: uniform(0.02), gridEvery: uniform(3, 'int'), ownNear: uniform(0.35), ownFar: uniform(0.75)
+      gridMinSigma: uniform(0.02), gridEvery: uniform(3, 'int'), ownNear: uniform(0.35), ownFar: uniform(0.75),
+      occOn: uniform(1)                // bryły: pomijanie pustych kolumn / odcinków z (zajętość z gasOccupancy; 0 — pełny marsz)
     };
     // Właściciel (gra): mnożnik otoczenia ze strefy nieba i przełącznik świateł siatki (A/B tej samej klatki).
     this.ambientScale = 1;
     this.gridEnabled = true;
+    // Pomijanie pustej przestrzeni w marszu brył (zajętość kolumn — GasGrid.occTex; obraz bit w bit ten sam; A/B: false).
+    this.skipEmpty = true;
     this.stepScale = 1;
     this._order = [];
     this.stats = { domains: 0 };
@@ -194,12 +216,54 @@ export class GasVolume {
   }
 
   /**
+   * Zakres kroków [kStart, kEnd) marszu z ZAJĘTOŚCI KOLUMNY (GasGrid.occTex — kernel gasOccupancy). Tylko gdy promień na
+   * całym odcinku czyta te same kolumny atlasu (kamera z góry: promień pionowy) — teksel zajętości kolumny i = floor(x − 0,5)
+   * (przycięty do domeny) obejmuje kolumny i, i + 1 — wszystkie, które czyta próbka trójliniowa; inaczej pełny zakres.
+   * Pusta kolumna → kEnd = 0. Inaczej próbki z pc.z poza (zlo − 0,5, zhi + 1,5) nie czytają warstw z gazem; zapas ±1–2
+   * kroków na zaokrąglenia (wagi filtra w stałym przecinku, narastanie t). Lustro CPU: gasOccRangeCpu.
+   */
+  _occRange({ ro, rd, tmin, tmax, bmin, h, slot, dtW, jitter, nSteps, kStart, kEnd }) {
+    const U = this.U;
+    const grid = this.grid;
+    const N = grid.N;
+    const NZ = grid.NZ;
+    If(U.occOn.greaterThan(0.5), () => {
+      const pA = ro.add(rd.mul(tmin)).sub(bmin).div(h).toVar();
+      const pB = ro.add(rd.mul(tmax)).sub(bmin).div(h).toVar();
+      const tap = (v) => clamp(floor(v.sub(0.5)), 0.0, N - 1);
+      const iA = tap(pA.x).toVar();
+      const jA = tap(pA.y).toVar();
+      If(iA.equal(tap(pB.x)).and(jA.equal(tap(pB.y))), () => {
+        const code = texture(grid.occTex, ivec2(int(iA), int(jA).add(int(slot.add(0.5)).mul(N)))).setSampler(false).x.toVar();
+        If(code.lessThan(0.0), () => {
+          kEnd.assign(0);
+        }).Else(() => {
+          const zlo = floor(code.mul(1 / GAS_OCC_PACK)).toVar();
+          const zhi = code.sub(zlo.mul(GAS_OCC_PACK));
+          const zA = select(zlo.lessThan(0.5), float(-1e6), zlo.sub(0.5));
+          const zB = select(zhi.greaterThan(NZ - 2.5), float(1e6), zhi.add(1.5));
+          const dz = rd.z.div(h).toVar();
+          If(abs(dz).greaterThan(1e-9), () => {
+            const ta = tmin.add(zA.sub(pA.z).div(dz));
+            const tb = tmin.add(zB.sub(pA.z).div(dz));
+            const nf = float(nSteps);
+            const ks = clamp(floor(min(ta, tb).sub(tmin).div(dtW).sub(jitter)).sub(1.0), 0.0, nf);
+            const ke = clamp(ceil(max(ta, tb).sub(tmin).div(dtW).sub(jitter)).add(2.0), 0.0, nf);
+            kStart.assign(int(ks));
+            kEnd.assign(int(ke));
+          });
+        });
+      });
+    });
+  }
+
+  /**
    * Marsz jednej domeny na odcinku [tmin, tmax] promienia ro + rd·t (scena lokalnie); akumuluje do
    * col / trans (zmienne TSL). sunVis — mnożnik członu słońca (maska cienia słońca gry; dema 1); densK —
    * mnożnik gęstości odcinka (przednia warstwa brył gry); ambVis — mnożnik otoczenia (gra: sunFill maski; null = 1);
    * useGrid — światła siatki `lightGrid` (tylko bryły gry; przebieg pełnoekranowy dem bez zmian).
    */
-  _march({ ro, rd, tmin, tmax, bmin, h, slot, fade, seed, tint, fire, jitter, phase, col, trans, sunVis, densK = null, ambVis = null, useGrid = false, domAmb = null }) {
+  _march({ ro, rd, tmin, tmax, bmin, h, slot, fade, seed, tint, fire, jitter, phase, col, trans, sunVis, densK = null, ambVis = null, useGrid = false, domAmb = null, occ = false }) {
     const U = this.U;
     const grid = this.grid;
     const N = grid.N;
@@ -240,113 +304,126 @@ export class GasVolume {
       const fireStops = gasFireStops(fire);
       const fireK = float(0.0).toVar();
       fireK.assign(fire);
-      Loop({ start: int(0), end: nSteps, type: 'int', condition: '<', name: 'gstep' }, () => {
-        const pw = ro.add(rd.mul(t)).toVar();
-        const pc = pw.sub(bmin).div(h).toVar();
-        const qz = clamp(pc.z, 0.5, NZ - 0.5);
-        const uvw = vec3(pc.x.mul(1 / N), pc.y.mul(1 / N), qz.add(slotZ).mul(1 / (NZ * S)));
-        const den0 = texture3D(grid.denA, uvw).level(0);
-        If(den0.x.add(den0.y).greaterThan(0.003), () => {
-          // Pozycja spoczynkowa gazu (komórki) — detal i przesunięcie odczytu jadą z dymem.
-          const rest = texture3D(grid.restA, uvw).level(0).xyz.toVar();
-          const seedV = vec3(seed, seed.mul(0.7), seed.mul(1.3));
-          // Przesunięcie odczytu polem wirowym (detal poniżej rozdzielczości siatki — „kalafior”).
-          const qw = rest.mul(U.warpScale.div(kS)).add(seedV);
-          const wa = texture3D(curl, qw).level(0).xy;
-          const wb = texture3D(curl, qw.zxy.add(vec3(0.29, 0.61, 0.17))).level(0).x;
-          const warp = vec3(wa, wb).mul(U.warpAmp.mul(kS));
-          const pq = pc.add(warp);
-          const uvq = vec3(pq.x.mul(1 / N), pq.y.mul(1 / N), clamp(pq.z, 0.5, NZ - 0.5).add(slotZ).mul(1 / (NZ * S)));
-          const den = texture3D(grid.denA, uvq).level(0).toVar();
-          const lgt = texture3D(grid.lightT, uvq).level(0).toVar();
-          const n1 = texture3D(noise, rest.mul(U.detailScale.div(kS)).add(seedV)).level(0);
-          const nA = n1.x.toVar();
-          const nB = n1.y.toVar();
-          const nd = nA.mul(0.65).add(nB.mul(0.35)).toVar();
-          // Miękkie ściany pudła i elipsoida domeny (symulacja gasi gaz za ~0,97 promienia — zapas).
-          const ew = min(pc, vec3(N, N, NZ).sub(pc));
-          const halfD = vec3(N * 0.5, N * 0.5, NZ * 0.5);
-          const rc = length(pc.sub(halfD).div(halfD));
-          const wall = smoothstep(0.6 * nS, 6.0 * nS, min(min(ew.x, ew.y), ew.z)).mul(float(1.0).sub(smoothstep(0.9, 1.05, rc)));
-          // Wygaszenie tuż przed kamerą (kamera w dymie / kuli ognia: mgła zamiast nieprzezroczystej ściany).
-          const nearFade = U.nearFade.mul(kS);
-          const nearK = smoothstep(nearFade.mul(0.15), nearFade, t.div(h));
-          // Ciągły próg pominięcia: gęstość czytamy z PRZESUNIĘTEGO miejsca (warp), a próg — z nieprzesuniętego;
-          // skok wkładu z 0 na granicy progu rysował poziomice (bez przesunięcia startu marszu — słoje, z nim — ziarno).
-          const gate = smoothstep(0.003, 0.06, den0.x.add(den0.y));
-          const fw = fade.mul(wall).mul(nearK).mul(gate).toVar();
-          // Gęstość: detal mnożny + erozja rzadkich brzegów (strzępy zamiast gładkiej mgły).
-          const sm = den.x.mul(fw).toVar();
-          const det = mix(float(1.0), nd.mul(2.0), U.detail);
-          const ero = U.erosion.mul(float(1.0).sub(nd)).mul(float(1.0).sub(smoothstep(0.0, 1.2, sm)));
-          const rho = max(sm.mul(det).sub(ero.mul(0.35)), 0.0).toVar();
-          const density = U.density.div(kS);
-          const sigma = (densK ? rho.mul(density).mul(densK) : rho.mul(density)).toVar();
-          // Ogień: temperatura z językami szumu. Sadza świeci jak ciało czarne (Kirchhoff: emisja =
-          // σ_pochłaniania · B(T)); czysty płomień frontu spalania świeci bez sadzy (tempo spalania).
-          const T = den.y.mul(float(1.0).add(nA.sub(0.5).mul(2.0).mul(U.flameNoise))).toVar();
-          // Emisja ŚREDNIA na odcinku (temperatura liniowo od poprzedniej próbki, 4 podpróbki — sama arytmetyka):
-          // front ognia cieńszy niż krok, próbkowany w tych samych płaszczyznach z (kamera z góry), rysował słoje
-          // poziomic (bez przesunięcia startu) albo ziarno (z nim). Całka po odcinku je wygładza.
-          const T0 = select(Tprev.lessThan(0.0), T, Tprev);
-          const gSum = vec3(0.0).toVar();
-          const bSum = vec3(0.0).toVar();
-          for (const k of [0.125, 0.375, 0.625, 0.875]) {
-            const Tk = mix(T0, T, k);
-            const bk = gasFirePalette(Tk, fireStops);
-            gSum.addAssign(bk.mul(gasFirePower(Tk, float(0.0), U.fireGain, float(0.0))));
-            bSum.addAssign(bk);
-          }
-          Tprev.assign(T);
-          const radiance = gSum.mul(0.25).mul(U.emission).mul(fw);
-          const flame = bSum.mul(0.25).mul(max(den.w, 0.0).mul(U.fireBurn.div(kS))).mul(U.emission).mul(fw);
-          // Rozpraszanie: słońce (samocień, maska cienia słońca gry), wielokrotne (T^¼), otoczenie, blask ognia.
-          const sunT = lgt.x;
-          const sun = U.sunColor.mul(U.sunGain).mul(sunT.mul(phase).add(pow(max(sunT, 1e-4), 0.25).mul(U.multiScatter))).mul(sunVis);
-          const alb = U.albedo.mul(tint).toVar();
-          // Blask ognia z objętości światła (kernel liczy go w barwie ciała czarnego) w palecie domeny: luminancja zostaje.
-          const glowC = gasFireGlow(lgt.yzw, gasLuma(lgt.yzw), fireK);
-          let light = sun.add(ambient).add(glowC.mul(U.glowGain));
-          // Otoczenie DOMENY (GasSlot.ambient — kanał w instancji: światło wnętrza hali K-7 dla dymu zapłonu, etap E2;
-          // pod dachem nie ma słońca, a lampy siatki przechodzą przez kolano i samocień). 0 = jak dawniej.
-          // Z lekkim samocieniem od strony kamery (obłok ma bryłę, nie płaską watę): × mix(1, trans, 0,6).
-          if (domAmb) light = light.add(vec3(domAmb).mul(mix(float(1.0), trans, 0.6)));
-          if (lg) {
-            // Pętla świateł siatki tylko w gęstszym dymie i co `gridEvery` gęstych próbek (w ośrodku światło
-            // zmienia się wolno — próbka co ~2 komórki wystarcza); między nimi ostatnia wartość.
-            If(U.gridOn.greaterThan(0.5).and(gridCnt.lessThanEqual(0)).and(sigma.greaterThan(U.gridMinSigma.div(kS))), () => {
-              const acc = vec3(0.0).toVar();
-              const accS = vec3(0.0).toVar();
-              lg.loop(pw, ({ att, col, scatter, owner, x }) => {
-                const c = col.mul(att.mul(scatter.mul(U.gridScatter).add(0.5))).toVar();
-                // Własna domena: tylko dalekie pole (bliżej świeci emisja i blask z objętości światła).
-                If(abs(owner.sub(ownId)).lessThan(0.5), () => {
-                  accS.addAssign(c.mul(smoothstep(U.ownNear, U.ownFar, x)));
-                }).Else(() => {
-                  acc.addAssign(c);
-                });
-              });
-              // Wspólne kolano (suma wszystkich świateł), potem rozdział: cudze / własne.
-              const ga = acc.add(accS).mul(U.gridGain).toVar();
-              const kn = U.gridGain.div(ga.x.add(ga.y).add(ga.z).mul(U.gridKnee).add(1.0)).toVar();
-              gridL.assign(acc.mul(kn));
-              gridS.assign(accS.mul(kn));
-              gridCnt.assign(U.gridEvery);
-            });
-            gridCnt.subAssign(1);
-            // Samocień cudzych świateł z przepuszczalności nad próbką (światła nad płaszczyzną, kamera z góry); światło
-            // własnego wybuchu świeci z jego środka — bez tego samocienia.
-            light = light.add(gridL.mul(mix(float(1.0), trans, U.gridShadow)).add(gridS).mul(U.gridOn));
-          }
-          const scat = alb.mul(light);
-          const segT = exp(sigma.mul(dtC).negate()).toVar();
-          const absorb = float(1.0).sub(alb.x.add(alb.y).add(alb.z).div(3.0));
-          const src = scat.add(radiance.mul(absorb)).mul(sigma).add(flame);
-          const integ = select(sigma.greaterThan(1e-4), src.mul(float(1.0).sub(segT)).div(max(sigma, 1e-4)), src.mul(dtC));
-          col.addAssign(integ.mul(trans));
-          trans.mulAssign(segT);
-        }).Else(() => {
+      // Pomijanie pustej przestrzeni (bryły gry, `occ`): kroki [kStart, kEnd) z zajętości kolumny (_occRange) — poza nim
+      // próbka na pewno nie przekracza progu gęstości, więc marsz robiłby tylko gałąź pustą (Tprev = 0). Pozycje próbek
+      // bez zmian (t narasta tak samo), kroki przed kStart bez odczytu atlasu, po kEnd koniec pętli — wynik bit w bit.
+      // Jawne przypisanie przed gałęziami (pułapka 29).
+      const kStart = int(0).toVar();
+      const kEnd = int(0).toVar();
+      kStart.assign(int(0));
+      kEnd.assign(nSteps);
+      if (occ) this._occRange({ ro, rd, tmin, tmax, bmin, h, slot, dtW, jitter, nSteps, kStart, kEnd });
+      Loop({ start: int(0), end: kEnd, type: 'int', condition: '<', name: 'gstep' }, ({ gstep }) => {
+        If(gstep.lessThan(kStart), () => {
           Tprev.assign(0.0);
+        }).Else(() => {
+          const pw = ro.add(rd.mul(t)).toVar();
+          const pc = pw.sub(bmin).div(h).toVar();
+          const qz = clamp(pc.z, 0.5, NZ - 0.5);
+          const uvw = vec3(pc.x.mul(1 / N), pc.y.mul(1 / N), qz.add(slotZ).mul(1 / (NZ * S)));
+          const den0 = texture3D(grid.denA, uvw).level(0);
+          If(den0.x.add(den0.y).greaterThan(0.003), () => {
+            // Pozycja spoczynkowa gazu (komórki) — detal i przesunięcie odczytu jadą z dymem.
+            const rest = texture3D(grid.restA, uvw).level(0).xyz.toVar();
+            const seedV = vec3(seed, seed.mul(0.7), seed.mul(1.3));
+            // Przesunięcie odczytu polem wirowym (detal poniżej rozdzielczości siatki — „kalafior”).
+            const qw = rest.mul(U.warpScale.div(kS)).add(seedV);
+            const wa = texture3D(curl, qw).level(0).xy;
+            const wb = texture3D(curl, qw.zxy.add(vec3(0.29, 0.61, 0.17))).level(0).x;
+            const warp = vec3(wa, wb).mul(U.warpAmp.mul(kS));
+            const pq = pc.add(warp);
+            const uvq = vec3(pq.x.mul(1 / N), pq.y.mul(1 / N), clamp(pq.z, 0.5, NZ - 0.5).add(slotZ).mul(1 / (NZ * S)));
+            const den = texture3D(grid.denA, uvq).level(0).toVar();
+            const lgt = texture3D(grid.lightT, uvq).level(0).toVar();
+            const n1 = texture3D(noise, rest.mul(U.detailScale.div(kS)).add(seedV)).level(0);
+            const nA = n1.x.toVar();
+            const nB = n1.y.toVar();
+            const nd = nA.mul(0.65).add(nB.mul(0.35)).toVar();
+            // Miękkie ściany pudła i elipsoida domeny (symulacja gasi gaz za ~0,97 promienia — zapas).
+            const ew = min(pc, vec3(N, N, NZ).sub(pc));
+            const halfD = vec3(N * 0.5, N * 0.5, NZ * 0.5);
+            const rc = length(pc.sub(halfD).div(halfD));
+            const wall = smoothstep(0.6 * nS, 6.0 * nS, min(min(ew.x, ew.y), ew.z)).mul(float(1.0).sub(smoothstep(0.9, 1.05, rc)));
+            // Wygaszenie tuż przed kamerą (kamera w dymie / kuli ognia: mgła zamiast nieprzezroczystej ściany).
+            const nearFade = U.nearFade.mul(kS);
+            const nearK = smoothstep(nearFade.mul(0.15), nearFade, t.div(h));
+            // Ciągły próg pominięcia: gęstość czytamy z PRZESUNIĘTEGO miejsca (warp), a próg — z nieprzesuniętego;
+            // skok wkładu z 0 na granicy progu rysował poziomice (bez przesunięcia startu marszu — słoje, z nim — ziarno).
+            const gate = smoothstep(0.003, 0.06, den0.x.add(den0.y));
+            const fw = fade.mul(wall).mul(nearK).mul(gate).toVar();
+            // Gęstość: detal mnożny + erozja rzadkich brzegów (strzępy zamiast gładkiej mgły).
+            const sm = den.x.mul(fw).toVar();
+            const det = mix(float(1.0), nd.mul(2.0), U.detail);
+            const ero = U.erosion.mul(float(1.0).sub(nd)).mul(float(1.0).sub(smoothstep(0.0, 1.2, sm)));
+            const rho = max(sm.mul(det).sub(ero.mul(0.35)), 0.0).toVar();
+            const density = U.density.div(kS);
+            const sigma = (densK ? rho.mul(density).mul(densK) : rho.mul(density)).toVar();
+            // Ogień: temperatura z językami szumu. Sadza świeci jak ciało czarne (Kirchhoff: emisja =
+            // σ_pochłaniania · B(T)); czysty płomień frontu spalania świeci bez sadzy (tempo spalania).
+            const T = den.y.mul(float(1.0).add(nA.sub(0.5).mul(2.0).mul(U.flameNoise))).toVar();
+            // Emisja ŚREDNIA na odcinku (temperatura liniowo od poprzedniej próbki, 4 podpróbki — sama arytmetyka):
+            // front ognia cieńszy niż krok, próbkowany w tych samych płaszczyznach z (kamera z góry), rysował słoje
+            // poziomic (bez przesunięcia startu) albo ziarno (z nim). Całka po odcinku je wygładza.
+            const T0 = select(Tprev.lessThan(0.0), T, Tprev);
+            const gSum = vec3(0.0).toVar();
+            const bSum = vec3(0.0).toVar();
+            for (const k of [0.125, 0.375, 0.625, 0.875]) {
+              const Tk = mix(T0, T, k);
+              const bk = gasFirePalette(Tk, fireStops);
+              gSum.addAssign(bk.mul(gasFirePower(Tk, float(0.0), U.fireGain, float(0.0))));
+              bSum.addAssign(bk);
+            }
+            Tprev.assign(T);
+            const radiance = gSum.mul(0.25).mul(U.emission).mul(fw);
+            const flame = bSum.mul(0.25).mul(max(den.w, 0.0).mul(U.fireBurn.div(kS))).mul(U.emission).mul(fw);
+            // Rozpraszanie: słońce (samocień, maska cienia słońca gry), wielokrotne (T^¼), otoczenie, blask ognia.
+            const sunT = lgt.x;
+            const sun = U.sunColor.mul(U.sunGain).mul(sunT.mul(phase).add(pow(max(sunT, 1e-4), 0.25).mul(U.multiScatter))).mul(sunVis);
+            const alb = U.albedo.mul(tint).toVar();
+            // Blask ognia z objętości światła (kernel liczy go w barwie ciała czarnego) w palecie domeny: luminancja zostaje.
+            const glowC = gasFireGlow(lgt.yzw, gasLuma(lgt.yzw), fireK);
+            let light = sun.add(ambient).add(glowC.mul(U.glowGain));
+            // Otoczenie DOMENY (GasSlot.ambient — kanał w instancji: światło wnętrza hali K-7 dla dymu zapłonu, etap E2;
+            // pod dachem nie ma słońca, a lampy siatki przechodzą przez kolano i samocień). 0 = jak dawniej.
+            // Z lekkim samocieniem od strony kamery (obłok ma bryłę, nie płaską watę): × mix(1, trans, 0,6).
+            if (domAmb) light = light.add(vec3(domAmb).mul(mix(float(1.0), trans, 0.6)));
+            if (lg) {
+              // Pętla świateł siatki tylko w gęstszym dymie i co `gridEvery` gęstych próbek (w ośrodku światło
+              // zmienia się wolno — próbka co ~2 komórki wystarcza); między nimi ostatnia wartość.
+              If(U.gridOn.greaterThan(0.5).and(gridCnt.lessThanEqual(0)).and(sigma.greaterThan(U.gridMinSigma.div(kS))), () => {
+                const acc = vec3(0.0).toVar();
+                const accS = vec3(0.0).toVar();
+                lg.loop(pw, ({ att, col, scatter, owner, x }) => {
+                  const c = col.mul(att.mul(scatter.mul(U.gridScatter).add(0.5))).toVar();
+                  // Własna domena: tylko dalekie pole (bliżej świeci emisja i blask z objętości światła).
+                  If(abs(owner.sub(ownId)).lessThan(0.5), () => {
+                    accS.addAssign(c.mul(smoothstep(U.ownNear, U.ownFar, x)));
+                  }).Else(() => {
+                    acc.addAssign(c);
+                  });
+                });
+                // Wspólne kolano (suma wszystkich świateł), potem rozdział: cudze / własne.
+                const ga = acc.add(accS).mul(U.gridGain).toVar();
+                const kn = U.gridGain.div(ga.x.add(ga.y).add(ga.z).mul(U.gridKnee).add(1.0)).toVar();
+                gridL.assign(acc.mul(kn));
+                gridS.assign(accS.mul(kn));
+                gridCnt.assign(U.gridEvery);
+              });
+              gridCnt.subAssign(1);
+              // Samocień cudzych świateł z przepuszczalności nad próbką (światła nad płaszczyzną, kamera z góry); światło
+              // własnego wybuchu świeci z jego środka — bez tego samocienia.
+              light = light.add(gridL.mul(mix(float(1.0), trans, U.gridShadow)).add(gridS).mul(U.gridOn));
+            }
+            const scat = alb.mul(light);
+            const segT = exp(sigma.mul(dtC).negate()).toVar();
+            const absorb = float(1.0).sub(alb.x.add(alb.y).add(alb.z).div(3.0));
+            const src = scat.add(radiance.mul(absorb)).mul(sigma).add(flame);
+            const integ = select(sigma.greaterThan(1e-4), src.mul(float(1.0).sub(segT)).div(max(sigma, 1e-4)), src.mul(dtC));
+            col.addAssign(integ.mul(trans));
+            trans.mulAssign(segT);
+          }).Else(() => {
+            Tprev.assign(0.0);
+          });
         });
         t.addAssign(dtW);
         If(trans.lessThan(0.01), () => { Break(); });
@@ -479,7 +556,8 @@ export class GasVolume {
           sunVis: sunVisibility ? sunVisibility() : float(1.0),
           densK: back ? null : U.frontDensity,
           ambVis: ambientVisibility ? ambientVisibility() : null,
-          useGrid: !!this.lightGrid
+          useGrid: !!this.lightGrid,
+          occ: !!grid.occTex
         });
         return vec4(col, float(1.0).sub(trans));
       })();
@@ -560,6 +638,7 @@ export class GasVolume {
     U.frontDensity.value = L.frontDensity ?? 1;
     U.ambientK.value = Number.isFinite(this.ambientScale) ? this.ambientScale : 1;
     U.gridOn.value = this.gridEnabled && this.lightGrid ? 1 : 0;
+    U.occOn.value = this.skipEmpty === false ? 0 : 1;
     U.gridGain.value = L.gridGain ?? 1;
     U.gridKnee.value = L.gridKnee ?? 0.45;
     U.gridShadow.value = L.gridShadow ?? 0.85;

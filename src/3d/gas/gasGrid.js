@@ -66,7 +66,7 @@
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, Return, Loop, float, int, uint, vec2, vec3, vec4, uvec3, uniform, uniformArray, instanceIndex, instancedArray,
+  Fn, If, Return, Loop, float, int, uint, vec2, vec3, vec4, ivec3, uvec2, uvec3, uniform, uniformArray, instanceIndex, instancedArray,
   texture, texture3D, textureStore, select, mix, clamp, smoothstep, step, exp, max, min, abs, length, cross, dot, ceil
 } from 'three/tsl';
 import { gasBlackbody, gasFirePower, GAS_FIRE_MAX } from './gasCommon.js';
@@ -327,6 +327,46 @@ function atlasTexture(N, NZ, S, name) {
   return t;
 }
 
+// Zajętość kolumn domen (R32F, odczyt textureLoad — bez filtrowania).
+function occupancyTexture(w, h, name) {
+  const t = new THREE.StorageTexture(w, h);
+  t.name = name;
+  t.type = THREE.FloatType;
+  t.format = THREE.RedFormat;
+  t.minFilter = THREE.NearestFilter;
+  t.magFilter = THREE.NearestFilter;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+/**
+ * Próg zajętości komórki (dym + temperatura teksela). Marsz (GasVolume._march) pomija próbkę z den.x + den.y ≤ 0,003
+ * z PRÓBKI TRÓJLINIOWEJ — wypukła kombinacja teksli, więc próbka z samych teksli ≤ progu zajętości (połowa progu marszu:
+ * zapas na wagi filtra w stałym przecinku) nigdy go nie przekroczy.
+ */
+export const GAS_OCC_THRESHOLD = 0.0015;
+/** Kod zajętości kolumny: −1 = pusta, inaczej zlo · GAS_OCC_PACK + zhi. */
+export const GAS_OCC_PACK = 64;
+
+/**
+ * LUSTRO CPU kernela gasOccupancy: zakres warstw z kolumny (xi, yi) ∪ (xi + 1, yi) ∪ (xi, yi + 1) ∪ (xi + 1, yi + 1)
+ * (sąsiedzi przycięci do domeny — teksele, które czyta próbka trójliniowa między środkami kolumn xi … xi + 1) z
+ * (x + y) > GAS_OCC_THRESHOLD. den(x, y, z) → [dym, temperatura] teksela domeny. Zwraca kod (−1 / zlo · 64 + zhi).
+ * Zmiana w kernelu = zmiana tutaj.
+ */
+export function gasOccupancyCpu(den, N, NZ, xi, yi) {
+  const x1 = Math.min(xi + 1, N - 1), y1 = Math.min(yi + 1, N - 1);
+  let zlo = NZ, zhi = -1;
+  for (let z = 0; z < NZ; z++) {
+    let m = -Infinity;
+    for (const [i, j] of [[xi, yi], [x1, yi], [xi, y1], [x1, y1]]) { const d = den(i, j, z); m = Math.max(m, d[0] + d[1]); }
+    if (m > Math.fround(GAS_OCC_THRESHOLD)) { if (z < zlo) zlo = z; zhi = z; }   // stała f32 jak w shaderze
+  }
+  return zhi < 0 ? -1 : zlo * GAS_OCC_PACK + zhi;
+}
+
 // Maska przeszkód R8 (0 / 255) z filtrem liniowym: próg 0,5 kładzie brzeg na granicy teksli, przy dowolnym
 // przesunięciu próbki (domena jadąca względem rastra) — bryła z k teksli ma w domenie k komórek.
 function maskTexture(data, w, h, name) {
@@ -484,6 +524,11 @@ export class GasGrid {
       this.curlT = this.prsA;
       this.lightT = this.denB;
     }
+    // ZAJĘTOŚĆ KOLUMN (2026-10-18, GPU workera w rzezi — docs/AUDYT-render-worker-2026-10-17.md § 7.4): na kolumnę (x, y)
+    // domeny zakres warstw z, w których próbka marszu MOŻE przekroczyć próg gęstości (gasOccupancy, na końcu kroku klatki
+    // — z tego samego denA, które czyta obraz). Marsz pomija puste kolumny i puste odcinki z bez zmiany pozycji próbek
+    // (GasVolume._march). R32F: −1 = pusta, inaczej zlo · 64 + zhi (całkowite — dokładne w f32). Pas N wierszy na slot.
+    this.occTex = occupancyTexture(...(this.allocated ? [N, N * S] : [1, 1]), 'gasOccupancy');
     this._idleSince = -1;
 
     // Źródła tej klatki (CPU, świat w double → komórki przy pakowaniu).
@@ -550,6 +595,37 @@ export class GasGrid {
     this._syncTune();
     this._buildKernels();
     this._list = [];
+    // Krok W LOCIE (GasGridSet.stagger, 2026-10-18): lista kroku zlecona w jednej z następnych klatek (bez podkroku),
+    // uniformy kroku nietknięte do tej chwili — stan symulacji ten sam, obraz siatki o tyle klatek później.
+    this._listB = [];
+    this._pending = null;
+    this._pendingIn = 0;
+    // Pamięć objętości światła i zajętości kolumn (lightCache): bez podkroku, bez zerowania domen i przy tym samym
+    // podpisie wejść (_lightSigSame) denA i lightT się nie zmieniły — gasLight / gasOccupancy dałyby to samo.
+    this.lightCache = true;
+    this._lightSig = new Float64Array(16 + this.S * 2);
+    this._lightSigN = 0;
+    this._lightSigValid = false;
+    this.stats.lightSkipped = 0;
+    this.stats.deferred = 0;
+  }
+
+  /**
+   * Podpis wejść kerneli gasLight i gasOccupancy poza atlasami (strojenie światła, kierunek słońca, generacja atlasów,
+   * aktywne domeny i ich skala komórki) — porównany z poprzednią klatką i zapamiętany. true = bez zmian.
+   */
+  _lightSigSame() {
+    const U = this.U, sig = this._lightSig, act = this.active;
+    let i = 0, same = this._lightSigValid && this._lightSigN === 11 + act.length * 2;
+    const put = (v) => { if (sig[i] !== v) { same = false; sig[i] = v; } i++; };
+    put(U.lightStep.value); put(U.shadow.value); put(U.glow.value); put(U.glowFar.value); put(U.fireGain.value); put(U.fireBurn.value);
+    const sd = U.sunDir.value;
+    put(sd.x); put(sd.y); put(sd.z);
+    put(this.stats.allocs || 0); put(this.stats.releases || 0);
+    for (let k = 0; k < act.length; k++) { put(act[k].index); put(act[k].k || 1); }
+    this._lightSigN = i;
+    this._lightSigValid = true;
+    return same;
   }
 
   // --- TSL: pomocniki ----------------------------------------------------------
@@ -1033,6 +1109,35 @@ export class GasGrid {
       const g = glow.mul(U.glow.div(GLOW_DIRS.length * GLOW_RADII.length * 0.5));
       textureStore(this.lightT, c.store, vec4(sunT, g));
     })().compute(cells).setName('gasLight');
+
+    // Zajętość kolumn (po ostatnim podkroku, z denA, które czyta obraz): wątek = kolumna (x, y) aktywnej domeny,
+    // zakres z teksli kolumny i jej sąsiadów +x, +y, +xy (przycięci do domeny) z dym + temperatura > GAS_OCC_THRESHOLD.
+    // Lustro CPU: gasOccupancyCpu.
+    this.occNode = Fn(() => {
+      const N2 = N * N;
+      const k = instanceIndex.div(uint(N2)).toVar();
+      If(k.greaterThanEqual(U.activeCount), () => { Return(); });
+      const local = instanceIndex.mod(uint(N2)).toVar();
+      const xi = int(local.mod(uint(N))).toVar();
+      const yi = int(local.div(uint(N))).toVar();
+      const slotI = int(U.act.element(int(k).mul(4)).x.add(0.5)).toVar();
+      const x1 = min(xi.add(1), int(N - 1)).toVar();
+      const y1 = min(yi.add(1), int(N - 1)).toVar();
+      const z0 = slotI.mul(NZ).toVar();
+      const zlo = int(NZ).toVar();
+      const zhi = int(-1).toVar();
+      Loop({ start: int(0), end: int(NZ), type: 'int', condition: '<', name: 'gocc' }, ({ gocc }) => {
+        const zz = z0.add(gocc);
+        const ld = (i, j) => { const d = texture3D(this.denA, ivec3(i, j, zz)).setSampler(false); return d.x.add(d.y); };
+        const m = max(max(ld(xi, yi), ld(x1, yi)), max(ld(xi, y1), ld(x1, y1)));
+        If(m.greaterThan(GAS_OCC_THRESHOLD), () => {
+          zlo.assign(min(zlo, gocc));
+          zhi.assign(gocc);
+        });
+      });
+      const code = select(zhi.lessThan(0), float(-1.0), float(zlo.mul(GAS_OCC_PACK).add(zhi)));
+      textureStore(this.occTex, uvec2(uint(xi), uint(yi.add(slotI.mul(N)))), vec4(code, 0.0, 0.0, 1.0));
+    })().compute(N * N * this.S).setName('gasOccupancy');
   }
 
   _syncTune() {
@@ -1461,9 +1566,27 @@ export class GasGrid {
    * Krok klatki: domeny (nośnik, życie, wygaszanie), pakowanie źródeł i przeszkód, podkroki
    * symulacji i objętość światła — wszystko w JEDNYM renderer.compute(lista). Źródła i
    * przeszkody tej klatki trzeba dodać przed wywołaniem (kasowane na końcu).
+   * delay > 0 (GasGridSet.stagger): lista kroku z podkrokami zlecona dopiero w `delay`-tej następnej klatce bez podkroku
+   * (albo wcześniej — przy następnym kroku); do tego czasu uniformy kroku zostają (klatki bez podkroku nic nie pakują).
    */
-  simulate(renderer, dt) {
+  simulate(renderer, dt, delay = 0) {
     dt = Math.max(0, Math.min(dt, 0.1));
+    if (this._pending) {
+      if (dt > 0 || --this._pendingIn <= 0) {
+        renderer.compute(this._pending);
+        this._pending = null;
+      } else {
+        // krok w locie: uniformy zajęte — źródła i kadłuby tej klatki (bez podkroku) przepadają jak dawniej; ziarno
+        // zaokrągleń i licznik klatek (LRU pasm masek kadłubów) rosną jak w każdej klatce z domenami — kolejne kroki
+        // dostają te same wartości co bez przesunięcia (U.seed zapisze następne pakowanie).
+        this._frame++;
+        this._seed = (this._seed + 1) >>> 0;
+        this._srcN = 0;
+        this._hullN = 0;
+        this.stats.substeps = 0;
+        return;
+      }
+    }
     this.time += dt;
     const now = this.time;
     // Domeny: ruch z nośnikiem, wygaszanie po końcu życia.
@@ -1496,6 +1619,7 @@ export class GasGrid {
     this.stats.bandUploads = 0;
     this.stats.hullsIn = this._hullN;
     if (!act.length) {
+      this._lightSigValid = false;
       // F17: atlasy wolne po `releaseAfter` s bez domen (alokacja leniwa — atlas „fine” wraca do 1 × 1 × 1).
       if (this._idleSince < 0) this._idleSince = now;
       else if (this.releaseAfter > 0 && this.allocated && now - this._idleSince > this.releaseAfter) this._release();
@@ -1509,6 +1633,9 @@ export class GasGrid {
     this._frame++;
     // Raster statyki: nowa domena, zmiana budowli, domena przy brzegu okna (zwykle już w updateRasters reżysera).
     for (let k = 0; k < act.length; k++) if (this._needsRaster(act[k], now)) this._rasterSlot(act[k]);
+    // Raster statyki wysłany w tej klatce: bez przesunięcia kroku (wysyłka tekstury czyta maskData przy pierwszym użyciu —
+    // raster następnej klatki przed zleceniem w locie zmieniłby wejście kroku).
+    const maskUpload = this._maskDirty;
     if (this._maskDirty) { this.maskTex.needsUpdate = true; this._maskDirty = false; }
     this._syncTune();
     this._pack();
@@ -1536,13 +1663,26 @@ export class GasGrid {
       }
       this.projectNode.count = count; L.push(this.projectNode);
     }
-    this.lightNode.count = count;
-    L.push(this.lightNode);
+    // Objętość światła i zajętość kolumn: po podkroku, zerowaniu albo zmianie wejść (lightCache: false — co klatkę).
+    const sigSame = this._lightSigSame();
+    if (n > 0 || clear || !sigSame || this.lightCache === false) {
+      this.lightNode.count = count;
+      L.push(this.lightNode);
+      this.occNode.count = this.N * this.N * act.length;
+      L.push(this.occNode);
+    } else this.stats.lightSkipped++;
     this.U.time.value = (now * this.tune.turbSpeed) % 64;
     this._seed = (this._seed + 1) >>> 0;
     this.U.seed.value = this._seed;
     ensureHalfRoundingProbe(renderer);
-    renderer.compute(L);
+    if (delay > 0 && n > 0 && !clear && !maskUpload) {
+      // krok w locie: lista zostaje (osobna tablica), zlecenie w jednej z następnych klatek
+      this._pending = L;
+      this._pendingIn = delay;
+      this._list = this._listB;
+      this._listB = L;
+      this.stats.deferred++;
+    } else if (L.length) renderer.compute(L);
     // Flagi zerowania zjedzone: następna klatka bez czyszczenia.
     const A = this.U.act.array;
     for (let k = 0; k < act.length; k++) A[k * 4 + 2].z = 0;
@@ -1936,8 +2076,9 @@ export class GasGrid {
 
   /** Rozgrzewka: puste dispatche (licznik aktywnych 0) — pipeline'y compute bez przestoju w klatce. */
   warm(renderer) {
+    this._lightSigValid = false;
     this.U.activeCount.value = 0;
-    const L = [this.clearNode, this.curlNode, this.advectNode, this.reactNode, this.divNode, this.jacAB, this.jacBA, this.projectNode, this.lightNode];
+    const L = [this.clearNode, this.curlNode, this.advectNode, this.reactNode, this.divNode, this.jacAB, this.jacBA, this.projectNode, this.lightNode, this.occNode];
     for (const node of L) node.count = 64;
     renderer.compute(L);
   }
@@ -1945,19 +2086,22 @@ export class GasGrid {
   /** Wszystkie domeny wygaszone natychmiast. */
   clear() {
     for (const s of this.slots) { s.active = false; s.clear = true; s.hostN = 0; }
+    this._pending = null;
+    this._lightSigValid = false;
     this.active.length = 0;
     this._srcN = 0;
     this._hullN = 0;
   }
 
   dispose() {
-    for (const t of [...this._atlases, this.maskTex, this.hullMaskTex]) t.dispose();
+    for (const t of [...this._atlases, this.occTex, this.maskTex, this.hullMaskTex]) t.dispose();
   }
 
-  /** Bajty atlasów na GPU (10 tekstur RGBA16F; 0 przed alokacją leniwą) i masek przeszkód (R8). */
+  /** Bajty atlasów na GPU (10 tekstur RGBA16F i zajętość kolumn R32F; 0 przed alokacją leniwą) i masek przeszkód (R8). */
   get memoryBytes() {
     const cells = this.allocated ? this.N * this.N * this.NZ * this.S : 0;
-    return cells * 8 * this._atlases.length + this.maskData.length + this.hullMaskData.length;
+    const occ = this.allocated ? this.N * this.N * this.S * 4 : 0;
+    return cells * 8 * this._atlases.length + occ + this.maskData.length + this.hullMaskData.length;
   }
 
   /**
@@ -1982,10 +2126,16 @@ export class GasGrid {
   }
 
   _setAtlasSize(w, depth, h) {
+    this._lightSigValid = false;
     for (const t of this._atlases) {
       t.image.width = w; t.image.height = h; t.image.depth = depth;
       t.dispose();
       t.needsUpdate = true;
     }
+    // Zajętość kolumn: N × N·S przy alokacji, 1 × 1 po zwolnieniu (jak atlasy — pipeline'y bez zmian).
+    const occ = this.occTex;
+    occ.image.width = w; occ.image.height = w > 1 ? this.N * this.S : 1;
+    occ.dispose();
+    occ.needsUpdate = true;
   }
 }

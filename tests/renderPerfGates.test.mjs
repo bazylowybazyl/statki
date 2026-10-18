@@ -416,3 +416,35 @@ test('tekstury planet: dekodowanie po pobraniu i upload z kolejki Core3D', () =>
   assert.match(schedule, /if \(!this\.gpuReady\) \{[\s\S]*?this\.ready\.then\(/);
   assert.match(readSrc('src/3d/planet3d.assets.js'), /loadTexture\(path, prewarmLoadedTexture\)/);
 });
+
+// 2026-10-18 (GPU workera w rzezi): three r183 dawał listom compute (tablicom) uid znacznika „r:<nr renderu>:undefined:f…”
+// — wszystkie listy między dwoma renderami miały TEN SAM uid, pula znaczników zostawiała ostatnią (gaz wybuchów, żar,
+// światło gazu nie trafiały do gpuComputeMs). Core3D nadaje liście własny uid w formacie puli.
+test('Core3D: listy compute mają własne uid znaczników czasu (pula nie gubi wcześniejszych list klatki)', async () => {
+  globalThis.window = globalThis.window || {};
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const core = Object.create(Core3D);
+  const data = new WeakMap();
+  const info = { frame: 7, compute: { frameCalls: 0 }, render: { frameCalls: 1 } };
+  const backend = {
+    renderer: { info },
+    get(o) { let d = data.get(o); if (!d) { d = {}; data.set(o, d); } return d; },
+    // ścieżka three r183 (Backend.updateTimeStampUID)
+    updateTimeStampUID(ctx) {
+      const prefix = ctx.isComputeNode === true ? 'c:' + info.compute.frameCalls : 'r:' + info.render.frameCalls;
+      this.get(ctx).timestampUID = prefix + ':' + ctx.id + ':f' + info.frame;
+    }
+  };
+  core._uniqueComputeListTimestamps({ backend });
+  const listA = [{ isComputeNode: true }], listB = [{ isComputeNode: true }];
+  const uid = (ctx) => { info.compute.frameCalls++; backend.updateTimeStampUID(ctx); return backend.get(ctx).timestampUID; };
+  const a = uid(listA), b = uid(listB);
+  assert.notEqual(a, b, 'dwie listy w tej samej klatce — różne uid');
+  assert.match(a, /^c:\d+:L\d+:f7$/, 'format puli: przedrostek compute, numer klatki na końcu');
+  info.frame = 8;
+  assert.notEqual(uid(listA), a, 'ta sama lista w następnej klatce — nowy uid');
+  const node = { isComputeNode: true, id: 42 };
+  assert.equal(uid(node), 'c:4:42:f8', 'pojedynczy węzeł compute — ścieżka three bez zmian');
+  core._uniqueComputeListTimestamps({ backend });
+  assert.equal(uid(listB).split(':')[2], b.split(':')[2], 'łatka raz (drugie wywołanie nie owija ponownie)');
+});
