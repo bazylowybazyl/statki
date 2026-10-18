@@ -194,12 +194,23 @@ test('wybuch w module zapala go (paliwo z rur, rozpad); poza bazą — nic', () 
 
 test('stan klatki → blok migawki → lustro: te same liczby; sufit wyrw', () => {
   fresh();
+  // pęknięcia (długie wyrwy) w wielu modułach naraz — sufit wyrw: najsłabsze wypierane
+  const ids = ['H-E', 'H-S', 'H-W', 'H-N', 'H-C', 'H-T', 'M-1', 'D-1', 'D-2', 'D-3', 'D-4', 'D-5', 'D-6', 'D-7', 'D-8'];
   for (let k = 0; k < VENT_MAX + 6; k++) {
-    const m = mod(k % 2 ? 'H-W' : 'M-1');
-    noteBaseCrater(m.id, null, m.gx + k * 400, m.gy + (k % 3) * 300, 0, 22);
+    const m = mod(ids[k % ids.length]);
+    const a = k * 0.7;
+    breach({ module: m.id, x: m.gx + Math.cos(a) * 900, y: m.gy + Math.sin(a) * 900, z: m.z, size: 90 + (k % 5) * 30, kind: 'main' });
   }
   run(0.1);
-  assert.ok(S().vents.length <= VENT_MAX);
+  assert.equal(S().vents.length, VENT_MAX, 'sufit wyrw');
+  assert.ok(S().stats.dropped >= 1);
+  // kajuty: nowa kajuta w module najwcześniej po cabinEvery
+  const w = mod('M-1');
+  fresh();
+  assert.ok(noteBaseCrater('M-1', null, w.gx, w.gy, 0, 20) > 0);
+  assert.equal(noteBaseCrater('M-1', null, w.gx + 600, w.gy, 0, 20), -1, 'za szybko po poprzedniej');
+  run(ATMO_TUNE.cabinEvery + 0.05);
+  assert.ok(noteBaseCrater('M-1', null, w.gx + 600, w.gy, 0, 20) > 0);
   const f = pirateBaseVentFrame(0, DT);
   const blk = createPirateVentsBlock();
   const B = { f64: new Float64Array(blk.f64) };

@@ -52,6 +52,7 @@ export const ATMO_TUNE = {
   cabinK: 33, cabinTauMin: 0.12, cabinTauMax: 1.4,
   cabinSpentR: 2.2,           // kajuta opróżniona: nowa mała wyrwa bliżej niż tyle × promień kajuty nie wieje
   cabinMinR: 45,              // promień kajuty [j.] (najmniej)
+  cabinEvery: 0.3,            // [s] nowa kajuta w module najwcześniej po tylu (broń szybkostrzelna nie zasypuje syków)
   mainSize: 70,               // wyrwa ≥ tyle j. promienia — główna objętość modułu (grodzie nie trzymają)
   // Grodzie (przejścia między modułami): pole przejścia × ułamek otwarcia przy pęknięciu sąsiada (ułamek na parę —
   // pirateBaseAtmoModules; między sektorami dysku drzwi grodzi trzymają lepiej).
@@ -207,7 +208,7 @@ function makeModule(def, i, place) {
     fire: 0, firePeak: 0, burning: false, fuel: k ? k.fuel : 0.5, smolder: 0,
     ignAt: -1, ignN: 0, breached: false, broken: false, spent: false,
     cabins: [], cabinN: 0,
-    flick: 0, flickT: -1e9, spentT: -1, light: 1,
+    flick: 0, flickT: -1e9, spentT: -1, light: 1, cabinT: -1e9,
     outA: 0
   };
 }
@@ -430,12 +431,14 @@ export function breach(o = {}) {
   // Kajuta: lokalna objętość za przegrodami — już opróżniona (wyrwa obok wcześniejszej) nie wieje.
   let cabin = null;
   if (!isMain) {
+    if (S.time - m.cabinT < T.cabinEvery) { S.stats.refused++; return -1; }
     const cr = Math.max(T.cabinMinR, size);
     for (let i = 0; i < m.cabins.length; i++) {
       const c = m.cabins[i];
       if (Math.hypot(c.x - x, c.y - y, c.z - z) < (c.r + cr) * T.cabinSpentR * 0.5) { S.stats.refused++; return -1; }
     }
     cabin = { rho: m.rho, T: m.T, tau: cabinTau(size), x, y, z, r: cr };
+    m.cabinT = S.time;
     if (m.cabins.length < 24) m.cabins.push(cabin);
     else { m.cabins[m.cabinN % 24] = cabin; m.cabinN++; }
   }
