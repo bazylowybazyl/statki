@@ -32220,8 +32220,22 @@
       pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity: ev.entity || null, kind: 'break' });
       pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity: ev.entity || null });
     }
+    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): środek między habitatem a środkiem skały, kadr na całą
+    // planetoidę; trzyma się do 4 s po uderzeniu dysku w skałę (albo do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    function pirateBaseFallLook() {
+      const F = _baseFall, T = F.terrain, pl = _fallCtx.place || _baseFallPlace;
+      if (!T || !pl || F.phase !== 'falling') return null;
+      const hc = pl.habitat;
+      const sp = ship?.pos;
+      if (!sp || Math.hypot(sp.x - hc.x, sp.y - hc.y) > 40000) return null;
+      const rx = T.cx, ry = -T.cy;
+      return {
+        x: hc.x + (rx - hc.x) * 0.3, y: hc.y + (ry - hc.y) * 0.3, viewHeight: 15000,
+        holdUntil: () => F.phase !== 'falling' || (F.discImpactT >= 0 && F.t >= F.discImpactT + 4)
+      };
+    }
     window.PirateBaseFall = {
-      state: () => _baseFall, tune: PIRATE_FALL_TUNE,
+      state: () => _baseFall, tune: PIRATE_FALL_TUNE, look: () => pirateBaseFallLook(),
       start: () => startPirateBaseFall(),
       surfaceZ: (x, y) => _baseFall.terrain?.surfaceZAt(x, y) ?? null
     };
@@ -32538,6 +32552,7 @@
       rockCollapse: () => collapsePirateRock(),
       // Upadek habitatu na planetoidę (2026-10-19): wieża przebija dysk, dysk za nią (src/game/story/pirateBaseFall.js).
       habitatFall: () => startPirateBaseFall(),
+      habitatFallLook: () => pirateBaseFallLook(),
       habitatFallDone: (maxSec) => pirateBaseFallDone(maxSec),
       launchNpc: storyNpcs.launch,
       // Zegar wodowania i herszt (misja 1, 2026-10-07): załoga przy działach w stanowisku, brama stanowiska

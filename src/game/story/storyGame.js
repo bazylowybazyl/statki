@@ -984,7 +984,11 @@ export const StoryGame = {
       // storyBaseBreak → pirateBaseFall.promotePlanarPiece); szyb odlatuje od osi, robiąc wieży drogę.
       const falling = typeof d.habitatFall === 'function';
       let fallStarted = false;
-      if (falling) at(0, () => { fallStarted = !!d.habitatFall(); if (!fallStarted) this._habitatImplosion(site, H, place, at); });
+      if (falling) at(0, () => {
+        fallStarted = !!d.habitatFall();
+        if (!fallStarted) this._habitatImplosion(site, H, place, at);
+        else if (opts.waitFuel !== false) this._habitatFallShot();
+      });
       at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: falling ? 170 : 60, dir: 'out', fall: falling }));
       if (!falling) this._habitatImplosion(site, H, place, at);
       H.quadrants.forEach((q, i) => {
@@ -1004,6 +1008,21 @@ export const StoryGame = {
         const fallDone = fallStarted && typeof d.habitatFallDone === 'function' ? d.habitatFallDone(30) : null;
         Promise.all([fuelDone, site.chain.pending || null, fallDone]).then(resolve);
       });
+    });
+  },
+
+  // Kadr upadku habitatu (kamera statku — lookAt jak ujęcie sygnatury masy w fazie zwiadu): odjazd nad habitat
+  // i planetoidę pod nim, kadr do chwili z `holdUntil` zależności (osiadanie, najwyżej holdSec), wejście odblokowane
+  // w kadrze. Gracz daleko, inna kamera — bez ujęcia (zależność zwraca null / lookAt kończy od razu).
+  _habitatFallShot() {
+    const d = this.deps;
+    const look = typeof d.habitatFallLook === 'function' ? d.habitatFallLook() : null;
+    if (!look || !d.lookAt) return;
+    this._block.add('look');
+    d.lookAt({
+      ...look, inSec: 1.8, holdSec: 18, outSec: 1.6,
+      onArrive: () => this._block.delete('look'),
+      onDone: () => this._block.delete('look')
     });
   },
 

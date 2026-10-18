@@ -8,7 +8,8 @@
 // stoi — HP 0 habitatu przy stojącej wieży (gracz zestrzelił resztę bez taranu szyi)
 // lezy — najpierw zerwanie szyi (window.snapPirateBaseNeck), wieża leży na dysku i zamarza, potem HP 0
 // kamera top — z góry (RTS): zbliżenie na habitat przy przebiciu dysku, potem oddalenie nad skałę (upadek, uderzenia);
-// kamera 3d — kamera 3D (Game3D 'tactical') krążąca wokół wieży (Game3D.focusEntity) od HP 0 do osiadania.
+// kamera 3d — kamera 3D (Game3D 'tactical') krążąca wokół wieży (Game3D.focusEntity) od HP 0 do osiadania;
+// kamera gra — kamera statku jak u gracza (ujęcie upadku robi fabuła: lookAt nad habitat i skałę).
 // Co 0,25 s: faza upadku, wieża (z, prędkość), sektory dysku puszczone, uderzenia, zamrożone, czas kroku fizyki i klatki;
 // kadry w chwilach sekwencji; pipeline'y renderu tworzone synchronicznie w scenariuszu (ma być 0). Raport: <out>/raport.json.
 import { mkdirSync } from 'node:fs';
@@ -156,7 +157,11 @@ async function przebieg(wariant, kamera) {
   }
   // kamera
   if (kamera === 'top') await camHub(0, 0, 0.15);
-  else {
+  else if (kamera === 'gra') {
+    // kamera gry (statek, z góry): ujęcie upadku robi fabuła (storyGame._habitatFallShot → lookAt)
+    await ev(`(() => { const c = window.camera; if (c.mode === 'rts' && c.exitRtsMode) c.exitRtsMode(); window.Game3D?.setCamera('classic');
+      c.manualZoom = false; c.targetZoom = 0.42; document.getElementById('cockpit-ui-host')?.classList.remove('hidden'); return c.mode; })()`);
+  } else {
     await ev(`(() => { const c = window.camera; if (c.mode === 'rts' && c.exitRtsMode) c.exitRtsMode(); window.Game3D?.setCamera('tactical'); return window.Game3D?.mode; })()`);
   }
   await sleep(600);

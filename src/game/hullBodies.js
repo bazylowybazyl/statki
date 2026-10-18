@@ -75,6 +75,10 @@ export const HULL_BODY_CONFIG = {
   // Drobne odłamy (mniej węzłów) spadające ku planetoidzie (studnia grawitacji silnika) nie zderzają się między sobą
   // (pairFilter) — tylko z terenem skały i resztą świata.
   fallDebrisPairNodes: 400,
+  // … a duże między sobą (bez wieży) co tyle kroków, krokiem × tyle (silnik: pairFilter → liczba). Pomiar 2026-10-19
+  // (Node, lądowanie dysku): 2 — kolizje −20% w szczycie (koszt robią pary z wieżą i teren), za to głębsze wnikanie
+  // przy ~2000 j/s; 1 — wyłączone.
+  fallPairEvery: 1,
   // Odłam bryły 3D poniżej tej wysokości (spadł w otchłań) znika (pętla wraków gry). Od 2026-10-19 bryły bazy piratów
   // lądują na planetoidzie pod bazą (teren silnika — src/game/story/pirateBaseFall.js; skała 8–40 km pod płaszczyzną),
   // więc dno leży pod skałą (dawniej −6000: odłamy znikały pod habitatem).
@@ -3151,7 +3155,13 @@ function pairFilter(A, B) {
   // Upadek bazy piratów na planetoidę (src/game/story/pirateBaseFall.js): DROBNE odłamy w studni skały nie zderzają się
   // z innymi ciałami tej studni (tylko z terenem skały i resztą świata) — stos złomu na skale bez setek par (pomiar
   // 2026-10-19: 350–420 par na krok, kolizje 15–23 ms). Duże bryły (wieża, sektory dysku, kawałki bębna) — zwykłe zderzenia.
-  if (A.gravityWell && A.gravityWell === B.gravityWell && Math.min(A.activeNodes, B.activeNodes) < C.fallDebrisPairNodes) return false;
+  let every = 1;
+  if (A.gravityWell && A.gravityWell === B.gravityWell) {
+    if (Math.min(A.activeNodes, B.activeNodes) < C.fallDebrisPairNodes) return false;
+    // Duże bryły upadku między sobą (sektory dysku, kawałki bębna i szybu) — co fallPairEvery kroków krokiem k · dt
+    // (lądowanie dysku: ~100 par); wieża (przebija dysk, uderza pierwsza) — co krok.
+    if (C.fallPairEvery > 1 && !ea.__neckTower && !eb.__neckTower) every = C.fallPairEvery;
+  }
   // Odłamy JEDNEGO kawałka budowli (worldBodies.breakPiece — pęknięcia Voronoi) nie zderzają się między sobą:
   // rodzą się na styk wzdłuż szwów i rozchodzą; ich styki to ~⅓ kroku po rozpadzie suchego doku (pomiar
   // 2026-10-07). Z okrętami, budowlą i odłamami innych kawałków — zwykłe zderzenia.
@@ -3169,8 +3179,8 @@ function pairFilter(A, B) {
   // Dwa stare, wolne wraki nie mielą się bez końca w stosie złomu.
   if (ea.isWreck && eb.isWreck && isColdWreck(ea) && isColdWreck(eb)) return false;
   // Flaga wreckPairEvery: wolna para wraków po czasie pełnych kolizji — co k-ty krok, krokiem k · dt.
-  if (C.wreckPairEvery > 1 && ea.isWreck && eb.isWreck && isSlowWreckPair(A, B, ea, eb)) return C.wreckPairEvery;
-  return true;
+  if (C.wreckPairEvery > 1 && ea.isWreck && eb.isWreck && isSlowWreckPair(A, B, ea, eb)) return Math.max(every, C.wreckPairEvery);
+  return every > 1 ? every : true;
 }
 
 // Para wraków bez szybkiego styku: oba po czasie pełnych kolizji (świeży odłam rozdziela się co krok),
