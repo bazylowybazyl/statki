@@ -3,7 +3,7 @@
 // src/3d/pirateRockImpactFx.js (cząstki w passie tła) i głębokie domeny gazu wybuchów (ExplosionFx.deepDomain).
 //
 //   node scripts/webgpu/uderzenia-gra.mjs [--out .tmp/uderzenia-gra] [--rozmiar 1600x900]
-//        [--tryb duze,srednie,male,szorowanie,upadek,3d,koszt] [--query renderWorker=1] [--zoomy 0.2,0.08]
+//        [--tryb jasne,duze,srednie,male,szorowanie,upadek,3d,glebia,koszt] [--query renderWorker=1] [--zoomy 0.2,0.08]
 //
 // Skok dev ?story=ram (baza postawiona), kamera RTS bez HUD-u nad punktem uderzenia (głęboki punkt — kamera nad nim,
 // rzut perspektywy passa tła zbiega ku środkowi kadru):
@@ -13,7 +13,8 @@
 //   szorowanie  ciało szoruje po powierzchni 3 s (zdarzenia co 0,25 s)
 //   upadek      scenariusz demo (wieża, 8 sektorów dysku, bęben, odłamy, szorowanie, osiadanie) — kadry do 9 s
 //   3d          kamera taktyczna (K) nad strefą uderzenia — demo upadku w perspektywie
-//   koszt       mediana Core3D.gpuFrameMs: bez uderzeń / z demo upadku (A/B tej samej klatki: przełącznik
+//   glebia      wybuch w głębi bez skały (deepBlast, z −800): obok dysku mieszkalnego, w osi habitatu, z kamery 3D
+//   koszt      mediana Core3D.gpuFrameMs: bez uderzeń / z demo upadku (A/B tej samej klatki: przełącznik
 //               ROCK_IMPACT_FX_TUNE.enabled przez nowe zdarzenia — kolejne demo przy wyłączonym obrazie)
 // Raport <out>/raport.json: statystyki kontraktu, obrazu i gazu, pipeline'y synchroniczne w klatkach gry (ma być 0),
 // błędy konsoli (też workera).
@@ -190,6 +191,24 @@ try {
     await series('06-3d-upadek', () => ev(`window.PirateRockImpacts.demo('upadek', { e: -3600, n: 0 })`), [0.4, 1.5, 3, 5.5, 9]);
     await ev(`(() => { window.Game3D?.setCamera('classic'); return true; })()`);
   }
+  if (tryby.has('glebia')) {
+    // wybuch w głębi bez skały (deepBlast — wieża przebija dysk mieszkalny, z −800): obok dysku (widać cały obłok) i w osi
+    // habitatu (dysk i bęben go zasłaniają — przebicie), z góry i z kamery 3D
+    const c = await ev(`(() => { const p = window.StoryGame.site.dock.toGame(0, 0); return { x: p.x, y: p.y }; })()`);
+    await camAt(c.x + 2600, c.y, zoomy[0]);
+    await sleep(900);
+    await series('07-glebia', () => ev(`window.PirateRockImpacts.testBlast({ dx: 2600, z: -800, size: 800, nz: -1, speed: 1800, id: 'b1' }) && true`),
+      [0.1, 0.4, 1.0, 2.5, 5]);
+    await camAt(c.x, c.y, zoomy[0]);
+    await sleep(900);
+    await series('07-glebia-os', () => ev(`window.PirateRockImpacts.testBlast({ z: -800, size: 800, nz: -1, speed: 1800, id: 'b2' }) && true`),
+      [0.2, 1.0, 2.5]);
+    await ev(`(() => { const S = window.StoryGame, p = S.site.dock.toGame(-2500, 4500); S.deps.placePlayer(p.x, p.y, S.site.dock.axis + 0.9); window.ship.vel.x = 0; window.ship.vel.y = 0; const cm = window.camera; if (cm.mode === 'rts' && cm.exitRtsMode) cm.exitRtsMode(); window.Game3D?.setCamera('tactical'); return true; })()`);
+    await sleep(2500);
+    await series('08-glebia-3d', () => ev(`window.PirateRockImpacts.testBlast({ dx: 2600, z: -800, size: 800, nz: -1, speed: 1800, id: 'b3' }) && true`),
+      [0.15, 0.6, 1.5, 3, 5]);
+    await ev(`(() => { window.Game3D?.setCamera('classic'); return true; })()`);
+  }
   if (tryby.has('koszt')) {
     // mediana gpuFrameMs (off: Core3D strony) — bez uderzeń, potem z demo upadku (0,5–6 s po starcie)
     const p = await at(-3600, 0);
@@ -214,6 +233,12 @@ try {
     report.koszt.upadekStan = await state();
     await sleep(9000);
     report.koszt.poUpadku = await sample(3);
+    // wybuch w głębi bez skały (deepBlast — przebicie dysku): obok dysku, w kadrze
+    await ev(`window.PirateRockImpacts.testBlast({ dx: 2600, z: -800, size: 800, id: 'koszt-blast' }) && true`);
+    await sleep(300);
+    report.koszt.wybuch = await sample(4);
+    report.koszt.wybuchStan = await state();
+    await sleep(9000);
     // to samo bez gazu (same cząstki) — koszt gazu = różnica
     await ev('(() => { const t = window.PirateRock?.state?.()?.impact?.tune; if (t) t.gas = false; return !!t; })()');
     await ev(`window.PirateRockImpacts.demo('upadek', { e: -3600, n: 0 })`);

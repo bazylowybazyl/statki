@@ -418,3 +418,117 @@ test('ślady uderzeń na skale: lustro reguły (lód na dnie i w promieniach, ci
   const b = buildMesh(r.mesh);
   assert.match(b.fragmentShader, /pirateRockScarA/);
 });
+
+test('kontrakt: deepBlast — wybuch w głębi bez skały (rekord BLAST, kierunek opcjonalny, odstęp na ciało)', () => {
+  const { writer, reader } = inlineStream();
+  RI.installPirateRockImpacts(writer, { clock: () => clock, place: () => place });
+  RI.resetPirateRockImpacts();
+  const got = [];
+  setRockImpactHost({ onEvent(type, e) { got.push({ type, ...e }); return true; } });
+  installRockImpactCommands(reader, null);
+  clock = 50;
+  assert.equal(RI.deepBlast({ id: 'przebicie', kind: 'tower', x: 3.2e6, y: -1.4e6, z: -800, size: 800, nx: 0, ny: 0.3, nz: -0.95,
+    speed: 1800, vx: 10, vy: -20, vz: -300 }), true);
+  const e = got[0];
+  assert.equal(e.type, ROCK_EVENT.BLAST);
+  assert.equal(e.kind, 'tower'); assert.equal(e.z, -800); assert.equal(e.size, 800); assert.equal(e.speed, 1800);
+  assert.ok(Math.abs(Math.hypot(e.nx, e.ny, e.nz) - 1) < 1e-12, 'kierunek znormalizowany');
+  assert.equal(e.vz, -300, 'nośnik bez zmian');
+  clock = 50.1;
+  assert.equal(RI.deepBlast({ id: 'przebicie', x: 3.2e6, y: -1.4e6, z: -800, size: 800 }), false, 'odstęp wybuchów ciała');
+  clock = 50.5;
+  assert.equal(RI.deepBlast({ id: 'przebicie', x: 3.2e6, y: -1.4e6, z: -800 }), true);
+  const e2 = got[1];
+  assert.equal(e2.nx, 0); assert.equal(e2.ny, 0); assert.equal(e2.nz, 0, 'bez kierunku — kulisty (zera, nie normalna skały)');
+  assert.equal(e2.size, 700, 'domyślny promień');
+  assert.equal(e2.speed, 0);
+  assert.equal(RI.deepBlast({ id: 'x', x: 0, y: NaN, z: 0 }), false);
+  assert.equal(RI.PirateRockImpacts.blast, RI.deepBlast);
+  setRockImpactHost(null);
+});
+
+test('RockImpactFx: dopasowanie zasięgu gazu do elipsoidy domeny (_fitAlong / _fitSpeed) — pióropusz nie wbija się w sufit', () => {
+  const fx = new RockImpactFx({ layer: 1 });
+  fx.setRock(0, 0, -24000, 16000);
+  // pudło 96 × 96 × 36 komórek po h = 50: półosie 2400 (x, y) i 900 (z)
+  const s = { h: 50, n: 96, nz: 36, cx: 0, cy: 0, cz: 0 };
+  assert.ok(Math.abs(fx._fitAlong(s, 0, 0, 0, 1, 0, 0, 0.8) - 1920) < 1e-9);
+  assert.ok(Math.abs(fx._fitAlong(s, 0, 0, 0, 0, 0, 1, 0.8) - 720) < 1e-9);
+  assert.ok(Math.abs(fx._fitAlong(s, 0, 0, -300, 0, 0, 1, 0.8) - 1020) < 1e-9, 'punkt pod środkiem — więcej miejsca w górę');
+  assert.equal(fx._fitAlong(s, 0, 0, 2000, 0, 0, 1, 0.8), 0, 'punkt poza elipsoidą');
+  const T = fx.tune;
+  assert.equal(fx._fitSpeed(1000, 0.4, 100, 1e6), 1000, 'dużo miejsca — prędkość bez zmian');
+  const v = fx._fitSpeed(1000, 0.4, 100, 900);
+  assert.ok(Math.abs(v - (0.8 * 900 - 100) / (0.4 + T.gasCoast)) < 1e-9);
+  assert.equal(fx._fitSpeed(1000, 0.4, 100, 50), 120, 'najmniej 0,12 × prędkość');
+  // uderzenie wieży w szczyt (normalna +z): strumienie z domeny o geometrii deepDomain (szerokość 5,6 R, środek wyżej o
+  // gasUpShift × wysokość) mieszczą zasięg (len + v · (czas + coast)) w 0,8 elipsoidy — albo stoją na dolnej granicy
+  const jets = [];
+  const gas = {
+    grid: { slots: [], time: 0, feed() {} },
+    director: { jet(slot, x, y, z, dx, dy, dz, r, len, speed, dur) { jets.push({ x, y, z, dx, dy, dz, len, speed, dur }); }, puff() {} },
+    deepDomain(x, y, z, R, o) {
+      const h = R * o.domainScale / 96;
+      this.grid.slots[0] = { active: true, deep: true, tag: o.tag, h, n: 96, nz: 36, cx: x, cy: -y, cz: z + o.upShift * 36 * h };
+      return 0;
+    },
+    setDeepSun() {}
+  };
+  fx.getGas = () => gas;
+  fx.onEvent(ROCK_EVENT.IMPACT, { id: 1, kind: 'tower', x: 0, y: 0, z: -8000, nx: 0, ny: 0, nz: 1, speed: 1900, slide: 0, mass: 1e6, size: 1280, energy: 1e12, vx: 0, vy: 0, vz: -1900 });
+  assert.ok(jets.length >= 14);
+  const sl = gas.grid.slots[0];
+  for (const j of jets) {
+    const l = Math.hypot(j.dx, j.dy, j.dz);
+    const avail = fx._fitAlong(sl, j.x, j.y, j.z, j.dx / l, j.dy / l, j.dz / l, 0.85);
+    const reach = j.len + j.speed * (j.dur + T.gasCoast);
+    assert.ok(reach <= 0.8 * avail + 1e-6, `zasięg ${reach.toFixed(0)} > ${(0.8 * avail).toFixed(0)}`);
+  }
+  // pióropusz (strumień wzdłuż +z) — wolniejszy niż bez dopasowania
+  const plume = jets.find((j) => j.dz > 0.99);
+  const q = Math.min(T.qMax, (1900 - T.speed0) / T.speedK);
+  const Rc = Math.min(T.cloudMax, 1280 * (T.cloudBase + T.cloudQ * q));
+  assert.ok(plume && plume.speed < Rc * (1.2 + 0.8 * q), 'pióropusz dopasowany do sufitu domeny');
+});
+
+test('RockImpactFx: wybuch w głębi (BLAST) — gaz w domenie głębokiej z nośnikiem, odłamki lądują na kuli skały, błysk', () => {
+  const fx = new RockImpactFx({ layer: 1 });
+  fx.setRock(0, 0, -24000, 16000);
+  const calls = [];
+  const gas = {
+    grid: { slots: [], time: 0, feed() {} },
+    director: { jet() { calls.push('jet'); }, puff() { calls.push('puff'); } },
+    deepDomain(x, y, z, R, o) {
+      calls.push({ x, y, z, R, o });
+      const h = R * o.domainScale / 96;
+      this.grid.slots[0] = { active: true, deep: true, tag: o.tag, h, n: 96, nz: 36, cx: x, cy: -y, cz: z };
+      return 0;
+    },
+    setDeepSun() {}
+  };
+  fx.getGas = () => gas;
+  const e = { id: 7, kind: 'tower', x: 1200, y: -300, z: -800, nx: 0, ny: 0, nz: -1, speed: 1800, slide: 0, mass: 0, size: 800, energy: 0, vx: 0, vy: 40, vz: -200 };
+  assert.equal(fx.onEvent(ROCK_EVENT.BLAST, e), true);
+  assert.equal(fx.stats.blasts, 1);
+  const d = calls.find((c) => typeof c === 'object');
+  assert.ok(d, 'domena głęboka');
+  assert.equal(d.x, 1200); assert.equal(d.y, -300); assert.equal(d.z, -800); assert.equal(d.R, 800);
+  assert.equal(d.o.ground.r, 16000, 'kula skały (promień skały, nie odległość punktu)');
+  assert.deepEqual(d.o.carrier, [0, 40, -200], 'nośnik w układzie gry');
+  assert.ok(!d.o.up, 'wybuch bez przesunięcia domeny');
+  assert.ok(calls.filter((c) => c === 'jet').length >= 8, 'strumienie na wszystkie strony + wzdłuż ruchu');
+  assert.ok(calls.filter((c) => c === 'puff').length >= 2, 'gorąca kula i kłąb');
+  // odłamki: lądowanie na kuli skały (16 000), nie na kuli przez punkt wybuchu
+  const A = fx.alpha.arr;
+  let chunks = 0;
+  for (let i = 0; i < fx.alpha.used; i++) {
+    if (A[i * 20 + 9] !== RIP.CHUNK) continue;
+    chunks++;
+    const tl = A[i * 20 + 7];
+    assert.ok(tl > 0 && tl <= 9, `lądowanie ${tl}`);
+  }
+  assert.ok(chunks > 100, `odłamki: ${chunks}`);
+  assert.ok(fx.add.used >= 40, 'iskry i błysk');
+  // bez kierunku — kulisty, nadal działa
+  assert.equal(fx.onEvent(ROCK_EVENT.BLAST, { ...e, nx: 0, ny: 0, nz: 0 }), true);
+});

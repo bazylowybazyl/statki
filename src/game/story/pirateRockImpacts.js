@@ -10,6 +10,8 @@
 // styku), z (wysokość świata, ujemna), nx, ny, nz (normalna skały na zewnątrz, układ GRY: y w dół, z w górę), speed (j/s
 // wzdłuż normalnej), slide (j/s stycznie), mass (masa silnika), size (promień ciała / łaty styku, j.), energy (½·m·v²),
 // vx, vy, vz (opcjonalnie: prędkość ciała w układzie gry — kierunek śladu pyłu przy szorowaniu) }.
+//   • deepBlast(ev) — wybuch / kłąb w GŁĘBI bez skały (wieża przebija dysk mieszkalny, z ≈ −800): ev = { id, kind, x, y,
+//     z, size (promień kuli wybuchu), nx, ny, nz (kierunek ruchu ciała, opcjonalnie), speed, vx, vy, vz (nośnik) }.
 //
 // Moduł jest czysty (bez three, DOM i `window`): waliduje zdarzenie, pilnuje odstępów na ciało (fizyka może wołać co krok
 // — nadmiar przepada tutaj), normalną bez wartości liczy z położenia skały (pirateRockLayout + miejsce bazy) i pisze
@@ -33,10 +35,11 @@ export const ROCK_IMPACT_TUNE = {
   minScrapeSlide: 10,   // [j/s] szorowanie wolniejsze — pomijane
   burstWindow: 0.1,     // [s] okno sufitu zdarzeń (wszystkie ciała razem)
   burstMax: 96,         // zdarzeń w oknie (reszta przepada — obraz i tak łączy bliskie uderzenia)
-  bodyMemory: 30        // [s] pamięć ciała bez zdarzeń (potem wpis wypada)
+  bodyMemory: 30,       // [s] pamięć ciała bez zdarzeń (potem wpis wypada)
+  blastGap: 0.3         // [s] najkrótszy odstęp wybuchów w głębi jednego ciała (deepBlast)
 };
 
-const stats = { impacts: 0, scrapes: 0, settles: 0, written: 0, gapped: 0, burst: 0, invalid: 0, noSink: 0 };
+const stats = { impacts: 0, scrapes: 0, settles: 0, blasts: 0, written: 0, gapped: 0, burst: 0, invalid: 0, noSink: 0 };
 
 let _writer = null;
 let _clock = null;
@@ -111,7 +114,7 @@ function bodyOf(id, t) {
     if (_bodies.size > 512) {
       for (const [k, v] of _bodies) if (t - v.seen > ROCK_IMPACT_TUNE.bodyMemory) _bodies.delete(k);
     }
-    b = { tI: -Infinity, eI: 0, tS: -Infinity, settled: false, seen: t };
+    b = { tI: -Infinity, eI: 0, tS: -Infinity, tB: -Infinity, settled: false, seen: t };
     _bodies.set(id, b);
   }
   b.seen = t;
@@ -217,6 +220,38 @@ export function rockSettle(ev) {
   return rockSettleNorm(bodyOf(_ev.id, now()), now());
 }
 
+/**
+ * Wybuch / kłąb w GŁĘBI bez skały (np. wieża przebija dysk mieszkalny — z ≈ −800; pass tła, kamera perspektywy):
+ * ev = { id, kind, x, y, z (świat gry, z — wysokość), size (promień kuli wybuchu [j.], domyślnie 700), nx, ny, nz
+ * (kierunek główny w układzie gry — ruch ciała, które przebija; bez niego — kulisty), speed (prędkość ciała [j/s];
+ * domyślnie |v|), mass, energy, vx, vy, vz (prędkość nośnika — obłok i odłamki jadą z nią) }. Odstęp ≥ blastGap na
+ * ciało. Zwraca true, gdy rekord poszedł do obrazu.
+ */
+export function deepBlast(ev) {
+  if (!ev || !Number.isFinite(ev.x) || !Number.isFinite(ev.y) || !Number.isFinite(ev.z)) { stats.invalid++; return false; }
+  const e = _ev;
+  e.id = numId(ev.id);
+  e.kind = ev.kind || 'other';
+  e.x = ev.x; e.y = ev.y; e.z = ev.z;
+  let nx = fin(ev.nx), ny = fin(ev.ny), nz = fin(ev.nz);
+  const l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (l > 1e-6) { nx /= l; ny /= l; nz /= l; } else { nx = 0; ny = 0; nz = 0; }
+  e.nx = nx; e.ny = ny; e.nz = nz;
+  e.vx = fin(ev.vx); e.vy = fin(ev.vy); e.vz = fin(ev.vz);
+  e.speed = Math.max(0, fin(ev.speed, Math.sqrt(e.vx * e.vx + e.vy * e.vy + e.vz * e.vz)));
+  e.slide = 0;
+  e.mass = Math.max(0, fin(ev.mass));
+  e.size = Math.max(1, fin(ev.size, 700));
+  e.energy = Math.max(0, fin(ev.energy, 0.5 * e.mass * e.speed * e.speed));
+  const t = now();
+  const b = bodyOf(e.id, t);
+  if (t - b.tB < ROCK_IMPACT_TUNE.blastGap) { stats.gapped++; return false; }
+  if (!burstOk(t)) return false;
+  b.tB = t;
+  stats.blasts++;
+  return write(ROCK_EVENT.BLAST, e);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Dev i narzędzia: zdarzenia w punkt powierzchni (e, n) bez fizyki.
 
@@ -253,6 +288,26 @@ export function rockEventAt(o = {}) {
     energy: Number(o.energy) || 0,
     vx: sx * slide - ng.x * speed, vy: sy * slide - ng.y * speed, vz: sz * slide - sp.nh * speed
   };
+}
+
+/**
+ * Wybuch w głębi przy habitacie (dev): o = { dx, dy (przesunięcie od środka habitatu w grze), z (−800 — dysk mieszkalny),
+ * size, nx, ny, nz (kierunek ruchu ciała — domyślnie w dół), speed, vx, vy, vz (nośnik — domyślnie 0), kind, id }.
+ * Zwraca zdarzenie albo null bez bazy.
+ */
+export function testDeepBlast(o = {}) {
+  const pl = _place ? _place() : null;
+  if (!pl || typeof pl.toGame !== 'function') return null;
+  const g = pl.toGame(0, 0, {});
+  const ev = {
+    id: o.id ?? `test-blast-${++_testSerial}`, kind: o.kind || 'tower',
+    x: g.x + (Number(o.dx) || 0), y: g.y + (Number(o.dy) || 0), z: Number(o.z ?? -800),
+    nx: Number(o.nx ?? 0), ny: Number(o.ny ?? 0), nz: Number(o.nz ?? -1), speed: Number(o.speed ?? 1500),
+    size: Number(o.size) || 800, mass: Number(o.mass) || 0,
+    vx: Number(o.vx) || 0, vy: Number(o.vy) || 0, vz: Number(o.vz) || 0
+  };
+  deepBlast(ev);
+  return ev;
 }
 
 function testEvent(type, o) {
@@ -328,6 +383,9 @@ export const PirateRockImpacts = {
   rockImpact,
   rockScrape,
   rockSettle,
+  deepBlast,
+  blast: deepBlast,
+  testBlast: testDeepBlast,
   eventAt: rockEventAt,
   test: (o) => testEvent(ROCK_EVENT.IMPACT, o),
   testScrape: (o) => testEvent(ROCK_EVENT.SCRAPE, o),

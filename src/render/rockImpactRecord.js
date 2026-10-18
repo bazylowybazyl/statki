@@ -19,8 +19,11 @@ export const ROCK_IMPACT_REC = Object.freeze({
   VX: 14, VY: 15, VZ: 16, WORDS: 17
 });
 
-/** Rodzaj zdarzenia. */
-export const ROCK_EVENT = Object.freeze({ IMPACT: 0, SCRAPE: 1, SETTLE: 2 });
+/**
+ * Rodzaj zdarzenia. BLAST — wybuch / kłąb w głębi BEZ skały (wieża przebija dysk mieszkalny): punkt w powietrzu, normalna =
+ * kierunek główny (ruch ciała; zera — kulisty), SIZE — promień kuli wybuchu, SPEED — prędkość ciała.
+ */
+export const ROCK_EVENT = Object.freeze({ IMPACT: 0, SCRAPE: 1, SETTLE: 2, BLAST: 3 });
 
 /** Rodzaje ciał (kolejność = kod w rekordzie). */
 export const ROCK_BODY_KINDS = Object.freeze(['other', 'tower', 'disc', 'drum', 'core', 'debris', 'cable']);

@@ -1129,7 +1129,7 @@
     // Uderzenia w planetoidę pod bazą piratów (upadek bazy, 2026-10-19): kontrakt fizyki src/game/story/pirateRockImpacts.js
     // (rockImpact / rockScrape / rockSettle → rekord ROCK_IMPACT), obraz z dekodera src/3d/pirateRockImpactFx.js — cząstki
     // w passie tła i głębokie domeny gazu wybuchów (ExplosionFx.deepDomain). Dev: window.PirateRockImpacts (test, demo).
-    import { installPirateRockImpacts, stepPirateRockImpacts, PirateRockImpacts, rockImpact, rockScrape, rockSettle, resetPirateRockImpacts } from "./src/game/story/pirateRockImpacts.js";
+    import { installPirateRockImpacts, stepPirateRockImpacts, PirateRockImpacts, rockImpact, rockScrape, rockSettle, resetPirateRockImpacts, deepBlast as pirateDeepBlast } from "./src/game/story/pirateRockImpacts.js";
     import { pirateBasePlace } from "./src/game/story/pirateBaseWorld.js";
     import { installRockImpactCommands } from "./src/3d/pirateRockImpactFx.js";
     installPirateRockImpacts(RenderCommands.writer, { clock: () => SimClock.sim, place: () => pirateBasePlace() });
@@ -32202,7 +32202,15 @@
     // powietrza, grodzie puszczają) i zapłon. Korek (cause 'plug') — wyrwy daje zgniot węzłów (atmoNodeLost).
     function pirateFallBreachFx(ev) {
       if (!ev) return;
-      if (ev.cause === 'plug') { camera.addShake(24, 0.9); return; }
+      if (ev.cause === 'plug') {
+        // wieża rozbija korek dysku: wybuch w głębi (pod płaszczyzną gry, ~800 j.) w kierunku jej ruchu; korek stoi
+        // (nośnik 0 — obłok zostaje przy dziurze, wieża wylatuje z niego w dół)
+        const F = _baseFall;
+        pirateDeepBlast({ id: 'pbase-plug', kind: 'disc', x: ev.x, y: ev.y, z: Number.isFinite(F.discMinZ) ? F.discMinZ + 180 : ev.z,
+          size: 760, nx: F.downX, ny: -F.downY, nz: F.downZ, vx: 0, vy: 0, vz: 0 });
+        camera.addShake(24, 0.9);
+        return;
+      }
       const module = ev.module;
       if (!module) return;
       if (ev.cause === 'release') {
@@ -32216,6 +32224,10 @@
         const z = Number.isFinite(F.discMinZ) ? F.discMinZ + 160 : ev.z;
         pirateBaseBreach({ module, x: hx + dx * r, y: hy + dy * r, z, nx: -dx * 0.8, ny: -dy * 0.8, nz: -0.6, size: 200,
           entity: ev.entity || null, kind: 'break' });
+        // pęknięcie mocowania sektora przy trzonie: mały wybuch w głębi, jedzie z sektorem
+        const sb = ev.entity?.beamHull?.body;
+        pirateDeepBlast({ id: `pbase-rel-${module}`, kind: 'disc', x: hx + dx * r, y: hy + dy * r, z, size: 320,
+          nx: -dx, ny: -dy, nz: -0.4, vx: sb ? sb.vel.x : 0, vy: sb ? -sb.vel.y : 0, vz: sb ? sb.vel.z : 0 });
         camera.addShake(8, 0.4);
         return;
       }
