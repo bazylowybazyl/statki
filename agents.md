@@ -1179,7 +1179,8 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   `fineMinPx` / `coarseMaxPx`, `domainScale`, `minPx`, `reserve`, `inView`) → indeks globalny; emitery `director.jet / puff /
   fire / trail` w scenie (Y = −y). `GasSlot.deep`: bryły `GasVolume.createDeepMeshes` (przód z testem głębi — bryły passa tła
   przed obłokiem go zasłaniają; tył bez testu, gdy kamera w pudle), marsz przez całe pudło do pierwszego przecięcia z kulą
-  (`gasSphereClipCpu`), cień kuli w świetle `setDeepSun` (`gasGroundLitCpu`), bez świateł siatki i maski słońca płaszczyzny gry;
+  (`gasSphereClipCpu`), cień kuli w świetle `setDeepSun` (`gasGroundLitCpu`; półcień `deepPenumbra` 450 j. — ostra linia cienia
+  skały w obłoku przy terminatorze wyglądała jak cięcie), bez świateł siatki i maski słońca płaszczyzny gry;
   w symulacji kula = komórki stałe (`gasGround` w `_solidAt`, ściany także w osi z w rzucie — przy pryzmatach bit w bit jak
   dawniej), gaz rozlewa się po niej. Ogólne (dowolna domena, np. nad płaszczyzną — głowa wieży): `noStatics` / `noHulls` (opcje
   `acquire` i pola slotu; deep ustawia oba) — bez rastra statyki (pryzmaty budowli przez całą wysokość) i bez kadłubów. Wybuch

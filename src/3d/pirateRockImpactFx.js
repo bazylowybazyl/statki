@@ -255,7 +255,8 @@ function buildGraph(add, U) {
     // oświetlenie (pył, odłamki): słońce skały z cieniem kuli (promień uRockR — lustro gasGroundLitCpu), otoczenie
     const b = dot(pos, U.uSunDir);
     const dperp = length(pos.sub(U.uSunDir.mul(b)));
-    const lit = max(smoothstep(-90.0, 90.0, b), smoothstep(U.uRockR.sub(90.0), U.uRockR.add(90.0), dperp));
+    // półcień 300 j. (jak gaz domen głębokich — 450 j.: ostra linia cienia skały w chmurze pyłu wyglądała jak cięcie)
+    const lit = max(smoothstep(-300.0, 300.0, b), smoothstep(U.uRockR.sub(300.0), U.uRockR.add(300.0), dperp));
     const light = U.uAmbient.add(lit.mul(U.uSunGain));
     // świecące: barwa z rekordu (HDR) bez oświetlenia
     const col = select(kind.greaterThan(2.5).and(kind.lessThan(5.5)), E.xyz, E.xyz.mul(light));
