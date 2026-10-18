@@ -61,7 +61,12 @@ export const ROCK_IMPACT_FX_TUNE = {
   cloudQ: 0.55,
   cloudMin: 140,
   cloudMax: 3400,
-  domainScale: 4.4,
+  // domena uderzenia: szerokość = domainScale × promień obłoku, wysokość = NZ / N szerokości (płaska); środek przesunięty
+  // wzdłuż normalnej o gasUpShift × wysokość — punkt uderzenia blisko środka wysokości, gdzie elipsoida domeny jest
+  // najszersza (pierścień pyłu po skale), pióropusz w górnej połowie (dopasowany prędkością — _fitSpeed)
+  domainScale: 5.6,
+  gasUpShift: 0.12,
+  gasCoast: 0.6,          // [s] droga gazu po wygaśnięciu strumienia ≈ prędkość × gasCoast (dopasowanie zasięgu do domeny)
   gasMinPx: 9,            // promień obłoku na ekranie [px], od którego uderzenie dostaje własną domenę gazu
   // atlas domeny wg promienia obłoku na ekranie [px]: „fine” (128² × 48, 41 iteracji Jacobiego — najdroższy) dopiero przy
   // zbliżeniu (kamery 3D), poniżej gasCoarseMaxPx — „coarse”, pomiędzy — podstawowy (pomiar 2026-10-19: demo upadku z dwiema
@@ -79,8 +84,17 @@ export const ROCK_IMPACT_FX_TUNE = {
   gasSmoke: 0.6,
   // otoczenie domeny gazu uderzenia (światło odbite od oświetlonej skały pod obłokiem — cień kłębów nie jest czarny):
   // gasAmbient0 + gasAmbientSun × max(0, n · słońce) w punkcie uderzenia; jednostka — światło przed albedo (jak słońce)
-  gasAmbient0: 0.12,
+  gasAmbient0: 0.2,
   gasAmbientSun: 0.45,
+  // wybuch w głębi (deepBlast — przebicie dysku mieszkalnego): domena, życie, barwa (pył, szron, dym), otoczenie,
+  // nośnik (× prędkość z rekordu), odłamki konstrukcji
+  blastDomainScale: 5.0,
+  blastLife: 6.0,
+  blastTint: [1.5, 1.46, 1.42],
+  blastAmbient: 0.3,
+  blastCarrier: 1.0,
+  blastChunkMax: 420,
+  blastChunkK: 0.32,
   // budżet cząstek: ułamek pojemności pierścienia zużyty w ostatnich ~2 s, ponad który liczby cząstek nowych uderzeń maleją
   budgetSoft: 0.55,
   // cząstki
@@ -365,7 +379,7 @@ export class RockImpactFx {
     // trwały ślad uderzenia na skale (x, y, z sceny, promień krateru, siła) — klej: PirateRock3D.addScar
     this.onScar = null;
     this._gasSlots = [];          // domeny uderzeń (indeksy globalne) — scalanie
-    this.stats = { impacts: 0, scrapes: 0, settles: 0, gasNew: 0, gasMerged: 0, gasNone: 0, particles: 0, dropped: 0 };
+    this.stats = { impacts: 0, scrapes: 0, settles: 0, blasts: 0, gasNew: 0, gasMerged: 0, gasNone: 0, particles: 0, dropped: 0 };
     this._tmp = new THREE.Vector3();
   }
 
@@ -466,7 +480,9 @@ export class RockImpactFx {
     const px = ev.x - this.center.x, py = -ev.y - this.center.y, pz = ev.z - this.center.z;
     let nx = ev.nx, ny = -ev.ny, nz = ev.nz;
     const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (nl > 1e-6) { nx /= nl; ny /= nl; nz /= nl; } else {
+    if (nl > 1e-6) { nx /= nl; ny /= nl; nz /= nl; } else if (type === ROCK_EVENT.BLAST) {
+      nx = 0; ny = 0; nz = 0;   // wybuch w głębi bez kierunku — kulisty
+    } else {
       const l = Math.sqrt(px * px + py * py + pz * pz) || 1;
       nx = px / l; ny = py / l; nz = pz / l;
     }
@@ -478,8 +494,159 @@ export class RockImpactFx {
     e.rs = Math.sqrt(px * px + py * py + pz * pz);
     if (type === ROCK_EVENT.IMPACT) { this.stats.impacts++; this._impact(e); }
     else if (type === ROCK_EVENT.SCRAPE) { this.stats.scrapes++; this._scrape(e); }
+    else if (type === ROCK_EVENT.BLAST) { this.stats.blasts++; this._blast(e); }
     else { this.stats.settles++; this._settle(e); }
     return true;
+  }
+
+  /**
+   * Wybuch / kłąb w GŁĘBI bez skały (deepBlast — wieża przebija dysk mieszkalny): gaz w głębokiej domenie (gorąca kula,
+   * kłąb pyłu i powietrza, strumienie we wszystkich kierunkach i wzdłuż ruchu ciała; obłok jedzie z nośnikiem) i cząstki
+   * (błysk z poświatą, iskry, odłamki konstrukcji spadające ku skale, kłęby). e.nx..nz — kierunek ruchu ciała (zera —
+   * kulisty), e.size — promień kuli wybuchu.
+   */
+  _blast(e) {
+    const T = this.tune;
+    const R = Math.max(60, e.size);
+    const hasGas = T.gas ? this._gasBlast(e, R) >= 0 : false;
+    if (!T.particles) return;
+    const bk = this._budgetK();
+    const g = T.gravity;
+    const dir = this._d || (this._d = [0, 0, 0]);
+    const ac = T.albedoChunk, ad = T.albedoDust;
+    const hasDir = e.nx * e.nx + e.ny * e.ny + e.nz * e.nz > 0.5;
+    const cvx = e.vx, cvy = e.vy, cvz = e.vz;
+    const rand3 = (out) => {   // kierunek losowy na kuli (z przewagą kierunku ruchu ciała)
+      const u = 2 * fxRandom.next() - 1, a = fxRandom.next() * TAU, s = Math.sqrt(1 - u * u);
+      out[0] = s * Math.cos(a); out[1] = s * Math.sin(a); out[2] = u;
+      if (hasDir && fxRandom.next() < 0.35) {
+        out[0] += e.nx * 1.4; out[1] += e.ny * 1.4; out[2] += e.nz * 1.4;
+        const l = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]) || 1;
+        out[0] /= l; out[1] /= l; out[2] /= l;
+      }
+      return out;
+    };
+    // odłamki konstrukcji: lecą z nośnikiem i spadają ku skale (lądowanie na kuli skały)
+    const nChunk = Math.min(T.blastChunkMax, Math.round(R * T.blastChunkK * bk));
+    for (let k = 0; k < nChunk; k++) {
+      rand3(dir);
+      const sp = R * (0.25 + 0.9 * fxRandom.next() * fxRandom.next()) + 60;
+      const r0 = R * 0.35 * Math.sqrt(fxRandom.next());
+      const x = e.px + dir[0] * r0, y = e.py + dir[1] * r0, z = e.pz + dir[2] * r0;
+      const vx = cvx + dir[0] * sp, vy = cvy + dir[1] * sp, vz = cvz + dir[2] * sp;
+      const tl = RockImpactFx.landTime(x, y, z, vx, vy, vz, g, this.R, 9);
+      const s = (10 + 50 * fxRandom.next() * fxRandom.next()) * Math.min(2, 0.5 + R / 700);
+      this._emit(this.alpha, RIP.CHUNK, x, y, z, vx, vy, vz, tl, Math.min(tl + 1.2, 9), s, s * (4 + 4 * fxRandom.next()), 0, 0, g,
+        ac[0] * 1.3, ac[1] * 1.25, ac[2] * 1.2, 1, 0.04 * fxRandom.next());
+    }
+    // kłęby pyłu i powietrza (bez gazu — główny obłok; z gazem — kilka na brzegu)
+    const nPuff = hasGas ? 4 : Math.min(18, Math.round(6 + R / 120));
+    for (let k = 0; k < nPuff; k++) {
+      rand3(dir);
+      const sp = R * (0.35 + 0.55 * fxRandom.next());
+      const r0 = R * (0.12 + 0.12 * fxRandom.next());
+      const off = R * 0.3 * Math.sqrt(fxRandom.next());
+      this._emit(this.alpha, RIP.PUFF, e.px + dir[0] * off, e.py + dir[1] * off, e.pz + dir[2] * off,
+        cvx + dir[0] * sp, cvy + dir[1] * sp, cvz + dir[2] * sp, 1e9, 2.5 + 2.5 * fxRandom.next(), r0, R * (0.45 + 0.5 * fxRandom.next()),
+        0.8 + 0.4 * fxRandom.next(), 0, 0, ad[0] * 1.1, ad[1] * 1.1, ad[2] * 1.1, (hasGas ? 0.22 : 0.38) * (0.7 + 0.5 * fxRandom.next()), 0.03 * k);
+    }
+    // iskry (pękające kratownice, przewody)
+    const ns = Math.min(T.sparkMax * 2, Math.round((40 + R / 8) * Math.max(0.4, bk)));
+    for (let k = 0; k < ns; k++) {
+      rand3(dir);
+      const sp = 300 + R * (0.6 + 1.4 * fxRandom.next());
+      const x = e.px + dir[0] * R * 0.15, y = e.py + dir[1] * R * 0.15, z = e.pz + dir[2] * R * 0.15;
+      const vx = cvx + dir[0] * sp, vy = cvy + dir[1] * sp, vz = cvz + dir[2] * sp;
+      this._emit(this.add, RIP.SPARK, x, y, z, vx, vy, vz, 1e9, 0.35 + 0.8 * fxRandom.next(),
+        3 + 4 * fxRandom.next() * Math.min(2, R / 500), 0, 0, 0, g, 1, 1, 1, 0.8 + 0.9 * fxRandom.next(), 0.05 * fxRandom.next());
+    }
+    // błysk z poświatą (gorące powietrze i przewody zasilania) — ślad świeci krótko
+    const k = T.flashGain;
+    this._emit(this.add, RIP.FLASH, e.px, e.py, e.pz, 0, 0, 0, 1e9, 0.3, R * 0.7, R * 0.7, 0, 0, 0, 6.0, 5.0, 3.8, 1.0 * k);
+    this._emit(this.add, RIP.FLASH, e.px, e.py, e.pz, 0, 0, 0, 1e9, 0.9, R * 1.8, R * 1.8, 0, 0, 0, 1.0, 0.55, 0.26, 0.5 * k);
+  }
+
+  /** Gaz wybuchu w głębi: głęboka domena (skała jako kula-przeszkoda — poza zasięgiem nic nie zmienia) i źródła. */
+  _gasBlast(e, R) {
+    const fx = this.getGas ? this.getGas() : null;
+    if (!fx || typeof fx.deepDomain !== 'function') { this.stats.gasNone++; return -1; }
+    const T = this.tune;
+    const gx = e.px + this.center.x, gy = -(e.py + this.center.y), gz = e.pz + this.center.z;   // świat gry
+    const slot = fx.deepDomain(gx, gy, gz, R, {
+      ground: { x: this.center.x, y: -this.center.y, z: this.center.z, r: this.R },
+      carrier: [e.vx * T.blastCarrier, -e.vy * T.blastCarrier, e.vz * T.blastCarrier],
+      life: T.blastLife, fadeTime: T.gasFade, baseDecay: T.gasDecay, tint: T.blastTint, fire: 0, tag: ROCK_IMPACT_TAG,
+      ambient: T.blastAmbient, minPx: T.gasMinPx, reserve: 1, domainScale: T.blastDomainScale, priority: 1,
+      fineMinPx: T.gasFineMinPx, coarseMaxPx: T.gasCoarseMaxPx
+    });
+    if (slot < 0) { this.stats.gasNone++; return -1; }
+    this._gasSlots.push(slot);
+    this.stats.gasNew++;
+    const d = fx.director;
+    const s = fx.grid.slots[slot];
+    if (!d || !s) return slot;
+    const rmin = 3.2 * s.h;
+    const k = T.gasSmoke;
+    const X = e.px + this.center.x, Y = e.py + this.center.y, Z = e.pz + this.center.z;
+    const po = this._po || (this._po = { temp: 0, smoke: 0, grow: 1.5, velBlend: 30, noise: 0.6, tau: 0, dir: [0, 0, 0] });
+    const jo = this._jo || (this._jo = { delay: 0, fuel: 0, temp: 0, smoke: 0, radial: 0, velBlend: 30, noise: 0.4, tau: 0.3, flicker: 0.2, grow: 1.4, rampIn: 0.02, rampOut: 0.2, velTau: 0.3 });
+    const hasDir = e.nx * e.nx + e.ny * e.ny + e.nz * e.nz > 0.5;
+    // gorąca kula (powietrze habitatu, przewody, paliwo w rurach — świeci krótko)
+    po.temp = 5.5; po.smoke = 1.6 * k; po.grow = 1.8; po.velBlend = 40; po.noise = 0.5; po.tau = 0;
+    po.dir[0] = hasDir ? e.nx * R * 0.5 : 0; po.dir[1] = hasDir ? e.ny * R * 0.5 : 0; po.dir[2] = hasDir ? e.nz * R * 0.5 : 0;
+    d.puff(slot, X, Y, Z, Math.max(rmin, R * 0.3), 0, 0.12, 0, R * 1.1, po);
+    // kłąb pyłu, szronu i dymu
+    po.temp = 0.35; po.smoke = 6 * k; po.grow = 1.7; po.velBlend = 24; po.noise = 0.65;
+    po.dir[0] = hasDir ? e.nx * R * 0.3 : 0; po.dir[1] = hasDir ? e.ny * R * 0.3 : 0; po.dir[2] = hasDir ? e.nz * R * 0.3 : 0;
+    d.puff(slot, X, Y, Z, Math.max(rmin, R * 0.36), 0.04, 0.4, 0, R * 0.75, po);
+    // strumienie: na wszystkie strony (pękające sekcje) i wzdłuż ruchu ciała (przebicie)
+    const dir = this._d || (this._d = [0, 0, 0]);
+    const nJ = 7 + Math.floor(fxRandom.next() * 4);
+    for (let i = 0; i < nJ; i++) {
+      const u = 2 * fxRandom.next() - 1, a = fxRandom.next() * TAU, sq = Math.sqrt(1 - u * u);
+      dir[0] = sq * Math.cos(a); dir[1] = sq * Math.sin(a); dir[2] = u;
+      const r = Math.max(rmin, R * 0.12);
+      const avail = this._fitAlong(s, X + dir[0] * r, Y + dir[1] * r, Z + dir[2] * r, dir[0], dir[1], dir[2], 0.78);
+      jo.delay = 0.02 * fxRandom.next(); jo.fuel = 0; jo.temp = 0.4 + 1.4 * fxRandom.next(); jo.smoke = 6 * k; jo.radial = R * 0.18;
+      jo.velBlend = 30; jo.noise = 0.4; jo.tau = 0.4; jo.flicker = 0.25; jo.grow = 1.5; jo.rampIn = 0.02; jo.rampOut = 0.25; jo.velTau = 0.3;
+      const dur = 0.25 + 0.2 * fxRandom.next();
+      const sp = this._fitSpeed(R * (1.3 + 0.9 * fxRandom.next()), dur, R * 0.22, avail);
+      d.jet(slot, X + dir[0] * r, Y + dir[1] * r, Z + dir[2] * r, dir[0], dir[1], dir[2], r, R * 0.22, sp, dur, jo);
+    }
+    if (hasDir) {
+      const r = Math.max(rmin, R * 0.16);
+      const avail = this._fitAlong(s, X + e.nx * r, Y + e.ny * r, Z + e.nz * r, e.nx, e.ny, e.nz, 0.8);
+      jo.delay = 0; jo.temp = 0.8; jo.smoke = 7 * k; jo.radial = R * 0.25; jo.tau = 0.45; jo.grow = 1.6; jo.velTau = 0.35;
+      const sp = this._fitSpeed(R * 2.0, 0.45, R * 0.3, avail);
+      d.jet(slot, X + e.nx * r, Y + e.ny * r, Z + e.nz * r, e.nx, e.ny, e.nz, r, R * 0.3, sp, 0.45, jo);
+    }
+    return slot;
+  }
+
+  /**
+   * Odległość [j.] od punktu (X, Y, Z — scena) wzdłuż kierunku (dx, dy, dz) do elipsoidy ułamka f pudła domeny `s`
+   * (elipsoida wpisana w pudło — za ~0,9 obraz i symulacja gaszą gaz; płaskie pudło: półoś z = NZ / N półosi x).
+   * Punkt poza elipsoidą — 0.
+   */
+  _fitAlong(s, X, Y, Z, dx, dy, dz, f) {
+    const ax = s.h * s.n * 0.5, az = s.h * s.nz * 0.5;
+    const ux = (X - s.cx) / ax, uy = (Y - s.cy) / ax, uz = (Z - s.cz) / az;
+    const vx = dx / ax, vy = dy / ax, vz = dz / az;
+    const a = vx * vx + vy * vy + vz * vz;
+    const b = ux * vx + uy * vy + uz * vz;
+    const c = ux * ux + uy * uy + uz * uz - f * f;
+    if (!(a > 0) || c >= 0) return 0;
+    return (-b + Math.sqrt(Math.max(0, b * b - a * c))) / a;
+  }
+
+  /**
+   * Prędkość strumienia dopasowana do miejsca w domenie: zasięg ≈ len + v · (czas + coast) ≤ 0,8 · avail (gaz nie dochodzi
+   * do brzegu elipsoidy domeny, gdzie obraz i symulacja go gaszą — płaskie ścięcie obłoku); najmniej 0,12 × v (punkt tuż
+   * przy brzegu — strumień tylko „pyknie”).
+   */
+  _fitSpeed(v, dur, len, avail) {
+    const fit = (0.8 * avail - len) / (dur + this.tune.gasCoast);
+    return Math.max(0.12 * v, Math.min(v, fit));
   }
 
   /** Skala uderzenia q (prędkość wzdłuż normalnej) — 0 … qMax. */
@@ -753,7 +920,7 @@ export class RockImpactFx {
         up: [e.nx, -e.ny, e.nz], ground: { x: this.center.x, y: -this.center.y, z: this.center.z, r: e.rs },
         life: T.gasLife, fadeTime: T.gasFade, baseDecay: T.gasDecay, tint: T.gasTint, fire: 0, tag: ROCK_IMPACT_TAG,
         ambient: T.gasAmbient0 + T.gasAmbientSun * Math.max(0, e.nx * this.U.uSunDir.value.x + e.ny * this.U.uSunDir.value.y + e.nz * this.U.uSunDir.value.z),
-        minPx: T.gasMinPx, reserve: T.gasReserve, domainScale: T.domainScale, upShift: 0.3, priority: 1,
+        minPx: T.gasMinPx, reserve: T.gasReserve, domainScale: T.domainScale, upShift: T.gasUpShift, priority: 1,
         fineMinPx: T.gasFineMinPx, coarseMaxPx: T.gasCoarseMaxPx
       });
       if (slot < 0) { this.stats.gasNone++; return -1; }
@@ -798,7 +965,11 @@ export class RockImpactFx {
     const jo = this._jo || (this._jo = { delay: 0, fuel: 0, temp: 0, smoke: 0, radial: 0, velBlend: 30, noise: 0.4, tau: 0.3, flicker: 0.2, grow: 1.4, rampIn: 0.02, rampOut: 0.2, velTau: 0.3 });
     const po = this._po || (this._po = { temp: 0, smoke: 0, grow: 1.5, velBlend: 30, noise: 0.6, tau: 0, dir: [0, 0, 0] });
     const sd = e.slide > 30 ? this._slideDir(e) : null;
-    // 1. pióropusz pary wzdłuż normalnej (skośny z poślizgiem)
+    // Zasięgi dopasowane do miejsca w domenie (_fitAlong / _fitSpeed): pudło domeny jest płaskie (wysokość = NZ / N
+    // szerokości), a symulacja i obraz gaszą gaz za ~0,9 elipsoidy wpisanej w pudło — pióropusz wzdłuż normalnej
+    // (przy szczycie skały ≈ +z) bez dopasowania wbijał się w sufit domeny: gorący słup ucięty płasko, ciemna płyta dymu
+    // pod sufitem (zgłoszenie sesji upadku 2026-10-19, kamera 3D).
+    // 1. oś pióropusza: normalna (skośna z poślizgiem)
     let ax = nx, ay = ny, az = nz;
     if (sd) {
       const w = Math.min(0.6, e.slide / Math.max(100, e.speed + e.slide));
@@ -806,10 +977,21 @@ export class RockImpactFx {
       const l = Math.sqrt(ax * ax + ay * ay + az * az) || 1;
       ax /= l; ay /= l; az /= l;
     }
-    jo.delay = 0; jo.fuel = 0; jo.temp = 0.35 + 3.0 * q; jo.smoke = 5 * k; jo.radial = Rc * 0.4; jo.velBlend = 34; jo.noise = 0.45;
-    jo.tau = 0.35; jo.flicker = 0.15; jo.grow = 1.7; jo.rampIn = 0.01; jo.rampOut = 0.2; jo.velTau = 0.25;
+    const availN = this._fitAlong(s, X, Y, Z, ax, ay, az, 0.8);
+    // 1a. gorąca półkula pary (krótka — świeci barwą ciała czarnego i stygnie; rozlewa się, zamiast iść słupem)
+    const rh = Math.max(rmin, Rc * 0.2);
+    const vh = this._fitSpeed(Rc * (0.7 + 0.5 * q), 0.12, rh, availN);
+    po.temp = 0.4 + 3.2 * q; po.smoke = 2.2 * k; po.grow = 1.9; po.velBlend = 36; po.noise = 0.55; po.tau = 0;
+    po.dir[0] = ax * vh; po.dir[1] = ay * vh; po.dir[2] = az * vh;
+    d.puff(slot, X + nx * rh * 0.5, Y + ny * rh * 0.5, Z + nz * rh * 0.5, rh, 0, 0.1 + 0.05 * q, 0, Rc * (0.8 + 0.6 * q), po);
+    // 1b. pióropusz pary i pyłu wzdłuż osi (chłodniejszy, w granicach domeny)
+    jo.delay = 0.02; jo.fuel = 0; jo.temp = 0.25 + 1.3 * q; jo.smoke = 4.5 * k; jo.radial = Rc * 0.35; jo.velBlend = 32; jo.noise = 0.45;
+    jo.tau = 0.35; jo.flicker = 0.15; jo.grow = 1.7; jo.rampIn = 0.02; jo.rampOut = 0.25; jo.velTau = 0.3;
     const r1 = Math.max(rmin, Rc * 0.16);
-    d.jet(slot, X + nx * r1, Y + ny * r1, Z + nz * r1, ax, ay, az, r1, Rc * 0.3, Rc * (1.6 + 1.2 * q), 0.4 + 0.25 * q, jo);
+    const dur1 = 0.3 + 0.15 * q;
+    const availP = this._fitAlong(s, X + nx * r1, Y + ny * r1, Z + nz * r1, ax, ay, az, 0.8);
+    d.jet(slot, X + nx * r1, Y + ny * r1, Z + nz * r1, ax, ay, az, r1, Rc * 0.2,
+      this._fitSpeed(Rc * (1.2 + 0.8 * q), dur1, Rc * 0.2, availP), dur1, jo);
     // 2. stożek wyrzutu
     const nCone = 5 + Math.floor(fxRandom.next() * 3);
     const c0 = fxRandom.next() * TAU;
@@ -819,8 +1001,10 @@ export class RockImpactFx {
       jo.delay = 0.02 * fxRandom.next(); jo.fuel = 0; jo.temp = 0.15 + 1.1 * q; jo.smoke = 6 * k; jo.radial = Rc * 0.15; jo.velBlend = 30;
       jo.noise = 0.35; jo.tau = 0.4; jo.flicker = 0.25; jo.grow = 1.4; jo.rampIn = 0.02; jo.rampOut = 0.25; jo.velTau = 0.3;
       const r = Math.max(rmin, Rc * 0.1);
+      const dur = 0.45 + 0.2 * fxRandom.next();
+      const avail = this._fitAlong(s, X + nx * r * 1.2, Y + ny * r * 1.2, Z + nz * r * 1.2, dir[0], dir[1], dir[2], 0.8);
       d.jet(slot, X + nx * r * 1.2, Y + ny * r * 1.2, Z + nz * r * 1.2, dir[0], dir[1], dir[2], r, Rc * 0.18,
-        Rc * (1.25 + 0.8 * q) * (0.8 + 0.4 * fxRandom.next()), 0.45 + 0.2 * fxRandom.next(), jo);
+        this._fitSpeed(Rc * (1.25 + 0.8 * q) * (0.8 + 0.4 * fxRandom.next()), dur, Rc * 0.18, avail), dur, jo);
     }
     // 3. pierścień przy ziemi (base surge): prawie styczne, nisko nad powierzchnią — kula-przeszkoda rozkłada je po skale
     const nRing = 8 + Math.floor(fxRandom.next() * 5);
@@ -831,26 +1015,22 @@ export class RockImpactFx {
       jo.delay = 0.04 + 0.06 * fxRandom.next(); jo.fuel = 0; jo.temp = 0.08 + 0.35 * q; jo.smoke = 10 * k; jo.radial = Rc * 0.2;
       jo.velBlend = 28; jo.noise = 0.4; jo.tau = 0.6; jo.flicker = 0.3; jo.grow = 1.6; jo.rampIn = 0.03; jo.rampOut = 0.35; jo.velTau = 0.45;
       const r = Math.max(rmin, Rc * 0.12);
+      const dur = 0.8 + 0.4 * fxRandom.next();
+      const avail = this._fitAlong(s, X + nx * r * 1.1, Y + ny * r * 1.1, Z + nz * r * 1.1, dir[0], dir[1], dir[2], 0.85);
       d.jet(slot, X + nx * r * 1.1, Y + ny * r * 1.1, Z + nz * r * 1.1, dir[0], dir[1], dir[2], r, Rc * 0.2,
-        Rc * (1.15 + 0.6 * q) * (0.8 + 0.4 * fxRandom.next()), 0.8 + 0.4 * fxRandom.next(), jo);
+        this._fitSpeed(Rc * (1.15 + 0.6 * q) * (0.8 + 0.4 * fxRandom.next()), dur, Rc * 0.2, avail), dur, jo);
     }
     // 4. kłąb w miejscu (gorący przy szybkim uderzeniu — odparowany lód i skała)
-    po.temp = 0.3 + 2.6 * q; po.smoke = 3.5 * k; po.grow = 1.5; po.velBlend = 32; po.noise = 0.6; po.tau = 0;
-    po.dir[0] = nx * Rc * 0.9; po.dir[1] = ny * Rc * 0.9; po.dir[2] = nz * Rc * 0.9;
     const rp = Math.max(rmin, Rc * 0.22);
+    const vp = this._fitSpeed(Rc * 0.9, 0.22, rp, availN);
+    po.temp = 0.3 + 1.8 * q; po.smoke = 3.5 * k; po.grow = 1.5; po.velBlend = 32; po.noise = 0.6; po.tau = 0;
+    po.dir[0] = nx * vp; po.dir[1] = ny * vp; po.dir[2] = nz * vp;
     d.puff(slot, X + nx * rp * 0.6, Y + ny * rp * 0.6, Z + nz * rp * 0.6, rp, 0, 0.22, 0, Rc * 0.8, po);
     // 5. pył osiadający (wolny, później — obłok nie znika od razu)
     po.temp = 0; po.smoke = 3 * k; po.grow = 1.8; po.velBlend = 12; po.noise = 0.7;
     po.dir[0] = nx * Rc * 0.3; po.dir[1] = ny * Rc * 0.3; po.dir[2] = nz * Rc * 0.3;
     const rq = Math.max(rmin, Rc * 0.35);
     d.puff(slot, X + nx * rq * 0.7, Y + ny * rq * 0.7, Z + nz * rq * 0.7, rq, 0.45, 0.6, 0, Rc * 0.4, po);
-    // 6. błysk pary (bardzo szybkie): krótka, gorąca kula — świeci barwą ciała czarnego, stygnie w ~0,5 s
-    if (q > 0.6) {
-      po.temp = 6 * q; po.smoke = 0.8 * k; po.grow = 1.8; po.velBlend = 40; po.noise = 0.5;
-      po.dir[0] = nx * Rc; po.dir[1] = ny * Rc; po.dir[2] = nz * Rc;
-      const rf = Math.max(rmin, Rc * 0.25);
-      d.puff(slot, X + nx * rf, Y + ny * rf, Z + nz * rf, rf, 0, 0.08, 0, Rc * 2.0, po);
-    }
   }
 
   /** Źródło pyłu szorowania / osiadania w żywej domenie uderzeń (scena): kłąb z prądem poślizgu, nisko nad skałą. */
