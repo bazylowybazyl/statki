@@ -589,7 +589,8 @@ if (TRYBY.includes('upadek')) {
     };
     const fctx = { engine: D, terrain, hooks, simTime: () => HullBodies.simTime, worldBodies, site, layout: L, place, neck, solids: HullBodies._solids, tune: T2,
       isBaseSite: () => true, rnd: () => 0.5,
-      wrecks: window.wrecks, shatter: (w, x, y, z, o) => HullBodies.shatterSolid(w, x, y, z, o) };
+      wrecks: window.wrecks, shatter: (w, x, y, z, o) => HullBodies.shatterSolid(w, x, y, z, o),
+      createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e) };
     FALL.attachPirateRockTerrain(fall, fctx);
     // wysokość skały pod habitatem (świat)
     const zRock = terrain.surfaceZAt(HAB.x, HAB.y);
@@ -609,6 +610,13 @@ if (TRYBY.includes('upadek')) {
       ents.push(atlas);
     }
     const nctx = { worldBodies, engine: D, layout: L, habitat: HAB, simTime: 0 };
+    // czas terenu (DestructorBeams3D._terrainPass) w oknie 1 s — rozbicie kosztu kroku: solver, pary, teren
+    let terrMs = 0, solvMs = 0, colMs = 0, winSteps = 0, pairsW = 0, aktW = 0;
+    if (!D.__terrWrapped) {
+      D.__terrWrapped = true;
+      const tp = D._terrainPass.bind(D);
+      D._terrainPass = function (b, dt2, dd) { const t = performance.now(); tp(b, dt2, dd); D.__terrMs = (D.__terrMs || 0) + performance.now() - t; };
+    }
     const total = Math.round((HP0 + PO) / dt);
     const hp0Step = Math.round(HP0 / dt);
     let stepPeak = 0, stepSum = 0, stepN = 0, solverPeak = 0;
@@ -626,12 +634,19 @@ if (TRYBY.includes('upadek')) {
       if (k === hp0Step) {
         // śmierć habitatu: wieża i dysk (fizyka upadku), bęben i szyb pękają jak w _chainExplosion
         FALL.startHabitatFall(fall, fctx);
+        // bęben i szyb: bryły 3D (promotePlanarPiece — jak storyBaseBreak z opts.fall); --plaskie 1 — dawny rozpad płaski
+        const core = site.pieces.find((pp) => pp.id === 'H-C');
+        if (core) {
+          if (arg('plaskie', '')) worldBodies.breakPiece(core, HAB.x, HAB.y, { power: 2.4, speed: 60, outX: 1, outY: 0 });
+          else FALL.promotePlanarPiece(fall, fctx, core, { x: HAB.x, y: HAB.y, power: 2.4, speed: 170, outX: 1, outY: 0 });
+        }
         for (const q of L.habitat.quadrants) {
           const p = site.pieces.find((pp) => pp.id === q.id);
-          if (p) worldBodies.breakPiece(p, HAB.x, HAB.y, { power: 2.2, speed: 110, outX: Math.cos((q.a0 + q.a1) / 2), outY: Math.sin((q.a0 + q.a1) / 2) });
+          const a = (q.a0 + q.a1) / 2;
+          if (!p) continue;
+          if (arg('plaskie', '')) worldBodies.breakPiece(p, HAB.x, HAB.y, { power: 2.2, speed: 110, outX: Math.cos(a), outY: Math.sin(a) });
+          else FALL.promotePlanarPiece(fall, fctx, p, { x: HAB.x + Math.cos(a) * 800, y: HAB.y + Math.sin(a) * 800, power: 2.2, speed: 110, outX: Math.cos(a), outY: Math.sin(a) });
         }
-        const core = site.pieces.find((pp) => pp.id === 'H-C');
-        if (core) worldBodies.breakPiece(core, HAB.x, HAB.y, { power: 2.4, speed: 60, outX: 1, outY: 0 });
       }
       FALL.stepHabitatFall(fall, fctx, dt);
       const ms = performance.now() - t0;
@@ -654,6 +669,14 @@ if (TRYBY.includes('upadek')) {
         const age = HullBodies.simTime - (tw.__contactT || -1e9);
         console.log(`      ${(k * dt).toFixed(2)}s wieża z=${tb ? tb.pos.z.toFixed(0) : '?'} v=${tb ? Math.hypot(tb.vel.x, tb.vel.y, tb.vel.z).toFixed(0) : '?'} styk ${age.toFixed(2)}s temu z ${w ? (w.worldPiece?.id || w.beamHull?.world?.id || w.name || '?') + (w.beamHull?.body?.planar ? ' (płaskie)' : ' (3D)') + (w.beamHull?.body?.anchored ? ' zakotw.' : '') : '-'} @z=${(tw.__contactZ || 0).toFixed(0)} dysk zakotw=${site.pieces.filter((p) => p.kind === 'disc').map((p) => (p.entity?.beamHull?.body?.anchored ? 1 : 0)).join('')}`);
       }
+      terrMs += D.__terrMs || 0; D.__terrMs = 0;
+      solvMs += D.perf.lastSolverMs || 0; colMs += D.perf.lastCollisionMs || 0; pairsW += D.perf.narrowphasePairs || 0; winSteps++;
+      for (const b of HullBodies._solids) if (b && !b.dead && b._region) aktW += b._region.list.length;
+      if (arg('koszt', '') && k % Math.round(1 / dt) === 0 && k > hp0Step) {
+        const n = Math.max(1, winSteps);
+        console.log(`      koszt ${(k * dt).toFixed(0)}s: solver ${(solvMs / n).toFixed(1)} ms, kolizje ${(colMs / n).toFixed(1)} ms (w tym teren ${(terrMs / n).toFixed(1)}), pary ${(pairsW / n).toFixed(0)}, aktywne węzły ${(aktW / n).toFixed(0)}`);
+      }
+      if (k % Math.round(1 / dt) === 0) { terrMs = 0; solvMs = 0; colMs = 0; winSteps = 0; pairsW = 0; aktW = 0; }
       if (k >= hp0Step) {
         stepSum += ms; stepN++; if (ms > stepPeak) stepPeak = ms;
         if (D.perf.lastSolverMs > solverPeak) solverPeak = D.perf.lastSolverMs;
@@ -696,7 +719,7 @@ if (TRYBY.includes('upadek')) {
     }
     console.log('    wolne na końcu:', JSON.stringify(wolne.slice(0, 12)));
     FALL.detachPirateRockTerrain(fall, D);
-    console.log(JSON.stringify({ hz: hz(dt), wariant, zRockPodHabitatem: Math.round(zRock), dziura: fall.holeNodes, korek: { belki: fall.holeCut, odlamy: fall.plugN }, touchT: +fall.touchT.toFixed(2), passT: +fall.passT.toFixed(2),
+    console.log(JSON.stringify({ hz: hz(dt), wariant, zRockPodHabitatem: Math.round(zRock), dziura: fall.holeNodes, podniesione: fall.promoted || 0, korek: { belki: fall.holeCut, odlamy: fall.plugN }, touchT: +fall.touchT.toFixed(2), passT: +fall.passT.toFixed(2),
       fall: { phase: fall.phase, released: fall.released, towerImpactT: +fall.towerImpactT.toFixed(2),
       discImpactT: +fall.discImpactT.toFixed(2), frozen: fall.frozen, impacts: fall.impacts, scrapes: fall.scrapes },
       tower: { minZ: Math.round(towerMinZ), vMax: Math.round(towerVmax) },

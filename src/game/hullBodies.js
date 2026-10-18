@@ -72,6 +72,9 @@ export const HULL_BODY_CONFIG = {
   // hitboxy 3D”): pocisk, wiązka, rzaz i orka lecą w płaszczyźnie gry w pasie ± tyle j. — jak słup okrętu. Węzeł
   // bryły w pasie (|z| ≤ pas + ½ komórki) jest trafialny; co bryła ma nad i pod pasem, broń mija (jak okręt).
   weaponBand: 70,
+  // Drobne odłamy (mniej węzłów) spadające ku planetoidzie (studnia grawitacji silnika) nie zderzają się między sobą
+  // (pairFilter) — tylko z terenem skały i resztą świata.
+  fallDebrisPairNodes: 400,
   // Odłam bryły 3D poniżej tej wysokości (spadł w otchłań) znika (pętla wraków gry). Od 2026-10-19 bryły bazy piratów
   // lądują na planetoidzie pod bazą (teren silnika — src/game/story/pirateBaseFall.js; skała 8–40 km pod płaszczyzną),
   // więc dno leży pod skałą (dawniej −6000: odłamy znikały pod habitatem).
@@ -3145,6 +3148,10 @@ function pairFilter(A, B) {
   // też to) — gracz w warpie i na rampie wyjścia (decyzja użytkownika 2026-10-11: warp niewrażliwy, kolizje
   // dopiero w zwykłym locie); flagę pisze gra co krok przed kolizjami.
   if (ea.noHullCollisions === true || eb.noHullCollisions === true) return false;
+  // Upadek bazy piratów na planetoidę (src/game/story/pirateBaseFall.js): DROBNE odłamy w studni skały nie zderzają się
+  // z innymi ciałami tej studni (tylko z terenem skały i resztą świata) — stos złomu na skale bez setek par (pomiar
+  // 2026-10-19: 350–420 par na krok, kolizje 15–23 ms). Duże bryły (wieża, sektory dysku, kawałki bębna) — zwykłe zderzenia.
+  if (A.gravityWell && A.gravityWell === B.gravityWell && Math.min(A.activeNodes, B.activeNodes) < C.fallDebrisPairNodes) return false;
   // Odłamy JEDNEGO kawałka budowli (worldBodies.breakPiece — pęknięcia Voronoi) nie zderzają się między sobą:
   // rodzą się na styk wzdłuż szwów i rozchodzą; ich styki to ~⅓ kroku po rozpadzie suchego doku (pomiar
   // 2026-10-07). Z okrętami, budowlą i odłamami innych kawałków — zwykłe zderzenia.

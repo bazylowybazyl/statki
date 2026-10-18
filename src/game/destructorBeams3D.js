@@ -465,6 +465,7 @@ export const DestructorBeams3D = {
       // r0 — przy r0 > 0 przyspieszenie g · (r0 / d)², inaczej stałe } — bierze górę nad `gravity`; obiekt wspólny
       // z odłamami (wraki dziedziczą referencję — zmiana g działa na wszystkie).
       gravityWell: opts.gravityWell || null,
+      _terrTick: -1,          // krok ostatniego styku z terenem (druga iteracja kolizji — tylko ciała w styku)
       colZ0: Number(opts.colZ0) || 0,
       colZ1: Number(opts.colZ1) || 0,
       joints: null,
@@ -2130,6 +2131,8 @@ export const DestructorBeams3D = {
       for (let k = 0; k < bodies.length; k++) {
         const b = bodies[k];
         if (!b || b.dead || b.planar || b.static || b.anchored || b.activeNodes <= 0) continue;
+        // druga iteracja — tylko ciała, które w pierwszej dotykały terenu (reszta jest nad nim)
+        if (!doDamage && b._terrTick !== this._tick) continue;
         this._collideTerrain(b, T, dt, doDamage);
       }
     }
@@ -2182,6 +2185,7 @@ export const DestructorBeams3D = {
       count++;
     }
     if (count === 0) return 0;
+    b._terrTick = this._tick;
     hx /= count; hy /= count; hz /= count;
     let nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
     if (!(nl > 1e-9)) { nx = hx - cx; ny = hy - cy; nz = hz - cz; nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; }
@@ -3895,6 +3899,7 @@ export const DestructorBeams3D = {
       planar: !!parent.planar,
       gravity: parent.gravity ? { x: parent.gravity.x, y: parent.gravity.y, z: parent.gravity.z } : null,
       gravityWell: parent.gravityWell || null,
+      _terrTick: -1,
       colZ0: parent.colZ0 || 0,
       colZ1: parent.colZ1 || 0,
       joints: null,
@@ -3987,6 +3992,7 @@ export const DestructorBeams3D = {
       planar: props.planar === undefined ? !!cfg?.planar : !!props.planar,
       gravity: props.gravity ? { x: props.gravity.x, y: props.gravity.y, z: props.gravity.z } : null,
       gravityWell: props.gravityWell || null,
+      _terrTick: -1,
       colZ0: Number(props.colZ0) || 0,
       colZ1: Number(props.colZ1) || 0,
       joints: null,

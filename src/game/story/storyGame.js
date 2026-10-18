@@ -977,19 +977,21 @@ export const StoryGame = {
       site.power.habitat = 0;
       site.power.disc = 0;
       at(0, () => { d.reactorBlow?.({ x: hc.x, y: hc.y, size: 640 }); d.shake?.(34, 0.9); });
-      H.quadrants.forEach((q, i) => {
-        const a = (q.a0 + q.a1) / 2;
-        const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
-        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
-      });
       // UPADEK NA PLANETOIDĘ (src/game/story/pirateBaseFall.js; prośba użytkownika 2026-10-19): szyb pęka pierwszy, wieża
       // (stojąca albo leżąca na dysku po zerwaniu szyi) przebija dysk i spada pierwsza, sektory dysku puszczają za nią
       // (wybuchy oderwania — zdarzenia upadku), wszystko osiada na skale. Bez terenu skały — dawna implozja.
+      // Bęben i szyb (ciała płaskie) przy upadku stają się bryłami 3D i spadają razem z resztą (opts.fall —
+      // storyBaseBreak → pirateBaseFall.promotePlanarPiece); szyb odlatuje od osi, robiąc wieży drogę.
       const falling = typeof d.habitatFall === 'function';
       let fallStarted = false;
-      at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: 60, dir: 'out' }));
-      if (falling) at(0.1, () => { fallStarted = !!d.habitatFall(); if (!fallStarted) this._habitatImplosion(site, H, place, at); });
-      else this._habitatImplosion(site, H, place, at);
+      if (falling) at(0, () => { fallStarted = !!d.habitatFall(); if (!fallStarted) this._habitatImplosion(site, H, place, at); });
+      at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: falling ? 170 : 60, dir: 'out', fall: falling }));
+      if (!falling) this._habitatImplosion(site, H, place, at);
+      H.quadrants.forEach((q, i) => {
+        const a = (q.a0 + q.a1) / 2;
+        const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
+        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out', fall: falling }); d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
+      });
       // winda kosmiczna spod dysku mieszkalnego puszcza: lina i głowica spadają na planetoidę, osada wybucha po kolei
       // (scenariusz — src/3d/portBuildings/pirateRockSite3D.js; prośba użytkownika 2026-10-15)
       at(1.5, () => d.rockCollapse?.());

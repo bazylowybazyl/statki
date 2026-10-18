@@ -1339,7 +1339,7 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     // Upadek habitatu na planetoidę (2026-10-19): teren skały i grawitacja ku jej środkowi w silniku belek, wieża
     // przebija dysk i spada pierwsza, dysk za nią, osiadanie na skale (src/game/story/pirateBaseFall.js).
-    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
+    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
@@ -31894,6 +31894,12 @@
       if (opts.dir === 'in') { ox = -ox; oy = -oy; }
       const power = opts.power ?? 1.6;
       const speed = opts.speed ?? 90;
+      // UPADEK habitatu (HP 0 — storyGame._chainExplosion, opts.fall): kawałek płaski z bryłą upadku (bęben, szyb) staje
+      // się bryłą 3D (uszkodzenia zostają), rozpada się i spada na planetoidę zamiast dryfować w płaszczyźnie
+      if (opts.fall && wPiece?.fall3d) {
+        const ol = Math.hypot(ox, oy) || 1;
+        if (promotePirateBasePiece(wPiece, { x: at.x, y: at.y, power, speed, outX: ox / ol, outY: oy / ol })) { markBaseBroken(wPiece); return true; }
+      }
       // pęknięty kawałek: jego ubytek węzłów to nie taran, nie liczy się też jako stojący (pirateBaseIntegrity.js)
       if (wPiece && worldBodies.breakPiece(wPiece, at.x, at.y, { power, speed, outX: ox, outY: oy })) { markBaseBroken(wPiece); return true; }
       return breakPirateBaseChunk(id, { speed, spin: 0.12, life: 45, dir: place.dirToHub(ox, oy) });
@@ -32014,6 +32020,7 @@
     };
     const _fallCtx = { engine: null, worldBodies, site: null, layout: null, place: null, neck: null, terrain: null,
       simTime: () => HullBodies.simTime, solids: null, hooks: _fallHooks, wrecks, shatter: null,
+      createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e),
       isBaseSite: (s) => !!(s && s.structure), rnd: Math.random, tune: PIRATE_FALL_TUNE };
     function syncPirateFallCtx() {
       const c = _fallCtx;
@@ -32057,6 +32064,11 @@
     function startPirateBaseFall() {
       if (!_baseFall.terrain) return false;
       return startHabitatFall(_baseFall, syncPirateFallCtx());
+    }
+    /** Kawałek płaski habitatu (bęben, szyb) → bryła 3D spadająca na skałę (pirateBaseFall.promotePlanarPiece). */
+    function promotePirateBasePiece(piece, o) {
+      if (!_baseFall.terrain) return 0;
+      return promotePlanarPiece(_baseFall, syncPirateFallCtx(), piece, o);
     }
     /** Promise: upadek skończony (wszystko osiadło) albo po `maxSec` s czasu gry. */
     function pirateBaseFallDone(maxSec = 30) {

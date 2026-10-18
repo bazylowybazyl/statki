@@ -34,7 +34,7 @@ export const PIRATE_FALL_TUNE = {
   // skała w prawie kontaktu: tarcie, mnożnik pancerza bryły w granicy plastyczności (skała twardsza od blachy)
   rockFriction: 0.85,
   rockArmorMul: 1.6,
-  rockRestAngDamp: 2.5,    // [1/s] tłumienie kołysania bryły leżącej na skale (szeroki styk — silnik: restAngDamp terenu)
+  rockRestAngDamp: 6,    // [1/s] tłumienie kołysania bryły leżącej na skale (szeroki styk — silnik: restAngDamp terenu)
   // sekwencja przy HP 0
   towerKick: 300,          // [j/s] prędkość zapadnięcia wieży ku skale w chwili śmierci habitatu
   towerTumble: 0.06,       // [rad/s] losowy obrót wieży przy puszczeniu (leżącej)
@@ -42,7 +42,15 @@ export const PIRATE_FALL_TUNE = {
   towerTumblePass: 0.13,   // [rad/s] stojąca wieża po przejściu przez dysk przechyla się (korek, styk z gruzem) —
                            // uderza w skałę pod kątem i przewraca się, zamiast lądować pionowo na szyi
   plugDebris: 0.12,        // korek (część dysku pod wieżą): udział węzłów w odłamki przy rozpadzie
-  plugSpeed: 170,          // [j/s] odłamy korka: od osi wieży i ku skale
+  plugSpeed: 170,
+  plugDown: 0.25,
+  columnLead: 0.92,        // odłam w rzucie wieży jedzie ku skale najwyżej z tą częścią jej prędkości (0 — wyłączone)
+  columnPush: 420,         // [j/s²] i zsuwa się z rzutu wieży na boki
+  columnCell: 90,          // [j.] komórka rzutu wieży
+  columnAhead: 2500,       // [j.] przed spodem wieży (ku skale) — tak daleko odłamy jeszcze w kolumnie          // korek: składowa ku skale (reszta — w bok od osi wieży)
+  holdGravity: 0.3,        // dolna część habitatu (szyb, bęben) przed przejściem wieży przez dysk — ułamek grawitacji          // [j/s] odłamy korka: od osi wieży i ku skale
+  plugCellsMax: 5,         // komórek Voronoi na wyspę korka (mniej — mniej ciał w stosie na skale)
+  minFragmentNodes: 50,    // odłam mniejszy (korek, bęben, szyb) — cały w odłamki (pula efektów), nie ciało
   // DZIURA: kotwice dysku pod wieżą (rzut wieży z góry + holePad) puszczają od razu — wieża przebija tę część dysku
   // (węzły trzymane belkami resztą sektora rwą się pod nią); reszta sektorów puszcza, gdy wieża przejdzie pod dysk
   holePad: 90,             // [j.] zapas rzutu wieży
@@ -69,9 +77,12 @@ export const PIRATE_FALL_TUNE = {
   restContactWindow: 0.3,  // [s] ostatni styk ze skałą (albo z inną bryłą — stos) najwyżej tyle temu
   restStackTime: 1.2,      // [s] spoczynek bryły leżącej na innej bryle (nie na skale)
   restStackMul: 3,         // próg prędkości bryły na innej bryle × tyle (stos drga od styków)
+  restStackPad: 1200,      // [j.] stos zamarza tylko tak blisko skały (bryła na bryle na skale)
   restEmaRate: 4,          // [1/s] wygładzanie prędkości spoczynku
   restSmallNodes: 30,      // drobnica (mniej węzłów) — bez progu obrotu
   restSmallTime: 2,        // [s] drobnica w styku tyle — zamarza (o ile nie leci szybciej niż 8 × restSpeed)
+  restTinyNodes: 12,       // drobina (mniej węzłów) na skale — zamarza od razu
+  restAssistTime: 3,       // [s] w styku tyle — zamarza przy prędkości chwilowej poniżej 2 × progu
   settleTimeout: 25,       // [s od śmierci habitatu] reszta wolnych brył przy skale zamarza, koniec sekwencji
   freezePinCells: 3,
   // odłam bryły spadający w otchłań (poza skałą) znika poniżej (pętla wraków gry — HULL_BODY_CONFIG.solidFloorZ)
@@ -347,7 +358,17 @@ function wellFor(st, tune) {
   if (!st.well) st.well = { x: st.terrain.cx, y: st.terrain.cy, z: st.terrain.cz, g: tune.gravity, r0: tune.gravityR0 };
   st.well.g = tune.gravity;
   st.well.r0 = tune.gravityR0;
+  // dolna część habitatu (szyb, bęben) przed przejściem wieży przez dysk: ta sama studnia, słabsza — wieża musi
+  // przebić dół i spaść pierwsza („dół ciągnięty przez wieżę”); po przejściu odłamy przechodzą na pełną studnię
+  if (!st.wellHold) st.wellHold = { x: st.well.x, y: st.well.y, z: st.well.z, g: 0, r0: st.well.r0 };
+  st.wellHold.x = st.well.x; st.wellHold.y = st.well.y; st.wellHold.z = st.well.z; st.wellHold.r0 = st.well.r0;
+  st.wellHold.g = tune.gravity * (st.passed ? 1 : tune.holdGravity);
   return st.well;
+}
+
+/** Studnia dla odłamów dolnej części habitatu (przed przejściem wieży słabsza — wellFor). */
+function lowerWell(st) {
+  return st.passed || !st.wellHold ? st.well : st.wellHold;
 }
 
 // Odmrożenie bryły (wieża zamrożona na dysku): kotwice siatki zamrożenia z powrotem węzłami swobodnymi.
@@ -563,16 +584,20 @@ function cutDiscHole(st, ctx, tune) {
   // wyspy korka (nowe wraki dysku bez kotwic) → odłamy od osi wieży i ku skale
   let n = 0;
   const hit = { x: st.holeX, y: st.holeY, z: st.discMinZ };
+  const tb0 = bodyOf(st.tower);
+  // środek rozpadu: oś wieży w połowie grubości dysku (odłamy od osi — w bok, nie przed wieżą)
+  const hcx = tb0 && !tb0.dead ? tb0.pos.x : st.holeX, hcy = tb0 && !tb0.dead ? tb0.pos.y : st.holeY;
+  const hcz = st.discMinZ + 180;
   for (let i = before; i < wrecks.length; i++) {
     const w = wrecks[i];
     const b = bodyOf(w);
     if (!b || b.dead || b.anchored || b.hull?.world?.kind !== 'disc') continue;
     b.gravityWell = st.well;
-    ctx.shatter(w, b.pos.x, -b.pos.y, b.pos.z, {
-      cells: Math.max(3, Math.min(10, Math.round(Math.cbrt(b.activeNodes) / 1.6))),
-      debrisFrac: tune.plugDebris, debrisMax: 260, crackDebris: 0.4, minFragmentNodes: 30,
-      speed: tune.plugSpeed, radial: 0.8,
-      outX: st.downX, outY: -st.downY, outZ: st.downZ, spread: 0.6, spin: 0.5
+    ctx.shatter(w, hcx, -hcy, hcz, {
+      cells: Math.max(2, Math.min(tune.plugCellsMax, Math.round(Math.cbrt(b.activeNodes) / 2))),
+      debrisFrac: tune.plugDebris, debrisMax: 260, crackDebris: 0.4, minFragmentNodes: tune.minFragmentNodes,
+      speed: tune.plugSpeed, radial: 1,
+      outX: st.downX * tune.plugDown, outY: -st.downY * tune.plugDown, outZ: st.downZ * tune.plugDown, spread: 0.4, spin: 0.5
     });
     n++;
   }
@@ -638,6 +663,108 @@ function openDiscHole(st, ctx, tb, discs, tune) {
     }
   }
   return freed;
+}
+
+/**
+ * Kawałek PŁASKI (bęben, szyb habitatu) → BRYŁA 3D (`piece.fall3d` — szablon z brył sceny, pirateBaseBodies.js): ciało
+ * swobodne w pozie spoczynkowej kawałka; komórki bez żywego węzła płaskiego w rzucie odpadają po cichu (uszkodzenia
+ * z walki zostają), ciało płaskie znika (kawałek stracony — statyka schowana, obraz trzyma ją do wypieku skóry 3D),
+ * bryła rozpada się (Voronoi 3D — ctx.shatter) z pędem od habitatu i spada ku skale. Kawałek pęknięty wcześniej po
+ * staremu (bez ciała) — nic. opts: { x, y (punkt rozpadu, gra), z, speed, outX, outY (gra), outZ, power }. ctx jak
+ * startHabitatFall + createSolid(entity, structure, opts), releaseHull(entity). Zwraca liczbę brył (0 — nie podniesiono).
+ */
+export function promotePlanarPiece(st, ctx, piece, opts = {}) {
+  const f3 = piece?.fall3d;
+  if (!st || !f3 || piece.lost || typeof ctx.createSolid !== 'function') return 0;
+  if (piece.state !== 'live' && piece.state !== 'static') return 0;
+  const tune = ctx.tune || PIRATE_FALL_TUNE;
+  const spec = f3.buildSolid();
+  if (!spec) return 0;
+  const engine = ctx.engine;
+  // rzut żywych węzłów płaskich kawałka (ciało i wyspy — zakotwiczone, w pozie spoczynkowej); kawałek w statyce — cały
+  const planar = [];
+  let occ = null;
+  const pc = Math.max(1, Number(piece.cellSize) || 15);
+  if (piece.state === 'live') {
+    occ = new Set();
+    for (const e of [piece.entity, ...(piece.islands || [])]) {
+      const b = bodyOf(e);
+      if (!b || b.dead) continue;
+      planar.push(e);
+      const m = rotOf(b.quat, _m), s = b.nodeStore;
+      for (let i = 0; i < s.count; i++) {
+        if (!s.active[i]) continue;
+        const x = b.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
+        const y = b.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
+        occ.add(holeKey(Math.floor(x / pc), Math.floor(y / pc)));
+      }
+    }
+    if (!occ.size) return 0;
+  }
+  const entity = {
+    id: `${piece.site?.id || 'pbase'}:${f3.id}`, name: f3.label || f3.id, type: 'worldPiece',
+    x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, angle: 0, angVel: 0, quat: null, radius: 0, mass: 0,
+    isWorldPiece: true, worldPiece: f3, static: false, isCollidable: true,
+    owner: piece.site?.owner || null,
+    visual: { spriteScale: 1, spriteScaleX: 1, spriteScaleY: 1, spriteRotation: 0 },
+    solid3D: true, beamHull: null
+  };
+  const hull = ctx.createSolid(entity, spec.structure, {
+    position: spec.position, quaternion: spec.quaternion, anchored: false,
+    massPerArea: f3.material?.density, collisionArmor: f3.material?.armor, hexPerNode: 4, world: f3
+  });
+  if (!hull) return 0;
+  const body = hull.body;
+  body.gravityWell = wellFor(st, tune);
+  // maska: komórka 3D bez żywego węzła płaskiego w rzucie (± 1 komórka płaska) — odpada bez odłamków i zdarzeń
+  if (occ) {
+    const m = rotOf(body.quat, _m), s = body.nodeStore;
+    const od = engine.onNodeDebris, o2 = engine.onDebris;
+    engine.onNodeDebris = null; engine.onDebris = null;
+    try {
+      for (let i = 0; i < s.count && !body.dead; i++) {
+        if (!s.active[i]) continue;
+        const x = body.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
+        const y = body.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
+        const ci = Math.floor(x / pc), cj = Math.floor(y / pc);
+        let hit = false;
+        for (let di = -1; di <= 1 && !hit; di++) for (let dj = -1; dj <= 1 && !hit; dj++) if (occ.has(holeKey(ci + di, cj + dj))) hit = true;
+        if (!hit) engine.destroyNode(body, i);
+      }
+    } finally { engine.onNodeDebris = od; engine.onDebris = o2; }
+  }
+  // ciało płaskie kawałka znika; kawałek stracony (statyka schowana — obraz trzyma ją do wypieku skóry bryły)
+  for (const e of planar) { ctx.releaseHull?.(e); e.dead = true; }
+  piece.entity = null;
+  if (piece.islands) piece.islands.length = 0;
+  piece.lost = true;
+  piece.state = 'lost';
+  piece.touched = true;
+  piece.site?.onLost?.(piece);
+  if (body.dead || body.activeNodes <= 0) return 0;
+  // rozpad (Voronoi 3D) z pędem od habitatu i ku skale; odłamy dziedziczą studnię
+  const wrecks = ctx.wrecks || null;
+  const before = wrecks ? wrecks.length : 0;
+  const n = body.activeNodes;
+  const gx = Number.isFinite(opts.x) ? opts.x : body.pos.x, gy = Number.isFinite(opts.y) ? opts.y : -body.pos.y;
+  const gz = Number.isFinite(opts.z) ? opts.z : body.pos.z;
+  if (typeof ctx.shatter === 'function') {
+    const sev = Math.max(0, Math.min(1.4, (Number(opts.power) || 1.6) - 1));
+    ctx.shatter(entity, gx, gy, gz, {
+      cells: Math.max(2, Math.min(6, Math.round(Math.cbrt(n) / 2.6))),
+      debrisFrac: Math.min(0.3, 0.06 * (1 + sev)), debrisMax: 220, crackDebris: 0.35, minFragmentNodes: tune.minFragmentNodes,
+      speed: Math.max(1, Number(opts.speed) || 110), radial: 0.45,
+      outX: Number(opts.outX) || 0, outY: Number(opts.outY) || 0, outZ: Number.isFinite(opts.outZ) ? opts.outZ : 0.1,
+      spread: 0.5, spin: 0.35
+    });
+  }
+  let made = 1;
+  if (wrecks) for (let i = before; i < wrecks.length; i++) {
+    const b = bodyOf(wrecks[i]);
+    if (b && !b.dead && !b.anchored && !b.planar) { b.gravityWell = lowerWell(st); made++; }
+  }
+  st.promoted = (st.promoted || 0) + 1;
+  return made;
 }
 
 // Puszczenie sektora dysku: kotwice zerwane, wrak 3D z grawitacją skały, prędkość ku dziurze po wieży i obrót, który
@@ -736,6 +863,7 @@ export function stepHabitatFall(st, ctx, dt) {
       }
     }
     if (st.passed) while (st.queue.length && st.passT + st.queue[0].t <= st.t) releaseDisc(st, ctx, st.queue.shift().id, tune);
+    sweepTowerColumn(st, ctx, dt, tune, solids);
   }
   // bryły bazy: grawitacja skały (po śmierci habitatu wszystkie swobodne; wcześniej odłamy spod habitatu), spoczynek
   const recs = st.recs;
@@ -746,8 +874,10 @@ export function stepHabitatFall(st, ctx, dt) {
     if (!b || b.dead || b.planar || b.static || b.anchored) continue;
     const world = b.hull?.world;
     if (!world || !world.site || (ctx.isBaseSite && !ctx.isBaseSite(world.site))) continue;
-    if (b.gravityWell !== well && (falling || b.pos.z < tune.wellBelowZ || st.phase === 'settled')) b.gravityWell = well;
-    if (b.gravityWell !== well) continue;
+    const held = b.gravityWell === st.wellHold && !!st.wellHold;
+    if (held && st.passed) b.gravityWell = well;
+    else if (!held && b.gravityWell !== well && (falling || b.pos.z < tune.wellBelowZ || st.phase === 'settled')) b.gravityWell = well;
+    if (b.gravityWell !== well && !(held && !st.passed)) continue;
     moving++;
     let r = recs.get(b);
     const e = b.entity;
@@ -760,7 +890,12 @@ export function stepHabitatFall(st, ctx, dt) {
     }
     if (!onRock && !onBody) { if (r) { r.restSince = -1; r.touchSince = -1; } continue; }
     if (!r) { r = { lastContact: -1e9, lastImpact: -1e9, lastScrape: -1e9, restSince: -1, first: true, vEma: -1, touchSince: -1 }; recs.set(b, r); }
+    // stos (styk z bryłą, nie ze skałą) zamarza tylko przy skale: odłam leżący na dysku, który jeszcze trzyma, nie może
+    // zamarznąć w powietrzu, kiedy dysk poleci
+    if (!onRock && !nearTerrain(st.terrain, b, tune.restStackPad)) { r.restSince = -1; r.touchSince = -1; continue; }
     if (!(r.touchSince >= 0)) r.touchSince = now;
+    // drobina (kilka węzłów) na skale — zamarza od razu: odbija się po rzeźbie skały bez końca, a nic nie znaczy w obrazie
+    if (onRock && b.activeNodes < tune.restTinyNodes) { settleBody(st, ctx, b, well); continue; }
     // drobnica w styku dłużej niż restSmallTime (podskakuje na skale, utknęła w zgniecionej wieży) — zamarza, gdy nie leci
     if (b.activeNodes < tune.restSmallNodes && now - r.touchSince >= tune.restSmallTime && (r.vEma < 0 || r.vEma < tune.restSpeed * 8)) {
       settleBody(st, ctx, b, well);
@@ -774,6 +909,8 @@ export function stepHabitatFall(st, ctx, dt) {
     const vNow = Math.max(v, w);
     r.vEma = r.vEma < 0 ? vNow : r.vEma + (vNow - r.vEma) * Math.min(1, dt * tune.restEmaRate);
     const lim = onRock ? tune.restSpeed : tune.restSpeed * tune.restStackMul;
+    // długi styk (stos, rzeźba skały) — wystarczy prędkość chwilowa poniżej podwójnego progu
+    if (now - r.touchSince >= tune.restAssistTime && vNow <= lim * 2) { settleBody(st, ctx, b, well); continue; }
     if (r.vEma > lim) { r.restSince = -1; continue; }
     if (r.restSince < 0) { r.restSince = now; continue; }
     if (now - r.restSince < (onRock ? tune.restTime : tune.restStackTime)) continue;
@@ -781,6 +918,64 @@ export function stepHabitatFall(st, ctx, dt) {
     settleBody(st, ctx, b, well);
   }
   if (falling && st.passed && st.queue.length === 0 && st.t > 4 && (moving === 0 || timeout)) st.phase = 'settled';
+}
+
+// KOLUMNA WIEŻY (do jej uderzenia w skałę): odłamy w rzucie wieży (szyb, korek dysku, sektory przy dziurze) nie
+// wyprzedzają jej — wieża przebija dół i spada pierwsza. Zgniatany metal nie odbija się sprężyście: odłam pchnięty
+// przez wieżę jedzie najwyżej z jej prędkością ku skale (× columnLead), a z kolumny zsuwa się na boki (columnPush).
+// Rzut wieży (komórki columnCell) co 0,1 s; pod wierzchołkiem wieży i do columnAhead przed jej spodem.
+function sweepTowerColumn(st, ctx, dt, tune, solids) {
+  const tb = bodyOf(st.tower);
+  if (!tb || tb.dead || st.towerImpactT >= 0 || !(tune.columnLead > 0)) return;
+  const C = tune.columnCell;
+  if (!st._col || st.t - st._colT >= 0.1) {
+    const occ = st._col || new Set();
+    occ.clear();
+    const m = rotOf(tb.quat, _m), s = tb.nodeStore;
+    let sx = 0, sy = 0, n = 0, zt = -Infinity, zb = Infinity;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const x = tb.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
+      const y = tb.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
+      const z = tb.pos.z + m[6] * s.x[i] + m[7] * s.y[i] + m[8] * s.z[i];
+      occ.add(holeKey(Math.floor(x / C), Math.floor(y / C)));
+      sx += x; sy += y; n++;
+      if (z > zt) zt = z;
+      if (z < zb) zb = z;
+    }
+    st._col = occ; st._colT = st.t;
+    st._colCx = n ? sx / n : tb.pos.x; st._colCy = n ? sy / n : tb.pos.y;
+    st._colTop = zt; st._colBot = zb;
+  }
+  const occ = st._col;
+  const dX = st.downX, dY = st.downY, dZ = st.downZ;
+  const vt = tb.vel.x * dX + tb.vel.y * dY + tb.vel.z * dZ;
+  const cap = Math.max(0, vt) * tune.columnLead;
+  const zLo = st._colBot - tune.columnAhead;
+  let swept = 0;
+  for (let k = 0; k < solids.length; k++) {
+    const b = solids[k];
+    if (!b || b === tb || b.dead || b.planar || b.static || b.anchored || !b.gravityWell) continue;
+    const r = b.radius || 0;
+    if (b.pos.z - r > st._colTop || b.pos.z + r < zLo) continue;
+    const reach = Math.min(3, Math.ceil(r * 0.5 / C));
+    const ci = Math.floor(b.pos.x / C), cj = Math.floor(b.pos.y / C);
+    let inCol = false;
+    for (let di = -reach; di <= reach && !inCol; di++) for (let dj = -reach; dj <= reach && !inCol; dj++) if (occ.has(holeKey(ci + di, cj + dj))) inCol = true;
+    if (!inCol) continue;
+    const vb = b.vel.x * dX + b.vel.y * dY + b.vel.z * dZ;
+    if (vb > cap) { const ex = vb - cap; b.vel.x -= dX * ex; b.vel.y -= dY * ex; b.vel.z -= dZ * ex; }
+    // na boki: od osi wieży, w płaszczyźnie ⊥ kierunku ku skale
+    let ox = b.pos.x - st._colCx, oy = b.pos.y - st._colCy, oz = 0;
+    const od = ox * dX + oy * dY;
+    ox -= dX * od; oy -= dY * od; oz -= dZ * od;
+    let ol = Math.sqrt(ox * ox + oy * oy + oz * oz);
+    if (ol < 1) { ox = -dY; oy = dX; oz = 0; ol = Math.sqrt(ox * ox + oy * oy) || 1; }
+    const a = tune.columnPush * dt / ol;
+    b.vel.x += ox * a; b.vel.y += oy * a; b.vel.z += oz * a;
+    swept++;
+  }
+  st.columnSwept = swept;
 }
 
 // Bryła przy skale (odległość od powierzchni ≤ promień ciała + pad).

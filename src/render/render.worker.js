@@ -408,6 +408,8 @@ if (isWorker) {
         p.site = site; p.state = 'static'; p.entity = null; p.touched = false; p.lost = false;
         rep.byRef.set(site.structure + '|' + p.id, p);
       }
+      // bryły upadku kawałków płaskich (bęben, szyb habitatu — odłamy 3D z worldRef `<id>~3d`)
+      for (const f of site.fallPieces || []) rep.byRef.set(site.structure + '|' + f.id, f);
     }
     st.pbg.pirateBase3DEvent('bodies', sitesObj);
     st.wbMods.w3d.setWorldBodiesSource(rep);
