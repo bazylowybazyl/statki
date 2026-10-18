@@ -11,6 +11,8 @@
 // szyja   — zerwanie szyi habitatu (window.snapPirateBaseNeck): wylot z kikuta wieży (wyrwa jedzie z bryłą) i szybu.
 // magazyn — próg punktów magazynu (pęknięcie M-1 — wylot, pożar towarów).
 // final   — habitat do zera (StoryGame._chainExplosion: ćwiartki, szyb, wieża, dysk — implozja, ogień).
+// glebia  — wyrwa w dysku mieszkalnym (pass tła) i na sztucznej bryle spadającej od głowy wieży do −9 km (kontrakt breach /
+//           ignite z encją ciała 3D — efekt jedzie z ciałem; domena głęboka reżysera wybuchów, gdy ją ma).
 // koszt   — scenariusz „prog” DWA RAZY: z atmosferą i bez (PirateBaseAtmosphere.tune.enabled = false) — mediana i p95
 //           czasu GPU klatki (Core3D.gpuFrameMs) i klatki w oknie 0–6 s po pęknięciu; tryb off (Core3D strony).
 // Wszystkie: pipeline'y tworzone synchronicznie w klatkach scenariusza (ma być 0), stan atmosfery i obrazu wyrw.
@@ -196,20 +198,21 @@ async function trybProg() {
 async function trybKrater() {
   await startStory('shipyard');
   const L = await ev(`(() => { const l = window.StoryGame.site.dock.layout; return { drumR: l.habitat.drumR }; })()`);
-  await placeHub(L.drumR + 2600, 0, Math.PI);
+  // ściana południowa (ćwiartka H-S) — od wschodu i zachodu stoją pomosty (nie mają powietrza), z południa nic nie zasłania
+  await placeHub(0, L.drumR + 2600, -Math.PI / 2);
   await waitFor(cdp, '(window.WorldBodies?.stats?.live || 0) > 0', 30000, 200);
   await sleep(1500);
-  await camHub(L.drumR + 200, 0, NEAR);
+  await camHub(0, L.drumR + 200, NEAR);
   const tp = await nowMs();
   const t0 = Date.now();
-  // broń z lufy 2,4 km od ściany wschodniej w ścianę, cele rozłożone wzdłuż ściany (pociski trafiają ciało kawałka —
+  // broń z lufy 2,4 km od ściany południowej w ścianę, cele rozłożone wzdłuż ściany (pociski trafiają ciało kawałka —
   // kratery broni, każdy w innej kajucie)
   const bron = String(args.bron || 'armata_mk1');
   const n = await ev(`new Promise((res) => {
     const d = window.StoryGame.site.dock;
     let k = 0;
     const tick = () => {
-      const a = (k - 2.5) * 0.11;
+      const a = Math.PI / 2 + (k - 2.5) * 0.11;
       const R = ${L.drumR};
       const t = d.toGame(Math.cos(a) * (R - 30), Math.sin(a) * (R - 30)), p = d.toGame(Math.cos(a) * (R + 2400), Math.sin(a) * (R + 2400));
       const dx = t.x - p.x, dy = t.y - p.y, l = Math.hypot(dx, dy) || 1;
@@ -291,6 +294,51 @@ async function trybFinal() {
   report.tryby.final = { kadry: rows, kadry3D: rows3, pipeline: await pipesSince(tp) };
 }
 
+// Głębia: wyrwa w dysku mieszkalnym (z ≈ −950 — pass tła) i wyrwa na SZTUCZNEJ bryle spadającej od głowy wieży do −9 km
+// (kontrakt fizyki upadku: breach / ignite z encją ciała 3D — punkt i normalna w układzie ciała, pozycja co krok).
+async function trybGlebia() {
+  await startStory('shipyard');
+  await placeHub(0, 5200, -Math.PI / 2);
+  await waitFor(cdp, '(window.WorldBodies?.stats?.live || 0) > 0', 30000, 200);
+  await sleep(1500);
+  await camHub(0, 1200, ZOOM);
+  const tp = await nowMs();
+  // dysk: sektor południowy (D-3 — kąt π/2), pęknięcie z zapłonem
+  const t0 = Date.now();
+  const d = await ev(`(() => { const A = window.PirateBaseAtmosphere; const id = A.test({ module: 'D-3', fire: true }); return { id, v: A.vents().map((v) => ({ m: v.module.id, z: Math.round(v.wz) })) }; })()`);
+  console.log('dysk:', JSON.stringify(d));
+  const rows = await series('glebia-dysk', t0, [0.4, 1.5, 3]);
+  // bryła spadająca: start w głowie wieży, opada z przyspieszeniem 400 j/s² (grawitacja habitatu) i obraca się
+  const t1 = Date.now();
+  const f = await ev(`(() => {
+    const S = window.StoryGame, hc = S.site.dock.habitat;
+    const body = { pos: { x: hc.x + 400, y: -(hc.y + 900), z: 1500 }, vel: { x: 0, y: 0, z: 0 }, angVel: { x: 0.25, y: 0, z: 0.1 },
+      quat: { x: 0, y: 0, z: 0, w: 1 }, planar: false, dead: false, radius: 300 };
+    const e = { x: body.pos.x, y: -body.pos.y, solid3D: true, beamHull: { body, solid3D: true, dmgKey: 0 } };
+    e.beamHull.entity = e;
+    window.__fallBody = e;
+    const A = window.PirateBaseAtmosphere;
+    const id = A.breach({ module: 'H-T', x: e.x + 260, y: e.y, z: 1500, nx: 1, ny: 0, nz: 0.2, size: 160, entity: e, kind: 'break' });
+    A.ignite({ module: 'H-T' });
+    let last = performance.now();
+    window.__fallTimer = setInterval(() => {
+      const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
+      if (body.pos.z < -9000) { body.vel.z = 0; return; }
+      body.vel.z -= 400 * dt; body.pos.z += body.vel.z * dt;
+      const w = body.angVel, q = body.quat, h = dt * 0.5;
+      const qx = q.x + h * (w.x * q.w + w.y * q.z - w.z * q.y), qy = q.y + h * (w.y * q.w + w.z * q.x - w.x * q.z);
+      const qz = q.z + h * (w.z * q.w + w.x * q.y - w.y * q.x), qw = q.w - h * (w.x * q.x + w.y * q.y + w.z * q.z);
+      const l = Math.hypot(qx, qy, qz, qw); q.x = qx / l; q.y = qy / l; q.z = qz / l; q.w = qw / l;
+      e.x = body.pos.x; e.y = -body.pos.y;
+    }, 16);
+    return { id };
+  })()`);
+  console.log('bryła:', JSON.stringify(f));
+  const rows2 = await series('glebia-spadek', t1, [0.5, 2, 4, 6.5]);
+  await ev('(() => { clearInterval(window.__fallTimer); return true; })()');
+  report.tryby.glebia = { dysk: d, kadryDysk: rows, bryla: f, kadrySpadek: rows2, pipeline: await pipesSince(tp) };
+}
+
 // A/B kosztu: ten sam scenariusz (próg punktów bębna) z atmosferą i bez; okno 0–6 s po pęknięciu.
 async function trybKoszt() {
   const runOne = async (on) => {
@@ -331,7 +379,7 @@ async function trybKoszt() {
   console.log('KOSZT bez', JSON.stringify([B, B2].map((x) => ({ gpuP50: x.gpuP50, gpuP95: x.gpuP95, klatkaP50: x.klatkaP50 }))));
 }
 
-const RUN = { prog: trybProg, krater: trybKrater, szyja: trybSzyja, magazyn: trybMagazyn, final: trybFinal, koszt: trybKoszt };
+const RUN = { prog: trybProg, krater: trybKrater, szyja: trybSzyja, magazyn: trybMagazyn, final: trybFinal, glebia: trybGlebia, koszt: trybKoszt };
 try {
   for (const t of tryby) {
     if (!RUN[t]) { console.log('nieznany tryb', t); continue; }

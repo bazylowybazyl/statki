@@ -50,18 +50,22 @@ export const VENT_LOOK = {
   // gaz (domena wylotu): wyrwa głównej objętości ≥ gasMinR j. i ≥ gasMinPx px promienia na ekranie, w kadrze
   gasMinR: 60, gasMinPx: 6, gasDomains: 2, gasReserve: 2,
   gasLenK: 11.5,                // długość obłoku przy pełnym strumieniu [× promień otworu] (rozmiar domeny)
-  gasDomainK: 2.6, gasDomainMin: 1200, gasDomainMax: 5200,
+  gasDomainK: 2.6, gasDomainMin: 1200, gasDomainMax: 4400,
   // paliwo w gazie tylko na krótki język przy otworze (ogień w wylatującym tlenie — nie miotacz płomieni)
-  gasSmoke: 11, gasFuel: 4.5, gasTemp: 0.25, gasFireTemp: 1.2,
+  gasSmoke: 7, gasFuel: 4.5, gasTemp: 0.25, gasFireTemp: 1.2,
   gasSpeed: 1.25,               // prędkość strumienia gazu [× długość obłoku / s]
-  gasLinger: 1.1, gasFade: 1.4, gasDecay: 0.65,
+  // para sublimuje i rozchodzi się w próżni — stały zanik w domenie wylotu (obłok nie wisi)
+  gasLinger: 1.0, gasFade: 1.3, gasDecay: 1.1,
   // barwa domeny × albedo sadzy obrazu gazu (0,15) = albedo pary: biała, lekko błękitna (~0,77); przy ogniu — szara
-  steamTint: [5.0, 5.7, 6.8], sootTint: [1.5, 1.45, 1.4], sootFire: 0.3, sootSmolder: 0.15,
+  steamTint: [4.3, 4.9, 5.9], sootTint: [1.5, 1.45, 1.4], sootFire: 0.3, sootSmolder: 0.15,
   // para i lód (cząstki)
   steamRate: 46,                // kłęby / s przy strumieniu 1 i promieniu 100 j.
+  // wspólny budżet cząstek wszystkich wyrw [/s] (finał: ~30 wyrw naraz — biała para zalewała kadr): wyrwy dzielą go
+  // proporcjonalnie do swoich potrzeb
+  steamBudget: 300, flameBudget: 220, emberBudget: 160,
   steamAlpha: 0.32,
-  steamColor0: [0.82, 0.86, 0.92], steamColor1: [0.46, 0.5, 0.57],
-  lenK: 3.5, lenFlowK: 8,       // długość strumienia: promień × (lenK + lenFlowK · √strumień)
+  steamColor0: [0.74, 0.78, 0.85], steamColor1: [0.4, 0.44, 0.5],
+  lenK: 3.5, lenFlowK: 8, lenMax: 2200,   // długość strumienia: promień × (lenK + lenFlowK · √strumień), najwyżej lenMax
   spread: 0.62,                 // półkąt stożka wylotu [rad] (w próżni strumień szeroko się rozchyla)
   glintRate: 26,
   coreGain: 0.55,
@@ -132,6 +136,9 @@ export class PirateBaseVents3D {
     this.states = new Map();
     this.frameNo = 0;
     this.ready = false;
+    // budżet emisji (potrzeby wszystkich wyrw z poprzedniej klatki → mnożnik tej)
+    this._steamWant = 0; this._flameWant = 0; this._emberWant = 0;
+    this._steamK = 1; this._flameK = 1; this._emberK = 1;
     this.layers = null;
     this.stats = { vents: 0, gas: 0, deepGas: 0, noSlot: 0, particles: 0, lights: 0 };
     this._ensure();
@@ -174,6 +181,12 @@ export class PirateBaseVents3D {
     const f = this.frameNo;
     const L = this.look;
     let n = 0;
+    // mnożniki budżetu z potrzeb poprzedniej klatki (bez skoku: wygładzone)
+    const kS = this._steamWant > L.steamBudget ? L.steamBudget / this._steamWant : 1;
+    const kF = this._flameWant > L.flameBudget ? L.flameBudget / this._flameWant : 1;
+    const kE = this._emberWant > L.emberBudget ? L.emberBudget / this._emberWant : 1;
+    if (step > 0) { this._steamK += (kS - this._steamK) * 0.3; this._flameK += (kF - this._flameK) * 0.3; this._emberK += (kE - this._emberK) * 0.3; }
+    this._steamWant = 0; this._flameWant = 0; this._emberWant = 0;
     if (frame && frame.has && frame.n > 0) {
       const R = VENT_REC, S = R.STRIDE, rec = frame.rec;
       for (let i = 0; i < frame.n; i++) {
@@ -228,7 +241,7 @@ export class PirateBaseVents3D {
     // nośnik cząstek: prędkość punktu ciała (spadająca wieża — para leci z nią i swoim pędem)
     _carrier.vx = cvx; _carrier.vy = cvy; _carrier.z = z; _carrier.t0 = Number(SimClock.sim) || 0; _carrier.clock = 0;
     const sq = Math.sqrt(flow);
-    const len = clamp(r * (L.lenK + L.lenFlowK * sq), 40, 3200);
+    const len = clamp(r * (L.lenK + L.lenFlowK * sq), 40, L.lenMax);
     // scena: (x, −y, z); kierunek wylotu
     _dir.set(nx, -ny, nz);
     const X = x, Y = -y;
@@ -251,11 +264,14 @@ export class PirateBaseVents3D {
       const k = L.maxEmitPerFrame;
       // --- para i lód (strumień)
       if (flow > 0.01) {
-        st.accSteam += L.steamRate * (0.15 + flow) * sizeK * dt;
+        const want = L.steamRate * (0.15 + flow) * Math.sqrt(sizeK);
+        this._steamWant += want;
+        st.accSteam += want * this._steamK * dt;
         let ns = Math.min(k, Math.floor(st.accSteam));
         st.accSteam -= ns;
-        const life0 = clamp(0.45 + r / 220, 0.45, 2.2);
-        const U = len * 1.6 * speedK;
+        // w próżni para leci swoim pędem i rzednie (mały opór — nie wisi przy wyrwie)
+        const life0 = clamp(0.5 + r / 400, 0.5, 1.5);
+        const U = len * 1.2 * speedK;
         for (let i = 0; i < ns; i++) {
           coneDir(_d, _dir, L.spread * (0.55 + 0.45 * fxRandom.next()), 1);
           const vv = U * (0.45 + 0.75 * fxRandom.next());
@@ -264,9 +280,9 @@ export class PirateBaseVents3D {
           s.x = X + _dir.x * a; s.y = Y + _dir.y * a; s.z = z + _dir.z * a;
           s.vx = _d.x * vv; s.vy = _d.y * vv; s.vz = _d.z * vv;
           s.life = life0 * (0.75 + 0.5 * fxRandom.next());
-          s.drag = 1.4;
+          s.drag = 0.5;
           s.s0 = r * (0.45 + 0.3 * fxRandom.next());
-          s.s1 = r * (1.6 + fxRandom.next()) + len * 0.25;
+          s.s1 = Math.min(r * (1.6 + fxRandom.next()) + len * 0.22, 700);
           s.rot = fxRandom.next() * 6.283; s.vrot = (fxRandom.next() - 0.5) * 1.2;
           const c0 = L.steamColor0, c1 = L.steamColor1;
           const w = 0.75 + 0.25 * ice;
@@ -282,7 +298,7 @@ export class PirateBaseVents3D {
         _col[0] = 0.62 * g; _col[1] = 0.72 * g; _col[2] = 0.9 * g;
         lay.core.spawn(_pos, _dir, 0.09, len * 0.32, len * 0.42, r * 0.7, r * 1.25, _col, 0.85);
         // kryształki lodu
-        st.accGlint += L.glintRate * flow * sizeK * ice * dt;
+        st.accGlint += L.glintRate * flow * Math.sqrt(sizeK) * ice * this._steamK * dt;
         let ng = Math.min(k, Math.floor(st.accGlint));
         st.accGlint -= ng;
         for (let i = 0; i < ng; i++) {
@@ -305,7 +321,9 @@ export class PirateBaseVents3D {
       }
       // --- ogień w wylatującym tlenie
       if (fire > 0.01) {
-        st.accFlame += L.flameRate * fire * sizeK * (0.3 + Math.min(1, flow * 2)) * dt;
+        const wantF = L.flameRate * fire * Math.sqrt(sizeK) * (0.3 + Math.min(1, flow * 2));
+        this._flameWant += wantF;
+        st.accFlame += wantF * this._flameK * dt;
         let nf = Math.min(k, Math.floor(st.accFlame));
         st.accFlame -= nf;
         const U = len * 0.7 * speedK;
@@ -331,7 +349,9 @@ export class PirateBaseVents3D {
       }
       // --- żarzenie: żar na brzegu otworu, poświata, ciemny dym
       if (smolder > 0.02) {
-        st.accEmber += L.emberRate * smolder * sizeK * dt;
+        const wantE = L.emberRate * smolder * Math.sqrt(sizeK);
+        this._emberWant += wantE;
+        st.accEmber += wantE * this._emberK * dt;
         let ne = Math.min(k, Math.floor(st.accEmber));
         st.accEmber -= ne;
         if (ne > 0) perpBasis(_dir);
@@ -359,7 +379,7 @@ export class PirateBaseVents3D {
         s.r0 = s.r1 = 0.95; s.g0 = s.g1 = 0.32; s.b0 = s.b1 = 0.07;
         s.alpha = 0.22 * smolder * (0.85 + 0.3 * Math.sin(st.flick + age * 5.3)); s.fadeIn = 0.02; s.fadeOut = 1; s.grow = 1;
         lay.glow.spawn(s);
-        st.accSmoke += L.smokeRate * smolder * sizeK * dt;
+        st.accSmoke += L.smokeRate * smolder * Math.sqrt(sizeK) * this._emberK * dt;
         let nk = Math.min(k, Math.floor(st.accSmoke));
         st.accSmoke -= nk;
         for (let i = 0; i < nk; i++) {
