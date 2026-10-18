@@ -1931,9 +1931,9 @@ export class ExplosionFx {
    *   (obłok rośnie od powierzchni), ground { x, y, z, r } (gra) — KULA-przeszkoda (planetoida: gaz rozlewa się po niej,
    *   marsz obrazu kończy się na niej, cień kuli w świetle słońca deepSun), carrier [vx, vy, vz] (gra) — domena i emitery
    *   jadą z nim (spadająca bryła), life, fadeTime, baseDecay (≥ −0,4 — ujemny: pył trzyma się dłużej), tint, fire, tag,
-   *   priority, ambient, tier (GAS_TIER_*; domyślnie wg promienia na ekranie jak wybuchy), domainScale (4,4), minPx (promień
-   *   na ekranie, poniżej — bez domeny), reserve (wolnych domen zostawionych wybuchom w płaszczyźnie gry, domyślnie 1),
-   *   inView (false — bez testu kadru).
+   *   priority, ambient, tier (GAS_TIER_*; domyślnie wg promienia na ekranie jak wybuchy — progi fineMinPx / coarseMaxPx
+   *   z opcji albo strojenia wybuchów), domainScale (4,4), minPx (promień na ekranie, poniżej — bez domeny), reserve (wolnych
+   *   domen zostawionych wybuchom w płaszczyźnie gry, domyślnie 1), inView (false — bez testu kadru).
    * Zwraca indeks globalny domeny albo −1. Źródła: this.director.jet / puff / fire / trail(slot, X, Y, Z, …) w SCENIE (X = x gry,
    * Y = −y gry, Z = z; kierunki tak samo). Życie: this.grid.feed / keepAlive(slot, until) (zegar this.grid.time).
    */
@@ -1948,7 +1948,9 @@ export class ExplosionFx {
     let free = 0;
     for (let i = 0; i < g.S; i++) if (!g.slots[i].active && this._tierAllowed(g.slots[i].tier | 0)) free++;
     if (free <= (Number.isFinite(o.reserve) ? o.reserve : 1)) { this.stats.deepNoSlot++; return -1; }
-    const order = Number.isFinite(o.tier) ? [o.tier | 0] : (rPx >= T.fineMinPx ? TIER_ORDER_BIG : (rPx < T.coarseMaxPx ? TIER_ORDER_SMALL : TIER_ORDER_MID));
+    const fineMin = Number.isFinite(o.fineMinPx) ? o.fineMinPx : T.fineMinPx;
+    const coarseMax = Number.isFinite(o.coarseMaxPx) ? o.coarseMaxPx : T.coarseMaxPx;
+    const order = Number.isFinite(o.tier) ? [o.tier | 0] : (rPx >= fineMin ? TIER_ORDER_BIG : (rPx < coarseMax ? TIER_ORDER_SMALL : TIER_ORDER_MID));
     let pick = -1;
     for (let j = 0; j < order.length && pick < 0; j++) if (this._tierAllowed(order[j])) pick = this._freeIn(this._tierIx[order[j]]);
     if (pick < 0) { this.stats.deepNoSlot++; return -1; }

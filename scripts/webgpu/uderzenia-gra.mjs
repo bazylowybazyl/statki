@@ -195,19 +195,31 @@ try {
     const p = await at(-3600, 0);
     await camAt(p.x, p.y, 0.12);
     await sleep(8000);
+    // render (gpuFrameMs) + compute (gpuComputeMs — symulacja gazu, żar, iskry): oba ze znaczników czasu Core3D
     const sample = async (sec) => {
-      const v = [];
+      const v = [], r = [], c = [];
       const t0 = Date.now();
-      while (Date.now() - t0 < sec * 1000) { v.push(await ev('window.Core3D?.gpuFrameMs || 0')); await sleep(50); }
-      v.sort((a, b) => a - b);
-      return { p50: +v[Math.floor(v.length * 0.5)].toFixed(3), p95: +v[Math.floor(v.length * 0.95)].toFixed(3), n: v.length };
+      while (Date.now() - t0 < sec * 1000) {
+        const s = await ev('[window.Core3D?.gpuFrameMs || 0, window.Core3D?.gpuComputeMs || 0]');
+        r.push(s[0]); c.push(s[1]); v.push(s[0] + s[1]);
+        await sleep(50);
+      }
+      const q = (a, k) => { const b = a.slice().sort((x, y) => x - y); return +b[Math.floor(b.length * k)].toFixed(3); };
+      return { p50: q(v, 0.5), p95: q(v, 0.95), render50: q(r, 0.5), compute50: q(c, 0.5), compute95: q(c, 0.95), n: v.length };
     };
     report.koszt = { bez: await sample(4) };
     await ev(`window.PirateRockImpacts.demo('upadek', { e: -3600, n: 0 })`);
     await sleep(500);
     report.koszt.upadek = await sample(5.5);
-    await sleep(6000);
+    report.koszt.upadekStan = await state();
+    await sleep(9000);
     report.koszt.poUpadku = await sample(3);
+    // to samo bez gazu (same cząstki) — koszt gazu = różnica
+    await ev('(() => { const t = window.PirateRock?.state?.()?.impact?.tune; if (t) t.gas = false; return !!t; })()');
+    await ev(`window.PirateRockImpacts.demo('upadek', { e: -3600, n: 0 })`);
+    await sleep(500);
+    report.koszt.upadekBezGazu = await sample(5.5);
+    await ev('(() => { const t = window.PirateRock?.state?.()?.impact?.tune; if (t) t.gas = true; return !!t; })()');
     console.log('koszt:', JSON.stringify(report.koszt));
   }
   report.koniec = await state();

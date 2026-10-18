@@ -63,14 +63,26 @@ export const ROCK_IMPACT_FX_TUNE = {
   cloudMax: 3400,
   domainScale: 4.4,
   gasMinPx: 9,            // promień obłoku na ekranie [px], od którego uderzenie dostaje własną domenę gazu
+  // atlas domeny wg promienia obłoku na ekranie [px]: „fine” (128² × 48, 41 iteracji Jacobiego — najdroższy) dopiero przy
+  // zbliżeniu (kamery 3D), poniżej gasCoarseMaxPx — „coarse”, pomiędzy — podstawowy (pomiar 2026-10-19: demo upadku z dwiema
+  // domenami „fine” — compute p95 +1,5 ms na klatkach kroku gazu)
+  gasFineMinPx: 150,
+  gasCoarseMaxPx: 55,
   gasMinSize: 120,        // [j.] ciało mniejsze (odłamy) — bez gazu, same cząstki
+  scarMinSize: 90,        // [j.] ciało mniejsze — bez trwałego śladu na skale
   gasDomains: 6,          // sufit domen uderzeń naraz
   gasReserve: 2,          // wolnych domen zostawionych wybuchom w płaszczyźnie gry
   gasLife: 7.5,           // [s] życie domeny po ostatnim zasileniu (potem wygaszanie gasFade)
   gasFade: 3.0,
   gasDecay: -0.38,        // stały zanik dymu domeny [1/s] (ujemny = pył trzyma się dłużej niż dym wybuchów — 0,545/s globalnie)
   gasTint: [1.75, 1.66, 1.56],   // barwa pyłu (× albedo sadzy gry 0,15 — szary regolit z lodem)
-  gasSmoke: 0.7,
+  gasSmoke: 0.6,
+  // otoczenie domeny gazu uderzenia (światło odbite od oświetlonej skały pod obłokiem — cień kłębów nie jest czarny):
+  // gasAmbient0 + gasAmbientSun × max(0, n · słońce) w punkcie uderzenia; jednostka — światło przed albedo (jak słońce)
+  gasAmbient0: 0.12,
+  gasAmbientSun: 0.45,
+  // budżet cząstek: ułamek pojemności pierścienia zużyty w ostatnich ~2 s, ponad który liczby cząstek nowych uderzeń maleją
+  budgetSoft: 0.55,
   // cząstki
   chunkMax: 700,          // odłamków na jedno uderzenie (sufit)
   chunkK: 0.34,           // odłamków na j. promienia ciała × (0,4 + q)
@@ -305,7 +317,7 @@ function buildGraph(add, U) {
         const n2 = texture(noiseTex, L.mul(0.9).add(vec2(seed.mul(2.1), seed)).sub(u.mul(0.05))).level(0);
         const edge = float(1.0).sub(smoothstep(n.r.mul(0.45).add(0.12), 1.0, r));
         const dens = clamp(n.b.mul(0.8).add(n2.g.mul(0.6)).sub(0.35), 0.0, 1.0);
-        const lift = mix(float(1.0), float(1.7), select(kind.lessThan(0.5), float(1.0), float(0.0)));
+        const lift = select(kind.lessThan(0.5), vec3(2.6, 2.3, 1.95), vec3(1.0));
         out.assign(vec4(vCol.xyz.mul(lift).mul(float(0.85).add(n2.r.mul(0.3))), clamp(edge.mul(dens).mul(vCol.w).mul(1.6), 0.0, 1.0)));
       });
     }
@@ -350,6 +362,8 @@ export class RockImpactFx {
     this.placed = false;
     // gaz (ExplosionFx — głębokie domeny): ustawia dekoder / klej (getExplosionFx)
     this.getGas = null;
+    // trwały ślad uderzenia na skale (x, y, z sceny, promień krateru, siła) — klej: PirateRock3D.addScar
+    this.onScar = null;
     this._gasSlots = [];          // domeny uderzeń (indeksy globalne) — scalanie
     this.stats = { impacts: 0, scrapes: 0, settles: 0, gasNew: 0, gasMerged: 0, gasNone: 0, particles: 0, dropped: 0 };
     this._tmp = new THREE.Vector3();
@@ -385,6 +399,7 @@ export class RockImpactFx {
     if (i < pool.lo) pool.lo = i;
     if (i + 1 > pool.hi) pool.hi = i + 1;
     if (i + 1 > pool.used) pool.used = i + 1;
+    if (pool === this.alpha) this._bud = (this._bud || 0) + 1;
     const end = this.time + delay + life;
     if (end > pool.lastT) pool.lastT = end;
     this.stats.particles++;
@@ -482,6 +497,10 @@ export class RockImpactFx {
     let gasSlot = -1;
     if (T.gas) gasSlot = this._gasImpact(e, q, size);
     if (T.particles) this._particlesImpact(e, q, size, metal, gasSlot >= 0);
+    // trwały ślad na skale (jasny lód krateru i promieni, ciemniejszy wał) — obraz skały (pirateRock3D.addScar)
+    if (this.onScar && size >= T.scarMinSize) {
+      this.onScar(e.px + this.center.x, e.py + this.center.y, e.pz + this.center.z, size * (0.35 + 0.25 * q), Math.min(1.4, 0.35 + q));
+    }
   }
 
   _scrape(e) {
@@ -572,6 +591,19 @@ export class RockImpactFx {
   }
 
   /**
+   * Mnożnik liczby cząstek nowego uderzenia z zajętości pierścienia pyłu: cząstki wyemitowane w ostatnich ~2 s (wykładniczo
+   * zanikający licznik) ponad budgetSoft pojemności — liczby maleją (seria uderzeń nie nadpisuje żywych cząstek w pierścieniu).
+   */
+  _budgetK() {
+    const dt = Math.max(0, this.time - (this._budT ?? this.time));
+    this._budT = this.time;
+    this._bud = (this._bud || 0) * Math.exp(-dt / 2);
+    const used = this._bud / this.alpha.cap;
+    const soft = this.tune.budgetSoft;
+    return used <= soft ? 1 : Math.max(0.15, soft / used);
+  }
+
+  /**
    * Cząstki uderzenia: kurtyna wyrzutu (odłamki i pył po łukach balistycznych — stożek 30–60° od normalnej, wcześniejsze
    * szybsze, krater rośnie: punkt wyrzutu przesuwa się na zewnątrz), promienie (azymuty z większą gęstością), pierścień
    * pyłu po powierzchni, kłęby, iskry (metal o skałę), błysk i żar krateru (szybkie). `hasGas` — obłok z gazu (mniej
@@ -579,6 +611,7 @@ export class RockImpactFx {
    */
   _particlesImpact(e, q, size, metal, hasGas) {
     const T = this.tune;
+    const bk = this._budgetK();
     const g = T.gravity;
     const t1 = this._t1 || (this._t1 = [0, 0, 0]), t2 = this._t2 || (this._t2 = [0, 0, 0]);
     this._basis(e.nx, e.ny, e.nz, t1, t2);
@@ -600,7 +633,7 @@ export class RockImpactFx {
       skewPhi = Math.atan2(sx * t2[0] + sy * t2[1] + sz * t2[2], sx * t1[0] + sy * t1[1] + sz * t1[2]);
       skew = Math.min(0.6, e.slide / Math.max(80, e.speed + e.slide));
     }
-    const nChunk = Math.min(T.chunkMax, Math.round(size * T.chunkK * (0.4 + q)));
+    const nChunk = Math.min(T.chunkMax, Math.round(size * T.chunkK * (0.4 + q) * bk));
     for (let k = 0; k < nChunk; k++) {
       const u = fxRandom.next();                                 // postęp krateru (0 — wcześnie, szybko)
       let phi = fxRandom.next() < 0.55 ? rays[Math.floor(fxRandom.next() * nRays)] + (fxRandom.next() - 0.5) * 0.18 : fxRandom.next() * TAU;
@@ -621,7 +654,7 @@ export class RockImpactFx {
         ac[0], ac[1], ac[2], 1, delay);
     }
     // pył kurtyny (miękkie kłęby po tych samych łukach — mgiełka stożka)
-    const nDust = Math.min(260, Math.round(size * T.dustK * (0.6 + q) * (hasGas ? 0.6 : 1)));
+    const nDust = Math.min(260, Math.round(size * T.dustK * (0.6 + q) * (hasGas ? 0.6 : 1) * bk));
     for (let k = 0; k < nDust; k++) {
       const u = fxRandom.next();
       const phi = fxRandom.next() < 0.4 ? rays[Math.floor(fxRandom.next() * nRays)] + (fxRandom.next() - 0.5) * 0.3 : fxRandom.next() * TAU;
@@ -636,7 +669,7 @@ export class RockImpactFx {
         0, 20, g, ad[0], ad[1], ad[2], 0.2 + 0.12 * fxRandom.next(), u * 0.3);
     }
     // pierścień pyłu po powierzchni (base surge — szybki front zwalnia, pył lekko się unosi)
-    const nSurf = Math.min(110, Math.round(16 + size * T.surfK * (0.6 + q)));
+    const nSurf = Math.min(110, Math.round((16 + size * T.surfK * (0.6 + q)) * Math.max(0.4, bk)));
     const vSurf = size * (1.0 + 0.9 * q) + 60;
     for (let k = 0; k < nSurf; k++) {
       const a = (k / nSurf) * TAU + (fxRandom.next() - 0.5) * 0.35;
@@ -651,14 +684,19 @@ export class RockImpactFx {
         0.04 + 0.12 * fxRandom.next());
     }
     // kłęby w miejscu (bez gazu — główny obłok; z gazem — kilka u podstawy)
-    const nPuff = hasGas ? 3 : Math.min(16, Math.round(5 + size / 160));
+    const nPuff = hasGas ? 3 : Math.min(12, Math.round(4 + size / 220));
     for (let k = 0; k < nPuff; k++) {
-      this._dirFrom(e.nx, e.ny, e.nz, t1, t2, Math.acos(Math.min(1, 0.55 + 0.45 * fxRandom.next())), fxRandom.next() * TAU, dir);
-      const sp = size * (0.35 + 0.5 * fxRandom.next()) * (0.6 + 0.5 * q);
-      const r0 = size * (0.15 + 0.1 * fxRandom.next());
-      this._emit(this.alpha, RIP.PUFF, e.px + e.nx * r0 * 0.6, e.py + e.ny * r0 * 0.6, e.pz + e.nz * r0 * 0.6,
-        dir[0] * sp, dir[1] * sp, dir[2] * sp, 1e9, 3.0 + 3.0 * fxRandom.next(), r0, size * (0.55 + 0.45 * fxRandom.next()) * (1 + 0.3 * q),
-        0.7 + 0.5 * fxRandom.next(), 0, 0, ad[0], ad[1], ad[2], (hasGas ? 0.22 : 0.42) * (0.7 + 0.4 * fxRandom.next()), 0.03 * k);
+      const phi = fxRandom.next() * TAU;
+      this._dirFrom(e.nx, e.ny, e.nz, t1, t2, 0.5 + 0.7 * fxRandom.next(), phi, dir);
+      const sp = size * (0.25 + 0.45 * fxRandom.next()) * (0.6 + 0.5 * q);
+      const r0 = size * (0.1 + 0.12 * fxRandom.next());
+      // przesunięcie styczne (kłąb nieregularny), nisko nad skałą
+      const off = size * 0.45 * Math.sqrt(fxRandom.next());
+      const c = Math.cos(phi), sn = Math.sin(phi);
+      const ox = (t1[0] * c + t2[0] * sn) * off, oy = (t1[1] * c + t2[1] * sn) * off, oz = (t1[2] * c + t2[2] * sn) * off;
+      this._emit(this.alpha, RIP.PUFF, e.px + ox + e.nx * r0 * 0.6, e.py + oy + e.ny * r0 * 0.6, e.pz + oz + e.nz * r0 * 0.6,
+        dir[0] * sp, dir[1] * sp, dir[2] * sp, 1e9, 2.5 + 3.0 * fxRandom.next(), r0, size * (0.35 + 0.6 * fxRandom.next() * fxRandom.next()) * (1 + 0.3 * q),
+        0.7 + 0.5 * fxRandom.next(), 0, 0, ad[0], ad[1], ad[2], (hasGas ? 0.2 : 0.34) * (0.7 + 0.5 * fxRandom.next()), 0.04 * k);
     }
     // iskry (metal o skałę): szybkie, nisko nad powierzchnią, krótkie
     if (metal && e.speed + e.slide > 260) {
@@ -714,7 +752,9 @@ export class RockImpactFx {
       slot = fx.deepDomain(gx, gy, gz, Rc, {
         up: [e.nx, -e.ny, e.nz], ground: { x: this.center.x, y: -this.center.y, z: this.center.z, r: e.rs },
         life: T.gasLife, fadeTime: T.gasFade, baseDecay: T.gasDecay, tint: T.gasTint, fire: 0, tag: ROCK_IMPACT_TAG,
-        minPx: T.gasMinPx, reserve: T.gasReserve, domainScale: T.domainScale, upShift: 0.3, priority: 1
+        ambient: T.gasAmbient0 + T.gasAmbientSun * Math.max(0, e.nx * this.U.uSunDir.value.x + e.ny * this.U.uSunDir.value.y + e.nz * this.U.uSunDir.value.z),
+        minPx: T.gasMinPx, reserve: T.gasReserve, domainScale: T.domainScale, upShift: 0.3, priority: 1,
+        fineMinPx: T.gasFineMinPx, coarseMaxPx: T.gasCoarseMaxPx
       });
       if (slot < 0) { this.stats.gasNone++; return -1; }
       this._gasSlots.push(slot);
