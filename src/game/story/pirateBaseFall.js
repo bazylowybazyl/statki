@@ -21,7 +21,7 @@
  *    kształt po zgniocie zostaje).
  *  - ZDARZENIA (hooks): onImpact / onScrape / onSettle (styk ze skałą — efekt uderzenia: src/game/story/pirateRockImpacts.js),
  *    onBreach (wieża przebija sektor dysku, oderwanie modułu — rozszczelnienie: src/game/story/pirateBaseAtmosphere.js),
- *    onFallStart. Współrzędne zdarzeń w GRZE (x, y — y w dół; z — wysokość świata), normalna w układzie gry.
+ *    onPromote(bryła, ciałoPłaskie | null, kawałek) — bryła 3D zastępuje ciało płaskie (wyrwy przechodzą na nią), onFallStart. Współrzędne zdarzeń w GRZE (x, y — y w dół; z — wysokość świata), normalna w układzie gry.
  * Bez three i DOM (testy i symulacja w Node: scripts/destrukcja-taran-sym.mjs --tryb upadek).
  */
 
@@ -736,6 +736,11 @@ export function promotePlanarPiece(st, ctx, piece, opts = {}) {
   body.gravityWell = lowerWell(st);
   // maska: komórka 3D bez żywego węzła płaskiego w rzucie (± 1 komórka płaska) — odpada bez odłamków i zdarzeń
   if (occ) maskSolidByOcc(engine, body, occ, pc);
+  // hak: bryła zastępuje ciało płaskie (wyrwy powietrza przechodzą na nią — pirateBaseAtmosphere.rehomePirateBaseVents)
+  if (ctx.hooks?.onPromote) {
+    if (planar.length) for (const e of planar) ctx.hooks.onPromote(entity, e, piece);
+    else ctx.hooks.onPromote(entity, null, piece);
+  }
   // ciało płaskie kawałka znika; kawałek stracony (statyka schowana — obraz trzyma ją do wypieku skóry bryły)
   for (const e of planar) { ctx.releaseHull?.(e); e.dead = true; }
   piece.entity = null;
@@ -940,6 +945,8 @@ export function promotePlanarWreck(st, ctx, wreck) {
   }
   wellFor(st, tune);
   body.gravityWell = lowerWell(st);
+  // hak: bryła zastępuje płaski odłam (wyrwy powietrza jadą dalej z bryłą)
+  ctx.hooks?.onPromote?.(entity, wreck, piece);
   // płaski odłam znika (obraz: skóra bryły z wypieku kawałka upadku)
   ctx.releaseHull?.(wreck);
   wreck.dead = true;

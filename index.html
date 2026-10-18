@@ -32103,6 +32103,8 @@
       onScrape: (ev) => { rockScrape(ev); },
       onSettle: (ev) => { rockSettle(ev); },
       onBreach: (ev) => pirateFallBreachFx(ev),
+      // bryła 3D zastępuje ciało płaskie kawałka / odłamu: wyrwy powietrza przechodzą na nią (jadą z nią na skałę)
+      onPromote: (solid, old, piece) => rehomePirateBaseVents(solid, old, atmoModuleId(piece)),
       onFallStart: () => {
         pushZoneMessage('HABITAT RUNĄŁ — WIEŻA PRZEBIJA DYSK I SPADA NA PLANETOIDĘ', 4.5);
         camera.addShake(20, 1.2);
