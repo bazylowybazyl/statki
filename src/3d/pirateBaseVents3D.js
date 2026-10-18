@@ -29,6 +29,8 @@ import { HullDebris3D } from './hullDebris3D.js';
 import { VENT_REC, VENT_KIND } from '../render/blocks/pirateVentsBlock.js';
 import { VENT_TAG, FIT_RR } from './explosions/explosionFx.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
+import { pirateRockSite } from './pirateBaseGame.js';
+import { PIRATE_ROCK_SPEC } from './portBuildings/pirateRockLayout.js';
 
 const LAYER_BG = 1;
 const LAYER_FG = 2;
@@ -53,7 +55,8 @@ export const VENT_LOOK = {
   gasSmoke: 11, gasFuel: 4.5, gasTemp: 0.25, gasFireTemp: 1.2,
   gasSpeed: 1.25,               // prędkość strumienia gazu [× długość obłoku / s]
   gasLinger: 1.1, gasFade: 1.4, gasDecay: 0.65,
-  steamTint: [1.85, 1.9, 2.05], sootTint: [0.36, 0.33, 0.3],
+  // barwa domeny × albedo sadzy obrazu gazu (0,15) = albedo pary: biała, lekko błękitna (~0,77); przy ogniu — szara
+  steamTint: [5.0, 5.7, 6.8], sootTint: [1.5, 1.45, 1.4], sootFire: 0.3, sootSmolder: 0.15,
   // para i lód (cząstki)
   steamRate: 46,                // kłęby / s przy strumieniu 1 i promieniu 100 j.
   steamAlpha: 0.32,
@@ -526,7 +529,7 @@ export class PirateBaseVents3D {
     // życie domeny: zasilana, póki wyrwa wieje albo płonie
     g.feed(st.slot, g.time + L.gasLinger);
     // barwa dymu domeny: biała para → sadza przy pożarze i żarzeniu
-    const soot = sat(fire * 0.8 + smolder * 0.5);
+    const soot = sat(fire * L.sootFire + smolder * L.sootSmolder);
     const T0 = L.steamTint, T1 = L.sootTint;
     s.tint[0] = T0[0] + (T1[0] - T0[0]) * soot;
     s.tint[1] = T0[1] + (T1[1] - T0[1]) * soot;
@@ -565,26 +568,29 @@ export class PirateBaseVents3D {
     const cx = x + nx * ahead, cy = y + ny * ahead;
     let slot = -1;
     if (deep) {
+      // domena GŁĘBOKA (pass tła z perspektywą — reżyser wybuchów, ExplosionFx.deepDomain; świat gry): skała pod bazą
+      // jako kula-przeszkoda (para z wyrwy leżącej na skale rozlewa się po niej), bez statyki i kadłubów
       if (typeof fx.deepDomain !== 'function') { this.stats.noSlot++; return false; }
-      slot = fx.deepDomain(cx, cy, z + nz * ahead * 0.5, D * 0.5 / 2.7, {
-        carrier: [cvx, cvy, cvz], life: L.gasLinger, fadeTime: L.gasFade, tint: L.steamTint, fire: 0, tag: VENT_TAG, priority: 0,
-        size: D, baseDecay: L.gasDecay, host
+      const rs = pirateRockSite();
+      const ground = rs && rs.at && rs.rock?.layout?.center ? this._ground(rs) : null;
+      slot = fx.deepDomain(cx, cy, z + nz * ahead * 0.5, D / 5.4, {
+        carrier: [cvx, cvy, cvz], life: L.gasLinger, fadeTime: L.gasFade, baseDecay: L.gasDecay, tint: L.steamTint, fire: 0,
+        tag: VENT_TAG, priority: 0, domainScale: 5.4, reserve: L.gasReserve, ground
       });
       if (slot >= 0) this.stats.deepGas++;
     } else {
       if (typeof fx._freeIn === 'function' && fx._freeIn(0) < 0) { this.stats.noSlot++; return false; }
+      // nad płaszczyzną (głowa wieży, szczyt szybu) statyka bazy — pryzmaty przez całą wysokość domeny — blokowałaby
+      // strumień: domena bez rastra statyki (GasSlot.noStatics)
       const A = {
         size: D, life: L.gasLinger, carrier: [cvx, -cvy, cvz], tint: L.steamTint, now: g.time, reuse: false, tag: VENT_TAG,
-        priority: 0, host, fire: 0, fadeTime: L.gasFade, baseDecay: L.gasDecay, tier: 0, k: 1
+        priority: 0, host, fire: 0, fadeTime: L.gasFade, baseDecay: L.gasDecay, tier: 0, k: 1, noStatics: z > 260, noHulls: false
       };
       const vz = Math.abs(nz) > 0.6 ? 0.3 : 0.15;
       slot = g.acquire(cx, -cy, z + nz * ahead * vz, r, A);
     }
     if (slot < 0) { this.stats.noSlot++; return false; }
     const s = g.slots[slot];
-    // nad płaszczyzną (głowa wieży, szczyt szybu) statyka bazy — pryzmaty przez całą wysokość domeny — blokowałaby
-    // strumień: domena bez rastra statyki (pole slotu — siatka gazu, sesja „uderzenia”; do tego czasu bez skutku)
-    s.noStatics = z > 260 || deep;
     s.rx = x; s.ry = -y;
     st.slot = slot;
     st.slotBorn = s.born;
@@ -598,6 +604,13 @@ export class PirateBaseVents3D {
     d.clearOrigin();
     if (!st.em) { st.slot = -1; return false; }
     return true;
+  }
+
+  // Skała pod bazą (planetoida — kula-przeszkoda domen głębokich): środek w świecie gry (x, y w dół, z), promień.
+  _ground(rs) {
+    const g = this._groundObj || (this._groundObj = { x: 0, y: 0, z: 0, r: 0 });
+    g.x = rs.at.x; g.y = rs.at.y; g.z = rs.rock.layout.center[1]; g.r = PIRATE_ROCK_SPEC.radius;
+    return g;
   }
 
   clear() {

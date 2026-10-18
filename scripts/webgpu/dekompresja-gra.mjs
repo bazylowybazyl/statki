@@ -202,16 +202,22 @@ async function trybKrater() {
   await camHub(L.drumR + 200, 0, NEAR);
   const tp = await nowMs();
   const t0 = Date.now();
-  // armata z lufy 2,4 km od ściany wschodniej w ścianę (pociski trafiają ciało kawałka — krater broni)
+  // broń z lufy 2,4 km od ściany wschodniej w ścianę, cele rozłożone wzdłuż ściany (pociski trafiają ciało kawałka —
+  // kratery broni, każdy w innej kajucie)
+  const bron = String(args.bron || 'armata_mk1');
   const n = await ev(`new Promise((res) => {
     const d = window.StoryGame.site.dock;
-    const p = d.toGame(${L.drumR + 2400}, 120), t = d.toGame(${L.drumR - 30}, 60);
-    const dx = t.x - p.x, dy = t.y - p.y, l = Math.hypot(dx, dy) || 1;
-    const muzzle = { pos: { x: p.x, y: p.y }, dir: { x: dx / l, y: dy / l }, baseVel: { x: 0, y: 0 } };
     let k = 0;
-    const tick = () => { try { window.fireWeaponCore(window.ship, null, 'special_yamato_cannon', muzzle); } catch (e) { console.error('[dekompresja] strzał', e); }
-      if (++k >= 4) { clearInterval(h); res(k); } };
-    const h = setInterval(tick, 900);
+    const tick = () => {
+      const a = (k - 2.5) * 0.11;
+      const R = ${L.drumR};
+      const t = d.toGame(Math.cos(a) * (R - 30), Math.sin(a) * (R - 30)), p = d.toGame(Math.cos(a) * (R + 2400), Math.sin(a) * (R + 2400));
+      const dx = t.x - p.x, dy = t.y - p.y, l = Math.hypot(dx, dy) || 1;
+      const muzzle = { pos: { x: p.x, y: p.y }, dir: { x: dx / l, y: dy / l }, baseVel: { x: 0, y: 0 } };
+      try { window.fireWeaponCore(window.ship, null, '${bron}', muzzle); } catch (e) { console.error('[dekompresja] strzał', e); }
+      if (++k >= 6) { clearInterval(h); res(k); }
+    };
+    const h = setInterval(tick, 450);
     tick();
   })`, 60000);
   const rows = await series('krater', t0, [0.5, 1.2, 2.2, 3.4, 4.6]);

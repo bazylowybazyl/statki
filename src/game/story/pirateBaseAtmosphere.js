@@ -86,16 +86,17 @@ export const ATMO_TUNE = {
   shortChance: { drum: 0.55, core: 0.6, tech: 0.75, disc: 0.6, warehouse: 0.45 },
   igniteDelay: [0.08, 0.7],
   blastIgnite: 0.85,          // szansa zapłonu modułu od wybuchu w nim (paliwo z rur, reaktor, wybuchy rozpadu)
-  // Miganie świateł budowli (zasilanie w obrazie): głębokość przy świeżej wyrwie, zanik [s].
-  flickerDepth: 0.55, flickerTau: 2.2,
+  // Miganie świateł budowli (zasilanie w obrazie): głębokość przy świeżej wyrwie, zanik [s]; moduł wypalony gaśnie
+  // w lightFade s (mocno migając) do światła awaryjnego lightEmergency.
+  flickerDepth: 0.55, flickerTau: 2.2, lightFade: 1.8, lightEmergency: 0.06,
   maxVents: VENT_MAX
 };
 
 // Rodzaje modułów: palne wnętrze (0…1), zwarcia (iskry w wyrwie), zasilanie budowli w obrazie (pirateBaseBlock).
 export const ATMO_KINDS = Object.freeze({
-  drum: Object.freeze({ fuel: 0.6, spark: 0.7, power: 'habitat', size: 240 }),
+  drum: Object.freeze({ fuel: 0.6, spark: 0.7, power: 'drumQ', size: 240 }),
   core: Object.freeze({ fuel: 0.35, spark: 0.9, power: 'habitat', size: 170 }),
-  tech: Object.freeze({ fuel: 0.7, spark: 1.0, power: 'habitat', size: 210 }),
+  tech: Object.freeze({ fuel: 0.7, spark: 1.0, power: 'tech', size: 210 }),
   disc: Object.freeze({ fuel: 1.0, spark: 0.8, power: 'disc', size: 280 }),
   warehouse: Object.freeze({ fuel: 1.0, spark: 0.5, power: 'warehouse', size: 260 })
 });
@@ -126,12 +127,12 @@ export function pirateBaseAtmoModules(layout) {
   };
   // bęben: ćwiartki pierścienia innerR..drumR, od dna do korony ściany
   const dz0 = z(H.floorY), dz1 = z(H.wallTop);
-  for (const q of H.quadrants) {
+  H.quadrants.forEach((q, qi) => {
     const a = (q.a0 + q.a1) / 2;
     const rm = (H.innerR + H.drumR) / 2;
     add(q.id, 'drum', (Math.PI / 4) * (H.drumR * H.drumR - H.innerR * H.innerR) * (dz1 - dz0),
-      Math.cos(a) * rm, Math.sin(a) * rm, (dz0 + dz1) / 2, dz0, dz1, H.drumR, { a0: q.a0, a1: q.a1 });
-  }
+      Math.cos(a) * rm, Math.sin(a) * rm, (dz0 + dz1) / 2, dz0, dz1, H.drumR, { a0: q.a0, a1: q.a1, qi });
+  });
   // szyb: kolumna coreR od dysku do szczytu szybu
   const cz0 = z(H.discY1), cz1 = z(H.coreTop);
   add('H-C', 'core', Math.PI * H.coreR * H.coreR * (cz1 - cz0), 0, 0, (cz0 + cz1) / 2, cz0, cz1, H.coreR);
@@ -191,7 +192,9 @@ const S = {
   // zgniot: wyrwy zebrane w oknie (moduł → { n, x, y, z, ent, t })
   tears: new Map(),
   stats: { breaches: 0, cabins: 0, mains: 0, merged: 0, refused: 0, ignitions: 0, fires: 0, dropped: 0, tears: 0 },
-  flicker: { habitat: 1, disc: 1, fuel: 1, warehouse: 1 }
+  // światła wnętrza na kanał obrazu bazy (PBASE_CH: habitat — szyb, tech — głowa wieży, drumQ — ćwiartki bębna, disc,
+  // fuel, warehouse): mnożnik zasilania 0…1 (miganie przy rozszczelnieniu, gaśnięcie modułu bez powietrza)
+  flicker: { habitat: 1, tech: 1, disc: 1, fuel: 1, warehouse: 1, drumQ: [1, 1, 1, 1] }
 };
 
 function makeModule(def, i, place) {
@@ -204,7 +207,7 @@ function makeModule(def, i, place) {
     fire: 0, firePeak: 0, burning: false, fuel: k ? k.fuel : 0.5, smolder: 0,
     ignAt: -1, ignN: 0, breached: false, broken: false, spent: false,
     cabins: [], cabinN: 0,
-    flick: 0, flickT: -1e9,
+    flick: 0, flickT: -1e9, spentT: -1, light: 1,
     outA: 0
   };
 }
@@ -817,6 +820,7 @@ function stepModules(dt) {
       if (m.smolder < T.smolderEnd * 0.5) m.smolder = 0;
     }
     if (m.rho < T.endRho && !m.spent) { m.spent = true; m.rho = Math.max(0, m.rho); }
+    if (m.spent && m.spentT < 0) m.spentT = S.time;
     // miganie zasilania (gaśnie)
     if (m.flick > 0) m.flick *= Math.exp(-dt / T.flickerTau);
   }
@@ -874,18 +878,35 @@ function mainVentLive(m) {
 
 function stepFlicker() {
   const f = S.flicker;
-  f.habitat = 1; f.disc = 1; f.fuel = 1; f.warehouse = 1;
+  f.habitat = 1; f.tech = 1; f.disc = 1; f.fuel = 1; f.warehouse = 1;
+  f.drumQ[0] = f.drumQ[1] = f.drumQ[2] = f.drumQ[3] = 1;
   const T = ATMO_TUNE;
   const tq = Math.floor(S.time * 14);
+  let discSum = 0, discN = 0, discMin = 1;
   for (const m of S.modules) {
     const k = ATMO_KINDS[m.kind];
-    if (!k || !(m.flick > 0.01)) continue;
-    // migotanie: przerywane spadki zasilania (hasz czasu — bez Math.random), głębokość gaśnie
+    if (!k) continue;
+    // migotanie: przerywane spadki zasilania (hasz czasu — bez Math.random), głębokość gaśnie z wiekiem wyrwy
     const n = hash01(m.index * 131 + 17, tq);
     const dip = n < 0.35 ? 1 : (n < 0.55 ? 0.5 : 0);
-    const v = 1 - T.flickerDepth * m.flick * dip;
-    if (v < f[k.power]) f[k.power] = v;
+    let v = m.flick > 0.01 ? 1 - T.flickerDepth * m.flick * dip : 1;
+    // moduł bez powietrza (zwarcia, zerwane zasilanie): gaśnie mocno migając do światła awaryjnego
+    if (m.spentT >= 0) {
+      const u = sat((S.time - m.spentT) / T.lightFade);
+      const dying = (1 - u) * (n < 0.5 ? 0.25 : 1);
+      v = Math.min(v, T.lightEmergency + (1 - T.lightEmergency) * dying);
+    }
+    m.light = v;
+    if (k.power === 'drumQ') {
+      const q = m.qi | 0;
+      if (q >= 0 && q < 4 && v < f.drumQ[q]) f.drumQ[q] = v;
+    } else if (k.power === 'disc') {
+      discSum += v; discN++;
+      if (v < discMin) discMin = v;
+    } else if (v < f[k.power]) f[k.power] = v;
   }
+  // dysk: okna gasną od środka (obraz — tryb fill) — średnia sektorów, migotanie najsłabszego
+  if (discN > 0) f.disc = Math.min(discSum / discN, 0.5 + 0.5 * discMin);
 }
 
 /** Krok atmosfery (krok fizyki gry). dt — czas gry (pauza = 0). */

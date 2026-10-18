@@ -210,14 +210,23 @@ test('stan klatki → blok migawki → lustro: te same liczby; sufit wyrw', () =
   for (let i = 0; i < f.n * VENT_REC.STRIDE; i++) assert.equal(mir.rec[i], f.rec[i]);
 });
 
-test('miganie zasilania przy świeżej wyrwie, gaśnie', () => {
+test('światła wnętrza: rozszczelniona ćwiartka miga, bez powietrza gaśnie; reszta świeci', () => {
   fresh();
+  const qi = mod('H-S').qi;
   noteBaseChunkBreak('H-S', null, {});
-  let minHab = 1;
-  run(1, () => { minHab = Math.min(minHab, pirateBaseAtmoFlicker().habitat); });
-  assert.ok(minHab < 0.8, `miganie ${minHab}`);
-  run(20);
-  assert.ok(pirateBaseAtmoFlicker().habitat > 0.97);
+  let minQ = 1;
+  run(1, () => { minQ = Math.min(minQ, pirateBaseAtmoFlicker().drumQ[qi]); });
+  assert.ok(minQ < 0.8, `miganie ${minQ}`);
+  run(25);
+  const fl = pirateBaseAtmoFlicker();
+  assert.ok(mod('H-S').spent);
+  assert.ok(fl.drumQ[qi] <= ATMO_TUNE.lightEmergency + 1e-9, `ćwiartka bez powietrza ciemna: ${fl.drumQ[qi]}`);
+  for (let q = 0; q < 4; q++) if (q !== qi) assert.ok(fl.drumQ[q] > 0.97, `ćwiartka ${q} świeci`);
+  assert.ok(fl.tech > 0.97 && fl.disc > 0.97);
+  // wieża po wylocie powietrza (zerwana szyja) — okna głowy gasną
+  noteBaseNeckSnap(null);
+  run(30);
+  assert.ok(pirateBaseAtmoFlicker().tech <= ATMO_TUNE.lightEmergency + 1e-9);
 });
 
 test('determinizm: ten sam przebieg — te same liczby (bez Math.random)', () => {
@@ -240,4 +249,22 @@ test('determinizm: ten sam przebieg — te same liczby (bez Math.random)', () =>
   } finally { Math.random = rnd; }
   detachPirateBaseAtmosphere();
   assert.equal(breach({ module: 'H-E', size: 200 }), -1, 'bez bazy — nic');
+});
+
+test('blok migawki bazy: światła wnętrza (głowa wieży, ćwiartki bębna) w obie strony', async () => {
+  const { createPirateBaseBlock, createPirateBaseMirror, applyPirateBaseBlock } = await import('../src/render/blocks/pirateBaseBlock.js');
+  const blk = createPirateBaseBlock();
+  const B = { f64: new Float64Array(blk.f64) };
+  const state = { hidden: false, habitatDead: false, alarm: true, bays: 0, berths: [1, 0, 1], habitat: 0.9, disc: 0.7, fuel: 1,
+    warehouse: 0.5, tech: 0.06, drumQ: [1, 0.06, 0.8, 1], sun: { x: 1, y: 2 }, daylight: 0.3 };
+  blk.pack(B, { pirateBase: state, pirateBaseDt: 0.016 }, { resizeBlock() { throw new Error('resize'); } });
+  const m = applyPirateBaseBlock(B, createPirateBaseMirror());
+  assert.equal(m.state.tech, 0.06);
+  assert.deepEqual(m.state.drumQ, [1, 0.06, 0.8, 1]);
+  assert.deepEqual(m.state.berths, [1, 0, 1]);
+  // stan bez pól świateł (dawny kształt) — jak habitat
+  blk.pack(B, { pirateBase: { ...state, tech: undefined, drumQ: undefined }, pirateBaseDt: 0 }, {});
+  const m2 = applyPirateBaseBlock(B, createPirateBaseMirror());
+  assert.equal(m2.state.tech, 0.9);
+  assert.deepEqual(m2.state.drumQ, [0.9, 0.9, 0.9, 0.9]);
 });

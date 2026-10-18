@@ -24565,7 +24565,7 @@
               if (wh) {
                 st.lastHitX = wh.x;
                 st.lastHitY = wh.y;
-                if (b.worldHitStation !== st) { b.worldHitStation = st; applyDamageToStation(st, b.damage || 0); }
+                if (b.worldHitStation !== st) { b.worldHitStation = st; applyDamageToStation(st, b.damage || 0); atmoBulletHit(st, wh.x, wh.y, b, wh.entity); }
                 writeImpactHit(_impactHit, wh.entity, wh.x, wh.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
                 spawnBulletImpactEffect(b, wh.x, wh.y, 1.0, _impactHit);
                 // głowica z promieniem rażenia (torpeda, rakieta kanwy) — front ciśnienia w punkcie trafienia, koniec lotu
@@ -24580,6 +24580,7 @@
             st.lastHitX = dh.x;
             st.lastHitY = dh.y;
             applyDamageToStation(st, b.damage || 0);
+            atmoBulletHit(st, dh.x, dh.y, b, null);
             writeImpactHit(_impactHit, st, dh.x, dh.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
             spawnBulletImpactEffect(b, dh.x, dh.y, 1.0, _impactHit);
             removeBulletAt(i);
@@ -31930,6 +31931,16 @@
       const p = pirateBasePieceOf(entity);
       if (p) noteBaseNodeLost(p.id, entity, x, y, z, Number(hull?.body?.cellSize) || 15);
     }
+    // Pocisk trafił budowlę bazy (ciało kawałka — orka kanału pędu — albo statykę): krater w module = mała wyrwa (kajuta,
+    // krótki syk); promień z obrażeń pocisku i głowicy. Moduł bez powietrza / kajuta obok opróżnionej — nic.
+    function atmoBulletHit(st, x, y, b, entity) {
+      const place = st?.baseStructure ? st.dryDock : null;
+      if (!place) return;
+      const id = entity?.worldPiece?.id || place.chunkAt(x, y, st.baseStructure);
+      if (!id) return;
+      const dmg = Math.max(0, Number(b?.damage) || 0);
+      noteBaseCrater(id, entity?.isWorldPiece ? entity : null, x, y, 0, 6 + Math.sqrt(dmg) * 1.1 + (Number(b?.explodeRadius) || 0) * 0.3);
+    }
     function atmoImpact(entity, r) {
       if (!r) return;
       const p = pirateBasePieceOf(entity);
@@ -32085,7 +32096,8 @@
     Object.defineProperty(window, 'pirateRockLandmark', { configurable: true, get: pirateRockLandmark });
 
     // Stan klatki bryły bazy z misji (render → updatePirateBase3D). Bez alokacji na klatkę.
-    const _baseFrameState = { hidden: false, habitatDead: false, alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, sun: null, daylight: 0.3 };
+    const _baseFrameState = { hidden: false, habitatDead: false, alarm: false, berths: [], bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1,
+      tech: 1, drumQ: [1, 1, 1, 1], sun: null, daylight: 0.3 };
     function storyBaseFrameState() {
       const s = _baseFrameState;
       const site = StoryGame.site;
@@ -32110,9 +32122,13 @@
       const f = site?.flagship;
       if (f && !f.dead && !f.__storyLaunched && Number.isInteger(f.__dockBerth) && f.__dockBerth < n) s.berths[f.__dockBerth] = 1;
       const pw = site?.powerLive;
-      // miganie świateł wnętrza przy rozszczelnieniu (zwarcia — src/game/story/pirateBaseAtmosphere.js)
+      // światła wnętrza: miganie przy rozszczelnieniu (zwarcia), moduł bez powietrza gaśnie — szyb, głowa wieży i ćwiartki
+      // bębna osobno (src/game/story/pirateBaseAtmosphere.js)
       const fl = pirateBaseAtmoFlicker();
-      s.habitat = (pw ? pw.habitat : 1) * fl.habitat;
+      const hab = pw ? pw.habitat : 1;
+      s.habitat = hab * fl.habitat;
+      s.tech = hab * fl.tech;
+      for (let q = 0; q < 4; q++) s.drumQ[q] = hab * fl.drumQ[q];
       s.disc = (pw ? pw.disc : 1) * fl.disc;
       s.fuel = (pw ? pw.fuel : 1) * fl.fuel;
       s.warehouse = (pw ? pw.warehouse : 1) * fl.warehouse;
