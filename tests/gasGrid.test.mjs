@@ -62,9 +62,10 @@ test('krok: zerowanie nowej domeny, podkroki [wiry, adwekcja, reakcja, dywergenc
   assert.equal(names[0], 'gasClear', 'nowe domeny zerowane przed krokiem');
   assert.deepEqual(names.slice(1, 5), ['gasCurl', 'gasAdvect', 'gasReact', 'gasDivergence']);
   assert.equal(names.filter((n) => n.startsWith('gasJacobi')).length, 5);
-  assert.equal(names.at(-2), 'gasProject');
-  assert.equal(names.at(-1), 'gasLight');
-  for (const c of L) assert.equal(c.count, 16 ** 3 * 2);
+  assert.equal(names.at(-3), 'gasProject');
+  assert.equal(names.at(-2), 'gasLight');
+  assert.equal(names.at(-1), 'gasOccupancy', 'zajętość kolumn na końcu (z denA po ostatnim rzucie — to czyta obraz)');
+  for (const c of L) assert.equal(c.count, c.name === 'gasOccupancy' ? 16 ** 2 * 2 : 16 ** 3 * 2, `${c.name}: wątki`);
   // Następna klatka bez zerowania; długa klatka — podkroki (najwyżej maxSubsteps).
   g.simulate(R, 0.05);
   const L2 = R.calls[1].map((c) => c.name);
@@ -74,9 +75,12 @@ test('krok: zerowanie nowej domeny, podkroki [wiry, adwekcja, reakcja, dywergenc
   // 144 Hz: jeden podkrok krótszy (źródła klatki nie giną).
   g.simulate(R, 1 / 144);
   assert.equal(R.calls[2].filter((c) => c.name === 'gasAdvect').length, 1);
-  // Pauza (dt 0): bez kroków, światło liczy się dalej.
+  // Pauza (dt 0): bez kroków; światło i zajętość z pamięci (te same wejścia — bez zlecenia), bez pamięci — co klatkę.
   g.simulate(R, 0);
-  assert.deepEqual(R.calls[3].map((c) => c.name), ['gasLight']);
+  assert.equal(R.calls.length, 3, 'klatka bez podkroku i bez zmian — bez zleceń');
+  g.lightCache = false;
+  g.simulate(R, 0);
+  assert.deepEqual(R.calls[3].map((c) => c.name), ['gasLight', 'gasOccupancy']);
 });
 
 test('źródła i kadłuby-przeszkody trafiają do domeny w komórkach (niezależnie od położenia świata — float32)', async () => {
@@ -212,7 +216,7 @@ test('płaska domena (gra z góry, NZ < N): atlas NZ warstw na domenę, wątki =
   g.source(s, 0, 0, 0, 0, 0, 0, 3, 5, 6, 7, 0, 0, 0, 0, 0, 0.5);
   g.simulate(R, 1 / 60);
   // Dawniej N³ na domenę — połowa wątków kończyła się od razu (strażnik activeCount).
-  for (const c of R.calls[0]) assert.equal(c.count, 16 * 16 * 8, `${c.name}: wątki`);
+  for (const c of R.calls[0]) assert.equal(c.count, c.name === 'gasOccupancy' ? 16 * 16 : 16 * 16 * 8, `${c.name}: wątki`);
   const A = g.U.srcA.array[0];
   assert.deepEqual([A.x, A.y, A.z], [8, 8, 4], 'środek domeny = komórka (N/2, N/2, NZ/2)');
   // Bryły instancji: pudło N·h × N·h × NZ·h wokół domeny, względem początku sceny (double na CPU).
