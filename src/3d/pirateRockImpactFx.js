@@ -535,9 +535,9 @@ export class RockImpactFx {
       const x = e.px + dir[0] * r0, y = e.py + dir[1] * r0, z = e.pz + dir[2] * r0;
       const vx = cvx + dir[0] * sp, vy = cvy + dir[1] * sp, vz = cvz + dir[2] * sp;
       const tl = RockImpactFx.landTime(x, y, z, vx, vy, vz, g, this.R, 9);
-      const s = (10 + 50 * fxRandom.next() * fxRandom.next()) * Math.min(2, 0.5 + R / 700);
+      const s = (7 + 32 * fxRandom.next() * fxRandom.next()) * Math.min(2, 0.5 + R / 700);
       this._emit(this.alpha, RIP.CHUNK, x, y, z, vx, vy, vz, tl, Math.min(tl + 1.2, 9), s, s * (4 + 4 * fxRandom.next()), 0, 0, g,
-        ac[0] * 1.3, ac[1] * 1.25, ac[2] * 1.2, 1, 0.04 * fxRandom.next());
+        ac[0], ac[1], ac[2], 1, 0.04 * fxRandom.next());
     }
     // kłęby pyłu i powietrza (bez gazu — główny obłok; z gazem — kilka na brzegu)
     const nPuff = hasGas ? 4 : Math.min(18, Math.round(6 + R / 120));
