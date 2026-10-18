@@ -249,6 +249,13 @@ if (isWorker) {
       wfx.WeaponFx.ensure();
       await yieldTask();
       st.blastFactory = blastFx.createExplosionFactory(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
+      // wyrwy bazy piratów (dekompresja, pożary): obraz na stanie klatki z bloku `pirateVents`, gaz reżysera wybuchów
+      try {
+        const [ventsMod, ventsBlk] = await Promise.all([import('../3d/pirateBaseVents3D.js'), import('./blocks/pirateVentsBlock.js')]);
+        st.vents = ventsMod.createPirateBaseVents3D(Core3D, { explosions: () => (st.blastFactory && st.blastFactory.system) || null });
+        st.ventsBlk = ventsBlk;
+        st.ventsMirror = ventsBlk.createPirateVentsFrame();
+      } catch (e) { report(e, 'wyrwy bazy'); }
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
@@ -828,6 +835,11 @@ if (isWorker) {
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     } } catch (e) { modFail('luk', e); }
     try { hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
+    // wyrwy bazy piratów (po kadłubach — bank Fx3D ma początek układu tej klatki)
+    try { if (st.vents && v.blocks.pirateVents && v.blocks.pirateVents.f64) {
+      const vm = st.ventsBlk.applyPirateVentsBlock(v.blocks.pirateVents, st.ventsMirror);
+      st.vents.update(vm, vm.has ? vm.dt : 0);
+    } } catch (e) { modFail('wyrwy bazy', e); }
     try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: st.playerPoseOf, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }

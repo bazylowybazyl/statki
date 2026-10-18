@@ -1137,10 +1137,11 @@
     import { installRepairFxCommands } from "./src/3d/repair/repairDrones3D.js";
     const RepairFxEvents = createRepairFxEvents(RenderCommands.writer);
     installRepairFxCommands(RenderCommands.reader, (id) => RepairFxEvents.rigAt(id));
-    HullBodies.onImpact = (e, r) => HullDamageEvents.impact(e, r);
+    // (+ powietrze budowli bazy piratów: krater w kawałku bazy = wyrwa — atmoImpact, zgniot bryły — atmoNodeLost)
+    HullBodies.onImpact = (e, r) => { HullDamageEvents.impact(e, r); atmoImpact(e, r); };
     HullBodies.onRepair = (e, dt, changed) => HullDamageEvents.repair(e, dt, changed);
     // Bryły 3D (wieża habitatu, dysk): rozdarcie po zgniocie — rany w komórkach kratownicy (src/3d/solidWounds.js).
-    HullBodies.onSolidNodeLost = (e, hull, ix, iy, iz, x, y) => HullDamageEvents.solidNodeLost(e, hull, ix, iy, iz, x, y);
+    HullBodies.onSolidNodeLost = (e, hull, ix, iy, iz, x, y, z) => { HullDamageEvents.solidNodeLost(e, hull, ix, iy, iz, x, y); atmoNodeLost(e, hull, x, y, z); };
     // Odłamki zniszczonych węzłów (rekord HULL_DEBRIS; skala i kształtownik losuje render — strumień efektów).
     HullBodies.onDebris = (x, y, vx, vy, r, g, b, cell, st, solid, z, vz) => HullDamageEvents.debris(x, y, vx, vy, r, g, b, cell, st, solid, z, vz);
     // Rój dronów naprawczych okrętów (src/game/repairRig.js, rejestr src/game/repairSwarm.js, dane src/data/repairDrones.js,
@@ -1337,6 +1338,11 @@
     import { syncWorldBodies3D } from "./src/3d/worldBodies3D.js";
     import { BASE_INTEGRITY_TUNE, baseStepChunk, markBaseBroken, noteBaseRam, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
+    // Powietrze budowli bazy (2026-10-19): rozszczelnienie, dekompresja, wylot powietrza i pożary — decyzje w grze
+    // (src/game/story/pirateBaseAtmosphere.js), obraz wyrw src/3d/pirateBaseVents3D.js (stan klatki — blok pirateVents).
+    import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
+    import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
+    import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
@@ -1812,6 +1818,7 @@
     let reactorBlastFx = null;
     // Wybuchy okrętów z gazu (createExplosionFactory bez withRepairDroneBlast) — śmierć ze zbiornika paliwa, gaz rdzenia.
     let shipBlastFactory = null;
+    let pirateVents3D = null;   // obraz wyrw bazy piratów (tryb off / inline; w workerze — render.worker.js)
     let reactorModel3D = null;
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
@@ -1856,6 +1863,8 @@
         // Wybuchy okrętów (zbiornik paliwa przy śmierci NPC, gaz detonacji rdzenia) — fabryka BEZ zmiatania dronów
         // naprawczych: śmierć okrętu z puli HP dawniej dronów nie raniła (sam obraz, rozgrywka bez zmian).
         shipBlastFactory = window.makeReactorBlow;
+        // Obraz wyrw bazy piratów (dekompresja, pożary): cząstki w passach tła i FG, gaz reżysera wybuchów (VENT_TAG).
+        pirateVents3D = createPirateBaseVents3D(Core3D, { explosions: () => window.__explosions || null });
         // Gra pisze rekordy EXPLOSION, gdy render ma fabrykę (w workerze — flaga z kanału zwrotnego).
         GameBlasts.ready = !!shipBlastFactory;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
@@ -23508,6 +23517,7 @@
     function noteHullNodeLost(entity, hull, u, v, x, y) {
       HullDamageEvents.nodeLost(entity, hull, u, v, x, y);
       if (entity?.fuelTank) crushSmoke.lost(entity, x, y, HullBodies.simTime);
+      else if (entity?.isWorldPiece || entity?.worldDebris) atmoNodeLost(entity, hull, x, y, NaN);
     }
     const _crushContact = (ev) => {
       if (!ev) return;
@@ -27019,6 +27029,8 @@
       stepPirateBaseIntegrity();
       // Szyja habitatu (src/game/story/pirateBaseNeck.js): taran zrywa kotwice szybu → głowa spada na dysk.
       stepPirateBaseNeck(dt);
+      // Powietrze budowli bazy (src/game/story/pirateBaseAtmosphere.js): wypływ z wyrw, pożary, wyrwy jadą z ciałami.
+      stepPirateBaseAtmosphere(dt);
       // Rdzenie reaktorów: stopienie, detonacje (rozpad, fala), strumienie i kule plazmy.
       ReactorGame.step(dt, allDestructibles);
       const destructorMs = performance.now() - tDestructor0;
@@ -28682,6 +28694,8 @@
       renderSnapshot.addBlock(createGasObstBlock());
       renderSnapshot.addBlock(createWarpBlock());
       renderSnapshot.addBlock(createPirateBaseBlock());
+      // wyrwy bazy piratów (dekompresja, pożary — src/game/story/pirateBaseAtmosphere.js): stan klatki obrazu wyrw
+      renderSnapshot.addBlock(createPirateVentsBlock());
       renderSnapshot.addBlock(createRingBlock());
       // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
       if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
@@ -28811,6 +28825,8 @@
       // baza piratów misji 1: stan klatki obrazu (ten sam, który dostaje updatePirateBase3D) i dt gry
       f.pirateBase = storyBaseFrameState();
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
+      // wyrwy bazy (dekompresja, pożary): pozy wyrw dosunięte do czasu renderu, dt gry klatki
+      f.pirateVents = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // ringi „Halo”: świat ringów gry (zegar hal, rejestr — stanowiska, lampy, pozy obsługi), statek do obrysu w hubie
       f.ringWorld = haloWorld;
       f.ringShip = ship;
@@ -29960,6 +29976,11 @@
         _repairDronesSync.time = SimClock.render;
         RepairFxEvents.flush(RepairSwarm.rigs);
         if (!RW_WORKER) syncRepairDrones3D(_repairDronesSync);
+        // Wyrwy bazy piratów (para, ogień, żar — po kadłubach: bank Fx3D ma początek układu tej klatki); worker — sam.
+        if (!RW_WORKER && pirateVents3D) {
+          const vf = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+          pirateVents3D.update(vf, vf.dt);
+        }
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -31825,6 +31846,8 @@
       attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
+      // Powietrze budowli (moduły ciśnieniowe z układu): dekompresja i pożary przy wyrwach.
+      attachPirateBaseAtmosphere(place);
       return out;
     }
 
@@ -31853,12 +31876,15 @@
       if (!c || !storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } })) {
         if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
         GameBlasts.blast({ x: hx, y: hy, size: 300 }, true);
+        noteBaseBlast(hx, hy, 300);
         camera.addShake(8, 0.4);
         return;
       }
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
       GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 }, true);
+      // wybuch przy pęknięciu — zapłon powietrza modułu (zwarcia i ogień w wylatującym tlenie)
+      noteBaseBlast(p.x, p.y, c.kind === 'drum' || c.kind === 'tank' ? 520 : 360);
       camera.addShake(12, 0.5);
     }
 
@@ -31886,10 +31912,41 @@
       if (opts.dir === 'in') { ox = -ox; oy = -oy; }
       const power = opts.power ?? 1.6;
       const speed = opts.speed ?? 90;
+      // Powietrze: pęknięcie modułu ciśnieniowego (dekompresja — wyrwa po stronie punktu, grodzie do sąsiadów puszczają);
+      // wyrwa przy ciele kawałka, odłamy rozpadu przejmują ją (HullBodies.onWreckSpawned), bez ciała — dryfuje ze statyką.
+      noteBaseChunkBreak(id, at, { entity: wPiece?.entity || null, drift: speed, dir: opts.dir || 'out', power });
       // pęknięty kawałek: jego ubytek węzłów to nie taran, nie liczy się też jako stojący (pirateBaseIntegrity.js)
       if (wPiece && worldBodies.breakPiece(wPiece, at.x, at.y, { power, speed, outX: ox, outY: oy })) { markBaseBroken(wPiece); return true; }
       return breakPirateBaseChunk(id, { speed, spin: 0.12, life: 45, dir: place.dirToHub(ox, oy) });
     }
+
+    // Powietrze budowli bazy (src/game/story/pirateBaseAtmosphere.js): straty węzłów kawałków bazy poza bronią (zgniot
+    // taranem, rozpad) i kratery broni → wyrwy; nowe odłamy przejmują wyrwy z punktem przy sobie. Tylko ciała miejsc bazy.
+    function pirateBasePieceOf(entity) {
+      const p = entity ? worldBodies.pieceOf(entity) : null;
+      return p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:') ? p : null;
+    }
+    function atmoNodeLost(entity, hull, x, y, z) {
+      const p = pirateBasePieceOf(entity);
+      if (p) noteBaseNodeLost(p.id, entity, x, y, z, Number(hull?.body?.cellSize) || 15);
+    }
+    function atmoImpact(entity, r) {
+      if (!r) return;
+      const p = pirateBasePieceOf(entity);
+      if (!p) return;
+      const cs = Number(entity.beamHull?.body?.cellSize) || 15;
+      const rad = Math.max(Number(r.crater) || 0, Number(r.radius) || 0, cs * Math.sqrt(Math.max(1, Number(r.killed) || 0)) * 0.6);
+      noteBaseCrater(p.id, entity, r.x, r.y, r.solid ? r.z : NaN, rad);
+    }
+    {
+      const prevSpawned = HullBodies.onWreckSpawned;
+      HullBodies.onWreckSpawned = (wreck, parent, parentBody) => {
+        if (typeof prevSpawned === 'function') prevSpawned(wreck, parent, parentBody);
+        const p = wreck?.beamHull?.world;
+        if (p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:')) rehomePirateBaseVents(wreck, parent, p.id);
+      };
+    }
+    window.PirateBaseAtmosphere = PirateBaseAtmosphere;
 
     // Taran ciał bazy (kawałki w bańce gracza): zwykłe zderzenie kadłubów w HullBodies.step. Styk okrętu spoza piratów
     // (gracz, sojusznicy — nie wraki ani odłamy bazy) otwiera okno taranu kawałka: węzły zgniecione w nim zdejmują
@@ -31951,10 +32008,16 @@
         if (StoryGame.site) StoryGame.site.neckSnapped = true;
         pushZoneMessage('SZYJA HABITATU ZERWANA — WIEŻA SIĘ PRZEWRACA', 3.5);
         if (owner && owner.hp > 0) _baseIntegrityHooks.damage(owner, (Number(owner.maxHp) || 0) * NECK_TUNE.hpFrac, hc.x, hc.y);
+        // powietrze: rura szyi pęka — wylot z kikuta u spodu wieży (z bryłą) i u szczytu szybu; zwarcia w rurze
+        noteBaseNeckSnap(st.tower);
+        noteBaseBlast(hc.x, hc.y, 560);
       },
       onImpact(st) {
         GameBlasts.blast({ x: st.impactX, y: st.impactY, size: 620 }, true);
         camera.addShake(32, 1.1);
+        // powietrze: bok wieży gniecie się o koronę bębna / dysk — wyrwa w wieży (z bryłą) i zapłon
+        pirateBaseBreach({ module: 'H-T', x: st.impactX, y: st.impactY, z: st.impactZ, size: 180, entity: st.tower, kind: 'break' });
+        noteBaseBlast(st.impactX, st.impactY, 620);
       },
       onLand(st) {
         camera.addShake(14, 0.6);
@@ -32047,10 +32110,12 @@
       const f = site?.flagship;
       if (f && !f.dead && !f.__storyLaunched && Number.isInteger(f.__dockBerth) && f.__dockBerth < n) s.berths[f.__dockBerth] = 1;
       const pw = site?.powerLive;
-      s.habitat = pw ? pw.habitat : 1;
-      s.disc = pw ? pw.disc : 1;
-      s.fuel = pw ? pw.fuel : 1;
-      s.warehouse = pw ? pw.warehouse : 1;
+      // miganie świateł wnętrza przy rozszczelnieniu (zwarcia — src/game/story/pirateBaseAtmosphere.js)
+      const fl = pirateBaseAtmoFlicker();
+      s.habitat = (pw ? pw.habitat : 1) * fl.habitat;
+      s.disc = (pw ? pw.disc : 1) * fl.disc;
+      s.fuel = (pw ? pw.fuel : 1) * fl.fuel;
+      s.warehouse = (pw ? pw.warehouse : 1) * fl.warehouse;
       s.sun = SUN;
       return s;
     }
@@ -32326,7 +32391,8 @@
       warpArrivalsFree: () => warpTraffic.free,
       warpOut: (list, origin) => storyWarpOutUnits(list, origin),
       returnWing: () => returnSupportWingToEarth(),
-      reactorBlow: (o) => GameBlasts.blast(o, true),
+      // wybuch w module bazy (rozpad habitatu, ogień w rurach) — zapłon powietrza modułu (pirateBaseAtmosphere.js)
+      reactorBlow: (o) => { if (o) noteBaseBlast(o.x, o.y, o.size); return GameBlasts.blast(o, true); },
       addCredits: (n) => { if (window.DevEconomy?.addCredits) window.DevEconomy.addCredits(n); else PLAYER.credits += n; },
       changeReputation: (f, d, reason) => changePlayerReputation(f, d, reason),
       factionLabel: (f) => FACTIONS[normalizeFaction(f)]?.name || f,

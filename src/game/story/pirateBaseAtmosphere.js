@@ -62,12 +62,14 @@ export const ATMO_TUNE = {
   wallTau: 25,                // [s] ściany oddają ciepło gazowi (T → 1)
   // Tlen i ogień (ciśnienie cząstkowe w jednostkach p0): zapłon i palenie tylko powyżej pO2Min, pełny ogień od pO2Full.
   o2: 0.21, pO2Min: 0.05, pO2Full: 0.15,
+  // stężenie tlenu, poniżej którego ogień w szczelnym module dusi się sam (grzanie podnosi ciśnienie — samo pO2 nie wystarcza)
+  o2FracMin: 0.135, o2FracFull: 0.18,
   fireGrow: 1.6,              // [1/s] narastanie (rozgorzenie — zasilane powietrzem rozszczelnienia)
   fireDecay: 3.0,             // [1/s] gaśnięcie bez tlenu
-  fireO2Use: 0.012,           // tlen zużyty przez pełny ogień [ρ·x na s]
+  fireO2Use: 0.01,            // tlen zużyty przez pełny ogień [ρ·x na s] (szczelny moduł dusi się w ~6–8 s)
   fireFuelUse: 0.025,         // palne wnętrze zużyte przez pełny ogień [1/s]
-  fireHeat: 0.25,             // grzanie gazu przez pełny ogień [T na s przy ρ = 1]
-  fireTMax: 2.4,
+  fireHeat: 0.12,             // grzanie gazu przez pełny ogień [T na s przy ρ = 1]
+  fireTMax: 1.5,
   igniteKick: 0.18,           // ogień na starcie zapłonu
   smolderFromFire: 0.85,      // żarzenie po pożarze ∝ największy ogień
   smolderTau: 5,              // [s] gaśnięcie żarzenia
@@ -502,7 +504,7 @@ export function ignite(o = {}) {
   if (!m) return false;
   S.stats.ignitions++;
   const T = ATMO_TUNE;
-  if (m.rho * m.T * m.x < T.pO2Min || m.fuel < 0.04) {
+  if (m.rho * m.T * m.x < T.pO2Min || m.x <= T.o2FracMin || m.fuel < 0.04) {
     // bez tlenu: gorące szczątki tylko się żarzą (wnętrze palne)
     if (m.fuel > 0.04) m.smolder = Math.max(m.smolder, 0.35);
     return false;
@@ -600,13 +602,16 @@ export function noteBaseCrater(id, entity, x, y, z = NaN, radius = 20) {
  * Wybuch w punkcie (gra; size — rozmiar wybuchu): zapłon modułów, w których leży (paliwo z rur, reaktor, wybuchy
  * rozpadu, uderzenie). Zwraca liczbę modułów, które zapłonęły.
  */
-export function noteBaseBlast(x, y, size = 300) {
+export function noteBaseBlast(x, y, size = 300, z = 0) {
   if (!S.place || !ATMO_TUNE.enabled) return 0;
   let n = 0;
   const r = Math.max(60, Number(size) || 300) * 0.9;
+  const bz = Number.isFinite(z) ? z : 0;
   for (const m of S.modules) {
     if (m.spent || m.burning) continue;
-    const d = distToModule(m, x, y);
+    // w pionie: wybuch przy płaszczyźnie gry nie sięga dysku 0,8 km pod bębnem ani głowy wieży 1,4 km nad nim
+    const dz = bz < m.z0 ? m.z0 - bz : (bz > m.z1 ? bz - m.z1 : 0);
+    const d = Math.hypot(distToModule(m, x, y, bz), dz);
     if (d > r) continue;
     if (hash01(m.index + 31 * S.stats.ignitions, Math.floor(S.time * 10)) > ATMO_TUNE.blastIgnite) continue;
     if (ignite({ module: m.id, x, y })) n++;
@@ -614,8 +619,9 @@ export function noteBaseBlast(x, y, size = 300) {
   return n;
 }
 
-// Odległość punktu gry od modułu w płaszczyźnie (0 w środku) — ćwiartki i sektory jako wycinki pierścienia.
-function distToModule(m, x, y) {
+// Odległość punktu gry od modułu w płaszczyźnie (0 w środku) — ćwiartki i sektory jako wycinki pierścienia; z — wysokość
+// punktu (wieża: rura szyi przy płaszczyźnie gry, talerz głowy wysoko).
+function distToModule(m, x, y, z = 0) {
   const place = S.place;
   const H = place.layout.habitat;
   const hc = place.habitat;
@@ -631,7 +637,9 @@ function distToModule(m, x, y) {
     const darc = da > half ? (da - half) * Math.max(r, 1) : 0;
     return Math.hypot(dr, darc);
   }
-  if (m.kind === 'core' || m.kind === 'tech') return Math.max(0, Math.hypot(x - hc.x, y - hc.y) - (m.kind === 'core' ? H.innerR : H.ringR1));
+  // szyb: kolumna coreR; wieża przy płaszczyźnie gry — rura szyi (neckR), talerz głowy (ringR1) dopiero na jego wysokości
+  if (m.kind === 'core') return Math.max(0, Math.hypot(x - hc.x, y - hc.y) - H.coreR * 1.2);
+  if (m.kind === 'tech') return Math.max(0, Math.hypot(x - hc.x, y - hc.y) - (z > m.z - 200 ? H.ringR1 : H.neckR));
   return Math.max(0, Math.hypot(x - m.gx, y - m.gy) - m.r);
 }
 
@@ -660,6 +668,40 @@ export function noteBaseNeckSnap(tower) {
     if (breach({ module: 'H-T', x, y, z, nx, ny, nz, size: H.neckR, entity: tower || null, kind: 'break' }) > 0) n++;
   }
   if (c && breach({ module: 'H-C', x: hc.x, y: hc.y, z: c.z1, nx: 0, ny: 0, nz: 1, size: H.neckR * 0.8, kind: 'break' }) > 0) n++;
+  return n;
+}
+
+/**
+ * Nowy odłam (HullBodies.onWreckSpawned — rozpad kawałka, odłam spadającej bryły): wyrwy przyczepione do rodzica albo
+ * statyczne wyrwy tego kawałka (moduł = kawałek odłamu) przechodzą na odłam, który leży przy ich punkcie (najbliższy
+ * brzeg obwiedni ciała) — wyrwa leci dalej z kawałkiem, w którym jest. pieceId — id kawałka odłamu (hull.world.id).
+ */
+export function rehomePirateBaseVents(wreck, parent, pieceId = null) {
+  if (!S.place || !wreck || !S.vents.length) return 0;
+  const b = bodyOf(wreck);
+  if (!b) return 0;
+  const solid = isSolidEntity(wreck);
+  const cx = solid ? b.pos.x : Number(wreck.x), cy = solid ? -b.pos.y : Number(wreck.y), cz = solid ? b.pos.z : 0;
+  const R = Math.max(1, Number(b.radius) || Number(wreck.radius) || 1);
+  let n = 0;
+  for (const v of S.vents) {
+    // ten sam rozpad (kolejne odłamy przychodzą po kolei w tym samym kroku): porównanie z odłamem wybranym wcześniej
+    const same = v.rehomeT === S.time && v.rehomeParent === (parent || null);
+    const own = (v.ent && v.ent === parent) || same;
+    const stat = !v.ent && pieceId && v.module.id === pieceId;
+    if (!own && !stat && !(v.ent && !entityAlive(v.ent) && pieceId && v.module.id === pieceId)) continue;
+    const d = Math.max(0, Math.hypot(v.wx - cx, v.wy - cy, solid ? v.wz - cz : 0) - R);
+    // obecny odłam bliżej — zostaje
+    if (same && v.rehomeD <= d) continue;
+    v.rehomeD = d;
+    v.rehomeT = S.time;
+    v.rehomeParent = parent || null;
+    anchor(v, wreck);
+    if (v.ent === wreck) {
+      v.host = Number(wreck.beamHull?.dmgKey) || 0;
+      n++;
+    }
+  }
   return n;
 }
 
@@ -752,14 +794,15 @@ function stepModules(dt) {
     const pO2 = m.rho * m.T * m.x;
     if (m.ignAt >= 0 && S.time >= m.ignAt) {
       m.ignAt = -1;
-      if (pO2 > T.pO2Min && m.fuel > 0.04) {
+      if (pO2 > T.pO2Min && m.x > T.o2FracMin && m.fuel > 0.04) {
         m.burning = true;
         m.fire = Math.max(m.fire, T.igniteKick);
         S.stats.fires++;
       } else if (m.fuel > 0.04) m.smolder = Math.max(m.smolder, 0.3);
     }
     if (m.burning) {
-      const target = sat((pO2 - T.pO2Min) / (T.pO2Full - T.pO2Min)) * sat(m.fuel / 0.12);
+      const target = sat((pO2 - T.pO2Min) / (T.pO2Full - T.pO2Min)) * sat((m.x - T.o2FracMin) / (T.o2FracFull - T.o2FracMin))
+        * sat(m.fuel / 0.12);
       const rate = target > m.fire ? T.fireGrow : T.fireDecay;
       m.fire += (target - m.fire) * (1 - Math.exp(-rate * dt));
       if (m.fire > m.firePeak) m.firePeak = m.fire;
