@@ -335,6 +335,9 @@ export const DestructorBeams3D = {
   onContact: null,        // (A, B, info) — styk pary po impulsie i zgniocie (_contactInfo, tylko do odczytu)
   onWreck: null,          // (parent, wreck) — nowy wrak z rozpadu, już w liście ciał
   onNodeDebris: null,     // (body, i, wx, wy, wz, vx, vy, vz) — ginący węzeł jako indeks, bez widoku
+  // TEREN STATYCZNY (addTerrain — planetoida pod bazą piratów): powierzchnie gwiaździste wokół środka, z którymi
+  // zderzają się ciała 3D (bryły i ich odłamy). Pusta lista = krok bit w bit jak dawniej.
+  terrains: [],
   clock: () => nowMs() * 0.001,   // sekundy znaczników żaru (baza czasu renderera)
   // Zasięg ostatniego krateru (applyImpact w trybie krateru): najdalszy węzeł zabity przez krater
   // od punktu trafienia [j.]; 0 = krater nikogo nie zabił (mapa ran gry: lej tylko w dziurze).
@@ -458,6 +461,10 @@ export const DestructorBeams3D = {
       // węzłów); grawitacja świata [j/s²] dla swobodnego ciała 3D (integrate) — dziedziczą je wraki.
       planar: opts.planar === undefined ? !!cfg.planar : !!opts.planar,
       gravity: opts.gravity ? { x: Number(opts.gravity.x) || 0, y: Number(opts.gravity.y) || 0, z: Number(opts.gravity.z) || 0 } : null,
+      // Grawitacja KU PUNKTOWI (planetoida pod bazą piratów — upadek habitatu): { x, y, z (świat silnika), g [j/s²],
+      // r0 — przy r0 > 0 przyspieszenie g · (r0 / d)², inaczej stałe } — bierze górę nad `gravity`; obiekt wspólny
+      // z odłamami (wraki dziedziczą referencję — zmiana g działa na wszystkie).
+      gravityWell: opts.gravityWell || null,
       colZ0: Number(opts.colZ0) || 0,
       colZ1: Number(opts.colZ1) || 0,
       joints: null,
@@ -662,6 +669,17 @@ export const DestructorBeams3D = {
       if (planar) {
         // Odrzut odłamu (_spawnWreck) i szum numeryczny nie wyprowadzą kadłuba z płaszczyzny.
         b.vel.z = 0; b.angVel.x = 0; b.angVel.y = 0;
+      } else if (b.gravityWell !== null && b.gravityWell !== undefined) {
+        // Grawitacja ku punktowi (środek planetoidy): kierunek liczony co krok — ciało spada po prostej ku środkowi,
+        // a nie „w dół” sceny; r0 > 0 — przyspieszenie maleje z kwadratem odległości.
+        const gw = b.gravityWell;
+        const gx = gw.x - b.pos.x, gy = gw.y - b.pos.y, gz = gw.z - b.pos.z;
+        const d2 = gx * gx + gy * gy + gz * gz;
+        if (d2 > 1e-6) {
+          const d = Math.sqrt(d2);
+          const a = (gw.r0 > 0 ? gw.g * (gw.r0 * gw.r0) / d2 : gw.g) * dt / d;
+          b.vel.x += gx * a; b.vel.y += gy * a; b.vel.z += gz * a;
+        }
       } else if (b.gravity) {
         // Grawitacja ciała 3D (wieża habitatu, jej odłamy): jednorodne przyspieszenie całości — węzły się od niego nie
         // odkształcają (konstrukcja zakotwiczona stoi bez naprężeń od ciężaru, jak w Teardown: spada to, co odpadło).
@@ -1318,6 +1336,8 @@ export const DestructorBeams3D = {
         if (this.collideBodies(A, B, pairDt, it === 0) === 0) { quietA[p] = A._geomVer; quietB[p] = B._geomVer; }
         else quietA[p] = -1;
       }
+      // teren statyczny po parach — ostatnie ograniczenie iteracji (stos brył na skale: para, potem grunt)
+      if (this.terrains.length > 0) this._terrainPass(bodies, dt, it === 0);
     }
     const tAfterCol = nowMs();
 
@@ -2073,6 +2093,217 @@ export const DestructorBeams3D = {
       info.impulse = impulse;
       info.doDamage = doDamage;
       this.onContact(A, B, info);
+    }
+    return count;
+  },
+
+  // ------------------------------------------------------------------ TEREN STATYCZNY (addTerrain)
+
+  /**
+   * TEREN STATYCZNY (planetoida pod bazą piratów — upadek habitatu, src/game/story/pirateBaseFall.js): powierzchnia
+   * gwiaździsta wokół środka (cx, cy, cz — świat silnika): promień w kierunku jednostkowym `radius(ux, uy, uz)`, normalna
+   * na zewnątrz `normal(ux, uy, uz, r, out)` (brak — radialna), obwiednia `rMax` (największy promień powierzchni), tarcie
+   * `friction` (styk bierze większe z tarciem ciała), `armorMul` (mnożnik pancerza ciała w granicy plastyczności —
+   * skała twardsza niż konstrukcja), opcjonalnie `onContact(body, info)` (info jak _contactInfo, tylko do odczytu).
+   * Węzły SWOBODNYCH ciał 3D (nie płaskich, nie zakotwiczonych) zderzają się z powierzchnią w prawie v2: impuls
+   * sprężysty do granicy plastyczności frontu (węzły w styku × pancerz ciała), ponad nią granica i ZGNIOT NADMIARU
+   * w ciele (teren się nie gniecie), tarcie, korekta przenikania. Zwraca teren.
+   */
+  addTerrain(terrain) {
+    if (terrain && this.terrains.indexOf(terrain) < 0) this.terrains.push(terrain);
+    return terrain;
+  },
+
+  removeTerrain(terrain) {
+    const i = this.terrains.indexOf(terrain);
+    if (i >= 0) this.terrains.splice(i, 1);
+  },
+
+  _terrIdx: new Int32Array(2048),
+  _terrDepth: new Float64Array(2048),
+  _terrN: { x: 0, y: 0, z: 0 },
+
+  _terrainPass(bodies, dt, doDamage) {
+    const terrains = this.terrains;
+    for (let t = 0; t < terrains.length; t++) {
+      const T = terrains[t];
+      for (let k = 0; k < bodies.length; k++) {
+        const b = bodies[k];
+        if (!b || b.dead || b.planar || b.static || b.anchored || b.activeNodes <= 0) continue;
+        this._collideTerrain(b, T, dt, doDamage);
+      }
+    }
+  },
+
+  // Styk ciała 3D z terenem statycznym (opis przy addTerrain). Zwraca liczbę węzłów w styku. Bez alokacji (bufory
+  // systemu rosną tylko przy większym styku niż kiedykolwiek).
+  _collideTerrain(b, T, dt, doDamage) {
+    const cfg = this.config;
+    const cs = b.cellSize;
+    const nodeR = cs * (cfg.nodeRadius / cfg.cellSize);
+    const cx = T.cx, cy = T.cy, cz = T.cz;
+    const pdx = b.pos.x - cx, pdy = b.pos.y - cy, pdz = b.pos.z - cz;
+    const reach = T.rMax + nodeR + b.radius + (b._maxDisp || 0) + cs;
+    if (pdx * pdx + pdy * pdy + pdz * pdz > reach * reach) return 0;
+    const m = this._refreshRot(b);
+    const s = b.nodeStore, X = s.x, Y = s.y, Z = s.z, active = s.active;
+    const m0 = m[0], m1 = m[1], m2 = m[2], m3 = m[3], m4 = m[4], m5 = m[5], m6 = m[6], m7 = m[7], m8 = m[8];
+    const lim = T.rMax + nodeR, lim2 = lim * lim;
+    const tn = this._terrN;
+    const hasNormal = typeof T.normal === 'function';
+    let idx = this._terrIdx, dep = this._terrDepth;
+    let count = 0, kept = 0, penMax = 0;
+    let hx = 0, hy = 0, hz = 0, nx = 0, ny = 0, nz = 0;
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i]) continue;
+      const lx = X[i], ly = Y[i], lz = Z[i];
+      const dx = m0 * lx + m1 * ly + m2 * lz + pdx;
+      const dy = m3 * lx + m4 * ly + m5 * lz + pdy;
+      const dz = m6 * lx + m7 * ly + m8 * lz + pdz;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > lim2) continue;
+      const d = Math.sqrt(d2);
+      if (!(d > 1e-6)) continue;
+      const ux = dx / d, uy = dy / d, uz = dz / d;
+      const r = T.radius(ux, uy, uz);
+      const pen = r + nodeR - d;
+      if (pen <= 0) continue;
+      if (hasNormal) T.normal(ux, uy, uz, r, tn);
+      else { tn.x = ux; tn.y = uy; tn.z = uz; }
+      hx += cx + ux * r; hy += cy + uy * r; hz += cz + uz * r;
+      nx += tn.x * pen; ny += tn.y * pen; nz += tn.z * pen;
+      if (pen > penMax) penMax = pen;
+      if (kept === idx.length) {
+        const ni = new Int32Array(idx.length * 2), nd = new Float64Array(idx.length * 2);
+        ni.set(idx); nd.set(dep);
+        idx = this._terrIdx = ni; dep = this._terrDepth = nd;
+      }
+      idx[kept] = i; dep[kept] = pen; kept++;
+      count++;
+    }
+    if (count === 0) return 0;
+    hx /= count; hy /= count; hz /= count;
+    let nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (!(nl > 1e-9)) { nx = hx - cx; ny = hy - cy; nz = hz - cz; nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; }
+    nx /= nl; ny /= nl; nz /= nl;
+    this._touchGeometry(b);
+    this.perf.contacts += count;
+    this.wake(b, cfg.wakeHoldFrames);
+
+    const rx = hx - b.pos.x, ry = hy - b.pos.y, rz = hz - b.pos.z;
+    const vx = b.vel.x + (b.angVel.y * rz - b.angVel.z * ry);
+    const vy = b.vel.y + (b.angVel.z * rx - b.angVel.x * rz);
+    const vz = b.vel.z + (b.angVel.x * ry - b.angVel.y * rx);
+    const vn = vx * nx + vy * ny + vz * nz;
+    const approach = Math.max(0, -vn);
+    const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
+    const mass = Math.max(1, b.mass * b.rammingMassMult);
+    const invMass = 1 / mass;
+    let impulse = 0, crushing = false, closingAfter = 0;
+    if (vn < 0) {
+      const ia = applyInvInertia(b, ry * nz - rz * ny, rz * nx - rx * nz, rx * ny - ry * nx, this._s4);
+      const tqx = ia.y * rz - ia.z * ry, tqy = ia.z * rx - ia.x * rz, tqz = ia.x * ry - ia.y * rx;
+      const denom = invMass + (tqx * nx + tqy * ny + tqz * nz);
+      if (Number.isFinite(denom) && denom > 1e-12) {
+        const jReq = (-(1 + cfg.restitution) * vn) / denom;
+        const nodeMass = b.mass / Math.max(1, b.activeNodes);
+        const armor = b.collisionArmor * (T.armorMul > 0 ? T.armorMul : 1);
+        const jYield = cfg.crushStrength * armor * nodeMass / Math.max(1e-6, cs) * count * dt;
+        let j;
+        // wolne zbliżanie (ciężar leżącej bryły, osiadanie) — sprężyście, jak pary 3D (crushRestSpeed3D)
+        if (!(cfg.crushStrength > 0) || jReq <= jYield || approach < cfg.crushRestSpeed3D) j = jReq;
+        else {
+          crushing = true;
+          j = doDamage ? jYield : 0;
+          closingAfter = Math.max(0, -(vn + j * denom));
+        }
+        impulse = j;
+        if (j > 0) {
+          this._applyImpulse(b, rx, ry, rz, nx * j, ny * j, nz * j, invMass);
+          let tx = vx - nx * vn, ty = vy - ny * vn, tz = vz - nz * vn;
+          const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+          if (tLen > 1e-6) {
+            tx /= tLen; ty /= tLen; tz /= tLen;
+            let jt = -tLen / invMass;
+            const fb = b.friction ?? cfg.friction;
+            const maxF = j * Math.max(fb, Number(T.friction) || 0);
+            if (jt < -maxF) jt = -maxF;
+            this._applyImpulse(b, rx, ry, rz, tx * jt, ty * jt, tz * jt, invMass);
+          }
+        }
+      }
+    }
+
+    // --- zgniot nadmiaru: całość w ciele (teren statyczny się nie gniecie) ---
+    if (doDamage && crushing) {
+      const stamp = this._nextContactStamp();
+      const ln = matVecT(m, nx, ny, nz, this._lnA);
+      const maxD = Math.max(0, cfg.crushMaxCells) * cs;
+      const local = !!cfg.localSolver;
+      const level = cfg.heatGain > 0 ? Math.min(1, approach / Math.max(1e-6, cfg.heatSpeed)) * cfg.heatGain : 0;
+      const heatNow = level > 0.02 ? this.clock() : 0;
+      const heat = level * cfg.heatContact;
+      if (heatNow > 0 && (level >= (b._woundHeat || 0) || heatNow - (b._woundHeatAt || 0) > cfg.heatWoundWindow)) {
+        b._woundHeat = level; b._woundHeatAt = heatNow;
+      }
+      if (this._crushedA.length < kept) { this._crushedA = new Int32Array(kept * 2); this._crushedB = new Int32Array(kept * 2); }
+      const list = this._crushedA;
+      const ld = this._ldA;
+      const px = b.pos.x, py = b.pos.y, pz = b.pos.z;
+      let cnt = 0;
+      for (let k = 0; k < kept; k++) {
+        const i = idx[k];
+        if (!active[i]) continue;
+        const depth = Math.min(maxD, Math.max(dep[k], approach * dt * cfg.crushTravelMul));
+        // wyboczenie od ŚRODKA STYKU (w poprzek normalnej)
+        const lx = X[i], ly = Y[i], lz = Z[i];
+        const ox = m0 * lx + m1 * ly + m2 * lz + px - hx;
+        const oy = m3 * lx + m4 * ly + m5 * lz + py - hy;
+        const oz = m6 * lx + m7 * ly + m8 * lz + pz - hz;
+        const along = ox * nx + oy * ny + oz * nz;
+        let qx = ox - along * nx, qy = oy - along * ny, qz = oz - along * nz;
+        const ql = Math.sqrt(qx * qx + qy * qy + qz * qz);
+        const buckle = cfg.crushBuckling * ql / (ql + cs);
+        if (ql > 1e-6) { qx /= ql; qy /= ql; qz /= ql; }
+        matVecT(m, qx, qy, qz, ld);
+        if (this._crushNodeV2(b, i, ln, ld, buckle, depth, closingAfter, stamp, approach * dt)) {
+          list[cnt++] = i;
+          if (heatNow > 0) this._heatCrushed(b, i, heat, heatNow, local);
+        }
+      }
+      if (cnt > 0) this._breakOverloaded(b, list, cnt);
+      b.meshDirty = true;
+      b._hashTick = -1;
+    }
+
+    // --- korekta przenikania (przy zgniocie część rozchodzi się w węzłach) ---
+    const slop = cfg.separationSlop;
+    if (penMax > slop && vn < cfg.contactRestSpeed) {
+      const transfer = crushing ? Math.max(0, Math.min(1, cfg.crushTransfer)) : 0;
+      const separation = 1 - Math.pow(1 - cfg.separationPercent, dt * 60);
+      const corr = (penMax - slop) * separation * (1 - transfer);
+      b.pos.x += nx * corr; b.pos.y += ny * corr; b.pos.z += nz * corr;
+    }
+    // Bryła LEŻĄCA na terenie (wolne zbliżanie, szeroki styk): impuls w środku styku nie gasi kołysania, które rozłożone
+    // siły podłoża zgasiłyby od razu — tłumienie obrotu ∝ szerokość styku (T.restAngDamp [1/s]; 0 — bez).
+    if (doDamage && !crushing && approach < cfg.crushRestSpeed3D && T.restAngDamp > 0 && count >= 3) {
+      const k = Math.exp(-T.restAngDamp * dt * Math.min(1, count / 24));
+      b.angVel.x *= k; b.angVel.y *= k; b.angVel.z *= k;
+    }
+
+    if (typeof T.onContact === 'function') {
+      const info = this._contactInfo;
+      info.count = count;
+      info.x = hx; info.y = hy; info.z = hz;
+      info.nx = nx; info.ny = ny; info.nz = nz;       // normalna terenu (na zewnątrz)
+      info.relSpeed = speed;
+      info.approach = approach;
+      info.slide = Math.sqrt(Math.max(0, speed * speed - vn * vn));
+      info.penetration = penMax;
+      info.crushing = crushing;
+      info.impulse = impulse;
+      info.doDamage = doDamage;
+      T.onContact(b, info);
     }
     return count;
   },
@@ -3663,6 +3894,7 @@ export const DestructorBeams3D = {
       anchored: !!anchored,
       planar: !!parent.planar,
       gravity: parent.gravity ? { x: parent.gravity.x, y: parent.gravity.y, z: parent.gravity.z } : null,
+      gravityWell: parent.gravityWell || null,
       colZ0: parent.colZ0 || 0,
       colZ1: parent.colZ1 || 0,
       joints: null,
@@ -3754,6 +3986,7 @@ export const DestructorBeams3D = {
       anchored: false,
       planar: props.planar === undefined ? !!cfg?.planar : !!props.planar,
       gravity: props.gravity ? { x: props.gravity.x, y: props.gravity.y, z: props.gravity.z } : null,
+      gravityWell: props.gravityWell || null,
       colZ0: Number(props.colZ0) || 0,
       colZ1: Number(props.colZ1) || 0,
       joints: null,

@@ -72,8 +72,10 @@ export const HULL_BODY_CONFIG = {
   // hitboxy 3D”): pocisk, wiązka, rzaz i orka lecą w płaszczyźnie gry w pasie ± tyle j. — jak słup okrętu. Węzeł
   // bryły w pasie (|z| ≤ pas + ½ komórki) jest trafialny; co bryła ma nad i pod pasem, broń mija (jak okręt).
   weaponBand: 70,
-  // Odłam bryły 3D poniżej tej wysokości (spadł z budowli w otchłań — grawitacja habitatu) znika (pętla wraków gry).
-  solidFloorZ: -6000,
+  // Odłam bryły 3D poniżej tej wysokości (spadł w otchłań) znika (pętla wraków gry). Od 2026-10-19 bryły bazy piratów
+  // lądują na planetoidzie pod bazą (teren silnika — src/game/story/pirateBaseFall.js; skała 8–40 km pod płaszczyzną),
+  // więc dno leży pod skałą (dawniej −6000: odłamy znikały pod habitatem).
+  solidFloorZ: -45000,
   // Tarcie styku brył 3D (para bierze większe z dwóch; kadłuby — friction): przewrócona wieża szoruje po koronie bębna
   // i dysku, zamiast się z nich zsuwać.
   solidFriction: 0.75,

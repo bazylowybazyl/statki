@@ -982,26 +982,43 @@ export const StoryGame = {
         const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
         at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
       });
-      at(1.1, () => d.baseBreak?.('H-T', { power: 1.8, speed: 70, dir: 'in' }));
-      at(1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: 60, dir: 'out' }));
+      // UPADEK NA PLANETOIDĘ (src/game/story/pirateBaseFall.js; prośba użytkownika 2026-10-19): szyb pęka pierwszy, wieża
+      // (stojąca albo leżąca na dysku po zerwaniu szyi) przebija dysk i spada pierwsza, sektory dysku puszczają za nią
+      // (wybuchy oderwania — zdarzenia upadku), wszystko osiada na skale. Bez terenu skały — dawna implozja.
+      const falling = typeof d.habitatFall === 'function';
+      let fallStarted = false;
+      at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: 60, dir: 'out' }));
+      if (falling) at(0.1, () => { fallStarted = !!d.habitatFall(); if (!fallStarted) this._habitatImplosion(site, H, place, at); });
+      else this._habitatImplosion(site, H, place, at);
       // winda kosmiczna spod dysku mieszkalnego puszcza: lina i głowica spadają na planetoidę, osada wybucha po kolei
       // (scenariusz — src/3d/portBuildings/pirateRockSite3D.js; prośba użytkownika 2026-10-15)
       at(1.5, () => d.rockCollapse?.());
-      for (let k = 0; k < H.discSectors; k++) {
-        const a = (k / H.discSectors) * Math.PI * 2;
-        const p = place.toGame(Math.cos(a) * H.discR * 0.55, Math.sin(a) * H.discR * 0.55);
-        at(1.9 + k * 0.28, () => {
-          d.baseBreak?.(`D-${k + 1}`, { power: 1.6, speed: 90, dir: 'in' });
-          d.reactorBlow?.({ x: p.x, y: p.y, size: 420 });
-          d.shake?.(16, 0.5);
-        });
-      }
-      // koniec: rozpad habitatu i ogień w rurach (od środka i — gdy biegnie — od zbiorników) wygasły
+      // koniec: rozpad habitatu, upadek na planetoidę i ogień w rurach (od środka i — gdy biegnie — od zbiorników)
       let fuelDone = Promise.resolve();
       at(0.6, () => { fuelDone = this._fuelChain(site, 'H'); });
-      // opts.waitFuel = false (misja pominięta skokiem dev) — bez czekania na ogień w rurach
-      this._after(tLast + 1.5, () => { if (opts.waitFuel === false) resolve(); else Promise.all([fuelDone, site.chain.pending || null]).then(resolve); });
+      // opts.waitFuel = false (misja pominięta skokiem dev) — bez czekania na ogień w rurach i upadek
+      this._after(tLast + 1.5, () => {
+        if (opts.waitFuel === false) { resolve(); return; }
+        const fallDone = fallStarted && typeof d.habitatFallDone === 'function' ? d.habitatFallDone(30) : null;
+        Promise.all([fuelDone, site.chain.pending || null, fallDone]).then(resolve);
+      });
     });
+  },
+
+  // Dawny rozpad habitatu bez upadku na planetoidę (brak terenu skały): część techniczna i sektory dysku (duchy) pękają
+  // ku środkowi (implozja) z wybuchami.
+  _habitatImplosion(site, H, place, at) {
+    const d = this.deps;
+    at(1.1, () => d.baseBreak?.('H-T', { power: 1.8, speed: 70, dir: 'in' }));
+    for (let k = 0; k < H.discSectors; k++) {
+      const a = (k / H.discSectors) * Math.PI * 2;
+      const p = place.toGame(Math.cos(a) * H.discR * 0.55, Math.sin(a) * H.discR * 0.55);
+      at(1.9 + k * 0.28, () => {
+        d.baseBreak?.(`D-${k + 1}`, { power: 1.6, speed: 90, dir: 'in' });
+        d.reactorBlow?.({ x: p.x, y: p.y, size: 420 });
+        d.shake?.(16, 0.5);
+      });
+    }
   },
 
   // Reakcja łańcuchowa w rurach (src/game/story/pirateBaseFuel.js): harmonogram z węzła `start` ('P' — zbiorniki,
