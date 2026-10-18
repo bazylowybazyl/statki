@@ -738,8 +738,8 @@ if (TRYBY.includes('upadek')) {
     }
     console.log('    wolne na końcu:', JSON.stringify(wolne.slice(0, 12)));
     // płaskie odłamy habitatu z bryłą upadku, które zostały w płaszczyźnie (powinno być 0 — awans przy HP 0)
-    const plaskieZostaly = window.wrecks.filter((w) => !w.dead && w.beamHull?.body && !w.beamHull.body.dead && w.beamHull.body.planar && w.beamHull.world?.fall3d && w.beamHull.body.activeNodes >= T2.wreckPromoteMinNodes).length;
-    console.log(`    odłamy płaskie: awansowane ${fall.promotedWrecks || 0}, zostały w płaszczyźnie ${plaskieZostaly}, odchyłka środka rzutu bryły od odłamu ≤ ${(fall.promoteErrMax || 0).toFixed(0)} j.`);
+    const plaskieZostaly = window.wrecks.filter((w) => !w.dead && w.beamHull?.body && !w.beamHull.body.dead && w.beamHull.body.planar && w.beamHull.world?.fall3d).length;
+    console.log(`    odłamy płaskie: awansowane ${fall.promotedWrecks || 0}, rozsypane ${fall.dissolvedWrecks || 0}, zostały w płaszczyźnie ${plaskieZostaly}, odchyłka środka rzutu bryły od odłamu ≤ ${(fall.promoteErrMax || 0).toFixed(0)} j.`);
     FALL.detachPirateRockTerrain(fall, D);
     console.log(JSON.stringify({ hz: hz(dt), wariant, zRockPodHabitatem: Math.round(zRock), dziura: fall.holeNodes, podniesione: fall.promoted || 0, korek: { belki: fall.holeCut, odlamy: fall.plugN }, touchT: +fall.touchT.toFixed(2), passT: +fall.passT.toFixed(2),
       fall: { phase: fall.phase, released: fall.released, towerImpactT: +fall.towerImpactT.toFixed(2),

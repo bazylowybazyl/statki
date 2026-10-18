@@ -956,6 +956,19 @@ export function promotePlanarWreck(st, ctx, wreck) {
   return 1;
 }
 
+// Płaski okruch habitatu, który nie dostał bryły (drobnica): rozsypuje się w odłamki (pula efektów) — nic z habitatu
+// nie zostaje dryfujące w płaszczyźnie gry.
+function dissolvePlanarWreck(st, ctx, wreck) {
+  const b = bodyOf(wreck);
+  if (!b || b.dead || !b.planar || wreck.dead) return 0;
+  const s = b.nodeStore, engine = ctx.engine;
+  let n = 0;
+  for (let i = 0; i < s.count && !b.dead; i++) if (s.active[i]) { engine.destroyNode(b, i); n++; }
+  if (b.dead || b.activeNodes <= 0) { ctx.releaseHull?.(wreck); wreck.dead = true; }
+  st.dissolvedWrecks = (st.dissolvedWrecks || 0) + 1;
+  return n;
+}
+
 // Puszczenie sektora dysku: kotwice zerwane, wrak 3D z grawitacją skały, prędkość ku dziurze po wieży i obrót, który
 // opuszcza jego wewnętrzną krawędź (dysk składa się za wieżą).
 function releaseDisc(st, ctx, id, tune) {
@@ -1054,7 +1067,10 @@ export function stepHabitatFall(st, ctx, dt) {
     if (st.passed) while (st.queue.length && st.passT + st.queue[0].t <= st.t) releaseDisc(st, ctx, st.queue.shift().id, tune);
     sweepTowerColumn(st, ctx, dt, tune, solids);
     // płaskie odłamy habitatu sprzed HP 0 → bryły 3D (po kilka na krok — każdy to ciało z maską)
-    for (let k = 0; k < tune.wreckPromotePerStep && st.wreckQueue.length; k++) promotePlanarWreck(st, ctx, st.wreckQueue.shift());
+    for (let k = 0; k < tune.wreckPromotePerStep && st.wreckQueue.length; k++) {
+      const w = st.wreckQueue.shift();
+      if (!promotePlanarWreck(st, ctx, w)) dissolvePlanarWreck(st, ctx, w);
+    }
   }
   // bryły bazy: grawitacja skały (po śmierci habitatu wszystkie swobodne; wcześniej odłamy spod habitatu), spoczynek
   const recs = st.recs;
