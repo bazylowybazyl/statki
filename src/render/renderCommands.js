@@ -23,6 +23,7 @@ import { ActiveCarrier } from '../game/carrierVelocity.js';
 import { CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
 import { MASTER_WEAPONS } from '../data/weapons.js';
+import { ROCK_IMPACT_CODE } from './rockImpactRecord.js';
 
 /** Kody typów rekordów (1…65535; 0 = PAD pierścienia). */
 export const RC = Object.freeze({
@@ -61,7 +62,10 @@ export const RC = Object.freeze({
   WARP_BEGIN: 74,    // nowy przylot / odlot: slot, rodzaj, encja (slot, gen)
   WARP_ATTACH: 75,   // podpięcie okrętu do zaplanowanego przylotu: slot, encja
   WARP_END: 76,      // koniec rekordu: slot
-  WARP_CLEAR: 77     // wszystkie rekordy do zera (nowa gra, teleport w harnessie)
+  WARP_CLEAR: 77,    // wszystkie rekordy do zera (nowa gra, teleport w harnessie)
+  // Planetoida pod bazą piratów (misja 1): uderzenie / szorowanie / osiadanie ciała na skale (src/game/story/pirateRockImpacts.js
+  // → obraz src/3d/pirateRockImpactFx.js; układ rekordu: src/render/rockImpactRecord.js). Zakres 112–115 dla tego toru.
+  ROCK_IMPACT: ROCK_IMPACT_CODE
 });
 
 /** Rodzaje rekordu SHOT i HEX_HIT. */

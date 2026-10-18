@@ -357,8 +357,23 @@ export class ExplosionFx {
     this.glow = new GlowSprites({ scene, capacity: 512, renderOrder: 915 });
     this.glow.mesh.name = 'WybuchOdłamki';
     this.glow.mesh.layers.set(FG_LAYER);
+    // DOMENY GŁĘBOKIE (GasSlot.deep, 2026-10-19 — uderzenia w planetoidę pod bazą piratów, wylot powietrza i ogień z dysku
+    // mieszkalnego): bryły w passie TŁA (warstwa 1, perspektywa) dla każdego atlasu — deepDomain().
+    this._deepSets = [];
+    for (let t = 0; t < this._volumes.length; t++) {
+      const vol = this._volumes[t];
+      const ds = vol.createDeepMeshes({ layer: BG_LAYER, renderOrder: 10, name: t === 0 ? 'WybuchGłęboki' : (grids[t] === fine ? 'WybuchGłębokiFine' : 'WybuchGłębokiCoarse') });
+      scene.add(ds.out.mesh, ds.in.mesh);
+      this._deepSets.push(ds);
+    }
+    this.deepSun = [1, 0, 0];
+    this._deepAcq = { size: 1, life: 6, carrier: [0, 0, 0], tint: null, now: 0, reuse: false, tag: 0, priority: 0, host: 0, tier: 0, k: 1,
+      fire: 0, fadeTime: 1.6, baseDecay: 0, ambient: 0, deep: true, ground: null, offset: null };
+    this._deepGround = { x: 0, y: 0, z: 0, r: 0 };
+    this._deepOffset = [0, 0, 0];
     this.warmMeshes = [this.meshes.back, this.meshes.front, this.embers.mesh, this.flashes.mesh, this.glow.mesh];
     for (let t = 1; t < this._meshSets.length; t++) this.warmMeshes.push(this._meshSets[t].back, this._meshSets[t].front);
+    for (const ds of this._deepSets) this.warmMeshes.push(ds.out.mesh, ds.in.mesh);
     // Rozgrzewka także w rejestrze ekranu ładowania (2026-10-17, przestoje w bitwie): w workerze renderu (?renderWorker=1)
     // klucz z `_warm` kroku (prewarmPass przy tworzeniu reżysera) nie trafiał w prawdziwy rysunek — pierwsza domena
     // atlasu „coarse” i podstawowego budowała bryły gazu w klatce (NodeBuilder 130–370 ms na bryłę, pipeline'y
@@ -473,7 +488,9 @@ export class ExplosionFx {
       // atlas „fine” (F5b, etap D): wybuchy w nim, domeny żywe (ostatnia klatka) i najwięcej naraz
       fineGas: 0, fineDomains: 0, fineMax: 0, coarseGas: 0, coarseDomains: 0, coarseMax: 0,
       // bez wolnej domeny dołożone do żywej przy łagodniejszym teście (RELAX_FIT_R) zamiast cząstek
-      relaxed: 0 };
+      relaxed: 0,
+      // domeny głębokie (deepDomain): nowe, za małe na ekranie, poza kadrem, bez wolnej domeny (zapas), żywe (ostatnia klatka)
+      deepNew: 0, deepSmall: 0, deepOff: 0, deepNoSlot: 0, deepDomains: 0 };
     const self = this;
     this.step = {
       name: 'wybuchy',
@@ -623,12 +640,22 @@ export class ExplosionFx {
     for (let i = 0; i < g.S; i++) {
       const s = g.slots[i];
       if (!s.active || s.fade <= 0) continue;
-      const half = s.h * s.n * 0.5, gx = s.cx, gy = -s.cy;   // świat gry
+      let half = s.h * s.n * 0.5, gx = s.cx, gy = -s.cy;   // świat gry
+      // domena głęboka (pass tła, perspektywa): z góry — pudło rzutowane na płaszczyznę gry (mniejsze o k), promień idzie
+      // skośnie przez pudło (do ~1,5 × wysokości w komórkach); kamery 3D — px z odległości
+      let ppu = 0, steps = s.nz;
+      if (s.deep) {
+        steps = s.nz * 1.5;
+        if (!free) {
+          const pr = this._deepProject(gx, gy, s.cz, this._dp || (this._dp = { x: 0, y: 0, k: 1 }));
+          half *= pr.k; gx = pr.x; gy = pr.y;
+          ppu = this._pxPerUnit(gx, gy);
+        } else ppu = this._pxPerUnitZ(gx, gy, s.cz);
+      } else ppu = this._pxPerUnit(gx, gy);
       const ox = Math.min(x1, gx + half) - Math.max(x0, gx - half);
       const oy = Math.min(y1, gy + half) - Math.max(y0, gy - half);
       if (ox <= 0 || oy <= 0) continue;
-      const ppu = this._pxPerUnit(gx, gy);
-      samples += ox * oy * ppu * ppu * (s.nz / stepC);
+      samples += ox * oy * ppu * ppu * (steps / stepC);
     }
     const target = clamp(samples / (T.marchBudget * 1e6), 1, Math.max(1, T.marchStepMax));
     const prev = this._stepK || 1;
@@ -704,6 +731,8 @@ export class ExplosionFx {
       if (!s.active || (free && now > s.until)) continue;
       // Domena efektu (gaz z lufy, dym zapłonu) — inny przepis i komórka; wybuch jej nie scala (może ją przejąć w _slotFor).
       if (isEffectTag(s.tag)) continue;
+      // Domena głęboka (pass tła — skała pod bazą, dysk mieszkalny) leży pod płaszczyzną gry — wybuch w płaszczyźnie jej nie scala.
+      if (s.deep) continue;
       // Pełna lista gospodarzy (16 rodów) — nowy wybuch z nowym gospodarzem nie scala się (wrak-gospodarz stałby się
       // przeszkodą własnego gazu); idzie do nowej domeny albo cząstkami (przegląd etapu C pkt 4).
       if (!s.canHost(this._optHost)) continue;
@@ -1660,6 +1689,11 @@ export class ExplosionFx {
     // ta sama wygładzona jasność co tło — planet3d.assets.js) i przełącznik świateł siatki.
     const sky = typeof window !== 'undefined' && typeof window.getSkyRegion === 'function' ? Number(window.getSkyRegion()) : 1;
     const stepK = this._marchStep(ctx);
+    // Domeny głębokie: kamera passa tła z poprzedniej klatki (syncCamera biegnie po klatce efektów) — domena z kamerą
+    // w pudle rysuje się tyłem bez testu głębi; słońce cienia kuli-przeszkody (skała — deepSun, ustawia właściciel).
+    const cp = (ctx.core || this.core)?.cameraPersp?.position || null;
+    const ds = this.deepSun;
+    let deepN = 0;
     for (const vol of this._volumes) {
       vol.stepScale = stepK;
       vol.ambientScale = Number.isFinite(sky) ? sky * this.tune.ambientSky : 1;
@@ -1667,7 +1701,10 @@ export class ExplosionFx {
       vol.skipEmpty = this.tune.marchSkip !== false;
       vol.syncLook();
       vol.updateMeshes(origin.x, origin.y, 0);
+      vol.deepSunDir.set(ds[0], ds[1], ds[2]);
+      deepN += vol.updateDeepMeshes(origin.x, origin.y, cp ? cp.x : NaN, cp ? cp.y : NaN, cp ? cp.z : NaN);
     }
+    this.stats.deepDomains = deepN;
     const cam = this._camera(ctx);
     this.embers.update(ctx.renderer, dt, cam);
     this.flashes.update(dt, cam);
@@ -1678,6 +1715,7 @@ export class ExplosionFx {
     if (!T.gas || T.drawGas === false) {
       this.meshes.back.visible = false; this.meshes.front.visible = false;
       for (const ms of this._meshSets) { ms.back.visible = false; ms.front.visible = false; }
+      for (const d of this._deepSets) { d.out.mesh.visible = false; d.in.mesh.visible = false; }
     }
     if (!T.embers) this.embers.mesh.visible = false;
     if (!T.flash) this.flashes.mesh.visible = false;
@@ -1725,7 +1763,8 @@ export class ExplosionFx {
     let n = 0;
     for (let i = 0; i < g.S; i++) {
       const s = g.slots[i];
-      if (!s.active) continue;
+      // domena bez kadłubów-przeszkód (głęboka, noHulls) — gra nie pakuje dla niej kadłubów
+      if (!s.active || s.noHulls) continue;
       if ((n + 1) * 4 > out.length) break;
       const half = s.h * s.n * 0.5;
       const b = n * 4;
@@ -1801,26 +1840,155 @@ export class ExplosionFx {
     this.embers.warm(ctx.renderer);
     const MS = this._meshSets;
     const savedG = MS.map((ms) => ms.geometry.instanceCount);
+    const deepG = [];
+    for (const d of this._deepSets) deepG.push(d.out.geo, d.in.geo);
+    const savedD = deepG.map((g) => g.instanceCount);
     const saved = [0, this.embers.mesh.count, this.flashes.geo.instanceCount, this.glow.geo.instanceCount];
     const vis = this.warmMeshes.map((m) => m.visible);
     MS.forEach((ms, i) => { ms.geometry.instanceCount = Math.max(2, savedG[i]); });
+    deepG.forEach((g, i) => { g.instanceCount = Math.max(2, savedD[i]); });
     this.embers.mesh.count = Math.max(2, saved[1]);
     this.flashes.geo.instanceCount = Math.max(2, saved[2]);
     this.glow.geo.instanceCount = Math.max(2, saved[3]);
     for (const m of this.warmMeshes) m.visible = true;
     try {
       for (const m of this.warmMeshes) {
-        const layer = m.layers.isEnabled(FG_LAYER) ? FG_LAYER : 0;
+        const layer = m.layers.isEnabled(FG_LAYER) ? FG_LAYER : (m.layers.isEnabled(BG_LAYER) ? BG_LAYER : 0);
         core.prewarmPass?.(m, layer);
         core.prewarmPass?.(m, layer, { ortho: false });
       }
     } finally {
+      deepG.forEach((g, i) => { g.instanceCount = savedD[i]; });
       MS.forEach((ms, i) => { ms.geometry.instanceCount = savedG[i]; });
       this.embers.mesh.count = saved[1];
       this.flashes.geo.instanceCount = saved[2];
       this.glow.geo.instanceCount = saved[3];
       this.warmMeshes.forEach((m, i) => { m.visible = vis[i]; });
     }
+  }
+
+  // ------------------------------------------------------------------ domeny głębokie (pass tła)
+
+  /**
+   * Rzut punktu świata gry (x, y, z — wysokość, ujemna pod płaszczyzną) na płaszczyznę gry kamery z góry: { x, y } (gra)
+   * i k = skala (Zc / (Zc − z), Zc — wysokość kamery perspektywy z góry: (h CSS / 2) / tg 17,5° / zoom). Kamery 3D — k z
+   * odległości (out.k = px na j. / px na j. płaszczyzny przy zoomie — nie używać jako rzutu). out — obiekt wyniku.
+   */
+  _deepProject(x, y, z, out) {
+    const core = this.core;
+    const cam = core.activeCam1;
+    if (!cam || (typeof core.isFreePerspectiveCamera === 'function' && core.isFreePerspectiveCamera())) {
+      out.x = x; out.y = y; out.k = 1; return out;
+    }
+    const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
+    const cssH = typeof core._viewCssH === 'function' ? core._viewCssH() : (Number(core.composerTarget?.height) || 900);
+    const Zc = (cssH * 0.5) / FLAT_PERSP_TAN / zoom;
+    const k = Zc / Math.max(1, Zc - (Number(z) || 0));
+    const cx = Number(cam.x) || 0, cy = Number(cam.y) || 0;
+    out.x = cx + (x - cx) * k; out.y = cy + (y - cy) * k; out.k = k;
+    return out;
+  }
+
+  /** Px ekranu na j. świata w punkcie (x, y, z) świata gry (rzut perspektywy passa tła; kamery 3D — z odległości). */
+  _pxPerUnitZ(x, y, z) {
+    const core = this.core;
+    if (typeof core.isFreePerspectiveCamera === 'function' && core.isFreePerspectiveCamera()) {
+      const cam = core.cameraPersp;
+      if (cam) {
+        const H = Number(core.composerTarget?.height) || 1080;
+        const p = cam.position;
+        const dx = p.x - x, dy = p.y + y, dz = p.z - (Number(z) || 0);
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        const tanH = Math.tan(((Number(cam.fov) || 50) * Math.PI / 180) * 0.5);
+        return (H * 0.5) / (d * tanH);
+      }
+    }
+    const pr = this._deepProject(x, y, z, this._dp || (this._dp = { x: 0, y: 0, k: 1 }));
+    return Math.max(1e-4, Number(core.activeCam1?.zoom) || 1) * (Number(core.pxScale) || 1) * pr.k;
+  }
+
+  /** Czy obłok (x, y, z świata gry, zasięg reach) jest w kadrze passa tła (kamera z góry — rzut; kamery 3D — zawsze). */
+  _deepInView(x, y, z, reach) {
+    const core = this.core;
+    if (typeof core.isFreePerspectiveCamera === 'function' && core.isFreePerspectiveCamera()) return true;
+    const view = core.fx?.view || null;
+    if (!view || !(view.x1 > view.x0)) return true;
+    const pr = this._deepProject(x, y, z, this._dp || (this._dp = { x: 0, y: 0, k: 1 }));
+    return explosionInView(view, pr.x, pr.y, reach * pr.k);
+  }
+
+  /**
+   * DOMENA GŁĘBOKA gazu (GasSlot.deep — rysowana w passie TŁA, kamera perspektywy; bez rastra statyki i kadłubów-przeszkód):
+   * (x, y) świata GRY (y w dół), z — wysokość świata (ujemna pod płaszczyzną gry), R — promień obłoku [j.] (bok domeny =
+   * R × domainScale). Opcje:
+   *   up [ux, uy, uz] (gra) — kierunek „w górę” obłoku: środek domeny przesunięty wzdłuż niego o upShift × wysokość domeny
+   *   (obłok rośnie od powierzchni), ground { x, y, z, r } (gra) — KULA-przeszkoda (planetoida: gaz rozlewa się po niej,
+   *   marsz obrazu kończy się na niej, cień kuli w świetle słońca deepSun), carrier [vx, vy, vz] (gra) — domena i emitery
+   *   jadą z nim (spadająca bryła), life, fadeTime, baseDecay (≥ −0,4 — ujemny: pył trzyma się dłużej), tint, fire, tag,
+   *   priority, ambient, tier (GAS_TIER_*; domyślnie wg promienia na ekranie jak wybuchy), domainScale (4,4), minPx (promień
+   *   na ekranie, poniżej — bez domeny), reserve (wolnych domen zostawionych wybuchom w płaszczyźnie gry, domyślnie 1),
+   *   inView (false — bez testu kadru).
+   * Zwraca indeks globalny domeny albo −1. Źródła: this.director.jet / puff / fire / trail(slot, X, Y, Z, …) w SCENIE (X = x gry,
+   * Y = −y gry, Z = z; kierunki tak samo). Życie: this.grid.feed / keepAlive(slot, until) (zegar this.grid.time).
+   */
+  deepDomain(x, y, z, R, o = {}) {
+    const T = this.tune;
+    const g = this.grid;
+    if (!T.enabled || !T.gas || !(g.S > 0) || !(R > 0) || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return -1;
+    const ppu = this._pxPerUnitZ(x, y, z);
+    const rPx = R * ppu;
+    if (Number(o.minPx) > 0 && rPx < o.minPx) { this.stats.deepSmall++; return -1; }
+    if (o.inView !== false && !this._deepInView(x, y, z, R * 2.4)) { this.stats.deepOff++; return -1; }
+    let free = 0;
+    for (let i = 0; i < g.S; i++) if (!g.slots[i].active && this._tierAllowed(g.slots[i].tier | 0)) free++;
+    if (free <= (Number.isFinite(o.reserve) ? o.reserve : 1)) { this.stats.deepNoSlot++; return -1; }
+    const order = Number.isFinite(o.tier) ? [o.tier | 0] : (rPx >= T.fineMinPx ? TIER_ORDER_BIG : (rPx < T.coarseMaxPx ? TIER_ORDER_SMALL : TIER_ORDER_MID));
+    let pick = -1;
+    for (let j = 0; j < order.length && pick < 0; j++) if (this._tierAllowed(order[j])) pick = this._freeIn(this._tierIx[order[j]]);
+    if (pick < 0) { this.stats.deepNoSlot++; return -1; }
+    const A = this._deepAcq;
+    const ps = g.slots[pick];
+    const grid = g.grids[ps.tier | 0];
+    const dsc = Number(o.domainScale) > 0 ? Number(o.domainScale) : 4.4;
+    A.tier = ps.tier | 0;
+    A.k = ps.n / dsc / GAS_CELLS_PER_R_REF;
+    A.size = R * dsc;
+    A.life = Number(o.life) > 0 ? Number(o.life) : 6;
+    A.fadeTime = Number(o.fadeTime) > 0 ? Number(o.fadeTime) : 1.6;
+    A.baseDecay = Number(o.baseDecay) || 0;
+    A.tint = o.tint || null;
+    A.fire = Number(o.fire) || 0;
+    A.tag = o.tag ?? 0;
+    A.priority = o.priority ?? 0;
+    A.ambient = Number(o.ambient) || 0;
+    A.host = 0;
+    A.now = g.time;
+    const car = o.carrier;
+    A.carrier[0] = car ? (Number(car[0]) || 0) : 0; A.carrier[1] = car ? -(Number(car[1]) || 0) : 0; A.carrier[2] = car ? (Number(car[2]) || 0) : 0;
+    const up = o.up;
+    if (up) {
+      const sh = (Number.isFinite(o.upShift) ? o.upShift : 0.22) * A.size * (grid.NZ / grid.N);
+      const off = this._deepOffset;
+      off[0] = (Number(up[0]) || 0) * sh; off[1] = -(Number(up[1]) || 0) * sh; off[2] = (Number(up[2]) || 0) * sh;
+      A.offset = off;
+    } else A.offset = null;
+    const gd = o.ground;
+    if (gd && Number(gd.r) > 0) {
+      const G = this._deepGround;
+      G.x = Number(gd.x); G.y = -Number(gd.y); G.z = Number(gd.z); G.r = Number(gd.r);
+      A.ground = G;
+    } else A.ground = null;
+    A.deep = true;
+    const slot = g.acquire(x, -y, z, R, A);
+    if (slot >= 0) this.stats.deepNew++;
+    return slot;
+  }
+
+  /** Słońce cienia kuli-przeszkody domen głębokich (scena: kierunek do Słońca; skała — z płaszczyzny gry, z = 0). */
+  setDeepSun(x, y, z = 0) {
+    const l = Math.sqrt(x * x + y * y + z * z);
+    if (!(l > 1e-9)) return;
+    this.deepSun[0] = x / l; this.deepSun[1] = y / l; this.deepSun[2] = z / l;
   }
 
   clear() {
@@ -1834,6 +2002,7 @@ export class ExplosionFx {
     this.glow.begin();
     this.glow.mesh.visible = false;
     for (const ms of this._meshSets) { ms.back.visible = false; ms.front.visible = false; }
+    for (const d of this._deepSets) { d.out.mesh.visible = false; d.in.mesh.visible = false; }
   }
 
   dispose() {
@@ -1841,6 +2010,7 @@ export class ExplosionFx {
     if (this._originEntry) this.core?.fx?.origin?.unregister?.(this._originEntry);
     this.core?.scene?.remove(this.embers.mesh, this.flashes.mesh, this.glow.mesh);
     for (const ms of this._meshSets) this.core?.scene?.remove(ms.back, ms.front);
+    for (const d of this._deepSets) this.core?.scene?.remove(d.out.mesh, d.in.mesh);
     this.grid.dispose();
   }
 }
@@ -1855,6 +2025,10 @@ const JET_AXIS_SPREAD = 0.22;
 const JET_AXIS_DUR = [1.0, 1.8];
 /** Warstwa passa FG Core3D (perspektywa nad płaszczyzną gry, po passie ortho). */
 const FG_LAYER = 2;
+/** Warstwa passa TŁA Core3D (perspektywa, przed wszystkimi — skała pod bazą, dysk mieszkalny): bryły domen głębokich. */
+const BG_LAYER = 1;
+/** Kąt widzenia kamery perspektywy z góry (Core3D FLAT_PERSP_FOV = 35°) — rzut punktów pod płaszczyzną gry. */
+const FLAT_PERSP_TAN = Math.tan((35 * Math.PI / 180) * 0.5);
 
 // Wybuch wtórny: mały, w tej samej domenie gazu, bez własnych wtórnych.
 const SECONDARY_PROFILE = Object.freeze({
