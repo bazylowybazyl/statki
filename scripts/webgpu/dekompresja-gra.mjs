@@ -31,6 +31,13 @@ const tryby = String(args.tryb || 'prog,krater,szyja,magazyn,final').split(',').
 const ZOOM = Number(args.zoom || 0.22);
 const NEAR = Number(args.blisko || 0.55);
 const K3D = String(args.k3d || '1') === '1';
+// --look gas=0,steamBudget=200 — liczby (0 / 1 dla przełączników); --atmo 0 — bez atmosfery; --czasy 2.4,5 — kadry finału
+const LOOK = String(args.look || '').split(',').map((s) => s.trim()).filter(Boolean).map((kv) => {
+  const [k, v] = kv.split('=');
+  return [k.trim(), Number(v)];
+});
+const ATMO_OFF = String(args.atmo ?? '1') === '0';
+const CZASY = args.czasy ? String(args.czasy).split(',').map(Number).filter((x) => x >= 0) : null;
 
 const { server, base } = await startVite(Number(args.port || 5391));
 const chrome = await startChrome({ width: W, height: H, renderMode: WORKER ? 'worker' : 'off' });
@@ -84,6 +91,14 @@ async function startStoryOnce(phase) {
       if (s.hull) s.hull.val = s.hull.max; if (s.shield) s.shield.val = s.shield.max; if (window.fireControl) window.fireControl.posture = 'hold'; }, 100);
     return true;
   })()`);
+  // A/B wyglądu: --look k=v,… (VENT_LOOK obrazu wyrw — tryb off) i --atmo 0 (atmosfera wyłączona — bez wyrw)
+  if (LOOK.length || ATMO_OFF) {
+    await ev(`(() => {
+      const L = window.PirateVentLook; if (L) for (const [k, v] of ${JSON.stringify(LOOK)}) L[k] = v;
+      if (${ATMO_OFF} && window.PirateBaseAtmosphere) window.PirateBaseAtmosphere.tune.enabled = false;
+      return true;
+    })()`);
+  }
 }
 
 const placeHub = (x, z, heading) => ev(`(() => {
@@ -284,7 +299,7 @@ async function trybFinal() {
   const tp = await nowMs();
   const t0 = Date.now();
   await ev(`(() => { const st = window.StoryGame.site.structures.habitat; window.applyDamageToStation(st, st.hp + 10); return true; })()`);
-  const rows = await series('final', t0, [0.5, 1.4, 2.4, 3.5, 5, 7.5, 11]);
+  const rows = await series('final', t0, CZASY || [0.5, 1.4, 2.4, 3.5, 5, 7.5, 11]);
   let rows3 = null;
   if (K3D) {
     await cam3D('tactical');
@@ -339,32 +354,50 @@ async function trybGlebia() {
   report.tryby.glebia = { dysk: d, kadryDysk: rows, bryla: f, kadrySpadek: rows2, pipeline: await pipesSince(tp) };
 }
 
-// A/B kosztu: ten sam scenariusz (próg punktów bębna) z atmosferą i bez; okno 0–6 s po pęknięciu.
+// A/B kosztu: ten sam scenariusz z atmosferą i bez (ABAB). --scen prog (próg punktów bębna, okno 0–6 s po pęknięciu)
+// albo final (habitat do zera, okno 0–9 s). Czas GPU = render (Core3D.gpuFrameMs) + compute (Core3D.gpuComputeMs — gaz
+// wybuchów i wyrw liczy się w compute); próbka liczona tylko, gdy przyszła NOWA (liczniki gpuFrameSamples /
+// gpuComputeSamples — znaczniki czasu co kilka klatek). Tryb off (Core3D strony).
 async function trybKoszt() {
+  const scen = String(args.scen || 'prog');
   const runOne = async (on) => {
     await startStory('shipyard');
     const L = await ev(`(() => { const l = window.StoryGame.site.dock.layout; return { drumR: l.habitat.drumR }; })()`);
-    await placeHub(0, 4000, -Math.PI / 2);
+    await placeHub(0, scen === 'final' ? 4500 : 4000, -Math.PI / 2);
     await waitFor(cdp, '(window.WorldBodies?.stats?.live || 0) > 0', 30000, 200);
     await ev(`(() => { window.PirateBaseAtmosphere.tune.enabled = ${on}; return true; })()`);
-    await sleep(2500);
-    await camHub(0, L.drumR * 1.2, Number(args.zoomKoszt || 0.3));
+    if (scen === 'final') await ev(`(() => { const st = window.StoryGame.site.structures.habitat; window.WorldBodies.setAllLive(st._worldSite, true); return true; })()`);
+    await sleep(scen === 'final' ? 3500 : 2500);
+    if (scen === 'final') await camHub(0, 0, Number(args.zoomKoszt || 0.2));
+    else await camHub(0, L.drumR * 1.2, Number(args.zoomKoszt || 0.3));
     await sleep(1500);
     await ev(`(() => {
-      const R = window.__kz = { on: false, gpu: [], dt: [], last: 0 };
+      const R = window.__kz = { on: false, gpu: [], cmp: [], dt: [], last: 0, fs: -1, cs: -1 };
       const C = window.Core3D;
-      const tick = (t) => { requestAnimationFrame(tick); if (R.on) { if (R.last) R.dt.push(t - R.last); const g = C.gpuFrameMs; if (g > 0) R.gpu.push(g); } R.last = t; };
+      const tick = (t) => {
+        requestAnimationFrame(tick);
+        if (R.on) {
+          if (R.last) R.dt.push(t - R.last);
+          if (C.gpuFrameSamples !== R.fs) { R.fs = C.gpuFrameSamples; if (C.gpuFrameMs > 0) R.gpu.push(C.gpuFrameMs); }
+          if (C.gpuComputeSamples !== R.cs) { R.cs = C.gpuComputeSamples; if (C.gpuComputeMs >= 0) R.cmp.push(C.gpuComputeMs); }
+        } else { R.fs = C.gpuFrameSamples; R.cs = C.gpuComputeSamples; }
+        R.last = t;
+      };
       requestAnimationFrame(tick);
       return true;
     })()`);
     const tp = await nowMs();
-    await habitatStep(0, L.drumR * 0.9);
+    if (scen === 'final') await ev(`(() => { const st = window.StoryGame.site.structures.habitat; window.applyDamageToStation(st, st.hp + 10); return true; })()`);
+    else await habitatStep(0, L.drumR * 0.9);
     await ev('(() => { window.__kz.on = true; return true; })()');
-    await sleep(6000);
+    await sleep(scen === 'final' ? 9000 : 6000);
     const s = await ev(`(() => {
       const R = window.__kz; R.on = false;
       const q = (a, f) => { const b = a.slice().sort((x, y) => x - y); return b.length ? +b[Math.min(b.length - 1, Math.floor(b.length * f))].toFixed(3) : 0; };
-      return { klatek: R.dt.length, klatkaP50: q(R.dt, 0.5), klatkaP95: q(R.dt, 0.95), gpuP50: q(R.gpu, 0.5), gpuP95: q(R.gpu, 0.95), gpuMax: q(R.gpu, 1), probekGpu: R.gpu.length };
+      const avg = (a) => a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(3) : 0;
+      return { klatek: R.dt.length, klatkaP50: q(R.dt, 0.5), klatkaP95: q(R.dt, 0.95),
+        gpuP50: q(R.gpu, 0.5), gpuP95: q(R.gpu, 0.95), gpuMax: q(R.gpu, 1), gpuSr: avg(R.gpu), probekGpu: R.gpu.length,
+        cmpP50: q(R.cmp, 0.5), cmpP95: q(R.cmp, 0.95), cmpMax: q(R.cmp, 1), cmpSr: avg(R.cmp), probekCmp: R.cmp.length };
     })()`);
     s.pipeline = await pipesSince(tp);
     s.atmo = await atmo();
@@ -374,9 +407,10 @@ async function trybKoszt() {
   const B = await runOne(false);
   const A2 = await runOne(true);
   const B2 = await runOne(false);
-  report.tryby.koszt = { z: [A, A2], bez: [B, B2] };
-  console.log('KOSZT z atmosferą', JSON.stringify([A, A2].map((x) => ({ gpuP50: x.gpuP50, gpuP95: x.gpuP95, klatkaP50: x.klatkaP50 }))));
-  console.log('KOSZT bez', JSON.stringify([B, B2].map((x) => ({ gpuP50: x.gpuP50, gpuP95: x.gpuP95, klatkaP50: x.klatkaP50 }))));
+  report.tryby.koszt = { scen, z: [A, A2], bez: [B, B2] };
+  const row = (x) => ({ gpuP50: x.gpuP50, gpuP95: x.gpuP95, gpuSr: x.gpuSr, cmpP50: x.cmpP50, cmpP95: x.cmpP95, cmpSr: x.cmpSr, klatkaP50: x.klatkaP50, sync: x.pipeline?.sync });
+  console.log(`KOSZT (${scen}) z atmosferą`, JSON.stringify([A, A2].map(row)));
+  console.log(`KOSZT (${scen}) bez`, JSON.stringify([B, B2].map(row)));
 }
 
 const RUN = { prog: trybProg, krater: trybKrater, szyja: trybSzyja, magazyn: trybMagazyn, final: trybFinal, glebia: trybGlebia, koszt: trybKoszt };
