@@ -56,6 +56,10 @@ export const VENT_LOOK = {
   gasSpeed: 1.25,               // prędkość strumienia gazu [× długość obłoku / s]
   // para sublimuje i rozchodzi się w próżni — stały zanik w domenie wylotu (obłok nie wisi)
   gasLinger: 1.0, gasFade: 1.3, gasDecay: 1.1,
+  // obraz i symulacja gaszą gaz za ~0,9 elipsoidy wpisanej w pudło domeny (pudło płaskie: wysokość 0,375 boku) — prędkość
+  // strumienia dopasowana do drogi do brzegu: zasięg ≈ dysza + v · gasCoast ≤ gasFitK × droga (wyrwa w pion — kikut szybu,
+  // spód dysku — nie wbija się płasko w sufit); światło otoczenia obłoku (bez niego gęsty rdzeń pod słońcem z boku czarny)
+  gasCoast: 1.2, gasFitK: 0.8, gasAmbient: 0.22,
   // barwa domeny × albedo sadzy obrazu gazu (0,15) = albedo pary: biała, lekko błękitna (~0,77); przy ogniu — szara
   steamTint: [4.3, 4.9, 5.9], sootTint: [1.5, 1.45, 1.4], sootFire: 0.3, sootSmolder: 0.15,
   // para i lód (cząstki)
@@ -144,7 +148,7 @@ export class PirateBaseVents3D {
     this._steamWant = 0; this._flameWant = 0; this._emberWant = 0;
     this._steamK = 1; this._flameK = 1; this._emberK = 1;
     this.layers = null;
-    this.stats = { vents: 0, gas: 0, deepGas: 0, noSlot: 0, particles: 0, lights: 0 };
+    this.stats = { vents: 0, gas: 0, deepGas: 0, noSlot: 0, particles: 0, lights: 0, cpuMs: 0, cpuAvg: 0, cpuMax: 0 };
     this._ensure();
     if (core.warmup && typeof core.warmup.add === 'function') {
       core.warmup.add({ name: 'wyrwy bazy piratów (para, ogień, żar)', objects: () => (this._ensure() ? this.meshes() : null), phase: 'loading', variant: WARIANT_INSTANCJI });
@@ -180,6 +184,14 @@ export class PirateBaseVents3D {
    */
   update(frame, dt) {
     if (!this.look.enabled || !this._ensure()) return;
+    const t0 = performance.now();
+    this._update(frame, dt);
+    // czas CPU obrazu wyrw (klatka, średnia wykładnicza, szczyt) — narzędzia
+    const ms = performance.now() - t0, S = this.stats;
+    S.cpuMs = ms; S.cpuAvg += (ms - S.cpuAvg) * 0.05; if (ms > S.cpuMax) S.cpuMax = ms;
+  }
+
+  _update(frame, dt) {
     const step = Math.max(0, Math.min(0.1, Number(dt) || 0));
     this.frameNo++;
     const f = this.frameNo;
@@ -576,7 +588,10 @@ export class PirateBaseVents3D {
     e.px = e.x; e.py = e.y; e.pz = e.z;
     const jl = r * 1.6;
     e.jx = nx * jl; e.jy = -ny * jl; e.jz = nz * jl;
-    const U = L0 * L.gasSpeed * speedK * (0.35 + 0.65 * Math.sqrt(flow));
+    let U = L0 * L.gasSpeed * speedK * (0.35 + 0.65 * Math.sqrt(flow));
+    // droga od dyszy do brzegu elipsoidy domeny wzdłuż wylotu (scena) — prędkość dopasowana (najmniej 0,12 U: „pyknięcie”)
+    const avail = fitAlong(s, e.x, e.y, e.z, nx, -ny, nz, 0.9);
+    if (avail > 0) U = Math.max(0.12 * U, Math.min(U, (L.gasFitK * avail - jl) / L.gasCoast));
     e.dvx = nx * U; e.dvy = -ny * U; e.dvz = nz * U;
     e.radial = U * 0.22;
     e.r0 = Math.max(r * 0.8, 3.2 * s.h); e.r1 = e.r0 * 1.7;
@@ -597,9 +612,11 @@ export class PirateBaseVents3D {
     for (let i = 0; i < g.S; i++) if (!g.slots[i].active) free++;
     const reserve = Number(fx.tune?.muzzleReserve ?? L.gasReserve);
     if (mine >= L.gasDomains || free <= reserve) { this.stats.noSlot++; return false; }
-    // środek domeny: przed otworem (obłok mieści się w kole życia gazu); płaska domena — w pionie bliżej otworu
+    // środek domeny: przed otworem (obłok mieści się w kole życia gazu); płaska domena (wysokość 0,375 boku) — w pionie
+    // źródło w dolnej (wylot w górę) / górnej (w dół) części pudła: środek o nz × min(ahead, 0,103 boku) dalej
     const ahead = Math.min(L0 * 0.42, FIT_RR * D * 0.5 - r * 2);
     const cx = x + nx * ahead, cy = y + ny * ahead;
+    const cz = z + nz * Math.min(ahead, 0.103 * D);
     let slot = -1;
     if (deep) {
       // domena GŁĘBOKA (pass tła z perspektywą — reżyser wybuchów, ExplosionFx.deepDomain; świat gry): skała pod bazą
@@ -607,9 +624,9 @@ export class PirateBaseVents3D {
       if (typeof fx.deepDomain !== 'function') { this.stats.noSlot++; return false; }
       const rs = pirateRockSite();
       const ground = rs && rs.at && rs.rock?.layout?.center ? this._ground(rs) : null;
-      slot = fx.deepDomain(cx, cy, z + nz * ahead * 0.5, D / 5.4, {
+      slot = fx.deepDomain(cx, cy, cz, D / 5.4, {
         carrier: [cvx, cvy, cvz], life: L.gasLinger, fadeTime: L.gasFade, baseDecay: L.gasDecay, tint: L.steamTint, fire: 0,
-        tag: VENT_TAG, priority: 0, domainScale: 5.4, reserve: L.gasReserve, ground
+        tag: VENT_TAG, priority: 0, domainScale: 5.4, reserve: L.gasReserve, ground, ambient: L.gasAmbient
       });
       if (slot >= 0) this.stats.deepGas++;
     } else {
@@ -618,10 +635,10 @@ export class PirateBaseVents3D {
       // strumień: domena bez rastra statyki (GasSlot.noStatics)
       const A = {
         size: D, life: L.gasLinger, carrier: [cvx, -cvy, cvz], tint: L.steamTint, now: g.time, reuse: false, tag: VENT_TAG,
-        priority: 0, host, fire: 0, fadeTime: L.gasFade, baseDecay: L.gasDecay, tier: 0, k: 1, noStatics: z > 260, noHulls: false
+        priority: 0, host, fire: 0, fadeTime: L.gasFade, baseDecay: L.gasDecay, tier: 0, k: 1, noStatics: z > 260, noHulls: false,
+        ambient: L.gasAmbient
       };
-      const vz = Math.abs(nz) > 0.6 ? 0.3 : 0.15;
-      slot = g.acquire(cx, -cy, z + nz * ahead * vz, r, A);
+      slot = g.acquire(cx, -cy, cz, r, A);
     }
     if (slot < 0) { this.stats.noSlot++; return false; }
     const s = g.slots[slot];
@@ -652,6 +669,20 @@ export class PirateBaseVents3D {
     this.states.clear();
     if (this.layers) for (const lay of [this.layers.bg, this.layers.fg]) for (const s of lay.list) s.reset();
   }
+}
+
+// Droga od punktu (X, Y, Z sceny) wzdłuż kierunku jednostkowego (dx, dy, dz) do elipsoidy wpisanej w pudło domeny,
+// ściśniętej do f (obraz i symulacja gaszą gaz za ~0,9 — wzór RockImpactFx._fitAlong); punkt poza nią — 0.
+function fitAlong(s, X, Y, Z, dx, dy, dz, f) {
+  const ax = s.h * s.n * 0.5, az = s.h * s.nz * 0.5;
+  if (!(ax > 0) || !(az > 0)) return 0;
+  const ux = (X - s.cx) / ax, uy = (Y - s.cy) / ax, uz = (Z - s.cz) / az;
+  const vx = dx / ax, vy = dy / ax, vz = dz / az;
+  const a = vx * vx + vy * vy + vz * vz;
+  const b = ux * vx + uy * vy + uz * vz;
+  const c = ux * ux + uy * uy + uz * uz - f * f;
+  if (!(a > 0) || c >= 0) return 0;
+  return (-b + Math.sqrt(Math.max(0, b * b - a * c))) / a;
 }
 
 // Baza prostopadła do normalnej otworu (punkt na brzegu wyrwy — żar): u ⟂ d (oś pomocnicza +Z albo +X), w = d × u.
