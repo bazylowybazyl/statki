@@ -197,8 +197,10 @@ export class GasVolume {
       gridMinSigma: uniform(0.02), gridEvery: uniform(3, 'int'), ownNear: uniform(0.35), ownFar: uniform(0.75),
       occOn: uniform(1),               // bryły: pomijanie pustych kolumn / odcinków z (zajętość z gasOccupancy; 0 — pełny marsz)
       // Bryły domen głębokich (createDeepMeshes): kierunek słońca dla cienia kuli-przeszkody (skała — słońce z płaszczyzny
-      // gry jak materiał skały; właściciel: deepSunDir) i półszerokość półcienia [j.].
-      deepSun: uniform(new THREE.Vector3(1, 0, 0)), deepPenumbra: uniform(90)
+      // gry jak materiał skały; właściciel: deepSunDir) i półszerokość półcienia [j.]. Półcień szeroki (450 j.) zamiast
+      // ostrego cienia Słońca z 57 AU: rozpraszanie wielokrotne w obłoku rozmywa linię cienia, a ostra granica w obłoku
+      // 2–4 km przy terminatorze skały wyglądała jak cięcie (ciemny „prostokąt” w dymie — kamera 3D, 2026-10-19).
+      deepSun: uniform(new THREE.Vector3(1, 0, 0)), deepPenumbra: uniform(450)
     };
     // Kierunek słońca dla cienia kuli domen głębokich (scena, jednostkowy) — ustawia właściciel (reżyser wybuchów).
     this.deepSunDir = new THREE.Vector3(1, 0, 0);
