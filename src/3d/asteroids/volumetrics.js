@@ -25,11 +25,22 @@
 // lokalnej sceny dema; kwad dna w passie ortho Core3D (warstwa 0) z renderOrder przed
 // efektami gry (emitery addytywne gry bez zapisu głębi zostają nad pyłem — w demie
 // były tylko duszki pola po dnie); odczyt z gałęzią na włączniku (beltMedium.sample).
+//
+// WĄTEK NA PLASTRY (2026-10-18, docs/AUDYT-render-worker-2026-10-17.md § 7.5): dawny kernel to wątek na kolumnę,
+// który liczy 40 plastrów po kolei, w każdym pętlę po światłach komórki siatki świateł. Przy 5120 px to ~73 tys.
+// wątków (mniej niż jedna pełna fala GPU), a w rzezi bitwy gorące komórki mają do ~125 świateł (średnio ~3,5) —
+// czas kernela to czas najdłuższych łańcuchów szeregowych (40 plastrów × światła komórki w jednym wątku).
+// Kernel `plastry` (VOLUME_LIGHT_TUNE.slices, domyślnie): grupa robocza = `cols` kolumn × NZ/`per` wątków, wątek liczy
+// gęstość i rozproszenie SWOICH `per` plastrów (ta sama funkcja `_sliceLight` co dawny kernel), wyniki idą do pamięci
+// grupy, a po barierze `cols` sąsiednich wątków (jeden warp) całkuje po kolumnie od stropu w dół (ta sama arytmetyka
+// i kolejność co dawny kernel) — tekstura bit w bit (odczyt z GPU: scripts/webgpu/pas-swiatlo-gra.mjs). Warp to
+// plastry jednej, najwyżej dwóch sąsiednich kolumn — ta sama lista komórki, ten sam przebieg pętli świateł.
 
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, uint, vec2, vec3, vec4, uniform, instanceIndex, textureStore, texture, texture3D,
-  positionGeometry, varyingProperty, Loop, If, Return, mix, smoothstep, clamp, exp, max, min, pow
+  positionGeometry, varyingProperty, Loop, If, Return, mix, smoothstep, clamp, exp, max, min, pow,
+  workgroupArray, workgroupBarrier
 } from 'three/tsl';
 import { createMediumNoiseVolume } from './rockNoise.js';
 import { getBeltMedium, VOLUME_DEFAULTS } from './beltMedium.js';
@@ -42,6 +53,36 @@ export const FLOOR_Z = -29000;
 // addytywne bez zapisu głębi zostają nad pyłem, a kadłub z zapisem głębi dokłada
 // swój ośrodek sam (hak hullVolume).
 export const FLOOR_RENDER_ORDER = -50;
+
+// Przełącznik A/B na żywo (oba kernele zbudowane i rozgrzane raz, `compute()` wybiera): slices = false — dawny kernel
+// (wątek na kolumnę). cols / per — kolumny na grupę roboczą i plastry na wątek kernela `plastry` (inna para niż
+// domyślna buduje i kompiluje swój kernel przy pierwszym użyciu — tylko do pomiarów).
+export const VOLUME_LIGHT_TUNE = { slices: true, cols: 8, per: 2 };
+// 8 kolumn × 20 wątków (po 2 plastry) = grupa 160 — najszybszy z układów 4×1, 8×2, 16×4, 32×8 w ciężkiej i lekkiej
+// klatce bitwy (pomiar: pas-swiatlo-gra.mjs --koszt; § 7.5 audytu).
+const VOLUME_SLICES_DEFAULT = Object.freeze({ cols: 8, per: 2 });
+
+/**
+ * Lustro CPU podziału wątków kernela `plastry` (cols kolumn na grupę, per plastrów na wątek; per dzieli nz): wątek
+ * `id` → kolumna (indeks w siatce kolumn, wiersz po wierszu), jego plastry (sub + j · nz/per — sąsiednie wątki warpu
+ * to sąsiednie plastry), miejsce w grupie. Kolumna ≥ liczby kolumn — wątek bez pracy (dochodzi tylko do bariery).
+ * Całkuje kolumnę `colLocal` grupy wątek o miejscu colLocal (cols sąsiednich wątków jednego warpu).
+ */
+export function volumeSliceThread(id, nz, cols = VOLUME_SLICES_DEFAULT.cols, per = VOLUME_SLICES_DEFAULT.per) {
+  const tpc = nz / per;
+  const wg = cols * tpc;
+  const lane = id % wg;
+  const colLocal = Math.floor(lane / tpc);
+  const sub = lane % tpc;
+  const kz = [];
+  for (let j = 0; j < per; j++) kz.push(sub + j * tpc);
+  return { column: Math.floor(id / wg) * cols + colLocal, kz, lane, colLocal, group: Math.floor(id / wg), wg };
+}
+
+/** Wątki dispatchu kernela `plastry` dla `columns` kolumn (pełne grupy). */
+export function volumeSliceThreads(columns, nz, cols = VOLUME_SLICES_DEFAULT.cols, per = VOLUME_SLICES_DEFAULT.per) {
+  return Math.ceil(columns / cols) * cols * (nz / per);
+}
 
 function wrap1(v) {
   return v - Math.floor(v);
@@ -119,47 +160,151 @@ export class VolumeLight {
 
   _buildCompute() {
     const U = this.U;
-    const M = this.medium.U;
-    const grid = this.grid;
-    const fm = this.fieldMap;
     const NZ = this.NZ;
+    // Dawny kernel: wątek na kolumnę, 40 plastrów po kolei (VOLUME_LIGHT_TUNE.slices = false).
     this.node = Fn(() => {
       If(instanceIndex.greaterThanEqual(U.count), () => { Return(); });
       const ix = instanceIndex.mod(U.nx).toVar();
       const iy = instanceIndex.div(U.nx).toVar();
-      const xy = M.origin.add(vec2(float(ix).add(0.5), float(iy).add(0.5)).mul(U.cell)).toVar();
-      const muv = clamp(xy.sub(fm.origin).mul(fm.invSize), 0.0, 1.0);
-      const fmap = texture(fm.texture, muv).level(0);
-      const macro = U.base.add(fmap.g).mul(U.density).toVar();
+      const { xy, macro } = this._column(ix, iy);
       const acc = vec3(0.0).toVar();
       const T = float(1.0).toVar();
       const g = U.g;
       const g2 = g.mul(g).toVar();
       Loop({ start: 0, end: NZ, type: 'int', condition: '<', name: 'kz' }, ({ kz }) => {
-        const z = M.zTop.sub(float(kz).add(0.5).mul(U.dz));
-        const P = vec3(xy, z).toVar();
-        const rho = this._density(P, macro).toVar();
-        const inS = vec3(0.0).toVar();
-        If(U.dbg.greaterThan(0.5).and(U.dbg.lessThan(1.5)), () => {
-          inS.assign(vec3(0.02));
-        }).ElseIf(rho.greaterThan(1e-4), () => {
-          grid.loop(P, ({ toL, att, col, scatter, dist }) => {
-            // Widok z góry (+z do kamery): światło biegnie od lampy do P (−toL).
-            const c = toL.z.negate();
-            const ph = float(1.0).sub(g2).div(pow(max(g2.add(1.0).sub(g.mul(2.0).mul(c)), 1e-4), 1.5));
-            // Bliskie pole: rozpraszanie ~1/d przy lampie (smuga zaczyna się jasno).
-            const nb = min(float(1.0).div(dist.div(U.near).add(0.25)), 3.0);
-            inS.addAssign(col.mul(att.mul(scatter).mul(ph).mul(nb)));
-          });
-        });
-        const S = inS.mul(rho.mul(U.dz).mul(U.gain)).toVar();
-        const tHalf = exp(rho.mul(U.ext).mul(U.dz).mul(-0.5)).toVar();
+        const { S, tHalf } = this._sliceLight(xy, kz, macro, g, g2);
         const lit = S.mul(T).mul(tHalf).toVar();
         textureStore(this.texture, vec3(ix, iy, uint(kz)), vec4(acc.add(lit.mul(0.5)), T.mul(tHalf)));
         acc.addAssign(lit);
         T.mulAssign(tHalf.mul(tHalf));
       });
     })().compute(this.NX * this.NY).setName('beltVolumeLight');
+    this._slicesNodes = new Map();
+    this.nodeSlices = this._slicesNode(VOLUME_SLICES_DEFAULT.cols, VOLUME_SLICES_DEFAULT.per);
+  }
+
+  /** Kernel `plastry` dla pary (kolumny na grupę, plastry na wątek) — budowany raz na parę. */
+  _slicesNode(cols, per) {
+    const key = cols * 1000 + per;
+    let node = this._slicesNodes.get(key);
+    if (!node) {
+      node = this._slicesKernel(cols, per);
+      this._slicesNodes.set(key, node);
+    }
+    return node;
+  }
+
+  /** Kernel `plastry` (opis w nagłówku pliku): wątek na (kolumnę, plastry), całkowanie po barierze grupy. */
+  _slicesKernel(cols, per) {
+    const U = this.U;
+    const NZ = this.NZ;
+    if (NZ % per !== 0) throw new Error(`[VolumeLight] plastry na wątek (${per}) muszą dzielić NZ (${NZ})`);
+    const TPC = NZ / per;
+    const WG = cols * TPC;
+    if (WG > 256) throw new Error(`[VolumeLight] grupa robocza ${WG} > 256 wątków`);
+    // Pamięć grupy: rozproszenie plastra (rgb) + gęstość × dz × gain (a) oraz transmitancja pół plastra.
+    const sharedL = workgroupArray('vec4', cols * NZ);
+    const sharedT = workgroupArray('float', cols * NZ);
+    const node = Fn(() => {
+      const lane = instanceIndex.mod(uint(WG)).toVar();
+      const group = instanceIndex.div(uint(WG)).toVar();
+      const colLocal = lane.div(uint(TPC)).toVar();
+      const sub = lane.mod(uint(TPC)).toVar();
+      const id = group.mul(uint(cols)).add(colLocal).toVar();
+      If(id.lessThan(U.count), () => {
+        const { xy, macro } = this._column(id.mod(U.nx), id.div(U.nx));
+        const g = U.g;
+        const g2 = g.mul(g).toVar();
+        const slice = (kz) => {
+          const { inS, rho } = this._sliceLight(xy, kz, macro, g, g2, false);
+          // Postać wyrażeń jak w dawnym kernelu (zmienne w tych samych miejscach): sterownik przestawia iloczyny
+          // (fast-math) zależnie od tego, co jest zmienną — S = inS · (rho·dz·gain) liczone dopiero w wątku
+          // całkującym, tHalf tutaj (sprawdzone odczytem tekstury: inne podziały dawały 1 ULP f16 w ~0,002–0,01% tekseli).
+          const k1 = rho.mul(U.dz).mul(U.gain).toVar();
+          const tHalf = exp(rho.mul(U.ext).mul(U.dz).mul(-0.5)).toVar();
+          const at = colLocal.mul(uint(NZ)).add(kz).toVar();
+          sharedL.element(at).assign(vec4(inS, k1));
+          sharedT.element(at).assign(tHalf);
+        };
+        if (per === 1) slice(sub);
+        else {
+          Loop({ start: 0, end: per, type: 'int', condition: '<', name: 'kzJ' }, ({ kzJ }) => {
+            slice(sub.add(uint(kzJ).mul(uint(TPC))).toVar());
+          });
+        }
+      });
+      // Bariera w jednolitym przepływie (bez wcześniejszego wyjścia) — wszystkie wątki grupy dochodzą tutaj.
+      workgroupBarrier();
+      // Całkowanie: wątek o miejscu c < cols całkuje kolumnę c grupy — cols sąsiednich wątków jednego warpu.
+      const cid = group.mul(uint(cols)).add(lane).toVar();
+      If(lane.lessThan(uint(cols)).and(cid.lessThan(U.count)), () => {
+        const ix = cid.mod(U.nx).toVar();
+        const iy = cid.div(U.nx).toVar();
+        const base = lane.mul(uint(NZ)).toVar();
+        const acc = vec3(0.0).toVar();
+        const T = float(1.0).toVar();
+        Loop({ start: 0, end: NZ, type: 'int', condition: '<', name: 'kzI' }, ({ kzI }) => {
+          const v = sharedL.element(base.add(uint(kzI))).toVar();
+          const tHalf = sharedT.element(base.add(uint(kzI))).toVar();
+          const S = v.xyz.mul(v.w).toVar();
+          const lit = S.mul(T).mul(tHalf).toVar();
+          textureStore(this.texture, vec3(ix, iy, uint(kzI)), vec4(acc.add(lit.mul(0.5)), T.mul(tHalf)));
+          acc.addAssign(lit);
+          T.mulAssign(tHalf.mul(tHalf));
+        });
+      });
+    })().compute(volumeSliceThreads(this.NX * this.NY, NZ, cols, per), [WG]).setName('beltVolumeLight');
+    node.__volCols = cols;
+    node.__volPer = per;
+    return node;
+  }
+
+  /** TSL: środek kolumny (lokalnie) i pył pola kolumny z mapy pola. */
+  _column(ix, iy) {
+    const U = this.U;
+    const M = this.medium.U;
+    const fm = this.fieldMap;
+    const xy = M.origin.add(vec2(float(ix).add(0.5), float(iy).add(0.5)).mul(U.cell)).toVar();
+    const muv = clamp(xy.sub(fm.origin).mul(fm.invSize), 0.0, 1.0);
+    const fmap = texture(fm.texture, muv).level(0);
+    const macro = U.base.add(fmap.g).mul(U.density).toVar();
+    return { xy, macro };
+  }
+
+  /**
+   * TSL: plaster kz kolumny xy — gęstość, rozproszenie wszystkich świateł siatki (faza HG, bliskie pole) i ich wkład
+   * do całki: { S (rozproszenie × gęstość × dz × gain), tHalf (transmitancja pół plastra) }; integrand = false —
+   * { inS, rho } (kernel `plastry` składa wkład sam). Wspólne dla obu kerneli.
+   */
+  _sliceLight(xy, kz, macro, g, g2, integrand = true) {
+    const U = this.U;
+    const M = this.medium.U;
+    const grid = this.grid;
+    const z = M.zTop.sub(float(kz).add(0.5).mul(U.dz));
+    const P = vec3(xy, z).toVar();
+    const rho = this._density(P, macro).toVar();
+    const inS = vec3(0.0).toVar();
+    If(U.dbg.greaterThan(0.5).and(U.dbg.lessThan(1.5)), () => {
+      inS.assign(vec3(0.02));
+    }).ElseIf(rho.greaterThan(1e-4), () => {
+      grid.loop(P, ({ toL, att, col, scatter, dist }) => {
+        // Widok z góry (+z do kamery): światło biegnie od lampy do P (−toL).
+        const c = toL.z.negate();
+        const ph = float(1.0).sub(g2).div(pow(max(g2.add(1.0).sub(g.mul(2.0).mul(c)), 1e-4), 1.5));
+        // Bliskie pole: rozpraszanie ~1/d przy lampie (smuga zaczyna się jasno).
+        const nb = min(float(1.0).div(dist.div(U.near).add(0.25)), 3.0);
+        inS.addAssign(col.mul(att.mul(scatter).mul(ph).mul(nb)));
+      });
+    });
+    return integrand ? this._sliceIntegrand(inS, rho) : { inS, rho };
+  }
+
+  /** TSL: wkład plastra do całki z rozproszenia inS i gęstości rho — { S, tHalf }. */
+  _sliceIntegrand(inS, rho) {
+    const U = this.U;
+    const S = inS.mul(rho.mul(U.dz).mul(U.gain)).toVar();
+    const tHalf = exp(rho.mul(U.ext).mul(U.dz).mul(-0.5)).toVar();
+    return { S, tHalf };
   }
 
   _buildFloor(parent, layer) {
@@ -250,7 +395,18 @@ export class VolumeLight {
   /** Przebieg compute (po zbudowaniu siatki świateł i map cienia tej klatki). */
   compute() {
     if (!this.enabled || !this._count) return;
-    this.renderer.compute(this.node, this._count);
+    const T = VOLUME_LIGHT_TUNE;
+    if (T.slices) {
+      const node = T.cols === VOLUME_SLICES_DEFAULT.cols && T.per === VOLUME_SLICES_DEFAULT.per ? this.nodeSlices : this._slicesNode(T.cols, T.per);
+      this.renderer.compute(node, volumeSliceThreads(this._count, this.NZ, node.__volCols, node.__volPer));
+    } else {
+      this.renderer.compute(this.node, this._count);
+    }
+  }
+
+  /** Kernele do rozgrzewki (puste dispatche — licznik kolumn w uniformie = 0 przed pierwszą klatką pola). */
+  computeNodes() {
+    return [this.node, this.nodeSlices];
   }
 
   /** Pas poza kadrem: ośrodek wyłączony (materiały bez odczytu, kwad dna schowany). */
