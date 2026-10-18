@@ -486,6 +486,8 @@ function fxGraphs() {
   _graphs = { fragment, map, bb, plume, cross: crossQuad, wash };
   return _graphs;
 }
+/** Grafy wierzchołków banku (bb, plume, cross, wash) — dla własnych systemów na wspólnych węzłach. */
+export function fxQuadGraphs() { return fxGraphs(); }
 
 /**
  * Materiał systemu banku: wspólny graf (`vertex` z fxGraphs, wspólny fragment),
@@ -517,7 +519,8 @@ class FxQuadMaterial extends THREE.NodeMaterial {
 }
 
 /* --- bilboardy: dym, opary, rdzeń rozbłysku, żagwie --------------------- */
-class BillboardSystem {
+// (eksport: własne systemy na tym samym grafie — wyrwy bazy piratów w passach tła i FG, src/3d/pirateBaseVents3D.js)
+export class BillboardSystem {
   constructor(scene, texture, blending, capacity, renderOrder = 1, name = 'Fx3D:bb') {
     this.p = new Pool(capacity, {
       pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1,
@@ -611,7 +614,7 @@ class BillboardSystem {
    je wyłącznie sposób ustawienia quada w świecie: wzdłuż lufy ku kamerze,
    wzdłuż lufy na ekranie, płasko w płaszczyźnie gry.
    ----------------------------------------------------------------------- */
-class OrientedQuadSystem {
+export class OrientedQuadSystem {
   constructor(scene, texture, capacity, vertexNode, renderOrder = 4, fadePow = 2.0, fadeIn = 0.10, name = 'Fx3D:quad') {
     this.fadePow = fadePow;
     this.fadeIn = fadeIn;
