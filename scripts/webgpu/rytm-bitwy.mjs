@@ -60,6 +60,12 @@ const SZER = Number(args.szer || 1920), WYS = Number(args.wys || 1080);
 // --wkStart (2026-10-17): kod w workerze renderu po starcie gry, przed spokojem (A/B przełączników Core3D w tym samym
 // buildzie — np. stare ścieżki GPU); `plik:ścieżka` — kod z pliku. Wynik w raporcie `wkStart`.
 const WK_START = args.wkStart ? (String(args.wkStart).startsWith('plik:') ? readFileSync(String(args.wkStart).slice(5), 'utf8') : String(args.wkStart)) : '';
+// --wkKoniec (2026-10-18, GPU workera w rzezi): kod w workerze renderu PO dzienniku bitwy (odczyt kolektora
+// zainstalowanego przez --wkStart, np. czasy GPU passów); przed wywołaniem globalThis.__rytmBattleEpoch = czas epoki
+// początku bitwy [ms] (wspólna oś strony i workera). Wynik w raporcie `wkKoniec`. Czasy GPU passów workera w oknach
+// bitwy: --wkStart plik:scripts/webgpu/gpu-passy-worker.js --wkKoniec plik:scripts/webgpu/gpu-passy-wynik.js (z --wkAb:
+// kod wariantu ustawia globalThis.__gpcVariant = 0, 1, …).
+const WK_KONIEC = kodZ(args.wkKoniec);
 const OUT = args.out || join(tmpdir(), `rytm-bitwy-${Date.now()}`);
 mkdirSync(OUT, { recursive: true });
 
@@ -274,6 +280,12 @@ try {
     while (Date.now() < tEnd) { await sleep(5000); const s = await ev(STAN_EXPR); stan.push(s); report('stan', s); }
   }
   const tBattle1 = await ev('performance.now()');
+  if (WK_KONIEC && wk.sid) {
+    const epoch = await ev(`performance.timeOrigin + ${tBattle0}`);
+    const r = await wkSend('Runtime.evaluate', { expression: `globalThis.__rytmBattleEpoch = ${epoch}; ${WK_KONIEC}`, awaitPromise: true, returnByValue: true }).catch((e) => ({ error: String(e) }));
+    out.wkKoniec = r?.result?.value ?? r?.exceptionDetails?.text ?? r?.error ?? null;
+    report('wkKoniec', out.wkKoniec);
+  }
 
   // --watkiAb: warianty w tej samej bitwie, krótkie ślady wątków (patrz nagłówek)
   let watkiAb = null;
