@@ -10,6 +10,7 @@
 // kamera top — z góry (RTS): zbliżenie na habitat przy przebiciu dysku, potem oddalenie nad skałę (upadek, uderzenia);
 // kamera 3d — kamera 3D (Game3D 'tactical') krążąca wokół wieży (Game3D.focusEntity) od HP 0 do osiadania;
 // kamera gra — kamera statku jak u gracza (ujęcie upadku robi fabuła: lookAt nad habitat i skałę).
+// --progi 1 — przed HP 0 cztery trafienia w ćwiartki bębna (progi punktów łamią je płasko, odłamy dryfują).
 // Co 0,25 s: faza upadku, wieża (z, prędkość), sektory dysku puszczone, uderzenia, zamrożone, czas kroku fizyki i klatki;
 // kadry w chwilach sekwencji; pipeline'y renderu tworzone synchronicznie w scenariuszu (ma być 0). Raport: <out>/raport.json.
 import { mkdirSync } from 'node:fs';
@@ -166,6 +167,26 @@ async function przebieg(wariant, kamera) {
   }
   await sleep(600);
   await shot(`${tag}-01-przed`);
+  // --progi 1: jak u gracza — habitat zbijany stopniowo w różne ćwiartki bębna (progi punktów łamią je PŁASKO: odłamy
+  // dryfują), dopiero potem HP 0 — przy upadku płaskie odłamy też stają się bryłami i spadają (promotePlanarWreck)
+  if (args.progi) {
+    for (const deg of [20, 110, 200, 290]) {
+      const r = await ev(`(() => {
+        const S = window.StoryGame, st = S.site.structures.habitat, d = S.site.dock, H = d.layout.habitat;
+        const a = ${deg} * Math.PI / 180, p = d.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
+        st.lastHitX = p.x; st.lastHitY = p.y;
+        const step = (st.maxHp || 1) / Math.max(1, st.damageSteps || 5);
+        if (st.hp - step * 1.02 <= 0) return { hp: st.hp, pominiete: true };
+        S.deps.damageStation(st, step * 1.02);
+        return { hp: Math.round(100 * st.hp / st.maxHp) };
+      })()`);
+      console.log(tag, 'próg', deg, JSON.stringify(r));
+      await sleep(1500);
+    }
+    const pl = await ev(`window.wrecks.filter((w) => !w.dead && w.beamHull && w.beamHull.body && w.beamHull.body.planar && w.beamHull.world && w.beamHull.world.fall3d).length`);
+    console.log(tag, 'płaskie odłamy habitatu przed HP 0:', pl);
+    await shot(`${tag}-01b-progi`);
+  }
   // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek)
   await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10); return st.hp; })()`);
   const rows = [];
@@ -195,6 +216,13 @@ async function przebieg(wariant, kamera) {
     if (s.uderzenieWiezy >= 0 && s.t >= s.uderzenieWiezy + 1.2) await kadr('08-po-uderzeniu');
     if (s.uderzenieDysku >= 0 && s.t >= s.uderzenieDysku + 0.6) await kadr('09-uderzenie-dysku');
     if (s.upadek === 'settled') { await kadr('10-osiadlo'); break; }
+  }
+  if (args.progi) {
+    const pl = await ev(`(() => { const F = window.PirateBaseFall.state(); return { awansowane: F.promotedWrecks || 0, odchylka: Math.round(F.promoteErrMax || 0),
+      plaskie: window.wrecks.filter((w) => !w.dead && w.beamHull && w.beamHull.body && !w.beamHull.body.dead && w.beamHull.body.planar && w.beamHull.world && w.beamHull.world.fall3d && w.beamHull.body.activeNodes >= 12).length }; })()`);
+    console.log(tag, 'odłamy płaskie po upadku:', JSON.stringify(pl));
+    report.progi = report.progi || {};
+    report.progi[tag] = pl;
   }
   await shot(`${tag}-11-koniec`);
   const pipes = await ev(`(() => { const p = (window.__pipeRec ? window.__pipeRec.pipes : []).filter((x) => x.t >= ${t0}); const sync = p.filter((x) => x.sync); return { wszystkie: p.length, sync: sync.length, lista: sync.slice(0, 30).map((x) => x.nazwa) }; })()`);
