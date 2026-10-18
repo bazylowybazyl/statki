@@ -479,18 +479,9 @@ export function startHabitatFall(st, ctx) {
   st.released = 0;
   // płaskie odłamy habitatu sprzed HP 0 (progi punktów) — do awansu w bryły po kilka na krok (stepHabitatFall)
   st.wreckQueue.length = 0;
-  const wl = ctx.wrecks || [];
-  const hc0 = ctx.place?.habitat || { x: 0, y: 0 };
-  const r2 = tune.wreckPromoteRange * tune.wreckPromoteRange;
-  for (const w of wl) {
-    const b = bodyOf(w);
-    if (!b || b.dead || !b.planar || w.dead) continue;
-    const piece = b.hull?.world;
-    if (!piece || !piece.fall3d || piece.site !== site) continue;
-    const dx = b.pos.x - hc0.x, dy = -b.pos.y - hc0.y;
-    if (dx * dx + dy * dy > r2) continue;
-    st.wreckQueue.push(w);
-  }
+  st._wreckSeen = new WeakSet();
+  st._wreckScanT = 0;
+  queuePlanarWrecks(st, ctx, tune);
   ctx.hooks?.onFallStart?.(st);
   return true;
 }
@@ -956,6 +947,29 @@ export function promotePlanarWreck(st, ctx, wreck) {
   return 1;
 }
 
+// Płaskie odłamy kawałków habitatu z bryłą upadku (do wreckPromoteRange od habitatu), jeszcze nie w kolejce → kolejka.
+function queuePlanarWrecks(st, ctx, tune) {
+  const wl = ctx.wrecks || [];
+  const site = ctx.site;
+  const hc0 = ctx.place?.habitat || { x: 0, y: 0 };
+  const r2 = tune.wreckPromoteRange * tune.wreckPromoteRange;
+  const seen = st._wreckSeen || (st._wreckSeen = new WeakSet());
+  let n = 0;
+  for (const w of wl) {
+    if (!w || w.dead || seen.has(w)) continue;
+    const b = bodyOf(w);
+    if (!b || b.dead || !b.planar) continue;
+    const piece = b.hull?.world;
+    if (!piece || !piece.fall3d || piece.site !== site) continue;
+    const dx = b.pos.x - hc0.x, dy = -b.pos.y - hc0.y;
+    if (dx * dx + dy * dy > r2) continue;
+    seen.add(w);
+    st.wreckQueue.push(w);
+    n++;
+  }
+  return n;
+}
+
 // Płaski okruch habitatu, który nie dostał bryły (drobnica): rozsypuje się w odłamki (pula efektów) — nic z habitatu
 // nie zostaje dryfujące w płaszczyźnie gry.
 function dissolvePlanarWreck(st, ctx, wreck) {
@@ -1066,7 +1080,9 @@ export function stepHabitatFall(st, ctx, dt) {
     }
     if (st.passed) while (st.queue.length && st.passT + st.queue[0].t <= st.t) releaseDisc(st, ctx, st.queue.shift().id, tune);
     sweepTowerColumn(st, ctx, dt, tune, solids);
-    // płaskie odłamy habitatu sprzed HP 0 → bryły 3D (po kilka na krok — każdy to ciało z maską)
+    // płaskie odłamy habitatu sprzed HP 0 → bryły 3D (po kilka na krok — każdy to ciało z maską); co 0,5 s dobór
+    // odłamów płaskich powstałych po starcie upadku (kawałek, który nie dostał bryły, pękł płasko)
+    if (st.t >= (st._wreckScanT || 0)) { st._wreckScanT = st.t + 0.5; queuePlanarWrecks(st, ctx, tune); }
     for (let k = 0; k < tune.wreckPromotePerStep && st.wreckQueue.length; k++) {
       const w = st.wreckQueue.shift();
       if (!promotePlanarWreck(st, ctx, w)) dissolvePlanarWreck(st, ctx, w);
