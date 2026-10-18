@@ -207,9 +207,10 @@ export function createPirateRockTerrain(rockLayout, place, shape = null, tune = 
     const theta = Math.acos(ly > 1 ? 1 : ly < -1 ? -1 : ly);
     const fx = phi / TWO_PI * W, fy = theta / Math.PI * H;
     let x0 = Math.floor(fx), y0 = Math.floor(fy);
-    const tx = fx - x0, ty = fy - y0;
-    if (x0 >= W) x0 = W - 1;
-    if (y0 >= H) y0 = H - 1;
+    let tx = fx - x0, ty = fy - y0;
+    // krawędź siatki (φ = 2π, biegun płd. θ = π): ostatnie oczko z udziałem 1 jego dalszego wierzchołka
+    if (x0 >= W) { x0 = W - 1; tx = 1; }
+    if (y0 >= H) { y0 = H - 1; ty = 1; }
     const r0 = y0 * (W + 1), r1 = r0 + W + 1;
     const a = grid[r0 + x0] * (1 - tx) + grid[r0 + x0 + 1] * tx;
     const b = grid[r1 + x0] * (1 - tx) + grid[r1 + x0 + 1] * tx;
