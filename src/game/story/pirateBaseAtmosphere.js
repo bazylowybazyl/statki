@@ -90,6 +90,9 @@ export const ATMO_TUNE = {
   // Miganie świateł budowli (zasilanie w obrazie): głębokość przy świeżej wyrwie, zanik [s]; moduł wypalony gaśnie
   // w lightFade s (mocno migając) do światła awaryjnego lightEmergency.
   flickerDepth: 0.55, flickerTau: 2.2, lightFade: 1.8, lightEmergency: 0.06,
+  // Przejęcie wyrwy przez nowe ciało (odłam, bryła po awansie kawałka): wyrwa SWOJEGO rodzica — zawsze (najbliższe ciało),
+  // wyrwa statyki albo martwego ciała tego modułu — tylko bliżej niż rehomeReach [j.] od kuli ciała (dalsza zostaje).
+  rehomeReach: 400,
   maxVents: VENT_MAX
 };
 
@@ -697,6 +700,8 @@ export function rehomePirateBaseVents(wreck, parent, pieceId = null) {
     const stat = !v.ent && pieceId && v.module.id === pieceId;
     if (!own && !stat && !(v.ent && !entityAlive(v.ent) && pieceId && v.module.id === pieceId)) continue;
     const d = Math.max(0, Math.hypot(v.wx - cx, v.wy - cy, solid ? v.wz - cz : 0) - R);
+    // obca wyrwa (statyka / martwe ciało modułu) daleko od ciała — zostaje, gdzie jest
+    if (!own && d > ATMO_TUNE.rehomeReach) continue;
     // obecny odłam bliżej — zostaje
     if (same && v.rehomeD <= d) continue;
     v.rehomeD = d;
