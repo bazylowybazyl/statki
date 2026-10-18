@@ -592,6 +592,14 @@ if (TRYBY.includes('upadek')) {
       wrecks: window.wrecks, shatter: (w, x, y, z, o) => HullBodies.shatterSolid(w, x, y, z, o),
       createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e) };
     FALL.attachPirateRockTerrain(fall, fctx);
+    // odłamy płaskie (progi punktów przed HP 0): poza spoczynkowa kawałka przy narodzinach odłamu (jak klej gry)
+    if (!HullBodies.__fallRestHook) {
+      HullBodies.__fallRestHook = true;
+      const prevSp = HullBodies.onWreckSpawned;
+      HullBodies.onWreckSpawned = (w, par, pb) => { if (typeof prevSp === 'function') prevSp(w, par, pb); FALL.noteBaseWreckRest(w, pb); };
+    }
+    // --progi H-E,H-W — te kawałki pękają PŁASKO 3 s przed HP 0 (próg punktów), odłamy dryfują od habitatu
+    const PROGI = String(arg('progi', '')).split(',').filter(Boolean);
     // wysokość skały pod habitatem (świat)
     const zRock = terrain.surfaceZAt(HAB.x, HAB.y);
     const onFx = (ev) => {
@@ -631,6 +639,17 @@ if (TRYBY.includes('upadek')) {
       stepAll(ents, dt);
       nctx.simTime = HullBodies.simTime;
       if (neck.phase !== 'landed' && fall.phase === 'idle') stepNeck(neck, site, nctx, dt);
+      if (PROGI.length && k === Math.max(1, hp0Step - Math.round(3 / dt))) {
+        for (const id of PROGI) {
+          const pp = site.pieces.find((q) => q.id === id);
+          if (!pp || pp.lost) continue;
+          const bb = pp.bounds, cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
+          const ox = cx - HAB.x, oy = cy - HAB.y, ol = Math.hypot(ox, oy) || 1;
+          worldBodies.breakPiece(pp, cx, cy, { power: 1.4, speed: 70, outX: ox / ol, outY: oy / ol });
+        }
+        const plaskie = window.wrecks.filter((w) => !w.dead && w.beamHull?.body && w.beamHull.body.planar && w.beamHull.world?.fall3d).length;
+        console.log(`    progi: ${PROGI.join(',')} pękły płasko — odłamów płaskich z bryłą upadku ${plaskie}`);
+      }
       if (k === hp0Step) {
         // śmierć habitatu: wieża i dysk (fizyka upadku), bęben i szyb pękają jak w _chainExplosion
         FALL.startHabitatFall(fall, fctx);
@@ -718,6 +737,9 @@ if (TRYBY.includes('upadek')) {
         h: Math.round(d - r), skała: rec ? +(HullBodies.simTime - rec.lastContact).toFixed(1) : null, bryła: b.entity ? +(HullBodies.simTime - (b.entity.__contactT || -1e9)).toFixed(1) : null });
     }
     console.log('    wolne na końcu:', JSON.stringify(wolne.slice(0, 12)));
+    // płaskie odłamy habitatu z bryłą upadku, które zostały w płaszczyźnie (powinno być 0 — awans przy HP 0)
+    const plaskieZostaly = window.wrecks.filter((w) => !w.dead && w.beamHull?.body && !w.beamHull.body.dead && w.beamHull.body.planar && w.beamHull.world?.fall3d && w.beamHull.body.activeNodes >= T2.wreckPromoteMinNodes).length;
+    console.log(`    odłamy płaskie: awansowane ${fall.promotedWrecks || 0}, zostały w płaszczyźnie ${plaskieZostaly}, odchyłka środka rzutu bryły od odłamu ≤ ${(fall.promoteErrMax || 0).toFixed(0)} j.`);
     FALL.detachPirateRockTerrain(fall, D);
     console.log(JSON.stringify({ hz: hz(dt), wariant, zRockPodHabitatem: Math.round(zRock), dziura: fall.holeNodes, podniesione: fall.promoted || 0, korek: { belki: fall.holeCut, odlamy: fall.plugN }, touchT: +fall.touchT.toFixed(2), passT: +fall.passT.toFixed(2),
       fall: { phase: fall.phase, released: fall.released, towerImpactT: +fall.towerImpactT.toFixed(2),

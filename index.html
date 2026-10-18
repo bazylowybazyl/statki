@@ -1349,7 +1349,7 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     // Upadek habitatu na planetoidę (2026-10-19): teren skały i grawitacja ku jej środkowi w silniku belek, wieża
     // przebija dysk i spada pierwsza, dysk za nią, osiadanie na skale (src/game/story/pirateBaseFall.js).
-    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
+    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, noteBaseWreckRest, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
     // Powietrze budowli bazy (2026-10-19): rozszczelnienie, dekompresja, wylot powietrza i pożary — decyzje w grze
     // (src/game/story/pirateBaseAtmosphere.js), obraz wyrw src/3d/pirateBaseVents3D.js (stan klatki — blok pirateVents).
     import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
@@ -31981,7 +31981,11 @@
       HullBodies.onWreckSpawned = (wreck, parent, parentBody) => {
         if (typeof prevSpawned === 'function') prevSpawned(wreck, parent, parentBody);
         const p = wreck?.beamHull?.world;
-        if (p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:')) rehomePirateBaseVents(wreck, parent, atmoModuleId(p));
+        if (p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:')) {
+          rehomePirateBaseVents(wreck, parent, atmoModuleId(p));
+          // upadek habitatu: poza spoczynkowa kawałka płaskiego — jego odłamy sprzed HP 0 też spadną (pirateBaseFall.js)
+          noteBaseWreckRest(wreck, parentBody);
+        }
       };
     }
     window.PirateBaseAtmosphere = PirateBaseAtmosphere;

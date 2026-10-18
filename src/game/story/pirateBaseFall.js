@@ -52,7 +52,10 @@ export const PIRATE_FALL_TUNE = {
   columnAhead: 2500,       // [j.] przed spodem wieży (ku skale) — tak daleko odłamy jeszcze w kolumnie          // korek: składowa ku skale (reszta — w bok od osi wieży)
   holdGravity: 0.3,        // dolna część habitatu (szyb, bęben) przed przejściem wieży przez dysk — ułamek grawitacji          // [j/s] odłamy korka: od osi wieży i ku skale
   plugCellsMax: 5,         // komórek Voronoi na wyspę korka (mniej — mniej ciał w stosie na skale)
-  minFragmentNodes: 50,    // odłam mniejszy (korek, bęben, szyb) — cały w odłamki (pula efektów), nie ciało
+  minFragmentNodes: 50,
+  wreckPromoteMinNodes: 12, // płaski odłam habitatu sprzed HP 0 (mniej węzłów — zostaje drobnicą)
+  wreckPromotePerStep: 2,  // awansów płaskich odłamów na krok (każdy ~ ciało 3D kawałka z maską)
+  wreckPromoteRange: 15000, // [j.] od habitatu — dalsze płaskie odłamy dryfują dalej    // odłam mniejszy (korek, bęben, szyb) — cały w odłamki (pula efektów), nie ciało
   // DZIURA: kotwice dysku pod wieżą (rzut wieży z góry + holePad) puszczają od razu — wieża przebija tę część dysku
   // (węzły trzymane belkami resztą sektora rwą się pod nią); reszta sektorów puszcza, gdy wieża przejdzie pod dysk
   holePad: 90,             // [j.] zapas rzutu wieży
@@ -282,6 +285,7 @@ export function createFallState() {
     tower: null,              // encja wieży (wrak 3D) po puszczeniu
     holeX: 0, holeY: 0, holeZ: 0,   // świat silnika: dziura po wieży w dysku (środek dysku, gdy wieża stała)
     queue: [],                // [{ id, t }] sektory dysku do puszczenia
+    wreckQueue: [],           // płaskie odłamy habitatu sprzed HP 0 do awansu w bryły (promotePlanarWreck)
     released: 0,
     breached: new Set(),      // id modułów, w które wieża już weszła
     touchT: -1,               // [s od startu] pierwszy styk wieży z dyskiem
@@ -473,6 +477,20 @@ export function startHabitatFall(st, ctx) {
   st.queue.length = 0;
   order.forEach((o, i) => st.queue.push({ id: o.id, t: tune.discFirst + i * tune.discStep + rnd() * tune.discJitter }));
   st.released = 0;
+  // płaskie odłamy habitatu sprzed HP 0 (progi punktów) — do awansu w bryły po kilka na krok (stepHabitatFall)
+  st.wreckQueue.length = 0;
+  const wl = ctx.wrecks || [];
+  const hc0 = ctx.place?.habitat || { x: 0, y: 0 };
+  const r2 = tune.wreckPromoteRange * tune.wreckPromoteRange;
+  for (const w of wl) {
+    const b = bodyOf(w);
+    if (!b || b.dead || !b.planar || w.dead) continue;
+    const piece = b.hull?.world;
+    if (!piece || !piece.fall3d || piece.site !== site) continue;
+    const dx = b.pos.x - hc0.x, dy = -b.pos.y - hc0.y;
+    if (dx * dx + dy * dy > r2) continue;
+    st.wreckQueue.push(w);
+  }
   ctx.hooks?.onFallStart?.(st);
   return true;
 }
@@ -726,22 +744,7 @@ export function promotePlanarPiece(st, ctx, piece, opts = {}) {
   wellFor(st, tune);
   body.gravityWell = lowerWell(st);
   // maska: komórka 3D bez żywego węzła płaskiego w rzucie (± 1 komórka płaska) — odpada bez odłamków i zdarzeń
-  if (occ) {
-    const m = rotOf(body.quat, _m), s = body.nodeStore;
-    const od = engine.onNodeDebris, o2 = engine.onDebris;
-    engine.onNodeDebris = null; engine.onDebris = null;
-    try {
-      for (let i = 0; i < s.count && !body.dead; i++) {
-        if (!s.active[i]) continue;
-        const x = body.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
-        const y = body.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
-        const ci = Math.floor(x / pc), cj = Math.floor(y / pc);
-        let hit = false;
-        for (let di = -1; di <= 1 && !hit; di++) for (let dj = -1; dj <= 1 && !hit; dj++) if (occ.has(holeKey(ci + di, cj + dj))) hit = true;
-        if (!hit) engine.destroyNode(body, i);
-      }
-    } finally { engine.onNodeDebris = od; engine.onDebris = o2; }
-  }
+  if (occ) maskSolidByOcc(engine, body, occ, pc);
   // ciało płaskie kawałka znika; kawałek stracony (statyka schowana — obraz trzyma ją do wypieku skóry bryły)
   for (const e of planar) { ctx.releaseHull?.(e); e.dead = true; }
   piece.entity = null;
@@ -774,6 +777,183 @@ export function promotePlanarPiece(st, ctx, piece, opts = {}) {
   }
   st.promoted = (st.promoted || 0) + 1;
   return made;
+}
+
+// Maska bryły (poza spoczynkowa): węzeł 3D, którego rzut (świat silnika x, y) nie leży przy żywym węźle płaskim z `occ`
+// (komórki pc, ± 1), znika bez odłamków i zdarzeń.
+function maskSolidByOcc(engine, body, occ, pc) {
+  const m = rotOf(body.quat, _m), s = body.nodeStore;
+  const od = engine.onNodeDebris, o2 = engine.onDebris;
+  engine.onNodeDebris = null; engine.onDebris = null;
+  try {
+    for (let i = 0; i < s.count && !body.dead; i++) {
+      if (!s.active[i]) continue;
+      const x = body.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
+      const y = body.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
+      const ci = Math.floor(x / pc), cj = Math.floor(y / pc);
+      let hit = false;
+      for (let di = -1; di <= 1 && !hit; di++) for (let dj = -1; dj <= 1 && !hit; dj++) if (occ.has(holeKey(ci + di, cj + dj))) hit = true;
+      if (!hit) engine.destroyNode(body, i);
+    }
+  } finally { engine.onNodeDebris = od; engine.onDebris = o2; }
+}
+
+// ---------------------------------------------------------------- odłamy płaskie habitatu sprzed HP 0
+// Ćwiartki bębna i szyb pęknięte progami punktów przed śmiercią habitatu to płaskie odłamy w płaszczyźnie gry. Przy
+// upadku stają się bryłami 3D (ta sama struktura co kawałek — PIRATE_BASE_FALL_SOLID — z maską z rzutu żywych węzłów
+// odłamu) i spadają z resztą. Pozę odłamu względem spoczynku kawałka daje dopasowanie sztywne jego SIATKI (ix, iy
+// węzłów, wspólne dla kawałka i odłamów) do świata: raz dla kawałka w spoczynku (przy narodzinach pierwszego odłamu —
+// noteBaseWreckRest), raz dla odłamu w chwili awansu.
+
+// Dopasowanie sztywne siatki (ix · c, ±iy · c) ciała płaskiego do świata silnika: obrót θ + przesunięcie (środki).
+// flip — oś y siatki odbita (wiersze rastra kawałka bywają odwrócone); undefined — wybór mniejszego błędu.
+function fitLattice(b, flip, out) {
+  if (flip === undefined) {
+    const a = fitLattice(b, false, out);
+    const keep = a ? { ...a } : null;
+    const c = fitLattice(b, true, out);
+    if (!c) return keep ? Object.assign(out, keep) : null;
+    if (keep && keep.err <= c.err) return Object.assign(out, keep);
+    return c;
+  }
+  const s = b.nodeStore, cs = b.cellSize, m = rotOf(b.quat, _m), fy = flip ? -1 : 1;
+  let n = 0, lx = 0, ly = 0, wx = 0, wy = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    lx += s.ix[i] * cs; ly += fy * s.iy[i] * cs;
+    wx += b.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
+    wy += b.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
+    n++;
+  }
+  if (n < 3) return null;
+  lx /= n; ly /= n; wx /= n; wy /= n;
+  let sc = 0, ss = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    const ax = s.ix[i] * cs - lx, ay = fy * s.iy[i] * cs - ly;
+    const bx = b.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i] - wx;
+    const by = b.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i] - wy;
+    sc += ax * bx + ay * by;
+    ss += ax * by - ay * bx;
+  }
+  const th = Math.atan2(ss, sc), c = Math.cos(th), sn = Math.sin(th);
+  let err = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    const ax = s.ix[i] * cs - lx, ay = fy * s.iy[i] * cs - ly;
+    const px = c * ax - sn * ay + wx, py = sn * ax + c * ay + wy;
+    const qx = b.pos.x + m[0] * s.x[i] + m[1] * s.y[i] + m[2] * s.z[i];
+    const qy = b.pos.y + m[3] * s.x[i] + m[4] * s.y[i] + m[5] * s.z[i];
+    err += (px - qx) * (px - qx) + (py - qy) * (py - qy);
+  }
+  out.flip = !!flip; out.th = th; out.c = c; out.s = sn; out.lx = lx; out.ly = ly; out.wx = wx; out.wy = wy;
+  out.err = Math.sqrt(err / n);
+  return out;
+}
+
+/**
+ * Narodziny odłamu (HullBodies.onWreckSpawned): kawałek płaski bazy z bryłą upadku zapamiętuje dopasowanie swojej siatki
+ * w spoczynku (rodzic w chwili rozpadu — jeszcze w pozie spoczynkowej). Raz na kawałek.
+ */
+export function noteBaseWreckRest(wreck, parentBody) {
+  const b = bodyOf(wreck);
+  const piece = b?.hull?.world;
+  if (!piece || !piece.fall3d || piece.__latRest || !parentBody || !parentBody.planar || parentBody.dead) return false;
+  if (parentBody.hull?.world !== piece) return false;
+  const fit = fitLattice(parentBody, undefined, {});
+  if (!fit) return false;
+  piece.__latRest = fit;
+  return true;
+}
+
+/**
+ * Płaski odłam kawałka habitatu (sprzed HP 0) → bryła 3D w swojej obecnej pozie, z prędkością odłamu i studnią skały.
+ * Zwraca 1 — awans, 0 — nie (bez bryły upadku, bez spoczynku kawałka, za mały).
+ */
+export function promotePlanarWreck(st, ctx, wreck) {
+  const bw = bodyOf(wreck);
+  if (!st || !bw || bw.dead || !bw.planar || typeof ctx.createSolid !== 'function') return 0;
+  const piece = bw.hull?.world;
+  const f3 = piece?.fall3d;
+  const rest = piece?.__latRest;
+  if (!f3 || !rest) return 0;
+  const tune = ctx.tune || PIRATE_FALL_TUNE;
+  if (bw.activeNodes < tune.wreckPromoteMinNodes) return 0;
+  const now = fitLattice(bw, rest.flip, {});
+  if (!now) return 0;
+  const spec = f3.buildSolid();
+  if (!spec) return 0;
+  const engine = ctx.engine;
+  // rzut węzłów odłamu w SPOCZYNKU kawałka (świat silnika): siatka → spoczynek
+  const pc = Math.max(1, Number(piece.cellSize) || bw.cellSize || 15);
+  const cs = bw.cellSize, fy = rest.flip ? -1 : 1;
+  const occ = new Set();
+  const s = bw.nodeStore;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    const ax = s.ix[i] * cs - rest.lx, ay = fy * s.iy[i] * cs - rest.ly;
+    const x = rest.c * ax - rest.s * ay + rest.wx, y = rest.s * ax + rest.c * ay + rest.wy;
+    occ.add(holeKey(Math.floor(x / pc), Math.floor(y / pc)));
+  }
+  if (!occ.size) return 0;
+  const entity = {
+    id: `${piece.site?.id || 'pbase'}:${f3.id}:${bw.id}`, name: f3.label || f3.id, type: 'worldPiece',
+    x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, angle: 0, angVel: 0, quat: null, radius: 0, mass: 0,
+    isWorldPiece: true, worldPiece: f3, static: false, isCollidable: true,
+    owner: piece.site?.owner || null,
+    visual: { spriteScale: 1, spriteScaleX: 1, spriteScaleY: 1, spriteRotation: 0 },
+    solid3D: true, beamHull: null
+  };
+  const hull = ctx.createSolid(entity, spec.structure, {
+    position: spec.position, quaternion: spec.quaternion, anchored: false,
+    massPerArea: f3.material?.density, collisionArmor: f3.material?.armor, hexPerNode: 4, world: f3
+  });
+  if (!hull) return 0;
+  const body = hull.body;
+  maskSolidByOcc(engine, body, occ, pc);
+  if (body.dead || body.activeNodes <= 0) { ctx.releaseHull?.(entity); entity.dead = true; return 0; }
+  // spoczynek → teraz: punkt siatki L w spoczynku W_r = R_r·(L − L_r) + W_r0, teraz W_n = R_n·(L − L_n) + W_n0, więc
+  // W_n = R_n·R_rᵀ·(W_r − W_r0) + R_n·(L_r − L_n) + W_n0 = R(Δθ)·(W_r − c) + W_n0, c = R_r·(L_n − L_r) + W_r0
+  const dth = now.th - rest.th, c = Math.cos(dth), sn = Math.sin(dth);
+  const dlx = now.lx - rest.lx, dly = now.ly - rest.ly;
+  const crx = rest.c * dlx - rest.s * dly + rest.wx, cry = rest.s * dlx + rest.c * dly + rest.wy;
+  const px = body.pos.x - crx, py = body.pos.y - cry;
+  body.pos.x = c * px - sn * py + now.wx;
+  body.pos.y = sn * px + c * py + now.wy;
+  // obrót wokół z świata: q' = q_z(Δθ) · q
+  const hz = Math.sin(dth / 2), hw = Math.cos(dth / 2), q = body.quat;
+  const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
+  q.w = hw * qw - hz * qz; q.x = hw * qx - hz * qy; q.y = hw * qy + hz * qx; q.z = hw * qz + hz * qw;
+  if (typeof engine.wake === 'function') engine.wake(body, engine.config.wakeHoldFrames);
+  // prędkość: odłamu w punkcie środka bryły (ruch + obrót wokół z), obrót odłamu
+  const w = bw.angVel ? bw.angVel.z : 0;
+  body.vel.x = bw.vel.x - w * (body.pos.y - bw.pos.y);
+  body.vel.y = bw.vel.y + w * (body.pos.x - bw.pos.x);
+  body.vel.z = 0;
+  body.angVel.x = 0; body.angVel.y = 0; body.angVel.z = w;
+  body._hashTick = -1;
+  // kontrola: środek rzutu bryły (x, y świata) przy środku odłamu (sztywne dopasowanie siatki) — st.promoteErrMax
+  {
+    const mb = rotOf(body.quat, _m), sb = body.nodeStore;
+    let n1 = 0, ax = 0, ay = 0;
+    for (let i = 0; i < sb.count; i++) {
+      if (!sb.active[i]) continue;
+      ax += body.pos.x + mb[0] * sb.x[i] + mb[1] * sb.y[i] + mb[2] * sb.z[i];
+      ay += body.pos.y + mb[3] * sb.x[i] + mb[4] * sb.y[i] + mb[5] * sb.z[i];
+      n1++;
+    }
+    if (n1 > 0) {
+      const e = Math.hypot(ax / n1 - now.wx, ay / n1 - now.wy);
+      st.promoteErrMax = Math.max(st.promoteErrMax || 0, e);
+    }
+  }
+  wellFor(st, tune);
+  body.gravityWell = lowerWell(st);
+  // płaski odłam znika (obraz: skóra bryły z wypieku kawałka upadku)
+  ctx.releaseHull?.(wreck);
+  wreck.dead = true;
+  st.promotedWrecks = (st.promotedWrecks || 0) + 1;
+  return 1;
 }
 
 // Puszczenie sektora dysku: kotwice zerwane, wrak 3D z grawitacją skały, prędkość ku dziurze po wieży i obrót, który
@@ -873,6 +1053,8 @@ export function stepHabitatFall(st, ctx, dt) {
     }
     if (st.passed) while (st.queue.length && st.passT + st.queue[0].t <= st.t) releaseDisc(st, ctx, st.queue.shift().id, tune);
     sweepTowerColumn(st, ctx, dt, tune, solids);
+    // płaskie odłamy habitatu sprzed HP 0 → bryły 3D (po kilka na krok — każdy to ciało z maską)
+    for (let k = 0; k < tune.wreckPromotePerStep && st.wreckQueue.length; k++) promotePlanarWreck(st, ctx, st.wreckQueue.shift());
   }
   // bryły bazy: grawitacja skały (po śmierci habitatu wszystkie swobodne; wcześniej odłamy spod habitatu), spoczynek
   const recs = st.recs;
