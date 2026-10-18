@@ -127,12 +127,6 @@ test('wraki/fragmenty: LOD smugi i cienie z zasięgu aktywnych heksów, nie ze s
   assert.match(hex, /const ext = getGridActiveExtent\(grid, now\);/, 'selekcja cieni wraków/fragmentów');
 });
 
-test('panel skanera: przyciski akcji budowane raz na cel (klik nie ginie), schowany panel nie renderuje', () => {
-  const src = read('src/ui/scannerOverviewUI.js');
-  assert.match(src, /if \(detailBuiltFor !== target\) \{/);
-  assert.match(src, /if \(runtime\.enabled === false\) return;\s*render\(\);/);
-});
-
 // Port WebGPU, zadanie 19: dawne RocketFireGPU / RocketSmokeGPU zastąpił dym compute z dema
 // rakiet; pierścienie z wysyłką zakresów (iskry, łuki) mają test zachowania w
 // tests/rocketFx.test.mjs („pierścień: zawinięcie = dwa wycinki, bez pełnego bufora”).

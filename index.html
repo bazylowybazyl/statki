@@ -103,10 +103,6 @@
   <!-- --- HUD TOP CONTAINER --- -->
   <div id="hud-top-container">
     <div class="hud-dock" id="hud-top-dock">
-      <div class="location-display is-hidden" id="location-display">
-        <span class="loc-label" id="loc-label">CURRENT SECTOR</span>
-        <span class="loc-name" id="loc-text">INTERPLANETARY SPACE</span>
-      </div>
       <div class="hud-drawer" id="top-drawer">
         <div class="station-header">
           <div class="station-title">
@@ -129,144 +125,6 @@
     </div>
   </div>
 
-  <!-- --- LEFT PANELS (Support) --- -->
-  <div id="side-panels-container">
-    <div class="side-panel-transparent support-command-panel" id="panel-support">
-      <div class="panel-header support-command-header" onclick="togglePanel('panel-support')"><span class="support-title-block"><span class="panel-title">Wsparcie</span><span class="support-panel-kicker">FLEET CALL-IN</span></span><span
-          class="panel-chevron">&#9662;</span></div>
-      <div class="panel-body support-command-body">
-        <div class="orders-row support-faction-row">
-          <div class="glass-btn active" id="support-faction-terran">Terra Nova</div>
-          <div class="glass-btn" id="support-faction-pirate">Pirates</div>
-          <div class="glass-btn" id="support-faction-independent">Independent</div>
-        </div>
-        <div class="orders-row support-tools-row">
-          <div class="glass-btn" id="support-line-mode" title="Zaznacz typ statku na liscie, potem przeciagnij LPM po mapie">LINIE</div>
-        </div>
-        <div class="support-roster" id="support-roster"></div>
-        <div class="orders-row support-orders-row">
-          <div class="glass-btn active" id="support-guard">Guard</div>
-          <div class="glass-btn" id="support-engage">Engage</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="side-panel-transparent" id="panel-shield">
-      <div class="panel-header" onclick="togglePanel('panel-shield')"><span class="panel-title">Tarcza</span><span
-          class="panel-chevron">&#9662;</span></div>
-      <div class="panel-body">
-        <div class="orders-row">
-          <div class="glass-btn" id="btn-energy-shot">Energy Shot (+50%)</div>
-        </div>
-        <div class="orders-row">
-          <div class="glass-btn" id="btn-shield-toggle">Shield: ON</div>
-        </div>
-        <div class="orders-row">
-          <div class="glass-btn" id="btn-global-shields-toggle">Global Shields: ON</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Pusty kontener na prawe panele — panel "Flota" usunięty, ale
-       getGameUIElements() i cockpitUI.js nadal chowają/pokazują ten wrapper. -->
-  <div id="right-panels-container"></div>
-
-  <!-- --- HUD BOTTOM CONTAINER --- -->
-  <div id="hud-bottom-container">
-    <div class="hud-wing left" id="left-wing">
-      <div class="stat-unit" id="shield-unit">
-        <div class="stat-value-text" id="val-shield">2800</div>
-        <div class="stat-bar-aero">
-          <div class="stat-ghost" id="ghost-shield"></div>
-          <div class="stat-fill shield" id="fill-shield"></div>
-        </div>
-        <div class="stat-label">Deflector Shield</div>
-      </div>
-      <div class="stat-unit" id="hp-unit">
-        <div class="stat-value-text" id="val-hp">4200</div>
-        <div class="stat-bar-aero">
-          <div class="stat-ghost" id="ghost-hp"></div>
-          <div class="stat-fill hp" id="fill-hp"></div>
-        </div>
-        <div class="stat-label">Hull Integrity</div>
-      </div>
-    </div>
-
-    <div class="hud-dock" id="hud-center-dock">
-      <div class="hud-drawer" id="bottom-drawer">
-        <div class="drawer-content-wrapper" id="drawer-content-wrapper"></div>
-      </div>
-      <div class="warp-separator-container" id="warp-container"><span class="warp-label-center" id="warp-text">WARP
-          DRIVE CHARGING</span>
-        <div class="warp-separator-fill" id="fill-warp"></div>
-      </div>
-      <div class="dock-dashboard">
-        <div class="dash-group left"><span class="dash-label">Engine</span>
-          <div class="dash-gauge">
-            <div class="dash-fill power" id="fill-power"></div>
-          </div>
-        </div>
-        <div class="dash-group center">
-            <div class="speed-display"><span class="speed-value" id="val-speed">0</span><span
-              class="speed-unit" id="val-speed-unit">M/S</span>
-          </div>
-          <div class="drive-readout" id="drive-readout">
-            <span class="drive-mode" id="drive-mode">BOJOWY</span>
-            <span class="drive-gear" id="drive-gear">G 1/1</span>
-            <span id="drive-rpm">RPM 0%</span>
-          </div>
-          <div class="drive-rpm-track" aria-label="Obroty napędu">
-            <div class="drive-rpm-fill" id="drive-rpm-fill"></div>
-          </div>
-          <div class="dash-gauge">
-            <div class="dash-fill core" id="fill-core"></div>
-          </div>
-          <span class="dash-label">CORE INTEGRITY</span>
-        </div>
-        <div class="dash-group right"><span class="dash-label">Boost</span>
-          <div class="dash-gauge">
-            <div class="dash-fill boost" id="fill-boost"></div>
-          </div>
-        </div>
-      </div>
-      <div class="skill-row" id="skill-row">
-        <!-- Generowane przez HUDSystem -->
-      </div>
-    </div>
-    <div id="hud-radar-dock" aria-label="CIC radar">
-      <div class="hud-radar-shell">
-        <canvas class="hud-radar-canvas" width="176" height="176"></canvas>
-        <div class="hud-radar-readout">
-          <span class="total">C:0</span>
-          <span class="hostile">H:0</span>
-          <span class="asteroid">A:0</span>
-          <span class="range">20K</span>
-        </div>
-      </div>
-      <div class="hud-radar-controls" aria-label="Zasięg radaru" role="group">
-        <button class="hud-radar-range-btn" type="button" data-radar-range="5000" aria-pressed="false" title="Zasięg radaru: 5K">5K</button>
-        <button class="hud-radar-range-btn" type="button" data-radar-range="10000" aria-pressed="false" title="Zasięg radaru: 10K">10K</button>
-        <button class="hud-radar-range-btn active" type="button" data-radar-range="20000" aria-pressed="true" title="Zasięg radaru: 20K">20K</button>
-        <button class="hud-radar-range-btn" type="button" data-radar-range="40000" aria-pressed="false" title="Zasięg radaru: 40K">40K</button>
-        <button class="hud-radar-range-btn" type="button" data-radar-range="60000" aria-pressed="false" title="Zasięg radaru: 60K">60K</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="ui" class="hidden">
-    <div><strong>HULLFALL — gwiazdy na całej mapie + duży silnik plazmowy</strong>
-    </div>
-    <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
-    <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
-    <div class="stat">LPM — ogień grupy w ręku · 1/2/3 — grupy broni · ŚPM — koło trybów okrętu · SHIFT — wyższy bieg · 9 — warp
-    </div>
-    <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki
-        ślad przy ruchu.</small></div>
-  </div>
-  <div id="hud-topbar" class="hud-topbar hidden">
-    <div id="skill-slots" class="skill-slot-row" aria-label="Umiejetnosci i skille"></div>
-  </div>
   <!-- MENU GŁÓWNE: po lewej kolumna (tytuł, lista, panele podmenu), po prawej
        tło 3D — Ziemia z ringiem „Halo” (src/3d/menuBackdrop3D.js). Style:
        assets/css/main-menu.css. JS szuka widoków po id, a przycisków po klasie
@@ -853,11 +711,6 @@
     </div>
   </div>
   <div id="zoom-indicator">ZOOM X1.00</div>
-  <div id="hover-info" class="hover-info hidden">
-    <div class="hover-title"></div>
-    <span class="hover-subtitle"></span>
-    <div class="hover-content"></div>
-  </div>
   <script type="importmap">
 {
   "imports": {
@@ -1540,9 +1393,7 @@
     } from "./src/ui/commandOverlay.js";
     import { ContactMarkers } from "./src/ui/contactMarkers.js";
     import { createMissionTargetMarkers } from "./src/ui/missionTargetMarkers.js";
-    import { initRadarTargetingUI } from "./src/ui/radarTargetingUI.js";
     import {
-      buildAsteroidScanDetails,
       buildScannerContact,
       buildStationDirectoryContacts,
       getTargetRadius,
@@ -1552,13 +1403,11 @@
       isLockableTarget,
       isTargetAlive,
       isTargetWithinSensorRange,
-      refreshScannerContactDistances,
       resolveShipSensors,
       sortScannerContacts,
       sortScannerSweepContacts,
       targetPoint as scannerTargetPoint
     } from "./src/game/scannerTargeting.js";
-    import { initScannerOverviewUI } from "./src/ui/scannerOverviewUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
     import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim, turretDriveFor, mountFireArc } from "./src/game/weaponAim.js";
@@ -1901,46 +1750,6 @@
     setLiveDebugPerfHud(PerfHUD);
     installLiveDebugConsoleApi();
 
-    const supportUIRoot = document.getElementById('panel-support');
-    const supportGuardBtn = document.getElementById('support-guard');
-    const supportEngageBtn = document.getElementById('support-engage');
-    const supportFactionTerranBtn = document.getElementById('support-faction-terran');
-    const supportFactionPirateBtn = document.getElementById('support-faction-pirate');
-    const supportFactionIndependentBtn = document.getElementById('support-faction-independent');
-    const supportRosterRoot = document.getElementById('support-roster');
-    const supportLineModeBtn = document.getElementById('support-line-mode');
-    let carrierSpawnBtn = null;
-    const shieldControlsRoot = document.getElementById('panel-shield');
-    const energyShotBtn = document.getElementById('btn-energy-shot');
-    const shieldToggleBtn = document.getElementById('btn-shield-toggle');
-    const globalShieldsToggleBtn = document.getElementById('btn-global-shields-toggle');
-    const supportDragState = {
-      active: false,
-      key: null,
-      sourceBtn: null
-    };
-    const SUPPORT_DRAG_TYPES = new Set([
-      'carrier',
-      'supercapital',
-      'pirate_supercapital',
-      'atlas',
-      'megafreighter',
-      'frigate_pd',
-      'frigate_laser',
-      'destroyer',
-      'battleship',
-      'pirate_battleship'
-    ]);
-    const SUPPORT_CLICK_TYPES = new Set([
-      'fighter',
-      'interceptor',
-      'carrier_fighter',
-      // Role eskadr (2026-10-14): bombowce, torpedowce, kanonierki — karty testowe Rezerwy (?dev).
-      'bomber',
-      'torpedo_bomber',
-      'gunship'
-    ]);
-
     // --- Tryb LINIE: masowe spawnowanie wzdluz przeciaganej linii (dev/sandbox) ---
     // Kazdy klucz rostera dostaje "klase wagowa" jednostki; klasa okresla ile
     // sztuk zmiesci sie na linii dlugosci calego ekranu (im ciezsza klasa, tym
@@ -1988,7 +1797,6 @@
     const LineSpawnState = {
       active: false,
       selectedKey: null,
-      selectedBtn: null,
       widthPct: 100,
       dragging: false,
       startScreen: null,
@@ -2024,10 +1832,6 @@
       ]
     });
 
-    function isSupportDragKey(key) {
-      return SUPPORT_DRAG_TYPES.has(key);
-    }
-
     function normalizeSupportFaction(faction) {
       const key = String(faction || '').trim().toLowerCase();
       return SUPPORT_FACTION_ROSTERS[key] ? key : 'terran';
@@ -2037,144 +1841,9 @@
       return SUPPORT_FACTION_MODES[normalizeSupportFaction(faction)] || 'friendly';
     }
 
-    function supportIconMarkup(icon) {
-      if (icon === 'supercapital') {
-        return '<div class="icon-supercapital"><div class="icon-sc-wing"></div><div class="icon-sc-hull"></div><div class="icon-sc-wing"></div></div>';
-      }
-      if (icon === 'carrier') {
-        return '<div class="icon-carrier"><div class="icon-carrier-bay"></div><div class="icon-carrier-core"></div><div class="icon-carrier-bay"></div></div>';
-      }
-      if (icon === 'battleship') {
-        return '<div class="icon-battleship"><div class="icon-bs-rect"></div><div class="icon-bs-chevron"></div></div>';
-      }
-      if (icon === 'destroyer') return '<div class="icon-destroyer"></div>';
-      if (icon === 'fighter') return '<div class="icon-fighter"></div>';
-      return '<div class="icon-frigate"></div>';
-    }
-
-    function selectLineSpawnCard(key, btn) {
+    // Kokpit (shadow DOM) rysuje roster sam i sam zaznacza wybór — tu tylko stan.
+    function selectLineSpawnType(key) {
       LineSpawnState.selectedKey = key;
-      LineSpawnState.selectedBtn = btn || null;
-      // Podswietlenie karty dotyczy tylko starego panelu HUD. Kokpit (shadow DOM)
-      // rysuje wlasny roster i sam sobie zaznacza wybor — stad null-guard.
-      if (supportRosterRoot && supportRosterRoot.isConnected) {
-        supportRosterRoot.querySelectorAll('.support-card.line-selected').forEach(c => c.classList.remove('line-selected'));
-      }
-      if (btn) btn.classList.add('line-selected');
-    }
-
-    // Gdy tryb LINIE jest wlaczony, klikniecie karty statku zamiast spawnowac
-    // wybiera typ do przeciagania po mapie. Zwraca true, jesli klik zostal
-    // przechwycony (obsluzony) przez tryb LINIE.
-    function handleLineModeCardClick(key, btn) {
-      if (!LineSpawnState.active) return false;
-      if (btn.getAttribute('aria-disabled') === 'true') return true;
-      if (!SUPPORT_LINE_TIER_BY_KEY[key]) {
-        toast('Ten typ nie wspiera trybu LINIE');
-        return true;
-      }
-      selectLineSpawnCard(key, btn);
-      return true;
-    }
-
-    function bindSupportSpawnButton(btn) {
-      if (!btn) return;
-      const key = btn.dataset.supportSpawn;
-      if (SUPPORT_CLICK_TYPES.has(key)) {
-        btn.addEventListener('click', () => {
-          if (handleLineModeCardClick(key, btn)) return;
-          if (btn.getAttribute('aria-disabled') === 'true') return;
-          const mode = getSupportSpawnMode();
-          if (key === 'carrier_fighter') {
-            const carrier = getFriendlyCarrierEntity();
-            if (!carrier) return;
-            spawnCallInShip('fighter', { anchor: carrier, mode });
-          } else {
-            callInSupport(key, { mode });
-          }
-          // Rozkaz skrzydła zostaje, jaki był (ATAK nie znika po przyzwaniu).
-        });
-      } else if (isSupportDragKey(key)) {
-        btn.addEventListener('mousedown', (event) => {
-          if (event.button !== 0) return;
-          if (LineSpawnState.active) return;
-          if (btn.getAttribute('aria-disabled') === 'true') return;
-          beginSupportDrag(key, btn);
-        });
-        btn.addEventListener('click', (event) => {
-          event.preventDefault();
-          handleLineModeCardClick(key, btn);
-        });
-      }
-    }
-
-    function renderSupportRoster() {
-      if (!supportRosterRoot) return;
-      const faction = normalizeSupportFaction(SupportWing?.faction || 'terran');
-      const roster = SUPPORT_FACTION_ROSTERS[faction] || SUPPORT_FACTION_ROSTERS.terran;
-      const frag = document.createDocumentFragment();
-      supportRosterRoot.textContent = '';
-      carrierSpawnBtn = null;
-      let reselectedBtn = null;
-      for (const item of roster) {
-        const card = document.createElement('div');
-        card.className = 'support-card';
-        card.dataset.supportSpawn = item.key;
-        card.dataset.supportFaction = faction;
-        card.innerHTML = `
-          <div class="ship-icon-wrap">${supportIconMarkup(item.icon)}</div>
-          <div class="support-details"><span class="ship-name">${item.name}</span><span class="ship-role">${item.role}</span></div>
-          <div class="support-count">${item.count}</div>
-        `;
-        if (item.key === 'carrier') carrierSpawnBtn = card;
-        bindSupportSpawnButton(card);
-        if (LineSpawnState.active && item.key === LineSpawnState.selectedKey) {
-          card.classList.add('line-selected');
-          reselectedBtn = card;
-        }
-        frag.appendChild(card);
-      }
-      supportRosterRoot.appendChild(frag);
-      // Wybrany typ moze nie istniec w rosterze nowej frakcji (np. 'battleship'
-      // Terra Novy vs 'pirate_battleship' piratow) — wtedy czyscimy wybor.
-      if (LineSpawnState.active) {
-        if (reselectedBtn) {
-          LineSpawnState.selectedBtn = reselectedBtn;
-        } else {
-          LineSpawnState.selectedKey = null;
-          LineSpawnState.selectedBtn = null;
-        }
-      }
-    }
-
-    function beginSupportDrag(key, btn) {
-      supportDragState.active = true;
-      supportDragState.key = key;
-      supportDragState.sourceBtn = btn || null;
-    }
-
-    function endSupportDrag(event) {
-      if (!supportDragState.active) return false;
-      const key = supportDragState.key;
-      supportDragState.active = false;
-      supportDragState.key = null;
-      supportDragState.sourceBtn = null;
-
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX;
-      const y = event.clientY;
-      const overCanvas = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-      if (overCanvas) {
-        const world = screenToWorld(x - rect.left, y - rect.top);
-        const mode = getSupportSpawnMode();
-        // Rozkaz skrzydła zostaje, jaki był — dawniej każde przyzwanie
-        // przestawiało CAŁE skrzydło na ESKORTĘ i kasowało kliknięty ATAK.
-        // Przylot tunelem od Ziemi, okręt w grze w chwili wyrzutu (callInSupport).
-        callInSupport(key, { spawnPos: world, pos: world, mode });
-      }
-      mouse.left = false;
-      mouse.click = false;
-      return true;
     }
 
     function toggleLineSpawnMode(forceOn) {
@@ -2182,13 +1851,8 @@
       LineSpawnState.active = next;
       LineSpawnState.dragging = false;
       cancelLineSpawnDrag();
-      if (supportLineModeBtn) supportLineModeBtn.classList.toggle('active', next);
       if (!next) {
         LineSpawnState.selectedKey = null;
-        LineSpawnState.selectedBtn = null;
-        if (supportRosterRoot && supportRosterRoot.isConnected) {
-          supportRosterRoot.querySelectorAll('.support-card.line-selected').forEach(c => c.classList.remove('line-selected'));
-        }
         return next;
       }
       // Wygodny domyslny wybor, zeby od razu dalo sie ciagnac linie.
@@ -2196,12 +1860,7 @@
         const faction = normalizeSupportFaction(SupportWing?.faction || 'terran');
         const roster = SUPPORT_FACTION_ROSTERS[faction] || SUPPORT_FACTION_ROSTERS.terran;
         const firstLineable = roster.find(item => SUPPORT_LINE_TIER_BY_KEY[item.key]);
-        if (firstLineable) {
-          const card = (supportRosterRoot && supportRosterRoot.isConnected)
-            ? supportRosterRoot.querySelector(`.support-card[data-support-spawn="${firstLineable.key}"]`)
-            : null;
-          selectLineSpawnCard(firstLineable.key, card);
-        }
+        if (firstLineable) selectLineSpawnType(firstLineable.key);
       }
       toast('Tryb LINIE: przeciagnij LPM po mapie (wybierz typ na liscie)');
       return next;
@@ -2213,9 +1872,9 @@
       toggle: (force) => toggleLineSpawnMode(force),
       isActive: () => LineSpawnState.active,
       setType: (key) => {
-        if (key == null) { selectLineSpawnCard(null, null); return true; }
+        if (key == null) { selectLineSpawnType(null); return true; }
         if (!SUPPORT_LINE_TIER_BY_KEY[key]) return false;
-        selectLineSpawnCard(key, null);
+        selectLineSpawnType(key);
         return true;
       },
       getType: () => LineSpawnState.selectedKey,
@@ -2303,38 +1962,6 @@
       toast(`LINIA: ${count}x ${key}`);
     }
 
-    function setupSidePanel(panelEl) {
-      if (!panelEl) return null;
-      const toggleBtn = panelEl.querySelector('.panel-toggle');
-      const bodyEl = panelEl.querySelector('.side-panel-body');
-      let collapsed = false;
-
-      function applyState() {
-        panelEl.classList.toggle('collapsed', collapsed);
-        if (bodyEl) bodyEl.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
-        panelEl.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
-      }
-
-      applyState();
-
-      if (toggleBtn) {
-        toggleBtn.addEventListener('click', () => {
-          collapsed = !collapsed;
-          applyState();
-        });
-      }
-
-      return {
-        collapse() { if (!collapsed) { collapsed = true; applyState(); } },
-        expand() { if (collapsed) { collapsed = false; applyState(); } },
-        isCollapsed: () => collapsed
-      };
-    }
-
-    // Wywołania są tu dla efektu ubocznego — podpinają przycisk zwijania panelu.
-    // Zwracanego uchwytu (collapse/expand) nikt nie używa.
-    setupSidePanel(supportUIRoot);
-    setupSidePanel(shieldControlsRoot);
     // Fleet to rejestr jednostek gracza (ships/templates) — bez własnego UI.
     const Fleet = window.Fleet || (window.Fleet = {
       ships: []
@@ -2350,24 +1977,10 @@
       order: 'guard',
       formation: loadWingFormation(),
       faction: 'terran',
-      spawnMode: 'friendly',
-      ui: {
-        root: supportUIRoot || null,
-        guardBtn: supportGuardBtn || null,
-        engageBtn: supportEngageBtn || null,
-        factionTerranBtn: supportFactionTerranBtn || null,
-        factionPirateBtn: supportFactionPirateBtn || null,
-        factionIndependentBtn: supportFactionIndependentBtn || null
-      }
+      spawnMode: 'friendly'
     });
     SupportWing.faction = normalizeSupportFaction(SupportWing.faction || 'terran');
     SupportWing.spawnMode = normalizeCallInSpawnMode(SupportWing.spawnMode || 'friendly');
-    if (!SupportWing.ui.root && supportUIRoot) SupportWing.ui.root = supportUIRoot;
-    if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = supportGuardBtn;
-    if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
-    if (!SupportWing.ui.factionTerranBtn && supportFactionTerranBtn) SupportWing.ui.factionTerranBtn = supportFactionTerranBtn;
-    if (!SupportWing.ui.factionPirateBtn && supportFactionPirateBtn) SupportWing.ui.factionPirateBtn = supportFactionPirateBtn;
-    if (!SupportWing.ui.factionIndependentBtn && supportFactionIndependentBtn) SupportWing.ui.factionIndependentBtn = supportFactionIndependentBtn;
 
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
@@ -2627,7 +2240,6 @@
     const loadingEl = document.getElementById('loading');
     const loadingFillEl = document.getElementById('loading-fill');
     const loadingProgressEl = document.getElementById('loading-progress');
-    const skillSlotsEl = document.getElementById('skill-slots');
     let gameStarted = false;
     let menuView = 'home';
 
@@ -2882,28 +2494,13 @@
       return !!window.hudSystem?.cockpit?.pointerMode;
     }
 
-    // --- ZBIORCZA LISTA ELEMENTÓW HUD (Nowych i starych) ---
+    // --- ZBIORCZA LISTA ELEMENTÓW HUD (chowane pod menu główne) ---
     function getGameUIElements() {
       return [
         document.getElementById('cockpit-ui-host'),
-        // Główne kontenery AERO HUD
+        // slot tabletu stacji (kokpit przenosi go do swojego hosta)
         document.getElementById('hud-top-container'),
-        document.getElementById('hud-bottom-container'),
-
-        // Kontenery boczne
-        document.getElementById('side-panels-container'),
-        document.getElementById('right-panels-container'),
-
-        // Bezpośrednie panele (dla pewności)
-        document.getElementById('panel-support'),
-
-        // Elementy Overlay
         document.getElementById('zoom-indicator'),
-        document.getElementById('hint-box'),
-
-        // Stare/Inne elementy
-        document.getElementById('hud-topbar'),
-        document.getElementById('ui'),
       ];
     }
 
@@ -2948,16 +2545,6 @@
     function toggleMainMenu() {
       if (isMainMenuVisible()) hideMainMenu();
       else showMainMenu('home');
-    }
-
-    if (skillSlotsEl && skillSlotsEl.childElementCount === 0) {
-      const slots = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-      slots.forEach(label => {
-        const slot = document.createElement('div');
-        slot.className = 'skill-slot';
-        slot.textContent = label;
-        skillSlotsEl.appendChild(slot);
-      });
     }
 
     // Ile jednostek świata ma 1 AU. Helper leżał kiedyś w bloku warp lens, ale
@@ -3263,13 +2850,6 @@
       }
       if (SupportWing.order === normalized && !opts.force) return;
       SupportWing.order = normalized;
-
-      if (SupportWing.ui.guardBtn) {
-        SupportWing.ui.guardBtn.classList.toggle('active', normalized === 'guard');
-      }
-      if (SupportWing.ui.engageBtn) {
-        SupportWing.ui.engageBtn.classList.toggle('active', normalized === 'engage');
-      }
     }
 
     // Formacja skrzydła: dowódca floty (fleetCoordinator.js) czyta ją przy najbliższej przebudowie
@@ -3300,12 +2880,6 @@
       if (SupportWing.faction === normalized && !opts.force) return;
       SupportWing.faction = normalized;
       SupportWing.spawnMode = getSupportModeForFaction(normalized);
-
-      const ui = SupportWing.ui || {};
-      if (ui.factionTerranBtn) ui.factionTerranBtn.classList.toggle('active', normalized === 'terran');
-      if (ui.factionPirateBtn) ui.factionPirateBtn.classList.toggle('active', normalized === 'pirate');
-      if (ui.factionIndependentBtn) ui.factionIndependentBtn.classList.toggle('active', normalized === 'independent');
-      renderSupportRoster();
     }
 
     window.CockpitSupport = {
@@ -3334,14 +2908,6 @@
 
     function updateSupportWing(dt) {
       cleanupSupportWing();
-      if (SupportWing.ui.root) {
-        SupportWing.ui.root.classList.remove('hidden');
-      }
-      if (carrierSpawnBtn) {
-        const hasCarrier = getSupportSpawnMode() === 'friendly' && !!getFriendlyCarrierEntity();
-        carrierSpawnBtn.classList.toggle('disabled', hasCarrier);
-        carrierSpawnBtn.setAttribute('aria-disabled', hasCarrier ? 'true' : 'false');
-      }
       if (SupportWing.order === 'engage') {
         const piratesAlive = npcs.some(n => n && !n.dead && n.isPirate);
         if (!piratesAlive) {
@@ -4932,22 +4498,6 @@
     }
     window.triggerEnergyShot = triggerEnergyShot;
 
-    function refreshShieldControlButtons() {
-      const playerShieldEnabled = !!(ship?.shield) && !(ship?._shieldForcedOff);
-      if (shieldToggleBtn) {
-        shieldToggleBtn.textContent = `Shield: ${playerShieldEnabled ? 'ON' : 'OFF'}`;
-        shieldToggleBtn.classList.toggle('active', playerShieldEnabled);
-        shieldToggleBtn.setAttribute('aria-pressed', playerShieldEnabled ? 'true' : 'false');
-      }
-      if (globalShieldsToggleBtn) {
-        const globalEnabled = !(window.DevFlags && window.DevFlags.globalShieldsOff);
-        globalShieldsToggleBtn.textContent = `Global Shields: ${globalEnabled ? 'ON' : 'OFF'}`;
-        globalShieldsToggleBtn.classList.toggle('active', globalEnabled);
-        globalShieldsToggleBtn.setAttribute('aria-pressed', globalEnabled ? 'true' : 'false');
-      }
-    }
-    window.refreshShieldControlButtons = refreshShieldControlButtons;
-
     function togglePlayerShieldForcedState(forceOff = null) {
       if (!ship?.shield) return;
       const nextForcedOff = forceOff == null ? !ship._shieldForcedOff : !!forceOff;
@@ -4955,15 +4505,14 @@
       if (!nextForcedOff && ship.shield.val > 0 && ship.shield.state === 'off') {
         ship.shield.regenTimer = Math.min(Number(ship.shield.regenTimer) || 0, 0);
       }
-      refreshShieldControlButtons();
       if (typeof toast === 'function') toast(`Shield ${nextForcedOff ? 'OFF' : 'ON'}`);
     }
     window.togglePlayerShieldForcedState = togglePlayerShieldForcedState;
 
+    // Pomocnik konsoli: tarcze wszystkich okrętów wył./wł. (flaga DevFlags.globalShieldsOff — czytają ją skrypty).
     function toggleGlobalShields(forceOff = null) {
       const nextForcedOff = forceOff == null ? !DevFlags.globalShieldsOff : !!forceOff;
       DevFlags.globalShieldsOff = nextForcedOff;
-      refreshShieldControlButtons();
       if (typeof toast === 'function') toast(`Global shields ${nextForcedOff ? 'OFF' : 'ON'}`);
     }
     window.toggleGlobalShields = toggleGlobalShields;
@@ -6076,16 +5625,9 @@
       // -----------------------------------------------------
 
       if (!window.hudSystem) return;
-      const boostFuelMax = boost?.fuelMax || 1;
       const sysData = {
-        power: (enginePower?.current ?? 0) * 100,
-        boost: (boost?.fuel ?? 0) / boostFuelMax * 100,
         warpState: warp?.state,
-        warpCharge: warp?.charge ?? 0,
-        warpMax: warp?.chargeTime ?? 1,
-        warpSpeed: warp?.speed ?? 0,
         driveMode: driveState.mode,
-        driveModeLabel: getDriveMode(driveState).label,
         driveGear: driveState.gear,
         driveGearCount: driveState.gearCount,
         driveRpm: driveState.rpm,
@@ -6112,7 +5654,6 @@
       }
       const envData = {
         locationName: zoneState.current?.label || 'UNKNOWN SECTOR',
-        bannerMessage: zoneState.messages[0] || null,
         weaponHud: buildWeaponHudState(),
         radar: hudRadarSnapshot,
         // Karta celu i wyniki skanu w kokpicie (src/ui/cockpitUI.js).
@@ -6150,7 +5691,6 @@
       sys.driveShiftCueIntensity = 0;
       sys.driveShiftCueDanger = 0;
       sys.warpState = 'idle';
-      sys.warpCharge = 0;
       return _scoutHud;
     }
 
@@ -7707,11 +7247,9 @@
       lastZoneKey: null,
       lastZoneId: null,
       lastApproachKey: null,
-      initialized: false,
-      messages: []
+      initialized: false
     };
     publishGameState({ zoneState });
-    let zoneMessageSeq = 0;
 
     function makeInterplanetaryZone() {
       return {
@@ -8029,24 +7567,8 @@
       const tone = typeof options?.tone === 'string' && options.tone.trim()
         ? options.tone.trim()
         : 'status';
-      zoneState.messages = [{
-        id: ++zoneMessageSeq,
-        text: text.trim(),
-        life: duration,
-        maxLife: duration,
-        label,
-        tone
-      }];
-      // Kokpit pokazuje komunikaty w linii nad klastrem (stary baner i fallback
-      // na kanwie są wyłączone, odkąd istnieje window.hudSystem).
+      // Kokpit pokazuje komunikaty w linii nad klastrem.
       window.hudSystem?.pushAlert?.(text.trim(), { label, tone, duration });
-    }
-
-    function updateZoneMessages(dt) {
-      for (const msg of zoneState.messages) {
-        msg.life -= dt;
-      }
-      zoneState.messages = zoneState.messages.filter(msg => msg.life > 0);
     }
 
     function updateZoneState(dt) {
@@ -8088,8 +7610,6 @@
         }
       }
       zoneState.lastApproachKey = approachKey;
-
-      updateZoneMessages(dt);
     }
 
     // RODZINY PLANETOID (A2, docs/PLAN-pas-realizm.md § A2): gęste pole pasa = rodzina kolizyjna
@@ -13150,9 +12670,6 @@
         stationTerminal.loadingEndMs = 0;
         stationTerminal.line = '';
         openStationUI(stationRef, tabId);
-        if (window.hudSystem?.menuState === 'STATION') {
-          window.hudSystem.setBottomMenuState('IDLE');
-        }
       }
     }
 
@@ -13303,28 +12820,12 @@
       }
     });
 
-    const hoverInfoState = {
-      el: document.getElementById('hover-info'),
-      title: document.querySelector('#hover-info .hover-title'),
-      subtitle: document.querySelector('#hover-info .hover-subtitle'),
-      content: document.querySelector('#hover-info .hover-content'),
-      type: null,
-      target: null
-    };
-
     function toTitleCaseFromKey(value) {
       return String(value || '')
         .split(/[-_\s]+/g)
         .filter(Boolean)
         .map(part => part.charAt(0).toUpperCase() + part.slice(1))
         .join(' ');
-    }
-
-    function availableStationTabs(station) {
-      if (Array.isArray(station?.tabs) && station.tabs.length) {
-        return station.tabs.map(toTitleCaseFromKey);
-      }
-      return STATION_TERMINAL_TABS.map(tab => toTitleCaseFromKey(tab.id));
     }
 
     function formatNpcName(npc) {
@@ -13334,140 +12835,6 @@
       if (npc.type) return toTitleCaseFromKey(npc.type);
       if (npc.id != null) return `Jednostka #${npc.id}`;
       return 'Jednostka';
-    }
-
-    function formatShieldValue(entity) {
-      const shield = entity?.shield;
-      if (shield && typeof shield.val === 'number' && typeof shield.max === 'number') {
-        return `${Math.max(0, Math.round(shield.val))}/${Math.max(0, Math.round(shield.max))}`;
-      }
-      return 'Brak';
-    }
-
-    function formatWeaponName(weapon) {
-      if (!weapon) return 'Brak';
-      if (typeof weapon === 'string') return toTitleCaseFromKey(weapon);
-      if (weapon.name) return toTitleCaseFromKey(weapon.name);
-      return 'Brak';
-    }
-
-    function hideHoverInfo() {
-      const { el, content } = hoverInfoState;
-      if (!el) return;
-      if (content) content.innerHTML = '';
-      if (!el.classList.contains('hidden')) el.classList.add('hidden');
-      hoverInfoState.type = null;
-      hoverInfoState.target = null;
-    }
-
-    function updateHoverInfo(target, type) {
-      const { el, title, subtitle, content } = hoverInfoState;
-      if (!el) return;
-      if (!target || !type) {
-        hideHoverInfo();
-        return;
-      }
-      hoverInfoState.type = type;
-      hoverInfoState.target = target;
-      el.classList.remove('hidden');
-      if (content) content.innerHTML = '';
-
-      if (type === 'station') {
-        if (title) title.textContent = target.name || (target.id ? `Stacja ${String(target.id).toUpperCase()}` : 'Stacja');
-        if (subtitle) subtitle.textContent = 'STACJA ORBITALNA';
-        if (content) {
-          const section = document.createElement('div');
-          section.className = 'hover-section';
-          section.textContent = 'Zakładki';
-          content.appendChild(section);
-
-          const tags = document.createElement('div');
-          tags.className = 'hover-tags';
-          for (const tab of availableStationTabs(target)) {
-            const span = document.createElement('span');
-            span.className = 'hover-tag';
-            span.textContent = tab;
-            tags.appendChild(span);
-          }
-          content.appendChild(tags);
-        }
-      } else if (type === 'npc') {
-        if (title) title.textContent = formatNpcName(target);
-        if (subtitle) subtitle.textContent = target.friendly ? 'SOJUSZNIK' : 'CELE NPC';
-        if (content) {
-          const lines = [
-            { label: 'HP', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` },
-            { label: 'Tarcza', value: formatShieldValue(target) },
-            { label: 'Broń', value: formatWeaponName(target.weapon) }
-          ];
-          for (const line of lines) {
-            const row = document.createElement('div');
-            row.className = 'hover-line';
-            const strong = document.createElement('strong');
-            strong.textContent = `${line.label}:`;
-            const span = document.createElement('span');
-            span.textContent = line.value;
-            row.appendChild(strong);
-            row.appendChild(span);
-            content.appendChild(row);
-          }
-        }
-      } else if (type === 'platform') {
-        if (title) title.textContent = target.label || 'Platforma obronna';
-        if (subtitle) subtitle.textContent = 'PIRACKA OBRONA';
-        if (content) {
-          const lines = [];
-          if (target.shield) {
-            lines.push({ label: 'Osłony', value: `${Math.max(0, Math.round(target.shield.val))}/${target.shield.max}` });
-          }
-          lines.push({ label: 'Kadłub', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` });
-          lines.push({ label: 'Orbita', value: formatLocalDistance(target.orbitRadius) });
-          for (const line of lines) {
-            const row = document.createElement('div');
-            row.className = 'hover-line';
-            const strong = document.createElement('strong');
-            strong.textContent = `${line.label}:`;
-            const span = document.createElement('span');
-            span.textContent = line.value;
-            row.appendChild(strong);
-            row.appendChild(span);
-            content.appendChild(row);
-          }
-        }
-      } else if (type === 'wreck') {
-        const info = describeSalvage(target);
-        if (title) title.textContent = info?.label ? `Wrak: ${info.label}` : 'Wrak';
-        // Zimny = „tło” pola wraków; holowanie albo cięcie go wybudza.
-        if (subtitle) subtitle.textContent = target.isCold ? 'ODZYSK MOŻLIWY · ZIMNY' : 'ODZYSK MOŻLIWY';
-        if (content) {
-          if (!info || (!info.materials.length && !info.weaponCount)) {
-            const row = document.createElement('div');
-            row.className = 'hover-line';
-            row.textContent = 'Rozebrany do gołej konstrukcji.';
-            content.appendChild(row);
-          } else {
-            for (const material of info.materials) {
-              const row = document.createElement('div');
-              row.className = 'hover-line';
-              const strong = document.createElement('strong');
-              strong.textContent = `${material.label}:`;
-              const span = document.createElement('span');
-              span.textContent = `${material.amount}`;
-              row.appendChild(strong);
-              row.appendChild(span);
-              content.appendChild(row);
-            }
-            // Broń wychodzi tylko przez dok — mówimy o tym wprost, bo inaczej
-            // gracz przetnie wrak z działami i nie zrozumie, czemu ich nie ma.
-            const note = document.createElement('div');
-            note.className = 'hover-line hover-salvage-note';
-            note.textContent = info.weaponCount
-              ? `Uzbrojenie: ${info.weaponCount} szt. — tylko przez holowanie do doku`
-              : 'Bez sprawnego uzbrojenia';
-            content.appendChild(note);
-          }
-        }
-      }
     }
 
     window.addEventListener('keydown', (e) => {
@@ -18708,9 +18075,7 @@
     // Weapon controllers (initialized after game start)
     let p1WeaponCtrl = null;
     let p2WeaponCtrl = null;
-    const radarPings = [];
     const scanWaves = [];
-    const scannerRevealFx = [];
     // Skan X w świecie (src/ui/radar/scanOverlay.js): fala, ramki zaciskające się na kontaktach, podpisy,
     // namiary stacji. Zegar = czas logiki gry (pauza go zatrzymuje, jak dawną falę).
     // Cele misji (StoryGame.ui.targets) mają własne ramki i podpisy (missionTargetMarkers) — znaczniki
@@ -18785,31 +18150,19 @@
       ownLabel: (e) => _storyTargetEntities.has(e)
     };
     const scannerContacts = [];
-    const scannerPassiveContacts = [];
-    const SCANNER_PASSIVE_REFRESH_MS = 350;
     const SCANNER_CONTACT_REVEAL_DELAY = 0.22;
-    const SCANNER_ACQUIRE_LEAD_TIME = 0.42;
-    const SCANNER_REVEAL_FX_LIFE = 1.15;
-    const SCANNER_LOCK_PULSE_SPEED = 5.5;
     const scannerState = {
       active: false,
-      lockAnim: 0,
       sweepTargets: new Set(),
       autoInspectFirst: false,
       // Licznik impulsów X — kokpit pokazuje po nim wyniki skanu przez 10 s.
       burstSerial: 0
     };
     let scannerSelectedTarget = null;
-    let scannerPassiveContactsAt = Number.NEGATIVE_INFINITY;
     const RADAR_UI_MAX_TARGETS = 8;
-    const RADAR_UI_DEEP_SCAN_DURATION = 2.0;
 
     function getScannerSensors() {
       return resolveShipSensors(ship);
-    }
-
-    function getScannerPassiveRange() {
-      return getScannerSensors().passiveRange;
     }
 
     function getScannerActiveRange() {
@@ -19032,70 +18385,12 @@
       return sweepSort ? sortScannerSweepContacts(contacts) : sortScannerContacts(contacts);
     }
 
-    function refreshScannerPassiveContacts(force = false) {
-      const now = performance.now();
-      if (!force && now - scannerPassiveContactsAt < SCANNER_PASSIVE_REFRESH_MS) return;
-      const sorted = collectScannerContacts({
-        range: getScannerPassiveRange(),
-        includeAsteroids: false,
-        sweepSort: false
-      });
-      scannerPassiveContacts.length = 0;
-      scannerPassiveContacts.push(...sorted);
-      scannerPassiveContactsAt = now;
-    }
-
-    function invalidateScannerPassiveContacts() {
-      scannerPassiveContactsAt = Number.NEGATIVE_INFINITY;
-    }
-
-    function getScannerOverviewContacts() {
-      refreshScannerPassiveContacts(false);
-      refreshScannerContactDistances(scannerContacts, ship);
-      refreshScannerContactDistances(scannerPassiveContacts, ship);
-      const overviewContacts = scannerContacts.slice();
-      const seenTargets = new Set();
-      for (const contact of overviewContacts) {
-        if (contact?.target) seenTargets.add(contact.target);
-      }
-      for (const contact of scannerPassiveContacts) {
-        if (!contact?.target || seenTargets.has(contact.target)) continue;
-        overviewContacts.push(contact);
-        seenTargets.add(contact.target);
-      }
-      for (const contact of buildScannerStationDirectoryContacts()) {
-        if (!contact?.target || seenTargets.has(contact.target)) continue;
-        overviewContacts.push(contact);
-        seenTargets.add(contact.target);
-      }
-      return sortScannerContacts(overviewContacts);
-    }
-
     const NPC_DESPAWN_RADIUS = 20000;
-    function spawnRadarPing(x, y) { radarPings.push({ x, y, age: 0, life: 1 }); }
     function scannerContactRevealTime(contact, wave) {
       const distance = Math.max(0, Number(contact?.distance) || 0);
       const speed = Math.max(1, Number(wave?.speed) || getScannerWaveSpeed());
       // fala rusza powoli i rozpędza się (radarConfig.scanPulseTime — ten sam profil co obraz fali)
       return Math.max(SCANNER_CONTACT_REVEAL_DELAY, scanPulseTime(distance, speed));
-    }
-    function scannerToneRgb(tone) {
-      const t = String(tone || '').toLowerCase();
-      if (t === 'hostile') return '110,255,190';
-      if (t === 'resource') return '238,183,99';
-      if (t === 'friendly') return '80,190,255';
-      if (t === 'station') return '249,115,22';
-      return '150,255,220';
-    }
-    function scannerRevealSummary(contact) {
-      const target = contact?.target;
-      const label = String(contact?.label || target?.__radarUnitId || target?.id || 'CONTACT');
-      if (isAsteroidTarget(target)) {
-        const mass = Number(target?.mass);
-        const massLabel = Number.isFinite(mass) ? Math.round(mass).toLocaleString('en-US') : '0';
-        return `${label} / MASS ${massLabel}`;
-      }
-      return label;
     }
     function setScannerInspectedTarget(target) {
       if (!isTargetAlive(target)) return false;
@@ -19104,7 +18399,6 @@
       scan.scanned = target;
       const isStation = target?.__scannerContactType === 'station' || stations.includes(target);
       scan.targetType = isAsteroidTarget(target) ? 'asteroid' : (isStation ? 'station' : (target?.type || target?.__scannerContactType || 'ship'));
-      scannerOverviewUI?.selectTarget?.(target);
       return true;
     }
     function revealScannerContact(contact, wave) {
@@ -19166,21 +18460,14 @@
     }
     function setScannerActive(nextActive) {
       scannerState.active = !!nextActive;
-      scannerState.lockAnim = 0;
-      invalidateScannerPassiveContacts();
       if (scannerState.active) {
         scannerState.burstSerial += 1;
-        refreshScannerPassiveContacts(true);
         scanWaves.length = 0;
         triggerScanWave({ reset: true });
-        CICDisplay.triggerHudRadarBurst?.();
         pushZoneMessage('SKANER: IMPULS AKTYWNY', 1.3);
       } else {
         scannerContacts.length = 0;
         scanWaves.length = 0;
-        radarPings.length = 0;
-        scannerRevealFx.length = 0;
-        scannerPassiveContacts.length = 0;
         scannerSelectedTarget = null;
         scannerState.sweepTargets = new Set();
         scannerState.autoInspectFirst = false;
@@ -19193,14 +18480,6 @@
       const reconciled = reconcileLockedTargets(nextTargets, canPlayerLockTarget);
       lockedTargets = reconciled.targets;
       lockedTarget = reconciled.primary;
-    }
-
-    function clearLockedTargetsUi() {
-      if (!lockedTargets.length && !lockedTarget) return;
-      lockedTargets = [];
-      lockedTarget = null;
-      clearPlayerAttackState();
-      pushZoneMessage('CELE ODBLOKOWANE', 1.1);
     }
 
     function toggleLockedTargetUi(target) {
@@ -19251,150 +18530,6 @@
       return target.__radarUnitId;
     }
 
-    function getRadarTargetMeta(target) {
-      const source = target?.__targetingSubsystem ? target.ownerEntity : target;
-      const hpScale = getEntityHardpointScale(source);
-      const srcW = Number((source?.hexGrid || source?.beamHull)?.srcWidth);
-      const srcH = Number((source?.hexGrid || source?.beamHull)?.srcHeight);
-      const radius = Math.max(20, getTargetRadius(source));
-      return {
-        unitId: getRadarTargetUnitId(target),
-        unitClass: getRadarTargetUnitClass(target),
-        shipLength: Number.isFinite(srcW) && srcW > 0 ? srcW * hpScale.x : radius * 3.0,
-        shipWidth: Number.isFinite(srcH) && srcH > 0 ? srcH * hpScale.y : radius * 1.8
-      };
-    }
-
-    function buildRadarWeaponsSummary(target) {
-      const buckets = new Map();
-      const groups = target?.weapons && typeof target.weapons === 'object' ? Object.values(target.weapons) : [];
-      for (const group of groups) {
-        if (!Array.isArray(group)) continue;
-        for (const entry of group) {
-          const weaponId = entry?.weapon?.id || entry?.hp?.mount;
-          const weaponDef = weaponId ? WEAPONS[weaponId] : null;
-          const name = weaponDef?.name || weaponId || 'UNKNOWN';
-          const type = String(entry?.hp?.type || weaponDef?.mountType || 'main').toUpperCase();
-          const key = `${type}:${name}`;
-          const prev = buckets.get(key);
-          if (prev) prev.count += 1;
-          else buckets.set(key, { type, name, count: 1 });
-        }
-      }
-      return [...buckets.values()].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
-    }
-
-    function buildRadarCargoSummary(target) {
-      if (isAsteroidTarget(target)) return buildAsteroidScanDetails(target).rows;
-      const rows = [];
-      if (Number.isFinite(Number(target?.mass))) rows.push({ name: 'Mass', amount: `${Math.round(Number(target.mass))}` });
-      if (target?.shield && Number.isFinite(Number(target.shield?.max))) rows.push({ name: 'Shield', amount: `${Math.round(Number(target.shield.max))}` });
-      const hpMax = Math.max(0, Number(target?.maxHp) || Number(target?.hp) || 0);
-      if (hpMax > 0) rows.push({ name: 'Hull', amount: `${Math.round(hpMax)}` });
-      if (Number.isFinite(Number(target?.cargoCap))) rows.push({ name: 'Cargo', amount: `${Math.round(Number(target.cargoCap))}` });
-      return rows;
-    }
-
-    // Plan kadłuba na belkach: komórka = węzeł (piksele sprite'a od środka, y w dół — jak origLx/Ly).
-    function buildBeamBlueprintCells(target, hpScale) {
-      const cells = HullBodies.shieldCells(target);
-      const s = target.beamHull?.body?.nodeStore;
-      if (!cells || !s) return [];
-      const out = new Array(s.count);
-      for (let i = 0; i < s.count; i++) {
-        out[i] = {
-          x: cells[i * 2] * hpScale.x,
-          y: cells[i * 2 + 1] * hpScale.y,
-          hp: s.hp[i],
-          maxHp: s.maxHp[i] || 1,
-          active: s.active[i] === 1
-        };
-      }
-      return out;
-    }
-
-    function buildRadarBlueprintData(target) {
-      const grid = target?.hexGrid || target?.beamHull;
-      const hpScale = getEntityHardpointScale(target);
-      const shards = target?.beamHull ? buildBeamBlueprintCells(target, hpScale) : Array.isArray(grid?.shards)
-        ? grid.shards.map((shard) => ({
-            x: (Number(shard?.origLx) || 0) * hpScale.x,
-            y: (Number(shard?.origLy) || 0) * hpScale.y,
-            hp: Number(shard?.hp) || 0,
-            maxHp: Number(shard?.maxHp) || 1,
-            active: !!(shard?.active && !shard?.isDebris)
-          }))
-        : [];
-      const hardpoints = (getEntityHardpoints(target) || []).map((hp) => {
-        const local = getEntityHardpointLocalPos(target, hp) || { x: 0, y: 0 };
-        return { x: local.x, y: local.y, destroyed: !!hp?.destroyed };
-      });
-      const cores = (getEntityCores(target) || []).map((core) => {
-        const local = getEntityCoreLocalPos(target, core) || { x: 0, y: 0 };
-        return { x: local.x, y: local.y, destroyed: !!core?.destroyed };
-      });
-      return {
-        width: (Number(grid?.srcWidth) || Math.max(120, (Number(target?.radius) || 40) * 3)) * hpScale.x,
-        height: (Number(grid?.srcHeight) || Math.max(80, (Number(target?.radius) || 40) * 2)) * hpScale.y,
-        shards,
-        hardpoints,
-        cores
-      };
-    }
-
-    function getRadarTargetScanData(target) {
-      return {
-        weapons: buildRadarWeaponsSummary(target),
-        cargo: buildRadarCargoSummary(target),
-        blueprint: buildRadarBlueprintData(target)
-      };
-    }
-
-    function handleRadarAction(action, target) {
-      if (!isTargetAlive(target)) return;
-      clearPlayerAttackState(target);
-      const label = getRadarTargetUnitId(target);
-      const point = scannerTargetPoint(target);
-      const radius = getTargetRadius(target);
-      if (action === 'approach') {
-        ship.command = {
-          type: 'approach',
-          target: point,
-          targetEntity: target,
-          arrival: Math.max(90, radius + 80)
-        };
-        pushZoneMessage(`ROZKAZ: ZBLIZANIE DO ${label}`, 1.5);
-      } else if (action === 'orbit') {
-        ship.command = {
-          type: 'orbit',
-          target: point,
-          targetEntity: target,
-          orbitRadius: Math.max(RTS_DEFAULT_ORBIT_RADIUS, radius + 180),
-          orbitDir: 1,
-          arrival: Math.max(90, radius + 120)
-        };
-        pushZoneMessage(`ROZKAZ: ORBITA WOKOL ${label}`, 1.5);
-      } else if (action === 'travel' || action === 'warp' || action === 'jump') {
-        setTravelTarget(point.x, point.y, label);
-      }
-    }
-
-    function getScannerOverviewDetails(target) {
-      if (!target) return { title: 'CONTACT', rows: [] };
-      if (isAsteroidTarget(target)) return buildAsteroidScanDetails(target);
-      const meta = getRadarTargetMeta(target);
-      const rows = [
-        { name: 'ID', amount: meta.unitId },
-        { name: 'Class', amount: meta.unitClass },
-        { name: 'Distance', amount: `${Math.round(Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y))}` }
-      ];
-      for (const row of buildRadarCargoSummary(target)) rows.push(row);
-      return {
-        title: `${meta.unitId} / ${meta.unitClass}`,
-        rows
-      };
-    }
-
     function selectScannerTarget(target) {
       if (!isTargetAlive(target)) return false;
       scannerState.autoInspectFirst = false;
@@ -19405,52 +18540,6 @@
       if (contact?.type === 'station' || contact?.tone === 'station') return true;
       return target?.__scannerContactType === 'station' || stations.includes(target);
     }
-
-    function openScannerStationConnection(target) {
-      if (!isTargetAlive(target) || !isScannerStationContact(target, null)) return false;
-      const hudSystem = window.hudSystem;
-      if (!hudSystem || typeof hudSystem.handleMenuAction !== 'function') return false;
-      if (hudSystem.menuState !== 'SCAN' && typeof hudSystem.setBottomMenuState === 'function') {
-        hudSystem.setBottomMenuState('SCAN');
-      }
-      if (hudSystem.menuState !== 'SCAN') return false;
-      hudSystem.handleMenuAction('terminal-connect', target?.id != null ? String(target.id) : '');
-      pushZoneMessage(`LACZENIE ZE STACJA: ${getStationDisplayName(target).toUpperCase()}`, 1.2);
-      return true;
-    }
-
-    function handleScannerOverviewSelect(target, contact, meta = {}) {
-      const selected = selectScannerTarget(target);
-      if (selected && !meta.ctrlKey && isScannerStationContact(target, contact)) {
-        openScannerStationConnection(target);
-      }
-      return selected;
-    }
-
-    function handleScannerOverviewAction(action, target) {
-      if (!isTargetAlive(target)) return;
-      selectScannerTarget(target);
-      if (action === 'lock') {
-        toggleLockedTargetUi(target);
-      } else if (action === 'scan') {
-        issueDirectScanOrder(target);
-      } else if (action === 'approach' || action === 'orbit' || action === 'jump') {
-        handleRadarAction(action, target);
-      }
-    }
-
-    const radarTargetingUI = initRadarTargetingUI({
-      clearLocks: clearLockedTargetsUi
-    });
-    const scannerOverviewUI = initScannerOverviewUI({
-      onSelectTarget: handleScannerOverviewSelect,
-      onToggleLock: (target) => toggleLockedTargetUi(target),
-      onAction: handleScannerOverviewAction,
-      getDetails: getScannerOverviewDetails,
-      getTargetLabel: getRadarTargetUnitId,
-      getTargetClass: getRadarTargetUnitClass,
-      isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
-    });
 
     const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
     publishGameState({ mouse });
@@ -20128,7 +19217,6 @@
       } else {
         scanWaves.length = 0;
         triggerScanWave();
-        CICDisplay.triggerHudRadarBurst?.();
       }
       pushZoneMessage('SKANER: IMPULS AKTYWNY', 1.2);
     }
@@ -21160,7 +20248,6 @@
       scan.target = null;
       scan.scanned = null;
       scan.targetType = null;
-      hideHoverInfo();
       camera.lastPointerX = null;
       camera.lastPointerY = null;
       rtsState.panPrimed = false;
@@ -25933,7 +25020,6 @@
         scan.target = hover;
         scan.targetType = hoverType;
         scan.scanned = hover;
-        updateHoverInfo(hover, hoverType);
         if (!stationUI.open && mouse.click && hoverType === 'station' && !isRtsModeActive()) {
           openStationUI(hover);
           mouse.click = false;
@@ -25944,7 +25030,6 @@
           scan.scanned = null;
           scan.targetType = null;
         }
-        hideHoverInfo();
       }
       // Nowy celownik jest jedynym źródłem zatwierdzonych namiarów. Stara lista
       // kontaktów pojedynczego skanu nie może kasować poprawnego locka po powrocie celu.
@@ -25960,65 +25045,9 @@
       if (scannerSelectedTarget && !isTargetAlive(scannerSelectedTarget)) {
         scannerSelectedTarget = null;
       }
-      scannerState.lockAnim += frameLogicDt * SCANNER_LOCK_PULSE_SPEED;
-      // Kokpit (hudSystem.cockpit) ma własną listę skanu i overview pod Alt, a stary
-      // #scanner-overview-ui-root chowa na stałe cockpit-ui-bridge.css (ładowany
-      // bezwarunkowo). Bez tej bramki model, sortowanie kontaktów i DOM starego
-      // panelu liczyły się co klatkę dla niewidocznego elementu.
-      const legacyScannerPanelVisible = !window.hudSystem?.cockpit;
-      const scannerUiEnabled = legacyScannerPanelVisible && (scannerState.active || lockedTargets.length > 0 || scannerSelectedTarget) && !CICDisplay.active && !stationUI.open && !splitScreenMode;
-      const radarUiEnabled = false;
-      const scannerOverviewContacts = scannerUiEnabled ? getScannerOverviewContacts() : scannerContacts;
-      // Locked targets always shown; scanner contacts shown when scanner active (excluding already-locked)
-      // Lista tylko dla radarowego UI — przy wyłączonym nie budujemy jej co klatkę.
-      const _radarTargets = radarUiEnabled ? lockedTargets.filter(t => isTargetAlive(t)) : [];
-      if (radarUiEnabled && scannerState.active) {
-        for (const _c of scannerContacts) {
-          if (_c && _c.target && isTargetAlive(_c.target) && !lockedTargets.includes(_c.target)) {
-            _radarTargets.push(_c.target);
-          }
-        }
-      }
-      scannerOverviewUI.update({
-        enabled: scannerUiEnabled,
-        contacts: scannerOverviewContacts,
-        selectedTarget: scannerSelectedTarget,
-        lockedTargets,
-        maxRows: 96
-      });
-      radarTargetingUI.update({
-        enabled: radarUiEnabled,
-        dt: frameLogicDt,
-        deepScanDuration: RADAR_UI_DEEP_SCAN_DURATION,
-        width: W,
-        height: H,
-        camera,
-        worldToScreen,
-        lockAnim: scannerState.lockAnim,
-        ship,
-        targets: _radarTargets,
-        distanceTo: (target) => Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y),
-        getMeta: getRadarTargetMeta,
-        getScanData: getRadarTargetScanData,
-        isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget,
-        toggleLock: toggleLockedTargetUi,
-        onAction: handleRadarAction,
-        onStatus: (text) => pushZoneMessage(text, 1.2),
-        onDeepScanComplete: () => pushZoneMessage('SKAN ZAKONCZONY', 1.2)
-      });
 
       // zegar nakładki skanu X (czas logiki — pauza stoi, jak fala skanera)
       scanOverlayClock += frameLogicDt;
-      // update radar pings
-      for (let i = radarPings.length - 1; i >= 0; i--) {
-        const p = radarPings[i];
-        p.age += frameLogicDt; if (p.age > p.life) radarPings.splice(i, 1);
-      }
-      for (let i = scannerRevealFx.length - 1; i >= 0; i--) {
-        const fx = scannerRevealFx[i];
-        fx.age += frameLogicDt;
-        if (fx.age > fx.life || !isTargetAlive(fx.target)) scannerRevealFx.splice(i, 1);
-      }
       // update scan waves
       for (let i = scanWaves.length - 1; i >= 0; i--) {
         const w = scanWaves[i];
@@ -30518,20 +29547,6 @@
         if (scan.target && scan.targetType === 'station' && mouse.overCanvas && !stationUI.open) {
           _cursorRequest = 'pointer';
         }
-        const radarUiActive = false;
-        if (radarUiActive) {
-          radarTargetingUI.draw(ctx, {
-            width: W,
-            height: H,
-            camera: cam,
-            worldToScreen,
-            lockAnim: scannerState.lockAnim,
-            targets: scannerContacts
-              .filter(c => c && c.target && isTargetAlive(c.target))
-              .map(c => c.target),
-            isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
-          });
-        }
         PerfHUD.addTiming('renderHudTime', performance.now() - tRender2dSection);
         // ==========================================
         // END SPLIT-SCREEN 2D OVERLAY LOOP
@@ -31291,7 +30306,6 @@
       if (!CICDisplay.active && !stationUI.open) {
         drawWorldCommandMenu(ctx);
       }
-      renderZoneMessages();
       renderMissionCompleteBanner();
       // Baner "ALT · TRYB INTERFEJSU" rysuje kokpit (DOM), a kursor ustawiamy raz na klatkę.
       const nextCursor = _cursorRequest || (_osCursorHidden ? 'none' : 'default');
@@ -31312,41 +30326,6 @@
       mouse2.click = false;
       // B2cr: nakładki klatki k do kanwy pierścienia (para z bitmapą 3D klatki k)
       if (rwHost && renderSnapshot) { rwHost.resize(W, H); rwHost.commitOverlay(renderSnapshot.k); }
-    }
-
-    function renderZoneMessages() {
-      if (window.hudSystem) return;
-      if (!zoneState.messages.length) return;
-
-      ctx.save();
-      ctx.resetTransform();
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const baseY = 70;
-      const lineH = 32;
-
-      zoneState.messages.forEach((msg, i) => {
-        const progress = msg.maxLife - msg.life;
-        const fadeIn = clamp(progress / 0.35, 0, 1);
-        const fadeOut = clamp(msg.life / 0.5, 0, 1);
-        const alpha = Math.min(fadeIn, fadeOut);
-        if (alpha <= 0) return;
-
-        const fontSize = 22;
-        const y = baseY + i * lineH;
-        ctx.font = `600 ${fontSize}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-        ctx.shadowBlur = 12;
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(12, 20, 36, 0.7)';
-        ctx.fillStyle = '#e5ecff';
-        ctx.globalAlpha = alpha;
-
-        ctx.strokeText(msg.text, W / 2, y);
-        ctx.fillText(msg.text, W / 2, y);
-      });
-
-      ctx.restore();
     }
 
     function renderMissionCompleteBanner() {
@@ -33289,40 +32268,6 @@
     if (keybindsBackButton) {
       keybindsBackButton.addEventListener('click', () => setMenuView('home'));
     }
-    if (supportGuardBtn) {
-      supportGuardBtn.addEventListener('click', () => setSupportOrder('guard', { force: true, regroup: true }));
-    }
-    if (supportEngageBtn) {
-      supportEngageBtn.addEventListener('click', () => setSupportOrder('engage', { force: true, regroup: true }));
-    }
-    if (supportFactionTerranBtn) {
-      supportFactionTerranBtn.addEventListener('click', () => setSupportFaction('terran', { force: true }));
-    }
-    if (supportFactionPirateBtn) {
-      supportFactionPirateBtn.addEventListener('click', () => setSupportFaction('pirate', { force: true }));
-    }
-    if (supportFactionIndependentBtn) {
-      supportFactionIndependentBtn.addEventListener('click', () => setSupportFaction('independent', { force: true }));
-    }
-    if (supportLineModeBtn) {
-      supportLineModeBtn.addEventListener('click', () => toggleLineSpawnMode());
-    }
-    window.addEventListener('mouseup', (event) => {
-      if (endSupportDrag(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    }, true);
-    if (energyShotBtn) {
-      energyShotBtn.addEventListener('click', () => triggerEnergyShot());
-    }
-    if (shieldToggleBtn) {
-      shieldToggleBtn.addEventListener('click', () => togglePlayerShieldForcedState());
-    }
-    if (globalShieldsToggleBtn) {
-      globalShieldsToggleBtn.addEventListener('click', () => toggleGlobalShields());
-    }
-    refreshShieldControlButtons();
 
     // --- WYGLĄD NOWEJ GRY: statki 2D albo 3D (src/game/visualMode.js; bronie zawsze 3D) ---
     // Przełączniki w panelu „Nowa gra”; wybór zapamiętany, działa od razu (także w trakcie gry).

@@ -249,14 +249,13 @@ test('planista objazdów omija inne studnie, ale nie odsyła od brzegu studni ce
   assert.equal(obstacles[0].x, mars.x, 'studnia Ziemi przy porcie nie wymusza objazdu');
 });
 
-test('gra: TRAVEL TO zamiast CRUISE / SKOK / PRZELOT w mapie, menu i skanerze; kurs warpa stoi od ładowania', () => {
+test('gra: TRAVEL TO zamiast CRUISE / SKOK / PRZELOT w mapie i menu; kurs warpa stoi od ładowania', () => {
   const cic = read('src/ui/cicDisplay.js');
   assert.match(cic, /\{ label: 'TRAVEL TO', action: 'travel' \}/);
   assert.doesNotMatch(cic, /CRUISE TO|cruiseNav/);
   const menu = read('src/game/worldCommandMenu.js');
   assert.match(menu, /\['travel', 'TRAVEL TO'\]/);
   assert.doesNotMatch(menu, /\['jump'|\['cruise'/);
-  assert.match(read('src/ui/scannerOverviewUI.js'), /'travel'\]\) \{/);
   const html = read('index.html');
   assert.doesNotMatch(html, /cruiseNav|updateWarpCruiseAutopilot|rebuildCruiseRouteFromCurrent/);
   assert.match(html, /function setTravelTarget\(worldX, worldY, label = ''\) \{/);

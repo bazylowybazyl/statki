@@ -649,7 +649,6 @@ export class CockpitUI {
     this.shadow.innerHTML = cockpitMarkup(this.devMode);
     this.cacheElements();
     this.mountStationContent();
-    this.retireLegacyHud();
     this.buildSlots();
     this.buildTelltales();
     this.renderSupportRoster();
@@ -690,12 +689,6 @@ export class CockpitUI {
     stationHost.slot = 'station-panel';
     stationHost.classList.add('cockpit-station-slot');
     this.host.appendChild(stationHost);
-  }
-
-  retireLegacyHud() {
-    for (const id of ['side-panels-container', 'right-panels-container', 'hud-bottom-container', 'hud-topbar', 'ui', 'hover-info']) {
-      document.getElementById(id)?.remove();
-    }
   }
 
   applyScale() {

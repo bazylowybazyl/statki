@@ -11,7 +11,8 @@ test('X starts one scanner burst without scheduling recurring waves', () => {
   // Radar planet usunięty jako martwy kod (rozbiór index.html, 2026-08-23) — X tylko włącza skaner, nie przełącza.
   assert.match(html, /'tgt\.scan': \{\s*run\(ev\) \{[\s\S]{0,300}?setScannerActive\(true\);/);
   assert.doesNotMatch(html.slice(html.indexOf("'tgt.scan': {"), html.indexOf("'ui.cic': {")), /setScannerActive\(false\)|!scannerState\.active/);
-  assert.match(html, /scanWaves\.length = 0;\s*triggerScanWave\(\{ reset: true \}\);\s*CICDisplay\.triggerHudRadarBurst\?\.\(\)/);
+  assert.match(html, /scanWaves\.length = 0;\s*triggerScanWave\(\{ reset: true \}\);/);
+  assert.doesNotMatch(html, /triggerHudRadarBurst/, 'dawny mini-radar HUD-u usunięty');
   assert.doesNotMatch(html, /scannerState\.pulseTimer/);
   assert.doesNotMatch(html, /getScannerRefreshInterval/);
 });
