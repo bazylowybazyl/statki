@@ -15,6 +15,7 @@ import { isPointDefenseWeapon } from '../../src/ai/pointDefenseTargeting.js';
 import { readIndexHtml, sliceFunction } from './indexSource.mjs';
 import { CARRIER_SCOPE } from './carrierScope.mjs';
 import { beamPassesAlly, projectilePassesAlly } from '../../src/game/friendlyFire.js';
+import { isDeathRayWeapon } from '../../src/game/deathRay.js';
 
 // Pomocniki modułowe wiązki (po refaktorze) stoją między tym znacznikiem
 // a fireWeaponCore; przed refaktorem znacznika nie ma i bierzemy samą funkcję.
@@ -97,6 +98,9 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     isEntityShieldBlocking,
     beamPassesAlly,
     projectilePassesAlly,
+    // Promień śmierci (src/game/deathRay.js): fireWeaponCore oddaje go systemowi promieni — w harnessie tylko wpis.
+    isDeathRayWeapon,
+    fireDeathRayCore: (shooter, target, weapon) => { log.push(['deathRay', name(shooter), weapon?.id ?? null]); return Number(weapon?.cooldown) || 0; },
     registerShieldImpact: (e, x, y, dmg, cls) => log.push(['shieldFx', name(e), r1(x), r1(y), dmg, cls]),
     shieldImpactClass,
     applyDamageToPlayer: (d) => log.push(['dmgPlayer', d]),

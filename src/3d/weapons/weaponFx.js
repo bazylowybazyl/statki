@@ -29,8 +29,9 @@ import { GpuFx } from './gpuFx.js';
 import { ProjectileSystem, PSTYLE } from './projectiles.js';
 import { TrailSystem } from './trails.js';
 import { BeamSystem, BEAM, PULSE_SPEED } from './beams.js';
-import { RECIPES, runAfter, burnStep, droneBlast, bombBlast, bombDud, cheapMuzzle, cheapImpact, createChargeState } from './recipes.js';
+import { RECIPES, runAfter, burnStep, droneBlast, bombBlast, bombDud, cheapMuzzle, cheapImpact, createChargeState, deathRayPalette } from './recipes.js';
 import { WEAPON_FX, projectileFamilyFor, hexHdr, SIZE_POWER, TRAIL_FAMILIES } from './weaponFxTable.js';
+import { RAY_HIT, RAY_STATE, RAY_FLAG } from '../../render/renderCommands.js';
 import { fxNoise } from '../fx/noise.js';
 import { FX_DISTORT_LAYER } from '../fx/fxFrame.js';
 import { fxRandom } from '../fx/fxRandom.js';
@@ -71,6 +72,16 @@ export const RICOCHET_CAP = 256;
 export const EXTERNAL_CAP = 16;
 /** Znaków rzazu pocisku przebijającego na jedno wywołanie (po przerzedzeniu jak w demie — niżej). */
 export const KERF_PER_CALL = 16;
+/** Promieni śmierci naraz (obraz; src/game/deathRay.js — DEATH_RAY_CAP). */
+export const RAY_FX_CAP = 16;
+/** Trafień zapamiętanych na promień (punkty wejścia / wyjścia / końca — żar w trakcie trwania wiązki). */
+export const RAY_HIT_SLOTS = 8;
+/** Stanów ładowania promienia naraz (laser naprowadzający, implozja — co klatkę renderu). */
+export const RAY_HOLD_CAP = 8;
+/** Mnożnik HDR barwy ciała promienia (barwa broni liniowo × k): środek ciała przy progu bloomu, jądro ponad nim. */
+export const RAY_HDR = 1.3;
+/** Najwięcej świateł punktowych wzdłuż jednej wiązki (poza wylotem i końcem). */
+const RAY_LIGHTS = 4;
 /** Podkrok symulacji pocisków dema [Hz]: najwyżej jeden znak rzazu na podkrok (odstęp v / 240). */
 const KERF_DEMO_HZ = 240;
 /** Zapas kadru dla efektów pocisków (ułamek kadru siatki Core3D.fx.view). */
@@ -192,6 +203,22 @@ function createExternal() {
     vx: 0, vy: 0, rvx: 0, rvy: 0, ivx: 0, ivy: 0, seed: 0
   };
 }
+// Promień śmierci (obraz): wylot w układzie strzelca (lx, ly — kąt encji) albo stały punkt (x0, y0 + nośnik), kierunek
+// świata, długość (skraca ją RAY_STATE), czoło z czasu, barwa i paleta, trafienia (żar przy kadłubie).
+function createRayFx() {
+  const hits = [];
+  for (let i = 0; i < RAY_HIT_SLOTS; i++) hits.push({ active: false, kind: 0, entity: null, lx: 0, ly: 0, x: 0, y: 0, la: 0, t: 0 });
+  return {
+    active: false, id: 0, weaponId: null, shooter: null, visual: false, player: false, endFlash: false, endDone: false,
+    x0: 0, y0: 0, lx: 0, ly: 0, z0: 0, z1: 0, dx: 1, dy: 0, len: 0, speed: 30000, width: 150, sustain: 1, fade: 0.5,
+    age: 0, t0: 0, life: 0, front: 0, fadeAt: Infinity, col: [1, 1, 1], pal: null, seed: 0,
+    cvx: 0, cvy: 0, ct0: 0, cclock: CLOCK_SIM, sx: 0, sy: 0, hits, hitCount: 0
+  };
+}
+// Ładowanie promienia (stan efektu działa → wpis): laser naprowadzający, implozja i światło co klatkę renderu.
+function createRayHold() {
+  return { active: false, owner: null, x: 0, y: 0, z: 0, angle: 0, u: 0, scale: 1, len: 0, t: 0, pal: null, col: [1, 1, 1], cvx: 0, cvy: 0, ct0: 0, cclock: CLOCK_SIM, seed: 0 };
+}
 
 // Obiekty robocze (bez alokacji na zdarzenie). _hit.ric… — rykoszet rozstrzygnięty przez grę
 // (18-B, projectileMechanics.ricochetBounce): kierunek, prędkość i życie smugowca odbitego.
@@ -202,6 +229,15 @@ const _carrier = createCarrier();
 const _carrier2 = createCarrier();
 const _slot = { key: null, muzzle: 0 };
 const _mz = { x: 0, y: 0, angle: 0, scale: 1 };
+// Promień śmierci: poza encji jak w grze (src/game/deathRay.js — x kanoniczne NPC, gracz: x = pos co krok; lustro
+// migawki: x, y), czoło rosnącej wiązki (emisja) i widok strzału wizualnego z renderu (deathRayVisual).
+const rayEntX = (e) => (Number.isFinite(e?.x) ? e.x : Number(e?.pos?.x));
+const rayEntY = (e) => (Number.isFinite(e?.y) ? e.y : Number(e?.pos?.y));
+const _rayFront = { x: 0, y: 0 };
+const _rayVisual = {
+  id: 0, weaponId: 'death_ray', shooter: null, x: 0, y: 0, z0: 0, z1: 0, dx: 1, dy: 0, len: 0, lx: 0, ly: 0,
+  width: 150, speed: 30000, sustain: 1.1, fade: 0.5, flags: 0, r: NaN, g: NaN, b: NaN
+};
 
 // ---------------------------------------------------------------------------
 
@@ -239,13 +275,16 @@ export const WeaponFx = {
   _ricHead: 0,
   _external: [],
   _hexCharge: [],
+  _rays: [],
+  _rayHolds: [],
   _prjOriginX: 0,
   _prjOriginY: 0,
   _beamOriginX: 0,
   _beamOriginY: 0,
   stats: {
     shots: 0, muzzles: 0, cheapMuzzles: 0, impacts: 0, cheapImpacts: 0, bullets: 0, beams: 0, pulses: 0, after: 0, droppedAfter: 0,
-    kerfs: 0, exits: 0, stuck: 0, ricochets: 0, charges: 0, gasMuzzles: 0
+    kerfs: 0, exits: 0, stuck: 0, ricochets: 0, charges: 0, gasMuzzles: 0,
+    rays: 0, rayHits: 0, rayCharges: 0, rayLive: 0
   },
 
   /** Czy moduł działa (urządzenie i scena gotowe). */
@@ -275,6 +314,8 @@ export const WeaponFx = {
     for (let i = 0; i < RICOCHET_CAP; i++) this._ricochets.push(createRicochet());
     for (let i = 0; i < EXTERNAL_CAP; i++) this._external.push(createExternal());
     for (let i = 0; i < 8; i++) this._hexCharge.push(createChargeState());
+    for (let i = 0; i < RAY_FX_CAP; i++) this._rays.push(createRayFx());
+    for (let i = 0; i < RAY_HOLD_CAP; i++) this._rayHolds.push(createRayHold());
     this.ctx = this._createCtx();
     const self = this;
     this.step = Core3D.addFxStep({
@@ -489,6 +530,9 @@ export const WeaponFx = {
     const x = Number(detail.x); const y = Number(detail.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const w = weaponCtx(id);
+    // Promień śmierci: wylot (zawsze bogaty, bez LOD wieżyczki) i wiązka idą z rekordu RAY_FIRE (deathRayFire) — szyna
+    // niesie tylko dźwięk, odrzut wieży i wstrząs strzału (strona gry).
+    if (entry.fx === 'deathRay') return;
     if (detail.isBeam && detail.beam) {
       const kind = detail.beam.kind || detail.beamMode || detail.beam.mode;
       if (kind === 'continuous') { this._beamContinuousEvent(detail, w); return; }
@@ -819,6 +863,8 @@ export const WeaponFx = {
       beams.addRgb(ax - ox, -ay - oy, bx - ox, -by - oy, p.style, wdt, p.col[0], p.col[1], p.col[2], power, p.seed, p.age);
       if (p.hit && p.style === BEAM.PULSE && p.age >= p.hitAt) this.ctx.lights.point(bx, by, 1.0, 0.3, 0.3, 2 * power, 180, 30);
     }
+    // promienie śmierci i ich ładowanie (ten sam bufor wiązek tej klatki)
+    this._stepRays(c);
   },
 
   // -------------------------------------------------------------------------
@@ -1149,7 +1195,14 @@ export const WeaponFx = {
   charge(weaponId, x, y, angle, scale, u, dt, state, carrier = null) {
     if (!this.available || !(dt > 0) || !state) return;
     const recipe = RECIPES[WEAPON_FX[weaponId]?.fx];
-    if (!recipe?.charge || !this._inView(x, y, 1200)) return;
+    if (!recipe?.charge) return;
+    // Promień śmierci: laser naprowadzający i implozja co klatkę (także poza kadrem — laser sięga 12 km w kadr).
+    if (recipe === RECIPES.deathRay) {
+      this._noteRayHold(state, x, y, 0, angle, u, scale || 1, Number(MASTER_WEAPONS[weaponId]?.baseRange) || 12000,
+        this._rayPalette(weaponId, NaN, NaN, NaN, state.__rayCol || (state.__rayCol = [1, 1, 1])), carrier);
+      state.pal = state.__rayPal;
+    }
+    if (!this._inView(x, y, 1200)) return;
     _mz.x = x; _mz.y = y; _mz.angle = angle; _mz.scale = scale || 1;
     if (carrier) ActiveCarrier.set(carrier);
     try { recipe.charge(this.ctx, _mz, Math.max(0, Math.min(1, u)), dt, state); } finally { ActiveCarrier.clear(); }
@@ -1157,6 +1210,398 @@ export const WeaponFx = {
   },
 
   createChargeState,
+
+  // -------------------------------------------------------------------------
+  // Promień śmierci (src/game/deathRay.js → rekordy RAY_*): wiązka BEAM.RAY co klatkę, wylot, trafienia, ładowanie
+
+  /**
+   * Barwa ciała promienia (HDR, do `out`) i paleta cząstek: z rekordu (r, g, b liniowo 0..1 — NaN = z danych broni).
+   * Zwraca paletę (pamięć barw w recipes.js — bez alokacji po pierwszym użyciu barwy).
+   */
+  _rayPalette(weaponId, r, g, b, out) {
+    if (r === r && g === g && b === b) {
+      out[0] = Math.max(0, r) * RAY_HDR; out[1] = Math.max(0, g) * RAY_HDR; out[2] = Math.max(0, b) * RAY_HDR;
+    } else {
+      const c = beamColor(weaponId || 'death_ray', RAY_HDR);
+      out[0] = c[0]; out[1] = c[1]; out[2] = c[2];
+    }
+    return deathRayPalette(out[0], out[1], out[2]);
+  },
+
+  _rayById(id) {
+    const R = this._rays;
+    for (let i = 0; i < R.length; i++) if (R[i].active && R[i].id === id) return R[i];
+    return null;
+  },
+
+  /**
+   * Strzał promienia (rekord RAY_FIRE — widok `v` z dekodera; wołający z renderu może podać własny obiekt o tych
+   * polach): wiązka rośnie z czołem `v.speed`, trwa `v.sustain`, gaśnie `v.fade`. Wylot bogaty zawsze (superbroń).
+   */
+  deathRayFire(v, carrier = null) {
+    if (!this.available || !v) return null;
+    const R = this._rays;
+    let ray = null;
+    for (let i = 0; i < R.length; i++) if (!R[i].active) { ray = R[i]; break; }
+    if (!ray) {
+      // pełna pula: najstarszy promień ustępuje
+      for (let i = 0; i < R.length; i++) if (!ray || R[i].age > ray.age) ray = R[i];
+    }
+    const len = Math.max(0, Number(v.len) || 0);
+    const speed = Math.max(1000, Number(v.speed) || 30000);
+    ray.active = true;
+    ray.id = v.id;
+    ray.weaponId = v.weaponId || 'death_ray';
+    ray.shooter = v.shooter || null;
+    const flags = Number(v.flags) || 0;
+    ray.visual = (flags & RAY_FLAG.VISUAL) !== 0;
+    ray.player = (flags & RAY_FLAG.PLAYER) !== 0;
+    ray.endFlash = (flags & RAY_FLAG.END_FLASH) !== 0;
+    ray.endDone = false;
+    ray.x0 = Number(v.x) || 0; ray.y0 = Number(v.y) || 0;
+    ray.lx = Number(v.lx) || 0; ray.ly = Number(v.ly) || 0;
+    ray.z0 = Number(v.z0) || 0;
+    ray.z1 = Number.isFinite(Number(v.z1)) ? Number(v.z1) : ray.z0;
+    const dl = Math.sqrt(v.dx * v.dx + v.dy * v.dy) || 1;
+    ray.dx = v.dx / dl; ray.dy = v.dy / dl;
+    ray.len = len; ray.speed = speed;
+    ray.width = Math.max(10, Number(v.width) || 150);
+    ray.sustain = Math.max(0, Number(v.sustain) || 0);
+    ray.fade = Math.max(0.05, Number(v.fade) || 0.5);
+    // Wiek wiązki z zegara gry renderu (SimClock.render — czoło rośnie z czołem gry, w pauzie stoi; płynnie między
+    // krokami fizyki), nie z zegara efektów (ten biegnie też w pauzie).
+    ray.age = 0; ray.front = 0; ray.t0 = SimClock.render;
+    ray.fadeAt = len / speed + ray.sustain;
+    ray.life = ray.fadeAt + ray.fade;
+    ray.pal = this._rayPalette(ray.weaponId, v.r, v.g, v.b, ray.col);
+    ray.seed = fxRandom.next() * 10;
+    ray.cvx = Number(carrier?.vx) || 0; ray.cvy = Number(carrier?.vy) || 0;
+    ray.ct0 = Number(carrier?.t0) || 0; ray.cclock = carrier?.clock === CLOCK_RENDER ? CLOCK_RENDER : CLOCK_SIM;
+    ray.sx = ray.x0; ray.sy = ray.y0;
+    for (let i = 0; i < ray.hits.length; i++) { ray.hits[i].active = false; ray.hits[i].entity = null; }
+    ray.hitCount = 0;
+    this.stats.rays++;
+    // koniec ładowania przy tym wylocie: laser naprowadzający i implozja gasną od razu (nie czekają 0,12 s)
+    const Hs = this._rayHolds;
+    for (let i = 0; i < Hs.length; i++) {
+      const h = Hs[i];
+      if (!h.active) continue;
+      const hx = h.x - ray.x0, hy = h.y - ray.y0;
+      if (hx * hx + hy * hy < 600 * 600) { h.active = false; h.owner = null; }
+    }
+    // Wylot: bogaty niezależnie od rozmiaru wieżyczki na ekranie (w kadrze z zapasem — rozbłysk ma ~2 km).
+    if (this._inView(ray.x0, ray.y0, 2500)) {
+      _m.x = ray.x0; _m.y = ray.y0; _m.angle = Math.atan2(ray.dy, ray.dx); _m.scale = 1; _m.density = 1; _m.smokeK = 1;
+      _carrier.vx = ray.cvx; _carrier.vy = ray.cvy; _carrier.t0 = ray.ct0; _carrier.clock = ray.cclock; _carrier.z = ray.z0;
+      ActiveCarrier.set(_carrier);
+      this._shakeAllowed = ray.player;
+      try { RECIPES.deathRay.muzzle(this.ctx, _m, weaponCtx(ray.weaponId), ray.pal); } finally { ActiveCarrier.clear(); this._shakeAllowed = true; }
+    }
+    return ray;
+  },
+
+  /** Trafienie promienia (RAY_HIT): wejście / wyjście / tarcza / koniec / cel bez kadłuba — efekt z nośnikiem celu. */
+  deathRayHit(id, kind, x, y, nx, ny, relVx, relVy, entity = null, power = 1, t = 0, carrier = null) {
+    if (!this.available) return;
+    const ray = this._rayById(id);
+    const pal = ray ? ray.pal : RECIPES.deathRay.palette;
+    this.stats.rayHits++;
+    // żar w miejscu trafienia na czas trwania wiązki (punkt w układzie celu — jedzie z kadłubem i odłamem)
+    if (ray && (kind === RAY_HIT.ENTRY || kind === RAY_HIT.EXIT || kind === RAY_HIT.END)) this._rayRememberHit(ray, kind, entity, x, y, t);
+    const inView = this._inView(x, y, 2500);
+    if (!inView) return;
+    const player = RenderWorld.ship;
+    const p2 = RenderWorld.player2Ship;
+    this._shakeAllowed = !!ray?.player || (!!entity && (entity === player || entity === p2));
+    this._shakeScale = 1;
+    if (carrier) ActiveCarrier.set(carrier);
+    try {
+      const D = RECIPES.deathRay;
+      if (kind === RAY_HIT.ENTRY) D.entry(this.ctx, x, y, relVx, relVy, entity, pal, power || 1);
+      else if (kind === RAY_HIT.EXIT) {
+        const p = _imp;
+        p.x = x; p.y = y; p.vx = relVx; p.vy = relVy; p.rvx = relVx; p.rvy = relVy; p.power = power || 1;
+        D.exit(this.ctx, p, entity, pal);
+      } else if (kind === RAY_HIT.SHIELD) D.shield(this.ctx, x, y, relVx, relVy, pal, power || 1);
+      else if (kind === RAY_HIT.SMALL) D.end(this.ctx, x, y, relVx, relVy, pal, 0.35);
+      else D.end(this.ctx, x, y, relVx, relVy, pal, power || 1);
+    } finally {
+      ActiveCarrier.clear();
+      this._shakeAllowed = true;
+    }
+  },
+
+  _rayRememberHit(ray, kind, entity, x, y, t) {
+    const H = ray.hits;
+    let h = null;
+    for (let i = 0; i < H.length; i++) if (!H[i].active) { h = H[i]; break; }
+    if (!h) return;
+    h.active = true;
+    h.kind = kind;
+    h.entity = entity && typeof entity === 'object' ? entity : null;
+    h.t = t;
+    h.x = x; h.y = y;
+    if (h.entity) {
+      const ex = rayEntX(h.entity), ey = rayEntY(h.entity);
+      const a = Number(h.entity.angle) || 0;
+      if (Number.isFinite(ex) && Number.isFinite(ey)) {
+        const c = Math.cos(a), s = Math.sin(a);
+        const dx = x - ex, dy = y - ey;
+        h.lx = dx * c + dy * s; h.ly = -dx * s + dy * c;
+        h.la = a;
+      } else {
+        h.entity = null;
+      }
+    }
+    ray.hitCount++;
+  },
+
+  /** Nowa długość promienia (RAY_STATE): zatrzymanie (czoło staje na celu) albo przerwanie (gaśnie od razu). */
+  deathRayState(id, len, code) {
+    const ray = this._rayById(id);
+    if (!ray) return;
+    const L = Math.max(0, Number(len) || 0);
+    if (L < ray.len) {
+      ray.len = L;
+      ray.fadeAt = Math.min(ray.fadeAt, Math.max(ray.age, L / ray.speed) + ray.sustain);
+    }
+    if (code === RAY_STATE.CANCEL) ray.fadeAt = Math.min(ray.fadeAt, ray.age);
+    ray.life = ray.fadeAt + ray.fade;
+  },
+
+  /**
+   * Ładowanie promienia z rozkazu sceny / strzału wizualnego (RAY_CHARGE): barwa (r, g, b liniowo — null = broń),
+   * skala, wysokość z, długość lasera naprowadzającego; stan efektu `state` (createChargeState) na rozkaz.
+   */
+  deathRayCharge(x, y, z, angle, u, dt, scale = 1, col = null, state = null, carrier = null, len = 0) {
+    if (!this.available || !(dt > 0) || !state) return;
+    const c = state.__rayCol || (state.__rayCol = [1, 1, 1]);
+    const pal = col ? this._rayPalette('death_ray', col[0], col[1], col[2], c) : this._rayPalette('death_ray', NaN, NaN, NaN, c);
+    state.pal = pal;
+    this._noteRayHold(state, x, y, z, angle, u, scale || 1, len, pal, carrier);
+    if (!this._inView(x, y, 1200)) return;
+    _mz.x = x; _mz.y = y; _mz.angle = angle; _mz.scale = scale || 1;
+    if (carrier) { _carrier.vx = carrier.vx; _carrier.vy = carrier.vy; _carrier.t0 = carrier.t0; _carrier.clock = carrier.clock; _carrier.z = (Number(carrier.z) || 0) + (Number(z) || 0); ActiveCarrier.set(_carrier); }
+    try { RECIPES.deathRay.charge(this.ctx, _mz, Math.max(0, Math.min(1, u)), dt, state); } finally { ActiveCarrier.clear(); }
+    this.stats.rayCharges++;
+  },
+
+  // Wpis ładowania promienia (po stanie efektu działa): odświeżany co rekord ładowania, rysowany co klatkę do 0,12 s.
+  _noteRayHold(state, x, y, z, angle, u, scale, len, pal, carrier) {
+    const Hs = this._rayHolds;
+    let h = state.__rayHold && state.__rayHold.owner === state ? state.__rayHold : null;
+    if (!h) {
+      let oldest = null;
+      for (let i = 0; i < Hs.length; i++) {
+        if (!Hs[i].active) { h = Hs[i]; break; }
+        if (!oldest || Hs[i].t < oldest.t) oldest = Hs[i];
+      }
+      if (!h) h = oldest;
+      h.owner = state;
+      h.seed = fxRandom.next() * 10;
+      state.__rayHold = h;
+    }
+    h.active = true;
+    h.x = x; h.y = y; h.z = Number(z) || 0; h.angle = angle; h.u = Math.max(0, Math.min(1, u)); h.scale = scale; h.len = Math.max(0, Number(len) || 0);
+    h.t = SimClock.render;
+    h.pal = pal;
+    const c = state.__rayCol;
+    if (c) { h.col[0] = c[0]; h.col[1] = c[1]; h.col[2] = c[2]; }
+    state.__rayPal = pal;
+    h.cvx = Number(carrier?.vx) || 0; h.cvy = Number(carrier?.vy) || 0;
+    h.ct0 = Number(carrier?.t0) || 0; h.cclock = carrier?.clock === CLOCK_RENDER ? CLOCK_RENDER : CLOCK_SIM;
+  },
+
+  /**
+   * Strzał WYŁĄCZNIE obrazowy z renderu (bez rekordu gry): od (x0, y0) do (x1, y1), o: { width, color: [r, g, b]
+   * liniowo, z0, z1, speed, sustain, fade, impact }. Moduły renderu (warstwy bitwy w głębi) — gra pisze rekord przez
+   * system promieni (`deathRays.visual`).
+   */
+  deathRayVisual(x0, y0, x1, y1, o = null) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (!(len > 1)) return null;
+    const v = _rayVisual;
+    v.id = -(++this._rayVisualSeq);
+    v.weaponId = 'death_ray'; v.shooter = null;
+    v.x = x0; v.y = y0; v.z0 = Number(o?.z0) || 0; v.z1 = Number.isFinite(Number(o?.z1)) ? Number(o.z1) : v.z0;
+    v.dx = dx; v.dy = dy; v.len = len; v.lx = 0; v.ly = 0;
+    v.width = Number(o?.width) || 150; v.speed = Number(o?.speed) || 30000;
+    v.sustain = Number.isFinite(Number(o?.sustain)) ? Number(o.sustain) : 1.1; v.fade = Number(o?.fade) || 0.5;
+    v.flags = RAY_FLAG.VISUAL | (o?.impact === false ? 0 : RAY_FLAG.END_FLASH);
+    const col = o?.color;
+    v.r = col ? Number(col[0]) : NaN; v.g = col ? Number(col[1]) : NaN; v.b = col ? Number(col[2]) : NaN;
+    return this.deathRayFire(v, null);
+  },
+  _rayVisualSeq: 0,
+
+  // Promienie tej klatki (krok spawn, po wiązkach): wiązka RAY, światła wzdłuż, emisja przy wylocie / czole / osi,
+  // żar przy trafieniach, zniekształcenia (fala wylotu, gorące powietrze wzdłuż wiązki, implozja ładowania).
+  _stepRays(c) {
+    const beams = this.beams;
+    const ox = this._beamOriginX, oy = this._beamOriginY;
+    const time = c.time;
+    const dt = c.dt;
+    const field = Core3D.fxDistortion ? Core3D.fxDistortion() : null;
+    const lights = this.ctx.lights;
+    const D = RECIPES.deathRay;
+    let live = 0;
+    const R = this._rays;
+    for (let i = 0; i < R.length; i++) {
+      const ray = R[i];
+      if (!ray.active) continue;
+      const age = SimClock.render - ray.t0;
+      if (age > ray.age) ray.age = age;
+      if (ray.age >= ray.life) { this._releaseRay(ray); continue; }
+      live++;
+      // wylot: z kadłubem strzelca (poza encji × przesunięcie w jej układzie), inaczej punkt strzału + nośnik
+      const sh = ray.shooter;
+      let sx, sy;
+      if (sh && !ray.visual && !sh.removed) {
+        const ex = rayEntX(sh), ey = rayEntY(sh);
+        const a = Number(sh.angle) || 0;
+        if (Number.isFinite(ex) && Number.isFinite(ey)) {
+          const cs = Math.cos(a), sn = Math.sin(a);
+          sx = ex + ray.lx * cs - ray.ly * sn;
+          sy = ey + ray.lx * sn + ray.ly * cs;
+        }
+      }
+      if (sx === undefined) {
+        const T = SimClock.now(ray.cclock) - ray.ct0;
+        sx = ray.x0 + ray.cvx * T; sy = ray.y0 + ray.cvy * T;
+      }
+      ray.sx = sx; ray.sy = sy;
+      const front = Math.min(ray.len, ray.speed * ray.age);
+      ray.front = front;
+      const growing = front < ray.len - 1;
+      // obwiednia: wejście 0,05 s, trwanie, wygaszanie (wiązka zwęża się)
+      let k;
+      if (ray.age < ray.fadeAt) k = Math.min(1, ray.age / 0.05);
+      else { const u = Math.max(0, 1 - (ray.age - ray.fadeAt) / ray.fade); k = u * u * (3 - 2 * u); }
+      const flick = 0.93 + 0.07 * Math.sin(time * 53 + ray.seed) * Math.sin(time * 31.7 + ray.seed * 2.1);
+      const power = k * flick;
+      const wMul = ray.age < ray.fadeAt ? 1 : 0.35 + 0.65 * k;
+      const width = ray.width * wMul * (1 + 0.035 * Math.sin(time * 61 + ray.seed));
+      const ex = sx + ray.dx * front, ey = sy + ray.dy * front;
+      const zEnd = ray.len > 0 ? ray.z0 + (ray.z1 - ray.z0) * (front / ray.len) : ray.z0;
+      if (!(power > 0.002) || !(front > 1)) continue;
+      if (!this._segInView(sx, sy, ex, ey, width * 3 + 600)) continue;
+      const col = ray.col;
+      beams.addRgb(sx - ox, -sy - oy, ex - ox, -ey - oy, BEAM.RAY, width, col[0], col[1], col[2], power, ray.seed, ray.age,
+        ray.z0, growing ? 1 : 0, 1, zEnd);
+      const pal = ray.pal;
+      const L = pal.light;
+      // światła: wylot, koniec (czoło albo przeszkoda) i kilka wzdłuż w kadrze
+      lights.point(sx, sy, L[0], L[1], L[2], 4 * power, 1300, 40 + ray.z0);
+      lights.point(ex, ey, L[0], L[1], L[2], (growing ? 5 : 3) * power, 1100, 40 + zEnd);
+      const nL = Math.min(RAY_LIGHTS, Math.floor(front / 1800));
+      for (let l = 1; l <= nL; l++) {
+        const f = l / (nL + 1);
+        const lx = sx + ray.dx * front * f, ly = sy + ray.dy * front * f;
+        if (this._inView(lx, ly, 900)) lights.point(lx, ly, L[0], L[1], L[2], 2 * power, 1000, 40 + ray.z0 + (zEnd - ray.z0) * f);
+      }
+      // emisja: wylot, czoło (gdy rośnie), plazma z losowego miejsca osi w kadrze
+      _m.x = sx; _m.y = sy; _m.angle = Math.atan2(ray.dy, ray.dx); _m.scale = 1;
+      const fpt = growing ? _rayFront : null;
+      if (fpt) { fpt.x = ex; fpt.y = ey; }
+      let axX = NaN, axY = NaN;
+      const ft = fxRandom.next();
+      const px = sx + ray.dx * front * ft, py = sy + ray.dy * front * ft;
+      if (this._inView(px, py, 300)) { axX = px; axY = py; }
+      _carrier.vx = ray.cvx; _carrier.vy = ray.cvy; _carrier.t0 = ray.ct0; _carrier.clock = ray.cclock; _carrier.z = ray.z0;
+      ActiveCarrier.set(_carrier);
+      try { D.emit(this.ctx, _m, null, power, dt, null, pal, fpt, axX, axY, 1); } finally { ActiveCarrier.clear(); }
+      // koniec strzału wizualnego: rozbłysk, gdy czoło doszło do końca
+      if (ray.visual && ray.endFlash && !ray.endDone && !growing) {
+        ray.endDone = true;
+        if (this._inView(ex, ey, 2500)) {
+          _carrier.vx = 0; _carrier.vy = 0; _carrier.t0 = 0; _carrier.clock = CLOCK_SIM; _carrier.z = ray.z1;
+          ActiveCarrier.set(_carrier);
+          try { D.end(this.ctx, ex, ey, ray.dx, ray.dy, pal, 1); } finally { ActiveCarrier.clear(); }
+          this._rayRememberHit(ray, RAY_HIT.END, null, ex, ey, ray.len);
+        }
+      }
+      // żar przy trafieniach: punkt w układzie celu, póki leży w korytarzu wiązki
+      for (let h = 0; h < ray.hits.length; h++) {
+        const hit = ray.hits[h];
+        if (!hit.active) continue;
+        let hx = hit.x, hy = hit.y;
+        const e = hit.entity;
+        if (e) {
+          if (e.removed) { hit.active = false; hit.entity = null; continue; }
+          const exx = rayEntX(e), eyy = rayEntY(e);
+          const a = Number(e.angle) || 0;
+          const cs = Math.cos(a), sn = Math.sin(a);
+          hx = exx + hit.lx * cs - hit.ly * sn; hy = eyy + hit.lx * sn + hit.ly * cs;
+        }
+        const rx = hx - sx, ry = hy - sy;
+        const along = rx * ray.dx + ry * ray.dy;
+        const across = Math.abs(rx * -ray.dy + ry * ray.dx);
+        if (along < 0 || along > front + 50 || across > width * 0.9) continue;
+        if (!this._inView(hx, hy, 400)) continue;
+        _hit.x = hx; _hit.y = hy;
+        _hit.nx = hit.kind === RAY_HIT.EXIT ? ray.dx : -ray.dx; _hit.ny = hit.kind === RAY_HIT.EXIT ? ray.dy : -ray.dy;
+        ActiveCarrier.set(e ? writeCarrier(e, hx, hy, false, _carrier2) : null);
+        try { D.burn(this.ctx, _hit, power, dt, e, pal, 1); } finally { ActiveCarrier.clear(); }
+      }
+      // zniekształcenia: fala wylotu (0,7 s), gorące powietrze wzdłuż wiązki
+      if (field) {
+        if (ray.age < 0.7) {
+          const u = ray.age / 0.7;
+          field.shock(ray.x0, ray.y0, 80 + 2400 * Math.sqrt(u), 160 + 260 * u, 30 * (1 - u) * (1 - u), 0.4);
+        }
+        for (let q = 1; q <= 2; q++) {
+          const f = q / 3;
+          const hx = sx + ray.dx * front * f, hy = sy + ray.dy * front * f;
+          if (this._inView(hx, hy, width * 2)) field.heat(hx, hy, width * 1.6, 4 * power, ray.dx, -ray.dy, 3, 0, ray.seed + q, 1);
+        }
+      }
+    }
+    this.stats.rayLive = live;
+    // ładowanie: laser naprowadzający (po połowie ładowania), implozja przy wylocie
+    const Hs = this._rayHolds;
+    for (let i = 0; i < Hs.length; i++) {
+      const h = Hs[i];
+      if (!h.active) continue;
+      // wpis bez świeżego rekordu ładowania (strzał, przerwanie) gaśnie po 0,12 s czasu gry (w pauzie stoi)
+      if (SimClock.render - h.t > 0.12 || SimClock.render < h.t - 1) { h.active = false; h.owner = null; continue; }
+      const T = SimClock.now(h.cclock) - h.ct0;
+      const hx = h.x + h.cvx * T, hy = h.y + h.cvy * T;
+      if (field && this._inView(hx, hy, 1500)) field.implode(hx, hy, (260 + 520 * h.u) * h.scale, 14 * h.u * h.u, 0.35);
+      if (h.u > 0.5 && h.len > 10) {
+        const g = (h.u - 0.5) / 0.5;
+        const gx = hx + Math.cos(h.angle) * h.len, gy = hy + Math.sin(h.angle) * h.len;
+        if (this._segInView(hx, hy, gx, gy, 300)) {
+          const fl = 0.55 + 0.45 * Math.sin(time * 40 + h.seed) * Math.sin(time * 23 + h.seed * 3);
+          beams.addRgb(hx - ox, -hy - oy, gx - ox, -gy - oy, BEAM.PD, (5 + 6 * g) * h.scale, h.col[0], h.col[1], h.col[2],
+            (0.2 + 0.6 * g) * fl, h.seed, time, h.z, 1, 1, h.z);
+        }
+      }
+    }
+  },
+
+  _releaseRay(ray) {
+    ray.active = false;
+    ray.shooter = null;
+    for (let i = 0; i < ray.hits.length; i++) { ray.hits[i].active = false; ray.hits[i].entity = null; }
+    ray.hitCount = 0;
+  },
+
+  // Odcinek (świat gry) przecina kadr z zapasem `pad` (pudło odcinka ∩ kadr, potem odległość środka kadru od prostej).
+  _segInView(x0, y0, x1, y1, pad = VIEW_PAD) {
+    const v = Core3D.fx?.view;
+    if (!v || !(v.x1 > v.x0)) return true;
+    const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    if (maxX < v.x0 - pad || minX > v.x1 + pad || maxY < v.y0 - pad || minY > v.y1 + pad) return false;
+    const cx = (v.x0 + v.x1) * 0.5, cy = (v.y0 + v.y1) * 0.5;
+    const hw = (v.x1 - v.x0) * 0.5 + pad, hh = (v.y1 - v.y0) * 0.5 + pad;
+    const dx = x1 - x0, dy = y1 - y0;
+    const l = Math.sqrt(dx * dx + dy * dy);
+    if (!(l > 1e-6)) return true;
+    // odległość środka kadru od prostej odcinka względem promienia kadru
+    const dist = Math.abs((cx - x0) * dy - (cy - y0) * dx) / l;
+    return dist <= Math.sqrt(hw * hw + hh * hh);
+  },
 
   // -------------------------------------------------------------------------
   // Pociski w locie (zdarzenie F) — raz na klatkę renderu
@@ -1391,6 +1836,8 @@ export const WeaponFx = {
     for (const p of this._pulses) { p.active = false; p.hitEntity = null; }
     for (const r of this._ricochets) r.active = false;
     for (const h of this._external) { if (h.trail) this.trails.drop(h.trail); h.trail = null; h.active = false; }
+    for (const r of this._rays) this._releaseRay(r);
+    for (const h of this._rayHolds) { h.active = false; h.owner = null; }
     this.gpu.reset();
     this.trails.reset();
     this.projectiles.begin();
