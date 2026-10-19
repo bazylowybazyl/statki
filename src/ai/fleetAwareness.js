@@ -35,6 +35,24 @@ export const AWARENESS_CONFIG = Object.freeze({
 export const SIDE_FRIENDLY = 'friendly';
 export const SIDE_PIRATE = 'pirate';
 
+// Postawa strony narzucona z zewnątrz (scena deweloperska „Wojna”, DevScene.wojna — 2026-10-19): 'charge' — NATARCIE
+// (fleetCoordinator.js: flota maszeruje bez stania, w walce przeloty burtą w burtę i nawroty — capitalAI.js `chargeRun`).
+// null — postawa z rozkazu skrzydła (ESKORTA / ATAK) i piraci ofensywni jak dotąd. Strona z nadpisaną postawą nie ma
+// smyczy ESKORTY (bije wszystko, co widzą jej czujniki).
+export const FLEET_STANCES = Object.freeze(['charge']);
+const stanceOverride = { [SIDE_FRIENDLY]: null, [SIDE_PIRATE]: null };
+
+/** Postawa strony narzucona z zewnątrz ('charge') albo null — wtedy rozkaz skrzydła / piraci jak dotąd. */
+export function setFleetStanceOverride(side, stance) {
+  if (!(side in stanceOverride)) return null;
+  stanceOverride[side] = FLEET_STANCES.includes(stance) ? stance : null;
+  return stanceOverride[side];
+}
+
+export function fleetStanceOverride(side) {
+  return stanceOverride[side] || null;
+}
+
 function makeSide(id) {
   return {
     id,
@@ -299,7 +317,7 @@ export function resolveEngageLeash(npc, player = playerRef()) {
   if (!npc) return null;
   if (npc.friendly === true && npc.supportData) {
     const order = (typeof window !== 'undefined' && window.SupportWing?.order) || 'guard';
-    if (order !== 'engage' && player && !isGone(player)) {
+    if (order !== 'engage' && !stanceOverride[SIDE_FRIENDLY] && player && !isGone(player)) {
       return { x: posX(player), y: posY(player), r: AWARENESS_CONFIG.guardRadius };
     }
     return null;
@@ -367,6 +385,8 @@ export function describeFleetAwareness() {
 }
 
 if (typeof window !== 'undefined') {
+  window.setFleetStanceOverride = setFleetStanceOverride;
+  window.fleetStanceOverride = fleetStanceOverride;
   window.updateFleetAwareness = updateFleetAwareness;
   window.pickContactTarget = pickContactTarget;
   window.getSideContacts = getSideContacts;

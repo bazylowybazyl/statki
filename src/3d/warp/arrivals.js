@@ -35,6 +35,8 @@ import { newWarpSlot } from './frame.js';
 import { warpPalette, seamColor, heatColor } from './palette.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+// [s] okres fal zwiastuna „drganie przestrzeni” (styl 'ripple' — scena „Wojna”, warpTraffic.planArrival heraldStyle)
+const RIPPLE_PERIOD = 0.55;
 const easeOut3 = (x) => { const u = 1 - clamp01(x); return 1 - u * u * u; };
 const smoothK = (x) => { const u = clamp01(x); return u * u * (3 - 2 * u); };
 export { HERALD_REACH };
@@ -93,8 +95,17 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a) {
   v.pushSlot.releaseT = a.pushReleaseT;
   if (t < a.t0 || t > a.tEnd) return 0;
 
-  // --- zwiastun: nić wzdłuż kursu i punkt zbierania w miejscu zatrzymania ---
-  if (!a.moving && s.herald > 0.002 && t < a.tBrake + 0.6) {
+  // --- zwiastun: nić wzdłuż kursu i punkt zbierania w miejscu zatrzymania (styl 'thread', domyślny), drganie
+  // przestrzeni ('ripple': fale refrakcji zapadające się do punktu wyjścia, co RIPPLE_PERIOD s) albo nic ('none') ---
+  const heraldStyle = a.heraldStyle || 'thread';
+  if (!a.moving && heraldStyle === 'ripple' && s.herald > 0.002 && t < a.tBrake + 0.1) {
+    const age = (t - a.t0) / RIPPLE_PERIOD;
+    const u = age - Math.floor(age);
+    const k = s.herald * Math.sin(Math.PI * u);
+    frame.addWave(a.sx - camX, a.sy - camY, L * (0.15 + 2.1 * (1 - u)), L * 0.2, 7 * k * Math.min(1.2, size * 1.2));
+    frame.addFlash(a.sx - camX, a.sy - camY, L * (0.05 + 0.08 * s.herald), 0.25 + 0.9 * s.herald * s.herald, pal, true);
+  }
+  if (!a.moving && heraldStyle === 'thread' && s.herald > 0.002 && t < a.tBrake + 0.6) {
     const h = v.heraldSlot;
     const reach = a.heraldReach || HERALD_REACH;
     h.on = true;
