@@ -380,13 +380,17 @@ export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, ahead: 0.4, set
 /**
  * Rampa wyjścia (rozgrywka: prędkość statku gracza po wyjściu z warpa; efekt: oś wyjścia).
  * v0 — prędkość w chwili wyjścia [j/s]. Wlot nie szybszy niż v0 (wolny warp nie przyspiesza).
+ * vEnd — prędkość na końcu hamowania [j/s] (WYJŚCIE Z PĘDEM, user 2026-10-19: „lecenie à la Star Wars, a nie
+ * stanie pasywne”; demo „Pęd”: 3 × prędkość bojowa). Hamowanie z tym samym opóźnieniem co do zera, tylko
+ * krócej; po rampie statek leci z vEnd wzdłuż kursu (nadmiar zbiera zwykły model lotu). 0 — zatrzymanie.
  */
-export function createWarpExitRamp({ v0, hullLength, dirX = 1, dirY = 0, startTime = 0 } = {}) {
+export function createWarpExitRamp({ v0, hullLength, dirX = 1, dirY = 0, startTime = 0, vEnd = 0 } = {}) {
   const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
   const vStart = Math.max(0, Number(v0) || 0);
   const vArr = Math.max(1, Math.min(warpArrivalSpeed(L), vStart || 1));
+  const vOut = Math.max(0, Math.min(vArr, Number(vEnd) || 0));
   const E = WARP_EXIT;
-  const brake = warpBrakeTime(L, vArr);
+  const brake = warpBrakeTime(L, vArr) * (1 - vOut / vArr);
   const dl = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
   const r = {
     active: true,
@@ -394,6 +398,7 @@ export function createWarpExitRamp({ v0, hullLength, dirX = 1, dirY = 0, startTi
     age: 0,
     v0: vStart,
     vArr,
+    vEnd: vOut,
     hullLength: L,
     dirX: dirX / dl,
     dirY: dirY / dl,
@@ -404,28 +409,31 @@ export function createWarpExitRamp({ v0, hullLength, dirX = 1, dirY = 0, startTi
     tBrake: E.slow + E.coast,
     tHalt: E.slow + E.coast + brake
   };
-  r.dist = warpExitRampDistance(vStart, L);
+  r.dist = warpExitRampDistance(vStart, L, vOut);
   return r;
 }
 
 /**
  * Droga rampy wyjścia [j.] od prędkości v0: zwolnienie (średnia v0 i wlotu — smoothstep całkuje
- * się do ½), wlot, hamowanie (½ v·t). Travel to: wyjście zaczyna się, gdy do celu zostało tyle.
+ * się do ½), wlot, hamowanie (średnia wlotu i vEnd · czas). Travel to: wyjście zaczyna się, gdy do celu zostało tyle.
  */
-export function warpExitRampDistance(v0, hullLength) {
+export function warpExitRampDistance(v0, hullLength, vEnd = 0) {
   const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
   const vStart = Math.max(0, Number(v0) || 0);
   const vArr = Math.max(1, Math.min(warpArrivalSpeed(L), vStart || 1));
+  const vOut = Math.max(0, Math.min(vArr, Number(vEnd) || 0));
   const E = WARP_EXIT;
-  return E.slow * (vStart + vArr) * 0.5 + E.coast * vArr + warpBrakeTime(L, vArr) * vArr * 0.5;
+  const brake = warpBrakeTime(L, vArr) * (1 - vOut / vArr);
+  return E.slow * (vStart + vArr) * 0.5 + E.coast * vArr + brake * (vArr + vOut) * 0.5;
 }
 
 /**
  * Prędkość na rampie wyjścia w chwili `age` [s od wyjścia]: out.speed [j/s], out.phase
- * ('slow' | 'coast' | 'brake' | 'done'), out.tb (czas od początku hamowania).
+ * ('slow' | 'coast' | 'brake' | 'done'), out.tb (czas od początku hamowania). Po rampie — vEnd.
  */
 export function sampleWarpExitRamp(r, age, out = {}) {
   const a = Math.max(0, Number(age) || 0);
+  const vEnd = Number(r.vEnd) || 0;
   let speed;
   let phase;
   if (a < r.tSlowEnd) {
@@ -436,10 +444,10 @@ export function sampleWarpExitRamp(r, age, out = {}) {
     speed = r.vArr;
     phase = 'coast';
   } else if (a < r.tHalt) {
-    speed = r.vArr * (1 - (a - r.tBrake) / r.brake);
+    speed = r.vArr + (vEnd - r.vArr) * ((a - r.tBrake) / Math.max(1e-6, r.brake));
     phase = 'brake';
   } else {
-    speed = 0;
+    speed = vEnd;
     phase = 'done';
   }
   out.speed = speed;
@@ -480,6 +488,44 @@ export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EX
     b *= 1 - u * u * (3 - 2 * u);
   }
   return b;
+}
+
+/**
+ * STYL WARPA (user 2026-10-19: „przekombinowałem z zawijanym efektem warp — dodaj przełącznik rulon 0”; porównanie
+ * w demie „Pęd”, dema/warp-ped.html):
+ *   'rulon'    — zwinięcie świata w walec i lejek (rulon.js) — dziś domyślny w grze, do decyzji usera;
+ *   'ped'      — sama prędkość: bez gięcia świata (smugi gwiazd, ośrodek, soczewka świata, kop kamery);
+ *   'akcent'   — prędkość + krótkie akcenty soczewki na przejściach (naciąg przed dziobem w ładowaniu, fala
+ *                w punkcie skoku, sprężenie przestrzeni przed dziobem przy wyjściu);
+ *   'soczewka' — prędkość + soczewka bańki wokół statku przez cały skok (kadłub nietknięty).
+ * Adres strony: `?warp=ped|akcent|soczewka|rulon`; `?rulon=0` (off / false / nie) = 'ped'. search — `location.search`
+ * strony (render: RenderWorld.pageSearch — także w workerze); wynik pamiętany dla ostatniego napisu. Demo ustawia
+ * styl wprost (`setWarpStyle`, null — wraca do adresu). Bez rulonu kamera trzyma zwykłe wyprzedzenie (cameraRig.js).
+ */
+export const WARP_STYLES = Object.freeze(['rulon', 'ped', 'akcent', 'soczewka']);
+const RULON_OFF_RE = /[?&]rulon=(?:0|off|false|nie)(?:&|$)/i;
+const WARP_STYLE_RE = /[?&]warp=([a-z]+)(?:&|$)/i;
+let _styleSet = null;
+let _styleSearch = null;
+let _styleFromSearch = 'rulon';
+export function setWarpStyle(style) {
+  _styleSet = WARP_STYLES.includes(style) ? style : null;
+  return _styleSet;
+}
+export function warpStyle(search) {
+  if (_styleSet) return _styleSet;
+  const s = typeof search === 'string' ? search : '';
+  if (s !== _styleSearch) {
+    _styleSearch = s;
+    const m = WARP_STYLE_RE.exec(s);
+    const v = m ? m[1].toLowerCase() : '';
+    _styleFromSearch = WARP_STYLES.includes(v) ? v : (RULON_OFF_RE.test(s) ? 'ped' : 'rulon');
+  }
+  return _styleFromSearch;
+}
+/** Czy skok zwija świat w rulon (styl 'rulon'). */
+export function warpRulonEnabled(search) {
+  return warpStyle(search) === 'rulon';
 }
 
 

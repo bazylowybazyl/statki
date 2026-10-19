@@ -9,9 +9,11 @@ import * as THREE from 'three/webgpu';
 import {
   WARP_DEPARTURE_BASE, WARP_ARRIVAL_SHAPE, WARP_RUSH, WARP_EXIT, createWarpDeparture, sampleWarpDeparture, warpSizeScale,
   createWarpArrival, planWarpRush, sampleWarpRush, warpArrivalSpeed, warpBrakeTime,
-  createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, warpRulonBend
+  createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, warpRulonBend, warpRulonEnabled,
+  warpStyle, setWarpStyle, WARP_STYLES
 } from '../src/game/warpDrive.js';
-import { WarpPlayerFx, WARP_FLOW, WARP_BUBBLE } from '../src/3d/warp/player.js';
+import { RenderWorld } from '../src/render/renderWorld.js';
+import { WarpPlayerFx, WARP_FLOW, WARP_BUBBLE, WARP_ACCENT, WARP_LENS_BUBBLE, WARP_HULL_SHADOW } from '../src/3d/warp/player.js';
 import { WarpFrame, WARP_FRAME_CAPS, newWarpSlot } from '../src/3d/warp/frame.js';
 import {
   planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, departFxPose, warpDepartureFxState, HERALD_REACH,
@@ -194,6 +196,176 @@ test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudz
   assert.ok(frame.stars.stretch > 0.3 && frame.stars.stretch < 0.33, 'gwiazdy płasko 0,32·ładowanie²');
   assert.ok(near(fx.rulonBend, 1, 1e-9) && near(fx.rulonField, 1, 1e-9), 'rulon i lejek zwinięte na końcu ładowania');
   assert.ok(near(frame.bubbles[0].R, 1800 * WARP_BUBBLE.radiusK) && near(frame.bubbles[0].asp, WARP_BUBBLE.asp));
+});
+
+test('przełącznik rulonu: ?rulon=0 (off / false / nie) wyłącza, inne adresy zostawiają rulon', () => {
+  for (const s of ['?rulon=0', '?dev&rulon=0', '?rulon=off&x=1', '?rulon=false', '?rulon=NIE']) assert.equal(warpRulonEnabled(s), false, s);
+  for (const s of ['', '?rulon=1', '?dev', '?xrulon=0', '?rulon=01', undefined, null]) assert.equal(warpRulonEnabled(s), true, String(s));
+});
+
+test('styl warpa: ?warp=… (rulon / ped / akcent / soczewka), ?rulon=0 = ped, setWarpStyle (demo) nadpisuje adres', () => {
+  assert.deepEqual([...WARP_STYLES], ['rulon', 'ped', 'akcent', 'soczewka']);
+  assert.equal(warpStyle(''), 'rulon');
+  assert.equal(warpStyle('?warp=ped'), 'ped');
+  assert.equal(warpStyle('?dev&warp=akcent'), 'akcent');
+  assert.equal(warpStyle('?warp=SOCZEWKA&x=1'), 'soczewka');
+  assert.equal(warpStyle('?warp=xyz'), 'rulon');
+  assert.equal(warpStyle('?rulon=0'), 'ped');
+  assert.equal(warpStyle('?warp=akcent&rulon=0'), 'akcent', 'jawny styl wygrywa');
+  assert.equal(warpRulonEnabled('?warp=soczewka'), false);
+  try {
+    assert.equal(setWarpStyle('soczewka'), 'soczewka');
+    assert.equal(warpStyle('?warp=ped'), 'soczewka');
+    assert.equal(warpRulonEnabled(''), false);
+    assert.equal(setWarpStyle('nie-ma'), null, 'nieznany styl = powrót do adresu');
+  } finally {
+    setWarpStyle(null);
+  }
+  assert.equal(warpStyle('?warp=ped'), 'ped');
+});
+
+test('rampa wyjścia z pędem (vEnd): hamowanie tym samym opóźnieniem do vEnd, potem vEnd; droga = całka prędkości', () => {
+  const L = 1800;
+  const r0 = createWarpExitRamp({ v0: 200000, hullLength: L });
+  const r = createWarpExitRamp({ v0: 200000, hullLength: L, vEnd: 1500 });
+  assert.equal(r0.vEnd, 0);
+  assert.equal(r.vEnd, 1500);
+  assert.ok(near(r0.vArr / r0.brake, (r.vArr - r.vEnd) / r.brake, 1e-6), 'to samo opóźnienie');
+  assert.ok(r.tHalt < r0.tHalt);
+  const s = sampleWarpExitRamp(r, r.tHalt + 1);
+  assert.equal(s.phase, 'done');
+  assert.equal(s.speed, 1500);
+  assert.equal(sampleWarpExitRamp(r0, r0.tHalt + 1).speed, 0, 'bez vEnd statek stoi');
+  for (const ramp of [r, r0]) {
+    let d = 0;
+    const h = 1 / 4000;
+    for (let a = 0; a < ramp.tHalt; a += h) d += sampleWarpExitRamp(ramp, a + h / 2).speed * h;
+    assert.ok(Math.abs(d - ramp.dist) / ramp.dist < 0.003, `droga ${d.toFixed(0)} vs ${ramp.dist.toFixed(0)}`);
+  }
+  assert.ok(near(warpExitRampDistance(200000, L), r0.dist, 1e-9));
+  const capped = createWarpExitRamp({ v0: 5000, hullLength: L, vEnd: 9000 });
+  assert.equal(capped.vEnd, capped.vArr, 'vEnd nie wyżej niż wlot');
+  assert.equal(capped.brake, 0);
+});
+
+test('styl akcent: naciąg (implozja przed dziobem) w ładowaniu, pęknięcie w punkcie skoku, sprężenie przed dziobem przy wyjściu; bez rulonu', () => {
+  setWarpStyle('akcent');
+  try {
+    const { fx, frame, game, map, step } = playerRig();
+    const dt = 1 / 60;
+    let t = 0;
+    game.state = 'charging';
+    for (let i = 1; i <= 48; i++) { t += dt; game.charge = Math.min(1, i / 48); step(t, dt); }
+    assert.equal(fx.style, 'akcent');
+    assert.equal(fx.rulonBend, 0);
+    const waves = () => frame.waves.items.slice(0, frame.waves.count);
+    const imp = waves().filter((w) => w.kind === 1);
+    assert.equal(imp.length, 1, 'naciąg');
+    const ahead = 1800 * WARP_ACCENT.jumpAhead;
+    const sx = game.x - map.camX;
+    const sy = game.y - map.camY;
+    assert.ok(near(imp[0].x, sx + Math.cos(game.angle) * ahead, 1e-6) && near(imp[0].y, sy + Math.sin(game.angle) * ahead, 1e-6));
+    assert.ok(imp[0].amp > WARP_ACCENT.pullAmp * 0.95);
+    game.state = 'active';
+    t += dt; step(t, dt);
+    t += dt; step(t, dt);
+    assert.equal(waves().filter((w) => w.kind === 1).length, 0, 'po skoku naciąg znika');
+    assert.ok(waves().filter((w) => w.kind === 0).length >= 2, 'fala kopu + pęknięcie naciągu');
+    for (let i = 0; i < 60; i++) { t += dt; step(t, dt); }
+    game.state = 'idle';
+    game.exitRamp = createWarpExitRamp({ v0: 200000, hullLength: 1800, dirX: Math.cos(game.angle), dirY: Math.sin(game.angle) });
+    t += dt; step(t, dt);
+    assert.equal(fx.mode, 'exit');
+    t += 0.1; step(t, 0.1);
+    const bow = { x: sx + Math.cos(game.angle) * 1800 * 0.9, y: sy + Math.sin(game.angle) * 1800 * 0.9 };
+    assert.ok(waves().some((w) => w.kind === 0 && near(w.x, bow.x, 1e-6) && near(w.y, bow.y, 1e-6)), 'sprężenie przed dziobem');
+  } finally {
+    setWarpStyle(null);
+  }
+});
+
+test('cień kadłuba gracza w skoku (WARP_HULL_SHADOW): ładowanie gasi, w locie 0, po zatrzymaniu wraca do 1', () => {
+  const { fx, game, step } = playerRig();
+  const dt = 1 / 60;
+  let t = 0;
+  step(t, dt);
+  assert.equal(WARP_HULL_SHADOW.player, 1);
+  game.state = 'charging';
+  let prev = 1;
+  for (let i = 1; i <= 48; i++) {
+    t += dt; game.charge = Math.min(1, i / 48); step(t, dt);
+    assert.ok(WARP_HULL_SHADOW.player <= prev + 1e-12, 'w ładowaniu nie rośnie');
+    prev = WARP_HULL_SHADOW.player;
+  }
+  assert.ok(WARP_HULL_SHADOW.player < 1e-9);
+  game.state = 'active';
+  for (let i = 0; i < 30; i++) { t += dt; step(t, dt); assert.equal(WARP_HULL_SHADOW.player, 0); }
+  game.state = 'idle';
+  game.exitRamp = createWarpExitRamp({ v0: 200000, hullLength: 1800 });
+  t += dt; step(t, dt);
+  assert.ok(WARP_HULL_SHADOW.player < 0.01, 'w zwolnieniu dalej bez cienia');
+  for (let i = 0; i < 240; i++) { t += dt; step(t, dt); }
+  assert.ok(near(WARP_HULL_SHADOW.player, 1, 1e-9), 'po zatrzymaniu cień wrócił');
+  fx.reset();
+  assert.equal(WARP_HULL_SHADOW.player, 1);
+});
+
+test('styl soczewka: soczewka bańki wokół statku rośnie z ładowaniem, trzyma w locie, gaśnie przy wyjściu; ped — bez akcentów', () => {
+  setWarpStyle('soczewka');
+  try {
+    const { fx, frame, game, step } = playerRig();
+    const dt = 1 / 60;
+    let t = 0;
+    const lens = () => frame.waves.items.slice(0, frame.waves.count).filter((w) => w.kind === 2);
+    game.state = 'charging';
+    for (let i = 1; i <= 48; i++) { t += dt; game.charge = Math.min(1, i / 48); step(t, dt); }
+    assert.equal(lens().length, 1);
+    const L0 = lens()[0];
+    assert.ok(near(L0.amp, WARP_LENS_BUBBLE.amp, 1e-9));
+    assert.ok(near(L0.r, 1800 * WARP_BUBBLE.radiusK * WARP_LENS_BUBBLE.across, 1e-9) && near(L0.asp, WARP_BUBBLE.asp));
+    assert.ok(near(L0.dx, Math.cos(game.angle), 1e-12) && near(L0.dy, Math.sin(game.angle), 1e-12));
+    game.state = 'active';
+    for (let i = 0; i < 30; i++) { t += dt; step(t, dt); }
+    assert.ok(near(lens()[0].amp, WARP_LENS_BUBBLE.amp, 1e-9));
+    game.state = 'idle';
+    game.exitRamp = createWarpExitRamp({ v0: 200000, hullLength: 1800 });
+    t += dt; step(t, dt);
+    for (let i = 0; i < 120; i++) { t += dt; step(t, dt); }
+    assert.equal(lens().length, 0, 'po zwolnieniu i wlocie soczewka zgasła');
+    setWarpStyle('ped');
+    const p = playerRig();
+    let t2 = 0;
+    p.game.state = 'charging';
+    for (let i = 1; i <= 48; i++) { t2 += dt; p.game.charge = Math.min(1, i / 48); p.step(t2, dt); }
+    assert.equal(p.fx.rulonBend, 0);
+    assert.equal(p.frame.waves.items.slice(0, p.frame.waves.count).filter((w) => w.kind !== 0).length, 0);
+  } finally {
+    setWarpStyle(null);
+  }
+});
+
+test('skok gracza z ?rulon=0: ładowanie, skok i wyjście bez zwinięcia (adres strony z RenderWorld — także w workerze)', () => {
+  RenderWorld.setSource({ pageSearch: '?rulon=0' });
+  try {
+    const { fx, game, step } = playerRig();
+    const dt = 1 / 60;
+    let t = 0;
+    game.state = 'charging';
+    for (let i = 1; i <= 48; i++) {
+      t += dt;
+      game.charge = Math.min(1, i / 48);
+      step(t, dt);
+      assert.equal(fx.rulonBend, 0);
+      assert.equal(fx.rulonField, 0);
+    }
+    game.state = 'active';
+    for (let i = 0; i < 30; i++) { t += dt; step(t, dt); assert.equal(fx.rulonBend, 0); }
+    assert.equal(fx.mode, 'warp');
+    game.state = 'idle';
+    for (let i = 0; i < 30; i++) { t += dt; step(t, dt); assert.equal(fx.rulonBend, 0); }
+  } finally {
+    RenderWorld.setSource(null);
+  }
 });
 
 test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna); wyjście z rampy rozgrywki — zwolnienie, hamowanie (błysk, fala, żar, iskry), ośrodek gaśnie', () => {

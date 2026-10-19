@@ -11,7 +11,11 @@
 //   • HEAT    (2) gorące powietrze: płynący szum w kole słabnący ku brzegowi. Bez
 //               kierunku — wzór dema zakotwiczony w świecie (fazy z pozycji źródła
 //               liczone na CPU w double); z kierunkiem — wzór płynie z prądem
-//               (~350 j/s), a maska wydłuża się w dół strumienia (`stretch`).
+//               (~350 j/s), a maska wydłuża się w dół strumienia (`stretch`);
+//   • BUBBLE  (3) soczewka bańki warpa (styl „soczewka”, demo „Pęd” 2026-10-19): pierścień refrakcji
+//               na zewnątrz ELIPSY bańki (promień w poprzek, `stretch` = wydłużenie wzdłuż kursu) —
+//               w środku przesunięcie 0 (kadłub ostry, bez dawnego „jajka”), przed dziobem
+//               przestrzeń ściśnięta, za rufą rozciągnięta.
 // Dyspersja barw ×0,82 / ×1 / ×1,22 (jak w grze) — ułamek przesunięcia z `dispersion`
 // (demo: fale i implozja 0,35–0,45, gorące powietrze 0).
 //
@@ -28,12 +32,15 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, int, vec2, vec3, vec4, uniformArray, screenUV, Loop, If,
-  exp, sin, cos, max, abs, length, dot, smoothstep
+  exp, sin, cos, max, abs, length, dot, smoothstep, clamp
 } from 'three/tsl';
 
 export const DISTORT_CAP = 32;          // źródeł na GPU (jak demo rakiet)
 export const DISTORT_QUEUE = 128;       // zgłoszeń na klatkę po stronie CPU
-export const DISTORT = Object.freeze({ SHOCK: 0, IMPLODE: 1, HEAT: 2 });
+export const DISTORT = Object.freeze({ SHOCK: 0, IMPLODE: 1, HEAT: 2, BUBBLE: 3 });
+// Soczewka bańki: przód ściska (+1), boki słabiej (BUBBLE_SIDE), tył prawie wcale (BUBBLE_SIDE − BUBBLE_FRONT).
+const BUBBLE_SIDE = 0.55;
+const BUBBLE_FRONT = 0.45;
 export const DISTORT_HEADER = 2;        // vec4 nagłówka: (liczba, czas, włącznik, —), (szer., wys., zoom, —)
 export const DISTORT_STRIDE = 4;        // vec4 na źródło: A, B, C, D (niżej)
 export const DISTORT_TIME_WRAP = 600;   // [s] zawinięcie zegara wzoru (float32 i sin dużych kątów)
@@ -114,24 +121,37 @@ export class DistortionField {
   }
 
   /**
+   * Soczewka bańki warpa: elipsa bańki (półoś w poprzek `across` [j.], wzdłuż kursu × `asp`), pierścień
+   * refrakcji grubości `width` [j.] na zewnątrz elipsy, kurs (dirX, dirY) w świecie (y w dół).
+   */
+  bubble(x, y, across, width, strengthPx, dirX, dirY, asp = 1, dispersion = 0.2) {
+    return this.add(DISTORT.BUBBLE, x, y, across, width, strengthPx, dispersion, dirX, dirY, asp);
+  }
+
+  /**
    * Rzutuje zgłoszenia na widok i pakuje do bloku. camX, camY — środek kadru w świecie
    * gry, zoom — px ekranu na jednostkę świata, width / height — rozmiar celu [px],
    * time — zegar efektów [s], pxScale — px celu na px kanwy gry (skala renderu z opcji grafiki:
-   * siła zgłoszeń jest w px ekranu). Zwraca liczbę spakowanych źródeł.
+   * siła zgłoszeń jest w px ekranu), roll — obrót kadru kamery (src/3d/viewRoll.js: ekran =
+   * R(−roll)·(świat − kamera); 0 — osie świata). Zwraca liczbę spakowanych źródeł.
    */
-  commit(camX, camY, zoom, width, height, time = 0, pxScale = 1) {
+  commit(camX, camY, zoom, width, height, time = 0, pxScale = 1, roll = 0) {
     const A = this.array;
     const z = zoom > 0 ? zoom : 1;
     const hw = width * 0.5;
     const hh = height * 0.5;
     const q = this.qdata;
     const pick = this._pick;
+    const rc = roll ? Math.cos(roll) : 1;
+    const rs = roll ? Math.sin(roll) : 0;
     let vis = 0;
     let culled = 0;
     for (let i = 0; i < this.count; i++) {
       const o = i * Q;
-      const sx = (this.qx[i] - camX) * z;
-      const sy = -(this.qy[i] - camY) * z;
+      const wx = this.qx[i] - camX;
+      const wy = this.qy[i] - camY;
+      const sx = (rc * wx + rs * wy) * z;
+      const sy = -(-rs * wx + rc * wy) * z;
       const reach = this._reach(q[o], q[o + 1], q[o + 2], q[o + 7]) * z;
       if (Math.abs(sx) - reach > hw || Math.abs(sy) - reach > hh || reach < 0.5) { culled++; continue; }
       pick[vis++] = i;
@@ -157,13 +177,17 @@ export class DistortionField {
       const o = i * Q;
       const b = DISTORT_HEADER + k * DISTORT_STRIDE;
       const type = q[o];
-      const sx = (this.qx[i] - camX) * z;
-      const sy = -(this.qy[i] - camY) * z;
+      const wx = this.qx[i] - camX;
+      const wy = this.qy[i] - camY;
+      const sx = (rc * wx + rs * wy) * z;
+      const sy = -(-rs * wx + rc * wy) * z;
       A[b].set(sx, sy, q[o + 1] * z, q[o + 2] * z);
       A[b + 1].set(q[o + 3] * pxScale, type, q[o + 4], this._reach(type, q[o + 1], q[o + 2], q[o + 7]) * z);
-      // Kierunek świat → scena (y odwrócone), jednostkowy albo 0.
-      let dx = q[o + 5];
-      let dy = 0 - q[o + 6];
+      // Kierunek świat → ekran (obrót kadru) → scena (y odwrócone), jednostkowy albo 0.
+      const qx5 = q[o + 5];
+      const qy6 = q[o + 6];
+      let dx = rc * qx5 + rs * qy6;
+      let dy = 0 - (-rs * qx5 + rc * qy6);
       const dl = Math.hypot(dx, dy);
       if (dl > 1e-6) { dx /= dl; dy /= dl; } else { dx = 0; dy = 0; }
       const sc = q[o + 9];
@@ -189,6 +213,7 @@ export class DistortionField {
   _reach(type, radius, width, stretch) {
     if (type === DISTORT.SHOCK) return radius + SHOCK_REACH_W * Math.max(width, 1);
     if (type === DISTORT.IMPLODE) return IMPLODE_REACH_R * radius;
+    if (type === DISTORT.BUBBLE) return radius * stretch + SHOCK_REACH_W * Math.max(width, 1);
     return radius * (stretch + (stretch - 1) * 0.5);
   }
 
@@ -238,7 +263,7 @@ export function distortionOffset(block, uvIn = screenUV) {
           const u = r.div(max(A.z, 1.0));
           const prof = u.mul(exp(u.mul(u).mul(-2.2))).mul(2.2);
           o.assign(dir.mul(prof.mul(B.x)));
-        }).Else(() => {
+        }).ElseIf(B.y.lessThan(2.5), () => {
           const C = block.element(base.add(2)).toVar();
           const D = block.element(base.add(3)).toVar();
           // Skala wzoru (C.w; 1 — wzór dema, < 1 — grubsze fale).
@@ -268,6 +293,20 @@ export function distortionOffset(block, uvIn = screenUV) {
             const wc = cos(Pc.mul(0.025).add(D.z).add(t.mul(6.1))).add(cos(Pa.mul(0.029).add(D.w).sub(t.mul(4.7)))).mul(0.5);
             o.assign(C.xy.mul(wa).add(perp.mul(wc)).mul(B.x.mul(fall)));
           });
+        }).Else(() => {
+          // Soczewka bańki: pierścień na zewnątrz elipsy (A.z — półoś w poprzek, C.z — wydłużenie wzdłuż
+          // kursu C.xy, A.w — grubość); w elipsie 0. Przód ściska, boki lekko, tył rozciąga.
+          const C = block.element(base.add(2)).toVar();
+          const perp = vec2(C.y.negate(), C.x);
+          const al = dot(d, C.xy).toVar();
+          const ac = dot(d, perp);
+          const asp = max(C.z, 1.0).toVar();
+          const b = max(A.z, 1.0).toVar();
+          const qn = length(vec2(al.div(asp), ac)).div(b);
+          const x = qn.sub(1.0).mul(b).div(max(A.w, 1.0)).toVar();
+          const prof = max(x, 0.0).mul(exp(x.mul(x).negate())).mul(2.33);
+          const k = clamp(al.div(asp.mul(b)), -1.0, 1.0).mul(BUBBLE_FRONT).add(BUBBLE_SIDE);
+          o.assign(dir.mul(prof.mul(k).mul(B.x)));
         });
         offPx.addAssign(o);
         dispPx.addAssign(o.mul(B.z));
@@ -324,6 +363,16 @@ export function distortionOffsetCpu(field, px, py, out = { x: 0, y: 0, dx: 0, dy
       const u = r / Math.max(a.z, 1);
       const prof = u * Math.exp(-2.2 * u * u) * 2.2 * B.x;
       ox = ux * prof; oy = uy * prof;
+    } else if (B.y >= 2.5) {
+      const al = dx * C.x + dy * C.y;
+      const ac = dx * -C.y + dy * C.x;
+      const asp = Math.max(C.z, 1);
+      const bb = Math.max(a.z, 1);
+      const qn = Math.hypot(al / asp, ac) / bb;
+      const x = (qn - 1) * bb / Math.max(a.w, 1);
+      const prof = Math.max(x, 0) * Math.exp(-x * x) * 2.33;
+      const k = Math.max(-1, Math.min(1, al / (asp * bb))) * BUBBLE_FRONT + BUBBLE_SIDE;
+      ox = ux * prof * k * B.x; oy = uy * prof * k * B.x;
     } else if (Math.abs(C.x) + Math.abs(C.y) < 0.5) {
       const u = r / Math.max(a.z, 1);
       const fall = 1 - smooth(0.3, 1, u);

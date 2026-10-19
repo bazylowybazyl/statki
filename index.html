@@ -1546,7 +1546,7 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor } from "./src/game/warpDrive.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor, warpRulonEnabled } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
@@ -25266,7 +25266,8 @@
       }
       else if (warp.exitRamp && warp.exitRamp.active) {
         // Wyjście z warpa = przylot jak u NPC (warpDrive.js): prędkość wzdłuż kursu z rampy
-        // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu statek stoi.
+        // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu prędkość `vEnd` rampy
+        // (0 — statek stoi; wyjście z pędem — dalej leci, nadmiar zbiera zwykły lot).
         const r = warp.exitRamp;
         const wasBrake = r.age >= r.tBrake;
         r.age += dt;
@@ -25280,11 +25281,7 @@
         const desired = Math.atan2(r.dirY, r.dirX);
         ship.angle = wrapAngle(ship.angle + clamp(wrapAngle(desired - ship.angle), -warp.alignRate * dt, warp.alignRate * dt));
         ship.angVel = 0;
-        if (s.phase === 'done') {
-          r.active = false;
-          ship.vel.x = 0;
-          ship.vel.y = 0;
-        }
+        if (s.phase === 'done') r.active = false;
       }
       else {
         // --- Thruster-based Newtonian player physics ---
@@ -27086,10 +27083,12 @@
     // raz na klatkę przed zoomem i rigiem — człon log(zoom) dla updateCameraZoom, cofnięcie
     // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
-    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35 };
+    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: true };
     function updateCameraWarpKick(gameDt) {
       const w = _cameraWarpInput;
       w.dt = gameDt;
+      // Styl skoku bez rulonu (`?warp=ped|akcent|soczewka`, `?rulon=0` — warpDrive.js: warpRulonEnabled): kamera bez środka lejka.
+      w.rulon = warpRulonEnabled(location.search);
       w.state = warp.state;
       w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
       const dir = warp.dir;
