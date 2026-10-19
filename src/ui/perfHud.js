@@ -11,9 +11,8 @@ const PERF_PANEL_HTML = `
   <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
   <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
   <div class="perf-row"><span class="perf-label">Obraz 3D (worker)</span><span class="perf-val" id="perfWorker3D">--</span></div>
-  <div class="perf-row"><span class="perf-label">Hex LOD full/hybrid/far</span><span class="perf-val" id="perfHexLod">--</span></div>
+  <div class="perf-row"><span class="perf-label">LOD kadłubów pełne/smugi</span><span class="perf-val" id="perfHexLod">--</span></div>
   <div class="perf-row"><span class="perf-label">Culling rys./odrzuc. (cienie)</span><span class="perf-val" id="perfCulling">--</span></div>
-  <div class="perf-row"><span class="perf-label">Physics worker</span><span class="perf-val" id="perfPhysicsWorker">--</span></div>
   <div class="perf-row"><span class="perf-label">AI cadence actual/target</span><span class="perf-val" id="perfAiCadence">--</span></div>
   <div class="perf-row"><span class="perf-label">Untracked</span><span class="perf-val" id="perfFrameUntracked">--</span></div>
   <div class="perf-bar-bg">
@@ -32,7 +31,7 @@ const PERF_PANEL_HTML = `
     <div class="perf-bar" id="barPhysics" style="width:0%;background:#4af"></div>
   </div>
 
-  <div class="perf-row"><span class="perf-label"> |- Destructor</span><span class="perf-val"
+  <div class="perf-row"><span class="perf-label"> |- Kadłuby (silnik belek)</span><span class="perf-val"
       id="perfDestructor">--</span></div>
   <div class="perf-bar-bg">
     <div class="perf-bar" id="barDestructor" style="width:0%;background:#6cf"></div>
@@ -342,7 +341,7 @@ const PERF_PANEL_HTML = `
   </div>
 
   <div class="perf-sep"></div>
-  <div class="perf-row"><span class="perf-label">Shardy (aktywne)</span><span class="perf-val"
+  <div class="perf-row"><span class="perf-label">Węzły kadłubów (aktywne)</span><span class="perf-val"
       id="perfShards">--</span></div>
   <div class="perf-row"><span class="perf-label">Kontakty/klatka</span><span class="perf-val"
       id="perfContacts">--</span></div>
@@ -415,7 +414,7 @@ let worldSource = () => ({});
 
 /**
  * Podaje panelowi zrodlo stanu swiata.
- * @param {() => ({ship?, npcs?, wrecks?, bullets?, physicsBridge?})} fn
+ * @param {() => ({ship?, npcs?, wrecks?, coldWrecks?, bullets?})} fn
  */
 export function setPerfHudWorldSource(fn) {
   worldSource = typeof fn === 'function' ? fn : () => ({});
@@ -699,7 +698,6 @@ export const PerfHUD = {
       worker3D: document.getElementById('perfWorker3D'),
       hexLod: document.getElementById('perfHexLod'),
       culling: document.getElementById('perfCulling'),
-      physicsWorker: document.getElementById('perfPhysicsWorker'),
       aiCadence: document.getElementById('perfAiCadence'),
       frameUntracked: document.getElementById('perfFrameUntracked'),
       physics: document.getElementById('perfPhysics'),
@@ -1216,35 +1214,24 @@ export const PerfHUD = {
     let hotWreckCount = 0;
     let sleepingWreckCount = 0;
     const all = [];
-    if (ship && (ship.hexGrid || ship.beamHull) && !ship.dead) all.push(ship);
+    if (ship && ship.beamHull && !ship.dead) all.push(ship);
     for (const npc of npcs) {
-      if (npc && (npc.hexGrid || npc.beamHull) && !npc.dead) all.push(npc);
+      if (npc && npc.beamHull && !npc.dead) all.push(npc);
     }
     for (const w of wrecks) {
       if (!w || w.dead) continue;
       if (w._wreckSleeping) sleepingWreckCount++;
       else hotWreckCount++;
-      if (w.hexGrid || w.beamHull) all.push(w);
+      if (w.beamHull) all.push(w);
     }
     entitiesCount = all.length;
+    // Kadłuby na belkach: żywe węzły (wiersz „Węzły kadłubów”).
     for (const e of all) {
-      // Kadłub na belkach: żywe węzły zamiast heksów.
-      const hullBody = e?.beamHull?.body;
-      if (hullBody) {
-        const live = hullBody.dead ? 0 : hullBody.activeNodes;
-        if (e.isWreck && e._wreckSleeping) sleepingShards += live;
-        else activeShards += live;
-        continue;
-      }
-      const shards = e?.hexGrid?.shards;
-      if (!Array.isArray(shards)) continue;
-      const isSleeping = e.isWreck && e._wreckSleeping;
-      for (let i = 0; i < shards.length; i++) {
-        const s = shards[i];
-        if (!s?.active || s.isDebris) continue;
-        if (isSleeping) sleepingShards++;
-        else activeShards++;
-      }
+      const hullBody = e.beamHull.body;
+      if (!hullBody) continue;
+      const live = hullBody.dead ? 0 : hullBody.activeNodes;
+      if (e.isWreck && e._wreckSleeping) sleepingShards += live;
+      else activeShards += live;
     }
     let npcCount = 0;
     let fighterCount = 0;
@@ -1357,9 +1344,10 @@ export const PerfHUD = {
     }
     if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;
     if (e.hexLod) {
+      // Kadłuby skórą / smugą z daleka | węzły rysowanych skór / węzły wszystkich kadłubów w kadrze.
       const lod = window.__hexLodStats;
       e.hexLod.textContent = lod
-        ? `${lod.fullBodies}/${lod.hybridBodies}/${lod.impostorBodies} | ${lod.fullHexes + lod.hybridHexes}/${lod.totalStructuralHexes}`
+        ? `${lod.fullBodies}/${lod.impostorBodies} | ${lod.fullHexes}/${lod.totalStructuralHexes}`
         : '--';
     }
     if (e.culling) {
@@ -1377,12 +1365,6 @@ export const PerfHUD = {
       } else {
         e.culling.textContent = '--';
       }
-    }
-    if (e.physicsWorker) {
-      const workerStats = worldSource()?.physicsBridge?.getStats?.();
-      e.physicsWorker.textContent = workerStats
-        ? `${workerStats.mode} q=${workerStats.commandBacklog}/${workerStats.aiCommandBacklog}/${workerStats.eventBacklog} drop=${workerStats.commandDropped + workerStats.aiCommandDropped + workerStats.eventDropped}`
-        : 'disabled';
     }
     if (e.aiCadence) {
       e.aiCadence.textContent = `${d.aiDecisionHz.toFixed(1)} / ${this.aiDecisionTargetHz.toFixed(0)} Hz`;

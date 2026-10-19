@@ -483,8 +483,8 @@ function faceBasis(face) {
  * Rząd okien na pochyłej ścianie. `at` — wysokość środka rzędu na ścianie
  * (0 = dół, 1 = góra), `from/to` — zakres wzdłuż krawędzi (0..1). Każde okno
  * to szyba (GLASS) na ciemnym pasie (FRAME); oświetlone „pomieszczenia” (serie
- * 2–5 okien przedzielone 1–3 ciemnymi, jak buildBridgeWindows w
- * shipBridge.js) dostają emiter.
+ * 2–5 okien przedzielone 1–3 ciemnymi, jak buildBeamBridgeWindows w
+ * shipBridgeBeams.js) dostają emiter.
  */
 function windowRow(B, face, o) {
   const { t, b, n } = faceBasis(face);
@@ -1527,63 +1527,4 @@ export function sampleHeightField(field, x, y) {
   const a = H[i + j * w] * (1 - tx) + H[i1 + j * w] * tx;
   const b = H[i + j1 * w] * (1 - tx) + H[i1 + j1 * w] * tx;
   return a * (1 - ty) + b * ty;
-}
-
-// ---------------------------------------------------------------------------
-// Heksy siatki destruktora (lustro GLSL z bridge3D.js)
-// ---------------------------------------------------------------------------
-//
-// Układ komórek jak getHexBodyTemplate / hexCellCenter (shipBridge.js):
-// heksy „płaskie” (flat-top), środek komórki (c, r) = (1,5·R·c,
-// √3·R·(r + ½·(c & 1))) w przestrzeni SIATKI (px renderu, Y w dół).
-// Kolumny nieparzyste są przesunięte o pół heksa w dół (odd-q).
-
-const SQRT3 = Math.sqrt(3);
-
-// Sąsiedzi w układzie osiowym (q, r): kierunki 0..5. Ta sama kolejność w
-// masce martwych sąsiadów (bridge3D.js) i w shaderze.
-export const HEX_NEIGHBOR_AXIAL = Object.freeze([[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]);
-
-/** Jednostkowe kierunki do środków sąsiadów (przestrzeń siatki, Y w dół). */
-export const HEX_NEIGHBOR_DIRS = Object.freeze(HEX_NEIGHBOR_AXIAL.map(([dq, dr]) => {
-  const x = 1.5 * dq;
-  const y = SQRT3 * (dr + dq * 0.5);
-  const l = Math.hypot(x, y);
-  return Object.freeze([x / l, y / l]);
-}));
-
-/** Komórka (c, r) zawierająca punkt siatki (gx, gy) — zaokrąglenie sześcienne. */
-export function hexCellOf(gx, gy, R, out = { c: 0, r: 0 }) {
-  const q = (gx * (2 / 3)) / R;
-  const r = (-gx / 3 + gy * (SQRT3 / 3)) / R;
-  const s = -q - r;
-  let rq = Math.round(q);
-  let rr = Math.round(r);
-  const rs = Math.round(s);
-  const dq = Math.abs(rq - q);
-  const dr = Math.abs(rr - r);
-  const ds = Math.abs(rs - s);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds) rr = -rq - rs;
-  out.c = rq + 0; // −0 → 0
-  out.r = rr + (rq - (rq & 1)) / 2 + 0;
-  return out;
-}
-
-/** Środek komórki (c, r) w przestrzeni siatki. */
-export function hexCellCenterXY(c, r, R, out = { x: 0, y: 0 }) {
-  out.x = c * 1.5 * R;
-  out.y = SQRT3 * R * (r + ((c & 1) ? 0.5 : 0));
-  return out;
-}
-
-/** Sąsiad komórki (c, r) w kierunku dir (0..5, HEX_NEIGHBOR_AXIAL). */
-export function hexNeighborCell(c, r, dir, out = { c: 0, r: 0 }) {
-  const [dq, dr] = HEX_NEIGHBOR_AXIAL[dir];
-  const axR = r - (c - (c & 1)) / 2;
-  const q2 = c + dq;
-  const r2 = axR + dr;
-  out.c = q2;
-  out.r = r2 + (q2 - (q2 & 1)) / 2;
-  return out;
 }

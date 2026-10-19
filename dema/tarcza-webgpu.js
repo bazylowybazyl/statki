@@ -13,7 +13,7 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { updateShieldFx, setEntityShieldForcedOff } from '../shieldSystem.js';
 import { uTime, uDt, lights, uLightsOn, uLightGain, BLOOM_GAME, clamp } from './tarcza-webgpu/wspolne.js';
 import { createSky } from './tarcza-webgpu/tlo.js';
-import { loadAtlasSprite, createAtlasHullMesh } from './tarcza-webgpu/kadlub.js';
+import { loadAtlasSprite, createAtlasHullMesh, shieldOutlineOf } from './tarcza-webgpu/kadlub.js';
 import { buildShip, placeShip, aimTurret, shipPoint, footprintShards } from './tarcza-webgpu/wrogowie.js';
 import { Tarcza, FIELD_PARAMS } from './tarcza-webgpu/tarcza.js';
 import { SHATTER } from './tarcza-webgpu/heksy.js';
@@ -108,7 +108,7 @@ async function main() {
   const atlas = {
     x: 0, y: 0, angle: Number(params.get('kat')) || 0, type: 'atlas',
     visual: { spriteScale: sprite.scale },
-    hexGrid: { shards: sprite.shards, srcWidth: sprite.W, srcHeight: sprite.H },
+    shieldOutline: shieldOutlineOf(sprite.shards, sprite.W, sprite.H),
     shield: { val: SHIELD_MAX, max: SHIELD_MAX }
   };
   // Grupa w klatce lokalnej 3D: pozycja (x, −y), obrót −kąt (jak Core3D).
@@ -180,7 +180,7 @@ async function main() {
   const eEnt = {
     x: eShip.x, y: -eShip.y, angle: -eShip.angle, type: 'destroyer',
     visual: { spriteScale: ENEMY_DEFS[eIdx].scale },
-    hexGrid: { shards: footprintShards(eShip.footprint, 12) },
+    shieldOutline: shieldOutlineOf(footprintShards(eShip.footprint, 12)),
     shield: { val: 3000, max: 3000 }
   };
   const eGroup = new THREE.Group();

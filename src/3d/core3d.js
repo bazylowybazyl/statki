@@ -651,10 +651,10 @@ export const Core3D = {
   layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true, warp: false },
   // Bloom: BloomGryCompute (algorytm BloomNode three = dawny pass WebGL, 12 kroków w jednym passie
   // compute — tsl/bloomCompute.js, zadanie 23) liczony w _renderPost przed „uber”; siła / promień /
-  // próg to uniformy (_applyBloomPassConfig co klatkę z bloomConfig.js albo tunera DevVFX.bloom),
+  // próg to uniformy (_applyBloomPassConfig co klatkę z bloomConfig.js albo z konsoli: DevVFX.bloom),
   // rozmiar = bufor rysowania × resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
-  // Skala rozdzielczości bloomu z opcji grafiki (1 / 0,5), mnożona przez skalę panelu w _getBloomConfig.
+  // Skala rozdzielczości bloomu z opcji grafiki (1 / 0,5), mnożona przez skalę strojenia w _getBloomConfig.
   bloomQualityScale: 1,
   // Post: dwa RenderPipeline zbudowane raz — z bloomem (_post) i bez (_postBezBloomu,
   // perfToggles.bloom = false: bez kosztu passów bloomu, bez przebudowy przy
@@ -723,8 +723,8 @@ export const Core3D = {
     const strength = Number.isFinite(Number(bloom?.strength)) ? Number(bloom.strength) : this.bloomBaseStrength;
     const radius = Number.isFinite(Number(bloom?.radius)) ? Number(bloom.radius) : BLOOM_DEFAULTS.radius;
     const threshold = Number.isFinite(Number(bloom?.threshold)) ? Number(bloom.threshold) : this.bloomBaseThreshold;
-    // Skala panelu strojenia (DevVFX.bloom / bloomResolutionScale) × skala z opcji grafiki (bloomQualityScale:
-    // „Połowa” = 0,5) — panel ustawia swoją przy starcie, więc opcja nie może pisać w to samo pole.
+    // Skala strojenia (DevVFX.bloom z konsoli / bloomResolutionScale) × skala z opcji grafiki (bloomQualityScale:
+    // „Połowa” = 0,5) — osobne pola, żeby opcja nie nadpisywała strojenia.
     const resolutionScale = (Number.isFinite(Number(bloom?.resolutionScale))
       ? Number(bloom.resolutionScale)
       : this.bloomResolutionScale) * (Number(this.bloomQualityScale) || 1);
@@ -1030,7 +1030,7 @@ export const Core3D = {
     this.shadowShaftsPass = createShadowShaftsPass();
 
     const bloomCfg = this._getBloomConfig();
-    // Skala panelu bez mnożnika z opcji grafiki (bloomQualityScale zostaje osobno).
+    // Skala strojenia bez mnożnika z opcji grafiki (bloomQualityScale zostaje osobno).
     this.bloomResolutionScale = bloomCfg.resolutionScale / (Number(this.bloomQualityScale) || 1);
 
     // Handlery zegara GPU i pomiaru bloomu przypięte raz (bez domknięć per klatka).
@@ -1564,7 +1564,7 @@ export const Core3D = {
     resizeRenderTarget(this.distortionTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.planetHaloTarget, bufW, bufH, readyRenderer);
     // Bloom sam bierze rozmiar bufora rysowania w każdym renderze (BloomNode.updateBefore);
-    // tu tylko skala rozdzielczości (tuner zmienia bloomResolutionScale i woła resize).
+    // tu tylko skala rozdzielczości.
     if (this.bloomPass) this.bloomPass.resolutionScale = this._getBloomConfig().resolutionScale;
   },
 
@@ -2078,7 +2078,7 @@ export const Core3D = {
       this._renderPlanetHaloPrepass();
     }
 
-    // Bloom: siła / promień / próg / skala z bloomConfig.js albo tunera (uniformy węzła).
+    // Bloom: siła / promień / próg / skala z bloomConfig.js albo DevVFX.bloom (uniformy węzła).
     if (this.bloomPass && t.bloom !== false) this._applyBloomPassConfig();
 
     // Źródła gorącego powietrza: producenci (dysze, wybuchy, rakiety, tarcze)

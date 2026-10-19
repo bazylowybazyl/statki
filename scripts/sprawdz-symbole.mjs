@@ -34,9 +34,7 @@ const MODULY = [
 // Znane, wczesniej istniejace dziury — trzymamy jawnie, zeby nie halasowaly.
 //   AISPACE_MISSILES / AISPACE_PD — uzywane, nigdzie niezdefiniowane; wybuchna
 //     tylko gdy bron ma ustawione aispaceMissileId / aispacePdId.
-//   ApplyCheats / drawSunDirection — opcjonalne haki dev, wolane wylacznie
-//     za straznikiem `if (window.X)`, wiec brak definicji jest bezpieczny.
-const ZNANE_BRAKI = new Set(['AISPACE_MISSILES', 'AISPACE_PD', 'ApplyCheats', 'drawSunDirection']);
+const ZNANE_BRAKI = new Set(['AISPACE_MISSILES', 'AISPACE_PD']);
 
 const BUILTIN = new Set((
   'const let var function class return if else for while do switch case break continue new typeof instanceof in of ' +

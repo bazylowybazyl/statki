@@ -86,7 +86,7 @@ test('index.html: wybór w „Nowej grze”, skóra sprite\'a i wieżyczki kanwy
   // Kamery 3D to sam widok: bez kadłubów 3D, lotu w pionie i 6DoF (wycofana gra 3D).
   assert.doesNotMatch(html, /createHull3D|setFlight3DSixDof|stepSixDof|flight3DLiftInput|setShotQueryZ/);
   const hex = read('src/3d/hexShips3D.js');
-  assert.match(hex, /if \(beam && beamSkinSuppressor !== null && beamSkinSuppressor\(entity\)\) continue;/);
+  assert.match(hex, /if \(beamSkinSuppressor !== null && beamSkinSuppressor\(entity\)\) continue;/);
   const models = read('src/3d/ships3d/shipModels3DGame.js');
   assert.match(models, /return \{ ships: _cfg\.ships, weapons: true, view3D: _cfg\.view3D \};/);
 });

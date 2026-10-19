@@ -27,22 +27,35 @@ import {
 } from '../src/3d/hullShadowSdf.js';
 
 const L = HULL_SDF_LAYER_SIZE;
-const HEX_R = 5;
-const HEX_H = Math.sqrt(3) * HEX_R;
+const CELL_R = 5;
+const ROW_H = Math.sqrt(3) * CELL_R;
 
-// Siatka heksów jak getHexBodyTemplate: kolumny co 1,5 r, co druga przesunięta o pół wysokości.
+// Siatka komórek kadłuba jak beamShadowGrid w hexShips3D (tablice typowane: piksel sprite'a od lewego górnego
+// rogu, żywe, promień koła opisanego). Komórki w gęstym układzie (kolumny co 1,5 r, co druga przesunięta o pół
+// wiersza) — koła opisane pokrywają płaszczyznę bez dziur.
 function makeGrid(srcWidth, srcHeight, inside) {
-  const shards = [];
-  for (let c = 0; c * HEX_R * 1.5 < srcWidth; c++) {
-    for (let ro = 0; ro * HEX_H < srcHeight; ro++) {
-      const x = c * HEX_R * 1.5;
-      const y = ro * HEX_H + (c % 2 ? HEX_H * 0.5 : 0);
-      if (inside(x - srcWidth / 2, y - srcHeight / 2)) {
-        shards.push({ gridX: x, gridY: y, radius: HEX_R, active: true, isDebris: false });
-      }
+  const xs = [];
+  const ys = [];
+  for (let c = 0; c * CELL_R * 1.5 < srcWidth; c++) {
+    for (let ro = 0; ro * ROW_H < srcHeight; ro++) {
+      const x = c * CELL_R * 1.5;
+      const y = ro * ROW_H + (c % 2 ? ROW_H * 0.5 : 0);
+      if (inside(x - srcWidth / 2, y - srcHeight / 2)) { xs.push(x); ys.push(y); }
     }
   }
-  return { srcWidth, srcHeight, pivot: null, shards, activeStructuralCount: shards.length };
+  const n = xs.length;
+  return {
+    srcWidth, srcHeight, pivot: null,
+    cellX: Float32Array.from(xs), cellY: Float32Array.from(ys), cellActive: new Uint8Array(n).fill(1),
+    cellCount: n, cellRadius: CELL_R, activeStructuralCount: n
+  };
+}
+
+// Komórki zniszczone (trafienia, wyrwy): pred(x, y) w pikselach sprite'a od lewego górnego rogu.
+function killCells(grid, pred) {
+  for (let i = 0; i < grid.cellCount; i++) {
+    if (grid.cellActive[i] && pred(grid.cellX[i], grid.cellY[i])) { grid.cellActive[i] = 0; grid.activeStructuralCount--; }
+  }
 }
 
 // Kadłub testowy: korpus 360×120 + dwa zęby dziobu (+x) z przerwą 40 px.
@@ -93,11 +106,11 @@ test('SDF: ujemne w środku, zero w połowie między tekselem pełnym a pustym',
   assert.equal(sdf[6 * w + 0], 3.5);           // 4 teksele od brzegu
 });
 
-test('pieczenie: sylwetka z aktywnych heksów, margines wokół, poza siatką „daleko”', () => {
+test('pieczenie: sylwetka z żywych komórek, margines wokół, poza siatką „daleko”', () => {
   const grid = makeGrid(420, 160, forkHull);
   const { data, layout } = bake(grid);
   assert.ok(layout.gw <= L && layout.gh <= L);
-  // zakres heksów + promień + margines 12 tekseli z każdej strony
+  // zakres komórek + promień + margines 12 tekseli z każdej strony
   const ext = measureHullExtent(grid);
   assert.ok(layout.originX < ext.minX - 11 * layout.texel);
   assert.ok(layout.originX + layout.gw * layout.texel > ext.maxX + 11 * layout.texel);
@@ -110,9 +123,9 @@ test('pieczenie: sylwetka z aktywnych heksów, margines wokół, poza siatką �
 });
 
 test('krawędź z alfy: zero SDF poniżej teksela od prawdziwej burty', () => {
-  // Heksy sięgają dalej niż burta, więc krawędź wyznacza alfa (jak w grze).
+  // Komórki sięgają dalej niż burta, więc krawędź wyznacza alfa (jak w grze).
   const grid = makeGrid(400, 200, (x, y) => Math.abs(x) < 170 && Math.abs(y) < 75);
-  const layout = planHullSdfLayout(measureHullExtent(grid), HEX_R, {});
+  const layout = planHullSdfLayout(measureHullExtent(grid), CELL_R, {});
   const n = layout.gw * layout.gh;
   const mask = new Uint8Array(n);
   const hex = new Uint8Array(n);
@@ -203,10 +216,7 @@ test('cień startuje przy burcie, kadłub nie rzuca cienia sam na siebie', () =>
 test('kanał tła: pod własnym kadłubem i w wyrwie cień, powierzchnia bez samocienia', () => {
   const grid = makeGrid(420, 160, forkHull);
   // Zamknięta wyrwa w korpusie: x ∈ (-100, -40), |y| < 25.
-  for (const s of grid.shards) {
-    const x = s.gridX - 210, y = s.gridY - 80;
-    if (x > -100 && x < -40 && Math.abs(y) < 25) { s.active = false; s.isDebris = true; grid.activeStructuralCount--; }
-  }
+  killCells(grid, (gx, gy) => gx - 210 > -100 && gx - 210 < -40 && Math.abs(gy - 80) < 25);
   const shade = setupTrace(grid);
   const toSun = [1, 0];
   const back = { backdrop: true };
@@ -236,19 +246,16 @@ test('przerwa w widelcu dziobu przepuszcza światło (kapsuła ją zalewała)', 
 test('dziura po trafieniach wpuszcza światło po ponownym upieczeniu', () => {
   const grid = makeGrid(420, 160, forkHull);
   // Wyrwa przez całą szerokość korpusu przy x ∈ [-60, -20].
-  for (const s of grid.shards) {
-    const x = s.gridX - 210;
-    if (x > -60 && x < -20) { s.active = false; s.isDebris = true; grid.activeStructuralCount--; }
-  }
+  killCells(grid, (gx) => gx - 210 > -60 && gx - 210 < -20);
   const shade = setupTrace(grid);
   const toSunDown = [0, -1];               // słońce „pod” statkiem w three-space = +y sprite'a
   assert.equal(shade(-40, -90, toSunDown), 0, 'za wyrwą: światło przechodzi');
   assert.ok(shade(-120, -90, toSunDown) > 0.9, 'za pełnym korpusem: cień');
 });
 
-test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa dla wraku z puli, LRU', () => {
+test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa po zmianie tablic komórek, LRU', () => {
   HullShadowSdf.ensureTexture();
-  const image = { width: 420, height: 160 };   // bez DOM: sama maska heksów
+  const image = { width: 420, height: 160 };   // bez DOM: sama maska komórek
   const a = makeGrid(420, 160, forkHull);
   const b = makeGrid(420, 160, forkHull);
   a.armorImage = image;
@@ -262,10 +269,10 @@ test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa dla wrak
   assert.equal(HullShadowSdf.stats.bakes, 1);
 
   const hit = (grid, from, count) => {
-    for (let i = from; i < from + count; i++) grid.shards[i].active = false;
+    for (let i = from; i < from + count; i++) grid.cellActive[i] = 0;
     grid.activeStructuralCount -= count;
   };
-  // Draśnięcie (kilka heksów): dalej wspólna sylwetka, bez pieczenia.
+  // Draśnięcie (kilka komórek): dalej wspólna sylwetka, bez pieczenia.
   hit(a, 10, 3);
   HullShadowSdf.beginFrame(2);
   assert.equal(HullShadowSdf.acquire(a, 100), eb);
@@ -296,17 +303,18 @@ test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa dla wrak
   assert.equal(HullShadowSdf.stats.bakes, 1, 'duży ubytek po REBAKE_MS');
   assert.equal(HullShadowSdf.acquire(b, 5400), eb, 'reszta floty dalej na szablonie');
 
-  // Wrak z puli: ten sam obiekt siatki, nowa tablica heksów.
+  // Wrak: ten sam obiekt siatki, nowe tablice komórek (zagęszczenie magazynu ciała po rozpadzie).
   const wreck = makeGrid(420, 160, (x, y) => x < -100 && Math.abs(y) < 50);
   wreck.isFragment = true;
   wreck.armorImage = image;
   HullShadowSdf.beginFrame(9);
   const w1 = HullShadowSdf.acquire(wreck, 6000);
   const w1Width = w1.layout.gw;
-  wreck.shards = makeGrid(420, 160, (x, y) => Math.abs(x) < 150 && Math.abs(y) < 50).shards;
+  const next = makeGrid(420, 160, (x, y) => Math.abs(x) < 150 && Math.abs(y) < 50);
+  for (const k of ['cellX', 'cellY', 'cellActive', 'cellCount', 'activeStructuralCount']) wreck[k] = next[k];
   HullShadowSdf.beginFrame(10);
   const w2 = HullShadowSdf.acquire(wreck, 6100);
-  assert.equal(HullShadowSdf.stats.bakes, 1, 'nowa tablica heksów = nowe pieczenie');
+  assert.equal(HullShadowSdf.stats.bakes, 1, 'nowe tablice komórek = nowe pieczenie');
   assert.notEqual(w2.layout.gw, w1Width);
 
   // Budżet: najwyżej 2 pieczenia na klatkę.
@@ -336,7 +344,7 @@ test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa dla wrak
   assert.equal(layers.size, HULL_SDF_LAYER_COUNT, 'każda warstwa ma jednego właściciela');
 });
 
-test('kadłub bez aktywnego heksa: bez cienia (także z szablonu), bez wyjątku, bez pieczenia co klatkę', () => {
+test('kadłub bez żywej komórki: bez cienia (także z szablonu), bez wyjątku, bez pieczenia co klatkę', () => {
   HullShadowSdf.reset();
   const image = { width: 420, height: 160, id: 'hulk' };
   const fleet = makeGrid(420, 160, forkHull);
@@ -344,14 +352,11 @@ test('kadłub bez aktywnego heksa: bez cienia (także z szablonu), bez wyjątku,
   fleet.armorImage = image;
   hulk.armorImage = image;
   const strip = (grid, from, to) => {
-    for (let i = from; i < to; i++) {
-      grid.shards[i].active = false;
-      grid.shards[i].isDebris = true;
-    }
+    for (let i = from; i < to; i++) grid.cellActive[i] = 0;
     grid.activeStructuralCount -= to - from;
   };
   // Wyniki acquire porównujemy przez ===: assert.equal na wpisie z tablicą
-  // heksów rozwija ją w komunikacie porażki (OOM).
+  // komórek rozwija ją w komunikacie porażki (OOM).
   HullShadowSdf.beginFrame(1);
   const tpl = HullShadowSdf.acquire(fleet, 0);
   assert.ok(tpl && tpl.layer >= 0, 'szablon floty');
@@ -361,9 +366,9 @@ test('kadłub bez aktywnego heksa: bez cienia (także z szablonu), bez wyjątku,
   assert.ok(own && own.layer >= 0 && own !== tpl, 'własna warstwa po poważnym trafieniu');
   const ownLayer = own.layer;
 
-  // Ostatni heks zniszczony, stara sylwetka dojrzała do pieczenia. Tu acquire
+  // Ostatnia komórka zniszczona, stara sylwetka dojrzała do pieczenia. Tu acquire
   // rzucał TypeError: pieczenie oddało warstwę, a _touch sięgał po layers[-1].
-  strip(hulk, 60, hulk.shards.length);
+  strip(hulk, 60, hulk.cellCount);
   HullShadowSdf.beginFrame(3);
   assert.ok(HullShadowSdf.acquire(hulk, 5000) === null, 'pusty kadłub nie rzuca cienia');
   assert.ok(HullShadowSdf.layers[ownLayer].owner === null, 'warstwa wraca do puli');
@@ -385,12 +390,9 @@ test('kadłub bez aktywnego heksa: bez cienia (także z szablonu), bez wyjątku,
     HullShadowSdf._bake = bake;
   }
 
-  // Heksy wracają (nowa liczba aktywnych): sylwetka piecze się od razu.
-  for (let i = 60; i < hulk.shards.length; i++) {
-    hulk.shards[i].active = true;
-    hulk.shards[i].isDebris = false;
-  }
-  hulk.activeStructuralCount = hulk.shards.length - 60;
+  // Komórki wracają (odrost — nowa liczba żywych): sylwetka piecze się od razu.
+  for (let i = 60; i < hulk.cellCount; i++) hulk.cellActive[i] = 1;
+  hulk.activeStructuralCount = hulk.cellCount - 60;
   HullShadowSdf.beginFrame(9);
   const back = HullShadowSdf.acquire(hulk, 50000);
   assert.ok(back && back.layer >= 0 && back !== tpl, 'cień wraca z własnej warstwy');

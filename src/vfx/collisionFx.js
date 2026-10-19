@@ -121,8 +121,7 @@ function dispatch(listeners, ev) {
 }
 
 export const CollisionFX = {
-  // Ustawiane przez destructor.js z DESTRUCTOR_CONFIG.collisionFxDebug — moduł
-  // nie importuje configu, żeby nie robić cyklu destructor <-> collisionFx.
+  // Diagnostyka zdarzeń w konsoli (CollisionFX.debug = 1).
   debug: 0,
 
   stats: { impacts: 0, grinds: 0 },

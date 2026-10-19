@@ -844,9 +844,7 @@ export class SnapshotPacker {
     if (e.isWreck) fl |= ENT_FLAG.WRECK;
     if (e.isFragment) fl |= ENT_FLAG.FRAGMENT;
     if (e.isPirate) fl |= ENT_FLAG.PIRATE;
-    if (e.hexGrid) fl |= ENT_FLAG.HAS_HEXGRID;
     if (e.isRingSegment) fl |= ENT_FLAG.RING_SEGMENT;
-    if (e.isAsteroidHex) fl |= ENT_FLAG.ASTEROID_HEX;
     if (e.isPlayer) fl2 |= ENT_FLAG2.IS_PLAYER_FIELD;
     if (e.isCapitalShip) fl2 |= ENT_FLAG2.CAPITAL;
     if (rs) fl2 |= ENT_FLAG2.HAS_RS;

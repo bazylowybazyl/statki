@@ -21,21 +21,26 @@ function indexConst(name) {
 const LOOKAHEAD_SEC = indexConst('WRECK_WAKE_LOOKAHEAD_SEC');
 const LOOKAHEAD_MAX = indexConst('WRECK_WAKE_LOOKAHEAD_MAX');
 const WAKE_HEADER = 'function wakeSleepingWrecksNearBodies(';
+// Budzenie kadłuba (HullBodies.wake w grze) — atrapa zapisuje, na ile kroków.
+const wakeHullBodies = { wake(e, hold) { e.__wakeHold = hold; } };
 const wake = loadIndexFunction(html, WAKE_HEADER, 'wakeSleepingWrecksNearBodies', {
   WRECK_WAKE_LOOKAHEAD_SEC: LOOKAHEAD_SEC,
   WRECK_WAKE_LOOKAHEAD_MAX: LOOKAHEAD_MAX,
-  _wakeMovers: indexConst('_wakeMovers')
+  _wakeMovers: indexConst('_wakeMovers'),
+  HullBodies: wakeHullBodies
 });
 // Ta sama funkcja z dawnym horyzontem: 3 s lotu bez sufitu.
 const wakeLegacy = loadIndexFunction(html, WAKE_HEADER, 'wakeSleepingWrecksNearBodies', {
   WRECK_WAKE_LOOKAHEAD_SEC: 3,
   WRECK_WAKE_LOOKAHEAD_MAX: Infinity,
-  _wakeMovers: indexConst('_wakeMovers')
+  _wakeMovers: indexConst('_wakeMovers'),
+  HullBodies: wakeHullBodies
 });
 
-// Wrak tuż po uśpieniu w pętli wraków physicsStep.
+// Wrak tuż po uśpieniu w pętli wraków physicsStep. Kadłub na belkach w tym kształcie, o który pytają budzenie
+// i zimne wraki (src/game/coldWrecks.js — beamFreezable: wrak gry, kotwica w środku masy, żywe ciało).
 function sleepingWreck(x, y, r = 300) {
-  return {
+  const w = {
     isWreck: true,
     x,
     y,
@@ -44,8 +49,10 @@ function sleepingWreck(x, y, r = 300) {
     _wreckSleeping: true,
     _wreckSleepTimer: 1.4,
     _wreckSleptSec: 0,
-    hexGrid: { hexTemplate: {}, isSleeping: true, sleepFrames: 9999, wakeHoldFrames: 0 }
+    beamHull: null
   };
+  w.beamHull = { entity: w, body: { dead: false, activeNodes: 120, anchored: false }, anchorMode: 'com' };
+  return w;
 }
 
 // Ciało z listy destruktora (gracz, NPC) — pos/vel jak u statków.
@@ -77,7 +84,7 @@ test('szybki przelot obok pola i kurs na wrak z sekundy lotu nie budzą (dawniej
   for (const w of [...field, ahead]) {
     assert.equal(w._wreckSleeping, true);
     assert.equal(w._wreckSleepTimer, 1.4, 'licznik snu nietknięty');
-    assert.equal(w.hexGrid.isSleeping, true);
+    assert.equal(w.__wakeHold, undefined, 'kadłub nie budzony');
   }
 
   // Dawny wzór (300 + 400 + 6000 × 3 = 18,7 km) budził wszystkie.
@@ -101,9 +108,7 @@ test('gracz w warpie nie budzi niczego, także na kursie kolizyjnym; po wyjściu
   wake(sleeping, list, null);
   assert.equal(w._wreckSleeping, false);
   assert.equal(w._wreckSleepTimer, 0);
-  assert.equal(w.hexGrid.isSleeping, false);
-  assert.equal(w.hexGrid.sleepFrames, 0);
-  assert.equal(w.hexGrid.wakeHoldFrames, 20);
+  assert.equal(w.__wakeHold, 20, 'kadłub obudzony na 20 kroków');
   assert.equal(sleeping.length, 0);
   assert.ok(list[1] === w, 'obudzony na końcu listy destruktora');
 });
@@ -166,7 +171,7 @@ test('lista ruchomych ciał = dawna pętla śpiący × ciała (losowe sceny, bit
       const w = sleepingWreck((rnd() - 0.5) * field, (rnd() - 0.5) * field, 80 + rnd() * 900);
       w.id = `w${i}`;
       if (rnd() < 0.2) w._bpRadius = undefined;
-      if (rnd() < 0.3) { w.beamHull = {}; w.hexGrid = null; }
+      if (rnd() < 0.3) w.beamHull = null; // wrak bez kadłuba: budzi się bez HullBodies.wake
       if (rnd() < 0.15) { w.vx = (rnd() - 0.5) * 400; w.vy = (rnd() - 0.5) * 400; }
       if (rnd() < 0.1) w.vel = { x: (rnd() - 0.5) * 60, y: (rnd() - 0.5) * 60 };
       sleeping.push(w);
@@ -195,8 +200,7 @@ test('lista ruchomych ciał = dawna pętla śpiący × ciała (losowe sceny, bit
   const snap = ({ sleeping, bodies }, all) => JSON.stringify({
     sleeping: sleeping.map((w) => w.id),
     bodies: bodies.map((b) => (b ? b.id : null)),
-    wrecks: all.map((w) => [w.id, w._wreckSleeping, w._wreckSleepTimer, w.__wakeHold ?? null,
-      w.hexGrid ? [w.hexGrid.isSleeping, w.hexGrid.sleepFrames, w.hexGrid.wakeHoldFrames] : null])
+    wrecks: all.map((w) => [w.id, w._wreckSleeping, w._wreckSleepTimer, w.__wakeHold ?? null, !!w.beamHull])
   });
 
   let wokeTotal = 0;

@@ -76,6 +76,11 @@ function layoutRuntime() {
 
 let _uid = 0;
 
+// Strefy z edytora (dema/mostki-webgpu/edytor.js): (klucz kadłuba, wariant) → lista stref albo null
+// (układ gry z BRIDGE_LAYOUT_PROPOSALS). Okręty scen dostają strefy edytowane, póki edytor ich nie przywróci.
+let _zoneSource = null;
+export function setBridgeZoneSource(fn) { _zoneSource = typeof fn === 'function' ? fn : null; }
+
 /** Okręt NPC z kadłubem belkowym, dyszami i światłami z edytora oraz mostkami. */
 export function createShip(key, o = {}) {
   const a = assets.get(key);
@@ -97,7 +102,9 @@ export function createShip(key, o = {}) {
   layoutRuntime().applyLayoutToNpc(e);
   HullBodies.createHull(e, a.canvas, { visualImage: a.img, hullProfileId: def.profile });
   if (!e.beamHull) throw new Error(`createHull bez kadłuba: ${key}`);
-  attachEntityBridges(e, o.variant ? { variant: o.variant } : {});
+  e.__bridgeVariant = o.variant || null;
+  const edited = _zoneSource ? _zoneSource(key, o.variant || null) : null;
+  attachEntityBridges(e, { variant: o.variant || null, bridges: edited });
   // Dysze na ciągu przelotowym (bez modelu lotu): agonia dławi je od tego poziomu.
   for (const t of e.visual?.mainThrusters || []) t.__throttle = o.throttle ?? 0.55;
   return e;

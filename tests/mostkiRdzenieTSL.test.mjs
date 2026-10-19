@@ -1,9 +1,10 @@
-// Port WebGPU (zadanie 15): światła pozycyjne, mostki (model 3D, cień, okna) i rdzenie
-// (reaktor, efekty) w TSL. WGSL budowany w Node (WGSLNodeBuilder bez GPU, atrapa kanwy —
+// Port WebGPU (zadanie 15): światła pozycyjne, mostki (model 3D, cień, okna) i rdzeń
+// reaktora w TSL. WGSL budowany w Node (WGSLNodeBuilder bez GPU, atrapa kanwy —
 // jak tests/hexShips3DShader.test.mjs). Pilnuje: braku GLSL w plikach zadania, limitów
 // sprzętowych (≤ 12 buforów uniformów na etap, ≤ 8 buforów wierzchołków na pipeline — tyle
 // daje też adapter RTX 5080), jednego grafu bryły mostka na wszystkie rodzaje, cienia pod
-// kadłubem (depthFunc GREATER), blendu ONE/ONE rdzeni bez premultiplyAlpha w shaderze.
+// kadłubem (depthFunc GREATER), blendu ONE/ONE plazmy reaktora bez premultiplyAlpha w shaderze.
+// (Efekty rdzeni dawnego dema heksowego usunięte 2026-10-19 razem z silnikiem heksów.)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -16,7 +17,6 @@ import { Bridge3D } from '../src/3d/bridge3D.js';
 import { B3_KIND_STRIDE, B3_MODEL_LAYOUT, B3_RECEIVER_LAYOUT } from '../src/3d/bridge3D.tsl.js';
 import { BRIDGE3D_KIND_ORDER } from '../src/3d/bridge3DShapes.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
-import { createCoreFx3D } from '../src/3d/coreFx3D.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
@@ -56,7 +56,7 @@ function limits(label, mesh, camera) {
 
 test('pliki zadania bez GLSL (port WebGPU: TSL, GLSL usunięty w tym samym zadaniu)', () => {
   for (const p of ['src/3d/shipLights3D.js', 'src/3d/bridgeFx3D.js', 'src/3d/bridge3D.js', 'src/3d/bridge3D.tsl.js',
-    'src/3d/reactor3D.js', 'src/3d/reactor3D.tsl.js', 'src/3d/coreFx3D.js', 'src/3d/coreFx3D.tsl.js']) {
+    'src/3d/reactor3D.js', 'src/3d/reactor3D.tsl.js']) {
     const src = read(p);
     assert.doesNotMatch(src, /gl_FragColor|gl_Position\s*=|new THREE\.ShaderMaterial|vertexShader:|fragmentShader:|#define\s/, p);
   }
@@ -118,11 +118,13 @@ test('mostek 3D: jeden graf i materiał bryły na wszystkie rodzaje, bez uuid w 
     assert.doesNotMatch(b.fragmentShader, /textureSample\(/);
     // Dane instancji płaskie (stałe na instancję — flat jak w GLSL).
     assert.match(b.vertexShader, /@interpolate\( flat \) vB3ModelaB3Dmg/);
-    // Kadłuby belkowe (docs/PORT-mostki.md § 9): ten sam graf ma tryb siatki kwadratowej (aB3State.w < 0)
-    // — komórka = floor(współrzędne komórek), maska 8 sąsiadów (bity do 7) i poszarpany brzeg (discard).
+    // Komórki siatki belek kadłuba (docs/PORT-mostki.md § 9): komórka = floor(współrzędne komórek),
+    // maska 8 sąsiadów (bity do 7) i poszarpany brzeg (discard). Bez dawnego trybu heksów
+    // (zaokrąglenie sześcienne i środki komórek heksa: stałe 1/√3 i √3).
     assert.match(b.fragmentShader, /floor\(/);
     assert.match(b.fragmentShader, />> 7u|>> u32\( 7 \)|7u\)/, 'maska 8 sąsiadów siatki belek');
     assert.ok((b.fragmentShader.match(/discard/g) || []).length >= 2, 'wyrwa + poszarpany brzeg');
+    assert.doesNotMatch(b.fragmentShader, /0\.5773502692|1\.7320508076/, 'bez trybu heksów');
   } finally {
     Bridge3D.dispose();
   }
@@ -158,7 +160,8 @@ test('cień mostka na kadłubie: prostokąt pod kadłubem z depthFunc GREATER, o
 
 test('reaktor: graf raz na rodzaj (2 materiały na rodzaj), limity, plazma ONE/ONE bez premultiplyAlpha', () => {
   const scene = new THREE.Scene();
-  const r3 = createReactor3D({ scene });
+  // Rama rdzenia (wymagana — w grze reactorCoreFrame z reactorCore.js); test buduje tylko materiały.
+  const r3 = createReactor3D({ scene, frameOf: (core, out) => out });
   try {
     const mats = new Set();
     for (const kind of r3.kinds) {
@@ -180,27 +183,5 @@ test('reaktor: graf raz na rodzaj (2 materiały na rodzaj), limity, plazma ONE/O
     assert.equal(mats.size, r3.kinds.length * 2);
   } finally {
     r3.dispose();
-  }
-});
-
-test('efekty rdzenia: 6 materiałów, limity, ONE/ONE bez premultiplyAlpha, warstwa 7', () => {
-  const scene = new THREE.Scene();
-  const fx = createCoreFx3D({ scene });
-  try {
-    const names = Object.keys(fx.meshes);
-    assert.deepEqual(names.sort(), ['flashes', 'glow', 'jets', 'orbs', 'rings', 'vents']);
-    for (const k of names) {
-      const mesh = fx.meshes[k];
-      const m = mesh.material;
-      assert.ok(m.isNodeMaterial, k);
-      assert.equal(m.premultipliedAlpha, false, k);
-      assert.equal(m.blending, THREE.CustomBlending, k);
-      assert.equal(m.blendSrc, THREE.OneFactor, k);
-      assert.equal(m.blendDst, THREE.OneFactor, k);
-      assert.ok(mesh.layers.isEnabled(7), k);
-      limits(`coreFx3D:${k}`, mesh);
-    }
-  } finally {
-    fx.dispose();
   }
 });

@@ -1,5 +1,5 @@
-// Demo MOSTKÓW na WebGPU — nowa wersja dema mostków (stare: dema/mostki-demo.html, kadłuby
-// heksowe destruktora, którego gra od zadania 21 nie używa). Wszystko jak w grze: Core3D (WebGPU,
+// Demo MOSTKÓW na WebGPU (dawne heksowe dema/mostki-demo.html usunięte razem z silnikiem heksów,
+// 2026-10-19 — edytor stref przeszedł tutaj: klawisz E). Wszystko jak w grze: Core3D (WebGPU,
 // TSL, bloom, ACES), kadłuby na silniku belek (HullBodies + skóra hexShips3D z dyszami i światłami
 // pozycyjnymi z edytora), mapa ran, efekty broni (WeaponFx), iskry (SparkSystem3D), siatka świateł.
 // Mostki: logika na komórkach siatki belek (src/game/shipBridgeBeams.js), model 3D nadbudówki
@@ -7,7 +7,7 @@
 // i osmalenie wyrwy (bridgeFx3D.js), agonia hulka → wrak (jak finishBridgeKill w grze).
 //
 // Serwowanie: `npm run dev` → /dema/mostki-webgpu.html
-//   ?scene=kill|atlas|sever|fleet|close|range   ?hull=<klucz kadłuba>
+//   ?scene=kill|atlas|sever|fleet|close|range   ?hull=<klucz kadłuba>   ?edit=1 (edytor stref od startu)
 //   ?test=1 (klatki tylko z __mostki2.runFrames — harness)   ?clean=1 (bez paneli)
 import { Core3D } from '../src/3d/core3d.js';
 import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D } from '../src/3d/hexShips3D.js';
@@ -20,16 +20,30 @@ import { BridgeFx3D, BRIDGE_FX_TUNE } from '../src/3d/bridgeFx3D.js';
 import { HullBodies } from '../src/game/hullBodies.js';
 import { SimClock } from '../src/game/simClock.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { getWeaponTierForHull } from '../src/data/ships.js';
+import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import {
   BRIDGE_HULK_SEC,
   applyBridgeHulkVisuals,
+  attachEntityBridges,
   bridgePngToWorld,
   getBridgeAimPoint,
   isBridgeHulk,
-  noteBridgeHit
+  noteBridgeHit,
+  resolveBridgeHullKey
 } from '../src/game/shipBridgeRuntime.js';
-import { bridgeZoneCorners, commandLossAge, getShipBridgeSummary } from '../src/game/shipBridge.js';
-import { World, loadHullAssets } from './mostki-webgpu/swiat.js';
+import {
+  BRIDGE_LAYOUT_PROPOSALS,
+  bridgeZoneCorners,
+  bridgeZoneMargin,
+  commandLossAge,
+  formatBridgesJson,
+  getShipBridgeSummary,
+  normalizeBridgeDef,
+  validateBridgeLayout
+} from '../src/game/shipBridge.js';
+import { World, loadHullAssets, setBridgeZoneSource } from './mostki-webgpu/swiat.js';
+import { createZoneEditor, drawEditorGizmo, formatZonesExport } from './mostki-webgpu/edytor.js';
 import { Gun, DEMO_WEAPONS } from './mostki-webgpu/bron.js';
 import { SCENES } from './mostki-webgpu/sceny.js';
 import { BRIDGE_DEMO_HULLS, BRIDGE_DEMO_ORDER } from './mostki-webgpu/kadluby.js';
@@ -215,6 +229,8 @@ function openToBridge(e, side = -1) {
 // Mały krater (scena zbliżenia): wzdłuż osi kanału (pierwsza blacha na linii — dno kanału, potem
 // coraz głębiej w nadbudówkę), bez kanału — w komórce mostka najbliższej działu.
 function drillBridge(e, channel = null) {
+  // Kadłub mógł właśnie oddać ciało wrakowi (hulk po mostku) — wtedy nie ma czego wiercić.
+  if (!e?.beamHull) return false;
   let p = null;
   if (channel) {
     p = { x: channel.bx + (channel.bx - channel.ax) * 0.8, y: channel.by + (channel.by - channel.ay) * 0.8 };
@@ -255,6 +271,166 @@ function targetShip() {
   return world.ships.find((s) => s.bridgeState && !s.dead) || null;
 }
 
+// ---------------------------------------------------------------------------
+// Edytor stref mostka (E): strefa celu sceny w przestrzeni PNG sprite'a, podgląd komórek na żywo
+// (attachEntityBridges z listą edytora), kolizje z hardpointami, silnikami i rdzeniami, eksport JSON
+// do BRIDGE_LAYOUT_PROPOSALS. Strefy edytowane zostają w tej przeglądarce i biorą je okręty scen.
+const ZONES_KEY = 'mostkiWebgpu.zones.v1';
+const editor = createZoneEditor();
+const ED = { index: 0, prevPaused: false, prevZones: false };
+let zoneEdits = loadZoneEdits();
+
+function loadZoneEdits() {
+  try {
+    const v = JSON.parse(localStorage.getItem(ZONES_KEY) || '{}');
+    return v && typeof v === 'object' ? v : {};
+  } catch { return {}; }
+}
+function saveZoneEdits() {
+  try { localStorage.setItem(ZONES_KEY, JSON.stringify(zoneEdits)); } catch { /* prywatne okno */ }
+}
+function defaultVariantOf(key) {
+  return BRIDGE_LAYOUT_PROPOSALS[key]?.defaultVariant || 'standard';
+}
+/** Strefy edytowane (klucz kadłuba, wariant) albo null — wtedy układ gry. */
+function editedZones(key, variant = null) {
+  const list = zoneEdits[key]?.[variant || defaultVariantOf(key)];
+  return Array.isArray(list) && list.length ? list : null;
+}
+setBridgeZoneSource(editedZones);
+
+function zoneKeyOf(e) { return e?.bridgeState?.hullKey || resolveBridgeHullKey(e); }
+function zoneVariantOf(e) { return e?.__bridgeVariant || defaultVariantOf(zoneKeyOf(e)); }
+function zoneListOf(e) {
+  const key = zoneKeyOf(e);
+  const v = zoneVariantOf(e);
+  return editedZones(key, v) || BRIDGE_LAYOUT_PROPOSALS[key]?.variants?.[v] || [];
+}
+function editTarget() {
+  const t = targetShip();
+  return t?.bridgeState && !t.dead && !isBridgeHulk(t) ? t : null;
+}
+function editedDef(e) {
+  const list = zoneListOf(e);
+  if (!list.length) return null;
+  ED.index = Math.min(ED.index, list.length - 1);
+  return normalizeBridgeDef(list[ED.index], ED.index);
+}
+function editToScreen(x, y) {
+  return { x: (x - S.cam.x) * S.cam.zoom + W * 0.5, y: (y - S.cam.y) * S.cam.zoom + H * 0.5 };
+}
+
+// Edycja: kopia listy (wariant okrętu), podmiana strefy, ponowne podpięcie mostków (komórki i pancerz
+// strefy od nowa — attachBeamBridges oddaje pancerz poprzedniego stanu tego samego kadłuba).
+function setEditedZone(e, def, commit) {
+  const key = zoneKeyOf(e);
+  const v = zoneVariantOf(e);
+  const list = zoneListOf(e).map((d) => ({ ...d }));
+  if (!list.length) return;
+  const i = Math.min(ED.index, list.length - 1);
+  list[i] = { ...list[i], x: def.x, y: def.y, w: def.w, h: def.h, rot: def.rot };
+  (zoneEdits[key] || (zoneEdits[key] = {}))[v] = list;
+  attachEntityBridges(e, { variant: e.__bridgeVariant || null, bridges: list });
+  refreshEditorFields();
+  if (commit) { saveZoneEdits(); refreshEditorUi(); }
+}
+
+function setEditing(on) {
+  on = !!on;
+  if (on === editor.active) return;
+  editor.active = on;
+  if (on) {
+    ED.prevPaused = S.paused;
+    ED.prevZones = S.zones;
+    S.paused = true;
+    S.firing = false;
+    S.autofire = false;
+    $('autofire').checked = false;
+    S.zones = true;
+  } else {
+    editor.end();
+    S.paused = ED.prevPaused;
+    S.zones = ED.prevZones;
+  }
+  $('o-zones').checked = S.zones;
+  $('btn-pause').classList.toggle('on', S.paused);
+  $('edit-btn').classList.toggle('on', on);
+  refreshEditorUi();
+}
+
+function refreshEditorFields() {
+  const e = editTarget();
+  const def = e ? editedDef(e) : null;
+  for (const id of ['ed-x', 'ed-y', 'ed-rot', 'ed-w', 'ed-h']) $(id).disabled = !def || !!def.poly;
+  if (!def) {
+    $('ed-count').value = '—';
+    $('issues').innerHTML = e ? '' : '<span class="warn">Brak okrętu z mostkiem do edycji (po utracie dowodzenia — R od nowa).</span>';
+    return;
+  }
+  if (!def.poly) {
+    $('ed-x').value = Math.round(def.x);
+    $('ed-y').value = Math.round(def.y);
+    $('ed-rot').value = Math.round(def.rot);
+    $('ed-w').value = Math.round(def.w);
+    $('ed-h').value = Math.round(def.h);
+  }
+  const b = e.bridgeState?.bridges?.[Math.min(ED.index, (e.bridgeState?.bridges.length || 1) - 1)];
+  $('ed-count').value = b ? `${b.total}` : '—';
+  const key = zoneKeyOf(e);
+  const profile = BRIDGE_DEMO_HULLS[e.__hullKey]?.profile || key;
+  const renderPerPng = Math.min(Number(e.__hardpointScaleX) || 1, Number(e.__hardpointScaleY) || 1);
+  const margin = bridgeZoneMargin(renderPerPng, getWeaponTierForHull(profile));
+  const issues = validateBridgeLayout(zoneListOf(e), SHIP_EDITOR_DEFAULTS.ships[key] || {}, { margin });
+  const edited = !!editedZones(key, zoneVariantOf(e));
+  $('issues').innerHTML = (issues.length
+    ? `<span class="warn">Kolizje (${issues.length}, zapas ${Math.round(margin)} px PNG): ${issues.slice(0, 6).map((i) => `${i.kind}${i.type ? ` ${i.type}` : ''} (${Math.round(i.x)}, ${Math.round(i.y)})`).join('; ')}</span>`
+    : `<span class="good">Brak kolizji z hardpointami, silnikami i rdzeniami (zapas ${Math.round(margin)} px PNG).</span>`)
+    + (edited ? '<br><span class="warn">Strefy edytowane — inne niż w grze (Propozycje: wróć do układu gry).</span>' : '');
+}
+
+function refreshEditorUi() {
+  const sel = $('edit-bridge');
+  if (!sel) return;
+  const e = editTarget();
+  sel.innerHTML = '';
+  if (e) {
+    const label = BRIDGE_DEMO_HULLS[e.__hullKey]?.label || zoneKeyOf(e);
+    zoneListOf(e).forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = `${label}: ${d.label || d.id} (${zoneVariantOf(e)})`;
+      sel.appendChild(o);
+    });
+    ED.index = Math.max(0, Math.min(ED.index, sel.options.length - 1));
+    sel.value = String(ED.index);
+  }
+  refreshEditorFields();
+}
+
+function zonesExportText() {
+  const entries = [];
+  const seen = new Set();
+  const push = (key, variant, list) => {
+    const id = `${key}|${variant}`;
+    if (seen.has(id) || !list?.length) return;
+    seen.add(id);
+    entries.push({ key, variant, list });
+  };
+  const e = editTarget() || targetShip();
+  if (e?.bridgeState) push(zoneKeyOf(e), zoneVariantOf(e), zoneListOf(e));
+  for (const [key, byVariant] of Object.entries(zoneEdits)) {
+    for (const [variant, list] of Object.entries(byVariant || {})) push(key, variant, list);
+  }
+  return formatZonesExport(entries, formatBridgesJson);
+}
+
+function restoreProposalZones() {
+  zoneEdits = {};
+  saveZoneEdits();
+  startScene(S.sceneId);
+  log('Przywrócono strefy z gry (BRIDGE_LAYOUT_PROPOSALS)');
+}
+
 const D = {
   get world() { return world; },
   get gun() { return gun; },
@@ -287,6 +463,8 @@ function startScene(id = S.sceneId, keepRun = false) {
   $('scene-hint').textContent = sc.hint;
   document.querySelectorAll('[data-scene]').forEach((b) => b.classList.toggle('on', b.dataset.scene === id));
   sc.start(D, S.sceneRun);
+  editor.end();
+  refreshEditorUi();
 }
 
 function tickScene(dt) {
@@ -376,7 +554,7 @@ function drawOverlay(cam) {
     ctx2d.beginPath(); ctx2d.arc(g.x, g.y, 7, 0, Math.PI * 2); ctx2d.stroke();
   }
   // Strefy mostków (PNG → świat): zielone żywe, czerwone martwe; etykieta z integralnością.
-  if (S.zones) {
+  if (S.zones || editor.active) {
     const corners = [];
     const w = {};
     ctx2d.font = '11px ui-monospace, Consolas, monospace';
@@ -402,6 +580,12 @@ function drawOverlay(cam) {
         ctx2d.fillText(`${b.def.label} ${Math.round(b.integrity * 100)}%`, p.x + 6, p.y - 6);
       }
     }
+  }
+  // Uchwyty edytora stref (kamera bez wstrząsu — tą samą liczy trafianie myszą).
+  if (editor.active) {
+    const e = editTarget();
+    const def = e ? editedDef(e) : null;
+    if (def) drawEditorGizmo(ctx2d, editToScreen, editor.handles(e, def));
   }
   // Namiar na mostek (strzelnica).
   const t = targetShip();
@@ -503,6 +687,27 @@ function bindPanel() {
   $('o-arcs').addEventListener('change', () => { BRIDGE_FX_TUNE.arcRate = $('o-arcs').checked ? 7 : 0; });
   $('o-lights').addEventListener('change', () => { BRIDGE_FX_TUNE.lightGain = $('o-lights').checked ? 1 : 0; });
   $('o-scorch').addEventListener('change', () => { BRIDGE_FX_TUNE.scorch = $('o-scorch').checked ? 1 : 0; });
+
+  // Edytor stref mostka
+  $('edit-btn').addEventListener('click', () => setEditing(!editor.active));
+  $('edit-bridge').addEventListener('change', (ev) => { ED.index = Number(ev.target.value) || 0; refreshEditorFields(); });
+  for (const id of ['ed-x', 'ed-y', 'ed-rot', 'ed-w', 'ed-h']) {
+    $(id).addEventListener('change', () => {
+      const e = editTarget();
+      if (!e) return;
+      setEditedZone(e, normalizeBridgeDef({
+        x: Number($('ed-x').value), y: Number($('ed-y').value), rot: Number($('ed-rot').value),
+        w: Number($('ed-w').value), h: Number($('ed-h').value)
+      }), true);
+    });
+  }
+  $('export-btn').addEventListener('click', () => { $('export-out').value = zonesExportText(); });
+  $('copy-btn').addEventListener('click', async () => {
+    const text = zonesExportText();
+    $('export-out').value = text;
+    try { await navigator.clipboard.writeText(text); log('Skopiowano JSON stref (przestrzeń PNG)'); } catch { $('export-out').select(); }
+  });
+  $('proposal-btn').addEventListener('click', () => restoreProposalZones());
 }
 
 function togglePause() {
@@ -513,7 +718,12 @@ function togglePause() {
 function bindInput() {
   canvas2d.addEventListener('mousemove', (e) => {
     const m = S.mouse;
-    if (m.pan) {
+    if (editor.drag) {
+      const t = editTarget();
+      const p = screenToWorld(e.clientX, e.clientY);
+      const next = t ? editor.move(t, p.x, p.y) : null;
+      if (next) setEditedZone(t, next, false);
+    } else if (m.pan) {
       S.cam.x -= (e.clientX - m.lastX) / S.cam.zoom;
       S.cam.y -= (e.clientY - m.lastY) / S.cam.zoom;
       S.camTo = null;
@@ -527,11 +737,30 @@ function bindInput() {
     if (e.button === 1 || (e.button === 0 && e.altKey)) { m.pan = true; e.preventDefault(); return; }
     if (e.button === 2) { const p = screenToWorld(e.clientX, e.clientY); gun.place(p.x, p.y); return; }
     if (e.button === 0) {
+      if (editor.active) {
+        // Edycja: uchwyt strefy celu — przeciąganie; poza uchwytem — przesuw widoku.
+        const t = editTarget();
+        const def = t ? editedDef(t) : null;
+        const h = def ? editor.pick(t, def, editToScreen, e.clientX, e.clientY) : null;
+        if (h) {
+          const p = screenToWorld(e.clientX, e.clientY);
+          editor.begin(t, def, h, p.x, p.y);
+        } else m.pan = true;
+        return;
+      }
       if (S.sceneId === 'range') S.firing = true;
       else m.pan = true;
     }
   });
-  window.addEventListener('mouseup', () => { S.firing = false; S.mouse.pan = false; });
+  window.addEventListener('mouseup', () => {
+    S.firing = false;
+    S.mouse.pan = false;
+    if (editor.drag) {
+      editor.end();
+      const t = editTarget();
+      if (t) setEditedZone(t, editedDef(t), true);
+    }
+  });
   canvas2d.addEventListener('wheel', (e) => {
     e.preventDefault();
     const before = screenToWorld(e.clientX, e.clientY);
@@ -543,8 +772,9 @@ function bindInput() {
     S.camTo = null;
   }, { passive: false });
   window.addEventListener('keydown', (e) => {
-    if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
+    if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
     const k = e.key.toLowerCase();
+    if (k === 'e') { setEditing(!editor.active); return; }
     const sceneKeys = { 1: 'kill', 2: 'atlas', 3: 'sever', 4: 'fleet', 5: 'close', 6: 'range' };
     if (S.sceneId === 'range' && /^[1-5]$/.test(k)) {
       const id = DEMO_WEAPONS[Number(k) - 1];
@@ -602,6 +832,22 @@ window.__mostki2 = {
   model(on = true) { BRIDGE3D_TUNE.enabled = !!on; return true; },
   kill() { killBridge(targetShip()); return true; },
   sever() { severBridge(targetShip()); return true; },
+  /** Edytor stref: włącz / wyłącz, strefa celu (x, y, w, h, rot w PNG), eksport, układ gry. */
+  edit(on = true) { setEditing(on); return editor.active; },
+  editZone(def) { const e = editTarget(); if (!e) return null; setEditedZone(e, normalizeBridgeDef({ ...editedDef(e), ...def }), true); return editedDef(e); },
+  editState() {
+    const e = editTarget();
+    const def = e ? editedDef(e) : null;
+    const b = e?.bridgeState?.bridges?.[ED.index] || null;
+    return { active: editor.active, paused: S.paused, index: ED.index, def, cells: b ? b.total : 0, edits: JSON.parse(JSON.stringify(zoneEdits)), issues: $('issues').textContent };
+  },
+  editHandlesScreen() {
+    const e = editTarget();
+    const def = e ? editedDef(e) : null;
+    return def ? (editor.handles(e, def) || []).map((h) => ({ kind: h.kind, ...editToScreen(h.x, h.y) })) : [];
+  },
+  exportZones() { return zonesExportText(); },
+  restoreZones() { restoreProposalZones(); return true; },
   sceneTime() { return S.sceneT; },
   /** Ta sama klatka jeszcze raz (dt = 0) z ukrytymi siatkami o podanych nazwach — A/B warstw na zrzucie. */
   still(hide = null) {
@@ -664,6 +910,7 @@ window.__mostki2 = {
     bindPanel();
     bindInput();
     startScene(S.sceneId);
+    if (params.get('edit') === '1') setEditing(true);
     await Core3D.warmup.flush?.({ timeoutMs: 6000 });
     $('loading').style.display = 'none';
     window.__mostki2.ready = true;

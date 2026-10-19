@@ -843,7 +843,7 @@ export function buildNavLightClusters(entities, options = {}) {
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
-    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.hexGrid;
+    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.beamHull;
     const width = Math.max(1, Number(grid?.srcWidth) || (lights.hullLenPx * hardpointScale.x * 1.1) || 1);
     const pivotX = Number(grid?.pivot?.x) || 0;
     const worldScale = (Number(hardpointScale.uniform) || 1) * (Number(spriteScale.uniform) || 1);
@@ -907,7 +907,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
     const markers = Array.isArray(lights?.position) ? lights.position : [];
     if (!markers.length) continue;
 
-    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.hexGrid;
+    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.beamHull;
     const hardpointScale = getEntityLightScale(entity);
     const spriteScale = getEntitySpriteScale(entity, options);
     const pos = getEntityPosition(entity, options);

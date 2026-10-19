@@ -9,6 +9,7 @@ import {
   triBoxOverlap,
   invertSymmetric3,
   packKey,
+  VOXEL_NEIGHBOR_OFFSETS,
   extractTrianglesFromObject3D,
   extractSkinParts,
   bindSkinToLattice
@@ -227,16 +228,31 @@ test('interiorMode: żebra są gęstsze od pustej skorupy, rzadsze od litej bry�
     `żebra (${ribs.cells.length}) nie są rzadsze od litej bryły (${full.cells.length})`);
 });
 
-test('interiorMode ribs: konstrukcja jest spójna ze skorupą (jedna wyspa)', async () => {
-  // Belki oderwane od skorupy odpadłyby jako wraki przy pierwszym sprawdzeniu rozpadów.
-  const { Destructor3D, createDestructor3DConfig } = await import('../src/game/destructor3D.js');
+test('interiorMode ribs: konstrukcja jest spójna ze skorupą (jedna wyspa)', () => {
+  // Belki oderwane od skorupy odpadłyby jako wraki przy pierwszym sprawdzeniu rozpadów. Spójność po
+  // 6 sąsiadach siatki (ściana w ścianę) — mocniejsza niż 18 sąsiadów voxelComponents.
   const vox = voxelizeTriangles(offsetCubeTris(6), null, {
     cellSize: 0.5, shellLayers: 2, interiorMode: 'ribs', ribStep: 4
   });
-  Destructor3D.init(createDestructor3DConfig(0.5));
-  const body = Destructor3D.createBody(buildVoxelBody(vox, { cellMassBase: 10 }), {});
-  const islands = Destructor3D.findIslands(body.grid);
-  assert.equal(islands.length, 1, `konstrukcja rozpadła się na ${islands.length} wysp`);
+  const index = new Map(vox.cells.map((c, i) => [packKey(c.ix, c.iy, c.iz), i]));
+  const island = new Int32Array(vox.cells.length).fill(-1);
+  let islands = 0;
+  for (let s = 0; s < vox.cells.length; s++) {
+    if (island[s] >= 0) continue;
+    island[s] = islands;
+    const stack = [s];
+    while (stack.length) {
+      const c = vox.cells[stack.pop()];
+      for (const [dx, dy, dz] of VOXEL_NEIGHBOR_OFFSETS) {
+        const j = index.get(packKey(c.ix + dx, c.iy + dy, c.iz + dz));
+        if (j === undefined || island[j] >= 0) continue;
+        island[j] = islands;
+        stack.push(j);
+      }
+    }
+    islands++;
+  }
+  assert.equal(islands, 1, `konstrukcja rozpadła się na ${islands} wysp`);
 });
 
 test('extractSkinParts: wypieka pozycje i normalne do przestrzeni ekstrakcji', () => {

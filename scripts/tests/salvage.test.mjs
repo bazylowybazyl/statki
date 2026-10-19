@@ -21,20 +21,35 @@ const COLS = 30;
 const ROWS = 30;
 const CELL = 10;
 
-/** Sztuczny kadłub 30×30 komórek z czterema działami w rogach. */
+/**
+ * Sztuczny kadłub 30×30 komórek z czterema działami w rogach — w kształcie kadłuba na belkach, o który pyta
+ * salvage.js (hullBodies.js): węzły siatki z kluczami `ix,iy` (ix = kolumna), pozycje spoczynkowe w układzie
+ * ciała (oś Y w górę), środek sprite'a w latticeMin + anchorD, węzeł = jedna dawna komórka łupu (hexPerNode 1).
+ */
 function makeShip() {
-  const shards = [];
+  const n = COLS * ROWS;
+  const store = {
+    count: n, active: new Uint8Array(n).fill(1),
+    ix: new Int32Array(n), iy: new Int32Array(n), ox: new Float32Array(n), oy: new Float32Array(n)
+  };
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      shards.push({ c, r, gridX: c * CELL, gridY: r * CELL, active: true });
+      const i = r * COLS + c;
+      store.ix[i] = c;
+      store.iy[i] = r;
+      store.ox[i] = c * CELL;
+      store.oy[i] = (ROWS - 1 - r) * CELL;
     }
   }
+  const half = (COLS - 1) * CELL * 0.5;
   return {
-    hexGrid: {
-      shards,
-      srcWidth: COLS * CELL,
-      srcHeight: ROWS * CELL,
-      baseStructuralCount: shards.length
+    beamHull: {
+      baseNodes: n,
+      hexPerNode: 1,
+      scale: 1,
+      anchorDX: half,
+      anchorDY: half,
+      body: { latticeMin: { x: 0, y: 0 }, nodeStore: store }
     },
     __hardpointScaleX: 1,
     __hardpointScaleY: 1,
@@ -159,17 +174,10 @@ export function run() {
     sumBag(fieldTotal) + dockTotal <= startTotal + 1e-9,
     `(wycięto ${sumBag(fieldTotal)} + dok ${dockTotal} > ${startTotal})`);
 
-  t.section('5. Wrak asteroidy daje rudę, nie złom po statku');
-  const rock = makeShip();
-  rock.isAsteroidHex = true;
-  rock.asteroidRef = { resource: 'iron_ore' };
-  rock.editorHardpoints = [];
-  const rockManifest = ensureSalvageManifest(rock);
-  t.check('ruda żelaza w manifeście', rockManifest.materials.iron_ore > 0, `(${JSON.stringify(rockManifest.materials)})`);
-  t.check('brak złomu po statku', !rockManifest.materials.scrap);
-  t.check('brak komponentów okrętowych', !rockManifest.materials.hull_plate);
+  // (Dawna sekcja „wrak asteroidy daje rudę” dotyczyła skał-heksów — usunięte z silnikiem heksów 2026-10-19;
+  // rudę daje wydobycie skał pasa, src/game/asteroidMiningRig.js.)
 
-  t.section('6. Opis do UI');
+  t.section('5. Opis do UI');
   const desc = describeSalvage(wrecks[1]);
   t.equal('opis niesie etykietę źródła', desc.label, 'Testowa fregata');
   t.check('opis wylicza materiały', desc.materials.length > 0);

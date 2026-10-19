@@ -100,7 +100,7 @@ export function describeBridgeState(st, oid = NO_OID) {
     version: st.version, backendKind: st.backend && st.backend.kind ? st.backend.kind : 'beam',
     lineage: st.lineage, srcW: st.srcW, srcH: st.srcH, spriteScale: st.spriteScale,
     anchorDX: st.anchorDX, anchorDY: st.anchorDY, cellSize: st.cellSize, dimsX: st.dimsX, dimsY: st.dimsY,
-    scaleX: st.scaleX, scaleY: st.scaleY, rule: st.rule, hullKey: st.hullKey, hexRadius: st.hexRadius,
+    scaleX: st.scaleX, scaleY: st.scaleY, rule: st.rule, hullKey: st.hullKey,
     windowColorSrgb: plainCopy(st.windowColorSrgb, oid),
     commandLost: !!st.commandLost, commandLostAt: st.commandLostAt, vent: null,
     bridges,

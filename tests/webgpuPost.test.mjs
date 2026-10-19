@@ -256,7 +256,6 @@ test('Core3D: strojenie bloomu (bloomConfig.js / DevVFX.bloom) = uniformy węzł
   } finally {
     window.DevVFX = prev;
   }
-  assert.doesNotMatch(read('src/ui/bloomTunerPanel.js'), /bloomPass\.strength = /);
 });
 
 // Zadanie 23: bloom = jeden pass compute (bloomCompute.js) PRZED „uber” — kubełek 'bloom' z haków (czas, bez

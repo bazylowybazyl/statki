@@ -16,7 +16,7 @@
 //           driveState ← window.shipDriveState, warp ← window.warp (= GameState.warp), boost ← GameState.boost
 //   listy:  bullets, wrecks, npcs ← window.*
 //   świat:  planets ← window.planets
-//   dev:    devTuning, devVFX, devConfig, dev ← window.DevTuning / DevVFX / DevConfig / Dev; config.* — nastawy
+//   dev:    devTuning, devVFX, dev ← window.DevTuning / DevVFX / Dev; config.* — nastawy
 //           harnessu i haki konsoli sprzed wczytania (explosionGrid ← __EXPLOSION_GRID, explosionTune ←
 //           __EXPLOSION_TUNE_OVR, tslUuidFix ← __TSL_UUID_NAPRAWA, enginePointLights ← ENGINE_POINT_LIGHTS_ENABLED,
 //           stationScaleById, stationPivotById, debugRecord ← __renderDbgRecord, k7Glb ← __K7_GLB,
@@ -113,7 +113,6 @@ class RenderWorldFacade {
   // dev
   get devTuning() { const s = this._src; return s ? s.devTuning : W().DevTuning; }
   get devVFX() { const s = this._src; return s ? s.devVFX : W().DevVFX; }
-  get devConfig() { const s = this._src; return s ? s.devConfig : W().DevConfig; }
   get dev() { const s = this._src; return s ? s.dev : W().Dev; }
   get config() { return this._config; }
 

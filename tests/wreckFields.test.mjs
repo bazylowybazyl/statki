@@ -13,8 +13,9 @@ import { readIndexHtml, sliceFunction } from './helpers/indexSource.mjs';
 
 function cold(x, y, summary = {}) {
   return {
-    x, y, radius: 40, visual: { spriteScale: 2 }, isWreck: true, isCold: true,
+    x, y, radius: 80, isWreck: true, isCold: true,
     _coldSnapshot: {
+      kind: 'beam',
       summary: { label: 'Wrak', hullClass: 'frigate', liveHexes: 100, aliveFrac: 0.5, weapons: 0, hasCargo: false, hasScrap: true, ...summary }
     }
   };

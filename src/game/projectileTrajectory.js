@@ -52,13 +52,40 @@ export function stepProjectileKinematics(projectile, dt, nowSim = null) {
 }
 
 /**
- * Consumes a projectile after impact. A destructible hex hull is a solid target:
+ * Czas wejścia odcinka (x0, y0) → (x1, y1) w koło (cx, cy, radius) jako ułamek odcinka [0, 1]:
+ * 0 — początek już w kole, −1 — odcinek koła nie przecina. Bramka szeroka pocisku przed sweepem
+ * kadłuba (pętla kandydatów w bulletsAndCollisionsStep). Do 2026-10-19 w src/physics/physicsKernel.js
+ * (rusztowanie workera fizyki ciał heksowych — usunięte razem z silnikiem heksów).
+ */
+export function segmentCircleToi(x0, y0, x1, y1, cx, cy, radius) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const fx = x0 - cx;
+  const fy = y0 - cy;
+  const radiusSq = radius * radius;
+  if (fx * fx + fy * fy <= radiusSq) return 0;
+  const a = dx * dx + dy * dy;
+  if (a <= 1e-12) return -1;
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - radiusSq;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return -1;
+  const root = Math.sqrt(discriminant);
+  const inv = 1 / (2 * a);
+  const near = (-b - root) * inv;
+  if (near >= 0 && near <= 1) return near;
+  const far = (-b + root) * inv;
+  return far >= 0 && far <= 1 ? far : -1;
+}
+
+/**
+ * Consumes a projectile after impact. A destructible hull is a solid target:
  * its impact response already propagates structural damage, so rail penetration
  * must not keep the projectile flying through the same ship after the first cell.
  */
-export function shouldRemoveProjectileAfterImpact(projectile, hitSolidHex = false) {
+export function shouldRemoveProjectileAfterImpact(projectile, hitSolidHull = false) {
   if (!projectile) return true;
-  if (hitSolidHex || projectile.type !== 'rail') return true;
+  if (hitSolidHull || projectile.type !== 'rail') return true;
 
   projectile.penetration = (Number(projectile.penetration) || 1) - 1;
   return projectile.penetration <= 0;

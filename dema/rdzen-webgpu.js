@@ -1,5 +1,5 @@
-// Demo RDZENIA REAKTORA na WebGPU — nowa wersja dema rdzenia (stare: dema/rdzen-demo.html, kadłuby
-// heksowe). Wszystko jak w grze: Core3D (WebGPU, TSL, bloom, ACES), kadłuby na silniku belek
+// Demo RDZENIA REAKTORA na WebGPU — nowa wersja dema rdzenia (stare dema/rdzen-demo.html na kadłubach
+// heksowych usunięte 2026-10-19). Wszystko jak w grze: Core3D (WebGPU, TSL, bloom, ACES), kadłuby na silniku belek
 // (HullBodies + skóra hexShips3D), mapa ran, efekty broni (WeaponFx), rakiet (dym compute, łuki,
 // iskry), światła i zniekształcenia Core3D. Nowe: rdzeń na belkach (src/game/reactorCore.js),
 // model reaktora w wyrwie (reactor3D.js — rama z logiki belek) i reżyser wybuchu

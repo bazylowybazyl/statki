@@ -1,6 +1,6 @@
 // dema/asteroidy-webgpu.js — demo WebGPU nowego pola asteroid.
 //
-// Port dema WebGL (dema/asteroidy.html) na WebGPURenderer + TSL, z tymi samymi
+// Port dawnego dema WebGL (dema/asteroidy.html, usunięte 2026-10-19) na WebGPURenderer + TSL, z tymi samymi
 // scenami: galerie typów i kształtów, olbrzymy (tunele, szczeliny, jaskinie),
 // olbrzym w polu, gęste pole, przelot od słońca w głąb pola, głąb pola, rzadki
 // pas, pas Kuipera i burza energetyczna. Ponad port:

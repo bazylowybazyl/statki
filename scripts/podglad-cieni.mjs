@@ -41,18 +41,23 @@ function hullMask(u, v) {
   return Math.abs(v) <= halfWidthAt(t);
 }
 
-const shards = [];
-const hexH = Math.sqrt(3) * HEX;
+// Siatka komórek kadłuba jak beamShadowGrid w hexShips3D (kolumny co 1,5 r, co druga przesunięta o pół wiersza).
+const cellX = [], cellY = [];
+const rowH = Math.sqrt(3) * HEX;
 for (let c = 0; c * HEX * 1.5 <= SRC_W + 40; c++) {
-  for (let ro = 0; ro * hexH <= SRC_H + 60; ro++) {
+  for (let ro = 0; ro * rowH <= SRC_H + 60; ro++) {
     const gx = c * HEX * 1.5 - 20;
-    const gy = ro * hexH + (c % 2 ? hexH * 0.5 : 0) - 30;
-    if (hullMask(gx - SRC_W * 0.5, gy - SRC_H * 0.5)) shards.push({ gridX: gx, gridY: gy, radius: HEX, active: true });
+    const gy = ro * rowH + (c % 2 ? rowH * 0.5 : 0) - 30;
+    if (hullMask(gx - SRC_W * 0.5, gy - SRC_H * 0.5)) { cellX.push(gx); cellY.push(gy); }
   }
 }
-const grid = { srcWidth: SRC_W, srcHeight: SRC_H, pivot: { x: 0, y: 0 }, shards };
-// Alfa „sprite'a” z tej samej sylwetki — w grze maskę heksów przycina alfa
-// obrazu kadłuba (bez niej brzeg SDF to ząbki kół opisanych na heksach).
+const grid = {
+  srcWidth: SRC_W, srcHeight: SRC_H, pivot: { x: 0, y: 0 },
+  cellX: Float32Array.from(cellX), cellY: Float32Array.from(cellY), cellActive: new Uint8Array(cellX.length).fill(1),
+  cellCount: cellX.length, cellRadius: HEX
+};
+// Alfa „sprite'a” z tej samej sylwetki — w grze maskę komórek przycina alfa
+// obrazu kadłuba (bez niej brzeg SDF to ząbki kół opisanych na komórkach).
 const alpha = { data: new Uint8Array(SRC_W * SRC_H), w: SRC_W, h: SRC_H };
 for (let y = 0; y < SRC_H; y++) {
   for (let x = 0; x < SRC_W; x++) {
@@ -61,7 +66,7 @@ for (let y = 0; y < SRC_H; y++) {
 }
 const layer = new Uint8Array(HULL_SDF_LAYER_SIZE * HULL_SDF_LAYER_SIZE);
 const layout = bakeHullSdfLayer(grid, alpha, layer, 0, {});
-console.log('heksów:', shards.length, 'siatka SDF:', `${layout.gw}×${layout.gh}`, 'teksel:', layout.texel.toFixed(2), 'px');
+console.log('komórek:', cellX.length, 'siatka SDF:', `${layout.gw}×${layout.gh}`, 'teksel:', layout.texel.toFixed(2), 'px');
 
 // ── Scena: cztery orientacje kadłuba, jedno słońce (współrzędne gry, y w dół)
 const W = 1200, HGT = 760, SCALE = 0.42;

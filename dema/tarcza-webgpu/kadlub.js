@@ -2,9 +2,9 @@
 // Kadłub Atlasa: kwad z tekstury sprite'a (alfa), oświetlony tym samym
 // światłem co reszta sceny (normalna z luminancji, liczona raz na CPU),
 // plus dane dla tarczy i trafień:
-//  • hexGrid.shards — komórki co 12 px sprite'a tam, gdzie alfa > 0,5
-//    (origLx/origLy względem środka, y w dół, radius = pół odstępu), czyli
-//    wejście getEntityShieldProfile → ten sam obrys co w grze;
+//  • shards — komórki co 12 px sprite'a tam, gdzie alfa > 0,5 (origLx/origLy
+//    względem środka, y w dół, radius = pół odstępu); shieldOutlineOf(shards)
+//    to wejście getEntityShieldProfile (`entity.shieldOutline`) → ten sam obrys co w grze;
 //  • maska komórek do testu „pocisk w pancerzu” (przebicie tarczy).
 // ============================================================
 import * as THREE from 'three/webgpu';
@@ -85,6 +85,17 @@ export async function loadAtlasSprite(url = ATLAS_SPRITE_URL) {
     // Skala sprite'a → świat (spriteScale encji).
     scale: ATLAS_LENGTH / Math.max(W, H)
   };
+}
+
+// Obrys tarczy encji (`entity.shieldOutline`, shieldSystem.js) z listy komórek sylwetki
+// ({ origLx, origLy, radius } — px sprite'a względem środka, y w dół): ten sam obrys co w grze.
+export function shieldOutlineOf(cells, srcWidth = 0, srcHeight = 0) {
+  const xy = new Float32Array(cells.length * 2);
+  for (let i = 0; i < cells.length; i++) {
+    xy[i * 2] = cells[i].origLx;
+    xy[i * 2 + 1] = cells[i].origLy;
+  }
+  return { cells: xy, cellR: Number(cells[0]?.radius) || 6, srcWidth, srcHeight };
 }
 
 // Czy punkt kadłuba (piksele sprite'a względem środka, y w dół) leży w pancerzu.

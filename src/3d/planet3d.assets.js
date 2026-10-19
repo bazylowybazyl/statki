@@ -686,7 +686,7 @@ class DirectPlanet {
         }
 
         // Graf TSL wspólny dla wszystkich planet (planet3d.assets.tsl.js), wartości i tekstury
-        // per planeta w this.uniforms — window.EARTH.uniforms (tło menu, devTools) bez zmian.
+        // per planeta w this.uniforms — window.EARTH.uniforms (tło menu) bez zmian.
         // Jowisz: żywa atmosfera (jupiterAtmosphere.js — pasy z wiatrem strefowym, turbulencja, wiry, GRS).
         if (name === 'jupiter') this.jupiterAtm = new JupiterAtmosphere(this, dayTex);
         // Saturn: żywa atmosfera (saturnAtmosphere.js — pasy, wiry, sześciokąt i wiry polarne) tylko na mapie z generatora

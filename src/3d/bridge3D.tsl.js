@@ -3,8 +3,8 @@
 // Materiały modelu 3D mostka w TSL (port WebGPU, zadanie 15; docs/webgpu/PLAN.md §3,
 // docs/PORT-mostki.md §8). Odpowiednik dawnego GLSL z bridge3D.js:
 //   MODEL_VERT / MODEL_FRAG — bryła (światło kadłuba, panele, brud, nity, łatanina
-//     piratów, odbicie nieba, wyrwy i przypalony brzeg z obrażeń heksów);
-//   B3_FUNC_GLSL — przestrzeń modelu → siatka heksów, komórka, obrażenia, mapa
+//     piratów, odbicie nieba, wyrwy i przypalony brzeg z obrażeń komórek kadłuba);
+//   B3_FUNC_GLSL — przestrzeń modelu → komórki siatki belek, obrażenia, mapa
 //     wysokości, marsz cienia w stronę „słońca cieni”, AO;
 //   RECEIVER_* — cień modelu na kadłubie (prostokąt POD kadłubem, depthFunc
 //     GREATER: rysuje się tylko tam, gdzie kadłub zapisał głębię);
@@ -76,10 +76,10 @@ export const B3_MODEL_LAYOUT = Object.freeze({
   stride: 30,
   iBasis: 0,     // (ax, ay, bx, by) — osie X / Y modelu → scena
   iOrg: 4,       // (x, y względem mesh.position, skala wysokości, uniesienie z)
-  aB3GridA: 8,   // (zgx, zgy, m00, m01) — model → siatka heksów
-  aB3GridB: 12,  // (m10, m11, c0, r0) — … i początek bloku komórek
+  aB3GridA: 8,   // (a0, b0, n00, n01) — model → współrzędne komórek siatki belek
+  aB3GridB: 12,  // (n10, n11, c0, r0) — … i początek bloku komórek
   aB3Dmg: 16,    // (wiersz, szer. bloku, wys. bloku, są wyrwy)
-  aB3State: 20,  // (zanik, żar od zapisu, rodzaj, promień heksa > 0 | −komórka belek [px obrazu])
+  aB3State: 20,  // (zanik, żar od zapisu, rodzaj, bok komórki belek [px obrazu kadłuba])
   aB3Hull: 24,   // (światło kadłuba pod środkiem, LOD, 0, 0)
   aB3Mask: 28    // (maska modułów 0–23, 24–47)
 });
@@ -128,12 +128,6 @@ const b3Dither = (p) => {
   return fract(float(52.9829189).mul(fract(dot(q.xy, vec2(0.06711056, 0.00583715)).add(q.z.mul(0.0182)))));
 };
 
-// Kierunki sąsiadów (lustro HEX_NEIGHBOR_DIRS w bridge3DShapes.js).
-const B3_HEX_DIRS = [
-  [0.8660254, 0.5], [0.8660254, -0.5], [0.0, -1.0],
-  [-0.8660254, -0.5], [-0.8660254, 0.5], [0.0, 1.0]
-];
-
 // Siatka belek (kadłuby gry od zadania 21 — docs/PORT-mostki.md § 9): komórki kwadratowe, maska
 // martwych sąsiadów w 8 bitach (lustro BRIDGE3D_SQUARE_NEIGHBORS w bridge3D.js) — boki: +x, +y, −x, −y
 // (bity 0–3), narożniki: (+,+), (−,+), (−,−), (+,−) (bity 4–7). Układ siatki: Y w górę.
@@ -154,44 +148,14 @@ function b3Library(ctx, V) {
   const { kindTable, damage, heightTex, U } = ctx;
   const kindBase = int(V.state.z.add(0.5)).mul(B3_KIND_STRIDE).toVar();
   const kindVec = (slot) => kindTable.element(kindBase.add(slot));
-  // Siatka belek: state.w < 0 (−bok komórki w px obrazu); heksy: state.w = promień heksa.
-  const square = V.state.w.lessThan(0.0).toVar();
-  const cellPx = abs(V.state.w).toVar();
-  const hexR = select(V.state.w.greaterThan(0.0), V.state.w, float(5.0)).toVar();
+  // Bok komórki siatki belek w px obrazu kadłuba (state.w).
+  const cellPx = V.state.w.toVar();
 
+  // Model → współrzędne komórek siatki belek (ciągłe; komórka = floor).
   const grid = (m) => V.gridA.xy.add(vec2(dot(V.gridA.zw, m), dot(V.gridB.xy, m)));
 
-  const hexCell = (g) => {
-    const q = g.x.mul(2.0 / 3.0).div(hexR).toVar();
-    const r = g.y.mul(0.5773502692).sub(g.x.div(3.0)).div(hexR).toVar();
-    const sc = q.negate().sub(r).toVar();
-    const rq = floor(q.add(0.5)).toVar();
-    const rr = floor(r.add(0.5)).toVar();
-    const rs = floor(sc.add(0.5)).toVar();
-    const dq = abs(rq.sub(q)).toVar();
-    const dr = abs(rr.sub(r)).toVar();
-    const ds = abs(rs.sub(sc)).toVar();
-    If(dq.greaterThan(dr).and(dq.greaterThan(ds)), () => {
-      rq.assign(rr.negate().sub(rs));
-    }).ElseIf(dr.greaterThan(ds), () => {
-      rr.assign(rq.negate().sub(rs));
-    });
-    return vec2(rq, rr.add(rq.sub(mod(rq, 2.0)).mul(0.5)));
-  };
-
-  const hexCenter = (cr) => vec2(cr.x.mul(1.5).mul(hexR), cr.y.add(mod(cr.x, 2.0).mul(0.5)).mul(1.7320508076).mul(hexR));
-
-  // Komórka pod punktem siatki: belki — floor (grid() daje wtedy współrzędne w komórkach),
-  // heksy — zaokrąglenie heksowe.
-  const cellCoord = (g) => {
-    const cr = vec2(0.0).toVar();
-    If(square, () => {
-      cr.assign(floor(g));
-    }).Else(() => {
-      cr.assign(hexCell(g));
-    });
-    return cr;
-  };
+  // Komórka pod punktem siatki.
+  const cellCoord = (g) => floor(g);
 
   // Komórka bloku rekordu (RGBA8 → 0..1 jak texelFetch z tekstury RGBA8).
   const cell = (cr) => {
@@ -223,7 +187,7 @@ function b3Library(ctx, V) {
       const rg = kindVec(B3_KIND_SLOT.region);
       // Wysokość w atlasie normalizowana do szczytu rodzaju (8 bitów na model).
       h.assign(texture(heightTex, rg.xy.add(t.mul(rg.zw))).level(0.0).x.mul(top()));
-      // Bez uszkodzeń nie szukamy heksa (typowy przypadek: 1 odczyt na krok).
+      // Bez uszkodzeń nie szukamy komórki (typowy przypadek: 1 odczyt na krok).
       If(h.greaterThan(0.02).and(V.dmg.w.greaterThanEqual(0.5)), () => {
         If(cell(cellCoord(grid(m))).x.lessThanEqual(0.2), () => {
           h.assign(0.0);
@@ -272,7 +236,7 @@ function b3Library(ctx, V) {
     return float(1.0).sub(U.uB3Ao.y.mul(occ).mul(0.125));
   };
 
-  return { kindVec, square, cellPx, hexR, grid, hexCell, hexCenter, cellCoord, cell, detail, top, height, shadow, occlusion };
+  return { kindVec, cellPx, grid, cellCoord, cell, detail, top, height, shadow, occlusion };
 }
 
 // Dane instancji jako varyingi płaskie (stałe na instancję — jak flat w GLSL).
@@ -376,38 +340,27 @@ export function createBridgeModelMaterial(ctx) {
     const rim = float(0.0).toVar();
     const nmask = int(cell.z.mul(255.0).add(0.5)).toVar();
     If(nmask.greaterThan(int(0)), () => {
-      If(L3.square, () => {
-        // Belki: boki i narożniki kwadratu (px obrazu = komórki × bok komórki), poszarpany brzeg.
-        const F = B3_SQUARE_FRAY;
-        const off = g.sub(cr).sub(0.5).toVar();
-        const edge = float(1e4).toVar();
-        for (let i = 0; i < 8; i++) {
-          If(nmask.shiftRight(uint(i)).bitAnd(int(1)).equal(int(1)), () => {
-            const dir = vec2(B3_SQUARE_DIRS[i][0], B3_SQUARE_DIRS[i][1]);
-            const d = i < 4
-              ? float(0.5).sub(dot(off, dir)).mul(L3.cellPx)
-              : length(off.sub(dir.mul(0.5))).mul(L3.cellPx);
-            edge.assign(min(edge, d));
-          });
-        }
-        // Szum przyklejony do siatki rodu: dwie oktawy, kęs do frayMax komórki.
-        const n = b3Noise(g.div(F.period)).mul(0.65).add(b3Noise(g.div(F.period * 0.37).add(vec2(7.3, 1.9))).mul(0.35));
-        const bite = n.mul(F.frayMax).mul(L3.cellPx).toVar();
-        If(edge.lessThan(bite), () => {
-          Discard();
+      // Boki i narożniki kwadratu (px obrazu = komórki × bok komórki), poszarpany brzeg.
+      const F = B3_SQUARE_FRAY;
+      const off = g.sub(cr).sub(0.5).toVar();
+      const edge = float(1e4).toVar();
+      for (let i = 0; i < 8; i++) {
+        // WGSL: przesunięcie o u32.
+        If(nmask.shiftRight(uint(i)).bitAnd(int(1)).equal(int(1)), () => {
+          const dir = vec2(B3_SQUARE_DIRS[i][0], B3_SQUARE_DIRS[i][1]);
+          const d = i < 4
+            ? float(0.5).sub(dot(off, dir)).mul(L3.cellPx)
+            : length(off.sub(dir.mul(0.5))).mul(L3.cellPx);
+          edge.assign(min(edge, d));
         });
-        rim.assign(float(1.0).sub(smoothstep(0.0, U.uB3Wound.x.mul(F.rimMul), edge.sub(bite))));
-      }).Else(() => {
-        const off = g.sub(L3.hexCenter(cr)).toVar();
-        const ap = L3.hexR.mul(0.8660254).toVar();
-        for (let i = 0; i < 6; i++) {
-          // WGSL: przesunięcie o u32.
-          If(nmask.shiftRight(uint(i)).bitAnd(int(1)).equal(int(1)), () => {
-            const d = ap.sub(dot(off, vec2(B3_HEX_DIRS[i][0], B3_HEX_DIRS[i][1])));
-            rim.assign(max(rim, float(1.0).sub(smoothstep(0.0, U.uB3Wound.x, d))));
-          });
-        }
+      }
+      // Szum przyklejony do siatki rodu: dwie oktawy, kęs do frayMax komórki.
+      const n = b3Noise(g.div(F.period)).mul(0.65).add(b3Noise(g.div(F.period * 0.37).add(vec2(7.3, 1.9))).mul(0.35));
+      const bite = n.mul(F.frayMax).mul(L3.cellPx).toVar();
+      If(edge.lessThan(bite), () => {
+        Discard();
       });
+      rim.assign(float(1.0).sub(smoothstep(0.0, U.uB3Wound.x.mul(F.rimMul), edge.sub(bite))));
     });
 
     const front = frontFacing;
@@ -510,7 +463,7 @@ export function createBridgeModelMaterial(ctx) {
       col.mulAssign(float(0.62).add(float(0.24).mul(float(1.0).sub(exp(lum.sub(0.62).div(0.24).negate())))).div(lum));
     });
 
-    // Brzeg wyrwy: przypalony; żar kadłuba (G, cały heks jak na kadłubie)
+    // Brzeg wyrwy: przypalony; żar kadłuba (G, cała komórka jak na kadłubie)
     // i żar świeżego cięcia (A, cienka krawędź przy martwym sąsiedzie).
     col.mulAssign(float(1.0).sub(max(rim.mul(U.uB3Wound.y), float(1.0).sub(hpFrac).mul(0.3))));
     const hHull = cell.y.mul(V.state.y);
@@ -660,4 +613,4 @@ export function createBridgeEmitterMaterial() {
 }
 
 // Eksport węzłów do testów struktury grafu (bez GPU).
-export const BRIDGE3D_TSL_INTERNALS = Object.freeze({ b3Hash, b3Noise, B3_HEX_DIRS, B3_SQUARE_DIRS });
+export const BRIDGE3D_TSL_INTERNALS = Object.freeze({ b3Hash, b3Noise, B3_SQUARE_DIRS });

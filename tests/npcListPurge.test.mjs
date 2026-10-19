@@ -28,13 +28,13 @@ test('index.html: z npcs wypada tylko martwy NPC misji po utworzeniu wraku', () 
     ship,
     isBridgeHulk: (n) => hulks.has(n)
   });
-  const hulk = { dead: true, mission: true, hexGrid: null };
+  const hulk = { dead: true, mission: true, beamHull: null };
   hulks.add(hulk);
-  assert.equal(finished({ dead: true, mission: true, hexGrid: null }), true, 'wrak powstał, ciało zwolnione');
-  assert.equal(finished({ dead: true, mission: true, hexGrid: {} }), false, 'ciało heksowe jeszcze żyje');
-  assert.equal(finished({ dead: false, mission: true, hexGrid: null }), false);
-  assert.equal(finished({ dead: true, mission: false, hexGrid: null }), false, 'cywil się odrodzi');
-  assert.equal(finished({ dead: true, mission: true, hexGrid: null, isCargoVan: true }), false, 'frachtowiec sprząta rekord');
+  assert.equal(finished({ dead: true, mission: true, beamHull: null }), true, 'wrak powstał, kadłub oddany');
+  assert.equal(finished({ dead: true, mission: true, beamHull: {} }), false, 'kadłub na belkach jeszcze żyje');
+  assert.equal(finished({ dead: false, mission: true, beamHull: null }), false);
+  assert.equal(finished({ dead: true, mission: false, beamHull: null }), false, 'cywil się odrodzi');
+  assert.equal(finished({ dead: true, mission: true, beamHull: null, isCargoVan: true }), false, 'frachtowiec sprząta rekord');
   assert.equal(finished(hulk), false, 'hulk po mostku');
   ship.dead = true;
   ship.mission = true;

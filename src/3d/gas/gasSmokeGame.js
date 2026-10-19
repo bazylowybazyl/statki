@@ -369,7 +369,7 @@ export class GasSmokeGame {
       }
       if (!e) continue;   // ognisko w miejscu
       // Wrak zniknął (przetworzony, rozpadł się, zabrany holem do doku) — ogień gaśnie z nim.
-      if (f.kind === 'wreck' && (e.dead === true || (!e.beamHull && !e.hexGrid))) { f.emitter.alive = false; F.splice(i, 1); continue; }
+      if (f.kind === 'wreck' && (e.dead === true || !e.beamHull)) { f.emitter.alive = false; F.splice(i, 1); continue; }
       // ogień jedzie z encją (pozycja i obrót), domena z jej prędkością (scena: y odwrócone)
       this._placeFire(f, Number(e.x) || 0, Number(e.y) || 0, Number(e.angle) || 0);
       const em = f.emitter;

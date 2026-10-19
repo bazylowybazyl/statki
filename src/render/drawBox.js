@@ -61,8 +61,8 @@ export function isEntityInDrawBox(entity, cull, cameraZoom) {
   if (!cull || !Number.isFinite(cull.drawHalfW) || !Number.isFinite(cull.drawHalfH)) return true;
   const x = posX(entity);
   const y = posY(entity);
-  // Kadłub na belkach niesie te same wymiary sprite'a i pivot co siatka heksów.
-  const grid = entity?.hexGrid || entity?.beamHull;
+  // Kadłub na belkach: wymiary sprite'a i pivot.
+  const grid = entity?.beamHull;
   let r;
   if (grid) {
     const sx = Math.abs(scaleX(entity)) || 1;

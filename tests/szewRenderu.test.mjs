@@ -38,12 +38,9 @@ const SUFITY = {
   'import:src/game/cometNucleus.js': 1,
   'import:src/game/comets.js': 1,
   'import:src/game/coreModel.js': 3,
-  'import:src/game/destructorConfig.js': 2,
   'import:src/game/engineIgnition.js': 3,
   'import:src/game/fxRandomGame.js': 2, // 2026-10-15 RW-20 (rw-bronie): strumień losowy gry dla modułów kanwy wątku głównego (collisionSparks, canvasParticleSystem)
   'import:src/game/haloRingPlanets.js': 2,
-  'import:src/game/hexBodyHooks.js': 1,
-  'import:src/game/hexGridSpace.js': 1,
   'import:src/game/hullBodies.js': 8,
   'import:src/game/hullCraters.js': 1,
   'import:src/game/hullMounts.js': 2,

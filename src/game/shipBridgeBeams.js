@@ -1,13 +1,12 @@
 // src/game/shipBridgeBeams.js
 //
 // MOSTKI NA KADŁUBIE BELKOWYM — mechanika „zniszczenie mostka = utrata dowodzenia” (shipBridge.js)
-// dla silnika belek gry (src/game/hullBodies.js). Wersja heksowa (shipBridge.js: attachShipBridges,
-// evaluateShipBridges…) stoi na heksach destruktora, których gra od zadania 21 nie tworzy — na
-// kadłubach belkowych mostki były nieaktywne (etap 4 w docs/PORT-silnik-belek.md). Ten moduł daje
-// ten sam stan `entity.bridgeState` (te same pola, które czytają shipBridgeRuntime, bridge3D,
-// bridgeFx3D i HUD) z backendem `BEAM_BRIDGE_BACKEND`; ogólne funkcje shipBridge.js (bridgePngToWorld,
-// updateShipBridges, getBridgeAimPoint, stepCommandLossDrift…) oddają mu pracę, gdy stan go niesie.
-// Bez DOM i bez three. Opis: docs/PORT-mostki.md § 9.
+// dla silnika belek gry (src/game/hullBodies.js). Jedyna implementacja stanu mostków (dawna wersja na
+// heksach destruktora usunięta 2026-10-19 razem z silnikiem heksów): `entity.bridgeState` (pola
+// czytane przez shipBridgeRuntime, bridge3D, bridgeFx3D, HUD i lustro renderu) z backendem
+// `BEAM_BRIDGE_BACKEND`; ogólne funkcje shipBridge.js (bridgePngToWorld, updateShipBridges,
+// getBridgeAimPoint, stepCommandLossDrift…) oddają mu pracę. Bez DOM i bez three. Opis:
+// docs/PORT-mostki.md § 9.
 //
 // Model jak u rdzenia (reactorCore.js):
 //   • strefa mostka = obrócony prostokąt w PNG sprite'a (BRIDGE_LAYOUT_PROPOSALS) → KOMÓRKI siatki
@@ -19,11 +18,11 @@
 //     to TUNEL do niego, wniosek z benchmarku wersji heksowej);
 //   • integralność = żywe komórki strefy w BIEŻĄCYM ciele gospodarza ÷ komórki na starcie — mostek
 //     odcięty z odłamem (komórki żyją na innym ciele rodu) liczy się jako zniszczony;
-//   • kill, oś czasu, dryf hulka, okna i wyrwa — jak w wersji heksowej (te same liczby).
+//   • kill, oś czasu, dryf hulka, okna i wyrwa — te same liczby co dawna wersja heksowa.
 //
 // UKŁADY: świat gry (y w dół); siatka belek = ciało − latticeMin (j. świata, Y w GÓRĘ, komórka
 // cs = body.cellSize; środek komórki (ix, iy) = (ix + ½, iy + ½) · cs); obraz kadłuba („siatka”
-// w API heksowym: piksele obrazu fizyki/renderu od lewego górnego rogu, y w dół); PNG (edytor:
+// w API shipBridge.js: piksele obrazu fizyki/renderu od lewego górnego rogu, y w dół); PNG (edytor:
 // (0, 0) = środek sprite'a, +X dziób, y w dół). Kotwica encji jak w HullBodies: statek = środek
 // sprite'a, wrak = środek masy — przekształcenia biorą `HullBodies.anchorLocalX/Y`.
 
@@ -197,7 +196,6 @@ export function attachBeamBridges(entity, list, opts = {}) {
   const st = {
     version: 1,
     backend: BEAM_BRIDGE_BACKEND,
-    grid: null,
     lineage: hull.dmgKey,
     srcW: hull.srcWidth,
     srcH: hull.srcHeight,
@@ -220,8 +218,6 @@ export function attachBeamBridges(entity, list, opts = {}) {
     commandLostAt: -1,
     cause: null,
     hullKey: typeof opts.hullKey === 'string' ? opts.hullKey : null,
-    // Promień „heksa” w API heksowym (bridge3D, szczeliny) — tu pół komórki w pikselach obrazu.
-    hexRadius: cs / Math.max(1e-6, hull.scale) * 0.5,
     silhouette: null,
     windowColorSrgb: parseHexColor(opts.windowColor, [0.9, 0.95, 1.0]),
     lastHit: { x: 0, y: 0, vx: 0, vy: 0, t: -Infinity },
@@ -411,8 +407,8 @@ export function beamBridgeAliveCells(entity, bridgeIndex = 0) {
 
 // ============================ WYRWA I STRUMIEŃ ============================
 
-// Wyrwa i kierunek strumienia (PNG) — kolejność źródeł jak w wersji heksowej: świeże trafienie
-// (tunel ostrzału), centroid komórek straconych w ostatnim sprawdzeniu, „w górę obrazka”.
+// Wyrwa i kierunek strumienia (PNG) — kolejność źródeł: świeże trafienie (tunel ostrzału),
+// centroid komórek straconych w ostatnim sprawdzeniu względem środka strefy, „w górę obrazka”.
 function computeBeamVent(st, nowSec, bridge) {
   if (!bridge) for (const b of st.bridges) if (b.dead && (!bridge || b.deadAt >= bridge.deadAt)) bridge = b;
   const def = bridge ? bridge.def : st.bridges[0].def;
@@ -592,8 +588,10 @@ export function getBeamBridgeAimPoint(entity, out = { x: 0, y: 0 }, opts = {}) {
 // ============================ OKNA (dane szczelin) ============================
 
 /**
- * Okna nadbudówki jak buildBridgeWindows (2–3 rzędy wzdłuż dłuższej osi strefy, serie oświetlonych
- * pomieszczeń) — okno przypięte do komórki pod sobą (gaśnie z nią). Szczeliny bridgeFx3D rysują je
+ * Okna nadbudówki: 2–3 rzędy wzdłuż dłuższej osi strefy, serie oświetlonych pomieszczeń (2–5 okien
+ * przedzielone ciemnymi) — okno przypięte do komórki pod sobą (gaśnie z nią). Rozmiary w jednostkach
+ * RENDERU (świat gry przy spriteScale 1), więc okna mają ten sam rozmiar na każdym kadłubie.
+ * Szczeliny bridgeFx3D rysują je
  * tylko dla kadłubów bez modelu 3D (bridge3D.js); model bierze stąd barwę okien.
  */
 export function buildBeamBridgeWindows(entity, opts = {}) {
@@ -673,7 +671,6 @@ export function buildBeamBridgeWindows(entity, opts = {}) {
     seed: Float32Array.from(seed),
     level: Float32Array.from(level),
     bridge: Uint8Array.from(bridgeIdx),
-    shard: null,
     delay: new Float32Array(n),
     colorsLinear: colors,
     length: slitLen,
@@ -700,7 +697,7 @@ export function beamWindowWorld(entity, win, i, out, pose = null) {
 /**
  * Backend stanu mostków na belkach: funkcje ogólne shipBridge.js (bridgePngToWorld,
  * bridgeGridToWorld, updateShipBridges, getBridgeAimPoint…) wołają go, gdy stan go niesie
- * (`st.backend`). „Siatka” w API heksowym = piksele obrazu kadłuba.
+ * (`st.backend`). „Siatka” w API shipBridge.js = piksele obrazu kadłuba.
  */
 export const BEAM_BRIDGE_BACKEND = Object.freeze({
   kind: 'beam',

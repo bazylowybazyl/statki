@@ -92,7 +92,7 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   warpChargeShakePx: 4    // drżenie w drugiej połowie ładowania [px] (demo: 4 · smooth(0,5, 1, ładowanie))
 });
 
-// Zakresy dla panelu strojenia i sanitizacji zapisu.
+// Zakresy strojenia (sanityzacja wartości z konsoli i testów).
 export const CAMERA_RIG_RANGES = Object.freeze({
   navLook: [0, 1],
   navLead: [0, 0.8],
@@ -183,8 +183,8 @@ export function createCameraRigTune(overrides = null) {
   return tune;
 }
 
-// Wspólne strojenie gry: czyta je render(), pisze panel dev (src/ui/cameraTunerPanel.js).
-// Jeden obiekt w instancji modułu — kolejność startu gry i panelu nie ma znaczenia.
+// Wspólne strojenie gry: czyta je render(); na żywo z konsoli — CameraRig.tune (index.html).
+// Jeden obiekt w instancji modułu.
 export const cameraRigTune = createCameraRigTune();
 
 export function createCameraRig() {

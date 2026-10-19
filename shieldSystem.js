@@ -113,10 +113,11 @@ function getExplicitShieldMaxDimension(entity) {
   return 0;
 }
 
-function getHexGridShieldMaxDimension(entity) {
-  const grid = entity?.hexGrid;
-  const w = readPositiveNumber(grid?.srcWidth);
-  const h = readPositiveNumber(grid?.srcHeight);
+// Rozmiar z obrysu podanego wprost (`entity.shieldOutline` — dema bez kadłuba na belkach).
+function getOutlineShieldMaxDimension(entity) {
+  const outline = entity?.shieldOutline;
+  const w = readPositiveNumber(outline?.srcWidth);
+  const h = readPositiveNumber(outline?.srcHeight);
   if (w <= 0 && h <= 0) return 0;
   return Math.max(
     (w || DEFAULT_SHIELD_DIMENSION) * getEntityScaleX(entity),
@@ -146,10 +147,14 @@ function getCapitalProfileShieldMaxDimension(entity) {
 
 // ============================================================
 // Radialny profil tarczy (obrys kadłuba)
-// Statki z hexGrid dostają tarczę-obramówkę dopasowaną do sylwetki:
-// r(θ) w binach kątowych w klatce statku (przestrzeń "grid-local" po skali,
-// y w dół jak w świecie). Encje bez hexGrid (stacje, budowle, myśliwce,
-// przyszłe generatory osłon) zostają na klasycznej kolistej bańce.
+// Statki z kadłubem na belkach (albo z obrysem podanym wprost — `shieldOutline`,
+// dema) dostają tarczę-obramówkę dopasowaną do sylwetki: r(θ) w binach kątowych
+// w klatce statku (przestrzeń "grid-local" po skali, y w dół jak w świecie).
+// Encje bez obrysu (stacje, budowle, myśliwce, przyszłe generatory osłon)
+// zostają na klasycznej kolistej bańce.
+//
+// `entity.shieldOutline` = { cells: [x0, y0, x1, y1, …] — komórki sylwetki w px sprite'a od środka
+// (y w dół), cellR — promień komórki [px], srcWidth?, srcHeight? — rozmiar sprite'a [px] }.
 // ============================================================
 const SHIELD_PROFILE_BINS = 96;
 const TWO_PI = Math.PI * 2;
@@ -168,16 +173,15 @@ export function entityUsesHullShield(rawEntity) {
   if (beamHull) {
     if (beamHull.entity !== entity || !beamHull.body || beamHull.body.dead) return false;
   } else {
-    if (!entity.hexGrid) return false;
-    if (!Array.isArray(entity.hexGrid.shards) || entity.hexGrid.shards.length === 0) return false;
+    const cells = entity.shieldOutline?.cells;
+    if (!cells || !(cells.length >= 2)) return false;
   }
-  if (entity.isRingSegment || entity.isAsteroidHex || entity.isWreck) return false;
+  if (entity.isRingSegment || entity.isWreck) return false;
   if (entity.visual?.preserveBillboardOrientation === true) return false;
   return true;
 }
 
-// Kąt wizualny kadłuba — lustrzane odbicie destructorowego getEntityHexAngle
-// (visualRotationOffset ma domyślnie 0 i nie jest tu dostępny bez cyklu importów).
+// Kąt wizualny kadłuba: kąt encji + obrót sprite'a (gracz bez obrotu sprite'a) — jak skóra kadłuba.
 export function getShieldHullAngle(rawEntity) {
   const entity = unwrapShieldEntity(rawEntity);
   const base = Number(entity?.angle) || 0;
@@ -190,8 +194,8 @@ export function getShieldHullAngle(rawEntity) {
   return base + (Number.isFinite(r) ? r : 0);
 }
 
-// Komórki obrysu w pikselach sprite'a względem środka (y w dół): heksy (origLx/Ly) albo
-// węzły kadłuba na belkach (pozycje spoczynkowe) — płaska tablica [x0, y0, x1, y1, ...].
+// Komórki obrysu w pikselach sprite'a względem środka (y w dół): węzły kadłuba na belkach
+// (pozycje spoczynkowe) albo obrys podany wprost — płaska tablica [x0, y0, x1, y1, ...].
 function shieldOutlineCells(entity) {
   const hull = entity.beamHull;
   if (hull) {
@@ -206,14 +210,8 @@ function shieldOutlineCells(entity) {
     hull.shieldCells = out;
     return { cells: out, cellR: hull.pixelPitch * 0.62 };
   }
-  const shards = entity.hexGrid.shards;
-  const out = new Float32Array(shards.length * 2);
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    out[i * 2] = Number.isFinite(s.origLx) ? s.origLx : (Number(s.lx) || 0);
-    out[i * 2 + 1] = Number.isFinite(s.origLy) ? s.origLy : (Number(s.ly) || 0);
-  }
-  return { cells: out, cellR: Number(shards[0]?.radius) || 6 };
+  const outline = entity.shieldOutline;
+  return { cells: outline.cells, cellR: Number(outline.cellR) || 6 };
 }
 
 function buildShieldProfile(entity) {
@@ -291,7 +289,7 @@ function buildShieldProfile(entity) {
 export function getEntityShieldProfile(rawEntity) {
   const entity = unwrapShieldEntity(rawEntity);
   if (!entityUsesHullShield(entity)) return null;
-  const grid = entity.beamHull || entity.hexGrid;
+  const grid = entity.beamHull || entity.shieldOutline;
   const sx = getEntityScaleX(entity);
   const sy = getEntityScaleY(entity);
   const cache = entity._shieldProfileCache;
@@ -423,8 +421,8 @@ export function getEntityShieldRayEnter(rawEntity, x0, y0, dirX, dirY, maxT) {
 }
 
 export function getEntityShieldMaxDimension(entity) {
-  const fromHexGrid = getHexGridShieldMaxDimension(entity);
-  if (fromHexGrid > 0) return fromHexGrid;
+  const fromOutline = getOutlineShieldMaxDimension(entity);
+  if (fromOutline > 0) return fromOutline;
 
   const explicit = getExplicitShieldMaxDimension(entity);
   if (explicit > 0) {

@@ -68,7 +68,7 @@ export function getAsteroidDisplayName(asteroid) {
 export function isAsteroidTarget(target) {
   const a = asteroidSource(target);
   if (!a) return false;
-  if (a.isAsteroidTarget === true || a.isAsteroid === true || a.isAsteroidHex === true) return true;
+  if (a.isAsteroidTarget === true || a.isAsteroid === true) return true;
   return Number.isFinite(Number(a.worldX)) &&
     Number.isFinite(Number(a.worldY)) &&
     Number.isFinite(Number(a.scale)) &&

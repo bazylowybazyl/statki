@@ -93,13 +93,13 @@ test('NPC overlay culling keeps what is on screen and drops the rest', () => {
   assert.equal(isNpcOverlayOnScreen(fighter, { x: W + 20, y: 540 }, 1, W, H), true);
 
   // Długi kadłub: środek poza ekranem, dziób w kadrze — nakładka musi zostać.
-  const capital = { radius: 150, hexGrid: { srcWidth: 3000, srcHeight: 800 } };
+  const capital = { radius: 150, beamHull: { srcWidth: 3000, srcHeight: 800 } };
   assert.equal(isNpcOverlayOnScreen(capital, { x: -1200, y: 540 }, 1, W, H), true);
   assert.equal(isNpcOverlayOnScreen(capital, { x: -4000, y: 540 }, 1, W, H), false);
 });
 
 // Kadłub NPC powstaje leniwie w rysowaniu (HullBodies.createHull w drawNPCPretty), więc
-// culling nakładki dotyczy tylko encji z ciałem (heksy albo kadłub na belkach) i myśliwców.
+// culling nakładki dotyczy tylko encji z kadłubem na belkach i myśliwców.
 test('NPCs without a hull body are never culled (lazy hull init lives in the draw)', () => {
-  assert.match(html, /\(npc\.hexGrid \|\| npc\.beamHull \|\| isFighterUnit\(npc\)\) && !isNpcOverlayOnScreen\(/);
+  assert.match(html, /\(npc\.beamHull \|\| isFighterUnit\(npc\)\) && !isNpcOverlayOnScreen\(/);
 });

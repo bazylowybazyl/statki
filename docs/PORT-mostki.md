@@ -2,8 +2,12 @@
 
 > **Stan 2026-10-05: mostki działają na kadłubach belkowych gry** (§ 9) — logika na komórkach siatki
 > belek (`src/game/shipBridgeBeams.js`), model 3D z wyrwami po komórkach (tryb siatki kwadratowej),
-> efekty agonii na pulach WebGPU, nowe demo `dema/mostki-webgpu.html`. Opisy heksowe niżej (§ 0–8)
-> zostają dla dema heksowego (`dema/mostki-demo.html`) i jako źródło liczb (strefy, oś czasu, benchmark).
+> efekty agonii na pulach WebGPU, nowe demo `dema/mostki-webgpu.html`. **2026-10-19 wersję heksową i jej demo
+> (`mostki-demo`) usunięto** razem z silnikiem heksów; edytor stref przeszedł do `dema/mostki-webgpu.html`
+> (klawisz E albo `?edit=1`, eksport do `BRIDGE_LAYOUT_PROPOSALS`). Opisy heksowe niżej (§ 0–8) zostają jako
+> historia projektu i źródło liczb (strefy, oś czasu, benchmark) — wymienione w nich pliki i funkcje heksów
+> (`attachShipBridges`, `bridgeShardIsAlive`, `mostki-*.js` i `mostki3d-*.js` dema, `shardHeatNow`, …) już nie istnieją;
+> sprawdzenie w grze: `scripts/webgpu/mostki-gra.mjs` (§ 9.4).
 
 Stan na 2026-09-25: **mechanika jest wpięta do gry** (§0), a **model 3D
 mostka** (nadbudówka z oknami, cieniem i wyrwami z heksów 2D) też (§8) — na
@@ -855,9 +859,9 @@ w `docs/PORT-silnik-belek.md`). Port według wzorca rdzenia reaktora (`reactorCo
 |---|---|
 | `src/game/shipBridgeBeams.js` | **logika na belkach**: strefa → komórki siatki (ix, iy), pancerz węzłów, integralność, utrata dowodzenia, odcięcie z odłamem, wyrwa i wylot tunelu (obrys z chwili montażu), lock na mostek (`breach` / `exposed` / `centroid` / `center`), okna (dane szczelin), przekształcenia PNG ↔ siatka ↔ świat z pozą renderu; backend `BEAM_BRIDGE_BACKEND` |
 | `src/game/shipBridge.js` | funkcje ogólne oddają pracę backendowi stanu (`st.backend`): `bridgeGridToWorld`, `bridgePngToWorld`, `bridgeWorldToPng`, `bridgeWorldToGrid`, `updateShipBridges`, `evaluateShipBridges`, `getBridgeAimPoint`, `detachShipBridges`; `stepCommandLossDrift` bierze wymiary obrazu ze stanu; `releaseShipBridges` gasi flagę `isBridgeHulk` |
-| `src/game/shipBridgeRuntime.js` | `attachEntityBridges`: kadłub belkowy → `attachBeamBridges` (skala stref z obrazów kadłuba: render / PNG, jak rdzenie), heksowy → po staremu; `beginBridgeHulk` stawia `entity.isBridgeHulk` (EngineVfxSystem: bez plazmy skoku na hulku) |
+| `src/game/shipBridgeRuntime.js` | `attachEntityBridges`: kadłub belkowy → `attachBeamBridges` (skala stref z obrazów kadłuba: render / PNG, jak rdzenie), inny → `null` (bez mostka); `beginBridgeHulk` stawia `entity.isBridgeHulk` (EngineVfxSystem: bez plazmy skoku na hulku) |
 | `src/3d/bridge3D.js` | rekordy belkowe (`createBeamBridgeRecordCore`, `refreshBeamBridgeRecordDamage`, `beamBridgeInstanceBasis`): blok komórek pod modelem, maska 8 sąsiadów, żar węzła (`heat`/`heatStamp` jak skóra), gospodarz po rodzie `dmgKey` i po ciele silnika (wrak), odłamy z częścią mostka; `opts.visibility(e)`; `warmupMeshes()` do rejestru rozgrzewki |
-| `src/3d/bridge3D.tsl.js` | ten sam graf: tryb siatki kwadratowej (`aB3State.w < 0` = −bok komórki w px obrazu) — komórka = floor, brzeg rany od boków i narożników (8 bitów), poszarpany brzeg (`B3_SQUARE_FRAY`, szum przyklejony do siatki rodu); heksy bez zmian |
+| `src/3d/bridge3D.tsl.js` | graf siatki kwadratowej (`aB3State.w` = bok komórki w px obrazu) — komórka = floor, brzeg rany od boków i narożników (8 bitów), poszarpany brzeg (`B3_SQUARE_FRAY`, szum przyklejony do siatki rodu); tryb heksów usunięty 2026-10-19 (obraz bit w bit jak przed) |
 | `src/3d/bridgeFx3D.js` | belki (okna i wyrzut przez backend) + **warstwa WebGPU**: rozszczelnienie i błyski pomieszczeń w siatce świateł Core3D, osmalenie wyrwy na mapie ran (`HullDamageMap.stampRecipe`), łuki przepięć w agonii (pula ARC `WeaponFx`, iskry `SparkSystem3D`); usługi z `attach(scena, { weaponFx })`, strojenie `BRIDGE_FX_TUNE.lightGain / arcRate / arcEnd / scorch` |
 | `dema/mostki-webgpu.html`, `.js`, `dema/mostki-webgpu/` | **demo WebGPU** (§ 9.3) |
 | `tests/shipBridgeBeams.test.mjs` (+ `tests/helpers/bridgeHulls.mjs`) | 9 testów na prawdziwych sprite'ach 11 kadłubów |

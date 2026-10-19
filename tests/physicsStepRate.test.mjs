@@ -33,28 +33,21 @@ test('ticksAt120: ten sam czas w krokach innej długości, przy 1/120 s wartoś�
   assert.equal(ticksAt120(1, 1 / 60), 1, 'co najmniej jeden krok');
 });
 
-test('index.html: ?physHz z białej listy, domyślnie 60, worker v2 zawsze 120', () => {
+test('index.html: ?physHz z białej listy, domyślnie 60', () => {
   const html = read('index.html');
   assert.match(html, /const PHYS_HZ_DEFAULT = 60;/);
-  assert.match(html, /const PHYS_HZ_WORKER_V2 = 120;/);
   assert.match(html, /const PHYS_HZ_ALLOWED = \[60, 90, 120, 240\];/);
   assert.match(html, /const PHYS_HZ = resolvePhysicsHz\(\);/);
-  assert.match(html, /if \(DevFlags\.workerPhysicsV2\) \{[\s\S]{0,200}return PHYS_HZ_WORKER_V2;/);
+  // Rusztowanie workera fizyki v2 (?workerPhysicsV2, src/physics/) usunięte 2026-10-19 — nie wraca.
+  assert.doesNotMatch(html, /workerPhysicsV2|PHYS_HZ_WORKER_V2|PhysicsBridge/);
   assert.match(html, /PerfHUD\.setPhysicsHz\(PHYS_HZ\);/);
   assert.match(html, /new FixedStepCadence\(PHYS_HZ, AI_DECISION_TARGET_HZ\)/, 'mózg AI zostaje przy 20 Hz');
 });
 
 test('tarcie „na krok” w fizyce przeliczane przez stepDecay120', () => {
   const html = read('index.html');
-  assert.match(html, /const drag = stepDecay120\(0\.991, dt\);/, 'latające odłamki');
   assert.match(html, /const wreckFriction = stepDecay120\(w\.friction, dt\);/, 'wraki');
   assert.match(html, /const npcDrag = stepDecay120\(npc\.friction \|\| 0\.99, dt\);/, 'NPC bez modelu lotu');
   assert.match(html, /const friction = stepDecay120\(npc\.friction \|\| 1\.0, dt\);/, 'NPC — fizyka pędu');
   assert.doesNotMatch(html, /w\.vx \*= w\.friction;/);
-});
-
-test('destruktor: liczniki splitów w krokach przeliczane na czas przy innym kroku', () => {
-  const src = read('src/game/destructor.js');
-  assert.match(src, /const splitInterval = ticksAt120\(Math\.max\(1, DESTRUCTOR_CONFIG\.splitCheckInterval \| 0\), step\);/);
-  assert.match(src, /const deferTicks = ticksAt120\(/);
 });

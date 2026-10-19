@@ -63,13 +63,13 @@ export function stampDrawBoxFlags(entities, view, hiddenTest = null) {
  * Czy zamrożenie wraku przejdzie niezauważone: wrak poza pudłem rysowania ostatniej klatki albo (na belkach) przy
  * pełnym wyglądzie zimnego (staticSkin + nearExtras — ta sama skóra, mostek, rdzeń i cień co u śpiącego) w kadrze do
  * `inViewFreezeMaxPx`; bez niego — tylko na poziomie smugi. Ukryty mgłą wojny w kadrze — nie (zimny rysuje się jak
- * teren, bez mgły). Wrak bez kadłuba na belkach (heksy — tylko dema) → `fallback(entity)` (render).
+ * teren, bez mgły). Wrak bez kadłuba na belkach nie ma obrazu, który zamrożenie mogłoby zmienić.
  */
-export function coldFreezeVisuallySafe(entity, view, config = null, fallback = null) {
+export function coldFreezeVisuallySafe(entity, view, config = null) {
   const cull = view?.cull;
   if (!entity || !cull) return true;
   if (!isEntityInDrawBox(entity, cull, view.zoom)) return true;
-  if (!isBeamHullEntity(entity)) return fallback ? fallback(entity) : true;
+  if (!isBeamHullEntity(entity)) return true;
   if (entity.__drawFogHidden === true) return false;
   const cfg = config || COLD_WRECK_CONFIG;
   const rPx = beamBodyRadiusPx(entity, view.zoom, view.pixelRatio);

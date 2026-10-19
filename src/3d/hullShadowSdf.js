@@ -9,7 +9,7 @@
 // rzucała cień na kadłub pod sąsiednią.
 //
 // Teraz każdy kształt kadłuba ma warstwę w tablicy tekstur R8 (256×256):
-// odległość ze znakiem od sylwetki (alfa sprite'a ∩ aktywne heksy), ujemna
+// odległość ze znakiem od sylwetki (alfa sprite'a ∩ żywe komórki kadłuba), ujemna
 // w środku. Pass maski (hullSdfShadow — TSL) przenosi piksel do układu
 // statku (to samo przekształcenie co mesh kadłuba), przycina promień do
 // prostokąta warstwy, w kanale powierzchni pomija piksele NA własnym kadłubie
@@ -41,8 +41,8 @@ export const HULL_SDF_MARGIN_TEXELS = 12;
 export const HULL_SDF_SOFT_TEXELS = 10;
 // Zakres kodowania: bajt 0..255 = odległość -16..+16 tekseli (krok 0,125).
 export const HULL_SDF_RANGE_TEXELS = 16;
-// Próg alfy sylwetki. Heks brzegowy wystaje do promienia poza rysowaną
-// krawędź, więc sama maska heksów dawała szczelinę światła przy burcie;
+// Próg alfy sylwetki. Komórka brzegowa wystaje do promienia poza rysowaną
+// krawędź, więc sama maska komórek dawała szczelinę światła przy burcie;
 // sama alfa nie widziałaby dziur po trafieniach — stąd iloczyn obu.
 export const HULL_SDF_ALPHA_INSIDE = 0.5;
 
@@ -54,13 +54,13 @@ const MIN_TEXEL_PX = 1.5;          // małe kadłuby: nie gęściej niż 1,5 px 
 const SELF_BIAS_TEXELS = 0.15;
 const STEP_FLOOR_TEXELS = 0.75;    // najkrótszy krok marszu
 const PENUMBRA_STEP = 0.3;         // krok w półcieniu jako ułamek jego szerokości
-// Ponowne pieczenie po trafieniach: po większej stracie (≥ 0,5% heksów, min. 8)
+// Ponowne pieczenie po trafieniach: po większej stracie (≥ 0,5% komórek, min. 8)
 // najczęściej co sekundę, drobne ubytki dopiero po 4 s. Sylwetka z kilkoma
-// heksami mniej wygląda tak samo, a pieczenie Atlasa to ~2–4 ms.
+// komórkami mniej wygląda tak samo, a pieczenie Atlasa to ~2–4 ms.
 const REBAKE_MS = 1000;
 const REBAKE_SMALL_MS = 4000;
 const REBAKE_MIN_FRACTION = 0.005;
-const REBAKE_MIN_HEXES = 8;
+const REBAKE_MIN_CELLS = 8;
 const BAKE_BUDGET_MS = 2.5;
 const MAX_BAKES_PER_FRAME = 2;
 const ALPHA_MAP_MAX_SIDE = 1024;   // ~1,8 px sprite'a Atlasa na teksel alfy — pod pokrycie brzegu
@@ -277,64 +277,23 @@ function gridLocalOffset(grid) {
   };
 }
 
-function isShardSolid(s) {
-  return !!s && s.active !== false && s.isDebris !== true;
+// Siatka komórek kadłuba na belkach (hexShips3D → beamShadowGrid): tablice typowane — cellX/cellY (piksel
+// sprite'a od lewego górnego rogu), cellActive (żywe), cellCount, cellRadius (koło opisane komórki).
+// Liczba komórek — mianownik utraty i klucz szablonu; 0 = siatka bez komórek.
+function cellCountOf(grid) {
+  return grid?.cellX instanceof Float32Array ? grid.cellCount | 0 : 0;
 }
 
-// Siatka KOMÓRKOWA (kadłub na belkach, hexShips3D → beamShadowGrid): zamiast obiektów
-// heksów tablice typowane — cellX/cellY (piksel sprite'a od lewego górnego rogu, jak
-// gridX/gridY heksów), cellActive (żywe), cellCount, cellRadius (koło opisane komórki).
-function isCellGrid(grid) {
-  return !!grid && grid.cellX instanceof Float32Array;
-}
-
-// Liczba komórek siatki (heksów albo węzłów) — mianownik utraty i klucz szablonu.
-function totalCountOf(grid) {
-  if (isCellGrid(grid)) return grid.cellCount | 0;
-  return Array.isArray(grid?.shards) ? grid.shards.length : 0;
-}
-
-// Tożsamość zawartości siatki: tablica heksów albo tablica komórek (nowa po zagęszczeniu).
-function contentRefOf(grid) {
-  return isCellGrid(grid) ? grid.cellX : grid.shards;
-}
-
-function hexRadiusOf(grid) {
-  if (isCellGrid(grid)) return grid.cellRadius || 5;
-  const shards = grid?.shards;
-  for (let i = 0; shards && i < shards.length; i++) {
-    const r = Number(shards[i]?.radius);
-    if (r > 0) return r;
-  }
-  return 5;
-}
-
-// Zasięg aktywnych heksów w układzie lokalnym mesha (px sprite'a względem
-// pozycji encji — ta sama klatka co translacje instancji w hexShips3D).
+// Zasięg żywych komórek w układzie lokalnym mesha (px sprite'a względem
+// pozycji encji — ta sama klatka co skóra kadłuba w hexShips3D).
 export function measureHullExtent(grid, out = {}) {
-  const shards = grid?.shards;
   const off = gridLocalOffset(grid);
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, count = 0;
-  if (isCellGrid(grid)) {
-    const cx = grid.cellX, cy = grid.cellY, alive = grid.cellActive, n = grid.cellCount | 0;
-    for (let i = 0; i < n; i++) {
-      if (!alive[i]) continue;
-      const x = cx[i] - off.x;
-      const y = cy[i] - off.y;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-      count++;
-    }
-    out.minX = minX; out.maxX = maxX; out.minY = minY; out.maxY = maxY; out.count = count;
-    return out;
-  }
-  for (let i = 0; shards && i < shards.length; i++) {
-    const s = shards[i];
-    if (!isShardSolid(s)) continue;
-    const x = (Number(s.gridX) || 0) - off.x;
-    const y = (Number(s.gridY) || 0) - off.y;
+  const cx = grid.cellX, cy = grid.cellY, alive = grid.cellActive, n = cellCountOf(grid);
+  for (let i = 0; i < n; i++) {
+    if (!alive[i]) continue;
+    const x = cx[i] - off.x;
+    const y = cy[i] - off.y;
     if (x < minX) minX = x;
     if (x > maxX) maxX = x;
     if (y < minY) minY = y;
@@ -347,12 +306,12 @@ export function measureHullExtent(grid, out = {}) {
 
 // Rozkład siatki SDF: teksel (i, j) ma środek w lokalnym
 // (originX + (i + 0,5)·texel, originY + (j + 0,5)·texel).
-export function planHullSdfLayout(extent, hexR, out = {}) {
+export function planHullSdfLayout(extent, cellR, out = {}) {
   if (!extent || !(extent.count > 0)) return null;
   const L = HULL_SDF_LAYER_SIZE;
   const M = HULL_SDF_MARGIN_TEXELS;
-  const w = extent.maxX - extent.minX + 2 * hexR;
-  const h = extent.maxY - extent.minY + 2 * hexR;
+  const w = extent.maxX - extent.minX + 2 * cellR;
+  const h = extent.maxY - extent.minY + 2 * cellR;
   const texel = Math.max(MIN_TEXEL_PX, Math.max(w, h) / (L - 2 * M - 1));
   const gw = Math.min(L, Math.ceil(w / texel) + 2 * M + 1);
   const gh = Math.min(L, Math.ceil(h / texel) + 2 * M + 1);
@@ -383,33 +342,22 @@ function sampleAlphaMap(map, u, v) {
   return (top * (1 - ty) + bot * ty) / 255;
 }
 
-// Maska sylwetki: środek teksela leży w którymś aktywnym heksie (koło
-// opisane — koła opisane na siatce heksów pokrywają płaszczyznę bez dziur),
-// a jeśli jest mapa alfy, alfa sprite'a ≥ HULL_SDF_ALPHA_INSIDE. hexOut
-// (opcjonalnie) dostaje samo pokrycie heksami — refineSdfEdges nie
+// Maska sylwetki: środek teksela leży w którejś żywej komórce (koło
+// opisane — koła opisane na siatce komórek pokrywają płaszczyznę bez dziur),
+// a jeśli jest mapa alfy, alfa sprite'a ≥ HULL_SDF_ALPHA_INSIDE. cellOut
+// (opcjonalnie) dostaje samo pokrycie komórkami — refineSdfEdges nie
 // doprecyzowuje brzegów wyrw, tylko krawędź narysowaną alfą.
-export function rasterizeHullMask(grid, layout, alphaMap, out, hexOut = null) {
+export function rasterizeHullMask(grid, layout, alphaMap, out, cellOut = null) {
   const { texel, gw, gh, originX, originY } = layout;
   out.fill(0, 0, gw * gh);
-  const cells = isCellGrid(grid);
-  const shards = grid.shards;
   const off = gridLocalOffset(grid);
-  const total = cells ? (grid.cellCount | 0) : shards.length;
+  const total = cellCountOf(grid);
+  const r = (grid.cellRadius || 5) / texel;
+  const r2 = r * r;
   for (let i = 0; i < total; i++) {
-    let r, fx, fy;
-    if (cells) {
-      if (!grid.cellActive[i]) continue;
-      r = (grid.cellRadius || 5) / texel;
-      fx = (grid.cellX[i] - off.x - originX) / texel - 0.5;
-      fy = (grid.cellY[i] - off.y - originY) / texel - 0.5;
-    } else {
-      const s = shards[i];
-      if (!isShardSolid(s)) continue;
-      r = (Number(s.radius) || 5) / texel;
-      fx = ((Number(s.gridX) || 0) - off.x - originX) / texel - 0.5;
-      fy = ((Number(s.gridY) || 0) - off.y - originY) / texel - 0.5;
-    }
-    const r2 = r * r;
+    if (!grid.cellActive[i]) continue;
+    const fx = (grid.cellX[i] - off.x - originX) / texel - 0.5;
+    const fy = (grid.cellY[i] - off.y - originY) / texel - 0.5;
     const x0 = Math.max(0, Math.ceil(fx - r));
     const x1 = Math.min(gw - 1, Math.floor(fx + r));
     const y0 = Math.max(0, Math.ceil(fy - r));
@@ -423,7 +371,7 @@ export function rasterizeHullMask(grid, layout, alphaMap, out, hexOut = null) {
       }
     }
   }
-  if (hexOut) hexOut.set(out.subarray(0, gw * gh));
+  if (cellOut) cellOut.set(out.subarray(0, gw * gh));
   if (alphaMap?.data && alphaMap.w > 0 && alphaMap.h > 0) {
     const invW = 1 / (Number(grid.srcWidth) || 1);
     const invH = 1 / (Number(grid.srcHeight) || 1);
@@ -446,13 +394,13 @@ export function rasterizeHullMask(grid, layout, alphaMap, out, hexOut = null) {
 // przemian odklejał się od burty i wchodził na nią ząbkami. Na tekselach
 // brzegowych (|sdf| < 1) szukamy więc, gdzie alfa przechodzi przez próg
 // wzdłuż normalnej (gradient SDF) — bisekcja w ±1,5 teksela — i to jest
-// odległość ze znakiem. Brzegi wyrw (pokrycie heksami) zostają binarne,
+// odległość ze znakiem. Brzegi wyrw (pokrycie komórkami) zostają binarne,
 // i tak są poszarpane; bez przejścia alfy w przedziale (róg, cienki
 // element) też zostaje wartość binarna.
 const REFINE_REACH = 1.5;
 const REFINE_STEPS = 10;
 
-export function refineSdfEdges(sdf, hexMask, grid, layout, alphaMap) {
+export function refineSdfEdges(sdf, cellMask, grid, layout, alphaMap) {
   if (!alphaMap?.data || !(alphaMap.w > 0) || !(alphaMap.h > 0)) return sdf;
   const { texel, gw, gh, originX, originY } = layout;
   const off = gridLocalOffset(grid);
@@ -466,9 +414,9 @@ export function refineSdfEdges(sdf, hexMask, grid, layout, alphaMap) {
       const i = row + x;
       const d0 = sdf[i];
       if (!(d0 > -1 && d0 < 1)) continue;
-      // Brzeg z alfy tylko wtedy, gdy całe otoczenie leży na heksach.
-      if (!hexMask[i] || !hexMask[i - 1] || !hexMask[i + 1] || !hexMask[i - gw] || !hexMask[i + gw] ||
-          !hexMask[i - gw - 1] || !hexMask[i - gw + 1] || !hexMask[i + gw - 1] || !hexMask[i + gw + 1]) continue;
+      // Brzeg z alfy tylko wtedy, gdy całe otoczenie leży na komórkach.
+      if (!cellMask[i] || !cellMask[i - 1] || !cellMask[i + 1] || !cellMask[i - gw] || !cellMask[i + gw] ||
+          !cellMask[i - gw - 1] || !cellMask[i - gw + 1] || !cellMask[i + gw - 1] || !cellMask[i + gw + 1]) continue;
       let nx = sdf[i + 1] - sdf[i - 1];
       let ny = sdf[i + gw] - sdf[i - gw];
       const len = Math.hypot(nx, ny);
@@ -513,25 +461,25 @@ export function encodeSdfLayer(sdf, gw, gh, dst, dstOffset = 0) {
 }
 
 let _maskScratch = null;
-let _hexScratch = null;
+let _cellScratch = null;
 let _sdfScratch = null;
 const _extentScratch = {};
 
 // Pieczenie jednej warstwy: maska -> SDF -> bajty w dst[dstOffset..]. Zwraca
-// rozkład siatki (wypełniony w layoutOut) albo null, gdy nie ma aktywnych heksów.
+// rozkład siatki (wypełniony w layoutOut) albo null, gdy nie ma żywych komórek.
 export function bakeHullSdfLayer(grid, alphaMap, dst, dstOffset = 0, layoutOut = {}) {
-  if (!grid || totalCountOf(grid) === 0) return null;
-  const layout = planHullSdfLayout(measureHullExtent(grid, _extentScratch), hexRadiusOf(grid), layoutOut);
+  if (!grid || cellCountOf(grid) === 0) return null;
+  const layout = planHullSdfLayout(measureHullExtent(grid, _extentScratch), grid.cellRadius || 5, layoutOut);
   if (!layout) return null;
   const n = HULL_SDF_LAYER_SIZE * HULL_SDF_LAYER_SIZE;
   if (!_maskScratch) {
     _maskScratch = new Uint8Array(n);
-    _hexScratch = new Uint8Array(n);
+    _cellScratch = new Uint8Array(n);
     _sdfScratch = new Float32Array(n);
   }
-  rasterizeHullMask(grid, layout, alphaMap, _maskScratch, _hexScratch);
+  rasterizeHullMask(grid, layout, alphaMap, _maskScratch, _cellScratch);
   signedDistanceField(_maskScratch, layout.gw, layout.gh, _sdfScratch);
-  refineSdfEdges(_sdfScratch, _hexScratch, grid, layout, alphaMap);
+  refineSdfEdges(_sdfScratch, _cellScratch, grid, layout, alphaMap);
   encodeSdfLayer(_sdfScratch, layout.gw, layout.gh, dst, dstOffset);
   return layout;
 }
@@ -704,7 +652,7 @@ function getAlphaMap(image) {
       map = { data, w, h };
     }
   } catch {
-    map = null;   // np. obraz z innej domeny — wtedy sama maska heksów
+    map = null;   // np. obraz z innej domeny — wtedy sama maska komórek
   }
   _alphaMaps.set(image, map || NO_ALPHA);
   return map;
@@ -712,12 +660,12 @@ function getAlphaMap(image) {
 
 function activeCountOf(grid) {
   const n = Number(grid.activeStructuralCount);
-  return Number.isFinite(n) ? n : totalCountOf(grid);
+  return Number.isFinite(n) ? n : cellCountOf(grid);
 }
 
-// Ile heksów musi ubyć, żeby sylwetka zasłużyła na własne pieczenie.
+// Ile komórek musi ubyć, żeby sylwetka zasłużyła na własne pieczenie.
 function significantLoss(grid) {
-  return Math.max(REBAKE_MIN_HEXES, totalCountOf(grid) * REBAKE_MIN_FRACTION);
+  return Math.max(REBAKE_MIN_CELLS, cellCountOf(grid) * REBAKE_MIN_FRACTION);
 }
 
 function nowMs() {
@@ -728,20 +676,20 @@ function newEntry() {
   return {
     layer: -1,
     layout: { texel: 1, gw: 0, gh: 0, originX: 0, originY: 0, spanPx: 0 },
-    shardsRef: null,
+    cellsRef: null,
     pivotX: 0,
     pivotY: 0,
     activeCount: -1,
     bakedAt: -Infinity,
-    empty: false       // ostatnie pieczenie nie znalazło aktywnego heksa
+    empty: false       // ostatnie pieczenie nie znalazło żywej komórki
   };
 }
 
-// Siatka ta sama, którą entry ostatnio piekło. Wraki idą z puli: ten sam
-// obiekt siatki dostaje nową tablicę heksów (i pivot), więc stara warstwa
-// należy wtedy do innego kadłuba.
+// Siatka ta sama, którą entry ostatnio piekło. Ten sam obiekt siatki dostaje
+// nowe tablice komórek (zagęszczenie magazynu ciała po rozpadzie) i pivot —
+// stara warstwa należy wtedy do innego kształtu.
 function sameGridAs(entry, grid) {
-  return entry.shardsRef === contentRefOf(grid) &&
+  return entry.cellsRef === grid.cellX &&
     entry.pivotX === (Number(grid.pivot?.x) || 0) && entry.pivotY === (Number(grid.pivot?.y) || 0);
 }
 
@@ -817,9 +765,9 @@ export const HullShadowSdf = {
 
   // Warstwa z sylwetką kadłuba (entry.layer, entry.layout) albo null, gdy
   // jeszcze nie ma czym rzucić cienia (brak budżetu na pieczenie w tej
-  // klatce) albo kadłub nie ma już żadnego aktywnego heksa.
+  // klatce) albo kadłub nie ma już żadnej żywej komórki.
   acquire(grid, frameNowMs = nowMs()) {
-    const total = totalCountOf(grid);
+    const total = cellCountOf(grid);
     if (!(total > 0)) return null;
     if (!(Number(grid.srcWidth) > 0) || !(Number(grid.srcHeight) > 0)) return null;
     this.ensureTexture();
@@ -843,9 +791,9 @@ export const HullShadowSdf = {
       entry = newEntry();
       this._perGrid.set(grid, entry);
     }
-    // Kadłub bez aktywnego heksa (hulk po mostku, pocięty wrak) nie rzuca
+    // Kadłub bez żywej komórki (hulk po mostku, pocięty wrak) nie rzuca
     // cienia — także z szablonu — i nie piecze się co klatkę, dopóki siatka
-    // albo liczba heksów się nie zmieni.
+    // albo liczba komórek się nie zmieni.
     if (entry.empty && entry.activeCount === active && sameGridAs(entry, grid)) return null;
     const sameShape = entry.layer >= 0 && sameGridAs(entry, grid);
     const lost = sameShape ? Math.abs(entry.activeCount - active) : 0;
@@ -853,7 +801,7 @@ export const HullShadowSdf = {
     const stale = lost > 0 && (age >= REBAKE_SMALL_MS || (age >= REBAKE_MS && lost >= minLoss));
     if (!sameShape || stale) {
       if (this._bake(entry, grid, image, frameNowMs)) return this._touch(entry);
-      // Pieczenie nie znalazło heksów i oddało warstwę: sameShape jest już
+      // Pieczenie nie znalazło komórek i oddało warstwę: sameShape jest już
       // nieaktualne, a _touch(entry) sięgnąłby po layers[-1].
       if (entry.empty) return null;
     }
@@ -873,8 +821,8 @@ export const HullShadowSdf = {
       byKey = new Map();
       this._templates.set(image, byKey);
     }
-    // Liczbowy klucz bez alokacji: wymiary siatki i liczba heksów.
-    const key = ((Number(grid.srcWidth) | 0) * 16384 + (Number(grid.srcHeight) | 0)) * 1048576 + totalCountOf(grid);
+    // Liczbowy klucz bez alokacji: wymiary siatki i liczba komórek.
+    const key = ((Number(grid.srcWidth) | 0) * 16384 + (Number(grid.srcHeight) | 0)) * 1048576 + cellCountOf(grid);
     let entry = byKey.get(key);
     if (!entry && create) {
       entry = newEntry();
@@ -914,7 +862,7 @@ export const HullShadowSdf = {
   },
 
   // false: brak budżetu albo warstwy (entry bez zmian, stara sylwetka zostaje)
-  // albo kadłub bez aktywnego heksa (entry.empty, warstwa oddana).
+  // albo kadłub bez żywej komórki (entry.empty, warstwa oddana).
   _bake(entry, grid, image, frameNowMs) {
     entry.empty = false;
     if (this._bakesLeft <= 0) return false;
@@ -927,13 +875,13 @@ export const HullShadowSdf = {
     }
     const L = HULL_SDF_LAYER_SIZE;
     const layout = bakeHullSdfLayer(grid, getAlphaMap(image), this.data, layer * L * L, entry.layout);
-    entry.shardsRef = contentRefOf(grid);
+    entry.cellsRef = grid.cellX;
     entry.pivotX = Number(grid.pivot?.x) || 0;
     entry.pivotY = Number(grid.pivot?.y) || 0;
     entry.activeCount = activeCountOf(grid);
     entry.bakedAt = frameNowMs;
     if (!layout) {
-      // Brak aktywnych heksów: warstwa wraca do puli, kadłub nie rzuca cienia.
+      // Brak żywych komórek: warstwa wraca do puli, kadłub nie rzuca cienia.
       this.layers[layer].owner = null;
       this.layers[layer].usedFrame = -1;
       entry.layer = -1;

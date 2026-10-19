@@ -1,7 +1,7 @@
 // ============================================================
 // Tarcza encji: most między shieldSystem.js (stan, obrys, trafienia — jak w grze)
 // a renderem WebGPU (pole w compute, siatka płytek-heksów, efekty). Encja w konwencji gry:
-// { x, y, angle, visual: { spriteScale }, hexGrid: { shards }, shield: { val, max } },
+// { x, y, angle, visual: { spriteScale }, shieldOutline: { cells, cellR }, shield: { val, max } },
 // y w dół; render w klatce lokalnej 3D grupy (pozycja (x, −y), obrót −kąt).
 // ============================================================
 import * as THREE from 'three/webgpu';
@@ -112,7 +112,7 @@ export class Tarcza {
     this.group = group;
     this.name = name;
     this.profile = getEntityShieldProfile(entity);
-    if (!this.profile) throw new Error(`${name}: brak profilu tarczy (hexGrid.shards?)`);
+    if (!this.profile) throw new Error(`${name}: brak profilu tarczy (shieldOutline.cells?)`);
     const { geometry, height } = buildDomeGeometry(this.profile);
     this.domeHeight = height;
     this.sizeK = clamp(this.profile.maxR / 900, 0.35, 1.2);

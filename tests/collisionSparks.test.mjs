@@ -157,3 +157,60 @@ test('SparkSystem3D: jasność iskry idzie atrybutem instancji (domyślnie 1)', 
     SparkSystem3D.dispose();
   }
 });
+
+// --- Szew styku: nie jaśniejszy od dawnego snopu, tylko dłuższy (przeniesione z collisionFx.test.mjs
+// przy usuwaniu silnika heksów, 2026-10-19) ---
+
+function countSparks(emitFn) {
+  const scene = new THREE.Scene();
+  SparkSystem3D.init(scene);
+  const original = SparkSystem3D.emit;
+  const hits = [];
+  SparkSystem3D.emit = (x, y) => { hits.push([x, y]); };
+  try {
+    emitFn();
+  } finally {
+    SparkSystem3D.emit = original;
+    SparkSystem3D.dispose();
+  }
+  return hits;
+}
+
+test('szew dzieli budżet iskier między punkty, nie mnoży go przez ich liczbę', () => {
+  const approachSpeed = 40;
+  const slideSpeed = 60;
+  const budget = 48;
+  const points = new Float32Array(6 * 4);
+  for (let p = 0; p < 6; p++) {
+    points[p * 4] = p * 50;      // szew długi na 250 jednostek
+    points[p * 4 + 1] = 0;
+    points[p * 4 + 2] = 0;
+    points[p * 4 + 3] = 1;
+  }
+
+  const burst = countSparks(() => {
+    SparkSystem3D.grindingBurst(0, 0, 0, -1, 1, 0, approachSpeed, slideSpeed, 0, 0, budget);
+  });
+  const seam = countSparks(() => {
+    SparkSystem3D.grindingSeam(points, 6, 1, 0, approachSpeed, slideSpeed, 0, 0, budget);
+  });
+
+  assert.equal(burst.length, budget, 'snop wysypuje dokładnie podany budżet');
+  assert.equal(seam.length, burst.length, 'ten sam budżet iskier, inny rozkład');
+
+  // Snop z centroidu siedzi wokół jednego punktu; szew rozkłada się na całej długości.
+  const seamSpanX = Math.max(...seam.map((p) => p[0])) - Math.min(...seam.map((p) => p[0]));
+  const burstSpanX = Math.max(...burst.map((p) => p[0])) - Math.min(...burst.map((p) => p[0]));
+  assert.ok(seamSpanX > 200, `iskry muszą pokryć szew (rozpiętość ${seamSpanX})`);
+  assert.ok(seamSpanX > burstSpanX * 0.5);
+});
+
+test('jeden punkt szwu spada z powrotem na dawny snop', () => {
+  const points = new Float32Array([120, -40, 0, 1]);
+  const seam = countSparks(() => {
+    SparkSystem3D.grindingSeam(points, 1, 1, 0, 40, 60, 0, 0, 30);
+  });
+  assert.equal(seam.length, 30);
+  const cx = seam.reduce((sum, p) => sum + p[0], 0) / seam.length;
+  assert.ok(Math.abs(cx - 120) < 200, 'fallback iskrzy w podanym punkcie');
+});

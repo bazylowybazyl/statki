@@ -4,8 +4,8 @@ Stan 2026-09-30. Druga wersja dema rdzenia: **logika na silniku belek** (ten sam
 `HullBodies`) i **wybuch na pulach WebGPU** (objętości TSL, dym compute, siatka świateł, mapa ran).
 Pierwsza wersja (heksy, `dema/rdzen-demo.html`, `src/game/shipCore.js`, `src/3d/coreFx3D.js`,
 `docs/PORT-rdzen.md`) stanęła na silniku heksów, który od zadania 21 nie tworzy już ciał w grze — do
-gry się nie dało jej wpiąć. Zostaje do porównania; liczby modelu (stany, profile klas, warianty)
-są wspólne (`src/game/coreModel.js`).
+gry się nie dało jej wpiąć; usunięta 2026-10-19 razem z silnikiem heksów. Liczby modelu (stany, profile
+klas, warianty) są wspólne (`src/game/coreModel.js`).
 
 **W grze od 2026-10-02** (klej `src/game/reactorCoreGame.js`, stan § 7) — zastąpił losowy wybuch reaktora przy śmierci okrętu.
 
@@ -36,7 +36,7 @@ bloom/ekspozycja, model reaktora).
 
 | plik | rola |
 |---|---|
-| `src/game/coreModel.js` | liczby i czyste funkcje modelu (stany, profile klas, warianty i ich wagi, wybuch, strumień, kula, wtórne) — wyjęte bez zmian z `shipCore.js`, który je re-eksportuje |
+| `src/game/coreModel.js` | liczby i czyste funkcje modelu (stany, profile klas, warianty i ich wagi, wybuch, strumień, kula, wtórne) — wyjęte bez zmian z dawnego `shipCore.js` (usunięty 2026-10-19) |
 | `src/game/reactorCore.js` | **logika na belkach**: komora z komórek siatki, pancerz, stany, odcięcie, łańcuch, detonacja (rozpad, krater, pęknięcia), fala na sąsiadów, strumień, kula, wybuchy wtórne, lock; bez DOM i three |
 | `src/3d/reactorBlast/reactorBlastFx.js` | **reżyser obrazu** (krok `Core3D.addFxStep` „reaktor-rdzen”): stopienie, detonacja, strumień, kula, wtórne |
 | `src/3d/reactorBlast/plasmaFireballs.js` | nowa pula: kula plazmy / ognia z objętości (TSL, 22 kroki marszu, plazma → ogień → kłęby) i kula plazmy wariantu `orb` (wirujący torus) |
@@ -147,8 +147,8 @@ i A/B tej samej klatki z bloomem (`__rdzen2.still(ukryte)` — dt = 0, zegary st
 Wzorzec: `dema/rdzen-webgpu/swiat.js` (`createShip`, `World.step`, `_process`, `_detonate`).
 
 1. **Markery.** Dziś wszystkie kadłuby mają `cores: []`. Miejsca z dema (`dema/rdzen-hulls-data.js`,
-   reguła „komora poza strefami mostków we wszystkich wariantach”, strażnik w
-   `tests/shipCore.test.mjs`) do `hardpointEditorDefaults.js`; poprawki 1–4 z `PORT-rdzen.md` § 5
+   reguła „komora poza strefami mostków we wszystkich wariantach”, strażnik i testy TODO poprawek 1 i 3
+   w `tests/reactorEditorCores.test.mjs`) do `hardpointEditorDefaults.js`; poprawki 1–4 z `PORT-rdzen.md` § 5
    (podwójna skala rdzeni gracza, `pirate_` → Bellator, `normalizeEditorCore`, losowy crit).
 2. **Montaż.** Po `HullBodies.createHull(encja, …)` (NPC, gracz):
    `attachReactorCores(encja, markery, { pngWidth, pngHeight, classId?, color })`.
@@ -188,7 +188,7 @@ node scripts/webgpu/rdzen-webgpu.mjs --tryb test
 node scripts/webgpu/rdzen-webgpu.mjs --tryb zrzuty --scena jet --czasy 3.1,3.5 [--sledz orb --zoom 1.3] [--czyste 1]
 node scripts/webgpu/rdzen-webgpu.mjs --tryb pasma --scena meltdown --czasy 7.25,7.3 --grupy "ReactorPlasmaFireballs;ReactorGlow"
 node scripts/webgpu/rdzen-webgpu.mjs --tryb wydajnosc --wariant shatter
-node --test tests/reactorCore.test.mjs tests/shipCore.test.mjs tests/reactor3D.test.mjs
+node --test tests/reactorCore.test.mjs tests/reactorEditorCores.test.mjs tests/reactor3D.test.mjs
 ```
 
 Wyniki w `.tmp/rdzen-webgpu/<tryb>/` (poza repo). API strony: `window.__rdzen2` (`scene`, `setVariant`,

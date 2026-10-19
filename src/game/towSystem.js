@@ -164,11 +164,6 @@ function wakeBody(body, onWake = null) {
     body._wreckSleeping = false;
     body._wreckSleepTimer = 0;
   }
-  if (body.hexGrid?.isSleeping) {
-    body.hexGrid.isSleeping = false;
-    body.hexGrid.sleepFrames = 0;
-    body.hexGrid.wakeHoldFrames = Math.max(20, body.hexGrid.wakeHoldFrames | 0);
-  }
   if (typeof body.onTowWake === 'function') body.onTowWake(body);
   if (onWake) onWake(body);
 }

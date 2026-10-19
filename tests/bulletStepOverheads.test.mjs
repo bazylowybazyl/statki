@@ -11,8 +11,6 @@ import {
 import { BeltGiants } from '../src/game/asteroidBeltGiants.js';
 import { CanvasVFX } from '../src/vfx/canvasParticleSystem.js';
 import { fxRandom } from '../src/3d/fx/fxRandom.js';
-import { DestructorSystem, disposeHexBody } from '../src/game/destructor.js';
-import { makeDestructorHull } from './helpers/destructorHull.mjs';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 const html = readIndexHtml();
@@ -161,22 +159,28 @@ test('kąt tarczy liczony z dwóch liczb, bez obiektu pozycji', () => {
   assert.doesNotMatch(angle, /\{ x:|\{x:/);
 });
 
-test('sweep po odcinku [0, limit] znajduje ten sam heks co pełny, gdy leży przed limitem', () => {
-  const e = makeDestructorHull({ width: 160, height: 60, x: 0, y: 0, angle: 0.3 });
+test('sweep po odcinku [0, limit] znajduje ten sam węzeł co pełny, gdy leży przed limitem', async () => {
+  // Kadłub na belkach (HullBodies.sweep — wynik we współdzielonym hullSweepResult, więc t i węzeł
+  // pełnego sweepu kopiujemy przed skróconym).
+  globalThis.window = globalThis.window || {};
+  window.wrecks = window.wrecks || [];
+  const { HullBodies } = await import('../src/game/hullBodies.js');
+  const { makeHullTarget } = await import('./helpers/beamShotHarness.mjs');
+  const e = makeHullTarget('kadłub', { x: 0, y: 0, angle: 0.3, width: 160, height: 60 });
   try {
     let checked = 0;
     for (let k = 0; k < 40; k++) {
       const y = -40 + k * 2;
       const x0 = -200, y0 = y, x1 = 200, y1 = y + 15;
-      const full = DestructorSystem.sweepImpact(e, x0, y0, x1, y1, 2);
+      const full = HullBodies.sweep(e, x0, y0, x1, y1, 2);
       const fullT = full ? full.t : -1;
-      const fullShard = full ? full.hitShard : null;
+      const fullNode = full ? full.node : -1;
       for (const limit of [0.2, 0.45, 0.7]) {
-        const part = DestructorSystem.sweepImpact(e, x0, y0, x0 + (x1 - x0) * limit, y0 + (y1 - y0) * limit, 2);
+        const part = HullBodies.sweep(e, x0, y0, x0 + (x1 - x0) * limit, y0 + (y1 - y0) * limit, 2);
         if (fullT >= 0 && fullT < limit) {
-          assert.ok(part, `k=${k} limit=${limit}: skrócony sweep zgubił heks`);
+          assert.ok(part, `k=${k} limit=${limit}: skrócony sweep zgubił węzeł`);
           assert.ok(Math.abs(part.t * limit - fullT) < 1e-9, `k=${k}: t ${part.t * limit} ≠ ${fullT}`);
-          assert.equal(part.hitShard, fullShard);
+          assert.equal(part.node, fullNode);
           checked++;
         } else if (part) {
           assert.ok(part.t * limit >= fullT - 1e-9 || fullT < 0, `k=${k}: skrócony sweep trafił wcześniej niż pełny`);
@@ -185,13 +189,13 @@ test('sweep po odcinku [0, limit] znajduje ten sam heks co pełny, gdy leży prz
     }
     assert.ok(checked > 10, `za mało przypadków porównania: ${checked}`);
   } finally {
-    disposeHexBody(e);
+    HullBodies.release(e);
   }
   const step = sliceFunction(html, 'function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {');
   const shieldAt = step.indexOf('getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y)');
-  // Sweep kadłuba na belkach (HullBodies) — heksów w grze nie ma od etapu 8 portu belek.
+  // Sweep kadłuba na belkach (HullBodies).
   const sweepAt = step.indexOf('hullSweepImpact(realNpc');
   assert.match(step, /const hullSweepable = !!realNpc\.beamHull;/);
-  assert.ok(shieldAt > 0 && sweepAt > shieldAt, 'tarcza liczona przed sweepem heksów');
+  assert.ok(shieldAt > 0 && sweepAt > shieldAt, 'tarcza liczona przed sweepem kadłuba');
   assert.match(step, /if \(shieldT >= 0 && shieldT < sweepLimit\) sweepLimit = shieldT;/);
 });

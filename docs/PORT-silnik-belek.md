@@ -3,8 +3,8 @@
 Stan: 2026-09-25, etap 1 wdrożony — **statki gracza, P2, NPC i ich wraki są na silniku belek**
 (`src/game/destructorBeams3D.js`, tryb płaski, solver lokalny). Encja z kadłubem ma `beamHull`,
 nie `hexGrid`. Od 2026-10-11 (etap 8, § „Etap 8” niżej) **gra w ogóle nie ładuje heksowego destruktora**
-(`src/game/destructor.js`, solver sprężyn GPU, arena heksów, siatka kontaktów) — zostaje w repo dla dem
-heksowych (`dema/mostki-demo.html`, `dema/rdzen-demo.html`) i ich testów.
+(`src/game/destructor.js`, solver sprężyn GPU, arena heksów, siatka kontaktów); 2026-10-19 (etap 9, § „Etap 9”)
+**usunięty z repo** razem z demami heksowymi i rusztowaniem workera fizyki v2.
 
 ## Pliki
 
@@ -319,8 +319,8 @@ skór kawałków w klatce (`worldBodies3D.stepSkinBake` 39–49 ms po `breakPiec
    heksów i bez „Deformacji”.
 7. Asteroidy na belkach (materiał kruchy). Do tego czasu statek bez `hexGrid` ma z heksową
    asteroidą kolizję KOŁOWĄ (`asteroidField3D`), bez zgniotu.
-8. ~~Usunięcie starego silnika z gry~~ — **zrobione 2026-10-11**, § „Etap 8” niżej. Pliki silnika i jego testy
-   zostają, dopóki używają ich dema heksowe.
+8. ~~Usunięcie starego silnika z gry~~ — **zrobione 2026-10-11**, § „Etap 8” niżej. Pliki silnika, dema heksowe
+   i ich testy usunięte 2026-10-19 (§ „Etap 9”).
 
 Wydajność (zmierzone 2026-09-25, headless, bez profilera — sam start profilera CDP pauzuje
 stronę na ~0,5 s i fałszuje pomiar klatek; skrypty były w scratchpadzie sesji):
@@ -380,6 +380,34 @@ w KAŻDEJ grze tworzył **drugie `GPUDevice`** (osobne od Core3D) z pipeline'em 
 Zostaje do sprzątnięcia (martwe, ale już bez silnika): `spawnFlyingHexDebris` / `drawFlyingHexDebris`
 i drobne testy `hexGrid` w `index.html`; ścieżka heksowa `hexShips3D.js` (potrzebna demom); gałęzie `hexGrid`
 w `towSystem.js`, `salvage.js`, `shipBridgeRuntime.js` (korzystają z nich destructor.js i dema heksowe).
+— **sprzątnięte w etapie 9.**
+
+## Etap 9: silnik heksów usunięty z repo (2026-10-19)
+
+Na prośbę użytkownika usunięte w całości: silnik heksów (`destructor.js`, `destructor3D.js`, `destructorGpuSoftBody*.js`,
+`hexArenaBridge.js`, `hexContactGrid.js`, `shipCore.js`, `destructorConfig.js`, `hexBodyHooks.js`, `hexGridSpace.js`),
+żar rdzeni dem heksowych (`coreFx3D.js` z grafem TSL), dema heksowe (`mostki-demo`, `rdzen-demo` z narzędziami pomiarów
+i zrzutów, zepsute już `asteroidy.html`), rusztowanie workera fizyki v2 (`src/physics/`, `src/benchmark/`,
+`?workerPhysicsV2`, `npm run benchmark:100k`) i ich testy. Przed usunięciem przeniesione: edytor stref mostka do dema
+belkowego (`dema/mostki-webgpu.html` — klawisz E albo `?edit=1`, eksport do `BRIDGE_LAYOUT_PROPOSALS`; harness
+`scripts/webgpu/mostki-webgpu.mjs --tryb edytor`), testy TODO rdzeni edytora (`tests/reactorEditorCores.test.mjs`),
+ogólne testy zimnych wraków (`tests/coldWrecks.test.mjs`), iskier szwu (`tests/collisionSparks.test.mjs`), ustępowania
+AI przy styku kadłubów i ścieżek trafień (`tests/hullHitPaths.test.mjs`) — teraz na kadłubach belkowych.
+`segmentCircleToi` (pocisk kontra cel kołowy) mieszka w `src/game/projectileTrajectory.js`.
+
+Heksowe połówki modułów wspólnych zniknęły: siatka heksów, płyta pancerza LOD i pula szczątków GPU w `hexShips3D.js` /
+`hexShips3D.tsl.js` (zostały warianty `beam`, `beamBatch`, `cloakDist`), latające heksy i gałęzie `hexGrid` w `index.html`,
+wersja heksowa mostków (`shipBridge.js`, `shipBridgeRuntime.js`, `bridge3D*.js`, `bridgeFx3D.js` — model mostka bit w bit
+jak przed), zrzuty heksów w `coldWrecks.js` (tylko migawki belek), `isAsteroidHex` (radar, łup, migawka renderu), obrys
+tarczy z heksów (`shieldSystem.js` — kadłub na belkach albo jawny `entity.shieldOutline` dla dem), pieczenie cienia SDF
+z heksów (`hullShadowSdf.js` — siatka komórek), zapas renderu do smugi zimnego wraku (`captureColdWreckImpostor` — liczy ją
+gra, `coldWreckView.js`), `covers()` modelu reaktora (jedynym odbiorcą był `coreFx3D.js`); `reactor3D.js` wymaga ramy
+rdzenia `frameOf` (`reactorCoreFrame`). Strażnik: `tests/graBezHeksow.test.mjs` (graf gry bez plików silnika heksów
+i `src/physics/`, kod gry bez heksowych pól i API).
+
+Zostaje celowo — nazwy z czasów heksów, bez heksowej logiki: `hexShips3D.js`, `HexBodyImpostorBatch`, `destructorBeams3D.js`,
+`hideHexVisual`, `applyHexImpact` (argument `shard` zawsze `null`), jednostka strojenia `HEX_PITCH_PX` / `hexPerNode`,
+`liveHexes` w streszczeniu zimnego wraku, `isAsteroidHex: false` w obiekcie wraku `hullBodies.js` (wyjątek strażnika).
 
 ## Testy i narzędzia
 

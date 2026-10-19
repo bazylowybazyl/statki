@@ -104,10 +104,8 @@ test('bramka zamrażania: poza kadrem tak, w kadrze ukryty mgłą nie, przy peł
   const plain = { ...COLD_WRECK_CONFIG, nearExtras: false };
   assert.equal(V.coldFreezeVisuallySafe(e, view(CULL, 0.001), plain), true);
   assert.equal(V.coldFreezeVisuallySafe(e, view(CULL, 2), plain), false);
-  // Heksy (bez kadłuba na belkach) — reguła renderu przez fallback.
-  const hex = { x: 0, y: 0, hexGrid: { srcWidth: 100, srcHeight: 50 } };
-  assert.equal(V.coldFreezeVisuallySafe(hex, v, null, () => false), false);
-  assert.equal(V.coldFreezeVisuallySafe(hex, v, null, null), true);
+  // Wrak bez kadłuba na belkach — w obrazie nie ma czego zmienić.
+  assert.equal(V.coldFreezeVisuallySafe({ x: 0, y: 0 }, v), true);
   HullBodies.release(e); HullBodies.release(far);
 });
 

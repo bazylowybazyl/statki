@@ -41,8 +41,8 @@ export class MirrorEntity {
     this.__hardpointScale = undefined; this.__hardpointScaleX = undefined; this.__hardpointScaleY = undefined;
     // flagi
     this.dead = false; this.isWreck = false; this.isFragment = false; this.isPlayer = false; this.isCold = false;
-    this.isPirate = false; this.friendly = false; this.hideHexVisual = false; this.hexGrid = null;
-    this.isRingSegment = false; this.isAsteroidHex = false; this.isCapitalShip = false; this.isBridgeHulk = false;
+    this.isPirate = false; this.friendly = false; this.hideHexVisual = false;
+    this.isRingSegment = false; this.isCapitalShip = false; this.isBridgeHulk = false;
     this.lightsOff = false; this.roadLightsOff = false;
     this.__lightsHidden = false; this.__enginesHidden = false; this.__turretsHidden = false;
     this.__editorBoost = false; this.__fSysBoost = false; this.__warpPreview = false;
@@ -204,7 +204,6 @@ export function applyEntityPage(rm, m, v, s) {
   m.friendly = (flags & ENT_FLAG.FRIENDLY) !== 0;
   m.hideHexVisual = (flags & ENT_FLAG.HIDE_HEX) !== 0;
   m.isRingSegment = (flags & ENT_FLAG.RING_SEGMENT) !== 0;
-  m.isAsteroidHex = (flags & ENT_FLAG.ASTEROID_HEX) !== 0;
   m.isCapitalShip = (flags2 & ENT_FLAG2.CAPITAL) !== 0;
   m.isBridgeHulk = (flags & ENT_FLAG.BRIDGE_HULK) !== 0;
   m.lightsOff = (flags & ENT_FLAG.LIGHTS_OFF) !== 0;
@@ -470,7 +469,6 @@ export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null, brid
       m._bridgeOid = bid;
     } else st = reconcileDescriptor(db, pool, used);
     st.backend = bridgeBackends ? (bridgeBackends[db.backendKind] || null) : null;
-    st.grid = null;
     m.bridgeState = st;
   } else { m.bridgeState = null; m._bridgeOid = 0; }
   const dh = desc.hull;

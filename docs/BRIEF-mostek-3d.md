@@ -1,5 +1,9 @@
 # Zadanie: model 3D mostka — Atlas, Bellator, Iron Skull (jedyny element 3D na kadłubie)
 
+> Historyczny brief zadania (wrzesień 2026, kadłuby heksowe). Wersję heksową mostków i demo `mostki-demo`
+> usunięto 2026-10-19 razem z silnikiem heksów — dziś mostki stoją na komórkach siatki belek: `docs/PORT-mostki.md`
+> § 9, nowy kadłub — `docs/BRIEF-mostek-nowego-kadluba.md`, demo i edytor stref — `dema/mostki-webgpu.html`.
+
 ## Kontekst — co już jest
 
 Mechanika mostków jest w grze od 2026-09-24 (zniszczenie mostka = utrata dowodzenia = kill):

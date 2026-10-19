@@ -4,44 +4,10 @@
 // (hexBodyImpostorBatch.js). Zimny wrak nie ma meshy ani siatki, nie rzuca cienia,
 // nie świeci i nie ma wieżyczek — zostaje po nim jedna smuga.
 //
-// Zimny wrak stoi w miejscu, więc transformację sceny liczymy RAZ, przy
-// zamrożeniu (prepareColdWreckImpostor). Co klatkę zostaje test pudła kadru
-// i kilka liczb zapisanych do batcha — bez obiektów per wrak. Moduł nie zna
-// three.js: batch dostaje z zewnątrz, więc logikę sprawdza się w node.
-
-/**
- * Zapisuje na zrzucie gotową smugę: `snapshot.impostor`. Przekształcenie jak
- * w updateEntityMesh (hexShips3D): T(ex, -ey) · Rz(rot) · S(sx, -sy), środek
- * smugi = środek aktywnych heksów (snapshot.extent), kolor = snapshot.color.
- * Ta sama geometria co smuga gorącego wraku — zamrożenie nie przeskakuje obrazu.
- */
-export function prepareColdWreckImpostor(snapshot, worldX, worldY, rot, scaleX, scaleY) {
-  const ext = snapshot?.extent;
-  if (!ext) return null;
-  const offX = ext.cx * scaleX;
-  const offY = -ext.cy * scaleY;
-  const c = Math.cos(rot);
-  const s = Math.sin(rot);
-  const sceneX = worldX + offX * c - offY * s;
-  const sceneY = -worldY + offX * s + offY * c;
-  const halfW = ext.halfW * scaleX;
-  const halfH = ext.halfH * scaleY;
-  const color = snapshot.color || { r: 0.35, g: 0.37, b: 0.4 };
-  const out = snapshot.impostor || (snapshot.impostor = {});
-  out.x = sceneX;
-  out.y = sceneY;
-  out.rot = rot;
-  out.halfW = halfW;
-  out.halfH = halfH;
-  out.r = color.r;
-  out.g = color.g;
-  out.b = color.b;
-  // Środek w układzie ŚWIATA (scena ma odwróconą oś Y) i zasięg do cullingu.
-  out.wx = sceneX;
-  out.wy = -sceneY;
-  out.reach = Math.hypot(halfW, halfH);
-  return out;
-}
+// Zimny wrak stoi w miejscu, więc smugę (`snapshot.impostor`: x, y, rot, halfW, halfH, r, g, b, wx, wy,
+// reach, opacity) liczy RAZ, przy zamrożeniu, gra (src/game/coldWreckView.js captureBeamColdImpostor — zasięg
+// żywych węzłów kadłuba na belkach). Co klatkę zostaje test pudła kadru i kilka liczb zapisanych do batcha —
+// bez obiektów per wrak. Moduł nie zna three.js: batch dostaje z zewnątrz, więc logikę sprawdza się w node.
 
 // Odległości kandydatów przy przepełnieniu batcha — rośnie tylko wtedy, gdy
 // zimnych w kadrze jest więcej niż kiedykolwiek wcześniej.

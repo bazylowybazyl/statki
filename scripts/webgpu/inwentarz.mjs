@@ -35,7 +35,7 @@ const SCOPE_RULES = POZA_PORTEM.map((w) => ({ re: new RegExp(`^${escRe(w.plik)}$
 // Uwagi ręczne do tabel (to, czego skan nie wyczyta).
 const NOTES = {
   'src/3d/core3d.js': 'serce renderu: WebGPURenderer, passy scen do composerTarget, post w TSL (src/3d/tsl/postGry.js, bloom compute), maska słońca w TSL, klatka efektów GPU (Core3D.fx), rejestr rozgrzewki (Core3D.warmup)',
-  'src/3d/hexShips3D.js': 'kadłuby: skóra belek w partiach (hullSkinBatch.js), grafy TSL w hexShips3D.tsl.js; gałąź heksów (HEX/ARMOR/DEBRIS) rysuje w grze tylko to, co ma hexGrid — stoją na niej warsztaty mostki-demo, rdzen-demo i pomiar drżenia',
+  'src/3d/hexShips3D.js': 'kadłuby: skóra belek w partiach (hullSkinBatch.js), grafy TSL w hexShips3D.tsl.js (beam, beamBatch, cloakDist); gałąź heksów (HEX/ARMOR/DEBRIS) usunięta 2026-10-19 z silnikiem heksów',
   'src/3d/sparkSystem3D.js': 'API iskier gry na puli z dema rakiet (src/3d/rockets/sparks.js) w scenie Core3D — zadanie 19',
   'src/game/rockets/rocketSim.js': 'lot i trafienia rakiet (rozgrywka); wygląd — reżyser efektów z dema rakiet w Core3D (src/3d/rockets/, zadanie 19)',
   'src/3d/explosions/explosionFx.js': 'wybuchy WebGPU (2026-10-07, zamiast reactorblow.js): kula ognia i dym z gazu na siatce 3D (src/3d/gas/, compute), żar, błyski, pule gry (iskry, odłamki, dym rakiet), światła w siatce, fala jako sama refrakcja — krok Core3D.fx',
@@ -50,7 +50,7 @@ const NOTES = {
   'src/3d/beamDebris3D.js': 'pula odłamków dem destruktora (własny WebGLRenderer) — geometria dla gry w metalDebrisGeometry.js',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
-  'src/3d/coldWreckImpostors.js': 'uśpione (wymaga hexGrid)',
+  'src/3d/coldWreckImpostors.js': 'smugi zimnych wraków na belkach (rekord smugi z migawki liczy gra — src/game/coldWreckView.js)',
   'src/3d/asteroids/asteroidBelt.js': 'pas asteroid z dema WebGPU (zadanie 21): klej klatki jako krok Core3D.fx, warstwy passów gry i tła',
   'src/3d/asteroids/beltMedium.js': 'ośrodek objętościowy pasa (zadanie 21) — czytają go skały, minerały, olbrzymy i kadłuby (hak hullVolume)'
 };
@@ -409,9 +409,8 @@ ${fileTable(groups['poza portem'])}
 Moduły rozwijane poza grą — Z4 \`shipProxyBatch3D\`, Z5 \`cargoContainers3D\` / \`cargoDrones3D\`, Z7 \`portBuildings/*\`,
 \`beamShips3D\` / \`beamDebris3D\` dem destruktora — zostają w GLSL (na WebGPU zamienniki) i przejdą na TSL przy swojej
 integracji (tabela „Poza grą” niżej). Asteroidy: stare pole, tło pasa i klej WebGL usunięte w zadaniu 21 — pas z dema
-WebGPU (\`src/3d/asteroids/\`) jest w porcie. Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula
-szczątków GPU) nie ma w grze ciał (stare asteroidy usunięte); stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\` i pomiar
-drżenia (PLAN.md §1 p. 7). \`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
+WebGPU (\`src/3d/asteroids/\`) jest w porcie. Ścieżkę heksów w \`hexShips3D.js\` (HEX/ARMOR/DEBRIS, pula szczątków GPU)
+usunięto 2026-10-19 razem z silnikiem heksów i jego demami (\`mostki-demo\`, \`rdzen-demo\`).
 
 ## Poza grą (dema, narzędzia, nieużywane)
 

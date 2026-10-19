@@ -1,11 +1,9 @@
 ﻿import { getEntityPosX, getEntityPosY, getEntityScaleX, getEntityScaleY, getEntityScale } from '../render/drawBox.js';
 import * as THREE from 'three';
-// Heksy (dema mostków, rdzenia, asteroid): strojenie i żar bez silnika, reszta przez haki, które
-// wpisuje destructor.js — gra go nie ładuje (etap 8, docs/PORT-silnik-belek.md), więc bytów z hexGrid nie ma.
-import { DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructorConfig.js';
+// Kadłuby na silniku belek (hullBodies.js). Nazwa modułu z czasów kadłubów heksowych — ścieżkę siatki heksów,
+// płyty pancerza LOD i pulę szczątków GPU usunięto 2026-10-19 razem z silnikiem heksów (destructor.js).
 import { isCanvasSource } from './canvas2d.js';
 import { RenderWorld } from '../render/renderWorld.js';
-import { HexBodyHooks } from '../game/hexBodyHooks.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { WeaponFx } from './weapons/weaponFx.js';
@@ -36,7 +34,7 @@ import {
   isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX, WRECK_IMPOSTOR_PX, wreckImpostorEnterPx,
   beamBodyRadiusPx as beamBodyRadiusPxAt
 } from '../render/drawBox.js';
-import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
+import { pushColdWreckImpostors } from './coldWreckImpostors.js';
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
 // Oświetlenie kadłubów v2 (2026-10-06): model PBR (hullLighting.js) i mapy powierzchni ze sprite'ów.
@@ -46,13 +44,11 @@ import { EngineFrame } from './engineFrame.js';
 import { MAIN_EXHAUST_PALETTES } from '../data/engineFx.js';
 import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
 import {
-  DEBRIS_SHARED,
   HULL_EMPTY_SPRITE_TEXTURE,
   HULL_FLAT_NORMAL_TEXTURE,
   HULL_LIGHT_ZONE_OFFSET,
   HULL_SHARED,
   HULL_WARP_OFF,
-  HullDebrisNodeMaterial,
   HullLightStore,
   HullNodeMaterial,
   HullObjectStore
@@ -64,8 +60,8 @@ import { HullSkinBatch } from './hullSkinBatch.js';
 import { HullDamageMap } from './hullDamageMap.js';
 import { cloakHidesShadow, cloakHullHolder, syncCloakDist, renderCloakLooks } from './cloak/hullCloak.js';
 
-// Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
-// są w TSL: src/3d/hexShips3D.tsl.js — graf na wariant, wartości per encja
+// Materiały kadłubów (skóra belek, partia skór, maskowanie) są w TSL:
+// src/3d/hexShips3D.tsl.js — graf na wariant, wartości per encja
 // w material.uniforms (obiekty `{ value }` jak w ShaderMaterial), lampy statku
 // i strefy dysz w buforze storage HullLightStore (slot na kadłub). Port WebGPU,
 // zadanie 04: kod aktualizacji niżej pisze `material.uniforms.X.value` jak dawniej;
@@ -101,27 +97,21 @@ const state = {
   worldOmniLights: [],
   navLightSprites: [],
   staleEntities: [],
-  validEntitySet: new Set(),
-  damageTintEnabled: true
+  validEntitySet: new Set()
 };
 
-const HEX_LOD = Object.freeze({ FULL: 0, HYBRID: 1, IMPOSTOR: 2 });
-// Poniżej tego promienia ekranowego CIAŁA (nie heksa) wrak przestaje być
-// rysowany własnym wywołaniem i wpada do wspólnego batcha smug. Dotyczy tylko
-// wraków i fragmentów — żywe kadłuby mają swoją ścieżkę LOD. Histereza trzyma
-// przełączenie z dala od progu, żeby nie migotało przy powolnym zoomie.
+// Poniżej tego promienia ekranowego CIAŁA wrak przestaje być rysowany własną
+// skórą i wpada do wspólnego batcha smug. Dotyczy tylko wraków i fragmentów —
+// żywe kadłuby rysują się zawsze skórą. Histereza trzyma przełączenie z dala
+// od progu, żeby nie migotało przy powolnym zoomie.
 const WRECK_IMPOSTOR_EXIT_MUL = 1.35;
-const HEX_LOD_FULL_PX = 1.25;
-const HEX_LOD_IMPOSTOR_PX = 0.45;
-const HEX_LOD_HYSTERESIS = 0.20;
-const HEX_LOD_FADE_MS = 150;
 
+// Liczniki klatki (PerfHUD „LOD kadłubów pełne/smugi”, culling, cienie). `fullHexes` / `totalStructuralHexes` —
+// węzły kadłubów na belkach (nazwy z czasów heksów).
 const lodFrameStats = {
   fullBodies: 0,
-  hybridBodies: 0,
   impostorBodies: 0,
   fullHexes: 0,
-  hybridHexes: 0,
   totalStructuralHexes: 0,
   // Bilans cullingu. Bez tego nie da sie odpowiedziec na pytanie „czy odwrocenie
   // kamery cokolwiek zdejmuje" — reszta licznikow patrzy dopiero NA TO, co juz
@@ -230,11 +220,11 @@ function refreshTuneEpoch() {
 function ensureShipLightPanelApi() { }
 
 function usesBillboardLighting(entity) {
-  return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardLighting === true;
+  return entity?.visual?.preserveBillboardLighting === true;
 }
 
 function usesBillboardOrientation(entity) {
-  return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardOrientation === true;
+  return entity?.visual?.preserveBillboardOrientation === true;
 }
 
 // Pudło rozgrzania i pudło RYSOWANIA (isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX) — src/render/drawBox.js:
@@ -247,63 +237,6 @@ function getInterpolatedRenderPose(entity) {
   if (!pose) return null;
   if (!Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.angle)) return null;
   return pose;
-}
-
-// Rzeczywisty zasięg AKTYWNYCH heksów w układzie lokalnym mesha (piksele
-// sprite'a, względem pivota — jak translacje instancji). Fragment dziedziczy
-// srcWidth/srcHeight rodzica (musi: próbkuje jego teksturę), więc rozmiar
-// liczony z src dawał promień CAŁEGO kadłuba: fragmenty dużych okrętów nigdy
-// nie wchodziły do batcha smug, te z małych rysowały smugę wielkości statku,
-// a przy selekcji cieni drobnica wypychała żywe okręty z 12 slotów.
-// Cache na siatce: po meshRevision, a przy deformacji najwyżej co 250 ms.
-const ACTIVE_EXTENT_REFRESH_MS = 250;
-
-function getGridActiveExtent(grid, nowMs) {
-  const shards = grid?.shards;
-  let ext = grid.__activeExtent;
-  if (!ext) {
-    ext = grid.__activeExtent = { rev: -1, shardsRef: null, at: -Infinity, halfW: 0, halfH: 0, cx: 0, cy: 0 };
-  }
-  const rev = Number(grid.meshRevision) || 0;
-  if (ext.shardsRef === shards && (ext.rev === rev || nowMs - ext.at < ACTIVE_EXTENT_REFRESH_MS)) return ext;
-
-  const pivotX = Number(grid?.pivot?.x) || 0;
-  const pivotY = Number(grid?.pivot?.y) || 0;
-  const offX = (Number(grid.srcWidth) || 0) * 0.5 + pivotX;
-  const offY = (Number(grid.srcHeight) || 0) * 0.5 + pivotY;
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  if (Array.isArray(shards)) {
-    for (let i = 0; i < shards.length; i++) {
-      const s = shards[i];
-      if (!s || !s.active || s.isDebris) continue;
-      const x = (Number(s.gridX) || 0) - offX;
-      const y = (Number(s.gridY) || 0) - offY;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-  }
-  if (maxX < minX) {
-    // Brak aktywnych heksów — zachowawczo cały sprite (środek = -pivot).
-    ext.halfW = (Number(grid.srcWidth) || 0) * 0.5;
-    ext.halfH = (Number(grid.srcHeight) || 0) * 0.5;
-    ext.cx = -pivotX;
-    ext.cy = -pivotY;
-  } else {
-    const pad = Math.max(2, Number(shards[0]?.radius) || 20);
-    ext.halfW = (maxX - minX) * 0.5 + pad;
-    ext.halfH = (maxY - minY) * 0.5 + pad;
-    ext.cx = (minX + maxX) * 0.5;
-    ext.cy = (minY + maxY) * 0.5;
-  }
-  ext.rev = rev;
-  ext.shardsRef = shards;
-  ext.at = nowMs;
-  return ext;
 }
 
 function getEntityLightPosition(entity) {
@@ -338,7 +271,7 @@ const SHIP_LIGHT_EMITTER_OPTIONS = {
 // z nimi — `externalOmniLights` ustawiane co klatkę na state.navLightClusters.
 const NAV_CLUSTER_OPTIONS = {
   ...SHIP_LIGHT_TRANSFORM_OPTIONS,
-  getGrid: (entity) => entity?.hexGrid || entity?.beamHull,
+  getGrid: (entity) => entity?.beamHull,
   out: null,
   time: 0,
   maxClusters: 256
@@ -352,133 +285,11 @@ const SHIP_LIGHT_PAYLOAD_OPTIONS = {
 
 const NAV_LIGHT_SPRITE_OPTIONS = {
   ...SHIP_LIGHT_TRANSFORM_OPTIONS,
-  getGrid: (entity) => entity?.hexGrid || entity?.beamHull,
+  getGrid: (entity) => entity?.beamHull,
   out: null,
   zoom: 1,
   minHaloWorld: 0
 };
-
-function computeShardStress(shard) {
-  if (shard && shard.deformation) {
-    const def = shard.deformation;
-    const target = shard.targetDeformation || def;
-    const sx = (Number(target.x) || 0) - (Number(def.x) || 0);
-    const sy = (Number(target.y) || 0) - (Number(def.y) || 0);
-    const absX = sx < 0 ? -sx : sx;
-    const absY = sy < 0 ? -sy : sy;
-    const defStress = absX > absY ? absX + absY * 0.4 : absY + absX * 0.4;
-    const velX = Math.abs(Number(shard.__velX) || 0) + Math.abs(Number(shard.__collVelX) || 0);
-    const velY = Math.abs(Number(shard.__velY) || 0) + Math.abs(Number(shard.__collVelY) || 0);
-    const velStress = (velX > velY ? velX + velY * 0.4 : velY + velX * 0.4) * 0.18;
-    return defStress > velStress ? defStress : velStress;
-  }
-  return 0;
-}
-
-function isLegacyBoundaryShard(shard) {
-  const neighbors = shard?.neighbors;
-  if (!Array.isArray(neighbors) || neighbors.length < 6) return true;
-  for (let index = 0; index < 6; index++) {
-    const neighbor = neighbors[index];
-    if (!neighbor || !neighbor.active || neighbor.isDebris || neighbor.hp <= 0) return true;
-  }
-  return false;
-}
-
-function shouldRenderHybridShard(shard, nowSec = 0) {
-  if (!shard?.active || shard.isDebris || shard.hp <= 0) return false;
-  if (HexBodyHooks.isPackedShardBoundary?.(shard) || isLegacyBoundaryShard(shard)) return true;
-  if (Number(shard.hp) < (Number(shard.maxHp) || Number(shard.hp)) * 0.995) return true;
-  const deform = shard.deformation;
-  const target = shard.targetDeformation;
-  if (Math.abs(Number(deform?.x) || 0) + Math.abs(Number(deform?.y) || 0) > 0.08) return true;
-  if (Math.abs(Number(target?.x) || 0) + Math.abs(Number(target?.y) || 0) > 0.08) return true;
-  // Rozżarzony heks WNĘTRZA musi zostać w instancjach, inaczej w trybie HYBRID
-  // żar znika pod płytą pancerza — a płyta nie ma jak go pokazać (vHeat = 0).
-  if (shardHeatNow(shard, nowSec) > 0.03) return true;
-  return computeShardStress(shard) > 0.08;
-}
-
-function resolveHexLod(data, screenRadiusPx, now, solidArmorAllowed = true) {
-  // A split body still samples the original sprite in each individual hex.
-  // Its solid armor plane, however, contains the entire parent sprite. Never
-  // let that plane fade in for wrecks/fragments: it produced the visible loop
-  // "whole ship -> fragments -> whole ship" around the LOD thresholds.
-  if (!solidArmorAllowed) {
-    if (data.lodMode !== HEX_LOD.FULL || data.instanceLodMode !== HEX_LOD.FULL) {
-      data.needsInstanceRefresh = true;
-    }
-    data.lodMode = HEX_LOD.FULL;
-    data.instanceLodMode = HEX_LOD.FULL;
-    data.lodFadeStart = now;
-    data.lodFromHexOpacity = 1;
-    data.lodFromArmorOpacity = 0;
-    data.hexOpacity = 1;
-    data.armorOpacity = 0;
-    data.mesh.material.uniforms.uLodOpacity.value = 1;
-    data.armorMesh.material.uniforms.uLodOpacity.value = 0;
-    data.mesh.visible = true;
-    data.armorMesh.visible = false;
-    return;
-  }
-
-  const current = data.lodMode;
-  let desired = current;
-  const h = HEX_LOD_HYSTERESIS;
-
-  if (current === HEX_LOD.FULL) {
-    if (screenRadiusPx < HEX_LOD_FULL_PX * (1 - h)) desired = HEX_LOD.HYBRID;
-  } else if (current === HEX_LOD.HYBRID) {
-    if (screenRadiusPx > HEX_LOD_FULL_PX * (1 + h)) desired = HEX_LOD.FULL;
-    else if (screenRadiusPx < HEX_LOD_IMPOSTOR_PX * (1 - h)) desired = HEX_LOD.IMPOSTOR;
-  } else if (screenRadiusPx > HEX_LOD_IMPOSTOR_PX * (1 + h)) {
-    desired = HEX_LOD.HYBRID;
-  }
-
-  if (desired !== current) {
-    data.lodMode = desired;
-    data.lodFadeStart = now;
-    data.lodFromHexOpacity = data.hexOpacity;
-    data.lodFromArmorOpacity = data.armorOpacity;
-    // Upgrades may reveal detailed geometry immediately at zero opacity.  During
-    // downgrades keep the old geometry until the armor has faded in, avoiding a
-    // one-frame hole where the interior disappears.
-    if (desired < current || current === HEX_LOD.IMPOSTOR) {
-      data.instanceLodMode = desired;
-      data.needsInstanceRefresh = true;
-    }
-  }
-
-  const elapsed = Math.max(0, now - data.lodFadeStart);
-  const t = Math.min(1, elapsed / HEX_LOD_FADE_MS);
-  const smooth = t * t * (3 - 2 * t);
-  const targetHex = data.lodMode === HEX_LOD.IMPOSTOR ? 0 : 1;
-  const targetArmor = data.lodMode === HEX_LOD.FULL ? 0 : 1;
-  data.hexOpacity = data.lodFromHexOpacity + (targetHex - data.lodFromHexOpacity) * smooth;
-  data.armorOpacity = data.lodFromArmorOpacity + (targetArmor - data.lodFromArmorOpacity) * smooth;
-  if (t >= 1 && data.instanceLodMode !== data.lodMode) {
-    data.instanceLodMode = data.lodMode;
-    data.needsInstanceRefresh = true;
-  }
-  data.mesh.material.uniforms.uLodOpacity.value = data.hexOpacity;
-  data.armorMesh.material.uniforms.uLodOpacity.value = data.armorOpacity;
-  data.mesh.visible = data.lodMode !== HEX_LOD.IMPOSTOR || data.hexOpacity > 0.001;
-  data.armorMesh.visible = data.armorOpacity > 0.001;
-}
-
-function setAttrUpdateRange(attr, start, count) {
-  if (!attr) return;
-  if (typeof attr.clearUpdateRanges === 'function') {
-    attr.clearUpdateRanges();
-    if (typeof attr.addUpdateRange === 'function' && Number.isFinite(count) && count > 0) {
-      attr.addUpdateRange(start, count);
-    }
-    return;
-  }
-  if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
-  attr.updateRange.offset = start;
-  attr.updateRange.count = count;
-}
 
 function createManagedTexture(source, isLinearData = false) {
   if (!source) return null;
@@ -723,13 +534,8 @@ function disposeMeshData(data) {
   if (Core3D.scene && data.mesh) {
     Core3D.scene.remove(data.mesh);
   }
-  if (Core3D.scene && data.armorMesh) {
-    Core3D.scene.remove(data.armorMesh);
-  }
   data.mesh?.geometry?.dispose?.();
   data.mesh?.material?.dispose?.();
-  data.armorMesh?.geometry?.dispose?.();
-  data.armorMesh?.material?.dispose?.();
   if (data.visualImageRef) releaseSharedVisualTexture(data.visualImageRef);
   else data.texture?.dispose?.();
   data.normalTexture?.dispose?.();
@@ -750,240 +556,9 @@ function disposeMeshData(data) {
   }
 }
 
-const GPU_DEBRIS_MAX = 10000;
-
-class GpuDebrisPool {
-  constructor(gridRef) {
-    this.textureKey = gridRef.armorImage;
-    this.currentIndex = 0;
-    // Dirty-span spawnów między klatkami. Poprzednio każdy spawn robił
-    // clearUpdateRanges() — przy wielu odłamkach w jednej klatce na GPU
-    // trafiał tylko zakres OSTATNIEGO spawnu (reszta miała stare atrybuty).
-    this._dirtyMin = Infinity;
-    this._dirtyMax = -1;
-    this._dirtyWrapped = false;
-    this.lastExpiryTime = -Infinity;
-    this.geometry = new THREE.CircleGeometry(25, 6);
-
-    this.startPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
-    this.startVelArray = new Float32Array(GPU_DEBRIS_MAX * 2);
-    this.rotationArray = new Float32Array(GPU_DEBRIS_MAX * 3);
-    this.timeArray = new Float32Array(GPU_DEBRIS_MAX * 2);
-    this.gridPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
-    this.heatArray = new Float32Array(GPU_DEBRIS_MAX);
-
-    this.geometry.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPosArray, 2));
-    this.geometry.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVelArray, 2));
-    this.geometry.setAttribute('aRotationData', new THREE.InstancedBufferAttribute(this.rotationArray, 3));
-    this.geometry.setAttribute('aTimeData', new THREE.InstancedBufferAttribute(this.timeArray, 2));
-    this.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(this.gridPosArray, 2));
-    this.geometry.setAttribute('aHeat', new THREE.InstancedBufferAttribute(this.heatArray, 1));
-
-    // Materiał TSL (hexShips3D.tsl.js, graf wspólny dla pul): wartości puli
-    // w `uniforms`; zanik i siła żaru wspólne (DEBRIS_SHARED, updateTime).
-    // Przezroczysty, bez głębi, DoubleSide w jednym przejściu.
-    this.material = new HullDebrisNodeMaterial({
-      uSprite: { value: createManagedTexture(gridRef.armorImage) },
-      uSpriteSize: { value: new THREE.Vector2(gridRef.srcWidth || 1, gridRef.srcHeight || 1) },
-      uTime: { value: 0 },
-      uLightDir: { value: new THREE.Vector3(0, 0, 1) },
-      uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
-      uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul }
-    });
-
-    this.mesh = new THREE.InstancedMesh(this.geometry, this.material, GPU_DEBRIS_MAX);
-    this.mesh.count = 0;
-    this.mesh.frustumCulled = false;
-    Core3D.scene.add(this.mesh);
-  }
-
-  spawn(shard, worldX, worldY, vx, vy, angVel, startAngle, scale, globalTime) {
-    const i = this.currentIndex;
-
-    this.startPosArray[i * 2] = worldX;
-    this.startPosArray[i * 2 + 1] = worldY;
-    this.startVelArray[i * 2] = vx;
-    this.startVelArray[i * 2 + 1] = vy;
-
-    this.rotationArray[i * 3] = startAngle;
-    this.rotationArray[i * 3 + 1] = angVel;
-    this.rotationArray[i * 3 + 2] = scale * ((shard.radius || 20) / 25.0);
-
-    const worldRadius = Math.max(0, (shard.radius || 5) * scale);
-    const lifetime = 5 + 7 * Math.min(1, Math.max(0, (worldRadius - 5) / 15));
-    this.timeArray[i * 2] = globalTime;
-    this.timeArray[i * 2 + 1] = lifetime;
-
-    // UV odłamka z pozycji siatki bez deformacji — poza spritem shader go odrzuci.
-    this.gridPosArray[i * 2] = shard.origGridX ?? shard.gridX ?? 0;
-    this.gridPosArray[i * 2 + 1] = shard.origGridY ?? shard.gridY ?? 0;
-
-    // Żar zabrany z kadłuba, wyliczony na moment oderwania (ta sama formuła co
-    // shardHeatNow w destructorze). PODŁOGA: metal urwany rozciąganiem przez
-    // solver GPU nie przeszedł przez strefę zgniotu i miałby zerowy żar — ma
-    // się świecić słabo, ale nie wcale.
-    const heatPeak = Number(shard.heat) || 0;
-    const heatAge = globalTime - (Number(shard.heatStamp) || 0);
-    const heatNow = heatPeak > 0 && heatAge > 0
-      ? heatPeak * Math.exp(-heatAge * (Number(DESTRUCTOR_CONFIG.heatDecay) || 0.45))
-      : heatPeak;
-    this.heatArray[i] = Math.max(Number(DESTRUCTOR_CONFIG.debrisHeatFloor) || 0, heatNow);
-
-    if (i < this._dirtyMin) this._dirtyMin = i;
-    if (i > this._dirtyMax) this._dirtyMax = i;
-    this.lastExpiryTime = Math.max(this.lastExpiryTime, globalTime + lifetime);
-
-    this.currentIndex = (this.currentIndex + 1) % GPU_DEBRIS_MAX;
-    if (this.currentIndex === 0) this._dirtyWrapped = true;
-    if (this.mesh.count < GPU_DEBRIS_MAX) this.mesh.count++;
-  }
-
-  // Jeden upload zakresu na klatkę (wołany z GpuDebrisManager.updateTime).
-  commit() {
-    if (this._dirtyMax < this._dirtyMin && !this._dirtyWrapped) return;
-    const start = this._dirtyWrapped ? 0 : this._dirtyMin;
-    const count = this._dirtyWrapped ? GPU_DEBRIS_MAX : (this._dirtyMax - this._dirtyMin + 1);
-    const apply = (name, stride) => {
-      const attr = this.geometry.getAttribute(name);
-      setAttrUpdateRange(attr, start * stride, count * stride);
-      attr.needsUpdate = true;
-    };
-    apply('aStartPos', 2);
-    apply('aStartVel', 2);
-    apply('aRotationData', 3);
-    apply('aTimeData', 2);
-    apply('aGridPos', 2);
-    apply('aHeat', 1);
-    this._dirtyMin = Infinity;
-    this._dirtyMax = -1;
-    this._dirtyWrapped = false;
-  }
-
-  dispose() {
-    if (Core3D.scene && this.mesh) Core3D.scene.remove(this.mesh);
-    this.geometry?.dispose?.();
-    this.material?.uniforms?.uSprite?.value?.dispose?.();
-    this.material?.dispose?.();
-  }
-}
-
-const GpuDebrisManager = {
-  pools: new Map(),
-  globalTime: 0,
-  // Ustawiane z updateHexShips3D razem z uStressTint kadłubów (state.damageTintEnabled).
-  heatTintEnabled: true,
-
-  spawn(shard, gridRef, wx, wy, vx, vy, drot, angle, scale) {
-    const texKey = shard.img;
-    if (!texKey) return;
-
-    let pool = this.pools.get(texKey);
-    if (!pool) {
-      pool = new GpuDebrisPool({
-        armorImage: texKey,
-        srcWidth: texKey.width || gridRef.srcWidth,
-        srcHeight: texKey.height || gridRef.srcHeight
-      });
-      this.pools.set(texKey, pool);
-    }
-    pool.spawn(shard, wx, wy, vx, vy, drot, angle, scale, this.globalTime);
-  },
-
-  updateTime(time) {
-    this.globalTime = time;
-    // Żar odłamków respektuje ten sam przełącznik co żar kadłuba (wspólne dla pul).
-    DEBRIS_SHARED.uHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
-    DEBRIS_SHARED.uHeatTint.value = this.heatTintEnabled
-      ? Math.max(0, Number(DESTRUCTOR_CONFIG.debrisHeatGlow) || 0)
-      : 0;
-    const sun = RenderWorld.sun;
-    const camera = RenderWorld.camera;
-    for (const pool of this.pools.values()) {
-      pool.commit();
-      // All sizes have expired; a later small chip must not truncate a big one.
-      // żeby pula po długiej bitwie nie mieliła na stałe 10k martwych slotów.
-      if (pool.mesh.count > 0 && time > pool.lastExpiryTime) {
-        pool.mesh.count = 0;
-        pool.currentIndex = 0;
-      }
-      pool.material.uniforms.uTime.value = time;
-      if (sun && camera && pool.mesh.count > 0) {
-        const dx = sun.x - camera.x;
-        const dy = -(sun.y - camera.y);
-        // In-place: bez alokacji Vector3 per pool per klatkę
-        pool.material.uniforms.uLightDir.value.set(dx, dy, 600).normalize();
-      }
-    }
-  },
-
-  dispose() {
-    for (const pool of this.pools.values()) pool.dispose();
-    this.pools.clear();
-    this.globalTime = 0;
-  }
-};
-
-if (typeof window !== 'undefined') {
-  window.spawnGpuDebris = (shard, grid, wx, wy, vx, vy, drot, ang, scale) => {
-    GpuDebrisManager.spawn(shard, grid, wx, wy, vx, vy, drot, ang, scale);
-  };
-}
-
-function updateDebrisRendering() { }
-
-function createEntityMesh(entity) {
-  if (!entity?.hexGrid || !Array.isArray(entity.hexGrid.shards)) return null;
-
-  HexBodyHooks.refreshHexBodyCache?.(entity);
-
-  const grid = entity.hexGrid;
-  const shards = grid.shards;
-  const count = shards.length;
-  if (count <= 0) return null;
-
-  const baseRadius = Math.max(2, Number(shards[0]?.radius) || 20);
-  const geometry = new THREE.CircleGeometry(baseRadius * 1.04, 6);
-
-  // Geometria/destrukcja może pracować na lekkiej, zmniejszonej masce, ale
-  // render powinien próbkować oryginalny sprite, żeby małe klasy nie pikselowały
-  // po przybliżeniu kamery.
-  const visualImage = grid.visualImage || null;
-  const armorSource = visualImage || grid.armorImage || grid.cacheCanvas;
-  const texture = visualImage
-    ? acquireSharedVisualTexture(visualImage)
-    : createManagedTexture(armorSource);
-
-  let normalTexture = null;
-  if (grid.normalMapImage) {
-    normalTexture = createManagedTexture(grid.normalMapImage, true);
-  }
-
-  // Mapa kształtu lakieru jest wspólna dla wszystkich kadłubów z tym samym
-  // sprite'em (pieczona z jego alfy). Bez sprite'a albo bez lakieru — płaska.
-  const shapeImageRef = (visualImage && allowsHullLacquer(entity)) ? visualImage : null;
-  const shapeUniform = shapeImageRef
-    ? HullLacquer.acquireShapeUniform(shapeImageRef)
-    : HullLacquer.flatShapeUniform;
-
-  // Mapa powierzchni (oświetlenie v2): wspólna dla kadłubów z tym samym obrazem.
-  const surfaceImageRef = armorSource && !usesBillboardLighting(entity) ? armorSource : null;
-  const surfaceUniform = surfaceImageRef ? HullSurface.acquireUniform(surfaceImageRef) : HullSurface.flatUniform;
-
-  // Graf wariantu „hex” (hexShips3D.tsl.js): przezroczysty, z zapisem głębi, FrontSide.
-  const material = new HullNodeMaterial('hex',
-    createHullUniforms(entity, texture, normalTexture, shapeUniform, grid.srcWidth, grid.srcHeight, surfaceUniform));
-
-  const data = finishEntityMesh(entity, grid, shards, count, geometry, material, texture, visualImage,
-    shapeImageRef, normalTexture, baseRadius);
-  if (data) data.surfaceImageRef = surfaceImageRef;
-  else if (surfaceImageRef) HullSurface.releaseUniform(surfaceImageRef);
-  return data;
-}
-
-// Wartości per encja materiału kadłuba (siatka heksów, płyta pancerza, skóra belek):
-// obiekty `{ value }` czytane per obiekt przez graf wariantu (hexShips3D.tsl.js).
-// Płyta pancerza dzieli je z siatką heksów (spread) poza uLodOpacity. Wartości
-// wspólne dla wszystkich kadłubów (czas, strojenie światła, żar, lakier, maska
+// Wartości per encja materiału kadłuba (skóra belek): obiekty `{ value }`, które
+// HullObjectStore przepisuje do bufora storage slotu (graf wariantu — hexShips3D.tsl.js).
+// Wartości wspólne dla wszystkich kadłubów (czas, strojenie światła, żar, lakier, maska
 // słońca) są w węzłach grafu — tu ich nie ma. Lampy i strefy dysz: slot w
 // HullLightStore (uLightBase), liczniki uShipLightCount / uEngineZoneCount.
 function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWidth, srcHeight, surfaceUniform = null) {
@@ -1104,422 +679,6 @@ function warpHullHolder(entity, key) {
   };
 }
 
-function finishEntityMesh(entity, grid, shards, count, geometry, material, texture, visualImage,
-  shapeImageRef, normalTexture, baseRadius) {
-  const mesh = new THREE.InstancedMesh(geometry, material, count);
-  mesh.frustumCulled = false;
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-
-  const enableShadowCast = !entity?.isRingSegment;
-  mesh.renderOrder = entity?.isRingSegment ? 0 : 10;
-  mesh.castShadow = false;           // <-- CAŁKOWICIE WYŁĄCZONE RZUCANIE CIENIA
-  mesh.customDepthMaterial = null;   // <-- CAŁKOWICIE WYŁĄCZONY MATERIAŁ DLA CIENI
-
-  const initialArray = mesh.instanceMatrix.array;
-  for (let i = 0; i < count; i++) {
-    const offset = i * 16;
-    initialArray[offset + 0] = 1.0;
-    initialArray[offset + 5] = 1.0;
-    initialArray[offset + 10] = 1.0;
-    initialArray[offset + 15] = 1.0;
-  }
-
-  const gridPosArray = new Float32Array(count * 2);
-  const stressArray = new Float32Array(count);
-  // Żar startuje z POLA SHARDA, nie z zera: wrak odłączony w spawnWreckEntity
-  // dostaje te same obiekty shardów i nowy mesh, więc rozgrzana blacha nie może
-  // ostygnąć tylko dlatego, że zmieniła właściciela.
-  const heatArray = new Float32Array(count * 2);
-  for (let i = 0; i < count; i++) {
-    const shard = shards[i];
-    if (typeof shard?.gridX === 'number' && typeof shard?.gridY === 'number') {
-      // aGridPos = kotwica UV pancerza. Shader odrzuca UV poza [0,1], więc czyta się
-      // ją z pozycji siatki BEZ deformacji — ekranową pozycję daje instance matrix
-      // (gridX + deformation) liczony w updateEntityMesh.
-      gridPosArray[i * 2] = shard.gridX;
-      gridPosArray[i * 2 + 1] = shard.gridY;
-    } else {
-      const cx = (grid.srcWidth || 0) * 0.5;
-      const cy = (grid.srcHeight || 0) * 0.5;
-      gridPosArray[i * 2] = (shard?.lx || 0) + cx;
-      gridPosArray[i * 2 + 1] = (shard?.ly || 0) + cy;
-    }
-    stressArray[i] = computeShardStress(shard);
-    heatArray[i * 2] = Number(shard?.heat) || 0;
-    heatArray[i * 2 + 1] = Number(shard?.heatStamp) || 0;
-  }
-
-  mesh.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(gridPosArray, 2));
-  mesh.geometry.setAttribute('aStress', new THREE.InstancedBufferAttribute(stressArray, 1));
-  mesh.geometry.getAttribute('aStress').setUsage(THREE.DynamicDrawUsage);
-  mesh.geometry.setAttribute('aHeat', new THREE.InstancedBufferAttribute(heatArray, 2));
-  mesh.geometry.getAttribute('aHeat').setUsage(THREE.DynamicDrawUsage);
-
-  // The armor layer reuses the exact same texture and lighting uniforms.  At
-  // distance it replaces thousands of interior hex instances, while boundary,
-  // damaged and deforming hexes remain individually rendered above it.
-  const armorGeometry = new THREE.PlaneGeometry(grid.srcWidth || 1, grid.srcHeight || 1);
-  armorGeometry.translate(-(Number(grid?.pivot?.x) || 0), -(Number(grid?.pivot?.y) || 0), 0);
-  const armorUniforms = { ...material.uniforms, uLodOpacity: { value: 0 } };
-  const armorMaterial = new HullNodeMaterial('armor', armorUniforms);
-  const armorMesh = new THREE.Mesh(armorGeometry, armorMaterial);
-  armorMesh.frustumCulled = false;
-  armorMesh.renderOrder = entity?.isRingSegment ? -1 : 9;
-  armorMesh.visible = false;
-  armorMesh.position.z = -0.25;
-
-  Core3D.scene.add(armorMesh);
-  Core3D.scene.add(mesh);
-
-  const data = {
-    mesh,
-    armorMesh,
-    texture,
-    visualImageRef: visualImage,
-    // Źródło tekstury, gdy sprite'a brak (fragmenty asteroid) — patrz needsRebuild.
-    armorImageRef: visualImage ? null : (grid.armorImage || null),
-    shapeImageRef,
-    normalTexture,
-    normalMapRef: grid.normalMapImage || null,
-    gridPosAttr: mesh.geometry.getAttribute('aGridPos'),
-    stressAttr: mesh.geometry.getAttribute('aStress'),
-    heatAttr: mesh.geometry.getAttribute('aHeat'),
-    shardsRef: shards,
-    shardCount: count,
-    srcWidth: grid.srcWidth || 1,
-    srcHeight: grid.srcHeight || 1,
-    pivotX: Number(grid?.pivot?.x) || 0,
-    pivotY: Number(grid?.pivot?.y) || 0,
-    baseRadius,
-    lodMode: HEX_LOD.FULL,
-    instanceLodMode: HEX_LOD.FULL,
-    lodFadeStart: state.lastTime,
-    lodFromHexOpacity: 1,
-    lodFromArmorOpacity: 0,
-    hexOpacity: 1,
-    armorOpacity: 0,
-    renderedHexCount: count,
-    needsInstanceRefresh: true,
-    // Slot lamp i stref dysz w HullLightStore (-1 = brak).
-    lightSlot: -1
-  };
-  state.entityMeshes.set(entity, data);
-  return data;
-}
-
-function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
-  if (!entity?.hexGrid || !data?.mesh) return;
-  const grid = entity.hexGrid;
-  const shards = grid.shards;
-  // `let`: po przebudowie niżej mesh MUSI wskazywać nowy obiekt. Dawniej reszta
-  // funkcji pisała do starego, już zwolnionego mesha (count, uniformy, pozycja),
-  // a flagi czyściła w nowych danych — nowy kadłub zostawał z macierzami
-  // jednostkowymi (wszystkie heksy w środku) aż do pełnego odświeżenia.
-  let mesh = data.mesh;
-  const pivotX = Number(grid?.pivot?.x) || 0;
-  const pivotY = Number(grid?.pivot?.y) || 0;
-
-  const needsRebuild =
-    data.shardCount < shards.length ||
-    data.srcWidth !== (grid.srcWidth || 1) ||
-    data.srcHeight !== (grid.srcHeight || 1) ||
-    data.visualImageRef !== (grid.visualImage || null) ||
-    // Bez sprite'a tekstura idzie z armorImage — wrak z puli dostający siatkę
-    // innego typu (fragment innej asteroidy) zachowywał starą teksturę.
-    (!grid.visualImage && data.armorImageRef !== (grid.armorImage || null)) ||
-    data.normalMapRef !== (grid.normalMapImage || null);
-
-  if (needsRebuild) {
-    // Najpierw nowe dane, dopiero potem zwolnienie starych: przy tym samym
-    // sprite'cie współdzielona tekstura i mapa kształtu lakieru nie spadają do
-    // zera referencji (inaczej ponowny upload tekstury z mipmapami i pieczenie).
-    const previous = data;
-    state.entityMeshes.delete(entity);
-    data = createEntityMesh(entity);
-    disposeMeshData(previous);
-    if (!data) return;
-    mesh = data.mesh;
-  } else if (data.shardsRef !== shards) {
-    const gridPosAttr = data.mesh.geometry.getAttribute('aGridPos');
-    const cx = (grid.srcWidth || 0) * 0.5;
-    const cy = (grid.srcHeight || 0) * 0.5;
-
-    for (let i = 0; i < shards.length; i++) {
-      const shard = shards[i];
-      // UV z pozycji siatki bez deformacji — patrz komentarz w createEntityMesh.
-      const baseX = shard.gridX;
-      const baseY = shard.gridY;
-      gridPosAttr.array[i * 2] = (typeof baseX === 'number') ? baseX : ((shard.lx || 0) + cx);
-      gridPosAttr.array[i * 2 + 1] = (typeof baseY === 'number') ? baseY : ((shard.ly || 0) + cy);
-    }
-    gridPosAttr.needsUpdate = true;
-    data.shardsRef = shards;
-    data.needsInstanceRefresh = true;
-  }
-
-  if (pivotX !== data.pivotX || pivotY !== data.pivotY) {
-    data.armorMesh.geometry.translate(data.pivotX - pivotX, data.pivotY - pivotY, 0);
-    data.pivotX = pivotX;
-    data.pivotY = pivotY;
-    data.needsInstanceRefresh = true;
-  }
-
-  const interpPose = getInterpolatedRenderPose(entity);
-  const ex = interpPose ? interpPose.x : getEntityPosX(entity);
-  const ey = interpPose ? interpPose.y : getEntityPosY(entity);
-  const entityAngle = interpPose ? interpPose.angle : (entity.angle || 0);
-  const entityScale = getEntityScale(entity);
-  const zoomPx = Math.max(0.0001, cameraZoom) * (Core3D.pixelRatio || 1);
-  const screenRadiusPx = data.baseRadius * entityScale * zoomPx;
-  const solidArmorAllowed = allowsSolidArmorLod(entity);
-
-  // Wrak z oddali: jedna smuga we wspólnym batchu zamiast własnego wywołania
-  // i zamiast pełnego przeliczenia macierzy wszystkich heksów.
-  if (!solidArmorAllowed) {
-    // Zasięg AKTYWNYCH heksów, nie sprite'a (fragment ma src rodzica).
-    const lodScaleX = getEntityScaleX(entity);
-    const lodScaleY = getEntityScaleY(entity);
-    const extent = getGridActiveExtent(grid, state.lastTime);
-    const bodyRadiusPx = Math.max(extent.halfW * Math.abs(lodScaleX), extent.halfH * Math.abs(lodScaleY)) * zoomPx;
-    const tuning = RenderWorld.devTuning || null;
-    const enterPx = Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
-    const exitPx = enterPx * WRECK_IMPOSTOR_EXIT_MUL;
-    const wasImpostor = data.batchedImpostor === true;
-    const isImpostor = wasImpostor ? (bodyRadiusPx < exitPx) : (bodyRadiusPx < enterPx);
-
-    if (isImpostor) {
-      if (data.impostorColor === undefined) {
-        data.impostorColor = computeAverageBodyColor(grid.visualImage || grid.armorImage || grid.cacheCanvas) || null;
-      }
-      if (data.impostorColor) {
-        if (data.mesh.visible) data.mesh.visible = false;
-        if (data.armorMesh.visible) data.armorMesh.visible = false;
-        // Powrót do pełnego detalu musi przeliczyć wszystko od zera — przez czas
-        // w batchu nie śledziliśmy meshDirty.
-        data.needsInstanceRefresh = true;
-        data.batchedImpostor = true;
-        const halfW = extent.halfW * lodScaleX;
-        const halfH = extent.halfH * lodScaleY;
-        // Środek smugi = środek aktywnych heksów, przeniesiony tym samym
-        // przekształceniem co mesh: T(ex, -ey) · Rz(rot) · S(sx, -sy).
-        const rot = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
-        const offX = extent.cx * lodScaleX;
-        const offY = -extent.cy * lodScaleY;
-        const cosRot = Math.cos(rot);
-        const sinRot = Math.sin(rot);
-        // Skalary zamiast obiektu per wrak per klatkę.
-        const impostorColor = data.impostorColor;
-        HexBodyImpostorBatch.pushRaw(
-          ex + offX * cosRot - offY * sinRot,
-          -ey + offX * sinRot + offY * cosRot,
-          rot,
-          halfW,
-          halfH,
-          impostorColor.r,
-          impostorColor.g,
-          impostorColor.b,
-          1
-        );
-        DrawCallStats.addImpostor(1);
-        lodFrameStats.impostorBodies++;
-        lodFrameStats.totalStructuralHexes += shards.length;
-        return;
-      }
-    }
-    data.batchedImpostor = false;
-  }
-
-  resolveHexLod(data, screenRadiusPx, state.lastTime, solidArmorAllowed);
-
-  // Upload tekstury pancerza = pełny texImage2D + regeneracja mipmap. W ostrzale
-  // destroyShard ustawiał gpuTextureNeedsUpdate przy KAŻDYM heksie → kilka pełnych
-  // uploadów na klatkę. Throttle per statek; flagi zostają ustawione, więc upload
-  // dogania w pierwszej klatce po oknie (przy 100 ms wizualnie niezauważalne).
-  const TEX_UPLOAD_MIN_MS = 100;
-  if (!!grid.cacheDirty || !!grid.textureDirty || !!grid.gpuTextureNeedsUpdate) {
-    const lastUpload = Number(data._lastTexUploadMs) || 0;
-    if (lastUpload === 0 || (state.lastTime - lastUpload) >= TEX_UPLOAD_MIN_MS) {
-      if (grid.cacheDirty) HexBodyHooks.refreshHexBodyCache?.(entity);
-      data.texture.needsUpdate = true;
-      grid.textureDirty = false;
-      grid.cacheDirty = false;
-      grid.gpuTextureNeedsUpdate = false;
-      data._lastTexUploadMs = state.lastTime;
-    }
-  }
-
-  // Zegar kadłuba (zanik żaru, sekwencja świateł pozycyjnych) to wspólny węzeł
-  // HULL_SHARED.uTime — jeden zapis na klatkę w updateHexShips3D dla wszystkich.
-  const nowSec = state.lastTime * 0.001;
-
-  if (!!grid.meshDirty || data.needsInstanceRefresh) {
-    const stressAttr = data.stressAttr;
-    const gridPosAttr = data.gridPosAttr;
-    const heatAttr = data.heatAttr;
-
-    const instanceArray = mesh.instanceMatrix.array;
-    const cx = (grid.srcWidth || 0) * 0.5;
-    const cy = (grid.srcHeight || 0) * 0.5;
-
-    const hasRange =
-      Number.isFinite(grid.meshDirtyStart) &&
-      Number.isFinite(grid.meshDirtyEnd) &&
-      grid.meshDirtyStart >= 0 &&
-      grid.meshDirtyEnd >= grid.meshDirtyStart;
-
-    const fullLod = data.instanceLodMode === HEX_LOD.FULL;
-    const fullRefresh = !fullLod || data.needsInstanceRefresh || !!grid.meshDirtyAll || !hasRange;
-
-    let start = 0;
-    let end = shards.length - 1;
-
-    if (!fullRefresh) {
-      start = Math.max(0, grid.meshDirtyStart | 0);
-      end = Math.min(shards.length - 1, grid.meshDirtyEnd | 0);
-      if (end < start) {
-        start = 0;
-        end = shards.length - 1;
-      }
-    }
-
-    if (fullLod) {
-      mesh.count = shards.length;
-      for (let i = start; i <= end; i++) {
-        const shard = shards[i];
-        const offset = i * 16;
-
-        if (shard && shard.active && !shard.isDebris) {
-          const deform = shard.deformation;
-          const gx = shard.gridX + (deform ? deform.x : 0);
-          const gy = shard.gridY + (deform ? deform.y : 0);
-
-          instanceArray[offset + 12] = gx - cx - data.pivotX;
-          instanceArray[offset + 13] = gy - cy - data.pivotY;
-          instanceArray[offset + 0] = 1.0;
-          instanceArray[offset + 5] = 1.0;
-
-          const baseX = shard.gridX;
-          const baseY = shard.gridY;
-          gridPosAttr.array[i * 2] = Number(baseX) || 0;
-          gridPosAttr.array[i * 2 + 1] = Number(baseY) || 0;
-          stressAttr.array[i] = computeShardStress(shard);
-          heatAttr.array[i * 2] = Number(shard.heat) || 0;
-          heatAttr.array[i * 2 + 1] = Number(shard.heatStamp) || 0;
-        } else {
-          instanceArray[offset + 0] = 0.0;
-          instanceArray[offset + 5] = 0.0;
-          instanceArray[offset + 12] = 0.0;
-          instanceArray[offset + 13] = 0.0;
-          stressAttr.array[i] = 0;
-          heatAttr.array[i * 2] = 0;
-          heatAttr.array[i * 2 + 1] = 0;
-        }
-      }
-    } else {
-      // Compact selected instances into the leading span.  InstancedMesh.count
-      // then actually lowers GPU vertex work; merely setting scale to zero would
-      // still submit every interior hex.
-      let writeIndex = 0;
-      if (data.instanceLodMode === HEX_LOD.HYBRID) {
-        for (let shardIndex = 0; shardIndex < shards.length; shardIndex++) {
-          const shard = shards[shardIndex];
-          if (!shouldRenderHybridShard(shard, nowSec)) continue;
-          const offset = writeIndex * 16;
-          const deform = shard.deformation;
-          const gx = shard.gridX + (deform ? deform.x : 0);
-          const gy = shard.gridY + (deform ? deform.y : 0);
-          instanceArray[offset + 0] = 1.0;
-          instanceArray[offset + 5] = 1.0;
-          instanceArray[offset + 10] = 1.0;
-          instanceArray[offset + 15] = 1.0;
-          instanceArray[offset + 12] = gx - cx - data.pivotX;
-          instanceArray[offset + 13] = gy - cy - data.pivotY;
-          const baseX = shard.gridX;
-          const baseY = shard.gridY;
-          gridPosAttr.array[writeIndex * 2] = Number(baseX) || 0;
-          gridPosAttr.array[writeIndex * 2 + 1] = Number(baseY) || 0;
-          stressAttr.array[writeIndex] = computeShardStress(shard);
-          heatAttr.array[writeIndex * 2] = Number(shard.heat) || 0;
-          heatAttr.array[writeIndex * 2 + 1] = Number(shard.heatStamp) || 0;
-          writeIndex++;
-        }
-      }
-      mesh.count = writeIndex;
-      data.renderedHexCount = writeIndex;
-    }
-
-    if (fullRefresh) {
-      setAttrUpdateRange(mesh.instanceMatrix, 0, -1);
-      setAttrUpdateRange(stressAttr, 0, -1);
-      setAttrUpdateRange(gridPosAttr, 0, -1);
-      setAttrUpdateRange(heatAttr, 0, -1);
-    } else {
-      const count = Math.max(0, end - start + 1);
-      setAttrUpdateRange(mesh.instanceMatrix, start * 16, count * 16);
-      setAttrUpdateRange(stressAttr, start, count);
-      setAttrUpdateRange(gridPosAttr, start * 2, count * 2);
-      setAttrUpdateRange(heatAttr, start * 2, count * 2);
-    }
-
-    mesh.instanceMatrix.needsUpdate = true;
-    stressAttr.needsUpdate = true;
-    gridPosAttr.needsUpdate = true;
-    heatAttr.needsUpdate = true;
-    if (fullLod) data.renderedHexCount = mesh.count;
-    data.needsInstanceRefresh = false;
-    grid.meshDirty = false;
-    grid.meshDirtyAll = false;
-    grid.meshDirtyStart = -1;
-    grid.meshDirtyEnd = -1;
-  }
-
-  // Strojenie światła (panel), glow naprężenia i żar heksów (DESTRUCTOR_CONFIG)
-  // to wspólne węzły HULL_SHARED — zapis raz na klatkę w syncHullSharedUniforms.
-
-  const sun = RenderWorld.sun;
-  if (sun) {
-    const dx = sun.x - ex;
-    const dy = -(sun.y - ey);
-    // In-place: bez alokacji Vector3 per klatkę per statek
-    mesh.material.uniforms.uLightDir.value.set(dx, dy, 600).normalize();
-  }
-
-  if (mesh.material.uniforms.uBillboardLighting) {
-    mesh.material.uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
-  }
-  const bodyRadiusPx = Math.max(data.srcWidth, data.srcHeight) * 0.5 * entityScale * zoomPx;
-  syncEntityLightUniforms(entity, data, grid, state.roadLightEmitters, bodyRadiusPx);
-  syncEntityLacquer(entity, data, grid, entityScale, zoomPx);
-  const renderRotation = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
-  mesh.material.uniforms.uRotation.value = renderRotation;
-
-  mesh.position.set(ex, -ey, 0);
-  mesh.rotation.set(0, 0, renderRotation);
-  const scaleX = getEntityScaleX(entity);
-  const scaleY = getEntityScaleY(entity);
-  mesh.scale.set(scaleX, -scaleY, 1);
-  data.armorMesh.position.set(ex, -ey, -0.25);
-  data.armorMesh.rotation.set(0, 0, renderRotation);
-  data.armorMesh.scale.set(scaleX, -scaleY, 1);
-
-  // Jedno ciało = jedno wywolanie na siatke heksow i jedno na plyte pancerza —
-  // w praktyce widoczna jest jedna z nich naraz, ale w oknie przenikania LOD-u
-  // obie. Wraki liczymy osobno, bo to one narastaja przez cala bitwe.
-  const bodyDraws = (data.mesh.visible ? 1 : 0) + (data.armorMesh.visible ? 1 : 0);
-  if (bodyDraws > 0) DrawCallStats.addHexBody(bodyDraws, !allowsSolidArmorLod(entity));
-
-  lodFrameStats.totalStructuralHexes += shards.length;
-  if (data.lodMode === HEX_LOD.FULL) {
-    lodFrameStats.fullBodies++;
-    lodFrameStats.fullHexes += data.renderedHexCount;
-  } else if (data.lodMode === HEX_LOD.HYBRID) {
-    lodFrameStats.hybridBodies++;
-    lodFrameStats.hybridHexes += data.renderedHexCount;
-  } else {
-    lodFrameStats.impostorBodies++;
-  }
-}
-
 // ============================ KADŁUBY NA BELKACH ============================
 // Encja z `beamHull` (hullBodies.js): jeden mesh na ciało — czworokąt na węzeł, pozycje
 // w układzie ciała, mesh.position = początek ciała w świecie (z pozy RENDERU encji,
@@ -1615,7 +774,6 @@ function createBeamSkinMesh(entity) {
   const data = {
     kind: 'beam',
     mesh,
-    armorMesh: null,
     texture,
     visualImageRef: visualImage,
     armorImageRef: visualImage ? null : hull.image,
@@ -1636,9 +794,6 @@ function createBeamSkinMesh(entity) {
     srcHeight: hull.srcHeight,
     pivotX: hull.pivot.x,
     pivotY: hull.pivot.y,
-    baseRadius: hull.cellSize * 0.5,
-    lodMode: HEX_LOD.FULL,
-    renderedHexCount: 0,
     // Slot lamp i stref dysz w HullLightStore (-1 = brak).
     lightSlot: -1,
     batch: null,
@@ -1806,7 +961,6 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   lodFrameStats.totalStructuralHexes += body.activeNodes;
   lodFrameStats.fullBodies++;
   lodFrameStats.fullHexes += body.activeNodes;
-  data.renderedHexCount = body.activeNodes;
 }
 
 export function initHexShips3D({ canvas = null } = {}) {
@@ -1815,13 +969,13 @@ export function initHexShips3D({ canvas = null } = {}) {
   return true;
 }
 
-// Trzymacze grafów kadłubów: jeden ukryty mesh na wariant (skóra belek, płyta
-// pancerza) z materiałem, którego nie zwalniamy. NodeManager usuwa stan budowy
+// Trzymacze grafów kadłubów: jeden ukryty mesh na wariant (skóra belek, partia
+// skór) z materiałem, którego nie zwalniamy. NodeManager usuwa stan budowy
 // materiału (i pipeline), gdy ostatni obiekt przestaje go używać — bez trzymacza
 // śmierć ostatniego kadłuba w kadrze kosztowałaby pełną przebudowę grafu przy
 // następnym spawnie. Rozgrzewka (prewarmPass) buduje je na ekranie ładowania,
-// więc pierwszy kadłub bierze gotowy pipeline. Siatka heksów (InstancedMesh)
-// ma w kluczu three uuid obiektu — trzymacz nic by jej nie dał.
+// więc pierwszy kadłub bierze gotowy pipeline. (Do 2026-10-19 także płyta
+// pancerza LOD kadłubów heksowych — w grze nieużywana, a kompilowana przy starcie.)
 let _hullProbes = null;
 function hullVariantProbes() {
   if (_hullProbes) return _hullProbes;
@@ -1835,9 +989,6 @@ function hullVariantProbes() {
   const holders = () => createHullUniforms(null, null, null, HullLacquer.flatShapeUniform, 1, 1);
   const beam = new THREE.Mesh(beamGeo, new HullNodeMaterial('beam', holders()));
   beam.renderOrder = 10;
-  const armor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new HullNodeMaterial('armor', holders()));
-  armor.renderOrder = 9;
-  armor.position.z = -0.25;
   // partia skór (zadanie 23): ten sam układ atrybutów co HullSkinBatch
   const batchGeo = new THREE.BufferGeometry();
   batchGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
@@ -1846,13 +997,13 @@ function hullVariantProbes() {
   batchGeo.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2, 0, 2, 3]), 1));
   const batchProbe = new THREE.Mesh(batchGeo, new HullNodeMaterial('beamBatch', holders()));
   batchProbe.renderOrder = 10;
-  for (const m of [beam, armor, batchProbe]) {
+  for (const m of [beam, batchProbe]) {
     m.name = `hullProbe:${m.material.name}`;
     m.frustumCulled = false;
     m.visible = false;
     Core3D.scene.add(m);
   }
-  _hullProbes = [beam, armor, batchProbe];
+  _hullProbes = [beam, batchProbe];
   return _hullProbes;
 }
 
@@ -1881,7 +1032,7 @@ function prewarmFx3D() {
   meshes.push(...WarpPlume3D.prewarm());
   // Odłamki kadłubów na belkach: program gotowy przed pierwszym trafieniem.
   meshes.push(...HullDebris3D.prewarm());
-  // Kadłuby (graf na wariant): pipeline skóry belek i płyty pancerza przed
+  // Kadłuby (graf na wariant): pipeline skóry belek i partii skór przed
   // pierwszym NPC; trzymacze zostają w scenie ukryte.
   meshes.push(...hullVariantProbes());
   const prev = meshes.map((m) => m.visible);
@@ -1905,14 +1056,6 @@ export function prewarmHexShips3D({ canvas = null } = {}) {
 
 export function resizeHexShips3D(width, height) {
   if (Core3D.isInitialized) Core3D.resize(width, height);
-}
-
-export function setHexDamageTintEnabled(enabled) {
-  state.damageTintEnabled = enabled !== false;
-  GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
-  // Glow naprężenia i szczyt żaru to wspólne węzły — jeden zapis dla wszystkich kadłubów.
-  syncHullSharedUniforms();
-  return state.damageTintEnabled;
 }
 
 // Poświata dysz MAIN na blachę (oświetlenie v2): gromada dysz okrętu z tej klatki (EngineFrame — te same
@@ -1942,8 +1085,7 @@ const ENGINE_LIGHT_FALLBACK = Object.freeze([0.5, 0.7, 1.0]);
 
 // Wartości wspólne kadłubów (węzły HULL_SHARED, hexShips3D.tsl.js): raz na klatkę
 // zamiast per mesh. Strojenie światła z panelu (window.__shipLightTune) tylko przy
-// zmianie epoki; żar pod przełącznikiem glow stresu, jasność z configu (suwaki
-// „heat glow peak”): skóra belek — HULL_BODY_CONFIG, heksy — DESTRUCTOR_CONFIG.
+// zmianie epoki; zanik i jasność żaru skóry belek z HULL_BODY_CONFIG.
 let _appliedTuneEpoch = -1;
 function syncHullSharedUniforms() {
   const shared = HULL_SHARED;
@@ -1956,16 +1098,8 @@ function syncHullSharedUniforms() {
     shared.uSpecularMul.value = clamp(tune.specularMul, 0.0, 1.5);
     _appliedTuneEpoch = _tuneEpoch;
   }
-  const tint = state.damageTintEnabled;
-  shared.uStressTint.value = tint ? 0.30 : 0.0;
   shared.beamHeatDecay.value = Math.max(0, Number(HullBodies.config.heatDecay) || 0);
-  shared.beamHeatPeak.value = tint ? Math.max(0, Number(HullBodies.config.heatGlowPeak) || 0) : 0.0;
-  shared.hexHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
-  shared.hexHeatPeak.value = tint ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0) : 0.0;
-}
-
-export function isHexDamageTintEnabled() {
-  return state.damageTintEnabled !== false;
+  shared.beamHeatPeak.value = Math.max(0, Number(HullBodies.config.heatGlowPeak) || 0);
 }
 
 // coldWrecks: zimne wraki (src/game/coldWrecks.js) — tylko smugi z batcha.
@@ -2013,10 +1147,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   DrawCallStats.begin();
   HexBodyImpostorBatch.begin();
   lodFrameStats.fullBodies = 0;
-  lodFrameStats.hybridBodies = 0;
   lodFrameStats.impostorBodies = 0;
   lodFrameStats.fullHexes = 0;
-  lodFrameStats.hybridHexes = 0;
   lodFrameStats.totalStructuralHexes = 0;
   lodFrameStats.entitiesIn = 0;
   lodFrameStats.culled = 0;
@@ -2050,16 +1182,14 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     if (hideHexVisual) {
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
-      if (data?.armorMesh) data.armorMesh.visible = false;
       continue;
     }
-    const hasBody = !!entity.hexGrid || isBeamHullEntity(entity);
+    const hasBody = isBeamHullEntity(entity);
     if (hasBody) validSet.add(entity);
     if (entityHiddenTest && entityHiddenTest(entity)) {
       entity.__hiddenFromView = true;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
-      if (data?.armorMesh) data.armorMesh.visible = false;
       continue;
     }
     entity.__hiddenFromView = false;
@@ -2069,7 +1199,6 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       lodFrameStats.culled++;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
-      if (data?.armorMesh) data.armorMesh.visible = false;
       continue;
     }
 
@@ -2119,25 +1248,13 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   let hasRenderable = false;
   const frameId = state.frameId;
   for (const entity of drawHex) {
-    const beam = !entity.hexGrid;
     // Model 3D zamiast skóry: nośnik chowa pętla pudła rozgrzania niżej (lastDrawFrame ≠ tej klatki).
-    if (beam && beamSkinSuppressor !== null && beamSkinSuppressor(entity)) continue;
+    if (beamSkinSuppressor !== null && beamSkinSuppressor(entity)) continue;
     let data = state.entityMeshes.get(entity);
-    // Encja zmieniła rodzaj ciała (heksy ↔ belki): stary mesh do zwolnienia.
-    if (data && (data.kind === 'beam') !== beam) {
-      state.entityMeshes.delete(entity);
-      disposeMeshData(data);
-      data = null;
-    }
-    if (!data) data = beam ? createBeamSkinMesh(entity) : createEntityMesh(entity);
+    if (!data) data = createBeamSkinMesh(entity);
     if (!data) continue;
-
-    // Powrót do pudła rysowania po przerwie: przez ten czas nie liczyliśmy
-    // instancji ani LOD-u, więc jedno pełne odświeżenie.
-    if (data.lastDrawFrame !== frameId - 1) data.needsInstanceRefresh = true;
-    if (beam) updateBeamSkinMesh(entity, data, camX, camY, cameraZoom);
-    else updateEntityMesh(entity, data, camX, camY, cameraZoom);
-    // updateEntityMesh potrafi przebudować dane encji — znacznik na aktualnych.
+    updateBeamSkinMesh(entity, data, camX, camY, cameraZoom);
+    // updateBeamSkinMesh potrafi przebudować dane encji (nowe ciało) — znacznik na aktualnych.
     (state.entityMeshes.get(entity) || data).lastDrawFrame = frameId;
     hasRenderable = true;
   }
@@ -2158,10 +1275,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   for (const entity of visibleHex) {
     let data = state.entityMeshes.get(entity);
     if (data && data.lastDrawFrame === frameId) continue;
-    if (!data) data = entity.hexGrid ? createEntityMesh(entity) : createBeamSkinMesh(entity);
+    if (!data) data = createBeamSkinMesh(entity);
     if (!data) continue;
     if (data.mesh?.visible) data.mesh.visible = false;
-    if (data.armorMesh?.visible) data.armorMesh.visible = false;
   }
   // Partie skór: widoczność po ustaleniu widoczności wszystkich nośników (kadr, pudło rozgrzania).
   syncSkinBatches();
@@ -2187,24 +1303,18 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       if (entity.hideHexVisual === true || entity.visual?.hideHexMesh === true) continue;
       if (entity.__hiddenFromView === true) continue;   // mgła wojny: cień zdradzałby okręt
       if (cloakHidesShadow(entity)) continue;            // maskowanie: ukryty kadłub nie rzuca cienia
-      const beam = !entity.hexGrid && isBeamHullEntity(entity);
-      if (!entity.hexGrid && !beam) continue;
-      const grid = beam ? beamShadowGrid(entity.beamHull) : entity.hexGrid;
+      if (!isBeamHullEntity(entity)) continue;
+      const grid = beamShadowGrid(entity.beamHull);
       const scaleX = Math.abs(getEntityScaleX(entity)) || 1;
       const scaleY = Math.abs(getEntityScaleY(entity)) || 1;
       let w = (Number(grid.srcWidth) || 0) * scaleX;
       let h = (Number(grid.srcHeight) || 0) * scaleY;
-      if (beam && (entity.isWreck === true || grid.isFragment === true)) {
-        // Wrak na belkach: rozmiar z obrysu żywych węzłów (j. świata).
+      if (entity.isWreck === true || grid.isFragment === true) {
+        // Wrak / odłam: rozmiar z obrysu żywych węzłów (j. świata) — src to sprite rodzica,
+        // więc drobnica sortowałaby się jak cały okręt i zabierała mu slot cienia.
         const mm = entity.beamHull.body._boundsMinMax;
         w = mm[3] - mm[0];
         h = mm[4] - mm[1];
-      } else if (entity.isWreck === true || grid.isFragment === true) {
-        // Wrak/fragment: rozmiar z aktywnych heksów — src to sprite rodzica,
-        // więc drobnica sortowała się jak cały okręt i zabierała mu slot cienia.
-        const ext = getGridActiveExtent(grid, now);
-        w = ext.halfW * 2 * scaleX;
-        h = ext.halfH * 2 * scaleY;
       }
       const size = Math.max(w, h);
       if (size < 40) continue; // drobnica nie rzuca sensownego cienia
@@ -2225,7 +1335,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       const px = interpPose ? interpPose.x : c.ex;
       const py = interpPose ? interpPose.y : c.ey;
       const rawAng = interpPose ? interpPose.angle : (c.entity.angle || 0);
-      // rotation.z mesha kadłuba (updateEntityMesh): -kąt, billboard +kąt.
+      // obrót jak skóra kadłuba: -kąt, billboard +kąt.
       const rot = usesBillboardOrientation(c.entity) ? rawAng : -rawAng;
       const rsc = Number(c.entity.__renderScale) > 0 ? Number(c.entity.__renderScale) : 1;
       packHullShaftOccluder(shaftOccluderScratch, 0, px, py, rot,
@@ -2249,11 +1359,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // renderu, po Turret2D.sync (lufy wiązek ciągłych i błysków z rekordów tej klatki).
   WeaponFx.sync(Array.isArray(RenderWorld.bullets) ? RenderWorld.bullets : []);
 
-  GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
-  GpuDebrisManager.updateTime(now * 0.001);
   // Odłamki kadłubów na belkach (płyty i kształtowniki z dema).
   HullDebris3D.update(now * 0.001);
-  updateDebrisRendering();
 
   for (const [entity] of state.entityMeshes) {
     if (!validSet.has(entity)) stale.push(entity);
@@ -2423,14 +1530,12 @@ function beamBodyRadiusPx(entity, zoom) {
 }
 
 /**
- * (Gra liczy to samo dla kadłubów na belkach sama — src/game/coldWreckView.js coldFreezeVisuallySafe, RW-31; tu zostaje
- * reguła wraków heksowych dem i zapas.)
- * Czy zamrożenie wraku przejdzie niezauważone: wrak jest poza pudłem
- * rysowania ostatniej klatki albo już leży w batchu smug (to samo kryterium
- * co updateEntityMesh), więc zamiana heksów na smugę nie przeskoczy obrazem.
- * Wrak na belkach: przy pełnym wyglądzie zimnego (staticSkin + nearExtras — ta sama skóra, mostek, rdzeń
- * i cień co u śpiącego) w kadrze do `inViewFreezeMaxPx`; bez niego — tylko na poziomie smugi.
- * Ukryty mgłą wojny w kadrze — nie (zimny rysuje się jak teren, bez mgły).
+ * (Gra liczy to samo sama — src/game/coldWreckView.js coldFreezeVisuallySafe, RW-31; tu zostaje zapas po stronie
+ * renderu.)
+ * Czy zamrożenie wraku przejdzie niezauważone: wrak jest poza pudłem rysowania ostatniej klatki albo — przy pełnym
+ * wyglądzie zimnego (staticSkin + nearExtras — ta sama skóra, mostek, rdzeń i cień co u śpiącego) — w kadrze do
+ * `inViewFreezeMaxPx`; bez niego — tylko na poziomie smugi. Ukryty mgłą wojny w kadrze — nie (zimny rysuje się jak
+ * teren, bez mgły).
  */
 export function isColdFreezeVisuallySafe(entity, config = null) {
   const cull = state.lastCull;
@@ -2448,101 +1553,7 @@ export function isColdFreezeVisuallySafe(entity, config = null) {
     if (data) return data.batchedImpostor === true;
     return rPx < getWreckImpostorEnterPx();
   }
-  if (data) return data.batchedImpostor === true;
-  // W kadrze, ale bez meshu (dopiero wszedł): policz jak updateEntityMesh.
-  const grid = entity.hexGrid;
-  if (!grid) return true;
-  const ext = getGridActiveExtent(grid, state.lastTime);
-  const zoomPx = Math.max(0.0001, state.lastCameraZoom) * (Core3D.pixelRatio || 1);
-  const bodyRadiusPx = Math.max(ext.halfW * Math.abs(getEntityScaleX(entity)), ext.halfH * Math.abs(getEntityScaleY(entity))) * zoomPx;
-  return bodyRadiusPx < getWreckImpostorEnterPx();
-}
-
-// Kolor smugi per obraz kadłuba — ta sama średnia co data.impostorColor
-// gorącego wraku (computeAverageBodyColor na visualImage/armorImage).
-const coldImpostorColorBySource = new WeakMap();
-
-function coldImpostorColor(entity, source) {
-  let color = state.entityMeshes.get(entity)?.impostorColor || null;
-  if (!color && source) {
-    color = coldImpostorColorBySource.get(source);
-    if (color === undefined) {
-      color = computeAverageBodyColor(source) || null;
-      coldImpostorColorBySource.set(source, color);
-    }
-  }
-  return color;
-}
-
-/**
- * Smuga zimnego wraku na belkach — ta sama co smuga gorącego w updateBeamSkinMesh (zasięg żywych węzłów, środek
- * pudła w układzie ciała, kąt skóry, kolor sprite'a): zamrożenie i zwolnienie ciała nie zmieniają obrazu.
- */
-function captureBeamColdImpostor(entity, snapshot) {
-  const hull = entity.beamHull;
-  if (!hull || hull.entity !== entity || !hull.body || hull.body.dead) return false;
-  const body = hull.body;
-  const mm = body._boundsMinMax;
-  if (!mm) return false;
-  const theta = -((Number(entity.angle) || 0) + hullSpriteRotation(entity));
-  const c = Math.cos(theta), s = Math.sin(theta);
-  const ax = HullBodies.anchorLocalX(hull), ay = HullBodies.anchorLocalY(hull);
-  const originX = getEntityPosX(entity) - (c * ax - s * ay);
-  const originY = -getEntityPosY(entity) - (s * ax + c * ay);
-  const halfW = (mm[3] - mm[0]) * 0.5 + body.cellSize * 0.5;
-  const halfH = (mm[4] - mm[1]) * 0.5 + body.cellSize * 0.5;
-  const cxL = (mm[0] + mm[3]) * 0.5, cyL = (mm[1] + mm[4]) * 0.5;
-  const x = originX + c * cxL - s * cyL;
-  const y = originY + s * cxL + c * cyL;
-  const color = coldImpostorColor(entity, hull.visualImage || hull.image) || snapshot.color || { r: 0.35, g: 0.37, b: 0.4 };
-  snapshot.color = { r: color.r, g: color.g, b: color.b };
-  const cfg = coldRenderHooks.config || COLD_WRECK_CONFIG;
-  const out = snapshot.impostor || (snapshot.impostor = {});
-  out.x = x;
-  out.y = y;
-  out.rot = theta;
-  out.halfW = halfW;
-  out.halfH = halfH;
-  out.r = color.r;
-  out.g = color.g;
-  out.b = color.b;
-  out.wx = x;
-  out.wy = -y;
-  out.reach = Math.hypot(halfW, halfH);
-  out.opacity = Number.isFinite(Number(cfg.beamImpostorOpacity)) ? Number(cfg.beamImpostorOpacity) : 1;
   return true;
-}
-
-/**
- * Przy zamrażaniu, PRZED invalidateHexShipEntity3D: kolor (z meshu, póki
- * istnieje) i gotowa smuga na zrzucie (`snapshot.color`, `snapshot.impostor`).
- */
-export function captureColdWreckImpostor(entity, snapshot) {
-  if (!entity || !snapshot) return false;
-  if (snapshot.kind === 'beam') return captureBeamColdImpostor(entity, snapshot);
-  if (!snapshot.extent) return false;
-  let color = state.entityMeshes.get(entity)?.impostorColor || null;
-  if (!color) {
-    const source = snapshot.visualImage || snapshot.armorImage || entity.hexGrid?.cacheCanvas || null;
-    if (source) {
-      color = coldImpostorColorBySource.get(source);
-      if (color === undefined) {
-        color = computeAverageBodyColor(source) || null;
-        coldImpostorColorBySource.set(source, color);
-      }
-    }
-  }
-  if (color) snapshot.color = { r: color.r, g: color.g, b: color.b };
-  const angle = Number(entity.angle) || 0;
-  const rot = usesBillboardOrientation(entity) ? angle : -angle;
-  return !!prepareColdWreckImpostor(
-    snapshot,
-    getEntityPosX(entity),
-    getEntityPosY(entity),
-    rot,
-    getEntityScaleX(entity),
-    getEntityScaleY(entity)
-  );
 }
 
 /**
@@ -2587,14 +1598,8 @@ function updateColdBeamWrecks(coldWrecks, cull, camX, camY, cameraZoom, frameId,
       if (modelDrawn) w._coldSkinFrame = frameId;
       continue;
     }
-    if (data && data.kind !== 'beam') {
-      state.entityMeshes.delete(w);
-      disposeMeshData(data);
-      data = null;
-    }
     if (!data) data = createBeamSkinMesh(w);
     if (!data) continue;
-    if (data.lastDrawFrame !== frameId - 1) data.needsInstanceRefresh = true;
     updateBeamSkinMesh(w, data, camX, camY, cameraZoom);
     (state.entityMeshes.get(w) || data).lastDrawFrame = frameId;
     w._coldSkinFrame = frameId;
@@ -2606,7 +1611,6 @@ function updateColdBeamWrecks(coldWrecks, cull, camX, camY, cameraZoom, frameId,
 export function disposeHexShips3D() {
   for (const [, data] of state.entityMeshes) disposeMeshData(data);
   state.entityMeshes.clear();
-  GpuDebrisManager.dispose();
   HullDebris3D.dispose();
   EngineVfxSystem.disposeAll();
   WeaponFx.reset();

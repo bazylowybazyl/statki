@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { prepareColdWreckImpostor, pushColdWreckImpostors } from '../src/3d/coldWreckImpostors.js';
+import { pushColdWreckImpostors } from '../src/3d/coldWreckImpostors.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -19,29 +19,13 @@ function fakeBatch(capacity, used = 0) {
   };
 }
 
-function coldAt(x, y, halfW = 40, halfH = 20) {
-  const snapshot = { extent: { halfW, halfH, cx: 0, cy: 0 }, color: { r: 0.2, g: 0.3, b: 0.4 } };
-  prepareColdWreckImpostor(snapshot, x, y, 0, 1, 1);
-  return { x, y, _coldSnapshot: snapshot };
+// Smuga zimnego wraku = rekord `snapshot.impostor` liczony raz przy zamrożeniu (gra: src/game/coldWreckView.js
+// captureBeamColdImpostor — test w coldWreckView.test.mjs): współrzędne sceny (y = −y gry), środek do cullingu
+// w świecie gry (wx, wy), zasięg pudła.
+function coldAt(x, y, halfW = 40, halfH = 20, extra = {}) {
+  const impostor = { x, y: -y, rot: 0, halfW, halfH, r: 0.2, g: 0.3, b: 0.4, wx: x, wy: y, reach: Math.hypot(halfW, halfH), ...extra };
+  return { x, y, _coldSnapshot: { kind: 'beam', impostor } };
 }
-
-test('smuga zimnego wraku = smuga gorącego: to samo przekształcenie co updateEntityMesh', () => {
-  const snapshot = { extent: { halfW: 30, halfH: 12, cx: 10, cy: -4 }, color: { r: 0.5, g: 0.25, b: 0.125 } };
-  const ex = 1000, ey = -250, angle = 0.6, sx = 2, sy = 3;
-  const rot = -angle;
-  const imp = prepareColdWreckImpostor(snapshot, ex, ey, rot, sx, sy);
-  // updateEntityMesh: offX = cx·sx, offY = -cy·sy; x = ex + offX·cos − offY·sin; y = −ey + offX·sin + offY·cos.
-  const offX = 10 * sx;
-  const offY = 4 * sy;
-  assert.ok(Math.abs(imp.x - (ex + offX * Math.cos(rot) - offY * Math.sin(rot))) < 1e-9);
-  assert.ok(Math.abs(imp.y - (-ey + offX * Math.sin(rot) + offY * Math.cos(rot))) < 1e-9);
-  assert.equal(imp.halfW, 60);
-  assert.equal(imp.halfH, 36);
-  assert.equal(imp.rot, rot);
-  assert.deepEqual([imp.r, imp.g, imp.b], [0.5, 0.25, 0.125]);
-  assert.equal(imp.wy, -imp.y, 'środek do cullingu w układzie świata');
-  assert.equal(snapshot.impostor, imp);
-});
 
 test('tylko zimne w kadrze trafiają do batcha, z kryciem „tła”', () => {
   const list = [coldAt(0, 0), coldAt(900, 0), coldAt(5000, 0), coldAt(0, -3000), { x: 1, y: 1, _coldSnapshot: null }];
@@ -51,6 +35,16 @@ test('tylko zimne w kadrze trafiają do batcha, z kryciem „tła”', () => {
   assert.equal(pushed, 2);
   assert.deepEqual(batch.pushed.map(args => args[0]), [0, 900]);
   assert.ok(batch.pushed.every(args => args.length === 9 && args[8] === 0.7));
+});
+
+test('własne krycie smugi bierze górę; wrak rysowany w tej klatce skórą smugi nie dostaje', () => {
+  const own = coldAt(0, 0, 40, 20, { opacity: 0.35 });
+  const skinned = coldAt(100, 0);
+  skinned._coldSkinFrame = 12;
+  const plain = coldAt(200, 0);
+  const batch = fakeBatch(100);
+  assert.equal(pushColdWreckImpostors(batch, [own, skinned, plain], null, 0.7, 12), 2);
+  assert.deepEqual(batch.pushed.map(args => [args[0], args[8]]), [[0, 0.35], [200, 0.7]]);
 });
 
 test('pełny batch: culling po odległości od środka kadru, nie wyjątek', () => {
@@ -69,13 +63,16 @@ test('pełny batch: culling po odległości od środka kadru, nie wyjątek', () 
   assert.deepEqual(again.pushed.map(args => Math.abs(args[0])).sort((a, b) => a - b), xs);
 });
 
-test('hexShips3D: przebieg zimnych przed flush batcha, bez listy encji; eksporty dla zamrażania', () => {
+test('hexShips3D: przebieg zimnych przed flush batcha, bez listy encji; smuga z migawki liczy gra', () => {
   const hex = read('src/3d/hexShips3D.js');
   assert.match(hex, /export function updateHexShips3D\(viewCamera, entities = \[\], cullInfo = null, coldWrecks = null(, cloakFrame = null)?\)/);
   // Wraki na belkach rysowane w tej klatce skórą (znacznik `_coldSkinFrame === frameId`) smugi nie dostają.
   assert.match(hex, /pushColdWreckImpostors\(HexBodyImpostorBatch, coldWrecks, cullInfo, COLD_WRECK_CONFIG\.impostorOpacity, frameId\);[\s\S]*?HexBodyImpostorBatch\.flush\(\);/);
   assert.match(hex, /export function isColdFreezeVisuallySafe\(entity, config = null\)/);
-  assert.match(hex, /export function captureColdWreckImpostor\(entity, snapshot\)/);
+  // Jedna ścieżka smugi: gra (RW-31) — dawny zapas renderu (captureColdWreckImpostor, też dla zrzutów heksów)
+  // usunięty razem z silnikiem heksów (2026-10-19).
+  assert.doesNotMatch(hex, /captureColdWreckImpostor/);
+  assert.match(read('src/game/coldWreckView.js'), /export function captureBeamColdImpostor\(entity, snapshot, config = null\)/);
   const batch = read('src/3d/hexBodyImpostorBatch.js');
   assert.match(batch, /pushRaw\(x, y, rot, halfW, halfH, r, g, b, opacity\) \{/);
   assert.match(batch, /push\(p\) \{\s*return this\.pushRaw\(/);

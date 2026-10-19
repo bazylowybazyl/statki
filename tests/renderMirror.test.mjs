@@ -194,8 +194,8 @@ test('lustro: bridgeState — część statyczna z opisu, stan z bloku mostków,
   store.hp = new Float64Array(store.count).fill(100);
   store.maxHp = new Float64Array(store.count).fill(120);
   e.bridgeState = {
-    version: 1, backend: BACKEND, grid: null, lineage: 'ród-A', srcW: 300, srcH: 150, spriteScale: 1.25, anchorDX: 2, anchorDY: -3,
-    cellSize: 15, dimsX: 5, dimsY: 4, scaleX: 1, scaleY: 1, rule: 'all', hullKey: 'bellator', hexRadius: 6,
+    version: 1, backend: BACKEND, lineage: 'ród-A', srcW: 300, srcH: 150, spriteScale: 1.25, anchorDX: 2, anchorDY: -3,
+    cellSize: 15, dimsX: 5, dimsY: 4, scaleX: 1, scaleY: 1, rule: 'all', hullKey: 'bellator',
     windowColorSrgb: [0.9, 0.95, 1], commandLost: false, commandLostAt: -1, vent: null,
     bridges: [{ def: { id: 'main', x: 10, y: 20, w: 30, h: 40 }, id: 'main', index: 0, total: 12, cellX: new Int32Array([1, 2]), cellY: new Int32Array([3, 3]), dead: false, deadAt: -1, missing: false, vent: null }],
     windows: { count: 2, px: new Float32Array([1, 2]), py: new Float32Array([3, 4]), cellX: new Int16Array(2), cellY: new Int16Array(2), offX: new Float32Array(2), offY: new Float32Array(2), angle: new Float32Array(2), seed: new Float32Array(2), level: new Float32Array(2), bridge: new Uint8Array(2), delay: new Float32Array(2), colorsLinear: [[1, 1, 1]], length: 8, width: 2 }

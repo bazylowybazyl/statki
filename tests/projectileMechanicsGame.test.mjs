@@ -13,8 +13,7 @@ window.wrecks = [];
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
 const M = await import('../src/game/projectileMechanics.js');
-const { stepProjectileKinematics, projectileStepSpan, shouldRemoveProjectileAfterImpact } = await import('../src/game/projectileTrajectory.js');
-const { segmentCircleToi } = await import('../src/physics/physicsKernel.js');
+const { stepProjectileKinematics, projectileStepSpan, shouldRemoveProjectileAfterImpact, segmentCircleToi } = await import('../src/game/projectileTrajectory.js');
 const Carrier = await import('../src/game/carrierVelocity.js');
 const { SimClock } = await import('../src/game/simClock.js');
 const { createShot, flyShot, ledgerFor } = await import('./helpers/hullFlight.mjs');
@@ -108,7 +107,7 @@ const game = {
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false, projectilePassesAlly,
-  HullBodies, HullDamageEvents, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  HullBodies, HullDamageEvents, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },

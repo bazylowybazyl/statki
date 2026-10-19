@@ -1,8 +1,8 @@
 /**
  * SALVAGE — łup z wraków.
  *
- * Problem, który ten moduł rozwiązuje: `spawnWreckEntity` kopiuje do wraku
- * hexGrid i fizykę, ale nie wie NIC o tym, czym statek był uzbrojony. Uzbrojenie
+ * Problem, który ten moduł rozwiązuje: wrak przejmuje kadłub (silnik belek)
+ * i fizykę, ale nie wie NIC o tym, czym statek był uzbrojony. Uzbrojenie
  * znikało w momencie śmierci. Tutaj powstaje "manifest łupu" — spis broni
  * i materiałów — który wędruje z rodzica na fragmenty przy każdym rozpadzie.
  *
@@ -12,8 +12,8 @@
  *   HOLOWANIE     — wrak przywleczony do stoczni oddaje wszystko, z bronią
  *                   w całości.
  *
- * Broń zapamiętuje komórkę kadłuba (`c,r`), do której była przykręcona, więc
- * odlatuje z TYM fragmentem, który odstrzelisz — nie losowym.
+ * Broń zapamiętuje komórkę kadłuba (`ix,iy` siatki belek), do której była przykręcona,
+ * więc odlatuje z TYM fragmentem, który odstrzelisz — nie losowym.
  */
 
 import { RESOURCES } from '../data/resources.js';
@@ -58,7 +58,7 @@ export function fieldCutNodesPerSecond(wreck) {
   return FIELD_CUT_SHARDS_PER_SECOND / hexesPerCell(wreck);
 }
 
-/** Dawne heksy na komórkę encji: węzeł belkowy = `hexPerNode` (siatka 15 px → 4), heks = 1. */
+/** Dawne heksy (jednostka stawek łupu) na komórkę encji: węzeł belkowy = `hexPerNode` (siatka 15 px → 4). */
 function hexesPerCell(entity) {
   const k = Number(entity?.beamHull?.hexPerNode);
   return Number.isFinite(k) && k > 0 ? k : 1;
@@ -77,13 +77,7 @@ export const DOCK_DELIVERY_RANGE = 1400;
 function shardCount(entity) {
   // Kadłub na belkach (hullBodies.js): komórka = węzeł siatki, liczba z chwili budowy.
   const hull = entity?.beamHull;
-  if (hull) return Math.max(0, Number(hull.baseNodes) || 0);
-  const grid = entity?.hexGrid;
-  if (!grid) return 0;
-  return Math.max(
-    0,
-    Number(grid.baseStructuralCount) || Number(grid.activeStructuralCount) || grid.shards?.length || 0
-  );
+  return hull ? Math.max(0, Number(hull.baseNodes) || 0) : 0;
 }
 
 /** Zbiera zamontowaną broń — działa tak samo dla gracza i NPC. */
@@ -123,39 +117,11 @@ function collectMountedWeapons(entity) {
 
 /**
  * Przelicza pozycję hardpointu (piksele sprite'a źródłowego, środek w zerze)
- * na komórkę kratownicy heksów i zapamiętuje jej klucz `c,r`.
+ * na komórkę siatki kadłuba i zapamiętuje jej klucz.
  * Bez tego nie wiadomo, z którym fragmentem ma odlecieć działo.
  */
 function anchorWeaponsToCells(entity, weapons) {
-  if (entity?.beamHull) {
-    anchorWeaponsToBeamCells(entity, weapons);
-    return;
-  }
-  const grid = entity?.hexGrid;
-  const shards = grid?.shards;
-  if (!Array.isArray(shards) || !shards.length) return;
-
-  const scaleX = Number(entity.__hardpointScaleX) || Number(entity.__hardpointScale) || 1;
-  const scaleY = Number(entity.__hardpointScaleY) || Number(entity.__hardpointScale) || 1;
-  const cx = (Number(grid.srcWidth) || 0) * 0.5;
-  const cy = (Number(grid.srcHeight) || 0) * 0.5;
-
-  for (const weapon of weapons) {
-    const gx = cx + weapon.x * scaleX;
-    const gy = cy + weapon.y * scaleY;
-    let best = null;
-    let bestD2 = Infinity;
-    for (const shard of shards) {
-      const dx = (Number(shard.gridX) || 0) - gx;
-      const dy = (Number(shard.gridY) || 0) - gy;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = shard;
-      }
-    }
-    if (best) weapon.cell = `${best.c},${best.r}`;
-  }
+  if (entity?.beamHull) anchorWeaponsToBeamCells(entity, weapons);
 }
 
 // Kadłub na belkach: najbliższy żywy węzeł w układzie spoczynkowym ciała, klucz `ix,iy`
@@ -191,16 +157,6 @@ function anchorWeaponsToBeamCells(entity, weapons) {
 function buildMaterials(entity, shards) {
   const materials = {};
   if (shards <= 0) return materials;
-
-  // Wrak asteroidy oddaje rudę swojego typu, nie złom po statku.
-  // To ta sama ścieżka, którą później wykorzysta wydobycie w pasach.
-  const asteroidResource = entity?.asteroidRef?.resource;
-  if (entity?.isAsteroidHex) {
-    if (asteroidResource && RESOURCES[asteroidResource]) {
-      materials[asteroidResource] = Math.max(1, Math.round(shards * 0.22));
-    }
-    return materials;
-  }
 
   for (const [id, perShard] of Object.entries(SALVAGE_PER_SHARD)) {
     const amount = Math.round(shards * perShard);
@@ -242,7 +198,7 @@ export function ensureSalvageManifest(entity) {
     sourceShards: shards,
     // Maleje z każdym odrywanym fragmentem — to mianownik przy dzieleniu łupu.
     remainingShards: shards,
-    label: entity.displayName || entity.shipFrame || (entity.isAsteroidHex ? 'Asteroida' : 'Wrak')
+    label: entity.displayName || entity.shipFrame || 'Wrak'
   };
   return entity._salvage;
 }
@@ -269,7 +225,7 @@ function takeMaterialShare(source, ratio) {
 /**
  * Przenosi udział łupu z rodzica na świeżo powstały wrak.
  * Materiały idą proporcjonalnie do liczby komórek, broń — za swoim kawałkiem
- * kadłuba. `hasCell(key)` odpowiada, czy komórka `c,r` odleciała z tym fragmentem;
+ * kadłuba. `hasCell(key)` odpowiada, czy komórka `ix,iy` odleciała z tym fragmentem;
  * predykat zamiast kolekcji, żeby rozpad nie alokował zbioru na każdy fragment.
  *
  * Udział liczony jest względem tego, co rodzicowi ZOSTAŁO, nie względem stanu

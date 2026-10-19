@@ -2,7 +2,7 @@
 
 > Dla agenta, który wprowadza do gry nowy statek (nowy sprite kadłuba) albo
 > podmienia sprite istniejącego. **Każdy okręt bojowy dostaje mostek**: strefę
-> heksów (zniszczenie = utrata dowodzenia → hulk → wrak) i model 3D nadbudówki
+> komórek kadłuba (zniszczenie = utrata dowodzenia → hulk → wrak) i model 3D nadbudówki
 > stojący dokładnie na tej strefie. Mechanika: `docs/PORT-mostki.md` §0–§4,
 > model: §8, lista gotowych kadłubów: §8.2. Czas pracy: ~1–2 h na kadłub.
 
@@ -53,8 +53,10 @@ Przestrzeń PNG: środek obrazka = (0, 0), +X = dziób, +Y = w dół obrazka.
 3. Jak mierzyć: sprite z nałożonymi hardpointami, silnikami, kołami zapasu
    i siatką co 10 px PNG (kilka linijek PIL albo kanwy; opis metody
    i pułapek w `docs/PORT-mostki.md` §8.13 — zgrubna siatka myli o 20–50 px)
-   albo edytor stref w demie (`/dema/mostki-demo.html`, klawisz `E`,
-   „Eksport JSON” daje gotowy wpis).
+   albo edytor stref w demie belkowym (`/dema/mostki-webgpu.html`, klawisz `E`
+   albo `?edit=1`: przeciąganie, rogi, obrót, kolizje z gniazdami na żywo,
+   „Eksport” daje gotowy wpis `BRIDGE_LAYOUT_PROPOSALS.<klucz>.variants.<wariant>`;
+   kadłub dema — wpis w `dema/mostki-webgpu/kadluby.js`).
 4. Jedna strefa na okręt (`role: 'primary'`); mostek zapasowy tylko przy
    wielkich okrętach (Atlas) i drugiej, rozłącznej nadbudówce.
 5. `windowColor`: Terra `#e4f3ff`, piraci `#ff9a4a`, Atlas `#d6ecff`,
@@ -62,8 +64,9 @@ Przestrzeń PNG: środek obrazka = (0, 0), +X = dziób, +Y = w dół obrazka.
 6. Test: sprite do `BRIDGE_HULL_SPRITES` w `tests/shipBridge.test.mjs`
    (ścieżka, rozmiar PNG, profil renderu).
 
-Liczba heksów: promień heksa to zawsze 5 px renderu. Mała fregata (192 px)
-ma w strefie ~10 heksów — OK; mniej niż ~6 to już jeden strzał.
+Liczba komórek: komórka siatki belek ma 15 px renderu (`HULL_BODY_CONFIG.cellPx`),
+a strefa mostka to komórki, których środek leży w prostokącie strefy — edytor
+pokazuje ich liczbę („komórek w strefie”). Strefa na kilka komórek to już jeden strzał.
 
 ## 3. Model 3D (`src/3d/bridge3DShapes.js`)
 
@@ -110,29 +113,28 @@ robią się rude), cywilni (`megafreighter`). Nowa lampa → kolor w `EMIT_COLOR
 
 ## 5. Demo i sprawdzenie (sam, bez proszenia usera)
 
-1. `dema/mostki-hulls.js` — wpis w `HULLS` + `HULL_ORDER` (PNG, rozmiar,
-   profil, typ NPC); `dema/mostki-sim.js` — `HULL_POOLS`; przycisk
-   w `dema/mostki-demo.html`.
-2. `dema/mostki3d-shots.js` — wpis w `HULLS` (zoom zbliżenia i całego
-   kadłuba; `killDirect` dla wielkich stref).
-3. Uruchom:
+1. `dema/mostki-webgpu/kadluby.js` — wpis w `BRIDGE_DEMO_HULLS` (PNG, profil
+   renderu, typ i frakcja NPC); kadłub pojawia się w wyborze dema.
+2. Uruchom:
    ```
-   node --test tests/bridge3D.test.mjs tests/shipBridge.test.mjs
-   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON dema/mostki3d-shots.js --only <id>,free3d --out .tmp/mostki3d/<id>
+   node --test tests/bridge3D.test.mjs tests/shipBridge.test.mjs tests/shipBridgeBeams.test.mjs
+   node scripts/webgpu/mostki-webgpu.mjs --tryb zrzuty --kadlub <klucz>
+   node scripts/webgpu/mostki-webgpu.mjs --tryb edytor --kadlub <klucz>
    ```
    Obejrzyj: zbliżenie (czy model przykrywa namalowaną nadbudówkę i czyta się
    jak ta sama bryła), cały kadłub (skala, cień), uszkodzony (wyrwy po
-   heksach), hulk i wrak (okna gasną falą, model zostaje zgaszony na wraku),
-   wolną kamerę (wysokość). Pasma HDR okien: wiersz `OKNA` w logu.
-4. `npm test` i build Vite. Opcjonalnie drżenie przy współrzędnych gry:
-   `dema/mostki3d-drzenie.js`.
+   komórkach kadłuba), hulk i wrak (okna gasną falą, model zostaje zgaszony
+   na wraku). Strefa w edytorze: bez ostrzeżenia „Kolizje” (gniazda, silniki, rdzenie).
+3. `npm test` i build Vite. Opcjonalnie drżenie przy współrzędnych gry:
+   `node scripts/webgpu/drzenie-gra.mjs`.
 
 ## 6. Gra
 
-Nic więcej: `attachEntityBridges` biegnie dla każdego NPC po `initHexBody`
-(`drawNPCPretty`) i dla gracza przy zmianie kadłuba, `Bridge3D.update`
+Nic więcej: `attachEntityBridges` biegnie dla każdego NPC po budowie kadłuba
+na belkach (`HullBodies.createHull` w `drawNPCPretty`) i dla gracza przy zmianie kadłuba, `Bridge3D.update`
 podpina model sam (≤ 24 rekordy na klatkę). Sprawdzenie w samej grze:
-`dema/mostki3d-gra.js` (headless Chrome).
+`node scripts/webgpu/mostki-gra.mjs` (headless Chrome: mostek pirata, utrata dowodzenia → hulk → wrak,
+mostki Atlasa, pipeline'y w klatkach — 0).
 
 ## 7. Pułapki
 

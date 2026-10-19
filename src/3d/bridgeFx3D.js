@@ -1,7 +1,7 @@
 // src/3d/bridgeFx3D.js
 //
-// Wygląd mostków (src/game/shipBridge.js): okna nadbudówki i wyrzut
-// atmosfery z wyrwy. Moduł nie tworzy renderera ani kanwy — podpina się do
+// Wygląd mostków (src/game/shipBridge.js, stan z shipBridgeBeams.js): okna
+// nadbudówki i wyrzut atmosfery z wyrwy. Moduł nie tworzy renderera ani kanwy — podpina się do
 // podanej sceny (w grze Core3D.scene), a cząstki wysypuje do wspólnego banku
 // Fx3D (fxParticles3D.js), bez nowych pul.
 //
@@ -21,8 +21,8 @@
 // pomieszczeń świecą też w SIATCE ŚWIATEŁ Core3D (oświetlają kadłub i sąsiadów), wyrwa dostaje
 // osmalenie na mapie ran kadłuba (HullDamageMap), a w agonii (przepięcia, gdy okna migają)
 // po nadbudówce przeskakują łuki z puli ARC broni (WeaponFx) z iskrami puli gry (SparkSystem3D).
-// Usługi podaje host: BridgeFx3D.attach(scena, { weaponFx }) — bez nich (dema heksowe) tylko
-// cząstki banku Fx3D jak dawniej.
+// Usługi podaje host: BridgeFx3D.attach(scena, { weaponFx }) — bez nich łuków nie ma (zostają
+// cząstki banku Fx3D, światła i osmalenie).
 
 import * as THREE from 'three/webgpu';
 import {
@@ -36,10 +36,8 @@ import { uniformsAdapter } from './tsl/uniformy.js';
 import { fxRandom } from './fx/fxRandom.js';
 import {
   BRIDGE_KILL_TIMELINE,
-  bridgeGridToWorld,
   bridgeHash01,
   bridgePngToWorld,
-  bridgeShardIsAlive,
   bridgeWaveDelay,
   sampleVentStrength,
   sampleWindowLight
@@ -136,7 +134,7 @@ const _v = new THREE.Vector3();
 
 // Skala efektów względem Bellatora (długość renderu 624 j.).
 function hullFxScale(entity) {
-  const g = entity.hexGrid || entity.beamHull;
+  const g = entity.beamHull;
   if (!g) return 1;
   const s = Math.max(Number(entity.visual?.spriteScaleX) || Number(entity.visual?.spriteScale) || 1, 0.0001);
   const len = Math.max(g.srcWidth, g.srcHeight) * s;
@@ -146,8 +144,8 @@ function hullFxScale(entity) {
 export { hullFxScale as bridgeHullFxScale };
 
 /**
- * Krótki błysk pomieszczenia (świat gry, Y w dół) — okno gaśnie, bo heks pod
- * nim zginął. Wspólny dla szczelin okien i okien modelu 3D (bridge3D.js).
+ * Krótki błysk pomieszczenia (świat gry, Y w dół) — okno gaśnie, bo komórka
+ * kadłuba pod nim zginęła. Wspólny dla szczelin okien i okien modelu 3D (bridge3D.js).
  */
 export function spawnBridgeRoomFlash(x, y, col, S) {
   if (!Fx3D.ensure()) return;
@@ -256,10 +254,9 @@ export const BridgeFx3D = {
     for (let e = 0; e < entities.length; e++) {
       const entity = entities[e];
       const st = entity?.bridgeState;
-      const grid = entity?.hexGrid;
-      const beam = isBeamBridgeState(st);
       if (!st || entity.hideHexVisual === true) continue;
-      if (beam ? !st.backend.owns(entity, st) : (!grid || st.grid !== grid)) continue;
+      // Stan mostków kadłuba belkowego tej encji (ten sam ród; wrak bez stanu — nic).
+      if (!isBeamBridgeState(st) || !st.backend.owns(entity, st)) continue;
       const pose = poseOf ? poseOf(entity) : null;
       const vis = visibility ? visibility(entity, true) : 1;
 
@@ -271,7 +268,7 @@ export const BridgeFx3D = {
         if (age < 0 || age > BRIDGE_KILL_TIMELINE.ventEnd) continue;
         if (this._emitVent(entity, bridge, age, dt, pose)) vents++;
         // Przepięcia: łuki po nadbudówce, dopóki okna migają (tylko przy usługach WebGPU).
-        if (beam && dt > 0 && age < T.arcEnd && vis > 0.05) arcs += this._agonyArcs(entity, st, bridge, age, dt);
+        if (dt > 0 && age < T.arcEnd && vis > 0.05) arcs += this._agonyArcs(entity, st, bridge, age, dt);
       }
 
       // Kadłub z modelem 3D mostka (bridge3D.js) ma okna na modelu — szczeliny
@@ -288,16 +285,14 @@ export const BridgeFx3D = {
       const halfWid = win.width * 0.5 * sx;
       const halo = win.width * sx * T.haloScale;
 
-      const ns = beam ? bridgeBeamHull(entity)?.body.nodeStore : null;
+      const ns = bridgeBeamHull(entity)?.body.nodeStore;
       for (let i = 0; i < win.count; i++) {
-        const s = beam ? null : win.shard[i];
-        // Belki: węzeł komórki pod oknem (−1 = wybita albo na innym ciele rodu).
-        const node = beam ? beamWindowNode(entity, win, i) : -1;
-        if (beam ? node < 0 : !bridgeShardIsAlive(grid, s)) {
-          // Pomieszczenie wybite: krótki błysk w chwili śmierci heksa pod oknem.
+        // Węzeł komórki pod oknem (−1 = wybita albo na innym ciele rodu).
+        const node = beamWindowNode(entity, win, i);
+        if (node < 0) {
+          // Pomieszczenie wybite: krótki błysk w chwili śmierci komórki pod oknem.
           if (win.lit[i] && flashes < MAX_ROOM_FLASHES_PER_FRAME && fade > 0.05 && age < 0) {
-            if (beam) beamWindowWorld(entity, win, i, _w, pose);
-            else bridgeGridToWorld(entity, s.gridX + s.deformation.x + win.offX[i], s.gridY + s.deformation.y + win.offY[i], _w, pose);
+            beamWindowWorld(entity, win, i, _w, pose);
             this._roomFlash(_w.x, _w.y, win.colorsLinear[win.bridge[i]], hullFxScale(entity));
             flashes++;
           }
@@ -317,12 +312,10 @@ export const BridgeFx3D = {
         } else if (age >= 0) {
           I = sampleWindowLight(age, win.delay[i], win.seed[i]);
         } else {
-          // Spokojne, lekko nierówne oświetlenie; uszkodzony heks mruga.
+          // Spokojne, lekko nierówne oświetlenie; uszkodzona komórka mruga.
           const seed = win.seed[i];
           I = 0.82 + 0.18 * Math.sin(now * (0.7 + seed * 1.3) + seed * 40);
-          const hpFrac = beam
-            ? (ns && ns.maxHp[node] > 0 ? ns.hp[node] / ns.maxHp[node] : 1)
-            : (s.maxHp > 0 ? s.hp / s.maxHp : 1);
+          const hpFrac = ns && ns.maxHp[node] > 0 ? ns.hp[node] / ns.maxHp[node] : 1;
           if (hpFrac < 0.55) {
             const slot = Math.floor(now * (9 + seed * 7));
             if (bridgeHash01(slot, i + 101) < 0.45 * (1 - hpFrac / 0.55) + 0.1) I *= 0.18;
@@ -330,8 +323,7 @@ export const BridgeFx3D = {
         }
         I *= fade * vis * (win.level ? win.level[i] : 1);
         if (I <= 0.003) continue;
-        if (beam) beamWindowWorld(entity, win, i, _w, pose);
-        else bridgeGridToWorld(entity, s.gridX + s.deformation.x + win.offX[i], s.gridY + s.deformation.y + win.offY[i], _w, pose);
+        beamWindowWorld(entity, win, i, _w, pose);
         const rot = -(baseAngle + win.angle[i]);
         const c = Math.cos(rot);
         const sn = Math.sin(rot);

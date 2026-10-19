@@ -18,8 +18,6 @@
         ship: ['hpEditor.v1', 'loadout', 'engineVfxTune.v1'],
         // Panele deweloperskie, layouty HUD i ustawienia grafiki.
         dev: [
-          'devConfig', 'devFlags', 'devBloomPanel', 'devRingColors',
-          'devDestructorConfig', 'devDestructorMassConfig', 'devCameraRig',
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
           'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_hull_light', 'sc_audio', 'sc_camera_look',
           'sc_camera_frame', 'sc_gfx', 'sc_gfx_auto', 'sc_space_dust'
@@ -72,6 +70,13 @@
       window.resetGameSave = resetGameSave;
       window.hardResetGameSave = hardResetGameSave;
       window.GAME_SAVE_KEYS = ALL_KEYS;
+
+      // Klucze usuniętych paneli dev (F12 odchudzony 2026-10-19; bloom, kamera, kolory ringu, destruktor, suwaki
+      // świata i flagi). Nikt ich już nie czyta — kasowane przy każdym starcie, żeby stary stan nie wrócił.
+      for (const key of ['devConfig', 'devFlags', 'devBloomPanel', 'devRingColors', 'devDestructorConfig',
+        'devDestructorMassConfig', 'devCameraRig']) {
+        try { localStorage.removeItem(key); } catch { }
+      }
 
       let params;
       try { params = new URLSearchParams(location.search); } catch { return; }
@@ -1099,7 +1104,8 @@
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { compensateStrafeYaw, resolveShipTurnCapability, strafeUsableForCapability } from "./src/game/flight/headingControl.js";
     // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js). Heksowy destruktor
-    // (src/game/destructor.js) gra nie ładuje od etapu 8 portu (docs/PORT-silnik-belek.md) — zostaje dla dem.
+    // (src/game/destructor.js) gra przestała ładować w etapie 8 portu (docs/PORT-silnik-belek.md), a 2026-10-19
+    // usunięto go z repo razem z demami heksowymi.
     import { HullBodies } from "./src/game/hullBodies.js";
     // Sufit punktów kadłuba z konstrukcji (enforceNpcHexIntegrityBalance) i punkty rosnące z odrostem węzłów.
     import { HULL_INTEGRITY, raiseHullHpForRegrowth } from "./src/game/hullIntegrity.js";
@@ -1266,7 +1272,7 @@
       MEGAFREIGHTER_YAW_ASSIST
     } from "./src/game/megafreighterTrain.js";
     import { BulletSpatialGrid } from "./src/game/bulletSpatialGrid.js";
-    import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics, projectileStepSpan } from "./src/game/projectileTrajectory.js";
+    import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics, projectileStepSpan, segmentCircleToi } from "./src/game/projectileTrajectory.js";
     import { ciwsShotHitsRocket, ciwsRocketReach, RocketThreatGrid } from "./src/game/rocketIntercept.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
@@ -1283,9 +1289,7 @@
     } from "./src/game/cameraDirector.js";
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
-    import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
-    import { segmentCircleToi } from "./src/physics/physicsKernel.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
       RenderLiveDebug,
@@ -1397,7 +1401,6 @@
       resizeHexShips3D,
       drawHexShips3D,
       prewarmHexShipVisual,
-      captureColdWreckImpostor,
       setColdWreckRenderHooks,
       setBeamSkinSuppressor,
       setEntityHiddenTest
@@ -1895,7 +1898,7 @@
     // Panel wydajnosci ma własny DOM i własny CSS (assets/css/perf-hud.css).
     // Stan świata dostaje przez provider — moduł nie zna zmiennych tego skryptu.
     mountPerfHudDom();
-    setPerfHudWorldSource(() => ({ ship, npcs, wrecks, coldWrecks, bullets, physicsBridge: physicsBridgeV2 }));
+    setPerfHudWorldSource(() => ({ ship, npcs, wrecks, coldWrecks, bullets }));
     PerfHUD.init();
 
     setLiveDebugPerfHud(PerfHUD);
@@ -3002,17 +3005,12 @@
 
     window.addEventListener('beforeunload', detachPlanetStationsIfNeeded);
 
-    // Dev flags/tuning (persisted via  where available)
+    // Flagi dev: konsola i skrypty narzędzi (scripts/webgpu). Nie zapisują się — panel F12 (do 2026-10-19 z miarkami,
+    // tarczami i warpem) wczytywał je z localStorage przy każdym starcie, więc raz kliknięta flaga żyła wiecznie.
     window.DevFlags = Object.assign({
-      showRuler: false,
-      showPlanetOrbits: false,
       unlimitedWarp: false,
-      showSunDir: false,
-      use3DPirateStation: true,
-      usePlanetStations3D: true,
       disableCameraShake: false,
       globalShieldsOff: false,
-      workerPhysicsV2: new URLSearchParams(location.search).has('workerPhysicsV2'),
       // Ruch v2 w Web Workerze (src/game/trafficBridge.js): gospodarka ×60,
       // stara ekonomia stacji i vany stoją. `?trafficV2=N` — inna skala.
       trafficV2: new URLSearchParams(location.search).has('trafficV2'),
@@ -3024,8 +3022,6 @@
     }, window.DevFlags || {});
     const DEFAULT_PIRATE_STATION_SCALE = 6;
     const DEFAULT_STATION_3D_SCALE = 2.70;
-    window.DEFAULT_STATION_SCALE = DEFAULT_PIRATE_STATION_SCALE;
-    window.DEFAULT_STATION_3D_SCALE = DEFAULT_STATION_3D_SCALE;
 
     window.DevTuning = Object.assign({
       pirateStationScale: DEFAULT_PIRATE_STATION_SCALE
@@ -3034,11 +3030,6 @@
     const DevFlags = window.DevFlags;
     const DevTuning = window.DevTuning;
     const Dev = window.Dev = window.Dev || {};
-    const physicsBridgeV2 = DevFlags.workerPhysicsV2
-      ? new PhysicsBridge({ maxBodies: 4096, maxProjectiles: 65536 })
-      : null;
-    window.PhysicsBridgeV2 = physicsBridgeV2;
-    window.PhysicsBridgeV2Stats = () => physicsBridgeV2?.getStats?.() || { mode: 'disabled' };
     // Most ruchu v2 — tworzony w initTrafficV2(), gdy stacje i ich budynki już
     // istnieją. `null` = flaga wyłączona (stara ekonomia i vany jak dotąd).
     let trafficV2 = null;
@@ -6530,7 +6521,7 @@
 
     // --- Kamera statku: postawy nawigacja / walka (src/game/cameraRig.js) ---
     // Offset kamery względem statku w px ekranu; krok raz na klatkę w render().
-    // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
+    // Strojenie na żywo: konsola CameraRig.tune (= cameraRigTune).
     const cameraRig = createCameraRig();
     // Kopnięcie kadru od ciężkich strzałów gracza (sprężyna w px ekranu, weaponKick* w cameraRigTune):
     // impuls ze strzału z wieżyczki (rekord SHOT — hak onShotFeel strumienia rozkazów) i z superweapon.js (Hexlance —
@@ -8436,7 +8427,7 @@
     window.wrecks = wrecks;
     publishGameState({ wrecks });
     // Zimne wraki („tło”, src/game/coldWrecks.js): poza wrecks i wszystkimi
-    // listami fizyki/renderu, bez hexGrid; rysowane tylko jako smugi.
+    // listami fizyki/renderu; rysowane z migawki (smuga albo skóra — coldWreckView.js).
     const coldWrecks = [];
     window.coldWrecks = coldWrecks;
     publishGameState({ coldWrecks });
@@ -10418,8 +10409,7 @@
     window.createWreckage = function (parentEntity) {
       // Kadłub na belkach: cały ocalały kadłub przechodzi na encję wraku (łup i ładunek z nim).
       if (parentEntity?.beamHull) return HullBodies.convertToWreck(parentEntity);
-      // Wrak z listy heksów (dawny destruktor heksowy) — w grze nie ma już kadłubów heksowych
-      // (etap 8, docs/PORT-silnik-belek.md).
+      // Bez kadłuba na belkach nie ma z czego zrobić wraku.
       return null;
     };
     // Ile myśliwców liczy pojedyncza eskadra roju i jak długo stacja przezbraja
@@ -10998,7 +10988,7 @@
     // wspólne: strzał zużywa je synchronicznie i nic ich nie zatrzymuje.
     function getBeamTargetRadius(pt) {
       let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
-      const hullGrid = pt?.hexGrid || pt?.beamHull;
+      const hullGrid = pt?.beamHull;
       if (hullGrid?.srcWidth && hullGrid?.srcHeight) {
         const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
         const halfW = (Number(hullGrid.srcWidth) || 0) * 0.5 * hexScale;
@@ -11023,7 +11013,7 @@
       const rad = Math.max(20, Number(t.radius) || 20);
       let a = 0;
       let b = 0;
-      if (t.shield && (t.beamHull || t.hexGrid || isShip)) {
+      if (t.shield && (t.beamHull || isShip)) {
         const c = Math.cos(axis);
         const s = Math.sin(axis);
         a = Math.max(getEntityShieldRadiusTowards(t, tx + c * 1000, ty + s * 1000),
@@ -11032,7 +11022,7 @@
           getEntityShieldRadiusTowards(t, tx + s * 1000, ty - c * 1000)) * 0.85;
       }
       if (!(a > 0) || !(b > 0)) {
-        const hull = t.hexGrid || t.beamHull;
+        const hull = t.beamHull;
         if (hull?.srcWidth && hull?.srcHeight) {
           const sc = Math.max(0.0001, t.visual?.spriteScale || t.capitalProfile?.spriteScale || t.profile?.spriteScale || 1);
           a = Math.max(hull.srcWidth, hull.srcHeight) * 0.5 * sc;
@@ -11534,7 +11524,7 @@
             const allowDamage = !ignoreSelfHit; // Przyjazny ogien aktywny (friendly fire on)!
 
             if (allowDamage && !beamHitShield) {
-              if (hitEntity.hexGrid || hitEntity.beamHull) {
+              if (hitEntity.beamHull) {
                 const impactSpeed = Number.isFinite(speed) ? speed : Math.max(800, Number(weapon.baseRange) || 2000);
                 applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard, weapon);
                 // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel wiązki).
@@ -15582,7 +15572,7 @@
 
     function ensureCargoWreckInventory(wreck, order) {
       if (!wreck) return null;
-      const shardCount = Math.max(1, Number(wreck.beamHull?.body?.activeNodes ?? wreck.hexGrid?.activeStructuralCount) || 1);
+      const shardCount = Math.max(1, Number(wreck.beamHull?.body?.activeNodes) || 1);
       if (!wreck._salvage) {
         wreck._salvage = {
           weapons: [],
@@ -16081,10 +16071,9 @@
       pushZoneMessage(`SALVAGE: CIĘCIE${weaponsNote}`, 1.6);
     }
 
-    // Żywe komórki konstrukcji wraku: węzły kadłuba na belkach albo heksy.
+    // Żywe komórki konstrukcji wraku: węzły kadłuba na belkach.
     function wreckStructureCount(wreck) {
-      if (wreck?.beamHull) return HullBodies.hasHull(wreck) ? wreck.beamHull.body.activeNodes : 0;
-      return Number(wreck?.hexGrid?.activeStructuralCount) || 0;
+      return wreck?.beamHull && HullBodies.hasHull(wreck) ? wreck.beamHull.body.activeNodes : 0;
     }
 
     function stopFieldSalvage(reason = '') {
@@ -16120,7 +16109,7 @@
       if (cargoRecovery.changed) {
         pushZoneMessage(`ODZYSKANO ŁADUNEK: ${formatCargoBag(cargoRecovery.moved)}`, 1.8);
       }
-      if (!wreck.hexGrid && !HullBodies.hasHull(wreck)) {
+      if (!HullBodies.hasHull(wreck)) {
         stopFieldSalvage(cargoRecovery.reason === 'capacity'
           ? 'SALVAGE: CAŁA PARTIA NIE MIEŚCI SIĘ W ŁADOWNI'
           : 'SALVAGE: PUSTY KONTENER');
@@ -16266,7 +16255,7 @@
     function updateWreckTow() {
       const wreck = salvageState.towed;
       if (!wreck) return;
-      if (wreck.dead || (!wreck.hexGrid && !HullBodies.hasHull(wreck))) {
+      if (wreck.dead || !HullBodies.hasHull(wreck)) {
         releaseWreckTow('HOL: WRAK PRZEPADŁ');
         return;
       }
@@ -19254,8 +19243,8 @@
     function getRadarTargetMeta(target) {
       const source = target?.__targetingSubsystem ? target.ownerEntity : target;
       const hpScale = getEntityHardpointScale(source);
-      const srcW = Number((source?.hexGrid || source?.beamHull)?.srcWidth);
-      const srcH = Number((source?.hexGrid || source?.beamHull)?.srcHeight);
+      const srcW = Number(source?.beamHull?.srcWidth);
+      const srcH = Number(source?.beamHull?.srcHeight);
       const radius = Math.max(20, getTargetRadius(source));
       return {
         unitId: getRadarTargetUnitId(target),
@@ -19314,17 +19303,10 @@
     }
 
     function buildRadarBlueprintData(target) {
-      const grid = target?.hexGrid || target?.beamHull;
+      const grid = target?.beamHull;
       const hpScale = getEntityHardpointScale(target);
-      const shards = target?.beamHull ? buildBeamBlueprintCells(target, hpScale) : Array.isArray(grid?.shards)
-        ? grid.shards.map((shard) => ({
-            x: (Number(shard?.origLx) || 0) * hpScale.x,
-            y: (Number(shard?.origLy) || 0) * hpScale.y,
-            hp: Number(shard?.hp) || 0,
-            maxHp: Number(shard?.maxHp) || 1,
-            active: !!(shard?.active && !shard?.isDebris)
-          }))
-        : [];
+      // Komórki kadłuba na belkach (pole `shards` — nazwa z czasów heksów, czyta ją radarTargetingUI.js).
+      const shards = grid ? buildBeamBlueprintCells(target, hpScale) : [];
       const hardpoints = (getEntityHardpoints(target) || []).map((hp) => {
         const local = getEntityHardpointLocalPos(target, hp) || { x: 0, y: 0 };
         return { x: local.x, y: local.y, destroyed: !!hp?.destroyed };
@@ -23094,7 +23076,6 @@
     window.applyDamageToPlayer = applyDamageToPlayer;
 
     // ── Critical Reactor Blow system ──────────────────────────────────────
-    window.flyingHexDebris = [];
     let _critChainDepth = 0;
 
     // Typ → myśliwiec, zapamiętane po napisie typu: toLowerCase() robił nowy napis przy każdym
@@ -23159,131 +23140,6 @@
       }
     }
 
-    function spawnFlyingHexDebris(entity, explosionPos, countOrShards, opts = null) {
-      // Works with either wreck or npc (anything with hexGrid.shards + x/y/angle).
-      const shards = entity?.hexGrid?.shards;
-      if (!shards || shards.length === 0) return;
-      const options = opts || {};
-      const srcWidth  = entity.hexGrid.srcWidth  || 256;
-      const srcHeight = entity.hexGrid.srcHeight || 256;
-      const cx     = srcWidth * 0.5;
-      const cy     = srcHeight * 0.5;
-      const pivotX = entity.hexGrid.pivot?.x || 0;
-      const pivotY = entity.hexGrid.pivot?.y || 0;
-      const scaleX = entity.visual?.spriteScaleX || entity.visual?.spriteScale || 1;
-      const scaleY = entity.visual?.spriteScaleY || entity.visual?.spriteScale || 1;
-      const ang  = (entity.angle || 0) + (entity.visual?.spriteRotation || 0);
-      const cosA = Math.cos(ang), sinA = Math.sin(ang);
-      const hexWorldR = 9 * Math.max(scaleX, scaleY);
-      const entX = (entity.x !== undefined) ? entity.x : (entity.pos?.x || 0);
-      const entY = (entity.y !== undefined) ? entity.y : (entity.pos?.y || 0);
-      const entVX = entity.vx || entity.vel?.x || 0;
-      const entVY = entity.vy || entity.vel?.y || 0;
-
-      // Prefer edge shards (fewer neighbors) for a punchier "chunks fly off" look
-      const suppliedShards = Array.isArray(countOrShards) ? countOrShards : null;
-      const eligible = (suppliedShards || shards).filter(s => s && s.active !== false && !s.isDebris && Number.isFinite(s.gridX));
-      if (eligible.length === 0) return;
-      if (!suppliedShards) {
-        // Shuffle for variety
-        for (let i = eligible.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
-        }
-      }
-      const pick = Math.min(suppliedShards ? eligible.length : Math.max(0, countOrShards | 0), eligible.length);
-      const speedMin = Math.max(120, Number(options.speedMin) || 260);
-      const speedMax = Math.max(speedMin, Number(options.speedMax) || 820);
-      const lateralJitter = Math.max(0, Number(options.lateralJitter) || 140);
-      const tangentialKick = Math.max(0, Number(options.tangentialKick) || 0);
-      const radiusMul = Math.max(0.4, Number(options.radiusMul) || 1);
-      const lifeMin = Math.max(0.6, Number(options.lifeMin) || 2.4);
-      const lifeMax = Math.max(0, Number(options.lifeMax) || 2.6);
-      const angVelMul = Math.max(0.1, Number(options.angVelMul) || 1);
-      for (let i = 0; i < pick && window.flyingHexDebris.length < 512; i++) {
-        const shard = eligible[i];
-        const relX = (shard.gridX - cx - pivotX) * scaleX;
-        const relY = (shard.gridY - cy - pivotY) * scaleY;
-        const wx = entX + relX * cosA - relY * sinA;
-        const wy = entY + relX * sinA + relY * cosA;
-        let toX = wx - explosionPos.x, toY = wy - explosionPos.y;
-        let dist = Math.hypot(toX, toY);
-        if (dist < 0.001) {
-          // Shard sits on epicenter — give it a random outward vector
-          const a = Math.random() * Math.PI * 2;
-          toX = Math.cos(a); toY = Math.sin(a); dist = 1;
-        }
-        const nx = toX / dist;
-        const ny = toY / dist;
-        const tx = -ny;
-        const ty = nx;
-        const speed = speedMin + Math.random() * (speedMax - speedMin);
-        const tangent = (Math.random() - 0.5) * tangentialKick;
-        window.flyingHexDebris.push({
-          x: wx, y: wy,
-          vx: entVX + nx * speed + tx * tangent + (Math.random() - 0.5) * lateralJitter,
-          vy: entVY + ny * speed + ty * tangent + (Math.random() - 0.5) * lateralJitter,
-          angle: Math.random() * Math.PI * 2,
-          angVel: (Math.random() - 0.5) * 0.35 * angVelMul,
-          life: 1.0,
-          lifetime: lifeMin + Math.random() * lifeMax,
-          hexR: hexWorldR * radiusMul * (0.7 + Math.random() * 0.6),
-        });
-      }
-    }
-
-    function updateFlyingHexDebris(dt) {
-      const debris = window.flyingHexDebris;
-      // Tłumienie strojone na krok 1/120 s (patrz stepDecay120 / ?physHz).
-      const drag = stepDecay120(0.991, dt);
-      for (let i = debris.length - 1; i >= 0; i--) {
-        const d = debris[i];
-        d.x += d.vx * dt;
-        d.y += d.vy * dt;
-        d.vx *= drag;
-        d.vy *= drag;
-        d.angle += d.angVel * dt;
-        d.life -= dt / d.lifetime;
-        if (d.life <= 0) debris.splice(i, 1);
-      }
-    }
-
-    function drawFlyingHexDebris(ctx, cam) {
-      const debris = window.flyingHexDebris;
-      if (!debris || debris.length === 0) return;
-      ctx.save();
-      for (const d of debris) {
-        const alpha = Math.max(0, d.life * d.life);
-        if (alpha < 0.01) continue;
-        const s = worldToScreen(d.x, d.y, cam);
-        const screenR = d.hexR * cam.zoom;
-        if (screenR < 0.3) continue;
-        ctx.save();
-        ctx.translate(s.x, s.y);
-        ctx.rotate(d.angle);
-        ctx.globalAlpha = alpha;
-        const heatT = Math.max(0, Math.min(1, d.life * 2 - 0.3));
-        const r = Math.round(70 + heatT * 185);
-        const g = Math.round(80 + heatT * 70);
-        const b = Math.round(100 - heatT * 55);
-        ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2;
-          if (i === 0) ctx.moveTo(Math.cos(a) * screenR, Math.sin(a) * screenR);
-          else ctx.lineTo(Math.cos(a) * screenR, Math.sin(a) * screenR);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = `rgba(0,0,0,${0.5 * alpha})`;
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.restore();
-    }
-    window.drawFlyingHexDebris = drawFlyingHexDebris;
-
     function releaseNpcHexBody(npc) {
       if (npc?.beamHull) {
         HullDamageEvents.invalidate(npc);
@@ -23291,7 +23147,7 @@
       }
     }
 
-    // Martwy NPC misji, po którym wrak już powstał (ciało heksowe zwolnione
+    // Martwy NPC misji, po którym wrak już powstał (ciało kadłuba zwolnione
     // przez releaseNpcHexBody). Nic go nie ożywi — odradzają się tylko cywile
     // (gałąź respawnTimer w npcStep), a frachtowce ładunku sprząta ich rekord.
     function isFinishedMissionNpc(npc) {
@@ -23299,7 +23155,6 @@
         && npc.mission === true
         && npc !== ship
         && !npc.isCargoVan
-        && !npc.hexGrid
         && !npc.beamHull
         && !isBridgeHulk(npc);
     }
@@ -23332,7 +23187,7 @@
       if (!Number.isFinite(dmg) || dmg <= 0) return;
       // Cargo może umrzeć dopiero, gdy istnieje geometria zdolna utworzyć realny wrak.
       // Do tego czasu rekord nadal leci, a encja jest wyłącznie niewrażliwym widokiem.
-      if (npc.isCargoVan && !npc.beamHull && (!npc.hexGrid || !Array.isArray(npc.hexGrid.shards) || npc.hexGrid.shards.length === 0)) return;
+      if (npc.isCargoVan && !npc.beamHull) return;
       const bypassShield = !!opts?.bypassShield;
       // Fregata zwiadu (ScoutBay): trafienie zrywa maskowanie, jak u Atlasa.
       if (npc.scoutFrigate && npc.cloak) ScoutBay.breakCloak('hit');
@@ -23640,7 +23495,7 @@
       const playerHexLossExponent = HULL_INTEGRITY.playerExponent;
       const npcHexLossExponent = HULL_INTEGRITY.npcExponent;
 
-      if (ship && !ship.destroyed && (ship.hexGrid || ship.beamHull) && ship.hull && Number.isFinite(ship.hull.max) && ship.hull.max > 0) {
+      if (ship && !ship.destroyed && ship.beamHull && ship.hull && Number.isFinite(ship.hull.max) && ship.hull.max > 0) {
         const shipState = getHullStructuralState(ship);
         if (shipState && shipState.total > 0) {
           const ratioAdjusted = Math.pow(Math.max(0, Math.min(1, shipState.ratio)), playerHexLossExponent);
@@ -23656,7 +23511,7 @@
 
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
-        if (!npc || npc.dead || npc.isWreck || (!npc.hexGrid && !npc.beamHull) || isBridgeHulk(npc)) continue;
+        if (!npc || npc.dead || npc.isWreck || !npc.beamHull || isBridgeHulk(npc)) continue;
 
         const state = getHullStructuralState(npc);
         if (!state || state.total <= 0) continue;
@@ -23782,7 +23637,7 @@
     // Przebieg odłożony z kroku — poza krokiem lista ciał od nowa (lista kroku żyje w pamięci klatki).
     function runPendingIntegrity() {
       if (!_integrityPending) return;
-      const p2 = (splitScreenMode && player2Ship && !player2Ship.destroyed && (player2Ship.hexGrid || player2Ship.beamHull)) ? player2Ship : null;
+      const p2 = (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.beamHull) ? player2Ship : null;
       _destrPrepFrameId = -1;   // lista z pamięci klatki jest nadpisana — krok tej klatki zbuduje ją od nowa
       runIntegrityPass(buildDynamicDestructibles(ship, npcs, _activeWrecksBuffer, p2));
     }
@@ -23986,7 +23841,6 @@
             get y() { return ship.pos.y; },
             get radius() { return ship.radius || 50; },
             get shield() { return ship.shield; },
-            get hexGrid() { return ship.hexGrid; },
             get beamHull() { return ship.beamHull; },
             get capitalProfile() { return ship.capitalProfile; },
             get angle() { return ship.angle; },
@@ -24012,7 +23866,6 @@
             get y() { return player2Ship.pos.y; },
             get radius() { return player2Ship.radius || 50; },
             get shield() { return player2Ship.shield; },
-            get hexGrid() { return player2Ship.hexGrid; },
             get beamHull() { return player2Ship.beamHull; },
             get capitalProfile() { return player2Ship.capitalProfile; },
             get angle() { return player2Ship.angle; },
@@ -24413,9 +24266,8 @@
             }
             const entryK = entryDamage(b, mech, decision);
 
-            // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
-            // kadłub na belkach — krater od punktu wejścia.
-            if (hitNPC.hexGrid || hitNPC.beamHull) {
+            // Kadłub na belkach — krater od punktu wejścia (sweep).
+            if (hitNPC.beamHull) {
               // Źródło stempla mapy ran (18-C) — pocisk; rykoszet zostawia płytkie osmalenie
               // (wariant `ricochet`, src/3d/hullDamageStamps.js), reszta — ranę trafienia.
               applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, hitHexShard, b,
@@ -24462,7 +24314,7 @@
               if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
               continue bulletLoop;
             }
-            if (mech || shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
+            if (mech || shouldRemoveProjectileAfterImpact(b, !!hitNPC.beamHull)) removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue bulletLoop;
           } else {
@@ -25311,35 +25163,6 @@
     }
     window.devTeleportTo = devTeleportTo;
 
-    // Cel = stacja piracka (mercMission.station albo pierwsza isPirate w stations).
-    // Domyślnie lądujemy na ORBICIE ZEWNĘTRZNEJ misji (PIRATE_ORBIT.outerAu = 6 AU),
-    // czyli w obrębie strefy misji, ale poza inner orbit — dolot i aggro zostają
-    // po stronie gracza. Zrzut tuż przy kadłubie stacji nie dawał żadnego dystansu.
-    // opts.orbit: 'outer' (domyślnie) | 'gravity' | 'inner' | 'close'
-    function devTeleportToPirateStation(opts = {}) {
-      const station = mercMission?.station
-        || (Array.isArray(stations) ? stations.find(isPirateStation) : null);
-      if (!station) return null;
-
-      const radii = (typeof pirateOrbitRadii === 'function') ? pirateOrbitRadii() : null;
-      const closeIn = Math.max(1200, (station.r || 600) * 2.2);
-      const orbit = String(opts.orbit || 'outer');
-      let standoff;
-      if (orbit === 'close') standoff = closeIn;
-      else if (orbit === 'inner') standoff = radii?.inner;
-      else if (orbit === 'gravity') standoff = radii?.gravityWell;
-      else standoff = radii?.outer;
-      if (!Number.isFinite(standoff) || standoff <= 0) standoff = closeIn;
-
-      const bearing = Number.isFinite(opts.bearing) ? opts.bearing : Math.random() * Math.PI * 2;
-      const x = station.x + Math.cos(bearing) * standoff;
-      const y = station.y + Math.sin(bearing) * standoff;
-
-      const ok = devTeleportTo(x, y, { angle: Math.atan2(station.y - y, station.x - x) });
-      return ok ? { station, standoff, orbit } : null;
-    }
-    window.devTeleportToPirateStation = devTeleportToPirateStation;
-
     function triggerGravityWarpBrake(zoneId) {
       if (warp.state !== 'active') return;
       const source = resolveGravityWellSource(zoneId);
@@ -25617,12 +25440,9 @@
         if (salvageState.towed === w) releaseWreckTow();
         if (salvageState.cutting === w) stopFieldSalvage();
         TowSystem.detachBody(w, 'wreck-cold');
-        // Smuga (kolor z meshu, póki jest) PRZED zwolnieniem meshy.
-        if (w._coldSnapshot?.kind === 'beam') captureBeamColdImpostor(w, w._coldSnapshot, coldWreckSystem.config);
-        else if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
-        // Wrak na belkach zostaje z ciałem do rysowania i swoją siatką skóry (render przejmuje je bez przebudowy,
-        // poza kadrem ciało i siatka znikają same) — meshe kasujemy tylko heksom.
-        if (!w.beamHull) HullDamageEvents.invalidate(w);
+        // Smuga z migawki (kolor sprite'a, zasięg żywych węzłów). Wrak zostaje z ciałem do rysowania i swoją siatką
+        // skóry (render przejmuje je bez przebudowy, poza kadrem ciało i siatka znikają same) — meshy nie kasujemy.
+        captureBeamColdImpostor(w, w._coldSnapshot, coldWreckSystem.config);
       },
       onThawed(w, reason) {
         if (window.DEBUG_COLD_WRECKS) console.log('[ColdWrecks] odmrożony (' + reason + ')', w);
@@ -25785,13 +25605,7 @@
           if (distSq < wakeR * wakeR) {
             sw._wreckSleeping = false;
             sw._wreckSleepTimer = 0;
-            if (sw.beamHull) {
-              HullBodies.wake(sw, 20);
-            } else if (sw.hexGrid) {
-              sw.hexGrid.isSleeping = false;
-              sw.hexGrid.sleepFrames = 0;
-              sw.hexGrid.wakeHoldFrames = 20;
-            }
+            if (sw.beamHull) HullBodies.wake(sw, 20);
             bodies.push(sw);
             sleeping.splice(si, 1);
             break;
@@ -25829,13 +25643,7 @@
           if (distSq < wakeR * wakeR) {
             sw._wreckSleeping = false;
             sw._wreckSleepTimer = 0;
-            if (sw.beamHull) {
-              HullBodies.wake(sw, 20);
-            } else if (sw.hexGrid) {
-              sw.hexGrid.isSleeping = false;
-              sw.hexGrid.sleepFrames = 0;
-              sw.hexGrid.wakeHoldFrames = 20;
-            }
+            if (sw.beamHull) HullBodies.wake(sw, 20);
             bodies.push(sw);
             sleeping.splice(si, 1);
             break;
@@ -26739,8 +26547,6 @@
       PerfHUD.addTiming('playerFlightTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
 
-      updateFlyingHexDebris(dt);
-
       // Zimne wraki: odmrożenia z kolejki, skan co 0,5 s, zamrażanie w budżecie
       // klatki. PRZED pętlą wraków — zamrożony wrak nie trafia już do buforów
       // ani list destruktora tej klatki.
@@ -26782,24 +26588,8 @@
             w.vy = 0;
             w.angVel = 0;
             if (w.vel) { w.vel.x = 0; w.vel.y = 0; }
-            // Wymuś usypianie gridu — nie czekaj na naturalny cykl deformacji
+            // Wymuś uśpienie ciała — nie czekaj na naturalny cykl deformacji
             if (w.beamHull) HullBodies.sleep(w);
-            const wg = w.hexGrid;
-            if (wg && !wg.isSleeping) {
-              wg.isSleeping = true;
-              wg.sleepFrames = 9999;
-              wg.wakeHoldFrames = 0;
-              // Wyzeruj rezydualne prędkości shardów
-              const wShards = wg.shards;
-              if (Array.isArray(wShards)) {
-                for (let si = 0; si < wShards.length; si++) {
-                  const ws = wShards[si];
-                  if (!ws || !ws.active) continue;
-                  ws.__velX = 0; ws.__velY = 0;
-                  ws.__collVelX = 0; ws.__collVelY = 0;
-                }
-              }
-            }
           }
         } else {
           w._wreckSleepTimer = 0;
@@ -26811,13 +26601,13 @@
         // Despawn jeśli wrak nie ma już heksów lub jest bardzo daleko
         const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
         // bryła 3D pod dnem świata (spadła z budowli w otchłań — grawitacja habitatu) też znika
-        const hasHexesLeft = (w.beamHull ? HullBodies.hasHull(w) : (w.hexGrid && w.hexGrid.activeStructuralCount > 0)) &&
+        const hasHullLeft = HullBodies.hasHull(w) &&
           !(w.solid3D && w.z < HullBodies.config.solidFloorZ);
         const ownsShipmentCargo = !cargoBagIsEmpty(w._cargoManifest);
 
         // Usuń tylko jeśli: brak heksów LUB ekstremalna odległość (50 km).
         // Zimnych (coldWrecks) ta pętla nie widzi — pole przetrwa odlot gracza.
-        if ((!hasHexesLeft || distToPlayer > WRECK_DESPAWN_DIST) && !ownsShipmentCargo) {
+        if ((!hasHullLeft || distToPlayer > WRECK_DESPAWN_DIST) && !ownsShipmentCargo) {
           // Wrak wraca do puli obiektów — lina i cięcie muszą go puścić PRZED
           // recyklingiem, inaczej trzymałyby referencję do cudzego wraku.
           if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
@@ -26984,7 +26774,7 @@
         ship,
         npcs,
         _activeWrecksBuffer,
-        (splitScreenMode && player2Ship && !player2Ship.destroyed && (player2Ship.hexGrid || player2Ship.beamHull)) ? player2Ship : null
+        (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.beamHull) ? player2Ship : null
       );
 
       // Wake sweep: budź śpiące wraki, w które ciało może wjechać przed
@@ -28075,12 +27865,10 @@
     // =============== Main loop ===============
     let lastTime = performance.now();
     // Krok fizyki. Domyślnie 60 Hz (decyzja użytkownika 2026-10-11 po pomiarze bitwy: walka
-    // 70 fps zamiast 40–64); `?physHz=120` (albo 90/240) do testu A/B. Destruktor i ruch liczą
-    // z dt, a stałe strojone „na krok 1/120 s” (tarcie NPC/wraków/odłamków, liczniki splitów)
-    // przeliczają stepDecay120 i ticksAt120 — przy 120 Hz bit w bit jak dawniej. Worker fizyki v2
-    // (?workerPhysicsV2) ma protokół na sztywno 120 Hz, więc wtedy zawsze 120.
+    // 70 fps zamiast 40–64); `?physHz=120` (albo 90/240) do testu A/B. Kadłuby i ruch liczą
+    // z dt, a stałe strojone „na krok 1/120 s” (tarcie NPC i wraków) przelicza stepDecay120
+    // (liczniki w krokach — ticksAt120) — przy 120 Hz bit w bit jak dawniej.
     const PHYS_HZ_DEFAULT = 60;
-    const PHYS_HZ_WORKER_V2 = 120;
     const PHYS_HZ_ALLOWED = [60, 90, 120, 240];
     function resolvePhysicsHz() {
       let requested = PHYS_HZ_DEFAULT;
@@ -28088,10 +27876,6 @@
         const raw = new URLSearchParams(location.search).get('physHz');
         if (raw != null) requested = Number(raw);
       } catch { /* bez URL — domyślnie */ }
-      if (DevFlags.workerPhysicsV2) {
-        if (requested !== PHYS_HZ_WORKER_V2) console.warn('[physics] krok 120 Hz przy ?workerPhysicsV2 (protokół 120 Hz)');
-        return PHYS_HZ_WORKER_V2;
-      }
       if (!PHYS_HZ_ALLOWED.includes(requested)) return PHYS_HZ_DEFAULT;
       if (requested !== PHYS_HZ_DEFAULT) console.info(`[physics] krok fizyki ${requested} Hz (?physHz)`);
       return requested;
@@ -28358,7 +28142,6 @@
       renderFrameId++;
       window.__frameId = renderFrameId;
       let steps = 0;
-      const bridgeStartTick = physicsTickId + 1;
       // Sensory/CIC/skan liczymy raz na klatkę renderu. AI ma osobny zegar:
       // 120 Hz / 6 ticków = deterministyczne 20 Hz niezależne od rAF monitora.
       const plannedSteps = Math.min(10, Math.floor(acc / PHYS_DT));
@@ -28423,10 +28206,6 @@
         runAiOffStep(physicsTickId + 1, performance.now() + aiOffStepBudget(frame, PHYS_DT - acc));
         _aiOff.offMs = performance.now() - tOff0;
         PerfHUD.addTiming('offStepTime', _aiOff.offMs);
-      }
-      if (steps > 0 && physicsBridgeV2) {
-        const pressure = Math.max(0, (PerfHUD.display?.frameP95 || 0) / 16.67 - 1);
-        physicsBridgeV2.step(bridgeStartTick, steps, pressure, PHYS_DT);
       }
       if (trafficV2) {
         // Czas gospodarki = czas gry: te same kroki fizyki, więc pauza (return
@@ -28551,7 +28330,7 @@
     let _currentCam = camera;
 
     // Viewport jest KONSUMOWANY NATYCHMIAST przez wolajacego (worldToScreenInto,
-    // screenToWorld, drawRangeRuler czytaja pola w nastepnej linii), wiec zamiast
+    // screenToWorld czytaja pola w nastepnej linii), wiec zamiast
     // swiezego obiektu na kazde rzutowanie oddajemy jeden scratch. Kto chcialby
     // przeniesc viewport przez kolejne wywolanie, musi skopiowac pola.
     const _vpScratch = { x: 0, y: 0, w: 0, h: 0 };
@@ -29126,7 +28905,7 @@
     // zapasem na paski HP.
     function isNpcOverlayOnScreen(npc, s, zoom, viewW, viewH) {
       let extent = Number(npc.radius) || 20;
-      const grid = npc.hexGrid || npc.beamHull;
+      const grid = npc.beamHull;
       if (grid) {
         const v = npc.visual;
         const renderScale = Math.max(Number(v?.spriteScaleX) || 0, Number(v?.spriteScaleY) || 0, Number(v?.spriteScale) || 0);
@@ -29237,82 +29016,6 @@
     }
 
 
-    function drawRangeRuler(ctx, cam) {
-      if (!DevFlags.showRuler) return;
-
-      const _vp = getViewportForCamera(cam);
-      const cx = _vp.x + _vp.w / 2;
-      const cy = _vp.y + _vp.h / 2;
-      const zoom = cam?.zoom ?? camera.zoom ?? 1;
-
-      ctx.save();
-      ctx.globalAlpha = 0.5;
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = '#6db6ff';
-
-      const step = 500;
-      const maxWorldR = Math.min(W, H) / zoom * 0.5 * 0.95;
-
-      for (let r = step; r < maxWorldR; r += step) {
-        const rr = r * zoom;
-        ctx.beginPath();
-        ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-        ctx.stroke();
-
-        if (r % 1000 === 0) {
-          ctx.fillStyle = '#cfe6ff';
-          ctx.font = '11px monospace';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(`${r}`, cx + rr + 4, cy);
-        }
-      }
-
-      ctx.globalAlpha = 0.25;
-      const axisR = maxWorldR * zoom;
-      ctx.beginPath(); ctx.moveTo(cx - axisR, cy); ctx.lineTo(cx + axisR, cy); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy - axisR); ctx.lineTo(cx, cy + axisR); ctx.stroke();
-
-      ctx.restore();
-    }
-
-    function drawPlanetOrbitRings(ctx, cam) {
-      if (!DevFlags.showPlanetOrbits) return;
-      const planetList = Array.isArray(window.planets) ? window.planets : [];
-      if (!planetList.length) return;
-
-      const zoom = cam?.zoom ?? camera.zoom ?? 1;
-      ctx.save();
-      ctx.lineWidth = Math.max(1, 1.5 * zoom);
-
-      for (const planet of planetList) {
-        if (!planet || !Number.isFinite(planet.x) || !Number.isFinite(planet.y)) continue;
-        const radii = planetOrbitRadii(planet);
-        const s = worldToScreen(planet.x, planet.y, cam);
-
-        if (Number.isFinite(radii.inner)) {
-          ctx.strokeStyle = 'rgba(90, 180, 255, 0.55)';
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, radii.inner * zoom, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        if (Number.isFinite(radii.outer)) {
-          ctx.strokeStyle = 'rgba(140, 210, 255, 0.45)';
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, radii.outer * zoom, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        if (Number.isFinite(radii.gravityWell)) {
-          ctx.strokeStyle = 'rgba(170, 150, 255, 0.35)';
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, radii.gravityWell * zoom, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      }
-
-      ctx.restore();
-    }
-
     function drawNpcHardpointOverlay(ctx, npc, screenPos) {
       const hardpoints = Array.isArray(npc?.editorHardpoints) ? npc.editorHardpoints : null;
       if (!hardpoints || hardpoints.length === 0) return;
@@ -29373,7 +29076,7 @@
       const _zoom = _currentCam.zoom;
       const statusSize = (npc.radius || 20) * _zoom;
 
-      if (npc.hexGrid || npc.beamHull) {
+      if (npc.beamHull) {
         if (_npcFogQuiet) return;   // mgła wojny: kadłub zbudowany, nakładki nie
         if (DevFlags.showNpcHardpoints) drawNpcHardpointOverlay(ctx, npc, s);
         drawNpcStatusBars(ctx, npc, s, statusSize);
@@ -29410,7 +29113,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hullInitRetryAtMs > nowMs) && hullInitBudgetAllows()) {
@@ -29504,8 +29207,6 @@
       const tRenderStart = renderDbgEnabled ? performance.now() : 0;
       let tRenderSection = tRenderStart;
       let tPost3DStart = 0;
-      //  cheats (np. nielimitowany warp)
-      if (window.ApplyCheats) ApplyCheats();
 
       window.__weaponAimAlpha = alpha;
       // Interpolacja stanu
@@ -30113,9 +29814,6 @@
         }
         InfrastructureUI.drawInstances(ctx, cam);
         drawPlanetLabels(ctx, cam);
-        drawPlanetOrbitRings(ctx, cam);
-        drawRangeRuler(ctx, cam);
-        if (window.drawSunDirection) drawSunDirection(ctx, cam);
 
         // Warp gates
         for (const key in warpRoutes) {
@@ -30137,7 +29835,6 @@
         }
 
         CanvasVFX.drawShockwaves(ctx, cam);
-        drawFlyingHexDebris(ctx, cam);
         drawTowRopes(ctx, cam);
 
         if (!window.USE_STATION_3D) {
@@ -30203,7 +29900,7 @@
           if (!npc || npc.dead) continue;
           // Mgła wojny: ukryty okręt z ciałem / myśliwiec — nic do rysowania. Bez ciała zostaje w liście:
           // drawNPCPretty buduje mu kadłub (kolizje), ale bez nakładek (_npcFogQuiet).
-          if (SensorSystem.hides(npc) && (npc.hexGrid || npc.beamHull || isFighterUnit(npc))) continue;
+          if (SensorSystem.hides(npc) && (npc.beamHull || isFighterUnit(npc))) continue;
           npcDrawList.push(npc);
         }
         npcDrawList.sort((a, b) => (a.drawLayer || 0) - (b.drawLayer || 0));
@@ -30230,7 +29927,7 @@
           // kadłubów poza ekranem odpadają; NPC bez kadłuba na belkach
           // przechodzą zawsze, bo drawNPCPretty buduje go leniwie,
           // od którego zależą kolizje i obrażenia kadłuba także poza ekranem.
-          if ((npc.hexGrid || npc.beamHull || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
+          if ((npc.beamHull || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
           _npcFogQuiet = SensorSystem.hides(npc);
           drawNPCPretty(ctx, npc, s);
           _npcFogQuiet = false;
@@ -30326,7 +30023,7 @@
           // pokazuje ośrodek warpa „Nurt” (src/3d/warp/, zadanie 22).
 
           // --- 3. Rysowanie KADLUBA ---
-          if (ship.hexGrid || ship.beamHull) {
+          if (ship.beamHull) {
             if (ship.hp < ship.maxHp) {
               const zoom = camera.zoom;
               const size = (ship.radius || 20); // Usunąłem * zoom, bo ctx jest już wyskalowany w linii 2010
@@ -33138,7 +32835,7 @@
         HullBodies.release(player2Ship);
         HullBodies.createHull(player2Ship, hexInitImage, { visualImage: p2Sprite, hullProfileId });
         attachEntityReactorCores(player2Ship);
-        console.log('[SplitScreen] P2 sprite loaded & hexBody initialized:', hullKey);
+        console.log('[SplitScreen] P2 sprite loaded & hull built:', hullKey);
       };
       p2Sprite.onerror = () => {
         console.warn('[SplitScreen] P2 sprite failed to load, using fallback');
@@ -33723,16 +33420,12 @@
   </script>
 
   <script type="module">
+    // Panel F12 (kredyty, spawn jednostek, zerowanie zapisu). Dawne panele bloomu i kamery usunięte 2026-10-19 —
+    // strojenie z konsoli: DevVFX.bloom, CameraRig.tune.
     import { initDevTools } from './src/ui/devTools.js';
-    import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
-    import { initCameraTunerPanel } from './src/ui/cameraTunerPanel.js';
 
     window.addEventListener('DOMContentLoaded', () => {
-      setTimeout(() => {
-        initDevTools();
-        initBloomTunerPanel({ enableHotkey: false });
-        initCameraTunerPanel();
-      }, 100);
+      setTimeout(initDevTools, 100);
     });
   </script>
 

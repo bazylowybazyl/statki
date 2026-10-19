@@ -2,8 +2,9 @@
 
 > **2026-09-30: nowa wersja na silniku belek i WebGPU** — `dema/rdzen-webgpu.html`, logika
 > `src/game/reactorCore.js`, wybuch `src/3d/reactorBlast/`, opis i kroki integracji:
-> `docs/webgpu/DEMO-RDZEN.md`. Ten dokument opisuje wersję HEKSOWĄ (silnik heksów nie tworzy już
-> ciał w grze); zostają aktualne: model i liczby (`coreModel.js`), miejsca rdzeni (§ 3), poprawki
+> `docs/webgpu/DEMO-RDZEN.md`. Ten dokument opisuje wersję HEKSOWĄ — usuniętą 2026-10-19 razem z silnikiem
+> heksów (`dema/rdzen-demo.html`, `src/game/shipCore.js`, `src/3d/coreFx3D.js`; testy TODO poprawek 1 i 3 —
+> `tests/reactorEditorCores.test.mjs`); zostają aktualne: model i liczby (`coreModel.js`), miejsca rdzeni (§ 3), poprawki
 > integracji 1–4 (§ 5), pytania o pulę HP (§ 11), decyzje o fali i wariantach (§ 12), modele (§ 13).
 
 Stan na 2026-09-25 (numery linii `index.html` z bieżącego stanu drzewa — plik zmienia się

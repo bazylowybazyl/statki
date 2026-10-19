@@ -50,10 +50,9 @@ test('overlay efektów usunięty: moduł, wpięcie w index.html, bloom overlaya'
   const page = code(indexHtml);
   assert.doesNotMatch(page, /initOverlay|startOverlay3D|overlay3D|resizeOverlay3D|rocketOverlay3D|splitOverlayContexts|overlayView|withRawLayer/);
   assert.doesNotMatch(page, /EffectComposer|UnrealBloomPass/);
-  // Parametry bloomu overlaya (dawny drugi bloom) — bez odbiorcy, usunięte z bloomConfig i tunera.
+  // Parametry bloomu overlaya (dawny drugi bloom) — bez odbiorcy, usunięte z bloomConfig (panel bloomu F12 usunięty
+  // w całości 2026-10-19).
   assert.doesNotMatch(code(read('src/3d/bloomConfig.js')), /overlay/i);
-  const tuner = code(read('src/ui/bloomTunerPanel.js'));
-  assert.doesNotMatch(tuner, /overlay3D|'Overlay FX'|key: 'overlay/);
   // Kubełek PerfHUD „Overlay FX 3D” — został sam lot rakiet (wybuchy liczy render Core3D).
   const hud = read('src/ui/perfHud.js');
   assert.doesNotMatch(hud, /overlayFxTime|Overlay FX 3D/);
@@ -78,8 +77,4 @@ test('rakiety, iskry i wybuchy WebGPU w scenie Core3D (kroki klatki efektów)', 
   assert.doesNotMatch(blow, /overlay3D|WebGLRenderer|WebGPURenderer|new THREE\.RenderPipeline/);
   // Rozpad stacji uruchamia wybuchy fabryką (bez oddawania efektu tickowi overlaya).
   assert.doesNotMatch(code(read('src/vfx/destruction3D.js')), /overlay3D/);
-  // Demo rdzenia (warsztat reaktorów) na tej samej ścieżce.
-  const demo = code(read('dema/rdzen-demo.js'));
-  assert.doesNotMatch(demo, /initOverlay|overlay3D/);
-  assert.match(demo, /createExplosionFactory\(Core3D\)/);
 });

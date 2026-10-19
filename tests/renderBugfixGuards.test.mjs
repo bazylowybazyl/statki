@@ -110,21 +110,24 @@ test('bloom tylko Core3D: efekty przez Core3D.fx.post, bez zapisu/przywracania b
   assert.match(code('src/3d/fx/fxFrame.js'), /this\.post\.exposure = 1;\s*this\.post\.bloomBoost = 0;/, 'post efektów kasowany co klatkę');
 });
 
-test('updateEntityMesh: po przebudowie mesh wskazuje nowy obiekt; nowe dane przed zwolnieniem starych', () => {
+// Skóra kadłuba na belkach (dawne updateEntityMesh / getGridActiveExtent siatki heksów usunięte 2026-10-19).
+test('updateBeamSkinMesh: po nowym ciele dane encji od nowa; nowe dane przed zwolnieniem starych', () => {
   const hex = read('src/3d/hexShips3D.js');
-  const fn = hex.match(/function updateEntityMesh\(entity, data, camX, camY, cameraZoom\) \{[\s\S]*?\n}\n/)?.[0] || '';
+  const fn = hex.match(/function updateBeamSkinMesh\(entity, data, camX, camY, cameraZoom\) \{[\s\S]*?\n}\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   assert.match(fn, /let mesh = data\.mesh;/);
-  assert.match(fn, /data = createEntityMesh\(entity\);\s*disposeMeshData\(previous\);\s*if \(!data\) return;\s*mesh = data\.mesh;/);
-  assert.match(fn, /data\.armorImageRef !== \(grid\.armorImage \|\| null\)/);
+  assert.match(fn, /data\.hull !== hull \|\| data\.body !== hull\.body/);
+  assert.match(fn, /data = createBeamSkinMesh\(entity\);\s*disposeMeshData\(previous\);\s*if \(!data\) return;\s*mesh = data\.mesh;/);
+  // Pętla rysowania stempluje klatkę na AKTUALNYCH danych (updateBeamSkinMesh mógł je podmienić).
+  assert.match(hex, /\(state\.entityMeshes\.get\(entity\) \|\| data\)\.lastDrawFrame = frameId;/);
 });
 
-test('wraki/fragmenty: LOD smugi i cienie z zasięgu aktywnych heksów, nie ze sprite rodzica', () => {
+test('wraki/fragmenty: smuga i cienie z obrysu żywych węzłów, nie ze sprite rodzica', () => {
   const hex = read('src/3d/hexShips3D.js');
-  assert.match(hex, /function getGridActiveExtent\(grid, nowMs\)/);
-  assert.match(hex, /const extent = getGridActiveExtent\(grid, state\.lastTime\);\s*const bodyRadiusPx = Math\.max\(extent\.halfW/);
-  assert.match(hex, /const halfW = extent\.halfW \* lodScaleX;/);
-  assert.match(hex, /const ext = getGridActiveExtent\(grid, now\);/, 'selekcja cieni wraków/fragmentów');
+  assert.match(hex, /if \(!allowsSolidArmorLod\(entity\)\) \{\s*const mm = body\._boundsMinMax;/);
+  assert.match(hex, /const bodyRadiusPx = Math\.max\(halfW, halfH\) \* zoomPx;/);
+  assert.match(hex, /if \(entity\.isWreck === true \|\| grid\.isFragment === true\) \{[\s\S]{0,300}?const mm = entity\.beamHull\.body\._boundsMinMax;/,
+    'selekcja cieni wraków/fragmentów');
 });
 
 test('panel skanera: przyciski akcji budowane raz na cel (klik nie ginie), schowany panel nie renderuje', () => {

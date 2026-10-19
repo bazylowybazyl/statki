@@ -344,7 +344,7 @@ test('position lights are exported as world-space sprites with hull-shader phase
     __hardpointScaleX: 2,
     __hardpointScaleY: 1,
     visual: { spriteScale: 0.5 },
-    hexGrid: { srcWidth: 200, srcHeight: 100, pivot: { x: 10, y: 0 } },
+    beamHull: { srcWidth: 200, srcHeight: 100, pivot: { x: 10, y: 0 } },
     editorLights: {
       position: [{ id: 'p', x: 40, y: -20, color: '#00ff88', power: 2, radius: 8 }],
       road: []

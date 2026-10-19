@@ -46,6 +46,14 @@
   #bridges .bar { height: 5px; background: #ffffff18; border-radius: 2px; overflow: hidden; position: relative; }
   #bridges .bar i { display: block; height: 100%; background: var(--good); }
   #bridges .bar s { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--bad); }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin-top: 6px; }
+  .fields label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
+  .fields input, #export-out { background: #0d1822; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 3px 6px; font: 11px ui-monospace, Consolas, monospace; }
+  .fields input { width: 100%; min-width: 0; }
+  .fields input:disabled { opacity: .5; }
+  #issues { font-size: 11px; margin-top: 6px; }
+  #issues .warn { color: var(--warn); } #issues .good { color: var(--good); }
+  #export-out { display: block; width: 100%; height: 110px; margin-top: 4px; resize: vertical; }
   #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
   #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 12px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
   #nogpu { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: #030406f2; font-size: 15px; text-align: center; }
@@ -86,6 +94,25 @@
     <button id="btn-reset" title="R">Od nowa (R)</button>
   </div>
   <div id="bridges"></div>
+
+  <h2>Edytor strefy <kbd>E</kbd></h2>
+  <div class="btns"><button id="edit-btn" title="E">Edycja strefy (E)</button><select id="edit-bridge" style="flex:1;min-width:0"></select></div>
+  <div class="fields">
+    <label>x (PNG)<input type="number" id="ed-x" step="1"></label>
+    <label>y (PNG)<input type="number" id="ed-y" step="1"></label>
+    <label>obrót °<input type="number" id="ed-rot" step="1"></label>
+    <label>szer. (PNG)<input type="number" id="ed-w" step="1" min="4"></label>
+    <label>wys. (PNG)<input type="number" id="ed-h" step="1" min="4"></label>
+    <label>komórek w strefie<input type="text" id="ed-count" readonly></label>
+  </div>
+  <div id="issues"></div>
+  <div class="hint">Edycja zatrzymuje scenę i edytuje mostek celu. Przeciągnij środek (przesuw), róg (rozmiar), kółko nad strefą (obrót); LPM poza uchwytem przesuwa widok. Współrzędne w przestrzeni PNG sprite'a — jak w hardpointEditorDefaults. Strefy edytowane zostają w tej przeglądarce i biorą je okręty scen; „Propozycje” wraca do układu gry.</div>
+  <div class="btns" style="margin-top:4px">
+    <button id="export-btn">Eksport JSON</button>
+    <button id="copy-btn">Kopiuj</button>
+    <button id="proposal-btn">Propozycje</button>
+  </div>
+  <textarea id="export-out" spellcheck="false" aria-label="Eksport stref mostka (JSON)"></textarea>
 
   <h2>Czas i kamera</h2>
   <div class="btns">

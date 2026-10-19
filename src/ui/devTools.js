@@ -1,245 +1,77 @@
-﻿// src/ui/devTools.js
+﻿// src/ui/devTools.js — panel F12: kredyty, spawn jednostek, zerowanie zapisu.
+//
+// Odchudzony 2026-10-19 (decyzja użytkownika: „zostaw kredyty, spawn i zerowanie zapisu”). Wyleciały sekcje martwe
+// (suwaki bez obsługi, przyciski paneli, których już nie ma), zdublowane (edytor hardpointów jest w menu głównym,
+// Performance = PerfHUD pod P) i psujące świat (promienie i orbity planet zmieniane w trakcie gry). Suwaków renderu
+// tu nie dokładaj: obraz rysuje worker renderu, a panel działałby na Core3D strony — strojenie idzie z konsoli
+// (`*Tune`, `DevVFX.bloom`, `CameraRig.tune`).
+// Lista jednostek = karty Rezerwy kokpitu (src/data/supportRoster.js), więc nowa karta trafia tu sama.
 
-import { isHexDamageTintEnabled, setHexDamageTintEnabled } from '../3d/hexShips3D.js';
+import { SUPPORT_FACTIONS } from '../data/supportRoster.js';
 
 const STYLES = `
 #devtools { position: fixed; right: 16px; top: 16px; width: 340px; max-height: 80vh; overflow: auto; padding: 14px; border-radius: 12px; background: rgba(10, 14, 25, .92); border: 1px solid #1b2337; color: #dfe7ff; z-index: 1000; font-family: Inter, system-ui, Segoe UI, Roboto, Arial; display: none }
 #devtools h3 { margin: 0 0 8px 0; font-size: 16px; letter-spacing: .04em; text-transform: uppercase; color: #8fb5ff }
 #devtools .group { margin: 12px 0; padding: 10px; background: #0b0f1a; border: 1px solid #1b2337; border-radius: 10px }
 #devtools .row { display: flex; align-items: center; gap: 8px; margin: 6px 0 }
-#devtools .row label { flex: 1 }
-#devtools input[type=range] { width: 180px }
-#devtools .val { min-width: 64px; text-align: right; font-variant-numeric: tabular-nums }
+#devtools .dt-row { display: flex; align-items: center; gap: 6px; margin-top: 6px }
 #devtools .small { opacity: .7; font-size: 12px }
-#devtools .pill { display: inline-block; padding: 2px 8px; border: 1px solid #2a3a5a; border-radius: 999px; background: #0a1020 }
-#devtools textarea { width: 100%; height: 90px; background: #0b1224; color: #dfe7ff; border: 1px solid #2a3a5a; border-radius: 8px; padding: 8px }
 #devtools .muted { color: #9fb0d8 }
-#devtools .dt-row { display: flex; gap: 8px; margin-top: 6px }
-#devtools .dt-col { display: flex; flex-direction: column }
-#devtools .dt-stack { display: flex; flex-direction: column }
-#devtools .dt-btn { padding: 4px 8px; border: 1px solid #2a3a5a; border-radius: 8px; background: #0a1020; color: #dfe7ff; cursor: pointer }
+#devtools .dt-btn { padding: 4px 8px; border: 1px solid #2a3a5a; border-radius: 8px; background: #0a1020; color: #dfe7ff; cursor: pointer; white-space: nowrap }
 #devtools .dt-btn:hover { background: #18233c }
-#devtools .dt-label { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #9fb0d8 }
+#devtools .dt-field { background: #060e1c; color: #fff; border: 1px solid #2a3a5a; padding: 4px; border-radius: 4px; min-width: 0 }
+#devtools #dt-status { min-height: 1.3em; margin: 8px 0 4px }
 `;
 
 const HTML = `
 <h3>DevTools</h3>
 <div class="group">
-  <div class="row"><strong>Wszechswiat</strong></div>
-  <div class="row"><label>Slonce - promien 2D (R)</label><input id="sunR2D" type="range" min="50" max="1500" step="1" value="823"><div class="val" id="sunR2DVal"></div></div>
-  <div class="row"><label>Slonce - promien 3D (R)</label><input id="sunR3D" type="range" min="50" max="1500" step="1" value="399"><div class="val" id="sunR3DVal"></div></div>
-  <div class="row"><label>Planety - skala globalna (x)</label><input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01" value="1"><div class="val" id="planetScaleAllVal"></div></div>
-</div>
-<div class="group">
-  <div class="row"><strong>Earth Lighting</strong> <span class="small muted">(live shader)</span></div>
-  <div class="row"><label>Ambient</label><input id="dt-earth-ambient" type="range" min="0" max="0.05" step="0.001" value="0.05"><input id="dt-earth-ambient-num" type="number" min="0" max="0.05" step="0.001" value="0.05" style="width:72px;"><div class="val" id="dt-earth-ambient-val"></div></div>
-  <div class="row"><label>Sun intensity</label><input id="dt-earth-sunintensity" type="range" min="0.2" max="2.0" step="0.01" value="1"><input id="dt-earth-sunintensity-num" type="number" min="0.2" max="2.0" step="0.01" value="1" style="width:72px;"><div class="val" id="dt-earth-sunintensity-val"></div></div>
-  <div class="row"><label>Specular</label><input id="dt-earth-specular" type="range" min="0" max="1.2" step="0.01" value="1.2"><input id="dt-earth-specular-num" type="number" min="0" max="1.2" step="0.01" value="1.2" style="width:72px;"><div class="val" id="dt-earth-specular-val"></div></div>
-  <div class="row"><label>Sun wrap</label><input id="dt-earth-sunwrap" type="range" min="-0.5" max="0.5" step="0.01" value="0.5"><input id="dt-earth-sunwrap-num" type="number" min="-0.5" max="0.5" step="0.01" value="0.5" style="width:72px;"><div class="val" id="dt-earth-sunwrap-val"></div></div>
-  <div class="row"><label>Brightness</label><input id="dt-earth-brightness" type="range" min="0.5" max="2.0" step="0.01" value="1.2"><input id="dt-earth-brightness-num" type="number" min="0.5" max="2.0" step="0.01" value="1.2" style="width:72px;"><div class="val" id="dt-earth-brightness-val"></div></div>
-  <div class="row"><label>Sunset R</label><input id="dt-earth-sunset-r" type="range" min="0" max="3.0" step="0.01" value="1.4"><input id="dt-earth-sunset-r-num" type="number" min="0" max="3.0" step="0.01" value="1.4" style="width:72px;"><div class="val" id="dt-earth-sunset-r-val"></div></div>
-  <div class="row"><label>Sunset G</label><input id="dt-earth-sunset-g" type="range" min="0" max="3.0" step="0.01" value="0.1"><input id="dt-earth-sunset-g-num" type="number" min="0" max="3.0" step="0.01" value="0.1" style="width:72px;"><div class="val" id="dt-earth-sunset-g-val"></div></div>
-  <div class="row"><label>Sunset B</label><input id="dt-earth-sunset-b" type="range" min="0" max="3.0" step="0.01" value="0.1"><input id="dt-earth-sunset-b-num" type="number" min="0" max="3.0" step="0.01" value="0.1" style="width:72px;"><div class="val" id="dt-earth-sunset-b-val"></div></div>
-  <div class="row"><label>Earth bloom</label><input id="dt-earth-planet-bloom" type="range" min="0" max="2.0" step="0.01" value="0.78"><input id="dt-earth-planet-bloom-num" type="number" min="0" max="2.0" step="0.01" value="0.78" style="width:72px;"><div class="val" id="dt-earth-planet-bloom-val"></div></div>
-</div>
-<div class="group" id="planetsGroup"><div class="row"><strong>Planety (R)</strong> <span class="small muted">(per-planeta)</span></div></div>
-<div class="group" id="distancesGroup"><div class="row"><strong>Dystanse od Slonca</strong> <span class="small muted">(AU -> promien orbity)</span></div></div>
-<div class="group">
-  <div class="row"><strong>Stacje</strong></div>
-  <div class="row"><label>Skala stacji pirackiej (x)</label><input id="pirScale" type="range" min="0.4" max="12" step="0.01" value="6"><div class="val" id="pirScaleVal"></div></div>
-  <div class="row"><label>Skala stacji 3D (x) (global)</label><input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="2.70"><div class="val" id="station3DScaleVal"></div></div>
-  <div class="row"><label>Stacja 3D - rozmiar sprite (px)</label><input id="stationSpritePx" type="number" min="64" max="4096" step="32" value="1024" style="width:96px;"></div>
+  <div class="row"><strong>Kredyty</strong></div>
   <div class="dt-row">
-    <div class="dt-col">
-      <div class="dt-label" style="margin-top:6px;">Skala per stacja (3D override)</div>
-      <div id="dt-stations-per-scale" class="dt-stack" style="gap:6px;"></div>
-      <button id="dt-reset-station-scales" class="dt-btn" style="margin-top:6px;">Reset per stacja</button>
-    </div>
+    <input id="dt-add-credits-amount" class="dt-field" type="number" min="1" step="100" value="1000" style="flex:1; text-align:right;">
+    <button id="dt-add-credits-btn" class="dt-btn">Dodaj CR</button>
   </div>
-  <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="dt-use-planet-stations" type="checkbox" /> Planet Stations 3D (overlay)</label>
-  <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="dt-use-3d-pirate" type="checkbox" /> 3D Pirate Station (hide 2D)</label>
-</div>
-<div class="group" id="stationsFramesGroup"><div class="row"><strong>Stacje (kadr per stacja)</strong> <span class="small muted">(zoom kamery na sprite)</span></div></div>
-<div class="group">
-  <div class="row"><label><input id="toggleRuler" type="checkbox"> Miarka (okregi dystansu)</label></div>
-  <div class="row"><label><input id="togglePlanetOrbits" type="checkbox"> Miarki planet (inner/outer/gravity)</label></div>
-  <div class="row"><label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label></div>
-  <div class="row"><label><input id="dt-global-shields" type="checkbox"> Global shields</label></div>
-  <div class="row"><label><input id="dt-show-sundir" type="checkbox"> Pokaz kierunek slonca</label></div>
-  <div class="row"><label><input id="dt-disable-shake" type="checkbox"> Wylacz wstrzasy kamery</label></div>
-</div>
-<div class="group">
-  <div class="row"><strong>HUD (pozycja Y)</strong></div>
-  <div class="row">
-    <label>Panel glowny</label>
-    <input id="dt-hud-center-y" type="range" min="-250" max="250" step="1" value="0">
-    <input id="dt-hud-center-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
-    <div class="val" id="dt-hud-center-y-val">0px</div>
-  </div>
-  <div class="row">
-    <label>Shield bar</label>
-    <input id="dt-hud-shield-y" type="range" min="-250" max="250" step="1" value="0">
-    <input id="dt-hud-shield-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
-    <div class="val" id="dt-hud-shield-y-val">0px</div>
-  </div>
-  <div class="row">
-    <label>HP bar</label>
-    <input id="dt-hud-hp-y" type="range" min="-250" max="250" step="1" value="0">
-    <input id="dt-hud-hp-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
-    <div class="val" id="dt-hud-hp-y-val">0px</div>
-  </div>
-  <div class="small muted">Dodatnia wartosc = w gore, ujemna = w dol.</div>
-</div>
-<div class="group">
-  <div class="row"><strong>Edytor hardpointow</strong></div>
-  <div class="row">
-    <button id="btn-hardpoint-editor" class="dt-btn" style="width:100%">Edytor</button>
-  </div>
-  <div class="small muted">Uklad hardpointow/silnikow + eksport JSON.</div>
-</div>
-<div class="group">
-  <div class="row"><strong>Panele konfiguracyjne</strong></div>
-  <div class="row">
-    <button id="btn-bloom-panel" class="dt-btn" style="width:100%">Bloom panel</button>
-  </div>
-  <div class="row">
-    <button id="btn-ring-color-panel" class="dt-btn" style="width:100%">Ring Colors</button>
-  </div>
-  <div class="row">
-    <button id="btn-destructor-panel" class="dt-btn" style="width:100%">Destructor panel</button>
-  </div>
-  <div class="row">
-    <button id="btn-camera-panel" class="dt-btn" style="width:100%">Kamera panel</button>
-  </div>
-  <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
-</div>
-<div class="group">
-  <div class="row"><strong>Shadery statkow</strong></div>
-  <label style="display:flex;gap:6px;align-items:center;margin-top:6px">
-    <input id="dt-toggle-damage-tint" type="checkbox">
-    Damage tint z destructora (pomaranczowy)
-  </label>
-  <div class="small muted">Przelacza pomaranczowe podswietlenie uszkodzen na statkach 3D.</div>
-</div>
-<div class="group">
-  <div class="row"><strong>Performance</strong></div>
-  <div class="row">
-    <button id="btn-perf-tools" class="dt-btn" style="width:100%">Performance</button>
-  </div>
-  <div id="dt-perf-panel" style="display:none; margin-top:8px;">
-    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-bloom" type="checkbox"> Bloom pass</label>
-    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-heat" type="checkbox"> Heat haze pass</label>
-    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-bg" type="checkbox"> Background pass</label>
-    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-ortho" type="checkbox"> Ortho pass</label>
-    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-fg" type="checkbox"> Foreground pass</label>
-    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-msaa" type="checkbox"> MSAA x4</label>
-    <div class="dt-row" style="margin-top:8px;">
-      <button id="dt-perf-preset-base" class="dt-btn" style="flex:1">Base</button>
-      <button id="dt-perf-preset-fast" class="dt-btn" style="flex:1">Fast</button>
-      <button id="dt-perf-preset-ultra" class="dt-btn" style="flex:1">UltraFast</button>
-    </div>
-    <div class="dt-row" style="margin-top:8px;">
-      <button id="dt-renderdbg-start" class="dt-btn" style="flex:1">Render DBG ON</button>
-      <button id="dt-renderdbg-stop" class="dt-btn" style="flex:1">Render DBG OFF</button>
-    </div>
-    <div class="small muted" id="dt-perf-status" style="margin-top:8px;"></div>
-  </div>
-</div>
-<div class="group">
-  <div class="row"><strong>Ekonomia</strong></div>
-  <div class="dt-row" style="align-items:center;">
-    <input id="dt-add-credits-amount" type="number" min="1" step="100" value="1000" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; text-align:right;">
-    <button id="dt-add-credits-btn" class="dt-btn" style="white-space:nowrap;">Add credits</button>
-  </div>
-  <div class="small muted">Dodaje wskazana ilosc kredytow graczowi.</div>
-</div>
-<div class="group">
-  <div class="row"><strong>Teleport</strong></div>
-  <div class="dt-row" style="align-items:center;">
-    <select id="dt-teleport-orbit" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
-      <option value="outer" selected>Outer orbit (6 AU)</option>
-      <option value="gravity">Studnia graw. (7 AU)</option>
-      <option value="inner">Inner orbit (4 AU)</option>
-      <option value="close">Przy stacji</option>
-    </select>
-    <button id="dt-teleport-pirate-station-btn" class="dt-btn" style="white-space:nowrap;">Stacja piracka</button>
-  </div>
-  <div class="small muted" id="dt-teleport-status">Skok w obreb misji pirackiej (misja musi byc aktywna).</div>
 </div>
 <div class="group">
   <div class="row"><strong>Floty</strong></div>
-  <div class="dt-row" style="align-items:center;">
-    <button id="dt-spawn-pirate-heavy-fleet-btn" class="dt-btn" style="flex:1;">Spawn pirate fleet</button>
-    <button id="dt-spawn-enemy-fighters-btn" class="dt-btn" style="flex:1;">Spawn enemy fighters</button>
+  <div class="dt-row">
+    <button id="dt-spawn-pirate-fleet-btn" class="dt-btn" style="flex:1;">Flota piratów</button>
+    <button id="dt-spawn-enemy-fighters-btn" class="dt-btn" style="flex:1;">Wrogie myśliwce</button>
   </div>
-  <div class="dt-row" style="align-items:center; margin-top:8px;">
-    <button id="dt-spawn-support-fleet-btn" class="dt-btn" style="width:100%;">Spawn support fleet</button>
+  <div class="dt-row">
+    <button id="dt-spawn-support-fleet-btn" class="dt-btn" style="flex:1;">Flota wsparcia</button>
   </div>
-  <div class="small muted">Piraci i wsparcie spawnuja sie przed dziobem gracza.</div>
-  <div class="dt-row" style="align-items:center; margin-top:8px; gap:6px;">
-    <select id="dt-spawn-unit-type" style="flex:2; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
-      <optgroup label="Frachtowce">
-        <option value="hull:freighter-small">Wahadlowiec (maly)</option>
-        <option value="hull:freighter-medium" selected>Kontenerowiec (sredni)</option>
-        <option value="hull:freighter-large">Frachtowiec dalekiego zasiegu</option>
-        <option value="hull:freighter-capital">Ciezki frachtowiec</option>
-        <option value="call:megafreighter">Megafrachtowiec (sklad)</option>
-      </optgroup>
-      <optgroup label="Cywilne / przemysl">
-        <option value="hull:heavy_harvester">Ciezki zbieracz</option>
-        <option value="hull:belter">Belter</option>
-        <option value="hull:surveyor">Zwiadowca geologiczny</option>
-        <option value="hull:refinery_tender">Rafineria</option>
-        <option value="hull:tanker">Tankowiec</option>
-        <option value="hull:salvage_hauler">Zlomiarz</option>
-        <option value="hull:construction_tug">Holownik budowlany</option>
-        <option value="hull:repair_drone">Dron naprawczy</option>
-        <option value="hull:distress_beacon_ship">Statek ratunkowy</option>
-      </optgroup>
-      <optgroup label="Piraci (bez broni)">
-        <option value="hull:smuggler">Przemytnik</option>
-        <option value="hull:pirate_raider">Rajder</option>
-      </optgroup>
-      <optgroup label="Bojowe">
-        <option value="call:fighter">Mysliwce (eskadra)</option>
-        <option value="call:interceptor">Przechwytywacze (eskadra)</option>
-        <option value="call:frigate_pd">Fregata PD</option>
-        <option value="call:frigate_laser">Fregata laserowa</option>
-        <option value="call:destroyer">Niszczyciel</option>
-        <option value="call:battleship">Pancernik</option>
-        <option value="call:pirate_battleship">Pancernik piracki</option>
-        <option value="call:carrier">Lotniskowiec</option>
-        <option value="call:supercapital">Superkapital</option>
-        <option value="call:pirate_supercapital">Superkapital piracki — Iron Skull</option>
-        <option value="call:atlas">Atlas</option>
-      </optgroup>
-    </select>
-    <select id="dt-spawn-unit-side" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
-      <option value="auto" selected>Strona: auto</option>
+  <div class="small muted">Przed dziobem gracza: ciężka flota piracka z warpa, 16 wrogich myśliwców albo wsparcie Terra Nova (lotniskowiec, pancernik, niszczyciel, fregata, myśliwce).</div>
+</div>
+<div class="group">
+  <div class="row"><strong>Jednostki</strong></div>
+  <div class="dt-row">
+    <select id="dt-spawn-unit-type" class="dt-field" style="flex:1;"></select>
+  </div>
+  <div class="dt-row">
+    <select id="dt-spawn-unit-side" class="dt-field" style="flex:1;">
+      <option value="auto" selected>Strona: jak karta</option>
       <option value="friendly">Sojusznik</option>
       <option value="pirate">Pirat</option>
       <option value="dummy">Neutralny</option>
     </select>
+    <input id="dt-spawn-unit-count" class="dt-field" type="number" min="1" max="20" value="1" style="width:56px;">
+    <button id="dt-spawn-unit-btn" class="dt-btn">Spawn</button>
   </div>
-  <div class="dt-row" style="align-items:center; margin-top:6px; gap:6px;">
-    <input id="dt-spawn-unit-count" type="number" min="1" max="20" value="1" style="width:56px; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
-    <button id="dt-spawn-unit-btn" class="dt-btn" style="flex:1;">Spawn jednostki</button>
-  </div>
-  <div class="small muted">Jednostki cywilne bez AI i broni — dryfuja, sluchaja rozkazow RTS.</div>
-</div>
-<div class="group">
-  <div class="row"><strong>Konfiguracja</strong></div>
-  <div class="row"><button id="btnCopy">Kopiuj aktualna konfiguracje</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
-  <div class="row"><textarea id="cfgOut" readonly></textarea></div>
-  <div class="small muted">Skopiuj JSON i wklej do kodu.</div>
+  <div class="small muted">Karty Rezerwy kokpitu ze wszystkich frakcji (bez ?dev). Stają od razu przed dziobem, bez przylotu tunelem; holownik leci do Atlasa. Kadłuby cywilne są bez AI i broni — dryfują i słuchają rozkazów RTS.</div>
 </div>
 <div class="group">
   <div class="row"><strong>Zapis gry</strong> <span class="small muted">(localStorage)</span></div>
-  <div class="row"><button id="dt-reset-save-btn" class="dt-btn" style="width:100%;">Wyzeruj zapis i przeladuj</button></div>
-  <div class="small muted" id="dt-reset-save-status">To samo co index.html?reset - kasuje uklad gniazd z edytora, fit i ustawienia dev.</div>
+  <div class="row"><button id="dt-reset-save-btn" class="dt-btn" style="width:100%;">Wyzeruj zapis i przeładuj</button></div>
+  <div class="small muted" id="dt-reset-save-status">To samo co index.html?reset — kasuje układ gniazd z edytora, fit i ustawienia.</div>
 </div>
-<div class="small muted">F12 - pokaz/ukryj panel</div>
+<div class="small muted" id="dt-status"></div>
+<div class="small muted">F12 — pokaż / ukryj panel</div>
 `;
+
+// Karty, które w szeregu potrzebują więcej miejsca (lotniskowce, supercapitale, Atlas, megafrachtowiec).
+const BIG_ICONS = new Set(['carrier', 'supercapital']);
+const SIDE_LABELS = Object.freeze({ friendly: 'sojusznik', pirate: 'pirat', dummy: 'neutralny' });
 
 export function initDevTools() {
   if (document.getElementById('devtools')) return;
@@ -251,1014 +83,202 @@ export function initDevTools() {
   container.innerHTML = HTML;
   document.body.appendChild(container);
 
-  // Ten skrót jest wiązany od razu, niezależnie od pozostałej (dużej)
-  // inicjalizacji DevTools. Dzięki temu tuner kolorów pozostaje dostępny nawet
-  // wtedy, gdy opcjonalna sekcja narzędzi przerwie dalsze wireDevToolsLogic().
-  container.querySelector('#btn-ring-color-panel')?.addEventListener('click', () => {
-    if (window.RingColors && typeof window.RingColors.toggle === 'function') {
-      window.RingColors.toggle();
-      return;
-    }
-    const panel = document.getElementById('ring-color-tuner-panel');
-    if (panel) panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
-  });
+  const q = (id) => container.querySelector(`#${id}`);
+  const statusEl = q('dt-status');
+  const status = (text) => {
+    if (statusEl) statusEl.textContent = text;
+    console.info(`[DevTools] ${text}`);
+  };
 
-  // Zerowanie zapisu wiazemy od razu, z tego samego powodu co tuner kolorow wyzej:
-  // ma dzialac zwlaszcza wtedy, gdy gra wstala polamana i wireDevToolsLogic()
-  // przerwalo sie w polowie. Kasowanie jest nieodwracalne, wiec przycisk uzbraja
-  // sie na pierwsze klikniecie i rozbraja sam po 4 s.
-  const resetSaveBtn = container.querySelector('#dt-reset-save-btn');
-  const resetSaveStatus = container.querySelector('#dt-reset-save-status');
-  if (resetSaveBtn) {
-    const DISARM_MS = 4000;
-    const idleLabel = resetSaveBtn.textContent;
-    const idleHint = resetSaveStatus ? resetSaveStatus.textContent : '';
-    let armedAt = 0;
-    const disarm = () => {
-      armedAt = 0;
-      resetSaveBtn.textContent = idleLabel;
-      resetSaveBtn.style.borderColor = '';
-      resetSaveBtn.style.color = '';
-      if (resetSaveStatus) resetSaveStatus.textContent = idleHint;
-    };
-    resetSaveBtn.addEventListener('click', () => {
-      if (!armedAt || Date.now() - armedAt > DISARM_MS) {
-        armedAt = Date.now();
-        resetSaveBtn.textContent = 'Na pewno? Kliknij ponownie';
-        resetSaveBtn.style.borderColor = '#b4452f';
-        resetSaveBtn.style.color = '#ffb4a2';
-        if (resetSaveStatus) resetSaveStatus.textContent = 'Fit, hardpointy z edytora i ustawienia dev znikna bezpowrotnie.';
-        setTimeout(disarm, DISARM_MS);
-        return;
-      }
-      // hardResetGameSave zamyka zapisy na klucz, zeby beforeunload -> saveLoadout
-      // nie odtworzyl wlasnie skasowanego fitu, i dopiero wtedy przeladowuje.
-      if (typeof window.hardResetGameSave === 'function') {
-        window.hardResetGameSave('all');
-        return;
-      }
-      // Awaryjnie - gdy DevTools zyja na stronie bez skryptu zerujacego z <head>.
-      window.__SAVE_LOCKED = true;
-      try { localStorage.clear(); } catch { }
-      location.reload();
-    });
-  }
-
-  // Obsługa F12
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'F12') {
-      e.preventDefault();
-      const el = document.getElementById('devtools');
-      if (el) {
-        const isHidden = el.style.display === 'none' || el.style.display === '';
-        el.style.display = isHidden ? 'block' : 'none';
-      }
-    }
+    if (e.code !== 'F12') return;
+    e.preventDefault();
+    container.style.display = container.style.display === 'block' ? 'none' : 'block';
   });
+  // Pola panelu nie oddają klawiszy grze (jej skróty słuchają na window): wpisanie „1000” w kwotę przełączało
+  // grupę broni (1) i trzy razy silniki (0). keyup przechodzi — puszczenie klawisza, którego gra nie dostała, nic
+  // nie robi, a klawisz wciśnięty przed wejściem w pole puści się normalnie.
+  container.addEventListener('keydown', (e) => {
+    if (e.code === 'F12') return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) e.stopPropagation();
+  });
+  // Przycisk po kliknięciu oddaje fokus — inaczej Spacja (pauza gry) i Enter klikałyby go jeszcze raz.
+  container.addEventListener('click', (e) => { e.target.closest?.('button')?.blur(); });
 
-  wireDevToolsLogic();
+  wireCredits(q, status);
+  wireFleets(q, status);
+  wireUnitSpawner(q, status);
+  wireResetSave(q);
 }
 
-function wireDevToolsLogic() {
-  const el = (id) => document.getElementById(id);
-  const ui = {};
-  const uiIds = {
-    root: 'devtools',
-    sunR2D: 'sunR2D', sunR2DVal: 'sunR2DVal',
-    sunR3D: 'sunR3D', sunR3DVal: 'sunR3DVal',
-    planetScaleAll: 'planetScaleAll', planetScaleAllVal: 'planetScaleAllVal',
-    pirScale: 'pirScale', pirScaleVal: 'pirScaleVal',
-    station3DScale: 'station3DScale', station3DScaleVal: 'station3DScaleVal',
-    stationSpritePx: 'stationSpritePx',
-    stationsFramesGroup: 'stationsFramesGroup', planetsGroup: 'planetsGroup', distancesGroup: 'distancesGroup',
-    cbRuler: 'toggleRuler', cbPlanetOrbits: 'togglePlanetOrbits', cbUnlimited: 'toggleUnlimitedWarp',
-    cbGlobalShields: 'dt-global-shields',
-    cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
-    cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
-    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel', btnCameraPanel: 'btn-camera-panel',
-    cbDamageTint: 'dt-toggle-damage-tint',
-    btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
-    perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
-    perfFg: 'dt-perf-fg', perfMsaa: 'dt-perf-msaa',
-    perfPresetBase: 'dt-perf-preset-base', perfPresetFast: 'dt-perf-preset-fast', perfPresetUltra: 'dt-perf-preset-ultra',
-    renderDbgStart: 'dt-renderdbg-start', renderDbgStop: 'dt-renderdbg-stop',
-    addCreditsAmount: 'dt-add-credits-amount', addCreditsBtn: 'dt-add-credits-btn',
-    teleportPirateStationBtn: 'dt-teleport-pirate-station-btn',
-    teleportOrbit: 'dt-teleport-orbit',
-    teleportStatus: 'dt-teleport-status',
-    spawnPirateHeavyFleetBtn: 'dt-spawn-pirate-heavy-fleet-btn',
-    spawnEnemyFightersBtn: 'dt-spawn-enemy-fighters-btn',
-    spawnSupportFleetBtn: 'dt-spawn-support-fleet-btn',
-    spawnUnitType: 'dt-spawn-unit-type', spawnUnitSide: 'dt-spawn-unit-side',
-    spawnUnitCount: 'dt-spawn-unit-count', spawnUnitBtn: 'dt-spawn-unit-btn',
-    hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
-    hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
-    hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val',
-    earthAmbient: 'dt-earth-ambient', earthAmbientNum: 'dt-earth-ambient-num', earthAmbientVal: 'dt-earth-ambient-val',
-    earthSunIntensity: 'dt-earth-sunintensity', earthSunIntensityNum: 'dt-earth-sunintensity-num', earthSunIntensityVal: 'dt-earth-sunintensity-val',
-    earthSpecular: 'dt-earth-specular', earthSpecularNum: 'dt-earth-specular-num', earthSpecularVal: 'dt-earth-specular-val',
-    earthSunWrap: 'dt-earth-sunwrap', earthSunWrapNum: 'dt-earth-sunwrap-num', earthSunWrapVal: 'dt-earth-sunwrap-val',
-    earthBrightness: 'dt-earth-brightness', earthBrightnessNum: 'dt-earth-brightness-num', earthBrightnessVal: 'dt-earth-brightness-val',
-    earthSunsetR: 'dt-earth-sunset-r', earthSunsetRNum: 'dt-earth-sunset-r-num', earthSunsetRVal: 'dt-earth-sunset-r-val',
-    earthSunsetG: 'dt-earth-sunset-g', earthSunsetGNum: 'dt-earth-sunset-g-num', earthSunsetGVal: 'dt-earth-sunset-g-val',
-    earthSunsetB: 'dt-earth-sunset-b', earthSunsetBNum: 'dt-earth-sunset-b-num', earthSunsetBVal: 'dt-earth-sunset-b-val',
-    earthPlanetBloom: 'dt-earth-planet-bloom', earthPlanetBloomNum: 'dt-earth-planet-bloom-num', earthPlanetBloomVal: 'dt-earth-planet-bloom-val'
-  };
-  function refreshUIRefs() { for (const [k, id] of Object.entries(uiIds)) ui[k] = el(id); }
-  refreshUIRefs();
-
-  // Domyślne wartości
-  const DEFAULT_PIRATE_SCALE = 6;
-  const DEFAULT_STATION3D_SCALE = 2.70;
-  const DEFAULT_EARTH_LIGHT = Object.freeze({
-    ambient: 0.05,
-    sunIntensity: 1.0,
-    specular: 1.2,
-    sunWrap: 0.5,
-    brightness: 1.2,
-    sunsetR: 1.4,
-    sunsetG: 0.1,
-    sunsetB: 0.1,
-    planetBloom: 0.78
+function wireCredits(q, status) {
+  const amountEl = q('dt-add-credits-amount');
+  q('dt-add-credits-btn')?.addEventListener('click', () => {
+    const raw = Number(amountEl?.value);
+    const amount = Math.max(0, Math.floor(Number.isFinite(raw) ? raw : 0));
+    if (amount <= 0) return;
+    if (amountEl) amountEl.value = String(amount);
+    const addCredits = window.DevEconomy?.addCredits;
+    if (typeof addCredits !== 'function') {
+      status('Brak DevEconomy.addCredits — gra jeszcze nie wstała.');
+      return;
+    }
+    const next = Number(addCredits(amount));
+    if (Number.isFinite(next)) status(`Dodano ${amount.toLocaleString('pl-PL')} CR — saldo ${Math.round(next).toLocaleString('pl-PL')} CR`);
   });
-
-  const DevConfig = window.DevConfig || {
-    sunR2D: 823, sunR3D: 399, planetRById: {}, planetOrbitAUById: {},
-    planetScaleAll: 1, pirateScale: DEFAULT_PIRATE_SCALE, station3DScale: DEFAULT_STATION3D_SCALE, stationSpriteSize: 1024,
-    stationSpriteFrame: 3.00, stationSpriteFrameById: {}, stationScaleById: {},
-    hudOffsets: { centerY: 0, shieldY: 0, hpY: 0 },
-    earthLight: { ...DEFAULT_EARTH_LIGHT }
-  };
-  window.DevConfig = DevConfig;
-  
-  // Upewniamy się, że obiekt Dev istnieje (silnik 3D z niego korzysta w getDevScale)
-  window.Dev = window.Dev || {};
-  window.Dev.station3DScale = DevConfig.station3DScale;
-
-  const DevVFX = window.DevVFX = window.DevVFX || {};
-
-  const DevTuning = window.DevTuning = window.DevTuning || {};
-  const DEFAULT_HUD_OFFSETS = { centerY: 0, shieldY: 0, hpY: 0 };
-
-  function ensureHudOffsetsShape() {
-    if (!DevConfig.hudOffsets || typeof DevConfig.hudOffsets !== 'object') {
-      DevConfig.hudOffsets = { ...DEFAULT_HUD_OFFSETS };
-      return;
-    }
-    for (const [k, v] of Object.entries(DEFAULT_HUD_OFFSETS)) {
-      if (!Number.isFinite(DevConfig.hudOffsets[k])) DevConfig.hudOffsets[k] = v;
-    }
-  }
-
-  function ensureEarthLightShape() {
-    if (!DevConfig.earthLight || typeof DevConfig.earthLight !== 'object') {
-      DevConfig.earthLight = { ...DEFAULT_EARTH_LIGHT };
-      return;
-    }
-    for (const [k, v] of Object.entries(DEFAULT_EARTH_LIGHT)) {
-      if (!Number.isFinite(DevConfig.earthLight[k])) DevConfig.earthLight[k] = v;
-    }
-  }
-
-  function clampHudOffset(vRaw) {
-    let v = Number(vRaw);
-    if (!Number.isFinite(v)) v = 0;
-    return Math.max(-250, Math.min(250, Math.round(v)));
-  }
-
-  function formatHudOffset(v) {
-    const n = clampHudOffset(v);
-    return `${n > 0 ? '+' : ''}${n}px`;
-  }
-
-  function setHudYOffset(elId, offsetPx) {
-    const node = document.getElementById(elId);
-    if (!node) return;
-    const y = clampHudOffset(offsetPx);
-    node.style.transform = `translateY(${-y}px)`;
-  }
-
-  function applyHudOffsetsToDom() {
-    ensureHudOffsetsShape();
-    setHudYOffset('hud-center-dock', DevConfig.hudOffsets.centerY);
-    setHudYOffset('shield-unit', DevConfig.hudOffsets.shieldY);
-    setHudYOffset('hp-unit', DevConfig.hudOffsets.hpY);
-  }
-
-  function applyEarthLightingTo3D() {
-    ensureEarthLightShape();
-    const earth = window.EARTH;
-    const cfg = DevConfig.earthLight;
-    if (!earth?.uniforms) return;
-
-    if (earth.uniforms.uAmbient) earth.uniforms.uAmbient.value = cfg.ambient;
-    if (earth.uniforms.uSunIntensity) earth.uniforms.uSunIntensity.value = cfg.sunIntensity;
-    if (earth.uniforms.uSpecular) earth.uniforms.uSpecular.value = cfg.specular;
-    if (earth.uniforms.uSunWrap) earth.uniforms.uSunWrap.value = cfg.sunWrap;
-    if (earth.uniforms.uBrightness) earth.uniforms.uBrightness.value = cfg.brightness;
-    if (earth.uniforms.sunsetTint?.value?.set) {
-      earth.uniforms.sunsetTint.value.set(cfg.sunsetR, cfg.sunsetG, cfg.sunsetB);
-    }
-    earth.basePlanetBloom = cfg.planetBloom;
-    if (earth.uniforms.uPlanetBloom) {
-      const mul = (window.DevVFX && Number.isFinite(window.DevVFX.planetBloomMultiplier))
-        ? window.DevVFX.planetBloomMultiplier
-        : 1.0;
-      earth.uniforms.uPlanetBloom.value = cfg.planetBloom * mul;
-    }
-    const atmUniforms = earth.atmosphere?.material?.uniforms;
-    if (atmUniforms?.sunsetTint?.value?.set) {
-      atmUniforms.sunsetTint.value.set(cfg.sunsetR, cfg.sunsetG, cfg.sunsetB);
-    }
-  }
-
-  function loadLS() {
-    try { Object.assign(DevConfig, JSON.parse(localStorage.getItem('devConfig') || '{}')); } catch { }
-    // Synchronizacja z Dev
-    window.Dev.station3DScale = DevConfig.station3DScale;
-    ensureHudOffsetsShape();
-    ensureEarthLightShape();
-    try {
-      const savedFlags = JSON.parse(localStorage.getItem('devFlags') || '{}');
-      if (!window.DevFlags) window.DevFlags = {};
-      Object.assign(window.DevFlags, savedFlags);
-    } catch { }
-  }
-  function saveLS() {
-    if (window.__SAVE_LOCKED) return;
-    localStorage.setItem('devConfig', JSON.stringify(DevConfig));
-    localStorage.setItem('devFlags', JSON.stringify(window.DevFlags || {}));
-  }
-  window.__devtoolsSaveLS = saveLS;
-  window.__devtoolsReflectToCfg = reflectToCfg;
-
-  function reflectToCfg() {
-    if (ui.cfgOut) ui.cfgOut.value = JSON.stringify({ DevConfig, VFX: DevVFX }, null, 2);
-  }
-
-  function stationKey(st) {
-    if (!st) return null;
-    if (st.id != null) return String(st.id).toLowerCase();
-    if (st.name) return String(st.name).toLowerCase();
-    return null;
-  }
-
-  function keyFor(p) {
-    return (p?.name || p?.id || String(p?.index || '')).toString().toLowerCase();
-  }
-
-  // --- REBUILD 3D (Throttle) ---
-  let rebuildTimer = null;
-  function scheduleRebuild3D() {
-    if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
-    rebuildTimer = requestAnimationFrame(() => {
-      // (Kod przebudowy planet) ...
-      // Tutaj zostawiamy, ale najważniejsze dzieje się w event listenerach
-    });
-  }
-
-  // --- PLANET UI ---
-  function buildPlanetsUI() {
-    refreshUIRefs();
-    const root = ui.planetsGroup;
-    if (!root) return;
-    root.querySelectorAll('.row.p').forEach(n => n.remove());
-
-    const planetList = Array.isArray(window.planets) ? window.planets : null;
-    if (!planetList || planetList.length === 0) {
-        // Retry logic...
-        setTimeout(buildPlanetsUI, 500);
-        return;
-    }
-
-    for (const p of planetList) {
-      const key = keyFor(p);
-      const stored = DevConfig.planetRById[key];
-      const base = Number.isFinite(stored) ? stored : (Number.isFinite(p.baseR) ? p.baseR : p.r);
-      DevConfig.planetRById[key] = base;
-
-      const row = document.createElement('div');
-      row.className = 'row p';
-      row.innerHTML = `
-        <label>${p.name || ('Planet ' + (p.id ?? ''))}</label>
-        <input data-k="${key}" class="plR" type="range" min="20" max="2000" step="1" value="${base}">
-        <input data-k="${key}" class="plRVal" type="number" min="20" max="2000" step="1" value="${base}" style="width:72px; margin-left:6px;">
-      `;
-      root.appendChild(row);
-    }
-
-    // Listenery
-    root.querySelectorAll('input.plR').forEach(inp => {
-        const key = inp.dataset.k;
-        const num = root.querySelector(`input.plRVal[data-k="${key}"]`);
-        
-        const apply = (vRaw) => {
-            let v = Number(vRaw);
-            if (!Number.isFinite(v)) v = 1;
-            v = Math.max(1, Math.min(2000, v));
-            
-            // 1. Zapisz w konfigu
-            DevConfig.planetRById[key] = v;
-            
-            // 2. ZNAJDZ PLANETE I ZAKTUALIZUJ JA NA ZYWO
-            const targetP = planetList.find(p => keyFor(p) === key);
-            if (targetP) {
-                targetP.baseR = v;
-                // Jeśli mamy globalną skalę, uwzględnij ją
-                const scaleAll = DevConfig.planetScaleAll || 1;
-                targetP.r = v * scaleAll; 
-                if (targetP.orbit) targetP.orbit.radius = targetP.orbitRadius; 
-            }
-
-            if (num) num.value = String(v);
-            inp.value = String(v);
-            saveLS();
-        };
-        inp.addEventListener('input', () => apply(inp.value));
-        if (num) num.addEventListener('input', () => apply(num.value));
-    });
-  }
-
-  // --- DISTANCES UI (FIXED) ---
-  function getBaseOrbit() {
-    if (window.BASE_ORBIT) return window.BASE_ORBIT;
-    return 3000; // Fallback
-  }
-
-  function formatAUValue(distWorld) {
-    const base = getBaseOrbit();
-    if (!Number.isFinite(base) || !Number.isFinite(distWorld)) return 0;
-    return distWorld / base;
-  }
-
-  function fmtU(v) {
-    if (!Number.isFinite(v)) return '-';
-    return Math.round(v).toLocaleString('pl-PL');
-  }
-
-  function buildDistancesUI() {
-    refreshUIRefs();
-    const root = ui.distancesGroup;
-    if (!root) return;
-    root.querySelectorAll('.row.dist').forEach(n => n.remove());
-    if (!Array.isArray(window.planets) || !window.SUN) return;
-
-    for (const p of window.planets) {
-      const k = keyFor(p);
-      const dWorld = Math.hypot((p.x || 0) - window.SUN.x, (p.y || 0) - window.SUN.y);
-      const dAU = (DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld));
-      
-      const row = document.createElement('div');
-      row.className = 'row dist';
-      row.innerHTML = `
-        <label style="min-width:80px">${p.name || ('Planet ' + (p.id ?? ''))}</label>
-        <input data-k="${k}" class="plAU" type="range" min="0" max="60" step="0.01">
-        <input data-k="${k}" class="plAUVal" type="number" min="0" max="60" step="0.01" style="width:72px; margin:0 6px;">
-        <div class="val" id="au_val_${k}" style="min-width:160px; text-align:right; font-variant-numeric: tabular-nums;"></div>
-      `;
-      root.appendChild(row);
-      
-      const inp = row.querySelector('input.plAU');
-      const inpVal = row.querySelector('input.plAUVal');
-      const slot = document.getElementById('au_val_' + k);
-
-      if (!DevConfig.planetOrbitAUById) DevConfig.planetOrbitAUById = {};
-      inp.value = dAU;
-      if (inpVal) inpVal.value = (+dAU).toFixed(2);
-
-      const renderVal = (au) => {
-        let num = Number(au);
-        if (!Number.isFinite(num)) num = 0;
-        const baseOrbit = getBaseOrbit();
-        const worldR = Number.isFinite(baseOrbit) ? num * baseOrbit : NaN;
-        if (slot) slot.textContent = `${num.toFixed(2)} AU (${fmtU(worldR)} WU)`;
-        return worldR;
-      };
-      
-      renderVal(dAU);
-
-      const apply = () => {
-        const au = +inp.value;
-        DevConfig.planetOrbitAUById[k] = au;
-        const worldR = renderVal(au);
-        
-        // --- KLUCZOWA POPRAWKA ---
-        // Bezpośrednia modyfikacja promienia orbity planety w grze
-        p.orbitRadius = worldR;
-        p.orbitR = worldR;
-        if(p.orbit) p.orbit.radius = worldR;
-        
-        // Aktualizacja pozycji natychmiast (opcjonalne, ale daje płynność)
-        p.x = window.SUN.x + Math.cos(p.angle) * worldR;
-        p.y = window.SUN.y + Math.sin(p.angle) * worldR;
-        // -------------------------
-
-        saveLS();
-        if (inpVal) inpVal.value = au.toFixed(2);
-      };
-
-      inp.addEventListener('input', apply);
-      if(inpVal) inpVal.addEventListener('change', () => { inp.value = inpVal.value; apply(); });
-    }
-  }
-
-  // --- STATION FRAMES UI (ZOOM SPRITE) ---
-  function buildStationFramesUI() {
-    refreshUIRefs();
-    const root = ui.stationsFramesGroup;
-    if (!root) return;
-
-    root.querySelectorAll('.row.frame').forEach(n => n.remove());
-
-    const stations = Array.isArray(window.stations) ? window.stations : [];
-    if (!stations.length) return;
-
-    if (!DevConfig.stationSpriteFrameById) DevConfig.stationSpriteFrameById = {};
-
-    for (const st of stations) {
-      const key = stationKey(st);
-      if (!key) continue;
-
-      const valRaw = DevConfig.stationSpriteFrameById[key] ?? DevConfig.stationSpriteFrame;
-      const val = Number.isFinite(valRaw) ? valRaw : DevConfig.stationSpriteFrame;
-      
-      const row = document.createElement('div');
-      row.className = 'row frame';
-      row.innerHTML = `
-        <label>${st.name || key}</label>
-        <input data-k="${key}" class="stFrame" type="range" min="0.1" max="3.0" step="0.01" value="${val}">
-        <input data-k="${key}" class="stFrameVal" type="number" min="0.1" max="3.0" step="0.01" value="${val}" style="width:72px; margin-left:6px;">
-        <div class="val" id="stFrameVal_${key}"></div>
-      `;
-      root.appendChild(row);
-
-      const slider = row.querySelector('input.stFrame');
-      const num = row.querySelector('input.stFrameVal');
-      const valEl = row.querySelector(`#stFrameVal_${key}`);
-
-      // Ustawienie etykiety
-      if (valEl) valEl.textContent = 'x' + val.toFixed(2);
-
-      const apply = (vRaw) => {
-        let v = Number(vRaw);
-        if (!Number.isFinite(v)) v = 3.0;
-        v = Math.max(0.1, Math.min(3.0, v));
-
-        // 1. Zapisz w konfigu
-        DevConfig.stationSpriteFrameById[key] = v;
-
-        // 2. Wyślij do silnika 3D
-        if (typeof window.setStationSpriteFrame === 'function') {
-          window.setStationSpriteFrame(key, v);
-        }
-
-        if (num) num.value = String(v);
-        if (slider) slider.value = String(v);
-        if (valEl) valEl.textContent = 'x' + v.toFixed(2);
-
-        saveLS();
-      };
-      
-      slider?.addEventListener('input', e => apply(e.target.value));
-      num?.addEventListener('input', e => apply(e.target.value));
-    }
-  }
-
-  // --- 3D SCALES UI (Per Station) ---
-  function setupPerStationScales() {
-    const root = document.getElementById('dt-stations-per-scale');
-    if (!root) return;
-
-    function currentStations() {
-      if (Array.isArray(window.stations) && window.stations.length) return window.stations;
-      return [];
-    }
-
-    function rebuild() {
-      root.innerHTML = '';
-      const list = currentStations();
-      for (const st of list) {
-        const id = stationKey(st);
-        if (!id) continue;
-        const initial = (DevConfig.stationScaleById && DevConfig.stationScaleById[id]) || 1;
-
-        const wrap = document.createElement('div');
-        wrap.className = 'dt-row';
-        wrap.style.alignItems = 'center';
-        wrap.innerHTML = `
-          <div class="dt-col" style="min-width:120px">${st.name || id}</div>
-          <div class="dt-col" style="flex:1">
-             <input type="range" min="0.2" max="5" step="0.01" value="${initial}" id="dt-scale-${id}">
-             <input type="number" min="0.2" max="5" step="0.01" value="${initial}" id="dt-scale-num-${id}" style="width:72px;margin-left:8px">
-          </div>
-        `;
-        root.appendChild(wrap);
-
-        const range = wrap.querySelector(`input[type="range"]`);
-        const num = wrap.querySelector(`input[type="number"]`);
-
-        const apply = (v) => {
-          const val = parseFloat(v);
-          if (!isFinite(val)) return;
-          DevConfig.stationScaleById[id] = val;
-          // Przekazanie do silnika 3D
-          if (typeof window.setStationScale === 'function') {
-              window.setStationScale(id, val);
-          }
-          range.value = val;
-          num.value = val;
-          saveLS();
-        };
-
-        range.addEventListener('input', e => apply(e.target.value));
-        num.addEventListener('input', e => apply(e.target.value));
-      }
-    }
-    rebuild();
-    setInterval(() => {
-      if (root.children.length === 0 && currentStations().length > 0) rebuild();
-    }, 2000);
-  }
-
-  function setupHudOffsetControls() {
-    ensureHudOffsetsShape();
-
-    const links = [
-      { key: 'centerY', range: ui.hudCenterY, num: ui.hudCenterYNum, val: ui.hudCenterYVal },
-      { key: 'shieldY', range: ui.hudShieldY, num: ui.hudShieldYNum, val: ui.hudShieldYVal },
-      { key: 'hpY', range: ui.hudHpY, num: ui.hudHpYNum, val: ui.hudHpYVal }
-    ];
-
-    for (const item of links) {
-      const apply = (vRaw) => {
-        const v = clampHudOffset(vRaw);
-        DevConfig.hudOffsets[item.key] = v;
-        if (item.range) item.range.value = String(v);
-        if (item.num) item.num.value = String(v);
-        if (item.val) item.val.textContent = formatHudOffset(v);
-        applyHudOffsetsToDom();
-        saveLS();
-        reflectToCfg();
-      };
-
-      const initial = clampHudOffset(DevConfig.hudOffsets[item.key]);
-      if (item.range) item.range.addEventListener('input', () => apply(item.range.value));
-      if (item.num) item.num.addEventListener('input', () => apply(item.num.value));
-      apply(initial);
-    }
-  }
-
-  function setupEarthLightingControls() {
-    ensureEarthLightShape();
-
-    const links = [
-      { key: 'ambient', range: ui.earthAmbient, num: ui.earthAmbientNum, val: ui.earthAmbientVal, min: 0, max: 0.05, digits: 3 },
-      { key: 'sunIntensity', range: ui.earthSunIntensity, num: ui.earthSunIntensityNum, val: ui.earthSunIntensityVal, min: 0.2, max: 2.0, digits: 2 },
-      { key: 'specular', range: ui.earthSpecular, num: ui.earthSpecularNum, val: ui.earthSpecularVal, min: 0, max: 1.2, digits: 2 },
-      { key: 'sunWrap', range: ui.earthSunWrap, num: ui.earthSunWrapNum, val: ui.earthSunWrapVal, min: -0.5, max: 0.5, digits: 2 },
-      { key: 'brightness', range: ui.earthBrightness, num: ui.earthBrightnessNum, val: ui.earthBrightnessVal, min: 0.5, max: 2.0, digits: 2 },
-      { key: 'sunsetR', range: ui.earthSunsetR, num: ui.earthSunsetRNum, val: ui.earthSunsetRVal, min: 0, max: 3.0, digits: 2 },
-      { key: 'sunsetG', range: ui.earthSunsetG, num: ui.earthSunsetGNum, val: ui.earthSunsetGVal, min: 0, max: 3.0, digits: 2 },
-      { key: 'sunsetB', range: ui.earthSunsetB, num: ui.earthSunsetBNum, val: ui.earthSunsetBVal, min: 0, max: 3.0, digits: 2 },
-      { key: 'planetBloom', range: ui.earthPlanetBloom, num: ui.earthPlanetBloomNum, val: ui.earthPlanetBloomVal, min: 0, max: 2.0, digits: 2 }
-    ];
-
-    for (const item of links) {
-      const clamp = (raw) => {
-        let v = Number(raw);
-        if (!Number.isFinite(v)) v = DEFAULT_EARTH_LIGHT[item.key];
-        return Math.max(item.min, Math.min(item.max, v));
-      };
-      const apply = (vRaw) => {
-        const v = clamp(vRaw);
-        DevConfig.earthLight[item.key] = v;
-        if (item.range) item.range.value = String(v);
-        if (item.num) item.num.value = String(v);
-        if (item.val) item.val.textContent = v.toFixed(item.digits);
-        applyEarthLightingTo3D();
-        saveLS();
-        reflectToCfg();
-      };
-
-      if (item.range) item.range.addEventListener('input', () => apply(item.range.value));
-      if (item.num) item.num.addEventListener('input', () => apply(item.num.value));
-      apply(DevConfig.earthLight[item.key]);
-    }
-  }
-
-  function wireDevTools() {
-    // --- GLOBALNA SKALA STACJI ---
-    const elStation3DScale = document.getElementById('station3DScale');
-    if (elStation3DScale) {
-      elStation3DScale.addEventListener('input', e => {
-        const val = parseFloat(e.target.value);
-        // Aktualizacja globalnego stanu
-        DevConfig.station3DScale = val;
-        window.Dev.station3DScale = val; // Synchronizacja
-        
-        // Wymuszenie aktualizacji w silniku 3D
-        if (typeof window.updateStations3D === 'function' && window.stations) {
-            window.updateStations3D(window.stations);
-        }
-        
-        const l = document.getElementById('station3DScaleVal');
-        if (l) l.textContent = 'x' + val.toFixed(2);
-        saveLS();
-      });
-    }
-
-    const elUnlimited = document.getElementById('toggleUnlimitedWarp');
-    if (elUnlimited) {
-      elUnlimited.checked = !!(window.DevFlags && window.DevFlags.unlimitedWarp);
-      elUnlimited.addEventListener('change', e => {
-        if (!window.DevFlags) window.DevFlags = {};
-        window.DevFlags.unlimitedWarp = e.target.checked;
-        saveLS();
-      });
-    }
-
-    if (ui.cbGlobalShields) {
-      ui.cbGlobalShields.checked = !(window.DevFlags && window.DevFlags.globalShieldsOff);
-      ui.cbGlobalShields.addEventListener('change', (e) => {
-        const enabled = !!e.target.checked;
-        if (typeof window.toggleGlobalShields === 'function') {
-          window.toggleGlobalShields(!enabled);
-        } else {
-          if (!window.DevFlags) window.DevFlags = {};
-          window.DevFlags.globalShieldsOff = !enabled;
-        }
-        saveLS();
-      });
-    }
-
-    if (ui.cbRuler) {
-      ui.cbRuler.checked = !!(window.DevFlags && window.DevFlags.showRuler);
-      ui.cbRuler.addEventListener('change', (e) => {
-        if (!window.DevFlags) window.DevFlags = {};
-        window.DevFlags.showRuler = !!e.target.checked;
-        saveLS();
-      });
-    }
-
-    if (ui.cbPlanetOrbits) {
-      ui.cbPlanetOrbits.checked = !!(window.DevFlags && window.DevFlags.showPlanetOrbits);
-      ui.cbPlanetOrbits.addEventListener('change', (e) => {
-        if (!window.DevFlags) window.DevFlags = {};
-        window.DevFlags.showPlanetOrbits = !!e.target.checked;
-        saveLS();
-      });
-    }
-
-    if (ui.planetScaleAll) {
-      ui.planetScaleAll.addEventListener('input', () => {
-        DevConfig.planetScaleAll = +ui.planetScaleAll.value;
-        if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + DevConfig.planetScaleAll.toFixed(2);
-        // TODO: Można tu dodać logikę apply dla planetScaleAll
-        saveLS(); 
-      });
-    }
-    if (ui.pirScale) {
-      ui.pirScale.addEventListener('input', () => {
-        const v = +ui.pirScale.value;
-        DevConfig.pirateScale = v;
-        DevTuning.pirateStationScale = v;
-        if (ui.pirScaleVal) ui.pirScaleVal.textContent = 'x' + v.toFixed(2);
-        saveLS();
-      });
-    }
-
-    if (ui.btnHardpointEditor) {
-      ui.btnHardpointEditor.addEventListener('click', async () => {
-        try {
-          const { openHardpointEditor } = await import('./hardpointEditor.js');
-          openHardpointEditor();
-        } catch (err) {
-          console.error('Blad otwierania edytora hardpointow:', err);
-        }
-      });
-    }
-
-    if (ui.btnBloomPanel) {
-      ui.btnBloomPanel.addEventListener('click', () => {
-        if (window.__bloomPanel && typeof window.__bloomPanel.toggle === 'function') {
-          window.__bloomPanel.toggle();
-        }
-      });
-    }
-
-    if (ui.btnCameraPanel) {
-      ui.btnCameraPanel.addEventListener('click', () => {
-        if (window.__cameraPanel && typeof window.__cameraPanel.toggle === 'function') {
-          window.__cameraPanel.toggle();
-        }
-      });
-    }
-
-    if (ui.btnDestructorPanel) {
-      ui.btnDestructorPanel.addEventListener('click', () => {
-        if (window.__destructorPanel && typeof window.__destructorPanel.toggle === 'function') {
-          window.__destructorPanel.toggle();
-        }
-      });
-    }
-
-    if (ui.cbDamageTint) {
-      ui.cbDamageTint.checked = isHexDamageTintEnabled();
-      ui.cbDamageTint.addEventListener('change', () => {
-        const enabled = setHexDamageTintEnabled(!!ui.cbDamageTint.checked);
-        if (typeof window.toast === 'function') {
-          window.toast(enabled ? 'Damage tint ON' : 'Damage tint OFF');
-        }
-      });
-    }
-
-    if (ui.addCreditsBtn && ui.addCreditsAmount) {
-      ui.addCreditsBtn.addEventListener('click', () => {
-        const amountRaw = Number(ui.addCreditsAmount.value);
-        const amount = Math.max(0, Math.floor(Number.isFinite(amountRaw) ? amountRaw : 0));
-        if (amount <= 0) return;
-        ui.addCreditsAmount.value = String(amount);
-
-        const addCreditsFn =
-          (window.DevEconomy && typeof window.DevEconomy.addCredits === 'function')
-            ? window.DevEconomy.addCredits
-            : (typeof window.DevAddCredits === 'function' ? window.DevAddCredits : null);
-        if (!addCreditsFn) {
-          console.warn('[DevTools] Brak API dodawania kredytow (DevEconomy.addCredits).');
-          return;
-        }
-
-        const nextCredits = Number(addCreditsFn(amount));
-        if (Number.isFinite(nextCredits)) {
-          if (typeof window.toast === 'function') window.toast(`Dodano ${amount} CR`);
-          console.log(`[DevTools] Dodano ${amount} CR -> saldo ${Math.round(nextCredits)} CR`);
-        }
-      });
-    }
-
-    if (ui.teleportPirateStationBtn) {
-      ui.teleportPirateStationBtn.addEventListener('click', () => {
-        const setStatus = (text) => { if (ui.teleportStatus) ui.teleportStatus.textContent = text; };
-
-        const teleportFn = window.devTeleportToPirateStation;
-        if (typeof teleportFn !== 'function') {
-          setStatus('Brak window.devTeleportToPirateStation.');
-          console.warn('[DevTools] Brak window.devTeleportToPirateStation.');
-          return;
-        }
-
-        const orbit = ui.teleportOrbit?.value || 'outer';
-        const result = teleportFn({ orbit });
-        if (!result) {
-          // Stacja powstaje dopiero razem z misja najemnicza — bez niej nie ma dokad skakac.
-          setStatus('Brak stacji pirackiej — odpal misje najemnicza.');
-          if (typeof window.toast === 'function') window.toast('Brak stacji pirackiej');
-          return;
-        }
-
-        const station = result.station || result;
-        const dist = Math.round(Math.hypot(
-          (window.ship?.pos?.x || 0) - station.x,
-          (window.ship?.pos?.y || 0) - station.y
-        ));
-        const au = Number(window.AU_IN_WORLD_UNITS) || 3000;
-        setStatus(`Skok: ${dist} WU od stacji (~${(dist / au).toFixed(1)} AU).`);
-        if (typeof window.toast === 'function') window.toast(`TELEPORT: stacja piracka (${orbit})`);
-      });
-    }
-
-    if (ui.spawnPirateHeavyFleetBtn) {
-      ui.spawnPirateHeavyFleetBtn.addEventListener('click', () => {
-        const ship = window.ship;
-        const spawnFleetFn = window.spawnPirateHeavyFleet;
-        if (!ship?.pos || typeof spawnFleetFn !== 'function') {
-          console.warn('[DevTools] Brak window.ship lub window.spawnPirateHeavyFleet.');
-          return;
-        }
-
-        const angle = Number(ship.angle) || 0;
-        const spawnDist = 3500;
-        const spawnX = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
-        const spawnY = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
-        const dummyBeacon = { x: spawnX, y: spawnY, r: 100 };
-
-        if (typeof window.spawnShockwave === 'function') {
-          window.spawnShockwave(spawnX, spawnY, {
-            maxR: 2000,
-            w: 15,
-            maxLife: 1.5,
-            color: 'rgba(255, 50, 50,'
-          });
-        }
-
-        spawnFleetFn(dummyBeacon);
-        if (typeof window.toast === 'function') window.toast('Wykryto ciężką flotę piratów');
-        console.log('%c⚠️ UWAGA: ZABURZENIA CZASOPRZESTRZENI! Wykryto masywne sygnatury wroga!', 'color: #ff5c7c; font-size: 14px; font-weight: bold;');
-      });
-    }
-
-    if (ui.spawnEnemyFightersBtn) {
-      ui.spawnEnemyFightersBtn.addEventListener('click', () => {
-        const ship = window.ship;
-        const spawnSquadFn = window.spawnPirateSquad;
-        if (!ship?.pos || typeof spawnSquadFn !== 'function') {
-          console.warn('[DevTools] Brak window.ship lub window.spawnPirateSquad.');
-          return;
-        }
-
-        const angle = Number(ship.angle) || 0;
-        const spawnDist = 3200;
-        const spawnX = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
-        const spawnY = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
-        const dummyBeacon = { x: spawnX, y: spawnY, r: 180 };
-
-        if (typeof window.spawnShockwave === 'function') {
-          window.spawnShockwave(spawnX, spawnY, {
-            maxR: 1200,
-            w: 10,
-            maxLife: 0.8,
-            color: 'rgba(255, 80, 80,'
-          });
-        }
-
-        spawnSquadFn(dummyBeacon, 'interceptor', 8, 'attack', { radius: 260, speed: 0.42 });
-        spawnSquadFn(dummyBeacon, 'fighter', 8, 'attack', { radius: 320, speed: 0.38 });
-        if (typeof window.toast === 'function') window.toast('Wrogie eskadry w drodze');
-        console.log('[DevTools] Spawn enemy fighters -> 16 jednostek');
-      });
-    }
-
-    if (ui.spawnSupportFleetBtn) {
-      ui.spawnSupportFleetBtn.addEventListener('click', () => {
-        const ship = window.ship;
-        const spawnSupportFn = window.spawnSupportShip;
-        const spawnCarrierFn = window.spawnFriendlyCarrier;
-        if (!ship?.pos || typeof spawnSupportFn !== 'function' || typeof spawnCarrierFn !== 'function') {
-          console.warn('[DevTools] Brak API wsparcia (spawnSupportShip / spawnFriendlyCarrier).');
-          return;
-        }
-
-        const angle = Number(ship.angle) || 0;
-        const spawnDist = 2600;
-        const spawnPos = {
-          x: (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist,
-          y: (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist
-        };
-
-        spawnCarrierFn({ pos: spawnPos });
-        spawnSupportFn('battleship', { spawnPos, spawnOffset: { x: -280, y: -420 } });
-        spawnSupportFn('destroyer', { spawnPos, spawnOffset: { x: -220, y: 260 } });
-        spawnSupportFn('frigate_pd', { spawnPos, spawnOffset: { x: -360, y: 520 } });
-        spawnSupportFn('fighter', { spawnPos, spawnOffset: { x: -480, y: 0 } });
-
-        if (typeof window.spawnShockwave === 'function') {
-          window.spawnShockwave(spawnPos.x, spawnPos.y, {
-            maxR: 1400,
-            w: 12,
-            maxLife: 1.0,
-            color: 'rgba(120, 220, 255,'
-          });
-        }
-        if (typeof window.toast === 'function') window.toast('Flota wsparcia przybyla');
-        console.log('[DevTools] Spawn support fleet');
-      });
-    }
-
-    if (ui.spawnUnitBtn) {
-      ui.spawnUnitBtn.addEventListener('click', () => {
-        const ship = window.ship;
-        const [kind, key] = String(ui.spawnUnitType?.value || '').split(':');
-        const side = ui.spawnUnitSide?.value || 'auto';
-        const mode = side === 'auto' ? undefined : side;
-        const count = Math.max(1, Math.min(20, Math.round(Number(ui.spawnUnitCount?.value) || 1)));
-        const spawnFn = kind === 'hull' ? window.spawnDevHull : window.spawnCallInShip;
-        if (!ship?.pos || !key || typeof spawnFn !== 'function') {
-          console.warn('[DevTools] Brak window.ship lub API spawnu (spawnDevHull / spawnCallInShip).');
-          return;
-        }
-
-        // Szereg w poprzek kursu, przed dziobem gracza.
-        const angle = Number(ship.angle) || 0;
-        const big = kind === 'call' && ['carrier', 'supercapital', 'pirate_supercapital', 'atlas', 'megafreighter'].includes(key);
-        const spawnDist = big ? 6000 : 3000;
-        const spacing = big ? 2200 : 900;
-        const cx = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
-        const cy = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
-        const px = -Math.sin(angle);
-        const py = Math.cos(angle);
-        let spawned = 0;
-        for (let i = 0; i < count; i++) {
-          const off = (i - (count - 1) * 0.5) * spacing;
-          const pos = { x: cx + px * off, y: cy + py * off };
-          const opts = { spawnPos: pos, pos, spawnAngle: angle + Math.PI, singleModule: false };
-          if (mode) opts.mode = mode;
-          const result = spawnFn(key, opts);
-          if (Array.isArray(result) ? result.length : result) spawned++;
-        }
-        if (typeof window.toast === 'function') window.toast(`Spawn: ${count}x ${key}${spawned < count ? ` (udane: ${spawned})` : ''}`);
-        console.log(`[DevTools] Spawn ${kind}:${key} x${count} (${mode || 'auto'}) -> ${spawned}`);
-      });
-    }
-
-    const getCorePerfStatus = () => {
-      if (typeof window.Core3DPerfStatus === 'function') {
-        return window.Core3DPerfStatus() || null;
-      }
-      if (window.Core3D && typeof window.Core3D.getPerfStatus === 'function') {
-        return window.Core3D.getPerfStatus() || null;
-      }
-      return null;
-    };
-
-    const syncPerfControls = (statusRaw = null) => {
-      const status = statusRaw || getCorePerfStatus();
-      if (!status) {
-        if (ui.perfStatus) ui.perfStatus.textContent = 'Core3D niedostepny';
-        return;
-      }
-      if (ui.perfBloom) ui.perfBloom.checked = !!status.bloom;
-      if (ui.perfHeat) ui.perfHeat.checked = !!status.heatHaze;
-      if (ui.perfBg) ui.perfBg.checked = !!status.bgPass;
-      if (ui.perfOrtho) ui.perfOrtho.checked = !!status.orthoPass;
-      if (ui.perfFg) ui.perfFg.checked = !!status.fgPass;
-      if (ui.perfMsaa) ui.perfMsaa.checked = Number(status.msaaSamples) > 0;
-      if (ui.perfStatus) {
-        ui.perfStatus.textContent = `MSAA=${Number(status.msaaSamples) || 0} | bloom=${status.bloom ? 'on' : 'off'} | heat=${status.heatHaze ? 'on' : 'off'}`;
-      }
-    };
-
-    const applyPerfFromControls = () => {
-      if (typeof window.Core3DPerf === 'function') {
-        window.Core3DPerf({
-          bloom: !!ui.perfBloom?.checked,
-          heatHaze: !!ui.perfHeat?.checked,
-          bgPass: !!ui.perfBg?.checked,
-          orthoPass: !!ui.perfOrtho?.checked,
-          fgPass: !!ui.perfFg?.checked
-        });
-      }
-      if (typeof window.Core3DMsaa === 'function') {
-        window.Core3DMsaa(!!ui.perfMsaa?.checked, 4);
-      }
-      syncPerfControls();
-    };
-
-    if (ui.btnPerfTools && ui.perfPanel) {
-      ui.btnPerfTools.addEventListener('click', () => {
-        const show = ui.perfPanel.style.display === 'none' || ui.perfPanel.style.display === '';
-        ui.perfPanel.style.display = show ? 'block' : 'none';
-        if (show) syncPerfControls();
-      });
-    }
-    [ui.perfBloom, ui.perfHeat, ui.perfBg, ui.perfOrtho, ui.perfFg, ui.perfMsaa].forEach((node) => {
-      if (!node) return;
-      node.addEventListener('change', applyPerfFromControls);
-    });
-    if (ui.perfPresetBase) ui.perfPresetBase.addEventListener('click', () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('base'); syncPerfControls(); });
-    if (ui.perfPresetFast) ui.perfPresetFast.addEventListener('click', () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('fast'); syncPerfControls(); });
-    if (ui.perfPresetUltra) ui.perfPresetUltra.addEventListener('click', () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('ultrafast'); syncPerfControls(); });
-    if (ui.renderDbgStart) ui.renderDbgStart.addEventListener('click', () => { if (typeof window.RenderDbgStart === 'function') window.RenderDbgStart(1000); });
-    if (ui.renderDbgStop) ui.renderDbgStop.addEventListener('click', () => { if (typeof window.RenderDbgStop === 'function') window.RenderDbgStop(); });
-    syncPerfControls();
-  }
-
-  // --- BOOT ---
-  loadLS();
-  refreshUIRefs();
-  
-  if (typeof DevConfig.stationSpriteFrame !== 'number') DevConfig.stationSpriteFrame = 3.0;
-
-  // Renderowanie sekcji
-  buildPlanetsUI();
-  buildDistancesUI();
-  buildStationFramesUI();
-  setupPerStationScales();
-  setupHudOffsetControls();
-  setupEarthLightingControls();
-  applyHudOffsetsToDom();
-  applyEarthLightingTo3D();
-
-  // Wypełnienie wartości początkowych w UI
-  if (ui.sunR2D) ui.sunR2D.value = DevConfig.sunR2D || 823;
-  if (ui.sunR3D) ui.sunR3D.value = DevConfig.sunR3D || 399;
-  if (ui.planetScaleAll) ui.planetScaleAll.value = DevConfig.planetScaleAll || 1;
-  if (ui.pirScale) ui.pirScale.value = DevConfig.pirateScale || 6;
-  if (ui.station3DScale) ui.station3DScale.value = DevConfig.station3DScale || 2.7;
-
-  // Odświeżenie opisów
-  if (ui.sunR2DVal) ui.sunR2DVal.textContent = ui.sunR2D?.value;
-  if (ui.sunR3DVal) ui.sunR3DVal.textContent = ui.sunR3D?.value;
-  if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + (+ui.planetScaleAll?.value).toFixed(2);
-  if (ui.pirScaleVal) ui.pirScaleVal.textContent = 'x' + (+ui.pirScale?.value).toFixed(2);
-  if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = 'x' + (+ui.station3DScale?.value).toFixed(2);
-  if (ui.cbDamageTint) ui.cbDamageTint.checked = isHexDamageTintEnabled();
-
-  wireDevTools();
-
-  // Pętla odświeżania dla dynamicznie ładowanych obiektów
-  setInterval(() => {
-    buildStationFramesUI();
-    applyEarthLightingTo3D();
-  }, 2000);
 }
 
+const NOT_IN_GAME = 'Spawn działa w grze — zamknij menu.';
+
+// Spawn tylko w grze: w menu (przed startem i pod Esc) statek gracza już istnieje, ale jednostka trafiłaby do świata
+// sprzed startu albo za zasłonę menu.
+function inMainMenu() {
+  const menu = document.getElementById('main-menu');
+  return !!menu && !menu.classList.contains('hidden');
+}
+
+// Punkt `dist` przed dziobem gracza (null w menu i przed startem gry).
+function pointAhead(dist) {
+  const ship = window.ship;
+  if (!ship?.pos || inMainMenu()) return null;
+  const angle = Number(ship.angle) || 0;
+  return {
+    x: (Number(ship.pos.x) || 0) + Math.cos(angle) * dist,
+    y: (Number(ship.pos.y) || 0) + Math.sin(angle) * dist,
+    angle
+  };
+}
+
+function shockwave(p, maxR, w, maxLife, color) {
+  if (typeof window.spawnShockwave === 'function') window.spawnShockwave(p.x, p.y, { maxR, w, maxLife, color });
+}
+
+function wireFleets(q, status) {
+  q('dt-spawn-pirate-fleet-btn')?.addEventListener('click', () => {
+    const p = pointAhead(3500);
+    if (!p || typeof window.spawnPirateHeavyFleet !== 'function') return status(NOT_IN_GAME);
+    shockwave(p, 2000, 15, 1.5, 'rgba(255, 50, 50,');
+    window.spawnPirateHeavyFleet({ x: p.x, y: p.y, r: 100 });
+    status('Ciężka flota piratów wychodzi z warpa przed dziobem.');
+  });
+
+  q('dt-spawn-enemy-fighters-btn')?.addEventListener('click', () => {
+    const p = pointAhead(3200);
+    if (!p || typeof window.spawnPirateSquad !== 'function') return status(NOT_IN_GAME);
+    const beacon = { x: p.x, y: p.y, r: 180 };
+    shockwave(p, 1200, 10, 0.8, 'rgba(255, 80, 80,');
+    window.spawnPirateSquad(beacon, 'interceptor', 8, 'attack', { radius: 260, speed: 0.42 });
+    window.spawnPirateSquad(beacon, 'fighter', 8, 'attack', { radius: 320, speed: 0.38 });
+    status('Wrogie eskadry: 8 przechwytujących + 8 myśliwców.');
+  });
+
+  q('dt-spawn-support-fleet-btn')?.addEventListener('click', () => {
+    const p = pointAhead(2600);
+    const spawnSupport = window.spawnSupportShip;
+    const spawnCarrier = window.spawnFriendlyCarrier;
+    if (!p || typeof spawnSupport !== 'function' || typeof spawnCarrier !== 'function') {
+      return status(NOT_IN_GAME);
+    }
+    const spawnPos = { x: p.x, y: p.y };
+    spawnCarrier({ pos: spawnPos });
+    spawnSupport('battleship', { spawnPos, spawnOffset: { x: -280, y: -420 } });
+    spawnSupport('destroyer', { spawnPos, spawnOffset: { x: -220, y: 260 } });
+    spawnSupport('frigate_pd', { spawnPos, spawnOffset: { x: -360, y: 520 } });
+    spawnSupport('fighter', { spawnPos, spawnOffset: { x: -480, y: 0 } });
+    shockwave(p, 1400, 12, 1.0, 'rgba(120, 220, 255,');
+    status('Flota wsparcia Terra Nova przybyła.');
+  });
+}
+
+function wireUnitSpawner(q, status) {
+  const typeEl = q('dt-spawn-unit-type');
+  if (typeEl) {
+    for (const [factionId, faction] of Object.entries(SUPPORT_FACTIONS)) {
+      const group = document.createElement('optgroup');
+      group.label = faction.label;
+      for (const item of faction.roster) {
+        const opt = document.createElement('option');
+        opt.value = `${factionId}:${item.key}`;
+        opt.textContent = `${item.name} — ${item.role}`;
+        group.appendChild(opt);
+      }
+      typeEl.appendChild(group);
+    }
+  }
+
+  q('dt-spawn-unit-btn')?.addEventListener('click', () => {
+    const [factionId, key] = String(typeEl?.value || '').split(':');
+    const faction = SUPPORT_FACTIONS[factionId];
+    const item = faction?.roster.find((it) => it.key === key);
+    if (!item) return;
+    const side = q('dt-spawn-unit-side')?.value || 'auto';
+    const mode = side === 'auto' ? faction.mode : side;
+    const count = Math.max(1, Math.min(20, Math.round(Number(q('dt-spawn-unit-count')?.value) || 1)));
+    const ship = window.ship;
+    if (!ship?.pos || inMainMenu()) return status(NOT_IN_GAME);
+
+    // Holownik serwisowy ma własną misję (naprawa rojem, transport do K-7): przylot do Atlasa, jeden naraz.
+    if (key === 'service_tug') {
+      const res = typeof window.callServiceTug === 'function' ? window.callServiceTug({ target: ship }) : null;
+      if (!res) return status('Holownik: brak celu.');
+      return status(res.existing ? 'Holownik już jest w drodze albo przy pracy.' : `Holownik leci do Atlasa (przylot za ${(Number(res.eta) || 0).toFixed(1).replace('.', ',')} s).`);
+    }
+
+    const spawnFn = window.spawnCallInShip;
+    if (typeof spawnFn !== 'function') return status('Brak spawnCallInShip — gra jeszcze nie wstała.');
+    // Szereg w poprzek kursu, przed dziobem gracza; jednostki dziobem do gracza.
+    const big = BIG_ICONS.has(item.icon);
+    const center = pointAhead(big ? 6000 : 3000);
+    const spacing = big ? 2200 : 900;
+    const px = -Math.sin(center.angle);
+    const py = Math.cos(center.angle);
+    let spawned = 0;
+    for (let i = 0; i < count; i++) {
+      const off = (i - (count - 1) * 0.5) * spacing;
+      const pos = { x: center.x + px * off, y: center.y + py * off };
+      const result = spawnFn(key, { spawnPos: pos, pos, spawnAngle: center.angle + Math.PI, singleModule: false, mode });
+      if (Array.isArray(result) ? result.length : result) spawned++;
+    }
+    status(`Spawn: ${count}× ${item.name} (${SIDE_LABELS[mode] || mode})${spawned < count ? ` — udane: ${spawned}` : ''}`);
+  });
+}
+
+// Zerowanie zapisu wiąże się niezależnie od reszty: ma działać zwłaszcza wtedy, gdy gra wstała połamana. Kasowanie
+// jest nieodwracalne, więc przycisk uzbraja się na pierwsze kliknięcie i rozbraja sam po 4 s. W Electronie to jedyna
+// droga bez konsoli (?reset wymaga paska adresu).
+function wireResetSave(q) {
+  const btn = q('dt-reset-save-btn');
+  const statusEl = q('dt-reset-save-status');
+  if (!btn) return;
+  const DISARM_MS = 4000;
+  const idleLabel = btn.textContent;
+  const idleHint = statusEl ? statusEl.textContent : '';
+  let armedAt = 0;
+  const disarm = () => {
+    armedAt = 0;
+    btn.textContent = idleLabel;
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    if (statusEl) statusEl.textContent = idleHint;
+  };
+  btn.addEventListener('click', () => {
+    if (!armedAt || Date.now() - armedAt > DISARM_MS) {
+      armedAt = Date.now();
+      btn.textContent = 'Na pewno? Kliknij ponownie';
+      btn.style.borderColor = '#b4452f';
+      btn.style.color = '#ffb4a2';
+      if (statusEl) statusEl.textContent = 'Fit, hardpointy z edytora i ustawienia znikną bezpowrotnie.';
+      setTimeout(disarm, DISARM_MS);
+      return;
+    }
+    // hardResetGameSave (skrypt w <head> index.html) zamyka zapisy na klucz, żeby beforeunload -> saveLoadout
+    // nie odtworzył właśnie skasowanego fitu, i dopiero wtedy przeładowuje.
+    if (typeof window.hardResetGameSave === 'function') {
+      window.hardResetGameSave('all');
+      return;
+    }
+    window.__SAVE_LOCKED = true;
+    try { localStorage.clear(); } catch { }
+    location.reload();
+  });
+}

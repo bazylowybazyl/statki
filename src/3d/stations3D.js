@@ -257,20 +257,19 @@ function getDevScale() {
   return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
+// Skale i osie per stacja: nastawy sprzed wczytania (RenderWorld.config) i strojenie z konsoli (DevTuning).
 function getPerStationScaleMap() {
-  const devConfig = RenderWorld.devConfig, devTuning = RenderWorld.devTuning;
-  const cfg = (devConfig && devConfig.stationScaleById) || {};
+  const devTuning = RenderWorld.devTuning;
   const tun = (devTuning && devTuning.stationScaleById) || {};
   const fb = RenderWorld.config.stationScaleById || {};
-  return Object.assign({}, fb, tun, cfg);
+  return Object.assign({}, fb, tun);
 }
 
 function getPerStationPivotMap() {
-  const devConfig = RenderWorld.devConfig, devTuning = RenderWorld.devTuning;
-  const cfg = (devConfig && devConfig.stationPivotById) || {};
+  const devTuning = RenderWorld.devTuning;
   const tun = (devTuning && devTuning.stationPivotById) || {};
   const fb = RenderWorld.config.stationPivotById || {};
-  return Object.assign({}, fb, tun, cfg);
+  return Object.assign({}, fb, tun);
 }
 
 function getStationIdKey(station) {
@@ -608,34 +607,7 @@ export function detachPlanetStations3D(_sceneIgnored) {
   stationRecords.clear();
 }
 
-export function setStationScale(id, scale = 1) {
-  if (typeof window === 'undefined') return;
-  const key = String(id ?? '').toLowerCase();
-  if (!key) return;
-  let devConfig = RenderWorld.devConfig;
-  if (!devConfig) devConfig = window.DevConfig = {};
-  if (!devConfig.stationScaleById) devConfig.stationScaleById = {};
-  devConfig.stationScaleById[key] = Number(scale) || 1;
-  const devScale = getDevScale();
-  for (const rec of stationRecords.values()) {
-    const st = rec.stationRef;
-    if (!st) continue;
-    if (getStationIdKey(st) === key && rec.group) {
-      updateRecordTransform(rec, st, devScale, rec.group.visible !== false);
-    }
-  }
-}
-
-export function setStationSpriteFrame(id, val) { }
-
-export function getStationScales() {
-  return getPerStationScaleMap();
-}
-
 if (typeof window !== 'undefined') {
-  window.setStationScale = setStationScale;
-  window.setStationSpriteFrame = setStationSpriteFrame;
-  window.getStationScales = getStationScales;
   window.initStations3D = initStations3D;
   window.updateStations3D = updateStations3D;
   window.drawStations3D = drawStations3D;

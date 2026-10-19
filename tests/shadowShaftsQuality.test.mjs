@@ -156,9 +156,9 @@ test('ships push size-sorted hull silhouettes from the hex update loop', () => {
   assert.match(coreSource, /getShaftHullBudget\(\) \{/);
   assert.match(shipsSource, /pushed < shaftHullBudget/);
   assert.match(coreSource, /shaftCfg\.capsuleBudget/);
-  // Obrot i skala okludera = mesh kadluba (rotation.z = -kat, billboard +kat).
+  // Obrot i skala okludera = skora kadluba (-kat, billboard +kat; obrot sprite'a kadlubow gry = 0).
   assert.match(shipsSource, /const rot = usesBillboardOrientation\(c\.entity\) \? rawAng : -rawAng;/);
-  assert.match(shipsSource, /const renderRotation = usesBillboardOrientation\(entity\) \? entityAngle : -entityAngle;/);
+  assert.match(shipsSource, /const theta = -\(entityAngle \+ hullSpriteRotation\(entity\)\);/);
 });
 
 test('hull occluder is the silhouette distance field, not a capsule chain', () => {
@@ -170,14 +170,14 @@ test('hull occluder is the silhouette distance field, not a capsule chain', () =
   }
   assert.ok(!coreSource.includes('HULL_SHAFT_BANDS'), 'capsule band count back in core3d.js');
   assert.ok(shipsSource.includes('HullShadowSdf.acquire(c.grid, now)'), 'hexShips3D must acquire the hull SDF layer');
-  // Sylwetka = aktywne heksy ∩ alfa sprite'a (dziury po trafieniach + brak
-  // szczeliny od heksow brzegowych wystajacych poza rysowana krawedz).
-  assert.ok(hullSdfSource.includes('return !!s && s.active !== false && s.isDebris !== true;'));
+  // Sylwetka = zywe komorki kadluba ∩ alfa sprite'a (dziury po trafieniach + brak
+  // szczeliny od komorek brzegowych wystajacych poza rysowana krawedz).
+  assert.ok(hullSdfSource.includes('if (!grid.cellActive[i]) continue;'));
   assert.ok(hullSdfSource.includes('sampleAlphaMap(alphaMap, sx * invW, sy * invH) < HULL_SDF_ALPHA_INSIDE'));
-  // Wraki ida z puli: warstwa wazna tylko dla tej samej tablicy heksow.
-  // (heksy albo komórki kadłuba na belkach: tablica zawartości siatki).
-  assert.ok(hullSdfSource.includes('return entry.shardsRef === contentRefOf(grid) &&'));
-  assert.ok(hullSdfSource.includes('return isCellGrid(grid) ? grid.cellX : grid.shards;'));
+  // Warstwa wazna tylko dla tych samych tablic komorek (zageszczenie magazynu ciala = nowe tablice);
+  // sciezka heksow (shards) usunieta 2026-10-19.
+  assert.ok(hullSdfSource.includes('return entry.cellsRef === grid.cellX &&'));
+  assert.ok(!/\bshards\b/.test(hullSdfSource), 'heksy (shards) wrocily do hullShadowSdf.js');
   assert.ok(hullSdfSource.includes('const sameShape = entry.layer >= 0 && sameGridAs(entry, grid);'));
   // Brzeg prostokata SDF musi byc dalej niz najszerszy polcien.
   const margin = Number(hullSdfSource.match(/HULL_SDF_MARGIN_TEXELS = (\d+);/)?.[1]);
@@ -297,13 +297,12 @@ test('sun shadow mask module shares uniform nodes and keeps the backdrop tint', 
 });
 
 test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', () => {
-  // Port WebGPU (zadanie 04): kadłuby, szczątki GPU, odłamki belek i smugi wraków w TSL.
-  // Maska słońca przez JEDNO miejsce importu (hexShips3D.tsl.js — od zadania 03 funkcje
+  // Port WebGPU (zadanie 04): kadłuby, odłamki belek i smugi wraków w TSL (szczątki GPU heksów usunięte
+  // 2026-10-19). Maska słońca przez JEDNO miejsce importu (hexShips3D.tsl.js — od zadania 03 funkcje
   // TSL z sunShadowMask.js); tu pilnujemy, KTÓRE człony ją czytają.
   const tsl = readFileSync(new URL('../src/3d/hexShips3D.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const hullFragment = tsl.slice(tsl.indexOf('function hullFragmentNode(opts)'), tsl.indexOf('// Offset fragmentu od początku mesha'));
-  const debrisFragment = tsl.slice(tsl.indexOf('const fragmentNode = Fn(() => {\n    const suv'), tsl.indexOf('_debrisGraph = { vertexNode, fragmentNode };'));
-  assert.ok(hullFragment.length > 0 && debrisFragment.length > 0, 'hull graphs missing');
+  assert.ok(hullFragment.length > 0, 'hull graph missing');
   assert.match(hullFragment, /const sunVis = sunVisibility\(\)\.toVar\(\);/);
   assert.match(hullFragment, /const lightMul = HULL_SHARED\.uDayAmbient\.mul\(sunFill\(sunVis\)\)\.add\(dayDiffuse\.mul\(HULL_SHARED\.uDayDiffuseMul\)\.mul\(sunVis\)\);/);
   assert.match(hullFragment, /color\.addAssign\(vec3\(spec\.mul\(HULL_SHARED\.uSpecularMul\)\.mul\(litMask\)\.mul\(sunVis\)\)\);/);
@@ -313,8 +312,7 @@ test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', 
   assert.match(hullFragment, /const lobe = pow\(RdotL, glintExp\)[\s\S]*?\.mul\(sheenExp\.div\(L\.uLacquerC\.x\)\)\)\.mul\(sunVis\);/);
   // Swiatla statku, stres i zar NIE widza maski.
   const lightsLoop = hullFragment.slice(hullFragment.indexOf('Loop({ start: int(0), end: int(P.uShipLightCount)'));
-  assert.ok(lightsLoop.length > 0 && !/sunVis|sunFill|sunVisibility/.test(lightsLoop), 'ship lights, stress and heat must ignore the mask');
-  assert.match(debrisFragment, /const lightMul = uDayAmbient\.mul\(sunFill\(sunVis\)\)\.add\(NdotL\.mul\(uDayDiffuseMul\)\.mul\(sunVis\)\);/);
+  assert.ok(lightsLoop.length > 0 && !/sunVis|sunFill|sunVisibility/.test(lightsLoop), 'ship lights and heat must ignore the mask');
   // Jedno miejsce importu maski dla kadłubów, odłamków belek i smug wraków — funkcje TSL
   // biblioteki (zadanie 03), bez zastępnika z pełnym słońcem.
   assert.match(tsl, /import \{ fieldDarkness, sunFill, sunShadeUnlit, sunVisibility \} from '\.\/sunShadowMask\.js';/);

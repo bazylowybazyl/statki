@@ -25,7 +25,7 @@ test('physicsStep separates frame logic from fixed-rate AI logic', () => {
 });
 
 test('the loop runs UI once per frame and AI every sixth physics tick', () => {
-  const loopSlice = sliceBetween(indexHtml, 'const bridgeStartTick = physicsTickId + 1;', 'physicsTickId = nextPhysicsTickId;');
+  const loopSlice = sliceBetween(indexHtml, 'const plannedSteps = Math.min(10, Math.floor(acc / PHYS_DT));', 'physicsTickId = nextPhysicsTickId;');
 
   // Liczba podkroków znana PRZED pętlą — bez tego nie da się podać sumarycznego dt.
   assert.match(loopSlice, /const plannedSteps = Math\.min\(10, Math\.floor\(acc \/ PHYS_DT\)\)/);

@@ -3,17 +3,16 @@
 // MODELE REAKTORA w scenie Core3D — bez własnego renderera. Geometria:
 // reactor3DShapes.js (tokamak Terra Nova, prowizorka piratów, podwójny
 // pierścień Atlasa). Stan (komora, osłona, stopienie) czyta z runtime rdzeni
-// shipCore.js — nic nie zmienia w gameplayu.
+// na kadłubach belkowych (src/game/reactorCore.js) — nic nie zmienia w gameplayu.
 //
 // WIDOCZNOŚĆ: model leży POD kadłubem (dach na z = REACTOR_Z_TOP, głębia
-// rośnie z promieniem komory). Kadłub heksowy pisze głębię na z = 0, więc
-// model przechodzi test głębi tylko przez martwe heksy — widać go wyłącznie
-// przez wyrwę, jak dawny żar coreFx3D (dla rdzeni z modelem żar jest
-// wyłączany — światło daje plazma w torusie). Instancje są tylko dla rdzeni
+// rośnie z promieniem komory). Skóra kadłuba pisze głębię na z ≈ 0, więc
+// model przechodzi test głębi tylko przez dziury w kadłubie — widać go
+// wyłącznie przez wyrwę (światło daje plazma w torusie). Instancje są tylko dla rdzeni
 // ODSŁONIĘTYCH i wyżej (i wraków reaktora po wyrzucie/kuli).
 //
-// WARSTWA 7 (pass tarcz, bez maski cieni i czyszczenia głębi) — jak
-// coreFx3D: na warstwie 0 cień własnego kadłuba mnożył dawniej wnętrze o ~0,5.
+// WARSTWA 7 (pass tarcz, bez maski cieni i czyszczenia głębi): na warstwie 0
+// cień własnego kadłuba mnożył dawniej wnętrze o ~0,5.
 // Konstrukcja (nieprzezroczysta, zapis głębi) idzie przed plazmą
 // (addytywna, test głębi): cewki przykrywają pierścień, między nimi plazmę
 // widać. Kontrakt AGENTS.md: sync() zgłasza warstwę przez markLayerActive.
@@ -51,10 +50,8 @@
 // buforów wierzchołków na pipeline), atrybuty instancji jak dawniej — osobne
 // tablice (upload tylko zmienionego zakresu po needsUpdate).
 import * as THREE from 'three/webgpu';
-// Stany z coreModel.js, przestrzeń siatki z hexGridSpace.js — bez shipCore.js, który ciągnie heksowy
-// destructor.js (gra go nie ładuje; etap 8, docs/PORT-silnik-belek.md).
+// Stany z coreModel.js; ramę rdzenia na kadłubie belkowym podaje wołający (frameOf — src/game/reactorCore.js).
 import { CORE_STATE, coreStateRank } from '../game/coreModel.js';
-import { gridToLocal, localToWorld } from '../game/hexGridSpace.js';
 import { CORE_FX_BANDS, CORE_FX_LAYER, coreStateBand } from './coreBands.js';
 import { REACTOR3D_KINDS, buildReactorModel } from './reactor3DShapes.js';
 import { fxRandom } from './fx/fxRandom.js';
@@ -116,7 +113,7 @@ export function resolveReactorKind(core) {
   return 'terran';
 }
 
-// Ziarno z uid rdzenia: liczba (belki) albo napis `core_<base36>` (heksy) — dawniej `uid | 0`
+// Ziarno z uid rdzenia: liczba albo napis (dawne rdzenie `core_<base36>`) — dawniej `uid | 0`
 // z napisu dawało 0 i wszystkie reaktory pękały w tych samych cewkach.
 function uidHash(uid) {
   if (typeof uid === 'number' && Number.isFinite(uid)) return uid | 0;
@@ -176,21 +173,21 @@ function interleaveGeometry(base, target) {
  * @param {object} options
  *   scene — THREE.Scene (Core3D.scene), layer — warstwa (7), markLayerActive,
  *   kindFor(core) → 'terran' | 'pirate' | 'atlas', colorFor(core) → [r, g, b],
- *   frameOf(core, out) → out { x, y, axX, axY, ayX, ayY } — rama rdzenia w świecie gry (środek,
- *     wektor promienia wzdłuż +x sprite'a i w dół obrazka); podaje ją rdzeń na kadłubie belkowym
- *     (src/game/reactorCore.js reactorCoreFrame). Bez niej — siatka heksów (shipCore.js).
- *   hostReady(host) → bool — kadłub gospodarza istnieje (domyślnie: hexGrid i nie martwy;
- *     belki: reactorHull(host)).
+ *   frameOf(core, out) → out { x, y, axX, axY, ayX, ayY } — WYMAGANA rama rdzenia w świecie gry
+ *     (środek, wektor promienia wzdłuż +x sprite'a i w dół obrazka); podaje ją rdzeń na kadłubie
+ *     belkowym (src/game/reactorCore.js reactorCoreFrame).
+ *   hostReady(host) → bool — kadłub gospodarza istnieje (gra: reactorHull(host); domyślnie: jest i nie martwy).
  */
 export function createReactor3D(options = {}) {
   const scene = options.scene;
   if (!scene) throw new Error('createReactor3D: wymagana scena');
+  if (typeof options.frameOf !== 'function') throw new Error('createReactor3D: wymagana rama rdzenia (frameOf)');
   const layer = Number.isFinite(options.layer) ? options.layer : CORE_FX_LAYER;
   const markLayerActive = typeof options.markLayerActive === 'function' ? options.markLayerActive : null;
   const kindFor = typeof options.kindFor === 'function' ? options.kindFor : resolveReactorKind;
   const colorFor = typeof options.colorFor === 'function' ? options.colorFor : () => [0.3, 0.7, 1.0];
-  const frameOf = typeof options.frameOf === 'function' ? options.frameOf : null;
-  const hostReady = typeof options.hostReady === 'function' ? options.hostReady : (h) => !!h?.hexGrid && !h.dead;
+  const frameOf = options.frameOf;
+  const hostReady = typeof options.hostReady === 'function' ? options.hostReady : (h) => !!h && !h.dead;
   const _fr = { x: 0, y: 0, axX: 0, axY: 0, ayX: 0, ayY: 0 };
   const T = REACTOR3D_TUNE;
   const debug = { enabled: true, xray: false, structure: true, plasma: true };
@@ -278,7 +275,6 @@ export function createReactor3D(options = {}) {
   const _c = { x: 0, y: 0 };
   const _px = { x: 0, y: 0 };
   const _py = { x: 0, y: 0 };
-  const _l = { x: 0, y: 0 };
   const colorCache = new WeakMap();
   // początek klatki w scenie (y odwrócone), wspólny dla wszystkich rodzajów
   const origin = { x: 0, y: 0, set: false };
@@ -310,17 +306,10 @@ export function createReactor3D(options = {}) {
     return rec;
   }
 
-  // Czy rdzeń ma model (coreFx3D wyłącza wtedy swój żar — światło daje plazma).
-  function covers(core) {
-    if (!debug.enabled || !core || core.invalid) return false;
-    return kinds.has(records.get(core)?.kind ?? kindFor(core));
-  }
-
   // Detonacja: wyrzut i kula zostawiają wrak reaktora (kierunek w siatce),
   // pozostałe warianty wyparowują model. `info.host` — obiekt, który niesie
-  // kadłub po wybuchu, gdy nie jest nim core.host (gra: zabity NPC oddaje heksy
-  // wrakowi ze spawnWreckEntity; wrak żyje na komórkach rodzica, więc
-  // core.gridX/gridY dalej pasują — zmienia się tylko pivot).
+  // kadłub po wybuchu, gdy nie jest nim core.host (gra: zabity NPC oddaje ciało
+  // wrakowi; wrak żyje na komórkach rodzica, więc rama rdzenia (frameOf) dalej pasuje).
   function detonated(core, info = {}) {
     const rec = records.get(core) || (core ? recordFor(core) : null);
     if (!rec) return;
@@ -337,11 +326,10 @@ export function createReactor3D(options = {}) {
     rec.host = info.host || core.host;
   }
 
-  // Kadłub wraku reaktora zniknął: martwy (gra: zabity NPC, `recycleWreck`)
-  // albo w puli wraków — obiekt z puli wraca potem jako INNY wrak, więc rekord
-  // nie może na nim zostać. Zimny wrak (hexGrid === null) nie jest zniknięciem.
+  // Kadłub wraku reaktora zniknął: martwy (gra: zabity NPC, `recycleWreck`).
+  // Zimny wrak (bez ciała) nie jest zniknięciem — rekord czeka na odmrożenie.
   function burntHostGone(host) {
-    return !host || host.dead === true || host._inPool === true;
+    return !host || host.dead === true;
   }
 
   // Wrak reaktora przechodzi na inny obiekt kadłuba (np. wrak utworzony po
@@ -353,20 +341,14 @@ export function createReactor3D(options = {}) {
     return true;
   }
 
-  function writeInstance(kd, rec, core, host, gridX, gridY, gridR) {
+  function writeInstance(kd, rec, core) {
     if (kd.n >= MAX_PER_KIND) return false;
     const b = kd.n * 4;
-    if (frameOf) {
-      // Rdzeń na kadłubie belkowym: rama z logiki rdzenia (środek + promień w osiach sprite'a).
-      frameOf(core, _fr);
-      _c.x = _fr.x; _c.y = _fr.y;
-      _px.x = _fr.x + _fr.axX; _px.y = _fr.y + _fr.axY;
-      _py.x = _fr.x + _fr.ayX; _py.y = _fr.y + _fr.ayY;
-    } else {
-      gridToLocal(host, gridX, gridY, _l); localToWorld(host, _l.x, _l.y, _c);
-      gridToLocal(host, gridX + gridR, gridY, _l); localToWorld(host, _l.x, _l.y, _px);
-      gridToLocal(host, gridX, gridY + gridR, _l); localToWorld(host, _l.x, _l.y, _py);
-    }
+    // Rdzeń na kadłubie belkowym: rama z logiki rdzenia (środek + promień w osiach sprite'a).
+    frameOf(core, _fr);
+    _c.x = _fr.x; _c.y = _fr.y;
+    _px.x = _fr.x + _fr.axX; _px.y = _fr.y + _fr.axY;
+    _py.x = _fr.x + _fr.ayX; _py.y = _fr.y + _fr.ayY;
     const B = kd.bufs;
     // scena: y odwrócone
     B.iBasis.arr[b] = _px.x - _c.x; B.iBasis.arr[b + 1] = -(_px.y - _c.y);
@@ -430,7 +412,7 @@ export function createReactor3D(options = {}) {
         rec.flowPhase += flowRevPerSec(core, band) * dt;
         rec.pulsePhase += Math.PI * 2 * band.pulseHz * dt;
         const pulse = 0.5 + 0.5 * Math.sin(rec.pulsePhase);
-        const b = writeInstance(kd, rec, core, host, core.gridX, core.gridY, core.gridR);
+        const b = writeInstance(kd, rec, core);
         if (b === false) continue;
         const B = kd.bufs;
         B.iState.arr[b] = band.bodyL; B.iState.arr[b + 1] = band.coreL * (0.92 + 0.08 * pulse);
@@ -440,7 +422,7 @@ export function createReactor3D(options = {}) {
         B.iBreak.arr[b] = 0; B.iBreak.arr[b + 1] = 0; B.iBreak.arr[b + 2] = 0; B.iBreak.arr[b + 3] = -1;
         visible++;
       }
-      // wraki reaktorów (po wyrzucie i kuli); zimny wrak (bez hexGrid) nie
+      // wraki reaktorów (po wyrzucie i kuli); zimny wrak (bez ciała) nie
       // rysuje, ale rekord czeka na odmrożenie
       for (const rec of records.values()) {
         if (!rec.burnt) continue;
@@ -449,7 +431,7 @@ export function createReactor3D(options = {}) {
         const kd = kinds.get(rec.kind);
         const t = clock - rec.burnt.t0;
         const core = rec.core;
-        const b = writeInstance(kd, rec, core, host, core.gridX, core.gridY, core.gridR);
+        const b = writeInstance(kd, rec, core);
         if (b === false) continue;
         const heat = Math.exp(-t / Math.max(0.05, T.burnCool));
         const plasma = Math.max(0, 1 - t / Math.max(0.01, T.plasmaOut));
@@ -515,7 +497,7 @@ export function createReactor3D(options = {}) {
   }
 
   return {
-    sync, detonated, rehost, covers, reset, dispose, stats, debug, layer, origin,
+    sync, detonated, rehost, reset, dispose, stats, debug, layer, origin,
     kinds: [...kinds.keys()],
     meshes: Object.fromEntries([...kinds.values()].map((kd) => [kd.kind, { structure: kd.structMesh, plasma: kd.plasmaMesh }])),
     records

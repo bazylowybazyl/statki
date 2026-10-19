@@ -1,44 +1,46 @@
+// Model 3D mostka (src/3d/bridge3D.js, bridge3DShapes.js): geometria modeli, rekord na komórkach siatki
+// belek kadłuba (blok, mapowanie strefy, bufor obrażeń, baza instancji, odłam i wrak), oś czasu okien,
+// szczeliny bridgeFx3D. Kadłuby belkowe z prawdziwych sprite'ów (tests/helpers/bridgeHulls.mjs) — dawna
+// wersja na heksach destruktora usunięta 2026-10-19. Rekord na wraku i odłamie, wrak poza listą:
+// tests/shipBridgeBeams.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as THREE from 'three';
-import { DestructorSystem as D, disposeHexBody } from '../src/game/destructor.js';
-import {
-  BRIDGE_KILL_TIMELINE,
-  BRIDGE_LAYOUT_PROPOSALS,
-  attachShipBridges,
-  bridgeGridToWorld,
-  evaluateShipBridges,
-  hexCellCenter
-} from '../src/game/shipBridge.js';
-import {
+
+// hullBodies.js czyta window.wrecks — przed importem.
+globalThis.window = globalThis.window || {};
+window.wrecks = window.wrecks || [];
+
+const { HullBodies } = await import('../src/game/hullBodies.js');
+const { makeBridgeShip } = await import('./helpers/bridgeHulls.mjs');
+const { BRIDGE_DEMO_ORDER } = await import('../dema/mostki-webgpu/kadluby.js');
+const RT = await import('../src/game/shipBridgeRuntime.js');
+const BB = await import('../src/game/shipBridgeBeams.js');
+const { BRIDGE_KILL_TIMELINE, BRIDGE_LAYOUT_PROPOSALS, bridgeGridToWorld, bridgePngToWorld } = await import('../src/game/shipBridge.js');
+const {
   BRIDGE3D_EMIT,
   BRIDGE3D_KINDS,
   BRIDGE3D_KIND_ORDER,
-  HEX_NEIGHBOR_AXIAL,
-  HEX_NEIGHBOR_DIRS,
   buildBridgeModel,
-  hexCellCenterXY,
-  hexCellOf,
-  hexNeighborCell,
   resolveBridgeModelKind,
   sampleHeightField
-} from '../src/3d/bridge3DShapes.js';
-import {
+} = await import('../src/3d/bridge3DShapes.js');
+const {
   BRIDGE3D_DAMAGE_LIMITS,
   BRIDGE3D_KIND_STYLE,
+  BRIDGE3D_SQUARE_NEIGHBORS,
   BRIDGE3D_TUNE,
   Bridge3D,
-  bridgeCellBlock,
+  beamBridgeInstanceBasis,
   bridgeEmitterLight,
-  bridgeInstanceBasis,
   bridgeModelGridMap,
   bridgeModelToGrid,
-  createBridgeRecordCore,
-  refreshBridgeRecordDamage
-} from '../src/3d/bridge3D.js';
-import { BridgeFx3D } from '../src/3d/bridgeFx3D.js';
-import { makeDestructorHull as hull } from './helpers/destructorHull.mjs';
+  createBeamBridgeRecordCore,
+  refreshBeamBridgeRecordDamage
+} = await import('../src/3d/bridge3D.js');
+const { BRIDGE3D_TSL_INTERNALS } = await import('../src/3d/bridge3D.tsl.js');
+const { BridgeFx3D } = await import('../src/3d/bridgeFx3D.js');
 
 const MODELS = Object.fromEntries(BRIDGE3D_KIND_ORDER.map((k) => [k, buildBridgeModel(k)]));
 
@@ -72,35 +74,29 @@ function kindRes(name) {
   return { name, index: BRIDGE3D_KINDS[name].index, model, emit: E };
 }
 
-// Kadłub-prostokąt 320×100 (alfa pełna), skala PNG → render = 1. Strefa
-// w rufowej połowie; model Bellatora dopasowuje się do niej skalą XY.
-const ZONE = { id: 'mostek', x: -80, y: 0, w: 110, h: 44, armorMul: 1.5, killFrac: 0.35 };
-
-function hullWithBridge(state = {}) {
-  const e = hull({ width: 320, height: 100, ...state });
-  attachShipBridges(e, [ZONE], { scaleX: 1, scaleY: 1, hullKey: 'battleship' });
+// Okręt NPC na kadłubie belkowym z mostkami z BRIDGE_LAYOUT_PROPOSALS.
+function ship(key = 'battleship', x = 0, y = 0, angle = 0) {
+  const e = makeBridgeShip(HullBodies, key, x, y, angle);
+  RT.attachEntityBridges(e);
   return e;
 }
 
-function withWindow(run) {
-  const oldDocument = globalThis.document;
-  const oldWindow = globalThis.window;
-  const oldQueue = D.splitQueue;
-  const oldPool = D._wreckPool;
-  const entities = [];
-  try {
-    globalThis.document = { createElement: () => ({ getContext: () => ({ drawImage() {} }) }) };
-    globalThis.window = { wrecks: [] };
-    D.splitQueue = [];
-    D._wreckPool = [];
-    run(entities);
-  } finally {
-    for (const e of new Set([...entities, ...globalThis.window.wrecks])) disposeHexBody(e);
-    D.splitQueue = oldQueue;
-    D._wreckPool = oldPool;
-    if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument;
-    if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
-  }
+// Krater na miarę komórki w środku komórki k mostka (zabija jej węzeł). false — już martwa.
+function killCell(e, k, b = 0) {
+  const hull = e.beamHull;
+  const bridge = e.bridgeState.bridges[b];
+  const cs = hull.body.cellSize;
+  if (BB.bridgeCellNode(hull, bridge.cellX[k], bridge.cellY[k]) < 0) return false;
+  const p = BB.beamLatticeToWorld(hull, (bridge.cellX[k] + 0.5) * cs, (bridge.cellY[k] + 0.5) * cs, {});
+  HullBodies.impact(e, p.x, p.y, 1, null, { craterRadius: cs * 0.45 });
+  return true;
+}
+
+// Indeks komórki (ix, iy) w bloku rekordu (−1 poza blokiem).
+function blockIndex(rec, ix, iy) {
+  const i = ix - rec.c0;
+  const j = iy - rec.r0;
+  return i >= 0 && j >= 0 && i < rec.blockW && j < rec.blockH ? i + j * rec.blockW : -1;
 }
 
 test('each bridge model builds finite, bounded, low-poly geometry with modules', () => {
@@ -177,244 +173,183 @@ test('model kind follows the hull key and the Atlas zone shape', () => {
   assert.equal(resolveBridgeModelKind('long_haul_freighter', { w: 100, h: 40 }), null);
 });
 
-test('hex rounding matches the destructor lattice (nearest cell centre) and neighbour directions', () => {
-  const R = 5;
-  let seed = 1;
-  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  const cell = { c: 0, r: 0 };
-  const p = { x: 0, y: 0 };
-  for (let i = 0; i < 5000; i++) {
-    const x = rnd() * 800 - 50;
-    const y = rnd() * 400 - 50;
-    hexCellOf(x, y, R, cell);
-    let best = null;
-    let bd = Infinity;
-    for (let c = Math.round(x / (1.5 * R)) - 2; c <= Math.round(x / (1.5 * R)) + 2; c++) {
-      for (let r = Math.round(y / (Math.sqrt(3) * R)) - 2; r <= Math.round(y / (Math.sqrt(3) * R)) + 2; r++) {
-        const q = hexCellCenter(c, r, R);
-        const d = Math.hypot(q.x - x, q.y - y);
-        if (d < bd) { bd = d; best = [c, r]; }
-      }
-    }
-    assert.deepEqual([cell.c, cell.r], best);
-  }
-  // Sąsiedzi: środek w odległości √3·R, w kierunku HEX_NEIGHBOR_DIRS.
-  for (const [c, r] of [[4, 4], [5, 4], [0, 0], [7, 2]]) {
-    const o = hexCellCenterXY(c, r, R, {});
-    for (let d = 0; d < 6; d++) {
-      const n = hexNeighborCell(c, r, d, {});
-      hexCellCenterXY(n.c, n.r, R, p);
-      const dx = p.x - o.x;
-      const dy = p.y - o.y;
-      assert.ok(Math.abs(Math.hypot(dx, dy) - Math.sqrt(3) * R) < 1e-9);
-      assert.ok(Math.abs(dx / Math.hypot(dx, dy) - HEX_NEIGHBOR_DIRS[d][0]) < 1e-9);
-      assert.ok(Math.abs(dy / Math.hypot(dx, dy) - HEX_NEIGHBOR_DIRS[d][1]) < 1e-9);
-    }
-  }
-  assert.equal(HEX_NEIGHBOR_AXIAL.length, 6);
+test('square neighbour directions: the CPU table mirrors the shader (sides, then corners)', () => {
+  const dirs = BRIDGE3D_SQUARE_NEIGHBORS.map((d) => [...d]);
+  assert.deepEqual(dirs, BRIDGE3D_TSL_INTERNALS.B3_SQUARE_DIRS.map((d) => [...d]), 'maska 8 bitów: te same kierunki w buforze i w shaderze');
+  assert.equal(dirs.length, 8);
+  for (let d = 0; d < 4; d++) assert.equal(Math.abs(dirs[d][0]) + Math.abs(dirs[d][1]), 1, `bok ${d}`);
+  for (let d = 4; d < 8; d++) assert.ok(Math.abs(dirs[d][0]) === 1 && Math.abs(dirs[d][1]) === 1, `narożnik ${d}`);
+  assert.equal(new Set(dirs.map((d) => d.join(','))).size, 8);
 });
 
-test('the neighbour mask directions agree with the destructor neighbour lists', () => {
-  const e = hull({ width: 320, height: 100 });
-  try {
-    const grid = e.hexGrid;
-    let checked = 0;
-    for (const s of grid.shards) {
-      if (!s.neighbors || s.neighbors.length < 6) continue;
-      const mine = new Set();
-      for (let d = 0; d < 6; d++) { const n = hexNeighborCell(s.c, s.r, d, {}); mine.add(`${n.c},${n.r}`); }
-      for (const n of s.neighbors) assert.ok(mine.has(`${n.c},${n.r}`), `sąsiad (${n.c},${n.r}) heksa (${s.c},${s.r})`);
-      if (++checked > 200) break;
-    }
-    assert.ok(checked > 50);
-  } finally {
-    disposeHexBody(e);
+test('record block maps model space onto the zone and holds every live bridge cell under the model', () => {
+  const e = ship('battleship');
+  const st = e.bridgeState;
+  const def = st.bridges[0].def;
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  // Środek modelu = środek strefy w obrazie kadłuba (px od lewego górnego rogu).
+  const g = bridgeModelToGrid(rec.map, 0, 0);
+  assert.ok(Math.abs(g.x - (st.srcW * 0.5 + def.x * st.scaleX)) < 1e-9 && Math.abs(g.y - (st.srcH * 0.5 + def.y * st.scaleY)) < 1e-9);
+  // Narożnik modelu (M: +x, +y↑) → prawy GÓRNY róg strefy (Y obrazu w dół).
+  const k = MODELS.bellator.design;
+  const c = bridgeModelToGrid(rec.map, k.w / 2, k.h / 2);
+  assert.ok(Math.abs(c.x - (st.srcW * 0.5 + (def.x + def.w / 2) * st.scaleX)) < 1e-6);
+  assert.ok(Math.abs(c.y - (st.srcH * 0.5 + (def.y - def.h / 2) * st.scaleY)) < 1e-6);
+  // Komórki mostka w bloku istniały przy budowie i żyją u gospodarza.
+  const b = st.bridges[0];
+  let inBlock = 0;
+  for (let q = 0; q < b.total; q++) {
+    const kk = blockIndex(rec, b.cellX[q], b.cellY[q]);
+    if (kk < 0) continue;
+    inBlock++;
+    assert.equal(rec.existed[kk], 1);
   }
+  assert.ok(inBlock / b.total > 0.95, `komórki strefy w bloku (${inBlock}/${b.total})`);
+  // Emitery trafiają na komórki kadłuba.
+  let onCells = 0;
+  for (let i = 0; i < rec.emCellX.length; i++) if (rec.emCellX[i] !== -32768) onCells++;
+  assert.ok(onCells >= rec.emCellX.length * 0.9, `emitery na komórkach: ${onCells}/${rec.emCellX.length}`);
+  assert.ok(Math.abs(rec.cellPx - st.cellSize / st.spriteScale) < 1e-9, 'bok komórki w px obrazu (aB3State.w)');
 });
 
-test('record block covers every hex under the model and maps model space onto the zone', () => {
-  const e = hullWithBridge();
-  try {
-    const st = e.bridgeState;
-    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
-    // Środek strefy w siatce = środek strefy w PNG (skala 1).
-    const g = bridgeModelToGrid(rec.map, 0, 0);
-    assert.ok(Math.abs(g.x - (160 + ZONE.x)) < 1e-9 && Math.abs(g.y - 50) < 1e-9);
-    // Narożnik modelu (M: +x, +y↑) → prawy GÓRNY róg strefy w PNG (Y w dół).
-    const k = MODELS.bellator.design;
-    const c = bridgeModelToGrid(rec.map, k.w / 2, k.h / 2);
-    assert.ok(Math.abs(c.x - (160 + ZONE.x + ZONE.w / 2)) < 1e-6 && Math.abs(c.y - (50 - ZONE.h / 2)) < 1e-6);
-    // Każdy heks mostka ma komórkę w bloku; wszystkie istnieją.
-    for (const s of st.bridges[0].shards) {
-      const i = s.c - rec.c0;
-      const j = s.r - rec.r0;
-      assert.ok(i >= 0 && j >= 0 && i < rec.blockW && j < rec.blockH);
-      assert.equal(rec.cellShard[i + j * rec.blockW], s);
-      assert.equal(rec.existed[i + j * rec.blockW], 1);
-    }
-    // Emitery trafiają na heksy siatki.
-    assert.ok(rec.emShard.filter(Boolean).length >= rec.emShard.length * 0.9);
-  } finally {
-    disposeHexBody(e);
+test('damage row: a dead cell opens a hole, live neighbours get the edge mask and a fresh-cut glow that fades', () => {
+  const e = ship('battleship');
+  const st = e.bridgeState;
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 1);
+  const W = BRIDGE3D_DAMAGE_LIMITS.width;
+  const data = new Uint8Array(W * 4 * 4);
+  refreshBeamBridgeRecordDamage(rec, e.beamHull, data, 10, W);
+  const base = 1 * W * 4;
+  for (let k = 0; k < rec.cellCount; k++) {
+    if (!rec.existed[k]) continue;
+    assert.ok(data[base + k * 4] >= 64, 'żywa komórka ma R ≥ 64');
+    assert.equal(data[base + k * 4 + 2], 0, 'bez martwych sąsiadów');
   }
-});
-
-test('damage row: dead hexes open a hole, live neighbours get the edge mask and a fresh-cut glow', () => {
-  const e = hullWithBridge();
-  try {
-    const st = e.bridgeState;
-    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 1);
-    const W = 768;
-    const data = new Uint8Array(W * 4 * 4);
-    refreshBridgeRecordDamage(rec, e.hexGrid, data, 10, W);
-    const base = 1 * W * 4;
-    for (let k = 0; k < rec.cellCount; k++) {
-      if (!rec.existed[k]) continue;
-      assert.ok(data[base + k * 4] >= 64, 'żywa komórka ma R ≥ 64');
-      assert.equal(data[base + k * 4 + 2], 0, 'bez martwych sąsiadów');
-    }
-    assert.equal(rec.anyDead, 0);
-    // Zabijamy heks w środku strefy.
-    const victim = st.bridges[0].shards[Math.floor(st.bridges[0].shards.length / 2)];
-    D.destroyShard(e, victim);
-    const changed = refreshBridgeRecordDamage(rec, e.hexGrid, data, 10.5, W);
-    assert.ok(changed);
-    assert.equal(rec.anyDead, 1);
-    const vk = (victim.c - rec.c0) + (victim.r - rec.r0) * rec.blockW;
-    assert.equal(data[base + vk * 4], 0, 'martwa komórka = wyrwa');
-    // Sąsiad w kierunku d ma bit (d + 3) % 6 (martwy sąsiad po przeciwnej stronie) i żar cięcia.
-    for (let d = 0; d < 6; d++) {
-      const n = hexNeighborCell(victim.c, victim.r, d, {});
-      const nk = (n.c - rec.c0) + (n.r - rec.r0) * rec.blockW;
-      if (!rec.existed[nk]) continue;
-      const mask = data[base + nk * 4 + 2];
-      assert.ok(mask & (1 << ((d + 3) % 6)), `sąsiad w kierunku ${d}: maska ${mask.toString(2)}`);
-      assert.ok(data[base + nk * 4 + 3] > 200, 'świeże cięcie świeci');
-    }
-    // Żar cięcia gaśnie z czasem jak żar heksa (heatDecay).
-    refreshBridgeRecordDamage(rec, e.hexGrid, data, 30, W);
-    const n0 = hexNeighborCell(victim.c, victim.r, 0, {});
-    const k0 = (n0.c - rec.c0) + (n0.r - rec.r0) * rec.blockW;
-    assert.ok(data[base + k0 * 4 + 3] < 10);
-  } finally {
-    disposeHexBody(e);
+  assert.equal(rec.anyDead, 0);
+  // Zabijamy komórkę w środku strefy.
+  const b = st.bridges[0];
+  const q = Math.floor(b.total / 2);
+  assert.ok(killCell(e, q));
+  const changed = refreshBeamBridgeRecordDamage(rec, e.beamHull, data, 10.5, W);
+  assert.ok(changed);
+  assert.equal(rec.anyDead, 1);
+  const vk = blockIndex(rec, b.cellX[q], b.cellY[q]);
+  assert.ok(vk >= 0);
+  assert.equal(data[base + vk * 4], 0, 'martwa komórka = wyrwa');
+  // Sąsiad w kierunku d widzi martwą komórkę w kierunku przeciwnym (bit) i świeci świeżym cięciem.
+  const opposite = (d) => (d < 4 ? (d + 2) % 4 : 4 + ((d - 4 + 2) % 4));
+  let seen = 0;
+  for (let d = 0; d < 8; d++) {
+    const [dx, dy] = BRIDGE3D_SQUARE_NEIGHBORS[d];
+    const nk = blockIndex(rec, b.cellX[q] + dx, b.cellY[q] + dy);
+    if (nk < 0 || !rec.existed[nk] || data[base + nk * 4] < 64) continue;
+    const mask = data[base + nk * 4 + 2];
+    assert.ok(mask & (1 << opposite(d)), `sąsiad w kierunku ${d}: maska ${mask.toString(2)}`);
+    assert.ok(data[base + nk * 4 + 3] > 200, 'świeże cięcie świeci');
+    seen++;
+  }
+  assert.ok(seen >= 4, `żywi sąsiedzi wyrwy: ${seen}`);
+  // Żar cięcia gaśnie z czasem (zanik żaru węzła, HULL_BODY_CONFIG.heatDecay).
+  refreshBeamBridgeRecordDamage(rec, e.beamHull, data, 30, W);
+  for (let d = 0; d < 8; d++) {
+    const [dx, dy] = BRIDGE3D_SQUARE_NEIGHBORS[d];
+    const nk = blockIndex(rec, b.cellX[q] + dx, b.cellY[q] + dy);
+    if (nk >= 0 && rec.existed[nk] && data[base + nk * 4] >= 64) assert.ok(data[base + nk * 4 + 3] < 10);
   }
 });
 
-test('instance basis maps model points exactly where bridgeGridToWorld puts them (rotated, scaled, wreck pivot)', () => {
-  const e = hullWithBridge({ x: 1200, y: -340, angle: 0.73 });
-  try {
-    e.visual = { spriteScale: 1.3, spriteScaleX: 1.3, spriteScaleY: 1.3 };
-    const map = bridgeModelGridMap(ZONE, 1, 1, e.hexGrid.srcWidth, e.hexGrid.srcHeight, MODELS.bellator.design);
-    for (const pose of [null, { x: 1190, y: -331, angle: 0.71 }]) {
-      const B = bridgeInstanceBasis(map, e, pose, {});
-      for (const [x, y] of [[0, 0], [30, -10], [-50, 20], [60, 24]]) {
-        const g = bridgeModelToGrid(map, x, y);
-        const w = bridgeGridToWorld(e, g.x, g.y, { x: 0, y: 0 }, pose);
-        const sx = B.ox + B.ax * x + B.bx * y;
-        const sy = B.oy + B.ay * x + B.by * y;
-        assert.ok(Math.abs(sx - w.x) < 1e-6 && Math.abs(sy + w.y) < 1e-6, `(${x}, ${y})`);
-      }
-      // Bez odbicia: kolejność ścian zachowana (FrontSide działa).
-      assert.ok(B.ax * B.by - B.ay * B.bx > 0);
-      assert.ok(Math.abs(B.sz - 1.3) < 1e-9);
+test('instance basis maps model points exactly where bridgeGridToWorld puts them (rotated, posed, on the wreck)', () => {
+  window.wrecks.length = 0;
+  const e = ship('battleship', 1200, -340, 0.73);
+  const st = e.bridgeState;
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  for (const pose of [null, { x: 1190, y: -331, angle: 0.71 }]) {
+    const B = beamBridgeInstanceBasis(rec, e, pose, {});
+    for (const [x, y] of [[0, 0], [30, -10], [-50, 20], [60, 24]]) {
+      const g = bridgeModelToGrid(rec.map, x, y);
+      const w = bridgeGridToWorld(e, g.x, g.y, { x: 0, y: 0 }, pose);
+      const sx = B.ox + B.ax * x + B.bx * y;
+      const sy = B.oy + B.ay * x + B.by * y;
+      assert.ok(Math.abs(sx - w.x) < 1e-6 && Math.abs(sy + w.y) < 1e-6, `(${x}, ${y})`);
     }
-  } finally {
-    disposeHexBody(e);
+    // Bez odbicia: kolejność ścian zachowana (FrontSide działa).
+    assert.ok(B.ax * B.by - B.ay * B.bx > 0);
+    assert.ok(Math.abs(B.sz - st.spriteScale) < 1e-9);
   }
+  // Wrak (kotwica = środek masy, to samo ciało): ta sama baza — bez „pyknięcia” modelu.
+  const B0 = beamBridgeInstanceBasis(rec, e, null, {});
+  const wreck = HullBodies.convertToWreck(e);
+  assert.ok(wreck && wreck.beamHull);
+  const B1 = beamBridgeInstanceBasis(rec, wreck, null, {});
+  assert.ok(Math.hypot(B1.ox - B0.ox, B1.oy - B0.oy) < 1e-3, 'początek modelu w tym samym miejscu');
+  for (const k of ['ax', 'ay', 'bx', 'by', 'sz']) assert.ok(Math.abs(B1[k] - B0[k]) < 1e-9, k);
+  window.wrecks.length = 0;
 });
 
-test('when the hulk becomes a wreck the record finds the wreck by its shards and keeps its holes', () => {
-  withWindow((entities) => {
-    const e = hullWithBridge();
-    entities.push(e);
-    const st = e.bridgeState;
-    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
-    // Wyrwa w mostku przed utratą dowodzenia.
-    const victim = st.bridges[0].shards[3];
-    D.destroyShard(e, victim);
-    // finishBridgeKill: wrak z żywych heksów, potem ciało hulka oddane.
-    const surviving = e.hexGrid.shards.filter((s) => s.active && !s.isDebris && s.hp > 0);
-    const wreck = D.spawnWreckEntity(e, surviving, entities);
-    assert.ok(wreck && wreck.isWreck);
-    const found = Bridge3D._findHost(rec, [wreck], null);
-    assert.equal(found, wreck);
-    const data = new Uint8Array(768 * 4);
-    refreshBridgeRecordDamage(rec, wreck.hexGrid, data, 1, 768);
-    const vk = (victim.c - rec.c0) + (victim.r - rec.r0) * rec.blockW;
-    assert.equal(data[vk * 4], 0, 'wyrwa zostaje na wraku');
-    let alive = 0;
-    for (let k = 0; k < rec.cellCount; k++) if (rec.existed[k] && data[k * 4] >= 64) alive++;
-    assert.ok(alive > rec.cellCount * 0.5, `żywych komórek na wraku: ${alive}`);
-    // Transformacja wraku (pivot) zgadza się z bridgeGridToWorld wraku.
-    const B = bridgeInstanceBasis(rec.map, wreck, null, {});
-    const w = bridgeGridToWorld(wreck, rec.map.zgx, rec.map.zgy, { x: 0, y: 0 });
-    assert.ok(Math.abs(B.ox - w.x) < 1e-6 && Math.abs(B.oy + w.y) < 1e-6);
-    const w0 = bridgeGridToWorld(e, rec.map.zgx, rec.map.zgy, { x: 0, y: 0 });
-    assert.ok(Math.hypot(w.x - w0.x, w.y - w0.y) < 1e-6, 'wrak w tej samej pozie — bez „pyknięcia”');
-  });
-});
-
-test('hexes moved to a split fragment count as moved, not alive, for the parent', () => {
-  withWindow((entities) => {
-    const e = hullWithBridge();
-    entities.push(e);
-    const st = e.bridgeState;
-    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
-    // Odcinamy część strefy do fragmentu (jak processSplits).
-    const part = st.bridges[0].shards.slice(0, 20);
-    const frag = D.spawnWreckEntity(e, part, entities);
-    const remain = e.hexGrid.shards.filter((s) => !part.includes(s));
-    D.rebuildEntityGrid(e, remain);
-    const data = new Uint8Array(768 * 4);
-    refreshBridgeRecordDamage(rec, e.hexGrid, data, 1, 768);
-    assert.ok(rec.moved >= 20, `przeniesionych: ${rec.moved}`);
-    const k = (part[0].c - rec.c0) + (part[0].r - rec.r0) * rec.blockW;
-    assert.equal(data[k * 4], 0, 'na kadłubie-matce ta część modelu znika');
-    // Fragment ma te heksy — rekord-siostra pokaże tam model.
-    const data2 = new Uint8Array(768 * 4);
-    refreshBridgeRecordDamage(rec, frag.hexGrid, data2, 1, 768);
-    assert.ok(data2[k * 4] >= 64);
-  });
-});
-
-test('window lights follow the kill timeline: steady, flicker, wave out; backup dies on its own', () => {
-  const e = hullWithBridge();
-  try {
-    const st = e.bridgeState;
-    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
-    const E = rec.kind.emit;
-    const win = [];
-    for (let i = 0; i < E.count; i++) if (E.type[i] === BRIDGE3D_EMIT.WINDOW) win.push(i);
-    assert.ok(win.length > 5);
-    // Przed utratą: spokojne światło w paśmie 0,64–1 × poziom pomieszczenia.
-    for (const i of win) {
-      const I = bridgeEmitterLight(rec, i, 12.3, 1);
-      assert.ok(I > 0.2 && I <= 1.0001, `okno ${i}: ${I}`);
-    }
-    // Utrata dowodzenia w t = 20: po końcu fali wszystko zgaszone.
-    st.commandLost = true;
-    st.commandLostAt = 20;
-    st.vent = { x: ZONE.x, y: 0, dirX: 0, dirY: -1 };
-    const end = BRIDGE_KILL_TIMELINE.windowFlickerEnd + 400 / BRIDGE_KILL_TIMELINE.windowWaveSpeed + BRIDGE_KILL_TIMELINE.windowFade + 0.1;
-    for (let i = 0; i < E.count; i++) {
-      rec.emDelayCmd[i] = 0.2;
-      assert.equal(bridgeEmitterLight(rec, i, 20 + end + 1, 1), 0);
-    }
-    // Pierwsze 60 ms: rozbłysk przeciążenia.
-    for (const i of win) assert.ok(bridgeEmitterLight(rec, i, 20.03, 1) > 0.3);
-    // Wrak bez utraty dowodzenia (np. zabity pulą): gaśnie od zasilania.
-    st.commandLost = false;
-    rec.powerLostAt = 50;
-    for (const i of win) assert.equal(bridgeEmitterLight(rec, i, 55, 1), 0);
-  } finally {
-    disposeHexBody(e);
+test('cells cut off with a fragment vanish from the parent row and live in the fragment row', () => {
+  window.wrecks.length = 0;
+  const e = ship('battleship');
+  const st = e.bridgeState;
+  const def = st.bridges[0].def;
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  // Rzaz w poprzek strefy mostka: rufowa część nadbudówki odpada z odłamem.
+  const a = bridgePngToWorld(e, def.x, -500, {});
+  const c = bridgePngToWorld(e, def.x, 500, {});
+  HullBodies.cutSegment(e, a.x, a.y, c.x, c.y, e.beamHull.cellSize * 1.2, { push: true });
+  for (let i = 0; i < 30; i++) HullBodies.step(1 / 120, [e, ...window.wrecks]);
+  const frag = window.wrecks.find((w) => w.beamHull && w.beamHull.dmgKey === st.lineage
+    && rec.existed.some((v, k) => v && BB.bridgeCellNode(w.beamHull, rec.c0 + (k % rec.blockW), rec.r0 + ((k / rec.blockW) | 0)) >= 0));
+  assert.ok(frag, 'odłam rodu z częścią mostka');
+  const W = BRIDGE3D_DAMAGE_LIMITS.width;
+  const data = new Uint8Array(W * 4);
+  refreshBeamBridgeRecordDamage(rec, e.beamHull, data, 1, W);
+  assert.ok(rec.moved > 0, `komórki poza gospodarzem: ${rec.moved}`);
+  // Komórka na odłamie: na kadłubie-matce ta część modelu znika, rekord-siostra pokaże ją na odłamie.
+  let k0 = -1;
+  for (let k = 0; k < rec.cellCount && k0 < 0; k++) {
+    if (rec.existed[k] && BB.bridgeCellNode(frag.beamHull, rec.c0 + (k % rec.blockW), rec.r0 + ((k / rec.blockW) | 0)) >= 0) k0 = k;
   }
+  assert.ok(k0 >= 0);
+  assert.equal(data[k0 * 4], 0, 'na kadłubie-matce wyrwa');
+  const data2 = new Uint8Array(W * 4);
+  refreshBeamBridgeRecordDamage(rec, frag.beamHull, data2, 1, W);
+  assert.ok(data2[k0 * 4] >= 64, 'na odłamie żywa');
+  window.wrecks.length = 0;
+});
+
+test('window lights follow the kill timeline: steady, flicker, wave out; a wreck dies with its power', () => {
+  const e = ship('battleship');
+  const st = e.bridgeState;
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  const E = rec.kind.emit;
+  const win = [];
+  for (let i = 0; i < E.count; i++) if (E.type[i] === BRIDGE3D_EMIT.WINDOW) win.push(i);
+  assert.ok(win.length > 5);
+  // Przed utratą: spokojne światło w paśmie 0,64–1 × poziom pomieszczenia.
+  for (const i of win) {
+    const I = bridgeEmitterLight(rec, i, 12.3, 1);
+    assert.ok(I > 0.2 && I <= 1.0001, `okno ${i}: ${I}`);
+  }
+  // Utrata dowodzenia w t = 20: po końcu fali wszystko zgaszone.
+  st.commandLost = true;
+  st.commandLostAt = 20;
+  st.vent = { x: st.bridges[0].def.x, y: 0, dirX: 0, dirY: -1 };
+  const end = BRIDGE_KILL_TIMELINE.windowFlickerEnd + 400 / BRIDGE_KILL_TIMELINE.windowWaveSpeed + BRIDGE_KILL_TIMELINE.windowFade + 0.1;
+  for (let i = 0; i < E.count; i++) {
+    rec.emDelayCmd[i] = 0.2;
+    assert.equal(bridgeEmitterLight(rec, i, 20 + end + 1, 1), 0);
+  }
+  // Pierwsze 60 ms: rozbłysk przeciążenia.
+  for (const i of win) assert.ok(bridgeEmitterLight(rec, i, 20.03, 1) > 0.3);
+  // Wrak bez utraty dowodzenia (np. zabity pulą): gaśnie od zasilania.
+  st.commandLost = false;
+  rec.powerLostAt = 50;
+  for (const i of win) assert.equal(bridgeEmitterLight(rec, i, 55, 1), 0);
 });
 
 test('bridgeFx3D skips its window slits for hulls that carry the 3D model (vent stays)', () => {
   const scene = new THREE.Scene();
-  const e = hullWithBridge();
+  const e = ship('battleship');
   try {
     BridgeFx3D.attach(scene);
     BridgeFx3D.update([e], { nowSec: 1, dt: 0, zoom: 4 });
@@ -425,12 +360,11 @@ test('bridgeFx3D skips its window slits for hulls that carry the 3D model (vent 
     assert.equal(BridgeFx3D.count, 0, 'z modelem: brak podwójnych okien');
   } finally {
     BridgeFx3D.dispose();
-    disposeHexBody(e);
   }
 });
 
-test('every model stands on its zone and its cell block fits the damage texture', () => {
-  const { width, maxRows } = BRIDGE3D_DAMAGE_LIMITS;
+test('every model stands on its zone and its cell block fits the damage rows', () => {
+  const { maxRows } = BRIDGE3D_DAMAGE_LIMITS;
   for (const name of BRIDGE3D_KIND_ORDER) {
     const k = BRIDGE3D_KINDS[name];
     const def = kindZone(name);
@@ -439,10 +373,22 @@ test('every model stands on its zone and its cell block fits the damage texture'
     const ky = k.render[1] / k.png[1];
     const map = bridgeModelGridMap({ ...def, rot: 0 }, kx, ky, k.render[0], k.render[1], MODELS[name].design);
     assert.ok(Math.abs(map.sxZ - 1) < 0.01 && Math.abs(map.syZ - 1) < 0.01, `${name}: model zaprojektowany na strefę`);
-    const b = bridgeCellBlock(map, MODELS[name].heightField, 5);
-    assert.ok(b.w * b.h <= width * maxRows, `${name}: blok ${b.w}×${b.h} > ${maxRows} wierszy`);
     assert.equal(resolveBridgeModelKind(k.hull, def), name, `${name}: rodzaj po strefie`);
   }
+  // Blok komórek pod każdym modelem na prawdziwym kadłubie mieści się w maxRows wierszach bufora obrażeń.
+  const covered = new Set();
+  for (const key of BRIDGE_DEMO_ORDER) {
+    const e = ship(key);
+    const st = e.bridgeState;
+    for (let b = 0; b < st.bridges.length; b++) {
+      const name = resolveBridgeModelKind(st.hullKey, st.bridges[b].def);
+      assert.ok(name, `${key}/${st.bridges[b].id}: rodzaj modelu`);
+      const rec = createBeamBridgeRecordCore(e, st, b, kindRes(name), 0);
+      assert.ok(rec.cellCount > 0 && rec.rowCount <= maxRows, `${key}/${name}: blok ${rec.blockW}×${rec.blockH} > ${maxRows} wierszy`);
+      covered.add(name);
+    }
+  }
+  assert.deepEqual([...covered].sort(), [...BRIDGE3D_KIND_ORDER].sort(), 'każdy rodzaj modelu na kadłubie dema');
   assert.equal(BRIDGE3D_TUNE.enabled, true);
 });
 
@@ -505,31 +451,26 @@ test('damage rows: big bridges get consecutive rows, uploads cover only the chan
   }
 });
 
-test('refreshBridgeRecordDamage writes RGBA bytes the shader unpacks from one u32 per cell', () => {
-  const e = hullWithBridge();
-  try {
-    const st = e.bridgeState;
-    const rec = createBridgeRecordCore(e, st, 0, kindRes('bellator'), 2);
-    const W = BRIDGE3D_DAMAGE_LIMITS.width;
-    const words = new Uint32Array(W * 4);
-    const bytes = new Uint8Array(words.buffer);
-    const victim = st.bridges[0].shards[Math.floor(st.bridges[0].shards.length / 2)];
-    refreshBridgeRecordDamage(rec, e.hexGrid, bytes, 1, W);
-    D.destroyShard(e, victim);
-    refreshBridgeRecordDamage(rec, e.hexGrid, bytes, 1.2, W);
-    // Słowo komórki k rekordu z wiersza 2 = R | G << 8 | B << 16 | A << 24 (bridge3D.tsl.js: cell()).
-    let checked = 0;
-    for (let k = 0; k < rec.cellCount; k++) {
-      const o = (2 * W + k) * 4;
-      const w = words[2 * W + k];
-      assert.equal(w & 255, bytes[o]);
-      assert.equal((w >>> 8) & 255, bytes[o + 1]);
-      assert.equal((w >>> 16) & 255, bytes[o + 2]);
-      assert.equal(w >>> 24, bytes[o + 3]);
-      if (bytes[o + 2]) checked++;
-    }
-    assert.ok(checked > 0, 'komórki z maską martwych sąsiadów');
-  } finally {
-    disposeHexBody(e);
+test('refreshBeamBridgeRecordDamage writes RGBA bytes the shader unpacks from one u32 per cell', () => {
+  const e = ship('battleship');
+  const st = e.bridgeState;
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 2);
+  const W = BRIDGE3D_DAMAGE_LIMITS.width;
+  const words = new Uint32Array(W * 4);
+  const bytes = new Uint8Array(words.buffer);
+  refreshBeamBridgeRecordDamage(rec, e.beamHull, bytes, 1, W);
+  assert.ok(killCell(e, Math.floor(st.bridges[0].total / 2)));
+  refreshBeamBridgeRecordDamage(rec, e.beamHull, bytes, 1.2, W);
+  // Słowo komórki k rekordu z wiersza 2 = R | G << 8 | B << 16 | A << 24 (bridge3D.tsl.js: cell()).
+  let checked = 0;
+  for (let k = 0; k < rec.cellCount; k++) {
+    const o = (2 * W + k) * 4;
+    const w = words[2 * W + k];
+    assert.equal(w & 255, bytes[o]);
+    assert.equal((w >>> 8) & 255, bytes[o + 1]);
+    assert.equal((w >>> 16) & 255, bytes[o + 2]);
+    assert.equal(w >>> 24, bytes[o + 3]);
+    if (bytes[o + 2]) checked++;
   }
+  assert.ok(checked > 0, 'komórki z maską martwych sąsiadów');
 });

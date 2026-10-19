@@ -1,8 +1,8 @@
 // ============================================================
 // Wrogowie: proceduralne okręty z brył (wzór buildShip z dema/laser-webgpu.html),
 // materiał kadłuba z panelami oświetlany światłami trafień. Każdy okręt zapisuje
-// obrys brył w płaszczyźnie (widok z góry) — z niego powstają komórki hexGrid
-// dla tarczy-obrysu tą samą drogą co u Atlasa (getEntityShieldProfile).
+// obrys brył w płaszczyźnie (widok z góry) — z niego powstają komórki obrysu tarczy
+// (shieldOutline) tą samą drogą co u Atlasa (getEntityShieldProfile).
 // ============================================================
 import * as THREE from 'three/webgpu';
 import {

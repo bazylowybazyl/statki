@@ -683,9 +683,8 @@ function beamGeometry() {
   return g;
 }
 
-test('WGSL materiału: skóra belek czyta pulę ran i siatkę świateł (tylko odczyt), heksy i płyta pancerza — nie', () => {
+test('WGSL materiału: skóra belek czyta pulę ran i siatkę świateł (tylko odczyt)', () => {
   const beam = buildMesh(new THREE.Mesh(beamGeometry(), new HullNodeMaterial('beam', holders()))).fragmentShader;
-  const armor = buildMesh(new THREE.Mesh(new THREE.PlaneGeometry(64, 32), new HullNodeMaterial('armor', holders()))).fragmentShader;
   assert.match(beam, /var<storage, read> hullDamagePool\b/);
   assert.match(beam, /var<storage, read> fxGridLights\b/);
   assert.match(beam, /var<storage, read> fxGridIndex\b/);
@@ -698,9 +697,6 @@ test('WGSL materiału: skóra belek czyta pulę ran i siatkę świateł (tylko o
   // zadanie 23) i jedno źródło żaru (max ze skórą).
   assert.match(beam, /if \( \( hullObjects\.value\[ \( \w+ \+ 12u \) \]\.w > 0\.5 \) \)/);
   assert.match(beam, /max\( \(?[^;]*heat|max\(/);
-  for (const v of [armor]) {
-    assert.doesNotMatch(v, /hullDamagePool|fxGrid/, 'płyta pancerza bez mapy ran i świateł efektów');
-  }
   // Graf wariantu wspólny — mapa nie rozbija klucza programu na kadłub.
   const a = new HullNodeMaterial('beam', holders());
   const b = new HullNodeMaterial('beam', holders());

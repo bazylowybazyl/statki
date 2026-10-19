@@ -3,14 +3,13 @@ import assert from 'node:assert/strict';
 
 import * as shieldSystem from '../shieldSystem.js';
 
-// Syntetyczny hexGrid: wydłużony kadłub 400x100 (lokalne px, środek w 0,0).
-// Shardy co 10px na prostokącie [-200..200] x [-50..50].
+// Syntetyczny obrys (entity.shieldOutline — ten sam kontrakt, który kadłub na belkach wypełnia z węzłów
+// spoczynkowych): wydłużony kadłub 400x100 (lokalne px, środek w 0,0), komórki co 10 px na prostokącie
+// [-200..200] x [-50..50].
 function makeElongatedShip(overrides = {}) {
-  const shards = [];
+  const cells = [];
   for (let x = -200; x <= 200; x += 10) {
-    for (let y = -50; y <= 50; y += 10) {
-      shards.push({ lx: x, ly: y, origLx: x, origLy: y, radius: 6 });
-    }
+    for (let y = -50; y <= 50; y += 10) cells.push(x, y);
   }
   return {
     type: 'destroyer',
@@ -18,7 +17,7 @@ function makeElongatedShip(overrides = {}) {
     x: 0,
     y: 0,
     radius: 210,
-    hexGrid: { shards, srcWidth: 400, srcHeight: 100 },
+    shieldOutline: { cells: Float32Array.from(cells), cellR: 6, srcWidth: 400, srcHeight: 100 },
     shield: { max: 5000, val: 5000, state: 'active', activationProgress: 1 },
     ...overrides
   };
@@ -28,7 +27,7 @@ test('hull shield profile follows the ship silhouette', () => {
   const ship = makeElongatedShip();
   const profile = shieldSystem.getEntityShieldProfile(ship);
 
-  assert.ok(profile, 'statek z hexGrid dostaje profil');
+  assert.ok(profile, 'statek z obrysem dostaje profil');
   assert.ok(profile.maxR > 200, 'maxR obejmuje dziób');
   assert.ok(profile.minR >= 50, 'minR obejmuje burtę z padem');
 
@@ -65,7 +64,7 @@ test('blocking radius scales with activation progress and drops to zero when off
   assert.equal(shieldSystem.getEntityShieldBlockingRadiusTowards(ship, 1000, 0), 0);
 });
 
-test('entities without hexGrid keep the circular shield', () => {
+test('entities without a hull outline keep the circular shield', () => {
   const station = {
     type: 'station',
     radius: 300,
@@ -100,7 +99,7 @@ test('player spatial proxy resolves the real entity for profile sampling', () =>
     get x() { return ship.x; },
     get y() { return ship.y; },
     get shield() { return ship.shield; },
-    get hexGrid() { return ship.hexGrid; },
+    get shieldOutline() { return ship.shieldOutline; },
     get angle() { return ship.angle; }
   };
   const direct = shieldSystem.getEntityShieldBlockingRadiusTowards(ship, 1000, 0);

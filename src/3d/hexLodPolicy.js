@@ -1,12 +1,10 @@
 /**
- * A solid armor plane is only correct while the body still represents the
- * complete source sprite. Split bodies keep source-space UVs so their hexes
- * look sharp, but a full-sprite impostor would turn every fragment back into
- * an intact ship.
+ * Czy kadłub może zostać pełną skórą z dala (zamiast smugi z batcha smug). Wrak i odłam — nie: odłam
+ * próbkuje sprite rodzica, a pełna skóra „całego sprite'a” zamieniałaby każdy fragment z powrotem w cały
+ * okręt. Dawniej (kadłuby heksowe) decydowało to o płycie pancerza LOD — stąd nazwa modułu i funkcji.
  */
 export function allowsSolidArmorLod(entity) {
-  // Kadłub na belkach (hullBodies.js) niesie te same flagi co siatka heksów.
-  const grid = entity?.hexGrid || entity?.beamHull;
+  const grid = entity?.beamHull;
   if (!grid) return false;
   if (entity?.isWreck === true) return false;
   if (grid.isFragment === true) return false;

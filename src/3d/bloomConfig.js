@@ -1,6 +1,6 @@
 // Kanoniczna konfiguracja bloomu gry — JEDYNE źródło prawdy.
-// Core3D bierze stąd wartości bazowe, bloomTunerPanel domyślne pozycje
-// suwaków. Zmiany wyglądu bloomu robi się TUTAJ, nie w localStorage ani
+// Core3D bierze stąd wartości bazowe (strojenie na żywo — konsola: DevVFX.bloom,
+// tylko Core3D strony). Zmiany wyglądu bloomu robi się TUTAJ, nie w localStorage ani
 // w rozjechanych stałych. Bloom jest jeden — w poście Core3D (od zadania 20
 // portu WebGPU nie ma overlaya efektów z własnym bloomem; parametry overlay*
 // usunięte, wybuch reaktora świeci przez bloom gry).

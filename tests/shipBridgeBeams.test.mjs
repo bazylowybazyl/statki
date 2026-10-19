@@ -132,7 +132,7 @@ test('a bridge cut off with a fragment counts as lost; the 3D record follows the
   const def = st.bridges[0].def;
   const K = { index: SH.BRIDGE3D_KINDS.bellator.index, name: 'bellator', model: SH.buildBridgeModel('bellator'), emit: { count: 0, cx: [], cy: [] } };
   const rec = B3.createBeamBridgeRecordCore(e, st, 0, K, 0);
-  assert.ok(rec.beam && rec.cellCount > 0 && rec.hexR < 0, 'rekord siatki kwadratowej');
+  assert.ok(rec.cellCount > 0 && Math.abs(rec.cellPx - st.cellSize / st.spriteScale) < 1e-9, 'rekord na komórkach siatki belek (bok komórki w px obrazu)');
   // Rzaz w poprzek kadłuba przed nadbudówką (Bellator: mostek na rufie, x ≈ −282 PNG).
   const xCut = def.x + def.w * 0.5 + 40;
   const a = SB.bridgePngToWorld(e, xCut, -400, {});

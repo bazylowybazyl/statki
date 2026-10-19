@@ -1,7 +1,8 @@
-// Mostki w grze — klej między index.html a shipBridge.js (heksy) / shipBridgeBeams.js (belki).
+// Mostki w grze — klej między index.html a shipBridge.js (strefy, oś czasu, API) i
+// shipBridgeBeams.js (stan mostków na kadłubie belkowym).
 //
 // Który kadłub ma mostki i w jakim układzie, podpięcie po HullBodies.createHull (kadłuby
-// belkowe — jedyne w grze od zadania 21) albo initHexBody (dema heksowe), hulk po
+// belkowe — jedyne w grze i w demach od usunięcia silnika heksów, 2026-10-19), hulk po
 // utracie dowodzenia (agonia: bez AI, broni i ciągu, tylko dryf; po
 // BRIDGE_KILL_TIMELINE.sequenceEnd gra zamienia go we wrak) i stan wizualny
 // hulka. Bez DOM i bez three — ścieżki śmierci (wrak, reputacja, gracz) zostają
@@ -12,7 +13,6 @@ import {
   BRIDGE_KILL_TIMELINE,
   BRIDGE_LAYOUT_PROPOSALS,
   applyCommandLossVisuals,
-  attachShipBridges,
   bridgePngToWorld,
   commandLossAge,
   getBridgeAimPoint,
@@ -81,31 +81,23 @@ export function resolveBridgeLayout(key, variant = null) {
 }
 
 /**
- * Po HullBodies.createHull (albo initHexBody w demach heksowych): zaznacza komórki / heksy stref
- * i nakłada pancerz. `bridges` — lista z konfiguracji edytora (gdy kiedyś będzie), inaczej
- * domyślny wariant z BRIDGE_LAYOUT_PROPOSALS. Kadłub belkowy: skala stref z obrazów kadłuba
- * (render px / PNG px — jak rdzenie), heksowy: skala hardpointów.
+ * Po HullBodies.createHull: zaznacza komórki siatki belek stref i nakłada pancerz
+ * (shipBridgeBeams.js: attachBeamBridges). `bridges` — lista z konfiguracji edytora (gdy kiedyś
+ * będzie), inaczej domyślny wariant z BRIDGE_LAYOUT_PROPOSALS. Skala stref z obrazów kadłuba
+ * (render px / PNG px — jak rdzenie). Encja bez własnego kadłuba belkowego mostków nie ma.
  */
 export function attachEntityBridges(entity, { key: keyIn = null, bridges = null, variant = null } = {}) {
   if (!entity) return null;
   const key = keyIn != null ? normalizeBridgeHullKey(keyIn) : resolveBridgeHullKey(entity);
   const list = Array.isArray(bridges) && bridges.length ? bridges : resolveBridgeLayout(key, variant);
   const beam = !!entity.beamHull && entity.beamHull.entity === entity;
-  if (!list || (!beam && !entity.hexGrid)) {
+  if (!list || !beam) {
     if (entity.bridgeState) releaseShipBridges(entity);
     return null;
   }
-  if (beam) {
-    // Stan z innego kadłuba (zmiana kadłuba gracza) — oddaj dysze i lampy.
-    if (entity.bridgeState && entity.bridgeState.lineage !== entity.beamHull.dmgKey) releaseShipBridges(entity);
-    return attachBeamBridges(entity, list, {
-      windowColor: BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor,
-      hullKey: key
-    });
-  }
-  return attachShipBridges(entity, list, {
-    scaleX: entity.__hardpointScaleX,
-    scaleY: entity.__hardpointScaleY,
+  // Stan z innego kadłuba (zmiana kadłuba gracza) — oddaj dysze i lampy.
+  if (entity.bridgeState && entity.bridgeState.lineage !== entity.beamHull.dmgKey) releaseShipBridges(entity);
+  return attachBeamBridges(entity, list, {
     windowColor: BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor,
     hullKey: key
   });
