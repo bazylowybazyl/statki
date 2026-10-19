@@ -197,6 +197,29 @@ test('awans płaskiego odłamu do bryły 3D: wyrwa przechodzi na nową encję; o
   assert.ok(Math.abs(v.wz + 400) < 1e-6 && Math.abs(v.wx - (hx + 1300)) < 1e-6, `${v.wx}, ${v.wz}`);
 });
 
+test('awans kawałków statycznych w jednym kroku (bez rodzica): każda wyrwa na bryle swojego modułu', () => {
+  fresh();
+  const hx = place.habitat.x, hy = place.habitat.y;
+  const idW = breach({ module: 'H-W', x: hx - 900, y: hy, z: 0, nx: -1, ny: 0, nz: 0, size: 120 });
+  const idS = breach({ module: 'H-S', x: hx, y: hy + 900, z: 0, nx: 0, ny: 1, nz: 0, size: 120 });
+  stepPirateBaseAtmosphere(DT);
+  const mk = (x, y, R) => {
+    const body = { pos: { x, y: -y, z: 0 }, vel: { x: 0, y: 0, z: 0 }, angVel: { x: 0, y: 0, z: 0 },
+      quat: { x: 0, y: 0, z: 0, w: 1 }, planar: false, dead: false, radius: R };
+    const e = { x, y, solid3D: true, beamHull: { body, solid3D: true, dmgKey: 3 } };
+    e.beamHull.entity = e;
+    return e;
+  };
+  // wyrwa zachodnia 50 j. poza kulą swojej bryły (w zasięgu przejęcia), a w kuli bryły południowej
+  const sW = mk(hx - 800, hy, 50);
+  // bryła ćwiartki południowej z kulą obejmującą też wyrwę zachodniej
+  const sS = mk(hx - 300, hy + 700, 1400);
+  rehomePirateBaseVents(sW, null, 'H-W');
+  rehomePirateBaseVents(sS, null, 'H-S');
+  assert.equal(ventById(idW).ent, sW, 'wyrwa zachodnia zostaje na bryle zachodniej');
+  assert.equal(ventById(idS).ent, sS);
+});
+
 test('zerwanie szyi: wyrwa u spodu wieży (z bryłą) i u szczytu szybu', () => {
   fresh();
   const body = { pos: { x: place.habitat.x, y: -place.habitat.y, z: 900 }, vel: { x: 0, y: 0, z: 0 },
