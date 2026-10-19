@@ -8,6 +8,7 @@
 //   node scripts/webgpu/wojna-gra.mjs [--out .tmp/wojna/gra] [--czas 60] [--k 3] [--zwiastun thread|ripple|none]
 //        [--tlo jupiter|mars] [--atlas side|fleet] [--A 20] [--B 25] [--odleglosc 25000] [--rozmiar 1600x900]
 //        [--zrzuty 1.5,4,6,8,10,13,18,25,35,50] [--query renderWorker=1]
+//        [--flaga 1]   (start sceny flagą adresu ?wojna — jak gracz bez konsoli — zamiast DevScene.wojna)
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, osobneLosowanieUuid, repo } from './wspolne.mjs';
@@ -26,7 +27,10 @@ const opts = {
   countB: Number(args.B || 25),
   distance: Number(args.odleglosc || 25000)
 };
-const query = args.query ? `&${args.query}` : '';
+const FLAGA = String(args.flaga ?? '0') === '1';
+const flagQuery = FLAGA ? `&wojna&wojnaK=${opts.k}&wojnaZwiastun=${opts.heraldStyle}&wojnaTlo=${opts.backdrop}&wojnaAtlas=${opts.atlas}`
+  + `&wojnaA=${opts.countA}&wojnaB=${opts.countB}&wojnaOdl=${opts.distance}` : '';
+const query = (args.query ? `&${args.query}` : '') + flagQuery;
 mkdirSync(out, { recursive: true });
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 
@@ -88,7 +92,15 @@ try {
   // Atlas nieśmiertelny (widz) — scena dotyczy flot.
   await ev(`(() => { window.__godTimer = setInterval(() => { const s = window.ship; if (!s || s.destroyed) return;
     if (s.hull) s.hull.val = s.hull.max; if (s.shield) s.shield.val = s.shield.max; }, 100); return true; })()`);
-  report.plan = await ev(`window.DevScene.wojna(${JSON.stringify(opts)})`);
+  if (FLAGA) {
+    // flaga adresu: scena startuje sama ~1 s po wejściu do gry (setTimeout — prawdziwy czas, także przy hold)
+    if (!await waitFor(cdp, '!!(window.WarScene && window.WarScene.active)', 30000, 200)) throw new Error('flaga ?wojna nie uruchomiła sceny');
+    report.plan = await ev(`(() => { const p = window.WarScene.plan; return { center: p.center, planet: p.planet,
+      fleets: { A: { count: p.fleets.A.ships.length, start: p.fleets.A.start }, B: { count: p.fleets.B.ships.length, start: p.fleets.B.start } },
+      opts: window.WarScene.opts }; })()`);
+  } else {
+    report.plan = await ev(`window.DevScene.wojna(${JSON.stringify(opts)})`);
+  }
   console.log('plan:', JSON.stringify({ center: report.plan.center, planet: report.plan.planet,
     A: report.plan.fleets.A.count, B: report.plan.fleets.B.count, startB: report.plan.fleets.B.start }));
   const begLog = await ev('window.__harness.frameLog.n');

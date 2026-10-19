@@ -31875,6 +31875,19 @@
       if (fadeThroughBlack) fadeScreen(false, 750);
 
       console.log("[System] Gra uruchomiona.");
+      // Scena „Wojna” z adresu (bez konsoli): ?wojna — start sekundę po wejściu do gry swobodnej (kampania ma własny
+      // świat — pomija). Opcje: wojnaK (k wyjścia z warpa), wojnaZwiastun (thread | ripple | none), wojnaTlo (jupiter |
+      // mars), wojnaAtlas (side | fleet), wojnaA / wojnaB (liczba okrętów), wojnaOdl (odległość flot, j.).
+      const warQuery = new URLSearchParams(location.search);
+      if (warQuery.has('wojna') && !storyCampaign) {
+        const num = (k) => (warQuery.has(k) && Number.isFinite(Number(warQuery.get(k))) ? Number(warQuery.get(k)) : undefined);
+        const warOpts = {
+          k: num('wojnaK'), heraldStyle: warQuery.get('wojnaZwiastun') || undefined, backdrop: warQuery.get('wojnaTlo') || undefined,
+          atlas: warQuery.get('wojnaAtlas') || undefined, countA: num('wojnaA'), countB: num('wojnaB'), distance: num('wojnaOdl')
+        };
+        for (const key of Object.keys(warOpts)) if (warOpts[key] === undefined) delete warOpts[key];
+        setTimeout(() => { try { startWarScene(warOpts); } catch (err) { console.error('[Wojna] start sceny:', err); } }, 1000);
+      }
     }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {
