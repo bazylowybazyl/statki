@@ -1,0 +1,24 @@
+---
+paths:
+  - "src/3d/dust/**"
+---
+
+# Pył kosmiczny — wrażenie lotu
+
+> Reguła obszaru (podział AGENTS.md, 2026-10-19). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Odnośnik „§ X” = nagłówek sekcji w tej albo innej regule (`grep -rn "## X" .claude/rules`). Nową wiedzę o obszarze dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i wyniki pomiarów — do `docs/`.
+
+## Pył kosmiczny — wrażenie lotu (2026-10-05, `src/3d/dust/`)
+
+- Po co (zgłoszenie użytkownika: „nie czuć, że statek leci, zwłaszcza przy przybliżeniu”): w pustce jedynym odniesieniem były mgławica (paralaksa 0,02 — stoi) i gwiazdy w płaszczyźnie gry (przy zoomie 0,45 ~1 „szybka” gwiazda w kadrze). Pył = drobiny w warstwach PARALAKSY p (przesuw na ekranie = −p × ruch kamery × zoom; 0,36 / 0,6 / 1 / 1,45 pod kadłubami w passie ortho, z = −12, test głębi; 2,3 — rzadkie, rozmyte, w passie FG nad wszystkim), w ruchu SMUGA wzdłuż prędkości na ekranie (migawka `shutter`, głowa jaśniejsza) i jaśnieją (w spoczynku `restAlpha`).
+
+- OKTAWY ZOOMU: warstwa = dwa sloty (parzystość oktawy), wzór o kontenerze C0 · 2^k z wagami z log2 (kapelusz) — gęstość w kadrze stała przy każdym zoomie (~135–155 drobin), wzór się nie powtarza w kadrze; oktawa k zawsze w slocie k & 1 (bez przeskoków — zmiana oktawy przy wadze 0). Położenie wzoru = fract(kamera / C) liczone na CPU w double (świat 5–10 mln j.), shader dostaje ułamek i kontener w px.
+
+- Obraz (`spaceDust3D.js`, TSL): kwad instancji liczy piksele kadru wprost (głębia i w z rzutu początku siatki — siatka stoi w 0, 0, `frustumCulled = false`), siatki 'ortho' i 'fg' na jednym grafie wierzchołków, wszystkie trzy na wspólnym fragmencie (te same varyingi), ONE/ONE z alfą = max(rgb). Uniformy (tablice vec4 `spaceDust` / `spaceDust3d`) pisze hak `Core3D.addPassHook('ortho')` z kamerą TEGO renderu (podzielony ekran: dwa widoki; prędkość kamery per widok z `frame()` — kamera BEZ wstrząsu, w pauzie dt = 0 — smugi stoją). Słońce: `sunShadeUnlit` (cień planety, mrok pola); światło efektów: drobina czyta `Core3D.fx.grid` w wierzchołkach (błyski luf, trafienia, wybuchy, reflektory w pasie) z sufitem `DUST_LIGHT_CAP`.
+
+- POŚWIATA DYSZ (druga prośba 2026-10-05): stożek światła za gromadą dysz MAIN okrętu (najwyżej `DUST_PLUME_CAP` = 16 najjaśniejszych i najbliższych, `writeDustPlumes` → pętla `plumeLight` w wierzchołkach) rozświetla drobiny barwą `light` palety silnika; moc = moc strugi po rampie × widoczność maskowania (dopalacz jaśniej, ukryty okręt nie świeci). Źródło: `EngineFrame` (`src/3d/engineFrame.js` — dysze MAIN klatki per okręt, pisze `EngineVfxSystem`: `begin` / `beginShip` / `nozzle` / `endShip`; tylko okręty, których dysze się rysują). Nowy efekt „za silnikami” czyta tę listę, nie liczy dysz drugi raz. Strojenie `SpaceDustTune.plume`.
+
+- KAMERY 3D (K, free3d): pass ortho rysuje kamerą perspektywy ze wspólną głębią — wtedy siatka 'free': drobiny w SZEŚCIANIE wokół kamery (`buildDust3DInstances`, `writeDust3DUniforms`: oktawy z odległości kamery od celu `viewDistance`, zanik przy kamerze i przy brzegu sześcianu), obrót kamery bez przesunięcia (`cameraViewMatrix × (pozycja względem kamery, 0)`), smuga = rzut drogi drobiny względem kamery w migawce, promień rośnie ku kamerze (bliskie — miękkie). Prędkość: położenie kamery perspektywy (`frame()` — `step3`). Strojenie `SpaceDustTune.free3d`; rozgrzewka wpis `pył kosmiczny (kamery 3D)` (`ortho: false`).
+
+- Gaśnie: zoom < `zoomFade` (widok strategiczny), prędkość kamery > `speedFade` (warp ma ośrodek „Nurt”), `WARP_STARS.stretch` (ładowanie skoku); skok kamery > `cutScreens` kadrów na klatkę = cięcie (teleport) bez smug. Opcja menu Grafika → „Pył kosmiczny” (`OPTIONS.spaceDust`, `sc_space_dust`). Strojenie na żywo: `window.SpaceDustTune` (warstwy — po zmianie `SpaceDust3D.rebuild()`; rozmiar tablicy uniformów stały: `DUST_MAX_LAYERS`). Rozgrzewka: wpis `pył kosmiczny`. Koszt: 2 rysunki z góry, 1 w kamerach 3D. Ślad za rufą — odłożony (użytkownik zrobi własny na compute).
+
+- Testy: `tests/spaceDust.test.mjs` (lustra CPU shadera `dustMotePx` / `dust3DMoteRel` / `dustPlumeLightCpu`, ciągłość przy zoomie, kotwica w świecie, gęstość, stożki dysz, sześcian 3D, WGSL w Node), `tests/engineFrame.test.mjs`; w grze: `node scripts/webgpu/pyl-gra.mjs [--zoomy 0.2,0.45,0.9] [--seria 36] [--kamery 0] [--pas 0]` (postój / 500 j/s / dopalacz, A/B bez pyłu i bez poświaty dysz, błysk, ogień, kamery 3D z A/B pościgu, pas, Ziemia, pipeline'y synchroniczne pyłu — ma być 0).

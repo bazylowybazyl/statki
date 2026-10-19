@@ -40,7 +40,7 @@ test('gra (graf importów od index.html) bez GLSL i API WebGL', () => {
     for (const w of e.webgl) problemy.push(`${plik}:${w.linia} ${w.co}: ${w.tekst}`);
   }
   assert.deepEqual(problemy, [],
-    'gra na WebGPU: nowy kod renderu tylko w TSL (agents.md § Render: WebGPU + TSL) — bez GLSL, ShaderMaterial, ' +
+    'gra na WebGPU: nowy kod renderu tylko w TSL (.claude/rules/webgpu-tsl.md § Render: WebGPU + TSL) — bez GLSL, ShaderMaterial, ' +
     'onBeforeCompile, WebGLRenderer / celów WebGL, EffectComposer i kontekstu WebGL:\n' + problemy.join('\n'));
 });
 
