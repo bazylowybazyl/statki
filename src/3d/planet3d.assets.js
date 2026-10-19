@@ -373,10 +373,13 @@ const NebulaSystem = {
         Core3D.enableBackground3D(this.mesh);
         Core3D.addPassHook('bg', (camera) => this.skyCacheHook(camera));
         Core3D.skyCacheStats = this.cacheStats;   // narzędzia (licznik przeliczeń / odczytów pamięci nieba)
-        // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry
+        // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry; pamięć
+        // działa dopiero z gotowym pipeline'em (skyCacheHook — do tego czasu niebo wprost)
         if (Core3D.warmup) Core3D.warmup.add({ name: 'mgławica: pamięć nieba', objects: () => (this.mesh ? [this.mesh] : []),
             layer: 1, target: () => this.cacheTarget, scene: null, phase: 'loading',
-            variant: { apply: (m) => { const prev = m.material; m.material = this.cacheWriteMaterial; return () => { m.material = prev; }; } } });
+            variant: { apply: (m) => { const prev = m.material; m.material = this.cacheWriteMaterial; return () => { m.material = prev; }; } } })
+            .promise.then(() => { this.cacheWriteReady = true; });
+        else this.cacheWriteReady = true;
     },
     // ── Pamięć nieba (2026-10-17) ──
     // Niebo (tekstura + gwiazdy na piksel) zależy tylko od położenia płaszczyzny mgławicy na ekranie (paralaksa 0,02 —
@@ -384,7 +387,7 @@ const NebulaSystem = {
     // punkty płaszczyzny przesuną się na ekranie o więcej niż SKY_CACHE_PX albo zmieni się rozmiar / tekstura; zgięcie
     // warpa i rulon (przesunięcia na piksel) — liczone wprost. Jasność strefy, rozjaśnienie i smuga cienia — w passie
     // tła na pamięci (tanie). A/B: Core3D.skyCacheEnabled = false. Liczniki: NebulaSystem.cacheStats.
-    cacheTarget: null, cacheWriteMaterial: null, cacheValid: false, cacheTexVersion: -1,
+    cacheTarget: null, cacheWriteMaterial: null, cacheWriteReady: false, cacheValid: false, cacheTexVersion: -1,
     cacheP0: new THREE.Vector2(), cacheP1: new THREE.Vector2(),
     cacheStats: { renders: 0, reused: 0, direct: 0 },
     _skyV: new THREE.Vector4(), _skyQ0: new THREE.Vector2(), _skyQ1: new THREE.Vector2(),
@@ -397,7 +400,9 @@ const NebulaSystem = {
         const u = this.uniforms, rt = this.cacheTarget, renderer = Core3D.renderer;
         if (!u || !rt || !this.mesh || !renderer) return;
         const st = this.cacheStats;
-        if (Core3D.skyCacheEnabled === false || !this.mesh.visible || warpSkyBendCount() > 0 || rulonActive()) {
+        // Bez gotowego pipeline'u zapisu (wpis rozgrzewki „mgławica: pamięć nieba”) — niebo wprost, ten sam obraz: pierwszy
+        // zapis nie kompiluje się w klatce, gdy kolejka rozgrzewki nie zdążyła przed nią (klatka zero workera).
+        if (Core3D.skyCacheEnabled === false || !this.cacheWriteReady || !this.mesh.visible || warpSkyBendCount() > 0 || rulonActive()) {
             u.skyCacheMode.value = 0; this.cacheValid = false; st.direct++; return;
         }
         const ct = Core3D.composerTarget;
