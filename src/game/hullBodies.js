@@ -297,7 +297,7 @@ let _nextDmgKey = 0;
  * Wynik sweep() — współdzielony, ważny do następnego wywołania. z — wysokość świata trafionego węzła (bryła 3D: węzeł
  * w pasie broni; ciało płaskie: 0).
  */
-export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0, node: -1, hitShard: null, z: 0 };
+export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0, node: -1, z: 0 };
 
 /**
  * Wynik impact() / cutSegment() — współdzielony, ważny do następnego wywołania.
@@ -789,7 +789,6 @@ export const HullBodies = {
     const r = hullSweepResult;
     r.t = t;
     r.node = _sweepOut.node;
-    r.hitShard = null;
     r.projectileX = x0 + (x1 - x0) * t;
     r.projectileY = y0 + (y1 - y0) * t;
     r.worldX = r.projectileX;
@@ -2067,7 +2066,6 @@ function solidSweep(hull, x0, y0, x1, y1, radius) {
   const t = bandHit.t;
   r.t = t;
   r.node = bandHit.node;
-  r.hitShard = null;
   r.projectileX = x0 + (x1 - x0) * t;
   r.projectileY = y0 + (y1 - y0) * t;
   r.worldX = r.projectileX;
@@ -3376,7 +3374,6 @@ function makeWreckEntity(parent, body, parentHull) {
     friction: C.wreckFriction,
     dead: false,
     isWreck: true,
-    isAsteroidHex: false,
     noWreckSleep: false,
     destructionMaterial: parent.destructionMaterial,
     isCollidable: true,
@@ -3473,7 +3470,6 @@ function makeSolidWreckEntity(parent, body, parentHull) {
     friction: 1,
     dead: false,
     isWreck: true,
-    isAsteroidHex: false,
     noWreckSleep: true,
     destructionMaterial: parent?.destructionMaterial,
     isCollidable: true,

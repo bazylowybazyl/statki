@@ -90,7 +90,6 @@ const game = {
   _impactCarrier: Carrier.createCarrier(), _impactRelVel: { x: 0, y: 0 }, _bulletTargetVel: { x: 0, y: 0 },
   _impactHit: { x: 0, y: 0, nx: 0, ny: -1, entity: null, relVx: 0, relVy: 0, kind: 'none', through: false, ric: false, ricDirX: 0, ricDirY: 0, ricSpeed: 0, ricLife: 0 },
   _ricRelVel: { x: 0, y: 0 }, _passCarrier: Carrier.createCarrier(), _passRelVel: { x: 0, y: 0 },
-  _hexImpactOpts: { shard: null },
   spawnBulletImpactEffect(b, x, y, scale, hit) {
     events.push({ type: 'impact', x, y, through: !!hit?.through, ric: !!hit?.ric, ricSpeed: hit?.ricSpeed || 0, ricDirX: hit?.ricDirX || 0, ricDirY: hit?.ricDirY || 0, entity: hit?.entity || null });
   },
@@ -123,7 +122,7 @@ const game = {
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };
 load('function removeBulletAt(index) {', 'removeBulletAt');
 load('function hullSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hullSweepImpact');
-load("function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {", 'applyHexImpact');
+load("function applyHexImpact(entity, x, y, damage, vel, fxSource = null, fxVariant = 'impact') {", 'applyHexImpact');
 load('function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {', 'writeImpactHit');
 load('function writeImpactRicochet(out, b, node) {', 'writeImpactRicochet');
 load('function applyBulletHullPass(b, pass) {', 'applyBulletHullPass');

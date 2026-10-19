@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 // Kadłuby na belkach w grze: AI ustępuje fizyce przy styku kadłubów, a ścieżki trafień (wiązka, pocisk) podają
@@ -62,13 +63,52 @@ test('ścieżki trafień gry podają kadłub i źródło stempla mapy ran do app
   // Raymarch heksów (findBeamHexShard) zniknął z gry razem z heksowym destruktorem (etap 8 portu belek).
   assert.doesNotMatch(beam, /findBeamHexShard/);
   assert.doesNotMatch(beam, /for \(let dr = -1; dr <= 1; dr\+\+\)/, 'the fixed 3x3 window is back in the beam raymarch');
-  // Ostatni argument po heksie: źródło stempla mapy ran (broń / pocisk, zadanie 18-C).
-  assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, [^;]*beamHitShard(?:, weapon)?\)/);
+  // Po prędkości wgniecenia: źródło stempla mapy ran (broń, zadanie 18-C).
+  assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, \{ x: dirX \* impactSpeed, y: dirY \* impactSpeed \}, weapon\)/);
   const bullets = html.slice(html.indexOf('function bulletsAndCollisionsStep('));
-  assert.match(bullets, /hullShard = hexSweep\.hitShard/);
+  // Węzeł wejścia ze sweepu po kadłubie — ziarno decyzji rykoszetu (18-B).
+  assert.match(bullets, /hullNode = Number\.isInteger\(hullSweep\.node\) \? hullSweep\.node : -1;/);
   // Zadanie 18-B: krater wejścia z mnożnikiem mechaniki broni (rykoszet × 0,3; reszta arsenału
   // × 1 — obrażenia jak dotąd), encja trafienia jako realHit = hitNPC._realEntity || hitNPC;
-  // po heksie źródło stempla mapy ran (pocisk, 18-C) i wariant (rykoszet / trafienie, 18-B).
+  // po prędkości źródło stempla mapy ran (pocisk, 18-C) i wariant (rykoszet / trafienie, 18-B).
   assert.match(bullets, /const realHit = hitNPC\._realEntity \|\| hitNPC;/);
-  assert.match(bullets, /applyHexImpact\(realHit, hitX, hitY, npcDamage \* entryK\.crater, [^;]*hitHexShard(?:, b(?:,[^;]*)?)?\)/);
+  assert.match(bullets, /applyHexImpact\(realHit, hitX, hitY, npcDamage \* entryK\.crater, _impactRelVel, b,\s*decision === HIT_RICOCHET \? 'ricochet' : 'impact'\)/);
+});
+
+// Argumenty applyHexImpact od 2026-10-19 (bez dawnego `shard`): (encja, x, y, obrażenia, prędkość, źródło stempla,
+// wariant). `null` na szóstym miejscu zostałby po heksie — źródło stempla przesunęłoby się na wariant (krater bez
+// opcji rany, stempel ogólny). To samo dla `applyImpact` w src/game/hullCraters.js (rów przebicia, krater rakiety).
+test('wywołania applyHexImpact: źródło stempla na szóstym miejscu, bez dawnego argumentu shard', async () => {
+  const { lex, loadSource } = await import('../scripts/webgpu/grafGry.mjs');
+  const code = (p) => lex(loadSource(fileURLToPath(new URL(`../${p}`, import.meta.url))).js).codeOnly;
+  // Argumenty wywołań `name(` na zerowym poziomie nawiasów (komentarze i treść napisów wyczyszczone przez lekser).
+  const calls = (src, name) => {
+    const out = [];
+    const re = new RegExp(`(?<!function )\\b${name}\\(`, 'g');
+    for (let m; (m = re.exec(src));) {
+      const args = [];
+      let depth = 0;
+      let from = re.lastIndex;
+      for (let i = from; i < src.length; i++) {
+        const c = src[i];
+        if (c === '(' || c === '[' || c === '{') depth++;
+        else if (c === ')' || c === ']' || c === '}') {
+          if (depth === 0) { args.push(src.slice(from, i).trim()); break; }
+          depth--;
+        } else if (c === ',' && depth === 0) { args.push(src.slice(from, i).trim()); from = i + 1; }
+      }
+      out.push(args);
+    }
+    return out;
+  };
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /function applyHexImpact\(entity, x, y, damage, vel, fxSource = null, fxVariant = 'impact'\)/);
+  const game = calls(code('index.html'), 'applyHexImpact');
+  const craters = calls(code('src/game/hullCraters.js'), 'applyImpact');
+  assert.ok(game.length >= 4 && craters.length >= 2, `znalezione wywołania: gra ${game.length}, hullCraters ${craters.length}`);
+  for (const args of [...game, ...craters]) {
+    const call = args.join(', ').replace(/\s+/g, ' ');
+    assert.ok(args.length >= 5 && args.length <= 7, `${args.length} argumentów: (${call})`);
+    assert.notEqual(args[5], 'null', `null na miejscu źródła stempla: (${call})`);
+  }
 });

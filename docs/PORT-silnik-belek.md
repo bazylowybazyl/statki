@@ -406,8 +406,12 @@ rdzenia `frameOf` (`reactorCoreFrame`). Strażnik: `tests/graBezHeksow.test.mjs`
 i `src/physics/`, kod gry bez heksowych pól i API).
 
 Zostaje celowo — nazwy z czasów heksów, bez heksowej logiki: `hexShips3D.js`, `HexBodyImpostorBatch`, `destructorBeams3D.js`,
-`hideHexVisual`, `applyHexImpact` (argument `shard` zawsze `null`), jednostka strojenia `HEX_PITCH_PX` / `hexPerNode`,
-`liveHexes` w streszczeniu zimnego wraku, `isAsteroidHex: false` w obiekcie wraku `hullBodies.js` (wyjątek strażnika).
+`hideHexVisual`, `applyHexImpact`, jednostka strojenia `HEX_PITCH_PX` / `hexPerNode`, `liveHexes` w streszczeniu zimnego wraku.
+Ostatnie resztki zdjęte tego samego dnia, po scaleniu bazy piratów: argument `shard` ścieżek trafień (dziś
+`applyHexImpact(encja, x, y, obrażenia, prędkość, źródło stempla, wariant)` — wiązka, pocisk, wylot przebicia, bomba,
+rów i krater rakiety w `hullCraters.js`; wynik PD w `pdBeamFastPath.js` bez pola `shard`), `hitShard` wyniku sweepu
+i `isAsteroidHex: false` obu obiektów wraku w `hullBodies.js` — strażnik bez wyjątków, położenie argumentów pilnuje
+`tests/hullHitPaths.test.mjs`.
 
 ## Testy i narzędzia
 
