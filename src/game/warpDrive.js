@@ -195,30 +195,92 @@ export function warpArrivalSpeed(hullLength) {
   return Math.min(R.arriveSpeedMax, Math.max(R.arriveSpeedMin, R.arriveSpeed * L));
 }
 
-/** Czas hamowania [s] z prędkości v0 na drodze WARP_RUSH.brakeDist × L (stałe opóźnienie). */
-export function warpBrakeTime(hullLength, v0) {
+/**
+ * Czas hamowania [s] z prędkości v0 do vEnd na drodze WARP_RUSH.brakeDist × L (stałe opóźnienie). vEnd = 0 —
+ * zatrzymanie (rampa wyjścia gracza); vEnd > 0 — wyjście z pędem NPC (warpExitMomentum).
+ */
+export function warpBrakeTime(hullLength, v0, vEnd = 0) {
   const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
-  return 2 * WARP_RUSH.brakeDist * L / Math.max(1, Number(v0) || 1);
+  const v = Math.max(1, Number(v0) || 1);
+  const ve = Math.max(0, Math.min(v, Number(vEnd) || 0));
+  return 2 * WARP_RUSH.brakeDist * L / (v + ve);
+}
+
+/**
+ * WYJŚCIE Z PĘDEM (2026-10-19, user: „potrzeba prędkości wyjścia z warpa i lecenia à la Star Wars, a nie stania
+ * pasywnego”): gwałtowne hamowanie przylotu NPC (błysk, fala, iskry) kończy się na k × prędkość bojowa klasy
+ * (`maxSpeed`, src/data/shipFlightSpecs.js), nie na zerze. Okręt wraca do gry z tą prędkością wzdłuż kursu, a nadmiar
+ * ścina zwykły model lotu (src/game/flight/shipFlightModel.js): pilot (lot naprzód w trybie bojowym) hamuje z `decel`
+ * — przy nadmiarze mniejszym niż decel · τ pilota (`FLIGHT_PILOT.velocityTau`) słabiej, (v − cap) / τ — a governor
+ * dokłada 0,5 × `decel` (`FLIGHT_PILOT.governorDecelFrac`). Droga ślizgu z k·v do v ≈ (k² − 1)·v² / (2 · 1,5 · decel)
+ * + ogon pilota (k = 3: ~2,8–2,9 km Terra Nova, ~3,5–4 km piraci). Punkt przylotu wezwania to KONIEC ślizgu (tam okręt
+ * ma prędkość bojową), hamowanie kończy się `slide` przed nim. k = 0 — dawne zatrzymanie.
+ */
+export const WARP_EXIT_MOMENTUM = Object.freeze({
+  k: 3,                 // prędkość wyjścia × maxSpeed
+  slideDecelMul: 1.5,   // opóźnienie ślizgu × decel (pilot 1 + governor 0,5)
+  pilotTau: 0.3         // [s] = FLIGHT_PILOT.velocityTau (shipFlightModel.js) — ogon hamowania pilota
+});
+
+/**
+ * Prędkość wyjścia i ślizg okrętu o specyfikacji lotu `spec` ({ maxSpeed, decel } — buildShipFlightSpec):
+ * out.vExit [j/s], out.combat (= maxSpeed), out.slide [j.] — droga od końca hamowania do prędkości bojowej,
+ * out.slideTime [s]. k < 1 — bez ślizgu (wyjście wolniejsze od prędkości bojowej), k = 0 — zatrzymanie.
+ * Ślizg liczony jak w modelu lotu (pilot naprzód w trybie bojowym): nadmiar u = v − maxSpeed maleje z 1,5 · decel,
+ * a poniżej decel · τ — du/dt = −u/τ − 0,5 · decel (do zera w skończonym czasie).
+ */
+export function warpExitMomentum(spec, k = WARP_EXIT_MOMENTUM.k, out = {}) {
+  const M = WARP_EXIT_MOMENTUM;
+  const v = Math.max(0, Number(spec?.maxSpeed) || 0);
+  const D = Math.max(1, Number(spec?.decel) || 1);
+  const kk = Number(k);
+  const vExit = (Number.isFinite(kk) && kk > 0 ? kk : 0) * v;
+  out.vExit = vExit;
+  out.combat = v;
+  out.slide = 0;
+  out.slideTime = 0;
+  if (!(vExit > v)) return out;
+  const tau = M.pilotTau;
+  const gov = (M.slideDecelMul - 1) * D;      // governor [j/s²]
+  const knee = D * tau;                       // poniżej tego nadmiaru pilot hamuje słabiej niż decel
+  const u0 = vExit - v;
+  let d = 0;
+  let t = 0;
+  let u1 = u0;
+  if (u0 > knee) {
+    const a = D * M.slideDecelMul;
+    d = (vExit * vExit - (v + knee) * (v + knee)) / (2 * a);
+    t = (u0 - knee) / a;
+    u1 = knee;
+  }
+  // ogon: u + gov·τ = (u1 + gov·τ)·e^(−t/τ) → 0
+  const g = gov * tau;
+  const t2 = g > 0 ? tau * Math.log((u1 + g) / g) : tau * 6;
+  out.slide = d + v * t2 + tau * u1 - g * t2;
+  out.slideTime = t + t2;
+  return out;
 }
 
 /**
  * Rozpęd przylotu do osi z createWarpArrival (dopisuje pola do `a`): okręt pojawia się
- * `rushDist` za miejscem zatrzymania (a.x, a.y) w chwili tAppear, leci z v0 do tBrake (= dawny
- * wyrzut, tBurst — oś zwiastuna bez zmian), hamuje ze stałym opóźnieniem i staje w tStop.
+ * `rushDist` za końcem hamowania (a.x, a.y) w chwili tAppear, leci z v0 do tBrake (= dawny
+ * wyrzut, tBurst — oś zwiastuna bez zmian), hamuje ze stałym opóźnieniem do vExit i w tStop
+ * wraca do gry (vExit = 0 — staje w a.x, a.y; vExit > 0 — leci dalej z vExit wzdłuż kursu).
  * rush — minimalna droga [× długość kadłuba] (sceny / wezwania dobierają do kadru).
  */
-export function planWarpRush(a, rush = WARP_RUSH.arriveDist) {
+export function planWarpRush(a, rush = WARP_RUSH.arriveDist, vExit = 0) {
   const L = a.hullLength;
   const R = WARP_RUSH;
   a.v0 = warpArrivalSpeed(L);
+  a.vExit = Math.max(0, Math.min(a.v0, Number(vExit) || 0));
   const brakeDist = L * R.brakeDist;
   a.rushDist = Math.max(L * Math.max(0.6, Number(rush) || R.arriveDist), R.arriveMin, brakeDist + a.v0 * R.arriveCoast);
-  a.brake = warpBrakeTime(L, a.v0);
+  a.brake = warpBrakeTime(L, a.v0, a.vExit);
   a.coast = (a.rushDist - brakeDist) / a.v0;
   a.tBrake = a.tBurst;
   a.tAppear = a.tBrake - a.coast;
   a.tStop = a.tBrake + a.brake;
-  // Miejsce pojawienia się (świat): cel − droga rozpędu wzdłuż kursu.
+  // Miejsce pojawienia się (świat): koniec hamowania − droga rozpędu wzdłuż kursu.
   a.x0 = a.x - a.dirX * a.rushDist;
   a.y0 = a.y - a.dirY * a.rushDist;
   if (!(a.tEnd > a.tStop + 1.5)) a.tEnd = a.tStop + 1.5;
@@ -227,8 +289,8 @@ export function planWarpRush(a, rush = WARP_RUSH.arriveDist) {
 
 /**
  * Próbka rozpędu przylotu: out.along — droga od miejsca pojawienia się, out.speed [j/s] wzdłuż
- * kursu, out.off — położenie względem miejsca zatrzymania (≤ 0), out.appeared, out.tb — czas od
- * początku hamowania (< 0: jeszcze leci).
+ * kursu, out.off — położenie względem końca hamowania (≤ 0 do tStop; po nim vExit · czas), out.appeared,
+ * out.tb — czas od początku hamowania (< 0: jeszcze leci).
  */
 export function sampleWarpRush(a, t, out = {}) {
   const tau = t - a.tAppear;
@@ -236,9 +298,15 @@ export function sampleWarpRush(a, t, out = {}) {
   let speed = 0;
   if (tau >= 0) {
     const tb = tau - a.coast;
+    const vE = a.vExit > 0 ? a.vExit : 0;
     if (tb < 0) { along = a.v0 * tau; speed = a.v0; }
-    else if (tb < a.brake) { along = a.v0 * a.coast + a.v0 * tb - a.v0 * tb * tb / (2 * a.brake); speed = a.v0 * (1 - tb / a.brake); }
-    else along = a.rushDist;
+    else if (tb < a.brake) {
+      along = a.v0 * a.coast + a.v0 * tb - (a.v0 - vE) * tb * tb / (2 * a.brake);
+      speed = a.v0 - (a.v0 - vE) * tb / a.brake;
+    } else {
+      along = a.rushDist + vE * (tb - a.brake);
+      speed = vE;
+    }
   }
   out.appeared = tau >= 0;
   out.along = along;
@@ -487,8 +555,10 @@ export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EX
  * Plan przylotu floty (wezwanie, zasadzka): zwiastuny startują razem,
  * a wyrzuty idą po kolei od najmniejszego okrętu; największy (okręt
  * flagowy) wychodzi ostatni, z dodatkową pauzą — kulminacja.
+ * FALE (waveGap > 0, scena „Wojna”): okręt o kadłubie dłuższym niż poprzedni o więcej niż `waveStep` (nowa klasa)
+ * wychodzi dodatkowo `waveGap` s później — flota wypada z warpa falami klas.
  * @param {Array<{hullLength:number}>} ships
- * @param {object} [o] { startTime, gap, flagshipPause, jitter, rng }
+ * @param {object} [o] { startTime, gap, flagshipPause, jitter, rng, waveGap, waveStep }
  * @returns {Array<{index:number, startTime:number, heraldExtra:number, burstTime:number}>}
  *   w kolejności wejścia `ships`.
  */
@@ -498,6 +568,8 @@ export function planWarpFleetArrival(ships, o = {}) {
   const gap = Number.isFinite(o.gap) ? o.gap : 0.18;
   const flagshipPause = Number.isFinite(o.flagshipPause) ? o.flagshipPause : 0.45;
   const jitter = Number.isFinite(o.jitter) ? o.jitter : 0.25;
+  const waveGap = Number.isFinite(o.waveGap) ? Math.max(0, o.waveGap) : 0;
+  const waveStep = Number.isFinite(o.waveStep) ? o.waveStep : 1.15;
   const rng = typeof o.rng === 'function' ? o.rng : Math.random;
   const plan = list.map((s, index) => {
     const probe = createWarpArrival({ hullLength: s?.hullLength, startTime });
@@ -510,8 +582,9 @@ export function planWarpFleetArrival(ships, o = {}) {
   for (let k = 0; k < order.length; k++) {
     const p = order[k];
     const isFlagship = k === order.length - 1 && order.length > 1;
-    let burst = Math.max(p.natural, prev + gap);
-    if (isFlagship) burst = Math.max(p.natural, prev + gap + flagshipPause);
+    const wave = waveGap > 0 && k > 0 && p.hullLength > order[k - 1].hullLength * waveStep ? waveGap : 0;
+    let burst = Math.max(p.natural, prev + gap + wave);
+    if (isFlagship) burst = Math.max(p.natural, prev + gap + wave + flagshipPause);
     p.burstTime = burst;
     p.heraldExtra = burst - p.natural;
     prev = burst;

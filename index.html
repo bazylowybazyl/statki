@@ -893,7 +893,7 @@
       npcHasPhysicalThrusters,
       syncNpcFlightState
     } from "./src/game/flight/npcFlight.js";
-    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
+    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel, buildShipFlightSpec, resolveShipFlightSpec } from "./src/game/flight/shipFlightModel.js";
     import {
       createNpcCollisionBody,
       loadNpcCollisionBody,
@@ -901,7 +901,8 @@
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
-    import { describeFleetFormation, getFleetPhase } from "./src/ai/fleetCoordinator.js";
+    import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
+    import { WAR_SCENE_DEFAULTS, planWarScene } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
     import { capitalCommandFreePoint, capitalCommandSeparate, capitalCommandSteer } from "./src/ai/capitalAI.js";
@@ -1546,7 +1547,7 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor } from "./src/game/warpDrive.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
@@ -3676,10 +3677,10 @@
       // Zaznacz, że ten NPC należy do skrzydła wsparcia
       npc.isSupportWing = true;
 
-      // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione)
-      const order = (typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order)
-        ? SupportWing.order
-        : 'guard';
+      // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione); NATARCIE narzucone stronie
+      // (scena „Wojna”: setFleetStanceOverride) liczy się jak ATAK.
+      const order = window.fleetStanceOverride?.('friendly') ? 'engage'
+        : ((typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order) ? SupportWing.order : 'guard');
 
       npc.supportOrder = order; // przyda się w fighter AI
 
@@ -8935,7 +8936,7 @@
       if (templateKey === 'megafreighter' && opts.singleModule !== true) {
         return spawnMegafreighterTrain({ ...opts, mode });
       }
-      if (templateKey === 'carrier' && mode === 'friendly') {
+      if (templateKey === 'carrier' && mode === 'friendly' && !opts.extraCarrier) {
         const existing = getFriendlyCarrierEntity();
         if (existing) return existing;
       }
@@ -9064,7 +9065,9 @@
         length: size.w,
         width: size.h,
         pirate: isPirate,
-        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta')
+        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta'),
+        // id kadłuba tabeli lotu (wyjście z pędem: prędkość bojowa i hamowanie klasy) — null poza tabelą
+        flightSpec: buildShipFlightSpec(profileId)
       };
     }
 
@@ -9090,6 +9093,24 @@
     installWarpTrafficCommands(RenderCommands.reader, WarpNurt, (slot) => warpTraffic.recordAt(slot));
     window.WarpTraffic = warpTraffic;
 
+    // WYJŚCIE Z PĘDEM (2026-10-19, scena „Wojna”, src/game/warpDrive.js: warpExitMomentum): przylot NPC hamuje do
+    // k × prędkość bojowa klasy i wraca do gry z tym pędem wzdłuż kursu (ślizg ~3–4 km ścina model lotu); punkt
+    // przylotu = koniec ślizgu. k = 0 — dawne zatrzymanie (A/B: `?pedNpc=0`, konsola `WarpExitTune.k`). Bez pędu:
+    // myśliwce, holownik serwisowy (przylot do burty statku), kadłuby spoza tabeli lotu (megafrachtowiec).
+    const WarpExitTune = { k: new URLSearchParams(location.search).get('pedNpc') === '0' ? 0 : WARP_EXIT_MOMENTUM.k };
+    window.WarpExitTune = WarpExitTune;
+    function warpExitMomentumOfSpec(spec, k = WarpExitTune.k) {
+      if (!spec || !(Number(k) > 0)) return null;
+      const m = warpExitMomentum(spec, k);
+      return m.vExit > 0 ? m : null;
+    }
+    // Przylot „teraz” (warpTraffic.arrive): specyfikacja lotu encji.
+    function npcWarpExitMomentum(e) {
+      if (!e || e.fighter || e.isFighter || e.serviceTug || e.towTrainChild) return null;
+      return warpExitMomentumOfSpec(resolveShipFlightSpec(e));
+    }
+    warpTraffic.momentum = npcWarpExitMomentum;
+
     const supportCallIns = createSupportWarpCallIns({
       warp: warpTraffic,
       spawn: (req) => {
@@ -9112,7 +9133,8 @@
       if (key === 'service_tug' && !opts.__tugCall) return callServiceTug(opts);
       const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
       // Lotniskowiec Terra Novy jest jeden: kolejne wezwanie oddaje istniejący (spawnCapitalCallIn).
-      if (key === 'carrier' && mode === 'friendly' && getFriendlyCarrierEntity()) {
+      // (scena „Wojna” — opts.extraCarrier: kilka lotniskowców we flocie A)
+      if (key === 'carrier' && mode === 'friendly' && !opts.extraCarrier && getFriendlyCarrierEntity()) {
         return { planned: false, eta: 0, existing: true };
       }
       const pos = opts.spawnPos || opts.pos || null;
@@ -9126,9 +9148,16 @@
         // Nić zwiastuna zaczyna się w miejscu startu, gdy to jest bliżej niż zasięg nici (60 tys. j.).
         const homeDist = from ? Math.hypot(pos.x - from.x, pos.y - from.y) - (Number(from.r) || 0) : Infinity;
         const at = { x: pos.x, y: pos.y };
+        // Wyjście z pędem (punkt upuszczenia = koniec ślizgu); opts.exitK — k tego wezwania (0 — zatrzymanie).
+        // Holownik podpływa do burty statku — staje jak dawniej.
+        const exit = key === 'service_tug' ? null
+          : warpExitMomentumOfSpec(hull.flightSpec, Number.isFinite(opts.exitK) ? opts.exitK : WarpExitTune.k);
         const rec = supportCallIns.request({
           x: at.x, y: at.y, angle, hullLength: hull.length, hullWidth: hull.width,
           palette: hull.palette, pirate: hull.pirate, heraldReach: homeDist,
+          exitSpeed: exit ? exit.vExit : undefined, slide: exit ? exit.slide : undefined,
+          // plan floty (scena „Wojna”: planWarpFleetArrival) i wygląd zwiastuna
+          delay: opts.warpDelay, heraldExtra: opts.warpHeraldExtra, heraldStyle: opts.heraldStyle,
           key, opts: { ...opts, mode, spawnPos: at, pos: at, angle, spawnAngle: angle }
         });
         if (rec) return { planned: true, eta: Math.max(0, rec.fx.tBurst - warpTraffic.time), from: hull.pirate ? 'belt' : 'earth' };
@@ -9242,6 +9271,7 @@
     // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — potem krok rejestru ruchu warpa
     // (warpTraffic.step) przesuwa zegar tej klatki o `dt` (dt gry: 0 w pauzie i przy zamrożonym świecie fabuły).
     function stepSupportWarp(dt) {
+      stepWarScene(dt);
       supportCallIns.flush(dt);
       supportReturn.step(dt, dt);
       storyWarpOut.step(dt, dt);
@@ -11854,12 +11884,251 @@
         camera: { x: Math.round(camera.x), y: Math.round(camera.y), zoom: camera.zoom }
       })
     };
+    // === SCENA „WOJNA” (DevScene.wojna — src/game/warScene.js, 2026-10-19) ===
+    // User: „dużo statków jak battle over Coruscant: wychodzą z warpa jednostki i naprzeciwko nich po chwili też
+    // wychodzą z warpa jednostki, obydwa się o siebie rozbijają; prędkość wyjścia z warpa i lecenie à la Star Wars”.
+    // Flota A (Terra Nova) i B (piraci) przylatują wezwaniami (callInSupport → warpTraffic: zwiastuny, fale klas,
+    // wyjście z pędem — punkt przylotu = koniec ślizgu), obie strony w postawie NATARCIA (setFleetStanceOverride:
+    // marsz bez stania, przeloty burtą w burtę i nawroty — capitalAI.js `chargeRun`). Tło: tarcza Jowisza / Marsa —
+    // bitwa NAD tarczą (planeta w 2D nie koliduje; cała scena wewnątrz płyty ringu, po stronie słońca), Atlas — widz
+    // z boku albo w szyku A. Kamera: reżyser kadru dostaje sygnał tego, co się dzieje — przylot A, przylot B, potem
+    // środek bitwy (obie floty naraz nie mieszczą się w kadrze gry przy 25 km). Krok w czasie gry (stepSupportWarp —
+    // przed wezwaniami): start floty B po `gapB` s, pomiar ślizgu (od zwolnienia z tunelu do prędkości bojowej
+    // ≤ 1,03 maxSpeed) — DevScene.wojnaState().
+    const WarScene = { active: false, t: 0, plan: null, launched: { A: false, B: false }, tracked: [], calls: [] };
+    window.WarScene = WarScene;
+
+    function warSceneHull(key, mode) {
+      const h = estimateCallInHull(key, mode);
+      return h ? { length: h.length, width: h.width } : null;
+    }
+
+    function startWarScene(opts = {}) {
+      stopWarScene({ clear: false });
+      const o = { ...WAR_SCENE_DEFAULTS, ...opts };
+      // Czysty stół: okręty misji (skrzydło, piraci, wezwania) znikają bez wraków; kolejka wezwań i ruch warpa od zera.
+      if (o.clear !== false) {
+        for (const n of npcs.slice()) if (n && !n.dead && n.mission && !n.isStation) dematerializeSupportUnit(n);
+        supportCallIns.clear();
+        warpTraffic.clear();
+      }
+      const planet = planets.find((p) => p?.id === o.backdrop) || planets.find((p) => p?.id === 'jupiter')
+        || planets.find((p) => p?.id === 'mars') || planets[0];
+      // Bitwa poziomo w kadrze (oś A → B wzdłuż x świata) NAD tarczą planety, po stronie słońca (oświetlona półkula);
+      // Atlas-widz dalej od środka planety. Promień tarczy i wewnętrzny brzeg płyty ringu — z kolidera gry
+      // (src/game/haloRingWorld.js), nie z modułów obrazu; scena (klin ± ślizg) zostaje wewnątrz płyty.
+      const ringCol = haloRingKey(planet) ? haloWorld?.entry(haloRingKey(planet))?.collider : null;
+      const discR = Number(ringCol?.layout?.planetRadius) || Number(planet.r) || 0;
+      const ringInner = Number(ringCol?.layout?.radii?.min) || 0;
+      const ringOuter = ringCol ? Math.max(Number(ringCol.wallsOuter) || 0, Number(ringCol.layout?.radii?.max) || 0) : 0;
+      // środek bitwy od środka tarczy w stronę Słońca (dzienna półkula pod całą sceną), widz dalej w osi y
+      const sunDx = SUN.x - planet.x;
+      const sunDy = SUN.y - planet.y;
+      const sunD = Math.hypot(sunDx, sunDy) || 1;
+      const side = sunDy >= 0 ? 1 : -1;
+      const over = Number.isFinite(o.overPlanet) ? o.overPlanet : 0.35;
+      const center = { x: planet.x + (sunDx / sunD) * discR * over, y: planet.y + (sunDy / sunD) * discR * over };
+      const plan = planWarScene(o, center, 0, warSceneHull);
+      plan.planet = { id: planet.id, x: planet.x, y: planet.y, r: discR, ringInner, ringOuter, side };
+      WarScene.plan = plan;
+      WarScene.opts = o;
+      WarScene.t = 0;
+      WarScene.launched = { A: false, B: false };
+      WarScene.tracked = [];
+      WarScene.calls = [];
+      WarScene.active = true;
+      // Atlas: widz z boku (dalej od planety, dziobem na bitwę) albo w szyku A (za flagowcem, z boku klina).
+      const A = plan.fleets.A;
+      let px;
+      let py;
+      let heading;
+      if (o.atlas === 'fleet') {
+        px = A.apex.x - Math.cos(A.heading) * 3500 + Math.sin(A.heading) * 4000;
+        py = A.apex.y - Math.sin(A.heading) * 3500 - Math.cos(A.heading) * 4000;
+        heading = A.heading;
+      } else {
+        px = center.x;
+        py = center.y + side * (Number(o.sideOffset) || 9000);
+        heading = Math.atan2(-side, 0);
+      }
+      if (warp.state !== 'idle') { warp.state = 'idle'; exitWarp({ abrupt: true }); }
+      warp.exitRamp = null;
+      if (typeof cancelTravel === 'function') cancelTravel(null);
+      ship.pos.x = px; ship.pos.y = py; ship.vel.x = 0; ship.vel.y = 0; ship.angle = heading; ship.angVel = 0;
+      camera.mode = 'ship';
+      camera.transition = null;
+      camera.x = camera.targetX = px;
+      camera.y = camera.targetY = py;
+      prevCameraState.x = px;
+      prevCameraState.y = py;
+      // Kadr gracza ~kadru jednej floty; reżyser kadru oddala go (do ~45 km) i przesuwa na sygnał tego, co się dzieje.
+      const spanW = Number(o.viewWidth) || 24000;
+      camera.manualZoom = true;
+      camera.zoom = camera.targetZoom = camera.zoomBase = clamp(W / spanW, camera.minZoom, camera.maxZoom);
+      camera.zoomVel = 0;
+      camera.zoomImpulseLog = 0;
+      // Reżyser kadru może oddalić do granicy zoomu gry (~45 km): podłoga „kadłub ≥ 6% kadru” trzymała kadr przy
+      // Atlasie na 30 km — przylot floty 25 km dalej wypadał za brzeg. Przywraca wojnaStop.
+      if (WarScene.prevMinShipFrac == null) WarScene.prevMinShipFrac = cameraDirectorTune.minShipFrac;
+      cameraDirectorTune.minShipFrac = Number(o.minShipFrac) || 0.03;
+      // Natarcie obu stron (bez smyczy ESKORTY, marsz bez stania, przeloty).
+      setFleetStanceOverride('friendly', 'charge');
+      setFleetStanceOverride('pirate', 'charge');
+      return {
+        center, planet: plan.planet, atlas: { x: px, y: py },
+        fleets: Object.fromEntries(['A', 'B'].map((k) => [k, {
+          start: plan.fleets[k].start, count: plan.fleets[k].ships.length, apex: plan.fleets[k].apex,
+          heading: plan.fleets[k].heading,
+          bursts: plan.fleets[k].ships.map((sh) => ({ key: sh.key, burst: +(plan.fleets[k].start + sh.burst).toFixed(2) }))
+        }]))
+      };
+    }
+
+    // Wezwania floty: każdy okręt z planu (punkt przylotu, start tunelu za flotą, plan fali, k, styl zwiastuna).
+    function launchWarFleet(fleet) {
+      const o = WarScene.opts;
+      for (const sh of fleet.ships) {
+        const res = callInSupport(sh.key, {
+          mode: sh.mode, spawnPos: { x: sh.x, y: sh.y }, origin: fleet.origin,
+          warpDelay: sh.delay, warpHeraldExtra: sh.heraldExtra, heraldStyle: o.heraldStyle, exitK: o.k,
+          extraCarrier: true,
+          onSpawned: (list) => trackWarSceneShips(list, sh, fleet.side)
+        });
+        WarScene.calls.push({ side: fleet.side, key: sh.key, planned: !!res?.planned, eta: res?.eta ?? null });
+      }
+    }
+
+    function trackWarSceneShips(list, sh, side) {
+      for (const e of list) {
+        if (!e || e.dead || e.fighter) continue;
+        e.__warScene = side;
+        WarScene.tracked.push({
+          e, side, key: sh.key, px: sh.x, py: sh.y, spawnT: WarScene.t, ghost: false,
+          releaseT: NaN, rx: NaN, ry: NaN, vExit: NaN, slide: NaN, slideT: NaN, endErr: NaN
+        });
+      }
+    }
+
+    // Środek i rozrzut żywych okrętów strony (side null — obu; sygnał kamery w walce) albo punktów przylotu strony
+    // (przed przylotem).
+    const _warCue = { x: 0, y: 0, r: 0, n: 0 };
+    function warSceneFleetCue(side) {
+      let sx = 0, sy = 0, n = 0;
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if ((side && tr.side !== side) || !e || e.dead || e.isCollidable === false) continue;
+        sx += e.x; sy += e.y; n++;
+      }
+      if (n === 0) {
+        if (!side) { _warCue.n = 0; return _warCue; }
+        const f = WarScene.plan.fleets[side];
+        for (const sh of f.ships) { sx += sh.x; sy += sh.y; n++; }
+        _warCue.x = sx / n; _warCue.y = sy / n;
+        let r = 0;
+        for (const sh of f.ships) r = Math.max(r, Math.hypot(sh.x - _warCue.x, sh.y - _warCue.y) + sh.length * 0.5);
+        _warCue.r = r; _warCue.n = 0;
+        return _warCue;
+      }
+      _warCue.x = sx / n; _warCue.y = sy / n; _warCue.n = n;
+      // promień: 80% okrętów (pojedyncze maruderki nie oddalają kadru), najwyżej pół odległości flot
+      const ds = [];
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if ((side && tr.side !== side) || !e || e.dead || e.isCollidable === false) continue;
+        ds.push(Math.hypot(e.x - _warCue.x, e.y - _warCue.y));
+      }
+      ds.sort((a, b) => a - b);
+      _warCue.r = Math.min(WarScene.opts.distance * 0.5, (ds[Math.floor(ds.length * 0.8)] || 0) + 1500);
+      return _warCue;
+    }
+
+    function stepWarScene(dt) {
+      if (!WarScene.active) return;
+      const h = Math.max(0, Number(dt) || 0);
+      WarScene.t += h;
+      const plan = WarScene.plan;
+      for (const side of ['A', 'B']) {
+        if (!WarScene.launched[side] && WarScene.t >= plan.fleets[side].start) {
+          WarScene.launched[side] = true;
+          launchWarFleet(plan.fleets[side]);
+        }
+      }
+      // Pomiar ślizgu: duch w tunelu → zwolnienie (prędkość wyjścia) → prędkość bojowa (≤ 1,03 maxSpeed).
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if (!e || e.dead) continue;
+        if (e.isCollidable === false) { tr.ghost = true; continue; }
+        if (!tr.ghost) continue;
+        const sp = Math.hypot(e.vx || 0, e.vy || 0);
+        if (!Number.isFinite(tr.releaseT)) {
+          tr.releaseT = WarScene.t; tr.rx = e.x; tr.ry = e.y; tr.vExit = sp;
+        } else if (!Number.isFinite(tr.slide)) {
+          const spec = resolveShipFlightSpec(e);
+          if (spec && sp <= spec.maxSpeed * 1.03) {
+            tr.slide = Math.hypot(e.x - tr.rx, e.y - tr.ry);
+            tr.slideT = WarScene.t - tr.releaseT;
+            tr.endErr = Math.hypot(e.x - tr.px, e.y - tr.py);
+          }
+        }
+      }
+      // Kamera (reżyser kadru mieści sygnał i Atlasa): przylot A, od startu B — przylot B (do 2 s po ostatnim wyjściu),
+      // potem środek bitwy (wszystkie żywe okręty, promień 80% z nich).
+      if (camera.mode === 'ship') {
+        const B = plan.fleets.B;
+        const bEnd = B.start + B.ships.reduce((m, sh) => Math.max(m, sh.burst), 0) + 2;
+        if (WarScene.t < B.start) {
+          const c = warSceneFleetCue('A');
+          noteCameraDirectorCue(cameraDirector, 'wojna-A', c.x, c.y, c.r, 2, 0.6);
+        } else if (WarScene.t < bEnd) {
+          const c = warSceneFleetCue('B');
+          noteCameraDirectorCue(cameraDirector, 'wojna-B', c.x, c.y, c.r, 2, 0.6);
+        } else {
+          const c = warSceneFleetCue(null);
+          if (c.n > 0) noteCameraDirectorCue(cameraDirector, 'wojna', c.x, c.y, c.r, 2, 0.6);
+        }
+      }
+    }
+
+    function stopWarScene({ clear = false } = {}) {
+      if (!WarScene.active && !clear) return false;
+      WarScene.active = false;
+      setFleetStanceOverride('friendly', null);
+      setFleetStanceOverride('pirate', null);
+      camera.manualZoom = false;
+      if (WarScene.prevMinShipFrac != null) { cameraDirectorTune.minShipFrac = WarScene.prevMinShipFrac; WarScene.prevMinShipFrac = null; }
+      if (clear) for (const tr of WarScene.tracked) if (tr.e && !tr.e.dead) dematerializeSupportUnit(tr.e);
+      return true;
+    }
+
+    // Stan sceny i pomiary (harness: scripts/webgpu/wojna-gra.mjs).
+    function warSceneState() {
+      const per = (side) => {
+        const list = WarScene.tracked.filter((tr) => tr.side === side);
+        const alive = list.filter((tr) => tr.e && !tr.e.dead).length;
+        const slides = list.filter((tr) => Number.isFinite(tr.slide)).map((tr) => ({
+          key: tr.key, vExit: Math.round(tr.vExit), slide: Math.round(tr.slide), t: +tr.slideT.toFixed(2),
+          endErr: Math.round(tr.endErr)
+        }));
+        return { spawned: list.length, alive, released: list.filter((tr) => Number.isFinite(tr.releaseT)).length, slides };
+      };
+      return {
+        active: WarScene.active, t: +WarScene.t.toFixed(2), launched: { ...WarScene.launched },
+        A: per('A'), B: per('B'), calls: WarScene.calls.length, planned: WarScene.calls.filter((c) => c.planned).length
+      };
+    }
+
     // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
     // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
     if (new URLSearchParams(location.search).has('dev')) {
       window.DevScene = Object.assign(window.DevScene || {}, {
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
+        // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
+        // opts: countA, countB, k, distance, gapB, heraldStyle ('thread' | 'ripple' | 'none'), backdrop ('jupiter' |
+        // 'mars'), atlas ('side' | 'fleet'), seed, clear. Zwraca plan (środek, floty, czasy wyjść).
+        wojna(opts = {}) { return startWarScene(opts); },
+        wojnaStop(clear = false) { return stopWarScene({ clear }); },
+        wojnaState() { return warSceneState(); },
         teleport(x, y, heading = ship.angle) {
           ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
           if (Number.isFinite(heading)) ship.angle = heading;
@@ -23715,8 +23984,14 @@
             if (dist < npc.warpData.brakingDist) {
               npc.state = 'engage_formation';
               npc.isCollidable = true;
-              npc.vx *= 0.1;
-              npc.vy *= 0.1;
+              // Wyjście z pędem (WarpExitTune): dalej z k × prędkość bojowa wzdłuż kursu (nadmiar ścina model lotu);
+              // bez pędu (k = 0, kadłub spoza tabeli lotu) — dawne 10% prędkości warpa.
+              const exitMom = npcWarpExitMomentum(npc);
+              const vIn = Math.hypot(npc.vx, npc.vy) || 1;
+              const vOut = exitMom ? Math.min(vIn, exitMom.vExit) : vIn * 0.1;
+              npc.vx *= vOut / vIn;
+              npc.vy *= vOut / vIn;
+              if (exitMom) npc.__warpExitSlide = true;
               // Przylot widać w warpie „Nurt” (WarpNurt: wyrzut z tunelu w chwili warp-in) — dawny
               // czerwony pierścień 2D i smuga cząstek usunięte w zadaniu 22.
               if (npc.type === 'battleship') camera.addShake(8, 0.4);
