@@ -220,6 +220,8 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   uuid się nie powtarza. Strażnik `tests/tslUuid.test.mjs` (`TSL_UUID_BEZ_LATY=1` — przypadki skażenia padają), A/B
   w przeglądarce `node scripts/webgpu/tsl-uuid-gra.mjs [--tryb demo|gra] [--naprawa 0] [--czekaj 0]`.
 
+- **Pułapka r183 z bitwy w głębi (2026-10-19):** (39) zagnieżdżone `select` POZA `Fn` (np. w `positionNode` złożonym z wyrażeń) budują się jako if / else, a węzeł wspólny dla dwóch gałęzi (szerokość kwadu użyta i w billboardzie, i w kwadzie kierunkowym; `modelViewMatrix` pierwszy raz potrzebny w jednej gałęzi) dostaje wartość tylko w gałęzi, w której zbudował się pierwszy — druga czyta zmienną nieprzypisaną, BEZ błędu (smugi i wiązki bitwy w głębi miały zerową szerokość, błyski z tego samego pierścienia się rysowały). Wierzchołki z rozgałęzieniami: `Fn` z jawnymi zmiennymi przypisanymi przed rozgałęzieniem (`const w = float(0).toVar(); w.assign(…)`), varyingi przez `varyingProperty(…).assign(…)`, wybór rodzaju mnożeniem przez maski 0 / 1 (`step`) zamiast `select` — wzór `buildEventGraph` (`src/3d/warBackdrop/warBackdropTSL.js`). Sprawdzanie: WGSL z Node (wzór w `tests/warBackdrop.test.mjs`) — zmienna przypisana w jednej gałęzi `if`, czytana poza nią.
+
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 
 - **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):

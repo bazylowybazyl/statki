@@ -12,10 +12,21 @@
 //   potem   — obie strony w postawie NATARCIA (fleetAwareness.setFleetStanceOverride: marsz bez stania, w walce przeloty
 //             burtą w burtę i nawroty — capitalAI.js `chargeRun`), myśliwce z lotniskowców, przenikanie linii.
 // Punkty przylotu to KOŃCE ślizgu; kursy przylotu: A od strony swojego tyłu, B od swojego (start tunelu daleko za flotą).
-// Ten moduł jest czysty (bez DOM, three i gry): skład flot, klin, plan fal. Wezwania (callInSupport → warpTraffic),
-// kamerę (reżyser kadru — sygnały obu flot), tło (tarcza planety) i Atlasa stawia klej w index.html.
+//
+// BITWA W GŁĘBI (2026-10-19, user: „bitwa o Coruscant = masa statków na wielu płaszczyznach; planeta znacznie niżej
+// niż płaszczyzna gry; statki poza zasięgiem gracza duże blisko kamery — inny Atlas wali serię w battleshipa i go
+// niszczy; wylot z warpa Atlasa i supercapitala piratów, którzy niszczą się obaj; kinematografia”): scena stoi
+// w pustej przestrzeni między orbitami olbrzymów (`backdrop: 'deep'`), a obraz (src/3d/warBackdrop/) dokłada tłum
+// okrętów w pasmach nad i pod płaszczyzną, planetę ~200 km pod nią (terminator pod środkiem bitwy) i BOHATERÓW —
+// `planWarBackdrop` układa sceny bohaterów (kombo Atlasa, pojedynek z warpa) i UJĘCIA kamery (szeroki kadr, kadry
+// bohaterów prowadzone `heroFocus`, znów szeroki). Bohaterowie i tłum to wyłącznie obraz (zasada żelazna 1).
+//
+// Ten moduł jest czysty (bez DOM, three i gry): skład flot, klin, plan fal, plan obrazu i kamery. Wezwania
+// (callInSupport → warpTraffic), kamerę (reżyser kadru, ujęcia fabuły), miejsce sceny i Atlasa stawia klej w index.html.
 
 import { planWarpFleetArrival } from './warpDrive.js';
+import { WB_HERO, WB_PLANET_DEFAULTS, planWarHero } from '../render/warBackdropPlan.js';
+import { WB_PLANET_MAPS } from '../render/blocks/warBackdropBlock.js';
 
 export const WAR_SCENE_DEFAULTS = Object.freeze({
   countA: 20,            // okrętów floty A (Terra Nova)
@@ -24,7 +35,14 @@ export const WAR_SCENE_DEFAULTS = Object.freeze({
   distance: 25000,       // [j.] odległość wierzchołków klinów (punkty przylotu — końce ślizgu)
   gapB: 6,               // [s] start zwiastunów floty B po starcie zwiastunów floty A
   heraldStyle: 'thread', // zwiastun: 'thread' (nić), 'ripple' (drganie przestrzeni), 'none'
-  backdrop: 'jupiter',   // tarcza planety w tle: 'jupiter' | 'mars' (bitwa nad tarczą, wewnątrz płyty ringu)
+  backdrop: 'deep',      // 'deep' — pusta przestrzeń, bitwa w głębi i planeta pod płaszczyzną; 'jupiter' | 'mars' — dawne
+                         // tło: tarcza planety gry (bitwa nad tarczą, wewnątrz płyty ringu, bez planety w głębi)
+  deepRadius: 2.76e6,    // [j.] odległość sceny 'deep' od Słońca (między orbitami Jowisza i Saturna)
+  planetMaps: 'venus',   // mapy planety w głębi (WB_PLANET_MAPS: 'venus' — planeta fabryk ze światłami miast)
+  density: 1,            // gęstość tłumu w głębi (mnożnik liczby okrętów)
+  prewarm: 18,           // [s] rozbieg tłumu (bitwa w głębi trwa, zanim scena się zacznie)
+  heroes: true,          // sceny bohaterów (kombo Atlasa, pojedynek z warpa)
+  cinema: true,          // ujęcia kamery (szeroki kadr, kadry bohaterów) — false: sam reżyser kadru
   overPlanet: 0.35,      // środek bitwy od środka tarczy × jej promień (po stronie słońca — przylot A nad dzienną półkulą)
   atlas: 'side',         // Atlas gracza: 'side' — widz z boku, 'fleet' — w szyku floty A
   sideOffset: 8000,      // [j.] widz z boku: odległość od osi bitwy (dalej od środka planety)
@@ -182,4 +200,104 @@ export function planWarScene(opts = {}, center = { x: 0, y: 0 }, axis = 0, hull 
     };
   }
   return { opts: o, center: { x: center.x, y: center.y }, axis, dir, perp, fleets };
+}
+
+// ── BITWA W GŁĘBI: miejsce, planeta, bohaterowie, ujęcia ────────────────────────────────────────────────────────────
+
+/** Wysokość kamery z góry [j.] dla kadru o wysokości `viewHeight` w płaszczyźnie gry (Core3D: FOV 35°). */
+export function topCameraHeight(viewHeight) {
+  return (Number(viewHeight) || 0) * 0.5 / Math.tan((17.5 * Math.PI) / 180);
+}
+
+/**
+ * Miejsce sceny 'deep': punkt na okręgu `radius` wokół Słońca najdalej od ciał (planety, małe ciała — { x, y, r }).
+ * Kąty kandydatów: najpierw ±90° od osi x (Słońce w pionie kadru → planeta w głębi z boku, terminator poziomo),
+ * potem co 15°; wygrywa pierwszy z odstępem ≥ `clear` od każdego ciała, inaczej ten z największym odstępem.
+ */
+export function pickDeepSpot(sun, bodies, radius = WAR_SCENE_DEFAULTS.deepRadius, clear = 700000) {
+  const cand = [Math.PI / 2, -Math.PI / 2];
+  for (let k = 0; k < 24; k++) {
+    const a = (k * Math.PI) / 12;
+    if (Math.abs(Math.sin(a)) < 0.999) cand.push(a);
+  }
+  let best = null;
+  let bestD = -Infinity;
+  for (const a of cand) {
+    const x = (Number(sun?.x) || 0) + Math.cos(a) * radius;
+    const y = (Number(sun?.y) || 0) + Math.sin(a) * radius;
+    let d = Infinity;
+    for (const b of bodies || []) {
+      if (!b) continue;
+      d = Math.min(d, Math.hypot(x - b.x, y - b.y) - (Number(b.r) || 0));
+    }
+    if (d >= clear) return { x, y, angle: a, clearance: d };
+    if (d > bestD) { bestD = d; best = { x, y, angle: a, clearance: d }; }
+  }
+  return best;
+}
+
+/** Sceny bohaterów (czas sceny, punkt kulminacji w osi bitwy: along — ku piratom, across — od widza, kadr [j.]). */
+export const WAR_SCENE_BEATS = Object.freeze([
+  Object.freeze({ kind: 'combo', t0: 13, along: -3000, across: -9000, heading: Math.PI + 0.25, view: 9500, viewMax: 15000, fit: 1.9, seed: 3 }),
+  Object.freeze({ kind: 'duel', t0: 34, along: 3500, across: -7000, heading: 0.12, view: 10500, viewMax: 18000, fit: 1.75, seed: 6 })
+]);
+
+/**
+ * Plan obrazu i kamery sceny. o — opcje (WAR_SCENE_DEFAULTS), center — środek bitwy, axis — oś A → B, sun — Słońce
+ * ({ x, y }), side — strona widza względem osi (+1 / −1: Atlas gracza na center + perp · side · sideOffset).
+ * Zwraca { backdrop (pola bloku warBackdrop bez czasu), heroes: [{ params, plan, beat }], shots: [ujęcia] }:
+ *   backdrop — seed, axis, density, prewarm, planet (maps — indeks WB_PLANET_MAPS, r, z, dx, dy, spin), heroes (params);
+ *   ujęcie — { t, kind: 'wide' | 'hero', x, y (wide), viewHeight, inSec, holdSec, outSec, hero (plan), fit, vMin, vMax }.
+ * Wysokość bohaterów: 0,55 wysokości kamery najbliższego kadru (duzi, blisko kamery, ale pod nią).
+ */
+export function planWarBackdrop(opts = {}, center = { x: 0, y: 0 }, axis = 0, sun = { x: 0, y: 0 }, side = 1) {
+  const o = { ...WAR_SCENE_DEFAULTS, ...opts };
+  const dir = { x: Math.cos(axis), y: Math.sin(axis) };
+  const perp = { x: -dir.y, y: dir.x };
+  const sdx = (Number(sun?.x) || 0) - center.x;
+  const sdy = (Number(sun?.y) || 0) - center.y;
+  const sl = Math.hypot(sdx, sdy) || 1;
+  // planeta w głębi: przesunięta prostopadle do kierunku Słońca (terminator pod środkiem), na stronę bez widza
+  const P = WB_PLANET_DEFAULTS;
+  let px = -sdy / sl;
+  let py = sdx / sl;
+  if (px * perp.x + py * perp.y > 0 === side > 0) { px = -px; py = -py; }
+  const deep = o.backdrop === 'deep';
+  const mapsIdx = Math.max(0, WB_PLANET_MAPS.indexOf(o.planetMaps));
+  const rng = warSceneRng((Number(o.seed) || 1) * 7919 + 17);
+  const backdrop = {
+    seed: ((Number(o.seed) || 1) * 2654435761) >>> 0 || 1,
+    axis,
+    density: Number(o.density) || 1,
+    prewarm: Math.max(0, Number(o.prewarm) || 0),
+    planet: { on: deep ? 1 : 0, maps: mapsIdx, r: P.r, z: P.z, dx: px * P.offset * P.side, dy: py * P.offset * P.side, spin: rng() * Math.PI * 2 },
+    heroes: []
+  };
+  const heroes = [];
+  if (o.heroes !== false) {
+    for (const b of WAR_SCENE_BEATS) {
+      const z = 0.55 * topCameraHeight(b.view);
+      const fx = dir.x * b.along + perp.x * b.across * side;
+      const fy = dir.y * b.along + perp.y * b.across * side;
+      const heading = axis + b.heading;
+      const params = { kind: b.kind === 'duel' ? WB_HERO.DUEL : WB_HERO.COMBO, t0: b.t0, x: fx, y: fy, z, heading, seed: b.seed };
+      backdrop.heroes.push(params);
+      heroes.push({ params, plan: planWarHero(params), beat: b });
+    }
+  }
+  const shots = [];
+  if (o.cinema !== false) {
+    const wideV = deep ? 34000 : 30000;
+    shots.push({ t: 0.25, kind: 'wide', x: center.x, y: center.y, viewHeight: wideV, inSec: 1.4, holdSec: 3.0, outSec: 2.2 });
+    for (const h of heroes) {
+      const k = h.plan.keys;
+      const end = h.beat.kind === 'duel' ? k.killA + 3.2 : k.kill + 3.4;
+      const tIn = h.plan.t0 - 0.9;
+      shots.push({ t: tIn, kind: 'hero', hero: h.plan, cx: center.x, cy: center.y, inSec: 1.7, holdSec: Math.max(1, end - tIn - 1.7),
+        outSec: 1.8, viewHeight: h.beat.view, vMin: h.beat.view, vMax: h.beat.viewMax, fit: h.beat.fit });
+    }
+    const last = heroes.length ? heroes[heroes.length - 1].plan.t1 + 2 : 30;
+    shots.push({ t: last, kind: 'wide', x: center.x, y: center.y, viewHeight: wideV * 1.1, inSec: 2.2, holdSec: 5, outSec: 2.4 });
+  }
+  return { backdrop, heroes, shots };
 }

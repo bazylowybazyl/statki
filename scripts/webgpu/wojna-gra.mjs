@@ -5,8 +5,13 @@
 // straty; zrzuty zwiastunów, przylotów i zwarcia; na końcu klatki (CPU, przestoje), Core3D.gpuFrameMs, pipeline'y
 // SYNCHRONICZNE (ma być 0) i błędy konsoli.
 //
+// BITWA W GŁĘBI (2026-10-19, tło 'deep'): tłum nad i pod płaszczyzną, planeta w głębi, bohaterowie i ujęcia kamery —
+// próbka dokłada stan obrazu (tryb off: Core3D.scene → 'WarBackdrop' → userData.owner.state(); w workerze null)
+// i ujęcie kamery; zrzuty domyślnie w chwilach ujęć (szeroki kadr, kombo Atlasa, pojedynek, szeroki kadr).
+//
 //   node scripts/webgpu/wojna-gra.mjs [--out .tmp/wojna/gra] [--czas 60] [--k 3] [--zwiastun thread|ripple|none]
-//        [--tlo jupiter|mars] [--atlas side|fleet] [--A 20] [--B 25] [--odleglosc 25000] [--rozmiar 1600x900]
+//        [--tlo deep|jupiter|mars] [--atlas side|fleet] [--A 20] [--B 25] [--odleglosc 25000] [--rozmiar 1600x900]
+//        [--kino 1] [--bohaterowie 1] [--gestosc 1] [--planeta venus|mercury|earth|mars]
 //        [--zrzuty 1.5,4,6,8,10,13,18,25,35,50] [--query renderWorker=1]
 //        [--flaga 1]   (start sceny flagą adresu ?wojna — jak gracz bez konsoli — zamiast DevScene.wojna)
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -17,19 +22,24 @@ const args = parseArgs();
 const [W, H] = (args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/wojna/gra');
 const CZAS = Number(args.czas || 60);
-const SHOTS = String(args.zrzuty || '1.5,4,5.5,7,9,11,13,16,20,26,35,50').split(',').map(Number).filter((t) => t <= CZAS);
+const SHOTS = String(args.zrzuty || '1.5,3.5,6,9,12,15,18,21,22.4,23,24.5,28,35,38,40,41.5,42.6,43.4,46,52,56').split(',').map(Number).filter((t) => t <= CZAS);
 const opts = {
   k: Number(args.k ?? 3),
   heraldStyle: args.zwiastun || 'thread',
-  backdrop: args.tlo || 'jupiter',
+  backdrop: args.tlo || 'deep',
   atlas: args.atlas || 'side',
   countA: Number(args.A || 20),
   countB: Number(args.B || 25),
-  distance: Number(args.odleglosc || 25000)
+  distance: Number(args.odleglosc || 25000),
+  cinema: String(args.kino ?? '1') !== '0',
+  heroes: String(args.bohaterowie ?? '1') !== '0',
+  density: Number(args.gestosc || 1),
+  planetMaps: args.planeta || 'venus'
 };
 const FLAGA = String(args.flaga ?? '0') === '1';
 const flagQuery = FLAGA ? `&wojna&wojnaK=${opts.k}&wojnaZwiastun=${opts.heraldStyle}&wojnaTlo=${opts.backdrop}&wojnaAtlas=${opts.atlas}`
-  + `&wojnaA=${opts.countA}&wojnaB=${opts.countB}&wojnaOdl=${opts.distance}` : '';
+  + `&wojnaA=${opts.countA}&wojnaB=${opts.countB}&wojnaOdl=${opts.distance}&wojnaKino=${opts.cinema ? 1 : 0}`
+  + `&wojnaBohaterowie=${opts.heroes ? 1 : 0}&wojnaGestosc=${opts.density}&wojnaPlaneta=${opts.planetMaps}` : '';
 const query = (args.query ? `&${args.query}` : '') + flagQuery;
 mkdirSync(out, { recursive: true });
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
@@ -38,6 +48,22 @@ const { server, base } = await startVite(Number(args.port || 5447));
 const chrome = await startChrome({ width: W, height: H });
 const logs = await attachLogs(chrome);
 const { cdp } = chrome;
+// logi workera renderu (tryb gracza, --query renderWorker=1): pipeline'y w klatce workera, wyjątki, moduły z błędem
+const workerLogs = [];
+cdp.on((msg) => {
+  if (msg.method === 'Target.attachedToTarget') {
+    const sid = msg.params.sessionId;
+    cdp.ws.send(JSON.stringify({ id: 900000 + workerLogs.length * 7 + 1, method: 'Runtime.enable', sessionId: sid }));
+    cdp.ws.send(JSON.stringify({ id: 950000 + workerLogs.length * 7 + 2, method: 'Runtime.runIfWaitingForDebugger', sessionId: sid }));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.consoleAPICalled') {
+    workerLogs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 1000));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.exceptionThrown') {
+    workerLogs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`.slice(0, 1000));
+  }
+});
+await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 const ev = (e, t = 180000) => evaluate(cdp, e, t);
 const report = { opts, plan: null, probki: [], zrzuty: {}, slizgi: null, klatki: null, pipeline: null, bledy: [] };
 
@@ -74,14 +100,18 @@ const PROBE = `(() => {
     zwolnione: st.A.released + st.B.released, wPrzelocie: charging, wolnoWPrzelocie: slow, zCelem: withTarget, stoi: standing, stoiCo: why,
     mysliwce: fighters, odlegloscFlot: ca && cb ? Math.round(Math.hypot(ca[0] - cb[0], ca[1] - cb[1])) : null,
     fazy: { tn: ph('friendly'), pir: ph('pirate') }, warp: window.WarpTraffic ? window.WarpTraffic.records.length : null,
-    zoom: +window.camera.zoom.toFixed(4), gpuMs: +(Number(window.Core3D?.gpuFrameMs) || 0).toFixed(2) };
+    zoom: +window.camera.zoom.toFixed(4), gpuMs: +(Number(window.Core3D?.gpuFrameMs) || 0).toFixed(2),
+    ujecie: st.shot, obraz: (() => { const g = window.Core3D?.scene?.getObjectByName?.('WarBackdrop'); const o = g && g.userData.owner;
+      if (!o) return null; const s = o.state(); return { t: s.time, atlas: s.atlas, sim: s.sim && { zywe: s.sim.alive, gina: s.sim.dying,
+        kawalki: s.sim.chunkAlive, mysliwce: s.sim.fighters, zabite: s.sim.kills, wiazki: s.sim.rays }, rys: s.draw }; })() };
 })()`;
 
 try {
   await osobneLosowanieUuid(cdp);
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed4242};\n${INJECT}` });
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1${query}` });
-  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
+  // tryb workera: strona bez urządzenia GPU (Core3D.noDevice) — gotowość z hosta workera, nie z Core3D strony
+  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && (window.Core3D.noDevice ? !!window.RenderWorkerHost : window.Core3D.gpuReady !== false) && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
   await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 500);
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
   await sleep(900);
@@ -97,12 +127,14 @@ try {
     if (!await waitFor(cdp, '!!(window.WarScene && window.WarScene.active)', 30000, 200)) throw new Error('flaga ?wojna nie uruchomiła sceny');
     report.plan = await ev(`(() => { const p = window.WarScene.plan; return { center: p.center, planet: p.planet,
       fleets: { A: { count: p.fleets.A.ships.length, start: p.fleets.A.start }, B: { count: p.fleets.B.ships.length, start: p.fleets.B.start } },
+      backdrop: p.backdrop ? { planet: p.backdrop.backdrop.planet, heroes: p.backdrop.heroes.map((h) => ({ kind: h.beat.kind, keys: h.plan.keys })),
+        shots: p.backdrop.shots.map((sh) => ({ t: sh.t, kind: sh.kind })) } : null,
       opts: window.WarScene.opts }; })()`);
   } else {
     report.plan = await ev(`window.DevScene.wojna(${JSON.stringify(opts)})`);
   }
   console.log('plan:', JSON.stringify({ center: report.plan.center, planet: report.plan.planet,
-    A: report.plan.fleets.A.count, B: report.plan.fleets.B.count, startB: report.plan.fleets.B.start }));
+    A: report.plan.fleets.A.count, B: report.plan.fleets.B.count, startB: report.plan.fleets.B.start, obraz: report.plan.backdrop }));
   const begLog = await ev('window.__harness.frameLog.n');
   const STEP = 1000 / 60;
   let t = 0;
@@ -147,6 +179,9 @@ try {
   report.pipeline = fs.pipeline;
   console.log('klatki:', JSON.stringify(report.klatki), 'pipeline sync:', fs.pipeline?.sync, JSON.stringify(fs.pipeline?.syncLista || []).slice(0, 400));
   report.bledy = logs.errors().filter((l) => !/favicon|DevTools|\[vite\]/.test(l)).slice(0, 30);
+  report.worker = { syncPipeline: workerLogs.filter((l) => /\[render\.worker\] pipeline sync/.test(l)).length,
+    lista: workerLogs.filter((l) => /pipeline sync|exception|\[error\]|modu/.test(l)).slice(0, 30) };
+  console.log('worker:', JSON.stringify(report.worker).slice(0, 1500));
 } catch (e) {
   report.blad = String(e?.stack || e);
   console.error(e);

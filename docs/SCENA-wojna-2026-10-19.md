@@ -83,3 +83,36 @@ głębokość przed pierwszym stykiem przy 8700 j/s (dwie fregaty czołowo, 60 H
 42–50% przy 6400, 58–67% przy 8700 (120 Hz: 0 / 0 / 8–25%) — ten sam znany przypadek co przy 6000 j/s (reguła
 `kadluby-belki`, „TUNELOWANIE”). Czołówka dwóch okrętów w pełnym ślizgu (4200 + 4500) wymaga przylotów naprzeciw
 siebie w odległości ślizgu — scena stawia floty 25 km od siebie.
+
+## 6. Bitwa w głębi — druga wersja sceny (2026-10-19)
+
+User po pierwszej wersji (floty nad tarczą Jowisza): „kompletnie minąłem się z celem — bitwa o Coruscant to masa
+statków na wielu płaszczyznach; planeta znacznie niżej niż płaszczyzna gry; statki poza zasięgiem gracza duże blisko
+kamery (inny Atlas wali serię w battleshipa i go niszczy), wylot z warpa Atlasa i supercapitala piratów, którzy niszczą
+się obaj; masa statków w oddali i w przybliżeniu; kinematografia”. Opis działania: reguła `scena-wojna`. Tu liczby.
+
+**Symulacja widoku (Node, `createWarBackdropSim`, gęstość 1, 60 s po rozbiegu 20 s, 3 przebiegi):** ~700–710 żywych
+okrętów (sufit 1024), 560 myśliwców, ~10 zniszczeń / s (zastępstwa z warpa), ~1 wielki laser / s w całym tłumie;
+zdarzenia obrazu PRZED odcinaniem kadru: ~390 smug / s, ~240 błysków / s, ~190 odłamków / s, ~9 smug przylotu / s.
+Krok: średnio ~0,1 ms na klatkę 60 Hz, najdłuższy 0,5–1,3 ms; rozbieg 18–20 s — 120–200 ms CPU (w grze porcjami
+≤ 6 ms na klatkę, obraz schowany do końca rozbiegu). To samo ziarno → identyczny przebieg (test).
+
+**Błąd znaleziony w grze — wiązki i smugi niewidoczne (pułapka TSL 39):** pierwszy przebieg pokazał błyski
+z pierścienia zdarzeń, ale ani jednej wiązki ani smugi. Sonda (zdarzenia wstrzyknięte pod kamerą) i zrzut WGSL z Node:
+zagnieżdżone `select` w `positionNode` zbudowały się jako if / else, a szerokość kwadu i `modelViewMatrix` (wspólne dla
+gałęzi billboardu i kwadu kierunkowego) przypisały się tylko w gałęzi billboardu — kwady kierunkowe miały szerokość 0.
+Naprawa: `Fn` z jawnymi zmiennymi przed rozgałęzieniem, rodzaj — maski 0 / 1 (`step`), varyingi `varyingProperty`.
+
+**Planeta (sonda z wymuszonym kierunkiem światła, tłum schowany):** oświetlenie zgodne z kierunkiem Słońca (z góry
+kadru: dzień u góry, noc z siecią świateł tras u dołu, pas zmierzchu w poprzek). Wrażenie „cała tarcza oświetlona”
+robiły chmury Wenus oświetlone przy terminatorze i łuna zmierzchu — chmury gasną teraz z terminatorem i barwią się
+zmierzchem. Próba „ekumenopolis” (dywan świateł miasta z gładkiego szumu gry po stronie nocnej) dała w kadrze beżowe
+plamy jak dym, nie światła — wycofana; noc pokazuje sieć tras z mapy nocnej Wenus (`uCity` 1,6). Świateł miasta
+w skali Coruscant trzeba by szukać w mapie (generator planet), nie w szumie.
+
+**Przebiegi w grze (`node scripts/webgpu/wojna-gra.mjs`, tryb off, 1600 × 900, 60 s):** pipeline'y synchroniczne 0,
+błędy strony 0; w kadrze tła 420–780 kadłubów (pasma pod płaszczyzną), FG 3–46, poświat 590–860; ujęcia kamery
+o czasie (szeroki kadr od 0,25 s — zoom ograniczony `camera.minZoom` 0,035, kadr kombo 9,6–12,7 tys. j. wysokości,
+pojedynku 10,5–13,4 tys.). Przestoje na starcie sceny: klatka startu (plan, teleport, floty, rozbieg w jednej klatce —
+zegar harnessu stoi, więc budżet porcji rozbiegu nie działa) i klatka wgrania tekstur (atlas 4096 × 2144 i mapy planety
+naraz: 42,6 MB, ~65 ms CPU) — tekstury idą teraz kolejką po jednej na klatkę.

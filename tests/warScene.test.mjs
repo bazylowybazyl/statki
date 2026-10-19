@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WAR_SCENE_DEFAULTS, layoutWarWedge, planWarScene, warSceneRoster } from '../src/game/warScene.js';
+import { WAR_SCENE_DEFAULTS, layoutWarWedge, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight, warSceneRoster } from '../src/game/warScene.js';
+import { WB_PLANET_DEFAULTS, heroFocus } from '../src/render/warBackdropPlan.js';
 
 const LEN = { supercapital: 4200, pirate_supercapital: 4000, carrier: 2600, battleship: 1700, destroyer: 950, frigate_pd: 620 };
 const hull = (key) => ({ length: LEN[key] || 900, width: (LEN[key] || 900) * 0.42 });
@@ -73,4 +74,51 @@ test('gra: DevScene.wojna / wojnaStop / wojnaState, krok sceny przed wezwaniami,
   assert.match(html, /function launchWarFleet\(fleet\) \{[\s\S]{0,400}callInSupport\(sh\.key, \{/);
   assert.ok(!/WarpNurt\.(arrive|planArrival|arriveAll)/.test(html.slice(html.indexOf('function startWarScene'), html.indexOf('function warSceneState'))),
     'scena nie woła efektu warpa wprost');
+});
+
+test('miejsce sceny w głębi: na okręgu wokół Słońca, z dala od ciał, najpierw ±90° (Słońce w pionie kadru)', () => {
+  const sun = { x: 6e6, y: 6e6 };
+  const R = WAR_SCENE_DEFAULTS.deepRadius;
+  const free = pickDeepSpot(sun, [], R);
+  assert.ok(Math.abs(free.angle - Math.PI / 2) < 1e-9);
+  assert.ok(Math.abs(Math.hypot(free.x - sun.x, free.y - sun.y) - R) < 1e-3);
+  // ciało w punkcie +90° — wybór innego kąta z odstępem
+  const body = { x: sun.x, y: sun.y + R, r: 400000 };
+  const s2 = pickDeepSpot(sun, [body], R);
+  assert.ok(Math.hypot(s2.x - body.x, s2.y - body.y) - body.r >= 700000);
+});
+
+test('plan obrazu sceny: planeta w głębi prostopadle do Słońca i od widza, bohaterowie pod kamerą, ujęcia rosnąco', () => {
+  const center = { x: 6e6, y: 8.76e6 };
+  const sun = { x: 6e6, y: 6e6 };
+  const bd = planWarBackdrop({}, center, 0, sun, 1);
+  const P = bd.backdrop.planet;
+  assert.equal(P.on, 1);
+  assert.equal(P.z, WB_PLANET_DEFAULTS.z);
+  // przesunięcie ⟂ kierunku Słońca (terminator pod środkiem bitwy)
+  const sdx = sun.x - center.x;
+  const sdy = sun.y - center.y;
+  assert.ok(Math.abs(P.dx * sdx + P.dy * sdy) < 1e-6 * Math.hypot(sdx, sdy) * Math.hypot(P.dx, P.dy) + 1e-6);
+  assert.ok(Math.abs(Math.hypot(P.dx, P.dy) - WB_PLANET_DEFAULTS.offset) < 1e-6);
+  // bohaterowie: dwie sceny, wysokość 0,55 kamery najbliższego kadru, ognisko pary w kadrze w chwili kulminacji
+  assert.equal(bd.heroes.length, 2);
+  for (const h of bd.heroes) {
+    assert.ok(Math.abs(h.params.z - 0.55 * topCameraHeight(h.beat.view)) < 1e-6);
+    const kill = h.beat.kind === 'duel' ? h.plan.keys.killB : h.plan.keys.kill;
+    const f = heroFocus(h.plan, kill);
+    assert.ok(Number.isFinite(f.x) && Number.isFinite(f.y) && f.extent > 1000);
+  }
+  for (let i = 1; i < bd.shots.length; i++) assert.ok(bd.shots[i].t >= bd.shots[i - 1].t, 'ujęcia rosnąco');
+  assert.deepEqual(bd.shots.map((s) => s.kind), ['wide', 'hero', 'hero', 'wide']);
+  // ujęcie bohatera trzyma kadr do końca ich sceny
+  for (const s of bd.shots.filter((x) => x.kind === 'hero')) {
+    const end = s.t + s.inSec + s.holdSec;
+    const k = s.hero.keys;
+    assert.ok(end >= (k.killA ?? k.kill), 'kadr trzyma śmierć');
+  }
+  // tło planety gry: bez planety w głębi; bez kina i bohaterów — puste listy
+  assert.equal(planWarBackdrop({ backdrop: 'jupiter' }, center, 0, sun, 1).backdrop.planet.on, 0);
+  const bare = planWarBackdrop({ cinema: false, heroes: false }, center, 0, sun, 1);
+  assert.equal(bare.shots.length, 0);
+  assert.equal(bare.backdrop.heroes.length, 0);
 });

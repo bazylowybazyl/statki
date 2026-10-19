@@ -902,7 +902,7 @@
     } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
-    import { WAR_SCENE_DEFAULTS, planWarScene } from "./src/game/warScene.js";
+    import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
     import { capitalCommandFreePoint, capitalCommandSeparate, capitalCommandSteer } from "./src/ai/capitalAI.js";
@@ -1213,6 +1213,11 @@
     import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
     import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
     import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
+    // Bitwa w głębi sceny „Wojna” (2026-10-19): tłum okrętów nad i pod płaszczyzną gry, planeta w głębi, bohaterowie —
+    // sam obraz (src/3d/warBackdrop/); plan wspólny z grą (src/render/warBackdropPlan.js), stan klatki — blok warBackdrop.
+    import { createWarBackdropBlock, createWarBackdropFrame } from "./src/render/blocks/warBackdropBlock.js";
+    import { heroFocus as warHeroFocus } from "./src/render/warBackdropPlan.js";
+    import { createWarBackdrop3D } from "./src/3d/warBackdrop/warBackdrop3D.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
@@ -1684,6 +1689,8 @@
     // Wybuchy okrętów z gazu (createExplosionFactory bez withRepairDroneBlast) — śmierć ze zbiornika paliwa, gaz rdzenia.
     let shipBlastFactory = null;
     let pirateVents3D = null;   // obraz wyrw bazy piratów (tryb off / inline; w workerze — render.worker.js)
+    let warBackdrop3D = null;   // bitwa w głębi sceny „Wojna” (tryb off / inline; w workerze — render.worker.js)
+    const warBackdropFrame = createWarBackdropFrame();   // stan klatki bitwy w głębi (gra pisze — blok warBackdrop)
     let reactorModel3D = null;
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
@@ -1730,6 +1737,8 @@
         shipBlastFactory = window.makeReactorBlow;
         // Obraz wyrw bazy piratów (dekompresja, pożary): cząstki w passach tła i FG, gaz reżysera wybuchów (VENT_TAG).
         pirateVents3D = createPirateBaseVents3D(Core3D, { explosions: () => window.__explosions || null });
+        // Bitwa w głębi sceny „Wojna” (passy tła i FG, rozgrzewka 'after') — tylko gdy rysuje strona (tryb off / inline).
+        if (!Core3D.noDevice) warBackdrop3D = createWarBackdrop3D(Core3D);
         // Gra pisze rekordy EXPLOSION, gdy render ma fabrykę (w workerze — flaga z kanału zwrotnego).
         GameBlasts.ready = !!shipBlastFactory;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
@@ -11912,24 +11921,60 @@
         supportCallIns.clear();
         warpTraffic.clear();
       }
-      const planet = planets.find((p) => p?.id === o.backdrop) || planets.find((p) => p?.id === 'jupiter')
-        || planets.find((p) => p?.id === 'mars') || planets[0];
-      // Bitwa poziomo w kadrze (oś A → B wzdłuż x świata) NAD tarczą planety, po stronie słońca (oświetlona półkula);
-      // Atlas-widz dalej od środka planety. Promień tarczy i wewnętrzny brzeg płyty ringu — z kolidera gry
-      // (src/game/haloRingWorld.js), nie z modułów obrazu; scena (klin ± ślizg) zostaje wewnątrz płyty.
-      const ringCol = haloRingKey(planet) ? haloWorld?.entry(haloRingKey(planet))?.collider : null;
-      const discR = Number(ringCol?.layout?.planetRadius) || Number(planet.r) || 0;
-      const ringInner = Number(ringCol?.layout?.radii?.min) || 0;
-      const ringOuter = ringCol ? Math.max(Number(ringCol.wallsOuter) || 0, Number(ringCol.layout?.radii?.max) || 0) : 0;
-      // środek bitwy od środka tarczy w stronę Słońca (dzienna półkula pod całą sceną), widz dalej w osi y
-      const sunDx = SUN.x - planet.x;
-      const sunDy = SUN.y - planet.y;
-      const sunD = Math.hypot(sunDx, sunDy) || 1;
-      const side = sunDy >= 0 ? 1 : -1;
-      const over = Number.isFinite(o.overPlanet) ? o.overPlanet : 0.35;
-      const center = { x: planet.x + (sunDx / sunD) * discR * over, y: planet.y + (sunDy / sunD) * discR * over };
+      let center;
+      let side = 1;
+      let planetInfo;
+      if (o.backdrop === 'deep') {
+        // BITWA W GŁĘBI: pusta przestrzeń między orbitami olbrzymów, z dala od planet, księżyców i małych ciał
+        // (w 2D nic tu nie koliduje); tłum nad i pod płaszczyzną i planetę ~200 km pod nią rysuje obraz
+        // (src/3d/warBackdrop/ — blok warBackdrop). Widz (Atlas) na południe od osi bitwy.
+        const bodies = [...planets, ...(window.smallBodies || [])]
+          .filter((b) => b && Number.isFinite(b.x) && Number.isFinite(b.y))
+          .map((b) => ({ x: b.x, y: b.y, r: (Number(b.r) || 0) + 400000 }));
+        const spot = pickDeepSpot(SUN, bodies, Number(o.deepRadius) || WAR_SCENE_DEFAULTS.deepRadius);
+        center = { x: spot.x, y: spot.y };
+        planetInfo = { id: 'deep', x: center.x, y: center.y, r: 0, clearance: Math.round(spot.clearance), side };
+      } else {
+        const planet = planets.find((p) => p?.id === o.backdrop) || planets.find((p) => p?.id === 'jupiter')
+          || planets.find((p) => p?.id === 'mars') || planets[0];
+        // Bitwa poziomo w kadrze (oś A → B wzdłuż x świata) NAD tarczą planety, po stronie słońca (oświetlona półkula);
+        // Atlas-widz dalej od środka planety. Promień tarczy i wewnętrzny brzeg płyty ringu — z kolidera gry
+        // (src/game/haloRingWorld.js), nie z modułów obrazu; scena (klin ± ślizg) zostaje wewnątrz płyty.
+        const ringCol = haloRingKey(planet) ? haloWorld?.entry(haloRingKey(planet))?.collider : null;
+        const discR = Number(ringCol?.layout?.planetRadius) || Number(planet.r) || 0;
+        const ringInner = Number(ringCol?.layout?.radii?.min) || 0;
+        const ringOuter = ringCol ? Math.max(Number(ringCol.wallsOuter) || 0, Number(ringCol.layout?.radii?.max) || 0) : 0;
+        // środek bitwy od środka tarczy w stronę Słońca (dzienna półkula pod całą sceną), widz dalej w osi y
+        const sunDx = SUN.x - planet.x;
+        const sunDy = SUN.y - planet.y;
+        const sunD = Math.hypot(sunDx, sunDy) || 1;
+        side = sunDy >= 0 ? 1 : -1;
+        const over = Number.isFinite(o.overPlanet) ? o.overPlanet : 0.35;
+        center = { x: planet.x + (sunDx / sunD) * discR * over, y: planet.y + (sunDy / sunD) * discR * over };
+        planetInfo = { id: planet.id, x: planet.x, y: planet.y, r: discR, ringInner, ringOuter, side };
+      }
       const plan = planWarScene(o, center, 0, warSceneHull);
-      plan.planet = { id: planet.id, x: planet.x, y: planet.y, r: discR, ringInner, ringOuter, side };
+      plan.planet = planetInfo;
+      // Bitwa w głębi (obraz): tłum w pasmach, planeta pod płaszczyzną ('deep'), bohaterowie i ujęcia kamery.
+      const bd = planWarBackdrop(o, center, 0, SUN, side);
+      plan.backdrop = bd;
+      WarScene.shots = bd.shots.map((sh) => ({ ...sh, started: false }));
+      const F = warBackdropFrame;
+      F.has = true;
+      F.id = (F.id | 0) + 1;
+      F.t = 0;
+      F.cx = center.x;
+      F.cy = center.y;
+      F.axis = bd.backdrop.axis;
+      F.seed = bd.backdrop.seed;
+      F.density = bd.backdrop.density;
+      F.prewarm = bd.backdrop.prewarm;
+      F.fade = 1;
+      Object.assign(F.planet, bd.backdrop.planet);
+      F.sunX = SUN.x;
+      F.sunY = SUN.y;
+      F.heroN = Math.min(F.heroes.length, bd.backdrop.heroes.length);
+      for (let i = 0; i < F.heroN; i++) Object.assign(F.heroes[i], bd.backdrop.heroes[i]);
       WarScene.plan = plan;
       WarScene.opts = o;
       WarScene.t = 0;
@@ -11976,6 +12021,8 @@
       setFleetStanceOverride('pirate', 'charge');
       return {
         center, planet: plan.planet, atlas: { x: px, y: py },
+        backdrop: { planet: { ...F.planet }, heroes: bd.heroes.map((h) => ({ kind: h.beat.kind, t0: h.plan.t0, keys: h.plan.keys, z: Math.round(h.params.z) })),
+          shots: WarScene.shots.map((sh) => ({ t: +sh.t.toFixed(2), kind: sh.kind })) },
         fleets: Object.fromEntries(['A', 'B'].map((k) => [k, {
           start: plan.fleets[k].start, count: plan.fleets[k].ships.length, apex: plan.fleets[k].apex,
           heading: plan.fleets[k].heading,
@@ -12071,6 +12118,8 @@
           }
         }
       }
+      // Ujęcia (kino sceny, opcja cinema): szeroki kadr, kadry bohaterów prowadzone za ich ogniskiem (heroFocus), szeroki.
+      if (WarScene.shots && camera.mode === 'ship') stepWarSceneShots();
       // Kamera (reżyser kadru mieści sygnał i Atlasa): przylot A, od startu B — przylot B (do 2 s po ostatnim wyjściu),
       // potem środek bitwy (wszystkie żywe okręty, promień 80% z nich).
       if (camera.mode === 'ship') {
@@ -12089,9 +12138,53 @@
       }
     }
 
+    // Bitwa w głębi: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu) — blok migawki i tryb off.
+    function warBackdropFrameNow() {
+      const F = warBackdropFrame;
+      if (F.has) F.t = WarScene.t + Math.max(0, (SimClock.render - SimClock.sim) || 0);
+      return F;
+    }
+
+    // Kadr bohaterów: rozpiętość pary × fit mieści się w szerokości kadru NA ICH WYSOKOŚCI (perspektywa z góry:
+    // widoczna szerokość na wysokości z = vh · aspekt · (1 − z / wysokość kamery)).
+    const _warFocus = { x: 0, y: 0, extent: 0 };
+    function warShotViewHeight(shot) {
+      warHeroFocus(shot.hero, WarScene.t, _warFocus);
+      const aspect = W / Math.max(1, H);
+      const need = (_warFocus.extent * shot.fit + (aspect * shot.hero.z) / topCameraHeight(1)) / aspect;
+      return clamp(need, shot.vMin, shot.vMax);
+    }
+
+    function stepWarSceneShots() {
+      for (const shot of WarScene.shots) {
+        if (shot.started || WarScene.t < shot.t) continue;
+        shot.started = true;
+        if (shot.kind === 'hero') {
+          warHeroFocus(shot.hero, WarScene.t, _warFocus);
+          startStoryCameraLook({ x: shot.cx + _warFocus.x, y: shot.cy + _warFocus.y, viewHeight: warShotViewHeight(shot),
+            inSec: shot.inSec, holdSec: shot.holdSec, outSec: shot.outSec });
+        } else {
+          startStoryCameraLook({ x: shot.x, y: shot.y, viewHeight: shot.viewHeight, inSec: shot.inSec, holdSec: shot.holdSec, outSec: shot.outSec });
+        }
+        if (storyCameraLook) storyCameraLook.__warShot = shot;
+      }
+      const look = storyCameraLook;
+      const shot = look && look.__warShot;
+      if (shot && shot.kind === 'hero') {
+        // punkt kadru płynnie goni ognisko bohaterów (bez szarpnięcia przy rozpadzie okrętu), wysokość kadru — rozpiętość
+        warHeroFocus(shot.hero, WarScene.t, _warFocus);
+        look.x += (shot.cx + _warFocus.x - look.x) * 0.12;
+        look.y += (shot.cy + _warFocus.y - look.y) * 0.12;
+        look.viewHeight += (warShotViewHeight(shot) - look.viewHeight) * 0.05;
+      }
+    }
+
     function stopWarScene({ clear = false } = {}) {
       if (!WarScene.active && !clear) return false;
       WarScene.active = false;
+      warBackdropFrame.has = false;
+      if (storyCameraLook && storyCameraLook.__warShot) { storyCameraLook.holdSec = 0; storyCameraLook.holdUntil = null; }
+      WarScene.shots = null;
       setFleetStanceOverride('friendly', null);
       setFleetStanceOverride('pirate', null);
       camera.manualZoom = false;
@@ -12113,7 +12206,10 @@
       };
       return {
         active: WarScene.active, t: +WarScene.t.toFixed(2), launched: { ...WarScene.launched },
-        A: per('A'), B: per('B'), calls: WarScene.calls.length, planned: WarScene.calls.filter((c) => c.planned).length
+        A: per('A'), B: per('B'), calls: WarScene.calls.length, planned: WarScene.calls.filter((c) => c.planned).length,
+        backdrop: { has: warBackdropFrame.has, id: warBackdropFrame.id, t: +warBackdropFrame.t.toFixed(2) },
+        shot: storyCameraLook && storyCameraLook.__warShot ? { kind: storyCameraLook.__warShot.kind, t: storyCameraLook.__warShot.t,
+          x: Math.round(storyCameraLook.x), y: Math.round(storyCameraLook.y), viewHeight: Math.round(storyCameraLook.viewHeight) } : null
       };
     }
 
@@ -27789,6 +27885,8 @@
       renderSnapshot.addBlock(createPirateBaseBlock());
       // wyrwy bazy piratów (dekompresja, pożary — src/game/story/pirateBaseAtmosphere.js): stan klatki obrazu wyrw
       renderSnapshot.addBlock(createPirateVentsBlock());
+      // bitwa w głębi sceny „Wojna” (src/game/warScene.js): środek, czas sceny, planeta, bohaterowie
+      renderSnapshot.addBlock(createWarBackdropBlock());
       renderSnapshot.addBlock(createRingBlock());
       // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
       if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
@@ -27920,6 +28018,8 @@
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
       // wyrwy bazy (dekompresja, pożary): pozy wyrw dosunięte do czasu renderu, dt gry klatki
       f.pirateVents = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      // bitwa w głębi sceny „Wojna”: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu)
+      f.warBackdrop = warBackdropFrameNow();
       // ringi „Halo”: świat ringów gry (zegar hal, rejestr — stanowiska, lampy, pozy obsługi), statek do obrysu w hubie
       f.ringWorld = haloWorld;
       f.ringShip = ship;
@@ -28996,6 +29096,8 @@
           const vf = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
           pirateVents3D.update(vf, vf.dt);
         }
+        // Bitwa w głębi sceny „Wojna” (tłum nad i pod płaszczyzną, planeta); worker — sam z bloku warBackdrop.
+        if (!RW_WORKER && warBackdrop3D) warBackdrop3D.update(warBackdropFrameNow(), cam);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -31876,14 +31978,19 @@
 
       console.log("[System] Gra uruchomiona.");
       // Scena „Wojna” z adresu (bez konsoli): ?wojna — start sekundę po wejściu do gry swobodnej (kampania ma własny
-      // świat — pomija). Opcje: wojnaK (k wyjścia z warpa), wojnaZwiastun (thread | ripple | none), wojnaTlo (jupiter |
-      // mars), wojnaAtlas (side | fleet), wojnaA / wojnaB (liczba okrętów), wojnaOdl (odległość flot, j.).
+      // świat — pomija). Opcje: wojnaK (k wyjścia z warpa), wojnaZwiastun (thread | ripple | none), wojnaTlo (deep |
+      // jupiter | mars), wojnaAtlas (side | fleet), wojnaA / wojnaB (liczba okrętów), wojnaOdl (odległość flot, j.),
+      // wojnaKino (0 — bez ujęć kamery), wojnaBohaterowie (0 — bez scen bohaterów), wojnaGestosc (tłum w głębi),
+      // wojnaPlaneta (venus | mercury | earth | mars).
       const warQuery = new URLSearchParams(location.search);
       if (warQuery.has('wojna') && !storyCampaign) {
         const num = (k) => (warQuery.has(k) && Number.isFinite(Number(warQuery.get(k))) ? Number(warQuery.get(k)) : undefined);
         const warOpts = {
           k: num('wojnaK'), heraldStyle: warQuery.get('wojnaZwiastun') || undefined, backdrop: warQuery.get('wojnaTlo') || undefined,
-          atlas: warQuery.get('wojnaAtlas') || undefined, countA: num('wojnaA'), countB: num('wojnaB'), distance: num('wojnaOdl')
+          atlas: warQuery.get('wojnaAtlas') || undefined, countA: num('wojnaA'), countB: num('wojnaB'), distance: num('wojnaOdl'),
+          cinema: warQuery.has('wojnaKino') ? warQuery.get('wojnaKino') !== '0' : undefined,
+          heroes: warQuery.has('wojnaBohaterowie') ? warQuery.get('wojnaBohaterowie') !== '0' : undefined,
+          density: num('wojnaGestosc'), planetMaps: warQuery.get('wojnaPlaneta') || undefined
         };
         for (const key of Object.keys(warOpts)) if (warOpts[key] === undefined) delete warOpts[key];
         setTimeout(() => { try { startWarScene(warOpts); } catch (err) { console.error('[Wojna] start sceny:', err); } }, 1000);

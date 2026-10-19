@@ -8,7 +8,7 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 
 - Opis obszaru (jak działa, decyzje użytkownika, pułapki, jak sprawdzić) → jego reguła w `.claude/rules/`. Nowy obszar = nowa reguła z `paths:` (każdy glob w cudzysłowie — zepsuty YAML ładuje regułę ZAWSZE) + wiersz w indeksie niżej. Do tego pliku dopisuj tylko zasadę przekrojową (dotyczy kodu poza obszarem: „nowa ścieżka X musi wołać Y”) albo zmianę indeksu.
 - Reguła opisuje STAN i ZASADY w czasie teraźniejszym. Historia („dawniej…”), wyniki pomiarów i A/B → `docs/` (audyty, plany); w regule zostaje wniosek i odnośnik.
-- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–38) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
+- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–39) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
 - Notatka dla kolejnych agentów w kodzie: komentarz z prefiksem `AGENT:`.
 
 ## Zasady żelazne
@@ -113,7 +113,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 | Reguła | Obszar |
 |---|---|
-| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–38), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
+| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–39), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
 | `core3d` | Core3D: klatka i passy, post i bloom, efekty GPU (`Core3D.fx`), maska słońca i cień kadłubów, wydajność renderu |
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
@@ -139,6 +139,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
+| `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |
 | `fregata-zwiadu` | Fregata zwiadu w ładowni Atlasa |
 | `holownik` | Uszkodzenie silników i holownik serwisowy |
 | `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie |
