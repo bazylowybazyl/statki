@@ -10969,7 +10969,7 @@
     function hullSweepImpact(entity, x0, y0, x1, y1, radius) {
       return HullBodies.sweep(entity, x0, y0, x1, y1, radius);
     }
-    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {
+    function applyHexImpact(entity, x, y, damage, vel, fxSource = null, fxVariant = 'impact') {
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
       // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C);
       // fxVariant — wariant stempla: 'impact', 'ricochet', 'exit', 'stuck' (przebicia 18-B).
@@ -10985,8 +10985,7 @@
           HullDamageEvents.clearSource();
         }
       }
-      // Bez kadłuba na belkach nie ma czego kraterować (heksów w grze nie ma od etapu 8 portu belek;
-      // parametr shard zostaje w sygnaturze dla wołających).
+      // Bez kadłuba na belkach nie ma czego kraterować (heksów w grze nie ma od etapu 8 portu belek).
       return false;
     }
 
@@ -11087,7 +11086,7 @@
     const _beamHitPool = [];
     const _dockBeamHit = { t: 0, x: 0, y: 0, chunk: null };
     const _beamHits = [];
-    const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null, shield: false, breach: false, world: null };
+    const _beamWorldHit = { dist: 0, entity: null, kind: null, shield: false, breach: false, world: null };
     const _pdBeamHit = createPdBeamHit();
     const _fireAimPoint = { x: 0, y: 0 };
     // Nośniki strzału (src/game/carrierVelocity.js): lufa strzelca i trafiony
@@ -11143,7 +11142,6 @@
       let hitDist = range;
       let hitEntity = null;
       let hitType = null;
-      let beamHitShard = null;
       let hitShield = false;
       let hitBreach = false;
       let hitWorld = null;   // ciało budowli (kawałek doku w bańce) — ciepło wiązki przy obrażeniach
@@ -11279,7 +11277,6 @@
           hitDist = hit.tEnter;
           hitEntity = pt;
           hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
-          beamHitShard = null;
           hitShield = true;
           hitBreach = false;
           hitWorld = null;
@@ -11298,7 +11295,6 @@
             hitDist = tA + (tB - tA) * sweep.t;
             hitEntity = pt;
             hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
-            beamHitShard = null;
             hitShield = false;
             hitBreach = hit.breach;
             hitWorld = null;
@@ -11307,7 +11303,6 @@
           hitDist = hit.tEnter;
           hitEntity = pt;
           hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
-          beamHitShard = null;
           hitShield = false;
           hitBreach = hit.breach;
           hitWorld = hit.world || null;
@@ -11322,7 +11317,6 @@
       out.dist = hitDist;
       out.entity = hitEntity;
       out.kind = hitType;
-      out.shard = beamHitShard;
       out.shield = hitShield;
       out.breach = hitBreach;
       out.world = hitWorld;
@@ -11490,9 +11484,6 @@
           const hitDist = beamHit.dist;
           const hitEntity = beamHit.entity;
           const hitType = beamHit.kind;
-          // Heks trafiony przez raymarch/sweep — applyImpact bierze go wprost, zamiast
-          // szukać od nowa sondą o innym promieniu (brzegowe trafienia ginęły).
-          const beamHitShard = beamHit.shard;
           // Wiązka skończyła się na tarczy (obrys blokującej tarczy), nie na kadłubie.
           const beamHitShield = beamHit.shield === true;
           const mercCtx = window.mercMission || (typeof mercMission !== 'undefined' ? mercMission : null);
@@ -11547,7 +11538,7 @@
             if (allowDamage && !beamHitShield) {
               if (hitEntity.beamHull) {
                 const impactSpeed = Number.isFinite(speed) ? speed : Math.max(800, Number(weapon.baseRange) || 2000);
-                applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard, weapon);
+                applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, weapon);
                 // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel wiązki).
                 noteBridgeHit(hitEntity, finalEndX, finalEndY, dirX * impactSpeed, dirY * impactSpeed, bridgeSimTime);
               }
@@ -12913,7 +12904,7 @@
         }
       }
       if (out && pass.craterDamage > 0) {
-        applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');
+        applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, b, stuck ? 'stuck' : 'exit');
       }
       if (RenderCommands.ready) {
         ActiveCarrier.set(carrier);
@@ -21806,7 +21797,7 @@
         if (e.beamHull) {
           _bombRelVel.x = relVx;
           _bombRelVel.y = relVy;
-          applyHexImpact(e, x, y, dmg, _bombRelVel, null, def, 'impact');
+          applyHexImpact(e, x, y, dmg, _bombRelVel, def, 'impact');
         }
         if (e === window.ship) applyDamageToPlayer(dmg, SHIELD_BREACH_DAMAGE_OPTS);
         else applyDamageToNPC(e, dmg, 'bomb', SHIELD_BREACH_DAMAGE_OPTS, false);
@@ -23804,7 +23795,6 @@
       beamHit.dist = dist * t;
       beamHit.entity = null;
       beamHit.kind = null;
-      beamHit.shard = null;
       beamHit.shield = false;
       beamHit.breach = false;
       beamHit.world = null;
@@ -24073,8 +24063,6 @@
         for (let hullPass = 0; hullPass < 12; hullPass++) {
         let didHitShield = false;
         let didHitHex = false;
-        // Heks znaleziony przez sweepImpact — idzie wprost do applyImpact.
-        let hitHexShard = null;
         // Węzeł wejścia w kadłub na belkach (sweep) — ziarno decyzji rykoszetu (hash z numerem pocisku).
         let hitNode = -1;
         // Pocisk przeleciał przez przebicie tarczy trafionej encji (shield3D.js — dziura w polu).
@@ -24147,7 +24135,6 @@
           }
           let hullT = hullBroadT;
           let hullIsHex = false;
-          let hullShard = null;
           let hullNode = -1;
           let hullImpactX = hullT >= 0 ? segX0 + (b.x - segX0) * hullT : b.x;
           let hullImpactY = hullT >= 0 ? segY0 + (b.y - segY0) * hullT : b.y;
@@ -24159,21 +24146,20 @@
             // tarczy w górze odcinek kończy się zwykle przed kadłubem (puste pudło).
             let sweepLimit = hitT < 1 ? hitT : 1;
             if (shieldT >= 0 && shieldT < sweepLimit) sweepLimit = shieldT;
-            let hexSweep = null;
+            let hullSweep = null;
             if (sweepLimit >= 1) {
-              hexSweep = hullSweepImpact(realNpc, segX0, segY0, b.x, b.y, bulletR);
+              hullSweep = hullSweepImpact(realNpc, segX0, segY0, b.x, b.y, bulletR);
             } else if (sweepLimit > 0) {
-              hexSweep = hullSweepImpact(realNpc, segX0, segY0,
+              hullSweep = hullSweepImpact(realNpc, segX0, segY0,
                 segX0 + (b.x - segX0) * sweepLimit, segY0 + (b.y - segY0) * sweepLimit, bulletR);
             }
-            hullT = hexSweep ? (sweepLimit >= 1 ? hexSweep.t : hexSweep.t * sweepLimit) : -1;
+            hullT = hullSweep ? (sweepLimit >= 1 ? hullSweep.t : hullSweep.t * sweepLimit) : -1;
             hullIsHex = hullT >= 0;
-            if (hexSweep) {
-              hullImpactX = hexSweep.worldX;
-              hullImpactY = hexSweep.worldY;
+            if (hullSweep) {
               // Wynik sweepa jest statyczny — następny kandydat go nadpisze.
-              hullShard = hexSweep.hitShard;
-              hullNode = Number.isInteger(hexSweep.node) ? hexSweep.node : -1;
+              hullImpactX = hullSweep.worldX;
+              hullImpactY = hullSweep.worldY;
+              hullNode = Number.isInteger(hullSweep.node) ? hullSweep.node : -1;
             }
           }
 
@@ -24194,7 +24180,6 @@
           hitBreach = candidateBreach && !candidateShield;
           didHitShield = candidateShield;
           didHitHex = !candidateShield && hullIsHex;
-          hitHexShard = didHitHex ? hullShard : null;
           hitNode = didHitHex ? hullNode : -1;
           hitX = candidateImpactX;
           hitY = candidateImpactY;
@@ -24292,7 +24277,7 @@
             if (hitNPC.beamHull) {
               // Źródło stempla mapy ran (18-C) — pocisk; rykoszet zostawia płytkie osmalenie
               // (wariant `ricochet`, src/3d/hullDamageStamps.js), reszta — ranę trafienia.
-              applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, hitHexShard, b,
+              applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, b,
                 decision === HIT_RICOCHET ? 'ricochet' : 'impact');
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
               noteBridgeHit(realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);

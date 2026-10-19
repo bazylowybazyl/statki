@@ -37,7 +37,6 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
   const world = { ship: null, npcs: [], stations: [], wrecks: [], platforms: [], ring: [] };
   let clock = 1000;
   const name = (e) => (e ? (e.__name || e.id || '?') : null);
-  const shardId = (s) => (s ? `${s.c},${s.r}` : null);
 
   const win = {
     get npcs() { counters.npcs++; return world.npcs; },
@@ -91,7 +90,8 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     resolvePdBeamHit,
     isPointDefenseWeapon,
     spawnLaserBeam: (a, b, w) => log.push(['beam2d', r1(a.x), r1(a.y), r1(b.x), r1(b.y), w]),
-    applyHexImpact: (e, x, y, dmg, vel, shard) => log.push(['hex', name(e), r1(x), r1(y), dmg, shardId(shard)]),
+    // Krater: kadłub, punkt, obrażenia i źródło stempla mapy ran (id broni — szósty argument applyHexImpact).
+    applyHexImpact: (e, x, y, dmg, vel, fxSource) => log.push(['hex', name(e), r1(x), r1(y), dmg, fxSource?.id ?? null]),
     noteBridgeHit: () => {},
     bridgeSimTime: 0,
     isEntityShieldBlocking,

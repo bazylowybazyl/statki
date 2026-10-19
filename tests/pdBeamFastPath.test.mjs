@@ -33,13 +33,12 @@ test('tarcza celu: wiązka kończy się na wejściu w obrys tarczy', () => {
 test('kadłub na belkach: sweep dostaje odcinek przycięty do okręgu kadłuba', () => {
   const out = createPdBeamHit();
   const target = { x: 600, y: 0, radius: 50, hp: 10, maxHp: 10, beamHull: {} };
-  const shard = { c: 3, r: 4 };
   let seen = null;
-  const sweepImpact = (e, x0, y0, x1, y1, r) => { seen = [x0, y0, x1, y1, r]; return { t: 0.25, hitShard: shard }; };
+  const sweepImpact = (e, x0, y0, x1, y1, r) => { seen = [x0, y0, x1, y1, r]; return { t: 0.25 }; };
   resolvePdBeamHit(out, 0, 0, 1, 0, 1000, target, deps({ sweepImpact }));
   assert.deepEqual(seen, [550, 0, 650, 0, 0], 'sweep po odcinku nad kadłubem');
   assert.equal(out.entity, target);
-  assert.equal(out.shard, shard);
+  assert.equal('shard' in out, false, 'wynik bez heksa (kadłuby tylko na belkach)');
   assert.equal(out.shield, false);
   assert.ok(Math.abs(out.dist - 575) < 1e-9);
 });
@@ -158,6 +157,7 @@ test('PD z celem: kadłub bez tarczy dostaje krater z sweepu', () => {
     const hex = kinds(log, 'hex');
     assert.equal(hex.length, 1);
     assert.equal(hex[0][1], 'bare');
+    assert.equal(hex[0][5], 'laser_pd_mk1', 'źródło stempla mapy ran = broń strzału');
     assert.deepEqual(kinds(log, 'dmgNpc').map((e) => e[1]), ['bare']);
   });
 });

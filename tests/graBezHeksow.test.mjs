@@ -31,15 +31,12 @@ const USUNIETY_PLIK = /(^|\/)(destructor|destructor3D|destructorConfig|destructo
 const SLOWA = [
   'hexGrid', 'isAsteroidHex', 'DESTRUCTOR_CONFIG', 'DestructorSystem', 'initHexBody', 'disposeHexBody',
   'captureHexBodySnapshot', 'flyingHexDebris', 'spawnFlyingHexDebris', 'hexTemplate', '_packedBody',
-  'getHexProbeDrift', 'HexBodyHooks', 'destroyShard', 'workerPhysicsV2', 'PhysicsBridge', 'physicsKernel'
+  'getHexProbeDrift', 'HexBodyHooks', 'destroyShard', 'workerPhysicsV2', 'PhysicsBridge', 'physicsKernel',
+  // heks trafiony przez sweep / raymarch, niesiony do krateru (applyHexImpact bez argumentu `shard` od 2026-10-19)
+  'hitShard', 'beamHitShard', 'hitHexShard'
 ];
 
-const WYJATKI = [
-  {
-    plik: 'src/game/hullBodies.js', slowo: 'isAsteroidHex', ile: 2,
-    powod: 'pole kształtu obiektu wraku (zawsze false) — plik prowadzi teraz inna sesja; usunąć przy najbliższej zmianie hullBodies.js'
-  }
-];
+const WYJATKI = [];
 
 function kodGry() {
   const out = new Map();

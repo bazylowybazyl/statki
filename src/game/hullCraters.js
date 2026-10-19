@@ -67,7 +67,7 @@ export function trenchCraters(HB, pass, b, relVel, applyImpact = null) {
     const x = pass.kerfX + dx * k - bx;
     const y = pass.kerfY + dy * k - by;
     const hit = typeof applyImpact === 'function'
-      ? applyImpact(e, x, y, dmg, relVel, null, b, 'kerf')
+      ? applyImpact(e, x, y, dmg, relVel, b, 'kerf')
       : HB.impact(e, x, y, dmg, relVel, craterOptsFor(b, 'kerf', dmg));
     if (hit) killed += HB.impactResult.killed;
   }
@@ -122,7 +122,7 @@ const _rocketVel = { x: 0, y: 0 };
  * Krater wybuchu rakiety na poszyciu (zadanie 25c — rakieta też robi krater: mały, rodzina
  * stempla `rocket`, wzorzec 1000 obrażeń = missile_rack → promień leja 18 j.). Punkt styku jak
  * obraz wybuchu (rocketHullContact); kierunek wgniecenia — odcinek lotu. `applyImpact` — funkcja
- * gry (entity, x, y, damage, vel, shard, źródło, wariant) z mapą ran (index.html applyHexImpact);
+ * gry (entity, x, y, damage, vel, źródło, wariant) z mapą ran (index.html applyHexImpact);
  * bez niej HullBodies.impact z opcjami krateru (testy, bilans). Zwraca liczbę zabitych węzłów.
  */
 export function rocketCraterHit(HB, target, x0, y0, x1, y1, damage, source = 'rocket', relVel = null, applyImpact = null) {
@@ -135,7 +135,7 @@ export function rocketCraterHit(HB, target, x0, y0, x1, y1, damage, source = 'ro
   _rocketVel.y = vy;
   const src = source || 'rocket';
   const hit = typeof applyImpact === 'function'
-    ? applyImpact(target, c.x, c.y, damage, _rocketVel, null, src, 'impact')
+    ? applyImpact(target, c.x, c.y, damage, _rocketVel, src, 'impact')
     : HB.impact(target, c.x, c.y, damage, _rocketVel, craterOptsFor(src, 'impact', damage));
   return hit ? HB.impactResult.killed : 0;
 }
