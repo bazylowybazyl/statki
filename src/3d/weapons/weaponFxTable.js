@@ -26,7 +26,8 @@ const W = (fx, pattern, extra = null) => Object.freeze({ fx, pattern, charge: 0,
  * 27 broni z dema (działa Capital / L / M / S, wiązki, obrona punktowa) + 3 warianty rozmiarowe
  * broni specjalnej (Kolec S, Oszczep M, Yamato L — rodziny rodziców) + 2 działa main klasy
  * snajperskiej (Lanca M / L, 2026-10-08 — receptura Valkyrie, bez ładowania) + działko kanonierki
- * (broń maszyn eskadr, 2026-10-14 — receptura autokanonu).
+ * (broń maszyn eskadr, 2026-10-14 — receptura autokanonu) + promień śmierci (2026-10-19 — własna
+ * receptura `deathRay`).
  */
 export const WEAPON_FX = Object.freeze({
   // Capital / specjalne
@@ -34,6 +35,8 @@ export const WEAPON_FX = Object.freeze({
   hexlance_siege: W('hexlance', 'charge', { charge: 1.2, short: 'Hexlance' }),
   siege_railgun: W('mjolnir', 'charge', { charge: 3.0, short: 'Mjolnir' }),
   special_valkyrie_railgun: W('valkyrie', 'charge', { charge: 0.28, short: 'Valkyrie' }),
+  // Promień śmierci (2026-10-19): wiązka BEAM.RAY i trafienia z rekordów RAY_* (src/game/deathRay.js), nie pocisk
+  death_ray: W('deathRay', 'charge', { charge: 4.0, short: 'Gungnir' }),
   special_goliath_autocannon: W('goliath', 'alt', { short: 'Goliath' }),
   special_plasma_gatling: W('plasmaGatling', 'single', { short: 'Plasma Gatling' }),
   // warianty rozmiarowe broni specjalnej (S / M / L) — receptury rodziców, bez nowych rodzin

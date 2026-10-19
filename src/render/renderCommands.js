@@ -12,7 +12,8 @@
 //
 // Rekordy broni (katalog § 3.3): SHOT (strzał z szyny i PD gracza; lufa ROZWIĄZANA w grze — Turret2D.shotMuzzle),
 // IMPACT, KERF, PIERCE, FLAK_BURST, DRONE_BLAST, BOMB_BLAST / BOMB_DUD, CHARGE (stan ładowania po kluczu działa),
-// PD_LASER, HEX_CHARGE / HEX_FIRE / HEX_BEGIN / HEX_STEP / HEX_END / HEX_HIT (Hexlance: uchwyt pocisku = id gry).
+// PD_LASER, HEX_CHARGE / HEX_FIRE / HEX_BEGIN / HEX_STEP / HEX_END / HEX_HIT (Hexlance: uchwyt pocisku = id gry),
+// RAY_FIRE / RAY_HIT / RAY_STATE / RAY_CHARGE (promień śmierci: id promienia = id gry, src/game/deathRay.js).
 //
 // Czysty moduł gry / wspólny (bez three i DOM; `window` tylko do rejestracji w konsoli).
 
@@ -44,7 +45,13 @@ export const RC = Object.freeze({
   HEX_STEP: 15,
   HEX_END: 16,
   HEX_HIT: 17,
-  // Zakresy torów (równoległe tory nie mogą zderzyć się kodami): 1–31 broń (rw-bronie; wolne od 18), 32–63 kadłuby /
+  // Promień śmierci (2026-10-19, src/game/deathRay.js → WeaponFx.deathRay*): strzał, trafienie (wejście / wyjście /
+  // tarcza / koniec), zmiana długości (zatrzymanie, przerwanie), ładowanie z barwą i wysokością (rozkazy scen).
+  RAY_FIRE: 18,
+  RAY_HIT: 19,
+  RAY_STATE: 20,
+  RAY_CHARGE: 21,
+  // Zakresy torów (równoległe tory nie mogą zderzyć się kodami): 1–31 broń (rw-bronie; wolne od 22), 32–63 kadłuby /
   // rany / wybuchy / iskry / odłamki / reaktor / stacje (rw-kadluby — `HC` w src/render/hullCommands.js), 64–73 rakiety
   // (RW-23), 74–127 świat (rw-swiat).
   RKT_BEGIN: 64,     // początek kroku lotu: liczba rakiet w locie i w kolejkach
@@ -131,6 +138,29 @@ export const HEX = Object.freeze({
   E_ID: 0, E_X: 1, E_Y: 2, E_WORDS: 3,
   // HEX_HIT: rodzaj, x, y, relVx, relVy, moc, wstrząs, nośnik
   H_KIND: 0, H_X: 1, H_Y: 2, H_RVX: 3, H_RVY: 4, H_POWER: 5, H_SHAKE: 6, H_HAS: 7, H_CARRIER: 8, H_WORDS: 8 + CARRIER_WORDS
+});
+// Promień śmierci (src/game/deathRay.js). Barwa NaN = z danych broni (vfxColor).
+/** Rodzaje trafień promienia (rekord RAY_HIT): wejście w kadłub, wyjście, tarcza, zatrzymanie / koniec, cel bez kadłuba. */
+export const RAY_HIT = Object.freeze({ ENTRY: 0, EXIT: 1, SHIELD: 2, END: 3, SMALL: 4 });
+/** Kody zmiany stanu promienia (rekord RAY_STATE): zatrzymany (nowa długość), przerwany (strzelec zginął). */
+export const RAY_STATE = Object.freeze({ STOP: 0, CANCEL: 1 });
+/** Flagi rekordu RAY_FIRE: strzał wizualny (bez trafień), strzał gracza (wstrząs), rozbłysk na końcu. */
+export const RAY_FLAG = Object.freeze({ VISUAL: 1, PLAYER: 2, END_FLASH: 4 });
+export const RAY = Object.freeze({
+  // RAY_FIRE: id, broń (napis), strzelec (encja), wylot x, y, z0, kierunek (świat), długość, wylot w układzie strzelca
+  // (lx, ly — kąt encji), szerokość, czoło [j/s], trwanie, wygaszanie, flagi, barwa r, g, b, z1, nośnik
+  F_ID: 0, F_WEAPON: 1, F_SHOOTER: 2, F_X: 4, F_Y: 5, F_Z0: 6, F_DX: 7, F_DY: 8, F_LEN: 9, F_LX: 10, F_LY: 11,
+  F_WIDTH: 12, F_SPEED: 13, F_SUSTAIN: 14, F_FADE: 15, F_FLAGS: 16, F_R: 17, F_G: 18, F_B: 19, F_Z1: 20,
+  F_CARRIER: 21, F_WORDS: 21 + CARRIER_WORDS,
+  // RAY_HIT: id, rodzaj (RAY_HIT), x, y, nx, ny, relVx, relVy, encja, moc, odległość od wylotu, nośnik (trafiony)
+  H_ID: 0, H_KIND: 1, H_X: 2, H_Y: 3, H_NX: 4, H_NY: 5, H_RVX: 6, H_RVY: 7, H_ENT: 8, H_POWER: 10, H_T: 11,
+  H_CARRIER: 12, H_WORDS: 12 + CARRIER_WORDS,
+  // RAY_STATE: id, długość, kod (RAY_STATE)
+  S_ID: 0, S_LEN: 1, S_CODE: 2, S_WORDS: 3,
+  // RAY_CHARGE: klucz stanu efektu (slot, gen), x, y, z, kąt, u, dt, skala, barwa r, g, b, długość lasera
+  // naprowadzającego, nośnik
+  C_KEY: 0, C_X: 2, C_Y: 3, C_Z: 4, C_ANGLE: 5, C_U: 6, C_DT: 7, C_SCALE: 8, C_R: 9, C_G: 10, C_B: 11, C_LEN: 12,
+  C_CARRIER: 13, C_WORDS: 13 + CARRIER_WORDS
 });
 
 
@@ -533,6 +563,74 @@ export class RenderCommandWriter {
   hexlanceImpact(x, y, relVx, relVy, carrier = null, power = 1, shake = true) { this._hexHit(HEX_HIT_KIND.IMPACT, x, y, relVx, relVy, carrier, power, shake); }
   hexlanceKerf(x, y, relVx, relVy, carrier = null, power = 1) { this._hexHit(HEX_HIT_KIND.KERF, x, y, relVx, relVy, carrier, power, true); }
   hexlanceExit(x, y, relVx, relVy, carrier) { this._hexHit(HEX_HIT_KIND.EXIT, x, y, relVx, relVy, carrier, 1, true); }
+
+  // ---- Promień śmierci (src/game/deathRay.js) -------------------------------
+
+  _carrierOrZero(d, o, c) {
+    if (c) this._carrierArg(d, o, c);
+    else for (let i = 0; i < CARRIER_WORDS; i++) d[o + i] = 0;
+  }
+
+  /** Strzał promienia: `r` — promień z puli systemu (pola id, def, shooter, ox…), nośnik strzelca. */
+  deathRayFire(r, carrier = null) {
+    const R = RAY;
+    const wid = this.str(r.def?.id || 'death_ray');
+    const o = this._begin(RC.RAY_FIRE, R.F_WORDS);
+    const d = this.ring.data;
+    d[o + R.F_ID] = r.id; d[o + R.F_WEAPON] = wid;
+    this._ent(d, o + R.F_SHOOTER, r.shooter);
+    d[o + R.F_X] = r.ox; d[o + R.F_Y] = r.oy; d[o + R.F_Z0] = r.z0;
+    d[o + R.F_DX] = r.dx; d[o + R.F_DY] = r.dy; d[o + R.F_LEN] = r.len;
+    d[o + R.F_LX] = r.lx; d[o + R.F_LY] = r.ly;
+    d[o + R.F_WIDTH] = r.width; d[o + R.F_SPEED] = r.frontSpeed;
+    d[o + R.F_SUSTAIN] = r.params.sustain; d[o + R.F_FADE] = r.params.fade;
+    d[o + R.F_FLAGS] = r.flags;
+    d[o + R.F_R] = r.colR; d[o + R.F_G] = r.colG; d[o + R.F_B] = r.colB;
+    d[o + R.F_Z1] = r.z1;
+    this._carrierOrZero(d, o + R.F_CARRIER, carrier);
+    this._commit();
+  }
+
+  /** Trafienie promienia: rodzaj (RAY_HIT), punkt, normalna, prędkość względna, encja, moc, odległość, nośnik celu. */
+  deathRayHit(id, kind, x, y, nx, ny, relVx, relVy, entity, power, t, carrier = null) {
+    const R = RAY;
+    const o = this._begin(RC.RAY_HIT, R.H_WORDS);
+    const d = this.ring.data;
+    d[o + R.H_ID] = id; d[o + R.H_KIND] = kind;
+    d[o + R.H_X] = x; d[o + R.H_Y] = y; d[o + R.H_NX] = nx; d[o + R.H_NY] = ny;
+    d[o + R.H_RVX] = relVx; d[o + R.H_RVY] = relVy;
+    this._ent(d, o + R.H_ENT, entity);
+    d[o + R.H_POWER] = power; d[o + R.H_T] = t;
+    this._carrierOrZero(d, o + R.H_CARRIER, carrier);
+    this._commit();
+  }
+
+  /** Nowa długość promienia (zatrzymanie na celu / stacji, przerwanie — strzelec zginął). */
+  deathRayState(id, len, code) {
+    const R = RAY;
+    const o = this._begin(RC.RAY_STATE, R.S_WORDS);
+    const d = this.ring.data;
+    d[o + R.S_ID] = id; d[o + R.S_LEN] = len; d[o + R.S_CODE] = code;
+    this._commit();
+  }
+
+  /**
+   * Ładowanie promienia z rozkazu sceny / strzału wizualnego (barwa, skala, wysokość z): `stateOwner` — obiekt gry,
+   * do którego należy stan efektu (klucz jak w `charge`), color — [r, g, b] (liniowo, 0..1) albo null (barwa broni),
+   * len — długość lasera naprowadzającego [j.] (0 — bez).
+   */
+  deathRayCharge(stateOwner, x, y, z, angle, u, dt, scale = 1, color = null, carrier = null, len = 0) {
+    const R = RAY;
+    const o = this._begin(RC.RAY_CHARGE, R.C_WORDS);
+    const d = this.ring.data;
+    this._ent(d, o + R.C_KEY, stateOwner, this.chargeKeys);
+    d[o + R.C_X] = x; d[o + R.C_Y] = y; d[o + R.C_Z] = z; d[o + R.C_ANGLE] = angle;
+    d[o + R.C_U] = u; d[o + R.C_DT] = dt; d[o + R.C_SCALE] = scale;
+    d[o + R.C_R] = color ? Number(color[0]) : NaN; d[o + R.C_G] = color ? Number(color[1]) : NaN; d[o + R.C_B] = color ? Number(color[2]) : NaN;
+    d[o + R.C_LEN] = Number(len) || 0;
+    this._carrierOrZero(d, o + R.C_CARRIER, carrier);
+    this._commit();
+  }
 }
 
 const _bs = [0, 0, 0, 0];

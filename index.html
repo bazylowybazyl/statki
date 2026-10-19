@@ -1338,6 +1338,9 @@
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     window.Superweapon = Superweapon;
+    // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js): superbroń special — czoło promienia, tarcze, rzaz belek,
+    // obrażenia; rozkazy scen (scena „Wojna”) i strzał wizualny. Klej gry: blok „PROMIEŃ ŚMIERCI” przy fireWeaponCore.
+    import { createDeathRaySystem } from "./src/game/deathRay.js";
     window.applyNpcFlightVector = applyNpcFlightVector;
     window.executeNpcFlightCommand = executeNpcFlightCommand;
     window.npcHasPhysicalThrusters = npcHasPhysicalThrusters;
@@ -2172,6 +2175,11 @@
         case 'hexlance':
           // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
           playDynamicSound('sfx_hexlance', x, y, 0.1, 0.6);
+          break;
+
+        case 'death_ray':
+          // Promień śmierci — dźwięk superbroni, głośniej i bez wariacji
+          playDynamicSound('sfx_hexlance', x, y, 0, 0.9);
           break;
 
         case 'railgun_mk1':
@@ -10521,6 +10529,149 @@
       return rocketCraterHit(HullBodies, target, x0, y0, x1, y1, damage, weaponDef || 'rocket', _rocketHullVel, applyHexImpact);
     };
 
+    // ============================================================================
+    // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js; dane `death_ray` w src/data/weapons.js, obraz WeaponFx.deathRay*
+    // przez rekordy RAY_* strumienia rozkazów)
+    // ============================================================================
+    // Klej gry: kandydaci (gracz, P2, NPC, wraki), stacje (bryły doku albo okrąg), tarcza (obrys blokującej tarczy — pada
+    // do zera), obrażenia z pominięciem tarczy (NPC / gracz — śmierć, wrak i wybuch zbiornika jak przy każdej śmierci),
+    // źródło stempla mapy ran, wylot strzelca dla rozkazów scen (gniazdo z promieniem / special, inaczej dziób).
+    // Strzał gracza i NPC: fireWeaponCore → fireDeathRayCore (ładowanie zrobiły stepMountCharge / capitalAI). Scena:
+    // DevScene.deathRay(strzelec, cel, opcje) / window.DeathRayGame.order(…) i .visual(x0, y0, x1, y1, opcje).
+    const _deathRayDockHit = { t: 0, x: 0, y: 0, chunk: null };
+    const _deathRayHp = { x: 0, y: 0 };
+    const deathRays = createDeathRaySystem({
+      hulls: HullBodies,
+      time: () => SimClock.sim,
+      collect(out) {
+        const s = window.ship;
+        if (s && !s.destroyed && s.beamHull) out.push(s);
+        const p2 = window.player2Ship;
+        if (p2 && !p2.destroyed && p2.beamHull) out.push(p2);
+        const list = window.npcs;
+        if (list) {
+          for (let i = 0; i < list.length; i++) {
+            const n = list[i];
+            if (!n || n.dead || n.isCollidable === false) continue;
+            if (!n.beamHull && !(n.hp > 0)) continue;
+            out.push(n);
+          }
+        }
+        const wl = window.wrecks;
+        if (wl) {
+          for (let i = 0; i < wl.length; i++) {
+            const w = wl[i];
+            if (w && w.beamHull && !w.removed && w.isCollidable !== false) out.push(w);
+          }
+        }
+      },
+      stations: () => (Array.isArray(window.stations) ? window.stations : null),
+      // Wejście promienia w stację: bryły trzonu i hali suchego doku (jak Hexlance), inaczej okrąg obwiedni.
+      stationHit(st, x0, y0, x1, y1) {
+        if (!st || st._destroyed3D || !(st.hp > 0) || st.ringPort) return -1;
+        if (st.hitShapes) {
+          const dh = dryDockSegmentHit(st.hitShapes, x0, y0, x1, y1, _deathRayDockHit, st._dockGone)
+            || (st.hallShapes && dryDockSegmentHit(st.hallShapes, x0, y0, x1, y1, _deathRayDockHit));
+          return dh ? dh.t : -1;
+        }
+        const r = Math.max(60, Number(st.r) || 200);
+        const dx = x1 - x0, dy = y1 - y0, fx = x0 - st.x, fy = y0 - st.y;
+        const a = dx * dx + dy * dy;
+        if (!(a > 0)) return -1;
+        const c = fx * fx + fy * fy - r * r;
+        if (c <= 0) return 0;
+        const b = 2 * (fx * dx + fy * dy);
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) return -1;
+        const t = (-b - Math.sqrt(disc)) / (2 * a);
+        return t >= 0 && t <= 1 ? t : -1;
+      },
+      radius: (e) => getBeamTargetRadius(e),
+      shieldRadius: (e) => getEntityShieldBlockingRadius(e),
+      shieldEnter: (e, x, y, dx, dy, maxT) => getEntityShieldRayEnter(e, x, y, dx, dy, maxT),
+      // Przepalenie tarczy (świadomie bez testu przebicia — superbroń): efekt trafienia klasy „special”, pole do zera
+      // (shieldSystem: stan 'breaking', regeneracja od opóźnienia).
+      collapseShield(e, x, y, dmg) {
+        const real = e._realEntity || e;
+        const sh = real.shield;
+        if (!sh || !(sh.val > 0)) return;
+        registerShieldImpact(e, x, y, dmg, 'special');
+        sh.val = 0;
+        sh.regenTimer = sh.regenDelay ?? 0;
+        if (real.fleetEntry?.status) real.fleetEntry.status.shield = 0;
+      },
+      damage(e, dmg, ray) {
+        if (!(dmg > 0) || !e) return;
+        const shooter = ray.shooter;
+        if (e === window.ship) {
+          applyDamageToPlayer(dmg, SHIELD_BREACH_DAMAGE_OPTS);
+          // obrażenia gracza od NPC — znacznik zagrożenia strzelca (kierowanie ogniem: `threat`)
+          if (shooter && shooter !== window.ship) shooter.__fcHitPlayerAt = SimClock.sim;
+        } else if (e === window.player2Ship) {
+          if (e.hull && typeof e.hull.val === 'number') e.hull.val = Math.max(0, e.hull.val - dmg);
+        } else {
+          if (ray.byPlayer) markPlayerDamage(e);
+          applyDamageToNPC(e, dmg, 'deathray', SHIELD_BREACH_DAMAGE_OPTS, ray.byPlayer === true);
+        }
+      },
+      damageStation: (st, dmg) => applyDamageToStation(st, dmg),
+      isWreck: (e) => !!e.isWreck,
+      alive: (e) => !!e && !e.dead && !e.destroyed && !e.removed,
+      setSource: (def, variant) => HullDamageEvents.setSource(def, variant),
+      clearSource: () => HullDamageEvents.clearSource(),
+      fx: () => (RenderCommands.ready ? RenderCommands.writer : null),
+      carrier: (e, x, y, out) => writeCarrier(e, x, y, false, out),
+      // Wylot dla rozkazu sceny: gniazdo z promieniem (albo pierwsze special) — jak spawnBulletAdapter (NPC) /
+      // mountedWeaponBase (gracz); bez gniazda — false (system strzela z dziobu).
+      muzzleOf(shooter, def, out) {
+        if (!shooter) return false;
+        if (shooter === window.ship) {
+          const lo = (Game.player?.weapons?.[HP.SPECIAL] || []).find((l) => l?.weapon?.id === def?.id && l.hp && !l.hp.destroyed);
+          if (!lo) return false;
+          mountedWeaponBase(ship, lo.hp, _deathRayHp);
+          out.x = _deathRayHp.x; out.y = _deathRayHp.y;
+          return true;
+        }
+        const specials = shooter.weapons?.special;
+        let hp = null;
+        if (Array.isArray(specials)) {
+          for (let i = 0; i < specials.length && !hp; i++) if (specials[i]?.weapon?.id === def?.id && specials[i].hp) hp = specials[i].hp;
+        }
+        if (!hp && Array.isArray(shooter.editorHardpoints)) hp = shooter.editorHardpoints.find((h) => h?.type === HP.SPECIAL && !h.destroyed) || null;
+        if (!hp || hp.x === undefined) return false;
+        const angle = (shooter.angle || 0) + (Number(shooter.capitalProfile?.spriteRotation) || 0);
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const hx = hp.x * getEntityHardpointScaleX(shooter), hy = hp.y * getEntityHardpointScaleY(shooter);
+        out.x = shooter.x + (hx * c - hy * s);
+        out.y = shooter.y + (hx * s + hy * c);
+        return true;
+      }
+    });
+    window.DeathRayGame = deathRays;
+
+    // Strzał promienia z fireWeaponCore (gracz: wieża celuje w kursor — kierunek lufy; NPC: w cel — wiązka trafia
+    // natychmiast, bez wyprzedzenia). Obraz idzie rekordem RAY_FIRE z systemu; szyna strzałów niesie dźwięk, odrzut wieży
+    // i wstrząs strzału. Zwraca przeładowanie (jak fireWeaponCore).
+    function fireDeathRayCore(shooter, target, weapon, muzzleData) {
+      const mods = shooter.modifiers || {};
+      const isP1Ship = shooter === window.ship;
+      const isPlayerShip = isP1Ship || shooter === window.player2Ship;
+      const range = weaponRangeFor(shooter, weapon, weapon.baseRange || 12000);
+      const damage = (weapon.baseDamage || 0) * (mods.damage || 1.0);
+      const cd = (weapon.cooldown || 45) * (mods.fireRate || 1.0);
+      const x = muzzleData.pos.x, y = muzzleData.pos.y;
+      let dirX = muzzleData.dir.x, dirY = muzzleData.dir.y;
+      if (!isPlayerShip && isTargetAlive(target)) {
+        dirX = getTargetX(target) - x;
+        dirY = getTargetY(target) - y;
+      }
+      // NPC: wylot z czopu gniazda (spawnBulletAdapter) — system dokłada lufę wieży (Turret2D.writeMuzzleOffset)
+      const ray = deathRays.fire(shooter, weapon, x, y, dirX, dirY, { range, damage, byPlayer: isP1Ship, addBarrel: !isPlayerShip });
+      const l = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+      WeaponShotBus.emit(weapon.id, shooter, ray ? ray.ox : x, ray ? ray.oy : y, false, null, null, dirX / l, dirY / l);
+      return cd;
+    }
+
     // --- Trafienia wiązek: pomocniki modułowe (bez domknięć i tablic per strzał) ---
     // Dawniej każda wiązka budowała 3 tablice, 4 domknięcia, obiekt na kandydata
     // i tekstowy klucz cache ringu — przy tysiącach strzałów PD na sekundę główny
@@ -10894,6 +11045,9 @@
     window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {
       const weapon = MASTER_WEAPONS[weaponId];
       if (!weapon) return null;
+      // Promień śmierci (pole `deathRay` broni — isDeathRayWeapon): czoło promienia w systemie promieni
+      // (src/game/deathRay.js), nie pocisk ani wiązka. Bez wywołań dla innych broni (wycinki fireWeaponCore w testach).
+      if (weapon.deathRay) return fireDeathRayCore(shooter, target, weapon, muzzleData);
 
       // Ciągła wiązka pracuje seriami jak w demie. Przerwa nie emituje zdarzenia
       // ani obrażeń; normalny takt podtrzymuje stan emitera podczas chłodzenia.
@@ -11580,6 +11734,8 @@
         y = owner.y + (hpX * s + hpY * c);
       }
       const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
+      // Promień śmierci: wylot na końcu lufy wieży (laser naprowadzający i implozja przy głowicy, nie na czopie).
+      if (weapon.def.deathRay) { deathRays.chargeFx(owner, weapon.def, x, y, a, u, dt, weapon); return; }
       // Stan efektu ładowania — w renderze po kluczu działa (obiekt broni NPC).
       RenderCommands.writer.charge(weapon.def.id, x, y, a, 1, u, dt, weapon, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
@@ -11895,6 +12051,44 @@
         },
         fireSpecial() {
           return tryFireMountedSpecialWeapons(true);
+        },
+        // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js; gra: window.DeathRayGame). Rozkaz sceny: strzelec (encja albo
+        // indeks w npcs; brak — gracz) ładuje promień `opts.charge` s (domyślnie chargeTime broni, 4 s) przy wylocie
+        // swojego gniazda (albo dziobu) i strzela w AKTUALNĄ pozycję celu (encja, indeks w npcs albo { x, y }).
+        // opts: { charge, damage, range, penetration, width, color: [r, g, b] liniowo 0..1, byPlayer }. Zwraca rozkaz.
+        deathRay(shooter, target, opts = {}) {
+          const s = typeof shooter === 'number' ? npcs[shooter] : (shooter || ship);
+          const t = typeof target === 'number' ? npcs[target] : target;
+          if (!s || !t) return null;
+          return deathRays.order(s, t, { byPlayer: s === ship, ...opts });
+        },
+        // Strzał WYŁĄCZNIE obrazowy (bez trafień) od (x0, y0) do (x1, y1) — ten sam obraz co prawdziwy promień (warstwy
+        // bitwy w głębi): opts { charge [s], width, color: [r, g, b], z0, z1, impact (rozbłysk na końcu, domyślnie tak) }.
+        deathRayVisual(x0, y0, x1, y1, opts = {}) {
+          return deathRays.visual(x0, y0, x1, y1, opts);
+        },
+        // Promień na gniazdach special NPC (AI strzela sama: autoWeapons + ładowanie z capitalAI) — bez gniazda special
+        // wirtualne gniazdo na osi dziobu. Zwraca liczbę gniazd z promieniem.
+        equipDeathRay(npc, weaponId = 'death_ray') {
+          const e = typeof npc === 'number' ? npcs[npc] : npc;
+          const def = MASTER_WEAPONS[weaponId];
+          if (!e || !def) return 0;
+          if (!e.weapons) e.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+          if (!Array.isArray(e.editorHardpoints)) e.editorHardpoints = [];
+          let hps = e.editorHardpoints.filter((h) => h && h.type === HP.SPECIAL && !h.destroyed);
+          if (!hps.length) {
+            const hp = { id: `deathray_${e.id ?? 'npc'}`, type: HP.SPECIAL, size: 'Capital', x: (Number(e.radius) || 200) * 0.45 / getEntityHardpointScaleX(e), y: 0 };
+            e.editorHardpoints.push(hp);
+            hps = [hp];
+          }
+          e.weapons.special = [];
+          for (const hp of hps) { hp.mount = weaponId; e.weapons.special.push({ hp, weapon: def }); }
+          e._weaponsInit = false;   // autoWeapons od nowa (capitalAI.initAutonomousWeapons)
+          return hps.length;
+        },
+        // Stan promieni i rozkazów (harness: scripts/webgpu/promien-gra.mjs).
+        deathRayState() {
+          return deathRays.describe();
         },
         // Działa main (2026-10-08, klasa dział snajperskich): broń na zaczepach main gracza bez ładowni
         // (wszystkie albo `count` pierwszych) — Lanca w grze (scripts/webgpu/lanca-gra.mjs).
@@ -25781,6 +25975,8 @@
       window.__npcFireScanMs = 0;
       window.__npcFireSpawnMs = 0;
       npcShootingStep(dt);
+      // Promienie śmierci: czoło (tarcze, rzaz belek, obrażenia) po strzałach gracza i NPC tego kroku, rozkazy scen.
+      deathRays.step(dt);
       PerfHUD.addTiming('npcFireTime', performance.now() - tPhysSection0);
       PerfHUD.addTiming('npcFireScanTime', window.__npcFireScanMs || 0);
       PerfHUD.addTiming('npcFireSpawnTime', window.__npcFireSpawnMs || 0);
