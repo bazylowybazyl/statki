@@ -1,17 +1,5 @@
 /* Light-DOM bridge for the existing, gameplay-backed station services.
    The tablet shell itself lives in CockpitUI's ShadowRoot. */
-#side-panels-container,
-#right-panels-container,
-#hud-bottom-container,
-#hud-topbar,
-#hover-info,
-#scanner-overview-ui-root,
-#radar-targeting-labels {
-  display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
 #cockpit-ui-host > #hud-top-container.cockpit-station-slot {
   position: static !important;
   inset: auto !important;
@@ -47,7 +35,6 @@
   pointer-events: auto !important;
 }
 
-#cockpit-ui-host .cockpit-station-slot .location-display,
 #cockpit-ui-host .cockpit-station-slot .station-header,
 #cockpit-ui-host .cockpit-station-slot .station-nav {
   display: none !important;

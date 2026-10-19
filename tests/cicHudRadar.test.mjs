@@ -3,12 +3,9 @@ import assert from 'node:assert/strict';
 
 globalThis.window = globalThis.window || {};
 
-const {
-  applyCicHudRadarSweepTracking,
-  createCicHudRadarModel,
-  didCicRadarSweepCrossAngle,
-  projectCicHudRadarContact
-} = await import('../src/ui/cicDisplay.js');
+// Model kontaktów mapy CIC (CICDisplay.update). Dawny mini-radar HUD-u (przemiatanie, rzut, rysunek)
+// usunięty razem ze starym HUD-em 2026-10-19 — radar kokpitu ma własny tor (src/ui/radar/).
+const { createCicHudRadarModel } = await import('../src/ui/cicDisplay.js');
 
 function makeSensorSystem() {
   return {
@@ -126,25 +123,6 @@ test('CIC HUD radar model includes nearby asteroids without marking them hostile
   assert.equal(asteroidContact.ny, 0);
 });
 
-test('CIC HUD radar projection uses tactical range and supports panning', () => {
-  const contact = { dx: 5000, dy: -2500 };
-  const centered = projectCicHudRadarContact(contact, {
-    width: 160,
-    height: 160,
-    range: 20000
-  });
-  const panned = projectCicHudRadarContact(contact, {
-    width: 160,
-    height: 160,
-    range: 20000,
-    panWorldX: 2500,
-    panWorldY: -1250
-  });
-
-  assert.deepEqual(centered, { x: 99, y: 70.5 });
-  assert.deepEqual(panned, { x: 89.5, y: 75.25 });
-});
-
 test('CIC HUD radar model preserves real hull footprints and static world outlines', () => {
   const ship = { pos: { x: 1000, y: 2000 }, w: 1200, h: 420, angle: 0.25 };
   const capital = {
@@ -186,63 +164,4 @@ test('CIC HUD radar model preserves real hull footprints and static world outlin
   assert.equal(contact.hullWorldW, 1800);
   assert.equal(contact.hullWorldH, 640);
   assert.equal(contact.angle, 0.75);
-});
-
-test('HUD radar latches a moving contact only when the rotating beam crosses it', () => {
-  const ship = { pos: { x: 0, y: 0 } };
-  const target = { id: 'moving', x: 200, y: 0, type: 'destroyer', _sensorAwareness: 3 };
-  const SensorSystem = makeSensorSystem();
-  const trackStore = new WeakMap();
-
-  const first = createCicHudRadarModel({ ship, npcs: [target], SensorSystem, range: 1000, sweepAngle: 0.15 });
-  applyCicHudRadarSweepTracking(first, {
-    previousSweepAngle: -0.15,
-    trackStore
-  });
-  assert.equal(first.contacts.length, 1);
-  assert.equal(first.contacts[0].x, 200);
-  assert.equal(first.contacts[0].y, 0);
-
-  target.x = 0;
-  target.y = 300;
-  const held = createCicHudRadarModel({ ship, npcs: [target], SensorSystem, range: 1000, sweepAngle: 0.35 });
-  applyCicHudRadarSweepTracking(held, {
-    previousSweepAngle: 0.15,
-    trackStore
-  });
-  assert.equal(held.contacts[0].x, 200);
-  assert.equal(held.contacts[0].y, 0);
-
-  const refreshed = createCicHudRadarModel({ ship, npcs: [target], SensorSystem, range: 1000, sweepAngle: Math.PI / 2 + 0.1 });
-  applyCicHudRadarSweepTracking(refreshed, {
-    previousSweepAngle: 0.35,
-    trackStore
-  });
-  assert.equal(refreshed.contacts[0].x, 0);
-  assert.equal(refreshed.contacts[0].y, 300);
-  assert.equal(refreshed.contacts[0].radarEchoStrength, 1);
-});
-
-test('HUD radar sweep crossing handles angle wrap and a burst reveals every contact at once', () => {
-  assert.equal(didCicRadarSweepCrossAngle(6.2, 0.1, 0), true);
-  assert.equal(didCicRadarSweepCrossAngle(6.2, 0.1, Math.PI), false);
-
-  const ship = { pos: { x: 0, y: 0 } };
-  const target = { id: 'burst', x: 0, y: 400, type: 'frigate', friendly: true, _sensorAwareness: 3 };
-  const model = createCicHudRadarModel({
-    ship,
-    npcs: [target],
-    SensorSystem: makeSensorSystem(),
-    range: 1000,
-    sweepAngle: 0.2
-  });
-  applyCicHudRadarSweepTracking(model, {
-    previousSweepAngle: 0.1,
-    forceReveal: true,
-    trackStore: new WeakMap()
-  });
-
-  assert.equal(model.contacts.length, 1);
-  assert.equal(model.contacts[0].entity, target);
-  assert.equal(model.counts.friendly, 1);
 });

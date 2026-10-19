@@ -293,11 +293,11 @@ test('shield3D: tarcza mniejsza niż 9 px na ekranie nie dostaje slotu puli (pł
   assert.match(shield3d, /p\.tileMesh\.visible = anyAlive;/);
 });
 
-test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / radar wyłączony', () => {
-  assert.match(indexHtml, /const legacyScannerPanelVisible = !window\.hudSystem\?\.cockpit;/);
-  assert.match(indexHtml, /const scannerUiEnabled = legacyScannerPanelVisible && /);
-  assert.match(indexHtml, /const _radarTargets = radarUiEnabled \? lockedTargets\.filter\(/);
-  assert.match(indexHtml, /if \(radarUiEnabled && scannerState\.active\) \{/);
+// 2026-10-19: stary panel skanera (scannerOverviewUI) i radar celowania (radarTargetingUI) usunięte —
+// kokpit ma własną listę skanu i kartę celu; w pętli nie zostało nic, co by je karmiło.
+test('stary panel skanera i radar celowania: usunięte razem z klejem w pętli', () => {
+  assert.doesNotMatch(indexHtml, /scannerOverviewUI|radarTargetingUI|legacyScannerPanelVisible|radarUiEnabled|radarUiActive/);
+  assert.doesNotMatch(indexHtml, /scannerPassiveContacts|getRadarTargetScanData|handleRadarAction/);
 });
 
 // ── Druga tura audytu (2026-09-23): przycięcia i stałe koszty w spoczynku ──

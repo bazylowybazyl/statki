@@ -111,7 +111,7 @@ try {
     await setZoom(0.45);
     await shot('pas-z0.45');
     const pas = await ev(`(() => { let neb = null; window.Core3D.scene.traverse((o) => { if (o.name === 'Nebula' && o.isMesh) neb = o; });
-      const z = document.getElementById('loc-text')?.textContent ?? null; return { jasnosc: neb?.material?.uniforms?.brightness?.value ?? null, strefa: z }; })()`);
+      const z = window.hudSystem?.cockpit?.els?.feedZone?.textContent ?? null; return { jasnosc: neb?.material?.uniforms?.brightness?.value ?? null, strefa: z }; })()`);
     report.pas = pas;
     console.log('  pas:', JSON.stringify(pas));
   }
