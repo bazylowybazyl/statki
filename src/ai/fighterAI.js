@@ -493,6 +493,8 @@ function squadOrderOf(npc) {
     return 'escort';
   }
   if ((npc.isSupportWing || npc.supportData) && window.SupportWing) {
+    // NATARCIE narzucone stronie (scena „Wojna”: window.fleetStanceOverride) — myśliwce skrzydła atakują.
+    if (window.fleetStanceOverride?.('friendly')) return 'attack';
     return (window.SupportWing.order === 'engage') ? 'attack' : 'escort';
   }
   return 'attack';

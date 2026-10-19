@@ -88,7 +88,8 @@ test('pass maski: jeden quad, tablica warstw SDF, pętle z uniformów, ≤ 12 bu
   assert.equal(u.uDiscs.value.length, 48);
   assert.equal(u.uDiscAxis.value.length, 48);
   assert.equal(u.uHullA.value.length, 32);
-  assert.equal(u.uRings.value.length, 3);
+  // dwa vec4 na ring (środek / promień / zasięg i siła — ring w soczewce warpa), 3 ringi
+  assert.equal(u.uRings.value.length, 6);
   assert.ok(u.uDiscs.value[0].isVector4);
   assert.equal(u.uHullSdf.value, pass.hullSdfPlaceholder);
   assert.equal(pass.hullSdfPlaceholder.isDataArrayTexture, true);
@@ -161,6 +162,7 @@ test('Core3D: maska do celu przed passami, placeholdery zamiast null, wyłączon
   assert.equal(u.uFieldOcc.value, pass.fieldOccPlaceholder);
   assert.equal(u.uRingCount.value, 1);
   assert.deepEqual(u.uRings.value[0].toArray(), [5, -6, 700, 800]);
+  assert.equal(u.uRings.value[1].x, 1, 'rekord bez siły — pełny cień');
   assert.equal(U.uSunShadowOn.value, 1);
   assert.equal(U.uSunShadowMap.value, target.texture, 'materiały czytają cel maski');
   assert.equal(core.lastFrameRenderInfo?.shafts?.calls, 0, 'kubełek shafts mierzony');

@@ -12,6 +12,7 @@
 import * as THREE from 'three/webgpu';
 import { requestIdle } from './harmonogram.js';
 import { RenderWorld } from '../render/renderWorld.js';
+import { cameraRoll } from './viewRoll.js';
 // Niepowtarzalne uuid węzłów TSL + strażnik kolizji (pułapka 38) — PRZED resztą zależności: węzły tworzone
 // w modułach Core3D dostają już uuid z licznikiem (src/3d/tsl/uuidWezlow.js).
 import { tslUuidStan } from './tsl/uuidWezlow.js';
@@ -252,6 +253,7 @@ function shadowShaftsMaskNode(u) {
   const uSunWorld = uniformNode(u.uSunWorld);
   const uCamCenter = uniformNode(u.uCamCenter);
   const uViewWorldSize = uniformNode(u.uViewWorldSize);
+  const uViewRot = uniformNode(u.uViewRot);
   const uDiscLenMul = uniformNode(u.uDiscLenMul);
   const uDiscCount = uniformNode(u.uDiscCount);
   const uDiscs = uniformNode(u.uDiscs);
@@ -281,7 +283,13 @@ function shadowShaftsMaskNode(u) {
         const span = RULON.viewHalf.mul(2.0);
         uvGl.assign(rulonInverse(uvGl.sub(0.5).mul(span)).xy.div(span).add(0.5));
       });
-      const worldP = uCamCenter.add(uvGl.sub(0.5).mul(uViewWorldSize)).toVar('maskWorldP');
+      // Obrót kadru (cam.roll, viewRoll.js): przesunięcie piksela od środka w osiach ekranu → osie sceny,
+      // uViewRot = (cos, −sin roll) — kamera three obrócona o −roll; bez obrotu (1, 0): wynik jak dawniej.
+      const offV = uvGl.sub(0.5).mul(uViewWorldSize).toVar('maskOffV');
+      const worldP = uCamCenter.add(vec2(
+        offV.x.mul(uViewRot.x).sub(offV.y.mul(uViewRot.y)),
+        offV.x.mul(uViewRot.y).add(offV.y.mul(uViewRot.x))
+      )).toVar('maskWorldP');
 
       // Kierunek do słońca liczony PER PIKSEL (nie per kamera) — poprawna
       // paralaksa smug przy okluderach blisko słońca.
@@ -370,7 +378,9 @@ function shadowShaftsMaskNode(u) {
         // — bez tego pas byłby liczony podwójnie.
         If(insideDisc.lessThan(0.5), () => {
           Loop({ start: int(0), end: uRingCount, type: 'int', condition: '<', name: 'ringIdx' }, ({ ringIdx }) => {
-            const ring = uRings.element(ringIdx).toVar();
+            // dwa vec4 na ring: (środek, promień, zasięg) i (siła, —) — siła < 1: ring w soczewce warpa
+            const ring = uRings.element(ringIdx.mul(2)).toVar();
+            const ringK = uRings.element(ringIdx.mul(2).add(1)).x.toVar();
             const ringR = ring.z.toVar();
             If(ringR.lessThanEqual(0.0), () => { Continue(); });
             const rel = worldP.sub(ring.xy).toVar();
@@ -382,7 +392,7 @@ function shadowShaftsMaskNode(u) {
             // wewnątrz okręgu: wyjście w stronę słońca; na zewnątrz: wejście
             const tHit = select(c2.lessThan(0.0), b.negate().add(sq), b.negate().sub(sq)).toVar();
             If(tHit.lessThanEqual(0.0).or(tHit.greaterThanEqual(sunDist)), () => { Continue(); });
-            const ringShade = float(1.0).sub(smoothstep(0.0, max(ring.w, 1.0), tHit)).mul(0.85);
+            const ringShade = float(1.0).sub(smoothstep(0.0, max(ring.w, 1.0), tHit)).mul(0.85).mul(ringK);
             backdropShadow.assign(max(backdropShadow, ringShade));
           });
         });
@@ -440,6 +450,7 @@ export function createShadowShaftsPass() {
     uSunWorld: uniform(new THREE.Vector2(0, 0)),
     uCamCenter: uniform(new THREE.Vector2(0, 0)),
     uViewWorldSize: uniform(new THREE.Vector2(1, 1)),
+    uViewRot: uniform(new THREE.Vector2(1, 0)),   // obrót kadru: (cos, −sin roll) — viewRoll.js
     uDiscLenMul: uniform(5.0),
     uDiscCount: uniform(0, 'int'),
     uDiscs: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
@@ -459,8 +470,9 @@ export function createShadowShaftsPass() {
     // pudło cienia kadłuba w świecie (minX, minY, maxX, maxY — hullShadowAabb): szybkie odrzucenie piksela
     uHullB: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
     uRingCount: uniform(0, 'int'),
-    // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
-    uRings: uniformArray(v4(SHAFT_RING_CAP), 'vec4'),
+    // uRings[2i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia; uRings[2i + 1].x = siła (1 — pełna,
+    // mniej — ring w soczewce warpa gaśnie jak tarcza planety; ten sam bufor — limit 12 buforów uniformów na etap)
+    uRings: uniformArray(v4(SHAFT_RING_CAP * 2), 'vec4'),
     // Pole przesłaniające słońce (gęste pola asteroid): tekstura transmitancji T (R8)
     // wokół kamery; xy = róg prostokąta (three-space), zw = 1 / rozmiar. Mnoży
     // widoczność w obu kanałach.
@@ -1689,9 +1701,15 @@ export const Core3D = {
     // sceny Three, a kanwa 2D (wieżyczki, myśliwce) stała — warstwy się rozjeżdżały.
     const camX = gameCamera.x;
     const camY = -gameCamera.y;
+    // Obrót kadru (cam.roll — src/3d/viewRoll.js: ekran = R(−roll)·(świat − kamera)): kamery three obrócone
+    // o −roll wokół osi widoku; bez obrotu (0) — dawne położenie i „góra” kamer.
+    const roll = cameraRoll(gameCamera);
+    if (viewOffsetX === 0) this.viewRoll = roll;
 
     this.cameraOrtho.position.set(camX, camY, 150000);
+    this.cameraOrtho.rotation.z = -roll;
     this.cameraPersp.position.set(camX, camY, targetZ);
+    this.cameraPersp.up.set(Math.sin(roll), Math.cos(roll), 0);
     this.cameraPersp.lookAt(camX, camY, 0);
 
     if (viewOffsetX === 0) {
@@ -1930,6 +1948,8 @@ export const Core3D = {
     uShafts.uSunWorld.value.set(sun.x, -sun.y);
     uShafts.uCamCenter.value.set(camX, camY);
     uShafts.uViewWorldSize.value.set(viewW / zoom1, viewH / zoom1);
+    const roll1 = cameraRoll(cam1);
+    uShafts.uViewRot.value.set(Math.cos(roll1), -Math.sin(roll1));
     uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 5);
     uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
     uShafts.uHullSteps.value = Math.max(1, Math.min(HULL_SDF_MAX_STEPS, Number(shaftCfg.hullSteps) || 24));
@@ -1993,8 +2013,10 @@ export const Core3D = {
     const ringVals = uShafts.uRings.value;
     for (const rec of this.shaftRings.values()) {
       if (!raysOn || ringCount >= SHAFT_RING_CAP) break;
-      if (!(rec.r > 0)) continue;
-      ringVals[ringCount].set(rec.x, rec.y, rec.r, rec.reach);
+      const ringK = Number.isFinite(rec.k) ? rec.k : 1;
+      if (!(rec.r > 0) || !(ringK > 0.001)) continue;
+      ringVals[ringCount * 2].set(rec.x, rec.y, rec.r, rec.reach);
+      ringVals[ringCount * 2 + 1].set(ringK, 0, 0, 0);
       ringCount++;
     }
     uShafts.uRingCount.value = ringCount;
@@ -2787,14 +2809,17 @@ export const Core3D = {
   // kluczu ringu (bez begin/reset — ring aktualizuje swój wpis co klatkę,
   // a przy dispose go zdejmuje), więc cień działa też przy ukrytych
   // wizualiach ringu (dystansowy gate).
-  setShaftRingOccluder(key, cx, cy, radius, reach) {
+  // strength — siła cienia 0..1 (ring w soczewce warpa gaśnie z udziałem prawdziwego widoku, jak tarcza planety).
+  setShaftRingOccluder(key, cx, cy, radius, reach, strength = 1) {
     if (!key || !(Number(radius) > 0)) return;
     let rec = this.shaftRings.get(key);
-    if (!rec) { rec = { x: 0, y: 0, r: 0, reach: 1 }; this.shaftRings.set(key, rec); }
+    if (!rec) { rec = { x: 0, y: 0, r: 0, reach: 1, k: 1 }; this.shaftRings.set(key, rec); }
     rec.x = Number(cx) || 0;
     rec.y = -(Number(cy) || 0);
     rec.r = Number(radius) || 0;
     rec.reach = Math.max(1, Number(reach) || 1);
+    const k = Number(strength);
+    rec.k = Number.isFinite(k) ? Math.min(1, Math.max(0, k)) : 1;
   },
 
   removeShaftRingOccluder(key) { if (key) this.shaftRings.delete(key); },
@@ -2977,8 +3002,22 @@ export const Core3D = {
     const worldW = halfW * 2;
     const worldH = halfH * 2;
 
-    const u = (worldX - left) / worldW;
-    const v = (worldY - bottom) / worldH;
+    let u = (worldX - left) / worldW;
+    let v = (worldY - bottom) / worldH;
+    // Obrócony kadr (cam.roll — viewRoll.js; kamera three obrócona o −roll): przesunięcie i kierunek w osiach
+    // widoku = R(roll)·(osie sceny).
+    const roll = cameraRoll(camData);
+    if (roll) {
+      const c = Math.cos(roll);
+      const s = Math.sin(roll);
+      const ox = worldX - camData.x;
+      const oy = worldY + camData.y;
+      u = 0.5 + (c * ox - s * oy) / worldW;
+      v = 0.5 + (s * ox + c * oy) / worldH;
+      const rdx = c * dirX - s * dirY;
+      dirY = s * dirX + c * dirY;
+      dirX = rdx;
+    }
     // Promien w jednostkach osi v: shader koryguje os u przez uAspect,
     // wiec mapowanie swiat->ekran jest izotropowe.
     const rUv = radiusWorld / worldH;

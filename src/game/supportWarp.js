@@ -36,13 +36,18 @@ export function supportWarpCourse(from, to, fallback = 0) {
  * flush(lead) stawia okręty, których wyrzut wypada najpóźniej w najbliższym kroku rejestru
  * (warp.time + lead ≥ tBurst: krok rejestru tej samej klatki przesuwa jego zegar o lead).
  *
- * req: { x, y, angle, hullLength, hullWidth, palette, pirate, heraldReach, ...pola gry }.
+ * req: { x, y, angle, hullLength, hullWidth, palette, pirate, heraldReach, ...pola gry } — (x, y) = punkt przylotu;
+ * opcjonalnie exitSpeed, slide (wyjście z pędem — warpExitMomentum: (x, y) to koniec ślizgu), delay / heraldExtra
+ * (plan floty — planWarpFleetArrival), heraldStyle.
  * deps:
  *   warp  — { time, planArrival(o) → rec | null, attach(rec, encja), arrive(encja) },
  *   spawn(req) → encja | encja[] | null — wołane w chwili wyrzutu,
  *   isHull(encja) → bool — encja z kadłubem do podpięcia (domyślnie: każda),
  *   onSpawned(lista, req) — po spawnie (kurs, prędkość, dziennik).
  */
+// Pola planu przylotu przekazywane rejestrowi tylko wtedy, gdy wezwanie je ma (wyjście z pędem, plan floty, zwiastun).
+const PLAN_KEYS = ['exitSpeed', 'slide', 'delay', 'heraldExtra', 'heraldStyle'];
+
 export function createSupportWarpCallIns({ warp, spawn, isHull = () => true, onSpawned = null }) {
   const pending = [];
   return {
@@ -51,10 +56,12 @@ export function createSupportWarpCallIns({ warp, spawn, isHull = () => true, onS
     /** Planuje przylot; null — efekt niedostępny albo pula przylotów pełna (wołający spawnuje od razu). */
     request(req) {
       if (!req || !warp || typeof warp.planArrival !== 'function') return null;
-      const rec = warp.planArrival({
+      const o = {
         x: req.x, y: req.y, angle: req.angle, hullLength: req.hullLength, hullWidth: req.hullWidth,
         palette: req.palette, pirate: !!req.pirate, heraldReach: req.heraldReach
-      });
+      };
+      for (let i = 0; i < PLAN_KEYS.length; i++) if (req[PLAN_KEYS[i]] !== undefined) o[PLAN_KEYS[i]] = req[PLAN_KEYS[i]];
+      const rec = warp.planArrival(o);
       if (!rec || !rec.fx) return null;
       pending.push({ rec, req });
       return rec;

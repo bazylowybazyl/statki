@@ -11,7 +11,7 @@ import {
   pirateRockPowerAt, pirateRockSurfaceH, planPirateRockCollapse
 } from '../src/3d/portBuildings/pirateRockLayout.js';
 import { createTetherSim, releaseTetherBottom, snapTether, stepTetherSim, climberParam } from '../src/3d/portBuildings/pirateRockTether.js';
-import { buildPirateRockScene } from '../src/3d/portBuildings/pirateRockScene.js';
+import { buildPirateRockScene, pirateTetherThickness } from '../src/3d/portBuildings/pirateRockScene.js';
 import { PB_MAX_GROUPS, PB_STRIDE } from '../src/3d/portBuildings/portBuildingScene.js';
 import { createPirateBaseLayout, PIRATE_BASE_SPEC } from '../src/3d/portBuildings/pirateBaseLayout.js';
 import { k7HeightToZ } from '../src/3d/haloRing/haloPortK7Layout.js';
@@ -22,9 +22,64 @@ const L = createPirateRockLayout();
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const rot = (q, v) => new THREE.Vector3(v[0], v[1], v[2]).applyQuaternion(new THREE.Quaternion(q[0], q[1], q[2], q[3]));
 
+test('skala: świat = projekt powiększony podobieństwem względem punktu widzenia nad osią habitatu', () => {
+  const k = PIRATE_ROCK_SPEC.scale;
+  assert.ok(k > 1, 'skała w świecie większa niż w projekcie');
+  assert.equal(L.k, k);
+  const D = createPirateRockLayout({ scale: 1 });
+  const E = [0, PIRATE_ROCK_SPEC.eyeH, 0];
+  const sim = (pw, pd, what) => {
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs((pw[i] - E[i]) - k * (pd[i] - E[i])) < 1e-6, `${what}[${i}]`);
+  };
+  sim(L.foot, D.foot, 'stopa');
+  sim(L.center, D.center, 'środek');
+  sim(L.stationTop, D.stationTop, 'wieża stacji');
+  for (const b of L.buildings) sim(b.frame.o, D.buildingById.get(b.id).frame.o, b.id);
+  assert.equal(L.R, D.R * k);
+  assert.deepEqual(L.design.center, D.center);
+  assert.equal(L.design.R, D.R);
+  // głowica kotwicy należy do habitatu — bez skali; lina dłuższa (tether.scale — fizyka liny w czasie projektu)
+  assert.deepEqual(L.anchor, D.anchor);
+  assert.ok(Math.abs(L.tether.scale * D.tether.length - L.tether.length) < 1e-6);
+  assert.ok(L.tether.scale > k, `lina ${L.tether.scale.toFixed(2)}× dłuższa`);
+  // mapy tekstur bez zmian: te same kąty na kuli
+  for (const b of L.buildings) {
+    const d = D.buildingById.get(b.id);
+    assert.ok(Math.abs(L.lonLat(b.e, b.n).lon - D.lonLat(d.e, d.n).lon) < 1e-12, b.id);
+  }
+  // szczyt skały głębiej: kawałki bazy lecą dłużej (szczyt ≥ 2,5 × głębiej niż w projekcie, środek ≥ 2 ×)
+  assert.ok(L.foot[1] <= 2.5 * D.foot[1] && L.center[1] <= 2 * D.center[1], `szczyt ${L.foot[1]}, środek ${L.center[1]}`);
+});
+
+test('lina: grubość od głowicy (projekt) do stacji dolnej (× skala) — z punktu widzenia jak w projekcie', () => {
+  const D = createPirateRockLayout({ scale: 1 });
+  const E = [0, PIRATE_ROCK_SPEC.eyeH, 0];
+  assert.equal(pirateTetherThickness(L, 0), 1);
+  assert.ok(Math.abs(pirateTetherThickness(L, 1) - L.k) < 1e-12);
+  // punkt liny świata i punkt liny projektu na tym samym promieniu widzenia: odległości od punktu widzenia w stosunku
+  // równym grubości (1 + t · (k − 1))
+  for (const t of [0.1, 0.35, 0.6, 0.9]) {
+    const a = L.anchor, bw = L.stationTop, bd = D.stationTop;
+    const pw = [a[0] + (bw[0] - a[0]) * t, a[1] + (bw[1] - a[1]) * t, a[2] + (bw[2] - a[2]) * t];
+    const ray = [pw[0] - E[0], pw[1] - E[1], pw[2] - E[2]];
+    // przecięcie promienia z linią projektu (najmniejsze kwadraty w parametrze u linii projektu)
+    let best = Infinity, bu = 0;
+    for (let u = 0; u <= 1; u += 1e-4) {
+      const pd = [a[0] + (bd[0] - a[0]) * u, a[1] + (bd[1] - a[1]) * u, a[2] + (bd[2] - a[2]) * u];
+      const v = [pd[0] - E[0], pd[1] - E[1], pd[2] - E[2]];
+      const lv = Math.hypot(...v), lr = Math.hypot(...ray);
+      const c = (v[0] * ray[0] + v[1] * ray[1] + v[2] * ray[2]) / (lv * lr);
+      if (1 - c < best) { best = 1 - c; bu = u; }
+    }
+    const pd = [a[0] + (bd[0] - a[0]) * bu, a[1] + (bd[1] - a[1]) * bu, a[2] + (bd[2] - a[2]) * bu];
+    const ratio = Math.hypot(ray[0], ray[1], ray[2]) / dist(pd, E);
+    assert.ok(Math.abs(ratio - pirateTetherThickness(L, t)) < 0.01, `t ${t}: ${ratio.toFixed(3)}`);
+  }
+});
+
 test('skała: stopa windy na szczycie kuli, taras w obrębie, kula pod całą bazą z zapasem', () => {
   assert.ok(Math.abs(dist(L.foot, L.center) - L.R) < 1e-6);
-  assert.equal(L.foot[1], PIRATE_ROCK_SPEC.footH);
+  assert.equal(L.foot[1], L.footH);
   // najwyższy punkt skały (stopa) dużo niżej niż najniższa część bazy (dno dysku mieszkalnego)
   const discBottom = k7HeightToZ(PIRATE_BASE_SPEC.habitat.discY0);
   assert.ok(L.foot[1] < discBottom - 5000, `szczyt skały ${L.foot[1]} vs dno dysku ${discBottom}`);
@@ -70,7 +125,7 @@ test('mapa skały: stopa windy = (lon 0, lat 0), wschód +lon, północ +lat; ob
 
 test('osada: budowle na tarasie, ramki ortonormalne z osią Y wzdłuż normalnej', () => {
   for (const b of L.buildings) {
-    assert.ok(Math.hypot(b.e, b.n) + b.r <= PIRATE_ROCK_SPEC.plateau, b.id);
+    assert.ok(Math.hypot(b.e, b.n) + b.r <= L.plateau, b.id);
     const F = b.frame;
     assert.ok(Math.abs(dist(F.o, L.center) - L.R) < 1e-6, b.id);
     const dot = (a, c) => a[0] * c[0] + a[1] * c[1] + a[2] * c[2];
@@ -174,12 +229,13 @@ test('scena: grupy w limicie, bryły skończone, osada przy powierzchni, lina i 
       }
     }
   }
+  // budowle w skali świata (rejestrator × k): przy powierzchni w zakresie projektu × k
   for (const [id, gi] of Object.entries(g.buildings)) {
     const pts = byGroup.get(gi);
     assert.ok(pts && pts.length > 5, id);
     for (const p of pts) {
       const d = dist(p, L.center) - L.R;
-      assert.ok(d > -400 && d < 1100, `${id}: bryła ${d.toFixed(0)} j. od powierzchni`);
+      assert.ok(d > -400 * L.k && d < 1100 * L.k, `${id}: bryła ${d.toFixed(0)} j. od powierzchni`);
     }
   }
   for (const gi of g.segments) assert.ok(byGroup.get(gi).length >= 3);

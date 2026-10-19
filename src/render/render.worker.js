@@ -265,6 +265,13 @@ if (isWorker) {
         st.ventsBlk = ventsBlk;
         st.ventsMirror = ventsBlk.createPirateVentsFrame();
       } catch (e) { report(e, 'wyrwy bazy'); }
+      // bitwa w głębi sceny „Wojna” (tłum nad i pod płaszczyzną, planeta w głębi, bohaterowie): stan z bloku warBackdrop
+      try {
+        const [wbMod, wbBlk] = await Promise.all([import('../3d/warBackdrop/warBackdrop3D.js'), import('./blocks/warBackdropBlock.js')]);
+        st.warBd = wbMod.createWarBackdrop3D(Core3D);
+        st.warBdBlk = wbBlk;
+        st.warBdMirror = wbBlk.createWarBackdropFrame();
+      } catch (e) { report(e, 'bitwa w głębi'); }
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
@@ -852,6 +859,9 @@ if (isWorker) {
       const vm = st.ventsBlk.applyPirateVentsBlock(v.blocks.pirateVents, st.ventsMirror);
       st.vents.update(vm, vm.has ? vm.dt : 0);
     } } catch (e) { modFail('wyrwy bazy', e); }
+    try { if (st.warBd && v.blocks.warBackdrop && v.blocks.warBackdrop.f64) {
+      st.warBd.update(st.warBdBlk.applyWarBackdropBlock(v.blocks.warBackdrop, st.warBdMirror), cam);
+    } } catch (e) { modFail('bitwa w głębi', e); }
     try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: st.playerPoseOf, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }

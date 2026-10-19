@@ -136,9 +136,11 @@ test('planets and moons push analytic discs every frame', () => {
   // Głębokość ciała: planety i księżyce tła (perspektywa, z = −50 000) maska rzutuje tam, gdzie je widać.
   assert.match(planetSource, /Core3D\.pushShaftDiscWorld\(this\.data\.x, this\.data\.y, scale, 1, visualZ\)/);
   assert.match(planetSource, /Core3D\.pushShaftDiscWorld\(mx, my, scale, 1, z\)/);
-  // Soczewka warpa: tarcza za ciałem w kadrze skoku, siła 1 − β, oś z prawdziwego środka (b.x, b.y).
-  const lensPushes = planetSource.match(/Core3D\.pushShaftDiscWorld\(L\.camX \+ o\.x \* k, L\.camY \+ o\.y \* k, Math\.max\(1e-3, fit\.size \* k\), real, b\.z, b\.x, b\.y\)/g) || [];
+  // Soczewka warpa: tarcza za ciałem w kadrze skoku, siła 1 − β, oś z prawdziwego środka (b.x, b.y); położenie
+  // z pikseli soczewki przez lensToWorld (obrót kadru kamery — src/3d/viewRoll.js).
+  const lensPushes = planetSource.match(/Core3D\.pushShaftDiscWorld\(lwx, lwy, Math\.max\(1e-3, fit\.size \* k\), real, b\.z, b\.x, b\.y\)/g) || [];
   assert.equal(lensPushes.length, 2, 'planeta i księżyc w soczewce');
+  assert.equal((planetSource.match(/const lw = lensToWorld\(L, o\.x \* k, o\.y \* k\);/g) || []).length, 3);
   // Oś smugi z CPU (uDiscAxis), nie ze środka tarczy w shaderze.
   assert.match(coreSource, /const axis = uDiscAxis\.element\(discIdx\)\.xy\.toVar\(\);/);
   assert.doesNotMatch(coreSource, /const axis = disc\.xy\.sub\(uSunWorld\)/);
@@ -200,13 +202,14 @@ test('hull shaft starts at the hull edge and only dims the scene', () => {
 });
 
 test('planetary rings register analytic circle occluders', () => {
-  assert.match(coreSource, /setShaftRingOccluder\(key, cx, cy, radius, reach\)/);
+  assert.match(coreSource, /setShaftRingOccluder\(key, cx, cy, radius, reach, strength = 1\)/);
   assert.match(coreSource, /removeShaftRingOccluder\(key\)/);
   // Ring „Halo” (haloRingGame.js): środek obwiedni, zasięg ×1,15 jak dawny ring;
   // rejestracja co klatkę PRZED testem kadru — cień działa także przy ringu poza
   // kadrem — ale dopiero od podpięcia brył (ring.ready): ring-archetyp buduje się
   // w tle i wcześniej kadr miał sam cień niewidocznego ringu (Mars po przylocie).
-  assert.match(ringSource, /if \(e\.shadowReady\) Core3D\.setShaftRingOccluder\?\.\(e\.occluderKey, e\.place\.x, e\.place\.y, ringMid, ringMid \* HALO_GAME\.occluderReachMul\);\s*else Core3D\.removeShaftRingOccluder\?\.\(e\.occluderKey\);/);
+  // W soczewce warpa (2026-10-19) cień gaśnie z udziałem prawdziwego widoku (siła), zostaje na prawdziwym miejscu.
+  assert.match(ringSource, /if \(e\.shadowReady && shadowK > 0\.001\) \{\s*Core3D\.setShaftRingOccluder\?\.\(e\.occluderKey, e\.place\.x, e\.place\.y, ringMid, ringMid \* HALO_GAME\.occluderReachMul, shadowK\);\s*\} else Core3D\.removeShaftRingOccluder\?\.\(e\.occluderKey\);/);
   assert.match(ringSource, /if \(!ok \|\| e\.ring !== ring\) return;\s*e\.shadowReady = true;/);
   assert.match(ringSource, /occluderReachMul: 1\.15/);
   assert.match(ringSource, /Core3D\.removeShaftRingOccluder\?\.\(e\.occluderKey\);/);

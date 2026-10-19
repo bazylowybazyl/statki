@@ -51,7 +51,11 @@ const WIZUALIA = [
   'src/3d/explosions/explosionRecipes.js',
   // zadanie 25a: wygląd stacji pirackiej (panele, okna) — własny strumień FxRandom ze stałym ziarnem (bryła powstaje
   // na ekranie ładowania: nie zużywa ani Math.random gry, ani wspólnego fxRandom — tests/rozgrzewkaStacji.test.mjs)
-  'src/space/pirateStation/pirateStationFactory.js'
+  'src/space/pirateStation/pirateStationFactory.js',
+  // scena „Wojna” (2026-10-19): bitwa w głębi — własny mulberry32 z ziarna sceny (ten sam obraz w workerze i w off)
+  'src/3d/warBackdrop/warBackdropSim.js',
+  'src/3d/warBackdrop/warBackdrop3D.js',
+  'src/render/warBackdropPlan.js'
 ];
 
 test('wizualia gry nie wołają Math.random gry (fxRandom — warstwa efektów)', () => {

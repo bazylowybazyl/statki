@@ -244,6 +244,18 @@ const SPECS = {
     m: [[80, 0]]
   },
 
+  // Promień śmierci (death_ray, 2026-10-19): szeroka obudowa z kondensatorami, żebrowany akcelerator, głowica
+  // ogniskująca z dwoma kolcami. Wylot (62, 0) — w tym samym punkcie kończy się model 3D (rodzina `deathRay`).
+  deathRay: {
+    r: 64,
+    g: [
+      { c: C.armor, b: 0, p: [['c', 0, 0, 20], ['r', 1, 0, 38, 40, 5]] },
+      { c: C.barrel, b: 1, p: [['r', 33, 0, 34, 7, 2.5], ['r', 55, 0, 10, 15, 3], ['r', 53, 7.6, 18, 1.6, 0.8], ['r', 53, -7.6, 18, 1.6, 0.8]] },
+      { c: C.detailCyan, b: 1, p: [['r', 30, 0, 22, 1.4, 0.7], ['ring', 58, 0, 6.6, 3.6]] }
+    ],
+    m: [[62, 0]]
+  },
+
   // ── Awaryjne sylwetki po kategorii (odpowiednik createFallbackWeaponMesh) ──
   fbRail: {
     r: 36,
@@ -334,6 +346,7 @@ function resolveSpec(weaponId, category) {
   if (key === 'siege_torpedo' || key === 'siege_torpedo_mk2') return SPECS.siegeTorpedo;
   if (key === 'torpedo_salvo') return SPECS.missileRack;
   if (key === 'siege_railgun') return SPECS.siegeRail;
+  if (key === 'death_ray') return SPECS.deathRay;
   // Warianty rodzinne S/M/L (tempest_ion_s, helios_lance_l, gatling_s …).
   if (key.includes('tempest') || key.includes('railgun')) return key.includes('mk2') ? SPECS.tempest2 : SPECS.tempest1;
   if (key.includes('helios')) return SPECS.helios;
@@ -388,7 +401,8 @@ const FX_PROFILE = {
   siege_torpedo: { key: 'torpedo' },
   siege_torpedo_mk2: { key: 'torpedo' },
   torpedo_salvo: { key: 'torpedo' },
-  siege_railgun: { key: 'siegeRail' }
+  siege_railgun: { key: 'siegeRail' },
+  death_ray: { key: 'deathRay' }
 };
 
 // Barwy błysku wylotowego — przeniesione z `muzzleColor` builderów 3D.
@@ -396,7 +410,7 @@ const MUZZLE_COLOR = {
   vulcan: '#ffaa00', helios: '#ff003c', tempest: '#00ccff', armata: '#ff5500',
   beam: '#00ffcc', goliath: '#ff6600', plasmaGatling: '#00ffff', yamato: '#00ffff',
   autocannon: '#ffcc8a', ciws: '#8cffd0', flak: '#ffc258', laserPD: '#6ec8ff',
-  rocket: '#ffbb77', torpedo: '#ff4444', hexlance: '#d0eaff', siegeRail: '#aaffff', lance: '#ff00ff'
+  rocket: '#ffbb77', torpedo: '#ff4444', hexlance: '#d0eaff', siegeRail: '#aaffff', lance: '#ff00ff', deathRay: '#46ff8c'
 };
 
 export function normalizeWeaponFxKey(weaponId) {
@@ -422,6 +436,7 @@ export function normalizeWeaponFxKey(weaponId) {
   if (id.includes('torpedo_salvo')) return 'torpedo';
   if (id.includes('hexlance')) return 'hexlance';
   if (id.includes('siege_railgun')) return 'siegeRail';
+  if (id.includes('death_ray')) return 'deathRay';
   if (id.includes('special_valkyrie')) return 'tempest';
   if (id.includes('special_yamato')) return 'yamato';
   return id;

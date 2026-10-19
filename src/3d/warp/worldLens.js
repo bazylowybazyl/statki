@@ -38,7 +38,12 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   holdSize: 0.5,
   holdPeek: 0.5,        // jaka część tarczy celu wystaje zza krawędzi kadru
   holdSoft: 40,         // [px] miękkie maksimum odstępów celu
-  edgeGap: 24           // [px] najmniejszy odstęp celu od kadłuba
+  edgeGap: 24,          // [px] najmniejszy odstęp celu od kadłuba
+  // PRZYLOT (WarpWorldLens.update — cel trzyma się krawędzi, póki prawdziwy obraz go nie dogoni):
+  arrivalKneePx: 60,    // [px] miękkie kolano przejścia (dogonienie bez ruchu celu na zewnątrz kadru)
+  arrivalStopPx: 40,    // [px/s] statek „stoi”, gdy prawdziwy obraz celu zbliża się wolniej — puszczenie
+  arrivalRelease: 0.8,  // [s] puszczenie celu na prawdziwe miejsce (statek stanął przed dogonieniem)
+  arrivalHoldMax: 8     // [s] po rampie wyjścia najdłużej tyle trzymania
 });
 
 const clamp = (v, a, b) => (v < a ? a : (v > b ? b : v));
@@ -172,11 +177,16 @@ export const WARP_WORLD_LENS = {
   W: 1, H: 1,         // bufor rysowania [px]
   focal: 1, camZ: 1,  // kamera perspektywy passa planet tła (z = −50 000)
   camX: 0, camY: 0,   // kamera gry (świat)
+  roll: 0,            // obrót kadru (src/3d/viewRoll.js): soczewka liczy w osiach EKRANU — wejścia o −roll, rozstawienie o +roll
   shipX: 0, shipY: 0, // statek (świat)
-  shipSx: 0, shipSy: 0, // statek od środka kadru [px, y w dół]
+  shipSx: 0, shipSy: 0, // statek od środka kadru [px, y w dół, osie ekranu]
   hullHalfLen: 0, hullHalfWid: 0, // [px]
   dt: 0,
-  target: null        // ciało celu (dane planety z gry) albo null
+  target: null,       // ciało celu (dane planety z gry) albo null
+  exitAge: -1,        // [s] wiek wyjścia gracza (rampa) — przylot; < 0: skok albo brak
+  exitHalt: 0,        // [s] zatrzymanie na rampie wyjścia (warpDrive.js: tHalt)
+  targetHold: 0       // WYNIK WarpWorldLens.update: cel trzymany przy krawędzi (0..1) — sterownik trzyma soczewkę,
+                      // póki > 0, choć β wyjścia już opadło
 };
 
 /** Wyłącza soczewkę (sterownik bez skoku gracza). */
@@ -184,6 +194,29 @@ export function resetWarpWorldLens() {
   WARP_WORLD_LENS.active = false;
   WARP_WORLD_LENS.beta = 0;
   WARP_WORLD_LENS.target = null;
+  WARP_WORLD_LENS.exitAge = -1;
+  WARP_WORLD_LENS.targetHold = 0;
+}
+
+/**
+ * RING „HALO” W SOCZEWCE (user 2026-10-19: ring ma iść w soczewce razem z planetą — dawniej mijana planeta i cel przy
+ * krawędzi leciały bez ringu, a prawdziwy ring przechodził przez kadr osobno, np. przy przelocie obok Marsa). Pisze
+ * planet3d.assets.js (DirectPlanet._lensPlace — planety z ringiem), czyta haloRingGame.js: ring = obraz planety
+ * przesunięty i przeskalowany wokół jej środka. Klucz = id planety ('earth', 'mars', 'jupiter').
+ *   on — planeta w soczewce w tej klatce; x, y — środek obrazu planety (świat gry); k — skala obrazu do prawdziwej
+ *   (1 — prawdziwy widok); q — obrót przelotu bryły (THREE.Quaternion, kopia) albo null; real — udział prawdziwego
+ *   widoku 1 − β (cień ringu w smugach gaśnie z nim jak tarcza planety); vis — obraz planety w kadrze.
+ */
+export const WARP_RING_LENS = Object.create(null);
+
+/** Rekord ringu w soczewce dla planety `id` (tworzony raz; `q` przypina właściciel — three nie jest tu importowane). */
+export function warpRingLensSlot(id) {
+  let s = WARP_RING_LENS[id];
+  if (!s) {
+    s = { on: false, x: 0, y: 0, k: 1, q: null, turned: false, real: 1, vis: false };
+    WARP_RING_LENS[id] = s;
+  }
+  return s;
 }
 
 /** Nowy rekord ciała soczewki (raz na ciało; `out` wypełnia WarpWorldLens.update). */
@@ -195,6 +228,7 @@ export function newLensBody(id) {
     z: 0,            // głębokość passa (0 — płaszczyzna gry, −50 000 — tło perspektywy)
     flat: 1,         // px/j. prawdziwego widoku (β = 0)
     gate: 1,         // 0..1 — udział soczewki (0: prawdziwy ring tego ciała jest w kadrze)
+    gateOpenSession: -1, // skok (WarpWorldLens.session), w którym bramka się otworzyła — potem zostaje otwarta
     parent: null,    // rekord planety (księżyce)
     ready: false,    // rekord odświeżony w tej klatce
     entry: 0,        // wejście w soczewkę w tym skoku: 0 — do oceny, 1 — w soczewce, −1 — czeka (WarpWorldLens)
@@ -249,12 +283,61 @@ export class WarpWorldLens {
     this._tgt = { x: 0, y: 0, size: 0, d: 0, edge: 0, theta: 0, gap: 0 };
     this._full = { x: 0, y: 0, size: 0, d: 0, edge: 0, theta: 0, gap: 0 };
     this._turn = { ax: 1, ay: 0, angle: 0 };
+    // Przylot: prawdziwy odstęp celu w poprzedniej klatce [px], tempo zbliżania [px/s] (wygładzone, z ilu próbek),
+    // czas puszczania [s] (< 0 — trzyma).
+    this._arr = { prevGap: NaN, closing: 0, samples: 0, releaseT: -1 };
   }
 
   /** Koniec skoku (soczewka wyłączona): skala od nowa, wejście ciał oceniane od nowa w następnym. */
   reset() {
     this.lensScale = 0;
     this.session++;
+    this._arrivalReset();
+  }
+
+  _arrivalReset() {
+    this._arr.prevGap = NaN;
+    this._arr.closing = 0;
+    this._arr.samples = 0;
+    this._arr.releaseT = -1;
+  }
+
+  /**
+   * PRZYLOT (user 2026-10-19: „planeta docelowa pokazuje się na chwilę, potem jej nie widać i znowu wskakuje”). β
+   * wyjścia opada z czasem rampy, a statek wychodzący z pędem ślizga się jeszcze kilka km — cel jechał na prawdziwe
+   * miejsce za krawędzią kadru i wracał, gdy ślizg go przybliżył. Teraz przy wyjściu cel trzyma się obrazu z pełnej
+   * soczewki (przy krawędzi, `tg`), póki bliski brzeg jego prawdziwego obrazu jest za krawędzią kadru; gdy wejdzie
+   * w kadr — β puszcza cel (miękkie kolano, bez wypadania z kadru), a gdy statek stanie przed tym (tempo zbliżania <
+   * arrivalStopPx, albo arrivalHoldMax s po rampie) — puszczenie w arrivalRelease s. Zwraca udział trzymania 0..1.
+   */
+  _arrivalHold(target, tg, ctx, dt) {
+    const A = this._arr;
+    const p = this.params;
+    const realGap = (tg.d - target.r) * target.flat;
+    // Cięcie (teleport, nowa podróż): prawdziwy obraz celu odskoczył w klatce dalej niż o kadr — koniec trzymania
+    // od razu (bez puszczania przez kadr).
+    if (Number.isFinite(A.prevGap) && realGap - A.prevGap > Math.max(Number(ctx.W) || 0, Number(ctx.H) || 0)) {
+      A.releaseT = Infinity;
+    }
+    if (Number.isFinite(A.prevGap) && dt > 0) {
+      const rate = (A.prevGap - realGap) / dt;
+      A.closing = A.samples > 0 ? A.closing + (rate - A.closing) * (1 - Math.exp(-dt / 0.2)) : rate;
+      A.samples++;
+    }
+    A.prevGap = realGap;
+    // Trzymanie tylko pilnuje KADRU: puszcza, gdy bliski brzeg prawdziwej tarczy jest w kadrze (krawędź − kolano;
+    // kadr przylotu kamery — cameraRig.js, arrivalDist — wprowadza go tam w trakcie hamowania), a nie dopiero przy
+    // obrazie z soczewki (ten siedzi głębiej — przejście spadało na koniec ślizgu, „planeta rośnie po hamowaniu”).
+    const w = Math.max(1, p.arrivalKneePx);
+    const x = realGap - Math.max(tg.gap, tg.edge - w);
+    const k = 0.5 * (1 + x / Math.sqrt(x * x + w * w));
+    const halt = Number(ctx.exitHalt) || 0;
+    // „Stoi” dopiero z kilku próbek tempa (pierwsza klatka przylotu nie ma jeszcze z czym porównać).
+    const stopped = A.samples >= 6 && A.closing < p.arrivalStopPx;
+    if (A.releaseT < 0 && ctx.exitAge > halt && (stopped || ctx.exitAge > halt + p.arrivalHoldMax)) A.releaseT = 0;
+    else if (A.releaseT >= 0) A.releaseT += dt;
+    const rel = A.releaseT >= 0 ? 1 - smoothstep(0, Math.max(0.05, p.arrivalRelease), A.releaseT) : 1;
+    return k * rel;
   }
 
   // Wejście ciała w soczewkę (WORLD_LENS_ENTRY): `full` — obraz w pełnej soczewce (β = 1).
@@ -281,7 +364,8 @@ export class WarpWorldLens {
       // za kadrem „mieściłaby się” po rulonie, choć jej nie widać).
       const fl = b.flat;
       const realOn = lensDiscInFrame(ctx.shipSx + dx * fl, ctx.shipSy + dy * fl, b.r * fl, ctx.W, ctx.H);
-      const ahead = Math.cos(full.theta - (Number(ctx.velAngle) || 0)) > WORLD_LENS_ENTRY.aheadCos;
+      // kurs w osiach ekranu (update: velAngle − roll), jak `full.theta`
+      const ahead = Math.cos(full.theta - this._o.velAngle) > WORLD_LENS_ENTRY.aheadCos;
       // prawdziwy obraz w kadrze (przejście ciągłe) albo ciało przed dziobem (wlatuje od strony lotu)
       b.entry = realOn || ahead ? 1 : -1;
     }
@@ -310,7 +394,12 @@ export class WarpWorldLens {
     o.shipSy = ctx.shipSy;
     o.hullHalfLen = Math.max(0, ctx.hullHalfLen || 0);
     o.hullHalfWid = Math.max(0, ctx.hullHalfWid || 0);
-    o.velAngle = ctx.velAngle;
+    // Obrót kadru (src/3d/viewRoll.js): soczewka liczy w osiach ekranu — przesunięcia ze świata R(−roll),
+    // kurs − roll; obrót przelotu (flybyTurn) zostaje w osiach świata (kręci kulą w scenie).
+    const roll = Number(ctx.roll) || 0;
+    const rc = roll ? Math.cos(roll) : 1;
+    const rs = roll ? Math.sin(roll) : 0;
+    o.velAngle = (Number(ctx.velAngle) || 0) - roll;
     o.hold = 0;
     o.sizeBoost = 1;
     const vis = typeof visible === 'function' ? visible : lensDiscInFrame;
@@ -321,18 +410,27 @@ export class WarpWorldLens {
     let tx0 = 0;
     let ty0 = 0;
     let tBeta = 0;
+    let arrHold = 0;
     const tg = this._tgt;
     if (target && target.ready) {
+      const twx = target.x - sx0;
+      const twy = target.y - sy0;
+      const tdx = rc * twx + rs * twy;
+      const tdy = -rs * twx + rc * twy;
       o.hold = 1;
       o.beta = 1;
       o.flatScale = target.flat;
-      mapWorldLens(target.x - sx0, target.y - sy0, target.r, o, tg);
+      mapWorldLens(tdx, tdy, target.r, o, tg);
       o.hold = 0;
       tScale = tg.size / Math.max(1e-9, target.r);
       tx0 = target.x;
       ty0 = target.y;
-      tBeta = beta * clamp(target.gate, 0, 1) * this._entry(target, target.x - sx0, target.y - sy0, tg, ctx, vis);
-    }
+      // Przylot: przy wyjściu cel trzymany przy krawędzi niezależnie od β (_arrivalHold); w skoku — zwykłe β.
+      if (Number(ctx.exitAge) >= 0) arrHold = this._arrivalHold(target, tg, ctx, dt);
+      else this._arrivalReset();
+      tBeta = Math.max(beta, arrHold) * clamp(target.gate, 0, 1) * this._entry(target, tdx, tdy, tg, ctx, vis);
+    } else this._arrivalReset();
+    ctx.targetHold = arrHold;
     const tilt = Math.max(0, p.flybyTilt);
     const hCam = Math.max(1, p.flybyHeight);
     const m = this._map;
@@ -340,16 +438,18 @@ export class WarpWorldLens {
     for (let i = 0; i < n; i++) {
       const b = bodies[i];
       if (!b || !b.ready) continue;
-      const dx = b.x - sx0;
-      const dy = b.y - sy0;
+      const wdx = b.x - sx0;
+      const wdy = b.y - sy0;
+      const dx = rc * wdx + rs * wdy;
+      const dy = -rs * wdx + rc * wdy;
       const isTarget = b === target;
       const inGroup = !isTarget && tScale > 0 && b.parent === target;
       const fl = b.flat;
+      // Cel i jego księżyce — udział celu (β albo trzymanie przy przylocie), reszta — β · bramka · wejście.
       let bb = tBeta;
-      if (!inGroup) {
+      if (!inGroup && !isTarget) {
         let e = 1;
-        if (isTarget) e = target.entry === 1 ? 1 : 0;
-        else if (b.entrySession !== this.session || b.entry !== 1) {
+        if (b.entrySession !== this.session || b.entry !== 1) {
           o.beta = 1;
           o.flatScale = fl;
           mapWorldLens(dx, dy, b.r, o, full);
@@ -358,9 +458,11 @@ export class WarpWorldLens {
         bb = beta * clamp(b.gate, 0, 1) * e;
       }
       if (inGroup) {
-        // Księżyc celu: wokół obrazu celu w jego skali.
-        const lx = tg.x + (b.x - tx0) * tScale;
-        const ly = tg.y + (b.y - ty0) * tScale;
+        // Księżyc celu: wokół obrazu celu w jego skali (przesunięcie od celu w osiach ekranu).
+        const mwx = b.x - tx0;
+        const mwy = b.y - ty0;
+        const lx = tg.x + (rc * mwx + rs * mwy) * tScale;
+        const ly = tg.y + (-rs * mwx + rc * mwy) * tScale;
         const ls = Math.max(b.r * tScale, 1e-6);
         m.x = dx * fl + (lx - dx * fl) * bb;
         m.y = dy * fl + (ly - dy * fl) * bb;
@@ -378,12 +480,15 @@ export class WarpWorldLens {
       out.size = m.size;
       out.beta = bb;
       out.isTarget = isTarget;
-      // Obrót przelotu (w soczewce): wirtualna kamera nad statkiem patrzy na ciało pod kątem.
+      // Obrót przelotu (w soczewce): wirtualna kamera nad statkiem patrzy na ciało pod kątem. Cel i jego księżyce bez
+      // obrotu (user 2026-10-19: „przy wejściu planeta docelowa się obraca, a powinna być taka sama, jak mi się
+      // pokazała”) — obrót × udział soczewki wracał do zera przy przylocie razem ze światłem (terminator); cel ma tylko
+      // ustawienie tarczy (planet3d.assets.js: lensFaceQuat), które przy przylocie zostaje.
       out.ax = 1;
       out.ay = 0;
       out.angle = 0;
-      if (tilt > 0 && bb > 0.002) {
-        flybyTurn(dx, -dy, hCam, this._turn);
+      if (tilt > 0 && bb > 0.002 && !isTarget && !inGroup) {
+        flybyTurn(wdx, -wdy, hCam, this._turn);
         out.ax = this._turn.ax;
         out.ay = this._turn.ay;
         out.angle = this._turn.angle * tilt * bb;

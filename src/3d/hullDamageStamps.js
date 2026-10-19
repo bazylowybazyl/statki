@@ -62,6 +62,13 @@ export const STAMP = Object.freeze({
   yamato: Object.freeze({ impact: st(130, 3.6, 1.0, 0.9, 0.4, 1, 0, 1940) }),
   plasmaGatling: Object.freeze({ impact: st(34, 2.2, 0.55, 0.56, 0.8) }),
   hexlance: Object.freeze({ impact: st(70, 3.4, 1.0, 0.85, 0.2), kerf: st(34, 3.2, 0.9, 0.85, 0, 2.2) }),
+  // Promień śmierci (2026-10-19): rzaz (`kerf` — cutSegment, pas ± 55 j.) szeroki i biało-gorący (żar 3,8 stygnie przez
+  // czerwień), z poświatą jonową barwy wiązki; zatrzymanie (`impact` — HullBodies.impact z craterRadius) — krater
+  // z danych broni (endCrater), wpis bez wzorca krateru (promień leja = dziura z geometrii).
+  deathRay: Object.freeze({
+    impact: st(120, 3.8, 1.0, 0.9, 0.6), kerf: st(70, 3.8, 1.0, 0.9, 0.5, 1.8),
+    exit: st(80, 3.6, 1.0, 0.9, 0.4)
+  }),
   // Mjolnir: rów przebicia (decyzja 2026-09-29) — kratery leja rzazu (26,5 j.) wzdłuż drogi w materiale.
   mjolnir: Object.freeze({
     impact: st(80, 3.8, 1.0, 0.9, 0.5, 1, 0, 2500), kerf: st(38, 3.6, 1.0, 0.9, 0.2, 2.2, 0, 2500),
@@ -165,6 +172,7 @@ export const WEAPON_STAMP_FAMILY = Object.freeze({
   special_yamato_cannon: 'yamato',
   special_yamato_l: 'yamatoL',
   hexlance_siege: 'hexlance',
+  death_ray: 'deathRay',
   siege_railgun: 'mjolnir',
   special_valkyrie_railgun: 'valkyrie',
   special_valkyrie_m: 'valkyrieM',
