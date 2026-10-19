@@ -4,7 +4,7 @@
 // mieszkalnym, dolny do wieży stacji dolnej na szczycie skały. Kabiny jeżdżą po linie (parametr s: 0 — góra, 1 — dół).
 // Zerwanie (rozpad habitatu): lina pęka POD GŁOWICĄ — głowica (węzeł 0, ciężka) spada osobno ku skale razem z
 // rozpadem habitatu, a wolna lina pod naciągiem ODSKAKUJE ku stacji dolnej (górny koniec najszybciej), wybrzusza się,
-// spada ku środkowi skały (grawitacja `spec.gravity`, Verlet + więzy długości, podkrok 1/120 s) i kładzie się na kuli
+// spada ku środkowi skały (grawitacja `spec.gravity` × skala długości liny, Verlet + więzy długości, podkrok 1/120 s) i kładzie się na kuli
 // wokół osady (tarcie); kabiny jadą z węzłami, przy których były. Uderzenie głowicy, kabin i pierwsze uderzenie każdego odcinka → zdarzenia (wybuchy,
 // kurz — pirateRockSite3D.js). Dolny koniec puszcza, gdy zawali się stacja dolna (releaseBottom). Lina w spoczynku
 // zasypia (zero pracy).
@@ -38,7 +38,11 @@ export function climberParam(k, t, count = 2, tune = TETHER_TUNE) {
   return 1 - u * u * (3 - 2 * u);
 }
 
-/** Nowa symulacja liny z układu skały. */
+/**
+ * Nowa symulacja liny z układu skały. Strojenie (recoil, impactSpeed, sleepSpeed) i grawitacja liny są w skali
+ * PROJEKTU — symulacja mnoży je przez `ls` = długość liny / długość z projektu (pirateRockLayout.js: skała w świecie
+ * jest `scale` razy większa i dalej): lina odskakuje, spada i zwija się w tym samym czasie co w projekcie.
+ */
 export function createTetherSim(layout, tune = TETHER_TUNE) {
   const T = { ...TETHER_TUNE, ...tune };
   const N = layout.tether.segments;
@@ -47,10 +51,11 @@ export function createTetherSim(layout, tune = TETHER_TUNE) {
   const prev = new Float64Array(layout.tether.nodes);
   const invMass = new Float64Array(n).fill(1);
   const hit = new Uint8Array(n);
+  const ls = Number(layout.tether.scale) > 0 ? Number(layout.tether.scale) : 1;
   return {
-    tune: T, N, n, pos, prev, invMass, hit,
+    tune: T, N, n, pos, prev, invMass, hit, ls,
     segLen: layout.tether.segLen,
-    C: layout.center, R: layout.R + layout.spec.cableR, g: layout.spec.gravity,
+    C: layout.center, R: layout.R + (layout.cableR ?? layout.spec.cableR), g: layout.spec.gravity * ls,
     snapped: false, bottomFree: false, sleeping: true, still: 0, time: 0, acc: 0,
     // kabiny: s na linie w chwili zerwania i węzeł, do którego się przyczepiły (−1 — przed zerwaniem)
     climberS: new Float64Array(layout.spec.climbers),
@@ -109,10 +114,11 @@ export function snapTether(sim, climberS = null) {
   let sx = uz, sz = -ux;
   const sl = Math.hypot(sx, sz) || 1;
   sx /= sl; sz /= sl;
+  const recoil = T.recoil * (sim.ls || 1);
   for (let i = 1; i < N; i++) {
     const f = 1 - (i - 1) / (N - 1);
-    const v = T.recoil * f;
-    const w = T.recoilWobble * T.recoil * f * Math.sin(i * 2.399 + 0.7);
+    const v = recoil * f;
+    const w = T.recoilWobble * recoil * f * Math.sin(i * 2.399 + 0.7);
     const o = i * 3;
     sim.prev[o] = p[o] - (ux * v + sx * w) * T.substep;
     sim.prev[o + 1] = p[o + 1] - uh * v * T.substep;
@@ -152,6 +158,8 @@ export function stepTetherSim(sim, dt, onImpact = null) {
   const g = sim.g;
   const keep = Math.exp(-T.damping * h);
   const L = sim.segLen;
+  const ls = sim.ls || 1;
+  const impactSpeed = T.impactSpeed * ls;
   let maxV = 0;
   for (let s = 0; s < steps; s++) {
     // Verlet + grawitacja ku środkowi skały
@@ -196,7 +204,7 @@ export function stepTetherSim(sim, dt, onImpact = null) {
       const nx = dx / d, nh = dh / d, nz = dz / d;
       let vx = (P[o] - Q[o]) / h, vh = (P[o + 1] - Q[o + 1]) / h, vz = (P[o + 2] - Q[o + 2]) / h;
       const vn = vx * nx + vh * nh + vz * nz;
-      if (vn < -T.impactSpeed && !sim.hit[i]) {
+      if (vn < -impactSpeed && !sim.hit[i]) {
         sim.hit[i] = 1;
         if (onImpact) {
           if (i === 0) { sim.headHit = 1; onImpact('head', i, P[o], P[o + 1], P[o + 2], -vn, -1); }
@@ -223,7 +231,7 @@ export function stepTetherSim(sim, dt, onImpact = null) {
     }
   }
   sim.time += steps * h;
-  if (maxV < T.sleepSpeed) {
+  if (maxV < T.sleepSpeed * ls) {
     sim.still += steps * h;
     if (sim.still >= T.sleepTime) sim.sleeping = true;
   } else sim.still = 0;

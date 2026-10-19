@@ -1005,7 +1005,8 @@ export const StoryGame = {
       // opts.waitFuel = false (misja pominięta skokiem dev) — bez czekania na ogień w rurach i upadek
       this._after(tLast + 1.5, () => {
         if (opts.waitFuel === false) { resolve(); return; }
-        const fallDone = fallStarted && typeof d.habitatFallDone === 'function' ? d.habitatFallDone(30) : null;
+        // upadek z ~24 km (skała w skali świata — pirateRockLayout.js): wieża na skale ~14 s, osiadanie ~25 s, najwyżej 40 s
+        const fallDone = fallStarted && typeof d.habitatFallDone === 'function' ? d.habitatFallDone(40) : null;
         Promise.all([fuelDone, site.chain.pending || null, fallDone]).then(resolve);
       });
     });
@@ -1020,7 +1021,7 @@ export const StoryGame = {
     if (!look || !d.lookAt) return;
     this._block.add('look');
     d.lookAt({
-      ...look, inSec: 1.8, holdSec: 18, outSec: 1.6,
+      ...look, inSec: 1.8, holdSec: 26, outSec: 1.6,
       onArrive: () => this._block.delete('look'),
       onDone: () => this._block.delete('look')
     });

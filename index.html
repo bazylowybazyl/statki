@@ -30906,17 +30906,31 @@
       pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity: ev.entity || null, kind: 'break' });
       pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity: ev.entity || null });
     }
-    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): środek między habitatem a środkiem skały, kadr na całą
-    // planetoidę; trzyma się do 4 s po uderzeniu dysku w skałę (albo do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): habitat i RZUT miejsca lądowania (prosta habitat → środek
+    // skały do przecięcia z kulą skały, ~24 km pod płaszczyzną — pirateRockLayout.js, skala świata) symetrycznie wokół
+    // środka kadru; kadr 13 km — kamera ~21 km nad płaszczyzną, kawałki bazy maleją w locie do ~0,46 (prośba użytkownika
+    // 2026-10-19: „powinny dłużej lecieć / bardziej się pomniejszać”). Trzyma się do 4 s po uderzeniu dysku w skałę (albo
+    // do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    const FALL_LOOK_VIEW_H = 13000;
     function pirateBaseFallLook() {
       const F = _baseFall, T = F.terrain, pl = _fallCtx.place || _baseFallPlace;
       if (!T || !pl || F.phase !== 'falling') return null;
       const hc = pl.habitat;
       const sp = ship?.pos;
       if (!sp || Math.hypot(sp.x - hc.x, sp.y - hc.y) > 40000) return null;
-      const rx = T.cx, ry = -T.cy;
+      const rx = T.cx, ry = -T.cy, rz = T.cz;
+      // lądowanie: z poziomu dysku (z ≈ −1000) po prostej ku środkowi skały, na kuli R
+      const hz = -1000;
+      const dx = rx - hc.x, dy = ry - hc.y, dz = rz - hz;
+      const dl = Math.hypot(dx, dy, dz) || 1;
+      const t = Math.max(0, dl - T.R);
+      const lx = hc.x + dx / dl * t, ly = hc.y + dy / dl * t, lz = hz + dz / dl * t;
+      // rzut z kamery H nad płaszczyzną: k = H / (H − z); środek kadru c spełnia c − hab = (lądowanie − c) · k
+      const camH = FALL_LOOK_VIEW_H * 0.5 / Math.tan(17.5 * Math.PI / 180);
+      const k = camH / (camH - lz);
+      const f = k / (1 + k);
       return {
-        x: hc.x + (rx - hc.x) * 0.3, y: hc.y + (ry - hc.y) * 0.3, viewHeight: 15000,
+        x: hc.x + (lx - hc.x) * f, y: hc.y + (ly - hc.y) * f, viewHeight: FALL_LOOK_VIEW_H,
         holdUntil: () => F.phase !== 'falling' || (F.discImpactT >= 0 && F.t >= F.discImpactT + 4)
       };
     }
@@ -30932,7 +30946,8 @@
 
     // Planetoida pod bazą na radarze i mapie CIC (teren — rysowana zawsze, także we mgle, jak komety; tylko obraz,
     // bez kolizji i studni). Póki baza misji stoi (StoryGame.site i baza w świecie gry): podkład radaru = ląd
-    // o promieniu skały (rzut z góry — szczyt leży 8 km pod płaszczyzną gry), kontakt „HIDALGO AST” w środku
+    // o promieniu skały z PROJEKTU (rzut z punktu widzenia — skała w świecie jest 2× większa i dalej, szczyt 24 km pod
+    // płaszczyzną gry, z kamery wygląda jak projekt: pirateRockLayout.js, pirateRockAt), kontakt „HIDALGO AST” w środku
     // (`env.bodies`, mała kropla — ląd rysuje podkład), mapa CIC — window.pirateRockLandmark (cicDisplay.js).
     const _pirateRockMark = { id: 'pirate-rock', label: PIRATE_ROCK_SPEC.label, x: 0, y: 0, radius: PIRATE_ROCK_SPEC.radius };
     const _pirateRockFeature = { id: 'pirate-rock', type: 'planet', label: PIRATE_ROCK_SPEC.label, entity: _pirateRockMark,
