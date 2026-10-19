@@ -26,6 +26,8 @@ import { resetWorldBodies3D } from './worldBodies3D.js';
 import { PirateRock3D } from './pirateRock3D.js';
 import { PirateRockSite3D } from './portBuildings/pirateRockSite3D.js';
 import { createPirateRockLayout } from './portBuildings/pirateRockLayout.js';
+import { RockImpactFx, setRockImpactHost } from './pirateRockImpactFx.js';
+import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 
 const LAYER_BG = 1;
 const LAYER_FG = 2;
@@ -55,18 +57,30 @@ Core3D.warmup?.add({ name: 'baza piratów: bryła', objects: () => ensurePrebuil
 let rock = null;
 let rockSite = null;
 let rockAt = { x: 0, y: 0 };
+// Uderzenia w skałę (upadek bazy — rekordy ROCK_IMPACT gry, src/3d/pirateRockImpactFx.js): cząstki w passie tła
+// i głębokie domeny gazu reżysera wybuchów; cel dekodera rejestrowany przy skale.
+let rockImpact = null;
 function ensureRock() {
   if (rock || !Core3D.scene) return rock;
   const layout = createPirateRockLayout();
   rock = new PirateRock3D(layout, LAYER_BG);
   rockSite = new PirateRockSite3D({ layout, frame: portModuleFrame(0, 0, 0), layer: LAYER_BG, name: 'Osada piratów na planetoidzie' });
   rockSite.root.userData.fgCategory = 'stations';
+  rockImpact = new RockImpactFx({ layer: LAYER_BG, core: Core3D });
+  rockImpact.onScar = (x, y, z, r, k) => rock.addScar(x, y, z, r, k);
+  setRockImpactHost(rockImpact);
   return rock;
 }
 Core3D.warmup?.add({
   name: 'baza piratów: planetoida, osada, winda',
   objects: () => (ensureRock() ? [rock.root, ...rockSite.warmupObjects()] : null),
   phase: 'loading'
+});
+Core3D.warmup?.add({
+  name: 'planetoida: uderzenia (pył, odłamki, błyski)',
+  objects: () => (ensureRock() ? rockImpact.warmupMeshes() : null),
+  phase: 'loading',
+  variant: WARIANT_INSTANCJI
 });
 let _skinHolders = null;
 function skinWarmHolders() {
@@ -142,7 +156,11 @@ function attachPirateRock(basePlace) {
   rockSite.setFrame(frame);
   rockSite.reset();
   rockSite.update(0, {});
-  for (const r of [rock.root, rockSite.root, rockSite.fx.root]) {
+  // uderzenia: środek skały w scenie (x gry, −y gry, h) — początek siatek cząstek
+  rockImpact.reset();
+  rock.clearScars();
+  rockImpact.setRock(rockAt.x, -rockAt.y, c[1], rock.layout.R);
+  for (const r of [rock.root, rockSite.root, rockSite.fx.root, rockImpact.root]) {
     if (r.parent !== Core3D.scene) Core3D.scene.add(r);
     r.visible = true;
   }
@@ -154,10 +172,11 @@ function collapsePirateRockSite() {
   return rockSite.collapse();
 }
 /** Skała i osada (albo null) — dev, zrzuty, narzędzia. */
-export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt } : null; }
+export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt, impact: rockImpact } : null; }
 
 function detachPirateBase3D() {
-  for (const r of [rock?.root, rockSite?.root, rockSite?.fx.root]) r?.removeFromParent();
+  for (const r of [rock?.root, rockSite?.root, rockSite?.fx.root, rockImpact?.root]) r?.removeFromParent();
+  rockImpact?.reset();
   if (!base) return;
   resetWorldBodies3D();
   base.root.removeFromParent();
@@ -185,7 +204,7 @@ function attachPirateBaseBodies3D(sites) {
 /** Bryła bazy (albo null) — dev, zrzuty. */
 export function pirateBase3D() { return base; }
 
-const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, daylight: 0.3, lampPower: undefined };
+const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, tech: 1, drumQ: [1, 1, 1, 1], daylight: 0.3, lampPower: undefined };
 const _rockState = { sun: null, at: null, daylight: 0.3 };
 const _sunOpts = { sun: null, at: null };
 
@@ -208,6 +227,11 @@ export function updatePirateBase3D(dt, state = {}) {
     _rockState.at = rockAt;
     _rockState.daylight = state.daylight ?? 0.3;
     rockSite.update(dt, _rockState);
+    // uderzenia (teren — także we mgle wojny): czas gry, słońce skały (scena: Słońce − środek, z = 0)
+    if (rockImpact) {
+      const sun = state.sun;
+      rockImpact.update(dt, sun ? Number(sun.x) - rockAt.x : null, sun ? -(Number(sun.y) - rockAt.y) : null);
+    }
   }
   if (hidden) return;
   if (state.sun && place) {
@@ -219,6 +243,9 @@ export function updatePirateBase3D(dt, state = {}) {
   _state.berths = state.berths || null;
   _state.bays = state.bays ? 1 : 0;
   for (const k of ['habitat', 'disc', 'fuel', 'warehouse']) _state[k] = state[k] ?? 1;
+  // światła wnętrza (dekompresja): głowa wieży i ćwiartki bębna — bez pól jak habitat
+  _state.tech = state.tech ?? _state.habitat;
+  for (let q = 0; q < 4; q++) _state.drumQ[q] = state.drumQ ? (state.drumQ[q] ?? _state.habitat) : _state.habitat;
   _state.daylight = state.daylight ?? 0.3;
   const dead = !!state.habitatDead;
   _state.lampPower = dead ? 0.15 : undefined;

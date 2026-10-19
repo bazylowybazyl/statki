@@ -111,6 +111,8 @@ if (isWorker) {
     const [warpMod, warpCmd, warpBlock] = await Promise.all([
       import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js')
     ]);
+    // uderzenia w planetoidę pod bazą piratów (rekord ROCK_IMPACT — cel: obraz planetoidy z pirateBaseGame.js)
+    const rockImpactMod = await import('../3d/pirateRockImpactFx.js');
     const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
@@ -144,7 +146,7 @@ if (isWorker) {
     st.w3Station = null;
     st.bayPose = { x: 0, y: 0, angle: 0 };
     st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: (e) => st.playerPoseOf(e), hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock, rockImpactMod };
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
     st.warpRamp = { active: false, age: 0, tBrake: 0 };
@@ -249,6 +251,13 @@ if (isWorker) {
       wfx.WeaponFx.ensure();
       await yieldTask();
       st.blastFactory = blastFx.createExplosionFactory(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
+      // wyrwy bazy piratów (dekompresja, pożary): obraz na stanie klatki z bloku `pirateVents`, gaz reżysera wybuchów
+      try {
+        const [ventsMod, ventsBlk] = await Promise.all([import('../3d/pirateBaseVents3D.js'), import('./blocks/pirateVentsBlock.js')]);
+        st.vents = ventsMod.createPirateBaseVents3D(Core3D, { explosions: () => (st.blastFactory && st.blastFactory.system) || null });
+        st.ventsBlk = ventsBlk;
+        st.ventsMirror = ventsBlk.createPirateVentsFrame();
+      } catch (e) { report(e, 'wyrwy bazy'); }
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
@@ -301,6 +310,7 @@ if (isWorker) {
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
+    st.mods.rockImpactMod.installRockImpactCommands(st.cmd, () => (st.blastFactory && st.blastFactory.system) || null);
     st.mods.warpCmd.installWarpTrafficCommands(st.cmd, st.mods.warpMod.WarpNurt, (slot) => st.warpMirror.recordAt(slot));
     st.hazMods.cmd.installReactorCommands(st.cmd, () => st.reactorFx || null, (id) => st.hazards.byId.get(id) || null);
     st.repairMods.drones.installRepairFxCommands(st.cmd, (id) => st.repairMirror._rigs.get(id) || null);
@@ -408,6 +418,8 @@ if (isWorker) {
         p.site = site; p.state = 'static'; p.entity = null; p.touched = false; p.lost = false;
         rep.byRef.set(site.structure + '|' + p.id, p);
       }
+      // bryły upadku kawałków płaskich (bęben, szyb habitatu — odłamy 3D z worldRef `<id>~3d`)
+      for (const f of site.fallPieces || []) rep.byRef.set(site.structure + '|' + f.id, f);
     }
     st.pbg.pirateBase3DEvent('bodies', sitesObj);
     st.wbMods.w3d.setWorldBodiesSource(rep);
@@ -828,6 +840,11 @@ if (isWorker) {
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     } } catch (e) { modFail('luk', e); }
     try { hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
+    // wyrwy bazy piratów (po kadłubach — bank Fx3D ma początek układu tej klatki)
+    try { if (st.vents && v.blocks.pirateVents && v.blocks.pirateVents.f64) {
+      const vm = st.ventsBlk.applyPirateVentsBlock(v.blocks.pirateVents, st.ventsMirror);
+      st.vents.update(vm, vm.has ? vm.dt : 0);
+    } } catch (e) { modFail('wyrwy bazy', e); }
     try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: st.playerPoseOf, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }

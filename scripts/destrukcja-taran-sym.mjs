@@ -182,7 +182,7 @@ function insideCount(listX, eY) {
 const CULLED = {};   // węzły odłamów brył 3D usuniętych pod dnem (rodzaj kawałka → liczba)
 function integrate(e, dt) { e.x += e.vx * dt; e.y += e.vy * dt; e.angle += e.angVel * dt; }
 function stepAll(ents, dt) {
-  const focus = [{ x: ents[0].x, y: ents[0].y }];
+  const focus = [ents.length ? { x: ents[0].x, y: ents[0].y } : { x: HAB.x, y: HAB.y }];
   for (const e of ents) if (!e.dead) integrate(e, dt);
   for (const w of window.wrecks) if (!w.dead && !w.solid3D) integrate(w, dt);   // bryły 3D całkuje silnik (HullBodies.step)
   worldBodies.step(dt, focus);
@@ -547,6 +547,208 @@ if (TRYBY.includes('szyja')) {
       console.log('    pary po zerwaniu do osiadania (ms / krok, wywołania / krok):', Object.entries(PARY).map(([k, [ms, c]]) => `${k} ${(ms / n).toFixed(2)} ms ${(c / n).toFixed(1)}`).join(', '));
       for (const k of Object.keys(PARY)) PARY[k] = [0, 0];
     }
+    release(ents);
+  }
+}
+
+// ============================================================================================================
+// UPADEK (2026-10-19, prośba użytkownika: „jak HP habitatu spadnie do 0, góra przebije się przez dół i jako pierwsza
+// spadnie na planetoidę, za nią dół pociągnięty przez wieżę”): src/game/story/pirateBaseFall.js — teren skały (mapa
+// kształtu), grawitacja ku środkowi skały, wieża przebija dysk, sektory puszczają za nią, osiadanie i zamrożenie.
+//   --tryb upadek [--warianty lezy,stoi] [--dt 60] [--hp0 16] [--czas 30] [--fall k=v] (PIRATE_FALL_TUNE w locie)
+//   lezy — taran szyi (jak --tryb szyja), wieża ląduje na dysku i zamarza, potem HP 0 habitatu
+//   stoi — HP 0 przy stojącej wieży (gracz zestrzelił resztę bez taranu szyi)
+if (TRYBY.includes('upadek')) {
+  const { CollisionFX } = await import('../src/vfx/collisionFx.js');
+  const { createNeckState, stepNeck, noteNeckRam } = await import('../src/game/story/pirateBaseNeck.js');
+  const { createPirateRockLayout } = await import('../src/3d/portBuildings/pirateRockLayout.js');
+  const FALL = await import('../src/game/story/pirateBaseFall.js');
+  const T2 = FALL.PIRATE_FALL_TUNE;
+  for (const kv of String(arg('fall', '')).split(',').filter(Boolean)) { const [k, val] = kv.split('='); T2[k] = Number(val); }
+  const D = HullBodies.engine;
+  HullBodies.config.solidFloorZ = T2.floorZ;
+  const rockLayout = createPirateRockLayout();
+  const png = readPng(join(repo, 'public', FALL.PIRATE_ROCK_SHAPE.url));
+  const shape = FALL.decodeRockShape(png.data, png.width, png.height);
+  const WARIANTY = String(arg('warianty', 'lezy,stoi')).split(',');
+  const HP0 = Number(arg('hp0', 16));
+  const PO = Number(arg('czas', 30));
+  console.log('\n=== UPADEK: HP 0 habitatu → wieża przebija dysk, dysk za nią, wszystko na planetoidę ===');
+  for (const dt of DTS) for (const wariant of WARIANTY) {
+    const site = freshHabitat();
+    for (const k of Object.keys(CULLED)) delete CULLED[k];
+    const neck = createNeckState();
+    const fall = FALL.createFallState();
+    const terrain = FALL.createPirateRockTerrain(rockLayout, place, shape);
+    const events = { impact: [], scrape: 0, settle: [], breach: [] };
+    const hooks = {
+      onImpact: (ev) => events.impact.push({ t: +(HullBodies.simTime).toFixed(2), kind: ev.kind, v: Math.round(ev.speed), size: Math.round(ev.size), z: Math.round(ev.z) }),
+      onScrape: () => { events.scrape++; },
+      onSettle: (ev) => events.settle.push({ t: +(HullBodies.simTime).toFixed(2), kind: ev.kind, z: Math.round(ev.z) }),
+      onBreach: (ev) => events.breach.push({ t: +(HullBodies.simTime).toFixed(2), m: ev.module, cause: ev.cause })
+    };
+    const fctx = { engine: D, terrain, hooks, simTime: () => HullBodies.simTime, worldBodies, site, layout: L, place, neck, solids: HullBodies._solids, tune: T2,
+      isBaseSite: () => true, rnd: () => 0.5,
+      wrecks: window.wrecks, shatter: (w, x, y, z, o) => HullBodies.shatterSolid(w, x, y, z, o),
+      createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e) };
+    FALL.attachPirateRockTerrain(fall, fctx);
+    // odłamy płaskie (progi punktów przed HP 0): poza spoczynkowa kawałka przy narodzinach odłamu (jak klej gry)
+    if (!HullBodies.__fallRestHook) {
+      HullBodies.__fallRestHook = true;
+      const prevSp = HullBodies.onWreckSpawned;
+      HullBodies.onWreckSpawned = (w, par, pb) => { if (typeof prevSp === 'function') prevSp(w, par, pb); FALL.noteBaseWreckRest(w, pb); };
+    }
+    // --progi H-E,H-W — te kawałki pękają PŁASKO 3 s przed HP 0 (próg punktów), odłamy dryfują od habitatu
+    const PROGI = String(arg('progi', '')).split(',').filter(Boolean);
+    // wysokość skały pod habitatem (świat)
+    const zRock = terrain.surfaceZAt(HAB.x, HAB.y);
+    const onFx = (ev) => {
+      const pa = ev.A?.worldPiece || null, pb = ev.B?.worldPiece || null;
+      if (!pa === !pb) return;
+      const other = pa ? ev.B : ev.A;
+      if (!other || other.isWreck || other.worldDebris) return;
+      noteNeckRam(neck, pa || pb, other, HullBodies.simTime, ev.x, ev.y);
+    };
+    CollisionFX.on('impact', onFx); CollisionFX.on('grind', onFx);
+    const ents = [];
+    let atlas = null;
+    if (wariant === 'lezy') {
+      atlas = ship('atlas', HAB.x + H.drumR + 300 + EXT.nose, HAB.y + 60, Math.PI, ATLAS_MASS);
+      atlas.vx = -3000;
+      ents.push(atlas);
+    }
+    const nctx = { worldBodies, engine: D, layout: L, habitat: HAB, simTime: 0 };
+    // czas terenu (DestructorBeams3D._terrainPass) w oknie 1 s — rozbicie kosztu kroku: solver, pary, teren
+    let terrMs = 0, solvMs = 0, colMs = 0, winSteps = 0, pairsW = 0, aktW = 0;
+    if (!D.__terrWrapped) {
+      D.__terrWrapped = true;
+      const tp = D._terrainPass.bind(D);
+      D._terrainPass = function (b, dt2, dd) { const t = performance.now(); tp(b, dt2, dd); D.__terrMs = (D.__terrMs || 0) + performance.now() - t; };
+    }
+    const total = Math.round((HP0 + PO) / dt);
+    const hp0Step = Math.round(HP0 / dt);
+    let stepPeak = 0, stepSum = 0, stepN = 0, solverPeak = 0;
+    const tl = [];
+    let towerMinZ = Infinity, towerVmax = 0;
+    const towerOf = () => fall.tower?.beamHull?.entity === fall.tower ? fall.tower.beamHull.body : null;
+    for (let k = 0; k < total; k++) {
+      const t0 = performance.now();
+      if (atlas && k * dt < 4 && -atlas.vx < 3000) atlas.vx -= CIAG * dt;
+      // gracz po przebiciu odlatuje (nie wpływa na upadek)
+      if (atlas && neck.phase !== 'attached' && !atlas.__odlot) { atlas.__odlot = true; atlas.x = HAB.x - 30000; atlas.vx = 0; atlas.vy = 0; }
+      stepAll(ents, dt);
+      nctx.simTime = HullBodies.simTime;
+      if (neck.phase !== 'landed' && fall.phase === 'idle') stepNeck(neck, site, nctx, dt);
+      if (PROGI.length && k === Math.max(1, hp0Step - Math.round(3 / dt))) {
+        for (const id of PROGI) {
+          const pp = site.pieces.find((q) => q.id === id);
+          if (!pp || pp.lost) continue;
+          const bb = pp.bounds, cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
+          const ox = cx - HAB.x, oy = cy - HAB.y, ol = Math.hypot(ox, oy) || 1;
+          worldBodies.breakPiece(pp, cx, cy, { power: 1.4, speed: 70, outX: ox / ol, outY: oy / ol });
+        }
+        const plaskie = window.wrecks.filter((w) => !w.dead && w.beamHull?.body && w.beamHull.body.planar && w.beamHull.world?.fall3d).length;
+        console.log(`    progi: ${PROGI.join(',')} pękły płasko — odłamów płaskich z bryłą upadku ${plaskie}`);
+      }
+      if (k === hp0Step) {
+        // śmierć habitatu: wieża i dysk (fizyka upadku), bęben i szyb pękają jak w _chainExplosion
+        FALL.startHabitatFall(fall, fctx);
+        // bęben i szyb: bryły 3D (promotePlanarPiece — jak storyBaseBreak z opts.fall); --plaskie 1 — dawny rozpad płaski
+        const core = site.pieces.find((pp) => pp.id === 'H-C');
+        if (core) {
+          if (arg('plaskie', '')) worldBodies.breakPiece(core, HAB.x, HAB.y, { power: 2.4, speed: 60, outX: 1, outY: 0 });
+          else FALL.promotePlanarPiece(fall, fctx, core, { x: HAB.x, y: HAB.y, power: 2.4, speed: 170, outX: 1, outY: 0 });
+        }
+        for (const q of L.habitat.quadrants) {
+          const p = site.pieces.find((pp) => pp.id === q.id);
+          const a = (q.a0 + q.a1) / 2;
+          if (!p) continue;
+          if (arg('plaskie', '')) worldBodies.breakPiece(p, HAB.x, HAB.y, { power: 2.2, speed: 110, outX: Math.cos(a), outY: Math.sin(a) });
+          else FALL.promotePlanarPiece(fall, fctx, p, { x: HAB.x + Math.cos(a) * 800, y: HAB.y + Math.sin(a) * 800, power: 2.2, speed: 110, outX: Math.cos(a), outY: Math.sin(a) });
+        }
+      }
+      FALL.stepHabitatFall(fall, fctx, dt);
+      const ms = performance.now() - t0;
+      // --wolne T — lista wolnych brył T s po HP 0 (prędkość, wygładzona prędkość spoczynku, styki)
+      if (arg('wolne', '') && k === hp0Step + Math.round(Number(arg('wolne', 20)) / dt)) {
+        const out = [];
+        for (const b of HullBodies._solids) {
+          if (!b || b.dead || b.planar || b.anchored) continue;
+          const rec = fall.recs.get(b);
+          out.push({ k: FALL.fallKindOf(b), n: b.activeNodes, v: Math.round(Math.hypot(b.vel.x, b.vel.y, b.vel.z)),
+            wr: Math.round(Math.hypot(b.angVel.x, b.angVel.y, b.angVel.z) * b.radius), ema: rec ? Math.round(rec.vEma) : null,
+            skała: rec ? +(HullBodies.simTime - rec.lastContact).toFixed(2) : null, bryła: b.entity ? +(HullBodies.simTime - (b.entity.__contactT || -1e9)).toFixed(2) : null,
+            akt: b._region ? b._region.list.length : 0 });
+        }
+        console.log('    WOLNE:', JSON.stringify(out));
+      }
+      // --kontakty 1 — z czym styka się wieża (co 0,25 s po HP 0)
+      if (arg('kontakty', '') && k >= hp0Step && k % Math.round(0.25 / dt) === 0 && fall.tower) {
+        const tw = fall.tower, tb = towerOf(), w = tw.__contactWith;
+        const age = HullBodies.simTime - (tw.__contactT || -1e9);
+        console.log(`      ${(k * dt).toFixed(2)}s wieża z=${tb ? tb.pos.z.toFixed(0) : '?'} v=${tb ? Math.hypot(tb.vel.x, tb.vel.y, tb.vel.z).toFixed(0) : '?'} styk ${age.toFixed(2)}s temu z ${w ? (w.worldPiece?.id || w.beamHull?.world?.id || w.name || '?') + (w.beamHull?.body?.planar ? ' (płaskie)' : ' (3D)') + (w.beamHull?.body?.anchored ? ' zakotw.' : '') : '-'} @z=${(tw.__contactZ || 0).toFixed(0)} dysk zakotw=${site.pieces.filter((p) => p.kind === 'disc').map((p) => (p.entity?.beamHull?.body?.anchored ? 1 : 0)).join('')}`);
+      }
+      terrMs += D.__terrMs || 0; D.__terrMs = 0;
+      solvMs += D.perf.lastSolverMs || 0; colMs += D.perf.lastCollisionMs || 0; pairsW += D.perf.narrowphasePairs || 0; winSteps++;
+      for (const b of HullBodies._solids) if (b && !b.dead && b._region) aktW += b._region.list.length;
+      if (arg('koszt', '') && k % Math.round(1 / dt) === 0 && k > hp0Step) {
+        const n = Math.max(1, winSteps);
+        console.log(`      koszt ${(k * dt).toFixed(0)}s: solver ${(solvMs / n).toFixed(1)} ms, kolizje ${(colMs / n).toFixed(1)} ms (w tym teren ${(terrMs / n).toFixed(1)}), pary ${(pairsW / n).toFixed(0)}, aktywne węzły ${(aktW / n).toFixed(0)}`);
+      }
+      if (k % Math.round(1 / dt) === 0) { terrMs = 0; solvMs = 0; colMs = 0; winSteps = 0; pairsW = 0; aktW = 0; }
+      if (k >= hp0Step) {
+        stepSum += ms; stepN++; if (ms > stepPeak) stepPeak = ms;
+        if (D.perf.lastSolverMs > solverPeak) solverPeak = D.perf.lastSolverMs;
+        const tb = towerOf();
+        if (tb) { if (tb.pos.z < towerMinZ) towerMinZ = tb.pos.z; const v = Math.hypot(tb.vel.x, tb.vel.y, tb.vel.z); if (v > towerVmax) towerVmax = v; }
+      }
+      if (k % Math.round(1 / dt) === 0 && (k >= hp0Step - Math.round(1 / dt) || k % Math.round(4 / dt) === 0)) {
+        const tb = towerOf();
+        let free = 0, frozen = 0, discFree = 0, discZ = 0, discN = 0;
+        for (const b of HullBodies._solids) {
+          if (!b || b.dead) continue;
+          if (b.anchored) frozen++; else free++;
+          if (b.hull?.world?.kind === 'disc' && !b.anchored && b.activeNodes > 300) { discFree++; discZ += b.pos.z; discN++; }
+        }
+        tl.push(`${(k * dt).toFixed(0)}s ${fall.phase}/${neck.phase}` +
+          (tb ? ` wieża z=${tb.pos.z.toFixed(0)} v=${Math.hypot(tb.vel.x, tb.vel.y, tb.vel.z).toFixed(0)} węzły=${tb.activeNodes}${tb.anchored ? ' zamr.' : ''}` : '') +
+          ` dysk[sw ${discFree}${discN ? ' z̄=' + (discZ / discN).toFixed(0) : ''}] bryły sw=${free} zamr=${frozen} krok=${ms.toFixed(1)}ms`);
+      }
+    }
+    CollisionFX.off?.('impact', onFx); CollisionFX.off?.('grind', onFx);
+    FALL.detachPirateRockTerrain(fall, D);
+    // podsumowanie: bryły na skale (odległość od powierzchni), w otchłani (pod skałą), w powietrzu
+    let onRock = 0, airborne = 0, lostBelow = 0, nodesOnRock = 0;
+    for (const b of HullBodies._solids) {
+      if (!b || b.dead || b.planar) continue;
+      const dx = b.pos.x - terrain.cx, dy = b.pos.y - terrain.cy, dz = b.pos.z - terrain.cz;
+      const d = Math.hypot(dx, dy, dz), r = terrain.radius(dx / d, dy / d, dz / d);
+      if (d - r < (b.radius || 0) + 200) { onRock++; nodesOnRock += b.activeNodes; } else airborne++;
+    }
+    for (const k of Object.keys(CULLED)) lostBelow += CULLED[k];
+    // wolne bryły na końcu: prędkość, obrót · r, wysokość nad skałą, wiek styku ze skałą / z bryłą
+    const wolne = [];
+    for (const b of HullBodies._solids) {
+      if (!b || b.dead || b.planar || b.anchored) continue;
+      const dx = b.pos.x - terrain.cx, dy = b.pos.y - terrain.cy, dz = b.pos.z - terrain.cz;
+      const d = Math.hypot(dx, dy, dz), r = terrain.radius(dx / d, dy / d, dz / d);
+      const rec = fall.recs.get(b);
+      wolne.push({ k: FALL.fallKindOf(b), n: b.activeNodes, v: Math.round(Math.hypot(b.vel.x, b.vel.y, b.vel.z)), wr: Math.round(Math.hypot(b.angVel.x, b.angVel.y, b.angVel.z) * b.radius),
+        h: Math.round(d - r), skała: rec ? +(HullBodies.simTime - rec.lastContact).toFixed(1) : null, bryła: b.entity ? +(HullBodies.simTime - (b.entity.__contactT || -1e9)).toFixed(1) : null });
+    }
+    console.log('    wolne na końcu:', JSON.stringify(wolne.slice(0, 12)));
+    // płaskie odłamy habitatu z bryłą upadku, które zostały w płaszczyźnie (powinno być 0 — awans przy HP 0)
+    const plaskieZostaly = window.wrecks.filter((w) => !w.dead && w.beamHull?.body && !w.beamHull.body.dead && w.beamHull.body.planar && w.beamHull.world?.fall3d).length;
+    console.log(`    odłamy płaskie: awansowane ${fall.promotedWrecks || 0}, rozsypane ${fall.dissolvedWrecks || 0}, zostały w płaszczyźnie ${plaskieZostaly}, odchyłka środka rzutu bryły od odłamu ≤ ${(fall.promoteErrMax || 0).toFixed(0)} j.`);
+    FALL.detachPirateRockTerrain(fall, D);
+    console.log(JSON.stringify({ hz: hz(dt), wariant, zRockPodHabitatem: Math.round(zRock), dziura: fall.holeNodes, podniesione: fall.promoted || 0, korek: { belki: fall.holeCut, odlamy: fall.plugN }, touchT: +fall.touchT.toFixed(2), passT: +fall.passT.toFixed(2),
+      fall: { phase: fall.phase, released: fall.released, towerImpactT: +fall.towerImpactT.toFixed(2),
+      discImpactT: +fall.discImpactT.toFixed(2), frozen: fall.frozen, impacts: fall.impacts, scrapes: fall.scrapes },
+      tower: { minZ: Math.round(towerMinZ), vMax: Math.round(towerVmax) },
+      bryły: { naSkale: onRock, wezlyNaSkale: nodesOnRock, wPowietrzu: airborne, wezlyPodDnem: lostBelow },
+      uderzenia: events.impact.slice(0, 14), osiadania: events.settle.length, przebicia: events.breach.slice(0, 10),
+      stepMs: { mean: +(stepSum / Math.max(1, stepN)).toFixed(2), peak: +stepPeak.toFixed(1), solverPeak: +solverPeak.toFixed(1) } }));
+    console.log('   ', tl.join(' | '));
     release(ents);
   }
 }

@@ -87,6 +87,33 @@ export function gasGridLightCpu(lights, slot, L, trans = 1) {
   return [0, 1, 2].map((c) => o[c] * kn * sh + m[c] * kn);
 }
 
+/**
+ * LUSTRO CPU cienia kuli-przeszkody domeny głębokiej (GasVolume._groundLit; ta sama reguła w cząstkach uderzeń —
+ * src/3d/pirateRockImpactFx.js): rel — punkt względem środka kuli [3], sun — kierunek do słońca (jednostkowy) [3], r —
+ * promień kuli, w — półszerokość półcienia [j.]. 1 — oświetlony, 0 — w cieniu kuli.
+ */
+export function gasGroundLitCpu(rel, sun, r, w) {
+  const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const b = rel[0] * sun[0] + rel[1] * sun[1] + rel[2] * sun[2];
+  const px = rel[0] - sun[0] * b, py = rel[1] - sun[1] * b, pz = rel[2] - sun[2] * b;
+  const dperp = Math.sqrt(px * px + py * py + pz * pz);
+  return Math.max(ss(-w, w, b), ss(r - w, r + w, dperp));
+}
+
+/**
+ * LUSTRO CPU cięcia promienia kulą (bryły domen głębokich — marsz kończy się na skale): ro, rd (jednostkowy) [3], środek c
+ * [3], promień r. Zwraca t pierwszego przecięcia > 0 albo Infinity (promień mija kulę / zaczyna się w niej).
+ */
+export function gasSphereClipCpu(ro, rd, c, r) {
+  const ox = ro[0] - c[0], oy = ro[1] - c[1], oz = ro[2] - c[2];
+  const b = ox * rd[0] + oy * rd[1] + oz * rd[2];
+  const q = ox * ox + oy * oy + oz * oz - r * r;
+  const disc = b * b - q;
+  if (!(q > 0) || !(disc > 0)) return Infinity;
+  const t = -b - Math.sqrt(disc);
+  return t > 0 ? t : Infinity;
+}
+
 /** Parametry obrazu gazu (uniformy). */
 export function createGasLook() {
   return {
@@ -168,8 +195,16 @@ export class GasVolume {
       ambientK: uniform(1),            // mnożnik otoczenia (strefa nieba — właściciel, `ambientScale`)
       gridOn: uniform(1), gridGain: uniform(1), gridKnee: uniform(0.45), gridShadow: uniform(0.85), gridScatter: uniform(1),
       gridMinSigma: uniform(0.02), gridEvery: uniform(3, 'int'), ownNear: uniform(0.35), ownFar: uniform(0.75),
-      occOn: uniform(1)                // bryły: pomijanie pustych kolumn / odcinków z (zajętość z gasOccupancy; 0 — pełny marsz)
+      occOn: uniform(1),               // bryły: pomijanie pustych kolumn / odcinków z (zajętość z gasOccupancy; 0 — pełny marsz)
+      // Bryły domen głębokich (createDeepMeshes): kierunek słońca dla cienia kuli-przeszkody (skała — słońce z płaszczyzny
+      // gry jak materiał skały; właściciel: deepSunDir) i półszerokość półcienia [j.]. Półcień szeroki (450 j.) zamiast
+      // ostrego cienia Słońca z 57 AU: rozpraszanie wielokrotne w obłoku rozmywa linię cienia, a ostra granica w obłoku
+      // 2–4 km przy terminatorze skały wyglądała jak cięcie (ciemny „prostokąt” w dymie — kamera 3D, 2026-10-19).
+      deepSun: uniform(new THREE.Vector3(1, 0, 0)), deepPenumbra: uniform(450)
     };
+    // Kierunek słońca dla cienia kuli domen głębokich (scena, jednostkowy) — ustawia właściciel (reżyser wybuchów).
+    this.deepSunDir = new THREE.Vector3(1, 0, 0);
+    this.deepMeshes = null;
     // Właściciel (gra): mnożnik otoczenia ze strefy nieba i przełącznik świateł siatki (A/B tej samej klatki).
     this.ambientScale = 1;
     this.gridEnabled = true;
@@ -190,6 +225,19 @@ export class GasVolume {
     const hw = hs.shiftRight(hs.shiftRight(uint(28)).add(uint(4))).bitXor(hs).mul(uint(277803737)).toVar();
     const white = float(hw.shiftRight(uint(22)).bitXor(hw)).mul(1 / 4294967296);
     return white.sub(0.5).mul(this.U.jitter).add(0.5).toVar();
+  }
+
+  /**
+   * Światło słońca w punkcie pw (scena lokalnie) przy kuli-przeszkodzie ground = { c (środek, scena lokalnie), r }: 1 poza
+   * cieniem kuli, 0 w cieniu, półcień ±deepPenumbra. Słońce: U.deepSun. Lustro CPU: gasGroundLitCpu.
+   */
+  _groundLit(pw, ground) {
+    const U = this.U;
+    const rel = pw.sub(ground.c);
+    const b = dot(rel, U.deepSun);
+    const dperp = length(rel.sub(U.deepSun.mul(b)));
+    const w = U.deepPenumbra;
+    return max(smoothstep(w.negate(), w, b), smoothstep(ground.r.sub(w), ground.r.add(w), dperp));
   }
 
   /** Faza Henyeya–Greensteina dla kierunku promienia (zmieszana z izotropową). */
@@ -263,7 +311,7 @@ export class GasVolume {
    * mnożnik gęstości odcinka (przednia warstwa brył gry); ambVis — mnożnik otoczenia (gra: sunFill maski; null = 1);
    * useGrid — światła siatki `lightGrid` (tylko bryły gry; przebieg pełnoekranowy dem bez zmian).
    */
-  _march({ ro, rd, tmin, tmax, bmin, h, slot, fade, seed, tint, fire, jitter, phase, col, trans, sunVis, densK = null, ambVis = null, useGrid = false, domAmb = null, occ = false }) {
+  _march({ ro, rd, tmin, tmax, bmin, h, slot, fade, seed, tint, fire, jitter, phase, col, trans, sunVis, densK = null, ambVis = null, useGrid = false, domAmb = null, occ = false, ground = null }) {
     const U = this.U;
     const grid = this.grid;
     const N = grid.N;
@@ -378,7 +426,10 @@ export class GasVolume {
             const flame = bSum.mul(0.25).mul(max(den.w, 0.0).mul(U.fireBurn.div(kS))).mul(U.emission).mul(fw);
             // Rozpraszanie: słońce (samocień, maska cienia słońca gry), wielokrotne (T^¼), otoczenie, blask ognia.
             const sunT = lgt.x;
-            const sun = U.sunColor.mul(U.sunGain).mul(sunT.mul(phase).add(pow(max(sunT, 1e-4), 0.25).mul(U.multiScatter))).mul(sunVis);
+            let sun = U.sunColor.mul(U.sunGain).mul(sunT.mul(phase).add(pow(max(sunT, 1e-4), 0.25).mul(U.multiScatter))).mul(sunVis);
+            // Domena głęboka z kulą-przeszkodą (skała): cień kuli w punkcie próbki (promień od próbki ku słońcu skały przecina
+            // kulę — próbka w cieniu; półcień deepPenumbra) — pył nad terminatorem łapie światło, w cieniu skały gaśnie.
+            if (ground) sun = sun.mul(this._groundLit(pw, ground));
             const alb = U.albedo.mul(tint).toVar();
             // Blask ognia z objętości światła (kernel liczy go w barwie ciała czarnego) w palecie domeny: luminancja zostaje.
             const glowC = gasFireGlow(lgt.yzw, gasLuma(lgt.yzw), fireK);
@@ -588,7 +639,8 @@ export class GasVolume {
     const A = aA.array, B = aB.array, C = aC.array;
     let n = 0;
     for (const s of grid.slots) {
-      if (!s.active || s.fade <= 0) continue;
+      // domeny głębokie rysują bryły passa tła (updateDeepMeshes)
+      if (!s.active || s.fade <= 0 || s.deep) continue;
       const o = n * 4;
       A[o] = s.cx - half * s.h - originX; A[o + 1] = s.cy - half * s.h - originY; A[o + 2] = s.cz - halfZ * s.h; A[o + 3] = s.h;
       B[o] = s.index; B[o + 1] = s.fade; B[o + 2] = s.seed; B[o + 3] = s.ambient || 0;
@@ -607,6 +659,163 @@ export class GasVolume {
     this.U.planeZ.value = planeZ;
     this.stats.domains = n;
     return n;
+  }
+
+  /**
+   * BRYŁY DOMEN GŁĘBOKICH (GasSlot.deep — 2026-10-19, uderzenia w planetoidę pod bazą piratów): pass TŁA (warstwa `layer`,
+   * kamera perspektywy jak skała — głęboki obłok w passie ortho stałby w złym miejscu, w perspektywie głęboki punkt zbiega
+   * się ku środkowi kadru). Marsz przez całe pudło (bez podziału płaszczyzną gry), koniec na KULI-przeszkodzie domeny
+   * (gasD: środek względem początku sceny, promień; skała przesłania obłok za sobą analitycznie), cień kuli w świetle
+   * słońca (_groundLit), bez świateł siatki i bez maski słońca płaszczyzny gry. Dwie siatki: `out` — przód pudła z testem
+   * głębi (bryły przed obłokiem w passie tła — spadająca wieża, dysk, osada — zasłaniają go; tył pudła pod skałą odpada
+   * testem), `in` — tył pudła bez testu, gdy kamera jest w pudle (kamery 3D; przód byłby za kamerą). Instancja = domena.
+   */
+  createDeepMeshes({ layer = 1, renderOrder = 10, name = 'GasVolumeDeep' } = {}) {
+    const U = this.U;
+    const grid = this.grid;
+    const N = grid.N;
+    const NZ = grid.NZ;
+    const cap = grid.S;
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const vLocal = varyingProperty('vec3', 'vGasDL');
+    const vA = varyingProperty('vec4', 'vGasDA');
+    const vB = varyingProperty('vec4', 'vGasDB');
+    const vC = varyingProperty('vec4', 'vGasDC');
+    const vD = varyingProperty('vec4', 'vGasDD');
+    const positionNode = Fn(() => {
+      const A = attribute('gasA', 'vec4');
+      const size = vec3(A.w.mul(N), A.w.mul(N), A.w.mul(NZ));
+      const local = A.xyz.add(positionGeometry.add(0.5).mul(size));
+      vLocal.assign(local);
+      vA.assign(A);
+      vB.assign(attribute('gasB', 'vec4'));
+      vC.assign(attribute('gasC', 'vec4'));
+      vD.assign(attribute('gasD', 'vec4'));
+      return local;
+    })();
+    const fragmentNode = Fn(() => {
+      const P = vLocal;
+      const h = vA.w;
+      const size = vec3(h.mul(N), h.mul(N), h.mul(NZ));
+      const ortho = cameraProjectionMatrix.element(3).w.greaterThan(0.5);
+      const rdV = select(ortho, vec3(0.0, 0.0, -1.0), normalize(positionView));
+      const rd = normalize(cameraWorldMatrix.mul(vec4(rdV, 0.0)).xyz).toVar();
+      const ro = select(ortho, P.sub(rd.mul(length(size).mul(2.0))), P.sub(rd.mul(length(positionView)))).toVar();
+      const span = this._boxSpan(ro, rd, vA.xyz, h);
+      // Koniec marszu na kuli-przeszkodzie (skała): pierwsze przecięcie promienia z kulą (gasSphereClipCpu).
+      const gc = vD.xyz;
+      const gr = vD.w;
+      const tmax = span.tmax.toVar();
+      If(gr.greaterThan(0.0), () => {
+        const oc = ro.sub(gc).toVar();
+        const b = dot(oc, rd);
+        const q = dot(oc, oc).sub(gr.mul(gr));
+        const disc = b.mul(b).sub(q).toVar();
+        If(q.greaterThan(0.0).and(disc.greaterThan(0.0)), () => {
+          const th = b.negate().sub(disc.max(0.0).sqrt());
+          If(th.greaterThan(0.0), () => { tmax.assign(min(tmax, th)); });
+        });
+      });
+      const col = vec3(0.0).toVar();
+      const trans = float(1.0).toVar();
+      this._march({
+        ro, rd, tmin: span.tmin, tmax, bmin: vA.xyz, h, slot: vB.x, fade: vB.y, seed: vB.z, tint: vC.xyz, fire: vC.w, domAmb: vB.w,
+        jitter: this._jitter(), phase: this._phase(rd), col, trans, sunVis: float(1.0),
+        occ: !!grid.occTex, ground: { c: gc, r: gr }
+      });
+      return vec4(col, float(1.0).sub(trans));
+    })();
+    const mk = () => {
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.setIndex(box.index);
+      geo.setAttribute('position', box.getAttribute('position'));
+      const attrs = ['gasA', 'gasB', 'gasC', 'gasD'].map((k) => {
+        const a = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
+        geo.setAttribute(k, a);
+        return a;
+      });
+      geo.instanceCount = 0;
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e12);
+      return { geo, attrs };
+    };
+    const makeMesh = (inside) => {
+      const { geo, attrs } = mk();
+      const mat = new THREE.NodeMaterial();
+      mat.name = `${name}${inside ? 'In' : 'Out'}`;
+      mat.transparent = true;
+      mat.depthWrite = false;
+      mat.depthTest = !inside;
+      mat.side = inside ? THREE.BackSide : THREE.FrontSide;
+      mat.forceSinglePass = true;
+      mat.lights = false;
+      mat.fog = false;
+      mat.blending = THREE.CustomBlending;
+      mat.blendSrc = THREE.OneFactor;
+      mat.blendDst = THREE.OneMinusSrcAlphaFactor;
+      mat.blendSrcAlpha = THREE.OneFactor;
+      mat.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+      mat.blendEquation = THREE.AddEquation;
+      mat.blendEquationAlpha = THREE.AddEquation;
+      mat.rulonBend = false;
+      mat.positionNode = positionNode;
+      mat.fragmentNode = fragmentNode;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = mat.name;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = renderOrder;
+      mesh.layers.set(layer);
+      mesh.matrixAutoUpdate = false;
+      mesh.visible = false;
+      return { mesh, geo, attrs };
+    };
+    this.deepMeshes = { out: makeMesh(false), in: makeMesh(true) };
+    return this.deepMeshes;
+  }
+
+  /**
+   * Instancje brył domen głębokich tej klatki: domeny względem początku sceny (originX, originY — scena, double), kamera
+   * (camX, camY, camZ — scena; NaN = bez testu: zawsze `out`) — domena z kamerą w pudle (z zapasem margin [j.]) idzie do `in`.
+   */
+  updateDeepMeshes(originX, originY, camX = NaN, camY = NaN, camZ = NaN, margin = 300) {
+    const M = this.deepMeshes;
+    if (!M) return 0;
+    const grid = this.grid;
+    const half = grid.N * 0.5;
+    const halfZ = grid.NZ * 0.5;
+    const camOk = Number.isFinite(camX) && Number.isFinite(camY) && Number.isFinite(camZ);
+    const cnt = [0, 0];
+    const sets = [M.out, M.in];
+    for (const s of grid.slots) {
+      if (!s.active || s.fade <= 0 || !s.deep) continue;
+      const hx = half * s.h + margin, hz = halfZ * s.h + margin;
+      const inside = camOk && Math.abs(camX - s.cx) < hx && Math.abs(camY - s.cy) < hx && Math.abs(camZ - s.cz) < hz;
+      const w = inside ? 1 : 0;
+      const set = sets[w];
+      const o = cnt[w] * 4;
+      cnt[w]++;
+      const [aA, aB, aC, aD] = set.attrs;
+      const A = aA.array, B = aB.array, C = aC.array, D = aD.array;
+      A[o] = s.cx - half * s.h - originX; A[o + 1] = s.cy - half * s.h - originY; A[o + 2] = s.cz - halfZ * s.h; A[o + 3] = s.h;
+      B[o] = s.index; B[o + 1] = s.fade; B[o + 2] = s.seed; B[o + 3] = s.ambient || 0;
+      this.U.slotK.array[s.index].x = s.k || 1;
+      C[o] = s.tint[0]; C[o + 1] = s.tint[1]; C[o + 2] = s.tint[2]; C[o + 3] = s.fire || 0;
+      if (s.gr > 0) { D[o] = s.gx - originX; D[o + 1] = s.gy - originY; D[o + 2] = s.gz; D[o + 3] = s.gr; }
+      else { D[o] = 0; D[o + 1] = 0; D[o + 2] = 0; D[o + 3] = 0; }
+    }
+    for (let k = 0; k < 2; k++) {
+      const set = sets[k];
+      const n = cnt[k];
+      set.geo.instanceCount = n;
+      set.mesh.visible = n > 0;
+      set.mesh.position.set(originX, originY, 0);
+      set.mesh.updateMatrix();
+      set.mesh.matrixWorld.copy(set.mesh.matrix);
+      if (n) for (const a of set.attrs) { a.clearUpdateRanges(); a.addUpdateRange(0, n * 4); a.needsUpdate = true; }
+    }
+    const d = this.deepSunDir;
+    this.U.deepSun.value.set(d.x, d.y, d.z);
+    this.stats.deep = cnt[0] + cnt[1];
+    return cnt[0] + cnt[1];
   }
 
   /** Parametry obrazu → uniformy (raz na klatkę). */

@@ -21,7 +21,11 @@ export const PBASE_CH = Object.freeze({
   disc: 6,                        // zasilanie dysku mieszkalnego (okna gasną od środka) 0..1
   bays: 7,                        // hangary dronów: start (światła biegnące) 0/1
   fuel: 8,                        // zasilanie zbiorników i kolektora 0..1
-  warehouse: 9                    // zasilanie magazynu 0..1
+  warehouse: 9,                   // zasilanie magazynu 0..1
+  // światła wnętrza modułów ciśnieniowych (2026-10-19, dekompresja — src/game/story/pirateBaseAtmosphere.js: moduł, który
+  // stracił powietrze, miga i gaśnie): okna głowy wieży i przedziały ćwiartek bębna (k = indeks ćwiartki w układzie)
+  tech: 10,
+  drumQ: (k) => 11 + k
 });
 export const PBASE_BERTH_BITS = 24;
 
@@ -124,7 +128,7 @@ function drumQuadrant(f, l, qd, qi) {
     f.box(x, H.wallTop - 10, z, r1 - r0, 16, H.spokeW + 14, M.rail, -s);
     // drzwi grodziowe (wnęka) i lampka
     boxAt(f, ang(s, r0 + 110), 30, 80, 180, H.spokeW + 8, M.black, -s);
-    f.fx(1.0, PB_FX.fill, 0.2, PBASE_CH.habitat);
+    f.fx(1.0, PB_FX.fill, 0.2, PBASE_CH.drumQ(qi));
     boxAt(f, ang(s, r1 - 60), H.wallTop + 6, 18, 6, 18, M.warm, -s);
     f.nofx();
   }
@@ -140,7 +144,7 @@ function drumQuadrant(f, l, qd, qi) {
     if (h < 0.35) f.box(x, H.floorY + 40, z, 90, 70, 60 + 50 * h, h < 0.18 ? M.orange : M.teal, -a);
     else if (h < 0.55) { f.box(x, H.floorY + 22, z, 70, 30, 70, M.dark, -a); hatch(f, x, H.floorY + 38, z, 26); }
     // światła przedziałów (zasilanie habitatu)
-    f.fx(1.1, PB_FX.fill, 0.15 + 0.3 * h, PBASE_CH.habitat);
+    f.fx(1.1, PB_FX.fill, 0.15 + 0.3 * h, PBASE_CH.drumQ(qi));
     const [lx, lz] = ang(a + 0.02, 600 + 300 * pbHash1(qi * 7 + k));
     f.box(lx, H.floorY + 12, lz, 60, 4, 10, h < 0.5 ? M.warm : M.cyan, -a);
     f.nofx();
@@ -316,7 +320,7 @@ function habitatHead(f, H) {
       const h = pbHash1(row * 41.7 + i * 2.9);
       if (h < 0.18) continue;
       const a = ((i + 0.5) / wins) * TAU;
-      f.fx(1.2, PB_FX.fill, 0.08 + 0.7 * h, PBASE_CH.habitat);
+      f.fx(1.2, PB_FX.fill, 0.08 + 0.7 * h, PBASE_CH.tech);
       boxAt(f, ang(a, H.ringR1 + 2), y0 + rh * t, wlen, 34, 10, h < 0.7 ? M.warm : h < 0.9 ? M.white : M.cyan, -(a + Math.PI / 2));
       f.nofx();
     }
@@ -324,7 +328,7 @@ function habitatHead(f, H) {
   const skyR = H.ringR0 + rd * 0.3;
   for (let i = 0; i < 40; i++) {
     const a = ((i + 0.5) / 40) * TAU;
-    f.fx(1.2, PB_FX.fill, 0.1 + 0.6 * pbHash1(i * 4.1), PBASE_CH.habitat);
+    f.fx(1.2, PB_FX.fill, 0.1 + 0.6 * pbHash1(i * 4.1), PBASE_CH.tech);
     boxAt(f, ang(a, skyR), y1 + 12, 54, 4, rd * 0.22, i % 3 ? M.warm : M.white, -(a + Math.PI / 2));
     f.nofx();
   }
@@ -345,7 +349,7 @@ function habitatHead(f, H) {
     const h = pbHash1(i * 7.3 + 3.1);
     if (h < 0.25) continue;
     const a = ((i + 0.5) / 24) * TAU;
-    f.fx(1.1, PB_FX.fill, 0.1 + 0.6 * h, PBASE_CH.habitat);
+    f.fx(1.1, PB_FX.fill, 0.1 + 0.6 * h, PBASE_CH.tech);
     boxAt(f, ang(a, hr + 2), (y1 + H.headTop) / 2, 2 * hr * Math.tan(Math.PI / 24) * 0.55, 44, 8, h < 0.75 ? M.warm : M.white, -(a + Math.PI / 2));
     f.nofx();
   }

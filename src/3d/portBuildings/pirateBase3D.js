@@ -48,7 +48,7 @@ export class PirateBase3D extends PortBuilding3D {
       base: new THREE.Matrix4()
     }));
     this._chunkById = new Map(this.chunkState.map((s) => [s.id, s]));
-    this.state = { alarm: 0, habitat: 1, disc: 1, bays: 0, fuel: 1, warehouse: 1 };
+    this.state = { alarm: 0, habitat: 1, disc: 1, bays: 0, fuel: 1, warehouse: 1, tech: 1, drumQ: [1, 1, 1, 1] };
     this.berths = layout.berths.map(() => 1);
     this.update(0, NO_STATE);
   }
@@ -193,6 +193,9 @@ export class PirateBase3D extends PortBuilding3D {
     const st = this.state;
     if (state.alarm !== undefined) st.alarm = state.alarm ? 1 : 0;
     for (const k of ['habitat', 'disc', 'fuel', 'warehouse']) if (state[k] !== undefined) st[k] = clamp01(Number(state[k]));
+    // światła wnętrza: głowa wieży i przedziały ćwiartek bębna (bez pól — zasilanie habitatu)
+    st.tech = clamp01(Number(state.tech ?? st.habitat));
+    for (let q = 0; q < 4; q++) st.drumQ[q] = clamp01(Number(state.drumQ ? state.drumQ[q] : st.habitat));
     if (state.bays !== undefined) st.bays = state.bays ? 1 : 0;
     if (Array.isArray(state.berths)) for (let k = 0; k < this.berths.length; k++) this.berths[k] = state.berths[k] ? 1 : 0;
     this._setChan(PBASE_CH.alarm, st.alarm);
@@ -201,6 +204,8 @@ export class PirateBase3D extends PortBuilding3D {
     this._setChan(PBASE_CH.bays, st.bays);
     this._setChan(PBASE_CH.fuel, st.fuel);
     this._setChan(PBASE_CH.warehouse, st.warehouse);
+    this._setChan(PBASE_CH.tech, st.tech);
+    for (let q = 0; q < 4; q++) this._setChan(PBASE_CH.drumQ(q), st.drumQ[q]);
     // lampki stanowisk: maski bitowe (tryb „show”) — zajęte / wolne, 24 bity na kanał
     for (let c = 0; c < 2; c++) {
       let busy = 0;
