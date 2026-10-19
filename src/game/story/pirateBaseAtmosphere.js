@@ -695,7 +695,8 @@ export function rehomePirateBaseVents(wreck, parent, pieceId = null) {
   let n = 0;
   for (const v of S.vents) {
     // ten sam rozpad (kolejne odłamy przychodzą po kolei w tym samym kroku): porównanie z odłamem wybranym wcześniej
-    const same = v.rehomeT === S.time && v.rehomeParent === (parent || null);
+    // (bez rodzica — kawałek statyczny po awansie: porównanie tylko wśród wyrw tego modułu; kilka kawałków w jednym kroku)
+    const same = v.rehomeT === S.time && v.rehomeParent === (parent || null) && (!!parent || v.module.id === pieceId);
     const own = (v.ent && v.ent === parent) || same;
     const stat = !v.ent && pieceId && v.module.id === pieceId;
     if (!own && !stat && !(v.ent && !entityAlive(v.ent) && pieceId && v.module.id === pieceId)) continue;
