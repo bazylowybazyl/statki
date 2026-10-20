@@ -306,6 +306,32 @@ function engineChannels(field, S, modules, T) {
   return out;
 }
 
+/**
+ * Przyłącze rury paliwa WIDAĆ: za obrysem urządzenia (od strony urządzenia na łamanej `poly`, koniec `end`) pierwsze
+ * 3 jd leżą w rowie maszynowni (kolektor / kołnierz przy wejściu widać) i co najmniej 60% z 12 jd — oś wiązki i jej
+ * brzegi na pół szerokości (`hwJ` [j.]; wiązka w rowie węższym od siebie leży głównie pod płytą). Zwraca { ok, seen, of }.
+ */
+function fuelEndVisible(poly, end, m, D, visAt, hwJ = 0) {
+  const pw = polyWalker(poly);
+  let s0 = -1;
+  for (let s = 0; s <= pw.L; s += 0.4 * D) {
+    const a = pw.at(end ? pw.L - s : s);
+    if (pipeModuleSdf(m, a.x, a.y) > 0.4 * D) { s0 = s; break; }
+  }
+  let nv = 0, nt = 0, near = true;
+  for (let s = 1; s0 >= 0 && s <= 12 && s0 + s * D <= pw.L; s++) {
+    const a = pw.at(end ? pw.L - s0 - s * D : s0 + s * D);
+    const nx = -Math.sin(a.rot) * 0.5 * hwJ, ny = Math.cos(a.rot) * 0.5 * hwJ;
+    // punkt w obrysie samego urządzenia (brzeg wiązki przy skośnym wyjściu) przykrywa rysunek modułu — liczy się jako widoczny
+    const vis = (x, y) => pipeModuleSdf(m, x, y) <= 0 || visAt(x, y);
+    const v = vis(a.x, a.y) && vis(a.x + nx, a.y + ny) && vis(a.x - nx, a.y - ny);
+    nt++;
+    if (v) nv++;
+    else if (s <= 3) near = false;
+  }
+  return { ok: nt > 0 && near && nv >= 0.6 * nt, seen: nv, of: nt };
+}
+
 /** Każdy moduł poza osią (|y| > 0,5) ma bliźniaka tego samego typu w odbiciu (tolerancja 0,01 j. — obrót części). */
 function modulesMirrored(modules) {
   for (const m of modules) {
@@ -413,7 +439,8 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   const stats = { cells: 0, routes: 0, searches: 0, expanded: 0, unrouted: 0, shrunk: 0, outside: 0 };
 
   // kanały serwisowe: SIDE i zbiorniki zawsze, gondole MAIN — gdy przy szyjce nie ma rowu (tylko przy włączonej sieci)
-  const engChan = density > 0 ? engineChannels(field, S, modules, T) : new Set();
+  const engChan = tuneIn._engChan || (density > 0 ? engineChannels(field, S, modules, T) : new Set());
+  let hiddenMain = null;     // gondole MAIN bez widocznego wejścia rury (drugi przebieg: z kanałem)
   const chanOf = (m) => serviceChannel(m, D, engChan.has(m));
   const gapAt = armorGapSampler(field, S, modules, chanOf);   // pancerz z kanałami serwisowymi (rów > 0)
   // ── pole wolnego miejsca (komórka freeDu jd): min(odległość od płyt, od sylwetki, od modułów, od osi lustra) [j.] ──
@@ -421,11 +448,12 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   const cf = T.freeDu * D;
   const fx0 = Math.floor(bnd.minX / cf) - 1, fy0 = Math.floor(bnd.minY / cf) - 1;
   const FW = Math.ceil(bnd.maxX / cf) + 2 - fx0, FH = Math.ceil((mirror ? cf : bnd.maxY) / cf) + 2 - fy0;   // lustro: burta y < 0
-  const fs = new Float32Array(FW * FH);
+  // pola niezależne od kanałów serwisowych — przy drugim przebiegu (kanał gondoli) z pamięci pierwszego (`_cache`)
+  const cache = tuneIn._cache || null;
   const fo = new Float32Array(FW * FH).fill(1e4);
-  const fsMod = new Float32Array(FW * FH).fill(1e4);
+  const fsMod = cache ? cache.fsMod : new Float32Array(FW * FH).fill(1e4);
   const modReach = 24 * D;
-  for (const m of obstacles) {
+  for (const m of cache ? [] : obstacles) {
     const b = moduleBox(m);
     const i0 = Math.max(0, Math.floor((b[0] - modReach) / cf) - fx0), i1 = Math.min(FW - 1, Math.ceil((b[2] + modReach) / cf) - fx0);
     const j0 = Math.max(0, Math.floor((b[1] - modReach) / cf) - fy0), j1 = Math.min(FH - 1, Math.ceil((b[3] + modReach) / cf) - fy0);
@@ -438,8 +466,9 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       }
     }
   }
-  const l0 = new Float32Array(FW * FH);
-  for (let j = 0; j < FH; j++) {
+  const l0 = cache ? cache.l0 : new Float32Array(FW * FH);
+  const fsBase = cache ? cache.fsBase : new Float32Array(FW * FH);
+  for (let j = 0; !cache && j < FH; j++) {
     const y = (fy0 + j) * cf;
     for (let i = 0; i < FW; i++) {
       const x = (fx0 + i) * cf;
@@ -448,9 +477,10 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       l0[k] = d0;
       let v = Math.min(S(L1, x, y), -d0, fsMod[k]);
       if (mirror) v = Math.min(v, Math.abs(y));
-      fs[k] = v;
+      fsBase[k] = v;
     }
   }
+  const fs = fsBase.slice();
   const bil = (arr, x, y) => {
     const fx = x / cf - fx0, fy = y / cf - fy0;
     const i = Math.floor(fx), j = Math.floor(fy);
@@ -481,7 +511,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   };
   /** Widoczne miejsce rury z ziemi (rów maszynowni, nie moduł, nie pod płytą, wewnątrz sylwetki). */
   const visAt = (x, y) => gapAt(x, y) >= 0 && S(L0, x, y) < 0 && modMin(x, y) > 0;
-  const inAt = insideDepthSampler(field, S, mirror, { x0: fx0 * cf, y0: fy0 * cf, cw: cf, W: FW, H: FH, l0 }, 1);
+  const inAt = cache ? cache.inAt : insideDepthSampler(field, S, mirror, { x0: fx0 * cf, y0: fy0 * cf, cw: cf, W: FW, H: FH, l0 }, 1);
   const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
   const tm = stats.t = { pola: now() - t0 };
 
@@ -1094,6 +1124,19 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         stamp(rr.poly, rr.halfW * D);
       }
       // ── osprzęt sieci ──
+      // wejście rury do każdej gondoli MAIN ma być widać — gondola bez widocznego wejścia (np. szyjka za wąskim pasem
+      // płyty) dostaje kanał serwisowy (z kopią lustra), a sieć liczy się od nowa (od razu po rurach do silników)
+      if (id === 'feed' && !tuneIn._engChan) {
+        for (const { run: r } of out) {
+          r.ends[0].forEach((nid, end) => {
+            const dev = graph.nodes[nid].dev;
+            if (!(dev >= 0) || modules[dev].type !== 'engine' || engChan.has(modules[dev])) return;
+            if (fuelEndVisible(r.polys[0], end, modules[dev], D, visAt, r.halfW * D).ok) return;
+            (hiddenMain || (hiddenMain = new Set())).add(modules[dev]).add(modules[mirrorIdx(dev)]);
+          });
+        }
+        if (hiddenMain) break;
+      }
       autoFittings(id, out, fits, { D, T, rand, visAt, clrAt, mirror, modules });
       tm[`biegi_${id}`] = now() - tq;
     }
@@ -1140,6 +1183,12 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   stats.runs = runs.length;
   stats.fits = fits.length;
   stats.ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
+  if (hiddenMain) {
+    const again = buildPipeNetwork(field, { ...tuneIn, _engChan: new Set([...engChan, ...hiddenMain]), _cache: { fsMod, l0, fsBase, inAt } });
+    again.stats.passes = 2;
+    again.stats.ms += stats.ms;
+    return again;
+  }
   const channels = [];
   modules.forEach((m, i) => { if (engChan.has(m)) channels.push(i); });
   return { runs, fits, graph, channels, clampJ: T.clampDu * D, detail: D, stats };
@@ -1194,33 +1243,22 @@ export function pipeNetworkCheck(net, field, marginDu = 0.5) {
   }
   const nodes = net.graph?.nodes || [];
   for (const [id, d] of deg) if (d === 1 && !(nodes[id]?.dev >= 0)) out.freeEnds++;
-  // przyłącza rur paliwa (gondola MAIN, dysza SIDE, zbiornik): widoczne, gdy co najmniej 60% odcinka 12 jd za obrysem
-  // urządzenia leży w rowie maszynowni (licznik [widoczne, wszystkie] — łamane po burcie y ≤ 0 i bez lustra)
+  // przyłącza rur paliwa (gondola MAIN, dysza SIDE, zbiornik): widoczne wg fuelEndVisible (licznik [widoczne,
+  // wszystkie] — łamane po burcie y ≤ 0 i bez lustra)
   for (const r of net.runs) {
     if (!r.auto || r.net === 'power') continue;
     r.polys.forEach((poly, pi) => {
       if (pi > 0) return;
-      const pw = polyWalker(poly);
       r.ends[pi].forEach((id, end) => {
         const dev = nodes[id]?.dev;
         if (!(dev >= 0)) return;
         const m = modules[dev];
         const key = m.type === 'engine' ? 'main' : (m.type === 'thruster_side' ? 'side' : (m.type === 'fuel_tank' ? 'tank' : null));
         if (!key) return;
-        let s0 = -1;
-        for (let s = 0; s <= pw.L; s += 0.4 * D) {
-          const a = pw.at(end ? pw.L - s : s);
-          if (pipeModuleSdf(m, a.x, a.y) > 0.4 * D) { s0 = s; break; }
-        }
-        let nv = 0, nt = 0;
-        for (let s = 1; s0 >= 0 && s <= 12 && s0 + s * D <= pw.L; s++) {
-          const a = pw.at(end ? pw.L - s0 - s * D : s0 + s * D);
-          nt++;
-          if (visAt(a.x, a.y)) nv++;
-        }
+        const v = fuelEndVisible(poly, end, m, D, visAt, r.halfW * D);
         out.fuelEnds[key][1]++;
-        if (nt && nv >= 0.6 * nt) out.fuelEnds[key][0]++;
-        else out.fuelHidden.push({ dev, type: m.type, net: r.net, seen: nv, of: nt });
+        if (v.ok) out.fuelEnds[key][0]++;
+        else out.fuelHidden.push({ dev, type: m.type, net: r.net, seen: v.seen, of: v.of });
       });
     });
   }
