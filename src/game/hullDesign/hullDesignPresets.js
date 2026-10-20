@@ -195,11 +195,14 @@ const blk = (shape, x0, y0, x1, y1, level = 1, o = {}) => ({ kind: 'block', shap
 const frameBlk = (x0, y0, x1, y1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, rot: 0, level: 0, ...o });
 /** Klocek ze środka, wymiarów (układ klocka) i obrotu w krokach 45°. */
 const blkAt = (shape, x, y, w, h, rot45, level = 1, o = {}) => ({ kind: 'block', shape, x, y, w, h, rot: rot45 * Math.PI / 4, level, gap: TN_SEAM, ...o });
-/** Okręt TN z klocków: wspólne nastawy wyglądu (jak sprite'y), siatka z detalu. */
+/**
+ * Okręt TN z klocków: wspólne nastawy wyglądu (jak sprite'y); `grid` — siatka klocków [j.] (domyślnie z detalu; duże
+ * okręty — drobniejsza niż z detalu, żeby sekcje sprite'a wypadły na siatce).
+ */
 function tnShip(name, seed, detail, o = {}) {
   return {
-    v: 2, name, style: 'chamfer', mirror: true, palette: 'terra', seed, detail, windows: 0, bevel: 1.9, round: 1,
-    panels: o.panels ?? 1, pipeNet: { density: o.pipes ?? 1 },
+    v: 2, name, style: 'chamfer', mirror: true, palette: 'terra', seed, detail, grid: o.grid, windows: 0, bevel: 1.9, round: 1,
+    panels: o.panels ?? 1, pipeNet: { density: o.pipes ?? 1, seed: o.pipeSeed ?? 0 },
     blocks: [], shapes: o.shapes || [], modules: o.modules || [], decals: o.decals || [], castles: o.castles || [], parts: []
   };
 }
@@ -368,16 +371,46 @@ function hasta() {
   d.decals.push(text(50, -11.8, 22, 3.1), eagle(53, -20.4, 11, 9.5), eagle(-83.6, -51.7, 8, 9));
   return d;
 }
-function bellator(o = {}) {
-  const d = tnBase('bellator', 'Pancernik Bellator (Terra Nova)', 47, {
-    raw: o.raw,
-    tiers: [
-      [[-140, -205], [60, -205], [100, -90], [-74, -96], [-126, -142], [-140, -150]],   // pokład z napisem
-      [[100, -160], [320, -160], [320, -15], [140, -15], [140, -86], [100, -86]],       // klin dziobu z wieżą
-      [[-255, -175], [-146, -175], [-146, -102], [-255, -102]]                          // wieża rufowa
-    ],
+function bellator() {
+  // sprite (wzór czystego stylu): wieża rufowa z orłem, rampa w dół do sekcji pierścienia, maszynownia z rurami za wieżą,
+  // sponson z napisem nad pasem burty (połączony z kadłubem tylko rampą — prześwit z rurami zostaje pusty), kanał
+  // maszynowni wzdłuż osi aż do dziobu, płyta dziobu z napisem, blok dziobu i klin
+  const d = tnShip('Pancernik Bellator (Terra Nova)', 47, 0.3661, {
+    grid: 1,
+    // AGENT: ziarno sieci 5 — przy 0–4 dawny generator rur (hullDesignPipes.js, autoFittings) dostaje bieg z jednym punktem
+    // i rzuca wyjątkiem; zgłoszone sesji sieci systemów (1C) — po jej poprawce ziarno może wrócić do 0
+    pipeSeed: 5,
+    panels: 0.4,                                       // sprite: duże gładkie płyty z kilkoma długimi szwami
     castles: [castle(-194, -152, 42, 13, { level: 3, clip: 2, tiers: 1, taper: 0.3 })],  // szczyt wieży rufowej
-    panels: 0.4                                        // sprite: duże gładkie płyty z kilkoma długimi szwami
+    shapes: [
+      frameBlk(-273, -106, -150, -34, { shape: 'trap', a: 31 }),    // maszynownia za wieżą (rury od gondol)
+      frameBlk(-248, -130, -234, -100),                             // mocowanie górnej gondoli
+      frameBlk(-272, -76, -258, -48),                               // mocowanie dolnej gondoli
+      frameBlk(-151, -84, -50, 84),                                 // rów pionowy, rowy przy pierścieniu, grzbiet za rdzeniem
+      frameBlk(-50, -39, 49, 39),                                   // korytarz wzdłuż pasa burty, kanał osi
+      frameBlk(49, -20, 240, 20),                                   // kanał osi pod dziobem
+      blk('trap', -234, -162, -150, -135, 2, { a: 8 }),             // wieża: szczyt (kasztel)
+      blk('trap', -242, -134, -150, -105, 2, { a: 8 }),             // wieża: płyta z orłem
+      blk('rect', -215, -104, -150, -80),                           // wieża: dolna płyta
+      blk('trap', -222, -77, -150, -36, 1, { a: 14 }),              // rufa: płyta nad rufą (pod nią rów do mostka)
+      blk('rect', -290, -33, -222, 33, 1, { c: [6, 0, 0, 6] }),     // rufa: skrzynia
+      blk('rect', -222, -33, -150, 33),                             // rufa przy osi (mostek, zbiornik)
+      blk('tri', -150, -162, -72, -84),                             // rampa wieży
+      blk('trap', -110, -188, 74, -98, 2, { a: 10, b: 40 }),        // sponson z napisem
+      blk('tri', -124, -188, -100, -138, 2, { a: 24 }),             // sponson: wysunięty róg (góra)
+      blkAt('tri', -114.5, -118, 19, 40, 4, 2, { a: 5 }),           // sponson: wysunięty róg (dół, trójkąt obrócony o 180°)
+      blk('rect', -90, -98, -66, -84, 1, { c: [6, 0, 0, 0] }),      // płetwa na końcu rampy
+      blk('rect', -135, -80, -75, -40, 1, { c: [0, 5, 0, 0] }),     // sekcja pierścienia
+      blk('rect', -72, -77, -10, -39),                              // pas burty
+      blk('trap', -10, -77, 66, -39, 1, { b: -32 }),                // pas burty przy dziobie (skos wzdłuż płyty dziobu)
+      blk('rect', -50, -84, 80, -77, 1, { c: [2, 2, 0, 0] }),       // szyna z rurami na burcie
+      blk('rect', -145, -33, -82, 33),                              // grzbiet za kanałem osi (gniazdo rufowe)
+      blk('rect', -78, -33, -10, -18),                              // płyta przy kanale osi (przed nią rów do kanału)
+      blk('rect', -10, -33, 49, -18),                               // płyta przy kanale osi (dziób)
+      blk('trap', 49, -81, 140, -20, 2, { a: 55 }),                 // płyta dziobu z napisem
+      blk('trap', 104, -151, 140, -81, 2, { a: 7 }),                // blok dziobu
+      blkAt('trap', 222.5, -85.5, 131, 165, 2, 2, { a: 61 })        // klin dziobu (trapez obrócony o 90°)
+    ]
   });
   d.modules.push(
     engine(-261, -117, 17, 16.5), engine(-287, -62, 19, 17.5),
