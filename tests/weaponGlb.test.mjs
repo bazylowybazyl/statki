@@ -28,8 +28,9 @@ test('rejestr ogólny: rodzina → assets/weapons3d/<plik>[_lod1].glb, w grze Ya
   assert.equal(rel(weaponGlbUrl('tempest1')), 'assets/weapons3d/tempest1.glb');
   assert.equal(rel(weaponGlbUrl('tempest2', 1)), 'assets/weapons3d/tempest2_lod1.glb');
   assert.equal(weaponGlbFile('yamato2'), 'yamato');
-  // 2026-10-13 (decyzja użytkownika): Yamato, Yamato L, Tempest 1 / 2 i Lanca na stałe, LOD wg oddalenia kamery
-  assert.deepEqual(Object.keys(WEAPON_GLB_GAME).sort(), ['lance', 'tempest1', 'tempest2', 'yamato', 'yamato2']);
+  // 2026-10-13 (decyzja użytkownika): Yamato, Yamato L, Tempest 1 / 2 i Lanca na stałe, LOD wg oddalenia kamery;
+  // 2026-10-20: Promień Śmierci „Gungnir” (deathRay — wieża supercapitala Terra Nova)
+  assert.deepEqual(Object.keys(WEAPON_GLB_GAME).sort(), ['deathRay', 'lance', 'tempest1', 'tempest2', 'yamato', 'yamato2']);
   for (const [fam, mode] of Object.entries(WEAPON_GLB_GAME)) {
     assert.equal(mode, WEAPON_GLB_AUTO, `${fam}: tryb AUTO (LOD0 z bliska, LOD1 z daleka)`);
     for (const lod of [0, 1]) assert.ok(readFileSync(fileURLToPath(weaponGlbUrl(fam, lod))).length > 1000, `plik ${fam} LOD${lod}`);
@@ -208,6 +209,66 @@ test('Tempest i Lanca: format, budżet (LOD1 ≈ budżet budowniczego), układ j
     assert.ok(tris(files.lod1, n) <= Math.min(WEAPON_GLB_TRI_BUDGET.lod1, refTris * 1.25),
       `${fam} LOD1 ${tris(files.lod1, n)} — budżet rodziny masowej ≈ budowniczy (${refTris}) + 25%`);
   }
+});
+
+// Promień Śmierci „Gungnir” (scripts/blender/deathRay.py): jedna wieża na supercapitalu (rozmiar Capital) — LOD0 do
+// zbliżeń, LOD1 przy zwykłych zoomach. Wylot 62 w układzie wieży = SPECS.deathRay w turret2D.js (muzzleX 46 od czopu).
+const DEATH_RAY = {
+  lod0: await parseWeaponGlb(abOf(weaponGlbUrl('deathRay', 0)), 'deathRay.glb'),
+  lod1: await parseWeaponGlb(abOf(weaponGlbUrl('deathRay', 1)), 'deathRay_lod1.glb')
+};
+
+test('Promień Śmierci: format, budżet, układ jak weapons3D.js (wylot 46 od czopu, korona zębów symetryczna)', () => {
+  const box = (d) => {
+    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < d.position.length; i += 3) for (let k = 0; k < 3; k++) {
+      b[k] = Math.min(b[k], d.position[i + k]); b[k + 3] = Math.max(b[k + 3], d.position[i + k]);
+    }
+    return b;
+  };
+  const ref = buildWeapon3D('deathRay', { builder: true });
+  assert.equal(ref.muzzleX, 46);
+  const refH = box(ref.parts.housing.build()), refR = box(ref.parts.ring.build());
+  for (const [name, P] of [['LOD0', DEATH_RAY.lod0], ['LOD1', DEATH_RAY.lod1]]) {
+    const tag = `deathRay ${name}`;
+    assert.deepEqual(P.unknownMaterials, [], `${tag}: materiały tylko z palety SHIP3D_MAT`);
+    assert.equal(P.spin, null);
+    const mats = new Set();
+    for (const k of ['ring', 'housing', 'barrel']) {
+      const d = P[k];
+      assert.ok(d.vertexCount > 0 && d.index.length === d.triangleCount * 3, `${tag} ${k}`);
+      for (let i = 0; i < d.vertexCount; i++) {
+        if (!PALETTE.has(d.mat[i])) assert.fail(`${tag} ${k}: materiał ${d.mat[i]}`);
+        if (!(d.ao[i] >= 0 && d.ao[i] <= 1)) assert.fail(`${tag} ${k}: AO ${d.ao[i]}`);
+        mats.add(d.mat[i]);
+      }
+    }
+    assert.ok(mats.has(SHIP3D_MAT.E_MINT), `${tag}: miętowe światła (barwa wiązki)`);
+    assert.ok(Math.min(...P.housing.ao) < 0.8, `${tag}: AO wypieczone`);
+    const bb = box(P.barrel), hb = box(P.housing), rb = box(P.ring);
+    assert.ok(Math.abs(bb[3] - ref.muzzleX) < 0.75, `${tag}: wylot ${bb[3].toFixed(2)} vs muzzleX ${ref.muzzleX}`);
+    assert.ok(Math.abs(bb[1] + bb[4]) < 0.5 && Math.abs(bb[2] + bb[5]) < 0.6, `${tag}: lufa na osi czopu`);
+    assert.ok(hb[2] > -0.5 && Math.abs(hb[5] - refH[5]) < 3, `${tag}: obudowa z ${hb[2].toFixed(1)}…${hb[5].toFixed(1)} (budowniczy ${refH[5].toFixed(1)})`);
+    assert.ok(Math.abs(hb[1] + hb[4]) < 0.5, `${tag}: obudowa symetryczna w y`);
+    assert.ok(Math.abs(hb[0] - refH[0]) < 1.5, `${tag}: rufa obudowy jak budowniczy`);
+    assert.ok(rb[5] < 2 && Math.abs(rb[3] - refR[3]) < 0.5, `${tag}: pierścień niski, promień jak budowniczy`);
+  }
+  assert.ok(tris(DEATH_RAY.lod0, 1) <= WEAPON_GLB_TRI_BUDGET.lod0, `LOD0 ${tris(DEATH_RAY.lod0, 1)}`);
+  assert.ok(tris(DEATH_RAY.lod1, 1) <= WEAPON_GLB_TRI_BUDGET.lod1, `LOD1 ${tris(DEATH_RAY.lod1, 1)}`);
+  assert.ok(tris(DEATH_RAY.lod1, 1) < tris(DEATH_RAY.lod0, 1) / 3, 'LOD1 wyraźnie lżejszy');
+  // LOD AUTO: sylwetka r 64 × skala Capital 1,75 — LOD0 przy zbliżeniu 1,8, LOD1 przy 0,9
+  assert.equal(weaponGlbLodFor(-1, 64 * 1.75 * 1.8), 0);
+  assert.equal(weaponGlbLodFor(-1, 64 * 1.75 * 0.9), 1);
+  resetWeaponGlbQueries();
+  setWeaponGlbFamilies(['deathRay@auto']);
+  registerWeaponGlb('deathRay', 0, DEATH_RAY.lod0);
+  registerWeaponGlb('deathRay', 1, DEATH_RAY.lod1);
+  assert.equal(weaponGlbAutoLod('deathRay'), true);
+  const m0 = buildWeapon3D('deathRay'), m1 = buildWeapon3D('deathRay', { lod: 1 });
+  assert.ok(m0.source === 'glb' && m1.source === 'glb' && m1.lod === 1);
+  for (const k of ['trunnion', 'barrels', 'muzzleX', 'recoil', 'pitch', 'kind', 'light']) assert.deepEqual(m0[k], ref[k], k);
+  resetWeaponGlbQueries();
+  setWeaponGlbFamilies(null);
 });
 
 test('Tempest przez rejestr (lista rodzin): części z GLB, układ z FAMILIES, partia z AO', () => {
