@@ -68,7 +68,7 @@ export const WEAPON_GLB_GAME = Object.freeze({
   tempest1: WEAPON_GLB_AUTO,
   tempest2: WEAPON_GLB_AUTO,
   lance: WEAPON_GLB_AUTO,
-  // Promień Śmierci „Gungnir” (2026-10-20, scripts/blender/deathRay.py): jedna wieża na supercapitalu Terra Nova
+  // Promień Śmierci „Gungnir” (2026-10-20, scripts/blender/deathRay.py; wygląd zaakceptowany przez użytkownika): jedna wieża na supercapitalu Terra Nova
   // (Capital, r 64) — LOD0 z góry od zoomu ~1,43, LOD1 (3,4 tys. trójkątów) poniżej ~1,14.
   deathRay: WEAPON_GLB_AUTO
 });

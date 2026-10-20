@@ -146,7 +146,7 @@ Demo: `dema/atlas3d-webgpu.html?bronie=blender` (pole „Yamato z Blendera” w 
 - Testy: `tests/weaponGlb.test.mjs` („LOD wg oddalenia kamery (tryb AUTO)” — histereza, progi, części na LOD,
   tablice partii), `tests/turretBatch3D.test.mjs` (partia rodziny × LOD w `syncTurrets`).
 
-## Promień Śmierci „Gungnir” (2026-10-20; na gałęzi `claude/wieza-promienia-blender-a09b54`, nie w main)
+## Promień Śmierci „Gungnir” (2026-10-20; wygląd zaakceptowany przez użytkownika — „zostaw w rejestrze gry”)
 
 - Zlecenie: wieża superbroni `death_ray` (rodzina `deathRay`) jako wbudowana wieża jednego celu supercapitala Terra Nova
   (Colossus, gniazdo `builtin` na dziobie — gniazdo i AI robi osobna sesja). Skrypt `scripts/blender/deathRay.py`
@@ -177,7 +177,7 @@ Demo: `dema/atlas3d-webgpu.html?bronie=blender` (pole „Yamato z Blendera” w 
   promień na 9 gniazdach special; oraz `bronie-blender-gra.mjs --bronie death_ray --zaczep special` na Atlasie): tryb off
   i worker — 0 pipeline'ów synchronicznych, 0 błędów konsoli (poza favicon), partia `deathRay` / `deathRay@1` jednym
   rysunkiem.
-- Wynik A/B (oceny użytkownika jeszcze nie ma): z góry przy 1,8–3,2 Blender czytelniejszy — obrotnica, cztery kapsuły
+- Wynik A/B (użytkownik zaakceptował wygląd 2026-10-20): z góry przy 1,8–3,2 Blender czytelniejszy — obrotnica, cztery kapsuły
   z miętowymi punktami, świecący zamek, żebrowana lufa i korona; stary to dysk z płaskim klockiem i kratką. Przy 0,9
   (LOD1) oba czytelne, nowy drobniejszy. W kamerach 3D największa różnica: stary — kanciasta skrzynka z rurą i świecącą
   głowicą, nowy — bryła z jarzmem, kołnierzami i koroną. Słabości: obudowa ma ciemne, gładkie ściany boczne (z góry nie
