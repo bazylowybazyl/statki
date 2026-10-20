@@ -253,15 +253,15 @@ function cableRadii(seedRand, n) {
 const bundleHalfW = (radii, gap) => (radii.reduce((a, r) => a + 2 * r, 0) + gap * (radii.length - 1)) * 0.5;
 
 /**
- * Pole pancerza z KANAŁAMI SERWISOWYMI (dysze SIDE, zbiorniki — serviceChannel): w kanale płyty zdjęte, więc wartość
- * = max(pole pancerza, głębokość w kanale) — dodatnie = rów maszynowni. Zwraca próbnik (x, y) → [j.].
+ * Pole pancerza z KANAŁAMI SERWISOWYMI (`chanOf(m)` — serviceChannel: dysze SIDE, zbiorniki, gondole bez rowu przy
+ * szyjce): w kanale płyty zdjęte, więc wartość = max(pole pancerza, głębokość w kanale) — dodatnie = rów maszynowni.
+ * Zwraca próbnik (x, y) → [j.].
  */
-function armorGapSampler(field, S, modules) {
+function armorGapSampler(field, S, modules, chanOf) {
   const L1 = field.levels[1];
-  const D = field.expanded.design.detail;
   const chans = [];
   for (const m of modules) {
-    const ch = serviceChannel(m, D);
+    const ch = chanOf(m);
     if (!ch) continue;
     const R = Math.hypot(ch.w, ch.h);
     chans.push({ ch, x0: ch.x - R, x1: ch.x + R, y0: ch.y - R, y1: ch.y + R });
@@ -276,6 +276,34 @@ function armorGapSampler(field, S, modules) {
     }
     return v;
   };
+}
+
+/**
+ * Gondole MAIN z kanałem serwisowym: w pasie startu trasy przy gondoli (do 1,6 komórki od obrysu, połowa od szyjki —
+ * jak startsOf) nie ma ani jednego miejsca w głębi rowu maszynowni (≥ 0,45 komórki od płyt, ≥ edgeDu od sylwetki) —
+ * kadłuby z klocków: płyta rufy dochodzi do gondoli; rura paliwa wchodzi wtedy kanałem. Gondole z rowem przy sobie
+ * (flota TN) kanału nie dostają.
+ */
+function engineChannels(field, S, modules, T) {
+  const D = field.expanded.design.detail;
+  const L0 = field.levels[0], L1 = field.levels[1];
+  const c = T.cellDu * D, pad = 1.6 * c, st = 0.5 * c;
+  const out = new Set();
+  for (const m of modules) {
+    if (m.type !== 'engine') continue;
+    const b = moduleBox(m);
+    const cr = Math.cos(m.rot || 0), sr = Math.sin(m.rot || 0);
+    let groove = false;
+    for (let x = b[0] - pad; x <= b[2] + pad && !groove; x += st) {
+      for (let y = b[1] - pad; y <= b[3] + pad; y += st) {
+        const sd = pipeModuleSdf(m, x, y);
+        if (sd <= 0 || sd > pad || (x - m.x) * cr + (y - m.y) * sr < -0.25 * m.w) continue;
+        if (S(L0, x, y) <= -T.edgeDu * D && S(L1, x, y) >= 0.45 * c) { groove = true; break; }
+      }
+    }
+    if (!groove) out.add(m);
+  }
+  return out;
 }
 
 /** Każdy moduł poza osią (|y| > 0,5) ma bliźniaka tego samego typu w odbiciu (tolerancja 0,01 j. — obrót części). */
@@ -361,7 +389,7 @@ function insideDepthSampler(field, S, mirror, pre = null, slack = 0) {
  * gap, rMax, mat (0 mix, 1 stal, 2 miedź, 3 kable), over, phase [j.], count, n, polys: [[[x, y], …], …] (kopia lustra
  * w tym samym biegu), ends: [[węzeł A, węzeł B], …] (na łamaną) }], fits: [{ type, x, y, rot, hw, hh [jd], p1, p2 }],
  * graph: { nodes: [{ x, y, dev (indeks modułu w field.expanded.modules przy przyłączu; −1 — węzeł), net }] },
- * clampJ [j.], stats }.
+ * channels (indeksy gondol MAIN z kanałem serwisowym — kompozytor rysuje kanał), clampJ [j.], stats }.
  */
 export function buildPipeNetwork(field, tuneIn = {}) {
   const T = { ...HD_PIPE_TUNE, ...tuneIn, cost: { ...HD_PIPE_TUNE.cost, ...(tuneIn.cost || {}) } };
@@ -384,7 +412,10 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   const bnd = field.bounds;
   const stats = { cells: 0, routes: 0, searches: 0, expanded: 0, unrouted: 0, shrunk: 0, outside: 0 };
 
-  const gapAt = armorGapSampler(field, S, modules);   // pancerz z kanałami serwisowymi (rów > 0)
+  // kanały serwisowe: SIDE i zbiorniki zawsze, gondole MAIN — gdy przy szyjce nie ma rowu (tylko przy włączonej sieci)
+  const engChan = density > 0 ? engineChannels(field, S, modules, T) : new Set();
+  const chanOf = (m) => serviceChannel(m, D, engChan.has(m));
+  const gapAt = armorGapSampler(field, S, modules, chanOf);   // pancerz z kanałami serwisowymi (rów > 0)
   // ── pole wolnego miejsca (komórka freeDu jd): min(odległość od płyt, od sylwetki, od modułów, od osi lustra) [j.] ──
   // fs — geometria (widoczność rowu), fo — wiązki wcześniejszych sieci (przeszkoda dla następnych)
   const cf = T.freeDu * D;
@@ -428,7 +459,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     return (arr[k] + (arr[k + 1] - arr[k]) * tx) * (1 - ty) + (arr[k + FW] + (arr[k + FW + 1] - arr[k + FW]) * tx) * ty;
   };
   // kanały serwisowe w polu wolnego miejsca: tylko w ich pudłach
-  for (const ch of modules.map((m) => serviceChannel(m, D)).filter(Boolean)) {
+  for (const ch of modules.map(chanOf).filter(Boolean)) {
     const R = Math.hypot(ch.w, ch.h) + cf;
     const i0 = Math.max(0, Math.floor((ch.x - R) / cf) - fx0), i1 = Math.min(FW - 1, Math.ceil((ch.x + R) / cf) - fx0);
     const j0 = Math.max(0, Math.floor((ch.y - R) / cf) - fy0), j1 = Math.min(FH - 1, Math.ceil((ch.y + R) / cf) - fy0);
@@ -691,9 +722,9 @@ export function buildPipeNetwork(field, tuneIn = {}) {
             const k = j * GW + i;
             if (kind[k] === 2) { termPen[k] = C.termPlate; termList.push(k); }
           }
-          // kanał serwisowy (SIDE, zbiornik): start na DRUGIM końcu kanału — ostatni odcinek przechodzi całym kanałem
-          // prosto do urządzenia; inaczej start w głębi rowu (wiązka biegnie środkiem, nie skrajem płyty), potem w rowie
-          const ch = serviceChannel(m, D);
+          // kanał serwisowy (SIDE, zbiornik, gondola bez rowu): start na DRUGIM końcu kanału — ostatni odcinek przechodzi
+          // całym kanałem prosto do urządzenia; inaczej start w głębi rowu (wiązka biegnie środkiem, nie skrajem płyty)
+          const ch = chanOf(m);
           if (ch) {
             const cc = Math.cos(ch.rot), sc = Math.sin(ch.rot);
             const farS = [];
@@ -702,7 +733,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
               if (!kind[k] || goal[k] || block[k]) continue;
               const x = cxOf(k), y = cyOf(k);
               if (-serviceChannelSdf(ch, x, y) < 0.3 * c) continue;
-              if ((x - ch.x) * cc + (y - ch.y) * sc > Math.min(0, -ch.w + 1.6 * c)) continue;     // dalsza połowa kanału
+              if (ch.dir * ((x - ch.x) * cc + (y - ch.y) * sc) < Math.max(0, ch.w - 1.6 * c)) continue;    // dalsza połowa kanału
               farS.push(k);
             }
             if (farS.length) path = search(farS);
@@ -826,13 +857,13 @@ export function buildPipeNetwork(field, tuneIn = {}) {
      */
     const terminalCorners = (dev, k, nextK, cellCorner) => {
       const m = modules[dev];
-      const ch = serviceChannel(m, D);
+      const ch = chanOf(m);
       if (!ch) return { pts: [anchorFor(dev, k, nextK).p], drop: false };
       const cr = Math.cos(m.rot || 0), sr = Math.sin(m.rot || 0);
       const at = (lx) => [m.x + lx * cr, m.y + lx * sr];
-      const A = at(-m.w + T.anchorDu * D);
-      const lc = (ch.x - m.x) * cr + (ch.y - m.y) * sr;                 // środek kanału na osi modułu
-      const F = at(lc - ch.w + Math.min(0.5 * c, 0.4 * ch.w));          // tuż przed dalszym końcem kanału
+      const A = at(ch.dir * (m.w - T.anchorDu * D));
+      const lc = (ch.x - m.x) * cr + (ch.y - m.y) * sr;                       // środek kanału na osi modułu
+      const F = at(lc + ch.dir * (ch.w - Math.min(0.5 * c, 0.4 * ch.w)));     // tuż przed dalszym końcem kanału
       const drop = cellCorner && Math.hypot(cellCorner[0] - F[0], cellCorner[1] - F[1]) < 1.5 * c;
       return { pts: [A, F], drop };
     };
@@ -1109,7 +1140,9 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   stats.runs = runs.length;
   stats.fits = fits.length;
   stats.ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
-  return { runs, fits, graph, clampJ: T.clampDu * D, detail: D, stats };
+  const channels = [];
+  modules.forEach((m, i) => { if (engChan.has(m)) channels.push(i); });
+  return { runs, fits, graph, channels, clampJ: T.clampDu * D, detail: D, stats };
 }
 
 /**
@@ -1126,7 +1159,8 @@ export function pipeNetworkCheck(net, field, marginDu = 0.5) {
   const S = fieldSampler(field);
   const obstacles = modules.filter(isObstacle);
   // widać z ziemi: rów maszynowni (nie płyta, nie moduł), wewnątrz sylwetki
-  const gapAt = armorGapSampler(field, S, modules);
+  const engChan = new Set((net.channels || []).map((i) => modules[i]));
+  const gapAt = armorGapSampler(field, S, modules, (m) => serviceChannel(m, D, engChan.has(m)));
   const visAt = (x, y) => gapAt(x, y) >= 0 && S(field.levels[0], x, y) < 0 && obstacles.every((m) => pipeModuleSdf(m, x, y) > 0);
   const inAt = insideDepthSampler(field, S, false);
   const deg = new Map();

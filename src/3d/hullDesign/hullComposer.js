@@ -640,6 +640,16 @@ export class HullComposer {
         // gondola MAIN (v = 0): walec wzdłuż osi gondoli — bęben z żebrami i kołnierzami, szyjka przy kadłubie (+x),
         // ciemna gardziel dyszy na rufie (−x); v = 1: kanciasty blok z kratą (silniki Colossusa)
         const w = B.x.mul(iD), hh = B.y.mul(iD);
+        If(fract(type).greaterThan(0.1), () => {
+          // kanał serwisowy od szyjki (+x) w głąb kadłuba (serviceChannel, gondola bez rowu przy szyjce)
+          const chX0 = w.mul(HD_SERVICE_CHANNEL.mainInK), chX1 = w.add(HD_SERVICE_CHANNEL.lenDu);
+          const chH = max(hh.mul(HD_SERVICE_CHANNEL.mainHalfK), HD_SERVICE_CHANNEL.halfDu);
+          const chSd = sdBox(lu.sub(vec2(chX0.add(chX1).mul(0.5), 0.0)), vec2(chX1.sub(chX0).mul(0.5), chH)).toVar();
+          const chK = clamp(chSd.negate().mul(2.0), 0.0, 1.0);
+          cutK.assign(max(cutK, chK));
+          engK.assign(max(engK, chK));
+          modSeam.assign(max(modSeam, lineN(chSd, float(0.35)).mul(0.5)));
+        });
         const sd = sdRoundBox(lq, B.xy, min(B.y.mul(0.35), 16.0)).mul(iD).toVar();
         If(sd.lessThan(1.0), () => {
           const inside = clamp(sd.negate().div(0.5), 0.0, 1.0);
@@ -1578,10 +1588,12 @@ export class HullComposer {
     });
     // moduły
     let mi = 0;
+    // gondole MAIN z kanałem serwisowym (sieć systemów: przy szyjce brak rowu) — znacznik w kodzie typu (+0,25)
+    const chanMods = new Set((field.pipeNet?.channels || []).map((i) => modules[i]));
     for (const m of modules) {
       if (mi >= HD_COMPOSER_LIMITS.modules) break;
       const A = U.mods.array[mi * 2], B = U.mods.array[mi * 2 + 1];
-      A.set(m.x, m.y, TYPE_CODE[m.type], m.rot || 0);
+      A.set(m.x, m.y, TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
       const extra = m.type === 'hangar' ? (m.doors || 1) : (m.v || 0);
       B.set(m.w || 0, m.h || 0, m.r || 0, extra);
       mi++;

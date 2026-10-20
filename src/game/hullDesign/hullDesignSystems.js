@@ -75,19 +75,29 @@ export function hullDesignSystems(modules) {
 }
 
 /**
- * KANAŁ SERWISOWY dyszy SIDE i zbiornika paliwa: wycięcie w płytach od strony kadłuba (lokalne −x modułu), którym
- * rura paliwa (i kabel) dochodzi do urządzenia — urządzenia stoją zwykle na płytach (SIDE przy burcie, zbiornik na
- * płycie grzbietu), a ostatni odcinek rury ma być widać. Generator tras traktuje kanał jak rów maszynowni, kompozytor
- * rysuje w nim maszynownię (płyty zdjęte, wysokość ramy) — te same wymiary w obu (hullComposer.js, gałęzie modułów).
- * Wymiary w jd: długość lenDu (SIDE — co najmniej sideLenK · w), pół-szerokość halfDu (co najmniej k · h).
+ * KANAŁ SERWISOWY dyszy SIDE, zbiornika paliwa i — gdy przy szyjce nie ma rowu — gondoli MAIN: wycięcie w płytach od
+ * strony kadłuba (SIDE i zbiornik: lokalne −x modułu, gondola: +x — szyjka), którym rura paliwa (i kabel) dochodzi do
+ * urządzenia — urządzenia stoją zwykle na płytach (SIDE przy burcie, zbiornik na płycie grzbietu, gondola kadłuba
+ * z klocków przy płycie rufy), a ostatni odcinek rury ma być widać. Generator tras traktuje kanał jak rów maszynowni,
+ * kompozytor rysuje w nim maszynownię (płyty zdjęte, wysokość ramy) — te same wymiary w obu (hullComposer.js, gałęzie
+ * modułów; kanał gondoli — znacznik w kodzie typu modułu). Wymiary w jd: długość lenDu (SIDE — co najmniej
+ * sideLenK · w), pół-szerokość halfDu (co najmniej k · h).
  */
-export const HD_SERVICE_CHANNEL = Object.freeze({ lenDu: 22, sideLenK: 1.8, halfDu: 7, sideHalfK: 0.8, tankHalfK: 0.5 });
+export const HD_SERVICE_CHANNEL = Object.freeze({ lenDu: 22, sideLenK: 1.8, halfDu: 7, sideHalfK: 0.8, tankHalfK: 0.5, mainHalfK: 0.45, mainInK: 0.6 });
 
-/** Kanał serwisowy modułu: { x, y, rot, w, h } (środek, obrót, pół-wymiary [j.]) albo null. `D` — detal [j./jd]. */
-export function serviceChannel(m, D) {
+/**
+ * Kanał serwisowy modułu: { x, y, rot, w, h, dir } (środek, obrót, pół-wymiary [j.], dir — strona kanału na osi modułu:
+ * −1 / +1) albo null. `D` — detal [j./jd], `engine` — gondola MAIN dostaje kanał (generator: przy szyjce brak rowu).
+ */
+export function serviceChannel(m, D, engine = false) {
   const C = HD_SERVICE_CHANNEL;
-  let x0, x1, hc;
-  if (m.type === 'thruster_side') {
+  let x0, x1, hc, dir = -1;
+  if (m.type === 'engine') {
+    if (!engine) return null;
+    x0 = C.mainInK * m.w; x1 = m.w + C.lenDu * D;
+    hc = Math.max(C.mainHalfK * m.h, C.halfDu * D);
+    dir = 1;
+  } else if (m.type === 'thruster_side') {
     const Lc = Math.max(C.sideLenK * m.w, C.lenDu * D);
     x0 = -m.w - Lc; x1 = -0.3 * m.w;
     hc = Math.max(C.sideHalfK * m.h, C.halfDu * D);
@@ -96,7 +106,7 @@ export function serviceChannel(m, D) {
     hc = Math.max(C.tankHalfK * m.h, C.halfDu * D);
   } else return null;
   const lx = (x0 + x1) * 0.5, c = Math.cos(m.rot || 0), s = Math.sin(m.rot || 0);
-  return { x: m.x + lx * c, y: m.y + lx * s, rot: m.rot || 0, w: (x1 - x0) * 0.5, h: hc };
+  return { x: m.x + lx * c, y: m.y + lx * s, rot: m.rot || 0, w: (x1 - x0) * 0.5, h: hc, dir };
 }
 
 /** Pole kanału [j.]: ujemne wewnątrz. */
