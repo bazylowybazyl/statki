@@ -1,6 +1,6 @@
 // Wieża Promienia Śmierci „Gungnir” (rodzina 3D `deathRay`, model z Blendera — scripts/blender/deathRay.py) NA SWOIM
-// MIEJSCU w prawdziwej grze: supercapital Terra Nova (Colossus) z promieniem (DevScene.equipDeathRay — gniazdo special
-// albo wirtualne gniazdo na osi dziobu), zrzuty z góry przy kilku zoomach i z kamer 3D (K), warianty modelu
+// MIEJSCU w prawdziwej grze: supercapital Terra Nova (Colossus) z promieniem na gnieździe builtin dziobu (uzbrojenie NPC;
+// DevScene.equipDeathRay — to samo gniazdo, inne okręty — wirtualne na osi dziobu), zrzuty z góry przy kilku zoomach i z kamer 3D (K), warianty modelu
 // stary / Blender (lista rodzin z GLB w ?bronieGlb=, rejestr weaponGlb.js). Harness strony (czas stoi, gra kroczy
 // przez __harness.step), gra swobodna, Colossus bez mózgu w pustej przestrzeni.
 //
@@ -70,7 +70,7 @@ const batchInfo = () => ev(`(() => {
 const lodOf = (p) => (p ? ['deathRay', 'deathRay@1'].filter((n) => p[n]?.instancje > 0 && p[n].rysowana !== false).map((n) => `${n}: ${p[n].instancje}`).join(', ') || 'brak' : 'scena w workerze');
 const turretAt = `(() => {
   const e = window.__wpColossus;
-  // Najbardziej wysunięta ku dziobowi wieża promienia (equipDeathRay montuje go na wszystkich gniazdach special).
+  // Wieża promienia najbardziej wysunięta ku dziobowi (Colossus: jedna, na gnieździe builtin dziobu).
   const c = Math.cos(e.angle), s = Math.sin(e.angle);
   let t = null, best = -Infinity;
   for (const q of window.Turret2D.recordsFor(e) || []) {

@@ -26,8 +26,12 @@ User: „built in turret single target — daj go supercapitalovi terran … bro
   cele wyłącznie okręty kapitałowe i niszczyciele (fregaty i myśliwce pomijane — 45 s przeładowania), linia ognia z
   pasem wiązki (pas rzazu + 60 j.) — także gracz, którego nie ma w siatce AI. `getLeadAim` dla broni natychmiastowej
   (`baseSpeed: Infinity`) celował w NaN (−∞ / −∞) — teraz bez wyprzedzenia.
-- **Model wieży z Blendera** robi osobna sesja (gałąź `wieza-promienia-blender`); do jej scalenia wieża proceduralna
-  `FAMILIES.deathRay`.
+- **Model wieży z Blendera** (osobna sesja, `scripts/blender/deathRay.py`, `assets/weapons3d/deathRay[_lod1].glb`,
+  rejestr GLB w trybie AUTO) scalony na tej gałęzi: na dziobie Colossusa z daleka LOD1 (zoom 0,35–1,4, 3,5 tys.
+  trójkątów), z bliska LOD0 (zoom 1,8 i 3,2 oraz kamery 3D, 12,6 tys.); 0 pipeline'ów synchronicznych i 0 błędów
+  w trybie off i worker (`node scripts/webgpu/wieza-promienia-gra.mjs [--warianty stary,blender] [--query
+  renderWorker=1]`). Wieża stoi na samym czubku dziobu (gniazdo builtin z edytora: x 813 przy półdługości sprite'a
+  836) — pierścień wystaje poza obrys nosa.
 
 Wyniki — § „Wyniki 2026-10-20” niżej. Decyzje z 2026-10-19 (gniazdo special, dwa przebicia) są nieaktualne.
 
