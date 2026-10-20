@@ -496,9 +496,70 @@ function citadella() {
   d.pipes = [{ pts: [[352, -9], [468, -9]], n: 2, r: 2.4, mat: 'steel', over: false }];
   return d;
 }
-function colossus(o = {}) {
-  const d = tnBase('colossus', 'Superkapitał Colossus (Terra Nova)', 59, {
-    raw: o.raw,
+function colossus() {
+  // sprite: płyty-szewrony rozdzielone ukośnymi rowami maszynowni (od lewej góry w prawy dół), ośmiokątne gniazda
+  // na osobnych płytach, rufa z kasztelami na płytach, dziób — klin z gniazdem i pas pod nim, maszynownia na osi
+  const d = tnShip('Superkapitał Colossus (Terra Nova)', 59, 0.9061, {
+    grid: 1,
+    shapes: [
+      // rama: maszynownia rufy i rowów, mocowania gondol, dziób (trapez obrócony o 90° pod skosem klina)
+      frameBlk(-710, -214, -618, 214, { c: [7, 0, 0, 7] }),
+      frameBlk(-756, -76, -700, 76),
+      frameBlk(-683, -240, -623, -192),                               // rów od górnej gondoli
+      frameBlk(-618, -148, -300, 148),
+      frameBlk(-300, -230, 312, 230),
+      { kind: 'block', shape: 'trap', x: 482.5, y: 0, w: 320, h: 341, rot: Math.PI / 2, level: 0, a: 60, b: 60 },
+      frameBlk(535, -40, 680, 40),
+      // rufa (kasztele na płytach)
+      blk('rect', -623, -303, -400, -148, 1, { c: [25, 0, 0, 0] }),   // pod kasztelami z kratą i orłem
+      blk('rect', -701, -192, -618, -63, 1, { c: [40, 0, 0, 0] }),    // kolumna z napisem (kasztel z ośmiokątem)
+      blk('rect', -647, -221, -623, -192),                            // pod górną gondolą
+      blk('rect', -723, -33, -660, 33),                               // rufa przy osi
+      blk('rect', -660, -49, -594, 49, 1, { c: [8, 0, 0, 8] }),        // rufa przy osi (mostek)
+      blk('rect', -587, -141, -345, -52, 1, { c: [41, 0, 0, 0] }),     // pod kasztelem środkowym
+      blk('rect', -587, -48, -386, 48),                               // pod kasztelem na osi
+      blk('rect', -333, -51, -279, 51, 1, { c: [10, 10, 10, 10] }),    // platforma rdzenia
+      // góra kadłuba
+      blk('tri', -400, -303, -368, -272),                             // skos za rufą
+      blk('rect', -400, -272, -324, -232),
+      blk('rect', -400, -214, -350, -147, 1, { c: [10, 0, 0, 10] }),   // płyta z ośmiokątem
+      blk('rect', -324, -314, -278, -256, 1, { c: [12, 0, 0, 0] }),    // gniazdo
+      blk('rect', -276, -306, -105, -196, 1, { c: [0, 0, 0, 24] }),    // wielka płyta z gniazdem L
+      blk('trap', -103, -306, 64, -240, 1, { b: 35 }),                // górna płyta do skosu
+      blk('rect', -45, -238, 34, -134, 1, { c: [12, 12, 12, 12] }),    // płyta z ośmiokątem
+      blk('rect', 97, -268, 150, -212, 1, { c: [6, 6, 6, 6] }),        // gniazdo
+      blk('rect', 152, -248, 241, -212, 1, { c: [0, 18, 0, 0] }),
+      blk('trap', 243, -230, 334, -176, 1, { b: 22 }),                // płyta z gniazdem L i skosem
+      blk('rect', 353, -192, 391, -150, 1, { c: [6, 6, 6, 6] }),       // gniazdo
+      blk('rect', 334, -176, 353, -150),
+      // szewrony między ukośnymi rowami
+      blk('trap', -305, -232, -250, -142, 1, { a: -90, b: 90 }),      // ukośny pas za wielką płytą (równoległobok)
+      blk('rect', -322, -254, -278, -234),                            // pod gniazdem
+      blk('rect', -250, -184, -165, -142, 1, { c: [8, 8, 8, 8] }),
+      blk('trap', -160, -194, -45, -134, 1, { a: 30, b: 40 }),        // szewron (skosy wzdłuż rowów)
+      blk('rect', -340, -137, -262, -112),
+      blk('rect', -305, -110, -182, -56, 1, { c: [10, 0, 10, 0] }),    // płyta z ośmiokątem
+      blk('rect', -110, -130, -3, -60, 1, { c: [24, 36, 0, 0] }),      // szewron (róg ścięty wzdłuż rowu)
+      blk('rect', -225, -52, -3, 52),                                 // grzbiet z napisem
+      blk('rect', 5, -126, 62, -92, 1, { c: [0, 20, 0, 0] }),         // (rów poprzeczny przy x 0 — łączy rowy obu połówek kadłuba)
+      blk('rect', 64, -132, 152, -90, 1, { c: [8, 8, 8, 8] }),         // płyta z gniazdem L
+      blk('trap', 100, -204, 226, -147, 1, { a: -57 }),               // pas ukośny pod gniazdami (rowy nad nim i za nim)
+      blk('rect', 234, -165, 340, -134),
+      blk('trap', 5, -90, 195, -52, 1, { b: 38 }),                    // szewron (skos wzdłuż rowu)
+      blk('rect', 200, -92, 266, -50, 1, { c: [10, 10, 10, 10] }),     // płyta z ośmiokątem
+      blk('trap', 270, -76, 392, -38, 1, { b: 37 }),
+      blk('rect', 5, -48, 125, 48),                                   // grzbiet
+      blk('rect', 128, -48, 197, 48),                                 // grzbiet z kratą
+      blk('rect', 200, -46, 300, 46, 1, { c: [12, 12, 12, 12] }),      // grzbiet z ośmiokątem
+      blk('rect', 300, -36, 395, 36),
+      // dziób
+      blk('tri', 391, -192, 408, -176),                               // skos przed gniazdem
+      blk('rect', 391, -176, 482, -112, 1, { c: [0, 0, 12, 0] }),      // płyta z gniazdem (prosta burta pod dyszę SIDE)
+      blkAt('trap', 611.5, -139, 74, 259, 2, 1, { a: 108, b: -62 }),  // klin (trapez obrócony o 90°)
+      blk('trap', 400, -105, 700, -40, 1, { b: 270 }),                // pas pod klinem
+      blk('rect', 405, -30, 535, 30),                                 // dziób przy osi (gniazdo, krata; rowy nad nim i przed nim)
+      blk('rect', 671, -65, 768, 65, 1, { c: [0, 27, 27, 0] })         // czoło
+    ],
     // KASZTELE rufowe (sprite: górny blok z kratą i orłem, blok z pionowym napisem, blok z ośmiokątem, środek)
     castles: [
       castle(-496, -264, 111, 40, { taperF: 0.9, taperB: 0.15 }),
@@ -509,6 +570,8 @@ function colossus(o = {}) {
     ]
   });
   d.modules.push(
+    vent(160.9, 0, 36.225, 13.44), vent(467, 0, 31.395, 16.8, Math.PI / 2), vent(592, -99.8, 22.575, 10.08),
+    vent(160.9, -231.4, 17.64, 10.08, Math.PI / 2), vent(282.2, -226.7, 6.825, 3.36),
     grid(-585, -269, 15, 21), vent(-502, -231, 46, 6), vent(-560, -178, 14, 14), vent(-643, -130, 9, 21),
     grid(-551, -14, 10, 13), grid(-498, -14, 11, 13), grid(-386, -14, 10, 13),
     // silniki: kanciaste bloki z kratą
