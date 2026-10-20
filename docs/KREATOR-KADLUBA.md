@@ -187,11 +187,14 @@ edytor ich nie przesuwa, nie skaluje i nie usuwa (🔒 w nakładce).
 2. TRZY SIECI po kolei: rury do silników, rury dopływu, kable. Każda to drzewo od PRZYŁĄCZY reaktora (komórki przy jego
    obrysie): urządzenie (najbliższe sieci pierwsze) dołącza najkrótszą trasą do najbliższego miejsca drzewa tej samej
    sieci albo do wolnego przyłącza reaktora (nowy pień; pnie co ≥ 2 komórki). A* po komórkach (kara za skręt 45° / 90° /
-   135° względem kierunku wejścia, heurystyka = odległość do sieci × 1,6, kable × 2,2; odległość aktualizowana Dijkstrą
-   na kolejce kubełkowej w promieniu 48 komórek od nowej gałęzi). Komórka przyłącza urządzenia jest dla reszty sieci
-   zamknięta — KAŻDA TRASA ma dwa prawdziwe
-   końce (urządzenie i węzeł albo przyłącze reaktora). Wiązki wcześniejszych sieci są przeszkodą dla następnych (+6
-   w koszcie, ślad w polu wolnego miejsca) — rury i kable we wspólnym rowie leżą obok siebie, krzyżują się tylko tam,
+   135° względem kierunku wejścia, heurystyka = odległość do sieci × 1,25 dla rur, × 2,2 dla kabli; odległość
+   aktualizowana Dijkstrą na kolejce kubełkowej w promieniu 48 komórek od nowej gałęzi). Komórka przyłącza urządzenia jest
+   dla reszty sieci zamknięta — KAŻDA TRASA ma dwa prawdziwe końce (urządzenie i węzeł albo przyłącze reaktora).
+   PRZYŁĄCZA RUR PALIWA WIDAĆ: płyty w pasie 5 komórek wokół silnika, dyszy i zbiornika +5 w koszcie, start trasy w głębi
+   rowu przy urządzeniu, a przy urządzeniu z KANAŁEM SERWISOWYM (niżej) — na drugim końcu kanału, z rogami łamanej na
+   osi kanału (ostatni odcinek biegnie całym kanałem prosto do urządzenia). Wiązki wcześniejszych sieci są przeszkodą
+   dla następnych (+6 w koszcie, ślad w polu wolnego miejsca) — rury i kable we wspólnym rowie leżą obok siebie, krzyżują
+   się tylko tam,
    gdzie inaczej się nie da (kabel chowa się pod wiązkę rur);
 3. obciążenie krawędzi = suma wag tras od urządzenia do reaktora → wiązka 1 + 1,3 · log2(1 + obciążenie) rur / kabli
    (× 0,5 + 0,5 · gęstość; do 8) — kable gęstnieją przy rdzeniu, rury przy gondolach; rury dopełniają rów do połowy
@@ -203,17 +206,30 @@ edytor ich nie przesuwa, nie skaluje i nie usuwa (🔒 w nakładce).
    zaokrąglone. Cała szerokość wiązki z zapasem 0,6 jd w sylwetce (głębokość generatora z zapasem komórki pola —
    niezależna kontrola na innej siatce nie wychodzi mniejsza) — inaczej wiązka cieńsza (mniej rur, potem cieńsze rury);
 5. osprzęt: rozgałęzienia — skrzynka rozdzielcza / obejma-trójnik (rury), puszka kablowa; wejścia pod płyty — kołnierz
-   (rury), przepust (kable); przyłącza urządzeń — kołnierz, dławnica kablowa, pompa przy zbiorniku, kolektor przy
-   gondoli; zawory i pompy co ~95 jd rur, puszki co ~120 jd kabli; reaktor bez bryły (`v` 1) — rozdzielnia na końcu pnia,
-   gdy widać go z rowu. Limity: 255 biegów, 255 elementów osprzętu.
+   (rury), przepust (kable); przyłącza urządzeń — kołnierz (dysza SIDE), dławnica kablowa, pompa przy zbiorniku, KOLEKTOR
+   na wejściu wiązki do gondoli (blok krótkich rur wzdłuż wiązki tuż za obrysem gondoli); zawory i pompy co ~95 jd rur,
+   puszki co ~120 jd kabli; reaktor bez bryły (`v` 1) — rozdzielnia na końcu pnia, gdy widać go z rowu. Limity: 255
+   biegów, 255 elementów osprzętu (przycinane parami lustra).
+
+**Kanał serwisowy** (`serviceChannel`, `HD_SERVICE_CHANNEL` w `hullDesignSystems.js`): wycięcie w płytach od strony
+kadłuba — przy dyszy SIDE (lokalne −x: 22 jd lub 1,8 · w, pół-szerokość ≥ 7 jd) i zbiorniku (od króćca −x; sloty TN
+obracają zbiornik króćcem ku rdzeniowi) zawsze, przy gondoli MAIN (od szyjki +x) wtedy, gdy przy gondoli nie ma rowu
+maszynowni (kadłuby z klocków: płyta rufy dochodzi do gondoli) albo gdy wejście rury okazało się niewidoczne — generator
+sprawdza każde przyłącze MAIN zaraz po sieci rur do silników (`fuelEndVisible`: pierwsze 3 jd za obrysem i ≥ 60% z 12 jd
+w rowie, oś i brzegi wiązki) i wtedy liczy sieć od nowa z kanałem (pola niezależne od kanałów z pamięci pierwszego
+przebiegu); lista gondol z kanałem — `net.channels`. Generator traktuje kanał jak rów, kompozytor rysuje w nim
+maszynownię (płyty zdjęte, wysokość ramy, obrzeże); kanał gondoli — znacznik +0,25 w kodzie typu modułu. Flota TN: kanał
+gondoli tylko przy Bellatorze (−287, ±62) i Haście (−108, ±49,5) — szyjka za wąskim pasem płyty.
 
 **Kontrola** (`pipeNetworkCheck` — testy i panel dema): wolne końce (koniec łamanej poza przyłączem urządzenia, który
 nie styka się z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż 0,5 jd), urządzenia bez
-drogi kablem do reaktora, silniki bez drogi rurą do reaktora albo reaktor bez dopływu ze zbiornika. Wynik grafu:
+drogi kablem do reaktora, silniki bez drogi rurą do reaktora albo reaktor bez dopływu ze zbiornika, WIDOCZNE
+przyłącza rur paliwa (`fuelEnds` — MAIN, SIDE, zbiornik: [widoczne, wszystkie], `fuelHidden`). Wynik grafu:
 `net.graph.nodes` (węzeł / przyłącze z indeksem modułu), `run.ends` (węzły końców każdej łamanej, lustro osobno).
 
-**Rysunek** (`hullComposer.js`, `_pipeNet`): bieg ma materiał (0 mix, 1 stal, 2 miedź, 3 KABLE) + 8 · „na płytach”.
-Rury — jak dotąd (stal / miedź / rdza, kołnierze w odcinkach, obejmy co 26 jd). KABLE: korytko drabinkowe (szyny po
+**Rysunek** (`hullComposer.js`, `_pipeNet`): bieg ma materiał (0 mix, 1 stal, 2 miedź, 3 KABLE, 4 RURY PALIWA) + 8 ·
+„na płytach”. Rury paliwa — jasna stal i miedź (bez rdzy i ciemnej stali: widać je na ciemnej maszynowni przy
+silnikach), kołnierze w odcinkach, obejmy co 26 jd; rury ręczne — jak dotąd. KABLE: korytko drabinkowe (szyny po
 bokach, szczeble co 3 jd widoczne między kablami), cienkie kable w ciemnej izolacji z połyskiem (pierwszy — grubszy
 zasilający), kolorowe opaski co ~9 jd: czerwona, bursztynowa, zielona, biała — BEZ NIEBIESKIEJ (niebieskie albedo
 świeci w grze, `hullGlowMask`). Osprzęt: kody 1–9 (skrzynka, kołnierz / przepust, zawór, pompa, kolektor, zaślepka rur
@@ -226,10 +242,11 @@ reaktorów / zbiorników / MAIN / SIDE / urządzeń, biegi kabli i rur, **wolne 
 bez paliwa, bez trasy; walidacja kompletu w recepturze; **graf sieci** (I): linie źródło → odbiornik (kable żółte,
 rury do silników pomarańczowe, dopływ zielony, odbiornik bez trasy — czerwony krzyżyk).
 
-**Koszt** (generator na gotowym polu, minimum z 9 przebiegów na przemian ze starym generatorem, ta sama maszyna,
-2026-10-20, 11 przebiegów): Custos 37 ms (stary 51), Hasta 45 (62), Bellator 45 (72), Citadella 49 (65), Colossus 56
-(58); w przeglądarce (demo, pojedynczy wypiek) 57–87 ms; kontrola sieci ~10–20 ms (tylko przy pełnym wypieku).
-Pipeline'y synchroniczne: 0.
+**Koszt** (generator na gotowym polu, minimum z 9 przebiegów na przemian ze starym generatorem, ta sama maszyna
+obciążona innymi programami, 2026-10-20): Custos 38 ms (stary 65), Hasta 69 (82 — z kanałem gondoli: dwa przebiegi),
+Bellator 64 (72 — dwa przebiegi), Citadella 52 (62), Colossus 64 (58); w przeglądarce (demo, pojedynczy wypiek)
+63–123 ms; kontrola sieci ~10–20 ms (tylko przy pełnym wypieku). Test pilnuje pracy A* (rozwinięte komórki ≤ 1,5 ×
+komórek siatki; dziś 0,4–0,8). Pipeline'y synchroniczne: 0.
 
 **Narzędzia**: `node scripts/webgpu/kreator-kadluba-demo.mjs --tylko custos,hasta,bellator,citadella,colossus --etapy
 ab,rury` → `<okręt>-a|b-rufa.png`, `<okręt>-a-rufa-bez.png` (bez sieci), Citadella `citadella-a-zgloszenie.png` (kadr
