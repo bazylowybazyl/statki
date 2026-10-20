@@ -304,7 +304,7 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
     const net = f.pipeNet;
     assert.ok(net && net.runs.length >= 15 && net.fits.length >= 20, `${key}: ${net?.runs.length} biegów, ${net?.fits.length} osprzętu`);
     assert.equal(netKey(net), netKey(buildHullField(d).pipeNet), `${key}: deterministyczna`);
-    const seeded = buildHullField({ ...d, pipeNet: { density: 1, seed: 5 } }).pipeNet;
+    const seeded = buildHullField({ ...d, pipeNet: { density: 1, seed: d.pipeNet.seed === 5 ? 6 : 5 } }).pipeNet;
     assert.notEqual(netKey(net), netKey(seeded), `${key}: inne ziarno — inna sieć`);
     // oś każdej rury wewnątrz sylwetki
     for (const r of net.runs) for (const poly of r.polys) for (const [x, y] of poly) {
