@@ -462,23 +462,23 @@ export function polygonsOverlap(A, B, eps = HD_BLOCK_TUNE.eps) {
       if (t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6) return true;
     }
   }
-  // punkt jednego ściśle wewnątrz drugiego: wierzchołki, środki krawędzi, środek ciężkości obrysu
-  const strictlyIn = (P, Q, x, y) => {
+  // punkt jednego ściśle wewnątrz drugiego: wierzchołki, środki krawędzi i punkty tuż za nimi po stronie wnętrza
+  // (strona (−dy, dx) — także przy otworach; środek ciężkości obrysu pierścienia leży w jego otworze, więc się nie
+  // nadaje: kopia lustra pierścienia na osi musi wyjść jako nakładanie, inaczej wycięłaby jego płytę)
+  const strictlyIn = (Q, x, y) => {
     if (!insideLoops(Q.loops, x, y)) return false;
     for (const [c, d] of Q.edges) if (segDist2(x, y, c[0], c[1], d[0], d[1]) <= E2 * 16) return false;
     return true;
   };
   for (const [P, Q] of [[PA, PB], [PB, PA]]) {
     for (const [a, b] of P.edges) {
-      if (strictlyIn(P, Q, a[0], a[1]) || strictlyIn(P, Q, (a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)) return true;
+      const mx = (a[0] + b[0]) * 0.5, my = (a[1] + b[1]) * 0.5;
+      if (strictlyIn(Q, a[0], a[1]) || strictlyIn(Q, mx, my)) return true;
+      const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.sqrt(dx * dx + dy * dy);
+      if (L <= E * 8) continue;
+      const k = Math.min(E * 50, L * 0.25) / L;
+      if (strictlyIn(Q, mx - dy * k, my + dx * k)) return true;
     }
-    const o = P.loops[0];
-    let cx = 0, cy = 0, a2 = 0;
-    for (let i = 0, n = o.length; i < n; i++) {
-      const p = o[i], q = o[(i + 1) % n], k = p[0] * q[1] - q[0] * p[1];
-      a2 += k; cx += (p[0] + q[0]) * k; cy += (p[1] + q[1]) * k;
-    }
-    if (Math.abs(a2) > 1e-12 && strictlyIn(P, Q, cx / (3 * a2), cy / (3 * a2))) return true;
   }
   return false;
 }

@@ -16,7 +16,6 @@ import { regularizeLoop, regularizeLoopSym } from '../src/game/hullDesign/hullDe
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { HD_PART_IDS, expandHullPart } from '../src/game/hullDesign/hullDesignParts.js';
-import { HD_TN_TRACE } from '../src/game/hullDesign/hullDesignTNTrace.js';
 import { HD_PIPE_FIT, filletPolyline, pipeTercileLoad, rasterPipeNetwork } from '../src/game/hullDesign/hullDesignPipes.js';
 import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE } from '../src/data/ships.js';
 
@@ -199,9 +198,18 @@ test('alfa fizyki i komórki belek; gotowe projekty bez ostrzeżeń', () => {
   }
 });
 
+// sprite'y floty TN: profil renderu, długość i szerokość alfy [j. świata] (pomiar: scripts/kreator-tn-ab.mjs)
+const TN_SPRITE_SIZE = {
+  custos: { profile: 'terran_frigate', length: 151.9, width: 66.1 },
+  hasta: { profile: 'terran_destroyer', length: 245.6, width: 137.6 },
+  bellator: { profile: 'terran_battleship', length: 622.4, width: 384.2 },
+  citadella: { profile: 'terran_carrier', length: 1071.6, width: 433.4 },
+  colossus: { profile: 'terran_supercapital', length: 1540.4, width: 627 }
+};
+
 test('flota Terra Novy: projekt w skali sprite\'a gry (długość, szerokość), detal = długość / 1700', () => {
   for (const key of ['custos', 'hasta', 'bellator', 'citadella', 'colossus']) {
-    const t = HD_TN_TRACE[key];
+    const t = TN_SPRITE_SIZE[key];
     const d = hullDesignPreset(key);
     const f = buildHullField(d);
     const len = f.bounds.maxX - f.bounds.minX, wid = f.bounds.maxY - f.bounds.minY;
@@ -235,10 +243,10 @@ test('gotowe części: rozwinięcie w skali i obrocie, kopia lustra odbita, pozi
   assert.equal(ex.modules.filter((x) => x.type === 'well').length, 2 + 3, 'port z lustrem + 3 porty grzbietu');
 });
 
-test('dane obrysu TN: rama i pancerz na okręt, kompozytor czyta pola ośmiokątne', () => {
-  for (const key of Object.keys(HD_TN_TRACE)) {
-    const t = HD_TN_TRACE[key];
-    assert.ok(t.frame.length >= 1 && t.armor.length >= 1 && t.frame[0].length >= 6, key);
+test('flota TN z klocków (bez obrysu sprite\'a), kompozytor czyta pola ośmiokątne', () => {
+  for (const key of Object.keys(TN_SPRITE_SIZE)) {
+    const d = hullDesignPreset(key);
+    assert.ok(d.shapes.length >= 10 && d.shapes.every((s) => s.kind === 'block'), key);
   }
   const src = readFileSync(new URL('../src/3d/hullDesign/hullComposer.js', import.meta.url), 'utf8');
   for (const k of ['_auxAt', 'oU.x', 'topComp']) assert.ok(src.includes(k), k);

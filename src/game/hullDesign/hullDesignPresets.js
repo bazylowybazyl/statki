@@ -1,16 +1,16 @@
 // src/game/hullDesign/hullDesignPresets.js
 //
-// KREATOR KADŁUBÓW — gotowe projekty (punkt wyjścia do edycji w stoczni). Bloki z prostokątów (fill), lustro
-// dopisuje drugą burtę. Wymiary w j. świata (blok 60 j.; Atlas w grze ma 1800 j. długości, Bellator 624).
+// KREATOR KADŁUBÓW — gotowe projekty (punkt wyjścia do edycji w stoczni). Wymiary w j. świata (blok 60 j.; Atlas
+// w grze ma 1800 j. długości, Bellator 624), lustro dopisuje drugą burtę. Wszystkie presety składają się wyłącznie
+// z elementów edytora gracza (isPlayerBuildable, src/game/hullDesign/hullDesignBuildable.js): klocki palety, bloki
+// 60 j., kasztele, gotowe części, moduły, naklejki.
 //
-// FLOTA TERRA NOVY (Custos, Hasta, Bellator, Citadella, Colossus) — odtworzona w kreatorze: rama i płyty pancerza
-// z obrysu sprite'ów (src/game/hullDesign/hullDesignTNTrace.js, scripts/kreator-presety-tn.mjs), wnęki z obrysu jako
-// kratki i gniazda, reszta (gondole, pierścienie, wieże, hangary, nadbudówki, napisy, orły) ręcznie — w j. świata
-// gry, w skali sprite'ów (getHullRenderSize).
+// FLOTA TERRA NOVY (Custos, Hasta, Bellator, Citadella, Colossus) — złożona z KLOCKÓW (src/game/hullDesign/
+// hullDesignBlocks.js) według podkładu sprite'ów (scripts/kreator-tn-ab.mjs: siatka j. świata, IoU alfy ≥ 0,9), styl
+// TN, nie kopia 1:1; gondole, pierścienie, wieże, hangary, kratki, kasztele, napisy i orły ręcznie — w j. świata gry,
+// w skali sprite'ów (getHullRenderSize).
 
-import { normalizeHullDesign, symPolyPoints } from './hullDesignSchema.js';
-import { axisHalfChain } from './hullDesignRegularize.js';
-import { HD_TN_TRACE, tnLoop } from './hullDesignTNTrace.js';
+import { normalizeHullDesign } from './hullDesignSchema.js';
 
 /** Bloki prostokąta bx0..bx1 × by0..by1 (włącznie) na poziomie `level`. */
 function fill(out, bx0, bx1, by0, by1, level) {
@@ -27,10 +27,9 @@ function orbis() {
     name: 'Krążownik Orbis', style: 'rounded', mirror: true, palette: 'terra', seed: 11,
     blocks: b,
     shapes: [
-      { kind: 'circle', op: 'add', x: 0, y: 0, r: 178, level: 0 },
-      { kind: 'circle', op: 'add', x: 0, y: 0, r: 132, level: 1 },
-      { kind: 'circle', op: 'cut', x: 0, y: 0, r: 98, level: 1 },
-      { kind: 'circle', op: 'add', x: 0, y: 0, r: 40, level: 2 }
+      { kind: 'block', shape: 'arc', arc: 360, x: 0, y: 0, w: 356, h: 356, level: 0 },
+      { kind: 'block', shape: 'arc', arc: 360, x: 0, y: 0, w: 264, h: 264, ri: 0.75, level: 1 },
+      { kind: 'block', shape: 'arc', arc: 360, x: 0, y: 0, w: 80, h: 80, level: 2 }
     ],
     modules: [
       { type: 'turret_l', x: 405, y: 0 },
@@ -67,8 +66,8 @@ function atlasLike() {
     name: 'Atlas II', style: 'chamfer', mirror: true, palette: 'atlas', seed: 23,
     blocks: b,
     shapes: [
-      { kind: 'circle', op: 'add', x: 200, y: -300, r: 62, level: 0 },
-      { kind: 'rect', op: 'cut', x: -905, y: 0, w: 40, h: 34, r: 0, level: 0 }
+      { kind: 'block', shape: 'arc', arc: 360, x: 200, y: -300, w: 124, h: 124, level: 0 },
+      { kind: 'block', shape: 'rect', op: 'cut', x: -906, y: 0, w: 80, h: 68, level: 0 }
     ],
     modules: [
       ...hatches,
@@ -102,9 +101,9 @@ function destroyer() {
     paint: { hull: '#9aa3ab', upper: '#c4c9ce' },
     blocks: b,
     shapes: [
-      { kind: 'rect', op: 'add', x: 214, y: 0, w: 40, h: 40, r: 0, rot: Math.PI / 4, level: 0 },
-      { kind: 'circle', op: 'add', x: -40, y: -60, r: 28, level: 0 },
-      { kind: 'rect', op: 'add', x: -30, y: 0, w: 92, h: 32, r: 10, level: 1 }
+      { kind: 'block', shape: 'rect', x: 214, y: 0, w: 80, h: 80, rot: Math.PI / 4, level: 0 },
+      { kind: 'block', shape: 'arc', arc: 360, x: -40, y: -60, w: 56, h: 56, level: 0 },
+      { kind: 'block', shape: 'rect', x: -30, y: 0, w: 184, h: 64, c: [10, 10, 10, 10], level: 1 }
     ],
     modules: [
       { type: 'turret_m', x: 150, y: 0 },
@@ -134,11 +133,10 @@ function pirate() {
     name: 'Szakal (piraci)', style: 'sharp', mirror: false, palette: 'pirate', seed: 31,
     blocks: b,
     shapes: [
-      { kind: 'circle', op: 'add', x: 0, y: 300, r: 72, level: 0 },
-      { kind: 'circle', op: 'add', x: 0, y: 300, r: 46, level: 1 },
-      { kind: 'circle', op: 'cut', x: 0, y: 300, r: 30, level: 1 },
-      { kind: 'circle', op: 'cut', x: 330, y: -128, r: 52, level: 0 },
-      { kind: 'rect', op: 'cut', x: -300, y: 132, w: 44, h: 22, r: 0, level: 0 }
+      { kind: 'block', shape: 'arc', arc: 360, x: 0, y: 300, w: 144, h: 144, level: 0 },
+      { kind: 'block', shape: 'arc', arc: 360, x: 0, y: 300, w: 92, h: 92, ri: 0.65, level: 1 },
+      { kind: 'block', shape: 'arc', arc: 360, op: 'cut', x: 330, y: -128, w: 104, h: 104, level: 0 },
+      { kind: 'block', shape: 'rect', op: 'cut', x: -300, y: 132, w: 88, h: 44, level: 0 }
     ],
     modules: [
       { type: 'turret_l', x: 0, y: 300 },
@@ -204,85 +202,6 @@ function tnShip(name, seed, detail, o = {}) {
     v: 2, name, style: 'chamfer', mirror: true, palette: 'terra', seed, detail, grid: o.grid, windows: 0, bevel: 1.9, round: 1,
     panels: o.panels ?? 1, pipeNet: { density: o.pipes ?? 1, seed: o.pipeSeed ?? 0 },
     blocks: [], shapes: o.shapes || [], modules: o.modules || [], decals: o.decals || [], castles: o.castles || [], parts: []
-  };
-}
-
-/** Krok siatki standaryzacji obrysów TN [jd] (hullDesignRegularize.js) i grubość okruchów, które znikają [jd]. */
-const TN_REG_DU = 2;
-const TN_THIN_DU = 9;
-
-/** Punkt w łamanej zamkniętej (parzysto-nieparzyście). */
-function inLoop(loop, x, y) {
-  let inside = false;
-  for (let s = 0, k = loop.length - 1; s < loop.length; k = s++) {
-    const a = loop[k], b = loop[s];
-    if ((a[1] <= y) !== (b[1] <= y) && x < a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0])) inside = !inside;
-  }
-  return inside;
-}
-
-/**
- * Grupa obrysu ze sprite'a (obrys + otwory) → dane LUSTRZANE. Sprite'y z AI nie są idealnie symetryczne, a sieć rur
- * liczy się na burcie y < 0 i odbija — przy rozjechanych burtach odbite rury wychodziły poza kadłub. Grupa na osi →
- * połowa y ≤ 0 (`sym`), otwory na osi też z połowy, otwory z burty y < 0 + ich odbicia; grupa z burty y < 0 → lustro
- * projektu dopisze drugą; z burty y > 0 → odpada (jest odbiciem tamtej). Null — grupa odpada.
- */
-function tnMirrorShape(outer, holes, base) {
-  const span = (L) => { let lo = Infinity, hi = -Infinity; for (const p of L) { if (p[1] < lo) lo = p[1]; if (p[1] > hi) hi = p[1]; } return [lo, hi]; };
-  const [lo, hi] = span(outer);
-  if (hi <= 0) return { ...base, pts: outer, holes };
-  if (lo >= 0) return null;
-  const half = axisHalfChain(outer);
-  if (!half) return { ...base, pts: outer, holes, mirror: false };
-  const hs = [];
-  for (const h of holes) {
-    const [hl, hh] = span(h);
-    if (hh <= 0) hs.push(h, h.map(([x, y]) => [x, -y]));
-    else if (hl < 0) { const c = axisHalfChain(h); if (c) hs.push(symPolyPoints(c)); }
-  }
-  return { ...base, pts: half, sym: true, holes: hs };
-}
-
-/**
- * Rama i płyty pancerza z obrysu sprite'a + wnęki z obrysu jako kratki (wydłużone, wypełnione). Wnęki krępe
- * (gniazda) — tylko gdy `mounts`; pozostałe zostają płytą (pancerz już je zalał). `raise` — punkty [x, y]: płyta,
- * w której leży punkt (albo jego odbicie), idzie piętro wyżej. `tiers` — zgrubne wielokąty (górna burta; lustro
- * dopisze drugą) PRZYCIĘTE DO PANCERZA (`clip`): pancerz pod nimi piętro wyżej — schodki płyt jak w sprite'ach
- * (wyższa płyta ma wokół siebie niższy próg), krawędzie zewnętrzne z obrysu.
- */
-function tnBase(key, name, seed, opts = {}) {
-  const t = HD_TN_TRACE[key];
-  const loops = (list) => list.map(tnLoop);
-  const [f0, ...fh] = loops(t.frame);
-  // obrys ze sprite'a STANDARYZOWANY (reg — krok siatki linii: 2 jd): sprite'y z AI są zaszumione, a ich szum
-  // szedłby w fazy, linie paneli, rowy i rury; 0 — obrys 1:1 ze sprite'a (A/B: opts.raw)
-  // (standaryzowany obrys jest też LUSTRZANY: burta y < 0 i jej odbicie — tnMirrorShape)
-  const reg = opts.raw ? 0 : TN_REG_DU * t.detail;
-  // płyta, której nie da się ustandaryzować (okruch obrysu), znika — sylwetka zostaje zawsze
-  const group = (pts, holes, base, drop = true) => (opts.raw ? { ...base, pts, holes, mirror: false }
-    : tnMirrorShape(pts, holes, { ...base, reg, ...(drop ? { regDrop: true, regThin: TN_THIN_DU * t.detail } : {}) }));
-  const shapes = [group(f0, fh, { kind: 'poly', op: 'add', level: 0 }, false)];
-  for (const plate of t.armor) {
-    const [a0, ...ah] = loops(plate);
-    const up = (opts.raise || []).some(([x, y]) => (inLoop(a0, x, y) || inLoop(a0, x, -y)) && !ah.some((h) => inLoop(h, x, y) || inLoop(h, x, -y)));
-    const sh = group(a0, ah, { kind: 'poly', op: 'add', level: up ? 2 : 1 });
-    if (sh) shapes.push(sh);
-  }
-  for (const pts of opts.tiers || []) shapes.push({ kind: 'poly', op: 'add', level: 2, clip: 1, pts });
-  const modules = [];
-  const D = t.detail;
-  for (const [x, y, w, h, fill] of t.recesses) {
-    if (y > 0.01 || fill < 0.6) continue;                    // lustro dopisze drugą burtę
-    const lo = Math.min(w, h), hi = Math.max(w, h);
-    if (lo < 2.2 * D || hi < 6 * D) continue;
-    if (hi / lo > 1.8) modules.push(vent(x, y, hi * 1.05, lo * 1.2, h > w ? Math.PI / 2 : 0));
-    else if (opts.mounts) modules.push(mount(x, y, hi * 1.0));
-  }
-  return {
-    v: 2, name, style: 'chamfer', mirror: true, palette: 'terra', seed, detail: D, windows: 0, bevel: 1.9, round: 1,
-    panels: opts.panels ?? 1,
-    pipeNet: { density: opts.pipes ?? 1 },
-    blocks: [], shapes, modules, decals: [], castles: opts.castles || []
   };
 }
 
@@ -710,6 +629,6 @@ export const HD_PRESETS = Object.freeze({
 export const HD_PRESET_KEYS = Object.freeze(Object.keys(HD_PRESETS));
 
 /** Świeża kopia gotowego projektu (znormalizowana). */
-export function hullDesignPreset(key, opts = {}) {
-  return normalizeHullDesign((HD_PRESETS[key] || HD_PRESETS.orbis).make(opts));
+export function hullDesignPreset(key) {
+  return normalizeHullDesign((HD_PRESETS[key] || HD_PRESETS.orbis).make());
 }

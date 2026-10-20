@@ -22,9 +22,11 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
   mapy pakietu `*-mapa-*.png`; edycja `edycja-*.png`). Klocki: `--etapy klocki --tylko klocki` → `klocki-*.png`
   (fregata z klocków: edytor, kadr, zbliżenie, zoom 1, A/B z Custosem; arkusz palety; edycja myszą — stawianie,
   przeciąganie, obrót, cofanie i ponawianie, liczby w `raport.json` → `mysz_klocki`).
-- Obrys sprite'ów TN: `node scripts/kreator-obrys-tn.mjs --kadlub terran_carrier` (podgląd maski i wnęk na
-  sprite'cie → `.tmp/kreator/obrys/`), dane presetów: `node scripts/kreator-presety-tn.mjs` →
-  `src/game/hullDesign/hullDesignTNTrace.js` (wygenerowany, nie edytować).
+- Pomiar floty TN: `node scripts/kreator-tn-ab.mjs [--kadlub custos,hasta,…] [--kadr x0,y0,x1,y1] [--px 10]
+  [--krok 5] [--bez-projektu] [--tylko-iou]` → IoU alfy projektu i sprite'a (konsola, `iou.json`) i podkład
+  `.tmp/kreator/tn/<okręt>-podklad.png` (sprite w j. świata z siatką i podpisami, kontury poziomów projektu, czerwień —
+  sprite bez projektu, błękit — projekt bez sprite'a; `--bez-projektu` — sam sprite do odczytu wymiarów). Obrys płyt
+  sprite'a (pomiar płyt i rowów): `node scripts/kreator-obrys-tn.mjs --kadlub terran_carrier` → `.tmp/kreator/obrys/`.
 - Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs` (klocki, suma wielokątów, szczelina,
   strażnik „bez czitowania”).
 
@@ -79,65 +81,57 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 
 ## Flota Terra Novy w kreatorze
 
-Rama (sylwetka) i płyty pancerza są **obrysem sprite'ów** (`scripts/kreator-obrys-tn.mjs`): jasne, mało nasycone
-piksele = płyty, maska symetryzowana względem osi okrętu (oś szukana po alfie), domknięta, małe dziury zalane,
-rozcięta erozją na osobne PŁYTY, obrys konturami bloków na komórkach 1–2 px i Douglasem–Peuckerem → wielokąty płyt
-z otworami (szczeliny maszynowni). Ciemne wnęki w płytach — kandydaci na moduły (kratki). Schodki płyt (płyta na
-płycie — Custos, Hasta, Bellator): zgrubne wielokąty `tiers` w presecie przycięte do pancerza (`clip`). Reszta
-ręcznie z siatek współrzędnych na sprite'ach: gondole, pierścienie, ośmiokątne gniazda, wrota hangarów (Citadella
-2 × 5), mostki, reaktory, napisy TERRA NOVA, orły. Projekt jest w skali sprite'a (`getHullRenderSize`: długość ±4%,
-test).
+Pięć okrętów TN jest złożonych wyłącznie z elementów edytora gracza — klocków palety (§ „Klocki”), kasztelów, modułów
+i naklejek (`isPlayerBuildable`, test) — według podkładu sprite'a (`scripts/kreator-tn-ab.mjs`: sprite w j. świata
+z siatką i podpisami, kontury poziomów projektu, różnice alfy). Klocki opisują połowę okrętu (burta y < 0), lustro
+dopisuje drugą; klocek na osi jest symetryczny. Styl TN, nie kopia 1:1 (wzór czystego stylu — Bellator). Moduły,
+kasztele, napisy i orły stoją jak w dawnych presetach z obrysu (kratki z wnęk obrysu przepisane jawnie). Projekt jest
+w skali sprite'a (`getHullRenderSize`: długość ±4%, test).
 
-**STANDARYZACJA obrysu** (2026-10-14, prośba użytkownika: „ustandaryzować, poprostować i odszumić — sprite'y z AI były
-zaszumione i szum przeszedł na generator: zygzak na kadłubie i w rurach”; wzór czystego stylu — sprite Bellatora).
-Obrys 1:1 ze sprite'a niósł ząbki, krawędzie pod przypadkowymi kątami, piłę na skosach, okruchy płyt i różne burty —
-a za nim szły fazy, linie paneli, rowy i rury. Teraz (`src/game/hullDesign/hullDesignRegularize.js`, wołane
-w `treatLoop` dla brył z `reg`):
+| Okręt | Siatka | Klocki na połowę (rama + płyty) | Kasztele | IoU alfy ze sprite'em |
+|---|---|---|---|---|
+| Custos | 0,5 j. | 20 (4 + 16) | 1 | 0,916 |
+| Hasta | 0,5 j. | 21 (5 + 16) | 1 | 0,957 |
+| Bellator | 1 j. | 27 (6 + 21) | 1 | 0,919 |
+| Citadella | 1 j. | 25 (5 + 20) | 4 | 0,960 |
+| Colossus | 1 j. | 52 (7 + 45) | 5 | 0,970 |
 
-- krawędzie → linie co 45° (długie ≥ 48 jd — co 22,5°) na WSPÓLNEJ siatce linii (krok 2 jd: osiowe co krok, ukośne
-  x ± y = n · krok) — sąsiednie płyty trafiają na te same linie, rów ma stałą szerokość;
-- porządki MOCNE (`HD_REG_STRONG`: krawędź ≥ 4 kroki, ząbek / wcięcie do 3 kroków zalane, róg najdalej 4 kroki od
-  oryginału — inaczej faza 45°), gdy kształt się nie da — łagodne (2 / 1,5 / 3 kroki);
-- SCHODKI I PIŁA na skosach (ciąg ≥ 3 krawędzi ≤ 16 kroków w kierunkach ±45° od cięciwy, rogi po obu stronach
-  cięciwy najwyżej 5 kroków) → jedna prosta; schody projektu (stopnie ≥ ~30 jd) zostają;
-- LUSTRO burt: grupa obrysu na osi → połowa y ≤ 0 (`sym`), płyty burty y < 0 + lustro projektu, burta y > 0 odpada
-  (`tnMirrorShape` w presetach); bryła dokładnie lustrzana zostaje lustrzana (wynik przycięty do połowy i odbity),
-  łamana burty y > 0 liczona jako odbicie swojej pary — porządki zależą od obiegu, więc burty rozjeżdżały się do
-  12 j. (Bellator) i odbite rury wychodziły poza kadłub;
-- OKRUCHY znikają (`regDrop`): płyta / otwór, którego nie da się ustandaryzować, albo cieńszy niż 9 jd
-  (`regThin`: 2 · pole / obwód) przy polu < 25 · 9² jd².
+Siatka floty jest drobniejsza niż z detalu (Bellator, Citadella, Colossus: 1 j. zamiast 2–4), żeby sekcje sprite'a
+wypadły na siatce (`grid` w `tnShip`). IoU liczy się na całej alfie; sprite'y z AI są niesymetryczne (Custos, Bellator —
+dolna burta inna niż górna), wzorem jest burta y < 0.
 
-Efekt: obrys floty TN ma o 34–50% mniej wierzchołków, płyt jest mniej (Citadella 40 → 13 — okruchy-podkładki
-znikają), burty równe do teksela (test), rury bez falowania. A/B: `hullDesignPreset(klucz, { raw: true })` — obrys
-1:1 ze sprite'a (jak przed standaryzacją).
+**Zasady układania:**
 
-| Okręt | Kadłub [j.] | detail | Obraz | Węzły belek | Pole | Kompozytor | Razem |
+- szwy płyt wąskie — styk klocków z szczeliną `TN_SEAM` = 4 jd; ROWY maszynowni to odstęp między płytami nad klockami
+  ramy (poziom 0), szerokie jak w sprite'ach (kilka do kilkudziesięciu jd), z rurami i maszynownią z kompozytora;
+- rowy są korytarzami sieci systemów: rdzeń stoi we wnęce maszynowni albo przy kanale osi, a gondole, zbiornik, mostek,
+  ładownia i gniazda leżą przy jednym spójnym korytarzu (skok pod płytą do korytarza: większość 0–60 jd, najdalej
+  ~120 jd — mostek Hasty pod rufą). Wyjątek: gondole Citadelli wchodzą pod lite kasztele rufy (sprite: rufa
+  z nadbudówek, kolumna z napisem nachodzi na kasztel centralny);
+- dysze SIDE ze slotów sesji sieci systemów stoją na prostych odcinkach burty (Colossus: płaska burta x 408–482);
+- nowego rodzaju klocka nie trzeba było: wszystko złożone z prostokątów (fazy rogów), trapezów (także obróconych
+  o 90° — kliny dziobów, i równoległoboków — rampy, pasy szewronów), trójkątów i łuków.
+
+**Odstępstwa od sprite'a:** Custos — wnęka rdzenia w grzbiecie, rów pod płytą dziobu, prosty zamiast ukośnego rów rur
+za rufą; Hasta — rampa wieży jako trójkąt; Bellator — rampa jako trójkąt (w sprite'ie pas z maszynownią pod spodem),
+rury między sponsonem a pasem burty pominięte (prześwit pusty); Citadella — skośna płyta dziobu z dwóch trapezów,
+kasztel wysoki 3 j. niższy (rów z rurami nad kasztelem centralnym); Colossus — kilkadziesiąt bloków-szewronów
+sprite'a sprowadzone do ~45 płyt, więcej kątów prostych niż w sprite'ie.
+
+Standaryzacja obrysu (`reg` w wielokącie, `src/game/hullDesign/hullDesignRegularize.js`) zostaje w formacie projektu;
+presety jej nie używają.
+
+| Okręt | Kadłub [j.] | detail | Obraz | Węzły belek | Pole z siecią rur | Kompozytor | Razem |
 |---|---|---|---|---|---|---|---|
-| Custos | 152 × 60 | 0,089 | 2544 × 1024 | 40 | 212 ms | 87 ms | 306 ms |
-| Hasta | 248 × 143 | 0,145 | 2560 × 1471 | 104 | 235 ms | 160 ms | 410 ms |
-| Bellator | 629 × 397 | 0,366 | 2560 × 1613 | 848 | 234 ms | 169 ms | 424 ms |
-| Citadella | 1073 × 441 | 0,630 | 2560 × 1077 | 1660 | 175 ms | 97 ms | 355 ms |
-| Colossus | 1558 × 663 | 0,906 | 2560 × 1072 | 3338 | 189 ms | 98 ms | 326 ms |
+| Custos | 151 × 56 | 0,089 | 2528 × 1024 | 40 | 226 ms | 45 ms | 352 ms |
+| Hasta | 243 × 138 | 0,145 | 2560 × 1489 | 105 | 327 ms | 67 ms | 535 ms |
+| Bellator | 612 × 377 | 0,366 | 2560 × 1607 | 805 | 294 ms | 76 ms | 509 ms |
+| Citadella | 1056 × 438 | 0,630 | 2560 × 1102 | 1634 | 241 ms | 47 ms | 378 ms |
+| Colossus | 1535 × 630 | 0,906 | 2560 × 1079 | 3298 | 252 ms | 42 ms | 389 ms |
 
-(RTX, headless, 1600 × 900; przeciąganie w edytorze liczy pole i obraz w połowie rozdzielczości.) Pipeline'y
-synchroniczne w klatkach: **0**, błędy konsoli: 0. Z siecią rur (pole + sieć, kompozytor, razem): Custos 236 / 102 /
-345 ms, Hasta 237 / 156 / 401, Bellator 270 / 129 / 413, Citadella 183 / 87 / 288, Colossus 164 / 91 / 285 ms.
-
-**A/B (arkusze `.tmp/kreator/demo/*-ab.png`, `*-a|b-fit.png`)**: sylwetka, układ płyt i szczelin maszynowni, hangary,
-gondole, pierścienie, napisy i orły — zgodne. Citadella w kadrze na okręt jest najbliżej sprite'a. Co jeszcze odstaje:
-
-- **piętra płyt** — w sprite'ach płyty nachodzą na siebie schodkami; automat tego nie wykryje (jasność nie mówi
-  o wysokości), więc piętra są ręczne: `tiers` (Custos, Hasta, Bellator) i KASZTELE (§ „Kasztele”),
-- **podział na sekcje** (Colossus) — w sprite'ie dziesiątki bloków-szewronów rozdzielonych rowami z rurami i jasnymi
-  szwami; obrys skleja bloki stykające się szwem (jasność nie mówi, gdzie kończy się blok) — środek Colossusa wychodzi
-  dużą płaską płytą. Domknięcie: rowki (R) i wycięcia rowów (wielokąt-wycięcie na poziomie 1) ręcznie albo lepszy
-  obrys (wykrywanie szwów — próba porzucona, niżej),
-- **gęstość sprzętu na płytach** — sprite'y mają więcej kratek, skrzynek i ramek; kreator stawia sprzęt regułami —
-  luka do zamknięcia zestawem modułów grafika (albo więcej części),
-- **szwy płyt** — automatyczne wyciąganie szwów ze sprite'ów (próg, szkielet; potem segmentacja bloków płyt) daje
-  poszarpane albo falujące linie — porzucone; rowki są narzędziem do ręcznego rysowania,
-- Custos i Hasta: sprite'y mają niesymetryczne moduły pod jedną burtą (projekt jest lustrzany).
-
+(RTX, headless, 1600 × 900, `kreator-kadluba-demo.mjs --etapy ab`; rozwinięcie klocków w polu: 4–30 ms; przeciąganie
+w edytorze liczy pole i obraz w połowie rozdzielczości.) Pipeline'y synchroniczne w klatkach: **0**, błędy konsoli: 0.
+Arkusze A/B: `<okręt>-ab.png` (oba w kadrze, ta sama skala), `<okręt>-a|b-fit|gra1|det.png`.
 ## Rury (`src/game/hullDesign/hullDesignPipes.js`, rysunek w kompozytorze)
 
 Prośba użytkownika (po v2): „siatka rur i małych urządzeń wspierających rury przez cały statek / pół statku
@@ -276,8 +270,9 @@ płyty wprost z pola (rowek w płycie, w alfie półprzezroczysta kreska).
 violations }`): dopuszcza klocki z parametrami na siatce (wymiary i parametry co krok, krawędzie pudła na siatce przy
 obrocie co 90°, środek co pół kroku przy 45°), wielokąt-pióro do 16 pkt na siatce bez otworów, kasztele, gotowe części,
 moduły, naklejki, rowki i rury do 16 pkt, bloki 60 j., sieć rur; limity liczby elementów (`HD_BUILD_LIMITS`). Odrzuca obrys
-sprite'a (wielokąty ze standaryzacją `reg`, setki punktów, otwory) i dawne bryły `circle` / `rect`. Dziś przechodzą
-`klocki` i `tnparts`; presety TN z obrysu — nie (etap 1B).
+sprite'a (wielokąty ze standaryzacją `reg`, setki punktów, otwory) i dawne bryły `circle` / `rect`. Przechodzą
+wszystkie presety (test); dawne bryły w presetach Orbis, Atlas II, Hasta-D i Szakal są zamienione na klocki (koło
+z wycięciem → klocek-pierścień, prostokąt z łukiem `r` → prostokąt z fazami).
 
 **Preset `klocki`** — fregata TN z 10 klocków (połowa okrętu, lustro robi drugą burtę): rufa-nadbudówka na osi ze ściętymi
 rogami, skrzydła rufy, grzbiet i burty z dwóch płyt każda, kliny dziobu (trapez), klocek ramy między klinami
@@ -341,7 +336,7 @@ kadłub (klucz = profil renderu)**. Kolejno:
    czy domknięcie luki „gęstości sprzętu” zestawem modułów / części (grafik) to dobry kierunek?
 2. Gotowe części — rozwijać bibliotekę (warianty mostków, dziobów, rufy na każdą frakcję) czy dopuścić części
    rysowane przez gracza (zapis własnej części z zaznaczenia)?
-3. Piętra płyt (schodki jak w sprite'ach) — wystarczy ręcznie w presetach (`tiers`), czy dać graczowi narzędzie
+3. Piętra płyt (schodki jak w sprite'ach) — wystarczy poziom klocka (pancerz / nadbudówka) i kasztele, czy dać graczowi narzędzie
    „podnieś płytę” (klik w płytę → piętro wyżej)?
 4. Kanał emisji w skórze (pkt 3 listy) — robić od razu, czy na razie okna w albedo?
 
@@ -352,9 +347,8 @@ kadłub (klucz = profil renderu)**. Kolejno:
   zbadania. Projekt w A/B jest bez automatycznych reflektorów otoczenia (`autoFlood: false`; zalewały blachę
   plamami), lampy pozycyjne zostają.
 
-- Po standaryzacji obrysu: sąsiednie płyty standaryzowane osobno potrafią zostawić wąski KLIN rowu (jedna krawędź na
-  45°, sąsiednia na 0°) — fazy i światło brzegów robią z niego „kolec” przy rogu płyty; na płytach poduszka liczona
-  z odległości od krawędzi ma ostre załamania na dwusiecznych rogów (zagięcia „papieru”) — do wygładzenia.
+- Na płytach poduszka liczona z odległości od krawędzi ma ostre załamania na dwusiecznych rogów (zagięcia „papieru”)
+  — do wygładzenia.
 - Moduły mają wygląd z reguł shadera; brak atlasu modułów od grafika. Wieże nie są rysowane (gniazda puste) — w grze
   rysuje je `Turret2D` / partie 3D w miejscach gniazd.
 - JSON do zapisu / wczytania w panelu (bez zapisu do pliku).

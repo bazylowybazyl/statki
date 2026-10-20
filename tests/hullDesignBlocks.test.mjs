@@ -10,7 +10,8 @@ import {
   loopArea, normalizeBlock, offsetLoop, polygonDifference, polygonUnion, polygonsOverlap, snapBlockRot
 } from '../src/game/hullDesign/hullDesignBlocks.js';
 import { isPlayerBuildable, onGrid } from '../src/game/hullDesign/hullDesignBuildable.js';
-import { hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
+import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
+import { tnIoU, tnSprite } from '../scripts/kreator-tn-ab.mjs';
 import { hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 
 const Q = Math.PI / 4;
@@ -139,6 +140,15 @@ test('suma i różnica wielokątów: styk bez szwu, nakładanie, styk w rogu, du
   const grown = offsetLoop(wedge, -0.5);
   assert.ok(Math.max(...grown.map((p) => p[0])) < 10 + 0.5 * 1.5 + 1e-6, 'szpic ostrego rogu ścięty');
   assert.equal(offsetLoop(sq(0, 0, 1, 1), 0.6), null, 'zanikła');
+  // pierścień: kopia lustra na osi (identyczna) nachodzi, piasta w otworze — nie (środek obrysu leży w otworze)
+  const ringL = blockWorldLoops(normalizeBlock({ kind: 'block', shape: 'arc', x: 0, y: 0, w: 100, h: 100, ri: 0.6 }));
+  const hub = blockWorldLoops(normalizeBlock({ kind: 'block', shape: 'arc', x: 0, y: 0, w: 30, h: 30 }));
+  assert.equal(polygonsOverlap(ringL, blockWorldLoops(normalizeBlock({ kind: 'block', shape: 'arc', x: 0, y: 0, w: 100, h: 100, ri: 0.6 }), true)), true, 'pierścień i jego lustro');
+  assert.equal(polygonsOverlap(ringL, hub), false, 'piasta w otworze pierścienia');
+  const ex = expandHullDesign(design([{ kind: 'block', shape: 'arc', x: 0, y: 0, w: 100, h: 100, ri: 0.6, level: 2 }, { kind: 'block', shape: 'arc', x: 0, y: 0, w: 30, h: 30, level: 3 }], { mirror: true }));
+  const plates2 = ex.shapes.filter((x) => x.blockSet === 'plate' && x.level === 2);
+  assert.equal(plates2.length, 2, 'płyta pierścienia (z otworem) i płyta piasty');
+  assert.ok(plates2.some((x) => x.holes && x.holes.length === 1));
 });
 
 test('szczelina płyt: rów maszynowni między sąsiednimi płytami, cienki brzeg przy burcie, gap 0 i nakładanie scalają', () => {
@@ -238,6 +248,20 @@ test('strażnik „bez czitowania”: klocki na siatce, pióro do 16 pkt, częś
   assert.ok(!check([{ kind: 'poly', op: 'add', level: 1, pts: pen, holes: [[[0, 0], [2, 0], [2, 2]]] }]).ok, 'otwory');
   assert.ok(!check([], { grooves: [{ pts: Array.from({ length: 30 }, (_, i) => [i, 0]) }] }).ok, 'rowek z 30 pkt');
   assert.ok(check([], { castles: [{ x: 10, y: -20, w: 20, h: 10 }], parts: [{ id: 'tn_bridge', x: 0, y: 0, s: 0.2 }] }).ok, 'kasztele i części');
+});
+
+test('wszystkie presety do zbudowania w edytorze gracza; flota TN z klocków: IoU alfy ze sprite\'em ≥ 0,9, najwyżej 60 klocków na połowę', () => {
+  for (const key of HD_PRESET_KEYS) {
+    const r = isPlayerBuildable(hullDesignPreset(key));
+    assert.ok(r.ok, `${key}: ${r.violations.map((v) => v.text).join('; ')}`);
+  }
+  for (const key of ['custos', 'hasta', 'bellator', 'citadella', 'colossus']) {
+    const d = hullDesignPreset(key);
+    assert.ok(d.shapes.every((s) => s.kind === 'block') && d.shapes.length <= 60, `${key}: ${d.shapes.length} brył`);
+    const f = buildHullField(d, { pipes: false });
+    const { iou } = tnIoU(key, f, tnSprite(key), 2);
+    assert.ok(iou >= 0.9, `${key}: IoU ${iou.toFixed(3)}`);
+  }
 });
 
 test('preset `klocki`: fregata TN z 10–15 klocków, w skali Custosa, kompletna receptura, rama w jednym kawałku', () => {

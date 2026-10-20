@@ -20,19 +20,20 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   części, kasztele, klocki → zwykłe bryły), `hullDesignGeometry.js` (pola odległości poziomów, metryka ośmiokątna, alfa fizyki,
   komórki belek), `hullDesignBlocks.js` (KLOCKI: paleta, wielokąty, suma / różnica wielokątów, szczelina płyt),
   `hullDesignBuildable.js` (strażnik `isPlayerBuildable`), `hullDesignParts.js`, `hullDesignCastles.js`,
-  `hullDesignPipes.js` (sieć rur), `hullDesignRegularize.js` + `hullDesignTNTrace.js` (obrys sprite'ów TN — wygenerowany),
-  `hullDesignPresets.js`, `hullDesignRecipe.js` (receptura, mocowania).
+  `hullDesignPipes.js` (sieć rur), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
+  (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania).
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
 - Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`
-  i `tests/hullDesignBlocks.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`.
+  i `tests/hullDesignBlocks.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
+  podkład do układania klocków) `scripts/kreator-tn-ab.mjs`.
 
 ## Decyzje użytkownika
 
 - Wygląd: STYL Terra Novy, nie kopia sprite'a 1:1; wzór czystego stylu — sprite Bellatora (2026-10-14). Fazy 45° zostają.
 - „Stocznia z klocków” (2026-10-20): gracz składa każdy kadłub z palety prostych kształtów; flota TN ma się dać zbudować tym
   samym edytorem „bez czitowania” — preset zawiera tylko narzędzia gracza (klocki na siatce, kasztele, części, moduły,
-  naklejki, pióro do 16 pkt), bez obrysu sprite'a. Pilnuje `isPlayerBuildable` (presety TN z obrysu dziś go nie przechodzą —
-  etap 1B je przebudowuje).
+  naklejki, pióro do 16 pkt), bez obrysu sprite'a. Pilnuje `isPlayerBuildable` na wszystkich presetach (test). Flota TN
+  jest z klocków (etap 1B): IoU alfy ze sprite'em ≥ 0,9 (test), najwyżej 60 klocków na połowę okrętu.
 - Systemy (rdzeń, mostki, silniki, ładownie, zbiorniki) mają stałe miejsca dla klasy i kadłuba; kable i rury wynikają
   z systemów i biegną rowami między płytami (etap 1C); klasa okrętu z mostka i rdzenia (etap 2, liczby do decyzji).
 
@@ -60,6 +61,15 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   dema są jednolinijkowe (`blockDown` / `blockDrag` / `blockUp`, `drawBlocks`, `syncBlockPanel`). R / F / X / Del działają
   tylko w narzędziu Klocki (poza nim R to rowek). Cofanie: zrzut JSON w `requestBuild` bez przeciągania — nowa ścieżka edycji
   ma po zakończeniu zmiany wołać `requestBuild(false)` (inaczej nie trafi do historii).
+
+## Flota TN z klocków — zasady
+
+- Układ z podkładu: `node scripts/kreator-tn-ab.mjs --kadlub <okręt> --kadr x0,y0,x1,y1 --px <px/j.> --krok <j.>`
+  (`--bez-projektu` — sam sprite do odczytu wymiarów). Wzorem jest burta y < 0 (sprite'y z AI są niesymetryczne).
+- Szwy płyt — styk klocków (`TN_SEAM` 4 jd); rowy maszynowni — odstęp między płytami nad klockiem ramy (poziom 0).
+  Rowy to korytarze sieci systemów: rdzeń, gondole, zbiornik, mostek, ładownia i gniazda mają leżeć przy jednym
+  spójnym korytarzu (przejście ≥ ~6 jd, inaczej rów się rwie), dysze SIDE — na prostym odcinku burty.
+- Pozycje modułów, kasztelów i naklejek są stałe; siatka floty (`grid` w `tnShip`) drobniejsza niż z detalu.
 
 ## Jak sprawdzić
 

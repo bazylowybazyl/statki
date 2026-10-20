@@ -64,12 +64,15 @@ export function tnSprite(key) {
   return { png, W, H, s, cx, axis, rgba, box: [(bx0 - cx) * s, (by0 - axis) * s, (bx1 + 1 - cx) * s, (by1 + 1 - axis) * s] };
 }
 
-/** IoU alfy projektu (pole poziomu 0 < 0) i sprite'a (alfa > ½) na siatce pikseli sprite'a (+ pudło projektu). */
-export function tnIoU(key, field, sp = tnSprite(key)) {
+/**
+ * IoU alfy projektu (pole poziomu 0 < 0) i sprite'a (alfa > ½) na siatce pikseli sprite'a (+ pudło projektu);
+ * `stride` — co który piksel (testy: 2).
+ */
+export function tnIoU(key, field, sp = tnSprite(key), stride = 1) {
   const b = field.bounds;
   const x0 = Math.min(sp.box[0], b.minX), x1 = Math.max(sp.box[2], b.maxX), y0 = Math.min(sp.box[1], b.minY), y1 = Math.max(sp.box[3], b.maxY);
   let inter = 0, uni = 0, a = 0, d = 0;
-  const step = sp.s;
+  const step = sp.s * stride;
   for (let y = y0 + step / 2; y < y1; y += step) {
     for (let x = x0 + step / 2; x < x1; x += step) {
       const A = sp.rgba(x, y)[3] > 127.5, D = sampleHullField(field, 0, x, y) < 0;
