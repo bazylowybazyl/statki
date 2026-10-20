@@ -1,71 +1,82 @@
 // src/game/hullDesign/hullDesignPipes.js
 //
-// KREATOR KADŁUBÓW — SIEĆ RUR (czysta: bez three i DOM; testy tests/hullDesign.test.mjs). Wzór: sprite'y Terra Novy —
-// wiązki 2–7 rur o różnych średnicach w rowach maszynowni między płytami, proste i 45° z zaokrąglonymi kolanami,
-// znikające pod płytami (kołnierz na wejściu), z osprzętem (skrzynki rozdzielcze, zawory, pompy, kolektory przy
-// gondolach, obejmy); najgęściej przy rufie i wokół gondoli silników, rzadko ku dziobowi.
+// KREATOR KADŁUBÓW — SIEĆ SYSTEMÓW: trasy rur paliwa i kabli zasilania (czysta: bez three i DOM; testy
+// tests/hullDesignNetwork.test.mjs, tests/hullDesign.test.mjs). Kto z kim — src/game/hullDesign/hullDesignSystems.js:
+// rury paliwa zbiornik → reaktor → każda gondola MAIN i dysza SIDE, kable reaktor → każde urządzenie. Wzór wyglądu:
+// sprite'y Terra Novy — wiązki w rowach maszynowni między płytami, proste i 45° z zaokrąglonymi kolanami, znikające pod
+// płytami (kołnierz na wejściu), osprzęt (skrzynki rozdzielcze, zawory, pompy, kolektory przy gondolach, obejmy).
 //
 // GENERATOR (deterministyczny z ziarna projektu, `design.pipeNet = { density, seed }`, gęstość 0 — brak sieci):
-//   1. siatka trasowania (komórka HD_PIPE_TUNE.cellDu jd) nad kadłubem — przy lustrze tylko burta y < 0 (druga
-//      to lustro wyniku: symetria z konstrukcji, połowa pracy); koszt komórki: rów maszynowni tanio (najtaniej przy
-//      ścianie płyty), pod płytą drożej (rura chowa się pod płytę), przez moduł najdrożej, przy sylwetce zakaz,
-//   2. drzewo od korzenia (reaktor; bez niego mostek albo pierwsza gondola): kolejne cele dołączają najkrótszą trasą
-//      (A* w stanach komórka × kierunek: 8 kierunków = 45°, kara za skręt; heurystyka = odległość do drzewa) do
-//      NAJBLIŻSZEGO miejsca rosnącej sieci — najpierw gondole silników, potem moduły (wieże, pierścienie, wrota,
-//      mostek) i punkty wzdłuż grzbietu (zawsze najbliższy cel pierwszy), na końcu cele wypełnienia (komórki rowów
-//      najdalej od sieci, z wagą ku rufie) — sieć wchodzi w każdy większy rów,
-//   3. trasy: każdy cel karmi najbliższa po drzewie gondola (z wyrównaniem obciążenia), każda gondola — reaktor;
-//      liczba tras przez krawędź drzewa → liczba rur w wiązce (1 + k · log2(1 + trasy)) — koncentracja przy
-//      silnikach wychodzi sama,
+//   1. siatka trasowania (komórka HD_PIPE_TUNE.cellDu jd) nad kadłubem — przy lustrze tylko burta y < 0 (druga to
+//      lustro wyniku: symetria z konstrukcji); koszt komórki: rów maszynowni tanio (najtaniej przy ścianie płyty), pod
+//      płytą drożej (trasa chowa się pod płytę), przez cudzy moduł najdrożej, przy burcie drożej, przy sylwetce zakaz,
+//   2. TRZY SIECI po kolei (HD_NETS): rury do silników (reaktor → MAIN, SIDE), rury dopływu (zbiornik → reaktor),
+//      kable (reaktor → urządzenia). Każda to drzewo od PRZYŁĄCZY reaktora: urządzenie (najbliższe sieci pierwsze)
+//      dołącza najkrótszą trasą (A* w stanach komórka × kierunek: 8 kierunków = 45°, kara za skręt; heurystyka =
+//      odległość do sieci) do najbliższego miejsca drzewa TEJ SAMEJ sieci albo do wolnego przyłącza reaktora (nowy pień,
+//      pnie co portGapCells). KAŻDA TRASA MA DWA PRAWDZIWE KOŃCE: przyłącze urządzenia i węzeł / przyłącze reaktora —
+//      bez celów „donikąd”; komórka przyłącza urządzenia jest zamknięta dla innych tras sieci. Wiązki wcześniejszych
+//      sieci są dla następnych przeszkodą (ślad w koszcie i w polu wolnego miejsca) — rury i kable we wspólnym rowie
+//      leżą obok siebie, przecinają się tylko tam, gdzie inaczej się nie da,
+//   3. obciążenie krawędzi = suma wag tras (HD_FUEL_LOAD, HD_POWER_LOAD) od urządzenia do reaktora → liczba rur / kabli
+//      w wiązce (1 + k · log2(1 + obciążenie)) — kable gęstnieją przy rdzeniu, rury przy silnikach (gondola waży 3),
 //   4. biegi (odcinki drzewa między węzłami) → łamane PROSTE: schodki trasy A* → najwyżej dwa odcinki (prosty + 45°),
 //      gdy koszt nie rośnie (straightenOctilinear); każdy prosty odcinek z JEDNYM przesunięciem w poprzek, przy którym
-//      wiązka mieści się w rowie (pole wolnego miejsca), rogi z przecięć przesuniętych prostych (offsetRun) — wiązka
-//      biegnie równolegle do ściany jak w czystym sprite'cie Bellatora, bez falowania za ząbkami; kolana zaokrąglone
-//      promieniem z szerokości wiązki,
-//   5. osprzęt: skrzynki rozdzielcze w rozgałęzieniach, kołnierze na wejściach pod płyty i w moduły, zaślepki na
-//      końcach, zawory na długich odcinkach, pompy i kolektory przy gondolach.
+//      wiązka mieści się w rowie (pole wolnego miejsca), rogi z przecięć przesuniętych prostych (offsetRun); koniec
+//      przy urządzeniu wchodzi w nie odcinkiem co 45° (przyłącze, dalej rysuje się moduł); kolana zaokrąglone; CAŁA
+//      szerokość wiązki (oś ± pół-szerokość) z zapasem marginDu wewnątrz sylwetki — inaczej wiązka cieńsza,
+//   5. osprzęt: skrzynki rozdzielcze (rury) i puszki (kable) w rozgałęzieniach, kołnierze / przepusty na wejściach pod
+//      płyty, przyłącza przy urządzeniach (kołnierz, dławnica kablowa, pompa przy zbiorniku, kolektor przy gondoli),
+//      zawory i pompy na długich odcinkach rur, rozdzielnia przy przyłączu reaktora bez własnej bryły.
 // Do tego RĘCZNE rury projektu (`design.pipes`: łamana, liczba rur, materiał; domyślnie leżą też na płytach).
 //
 // RASTER (rasterPipeNetwork): na siatce pola (jak grooveField) — dla tekseli przy wiązkach przesunięcie w poprzek
 // od osi biegu ze znakiem [j.], cos / sin fazy długości łuku (obejmy co clampDu jd), numer odcinka między obejmami
-// (kołnierze rur), numer biegu i numer elementu osprzętu; kompozytor (src/3d/hullDesign/hullComposer.js) rysuje z tego
-// rury, obejmy i osprzęt. Wymiary rur i osprzętu w jd.
+// (kołnierze rur, opaski kabli), numer biegu i numer elementu osprzętu; kompozytor (src/3d/hullDesign/hullComposer.js)
+// rysuje z tego rury, kable w korytkach i osprzęt. Wymiary rur i osprzętu w jd.
 
 import { HD_MODULES } from './hullDesignSchema.js';
+import { fuelLoad, hullDesignSystems, powerLoad } from './hullDesignSystems.js';
 
 export const HD_PIPE_TUNE = Object.freeze({
   cellDu: 5,            // komórka trasowania [jd]
   freeDu: 2,            // komórka pola wolnego miejsca (przesuw wiązek w rowie) [jd]
-  edgeDu: 3,            // oś rury co najmniej tyle jd wewnątrz sylwetki
+  edgeDu: 3,            // oś trasy (środek komórki) co najmniej tyle jd wewnątrz sylwetki
+  marginDu: 0.6,        // CAŁA szerokość wiązki co najmniej tyle jd wewnątrz sylwetki
+  edgeNearDu: 14,       // pas przy burcie z karą `edge` (rośnie ku burcie) [jd]
   cost: Object.freeze({
-    gap: 1, plate: 4, module: 9, halo: 1.1, axis: 2.5, edge: 0.6, wall: 0.45,
+    gap: 1, plate: 4, module: 9, halo: 1.1, axis: 2.5, edge: 1.2, wall: 0.45, occ: 6,
     turn45: 0.8, turn90: 2.4, turn135: 7
   }),
-  haloCells: 2,         // pas kary wokół sieci [komórki] — równoległe wiązki nie nachodzą na siebie
-  heurK: 1.3,           // A* ważone: heurystyka × k (szybciej, trasy prawie najkrótsze)
-  spineStepDu: 105,     // punkty wzdłuż grzbietu co … [jd]
-  spineBand: 0.45,      // … nie dalej od osi niż ułamek pół-szerokości
-  fillPerDensity: 11,   // cele wypełnienia na burtę przy gęstości 1
-  fillMinCells: 5,      // wypełnienie tylko komórek dalej od sieci niż … [komórki]
-  rearBias: 0.72,       // waga celów ku dziobowi: 1 − rearBias · u (u: 0 rufa → 1 dziób)
+  haloCells: 2,         // pas kary wokół sieci [komórki] — równoległe wiązki tej samej sieci nie nachodzą na siebie
+  heurK: 1.6,           // A* ważone: heurystyka × k (szybciej, trasy prawie najkrótsze) — rury …
+  heurKCable: 2.2,      // … i kable (trasa kabla może być mniej najkrótsza)
+  portGapCells: 2,      // pnie wychodzące z reaktora co najmniej tyle komórek od siebie
+  anchorDu: 2.5,        // przyłącze wchodzi w urządzenie na tyle jd (dalej rysuje się moduł)
   maxPipes: 8,
-  fillShare: 0.65,      // wiązka wypełnia co najmniej taki ułamek szerokości rowu (mediana na widocznej długości)
-  pipesK: 1.3,          // rur w wiązce: 1 + k · log2(1 + trasy)
+  fillShare: 0.5,       // wiązka RUR wypełnia co najmniej taki ułamek szerokości rowu (mediana na widocznej długości) …
+  fillExtra: 2,         // … dokładając najwyżej tyle rur ponad liczbę z obciążenia
+  pipesK: 1.3,          // rur / kabli w wiązce: 1 + k · log2(1 + obciążenie)
   rThin: Object.freeze([1.15, 1.8]), rThick: Object.freeze([2.2, 3.1]), thickP: 0.72, gap: Object.freeze([0.25, 0.55]),
+  rCable: Object.freeze([0.5, 0.75]), rCableMain: Object.freeze([0.95, 1.2]), gapCable: Object.freeze([0.08, 0.16]),
   clearDu: 0.5,         // luz wiązki od ścian [jd]
   shiftDu: 9,           // przesuw wiązki w poprzek najwyżej [jd]
   filletK: 1.2,         // promień kolana = k · (pół-szerokość + najgrubsza rura) [jd]
   clampDu: 26,          // okres obejm [jd]
-  valveDu: 95,          // zawór / kołnierz co ~ [jd] na długich widocznych odcinkach
+  valveDu: 95,          // zawór / kołnierz co ~ [jd] na długich widocznych odcinkach rur
+  boxDu: 120,           // puszka kablowa co ~ [jd] na długich widocznych odcinkach kabli
   maxRuns: 255,
   maxFits: 255
 });
 
+/** Sieci systemów w kolejności trasowania: rury do silników, rury dopływu ze zbiorników, kable zasilania. */
+export const HD_NETS = Object.freeze(['feed', 'supply', 'power']);
 /** Rodzaje osprzętu (te same kody rysuje kompozytor: _pipeNet w hullComposer.js) i ich pierwszeństwo przy nakładaniu. */
-export const HD_PIPE_FIT = Object.freeze({ box: 1, collar: 2, valve: 3, pump: 4, collector: 5, cap: 6 });
-const FIT_PRIO = Object.freeze({ 6: 0, 3: 1, 2: 2, 4: 3, 5: 4, 1: 5 });
-/** Materiały rur (ręczne): mieszane, stal, miedź. */
+export const HD_PIPE_FIT = Object.freeze({ box: 1, collar: 2, valve: 3, pump: 4, collector: 5, cap: 6, gland: 7, jbox: 8, hub: 9 });
+const FIT_PRIO = Object.freeze({ 6: 0, 3: 1, 2: 2, 7: 3, 4: 4, 5: 5, 8: 6, 1: 7, 9: 8 });
+/** Materiały rur (ręczne): mieszane, stal, miedź. Kod 3 — kable (sieć zasilania). */
 export const HD_PIPE_MATS = Object.freeze(['mix', 'steel', 'copper']);
+export const HD_PIPE_MAT_CABLE = 3;
 
 const SQ2 = Math.SQRT2;
 const DX = [1, 1, 0, -1, -1, -1, 0, 1];
@@ -106,7 +117,7 @@ function moduleBox(m) {
   const R = def.r ? (m.r || def.r) * 1.25 : Math.hypot(m.w, m.h);
   return [m.x - R, m.y - R, m.x + R, m.y + R];
 }
-/** Moduł rysowany (przeszkoda dla rur) — reaktor wewnątrz (v ≥ 1) nie ma bryły. */
+/** Moduł rysowany (przeszkoda dla tras) — reaktor wewnątrz (v ≥ 1) nie ma bryły. */
 const isObstacle = (m) => !(m.type === 'reactor' && (m.v || 0) >= 1);
 
 /** Próbnik dwuliniowy pola poziomu (poza siatką — pasmo). */
@@ -222,11 +233,93 @@ function pipeRadii(seedRand, n, scale = 1) {
   return out;
 }
 
+/** Promienie kabli wiązki (jd): pierwszy — gruby kabel zasilający, reszta cienkie w korytku. */
+function cableRadii(seedRand, n) {
+  const T = HD_PIPE_TUNE;
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const [lo, hi] = k === 0 ? T.rCableMain : T.rCable;
+    out.push(lo + (hi - lo) * seedRand());
+  }
+  return out;
+}
+
+const bundleHalfW = (radii, gap) => (radii.reduce((a, r) => a + 2 * r, 0) + gap * (radii.length - 1)) * 0.5;
+
 /**
- * Sieć rur projektu (null, gdy gęstość 0 i brak rur ręcznych). `field` — buildHullField (pola poziomów, moduły
- * rozwinięte, projekt). Zwraca { runs: [{ radii [jd], halfW [jd], gap, rMax, mat (0 mix, 1 stal, 2 miedź), over,
- * phase [j.], count, n, polys: [[[x, y], …], …] (kopia lustra w tym samym biegu) }], fits: [{ type, x, y, rot, hw,
- * hh [jd], p1, p2 }], clampJ [j.], stats }.
+ * Głębokość w sylwetce [j.] (próbnik): max(−pole ramy, odległość do zewnętrza). Pole ramy to suma brył przez min —
+ * wewnątrz NIEDOSZACOWUJE głębokości przy szwach stykających się brył (części, kasztele przy burcie: szew czyta się
+ * jak krawędź), więc obok liczy się transformata odległości (fazowa 1 / √2, siatka ~1 jd) od komórek zewnętrza —
+ * szew wewnątrz nie jest burtą. Lustro: tylko burta y ≤ 0 (najbliższe zewnętrze ma odbicie po tej stronie).
+ */
+function insideDepthSampler(field, S, mirror, pre = null) {
+  const L0 = field.levels[0];
+  const D = field.expanded.design.detail;
+  const b = field.bounds;
+  const BIG = 1e9;
+  let x0, y0, cw, W, H, d;
+  if (pre) {
+    // próbki pola ramy już policzone (siatka pola wolnego miejsca generatora)
+    ({ x0, y0, cw, W, H } = pre);
+    d = new Float32Array(W * H);
+    for (let k = 0; k < d.length; k++) d[k] = pre.l0[k] > 0 ? 0 : BIG;
+  } else {
+    cw = Math.max(1.5 * D, (b.maxX - b.minX) / 900);
+    x0 = b.minX - 2 * cw; y0 = b.minY - 2 * cw;
+    W = Math.ceil((b.maxX - x0) / cw) + 3; H = Math.ceil(((mirror ? 0 : b.maxY) - y0) / cw) + 3;
+    d = new Float32Array(W * H);
+    for (let j = 0; j < H; j++) {
+      const y = y0 + j * cw;
+      for (let i = 0; i < W; i++) d[j * W + i] = S(L0, x0 + i * cw, y) > 0 ? 0 : BIG;
+    }
+  }
+  const s2 = Math.SQRT2;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const k = j * W + i;
+    let v = d[k];
+    if (v === 0) continue;
+    if (i > 0) v = Math.min(v, d[k - 1] + 1);
+    if (j > 0) {
+      v = Math.min(v, d[k - W] + 1);
+      if (i > 0) v = Math.min(v, d[k - W - 1] + s2);
+      if (i + 1 < W) v = Math.min(v, d[k - W + 1] + s2);
+    }
+    d[k] = v;
+  }
+  for (let j = H - 1; j >= 0; j--) for (let i = W - 1; i >= 0; i--) {
+    const k = j * W + i;
+    let v = d[k];
+    if (v === 0) continue;
+    if (i + 1 < W) v = Math.min(v, d[k + 1] + 1);
+    if (j + 1 < H) {
+      v = Math.min(v, d[k + W] + 1);
+      if (i + 1 < W) v = Math.min(v, d[k + W + 1] + s2);
+      if (i > 0) v = Math.min(v, d[k + W - 1] + s2);
+    }
+    d[k] = v;
+  }
+  // fazowa transformata zawyża odległość euklidesową najwyżej o ~8% — z zapasem w dół (i o komórkę)
+  for (let k = 0; k < d.length; k++) d[k] = d[k] >= BIG ? 1e4 : Math.max(0, d[k] * 0.92 - 1) * cw;
+  return (x, y) => {
+    const raw = -S(L0, x, y);
+    if (raw <= 0) return raw;
+    const yy = mirror && y > 0 ? -y : y;
+    const fx = (x - x0) / cw, fy = (yy - y0) / cw;
+    const i = Math.floor(fx), j = Math.floor(fy);
+    if (i < 0 || j < 0 || i + 1 >= W || j + 1 >= H) return raw;
+    const tx = fx - i, ty = fy - j, k = j * W + i;
+    const v = (d[k] + (d[k + 1] - d[k]) * tx) * (1 - ty) + (d[k + W] + (d[k + W + 1] - d[k + W]) * tx) * ty;
+    return v > raw ? v : raw;
+  };
+}
+
+/**
+ * Sieć rur i kabli projektu (null, gdy gęstość 0 i brak rur ręcznych). `field` — buildHullField (pola poziomów,
+ * moduły rozwinięte, projekt). Zwraca { runs: [{ net ('feed' | 'supply' | 'power' | 'manual'), radii [jd], halfW [jd],
+ * gap, rMax, mat (0 mix, 1 stal, 2 miedź, 3 kable), over, phase [j.], count, n, polys: [[[x, y], …], …] (kopia lustra
+ * w tym samym biegu), ends: [[węzeł A, węzeł B], …] (na łamaną) }], fits: [{ type, x, y, rot, hw, hh [jd], p1, p2 }],
+ * graph: { nodes: [{ x, y, dev (indeks modułu w field.expanded.modules przy przyłączu; −1 — węzeł), net }] },
+ * clampJ [j.], stats }.
  */
 export function buildPipeNetwork(field, tuneIn = {}) {
   const T = { ...HD_PIPE_TUNE, ...tuneIn, cost: { ...HD_PIPE_TUNE.cost, ...(tuneIn.cost || {}) } };
@@ -242,15 +335,18 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   const rand = rng(((design.seed || 7) * 7919 + (design.pipeNet?.seed || 0) * 104729 + 17) >>> 0);
   const runs = [];
   const fits = [];
+  const graph = { nodes: [] };
   const obstacles = modules.filter(isObstacle);
   const bnd = field.bounds;
-  const stats = { cells: 0, routes: 0, searches: 0, expanded: 0 };
+  const stats = { cells: 0, routes: 0, searches: 0, expanded: 0, unrouted: 0, shrunk: 0, outside: 0 };
 
   // ── pole wolnego miejsca (komórka freeDu jd): min(odległość od płyt, od sylwetki, od modułów, od osi lustra) [j.] ──
+  // fs — geometria (widoczność rowu), fo — wiązki wcześniejszych sieci (przeszkoda dla następnych)
   const cf = T.freeDu * D;
   const fx0 = Math.floor(bnd.minX / cf) - 1, fy0 = Math.floor(bnd.minY / cf) - 1;
   const FW = Math.ceil(bnd.maxX / cf) + 2 - fx0, FH = Math.ceil((mirror ? cf : bnd.maxY) / cf) + 2 - fy0;   // lustro: burta y < 0
   const fs = new Float32Array(FW * FH);
+  const fo = new Float32Array(FW * FH).fill(1e4);
   const fsMod = new Float32Array(FW * FH).fill(1e4);
   const modReach = 24 * D;
   for (const m of obstacles) {
@@ -266,34 +362,44 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       }
     }
   }
+  const l0 = new Float32Array(FW * FH);
   for (let j = 0; j < FH; j++) {
     const y = (fy0 + j) * cf;
     for (let i = 0; i < FW; i++) {
       const x = (fx0 + i) * cf;
       const k = j * FW + i;
-      let v = Math.min(S(L1, x, y), -S(L0, x, y), fsMod[k]);
+      const d0 = S(L0, x, y);
+      l0[k] = d0;
+      let v = Math.min(S(L1, x, y), -d0, fsMod[k]);
       if (mirror) v = Math.min(v, Math.abs(y));
       fs[k] = v;
     }
   }
-  const fsAt = (x, y) => {
+  const bil = (arr, x, y) => {
     const fx = x / cf - fx0, fy = y / cf - fy0;
     const i = Math.floor(fx), j = Math.floor(fy);
     if (i < 0 || j < 0 || i + 1 >= FW || j + 1 >= FH) return -1e3;
     const tx = fx - i, ty = fy - j, k = j * FW + i;
-    return (fs[k] + (fs[k + 1] - fs[k]) * tx) * (1 - ty) + (fs[k + FW] + (fs[k + FW + 1] - fs[k + FW]) * tx) * ty;
+    return (arr[k] + (arr[k + 1] - arr[k]) * tx) * (1 - ty) + (arr[k + FW] + (arr[k + FW + 1] - arr[k + FW]) * tx) * ty;
   };
-  /** Widoczne miejsce rury z ziemi (rów maszynowni, nie moduł, nie pod płytą, wewnątrz sylwetki). */
-  const visAt = (x, y) => S(L1, x, y) >= 0 && S(L0, x, y) < 0 && modMin(x, y) > 0;
+  const fsAt = (x, y) => bil(fs, x, y);
+  /** Wolne miejsce wiązki: geometria i wiązki wcześniejszych sieci [j.]. */
+  const clrAt = (x, y) => Math.min(bil(fs, x, y), bil(fo, x, y));
   const modMin = (x, y) => {
     const fx = x / cf - fx0, fy = y / cf - fy0;
     const i = Math.round(fx), j = Math.round(fy);
     if (i < 0 || j < 0 || i >= FW || j >= FH) return 1e4;
     return fsMod[j * FW + i];
   };
+  /** Widoczne miejsce rury z ziemi (rów maszynowni, nie moduł, nie pod płytą, wewnątrz sylwetki). */
+  const visAt = (x, y) => S(L1, x, y) >= 0 && S(L0, x, y) < 0 && modMin(x, y) > 0;
+  const inAt = insideDepthSampler(field, S, mirror, { x0: fx0 * cf, y0: fy0 * cf, cw: cf, W: FW, H: FH, l0 });
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+  const tm = stats.t = { pola: now() - t0 };
 
-  // ── sieć generowana ──
+  // ── sieć systemów ──
   if (density > 0) {
+    const systems = hullDesignSystems(modules);
     const c = T.cellDu * D;
     const gx0 = Math.floor(bnd.minX / c), gx1 = Math.ceil(bnd.maxX / c);
     const gy0 = Math.floor(bnd.minY / c), gy1 = mirror ? 0 : Math.ceil(bnd.maxY / c);
@@ -306,18 +412,19 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     };
     const kind = new Uint8Array(N);       // 0 zakaz, 1 rów, 2 płyta, 3 moduł
     const cost = new Float32Array(N);
-    const d1c = new Float32Array(N);
+    const pen = new Float32Array(N);      // ślady wiązek wcześniejszych sieci
     const C = T.cost;
-    const edge = T.edgeDu * D;
+    const edge = T.edgeDu * D, edgeNear = T.edgeNearDu * D;
     for (let k = 0; k < N; k++) {
       const x = cxOf(k), y = cyOf(k);
-      const d0 = S(L0, x, y), d1 = S(L1, x, y);
-      d1c[k] = d1;
-      if (d0 > -edge) { kind[k] = 0; cost[k] = Infinity; continue; }
+      const dIn = inAt(x, y), d1 = S(L1, x, y);
+      if (dIn < edge) { kind[k] = 0; cost[k] = Infinity; continue; }
       if (d1 < 0) { kind[k] = 2; cost[k] = C.plate; } else {
         kind[k] = 1;
-        cost[k] = C.gap + C.wall * smooth01((d1 - 7 * D) / (16 * D)) + (-d0 < 7 * D ? C.edge : 0);
+        cost[k] = C.gap + C.wall * smooth01((d1 - 7 * D) / (16 * D));
       }
+      // z dala od burty: kara rośnie ku sylwetce (trasy nie schodzą „w dół do burty” bez potrzeby)
+      if (dIn < edgeNear) cost[k] += C.edge * (1 - (dIn - edge) / (edgeNear - edge));
       if (mirror && Math.abs(y) < 10 * D) cost[k] += C.axis;
     }
     for (const m of obstacles) {
@@ -330,111 +437,44 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         if (pipeModuleSdf(m, cxOf(k), cyOf(k)) < c * 0.35) { kind[k] = 3; cost[k] = C.module + (mirror && Math.abs(cyOf(k)) < 10 * D ? C.axis : 0); }
       }
     }
-    // stan A*: komórka × 9 (8 kierunków wejścia + start bez kierunku)
-    const g = new Float32Array(N * 9).fill(Infinity);
-    const prev = new Int32Array(N * 9);
+    tm.siatka = now() - t0 - tm.pola;
+    // stan A*: komórka (kierunek wejścia najlepszej drogi w din) — bufory wspólne dla sieci
+    const g = new Float32Array(N).fill(Infinity);
+    const prev = new Int32Array(N);
+    const din = new Uint8Array(N);
+    const closed = new Uint8Array(N);
     const touched = [];
     const heap = new Heap(4096);
-    const tree = new Uint8Array(N);
-    const links = new Uint8Array(N);
-    const near = new Uint8Array(N);
-    const dt = new Float32Array(N).fill(1e9);
+    // kolejka kubełkowa heurystyki (relax)
+    const buckets = [];
+    let bucketTop = 0;
+    const bucketPush = (v, k) => {
+      (buckets[v] || (buckets[v] = [])).push(k);
+      if (v + 1 > bucketTop) bucketTop = v + 1;
+    };
+    const di5 = new Int32Array(N);
+    const costN = new Float32Array(N);
+    let portBase = null;
     const TP = [0, C.turn45, C.turn90, C.turn135];
-    const HK = T.heurK;
     const dirOf = (a, b) => {
       const dx = (b % GW) - (a % GW), dy = ((b / GW) | 0) - ((a / GW) | 0);
       for (let d = 0; d < 8; d++) if (DX[d] === dx && DY[d] === dy) return d;
       return -1;
     };
-    const relax = (seeds) => {
-      const q = seeds.slice();
-      for (const k of seeds) dt[k] = 0;
-      for (let qi = 0; qi < q.length; qi++) {
-        const k = q[qi], i = k % GW, j = (k / GW) | 0;
-        for (let d = 0; d < 8; d++) {
-          const ni = i + DX[d], nj = j + DY[d];
-          if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
-          const nk = nj * GW + ni, v = dt[k] + DL[d];
-          if (v < dt[nk] - 1e-4) { dt[nk] = v; q.push(nk); }
-        }
+    const inHalf = (m) => !mirror || m.y <= 0.5;
+    /** Kopia lustra urządzenia (indeks w modules); urządzenie na osi — ono samo. */
+    const mirrorIdx = (i) => {
+      const m = modules[i];
+      if (!mirror || Math.abs(m.y) <= 0.5) return i;
+      for (let j = 0; j < modules.length; j++) {
+        const q = modules[j];
+        if (j !== i && q.type === m.type && Math.abs(q.x - m.x) < 1e-6 && Math.abs(q.y + m.y) < 1e-6) return j;
       }
+      return i;
     };
-    const markTree = (cells) => {
-      const fresh = [];
-      for (const k of cells) if (!tree[k]) { tree[k] = 1; fresh.push(k); }
-      const hr = T.haloCells;
-      for (const k of fresh) {
-        const i = k % GW, j = (k / GW) | 0;
-        for (let dj = -hr; dj <= hr; dj++) for (let di = -hr; di <= hr; di++) {
-          const ni = i + di, nj = j + dj;
-          if (ni >= 0 && nj >= 0 && ni < GW && nj < GH) near[nj * GW + ni] = 1;
-        }
-      }
-      if (fresh.length) relax(fresh);
-    };
-    const link = (a, b) => {
-      const d = dirOf(a, b);
-      if (d < 0) return;
-      links[a] |= 1 << d;
-      links[b] |= 1 << ((d + 4) & 7);
-    };
-    /** A* od komórek startu do najbliższej komórki drzewa; zwraca komórki [start … dołączenie] albo null. */
-    const search = (starts) => {
-      for (const s of touched) g[s] = Infinity;
-      touched.length = 0;
-      heap.clear();
-      stats.searches++;
-      for (const k of starts) {
-        if (!kind[k]) continue;
-        if (tree[k]) return [k];
-        const s = k * 9 + 8;
-        if (g[s] === Infinity) touched.push(s);
-        g[s] = 0; prev[s] = -1;
-        heap.push(HK * dt[k], s);
-      }
-      while (heap.n) {
-        const s = heap.pop();
-        const f = heap.top;
-        const k = (s / 9) | 0, d = s - k * 9;
-        const gs = g[s];
-        if (f > gs + HK * dt[k] + 1e-3) continue;
-        stats.expanded++;
-        if (tree[k]) {
-          const out = [];
-          for (let q = s; q >= 0; q = prev[q]) {
-            const kk = (q / 9) | 0;
-            if (out[out.length - 1] !== kk) out.push(kk);
-          }
-          return out.reverse();
-        }
-        const i = k % GW, j = (k / GW) | 0;
-        const ck = cost[k];
-        for (let nd = 0; nd < 8; nd++) {
-          let tp = 0;
-          if (d < 8) { let t = nd > d ? nd - d : d - nd; if (t > 4) t = 8 - t; if (t === 4) continue; tp = TP[t]; }
-          const ni = i + DX[nd], nj = j + DY[nd];
-          if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
-          const nk = nj * GW + ni;
-          const cn = cost[nk];
-          if (cn === Infinity) continue;
-          if (nd & 1) {
-            const ka = j * GW + ni, kb = nj * GW + i;
-            if (cost[ka] === Infinity || cost[kb] === Infinity) continue;
-            if ((tree[ka] || tree[kb]) && !tree[nk]) continue;     // bez przecinania sieci po przekątnej
-          }
-          const ng = gs + DL[nd] * 0.5 * (ck + cn) + tp + (near[nk] && !tree[nk] ? C.halo : 0);
-          const ns = nk * 9 + nd;
-          if (ng < g[ns]) {
-            if (g[ns] === Infinity) touched.push(ns);
-            g[ns] = ng; prev[ns] = s;
-            heap.push(ng + HK * dt[nk], ns);
-          }
-        }
-      }
-      return null;
-    };
-    /** Komórki startu przy module: obrys + pas (gondola — tylko połowa przy kadłubie). */
-    const startsOf = (m, inner = false) => {
+    /** Komórki przyłącza przy module: obrys + pas; side +1 — tylko połowa ku +x modułu (szyjka gondoli MAIN), −1 — ku −x
+     *  (dysza SIDE od strony kadłuba). */
+    const startsOf = (m, side = 0) => {
       const out = [];
       const b = moduleBox(m);
       const pad = c * 1.6;
@@ -446,160 +486,296 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         if (!kind[k]) continue;
         const x = cxOf(k), y = cyOf(k);
         if (pipeModuleSdf(m, x, y) > pad) continue;
-        if (inner && ((x - m.x) * cr + (y - m.y) * sr) < -0.25 * (m.w || 0)) continue;
+        const lx = (x - m.x) * cr + (y - m.y) * sr;
+        if (side > 0 && lx < -0.25 * (m.w || 0)) continue;
+        if (side < 0 && lx > 0.25 * (m.w || 0)) continue;
         out.push(k);
       }
       return out;
     };
-    const inHalf = (m) => !mirror || m.y <= 0.5;
-    const engines = modules.filter((m) => m.type === 'engine' && inHalf(m));
-    const reactor = modules.find((m) => m.type === 'reactor' && inHalf(m));
-    const bridge = modules.find((m) => m.type === 'bridge' && inHalf(m));
-    // korzeń: jedna komórka (reaktor → mostek → pierwsza gondola)
-    const rootMod = reactor || bridge || engines[0] || null;
-    let rootCell = -1;
-    if (rootMod) {
-      let best = Infinity;
-      for (const k of startsOf(rootMod)) {
-        const v = Math.hypot(cxOf(k) - rootMod.x, cyOf(k) - rootMod.y) + (kind[k] === 1 ? 0 : 2 * c);
-        if (v < best) { best = v; rootCell = k; }
-      }
-    }
-    if (rootCell >= 0) {
-      markTree([rootCell]);
-      const targets = [];   // { kind, starts, anchor, path, gondola }
-      const addTarget = (t) => {
-        if (!t.starts.length) return null;
-        const path = search(t.starts);
-        if (!path) return null;
-        for (let q = 0; q + 1 < path.length; q++) link(path[q], path[q + 1]);
-        markTree(path);
-        t.anchor = path[0];
-        t.join = path[path.length - 1];
-        t.len = path.length;
-        targets.push(t);
-        stats.routes++;
-        return t;
+    const sideOf = (m) => (m.type === 'engine' ? 1 : (m.type === 'thruster_side' ? -1 : 0));
+    const coresHalf = systems.cores.filter((i) => inHalf(modules[i]));
+    const itemsOf = (net) => {
+      const list = net === 'feed' ? [...systems.mains, ...systems.sides] : (net === 'supply' ? systems.tanks : systems.consumers);
+      return list.filter((i) => inHalf(modules[i])).map((i) => ({ dev: i, load: net === 'power' ? powerLoad(modules[i]) : fuelLoad(modules[i]) }));
+    };
+
+    /** Drzewo sieci `id` od przyłączy reaktorów: trasy urządzeń (najbliższe sieci pierwsze), obciążenie krawędzi. */
+    const routeNet = (id, items) => {
+      const tree = new Uint8Array(N), goal = new Uint8Array(N), block = new Uint8Array(N), near = new Uint8Array(N);
+      const links = new Uint8Array(N), par = new Int32Array(N).fill(-1), term = new Int32Array(N).fill(-1);
+      const portOf = new Int32Array(N).fill(-1);
+      const dt = new Float32Array(N).fill(1e9);
+      const cnt = new Float32Array(N * 8);
+      // odległość do sieci (heurystyka A*, w komórkach): Dijkstra od nowych komórek na kolejce kubełkowej — wagi
+      // całkowite 5 (prosto) i 7 (ukos ≈ 5 · √2), każda komórka zdejmowana raz
+      const relax = (seeds) => {
+        let lo = Infinity;
+        for (const k of seeds) { dt[k] = 0; di5[k] = 0; bucketPush(0, k); lo = 0; }
+        for (let b = lo; b < bucketTop; b++) {
+          const list = buckets[b];
+          if (!list) continue;
+          for (let q = 0; q < list.length; q++) {
+            const k = list[q];
+            if (di5[k] !== b) continue;
+            const i = k % GW, j = (k / GW) | 0;
+            for (let d = 0; d < 8; d++) {
+              const ni = i + DX[d], nj = j + DY[d];
+              if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
+              const nk = nj * GW + ni, v = b + ((d & 1) ? 7 : 5);
+              if (v < di5[nk]) { di5[nk] = v; dt[nk] = v * 0.2; bucketPush(v, nk); }
+            }
+          }
+          list.length = 0;
+        }
+        bucketTop = 0;
       };
-      const minDt = (starts) => { let v = Infinity; for (const k of starts) if (dt[k] < v) v = dt[k]; return v; };
-      // 1. gondole (najbliższa sieci pierwsza)
-      const gq = engines.filter((m) => m !== rootMod).map((m) => ({ kind: 'engine', mod: m, starts: startsOf(m, true) }));
-      const gondolas = [];
-      if (rootMod && rootMod.type === 'engine') gondolas.push({ kind: 'engine', mod: rootMod, starts: [rootCell], anchor: rootCell, join: rootCell, len: 1, root: true });
-      while (gq.length) {
-        let bi = 0, bv = Infinity;
-        gq.forEach((t, i) => { const v = minDt(t.starts); if (v < bv) { bv = v; bi = i; } });
-        const t = gq.splice(bi, 1)[0];
-        if (addTarget(t)) gondolas.push(t);
-      }
-      // 2. moduły i grzbiet (najbliższy sieci pierwszy)
-      const pool = [];
-      for (const m of modules) {
-        if (!inHalf(m) || m === rootMod) continue;
-        if (m.type.startsWith('turret_') || m.type === 'well' || m.type === 'hangar' || m.type === 'bridge' || (m.type === 'reactor' && m !== rootMod)) {
-          pool.push({ kind: m.type, mod: m, starts: startsOf(m) });
-        }
-      }
-      const halfWidth = Math.max(Math.abs(bnd.minY), Math.abs(bnd.maxY));
-      const L = bnd.maxX - bnd.minX;
-      const step = T.spineStepDu * D;
-      const nSpine = Math.max(0, Math.round(L * 0.78 / step));
-      for (let s = 0; s < nSpine * density; s++) {
-        const x = bnd.minX + L * 0.1 + (s + 0.5) * (L * 0.72 / (nSpine * density));
-        const i = Math.floor(x / c) - gx0;
-        if (i < 0 || i >= GW) continue;
-        let bestK = -1, bestY = Infinity;
-        for (let j = 0; j < GH; j++) {
-          const k = j * GW + i;
-          if (kind[k] !== 1) continue;
-          const y = cyOf(k);
-          if (Math.abs(y) > halfWidth * T.spineBand) continue;
-          const v = Math.abs(Math.abs(y) - 14 * D);
-          if (v < bestY) { bestY = v; bestK = k; }
-        }
-        if (bestK >= 0) pool.push({ kind: 'spine', starts: [bestK] });
-      }
-      while (pool.length) {
-        let bi = 0, bv = Infinity;
-        pool.forEach((t, i) => { const v = minDt(t.starts); if (v < bv) { bv = v; bi = i; } });
-        addTarget(pool.splice(bi, 1)[0]);
-      }
-      // 3. wypełnienie: komórki rowów najdalej od sieci (waga ku rufie)
-      const nFill = Math.round(T.fillPerDensity * density * (mirror ? 1 : 2));
-      const minX = bnd.minX;
-      for (let f = 0; f < nFill; f++) {
-        let bestK = -1, bestV = 0;
-        for (let k = 0; k < N; k++) {
-          if (kind[k] !== 1 || dt[k] < T.fillMinCells || d1c[k] < 2 * D) continue;
-          const u = (cxOf(k) - minX) / Math.max(1, L);
-          const v = dt[k] * (1 - T.rearBias * u) * (0.85 + 0.3 * ((k * 2654435761) % 997) / 997);
-          if (v > bestV) { bestV = v; bestK = k; }
-        }
-        if (bestK < 0) break;
-        addTarget({ kind: 'fill', starts: [bestK] });
-      }
-      // ── trasy: cel → gondola (najbliższa po drzewie, z wyrównaniem), gondola → korzeń ──
-      const cnt = new Uint16Array(N * 8);
-      const bfs = (src) => {
-        const dist = new Int32Array(N).fill(-1);
-        const par = new Int32Array(N).fill(-1);
-        const q = [src];
-        dist[src] = 0;
-        for (let qi = 0; qi < q.length; qi++) {
-          const k = q[qi], lk = links[k];
-          for (let d = 0; d < 8; d++) {
-            if (!(lk & (1 << d))) continue;
-            const nk = k + DY[d] * GW + DX[d];
-            if (dist[nk] >= 0) continue;
-            dist[nk] = dist[k] + 1; par[nk] = k;
-            q.push(nk);
+      // przyłącza reaktorów i odległość od nich — te same dla każdej sieci (liczone raz)
+      if (!portBase) {
+        di5.fill(0x3fffffff);
+        portBase = { portOf: new Int32Array(N).fill(-1), dt: new Float32Array(N).fill(1e9), di5: null, cells: [] };
+        for (const ci of coresHalf) for (const k of startsOf(modules[ci])) if (portBase.portOf[k] < 0) { portBase.portOf[k] = ci; portBase.cells.push(k); }
+        if (portBase.cells.length) relax(portBase.cells);
+        portBase.dt.set(dt);
+        portBase.di5 = di5.slice();
+      } else { dt.set(portBase.dt); di5.set(portBase.di5); }
+      portOf.set(portBase.portOf);
+      for (const k of portBase.cells) goal[k] = 1;
+      // koszt wejścia w komórkę dla tej sieci: podłoże + ślady wcześniejszych sieci
+      for (let k = 0; k < N; k++) costN[k] = cost[k] + pen[k];
+      const HK = id === 'power' ? T.heurKCable : T.heurK;
+      const markTree = (cells) => {
+        const fresh = [];
+        for (const k of cells) if (!tree[k]) { tree[k] = 1; goal[k] = 1; fresh.push(k); }
+        const hr = T.haloCells;
+        for (const k of fresh) {
+          const i = k % GW, j = (k / GW) | 0;
+          for (let dj = -hr; dj <= hr; dj++) for (let di = -hr; di <= hr; di++) {
+            const ni = i + di, nj = j + dj;
+            if (ni >= 0 && nj >= 0 && ni < GW && nj < GH) near[nj * GW + ni] = 1;
           }
         }
-        return { dist, par };
+        if (fresh.length) relax(fresh);
       };
-      const walk = (from, tree2) => {
-        let k = from;
-        for (let guard = 0; guard < N && tree2.par[k] >= 0; guard++) {
-          const p = tree2.par[k];
-          const d = dirOf(k, p);
-          cnt[k * 8 + d]++;
-          cnt[p * 8 + ((d + 4) & 7)]++;
-          k = p;
+      /**
+       * A* od komórek startu do najbliższej komórki celu (drzewo albo wolne przyłącze reaktora): stan = komórka
+       * (zamknięta raz), kara za skręt względem kierunku wejścia najlepszej drogi do komórki — kilka razy mniej
+       * rozwinięć niż stany komórka × kierunek, schodki i tak prostuje straightenOctilinear.
+       */
+      const search = (starts) => {
+        for (const k of touched) { g[k] = Infinity; closed[k] = 0; }
+        touched.length = 0;
+        heap.clear();
+        stats.searches++;
+        for (const k of starts) {
+          if (g[k] === Infinity) touched.push(k);
+          g[k] = 0; prev[k] = -1; din[k] = 8;
+          heap.push(HK * dt[k], k);
         }
+        while (heap.n) {
+          const k = heap.pop();
+          if (closed[k]) continue;
+          closed[k] = 1;
+          const gs = g[k], d = din[k];
+          stats.expanded++;
+          if (goal[k] && d < 8) {
+            const out = [];
+            for (let q = k; q >= 0; q = prev[q]) out.push(q);
+            return out.reverse();
+          }
+          const i = k % GW, j = (k / GW) | 0;
+          const ck = costN[k];
+          for (let nd = 0; nd < 8; nd++) {
+            let tp = 0;
+            if (d < 8) { let t = nd > d ? nd - d : d - nd; if (t > 4) t = 8 - t; if (t === 4) continue; tp = TP[t]; }
+            const ni = i + DX[nd], nj = j + DY[nd];
+            if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
+            const nk = nj * GW + ni;
+            if (closed[nk]) continue;
+            const cn = costN[nk];
+            if (cn === Infinity || block[nk]) continue;
+            if (nd & 1) {
+              const ka = j * GW + ni, kb = nj * GW + i;
+              if (cost[ka] === Infinity || cost[kb] === Infinity) continue;
+              if ((tree[ka] || tree[kb] || block[ka] || block[kb]) && !goal[nk]) continue;     // bez przecinania sieci po przekątnej
+            }
+            const ng = gs + DL[nd] * 0.5 * (ck + cn) + tp + (near[nk] && !tree[nk] ? C.halo : 0);
+            if (ng < g[nk]) {
+              if (g[nk] === Infinity) touched.push(nk);
+              g[nk] = ng; prev[nk] = k; din[nk] = nd;
+              heap.push(ng + HK * dt[nk], nk);
+            }
+          }
+        }
+        return null;
       };
-      const G = gondolas.length;
-      const gb = gondolas.map((t) => bfs(t.anchor));
-      const load = new Float32Array(Math.max(1, G));
-      const rootB = bfs(rootCell);
-      for (const t of gondolas) if (!t.root) walk(t.anchor, rootB);
-      const others = targets.filter((t) => t.kind !== 'engine');
-      for (const t of others) {
-        if (!G) { walk(t.anchor, rootB); continue; }
-        let best = -1, bv = Infinity;
-        const mean = others.length / G;
-        for (let q = 0; q < G; q++) {
-          const dd = gb[q].dist[t.anchor];
-          if (dd < 0) continue;
-          const v = (dd + 4) * (1 + 0.55 * load[q] / (mean + 1));
-          if (v < bv) { bv = v; best = q; }
+      const pending = items.map((it) => ({ ...it, starts: startsOf(modules[it.dev], sideOf(modules[it.dev])) }));
+      let routed = 0;
+      while (pending.length) {
+        let bi = 0, bv = Infinity;
+        pending.forEach((t, i) => {
+          let v = Infinity;
+          for (const k of t.starts) if (!goal[k] && !block[k] && dt[k] < v) v = dt[k];
+          if (v < bv) { bv = v; bi = i; }
+        });
+        const it = pending.splice(bi, 1)[0];
+        const starts = it.starts.filter((k) => !goal[k] && !block[k]);
+        const path = starts.length ? search(starts) : null;
+        if (!path || path.length < 2) { stats.unrouted++; continue; }
+        stats.routes++;
+        routed++;
+        const last = path.length - 1, end = path[last];
+        for (let q = 0; q < last; q++) {
+          const a = path[q], b = path[q + 1], dd = dirOf(a, b);
+          links[a] |= 1 << dd;
+          links[b] |= 1 << ((dd + 4) & 7);
+          par[a] = b;
         }
-        if (best < 0) { walk(t.anchor, rootB); continue; }
-        load[best]++;
-        t.gondola = best;
-        walk(t.anchor, gb[best]);
+        term[path[0]] = it.dev;
+        block[path[0]] = 1;
+        if (!tree[end]) {
+          // nowy pień do reaktora: koniec to przyłącze rdzenia; przyłącza obok odpadają (pnie co portGapCells)
+          term[end] = portOf[end];
+          block[end] = 1;
+          goal[end] = 0;
+          const ei = end % GW, ej = (end / GW) | 0, r = T.portGapCells;
+          for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+            const ni = ei + di, nj = ej + dj;
+            if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
+            const kk = nj * GW + ni;
+            if (portOf[kk] >= 0 && !tree[kk]) goal[kk] = 0;
+          }
+        }
+        markTree(path.slice(1, last));
+        // obciążenie: od urządzenia po drzewie do przyłącza reaktora
+        for (let k = path[0], guard = 0; par[k] >= 0 && guard < N; k = par[k], guard++) {
+          const p = par[k], dd = dirOf(k, p);
+          cnt[k * 8 + dd] += it.load;
+          cnt[p * 8 + ((dd + 4) & 7)] += it.load;
+        }
       }
-      // ── biegi: odcinki drzewa między węzłami (stopień ≠ 2 albo zmiana liczby tras) ──
+      return { id, links, cnt, term, routed };
+    };
+
+    /** Promienie: jedna sekwencja na sieć (gruba rura ciągnie się przez rozgałęzienia). */
+    const seqOf = (id) => {
+      const r = rng((design.seed || 7) * 31 + (HD_NETS.indexOf(id) + 1) * 977 + (design.pipeNet?.seed || 0));
+      if (id === 'power') return { radii: cableRadii(r, T.maxPipes), gap: T.gapCable[0] + (T.gapCable[1] - T.gapCable[0]) * r(), mat: HD_PIPE_MAT_CABLE };
+      return { radii: pipeRadii(r, T.maxPipes), gap: T.gap[0] + (T.gap[1] - T.gap[0]) * r(), mat: 0 };
+    };
+    const pathCost = (poly) => {
+      let sum = 0;
+      for (let q = 0; q + 1 < poly.length; q++) {
+        const a = poly[q], b = poly[q + 1];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const n = Math.max(1, Math.ceil(L / (0.5 * c)));
+        for (let t = 0; t < n; t++) {
+          const kk = cellAt(a[0] + (b[0] - a[0]) * (t + 0.5) / n, a[1] + (b[1] - a[1]) * (t + 0.5) / n);
+          const v = kk < 0 ? Infinity : cost[kk] + pen[kk];
+          if (v === Infinity) return Infinity;
+          sum += v * L / n;
+        }
+      }
+      return sum;
+    };
+    /** Przyłącze w urządzeniu: od środka komórki odcinkiem co 45° (najpierw „prosto dalej”) na anchorDu jd w moduł. */
+    const anchorFor = (dev, k, nextK) => {
+      const m = modules[dev];
+      const x0 = cxOf(k), y0 = cyOf(k);
+      const inset = T.anchorDu * D;
+      if (pipeModuleSdf(m, x0, y0) <= -inset) return [x0, y0];
+      const dOut = nextK >= 0 ? dirOf(k, nextK) : -1;
+      const straight = dOut >= 0 ? (dOut + 4) & 7 : -1;
+      let best = null, bestS = null;
+      for (let d = 0; d < 8; d++) {
+        if (d === dOut) continue;
+        const ux = DX[d] / DL[d], uy = DY[d] / DL[d];
+        for (let s = 0.25 * D; s <= 3.5 * c; s += 0.25 * D) {
+          const x = x0 + ux * s, y = y0 + uy * s;
+          if (mirror && y > -0.5 * D) break;
+          if (pipeModuleSdf(m, x, y) <= -inset) {
+            if (!best || s < best.s - 1e-9) best = { s, x, y };
+            if (d === straight) bestS = { s, x, y };
+            break;
+          }
+        }
+      }
+      if (bestS && best && bestS.s <= best.s * 1.35 + D) best = bestS;
+      return best ? [best.x, best.y] : [m.x, mirror ? Math.min(m.y, -0.5 * D) : m.y];
+    };
+    const fitsHull = (poly, hwJ) => {
+      const need = hwJ + T.marginDu * D;
+      for (let q = 0; q + 1 < poly.length; q++) {
+        const a = poly[q], b = poly[q + 1];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const n = Math.max(1, Math.ceil(L / (0.5 * D)));
+        for (let t = 0; t <= n; t++) if (inAt(a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n) < need) return false;
+      }
+      return true;
+    };
+    /** Ślad wiązki w polu wolnego miejsca (fo) i w koszcie tras następnych sieci (pen). */
+    const stamp = (polyIn, hwJ) => {
+      const reach = hwJ + 6 * D;
+      // długie odcinki w kawałkach ≤ 16 jd (pudło kawałka, nie całego odcinka)
+      const poly = [polyIn[0]];
+      for (let q = 1; q < polyIn.length; q++) {
+        const a = polyIn[q - 1], b = polyIn[q];
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / (16 * D)));
+        for (let t = 1; t <= n; t++) poly.push([a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n]);
+      }
+      for (let q = 0; q + 1 < poly.length; q++) {
+        const a = poly[q], b = poly[q + 1];
+        const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy;
+        const seg = (x, y) => {
+          const t = L2 > 1e-12 ? clamp(((x - a[0]) * vx + (y - a[1]) * vy) / L2, 0, 1) : 0;
+          const ex = x - a[0] - vx * t, ey = y - a[1] - vy * t;
+          return Math.sqrt(ex * ex + ey * ey);
+        };
+        const i0 = Math.max(0, Math.floor((Math.min(a[0], b[0]) - reach) / cf) - fx0), i1 = Math.min(FW - 1, Math.ceil((Math.max(a[0], b[0]) + reach) / cf) - fx0);
+        const j0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - reach) / cf) - fy0), j1 = Math.min(FH - 1, Math.ceil((Math.max(a[1], b[1]) + reach) / cf) - fy0);
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const v = seg((fx0 + i) * cf, (fy0 + j) * cf) - hwJ;
+          const k = j * FW + i;
+          if (v < fo[k]) fo[k] = v;
+        }
+        const ci0 = Math.max(0, Math.floor((Math.min(a[0], b[0]) - reach) / c) - gx0), ci1 = Math.min(GW - 1, Math.ceil((Math.max(a[0], b[0]) + reach) / c) - gx0);
+        const cj0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - reach) / c) - gy0), cj1 = Math.min(GH - 1, Math.ceil((Math.max(a[1], b[1]) + reach) / c) - gy0);
+        for (let j = cj0; j <= cj1; j++) for (let i = ci0; i <= ci1; i++) {
+          const k = j * GW + i;
+          if (seg(cxOf(k), cyOf(k)) < hwJ + 0.45 * c) pen[k] = Math.max(pen[k], C.occ);
+        }
+      }
+    };
+
+    // węzły grafu (lustro: osobne węzły), przyłącza z urządzeniem
+    const nodeIds = new Map();
+    const addNode = (key, x, y, dev, net) => {
+      let id = nodeIds.get(key);
+      if (id === undefined) { id = graph.nodes.length; graph.nodes.push({ x, y, dev, net }); nodeIds.set(key, id); }
+      return id;
+    };
+
+    for (const id of HD_NETS) {
+      const items = itemsOf(id);
+      if (!coresHalf.length || !items.length) continue;
+      let tq = now();
+      const R = routeNet(id, items);
+      tm[`trasy_${id}`] = now() - tq; tq = now();
+      stats[`exp_${id}`] = stats.expanded - (stats._e0 || 0); stats._e0 = stats.expanded;
+      if (!R.routed) continue;
+      const { links, cnt, term } = R;
+      // ── biegi: odcinki drzewa między węzłami (stopień ≠ 2, przyłącze albo zmiana obciążenia) ──
       const deg = (k) => { let n = 0, l = links[k]; while (l) { n += l & 1; l >>= 1; } return n; };
       const isNode = (k) => {
-        if (deg(k) !== 2) return true;
+        if (term[k] >= 0 || deg(k) !== 2) return true;
         let a = -1;
-        for (let d = 0; d < 8; d++) if (links[k] & (1 << d)) { const v = cnt[k * 8 + d]; if (a < 0) a = v; else if (v !== a) return true; }
+        for (let d = 0; d < 8; d++) if (links[k] & (1 << d)) { const v = cnt[k * 8 + d]; if (a < 0) a = v; else if (Math.abs(v - a) > 1e-6) return true; }
         return false;
       };
       const seen = new Uint8Array(N * 8);
       const rawRuns = [];
       for (let k = 0; k < N; k++) {
-        if (!tree[k] || !links[k] || !isNode(k)) continue;
+        if (!links[k] || !isNode(k)) continue;
         for (let d = 0; d < 8; d++) {
           if (!(links[k] & (1 << d)) || seen[k * 8 + d]) continue;
           const cells = [k];
@@ -620,43 +796,37 @@ export function buildPipeNetwork(field, tuneIn = {}) {
           rawRuns.push({ cells, count: Math.max(1, count) });
         }
       }
-      // gondola biegu (najbliższa po drzewie) → sekwencja promieni tej gondoli: grube rury ciągną się przez węzły
-      const seqs = [];
-      for (let q = 0; q < Math.max(1, G); q++) {
-        const r = rng((design.seed || 7) * 31 + q * 977 + (design.pipeNet?.seed || 0));
-        seqs.push({ radii: pipeRadii(r, T.maxPipes), gap: T.gap[0] + (T.gap[1] - T.gap[0]) * r() });
-      }
-      const nodeInfo = new Map();     // komórka węzła → { halfW, pts przesunięte }
-      for (const rr of rawRuns) {
-        const mid = rr.cells[rr.cells.length >> 1];
-        let gq2 = 0, gd = Infinity;
-        for (let q = 0; q < G; q++) { const v = gb[q].dist[mid]; if (v >= 0 && v < gd) { gd = v; gq2 = q; } }
-        const n = clamp(Math.round(1 + T.pipesK * Math.log2(1 + rr.count)), 1, T.maxPipes);
-        const sq = seqs[Math.min(gq2, seqs.length - 1)];
-        rr.radii = sq.radii.slice(0, n);
-        rr.gap = sq.gap;
+      const sq = seqOf(id);
+      const kScale = 0.5 + 0.5 * Math.min(2, density);
+      const setN = (rr, n) => {
         rr.n = n;
-        rr.halfW = (rr.radii.reduce((a, r) => a + 2 * r, 0) + sq.gap * (n - 1)) * 0.5;
+        rr.radii = sq.radii.slice(0, n);
+        rr.halfW = bundleHalfW(rr.radii, sq.gap);
         rr.rMax = Math.max(...rr.radii);
-        rr.gondola = gq2;
+      };
+      const nodeInfo = new Map();     // komórka węzła (nie przyłącza) → { halfW, x, y, deg, runs }
+      for (const rr of rawRuns) {
+        setN(rr, clamp(Math.round((1 + T.pipesK * Math.log2(1 + rr.count)) * kScale), 1, T.maxPipes));
+        rr.nBase = rr.n;
         for (const e of [rr.cells[0], rr.cells[rr.cells.length - 1]]) {
+          if (term[e] >= 0) continue;
           const ni = nodeInfo.get(e) || { halfW: 0, runs: [] };
           ni.halfW = Math.max(ni.halfW, rr.halfW);
           ni.runs.push(rr);
           nodeInfo.set(e, ni);
         }
       }
-      // węzły: przesunięte w stronę wolnego miejsca (wiązka mieści się w rowie)
+      // węzły: przesunięte w stronę wolnego miejsca (wiązka mieści się w rowie, obok wcześniejszych sieci)
       for (const [k, ni] of nodeInfo) {
         let x = cxOf(k), y = cyOf(k);
         const need = (ni.halfW + T.clearDu) * D;
         const x0 = x, y0 = y;
-        if (fsAt(x, y) > -2 * D) {
+        if (clrAt(x, y) > -2 * D) {
           for (let it = 0; it < 14; it++) {
-            const v = fsAt(x, y);
+            const v = clrAt(x, y);
             if (v >= need) break;
             const h = D;
-            let gxv = fsAt(x + h, y) - fsAt(x - h, y), gyv = fsAt(x, y + h) - fsAt(x, y - h);
+            let gxv = clrAt(x + h, y) - clrAt(x - h, y), gyv = clrAt(x, y + h) - clrAt(x, y - h);
             const gl = Math.hypot(gxv, gyv);
             if (gl < 1e-6) break;
             gxv /= gl; gyv /= gl;
@@ -666,87 +836,97 @@ export function buildPipeNetwork(field, tuneIn = {}) {
             if (dd > lim) { x = x0 + (x - x0) * lim / dd; y = y0 + (y - y0) * lim / dd; break; }
           }
         }
+        // oś wiązki w sylwetce z zapasem całej szerokości (węzeł przy burcie — w głąb)
+        for (let it = 0; it < 10 && inAt(x, y) < (ni.halfW + T.marginDu) * D; it++) {
+          let gxv = inAt(x + D, y) - inAt(x - D, y), gyv = inAt(x, y + D) - inAt(x, y - D);
+          const gl = Math.hypot(gxv, gyv);
+          if (gl < 1e-6) break;
+          x += gxv / gl * D; y += gyv / gl * D;
+        }
         if (mirror && y > -0.2 * D) y = -0.2 * D;
         ni.x = x; ni.y = y;
         ni.deg = deg(k);
         ni.cell = k;
       }
-      // koszt łamanej po komórkach (do prostowania schodków: zamiennik nie może iść drożej niż trasa A*)
-      const inAt = (x, y) => -S(L0, x, y);
-      const pathCost = (poly) => {
-        let sum = 0;
-        for (let q = 0; q + 1 < poly.length; q++) {
-          const a = poly[q], b = poly[q + 1];
-          const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          const n = Math.max(1, Math.ceil(L / (0.5 * c)));
-          for (let t = 0; t < n; t++) {
-            const kk = cellAt(a[0] + (b[0] - a[0]) * (t + 0.5) / n, a[1] + (b[1] - a[1]) * (t + 0.5) / n);
-            const v = kk < 0 ? Infinity : cost[kk];
-            if (v === Infinity) return Infinity;
-            sum += v * L / n;
-          }
-        }
-        return sum;
-      };
+      const netRuns = [];
       for (const rr of rawRuns) {
-        // rogi trasy na środkach komórek (zmiany kierunku) → schodki wyprostowane (najwyżej dwa odcinki: prosty
-        // i 45°, gdy nie drożej) → wiązka ze STAŁYM przesunięciem na każdy prosty odcinek; końce przez węzły
+        const cells = rr.cells, last = cells.length - 1;
+        // rogi trasy na środkach komórek (zmiany kierunku) → schodki wyprostowane → przyłącza urządzeń na końcach
         const pts = [];
-        for (let q = 0; q < rr.cells.length; q++) {
-          const k = rr.cells[q];
-          if (q > 0 && q < rr.cells.length - 1) {
-            const a = rr.cells[q - 1], b = rr.cells[q + 1];
-            if (dirOf(a, k) === dirOf(k, b)) continue;
-          }
+        for (let q = 0; q <= last; q++) {
+          const k = cells[q];
+          if (q > 0 && q < last && dirOf(cells[q - 1], k) === dirOf(k, cells[q + 1])) continue;
           pts.push([cxOf(k), cyOf(k)]);
         }
-        const corners = straightenOctilinear(pts, pathCost);
-        const A = nodeInfo.get(rr.cells[0]), B = nodeInfo.get(rr.cells[rr.cells.length - 1]);
+        let corners = straightenOctilinear(pts, pathCost);
+        const kA = cells[0], kB = cells[last];
+        const devA = term[kA], devB = term[kB];
+        let A, B;
+        if (devA >= 0) { A = anchorFor(devA, kA, cells[1]); corners.unshift(A); } else { const n0 = nodeInfo.get(kA); A = [n0.x, n0.y]; }
+        if (devB >= 0) { B = anchorFor(devB, kB, cells[last - 1]); corners.push(B); } else { const n1 = nodeInfo.get(kB); B = [n1.x, n1.y]; }
+        corners = dropCollinear(corners);
         rr.corners = corners;
-        rr.pts = offsetRun(corners, [A.x, A.y], [B.x, B.y], rr.halfW, D, T, fsAt, inAt, mirror);
-        rr.nodeA = A; rr.nodeB = B;
-        // pojemność rowu: wiązka nie szersza niż rów (mediana szerokości na widocznej długości) i wypełnia co
-        // najmniej fillShare jego szerokości — jak w sprite'ach, gdzie rowy są pełne rur
-        const capW = runGapWidth(rr.pts, D, fsAt);
-        if (capW > 0) {
-          const sq = seqs[Math.min(rr.gondola, seqs.length - 1)];
-          let w = 0, nCap = 0;
-          for (let k2 = 0; k2 < T.maxPipes; k2++) {
-            const add = 2 * sq.radii[k2] + (k2 ? sq.gap : 0);
-            if (w + add > capW - 2 * T.clearDu) break;
-            w += add; nCap++;
-          }
-          nCap = Math.max(1, nCap);
-          const nMin = Math.min(nCap, Math.max(2, Math.round(T.fillShare * nCap)));
-          const n2 = clamp(rr.n, nMin, nCap);
-          if (n2 !== rr.n) {
-            rr.n = n2;
-            rr.radii = sq.radii.slice(0, n2);
-            rr.halfW = (rr.radii.reduce((a, r) => a + 2 * r, 0) + sq.gap * (n2 - 1)) * 0.5;
-            rr.rMax = Math.max(...rr.radii);
-            rr.pts = offsetRun(rr.corners, [A.x, A.y], [B.x, B.y], rr.halfW, D, T, fsAt, inAt, mirror);
+        rr.A = A; rr.B = B; rr.devA = devA; rr.devB = devB;
+        rr.nodeA = devA >= 0 ? null : nodeInfo.get(kA);
+        rr.nodeB = devB >= 0 ? null : nodeInfo.get(kB);
+        const place = () => {
+          rr.pts = offsetRun(rr.corners, A, B, rr.halfW, D, T, clrAt, fsAt, inAt, mirror);
+          rr.poly = filletPolyline(rr.pts, Math.max(T.filletK * (rr.halfW + rr.rMax), 2.2) * D);
+        };
+        place();
+        // pojemność rowu (tylko rury): wiązka nie szersza niż rów i wypełnia co najmniej fillShare jego szerokości —
+        // najwyżej fillExtra rur ponad obciążenie (grubość dalej z liczby tras)
+        if (id !== 'power') {
+          const capW = runGapWidth(rr.pts, D, clrAt);
+          if (capW > 0) {
+            let w = 0, nCap = 0;
+            for (let k2 = 0; k2 < T.maxPipes; k2++) {
+              const add = 2 * sq.radii[k2] + (k2 ? sq.gap : 0);
+              if (w + add > capW - 2 * T.clearDu) break;
+              w += add; nCap++;
+            }
+            nCap = Math.max(1, nCap);
+            const nMin = Math.min(nCap, rr.nBase + T.fillExtra, Math.max(1, Math.round(T.fillShare * nCap)));
+            const n2 = clamp(rr.n, nMin, Math.max(nCap, 1));
+            if (n2 !== rr.n) { setN(rr, n2); place(); }
           }
         }
+        // cała szerokość wiązki w sylwetce z zapasem — inaczej cieńsza wiązka, potem cieńsze rury
+        while (!fitsHull(rr.poly, rr.halfW * D) && rr.n > 1) { setN(rr, rr.n - 1); place(); stats.shrunk++; }
+        for (let sc = 0.7; sc > 0.3 && !fitsHull(rr.poly, rr.halfW * D); sc -= 0.2) {
+          rr.radii = rr.radii.map((r) => r * sc); rr.halfW = bundleHalfW(rr.radii, sq.gap * sc); rr.rMax = Math.max(...rr.radii);
+          place(); stats.shrunk++;
+        }
+        if (!fitsHull(rr.poly, rr.halfW * D)) stats.outside++;
+        netRuns.push(rr);
       }
-      // biegi do wyjścia (najwyżej maxRuns — przy nadmiarze odpadają najmniej obciążone)
-      rawRuns.sort((a, b) => b.count - a.count || a.cells[0] - b.cells[0]);
-      const keep = rawRuns.slice(0, T.maxRuns - Math.min(T.maxRuns - 1, manual.length));
+      // biegi do wyjścia (przy nadmiarze odpadają najmniej obciążone) — węzły grafu na końcach łamanych
+      netRuns.sort((a, b) => b.count - a.count || a.cells[0] - b.cells[0]);
+      const room = T.maxRuns - Math.min(T.maxRuns - 1, manual.length) - runs.length;
+      const keep = netRuns.slice(0, Math.max(0, room));
+      const out = [];
       for (const rr of keep) {
-        const R = Math.max(T.filletK * (rr.halfW + rr.rMax), 2.2) * D;
-        const poly = filletPolyline(rr.pts, R);
-        const polys = [poly];
-        if (mirror) polys.push(poly.map(([x, y]) => [x, -y]));
-        runs.push({
-          radii: rr.radii, halfW: rr.halfW, gap: rr.gap, rMax: rr.rMax, mat: 0, over: false, phase: rand() * T.clampDu * D,
-          count: rr.count, n: rr.n, polys, auto: true, nodeA: rr.nodeA, nodeB: rr.nodeB, gondola: rr.gondola
+        const polys = [rr.poly];
+        const endIds = (mir) => [[rr.devA, rr.cells[0], rr.A], [rr.devB, rr.cells[rr.cells.length - 1], rr.B]].map(([dev, cell, P]) => {
+          const y = mir ? -P[1] : P[1];
+          if (dev >= 0) return addNode(`${id}:t:${mir ? 1 : 0}:${dev}:${cell}`, P[0], y, mir ? mirrorIdx(dev) : dev, id);
+          return addNode(`${id}:n:${mir ? 1 : 0}:${cell}`, P[0], y, -1, id);
         });
+        const ends = [endIds(false)];
+        if (mirror) { polys.push(rr.poly.map(([x, y]) => [x, -y])); ends.push(endIds(true)); }
+        const run = {
+          net: id, radii: rr.radii, halfW: rr.halfW, gap: id === 'power' ? sq.gap : sq.gap, rMax: rr.rMax, mat: sq.mat, over: false,
+          phase: rand() * T.clampDu * D, count: rr.count, n: rr.n, polys, ends, auto: true
+        };
+        runs.push(run);
+        out.push({ run, rr });
+        stamp(rr.poly, rr.halfW * D);
       }
       // ── osprzęt sieci ──
-      autoFittings(runs.filter((r) => r.auto), fits, { D, T, rand, visAt, fsAt, gondolas, mirror });
-      for (const r of runs) { delete r.nodeA; delete r.nodeB; }     // wynik bez odwołań do węzłów (JSON, worker)
-      stats.targets = targets.length;
-      stats.gondolas = G;
+      autoFittings(id, out, fits, { D, T, rand, visAt, clrAt, mirror, modules });
+      tm[`biegi_${id}`] = now() - tq;
     }
+    stats.systems = { cores: systems.cores.length, tanks: systems.tanks.length, mains: systems.mains.length, sides: systems.sides.length, consumers: systems.consumers.length };
   }
 
   // ── rury ręczne: bieg na rurę (kopia lustra w tym samym biegu); domyślnie leżą też na płytach ──
@@ -771,7 +951,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     const R = Math.max(T.filletK * (halfW + rMax), 2.2) * D;
     const polys = list.map((q) => filletPolyline(q.pts, R));
     radii = radii.slice(0, 8);
-    runs.push({ radii, halfW, gap, rMax, mat, over: p.over !== false, phase: r() * T.clampDu * D, count: n, n, polys, auto: false });
+    runs.push({ net: 'manual', radii, halfW, gap, rMax, mat, over: p.over !== false, phase: r() * T.clampDu * D, count: n, n, polys, auto: false });
     // zaślepki na końcach (widocznych)
     for (const poly of polys) {
       for (const end of [0, 1]) {
@@ -788,7 +968,75 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   stats.runs = runs.length;
   stats.fits = fits.length;
   stats.ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
-  return { runs, fits, clampJ: T.clampDu * D, detail: D, stats };
+  return { runs, fits, graph, clampJ: T.clampDu * D, detail: D, stats };
+}
+
+/**
+ * Kontrola sieci (testy, panel dema): wolne końce (koniec łamanej poza przyłączem urządzenia, który nie styka się
+ * z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż `marginDu` jd — próbki co pół jd),
+ * urządzenia bez drogi do reaktora (kable) i silniki bez drogi paliwa ze zbiornika przez reaktor. `field` —
+ * buildHullField z tą siecią. Zwraca { freeEnds, outside, unpowered: [indeksy modułów], unfueled: [...], runs }.
+ */
+export function pipeNetworkCheck(net, field, marginDu = 0.5) {
+  const out = { freeEnds: 0, outside: 0, unpowered: [], unfueled: [], runs: 0 };
+  if (!net) return out;
+  const modules = field.expanded.modules;
+  const D = net.detail;
+  const S = fieldSampler(field);
+  const inAt = insideDepthSampler(field, S, false);
+  const deg = new Map();
+  const adj = new Map();
+  const edge = (net2, a, b) => {
+    for (const [p, q] of [[a, b], [b, a]]) {
+      const key = `${net2}:${p}`;
+      if (!adj.has(key)) adj.set(key, []);
+      adj.get(key).push(q);
+    }
+    deg.set(a, (deg.get(a) || 0) + 1);
+    deg.set(b, (deg.get(b) || 0) + 1);
+  };
+  for (const r of net.runs) {
+    if (!r.auto) continue;
+    out.runs++;
+    r.polys.forEach((poly, pi) => {
+      const [a, b] = r.ends[pi];
+      edge(r.net, a, b);
+      // cała szerokość wiązki z zapasem wewnątrz sylwetki
+      const need = (r.halfW + marginDu) * D;
+      let bad = false;
+      for (let q = 0; q + 1 < poly.length && !bad; q++) {
+        const p0 = poly[q], p1 = poly[q + 1];
+        const L = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+        const n = Math.max(1, Math.ceil(L / (0.5 * D)));
+        for (let t = 0; t <= n; t++) if (inAt(p0[0] + (p1[0] - p0[0]) * t / n, p0[1] + (p1[1] - p0[1]) * t / n) < need) { bad = true; break; }
+      }
+      if (bad) out.outside++;
+    });
+  }
+  const nodes = net.graph?.nodes || [];
+  for (const [id, d] of deg) if (d === 1 && !(nodes[id]?.dev >= 0)) out.freeEnds++;
+  // drogi: urządzenie → reaktor (kable), silnik → reaktor (rury do silników) i reaktor → zbiornik (dopływ)
+  const reach = (netId, from, ok) => {
+    const seenN = new Set([from]);
+    const q = [from];
+    for (let i = 0; i < q.length; i++) {
+      const v = q[i];
+      if (i > 0 && nodes[v].dev >= 0 && ok(modules[nodes[v].dev])) return true;
+      if (i > 0 && nodes[v].dev >= 0) continue;     // przez urządzenie trasa nie przechodzi
+      for (const w of adj.get(`${netId}:${v}`) || []) if (!seenN.has(w)) { seenN.add(w); q.push(w); }
+    }
+    return false;
+  };
+  const termsOf = (netId, dev) => nodes.map((n, i) => (n.net === netId && n.dev === dev ? i : -1)).filter((i) => i >= 0);
+  const sys = hullDesignSystems(modules);
+  if (!sys.cores.length) return out;
+  const isCore = (m) => m.type === 'reactor';
+  for (const i of sys.consumers) if (!termsOf('power', i).some((t) => reach('power', t, isCore))) out.unpowered.push(i);
+  const tankReachesCore = sys.cores.some((ci) => termsOf('supply', ci).some((t) => reach('supply', t, (m) => m.type === 'fuel_tank')));
+  for (const i of [...sys.mains, ...sys.sides]) {
+    if (!tankReachesCore || !termsOf('feed', i).some((t) => reach('feed', t, isCore))) out.unfueled.push(i);
+  }
+  return out;
 }
 
 /**
@@ -872,13 +1120,14 @@ function dropFolds(pts) {
 /**
  * Wiązka w rowie: STAŁE przesunięcie w poprzek na każdy prosty odcinek trasy, rogi = przecięcia przesuniętych prostych
  * (kolana zostają 45° / 90°, wiązka biegnie równolegle do ściany — bez falowania za ząbkami obrysu). Przesunięcie
- * odcinka: najmniejsze, przy którym wiązka ma luz od ścian (pole wolnego miejsca) na całej widocznej długości odcinka
- * (pod płytą — bez wymagań), a oś na całej długości leży w sylwetce; bez takiego — najlepszy luz. Odcinek końcowy
- * biegnie przez swój węzeł (węzeł przesunięty w wolne miejsce, wspólny dla biegów rozgałęzienia), a gdy tam nie ma
- * luzu — wchodzi na swoją prostą kolanem 45° tuż za węzłem. Odcinek odwrócony przez przesunięcia: kolano przy węźle
- * znika, odcinek końcowy za węzłem odpada, środkowy — sąsiad przesunięty tak, by odcinek miał długość zero.
+ * odcinka: najmniejsze, przy którym wiązka ma luz od ścian i od wcześniejszych sieci (`clrAt`) na całej widocznej
+ * długości odcinka (`visAt` — pole geometrii; pod płytą — bez wymagań), a CAŁA szerokość na całej długości leży
+ * w sylwetce z zapasem; bez takiego — najlepszy luz. Odcinek końcowy biegnie przez swój węzeł (węzeł przesunięty
+ * w wolne miejsce, wspólny dla biegów rozgałęzienia; przyłącze urządzenia), a gdy tam nie ma luzu — wchodzi na swoją
+ * prostą kolanem 45° tuż za węzłem. Odcinek odwrócony przez przesunięcia: kolano przy węźle znika, odcinek końcowy za
+ * węzłem odpada, środkowy — sąsiad przesunięty tak, by odcinek miał długość zero.
  */
-function offsetRun(corners, A, B, halfW, D, T, fsAt, inAt, mirror) {
+function offsetRun(corners, A, B, halfW, D, T, clrAt, visAt, inAt, mirror) {
   const m = corners.length;
   if (m < 2) return [[A[0], A[1]], [B[0], B[1]]];
   const segs = [];
@@ -890,6 +1139,7 @@ function offsetRun(corners, A, B, halfW, D, T, fsAt, inAt, mirror) {
   }
   const ns = segs.length;
   const clear = T.clearDu * D, maxS = T.shiftDu * D, hw = halfW * D, jogMin = 0.25 * D;
+  const inNeed = hw + (T.marginDu ?? 0.6) * D;
   const S0 = segs[0], S1 = segs[ns - 1];
   // węzły względem prostych odcinków końcowych: przesunięcie w poprzek (o) i położenie wzdłuż (t)
   const oA = (A[0] - S0.a[0]) * S0.nx + (A[1] - S0.a[1]) * S0.ny;
@@ -904,14 +1154,14 @@ function offsetRun(corners, A, B, halfW, D, T, fsAt, inAt, mirror) {
       const t = lo + (hi - lo) * q / n;
       const x = g.a[0] + g.ux * t, y = g.a[1] + g.uy * t;
       all.push(x, y);
-      if (fsAt(x, y) >= -1.5 * D) vis.push(x, y);
+      if (visAt(x, y) >= -1.5 * D) vis.push(x, y);
     }
     const score = (o) => {
-      for (let q = 0; q < all.length; q += 2) if (inAt(all[q] + g.nx * o, all[q + 1] + g.ny * o) < D) return -Infinity;
+      for (let q = 0; q < all.length; q += 2) if (inAt(all[q] + g.nx * o, all[q + 1] + g.ny * o) < inNeed) return -Infinity;
       let v = Infinity;
       for (let q = 0; q < vis.length; q += 2) {
         const cx = vis[q] + g.nx * o, cy = vis[q + 1] + g.ny * o;
-        const cl = Math.min(fsAt(cx + g.nx * hw, cy + g.ny * hw), fsAt(cx - g.nx * hw, cy - g.ny * hw), fsAt(cx, cy) - hw);
+        const cl = Math.min(clrAt(cx + g.nx * hw, cy + g.ny * hw), clrAt(cx - g.nx * hw, cy - g.ny * hw), clrAt(cx, cy) - hw);
         if (cl < v) v = cl;
       }
       return v;
@@ -963,8 +1213,8 @@ function offsetRun(corners, A, B, halfW, D, T, fsAt, inAt, mirror) {
     if (end0 && jA() > 0) { jogA = false; S0.o = oA; continue; }
     if (end1 && jB() > 0) { jogB = false; S1.o = oB; continue; }
     if (ns === 1) return [[A[0], A[1]], [B[0], B[1]]];
-    if (end0) return offsetRun(corners.slice(1), A, B, halfW, D, T, fsAt, inAt, mirror);
-    if (end1) return offsetRun(corners.slice(0, -1), A, B, halfW, D, T, fsAt, inAt, mirror);
+    if (end0) return offsetRun(corners.slice(1), A, B, halfW, D, T, clrAt, visAt, inAt, mirror);
+    if (end1) return offsetRun(corners.slice(0, -1), A, B, halfW, D, T, clrAt, visAt, inAt, mirror);
     // środkowy: przesunięcie sąsiada (najpierw nie-końcowego) tak, by odcinek miał długość zero (długość liniowa w o)
     const fixWith = (h) => {
       const o0 = h.o, v0 = span(bad);
@@ -1017,118 +1267,151 @@ function runGapWidth(pts, D, fsAt) {
   return ws[ws.length >> 1];
 }
 
-/** Długość łamanej. */
-function polyLength(poly) {
-  let L = 0;
-  for (let i = 0; i + 1 < poly.length; i++) L += Math.hypot(poly[i + 1][0] - poly[i][0], poly[i + 1][1] - poly[i][1]);
-  return L;
-}
-
-/** Punkt i kierunek łamanej na długości s. */
-function polyAt(poly, s) {
-  let acc = 0;
-  for (let i = 0; i + 1 < poly.length; i++) {
-    const a = poly[i], b = poly[i + 1];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (acc + L >= s || i + 2 === poly.length) {
-      const t = L > 0 ? clamp((s - acc) / L, 0, 1) : 0;
-      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, rot: Math.atan2(b[1] - a[1], b[0] - a[0]) };
-    }
-    acc += L;
-  }
-  const p = poly[poly.length - 1];
-  return { x: p[0], y: p[1], rot: 0 };
+/** Próbnik łamanej po długości łuku (sumy prefiksowe, wyszukiwanie binarne): at(s) → { x, y, rot }, L. */
+function polyWalker(poly) {
+  const n = poly.length;
+  const acc = new Float64Array(n);
+  for (let i = 1; i < n; i++) acc[i] = acc[i - 1] + Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]);
+  const L = acc[n - 1];
+  const at = (s) => {
+    if (n < 2) return { x: poly[0][0], y: poly[0][1], rot: 0 };
+    let lo = 0, hi = n - 2;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (acc[mid] <= s) lo = mid; else hi = mid - 1; }
+    const a = poly[lo], b = poly[lo + 1];
+    const len = acc[lo + 1] - acc[lo];
+    const t = len > 0 ? clamp((s - acc[lo]) / len, 0, 1) : 0;
+    return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, rot: Math.atan2(b[1] - a[1], b[0] - a[0]) };
+  };
+  return { at, L };
 }
 
 /**
- * Osprzęt sieci generowanej (tylko burta y ≤ 0 przy lustrze — kopia lustra na końcu): skrzynki rozdzielcze
- * w rozgałęzieniach, kołnierze na wejściach pod płyty / w moduły, zaślepki na końcach, zawory na długich odcinkach,
- * pompy na wiązkach przy gondolach, kolektory przy gondolach.
+ * Osprzęt sieci `net` (tylko burta y ≤ 0 przy lustrze — kopia lustra na końcu): rozgałęzienia (rury — skrzynka
+ * rozdzielcza albo obejma-trójnik, kable — puszka), przejścia rów ↔ płyta (rury — kołnierz, kable — przepust), zawory
+ * i pompy na długich odcinkach rur, puszki na długich odcinkach kabli, PRZYŁĄCZA przy urządzeniach (rury — kołnierz,
+ * przy zbiorniku pompa, przy gondoli kolektor; kable — dławnica; reaktor bez bryły — rozdzielnia na końcu pnia).
  */
-function autoFittings(runs, fits, ctx) {
-  const { D, T, rand, visAt, fsAt, mirror } = ctx;
+function autoFittings(net, list, fits, ctx) {
+  const { D, T, rand, visAt, clrAt, mirror, modules } = ctx;
+  const cable = net === 'power';
   const own = [];
   const free = (x, y, r) => own.every((f) => Math.hypot(f.x - x, f.y - y) > (r + Math.max(f.hw, f.hh) * D) * 0.8);
   const put = (f) => { own.push(f); };
-  // skrzynki w rozgałęzieniach (stopień ≥ 3), oś = bieg o największej liczbie tras
+  // rozgałęzienia (stopień ≥ 3), oś = bieg o największym obciążeniu
   const nodes = new Map();
-  for (const r of runs) for (const [nd, poly, end] of [[r.nodeA, r.polys[0], 0], [r.nodeB, r.polys[0], 1]]) {
-    if (!nd || nd.deg < 3) continue;
-    if (!nodes.has(nd)) nodes.set(nd, []);
-    nodes.get(nd).push({ r, poly, end });
+  for (const { run, rr } of list) {
+    const poly = run.polys[0];
+    for (const [nd, end] of [[rr.nodeA, 0], [rr.nodeB, 1]]) {
+      if (!nd || nd.deg < 3) continue;
+      if (!nodes.has(nd)) nodes.set(nd, []);
+      nodes.get(nd).push({ run, poly, end });
+    }
   }
-  for (const [nd, list] of nodes) {
+  for (const [nd, items] of nodes) {
     if (!visAt(nd.x, nd.y)) continue;
-    list.sort((a, b) => b.r.count - a.r.count);
-    const main = list[0];
+    items.sort((a, b) => b.run.count - a.run.count);
+    const main = items[0];
     const p = main.end ? main.poly[main.poly.length - 2] : main.poly[1];
     const rot = Math.atan2(p[1] - nd.y, p[0] - nd.x);
     let side = 0, total = 0;
-    for (const e of list.slice(1)) side = Math.max(side, e.r.halfW);
-    for (const e of list) total += e.r.n;
-    // duże rozgałęzienie — skrzynka rozdzielcza (czasem z kółkiem zaworu), małe — obejma-trójnik w poprzek wiązki
-    if (total >= 6 || nd.deg >= 4) {
-      const hw = Math.max(side + 1.4, 2.6), hh = main.r.halfW + 1.5;
-      put({ type: HD_PIPE_FIT.box, x: nd.x, y: nd.y, rot, hw, hh, p1: total >= 9 && rand() < 0.4 ? 1 : 0, p2: main.r.rMax + 1.4 });
+    for (const e of items.slice(1)) side = Math.max(side, e.run.halfW);
+    for (const e of items) total += e.run.n;
+    if (cable) {
+      // puszka kablowa: płaska skrzynka z pokrywą i dławnicami po bokach
+      put({ type: HD_PIPE_FIT.jbox, x: nd.x, y: nd.y, rot, hw: Math.max(side + 1.2, 2.2), hh: main.run.halfW + 1.3, p1: 0, p2: main.run.rMax + 1.1 });
+    } else if (total >= 6 || nd.deg >= 4) {
+      const hw = Math.max(side + 1.4, 2.6), hh = main.run.halfW + 1.5;
+      put({ type: HD_PIPE_FIT.box, x: nd.x, y: nd.y, rot, hw, hh, p1: total >= 9 && rand() < 0.4 ? 1 : 0, p2: main.run.rMax + 1.4 });
     } else {
-      put({ type: HD_PIPE_FIT.collar, x: nd.x, y: nd.y, rot, hw: Math.max(1.3, side + 0.6), hh: main.r.halfW + 0.9, p1: 0, p2: main.r.rMax + 0.6 });
+      put({ type: HD_PIPE_FIT.collar, x: nd.x, y: nd.y, rot, hw: Math.max(1.3, side + 0.6), hh: main.run.halfW + 0.9, p1: 0, p2: main.run.rMax + 0.6 });
     }
   }
-  // wzdłuż biegów: kołnierze na przejściach rów ↔ przykryte, zaślepki, zawory, pompy
-  for (const r of runs) {
-    const poly = r.polys[0];
-    const L = polyLength(poly);
+  // wzdłuż biegów: przejścia rów ↔ przykryte, zawory, pompy, puszki
+  for (const { run: r } of list) {
+    const pw = polyWalker(r.polys[0]);
+    const L = pw.L;
     const st = 0.7 * D;
     let prevVis = null;
-    let visRun = 0, nextValve = T.valveDu * D * (0.45 + 0.6 * rand());
+    let visRun = 0, nextValve = (cable ? T.boxDu : T.valveDu) * D * (0.45 + 0.6 * rand());
     for (let s = 0; s <= L; s += st) {
-      const a = polyAt(poly, s);
+      const a = pw.at(s);
       const v = visAt(a.x, a.y);
       if (prevVis !== null && v !== prevVis) {
-        // kołnierz po stronie widocznej, ~1 jd od przejścia
+        // kołnierz / przepust po stronie widocznej, ~1 jd od przejścia
         const sv = v ? s + 0.9 * D : s - st - 0.9 * D;
-        const b = polyAt(poly, clamp(sv, 0, L));
-        if (visAt(b.x, b.y) && free(b.x, b.y, (r.halfW + 0.8) * D)) put({ type: HD_PIPE_FIT.collar, x: b.x, y: b.y, rot: b.rot, hw: 1.1, hh: r.halfW + 0.75, p1: 0, p2: r.rMax + 0.55 });
+        const b = pw.at(clamp(sv, 0, L));
+        if (visAt(b.x, b.y) && free(b.x, b.y, (r.halfW + 0.8) * D)) put({ type: HD_PIPE_FIT.collar, x: b.x, y: b.y, rot: b.rot, hw: 1.1, hh: r.halfW + 0.75, p1: cable ? 2 : 0, p2: r.rMax + 0.55 });
       }
       visRun = v ? visRun + st : 0;
-      if (v && visRun > 10 * D && s > nextValve && s < L - 8 * D && r.n >= 2) {
-        const b = polyAt(poly, s - 4 * D);
+      if (v && visRun > 10 * D && s > nextValve && s < L - 8 * D && (cable || r.n >= 2)) {
+        const b = pw.at(s - 4 * D);
         if (free(b.x, b.y, (r.halfW + 2) * D)) {
           const kindV = rand();
-          if (kindV < 0.45) put({ type: HD_PIPE_FIT.valve, x: b.x, y: b.y, rot: b.rot, hw: 2.0, hh: r.halfW + 1.2, p1: Math.min(1.8, r.halfW * 0.5 + 0.7), p2: r.rMax + 1.5 });
+          if (cable) {
+            if (kindV < 0.5) put({ type: HD_PIPE_FIT.jbox, x: b.x, y: b.y, rot: b.rot, hw: 1.8, hh: r.halfW + 1.2, p1: 1, p2: r.rMax + 1.0 });
+          } else if (kindV < 0.45) put({ type: HD_PIPE_FIT.valve, x: b.x, y: b.y, rot: b.rot, hw: 2.0, hh: r.halfW + 1.2, p1: Math.min(1.8, r.halfW * 0.5 + 0.7), p2: r.rMax + 1.5 });
           else if (kindV < 0.8 || r.count < 4) put({ type: HD_PIPE_FIT.collar, x: b.x, y: b.y, rot: b.rot, hw: 1.6, hh: r.halfW + 0.8, p1: 1, p2: r.rMax + 0.6 });
           else put({ type: HD_PIPE_FIT.pump, x: b.x, y: b.y, rot: b.rot, hw: 2.6, hh: r.halfW + 2.0, p1: 0, p2: r.rMax + 2.0 });
         }
-        nextValve = s + T.valveDu * D * (0.7 + 0.6 * rand());
+        nextValve = s + (cable ? T.boxDu : T.valveDu) * D * (0.7 + 0.6 * rand());
       }
       prevVis = v;
     }
-    // zaślepki: wolne (widoczne) końce biegu w liściach
-    for (const [nd, end] of [[r.nodeA, 0], [r.nodeB, 1]]) {
-      if (!nd || nd.deg !== 1) continue;
-      const a = end ? poly[poly.length - 1] : poly[0], b = end ? poly[poly.length - 2] : poly[1];
-      if (!b || !visAt(a[0], a[1])) continue;
-      const rot = Math.atan2(a[1] - b[1], a[0] - b[0]);
-      const x = a[0] - Math.cos(rot) * 0.8 * D, y = a[1] - Math.sin(rot) * 0.8 * D;
-      if (free(x, y, (r.halfW + 0.6) * D)) put({ type: HD_PIPE_FIT.cap, x, y, rot, hw: 1.0, hh: r.halfW + 0.7, p1: 0, p2: r.rMax + 0.6 });
+  }
+  // przyłącza urządzeń: miejsce, gdzie łamana wychodzi z obrysu modułu (widoczne) — od strony urządzenia
+  for (const { run: r, rr } of list) {
+    const poly = r.polys[0];
+    const pw = polyWalker(poly);
+    const L = pw.L;
+    for (const [dev, end] of [[rr.devA, 0], [rr.devB, 1]]) {
+      if (dev < 0) continue;
+      const m = modules[dev];
+      let hit = null;
+      for (let s = 0; s <= L; s += 0.4 * D) {
+        const a = pw.at(end ? L - s : s);
+        if (pipeModuleSdf(m, a.x, a.y) > 0.4 * D) { hit = { ...a, s }; break; }
+      }
+      const drawn = isObstacle(m);
+      if (!drawn) {
+        // reaktor bez bryły (wewnątrz kadłuba): na końcu pnia rozdzielnia, gdy widać ją z rowu
+        const P = end ? poly[poly.length - 1] : poly[0], Q = end ? poly[poly.length - 2] : poly[1];
+        if (Q && visAt(P[0], P[1])) {
+          const rot = Math.atan2(Q[1] - P[1], Q[0] - P[0]);
+          put({ type: HD_PIPE_FIT.hub, x: P[0], y: P[1], rot, hw: r.halfW + 1.6, hh: r.halfW + 1.6, p1: cable ? 1 : 0, p2: r.rMax + 1.6 });
+        }
+        continue;
+      }
+      if (!hit) continue;
+      const b = pw.at(end ? L - hit.s - 0.5 * D : hit.s + 0.5 * D);
+      if (!visAt(b.x, b.y)) continue;
+      const rot = b.rot;
+      if (cable) put({ type: HD_PIPE_FIT.gland, x: b.x, y: b.y, rot, hw: 1.5, hh: r.halfW + 1.0, p1: r.n, p2: r.rMax + 0.9 });
+      else if (m.type === 'fuel_tank') put({ type: HD_PIPE_FIT.pump, x: b.x, y: b.y, rot, hw: 2.6, hh: r.halfW + 2.0, p1: 0, p2: r.rMax + 2.0 });
+      else put({ type: HD_PIPE_FIT.collar, x: b.x, y: b.y, rot, hw: 1.3, hh: r.halfW + 0.9, p1: 1, p2: r.rMax + 0.7 });
     }
   }
-  // gondole: kolektor (stos krótkich rur wzdłuż osi gondoli) w rowie przy szyjce
-  for (const t of ctx.gondolas) {
-    const m = t.mod;
-    if (!m) continue;
-    const cr = Math.cos(m.rot || 0), sr = Math.sin(m.rot || 0);
-    let best = null;
-    for (const [lx, ly] of [[0.35 * m.w, -(m.h + 5 * D)], [0.35 * m.w, m.h + 5 * D], [m.w + 6 * D, 0], [0.75 * m.w, -(m.h + 5 * D)], [0.75 * m.w, m.h + 5 * D]]) {
-      const x = m.x + lx * cr - ly * sr, y = m.y + lx * sr + ly * cr;
-      if (mirror && y > -1 * D) continue;
-      const f = fsAt(x, y);
-      if (f > 2.6 * D && visAt(x, y) && (!best || f > best.f)) best = { x, y, f, along: lx > m.w };
+  // gondole MAIN: kolektor (stos krótkich rur wzdłuż osi gondoli) w rowie przy szyjce
+  if (net === 'feed') {
+    const seenG = new Set();
+    for (const { rr } of list) {
+      for (const dev of [rr.devA, rr.devB]) {
+        if (dev < 0 || seenG.has(dev) || modules[dev].type !== 'engine') continue;
+        seenG.add(dev);
+        const m = modules[dev];
+        const cr = Math.cos(m.rot || 0), sr = Math.sin(m.rot || 0);
+        let best = null;
+        for (const [lx, ly] of [[0.35 * m.w, -(m.h + 5 * D)], [0.35 * m.w, m.h + 5 * D], [m.w + 6 * D, 0], [0.75 * m.w, -(m.h + 5 * D)], [0.75 * m.w, m.h + 5 * D]]) {
+          const x = m.x + lx * cr - ly * sr, y = m.y + lx * sr + ly * cr;
+          if (mirror && y > -1 * D) continue;
+          const f = clrAt(x, y);
+          if (f > 2.6 * D && visAt(x, y) && (!best || f > best.f)) best = { x, y, f, along: lx > m.w };
+        }
+        if (!best) continue;
+        const hh = Math.min(best.f / D - 0.6, 6.5), hw = Math.min(0.42 * m.w / D, 10);
+        if (hh < 2.2 || hw < 2.5) continue;
+        put({ type: HD_PIPE_FIT.collector, x: best.x, y: best.y, rot: (m.rot || 0) + (best.along ? Math.PI / 2 : 0), hw: best.along ? hh : hw, hh: best.along ? hw : hh, p1: clamp(Math.round(2 * Math.min(hh, hw) / 2.1), 3, 8), p2: 2.4 });
+      }
     }
-    if (!best) continue;
-    const hh = Math.min(best.f / D - 0.6, 6.5), hw = Math.min(0.42 * m.w / D, 10);
-    if (hh < 2.2 || hw < 2.5) continue;
-    put({ type: HD_PIPE_FIT.collector, x: best.x, y: best.y, rot: (m.rot || 0) + (best.along ? Math.PI / 2 : 0), hw: best.along ? hh : hw, hh: best.along ? hw : hh, p1: clamp(Math.round(2 * Math.min(hh, hw) / 2.1), 3, 8), p2: 2.4 });
   }
   for (const f of own) {
     fits.push(f);
@@ -1225,12 +1508,13 @@ export function rasterPipeNetwork(net, grid) {
   return { a: A, b: B, mask, count: Math.min(255, net.runs.length) };
 }
 
-/** Rury na tercję długości (rufa, środek, dziób): Σ liczba rur × długość widocznych biegów generowanych [j.]. */
-export function pipeTercileLoad(net, bounds) {
+/** Rury na tercję długości (rufa, środek, dziób): Σ liczba rur × długość biegów generowanych [j.] (`net` — tylko ta sieć). */
+export function pipeTercileLoad(net, bounds, onlyNet = null) {
   const out = [0, 0, 0];
   if (!net) return out;
   const L = bounds.maxX - bounds.minX;
   for (const r of net.runs) {
+    if (onlyNet && r.net !== onlyNet) continue;
     for (const poly of r.polys) {
       for (let i = 0; i + 1 < poly.length; i++) {
         const a = poly[i], b = poly[i + 1];

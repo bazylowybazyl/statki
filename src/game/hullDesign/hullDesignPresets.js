@@ -11,6 +11,7 @@
 import { normalizeHullDesign, symPolyPoints } from './hullDesignSchema.js';
 import { axisHalfChain } from './hullDesignRegularize.js';
 import { HD_TN_TRACE, tnLoop } from './hullDesignTNTrace.js';
+import { applySystemSlots } from './hullDesignSystemSlots.js';
 
 /** Bloki prostokąta bx0..bx1 × by0..by1 (włącznie) na poziomie `level`. */
 function fill(out, bx0, bx1, by0, by1, level) {
@@ -470,7 +471,8 @@ export const HD_PRESETS = Object.freeze({
 });
 export const HD_PRESET_KEYS = Object.freeze(Object.keys(HD_PRESETS));
 
-/** Świeża kopia gotowego projektu (znormalizowana). */
+/** Świeża kopia gotowego projektu (znormalizowana) ze slotami systemów (hullDesignSystemSlots.js). */
 export function hullDesignPreset(key, opts = {}) {
-  return normalizeHullDesign((HD_PRESETS[key] || HD_PRESETS.orbis).make(opts));
+  const k = HD_PRESETS[key] ? key : 'orbis';
+  return normalizeHullDesign(applySystemSlots(k, HD_PRESETS[k].make(opts)));
 }

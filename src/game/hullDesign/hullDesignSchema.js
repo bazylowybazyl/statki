@@ -36,9 +36,10 @@
 //   pipes   RURY ręczne — wiązki wzdłuż łamanej: { pts: [[x, y], …], n (rur w wiązce 1–8, domyślnie 3), mat ('mix' |
 //           'steel' | 'copper'), r (skala średnicy, domyślnie 1), over (false — tylko w rowach maszynowni; domyślnie
 //           leżą też na płytach) }.
-//   pipeNet SIEĆ RUR generowana (src/game/hullDesign/hullDesignPipes.js): { density (0 — brak, domyślnie; 1 — jak
-//           sprite'y TN; do 2), seed }. Trasy od gondol silników przez rowy maszynowni do reaktora, mostka, wież,
-//           pierścieni, wrót i wzdłuż grzbietu — wiązki najgrubsze przy silnikach, z osprzętem.
+//   pipeNet SIEĆ SYSTEMÓW generowana (src/game/hullDesign/hullDesignSystems.js — kto z kim, hullDesignPipes.js —
+//           trasy): { density (0 — brak, domyślnie; 1 — jak sprite'y TN; do 2 — grubsze wiązki), seed }. Rury paliwa
+//           zbiornik → reaktor → każda gondola MAIN i dysza SIDE, kable zasilania reaktor → każde urządzenie; trasy
+//           rowami maszynowni, wiązki z liczby tras, bez wolnych końców.
 //   castles KASZTELE — schodkowe nadbudówki TN (src/game/hullDesign/hullDesignCastles.js): bloki-trapezy z fazą od
 //           burty, drugim węższym piętrem, kratką-radiatorem, iluminatorem i klapami: { x, y, w, h, rot, tiers, taper,
 //           taperIn, level, clip, vent, port, hatches } — rozwijane na wielokąty pięter i moduły.
@@ -110,7 +111,13 @@ export const HD_MODULES = Object.freeze({
   bridge: Object.freeze({ code: 7, label: 'Mostek', w: 26, h: 19, level: 3, parts: { avionics: 2, life_support: 1 } }),
   vent: Object.freeze({ code: 8, label: 'Kratka', w: 14, h: 6, parts: {} }),
   hangar: Object.freeze({ code: 9, label: 'Wrota hangaru', w: 38, h: 32, parts: { hull_plate: 1 } }),
-  well: Object.freeze({ code: 10, label: 'Pierścień', r: 20, parts: { hull_plate: 0.5 } })
+  well: Object.freeze({ code: 10, label: 'Pierścień', r: 20, parts: { hull_plate: 0.5 } }),
+  // SYSTEMY (sieć systemów: src/game/hullDesign/hullDesignSystems.js): zbiornik paliwa (v 0 — walec poziomy we wnęce
+  // maszynowni, wzdłuż osi modułu; 1 — kula), dysza boczna SIDE (gniazdo w poszyciu przy burcie: wydech wzdłuż +x
+  // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa)
+  fuel_tank: Object.freeze({ code: 11, label: 'Zbiornik paliwa', w: 26, h: 11, parts: { hull_plate: 1 } }),
+  thruster_side: Object.freeze({ code: 12, label: 'Dysza SIDE', w: 9, h: 7, parts: { thruster: 1 } }),
+  cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
 
@@ -208,6 +215,8 @@ function normModule(m) {
   if (m.n !== undefined) out.n = clampInt(m.n, 1, 8);
   if (m.doors !== undefined) out.doors = clampInt(m.doors, 1, 6);
   if (m.mirror === false) out.mirror = false;
+  // system na stałym miejscu klasy i kadłuba (sloty presetów: hullDesignSystemSlots.js) — edytor go nie przesuwa
+  if (m.lock === true) out.lock = true;
   return out;
 }
 
