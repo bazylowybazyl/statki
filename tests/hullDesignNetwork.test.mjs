@@ -9,7 +9,7 @@ import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDes
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { hullDesignSystems, powerLoad, systemIssues, HD_SYSTEM_TYPES } from '../src/game/hullDesign/hullDesignSystems.js';
 import { HD_SYSTEM_SLOTS, applySystemSlots } from '../src/game/hullDesign/hullDesignSystemSlots.js';
-import { HD_PIPE_FIT, HD_PIPE_MAT_CABLE, pipeModuleSdf, pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
+import { HD_PIPE_FIT, HD_PIPE_MAT_CABLE, buildPipeNetwork, pipeModuleSdf, pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
 
 const TN = ['custos', 'hasta', 'bellator', 'citadella', 'colossus'];
 const netKey = (net) => JSON.stringify({ runs: net.runs, fits: net.fits, nodes: net.graph.nodes });
@@ -204,6 +204,39 @@ test('sieć ogólna: każdy preset z włączoną siecią (bloki, części, koło
     assert.equal(f.pipeNet.stats.unrouted, 0, `${key}: bez trasy`);
     assert.deepEqual([c.freeEnds, c.outside, c.unpowered.length, c.unfueled.length], [0, 0, 0, 0], `${key}: wolne końce, poza, bez prądu, bez paliwa`);
   }
+});
+
+test('sieć TN przy innych ziarnach (Bellator 0–8): bez wyjątku, każdy bieg ma odcinek (≥ 2 punkty), bez wolnych końców', () => {
+  // AGENT: Bellator z klocków (gałąź klocków, bb579bb6) wywracał stary generator biegiem jednopunktowym w osprzęcie
+  // (ziarna 0–4, 7, 8) — osłona w offsetRun i autoFittings; pole liczone raz, sieć na kopii projektu z innym ziarnem
+  for (const key of TN) {
+    const f = fieldOf(key);
+    for (const seed of key === 'bellator' ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [1, 2]) {
+      const design = { ...f.expanded.design, pipeNet: { ...f.expanded.design.pipeNet, density: 1, seed } };
+      const fs = { ...f, expanded: { ...f.expanded, design } };
+      const net = buildPipeNetwork(fs);
+      const short = net.runs.filter((r) => r.polys.some((p) => p.length < 2)).length;
+      const c = pipeNetworkCheck(net, fs);
+      assert.deepEqual([short, net.stats.unrouted, c.freeEnds], [0, 0, 0], `${key}, ziarno ${seed}: krótkie biegi, bez trasy, wolne końce`);
+    }
+  }
+});
+
+test('kontrola sieci: wiązka za blisko burty (oś w sylwetce, brzeg poza nią) i wiązka za burtą są „poza”', () => {
+  const f = fieldOf('custos');
+  const net = f.pipeNet, D = net.detail;
+  const ri = net.runs.findIndex((r) => r.auto && r.halfW >= 1.5);
+  const r = net.runs[ri];
+  // punkt na prostej burcie (śródokręcie), głęboki na 0,6 pół-szerokości wiązki — próbnik siatki i dokładne
+  // sprawdzenie pierścieniami mają odrzucić
+  const x = 0.5 * (f.bounds.minX + f.bounds.maxX);
+  let y = 0;
+  while (y > f.bounds.minY && -sampleHullField(f, 0, x, y) > 0.6 * r.halfW * D) y -= 0.05 * D;
+  const shifted = (poly) => ({ ...net, runs: net.runs.map((q, i) => i === ri ? { ...q, polys: [poly, ...q.polys.slice(1)] } : q) });
+  assert.ok(-sampleHullField(f, 0, x, y) > 0, 'oś wiązki w sylwetce');
+  assert.equal(pipeNetworkCheck(shifted([[x - 3 * D, y], [x + 3 * D, y]]), f).outside, 1, 'brzeg wiązki za burtą');
+  assert.equal(pipeNetworkCheck(shifted([[x - 3 * D, f.bounds.minY - D], [x + 3 * D, f.bounds.minY - D]]), f).outside, 1, 'wiązka za burtą');
+  assert.equal(pipeNetworkCheck(net, f).outside, 0);
 });
 
 test('receptura: ostrzeżenia z kompletu systemów, dysza SIDE przy burcie nie jest „poza kadłubem”', () => {

@@ -1196,7 +1196,8 @@ export function buildPipeNetwork(field, tuneIn = {}) {
 
 /**
  * Kontrola sieci (testy, panel dema): wolne końce (koniec łamanej poza przyłączem urządzenia, który nie styka się
- * z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż `marginDu` jd — próbki co pół jd),
+ * z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż `marginDu` jd — próbki co pół jd,
+ * próbka za płytka w próbniku siatki sprawdzana dokładnie pierścieniami w polu ramy),
  * urządzenia bez drogi do reaktora (kable) i silniki bez drogi paliwa ze zbiornika przez reaktor. `field` —
  * buildHullField z tą siecią. Zwraca { freeEnds, outside, unpowered: [indeksy modułów], unfueled: [...], runs }.
  */
@@ -1212,6 +1213,25 @@ export function pipeNetworkCheck(net, field, marginDu = 0.5) {
   const gapAt = armorGapSampler(field, S, modules, (m) => serviceChannel(m, D, engChan.has(m)));
   const visAt = (x, y) => gapAt(x, y) >= 0 && S(field.levels[0], x, y) < 0 && obstacles.every((m) => pipeModuleSdf(m, x, y) > 0);
   const inAt = insideDepthSampler(field, S, false);
+  // próbnik siatki jest ostrożny (na szwie sumy brył pole ramy zaniża głębokość, transformata odejmuje komórkę) —
+  // próbka za płytka sprawdzana dokładnie: w promieniu `need` żadnego punktu poza sylwetką (pierścienie co ¼ jd od
+  // głębokości z pola ramy, które jej nie zawyża)
+  const L0 = field.levels[0];
+  const deepEnough = (x, y, need) => {
+    if (inAt(x, y) >= need) return true;
+    const raw = -S(L0, x, y);
+    if (raw <= 0) return false;
+    const st = 0.25 * D;
+    for (let r = Math.max(st, raw - D); ; r += st) {
+      const rr = Math.min(r, need);
+      const n = Math.max(8, Math.ceil(2 * Math.PI * rr / st));
+      for (let a = 0; a < n; a++) {
+        const th = a * 2 * Math.PI / n;
+        if (S(L0, x + Math.cos(th) * rr, y + Math.sin(th) * rr) > 0) return false;
+      }
+      if (rr >= need) return true;
+    }
+  };
   const deg = new Map();
   const adj = new Map();
   const edge = (net2, a, b) => {
@@ -1236,7 +1256,7 @@ export function pipeNetworkCheck(net, field, marginDu = 0.5) {
         const p0 = poly[q], p1 = poly[q + 1];
         const L = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
         const n = Math.max(1, Math.ceil(L / (0.5 * D)));
-        for (let t = 0; t <= n; t++) if (inAt(p0[0] + (p1[0] - p0[0]) * t / n, p0[1] + (p1[1] - p0[1]) * t / n) < need) { bad = true; break; }
+        for (let t = 0; t <= n; t++) if (!deepEnough(p0[0] + (p1[0] - p0[0]) * t / n, p0[1] + (p1[1] - p0[1]) * t / n, need)) { bad = true; break; }
       }
       if (bad) out.outside++;
     });
@@ -1482,7 +1502,10 @@ function offsetRun(corners, A, B, halfW, D, T, clrAt, geoAt, inAt, mirror) {
   if (jB() > 0) pts.push([B[0] - S1.ux * Math.abs(dB) + S1.nx * dB, B[1] - S1.uy * Math.abs(dB) + S1.ny * dB]);
   pts.push([B[0], B[1]]);
   if (mirror) for (const p of pts) if (p[1] > -0.2 * D) p[1] = -0.2 * D;
-  return dropFolds(dropCollinear(pts));
+  // AGENT: bieg zerowej długości (A ≈ B) zwija się w dropCollinear do jednego punktu — osprzęt i rysunek potrzebują
+  // co najmniej dwóch (bieg o długości zero niczego nie rysuje, ale końce zostają w grafie)
+  const out = dropFolds(dropCollinear(pts));
+  return out.length >= 2 ? out : [[A[0], A[1]], [B[0], B[1]]];
 }
 
 /**
@@ -1557,7 +1580,8 @@ function autoFittings(net, list, fits, ctx) {
   for (const [nd, items] of nodes) {
     if (!visAt(nd.x, nd.y)) continue;
     items.sort((a, b) => b.run.count - a.run.count);
-    const main = items[0];
+    const main = items.find((e) => e.poly.length >= 2);     // oś z biegu, który ma odcinek
+    if (!main) continue;
     const p = main.end ? main.poly[main.poly.length - 2] : main.poly[1];
     const rot = Math.atan2(p[1] - nd.y, p[0] - nd.x);
     let side = 0, total = 0;

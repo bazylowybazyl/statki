@@ -222,7 +222,9 @@ maszynownię (płyty zdjęte, wysokość ramy, obrzeże); kanał gondoli — zna
 gondoli tylko przy Bellatorze (−287, ±62) i Haście (−108, ±49,5) — szyjka za wąskim pasem płyty.
 
 **Kontrola** (`pipeNetworkCheck` — testy i panel dema): wolne końce (koniec łamanej poza przyłączem urządzenia, który
-nie styka się z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż 0,5 jd), urządzenia bez
+nie styka się z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż 0,5 jd; próbka, którą
+ostrożny próbnik siatki uznał za płytką — szew sumy brył, komórka zapasu — sprawdzana dokładnie pierścieniami co ¼ jd
+w polu ramy, inaczej fałszywe „poza” przy gondolach Hasty z klocków), urządzenia bez
 drogi kablem do reaktora, silniki bez drogi rurą do reaktora albo reaktor bez dopływu ze zbiornika, WIDOCZNE
 przyłącza rur paliwa (`fuelEnds` — MAIN, SIDE, zbiornik: [widoczne, wszystkie], `fuelHidden`). Wynik grafu:
 `net.graph.nodes` (węzeł / przyłącze z indeksem modułu), `run.ends` (węzły końców każdej łamanej, lustro osobno).
