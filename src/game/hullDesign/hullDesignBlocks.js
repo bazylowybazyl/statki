@@ -115,7 +115,9 @@ export function normalizeBlock(s, levels = 4, levelShift = 0) {
     const c = [0, 1, 2, 3].map((i) => clamp(num(s.c[i]), 0, lim));
     if (c.some((v) => v > 0)) out.c = c;
   } else if (shape === 'trap') {
-    let a = clamp(num(s.a), -out.w, out.w), b = clamp(num(s.b), -out.w, out.w);
+    // skosy do ±(w + 4h): stromy równoległobok (a = −b) też jest trapezem
+    const lim = out.w + 4 * out.h;
+    let a = clamp(num(s.a), -lim, lim), b = clamp(num(s.b), -lim, lim);
     if (a + b > out.w) { const k = out.w / (a + b); a *= k; b *= k; }   // górna krawędź nie krótsza niż 0
     out.a = a; out.b = b;
   } else if (shape === 'tri') {

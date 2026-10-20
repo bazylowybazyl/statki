@@ -324,14 +324,39 @@ function custos() {
   d.decals.push(text(27, -8.5, 15.5, 2.1), eagle(29.5, -13.6, 7.8, 6.4));
   return d;
 }
-function hasta(o = {}) {
-  const d = tnBase('hasta', 'Niszczyciel Hasta (Terra Nova)', 43, {
-    raw: o.raw,
-    tiers: [[[-118, -74], [-60, -74], [-60, -36], [-118, -36]], [[42, -44], [128, -44], [128, -9], [42, -9]]],
+function hasta() {
+  // sprite: wieża rufowa (ukośna lewa krawędź, szczyt pod kasztel), rampa w dół do sekcji pierścienia, maszynownia
+  // z rurami za wieżą i pionowy rów do korytarza wzdłuż grzbietu, pas burty z szyną, płyta dziobu z napisem, klin,
+  // maszynownia między klinami; wnęka rdzenia w grzbiecie
+  const d = tnShip('Niszczyciel Hasta (Terra Nova)', 43, 0.1445, {
+    panels: 0.55,
     castles: [castle(-86, -60, 16, 12, { level: 3, clip: 2, tiers: 1, taper: 0.5, taperIn: 0.05 })],
-    panels: 0.55
+    shapes: [
+      frameBlk(-113, -44, -60, -14, { shape: 'trap', a: 13 }),       // maszynownia za wieżą (rury od gondol)
+      frameBlk(-101, -56, -95, -43),                                // mocowanie górnej gondoli
+      frameBlk(-60.5, -31, 21, 31),                                 // rów pionowy, korytarz grzbietu, wnęka rdzenia
+      frameBlk(-61, -35.5, -54.5, -30.5),                           // szczyt rowu pionowego
+      frameBlk(21, -10, 105, 10),                                   // rów pod płytą dziobu i maszynownia między klinami
+      blk('trap', -100, -68.5, -60.5, -44.5, 2, { a: 7 }),          // wieża rufowa (kasztel na szczycie)
+      blk('rect', -88, -44.5, -60.5, -31),                          // wieża: dolna płyta
+      blk('trap', -91.5, -31, -60.5, -16, 1, { a: 3 }),             // rufa: pas nad rowem do rufy
+      blk('rect', -120, -14, -92, 14, 1, { c: [2, 0, 0, 2] }),      // rufa przy osi (zbiornik)
+      blk('rect', -92, -14, -60.5, 14),                             // rufa przy osi (mostek)
+      blk('tri', -60.5, -68.5, -33.5, -35),                         // rampa wieży
+      blk('rect', -55, -35, -30, -16, 1, { c: [0, 4, 0, 0] }),      // sekcja pierścienia
+      blk('rect', -29, -31, -5, -18.5),                             // pas burty
+      blk('trap', -5, -31, 28.5, -18.5, 1, { b: -12 }),             // pas burty przy dziobie (skos wzdłuż płyty dziobu)
+      blk('rect', -17.5, -35, 10, -31, 1, { c: [1, 1, 0, 0] }),     // szyna na burcie
+      blk('rect', -60.5, -12.5, -38, 12.5),                         // grzbiet za wnęką rdzenia
+      blk('rect', -22, -12.5, 0, 12.5),                             // grzbiet z kratą
+      blk('rect', 0, -8, 21, 8),                                    // grzbiet z gniazdem
+      blk('rect', 21, -8, 60, 8),                                   // grzbiet pod płytą dziobu
+      blk('trap', 21, -35, 61.5, -9.5, 2, { a: 24.5 }),             // płyta dziobu z napisem
+      blkAt('trap', 92, -22.25, 25.5, 61, 2, 2, { a: 23 })          // klin dziobu (trapez obrócony o 90°)
+    ]
   });
   d.modules.push(
+    vent(-77.8, -3.7, 1.575, 0.96, Math.PI / 2),
     engine(-108, -49.5, 8.2, 7.4), engine(-109, -28, 6.2, 5.6),
     port(-40, -25.2, 9.4),
     vent(-6, 0, 10, 3.6),
