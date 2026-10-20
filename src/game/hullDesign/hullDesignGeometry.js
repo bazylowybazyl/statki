@@ -522,7 +522,7 @@ export function octagonalField(f, w, h, res, band) {
  * dwuliniowo), `opts.pipes === false` — bez sieci rur. Zwraca { expanded, style, scale, grid, levels: [Float32Array
  * × 4], oct: [null, × 3] (metryka ośmiokątna poziomów 1–3), loops: [łamane poziomów], bounds (kadłub bez marginesu),
  * image (pudło obrazu z marginesem), band, dome (rozmyta sylwetka 0..1 na siatce pola), domeSigma [j.], groove,
- * pipeNet (sieć rur albo null), pipeTex (jej raster na siatce pola) }.
+ * pipeNet (sieć rur albo null), pipeTex (jej raster na siatce pola), area (powierzchnia kadłuba [j.²] z pokrycia pola) }.
  */
 export function buildHullField(input, opts = {}) {
   const expanded = expandHullDesign(input);
@@ -565,8 +565,10 @@ export function buildHullField(input, opts = {}) {
       const applies = s.op === 'add' ? s.level >= L : s.level <= L;
       if (!applies) continue;
       // przycięta do poziomu C: na poziomach ≤ C nic nie dokłada (leży w nich), wyżej — część wspólna z poziomem C
+      // (z odsunięciem clipIn [j.] w głąb — płyty klocków: brzeg ramy przy burcie)
       const clipF = s.clip !== undefined ? (L <= s.clip ? null : levels[s.clip]) : undefined;
       if (clipF === null) continue;
+      const clipIn = s.clipIn || 0;
       const win = shapeWindow(s);
       const [i0, i1, j0, j1] = win;
       if (i1 < i0 || j1 < j0) continue;
@@ -592,7 +594,7 @@ export function buildHullField(input, opts = {}) {
         const prow = (j - j0) * ww - i0;
         for (let i = i0; i <= i1; i++) {
           let ds = pf[prow + i];
-          if (clipF && clipF[row + i] > ds) ds = clipF[row + i];
+          if (clipF && clipF[row + i] + clipIn > ds) ds = clipF[row + i] + clipIn;
           const a = f[row + i];
           const v = s.op === 'add' ? fieldUnion(a, ds, sStyle, tune) : fieldSubtract(a, ds, sStyle, tune);
           f[row + i] = v < -band ? -band : (v > band ? band : v);
@@ -613,10 +615,13 @@ export function buildHullField(input, opts = {}) {
   let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
   const f0 = levels[0];
   const cov = new Float32Array(w * h);
+  let covSum = 0;
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const v = f0[j * w + i];
-      cov[j * w + i] = clamp(0.5 - v * res, 0, 1);
+      const c = clamp(0.5 - v * res, 0, 1);
+      cov[j * w + i] = c;
+      covSum += c;
       if (v > 0.5 * inv) continue;
       const x = gx0 + (i + 0.5) * inv, y = gy0 + (j + 0.5) * inv;
       if (x < bx0) bx0 = x; if (x > bx1) bx1 = x;
@@ -648,7 +653,7 @@ export function buildHullField(input, opts = {}) {
   const base0 = { expanded, grid, levels, bounds, band };
   const pipeNet = opts.pipes === false ? null : buildPipeNetwork(base0, opts.pipeTune);
   const pipeTex = pipeNet ? rasterPipeNetwork(pipeNet, grid) : null;
-  return { expanded, style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, groove, grooveBand, pipeNet, pipeTex };
+  return { expanded, style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, groove, grooveBand, pipeNet, pipeTex, area: covSum * inv * inv };
 }
 
 /**

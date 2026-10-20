@@ -398,6 +398,51 @@ function colossus(o = {}) {
   return d;
 }
 
+/**
+ * FREGATA Z KLOCKÓW (TN): kadłub wyłącznie z klocków palety (src/game/hullDesign/hullDesignBlocks.js) na siatce 0,5 j.,
+ * połowa okrętu — lustro dopisuje drugą burtę. Płyty pancerza mają rowy maszynowni od sąsiadów same (szczelina klocka),
+ * rdzeń dziobu między klinami to klocek ramy (maszynownia). Wzór: układ Custosa (rufa-nadbudówka, grzbiet, burty,
+ * kliny dziobu), nie kopia sprite'a.
+ */
+function blocksFrigate() {
+  // klocek z pudła [x0, x1] × [y0, y1] (pełne wymiary na siatce)
+  const blk = (shape, x0, y0, x1, y1, level, o = {}) => ({ kind: 'block', shape, x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, rot: 0, level, ...o });
+  return {
+    v: 2, name: 'Fregata z klocków (TN)', style: 'chamfer', mirror: true, palette: 'terra', seed: 71, detail: 0.09, grid: 0.5,
+    windows: 0, bevel: 1.9, round: 1, panels: 0.55,
+    pipeNet: { density: 1 },
+    blocks: [],
+    shapes: [
+      blk('rect', -66, -28, -46, 28, 2, { c: [6, 0, 0, 6] }),     // rufa: nadbudówka na osi, ścięte rogi rufowe
+      blk('trap', -66, -34, -50, -28, 1, { a: 0, b: 6 }),         // skrzydło rufy
+      blk('rect', -46, -8, -14, 8, 1),                            // grzbiet rufowy (na osi)
+      blk('rect', -14, -8, 26, 8, 1),                             // grzbiet dziobowy
+      blk('rect', -46, -24, -10, -8, 1, { c: [4, 0, 0, 0] }),     // burta rufowa
+      blk('rect', -10, -24, 26, -8, 1),                           // burta dziobowa
+      blk('trap', 26, -24, 76, -4, 1, { a: 0, b: 40 }),           // klin dziobu
+      blk('rect', 26, -4, 68, 4, 0),                              // rdzeń dziobu: maszynownia między klinami
+      blk('trap', -42, -22, -22, -12, 2, { a: 4, b: 4 }),         // nadbudówka burty z iluminatorem
+      blk('rect', -45, -5, -35, 5, 2)                             // wieża mostka
+    ],
+    modules: [
+      { type: 'engine', x: -69, y: -12, w: 4.6, h: 3.4, n: 1, v: 0 },
+      { type: 'bridge', x: -40, y: 0, w: 4, h: 3.2 },
+      { type: 'reactor', x: -22, y: 0, r: 4.5, v: 1 },
+      { type: 'turret_m', x: 8, y: 0, r: 3.2, v: 0 },
+      { type: 'turret_s', x: 10, y: -16, r: 2.6, v: 0 },
+      { type: 'well', x: -32, y: -17, r: 3.2, v: 1 },
+      { type: 'vent', x: -56, y: -15, w: 1.2, h: 3.2, rot: 0, v: 1 },
+      { type: 'vent', x: -4, y: 0, w: 4.3, h: 1.6, rot: 0, v: 1 },
+      { type: 'hatch', x: -28, y: -10.5, w: 3.4, h: 1.2, rot: 0, v: 1 },
+      { type: 'hatch', x: 18, y: -20, w: 3, h: 1.6, rot: 0, v: 1 }
+    ],
+    decals: [
+      { kind: 'text', text: 'TERRA NOVA', x: 50, y: -8.5, w: 15.5, h: 2.1, rot: 0, color: TN_TEXT, opacity: 0.88, weight: 500 },
+      { kind: 'emblem', id: 'eagle', x: 44, y: -14, w: 6.4, h: 5.2, rot: 0, color: TN_EMBLEM, opacity: 0.9 }
+    ]
+  };
+}
+
 /** Okręt złożony z gotowych części (src/game/hullDesign/hullDesignParts.js) na ramie z bloków — punkt wyjścia. */
 function tnParts() {
   const b = [];
@@ -460,6 +505,7 @@ export const HD_PRESETS = Object.freeze({
   bellator: { label: 'TN · pancernik Bellator', make: bellator },
   citadella: { label: 'TN · lotniskowiec Citadella', make: citadella },
   colossus: { label: 'TN · superkapitał Colossus', make: colossus },
+  klocki: { label: 'Fregata z klocków (TN)', make: blocksFrigate },
   tnparts: { label: 'Fregata z gotowych części (TN)', make: tnParts },
   tnparts2: { label: 'Krążownik z gotowych części (TN)', make: tnParts2 },
   orbis: { label: 'Krążownik Orbis (koło w środku)', make: orbis },

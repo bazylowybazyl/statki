@@ -126,6 +126,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
+| `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć rur |
 | `ciala-swiata` | Budowle na silniku belek: kawałki, kotwice, broń, rozpad, skóry |
 | `wybuchy-gaz` | Wybuchy WebGPU i gaz 3D: domeny, przeszkody, zbiorniki paliwa, dym zgniotu |
 | `flota-ai` | Szyk floty, formacje, omijanie przeszkód, rozkazy RTS, AI poza krokiem fizyki |

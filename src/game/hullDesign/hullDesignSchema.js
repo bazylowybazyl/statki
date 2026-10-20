@@ -26,6 +26,10 @@
 //           zgrubny obrys wystarczy, krawędzie zewnętrzne biorą się z płyt poziomu C (podniesienie wybranych płyt
 //           o piętro). Dodanie na poziomie L wypełnia poziomy ≤ L,
 //           wycięcie na poziomie L usuwa poziomy ≥ L (np. pierścień nadbudówki: koło + mniejsze wycięcie).
+//           KLOCKI — { kind: 'block', shape: 'rect' | 'trap' | 'tri' | 'arc', x, y, w, h (pełne wymiary), rot (co 45°), flip,
+//           level, op, gap, … } (src/game/hullDesign/hullDesignBlocks.js): paleta prostych kształtów na siatce `grid`;
+//           rozwinięcie zamienia wszystkie klocki projektu na wielokąty ramy (suma pełnych obrysów), płyt (z rowem
+//           maszynowni `gap` [jd] od sąsiednich płyt) i wycięć — w miejscu PIERWSZEGO klocka na liście brył.
 //   modules gniazda i urządzenia: { type, x, y, rot?, … } — typy w HD_MODULES (gondola silnika i mostek dokładają
 //           własną bryłę).
 //   parts   GOTOWE CZĘŚCI (src/game/hullDesign/hullDesignParts.js — wieża mostka, dziób, blok silników, sponson,
@@ -52,8 +56,11 @@
 //   detail  skala detalu [j. na jednostkę detalu „jd”]: płyty, szwy, nity, rury, kratki i wysokości tarasów są w jd,
 //           więc mała fregata ma tyle samo detalu na swoją długość co lotniskowiec (jak sprite'y: ~1700 px na okręt
 //           → detail ≈ długość / 1700). Pancerz stoi 7 jd nad ramą, nadbudówka 12, mostek 15.
+//   grid    krok siatki klocków [j.]: ustalany RAZ przy tworzeniu projektu (brak pola — z detalu: hullDesignGridStep,
+//           ~4 jd, potęga dwójki), potem stały — zmiana detalu nie rusza klocków ani rozmiaru okrętu.
 
 import { HD_PARTS, expandHullPart } from './hullDesignParts.js';
+import { expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
 import { expandCastle, normalizeCastle } from './hullDesignCastles.js';
 
 export const HD_VERSION = 2;
@@ -162,6 +169,7 @@ function normPts(pts) {
 }
 
 function normShape(s, levelShift = 0) {
+  if (s?.kind === 'block') return normalizeBlock(s, HD_LEVELS, levelShift);
   if (!s || (s.kind !== 'circle' && s.kind !== 'rect' && s.kind !== 'poly')) return null;
   const out = {
     kind: s.kind, op: s.op === 'cut' ? 'cut' : 'add',
@@ -193,7 +201,11 @@ function normShape(s, levelShift = 0) {
       out.rot = num(s.rot);
     }
   }
-  if (s.clip !== undefined && out.op === 'add') out.clip = clampInt(num(s.clip) + levelShift, 0, HD_LEVELS - 1);
+  if (s.clip !== undefined && out.op === 'add') {
+    out.clip = clampInt(num(s.clip) + levelShift, 0, HD_LEVELS - 1);
+    // przycięcie z odsunięciem [j.]: bryła co najmniej clipIn wewnątrz poziomu C (płyty klocków — brzeg ramy przy burcie)
+    if (num(s.clipIn) > 0) out.clipIn = num(s.clipIn);
+  }
   if (s.mirror === false) out.mirror = false;
   return out;
 }
@@ -289,6 +301,8 @@ export function normalizeHullDesign(design = {}) {
     paint: design.paint && typeof design.paint === 'object' ? { ...design.paint } : null,
     seed: clampInt(design.seed, 0, 1e6) || 7,
     detail,
+    // siatka klocków [j.]: z projektu (stała), dla projektu bez niej — z detalu
+    grid: num(design.grid, 0) > 0 ? Math.max(0.01, Math.min(64, num(design.grid))) : hullDesignGridStep(detail),
     bevel: Math.max(0.3, Math.min(4, num(design.bevel, 1))),
     round: Math.max(0, Math.min(1, num(design.round, style === 'rounded' ? 1 : 0))),
     // Okna tarasów (rząd świateł za krawędzią nadbudówki): 0 — brak (Terra Nova), 1 — pełne.
@@ -344,7 +358,16 @@ export function expandHullDesign(input) {
   }
   const mirrorOf = (o) => design.mirror && o.mirror !== false;
   const shapes = [];
+  // klocki: wszystkie naraz (sumy geometryczne ramy, płyt i wycięć) w miejscu pierwszego klocka
+  const blockList = design.shapes.filter((s) => s.kind === 'block');
+  let blocksDone = false;
   for (const s of design.shapes) {
+    if (s.kind === 'block') {
+      if (blocksDone) continue;
+      blocksDone = true;
+      for (const sh of expandHullBlocks(blockList, { detail: design.detail, mirror: mirrorOf, levels: HD_LEVELS })) shapes.push(sh);
+      continue;
+    }
     if (s.kind === 'poly') {
       const pts = s.sym ? symPolyPoints(s.pts) : s.pts;
       shapes.push({ ...s, pts });

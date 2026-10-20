@@ -14,16 +14,19 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 
 - Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html` (otwiera się z lotniskowcem Citadella; flota TN z siecią
   rur — suwak „sieć rur”, ⟳ inny układ, narzędzie Rura W).
-  `?preset=citadella|custos|hasta|bellator|colossus|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
+  `?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
   `?clean=1` bez paneli. A — A/B (kreator ↔ sprite tego samego okrętu), U — sprite jako podkład pod projektem.
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--tylko citadella]
   [--etapy ab,rury,style,mapy,czesci,edycja]` → `.tmp/kreator/demo/` (flota TN: `<okręt>-ab.png` — oba w kadrze, ta sama
   skala; `<okręt>-a|b-fit|gra1|det.png` — kadr na okręt, zoom 1, zbliżenie ×3 przy rufie; części: `czesci-*.png`;
-  mapy pakietu `*-mapa-*.png`; edycja `edycja-*.png`).
+  mapy pakietu `*-mapa-*.png`; edycja `edycja-*.png`). Klocki: `--etapy klocki --tylko klocki` → `klocki-*.png`
+  (fregata z klocków: edytor, kadr, zbliżenie, zoom 1, A/B z Custosem; arkusz palety; edycja myszą — stawianie,
+  przeciąganie, obrót, cofanie i ponawianie, liczby w `raport.json` → `mysz_klocki`).
 - Obrys sprite'ów TN: `node scripts/kreator-obrys-tn.mjs --kadlub terran_carrier` (podgląd maski i wnęk na
   sprite'cie → `.tmp/kreator/obrys/`), dane presetów: `node scripts/kreator-presety-tn.mjs` →
   `src/game/hullDesign/hullDesignTNTrace.js` (wygenerowany, nie edytować).
-- Testy: `node --test tests/hullDesign.test.mjs`.
+- Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs` (klocki, suma wielokątów, szczelina,
+  strażnik „bez czitowania”).
 
 ## Format projektu v2 (`src/game/hullDesign/hullDesignSchema.js`)
 
@@ -31,7 +34,7 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 |---|---|---|
 | poziomy 0–3 | **rama** (ciemna maszynownia), **pancerz** (białe płyty), **nadbudówka**, **mostek** | wyższy leży na niższym; v1 (3 poziomy) przechodzi na v2 przesunięciem o 1 (kadłub = pancerz) |
 | `blocks` | bloki 60 j. (4 × 4 komórki belek) z poziomem | jak w v1 |
-| `shapes` | koło, prostokąt (`r` łuk, `ch` faza rogów, `rot`), **wielokąt** (`pts`, `holes`, `sym`, `ch`, `r`) | `sym` — połowa od osi do osi (lustro nie dubluje); wielokąty łączą się z resztą ostro (wspólne krawędzie ramy i pancerza); `clip: C` — bryła przycięta do poziomu C (zgrubny wielokąt podnosi płyty o piętro, krawędzie zewnętrzne z płyt) |
+| `shapes` | **klocek** (`kind: 'block'` — § „Klocki”), koło, prostokąt (`r` łuk, `ch` faza rogów, `rot`), **wielokąt** (`pts`, `holes`, `sym`, `ch`, `r`) | `sym` — połowa od osi do osi (lustro nie dubluje); wielokąty łączą się z resztą ostro (wspólne krawędzie ramy i pancerza); `clip: C` — bryła przycięta do poziomu C (zgrubny wielokąt podnosi płyty o piętro, krawędzie zewnętrzne z płyt), `clipIn` — z odsunięciem w głąb [j.] |
 | `parts` | **gotowe części** `{ id, x, y, s, rot, dl }` | `src/game/hullDesign/hullDesignParts.js`, rozwijane na bryły, moduły i naklejki |
 | `modules` | wieże S/M/L (`v` 0 — **kapsuła TN**: ośmiokątna rama, kwadratowy właz z ciemnym oknem; 1 — płyta z rowkiem), gondola MAIN (`v` 0 — **beczka**: gęste żebra, kołnierze, rury, dzwon dyszy; 1 — blok z kratą; `n` dysz), luk (`v` 1 — **klapa TN**), reaktor (`v` 1 — wewnątrz), mostek, **kratka** (`v` 0 — prosta, 1 — **radiator TN**, 2 — **krata**), **wrota hangaru** (`doors`), **pierścień** (`v` 1 — **iluminator**, 2 — iluminator w ośmiokątnej ramie) | mocowania (gniazda, dysze, lampy) z modułów |
 | `castles` | **kasztele** — schodkowe nadbudówki `{ x, y, w, h, rot, tiers, taper / taperF / taperB / taperIn, high, split, level, clip, vent, port, hatches }` | `src/game/hullDesign/hullDesignCastles.js` — § „Kasztele” |
@@ -40,6 +43,7 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 | `pipeNet` | **sieć rur** generowana `{ density (0–2), seed }` | brak pola = 0 (stare projekty bez zmian); flota TN: 1 — § „Rury” |
 | `decals` | pasy, pas wzdłuż konturu, emblematy (+ **orzeł TN** — własny rysunek), napisy (`weight`) | jak w v1 |
 | `detail` | skala detalu [j. / jd] | płyty, szwy, nity, rury, kratki i tarasy są w jd: fregata 150 j. ma tyle detalu na długość co lotniskowiec (jak sprite'y: detail ≈ długość / 1700) |
+| `grid` | krok siatki klocków [j.] | ustalany przy tworzeniu projektu (brak pola — z detalu: ~4 jd, potęga dwójki: fregata 0,5, Bellator i Citadella 2, Colossus 4), potem stały — § „Klocki” |
 | `bevel`, `round` | skala i profil fazy krawędzi płyt | TN: 1,9 i 1 (gruba, zaokrąglona „poduszka” jak w sprite'ach) |
 | `panels` | widoczność losowego podziału płyt | 1 — pełny; TN: Citadella i Colossus 1, Custos i Hasta 0,55, Bellator 0,4 (jak w sprite'ach) |
 | `windows` | okna tarasów (rząd świateł) | TN: 0 |
@@ -220,6 +224,65 @@ kasztel z półką i kratą, centralny trapez na osi z półkami i iluminatorami
 płytach, Custos / Hasta / Bellator — szczyty wież rufowych. Demo: narzędzie **Kasztel (Q)** (przeciąganie — przesuń,
 kółko — skala), przełącznik „kasztel na płytach” (nowy kasztel z `clip: 1`).
 
+## Klocki (`src/game/hullDesign/hullDesignBlocks.js`)
+
+Prośba użytkownika (2026-10-20): „trójkąty prostokątne, różne kształty, z których gracz ułoży statek — lotniskowca Terra
+Novy dziś sam nie odtworzę”. Klocek to bryła z palety prostych kształtów; z tych samych klocków gracz i presety składają
+każdy kadłub (plan: `docs/PLAN-KREATOR-STOCZNIA.md`).
+
+**Format**: `{ kind: 'block', shape, x, y, w, h, rot, flip, level, op, gap, mirror, … }` w `shapes`:
+
+| Pole | Co |
+|---|---|
+| `shape` | `rect` — prostokąt, `c: [4]` — faza osobno na każdy róg (lewy-górny, prawy-górny, prawy-dolny, lewy-dolny); `trap` — trapez: górna krawędź wcięta o `a` z lewej i `b` z prawej (ujemne — wysunięta; równoległobok: `a = −b`); `tri` — trójkąt, wierzchołek `a` od lewego rogu górnej krawędzi (0 — prostokątny, `w / 2` — klin); `arc` — łuk `arc` 360 (koło / elipsa w pudle), 180 (półkole na dolnej krawędzi), 90 (ćwiartka z rogiem w lewym-dolnym), `ri` — pierścień (promień wewnętrzny / zewnętrzny) |
+| `x`, `y`, `w`, `h` | środek i PEŁNE wymiary pudła w układzie klocka [j.] (inaczej niż `rect` i kasztele — pół-wymiary) |
+| `rot`, `flip` | obrót [rad] przyciągany do 45°; odbicie lewo-prawo w układzie klocka (przed obrotem) |
+| `level`, `op` | poziom (domyślnie 1 — pancerz), `cut` — wycięcie (na poziomie L usuwa poziomy ≥ L) |
+| `gap` | szczelina płyty [jd] (domyślnie 12; 0 — płyta scala się z sąsiadem) |
+
+Paleta (`HD_BLOCK_PALETTE` — ustawienia czterech rodzajów): prostokąt, prostokąt ze ściętymi rogami, trójkąt prostokątny,
+klin, trapez prostokątny, trapez równoramienny, równoległobok, koło, półkole, ćwiartka koła, pierścień. Nowy kształt =
+wpis palety; nowy rodzaj tylko wtedy, gdy parametry nie wystarczą.
+
+**Siatka a `detail`** (decyzja 1A): klocki leżą w j. świata na siatce projektu `grid` — krok ustalany przy tworzeniu
+projektu z detalu (`hullDesignGridStep`: ~4 jd, potęga dwójki) i zapisany w projekcie. Suwak detalu zmienia gęstość detalu
+(płyty, nity, rury, szerokość rowów), ale nie rozmiar okrętu ani położenie klocków (gdyby klocki były w jd, zmiana detalu
+skalowałaby okręt). Ta sama paleta służy fregacie (siatka 0,5 j.) i superkapitałowi (4 j.): jednostka palety to
+wielokrotność dwóch kroków siatki najbliższa ~24 jd.
+
+**Rozwinięcie** (`expandHullBlocks` z `expandHullDesign`, w miejscu PIERWSZEGO klocka na liście brył) — klocki znikają,
+zostają zwykłe wielokąty, więc fazy, poziomy, pola, sieć rur i kompozytor działają bez zmian:
+
+- **rama** (poziom 0, sylwetka) — suma pełnych obrysów wszystkich klocków dodających i ich kopii lustra,
+- **płyty** poziomu L — suma płyt klocków z poziomem ≥ L. Płyta klocka to jego obrys bez pasa `gap / 2` jd wokół
+  SĄSIEDNICH klocków-płyt (różnica z sąsiadami poszerzonymi o pół szczeliny; ostre szpice poszerzenia ścięte): między
+  sąsiadami zostaje rów maszynowni `gapA / 2 + gapB / 2` — tędy pójdą rury i kable (etap 1C). Klocki nachodzące na siebie
+  dają jedną płytę, klocek ramy (poziom 0) nie jest sąsiadem (płyta dochodzi do niego — klocek ramy to maszynownia). Przy
+  burcie płyta kończy się 1,5 jd przed sylwetką (przycięcie do pola ramy: `clip: 0`, `clipIn`). Wartości z obrysu
+  sprite'ów TN: rów między płytami — mediana 16–23 jd, dolny kwartyl 10–15 (domyślne 12); płyta przy burcie — mediana
+  0,7–2,4 jd od sylwetki,
+- **wycięcia** — suma klocków-wycięć z poziomem ≤ L (tną wszystkie klocki dodające).
+
+Sumy są geometryczne (`polygonUnion`, `polygonDifference`): krawędzie tnie się w punktach przecięcia, kawałek zostaje, gdy
+leży poza innymi wielokątami, wspólna krawędź o przeciwnym kierunku (styk) znika z obu stron, reszta sklejona w pętle.
+Suma przez `min` pól dawałaby szew: na wspólnej krawędzi dwóch stykających się brył pole = 0, a kompozytor liczy profil
+płyty wprost z pola (rowek w płycie, w alfie półprzezroczysta kreska).
+
+**Koszt** (Node, pole bez sieci rur / z siecią): fregata z klocków — rozwinięcie 3,8 ms, pole 162 / 212 ms; 105 klocków
+(210 z lustrem) w skali Colossusa — rozwinięcie 26 ms, pole 275 / 264 ms. W demie (RTX, headless) wypiek fregaty
+0,43 s razem; pipeline'y synchroniczne w klatkach: 0.
+
+**Strażnik „bez czitowania”** (`isPlayerBuildable(design)` w `src/game/hullDesign/hullDesignBuildable.js` → `{ ok,
+violations }`): dopuszcza klocki z parametrami na siatce (wymiary i parametry co krok, krawędzie pudła na siatce przy
+obrocie co 90°, środek co pół kroku przy 45°), wielokąt-pióro do 16 pkt na siatce bez otworów, kasztele, gotowe części,
+moduły, naklejki, rowki i rury do 16 pkt, bloki 60 j., sieć rur; limity liczby elementów (`HD_BUILD_LIMITS`). Odrzuca obrys
+sprite'a (wielokąty ze standaryzacją `reg`, setki punktów, otwory) i dawne bryły `circle` / `rect`. Dziś przechodzą
+`klocki` i `tnparts`; presety TN z obrysu — nie (etap 1B).
+
+**Preset `klocki`** — fregata TN z 10 klocków (połowa okrętu, lustro robi drugą burtę): rufa-nadbudówka na osi ze ściętymi
+rogami, skrzydła rufy, grzbiet i burty z dwóch płyt każda, kliny dziobu (trapez), klocek ramy między klinami
+(maszynownia), nadbudówka burty z iluminatorem, wieża mostka; moduły i naklejki jak w presetach TN.
+
 ## Gotowe części (`src/game/hullDesign/hullDesignParts.js`)
 
 Odpowiedź na „brakuje kształtów kadłuba, mostka, modeli innych niż proste”: złożone elementy w stylu TN stawiane jak
@@ -230,6 +293,14 @@ i `tnparts2` (krążownik wyłącznie z części). Nowa część = wpis w `HD_PA
 układzie przy skali 1 ≈ detail 0,6).
 
 ## Demo — narzędzia
+
+**Klocki (N)** — sekcja „Klocki” w panelu: paleta z ikonami, LPM na pustym stawia klocek (klik — rozmiar domyślny,
+przeciąganie — pudło), LPM na klocku zaznacza i przesuwa (z przyciąganiem do siatki), Shift+klik dodaje do zaznaczenia,
+Ctrl+przeciąganie — ramka, uchwyty — rozmiar (skosy 45° trapezu zostają 45°), R / Shift+R — obrót o 90° / 45° (grupa
+wokół środka), F — odbicie, X — wycięcie, 1–4 — poziom zaznaczenia, Del — usuń, Ctrl+D — duplikat obok, strzałki — krok
+siatki; suwak szczeliny zaznaczonych klocków; w panelu powierzchnia kadłuba [j.²], liczba klocków (i z lustrem), liczba
+gniazd uzbrojenia i wynik strażnika „bez czitowania”. Oś lustra widoczna w narzędziu Klocki. **Ctrl+Z / Ctrl+Y** —
+cofnij / ponów każdą zmianę projektu (zrzut JSON po zakończonej zmianie).
 
 Bloki (B), przesuń / skala / obrót (V, kółko, Shift + kółko), koło (C, Shift — wycięcie), **wielokąt** (P; LPM punkty,
 PPM / Enter zamyka, pierwszy i ostatni punkt na osi → symetryczny; „wielokąt-wycięcie”), **rowek** (R — łamana
@@ -286,6 +357,6 @@ kadłub (klucz = profil renderu)**. Kolejno:
   z odległości od krawędzi ma ostre załamania na dwusiecznych rogów (zagięcia „papieru”) — do wygładzenia.
 - Moduły mają wygląd z reguł shadera; brak atlasu modułów od grafika. Wieże nie są rysowane (gniazda puste) — w grze
   rysuje je `Turret2D` / partie 3D w miejscach gniazd.
-- Brak cofania (undo); JSON do zapisu / wczytania w panelu.
+- JSON do zapisu / wczytania w panelu (bez zapisu do pliku).
 - Pole odległości liczy się ~0,1–0,25 s na okręt (CPU, w wątku strony) — przy edycji przeciąganie liczy je w połowie
   rozdzielczości; w grze należałoby je przenieść do workera.
