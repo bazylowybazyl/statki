@@ -78,6 +78,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Kamera: wejście ustawia `camera.targetZoom` (sprężyna raz na klatkę renderu, nie w `physicsStep`); offsety kamery tylko w rigu (`src/game/cameraRig.js`); wstrząs z modułu renderu → hak `onShake` (żądanie do gry), nie `window.camera`.
 - Ciąg, skok, szarża → `mainEngineFraction` / `engineThrustScale` / `engineBlocksDrive` (uszkodzenie i stan silników).
 - Modyfikatory okrętu → `setModifierSource`, nigdy `entity.modifiers =`; zasięg i prędkość pocisku broni → `weaponRangeFor` / `weaponSpeedMul`.
+- Nowa ścieżka montażu broni u gracza (fitowanie, zapis wyposażenia, sklep, konsola dev) → przez `playerFitFits` / `savedHardpointBucket` / `weaponBuildCost`: broń `npcOnly` (promień śmierci Colossusa) do gracza nie trafia; broń z `npcFaction` uzbraja tylko tę frakcję (`equipNpcWeapons`).
 - Mózgi NPC liczą się też w klatkach bez kroku fizyki — mózg pisze tylko ZAMIARY (intencja lotu, cel, wieże); mózg całkujący ruch sam musi zostać w kroku (`aiOffStepEligible`).
 - Logika nie czyta klawiszy ani padów wprost: akcje (`Input.*`, rejestr `GameActions`); nowa akcja = wpis w `INPUT_ACTIONS` + układy + `GameActions`.
 - Nowy rodzaj obiektu na radarze → rekord w `radarFeed.collect` (nie rysunek w kokpicie).

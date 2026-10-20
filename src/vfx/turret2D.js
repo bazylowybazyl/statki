@@ -567,13 +567,16 @@ function weaponScale(size, category) {
 // Hangary i broń BUILT-IN nie dostają wieżyczki — i to jest decyzja, nie brak.
 // Built-in (Hexlance) jest WTOPIONA W KADŁUB: lufa to centralny kil na spricie
 // Atlasa, więc dorysowanie sylwetki nałożyłoby działo na działo. `sync()` z tego
-// samego powodu nie wylicza grupy `builtin`, a błysk wylotowy i odrzut robi sobie
-// sama superweapon.js (getMuzzlePos + własne cząstki). Nie „naprawiać" tego przez
-// zdjęcie filtra — najpierw trzeba przesunąć hardpoint poza kil.
-function shouldRenderTurret(def) {
+// samego powodu nie wylicza grupy `builtin` gracza, a błysk wylotowy i odrzut robi
+// sobie sama superweapon.js (getMuzzlePos + własne cząstki). Nie „naprawiać" tego
+// przez zdjęcie filtra — najpierw trzeba przesunąć hardpoint poza kil.
+// Wyjątek z danych: `builtinTurret: true` — broń wbudowana Z WŁASNĄ WIEŻĄ (promień
+// śmierci Colossusa, 2026-10-20: wieża na dziobie, NPC — autoWeapons grupy `builtin`).
+export function shouldRenderTurret(def) {
   if (!def) return false;
   const mountType = String(def.mountType || '').toLowerCase();
-  if (mountType === 'hangar' || mountType === 'builtin') return false;
+  if (mountType === 'hangar') return false;
+  if (mountType === 'builtin') return def.builtinTurret === true;
   return true;
 }
 

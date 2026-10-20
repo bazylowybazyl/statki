@@ -11,7 +11,7 @@ import { AWARENESS_CONFIG, SIDE_FRIENDLY, fleetStanceOverride } from './fleetAwa
 import { isCloakHidden } from '../game/cloak.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
-import { mountFireArc } from '../game/weaponAim.js';
+import { MOUNT_ARCS, mountFireArc } from '../game/weaponAim.js';
 import { AI_SNAP_FIGHTER, trafficAvoidanceObjects, trafficAvoidanceRange, trafficAvoidanceSnapshot } from './aiNeighborKernels.js';
 import { getWreckIndex, wreckLowerBound } from './aiWreckIndex.js';
 import { npcHasEngineBurst, stepNpcShipSystem } from './npcShipSystem.js';
@@ -1269,7 +1269,8 @@ function initAutonomousWeapons(npc) {
 
   if (npc.weapons) {
     const shape = resolveMountShape(npc, _mountShape);
-    const addWeaponsFromGroup = (group, groupName, arcDefault, prefers, scanProfile) => {
+    // `strict` — cel wyłącznie z `prefers` (inne rodzaje pomijane, nie z wynikiem 0): superlaser nie traci 45 s na fregatę.
+    const addWeaponsFromGroup = (group, groupName, arcDefault, prefers, scanProfile, strict = false) => {
       if (!group || !Array.isArray(group)) return;
       for (let i = 0; i < group.length; i++) {
         const loadout = group[i];
@@ -1279,7 +1280,13 @@ function initAutonomousWeapons(npc) {
         const localY = loadout.hp?.y || loadout.hp?.pos?.y || 0;
         let baseAngle = loadout.hp?.rot || loadout.hp?.pos?.rot;
         let arc = arcDefault;
-        if (typeof baseAngle !== 'number') {
+        if (groupName === 'builtin') {
+          // Gniazdo builtin z wieżą (promień śmierci Colossusa): `rot` z edytora w STOPNIACH (90 = dziób —
+          // editorDegToForward: x = sin, y = −cos), łuk broni specjalnej (270°) wokół tego kierunku.
+          const rot = Number(loadout.hp?.rot ?? loadout.hp?.pos?.rot);
+          baseAngle = (Number.isFinite(rot) ? rot : 90) * Math.PI / 180 - Math.PI / 2;
+          arc = MOUNT_ARCS.special.half + MAIN_ARC_TOLERANCE;
+        } else if (typeof baseAngle !== 'number') {
           if (groupName === 'main' || groupName === 'special') {
             const fireArc = mountFireArc(loadout.hp, 'main', shape.halfLen, shape.halfWid);
             baseAngle = fireArc.center;
@@ -1308,6 +1315,9 @@ function initAutonomousWeapons(npc) {
           // Obrona punktowa (gniazdo aux): kadłub spoza `prefers` to brak celu,
           // chyba że okręt ma PD CHIP (getTargetScoreForWeapon).
           pd: isPointDefenseWeapon(def),
+          strict,
+          // Szeroka wiązka (promień śmierci: rzaz ± cutHalfWidth): linia ognia z pasem, nie z punktem pocisku.
+          losPad: def.deathRay ? (Number(def.deathRay.cutHalfWidth) || 55) + 60 : 0,
           scanProfile
         });
       }
@@ -1317,6 +1327,12 @@ function initAutonomousWeapons(npc) {
     addWeaponsFromGroup(npc.weapons.special, 'special', 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
     addWeaponsFromGroup(npc.weapons.aux, 'aux', Math.PI * 2, ['rocket', 'fighter'], 'fast');
     addWeaponsFromGroup(npc.weapons.missile, 'missile', 1.2, ['battleship', 'destroyer', 'frigate', 'fighter'], 'slow');
+    // Broń wbudowana z wieżą (promień śmierci supercapitala Terra Nova, 2026-10-20): jeden cel — okręt kapitałowy,
+    // potem niszczyciel; fregaty i myśliwce pomija. Inne bronie builtin NPC (bez wieży) zostają poza AI.
+    if (Array.isArray(npc.weapons.builtin) && npc.weapons.builtin.some((l) => l?.weapon?.builtinTurret === true)) {
+      addWeaponsFromGroup(npc.weapons.builtin.filter((l) => l?.weapon?.builtinTurret === true), 'builtin', 0.55,
+        ['battleship', 'destroyer'], 'slow', true);
+    }
   }
 
   // Układ broni mógł się zmienić — przelicz preferowane ustawienie kadłuba.
@@ -1726,6 +1742,7 @@ export function processAutonomousWeapons(npc, dt) {
         const candidateKind = cache.enemyKinds[i];
         // PD bez chipa: z okrętów tylko myśliwce (rakiety zebrała pętla wyżej).
         if (weapon.pd && !pdHullsAllowed && candidateKind !== 'fighter') continue;
+        if (weapon.strict && weapon.prefers.indexOf(candidateKind) < 0) continue;
 
         const absTargetAngle = cache.enemyAngles[i];
         const angleDiff = Math.abs(window.wrapAngle(absTargetAngle - restAngle));
@@ -1787,17 +1804,22 @@ export function processAutonomousWeapons(npc, dt) {
         const targetIsRocket = bestTarget.type === 'rocket' || bestTarget.type === 'torpedo';
         let lineBlocked = false;
         if (!targetIsRocket) {
+          // Szeroka wiązka (`losPad` — promień śmierci: sojusznik przy osi dostałby rzaz) liczy linię ze swoim pasem i
+          // bez pamięci LOS wywołania (ta trzyma linię pocisku). Strzał raz na kilkadziesiąt sekund — koszt bez znaczenia.
+          const wide = weapon.losPad > 0;
           let losIndex = -1;
-          for (let i = 0; i < losCount; i++) {
+          for (let i = 0; i < losCount && !wide; i++) {
             if (losTargets[i] === bestTarget) { losIndex = i; break; }
           }
           if (losIndex >= 0) {
             lineBlocked = losBlocked[losIndex] === true;
           } else {
-            lineBlocked = window.isLineOfFireBlocked?.(npc, bestTarget, range) === true;
-            losTargets[losCount] = bestTarget;
-            losBlocked[losCount] = lineBlocked;
-            losCount++;
+            lineBlocked = window.isLineOfFireBlocked?.(npc, bestTarget, range, weapon.losPad) === true;
+            if (!wide) {
+              losTargets[losCount] = bestTarget;
+              losBlocked[losCount] = lineBlocked;
+              losCount++;
+            }
           }
         }
         if (targetIsRocket && !(bestTarget.life > 0)) {

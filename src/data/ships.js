@@ -136,7 +136,10 @@ export const SHIPS = {
     id: 'terran_supercapital',
     name: 'Colossus-class',
     sensors: { ...SHIP_SENSOR_PROFILES.atlas_combat },
-    spec: { main: 16, missile: 8, aux: 10, hangar: 2, special: 1 },
+    spec: { main: 16, missile: 8, aux: 10, hangar: 2, special: 1, builtin: 1 },
+    // Wbudowana wieża superlasera na dziobie (gniazdo `builtin` z edytora, 2026-10-20 — decyzja użytkownika:
+    // promień śmierci tylko na supercapitalu Terra Nova, nie w slocie special). Uzbrojenie NPC (equipNpcWeapons).
+    defaultNpcLoadout: { builtin: 'death_ray' },
     hardpointLayout: {
       type: 'lines',
       rotate: 'cw',

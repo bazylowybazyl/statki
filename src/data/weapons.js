@@ -563,12 +563,18 @@ export const MASTER_WEAPONS = {
   // zatrzymuje promień kraterem; obrażenia na kadłub = baseDamage × min(1, droga w materiale / `fullDepth`)
   // (≥ `minFrac`): pancernik (12 000) ginie od jednego strzału, lotniskowiec (42 000) i superkapitał (85 000) — nie.
   // Zasięg 12 km: superbroń krótsza niż Hexlance (15 km), bo trafia natychmiast. Smugi gazu — brak (TRAIL_FAMILIES).
+  // Wbudowana wieża supercapitala Terra Nova (Colossus — `defaultNpcLoadout.builtin` w src/data/ships.js), tylko NPC
+  // (2026-10-20, user: „built-in turret single target — daj go supercapitalowi Terran; broń jest zbyt potężna na
+  // special slot”). `npcOnly` — poza wyposażeniem gracza, sklepem i zapisem; `builtinTurret` — gniazdo builtin z wieżą
+  // (Turret2D, rodzina 3D `deathRay`), nie lufą w kadłubie jak Hexlance.
   death_ray: {
-    id: 'death_ray', name: 'Gungnir — Promień Śmierci (Special)', mountType: 'special', category: 'superweapon', size: 'Capital',
+    id: 'death_ray', name: 'Gungnir — Promień Śmierci', mountType: 'builtin', category: 'superweapon', size: 'Capital',
+    npcOnly: true, builtinTurret: true, npcFaction: 'terran',   // piracki supercapital na ramie Colossusa — bez promienia
     baseDamage: 20000, baseRange: 12000, baseSpeed: Infinity, cooldown: 45.0, chargeTime: 4.0,
-    spread: 0, penetration: 2, energyCost: 400, vfxColor: '#46ff8c',
+    spread: 0, penetration: 1, energyCost: 400, vfxColor: '#46ff8c',
     recoil: 30, shake: 40, impactScale: 6.0,
     deathRay: {
+      singleTarget: true,  // jeden cel: promień kończy się za pierwszym przeciętym okrętem (i najdalej za celem strzału)
       width: 150,          // [j.] szerokość wiązki w obrazie (ciało; poświata ~2,4 ×)
       cutHalfWidth: 55,    // [j.] półszerokość pasa rzazu w kadłubie (~7 węzłów siatki 15 j.)
       frontSpeed: 30000,   // [j/s] czoło promienia (12 km w 0,4 s; rzaz pancernika w 1–3 krokach fizyki)
@@ -576,11 +582,11 @@ export const MASTER_WEAPONS = {
       fade: 0.5,           // [s] wygaszanie
       fullDepth: 200,      // [j.] droga w materiale, przy której kadłub dostaje pełne obrażenia
       minFrac: 0.15,       // otarcie: najmniej taki ułamek obrażeń
-      endDamageFrac: 0.35, // okręt, który zatrzymał promień (ponad `penetration`): ułamek obrażeń + krater
+      endDamageFrac: 0.35, // okręt, który zatrzymał promień (ponad `penetration`, bez `singleTarget`): ułamek obrażeń + krater
       endCrater: 90,       // [j.] promień krateru zatrzymania
       stationDamage: 30000 // stacja / budowla: obrażenia raz na strzał, promień kończy się na niej
     },
-    description: 'Promień śmierci superkapitału: 4 s ładowania, potem wiązka, która przepala tarczę i tnie kadłub na wylot — jeden strzał rozcina pancernik. Przebija dwa okręty, przeładowanie 45 s.'
+    description: 'Wbudowana wieża superlasera Colossusa Terra Nova: 4 s ładowania, potem wiązka, która przepala tarczę i tnie kadłub na wylot — jeden strzał rozcina pancernik. Jeden cel, przeładowanie 45 s.'
   },
 
   // ==========================================================================

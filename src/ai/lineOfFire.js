@@ -1,6 +1,7 @@
 const LINE_OF_FIRE_QUERY_PADDING = 1200;
 
-function entityBlocksLine(victim, shooter, target, player, startX, startY, dirX, dirY, checkDist) {
+// `pad` — pas linii ognia ponad promień kadłuba sojusznika (domyślnie 15 j. — pocisk; szeroka wiązka podaje więcej).
+function entityBlocksLine(victim, shooter, target, player, startX, startY, dirX, dirY, checkDist, pad = 15) {
   if (!victim || victim === shooter || victim === target || victim.dead || victim.destroyed) return false;
 
   const isAlly = (shooter.friendly === victim.friendly) || (shooter.friendly && victim === player);
@@ -23,7 +24,7 @@ function entityBlocksLine(victim, shooter, target, player, startX, startY, dirX,
   const closestY = startY + dirY * dot;
   const offsetX = victimX - closestX;
   const offsetY = victimY - closestY;
-  const safeRadius = (victimRadius || 20) + 15;
+  const safeRadius = (victimRadius || 20) + pad;
   return offsetX * offsetX + offsetY * offsetY < safeRadius * safeRadius;
 }
 
@@ -31,6 +32,10 @@ function entityBlocksLine(victim, shooter, target, player, startX, startY, dirX,
  * Checks whether an allied hull crosses the shot path. The spatial query is
  * centred on the segment, so callers avoid rebuilding/scanning the whole NPC
  * array for every weapon candidate.
+ *
+ * `pad` — pas ponad promień kadłuba sojusznika (domyślnie 15 j., pocisk). Szeroka wiązka (pad > 15 — promień
+ * śmierci) sprawdza też GRACZA przy zapytaniu siatki: siatka AI ma tylko NPC, a rzaz przeciąłby Atlasa.
+ * Zwykłe pociski — jak dawniej (bez gracza w gałęzi siatki).
  */
 export function isFriendlyLineOfFireBlocked(
   shooter,
@@ -38,8 +43,10 @@ export function isFriendlyLineOfFireBlocked(
   weaponRange,
   queryNearby,
   fallbackEntities,
-  player
+  player,
+  pad = 15
 ) {
+  const lane = Math.max(15, Number(pad) || 15);
   if (!shooter || !target) return false;
   const startX = Number(shooter.x);
   const startY = Number(shooter.y);
@@ -58,6 +65,9 @@ export function isFriendlyLineOfFireBlocked(
   const dirY = toTargetY / distToTarget;
 
   if (typeof queryNearby === 'function') {
+    if (lane > 15 && player && entityBlocksLine(player, shooter, target, player, startX, startY, dirX, dirY, checkDist, lane)) {
+      return true;
+    }
     const halfDist = checkDist * 0.5;
     const query = queryNearby(
       startX + dirX * halfDist,
@@ -67,19 +77,19 @@ export function isFriendlyLineOfFireBlocked(
     const buffer = query?.buffer;
     const count = Math.min(Number(query?.count) || 0, buffer?.length || 0);
     for (let i = 0; i < count; i++) {
-      if (entityBlocksLine(buffer[i], shooter, target, player, startX, startY, dirX, dirY, checkDist)) {
+      if (entityBlocksLine(buffer[i], shooter, target, player, startX, startY, dirX, dirY, checkDist, lane)) {
         return true;
       }
     }
     return false;
   }
 
-  if (player && entityBlocksLine(player, shooter, target, player, startX, startY, dirX, dirY, checkDist)) {
+  if (player && entityBlocksLine(player, shooter, target, player, startX, startY, dirX, dirY, checkDist, lane)) {
     return true;
   }
   const entities = fallbackEntities || [];
   for (let i = 0; i < entities.length; i++) {
-    if (entityBlocksLine(entities[i], shooter, target, player, startX, startY, dirX, dirY, checkDist)) {
+    if (entityBlocksLine(entities[i], shooter, target, player, startX, startY, dirX, dirY, checkDist, lane)) {
       return true;
     }
   }
