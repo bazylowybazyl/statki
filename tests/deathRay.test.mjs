@@ -1,8 +1,10 @@
-// Promień śmierci (2026-10-19, src/game/deathRay.js; dane `death_ray` w src/data/weapons.js): dane i pasmo broni, tabele
-// obrazu (receptura, stemple ran, wieża 2D / 3D), model obrażeń, strzał na PRAWDZIWYM kadłubie belek pancernika (sprite
-// gry, HullBodies) — jeden strzał przecina kadłub silnikiem belek i zabija, tarcza pada do zera, przebicia i zatrzymanie,
-// wrak tnie się bez liczenia do przebić, strzał wizualny bez trafień, rozkaz sceny (ładowanie → strzał w cel), rekordy
-// RAY_* strumienia rozkazów, bez Math.random w kroku, wpięcie w index.html.
+// Promień śmierci (2026-10-19, src/game/deathRay.js; dane `death_ray` w src/data/weapons.js): dane i pasmo broni (od
+// 2026-10-20 wbudowana wieża Colossusa Terra Nova, tylko NPC, jeden cel), tabele obrazu (receptura, stemple ran, wieża 2D /
+// 3D), model obrażeń, strzał na PRAWDZIWYM kadłubie belek pancernika (sprite gry, HullBodies) — jeden strzał przecina
+// kadłub silnikiem belek i zabija, tarcza pada do zera, jeden cel (okręt za celem nietknięty, promień kończy się za
+// wyjściem i za celem strzału), mechanizm przebić i zatrzymania (broń bez `singleTarget`), wrak tnie się bez liczenia do
+// przebić, strzał wizualny bez trafień, rozkaz sceny (ładowanie → strzał w cel), rekordy RAY_* strumienia rozkazów, bez
+// Math.random w kroku, wpięcie w index.html (AI NPC — tests/deathRayNpc.test.mjs).
 // node --test tests/deathRay.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +21,10 @@ const { createRenderCommands, RC, RAY } = await import('../src/render/renderComm
 const { WEAPON_FX } = await import('../src/3d/weapons/weaponFxTable.js');
 const { RECIPES, deathRayPalette } = await import('../src/3d/weapons/recipes.js');
 const { STAMP, WEAPON_STAMP_FAMILY, stampFamilyFor } = await import('../src/3d/hullDamageStamps.js');
-const { Turret2D, normalizeWeaponFxKey } = await import('../src/vfx/turret2D.js');
+const { Turret2D, normalizeWeaponFxKey, shouldRenderTurret } = await import('../src/vfx/turret2D.js');
+const { SHIPS } = await import('../src/data/ships.js');
+const { SHIP_EDITOR_DEFAULTS } = await import('../src/data/hardpointEditorDefaults.js');
+const { weaponBuildCost, weaponCatalog } = await import('../src/game/weaponEconomy.js');
 const { buildWeapon3D, WEAPON3D_FAMILY } = await import('../src/3d/ships3d/weapons/weapons3D.js');
 const { BEAM } = await import('../src/3d/weapons/beams.js');
 const shields = await import('../shieldSystem.js');
@@ -133,9 +138,30 @@ const recs = (world, type, kind = null) => world.records.filter((r) => r.type ==
 
 // ---------------------------------------------------------------------------- dane i tabele
 
-test('dane: superbroń special Capital z ładowaniem i długim przeładowaniem, zasięg w paśmie superbroni (≥ Valkyrie, < Hexlance)', () => {
+test('dane: wbudowana wieża Capital (tylko NPC Terra Nova, jeden cel) z ładowaniem i długim przeładowaniem, zasięg w paśmie superbroni', () => {
   assert.ok(DEF, 'death_ray w MASTER_WEAPONS');
-  assert.equal(DEF.mountType, 'special');
+  // user 2026-10-20: „built-in turret single target — daj go supercapitalovi Terran; zbyt potężna na special slot”
+  assert.equal(DEF.mountType, 'builtin');
+  assert.equal(DEF.npcOnly, true, 'poza wyposażeniem gracza');
+  assert.equal(DEF.builtinTurret, true, 'wbudowana Z WIEŻĄ (nie lufa w kadłubie jak Hexlance)');
+  assert.equal(DEF.npcFaction, 'terran');
+  assert.equal(DEF.penetration, 1);
+  assert.equal(deathRayParams(DEF).singleTarget, true, 'jeden cel');
+  assert.equal(weaponBuildCost(DEF), null, 'nie jest towarem');
+  assert.ok(!weaponCatalog().some((row) => row.id === 'death_ray'), 'bez katalogu i sklepu');
+  // Colossus Terra Nova: gniazdo builtin z edytora na dziobie (osi), w spec ramy i w domyślnym uzbrojeniu NPC
+  const colossus = SHIPS.terran_supercapital;
+  assert.equal(colossus.defaultNpcLoadout?.builtin, 'death_ray');
+  assert.equal(colossus.spec.builtin, 1);
+  const bow = SHIP_EDITOR_DEFAULTS.ships.terran_supercapital.hardpoints.filter((h) => h.type === 'builtin');
+  assert.equal(bow.length, 1, 'jedno gniazdo builtin');
+  assert.ok(bow[0].x > 600 && Math.abs(bow[0].y) < 50 && bow[0].rot === 90, 'na dziobie, w osi, kierunek dziobu');
+  // piraci: własna rama bez promienia; inne ramy — bez gniazda builtin w uzbrojeniu NPC
+  assert.notEqual(SHIPS.pirate_supercapital.defaultNpcLoadout?.builtin, 'death_ray');
+  assert.ok(!SHIPS.pirate_supercapital.spec.builtin);
+  for (const [id, frame] of Object.entries(SHIPS)) {
+    if (id !== 'terran_supercapital') assert.notEqual(frame.defaultNpcLoadout?.builtin, 'death_ray', id);
+  }
   assert.equal(DEF.size, 'Capital');
   assert.equal(DEF.category, 'superweapon');
   assert.ok(isDeathRayWeapon(DEF) && !isDeathRayWeapon(MASTER_WEAPONS.hexlance_siege));
@@ -168,6 +194,9 @@ test('obraz: receptura `deathRay` (ładowanie, wylot, trafienia, emisja), stempl
   assert.equal(normalizeWeaponFxKey('death_ray'), 'deathRay');
   const spec = Turret2D.resolveSpec('death_ray', 'superweapon');
   assert.ok(spec && spec.m.length === 1, 'sylwetka z jednym wylotem');
+  // wieża na gnieździe builtin: tylko broń z `builtinTurret` (Hexlance — lufa w kadłubie, bez wieży)
+  assert.equal(shouldRenderTurret(DEF), true);
+  assert.equal(shouldRenderTurret(MASTER_WEAPONS.hexlance_siege), false);
   assert.equal(WEAPON3D_FAMILY.death_ray, 'deathRay');
   const m3 = buildWeapon3D('deathRay', { builder: true });
   assert.equal(m3.trunnion[0] + m3.muzzleX, spec.m[0][0], 'wylot modelu 3D = wylot sylwetki 2D');
@@ -229,7 +258,12 @@ test('jeden strzał w poprzek pancernika: kadłub przecięty na wylot (pas rzazu
     const exit = recs(world, RC.RAY_HIT, RAY_HIT.EXIT)[0].d;
     assert.ok(entry[RAY.H_Y] > -400 && entry[RAY.H_Y] < -100 && exit[RAY.H_Y] > 100 && exit[RAY.H_Y] < 400, 'wejście i wyjście na burtach');
     assert.ok(exit[RAY.H_T] - entry[RAY.H_T] > 250, 'droga w materiale ~ szerokość kadłuba');
-    assert.equal(recs(world, RC.RAY_STATE).length, 0, 'promień doszedł do końca zasięgu');
+    // jeden cel: promień kończy się tuż za wyjściem (pas rzazu + zapas) — obraz dostaje skrócenie RAY_STATE
+    const st = recs(world, RC.RAY_STATE);
+    assert.equal(st.length, 1);
+    assert.equal(st[0].d[RAY.S_CODE], RAY_STATE.STOP);
+    const over = st[0].d[RAY.S_LEN] - exit[RAY.H_T];
+    assert.ok(over > deathRayParams(DEF).cutHalfWidth && over < 200, `koniec za wyjściem (+${Math.round(over)} j.)`);
   } finally {
     cleanupWorld(world);
   }
@@ -256,14 +290,64 @@ test('tarcza pancernika pada do zera przy obrysie (przepalenie), kadłub i tak p
   }
 });
 
-test('przebicia: dwa pancerniki na linii przecięte na wylot, trzeci zatrzymuje promień (krater, ułamek obrażeń)', () => {
+test('jeden cel: pierwszy pancernik na linii przecięty i martwy, drugi za nim nietknięty — promień kończy się za wyjściem', () => {
+  const a = battleship('A', 0, 0, Math.PI / 2);
+  const b = battleship('B', 2000, 0, Math.PI / 2);
+  const world = makeWorld({ ships: [a, b] });
+  try {
+    const bNodes = b.beamHull.body.activeNodes;
+    const ray = world.sys.fire(null, DEF, -3000, 0, 1, 0);
+    run(world, 0.7);
+    assert.ok(a.dead, 'pierwszy przecięty i martwy');
+    assert.ok(!b.dead, 'drugi żyje');
+    assert.ok(!world.log.some((l) => l[0] === 'dmg' && l[1] === 'B'), 'drugi bez obrażeń');
+    assert.equal(b.beamHull.body.activeNodes, bNodes, 'drugi bez rzazu i krateru');
+    // koniec tuż za wyjściem z A (kadłub w poprzek: x ∈ ~[−190, 190]) — pas rzazu + zapas, przed obwiednią B
+    const endX = -3000 + ray.len;
+    assert.ok(ray.stopped && endX > 150 && endX < 400, `promień kończy się za A (x ${Math.round(endX)})`);
+    assert.equal(recs(world, RC.RAY_HIT, RAY_HIT.EXIT).length, 1, 'wyjście z A');
+    assert.equal(recs(world, RC.RAY_HIT, RAY_HIT.END).length, 0, 'bez zatrzymania na kraterze');
+    const st = recs(world, RC.RAY_STATE);
+    assert.equal(st.length, 1);
+    assert.equal(st[0].d[RAY.S_CODE], RAY_STATE.STOP);
+    assert.ok(Math.abs(st[0].d[RAY.S_LEN] - ray.len) < 1e-6, 'obraz skrócony do długości gry');
+  } finally {
+    cleanupWorld(world);
+  }
+});
+
+test('jeden cel: promień nie leci dalej niż za obwiednię celu strzału (cel poza osią — okręt daleko za nim nietknięty)', () => {
+  const t = battleship('cel', 2000, 1500, 0);
+  const far = battleship('daleko', 8000, 0, Math.PI / 2);
+  const world = makeWorld({ ships: [t, far] });
+  try {
+    const n0 = far.beamHull.body.activeNodes;
+    const ray = world.sys.fire(null, DEF, -3000, 0, 1, 0, { target: t });
+    const proj = 2000 - -3000;
+    assert.ok(ray.len < proj + beamRadius(t) * 1.2 + 301 && ray.len > proj, `długość ograniczona celem (${Math.round(ray.len)})`);
+    run(world, 0.7);
+    assert.equal(far.beamHull.body.activeNodes, n0, 'okręt za celem nietknięty');
+    assert.ok(!far.dead);
+    // bez celu ten sam strzał doszedłby do niego (kontrola)
+    const ray2 = world.sys.fire(null, DEF, -3000, 0, 1, 0);
+    run(world, 0.7);
+    assert.ok(far.dead && ray2.kills === 1, 'kontrola: bez celu promień sięga dalekiego okrętu');
+  } finally {
+    cleanupWorld(world);
+  }
+});
+
+test('przebicia (broń bez `singleTarget`): dwa pancerniki na linii przecięte na wylot, trzeci zatrzymuje promień (krater, ułamek obrażeń)', () => {
+  // mechanizm przebić systemu (sceny, przyszłe bronie): ta sama broń z penetration 2 i bez jednego celu
+  const MULTI = { ...DEF, penetration: 2, deathRay: { ...DEF.deathRay, singleTarget: false } };
+  assert.equal(deathRayParams(MULTI).singleTarget, false);
   const a = battleship('A', 0, 0, Math.PI / 2);
   const b = battleship('B', 2000, 0, Math.PI / 2);
   const c = battleship('C', 4000, 0, Math.PI / 2);
   const world = makeWorld({ ships: [a, b, c] });
   try {
     const cNodes = c.beamHull.body.activeNodes;
-    const ray = world.sys.fire(null, DEF, -3000, 0, 1, 0);
+    const ray = world.sys.fire(null, MULTI, -3000, 0, 1, 0);
     run(world, 0.7);
     assert.ok(a.dead && b.dead, 'dwa pierwsze przecięte i martwe');
     assert.ok(!c.dead, 'trzeci żyje');
@@ -284,7 +368,7 @@ test('przebicia: dwa pancerniki na linii przecięte na wylot, trzeci zatrzymuje 
   }
 });
 
-test('wrak na linii: cięty z pędem, bez obrażeń i bez liczenia do przebić', () => {
+test('wrak na linii: cięty z pędem, bez obrażeń i bez liczenia do przebić (jeden cel — okręt za wrakiem)', () => {
   const w0 = battleship('wrak', 0, 0, Math.PI / 2);
   const a = battleship('A', 2000, 0, Math.PI / 2);
   const b = battleship('B', 4000, 0, Math.PI / 2);
@@ -298,7 +382,8 @@ test('wrak na linii: cięty z pędem, bez obrażeń i bez liczenia do przebić',
     run(world, 0.7);
     assert.ok(!world.log.some((l) => l[0] === 'dmg' && l[1] === 'wrak'), 'wrak bez obrażeń');
     assert.ok(wreck.beamHull ? wreck.beamHull.body.activeNodes < n0 : true, 'wrak przecięty');
-    assert.ok(a.dead && b.dead, 'dwa okręty za wrakiem przecięte (wrak nie liczy się do przebić)');
+    assert.ok(a.dead, 'okręt za wrakiem przecięty (wrak nie jest celem)');
+    assert.ok(!b.dead, 'jeden cel: następny okręt nietknięty');
   } finally {
     cleanupWorld(world);
   }
@@ -381,6 +466,28 @@ test('rozkaz sceny: strzelec ładuje promień i strzela w AKTUALNĄ pozycję cel
   }
 });
 
+test('ładowanie NPC (wieża Colossusa): rekord RAY_CHARGE przy lufie, laser naprowadzający do celu AI (bez celu — zasięg)', () => {
+  const world = makeWorld({ ships: [] });
+  try {
+    const shooter = { __name: 'colossus', x: 0, y: 0, angle: 0, vx: 0, vy: 0, radius: 800 };
+    const weaponState = {};   // działo NPC (autoWeapons) — klucz stanu efektu
+    const target = { x: 6000, y: 800 };
+    world.sys.chargeFx(shooter, DEF, 900, 0, Math.atan2(800, 5100), 0.4, DT, weaponState, target);
+    world.sys.chargeFx(shooter, DEF, 900, 0, 0, 0.5, DT, weaponState, null);
+    const ch = recs(world, RC.RAY_CHARGE);
+    assert.equal(ch.length, 2, 'ładowanie promienia, nie zwykły rekord CHARGE');
+    assert.equal(recs(world, RC.CHARGE).length, 0);
+    const d = ch[0].d;
+    const want = Math.sqrt((target.x - d[RAY.C_X]) ** 2 + (target.y - d[RAY.C_Y]) ** 2);
+    assert.ok(Math.abs(d[RAY.C_LEN] - want) < 1e-6, `laser do celu (${Math.round(d[RAY.C_LEN])} / ${Math.round(want)})`);
+    assert.ok(d[RAY.C_X] > 900, 'wylot na końcu lufy (czop + lufa sylwetki)');
+    assert.equal(d[RAY.C_U], 0.4);
+    assert.equal(ch[1].d[RAY.C_LEN], DEF.baseRange, 'bez celu — zasięg broni');
+  } finally {
+    cleanupWorld(world);
+  }
+});
+
 test('krok promienia bez Math.random gry (rzaz, tarcze, rekordy)', () => {
   const bs = battleship('los', 0, 0, 0, { radius: 330, shield: { val: 7200, max: 7200, state: 'active', activationProgress: 1, impacts: [] } });
   const world = makeWorld({ ships: [bs] });
@@ -407,4 +514,15 @@ test('index.html: fireWeaponCore oddaje promień systemowi, krok w physicsStep, 
   assert.match(html, /if \(weapon\.def\.deathRay\) \{ deathRays\.chargeFx\(/);
   assert.ok(html.includes("applyDamageToNPC(e, dmg, 'deathray', SHIELD_BREACH_DAMAGE_OPTS"), 'obrażenia z pominięciem tarczy');
   assert.ok(html.includes('window.DeathRayGame = deathRays'), 'gra: window.DeathRayGame (scena „Wojna”)');
+  // jeden cel: strzał NPC niesie cel; wieża Colossusa na gnieździe builtin (equipDeathRay — wirtualne builtin na dziobie)
+  assert.match(html, /target: aimed \? target : null/);
+  assert.match(html, /e\.weapons\.builtin = \[\{ hp, weapon: def \}\];/);
+  // tylko NPC: gniazda gracza, zapis wyposażenia i konsola dev odrzucają broń `npcOnly`
+  assert.match(html, /function playerFitFits\(def, slot\) \{\n\s*return !!def && def\.npcOnly !== true && /);
+  assert.match(html, /function savedHardpointBucket\(saved\) \{\n\s*if \(saved\?\.mount && WEAPONS\[saved\.mount\]\?\.npcOnly === true\) return null;/);
+  assert.ok(html.includes("isKnown: (id) => !!WEAPONS[id] && WEAPONS[id].npcOnly !== true"), 'magazyn z zapisu bez broni NPC');
+  assert.match(html, /mountSpecial\(weaponId, count = Infinity\) \{\n(?:.*\n){0,1}\s*if \(weaponId && WEAPONS\[weaponId\]\?\.npcOnly === true\) return 0;/);
+  // frakcja: piracka rama Colossusa bez promienia; linia ognia NPC z pasem szerokiej wiązki
+  assert.match(html, /const onlyFaction = MASTER_WEAPONS\[weaponId\]\.npcFaction;/);
+  assert.match(html, /function isLineOfFireBlocked\(shooter, target, weaponRange, pad\) \{/);
 });

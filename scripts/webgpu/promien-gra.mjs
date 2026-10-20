@@ -1,27 +1,29 @@
 // Promień śmierci (2026-10-19, src/game/deathRay.js; dane `death_ray`) w PRAWDZIWEJ grze: własny Vite (bez HMR)
 // + headless Chrome z WebGPU (CDP), harness strony (scripts/webgpu/harness-strona.js — czas stoi, gra kroczy tylko
-// przez __harness.step), gra swobodna. Trzy przypadki:
-//   gracz — Atlas w pustej przestrzeni z promieniem na gnieździe special (DevScene.mountSpecial), piracki pancernik
-//           (z tarczą, bez mózgu i broni) w `--odl` j. na wschód, kursor nad celem, DevScene.fireSpecial(): ładowanie
-//           4 s, strzał, rozpad;
-//   npc    — rozkaz sceny DevScene.deathRay(strzelec, cel): pancernik Terra Nova ładuje i strzela w drugi pancernik;
-//   wizual — DevScene.deathRayVisual(…) z ładowaniem i barwą sceny (bez trafień).
-// Mierzy: HP, śmierć i wraki celu (odłamy po rzazie), stan promieni (DevScene.deathRayState), statystyki WeaponFx
-// (promienie, trafienia, ładowania), pipeline'y tworzone synchronicznie od końca przygotowania (ma być 0), błędy konsoli.
-// Zrzuty: ładowanie (25 / 90%), czoło, pełna wiązka, trwanie, rozpad (zbliżenie), strzał NPC, strzał wizualny.
+// przez __harness.step), gra swobodna. Od 2026-10-20 promień to wbudowana wieża Colossusa Terra Nova (tylko NPC, jeden
+// cel) — przygotowanie sprawdza, że gracz go nie zamontuje (DevScene.mountSpecial → 0). Trzy przypadki:
+//   colossus — supercapital Terra Nova (spawnCallInShip('supercapital'), uzbrojenie jak w grze: promień na gnieździe
+//              builtin dziobu; pozostałe grupy zdjęte, mózg = sam processAutonomousWeapons — bez ruchu) i dwa pirackie
+//              pancerniki (z tarczą, bez mózgu i broni) na jednej linii przed dziobem w `--odl` j. i `--odl` + 2500 j.:
+//              AI sama wybiera cel, ładuje 4 s i strzela; pierwszy ginie przecięty, drugi za nim zostaje cały;
+//   npc      — rozkaz sceny DevScene.deathRay(strzelec, cel): pancernik Terra Nova ładuje i strzela w drugi pancernik;
+//   wizual   — DevScene.deathRayVisual(…) z ładowaniem i barwą sceny (bez trafień).
+// Mierzy: HP, śmierć i wraki celów (odłamy po rzazie), stan promieni (DevScene.deathRayState), statystyki WeaponFx
+// (promienie, trafienia, ładowania), pipeline'y tworzone synchronicznie od wejścia do gry (ma być 0), błędy konsoli.
+// Zrzuty: wieża Colossusa (zbliżenie), ładowanie, czoło, pełna wiązka, rozpad (zbliżenie), po 3 s, strzał NPC, wizualny.
 //
-//   node scripts/webgpu/promien-gra.mjs [--odl 3200] [--out .tmp/promien] [--port 5417] [--rozmiar 1600x900]
-//        [--query renderWorker=1] [--przypadki gracz,npc,wizual]
+//   node scripts/webgpu/promien-gra.mjs [--odl 5500] [--out .tmp/promien] [--port 5417] [--rozmiar 1600x900]
+//        [--query renderWorker=1] [--przypadki colossus,npc,wizual]
 // Wynik: <out>/*.png i <out>/raport.json.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
 
 const args = parseArgs();
-const odl = Number(args.odl || 3200);
+const odl = Number(args.odl || 5500);
 const [W, H] = (args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/promien');
-const cases = new Set(String(args.przypadki || 'gracz,npc,wizual').split(','));
+const cases = new Set(String(args.przypadki || 'colossus,npc,wizual').split(','));
 const query = args.query ? `&${args.query}` : '';
 mkdirSync(out, { recursive: true });
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
@@ -91,90 +93,110 @@ try {
   report.tryb = await ev('window.__RENDER_MODE || window.RenderWorkerHost?.mode || (window.RenderWorkerHost ? "worker" : "off")');
   const prepMark = await pipeMark();
 
-  // ------------------------------------------------------------------ przygotowanie: Atlas, cel, kamera, kursor
+  // ------------------------------------------------------------------ przygotowanie: Atlas, Colossus TN, cele, kamera
+  // Colossus Terra Nova: uzbrojenie jak w grze (equipNpcWeapons — promień na gnieździe builtin dziobu), pozostałe grupy
+  // zdjęte (czysty kadr promienia), mózg = sam processAutonomousWeapons (wybór celu, ładowanie, strzał — bez ruchu).
+  // Cele: dwa pirackie pancerniki z tarczą na linii przed dziobem (bez mózgu i broni) — jeden cel: drugi ma przeżyć.
+  const CY = DEEP.y + 7000;
   const prep = await ev(String.raw`(async () => {
     const S = window.__harness.scene, H = window.__harness;
     S.hideHud(true);
     window.setFogOfWar?.(false);
     DevScene.preloadHullSprites();
     DevScene.mountMissile(null);
-    const mounted = DevScene.mountSpecial('death_ray', 1);
-    // Łuk gniazda special (270° wokół normalnej burty, weaponAim.mountFireArc): kurs tak, żeby burta gniazda patrzyła
-    // na wschód, gdzie stoi cel (gniazdo na lewej burcie, y < 0 sprite'a — kurs na południe, na prawej — na północ).
-    const lo = (Game.player.weapons?.special || []).find((l) => l?.weapon?.id === 'death_ray');
-    const hy = Number(lo?.hp?.y ?? lo?.hp?.pos?.y) || 0;
-    const heading = hy < 0 ? Math.PI / 2 : -Math.PI / 2;
-    DevScene.teleport(${DEEP.x}, ${DEEP.y}, heading);
+    // gracz NIE dostaje promienia (npcOnly): montaż na gniazdach special odmawia
+    const graczMontaz = DevScene.mountSpecial('death_ray', 1);
+    DevScene.teleport(${DEEP.x}, ${DEEP.y}, -Math.PI / 2);
     ship.angVel = 0;
-    // działa main i rakiety bez ognia na auto (czysty kadr promienia; grupa special w ręku)
-    fireControl.auto.main = false; fireControl.auto.missile = false; fireControl.inHand = 'special';
-    const r = spawnCallInShip('battleship', { mode: 'pirate', spawnPos: { x: ${DEEP.x + odl}, y: ${DEEP.y} }, spawnAngle: Math.PI / 2 });
-    const e = Array.isArray(r) ? r[0] : r;
-    if (!e) return { error: 'brak celu' };
-    e.ai = () => {}; e.autoWeapons = []; e._weaponsInit = true; e.vx = 0; e.vy = 0; e.angVel = 0;
-    window.__prTarget = e;
-    S.cam(${DEEP.x + odl * 0.5}, ${DEEP.y}, ${Math.min(0.32, (W * 0.8) / (odl + 2600)).toFixed(4)});
+    fireControl.auto.main = false; fireControl.auto.missile = false;
+    const { processAutonomousWeapons } = await import('/src/ai/capitalAI.js');
+    // okręty kapitałowe (spawnCapitalCallIn) biorą pozycję z pola pos, nie ze spawnPos
+    const rc = spawnCallInShip('supercapital', { mode: 'friendly', pos: { x: ${DEEP.x - 3000}, y: ${CY} }, spawnPos: { x: ${DEEP.x - 3000}, y: ${CY} }, spawnAngle: 0 });
+    const c = Array.isArray(rc) ? rc[0] : rc;
+    if (!c) return { error: 'brak Colossusa' };
+    const builtin = (c.weapons?.builtin || []).map((l) => ({ id: l.weapon?.id, x: l.hp?.x, y: l.hp?.y, rot: l.hp?.rot, mount: l.hp?.mount }));
+    for (const g of ['main', 'aux', 'missile', 'special', 'special_missile', 'hangar']) if (c.weapons?.[g]) c.weapons[g] = [];
+    c._weaponsInit = false; c.autoWeapons = undefined;
+    c.vx = 0; c.vy = 0; c.angVel = 0; c.angle = 0; c.desiredAngle = 0;
+    c.ai = (dt) => processAutonomousWeapons(c, dt);
+    if (c.supportData) c.supportData = null;
+    const targets = [];
+    for (const dx of [${odl}, ${odl + 2500}]) {
+      const r = spawnCallInShip('battleship', { mode: 'pirate', spawnPos: { x: ${DEEP.x - 3000} + dx, y: ${CY} }, spawnAngle: Math.PI / 2 });
+      const e = Array.isArray(r) ? r[0] : r;
+      if (!e) return { error: 'brak celu' };
+      e.ai = () => {}; e.autoWeapons = []; e._weaponsInit = true; e.vx = 0; e.vy = 0; e.angVel = 0;
+      targets.push(e);
+    }
+    window.__prColossus = c; window.__prTarget = targets[0]; window.__prBehind = targets[1];
+    S.cam(${DEEP.x - 3000 + (odl + 2500) * 0.5}, ${CY}, ${Math.min(0.3, (W * 0.8) / (odl + 2500 + 3200)).toFixed(4)});
     await H.step(30);
-    return { mounted, special: (Game.player.weapons?.special || []).map((l) => l.weapon?.id), gniazdo: lo?.hp ? { x: lo.hp.x ?? lo.hp.pos?.x, y: hy } : null,
-      kurs: +heading.toFixed(3), typ: e.type, hp: e.hp, maxHp: e.maxHp, shield: e.shield ? Math.round(e.shield.val) : null, hull: !!e.beamHull };
+    return { graczMontaz, colossus: { typ: c.type, rama: c.shipFrame, builtin, hp: c.hp, radius: c.radius },
+      cele: targets.map((e) => ({ typ: e.type, hp: e.hp, shield: e.shield ? Math.round(e.shield.val) : null, hull: !!e.beamHull })) };
   })()`);
   report.przygotowanie = prep;
   console.log('przygotowanie', JSON.stringify(prep));
   if (prep.error) throw new Error(prep.error);
-  await waitFor(cdp, '!!window.__prTarget?.beamHull', 60000, 300);
-  await step(30);
-  for (let i = 0; i < 120 && !(await ev('window.__harness.scene.uploadsIdle()')); i++) await sleep(250);
-  // przygotowanie: montaż promienia (wieża 3D rodziny `deathRay`), spawn celu — pipeline'y od wejścia do gry
+  if (prep.graczMontaz !== 0) throw new Error('gracz zamontował promień (npcOnly): ' + prep.graczMontaz);
+  if (!prep.colossus.builtin.some((b) => b.id === 'death_ray')) throw new Error('Colossus bez promienia na gnieździe builtin');
+  await waitFor(cdp, '!!window.__prColossus?.beamHull && !!window.__prTarget?.beamHull && !!window.__prBehind?.beamHull', 60000, 300);
+  // przygotowanie: spawn Colossusa (wieża 3D rodziny `deathRay` na gnieździe builtin) i celów — pipeline'y od wejścia do gry
   await pipeSince('przygotowanie', prepMark);
 
-  if (cases.has('gracz')) {
-    const C = report.przypadki.gracz = { etapy: [] };
-    // kursor nad celem, wieża dochodzi (Capital ~43°/s)
-    await ev(`(() => { const e = window.__prTarget; DevScene.pointerAt(e.x, e.y); return true; })()`);
-    await step(150);
-    C.wieza = await ev('(() => { const fc = window.fireControl; return fc.turrets.special.slice(0, fc.turretCount.special).map((t) => ({ stan: t.state, kat: +(+t.angle).toFixed(3) })); })()');
+  if (cases.has('colossus')) {
+    const C = report.przypadki.colossus = { etapy: [] };
     const k0 = await pipeMark();
-    C.przed = await ev(`(() => { const e = window.__prTarget; return { hp: Math.round(e.hp), nodes: e.beamHull?.body?.activeNodes ?? null, shield: e.shield ? Math.round(e.shield.val) : null, wraki: (window.wrecks || []).length, ladowanie: DevScene.specialCharge() }; })()`);
-    C.fire = await ev('DevScene.fireSpecial()');
-    // ładowanie 4 s: zrzuty przy ~25% i ~90%
-    await step(60);
-    C.etapy.push({ t: 'ladowanie-25', stan: await ev('DevScene.specialCharge()'), fx: await fxStats() });
-    await shot('01-ladowanie-25');
-    await step(150);
-    C.etapy.push({ t: 'ladowanie-90', stan: await ev('DevScene.specialCharge()'), fx: await fxStats() });
-    await shot('02-ladowanie-90');
-    // do strzału (krok po kroku — zrzut tuż po wyjściu czoła)
-    let fired = false;
-    for (let i = 0; i < 120 && !fired; i++) {
-      await step(1);
-      fired = await ev('(DevScene.deathRayState().stats.fired || 0) > 0');
+    const tState = (name) => `(() => { const e = window.${name}; return { hp: Math.round(e.hp), dead: !!e.dead, nodes: e.beamHull?.body?.activeNodes ?? null, shield: e.shield ? Math.round(e.shield.val) : null }; })()`;
+    C.przed = { cel: await ev(tState('__prTarget')), zaCelem: await ev(tState('__prBehind')) };
+    const weapon = `(() => { const w = (window.__prColossus.autoWeapons || []).find((a) => a.id === 'death_ray'); return w ? { grupa: w.group, kat: +(+w.visualAngle).toFixed(3), cel: w.cachedTarget === window.__prTarget ? 'cel' : (w.cachedTarget === window.__prBehind ? 'zaCelem' : (w.cachedTarget ? 'inny' : null)), ladowanie: w.charge ? +(+w.charge.u || 0).toFixed(2) : null, cd: +(+w.cd).toFixed(2) } : null; })()`;
+    // wieża Colossusa z bliska (gniazdo builtin na dziobie), zanim AI złapie cel
+    C.czop = await ev(`(() => { const m = DevScene.deathRayMuzzle(window.__prColossus); if (m) window.__harness.scene.cam(m.x, m.y, 1.1);
+      return m ? { x: Math.round(m.x - window.__prColossus.x), y: Math.round(m.y - window.__prColossus.y) } : null; })()`);
+    await step(20);
+    await shot('01-wieza-colossus');
+    C.etapy.push({ t: 'wieza', bron: await ev(weapon) });
+    await ev(`(() => { window.__harness.scene.cam(${DEEP.x - 3000 + (odl + 2500) * 0.5}, ${CY}, ${Math.min(0.3, (W * 0.8) / (odl + 2500 + 3200)).toFixed(4)}); return true; })()`);
+    // AI: cel i ładowanie (4 s) — zrzut w połowie
+    let charging = false;
+    for (let i = 0; i < 240 && !charging; i++) { await step(1); charging = await ev("(window.__prColossus.autoWeapons || []).some((a) => a.id === 'death_ray' && a.charge && a.charge.charge >= 0)"); }
+    C.ladowanieOd = charging;
+    if (!charging) {
+      const diag = await ev(`(() => { const c = window.__prColossus, t = window.__prTarget;
+        const pool = window.getAIPirateCandidates?.();
+        const sc = c._shipScanCaches?.slow;
+        return { friendly: c.friendly, isPirate: c.isPirate, pool: Array.isArray(pool) ? pool.length : String(pool), celWPuli: Array.isArray(pool) && pool.includes(t),
+          celWNpcs: (window.npcs || []).includes(t), cel: { isPirate: t.isPirate, friendly: t.friendly, dead: !!t.dead, typ: t.type, rodzaj: window.getUnitKind?.(t), x: Math.round(t.x - c.x), y: Math.round(t.y - c.y) },
+          skan: sc ? { wrogowie: sc.enemies.length, rodzaje: sc.enemyKinds?.slice(0, 4), maxRange: sc.maxRange } : null,
+          bronie: (c.autoWeapons || []).map((a) => ({ id: a.id, g: a.group, arc: +(+a.arc).toFixed(2), m: +(+a.mountAngle).toFixed(2), strict: a.strict, prefers: a.prefers })),
+          kat: c.angle, mozg: String(c.ai).slice(0, 80) }; })()`);
+      throw new Error('Colossus nie ładuje promienia: ' + JSON.stringify(await ev(weapon)) + ' diag ' + JSON.stringify(diag));
     }
+    await step(120);
+    C.etapy.push({ t: 'ladowanie', bron: await ev(weapon), fx: await fxStats() });
+    await shot('02-ladowanie');
+    let fired = false;
+    for (let i = 0; i < 200 && !fired; i++) { await step(1); fired = await ev('(DevScene.deathRayState().stats.fired || 0) > 0'); }
     C.strzal = fired;
-    if (!fired) throw new Error('promień nie wystrzelił (ładowanie: ' + JSON.stringify(await ev('DevScene.specialCharge()')) + ')');
+    if (!fired) throw new Error('Colossus nie wystrzelił: ' + JSON.stringify(await ev(weapon)));
     await step(2);
     await shot('03-czolo');
     await step(10);
     C.etapy.push({ t: 'wiazka', promien: await ev('DevScene.deathRayState().rays'), fx: await fxStats() });
-    await shot('04-wiazka-pelna');
-    await step(40);
-    await shot('05-wiazka-trwanie');
-    // rozpad: zbliżenie na cel
-    await ev(`(() => { const e = window.__prTarget; window.__harness.scene.cam(e.x, e.y, 0.9); return true; })()`);
+    await shot('04-wiazka');
+    await ev(`(() => { const e = window.__prTarget; window.__harness.scene.cam(e.x, e.y, 0.75); return true; })()`);
     await step(30);
-    await shot('06-rozpad-zblizenie');
-    await step(120);
-    await shot('07-rozpad-3s');
-    C.po = await ev(`(() => {
-      const e = window.__prTarget;
-      const key = e.beamHull?.dmgKey ?? e.__dmgKeySeen ?? null;
-      const wr = (window.wrecks || []);
-      return { hp: Math.round(e.hp), dead: !!e.dead, shield: e.shield ? Math.round(e.shield.val) : null, wraki: wr.length,
-        wrakiCelu: wr.filter((w) => Math.hypot(w.x - e.x, w.y - e.y) < 3000).length,
-        stan: DevScene.deathRayState().stats };
-    })()`);
+    await shot('05-rozpad-zblizenie');
+    await ev(`(() => { window.__harness.scene.cam(${DEEP.x - 3000 + (odl + 2500) * 0.5}, ${CY}, ${Math.min(0.3, (W * 0.8) / (odl + 2500 + 3200)).toFixed(4)}); return true; })()`);
+    await step(150);
+    await shot('06-po-3s');
+    C.po = {
+      cel: await ev(tState('__prTarget')), zaCelem: await ev(tState('__prBehind')),
+      wraki: await ev(`(() => { const e = window.__prTarget; return (window.wrecks || []).filter((w) => Math.hypot(w.x - e.x, w.y - e.y) < 3000).length; })()`),
+      stan: await ev('DevScene.deathRayState().stats'), bron: await ev(weapon)
+    };
     C.fx = await fxStats();
-    C.pipeline = await pipeSince('gracz', k0);
-    console.log('gracz', JSON.stringify({ przed: C.przed, po: C.po, fx: C.fx, pipeline: C.pipeline }));
+    C.pipeline = await pipeSince('colossus', k0);
+    console.log('colossus', JSON.stringify({ przed: C.przed, po: C.po, fx: C.fx, pipeline: C.pipeline }));
   }
 
   if (cases.has('npc')) {

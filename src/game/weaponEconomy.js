@@ -154,6 +154,8 @@ export function weaponBuildCost(weaponOrId) {
   // a jej amunicję liczy przezbrojenie eskadry (squadronRearmCost). Bez ceny wypada z katalogu, cen portu
   // i zakupów refitu.
   if (isFighterWeapon(weapon)) return null;
+  // Broń tylko dla NPC (`npcOnly` — promień śmierci, wieża Colossusa) też nie jest towarem: bez ceny, katalogu i refitu.
+  if (weapon.npcOnly === true) return null;
   const good = weaponTradeGood(weapon);
   if (!good) return null;
 

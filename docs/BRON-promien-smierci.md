@@ -1,12 +1,39 @@
-# Promień Śmierci „Gungnir” (`death_ray`) — superbroń special
+# Promień Śmierci „Gungnir” (`death_ray`) — wbudowana wieża Colossusa Terra Nova
 
 2026-10-19, prośba użytkownika: „brakuje ogromnego lasera, który ma Venator — może trzeba dodać broń death ray: na strzała
 niszczy battleship”. Broń ma posłużyć scenie „Wojna” (prawdziwe encje na płaszczyźnie gry + czysto wizualny strzał w
 warstwach bitwy w głębi).
 
-## Decyzje
+## Zmiana 2026-10-20: wbudowana wieża Colossusa, tylko NPC, jeden cel
 
-- **Gniazdo special Capital, nie broń wbudowana.** Hexlance (`builtin`) ma jeden stan na grę (`superweaponState`) i strzela
+User: „built in turret single target — daj go supercapitalovi terran … broń jest zbyt potężna na special slot”.
+
+- **Wieża wbudowana Colossusa.** `mountType: 'builtin'` z wieżą (`builtinTurret` — Turret2D rysuje wieżę na gnieździe
+  builtin tylko z tym polem; Hexlance dalej lufą w kadłubie) na gnieździe builtin supercapitala Terra Nova
+  (`terran_supercapital`: punkt edytora x 813, y 0, `rot` 90 — dziób; `spec.builtin: 1`,
+  `defaultNpcLoadout: { builtin: 'death_ray' }`).
+- **Tylko NPC i tylko Terra Nova.** `npcOnly`: `playerFitFits` odrzuca (WYPOSAŻENIE, plan fitowania, automat kart),
+  zapis wyposażenia czyta wpis jako pusty, magazyn z zapisu go nie zna, `weaponBuildCost` → null (bez ceny, katalogu,
+  sklepu), `DevScene.mountSpecial('death_ray')` → 0. `npcFaction: 'terran'`: piracki „supercapital” bez własnej ramy
+  rozwiązuje się do ramy Colossusa — `equipNpcWeapons` zostawia mu gniazdo puste.
+- **Jeden cel.** `penetration: 1` + `deathRay.singleTarget`: promień kończy się tuż za wyjściem z przebitego okrętu
+  (pas rzazu + 30 j.) i najdalej za obwiednią celu strzału (× 1,2 + 300 j.), więc okręt za celem zostaje cały, także
+  gdy kadłub celu się wymknie; laser naprowadzający przy ładowaniu kończy się na celu AI (rekord `RAY_CHARGE`).
+  Decyzja „przebij / zatrzymaj” zapada przy dojściu czoła do materiału (wcześniej — przy zaplanowaniu, w kolejności
+  zbierania kandydatów), rzaz zaczyna się od wejścia minus pas (`cutAt`). Mechanizm wielu przebić zostaje dla broni bez
+  `singleTarget`.
+- **AI.** Grupa `builtin` w `autoWeapons` (tylko broń z `builtinTurret`): kurs z `rot` w stopniach edytora, łuk 270°,
+  cele wyłącznie okręty kapitałowe i niszczyciele (fregaty i myśliwce pomijane — 45 s przeładowania), linia ognia z
+  pasem wiązki (pas rzazu + 60 j.) — także gracz, którego nie ma w siatce AI. `getLeadAim` dla broni natychmiastowej
+  (`baseSpeed: Infinity`) celował w NaN (−∞ / −∞) — teraz bez wyprzedzenia.
+- **Model wieży z Blendera** robi osobna sesja (gałąź `wieza-promienia-blender`); do jej scalenia wieża proceduralna
+  `FAMILIES.deathRay`.
+
+Wyniki — § „Wyniki 2026-10-20” niżej. Decyzje z 2026-10-19 (gniazdo special, dwa przebicia) są nieaktualne.
+
+## Decyzje (2026-10-19)
+
+- **(do 2026-10-20) Gniazdo special Capital, nie broń wbudowana.** Hexlance (`builtin`) ma jeden stan na grę (`superweaponState`) i strzela
   tylko z Atlasa gracza. Promień ma strzelać też z okrętów NPC (scena), więc idzie torem specjali: gracz montuje go w
   WYPOSAŻENIU / `DevScene.mountSpecial('death_ray')`, NPC dostaje go w `npc.weapons.special` (AI strzela sama:
   `autoWeapons`, ładowanie `stepNpcWeaponCharge`) albo strzela na rozkaz sceny.
@@ -17,7 +44,7 @@ warstwach bitwy w głębi).
 - **Obrażenia z drogi w materiale.** baseDamage 20 000 × min(1, droga / 200 j.), najmniej 15% (otarcie). Pancernik
   (12 000 HP) ginie od każdego przejścia przez kadłub (≥ 120 j. materiału); lotniskowiec (42 000) i superkapitał
   (85 000) przeżywają z wyciętym pasem.
-- **Przebicia: 2 okręty.** Trzeci na linii zatrzymuje promień: krater (`endCrater` 90 j.) i 35% obrażeń. Wraki są cięte
+- **(do 2026-10-20) Przebicia: 2 okręty.** Trzeci na linii zatrzymuje promień: krater (`endCrater` 90 j.) i 35% obrażeń. Wraki są cięte
   (z pędem), ale nie liczą się do przebić. Stacja kończy promień (30 000 obrażeń raz).
 - **Zasięg 12 km**: superbroń natychmiastowa krótsza niż Hexlance (15 km), dłuższa niż Valkyrie (9 km). Ładowanie 4 s
   (bez postoju — Venator strzela w ruchu), przeładowanie 45 s.
@@ -77,3 +104,20 @@ promienia: `bridge3D:model / shadow / windows` (mostek Atlasa), `dysze SIDE 3D (
 kolejność ABBA): baza i gałąź — ta sama piątka w każdym przebiegu. W jednym przebiegu `promien-gra.mjs` (obciążona
 maszyna) było ich 14 — dochodziły mgławica, pył hali i kosmiczny, cień, partia kadłubów, światła nawigacyjne; wszystkie
 przed montażem promienia.
+
+### Wyniki 2026-10-20 (`promien-gra.mjs`: Colossus TN z AI kontra dwa pancerniki pirackie na jednej linii)
+
+| Przypadek | Tryb off | Tryb worker |
+|---|---|---|
+| Gracz montuje promień (`DevScene.mountSpecial('death_ray')`) | 0 gniazd (odmowa — `npcOnly`) | 0 |
+| Colossus TN (AI, gniazdo builtin x 813, `rot` 90) — wybór celu, ładowanie 4 s (80 rekordów `RAY_CHARGE`, laser do celu) | strzał w pierwszy pancernik (5,5 km) | to samo |
+| Pierwszy pancernik (tarcza 7200, 12 000 HP, 742 węzły) | martwy (HP −8000), tarcza 0, 304 węzły wycięte, wrak | to samo |
+| Drugi pancernik 2,5 km za nim, na tej samej linii | nietknięty (742 węzły, tarcza 7200, HP 12 000) | to samo |
+| Po strzale: wieża bierze następny cel, przeładowanie | cel = drugi pancernik, 41,8 s do strzału | to samo |
+| Rozkaz sceny (pancernik TN → piracki) / strzał wizualny | martwy (HP −8000) / wiązka bez trafień | to samo |
+| Pipeline'y synchroniczne (render / compute / worker), także start gry | 0 / 0 / — | 0 (dziennik workera, cały przebieg) |
+| Błędy konsoli | 0 | 0 (strona i worker) |
+
+Zrzuty: `.tmp/promien-v2-off/*.png`, `.tmp/promien-v2-worker/*.png` (wieża na dziobie Colossusa — dziś proceduralna,
+ładowanie z laserem do celu, czoło, wiązka kończąca się za pierwszym pancernikiem, rozpad, po 3 s). Testy:
+`tests/deathRay.test.mjs` (15), `tests/deathRayNpc.test.mjs` (8); pełny zestaw — bez nowych błędów (9 zastanych).

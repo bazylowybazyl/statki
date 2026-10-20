@@ -7,8 +7,10 @@
 // Promień = odcinek od wylotu w STAŁYM kierunku świata; wylot jedzie z kadłubem strzelca (przesunięcie w jego układzie).
 // Czoło biegnie `frontSpeed` j/s i w każdym kroku fizyki przetwarza odcinek [poprzednie czoło, nowe czoło]:
 //   • pierwszy kontakt z obwiednią celu (kadłub ∪ tarcza + półszerokość rzazu): `traceThrough` po cięciwie (tylko
-//     odczyt, PRZED rzazem) — wejście, wyjście i droga w materiale. Okręt ponad `penetration` ZATRZYMUJE promień na
-//     wejściu (krater, ułamek obrażeń); pozostałe są przecinane na wylot;
+//     odczyt, PRZED rzazem) — wejście, wyjście i droga w materiale. Decyzja zapada, gdy czoło dojdzie do materiału
+//     (kolejność wejścia): okręt ponad `penetration` ZATRZYMUJE promień na wejściu (krater, ułamek obrażeń), pozostałe
+//     są przecinane na wylot. JEDEN CEL (`singleTarget`, broń `death_ray` od 2026-10-20): promień kończy się tuż za
+//     wyjściem z ostatniego przebitego okrętu i najdalej za celem strzału (`o.target`) — dalej nikogo nie rani;
 //   • tarcza blokująca PADA DO ZERA, gdy czoło dojdzie do jej obrysu — świadomie bez testu przebicia
 //     (`isShieldBreachedAt`): to superbroń, a pole i tak dostaje efekt trafienia klasy „special”;
 //   • rzaz: HullBodies.cutSegment(…, { push: true }) na części odcinka kroku w [wejście, wyjście] (pas ±
@@ -33,8 +35,11 @@ export { RAY_HIT, RAY_STATE, RAY_FLAG };
 /** Domyślne nastawy (pole `deathRay` broni bierze górę). */
 export const DEATH_RAY_DEFAULTS = Object.freeze({
   width: 150, cutHalfWidth: 55, frontSpeed: 30000, sustain: 1.1, fade: 0.5,
-  fullDepth: 200, minFrac: 0.15, endDamageFrac: 0.35, endCrater: 90, stationDamage: 30000
+  fullDepth: 200, minFrac: 0.15, endDamageFrac: 0.35, endCrater: 90, stationDamage: 30000, singleTarget: false
 });
+/** Jeden cel: zapas promienia za wyjściem z przebitego okrętu [j.] (ponad pas rzazu) i za obwiednią celu strzału. */
+const SINGLE_EXIT_PAD = 30;
+const SINGLE_TARGET_PAD = 300;
 
 /** Pojemności pul. */
 export const DEATH_RAY_CAP = 16;
@@ -59,7 +64,7 @@ export function deathRayParams(def) {
       width: pick('width'), cutHalfWidth: pick('cutHalfWidth'), frontSpeed: Math.max(1000, pick('frontSpeed')),
       sustain: pick('sustain'), fade: Math.max(0.05, pick('fade')), fullDepth: Math.max(1, pick('fullDepth')),
       minFrac: Math.min(1, pick('minFrac')), endDamageFrac: pick('endDamageFrac'), endCrater: pick('endCrater'),
-      stationDamage: pick('stationDamage')
+      stationDamage: pick('stationDamage'), singleTarget: own?.singleTarget === true
     });
     _params.set(def, p);
   }
@@ -94,8 +99,9 @@ function velY(e) { return Number.isFinite(e?.vy) ? e.vy : (Number(e?.vel?.y) || 
 
 function createTarget() {
   return {
-    e: null, state: 0, wreck: false, ship: false, hull: false, block: false, solid: false,
-    tIn: 0, tOut: 0, path: 0, chordIn: 0, chordOut: 0, sIn: -1, shieldDone: false, entered: false, key: 0, killed: 0
+    e: null, state: 0, wreck: false, ship: false, hull: false, block: false, decided: false, solid: false,
+    tIn: 0, tOut: 0, path: 0, chordIn: 0, chordOut: 0, sIn: -1, shieldDone: false, entered: false, key: 0, killed: 0,
+    cutAt: -Infinity
   };
 }
 
@@ -234,7 +240,8 @@ export function createDeathRaySystem(env) {
   /**
    * Strzał promienia: strzelec (encja albo null), opis broni, wylot (świat) i kierunek. o: { range, damage, byPlayer,
    * penetration, width, color: [r, g, b] (liniowo 0..1; brak — z broni), visual, z0, z1, endFlash, frontSpeed,
-   * addBarrel — wylot podany na czopie gniazda: dołóż lufę wieży wzdłuż kierunku strzału }.
+   * addBarrel — wylot podany na czopie gniazda: dołóż lufę wieży wzdłuż kierunku strzału, target — cel strzału
+   * (broń `singleTarget`: promień kończy się za jego obwiednią) }.
    * Zwraca promień (obiekt z puli — ważny do końca jego życia) albo null.
    */
   function fire(shooter, def, x, y, dirX, dirY, o = null) {
@@ -270,6 +277,14 @@ export function createDeathRaySystem(env) {
     const range = Number(o?.range);
     r.range = Number.isFinite(range) && range > 0 ? range : (Number(d.baseRange) || 12000);
     r.len = r.range;
+    // Jeden cel: promień nie leci dalej niż za obwiednię celu strzału — także gdy kadłub celu się wymknie (linia
+    // ognia AI sprawdza drogę tylko do celu, sojusznik za nim byłby bez ochrony).
+    const tg = o?.target;
+    if (p.singleTarget && !r.visual && tg && typeof tg === 'object') {
+      const proj = (posX(tg) - x) * r.dx + (posY(tg) - y) * r.dy;
+      const rad = typeof env.radius === 'function' ? env.radius(tg) : (Number(tg.radius) || 200);
+      if (proj > 0) r.len = Math.min(r.len, proj + rad * 1.2 + SINGLE_TARGET_PAD);
+    }
     r.front = 0;
     r.frontSpeed = Number(o?.frontSpeed) > 0 ? Number(o.frontSpeed) : p.frontSpeed;
     r.halfWidth = p.cutHalfWidth;
@@ -389,14 +404,23 @@ export function createDeathRaySystem(env) {
 
   /**
    * Efekt ładowania NPC (capitalAI.stepNpcWeaponCharge → hak gry spawnWeaponChargeFx): wylot na końcu lufy wieży
-   * (czop gniazda + lufa sylwetki) i rekord ładowania broni (receptura `deathRay` — laser naprowadzający, implozja).
-   * stateOwner — obiekt gry ze stanem efektu (działo NPC).
+   * (czop gniazda + lufa sylwetki) i rekord ładowania promienia RAY_CHARGE (receptura `deathRay` — implozja, laser
+   * naprowadzający). stateOwner — obiekt gry ze stanem efektu (działo NPC); target — cel AI: laser kończy się na nim
+   * (jeden cel — strzał nie sięgnie dalej), bez celu — zasięg broni.
    */
-  function chargeFx(shooter, def, x, y, angle, u, dt, stateOwner) {
+  function chargeFx(shooter, def, x, y, angle, u, dt, stateOwner, target = null) {
     const w = fxWriter();
-    if (!w || typeof w.charge !== 'function' || !shooter) return;
+    if (!w || !shooter) return;
     barrelTip(shooter, def, x, y, angle, _mz);
-    w.charge(def.id, _mz.x, _mz.y, angle, 1, u, dt, stateOwner, carrierOf(shooter, _mz.x, _mz.y));
+    const c = carrierOf(shooter, _mz.x, _mz.y);
+    const range = Number(def.baseRange) || 12000;
+    let guide = range;
+    if (target && typeof target === 'object') {
+      const gx = posX(target) - _mz.x, gy = posY(target) - _mz.y;
+      guide = Math.min(range, Math.sqrt(gx * gx + gy * gy));
+    }
+    if (typeof w.deathRayCharge === 'function') w.deathRayCharge(stateOwner, _mz.x, _mz.y, 0, angle, u, dt, 1, null, c, guide);
+    else if (typeof w.charge === 'function') w.charge(def.id, _mz.x, _mz.y, angle, 1, u, dt, stateOwner, c);
   }
 
   function stepOrders(dt) {
@@ -432,7 +456,7 @@ export function createDeathRaySystem(env) {
         const dx = ord.tx - ord.mx, dy = ord.ty - ord.my;
         ord.ray = fire(ord.shooter, ord.def, ord.mx, ord.my, dx, dy, {
           range: o?.range, damage: o?.damage, penetration: o?.penetration, width: o?.width, color: o?.color,
-          byPlayer: o?.byPlayer === true
+          byPlayer: o?.byPlayer === true, target: ord.target
         });
         if (typeof env.onOrderFired === 'function') env.onOrderFired(ord);
       }
@@ -448,14 +472,14 @@ export function createDeathRaySystem(env) {
     for (let i = 0; i < r.targetCount; i++) if (r.targets[i].e === e) return r.targets[i];
     if (r.targetCount >= r.targets.length) return null;
     const t = r.targets[r.targetCount++];
-    t.e = e; t.state = 0; t.wreck = false; t.ship = false; t.hull = false; t.block = false; t.solid = false;
+    t.e = e; t.state = 0; t.wreck = false; t.ship = false; t.hull = false; t.block = false; t.decided = false; t.solid = false;
     t.tIn = 0; t.tOut = 0; t.path = 0; t.chordIn = 0; t.chordOut = 0; t.sIn = -1; t.shieldDone = false;
-    t.entered = false; t.key = 0; t.killed = 0;
+    t.entered = false; t.key = 0; t.killed = 0; t.cutAt = -Infinity;
     return t;
   }
 
-  // Pierwszy kontakt czoła z obwiednią celu: droga w materiale po cięciwie (traceThrough PRZED rzazem), tarcza,
-  // decyzja przebicia / zatrzymania.
+  // Pierwszy kontakt czoła z obwiednią celu: droga w materiale po cięciwie (traceThrough PRZED rzazem), tarcza.
+  // Decyzja przebicia / zatrzymania — dopiero przy dojściu czoła do materiału (decide), w kolejności wejścia.
   function schedule(r, t, f0) {
     const e = t.e;
     t.state = 1;
@@ -491,11 +515,19 @@ export function createDeathRaySystem(env) {
       const sIn = env.shieldEnter(e, r.ox, r.oy, r.dx, r.dy, Math.min(r.len, t.chordOut));
       if (sIn >= 0) t.sIn = Math.max(sIn, f0);
     }
-    if (t.ship && t.solid) {
-      if (r.committed >= r.pen) t.block = true;
-      else r.committed++;
-    }
+    t.block = false;
+    t.decided = false;
     t.key = t.sIn >= 0 ? t.sIn : (t.solid || !t.hull ? t.tIn : t.chordIn);
+  }
+
+  // Czoło doszło do materiału okrętu: przebicie (do `penetration` okrętów) albo zatrzymanie. Kolejność wejścia, nie
+  // zbierania kandydatów — dwa okręty w oknie jednego kroku czoła dostają decyzje od bliższego. Jeden cel: za
+  // ostatnim przebitym okrętem promień się kończy (rzaz domyka pas ± hw przy wyjściu).
+  function decide(r, t) {
+    t.decided = true;
+    if (r.committed >= r.pen) { t.block = true; return; }
+    r.committed++;
+    if (r.params.singleTarget && r.committed >= r.pen) stopAt(r, t.tOut + r.halfWidth + SINGLE_EXIT_PAD);
   }
 
   // Okręt zatrzymuje promień (ponad przebicia): krater i ułamek obrażeń na wejściu, koniec promienia.
@@ -635,12 +667,21 @@ export function createDeathRaySystem(env) {
           if (f1 >= t.chordOut) t.state = 2;
           continue;
         }
+        if (!t.ship) {
+          // wrak: cięty, bez liczenia do przebić
+        } else if (!t.decided) {
+          if (f1 < t.tIn) continue;   // czoło jeszcze przed materiałem
+          decide(r, t);
+          if (f1 > r.len) f1 = r.len;
+        }
         if (t.block) {
           if (f1 >= t.tIn) { blockAt(r, t); f1 = Math.min(f1, r.len); }
           continue;
         }
-        // rzaz części kroku w materiale
-        const c0 = Math.max(f0, t.tIn - hw), c1 = Math.min(f1, t.tOut + hw);
+        // rzaz części kroku w materiale: od miejsca, do którego ten cel już przecięto (pierwszy raz — od wejścia minus
+        // pas: przy skośnej burcie węzły ± hw od osi zaczynają się przed `tIn`, a decyzja zapada dopiero przy nim)
+        const c0 = Math.max(t.cutAt, t.tIn - hw), c1 = Math.min(f1, t.tOut + hw);
+        if (c1 > t.cutAt) t.cutAt = c1;
         if (c1 > c0 && hulls && typeof hulls.cutSegment === 'function') {
           if (typeof env.setSource === 'function') env.setSource(r.def, 'kerf');
           let killed = 0;
@@ -709,7 +750,7 @@ export function createDeathRaySystem(env) {
         id: r.id, visual: r.visual, front: Math.round(r.front), len: Math.round(r.len), age: +r.age.toFixed(3), done: r.done,
         stopped: r.stopped, cutNodes: r.cutNodes, hullsCut: r.hullsCut, kills: r.kills,
         targets: r.targets.slice(0, r.targetCount).map((t) => ({
-          name: t.e?.name || t.e?.type || null, wreck: t.wreck, block: t.block, solid: t.solid, tIn: Math.round(t.tIn),
+          name: t.e?.name || t.e?.type || null, wreck: t.wreck, block: t.block, decided: t.decided, solid: t.solid, tIn: Math.round(t.tIn),
           tOut: Math.round(t.tOut), path: Math.round(t.path), killed: t.killed, state: t.state, shield: t.shieldDone
         }))
       });
