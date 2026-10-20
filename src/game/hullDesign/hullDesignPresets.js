@@ -428,20 +428,50 @@ function bellator() {
   );
   return d;
 }
-function citadella(o = {}) {
-  const d = tnBase('citadella', 'Lotniskowiec Citadella (Terra Nova)', 53, {
-    raw: o.raw,
-    // KASZTELE rufowe — lite bryły (bez clip: przykrywają szczeliny obrysu), wymiary z siatki sprite'a: kolumna
-    // z pionowym napisem i jej górny blok z kratkami, wysoki kasztel z górną półką z kratą (split), centralny
-    // trapez na osi z półkami przy burtach i iluminatorami
+function citadella() {
+  // sprite: rufa z kasztelów nad maszynownią z rurami, szyja z rurami, pokład górny z orłami i kratkami, rampa w dół
+  // do pokładu dolnego, rząd hangarów nad ramą (wrota rysuje moduł), grzbiet z wnęką rdzenia i korytarzem, dziób:
+  // blok z orłem, długa skośna płyta z napisem, płyty przy osi i maszynownia z walcami wzdłuż osi
+  const d = tnShip('Lotniskowiec Citadella (Terra Nova)', 53, 0.6304, {
+    grid: 1,
+    shapes: [
+      frameBlk(-470, -172, -256, 172),                              // rufa: maszynownia między kasztelami, szyja z rurami
+      frameBlk(-292, -188, -268, -172),                             // szyja: rury nad kasztelami
+      frameBlk(-482, -105, -465, -30),                              // mocowanie środkowej gondoli
+      frameBlk(-256, -140, 245, 140),                               // hangary, wnęka zbiornika, korytarz, wnęka rdzenia
+      frameBlk(245, -100, 470, 100),                                // dziób: maszynownia pod skośną płytą i przy osi
+      blk('rect', -256, -180, -125, -140),                          // pokład górny z orłem
+      blk('trap', -256, -202, -125, -179, 1, { a: 56 }),            // pokład górny: skos rufowego rogu
+      blk('rect', -125, -193, 20, -140),                            // pokład górny z napisem
+      blk('rect', 20, -193, 167, -140),                             // pokład górny przy dziobie
+      blk('trap', -256, -140, -185, -92, 1, { b: 48 }),             // płyta nad wnęką zbiornika (skos wzdłuż rampy)
+      blk('rect', -256, -92, -238, -55),                            // kolumna przy szyi
+      blk('trap', -145, -140, -120, -55, 1, { a: -85, b: 85 }),     // rampa w dół do pokładu dolnego
+      blk('rect', -200, -55, -125, -40),                            // pokład dolny (rufa)
+      blk('rect', -120, -55, 20, -40),                              // pokład dolny pod hangarami (rowy w poprzek do korytarza)
+      blk('rect', 25, -55, 245, -40),                               // pokład dolny przy dziobie
+      blk('rect', -206, -34, -125, 34),                             // grzbiet przed wnęką rdzenia
+      blk('rect', -125, -34, 0, 34),                                // grzbiet
+      blk('rect', 0, -34, 125, 34),                                 // grzbiet
+      blk('rect', 125, -34, 245, 34),                               // grzbiet przy dziobie
+      blk('rect', 167, -198, 215, -148, 2),                         // blok dziobu z orłem
+      blkAt('trap', 297.5, -150.5, 95, 165, 2, 2, { a: 85, b: -68 }), // skośna płyta dziobu z napisem (trapez obrócony o 90°)
+      blkAt('trap', 430, -76.5, 73, 100, 2, 2, { a: 51 }),          // skośna płyta dziobu: koniec (trapez obrócony o 90°)
+      blk('rect', 245, -34, 300, 34),                               // dziób przy osi
+      blk('rect', 320, -34, 470, -15),                              // dziób: płyta nad maszynownią osi
+      blk('rect', 470, -28, 515, 28, 1, { c: [0, 14, 14, 0] })      // czoło dziobu
+    ],
+    // KASZTELE rufowe — lite bryły (bez clip), wymiary z siatki sprite'a: kolumna z pionowym napisem i jej górny blok
+    // z kratkami, wysoki kasztel z górną półką z kratą (split), centralny trapez na osi z półkami i iluminatorami
     castles: [
       castle(-436.5, -122.5, 21.5, 56.5, { tiers: 1, taperB: 0.18, taperF: 0, taperIn: 0.14, clip: undefined }),
       castle(-406.5, -152.5, 20.5, 26.5, { tiers: 1, taperF: 0.1, taperB: 0, taperIn: 0.05, clip: undefined }),
-      castle(-341, -164.5, 50, 53.5, { taperB: 0.65, taperF: 0.28, taperIn: 0.05, split: 0.42, clip: undefined }),
+      castle(-341, -168, 50, 50, { taperB: 0.65, taperF: 0.28, taperIn: 0.05, split: 0.42, clip: undefined }),  // nad rowem z rurami
       castle(-366.5, 0, 104.5, 109, { taperB: 0.57, taperF: 0.23, split: 0.5, clip: undefined })
     ]
   });
   d.modules.push(
+    vent(-87.5, -164.7, 21, 5.4), vent(79.8, -164.7, 19.005, 5.4), vent(147.6, -185.4, 12.915, 3.84),
     engine(-504, 0, 34, 28), engine(-491, -134, 26, 21), engine(-502, -85, 23, 22),
     ...[-112, -38, 39, 115, 190].map((x) => ({ type: 'hangar', x, y: -90, w: 34, h: 35, doors: 1 })),
     port(-132, 0, 12), port(121, 0, 12), port(237, 0, 12), port(-354, -39, 11),
