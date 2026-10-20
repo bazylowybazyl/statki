@@ -31,7 +31,9 @@ if (isWorker) {
     // strumień rozkazów (RW-40b): czytelnik pierścienia strony, pociski-lustra po slocie (SHOTS)
     cmd: null, cmdBuf: null, evFrame: -1, pageEv: new Float64Array(64).fill(-1), shots: [], shotList: [],
     // wieże 3D (blok TURRETS — rekordy Turret2D tej klatki po stronie gry, RW-26): lustro → rekordy
-    turByEnt: new Map(), turPool: [], turrets: null
+    turByEnt: new Map(), turPool: [], turrets: null,
+    // klatka zero: rozgrzewka widocznych obiektów przed pierwszym rysunkiem strony gry (renderPage)
+    firstPageWarm: true
   };
   // tło menu gotowe (RW-41c) — reszta init workera (efekty) rusza po nim
   st.menuReadyP = new Promise((r) => { st.menuReadyRes = r; });
@@ -177,6 +179,11 @@ if (isWorker) {
     st.ret = ret.createReturnViews(m.retBuffer);
     st.canvas = new OffscreenCanvas(Math.max(1, Math.round(m.W * (m.dpr || 1))), Math.max(1, Math.round(m.H * (m.dpr || 1))));
     hex.initHexShips3D({ canvas: st.canvas });
+    // Stałe światła sceny (latarnie stacji pirackiej, intensywność 0) od razu po scenie — jak initWorld3D() strony przy
+    // starcie. Zestaw świateł passa jest w kluczu materiałów (pułapka 34): latarnie dodane dopiero przez wpis rozgrzewki
+    // „stacja piracka” zmieniały go w środku kolejki — wszystko rozgrzane wcześniej (krok fx wybuchów, wieże, dysze SIDE)
+    // budowało się drugi raz, a w klatce zero synchronicznie (2026-10-20, docs/AUDYT-start-sync-worker-2026-10-20.md).
+    st.w3.initWorld3D();
     Core3D.resize(m.W, m.H);
     const sid = models.shipModel3DIdFor;
     hex.setBeamSkinSuppressor((e) => !!e.beamHull?.world || !!sid(e));
@@ -873,6 +880,13 @@ if (isWorker) {
         st.reactorModel.sync(rm.cores, 0, rdt, st.reactorModelOpts);
       }
     } } catch (e) { modFail('reaktory', e); }
+    // Klatka zero (pierwsza strona gry, pod kurtyną ładowania): to, co po aktualizacji modułów WIDAĆ w passach, kompiluje
+    // się w tle przed rysunkiem (Core3D.prewarmVisibleNow) — rysunki z pipeline'em w budowie Core3D pomija. Kolejka
+    // rozgrzewki nie musi zdążyć przed tą klatką (strona czeka na `prepare` z limitem, flush ma limit 4 s).
+    if (st.firstPageWarm) {
+      st.firstPageWarm = false;
+      try { Core3D.prewarmVisibleNow(); } catch (e) { modFail('rozgrzewka klatki zero', e); }
+    }
     const t1 = performance.now();
     let bmp = null;
     try { if ((h[H.FLAGS] & layoutMod.HEAD_FLAG.SKIP_WORLD_3D) !== 0) {

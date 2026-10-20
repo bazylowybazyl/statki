@@ -178,6 +178,8 @@ const SHIELD_RENDER_LAYER = 7;
 // Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
 // tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
 const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER]);
+// Warstwy passów sceny gry w kolejności rozgrzewki (wpisy „start gry” rejestru, klatka zero — prewarmVisibleNow).
+const GAME_PASS_LAYERS = Object.freeze([0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]);
 // Kamera perspektywy z góry (gałąź płaska syncCamera): wysokość nad płaszczyzną gry liczona z FOV tak, żeby
 // z = 0 pokrywało się z kamerą ortho (ten sam kąt bierze tryb „z góry 3D” — topFov w camera3DRig.js).
 // Kamery 3D (free3d) piszą w cameraPersp własne FOV, near i far, więc gałąź płaska ustawia te przy każdym
@@ -1165,7 +1167,7 @@ export const Core3D = {
     w.add({ name: 'Core3D: pre-pass głębi halo', objects: scene, layer: PLANET_RENDER_LAYER, visible: false, split: false, override: this.haloDepthMaskMaterial });
     w.add({ name: 'Core3D: quad halo planet', objects: () => this.planetHaloPass?.quad });
     w.add({ name: 'Core3D: quad maski słońca', objects: () => this.shadowShaftsPass?.quad, target: () => this.sunShadowTarget });
-    for (const layer of [0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
+    for (const layer of GAME_PASS_LAYERS) {
       w.add({ name: `Core3D: warstwa ${layer} (start gry)`, objects: scene, layer, visible: false, phase: 'loading' });
     }
     // Gra 3D (free3d): wszystkie passy rysuje kamera perspektywy — typ kamery wchodzi do klucza pipeline'u, więc
@@ -2503,6 +2505,29 @@ export const Core3D = {
     // flush() rejestru na ekranie ładowania czeka i na te pipeline'y (zadanie 11): pierwsza klatka gry
     // zapisująca do kolejki w trakcie ich kompilacji stawała na procesie GPU.
     return this.warmup ? this.warmup.track(done) : done;
+  },
+
+  // Klatka zero renderu w workerze (pierwsza strona gry, src/render/render.worker.js — tuż przed renderSingle): to,
+  // co WIDAĆ w passach gry i rzuca cień, kompiluje się w tle przed rysunkiem (Core3D.warmup.compileNow — budowy
+  // NodeBuildera teraz, pipeline'y w tle GPU); rysunek z pipeline'em w budowie pomija osłona (_guardPendingPipelines),
+  // a klatka zero leży pod kurtyną ładowania. Bez tego klatka zero kompilowała synchronicznie wszystko, czego kolejka
+  // rozgrzewki nie zdążyła (strona czeka na `prepare` workera z limitem, flush ma limit 4 s). Macierze i przełączniki
+  // passów jak w render() — wyznacznik macierzy świata wchodzi do klucza pipeline'u (pułapka 37).
+  prewarmVisibleNow() {
+    const w = this.warmup;
+    if (!this.gpuReady || !this.scene || !w || typeof w.compileNow !== 'function') return Promise.resolve(false);
+    if (this._passTogglesDirty) {
+      this._applyPassToggles();
+      this._passTogglesDirty = false;
+    }
+    this._syncSceneMatrices();
+    const ortho = this.isFreePerspectiveCamera() ? false : undefined;
+    const jobs = [];
+    for (const layer of GAME_PASS_LAYERS) {
+      jobs.push(w.compileNow(this.scene, { name: `Core3D: klatka zero, warstwa ${layer}`, layer, visible: false, ortho }));
+    }
+    jobs.push(w.compileNow(this.scene, { name: 'Core3D: klatka zero, cień', visible: false, shadow: true }));
+    return Promise.all(jobs).then((r) => r.some(Boolean));
   },
 
   // Pass mapy cienia słońca w tle (zadanie 25a; dawniej tylko rysunkiem — pułapka 20 w agents.md). Gra rysuje mapę
