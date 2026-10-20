@@ -9,7 +9,7 @@ import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDes
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { hullDesignSystems, powerLoad, systemIssues, HD_SYSTEM_TYPES } from '../src/game/hullDesign/hullDesignSystems.js';
 import { HD_SYSTEM_SLOTS, applySystemSlots } from '../src/game/hullDesign/hullDesignSystemSlots.js';
-import { HD_PIPE_FIT, HD_PIPE_MAT_CABLE, buildPipeNetwork, pipeModuleSdf, pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
+import { HD_PIPE_FIT, HD_PIPE_MAT_CABLE, pipeModuleSdf, pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
 
 const TN = ['custos', 'hasta', 'bellator', 'citadella', 'colossus'];
 const netKey = (net) => JSON.stringify({ runs: net.runs, fits: net.fits, nodes: net.graph.nodes });
@@ -104,6 +104,10 @@ test('sieć TN: zero wolnych końców, cała szerokość wiązki w sylwetce, ka�
     assert.equal(c.outside, 0, `${key}: wiązki poza sylwetką`);
     assert.deepEqual(c.unpowered, [], `${key}: urządzenia bez prądu`);
     assert.deepEqual(c.unfueled, [], `${key}: silniki bez paliwa ze zbiornika przez reaktor`);
+    // przyłącza rur paliwa WIDAĆ: ostatni odcinek do gondoli MAIN, dyszy SIDE i przy zbiorniku biegnie rowem / kanałem
+    for (const [kind, [seen, all]] of Object.entries(c.fuelEnds)) {
+      assert.ok(all > 0 && seen === all, `${key}: widoczne przyłącza ${kind} ${seen}/${all} (${JSON.stringify(c.fuelHidden)})`);
+    }
     // każdy koniec łamanej: przyłącze urządzenia (wewnątrz albo na brzegu modułu) albo węzeł wspólny z innym biegiem
     const mods = f.expanded.modules;
     const D = net.detail;
@@ -182,19 +186,12 @@ test('sieć: projekt od zera z kompletem systemów (bez lustra), kadłub z czę�
   const fp = fieldOf('tnparts2');
   assert.equal(fp.pipeNet.stats.unrouted, 0, 'tnparts2: trasy przez szwy części');
   assert.equal(pipeNetworkCheck(fp.pipeNet, fp).freeEnds, 0);
-  // koszt: generator (bez pola) poniżej ~2× dzisiejszego budżetu 90 ms na okręt — czas CPU procesu (testy biegną
-  // równolegle w kilku procesach, zegar ścienny skacze)
-  for (const key of ['citadella', 'colossus']) {
-    const f2 = fieldOf(key);
-    const base = { expanded: f2.expanded, grid: f2.grid, levels: f2.levels, bounds: f2.bounds, band: f2.band };
-    let best = Infinity;
-    for (let i = 0; i < 3; i++) {
-      const c0 = process.cpuUsage();
-      buildPipeNetwork(base);
-      const c1 = process.cpuUsage(c0);
-      best = Math.min(best, (c1.user + c1.system) / 1000);
-    }
-    assert.ok(best < 180, `${key}: generator ${best.toFixed(0)} ms CPU`);
+  // koszt: praca A* (rozwinięte komórki) najwyżej 1,5 × komórek siatki trasowania na okręt TN (dziś 0,4–0,8; stary
+  // generator po stanach komórka × kierunek ~3–4) — miara deterministyczna, czas zależy od obciążenia maszyny (pomiar
+  // czasu: docs/KREATOR-KADLUBA.md § „Sieć systemów”)
+  for (const key of TN) {
+    const st = fieldOf(key).pipeNet.stats;
+    assert.ok(st.expanded <= 1.5 * st.cells, `${key}: A* ${st.expanded} rozwinięć na ${st.cells} komórek`);
   }
 });
 

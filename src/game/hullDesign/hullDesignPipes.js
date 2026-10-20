@@ -415,7 +415,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       const k = j * FW + i;
       const d0 = S(L0, x, y);
       l0[k] = d0;
-      let v = Math.min(gapAt(x, y), -d0, fsMod[k]);
+      let v = Math.min(S(L1, x, y), -d0, fsMod[k]);
       if (mirror) v = Math.min(v, Math.abs(y));
       fs[k] = v;
     }
@@ -427,6 +427,18 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     const tx = fx - i, ty = fy - j, k = j * FW + i;
     return (arr[k] + (arr[k + 1] - arr[k]) * tx) * (1 - ty) + (arr[k + FW] + (arr[k + FW + 1] - arr[k + FW]) * tx) * ty;
   };
+  // kanały serwisowe w polu wolnego miejsca: tylko w ich pudłach
+  for (const ch of modules.map((m) => serviceChannel(m, D)).filter(Boolean)) {
+    const R = Math.hypot(ch.w, ch.h) + cf;
+    const i0 = Math.max(0, Math.floor((ch.x - R) / cf) - fx0), i1 = Math.min(FW - 1, Math.ceil((ch.x + R) / cf) - fx0);
+    const j0 = Math.max(0, Math.floor((ch.y - R) / cf) - fy0), j1 = Math.min(FH - 1, Math.ceil((ch.y + R) / cf) - fy0);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = (fx0 + i) * cf, y = (fy0 + j) * cf, k = j * FW + i;
+      let v = Math.min(gapAt(x, y), -l0[k], fsMod[k]);
+      if (mirror) v = Math.min(v, Math.abs(y));
+      fs[k] = v;
+    }
+  }
   const fsAt = (x, y) => bil(fs, x, y);
   /** Wolne miejsce wiązki: geometria i wiązki wcześniejszych sieci [j.]. */
   const clrAt = (x, y) => Math.min(bil(fs, x, y), bil(fo, x, y));
