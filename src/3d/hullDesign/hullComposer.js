@@ -34,6 +34,7 @@ import {
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { srgbEncode } from '../skybake/skyGameColor.js';
 import { HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
 export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 96, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
 /** Gęstość obrazu: dłuższy bok ~targetSide tekseli, w granicach [min, max] tekseli na j. */
@@ -305,7 +306,7 @@ export class HullComposer {
       const halfW = R2.x, gap = R2.y, rMax = R2.z;
       const overF = step(7.5, R2.w);
       const mat = R2.w.sub(overF.mul(8.0)).toVar();
-      const isCable = step(2.5, mat).toVar();       // materiał 3 — kable sieci zasilania
+      const isCable = step(2.5, mat).mul(step(mat, 3.5)).toVar();       // materiał 3 — kable sieci zasilania, 4 — rury paliwa
       o.t.assign(tU);
       o.halfW.assign(halfW);
       o.over.assign(overF);
@@ -365,7 +366,9 @@ export class HullComposer {
           const mixM = select(thick.greaterThan(0.5), select(hm.lessThan(0.72), float(0.0), float(3.0)),
             select(hm.lessThan(0.3), float(0.0), select(hm.lessThan(0.7), float(1.0), select(hm.lessThan(0.85), float(2.0), float(3.0)))));
           const mSteel = select(hm.lessThan(0.8), float(0.0), float(3.0)), mCop = select(hm.lessThan(0.75), float(1.0), float(2.0));
-          const m = select(mat.lessThan(0.5), mixM, select(mat.lessThan(1.5), mSteel, mCop));
+          // rury paliwa (4): jasna stal i miedź — bez rdzy i ciemnej stali (widać je przy silnikach na ciemnej maszynowni)
+          const mFuel = select(hm.lessThan(0.55), float(0.0), float(1.0));
+          const m = select(mat.lessThan(0.5), mixM, select(mat.lessThan(1.5), mSteel, select(mat.lessThan(2.5), mCop, mFuel)));
           const rust = mix(copper, grime, 0.45).mul(0.72);
           const baseC = select(m.lessThan(0.5), steel.mul(1.12), select(m.lessThan(1.5), copper.mul(1.6), select(m.lessThan(2.5), rust, engC.mul(0.95))));
           const segT = float(0.9).add(hash11(rid.mul(3.3).add(pkV.mul(11.1)).add(seg.mul(7.7))).mul(0.18));
@@ -568,6 +571,7 @@ export class HullComposer {
     const modK = float(0.0).toVar();
     const modSeam = float(0.0).toVar();
     const engK = float(0.0).toVar();      // gondola MAIN (poziom ramy): pod nią wysokość samej ramy, bez okruchów płyt
+    const cutK = float(0.0).toVar();      // KANAŁ SERWISOWY (SIDE, zbiornik): płyty zdjęte — maszynownia z siecią
     const emis = vec3(0.0).toVar();
     const hullC = this._pal(0), upperC = this._pal(1), trimC = this._pal(2), accent = this._pal(3), metal = this._pal(4);
     const hazard = this._pal(5), winC = this._pal(6), pipeC = this._pal(7), engC = this._pal(8), doorC = this._pal(9);
@@ -943,6 +947,14 @@ export class HullComposer {
         // walec poziomy wzdłuż osi modułu z półkulistymi dennicami (v 1 — kula), 3–5 obręczy ze śrubami, bursztynowy pas
         // znakowania paliwa, króciec na dennicy −x (wyjście do pompy)
         const hb = B.xy.mul(iD).toVar();
+        const chX0 = hb.x.negate().sub(HD_SERVICE_CHANNEL.lenDu), chX1 = hb.x.negate().add(1.0);
+        const chH = max(hb.y.mul(HD_SERVICE_CHANNEL.tankHalfK), HD_SERVICE_CHANNEL.halfDu);
+        // kanał serwisowy (serviceChannel w hullDesignSystems.js — te same wymiary): płyty zdjęte, wysokość ramy, obrzeże
+        const chSd = sdBox(lu.sub(vec2(chX0.add(chX1).mul(0.5), 0.0)), vec2(chX1.sub(chX0).mul(0.5), chH)).toVar();
+        const chK = clamp(chSd.negate().mul(2.0), 0.0, 1.0);
+        cutK.assign(max(cutK, chK));
+        engK.assign(max(engK, chK));
+        modSeam.assign(max(modSeam, lineN(chSd, float(0.35)).mul(0.5)));
         const sdW = sdRoundBox(lu, hb, min(hb.y.mul(0.5), 3.0)).toVar();
         If(sdW.lessThan(1.0), () => {
           const inside = clamp(sdW.negate().mul(2.0), 0.0, 1.0);
@@ -988,6 +1000,14 @@ export class HullComposer {
         // (wydech, burta) obręcz gniazda ze śrubami i ciemną gardzielą, od strony kadłuba (−x) dwa krótkie przewody w
         // obudowę: miedziany (paliwo) i ciemny (prąd)
         const hb = B.xy.mul(iD).toVar();
+        const chX0 = hb.x.negate().sub(max(hb.x.mul(HD_SERVICE_CHANNEL.sideLenK), HD_SERVICE_CHANNEL.lenDu)), chX1 = hb.x.mul(-0.3);
+        const chH = max(hb.y.mul(HD_SERVICE_CHANNEL.sideHalfK), HD_SERVICE_CHANNEL.halfDu);
+        // kanał serwisowy (serviceChannel w hullDesignSystems.js — te same wymiary): płyty zdjęte, wysokość ramy, obrzeże
+        const chSd = sdBox(lu.sub(vec2(chX0.add(chX1).mul(0.5), 0.0)), vec2(chX1.sub(chX0).mul(0.5), chH)).toVar();
+        const chK = clamp(chSd.negate().mul(2.0), 0.0, 1.0);
+        cutK.assign(max(cutK, chK));
+        engK.assign(max(engK, chK));
+        modSeam.assign(max(modSeam, lineN(chSd, float(0.35)).mul(0.5)));
         const sd = sdRoundBox(lu, hb, min(hb.y.mul(0.45), 2.5)).toVar();
         If(sd.lessThan(1.0), () => {
           const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
@@ -1052,6 +1072,9 @@ export class HullComposer {
       });
     });
     const freeK = float(1.0).sub(modK).toVar();
+    // kanały serwisowe: płyty (pancerz, nadbudówka, mostek) zdjęte — w kanale maszynownia z rurą i kablem do urządzenia
+    const keepK = float(1.0).sub(cutK);
+    s1.assign(s1.mul(keepK)); s2.assign(s2.mul(keepK)); s3.assign(s3.mul(keepK));
     // sieć rur (generowana + ręczne): wiązki i osprzęt — w maszynowni, ręczne także na płytach
     const net = this._pipeNet(p, iD);
     const netOn = U.pnet.x;

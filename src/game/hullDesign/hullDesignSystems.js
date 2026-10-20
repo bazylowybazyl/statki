@@ -74,6 +74,39 @@ export function hullDesignSystems(modules) {
   return { cores, tanks, mains, sides, consumers, links, issues: systemIssues(modules, { cores, tanks, mains }) };
 }
 
+/**
+ * KANAŁ SERWISOWY dyszy SIDE i zbiornika paliwa: wycięcie w płytach od strony kadłuba (lokalne −x modułu), którym
+ * rura paliwa (i kabel) dochodzi do urządzenia — urządzenia stoją zwykle na płytach (SIDE przy burcie, zbiornik na
+ * płycie grzbietu), a ostatni odcinek rury ma być widać. Generator tras traktuje kanał jak rów maszynowni, kompozytor
+ * rysuje w nim maszynownię (płyty zdjęte, wysokość ramy) — te same wymiary w obu (hullComposer.js, gałęzie modułów).
+ * Wymiary w jd: długość lenDu (SIDE — co najmniej sideLenK · w), pół-szerokość halfDu (co najmniej k · h).
+ */
+export const HD_SERVICE_CHANNEL = Object.freeze({ lenDu: 22, sideLenK: 1.8, halfDu: 7, sideHalfK: 0.8, tankHalfK: 0.5 });
+
+/** Kanał serwisowy modułu: { x, y, rot, w, h } (środek, obrót, pół-wymiary [j.]) albo null. `D` — detal [j./jd]. */
+export function serviceChannel(m, D) {
+  const C = HD_SERVICE_CHANNEL;
+  let x0, x1, hc;
+  if (m.type === 'thruster_side') {
+    const Lc = Math.max(C.sideLenK * m.w, C.lenDu * D);
+    x0 = -m.w - Lc; x1 = -0.3 * m.w;
+    hc = Math.max(C.sideHalfK * m.h, C.halfDu * D);
+  } else if (m.type === 'fuel_tank') {
+    x0 = -m.w - C.lenDu * D; x1 = -m.w + D;
+    hc = Math.max(C.tankHalfK * m.h, C.halfDu * D);
+  } else return null;
+  const lx = (x0 + x1) * 0.5, c = Math.cos(m.rot || 0), s = Math.sin(m.rot || 0);
+  return { x: m.x + lx * c, y: m.y + lx * s, rot: m.rot || 0, w: (x1 - x0) * 0.5, h: hc };
+}
+
+/** Pole kanału [j.]: ujemne wewnątrz. */
+export function serviceChannelSdf(ch, x, y) {
+  const c = Math.cos(ch.rot), s = Math.sin(ch.rot);
+  const dx = x - ch.x, dy = y - ch.y;
+  const qx = Math.abs(dx * c + dy * s) - ch.w, qy = Math.abs(-dx * s + dy * c) - ch.h;
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0);
+}
+
 /** Walidacja kompletu systemów: rdzeń, zbiornik, mostek i MAIN wymagane (projekt od zera — gracz je stawia). */
 export function systemIssues(modules, sys = null) {
   const s = sys || {

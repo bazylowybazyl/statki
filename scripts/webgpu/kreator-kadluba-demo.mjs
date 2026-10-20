@@ -94,7 +94,7 @@ try {
         await ev('window.__kreator.setAb(false); window.__kreator.setCamera(-362, -65, 3.3)');
         await shot(`${key}-a-zgloszenie`, `${key}: kadr zgłoszenia (rufa: gondole, kolumna TERRA NOVA, kasztele), zoom 3,3`);
         await ev('document.body.classList.remove("clean"); window.__kreator.setNetGraph?.(true); window.__kreator.setCamera(-362, -65, 3.3)');
-        await shot(`${key}-a-zgloszenie-edytor`, `${key}: kadr zgłoszenia z nakładką edytora i grafem sieci (N)`);
+        await shot(`${key}-a-zgloszenie-edytor`, `${key}: kadr zgłoszenia z nakładką edytora i grafem sieci (I)`);
         await ev('window.__kreator.setNetGraph?.(false); document.body.classList.add("clean")');
       }
       const dens = await ev('window.__kreator.design.pipeNet?.density ?? 0');

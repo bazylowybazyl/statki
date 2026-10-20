@@ -36,7 +36,7 @@
 // rysuje z tego rury, kable w korytkach i osprzęt. Wymiary rur i osprzętu w jd.
 
 import { HD_MODULES } from './hullDesignSchema.js';
-import { fuelLoad, hullDesignSystems, powerLoad } from './hullDesignSystems.js';
+import { fuelLoad, hullDesignSystems, powerLoad, serviceChannel, serviceChannelSdf } from './hullDesignSystems.js';
 
 export const HD_PIPE_TUNE = Object.freeze({
   cellDu: 5,            // komórka trasowania [jd]
@@ -46,10 +46,12 @@ export const HD_PIPE_TUNE = Object.freeze({
   edgeNearDu: 14,       // pas przy burcie z karą `edge` (rośnie ku burcie) [jd]
   cost: Object.freeze({
     gap: 1, plate: 4, module: 9, halo: 1.1, axis: 2.5, edge: 1.2, wall: 0.45, occ: 6,
+    termPlate: 5,       // rury paliwa: płyta przy przyłączu silnika / dyszy / zbiornika (ostatni odcinek widać z rowu)
     turn45: 0.8, turn90: 2.4, turn135: 7
   }),
+  termCells: 5,         // … w pasie tylu komórek wokół urządzenia
   haloCells: 2,         // pas kary wokół sieci [komórki] — równoległe wiązki tej samej sieci nie nachodzą na siebie
-  heurK: 1.6,           // A* ważone: heurystyka × k (szybciej, trasy prawie najkrótsze) — rury …
+  heurK: 1.25,          // A* ważone: heurystyka × k (szybciej, trasy prawie najkrótsze) — rury (bliżej najtańszej: rowem) …
   heurKCable: 2.2,      // … i kable (trasa kabla może być mniej najkrótsza)
   relaxCells: 48,       // heurystyka (odległość do sieci) poprawiana w promieniu tylu komórek od nowej gałęzi
   portGapCells: 2,      // pnie wychodzące z reaktora co najmniej tyle komórek od siebie
@@ -76,9 +78,11 @@ export const HD_NETS = Object.freeze(['feed', 'supply', 'power']);
 /** Rodzaje osprzętu (te same kody rysuje kompozytor: _pipeNet w hullComposer.js) i ich pierwszeństwo przy nakładaniu. */
 export const HD_PIPE_FIT = Object.freeze({ box: 1, collar: 2, valve: 3, pump: 4, collector: 5, cap: 6, gland: 7, jbox: 8, hub: 9 });
 const FIT_PRIO = Object.freeze({ 6: 0, 3: 1, 2: 2, 7: 3, 4: 4, 5: 5, 8: 6, 1: 7, 9: 8 });
-/** Materiały rur (ręczne): mieszane, stal, miedź. Kod 3 — kable (sieć zasilania). */
+/** Materiały rur (ręczne): mieszane, stal, miedź. Kod 3 — kable (sieć zasilania), 4 — rury paliwa. */
 export const HD_PIPE_MATS = Object.freeze(['mix', 'steel', 'copper']);
 export const HD_PIPE_MAT_CABLE = 3;
+/** Kod 4 — rury paliwa sieci (jasna stal i miedź). */
+export const HD_PIPE_MAT_FUEL = 4;
 
 const SQ2 = Math.SQRT2;
 const DX = [1, 1, 0, -1, -1, -1, 0, 1];
@@ -248,6 +252,32 @@ function cableRadii(seedRand, n) {
 
 const bundleHalfW = (radii, gap) => (radii.reduce((a, r) => a + 2 * r, 0) + gap * (radii.length - 1)) * 0.5;
 
+/**
+ * Pole pancerza z KANAŁAMI SERWISOWYMI (dysze SIDE, zbiorniki — serviceChannel): w kanale płyty zdjęte, więc wartość
+ * = max(pole pancerza, głębokość w kanale) — dodatnie = rów maszynowni. Zwraca próbnik (x, y) → [j.].
+ */
+function armorGapSampler(field, S, modules) {
+  const L1 = field.levels[1];
+  const D = field.expanded.design.detail;
+  const chans = [];
+  for (const m of modules) {
+    const ch = serviceChannel(m, D);
+    if (!ch) continue;
+    const R = Math.hypot(ch.w, ch.h);
+    chans.push({ ch, x0: ch.x - R, x1: ch.x + R, y0: ch.y - R, y1: ch.y + R });
+  }
+  if (!chans.length) return (x, y) => S(L1, x, y);
+  return (x, y) => {
+    let v = S(L1, x, y);
+    for (const c of chans) {
+      if (x < c.x0 || x > c.x1 || y < c.y0 || y > c.y1) continue;
+      const d = -serviceChannelSdf(c.ch, x, y);
+      if (d > v) v = d;
+    }
+    return v;
+  };
+}
+
 /** Każdy moduł poza osią (|y| > 0,5) ma bliźniaka tego samego typu w odbiciu (tolerancja 0,01 j. — obrót części). */
 function modulesMirrored(modules) {
   for (const m of modules) {
@@ -354,6 +384,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   const bnd = field.bounds;
   const stats = { cells: 0, routes: 0, searches: 0, expanded: 0, unrouted: 0, shrunk: 0, outside: 0 };
 
+  const gapAt = armorGapSampler(field, S, modules);   // pancerz z kanałami serwisowymi (rów > 0)
   // ── pole wolnego miejsca (komórka freeDu jd): min(odległość od płyt, od sylwetki, od modułów, od osi lustra) [j.] ──
   // fs — geometria (widoczność rowu), fo — wiązki wcześniejszych sieci (przeszkoda dla następnych)
   const cf = T.freeDu * D;
@@ -384,7 +415,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       const k = j * FW + i;
       const d0 = S(L0, x, y);
       l0[k] = d0;
-      let v = Math.min(S(L1, x, y), -d0, fsMod[k]);
+      let v = Math.min(gapAt(x, y), -d0, fsMod[k]);
       if (mirror) v = Math.min(v, Math.abs(y));
       fs[k] = v;
     }
@@ -406,7 +437,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     return fsMod[j * FW + i];
   };
   /** Widoczne miejsce rury z ziemi (rów maszynowni, nie moduł, nie pod płytą, wewnątrz sylwetki). */
-  const visAt = (x, y) => S(L1, x, y) >= 0 && S(L0, x, y) < 0 && modMin(x, y) > 0;
+  const visAt = (x, y) => gapAt(x, y) >= 0 && S(L0, x, y) < 0 && modMin(x, y) > 0;
   const inAt = insideDepthSampler(field, S, mirror, { x0: fx0 * cf, y0: fy0 * cf, cw: cf, W: FW, H: FH, l0 }, 1);
   const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
   const tm = stats.t = { pola: now() - t0 };
@@ -431,7 +462,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     const edge = T.edgeDu * D, edgeNear = T.edgeNearDu * D;
     for (let k = 0; k < N; k++) {
       const x = cxOf(k), y = cyOf(k);
-      const dIn = inAt(x, y), d1 = S(L1, x, y);
+      const dIn = inAt(x, y), d1 = gapAt(x, y);
       if (dIn < edge) { kind[k] = 0; cost[k] = Infinity; continue; }
       if (d1 < 0) { kind[k] = 2; cost[k] = C.plate; } else {
         kind[k] = 1;
@@ -468,6 +499,8 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     };
     const di5 = new Int32Array(N);
     const costN = new Float32Array(N);
+    const termPen = new Float32Array(N);   // kara płyt przy przyłączu urządzenia (rury paliwa) — na czas jednej trasy
+    const termList = [];
     let portBase = null;
     const TP = [0, C.turn45, C.turn90, C.turn135];
     const dirOf = (a, b) => {
@@ -614,7 +647,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
               if (cost[ka] === Infinity || cost[kb] === Infinity) continue;
               if ((tree[ka] || tree[kb] || block[ka] || block[kb]) && !goal[nk]) continue;     // bez przecinania sieci po przekątnej
             }
-            const ng = gs + DL[nd] * 0.5 * (ck + cn) + tp + (near[nk] && !tree[nk] ? C.halo : 0);
+            const ng = gs + DL[nd] * 0.5 * (ck + cn) + tp + (near[nk] && !tree[nk] ? C.halo : 0) + termPen[nk];
             if (ng < g[nk]) {
               if (g[nk] === Infinity) touched.push(nk);
               g[nk] = ng; prev[nk] = k; din[nk] = nd;
@@ -635,7 +668,41 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         });
         const it = pending.splice(bi, 1)[0];
         const starts = it.starts.filter((k) => !goal[k] && !block[k]);
-        let path = starts.length ? search(starts) : null;
+        // RURY PALIWA: ostatni odcinek do silnika, dyszy i zbiornika ma być widać — płyty przy urządzeniu drożej, start
+        // w rowie przy urządzeniu (gdy jest); pod płyty trasa schodzi dalej od przyłącza
+        let path = null;
+        if (id !== 'power') {
+          const m = modules[it.dev], b = moduleBox(m), pad = T.termCells * c;
+          const i0 = Math.max(0, Math.floor((b[0] - pad) / c) - gx0), i1 = Math.min(GW - 1, Math.ceil((b[2] + pad) / c) - gx0);
+          const j0 = Math.max(0, Math.floor((b[1] - pad) / c) - gy0), j1 = Math.min(GH - 1, Math.ceil((b[3] + pad) / c) - gy0);
+          for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+            const k = j * GW + i;
+            if (kind[k] === 2) { termPen[k] = C.termPlate; termList.push(k); }
+          }
+          // kanał serwisowy (SIDE, zbiornik): start na DRUGIM końcu kanału — ostatni odcinek przechodzi całym kanałem
+          // prosto do urządzenia; inaczej start w głębi rowu (wiązka biegnie środkiem, nie skrajem płyty), potem w rowie
+          const ch = serviceChannel(m, D);
+          if (ch) {
+            const cc = Math.cos(ch.rot), sc = Math.sin(ch.rot);
+            const farS = [];
+            for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+              const k = j * GW + i;
+              if (!kind[k] || goal[k] || block[k]) continue;
+              const x = cxOf(k), y = cyOf(k);
+              if (-serviceChannelSdf(ch, x, y) < 0.3 * c) continue;
+              if ((x - ch.x) * cc + (y - ch.y) * sc > Math.min(0, -ch.w + 1.6 * c)) continue;     // dalsza połowa kanału
+              farS.push(k);
+            }
+            if (farS.length) path = search(farS);
+          }
+          const deepS = path ? [] : starts.filter((k) => kind[k] === 1 && gapAt(cxOf(k), cyOf(k)) >= 0.45 * c);
+          if (deepS.length) path = search(deepS);
+          if (!path) {
+            const gs0 = starts.filter((k) => kind[k] === 1);
+            if (gs0.length) path = search(gs0);
+          }
+        }
+        if (!path) path = starts.length ? search(starts) : null;
         // przyłącze bez głębokiego wejścia w urządzenie (róg gondoli przy burcie) — trasa jeszcze raz, tylko z komórek,
         // z których wejście jest głębokie
         if (path && path.length >= 2 && !anchorFor(it.dev, path[0], path[1]).ok) {
@@ -643,6 +710,8 @@ export function buildPipeNetwork(field, tuneIn = {}) {
           const p2 = good.length ? search(good) : null;
           if (p2 && p2.length >= 2) path = p2;
         }
+        for (const k of termList) termPen[k] = 0;
+        termList.length = 0;
         if (!path || path.length < 2) { stats.unrouted++; continue; }
         stats.routes++;
         routed++;
@@ -683,7 +752,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     const seqOf = (id) => {
       const r = rng((design.seed || 7) * 31 + (HD_NETS.indexOf(id) + 1) * 977 + (design.pipeNet?.seed || 0));
       if (id === 'power') return { radii: cableRadii(r, T.maxPipes), gap: T.gapCable[0] + (T.gapCable[1] - T.gapCable[0]) * r(), mat: HD_PIPE_MAT_CABLE };
-      return { radii: pipeRadii(r, T.maxPipes), gap: T.gap[0] + (T.gap[1] - T.gap[0]) * r(), mat: 0 };
+      return { radii: pipeRadii(r, T.maxPipes), gap: T.gap[0] + (T.gap[1] - T.gap[0]) * r(), mat: HD_PIPE_MAT_FUEL };
     };
     const pathCost = (poly) => {
       let sum = 0;
@@ -738,6 +807,23 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       return { p: [m.x, mirror ? Math.min(m.y, -0.5 * D) : m.y], ok: false };
     };
     // cała szerokość wiązki w sylwetce (próbki co 1 jd — zapas głębokości generatora to komórka pola, 2 jd)
+    /**
+     * Rogi łamanej przy urządzeniu (od urządzenia): przyłącze; urządzenie z KANAŁEM SERWISOWYM — przyłącze na osi kanału
+     * i koniec kanału (ostatni odcinek biegnie całym kanałem, prosto do urządzenia), róg komórki startu przy końcu
+     * kanału odpada (`drop`).
+     */
+    const terminalCorners = (dev, k, nextK, cellCorner) => {
+      const m = modules[dev];
+      const ch = serviceChannel(m, D);
+      if (!ch) return { pts: [anchorFor(dev, k, nextK).p], drop: false };
+      const cr = Math.cos(m.rot || 0), sr = Math.sin(m.rot || 0);
+      const at = (lx) => [m.x + lx * cr, m.y + lx * sr];
+      const A = at(-m.w + T.anchorDu * D);
+      const lc = (ch.x - m.x) * cr + (ch.y - m.y) * sr;                 // środek kanału na osi modułu
+      const F = at(lc - ch.w + Math.min(0.5 * c, 0.4 * ch.w));          // tuż przed dalszym końcem kanału
+      const drop = cellCorner && Math.hypot(cellCorner[0] - F[0], cellCorner[1] - F[1]) < 1.5 * c;
+      return { pts: [A, F], drop };
+    };
     const fitsHull = (poly, hwJ) => {
       const need = hwJ + T.marginDu * D;
       for (let q = 0; q + 1 < poly.length; q++) {
@@ -896,8 +982,16 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         const kA = cells[0], kB = cells[last];
         const devA = term[kA], devB = term[kB];
         let A, B;
-        if (devA >= 0) { A = anchorFor(devA, kA, cells[1]).p; corners.unshift(A); } else { const n0 = nodeInfo.get(kA); A = [n0.x, n0.y]; }
-        if (devB >= 0) { B = anchorFor(devB, kB, cells[last - 1]).p; corners.push(B); } else { const n1 = nodeInfo.get(kB); B = [n1.x, n1.y]; }
+        if (devA >= 0) {
+          const tc = terminalCorners(devA, kA, cells[1], corners[0]);
+          if (tc.drop) corners.shift();
+          A = tc.pts[0]; corners.unshift(...tc.pts);
+        } else { const n0 = nodeInfo.get(kA); A = [n0.x, n0.y]; }
+        if (devB >= 0) {
+          const tc = terminalCorners(devB, kB, cells[last - 1], corners[corners.length - 1]);
+          if (tc.drop) corners.pop();
+          B = tc.pts[0]; corners.push(...tc.pts.slice().reverse());
+        } else { const n1 = nodeInfo.get(kB); B = [n1.x, n1.y]; }
         corners = dropCollinear(corners);
         rr.corners = corners;
         rr.A = A; rr.B = B; rr.devA = devA; rr.devB = devB;
@@ -997,8 +1091,9 @@ export function buildPipeNetwork(field, tuneIn = {}) {
     }
   }
   // osprzęt: pierwszeństwo przy nakładaniu (później zapisany przykrywa wcześniejszy), limit
+  // (sortowanie stabilne: kopia lustra zostaje tuż za oryginałem — przycięcie usuwa całe pary)
   fits.sort((a, b) => FIT_PRIO[a.type] - FIT_PRIO[b.type]);
-  while (fits.length > T.maxFits) fits.shift();
+  while (fits.length > T.maxFits || fits[0]?.mirrorOf) fits.shift();
   stats.runs = runs.length;
   stats.fits = fits.length;
   stats.ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
@@ -1012,11 +1107,15 @@ export function buildPipeNetwork(field, tuneIn = {}) {
  * buildHullField z tą siecią. Zwraca { freeEnds, outside, unpowered: [indeksy modułów], unfueled: [...], runs }.
  */
 export function pipeNetworkCheck(net, field, marginDu = 0.5) {
-  const out = { freeEnds: 0, outside: 0, unpowered: [], unfueled: [], runs: 0 };
+  const out = { freeEnds: 0, outside: 0, unpowered: [], unfueled: [], runs: 0, fuelEnds: { main: [0, 0], side: [0, 0], tank: [0, 0] }, fuelHidden: [] };
   if (!net) return out;
   const modules = field.expanded.modules;
   const D = net.detail;
   const S = fieldSampler(field);
+  const obstacles = modules.filter(isObstacle);
+  // widać z ziemi: rów maszynowni (nie płyta, nie moduł), wewnątrz sylwetki
+  const gapAt = armorGapSampler(field, S, modules);
+  const visAt = (x, y) => gapAt(x, y) >= 0 && S(field.levels[0], x, y) < 0 && obstacles.every((m) => pipeModuleSdf(m, x, y) > 0);
   const inAt = insideDepthSampler(field, S, false);
   const deg = new Map();
   const adj = new Map();
@@ -1049,6 +1148,36 @@ export function pipeNetworkCheck(net, field, marginDu = 0.5) {
   }
   const nodes = net.graph?.nodes || [];
   for (const [id, d] of deg) if (d === 1 && !(nodes[id]?.dev >= 0)) out.freeEnds++;
+  // przyłącza rur paliwa (gondola MAIN, dysza SIDE, zbiornik): widoczne, gdy co najmniej 60% odcinka 12 jd za obrysem
+  // urządzenia leży w rowie maszynowni (licznik [widoczne, wszystkie] — łamane po burcie y ≤ 0 i bez lustra)
+  for (const r of net.runs) {
+    if (!r.auto || r.net === 'power') continue;
+    r.polys.forEach((poly, pi) => {
+      if (pi > 0) return;
+      const pw = polyWalker(poly);
+      r.ends[pi].forEach((id, end) => {
+        const dev = nodes[id]?.dev;
+        if (!(dev >= 0)) return;
+        const m = modules[dev];
+        const key = m.type === 'engine' ? 'main' : (m.type === 'thruster_side' ? 'side' : (m.type === 'fuel_tank' ? 'tank' : null));
+        if (!key) return;
+        let s0 = -1;
+        for (let s = 0; s <= pw.L; s += 0.4 * D) {
+          const a = pw.at(end ? pw.L - s : s);
+          if (pipeModuleSdf(m, a.x, a.y) > 0.4 * D) { s0 = s; break; }
+        }
+        let nv = 0, nt = 0;
+        for (let s = 1; s0 >= 0 && s <= 12 && s0 + s * D <= pw.L; s++) {
+          const a = pw.at(end ? pw.L - s0 - s * D : s0 + s * D);
+          nt++;
+          if (visAt(a.x, a.y)) nv++;
+        }
+        out.fuelEnds[key][1]++;
+        if (nt && nv >= 0.6 * nt) out.fuelEnds[key][0]++;
+        else out.fuelHidden.push({ dev, type: m.type, net: r.net, seen: nv, of: nt });
+      });
+    });
+  }
   // drogi: urządzenie → reaktor (kable), silnik → reaktor (rury do silników) i reaktor → zbiornik (dopływ)
   const reach = (netId, from, ok) => {
     const seenN = new Set([from]);
@@ -1416,35 +1545,18 @@ function autoFittings(net, list, fits, ctx) {
         continue;
       }
       if (!hit) continue;
-      const b = pw.at(end ? L - hit.s - 0.5 * D : hit.s + 0.5 * D);
+      // gondola MAIN: KOLEKTOR na wejściu wiązki (blok z krótkimi rurami wzdłuż wiązki, kołnierze na końcach) — tuż za
+      // obrysem gondoli; inne urządzenia — kołnierz / dławnica / pompa przy zbiorniku
+      const coll = !cable && m.type === 'engine';
+      const cw = coll ? clamp(r.halfW * 0.6 + 1.6, 2.6, 4.5) : 0;
+      const sb = hit.s + (coll ? cw + 0.3 : 0.5) * D;
+      const b = pw.at(end ? L - sb : sb);
       if (!visAt(b.x, b.y)) continue;
       const rot = b.rot;
       if (cable) put({ type: HD_PIPE_FIT.gland, x: b.x, y: b.y, rot, hw: 1.5, hh: r.halfW + 1.0, p1: r.n, p2: r.rMax + 0.9 });
       else if (m.type === 'fuel_tank') put({ type: HD_PIPE_FIT.pump, x: b.x, y: b.y, rot, hw: 2.6, hh: r.halfW + 2.0, p1: 0, p2: r.rMax + 2.0 });
+      else if (coll) put({ type: HD_PIPE_FIT.collector, x: b.x, y: b.y, rot, hw: cw, hh: r.halfW + 1.2, p1: clamp(r.n, 2, 8), p2: r.rMax + 1.2 });
       else put({ type: HD_PIPE_FIT.collar, x: b.x, y: b.y, rot, hw: 1.3, hh: r.halfW + 0.9, p1: 1, p2: r.rMax + 0.7 });
-    }
-  }
-  // gondole MAIN: kolektor (stos krótkich rur wzdłuż osi gondoli) w rowie przy szyjce
-  if (net === 'feed') {
-    const seenG = new Set();
-    for (const { rr } of list) {
-      for (const dev of [rr.devA, rr.devB]) {
-        if (dev < 0 || seenG.has(dev) || modules[dev].type !== 'engine') continue;
-        seenG.add(dev);
-        const m = modules[dev];
-        const cr = Math.cos(m.rot || 0), sr = Math.sin(m.rot || 0);
-        let best = null;
-        for (const [lx, ly] of [[0.35 * m.w, -(m.h + 5 * D)], [0.35 * m.w, m.h + 5 * D], [m.w + 6 * D, 0], [0.75 * m.w, -(m.h + 5 * D)], [0.75 * m.w, m.h + 5 * D]]) {
-          const x = m.x + lx * cr - ly * sr, y = m.y + lx * sr + ly * cr;
-          if (mirror && y > -1 * D) continue;
-          const f = clrAt(x, y);
-          if (f > 2.6 * D && visAt(x, y) && (!best || f > best.f)) best = { x, y, f, along: lx > m.w };
-        }
-        if (!best) continue;
-        const hh = Math.min(best.f / D - 0.6, 6.5), hw = Math.min(0.42 * m.w / D, 10);
-        if (hh < 2.2 || hw < 2.5) continue;
-        put({ type: HD_PIPE_FIT.collector, x: best.x, y: best.y, rot: (m.rot || 0) + (best.along ? Math.PI / 2 : 0), hw: best.along ? hh : hw, hh: best.along ? hw : hh, p1: clamp(Math.round(2 * Math.min(hh, hw) / 2.1), 3, 8), p2: 2.4 });
-      }
     }
   }
   for (const f of own) {

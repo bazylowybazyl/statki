@@ -13,7 +13,7 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 ## Jak uruchomić
 
 - Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html` (otwiera się z lotniskowcem Citadella; flota TN z siecią
-  systemów — suwak „sieć rur”, ⟳ inne wiązki, N — graf sieci, panel „Sieć systemów”; narzędzie Rura W).
+  systemów — suwak „sieć rur”, ⟳ inne wiązki, I — graf sieci, panel „Sieć systemów”; narzędzie Rura W).
   `?preset=citadella|custos|hasta|bellator|colossus|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
   `?clean=1` bez paneli. A — A/B (kreator ↔ sprite tego samego okrętu), U — sprite jako podkład pod projektem.
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--tylko citadella]
@@ -223,7 +223,7 @@ rur (urywały się w rowach jak rury „donikąd”).
 **Edytor (demo)**: systemy presetu zablokowane (🔒, komunikat przy próbie przesunięcia / usunięcia), projekt od zera —
 wolne; nowe moduły w narzędziu M (dysza SIDE dostaje wydech ku najbliższej burcie); panel „Sieć systemów”: liczba
 reaktorów / zbiorników / MAIN / SIDE / urządzeń, biegi kabli i rur, **wolne końce**, **poza obrysem**, bez prądu,
-bez paliwa, bez trasy; walidacja kompletu w recepturze; **graf sieci** (N): linie źródło → odbiornik (kable żółte,
+bez paliwa, bez trasy; walidacja kompletu w recepturze; **graf sieci** (I): linie źródło → odbiornik (kable żółte,
 rury do silników pomarańczowe, dopływ zielony, odbiornik bez trasy — czerwony krzyżyk).
 
 **Koszt** (generator na gotowym polu, minimum z 9 przebiegów na przemian ze starym generatorem, ta sama maszyna,
@@ -283,7 +283,7 @@ PPM / Enter zamyka, pierwszy i ostatni punkt na osi → symetryczny; „wieloką
 linii płyt), **rura** (W — łamana wiązki; liczba rur i materiał w panelu, kółko nad rurą — średnica), **część** (K),
 **kasztel** (Q; „kasztel na płytach” — z `clip: 1`), moduł (M — także zbiornik paliwa, dysza SIDE, ładownia), pas (S),
 emblemat (E), napis (T); poziomy 1–4 (rama, pancerz, nadbudówka, mostek); suwaki detalu, fazy płyt, łuku, widoczności
-paneli i **gęstości sieci** (⟳ — inne ziarno wiązek); **graf sieci** (N); podkład ze sprite'a (U) do odrysowania; A/B (A).
+paneli i **gęstości sieci** (⟳ — inne ziarno wiązek); **graf sieci** (I); podkład ze sprite'a (U) do odrysowania; A/B (A).
 Systemy presetu (🔒) nie dają się przesunąć, przeskalować ani usunąć.
 
 ## Co trzeba zmienić w grze, żeby przyjęła projekt z kreatora

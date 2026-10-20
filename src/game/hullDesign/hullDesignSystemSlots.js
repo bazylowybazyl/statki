@@ -28,6 +28,9 @@ import { HD_SYSTEM_TYPES } from './hullDesignSystems.js';
 
 const SIDE_PORT = -Math.PI / 2;     // dysza SIDE burty y < 0: wydech w −y (lustro: +y)
 const tank = (x, y, w, h, o = {}) => ({ type: 'fuel_tank', x, y, w, h, rot: 0, v: 0, ...o });
+// zbiornik obrócony króćcem (lokalne −x, kanał serwisowy) do rdzenia: π — rdzeń ku dziobowi, −π/2 — ku osi (burta y < 0)
+// π/2 — zbiornik na osi w poprzek okrętu, króćcem ku burcie y < 0 (sieć liczy się na tej burcie)
+const TO_BOW = Math.PI, TO_AXIS = -Math.PI / 2, TO_PORT = Math.PI / 2;
 const side = (x, y, w, h) => ({ type: 'thruster_side', x, y, w, h, rot: SIDE_PORT });
 const cargo = (x, y, w, h, o = {}) => ({ type: 'cargo', x, y, w, h, rot: 0, v: 0, ...o });
 
@@ -39,25 +42,26 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
   // Custos: zbiornik (automat gry) na osi między mostkiem a gondolami; ładownia (gra: grzbiet 3,7 ± 27 j. — nakryłaby
   // gniazdo i kratkę) na płycie przed gniazdem dziobowym
   custos: {
-    add: [tank(-61, 0, 3.2, 1.3), side(29.8, -22.1, 1.3, 0.9), cargo(22, 0, 11, 6)]
+    add: [tank(-61, 0, 3.2, 1.3, { rot: TO_BOW }), side(29.8, -22.1, 1.3, 0.9), cargo(22, 0, 11, 6)]
   },
   // Hasta: zbiornik (automat gry) w maszynowni za mostkiem; ładownia (gra: grzbiet 3,2 ± 27 j. — kratka i gniazdo)
   // między gniazdem dziobowym a klinami dziobu
   hasta: {
-    add: [tank(-98.5, 0, 5, 2.2), side(-77.4, -66.6, 2, 1.4), side(55.1, -33.4, 2, 1.4), cargo(31, 0, 10, 6.5)]
+    add: [tank(-98.5, 0, 5, 2.2, { rot: TO_BOW }), side(-77.4, -66.6, 2, 1.4), side(55.1, -33.4, 2, 1.4), cargo(31, 0, 10, 6.5)]
   },
   // Bellator: rdzeń z REACTOR_CORE_MARKERS (−17, r 26; preset −80), zbiornik z FUEL_TANK_MARKERS (−161, r 23 —
-  // walec między mostkiem a gniazdem rufowym); SIDE — tabela gry pusta (gra: automat z obrysu): para przy rufie
-  // i przy dziobie; ładownia — przednia część rynny grzbietowej (gra: 75,7 ± 151 j. — nakryłaby gniazdo 40)
+  // walec w poprzek między mostkiem a gniazdem rufowym, króćcem ku burcie: ku dziobowi kanał wchodziłby w gniazdo);
+  // SIDE — tabela gry pusta (gra: automat z obrysu): para przy rufie i przy dziobie; ładownia — przednia część rynny
+  // grzbietowej (gra: 75,7 ± 151 j. — nakryłaby gniazdo 40)
   bellator: {
     reactor: { x: -17, y: 0, r: 26 },
-    add: [tank(-162, 0, 14, 8), side(-221.3, -157, 5.1, 3.7), side(184.1, -130.7, 5.1, 3.7), cargo(95, 0, 42, 14)]
+    add: [tank(-162, 0, 14, 8, { rot: TO_PORT }), side(-221.3, -157, 5.1, 3.7), side(184.1, -130.7, 5.1, 3.7), cargo(95, 0, 42, 14)]
   },
   // Citadella: para zbiorników w maszynowni obok komory reaktora; ładowni nie ma osobno — pokłady ładowni gry
   // (lewy / prawy, x 25 ± 191 j.) to rząd wrót hangarów presetu. Mostek presetu (−300) stoi tuż przed strefą gry
   // (−387…−325: środek kasztelu z kratą i kapsułami wież) — zostaje (przesunięcie nakryłoby kratę i kapsuły)
   citadella: {
-    add: [tank(-228, -75, 18, 8), side(-167.5, -193.5, 8.8, 6.3), side(191.1, -191, 8.8, 6.3)]
+    add: [tank(-228, -75, 18, 8, { rot: TO_AXIS }), side(-167.5, -193.5, 8.8, 6.3), side(191.1, -191, 8.8, 6.3)]
   },
   // Colossus: mostek w strefie gry (centralna nadbudówka −238…85 j.; −160 — przed napisem TERRA NOVA; preset −560),
   // para zbiorników w maszynowni przy nadbudówce; SIDE z tabeli gry (bez dziobowej na skosie i 278 — gniazda wież);
@@ -69,6 +73,11 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
       side(416.4, -164, 12.7, 9.1), side(1.6, -292.7, 12.7, 9.1), side(-334.7, -260, 12.7, 9.1), side(-557.5, -290.8, 12.7, 9.1),
       cargo(-441, 0, 40, 20)
     ]
+  },
+  // fregata z klocków (preset `klocki`, gałąź klocków — blocksFrigate: rdzeń −22, mostek −40, gondola −69 / −12): jak
+  // Custos — zbiornik na osi rufowej nadbudówki króćcem ku dziobowi, para SIDE na prostej krawędzi klina dziobu
+  klocki: {
+    add: [tank(-58, 0, 3.2, 2, { rot: TO_BOW }), side(30, -22.1, 2, 2)]
   },
   // pozostałe presety: zbiornik paliwa (komplet systemów — walidacja), bez tabel gry
   orbis: { add: [tank(-300, -30, 26, 11)] },

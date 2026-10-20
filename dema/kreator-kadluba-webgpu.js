@@ -65,7 +65,7 @@ const S = {
   bake: null, field: null, recipe: null, mounts: null,
   busy: false, pending: null, rev: 0, builtRev: -1,
   syncPipes: 0, syncNames: [], frame: 0,
-  // sieć systemów: graf (kto z kim), kontrola tras (wolne końce, poza obrysem, bez prądu / paliwa), nakładka grafu (N)
+  // sieć systemów: graf (kto z kim), kontrola tras (wolne końce, poza obrysem, bez prądu / paliwa), nakładka grafu (I)
   systems: null, netCheck: null, netGraph: false, flash: null
 };
 window.camera = {
@@ -897,7 +897,7 @@ function drawEditor(cam) {
 }
 
 /**
- * Nakładka GRAFU SIECI (N): linie źródło → odbiornik (hullDesignSystems), barwa wg sieci — kable (reaktor → urządzenie)
+ * Nakładka GRAFU SIECI (I): linie źródło → odbiornik (hullDesignSystems), barwa wg sieci — kable (reaktor → urządzenie)
  * żółte, rury do silników (reaktor → MAIN / SIDE) pomarańczowe, dopływ (zbiornik → reaktor) zielony; odbiornik bez
  * trasy do reaktora (kontrola sieci) — czerwony krzyżyk.
  */
@@ -1094,7 +1094,7 @@ const ACTIONS = {
   g: () => { S.grid = !S.grid; },
   h: () => { document.body.classList.toggle('clean'); },
   a: () => toggleAb(),
-  n: () => { S.netGraph = !S.netGraph; }
+  i: () => { S.netGraph = !S.netGraph; }
 };
 function toggleAb() {
   if (!S.ab) { S.ab = true; S.abFocus = 'design'; }
@@ -1165,7 +1165,7 @@ function bindPanel() {
   for (const k of REF_KEYS) selR.add(new Option(`A/B z: ${BRIDGE_DEMO_HULLS[k].label}`, k));
   selR.addEventListener('change', async () => { await setRef(selR.value); S.ab = true; syncPanel(); });
   $('btn-ab').addEventListener('click', () => toggleAb());
-  $('btn-netgraph').addEventListener('click', () => { ACTIONS.n(); syncPanel(); });
+  $('btn-netgraph').addEventListener('click', () => { ACTIONS.i(); syncPanel(); });
   $('btn-clean').addEventListener('click', () => ACTIONS.h());
   $('btn-json').addEventListener('click', () => {
     const ta = $('json');
