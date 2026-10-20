@@ -227,8 +227,9 @@ bez paliwa, bez trasy; walidacja kompletu w recepturze; **graf sieci** (N): lini
 rury do silników pomarańczowe, dopływ zielony, odbiornik bez trasy — czerwony krzyżyk).
 
 **Koszt** (generator na gotowym polu, minimum z 9 przebiegów na przemian ze starym generatorem, ta sama maszyna,
-2026-10-20): Custos 36 ms (stary 49), Hasta 40 (59), Bellator 40 (60), Citadella 50 (52), Colossus 58 (55); kontrola
-sieci ~10–20 ms (tylko przy pełnym wypieku). Pipeline'y synchroniczne: 0.
+2026-10-20, 11 przebiegów): Custos 37 ms (stary 51), Hasta 45 (62), Bellator 45 (72), Citadella 49 (65), Colossus 56
+(58); w przeglądarce (demo, pojedynczy wypiek) 57–87 ms; kontrola sieci ~10–20 ms (tylko przy pełnym wypieku).
+Pipeline'y synchroniczne: 0.
 
 **Narzędzia**: `node scripts/webgpu/kreator-kadluba-demo.mjs --tylko custos,hasta,bellator,citadella,colossus --etapy
 ab,rury` → `<okręt>-a|b-rufa.png`, `<okręt>-a-rufa-bez.png` (bez sieci), Citadella `citadella-a-zgloszenie.png` (kadr
