@@ -218,8 +218,9 @@ test('strażnik „bez czitowania”: klocki na siatce, pióro do 16 pkt, częś
   const ok = isPlayerBuildable(hullDesignPreset('klocki'));
   assert.ok(ok.ok, JSON.stringify(ok.violations));
   assert.ok(isPlayerBuildable(hullDesignPreset('tnparts')).ok, 'części, moduły, bloki 60 j.');
-  const traced = isPlayerBuildable(hullDesignPreset('custos'));
-  assert.ok(!traced.ok && traced.violations.some((v) => /obrys/.test(v.text)), 'obrys sprite\'a TN odrzucony');
+  const outline = Array.from({ length: 60 }, (_, i) => [Math.cos(i / 60 * 6.283) * 70 + 0.13 * i, Math.sin(i / 60 * 6.283) * 25]);
+  const traced = isPlayerBuildable({ v: 2, detail: 0.09, shapes: [{ kind: 'poly', op: 'add', level: 0, pts: outline, reg: 0.18, regDrop: true }] });
+  assert.ok(!traced.ok && traced.violations.some((v) => /obrys/.test(v.text)), 'obrys sprite\'a odrzucony');
   const g = 0.5;
   const base = { v: 2, detail: 0.09, grid: g, mirror: true };
   const check = (shapes, extra = {}) => isPlayerBuildable({ ...base, shapes, ...extra });

@@ -184,6 +184,26 @@ const hatch = (x, y, w, h, rot = 0) => ({ type: 'hatch', x, y, w, h, rot, v: 1 }
 /** Kasztel na płytach pancerza (clip 1) — domyślnie bez szczegółów automatu (stawiane ręcznie wg sprite'a). */
 const castle = (x, y, w, h, o = {}) => ({ x, y, w, h, tiers: 2, high: 'out', taper: 0.4, vent: 'none', port: false, hatches: 0, clip: 1, ...o });
 
+// KLOCKI floty TN (src/game/hullDesign/hullDesignBlocks.js): połowa okrętu (y ≤ 0, lustro dopisuje drugą burtę; klocek
+// na osi — symetryczny), wymiary z podkładu sprite'a (scripts/kreator-tn-ab.mjs: siatka j. świata, IoU alfy). Szwy płyt
+// wąskie (TN_SEAM jd — styk klocków), ROWY maszynowni to odstęp między płytami nad klockami ramy (poziom 0) — korytarze
+// sieci rur i kabli jak w sprite'ach.
+const TN_SEAM = 4;
+/** Klocek z pudła [x0, x1] × [y0, y1] (obrót 0). */
+const blk = (shape, x0, y0, x1, y1, level = 1, o = {}) => ({ kind: 'block', shape, x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, rot: 0, level, gap: TN_SEAM, ...o });
+/** Klocek ramy (maszynownia, rowy) z pudła. */
+const frameBlk = (x0, y0, x1, y1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, rot: 0, level: 0, ...o });
+/** Klocek ze środka, wymiarów (układ klocka) i obrotu w krokach 45°. */
+const blkAt = (shape, x, y, w, h, rot45, level = 1, o = {}) => ({ kind: 'block', shape, x, y, w, h, rot: rot45 * Math.PI / 4, level, gap: TN_SEAM, ...o });
+/** Okręt TN z klocków: wspólne nastawy wyglądu (jak sprite'y), siatka z detalu. */
+function tnShip(name, seed, detail, o = {}) {
+  return {
+    v: 2, name, style: 'chamfer', mirror: true, palette: 'terra', seed, detail, windows: 0, bevel: 1.9, round: 1,
+    panels: o.panels ?? 1, pipeNet: { density: o.pipes ?? 1 },
+    blocks: [], shapes: o.shapes || [], modules: o.modules || [], decals: o.decals || [], castles: o.castles || [], parts: []
+  };
+}
+
 /** Krok siatki standaryzacji obrysów TN [jd] (hullDesignRegularize.js) i grubość okruchów, które znikają [jd]. */
 const TN_REG_DU = 2;
 const TN_THIN_DU = 9;
@@ -263,12 +283,34 @@ function tnBase(key, name, seed, opts = {}) {
   };
 }
 
-function custos(o = {}) {
-  const d = tnBase('custos', 'Fregata Custos (Terra Nova)', 41, {
-    raw: o.raw,
-    tiers: [[[-66, -33], [-44, -33], [-44, -8], [-66, -8]], [[18, -27], [76, -27], [76, -9], [18, -9]]],
+function custos() {
+  // sprite: rufa-nadbudówka (ukośny róg), pionowy rów rur za nią i ukośny do korytarza wzdłuż grzbietu, pas burty
+  // z szyną, płyta dziobu z napisem (ukośna lewa krawędź), klin, maszynownia między klinami
+  const d = tnShip('Fregata Custos (Terra Nova)', 41, 0.0894, {
+    panels: 0.55,                                      // sprite: mniej szwów paneli niż u lotniskowca
     castles: [castle(-55, -24, 5, 4, { level: 3, clip: 2, tiers: 1, taper: 0.5 })],
-    panels: 0.55                                       // sprite: mniej szwów paneli niż u lotniskowca
+    shapes: [
+      frameBlk(-48, -28, -27, 28, { c: [0, 6.5, 6.5, 0] }),         // rama: rowy za rufą i pod sekcją pierścienia
+      frameBlk(-27, -21.5, 22.5, 21.5),                             // rama: korytarz wzdłuż grzbietu
+      frameBlk(8.5, -7, 64, 7),                                     // maszynownia między klinami dziobu i rów pod płytą dziobu
+      frameBlk(-75, -7.5, -47, 7.5),                                // mocowanie gondoli i rów od gondol wzdłuż rufy
+      blk('rect', -67, -5, -47, 5),                                 // rufa przy osi (zbiornik; rów od gondol obok)
+      blk('trap', -67, -17, -47, -7.5, 2, { a: 6 }),                // rufa: ukośny róg
+      blk('rect', -62, -21, -47, -17, 2),                           // rufa: pas pod szczytem
+      blk('rect', -61, -28, -47, -21, 2, { c: [1.5, 0, 0, 0] }),    // szczyt rufy (kasztel)
+      blk('rect', -43, -28, -27, -14, 1, { c: [0, 6.5, 0, 3] }),    // sekcja pierścienia
+      blk('trap', -29, -26.5, -24, -21.5, 1, { a: 2.5 }),           // płetwa wieżyczki
+      blk('rect', -43, -9, -25, 9),                                 // grzbiet za mostkiem (rów za rufą schodzi do osi)
+      blk('rect', -27, -21.5, -4, -12.5),                           // pas burty
+      blk('trap', -4, -21.5, 13.5, -12.5, 1, { b: -8.5 }),          // pas burty przy dziobie (skos wzdłuż płyty dziobu)
+      blk('rect', -36, -24, -1, -21.5, 1, { c: [1, 1, 0, 0] }),     // szyna na burcie
+      blk('rect', -1, -22.5, 20, -21.5, 1, { c: [0, 0.5, 0, 0] }),  // szyna przy dziobie
+      blk('rect', -15, -8, -5, 8),                                  // grzbiet z kratą (przed wnęką reaktora)
+      blk('rect', -5, -5, 8.5, 5),                                  // grzbiet z gniazdem (korytarz schodzi do rowu dziobu)
+      blk('rect', 8.5, -5, 34, 5),                                  // grzbiet dziobu
+      blk('trap', 8.5, -24, 35.5, -6.5, 2, { a: 16.5 }),            // płyta dziobu z napisem
+      blkAt('trap', 55.5, -15.25, 17.5, 40, 2, 2, { a: 14 })        // klin dziobu (trapez obrócony o 90°)
+    ]
   });
   d.modules.push(
     engine(-71, -9.4, 4.6, 3.4),
