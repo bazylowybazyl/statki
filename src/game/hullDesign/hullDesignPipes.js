@@ -51,8 +51,10 @@ export const HD_PIPE_TUNE = Object.freeze({
   haloCells: 2,         // pas kary wokół sieci [komórki] — równoległe wiązki tej samej sieci nie nachodzą na siebie
   heurK: 1.6,           // A* ważone: heurystyka × k (szybciej, trasy prawie najkrótsze) — rury …
   heurKCable: 2.2,      // … i kable (trasa kabla może być mniej najkrótsza)
+  relaxCells: 48,       // heurystyka (odległość do sieci) poprawiana w promieniu tylu komórek od nowej gałęzi
   portGapCells: 2,      // pnie wychodzące z reaktora co najmniej tyle komórek od siebie
-  anchorDu: 2.5,        // przyłącze wchodzi w urządzenie na tyle jd (dalej rysuje się moduł)
+  anchorDu: 2.5,        // przyłącze wchodzi w urządzenie na tyle jd (dalej rysuje się moduł) …
+  anchorInDu: 6,        // … w punkt co najmniej tyle jd w głąb sylwetki
   maxPipes: 8,
   fillShare: 0.5,       // wiązka RUR wypełnia co najmniej taki ułamek szerokości rowu (mediana na widocznej długości) …
   fillExtra: 2,         // … dokładając najwyżej tyle rur ponad liczbę z obciążenia
@@ -246,13 +248,23 @@ function cableRadii(seedRand, n) {
 
 const bundleHalfW = (radii, gap) => (radii.reduce((a, r) => a + 2 * r, 0) + gap * (radii.length - 1)) * 0.5;
 
+/** Każdy moduł poza osią (|y| > 0,5) ma bliźniaka tego samego typu w odbiciu (tolerancja 0,01 j. — obrót części). */
+function modulesMirrored(modules) {
+  for (const m of modules) {
+    if (Math.abs(m.y) <= 0.5) continue;
+    if (!modules.some((q) => q !== m && q.type === m.type && Math.abs(q.x - m.x) < 0.01 && Math.abs(q.y + m.y) < 0.01)) return false;
+  }
+  return true;
+}
+
 /**
  * Głębokość w sylwetce [j.] (próbnik): max(−pole ramy, odległość do zewnętrza). Pole ramy to suma brył przez min —
  * wewnątrz NIEDOSZACOWUJE głębokości przy szwach stykających się brył (części, kasztele przy burcie: szew czyta się
  * jak krawędź), więc obok liczy się transformata odległości (fazowa 1 / √2, siatka ~1 jd) od komórek zewnętrza —
- * szew wewnątrz nie jest burtą. Lustro: tylko burta y ≤ 0 (najbliższe zewnętrze ma odbicie po tej stronie).
+ * szew wewnątrz nie jest burtą. Lustro: tylko burta y ≤ 0 (najbliższe zewnętrze ma odbicie po tej stronie). `slack` —
+ * dodatkowy zapas w komórkach (generator: 1 — kontrola na siatce o innym przesunięciu nie wyjdzie mniejsza).
  */
-function insideDepthSampler(field, S, mirror, pre = null) {
+function insideDepthSampler(field, S, mirror, pre = null, slack = 0) {
   const L0 = field.levels[0];
   const D = field.expanded.design.detail;
   const b = field.bounds;
@@ -264,7 +276,7 @@ function insideDepthSampler(field, S, mirror, pre = null) {
     d = new Float32Array(W * H);
     for (let k = 0; k < d.length; k++) d[k] = pre.l0[k] > 0 ? 0 : BIG;
   } else {
-    cw = Math.max(1.5 * D, (b.maxX - b.minX) / 900);
+    cw = HD_PIPE_TUNE.freeDu * D;                 // ta sama siatka co pole wolnego miejsca generatora
     x0 = b.minX - 2 * cw; y0 = b.minY - 2 * cw;
     W = Math.ceil((b.maxX - x0) / cw) + 3; H = Math.ceil(((mirror ? 0 : b.maxY) - y0) / cw) + 3;
     d = new Float32Array(W * H);
@@ -298,8 +310,8 @@ function insideDepthSampler(field, S, mirror, pre = null) {
     }
     d[k] = v;
   }
-  // fazowa transformata zawyża odległość euklidesową najwyżej o ~8% — z zapasem w dół (i o komórkę)
-  for (let k = 0; k < d.length; k++) d[k] = d[k] >= BIG ? 1e4 : Math.max(0, d[k] * 0.92 - 1) * cw;
+  // fazowa transformata zawyża odległość euklidesową najwyżej o ~8% — z zapasem w dół (i o komórkę; próbki w węzłach)
+  for (let k = 0; k < d.length; k++) d[k] = d[k] >= BIG ? 1e4 : Math.max(0, d[k] * 0.92 - 1 - slack) * cw;
   return (x, y) => {
     const raw = -S(L0, x, y);
     if (raw <= 0) return raw;
@@ -331,7 +343,9 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   const D = design.detail;
   const S = fieldSampler(field);
   const L0 = field.levels[0], L1 = field.levels[1];
-  const mirror = design.mirror;
+  // lustro sieci (trasy na burcie y < 0 i ich odbicie) — tylko gdy każdy moduł poza osią ma bliźniaka po drugiej burcie
+  // (część na osi bywa niesymetryczna: odbita trasa skończyłaby się bez urządzenia); inaczej sieć na całym kadłubie
+  const mirror = design.mirror && modulesMirrored(modules);
   const rand = rng(((design.seed || 7) * 7919 + (design.pipeNet?.seed || 0) * 104729 + 17) >>> 0);
   const runs = [];
   const fits = [];
@@ -393,7 +407,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   };
   /** Widoczne miejsce rury z ziemi (rów maszynowni, nie moduł, nie pod płytą, wewnątrz sylwetki). */
   const visAt = (x, y) => S(L1, x, y) >= 0 && S(L0, x, y) < 0 && modMin(x, y) > 0;
-  const inAt = insideDepthSampler(field, S, mirror, { x0: fx0 * cf, y0: fy0 * cf, cw: cf, W: FW, H: FH, l0 });
+  const inAt = insideDepthSampler(field, S, mirror, { x0: fx0 * cf, y0: fy0 * cf, cw: cf, W: FW, H: FH, l0 }, 1);
   const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
   const tm = stats.t = { pola: now() - t0 };
 
@@ -468,7 +482,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       if (!mirror || Math.abs(m.y) <= 0.5) return i;
       for (let j = 0; j < modules.length; j++) {
         const q = modules[j];
-        if (j !== i && q.type === m.type && Math.abs(q.x - m.x) < 1e-6 && Math.abs(q.y + m.y) < 1e-6) return j;
+        if (j !== i && q.type === m.type && Math.abs(q.x - m.x) < 0.01 && Math.abs(q.y + m.y) < 0.01) return j;     // części: obrót gubi bity
       }
       return i;
     };
@@ -508,8 +522,9 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       const dt = new Float32Array(N).fill(1e9);
       const cnt = new Float32Array(N * 8);
       // odległość do sieci (heurystyka A*, w komórkach): Dijkstra od nowych komórek na kolejce kubełkowej — wagi
-      // całkowite 5 (prosto) i 7 (ukos ≈ 5 · √2), każda komórka zdejmowana raz
-      const relax = (seeds) => {
+      // całkowite 5 (prosto) i 7 (ukos ≈ 5 · √2), każda komórka zdejmowana raz; nowa gałąź poprawia heurystykę w promieniu
+      // relaxCells komórek (dalej zostaje starsza — większa — wartość: A* i tak jest ważone)
+      const relax = (seeds, rMax5 = T.relaxCells * 5) => {
         let lo = Infinity;
         for (const k of seeds) { dt[k] = 0; di5[k] = 0; bucketPush(0, k); lo = 0; }
         for (let b = lo; b < bucketTop; b++) {
@@ -523,7 +538,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
               const ni = i + DX[d], nj = j + DY[d];
               if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
               const nk = nj * GW + ni, v = b + ((d & 1) ? 7 : 5);
-              if (v < di5[nk]) { di5[nk] = v; dt[nk] = v * 0.2; bucketPush(v, nk); }
+              if (v < di5[nk] && v <= rMax5) { di5[nk] = v; dt[nk] = v * 0.2; bucketPush(v, nk); }
             }
           }
           list.length = 0;
@@ -535,7 +550,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         di5.fill(0x3fffffff);
         portBase = { portOf: new Int32Array(N).fill(-1), dt: new Float32Array(N).fill(1e9), di5: null, cells: [] };
         for (const ci of coresHalf) for (const k of startsOf(modules[ci])) if (portBase.portOf[k] < 0) { portBase.portOf[k] = ci; portBase.cells.push(k); }
-        if (portBase.cells.length) relax(portBase.cells);
+        if (portBase.cells.length) relax(portBase.cells, Infinity);
         portBase.dt.set(dt);
         portBase.di5 = di5.slice();
       } else { dt.set(portBase.dt); di5.set(portBase.di5); }
@@ -620,7 +635,14 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         });
         const it = pending.splice(bi, 1)[0];
         const starts = it.starts.filter((k) => !goal[k] && !block[k]);
-        const path = starts.length ? search(starts) : null;
+        let path = starts.length ? search(starts) : null;
+        // przyłącze bez głębokiego wejścia w urządzenie (róg gondoli przy burcie) — trasa jeszcze raz, tylko z komórek,
+        // z których wejście jest głębokie
+        if (path && path.length >= 2 && !anchorFor(it.dev, path[0], path[1]).ok) {
+          const good = starts.filter((k) => anchorFor(it.dev, k, -1).ok);
+          const p2 = good.length ? search(good) : null;
+          if (p2 && p2.length >= 2) path = p2;
+        }
         if (!path || path.length < 2) { stats.unrouted++; continue; }
         stats.routes++;
         routed++;
@@ -678,37 +700,50 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       }
       return sum;
     };
-    /** Przyłącze w urządzeniu: od środka komórki odcinkiem co 45° (najpierw „prosto dalej”) na anchorDu jd w moduł. */
+    /**
+     * Przyłącze w urządzeniu: od środka komórki odcinkiem co 45° (najpierw „prosto dalej”) na anchorDu jd w moduł —
+     * w punkt, który leży też głęboko w sylwetce (anchorInDu jd; róg gondoli przy burcie się nie nadaje), a cały odcinek
+     * z zapasem (marginDu + 2 jd — przewężenie między bryłą gondoli a kadłubem odpada); bez takiego — pierwszy punkt
+     * w module.
+     */
     const anchorFor = (dev, k, nextK) => {
       const m = modules[dev];
       const x0 = cxOf(k), y0 = cyOf(k);
-      const inset = T.anchorDu * D;
-      if (pipeModuleSdf(m, x0, y0) <= -inset) return [x0, y0];
+      const inset = T.anchorDu * D, deep = T.anchorInDu * D, stub = (T.marginDu + 2) * D;
+      if (pipeModuleSdf(m, x0, y0) <= -inset && inAt(x0, y0) >= deep) return { p: [x0, y0], ok: true };
       const dOut = nextK >= 0 ? dirOf(k, nextK) : -1;
       const straight = dOut >= 0 ? (dOut + 4) & 7 : -1;
-      let best = null, bestS = null;
+      let best = null, bestS = null, shallow = null;
       for (let d = 0; d < 8; d++) {
         if (d === dOut) continue;
         const ux = DX[d] / DL[d], uy = DY[d] / DL[d];
-        for (let s = 0.25 * D; s <= 3.5 * c; s += 0.25 * D) {
+        let narrow = false;
+        for (let s = 0.25 * D; s <= 8 * c; s += 0.25 * D) {
           const x = x0 + ux * s, y = y0 + uy * s;
           if (mirror && y > -0.5 * D) break;
-          if (pipeModuleSdf(m, x, y) <= -inset) {
-            if (!best || s < best.s - 1e-9) best = { s, x, y };
-            if (d === straight) bestS = { s, x, y };
-            break;
-          }
+          const dIn = inAt(x, y);
+          if (dIn < stub) narrow = true;
+          if (pipeModuleSdf(m, x, y) > -inset) continue;
+          if (!shallow || s < shallow.s) shallow = { s, x, y };
+          if (narrow) break;
+          if (dIn < deep) continue;
+          if (!best || s < best.s - 1e-9) best = { s, x, y };
+          if (d === straight) bestS = { s, x, y };
+          break;
         }
       }
       if (bestS && best && bestS.s <= best.s * 1.35 + D) best = bestS;
-      return best ? [best.x, best.y] : [m.x, mirror ? Math.min(m.y, -0.5 * D) : m.y];
+      if (best) return { p: [best.x, best.y], ok: true };
+      if (shallow) return { p: [shallow.x, shallow.y], ok: false };
+      return { p: [m.x, mirror ? Math.min(m.y, -0.5 * D) : m.y], ok: false };
     };
+    // cała szerokość wiązki w sylwetce (próbki co 1 jd — zapas głębokości generatora to komórka pola, 2 jd)
     const fitsHull = (poly, hwJ) => {
       const need = hwJ + T.marginDu * D;
       for (let q = 0; q + 1 < poly.length; q++) {
         const a = poly[q], b = poly[q + 1];
         const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        const n = Math.max(1, Math.ceil(L / (0.5 * D)));
+        const n = Math.max(1, Math.ceil(L / D));
         for (let t = 0; t <= n; t++) if (inAt(a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n) < need) return false;
       }
       return true;
@@ -761,7 +796,6 @@ export function buildPipeNetwork(field, tuneIn = {}) {
       let tq = now();
       const R = routeNet(id, items);
       tm[`trasy_${id}`] = now() - tq; tq = now();
-      stats[`exp_${id}`] = stats.expanded - (stats._e0 || 0); stats._e0 = stats.expanded;
       if (!R.routed) continue;
       const { links, cnt, term } = R;
       // ── biegi: odcinki drzewa między węzłami (stopień ≠ 2, przyłącze albo zmiana obciążenia) ──
@@ -862,8 +896,8 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         const kA = cells[0], kB = cells[last];
         const devA = term[kA], devB = term[kB];
         let A, B;
-        if (devA >= 0) { A = anchorFor(devA, kA, cells[1]); corners.unshift(A); } else { const n0 = nodeInfo.get(kA); A = [n0.x, n0.y]; }
-        if (devB >= 0) { B = anchorFor(devB, kB, cells[last - 1]); corners.push(B); } else { const n1 = nodeInfo.get(kB); B = [n1.x, n1.y]; }
+        if (devA >= 0) { A = anchorFor(devA, kA, cells[1]).p; corners.unshift(A); } else { const n0 = nodeInfo.get(kA); A = [n0.x, n0.y]; }
+        if (devB >= 0) { B = anchorFor(devB, kB, cells[last - 1]).p; corners.push(B); } else { const n1 = nodeInfo.get(kB); B = [n1.x, n1.y]; }
         corners = dropCollinear(corners);
         rr.corners = corners;
         rr.A = A; rr.B = B; rr.devA = devA; rr.devB = devB;
@@ -915,7 +949,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
         const ends = [endIds(false)];
         if (mirror) { polys.push(rr.poly.map(([x, y]) => [x, -y])); ends.push(endIds(true)); }
         const run = {
-          net: id, radii: rr.radii, halfW: rr.halfW, gap: id === 'power' ? sq.gap : sq.gap, rMax: rr.rMax, mat: sq.mat, over: false,
+          net: id, radii: rr.radii, halfW: rr.halfW, gap: sq.gap, rMax: rr.rMax, mat: sq.mat, over: false,
           phase: rand() * T.clampDu * D, count: rr.count, n: rr.n, polys, ends, auto: true
         };
         runs.push(run);
@@ -1121,13 +1155,13 @@ function dropFolds(pts) {
  * Wiązka w rowie: STAŁE przesunięcie w poprzek na każdy prosty odcinek trasy, rogi = przecięcia przesuniętych prostych
  * (kolana zostają 45° / 90°, wiązka biegnie równolegle do ściany — bez falowania za ząbkami obrysu). Przesunięcie
  * odcinka: najmniejsze, przy którym wiązka ma luz od ścian i od wcześniejszych sieci (`clrAt`) na całej widocznej
- * długości odcinka (`visAt` — pole geometrii; pod płytą — bez wymagań), a CAŁA szerokość na całej długości leży
+ * długości odcinka (`geoAt` — pole geometrii; pod płytą — bez wymagań), a CAŁA szerokość na całej długości leży
  * w sylwetce z zapasem; bez takiego — najlepszy luz. Odcinek końcowy biegnie przez swój węzeł (węzeł przesunięty
  * w wolne miejsce, wspólny dla biegów rozgałęzienia; przyłącze urządzenia), a gdy tam nie ma luzu — wchodzi na swoją
  * prostą kolanem 45° tuż za węzłem. Odcinek odwrócony przez przesunięcia: kolano przy węźle znika, odcinek końcowy za
  * węzłem odpada, środkowy — sąsiad przesunięty tak, by odcinek miał długość zero.
  */
-function offsetRun(corners, A, B, halfW, D, T, clrAt, visAt, inAt, mirror) {
+function offsetRun(corners, A, B, halfW, D, T, clrAt, geoAt, inAt, mirror) {
   const m = corners.length;
   if (m < 2) return [[A[0], A[1]], [B[0], B[1]]];
   const segs = [];
@@ -1148,13 +1182,13 @@ function offsetRun(corners, A, B, halfW, D, T, clrAt, visAt, inAt, mirror) {
   const tB = (B[0] - S1.a[0]) * S1.ux + (B[1] - S1.a[1]) * S1.uy;
   const fit = (g, pref, t0, t1) => {
     const lo = clamp(t0, 0, g.L), hi = clamp(t1, lo, g.L);
-    const n = Math.max(2, Math.round((hi - lo) / (1.5 * D)));
+    const n = Math.max(2, Math.round((hi - lo) / (2 * D)));
     const all = [], vis = [];
     for (let q = 0; q <= n; q++) {
       const t = lo + (hi - lo) * q / n;
       const x = g.a[0] + g.ux * t, y = g.a[1] + g.uy * t;
       all.push(x, y);
-      if (visAt(x, y) >= -1.5 * D) vis.push(x, y);
+      if (geoAt(x, y) >= -1.5 * D) vis.push(x, y);
     }
     const score = (o) => {
       for (let q = 0; q < all.length; q += 2) if (inAt(all[q] + g.nx * o, all[q + 1] + g.ny * o) < inNeed) return -Infinity;
@@ -1213,8 +1247,8 @@ function offsetRun(corners, A, B, halfW, D, T, clrAt, visAt, inAt, mirror) {
     if (end0 && jA() > 0) { jogA = false; S0.o = oA; continue; }
     if (end1 && jB() > 0) { jogB = false; S1.o = oB; continue; }
     if (ns === 1) return [[A[0], A[1]], [B[0], B[1]]];
-    if (end0) return offsetRun(corners.slice(1), A, B, halfW, D, T, clrAt, visAt, inAt, mirror);
-    if (end1) return offsetRun(corners.slice(0, -1), A, B, halfW, D, T, clrAt, visAt, inAt, mirror);
+    if (end0) return offsetRun(corners.slice(1), A, B, halfW, D, T, clrAt, geoAt, inAt, mirror);
+    if (end1) return offsetRun(corners.slice(0, -1), A, B, halfW, D, T, clrAt, geoAt, inAt, mirror);
     // środkowy: przesunięcie sąsiada (najpierw nie-końcowego) tak, by odcinek miał długość zero (długość liniowa w o)
     const fixWith = (h) => {
       const o0 = h.o, v0 = span(bad);

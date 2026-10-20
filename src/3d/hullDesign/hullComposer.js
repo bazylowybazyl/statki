@@ -7,10 +7,11 @@
 //
 // WYGLĄD (v2, 2026-10-14 — wzór: sprite'y Terra Novy): białe PŁYTY PANCERZA (poziom 1) i nadbudówki nad ciemną
 // MASZYNOWNIĄ ramy (poziom 0). Płyty: stroma ściana + faza, linia paneli równoległa do krawędzi, nity, podział na
-// panele (cegiełki o losowych granicach), kratki, luki, skrzynki, płyty na płytach. Maszynownia: wiązki RUR wzdłuż
-// krawędzi pancerza (izolinie pola odległości — same zakręcają po fazach 45°, jak w sprite'ach), obejmy, a dalej od
-// pancerza skrzynki, żebrowane walce i kraty. Moduły: ośmiokątne obudowy wież, pierścienie, gondole-walce z żebrami,
-// wrota hangarów, kratki, luki, reaktor, mostek. Wszystkie wymiary detalu w JEDNOSTKACH DETALU (jd = design.detail j.),
+// panele (cegiełki o losowych granicach), kratki, luki, skrzynki, płyty na płytach. Maszynownia: SIEĆ SYSTEMÓW (rury
+// paliwa i kable w korytkach — src/game/hullDesign/hullDesignPipes.js; bez sieci — wiązki rur wzdłuż krawędzi pancerza
+// z izolinii pola odległości, same zakręcają po fazach 45°, jak w sprite'ach), obejmy, a dalej od pancerza skrzynki,
+// żebrowane walce i kraty. Moduły: ośmiokątne obudowy wież, pierścienie, gondole-walce z żebrami, wrota hangarów,
+// kratki, luki, reaktor, mostek, zbiorniki paliwa, gniazda dysz SIDE, ładownie. Wszystkie wymiary detalu w JEDNOSTKACH DETALU (jd = design.detail j.),
 // więc mała fregata ma tyle detalu na długość co lotniskowiec (jak sprite'y).
 //
 //   GEO   (RGBA16F) wysokość reliefu [j.], alfa, szwy, KOPUŁA [j.] (sylwetka rozmyta jak w HullSurface sprite'ów)

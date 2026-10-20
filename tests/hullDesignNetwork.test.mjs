@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeHullDesign, expandHullDesign, HD_MODULES } from '../src/game/hullDesign/hullDesignSchema.js';
 import { buildHullField, sampleHullField } from '../src/game/hullDesign/hullDesignGeometry.js';
-import { hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
+import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { hullDesignSystems, powerLoad, systemIssues, HD_SYSTEM_TYPES } from '../src/game/hullDesign/hullDesignSystems.js';
 import { HD_SYSTEM_SLOTS, applySystemSlots } from '../src/game/hullDesign/hullDesignSystemSlots.js';
@@ -182,13 +182,30 @@ test('sieć: projekt od zera z kompletem systemów (bez lustra), kadłub z czę�
   const fp = fieldOf('tnparts2');
   assert.equal(fp.pipeNet.stats.unrouted, 0, 'tnparts2: trasy przez szwy części');
   assert.equal(pipeNetworkCheck(fp.pipeNet, fp).freeEnds, 0);
-  // koszt: generator (bez pola) poniżej ~2× dzisiejszego budżetu 90 ms na okręt (maszyna testów bywa obciążona)
+  // koszt: generator (bez pola) poniżej ~2× dzisiejszego budżetu 90 ms na okręt — czas CPU procesu (testy biegną
+  // równolegle w kilku procesach, zegar ścienny skacze)
   for (const key of ['citadella', 'colossus']) {
     const f2 = fieldOf(key);
     const base = { expanded: f2.expanded, grid: f2.grid, levels: f2.levels, bounds: f2.bounds, band: f2.band };
     let best = Infinity;
-    for (let i = 0; i < 3; i++) { const t0 = performance.now(); buildPipeNetwork(base); best = Math.min(best, performance.now() - t0); }
-    assert.ok(best < 180, `${key}: generator ${best.toFixed(0)} ms`);
+    for (let i = 0; i < 3; i++) {
+      const c0 = process.cpuUsage();
+      buildPipeNetwork(base);
+      const c1 = process.cpuUsage(c0);
+      best = Math.min(best, (c1.user + c1.system) / 1000);
+    }
+    assert.ok(best < 180, `${key}: generator ${best.toFixed(0)} ms CPU`);
+  }
+});
+
+test('sieć ogólna: każdy preset z włączoną siecią (bloki, części, koło, bez lustra) — komplet tras, bez wolnych końców', () => {
+  for (const key of HD_PRESET_KEYS) {
+    if (key === 'empty') continue;
+    const d = hullDesignPreset(key);
+    const f = buildHullField({ ...d, pipeNet: { density: 1, seed: d.pipeNet?.seed || 0 } });
+    const c = pipeNetworkCheck(f.pipeNet, f);
+    assert.equal(f.pipeNet.stats.unrouted, 0, `${key}: bez trasy`);
+    assert.deepEqual([c.freeEnds, c.outside, c.unpowered.length, c.unfueled.length], [0, 0, 0, 0], `${key}: wolne końce, poza, bez prądu, bez paliwa`);
   }
 });
 
