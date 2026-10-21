@@ -47,7 +47,7 @@ function surfaceUniforms(overrides = {}) {
     uSunWrap: { value: 0.5 }, uSunIntensity: { value: 1.0 }, sunsetTint: { value: V3(1.4, 0.1, 0.1) },
     uHazeStrength: { value: 0.0 }, uHazeColor: { value: V3(0.55, 0.72, 1.0) }, uHazeBeta: { value: V3(0.05, 0.10, 0.22) },
     uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 },
-    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 0.0 }, uPitMode: { value: 0.0 },
+    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 0.0 }, uPitMode: { value: 0.0 }, uBite: { value: new THREE.Vector4() },
     ...overrides
   };
 }
@@ -57,7 +57,8 @@ const atmosphereUniforms = () => ({
 });
 const ringAtmosphereUniforms = () => ({
   uSunDir: { value: V3(1, 0, 0) }, uRa: { value: 1.033 }, uHs: { value: 0.0073 }, uDayColor: { value: V3(0.26, 0.5, 1) },
-  uSunsetColor: { value: V3(1, 0.38, 0.12) }, uGain: { value: V3(1, 1, 1) }, uSunShadowRecv: { value: 1 }
+  uSunsetColor: { value: V3(1, 0.38, 0.12) }, uGain: { value: V3(1, 1, 1) }, uSunShadowRecv: { value: 1 },
+  uPitMode: { value: 0 }, uBite: { value: new THREE.Vector4() }, uBiteEast: { value: V3(1, 0, 0) }
 });
 function starUniforms() {
   return uniformsAdapter({
@@ -112,7 +113,9 @@ test('powierzchnia planety: jeden graf dla wszystkich planet, wartości i tekstu
   assert.ok(uniformBuffers(a.fragment) <= 3, `bufory uniformów: ${uniformBuffers(a.fragment)}`);
   // Mapa normalnych (tylko Ziemia): pochodne jak GL (three: dFdy = −dpdy), próbki w jednolitym przepływie.
   assert.match(a.fragment, /- dpdy\(/);
-  const beforeFirstIf = a.fragment.slice(0, a.fragment.indexOf('if ('));
+  // pierwsza gałąź ciała main (funkcje pomocnicze — np. gryzu Ziemi z select → if — stoją przed main)
+  const mainAt = a.fragment.indexOf('fn main');
+  const beforeFirstIf = a.fragment.slice(mainAt, a.fragment.indexOf('if (', mainAt));
   assert.equal((beforeFirstIf.match(/textureSample\(/g) || []).length >= 1, true, 'mapa normalnych przed gałęzią');
   assert.doesNotMatch(a.fragment.slice(a.fragment.indexOf('if ( ( nodeVar'), a.fragment.length), /if \( \( nodeVar\d+ > 0\.0 \) \) \{\s*nodeVar\d+ = textureSample/,
     'próbka połysku nie w gałęzi zależnej od piksela');
@@ -143,7 +146,8 @@ test('tekstura per obiekt: węzeł czyta teksturę rysowanego materiału, bez ni
 test('chmury, poświaty, słońce: stan renderu jak dawny ShaderMaterial', () => {
   const clouds = createPlanetCloudMaterial({ cloudTexture: { value: tex(THREE.SRGBColorSpace) }, sunPosition: { value: V3() }, uOpacity: { value: 0.62 },
     uHazeStrength: { value: 1 }, uHazeColor: { value: V3() }, uHazeBeta: { value: V3() }, uRingShadowStrength: { value: 0 },
-    uRingShadowRadius: { value: 0 }, uRingShadowReach: { value: 1 }, uRingShadowCenter: { value: new THREE.Vector2() }, uSunShadowRecv: { value: 0 } });
+    uRingShadowRadius: { value: 0 }, uRingShadowReach: { value: 1 }, uRingShadowCenter: { value: new THREE.Vector2() }, uSunShadowRecv: { value: 0 },
+    uPitMode: { value: 0 }, uBite: { value: new THREE.Vector4() } });
   assert.equal(clouds.side, THREE.DoubleSide);
   assert.equal(clouds.forceSinglePass, true, 'przezroczysty DoubleSide w jednym rysunku (ShaderMaterial)');
   assert.equal(clouds.transparent, true);

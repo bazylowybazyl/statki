@@ -38,10 +38,10 @@ import {
   Fn, If, Loop, Discard,
   float, vec2, vec3, vec4, uniform, attribute, varying,
   positionLocal, positionGeometry, normalLocal, uv,
-  modelWorldMatrix, modelWorldMatrixInverse, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
+  modelWorldMatrix, modelWorldMatrixInverse, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition, cameraWorldMatrix,
   transformNormalToView, screenCoordinate, screenSize, viewportSize,
-  atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
-  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty, uint, screenUV
+  abs, atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
+  select, smoothstep, sqrt, step, distance, dFdx, dFdy, fwidth, texture, varyingProperty, uint, screenUV
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
@@ -60,8 +60,8 @@ const SKY_STAR_TEX = vec2(5120, 3200);
 // maska liczona w płaszczyźnie gry trafiałaby w nie obok), ciała przy ringu (pass ortho) — tak;
 // mgławica i gwiazdy dostają długą smugę tła.
 import { sunShaftBackdrop, sunVisibility } from './sunShadowMask.js';
-// Wielka kopalnia ringu na Ziemi: wycięcie kuli i łata-bryła (uPitMode 1 / 2, earthPit.tsl.js).
-import { earthPitProfile, earthPitShade, EARTH_PIT_TSL } from './earthPit.tsl.js';
+// Wielki gryz Ziemi: wycięcie kuli, łata (ściany, dno, kołnierz) i klamry (uPitMode 1 / 2 / 3, earthBite.tsl.js).
+import { earthBiteCoords, earthBiteEast, earthBiteShade, earthBiteRibShade, EARTH_BITE_TSL } from './earthBite.tsl.js';
 // Żywa atmosfera Jowisza (rodzaj 'jupiter' = graf powierzchni z barwą dnia z przepływu, jupiterAtmosphere.tsl.js).
 import { JUPITER_UNIFORM_KEYS, jupiterFlowDayColor } from './jupiterAtmosphere.tsl.js';
 // Żywa atmosfera Saturna (rodzaj 'saturn' — ten sam silnik gazowych olbrzymów z czapami polarnymi, saturnAtmosphere*.js).
@@ -276,7 +276,7 @@ const SURFACE_KEYS = {
   uBrightness: 'float', uSpecular: 'float', uSunIntensity: 'float',
   uHazeStrength: 'float', uHazeColor: 'vec3', uHazeBeta: 'vec3',
   uRingShadowStrength: 'float', uRingShadowRadius: 'float', uRingShadowReach: 'float', uRingShadowCenter: 'vec2',
-  uSunShadowRecv: 'float', uPitMode: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4'
 };
 
 // `flow` (rodzaj 'jupiter'): barwa dnia z przepływu atmosfery zamiast próbki mapy — reszta grafu bez zmian.
@@ -289,6 +289,7 @@ function buildSurfaceGraph(flow = null) {
   const vViewPosition = varying(modelViewMatrix.mul(vec4(positionLocal, 1.0)).xyz.negate(), 'vPlanetView');
   const vUv = uv();
   const vLocal = varying(positionLocal, 'vPlanetLocal');
+  const vNormalLocal = varying(normalLocal, 'vPlanetNormalLocal');
   const dayTex = perObjectTexture('dayTexture', PLACEHOLDER.day, vUv);
   const nightTex = perObjectTexture('nightTexture', PLACEHOLDER.night, vUv);
   const specTex = perObjectTexture('specularTexture', PLACEHOLDER.specular, vUv);
@@ -314,63 +315,96 @@ function buildSurfaceGraph(flow = null) {
     const mappedNormal = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(geoN.mul(mapN.z)));
     const normal = select(hasNight, mappedNormal, geoN).toVar();
 
-    // Dziura (tylko Ziemia): profil w kierunku fragmentu; na łacie normalna, cień i żar ze wzoru.
-    const pitP = vec4(0.0, 9.0, 0.0, 0.0).toVar();
+    // Gryz (tylko Ziemia): współrzędne gryzu fragmentu (earthBite.tsl.js); kula wycina obszar gryzu, na łacie
+    // (ściany i dno) normalna, cień, barwa skał, żar i pole siłowe ze wzoru, klamry — własna barwa i światła.
+    const biteC = vec4(9.0, 0.0, 0.0, 0.0).toVar();
     const pitShadow = float(1.0).toVar();
-    const pitGlow = float(0.0).toVar();
-    const pitDetail = float(1.0).toVar();
-    const inPit = float(0.0).toVar();
+    const pitAlbedo = vec3(0.0).toVar();
+    const pitOwn = float(0.0).toVar();      // 1 — barwa i światła z gryzu (ściany, dno, klamry), nie z mapy
+    const pitEmit = vec3(0.0).toVar();
+    const pitField = float(0.0).toVar();
+    // wysokość widoku dla mgiełki we wnętrzu gryzu: z punktu, w którym promień widzenia wchodzi do otworu (kula R)
+    const biteMu = float(0.0).toVar();
+    // normalna atmosfery (wysokość słońca, mgiełka): promieniowa — także na ścianach belek klamer
+    const atmN = vec3(geoN).toVar();
+    // rozmiar piksela w układzie obiektu — pochodne poza gałęziami (detal gryzu z daleka gaśnie do średniej)
+    const pixL = length(fwidth(vLocal)).toVar();
     If(U.uPitMode.greaterThan(0.5), () => {
-      const pDir = normalize(vLocal).toVar();
-      pitP.assign(earthPitProfile(pDir));
-      If(U.uPitMode.greaterThan(1.5), () => {
+      const east = earthBiteEast(U.uBite.xyz).toVar();
+      const pL = vec3(vLocal).toVar();
+      If(U.uPitMode.lessThan(1.5), () => {
+        biteC.assign(earthBiteCoords(normalize(pL), U.uBite, east));
+      }).Else(() => {
         const sunW = normalize(U.sunPosition.sub(vWorldPosition));
-        const sunObj = normalize(modelWorldMatrixInverse.mul(vec4(sunW, 0.0)).xyz);
-        const sh = earthPitShade(pDir, sunObj, pitP);
-        inPit.assign(float(1.0).sub(smoothstep(EARTH_PIT_TSL.rimS, EARTH_PIT_TSL.rimS + 0.012, pitP.y)));
-        normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), inPit)));
-        pitShadow.assign(mix(1.0, sh.shadow, inPit));
-        pitGlow.assign(sh.glow);
-        pitDetail.assign(mix(1.0, sh.detail, inPit));
+        const sunObj = normalize(modelWorldMatrixInverse.mul(vec4(sunW, 0.0)).xyz).toVar();
+        If(U.uPitMode.lessThan(2.5), () => {
+          biteC.assign(earthBiteCoords(pL, U.uBite, east));
+          const sh = earthBiteShade(pL, sunObj, biteC, U.uBite, east, pixL);
+          normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), sh.cav)));
+          pitShadow.assign(mix(1.0, sh.shadow, sh.cav));
+          pitAlbedo.assign(sh.albedo);
+          pitOwn.assign(sh.cav);
+          pitEmit.assign(sh.emit);
+          pitField.assign(sh.field);
+          const vObj = normalize(modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(viewDir, 0.0))).xyz);
+          const pv = dot(pL, vObj);
+          const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0)));
+          biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.0, 1.0));
+        }).Else(() => {
+          const rs = earthBiteRibShade(pL, normalize(vNormalLocal), sunObj, vUv, U.uBite, east);
+          normal.assign(geoN);
+          atmN.assign(transformNormalToView(normalize(pL)));
+          pitShadow.assign(rs.shadow);
+          pitAlbedo.assign(rs.albedo);
+          pitOwn.assign(1.0);
+          pitEmit.assign(rs.emit);
+        });
       });
     });
 
     const NdotL = dot(normal, lightDir).toVar();
     const sunL = max(0.0, NdotL).mul(pitShadow).toVar();
     // Wysokość słońca nad horyzontem w punkcie (normalna geometryczna — gładki pas zachodu).
-    const geoMu = dot(geoN, lightDir).toVar();
+    const geoMu = dot(atmN, lightDir).toVar();
     // Próbki w jednolitym przepływie (toVar): select() niżej rozwija się w if/else, a próbka
     // z pochodnymi w gałęzi zależnej od piksela dawałaby nieokreślony poziom mipmapy.
     const dayRgb = flow ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb;
-    const dayColor = vec4(dayRgb.mul(pitDetail), 1.0).toVar();
+    const dayColor = vec4(mix(dayRgb, pitAlbedo, pitOwn), 1.0).toVar();
     const nightColor = vec4(nightTex).toVar();
     const specularMask = vec4(specTex).toVar().r;
     const waterMask = smoothstep(0.08, 0.82, specularMask);
     const NdotH = max(0.0, dot(normal, halfVector));
     const shininess = mix(16.0, 42.0, waterMask);
-    const specular = select(sunL.greaterThan(0.0), pow(NdotH, shininess).mul(waterMask).mul(U.uSpecular).mul(sunL), float(0.0)).toVar();
+    // połysk wody tylko z mapy — ściany, dno i klamry gryzu go nie mają
+    const specular = select(sunL.greaterThan(0.0), pow(NdotH, shininess).mul(waterMask).mul(U.uSpecular).mul(sunL), float(0.0))
+      .mul(float(1.0).sub(pitOwn)).toVar();
     const sunVisP = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
 
     // Dzień: Lambert w świetle przefiltrowanym przez atmosferę, połysk wody tym samym światłem.
     const sunT = sunTransmittance(geoMu, U).toVar();
     const dayLit = dayColor.rgb.mul(U.uBrightness).mul(clamp(sunL.mul(U.uSunIntensity), 0.0, 1.2))
       .add(vec3(0.55, 0.62, 0.78).mul(specular)).mul(sunT).mul(sunVisP);
-    // Dziura: światło nieba w cieniu ścian (bez niego tarasy w cieniu byłyby czarne jak noc).
-    const pitSky = dayColor.rgb.mul(U.uBrightness).mul(EARTH_PIT_TSL.skyFill).mul(float(1.0).sub(pitShadow))
-      .mul(smoothstep(0.0, 0.25, geoMu)).mul(sunT).mul(sunVisP).mul(inPit);
+    // Gryz: światło nieba w cieniu ścian (bez niego ściany w cieniu byłyby czarne jak noc).
+    const pitSky = dayColor.rgb.mul(U.uBrightness).mul(EARTH_BITE_TSL.skyFill).mul(float(1.0).sub(pitShadow))
+      .mul(smoothstep(0.0, 0.25, geoMu)).mul(sunT).mul(sunVisP).mul(pitOwn);
     // Noc (Ziemia): same miasta — ląd w świetle księżyca z mapy nocy (luminancja ~0,005) i ocean
     // (~0,002) odcięte progiem. Zapalają się z zapadaniem zmroku i w cieniu ringu.
     const nightBase = nightColor.rgb;
     const cityBrightness = dot(nightBase, vec3(0.299, 0.587, 0.114));
     const cityGlow = nightBase.mul(cityBrightness.mul(cityBrightness)).mul(5.0);
     const cityOn = float(1.0).sub(smoothstep(-0.10, 0.06, geoMu).mul(sunVisP));
-    const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn);
+    const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn).mul(float(1.0).sub(pitOwn));
     const finalColor = dayLit.add(pitSky).add(cities).toVar();
-    // Żar szybu kopalni (skała ~900 °C): świeci także w dzień, nocą pełną mocą.
-    finalColor.addAssign(vec3(...EARTH_PIT_TSL.glow).mul(pitGlow).mul(mix(EARTH_PIT_TSL.glowDay, 1.0, cityOn)));
+    // Żar gryzu (płaszcz ~2 500 K na dnie) świeci tak samo w dzień i w nocy; pole siłowe ścian (język tarcz)
+    // widać pod kątem i w cieniu.
+    finalColor.addAssign(pitEmit);
+    const fieldFr = float(1.0).sub(abs(dot(normal, viewDir)));
+    finalColor.addAssign(vec3(...EARTH_BITE_TSL.field).mul(pitField.mul(EARTH_BITE_TSL.fieldGain))
+      .mul(float(0.35).add(fieldFr.mul(fieldFr).mul(0.65))).mul(float(1.0).sub(min(sunL.mul(2.0), 1.0).mul(0.85))));
 
     If(U.uHazeStrength.greaterThan(0.0005), () => {
-      const mu = clamp(dot(geoN, viewDir), 0.0, 1.0);
+      // we wnętrzu gryzu (ściany, dno) promień wychodzi przez otwór — wysokość widoku z punktu wejścia (biteMu)
+      const mu = mix(clamp(dot(atmN, viewDir), 0.0, 1.0), biteMu, pitOwn.mul(select(U.uPitMode.greaterThan(1.5).and(U.uPitMode.lessThan(2.5)), 1.0, 0.0)));
       const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();
       // Mgiełka świeci światłem słońca, które do niej doszło: za dnia barwa mgiełki, przy terminatorze
@@ -393,8 +427,8 @@ function buildSurfaceGraph(flow = null) {
     const luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
     const bloomPush = smoothstep(0.85, 1.0, luminance).mul(U.uPlanetBloom);
     finalColor.addAssign(finalColor.mul(bloomPush));
-    // Kula Ziemi bez obszaru dziury — tam leży łata (bryła).
-    Discard(U.uPitMode.greaterThan(0.5).and(U.uPitMode.lessThan(1.5)).and(pitP.y.lessThan(EARTH_PIT_TSL.cutS)));
+    // Kula Ziemi bez obszaru gryzu — tam leży łata (bryła).
+    Discard(U.uPitMode.greaterThan(0.5).and(U.uPitMode.lessThan(1.5)).and(biteC.x.lessThan(biteC.w.add(EARTH_BITE_TSL.cutPad))));
     return vec4(finalColor, 1.0);
   })();
 
@@ -406,7 +440,7 @@ function buildSurfaceGraph(flow = null) {
 const CLOUD_KEYS = {
   sunPosition: 'vec3', uOpacity: 'float', uHazeStrength: 'float', uHazeColor: 'vec3', uHazeBeta: 'vec3',
   uRingShadowStrength: 'float', uRingShadowRadius: 'float', uRingShadowReach: 'float', uRingShadowCenter: 'vec2',
-  uSunShadowRecv: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4'
 };
 
 function buildCloudGraph() {
@@ -415,6 +449,7 @@ function buildCloudGraph() {
   const vNormal = varying(normalize(modelWorldMatrix.mul(vec4(normalLocal, 0.0)).xyz), 'vCloudNormal');
   const vWorldPosition = varying(worldPos.xyz, 'vCloudWorld');
   const cloudTex = perObjectTexture('cloudTexture', PLACEHOLDER.clouds, uv());
+  const vCloudLocal = varying(positionLocal, 'vCloudLocal');
 
   const fragmentNode = Fn(() => {
     const texel = vec4(cloudTex).toVar();
@@ -430,6 +465,12 @@ function buildCloudGraph() {
     const sunVisC = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
     const lit = smoothstep(-0.02, 0.12, muSun).mul(sunVisC).toVar();
     const alpha = mask.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
+    // Nad otworem gryzu chmur nie ma (żar, wznoszenie); uBite = środek gryzu w układzie TEJ kuli (chmury
+    // obracają się szybciej niż grunt — przelicza go CPU co klatkę).
+    If(U.uPitMode.greaterThan(0.5), () => {
+      const bc = earthBiteCoords(normalize(vCloudLocal), U.uBite, earthBiteEast(U.uBite.xyz));
+      alpha.mulAssign(smoothstep(bc.w.add(0.004), bc.w.add(0.05), bc.x));
+    });
     // Barwa chmury z chromy tekstury (biel — chmury, brąz — pył i burze piaskowe Ziemi przyszłości);
     // jasność niesie maska, więc dawna biała mapa daje barwę (1, 1, 1).
     const tint = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
@@ -504,7 +545,7 @@ function buildAtmosphereGraph() {
 // e^(−h/Hs) — gaśnie do zera na brzegu powłoki (bez twardej krawędzi).
 const RING_ATMOSPHERE_KEYS = {
   uSunDir: 'vec3', uRa: 'float', uHs: 'float', uDayColor: 'vec3', uSunsetColor: 'vec3', uGain: 'vec3',
-  uSunShadowRecv: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4', uBiteEast: 'vec3'
 };
 
 function buildRingAtmosphereGraph() {
@@ -526,6 +567,23 @@ function buildRingAtmosphereGraph() {
     // cień ringu z maski słońca tylko do połowy: słońce gry leży w płaszczyźnie ringu, więc
     // pełna maska gasiłaby cały limb od strony słońca
     glow.mulAssign(mix(1.0, sunVisibility(), U.uSunShadowRecv.mul(0.5)));
+    // Wcięcie gryzu w obrysie (Ziemia; uBite / uBiteEast w układzie dysku, z ku kamerze). Na tarczy (ρ < 1) dysk
+    // zasłania kula, ale w otworze kuli nie ma — przez otwór (punkt kuli od kamery w gryzie) poświata prawie gaśnie,
+    // a gdzie obie końcówki cięciwy promienia leżą w gryzie, promień nie trafia w skałę (przecięty brzeg tarczy).
+    // Za limbem (ρ ≥ 1) poświata wisi nad punktem limbu pod promieniem — nad wyciętym gaśnie (wcięcie w obrysie).
+    If(U.uPitMode.greaterThan(0.5), () => {
+      const inDisc = rho.lessThan(1.0);
+      const hz = sqrt(max(float(1.0).sub(rho.mul(rho)), 0.0));
+      const limb = vOff.div(max(rho, 1e-4));
+      const pf = select(inDisc, vec3(vOff, hz), vec3(limb, 0.0));
+      const pb = select(inDisc, vec3(vOff, hz.negate()), vec3(limb, 0.0));
+      const bf = earthBiteCoords(pf, U.uBite, U.uBiteEast);
+      const bb = earthBiteCoords(pb, U.uBite, U.uBiteEast);
+      const mf = bf.w.sub(bf.x);
+      const through = smoothstep(-0.004, 0.008, min(mf, bb.w.sub(bb.x)));
+      const intoHole = select(inDisc, smoothstep(-0.01, 0.02, mf).mul(0.97), float(0.0));
+      glow.mulAssign(float(1.0).sub(max(through, intoHole)));
+    });
     const alpha = max(glow.r, max(glow.g, glow.b)).toVar();
     Discard(rho.greaterThanEqual(U.uRa).or(alpha.lessThanEqual(0.001)));
     return vec4(glow, alpha);
