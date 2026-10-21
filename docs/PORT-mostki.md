@@ -997,8 +997,8 @@ kwadratów 15 j., ile ma środek w strefie, a mostek pada po utracie 35% z nich 
 | Colossus | −76,5, 323,8 × 115,7 | −150, 150 × 76, VI | −70% | 176 → 50 (62 → 18) | 73,5 j. ku rufie, wieża z kratą i rufowa część bloku TERRA NOVA |
 
 Skutek: mostek Bellatora i Colossusa to mniejszy cel, ale pada po mniejszej liczbie komórek (strefa zabicia =
-obrys modelu — decyzja użytkownika). Pancerz strefy (`armorMul` 1,5) i próg (`killFrac` 0,35) bez zmian; ewentualne
-wyrównanie czasu zabicia (np. `armorMul` rosnący z poziomem) — do decyzji. Piraci i Atlas bez zmian (28; 51 + 16).
+obrys modelu — decyzja użytkownika). Pancerz strefy (`armorMul` 1,5) i próg (`killFrac` 0,35) bez zmian — bez
+wyrównania czasu zabicia pancerzem (decyzja użytkownika 2026-10-21). Piraci i Atlas bez zmian (28; 51 + 16).
 
 - CITADELLA — rozstrzygnięcie: mostek i gniazdo przeniesione na środek rufowego kasztelu (−339), tam gdzie cytadela
   sprite'a (kopuły i mechanizm) i dawna strefa gry; kratka (−357) i kapsuły (−354 ±39) kasztelu zdjęte spod gniazda.
