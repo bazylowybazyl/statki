@@ -18,7 +18,10 @@
  * byłby tym samym światem co pierwszy.
  *
  * Definicje progów (propozycja E4, akceptuje użytkownik):
- *   przechwyty  — przechwycone / (dostarczone + przechwycone + bez paliwa)
+ *   przechwyty  — przechwycone kursy Z ŁADUNKIEM / (dostarczone + przechwycone
+ *                 z ładunkiem + bez paliwa). Puste przeloty (repozycjonowanie
+ *                 floty) idą osobno: dyspozytor liczy stracone do przechwytów,
+ *                 a udanych nie liczy wcale, więc w jednym worku zawyżały wynik
  *   głód        — najdłuższy CIĄGŁY czas, w którym surowiec chciany przez stację
  *                 (`stationWantsResource`) stoi poniżej 1% magazynu; liczone tylko
  *                 dla surowców, które ktoś w układzie wytwarza albo wydobywa
@@ -86,6 +89,7 @@ async function jedenBieg(args) {
   const { summarizeAgents } = await import('../src/game/traffic/agentFleets.js');
   const { summarizePiracy } = await import('../src/game/traffic/piracy.js');
   const { summarizeWar } = await import('../src/game/traffic/warDispatcher.js');
+  const { getCourse } = await import('../src/game/traffic/courseRegistry.js');
   const { buildTrafficWorld, stepTrafficWorld, TRAFFIC_STEP_SECONDS } =
     await import('../src/game/traffic/trafficWorld.js');
 
@@ -130,9 +134,22 @@ async function jedenBieg(args) {
   const aktywne = [];
   let peak = 0;
   let t = 0;
+  // Udane puste przeloty: dyspozytor ich nie liczy do dostaw, a stracone
+  // liczy do przechwytów — bez nich udział przechwyconych jest zawyżony.
+  let pustePrzeloty = 0;
+  let pusteStracone = 0;
+  const wrakiWidziane = new Set();
   for (let elapsed = 0; elapsed < totalSeconds; elapsed += STEP) {
     const t0 = process.hrtime.bigint();
-    stepTrafficWorld(world, STEP);
+    const wynikKroku = stepTrafficWorld(world, STEP);
+    for (const ev of wynikKroku.events || []) {
+      if (ev.type === 'done' && ev.course?.payload?.deadhead) pustePrzeloty++;
+    }
+    for (const wrak of director.wrecks) {
+      if (wrakiWidziane.has(wrak.courseId)) continue;
+      wrakiWidziane.add(wrak.courseId);
+      if (wrak.reason === 'pirate' && getCourse(registry, wrak.courseId)?.payload?.deadhead) pusteStracone++;
+    }
     tickMs.push(Number(process.hrtime.bigint() - t0) / 1e6);
     t = registry.clock;
     const czynne = registry.active.length;
@@ -168,7 +185,8 @@ async function jedenBieg(args) {
   for (let i = 0; i < kroki; i++) {
     if (aktywne[i] >= progSzczytu) { sumaSzczyt += tickMs[i]; nSzczyt++; }
   }
-  const rozstrzygniete = snap.stats.delivered + snap.stats.lost + snap.stats.stranded;
+  const zLadunkiem = snap.stats.lost - pusteStracone;
+  const rozstrzygniete = snap.stats.delivered + zLadunkiem + snap.stats.stranded;
   const glod = pary
     .filter(p => p.max > 0)
     .map(p => ({
@@ -188,7 +206,11 @@ async function jedenBieg(args) {
       przewozy: snap.stats.hauls, wydobycie: snap.stats.mining,
       dostarczone: snap.stats.delivered, przechwycone: snap.stats.lost,
       bezPaliwa: snap.stats.stranded,
-      udzialPrzechwyconych: rozstrzygniete > 0 ? snap.stats.lost / rozstrzygniete : 0,
+      pustePrzeloty, pusteStracone,
+      udzialPrzechwyconych: rozstrzygniete > 0 ? zLadunkiem / rozstrzygniete : 0,
+      /** Dawna miara planu (§ 2): wszystkie przechwyty / (dostarczone + przechwyty). */
+      udzialPrzechwyconychDawny: (snap.stats.delivered + snap.stats.lost) > 0
+        ? snap.stats.lost / (snap.stats.delivered + snap.stats.lost) : 0,
       skutecznosc: (snap.stats.hauls + snap.stats.mining) > 0
         ? snap.stats.delivered / (snap.stats.hauls + snap.stats.mining) : 0,
       szczyt: peak
@@ -229,7 +251,9 @@ function ocen(bieg) {
   const stoczniaMax = bieg.stocznie[0]?.bezPochylniMaxMin || 0;
   const wyniki = [
     { prog: 'przechwyty', wartosc: bieg.kursy.udzialPrzechwyconych, limit: PROGI.przechwytyMax,
-      opis: `${(bieg.kursy.udzialPrzechwyconych * 100).toFixed(1)}% (≤ ${PROGI.przechwytyMax * 100}%)` },
+      opis: `${(bieg.kursy.udzialPrzechwyconych * 100).toFixed(1)}% kursów z ładunkiem (≤ ${PROGI.przechwytyMax * 100}%); `
+        + `dawna miara ${(bieg.kursy.udzialPrzechwyconychDawny * 100).toFixed(1)}%, `
+        + `puste przeloty ${bieg.kursy.pustePrzeloty} (stracone ${bieg.kursy.pusteStracone})` },
     { prog: 'głód', wartosc: bieg.glodNajdluzszyMin, limit: PROGI.glodMinMax,
       opis: `${bieg.glodNajdluzszyMin} min (${bieg.glod[0] ? `${bieg.glod[0].stacja} ${bieg.glod[0].short}` : '—'}), `
         + `${bieg.glodPozycjiPonadProg} pozycji > ${PROGI.glodMinMax} min` },

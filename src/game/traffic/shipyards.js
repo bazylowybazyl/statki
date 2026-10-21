@@ -18,8 +18,8 @@
  */
 
 import { RESOURCES } from '../../data/resources.js';
-import { resourcePrice, scarcityMultiplier, PRICE_MODEL } from '../stationEconomy.js';
-import { restockTarget } from './tradeMarket.js';
+import { resourcePrice, scarcityMultiplier, PRICE_MODEL, stationNetRates } from '../stationEconomy.js';
+import { restockTarget, RESTOCK_SECONDS } from './tradeMarket.js';
 import { areFactionsHostile } from '../../data/factions.js';
 
 /**
@@ -167,6 +167,20 @@ export function registerShipyard(registry, spec = {}) {
     const juz = new Set(spec.station.extraDemand || []);
     for (const id of WARSHIP_COMPONENTS) juz.add(id);
     spec.station.extraDemand = [...juz];
+  }
+  // Zapas startowy podzespołów. Stocznia dopisuje swój popyt dopiero tutaj,
+  // już po `seedStationStock`, więc stocznie bez własnych podzespołów
+  // startowały z zerem i czekały na pierwszego kupca — na Uranie ~100 min.
+  // Zapas tyle, ile kupcy i tak odbudowują (`RESTOCK_SECONDS` planowego
+  // zużycia), a nie 45% magazynu: magazyn podzespołów to setki godzin budowy.
+  if (spec.station && spec.econ?.resources) {
+    const rates = stationNetRates(spec.station);
+    const scale = Math.max(0, Number(spec.economyScale) || 1);
+    for (const id of WARSHIP_COMPONENTS) {
+      const cap = Number(spec.econ.capacity?.[id]) || 0;
+      const target = Math.min(cap, Math.max(0, -(Number(rates[id]) || 0)) * scale * RESTOCK_SECONDS);
+      spec.econ.resources[id] = Math.max(Number(spec.econ.resources[id]) || 0, target);
+    }
   }
   const yard = {
     id: String(spec.id || `stocznia-${registry.yards.length + 1}`),

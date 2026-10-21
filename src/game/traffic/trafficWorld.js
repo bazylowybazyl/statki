@@ -291,7 +291,7 @@ export function buildTrafficWorld(options = {}) {
     if (!station.factionId) continue;
     if (militaryScale(getStationIndustry(station)) <= 0) continue;
     registerShipyard(shipyards, {
-      station,
+      station, econ: getEconomy(station.id), economyScale,
       stationId: station.id, factionId: station.factionId,
       weight: (SHIPYARD_WEIGHT[station.id] || 0.6) * Math.sqrt(economyScale)
     });

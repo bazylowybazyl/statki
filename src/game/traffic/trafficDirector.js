@@ -33,7 +33,7 @@ import {
   travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage,
   getCourse
 } from './courseRegistry.js';
-import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
+import { laneThreat, depositLoot, recordPirateLoss, pirateInterest } from './piracy.js';
 import { refreshQuote } from './tradeMarket.js';
 import {
   chooseRoute, getNode, DRIVE_MODES, interceptChance, randomFieldSpot, approachPoint
@@ -312,9 +312,14 @@ function tryDeadhead(director, targetStationId, requiredCapacity) {
       kind: COURSE_KIND.HAUL,
       unitClass: candidate.ship.hullId,
       factionId: candidate.company.factionId,
+      // Pusty statek nie ładuje ani nie rozładowuje, więc nie zajmuje
+      // stanowiska: czeka na orbicie oczekiwania w punkcie manewrowym portu.
+      // Ze stanowiskami pod „załadunek” i „rozładunek” puste przeloty były
+      // większością kolejki na redzie Westy (2026-10-21: ~6 z 9,5 kursu).
       stages: stagesFromRoute(route, candidate.ship.stationId, targetStationId, {
         loadSeconds: 30,
         unloadSeconds: 30,
+        dwellReason: DWELL_REASON.HOLD,
         ...manoeuvrePoints(director, candidate.ship.stationId, targetStationId)
       }),
       fuelCapacity: fuelCapacityFor(route),
@@ -566,8 +571,13 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // w środku planety. Bez `entryPos` świeżo wystawiony kurs siedział przez
   // jeden tick w punkcie zerowym stacji, zanim dyspozytor portu przydzielił mu
   // stanowisko; przy dużym ruchu widać to było jako grudkę w środku globu.
-  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS, DWELL_REASON.LOAD,
-    options.originBerthPos, { entryPos: options.originBerthPos || options.departPoint }));
+  // `dwellReason` podmienia oba postoje (pusty przelot: HOLD, bez stanowiska —
+  // wtedy statek stoi w punktach manewrowych, nie w środku stacji).
+  const hold = options.dwellReason === DWELL_REASON.HOLD;
+  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS,
+    options.dwellReason || DWELL_REASON.LOAD,
+    options.originBerthPos || (hold ? depart : undefined),
+    { entryPos: options.originBerthPos || options.departPoint }));
   if (depart) {
     stages.push(travelStage(originId, originId, {
       mode: 'conventional',
@@ -598,7 +608,7 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // Wcześniej ostatni manewr celował w `destinationPos`, czyli w sam środek
   // stacji: wszystko zlatywało się do jednego punktu i było stamtąd odbijane.
   stages.push(dwellStage(destinationId, options.unloadSeconds ?? UNLOAD_SECONDS,
-    DWELL_REASON.UNLOAD, null, { entryPos: arrive }));
+    options.dwellReason || DWELL_REASON.UNLOAD, hold ? arrive : null, { entryPos: arrive }));
   return stages;
 }
 
@@ -1507,6 +1517,24 @@ export function dispatchMining(director, stations) {
  * przelatuje przez tę pętlę nietknięty — nietykalność wynika z modelu, nie
  * z osobnego wyjątku.
  */
+/**
+ * Ile jest wart ładunek kursu W TEJ CHWILI — wejście do zainteresowania
+ * piratów. Wyprawa górnicza leci w pole pusto i dopiero wraca z urobkiem.
+ */
+function cargoValueNow(course) {
+  const payload = course?.payload;
+  if (!payload || payload.deadhead) return 0;
+  const value = Number(payload.value);
+  if (value > 0) return value;
+  if (!payload.harvest) return 0;
+  const stages = course.stages || [];
+  for (let i = 0; i < course.stageIndex && i < stages.length; i++) {
+    const stage = stages[i];
+    if (stage.toId === payload.fieldId || stage.nodeId === payload.fieldId) return getBagValue(payload.harvest);
+  }
+  return 0;
+}
+
 function rollPiracy(director, dt) {
   const { registry, config } = director;
   if (!config.piracyEnabled || config.piracyPressure <= 0) return;
@@ -1535,12 +1563,19 @@ function rollPiracy(director, dt) {
     // patrolu. Dzięki temu szlak da się realnie oczyścić, zabijając rejdera,
     // zamiast tylko przeczekać złą passę losowania.
     const zagrozenie = director.piracy ? laneThreat(director.piracy, stage.fromId, stage.toId) : 1;
-    const solo = interceptChance(exposure, director.network.config, config.piracyPressure)
+    const ryzyko = interceptChance(exposure, director.network.config, config.piracyPressure)
       * oslona * zagrozenie;
 
     const konwoj = convoyOf(director.convoys, course.id);
     if (konwoj) {
-      for (const id of konwoj.courseIds) rozliczone.add(id);
+      // Konwój kusi łupem CAŁEJ grupy — razem jest celem, nawet gdy pojedyncze
+      // statki wiozą drobnicę.
+      let lup = 0;
+      for (const id of konwoj.courseIds) {
+        rozliczone.add(id);
+        lup += cargoValueNow(getCourse(registry, id));
+      }
+      const solo = ryzyko * pirateInterest(lup, director.piracy?.config);
       // Konwój z choćby jednym oglądanym statkiem gracz widzi w całości —
       // o jego losie rozstrzyga gra, nie rzut.
       if (config.protectObserved && convoyIsObserved(registry, konwoj)) continue;
@@ -1559,7 +1594,8 @@ function rollPiracy(director, dt) {
     }
 
     if (config.protectObserved && course.actorId) continue;
-    if (director.rng() >= solo) continue;
+    // Pirat poluje na łup: pusty przelot i tani urobek to słaby cel.
+    if (director.rng() >= ryzyko * pirateInterest(cargoValueNow(course), director.piracy?.config)) continue;
     strikeCourse(director, course);
     note(director, `PRZECHWYT: ${course.originId}→${course.destinationId}`);
   }

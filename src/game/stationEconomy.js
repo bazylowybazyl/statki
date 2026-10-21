@@ -623,7 +623,10 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
   const netto = {};
 
   for (const [id, industry] of Object.entries(industryMap)) {
-    if (!industry.capacity) continue;
+    // Kopalnia księżycowa nie ma fabryki, ale ma załogę i urobek — jej wywóz
+    // i dowóz bytu przechodzą przez port planety. Pominięta, zaniżała przeładunek
+    // olbrzymów gazowych z kopalniami (Saturn: 26 stanowisk, kolejka 21).
+    if (!industry.capacity && !industry.size) continue;
     const local = {};
     const add = (res, amount) => { local[res] = (local[res] || 0) + amount; };
 
@@ -664,7 +667,9 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
     for (const [res, net] of Object.entries(local)) {
       const s = podaz[res] || 0;
       const d = popyt[res] || 0;
-      const handel = Math.min(s, d);
+      // Bez podaży u stacji towar i tak przypływa — z pól wydobywczych (ruda
+      // uranu z Kuipera) albo z wraków — i zajmuje stanowisko odbiorcy.
+      const handel = s > 0 ? Math.min(s, d) : d;
       if (handel <= 0) continue;
       const udzial = net > 0 ? (net / s) * handel : (-net / d) * handel;
       tons += getResourceMass(res, udzial * cyclesPerHour);
