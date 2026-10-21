@@ -32,6 +32,16 @@
 // = utrzymanie + tarcza + PRAWDZIWE domyślne uzbrojenie NPC (equipNpcWeapons w index.html: gniazda z edytora gry,
 // najwyżej SHIPS[rama].spec na typ, broń frakcji; hangary NPC lotniskowca latają wszystkie). Tabela i obie wersje
 // (propozycja / kalibracja) — docs/KREATOR-KADLUBA.md § „Klasy okrętów”; liczby pilnuje tests/shipClasses.test.mjs.
+//
+// KLASA VII — DREDNOT, TYLKO NPC (docs/BRIEF-drednot.md § 3, decyzja użytkownika 2026-10-21): ponad drabiną, w osobnej
+// tablicy NPC_SHIP_CLASSES — SHIP_CLASSES / SHIP_CLASS_MAX / coreLevelMax(≤ 6) sterują edytorem gracza i tam jej nie ma.
+// Funkcje poziomu (shipClass, coreLevel, shipClassCheck) przyjmują poziom 7; projekt kreatora dostaje go tylko z polem
+// `npc` (hullDesignSchema.js). Klasa nosi WBUDOWANĄ SUPERBROŃ (superlaser osiowy — nowa broń etapu E2 briefu): gniazdo
+// wbudowane bez przypisanej broni bierze jej planowany pobór. Rdzeń R7 = dwa rdzenie kadłuba razem; kalibracja jak
+// wyżej, na drednocie TN z kreatora (preset `dreadnought`) z bronią z briefu § 4.2.
+//
+// URZĄDZENIA (kategoria `device` kolejki mocy): moduły kreatora pobierające moc poza gniazdami — projektor studni
+// grawitacyjnej (DEVICE_MW). Generatory tarczy (`shield_gen`) to źródło tarczy: pobór tarczy (wyżej) dzielą między siebie.
 
 import { MASTER_WEAPONS, WEAPON_SIZES, WEAPON_SIZE_RANK } from './weapons.js';
 
@@ -60,6 +70,20 @@ export const SHIP_CLASSES = Object.freeze([
 export const SHIP_CLASS_MAX = SHIP_CLASSES.length;
 
 /**
+ * KLASY TYLKO DLA NPC ponad drabiną (poziom 7 — drednot, docs/BRIEF-drednot.md § 3): limit powierzchni, gniazd
+ * (ciężkich), broń do Capital i wbudowana superbroń (`superweapon`: planowana broń, pobór [MW] — § 5.1 briefu).
+ */
+export const NPC_SHIP_CLASSES = Object.freeze([
+  Object.freeze({
+    level: 7, roman: 'VII', id: 'dreadnought', label: 'Drednot', areaMax: 7000000, mountsMax: 80, heavyMax: 48, weaponSize: 'Capital',
+    npcOnly: true, example: 'Drednot TN',
+    superweapon: Object.freeze({ id: 'superlaser_axis', label: 'superlaser osiowy', mw: 1000 })
+  })
+]);
+/** Najwyższy poziom klasy (z klasami NPC). */
+export const SHIP_CLASS_NPC_MAX = SHIP_CLASS_MAX + NPC_SHIP_CLASSES.length;
+
+/**
  * POZIOMY RDZENIA (R1–R6): moc [MW] po kalibracji na domyślnych uzbrojeniach NPC (wzór — preset TN klasy, ~20% zapasu).
  * `proposal` — moc z propozycji (typowe uzbrojenie klasy z median, bez tarczy) — do porównania w dokumentacji.
  */
@@ -73,6 +97,14 @@ export const CORE_LEVELS = Object.freeze([
   // Colossus z promieniem śmierci (400 MW); bez niego wzór zajmuje ~44% mocy
   Object.freeze({ level: 6, mw: 1150, proposal: 1500, example: 'Colossus' })
 ]);
+/**
+ * RDZEŃ R7 (tylko NPC, klasa VII): moc DWÓCH rdzeni kadłuba razem (`cores`). Kalibracja jak R1–R6 na drednocie TN
+ * z kreatora: utrzymanie + tarcza + broń z briefu § 4.2 (istniejące bronie z `energyCost`, jony i promienie ściągające —
+ * typowa broń specjalna L, superlaser 1 000) + projektory studni = pobór, moc = pobór / 0,8. `proposal` — szacunek briefu.
+ */
+export const NPC_CORE_LEVELS = Object.freeze([
+  Object.freeze({ level: 7, mw: 5100, proposal: 4800, cores: 2, example: 'Drednot TN' })
+]);
 
 /** Utrzymanie kadłuba [MW] = k · powierzchnia^exp (Custos ~13, Bellator ~95, Colossus ~229). */
 export const HULL_UPKEEP = Object.freeze({ k: 0.07, exp: 0.6 });
@@ -85,18 +117,39 @@ export const DRIVE_FROM_SPARE = Object.freeze({ lo: 0.7, hi: 1.2, fullSpare: 0.4
 /** Zapas mocy wzoru na swoim rdzeniu (kalibracja: moc = pobór / (1 − share)). */
 export const CORE_CALIBRATION_SPARE = 0.2;
 
-/** Kategorie urządzeń w kolejce mocy (tarcza + typy gniazd) i kolejność domyślna (gracz ją zmienia). */
-export const POWER_CATEGORIES = Object.freeze(['shield', ...MOUNT_SLOTS]);
-export const POWER_PRIORITY_DEFAULT = Object.freeze(['shield', 'aux', 'main', 'special', 'builtin', 'missile', 'hangar']);
-export const POWER_CATEGORY_LABELS = Object.freeze({ shield: 'tarcza', ...MOUNT_SLOT_LABELS });
+/**
+ * Pobór urządzeń spoza gniazd [MW] (kategoria `device`): projektor studni grawitacyjnej — blokada skoku w promieniu
+ * 22 km (BRIEF-drednot § 5.7; liczba do strojenia w grze, rząd ciężkiego działa oblężniczego).
+ */
+export const DEVICE_MW = Object.freeze({ gravWell: 120 });
+
+/** Kategorie urządzeń w kolejce mocy (tarcza, urządzenia, typy gniazd) i kolejność domyślna (gracz ją zmienia). */
+export const POWER_CATEGORIES = Object.freeze(['shield', 'device', ...MOUNT_SLOTS]);
+export const POWER_PRIORITY_DEFAULT = Object.freeze(['shield', 'device', 'aux', 'main', 'special', 'builtin', 'missile', 'hangar']);
+export const POWER_CATEGORY_LABELS = Object.freeze({ shield: 'tarcza', device: 'urządzenia', ...MOUNT_SLOT_LABELS });
 
 const clamp = (v, lo, hi) => (v < lo ? lo : (v > hi ? hi : v));
-const clampLevel = (v) => clamp(Math.round(Number(v) || 1), 1, SHIP_CLASS_MAX);
+const clampLevel = (v) => clamp(Math.round(Number(v) || 1), 1, SHIP_CLASS_NPC_MAX);
 
-export function shipClass(level) { return SHIP_CLASSES[clampLevel(level) - 1]; }
-export function coreLevel(level) { return CORE_LEVELS[clampLevel(level) - 1]; }
-/** Najwyższy poziom rdzenia dla mostka (komora rdzenia: najwyżej poziom ponad mostek). */
-export function coreLevelMax(bridgeLevel) { return Math.min(SHIP_CLASS_MAX, clampLevel(bridgeLevel) + 1); }
+/** Klasa poziomu 1–7 (7 — klasa NPC). */
+export function shipClass(level) {
+  const lv = clampLevel(level);
+  return lv > SHIP_CLASS_MAX ? NPC_SHIP_CLASSES[lv - SHIP_CLASS_MAX - 1] : SHIP_CLASSES[lv - 1];
+}
+export function coreLevel(level) {
+  const lv = clampLevel(level);
+  return lv > SHIP_CLASS_MAX ? NPC_CORE_LEVELS[lv - SHIP_CLASS_MAX - 1] : CORE_LEVELS[lv - 1];
+}
+/** Czy poziom to klasa tylko dla NPC (ponad drabiną gracza). */
+export function isNpcClassLevel(level) { return Math.round(Number(level) || 0) > SHIP_CLASS_MAX; }
+/**
+ * Najwyższy poziom rdzenia dla mostka (komora rdzenia: najwyżej poziom ponad mostek, w drabinie gracza do R6); klasa
+ * NPC — jej własny rdzeń.
+ */
+export function coreLevelMax(bridgeLevel) {
+  const b = clampLevel(bridgeLevel);
+  return b > SHIP_CLASS_MAX ? b : Math.min(SHIP_CLASS_MAX, b + 1);
+}
 export function isHeavySlot(slot) { return HEAVY_SLOTS.includes(slot); }
 export function sizeRank(size) { return WEAPON_SIZE_RANK[size] || WEAPON_SIZE_RANK.M; }
 
@@ -163,10 +216,14 @@ export const TYPICAL_MOUNT_MW = (() => {
   return Object.freeze(out);
 })();
 
-/** Pobór gniazda [MW]: broń przypisana → jej pobór, '' → 0 (puste), brak pola → typowa broń typu i rozmiaru. */
-export function mountPowerMW(slot, size, weapon) {
+/**
+ * Pobór gniazda [MW]: broń przypisana → jej pobór, '' → 0 (puste), brak pola → typowa broń typu i rozmiaru; w klasie
+ * z wbudowaną superbronią (`cls.superweapon`, klasa VII) typowa broń gniazda wbudowanego to ta superbroń.
+ */
+export function mountPowerMW(slot, size, weapon, cls = null) {
   if (weapon === '' || weapon === null) return 0;
   if (typeof weapon === 'string' && MASTER_WEAPONS[weapon]) return weaponPowerMW(weapon);
+  if (slot === 'builtin' && cls?.superweapon) return cls.superweapon.mw;
   return TYPICAL_MOUNT_MW[slot]?.[size] ?? 0;
 }
 
@@ -228,23 +285,26 @@ export function classForHull(area, mounts = []) {
 
 /**
  * BILANS MOCY. `area` [j.²], `coreLevel`, `mounts` — [{ slot, size, weapon }] (kolejność = numer urządzenia), `shield`
- * (domyślnie true), `priority` — kolejność kategorii (POWER_PRIORITY_DEFAULT; brakujące na końcu). Utrzymanie zawsze
- * pierwsze; urządzenia w kolejce priorytetu (w kategorii — w kolejności gniazd) dostają moc, póki jej starcza —
- * urządzenie, które się nie mieści, jest wyłączone, mniejsze dalej w kolejce mogą się jeszcze zmieścić.
- * Zwraca { capacity, upkeep, shield, demand (urządzenia razem), used, spare, spareFrac, drive, deficit (popyt − moc po
- * utrzymaniu, ≥ 0), upkeepOver (utrzymanie > moc — wszystko wyłączone), devices: [{ i (−1 — tarcza), cat, mw, on }],
- * on: Uint8Array (gniazda z mocą, po numerach) }.
+ * (domyślnie true), `devices` — urządzenia spoza gniazd [{ mw }] (kategoria `device`, numery −2, −3, …), `priority` —
+ * kolejność kategorii (POWER_PRIORITY_DEFAULT; brakujące na końcu), `bridgeLevel` — klasa (superbroń klasy VII w gnieździe
+ * wbudowanym bez broni). Utrzymanie zawsze pierwsze; urządzenia w kolejce priorytetu (w kategorii — w kolejności gniazd)
+ * dostają moc, póki jej starcza — urządzenie, które się nie mieści, jest wyłączone, mniejsze dalej w kolejce mogą się
+ * jeszcze zmieścić. Zwraca { capacity, upkeep, shield, demand (urządzenia razem), used, spare, spareFrac, drive, deficit
+ * (popyt − moc po utrzymaniu, ≥ 0), upkeepOver (utrzymanie > moc — wszystko wyłączone), devices: [{ i (−1 — tarcza,
+ * ≤ −2 — urządzenie −2 − k), cat, mw, on }], on: Uint8Array (gniazda z mocą, po numerach) }.
  */
-export function shipPowerBalance({ area, coreLevel: coreLv, mounts = [], shield = true, priority = POWER_PRIORITY_DEFAULT }) {
+export function shipPowerBalance({ area, coreLevel: coreLv, mounts = [], shield = true, devices: extra = [], priority = POWER_PRIORITY_DEFAULT, bridgeLevel = 0 }) {
   const capacity = coreLevel(coreLv).mw;
   const upkeep = hullUpkeepMW(area);
   const sh = shield ? shieldMW(area) : 0;
+  const cls = bridgeLevel > 0 ? shipClass(bridgeLevel) : null;
   const order = [...priority.filter((c) => POWER_CATEGORIES.includes(c))];
   for (const c of POWER_CATEGORIES) if (!order.includes(c)) order.push(c);
   const rank = Object.fromEntries(order.map((c, i) => [c, i]));
   const devices = [];
   if (shield) devices.push({ i: -1, cat: 'shield', mw: sh, on: false });
-  mounts.forEach((m, i) => devices.push({ i, cat: m.slot, mw: mountPowerMW(m.slot, m.size, m.weapon), on: false }));
+  extra.forEach((d, k) => devices.push({ i: -2 - k, cat: 'device', mw: Math.max(0, Number(d.mw) || 0), on: false }));
+  mounts.forEach((m, i) => devices.push({ i, cat: m.slot, mw: mountPowerMW(m.slot, m.size, m.weapon, cls), on: false }));
   const queue = devices.map((d, k) => k).sort((a, b) => (rank[devices[a].cat] - rank[devices[b].cat]) || (a - b));
   let avail = capacity - upkeep;
   const upkeepOver = avail < 0;

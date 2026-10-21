@@ -13,7 +13,7 @@ import { pipeNetworkCheck, pipeModuleSdf, markPipeNetPower } from '../src/game/h
 import {
   hullDesignClass, applyHullDesignPower, hullDesignCheck, hullDesignLimitBreach, hullDesignMountAddIssue, hullDesignMountList
 } from '../src/game/hullDesign/hullDesignClass.js';
-import { CORE_CALIBRATION_SPARE, classForHull } from '../src/data/shipClasses.js';
+import { CORE_CALIBRATION_SPARE, POWER_CATEGORIES, classForHull } from '../src/data/shipClasses.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { WEAPON_TIER_BY_HULL } from '../src/data/ships.js';
 import { TN_MOUNT_HULLS, dedupeMarkers, npcLoadout, fitWeaponToSize } from '../scripts/kreator-gniazda-tn.mjs';
@@ -45,8 +45,8 @@ test('presety: klasa z decyzji użytkownika (TN, fregata z klocków), reszta z p
       continue;
     }
     assert.deepEqual(cls.check.issues, [], `${key}: limity klasy ${d.bridgeLevel} — pow. ${Math.round(f.area)}`);
-    // presety spoza TN: najniższa klasa z kadłuba
-    if (!want[key]) assert.equal(d.bridgeLevel, classForHull(f.area, cls.mounts), `${key}: klasa z powierzchni`);
+    // presety spoza TN: najniższa klasa z kadłuba (drednoty NPC — klasa VII ponad drabiną: tests/hullDesignDreadnought.test.mjs)
+    if (!want[key] && !d.npc) assert.equal(d.bridgeLevel, classForHull(f.area, cls.mounts), `${key}: klasa z powierzchni`);
   }
 });
 
@@ -194,7 +194,7 @@ test('schemat: gniazdo `mount` (typ, rozmiar, broń), wieże jako gniazda głów
   assert.equal(d.bridgeLevel, 6);
   assert.equal(d.coreLevel, 0);
   assert.deepEqual(d.powerPriority.slice(0, 2), ['main', 'shield']);
-  assert.equal(d.powerPriority.length, 7);
+  assert.equal(d.powerPriority.length, POWER_CATEGORIES.length);
   const g = d.modules.map(hullDesignMountOf);
   assert.deepEqual(g[0], { slot: 'missile', size: 'L', weapon: 'grad_launcher' });
   assert.deepEqual(g[1], { slot: 'main', size: 'M', weapon: undefined }, 'typ hangar tylko z wrót, nieznana broń — typowa');

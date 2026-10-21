@@ -26,7 +26,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`.
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
 - Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`,
-  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
+  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs`, `tests/hullDesignDreadnought.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
   podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`.
 
 ## Decyzje użytkownika
@@ -43,6 +43,9 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   klasy VI); limity mostka TWARDE (edytor nie pozwala ich przekroczyć), moc rdzenia — limit MIĘKKI (urządzenia ponad moc
   gasną wg priorytetu gracza, zapas mocy w napęd); liczby z tabel propozycji, moc rdzeni skalibrowana na domyślnym
   uzbrojeniu NPC.
+
+- Drednoty (2026-10-21, `docs/BRIEF-drednot.md`): klasa VII ponad drabiną, TYLKO NPC — gracz jej nie wybierze; drednot
+  Terra Novy i piracki „Vengeance” w kreatorze z klocków (styl floty, „bez czitowania”, rama w jednym kawałku) do oceny.
 
 ## Klocki
 
@@ -130,6 +133,34 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Demo: każda zmiana projektu przechodzi przez `classGuard` w `runBuild` (akcja zwiększająca przekroczenie limitu mostka
   wraca); nowa ścieżka dokładania gniazd → `classMountPlace` (odmowa przed akcją).
 
+## Drednoty: klasa VII tylko dla NPC
+
+- Klasa VII (`NPC_SHIP_CLASSES`, rdzeń R7 w `NPC_CORE_LEVELS` — moc dwóch rdzeni razem) stoi OBOK `SHIP_CLASSES`:
+  drabina gracza (`SHIP_CLASSES`, `SHIP_CLASS_MAX`, `coreLevelMax` ≤ 6, `classForHull`) jej nie zna. Funkcje poziomu
+  (`shipClass`, `coreLevel`, `shipClassCheck`) przyjmują 7; projekt dostaje go tylko z polem `npc: true` (normalizacja
+  obcina mostek i rdzeń do VI / R6), w demie opcje VII / R7 są ukryte poza projektem NPC, `setBridgeLevel` odmawia.
+  Nowa klasa NPC → wpis w `NPC_SHIP_CLASSES` + `NPC_CORE_LEVELS`, nie w drabinie.
+- Superbroń klasy (`superweapon`): gniazdo wbudowane BEZ przypisanej broni bierze jej planowany pobór
+  (`mountPowerMW(…, cls)`, `shipPowerBalance({ bridgeLevel })`). Gniazda nowych broni briefu (superlaser, jony,
+  promienie ściągające) zostają bez broni — liczą się typową bronią gniazda — póki gra ich nie ma (etapy E2–E5).
+- Urządzenia spoza gniazd: kategoria mocy `device` (`DEVICE_MW`, `hullDesignDeviceList`) — projektor studni
+  grawitacyjnej `grav_proj`; generator tarczy `shield_gen` to źródło tarczy (bierze pobór tarczy; tarcza bez prądu →
+  generatory martwe). Oba są systemami presetu (`HD_SYSTEM_TYPES`, `lock`) i urządzeniami sieci (`HD_POWER_LOAD`);
+  wygląd TN w kompozytorze (kody 15, 16 — gałęzie po ładowni).
+- Gniazda drednotów to dane briefu (`HD_NPC_PRESET_MOUNTS`: typ, rozmiar, promień [j.] i broń na gniazdo, wrota hangarów)
+  POZA blokiem `@gniazda` narzędzia TN (`kreator-gniazda-tn.mjs` ich nie liczy). Gniazdo o promieniu > ~41 j. nie
+  przejdzie testu głębokości: pole ramy jest obcięte do pasma 48 j. (`bandMax`).
+- SKALA DETALU: drednot TN ma `detail` 1,25 j./jd (nie długość / 1700 ≈ 3,2 — płyty, nity i rowy 3,5× większe niż
+  u Colossusa, „powiększony Colossus”); sekcje płyt w skali floty, więc okręt 3,5× dłuższy ma ich więcej. Przy
+  1,2 teksela/j. (`HD_TEX.min`) daje to ~1,5 teksela/jd — jak Colossus. Obraz drednota (6 539 × 2 056) mieści się
+  dopiero pod sufitem `HD_COMPOSER_LIMITS.maxSide` = 8 192 (gwarantowane minimum WebGPU; 4 096 dawało 0,76 teksela/j.).
+  Pomiary wypieku i pamięci: `docs/KREATOR-KADLUBA.md` § „Drednoty”.
+- Osprzęt sieci ma numer 16-bitowy w rastrze (`pipeB`: G + 256 · A; `HD_PIPE_TUNE.maxFits` 511, kompozytor `pipeFits`
+  512) — drednot ma ~430 elementów, Colossus ~290 (8 bitów obcinało nadmiar od najniższego priorytetu). Biegi zostają
+  8-bitowe (`maxRuns` 255; drednot ~130).
+- Ostrze z pasów równoległych do burty: trapez obrócony o 90° (lewy bok klocka = zewnętrzna krawędź pasa), skos 1 : 3,
+  x co 12 j. — wierzchołki na siatce 4 j. (`band` / `bandIn` w `dreadnought()`).
+
 ## Rdzeń: gniazdo obudowy reaktora (v 2)
 
 - Moduł `reactor`: v 0 — pancerna pokrywa z wentylami (rysunek kompozytora), v 1 — wewnątrz kadłuba (nic nie rysuje),
@@ -148,7 +179,11 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 ## Jak sprawdzić
 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
-  tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
+  tests/hullDesignClass.test.mjs tests/hullDesignDreadnought.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
+- Drednoty: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy drednot --tylko dreadnought --out .tmp/kreator/drednot
+  [--detale 1,1.25,3.2]` (cały okręt, A/B z Colossusem, dziób, rufa, burta, sponson, sieć, panel klasy; czasy wypieku
+  i pamięć w `raport.json` → `drednot`). Szybki podgląd układu bez GPU (poziomy, moduły, sieć) — wystarczy
+  `buildHullField` + `pipeNetworkCheck`; preset drednota liczy się w Node ~0,5 s (z siecią ~0,8 s).
 - Klasy: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` (panel klasy, gniazda
   Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]

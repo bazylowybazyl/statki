@@ -519,6 +519,114 @@ function colossus() {
 }
 
 /**
+ * DREDNOT TERRA NOVY (klasa VII, tylko NPC — docs/BRIEF-drednot.md): ~5 400 × 1 700 j., sztylet — wąska rufa
+ * („rękojeść”) z 8 gondolami MAIN i wieżą mostka głównego, szerokie śródokręcie („jelec”) z sześcioma sponsonami
+ * ciężkich baterii na burtę, długie ostrze z emiterem superlasera na osi. Pasy płyt śródokręcia (burtowy, środkowy,
+ * wewnętrzny) skręcają w ostrzu równolegle do burty — szewrony jak w Colossusie; rowy K1 (przy grzbiecie), K2, K3 i
+ * poprzeczne to korytarze sieci systemów. DETAL: 1,25 j./jd (nie długość / 1700 ≈ 3,2 — to dałoby płyty i nity 3,5× większe
+ * niż u Colossusa, „powiększony Colossus”): okręt 3× dłuższy ma ~2,5× więcej sekcji na długość, w skali sekcji floty TN.
+ * Systemy (rdzenie, mostki, zbiorniki, dysze SIDE, generatory tarczy, projektory studni) i gniazda — sloty presetu
+ * (hullDesignSystemSlots.js), tu kadłub, gondole i wygląd.
+ */
+function dreadnought() {
+  // ostrze: burta E(x) = −720 + (x − 700) / 3 (x od 700 do 2620); płyty pasów równoległych do burty — trapez obrócony
+  // o 90° (lewy bok klocka = zewnętrzna krawędź pasa), x0 i x1 co 12 j. od 700 (E na siatce 4 j.); o1, o2 — od burty [j.]
+  const E = (x) => -720 + (x - 700) / 3;
+  const band = (x0, x1, o1, o2, level = 1, o = {}) => ({
+    kind: 'block', shape: 'trap', x: (x0 + x1) / 2, y: E(x0) + (o1 + o2) / 2, w: o2 - o1, h: x1 - x0, rot: Math.PI / 2,
+    a: (x1 - x0) / 3, b: -(x1 - x0) / 3, level, gap: TN_SEAM, ...o
+  });
+  // … pas dochodzący do rowu K1 przy grzbiecie: wewnętrzna krawędź prosta (y = yIn)
+  const bandIn = (x0, x1, o1, yIn, level = 1, o = {}) => ({
+    kind: 'block', shape: 'trap', x: (x0 + x1) / 2, y: (E(x0) + o1 + yIn) / 2, w: yIn - E(x0) - o1, h: x1 - x0, rot: Math.PI / 2,
+    a: (x1 - x0) / 3, b: 0, level, gap: TN_SEAM, ...o
+  });
+  // sponson ciężkiej baterii przy burcie śródokręcia (−720): od rowu K3 (−624) do −840, fazy na rogach zewnętrznych,
+  // podest wieży (nadbudówka) pod gniazdem (x środka, −750)
+  const sponson = (x0, x1, c = (x0 + x1) / 2) => [
+    blk('rect', x0, -840, x1, -624, 1, { c: [44, 44, 0, 0] }), blk('rect', c - 64, -812, c + 64, -688, 2, { c: [24, 24, 24, 24] })
+  ];
+  // grzbiet podniesiony (nadbudówka na płycie osi)
+  const ridge = (x0, x1, hy, ch = 16) => blk('rect', x0, -hy, x1, hy, 2, { c: [ch, ch, ch, ch] });
+  const d = tnShip('Drednot Terra Novy (klasa VII)', 83, 1.25, {
+    grid: 4,
+    shapes: [
+      // RAMA: rufa ±460, rozszerzenie 45° do ±720, śródokręcie, ostrze (trapez obrócony o 90°: ±720 → ±80)
+      frameBlk(-2700, -460, 700, 460, { c: [56, 0, 0, 56] }),
+      { kind: 'block', shape: 'tri', x: -1510, y: -590, w: 260, h: 260, rot: 0, level: 0, a: 260 },
+      frameBlk(-1380, -720, 700, 720),
+      { kind: 'block', shape: 'trap', x: 1660, y: 0, w: 1440, h: 1920, rot: Math.PI / 2, level: 0, a: 640, b: 640 },
+      blk('rect', 2600, -80, 2700, 80, 1, { c: [0, 36, 36, 0] }),          // czoło z emiterem (scala się z płytą grzbietu)
+      // RUFA (maszynownia gondol x < −2504 bez płyt; wnęka zbiorników −2128…−1984)
+      blk('rect', -2480, -112, -2128, 112, 1, { c: [28, 0, 0, 28] }),
+      blk('rect', -2480, -460, -2316, -136, 1, { c: [40, 0, 0, 0] }),
+      blk('rect', -2292, -460, -2128, -136),
+      blk('rect', -1984, -112, -1664, 112),
+      blk('rect', -1960, -96, -1688, 96, 2, { c: [24, 0, 0, 24] }),          // wieża mostka głównego
+      blk('rect', -1984, -460, -1664, -136),
+      // ŚRÓDOKRĘCIE: grzbiet (oś), pas wewnętrzny (−400…−136), środkowy (−600…−424), burtowy (−720…−624) i sponsony
+      blk('rect', -1640, -112, -1236, 112), ridge(-1600, -1276, 60),
+      blk('rect', -1212, -112, -764, 112), ridge(-1172, -804, 60),
+      blk('rect', -740, -112, -340, 112),                                  // projektor studni (−540)
+      blk('rect', -316, -112, 100, 112), ridge(-276, 60, 56),
+      blk('rect', 124, -112, 444, 112),                                    // projektor studni (270)
+      blk('rect', 468, -112, 900, 112), ridge(504, 864, 56),
+      blk('rect', -1640, -400, -1436, -136),
+      blk('rect', -1412, -400, -1088, -236), blk('rect', -1412, -212, -1088, -136, 1, { c: [0, 12, 12, 0] }),
+      blk('rect', -1064, -400, -736, -136),                                // rdzeń (−810, −200)
+      blk('rect', -712, -400, -388, -236), blk('rect', -712, -212, -388, -136, 1, { c: [12, 12, 0, 0] }),
+      blk('rect', -364, -400, -36, -136),                                  // generator tarczy burty (−110, −250)
+      blk('rect', -12, -400, 312, -236), blk('rect', -12, -212, 312, -136, 1, { c: [0, 12, 12, 0] }),
+      blk('rect', 336, -400, 676, -236), blk('rect', 336, -212, 676, -136, 1, { c: [12, 12, 0, 0] }),
+      blk('trap', -1616, -600, -1260, -424, 1, { a: 116 }),
+      blk('rect', -1236, -600, -900, -424),
+      blk('rect', -876, -600, -540, -424),
+      blk('rect', -516, -600, -180, -424),
+      blk('rect', -156, -600, 180, -424),
+      blk('rect', 204, -600, 676, -424),
+      blk('trap', -1476, -720, -1372, -624, 1, { a: 96 }),
+      ...sponson(-1348, -1148), blk('rect', -1124, -720, -1020, -624),
+      ...sponson(-996, -796), blk('rect', -772, -720, -668, -624),
+      ...sponson(-644, -444), blk('rect', -420, -720, -316, -624),
+      ...sponson(-292, -92), blk('rect', -68, -720, 36, -624),
+      ...sponson(60, 260), blk('rect', 284, -720, 388, -624),
+      ...sponson(412, 676, 544),
+      // OSTRZE: pasy burtowy (0…96 od burty), środkowy (120…296), wewnętrzny (320… do K1), grzbiet
+      band(700, 1012, 0, 96), band(1036, 1312, 0, 96), band(1336, 1612, 0, 96), band(1636, 1912, 0, 96), band(1936, 2164, 0, 96),
+      bandIn(2188, 2428, 0, -136),
+      band(700, 1012, 120, 296, 2), band(1036, 1312, 120, 296, 2), band(1336, 1552, 120, 296, 2),
+      bandIn(1576, 1852, 120, -136, 2), bandIn(1876, 2068, 120, -136, 2),
+      bandIn(700, 1012, 320, -136), blk('rect', 760, -292, 880, -204, 2, { c: [12, 12, 12, 12] }),   // podest mostka pomocniczego
+      bandIn(1036, 1240, 320, -136), bandIn(1264, 1468, 320, -136),
+      blk('rect', 924, -112, 1380, 112), ridge(1140, 1340, 44, 12),
+      blk('rect', 1404, -112, 1860, 112), ridge(1440, 1640, 44, 12),
+      blk('rect', 1884, -112, 2316, 112), ridge(1920, 2280, 40, 12),
+      blk('rect', 2340, -112, 2524, 112),
+      { kind: 'block', shape: 'trap', x: 2584, y: 0, w: 208, h: 72, rot: Math.PI / 2, level: 1, a: 24, b: 24, gap: TN_SEAM }
+    ],
+    // KASZTELE: przy wieży mostka (rufa) i na „barkach” rozszerzenia
+    castles: [
+      castle(-1824, -300, 110, 100, { taper: 0.35, vent: 'slats' }),
+      castle(-1538, -268, 78, 108, { taper: 0.4, taperB: 0.15 })
+    ]
+  });
+  // gondole MAIN (beczki TN) w maszynowni rufy: 4 na burtę
+  for (const y of [-62, -174, -286, -398]) d.modules.push(engine(-2620, y, 96, 46));
+  d.modules.push(
+    // radiatory przy bateriach rzędu wewnętrznego, radiator rufy na osi, krata i iluminator „barku”, iluminatory grzbietu
+    vent(-1248, -174, 60, 12), vent(-960, -190, 40, 12), vent(-544, -174, 60, 12), vent(-250, -180, 34, 12), vent(160, -174, 60, 12), vent(512, -174, 60, 12),
+    vent(-2420, 0, 14, 44, 0), grid(-1390, -512, 54, 34), portO(-1530, -476, 22),
+    portO(-108, 0, 24), portO(1240, 0, 20), hatch(2470, 0, 20, 14)
+  );
+  d.decals.push(
+    text(-988, 0, 230, 30), text(1240, -64, 120, 15), text(-2340, -258, 120, 16, -Math.PI / 2),
+    eagle(-1440, 0, 84, 70), eagle(684, 0, 72, 60), eagle(2100, 0, 56, 46)
+  );
+  d.npc = true;
+  return d;
+}
+
+/**
  * FREGATA Z KLOCKÓW (TN): kadłub wyłącznie z klocków palety (src/game/hullDesign/hullDesignBlocks.js) na siatce 0,5 j.,
  * połowa okrętu — lustro dopisuje drugą burtę. Płyty pancerza mają rowy maszynowni od sąsiadów same (szczelina klocka),
  * rdzeń dziobu między klinami to klocek ramy (maszynownia). Wzór: układ Custosa (rufa-nadbudówka, grzbiet, burty,
@@ -625,6 +733,7 @@ export const HD_PRESETS = Object.freeze({
   bellator: { label: 'TN · pancernik Bellator', make: bellator },
   citadella: { label: 'TN · lotniskowiec Citadella', make: citadella },
   colossus: { label: 'TN · superkapitał Colossus', make: colossus },
+  dreadnought: { label: 'TN · drednot (klasa VII, NPC)', make: dreadnought },
   klocki: { label: 'Fregata z klocków (TN)', make: blocksFrigate },
   tnparts: { label: 'Fregata z gotowych części (TN)', make: tnParts },
   tnparts2: { label: 'Krążownik z gotowych części (TN)', make: tnParts2 },

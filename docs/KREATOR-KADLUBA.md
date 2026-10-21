@@ -14,7 +14,7 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 
 - Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html` (otwiera się z lotniskowcem Citadella; flota TN z siecią
   systemów — suwak „sieć rur”, ⟳ inne wiązki, I — graf sieci, panel „Sieć systemów”; narzędzie Rura W).
-  `?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
+  `?preset=citadella|custos|hasta|bellator|colossus|dreadnought|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
   `?clean=1` bez paneli. A — A/B (kreator ↔ sprite tego samego okrętu), U — sprite jako podkład pod projektem.
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--tylko citadella]
   [--etapy ab,rury,style,mapy,czesci,edycja]` → `.tmp/kreator/demo/` (flota TN: `<okręt>-ab.png` — oba w kadrze, ta sama
@@ -383,6 +383,7 @@ powierzchnia i gniazda) i `coreLevel` (0 — jak mostek; najwyżej mostek + 1 �
 | IV Pancernik | 200 000 | 38 (22) | L | Bellator 165 292 (83%), 31 (13) |
 | V Kapitał | 420 000 | 44 (26) | L | Citadella 352 131 (84%), 35 (20) |
 | VI Superkapitał | 900 000 | 60 (32) | Capital | Colossus 721 631 (80%), 56 (24) |
+| VII Drednot — tylko NPC (§ „Drednoty”) | 7 000 000 | 80 (48) | Capital + superbroń | Drednot TN 6 114 150 (87%), 67 (47) |
 
 **Rdzeń = moc [MW]** — limit miękki. Pobór: utrzymanie kadłuba `0,07 · powierzchnia^0,6`, tarcza, broń, hangary.
 Urządzenia ponad moc gasną według kolejki priorytetów (gracz ją zmienia), zapas mocy idzie w napęd: przyspieszenie
@@ -396,6 +397,7 @@ Urządzenia ponad moc gasną według kolejki priorytetów (gracz ją zmienia), z
 | R4 | 330 | 450 | Bellator 94,6 + 47,3 + 122,0 = 264,0 (20%) |
 | R5 | 450 | 700 | Citadella 149,0 + 74,5 + 138,0 = 361,5 (20%) |
 | R6 | 1 150 | 1 500 | Colossus 229,1 + 114,6 + 558,0 = 901,7 (22%; promień śmierci 400 MW, bez niego 44% mocy) |
+| R7 (NPC, 2 rdzenie) | 5 100 | 4 800 (brief) | Drednot TN 825,8 + 412,9 + 240 (projektory) + 2 592 = 4 070,8 (20%) |
 
 Kalibracja na PRAWDZIWYM domyślnym uzbrojeniu NPC (`equipNpcWeapons` w `index.html`: gniazda z edytora gry, najwyżej
 `SHIPS[rama].spec` na typ, wybór po kącie; Terra Nova — `railgun_mk2` 8 MW, `laser_pd_mk1` 3 MW, rakiety, promień śmierci;
@@ -484,6 +486,41 @@ limitów Custosa; liczby w `raport.json` → `klasa`).
 **Do gry (etap 3)**: bilans mocy na okręcie (gaśnięcie broni, tarczy i hangarów wg priorytetu, napęd z zapasu),
 `energyCost` broni zacznie coś znaczyć; gniazda z projektu zamiast `SHIP_EDITOR_DEFAULTS` (`hullDesignMounts` daje
 już typ, rozmiar i broń); NPC — wybór gniazd po `spec` zostaje albo przechodzi na pobór mocy.
+
+## Drednoty (klasa VII, tylko NPC — `docs/BRIEF-drednot.md`)
+
+Preset `dreadnought` (2026-10-21): drednot Terra Novy z klocków, do oceny użytkownika; gra go jeszcze nie zna (etap E1
+briefu). Stan i zasady — reguła `kreator-kadlubow` § „Drednoty: klasa VII tylko dla NPC”.
+
+**Kadłub**: 5 420 × 1 684 j., 6 114 150 j.² (87% limitu klasy VII), 27 384 węzły belek. Sztylet: rufa ±460 z 8 gondolami
+MAIN (beczki TN) i wieżą mostka głównego między kasztelami, rozszerzenie 45° do ±720, śródokręcie z 6 sponsonami ciężkich
+baterii na burtę, ostrze 1 920 j. (skos 1 : 3) do emitera na osi. Pasy płyt śródokręcia (burtowy, środkowy, wewnętrzny)
+skręcają w ostrzu równolegle do burty (środkowy podniesiony — szewron). 79 klocków na połowę (5 ramy, reszta płyty
+i nadbudówki), 2 kasztele, `isPlayerBuildable` i rama w jednym kawałku — tak.
+
+**Gniazda (brief § 4.2)**: 67 (ciężkich 47) — wbudowane Capital 1 (emiter, bez broni — superbroń klasy 1 000 MW),
+specjalne Capital 12 (Yamato), główne L 16 (Helios × 8, ciężkie autodziała × 8, w tym 4 w rufę), specjalne L 10 (jony
+× 6, promienie ściągające × 4 — bez broni, typowe 40 MW), pomocnicze L 14 (CIWS Mk II × 8, flak L × 6), rakietowe L 6
+(torpedy oblężnicze × 4 w dziobie, wyrzutnie rakiet × 2), hangary 8 (wrota w pasie środkowym). **Systemy (§ 4.4)**:
+2 rdzenie w obudowach R7 (r 48 j.), 3 mostki (główny −1 790 na osi, pomocnicze 820, ±248), 4 zbiorniki we wnęce
+rufy, 12 dysz SIDE (8 MAIN + 12 SIDE = sufit 20 stref dysz gry), 4 generatory tarczy sektorów, 2 projektory studni
+na grzbiecie. Sieć: 127 biegów, ~430 elementów osprzętu, 0 wolnych końców i wiązek poza obrysem.
+
+**Skala detalu** — `detail` 1,25 j./jd, obraz przy `HD_TEX.min` 1,2 teksela/j. (≈ 1,5 teksela/jd jak Colossus):
+
+| detail [j./jd] | Pole (teksele) | Pole + sieć | w tym sieć (A*) | Kompozytor | Razem z kadłubem gry | Wygląd |
+|---|---|---|---|---|---|---|
+| 1,0 | 3 839 × 1 216 | 937 ms | 335 ms | 721 ms | 2 005 ms | panele i nity jak Colossus (1,2 teksela/jd — na granicy) |
+| **1,25 (wybór)** | 3 071 × 973 | 673–740 ms | 218–251 ms | 451–523 ms (GPU 184–195) | 1 455–1 549 ms | ~1,4× Colossusa |
+| 3,2 (= długość / 1 700) | 1 920 × 608 | 409 ms | 201 ms | 266 ms | 931 ms | „powiększony Colossus”: panele, nity, rury 3,5× |
+
+(RTX, headless 1600 × 900, `kreator-kadluba-demo.mjs --etapy drednot --detale 1,1.25,3.2`; zrzuty
+`dreadnought-detal-*.png` — ten sam kadr burty.) Obraz 6 539 × 2 056 (sufit kompozytora podniesiony z 4 096 do 8 192 —
+minimum WebGPU; przy 4 096 drednot dostawał 0,76 teksela/j., czyli przy detalu 1,25 ~0,95 teksela/jd i nity znikały).
+**Pamięć** (detal 1,25): cele kompozytora 462 MB (36 B/teksel: GEO, BASE, EMIS RGBA16F + SURF, ALB, EOUT RGBA8; Colossus
+95 MB), tekstury pola i sieci ~103 MB, odczyt CPU (albedo, mapa powierzchni, emisja) 154 MB, sterta JS dema 657–827 MB
+(z ciałem 27 tys. węzłów). W grze (E1) zostaje sprite 6 539 × 2 056 RGBA8 ~54 MB (+ mipmapy ~72 MB) i mapa powierzchni
+— w widełkach briefu § 7.1 (65–120 MB). Pipeline'y synchroniczne: 0, błędy strony: 0.
 
 ## Demo — narzędzia
 

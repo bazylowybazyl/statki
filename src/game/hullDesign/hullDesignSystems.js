@@ -12,7 +12,8 @@
 //
 // URZĄDZENIA (pobór prądu, HD_POWER_LOAD — waga trasy = kabli w wiązce do urządzenia): wieże i gniazda broni
 // (`mount`; pobór w MW i bilans mocy rdzenia — src/data/shipClasses.js, hullDesignClass.js), mostek, gondola MAIN, dysza SIDE, zbiornik paliwa (pompa), wrota hangaru, ładownia, pierścień i iluminatory
-// (`well` — studnia, światło, czujniki), luk ładunkowy (`hatch` v 0 — napędzany). NIE są urządzeniami: kratki
+// (`well` — studnia, światło, czujniki), luk ładunkowy (`hatch` v 0 — napędzany), generator tarczy i projektor studni
+// grawitacyjnej (drednot). NIE są urządzeniami: kratki
 // (`vent` — wentylacja bierna), klapy serwisowe TN (`hatch` v 1 — pokrywy otwierane ręcznie), naklejki, rowki, rury
 // ręczne; reaktor jest źródłem.
 
@@ -20,12 +21,12 @@
 export const HD_SYSTEM_ROLE = Object.freeze({ reactor: 'core', fuel_tank: 'tank', engine: 'main', thruster_side: 'side' });
 
 /** Moduły systemów, które preset stawia na stałym miejscu klasy i kadłuba (blokada w edytorze). */
-export const HD_SYSTEM_TYPES = Object.freeze(['reactor', 'bridge', 'engine', 'fuel_tank', 'thruster_side', 'cargo']);
+export const HD_SYSTEM_TYPES = Object.freeze(['reactor', 'bridge', 'engine', 'fuel_tank', 'thruster_side', 'cargo', 'shield_gen', 'grav_proj']);
 
 /** Pobór prądu na typ modułu (kabli w trasie do urządzenia). */
 export const HD_POWER_LOAD = Object.freeze({
   turret_s: 1, turret_m: 1, turret_l: 2, bridge: 2, engine: 1, thruster_side: 1, fuel_tank: 1,
-  hangar: 1, cargo: 1, well: 1, hatch: 1, mount: 1
+  hangar: 1, cargo: 1, well: 1, hatch: 1, mount: 1, shield_gen: 2, grav_proj: 3
 });
 
 /** Waga trasy paliwa (rur w wiązce do odbiornika): gondola MAIN — zasilanie, powrót, chłodzenie dyszy. */

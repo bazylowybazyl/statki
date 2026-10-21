@@ -40,8 +40,8 @@ import {
 } from '../src/game/hullDesign/hullDesignClass.js';
 import { HD_MOUNT_SLOTS, HD_MOUNT_MODULES, HD_MOUNT_RADIUS_DU, hullDesignMountOf } from '../src/game/hullDesign/hullDesignSchema.js';
 import {
-  SHIP_CLASSES, CORE_LEVELS, MOUNT_SIZES, MOUNT_SLOT_LABELS, POWER_CATEGORY_LABELS, POWER_PRIORITY_DEFAULT, coreLevelMax,
-  mountPowerMW, shipClass, sizeRank, weaponsForMount, weaponPowerMW, isHeavySlot
+  SHIP_CLASSES, CORE_LEVELS, NPC_SHIP_CLASSES, NPC_CORE_LEVELS, SHIP_CLASS_MAX, MOUNT_SIZES, MOUNT_SLOT_LABELS, POWER_CATEGORY_LABELS,
+  POWER_PRIORITY_DEFAULT, coreLevelMax, isNpcClassLevel, mountPowerMW, shipClass, sizeRank, weaponsForMount, weaponPowerMW, isHeavySlot
 } from '../src/data/shipClasses.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
@@ -65,7 +65,9 @@ window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.r
 // Kadłub dzisiejszej gry do porównania (A/B) — ten sam okręt (Terra Nova) albo podobna klasa.
 const REF_FOR = {
   custos: 'frigate', klocki: 'frigate', hasta: 'destroyer', bellator: 'battleship', citadella: 'terran_carrier', colossus: 'terran_supercapital', tnparts: 'battleship', tnparts2: 'battleship',
-  orbis: 'terran_carrier', atlas2: 'atlas', pirate: 'pirate_battleship', empty: 'battleship'
+  orbis: 'terran_carrier', atlas2: 'atlas', pirate: 'pirate_battleship', empty: 'battleship',
+  // drednot: Colossus pod spodem w tej samej skali (3× dłuższy)
+  dreadnought: 'terran_supercapital'
 };
 const REF_KEYS = ['frigate', 'destroyer', 'battleship', 'terran_carrier', 'terran_supercapital', 'atlas', 'pirate_battleship', 'pirate_destroyer'];
 
@@ -1876,6 +1878,8 @@ function classMountPlace(o) {
 
 function setBridgeLevel(lv) {
   const d = design();
+  // klasy ponad drabiną (VII — drednot) tylko w projekcie NPC: gracz ich nie wybierze
+  if (isNpcClassLevel(lv) && !d.npc) { classFlash(`Mostek ${shipClass(lv).roman} (${shipClass(lv).label}) — klasa tylko dla NPC.`); syncClassPanel(); return false; }
   if (lv > 0 && S.cls && S.field) {
     const c = hullDesignCheck({ ...d, bridgeLevel: lv, coreLevel: Math.min(d.coreLevel || lv, coreLevelMax(lv)) }, S.cls.area, S.field.expanded.modules);
     const hard = c.issues.filter((i) => i.code !== 'core');
@@ -1923,7 +1927,7 @@ function syncMountEdit() {
   if (!o) { info.textContent = 'Kliknij gniazdo (narzędzie Przesuń / Moduł), by zmienić typ, rozmiar i broń.'; return; }
   const g = hullDesignMountOf(o);
   const cls = shipClass(S.cls?.levels.bridge || 1);
-  const mw = mountPowerMW(g.slot, g.size, g.weapon);
+  const mw = mountPowerMW(g.slot, g.size, g.weapon, cls);
   info.textContent = `Gniazdo ${MOUNT_SLOT_LABELS[g.slot]} ${g.size}${o.mirror === false || Math.abs(o.y) <= 0.5 || !design().mirror ? '' : ' (z kopią lustra)'} · pobór ${fmtMW(mw)} MW`;
   const sl = $('sel-medit-slot'), sz = $('sel-medit-size'), wp = $('sel-medit-weapon');
   sl.innerHTML = '';
@@ -1938,7 +1942,8 @@ function syncMountEdit() {
   }
   sz.value = g.size;
   wp.innerHTML = '';
-  wp.add(new Option(`broń: typowa (mediana ${MOUNT_SLOT_LABELS[g.slot]} ${g.size}: ${fmtMW(mountPowerMW(g.slot, g.size, undefined))} MW)`, '__typ'));
+  const typ = g.slot === 'builtin' && cls.superweapon ? `superbroń klasy ${cls.roman}: ${cls.superweapon.label}` : `mediana ${MOUNT_SLOT_LABELS[g.slot]} ${g.size}`;
+  wp.add(new Option(`broń: typowa (${typ}: ${fmtMW(mountPowerMW(g.slot, g.size, undefined, cls))} MW)`, '__typ'));
   wp.add(new Option('broń: brak (gniazdo puste, 0 MW)', ''));
   for (const id of weaponsForMount(g.slot, g.size, { npc: true })) {
     const w = MASTER_WEAPONS[id];
@@ -1951,7 +1956,10 @@ function bindClassPanel() {
   const sb = $('sel-bridge'), sc = $('sel-core');
   sb.add(new Option('mostek: z powierzchni (auto)', '0'));
   for (const c of SHIP_CLASSES) sb.add(new Option(`mostek ${c.roman} · ${c.label}${c.example ? ` (${c.example})` : ''}`, String(c.level)));
+  // klasy ponad drabiną (tylko NPC): widoczne i do wyboru tylko w projekcie NPC (syncClassPanel)
+  for (const c of NPC_SHIP_CLASSES) sb.add(new Option(`mostek ${c.roman} · ${c.label} — tylko NPC`, String(c.level)));
   for (const c of CORE_LEVELS) sc.add(new Option(`rdzeń R${c.level} · ${fmtInt(c.mw)} MW`, String(c.level)));
+  for (const c of NPC_CORE_LEVELS) sc.add(new Option(`rdzeń R${c.level} · ${fmtInt(c.mw)} MW (${c.cores} rdzenie) — tylko NPC`, String(c.level)));
   sb.addEventListener('change', () => setBridgeLevel(Number(sb.value)));
   sc.addEventListener('change', () => setCoreLevel(Number(sc.value)));
   const ms = $('sel-mslot'), mz = $('sel-msize');
@@ -2009,9 +2017,10 @@ function syncClassPanel() {
   const d = design();
   const sb = $('sel-bridge'), sc = $('sel-core');
   if (!d || !sb || !sb.options.length) return;
+  for (const sel of [sb, sc]) for (const o of sel.options) { const npcOnly = Number(o.value) > SHIP_CLASS_MAX; o.hidden = npcOnly && !d.npc; o.disabled = o.hidden; }
   sb.value = String(d.bridgeLevel || 0);
   const br = S.cls?.levels.bridge || d.bridgeLevel || 1;
-  for (const o of sc.options) o.disabled = Number(o.value) > coreLevelMax(br);
+  for (const o of sc.options) o.disabled = o.disabled || Number(o.value) > coreLevelMax(br);
   sc.value = String(S.cls?.levels.core || d.coreLevel || br);
   $('sel-mslot').value = S.mountSlot;
   $('sel-msize').value = S.mountSize || '';
@@ -2032,13 +2041,17 @@ function updateClassPanel() {
   };
   const by = c.check.counts.bySlot;
   const lines = [
-    `<b>Mostek ${cls.roman} · ${cls.label}</b>${c.levels.auto ? ' (z powierzchni)' : ''}${cls.example ? ` — wzór: ${cls.example}` : ''}`,
+    `<b>Mostek ${cls.roman} · ${cls.label}</b>${c.levels.auto ? ' (z powierzchni)' : ''}${cls.example ? ` — wzór: ${cls.example}` : ''}${cls.npcOnly ? ' · <span class="warn">tylko NPC</span>' : ''}`,
+    ...(cls.superweapon ? [`superbroń wbudowana: ${cls.superweapon.label} · ${fmtInt(cls.superweapon.mw)} MW (nowa broń — etap E2)`] : []),
     `pow.    ${bar(c.area, cls.areaMax)} ${fmtInt(c.area)} / ${fmtInt(cls.areaMax)} j²`,
     `gniazda ${bar(c.check.counts.mounts, cls.mountsMax)} ${c.check.counts.mounts} / ${cls.mountsMax}`,
     `ciężkie ${bar(c.check.counts.heavy, cls.heavyMax)} ${c.check.counts.heavy} / ${cls.heavyMax}`,
     `broń do ${cls.weaponSize} · ${Object.entries(by).map(([k, n]) => `${MOUNT_SLOT_LABELS[k]} ${n}`).join(' · ') || 'bez gniazd'}`,
     `<b>Rdzeń R${c.levels.core} · ${fmtInt(p.capacity)} MW</b>${c.levels.autoCore ? ' (jak mostek)' : ''}`,
-    `utrzymanie ${fmtMW(p.upkeep)} + tarcza ${fmtMW(p.shield)} + broń ${fmtMW(p.demand - p.shield)}`,
+    (() => {
+      const dev = p.devices.filter((x) => x.cat === 'device').reduce((a, x) => a + x.mw, 0);
+      return `utrzymanie ${fmtMW(p.upkeep)} + tarcza ${fmtMW(p.shield)}${dev ? ` + urządzenia ${fmtMW(dev)}` : ''} + broń ${fmtMW(p.demand - p.shield - dev)}`;
+    })(),
     `pobór   ${bar(p.upkeep + p.demand, p.capacity)} ${fmtMW(p.upkeep + p.demand)} / ${fmtInt(p.capacity)} MW`,
     p.upkeepOver
       ? '<span class="bad">utrzymanie kadłuba ponad moc rdzenia — okręt bez zasilania</span>'

@@ -6,10 +6,11 @@
 // myszą), sieć rur (etap `rury`: rufa z gondolami A/B, sieć wyłączona, rura ręczna), pipeline'y synchroniczne
 // w klatkach (ma być 0), błędy konsoli. Etap `klocki` (poza domyślnymi): fregata z klocków, arkusz palety, edycja myszą
 // (`--etapy klocki --tylko klocki` — bez floty). Etap `klasa` (poza domyślnymi): panel klasy, gniazda Bellatora
-// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka.
+// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka. Etap `drednot` (poza domyślnymi):
+// drednoty klasy VII (cały okręt, A/B z Colossusem, dziób, rufa, burta, sieć, panel klasy, czasy wypieku i pamięć).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,drednot] [--drednoty dreadnought]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -359,6 +360,81 @@ try {
     }
     report.klasa = klasa;
     console.log('klasa', JSON.stringify(klasa));
+  }
+  if (stages.has('drednot')) {
+    // DREDNOTY (--etapy drednot [--drednoty dreadnought,…], klasa VII, docs/BRIEF-drednot.md): cały okręt, A/B z Colossusem
+    // w tej samej skali, dziób z emiterem, rufa z mostkiem i gondolami, burta z bateriami, zbliżenie sponsonu, sieć
+    // systemów (graf I), panel klasy; czasy wypieku (pole + sieć, kompozytor, kadłub gry) i pamięć (cele kompozytora,
+    // tekstury pola, sterta JS) w raport.json → drednot
+    const k = 'window.__kreator';
+    const panelOn = `document.body.classList.remove("clean"); document.getElementById('sel-bridge').scrollIntoView({ block: 'start' })`;
+    const fitZ = `Math.min(innerWidth * 0.9 / ${k}.S.field.image.w, innerHeight * 0.85 / ${k}.S.field.image.h)`;
+    const drednot = {};
+    for (const key of String(args.drednoty || 'dreadnought').split(',')) {
+      await ev(`${k}.preset(${JSON.stringify(key)})`, 600000);
+      await ev(`document.body.classList.add("clean"); ${k}.setAb(false); ${k}.setNetGraph(false); ${k}.fit()`);
+      await shot(`${key}-caly`, `${key}: cały okręt (kadr na kadłub)`);
+      const im = await ev(`(() => { const i = ${k}.S.field.image; return { minX: i.minX, maxX: i.maxX, minY: i.minY, maxY: i.maxY, w: i.w, h: i.h, cx: i.cx, cy: i.cy }; })()`);
+      await ev(`${k}.fitAb()`);
+      await shot(`${key}-ab-colossus`, `${key}: kreator (góra) i Colossus — sprite gry (dół), ta sama skala`);
+      await ev(`${k}.setAb(false)`);
+      // dziób (emiter na osi), rufa (mostek główny, gondole MAIN), burta śródokręcia (sponsony baterii), zbliżenie sponsonu
+      const crop = (x, y, wj) => `${k}.setCamera(${x}, ${y}, innerWidth * 0.92 / ${wj})`;
+      await ev(crop(im.maxX - 420, 0, 900));
+      await shot(`${key}-dziob`, `${key}: dziób z emiterem superlasera na osi`);
+      await ev(crop(im.minX + 520, 0, 1100));
+      await shot(`${key}-rufa`, `${key}: rufa — wieża mostka głównego, gondole MAIN, zbiorniki`);
+      await ev(crop(-400, im.minY * 0.62, 1500));
+      await shot(`${key}-burta`, `${key}: burta śródokręcia — sponsony ciężkich baterii, hangary, rzędy baterii`);
+      await ev(crop(-896, -700, 420));
+      await shot(`${key}-sponson`, `${key}: zbliżenie sponsonu baterii (gniazdo Capital, obrona punktowa, rowy z kablami)`);
+      await ev(`${k}.setNetGraph(true); ${k}.fit()`);
+      await shot(`${key}-siec`, `${key}: sieć systemów (I) — kable z dwóch rdzeni, rury paliwa zbiorniki → rdzenie → MAIN / SIDE`);
+      await ev(crop(im.minX + 900, im.minY * 0.4, 1700));
+      await shot(`${key}-siec-rufa`, `${key}: sieć systemów przy rufie (zbiorniki, rdzenie, gondole)`);
+      await ev(`${k}.setNetGraph(false); ${k}.act("v"); ${panelOn}; (() => { const z = ${fitZ} * 0.72; ${k}.setCamera(${k}.S.field.image.cx + 170 / z, ${k}.S.field.image.cy, z); })()`);
+      await shot(`${key}-klasa`, `${key}: panel klasy — mostek VII (tylko NPC), rdzeń R7, gniazda, bilans mocy`);
+      drednot[key] = await ev(`(() => {
+        const S = ${k}.S, b = S.bake, g = S.field.grid, t = S.timing;
+        const px = b.width * b.height;
+        return {
+          img: [b.width, b.height], tpu: Math.round(b.tpu * 1000) / 1000, detail: S.design.detail,
+          // cele kompozytora: GEO, BASE, EMIS (RGBA16F) + SURF, ALB, EOUT (RGBA8) = 36 B/teksel; pole: 3 tekstury RGBA16F
+          // + sieć (RGBA16F + RGBA8); odczyt CPU: albedo, mapa powierzchni, emisja (RGBA8)
+          gpuMB: Math.round(px * 36 / 1048576), poleMB: Math.round(g.w * g.h * (8 * 4 + 4) / 1048576), odczytMB: Math.round(px * 12 / 1048576),
+          pole: [g.w, g.h], heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+          czas: { poleISiec: Math.round(t.field), siec: Math.round(S.field.pipeNet?.stats?.ms || 0), kompozytor: Math.round(t.bake), gpu: Math.round(t.gpu), kadlub: Math.round(t.hull), razem: Math.round(t.total) },
+          wezly: ${k}.ship?.beamHull?.body?.activeNodes ?? 0, siecStat: S.netCheck ? { wolne: S.netCheck.freeEnds, poza: S.netCheck.outside, bezPradu: S.netCheck.unpowered.length, bezPaliwa: S.netCheck.unfueled.length } : null,
+          klasa: ${k}.klasa.state()
+        };
+      })()`);
+      console.log('drednot', key, JSON.stringify(drednot[key]));
+      // porównanie skali detalu (--detale 1,1.25,3.2): ten sam kadr burty, czasy wypieku; 3,2 ≈ długość / 1700
+      const detale = args.detale ? String(args.detale).split(',').map(Number) : [];
+      if (detale.length) {
+        const d0 = await ev(`${k}.S.design.detail`);
+        drednot[`${key}-detale`] = {};
+        await ev('document.body.classList.add("clean")');
+        for (const dv of detale) {
+          await ev(`${k}.edit((d) => { d.detail = ${dv}; })`, 600000);
+          await ev(`${k}.built()`, 600000);
+          await ev(crop(-560, -560, 760));
+          await shot(`${key}-detal-${String(dv).replace('.', '_')}`, `${key}: detal ${dv} j./jd — burta śródokręcia`);
+          drednot[`${key}-detale`][dv] = await ev(`(() => { const S = ${k}.S, t = S.timing, g = S.field.grid; return { img: [S.bake.width, S.bake.height], pole: [g.w, g.h], czas: { poleISiec: Math.round(t.field), siec: Math.round(S.field.pipeNet?.stats?.ms || 0), kompozytor: Math.round(t.bake), razem: Math.round(t.total) }, siec: S.netCheck ? [S.netCheck.freeEnds, S.netCheck.outside] : null }; })()`);
+        }
+        await ev(`${k}.edit((d) => { d.detail = ${d0}; })`, 600000);
+        await ev(`${k}.built()`, 600000);
+        console.log('drednot detale', JSON.stringify(drednot[`${key}-detale`]));
+      }
+    }
+    // gracz nie wybierze klasy VII: projekt TN bez pola npc (Colossus) — mostek VII odrzucony, opcje VII / R7 ukryte
+    await ev(`${k}.preset("colossus")`);
+    drednot.graczVII = {
+      ok: await ev(`${k}.klasa.setBridge(7)`), msg: (await ev(`${k}.klasa.state()`)).msg,
+      ukryte: await ev(`[...document.querySelectorAll('#sel-bridge option, #sel-core option')].filter((o) => Number(o.value) > 6).map((o) => o.hidden && o.disabled)`)
+    };
+    console.log('drednot gracz VII', JSON.stringify(drednot.graczVII));
+    report.drednot = drednot;
   }
   report.bledy = logs.errors().filter((l) => !/favicon|DevTools|\[vite\]/.test(l)).slice(0, 20);
 } catch (e) {

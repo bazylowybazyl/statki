@@ -122,6 +122,23 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
   klocki: {
     add: [tank(-58, 0, 3.2, 2, { rot: TO_BOW }), side(30, -22.1, 2, 2)]
   },
+  // DREDNOT TN (klasa VII, tylko NPC): miejsca z briefu § 4.4 (u · 5 400, v · 1 800; rufa węższa niż w briefie — ±460):
+  // 2 rdzenie w obudowach R7 (−810, ±200), mostek główny w wieży rufy (−1790), 2 pomocnicze (820, ±248), 4 zbiorniki
+  // w poprzecznej wnęce rufy (−2056; v ±0,09 i ±0,19), 12 dysz SIDE (rufa 2, burta śródokręcia 3, skos ostrza 1 — na
+  // burtę), 4 generatory tarczy sektorów (dziób i rufa na osi, burty), 2 projektory studni grawitacyjnej na grzbiecie
+  dreadnought: {
+    add: [
+      { type: 'reactor', x: -810, y: -200, r: 48, v: 2 },
+      { type: 'bridge', x: -1790, y: 0, w: 64, h: 44 }, { type: 'bridge', x: 820, y: -248, w: 40, h: 28 },
+      tank(-2056, -168, 44, 18, { rot: TO_AXIS }), tank(-2056, -340, 44, 18, { rot: TO_AXIS }),
+      side(-2180, -445.25, 16, 12), side(-1960, -445.25, 16, 12),
+      side(-1072, -705.25, 16, 12), side(-368, -705.25, 16, 12), side(336, -705.25, 16, 12),
+      // skos ostrza (burta y = −720 + (x − 700) / 3): normalna zewnętrzna (1, −3) / √10, wylot 1 jd za burtą
+      { type: 'thruster_side', x: 1175.34, y: -546.01, w: 16, h: 12, rot: Math.atan2(-3, 1) },
+      { type: 'shield_gen', x: 1728, y: 0, r: 34 }, { type: 'shield_gen', x: -2300, y: 0, r: 34 }, { type: 'shield_gen', x: -110, y: -250, r: 34 },
+      { type: 'grav_proj', x: -540, y: 0, r: 60 }, { type: 'grav_proj', x: 270, y: 0, r: 60 }
+    ]
+  },
   // pozostałe presety: zbiornik paliwa (komplet systemów — walidacja), bez tabel gry
   orbis: { add: [tank(-300, -30, 26, 11)] },
   atlas2: { add: [tank(-780, -90, 40, 16)] },
@@ -176,13 +193,44 @@ export const HD_PRESET_MOUNTS = Object.freeze({
   // @gniazda-end
 });
 
+// ── GNIAZDA BRONI drednotów (klasa VII, tylko NPC — docs/BRIEF-drednot.md § 4.2, rozkład § 4.4) ──
+// Gra nie ma jeszcze tych kadłubów w edytorze gniazd (etap E1 briefu), więc to dane briefu w układzie projektu, wpisane
+// ręcznie (narzędzie TN ich nie liczy): typ, rozmiar, x, y [j.] (y < 0 — para w lustrze), promień podstawy [j.] i broń
+// z listy § 4.2 (istniejąca w MASTER_WEAPONS). Bez pola broni — typowa broń gniazda: nowe bronie briefu (superlaser
+// osiowy E2, baterie jonowe E4, promienie ściągające E5) — w klasie VII gniazdo wbudowane bierze pobór superbroni klasy.
+// Typ `hangar` — wrota hangaru (moduł `hangar`, pół-wymiary w × h).
+const n = (slot, size, x, y, r, w) => (w === undefined ? { slot, size, x, y, r } : { slot, size, x, y, r, w });
+const hg = (x, y, w, h) => ({ slot: 'hangar', x, y, w, h });
+export const HD_NPC_PRESET_MOUNTS = Object.freeze({
+  dreadnought: Object.freeze([
+    n('builtin', 'Capital', 2592, 0, 40),                              // emiter superlasera „Ragnarök” na osi dziobu
+    // ciężkie baterie burtowe na sponsonach (Yamato), 6 na burtę
+    ...[-1248, -896, -544, -192, 160, 544].map((x) => n('special', 'Capital', x, -750, 40, 'special_yamato_cannon')),
+    // baterie średnie: rząd wewnętrzny (6 na burtę; Helios dalej od dziobu, autodziała bliżej) i 2 na burtę w rufę
+    ...[-1248, -896, -544, -192].map((x) => n('main', 'L', x, -300, 28, 'helios_lance_l')),
+    ...[160, 512, -2400, -2230].map((x) => n('main', 'L', x, -300, 28, 'heavy_autocannon_l')),
+    // baterie jonowe (3 na burtę) i promienie ściągające (2 na burtę) — nowe bronie briefu
+    ...[280, 440, 600].map((x) => n('special', 'L', x, -512, 30)),
+    n('special', 'L', -720, -672, 30), n('special', 'L', -16, -672, 30),
+    // obrona punktowa: 2 dziób, 3 śródokręcie (sponsony), 2 rufa — na burtę
+    n('aux', 'L', 2300, -152, 17, 'ciws_mk2'), n('aux', 'L', 1460, -420, 17, 'ciws_mk2'),
+    n('aux', 'L', -896, -650, 17, 'flak_l'), n('aux', 'L', -192, -650, 17, 'flak_l'), n('aux', 'L', 544, -650, 17, 'flak_l'),
+    n('aux', 'L', -2400, -430, 17, 'ciws_mk2'), n('aux', 'L', -1700, -430, 17, 'ciws_mk2'),
+    // wyrzutnie: torpedy oblężnicze w dziobie (2 na burtę), rakiety przy grzbiecie
+    n('missile', 'L', 1624, -224, 20, 'siege_torpedo'), n('missile', 'L', 2032, -176, 20, 'siege_torpedo'),
+    n('missile', 'L', 1080, -72, 20, 'missile_rack'),
+    // wrota hangarów w pasie środkowym śródokręcia (4 na burtę)
+    ...[-1050, -700, -350, 0].map((x) => hg(x, -512, 64, 40))
+  ])
+});
+
 /**
  * Klasa presetu: [poziom mostka, poziom rdzenia]. TN i fregata z klocków — decyzja użytkownika; reszta — najniższa klasa
  * z powierzchni i gniazd (classForHull, 2026-10-21: Hasta-D 63 tys. j² → III, fregata / krążownik z części 149 / 124 tys.
  * → IV, Orbis 231 tys. i Szakal 256 tys. → V). `empty` — gracz wybiera (0 — z powierzchni).
  */
 export const HD_PRESET_CLASS = Object.freeze({
-  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], klocki: [1, 1],
+  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], klocki: [1, 1], dreadnought: [7, 7],
   destroyer: [3, 3], tnparts: [4, 4], tnparts2: [4, 4], orbis: [5, 5], pirate: [5, 5], atlas2: [6, 6]
 });
 /** Presety poza drabiną klas (jak Atlas — unikat fabularny): Atlas II ma 1,05 mln j², więcej niż limit klasy VI. */
@@ -194,6 +242,14 @@ export const HD_PRESET_OUTSIDE_LADDER = Object.freeze(['atlas2']);
  */
 export function presetMountModules(key, D) {
   const out = [];
+  // drednoty: rozmiar i promień na gniazdo, wrota hangarów
+  for (const g of HD_NPC_PRESET_MOUNTS[key] || []) {
+    const base = g.slot === 'hangar'
+      ? { type: 'hangar', w: g.w, h: g.h, doors: 2, rot: 0, mirror: false }
+      : { type: 'mount', slot: g.slot, size: g.size, r: g.r, rot: 0, mirror: false, ...(g.w === undefined ? {} : { weapon: g.w }) };
+    out.push({ ...base, x: g.x, y: g.y });
+    if (g.y < 0) out.push({ ...base, x: g.x, y: -g.y });
+  }
   for (const g of HD_PRESET_MOUNTS[key]?.list || []) {
     const r = Math.round(HD_MOUNT_RADIUS_DU[g.slot] * D * 100) / 100;
     const base = { type: 'mount', slot: g.slot, size: HD_PRESET_MOUNTS[key].size, r, rot: 0, mirror: false };
@@ -225,7 +281,7 @@ export function applySystemSlots(key, design, opts = {}) {
   }
   for (const m of slot.add || []) modules.push({ ...m });
   for (const m of modules) if (HD_SYSTEM_TYPES.includes(m.type)) m.lock = true;
-  if (HD_PRESET_MOUNTS[key] && opts.mounts !== false) {
+  if ((HD_PRESET_MOUNTS[key] || HD_NPC_PRESET_MOUNTS[key]) && opts.mounts !== false) {
     modules = modules.filter((m) => !MOUNT_REPLACE(m) && !dropped(key, m));
     modules.push(...presetMountModules(key, design.detail));
   }

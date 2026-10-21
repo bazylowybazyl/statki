@@ -378,6 +378,10 @@ cień SDF) i jednorazowe skoki czasu klatki.
   planu kreatora (`docs/PLAN-KREATOR-STOCZNIA.md`; kreator nie jest wpięty do gry, lista integracji
   w `docs/KREATOR-KADLUBA.md`). Format kreatora nie ma limitu długości, ale kompozytor obrazu ma sufit 4 096 px
   (~0,76 teksela/j. przy 5,4 km) — do podniesienia przy B. Rekomendacja: A teraz, B jako przebudowa później.
+  **Stan 2026-10-21 (wariant B w kreatorze, do oceny):** preset `dreadnought` — drednot TN z klocków, klasa VII
+  (`NPC_SHIP_CLASSES`, R7 = 5 100 MW na dwa rdzenie), 67 gniazd wg § 4.2, systemy wg § 4.4, sieć bez wolnych końców;
+  sufit kompozytora podniesiony do 8 192 px (obraz 6 539 × 2 056, 1,2 teksela/j.), detal 1,25 j./jd, wypiek ~1,5 s,
+  cele kompozytora 462 MB. Opis i pomiary: `docs/KREATOR-KADLUBA.md` § „Drednoty”. Do gry — nadal etap E1.
 - Model 3D: automat ze sprite'a (`autoHull3D.js`, obrysy z `node scripts/webgpu/obrysy-floty.mjs`), bronie 3D w partiach.
 - Mostki × 3 wg `docs/BRIEF-mostek-nowego-kadluba.md`.
 - Wieżyczki-dekoracje (setki „dział” Eclipse'a) w sprite'cie i modelu, bez gniazd.

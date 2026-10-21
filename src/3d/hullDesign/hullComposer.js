@@ -36,7 +36,9 @@ import { srgbEncode } from '../skybake/skyGameColor.js';
 import { HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
-export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 160, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
+// maxSide: gwarantowane minimum WebGPU (maxTextureDimension2D = 8 192) — drednot 5,4 km dostaje 1,2 teksela/j. (HD_TEX.min)
+// pipeFits: numer osprzętu sieci 16-bitowy w teksturze pipeB (G + 256 · A) — HD_PIPE_TUNE.maxFits + 1
+export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 160, decals: 48, maxSide: 8192, pipeRuns: 256, pipeFits: 512 });
 /** Gęstość obrazu: dłuższy bok ~targetSide tekseli, w granicach [min, max] tekseli na j. */
 export const HD_TEX = Object.freeze({ targetSide: 2560, min: 1.2, max: 16 });
 
@@ -236,7 +238,7 @@ export class HullComposer {
       aux: texture(placeholder(THREE.HalfFloatType), vec2(0)),     // kopuła, pola ośmiokątne poziomów 1–3
       grooves: texture(placeholder(THREE.HalfFloatType), vec2(0)), // odległość od rowków [j.]
       pipeA: texture(placeholder(THREE.HalfFloatType), vec2(0)),   // sieć rur: przesunięcie w poprzek [j.], cos φ, sin φ, odcinek
-      pipeB: texture(placeholder(THREE.UnsignedByteType), vec2(0)), // sieć rur: numer biegu, numer osprzętu (textureLoad)
+      pipeB: texture(placeholder(THREE.UnsignedByteType), vec2(0)), // sieć rur: numer biegu (R), numer osprzętu (G + 256 · A; textureLoad)
       atlas: texture(placeholder(THREE.UnsignedByteType), vec2(0)),
       geo: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       base: texture(placeholder(THREE.HalfFloatType), vec2(0)),
@@ -300,7 +302,7 @@ export class HullComposer {
     const ipc = ivec2(clamp(ip.x, int(0), int(U.fieldSize.x).sub(1)), clamp(ip.y, int(0), int(U.fieldSize.y).sub(1)));
     const pb = textureLoad(T.pipeB, ipc).toVar();
     const runId = int(floor(pb.x.mul(255.0).add(0.5))).toVar();
-    const fitId = int(floor(pb.y.mul(255.0).add(0.5))).toVar();
+    const fitId = int(floor(pb.y.mul(255.0).add(0.5))).add(int(floor(pb.w.mul(255.0).add(0.5))).mul(256)).toVar();
     const o = {
       K: float(0.0).toVar(), H: float(0.0).toVar(), C: vec3(0.0).toVar(), over: float(0.0).toVar(),
       t: float(1e3).toVar(), halfW: float(0.0).toVar(), band: float(0.0).toVar(),
@@ -1117,7 +1119,7 @@ export class HullComposer {
           modCol.assign(col);
           emis.addAssign(vec3(1.0, 0.45, 0.14).mul(throat).mul(float(1.0).sub(smoothstep(0.0, R0.mul(0.4), rc))).mul(0.35));
         });
-      }).Else(() => {
+      }).ElseIf(type.lessThan(14.5), () => {
         // ŁADOWNIA (v 0 — wrota: dwa skrzydła ze szwem na osi x modułu i zazębieniem, żebra w poprzek, szyny wzdłuż
         // dłuższych boków; v 1 — klapa z krzyżem wzmocnień): rama z pasem ostrzegawczym, bursztynowe lampy w rogach
         const hb = B.xy.mul(iD).toVar();
@@ -1150,6 +1152,99 @@ export class HullComposer {
           col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
           modCol.assign(col);
           emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+        });
+      }).ElseIf(type.lessThan(15.5), () => {
+        // GENERATOR TARCZY sektora (drednot): ośmiokątny pancerny kołnierz z nitami i żółtymi narożnikami (jak gniazdo
+        // obudowy reaktora), pokład z czterema skrzynkami zasilaczy na przekątnych, szczelina emitera wokół kopuły
+        // (chłodna emisja — w grze świeci przez hullGlowMask jak tarcza), kopuła z 12 żebrami i dwoma pierścieniami
+        const R = B.z.mul(iD);
+        If(rr.lessThan(R.mul(1.3).add(1.0)), () => {
+          const outer = sdOct(lu, R).toVar();
+          const inner = sdOct(lu, R.mul(0.8)).toVar();
+          const inK = clamp(outer.negate().mul(2.0), 0.0, 1.0);
+          const collar = clamp(outer.negate().div(0.6), 0.0, 1.0).mul(clamp(inner.div(0.4), 0.0, 1.0)).toVar();
+          const a = atan(lu.y, lu.x);
+          const nb = floor(R.mul(0.9)).max(16.0);
+          const angB = fract(a.div(6.28318).mul(nb));
+          const bolt = float(1.0).sub(smoothstep(0.22, 0.4, length(vec2(angB.sub(0.5).mul(6.28318).mul(R.mul(0.9)).div(nb), outer.add(R.mul(0.1)))))).mul(collar);
+          const corner = step(0.82, abs(cos(a.mul(8.0).sub(3.14159)))).mul(collar).mul(step(outer, R.mul(-0.04)));
+          const dbl = lineN(inner.add(R.mul(0.05)), float(0.3)).mul(collar);
+          const domeR = R.mul(0.56).toVar();
+          const slotW = max(R.mul(0.06), 0.8);
+          const slotK = step(domeR, rr).mul(step(rr, domeR.add(slotW))).toVar();
+          const deck = clamp(inner.negate().div(0.4), 0.0, 1.0).mul(step(domeR.add(slotW), rr)).toVar();
+          // skrzynki zasilaczy na przekątnych pokładu
+          const dq = abs(rot2(lu, float(0.7853982)));
+          const boxSd = sdRoundBox(vec2(dq.x.sub(R.mul(0.68)), dq.y), vec2(R.mul(0.07).max(0.8), R.mul(0.11).max(1.2)), float(0.3)).toVar();
+          const box = clamp(boxSd.negate().div(0.35), 0.0, 1.0).mul(deck);
+          // kopuła: przekrój kulisty (wysokość z sufitem), żebra promieniste i pierścienie
+          const dn = clamp(rr.div(domeR), 0.0, 1.0);
+          const domeK = step(rr, domeR).toVar();
+          const sph = sqrt(max(float(0.0), float(1.0).sub(dn.mul(dn)))).toVar();
+          const angR = fract(a.div(6.28318).mul(12.0));
+          const rib = step(abs(angR.sub(0.5)), 0.06).mul(step(0.22, dn)).mul(domeK);
+          const ringD = min(abs(dn.sub(0.45)), abs(dn.sub(0.78)));
+          const ring = step(ringD, 0.035).mul(domeK);
+          const capH = min(domeR.mul(0.4), 5.0);
+          modH.addAssign(collar.mul(1.2).add(bolt.mul(0.22)).sub(dbl.mul(0.25)).add(deck.mul(0.35)).add(box.mul(1.1)).sub(slotK.mul(1.6))
+            .add(domeK.mul(sph.mul(capH).add(0.6))).add(rib.mul(0.45)).add(ring.mul(0.3)));
+          modK.assign(max(modK, inK));
+          modSeam.assign(max(modSeam, max(max(lineN(outer, float(0.35)), lineN(inner, float(0.3))).mul(0.6), max(lineN(rr.sub(domeR), float(0.3)), lineN(boxSd, float(0.3)).mul(deck)).mul(0.55))));
+          const steel = this._pal(11);
+          const col = mix(plateC.mul(1.02), plateC.mul(0.92), dbl).toVar();
+          col.assign(mix(col, hazard, corner));
+          col.assign(mix(col, trimC.mul(0.5), bolt.mul(0.6)));
+          col.assign(mix(col, metal.mul(1.35), deck));
+          col.assign(mix(col, engC.mul(1.1), box));
+          col.assign(mix(col, vec3(0.02, 0.025, 0.03), slotK));
+          const domeC = mix(steel, hullC, 0.3).mul(float(0.62).add(sph.mul(0.45)));
+          col.assign(mix(col, mix(domeC, engC.mul(1.25), max(rib, ring)), domeK));
+          modCol.assign(col);
+          emis.addAssign(vec3(0.25, 0.75, 1.0).mul(slotK).mul(0.35));
+        });
+      }).Else(() => {
+        // PROJEKTOR STUDNI GRAWITACYJNEJ (drednot, grzbiet): ośmiokątna podstawa z nitami, gruby pierścień cewki
+        // z miedzianymi zwojami w 24 segmentach (stalowe obejmy), cztery pylony na przekątnych nad ciemną misą
+        // schodzącą stopniami do stożka emitera w środku (ciepła poświata gardzieli)
+        const R = B.z.mul(iD);
+        If(rr.lessThan(R.mul(1.25).add(1.0)), () => {
+          const base = sdOct(lu, R.mul(1.06)).toVar();
+          const baseK = clamp(base.negate().mul(2.0), 0.0, 1.0);
+          const baseUp = clamp(base.negate().div(0.6), 0.0, 1.0);
+          const a = atan(lu.y, lu.x);
+          const nb = floor(R.mul(1.1)).max(24.0);
+          const angB = fract(a.div(6.28318).mul(nb));
+          const bolt = float(1.0).sub(smoothstep(0.22, 0.4, length(vec2(angB.sub(0.5).mul(6.28318).mul(R.mul(1.0)).div(nb), base.add(R.mul(0.05).add(0.6)))))).mul(baseUp);
+          const ringC = R.mul(0.78), ringW = R.mul(0.15).max(1.5);
+          const tr = rr.sub(ringC).div(ringW).toVar();
+          const inRing = step(abs(tr), 1.0).toVar();
+          const torus = sqrt(max(float(0.0), float(1.0).sub(tr.mul(tr)))).toVar();
+          const segF = fract(a.div(6.28318).mul(24.0));
+          const clampK = step(abs(segF.sub(0.5)), 0.08).mul(inRing).toVar();
+          const wind = smoothstep(0.18, 0.42, abs(fract(rr.mul(0.85)).sub(0.5))).mul(inRing).mul(float(1.0).sub(clampK));
+          const bowlR = ringC.sub(ringW);
+          const bowlK = step(rr, bowlR).toVar();
+          const bn = clamp(rr.div(max(bowlR, 0.5)), 0.0, 1.0);
+          const stepN = floor(bn.mul(4.0));
+          const emitR = R.mul(0.16).max(1.2);
+          const emitK = step(rr, emitR).toVar();
+          const cone = clamp(emitR.sub(rr).div(emitR), 0.0, 1.0);
+          const dq = abs(rot2(lu, float(0.7853982)));
+          const pyl = step(dq.y, R.mul(0.045).max(0.7)).mul(step(emitR, rr)).mul(bowlK).toVar();
+          const ringH = min(ringW.mul(0.9), 4.5);
+          modH.addAssign(baseUp.mul(0.8).add(bolt.mul(0.2)).add(inRing.mul(torus.mul(ringH).add(0.5)).sub(wind.mul(0.25)).add(clampK.mul(0.35)))
+            .add(bowlK.mul(stepN.mul(0.5).sub(2.4))).add(pyl.mul(2.8)).add(emitK.mul(cone.mul(3.2).add(0.4))));
+          modK.assign(max(modK, baseK));
+          modSeam.assign(max(modSeam, max(lineN(base, float(0.35)).mul(0.6), max(lineN(abs(tr).sub(1.0).mul(ringW), float(0.35)).mul(0.6), lineN(fract(bn.mul(4.0)).sub(0.02), float(0.08)).mul(bowlK).mul(0.4)))));
+          const steel = this._pal(11);
+          const col = mix(plateC.mul(0.98), trimC.mul(0.5), bolt.mul(0.6)).toVar();
+          const coil = mix(pipeC.mul(1.55), pipeC.mul(0.85), wind).mul(float(0.65).add(torus.mul(0.5)));
+          col.assign(mix(col, mix(coil, steel.mul(1.1).mul(float(0.7).add(torus.mul(0.4))), clampK), inRing));
+          col.assign(mix(col, vec3(0.028, 0.026, 0.03).mul(float(1.0).add(stepN.mul(0.35))), bowlK));
+          col.assign(mix(col, engC.mul(1.15), pyl));
+          col.assign(mix(col, steel.mul(float(0.6).add(cone.mul(0.6))), emitK));
+          modCol.assign(col);
+          emis.addAssign(vec3(1.0, 0.42, 0.4).mul(clamp(emitR.mul(1.6).sub(rr).div(emitR), 0.0, 1.0)).mul(bowlK).mul(0.5));
         });
       });
     });
@@ -1709,7 +1804,7 @@ export class HullComposer {
 
   /**
    * Sieć rur do tekstur i uniformów: pipeA (RGBA16F na siatce pola, dwuliniowo) — przesunięcie w poprzek od osi biegu
-   * [j.], cos φ, sin φ, numer odcinka; pipeB (RGBA8, textureLoad) — numer biegu, numer osprzętu; biegi (promienie rur,
+   * [j.], cos φ, sin φ, numer odcinka; pipeB (RGBA8, textureLoad) — numer biegu (R), numer osprzętu (G + 256 · A); biegi (promienie rur,
    * pół-szerokość, odstęp, najgrubsza, materiał (3 — kable) + 8 · na płytach) i osprzęt (miejsce, rodzaj + 16 · na płytach, obrót,
    * wymiary). Bez sieci — tekstury 1 × 1 i wyłącznik w uniformie.
    */

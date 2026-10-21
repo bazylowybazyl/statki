@@ -54,7 +54,8 @@ Stan 2026-10-21: etapy 1A–1D zrobione i scalone do main. Flota TN z klocków: 
 sylwetki ze sprite'em 0,92–0,98; sieć na całej flocie bez wolnych końców i wiązek poza obrysem. Etap 2 (klasy z mostka
 i rdzenia) wdrożony w kreatorze 2026-10-21 na gałęzi `claude/kreator-klasy-ba238b` (do oceny): dane `src/data/shipClasses.js`,
 pełne gniazda broni floty TN z gry, panel klasy, twarde limity mostka, bilans mocy z martwymi kablami — opis
-`docs/KREATOR-KADLUBA.md` § „Klasy okrętów”. Następny — etap 3 (kreator w grze).
+`docs/KREATOR-KADLUBA.md` § „Klasy okrętów”. Następny — etap 3 (kreator w grze). Poza etapami: drednoty klasy VII
+(tylko NPC, `docs/BRIEF-drednot.md`) — preset `dreadnought` z klocków (2026-10-21, do oceny), § „Drednoty”.
 
 | Etap | Co | Kto |
 |---|---|---|

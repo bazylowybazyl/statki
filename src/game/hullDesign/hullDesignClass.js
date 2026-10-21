@@ -12,7 +12,7 @@ import { powerLoad } from './hullDesignSystems.js';
 import { markPipeNetPower, rasterPipeNetwork } from './hullDesignPipes.js';
 import {
   shipClassCheck, shipPowerBalance, classForHull, coreLevelMax, shipClass, sizeRank, isHeavySlot, weaponMountIssue,
-  POWER_PRIORITY_DEFAULT
+  POWER_PRIORITY_DEFAULT, DEVICE_MW
 } from '../../data/shipClasses.js';
 
 /** Gniazda modułów (rozwiniętych — lustro osobno): [{ i (indeks modułu), slot, size, weapon }]. */
@@ -22,6 +22,16 @@ export function hullDesignMountList(modules) {
     const g = hullDesignMountOf(m);
     if (g) out.push({ i, ...g });
   });
+  return out;
+}
+
+/**
+ * Urządzenia projektu spoza gniazd (kategoria mocy `device`, src/data/shipClasses.js): [{ i (indeks modułu), mw }] —
+ * projektory studni grawitacyjnej.
+ */
+export function hullDesignDeviceList(modules) {
+  const out = [];
+  modules.forEach((m, i) => { if (m.type === 'grav_proj') out.push({ i, mw: DEVICE_MW.gravWell }); });
   return out;
 }
 
@@ -35,20 +45,29 @@ export function hullDesignLevels(design, area, mounts) {
 
 /**
  * Klasa i bilans mocy projektu. `field` — buildHullField (powierzchnia `area`, moduły rozwinięte). Zwraca { area, levels,
- * mounts, check (shipClassCheck), power (shipPowerBalance), dead: Set (indeksy modułów bez prądu), deadMounts (liczba) }.
- * Utrzymanie ponad moc rdzenia — bez prądu wszystkie urządzenia sieci zasilania.
+ * mounts, devices (hullDesignDeviceList), check (shipClassCheck), power (shipPowerBalance), dead: Set (indeksy modułów
+ * bez prądu), deadMounts (liczba) }. Utrzymanie ponad moc rdzenia — bez prądu wszystkie urządzenia sieci zasilania;
+ * tarcza bez prądu — generatory tarczy (`shield_gen`) martwe.
  */
 export function hullDesignClass(field) {
   const { design, modules } = field.expanded;
   const area = field.area;
   const mounts = hullDesignMountList(modules);
+  const devices = hullDesignDeviceList(modules);
   const levels = hullDesignLevels(design, area, mounts);
   const check = shipClassCheck({ bridgeLevel: levels.bridge, coreLevel: levels.core, area, mounts });
-  const power = shipPowerBalance({ area, coreLevel: levels.core, mounts, priority: design.powerPriority || POWER_PRIORITY_DEFAULT });
+  const power = shipPowerBalance({
+    area, coreLevel: levels.core, mounts, devices, priority: design.powerPriority || POWER_PRIORITY_DEFAULT, bridgeLevel: levels.bridge
+  });
   const dead = new Set();
   if (power.upkeepOver) modules.forEach((m, i) => { if (powerLoad(m) > 0) dead.add(i); });
-  else mounts.forEach((g, k) => { if (!power.on[k] && power.devices.find((d) => d.i === k).mw > 0) dead.add(g.i); });
-  return { area, levels, mounts, check, power, dead, deadMounts: mounts.filter((g) => dead.has(g.i)).length };
+  else {
+    const off = (i) => power.devices.some((d) => d.i === i && !d.on && d.mw > 0);
+    mounts.forEach((g, k) => { if (off(k)) dead.add(g.i); });
+    devices.forEach((g, k) => { if (off(-2 - k)) dead.add(g.i); });
+    if (off(-1)) modules.forEach((m, i) => { if (m.type === 'shield_gen') dead.add(i); });
+  }
+  return { area, levels, mounts, devices, check, power, dead, deadMounts: mounts.filter((g) => dead.has(g.i)).length };
 }
 
 /**

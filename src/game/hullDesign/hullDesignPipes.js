@@ -32,7 +32,7 @@
 //
 // RASTER (rasterPipeNetwork): na siatce pola (jak grooveField) — dla tekseli przy wiązkach przesunięcie w poprzek
 // od osi biegu ze znakiem [j.], cos / sin fazy długości łuku (obejmy co clampDu jd), numer odcinka między obejmami
-// (kołnierze rur, opaski kabli), numer biegu i numer elementu osprzętu; kompozytor (src/3d/hullDesign/hullComposer.js)
+// (kołnierze rur, opaski kabli), numer biegu (bajt R) i numer elementu osprzętu (G + 256 · A); kompozytor (src/3d/hullDesign/hullComposer.js)
 // rysuje z tego rury, kable w korytkach i osprzęt. Wymiary rur i osprzętu w jd.
 
 import { HD_MODULES } from './hullDesignSchema.js';
@@ -69,8 +69,8 @@ export const HD_PIPE_TUNE = Object.freeze({
   clampDu: 26,          // okres obejm [jd]
   valveDu: 95,          // zawór / kołnierz co ~ [jd] na długich widocznych odcinkach rur
   boxDu: 120,           // puszka kablowa co ~ [jd] na długich widocznych odcinkach kabli
-  maxRuns: 255,
-  maxFits: 255
+  maxRuns: 255,         // numer biegu w rastrze 8-bitowy (B.x)
+  maxFits: 511          // numer osprzętu 16-bitowy (B.y + 256 · B.w): drednot ~430, Colossus ~290
 });
 
 /** Sieci systemów w kolejności trasowania: rury do silników, rury dopływu ze zbiorników, kable zasilania. */
@@ -1796,7 +1796,7 @@ export function rasterPipeNetwork(net, grid) {
     }
   }
   const fits = net.fits;
-  for (let fi = 0; fi < fits.length && fi < 255; fi++) {
+  for (let fi = 0; fi < fits.length && fi < 65535; fi++) {
     const f = fits[fi];
     const c = Math.cos(f.rot), s = Math.sin(f.rot);
     const hx = f.hw * D + 2 * inv, hy = f.hh * D + 2 * inv;
@@ -1810,7 +1810,8 @@ export function rasterPipeNetwork(net, grid) {
         const lx = px * c + py * s, ly = -px * s + py * c;
         if (Math.abs(lx) > hx || Math.abs(ly) > hy) continue;
         const k = j * w + i;
-        B[k * 4 + 1] = fi + 1;
+        B[k * 4 + 1] = (fi + 1) & 255;
+        B[k * 4 + 3] = (fi + 1) >> 8;
         mask[k] = 1;
       }
     }

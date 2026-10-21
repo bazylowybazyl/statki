@@ -61,6 +61,8 @@
 //           ~4 jd, potęga dwójki), potem stały — zmiana detalu nie rusza klocków ani rozmiaru okrętu.
 //   bridgeLevel / coreLevel  KLASA okrętu (etap 2, src/data/shipClasses.js): poziom mostka I–VI (twarde limity:
 //           powierzchnia, gniazda, rozmiar broni) i rdzenia R1–R6 (moc); 0 — z powierzchni i gniazd (stare projekty).
+//   npc     projekt okrętu TYLKO DLA NPC (drednoty): dopuszcza klasę VII i rdzeń R7 (NPC_SHIP_CLASSES); bez pola poziomy
+//           kończą się na drabinie gracza (VI / R6).
 //   powerPriority  kolejność kategorii urządzeń w kolejce mocy (POWER_CATEGORIES; brak — POWER_PRIORITY_DEFAULT).
 //
 // GNIAZDA BRONI (etap 2): moduł `mount` { slot: main | aux | missile | special | builtin, size: S | M | L | Capital,
@@ -69,7 +71,7 @@
 
 import { HD_PARTS, expandHullPart } from './hullDesignParts.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
-import { MOUNT_SIZES, POWER_CATEGORIES, SHIP_CLASS_MAX } from '../../data/shipClasses.js';
+import { MOUNT_SIZES, POWER_CATEGORIES, SHIP_CLASS_MAX, SHIP_CLASS_NPC_MAX } from '../../data/shipClasses.js';
 import { expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
 import { expandCastle, normalizeCastle } from './hullDesignCastles.js';
 
@@ -139,7 +141,12 @@ export const HD_MODULES = Object.freeze({
   cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } }),
   // GNIAZDO BRONI (etap 2): podstawa w stylu TN pod wieżę gry (wieżę rysuje gra) — kompozytor rysuje ją jak kapsułę
   // wieży (główne, specjalne, wbudowane), okrągłą płytę (pomocnicze) albo pokrywę wyrzutni (rakietowe)
-  mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } })
+  mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } }),
+  // URZĄDZENIA DREDNOTA (docs/BRIEF-drednot.md § 4.3; w grze — etapy E3–E5): generator tarczy sektora (źródło tarczy:
+  // dzieli jej pobór — src/data/shipClasses.js) i projektor studni grawitacyjnej na grzbiecie (kategoria mocy `device`);
+  // wygląd TN w kompozytorze, kable z rdzenia (sieć systemów)
+  shield_gen: Object.freeze({ code: 15, label: 'Generator tarczy', r: 26, parts: { gun_energy: 1, avionics: 1 } }),
+  grav_proj: Object.freeze({ code: 16, label: 'Projektor studni grawitacyjnej', r: 40, parts: { reactor_core: 0.5, gun_energy: 2, avionics: 1 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
 
@@ -369,9 +376,10 @@ export function normalizeHullDesign(design = {}) {
     round: Math.max(0, Math.min(1, num(design.round, style === 'rounded' ? 1 : 0))),
     // Okna tarasów (rząd świateł za krawędzią nadbudówki): 0 — brak (Terra Nova), 1 — pełne.
     windows: Math.max(0, Math.min(1, num(design.windows, 1))),
-    // klasa okrętu (src/data/shipClasses.js): mostek I–VI, rdzeń R1–R6; 0 — z powierzchni i gniazd
-    bridgeLevel: clampInt(num(design.bridgeLevel, 0), 0, SHIP_CLASS_MAX),
-    coreLevel: clampInt(num(design.coreLevel, 0), 0, SHIP_CLASS_MAX),
+    // klasa okrętu (src/data/shipClasses.js): mostek I–VI, rdzeń R1–R6; 0 — z powierzchni i gniazd; projekt NPC — do VII / R7
+    npc: design.npc === true,
+    bridgeLevel: clampInt(num(design.bridgeLevel, 0), 0, design.npc === true ? SHIP_CLASS_NPC_MAX : SHIP_CLASS_MAX),
+    coreLevel: clampInt(num(design.coreLevel, 0), 0, design.npc === true ? SHIP_CLASS_NPC_MAX : SHIP_CLASS_MAX),
     powerPriority: normPriority(design.powerPriority),
     blocks: [...blocks.values()],
     shapes: (design.shapes || []).map((s) => normShape(s, shift)).filter(Boolean),
