@@ -59,8 +59,17 @@
 //           → detail ≈ długość / 1700). Pancerz stoi 7 jd nad ramą, nadbudówka 12, mostek 15.
 //   grid    krok siatki klocków [j.]: ustalany RAZ przy tworzeniu projektu (brak pola — z detalu: hullDesignGridStep,
 //           ~4 jd, potęga dwójki), potem stały — zmiana detalu nie rusza klocków ani rozmiaru okrętu.
+//   bridgeLevel / coreLevel  KLASA okrętu (etap 2, src/data/shipClasses.js): poziom mostka I–VI (twarde limity:
+//           powierzchnia, gniazda, rozmiar broni) i rdzenia R1–R6 (moc); 0 — z powierzchni i gniazd (stare projekty).
+//   powerPriority  kolejność kategorii urządzeń w kolejce mocy (POWER_CATEGORIES; brak — POWER_PRIORITY_DEFAULT).
+//
+// GNIAZDA BRONI (etap 2): moduł `mount` { slot: main | aux | missile | special | builtin, size: S | M | L | Capital,
+// weapon?: id z MASTER_WEAPONS | '' (puste) — brak pola = typowa broń gniazda }; wieże turret_s / m / l to gniazda
+// główne S / M / L (te same pola), wrota hangaru (`hangar`) — gniazda hangarowe. hullDesignMountOf(m) daje typ i rozmiar.
 
 import { HD_PARTS, expandHullPart } from './hullDesignParts.js';
+import { MASTER_WEAPONS } from '../../data/weapons.js';
+import { MOUNT_SIZES, POWER_CATEGORIES, SHIP_CLASS_MAX } from '../../data/shipClasses.js';
 import { expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
 import { expandCastle, normalizeCastle } from './hullDesignCastles.js';
 
@@ -127,9 +136,32 @@ export const HD_MODULES = Object.freeze({
   // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa)
   fuel_tank: Object.freeze({ code: 11, label: 'Zbiornik paliwa', w: 26, h: 11, parts: { hull_plate: 1 } }),
   thruster_side: Object.freeze({ code: 12, label: 'Dysza SIDE', w: 9, h: 7, parts: { thruster: 1 } }),
-  cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } })
+  cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } }),
+  // GNIAZDO BRONI (etap 2): podstawa w stylu TN pod wieżę gry (wieżę rysuje gra) — kompozytor rysuje ją jak kapsułę
+  // wieży (główne, specjalne, wbudowane), okrągłą płytę (pomocnicze) albo pokrywę wyrzutni (rakietowe)
+  mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
+
+/** Typy gniazd modułu `mount` (gniazda hangarowe to wrota `hangar`). */
+export const HD_MOUNT_SLOTS = Object.freeze(['main', 'aux', 'missile', 'special', 'builtin']);
+/** Moduły-gniazda: typ gniazda i rozmiar domyślny (wieże S / M / L — gniazda główne). */
+export const HD_MOUNT_MODULES = Object.freeze({
+  turret_s: Object.freeze({ slot: 'main', size: 'S' }), turret_m: Object.freeze({ slot: 'main', size: 'M' }),
+  turret_l: Object.freeze({ slot: 'main', size: 'L' }), mount: Object.freeze({ slot: 'main', size: 'M' }),
+  hangar: Object.freeze({ slot: 'hangar', size: 'S' })
+});
+/** Promień podstawy gniazda `mount` [jd] na typ (× detal projektu) — tak stawia je plik slotów i edytor. */
+export const HD_MOUNT_RADIUS_DU = Object.freeze({ main: 22, special: 26, builtin: 30, aux: 13, missile: 15 });
+
+/** Gniazdo modułu: { slot, size, weapon (undefined — typowa broń, '' — puste) } albo null (moduł nie jest gniazdem). */
+export function hullDesignMountOf(m) {
+  const def = HD_MOUNT_MODULES[m?.type];
+  if (!def) return null;
+  const slot = m.type === 'mount' && HD_MOUNT_SLOTS.includes(m.slot) ? m.slot : def.slot;
+  const size = MOUNT_SIZES.includes(m.size) ? m.size : def.size;
+  return { slot, size, weapon: m.weapon };
+}
 
 /**
  * Barwy frakcji (sRGB): pancerz, nadbudówka, linie paneli, akcent (pasy), maszynownia, ostrzegawcze, okna, rury
@@ -232,6 +264,24 @@ function normModule(m) {
   if (m.mirror === false) out.mirror = false;
   // system na stałym miejscu klasy i kadłuba (sloty presetów: hullDesignSystemSlots.js) — edytor go nie przesuwa
   if (m.lock === true) out.lock = true;
+  // gniazdo broni: typ (tylko `mount`), rozmiar, broń ('' — puste; nieznana — typowa)
+  const md = HD_MOUNT_MODULES[m.type];
+  if (md) {
+    if (m.type === 'mount') out.slot = HD_MOUNT_SLOTS.includes(m.slot) ? m.slot : md.slot;
+    if (MOUNT_SIZES.includes(m.size)) out.size = m.size;
+    else if (m.type === 'mount') out.size = md.size;
+    if (m.weapon === '' || (typeof m.weapon === 'string' && MASTER_WEAPONS[m.weapon])) out.weapon = m.weapon;
+  }
+  return out;
+}
+
+/** Kolejka mocy projektu: permutacja POWER_CATEGORIES albo null (domyślna). */
+function normPriority(p) {
+  if (!Array.isArray(p)) return null;
+  const out = [];
+  for (const c of p) if (POWER_CATEGORIES.includes(c) && !out.includes(c)) out.push(c);
+  if (!out.length) return null;
+  for (const c of POWER_CATEGORIES) if (!out.includes(c)) out.push(c);
   return out;
 }
 
@@ -319,6 +369,10 @@ export function normalizeHullDesign(design = {}) {
     round: Math.max(0, Math.min(1, num(design.round, style === 'rounded' ? 1 : 0))),
     // Okna tarasów (rząd świateł za krawędzią nadbudówki): 0 — brak (Terra Nova), 1 — pełne.
     windows: Math.max(0, Math.min(1, num(design.windows, 1))),
+    // klasa okrętu (src/data/shipClasses.js): mostek I–VI, rdzeń R1–R6; 0 — z powierzchni i gniazd
+    bridgeLevel: clampInt(num(design.bridgeLevel, 0), 0, SHIP_CLASS_MAX),
+    coreLevel: clampInt(num(design.coreLevel, 0), 0, SHIP_CLASS_MAX),
+    powerPriority: normPriority(design.powerPriority),
     blocks: [...blocks.values()],
     shapes: (design.shapes || []).map((s) => normShape(s, shift)).filter(Boolean),
     modules: (design.modules || []).map(normModule).filter(Boolean),

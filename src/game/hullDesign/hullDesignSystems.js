@@ -10,8 +10,8 @@
 //                      gondola MAIN i każda dysza SIDE (najbliższy reaktor). Paliwo idzie do silników przez rdzeń.
 //   PRĄD (kable)     — reaktor → każde URZĄDZENIE (najbliższy reaktor).
 //
-// URZĄDZENIA (pobór prądu, HD_POWER_LOAD — waga trasy = kabli w wiązce do urządzenia): wieże i gniazda S / M / L,
-// mostek, gondola MAIN, dysza SIDE, zbiornik paliwa (pompa), wrota hangaru, ładownia, pierścień i iluminatory
+// URZĄDZENIA (pobór prądu, HD_POWER_LOAD — waga trasy = kabli w wiązce do urządzenia): wieże i gniazda broni
+// (`mount`; pobór w MW i bilans mocy rdzenia — src/data/shipClasses.js, hullDesignClass.js), mostek, gondola MAIN, dysza SIDE, zbiornik paliwa (pompa), wrota hangaru, ładownia, pierścień i iluminatory
 // (`well` — studnia, światło, czujniki), luk ładunkowy (`hatch` v 0 — napędzany). NIE są urządzeniami: kratki
 // (`vent` — wentylacja bierna), klapy serwisowe TN (`hatch` v 1 — pokrywy otwierane ręcznie), naklejki, rowki, rury
 // ręczne; reaktor jest źródłem.
@@ -25,7 +25,7 @@ export const HD_SYSTEM_TYPES = Object.freeze(['reactor', 'bridge', 'engine', 'fu
 /** Pobór prądu na typ modułu (kabli w trasie do urządzenia). */
 export const HD_POWER_LOAD = Object.freeze({
   turret_s: 1, turret_m: 1, turret_l: 2, bridge: 2, engine: 1, thruster_side: 1, fuel_tank: 1,
-  hangar: 1, cargo: 1, well: 1, hatch: 1
+  hangar: 1, cargo: 1, well: 1, hatch: 1, mount: 1
 });
 
 /** Waga trasy paliwa (rur w wiązce do odbiornika): gondola MAIN — zasilanie, powrót, chłodzenie dyszy. */
@@ -34,6 +34,8 @@ export const HD_FUEL_LOAD = Object.freeze({ engine: 3, thruster_side: 1, fuel_ta
 /** Urządzenie pobierające prąd (klapa serwisowa TN — `hatch` v 1 — nie). */
 export function powerLoad(m) {
   if (m.type === 'hatch' && (m.v || 0) >= 1) return 0;
+  // gniazdo broni L / Capital — gruby kabel jak wieża L
+  if (m.type === 'mount' && (m.size === 'L' || m.size === 'Capital')) return 2;
   return HD_POWER_LOAD[m.type] || 0;
 }
 

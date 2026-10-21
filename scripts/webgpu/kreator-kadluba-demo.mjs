@@ -5,10 +5,11 @@
 // relief, emisja, komórki belek), okręty z gotowych części, edycja (blok, koło, wycięcie, moduł, naklejka, rowek
 // myszą), sieć rur (etap `rury`: rufa z gondolami A/B, sieć wyłączona, rura ręczna), pipeline'y synchroniczne
 // w klatkach (ma być 0), błędy konsoli. Etap `klocki` (poza domyślnymi): fregata z klocków, arkusz palety, edycja myszą
-// (`--etapy klocki --tylko klocki` — bez floty).
+// (`--etapy klocki --tylko klocki` — bez floty). Etap `klasa` (poza domyślnymi): panel klasy, gniazda Bellatora
+// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka.
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,reaktor]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,reaktor,klasa]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -298,6 +299,66 @@ try {
     rama.po = await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`);
     report.rama_klocki = rama;
     console.log('klocki rama', JSON.stringify(rama));
+  }
+  if (stages.has('klasa')) {
+    // KLASA OKRĘTU (--etapy klasa, etap 2): panel klasy przy Bellatorze (limity, bilans mocy, priorytety), Bellator
+    // i Colossus z gniazdami gry (kadr na okręt i zbliżenie z nakładką gniazd), niedobór mocy (Bellator na R2 — szare
+    // kable do gniazd bez prądu: czysty kadr i z nakładką), odrzucenie akcji ponad limit (Custos: gniazdo M w klasie I,
+    // 13. gniazdo, mostek niżej niż powierzchnia)
+    const k = 'window.__kreator';
+    const panelOn = `document.body.classList.remove("clean"); document.getElementById('sel-bridge').scrollIntoView({ block: 'start' })`;
+    const leftFit = (zk = 1) => `(() => { const im = ${k}.S.field.image; const z = Math.min((innerWidth - 360) * 0.86 / im.w, innerHeight * 0.7 / im.h) * ${zk}; ${k}.setCamera(im.cx + 170 / z, im.cy, z); })()`;
+    const klasa = {};
+    for (const key of ['bellator', 'colossus']) {
+      if (only && !only.has(key)) continue;
+      await ev(`${k}.preset("${key}")`);
+      await ev(`${k}.act("v"); ${panelOn}; ${leftFit()}`);
+      await shot(`klasa-${key}-panel`, `${key}: panel klasy (mostek, rdzeń, powierzchnia i gniazda wobec limitu, bilans mocy, priorytety), nakładka gniazd`);
+      klasa[key] = await ev(`${k}.klasa.state()`);
+      await ev(`document.body.classList.add("clean"); ${k}.fit()`);
+      await shot(`klasa-${key}-gniazda`, `${key}: gniazda broni z gry (podstawy TN: kapsuły, płyty PD, pokrywy wyrzutni), kadr na okręt`);
+      await ev(`${k}.setCamera(${k}.S.field.image.cx + ${k}.S.field.image.w * 0.18, ${k}.S.field.image.cy - ${k}.S.field.image.h * 0.18, ${k}.S.cam.zoom * 2.6)`);
+      await shot(`klasa-${key}-gniazda-det`, `${key}: zbliżenie dziobowej ćwiartki — gniazda i kable do nich`);
+    }
+    if (!only || only.has('bellator')) {
+      await ev(`${k}.preset("bellator")`);
+      await ev(`${k}.klasa.setCore(2)`);
+      await ev(`${k}.built()`);
+      klasa.niedobor = await ev(`${k}.klasa.state()`);
+      await ev(`${k}.act("v"); ${panelOn}; ${leftFit()}`);
+      await shot('klasa-niedobor-panel', 'Bellator na rdzeniu R2: niedobór mocy — panel (gniazda bez prądu), nakładka (czerwone gniazda)');
+      // kable do gniazd wchodzą pod płyty — widoczne martwe odcinki leżą w kanale osi przy rdzeniu (−17, 0)
+      await ev(`document.body.classList.add("clean"); ${k}.setCamera(5, 36, Math.min(innerWidth * 0.85 / ${k}.S.field.image.w, innerHeight * 0.8 / ${k}.S.field.image.h) * 9)`);
+      await shot('klasa-niedobor-kable', 'Bellator na R2: kable do gniazd bez prądu szare, bez opasek (żywe — czarne z kolorowymi opaskami)');
+      await ev(`${k}.klasa.setCore(4)`);
+      await ev(`${k}.built()`);
+      await shot('klasa-niedobor-kable-r4', 'Ten sam kadr na rdzeniu R4 (wszystko z prądem) — do porównania');
+      // mostek niżej niż kadłub (III: 90 000 j² przy 165 000) — odrzucony
+      klasa.mostekIII = { ok: await ev(`${k}.klasa.setBridge(3)`), msg: (await ev(`${k}.klasa.state()`)).msg };
+    }
+    if (!only || only.has('custos')) {
+      await ev(`${k}.preset("custos")`);
+      await ev(`${k}.built()`);
+      const lim = {};
+      lim.gniazdoM = await ev(`(${k}.klasa.addMount(0, 0, 'main', 'M'), ${k}.klasa.state().msg)`);
+      // 4 pary gniazd PD na klinie dziobu (4 + 8 = 12 — limit klasy I), piąta para odrzucona
+      let n = 0;
+      for (const x of [40, 45, 55, 60]) if (await ev(`${k}.klasa.addMount(${x}, -15, 'aux')`)) n++;
+      await ev(`${k}.built()`);
+      lim.dolozone = n;
+      lim.gniazda = (await ev(`${k}.klasa.state()`)).mounts;
+      lim.trzynaste = await ev(`(${k}.klasa.addMount(30, -10, 'aux'), ${k}.klasa.state().msg)`);
+      // powiększenie kadłuba ponad 10 000 j² (klocek przy burcie) — wraca
+      lim.powierzchnia = await ev(`(${k}.edit((d) => { d.shapes.push({ kind: 'block', shape: 'rect', x: -20, y: -50, w: 60, h: 40, level: 1 }); }), true)`);
+      await ev(`${k}.built()`);
+      lim.powierzchniaMsg = (await ev(`${k}.klasa.state()`)).msg;
+      lim.poCofnieciu = await ev(`${k}.klasa.state()`);
+      await ev(`${k}.act("v"); ${panelOn}; ${leftFit()}`);
+      await shot('klasa-limit-custos', 'Custos (klasa I): 12 gniazd — limit; gniazdo M, 13. gniazdo i powiększenie kadłuba odrzucone z komunikatem');
+      klasa.limity = lim;
+    }
+    report.klasa = klasa;
+    console.log('klasa', JSON.stringify(klasa));
   }
   report.bledy = logs.errors().filter((l) => !/favicon|DevTools|\[vite\]/.test(l)).slice(0, 20);
 } catch (e) {

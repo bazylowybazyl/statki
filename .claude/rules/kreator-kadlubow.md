@@ -21,12 +21,13 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   komórki belek), `hullDesignBlocks.js` (KLOCKI: paleta, wielokąty, suma / różnica wielokątów, szczelina płyt),
   `hullDesignBuildable.js` (strażnik `isPlayerBuildable`), `hullDesignParts.js`, `hullDesignCastles.js`,
   `hullDesignSystems.js` (sieć systemów: kto z kim), `hullDesignSystemSlots.js` (sloty systemów presetów),
-  `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
-  (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania).
+  `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster, martwe kable `markPipeNetPower`), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
+  (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania), `hullDesignClass.js` (klasa
+  okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`.
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
 - Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`,
-  `tests/hullDesignBlocks.test.mjs` i `tests/hullDesignNetwork.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
-  podkład do układania klocków) `scripts/kreator-tn-ab.mjs`.
+  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
+  podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`.
 
 ## Decyzje użytkownika
 
@@ -36,7 +37,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   naklejki, pióro do 16 pkt), bez obrysu sprite'a. Pilnuje `isPlayerBuildable` na wszystkich presetach (test). Flota TN
   jest z klocków (etap 1B): IoU alfy ze sprite'em ≥ 0,9 (test), najwyżej 60 klocków na połowę okrętu.
 - Systemy (rdzeń, mostki, silniki, ładownie, zbiorniki) mają stałe miejsca dla klasy i kadłuba; kable i rury wynikają
-  z systemów i biegną rowami między płytami (etap 1C); klasa okrętu z mostka i rdzenia (etap 2, liczby do decyzji).
+  z systemów i biegną rowami między płytami (etap 1C).
+- Klasa okrętu z mostka i rdzenia (etap 2, 2026-10-21, `docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md`): klasy I–VI (Fregata,
+  Niszczyciel, Krążownik, Pancernik, Kapitał — lotniskowiec to rola, Superkapitał); Atlas poza drabiną (unikat fabularny
+  klasy VI); limity mostka TWARDE (edytor nie pozwala ich przekroczyć), moc rdzenia — limit MIĘKKI (urządzenia ponad moc
+  gasną wg priorytetu gracza, zapas mocy w napęd); liczby z tabel propozycji, moc rdzeni skalibrowana na domyślnym
+  uzbrojeniu NPC.
 
 ## Klocki
 
@@ -117,10 +123,34 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   haki `reactorDemoCoresFrom` po wypieku, `reactorDemoSync` w `render()`, `window.__kreator.reactor3D`); zrzuty
   `--etapy reaktor` (z modelem, samo gniazdo, na tle okrętu).
 
+## Klasy okrętów i gniazda broni (etap 2)
+
+- Dane i rachunek w `src/data/shipClasses.js` (czysty, bez kreatora): klasy (limit powierzchni, gniazd, ciężkich, rozmiar
+  broni), rdzenie (MW), utrzymanie `0,07 · pow^0,6`, tarcza `0,5 · utrzymanie`, pobór gniazda (`energyCost` broni; brak
+  broni — mediana typu i rozmiaru; `weapon: ''` — 0; rakieta 2 MW), kolejka mocy `shipPowerBalance`, napęd 0,7–1,2.
+  Kreator czyta je przez `hullDesignClass.js`; gra (etap 3) ma czytać te same funkcje.
+- Projekt: `bridgeLevel` / `coreLevel` (0 — z powierzchni / jak mostek; rdzeń ≤ mostek + 1), `powerPriority`. Gniazdo =
+  moduł `mount` { slot, size, weapon } albo wieża `turret_*` (główne S / M / L) albo wrota `hangar` (hangarowe) —
+  zawsze przez `hullDesignMountOf`, nie po typie modułu. Nowy typ gniazda → `HD_MOUNT_SLOTS` / `HD_MOUNT_MODULES`,
+  wygląd w kompozytorze (`_mountLook`), pobór w `shipClasses.js`.
+- Gniazda floty TN są danymi (`HD_PRESET_MOUNTS` w `hullDesignSystemSlots.js`) z `SHIP_EDITOR_DEFAULTS` gry — po zmianie
+  gniazd w grze albo obrysu presetu przelicz `node scripts/kreator-gniazda-tn.mjs --zapisz` (duplikaty, pary burt,
+  sadzanie na kapsułach / ramach, dosuwanie od modułów i kanałów serwisowych); test pilnuje liczby na typ, broni = NPC
+  i braku nakładania. Gniazda bez pary (Bellator) wyłączają lustro sieci.
+- Każdy preset mieści się w limitach swojej klasy (`HD_PRESET_CLASS`, test); Atlas II — poza drabiną
+  (`HD_PRESET_OUTSIDE_LADDER`). Kalibracja: preset TN na swoim rdzeniu ma ~20% zapasu (test ± 5%) — zmiana broni NPC,
+  `energyCost` albo gniazd gry wymaga przeliczenia mocy `CORE_LEVELS`.
+- Niedobór mocy: `hullDesignClass` → `applyHullDesignPower(field, cls)` PRZED `composer.setDesign` (oznacza martwe biegi
+  i liczy raster od nowa; trasy bez zmian). Bieg kabli: `R2.w` = materiał + 8 · na płytach + 16 · martwy.
+- Demo: każda zmiana projektu przechodzi przez `classGuard` w `runBuild` (akcja zwiększająca przekroczenie limitu mostka
+  wraca); nowa ścieżka dokładania gniazd → `classMountPlace` (odmowa przed akcją).
+
 ## Jak sprawdzić
 
-- `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs` (WGSL
-  kompozytora buduje się w Node).
+- `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
+  tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
+- Klasy: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` (panel klasy, gniazda
+  Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
   [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`), gniazdo obudowy
   reaktora z modelem 3D (`reaktor`); raport `raport.json`
