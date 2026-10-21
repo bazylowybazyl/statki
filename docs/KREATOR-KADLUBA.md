@@ -380,7 +380,7 @@ powierzchnia i gniazda) i `coreLevel` (0 — jak mostek; najwyżej mostek + 1 �
 | I Fregata | 10 000 | 12 (7) | S | Custos 6 381 (64%), 4 (2) |
 | II Niszczyciel | 32 000 | 22 (13) | M | Hasta 18 373 (57%), 8 (4) |
 | III Krążownik | 90 000 | 26 (15) | M | — (Hasta-D z kreatora 63 141) |
-| IV Pancernik | 200 000 | 32 (18) | L | Bellator 165 292 (83%), 31 (13) |
+| IV Pancernik | 200 000 | 38 (22) | L | Bellator 165 292 (83%), 31 (13) |
 | V Kapitał | 420 000 | 44 (26) | L | Citadella 352 131 (84%), 35 (20) |
 | VI Superkapitał | 900 000 | 60 (32) | Capital | Colossus 721 631 (80%), 56 (24) |
 

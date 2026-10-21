@@ -16,7 +16,7 @@ test('klasy I–VI i rdzenie R1–R6: tabele rosnące, liczby z propozycji, rdze
   assert.equal(SHIP_CLASSES.length, 6);
   assert.deepEqual(SHIP_CLASSES.map((c) => c.label), ['Fregata', 'Niszczyciel', 'Krążownik', 'Pancernik', 'Kapitał', 'Superkapitał']);
   assert.deepEqual(SHIP_CLASSES.map((c) => c.areaMax), [10000, 32000, 90000, 200000, 420000, 900000]);
-  assert.deepEqual(SHIP_CLASSES.map((c) => [c.mountsMax, c.heavyMax]), [[12, 7], [22, 13], [26, 15], [32, 18], [44, 26], [60, 32]]);
+  assert.deepEqual(SHIP_CLASSES.map((c) => [c.mountsMax, c.heavyMax]), [[12, 7], [22, 13], [26, 15], [38, 22], [44, 26], [60, 32]]);
   assert.deepEqual(SHIP_CLASSES.map((c) => c.weaponSize), ['S', 'M', 'M', 'L', 'L', 'Capital']);
   for (let i = 1; i < 6; i++) {
     assert.ok(CORE_LEVELS[i].mw > CORE_LEVELS[i - 1].mw, `R${i + 1} > R${i}`);

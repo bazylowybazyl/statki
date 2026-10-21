@@ -51,7 +51,7 @@ Limity z zapasem: wzór TN zajmuje 60–85% limitu, żeby było co rozbudowywać
 | I Fregata | Custos | 10 000 | 12 (7) | S | 64% pow., 10 gniazd |
 | II Niszczyciel | Hasta | 32 000 | 22 (13) | M | 57% pow., 20 gniazd |
 | III Krążownik | — (nowa klasa, bez kadłuba TN) | 90 000 | 26 (15) | M | — |
-| IV Pancernik | Bellator | 200 000 | 32 (18) | L | 83% pow., 27 gniazd |
+| IV Pancernik | Bellator | 200 000 | 38 (22) | L | 83% pow., 31 gniazd |
 | V Kapitał | Citadella (rola: lotniskowiec) | 420 000 | 44 (26) | L | 84% pow., 40 gniazd |
 | VI Superkapitał | Colossus, Atlas | 900 000 | 60 (32) | Capital | 80% / 75% pow., 56 / 45 gniazd |
 
@@ -100,7 +100,8 @@ Opis stanu: `docs/KREATOR-KADLUBA.md` § „Klasy okrętów”. Różnice wobec 
 
 - **Gniazda TN** — edytor gniazd gry trzyma Custosa, Hastę i Bellatora pod kluczami `frigate`, `destroyer`, `battleship`
   (pomiar wyżej szukał `terran_*` i wziął `SHIPS[…].spec`). Gra ma 4 / 8 / 31 / 35 / 56 gniazd (Custos 5 markerów, w tym
-  duplikat; Citadella 40, w tym 5 duplikatów). Limity klas bez zmian; Bellator zajmuje 31 z 32 gniazd klasy IV.
+  duplikat; Citadella 40, w tym 5 duplikatów). Bellator zajmuje 31 gniazd, więc limit klasy IV podniesiony z 32 (18) do 38 (22) — decyzja użytkownika 2026-10-21;
+  pozostałe limity bez zmian.
 - **Moc rdzeni** skalibrowana na prawdziwym domyślnym uzbrojeniu NPC z tarczą (0,5 · utrzymanie): R1–R6 = 45 / 100 /
   185 / 330 / 450 / 1 150 MW (propozycja 65 / 180 / 280 / 450 / 700 / 1 500). Wzór na swoim rdzeniu ma 18–24% zapasu.
 - Rakiety (bez `energyCost`) — 2 MW na wyrzutnię; tarcza w kolejce mocy jak broń (domyślnie pierwsza).
