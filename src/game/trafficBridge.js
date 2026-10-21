@@ -281,6 +281,35 @@ export class TrafficBridge {
     this._send({ type: TRAFFIC_MSG.STATION, stationId: String(stationId || ''), destroyed: true });
   }
 
+  // ---------- rynki (E1, `traffic/markets.js`) ----------
+  // Kopia rynku widzi zmianę po odpowiedzi workera (`tick` z nową tabelą
+  // stacji, wysłany od razu) — do tego czasu `hasStation` zwraca stan sprzed.
+
+  /**
+   * Nowy rynek w trakcie gry: MarketDef (`src/data/markets.js`) — np. kryjówka
+   * misji `{ id, label, kind: 'hideout', position: { source: 'point', x, y },
+   * factionId: 'pirates', docks: { layout: 'hangar' } }`.
+   */
+  addMarket(def) {
+    if (!def?.id) return;
+    this._send({ type: TRAFFIC_MSG.MARKET_ADD, def: JSON.parse(JSON.stringify(def)) });
+  }
+
+  /** Budynek przemysłu na rynku (archetyp z `INDUSTRY_ARCHETYPES`, np. `foundry`). */
+  addMarketBuilding(stationId, role) {
+    this._send({ type: TRAFFIC_MSG.MARKET_BUILDING, stationId: String(stationId || ''), role: String(role || '') });
+  }
+
+  /** Nowy właściciel rynku; `null` = opuszczony. */
+  setMarketOwner(stationId, factionId) {
+    this._send({ type: TRAFFIC_MSG.MARKET_OWNER, stationId: String(stationId || ''), factionId: factionId || null });
+  }
+
+  /** Rynek znika ze świata ruchu (i z kopii rynku po odpowiedzi workera). */
+  removeMarket(stationId) {
+    this._send({ type: TRAFFIC_MSG.MARKET_REMOVE, stationId: String(stationId || '') });
+  }
+
   /** Pokrętła deweloperskie: `piracyPressure`, `piracyEnabled`, `protectObserved`. */
   setConfig(config = {}) {
     this._send({ ...config, type: TRAFFIC_MSG.CONFIG });
@@ -347,18 +376,35 @@ export class TrafficBridge {
     this.clock = Number(message.clock) || 0;
     this.seed = message.seed ?? null;
     this.buildMs = Number(message.buildMs) || 0;
-    this.stationIndex = new Map(this.tables.stations.map((entry, index) => [entry.id, index]));
     this.market.clear();
-    for (const entry of this.tables.stations) {
-      this.market.set(entry.id, createMirror(this.tables.resources));
-    }
+    this._indexStations();
     this._emit('ready', message);
     this._resolveReady(message);
+  }
+
+  /** Indeks i kopie magazynów po tabeli stacji — kopie istniejących rynków zostają. */
+  _indexStations() {
+    const stations = this.tables.stations;
+    this.stationIndex = new Map(stations.map((entry, index) => [entry.id, index]));
+    for (const id of [...this.market.keys()]) {
+      if (!this.stationIndex.has(id)) this.market.delete(id);
+    }
+    for (const entry of stations) {
+      if (!this.market.has(entry.id)) this.market.set(entry.id, createMirror(this.tables.resources));
+    }
   }
 
   _onTick(message) {
     this.clock = Number(message.clock) || 0;
     this.stats = message.stats || null;
+    // Nowa tabela rynków (MARKET_* albo zniszczona stacja) przed rynkiem —
+    // bufor `market` ma już jej układ.
+    if (Array.isArray(message.stations) && this.tables) {
+      this.tables.stations = message.stations;
+      if (message.berths) this.tables.berths = message.berths;
+      this._indexStations();
+      this._emit('markets', this.tables.stations);
+    }
     if (message.market) this._applyMarket(message.market, Number(message.stockSeq) || 0);
     if (message.bubble) this._applyBubble(message.bubble);
     if (Array.isArray(message.stationFactions) && this.tables) {
@@ -417,7 +463,7 @@ export class TrafficBridge {
   // Odczyt
   // ============================================================
 
-  /** Czy świat ruchu zna tę stację (planety gry tak, misyjna kryjówka nie). */
+  /** Czy świat ruchu zna tę stację (planety gry; kryjówka misji — po `addMarket` i odpowiedzi workera). */
   hasStation(stationId) {
     return this.market.has(String(stationId || ''));
   }
@@ -501,7 +547,7 @@ export class TrafficBridge {
   // Zdarzenia
   // ============================================================
 
-  /** `ready`, `tick`, `market`, `bubble`, `wrecks`, `war-wrecks`, `error`. Zwraca wypisanie. */
+  /** `ready`, `tick`, `market`, `markets` (nowa tabela stacji), `bubble`, `wrecks`, `war-wrecks`, `error`. Zwraca wypisanie. */
   on(type, listener) {
     if (typeof listener !== 'function') return () => {};
     let list = this.listeners.get(type);

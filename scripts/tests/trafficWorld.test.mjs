@@ -22,6 +22,12 @@ import {
   worldCapacityFromGame, baseCapacityOf, applyWorldStockDelta, setWorldCapacityFromGame,
   destroyWorldStation, seededRandom, trafficFields, TRAFFIC_STEP_SECONDS
 } from '../../src/game/traffic/trafficWorld.js';
+import {
+  addMarket, removeMarket, setMarketOwner, addMarketBuilding
+} from '../../src/game/traffic/markets.js';
+import { MARKET_DEFS, MARKET_DEF_BY_ID } from '../../src/data/markets.js';
+import { FACTION } from '../../src/data/factions.js';
+import { resourcePrice } from '../../src/game/stationEconomy.js';
 
 /** Stan świata w jednej linijce — do porównań „ten sam przebieg". */
 export function worldDigest(world) {
@@ -213,6 +219,93 @@ export function run() {
   t.check('nikt nie cumuje w zniszczonym porcie',
     getActiveCourses(bitwa.registry).every(course => course.portStationId !== 'mars'));
   t.equal('nieznana stacja', destroyWorldStation(bitwa, 'nie-ma-takiej'), -1);
+
+  // ----------------------------------------------------------
+  t.section('Rynek jako jeden obiekt (E1)');
+
+  t.equal('stacje świata idą w kolejności tabeli rynków',
+    world.stations.map(station => station.id).join(','), MARKET_DEFS.map(def => def.id).join(','));
+  t.equal('każdy rynek tabeli ma MarketDef w świecie', world.markets.size, MARKET_DEFS.length);
+  t.check('port domowy floty tylko przy rynku z właścicielem spoza piratów',
+    world.homePorts.length > 0 && !world.homePorts.includes('gniazdo-hildy') && !world.homePorts.includes('neptune'));
+  t.check('każdy port ma redę albo hangar', [...world.docks.keys()].every(id => world.parking.has(id)));
+  t.equal('Ziemia stoi na redzie, kryjówka w hangarze',
+    `${world.parking.get('earth')?.mode},${world.parking.get('gniazdo-hildy')?.mode}`, 'reda,hangar');
+
+  // Start i rynek dołożony w biegu idą tą samą drogą: świat bez Westy plus
+  // Westa dodana po budowie ma tę samą Westę co świat z pełnej tabeli.
+  const bezWesty = buildTrafficWorld({
+    economyScale: 4, capacityMultiplier: 4, seed: 11,
+    markets: MARKET_DEFS.filter(def => def.id !== 'vesta')
+  });
+  t.check('świat bez Westy jej nie zna', !bezWesty.markets.has('vesta') && !getNode(bezWesty.network, 'vesta'));
+  const westa = addMarket(bezWesty, MARKET_DEF_BY_ID.vesta);
+  t.check('addMarket zwraca stację', westa?.id === 'vesta');
+  t.equal('ten sam węzeł sieci', JSON.stringify(getNode(bezWesty.network, 'vesta')),
+    JSON.stringify(getNode(world.network, 'vesta')));
+  t.equal('ten sam zapas startowy', JSON.stringify(bezWesty.getEconomy('vesta')),
+    JSON.stringify(world.getEconomy('vesta')));
+  t.equal('te same doki', bezWesty.docks.get('vesta')?.berths.length, world.docks.get('vesta')?.berths.length);
+  t.check('stocznia Westy (Unia Pasa)',
+    bezWesty.shipyards.yards.some(yard => yard.stationId === 'vesta' && yard.id === 'stocznia-vesta'));
+  t.equal('drugi raz to samo id — odmowa', addMarket(bezWesty, MARKET_DEF_BY_ID.vesta), null);
+  t.equal('księżyc bez rodzica — odmowa',
+    addMarket(bezWesty, { id: 'sierota', kind: 'moon', position: { source: 'moon', parentId: 'nie-ma', orbitRadius: 1, angle: 0 } }),
+    null);
+
+  // Rynek w trakcie gry: huta Unii Pasa przy pasie głównym. Huta przetapia
+  // rudę, więc rudy jej braknie — i to jest powód, żeby ktoś do niej leciał.
+  const zywy = buildTrafficWorld({ economyScale: 4, capacityMultiplier: 4, seed: 5 });
+  runSteps(zywy, 120);
+  const HUTA = 'huta-testowa';
+  const wersja = zywy.marketsVersion;
+  const huta = addMarket(zywy, {
+    id: HUTA, label: 'Huta testowa', kind: 'outpost',
+    position: { source: 'orbit', orbitAU: 34, angle: 1.6 },
+    factionId: FACTION.BELT_UNION,
+    industry: { buildings: ['foundry', 'foundry'], size: 0.4 }
+  });
+  t.check('rynek wchodzi do świata w biegu', !!huta && zywy.stations.includes(huta));
+  t.check('węzeł widać w sieci (trasowanie)', zywy.network.stations.some(node => node.id === HUTA));
+  t.check('ma doki i hangar', zywy.docks.get(HUTA)?.berths.length > 0 && zywy.parking.get(HUTA)?.mode === 'hangar');
+  t.check('ma ceny', RESOURCE_KEYS.some(key => resourcePrice(huta, zywy.getEconomy(HUTA), key)?.bid > 0));
+  t.check('jest portem domowym floty', zywy.homePorts.includes(HUTA));
+  t.check('wersja listy rynków rośnie', zywy.marketsVersion > wersja);
+  const dotykaHuty = course => course.stages?.some(stage =>
+    stage.toId === HUTA || stage.fromId === HUTA || stage.nodeId === HUTA);
+  let kursHuty = null;
+  for (let krok = 0; krok < 1440 && !kursHuty; krok++) {
+    stepTrafficWorld(zywy, TRAFFIC_STEP_SECONDS);
+    kursHuty = getActiveCourses(zywy.registry).find(dotykaHuty) || null;
+  }
+  t.check('kursy obsługują nowy rynek', !!kursHuty, kursHuty ? `(${kursHuty.id})` : '');
+
+  // Budynek, właściciel, usunięcie.
+  const profil = addMarketBuilding(zywy, HUTA, 'shipworks');
+  t.check('budynek dokłada rolę', profil?.roles.includes('shipworks') && profil.roles.includes('foundry'));
+  const merkury = addMarketBuilding(zywy, 'mercury', 'electronics');
+  t.check('rynek z tabeli przemysłu zachowuje swoje role',
+    merkury?.roles.includes('foundry') && merkury.roles.includes('electronics'));
+  t.equal('nieznana rola', addMarketBuilding(zywy, HUTA, 'nie-ma-takiej'), null);
+  t.check('przejęcie przez piratów: kryjówka zamiast portu domowego',
+    setMarketOwner(zywy, HUTA, FACTION.PIRATES)
+      && zywy.piracy.nests.has(HUTA) && !zywy.homePorts.includes(HUTA)
+      && zywy.shipyards.yards.filter(yard => yard.stationId === HUTA).every(yard => yard.factionId === FACTION.PIRATES));
+  t.check('pusty księżyc zajęty: dostaje załogę i port',
+    setMarketOwner(zywy, 'dione', FACTION.OUTER_CONSORTIUM)
+      && zywy.docks.has('dione') && getNode(zywy.network, 'dione').berths > 0);
+  const ileStacji = zywy.stations.length;
+  t.check('removeMarket', removeMarket(zywy, HUTA));
+  t.equal('rynek znika z listy stacji', zywy.stations.length, ileStacji - 1);
+  t.check('i z sieci tras', !zywy.network.stations.some(node => node.id === HUTA)
+    && !zywy.docks.has(HUTA) && !zywy.piracy.nests.has(HUTA));
+  t.equal('drugi raz — nie ma czego usunąć', removeMarket(zywy, HUTA), false);
+  const zegarHuty = zywy.registry.clock;
+  runSteps(zywy, 120);
+  t.equal('świat działa dalej po usunięciu', zywy.registry.clock, zegarHuty + 120 * TRAFFIC_STEP_SECONDS);
+  t.check('to samo id da się założyć ponownie', !!addMarket(zywy, {
+    id: HUTA, kind: 'outpost', position: { source: 'point', x: huta.x, y: huta.y }, factionId: FACTION.BELT_UNION
+  }));
 
   return t.results;
 }

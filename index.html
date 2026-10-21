@@ -1153,6 +1153,7 @@
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
+    import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
       RenderLiveDebug,
@@ -15928,6 +15929,8 @@
           + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
+      // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
+      for (const station of stations) registerTrafficV2Market(station, bridge);
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
       bridge.on('market', () => {
         if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
@@ -15949,6 +15952,31 @@
         trafficV2CapacitySent.set(station.id, { ...capacity });
         trafficV2.setCapacity(station.id, capacity);
       }
+    }
+
+    /**
+     * Stacja misyjna piratów (kryjówka najemnika, stocznia piratów, baza misji 1) jako RYNEK świata ruchu
+     * (src/game/traffic/markets.js, MarketDef z src/data/markets.js): kryjówka — łup z przechwytów, przemyt, cel
+     * wojny. Baza misji 1 to jeden rynek (habitat), nie cztery budowle. Bez `?trafficV2` nic się nie dzieje.
+     */
+    function registerTrafficV2Market(station, bridge = trafficV2) {
+      if (!bridge || !station?.id || !station.mission || !station.isPirate) return;
+      if (station.baseStructure && station.baseStructure !== 'habitat') return;
+      if (station.hp <= 0) return;
+      bridge.addMarket({
+        id: String(station.id),
+        label: station.name || 'Kryjówka piratów',
+        kind: MARKET_KIND.HIDEOUT,
+        position: { source: MARKET_POSITION.POINT, x: station.x, y: station.y },
+        factionId: station.factionId || FACTION.PIRATES,
+        docks: { layout: DOCK_LAYOUT.HANGAR },
+        hideout: true
+      });
+    }
+
+    /** Stacja zginęła w grze — jej rynek w świecie ruchu zostaje opuszczony (port, stocznia, kryjówka znikają). */
+    function onTrafficV2StationKilled(station) {
+      if (trafficV2?.hasStation(station?.id)) trafficV2.stationDestroyed(station.id);
     }
 
     if (DevFlags.trafficV2) {
@@ -16011,6 +16039,7 @@
       };
 
       stations.push(station);
+      registerTrafficV2Market(station);   // RUCH v2: kryjówka jako rynek
       if (typeof attachPirateStation3D === 'function') {
         if (!mainScene3D && typeof initWorld3D === 'function') {
           const res = initWorld3D();
@@ -22679,6 +22708,7 @@
           // First death — trigger 3D destruction effect
           station._destroyed3D = true;
           HullDamageEvents.station(station, 1, true);
+          onTrafficV2StationKilled(station);
           if (mercMission?.station === station) {
             const completed = completeMission('merc_pirate_station', {
               rewardCredits: 50000,
@@ -30486,6 +30516,7 @@
         shield: { max: spec.shield || 4000, val: spec.shield || 4000, regenRate: 250, regenDelay: 6, regenTimer: 0 }
       };
       stations.push(station);
+      registerTrafficV2Market(station);   // RUCH v2: stocznia piratów jako rynek
       if (typeof attachPirateStation3D === 'function') {
         if (!mainScene3D && typeof initWorld3D === 'function') {
           const res = initWorld3D();
@@ -30529,6 +30560,7 @@
         stations.push(st);
         out[key] = st;
       }
+      registerTrafficV2Market(out.habitat);   // RUCH v2: baza piratów jako jeden rynek (habitat)
       attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
