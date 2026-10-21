@@ -224,3 +224,29 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Tick (+40%) to koszt O(n²) `nextShipmentOrderId` w `cargoFleet.js`; poprawka zlecona E4.
   - Odkrycie E8: podzespoły okrętowe w ruchu v2 w ogóle nie jeżdżą między stacjami (0 zleceń, także w bazie), więc silniki powstają w stoczniach.
   - Do akceptacji użytkownika: tabele towarów i składy okrętów (raport E8, `E8-receptury.md`).
+- 2026-10-22 E5 scalone do main (6b816997): `src/data/driveModes.js`, `src/game/flight/hypercruise.js`.
+  - Gracz: PRZELOT do 1200 j./s, dopalacz 1000 / 1800 j./s, hipercruise do 20 tys. j./s w 16 s (Atlas), TRAVEL TO na 30 tys. j. w 12,8 s, Luna w 46 s, blokada masy zatrzymuje statek w 2,8 s.
+  - Ruch v2: szczyt kursów w powietrzu spada z 6285 do 1826, a dostaw jest dwa razy więcej.
+  - Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`. Liczby prędkości czekają na akceptację użytkownika.
+- 2026-10-22 E3 scalone do main (9885ed90): `src/game/traffic/miningFields.js`, rejestr uszczuplenia, wyrwy przez `beltWorld`.
+  - 96% wypraw kończy się w polach ze skałami (wcześniej 21–25%).
+  - Opis: `docs/E3-pas-w-ekonomii.md`. Pokrętła są w `MINING_FIELDS_CONFIG`.
+  - Wygląd wyrw czeka na ocenę użytkownika.
+- 2026-10-22 E4 scalone do main (3d8a3dde): `scripts/bramka-bilansu.mjs`, cena rezerwacji producenta, kupcy zaopatrujący stocznie, piractwo, `nextShipmentOrderId` bez O(n²).
+- **Wynik fali 1 na całości** (bramka `fala1-main`, ziarna 7 / 11 / 23, wobec bazy z § 2):
+  - przechwyty: 5,8–5,9% kursów z ładunkiem (baza ~40%) — zaliczone;
+  - stocznie: najdłuższy postój 0 min (baza: 5 stoczni stało 240 min) — zaliczone;
+  - tick: 22–24 ms przy szczycie ~1400 kursów — zaliczone;
+  - głód: 3–6 pozycji ponad 30 min, najdłużej ok. 40 min (Westa: nadstop niklu i `hypercruise_mk1`; Uran, Westa i Merkury: jeden z napędów) — niezaliczone;
+  - kolejka na redzie: Saturn i Uran 5,2–7,7 (porty bez ringu) — niezaliczone;
+  - dostawy ok. 20 tys. (baza 8,2 tys.), zwodowane 867–913 okrętów.
+- Testy na całości:
+  - `npm test`: 1 błąd. `materializedFlight` („bez wymuszonych przechwytów”) to UKRYTY BŁĄD BAŃKI, który ujawnił inny przebieg ruchu po E3 + E5 (osobno obie gałęzie są zielone). Prom na `luna:dok2:b1` stoi w pozie (odchyłka 0 / 0,7 j., kąt 0), ale kręci się w miejscu (`angVel` 0,161 > 0,07), bo goni punkt stanowiska bliższy niż 1 j. Strażnik wymusza przechwyt po 25 s. Bańki nie ma w grze, więc to pierwszy punkt E6.
+  - `node --test`: 3100 testów, 1 porażka (`cicBeltLayer`, tylko pod obciążeniem; osobno przechodzi).
+  - `npm run build`: przechodzi.
+- Na jutro:
+  - E4: końcowe strojenie (głód nowych towarów E8 w dalekich stoczniach, kolejki Saturna i Urana, saldo `thruster`);
+  - decyzje użytkownika: tabele E8, prędkości E5, wygląd wyrw E3, progi bramki;
+  - fala 2 (E2);
+  - reguła ruchu v2 w `.claude/rules/` z wierszem w indeksie `AGENTS.md` (propozycja E1);
+  - poza falą: 1 pipeline kompilowany synchronicznie w skoku warpa przez pas (`AsteroidBelt:rocksSmear`, z main sprzed fali 1) — brak rozgrzewki w obszarze pasa.
