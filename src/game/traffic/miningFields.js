@@ -52,9 +52,12 @@ export const MINING_FIELDS_CONFIG = Object.freeze({
   // Kopalnia schodzi do sąsiedniej komórki, gdy w bieżącej zostało mniej niż tyle ładowni.
   claimMinLoads: 0.5,
   // Udział chcianej rudy w ładowni = clamp(udział wśród rud × selectivity, minWanted, 1): górnik wybiera skały
-  // tej rudy, reszta ładowni to urobek przy okazji — wg składu miejsca.
+  // tej rudy, reszta ładowni to urobek przy okazji — wg składu miejsca. Domyślnie minWanted = 1 (sama chciana
+  // ruda; skład decyduje o polu, punkcie i czasie): przy 0,7 produkty uboczne bez popytu (węgiel, nikiel…)
+  // robiły nadwyżki do wywiezienia i kolejka na redzie Saturna rosła 4,4 → 12,6 (bramka bilansu, ziarno 23).
+  // AGENT: przy recepturach rud z widm (E4) — do decyzji, czy włączyć urobek przy okazji (minWanted < 1).
   selectivity: 2.5,
-  minWanted: 0.7,
+  minWanted: 1,
   // Pole bez tej rudy (udział < minShare) nie wchodzi w wybór; pole wybrane z dostępnością < minAvailability też nie.
   minShare: 0.02,
   minAvailability: 0.02,

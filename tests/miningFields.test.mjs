@@ -132,6 +132,10 @@ test('punkt wyprawy leży w skałach pola, urobek ze składu miejsca, czas z gę
     }
   }
   assert.ok(inRocks / total >= 0.9, `wyprawy w skałach: ${inRocks}/${total}`);
+  // Urobek przy okazji (minWanted < 1 — wyłączony domyślnie): reszta ładowni ze składu miejsca, bez uranu poza Kuiperem.
+  const side = planExpedition(fresh({ minWanted: 0.7 }), { id: 'belt-main-02' }, 'raw_crystal', 120, seededRandom(9));
+  assert.ok(side.harvest.raw_crystal >= 83 && side.harvest.raw_crystal < 120, `kryształ ≥ 70%: ${JSON.stringify(side.harvest)}`);
+  assert.ok(Object.keys(side.harvest).length > 1 && side.harvest.uranium_ore === undefined, 'produkty uboczne ze składu pasa głównego');
   // Kryształ jest rzadki — szuka się go dłużej niż żelaza w tym samym polu.
   const r2 = seededRandom(5);
   const fe = planExpedition(fresh(), { id: 'belt-main-04' }, 'iron_ore', 120, r2);
