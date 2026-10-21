@@ -473,6 +473,7 @@ if (isWorker) {
         else if (op === 'anchors') field.setSmallBodyAnchors(arg);
         else if (op === 'peaks') field.familyPeaks();
         else if (op === 'wake') field.wakeSpots.push(arg);
+        else if (op === 'holes') field.setHoles(arg);   // wyrwy po wydobyciu (ruch v2 → beltWorld.setHoles)
       };
       const giants = { entries: [],
         get readyCount() { let n = 0; for (const e of this.entries) if (e.giant && e.giant.ready) n++; return n; },

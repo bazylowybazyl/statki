@@ -111,6 +111,27 @@ export const BELT_FIELD_CONFIG = Object.freeze({
   shapeCount: SHAPE_COUNT
 });
 
+/**
+ * WYRWY (E3, ekonomia pasa — docs/PLAN-ekonomia-rynki.md § 3.3): obszary przerzedzone wydobyciem. Źródłem jest
+ * rejestr uszczuplenia świata ruchu (src/game/traffic/miningFields.js), do gry dochodzą przez most ruchu i świat
+ * pasa (beltWorld.setHoles → pole gry i replika obrazu). Wyrwa = koło { x, y, r, depth }: do `inner` promienia
+ * gęstość × (1 − depth), dalej miękki brzeg poszarpany szumem; dotyczy WSZYSTKICH pasm (gra i tło).
+ */
+export const BELT_HOLE_CONFIG = Object.freeze({
+  // Komórka siatki wyszukiwania wyrw [j.] (≥ największy promień wyrwy).
+  grid: 16384,
+  // Pełna głębokość do tego ułamka brzegu, dalej miękkie przejście do brzegu.
+  inner: 0.6,
+  // Poszarpanie brzegu (brzeg między (1 − edgeNoise) r a r) i skala jego szumu [j.].
+  edgeNoise: 0.35,
+  edgeScale: 3200,
+  // Zapas unieważnienia komórek wokół wyrwy [j.]: skała PLAY ≤ 2600 j. z księżycem (zasięg układu ~4,85 r)
+  // — komórka poza kołem mogła odrzucić skałę z powodu większej skały w kole (_overlapsLarger).
+  reach: 7000,
+  // Ile ostatnich prostokątów zmian pamięta pole (warstwy obrazu dogrywają je w update()).
+  dirtyKeep: 64
+});
+
 // Rudy pola → indeks ROCK_TYPES (rudy gry 0–6 jak dawniej, typy z widm 9–13).
 export const TYPE_INDEX = Object.freeze(Object.fromEntries(ORE_ROCK_TYPES.map((t) => [t, ROCK_TYPE_INDEX[t]])));
 
@@ -136,6 +157,18 @@ export function mulberry32(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** Hasz napisu (FNV-1a, 32 bity) — ziarno brzegu wyrwy z jej id (ten sam w polu gry i w replice obrazu). */
+function stringHash32(s) {
+  let h = 0x811C9DC5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
+
+/** Klucz komórki siatki wyrw (ix, iy w ±32 tys. komórek). */
+function holeGridKey(ix, iy) {
+  return (ix + 32768) * 65536 + (iy + 32768);
 }
 
 function lattice2(ix, iy, seed) {
@@ -674,6 +707,12 @@ export class AsteroidBeltField {
     // Koła budzenia pasa [{ x, y, r, active }] poza regionami — skała rysowana materiałem pasa poza polem
     // (przelot NEA przy Ziemi: src/game/neaFlyby.js); rectTouchesBelt widzi je jak region.
     this.wakeSpots = [];
+    // Wyrwy po wydobyciu (setHoles): lista, siatka wyszukiwania, wersja i ostatnie prostokąty zmian.
+    this.holes = [];
+    this._holeById = new Map();
+    this._holeGrid = new Map();
+    this.holeVersion = 0;
+    this.holeDirty = [];
     this.bands = BELT_BANDS.map((band, index) => this._buildBandPlan(band, index));
     this._cache = new Map();
     this._frame = 0;
@@ -1111,7 +1150,8 @@ export class AsteroidBeltField {
       return hit.rocks;
     }
     const rocks = this._generateCell(bandIndex, k, cx, cy);
-    this._cache.set(key, { rocks, frame: this._frame });
+    // Pasmo, oktawa i komórka przy wpisie — wyrwa unieważnia komórki w swoim prostokącie (setHoles).
+    this._cache.set(key, { rocks, frame: this._frame, b: bandIndex, k, cx, cy });
     return rocks;
   }
 
@@ -1154,7 +1194,9 @@ export class AsteroidBeltField {
       // sampleMacro zwraca współdzielony obiekt, a _overlapsLarger generuje
       // (rekurencyjnie) większe komórki — potrzebne wartości kopiujemy od razu.
       const m = this.sampleMacro(x, y);
-      if (uAccept * bound > m.density) continue;
+      // Wyrwa (wydobycie, setHoles) przerzedza tylko przyjęcie kandydata: ta sama liczba losowań i te same
+      // skały poza wyrwą — w wyrwie zostaje ich podzbiór. Bez wyrw — bit w bit jak dawniej.
+      if (uAccept * bound > (this.holes.length ? m.density * this.holeFactor(x, y) : m.density)) continue;
       const region = m.region;
       const cluster = m.cluster;
       const depth = m.depth;
@@ -1323,6 +1365,28 @@ export class AsteroidBeltField {
   /** Ruda z this._comp (po _composeAt) — szczeble rud z głębokością; prowincje tylko poza rodzinami. */
   _pickFromComp(region, x, y, u, depth) {
     const comp = this._comp;
+    const total = this._oreWeights(region, x, y, depth);
+    const w = this._oreW;
+    let t = u * total;
+    for (let i = 0; i < comp.length; i++) {
+      if (comp[i] <= 0) continue;
+      const wi = w[i];
+      if (wi <= 0) continue;
+      t -= wi;
+      if (t <= 0) return i;
+    }
+    for (let i = comp.length - 1; i >= 0; i--) if (comp[i] > 0) return i;
+    return 0;
+  }
+
+  /**
+   * Wagi rud z this._comp (po _composeAt) → this._oreW (po indeksach ROCK_TYPES; zwraca sumę): skład × szczebel
+   * rudy na głębokości pola, premia prowincji w regionach bez rodzin. Wspólne dla losowania typu skały
+   * (_pickFromComp) i udziałów typów w punkcie (typeSharesAt).
+   */
+  _oreWeights(region, x, y, depth) {
+    const comp = this._comp;
+    const w = this._oreW || (this._oreW = new Float64Array(comp.length));
     const c = this.config;
     let favored = -1;
     let boost = 0;
@@ -1347,18 +1411,40 @@ export class AsteroidBeltField {
     // Rudy rzadkie (kryształ, uran) i średnie (miedź, tytan) głównie w głębi pola.
     let total = 0;
     for (let i = 0; i < comp.length; i++) {
-      if (comp[i] > 0) total += (comp[i] + (i === favored ? boost : 0)) * oreTierFactor(i, depth);
+      if (comp[i] > 0) {
+        const wi = (comp[i] + (i === favored ? boost : 0)) * oreTierFactor(i, depth);
+        w[i] = wi;
+        total += wi;
+      } else {
+        w[i] = 0;
+      }
     }
-    let t = u * total;
-    for (let i = 0; i < comp.length; i++) {
-      if (comp[i] <= 0) continue;
-      const w = (comp[i] + (i === favored ? boost : 0)) * oreTierFactor(i, depth);
-      if (w <= 0) continue;
-      t -= w;
-      if (t <= 0) return i;
-    }
-    for (let i = comp.length - 1; i >= 0; i--) if (comp[i] > 0) return i;
-    return 0;
+    return total;
+  }
+
+  /**
+   * Udziały typów skał PLAY (≥ REF_DIAMETER) w punkcie → out (po indeksach ROCK_TYPES, suma 1; poza pasem
+   * zera); zwraca gęstość PLAY (densityAt). Te same wagi co losowanie typu w komórce (_pickRockType) bez
+   * burz: udział rud z głębokości pola, skład regionu i rodzin, prowincje, szczeble rud; wypełniacz kamienny
+   * i węglowy. Ekonomia pasa (src/game/traffic/miningFields.js) liczy z tego urobek wypraw i zasób pola.
+   */
+  typeSharesAt(x, y, out) {
+    out.fill(0);
+    const m = this.sampleMacro(x, y);
+    const density = m.density;
+    const region = m.region;
+    const depth = m.depth;
+    if (!(density > 0)) return 0;
+    if (!region) { out[NEUTRAL_TYPE] = 1; return density; }
+    const share = oreShareAtDepth(depth);
+    const dark = this._composeAt(region, x, y, depth);
+    const total = this._oreWeights(region, x, y, depth);
+    const w = this._oreW;
+    if (total > 0) for (let i = 0; i < w.length; i++) if (w[i] > 0) out[i] = share * w[i] / total;
+    const rest = total > 0 ? 1 - share : 1;
+    if (dark > 0) out[NEUTRAL_CARBON_TYPE] += rest * dark;
+    out[NEUTRAL_TYPE] += rest * (dark > 0 ? 1 - dark : 1);
+    return density;
   }
 
   /**
@@ -1470,6 +1556,114 @@ export class AsteroidBeltField {
       if (dx * dx + dy * dy < 1) return true;
     }
     return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wyrwy po wydobyciu (E3)
+
+  /**
+   * Zmiany wyrw: [{ id, x, y, r, depth }] — nowa albo zmieniona wyrwa o tym id; depth ≤ 0 usuwa. Unieważnia
+   * komórki cache w prostokącie zmian (z zapasem `reach`) i dopisuje go do `holeDirty` z nową `holeVersion` —
+   * warstwy obrazu przeładowują swoje komórki w tym prostokącie. Zwraca liczbę zmian.
+   */
+  setHoles(list) {
+    if (!Array.isArray(list) || list.length === 0) return 0;
+    const cfg = BELT_HOLE_CONFIG;
+    const box = this._holeBox || (this._holeBox = new Float64Array(4));
+    box[0] = Infinity; box[1] = Infinity; box[2] = -Infinity; box[3] = -Infinity;
+    const grow = (h) => {
+      if (h.x - h.r < box[0]) box[0] = h.x - h.r;
+      if (h.y - h.r < box[1]) box[1] = h.y - h.r;
+      if (h.x + h.r > box[2]) box[2] = h.x + h.r;
+      if (h.y + h.r > box[3]) box[3] = h.y + h.r;
+    };
+    let changed = 0;
+    for (const rec of list) {
+      if (!rec || rec.id == null) continue;
+      const id = String(rec.id);
+      const old = this._holeById.get(id);
+      const x = Number(rec.x);
+      const y = Number(rec.y);
+      const r = Number(rec.r);
+      const depth = Math.min(1, Math.max(0, Number(rec.depth) || 0));
+      if (!(depth > 0) || !(r > 0) || !Number.isFinite(x) || !Number.isFinite(y)) {
+        if (!old) continue;
+        this._holeById.delete(id);
+        grow(old);
+        changed++;
+        continue;
+      }
+      if (old && old.x === x && old.y === y && old.r === r && old.depth === depth) continue;
+      if (old) grow(old);
+      const hole = { id, x, y, r, depth, seed: (this.seed ^ stringHash32(id)) >>> 0 };
+      this._holeById.set(id, hole);
+      grow(hole);
+      changed++;
+    }
+    if (!changed) return 0;
+    this.holes = [...this._holeById.values()];
+    this._holeGrid.clear();
+    const g = cfg.grid;
+    for (const h of this.holes) {
+      const ix0 = Math.floor((h.x - h.r) / g);
+      const ix1 = Math.floor((h.x + h.r) / g);
+      const iy0 = Math.floor((h.y - h.r) / g);
+      const iy1 = Math.floor((h.y + h.r) / g);
+      for (let iy = iy0; iy <= iy1; iy++) {
+        for (let ix = ix0; ix <= ix1; ix++) {
+          const key = holeGridKey(ix, iy);
+          const cell = this._holeGrid.get(key);
+          if (cell) cell.push(h); else this._holeGrid.set(key, [h]);
+        }
+      }
+    }
+    this._invalidateRect(box[0] - cfg.reach, box[1] - cfg.reach, box[2] + cfg.reach, box[3] + cfg.reach);
+    return changed;
+  }
+
+  /** Mnożnik gęstości wyrw w punkcie (1 = nietknięte, 0 = pusto). */
+  holeFactor(x, y) {
+    if (this.holes.length === 0) return 1;
+    const cfg = BELT_HOLE_CONFIG;
+    const g = cfg.grid;
+    const list = this._holeGrid.get(holeGridKey(Math.floor(x / g), Math.floor(y / g)));
+    if (!list) return 1;
+    let mul = 1;
+    for (let i = 0; i < list.length; i++) {
+      const h = list[i];
+      const dx = x - h.x;
+      const dy = y - h.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= h.r * h.r) continue;
+      // Brzeg między (1 − edgeNoise) r a r, poszarpany szumem w świecie (nie koło z cyrkla).
+      const e = 1 - cfg.edgeNoise * fbm2(x / cfg.edgeScale, y / cfg.edgeScale, h.seed, 2);
+      const t = Math.sqrt(d2) / h.r;
+      if (t >= e) continue;
+      const v = 1 - h.depth * (1 - smoothstep(cfg.inner * e, e, t));
+      if (v < mul) mul = v;
+    }
+    return mul;
+  }
+
+  /** Gęstość skał PLAY z wyrwami (densityAt × holeFactor) — skaner, testy. */
+  depletedDensityAt(x, y) {
+    const d = this.sampleMacro(x, y).density;
+    return d > 0 ? d * this.holeFactor(x, y) : d;
+  }
+
+  /** Usuwa z cache komórki dotykające prostokąta i zapisuje go w `holeDirty` (nowa `holeVersion`). */
+  _invalidateRect(x0, y0, x1, y1) {
+    for (const [key, e] of this._cache) {
+      if (e.b === undefined) continue;
+      const cs = this.bands[e.b].octaves[e.k].cell;
+      const ex = e.cx * cs;
+      const ey = e.cy * cs;
+      if (ex > x1 || ex + cs < x0 || ey > y1 || ey + cs < y0) continue;
+      this._cache.delete(key);
+    }
+    this.holeVersion++;
+    this.holeDirty.push({ v: this.holeVersion, x0, y0, x1, y1 });
+    if (this.holeDirty.length > BELT_HOLE_CONFIG.dirtyKeep) this.holeDirty.shift();
   }
 
   get cacheSize() {

@@ -141,6 +141,8 @@ export class RockLayer {
     // Porównanie kolejki komórek raz na warstwę (bez domknięcia przy każdej zmianie kadru).
     this._byDistance = (a, b) => this._missing[a + 2] - this._missing[b + 2];
     this._version = 0;
+    // Wersja wyrw pola (AsteroidBeltField.setHoles) — komórki w prostokątach zmian wczytuje się od nowa.
+    this._holeVersion = this.field.holeVersion || 0;
     this._built = { x: NaN, y: NaN, zoom: NaN, version: -1, minPx: NaN };
     this.buckets = new LodBuckets({
       bank: this.bank, material: this.material,
@@ -224,6 +226,7 @@ export class RockLayer {
    */
   update(f) {
     if (!this.enabled) return;
+    if ((this.field.holeVersion || 0) !== this._holeVersion) this._reloadHoles();
     const zoom = Math.max(1e-5, f.cam.zoom || 1);
     const camZ = f.focalPx / zoom;
     let minPx = this.minPx;
@@ -477,6 +480,36 @@ export class RockLayer {
     o.cells.delete(cellKey(cell.cx, cell.cy));
     o.cellsById.delete(cell.id);
     this._version++;
+  }
+
+  /**
+   * Wyrwy po wydobyciu (rzadko — zmiana wyrwy co minuty gry): wczytane komórki dotykające prostokątów zmian
+   * pola (`holeDirty` nowszych niż ostatnio widziana wersja) wracają do kolejki — pole generuje je już
+   * z wyrwą (ten sam podzbiór skał co w polu gry). Pominięte prostokąty (warstwa długo bez update) — wszystkie.
+   */
+  _reloadHoles() {
+    const field = this.field;
+    const dirty = field.holeDirty || [];
+    const seen = this._holeVersion;
+    this._holeVersion = field.holeVersion || 0;
+    const all = !dirty.length || dirty[0].v > seen + 1;
+    for (const o of this.octaves) {
+      if (!o.cells.size) continue;
+      const cs = o.oct.cell;
+      let any = false;
+      for (const cell of [...o.cells.values()]) {
+        const x0 = cell.cx * cs;
+        const y0 = cell.cy * cs;
+        let hit = all;
+        for (let i = 0; !hit && i < dirty.length; i++) {
+          const d = dirty[i];
+          if (d.v <= seen) continue;
+          hit = !(x0 > d.x1 || x0 + cs < d.x0 || y0 > d.y1 || y0 + cs < d.y0);
+        }
+        if (hit) { this._unloadCell(o, cell); any = true; }
+      }
+      if (any) o.pending++;
+    }
   }
 
   _unloadAll(o) {

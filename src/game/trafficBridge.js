@@ -24,6 +24,7 @@
 import {
   TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD
 } from './traffic/trafficProtocol.js';
+import { BELT_MSG } from './traffic/trafficProtocol.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
 const RECENT_WRECK_LIMIT = 64;
@@ -96,6 +97,8 @@ export class TrafficBridge {
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
+    /** Wyrwy w pasie (id → `{ id, x, y, r, depth }`) — rejestr uszczuplenia świata ruchu, dla świata pasa gry. */
+    this.beltHoles = new Map();
     this.listeners = new Map();
 
     this._initMessage = null;
@@ -305,6 +308,32 @@ export class TrafficBridge {
   }
 
   // ============================================================
+  // Pas w ekonomii (E3): urobek gracza i wyrwy
+  // ============================================================
+
+  /**
+   * Urobek platformy gracza (tony rudy w ładowni) w punkcie świata gry — ten sam rejestr uszczuplenia
+   * pasa co wyprawy NPC. Wyrwa, jeśli powstanie, wraca zdarzeniem `belt-holes`.
+   */
+  reportMining(x, y, tons) {
+    const amount = Number(tons);
+    if (!(amount > 0) || !Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return;
+    this._send({ type: BELT_MSG.MINED, x: Number(x), y: Number(y), tons: amount });
+  }
+
+  /** Wyrwy z workera: kopia `beltHoles` i zdarzenie `belt-holes` ze zmianami (depth 0 = usunięta). */
+  _onBeltHoles(message) {
+    const list = Array.isArray(message.holes) ? message.holes : [];
+    if (message.full) this.beltHoles.clear();
+    for (const hole of list) {
+      if (!hole || hole.id == null) continue;
+      if (Number(hole.depth) > 0) this.beltHoles.set(String(hole.id), hole);
+      else this.beltHoles.delete(String(hole.id));
+    }
+    if (list.length || message.full) this._emit('belt-holes', list);
+  }
+
+  // ============================================================
   // Świat → gra
   // ============================================================
 
@@ -325,6 +354,7 @@ export class TrafficBridge {
           this.lastError = message;
           this._emit('error', message);
           break;
+        case BELT_MSG.HOLES: this._onBeltHoles(message); break;
         default: break;
       }
     } finally {
@@ -501,7 +531,7 @@ export class TrafficBridge {
   // Zdarzenia
   // ============================================================
 
-  /** `ready`, `tick`, `market`, `bubble`, `wrecks`, `war-wrecks`, `error`. Zwraca wypisanie. */
+  /** `ready`, `tick`, `market`, `bubble`, `wrecks`, `war-wrecks`, `belt-holes`, `error`. Zwraca wypisanie. */
   on(type, listener) {
     if (typeof listener !== 'function') return () => {};
     let list = this.listeners.get(type);

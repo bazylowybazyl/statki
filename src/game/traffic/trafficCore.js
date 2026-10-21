@@ -37,6 +37,9 @@ import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber
 } from './trafficProtocol.js';
+import { BELT_MSG } from './trafficProtocol.js';
+import { recordPlayerMining } from './trafficDirector.js';
+import { takeHoleUpdates } from './miningFields.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
 const WRECK_LOG_LIMIT = 256;
@@ -103,6 +106,7 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.STATION: return station(message);
         case TRAFFIC_MSG.CONFIG: return config(message);
         case TRAFFIC_MSG.SNAPSHOT: return snapshot(message);
+        case BELT_MSG.MINED: return beltMined(message);
         default: return undefined;
       }
     } catch (error) {
@@ -199,6 +203,24 @@ export function createTrafficCore(post, options = {}) {
     core.stats.stepMs = ms / steps;
     core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
     publishTick(steps, ms);
+    publishBeltHoles();
+  }
+
+  // ============================================================
+  // Pas w ekonomii (E3): urobek gracza → rejestr uszczuplenia, wyrwy → gra
+  // ============================================================
+
+  function beltMined(message) {
+    const director = core.world?.director;
+    if (!director) return;
+    recordPlayerMining(director, finite(message.x, NaN), finite(message.y, NaN), finite(message.tons));
+    // Wyrwa po urobku gracza idzie od razu, nie dopiero po kroku świata.
+    publishBeltHoles();
+  }
+
+  function publishBeltHoles() {
+    const holes = takeHoleUpdates(core.world?.director?.mining);
+    if (holes) send({ type: BELT_MSG.HOLES, holes, full: false });
   }
 
   function setFocus(spec) {
