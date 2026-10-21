@@ -46,8 +46,12 @@ paths:
   przed podpięciem; `ready` / `mapsReady` obejmują rozgrzewkę, ringi-archetypy (`createArchRing`) tak samo (bez haka —
   od razu, jak demo). Nowa część ringu = obiekt w `prewarmParts` (index.js) / liście brył archetypu, inaczej jej
   pierwsza klatka kompiluje się synchronicznie. Mapa CPU zgodna z WebGL do precyzji float (`scripts/webgpu/ring-mapa.mjs`),
-  parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`, teren w koliderze gry:
-  `scripts/webgpu/ring-kolizje-gra.mjs`; warsztat `dema/halo_ring_demo.html` na WebGPU.
+  parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`, kolizje i teren w koliderze gry:
+  `scripts/webgpu/ring-kolizje-gra.mjs --ring earth|mars|jupiter [--query renderWorker=1]` (sonda na świecie gry
+  `window.__haloWorld.entries[].collider` — teren ≠ 0 na obwodzie podłogi, płyta `layout.radii` back / floorMid
+  w `pointInSlab`, zbocze w płycie tylko z terenem (Ziemia, Mars; pokład Jowisza jest płaski, 0…7 j.), wypchnięcie `constrainShip`; w `off` także teren kolidera = obraz ringu
+  po `mapsReady`; kod wyjścia 1 przy porażce). Narzędzia gry czytają kolizje i teren ze świata gry, nie z wpisów
+  obrazu `__haloRings` — w workerze obrazu ringu na stronie nie ma. Warsztat `dema/halo_ring_demo.html` na WebGPU.
 
 - Teren ringu w TSL (zadanie 07): `HaloTerrain` = NodeMaterial z `makeHaloTerrainNodes` (`haloRingTerrain.js`, 1:1 z
   dawnym GLSL), uniformy powierzchni w bloku `haloSurfU` (`terrain.surfaceUniforms` — klucze i `.value` jak dawniej, mapy
