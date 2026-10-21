@@ -108,21 +108,6 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   z ≥ 9 przebiegów), w testach liczyć pracę A* albo czas CPU, nie zegar ścienny.
 - Demo: graf sieci pod I, panel „Sieć systemów” (liczniki wolnych końców i wiązek poza obrysem).
 
-## Rdzeń: gniazdo obudowy reaktora (v 2)
-
-- Moduł `reactor`: v 0 — pancerna pokrywa z wentylami (rysunek kompozytora), v 1 — wewnątrz kadłuba (nic nie rysuje),
-  v 2 — GNIAZDO OBUDOWY Terra Novy (domyślne `v` wpisu `HD_MODULES.reactor`, nowy moduł w demie je dostaje): ośmiokąt
-  o apotemie r (= obrys kołnierza obudowy 3D gry, boki na osiach i przekątnych jak `sdOct`), szczelina, rama z nitami
-  i żółtymi narożnikami, płyta pokładu ze śrubami i przepustami kabli. Gra rysuje w nim model 3D reaktora
-  (`src/3d/reactor3D.js`, reguła `mostki-reaktor`). Dla sieci v 2 = v 1 (bez bryły, pień kończy się rozdzielnią w środku)
-  — trasy i testy sieci bez zmian; zmiana `r` rdzenia presetu PRZESTAWIA trasy (komórki startu z `moduleBox`).
-- Presety TN dostają v 2 ze slotów (`HOUSED` w `hullDesignSystemSlots.js`). Miejsca rdzeni TN to jedno źródło z grą:
-  `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`) = rdzeń presetu przeliczony `HD_TN_SPRITE_FRAMES` (ta sama rama co
-  sloty), `hr` = r / s — przesunięcie rdzenia w presecie TN wymaga tego samego w markerze (`tests/reactorCoreMarkers.test.mjs`).
-- Demo: sekcja „REAKTOR 3D” w `dema/kreator-kadluba-webgpu.js` — ten sam model gry nad gniazdem v 2 (rozgrzewka w starcie,
-  haki `reactorDemoCoresFrom` po wypieku, `reactorDemoSync` w `render()`, `window.__kreator.reactor3D`); zrzuty
-  `--etapy reaktor` (z modelem, samo gniazdo, na tle okrętu).
-
 ## Klasy okrętów i gniazda broni (etap 2)
 
 - Dane i rachunek w `src/data/shipClasses.js` (czysty, bez kreatora): klasy (limit powierzchni, gniazd, ciężkich, rozmiar
@@ -144,6 +129,21 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   i liczy raster od nowa; trasy bez zmian). Bieg kabli: `R2.w` = materiał + 8 · na płytach + 16 · martwy.
 - Demo: każda zmiana projektu przechodzi przez `classGuard` w `runBuild` (akcja zwiększająca przekroczenie limitu mostka
   wraca); nowa ścieżka dokładania gniazd → `classMountPlace` (odmowa przed akcją).
+
+## Rdzeń: gniazdo obudowy reaktora (v 2)
+
+- Moduł `reactor`: v 0 — pancerna pokrywa z wentylami (rysunek kompozytora), v 1 — wewnątrz kadłuba (nic nie rysuje),
+  v 2 — GNIAZDO OBUDOWY Terra Novy (domyślne `v` wpisu `HD_MODULES.reactor`, nowy moduł w demie je dostaje): ośmiokąt
+  o apotemie r (= obrys kołnierza obudowy 3D gry, boki na osiach i przekątnych jak `sdOct`), szczelina, rama z nitami
+  i żółtymi narożnikami, płyta pokładu ze śrubami i przepustami kabli. Gra rysuje w nim model 3D reaktora
+  (`src/3d/reactor3D.js`, reguła `mostki-reaktor`). Dla sieci v 2 = v 1 (bez bryły, pień kończy się rozdzielnią w środku)
+  — trasy i testy sieci bez zmian; zmiana `r` rdzenia presetu PRZESTAWIA trasy (komórki startu z `moduleBox`).
+- Presety TN dostają v 2 ze slotów (`HOUSED` w `hullDesignSystemSlots.js`). Miejsca rdzeni TN to jedno źródło z grą:
+  `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`) = rdzeń presetu przeliczony `HD_TN_SPRITE_FRAMES` (ta sama rama co
+  sloty), `hr` = r / s — przesunięcie rdzenia w presecie TN wymaga tego samego w markerze (`tests/reactorCoreMarkers.test.mjs`).
+- Demo: sekcja „REAKTOR 3D” w `dema/kreator-kadluba-webgpu.js` — ten sam model gry nad gniazdem v 2 (rozgrzewka w starcie,
+  haki `reactorDemoCoresFrom` po wypieku, `reactorDemoSync` w `render()`, `window.__kreator.reactor3D`); zrzuty
+  `--etapy reaktor` (z modelem, samo gniazdo, na tle okrętu).
 
 ## Mostek: gniazdo poziomu (v 2)
 
@@ -168,6 +168,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   (flota TN z modelem i bez, galeria I–VI na jednym kadłubie — `--tylko mostki`).
 - Do decyzji: w trybie „poziom z powierzchni” (`bridgeLevel` 0) gniazdo bierze `lv` modułu, a klasa — powierzchnię
   i gniazda (`hullDesignLevels`); mogą się rozjechać.
+
 
 ## Jak sprawdzić
 

@@ -23,13 +23,6 @@
 // Gdzie gra liczy automatem (`autoFuelTankMarker`), miejsce wybrane ręcznie: zbiornik w rufowej
 // części, głęboko w kadłubie, poza komorą reaktora (szczegóły przy kadłubach). Wymiary dysz SIDE: 14 × 10 jd
 // (pół-wymiary), zbiorników ~26–42 × 10–22 jd.
-// MOSTEK floty TN: jedno źródło miejsc z grą — moduł `bridge` presetu (x, y = 0) w wariancie gniazda (v 2: płyta
-// w obrysie modelu 3D poziomu klasy, src/data/bridgeLevels.js — Custos I −42, Hasta II −64, Bellator IV −217,
-// Citadella V −339, Colossus VI −150) = strefa BRIDGE_LAYOUT_PROPOSALS (src/game/shipBridge.js) przeliczona ramą
-// HD_TN_SPRITE_FRAMES (x, y, w = obrys / s, h, level); pilnuje tests/bridgeLevels.test.mjs.
-// RDZEŃ floty TN: jedno źródło miejsc z grą — rdzeń presetu (x, y = 0) w wariancie z obudową (v 2: gniazdo, w którym
-// gra rysuje obudowę 3D reaktora) = REACTOR_CORE_MARKERS (src/data/reactorCores.js) przeliczone ramą HD_TN_SPRITE_FRAMES
-// (x, y, hr = r / s); pilnuje tests/reactorCoreMarkers.test.mjs.
 //
 // GNIAZDA BRONI (etap 2, `mounts`): pełne zestawy gniazd gry — SHIP_EDITOR_DEFAULTS.ships (frigate, destroyer,
 // battleship, terran_carrier, terran_supercapital; gniazda NPC i gracza bierze gra z tych wpisów, npcHardpointRuntime.js)
@@ -49,6 +42,14 @@
 // KLASA presetu (etap 2, src/data/shipClasses.js): `bridgeLevel` / `coreLevel` — TN wg decyzji użytkownika (Custos I/R1,
 // Hasta II/R2, Bellator IV/R4, Citadella V/R5, Colossus VI/R6, fregata z klocków I/R1), pozostałe — najniższa klasa,
 // w której mieszczą się powierzchnia i gniazda (classForHull; test pilnuje, że każdy preset mieści się w swojej klasie).
+//
+// MOSTEK floty TN: jedno źródło miejsc z grą — moduł `bridge` presetu (x, y = 0) w wariancie gniazda (v 2: płyta
+// w obrysie modelu 3D poziomu klasy, src/data/bridgeLevels.js — Custos I −42, Hasta II −64, Bellator IV −217,
+// Citadella V −339, Colossus VI −150) = strefa BRIDGE_LAYOUT_PROPOSALS (src/game/shipBridge.js) przeliczona ramą
+// HD_TN_SPRITE_FRAMES (x, y, w = obrys / s, h, level); pilnuje tests/bridgeLevels.test.mjs.
+// RDZEŃ floty TN: jedno źródło miejsc z grą — rdzeń presetu (x, y = 0) w wariancie z obudową (v 2: gniazdo, w którym
+// gra rysuje obudowę 3D reaktora) = REACTOR_CORE_MARKERS (src/data/reactorCores.js) przeliczone ramą HD_TN_SPRITE_FRAMES
+// (x, y, hr = r / s); pilnuje tests/reactorCoreMarkers.test.mjs.
 
 import { HD_SYSTEM_TYPES } from './hullDesignSystems.js';
 import { HD_MOUNT_RADIUS_DU, hullDesignMountOf } from './hullDesignSchema.js';

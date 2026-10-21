@@ -11,7 +11,7 @@
 // (sześć gniazd na jednym kadłubie, z modelami i bez).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,reaktor,klasa,mostek]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,mostek]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';

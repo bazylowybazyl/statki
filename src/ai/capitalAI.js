@@ -1260,10 +1260,28 @@ function resolveMountShape(npc, out) {
 const MAIN_ARC_TOLERANCE = 0.12;
 const _mountShape = { halfLen: 1, halfWid: 1 };
 
+// Wpis działa sprzed przebudowy dla tego samego gniazda i tej samej broni; zabrany wpis znika z kopii listy, żeby nie
+// wrócił dwa razy.
+function takeKeptWeapon(prev, hp, def) {
+  for (let i = 0; i < prev.length; i++) {
+    const w = prev[i];
+    if (w && w.hpOffset === hp && w.id === def.id) {
+      prev[i] = null;
+      return w;
+    }
+  }
+  return null;
+}
+
 function initAutonomousWeapons(npc) {
   if (npc.autoWeapons !== undefined && npc._weaponsInit) return;
 
   npc._weaponsInit = true;
+  // Przebudowa po zmianie układu (utrata gniazda — markHardpointDestroyed w index.html, broń z konsoli dev): działo,
+  // które zostało (to samo gniazdo, ta sama broń), wraca TYM SAMYM wpisem — z przeładowaniem, amunicją, ładowaniem,
+  // celem i kątem lufy. Dawniej każde stracone gniazdo dawało wszystkim wieżom okrętu przeładowanie 0–2 s i pełną
+  // amunicję (promień śmierci Colossusa strzelał znów po 0–2 s zamiast 45 s, wyrzutnie dostawały rakiety).
+  const prev = Array.isArray(npc.autoWeapons) && npc.autoWeapons.length > 0 ? npc.autoWeapons.slice() : null;
   npc.autoWeapons = [];
   npc._shipScanCaches = Object.create(null);
 
@@ -1294,6 +1312,18 @@ function initAutonomousWeapons(npc) {
           } else if (localY > 15) baseAngle = Math.PI / 2;
           else if (localY < -15) baseAngle = -Math.PI / 2;
           else baseAngle = 0;
+        }
+
+        const kept = prev ? takeKeptWeapon(prev, loadout.hp, def) : null;
+        if (kept) {
+          kept.mountAngle = baseAngle;
+          kept.arc = arc;
+          kept.group = groupName;
+          kept.prefers = prefers;
+          kept.strict = strict;
+          kept.scanProfile = scanProfile;
+          npc.autoWeapons.push(kept);
+          continue;
         }
 
         let startAmmo = null;

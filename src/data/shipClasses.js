@@ -53,7 +53,7 @@ export const SHIP_CLASSES = Object.freeze([
   Object.freeze({ level: 1, roman: 'I', id: 'frigate', label: 'Fregata', areaMax: 10000, mountsMax: 12, heavyMax: 7, weaponSize: 'S', example: 'Custos' }),
   Object.freeze({ level: 2, roman: 'II', id: 'destroyer', label: 'Niszczyciel', areaMax: 32000, mountsMax: 22, heavyMax: 13, weaponSize: 'M', example: 'Hasta' }),
   Object.freeze({ level: 3, roman: 'III', id: 'cruiser', label: 'Krążownik', areaMax: 90000, mountsMax: 26, heavyMax: 15, weaponSize: 'M', example: '' }),
-  Object.freeze({ level: 4, roman: 'IV', id: 'battleship', label: 'Pancernik', areaMax: 200000, mountsMax: 32, heavyMax: 18, weaponSize: 'L', example: 'Bellator' }),
+  Object.freeze({ level: 4, roman: 'IV', id: 'battleship', label: 'Pancernik', areaMax: 200000, mountsMax: 38, heavyMax: 22, weaponSize: 'L', example: 'Bellator' }),
   Object.freeze({ level: 5, roman: 'V', id: 'capital', label: 'Kapitał', areaMax: 420000, mountsMax: 44, heavyMax: 26, weaponSize: 'L', example: 'Citadella' }),
   Object.freeze({ level: 6, roman: 'VI', id: 'supercapital', label: 'Superkapitał', areaMax: 900000, mountsMax: 60, heavyMax: 32, weaponSize: 'Capital', example: 'Colossus' })
 ]);
