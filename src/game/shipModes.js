@@ -8,13 +8,17 @@
 //                 znacznie twardsze na przebicie i WIDOCZNE — domyślnie tarcza jest niewidoczna; lot
 //                 i obrót wyraźnie wolniejsze — 2026-10-05, decyzja użytkownika);
 //   • PRZELOT   — szybki lot z zimną bronią na BIEGACH (QOL 2026-10-03: biegi przeniesione z warpa —
-//                 warp ma jedną prędkość): 4 biegi do 3× limitu bojowego (Atlas 500 → 1500 j/s), bieg
+//                 warp ma jedną prędkość): 4 biegi do 2,4× limitu bojowego (Atlas 500 → 1200 j/s; mnożniki
+//                 w tabeli napędów src/data/driveModes.js — E5 2026-10-21, wcześniej do 3× / 1500 j/s), bieg
 //                 w górę sam przy gazie pod limitem biegu, Ctrl w dół; wieże milczą, tarcza wolniej;
+//                 dalej — hipercruise (src/game/flight/hypercruise.js, akcja nav.hypercruise);
 //   • MASKOWANIE (I), TORPEDY (8), WYDOBYCIE (N), FLOTA (G — RTS) — dawne osobne przełączniki gry.
 //
 // Moduł jest czysty (bez DOM i okna gry). Stan TARCZE / PRZELOT / BOJOWY (postawa) żyje tutaj; tryby
 // z własnym systemem (maskowanie, torpedy, wydobycie, RTS) odczytuje i przełącza klej w index.html
 // (blok „TRYBY OKRĘTU”) — ich system zostaje źródłem prawdy (np. maskowanie pęka przy strzale).
+
+import { CRUISE_DRIVE } from '../data/driveModes.js';
 
 export const SHIP_MODE_IDS = Object.freeze(['combat', 'shield', 'cruise', 'cloak', 'torpedo', 'mining', 'fleet']);
 
@@ -39,16 +43,17 @@ export const SHIP_STANCE_TUNE = Object.freeze({
   // kątowe × 0,45, największa prędkość obrotu × 0,55).
   shield: Object.freeze({ speed: 0.4, thrust: 0.5, turn: 0.45, turnRate: 0.55, shieldRegen: 2.5, shieldDelay: 0.5, shieldTaken: 0.65, shieldHardness: 3, shieldShow: true, weaponsCold: false }),
   // PRZELOT: limit z biegu (CRUISE_GEARS — speed to bieg 1), ciąg × 1,6; wieże milczą, tarcza ładuje się o połowę wolniej.
-  cruise: Object.freeze({ speed: 1.5, thrust: 1.6, turn: 0.85, shieldRegen: 0.5, shieldDelay: 1, shieldTaken: 1, turnRate: 1, shieldHardness: 1, shieldShow: false, weaponsCold: true })
+  cruise: Object.freeze({ speed: CRUISE_DRIVE.gearMuls[0], thrust: 1.6, turn: 0.85, shieldRegen: 0.5, shieldDelay: 1, shieldTaken: 1, turnRate: 1, shieldHardness: 1, shieldShow: false, weaponsCold: true })
 });
 
 /**
- * Biegi PRZELOTU (QOL 2026-10-03, decyzja usera: „biegi przeniesiemy do trybu cruise — Atlas rozpędzi
- * się do 1500 j/s”): mnożniki limitu bojowego kadłuba (Atlas 500 j/s → 750 / 1000 / 1250 / 1500).
+ * Biegi PRZELOTU (QOL 2026-10-03, decyzja usera: „biegi przeniesiemy do trybu cruise”): mnożniki limitu
+ * bojowego kadłuba z tabeli napędów (CRUISE_DRIVE.gearMuls — Atlas 500 j/s → 700 / 850 / 1000 / 1200;
+ * do 2026-10-21 750–1500, decyzja użytkownika: „gracz lata trochę za szybko”).
  * upAt — bieg w górę, gdy prędkość ≥ tyle × limit biegu przy gazie; downAt — w dół bez gazu poniżej
  * tyle × limit biegu niżej; cooldown [s] między zmianami.
  */
-export const CRUISE_GEARS = Object.freeze({ muls: Object.freeze([1.5, 2.0, 2.5, 3.0]), upAt: 0.94, downAt: 0.6, throttle: 0.35, cooldown: 0.6 });
+export const CRUISE_GEARS = Object.freeze({ muls: CRUISE_DRIVE.gearMuls, upAt: 0.94, downAt: 0.6, throttle: 0.35, cooldown: 0.6 });
 
 /** Mnożnik limitu bojowego dla biegu PRZELOTU (1..N). */
 export function cruiseGearMul(gear) {

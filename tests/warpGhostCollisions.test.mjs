@@ -24,7 +24,9 @@ test('duch gracza: skok i rampa — tak; po rampie, dopóki stoi w kadłubie; po
   HullBodies.createHull(npc, plate(300, 120));
   const scope = {
     warp: { state: 'idle', exitRamp: null }, ship, npcs: [npc], _cachedAllDestructibles: null,
-    worldBodies: { withEntities: (list) => list }, HullBodies, _warpGhostLinger: false, playerHullOverlapsAny: null
+    worldBodies: { withEntities: (list) => list }, HullBodies, _warpGhostLinger: false, playerHullOverlapsAny: null,
+    // Hipercruise (E5) bezczynny — duch tylko od warpa.
+    hypercruise: { state: 'idle' }, hypercruiseDriving: () => false
   };
   scope.playerHullOverlapsAny = loadIndexFunction(html, 'function playerHullOverlapsAny(bodies) {', 'playerHullOverlapsAny', scope);
   const update = loadIndexFunction(html, 'function updatePlayerWarpGhost() {', 'updatePlayerWarpGhost', scope);
@@ -59,6 +61,7 @@ test('physicsStep: flaga ducha przed kolizjami gracza; olbrzymy, ring i budzenie
     assert.ok(at > flag, `${call} po fladze ducha`);
   }
   assert.match(sliceFunction(html, 'function stepShipAsteroidCollisions(dt) {'), /if \(ship && !ship\.dead && !ship\.noHullCollisions\) belt\.collideShip\(ship\);/);
-  assert.match(sliceFunction(html, 'function stepShipRingCollisions(dt) {'), /if \(ship && !ship\.dead && !ship\.noHullCollisions\) \{\n\s+const hit = haloWorld\.constrainShip\(ship, true\);/);
+  // Ring: duch warpa omija płytę, hipercruise (E5) NIE — płyta zostaje przeszkodą i zrywa lot.
+  assert.match(sliceFunction(html, 'function stepShipRingCollisions(dt) {'), /if \(ship && !ship\.dead && \(!ship\.noHullCollisions \|\| hcRing\)\) \{\n\s+const hit = haloWorld\.constrainShip\(ship, true\);\n\s+if \(hcRing && hit && hit\.hit\) \{\n\s+hypercruise\.reason = 'ring';\n\s+resetHypercruise\(hypercruise\);/);
   assert.match(step, /wakeSleepingWrecksNearBodies\(_sleepingWrecksBuffer, dynamicDestructibles, isPlayerWarpGhost\(\) \? ship : null\);/);
 });

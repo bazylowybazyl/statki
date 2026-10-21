@@ -220,8 +220,11 @@ export function run() {
   // ----------------------------------------------------------
   t.section('Encja w grze przejmuje zegar kursu');
 
+  // Kurs w locie, po którego etapie jest jeszcze lot — po stage-done ma zostać w drodze (od E5 hipercruise
+  // skraca odcinki do sekund, więc ostatni lot często kończyłby kurs przed rozbiciem).
   const przypiety = getActiveCourses(world.registry).find(course =>
-    currentStage(course)?.kind === STAGE_KIND.TRAVEL && currentStage(course).seconds > 60);
+    currentStage(course)?.kind === STAGE_KIND.TRAVEL && currentStage(course).seconds > 60
+    && course.stages?.[course.stageIndex + 1]?.kind === STAGE_KIND.TRAVEL);
   const numer = courseNumber(przypiety.id);
   core.handle({ type: TRAFFIC_MSG.ATTACH, course: numer });
   t.check('attach przypina encję', !!przypiety.actorId);

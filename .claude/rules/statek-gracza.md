@@ -2,7 +2,9 @@
 paths:
   - "src/game/shipEntity.js"
   - "src/data/shipFlightSpecs.js"
+  - "src/data/driveModes.js"
   - "src/game/flight/driveTransmission.js"
+  - "src/game/flight/hypercruise.js"
   - "src/game/loadoutSave.js"
   - "src/game/hardpointService.js"
   - "src/data/fitPresets.js"
@@ -32,6 +34,10 @@ paths:
 - Kadłub, kolizje i destrukcja: `ship.beamHull` (`hullBodies.js`, silnik belek) — jak u NPC i wraków.
 
 - **Lot z jednej tabeli** (2026-10-01): parametry lotu gracza i NPC tej klasy w `src/data/shipFlightSpecs.js` (Atlas gracza: limit bojowy 500 j/s, ~150 j/s², hamowanie ~230 j/s², obrót 18°/s); napęd gracza kalibruje się do tabeli w `calibrateDriveToShip` (`src/game/flight/driveTransmission.js`) — nie wpisuj osobnych liczb lotu gracza w `HULL_DRIVE_CONFIGS`. Stabilizator i autopilot mierzą zdolność obrotu z modelu dysz.
+
+- **JEDNA TABELA NAPĘDÓW** (E5, 2026-10-21, `src/data/driveModes.js`; plan `docs/PLAN-ekonomia-rynki.md` § 3.4): prędkości przelotu gracza, NPC gry i ruchu v2 — BOJOWY (limit z `SHIP_FLIGHT_SPECS`, walka bez zmian), PRZELOT (`CRUISE_DRIVE.gearMuls` — Atlas 700 / 850 / 1000 / 1200 j/s; NPC: `CRUISE_BY_CLASS` — `cruiseBonus` / `travelSpeed`, które `shipFlightSpecs.js` bierze z klasy), dopalacz gracza (`PLAYER_HULL_DRIVE` — Atlas 1000 / 1800 j/s w walce / w PRZELOCIE; bez wpisu 2× / 3,6× limitu bojowego), HIPERCRUISE (silniki `hypercruise_mk1..3` = 20 / 30 / 40 tys. j/s — id stałe, kontrakt z E8 „Receptury”; rozpęd, rozruch i obrót per klasa lotu w `HYPERCRUISE_BY_CLASS`) i WARP (`WARP_SPEED` 260 tys. j/s — gra bierze go stąd). Decyzja użytkownika 2026-10-21: „gracz lata trochę za szybko, będzie zwalniany” (do tej pory PRZELOT 750–1500, dopalacz 1500 / 3000). Nowa stała przelotu, hipercruise'u albo warpa — w tej tabeli, nie w module. Pomiar: `node scripts/webgpu/napedy-gra.mjs` (PRZELOT, dopalacz, odcinki TRAVEL TO, hipercruise ręczny, pipeline'y sync; czas gry z zegara `WarpTraffic.time`).
+
+- **HIPERCRUISE gracza** (E5, `src/game/flight/hypercruise.js` — czysty automat; klej: blok „HIPERCRUISE” w `index.html` za `travelRestoreStance`): `O` (akcja `nav.hypercruise`) — rozruch (`spool`, Atlas 4 s; lot zwykły trwa) → lot (`active`: automat PROWADZI prędkość wzdłuż dziobu jak rampa wyjścia warpa — gałąź w fizyce gracza przed newtonowską; rozpęd z klasy × `mainEngineFraction` × `engineThrustScale`, sufit vmax × strefa jak warp: pas 0,8, planety 0,3; A/D obraca × `turnMul`) → wyjście (`drop`: hamowanie do 1000 j/s, dalej PRZELOT). `O` drugi raz albo `S` — wyjście. Silnik: `ship.hypercruiseEngine` (wyposażenie / konsola, `null` = brak) → `PLAYER_HULL_DRIVE` kadłuba → Mk I dla kadłubów z tabelą lotu (bez niej — brak trybu). Odcinki `'drive'` TRAVEL TO ≥ `HYPERCRUISE_TUNE.minLeg` (12 km) lecą hipercruise'em z celem (automat hamuje tak, by wyjść przed punktem z prędkością wyjścia; dolot kończy autopilot), bez osobnej akcji na mapie. DA SIĘ PRZERWAĆ (warp nie): BLOKADA MASY (wróg bliżej niż 12 km — zjawisko fizyczne, bez mgły wojny; zamaskowany nie blokuje: nie wejdzie, w locie wypada) i TRAFIENIE (`applyDamageToPlayer`) = przechwyt (wyjście hamuje × 4 — statek staje przy przechwytującym); TRAVEL TO po przechwycie czeka 10 s. Kolizje kadłubów jak w warpie (`updatePlayerWarpGhost` — przy 20 tys. j/s krok fizyki to 330 j.), ale płyta ringu zostaje przeszkodą i zrywa hipercruise (`stepShipRingCollisions`), broń zimna (postawa PRZELOT), dopalacz zablokowany, warp przejmuje lot (ładowanie z prędkości hipercruise'u). HUD: podpis celownika i panelu wież (`hypercruiseHudTag`), struga MAIN na dopalaczu w rozpędzie (`__fSysBoost`), kamera — człon `hyperZoomOut` w `stepCameraRigWarp`. Konsola: `window.PlayerHypercruise`, `window.hypercruise`. Testy `tests/hypercruise.test.mjs`.
 
 - **System okrętu pod F** — § „Systemy F” niżej (szarża Atlasa to jeden z czterech rodzajów).
 

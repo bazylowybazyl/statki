@@ -89,7 +89,10 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   warpZoomKick: 0.1,      // impuls zoomu przy skoku: × (1 − 0,1 · impuls(0,04 / 0,25 s))
   warpZoomExit: 0.1,      // impuls zoomu przy wyjściu: × (1 + 0,1 · impuls(0,03 / 0,18 s))
   warpZoomReturn: 1.4,    // s powrotu do zoomu gracza po wyjściu (easeOut³, liniowo w zoomie jak w demie)
-  warpChargeShakePx: 4    // drżenie w drugiej połowie ładowania [px] (demo: 4 · smooth(0,5, 1, ładowanie))
+  warpChargeShakePx: 4,   // drżenie w drugiej połowie ładowania [px] (demo: 4 · smooth(0,5, 1, ładowanie))
+  // Hipercruise (E5, src/game/flight/hypercruise.js): zoom × lerp(1, hyperZoomOut, ułamek vmax) — przy
+  // 20–40 tys. j/s kadr 9 km mija się w ~0,3 s, oddalenie pokazuje ruch; ten sam człon log(zoom) co kop warpa.
+  hyperZoomOut: 0.6
 });
 
 // Zakresy strojenia (sanityzacja wartości z konsoli i testów).
@@ -128,7 +131,8 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   warpZoomKick: [0, 0.3],
   warpZoomExit: [0, 0.3],
   warpZoomReturn: [0.2, 4],
-  warpChargeShakePx: [0, 16]
+  warpChargeShakePx: [0, 16],
+  hyperZoomOut: [0.3, 1]
 });
 
 // Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
@@ -441,6 +445,7 @@ export function noteCameraRigWarp(rig, event) {
 //                     (przejście startuje z zoomu na ekranie, więc bez skoku)
 //   exitAge         — wiek rampy wyjścia [s] (< 0: brak), exitSlow / exitHalt — koniec zwolnienia
 //                     i zatrzymanie (warpDrive.js: createWarpExitRamp)
+//   hyper           — hipercruise gracza: 0…1 (prędkość / vmax; 0 poza nim) — oddalenie do hyperZoomOut
 // Wynik w rig: warpZoomLog (człon log(zoom)), warpLagPx, warpShakePx, warpDirX/Y.
 export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const dt = Math.max(0, finite(input.dt, 0));
@@ -489,6 +494,8 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     else if (state === 'charging') target = 1 + (zoomOut - 1) * smoothstep01(charge);
     // Wyjście: oddalenie zostaje do końca zwolnienia (demo: zoom wraca od wlotu).
     else if (exitAge >= 0 && exitAge < exitSlow) target = Math.min(rig.warpHold, zoomOut);
+    const hyper = clamp(finite(input.hyper, 0), 0, 1);
+    if (hyper > 0) target = Math.min(target, 1 + (clamp(finite(tune.hyperZoomOut, 1), 0.05, 1) - 1) * smoothstep01(hyper));
   }
   // Rulon: statek na środku lejka (ładowanie: × (1 − lejek), lot: 0), przy wyjściu kamera za nim.
   let leadScale = 1;

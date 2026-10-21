@@ -20,40 +20,48 @@
  */
 
 import { buildSystemMap, SYSTEM_MAP_MOONS, moonWorldPosition } from '../../data/systemMap.js';
+import {
+  WARP_DRIVE, TRAFFIC_CONVENTIONAL, TRAFFIC_CLASS_DRIVE, TRAFFIC_DEFAULT_CLASS,
+  trafficHypercruiseMode, trapezoidSeconds
+} from '../../data/driveModes.js';
 
 // ============================================================
 // Napędy
 // ============================================================
 
 /**
- * Trzy sposoby podróży. Liczby są punktem wyjścia do strojenia suwakami —
- * w prototypie mają być ruchome, bo to one decydują, czy piractwo ma sens.
+ * Sposoby podróży — z JEDNEJ tabeli napędów gracza, NPC i ruchu (`src/data/driveModes.js`, E5).
  *
- * `fuelPerUnit` to zużycie na jednostkę dystansu. Warp pali ~10× więcej na
- * jednostkę drogi I droższy surowiec, więc jest realnie kosztowny, a nie „lepszy".
+ *   conventional — PRZELOT statku bez silnika hipercruise (1200 j./s), pełna ekspozycja;
+ *   hypercruise  — frachtowiec z silnikiem hipercruise (20–40 tys. j./s wg klasy), DA SIĘ GO PRZERWAĆ,
+ *                  więc ekspozycja jak konwencjonalny: przechwyt liczy się od DROGI, nie od czasu —
+ *                  szybszy przelot skraca kurs, ale nie zmienia szansy przechwytu na trasie;
+ *   warp         — 260 tys. j./s jak u gracza (+ narzut ładowania i wyjścia), nietykalny;
+ *   gate         — skok natychmiastowy, czas zjada dolot do bramy i od bramy.
+ *
+ * `fuelPerUnit` to zużycie na jednostkę dystansu. Warp pali więcej na jednostkę
+ * drogi I droższy surowiec, więc jest realnie kosztowny, a nie „lepszy".
+ * Hipercruise pali więcej wodoru niż PRZELOT — rachunek masówki zostaje
+ * po stronie paliwa i ryzyka, nie czasu.
  */
 export const DRIVE_MODES = Object.freeze({
-  conventional: Object.freeze({
-    id: 'conventional',
-    label: 'konwencjonalny',
-    speed: 800,
-    fuelId: 'hydrogen',
-    fuelPerUnit: 1 / 40_000,
-    /** Pełna ekspozycja na przechwyt — to jest cała trasa pirata. */
-    risk: 1
-  }),
+  conventional: TRAFFIC_CONVENTIONAL,
+  /** Tryb klasy domyślnej (hauler); inna klasa — `driveModeFor('hypercruise', klasa)`. */
+  hypercruise: trafficHypercruiseMode(TRAFFIC_DEFAULT_CLASS),
   warp: Object.freeze({
     id: 'warp',
     label: 'warp',
-    speed: 20_000,
-    fuelId: 'fusion_fuel',
+    speed: WARP_DRIVE.speed,
+    /** Ładowanie i rampa wyjścia — skok nigdy nie trwa zero. */
+    overheadSeconds: WARP_DRIVE.overheadSeconds,
+    fuelId: WARP_DRIVE.fuelId,
     // Skalibrowane wobec ŁADOWNI, nie z sufitu: typowy kurs w rdzeniu (~1 mln j.)
     // to ~17 t paliwa fuzyjnego przy ładowni haulera 160 t. Pierwsza wersja
     // (1/4000) dawała 263 t paliwa na kurs — więcej, niż statek unosi towaru,
     // i 26 tys. CR kosztu, przez co warp był martwą opcją dla każdego ładunku.
-    fuelPerUnit: 1 / 60_000,
+    fuelPerUnit: WARP_DRIVE.fuelPerUnit,
     /** Nietykalny z założenia. Dopóki nie ma disruptorów, to jest zero. */
-    risk: 0
+    risk: WARP_DRIVE.risk
   }),
   gate: Object.freeze({
     id: 'gate',
@@ -65,6 +73,29 @@ export const DRIVE_MODES = Object.freeze({
     risk: 0
   })
 });
+
+// Tryb hipercruise per klasa ładowni — stała tabela (niezmienna), liczona raz.
+const HYPERCRUISE_BY_VAN_CLASS = Object.freeze(Object.fromEntries(
+  Object.keys(TRAFFIC_CLASS_DRIVE).map(cls => [cls, trafficHypercruiseMode(cls)])
+));
+
+/**
+ * Tryb napędu odcinka: `hypercruise` zależy od klasy przewoźnika (silnik i rozpęd kadłuba,
+ * `TRAFFIC_CLASS_DRIVE`), reszta jest wspólna. `null` dla nieznanego napędu.
+ */
+export function driveModeFor(modeId, vanClass = null) {
+  if (modeId === 'hypercruise') {
+    return HYPERCRUISE_BY_VAN_CLASS[vanClass] || DRIVE_MODES.hypercruise;
+  }
+  return DRIVE_MODES[modeId] || null;
+}
+
+/** Czas lotu odcinka trybem: profil rozpędu (hipercruise) albo prędkość stała + narzut. */
+export function driveLegSeconds(mode, distance) {
+  if (!mode || !(mode.speed > 0) || !Number.isFinite(mode.speed)) return 0;
+  if (mode.accel > 0) return trapezoidSeconds(distance, mode.speed, mode.accel, mode.decel, mode.overheadSeconds || 0);
+  return distance / mode.speed + (Number(mode.overheadSeconds) || 0);
+}
 
 /** Domyślne parametry ekonomiczne. Wszystkie do wystawienia na suwaki. */
 export const NETWORK_DEFAULTS = Object.freeze({
@@ -114,7 +145,9 @@ export const DEFAULT_GATE_HUBS = Object.freeze(['earth', 'mars', 'jupiter']);
  * dolot do niej i od niej na napędzie konwencjonalnym. Przy bramie tuż przy stacji
  * skok byłby jednocześnie tańszy i szybszy od warpa, więc warp stałby się martwy.
  *
- * 150 tys. j. to ~3 minuty dolotu z każdej strony.
+ * 150 tys. j. to ~15 s dolotu hipercruise'em z każdej strony (haulerem Mk I; ~3 min
+ * konwencjonalnie). Warp między hubami trwa 8–18 s, więc brama zostaje wolniejsza dla
+ * każdej klasy i silnika (strażnik w `scripts/tests/travelNetwork.test.mjs`).
  */
 const DEFAULT_GATE_OFFSET_UNITS = 150_000;
 
@@ -449,7 +482,7 @@ export function priceRoute(network, legs, cargo = {}) {
   for (const leg of legs) {
     const from = getNode(network, leg.from);
     const to = getNode(network, leg.to);
-    const mode = DRIVE_MODES[leg.mode];
+    const mode = driveModeFor(leg.mode, cargo.vanClass);
     if (!from || !to || !mode) return null;
 
     if (mode.id === 'gate') {
@@ -460,7 +493,7 @@ export function priceRoute(network, legs, cargo = {}) {
     }
 
     const legDistance = distanceBetween(from, to);
-    const legSeconds = legDistance / mode.speed;
+    const legSeconds = driveLegSeconds(mode, legDistance);
     const legFuel = legDistance * mode.fuelPerUnit;
 
     distance += legDistance;
@@ -504,13 +537,14 @@ export function priceRoute(network, legs, cargo = {}) {
 /**
  * Buduje warianty dojazdu z A do B i zwraca je posortowane po koszcie.
  *
- * Warianty są trzy, bo tyle jest napędów:
- *   1. prosto konwencjonalnie — najtaniej w paliwie, najdłużej, pełne ryzyko
+ * Warianty są trzy:
+ *   1. na wprost — hipercruise'em (frachtowiec z silnikiem; `cargo.hypercruise === false` —
+ *      konwencjonalnie): tanio w paliwie, pełne ryzyko, bo hipercruise da się przerwać
  *   2. przez bramy — dolot do bramy, skok, dolot od bramy; ryzyko tylko na dolotach
  *   3. warpem — natychmiast i bezpiecznie, ale paliwo fuzyjne kosztuje
  *
  * Brama bywa wolniejsza od warpa od drzwi do drzwi i to jest zamierzone:
- * ma być TAŃSZA, nie szybsza.
+ * ma być TAŃSZA, nie szybsza. `cargo.vanClass` — klasa przewoźnika (silnik, rozpęd).
  */
 export function planRouteOptions(network, fromId, toId, cargo = {}) {
   const from = getNode(network, fromId);
@@ -519,8 +553,9 @@ export function planRouteOptions(network, fromId, toId, cargo = {}) {
 
   const options = [];
 
-  const direct = priceRoute(network, [{ from: from.id, to: to.id, mode: 'conventional' }], cargo);
-  if (direct) options.push({ id: 'conventional', label: 'konwencjonalnie', ...direct });
+  const directMode = cargo.hypercruise === false ? 'conventional' : 'hypercruise';
+  const direct = priceRoute(network, [{ from: from.id, to: to.id, mode: directMode }], cargo);
+  if (direct) options.push({ id: directMode, label: directMode === 'hypercruise' ? 'hipercruise\'em' : 'konwencjonalnie', ...direct });
 
   if (!cargo.noWarp) {
     const warp = priceRoute(network, [{ from: from.id, to: to.id, mode: 'warp' }], cargo);
@@ -528,14 +563,14 @@ export function planRouteOptions(network, fromId, toId, cargo = {}) {
   }
 
   // Bramy działają tylko wtedy, gdy OBA końce mają swoją. Inaczej trzeba by
-  // dolecieć konwencjonalnie przez pół układu i skok nic nie daje.
+  // dolecieć przez pół układu i skok nic nie daje. Doloty — tym samym napędem co lot na wprost.
   const fromGate = getNode(network, `gate:${from.id}`);
   const toGate = getNode(network, `gate:${to.id}`);
   if (fromGate && toGate) {
     const viaGate = priceRoute(network, [
-      { from: from.id, to: fromGate.id, mode: 'conventional' },
+      { from: from.id, to: fromGate.id, mode: directMode },
       { from: fromGate.id, to: toGate.id, mode: 'gate' },
-      { from: toGate.id, to: to.id, mode: 'conventional' }
+      { from: toGate.id, to: to.id, mode: directMode }
     ], cargo);
     if (viaGate) options.push({ id: 'gate', label: 'przez bramę', ...viaGate });
   }

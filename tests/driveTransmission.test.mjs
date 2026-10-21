@@ -204,3 +204,21 @@ test('speed governor approaches the active limit without a hard mode-change snap
   for (let i = 0; i < 300; i++) applyDriveSpeedGovernor(drive, velocity, 1 / 60);
   assert.ok(Math.hypot(velocity.x, velocity.y) <= drive.speedLimit + 1e-6);
 });
+
+test('dopalacz: ponad jego limitem prędkość nie rośnie, nawet gdy ciąg przewyższa hamowanie regulatora (E5)', () => {
+  const drive = createDriveTransmission({ hullClass: 'atlas', mode: 'combat' });
+  drive.boostLimit = 1800;
+  drive.governorDeceleration = 400;
+  const velocity = { x: 1900, y: 0 };
+  let prev = applyDriveSpeedGovernor(drive, velocity, 1 / 60);
+  for (let i = 0; i < 600; i++) {
+    velocity.x += 1500 / 60;   // ciąg dopalacza 1500 j/s² > hamowanie regulatora 400 j/s²
+    const v = applyDriveSpeedGovernor(drive, velocity, 1 / 60);
+    assert.ok(v <= prev + 1e-9, `krok ${i}: ${v} > ${prev}`);
+    prev = v;
+  }
+  assert.ok(Math.abs(prev - 1800) < 1e-6, `prędkość ${prev} schodzi do limitu dopalacza`);
+  drive.boostLimit = 0;
+  velocity.x = 1800;
+  assert.ok(applyDriveSpeedGovernor(drive, velocity, 1 / 60) < 1800, 'po dopalaczu regulator wraca do limitu trybu');
+});

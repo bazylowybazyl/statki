@@ -1517,8 +1517,11 @@ function rollPiracy(director, dt) {
     if (!stage || stage.kind !== STAGE_KIND.TRAVEL || !(stage.risk > 0)) continue;
     if (course.kind === COURSE_KIND.PATROL) continue;
 
+    // Ekspozycja = droga w tym kroku: średnia prędkość etapu (hipercruise ma w czasie rozruch i rozpęd —
+    // jego prędkość szczytowa zawyżałaby drogę), bez dystansu — prędkość napędu.
     const mode = DRIVE_MODES[stage.mode];
-    const exposure = (mode?.speed || 0) * dt * stage.risk;
+    const v = stage.distance > 0 && stage.seconds > 0 ? stage.distance / stage.seconds : (mode?.speed || 0);
+    const exposure = v * dt * stage.risk;
     if (!(exposure > 0)) continue;
     // Patrol na szlaku zbija ryzyko — to jedyne miejsce, w którym pieniądze
     // frakcji przekładają się na bezpieczeństwo transportu.

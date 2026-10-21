@@ -80,9 +80,9 @@ test('postawy: TARCZE kosztem napędu, PRZELOT szybciej z zimną bronią, BOJOWY
   assert.equal(stanceTune(m), combat, 'tryb bez postawy = nastawy bojowe');
 });
 
-test('PRZELOT na biegach: Atlas 500 → 750 / 1000 / 1250 / 1500 j/s, w górę przy gazie pod limitem, w dół bez gazu i Ctrl', async () => {
+test('PRZELOT na biegach: Atlas 500 → 700 / 850 / 1000 / 1200 j/s (tabela napędów, E5), w górę przy gazie pod limitem, w dół bez gazu i Ctrl', async () => {
   const { CRUISE_GEARS, cruiseGearMul, stepCruiseGear, shiftCruiseGearDown } = await import('../src/game/shipModes.js');
-  assert.deepEqual([...CRUISE_GEARS.muls].map((m) => m * 500), [750, 1000, 1250, 1500]);
+  assert.deepEqual([...CRUISE_GEARS.muls].map((m) => Math.round(m * 500)), [700, 850, 1000, 1200]);
   const m = createShipModes();
   assert.equal(stepCruiseGear(m, 1000, 500, 1, 1), null, 'poza PRZELOTEM bez biegów');
   m.stance = 'cruise';
@@ -94,14 +94,14 @@ test('PRZELOT na biegach: Atlas 500 → 750 / 1000 / 1250 / 1500 j/s, w górę p
   let ev = null;
   for (let i = 0; i < 20 && !ev; i++) ev = stepCruiseGear(m, 990, 500, 1, 0.1);
   assert.equal(ev, 'up');
-  assert.equal(cruiseGearMul(m.cruiseGear) * 500, 1250);
+  assert.equal(Math.round(cruiseGearMul(m.cruiseGear) * 500), 1000);
   m.cruiseShiftCd = 0;
   assert.equal(stepCruiseGear(m, 400, 500, 0, 0.1), 'down', 'bez gazu, wolno — w dół');
   m.cruiseShiftCd = 0;
   assert.equal(shiftCruiseGearDown(m), true);
   assert.equal(m.cruiseGear, 1);
   assert.equal(shiftCruiseGearDown(m), false);
-  assert.equal(cruiseGearMul(99), 3, 'najwyższy bieg = 3 × limit bojowy');
+  assert.equal(cruiseGearMul(99), 2.4, 'najwyższy bieg = 2,4 × limit bojowy');
 });
 
 test('postawa w napędzie: regulator trzyma limit × stanceLimit, zryw szarży nadal wygrywa', () => {
