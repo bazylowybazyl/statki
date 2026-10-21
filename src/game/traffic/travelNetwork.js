@@ -20,6 +20,7 @@
  */
 
 import { buildSystemMap, SYSTEM_MAP_MOONS, moonWorldPosition } from '../../data/systemMap.js';
+import { DEFAULT_GATE_HUBS, DERELICT_MARKETS } from '../../data/markets.js';
 
 // ============================================================
 // Napędy
@@ -99,12 +100,10 @@ export const NODE_KIND = Object.freeze({
 });
 
 /**
- * Bramy stoją TYLKO przy największych hubach — to była decyzja projektowa,
- * nie optymalizacja. Pomiar (`scripts/analiza-ruchu.mjs`) mówi, że Ziemia odbiera
- * 55% importu, a Ziemia z Marsem 82%, więc te dwie plus jeden przyczółek
- * w układzie zewnętrznym obsługują praktycznie cały ruch dalekobieżny.
+ * Bramy stoją TYLKO przy największych hubach — lista żyje w tabeli rynków
+ * (`src/data/markets.js`, pole `gate`), tu zostaje dla zgodności importów.
  */
-export const DEFAULT_GATE_HUBS = Object.freeze(['earth', 'mars', 'jupiter']);
+export { DEFAULT_GATE_HUBS };
 
 /**
  * Jak daleko od macierzystej stacji wisi brama.
@@ -153,6 +152,174 @@ function planetAngleFor(options) {
 }
 
 /**
+ * Sieć bez węzłów stacji: geometria układu (AU w jednostkach świata, Słońce,
+ * orbity i kąty planet z `systemMap.js`). Węzły rynków dokłada `addMarket`
+ * (`markets.js`) przez `addPlanetNode` / `addOutpostNode` / `addMoonNode` —
+ * przy budowie świata i w trakcie gry tą samą drogą.
+ *
+ * `list`, `stations`, `gates` i `fields` rosną razem z mapą `nodes`, więc
+ * węzeł dołożony w biegu jest od razu widoczny dla trasowania i dyspozytora.
+ */
+export function createTravelNetwork(options = {}) {
+  const beltEdgeAu = Number(options.beltEdgeAu) || 140;
+  const origin = originOf(options);
+  const { auInWorldUnits, planets } = buildSystemMap(beltEdgeAu, {
+    angleFor: planetAngleFor(options),
+    planetScale: options.planetScale,
+    sunRadius: options.sunRadius
+  });
+  return {
+    auInWorldUnits,
+    /** Pozycja Słońca — środek orbit planet, placówek i pól. */
+    origin,
+    nodes: new Map(),
+    list: [],
+    gates: [],
+    stations: [],
+    fields: [],
+    /** Orbity i kąty planet z mapy układu — na nich stają węzły rynków planet. */
+    planets: new Map(planets.map(planet => [planet.id, planet])),
+    placement: {
+      berthsPerStation: options.berthsPerStation ?? 6,
+      gateOffsetUnits: Number(options.gateOffsetUnits) || DEFAULT_GATE_OFFSET_UNITS,
+      gateThroughputPerHour: options.gateThroughputPerHour ?? 90
+    },
+    config: { ...NETWORK_DEFAULTS, ...(options.config || {}) }
+  };
+}
+
+/** Wpisuje węzeł do mapy i do tablicy pochodnej jego rodzaju. */
+function pushNode(network, node) {
+  network.nodes.set(node.id, node);
+  network.list.push(node);
+  if (node.kind === NODE_KIND.STATION) network.stations.push(node);
+  else if (node.kind === NODE_KIND.GATE) network.gates.push(node);
+  else if (node.kind === NODE_KIND.FIELD) network.fields.push(node);
+  return node;
+}
+
+/**
+ * Brama przy hubie. Siedzi na tej samej orbicie, kawałek dalej po kącie —
+ * żeby dolot do niej był realnym odcinkiem, a nie zerem.
+ */
+function addGateNode(network, station, name) {
+  const { origin, placement } = network;
+  const gateAngle = station.angle + placement.gateOffsetUnits / Math.max(1, station.orbitRadius);
+  const gatePos = positionOnOrbit(station.orbitRadius, gateAngle, origin.x, origin.y);
+  return pushNode(network, {
+    id: `gate:${station.id}`,
+    kind: NODE_KIND.GATE,
+    label: `Brama ${name}`,
+    x: gatePos.x,
+    y: gatePos.y,
+    stationId: station.id,
+    /** Przepustowość skoków na godzinę — wejście dla slotów. */
+    throughputPerHour: placement.gateThroughputPerHour
+  });
+}
+
+/**
+ * Węzeł planety: orbita i kąt z mapy układu. `flags`: `derelict`, `gate`,
+ * `berths`, `label`. Zwraca węzeł albo `null` (nieznana planeta, zajęte id).
+ */
+export function addPlanetNode(network, planetId, flags = {}) {
+  const planet = network?.planets?.get(String(planetId || ''));
+  if (!planet || network.nodes.has(planet.id)) return null;
+  const { origin } = network;
+  const derelict = Boolean(flags.derelict);
+  const pos = positionOnOrbit(planet.orbitRadius, planet.angle, origin.x, origin.y);
+  const node = pushNode(network, {
+    id: planet.id,
+    kind: NODE_KIND.STATION,
+    label: flags.label || planet.name,
+    x: pos.x,
+    y: pos.y,
+    orbitRadius: planet.orbitRadius,
+    angle: planet.angle,
+    derelict,
+    /** Ile stanowisk — wejście dla kolejkowania slotowego. */
+    berths: derelict ? 0 : (flags.berths ?? network.placement.berthsPerStation),
+    hasGate: Boolean(flags.gate) && !derelict
+  });
+  if (node.hasGate) addGateNode(network, node, planet.name);
+  return node;
+}
+
+/**
+ * Stacja spoza tabeli planet: osada w asteroidach, przyczółek piracki,
+ * stacja misji — wszystko, co ma magazyn i cenę, ale nie krąży wokół planety.
+ * Dla warstwy ruchu nieodróżnialna od stacji planetarnej — ma pozycję,
+ * stanowiska i frakcję, więc handel, doki, patrole i agenci obsługują ją bez
+ * zmian. `outpost`: `id`, `label`, `orbitAU`, `angle` (albo wprost `x`, `y`),
+ * `berths`, `derelict`, `gate`.
+ */
+export function addOutpostNode(network, outpost = {}) {
+  const id = String(outpost.id || '');
+  if (!network?.nodes || !id || network.nodes.has(id)) return null;
+  const { origin } = network;
+  const radius = Number(outpost.orbitAU) * network.auInWorldUnits;
+  const angle = Number(outpost.angle) || 0;
+  const pos = positionOnOrbit(radius, angle, origin.x, origin.y);
+  const derelict = Boolean(outpost.derelict);
+  const node = pushNode(network, {
+    id,
+    kind: NODE_KIND.STATION,
+    label: outpost.label || outpost.id,
+    x: Number.isFinite(outpost.x) ? outpost.x : pos.x,
+    y: Number.isFinite(outpost.y) ? outpost.y : pos.y,
+    orbitRadius: radius,
+    angle,
+    derelict,
+    // Przyczółek jest mniejszy od portu planetarnego — mniej stanowisk,
+    // brak pierścienia, ale to nadal pełnoprawny rynek.
+    berths: derelict ? 0 : (outpost.berths ?? 4),
+    hasGate: Boolean(outpost.gate) && !derelict,
+    outpost: true
+  });
+  if (node.hasGate) addGateNode(network, node, node.label);
+  return node;
+}
+
+/**
+ * KSIĘŻYC — pozycję liczy się OD RODZICA, więc rodzic musi już być w sieci.
+ *
+ * Pełnoprawna stacja: ma port, magazyn, frakcję i rynek, więc handel, doki,
+ * patrole i agenci obsługują ją bez żadnej zmiany. Różni ją tylko to, skąd
+ * bierze współrzędne — i `parentId`, dzięki któremu wiadomo, czyim jest
+ * zapleczem. `moon`: wpis jak w `SYSTEM_MAP_MOONS` plus `derelict`.
+ */
+export function addMoonNode(network, moon = {}) {
+  const id = String(moon.id || '');
+  if (!network?.nodes || !id || network.nodes.has(id)) return null;
+  const parent = network.nodes.get(String(moon.parentId || ''));
+  if (!parent) return null;
+  const pos = moonWorldPosition(moon, parent);
+  const pusty = moon.role === 'empty' || Boolean(moon.derelict);
+  return pushNode(network, {
+    id,
+    kind: NODE_KIND.STATION,
+    label: moon.label || moon.id,
+    x: pos.x,
+    y: pos.y,
+    // Orbita wokół GWIAZDY jest tu tylko informacyjna — księżyc trzyma się
+    // planety, a nie własnego toru wokół Słońca.
+    orbitRadius: parent.orbitRadius,
+    angle: parent.angle,
+    parentId: parent.id,
+    moon: true,
+    moonOrbitRadius: Number(moon.orbitRadius) || 0,
+    moonAngle: Number(moon.angle) || 0,
+    role: moon.role || 'node',
+    // Pusty księżyc nie ma załogi ani nabrzeży: to działka do zajęcia,
+    // nie port. Stąd zero stanowisk — dokładnie jak opuszczony Neptun.
+    derelict: pusty,
+    berths: pusty ? 0 : (moon.berths ?? 3),
+    hasGate: false,
+    outpost: true
+  });
+}
+
+/**
  * Buduje węzły układu na podstawie mapy z `systemMap.js`.
  *
  * `fields` to pola wydobywcze podawane w AU mapy — pas główny i Kuiper. Nie
@@ -162,115 +329,24 @@ function planetAngleFor(options) {
  * Z gry przychodzą trzy rzeczy, bez których sieć nie pokryje się z mapą:
  * `origin` (pozycja Słońca), `planetAngles` i te same `planetScale`/`sunRadius`,
  * którymi gra liczy orbity w `buildSystemMap`.
+ *
+ * `stations: false` — bez węzłów stacji (planet, placówek, księżyców): świat
+ * ruchu dokłada je sam, rynek po rynku (`buildTrafficWorld` → `addMarket`).
  */
 export function buildTravelNetwork(options = {}) {
-  const beltEdgeAu = Number(options.beltEdgeAu) || 140;
-  const origin = originOf(options);
-  const { auInWorldUnits, planets } = buildSystemMap(beltEdgeAu, {
-    angleFor: planetAngleFor(options),
-    planetScale: options.planetScale,
-    sunRadius: options.sunRadius
-  });
-  const gateHubs = new Set(options.gateHubs || DEFAULT_GATE_HUBS);
-  const derelict = new Set(options.derelict || ['neptune']);
-  const nodes = new Map();
+  const network = createTravelNetwork(options);
+  const { auInWorldUnits, origin, nodes } = network;
+  const add = node => pushNode(network, node);
 
-  const add = node => { nodes.set(node.id, node); return node; };
-
-  for (const planet of planets) {
-    const pos = positionOnOrbit(planet.orbitRadius, planet.angle, origin.x, origin.y);
-    add({
-      id: planet.id,
-      kind: NODE_KIND.STATION,
-      label: planet.name,
-      x: pos.x,
-      y: pos.y,
-      orbitRadius: planet.orbitRadius,
-      angle: planet.angle,
-      derelict: derelict.has(planet.id),
-      /** Ile stanowisk — wejście dla kolejkowania slotowego. */
-      berths: derelict.has(planet.id) ? 0 : (options.berthsPerStation ?? 6),
-      hasGate: gateHubs.has(planet.id) && !derelict.has(planet.id)
-    });
-
-    if (gateHubs.has(planet.id) && !derelict.has(planet.id)) {
-      // Brama siedzi na tej samej orbicie, kawałek dalej po kącie — żeby dolot
-      // do niej był realnym odcinkiem, a nie zerem.
-      const gateOffset = Number(options.gateOffsetUnits) || DEFAULT_GATE_OFFSET_UNITS;
-      const gateAngle = planet.angle + gateOffset / Math.max(1, planet.orbitRadius);
-      const gatePos = positionOnOrbit(planet.orbitRadius, gateAngle, origin.x, origin.y);
-      add({
-        id: `gate:${planet.id}`,
-        kind: NODE_KIND.GATE,
-        label: `Brama ${planet.name}`,
-        x: gatePos.x,
-        y: gatePos.y,
-        stationId: planet.id,
-        /** Przepustowość skoków na godzinę — wejście dla slotów. */
-        throughputPerHour: options.gateThroughputPerHour ?? 90
-      });
+  if (options.stations !== false) {
+    const gateHubs = new Set(options.gateHubs || DEFAULT_GATE_HUBS);
+    const derelict = new Set(options.derelict || DERELICT_MARKETS);
+    for (const planet of network.planets.values()) {
+      addPlanetNode(network, planet.id, { derelict: derelict.has(planet.id), gate: gateHubs.has(planet.id) });
     }
-  }
-
-  // Stacje spoza tabeli planet: osady w asteroidach, przyczółki pirackie,
-  // wszystko, co ma magazyn i cenę, ale nie krąży wokół planety. Dla warstwy
-  // ruchu są nieodróżnialne od stacji planetarnych — mają pozycję, stanowiska
-  // i frakcję, więc handel, doki, patrole i agenci obsługują je bez zmian.
-  for (const outpost of options.outposts || []) {
-    const radius = Number(outpost.orbitAU) * auInWorldUnits;
-    const angle = Number(outpost.angle) || 0;
-    const pos = positionOnOrbit(radius, angle, origin.x, origin.y);
-    add({
-      id: String(outpost.id),
-      kind: NODE_KIND.STATION,
-      label: outpost.label || outpost.id,
-      x: Number.isFinite(outpost.x) ? outpost.x : pos.x,
-      y: Number.isFinite(outpost.y) ? outpost.y : pos.y,
-      orbitRadius: radius,
-      angle,
-      derelict: false,
-      // Przyczółek jest mniejszy od portu planetarnego — mniej stanowisk,
-      // brak pierścienia, ale to nadal pełnoprawny rynek.
-      berths: outpost.berths ?? 4,
-      hasGate: false,
-      outpost: true
-    });
-  }
-
-  // KSIĘŻYCE — po planetach, bo pozycję liczy się OD RODZICA.
-  //
-  // Dokładane jako pełnoprawne stacje: mają port, magazyn, frakcję i rynek,
-  // więc handel, doki, patrole i agenci obsługują je bez żadnej zmiany. Różni
-  // je tylko to, skąd biorą współrzędne — i `parentId`, dzięki któremu wiadomo,
-  // czyim są zapleczem.
-  const moons = options.moons === false ? [] : (options.moons || SYSTEM_MAP_MOONS);
-  for (const moon of moons) {
-    const parent = nodes.get(String(moon.parentId || ''));
-    if (!parent) continue;
-    const pos = moonWorldPosition(moon, parent);
-    const pusty = moon.role === 'empty' || derelict.has(moon.id);
-    add({
-      id: String(moon.id),
-      kind: NODE_KIND.STATION,
-      label: moon.label || moon.id,
-      x: pos.x,
-      y: pos.y,
-      // Orbita wokół GWIAZDY jest tu tylko informacyjna — księżyc trzyma się
-      // planety, a nie własnego toru wokół Słońca.
-      orbitRadius: parent.orbitRadius,
-      angle: parent.angle,
-      parentId: parent.id,
-      moon: true,
-      moonOrbitRadius: Number(moon.orbitRadius) || 0,
-      moonAngle: Number(moon.angle) || 0,
-      role: moon.role || 'node',
-      // Pusty księżyc nie ma załogi ani nabrzeży: to działka do zajęcia,
-      // nie port. Stąd zero stanowisk — dokładnie jak opuszczony Neptun.
-      derelict: pusty,
-      berths: pusty ? 0 : (moon.berths ?? 3),
-      hasGate: false,
-      outpost: true
-    });
+    for (const outpost of options.outposts || []) addOutpostNode(network, outpost);
+    const moons = options.moons === false ? [] : (options.moons || SYSTEM_MAP_MOONS);
+    for (const moon of moons) addMoonNode(network, { ...moon, derelict: derelict.has(moon.id) });
   }
 
   for (const field of options.fields || []) {
@@ -317,17 +393,7 @@ export function buildTravelNetwork(options = {}) {
     });
   }
 
-  return {
-    auInWorldUnits,
-    /** Pozycja Słońca — środek orbit planet, placówek i pól. */
-    origin,
-    nodes,
-    list: [...nodes.values()],
-    gates: [...nodes.values()].filter(node => node.kind === NODE_KIND.GATE),
-    stations: [...nodes.values()].filter(node => node.kind === NODE_KIND.STATION),
-    fields: [...nodes.values()].filter(node => node.kind === NODE_KIND.FIELD),
-    config: { ...NETWORK_DEFAULTS, ...(options.config || {}) }
-  };
+  return network;
 }
 
 /**
