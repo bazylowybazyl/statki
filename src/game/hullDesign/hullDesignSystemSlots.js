@@ -20,7 +20,7 @@
 // — rdzeń Bellatora: REACTOR_CORE_MARKERS (src/data/reactorCores.js), zbiornik Bellatora: FUEL_TANK_MARKERS
 //   (src/data/fuelTanks.js), mostek Colossusa: strefa BRIDGE_LAYOUT_PROPOSALS (src/game/shipBridge.js),
 // — ładownie: CARGO_BAY_HULLS (src/data/cargoBays.js) przesunięte / zmniejszone tak, by nie nakrywały modułów presetu.
-// Gdzie gra liczy automatem (`autoFuelTankMarker`, `autoReactorMarker`), miejsce wybrane ręcznie: zbiornik w rufowej
+// Gdzie gra liczy automatem (`autoFuelTankMarker`), miejsce wybrane ręcznie: zbiornik w rufowej
 // części, głęboko w kadłubie, poza komorą reaktora (szczegóły przy kadłubach). Wymiary dysz SIDE: 14 × 10 jd
 // (pół-wymiary), zbiorników ~26–42 × 10–22 jd.
 //
@@ -42,10 +42,28 @@
 // KLASA presetu (etap 2, src/data/shipClasses.js): `bridgeLevel` / `coreLevel` — TN wg decyzji użytkownika (Custos I/R1,
 // Hasta II/R2, Bellator IV/R4, Citadella V/R5, Colossus VI/R6, fregata z klocków I/R1), pozostałe — najniższa klasa,
 // w której mieszczą się powierzchnia i gniazda (classForHull; test pilnuje, że każdy preset mieści się w swojej klasie).
+//
+// RDZEŃ floty TN: jedno źródło miejsc z grą — rdzeń presetu (x, y = 0) w wariancie z obudową (v 2: gniazdo, w którym
+// gra rysuje obudowę 3D reaktora) = REACTOR_CORE_MARKERS (src/data/reactorCores.js) przeliczone ramą HD_TN_SPRITE_FRAMES
+// (x, y, hr = r / s); pilnuje tests/reactorCoreMarkers.test.mjs.
 
 import { HD_SYSTEM_TYPES } from './hullDesignSystems.js';
 import { HD_MOUNT_RADIUS_DU, hullDesignMountOf } from './hullDesignSchema.js';
 import { shipClass, sizeRank } from '../../data/shipClasses.js';
+
+/**
+ * Rama sprite'a floty TN w układzie projektu (tabela z nagłówka): profil renderu gry, wymiary PNG, s [j. / px PNG]
+ * i przesunięcie [px PNG] — x = (px + dx) · s, y = (py + dy) · s.
+ */
+export const HD_TN_SPRITE_FRAMES = Object.freeze({
+  custos: Object.freeze({ hull: 'terran_frigate', png: [2400, 1792], s: 0.08, dx: -35.5, dy: -6.0 }),
+  hasta: Object.freeze({ hull: 'terran_destroyer', png: [768, 573], s: 0.375, dx: 12.5, dy: 0.5 }),
+  bellator: Object.freeze({ hull: 'terran_battleship', png: [1158, 714], s: 0.5389, dx: 0.5, dy: 1.0 }),
+  citadella: Object.freeze({ hull: 'terran_carrier', png: [1672, 941], s: 0.6459, dx: 1.5, dy: 12.0 }),
+  colossus: Object.freeze({ hull: 'terran_supercapital', png: [1672, 941], s: 0.9330, dx: -0.5, dy: 2.0 })
+});
+// rdzeń w gnieździe obudowy (miejsce i promień z presetu)
+const HOUSED = Object.freeze({ v: 2 });
 
 const SIDE_PORT = -Math.PI / 2;     // dysza SIDE burty y < 0: wydech w −y (lustro: +y)
 const tank = (x, y, w, h, o = {}) => ({ type: 'fuel_tank', x, y, w, h, rot: 0, v: 0, ...o });
@@ -63,11 +81,13 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
   // Custos: zbiornik (automat gry) na osi między mostkiem a gondolami; ładownia (gra: grzbiet 3,7 ± 27 j. — nakryłaby
   // gniazdo i kratkę) na płycie przed gniazdem dziobowym
   custos: {
+    reactor: HOUSED,
     add: [tank(-61, 0, 3.2, 1.3, { rot: TO_BOW }), side(29.8, -22.1, 1.3, 0.9), cargo(22, 0, 11, 6)]
   },
   // Hasta: zbiornik (automat gry) w maszynowni za mostkiem; ładownia (gra: grzbiet 3,2 ± 27 j. — kratka i gniazdo)
   // między gniazdem dziobowym a klinami dziobu
   hasta: {
+    reactor: HOUSED,
     add: [tank(-98.5, 0, 5, 2.2, { rot: TO_BOW }), side(-77.4, -66.6, 2, 1.4), side(55.1, -33.4, 2, 1.4), cargo(31, 0, 10, 6.5)]
   },
   // Bellator: rdzeń z REACTOR_CORE_MARKERS (−17, r 26; preset −80), zbiornik z FUEL_TANK_MARKERS (−161, r 23 —
@@ -75,19 +95,21 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
   // SIDE — tabela gry pusta (gra: automat z obrysu): para przy rufie i przy dziobie; ładownia — przednia część rynny
   // grzbietowej (gra: 75,7 ± 151 j. — nakryłaby gniazdo 40)
   bellator: {
-    reactor: { x: -17, y: 0, r: 26 },
+    reactor: { x: -17, y: 0, r: 26, v: 2 },
     add: [tank(-162, 0, 14, 8, { rot: TO_PORT }), side(-221.3, -157, 5.1, 3.7), side(184.1, -130.7, 5.1, 3.7), cargo(95, 0, 42, 14)]
   },
   // Citadella: para zbiorników w maszynowni obok komory reaktora; ładowni nie ma osobno — pokłady ładowni gry
   // (lewy / prawy, x 25 ± 191 j.) to rząd wrót hangarów presetu. Mostek presetu (−300) stoi tuż przed strefą gry
   // (−387…−325: środek kasztelu z kratą i kapsułami wież) — zostaje (przesunięcie nakryłoby kratę i kapsuły)
   citadella: {
+    reactor: HOUSED,
     add: [tank(-228, -75, 18, 8, { rot: TO_AXIS }), side(-167.5, -193.5, 8.8, 6.3), side(191.1, -191, 8.8, 6.3)]
   },
   // Colossus: mostek w strefie gry (centralna nadbudówka −238…85 j.; −160 — przed napisem TERRA NOVA; preset −560),
   // para zbiorników w maszynowni przy nadbudówce; SIDE z tabeli gry (bez dziobowej na skosie i 278 — gniazda wież);
   // ładownia rufowa (gra: −493 ± 235 j.) między kratami osi kasztelu
   colossus: {
+    reactor: HOUSED,
     bridge: { x: -160, y: 0, w: 30, h: 22 },
     add: [
       tank(-160, -128, 22, 9),

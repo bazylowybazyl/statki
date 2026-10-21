@@ -1578,7 +1578,7 @@
     } from "./src/game/shipBridgeRuntime.js";
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
-    import { cloakLightGain } from "./src/game/cloakLook.js";
+    import { cloakLightGain, entityCloakVisAt } from "./src/game/cloakLook.js";
     import { stepCloakLooks } from "./src/game/cloakLooks.js";
     import { RenderPoses } from "./src/game/renderPoses.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
@@ -1752,23 +1752,25 @@
           shockwaveManager: null,
         });
         // Wybuch rdzenia reaktora (krok klatki efektów „reaktor-rdzen”: kula plazmy, strumień,
-        // dym rakiet, pule broni) i model reaktora w wyrwie (warstwa 7) — obraz ReactorCoreGame.
+        // dym rakiet, pule broni) i model reaktora w obudowie nad kadłubem (pass ortho) — obraz ReactorCoreGame.
         WeaponFx.ensure();
         reactorBlastFx = createReactorBlastFx(Core3D, { rocketFx, weaponFx: WeaponFx });
         if (reactorBlastFx) reactorBlastFx.onShake = (mag, dur) => camera.addShake?.(mag, dur);
         ReactorFxEvents.ready = !!reactorBlastFx;
+        // Reaktor w obudowie NAD kadłubem (pass ortho): poza renderu gospodarza jak mostek, gaśnie z maskowaniem
+        // w środku rdzenia i przy „Statkach 3D” (reactorModelVisibility), słońce z RenderWorld.
         reactorModel3D = createReactor3D({
           scene: Core3D.scene,
-          markLayerActive: () => Core3D.setShieldLayerActive(true),
           colorFor: (core) => core.color || [0.3, 0.7, 1.0],
-          frameOf: reactorCoreFrame,
-          hostReady: (h) => !!reactorCoreHull(h)
+          frameOf: (core, out) => reactorCoreFrame(core, out, bridgeRenderPose(core.host)),
+          hostReady: (h) => !!reactorCoreHull(h),
+          visibility: reactorModelVisibility
         });
-        // Pierwszy odsłonięty reaktor nie kompiluje materiałów w swojej klatce.
+        // Reaktory widać od pierwszej klatki gry — rozgrzewka na ekranie ładowania.
         Core3D.warmup.add({
           name: 'model reaktora (reactor3D)',
-          objects: () => Object.values(reactorModel3D?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean),
-          layer: 7,
+          objects: () => reactorModel3D?.warmupMeshes() || [],
+          layer: 0,
           phase: 'loading'
         });
         // Pył kosmiczny: dwie siatki (pod kadłubami w passie ortho, rzadkie drobiny „przy kamerze” w FG), uniformy
@@ -5050,6 +5052,13 @@
     function bridgeModelVisibility(entity) {
       if (shipModel3DIdFor(entity)) return 0;
       return cloakLightGain(entity);
+    }
+
+    // Model reaktora (obudowa nad kadłubem): jak mostek przy „Statkach 3D”, maskowanie w środku rdzenia
+    // (komórka kadłuba pod obudową — jak wieże 3D).
+    function reactorModelVisibility(core, wx, wy) {
+      const host = core?.host;
+      return bridgeModelVisibility(host) > 0 ? entityCloakVisAt(host, wx, wy) : 0;
     }
 
     function tickShipBridges(entity, dt) {
@@ -23016,7 +23025,7 @@
     // Render rdzeni: listy encji (gracze, NPC, wraki), zegar symulacji, początek modelu przy kamerze.
     const _reactorCoreLists = [[null, null], null, null, null];
     const _reactorModelOrigin = { x: 0, y: 0 };
-    const _reactorModelOpts = { origin: _reactorModelOrigin };
+    const _reactorModelOpts = { origin: _reactorModelOrigin, view: null, zoom: 1 };
     let _reactorFxSim = 0;
     // Rdzeń na świeżym kadłubie belkowym: miejsce z tabeli (src/data/reactorCores.js) po profilu
     // renderu kadłuba, inaczej komora z automatu (najgłębiej przy środku masy). Myśliwce bez rdzenia.
@@ -29352,8 +29361,8 @@
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
 
       // Rdzenie reaktorów: obraz stopienia i zagrożeń (reżyser wybuchu — krok klatki efektów
-      // przed passami) i model reaktora w wyrwie (warstwa 7 — po tarczach, które ją zgłaszają
-      // przypisaniem). Zegar = czas symulacji tej klatki (pauza = 0).
+      // przed passami) i model reaktora w obudowie nad kadłubem (pass ortho; kadr z pudła kadłubów).
+      // Zegar = czas symulacji tej klatki (pauza = 0).
       if (reactorBlastFx && !RW_WORKER) {
         const simNow = SimClock.sim;
         const reactorSimDt = Math.max(0, Math.min(0.1, simNow - _reactorFxSim));
@@ -29370,6 +29379,8 @@
         reactorBlastFx.syncHazards(reactorSimDt);
         if (reactorModel3D) {
           _reactorModelOrigin.x = cam.x; _reactorModelOrigin.y = cam.y;
+          _reactorModelOpts.view = _hexCullInfo;
+          _reactorModelOpts.zoom = cam.zoom;
           reactorModel3D.sync(reactorCores, 0, reactorSimDt, _reactorModelOpts);
         }
       }

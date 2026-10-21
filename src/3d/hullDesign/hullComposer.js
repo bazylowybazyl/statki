@@ -794,6 +794,41 @@ export class HullComposer {
       }).ElseIf(type.lessThan(6.5), () => {
         // reaktor: pancerna pokrywa, wentyle promieniste ze światłem, pierścień ostrzegawczy (v = 1 — wewnątrz kadłuba)
         const R = B.z.mul(iD);
+        // v = 2 — GNIAZDO OBUDOWY Terra Novy: ośmiokąt (boki na osiach i przekątnych) o apotemie R = obrys kołnierza
+        // obudowy 3D, w której gra rysuje reaktor (src/3d/reactor3D.js); wokół szczelina i pancerna rama z podwójną
+        // linią, nitami i żółtymi narożnikami ostrzegawczymi, w środku płyta pokładu ze śrubami i 4 przepustami kabli
+        If(B.w.greaterThan(1.5).and(B.w.lessThan(2.5)).and(rr.lessThan(R.mul(1.45).add(1.0))), () => {
+          const oct = sdOct(lu, R).toVar();
+          const gapO = sdOct(lu, R.mul(1.06).add(0.4)).toVar();
+          const frameO = sdOct(lu, R.mul(1.2).add(0.8)).toVar();
+          const pad = clamp(oct.negate().div(0.4), 0.0, 1.0).toVar();
+          const gap = clamp(gapO.negate().div(0.35), 0.0, 1.0).mul(float(1.0).sub(pad)).toVar();
+          const frame = clamp(frameO.negate().div(0.5), 0.0, 1.0).mul(float(1.0).sub(gap)).mul(float(1.0).sub(pad)).toVar();
+          const a = atan(lu.y, lu.x);
+          // nity na ramie i śruby płyty pokładu (8 na bok ośmiokąta)
+          const nb = floor(R.mul(0.9)).max(16.0);
+          const midF = frameO.add(R.mul(0.07).add(0.4));
+          const angF = fract(a.div(6.28318).mul(nb));
+          const boltF = float(1.0).sub(smoothstep(0.22, 0.4, length(vec2(angF.sub(0.5).mul(6.28318).mul(R.mul(1.13)).div(nb), midF)))).mul(frame);
+          const angP = fract(a.div(6.28318).mul(16.0));
+          const boltP = float(1.0).sub(smoothstep(0.2, 0.36, length(vec2(angP.sub(0.5).mul(6.28318).mul(R.mul(0.88)).div(16.0), oct.add(R.mul(0.1)))))).mul(pad);
+          // przepusty kabli na przekątnych (ciemne kwadraty przy brzegu płyty)
+          const dq = rot2(lu, float(0.7853982));
+          const port = step(abs(abs(dq.x).sub(R.mul(0.72))), R.mul(0.07).max(0.6)).mul(step(abs(abs(dq.y).sub(R.mul(0.72))), R.mul(0.07).max(0.6))).mul(pad);
+          // żółte narożniki ostrzegawcze ramy (przy wierzchołkach ośmiokąta)
+          const corner = step(0.82, abs(cos(a.mul(8.0).sub(3.14159)))).mul(frame).mul(step(frameO, R.mul(-0.05)));
+          const dbl = lineN(frameO.add(R.mul(0.11).add(0.55)), float(0.3)).mul(frame);
+          modH.addAssign(frame.mul(1.1).add(boltF.mul(0.25)).sub(gap.mul(2.2)).add(pad.mul(0.35)).add(boltP.mul(0.2)).sub(port.mul(0.6)).sub(dbl.mul(0.25)));
+          modK.assign(max(modK, max(frame, max(gap, pad))));
+          modSeam.assign(max(modSeam, max(lineN(frameO, float(0.35)), lineN(gapO, float(0.3))).mul(0.6)));
+          const col = mix(plateC.mul(1.02), plateC.mul(0.93), dbl).toVar();
+          col.assign(mix(col, hazard, corner));
+          col.assign(mix(col, trimC.mul(0.5), boltF.mul(0.6)));
+          col.assign(mix(col, vec3(0.025, 0.025, 0.024), gap));
+          col.assign(mix(col, mix(plateC.mul(0.84), trimC.mul(0.55), boltP), pad));
+          col.assign(mix(col, vec3(0.02), port));
+          modCol.assign(col);
+        });
         If(rr.lessThan(R.add(1.0)).and(B.w.lessThan(0.5)), () => {
           const a = atan(lu.y, lu.x);
           const cap = clamp(R.mul(0.92).sub(rr), 0.0, 1.0);

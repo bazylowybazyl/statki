@@ -123,7 +123,10 @@ export const HD_MODULES = Object.freeze({
   turret_l: Object.freeze({ code: 3, label: 'Wieża L', r: 26, size: 'L', parts: { weapon_mount: 2, avionics: 1 } }),
   engine: Object.freeze({ code: 4, label: 'Gondola MAIN', w: 48, h: 22, level: 0, parts: { thruster: 2 } }),
   hatch: Object.freeze({ code: 5, label: 'Luk', w: 26, h: 15, parts: { hull_plate: 1 } }),
-  reactor: Object.freeze({ code: 6, label: 'Reaktor', r: 24, parts: { reactor_core: 1 } }),   // v = 1 — wewnątrz (bez pokrywy)
+  // reaktor: v 0 — pancerna pokrywa z wentylami (rysunek kompozytora), 1 — wewnątrz kadłuba (bez pokrywy), 2 — GNIAZDO
+  // OBUDOWY Terra Novy (domyślny, `v` wpisu): ośmiokąt o apotemie r = obrys kołnierza obudowy 3D, w której gra rysuje
+  // reaktor (src/3d/reactor3D.js; marker gry: hr = r w px PNG — src/data/reactorCores.js); sieć jak przy v 1
+  reactor: Object.freeze({ code: 6, label: 'Reaktor', r: 24, v: 2, parts: { reactor_core: 1 } }),
   bridge: Object.freeze({ code: 7, label: 'Mostek', w: 26, h: 19, level: 3, parts: { avionics: 2, life_support: 1 } }),
   vent: Object.freeze({ code: 8, label: 'Kratka', w: 14, h: 6, parts: {} }),
   hangar: Object.freeze({ code: 9, label: 'Wrota hangaru', w: 38, h: 32, parts: { hull_plate: 1 } }),

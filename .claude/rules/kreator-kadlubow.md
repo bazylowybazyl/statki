@@ -130,6 +130,21 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Demo: każda zmiana projektu przechodzi przez `classGuard` w `runBuild` (akcja zwiększająca przekroczenie limitu mostka
   wraca); nowa ścieżka dokładania gniazd → `classMountPlace` (odmowa przed akcją).
 
+## Rdzeń: gniazdo obudowy reaktora (v 2)
+
+- Moduł `reactor`: v 0 — pancerna pokrywa z wentylami (rysunek kompozytora), v 1 — wewnątrz kadłuba (nic nie rysuje),
+  v 2 — GNIAZDO OBUDOWY Terra Novy (domyślne `v` wpisu `HD_MODULES.reactor`, nowy moduł w demie je dostaje): ośmiokąt
+  o apotemie r (= obrys kołnierza obudowy 3D gry, boki na osiach i przekątnych jak `sdOct`), szczelina, rama z nitami
+  i żółtymi narożnikami, płyta pokładu ze śrubami i przepustami kabli. Gra rysuje w nim model 3D reaktora
+  (`src/3d/reactor3D.js`, reguła `mostki-reaktor`). Dla sieci v 2 = v 1 (bez bryły, pień kończy się rozdzielnią w środku)
+  — trasy i testy sieci bez zmian; zmiana `r` rdzenia presetu PRZESTAWIA trasy (komórki startu z `moduleBox`).
+- Presety TN dostają v 2 ze slotów (`HOUSED` w `hullDesignSystemSlots.js`). Miejsca rdzeni TN to jedno źródło z grą:
+  `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`) = rdzeń presetu przeliczony `HD_TN_SPRITE_FRAMES` (ta sama rama co
+  sloty), `hr` = r / s — przesunięcie rdzenia w presecie TN wymaga tego samego w markerze (`tests/reactorCoreMarkers.test.mjs`).
+- Demo: sekcja „REAKTOR 3D” w `dema/kreator-kadluba-webgpu.js` — ten sam model gry nad gniazdem v 2 (rozgrzewka w starcie,
+  haki `reactorDemoCoresFrom` po wypieku, `reactorDemoSync` w `render()`, `window.__kreator.reactor3D`); zrzuty
+  `--etapy reaktor` (z modelem, samo gniazdo, na tle okrętu).
+
 ## Jak sprawdzić
 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
@@ -137,6 +152,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Klasy: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` (panel klasy, gniazda
   Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
-  [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`); raport `raport.json`
+  [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`), gniazdo obudowy
+  reaktora z modelem 3D (`reaktor`); raport `raport.json`
   (pipeline'y synchroniczne w klatkach — ma być 0, błędy konsoli).
 - Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki`.

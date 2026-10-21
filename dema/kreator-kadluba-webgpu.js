@@ -47,6 +47,7 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { BRIDGE_DEMO_HULLS } from './mostki-webgpu/kadluby.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
+import { createReactor3D } from '../src/3d/reactor3D.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -207,6 +208,7 @@ async function runBuild() {
     buildShipEntity(field, bake, mounts);
     const t3 = performance.now();
     S.field = field; S.recipe = recipe; S.mounts = mounts; S.bake = bake;
+    reactorDemoCoresFrom(field);
     S.timing = { field: t1 - t0, bake: t2 - t1, gpu: bake.ms, hull: t3 - t2, total: t3 - t0, fast: job.fast };
     S.builtRev = rev;
     placeRef();
@@ -502,6 +504,7 @@ function onDown(e) {
     const o = { type: S.moduleType, x: snap(w.x), y: Math.abs(w.y) < 10 * k ? 0 : snap(w.y), rot: 0 };
     if (def.r) o.r = Math.round(def.r * k * 10) / 10;
     if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
+    if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy)
     // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
     if (S.moduleType === 'thruster_side') o.rot = w.y > 0 ? Math.PI / 2 : -Math.PI / 2;
     // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
@@ -649,6 +652,7 @@ function render(realDt, list) {
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   backdrop.sync(cam, W, H);
   updateHexShips3D(cam, list, cullInfo);
+  reactorDemoSync(cam);
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
@@ -2135,6 +2139,48 @@ window.__kreator = {
   }
 };
 
+// ---------------------------------------------------------------------------
+// REAKTOR 3D w gnieździe obudowy (moduł `reactor` v 2): ten sam model co w grze (src/3d/reactor3D.js) nad kadłubem
+// projektu — obrys obudowy = promień modułu, rodzaj z palety. Kadłub projektu stoi w (cx, cy) obrazu z kątem 0, więc
+// układ projektu = świat. Haki: reactorDemoInit() przy starcie (rozgrzewka), reactorDemoCoresFrom(field) po wypieku,
+// reactorDemoSync(cam) w render().
+let reactorDemo = null;
+const reactorDemoCores = [];
+const reactorDemoOpts = { origin: { x: 0, y: 0 }, view: null, zoom: 1 };
+const REACTOR_DEMO_KIND = { terra: 'terran', pirate: 'pirate', atlas: 'atlas' };
+const REACTOR_DEMO_COLOR = { terran: [0.22, 0.72, 1.0], pirate: [1.0, 0.16, 0.34], atlas: [0.62, 0.42, 1.0] };
+function reactorDemoInit() {
+  reactorDemo = createReactor3D({
+    scene: Core3D.scene,
+    frameOf: (core, out) => {
+      out.x = core.wx; out.y = core.wy; out.R = core.gridR; out.cs = 0;
+      out.axX = core.gridR; out.axY = 0; out.ayX = 0; out.ayY = core.gridR;
+      return out;
+    },
+    hostReady: (h) => !!h && h === ship.entity
+  });
+  Core3D.warmup.add({ name: 'model reaktora (reactor3D)', objects: () => reactorDemo.warmupMeshes(), layer: 0, phase: 'loading' });
+  window.__kreator.reactor3D = reactorDemo;
+}
+function reactorDemoCoresFrom(field) {
+  reactorDemoCores.length = 0;
+  const kind = REACTOR_DEMO_KIND[field.expanded.design.palette] || 'terran';
+  for (const m of field.expanded.modules) {
+    if (m.type !== 'reactor' || m.v !== 2) continue;
+    reactorDemoCores.push({
+      uid: `kreator_core_${reactorDemoCores.length}`, host: ship.entity, state: 'nominal', integrity: 1, invalid: null,
+      wx: m.x, wy: m.y, gridR: m.r, color: REACTOR_DEMO_COLOR[kind],
+      model: { housingR: m.r, housing: true, kind, tier: null }, deadCount: 0, elsewhereCount: 0, aliveCount: 0
+    });
+  }
+}
+function reactorDemoSync(cam) {
+  if (!reactorDemo) return;
+  reactorDemoOpts.origin.x = cam.x; reactorDemoOpts.origin.y = cam.y;
+  reactorDemoOpts.view = cullInfo; reactorDemoOpts.zoom = cam.zoom;
+  reactorDemo.sync(reactorDemoCores, 0, PHYS_DT, reactorDemoOpts);
+}
+
 (async () => {
   try {
     if (!(await Core3D.ready)) {
@@ -2152,6 +2198,7 @@ window.__kreator = {
     mark('kadluby');
     backdrop = createBackdrop(Core3D);
     composer = new HullComposer(Core3D.renderer);
+    reactorDemoInit();
     window.__composer = composer;
     await composer.prewarm();
     mark('kompozytor');
