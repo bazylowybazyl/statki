@@ -789,6 +789,32 @@ export function stationNetRates(station) {
   return net;
 }
 
+/**
+ * Planowe zużycie BRUTTO stacji przy skali 1, w jednostkach/s: wsad wszystkich
+ * linii plus byt, gotowość i utrzymanie floty — bez odejmowania własnej
+ * produkcji.
+ *
+ * Saldo netto (`stationNetRates`) mówi, ile trzeba stacji DOWIEŹĆ według planu.
+ * Ta liczba mówi, ile stacja ZJADA — a to jest miara jej potrzeby, gdy plan się
+ * rozjedzie: Mars w planie eksportuje stal, więc netto ma zero popytu, choć
+ * w biegu stał na zerze stali przez blisko godzinę.
+ */
+export function stationConsumptionRates(station) {
+  const industry = getStationIndustry(station);
+  const out = {};
+  const add = (id, amount) => { out[id] = (out[id] || 0) + amount; };
+  for (const recipeId of industry?.recipes || []) {
+    const recipe = RECIPES[recipeId];
+    if (!recipe) continue;
+    const batchesPerSecond = lineWeight(industry, recipeId) / recipe.seconds;
+    for (const [id, need] of Object.entries(recipe.in)) add(id, need * batchesPerSecond);
+  }
+  for (const [id, amount] of Object.entries(systemDemandFor(industry))) {
+    add(id, amount / ECONOMY_CYCLE_SECONDS);
+  }
+  return out;
+}
+
 function amountOf(econ, id) {
   return Number(econ?.resources?.[id]) || 0;
 }
@@ -1095,8 +1121,12 @@ export const PRICE_MODEL = Object.freeze({
   // czego kupić, choć stocznia bez podzespołów płaciła 4,4× bazy (2026-10-21:
   // Merkury, Wenus, Saturn, Uran i Westa na 0% przez całe 240 min).
 
-  /** Zapas roboczy, którego producent nie sprzedaje nikomu, jeśli sam go używa. */
-  offerFloorFill: 0.1
+  /**
+   * Zapas roboczy, którego producent nie sprzedaje nikomu, jeśli sam go używa.
+   * Ten sam co zapas roboczy planisty (`inventorySafetyFill`). Przy 0,1 kupcy
+   * wyciągali z Marsa stal dla głodnych olbrzymów, aż Mars sam stał na zerze.
+   */
+  offerFloorFill: 0.25
 });
 
 /**

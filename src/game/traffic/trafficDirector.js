@@ -24,7 +24,7 @@ import {
 } from '../cargoFleet.js';
 import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, getStationSurpluses,
-  stationWantsResource, stationNetRates
+  stationWantsResource, stationNetRates, stationConsumptionRates
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
 import {
@@ -107,8 +107,12 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    *
    * Przepustowość portu i tak wyznaczają stanowiska — kolejka dłuższa niż one
    * niczego nie przyspiesza, tylko zamraża towar w rekordach.
+   *
+   * 0,1 zamiast 0,6 (2026-10-21): przy 0,6 eksport Westy trzymał na redzie
+   * średnio ~2,4 kursu, choć tempo i tak wyznaczały stanowiska. Statek, który
+   * czeka, czeka w porcie macierzystym — to nie zapycha redy.
    */
-  loadQueueRatio: 0.6,
+  loadQueueRatio: 0.1,
   /**
    * Ile pustych przerzutów wolno wystawić na jeden cykl gospodarczy.
    *
@@ -196,6 +200,8 @@ export function createDirector(network, registry, options = {}) {
     inboundSchedule: new Map(),
     /** `stacja` → nominalne saldo zasobów/s przy skali gospodarki 1. */
     demandRates: new Map(),
+    /** `stacja` → planowe zużycie brutto/s przy skali 1 — potrzeba w skupie kupców. */
+    useRates: new Map(),
     /** Surowce dostępne u kogokolwiek na zbyciu. Też raz na tick. */
     surplus: new Set(),
     /** `stacja` → ile kursów stoi tam na redzie, czekając na stanowisko. */
@@ -1022,6 +1028,7 @@ function rebuildMarket(director, stations) {
   market.buyers.length = 0;
   director.surplus.clear();
   director.demandRates.clear();
+  director.useRates.clear();
 
   for (const station of stations) {
     // Opuszczona stacja NIE JEST uczestnikiem rynku. Nie ma załogi, nie ma
@@ -1035,6 +1042,7 @@ function rebuildMarket(director, stations) {
     const econ = director.getEconomy(station.id);
     if (!econ) continue;
     director.demandRates.set(String(station.id), stationNetRates(station));
+    director.useRates.set(String(station.id), stationConsumptionRates(station));
 
     const spare = new Map();
     for (const surplus of getStationSurpluses(station, econ, 20)) {
@@ -2029,11 +2037,11 @@ export function tickDirector(director, dt, stations) {
   if (director.agents) {
     director.quotes = marketSnapshot(stations, id => director.getEconomy(id), {
       inbound: (stationId, resourceId) => inboundUnits(director, stationId, resourceId),
-      demandRate: (stationId, resourceId) => {
-        const rates = director.demandRates.get(String(stationId));
-        return Math.max(0, -(Number(rates?.[resourceId]) || 0))
-          * Math.max(0, Number(director.config.economyScale) || 0);
-      }
+      // Potrzeba skupu to zużycie BRUTTO, nie saldo planu — patrz
+      // `stationConsumptionRates`.
+      demandRate: (stationId, resourceId) =>
+        Math.max(0, Number(director.useRates.get(String(stationId))?.[resourceId]) || 0)
+          * Math.max(0, Number(director.config.economyScale) || 0)
     });
   }
 
