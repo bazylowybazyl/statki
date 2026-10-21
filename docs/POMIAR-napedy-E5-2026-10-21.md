@@ -102,3 +102,25 @@ Obie wersje nie zaliczają bramki (baza też nie); progi z `docs/PLAN-ekonomia-r
 - Tick mierzy bramka przy ≥ 90% szczytu kursów; w E5 szczyt przypada na koniec biegu, kiedy lista zleceń jest
   najdłuższa — kwadratowy `nextShipmentOrderId` (`src/game/cargoFleet.js:332`, 26% profilu) waży tam najwięcej.
 - Głód i stocznie bez zmian: to braki struktury (stocznie bez podzespołów — zadanie E4/E8), nie prędkości.
+
+## Po scaleniu lokalnego `main` (192cded0, z E1 i E8) — 2026-10-22
+
+Bramka bilansu, ziarna 7 / 11 / 23, po kolei (czysty `main` w osobnym worktree, potem E5 na `main`):
+
+| próg | `main` | E5 na `main` |
+|---|---|---|
+| przechwyty ≤ 15% | 35,2 / 33,9 / 34,6% | 25,0 / 25,4 / 24,6% |
+| głód ≤ 30 min | 240 min, 63–64 pozycje | 240 min, 58–59 pozycji |
+| stocznie ≤ 30 min | 240 min | 240 min |
+| średnia kolejka ≤ 2 | 3,6 / 4,4 / 3,8 (Uran) | 58,8 / 57,2 / 67,7 (Ziemia), Uran 17–25, Saturn 9–10 |
+| tick przy szczycie ≤ 25 ms | 55,7 / 38,4 / 40,6 ms | 59,8 / 53,0 / 66,2 ms |
+| dostawy | 10 862 / 11 089 / 11 211 | 21 760 / 21 153 / 21 631 |
+
+Symulacja, ziarno 7: kursy w powietrzu — szczyt 6285 → 1826; napęd kursów w locie na koniec — `main`: konw. 5898,
+warp 80, brama 203; E5: hipercruise 1071, warp 75, brama 98, konw. 25 (manewry); kolejka na redzie na koniec 35 → 96;
+zrabowane 2,4 → 5,0 mln CR.
+
+Gra (`napedy-gra.mjs` na scalonym stanie): PRZELOT 1200, dopalacz 1000 / 1800, TRAVEL TO 30 tys. j. 12,8 s, Luna 46 s,
+hipercruise 20 000 j/s po 16 s, przechwyt (blokada masy) po 2,8 s, 5,8 km od rajdera — jak przed scaleniem.
+Pipeline synchroniczny: 1 — `AsteroidBelt:rocksSmear @ warpDebris_lod0` (smugi skał pasa z `main`, włączane w skoku
+WARPA przez pas: `WARP_STARS.stretch`; hipercruise ich nie włącza) — do rozgrzewki w obszarze pasa.
