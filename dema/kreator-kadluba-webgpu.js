@@ -26,6 +26,8 @@ import { HD_EMBLEMS, HD_EMBLEM_KEYS } from '../src/game/hullDesign/hullEmblems.j
 import { HD_PARTS, HD_PART_IDS } from '../src/game/hullDesign/hullDesignParts.js';
 import { buildHullField, hullCells, hullFieldScale, polyShapeLoop, rasterHullAlpha, loopDistance } from '../src/game/hullDesign/hullDesignGeometry.js';
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
+import { pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
+import { hullDesignSystems } from '../src/game/hullDesign/hullDesignSystems.js';
 import { RESOURCES } from '../src/data/resources.js';
 import { getHullRenderSize } from '../src/data/ships.js';
 import {
@@ -67,7 +69,9 @@ const S = {
   drag: null, frameMs: 16, cpuMs: 0,
   bake: null, field: null, recipe: null, mounts: null,
   busy: false, pending: null, rev: 0, builtRev: -1,
-  syncPipes: 0, syncNames: [], frame: 0
+  syncPipes: 0, syncNames: [], frame: 0,
+  // sieć systemów: graf (kto z kim), kontrola tras (wolne końce, poza obrysem, bez prądu / paliwa), nakładka grafu (I)
+  systems: null, netCheck: null, netGraph: false, flash: null
 };
 window.camera = {
   get x() { return S.cam.x; }, get y() { return S.cam.y; }, get zoom() { return S.cam.zoom; },
@@ -173,6 +177,8 @@ async function runBuild() {
     const t1 = performance.now();
     const recipe = hullDesignRecipe(field);
     const mounts = hullDesignMounts(field);
+    // kontrola sieci tylko przy pełnym wypieku (przeciąganie — połowa rozdzielczości, bez kontroli)
+    if (!job.fast) { S.systems = hullDesignSystems(field.expanded.modules); S.netCheck = pipeNetworkCheck(field.pipeNet, field); }
     const atlas = buildHullDecalAtlas(field.expanded.decals);
     const tpu = hullComposerTexPerUnit(field.image.w, field.image.h);
     composer.setDesign(field, atlas, { texPerUnit: job.fast ? tpu * 0.5 : tpu, glowToAlbedo: S.glowToAlbedo });
@@ -340,6 +346,11 @@ function rectDist(px, py, cx, cy, hw, hh, rot = 0) {
   const qx = Math.abs(lx) - hw, qy = Math.abs(ly) - hh;
   return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0);
 }
+/** System presetu na stałym miejscu klasy i kadłuba (hullDesignSystemSlots.js) — edytor go nie przesuwa ani nie usuwa. */
+const isLocked = (p) => p?.kind === 'module' && p.obj.lock === true;
+function lockFlash(p) {
+  S.flash = { text: `${HD_MODULES[p.obj.type].label}: system na stałym miejscu klasy i kadłuba — zablokowany (projekt od zera: wolny)`, t: performance.now() };
+}
 function removePicked(p) {
   const d = design();
   const list = p.kind === 'decal' ? d.decals : (p.kind === 'module' ? d.modules : (p.kind === 'part' ? d.parts : (p.kind === 'castle' ? d.castles : (p.kind === 'groove' ? d.grooves : (p.kind === 'pipe' ? d.pipes : d.shapes)))));
@@ -405,6 +416,7 @@ function onDown(e) {
   if (e.button === 2 && (S.tool === 'poly' || S.tool === 'groove' || S.tool === 'pipe') && S.poly) { finishPoly(); return; }
   if (e.button === 2) {
     const p = pick(w.x, w.y);
+    if (p && isLocked(p)) { lockFlash(p); return; }
     if (p) { removePicked(p); requestBuild(); return; }
     S.drag = { kind: 'erase' };
     const [bx, by] = blockAt(w.x, w.y);
@@ -438,6 +450,7 @@ function onDown(e) {
   }
   if (tool === 'move' || (tool !== 'block' && !e.shiftKey && pick(w.x, w.y) && tool !== 'circle')) {
     const p = pick(w.x, w.y);
+    if (p && isLocked(p)) { lockFlash(p); return; }
     if (p) { S.drag = { kind: 'move', p, wx: w.x, wy: w.y }; S.selected = p; return; }
   }
   if (tool === 'block') {
@@ -468,6 +481,8 @@ function onDown(e) {
     const o = { type: S.moduleType, x: snap(w.x), y: Math.abs(w.y) < 10 * k ? 0 : snap(w.y), rot: 0 };
     if (def.r) o.r = Math.round(def.r * k * 10) / 10;
     if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
+    // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
+    if (S.moduleType === 'thruster_side') o.rot = w.y > 0 ? Math.PI / 2 : -Math.PI / 2;
     d.modules.push(o);
     S.drag = { kind: 'move', p: { kind: 'module', obj: o, mirrored: false }, wx: w.x, wy: w.y };
     requestBuild(true);
@@ -567,6 +582,7 @@ function onWheel(e) {
   const w = worldOf(e.clientX, e.clientY);
   if (S.tool === 'move') {
     const p = pick(w.x, w.y);
+    if (p && isLocked(p)) { lockFlash(p); return; }
     if (p) {
       if (e.shiftKey) rotateObj(p, (e.deltaY > 0 ? 1 : -1) * Math.PI / 36);
       else scaleObj(p, Math.exp(-e.deltaY * 0.0012));
@@ -779,7 +795,7 @@ function drawEditor(cam) {
       if (def.r) { const [sx, sy] = toS(m.x, m.y); ctx2d.arc(sx, sy, (m.r || def.r) * cam.zoom, 0, Math.PI * 2); }
       else rectPath(toS, m.x, m.y, m.w, m.h, m.rot || 0);
       ctx2d.stroke();
-      if (cam.zoom > 0.3) { const [sx, sy] = toS(m.x, m.y); ctx2d.fillStyle = '#7be0a0'; ctx2d.fillText(def.label, sx + 4, sy - 4); }
+      if (cam.zoom > 0.3) { const [sx, sy] = toS(m.x, m.y); ctx2d.fillStyle = '#7be0a0'; ctx2d.fillText(m.lock ? `🔒 ${def.label}` : def.label, sx + 4, sy - 4); }
     }
     // rowki
     ctx2d.strokeStyle = '#ffffff70';
@@ -839,6 +855,12 @@ function drawEditor(cam) {
       for (const t of S.mounts.mainThrusters) { const [sx, sy] = toS(im.cx + t.x, im.cy + t.y); ctx2d.fillRect(sx - 2, sy - 2, 4, 4); }
     }
   }
+  if (S.netGraph) drawNetGraph(toS);
+  if (S.flash && performance.now() - S.flash.t < 2500) {
+    ctx2d.font = '12px "Segoe UI", system-ui, sans-serif';
+    ctx2d.fillStyle = '#ffcf6a';
+    ctx2d.fillText(S.flash.text, S.mouse.x + 14, S.mouse.y + 18);
+  }
   // kursor narzędzia
   const m = S.mouse;
   if (S.tool === 'poly' || S.tool === 'groove' || S.tool === 'pipe') {
@@ -882,7 +904,51 @@ function drawEditor(cam) {
       ctx2d.font = '11px "Segoe UI", system-ui, sans-serif';
       const shapeName = { circle: 'koło', rect: 'prostokąt', poly: 'wielokąt', block: 'klocek' };
       const name = p.kind === 'castle' ? `kasztel ${Math.round(p.obj.w * 2)} × ${Math.round(p.obj.h * 2)} j. · ${p.obj.tiers} piętra${p.obj.clip !== undefined ? ' · na płytach' : ''}` : p.kind === 'pipe' ? `rura (${p.obj.pts.length} pkt, ${p.obj.n} w wiązce, ×${(p.obj.r || 1).toFixed(2)})` : p.kind === 'groove' ? `rowek (${p.obj.pts.length} pkt, ${p.obj.w.toFixed(1)} jd)` : p.kind === 'module' ? HD_MODULES[p.obj.type].label : (p.kind === 'part' ? `część: ${HD_PARTS[p.obj.id].label} (×${p.obj.s.toFixed(2)})` : (p.kind === 'shape' ? `${shapeName[p.obj.kind]} ${p.obj.op === 'cut' ? '(wycięcie)' : ''} · ${HD_LEVEL_NAMES[p.obj.level]}` : `naklejka: ${p.obj.kind}`));
-      ctx2d.fillText(`${name}  — PPM usuwa`, m.x + 14, m.y - 10);
+      ctx2d.fillText(isLocked(p) ? `🔒 ${name} — system na stałym miejscu (zablokowany)` : `${name}  — PPM usuwa`, m.x + 14, m.y - 10);
+    }
+  }
+  ctx2d.restore();
+}
+
+/**
+ * Nakładka GRAFU SIECI (I): linie źródło → odbiornik (hullDesignSystems), barwa wg sieci — kable (reaktor → urządzenie)
+ * żółte, rury do silników (reaktor → MAIN / SIDE) pomarańczowe, dopływ (zbiornik → reaktor) zielony; odbiornik bez
+ * trasy do reaktora (kontrola sieci) — czerwony krzyżyk.
+ */
+const NET_COLORS = { power: '#ffd23a', feed: '#ff7a2a', supply: '#5be08a' };
+function drawNetGraph(toS) {
+  const sys = S.systems;
+  const mods = S.field?.expanded.modules;
+  if (!sys || !mods) return;
+  ctx2d.save();
+  ctx2d.lineWidth = 1.4;
+  for (const net of ['power', 'feed', 'supply']) {
+    ctx2d.strokeStyle = NET_COLORS[net] + 'b0';
+    ctx2d.setLineDash(net === 'power' ? [5, 4] : []);
+    ctx2d.beginPath();
+    for (const l of sys.links) {
+      if (l.net !== net) continue;
+      const a = mods[l.from], b = mods[l.to];
+      const [ax, ay] = toS(a.x, a.y), [bx, by] = toS(b.x, b.y);
+      ctx2d.moveTo(ax, ay); ctx2d.lineTo(bx, by);
+    }
+    ctx2d.stroke();
+  }
+  ctx2d.setLineDash([]);
+  const bad = new Set([...(S.netCheck?.unpowered || []), ...(S.netCheck?.unfueled || [])]);
+  for (const i of new Set(sys.links.flatMap((l) => [l.from, l.to]))) {
+    const m = mods[i];
+    const [sx, sy] = toS(m.x, m.y);
+    const core = m.type === 'reactor';
+    ctx2d.fillStyle = bad.has(i) ? '#ff4040' : (core ? '#ffffff' : '#ffd23a');
+    ctx2d.beginPath();
+    ctx2d.arc(sx, sy, core ? 5 : 3, 0, Math.PI * 2);
+    ctx2d.fill();
+    if (bad.has(i)) {
+      ctx2d.strokeStyle = '#ff4040';
+      ctx2d.beginPath();
+      ctx2d.moveTo(sx - 7, sy - 7); ctx2d.lineTo(sx + 7, sy + 7); ctx2d.moveTo(sx + 7, sy - 7); ctx2d.lineTo(sx - 7, sy + 7);
+      ctx2d.stroke();
     }
   }
   ctx2d.restore();
@@ -907,7 +973,8 @@ function updateHud() {
   if (im && b) lines.push(`kadłub ${Math.round(S.field.bounds.maxX - S.field.bounds.minX)} × ${Math.round(S.field.bounds.maxY - S.field.bounds.minY)} j. · obraz ${b.width} × ${b.height} (${b.tpu.toFixed(2)} tek./j.) · belki ${ship.entity?.beamHull?.body?.activeNodes ?? 0} węzłów`);
   lines.push(`wypiek: pole ${(t.field || 0).toFixed(0)} ms · kompozytor ${(t.gpu || 0).toFixed(0)} ms · kadłub ${(t.hull || 0).toFixed(0)} ms${t.fast ? ' <span class="warn">(szybki, 1 tek./j.)</span>' : ''}${S.busy ? ' · <span class="warn">przebudowa…</span>' : ''}`);
   const pn = S.field?.pipeNet?.stats;
-  if (pn) lines.push(`sieć rur: ${pn.runs} biegów · ${pn.fits} osprzętu · ${pn.routes || 0} tras · ${(pn.ms || 0).toFixed(0)} ms`);
+  const nc = S.netCheck;
+  if (pn) lines.push(`sieć systemów: ${pn.runs} biegów · ${pn.fits} osprzętu · ${pn.routes || 0} tras · ${(pn.ms || 0).toFixed(0)} ms${nc ? ` · wolne końce: ${nc.freeEnds} · poza obrysem: ${nc.outside}` : ''}`);
   lines.push(`narzędzie: ${S.tool} · poziom: ${HD_LEVEL_NAMES[S.level]} · styl: ${HD_STYLE_NAMES[design()?.style] || ''} · lustro: ${design()?.mirror ? 'wł.' : 'wył.'} · pipeline'y synchr.: ${S.syncPipes}`);
   $('hud').innerHTML = lines.join('\n');
 }
@@ -926,6 +993,25 @@ function updateRecipe() {
     for (const w of r.warnings) lines.push(`<span class="${w.level}">⚠ ${w.text}</span>`);
   } else lines.push('<span class="good">✓ projekt kompletny</span>');
   $('recipe').innerHTML = lines.join('\n');
+  updateNetInfo();
+}
+
+/** Panel sieci systemów: liczniki tras i kontrola (wolne końce, poza obrysem, odbiorniki bez prądu / paliwa). */
+function updateNetInfo() {
+  const el = $('netinfo');
+  const net = S.field?.pipeNet, nc = S.netCheck, sys = S.systems;
+  if (!net || !sys || (design()?.pipeNet?.density ?? 0) <= 0) { el.innerHTML = 'sieć wyłączona (suwak „sieć rur”)'; return; }
+  const runs = { power: 0, feed: 0, supply: 0 };
+  for (const r of net.runs) if (r.net in runs) runs[r.net]++;
+  const ok = (v) => `<span class="${v ? 'bad' : 'good'}">${v}</span>`;
+  const lines = [
+    `reaktory ${sys.cores.length} · zbiorniki ${sys.tanks.length} · MAIN ${sys.mains.length} · SIDE ${sys.sides.length}`,
+    `urządzenia na kablach: ${sys.consumers.length}`,
+    `biegi: kable ${runs.power} · rury do silników ${runs.feed} · dopływ ${runs.supply}`,
+    `wolne końce: ${ok(nc?.freeEnds ?? 0)} · poza obrysem: ${ok(nc?.outside ?? 0)}`,
+    `bez prądu: ${ok(nc?.unpowered.length ?? 0)} · bez paliwa: ${ok(nc?.unfueled.length ?? 0)} · bez trasy: ${ok(net.stats.unrouted || 0)}`
+  ];
+  el.innerHTML = lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -956,6 +1042,7 @@ function syncPanel() {
   $('btn-grid').classList.toggle('on', S.grid);
   $('btn-glow').classList.toggle('on', S.glowToAlbedo);
   $('btn-ab').classList.toggle('on', S.ab);
+  $('btn-netgraph').classList.toggle('on', S.netGraph);
   $('zoom-022').classList.toggle('on', Math.abs(S.cam.zoom - 0.22) < 1e-3);
   $('zoom-05').classList.toggle('on', Math.abs(S.cam.zoom - 0.5) < 1e-3);
   $('zoom-1').classList.toggle('on', Math.abs(S.cam.zoom - 1) < 1e-3);
@@ -1023,7 +1110,8 @@ const ACTIONS = {
   l: () => { design().mirror = !design().mirror; requestBuild(); },
   g: () => { S.grid = !S.grid; },
   h: () => { document.body.classList.toggle('clean'); },
-  a: () => toggleAb()
+  a: () => toggleAb(),
+  i: () => { S.netGraph = !S.netGraph; }
 };
 function toggleAb() {
   if (!S.ab) { S.ab = true; S.abFocus = 'design'; }
@@ -1094,6 +1182,7 @@ function bindPanel() {
   for (const k of REF_KEYS) selR.add(new Option(`A/B z: ${BRIDGE_DEMO_HULLS[k].label}`, k));
   selR.addEventListener('change', async () => { await setRef(selR.value); S.ab = true; syncPanel(); });
   $('btn-ab').addEventListener('click', () => toggleAb());
+  $('btn-netgraph').addEventListener('click', () => { ACTIONS.i(); syncPanel(); });
   $('btn-clean').addEventListener('click', () => ACTIONS.h());
   $('btn-json').addEventListener('click', () => {
     const ta = $('json');
@@ -1710,6 +1799,7 @@ window.__kreator = {
     return true;
   },
   setUnderlay(on) { S.underlay = !!on; syncPanel(); return true; },
+  setNetGraph(on) { S.netGraph = !!on; syncPanel(); return true; },
   toScreen(x, y) { return { x: (x - S.cam.x) * S.cam.zoom + W * 0.5, y: (y - S.cam.y) * S.cam.zoom + H * 0.5 }; },
   async built() { await waitBuilt(); return true; },
   async runFrames(n = 1, fps = 60) {
@@ -1725,6 +1815,7 @@ window.__kreator = {
       image: S.bake ? [S.bake.width, S.bake.height] : null, nodes: ship.entity?.beamHull?.body?.activeNodes ?? 0,
       timing: S.timing, parts: S.recipe?.parts, warnings: S.recipe?.warnings?.map((w) => w.text),
       surfaceReady: ship.surfaceImg ? HullSurface.isReady(ship.surfaceImg) : false,
+      net: S.netCheck ? { freeEnds: S.netCheck.freeEnds, outside: S.netCheck.outside, unpowered: S.netCheck.unpowered.length, unfueled: S.netCheck.unfueled.length, ms: Math.round(S.field?.pipeNet?.stats?.ms || 0) } : null,
       syncPipes: S.syncPipes, syncNames: S.syncNames.slice()
     };
   }

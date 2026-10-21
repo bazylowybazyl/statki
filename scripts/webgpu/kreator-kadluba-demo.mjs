@@ -35,7 +35,7 @@ async function shot(name, opis, frames = 4) {
   await screenshotPng(cdp, join(out, `${name}.png`));
   const st = await ev('window.__kreator.stats()');
   report.zrzuty[name] = { opis, ...st };
-  console.log('zrzut', name.padEnd(30), JSON.stringify({ img: st.image, nodes: st.nodes, t: st.timing && Math.round(st.timing.total), sync: st.syncPipes }));
+  console.log('zrzut', name.padEnd(30), JSON.stringify({ img: st.image, nodes: st.nodes, t: st.timing && Math.round(st.timing.total), sync: st.syncPipes, siec: st.net }));
 }
 
 const PRESETS = ['custos', 'hasta', 'bellator', 'citadella', 'colossus', 'orbis', 'atlas2', 'pirate'];
@@ -88,6 +88,15 @@ try {
       for (const side of ['design', 'ref']) {
         await ev(`window.__kreator.setAb(true, ${JSON.stringify(side)}); window.__kreator.setZoom(${z}); window.__kreator.S.cam.x += ${dx}`);
         await shot(`${key}-${side === 'design' ? 'a' : 'b'}-rufa`, `${key}: ${side === 'design' ? 'A — kreator z siecią rur' : 'B — sprite gry'}, rufa, zoom ${z.toFixed(2)}`);
+      }
+      if (key === 'citadella') {
+        // kadr zgłoszenia użytkownika (2026-10-20): gondole MAIN, kolumna z napisem TERRA NOVA, kasztele — zoom 3,3;
+        // czysty i z nakładką edytora (obrysy modułów, graf sieci systemów)
+        await ev('window.__kreator.setAb(false); window.__kreator.setCamera(-362, -65, 3.3)');
+        await shot(`${key}-a-zgloszenie`, `${key}: kadr zgłoszenia (rufa: gondole, kolumna TERRA NOVA, kasztele), zoom 3,3`);
+        await ev('document.body.classList.remove("clean"); window.__kreator.setNetGraph?.(true); window.__kreator.setCamera(-362, -65, 3.3)');
+        await shot(`${key}-a-zgloszenie-edytor`, `${key}: kadr zgłoszenia z nakładką edytora i grafem sieci (I)`);
+        await ev('window.__kreator.setNetGraph?.(false); document.body.classList.add("clean")');
       }
       const dens = await ev('window.__kreator.design.pipeNet?.density ?? 0');
       await ev('window.__kreator.edit((d) => { d.pipeNet = { ...(d.pipeNet || {}), density: 0 }; })');

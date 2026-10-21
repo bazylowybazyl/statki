@@ -13,7 +13,7 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 ## Jak uruchomić
 
 - Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html` (otwiera się z lotniskowcem Citadella; flota TN z siecią
-  rur — suwak „sieć rur”, ⟳ inny układ, narzędzie Rura W).
+  systemów — suwak „sieć rur”, ⟳ inne wiązki, I — graf sieci, panel „Sieć systemów”; narzędzie Rura W).
   `?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
   `?clean=1` bez paneli. A — A/B (kreator ↔ sprite tego samego okrętu), U — sprite jako podkład pod projektem.
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--tylko citadella]
@@ -27,8 +27,8 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
   `.tmp/kreator/tn/<okręt>-podklad.png` (sprite w j. świata z siatką i podpisami, kontury poziomów projektu, czerwień —
   sprite bez projektu, błękit — projekt bez sprite'a; `--bez-projektu` — sam sprite do odczytu wymiarów). Obrys płyt
   sprite'a (pomiar płyt i rowów): `node scripts/kreator-obrys-tn.mjs --kadlub terran_carrier` → `.tmp/kreator/obrys/`.
-- Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs` (klocki, suma wielokątów, szczelina,
-  strażnik „bez czitowania”).
+- Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs` (klocki, suma
+  wielokątów, szczelina, strażnik „bez czitowania”, sieć systemów).
 
 ## Format projektu v2 (`src/game/hullDesign/hullDesignSchema.js`)
 
@@ -38,11 +38,11 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 | `blocks` | bloki 60 j. (4 × 4 komórki belek) z poziomem | jak w v1 |
 | `shapes` | **klocek** (`kind: 'block'` — § „Klocki”), koło, prostokąt (`r` łuk, `ch` faza rogów, `rot`), **wielokąt** (`pts`, `holes`, `sym`, `ch`, `r`) | `sym` — połowa od osi do osi (lustro nie dubluje); wielokąty łączą się z resztą ostro (wspólne krawędzie ramy i pancerza); `clip: C` — bryła przycięta do poziomu C (zgrubny wielokąt podnosi płyty o piętro, krawędzie zewnętrzne z płyt), `clipIn` — z odsunięciem w głąb [j.] |
 | `parts` | **gotowe części** `{ id, x, y, s, rot, dl }` | `src/game/hullDesign/hullDesignParts.js`, rozwijane na bryły, moduły i naklejki |
-| `modules` | wieże S/M/L (`v` 0 — **kapsuła TN**: ośmiokątna rama, kwadratowy właz z ciemnym oknem; 1 — płyta z rowkiem), gondola MAIN (`v` 0 — **beczka**: gęste żebra, kołnierze, rury, dzwon dyszy; 1 — blok z kratą; `n` dysz), luk (`v` 1 — **klapa TN**), reaktor (`v` 1 — wewnątrz), mostek, **kratka** (`v` 0 — prosta, 1 — **radiator TN**, 2 — **krata**), **wrota hangaru** (`doors`), **pierścień** (`v` 1 — **iluminator**, 2 — iluminator w ośmiokątnej ramie) | mocowania (gniazda, dysze, lampy) z modułów |
+| `modules` | wieże S/M/L (`v` 0 — **kapsuła TN**: ośmiokątna rama, kwadratowy właz z ciemnym oknem; 1 — płyta z rowkiem), gondola MAIN (`v` 0 — **beczka**: gęste żebra, kołnierze, rury, dzwon dyszy; 1 — blok z kratą; `n` dysz), luk (`v` 1 — **klapa TN**), reaktor (`v` 1 — wewnątrz), mostek, **kratka** (`v` 0 — prosta, 1 — **radiator TN**, 2 — **krata**), **wrota hangaru** (`doors`), **pierścień** (`v` 1 — **iluminator**, 2 — iluminator w ośmiokątnej ramie), **zbiornik paliwa** (`v` 0 — walec, 1 — kula), **dysza SIDE** (wydech wzdłuż +x modułu), **ładownia** (`v` 0 — wrota, 1 — klapa); `lock` — system na stałym miejscu (preset) | mocowania (gniazda, dysze MAIN i SIDE, rdzenie, zbiorniki, ładownie, lampy) z modułów — § „Sieć systemów” |
 | `castles` | **kasztele** — schodkowe nadbudówki `{ x, y, w, h, rot, tiers, taper / taperF / taperB / taperIn, high, split, level, clip, vent, port, hatches }` | `src/game/hullDesign/hullDesignCastles.js` — § „Kasztele” |
 | `grooves` | **rowki** — łamane linii podziału płyt `{ pts, w }` | płyta między rowkami ma własną fazę |
 | `pipes` | **rury ręczne** — wiązka wzdłuż łamanej `{ pts, n (1–8), mat ('mix' / 'steel' / 'copper'), r (skala średnicy), over }` | domyślnie leżą też na płytach (`over: false` — tylko w rowach); lustro jak u rowków |
-| `pipeNet` | **sieć rur** generowana `{ density (0–2), seed }` | brak pola = 0 (stare projekty bez zmian); flota TN: 1 — § „Rury” |
+| `pipeNet` | **sieć systemów** generowana `{ density (0–2 — grubość wiązek), seed }` | brak pola = 0 (stare projekty bez zmian); flota TN: 1 — § „Sieć systemów” |
 | `decals` | pasy, pas wzdłuż konturu, emblematy (+ **orzeł TN** — własny rysunek), napisy (`weight`) | jak w v1 |
 | `detail` | skala detalu [j. / jd] | płyty, szwy, nity, rury, kratki i tarasy są w jd: fregata 150 j. ma tyle detalu na długość co lotniskowiec (jak sprite'y: detail ≈ długość / 1700) |
 | `grid` | krok siatki klocków [j.] | ustalany przy tworzeniu projektu (brak pola — z detalu: ~4 jd, potęga dwójki: fregata 0,5, Bellator i Citadella 2, Colossus 4), potem stały — § „Klocki” |
@@ -52,10 +52,10 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 
 ## Wygląd (kompozytor `src/3d/hullDesign/hullComposer.js`)
 
-- **Rama bez pancerza = maszynownia**: SIEĆ RUR (§ „Rury”), pod nią wiązki rur wzdłuż krawędzi płyt (izolinie pola —
-  same zakręcają, ile się zmieszczą w szczelinie, do 4; przy włączonej sieci najwyżej 2, cieńsze i przerywane),
-  obejmy, dalej skrzynki, żebrowane walce i kraty. Izolinie idą po metryce ośmiokątnej (`octagonalField`), więc
-  w narożnikach wklęsłych mają fazę 45°, nie łuk — jak w sprite'ach.
+- **Rama bez pancerza = maszynownia**: SIEĆ SYSTEMÓW (§ „Sieć systemów” — rury paliwa i kable), skrzynki, żebrowane
+  walce i kraty. Bez sieci (gęstość 0) — wiązki rur wzdłuż krawędzi płyt (izolinie pola — same zakręcają, ile się
+  zmieszczą w szczelinie, do 4; po metryce ośmiokątnej `octagonalField`, więc w narożnikach wklęsłych z fazą 45°, nie
+  łukiem — jak w sprite'ach); przy włączonej sieci izolinii nie ma — w rowach leżą tylko trasy sieci.
 - **Płyty pancerza**: stroma ściana + zaokrąglona faza (`bevel`, `round`), linia przy krawędzi (metryka ośmiokątna)
   i nity na szerokich płytach, gruba płyta (wnętrze szerokiej płyty o stopień wyżej), segmenty w poprzek kadłuba
   (cięcia podłużne rzadkie) z „poduszką”, sprzęt na panelach (kratki, luki, skrzynki, płyty na płytach, szczeliny),
@@ -132,67 +132,134 @@ presety jej nie używają.
 (RTX, headless, 1600 × 900, `kreator-kadluba-demo.mjs --etapy ab`; rozwinięcie klocków w polu: 4–30 ms; przeciąganie
 w edytorze liczy pole i obraz w połowie rozdzielczości.) Pipeline'y synchroniczne w klatkach: **0**, błędy konsoli: 0.
 Arkusze A/B: `<okręt>-ab.png` (oba w kadrze, ta sama skala), `<okręt>-a|b-fit|gra1|det.png`.
-## Rury (`src/game/hullDesign/hullDesignPipes.js`, rysunek w kompozytorze)
 
-Prośba użytkownika (po v2): „siatka rur i małych urządzeń wspierających rury przez cały statek / pół statku
-z koncentracją przy silniku”. Wzór — sprite'y TN: wiązki 2–5 rur o różnych średnicach (grube stalowe, cieńsze
-miedziane / rdzawe) w rowach między płytami, proste i 45° z zaokrąglonymi kolanami, znikające pod płytami
-z kołnierzem na wejściu, obejmy, zawory, skrzynki rozdzielcze, pompy, kolektory przy gondolach; najgęściej przy
-rufie, rzadko ku dziobowi (Colossus: rowy pełne równoległych rur jak ścieżki PCB).
+## Sieć systemów: kable i rury paliwa (`hullDesignSystems.js`, `hullDesignPipes.js`, `hullDesignSystemSlots.js`)
 
-**Generator** (czysty, deterministyczny z `design.seed` + `pipeNet.seed`; wołany z `buildHullField` → `field.pipeNet`,
-raster `field.pipeTex`):
+Prośba użytkownika (2026-10-20): „kable idą od rdzenia do każdego elementu statku — rdzeń daje prąd, więc pokazujemy
+kable; rury idą od zbiornika przez reaktor do silników MAIN i bocznych”, nic nie kończy się „donikąd” i nic nie wychodzi
+poza kadłub; rdzeń, mostki, silniki, ładownie i zbiorniki stoją na stałych miejscach dla klasy i kadłuba (wolne tylko
+w projekcie od zera). Wzór wyglądu — sprite'y TN: wiązki w rowach maszynowni między płytami, proste i 45°
+z zaokrąglonymi kolanami, znikające pod płytami z kołnierzem na wejściu, osprzęt, najgęściej przy rufie.
 
-1. siatka trasowania (komórka 5 jd) nad kadłubem — przy lustrze tylko burta y < 0, druga to lustro wyniku
-   (symetria z konstrukcji). Koszt komórki: rów maszynowni 1 (najtaniej przy ścianie płyty, +0,6 przy sylwetce),
-   pod płytą 4 (rura chowa się pod płytę), przez moduł 9, oś lustra +2,5, ≤ 3 jd od sylwetki zakaz; pas 2 komórek
-   wokół istniejącej sieci +1,1 (równoległe wiązki nie nachodzą na siebie — dołączają albo trzymają odstęp);
-2. drzewo od korzenia (reaktor → mostek → pierwsza gondola). Cele dołączają do NAJBLIŻSZEGO miejsca rosnącej sieci
-   ważonym A* (stan komórka × kierunek: 8 kierunków = proste i 45°, kara za skręt 45° / 90° / 135°, heurystyka =
-   odległość do sieci × 1,3): najpierw gondole silników, potem wieże, pierścienie, wrota, mostek i punkty wzdłuż
-   grzbietu (co ~105 jd, zawsze najbliższy cel pierwszy), na końcu cele wypełnienia (11 × gęstość na burtę —
-   komórki rowów najdalej od sieci, z wagą ku rufie 1 − 0,72 · u);
-3. trasy: każdy cel karmi najbliższa po drzewie gondola (z wyrównaniem obciążenia), każda gondola — reaktor; liczba
-   tras przez krawędź → rury w wiązce 1 + 1,3 · log2(1 + trasy), do 8 — koncentracja przy silnikach wychodzi sama;
-   do tego pojemność rowu: wiązka nie szersza niż rów i wypełnia co najmniej 65% jego szerokości (mediana na
-   widocznej długości) — rowy pełne rur jak w sprite'ach;
-4. biegi (odcinki drzewa między węzłami) → łamane PROSTE (2026-10-14; dawniej przesuw w poprzek liczony co 1,5 jd
-   i wygładzany — wiązka falowała za każdym ząbkiem ściany rowu): schodki trasy A* zastąpione najwyżej dwoma
-   odcinkami (prosty + 45°), gdy koszt trasy nie rośnie (× 1,08) — `straightenOctilinear`; każdy prosty odcinek
-   dostaje JEDNO przesunięcie w poprzek (najmniejsze z luzem od ścian na widocznej długości, oś w sylwetce), rogi =
-   przecięcia przesuniętych prostych — wiązka biegnie równolegle do ściany, kolana zostają 45° / 90° —
-   `offsetRun`; odcinek końcowy przez swój węzeł (węzły przesunięte w wolne miejsce, wspólne dla rozgałęzienia),
-   bez luzu — kolano 45° tuż za węzłem; kolana zaokrąglone (promień 1,2 · (pół-szerokość + najgrubsza rura)).
-   Promienie rur z sekwencji gondoli biegu — gruba rura ciągnie się przez rozgałęzienia;
-5. osprzęt: skrzynki rozdzielcze w dużych rozgałęzieniach (≥ 6 rur), obejmy-trójniki w małych, kołnierze na
-   przejściach rów ↔ płyta / moduł, zaślepki na wolnych końcach, zawory (siłownik z dźwignią), podwójne kołnierze
-   i pompy co ~95 jd widocznej wiązki, kolektory (stos krótkich rur) przy szyjce gondoli. Limity: 255 biegów,
-   255 elementów osprzętu.
+**Kto z kim** (`hullDesignSystems.js`, czysty graf z listy modułów):
 
-**Rysunek** (`hullComposer.js`, `_pipeNet`): tekstura `pipeA` (RGBA16F na siatce pola, dwuliniowo — przesunięcie
-w poprzek od osi biegu ze znakiem [j.], cos / sin fazy długości łuku, numer odcinka między obejmami) i `pipeB`
-(RGBA8, `textureLoad` — numer biegu, numer osprzętu); tablice uniformów `hullDesignPipeRuns` (promienie 8 rur,
-pół-szerokość, odstęp, najgrubsza, materiał + na płytach) i `hullDesignPipeFits`. Wiązka: rura pod punktem z sum
-promieni (bez zmiennych zmienianych w miejscu), walec, materiał z haszu (jasna stal / miedź / rdza / ciemna stal;
-grube zwykle stalowe; ręczne — materiał rury), kołnierze rur w połowie odcinków, obejmy co 26 jd (taśma nad
-wiązką, przy ścianie płyty bliżej niż 4,5 jd — wspornik do ściany). Sieć generowana tylko w rowach (pod płytą jej
-nie widać), rury ręczne `over` — także na płytach. Kopia lustra biegu dzieli numer biegu (przesunięcie zmienia znak →
-kolejność rur odbita). Dno rowu przy sieci cieplejsze (brąz-szarość). Paleta: nowy wiersz `steel` (jasne rury).
+- PALIWO (rury): **dopływ** — każdy zbiornik → najbliższy reaktor; **do silników** — reaktor → każda gondola MAIN
+  i każda dysza SIDE. Paliwo do silników płynie przez rdzeń.
+- PRĄD (kable): reaktor → każde **urządzenie**: wieże i gniazda S / M / L, mostek, gondola MAIN, dysza SIDE, zbiornik
+  (pompa), wrota hangaru, ładownia, pierścień i iluminatory (`well`), luk ładunkowy (`hatch` v 0). NIE są urządzeniami:
+  kratki (wentylacja bierna), klapy serwisowe TN (`hatch` v 1), naklejki, rowki, rury ręczne.
+- Waga trasy (rur / kabli do urządzenia): gondola MAIN 3 (zasilanie, powrót, chłodzenie dyszy), SIDE 1, zbiornik 3;
+  kable: wieża L i mostek 2, reszta 1.
+- Walidacja (`systemIssues`, ostrzeżenia receptury): brak reaktora, zbiornika, mostka albo MAIN.
 
-**Koszt** (RTX, headless, sieć + raster w polu): generator ~65–90 ms, raster ~20 ms na okręt; wypiek okrętu
-z siecią 0,29–0,43 s (tabela wyżej + sieć). Pipeline'y synchroniczne: 0.
+**Moduły systemów** (`HD_MODULES`): **zbiornik paliwa** `fuel_tank` (walec poziomy z dennicami we wnęce maszynowni —
+pod wnęką wysokość ramy jak pod gondolą; 3–5 obręczy ze śrubami, bursztynowy pas paliwa, króciec na dennicy −x; `v` 1 —
+kula), **dysza SIDE** `thruster_side` (gniazdo-sponson przy burcie: wydech wzdłuż +x modułu, obręcz gniazda z ciemną
+gardzielą na końcu przy burcie, od strony kadłuba przewód paliwa i kabel; dzwon i płomień rysuje gra w 3D), **ładownia**
+`cargo` (rama z pasem ostrzegawczym, dwa skrzydła ze szwem na osi modułu i zazębieniem, żebra, szyny, bursztynowe lampy
+w rogach; `v` 1 — klapa z krzyżem). Mocowania dla gry (`hullDesignMounts`): `sideThrusters` (jak `engines.side` edytora
+gniazd: deg 0 — wydech na prawą burtę, 180 — na lewą), `cores`, `fuelTanks`, `cargoBays` (jak markery
+`reactorCores.js` / `fuelTanks.js` / `cargoBays.js`, względem środka obrazu).
 
-**Proste wiązki** (po standaryzacji obrysu i prostowaniu, flota TN): 81–86% długości rur leży na odcinkach co 45°
-(reszta to łuki kolan), skośne odcinki > 4 jd — 0,3–2,4% długości (test: > 75% i < 5%).
+**Sloty presetów** (`hullDesignSystemSlots.js`, dokładane w `hullDesignPreset()` — osobno od funkcji presetów): markery
+gry w px PNG sprite'a przeliczone na układ projektu jak obrys TN (skala `HULL_RENDER_PROFILES.length × 0,6 / dłuższy bok
+płótna`, środek pudła alfy, oś symetrii; tabela przeliczeń w nagłówku pliku). Moduły systemów presetu mają `lock` —
+edytor ich nie przesuwa, nie skaluje i nie usuwa (🔒 w nakładce).
+
+| Okręt | Rdzeń | Mostek | Zbiornik | SIDE (na burtę) | Ładownia |
+|---|---|---|---|---|---|
+| Custos | preset −20 (automat gry) | preset −46 (w strefie gry) | oś −61 (automat gry) | 1 — tabela gry (x 29,8) | 22 ± 11 (gra: 3,7 ± 27 — nakryłaby gniazdo i kratkę) |
+| Hasta | preset −30 | preset −82 (w strefie) | oś −98,5 (automat) | 2 — tabela gry | 31 ± 10 (gra: 3,2 ± 27) |
+| Bellator | **−17 r 26** (`REACTOR_CORE_MARKERS`) | preset −205 (w strefie) | **oś −162** (`FUEL_TANK_MARKERS`) | 2 — automat (tabela gry pusta) | 95 ± 42 (gra: 75,7 ± 151 — nakryłaby gniazdo 40) |
+| Citadella | preset −230 | preset −300 (strefa gry −387…−325: środek kasztelu z kratą i kapsułami — zostaje) | para ±75 przy komorze reaktora (automat) | 2 — tabela gry | pokłady ładowni gry = rzędy wrót hangarów presetu |
+| Colossus | preset −330 | **−160** (strefa gry −238…85; preset −560) | para (−160, ±128) w maszynowni (automat) | 4 — tabela gry (bez dziobowej na skosie i 278 — gniazda) | −441 ± 40 między kratami osi kasztelu (gra: −493 ± 235) |
+
+**Generator** (`buildPipeNetwork`, deterministyczny z `design.seed` + `pipeNet.seed`; wołany z `buildHullField` →
+`field.pipeNet`, raster `field.pipeTex`):
+
+1. siatka trasowania (komórka 5 jd) nad kadłubem — przy lustrze tylko burta y < 0, druga to lustro wyniku (gdy każdy
+   moduł poza osią ma bliźniaka po drugiej burcie; część na osi bywa niesymetryczna — wtedy sieć na całym kadłubie,
+   bez odbicia, inaczej odbita trasa kończyłaby się bez urządzenia). Koszt komórki:
+   rów maszynowni 1 (najtaniej przy ścianie płyty), pod płytą 4, przez cudzy moduł 9, oś lustra +2,5, pas 14 jd przy
+   burcie + do 1,2 (rośnie ku burcie), < 3 jd od sylwetki zakaz. Głębokość w sylwetce = max(−pole ramy, odległość do
+   zewnętrza z transformaty fazowej) — szew stykających się brył (części) nie jest burtą;
+2. TRZY SIECI po kolei: rury do silników, rury dopływu, kable. Każda to drzewo od PRZYŁĄCZY reaktora (komórki przy jego
+   obrysie): urządzenie (najbliższe sieci pierwsze) dołącza najkrótszą trasą do najbliższego miejsca drzewa tej samej
+   sieci albo do wolnego przyłącza reaktora (nowy pień; pnie co ≥ 2 komórki). A* po komórkach (kara za skręt 45° / 90° /
+   135° względem kierunku wejścia, heurystyka = odległość do sieci × 1,25 dla rur, × 2,2 dla kabli; odległość
+   aktualizowana Dijkstrą na kolejce kubełkowej w promieniu 48 komórek od nowej gałęzi). Komórka przyłącza urządzenia jest
+   dla reszty sieci zamknięta — KAŻDA TRASA ma dwa prawdziwe końce (urządzenie i węzeł albo przyłącze reaktora).
+   PRZYŁĄCZA RUR PALIWA WIDAĆ: płyty w pasie 5 komórek wokół silnika, dyszy i zbiornika +5 w koszcie, start trasy w głębi
+   rowu przy urządzeniu, a przy urządzeniu z KANAŁEM SERWISOWYM (niżej) — na drugim końcu kanału, z rogami łamanej na
+   osi kanału (ostatni odcinek biegnie całym kanałem prosto do urządzenia). Wiązki wcześniejszych sieci są przeszkodą
+   dla następnych (+6 w koszcie, ślad w polu wolnego miejsca) — rury i kable we wspólnym rowie leżą obok siebie, krzyżują
+   się tylko tam,
+   gdzie inaczej się nie da (kabel chowa się pod wiązkę rur);
+3. obciążenie krawędzi = suma wag tras od urządzenia do reaktora → wiązka 1 + 1,3 · log2(1 + obciążenie) rur / kabli
+   (× 0,5 + 0,5 · gęstość; do 8) — kable gęstnieją przy rdzeniu, rury przy gondolach; rury dopełniają rów do połowy
+   szerokości, najwyżej +2 rury ponad obciążenie;
+4. biegi (odcinki drzewa między węzłami) → łamane proste: `straightenOctilinear` (schodki → prosty + 45°), `offsetRun`
+   (jedno przesunięcie w poprzek na odcinek, luz od ścian i od wcześniejszych sieci), na końcu przy urządzeniu odcinek
+   co 45° na 2,5 jd w moduł (przyłącze — dalej rysuje się moduł) w punkt ≥ 6 jd w głąb sylwetki, cały odcinek z zapasem
+   (przewężenie przy zaokrąglonym rogu gondoli odpada — wtedy trasa jeszcze raz z innej komórki startu), kolana
+   zaokrąglone. Cała szerokość wiązki z zapasem 0,6 jd w sylwetce (głębokość generatora z zapasem komórki pola —
+   niezależna kontrola na innej siatce nie wychodzi mniejsza) — inaczej wiązka cieńsza (mniej rur, potem cieńsze rury);
+5. osprzęt: rozgałęzienia — skrzynka rozdzielcza / obejma-trójnik (rury), puszka kablowa; wejścia pod płyty — kołnierz
+   (rury), przepust (kable); przyłącza urządzeń — kołnierz (dysza SIDE), dławnica kablowa, pompa przy zbiorniku, KOLEKTOR
+   na wejściu wiązki do gondoli (blok krótkich rur wzdłuż wiązki tuż za obrysem gondoli); zawory i pompy co ~95 jd rur,
+   puszki co ~120 jd kabli; reaktor bez bryły (`v` 1) — rozdzielnia na końcu pnia, gdy widać go z rowu. Limity: 255
+   biegów, 255 elementów osprzętu (przycinane parami lustra).
+
+**Kanał serwisowy** (`serviceChannel`, `HD_SERVICE_CHANNEL` w `hullDesignSystems.js`): wycięcie w płytach od strony
+kadłuba — przy dyszy SIDE (lokalne −x: 22 jd lub 1,8 · w, pół-szerokość ≥ 7 jd) i zbiorniku (od króćca −x; sloty TN
+obracają zbiornik króćcem ku rdzeniowi) zawsze, przy gondoli MAIN (od szyjki +x) wtedy, gdy przy gondoli nie ma rowu
+maszynowni (kadłuby z klocków: płyta rufy dochodzi do gondoli) albo gdy wejście rury okazało się niewidoczne — generator
+sprawdza każde przyłącze MAIN zaraz po sieci rur do silników (`fuelEndVisible`: pierwsze 3 jd za obrysem i ≥ 60% z 12 jd
+w rowie, oś i brzegi wiązki) i wtedy liczy sieć od nowa z kanałem (pola niezależne od kanałów z pamięci pierwszego
+przebiegu); lista gondol z kanałem — `net.channels`. Generator traktuje kanał jak rów, kompozytor rysuje w nim
+maszynownię (płyty zdjęte, wysokość ramy, obrzeże); kanał gondoli — znacznik +0,25 w kodzie typu modułu. Flota TN: kanał
+gondoli tylko przy Bellatorze (−287, ±62) i Haście (−108, ±49,5) — szyjka za wąskim pasem płyty.
+
+**Kontrola** (`pipeNetworkCheck` — testy i panel dema): wolne końce (koniec łamanej poza przyłączem urządzenia, który
+nie styka się z innym biegiem), wiązki poza sylwetką (oś ± pół-szerokość bliżej krawędzi niż 0,5 jd; próbka, którą
+ostrożny próbnik siatki uznał za płytką — szew sumy brył, komórka zapasu — sprawdzana dokładnie pierścieniami co ¼ jd
+w polu ramy, inaczej fałszywe „poza” przy gondolach Hasty z klocków), urządzenia bez
+drogi kablem do reaktora, silniki bez drogi rurą do reaktora albo reaktor bez dopływu ze zbiornika, WIDOCZNE
+przyłącza rur paliwa (`fuelEnds` — MAIN, SIDE, zbiornik: [widoczne, wszystkie], `fuelHidden`). Wynik grafu:
+`net.graph.nodes` (węzeł / przyłącze z indeksem modułu), `run.ends` (węzły końców każdej łamanej, lustro osobno).
+
+**Rysunek** (`hullComposer.js`, `_pipeNet`): bieg ma materiał (0 mix, 1 stal, 2 miedź, 3 KABLE, 4 RURY PALIWA) + 8 ·
+„na płytach”. Rury paliwa — jasna stal i miedź (bez rdzy i ciemnej stali: widać je na ciemnej maszynowni przy
+silnikach), kołnierze w odcinkach, obejmy co 26 jd; rury ręczne — jak dotąd. KABLE: korytko drabinkowe (szyny po
+bokach, szczeble co 3 jd widoczne między kablami), cienkie kable w ciemnej izolacji z połyskiem (pierwszy — grubszy
+zasilający), kolorowe opaski co ~9 jd: czerwona, bursztynowa, zielona, biała — BEZ NIEBIESKIEJ (niebieskie albedo
+świeci w grze, `hullGlowMask`). Osprzęt: kody 1–9 (skrzynka, kołnierz / przepust, zawór, pompa, kolektor, zaślepka rur
+ręcznych, dławnica, puszka kablowa, rozdzielnia) + 16 · „na płytach”. Przy włączonej sieci maszynownia nie ma izolinii
+rur (urywały się w rowach jak rury „donikąd”).
+
+**Edytor (demo)**: systemy presetu zablokowane (🔒, komunikat przy próbie przesunięcia / usunięcia), projekt od zera —
+wolne; nowe moduły w narzędziu M (dysza SIDE dostaje wydech ku najbliższej burcie); panel „Sieć systemów”: liczba
+reaktorów / zbiorników / MAIN / SIDE / urządzeń, biegi kabli i rur, **wolne końce**, **poza obrysem**, bez prądu,
+bez paliwa, bez trasy; walidacja kompletu w recepturze; **graf sieci** (I): linie źródło → odbiornik (kable żółte,
+rury do silników pomarańczowe, dopływ zielony, odbiornik bez trasy — czerwony krzyżyk).
+
+**Koszt** (generator na gotowym polu, minimum z 9 przebiegów na przemian ze starym generatorem, ta sama maszyna
+obciążona innymi programami, 2026-10-20): Custos 38 ms (stary 65), Hasta 69 (82 — z kanałem gondoli: dwa przebiegi),
+Bellator 64 (72 — dwa przebiegi), Citadella 52 (62), Colossus 64 (58); w przeglądarce (demo, pojedynczy wypiek)
+63–123 ms; kontrola sieci ~10–20 ms (tylko przy pełnym wypieku). Test pilnuje pracy A* (rozwinięte komórki ≤ 1,5 ×
+komórek siatki; dziś 0,4–0,8). Pipeline'y synchroniczne: 0.
 
 **Narzędzia**: `node scripts/webgpu/kreator-kadluba-demo.mjs --tylko custos,hasta,bellator,citadella,colossus --etapy
-ab,rury` → `<okręt>-a|b-rufa.png` (rufa z gondolami A/B), `<okręt>-a-rufa-bez.png` (ta sama klatka bez sieci);
-testy: `rury: …` w `tests/hullDesign.test.mjs` (format i lustro rur ręcznych, determinizm, oś wewnątrz kadłuba, rufa
-gęstsza niż dziób, symetria biegów i osprzętu, raster).
+ab,rury` → `<okręt>-a|b-rufa.png`, `<okręt>-a-rufa-bez.png` (bez sieci), Citadella `citadella-a-zgloszenie.png` (kadr
+zgłoszenia: gondole, kolumna TERRA NOVA, kasztele) i `citadella-a-zgloszenie-edytor.png` (z nakładką i grafem sieci);
+w raporcie zrzutu `siec` — wolne końce, poza obrysem, bez prądu / paliwa. Testy: `tests/hullDesignNetwork.test.mjs`
+(graf, sloty, zero wolnych końców, pełna szerokość w sylwetce, zasilanie i paliwo, symetria, determinizm, koszt) i `rury:
+…` w `tests/hullDesign.test.mjs` (format rur ręcznych, raster, rufa gęstsza niż dziób, proste wiązki).
 
-**Do decyzji / dalej**: piraci i inne frakcje — dziś ta sama sieć (gęstość 0 w presetach poza TN); skrzynki
-rozdzielcze są proste (płyta z pokrywą) — wariantów można dodać przy atlasie modułów; rury nie rzucają cienia na
-płyty (relief tylko w rowach, poza rurami ręcznymi `over`).
+**Do decyzji / dalej**: rury ręczne presetów kończą się zaślepkami (Citadella: rdzeń dziobu — ozdobny walec, nie
+trasa); czy kable i rury mają kiedyś znaczenie w rozgrywce (przecięty kabel = urządzenie bez prądu) — etap 2; sloty TN
+liczone na obrysie sprite'ów — po klockach (etap 1B) do sprawdzenia (tabela wyżej); ładownie gry na Custosie, Haście,
+Bellatorze i Colossusie nakrywają moduły presetów — w kreatorze są mniejsze / przesunięte.
 
 ## Kasztele (`src/game/hullDesign/hullDesignCastles.js`)
 
@@ -300,10 +367,10 @@ cofnij / ponów każdą zmianę projektu (zrzut JSON po zakończonej zmianie).
 Bloki (B), przesuń / skala / obrót (V, kółko, Shift + kółko), koło (C, Shift — wycięcie), **wielokąt** (P; LPM punkty,
 PPM / Enter zamyka, pierwszy i ostatni punkt na osi → symetryczny; „wielokąt-wycięcie”), **rowek** (R — łamana
 linii płyt), **rura** (W — łamana wiązki; liczba rur i materiał w panelu, kółko nad rurą — średnica), **część** (K),
-**kasztel** (Q; „kasztel na płytach” — z `clip: 1`), moduł (M), pas (S), emblemat (E), napis (T); poziomy 1–4 (rama,
-pancerz, nadbudówka, mostek); suwaki detalu, fazy
-płyt, łuku, widoczności paneli i **gęstości sieci rur** (⟳ — inne ziarno sieci); podkład ze sprite'a (U) do
-odrysowania; A/B (A).
+**kasztel** (Q; „kasztel na płytach” — z `clip: 1`), moduł (M — także zbiornik paliwa, dysza SIDE, ładownia), pas (S),
+emblemat (E), napis (T); poziomy 1–4 (rama, pancerz, nadbudówka, mostek); suwaki detalu, fazy płyt, łuku, widoczności
+paneli i **gęstości sieci** (⟳ — inne ziarno wiązek); **graf sieci** (I); podkład ze sprite'a (U) do odrysowania; A/B (A).
+Systemy presetu (🔒) nie dają się przesunąć, przeskalować ani usunąć.
 
 ## Co trzeba zmienić w grze, żeby przyjęła projekt z kreatora
 
@@ -321,11 +388,13 @@ kadłub (klucz = profil renderu)**. Kolejno:
    w albedo (przełącznik „okna→albedo”), a barwy palet i naklejek ścisza do b ≤ 0,38 (`glowSafeLinear`). Docelowo:
    tekstura emisji per kadłub w `createHullUniforms` / `HullObjectTextureNode`.
 4. **Tabele per kadłub z mocowań projektu** (dziś ręcznie per sprite): mostki (`BRIDGE_LAYOUT_PROPOSALS`, model 3D
-   z modułu „Mostek”), rdzenie reaktora (`src/data/reactorCores.js` — z modułu „Reaktor”), zbiorniki paliwa
-   (`src/data/fuelTanks.js`), dysze MAIN (`ENGINE_FX_DEFAULTS` — z gondol: `hullDesignMounts().mainThrusters`),
-   dysze SIDE (automat z obrysu), gniazda broni (`SHIP_EDITOR_DEFAULTS` — z modułów wież; typ main / aux / special
-   do dodania w module), lampy pozycyjne (`editorLights` — zrobione w demie, promień w jd), ładownie
-   (`CARGO_BAY_HULLS` — z wrót hangaru / luków), `HULL_COLLISION_ARMOR`, `SHIP_FLIGHT_SPECS`, obrys 3D.
+   z modułu „Mostek”), rdzenie reaktora (`src/data/reactorCores.js` — z modułu „Reaktor”: `hullDesignMounts().cores`),
+   zbiorniki paliwa (`src/data/fuelTanks.js` — z modułu „Zbiornik paliwa”: `.fuelTanks`), dysze MAIN
+   (`ENGINE_FX_DEFAULTS` — z gondol: `.mainThrusters`), dysze SIDE (`engines.side` — z modułów „Dysza SIDE”:
+   `.sideThrusters`, deg jak edytor gniazd), gniazda broni (`SHIP_EDITOR_DEFAULTS` — z modułów wież; typ main / aux /
+   special do dodania w module), lampy pozycyjne (`editorLights` — zrobione w demie, promień w jd), ładownie
+   (`CARGO_BAY_HULLS` — z modułów „Ładownia”: `.cargoBays`; wrota gry do dobrania), `HULL_COLLISION_ARMOR`,
+   `SHIP_FLIGHT_SPECS`, obrys 3D.
 5. **Stocznia** — budowa od zera = ciało z wszystkimi komórkami martwymi ożywiane odrostem (`HullBodies.regrowCell`)
    z materiałem z receptury; refit = różnica komórek.
 6. **Naprawa i rany** — bez zmian (mapa ran, łaty, odrost, wraki pracują na alfie i uv obrazu).

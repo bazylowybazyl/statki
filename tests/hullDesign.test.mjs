@@ -310,7 +310,8 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
     const d = hullDesignPreset(key);
     const f = buildHullField(d);
     const net = f.pipeNet;
-    assert.ok(net && net.runs.length >= 15 && net.fits.length >= 20, `${key}: ${net?.runs.length} biegów, ${net?.fits.length} osprzętu`);
+    // sieć systemów (bez celów wypełnienia): biegi kabli i rur do urządzeń — sieci zupełności: tests/hullDesignNetwork.test.mjs
+    assert.ok(net && net.runs.length >= 12 && net.fits.length >= 20, `${key}: ${net?.runs.length} biegów, ${net?.fits.length} osprzętu`);
     assert.equal(netKey(net), netKey(buildHullField(d).pipeNet), `${key}: deterministyczna`);
     const seeded = buildHullField({ ...d, pipeNet: { density: 1, seed: d.pipeNet.seed === 5 ? 6 : 5 } }).pipeNet;
     assert.notEqual(netKey(net), netKey(seeded), `${key}: inne ziarno — inna sieć`);
@@ -319,11 +320,11 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
       const d0 = sampleHullField(f, 0, x, y);
       assert.ok(d0 < 0, `${key}: rura poza kadłubem (${x.toFixed(1)}, ${y.toFixed(1)}): ${d0.toFixed(2)}`);
     }
-    // koncentracja przy silnikach: rury × długość w rufowej tercji > w dziobowej
-    const [rear, , bow] = pipeTercileLoad(net, f.bounds);
+    // koncentracja przy silnikach: rury paliwa × długość w rufowej tercji > w dziobowej (kable — po całym okręcie)
+    const [rear, , bow] = pipeTercileLoad(net, f.bounds, 'feed');
     assert.ok(rear > bow * 1.3, `${key}: rufa ${rear.toFixed(0)} vs dziób ${bow.toFixed(0)}`);
-    // najgrubsze wiązki przy gondolach: biegi z 5+ rurami istnieją
-    assert.ok(net.runs.some((r) => r.n >= 5), `${key}: brak grubej wiązki`);
+    // wiązki z wielu rur / kabli istnieją (grubość z liczby tras)
+    assert.ok(net.runs.some((r) => r.auto && r.n >= 4), `${key}: brak grubej wiązki`);
     // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach
     for (const r of net.runs) {
       assert.equal(r.polys.length, 2);

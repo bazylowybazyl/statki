@@ -17,6 +17,7 @@ import { RESOURCES } from '../../data/resources.js';
 import { REPAIR_TUNE } from '../../data/repairDrones.js';
 import { HD_MODULES } from './hullDesignSchema.js';
 import { cellComponents, hullCells, sampleHullField } from './hullDesignGeometry.js';
+import { systemIssues } from './hullDesignSystems.js';
 
 export const HD_RECIPE_TUNE = Object.freeze({
   upperPlateShare: 0.5,     // płyty na komórkę nadbudówki / mostka (ponad ramę i pancerz)
@@ -53,16 +54,17 @@ export function hullDesignRecipe(field, tune = HD_RECIPE_TUNE) {
   for (const [k, n] of Object.entries(parts)) value += (RESOURCES[k]?.value || 0) * n;
 
   const warnings = [];
-  if (!counts.reactor) warnings.push({ level: 'bad', text: 'Brak reaktora — okręt bez zasilania (moduł Reaktor).' });
-  if (!counts.bridge) warnings.push({ level: 'bad', text: 'Brak mostka — okręt bez dowodzenia (moduł Mostek).' });
-  if (!counts.engine) warnings.push({ level: 'bad', text: 'Brak gondoli MAIN — okręt bez napędu głównego.' });
+  // komplet systemów (rdzeń, zbiornik, mostek, MAIN) — src/game/hullDesign/hullDesignSystems.js
+  for (const w of systemIssues(modules)) warnings.push({ level: w.level, text: w.text });
   const parts0 = cellComponents(c0);
   if (parts0.length > 1) warnings.push({ level: 'bad', text: `Kadłub w ${parts0.length} kawałkach — części bez połączenia odpadną jako wraki.` });
   // Moduły poza kadłubem / na złym poziomie.
   for (const m of modules) {
-    const d0 = sampleHullField(field, 0, m.x, m.y);
     const label = HD_MODULES[m.type].label;
-    if (d0 > -2) warnings.push({ level: 'warn', text: `${label} (${Math.round(m.x)}, ${Math.round(m.y)}) poza kadłubem.` });
+    // dysza SIDE stoi przy burcie (wydech wzdłuż +x modułu poza kadłub) — w kadłubie musi być jej koniec od strony kadłuba
+    const inner = m.type === 'thruster_side' ? (m.w || 0) * 0.6 : 0;
+    const d0 = sampleHullField(field, 0, m.x - Math.cos(m.rot || 0) * inner, m.y - Math.sin(m.rot || 0) * inner);
+    if (d0 > (m.type === 'thruster_side' ? -0.2 * (m.h || 1) : -2)) warnings.push({ level: 'warn', text: `${label} (${Math.round(m.x)}, ${Math.round(m.y)}) poza kadłubem.` });
     if (m.type === 'engine') {
       // dysza na rufie gondoli musi wychodzić poza kadłub: punkt za gondolą (−x lokalnie) pusty
       const c = Math.cos(m.rot || 0), s = Math.sin(m.rot || 0);
@@ -83,15 +85,27 @@ export function hullDesignRecipe(field, tune = HD_RECIPE_TUNE) {
 }
 
 /**
- * Mocowania względem środka obrazu (field.image.cx/cy): { hardpoints, mainThrusters, lights: { position } }.
- * Lampy na krawędzi kadłuba z pola (6 j. w głąb): dziób, rufa, burty w połowie długości.
+ * Mocowania względem środka obrazu (field.image.cx/cy): { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks,
+ * cargoBays, lights: { position } }. Dysze SIDE jak `engines.side` edytora gniazd (deg 0 — wydech na prawą burtę +y,
+ * 180 — na lewą, 90 — ku rufie), rdzenie, zbiorniki i ładownie jak markery gry (src/data/reactorCores.js,
+ * src/data/fuelTanks.js, src/data/cargoBays.js — środek, r / pół-wymiary). Lampy na krawędzi kadłuba z pola (6 j. w głąb):
+ * dziób, rufa, burty w połowie długości.
  */
 export function hullDesignMounts(field) {
   const { cx, cy } = field.image;
   const { modules } = field.expanded;
   const hardpoints = [];
   const mainThrusters = [];
+  const sideThrusters = [], cores = [], fuelTanks = [], cargoBays = [];
   for (const m of modules) {
+    if (m.type === 'thruster_side') {
+      // dysza na końcu +x gniazda (burta), kierunek wydechu (cos rot, sin rot) → deg edytora: dir = (−sin deg, cos deg)
+      const c = Math.cos(m.rot || 0), s = Math.sin(m.rot || 0);
+      const deg = Math.round(Math.atan2(-c, s) * 180 / Math.PI * 100) / 100;
+      sideThrusters.push({ id: `hd_side_${sideThrusters.length}`, x: m.x + c * m.w - cx, y: m.y + s * m.w - cy, deg: deg < 0 ? deg + 360 : deg });
+    } else if (m.type === 'reactor') cores.push({ id: `hd_core_${cores.length}`, x: m.x - cx, y: m.y - cy, r: m.r });
+    else if (m.type === 'fuel_tank') fuelTanks.push({ id: `hd_fuel_${fuelTanks.length}`, x: m.x - cx, y: m.y - cy, r: Math.max(m.w, m.h) });
+    else if (m.type === 'cargo') cargoBays.push({ id: `hd_cargo_${cargoBays.length}`, x: m.x - cx, y: m.y - cy, w: 2 * m.w, h: 2 * m.h, rot: m.rot || 0 });
     if (m.type.startsWith('turret_')) {
       hardpoints.push({ id: `hd_${hardpoints.length}`, x: m.x - cx, y: m.y - cy, size: HD_MODULES[m.type].size, type: 'main' });
     } else if (m.type === 'engine') {
@@ -134,5 +148,5 @@ export function hullDesignMounts(field) {
     { id: 'hd_stbd', x: mid - cx, y: edgeY(1, mid) - cy, color: '#2bff6a', power: 0.8, radius: lr(1), sequenceGroup: 'edge' },
     { id: 'hd_stern', x: edgeX(-1) - cx, y: -cy, color: '#ffffff', power: 0.6, radius: lr(0.9), sequenceGroup: 'edge' }
   ];
-  return { hardpoints, mainThrusters, lights: { position, road: [], flood: [] } };
+  return { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks, cargoBays, lights: { position, road: [], flood: [] } };
 }

@@ -20,11 +20,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   części, kasztele, klocki → zwykłe bryły), `hullDesignGeometry.js` (pola odległości poziomów, metryka ośmiokątna, alfa fizyki,
   komórki belek), `hullDesignBlocks.js` (KLOCKI: paleta, wielokąty, suma / różnica wielokątów, szczelina płyt),
   `hullDesignBuildable.js` (strażnik `isPlayerBuildable`), `hullDesignParts.js`, `hullDesignCastles.js`,
-  `hullDesignPipes.js` (sieć rur), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
+  `hullDesignSystems.js` (sieć systemów: kto z kim), `hullDesignSystemSlots.js` (sloty systemów presetów),
+  `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
   (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania).
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
-- Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`
-  i `tests/hullDesignBlocks.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
+- Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`,
+  `tests/hullDesignBlocks.test.mjs` i `tests/hullDesignNetwork.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
   podkład do układania klocków) `scripts/kreator-tn-ab.mjs`.
 
 ## Decyzje użytkownika
@@ -71,9 +72,36 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   spójnym korytarzu (przejście ≥ ~6 jd, inaczej rów się rwie), dysze SIDE — na prostym odcinku burty.
 - Pozycje modułów, kasztelów i naklejek są stałe; siatka floty (`grid` w `tnShip`) drobniejsza niż z detalu.
 
+## Sieć systemów (kable i rury)
+
+- Sieć wynika z modułów (`hullDesignSystems.js`): rury paliwa zbiornik → reaktor → każda gondola MAIN i dysza SIDE, kable
+  reaktor → każde urządzenie. Nowe urządzenie → `HD_POWER_LOAD` (waga = kabli w trasie), nowe źródło albo silnik →
+  `HD_SYSTEM_ROLE` / `HD_FUEL_LOAD`. Kratki, klapy serwisowe TN (`hatch` v 1), naklejki i rowki nie są urządzeniami.
+- Każda trasa ma dwa prawdziwe końce: przyłącze urządzenia albo węzeł / przyłącze reaktora; celów bez urządzenia nie ma.
+  `pipeNetworkCheck` (wolne końce, poza obrysem, bez prądu, bez paliwa, widoczne przyłącza paliwa) daje 0 na każdym
+  presecie — pilnuje `tests/hullDesignNetwork.test.mjs`.
+- „Wewnątrz sylwetki” = cała szerokość wiązki (oś ± pół-szerokość) z zapasem, mierzona głębokością z transformaty
+  odległości (`insideDepthSampler`), nie samym polem ramy: szew brył łączonych przez `min` udaje krawędź.
+- Lustro sieci tylko wtedy, gdy każdy moduł poza osią ma bliźniaka (`modulesMirrored`); inaczej sieć liczy się na całym
+  kadłubie.
+- Przyłącza rur paliwa (MAIN, SIDE, zbiornik) są WIDOCZNE: ostatni odcinek biegnie rowem. Gdy przy urządzeniu rowu nie ma
+  (płyta z klocków dochodzi do gondoli), generator wycina kanał serwisowy (`serviceChannel`, `HD_SERVICE_CHANNEL`)
+  i liczy sieć jeszcze raz.
+- Sloty systemów presetów trzyma `hullDesignSystemSlots.js` (dokładany w `hullDesignPreset()`), nie funkcje presetów;
+  pozycje z tabel gry (px PNG przeliczone na układ projektu — tabela w nagłówku pliku). Moduły systemów presetu mają
+  `lock`, projekt od zera (`empty`) jest wolny.
+- Rysunek: bieg = materiał (3 — KABLE: korytko drabinkowe, opaski; 4 — rury paliwa) + 8 · „na płytach”, osprzęt = rodzaj
+  (kody 1–9) + 16 · „na płytach”; nowy rodzaj osprzętu → gałąź w `_pipeNet` i wpis w `FIT_PRIO`. Opaski i moduły nie mogą
+  być niebieskie: `hullGlowMask` zapala niebieskie albedo w grze. Przy włączonej sieci maszynownia nie ma izolinii rur
+  (`HD_LOOK.net.isoCount` = 0).
+- Wydajność: A* po komórkach z heurystyką na kolejce kubełkowej; zmiany mierzyć na przemian ze starą wersją (minimum
+  z ≥ 9 przebiegów), w testach liczyć pracę A* albo czas CPU, nie zegar ścienny.
+- Demo: graf sieci pod I, panel „Sieć systemów” (liczniki wolnych końców i wiązek poza obrysem).
+
 ## Jak sprawdzić
 
-- `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs` (WGSL kompozytora buduje się w Node).
+- `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs` (WGSL
+  kompozytora buduje się w Node).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
   [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`); raport `raport.json`
   (pipeline'y synchroniczne w klatkach — ma być 0, błędy konsoli).
