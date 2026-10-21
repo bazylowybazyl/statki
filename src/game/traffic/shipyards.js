@@ -18,6 +18,9 @@
  */
 
 import { RESOURCES } from '../../data/resources.js';
+import { resourcePrice, scarcityMultiplier, PRICE_MODEL, stationNetRates } from '../stationEconomy.js';
+import { restockTarget, RESTOCK_SECONDS } from './tradeMarket.js';
+import { areFactionsHostile } from '../../data/factions.js';
 
 /**
  * Klasy okrętów i ich koszt w podzespołach.
@@ -126,7 +129,25 @@ export const SHIPYARD_MODEL = Object.freeze({
    *  niezależny od skali magazynu próg — patrz . */
   keepMultiple: 3,
   /** Ile okrętów naraz może stać w budowie w jednej stoczni. */
-  slots: 2
+  slots: 2,
+  /**
+   * LICYTACJA: o ile skup u innej stacji musi przebić cenę żądania portu,
+   * żeby miejscowa stocznia odłożyła dla niej podzespół (`reservedForMarket`).
+   *
+   * Własna stocznia nie ma bezwzględnego pierwszeństwa — towar idzie do tego,
+   * kto płaci więcej. 1,3 to marża kupca (12%) z rozstępem obu portów i zapasem
+   * na koszt trasy: stocznia ustępuje dopiero wtedy, gdy kupcom NAPRAWDĘ opłaca
+   * się ten podzespół wywieźć. W praktyce dzieje się to przy przyduszeniu
+   * odbiorcy (stocznia bez podzespołów płaci do 2,6× więcej) albo gdy port
+   * producenta jest pełniejszy od odbiorcy o kilkadziesiąt punktów procentowych.
+   */
+  outbidRatio: 1.3,
+  /**
+   * Powyżej tego zapełnienia stocznia buduje mimo przebicia. Towar, który
+   * leży, choć ktoś go chce, znaczy, że nikt nie ma czym go zabrać — wtedy
+   * stanie pochylni nikomu nie pomaga.
+   */
+  holdCeilingFill: 0.6
 });
 
 export function createShipyardRegistry() {
@@ -175,6 +196,20 @@ export function registerShipyard(registry, spec = {}) {
     const juz = new Set(spec.station.extraDemand || []);
     for (const id of WARSHIP_COMPONENTS) juz.add(id);
     spec.station.extraDemand = [...juz];
+  }
+  // Zapas startowy podzespołów. Stocznia dopisuje swój popyt dopiero tutaj,
+  // już po `seedStationStock`, więc stocznie bez własnych podzespołów
+  // startowały z zerem i czekały na pierwszego kupca — na Uranie ~100 min.
+  // Zapas tyle, ile kupcy i tak odbudowują (`RESTOCK_SECONDS` planowego
+  // zużycia), a nie 45% magazynu: magazyn podzespołów to setki godzin budowy.
+  if (spec.station && spec.econ?.resources) {
+    const rates = stationNetRates(spec.station);
+    const scale = Math.max(0, Number(spec.economyScale) || 1);
+    for (const id of WARSHIP_COMPONENTS) {
+      const cap = Number(spec.econ.capacity?.[id]) || 0;
+      const target = Math.min(cap, Math.max(0, -(Number(rates[id]) || 0)) * scale * RESTOCK_SECONDS);
+      spec.econ.resources[id] = Math.max(Number(spec.econ.resources[id]) || 0, target);
+    }
   }
   const yard = {
     id: String(spec.id || `stocznia-${registry.yards.length + 1}`),
@@ -262,6 +297,7 @@ export function returnShips(registry, factionId, ships) {
 /** Czy stację stać na ten okręt, nie ogałacając własnego przemysłu. */
 export function canAfford(econ, cls, options = {}) {
   if (!econ?.resources) return false;
+  const reserved = options.reserved;
   const reserve = Number(options.reserveFill ?? SHIPYARD_MODEL.reserveFill);
   const keepRatio = Number(options.keepMultiple ?? SHIPYARD_MODEL.keepMultiple);
 
@@ -275,10 +311,67 @@ export function canAfford(econ, cls, options = {}) {
     // przy skali ×60 próg wychodził 2880 sztuk KAŻDEGO podzespołu, więc budować
     // mogła wyłącznie stacja produkująca je u siebie. Zmierzone: siedem stoczni,
     // zwodował wyłącznie Mars.
-    const keep = Math.min(cap * reserve, need * keepRatio);
+    // Do tego zapas odłożony dla rynku: tyle, ile brakuje stoczniom, które
+    // przelicytowały tę — patrz `reservedForMarket`.
+    const keep = Math.max(Math.min(cap * reserve, need * keepRatio), reserved?.get(id) || 0);
     if (stan - need < keep) return false;
   }
   return true;
+}
+
+/**
+ * Ile podzespołu miejscowa stocznia odkłada w tym kroku dla rynku.
+ *
+ * Stocznia płaci za podzespół tyle, ile jest wart w JEJ porcie. Jeśli gdzie
+ * indziej stacja, która go zużywa, płaci wyraźnie więcej (`outbidRatio`),
+ * miejscowa stocznia nie kładzie stępki z zapasu, który tamta chce kupić —
+ * do jej potrzeby (`restockTarget`), licząc z tym, co już leci, i dzieląc ją
+ * między wszystkie stacje, które mają podzespół na zbyciu. Resztą buduje
+ * normalnie. Gdy głodna stocznia dostanie swoje, jej cena spada i rezerwa
+ * znika.
+ *
+ * Skup liczony przy zapasie z towarem w drodze; przyduszenie wchodzi tylko
+ * wtedy, gdy nawet z nim stacja zostaje w głodzie. Liczy się tylko stacja
+ * niewroga — tylko tam kupiec może podzespół zawieźć.
+ *
+ * `quotes` to notowania dyspozytora z tego ticku (`snapshotMarket`).
+ */
+export function reservedForMarket(quotes, stationId, econ, options = {}) {
+  const reserved = new Map();
+  const local = quotes?.get(stationId);
+  if (!local || !econ?.resources) return reserved;
+  const ratio = Number(options.outbidRatio ?? SHIPYARD_MODEL.outbidRatio);
+  const ceiling = Number(options.holdCeilingFill ?? SHIPYARD_MODEL.holdCeilingFill);
+  const half = PRICE_MODEL.spread / 2;
+  for (const id of WARSHIP_COMPONENTS) {
+    const own = resourcePrice(local.station, econ, id);
+    if (!own || !(own.capacity > 0) || own.fill >= ceiling) continue;
+    // Brak głodnego dzieli się między wszystkich, którzy mają podzespół na
+    // zbyciu — inaczej cztery ośrodki producenckie odkładałyby każdy całość.
+    let sellers = 0;
+    for (const [, quote] of quotes) {
+      const price = quote.prices.get(id);
+      if (!price || !(price.capacity > 0)) continue;
+      if (price.stored > restockTarget(price) + price.capacity * PRICE_MODEL.offerFloorFill) sellers++;
+    }
+    let units = 0;
+    for (const [otherId, quote] of quotes) {
+      if (otherId === stationId) continue;
+      const price = quote.prices.get(id);
+      if (!price || !price.wanted || !(price.capacity > 0)) continue;
+      if (areFactionsHostile(local.station.factionId, quote.station.factionId)) continue;
+      const position = price.stored + (price.inbound || 0);
+      const missing = (restockTarget(price) - position) / Math.max(1, sellers);
+      if (!(missing > 0)) continue;
+      const fill = Math.min(1, position / price.capacity);
+      const duress = fill < PRICE_MODEL.duressFill ? Math.max(1, price.duress || 1) : 1;
+      const bid = price.unitMarket / Math.max(1, price.duress || 1) * duress
+        * scarcityMultiplier(fill) * (1 - half);
+      if (bid >= own.ask * ratio) units += missing;
+    }
+    if (units > 0) reserved.set(id, units);
+  }
+  return reserved;
 }
 
 function consume(econ, cls) {
@@ -342,6 +435,7 @@ export function tickShipyards(registry, dt, options = {}) {
   if (typeof getEconomy !== 'function') return [];
   const step = Math.max(0, Number(dt) || 0);
   const events = [];
+  const quotes = typeof options.quotes === 'function' ? options.quotes() : options.quotes;
 
   for (const yard of registry.yards) {
     const econ = getEconomy(yard.stationId);
@@ -359,11 +453,19 @@ export function tickShipyards(registry, dt, options = {}) {
       events.push({ type: 'built', yardId: yard.id, factionId: yard.factionId, classId: slip.classId });
     }
 
-    // 2. Wolne pochylnie biorą to, czego brakuje flocie.
+    // 2. Wolne pochylnie biorą to, czego brakuje flocie — z podzespołów,
+    //    których nie przelicytowała stocznia głodniejsza od tej.
+    if (yard.building.length >= yard.slots) continue;
+    const reserved = quotes ? reservedForMarket(quotes, yard.stationId, econ, options) : null;
+    const yardOptions = reserved?.size ? { ...options, reserved } : options;
     while (yard.building.length < yard.slots) {
-      const cls = pickWarshipClass(registry, yard.factionId, econ, options)
-        || WARSHIP_ORDER.find(candidate => canAfford(econ, candidate, options));
-      if (!cls) { registry.stats.blocked++; break; }
+      const cls = pickWarshipClass(registry, yard.factionId, econ, yardOptions)
+        || WARSHIP_ORDER.find(candidate => canAfford(econ, candidate, yardOptions));
+      if (!cls) {
+        registry.stats.blocked++;
+        if (reserved?.size) registry.stats.yielded = (registry.stats.yielded || 0) + 1;
+        break;
+      }
       registry.stats.spent += consume(econ, cls);
       yard.building.push({ classId: cls.id, remaining: cls.seconds });
       events.push({ type: 'laid', yardId: yard.id, factionId: yard.factionId, classId: cls.id });

@@ -671,7 +671,10 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
   const netto = {};
 
   for (const [id, industry] of Object.entries(industryMap)) {
-    if (!industry.capacity) continue;
+    // Kopalnia księżycowa nie ma fabryki, ale ma załogę i urobek — jej wywóz
+    // i dowóz bytu przechodzą przez port planety. Pominięta, zaniżała przeładunek
+    // olbrzymów gazowych z kopalniami (Saturn: 26 stanowisk, kolejka 21).
+    if (!industry.capacity && !industry.size) continue;
     const local = {};
     const add = (res, amount) => { local[res] = (local[res] || 0) + amount; };
 
@@ -712,7 +715,9 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
     for (const [res, net] of Object.entries(local)) {
       const s = podaz[res] || 0;
       const d = popyt[res] || 0;
-      const handel = Math.min(s, d);
+      // Bez podaży u stacji towar i tak przypływa — z pól wydobywczych (ruda
+      // uranu z Kuipera) albo z wraków — i zajmuje stanowisko odbiorcy.
+      const handel = s > 0 ? Math.min(s, d) : d;
       if (handel <= 0) continue;
       const udzial = net > 0 ? (net / s) * handel : (-net / d) * handel;
       tons += getResourceMass(res, udzial * cyclesPerHour);
@@ -830,6 +835,32 @@ export function stationNetRates(station) {
   }
 
   return net;
+}
+
+/**
+ * Planowe zużycie BRUTTO stacji przy skali 1, w jednostkach/s: wsad wszystkich
+ * linii plus byt, gotowość i utrzymanie floty — bez odejmowania własnej
+ * produkcji.
+ *
+ * Saldo netto (`stationNetRates`) mówi, ile trzeba stacji DOWIEŹĆ według planu.
+ * Ta liczba mówi, ile stacja ZJADA — a to jest miara jej potrzeby, gdy plan się
+ * rozjedzie: Mars w planie eksportuje stal, więc netto ma zero popytu, choć
+ * w biegu stał na zerze stali przez blisko godzinę.
+ */
+export function stationConsumptionRates(station) {
+  const industry = getStationIndustry(station);
+  const out = {};
+  const add = (id, amount) => { out[id] = (out[id] || 0) + amount; };
+  for (const recipeId of industry?.recipes || []) {
+    const recipe = RECIPES[recipeId];
+    if (!recipe) continue;
+    const batchesPerSecond = lineWeight(industry, recipeId) / recipe.seconds;
+    for (const [id, need] of Object.entries(recipe.in)) add(id, need * batchesPerSecond);
+  }
+  for (const [id, amount] of Object.entries(systemDemandFor(industry))) {
+    add(id, amount / ECONOMY_CYCLE_SECONDS);
+  }
+  return out;
 }
 
 function amountOf(econ, id) {
@@ -1124,8 +1155,37 @@ export const PRICE_MODEL = Object.freeze({
   /** Po tylu sekundach głodu dopłata sięga ~63% maksimum. */
   duressHalfLife: 1800,
   /** Ile razy szybciej głód odpuszcza po dostawie, niż narastał. */
-  duressRelief: 3
+  duressRelief: 3,
+
+  // ---------- CENA REZERWACJI PRODUCENTA ----------
+  //
+  // Rynek kupców nie czeka na „nadwyżkę ponad 70%”. Producent sprzedaje każdą
+  // sztukę, za którą ktoś płaci więcej niż jego własna cena przy zapasie PO
+  // sprzedaży — czyli schodzi z zapasem w dół krzywej niedoboru, aż jego cena
+  // żądania zrówna się z ofertą skupu (patrz `sellDownToFill` w tradeMarket).
+  // Próg 70% zostaje dla planisty frakcji (`getStationSurpluses`).
+  //
+  // Bez tego stocznie producentów zjadały podzespoły do zera i kupcy nie mieli
+  // czego kupić, choć stocznia bez podzespołów płaciła 4,4× bazy (2026-10-21:
+  // Merkury, Wenus, Saturn, Uran i Westa na 0% przez całe 240 min).
+
+  /**
+   * Zapas roboczy, którego producent nie sprzedaje nikomu, jeśli sam go używa.
+   * Ten sam co zapas roboczy planisty (`inventorySafetyFill`). Przy 0,1 kupcy
+   * wyciągali z Marsa stal dla głodnych olbrzymów, aż Mars sam stał na zerze.
+   */
+  offerFloorFill: 0.25
 });
+
+/**
+ * Zapełnienie, przy którym mnożnik niedoboru wynosi `scarcity` — odwrotność
+ * `scarcityMultiplier`. Poza krzywą przycięte do [0, 1].
+ */
+export function fillForScarcity(scarcity) {
+  const { emptyMultiplier, fullMultiplier } = PRICE_MODEL;
+  const fill = (emptyMultiplier - (Number(scarcity) || 0)) / (emptyMultiplier - fullMultiplier);
+  return Math.max(0, Math.min(1, fill));
+}
 
 /**
  * Dopłata za DŁUGOŚĆ niedoboru. 1,0 świeżo po opróżnieniu, w granicy 2,6×.
@@ -1246,7 +1306,15 @@ export function resourcePrice(station, econ, resourceId, options = {}) {
     /** Ile jest do wzięcia bez naruszania zapasu roboczego stacji. */
     available: Math.max(0, stored - cap * SURPLUS_FILL),
     /** Ile stacja jeszcze zmieści. */
-    room: cap > 0 ? Math.max(0, cap - stored) : Infinity
+    room: cap > 0 ? Math.max(0, cap - stored) : Infinity,
+    // Składniki potrzebne, żeby policzyć cenę przy INNYM zapasie — rynek kupców
+    // sprzedaje i skupuje wzdłuż krzywej, a nie po jednej cenie chwili.
+    stored,
+    capacity: cap,
+    /** Cena przy mnożniku niedoboru 1, bez rozstępu i reputacji. */
+    unitMarket: def.value * profile * duress,
+    /** Poniżej tego zapełnienia stacja nie sprzedaje — patrz `offerFloorFill`. */
+    offerFloor: stationWantsResource(station, resourceId) ? PRICE_MODEL.offerFloorFill : 0
   };
 }
 

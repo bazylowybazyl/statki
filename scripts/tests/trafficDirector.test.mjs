@@ -464,7 +464,9 @@ export function run() {
     })],
     payload: {
       orderId: lossOrder.id, shipId: lossShip.id, companyId: lossCompany.id,
-      resourceId: 'iron_ore', units: 10, value: 100
+      // Wartość na progu pełnego zainteresowania piratów (`lootReference`) —
+      // drobnicę piraci łapią rzadziej, a test potrzebuje pewnego przechwytu.
+      resourceId: 'iron_ore', units: 10, value: 25_000
     }
   });
   t.check('test przechwytu przypisał statek', assignShipToCourse(lossShip, lossCourse.id));
@@ -536,7 +538,9 @@ export function run() {
       ships: 12,
       economyScale: 5,
       // Flota docelowa = startowa, więc firma odkupuje już pierwszą stratę.
-      directorOptions: { piracyEnabled: true, piracyPressure: 6, targetFleetPerCompany: 12 }
+      // Presja ×20: piraci polują na łup (`pirateInterest`), więc tania ruda
+      // przy ×6 dawała już tylko dwie straty na pół godziny.
+      directorOptions: { piracyEnabled: true, piracyPressure: 20, targetFleetPerCompany: 12 }
     });
     przewoznik = zPiratami.companies.companies[0];
     for (let czas = 0; czas < 1800; czas += 5) {

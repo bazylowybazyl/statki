@@ -15,8 +15,9 @@ import {
   WARSHIP_CLASSES, WARSHIP_ORDER, SHIPYARD_MODEL, FLEET_DOCTRINE, pickWarshipClass,
   createShipyardRegistry, registerShipyard, tickShipyards,
   readyShips, fleetPower, addShips, takeShips, returnShips,
-  canAfford, summarizeShipyards
+  canAfford, summarizeShipyards, reservedForMarket, WARSHIP_COMPONENTS
 } from '../../src/game/traffic/shipyards.js';
+import { snapshotMarket } from '../../src/game/traffic/tradeMarket.js';
 
 /** Magazyn z zadanym zapasem podzespołów. */
 function makeEcon(fill = 0) {
@@ -161,6 +162,43 @@ export function run() {
   tickShipyards(pusty, 1, { getEconomy: () => makeEcon(0) });
   t.equal('bez podzespołów nic nie powstaje', pusty.yards[0].building.length, 0);
   t.check('i jest to odnotowane', pusty.stats.blocked > 0);
+
+  // ----------------------------------------------------------
+  t.section('Licytacja: stocznia producenta ustępuje głodniejszej');
+
+  // Producent ma podzespoły na 40% magazynu, druga stocznia stoi na zerze od
+  // godziny (przyduszenie). Własna stocznia nie ma bezwzględnego pierwszeństwa:
+  // odkłada dla rynku tyle, ile brakuje tamtej, a z reszty buduje.
+  const prodSt = { id: 'prod', factionId: FACTION.MARS, extraDemand: [...WARSHIP_COMPONENTS] };
+  const glodSt = { id: 'glod', factionId: FACTION.MARS, extraDemand: [...WARSHIP_COMPONENTS] };
+  const prodEcon = makeEcon(80);
+  const glodEcon = makeEcon(0);
+  glodEcon.duress = Object.fromEntries(WARSHIP_COMPONENTS.map(id => [id, 3600]));
+  const notowania = snapshotMarket([prodSt, glodSt], id => (id === 'prod' ? prodEcon : glodEcon),
+    { demandRate: id => (id === 'glod' ? 0.005 : 0) });
+  const rezerwa = reservedForMarket(notowania, 'prod', prodEcon);
+  t.check('producent odkłada podzespoły dla głodnej stoczni', rezerwa.get('hull_plate') > 0);
+  t.check('nie więcej, niż tamta potrzebuje', rezerwa.get('hull_plate') <= 200);
+  t.check('rezerwa blokuje budowę z odłożonego zapasu',
+    canAfford(prodEcon, WARSHIP_CLASSES.frigate)
+    && !canAfford(prodEcon, WARSHIP_CLASSES.frigate, {
+      reserved: new Map([...rezerwa].map(([id]) => [id, 80]))
+    }));
+  // Gdy głodna stocznia ma już to, czego chce, licytacja się kończy.
+  for (const id of WARSHIP_COMPONENTS) glodEcon.resources[id] = 60;
+  glodEcon.duress = {};
+  const syte = snapshotMarket([prodSt, glodSt], id => (id === 'prod' ? prodEcon : glodEcon),
+    { demandRate: id => (id === 'glod' ? 0.005 : 0) });
+  t.equal('syta stocznia niczego nie rezerwuje', reservedForMarket(syte, 'prod', prodEcon).size, 0);
+
+  // Stocznia bez własnych podzespołów nie startuje z zerem: zapas na kilka
+  // godzin planowego zużycia, nie 45% magazynu.
+  const startSt = { id: 'mercury', factionId: FACTION.INNER_CONSORTIUM };
+  const startEcon = makeEcon(0);
+  registerShipyard(createShipyardRegistry(),
+    { station: startSt, econ: startEcon, stationId: 'mercury', economyScale: 1 });
+  t.check('zapas startowy podzespołów', startEcon.resources.hull_plate > 0);
+  t.check('nie ponad magazyn', startEcon.resources.hull_plate <= startEcon.capacity.hull_plate);
 
   // ----------------------------------------------------------
   t.section('Okręt trafia do zapasu frakcji');

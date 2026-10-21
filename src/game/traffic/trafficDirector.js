@@ -24,7 +24,7 @@ import {
 } from '../cargoFleet.js';
 import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, getStationSurpluses,
-  stationWantsResource, stationNetRates
+  stationWantsResource, stationNetRates, stationConsumptionRates
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
 import {
@@ -33,7 +33,8 @@ import {
   travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage,
   getCourse
 } from './courseRegistry.js';
-import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
+import { laneThreat, depositLoot, recordPirateLoss, pirateInterest } from './piracy.js';
+import { refreshQuote } from './tradeMarket.js';
 import {
   chooseRoute, getNode, DRIVE_MODES, interceptChance, randomFieldSpot, approachPoint
 } from './travelNetwork.js';
@@ -109,8 +110,12 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    *
    * Przepustowość portu i tak wyznaczają stanowiska — kolejka dłuższa niż one
    * niczego nie przyspiesza, tylko zamraża towar w rekordach.
+   *
+   * 0,1 zamiast 0,6 (2026-10-21): przy 0,6 eksport Westy trzymał na redzie
+   * średnio ~2,4 kursu, choć tempo i tak wyznaczały stanowiska. Statek, który
+   * czeka, czeka w porcie macierzystym — to nie zapycha redy.
    */
-  loadQueueRatio: 0.6,
+  loadQueueRatio: 0.1,
   /**
    * Ile pustych przerzutów wolno wystawić na jeden cykl gospodarczy.
    *
@@ -198,6 +203,8 @@ export function createDirector(network, registry, options = {}) {
     inboundSchedule: new Map(),
     /** `stacja` → nominalne saldo zasobów/s przy skali gospodarki 1. */
     demandRates: new Map(),
+    /** `stacja` → planowe zużycie brutto/s przy skali 1 — potrzeba w skupie kupców. */
+    useRates: new Map(),
     /** Surowce dostępne u kogokolwiek na zbyciu. Też raz na tick. */
     surplus: new Set(),
     /** `stacja` → ile kursów stoi tam na redzie, czekając na stanowisko. */
@@ -319,9 +326,14 @@ function tryDeadhead(director, targetStationId, requiredCapacity) {
       kind: COURSE_KIND.HAUL,
       unitClass: candidate.ship.hullId,
       factionId: candidate.company.factionId,
+      // Pusty statek nie ładuje ani nie rozładowuje, więc nie zajmuje
+      // stanowiska: czeka na orbicie oczekiwania w punkcie manewrowym portu.
+      // Ze stanowiskami pod „załadunek” i „rozładunek” puste przeloty były
+      // większością kolejki na redzie Westy (2026-10-21: ~6 z 9,5 kursu).
       stages: stagesFromRoute(route, candidate.ship.stationId, targetStationId, {
         loadSeconds: 30,
         unloadSeconds: 30,
+        dwellReason: DWELL_REASON.HOLD,
         ...manoeuvrePoints(director, candidate.ship.stationId, targetStationId)
       }),
       fuelCapacity: fuelCapacityFor(route),
@@ -573,8 +585,13 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // w środku planety. Bez `entryPos` świeżo wystawiony kurs siedział przez
   // jeden tick w punkcie zerowym stacji, zanim dyspozytor portu przydzielił mu
   // stanowisko; przy dużym ruchu widać to było jako grudkę w środku globu.
-  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS, DWELL_REASON.LOAD,
-    options.originBerthPos, { entryPos: options.originBerthPos || options.departPoint }));
+  // `dwellReason` podmienia oba postoje (pusty przelot: HOLD, bez stanowiska —
+  // wtedy statek stoi w punktach manewrowych, nie w środku stacji).
+  const hold = options.dwellReason === DWELL_REASON.HOLD;
+  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS,
+    options.dwellReason || DWELL_REASON.LOAD,
+    options.originBerthPos || (hold ? depart : undefined),
+    { entryPos: options.originBerthPos || options.departPoint }));
   if (depart) {
     stages.push(travelStage(originId, originId, {
       mode: 'conventional',
@@ -605,7 +622,7 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // Wcześniej ostatni manewr celował w `destinationPos`, czyli w sam środek
   // stacji: wszystko zlatywało się do jednego punktu i było stamtąd odbijane.
   stages.push(dwellStage(destinationId, options.unloadSeconds ?? UNLOAD_SECONDS,
-    DWELL_REASON.UNLOAD, null, { entryPos: arrive }));
+    options.dwellReason || DWELL_REASON.UNLOAD, hold ? arrive : null, { entryPos: arrive }));
   return stages;
 }
 
@@ -752,6 +769,13 @@ function dispatchAgent(director, stations) {
   }
 
   attachCourses(agent, kursy.map(course => course.id));
+  // Następny kupiec w tym samym ticku ma widzieć chudszego nadawcę i towar już
+  // lecący do odbiorcy — inaczej cała pula wolnych karawan rzuca się na tę samą
+  // parę, a nadmiar przepada przy rozładunku.
+  bumpInbound(director, opportunity.target.id, opportunity.resourceId, wyslane,
+    route.seconds + (dojazd?.seconds || 0));
+  refreshQuote(director.quotes, opportunity.source.id, opportunity.resourceId);
+  refreshQuote(director.quotes, opportunity.target.id, opportunity.resourceId, wyslane);
   // Karawana leci razem Z DEFINICJI: to jeden właściciel i jeden towar, więc
   // nie pytamy `shouldConvoy` — ta funkcja rozstrzyga, czy OBCYM kursom opłaca
   // się zebrać w grupę. Osłona jest już wliczona w rachunek okazji.
@@ -1012,6 +1036,7 @@ function rebuildMarket(director, stations) {
   market.buyers.length = 0;
   director.surplus.clear();
   director.demandRates.clear();
+  director.useRates.clear();
 
   for (const station of stations) {
     // Opuszczona stacja NIE JEST uczestnikiem rynku. Nie ma załogi, nie ma
@@ -1025,6 +1050,7 @@ function rebuildMarket(director, stations) {
     const econ = director.getEconomy(station.id);
     if (!econ) continue;
     director.demandRates.set(String(station.id), stationNetRates(station));
+    director.useRates.set(String(station.id), stationConsumptionRates(station));
 
     const spare = new Map();
     for (const surplus of getStationSurpluses(station, econ, 20)) {
@@ -1558,6 +1584,24 @@ export function recordPlayerMining(director, x, y, tons) {
  * przelatuje przez tę pętlę nietknięty — nietykalność wynika z modelu, nie
  * z osobnego wyjątku.
  */
+/**
+ * Ile jest wart ładunek kursu W TEJ CHWILI — wejście do zainteresowania
+ * piratów. Wyprawa górnicza leci w pole pusto i dopiero wraca z urobkiem.
+ */
+function cargoValueNow(course) {
+  const payload = course?.payload;
+  if (!payload || payload.deadhead) return 0;
+  const value = Number(payload.value);
+  if (value > 0) return value;
+  if (!payload.harvest) return 0;
+  const stages = course.stages || [];
+  for (let i = 0; i < course.stageIndex && i < stages.length; i++) {
+    const stage = stages[i];
+    if (stage.toId === payload.fieldId || stage.nodeId === payload.fieldId) return getBagValue(payload.harvest);
+  }
+  return 0;
+}
+
 function rollPiracy(director, dt) {
   const { registry, config } = director;
   if (!config.piracyEnabled || config.piracyPressure <= 0) return;
@@ -1589,12 +1633,19 @@ function rollPiracy(director, dt) {
     // patrolu. Dzięki temu szlak da się realnie oczyścić, zabijając rejdera,
     // zamiast tylko przeczekać złą passę losowania.
     const zagrozenie = director.piracy ? laneThreat(director.piracy, stage.fromId, stage.toId) : 1;
-    const solo = interceptChance(exposure, director.network.config, config.piracyPressure)
+    const ryzyko = interceptChance(exposure, director.network.config, config.piracyPressure)
       * oslona * zagrozenie;
 
     const konwoj = convoyOf(director.convoys, course.id);
     if (konwoj) {
-      for (const id of konwoj.courseIds) rozliczone.add(id);
+      // Konwój kusi łupem CAŁEJ grupy — razem jest celem, nawet gdy pojedyncze
+      // statki wiozą drobnicę.
+      let lup = 0;
+      for (const id of konwoj.courseIds) {
+        rozliczone.add(id);
+        lup += cargoValueNow(getCourse(registry, id));
+      }
+      const solo = ryzyko * pirateInterest(lup, director.piracy?.config);
       // Konwój z choćby jednym oglądanym statkiem gracz widzi w całości —
       // o jego losie rozstrzyga gra, nie rzut.
       if (config.protectObserved && convoyIsObserved(registry, konwoj)) continue;
@@ -1613,7 +1664,8 @@ function rollPiracy(director, dt) {
     }
 
     if (config.protectObserved && course.actorId) continue;
-    if (director.rng() >= solo) continue;
+    // Pirat poluje na łup: pusty przelot i tani urobek to słaby cel.
+    if (director.rng() >= ryzyko * pirateInterest(cargoValueNow(course), director.piracy?.config)) continue;
     strikeCourse(director, course);
     note(director, `PRZECHWYT: ${course.originId}→${course.destinationId}`);
   }
@@ -2051,7 +2103,16 @@ export function tickDirector(director, dt, stations) {
   rebuildInboundIndex(director);
   rebuildMarket(director, stations);
   rebuildParkedIndex(director);
-  if (director.agents) director.quotes = marketSnapshot(stations, id => director.getEconomy(id));
+  if (director.agents) {
+    director.quotes = marketSnapshot(stations, id => director.getEconomy(id), {
+      inbound: (stationId, resourceId) => inboundUnits(director, stationId, resourceId),
+      // Potrzeba skupu to zużycie BRUTTO, nie saldo planu — patrz
+      // `stationConsumptionRates`.
+      demandRate: (stationId, resourceId) =>
+        Math.max(0, Number(director.useRates.get(String(stationId))?.[resourceId]) || 0)
+          * Math.max(0, Number(director.config.economyScale) || 0)
+    });
+  }
 
   // Odstęp wysyłek skaluje się z gospodarką: N× większy przepływ przy tej samej
   // ładowni to N× więcej kursów, więc dyspozytor musi wystawiać je N× częściej.

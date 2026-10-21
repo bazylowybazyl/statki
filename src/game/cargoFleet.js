@@ -330,10 +330,35 @@ export function validateShipmentRoute(route, sourceId, targetId, options = {}) {
   };
 }
 
+/**
+ * Zbiór id wszystkich zleceń, prowadzony przyrostowo.
+ *
+ * Zlecenia tylko się dopisują, więc wystarczy doindeksować nowe wpisy od
+ * ostatniego razu. Budowanie zbioru od zera przy KAŻDYM nowym zleceniu było
+ * O(n²): po kilku godzinach ×60 (kilkanaście tysięcy zleceń) zjadało ~19%
+ * ticku ruchu. Gdy ktoś podmieni albo skróci `orders` (wczytanie, test),
+ * indeks buduje się od nowa — wynik jest zawsze ten sam co pełny przegląd.
+ * Pole niewyliczalne, żeby nie trafiało do zapisu stanu.
+ */
+function usedOrderIds(state) {
+  const orders = state.orders || [];
+  let index = state.usedOrderIndex;
+  if (!index || index.orders !== orders || index.count > orders.length) {
+    index = { orders, count: 0, ids: new Set() };
+    Object.defineProperty(state, 'usedOrderIndex', {
+      value: index, writable: true, configurable: true, enumerable: false
+    });
+  }
+  for (; index.count < orders.length; index.count++) {
+    index.ids.add(String(orders[index.count]?.id || ''));
+  }
+  return index.ids;
+}
+
 function nextShipmentOrderId(state, prefix = 'shipment') {
   let seq = Math.max(1, Math.floor(Number(state.nextOrderId) || 1));
   let id = `${prefix}-${String(seq).padStart(6, '0')}`;
-  const used = new Set((state.orders || []).map(order => String(order?.id || '')));
+  const used = usedOrderIds(state);
   while (used.has(id)) {
     seq++;
     id = `${prefix}-${String(seq).padStart(6, '0')}`;

@@ -255,6 +255,10 @@ function syncShipyard(world, station, def) {
     // od rynku — licznik po długości listy powtórzyłby się po usunięciu.
     id: world.building ? undefined : `stocznia-${station.id}`,
     station,
+    // Zapas startowy podzespołów (2 h planowego zużycia) — ten sam przy budowie
+    // świata i przy rynku dodanym w biegu (jedna ścieżka `addMarket`).
+    econ: world.economies.get(station.id),
+    economyScale: world.config.economyScale,
     stationId: station.id, factionId: station.factionId,
     weight: (def?.shipyardWeight || DEFAULT_SHIPYARD_WEIGHT) * Math.sqrt(world.config.economyScale)
   });
