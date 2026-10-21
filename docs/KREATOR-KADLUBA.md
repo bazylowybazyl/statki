@@ -91,10 +91,10 @@ w skali sprite'a (`getHullRenderSize`: długość ±4%, test).
 | Okręt | Siatka | Klocki na połowę (rama + płyty) | Kasztele | IoU alfy ze sprite'em |
 |---|---|---|---|---|
 | Custos | 0,5 j. | 20 (4 + 16) | 1 | 0,916 |
-| Hasta | 0,5 j. | 21 (5 + 16) | 1 | 0,957 |
-| Bellator | 1 j. | 27 (6 + 21) | 1 | 0,919 |
-| Citadella | 1 j. | 25 (5 + 20) | 4 | 0,960 |
-| Colossus | 1 j. | 52 (7 + 45) | 5 | 0,970 |
+| Hasta | 0,5 j. | 21 (5 + 16) | 1 | 0,958 |
+| Bellator | 1 j. | 30 (9 + 21) | 1 | 0,922 |
+| Citadella | 1 j. | 26 (6 + 20) | 4 | 0,962 |
+| Colossus | 1 j. | 58 (13 + 45) | 5 | 0,981 |
 
 Siatka floty jest drobniejsza niż z detalu (Bellator, Citadella, Colossus: 1 j. zamiast 2–4), żeby sekcje sprite'a
 wypadły na siatce (`grid` w `tnShip`). IoU liczy się na całej alfie; sprite'y z AI są niesymetryczne (Custos, Bellator —
@@ -109,13 +109,18 @@ dolna burta inna niż górna), wzorem jest burta y < 0.
   ~120 jd — mostek Hasty pod rufą). Wyjątek: gondole Citadelli wchodzą pod lite kasztele rufy (sprite: rufa
   z nadbudówek, kolumna z napisem nachodzi na kasztel centralny);
 - dysze SIDE ze slotów sesji sieci systemów stoją na prostych odcinkach burty (Colossus: płaska burta x 408–482);
+- rama każdego presetu to JEDNA bryła bez otworów (`hullFrameIntegrity`, test; zamierzonych wycięć na wylot flota nie
+  ma): tam, gdzie płyty stykają się tylko rogami albo zostawiają szparę nad pustką, pod spód idzie klocek ramy (poziom 0)
+  — szpara staje się rowem. Szpara na wylot to dziura w alfie i w belkach, a generator sieci traktuje ją jak zewnętrze
+  (rury szły wokół niej albo wiązka „poza obrysem”);
 - nowego rodzaju klocka nie trzeba było: wszystko złożone z prostokątów (fazy rogów), trapezów (także obróconych
   o 90° — kliny dziobów, i równoległoboków — rampy, pasy szewronów), trójkątów i łuków.
 
 **Odstępstwa od sprite'a:** Custos — wnęka rdzenia w grzbiecie, rów pod płytą dziobu, prosty zamiast ukośnego rów rur
 za rufą; Hasta — rampa wieży jako trójkąt; Bellator — rampa jako trójkąt (w sprite'ie pas z maszynownią pod spodem),
 rury między sponsonem a pasem burty pominięte (prześwit pusty); Citadella — skośna płyta dziobu z dwóch trapezów,
-kasztel wysoki 3 j. niższy (rów z rurami nad kasztelem centralnym); Colossus — kilkadziesiąt bloków-szewronów
+kasztel wysoki 3 j. niższy (rów z rurami nad kasztelem centralnym), rów 16 jd pod blokiem dziobu z orłem (w sprite'ie
+szpara 8 jd; rowem schodzi rura paliwa dyszy SIDE do korytarza nad hangarami); Colossus — kilkadziesiąt bloków-szewronów
 sprite'a sprowadzone do ~45 płyt, więcej kątów prostych niż w sprite'ie.
 
 Standaryzacja obrysu (`reg` w wielokącie, `src/game/hullDesign/hullDesignRegularize.js`) zostaje w formacie projektu;
@@ -340,6 +345,12 @@ moduły, naklejki, rowki i rury do 16 pkt, bloki 60 j., sieć rur; limity liczby
 sprite'a (wielokąty ze standaryzacją `reg`, setki punktów, otwory) i dawne bryły `circle` / `rect`. Przechodzą
 wszystkie presety (test); dawne bryły w presetach Orbis, Atlas II, Hasta-D i Szakal są zamienione na klocki (koło
 z wycięciem → klocek-pierścień, prostokąt z łukiem `r` → prostokąt z fazami).
+
+**Spójność ramy** (`hullFrameIntegrity(field)` w `hullDesignGeometry.js` → `{ pieces, holes }`, pole i pudło każdego
+kawałka) — kontrola konstrukcji osobna od strażnika: składowe wnętrza poziomu 0 na siatce pola (4-sąsiedztwo) i składowe
+zewnętrza bez styku z brzegiem siatki (szpary na wylot). Poprawny kadłub: 1 bryła, 0 otworów — test na wszystkich
+presetach (także drobiny). Panel klocków w demie pisze „⚠ kadłub w N kawałkach” / „⚠ M szpar na wylot” z miejscem
+(liczone raz na zbudowane pole).
 
 **Preset `klocki`** — fregata TN z 10 klocków (połowa okrętu, lustro robi drugą burtę): rufa-nadbudówka na osi ze ściętymi
 rogami, skrzydła rufy, grzbiet i burty z dwóch płyt każda, kliny dziobu (trapez), klocek ramy między klinami

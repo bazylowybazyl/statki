@@ -768,3 +768,48 @@ export function cellComponents(grid) {
   }
   return sizes.sort((a, b) => b - a);
 }
+
+/**
+ * SPÓJNOŚĆ RAMY (kontrola konstrukcji, osobna od isPlayerBuildable): bryły i otwory poziomu 0 na siatce pola
+ * (4-sąsiedztwo). Bryła = spójny obszar wnętrza kadłuba (pole ≤ 0), otwór = obszar zewnętrza bez styku z brzegiem
+ * siatki — szpara na wylot (przezroczysta alfa, dziura w belkach). Zwraca { pieces: [{ area [j.²], box }], holes:
+ * [{ area, box }] } posortowane od największych; kadłub poprawny — 1 bryła, 0 otworów.
+ */
+export function hullFrameIntegrity(field) {
+  const { x0, y0, w, h, res } = field.grid;
+  const L0 = field.levels[0];
+  const n = w * h;
+  const lab = new Int32Array(n).fill(-1);
+  const queue = new Int32Array(n);
+  const pieces = [], holes = [];
+  const a = 1 / (res * res);
+  let id = 0;
+  for (let s = 0; s < n; s++) {
+    if (lab[s] >= 0) continue;
+    const inside = L0[s] <= 0;
+    let qh = 0, qt = 0, cnt = 0, border = false, i0 = w, i1 = -1, j0 = h, j1 = -1;
+    queue[qt++] = s;
+    lab[s] = id;
+    while (qh < qt) {
+      const k = queue[qh++];
+      cnt++;
+      const i = k % w, j = (k - i) / w;
+      if (i === 0 || j === 0 || i === w - 1 || j === h - 1) border = true;
+      if (i < i0) i0 = i; if (i > i1) i1 = i; if (j < j0) j0 = j; if (j > j1) j1 = j;
+      if (i > 0 && lab[k - 1] < 0 && (L0[k - 1] <= 0) === inside) { lab[k - 1] = id; queue[qt++] = k - 1; }
+      if (i < w - 1 && lab[k + 1] < 0 && (L0[k + 1] <= 0) === inside) { lab[k + 1] = id; queue[qt++] = k + 1; }
+      if (j > 0 && lab[k - w] < 0 && (L0[k - w] <= 0) === inside) { lab[k - w] = id; queue[qt++] = k - w; }
+      if (j < h - 1 && lab[k + w] < 0 && (L0[k + w] <= 0) === inside) { lab[k + w] = id; queue[qt++] = k + w; }
+    }
+    id++;
+    const rec = {
+      area: cnt * a,
+      box: [x0 + i0 / res, y0 + j0 / res, x0 + (i1 + 1) / res, y0 + (j1 + 1) / res].map((v) => Math.round(v * 10) / 10)
+    };
+    if (inside) pieces.push(rec);
+    else if (!border) holes.push(rec);
+  }
+  pieces.sort((p, q) => q.area - p.area);
+  holes.sort((p, q) => q.area - p.area);
+  return { pieces, holes };
+}

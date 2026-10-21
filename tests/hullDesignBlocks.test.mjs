@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { expandHullDesign, normalizeHullDesign } from '../src/game/hullDesign/hullDesignSchema.js';
-import { buildHullField, sampleHullField } from '../src/game/hullDesign/hullDesignGeometry.js';
+import { buildHullField, hullFrameIntegrity, sampleHullField } from '../src/game/hullDesign/hullDesignGeometry.js';
 import {
   HD_BLOCK_PALETTE, HD_BLOCK_TUNE, blockArea, blockLocalLoops, blockWorldLoops, hullBlockFromPalette, hullDesignGridStep,
   loopArea, normalizeBlock, offsetLoop, polygonDifference, polygonUnion, polygonsOverlap, snapBlockRot
@@ -261,6 +261,26 @@ test('wszystkie presety do zbudowania w edytorze gracza; flota TN z klocków: Io
     const f = buildHullField(d, { pipes: false });
     const { iou } = tnIoU(key, f, tnSprite(key), 2);
     assert.ok(iou >= 0.9, `${key}: IoU ${iou.toFixed(3)}`);
+  }
+});
+
+test('spójność ramy: kawałki i szpary na wylot wykryte (także drobiny); rama każdego presetu — 1 bryła, 0 otworów', () => {
+  const at = (shapes) => hullFrameIntegrity(buildHullField(design(shapes), { pipes: false }));
+  const one = at([blk('rect', 0, -10, 40, 10), blk('rect', 40, -10, 80, 10)]);
+  assert.equal(one.pieces.length, 1, 'styk klocków: jedna bryła');
+  assert.equal(one.holes.length, 0, 'styk klocków: bez otworów');
+  assert.equal(at([blk('rect', 0, -10, 40, 10), blk('rect', 41, -10, 80, 10)]).pieces.length, 2, 'szczelina 1 j. rozcina kadłub');
+  assert.equal(at([blk('rect', 0, -10, 40, 10), blk('rect', 60, -1, 61, 0)]).pieces.length, 2, 'drobina 1 × 1 j. obok kadłuba');
+  // szpara na wylot: rama w kształcie U domknięta czwartym klockiem z odstępem 1 j.
+  const u = at([blk('rect', 0, -10, 40, -6), blk('rect', 0, 6, 40, 10), blk('rect', 0, -6, 4, 6), blk('rect', 36, -6, 40, 6),
+    blk('rect', 4, -6, 36, -1), blk('rect', 4, 0, 36, 6)]);
+  assert.equal(u.pieces.length, 1, 'U z wnętrzem: jedna bryła');
+  assert.equal(u.holes.length, 1, 'szpara 1 j. w środku ramy');
+  near(u.holes[0].area, 32, 4, 'pole szpary');
+  for (const key of HD_PRESET_KEYS) {
+    const { pieces, holes } = hullFrameIntegrity(buildHullField(hullDesignPreset(key), { pipes: false }));
+    assert.equal(pieces.length, 1, `${key}: kadłub w ${pieces.length} kawałkach (${pieces.slice(1).map((p) => `${p.area.toFixed(1)} j.² przy ${p.box.join(',')}`).join('; ')})`);
+    assert.equal(holes.length, 0, `${key}: ${holes.length} szpar (${holes.map((p) => `${p.area.toFixed(1)} j.² przy ${p.box.join(',')}`).join('; ')})`);
   }
 });
 

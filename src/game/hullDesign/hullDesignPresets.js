@@ -255,7 +255,7 @@ function hasta() {
     panels: 0.55,
     castles: [castle(-86, -60, 16, 12, { level: 3, clip: 2, tiers: 1, taper: 0.5, taperIn: 0.05 })],
     shapes: [
-      frameBlk(-113, -44, -60, -14, { shape: 'trap', a: 13 }),       // maszynownia za wieżą (rury od gondol)
+      frameBlk(-113, -45, -60, -14, { shape: 'trap', a: 13 }),       // maszynownia za wieżą (rury od gondol)
       frameBlk(-101, -56, -95, -43),                                // mocowanie górnej gondoli
       frameBlk(-60.5, -31, 21, 31),                                 // rów pionowy, korytarz grzbietu, wnęka rdzenia
       frameBlk(-61, -35.5, -54.5, -30.5),                           // szczyt rowu pionowego
@@ -297,9 +297,6 @@ function bellator() {
   // maszynowni wzdłuż osi aż do dziobu, płyta dziobu z napisem, blok dziobu i klin
   const d = tnShip('Pancernik Bellator (Terra Nova)', 47, 0.3661, {
     grid: 1,
-    // AGENT: ziarno sieci 5 — przy 0–4 dawny generator rur (hullDesignPipes.js, autoFittings) dostaje bieg z jednym punktem
-    // i rzuca wyjątkiem; zgłoszone sesji sieci systemów (1C) — po jej poprawce ziarno może wrócić do 0
-    pipeSeed: 5,
     panels: 0.4,                                       // sprite: duże gładkie płyty z kilkoma długimi szwami
     castles: [castle(-194, -152, 42, 13, { level: 3, clip: 2, tiers: 1, taper: 0.3 })],  // szczyt wieży rufowej
     shapes: [
@@ -308,6 +305,9 @@ function bellator() {
       frameBlk(-272, -76, -258, -48),                               // mocowanie dolnej gondoli
       frameBlk(-151, -84, -50, 84),                                 // rów pionowy, rowy przy pierścieniu, grzbiet za rdzeniem
       frameBlk(-50, -39, 49, 39),                                   // korytarz wzdłuż pasa burty, kanał osi
+      frameBlk(49, -81, 104, -18),                                  // pod skosem płyty dziobu (styk z pasem burty)
+      frameBlk(-92, -100, -66, -84),                                // pod płetwą na końcu rampy
+      frameBlk(-124, -140, -104, -132),                             // pod wysuniętym rogiem sponsonu
       frameBlk(49, -20, 240, 20),                                   // kanał osi pod dziobem
       blk('trap', -234, -162, -150, -135, 2, { a: 8 }),             // wieża: szczyt (kasztel)
       blk('trap', -242, -134, -150, -105, 2, { a: 8 }),             // wieża: płyta z orłem
@@ -374,7 +374,8 @@ function citadella() {
       blk('rect', -125, -34, 0, 34),                                // grzbiet
       blk('rect', 0, -34, 125, 34),                                 // grzbiet
       blk('rect', 125, -34, 245, 34),                               // grzbiet przy dziobie
-      blk('rect', 167, -198, 215, -148, 2),                         // blok dziobu z orłem
+      frameBlk(167, -156, 215, -140),                               // rów pod blokiem dziobu (rura dyszy SIDE do korytarza)
+      blk('rect', 167, -198, 215, -156, 2),                         // blok dziobu z orłem
       blkAt('trap', 297.5, -150.5, 95, 165, 2, 2, { a: 85, b: -68 }), // skośna płyta dziobu z napisem (trapez obrócony o 90°)
       blkAt('trap', 430, -76.5, 73, 100, 2, 2, { a: 51 }),          // skośna płyta dziobu: koniec (trapez obrócony o 90°)
       blk('rect', 245, -34, 300, 34),                               // dziób przy osi
@@ -424,9 +425,15 @@ function colossus() {
     shapes: [
       // rama: maszynownia rufy i rowów, mocowania gondol, dziób (trapez obrócony o 90° pod skosem klina)
       frameBlk(-710, -214, -618, 214, { c: [7, 0, 0, 7] }),
-      frameBlk(-756, -76, -700, 76),
+      frameBlk(-756, -80, -700, 80),
       frameBlk(-683, -240, -623, -192),                               // rów od górnej gondoli
       frameBlk(-618, -148, -300, 148),
+      frameBlk(-400, -234, -300, -146),                               // pod ukośnym pasem i płytą z ośmiokątem
+      frameBlk(-107, -304, 29, -228),                                 // pod górną płytą (szew z wielką płytą)
+      frameBlk(29, -240, 64, -228),
+      frameBlk(300, -178, 340, -150),                                 // pod płytą z gniazdem L
+      frameBlk(334, -160, 400, -140),                                 // pod gniazdem przed klinem
+      frameBlk(640, -70, 680, -38),                                   // pod końcem klina
       frameBlk(-300, -230, 312, 230),
       { kind: 'block', shape: 'trap', x: 482.5, y: 0, w: 320, h: 341, rot: Math.PI / 2, level: 0, a: 60, b: 60 },
       frameBlk(535, -40, 680, 40),
@@ -454,7 +461,7 @@ function colossus() {
       blk('rect', 334, -176, 353, -150),
       // szewrony między ukośnymi rowami
       blk('trap', -305, -232, -250, -142, 1, { a: -90, b: 90 }),      // ukośny pas za wielką płytą (równoległobok)
-      blk('rect', -322, -254, -278, -234),                            // pod gniazdem
+      blk('rect', -324, -256, -278, -230),                            // pod gniazdem
       blk('rect', -250, -184, -165, -142, 1, { c: [8, 8, 8, 8] }),
       blk('trap', -160, -194, -45, -134, 1, { a: 30, b: 40 }),        // szewron (skosy wzdłuż rowów)
       blk('rect', -340, -137, -262, -112),

@@ -269,6 +269,16 @@ try {
     report.mysz_klocki = mk;
     console.log('klocki mysz', JSON.stringify(mk));
     await shot('klocki-edycja-mysz', 'Edycja myszą: klin (klik) nad burtą, trapez przeciąganiem nad rufą, obrót R, cofnij / ponów');
+    // spójność ramy w panelu: fregata — jedna bryła; klocek odsunięty od kadłuba — ostrzeżenie „kadłub w 2 kawałkach”
+    await ev(`${k}.preset("klocki")`);
+    await ev(`${k}.built()`);
+    const rama = { przed: await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`) };
+    await ev(`${k}.edit((d) => { d.shapes.push({ kind: 'block', shape: 'rect', x: 0, y: -60, w: 8, h: 4, level: 1 }); })`);
+    await ev(`${k}.built(); ${k}.blk.tool(); document.getElementById('blk-palette').scrollIntoView({ block: 'start' })`);
+    await shot('klocki-rama-ostrzezenie', 'Panel klocków: ostrzeżenie o ramie w kawałkach (klocek odsunięty od burty)');
+    rama.po = await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`);
+    report.rama_klocki = rama;
+    console.log('klocki rama', JSON.stringify(rama));
   }
   report.bledy = logs.errors().filter((l) => !/favicon|DevTools|\[vite\]/.test(l)).slice(0, 20);
 } catch (e) {

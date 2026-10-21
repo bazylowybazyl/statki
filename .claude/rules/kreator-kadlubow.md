@@ -71,6 +71,10 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   Rowy to korytarze sieci systemów: rdzeń, gondole, zbiornik, mostek, ładownia i gniazda mają leżeć przy jednym
   spójnym korytarzu (przejście ≥ ~6 jd, inaczej rów się rwie), dysze SIDE — na prostym odcinku burty.
 - Pozycje modułów, kasztelów i naklejek są stałe; siatka floty (`grid` w `tnShip`) drobniejsza niż z detalu.
+- Rama każdego presetu = jedna bryła bez otworów (`hullFrameIntegrity`, test na `HD_PRESET_KEYS`, ostrzeżenie w panelu
+  klocków; osobno od `isPlayerBuildable`). Szpara między płytami nad pustką → klocek ramy pod spód (rów), nie przesuwanie
+  płyt: szparę na wylot generator sieci bierze za zewnętrze, a przesunięta płyta zmienia trasy A* (skośne odcinki rur —
+  test sieci TN w `tests/hullDesign.test.mjs`).
 
 ## Sieć systemów (kable i rury)
 

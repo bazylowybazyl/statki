@@ -24,7 +24,7 @@ import {
 import { HD_PRESETS, HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { HD_EMBLEMS, HD_EMBLEM_KEYS } from '../src/game/hullDesign/hullEmblems.js';
 import { HD_PARTS, HD_PART_IDS } from '../src/game/hullDesign/hullDesignParts.js';
-import { buildHullField, hullCells, hullFieldScale, polyShapeLoop, rasterHullAlpha, loopDistance } from '../src/game/hullDesign/hullDesignGeometry.js';
+import { buildHullField, hullCells, hullFieldScale, polyShapeLoop, rasterHullAlpha, loopDistance, hullFrameIntegrity } from '../src/game/hullDesign/hullDesignGeometry.js';
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
 import { hullDesignSystems } from '../src/game/hullDesign/hullDesignSystems.js';
@@ -1683,6 +1683,7 @@ function syncBlockPanel() {
 }
 
 /** Panel: powierzchnia kadłuba, liczba klocków (i z lustrem), gniazda uzbrojenia, strażnik „bez czitowania”. */
+const BLK_INTEGRITY = new WeakMap();   // pole → hullFrameIntegrity (liczona raz na zbudowane pole)
 function updateBlockStats() {
   const el = $('blk-stats');
   if (!el || !S.field || !S.design) return;
@@ -1694,12 +1695,22 @@ function updateBlockStats() {
   const b = S.field.bounds;
   const bp = isPlayerBuildable(S.design);
   const sel = blkSelected();
+  // spójność ramy (osobno od strażnika edytora): kawałki i szpary na wylot, raz na zbudowane pole
+  let it = BLK_INTEGRITY.get(S.field);
+  if (!it) BLK_INTEGRITY.set(S.field, it = hullFrameIntegrity(S.field));
+  const at = (p) => `${Math.round((p.box[0] + p.box[2]) / 2)}, ${Math.round((p.box[1] + p.box[3]) / 2)}`;
+  const j2 = (p) => p.area.toLocaleString('pl-PL', { maximumFractionDigits: 1 });
+  const frame = [];
+  if (it.pieces.length > 1) frame.push(`kadłub w ${it.pieces.length} kawałkach (najmniejszy ${j2(it.pieces[it.pieces.length - 1])} j.² przy ${at(it.pieces[it.pieces.length - 1])})`);
+  if (it.holes.length) frame.push(`${it.holes.length} ${it.holes.length === 1 ? 'szpara' : it.holes.length < 5 ? 'szpary' : 'szpar'} na wylot (największa ${j2(it.holes[0])} j.² przy ${at(it.holes[0])})`);
   el.innerHTML = [
     `kadłub ${Math.round(b.maxX - b.minX)} × ${Math.round(b.maxY - b.minY)} j. · powierzchnia <b>${Math.round(S.field.area).toLocaleString('pl-PL')} j.²</b>`,
     `klocki <b>${blocks.length}</b>${copies !== blocks.length ? ` (z lustrem ${copies})` : ''} · gniazda <b>${sockets}</b> (S ${cnt('turret_s')} · M ${cnt('turret_m')} · L ${cnt('turret_l')})`,
     `siatka ${fmtJ(blkGrid())} j. · zaznaczone ${sel.length}${sel.length === 1 ? ` — ${blockLabel(sel[0])}` : ''}`,
     bp.ok ? '<span style="color:var(--good)">✓ do zbudowania w edytorze gracza</span>'
-      : `<span style="color:var(--warn)">⚠ poza edytorem gracza: ${bp.violations.length} (${bp.violations[0].text})</span>`
+      : `<span style="color:var(--warn)">⚠ poza edytorem gracza: ${bp.violations.length} (${bp.violations[0].text})</span>`,
+    frame.length ? `<span style="color:var(--warn)">⚠ ${frame.join(' · ')}</span>`
+      : '<span style="color:var(--good)">✓ rama w jednym kawałku, bez szpar</span>'
   ].join('<br>');
 }
 
