@@ -15,7 +15,7 @@
 
 import { RESOURCES } from '../../data/resources.js';
 import { REPAIR_TUNE } from '../../data/repairDrones.js';
-import { HD_MODULES } from './hullDesignSchema.js';
+import { HD_MODULES, hullDesignMountOf } from './hullDesignSchema.js';
 import { cellComponents, hullCells, sampleHullField } from './hullDesignGeometry.js';
 import { systemIssues } from './hullDesignSystems.js';
 
@@ -73,8 +73,7 @@ export function hullDesignRecipe(field, tune = HD_RECIPE_TUNE) {
       if (sampleHullField(field, 0, bx, by) < 0) warnings.push({ level: 'warn', text: `${label} (${Math.round(m.x)}, ${Math.round(m.y)}): dysze zasłonięte kadłubem.` });
     }
   }
-  const turrets = (counts.turret_s || 0) + (counts.turret_m || 0) + (counts.turret_l || 0);
-  if (!turrets) warnings.push({ level: 'warn', text: 'Brak gniazd uzbrojenia.' });
+  if (!modules.some((m) => { const g = hullDesignMountOf(m); return g && g.slot !== 'hangar'; })) warnings.push({ level: 'warn', text: 'Brak gniazd uzbrojenia.' });
   return {
     parts, counts, plates,
     cells: { hull: c0.count, armor: c1.count, upper: c2.count, bridge: c3.count },
@@ -106,9 +105,15 @@ export function hullDesignMounts(field) {
     } else if (m.type === 'reactor') cores.push({ id: `hd_core_${cores.length}`, x: m.x - cx, y: m.y - cy, r: m.r });
     else if (m.type === 'fuel_tank') fuelTanks.push({ id: `hd_fuel_${fuelTanks.length}`, x: m.x - cx, y: m.y - cy, r: Math.max(m.w, m.h) });
     else if (m.type === 'cargo') cargoBays.push({ id: `hd_cargo_${cargoBays.length}`, x: m.x - cx, y: m.y - cy, w: 2 * m.w, h: 2 * m.h, rot: m.rot || 0 });
-    if (m.type.startsWith('turret_')) {
-      hardpoints.push({ id: `hd_${hardpoints.length}`, x: m.x - cx, y: m.y - cy, size: HD_MODULES[m.type].size, type: 'main' });
-    } else if (m.type === 'engine') {
+    const g = hullDesignMountOf(m);
+    if (g) {
+      // gniazda jak markery edytora gniazd gry: typ, rozmiar; wbudowane — obrót (90 = dziób), broń przypisana w projekcie
+      const hp = { id: `hd_${hardpoints.length}`, x: m.x - cx, y: m.y - cy, size: g.size, type: g.slot };
+      if (g.slot === 'builtin') hp.rot = 90;
+      if (typeof g.weapon === 'string') hp.weapon = g.weapon;
+      hardpoints.push(hp);
+    }
+    if (m.type === 'engine') {
       const n = m.n || Math.max(1, Math.round(m.h / 11));
       const c = Math.cos(m.rot || 0), s = Math.sin(m.rot || 0);
       const r = Math.min(m.h / n * 0.82, 14);

@@ -38,6 +38,15 @@
   #recipe .bad { color: var(--bad); } #recipe .warn { color: var(--warn); } #recipe .good { color: var(--good); }
   #netinfo { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
   #netinfo .bad { color: var(--bad); } #netinfo .good { color: var(--good); }
+  #classinfo { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; margin-top: 4px; }
+  #classinfo .bad { color: var(--bad); } #classinfo .warn { color: var(--warn); } #classinfo .good { color: var(--good); }
+  #classinfo .bar { display: inline-block; height: 7px; vertical-align: middle; background: #1b2a35; width: 56px; margin: 0 4px; position: relative; }
+  #classinfo .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--good); }
+  #classinfo .bar i.warn { background: var(--warn); } #classinfo .bar i.bad { background: var(--bad); }
+  #classmsg { color: var(--warn); min-height: 0; }
+  #prio { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 4px; align-items: center; font: 11px ui-monospace, Consolas, monospace; margin-top: 3px; }
+  #prio button { padding: 0 6px; text-align: center; }
+  #prio .off { color: var(--bad); }
   .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
   #json { display: none; width: 100%; height: 160px; margin-top: 4px; background: #050a0f; color: var(--ink); border: 1px solid #2a4252; font: 10px ui-monospace, Consolas, monospace; }
   #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
@@ -80,6 +89,18 @@
   <div class="row"><span id="lbl-pipenet" style="flex:0 0 112px;color:var(--muted)">sieć rur</span><input id="inp-pipenet" type="range" min="0" max="2" step="0.05" style="min-width:0"><button id="btn-pipeseed" style="flex:0 0 44px;text-align:center" title="inny układ sieci (ziarno)">⟳</button></div>
   <div class="btns" style="margin-top:4px"><button id="btn-windows">okna tarasów</button><button id="btn-underlay">podkład: sprite<kbd>U</kbd></button></div>
 
+  <h2>Klasa okrętu</h2>
+  <div class="row"><select id="sel-bridge" title="mostek — klasa: twarde limity powierzchni, gniazd i rozmiaru broni"></select></div>
+  <div class="row"><select id="sel-core" title="rdzeń — moc; najwyżej poziom ponad mostek"></select></div>
+  <div id="classinfo">—</div>
+  <div id="classmsg" class="hint"></div>
+  <h2>Gniazda broni</h2>
+  <div class="row"><select id="sel-mslot" title="typ nowego gniazda (narzędzie Moduł → Gniazdo broni)"></select><select id="sel-msize" title="rozmiar nowego gniazda"></select></div>
+  <div id="mountedit" class="hint">Kliknij gniazdo (narzędzie Przesuń / Moduł), by zmienić typ, rozmiar i broń.</div>
+  <div class="row" id="mountedit-row" style="display:none"><select id="sel-medit-slot"></select><select id="sel-medit-size"></select></div>
+  <div class="row" id="mountedit-row2" style="display:none"><select id="sel-medit-weapon"></select></div>
+  <div class="hint">Priorytet zasilania (przy niedoborze mocy gasną urządzenia od dołu listy; ich kable są szare):</div>
+  <div id="prio"></div>
   <h2>Klocki</h2>
   <div id="blk-palette" class="pal"></div>
   <div class="btns3" style="margin-top:4px">

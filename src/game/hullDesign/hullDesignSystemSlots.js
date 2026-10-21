@@ -23,8 +23,29 @@
 // Gdzie gra liczy automatem (`autoFuelTankMarker`, `autoReactorMarker`), miejsce wybrane ręcznie: zbiornik w rufowej
 // części, głęboko w kadłubie, poza komorą reaktora (szczegóły przy kadłubach). Wymiary dysz SIDE: 14 × 10 jd
 // (pół-wymiary), zbiorników ~26–42 × 10–22 jd.
+//
+// GNIAZDA BRONI (etap 2, `mounts`): pełne zestawy gniazd gry — SHIP_EDITOR_DEFAULTS.ships (frigate, destroyer,
+// battleship, terran_carrier, terran_supercapital; gniazda NPC i gracza bierze gra z tych wpisów, npcHardpointRuntime.js)
+// przeliczone tym samym przekształceniem co sloty wyżej. Liczy je narzędzie scripts/kreator-gniazda-tn.mjs (wynik
+// wklejony niżej — dane, nie rachunek przy wczytaniu):
+//   • duplikaty edytora (dwa markery jednego typu ≤ 3 px od siebie — podwójne kliknięcie) → jedno gniazdo,
+//   • pary burt (ten sam typ, |Δx|, |Δ|y|| małe) → para w lustrze w średnim położeniu (sprite'y z AI są niesymetryczne,
+//     projekt jest), gniazdo przy osi → na osi,
+//   • gniazdo kolidujące z modułem presetu albo za płytko w kadłubie → dosunięte do najbliższego wolnego miejsca
+//     (przesunięcie w tabeli narzędzia i w docs/KREATOR-KADLUBA.md),
+//   • rozmiar = rozmiar broni kadłuba w grze (WEAPON_TIER_BY_HULL), broń = DOMYŚLNE UZBROJENIE NPC (equipNpcWeapons
+//     w index.html: najwyżej spec ramy na typ, wybór po kącie; broń za duża na gniazdo → ta sama rodzina w rozmiarze
+//     gniazda — NPC Custos nosi railgun_mk2 M w gniazdach S), gniazdo bez broni NPC → puste (weapon '').
+// Gniazda hangarowe gry to wrota hangarów presetu (moduł `hangar`) — nie dokłada się ich. Preset z `mounts` traci WSZYSTKIE
+// swoje wieże (turret_*) i ośmiokątne ramy (`well` v 2) w miejscu gniazda: kapsuły i ramy sprite'ów to te same gniazda.
+//
+// KLASA presetu (etap 2, src/data/shipClasses.js): `bridgeLevel` / `coreLevel` — TN wg decyzji użytkownika (Custos I/R1,
+// Hasta II/R2, Bellator IV/R4, Citadella V/R5, Colossus VI/R6, fregata z klocków I/R1), pozostałe — najniższa klasa,
+// w której mieszczą się powierzchnia i gniazda (classForHull; test pilnuje, że każdy preset mieści się w swojej klasie).
 
 import { HD_SYSTEM_TYPES } from './hullDesignSystems.js';
+import { HD_MOUNT_RADIUS_DU, hullDesignMountOf } from './hullDesignSchema.js';
+import { shipClass, sizeRank } from '../../data/shipClasses.js';
 
 const SIDE_PORT = -Math.PI / 2;     // dysza SIDE burty y < 0: wydech w −y (lustro: +y)
 const tank = (x, y, w, h, o = {}) => ({ type: 'fuel_tank', x, y, w, h, rot: 0, v: 0, ...o });
@@ -88,14 +109,92 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
   tnparts2: { add: [tank(-200, -40, 20, 8)] }
 });
 
+// ── GNIAZDA BRONI floty TN (wynik scripts/kreator-gniazda-tn.mjs — nie edytować ręcznie, przeliczyć narzędziem) ──
+// g(typ, x, y, broń burty y ≤ 0, broń burty y > 0): y < 0 — para w lustrze, y = 0 — gniazdo na osi; broń '' — puste;
+// g1 — gniazdo bez pary na swojej burcie (gra ma po burtach nierówną liczbę gniazd tego typu)
+const g = (slot, x, y, w, w2) => (w2 === undefined || w2 === w ? { slot, x, y, w } : { slot, x, y, w, w2 });
+const g1 = (slot, x, y, w) => ({ slot, x, y, w, one: true });
+/** Gniazda presetów: { size — rozmiar gniazd (broń kadłuba w grze), list, drop — pierścienie / ramy presetu pod gniazdami }. */
+export const HD_PRESET_MOUNTS = Object.freeze({
+  // @gniazda-start
+  // custos: 5 markerów edytora (1 duplikatów, 4 gniazd), w tym 0 hangarów = wrota presetu
+  custos: Object.freeze({ size: 'S', drop: Object.freeze([[-33.5, -16]]), list: Object.freeze([
+    g('main', -33.5, -16, 'tempest_ion_s'), g('aux', 50.1, -13.5, 'laser_pd_mk1')
+  ])}),
+  // hasta: 8 markerów edytora (8 gniazd), w tym 0 hangarów = wrota presetu
+  hasta: Object.freeze({ size: 'M', drop: Object.freeze([[-40, -25.2]]), list: Object.freeze([
+    g('main', 74.8, -16, 'railgun_mk2'), g('main', -40, -25.2, 'railgun_mk2'), g('aux', 103.2, -11.7, 'laser_pd_mk1'), g('aux', -76.4, -50.8, 'laser_pd_mk1')
+  ])}),
+  // bellator: 31 markerów edytora (31 gniazd), w tym 0 hangarów = wrota presetu
+  bellator: Object.freeze({ size: 'L', drop: Object.freeze([[-100.5, -64]]), list: Object.freeze([
+    g('main', 257.2, -59.1, 'railgun_mk2'), g('main', 234.6, -68.8, 'railgun_mk2'), g('main', 207.3, -80.5, 'railgun_mk2'), g('main', 193.7, -38.8, '', 'railgun_mk2'),
+    g('main', 12.1, -127.2, 'railgun_mk2'), g1('main', -34.1, -137.8, 'railgun_mk2'), g('main', -68.9, -127.7, 'railgun_mk2'), g('aux', 288.4, -41.5, 'laser_pd_mk1', ''),
+    g('aux', 217.8, -34.3, ''), g('aux', 129, -135.4, 'laser_pd_mk1', ''), g1('aux', 121.2, 44.2, 'laser_pd_mk1'), g('aux', 13.9, -171.4, '', 'laser_pd_mk1'),
+    g('aux', -104.4, -164.3, 'laser_pd_mk1', ''), g('aux', -173, -113.8, '', 'laser_pd_mk1'), g('aux', -271.9, 0, ''), g('missile', 32.8, -55.1, 'grad_launcher'),
+    g('missile', -100.5, -64, 'missile_rack')
+  ])}),
+  // citadella: 40 markerów edytora (5 duplikatów, 35 gniazd), w tym 10 hangarów = wrota presetu
+  citadella: Object.freeze({ size: 'L', drop: Object.freeze([[-132, 0], [121, 0], [237, 0]]), list: Object.freeze([
+    g('main', 365.4, -81.6, 'railgun_mk2'), g('main', 231.1, -150.2, 'railgun_mk2'), g('main', -6.6, -167.8, 'railgun_mk2'), g('main', -310.3, -63, 'railgun_mk2'),
+    g('special', 112.6, 0, ''), g('special', -136.7, 0, ''), g('aux', 439.2, -44.9, '', 'laser_pd_mk1'), g('aux', 425, -66.7, 'laser_pd_mk1'),
+    g('aux', 395.1, -58.2, 'laser_pd_mk1', ''), g('aux', 293.6, -116.3, ''), g('aux', 237, 0, ''), g('aux', -203.2, -171.1, 'laser_pd_mk1'),
+    g('aux', -372.6, -141.2, ''), g('aux', -410.4, -24.2, 'laser_pd_mk1')
+  ])}),
+  // colossus: 56 markerów edytora (56 gniazd), w tym 0 hangarów = wrota presetu
+  colossus: Object.freeze({ size: 'Capital', drop: Object.freeze([[702, 0], [-14, -176], [227, 0], [-216.6, -86], [231.7, -71], [-468, -105.4], [-375, -178.5], [451, -147]]), list: Object.freeze([
+    g('main', 615.4, -64.3, 'railgun_mk2'), g('main', 558.7, -52.7, 'railgun_mk2'), g('main', 546, -108, 'railgun_mk2'), g('main', 465.5, -60, 'railgun_mk2'),
+    g('main', 395, -89.4, 'railgun_mk2'), g('main', 375.6, -166, 'railgun_mk2'), g('main', 124, -239.5, 'railgun_mk2'), g('special', 227, 0, ''),
+    g('special', 110, -110, ''), g('special', -14, -176, ''), g('special', -35.8, -255.6, ''), g('special', -195, -249, ''),
+    g('builtin', 702, 0, 'death_ray'), g('aux', 742.7, -40.5, ''), g('aux', 691.7, -67.3, 'laser_pd_mk1'), g('aux', 659.4, -69.5, ''),
+    g('aux', 641.9, -92.8, 'laser_pd_mk1'), g('aux', 451, -147, ''), g('aux', 321.1, -168.5, 'laser_pd_mk1', ''), g('aux', 185.2, -229.9, '', 'laser_pd_mk1'),
+    g('aux', 40.8, -248.4, ''), g('aux', -61, -291.2, 'laser_pd_mk1'), g('aux', -258.9, -289.8, ''), g('aux', -395.2, -274.6, 'laser_pd_mk1'),
+    g('aux', -511.9, -279.9, ''), g('missile', 231.7, -71, 'missile_rack'), g('missile', -216.6, -86, 'grad_launcher'), g('missile', -375, -178.5, 'missile_rack'),
+    g('missile', -468, -105.4, 'missile_rack')
+  ])})
+  // @gniazda-end
+});
+
+/**
+ * Klasa presetu: [poziom mostka, poziom rdzenia]. TN i fregata z klocków — decyzja użytkownika; reszta — najniższa klasa
+ * z powierzchni i gniazd (classForHull, 2026-10-21: Hasta-D 63 tys. j² → III, fregata / krążownik z części 149 / 124 tys.
+ * → IV, Orbis 231 tys. i Szakal 256 tys. → V). `empty` — gracz wybiera (0 — z powierzchni).
+ */
+export const HD_PRESET_CLASS = Object.freeze({
+  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], klocki: [1, 1],
+  destroyer: [3, 3], tnparts: [4, 4], tnparts2: [4, 4], orbis: [5, 5], pirate: [5, 5], atlas2: [6, 6]
+});
+/** Presety poza drabiną klas (jak Atlas — unikat fabularny): Atlas II ma 1,05 mln j², więcej niż limit klasy VI. */
+export const HD_PRESET_OUTSIDE_LADDER = Object.freeze(['atlas2']);
+
+/**
+ * Gniazda presetu `key` jako moduły `mount` (r z HD_MOUNT_RADIUS_DU × detal `D`): para — dwa moduły w lustrze (każdy
+ * `mirror: false`, własna broń burty; sieć systemów widzi je jako bliźniaki), na osi — jeden.
+ */
+export function presetMountModules(key, D) {
+  const out = [];
+  for (const g of HD_PRESET_MOUNTS[key]?.list || []) {
+    const r = Math.round(HD_MOUNT_RADIUS_DU[g.slot] * D * 100) / 100;
+    const base = { type: 'mount', slot: g.slot, size: HD_PRESET_MOUNTS[key].size, r, rot: 0, mirror: false };
+    out.push({ ...base, x: g.x, y: g.y, weapon: g.w });
+    if (g.y < 0 && !g.one) out.push({ ...base, x: g.x, y: -g.y, weapon: g.w2 ?? g.w });
+  }
+  return out;
+}
+
+const MOUNT_REPLACE = (m) => m.type.startsWith('turret_');
+/** Pierścień / rama presetu (`well`) w miejscu gniazda — z listy `drop` (x, |y|). */
+const dropped = (key, m) => m.type === 'well' && (HD_PRESET_MOUNTS[key]?.drop || []).some(([x, y]) => Math.abs(x - m.x) < 0.5 && Math.abs(Math.abs(y) - Math.abs(m.y)) < 0.5);
+
 /**
  * Sloty systemów presetu `key` w surowym projekcie (przed normalizacją): rdzeń / mostek przeniesione w miejsce z tabel
- * gry, moduły systemów dołożone, wszystkie moduły systemów zablokowane (`lock`). Projekt od zera (`empty`) — bez zmian.
+ * gry, moduły systemów dołożone, wszystkie moduły systemów zablokowane (`lock`), gniazda broni z gry (`mounts` —
+ * wieże presetu i ramy w miejscu gniazd znikają), klasa (`bridgeLevel` / `coreLevel`). Projekt od zera (`empty`) —
+ * bez zmian. `opts.mounts === false` — bez gniazd (narzędzie scripts/kreator-gniazda-tn.mjs liczy je na tym projekcie).
  */
-export function applySystemSlots(key, design) {
+export function applySystemSlots(key, design, opts = {}) {
   if (key === 'empty' || !design) return design;
   const slot = HD_SYSTEM_SLOTS[key] || {};
-  const modules = (design.modules || []).map((m) => ({ ...m }));
+  let modules = (design.modules || []).map((m) => ({ ...m }));
   for (const type of ['reactor', 'bridge']) {
     if (!slot[type]) continue;
     const m = modules.find((q) => q.type === type);
@@ -104,5 +203,17 @@ export function applySystemSlots(key, design) {
   }
   for (const m of slot.add || []) modules.push({ ...m });
   for (const m of modules) if (HD_SYSTEM_TYPES.includes(m.type)) m.lock = true;
-  return { ...design, modules };
+  if (HD_PRESET_MOUNTS[key] && opts.mounts !== false) {
+    modules = modules.filter((m) => !MOUNT_REPLACE(m) && !dropped(key, m));
+    modules.push(...presetMountModules(key, design.detail));
+  }
+  const cls = HD_PRESET_CLASS[key];
+  if (!cls) return { ...design, modules };
+  // gniazda presetu nie większe niż broń klasy (fregata z klocków: wieża M w klasie I → gniazdo S)
+  const maxSize = shipClass(cls[0]).weaponSize;
+  for (const m of modules) {
+    const gm = hullDesignMountOf(m);
+    if (gm && sizeRank(gm.size) > sizeRank(maxSize)) m.size = maxSize;
+  }
+  return { ...design, modules, bridgeLevel: cls[0], coreLevel: cls[1] };
 }

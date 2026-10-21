@@ -36,7 +36,7 @@ import { srgbEncode } from '../skybake/skyGameColor.js';
 import { HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
-export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 96, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
+export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 160, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
 /** Gęstość obrazu: dłuższy bok ~targetSide tekseli, w granicach [min, max] tekseli na j. */
 export const HD_TEX = Object.freeze({ targetSide: 2560, min: 1.2, max: 16 });
 
@@ -83,6 +83,16 @@ export const HD_LOOK = {
 
 const TYPE_CODE = Object.fromEntries(Object.entries(HD_MODULES).map(([k, v]) => [k, v.code]));
 const EDGE_GAIN = 0.3989423;
+
+/**
+ * GNIAZDO BRONI (`mount`, etap 2) w gałęzi wież: [kod wieży, wariant] — podstawa w stylu TN pod wieżę gry: główne,
+ * specjalne, wbudowane — kapsuła (v 0), pomocnicze — okrągła płyta z rowkiem obrotnicy (v 1), rakietowe — pokrywa
+ * wyrzutni (v 2); kod z rozmiaru (S 1, M 2, L / Capital 3 — wygląd i tak liczy się z promienia).
+ */
+function _mountLook(m) {
+  const code = m.size === 'S' ? 1 : (m.size === 'M' ? 2 : 3);
+  return [code, m.slot === 'aux' ? 1 : (m.slot === 'missile' ? 2 : 0)];
+}
 
 function srgbToLinear(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -304,8 +314,11 @@ export class HullComposer {
       const R2 = U.pruns.element(runId.mul(3).add(2)).toVar();
       const tU = pa.x.mul(iD).toVar();
       const halfW = R2.x, gap = R2.y, rMax = R2.z;
-      const overF = step(7.5, R2.w);
-      const mat = R2.w.sub(overF.mul(8.0)).toVar();
+      // R2.w = materiał + 8 · na płytach + 16 · MARTWY (kable do urządzeń bez prądu — markPipeNetPower)
+      const deadF = step(15.5, R2.w).toVar();
+      const w2 = R2.w.sub(deadF.mul(16.0));
+      const overF = step(7.5, w2);
+      const mat = w2.sub(overF.mul(8.0)).toVar();
       const isCable = step(2.5, mat).mul(step(mat, 3.5)).toVar();       // materiał 3 — kable sieci zasilania, 4 — rury paliwa
       o.t.assign(tU);
       o.halfW.assign(halfW);
@@ -341,12 +354,14 @@ export class HullComposer {
           const hb = hash11(rid.mul(5.9).add(pkV.mul(2.71)));
           const bandP = float(9.0);
           const bandIdx = floor(sAl.div(bandP).add(hb));
+          // martwy kabel (urządzenie bez prądu): szara izolacja, bez opasek
           const bandOn = step(abs(fract(sAl.div(bandP).add(hb)).sub(0.5)).mul(bandP), 0.45).mul(inPipe)
-            .mul(step(0.35, hash11(rid.add(pkV.mul(1.37)).add(bandIdx.mul(0.71))))).toVar();
+            .mul(step(0.35, hash11(rid.add(pkV.mul(1.37)).add(bandIdx.mul(0.71))))).mul(float(1.0).sub(deadF)).toVar();
           const hc = hash11(rid.mul(1.3).add(pkV.mul(9.1)).add(3.3));
           const bandCol = select(hc.lessThan(0.3), vec3(0.5, 0.05, 0.03), select(hc.lessThan(0.55), vec3(0.6, 0.34, 0.04),
             select(hc.lessThan(0.78), vec3(0.07, 0.32, 0.09), vec3(0.6, 0.6, 0.56))));
-          const insul = vec3(0.03, 0.029, 0.027).mul(select(pkV.lessThan(0.5), float(1.3), float(1.0)));   // pierwszy — gruby kabel zasilający
+          // pierwszy — gruby kabel zasilający; martwy — jasnoszara izolacja (w cieniu rowu ciemna szarość ginęła)
+          const insul = mix(vec3(0.03, 0.029, 0.027), vec3(0.34, 0.34, 0.33), deadF).mul(select(pkV.lessThan(0.5), float(1.3), float(1.0)));
           const gloss = smoothstep(0.82, 1.0, pcV).mul(0.1);
           const cableC = mix(insul.mul(float(0.55).add(pcV.mul(0.75))).add(vec3(gloss)), bandCol.mul(float(0.6).add(pcV.mul(0.5))), bandOn);
           const trayC = engC.mul(float(1.0).add(rail.mul(0.3)));
@@ -587,7 +602,8 @@ export class HullComposer {
       If(type.lessThan(3.5), () => {
         // gniazda wież S / M / L: v = 0 — KAPSUŁA Terra Novy (sprite'y Colossusa i Bellatora): ośmiokątna rama z podwójną
         // linią i nitami, płyta, zaokrąglony kwadratowy pierścień włazu, ciemne okno z płytą w środku, zaczepy na osi y;
-        // v = 1 — płyta z rowkiem obrotnicy
+        // v = 1 — płyta z rowkiem obrotnicy; v = 2 — pokrywa wyrzutni (gniazdo `mount` przychodzi tu z kodem wieży:
+        // _mountLook)
         const R = B.z.mul(iD);
         If(rr.lessThan(R.mul(1.3).add(1.0)), () => {
           If(B.w.lessThan(0.5), () => {
@@ -623,6 +639,26 @@ export class HullComposer {
             col.assign(mix(col, winC, win));
             col.assign(mix(col, trimC.mul(0.75), clampK));
             modCol.assign(col);
+          }).ElseIf(B.w.greaterThan(1.5), () => {
+            // POKRYWA WYRZUTNI (gniazdo rakietowe `mount`): kwadratowa płyta z ramą, 2 × 2 komory z pokrywami na zawiasie
+            const hb = R.mul(0.92);
+            const sd = sdRoundBox(lu, vec2(hb, hb), R.mul(0.18)).toVar();
+            If(sd.lessThan(1.0), () => {
+              const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
+              const frameUp = clamp(sd.negate().div(0.6), 0.0, 1.0);
+              const cc = vec2(select(lu.x.greaterThan(0.0), hb, hb.negate()), select(lu.y.greaterThan(0.0), hb, hb.negate())).mul(0.47).toVar();
+              const lc = lu.sub(cc).toVar();
+              const sc = sdRoundBox(lc, vec2(hb.mul(0.36), hb.mul(0.36)), hb.mul(0.07)).toVar();
+              const cell = clamp(sc.negate().div(0.35), 0.0, 1.0);
+              const lid = clamp(sc.negate().sub(0.5).div(0.3), 0.0, 1.0).toVar();
+              const hinge = lineN(lc.x, float(0.25)).mul(lid);
+              modH.addAssign(frameUp.mul(1.1).sub(cell.mul(0.9)).add(lid.mul(0.5)).sub(hinge.mul(0.2)));
+              modK.assign(max(modK, inside));
+              modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)), lineN(sc, float(0.3))).mul(0.6)));
+              const col = mix(plateC.mul(1.02), vec3(0.03, 0.03, 0.028), cell).toVar();
+              col.assign(mix(col, metal.mul(1.35), lid));
+              modCol.assign(mix(col, trimC.mul(0.6), hinge));
+            });
           }).Else(() => {
             const plate = clamp(R.sub(rr), 0.0, 1.0);
             const groove = lineN(rr.sub(R.mul(0.8)), float(0.7));
@@ -633,7 +669,8 @@ export class HullComposer {
             const bolt = float(1.0).sub(smoothstep(0.35, 0.6, boltD));
             modH.addAssign(plate.mul(1.4).sub(groove.mul(0.5)).add(bolt.mul(0.4)));
             modK.assign(max(modK, plate));
-            modCol.assign(select(rr.lessThan(R.mul(0.8)), metal.mul(0.75), metal.mul(1.25)).mul(float(1.0).sub(groove.mul(0.5))));
+            // obrotnica szara (pół stali, pół płyty), pierścień w barwie płyty — na białym pancerzu TN nie czyta się jak otwór
+            modCol.assign(select(rr.lessThan(R.mul(0.8)), mix(metal, plateC, 0.5), plateC.mul(0.97)).mul(float(1.0).sub(groove.mul(0.5))));
           });
         });
       }).ElseIf(type.lessThan(4.5), () => {
@@ -1593,8 +1630,9 @@ export class HullComposer {
     for (const m of modules) {
       if (mi >= HD_COMPOSER_LIMITS.modules) break;
       const A = U.mods.array[mi * 2], B = U.mods.array[mi * 2 + 1];
-      A.set(m.x, m.y, TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
-      const extra = m.type === 'hangar' ? (m.doors || 1) : (m.v || 0);
+      const look = m.type === 'mount' ? _mountLook(m) : null;
+      A.set(m.x, m.y, look ? look[0] : TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
+      const extra = look ? look[1] : (m.type === 'hangar' ? (m.doors || 1) : (m.v || 0));
       B.set(m.w || 0, m.h || 0, m.r || 0, extra);
       mi++;
     }
@@ -1680,7 +1718,7 @@ export class HullComposer {
       const q = r.radii;
       R[(i + 1) * 3].set(q[0] || 0, q[1] || 0, q[2] || 0, q[3] || 0);
       R[(i + 1) * 3 + 1].set(q[4] || 0, q[5] || 0, q[6] || 0, q[7] || 0);
-      R[(i + 1) * 3 + 2].set(r.halfW, r.gap, r.rMax, (r.mat || 0) + (r.over ? 8 : 0));
+      R[(i + 1) * 3 + 2].set(r.halfW, r.gap, r.rMax, (r.mat || 0) + (r.over ? 8 : 0) + (r.dead ? 16 : 0));
     });
     const F = U.pfits.array;
     net.fits.forEach((f, i) => {

@@ -12,6 +12,8 @@ import { HD_SYSTEM_SLOTS, applySystemSlots } from '../src/game/hullDesign/hullDe
 import { HD_PIPE_FIT, HD_PIPE_MAT_CABLE, buildPipeNetwork, pipeModuleSdf, pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
 
 const TN = ['custos', 'hasta', 'bellator', 'citadella', 'colossus'];
+/** Kadłuby TN z gniazdami gry bez pary na drugiej burcie (g1 w HD_PRESET_MOUNTS: Bellator — 7 / 6 gniazd głównych i 6 / 7 pomocniczych po burtach) — sieć bez lustra. */
+const TN_ASYM_MOUNTS = ['bellator'];
 const netKey = (net) => JSON.stringify({ runs: net.runs, fits: net.fits, nodes: net.graph.nodes });
 const fields = new Map();
 const fieldOf = (key) => {
@@ -138,14 +140,16 @@ test('sieć TN: kable gęstnieją przy rdzeniu, przyłącza z osprzętem, symetr
     const thick = cable.filter((r) => r.n === maxN);
     assert.ok(thick.some((r) => r.ends.flat().some((id) => mods[net.graph.nodes[id].dev]?.type === 'reactor')), `${key}: najgrubsze kable przy rdzeniu`);
     assert.ok(maxN > Math.min(...cable.map((r) => r.n)), `${key}: grubość wiązek kabli z liczby tras`);
-    // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach
-    for (const r of net.runs) {
+    // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach — gdy moduły są w lustrze (Bellator
+    // ma po burtach nierówną liczbę gniazd gry — sieć na całym kadłubie)
+    assert.equal(net.mirror, !TN_ASYM_MOUNTS.includes(key), `${key}: sieć w lustrze`);
+    for (const r of net.mirror ? net.runs : []) {
       if (!r.auto) continue;
       assert.equal(r.polys.length, 2);
       const [a, b] = r.polys;
       for (let i = 0; i < a.length; i++) assert.ok(Math.abs(a[i][0] - b[i][0]) < 1e-9 && Math.abs(a[i][1] + b[i][1]) < 1e-9);
     }
-    for (const ft of net.fits) {
+    for (const ft of net.mirror ? net.fits : []) {
       if (Math.abs(ft.y) <= 0.5 * net.detail) continue;
       assert.ok(net.fits.some((g) => g.type === ft.type && Math.abs(g.x - ft.x) < 1e-6 && Math.abs(g.y + ft.y) < 1e-6), `${key}: osprzęt bez pary lustra`);
     }
